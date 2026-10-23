@@ -12,9 +12,11 @@
 #include "duckdb/common/memory_mapped_file.hpp"
 #include "duckdb/common/mutex.hpp"
 #include "duckdb/common/shared_ptr.hpp"
-#include "duckdb/common/unordered_map.hpp"
-#include "duckdb/common/unordered_set.hpp"
 #include "duckdb/storage/block_cache/block_cache.hpp"
+
+#include <absl/container/btree_map.h>
+#include <absl/container/btree_set.h>
+#include <string_view>
 
 namespace duckdb {
 
@@ -81,14 +83,14 @@ public:
 	void Clear();
 
 private:
-	shared_ptr<MemoryFile> Find(const string &path);
-	shared_ptr<MemoryFile> Create(const string &path);
-	static string Normalize(const string &path);
+	shared_ptr<MemoryFile> Find(std::string_view path);
+	shared_ptr<MemoryFile> Create(std::string_view path);
+	static std::string_view Normalize(std::string_view path);
 
 	optional_ptr<DatabaseInstance> db;
 	annotated_mutex lock;
-	unordered_map<string, shared_ptr<MemoryFile>> files DUCKDB_GUARDED_BY(lock);
-	unordered_set<string> directories DUCKDB_GUARDED_BY(lock);
+	absl::btree_map<string, shared_ptr<MemoryFile>> files DUCKDB_GUARDED_BY(lock);
+	absl::btree_set<string> directories DUCKDB_GUARDED_BY(lock);
 };
 
 } // namespace duckdb

@@ -4,6 +4,8 @@
 #include "duckdb/common/helper.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/common/types/timestamp.hpp"
+#include "duckdb/common/unordered_map.hpp"
+#include "duckdb/common/unordered_set.hpp"
 #include "duckdb/main/database.hpp"
 #include "duckdb/storage/buffer_manager.hpp"
 
@@ -36,6 +38,12 @@ struct MemoryFile {
 };
 
 namespace {
+
+string DirectoryPrefix(std::string_view directory) {
+	string prefix(directory);
+	prefix += '/';
+	return prefix;
+}
 
 unordered_map<string, string> ErrnoInfo(int error) {
 	return {{"errno", std::to_string(error)}};
@@ -120,12 +128,12 @@ MemoryFileSystem::MemoryFileSystem() {
 MemoryFileSystem::~MemoryFileSystem() {
 }
 
-string MemoryFileSystem::Normalize(const string &path) {
-	auto result = path;
-	while (result.size() > strlen(PREFIX) && result.back() == '/') {
-		result.pop_back();
+std::string_view MemoryFileSystem::Normalize(std::string_view path) {
+	const auto prefix = strlen(PREFIX);
+	while (path.size() > prefix && path.back() == '/') {
+		path.remove_suffix(1);
 	}
-	return result;
+	return path;
 }
 
 bool MemoryFileSystem::CanHandleFile(const string &fpath) {
@@ -140,22 +148,22 @@ string MemoryFileSystem::PathSeparator(const string &path) {
 	return "/";
 }
 
-shared_ptr<MemoryFile> MemoryFileSystem::Find(const string &path) {
+shared_ptr<MemoryFile> MemoryFileSystem::Find(std::string_view path) {
 	annotated_lock_guard<annotated_mutex> guard(lock);
 	auto entry = files.find(Normalize(path));
 	return entry == files.end() ? nullptr : entry->second;
 }
 
-shared_ptr<MemoryFile> MemoryFileSystem::Create(const string &path) {
-	auto file = make_shared_ptr<MemoryFile>(path);
+shared_ptr<MemoryFile> MemoryFileSystem::Create(std::string_view path) {
+	auto file = make_shared_ptr<MemoryFile>(string(path));
 	if (db) {
 		annotated_lock_guard<annotated_mutex> file_guard(file->lock);
-		file->blocks = BlockCache::Get(*db).CreateUnbackedFile(path);
+		file->blocks = BlockCache::Get(*db).CreateUnbackedFile(file->path);
 	}
 	shared_ptr<MemoryFile> replaced;
 	{
 		annotated_lock_guard<annotated_mutex> guard(lock);
-		auto &slot = files[path];
+		auto &slot = files[file->path];
 		replaced = std::move(slot);
 		slot = file;
 	}
@@ -275,7 +283,7 @@ void MemoryFileSystem::Compact(const string &path) {
 }
 
 void MemoryFileSystem::Clear() {
-	unordered_map<string, shared_ptr<MemoryFile>> removed;
+	decltype(files) removed;
 	{
 		annotated_lock_guard<annotated_mutex> guard(lock);
 		removed = std::move(files);
@@ -417,44 +425,33 @@ void MemoryFileSystem::FileSync(FileHandle &handle) {
 FileExistence MemoryFileSystem::TryDirectoryExists(const string &directory, optional_ptr<FileOpener> opener,
                                                    optional_ptr<ErrorData> error) {
 	const auto name = Normalize(directory);
-	const auto prefix = name + "/";
+	const auto prefix = DirectoryPrefix(name);
 	annotated_lock_guard<annotated_mutex> guard(lock);
-	if (directories.find(name) != directories.end()) {
+	if (directories.contains(name)) {
 		return FileExistence::EXISTS;
 	}
-	for (auto &file : files) {
-		if (StringUtil::StartsWith(file.first, prefix)) {
-			return FileExistence::EXISTS;
-		}
-	}
-	return FileExistence::MISSING;
+	const auto first = files.lower_bound(prefix);
+	return first != files.end() && first->first.starts_with(prefix) ? FileExistence::EXISTS : FileExistence::MISSING;
 }
 
 void MemoryFileSystem::CreateDirectory(const string &directory, optional_ptr<FileOpener> opener) {
 	annotated_lock_guard<annotated_mutex> guard(lock);
-	directories.insert(Normalize(directory));
+	directories.emplace(Normalize(directory));
 }
 
 void MemoryFileSystem::RemoveDirectory(const string &directory, optional_ptr<FileOpener> opener) {
 	const auto name = Normalize(directory);
-	const auto prefix = name + "/";
+	const auto prefix = DirectoryPrefix(name);
 	vector<shared_ptr<MemoryFile>> removed;
 	{
 		annotated_lock_guard<annotated_mutex> guard(lock);
-		for (auto entry = files.begin(); entry != files.end();) {
-			if (StringUtil::StartsWith(entry->first, prefix)) {
-				removed.push_back(std::move(entry->second));
-				files.erase(entry++);
-			} else {
-				++entry;
-			}
+		for (auto entry = files.lower_bound(prefix); entry != files.end() && entry->first.starts_with(prefix);) {
+			removed.push_back(std::move(entry->second));
+			entry = files.erase(entry);
 		}
-		for (auto entry = directories.begin(); entry != directories.end();) {
-			if (*entry == name || StringUtil::StartsWith(*entry, prefix)) {
-				directories.erase(entry++);
-			} else {
-				++entry;
-			}
+		directories.erase(name);
+		for (auto entry = directories.lower_bound(prefix); entry != directories.end() && entry->starts_with(prefix);) {
+			entry = directories.erase(entry);
 		}
 	}
 }
@@ -462,19 +459,16 @@ void MemoryFileSystem::RemoveDirectory(const string &directory, optional_ptr<Fil
 bool MemoryFileSystem::ListFiles(const string &directory, const std::function<void(const string &, bool)> &callback,
                                  FileOpener *opener) {
 	const auto name = Normalize(directory);
-	const auto prefix = name + "/";
+	const auto prefix = DirectoryPrefix(name);
 	vector<pair<string, bool>> entries;
 	bool exists = false;
 	{
 		annotated_lock_guard<annotated_mutex> guard(lock);
-		exists = directories.find(name) != directories.end();
+		exists = directories.contains(name);
 		unordered_set<string> subdirectories;
-		for (auto &file : files) {
-			if (!StringUtil::StartsWith(file.first, prefix)) {
-				continue;
-			}
+		for (auto file = files.lower_bound(prefix); file != files.end() && file->first.starts_with(prefix); ++file) {
 			exists = true;
-			auto rest = file.first.substr(prefix.size());
+			auto rest = file->first.substr(prefix.size());
 			const auto separator = rest.find('/');
 			if (separator == string::npos) {
 				entries.emplace_back(std::move(rest), false);
@@ -482,10 +476,8 @@ bool MemoryFileSystem::ListFiles(const string &directory, const std::function<vo
 				entries.emplace_back(rest.substr(0, separator), true);
 			}
 		}
-		for (auto &child : directories) {
-			if (!StringUtil::StartsWith(child, prefix)) {
-				continue;
-			}
+		for (auto it = directories.lower_bound(prefix); it != directories.end() && it->starts_with(prefix); ++it) {
+			const auto &child = *it;
 			auto rest = child.substr(prefix.size());
 			const auto separator = rest.find('/');
 			auto child_name = separator == string::npos ? rest : rest.substr(0, separator);
@@ -511,7 +503,7 @@ void MemoryFileSystem::MoveFile(const string &source, const string &target, opti
 		}
 		auto file = std::move(entry->second);
 		files.erase(entry);
-		auto &slot = files[Normalize(target)];
+		auto &slot = files[string(Normalize(target))];
 		replaced = std::move(slot);
 		slot = std::move(file);
 	}
