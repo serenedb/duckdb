@@ -595,4 +595,27 @@ TEST_CASE("Block cache concurrent pins and evictions return the right bytes", "[
 	REQUIRE(wrong == 0);
 }
 
+TEST_CASE("Block cache spill drops the oldest copy first after the copies of a forgotten file go", "[block_cache]") {
+	DuckDB db(nullptr);
+	BlockCache cache(*db.instance, BLOCK);
+	cache.SetSpill(TestCreatePath("block_cache_spill_order"), 2 * BLOCK);
+	CountingSourceFileSystem fs;
+	TestFile file("block_cache_spill_order.bin", 4 * BLOCK);
+	TestFile other("block_cache_spill_order_other.bin", BLOCK);
+	auto cached = file.Open(cache, fs);
+	cache.Pin(cached, 0);
+	cache.Pin(cached, 1);
+	cache.ForgetFile(file.path);
+	cache.Pin(cached, 2);
+	cache.Pin(cached, 0);
+	cache.Pin(cached, 3);
+	cache.Pin(other.Open(cache, fs), 0);
+	cache.ForgetFile(other.path);
+
+	const auto reads = fs.ReadCount();
+	auto pin = cache.Pin(cached, 0);
+	REQUIRE(HoldsExpectedBytes(pin, 0));
+	REQUIRE(fs.ReadCount() == reads);
+}
+
 } // namespace duckdb
