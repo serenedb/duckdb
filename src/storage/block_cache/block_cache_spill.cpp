@@ -24,8 +24,12 @@ BlockCacheSpill::~BlockCacheSpill() {
 
 void BlockCacheSpill::Configure(FileSystem &fs, const string &path, idx_t backed_limit_p) {
 	annotated_lock_guard<annotated_mutex> guard(lock);
+	if (path.empty() && (!handle || is_default)) {
+		return;
+	}
 	backed_limit = backed_limit_p / BlockCache::BLOCK_SIZE;
 	if (handle && handle->GetPath() == path) {
+		is_default = false;
 		while (backed_order.size() > backed_limit && DropOldestBacked()) {
 		}
 		return;
@@ -44,9 +48,24 @@ void BlockCacheSpill::Configure(FileSystem &fs, const string &path, idx_t backed
 	slots.clear();
 	free_slots.clear();
 	backed_order.clear();
+	is_default = false;
 	if (path.empty()) {
 		return;
 	}
+	Open(fs, path);
+}
+
+void BlockCacheSpill::ConfigureDefault(FileSystem &fs, const string &path) {
+	annotated_lock_guard<annotated_mutex> guard(lock);
+	if (handle) {
+		return;
+	}
+	backed_limit = 0;
+	Open(fs, path);
+	is_default = true;
+}
+
+void BlockCacheSpill::Open(FileSystem &fs, const string &path) {
 	const auto flags = FileFlags::FILE_FLAGS_READ | FileFlags::FILE_FLAGS_WRITE | FileFlags::FILE_FLAGS_FILE_CREATE_NEW;
 	try {
 		handle = fs.OpenFile(path, flags | FileFlags::FILE_FLAGS_DIRECT_IO);

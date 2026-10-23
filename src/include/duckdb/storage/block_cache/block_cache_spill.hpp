@@ -24,8 +24,11 @@ class BlockCacheSpill {
 public:
 	~BlockCacheSpill();
 
-	//! Spills into [path], keeping at most [backed_limit] bytes of blocks that exist elsewhere
+	//! Spills into [path], keeping at most [backed_limit] bytes of blocks that exist elsewhere; an empty [path] keeps
+	//! the file ConfigureDefault opened
 	void Configure(FileSystem &fs, const string &path, idx_t backed_limit);
+	//! Spills only blocks that exist nowhere else into [path], unless a file is configured
+	void ConfigureDefault(FileSystem &fs, const string &path);
 	//! Whether a file is configured, which unbacked blocks need
 	bool IsConfigured() const;
 
@@ -50,12 +53,15 @@ private:
 	};
 	using Slots = unordered_map<uint64_t, Slot>;
 
+	void Open(FileSystem &fs, const string &path) DUCKDB_REQUIRES(lock);
 	uint32_t AcquireSlot() DUCKDB_REQUIRES(lock);
 	void Release(Slots::iterator entry) DUCKDB_REQUIRES(lock);
 	bool DropOldestBacked() DUCKDB_REQUIRES(lock);
 
 	mutable annotated_mutex lock;
 	unique_ptr<FileHandle> handle DUCKDB_GUARDED_BY(lock);
+	//! Whether ConfigureDefault opened the file
+	bool is_default DUCKDB_GUARDED_BY(lock) = false;
 	idx_t backed_limit DUCKDB_GUARDED_BY(lock) = 0;
 	vector<uint32_t> free_slots DUCKDB_GUARDED_BY(lock);
 	Slots slots DUCKDB_GUARDED_BY(lock);
