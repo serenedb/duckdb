@@ -284,6 +284,15 @@ idx_t BlockCache::ConfiguredCapacity(DatabaseInstance &db) {
 	return BufferManager::GetBufferManager(db).GetBufferPool().GetMaxMemory() / 4;
 }
 
+BlockCachePin BlockCache::AllocateUncached(DatabaseInstance &db, idx_t size) {
+	BlockCachePin result;
+	result.owned = BufferManager::GetBufferManager(db).Allocate(MemoryTag::EXTERNAL_FILE_CACHE, size);
+	result.owned.GetBlockHandle()->GetMemory().SetDestroyBufferUpon(DestroyBufferUpon::UNPIN);
+	result.data = result.owned.GetDataMutable();
+	result.size = size;
+	return result;
+}
+
 uint64_t BlockCache::MakeKey(uint32_t file, idx_t block) {
 	D_ASSERT(block <= NumericLimits<uint32_t>::Maximum());
 	return (uint64_t(file) << 32) | block;
@@ -1028,22 +1037,18 @@ BlockCachePin BlockCache::Pin(const shared_ptr<BlockCacheFile> &file_p, idx_t bl
 
 BlockCachePin BlockCache::ReadPrivate(BlockCacheFile &file, idx_t block) {
 	const auto nr_bytes = file.BlockBytes(block);
-	auto buffer = BufferManager::GetBufferManager(db).Allocate(MemoryTag::EXTERNAL_FILE_CACHE, BLOCK_SIZE);
-	buffer.GetBlockHandle()->GetMemory().SetDestroyBufferUpon(DestroyBufferUpon::UNPIN);
-	if (!spill.Read(MakeKey(file.number, block), buffer.GetDataMutable())) {
+	auto result = AllocateUncached(db, BLOCK_SIZE);
+	if (!spill.Read(MakeKey(file.number, block), result.GetDataMutable())) {
 		if (file.IsUnbacked()) {
 			throw InternalException("A block of the in-memory file \"%s\" is missing from the block cache", file.path);
 		}
 		TaskScheduler::BlockingScope blocking;
-		file.Source()->Read(buffer.GetDataMutable(), nr_bytes, block * BLOCK_SIZE);
+		file.Source()->Read(result.GetDataMutable(), nr_bytes, block * BLOCK_SIZE);
 		fetches.fetch_add(1, std::memory_order_relaxed);
 		fetched_bytes.fetch_add(nr_bytes, std::memory_order_relaxed);
 	}
 	misses.fetch_add(1, std::memory_order_relaxed);
-	BlockCachePin result;
-	result.data = buffer.GetDataMutable();
 	result.size = nr_bytes;
-	result.owned = make_uniq<BufferHandle>(std::move(buffer));
 	return result;
 }
 

@@ -11,7 +11,6 @@
 #include "duckdb/common/typedefs.hpp"
 #include "duckdb/common/vector.hpp"
 #include "duckdb/storage/block_cache/block_cache.hpp"
-#include "duckdb/storage/buffer/buffer_handle.hpp"
 
 namespace duckdb {
 
@@ -22,12 +21,8 @@ public:
 		MemoryHandle(BlockCachePin pin_p, const_data_ptr_t data_p, idx_t length_p)
 		    : pin(std::move(pin_p)), data(data_p), length(length_p) {
 		}
-		MemoryHandle(BufferHandle buffer_p, const_data_ptr_t data_p, idx_t length_p)
-		    : buffer(std::move(buffer_p)), data(data_p), length(length_p) {
-		}
 
 		BlockCachePin pin;
-		BufferHandle buffer;
 		//! The first byte
 		const_data_ptr_t data;
 		//! The number of bytes

@@ -11,8 +11,8 @@
 namespace duckdb {
 
 namespace {
-BufferHandle AllocateAndFill(BufferManager &bm, idx_t size, uint8_t fill) {
-	auto handle = bm.Allocate(MemoryTag::EXTERNAL_FILE_CACHE, size);
+BlockCachePin AllocateAndFill(BufferManager &bm, idx_t size, uint8_t fill) {
+	auto handle = BlockCache::AllocateUncached(bm.GetDatabase(), size);
 	memset(handle.GetDataMutable(), fill, size);
 	return handle;
 }
