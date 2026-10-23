@@ -255,6 +255,11 @@ private:
 		SelectionVector new_groups;
 		AggregateDictionaryState dict_state;
 
+		bool run_repeats[STANDARD_VECTOR_SIZE];
+		SelectionVector run_starts {STANDARD_VECTOR_SIZE};
+		sel_t row_runs[STANDARD_VECTOR_SIZE];
+		DataChunk run_groups;
+
 		RowOperationsState row_state;
 	} state;
 

@@ -4,6 +4,7 @@
 
 #include "duckdb/catalog/catalog_entry/aggregate_function_catalog_entry.hpp"
 #include "duckdb/common/algorithm.hpp"
+#include "duckdb/common/operator/comparison_operators.hpp"
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/radix_partitioning.hpp"
 #include "duckdb/common/row_operations/row_operations.hpp"
@@ -634,6 +635,108 @@ optional_idx GroupedAggregateHashTable::TryAddCompressedGroups(DataChunk &groups
 	return optional_idx();
 }
 
+template <class T>
+idx_t MarkRepeats(const UnifiedVectorFormat &format, idx_t count, bool *repeats, bool first) {
+	auto data = UnifiedVectorFormat::GetData<T>(format);
+	idx_t repeat_count = 0;
+	if (first && !format.sel->IsSet() && format.validity.AllValid()) {
+		for (idx_t row = 1; row < count; row++) {
+			const bool repeat = Equals::Operation(data[row], data[row - 1]);
+			repeats[row] = repeat;
+			repeat_count += repeat;
+		}
+		return repeat_count;
+	}
+	if (first) {
+		std::fill_n(repeats, count, true);
+	}
+	if (!format.sel->IsSet() && format.validity.AllValid()) {
+		for (idx_t row = 1; row < count; row++) {
+			repeats[row] &= Equals::Operation(data[row], data[row - 1]);
+		}
+	} else {
+		auto previous = format.sel->get_index(0);
+		auto previous_valid = format.validity.RowIsValid(previous);
+		for (idx_t row = 1; row < count; row++) {
+			const auto current = format.sel->get_index(row);
+			const auto current_valid = format.validity.RowIsValid(current);
+			repeats[row] &=
+			    current_valid == previous_valid && (!current_valid || Equals::Operation(data[current], data[previous]));
+			previous = current;
+			previous_valid = current_valid;
+		}
+	}
+	for (idx_t row = 1; row < count; row++) {
+		repeat_count += repeats[row];
+	}
+	return repeat_count;
+}
+
+idx_t MarkRepeats(Vector &vector, idx_t count, bool *repeats, bool first) {
+	if (vector.GetVectorType() == VectorType::DICTIONARY_VECTOR) {
+		return 0;
+	}
+	UnifiedVectorFormat format;
+	vector.ToUnifiedFormat(format);
+	switch (vector.GetType().InternalType()) {
+	case PhysicalType::BOOL:
+	case PhysicalType::INT8:
+		return MarkRepeats<int8_t>(format, count, repeats, first);
+	case PhysicalType::UINT8:
+		return MarkRepeats<uint8_t>(format, count, repeats, first);
+	case PhysicalType::INT16:
+		return MarkRepeats<int16_t>(format, count, repeats, first);
+	case PhysicalType::UINT16:
+		return MarkRepeats<uint16_t>(format, count, repeats, first);
+	case PhysicalType::INT32:
+		return MarkRepeats<int32_t>(format, count, repeats, first);
+	case PhysicalType::UINT32:
+		return MarkRepeats<uint32_t>(format, count, repeats, first);
+	case PhysicalType::INT64:
+		return MarkRepeats<int64_t>(format, count, repeats, first);
+	case PhysicalType::UINT64:
+		return MarkRepeats<uint64_t>(format, count, repeats, first);
+	case PhysicalType::INT128:
+		return MarkRepeats<hugeint_t>(format, count, repeats, first);
+	case PhysicalType::UINT128:
+		return MarkRepeats<uhugeint_t>(format, count, repeats, first);
+	case PhysicalType::VARCHAR:
+		return MarkRepeats<string_t>(format, count, repeats, first);
+	default:
+		return 0;
+	}
+}
+
+idx_t SelectRunStarts(DataChunk &groups, bool *repeats, SelectionVector &run_starts, sel_t *row_runs) {
+	const auto count = groups.size();
+	if (count < 2) {
+		return count;
+	}
+	for (idx_t col_idx = 0; col_idx < groups.ColumnCount(); col_idx++) {
+		if (MarkRepeats(groups.data[col_idx], count, repeats, col_idx == 0) == 0) {
+			return count;
+		}
+	}
+	idx_t runs = 0;
+	run_starts.set_index(runs, 0);
+	row_runs[0] = 0;
+	for (idx_t row = 1; row < count; row++) {
+		runs += !repeats[row];
+		run_starts.set_index(runs, row);
+		row_runs[row] = UnsafeNumericCast<sel_t>(runs);
+	}
+	return runs + 1;
+}
+
+template <class T>
+void ExpandRuns(Vector &vector, const sel_t *row_runs, idx_t count) {
+	auto data = FlatVector::GetDataMutable<T>(vector);
+	for (idx_t row = count; row-- > 0;) {
+		data[row] = data[row_runs[row]];
+	}
+	FlatVector::SetSize(vector, count_t(count));
+}
+
 idx_t GroupedAggregateHashTable::AddChunk(DataChunk &groups, DataChunk &payload, const unsafe_vector<idx_t> &filter) {
 	sink_count += groups.size();
 
@@ -642,10 +745,25 @@ idx_t GroupedAggregateHashTable::AddChunk(DataChunk &groups, DataChunk &payload,
 	if (result.IsValid()) {
 		return result.GetIndex();
 	}
-	// otherwise append the raw values
-	groups.Hash(state.hashes);
-
-	return AddChunk(groups, state.hashes, payload, filter);
+	const auto runs = SelectRunStarts(groups, state.run_repeats, state.run_starts, state.row_runs);
+	if (runs == groups.size()) {
+		groups.Hash(state.hashes);
+		return AddChunk(groups, state.hashes, payload, filter);
+	}
+	if (state.run_groups.ColumnCount() == 0) {
+		state.run_groups.InitializeEmpty(groups.GetTypes());
+	}
+	state.run_groups.Slice(groups, state.run_starts, runs);
+	state.run_groups.Hash(state.hashes);
+	const auto new_group_count = FindOrCreateGroups(state.run_groups, state.hashes, state.addresses, state.new_groups);
+	if (layout_ptr->GetAggregates().empty()) {
+		return new_group_count;
+	}
+	ExpandRuns<data_ptr_t>(state.addresses, state.row_runs, groups.size());
+	ExpandRuns<uint64_t>(state.ht_offsets, state.row_runs, groups.size());
+	VectorOperations::AddInPlace(state.addresses, NumericCast<int64_t>(layout_ptr->GetAggrOffset()));
+	UpdateAggregates(payload, filter, groups.size());
+	return new_group_count;
 }
 
 bool GroupedAggregateHashTable::UpdateAggregatesClustered(DataChunk &payload, const unsafe_vector<idx_t> &filter,

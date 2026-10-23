@@ -1,0 +1,26 @@
+# name: test/sql/aggregate/group/group_by_consecutive_repeats.test
+# description: grouped aggregates over keys stored in runs match the same data without runs
+# group: [group]
+
+statement ok
+SET threads = 4
+
+statement ok
+CREATE TABLE t AS SELECT i, i // 7 AS u, (i // 3) % 5 AS r, CASE WHEN (i // 11) % 4 = 0 THEN NULL ELSE i // 11 END AS n, ((i // 5) % 1000)::VARCHAR || repeat('x', 20) AS s, (i // 13)::HUGEINT AS h, i % 17 AS v FROM range(1000000) r(i)
+
+statement ok
+CREATE TABLE shuffled AS SELECT * FROM t ORDER BY hash(i)
+
+foreach key u r,u n s,r h
+
+query I
+SELECT count(*) FROM ((SELECT ${key}, count(*) AS c, sum(v) AS sv, min(i) AS mi, max(v) AS mv, avg(v) AS av, count(*) FILTER (WHERE v > 8) AS cf FROM t GROUP BY ${key}) EXCEPT ALL (SELECT ${key}, count(*), sum(v), min(i), max(v), avg(v), count(*) FILTER (WHERE v > 8) FROM shuffled GROUP BY ${key}))
+----
+0
+
+query I
+SELECT count(*) = (SELECT count(*) FROM (SELECT DISTINCT ${key} FROM shuffled)) FROM (SELECT ${key}, count(*) FROM t GROUP BY ${key})
+----
+true
+
+endloop
