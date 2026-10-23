@@ -261,6 +261,10 @@ public:
 	idx_t count_before_combining;
 	//! Maximum partition size if all unique
 	idx_t max_partition_size;
+
+	annotated_mutex admission_lock;
+	unique_ptr<GroupedAggregateHashTable> admitted DUCKDB_GUARDED_BY(admission_lock);
+	atomic<bool> admission_full {false};
 };
 
 RadixHTGlobalSinkState::RadixHTGlobalSinkState(ClientContext &context_p, const RadixPartitionedHashTable &radix_ht_p)
@@ -494,6 +498,13 @@ public:
 	unique_ptr<PartitionedTupleData> abandoned_data;
 	//! Exported abandoned aggregate states, aligned one-to-one with the partitions of abandoned_data
 	vector<unique_ptr<ColumnDataCollection>> abandoned_exported_data;
+
+	unique_ptr<GroupedAggregateHashTable> admitted;
+	bool admitted_synced = false;
+	AggregateHTLookupState lookup_state;
+	SelectionVector admitted_sel {STANDARD_VECTOR_SIZE};
+	DataChunk admitted_groups;
+	DataChunk admitted_payload;
 };
 
 RadixHTLocalSinkState::RadixHTLocalSinkState(ClientContext &, const RadixPartitionedHashTable &radix_ht)
@@ -513,6 +524,8 @@ void RadixHTLocalSinkState::ResetForReuse(const RadixPartitionedHashTable &radix
 	registered = false;
 	abandoned_data.reset();
 	abandoned_exported_data.clear();
+	admitted.reset();
+	admitted_synced = false;
 	if (!ht) {
 		adapted = false;
 		local_sink_capacity = DConstants::INVALID_INDEX;
@@ -564,6 +577,11 @@ void RadixPartitionedHashTable::ResetGlobalSinkState(ClientContext &context, Glo
 	gstate.scan_pin_properties = TupleDataPinProperties::DESTROY_AFTER_DONE;
 	gstate.count_before_combining = 0;
 	gstate.max_partition_size = 0;
+	{
+		const annotated_lock_guard<annotated_mutex> guard {gstate.admission_lock};
+		gstate.admitted.reset();
+	}
+	gstate.admission_full = false;
 }
 
 void RadixPartitionedHashTable::ResetLocalSinkState(ExecutionContext &context, GlobalSinkState &gstate_p,
@@ -590,6 +608,76 @@ void RadixPartitionedHashTable::PopulateGroupChunk(DataChunk &group_chunk, DataC
 		FlatVector::SetSize(group_chunk.data[0], count_t(input_chunk.size()));
 	}
 	group_chunk.Verify();
+}
+
+void CopyGroups(GroupedAggregateHashTable &source, GroupedAggregateHashTable &target,
+                const vector<LogicalType> &types) {
+	AggregateHTScanState scan_state;
+	source.InitializeScan(scan_state);
+	DataChunk keys;
+	keys.Initialize(Allocator::DefaultAllocator(), types);
+	Vector addresses(LogicalType::POINTER);
+	while (source.ScanGroups(scan_state, keys)) {
+		if (keys.size() != 0) {
+			target.FindOrCreateGroups(keys, addresses);
+		}
+	}
+}
+
+idx_t AdmitGroups(ClientContext &context, const RadixPartitionedHashTable &radix_ht, RadixHTGlobalSinkState &gstate,
+                  RadixHTLocalSinkState &lstate, DataChunk &groups) {
+	auto &allocator = BufferAllocator::Get(context);
+	if (!lstate.admitted) {
+		lstate.admitted =
+		    make_uniq<GroupedAggregateHashTable>(context, allocator, radix_ht.group_types, radix_ht.group_validity);
+	}
+	auto &local = *lstate.admitted;
+	const auto found = local.LookupGroups(groups, lstate.lookup_state, lstate.admitted_sel);
+	if (found == groups.size() || lstate.admitted_synced) {
+		return found;
+	}
+	const auto limit = radix_ht.op.group_limit.GetIndex();
+	{
+		const annotated_lock_guard<annotated_mutex> guard {gstate.admission_lock};
+		if (!gstate.admitted) {
+			gstate.admitted =
+			    make_uniq<GroupedAggregateHashTable>(context, allocator, radix_ht.group_types, radix_ht.group_validity);
+		}
+		auto &global = *gstate.admitted;
+		if (global.Count() < limit) {
+			bool is_found[STANDARD_VECTOR_SIZE] = {};
+			for (idx_t i = 0; i < found; i++) {
+				is_found[lstate.admitted_sel.get_index(i)] = true;
+			}
+			SelectionVector missing(STANDARD_VECTOR_SIZE);
+			idx_t missing_count = 0;
+			for (idx_t row = 0; row < groups.size(); row++) {
+				if (!is_found[row]) {
+					missing.set_index(missing_count++, row);
+				}
+			}
+			DataChunk candidates;
+			candidates.InitializeEmpty(radix_ht.group_types);
+			Vector addresses(LogicalType::POINTER);
+			if (global.Count() + missing_count <= limit) {
+				candidates.Slice(groups, missing, missing_count);
+				global.FindOrCreateGroups(candidates, addresses);
+			} else {
+				for (idx_t i = 0; i < missing_count && global.Count() < limit; i++) {
+					SelectionVector row(1);
+					row.set_index(0, missing.get_index(i));
+					candidates.Slice(groups, row, 1);
+					global.FindOrCreateGroups(candidates, addresses);
+				}
+			}
+		}
+		CopyGroups(global, local, radix_ht.group_types);
+		if (global.Count() >= limit) {
+			gstate.admission_full = true;
+		}
+		lstate.admitted_synced = gstate.admission_full;
+	}
+	return local.LookupGroups(groups, lstate.lookup_state, lstate.admitted_sel);
 }
 
 void DecideAdaptation(RadixHTGlobalSinkState &gstate, RadixHTLocalSinkState &lstate) {
@@ -879,7 +967,25 @@ void RadixPartitionedHashTable::Sink(ExecutionContext &context, DataChunk &chunk
 	PopulateGroupChunk(group_chunk, chunk);
 
 	auto &ht = *lstate.ht;
-	ht.AddChunk(group_chunk, payload_input, filter);
+	if (op.group_limit.IsValid()) {
+		const auto admitted = AdmitGroups(context.client, *this, gstate, lstate, group_chunk);
+		if (admitted == 0) {
+			return;
+		}
+		if (admitted < group_chunk.size()) {
+			if (lstate.admitted_groups.ColumnCount() == 0) {
+				lstate.admitted_groups.InitializeEmpty(group_chunk.GetTypes());
+				lstate.admitted_payload.InitializeEmpty(payload_input.GetTypes());
+			}
+			lstate.admitted_groups.Slice(group_chunk, lstate.admitted_sel, admitted);
+			lstate.admitted_payload.Slice(payload_input, lstate.admitted_sel, admitted);
+			ht.AddChunk(lstate.admitted_groups, lstate.admitted_payload, filter);
+		} else {
+			ht.AddChunk(group_chunk, payload_input, filter);
+		}
+	} else {
+		ht.AddChunk(group_chunk, payload_input, filter);
+	}
 
 	// Decide whether we should adapt our strategy to the data
 	if (!lstate.adapted && lstate.ht->GetSinkCount() >= RadixHTLocalSinkState::ADAPTIVITY_THRESHOLD) {

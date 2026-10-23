@@ -9,6 +9,7 @@
 #include "duckdb/execution/physical_plan_generator.hpp"
 #include "duckdb/logging/logger.hpp"
 #include "duckdb/main/config.hpp"
+#include "duckdb/planner/expression/bound_aggregate_expression.hpp"
 #include "duckdb/planner/operator/logical_limit.hpp"
 #include "duckdb/planner/operator/logical_order.hpp"
 
@@ -92,6 +93,28 @@ static bool CanUseLimitedDistinct(const PhysicalHashAggregate &hash_aggregate) {
 	return true;
 }
 
+static void TrySetGroupLimit(PhysicalOperator &plan, idx_t limit) {
+	auto *child = &plan;
+	if (child->type == PhysicalOperatorType::PROJECTION && child->children.size() == 1) {
+		child = &child->children[0].get();
+	}
+	if (child->type != PhysicalOperatorType::HASH_GROUP_BY || limit > STANDARD_VECTOR_SIZE) {
+		return;
+	}
+	auto &hash_aggregate = child->Cast<PhysicalHashAggregate>();
+	auto &data = hash_aggregate.grouped_aggregate_data;
+	if (data.groups.empty() || hash_aggregate.grouping_sets.size() != 1 || !data.GetGroupingFunctions().empty()) {
+		return;
+	}
+	for (auto &aggregate : data.aggregates) {
+		auto &bound = aggregate->Cast<BoundAggregateExpression>();
+		if (bound.IsDistinct() || bound.GetOrderBys()) {
+			return;
+		}
+	}
+	data.group_limit = limit;
+}
+
 static PhysicalOperator &CreateLimitedDistinct(PhysicalPlanGenerator &generator, PhysicalHashAggregate &hash_aggregate,
                                                idx_t limit) {
 	D_ASSERT(hash_aggregate.children.size() == 1);
@@ -161,6 +184,8 @@ PhysicalOperator &PhysicalPlanGenerator::CreatePlan(LogicalLimit &op) {
 		// The LIMIT node still stays on top to enforce the actual LIMIT/OFFSET semantics.
 		if (auto *limited_plan = TryCreateLimitedDistinct(*this, plan, total_limit.GetIndex())) {
 			limit_child = limited_plan;
+		} else {
+			TrySetGroupLimit(plan, total_limit.GetIndex());
 		}
 	}
 
