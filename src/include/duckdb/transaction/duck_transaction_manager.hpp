@@ -109,6 +109,7 @@ public:
 	}
 	void RefreshStartTime(Transaction &transaction) override;
 	void AdvanceStartTime(DuckTransaction &transaction);
+	void WaitForOlderTransactions(ClientContext &context, DuckTransaction &transaction);
 
 	//! Obtains a shared lock to the checkpoint lock
 	unique_ptr<StorageLockKey> SharedCheckpointLock();

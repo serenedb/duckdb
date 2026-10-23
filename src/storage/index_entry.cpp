@@ -443,7 +443,7 @@ void IndexEntry::VerifyUpdate(std::span<const PhysicalIndex> column_ids) const {
 	auto entry_lock = lock.GetSharedLock();
 	D_ASSERT(owned_index->IsBound());
 	const auto &bound_index = owned_index->Cast<BoundIndex>();
-	D_ASSERT(!bound_index.IndexIsUpdated(column_ids));
+	D_ASSERT(bound_index.IsBuilding() || !bound_index.IndexIsUpdated(column_ids));
 #endif
 }
 

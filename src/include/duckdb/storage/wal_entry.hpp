@@ -473,12 +473,18 @@ struct WALAdoptSegments {
 	static WALAdoptSegments Deserialize(Deserializer &deserializer);
 };
 
-struct WALDeleteRowRanges {
-	vector<row_t> starts;
-	vector<idx_t> counts;
+struct WALDeleteRowPositions {
+	string positions;
 
 	void Serialize(Serializer &serializer) const;
-	static WALDeleteRowRanges Deserialize(Deserializer &deserializer);
+	static WALDeleteRowPositions Deserialize(Deserializer &deserializer);
+};
+
+struct WALRowPositionMaps {
+	string maps;
+
+	void Serialize(Serializer &serializer) const;
+	static WALRowPositionMaps Deserialize(Deserializer &deserializer);
 };
 
 } // namespace duckdb

@@ -297,7 +297,8 @@ protected:
 		case WALType::DELETE_TUPLE:
 		case WALType::TRUNCATE_TABLE:
 		case WALType::ADOPT_SEGMENTS:
-		case WALType::DELETE_ROW_RANGES:
+		case WALType::DELETE_ROW_POSITIONS:
+		case WALType::ROW_POSITION_MAPS:
 			return true;
 		default:
 			return false;
@@ -401,7 +402,8 @@ protected:
 	void ReplayUpdate();
 	void ReplayTruncateTable();
 	void ReplayAdoptSegments();
-	void ReplayDeleteRowRanges();
+	void ReplayDeleteRowPositions();
+	void ReplayRowPositionMaps();
 	void ReplayCheckpoint();
 
 private:
@@ -1072,8 +1074,11 @@ void WriteAheadLogDeserializer::ReplayEntry(WALType entry_type) {
 	case WALType::ADOPT_SEGMENTS:
 		ReplayAdoptSegments();
 		break;
-	case WALType::DELETE_ROW_RANGES:
-		ReplayDeleteRowRanges();
+	case WALType::DELETE_ROW_POSITIONS:
+		ReplayDeleteRowPositions();
+		break;
+	case WALType::ROW_POSITION_MAPS:
+		ReplayRowPositionMaps();
 		break;
 	default:
 		throw InternalException("Invalid WAL entry type!");
@@ -2020,12 +2025,11 @@ void WriteAheadLogDeserializer::ReplayUseTable() {
 void WriteAheadLogDeserializer::ReplayInsert() {
 	DataChunk chunk;
 	deserializer.ReadObject(101, "chunk", [&](Deserializer &object) { chunk.Deserialize(object); });
-	auto row_start = deserializer.ReadPropertyWithDefault<optional_idx>(16486, "row_start");
 	if (DeserializeOnly()) {
 		return;
 	}
 	if (!state.current_table && state.current_log_table) {
-		state.current_log_table->ReplayInsert(context, chunk, row_start);
+		state.current_log_table->ReplayInsert(context, chunk);
 		return;
 	}
 	if (!state.current_table && state.table_storage) {
@@ -2097,10 +2101,6 @@ void WriteAheadLogDeserializer::ReplayDelete() {
 	DataChunk chunk;
 	deserializer.ReadObject(101, "chunk", [&](Deserializer &object) { chunk.Deserialize(object); });
 	if (DeserializeOnly()) {
-		return;
-	}
-	if (!state.current_table && state.current_log_table) {
-		state.current_log_table->ReplayDelete(context, chunk);
 		return;
 	}
 	if (!state.current_table && state.table_storage) {
@@ -2181,30 +2181,40 @@ void WriteAheadLogDeserializer::ReplayAdoptSegments() {
 	throw DataCorruptionException("Corrupt WAL: segments without a log table");
 }
 
-void WriteAheadLogDeserializer::ReplayDeleteRowRanges() {
-	const auto entry = WALDeleteRowRanges::Deserialize(deserializer);
-	const auto &starts = entry.starts;
-	const auto &counts = entry.counts;
-	if (starts.empty() || starts.size() != counts.size()) {
-		throw DataCorruptionException("Corrupt WAL: row ranges with mismatched starts and counts");
-	}
-	for (idx_t i = 0; i < starts.size(); i++) {
-		if (starts[i] < 0 || counts[i] == 0 ||
-		    counts[i] > static_cast<idx_t>(NumericLimits<row_t>::Maximum() - starts[i])) {
-			throw DataCorruptionException("Corrupt WAL: row range out of bounds");
-		}
+void WriteAheadLogDeserializer::ReplayDeleteRowPositions() {
+	auto entry = WALDeleteRowPositions::Deserialize(deserializer);
+	if (entry.positions.empty()) {
+		throw DataCorruptionException("Corrupt WAL: empty row position delete");
 	}
 	if (DeserializeOnly()) {
 		return;
 	}
 	if (!state.current_table && state.current_log_table) {
-		state.current_log_table->ReplayDeleteRanges(context, starts, counts);
+		state.current_log_table->ReplayDeleteRowPositions(context, std::move(entry.positions));
 		return;
 	}
 	if (!state.current_table && state.table_storage) {
 		return;
 	}
-	throw DataCorruptionException("Corrupt WAL: row ranges without a log table");
+	throw DataCorruptionException("Corrupt WAL: row position delete without a log table");
+}
+
+void WriteAheadLogDeserializer::ReplayRowPositionMaps() {
+	auto entry = WALRowPositionMaps::Deserialize(deserializer);
+	if (entry.maps.empty()) {
+		throw DataCorruptionException("Corrupt WAL: empty row position maps");
+	}
+	if (DeserializeOnly()) {
+		return;
+	}
+	if (!state.current_table && state.current_log_table) {
+		state.current_log_table->ReplayRowPositionMaps(context, std::move(entry.maps));
+		return;
+	}
+	if (!state.current_table && state.table_storage) {
+		return;
+	}
+	throw DataCorruptionException("Corrupt WAL: row position maps without a log table");
 }
 
 void WriteAheadLogDeserializer::ReplayCheckpoint() {
