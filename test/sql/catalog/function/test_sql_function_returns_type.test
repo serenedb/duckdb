@@ -132,6 +132,22 @@ SELECT wide_numeric_list();
 [123.456]
 
 statement ok
+CREATE FUNCTION scaled_list() RETURNS DECIMAL(4,2)[] LANGUAGE sql AS 'SELECT [1.23456]';
+
+query I
+SELECT scaled_list();
+----
+[1.23456]
+
+statement ok
+CREATE FUNCTION precise() RETURNS TIMESTAMP(0) LANGUAGE sql AS 'SELECT TIMESTAMP ''2024-01-01 10:00:00.123456''';
+
+query T
+SELECT precise();
+----
+2024-01-01 10:00:00.123456
+
+statement ok
 CREATE FUNCTION wide_out(OUT a DECIMAL(4,2), OUT b INTEGER) LANGUAGE sql AS 'SELECT 123.456, 1';
 
 query I

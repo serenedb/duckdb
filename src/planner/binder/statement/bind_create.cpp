@@ -7,7 +7,6 @@
 #include "duckdb/catalog/catalog_entry/view_catalog_entry.hpp"
 #include "duckdb/parser/parsed_data/create_schema_info.hpp"
 #include "duckdb/catalog/catalog_search_path.hpp"
-#include "duckdb/catalog/default/default_types.hpp"
 #include "duckdb/catalog/dependency_manager.hpp"
 #include "duckdb/catalog/duck_catalog.hpp"
 #include "duckdb/function/scalar_macro_function.hpp"
@@ -64,22 +63,6 @@
 #include "duckdb/planner/expression/bound_constant_expression.hpp"
 
 namespace duckdb {
-
-static LogicalType WithoutTypmod(const LogicalType &type) {
-	if (type.HasAlias()) {
-		return type;
-	}
-	if (type.id() == LogicalTypeId::DECIMAL) {
-		return DefaultTypeGenerator::TryDefaultBind("decimal", {});
-	}
-	if (type.id() == LogicalTypeId::LIST) {
-		return LogicalType::LIST(WithoutTypmod(ListType::GetChildType(type)));
-	}
-	if (type.id() == LogicalTypeId::ARRAY) {
-		return LogicalType::ARRAY(WithoutTypmod(ArrayType::GetChildType(type)), ArrayType::GetSize(type));
-	}
-	return type;
-}
 
 static unique_ptr<CommonTableExpressionInfo> MakeTriggerValidationCTE(const TableCatalogEntry &table) {
 	auto alias_select = make_uniq<SelectNode>();
@@ -667,24 +650,13 @@ SchemaCatalogEntry &Binder::BindCreateFunctionInfo(CreateInfo &info) {
 		// bind it to verify the function was defined correctly
 		ErrorData error;
 		auto types_compatible = [&](const LogicalType &actual, const LogicalType &expected) -> bool {
-			if (expected.id() == LogicalTypeId::ANY) {
-				return true;
-			}
-			// PG-compat: RETURNS VOID accepts any body return; the macro callsite
-			// expects the function call to evaluate to NULL regardless of the
-			// body's last expression type.
-			if (expected.id() == LogicalTypeId::SQLNULL && expected.GetAlias() == "void") {
-				return true;
-			}
-			if (actual == expected) {
-				return true;
-			}
 			GetCastFunctionInput input(context);
-			return !CastFunctionSet::Get(context).GetCastFunction(actual, expected, input).IsNullCast();
+			return !MacroFunction::ResultNeedsCast(actual, expected) ||
+			       !CastFunctionSet::Get(context).GetCastFunction(actual, expected, input).IsNullCast();
 		};
 		for (auto &return_type : function->return_types) {
 			BindLogicalType(return_type);
-			return_type = WithoutTypmod(return_type);
+			return_type = MacroFunction::WithoutTypmod(return_type);
 		}
 		if (info.type == CatalogType::MACRO_ENTRY) {
 			BoundSelectNode sel_node;
@@ -702,8 +674,7 @@ SchemaCatalogEntry &Binder::BindCreateFunctionInfo(CreateInfo &info) {
 				// regardless of body. Replace the stored body with a NULL constant
 				// so downstream macro expansion can't trip over the body's actual
 				// shape (e.g. multiple-column SELECTs).
-				if (ret_types.size() == 1 && ret_types[0].id() == LogicalTypeId::SQLNULL &&
-				    ret_types[0].GetAlias() == "void") {
+				if (ret_types.size() == 1 && MacroFunction::IsVoid(ret_types[0])) {
 					function->Cast<ScalarMacroFunction>().expression = ConstantExpression::Null();
 					function->Cast<ScalarMacroFunction>().query_body = false;
 					expression = function->Cast<ScalarMacroFunction>().expression->Copy();
@@ -737,8 +708,7 @@ SchemaCatalogEntry &Binder::BindCreateFunctionInfo(CreateInfo &info) {
 						}
 						auto bound = dummy_binder->Bind(*query_node);
 						const auto resolved = function->ResultType();
-						const bool is_void_return =
-						    resolved.id() == LogicalTypeId::SQLNULL && resolved.GetAlias() == "void";
+						const bool is_void_return = MacroFunction::IsVoid(resolved);
 						if (!is_void_return) {
 							if (!bound.types.empty() && !types_compatible(bound.types[0], resolved)) {
 								throw BinderException("return type mismatch in function declared to return %s\n"
@@ -807,8 +777,7 @@ SchemaCatalogEntry &Binder::BindCreateFunctionInfo(CreateInfo &info) {
 
 					// PG-compat: RETURNS VOID accepts any body shape (PG discards the
 					// result and emits a single NULL row).
-					const bool is_void_return =
-					    is_scalar && declared[0].id() == LogicalTypeId::SQLNULL && declared[0].GetAlias() == "void";
+					const bool is_void_return = is_scalar && MacroFunction::IsVoid(declared[0]);
 					// PG checks per-column types first (up to min columns),
 					// then reports column count mismatch.
 					const auto check_count = MinValue(bound.types.size(), declared.size());

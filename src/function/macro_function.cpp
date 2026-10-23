@@ -7,6 +7,7 @@
 
 #include "duckdb/catalog/catalog_entry/scalar_function_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/scalar_macro_catalog_entry.hpp"
+#include "duckdb/catalog/default/default_types.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/function/scalar_macro_function.hpp"
 #include "duckdb/function/table_macro_function.hpp"
@@ -345,14 +346,35 @@ LogicalType MacroFunction::ResultType() const {
 	return return_types.size() == 1 ? return_types[0] : LogicalType::INVALID;
 }
 
+LogicalType MacroFunction::WithoutTypmod(const LogicalType &type) {
+	if (type.HasAlias()) {
+		return type;
+	}
+	if (type.id() == LogicalTypeId::DECIMAL) {
+		return DefaultTypeGenerator::TryDefaultBind("decimal", {});
+	}
+	if (type.id() == LogicalTypeId::TIMESTAMP_SEC || type.id() == LogicalTypeId::TIMESTAMP_MS ||
+	    type.id() == LogicalTypeId::TIMESTAMP_NS) {
+		return LogicalType::TIMESTAMP;
+	}
+	if (type.id() == LogicalTypeId::LIST) {
+		return LogicalType::LIST(WithoutTypmod(ListType::GetChildType(type)));
+	}
+	if (type.id() == LogicalTypeId::ARRAY) {
+		return LogicalType::ARRAY(WithoutTypmod(ArrayType::GetChildType(type)), ArrayType::GetSize(type));
+	}
+	return type;
+}
+
+bool MacroFunction::IsVoid(const LogicalType &type) {
+	return type.id() == LogicalTypeId::SQLNULL && type.GetAlias() == "void";
+}
+
 bool MacroFunction::ResultNeedsCast(const LogicalType &result, const LogicalType &declared) {
-	if (result == declared || declared.id() == LogicalTypeId::ANY) {
+	if (result == declared || declared.id() == LogicalTypeId::ANY || IsVoid(declared)) {
 		return false;
 	}
-	if (declared.id() == LogicalTypeId::SQLNULL && declared.GetAlias() == "void") {
-		return false;
-	}
-	return declared.id() != LogicalTypeId::DECIMAL || result.id() != LogicalTypeId::DECIMAL;
+	return WithoutTypmod(result) != WithoutTypmod(declared);
 }
 
 bool MacroFunction::HasParameterTypes(const vector<LogicalType> &parameter_types) const {
