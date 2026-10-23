@@ -248,10 +248,6 @@ static vector<SerialSequence> CreateSerialSequences(CatalogTransaction transacti
 	if (info.serial_sequences.empty()) {
 		return created;
 	}
-	if (table.on_conflict == OnCreateConflict::IGNORE_ON_CONFLICT &&
-	    schema.GetEntry(transaction, CatalogType::TABLE_ENTRY, table.GetTableName())) {
-		return created;
-	}
 	for (auto &serial : info.serial_sequences) {
 		CreateSequenceInfo sequence_info;
 		sequence_info.SetQualifiedName(schema.GetQualifiedName(serial.name));
@@ -273,7 +269,17 @@ static vector<SerialSequence> CreateSerialSequences(CatalogTransaction transacti
 	return created;
 }
 
+static bool SkipsTakenName(DuckSchemaEntry &schema, CatalogTransaction transaction, CatalogType type,
+                           OnCreateConflict on_conflict, const Identifier &name) {
+	return on_conflict == OnCreateConflict::IGNORE_ON_CONFLICT &&
+	       schema.GetCatalogSet(type).GetNamespaceEntry(transaction, name);
+}
+
 optional_ptr<CatalogEntry> DuckSchemaEntry::CreateTable(CatalogTransaction transaction, BoundCreateTableInfo &info) {
+	if (SkipsTakenName(*this, transaction, CatalogType::TABLE_ENTRY, info.Base().on_conflict,
+	                   info.Base().GetTableName())) {
+		return nullptr;
+	}
 	auto serial_sequences = CreateSerialSequences(transaction, *this, info);
 	auto table = catalog.Cast<DuckCatalog>().MakeTableEntry(transaction, *this, info);
 	for (auto &serial : serial_sequences) {
@@ -390,16 +396,26 @@ optional_ptr<CatalogEntry> DuckSchemaEntry::CreateSequence(CatalogTransaction tr
 }
 
 optional_ptr<CatalogEntry> DuckSchemaEntry::CreateType(CatalogTransaction transaction, CreateTypeInfo &info) {
+	if (SkipsTakenName(*this, transaction, CatalogType::TYPE_ENTRY, info.on_conflict, info.GetQualifiedName().Name())) {
+		return nullptr;
+	}
 	auto type_entry = make_uniq<TypeCatalogEntry>(catalog, *this, info);
 	return AddEntry(transaction, std::move(type_entry), info.on_conflict);
 }
 
 optional_ptr<CatalogEntry> DuckSchemaEntry::CreateTokenizer(CatalogTransaction transaction, CreateTokenizerInfo &info) {
+	if (SkipsTakenName(*this, transaction, CatalogType::TOKENIZER_ENTRY, info.on_conflict,
+	                   info.GetQualifiedName().Name())) {
+		return nullptr;
+	}
 	auto tokenizer = catalog.Cast<DuckCatalog>().MakeTokenizerEntry(transaction, *this, info);
 	return AddEntry(transaction, std::move(tokenizer), info.on_conflict);
 }
 
 optional_ptr<CatalogEntry> DuckSchemaEntry::CreateJob(CatalogTransaction transaction, CreateJobInfo &info) {
+	if (SkipsTakenName(*this, transaction, CatalogType::JOB_ENTRY, info.on_conflict, info.GetQualifiedName().Name())) {
+		return nullptr;
+	}
 	auto job = catalog.Cast<DuckCatalog>().MakeJobEntry(transaction, *this, info);
 	return AddEntry(transaction, std::move(job), info.on_conflict);
 }
@@ -436,6 +452,9 @@ static bool IndexNameIsUnique(CatalogTransaction transaction, DuckSchemaEntry &s
 
 optional_ptr<CatalogEntry> DuckSchemaEntry::CreateIndex(CatalogTransaction transaction, CreateIndexInfo &info,
                                                         CatalogEntry &relation) {
+	if (SkipsTakenName(*this, transaction, CatalogType::INDEX_ENTRY, info.on_conflict, info.GetIndexName())) {
+		return nullptr;
+	}
 	info.table_oid = relation.oid;
 	// indexes do not require CASCADE to be dropped, they are simply always dropped along with the table
 	info.dependencies.AddDependency(relation, DependencyDependentFlags());

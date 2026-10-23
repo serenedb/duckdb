@@ -100,24 +100,11 @@ static PhysicalOperator &AddSort(PhysicalPlanGenerator &plan, ClientContext &con
 	return sortby;
 }
 
-static optional_ptr<CatalogEntry> GetNameHolder(ClientContext &context, SchemaCatalogEntry &schema,
-                                                const Identifier &name) {
-	auto transaction = schema.GetCatalogTransaction(context);
-	auto entry = schema.GetEntry(transaction, CatalogType::INDEX_ENTRY, name);
-	if (entry || schema.ParentCatalog().Compatibility() != SqlCompatibility::POSTGRES) {
-		return entry;
-	}
-	entry = schema.GetEntry(transaction, CatalogType::TABLE_ENTRY, name);
-	if (entry) {
-		return entry;
-	}
-	return schema.GetEntry(transaction, CatalogType::SEQUENCE_ENTRY, name);
-}
-
 PhysicalOperator &PhysicalPlanGenerator::CreatePlan(LogicalCreateIndex &op) {
 	// op.table is either a table or a view; for views, index_type->create_plan must be set.
 	auto &schema = op.table.ParentSchema(context);
-	auto entry = GetNameHolder(context, schema, op.info->GetIndexName());
+	auto entry =
+	    schema.GetNameHolder(schema.GetCatalogTransaction(context), CatalogType::INDEX_ENTRY, op.info->GetIndexName());
 	if (entry) {
 		if (op.info->on_conflict == OnCreateConflict::IGNORE_ON_CONFLICT) {
 			return Make<PhysicalDummyScan>(op.types, op.estimated_cardinality);
