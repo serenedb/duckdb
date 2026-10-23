@@ -13,6 +13,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <string_view>
 #include <vector>
 
@@ -26,6 +27,7 @@ struct TransformOptions {
 	CaseFolding folding = CaseFolding::DEFAULT;
 	bool strip_marks = false;
 	bool strip_before_case = false;
+	std::vector<uint32_t> keep_marks;
 };
 
 class TransformOutput {
@@ -67,6 +69,7 @@ private:
 	enum class AsciiMode : uint8_t { IDENTITY, LOWER, UPPER, TABLE };
 
 	const Tables &GetTables() const;
+	std::unique_ptr<Tables> BuildTables() const;
 	Classified Classify(const uint8_t *bytes, size_t size, size_t &position) const;
 	bool IsWideStable(uint32_t c) const;
 	uint32_t StableMapping(uint32_t c, TransformBuffer &buffer) const;
