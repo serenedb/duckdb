@@ -255,7 +255,7 @@ TEST_CASE("Block cache range read uses a response that forbids reuse once, witho
 			REQUIRE(HoldsExpectedBytes(pins[i], i));
 		}
 		REQUIRE(fs.ReadCount() == 1);
-		REQUIRE_FALSE(cache.TryPin(*cached, 3).IsValid());
+		REQUIRE_FALSE(cache.IsCached(*cached, 3 * BLOCK, BLOCK));
 	}
 	REQUIRE(cache.GetStatistics().used == 0);
 	auto pin = cache.Pin(cached, 3);
@@ -275,8 +275,8 @@ TEST_CASE("Block cache drops pinned blocks of a forgotten file with their last p
 
 	cache.ForgetFile(file.path);
 	REQUIRE(HoldsExpectedBytes(held, 1));
-	REQUIRE_FALSE(cache.TryPin(*cached, 1).IsValid());
-	REQUIRE_FALSE(cache.TryPin(*cached, 2).IsValid());
+	REQUIRE_FALSE(cache.IsCached(*cached, BLOCK, BLOCK));
+	REQUIRE_FALSE(cache.IsCached(*cached, 2 * BLOCK, BLOCK));
 	REQUIRE(cache.GetStatistics().used == BLOCK);
 	held.Reset();
 	REQUIRE(cache.GetStatistics().used == 0);
@@ -381,9 +381,9 @@ TEST_CASE("Disabling the block cache drops blocks of backed files and keeps in-m
 	cache.SetEnabled(false);
 	REQUIRE_FALSE(cache.IsEnabled());
 	REQUIRE(HoldsExpectedBytes(held, 0));
-	REQUIRE_FALSE(cache.TryPin(*cached, 0).IsValid());
-	REQUIRE_FALSE(cache.TryPin(*cached, 1).IsValid());
-	REQUIRE(cache.TryPin(*memory, 0).Ptr()[BLOCK - 1] == 7);
+	REQUIRE_FALSE(cache.IsCached(*cached, 0, BLOCK));
+	REQUIRE_FALSE(cache.IsCached(*cached, BLOCK, BLOCK));
+	REQUIRE(cache.TryPinRange(*memory, 0, BLOCK)[0].Ptr()[BLOCK - 1] == 7);
 	held.Reset();
 	REQUIRE(cache.GetStatistics().used == BLOCK);
 	cache.SetEnabled(true);
@@ -407,7 +407,7 @@ TEST_CASE("Block cache eviction keeps blocks read twice over blocks read once", 
 	}
 	idx_t kept = 0;
 	for (idx_t block = 0; block < 4; block++) {
-		kept += cache.TryPin(*cached, block).IsValid();
+		kept += cache.IsCached(*cached, block * BLOCK, BLOCK);
 	}
 	REQUIRE(kept == 4);
 	REQUIRE(cache.GetStatistics().used <= 16 * BLOCK);
@@ -430,7 +430,7 @@ TEST_CASE("Block cache never evicts a pinned block", "[block_cache]") {
 	}
 	for (idx_t block = 0; block < 4; block++) {
 		REQUIRE(HoldsExpectedBytes(pins[block], block));
-		REQUIRE(cache.TryPin(*cached, block).IsValid());
+		REQUIRE(cache.IsCached(*cached, block * BLOCK, BLOCK));
 	}
 }
 
@@ -448,7 +448,7 @@ TEST_CASE("Block cache reads a block into a buffer of its own when every frame i
 	REQUIRE(HoldsExpectedBytes(third, 5));
 	REQUIRE(cache.GetStatistics().used == 2 * BLOCK);
 	third.Reset();
-	REQUIRE_FALSE(cache.TryPin(*cached, 5).IsValid());
+	REQUIRE_FALSE(cache.IsCached(*cached, 5 * BLOCK, BLOCK));
 	REQUIRE(HoldsExpectedBytes(first, 0));
 	REQUIRE(HoldsExpectedBytes(second, 1));
 }
@@ -520,7 +520,6 @@ TEST_CASE("Block cache unbacked blocks spill and are never dropped", "[block_cac
 		REQUIRE(pin.Ptr()[0] == block + 1);
 		REQUIRE(pin.Ptr()[BLOCK - 1] == block + 1);
 	}
-	cache.DropFile(*file);
 }
 
 TEST_CASE("Block cache gives memory back to the buffer pool", "[block_cache]") {
@@ -567,8 +566,8 @@ TEST_CASE("Block cache concurrent pins and evictions return the right bytes", "[
 					seed = seed * 6364136223846793005ULL + 1442695040888963407ULL;
 					const auto block = (seed >> 33) % 128;
 					if (i % 3 == 0) {
-						auto pin = cache.TryPin(*cached, block);
-						if (pin.IsValid() && !HoldsExpectedBytes(pin, block)) {
+						auto pins = cache.TryPinRange(*cached, block * BLOCK, BLOCK);
+						if (!pins.empty() && !HoldsExpectedBytes(pins[0], block)) {
 							wrong++;
 						}
 						continue;
