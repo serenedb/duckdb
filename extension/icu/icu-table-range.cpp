@@ -20,7 +20,8 @@ struct ICUTableRange {
 		      calendar(other.calendar->Copy()), cardinality(other.cardinality) {
 		}
 
-		explicit ICURangeBindData(ClientContext &context, const vector<Value> &inputs) : cal_setting("gregorian") {
+		explicit ICURangeBindData(ClientContext &context, const vector<Value> &inputs)
+		    : cal_setting("gregorian"), cardinality(0) {
 			context.TryGetCurrentSetting("TimeZone", tz_setting);
 			context.TryGetCurrentSetting("Calendar", cal_setting);
 			auto tz = TimeZone::TryCreate(tz_setting);
