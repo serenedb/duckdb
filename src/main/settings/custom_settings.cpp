@@ -674,7 +674,10 @@ void EnableExternalAccessSetting::OnSet(SettingCallbackInfo &info, Value &input)
 //===----------------------------------------------------------------------===//
 void EnableExternalFileCacheSetting::OnSet(SettingCallbackInfo &info, Value &input) {
 	if (info.db) {
-		info.db->GetBlockCache().SetEnabled(input.GetValue<bool>());
+		auto cache = info.db->TryGetBlockCache();
+		if (cache) {
+			cache->SetEnabled(input.GetValue<bool>());
+		}
 	}
 }
 
