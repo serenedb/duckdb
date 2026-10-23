@@ -1301,12 +1301,6 @@ BlockCachePin BlockCache::CreateBlock(BlockCacheFile &file, idx_t block) {
 	return BlockCachePin(*this, *entry, FrameData(frame), BLOCK_SIZE);
 }
 
-void BlockCache::TrimBlock(BlockCachePin &pin, idx_t size) {
-	D_ASSERT(pin.entry && size <= BLOCK_SIZE);
-	pin.entry->valid.store(NumericCast<uint32_t>(size), std::memory_order_release);
-	pin.size = size;
-}
-
 void BlockCache::SetUnbackedSize(BlockCacheFile &file, idx_t size) {
 	D_ASSERT(file.IsUnbacked());
 	file.size.store(size, std::memory_order_release);
