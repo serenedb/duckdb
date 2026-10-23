@@ -59,8 +59,8 @@ struct alignas(64) BlockCacheBucket {
 	BlockCacheEntry first;
 };
 
-//! A block held in the cache, or read into a private buffer when no frame was free: its bytes stay valid and
-//! unchanged while the pin lives
+//! A block held in the cache, or bytes read into a buffer the pin owns: they stay valid and unchanged while the pin
+//! lives
 class BlockCachePin {
 public:
 	BlockCachePin() = default;
@@ -94,7 +94,7 @@ public:
 	BlockCachePin &operator=(const BlockCachePin &) = delete;
 
 	bool IsValid() const {
-		return entry || owned;
+		return entry || owned.IsValid();
 	}
 	const_data_ptr_t Ptr() const {
 		return data;
@@ -110,7 +110,7 @@ public:
 		if (entry) {
 			Unpin();
 		}
-		owned.reset();
+		owned.Destroy();
 		data = nullptr;
 		size = 0;
 	}
@@ -124,7 +124,7 @@ private:
 	optional_ptr<BlockCacheEntry> entry;
 	data_ptr_t data = nullptr;
 	idx_t size = 0;
-	unique_ptr<BufferHandle> owned;
+	BufferHandle owned;
 };
 
 //! An open file whose blocks the cache holds; opens of the same path and version share one file number
@@ -216,6 +216,8 @@ public:
 	static BlockCache &Get(DatabaseInstance &db);
 	//! The capacity the settings ask for: external_file_cache_size, or a quarter of the memory limit
 	static idx_t ConfiguredCapacity(DatabaseInstance &db);
+	//! A pin owning a new buffer of [size] bytes for a read the cache does not keep
+	static BlockCachePin AllocateUncached(DatabaseInstance &db, idx_t size);
 
 	//! Registers an open of [path] whose metadata is [current], reading missing blocks from [source], which may be
 	//! set later. It shares the blocks of an earlier open that [current] validates; without [validate] it shares them

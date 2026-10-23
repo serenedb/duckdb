@@ -2,27 +2,16 @@
 
 #include "duckdb/common/chrono.hpp"
 #include "duckdb/common/enums/cache_validation_mode.hpp"
-#include "duckdb/common/enums/destroy_buffer_upon.hpp"
-#include "duckdb/common/enums/memory_tag.hpp"
 #include "duckdb/common/file_system.hpp"
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/main/database.hpp"
 #include "duckdb/main/settings.hpp"
-#include "duckdb/storage/buffer/block_handle.hpp"
 #include "duckdb/storage/buffer_manager.hpp"
 #include "duckdb/storage/external_file_cache/external_file_cache_util.hpp"
 
 namespace duckdb {
 
 namespace {
-
-// Allocate an uncached read buffer to make sure it's de-allocated immediately, and its metadata is not stored in the
-// eviction queue.
-BufferHandle AllocateUncachedReadBuffer(BufferManager &buffer_manager, idx_t size) {
-	auto buffer = buffer_manager.Allocate(MemoryTag::EXTERNAL_FILE_CACHE, size);
-	buffer.GetBlockHandle()->GetMemory().SetDestroyBufferUpon(DestroyBufferUpon::UNPIN);
-	return buffer;
-}
 
 // IO operation is performed to stat the file.
 CacheValidationInfo GetValidationInfo(FileSystem &file_system, FileHandle &handle) {
@@ -207,7 +196,7 @@ Allocator &CachingFileHandle::GetBufferAllocator() const {
 }
 
 FileBufferHandleGroup CachingFileHandle::ReadUncached(idx_t nr_bytes, idx_t location) {
-	auto buf = AllocateUncachedReadBuffer(BufferManager::GetBufferManager(caching_file_system.db), nr_bytes);
+	auto buf = BlockCache::AllocateUncached(caching_file_system.db, nr_bytes);
 	ReadAndRecord(context, buf.GetDataMutable(), nr_bytes, location);
 	const auto data = buf.Ptr();
 	vector<FileBufferHandleGroup::MemoryHandle> mem_handles;
@@ -261,7 +250,7 @@ FileBufferHandleGroup CachingFileHandle::Read(idx_t &nr_bytes) {
 	// If we can't seek, we can't use the cache for these calls,
 	// because we won't be able to seek over any parts we skipped by reading from the cache
 	if (!CanSeek() || !GetCachedFile()) {
-		auto buf = AllocateUncachedReadBuffer(BufferManager::GetBufferManager(caching_file_system.db), nr_bytes);
+		auto buf = BlockCache::AllocateUncached(caching_file_system.db, nr_bytes);
 		auto handle = GetFileHandle();
 		// Do positional read if handle can seek, otherwise have to fallback to sequential read.
 		if (handle->CanSeek()) {
