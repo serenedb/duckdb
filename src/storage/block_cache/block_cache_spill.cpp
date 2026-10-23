@@ -26,7 +26,7 @@ void BlockCacheSpill::Configure(FileSystem &fs, const string &path, idx_t backed
 	annotated_lock_guard<annotated_mutex> guard(lock);
 	backed_limit = backed_limit_p / BlockCache::BLOCK_SIZE;
 	if (handle && handle->GetPath() == path) {
-		while (backed_count > backed_limit && DropOldestBacked()) {
+		while (backed_order.size() > backed_limit && DropOldestBacked()) {
 		}
 		return;
 	}
@@ -44,7 +44,6 @@ void BlockCacheSpill::Configure(FileSystem &fs, const string &path, idx_t backed
 	slots.clear();
 	free_slots.clear();
 	backed_order.clear();
-	backed_count = 0;
 	if (path.empty()) {
 		return;
 	}
@@ -75,22 +74,20 @@ uint32_t BlockCacheSpill::AcquireSlot() {
 
 void BlockCacheSpill::Release(Slots::iterator entry) {
 	if (!entry->second.keep) {
-		backed_count--;
+		backed_order.erase(entry->second.order);
 	}
 	free_slots.push_back(entry->second.index);
 	slots.erase(entry);
 }
 
 bool BlockCacheSpill::DropOldestBacked() {
-	while (!backed_order.empty()) {
-		auto victim = slots.find(backed_order.front());
-		backed_order.pop_front();
-		if (victim != slots.end() && !victim->second.keep) {
-			Release(victim);
-			return true;
-		}
+	if (backed_order.empty()) {
+		return false;
 	}
-	return false;
+	auto victim = slots.find(backed_order.front());
+	D_ASSERT(victim != slots.end() && !victim->second.keep);
+	Release(victim);
+	return true;
 }
 
 bool BlockCacheSpill::Write(uint64_t key, data_ptr_t data, bool keep) {
@@ -101,16 +98,12 @@ bool BlockCacheSpill::Write(uint64_t key, data_ptr_t data, bool keep) {
 	auto existing = slots.find(key);
 	if (existing != slots.end()) {
 		if (keep && !existing->second.keep) {
+			backed_order.erase(existing->second.order);
 			existing->second.keep = true;
-			backed_count--;
 		}
 		return true;
 	}
-	if (!keep && backed_count >= backed_limit) {
-		DropOldestBacked();
-		if (backed_count >= backed_limit) {
-			return false;
-		}
+	while (!keep && backed_order.size() >= backed_limit && DropOldestBacked()) {
 	}
 	const auto index = AcquireSlot();
 	try {
@@ -119,11 +112,11 @@ bool BlockCacheSpill::Write(uint64_t key, data_ptr_t data, bool keep) {
 		free_slots.push_back(index);
 		return false;
 	}
-	slots[key] = Slot {index, keep};
+	auto order = backed_order.end();
 	if (!keep) {
-		backed_count++;
-		backed_order.push_back(key);
+		order = backed_order.insert(order, key);
 	}
+	slots[key] = Slot {index, keep, order};
 	return true;
 }
 
@@ -180,7 +173,6 @@ void BlockCacheSpill::EraseBacked() {
 			Release(entry++);
 		}
 	}
-	backed_order.clear();
 }
 
 } // namespace duckdb
