@@ -49,8 +49,6 @@ struct BlockCacheEntry {
 	atomic<uint32_t> frame {0};
 	//! The next entry of the bucket's chain: its overflow pool index plus one, zero at the end
 	atomic<uint32_t> next {0};
-	//! Bytes of the block that are readable, growing while a fetch streams in
-	atomic<uint32_t> valid {0};
 	//! The bucket whose chain holds the entry
 	atomic<uint32_t> bucket {0};
 };
@@ -290,10 +288,11 @@ private:
 	BlockCacheBucket &BucketFor(uint64_t key) const;
 	data_ptr_t FrameData(uint32_t frame) const;
 
-	//! Finds the entry of [key] and pins it, waiting while it loads when [wait_for_load]; false when it is not cached
-	bool Lookup(uint64_t key, BlockCachePin &result, bool wait_for_load);
-	//! Pins the entry of [key] when it is cached or loading; [result] holds no bytes until the entry has loaded
-	bool PinPresent(uint64_t key, BlockCachePin &result);
+	//! Finds block [block] of [file] and pins it, waiting while it loads when [wait_for_load]; false when it is not
+	//! cached
+	bool Lookup(const BlockCacheFile &file, idx_t block, BlockCachePin &result, bool wait_for_load);
+	//! Pins block [block] of [file] when it is cached or loading; [result] holds no bytes until the block has loaded
+	bool PinPresent(const BlockCacheFile &file, idx_t block, BlockCachePin &result);
 	//! Waits until the entry [pin] holds has loaded and gives [pin] its bytes; resets [pin] when the load failed
 	bool AwaitLoad(BlockCachePin &pin);
 	//! The entry of [key] that lookups can find, or null
@@ -335,7 +334,7 @@ private:
 	void FinishLoad(BlockCacheEntry &entry, bool shared);
 	void WaitForLoad(BlockCacheEntry &entry);
 	//! Fills [entry] from the spill tier when it holds [key]
-	bool ReadSpilled(uint64_t key, BlockCacheEntry &entry, idx_t nr_bytes);
+	bool ReadSpilled(uint64_t key, BlockCacheEntry &entry);
 	//! Whether blocks of unbacked files can spill, configuring a file in the temporary directory when none is set
 	bool CanSpillUnbacked();
 

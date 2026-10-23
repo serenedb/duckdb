@@ -49,6 +49,11 @@ uint64_t Pins(uint64_t state) {
 	return state & PIN_MASK;
 }
 
+idx_t BlockBytesOf(idx_t file_size, idx_t block) {
+	const auto start = block * BlockCache::BLOCK_SIZE;
+	return start >= file_size ? 0 : MinValue(BlockCache::BLOCK_SIZE, file_size - start);
+}
+
 uint64_t Referenced(uint64_t state) {
 	if (state & FLAG_PREFETCHED) {
 		return state & ~FLAG_PREFETCHED;
@@ -174,9 +179,7 @@ idx_t BlockCacheFile::BlockCount() const {
 }
 
 idx_t BlockCacheFile::BlockBytes(idx_t block) const {
-	const auto file_size = GetSize();
-	const auto start = block * BlockCache::BLOCK_SIZE;
-	return start >= file_size ? 0 : MinValue(BlockCache::BLOCK_SIZE, file_size - start);
+	return BlockBytesOf(GetSize(), block);
 }
 
 //===--------------------------------------------------------------------===//
@@ -570,8 +573,9 @@ BlockCacheEntry *BlockCache::FindEntry(uint64_t key, uint64_t &state) const {
 	}
 }
 
-bool BlockCache::PinPresent(uint64_t key, BlockCachePin &result) {
+bool BlockCache::PinPresent(const BlockCacheFile &file, idx_t block, BlockCachePin &result) {
 	D_ASSERT(!result.IsValid());
+	const auto key = MakeKey(file.number, block);
 	while (true) {
 		uint64_t state = 0;
 		auto found = FindEntry(key, state);
@@ -590,9 +594,9 @@ bool BlockCache::PinPresent(uint64_t key, BlockCachePin &result) {
 		}
 		result.cache = this;
 		result.entry = found;
+		result.size = file.BlockBytes(block);
 		if (desired & FLAG_LOADED) {
 			result.data = FrameData(found->frame.load(std::memory_order_relaxed));
-			result.size = found->valid.load(std::memory_order_acquire);
 			CountHit(*found);
 		}
 		return true;
@@ -612,13 +616,12 @@ bool BlockCache::AwaitLoad(BlockCachePin &pin) {
 	                                          std::memory_order_acquire)) {
 	}
 	pin.data = FrameData(entry.frame.load(std::memory_order_relaxed));
-	pin.size = entry.valid.load(std::memory_order_acquire);
 	CountHit(entry);
 	return true;
 }
 
-bool BlockCache::Lookup(uint64_t key, BlockCachePin &result, bool wait_for_load) {
-	while (PinPresent(key, result)) {
+bool BlockCache::Lookup(const BlockCacheFile &file, idx_t block, BlockCachePin &result, bool wait_for_load) {
+	while (PinPresent(file, block, result)) {
 		if (result.data) {
 			return true;
 		}
@@ -686,7 +689,6 @@ optional_ptr<BlockCacheEntry> BlockCache::InsertLoading(uint64_t key, uint32_t f
 	}
 	slot->key.store(key, std::memory_order_relaxed);
 	slot->frame.store(frame, std::memory_order_relaxed);
-	slot->valid.store(0, std::memory_order_relaxed);
 	slot->bucket.store(bucket_index, std::memory_order_relaxed);
 	const auto version = (slot->state.load(std::memory_order_relaxed) & VERSION_MASK) + VERSION_ONE;
 	slot->state.store(version | FLAG_LOADING | FLAG_PROBATION | flags | 1, std::memory_order_release);
@@ -919,11 +921,10 @@ void BlockCache::SetEnabled(bool enabled_p) {
 	}
 }
 
-bool BlockCache::ReadSpilled(uint64_t key, BlockCacheEntry &entry, idx_t nr_bytes) {
+bool BlockCache::ReadSpilled(uint64_t key, BlockCacheEntry &entry) {
 	if (!spill.Read(key, FrameData(entry.frame.load(std::memory_order_relaxed)))) {
 		return false;
 	}
-	entry.valid.store(NumericCast<uint32_t>(nr_bytes), std::memory_order_release);
 	entry.state.fetch_or(FLAG_SPILLED, std::memory_order_relaxed);
 	spill_reads.fetch_add(1, std::memory_order_relaxed);
 	return true;
@@ -942,7 +943,7 @@ void BlockCache::Fetch(BlockCacheFile &file, const Run &run, vector<optional_ptr
 				continue;
 			}
 			const auto block = run.first_block + i;
-			if (ReadSpilled(MakeKey(file.number, block), *entries[i], file.BlockBytes(block))) {
+			if (ReadSpilled(MakeKey(file.number, block), *entries[i])) {
 				FinishLoad(*entries[i], true);
 				continue;
 			}
@@ -989,7 +990,6 @@ void BlockCache::Fetch(BlockCacheFile &file, const Run &run, vector<optional_ptr
 		if (!pending[i]) {
 			continue;
 		}
-		entries[i]->valid.store(NumericCast<uint32_t>(file.BlockBytes(run.first_block + i)), std::memory_order_release);
 		FinishLoad(*entries[i], shareable);
 	}
 }
@@ -1002,7 +1002,7 @@ BlockCachePin BlockCache::Pin(const shared_ptr<BlockCacheFile> &file_p, idx_t bl
 	const auto key = MakeKey(file.number, block);
 	while (true) {
 		BlockCachePin result;
-		if (Lookup(key, result, true)) {
+		if (Lookup(file, block, result, true)) {
 			return result;
 		}
 		uint32_t frame;
@@ -1022,7 +1022,7 @@ BlockCachePin BlockCache::Pin(const shared_ptr<BlockCacheFile> &file_p, idx_t bl
 			Unpin(*entry);
 			throw;
 		}
-		return BlockCachePin(*this, *entry, FrameData(frame), entry->valid.load(std::memory_order_acquire));
+		return BlockCachePin(*this, *entry, FrameData(frame), file.BlockBytes(block));
 	}
 }
 
@@ -1049,7 +1049,7 @@ BlockCachePin BlockCache::ReadPrivate(BlockCacheFile &file, idx_t block) {
 
 BlockCachePin BlockCache::TryPin(BlockCacheFile &file, idx_t block) {
 	BlockCachePin result;
-	Lookup(MakeKey(file.number, block), result, false);
+	Lookup(file, block, result, false);
 	return result;
 }
 
@@ -1065,7 +1065,7 @@ vector<BlockCachePin> BlockCache::PinRange(const shared_ptr<BlockCacheFile> &fil
 	const auto count = (end - 1) / BLOCK_SIZE - first + 1;
 	result.resize(count);
 	for (idx_t i = 0; i < count; i++) {
-		PinPresent(MakeKey(file.number, first + i), result[i]);
+		PinPresent(file, first + i, result[i]);
 	}
 	idx_t next = 0;
 	while (next < count) {
@@ -1087,7 +1087,7 @@ vector<BlockCachePin> BlockCache::PinRange(const shared_ptr<BlockCacheFile> &fil
 					ReleaseFrame(frame);
 					break;
 				}
-				result[i] = BlockCachePin(*this, *entry, nullptr, 0);
+				result[i] = BlockCachePin(*this, *entry, nullptr, file.BlockBytes(first + i));
 				entries.push_back(entry);
 				run.block_count++;
 				gap = 0;
@@ -1115,7 +1115,6 @@ vector<BlockCachePin> BlockCache::PinRange(const shared_ptr<BlockCacheFile> &fil
 			if (entries[i]) {
 				auto &pin = result[run.first_block - first + i];
 				pin.data = FrameData(entries[i]->frame.load(std::memory_order_relaxed));
-				pin.size = entries[i]->valid.load(std::memory_order_acquire);
 			}
 		}
 		next = run.first_block - first + run.block_count;
@@ -1140,7 +1139,7 @@ vector<BlockCachePin> BlockCache::TryPinRange(BlockCacheFile &file, idx_t offset
 	result.reserve(last - first + 1);
 	for (auto block = first; block <= last; block++) {
 		BlockCachePin pin;
-		if (!Lookup(MakeKey(file.number, block), pin, false)) {
+		if (!Lookup(file, block, pin, false)) {
 			result.clear();
 			break;
 		}
@@ -1296,7 +1295,6 @@ BlockCachePin BlockCache::CreateBlock(BlockCacheFile &file, idx_t block) {
 		throw InternalException("Block %llu of \"%s\" is written twice", block, file.path);
 	}
 	memset(FrameData(frame), 0, BLOCK_SIZE);
-	entry->valid.store(NumericCast<uint32_t>(BLOCK_SIZE), std::memory_order_release);
 	FinishLoad(*entry, true);
 	return BlockCachePin(*this, *entry, FrameData(frame), BLOCK_SIZE);
 }
@@ -1377,18 +1375,16 @@ vector<CachedFileInformation> BlockCache::GetBlockInformation() const {
 			continue;
 		}
 		in_memory.insert(key);
-		result.push_back({path->second.first, entry->valid.load(std::memory_order_relaxed), BlockOf(key) * BLOCK_SIZE,
-		                  true, spill.Contains(key)});
+		result.push_back({path->second.first, BlockBytesOf(path->second.second, BlockOf(key)),
+		                  BlockOf(key) * BLOCK_SIZE, true, spill.Contains(key)});
 	}
 	for (auto key : spill.Keys()) {
 		auto path = paths.find(FileOf(key));
 		if (path == paths.end() || in_memory.find(key) != in_memory.end()) {
 			continue;
 		}
-		const idx_t location = BlockOf(key) * BLOCK_SIZE;
-		const auto file_size = path->second.second;
-		const auto nr_bytes = location >= file_size ? 0 : MinValue(BLOCK_SIZE, file_size - location);
-		result.push_back({path->second.first, nr_bytes, location, false, true});
+		result.push_back({path->second.first, BlockBytesOf(path->second.second, BlockOf(key)),
+		                  BlockOf(key) * BLOCK_SIZE, false, true});
 	}
 	return result;
 }
