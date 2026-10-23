@@ -1047,12 +1047,6 @@ BlockCachePin BlockCache::ReadPrivate(BlockCacheFile &file, idx_t block) {
 	return result;
 }
 
-BlockCachePin BlockCache::TryPin(BlockCacheFile &file, idx_t block) {
-	BlockCachePin result;
-	Lookup(file, block, result, false);
-	return result;
-}
-
 vector<BlockCachePin> BlockCache::PinRange(const shared_ptr<BlockCacheFile> &file_p, idx_t offset, idx_t size) {
 	auto &file = *file_p;
 	vector<BlockCachePin> result;
