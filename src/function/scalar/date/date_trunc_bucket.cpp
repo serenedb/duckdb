@@ -95,9 +95,13 @@ int64_t Origin(int64_t bucket, int64_t width, int64_t anchor) {
 	return result;
 }
 
+int64_t WrappingSubtract(int64_t lhs, int64_t rhs) {
+	return static_cast<int64_t>(static_cast<uint64_t>(lhs) - static_cast<uint64_t>(rhs));
+}
+
 template <class INPUT>
 int64_t Bucket(INPUT ts, int64_t width, int64_t anchor) {
-	return DateTrunc::FloorDiv(Micros(ts) - anchor, width);
+	return DateTrunc::FloorDiv(WrappingSubtract(Micros(ts), anchor), width);
 }
 
 template <class RESULT>
@@ -116,7 +120,7 @@ dtime_t Unbucket<dtime_t>(int64_t bucket, int64_t width, int64_t anchor) {
 
 template <class INPUT>
 int64_t MonthBucket(INPUT ts, int64_t width, int64_t anchor) {
-	return DateTrunc::FloorDiv(DateTrunc::MonthIndex(timestamp_t(Micros(ts))) - anchor, width);
+	return DateTrunc::FloorDiv(WrappingSubtract(DateTrunc::MonthIndex(timestamp_t(Micros(ts))), anchor), width);
 }
 
 template <class RESULT>
