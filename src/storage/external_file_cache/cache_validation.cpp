@@ -12,7 +12,8 @@ bool CacheValidationInfo::IsExpired() const {
 	return cache_valid_until && Timestamp::GetCurrentTimestamp() >= *cache_valid_until;
 }
 
-bool CacheValidation::HasUsableLastModified(timestamp_t last_modified) {
+//! Whether the last modified timestamp is usable as a cache validator
+static bool HasUsableLastModified(timestamp_t last_modified) {
 	return last_modified.IsFinite() && last_modified != timestamp_t(0);
 }
 
