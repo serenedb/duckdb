@@ -14,9 +14,9 @@ PerfectAggregateHashTable::PerfectAggregateHashTable(ClientContext &context, All
                                                      vector<AggregateObject> aggregate_objects_p,
                                                      vector<Value> group_minima_p, vector<idx_t> required_bits_p)
     : BaseAggregateHashTable(context, allocator, aggregate_objects_p, std::move(payload_types_p)),
-      addresses(LogicalType::POINTER), required_bits(std::move(required_bits_p)), total_required_bits(0),
-      group_minima(std::move(group_minima_p)), sel(STANDARD_VECTOR_SIZE),
-      aggregate_allocator(make_uniq<ArenaAllocator>(allocator)) {
+      addresses(LogicalType::POINTER), new_state_addresses(LogicalType::POINTER),
+      required_bits(std::move(required_bits_p)), total_required_bits(0), group_minima(std::move(group_minima_p)),
+      sel(STANDARD_VECTOR_SIZE), aggregate_allocator(make_uniq<ArenaAllocator>(allocator)) {
 	for (auto &group_bits : required_bits) {
 		total_required_bits += group_bits;
 	}
@@ -33,27 +33,29 @@ PerfectAggregateHashTable::PerfectAggregateHashTable(ClientContext &context, All
 		clustered_state.Initialize();
 	}
 
-	// allocate and null initialize the data
 	owned_data = make_unsafe_uniq_array_uninitialized<data_t>(tuple_size * total_groups);
 	data = owned_data.get();
 
-	// set up the empty payloads for every tuple, and initialize the "occupied" flag to false
 	group_is_set = make_unsafe_uniq_array_uninitialized<bool>(total_groups);
 	memset(group_is_set.get(), 0, total_groups * sizeof(bool));
+}
 
-	// initialize the hash table for each entry
-	auto address_data = FlatVector::GetDataMutable<uintptr_t>(addresses);
-	idx_t init_count = 0;
-	for (idx_t i = 0; i < total_groups; i++) {
-		address_data[init_count] = uintptr_t(data) + (tuple_size * i);
-		init_count++;
-		if (init_count == STANDARD_VECTOR_SIZE) {
-			RowOperations::InitializeStates(*layout_ptr, addresses, *FlatVector::IncrementalSelectionVector(),
-			                                init_count);
-			init_count = 0;
-		}
+data_ptr_t PerfectAggregateHashTable::SetGroup(idx_t group, idx_t &new_count) {
+	const auto state = data + group * tuple_size;
+	if (!group_is_set[group]) {
+		group_is_set[group] = true;
+		FlatVector::GetDataMutable<data_ptr_t>(new_state_addresses)[new_count++] = state;
 	}
-	RowOperations::InitializeStates(*layout_ptr, addresses, *FlatVector::IncrementalSelectionVector(), init_count);
+	return state;
+}
+
+void PerfectAggregateHashTable::InitializeNewStates(idx_t new_count) {
+	if (new_count == 0) {
+		return;
+	}
+	FlatVector::SetSize(new_state_addresses, new_count);
+	RowOperations::InitializeStates(*layout_ptr, new_state_addresses, *FlatVector::IncrementalSelectionVector(),
+	                                new_count);
 }
 
 PerfectAggregateHashTable::~PerfectAggregateHashTable() { // NOLINT(bugprone-exception-escape)
@@ -143,6 +145,7 @@ void PerfectAggregateHashTable::AddChunk(DataChunk &groups, DataChunk &payload) 
 	}
 
 	// Non-clustered path: convert group ids to state pointers and update aggregates.
+	idx_t new_count = 0;
 	for (idx_t i = 0; i < groups.size(); i++) {
 		const auto group = address_data[i];
 		if (group >= total_groups) {
@@ -151,9 +154,9 @@ void PerfectAggregateHashTable::AddChunk(DataChunk &groups, DataChunk &payload) 
 			                            "disable_optimizer to disable optimizations that rely on correct statistics",
 			                            group, total_groups);
 		}
-		group_is_set[group] = true;
-		address_data[i] = uintptr_t(data) + group * tuple_size;
+		address_data[i] = uintptr_t(SetGroup(group, new_count));
 	}
+	InitializeNewStates(new_count);
 
 	idx_t payload_idx = 0;
 	auto &aggregates = layout_ptr->GetAggregates();
@@ -191,11 +194,9 @@ bool PerfectAggregateHashTable::AddChunkClustered(uintptr_t *address_data, DataC
 	if (!clustered_state.TryBuild(clustered, group_ids_ptr, count)) {
 		return false;
 	}
-	clustered.InitializeStates([&](uint64_t gid) {
-		auto group_id = static_cast<idx_t>(gid);
-		group_is_set[group_id] = true;
-		return data + group_id * tuple_size;
-	});
+	idx_t new_count = 0;
+	clustered.InitializeStates([&](uint64_t gid) { return SetGroup(static_cast<idx_t>(gid), new_count); });
+	InitializeNewStates(new_count);
 
 	// When all aggregates are clustered-aware, we can skip maintaining per-tuple addresses.
 	bool skip_addresses = clustered_state.all_clustered;
@@ -223,18 +224,19 @@ void PerfectAggregateHashTable::Combine(PerfectAggregateHashTable &other) {
 
 	// iterate over all entries of both hash tables and call combine for all entries that can be combined
 	data_ptr_t source_ptr = other.data;
-	data_ptr_t target_ptr = data;
 	idx_t combine_count = 0;
+	idx_t new_count = 0;
 	RowOperationsState row_state(*aggregate_allocator);
 	for (idx_t i = 0; i < total_groups; i++) {
 		auto has_entry_source = other.group_is_set[i];
 		// we only have any work to do if the source has an entry for this group
 		if (has_entry_source) {
-			group_is_set[i] = true;
 			source_addresses_ptr[combine_count] = source_ptr;
-			target_addresses_ptr[combine_count] = target_ptr;
+			target_addresses_ptr[combine_count] = SetGroup(i, new_count);
 			combine_count++;
 			if (combine_count == STANDARD_VECTOR_SIZE) {
+				InitializeNewStates(new_count);
+				new_count = 0;
 				FlatVector::SetSize(source_addresses, combine_count);
 				FlatVector::SetSize(target_addresses, combine_count);
 				RowOperations::CombineStates(row_state, *layout_ptr, source_addresses, target_addresses);
@@ -242,8 +244,8 @@ void PerfectAggregateHashTable::Combine(PerfectAggregateHashTable &other) {
 			}
 		}
 		source_ptr += tuple_size;
-		target_ptr += tuple_size;
 	}
+	InitializeNewStates(new_count);
 	FlatVector::SetSize(source_addresses, combine_count);
 	FlatVector::SetSize(target_addresses, combine_count);
 	RowOperations::CombineStates(row_state, *layout_ptr, source_addresses, target_addresses);
@@ -358,15 +360,16 @@ void PerfectAggregateHashTable::Destroy() {
 
 	// iterate over all initialised slots of the hash table
 	RowOperationsState row_state(*aggregate_allocator);
-	data_ptr_t payload_ptr = data;
 	for (idx_t i = 0; i < total_groups; i++) {
-		data_pointers[count++] = payload_ptr;
+		if (!group_is_set[i]) {
+			continue;
+		}
+		data_pointers[count++] = data + i * tuple_size;
 		if (count == STANDARD_VECTOR_SIZE) {
 			FlatVector::SetSize(addresses, count);
 			RowOperations::DestroyStates(row_state, *layout_ptr, addresses);
 			count = 0;
 		}
-		payload_ptr += tuple_size;
 	}
 	FlatVector::SetSize(addresses, count);
 	RowOperations::DestroyStates(row_state, *layout_ptr, addresses);
