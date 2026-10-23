@@ -38,7 +38,7 @@ static unique_ptr<Expression> CreateBoundStructExtract(ClientContext &context, u
 	} else {
 		result->SetAlias(Identifier(key_path[0]));
 	}
-	return std::move(result);
+	return result;
 }
 
 static unique_ptr<Expression> CreateBoundStructExtractIndex(ClientContext &context, unique_ptr<Expression> expr,
@@ -49,7 +49,7 @@ static unique_ptr<Expression> CreateBoundStructExtractIndex(ClientContext &conte
 	auto result = BindBuiltinScalarExpression(context, StructExtractFun::Name, std::move(arguments));
 
 	result->SetAlias(Identifier("element" + to_string(key)));
-	return std::move(result);
+	return result;
 }
 
 static unique_ptr<Expression> ExpandStructFields(ClientContext &context, unique_ptr<Expression> struct_expr,

@@ -34,6 +34,11 @@ SELECT to_bool();
 ----
 true
 
+statement error
+CREATE FUNCTION renamed_fields() RETURNS STRUCT(a INTEGER) LANGUAGE sql AS 'SELECT {''b'': 1}';
+----
+STRUCT to STRUCT cast must have at least one matching member
+
 statement ok
 CREATE FUNCTION pair() RETURNS TABLE(a BIGINT, b VARCHAR) LANGUAGE sql AS 'SELECT 1, 42';
 
