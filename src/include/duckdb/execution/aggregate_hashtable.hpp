@@ -175,6 +175,10 @@ public:
 	void Combine(GroupedAggregateHashTable &other);
 	//! Combines the data into this HT - combined_chunks (if set) is incremented for every combined chunk
 	void Combine(TupleDataCollection &other_data, optional_ptr<atomic<idx_t>> combined_chunks = nullptr);
+	idx_t CombineInPlace(TupleDataCollection &data, ValidityMask &alive, idx_t alive_offset,
+	                     optional_ptr<atomic<idx_t>> combined_chunks);
+	idx_t CombineSliced(unique_ptr<TupleDataCollection> &data, ValidityMask &alive, idx_t radix_bits, idx_t slice_bits,
+	                    optional_ptr<atomic<idx_t>> combined_chunks);
 	//! Reset the HT for a new execution while reusing internal allocations where possible
 	void ResetForNewIteration(idx_t radix_bits);
 
@@ -235,6 +239,7 @@ private:
 	idx_t sink_count;
 	//! If true, we just append, skipping HT lookups
 	bool skip_lookups;
+	bool adopted_rows;
 	//! Whether to enable HLL counting the hashes
 	bool enable_hll;
 	//! The associated HLL
@@ -280,6 +285,7 @@ private:
 	inline idx_t ApplyBitMask(hash_t hash) const;
 	//! Reinserts tuples (triggered by Resize)
 	void ReinsertTuples(PartitionedTupleData &data);
+	void ReinsertEntries(const ht_entry_t *old_entries, idx_t old_capacity);
 
 	void UpdateAggregates(DataChunk &payload, const unsafe_vector<idx_t> &filter, idx_t count,
 	                      bool ht_offsets_valid = true);
@@ -288,7 +294,7 @@ private:
 
 	//! Does the actual group matching / creation
 	idx_t FindOrCreateGroupsInternal(DataChunk &groups, Vector &group_hashes, Vector &addresses,
-	                                 SelectionVector &new_groups);
+	                                 SelectionVector &new_groups, const data_ptr_t *adopt_rows = nullptr);
 	void InitializeLookupState(AggregateHTLookupState &lookup_state) const;
 
 	//! Verify the pointer table of the HT

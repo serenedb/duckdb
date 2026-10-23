@@ -1,0 +1,39 @@
+# name: test/sql/aggregate/group/test_group_by_in_place_finalize.test
+# description: Hash aggregates that finalize their partitions in place: groups spread over threads, string keys, aggregates with destructors, NULL keys, grouping sets and partitions scanned twice
+# group: [group]
+
+statement ok
+SET threads=8
+
+statement ok
+CREATE TABLE t AS SELECT i, i % 250000 AS k, (i % 250000)::VARCHAR || '_a_string_longer_than_twelve_bytes' AS s FROM range(4000000) t(i)
+
+query III
+SELECT count(*), sum(c), max(c) FROM (SELECT s, count(*) AS c FROM t GROUP BY s)
+----
+250000	4000000	16
+
+query III
+SELECT count(*), sum(len(l)), sum(length(m)) FROM (SELECT s, list(i) AS l, max(s) AS m FROM t GROUP BY s)
+----
+250000	4000000	9888890
+
+query IIII
+SELECT count(*), count(k), sum(c), max(c) FILTER (WHERE k IS NULL) FROM (SELECT CASE WHEN i % 10 = 0 THEN NULL ELSE k END AS k, count(*) AS c FROM t GROUP BY 1)
+----
+225001	225000	4000000	400000
+
+query II
+SELECT count(*), sum(c) FROM (SELECT k % 7 AS a, s, count(*) AS c FROM t GROUP BY GROUPING SETS ((a, s), (a), ()))
+----
+250008	12000000
+
+query I
+SELECT count(*) FROM (SELECT DISTINCT s FROM t) d WHERE (SELECT count(*) FROM t WHERE t.s = d.s) = 16
+----
+250000
+
+query II
+SELECT count(*), sum(c) FROM (SELECT s, k, count(DISTINCT i % 3) AS c FROM t GROUP BY s, k)
+----
+250000	750000
