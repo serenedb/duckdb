@@ -29,6 +29,9 @@ struct ICUTableRange {
 			if (!calendar) {
 				throw InternalException("Unable to create calendar.");
 			}
+			if (inputs.size() != 3) {
+				return;
+			}
 
 			timestamp_tz_t bounds[2];
 			interval_t step;
