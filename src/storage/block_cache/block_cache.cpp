@@ -411,7 +411,8 @@ shared_ptr<BlockCacheFile> BlockCache::CreateUnbackedFile(const string &path) {
 	return make_shared_ptr<BlockCacheFile>(*this, path, number, true, BlockCacheFileInfo(), nullptr);
 }
 
-shared_ptr<BlockCacheFile> BlockCache::CreateWrittenFile(const string &path, const BlockCacheFileInfo &info) {
+shared_ptr<BlockCacheFile> BlockCache::CreateWrittenFile(const string &path) {
+	const BlockCacheFileInfo info;
 	uint32_t number;
 	optional<FileRecord> replaced;
 	bool sweep = false;
@@ -428,7 +429,7 @@ shared_ptr<BlockCacheFile> BlockCache::CreateWrittenFile(const string &path, con
 		number = record.number;
 	}
 	if (replaced) {
-		DropBlocks(replaced->number, (replaced->info.validation.file_size + BLOCK_SIZE - 1) / BLOCK_SIZE);
+		DropBlocks(replaced->number, BlockCountOf(replaced->info.validation.file_size));
 	}
 	if (sweep) {
 		SweepFiles();
