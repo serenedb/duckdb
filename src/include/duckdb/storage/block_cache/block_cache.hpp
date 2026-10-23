@@ -169,8 +169,6 @@ private:
 	const uint32_t number;
 	atomic<idx_t> size;
 	const bool unbacked;
-	//! A local file is read again as cheaply as a spilled block, so its blocks never spill
-	const bool local;
 	const BlockCacheFileInfo info;
 	mutable annotated_mutex source_lock;
 	shared_ptr<FileHandle> source DUCKDB_GUARDED_BY(source_lock);
