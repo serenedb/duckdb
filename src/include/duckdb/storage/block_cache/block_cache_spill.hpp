@@ -27,8 +27,6 @@ public:
 
 	//! Spills into [path], keeping at most [backed_limit] bytes of blocks that exist elsewhere
 	void Configure(FileSystem &fs, const string &path, idx_t backed_limit);
-	//! Whether blocks that exist elsewhere are spilled
-	bool SpillsBacked() const;
 	//! Whether a file is configured, which unbacked blocks need
 	bool IsConfigured() const;
 
@@ -43,26 +41,25 @@ public:
 	void EraseFile(uint32_t file);
 	//! Drops every copy that may be dropped
 	void EraseBacked();
-	idx_t SlotCount() const;
 
 private:
 	struct Slot {
 		uint32_t index;
 		bool keep;
 	};
+	using Slots = unordered_map<uint64_t, Slot>;
 
 	uint32_t AcquireSlot() DUCKDB_REQUIRES(lock);
-	void Grow() DUCKDB_REQUIRES(lock);
+	void Release(Slots::iterator entry) DUCKDB_REQUIRES(lock);
+	bool DropOldestBacked() DUCKDB_REQUIRES(lock);
 
 	const idx_t slot_size;
 	mutable annotated_mutex lock;
 	unique_ptr<FileHandle> handle DUCKDB_GUARDED_BY(lock);
-	bool spills_backed DUCKDB_GUARDED_BY(lock) = false;
 	idx_t backed_limit DUCKDB_GUARDED_BY(lock) = 0;
 	idx_t backed_count DUCKDB_GUARDED_BY(lock) = 0;
-	idx_t slot_count DUCKDB_GUARDED_BY(lock) = 0;
 	vector<uint32_t> free_slots DUCKDB_GUARDED_BY(lock);
-	unordered_map<uint64_t, Slot> slots DUCKDB_GUARDED_BY(lock);
+	Slots slots DUCKDB_GUARDED_BY(lock);
 	//! Backed copies in the order they were written, dropped oldest first
 	deque<uint64_t> backed_order DUCKDB_GUARDED_BY(lock);
 };

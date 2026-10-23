@@ -708,36 +708,31 @@ Value ExternalFileCacheSizeSetting::GetSetting(const ClientContext &context) {
 //===----------------------------------------------------------------------===//
 // External File Cache Spill
 //===----------------------------------------------------------------------===//
-void ExternalFileCacheSpillPathSetting::OnSet(SettingCallbackInfo &info, Value &input) {
-	if (!info.db) {
-		return;
-	}
-	auto cache = info.db->TryGetBlockCache();
+static void ApplyExternalFileCacheSpill(DatabaseInstance &db, const string &path, idx_t size) {
+	auto cache = db.TryGetBlockCache();
 	if (cache) {
-		cache->SetSpill(input.ToString(), info.config.options.external_file_cache_spill_size);
+		cache->SetSpill(path, size);
+	}
+}
+
+void ExternalFileCacheSpillPathSetting::OnSet(SettingCallbackInfo &info, Value &input) {
+	if (info.db) {
+		ApplyExternalFileCacheSpill(*info.db, input.ToString(), info.config.options.external_file_cache_spill_size);
 	}
 }
 
 void ExternalFileCacheSpillSizeSetting::SetGlobal(DatabaseInstance *db, DBConfig &config, const Value &input) {
 	config.options.external_file_cache_spill_size = DBConfig::ParseMemoryLimit(input.ToString());
-	if (!db) {
-		return;
-	}
-	auto cache = db->TryGetBlockCache();
-	if (cache) {
-		cache->SetSpill(Settings::Get<ExternalFileCacheSpillPathSetting>(*db),
-		                config.options.external_file_cache_spill_size);
+	if (db) {
+		ApplyExternalFileCacheSpill(*db, Settings::Get<ExternalFileCacheSpillPathSetting>(*db),
+		                            config.options.external_file_cache_spill_size);
 	}
 }
 
 void ExternalFileCacheSpillSizeSetting::ResetGlobal(DatabaseInstance *db, DBConfig &config) {
 	config.options.external_file_cache_spill_size = 0;
-	if (!db) {
-		return;
-	}
-	auto cache = db->TryGetBlockCache();
-	if (cache) {
-		cache->SetSpill(Settings::Get<ExternalFileCacheSpillPathSetting>(*db), 0);
+	if (db) {
+		ApplyExternalFileCacheSpill(*db, Settings::Get<ExternalFileCacheSpillPathSetting>(*db), 0);
 	}
 }
 
