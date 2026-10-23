@@ -11,6 +11,8 @@
 #include "duckdb/parser/expression/constant_expression.hpp"
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/main/client_context_state.hpp"
+#include "duckdb/storage/table/data_table_info.hpp"
+#include "duckdb/transaction/duck_transaction.hpp"
 
 namespace duckdb {
 
@@ -62,6 +64,11 @@ BoundStatement Binder::Bind(ExecuteStatement &stmt) {
 	// check if we need to rebind the prepared statement
 	// this happens if the catalog changes, since in this case e.g. tables we relied on may have been deleted
 	auto prepared = entry->second;
+	for (auto &table : prepared->properties.modified_tables) {
+		if (auto info = table.lock()) {
+			DuckTransaction::Get(context, info->GetDB()).IntendToModify(*info);
+		}
+	}
 	auto &named_param_map = prepared->unbound_statement->named_param_map;
 	const auto provided = stmt.bound_values.empty() ? stmt.named_values.size() : stmt.bound_values.size();
 	if (provided != named_param_map.size() && OnlyPositionalParameters(named_param_map)) {

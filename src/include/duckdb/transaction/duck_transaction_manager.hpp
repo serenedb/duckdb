@@ -14,6 +14,7 @@
 #include "duckdb/common/queue.hpp"
 
 namespace duckdb {
+struct DataTableInfo;
 class DuckTransactionManager;
 class DuckTransaction;
 struct UndoBufferProperties;
@@ -109,6 +110,7 @@ public:
 	}
 	void RefreshStartTime(Transaction &transaction) override;
 	void AdvanceStartTime(DuckTransaction &transaction);
+	void WaitForOlderWriters(ClientContext &context, DuckTransaction &transaction, DataTableInfo &table);
 
 	//! Obtains a shared lock to the checkpoint lock
 	unique_ptr<StorageLockKey> SharedCheckpointLock();

@@ -83,7 +83,8 @@ set(TEST_API_OBJECTS
     test_allocator_unpurged.cpp
     test_group_commit_bound.cpp
     test_wal_sync_parallelism.cpp
-    test_data_table_scan_without_row_groups.cpp)
+    test_data_table_scan_without_row_groups.cpp
+    test_wait_for_older_writers.cpp)
 
 if(NOT WIN32)
   set(TEST_API_OBJECTS ${TEST_API_OBJECTS} test_read_only.cpp)

@@ -459,6 +459,7 @@ public:
 	bool IsInsideSubquery() const;
 
 	StatementProperties &GetStatementProperties();
+	void RegisterTableModify(TableCatalogEntry &table, DatabaseModificationType modification);
 	static void ReplaceStarExpression(unique_ptr<ParsedExpression> &expr, unique_ptr<ParsedExpression> &replacement);
 	static string ReplaceColumnsAlias(const string &alias, const string &column_name,
 	                                  optional_ptr<duckdb_re2::RE2> regex);
