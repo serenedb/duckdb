@@ -315,7 +315,7 @@ TEST_CASE("Block cache shares the blocks a writer created once the file is publi
 	CountingSourceFileSystem fs;
 	TestFile file("block_cache_written.bin", 2 * BLOCK + 100);
 	{
-		auto written = cache.CreateWrittenFile(file.path, BlockCacheFileInfo());
+		auto written = cache.CreateWrittenFile(file.path);
 		WriteBlocks(cache, *written, 2 * BLOCK + 100);
 		cache.FinishWrittenFile(*written, 2 * BLOCK + 100, true);
 	}
@@ -335,7 +335,7 @@ TEST_CASE("Block cache drops the blocks of a written file that is abandoned", "[
 	CountingSourceFileSystem fs;
 	TestFile file("block_cache_abandoned.bin", 2 * BLOCK);
 	{
-		auto written = cache.CreateWrittenFile(file.path, BlockCacheFileInfo());
+		auto written = cache.CreateWrittenFile(file.path);
 		WriteBlocks(cache, *written, 2 * BLOCK);
 		REQUIRE(cache.GetStatistics().used == 2 * BLOCK);
 		cache.FinishWrittenFile(*written, 2 * BLOCK, false);
