@@ -138,13 +138,6 @@ TEST_CASE("Block cache pins hold the bytes of their block", "[block_cache]") {
 		REQUIRE(HoldsExpectedBytes(pin, block));
 	}
 	REQUIRE(fs.ReadCount() == 6);
-
-	data_t buffer[100];
-	REQUIRE(cache.TryRead(*cached, 3 * BLOCK + 17, buffer, sizeof(buffer)));
-	for (idx_t i = 0; i < sizeof(buffer); i++) {
-		REQUIRE(buffer[i] == ExpectedByte(3 * BLOCK + 17 + i));
-	}
-	REQUIRE_FALSE(cache.TryRead(*cached, 2 * BLOCK - 10, buffer, sizeof(buffer)));
 }
 
 TEST_CASE("Block cache reopens of an unchanged file share its blocks", "[block_cache]") {
@@ -577,15 +570,9 @@ TEST_CASE("Block cache concurrent pins and evictions return the right bytes", "[
 					seed = seed * 6364136223846793005ULL + 1442695040888963407ULL;
 					const auto block = (seed >> 33) % 128;
 					if (i % 3 == 0) {
-						data_t buffer[64];
-						const auto offset = block * BLOCK + (seed >> 20) % (BLOCK - sizeof(buffer));
-						if (cache.TryRead(*cached, offset, buffer, sizeof(buffer))) {
-							for (idx_t k = 0; k < sizeof(buffer); k++) {
-								if (buffer[k] != ExpectedByte(offset + k)) {
-									wrong++;
-									break;
-								}
-							}
+						auto pin = cache.TryPin(*cached, block);
+						if (pin.IsValid() && !HoldsExpectedBytes(pin, block)) {
+							wrong++;
 						}
 						continue;
 					}

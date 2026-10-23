@@ -1,16 +1,13 @@
 #include "duckdb/storage/block_cache/block_cache_spill.hpp"
 
 #include "duckdb/common/exception.hpp"
+#include "duckdb/storage/block_cache/block_cache.hpp"
 
 namespace duckdb {
 
 namespace {
 
 constexpr idx_t GROW_SLOTS = 64;
-
-uint32_t FileOfKey(uint64_t key) {
-	return static_cast<uint32_t>(key >> 32);
-}
 
 } // namespace
 
@@ -31,16 +28,8 @@ BlockCacheSpill::~BlockCacheSpill() {
 void BlockCacheSpill::Configure(FileSystem &fs, const string &path, idx_t backed_limit_p) {
 	annotated_lock_guard<annotated_mutex> guard(lock);
 	backed_limit = backed_limit_p / slot_size;
-	spills_backed = !path.empty() && backed_limit > 0;
 	if (handle && handle->GetPath() == path) {
-		while (backed_count > backed_limit && !backed_order.empty()) {
-			auto entry = slots.find(backed_order.front());
-			backed_order.pop_front();
-			if (entry != slots.end() && !entry->second.keep) {
-				free_slots.push_back(entry->second.index);
-				slots.erase(entry);
-				backed_count--;
-			}
+		while (backed_count > backed_limit && DropOldestBacked()) {
 		}
 		return;
 	}
@@ -59,7 +48,6 @@ void BlockCacheSpill::Configure(FileSystem &fs, const string &path, idx_t backed
 	free_slots.clear();
 	backed_order.clear();
 	backed_count = 0;
-	slot_count = 0;
 	if (path.empty()) {
 		return;
 	}
@@ -71,35 +59,46 @@ void BlockCacheSpill::Configure(FileSystem &fs, const string &path, idx_t backed
 	}
 }
 
-bool BlockCacheSpill::SpillsBacked() const {
-	annotated_lock_guard<annotated_mutex> guard(lock);
-	return spills_backed;
-}
-
 bool BlockCacheSpill::IsConfigured() const {
 	annotated_lock_guard<annotated_mutex> guard(lock);
 	return handle != nullptr;
 }
 
-void BlockCacheSpill::Grow() {
-	for (idx_t i = GROW_SLOTS; i > 0; i--) {
-		free_slots.push_back(NumericCast<uint32_t>(slot_count + i - 1));
-	}
-	slot_count += GROW_SLOTS;
-}
-
 uint32_t BlockCacheSpill::AcquireSlot() {
 	if (free_slots.empty()) {
-		Grow();
+		const auto used = slots.size();
+		for (idx_t i = GROW_SLOTS; i > 0; i--) {
+			free_slots.push_back(NumericCast<uint32_t>(used + i - 1));
+		}
 	}
 	const auto index = free_slots.back();
 	free_slots.pop_back();
 	return index;
 }
 
+void BlockCacheSpill::Release(Slots::iterator entry) {
+	if (!entry->second.keep) {
+		backed_count--;
+	}
+	free_slots.push_back(entry->second.index);
+	slots.erase(entry);
+}
+
+bool BlockCacheSpill::DropOldestBacked() {
+	while (!backed_order.empty()) {
+		auto victim = slots.find(backed_order.front());
+		backed_order.pop_front();
+		if (victim != slots.end() && !victim->second.keep) {
+			Release(victim);
+			return true;
+		}
+	}
+	return false;
+}
+
 bool BlockCacheSpill::Write(uint64_t key, data_ptr_t data, bool keep) {
 	annotated_lock_guard<annotated_mutex> guard(lock);
-	if (!handle || (!keep && !spills_backed)) {
+	if (!handle || (!keep && backed_limit == 0)) {
 		return false;
 	}
 	auto existing = slots.find(key);
@@ -111,16 +110,7 @@ bool BlockCacheSpill::Write(uint64_t key, data_ptr_t data, bool keep) {
 		return true;
 	}
 	if (!keep && backed_count >= backed_limit) {
-		while (!backed_order.empty()) {
-			auto victim = slots.find(backed_order.front());
-			backed_order.pop_front();
-			if (victim != slots.end() && !victim->second.keep) {
-				free_slots.push_back(victim->second.index);
-				slots.erase(victim);
-				backed_count--;
-				break;
-			}
-		}
+		DropOldestBacked();
 		if (backed_count >= backed_limit) {
 			return false;
 		}
@@ -168,28 +158,19 @@ vector<uint64_t> BlockCacheSpill::Keys() const {
 void BlockCacheSpill::Erase(uint64_t key) {
 	annotated_lock_guard<annotated_mutex> guard(lock);
 	auto entry = slots.find(key);
-	if (entry == slots.end()) {
-		return;
+	if (entry != slots.end()) {
+		Release(entry);
 	}
-	if (!entry->second.keep) {
-		backed_count--;
-	}
-	free_slots.push_back(entry->second.index);
-	slots.erase(entry);
 }
 
 void BlockCacheSpill::EraseFile(uint32_t file) {
 	annotated_lock_guard<annotated_mutex> guard(lock);
 	for (auto entry = slots.begin(); entry != slots.end();) {
-		if (FileOfKey(entry->first) != file) {
+		if (BlockCache::FileOf(entry->first) == file) {
+			Release(entry++);
+		} else {
 			++entry;
-			continue;
 		}
-		if (!entry->second.keep) {
-			backed_count--;
-		}
-		free_slots.push_back(entry->second.index);
-		slots.erase(entry++);
 	}
 }
 
@@ -198,18 +179,11 @@ void BlockCacheSpill::EraseBacked() {
 	for (auto entry = slots.begin(); entry != slots.end();) {
 		if (entry->second.keep) {
 			++entry;
-			continue;
+		} else {
+			Release(entry++);
 		}
-		free_slots.push_back(entry->second.index);
-		slots.erase(entry++);
 	}
-	backed_count = 0;
 	backed_order.clear();
-}
-
-idx_t BlockCacheSpill::SlotCount() const {
-	annotated_lock_guard<annotated_mutex> guard(lock);
-	return slots.size();
 }
 
 } // namespace duckdb
