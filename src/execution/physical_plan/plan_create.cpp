@@ -46,9 +46,12 @@ PhysicalOperator &PhysicalPlanGenerator::CreatePlan(LogicalCreate &op) {
 		return Make<PhysicalCreateFunction>(unique_ptr_cast<CreateInfo, CreateMacroInfo>(std::move(op.info)),
 		                                    op.estimated_cardinality);
 	case LogicalOperatorType::LOGICAL_CREATE_TYPE: {
+		const bool exists = op.info->on_conflict == OnCreateConflict::IGNORE_ON_CONFLICT && op.schema &&
+		                    op.schema->GetEntry(op.schema->GetCatalogTransaction(context), CatalogType::TYPE_ENTRY,
+		                                        op.info->GetQualifiedName().Name());
 		auto &create = Make<PhysicalCreateType>(unique_ptr_cast<CreateInfo, CreateTypeInfo>(std::move(op.info)),
 		                                        op.estimated_cardinality);
-		if (!op.children.empty()) {
+		if (!op.children.empty() && !exists) {
 			D_ASSERT(op.children.size() == 1);
 			auto &plan = CreatePlan(*op.children[0]);
 			create.children.push_back(plan);
