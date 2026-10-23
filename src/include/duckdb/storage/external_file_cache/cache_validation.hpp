@@ -43,8 +43,6 @@ struct CacheValidation {
 	                               const CacheValidationInfo &current);
 	//! Whether the version tag/last modified time provide any cache validation metadata
 	DUCKDB_API static bool HasValidationMetadata(const CacheValidationInfo &info);
-	//! Whether the last modified time can serve as a validator
-	DUCKDB_API static bool HasUsableLastModified(timestamp_t last_modified);
 };
 
 } // namespace duckdb
