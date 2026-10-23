@@ -1,0 +1,55 @@
+# name: test/optimizer/remove_constant_groups.test
+# description: constant group keys are dropped from the aggregate and restored above it
+# group: [optimizer]
+
+statement ok
+CREATE TABLE t AS SELECT i % 5 AS a, (i % 3)::VARCHAR AS b FROM range(100) r(i)
+
+query II
+EXPLAIN SELECT 1, a, count(*) FROM t GROUP BY 1, a
+----
+physical_plan	<REGEX>:.*Groups: #0\s.*
+
+query III
+SELECT 1, a, count(*) FROM t GROUP BY 1, a ORDER BY a
+----
+1	0	20
+1	1	20
+1	2	20
+1	3	20
+1	4	20
+
+query IIII nosort mixed
+SELECT a, 'x', b, count(*) FROM t GROUP BY a, 2, b, 2 ORDER BY a, b
+----
+
+query IIII nosort mixed
+SELECT a, 'x', b, count(*) FROM t GROUP BY a, b ORDER BY a, b
+----
+
+query II
+SELECT 7 AS k, count(*) AS c FROM t GROUP BY k, a HAVING k = 7 AND count(*) = 20 ORDER BY k, c LIMIT 2
+----
+7	20
+7	20
+
+query II
+SELECT 1, count(*) FROM t WHERE false GROUP BY 1
+----
+
+query I
+SELECT count(*) FROM t WHERE false GROUP BY 'x', 'y'
+----
+
+query III
+SELECT 1 AS k, a, count(*) FROM t GROUP BY ROLLUP (k, a) ORDER BY k NULLS LAST, a NULLS LAST LIMIT 3
+----
+1	0	20
+1	1	20
+1	2	20
+
+query II
+SELECT a, count(*) FROM (SELECT 1 AS one, a FROM t) GROUP BY one, a ORDER BY a LIMIT 2
+----
+0	20
+1	20

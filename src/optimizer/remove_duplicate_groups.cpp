@@ -21,6 +21,7 @@ struct GroupRemoval {
 	ProjectionIndex removed_idx;
 	ProjectionIndex target_idx;
 	unique_ptr<Expression> derived_expr;
+	bool constant = false;
 };
 
 // Stops once a second distinct binding is seen.
@@ -95,6 +96,29 @@ void CollectGroupRemovals(const LogicalAggregate &aggr, vector<GroupRemoval> &re
 			continue;
 		}
 		removals.push_back({group_idx, base_it->second, nullptr});
+		any_derived = true;
+	}
+
+	vector<bool> removed(groups.size(), false);
+	for (auto &r : removals) {
+		removed[r.removed_idx.GetIndex()] = true;
+	}
+	optional_idx survivor;
+	for (idx_t i = 0; i < groups.size(); i++) {
+		if (!removed[i] && !groups[i]->IsFoldable()) {
+			survivor = i;
+			break;
+		}
+	}
+	if (!survivor.IsValid()) {
+		return;
+	}
+	for (auto group_idx : ProjectionIndex::GetIndexes(groups.size())) {
+		const auto &group = groups[group_idx];
+		if (removed[group_idx.GetIndex()] || !group->IsFoldable() || !group->IsConsistent()) {
+			continue;
+		}
+		removals.push_back({group_idx, ProjectionIndex(survivor.GetIndex()), nullptr, true});
 		any_derived = true;
 	}
 }
@@ -181,6 +205,10 @@ BuildDerivedProjection(LogicalAggregate &aggr, idx_t num_original_groups, idx_t 
 	ColumnBindingReplacer rebinder;
 	for (auto &r : removals) {
 		if (!r.derived_expr) {
+			continue;
+		}
+		if (r.constant) {
+			select_list[r.removed_idx.GetIndex()] = std::move(r.derived_expr);
 			continue;
 		}
 		auto base_post = group_binding_map.at(ColumnBinding(original_group_index, r.target_idx));
