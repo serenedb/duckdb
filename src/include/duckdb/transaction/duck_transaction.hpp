@@ -64,6 +64,7 @@ public:
 	//! Some (after rollback) enter cleanup_queue, but do not require Cleanup.
 	bool awaiting_cleanup;
 	idx_t active_index = 0;
+	bool waits_for_older = false;
 
 public:
 	static DuckTransaction &Get(ClientContext &context, AttachedDatabase &db);
