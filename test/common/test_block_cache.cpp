@@ -618,4 +618,32 @@ TEST_CASE("Block cache spill drops the oldest copy first after the copies of a f
 	REQUIRE(fs.ReadCount() == reads);
 }
 
+TEST_CASE("Changing the spill size keeps the spill file of in-memory blocks", "[block_cache]") {
+	DuckDB db(nullptr);
+	Connection con(db);
+	const auto directory = TestCreatePath("block_cache_default_spill");
+	REQUIRE_NO_FAIL(con.Query("SET temp_directory='" + directory + "'"));
+	REQUIRE_NO_FAIL(con.Query("SET external_file_cache_size='1MiB'"));
+	auto &cache = BlockCache::Get(*db.instance);
+	auto file = cache.CreateUnbackedFile("memory://default_spill.bin");
+	for (idx_t block = 0; block < 16; block++) {
+		memset(cache.CreateBlock(*file, block).GetDataMutable(), int(block + 1), BLOCK);
+	}
+	cache.SetUnbackedSize(*file, 16 * BLOCK);
+	REQUIRE(cache.GetStatistics().spilled > 0);
+
+	REQUIRE_NO_FAIL(con.Query("SET external_file_cache_spill_size='64MiB'"));
+	REQUIRE_NO_FAIL(con.Query("RESET external_file_cache_spill_size"));
+	for (idx_t block = 0; block < 16; block++) {
+		auto pin = cache.Pin(file, block);
+		REQUIRE(pin.Ptr()[0] == block + 1);
+		REQUIRE(pin.Ptr()[BLOCK - 1] == block + 1);
+	}
+
+	file.reset();
+	LocalFileSystem local;
+	REQUIRE_NO_FAIL(con.Query("SET external_file_cache_spill_size='64MiB'"));
+	REQUIRE(local.FileExists(local.JoinPath(directory, "duckdb_block_cache.spill")));
+}
+
 } // namespace duckdb
