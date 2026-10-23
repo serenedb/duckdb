@@ -1448,9 +1448,9 @@ bool StringValueScanner::ProcessExtraRow() {
 			break;
 		case CSVState::STANDARD:
 			iterator.pos.buffer_pos++;
-			while (state_machine->transition_array
-			           .skip_standard[static_cast<uint8_t>(buffer_handle_ptr[iterator.pos.buffer_pos])] &&
-			       iterator.pos.buffer_pos < to_pos - 1) {
+			while (iterator.pos.buffer_pos < to_pos - 1 &&
+			       state_machine->transition_array
+			           .skip_standard[static_cast<uint8_t>(buffer_handle_ptr[iterator.pos.buffer_pos])]) {
 				iterator.pos.buffer_pos++;
 			}
 			break;
@@ -1462,9 +1462,9 @@ bool StringValueScanner::ProcessExtraRow() {
 		case CSVState::COMMENT:
 			result.SetComment(result, iterator.pos.buffer_pos);
 			iterator.pos.buffer_pos++;
-			while (state_machine->transition_array
-			           .skip_comment[static_cast<uint8_t>(buffer_handle_ptr[iterator.pos.buffer_pos])] &&
-			       iterator.pos.buffer_pos < to_pos - 1) {
+			while (iterator.pos.buffer_pos < to_pos - 1 &&
+			       state_machine->transition_array
+			           .skip_comment[static_cast<uint8_t>(buffer_handle_ptr[iterator.pos.buffer_pos])]) {
 				iterator.pos.buffer_pos++;
 			}
 			break;
