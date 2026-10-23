@@ -235,13 +235,9 @@ public:
 	void FinishWrittenFile(BlockCacheFile &file, idx_t size, bool published);
 	//! Drops the blocks of every open of [path]; current pins keep their bytes
 	void ForgetFile(const string &path);
-	//! Drops the blocks of [file], which no one reads anymore
-	void DropFile(BlockCacheFile &file);
 
 	//! Pins block [block] of [file], fetching it when missing; throws when the fetch fails
 	BlockCachePin Pin(const shared_ptr<BlockCacheFile> &file, idx_t block);
-	//! Pins block [block] of [file] when it is cached, without fetching it
-	BlockCachePin TryPin(BlockCacheFile &file, idx_t block);
 	//! Pins the blocks of [offset, offset + size) of [file], fetching the missing ones together
 	vector<BlockCachePin> PinRange(const shared_ptr<BlockCacheFile> &file, idx_t offset, idx_t size);
 	//! Pins the blocks of [offset, offset + size) of [file] when all of them are cached; empty otherwise
@@ -317,6 +313,8 @@ private:
 	bool EvictOne(uint32_t &frame);
 	//! Evicts [entry] when it is unpinned and still in [state]; [keep_copy] spills it first where the tier allows
 	bool TryEvict(BlockCacheEntry &entry, uint64_t state, uint32_t &frame, bool keep_copy);
+	//! Drops the blocks of [file], which no one reads anymore
+	void DropFile(BlockCacheFile &file);
 	void DropBlocks(uint32_t number, idx_t block_count);
 	void ReleaseUnbacked(uint32_t number, idx_t block_count);
 	bool IsLiveUnbacked(uint32_t number) const;
