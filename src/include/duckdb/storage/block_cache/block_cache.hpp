@@ -66,15 +66,37 @@ struct alignas(64) BlockCacheBucket {
 class BlockCachePin {
 public:
 	BlockCachePin() = default;
-	BlockCachePin(BlockCache &cache, BlockCacheEntry &entry, data_ptr_t data, idx_t size);
-	~BlockCachePin();
-	BlockCachePin(BlockCachePin &&other) noexcept;
-	BlockCachePin &operator=(BlockCachePin &&other) noexcept;
+	BlockCachePin(BlockCache &cache_p, BlockCacheEntry &entry_p, data_ptr_t data_p, idx_t size_p)
+	    : cache(&cache_p), entry(&entry_p), data(data_p), size(size_p) {
+	}
+	~BlockCachePin() {
+		Reset();
+	}
+	BlockCachePin(BlockCachePin &&other) noexcept
+	    : cache(other.cache), entry(other.entry), data(other.data), size(other.size), owned(std::move(other.owned)) {
+		other.entry = nullptr;
+		other.data = nullptr;
+		other.size = 0;
+	}
+	BlockCachePin &operator=(BlockCachePin &&other) noexcept {
+		if (this != &other) {
+			Reset();
+			cache = other.cache;
+			entry = other.entry;
+			data = other.data;
+			size = other.size;
+			owned = std::move(other.owned);
+			other.entry = nullptr;
+			other.data = nullptr;
+			other.size = 0;
+		}
+		return *this;
+	}
 	BlockCachePin(const BlockCachePin &) = delete;
 	BlockCachePin &operator=(const BlockCachePin &) = delete;
 
 	bool IsValid() const {
-		return entry != nullptr || buffer.IsValid();
+		return entry || owned;
 	}
 	const_data_ptr_t Ptr() const {
 		return data;
@@ -86,16 +108,25 @@ public:
 	idx_t Size() const {
 		return size;
 	}
-	void Reset();
+	void Reset() {
+		if (entry) {
+			Unpin();
+		}
+		owned.reset();
+		data = nullptr;
+		size = 0;
+	}
 
 private:
 	friend class BlockCache;
+
+	void Unpin();
 
 	optional_ptr<BlockCache> cache;
 	optional_ptr<BlockCacheEntry> entry;
 	data_ptr_t data = nullptr;
 	idx_t size = 0;
-	BufferHandle buffer;
+	unique_ptr<BufferHandle> owned;
 };
 
 //! An open file whose blocks the cache holds; opens of the same path and version share one file number
@@ -108,9 +139,6 @@ public:
 
 	const string &GetPath() const {
 		return path;
-	}
-	uint32_t GetNumber() const {
-		return number;
 	}
 	idx_t GetSize() const {
 		return size.load(std::memory_order_acquire);
@@ -175,6 +203,16 @@ public:
 	//! Bytes one file may have in flight, which bounds hints tuned for the page cache
 	static constexpr idx_t MAX_FILE_IN_FLIGHT = 64ULL * 1024ULL * 1024ULL;
 
+	static idx_t BlockCountOf(idx_t size) {
+		return (size + BLOCK_SIZE - 1) / BLOCK_SIZE;
+	}
+	static uint32_t FileOf(uint64_t key) {
+		return static_cast<uint32_t>(key >> 32);
+	}
+	static idx_t BlockOf(uint64_t key) {
+		return key & 0xFFFFFFFFULL;
+	}
+
 public:
 	BlockCache(DatabaseInstance &db, idx_t capacity);
 	~BlockCache();
@@ -212,8 +250,6 @@ public:
 	vector<BlockCachePin> PinRange(const shared_ptr<BlockCacheFile> &file, idx_t offset, idx_t size);
 	//! Pins the blocks of [offset, offset + size) of [file] when all of them are cached; empty otherwise
 	vector<BlockCachePin> TryPinRange(BlockCacheFile &file, idx_t offset, idx_t size);
-	//! Copies [size] bytes at [offset] when they lie inside one cached block, without pinning it
-	bool TryRead(BlockCacheFile &file, idx_t offset, data_ptr_t buffer, idx_t size);
 	//! Whether every block of [offset, offset + size) is cached or loading
 	bool IsCached(BlockCacheFile &file, idx_t offset, idx_t size) const;
 	//! Starts fetching the missing blocks of [offset, offset + size) and returns
@@ -266,6 +302,7 @@ private:
 	bool AwaitLoad(BlockCachePin &pin);
 	//! The entry of [key] that lookups can find, or null
 	BlockCacheEntry *FindEntry(uint64_t key) const;
+	BlockCacheEntry *FindEntry(uint64_t key, uint64_t &state) const;
 	//! Inserts a loading entry for [key], pinned once for the caller who fills it; null when [key] is already present
 	optional_ptr<BlockCacheEntry> InsertLoading(uint64_t key, uint32_t frame, uint64_t flags);
 	//! The entry flags of blocks of [file]
@@ -297,9 +334,9 @@ private:
 	void Fetch(BlockCacheFile &file, const Run &run, vector<optional_ptr<BlockCacheEntry>> &entries);
 	//! Reads block [block] of [file] into a buffer of its own, for a miss that found no frame
 	BlockCachePin ReadPrivate(BlockCacheFile &file, idx_t block);
-	//! Ends the load of [entry]: its bytes are shared when [loaded] and [keep]; the bytes of a block loaded but not
-	//! kept serve only its loader, and every other reader fetches the block again
-	void FinishLoad(BlockCacheEntry &entry, bool loaded, bool keep);
+	//! Ends the load of [entry]: its bytes are shared when [shared]; otherwise the load failed or its bytes serve only
+	//! the loader, and every other reader fetches the block again
+	void FinishLoad(BlockCacheEntry &entry, bool shared);
 	void WaitForLoad(BlockCacheEntry &entry);
 	//! Fills [entry] from the spill tier when it holds [key]
 	bool ReadSpilled(uint64_t key, BlockCacheEntry &entry, idx_t nr_bytes);
