@@ -345,6 +345,7 @@ void WindowBoundariesState::AddImpliedBounds(WindowBoundsSet &result, const Boun
 			break;
 		case WindowBoundary::EXPR_FOLLOWING_RANGE:
 			result.insert(PEER_BEGIN);
+			result.insert(VALID_BEGIN);
 			result.insert(VALID_END);
 			break;
 		case WindowBoundary::EXPR_PRECEDING_GROUPS:
@@ -370,6 +371,7 @@ void WindowBoundariesState::AddImpliedBounds(WindowBoundsSet &result, const Boun
 		case WindowBoundary::EXPR_PRECEDING_RANGE:
 			result.insert(PEER_END);
 			result.insert(VALID_BEGIN);
+			result.insert(VALID_END);
 			break;
 		case WindowBoundary::EXPR_FOLLOWING_RANGE:
 			result.insert(PEER_END);
