@@ -959,16 +959,15 @@ idx_t GroupedAggregateHashTable::FindOrCreateGroupsInternal(DataChunk &groups, V
 	// convert all vectors to unified format
 	TupleDataCollection::ToUnifiedFormat(state.partitioned_append_state.chunk_state, state.group_chunk);
 
-	if (enable_hll) {
-		hll.Update(group_hashes_v);
-	}
-
 	const auto hashes = group_hashes_v.Values<hash_t>();
 
 	addresses_v.Flatten();
 	const auto addresses = FlatVector::GetDataMutable<data_ptr_t>(addresses_v);
 
 	if (skip_lookups) {
+		if (enable_hll) {
+			hll.Update(group_hashes_v);
+		}
 		// Just appending now
 		partitioned_data->AppendUnified(state.partitioned_append_state, state.group_chunk,
 		                                *FlatVector::IncrementalSelectionVector(), chunk_size);
@@ -1097,6 +1096,13 @@ idx_t GroupedAggregateHashTable::FindOrCreateGroupsInternal(DataChunk &groups, V
 	}
 
 	FlatVector::SetSize(addresses_v, chunk_size);
+	if (enable_hll && new_group_count != 0) {
+		if (2 * new_group_count > chunk_size) {
+			hll.Update(group_hashes_v);
+		} else {
+			hll.Update(group_hashes_v, new_groups_out, new_group_count);
+		}
+	}
 	count += new_group_count;
 	return new_group_count;
 }
