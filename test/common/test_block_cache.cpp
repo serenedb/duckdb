@@ -293,9 +293,6 @@ void WriteBlocks(BlockCache &cache, BlockCacheFile &file, idx_t size) {
 		for (idx_t i = 0; i < bytes; i++) {
 			pin.GetDataMutable()[i] = ExpectedByte(block * BLOCK + i);
 		}
-		if (bytes < BLOCK) {
-			cache.TrimBlock(pin, bytes);
-		}
 	}
 }
 

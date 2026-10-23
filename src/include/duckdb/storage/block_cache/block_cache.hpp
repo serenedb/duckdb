@@ -254,8 +254,6 @@ public:
 	void Prefetch(const shared_ptr<BlockCacheFile> &file, idx_t offset, idx_t size);
 	//! Pins a new, zeroed block [block] of the unbacked or written [file] for its writer
 	BlockCachePin CreateBlock(BlockCacheFile &file, idx_t block);
-	//! Ends the block its writer still pins after its first [size] bytes, where its file ends
-	void TrimBlock(BlockCachePin &pin, idx_t size);
 	//! Extends the unbacked [file] to [size] bytes once its blocks are written
 	void SetUnbackedSize(BlockCacheFile &file, idx_t size);
 
