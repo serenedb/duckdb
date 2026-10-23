@@ -77,7 +77,11 @@ GrantFunctionTarget <- GrantRoutineKind QualifiedName FuncArgSignature?
 GrantRoutineKind <- 'FUNCTION' / 'ROUTINE' / 'PROCEDURE'
 FuncArgSignature <- Parens(List(FuncArg)?)
 FuncArg <- (FuncArgMode? ColId Type) / (FuncArgMode? Type)
-FuncArgMode <- 'IN' / 'OUT' / 'INOUT' / 'VARIADIC'
+FuncArgMode <- InArgMode / OutArgMode / InoutArgMode / VariadicArgMode
+InArgMode <- 'IN'
+OutArgMode <- 'OUT'
+InoutArgMode <- 'INOUT'
+VariadicArgMode <- 'VARIADIC'
 GrantNamedTarget <- GrantObjType? QualifiedName
 
 # Optional WITH GRANT OPTION suffix on a table GRANT: the grantee may re-grant.

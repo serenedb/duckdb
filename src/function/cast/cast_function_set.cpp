@@ -236,12 +236,6 @@ int64_t CastFunctionSet::ImplicitCastCost(optional_ptr<ClientContext> context, c
 		if (entry) {
 			return entry->implicit_cast_cost;
 		}
-		if (source.id() == LogicalTypeId::INTEGER_LITERAL) {
-			auto type_entry = map_info->GetEntry(IntegerLiteral::GetType(source), target);
-			if (type_entry && type_entry->implicit_cast_cost < 0) {
-				return type_entry->implicit_cast_cost;
-			}
-		}
 	}
 	// if not, fallback to the default implicit cast rules
 	auto score = CastRules::ImplicitCast(source, target);

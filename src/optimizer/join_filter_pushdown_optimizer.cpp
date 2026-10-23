@@ -177,9 +177,7 @@ void JoinFilterPushdownOptimizer::GetPushdownFilterTargets(LogicalOperator &op,
 	case LogicalOperatorType::LOGICAL_CROSS_PRODUCT:
 		for (auto &child : probe_child.children) {
 			unordered_set<TableIndex> child_tables;
-			for (auto &binding : child->GetColumnBindings()) {
-				child_tables.insert(binding.table_index);
-			}
+			LogicalJoin::GetTableReferences(*child, child_tables);
 			vector<JoinFilterPushdownColumn> child_columns;
 			for (auto &column : columns) {
 				if (child_tables.count(column.probe_column_index.table_index)) {

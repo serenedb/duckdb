@@ -1070,6 +1070,16 @@ MacroParameter:
     - NamedParameter
     - ModeParameter
 
+ParameterMode:
+  type: "char"
+  by_value: true
+  rules:
+    - FuncArgMode
+    - InArgMode
+    - OutArgMode
+    - InoutArgMode
+    - VariadicArgMode
+
 JobScheduleInfo:
   type: "JobScheduleInfo"
   by_value: true

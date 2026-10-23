@@ -432,31 +432,16 @@ BoundStatement Binder::BindTableFunction(TableFunction &function, vector<Value> 
 	                                 std::move(input_table_types), std::move(input_table_names), nullptr);
 }
 
-static void CastToReturnTypes(Binder &binder, ClientContext &context, BoundStatement &query,
-                              const vector<LogicalType> &return_types) {
-	if (return_types.size() > query.types.size()) {
-		return;
-	}
-	bool needs_cast = false;
-	for (idx_t i = 0; i < return_types.size(); i++) {
-		needs_cast = needs_cast || MacroFunction::ResultNeedsCast(query.types[i], return_types[i]);
-	}
-	if (!needs_cast) {
-		return;
-	}
-	const auto bindings = query.plan->GetColumnBindings();
-	vector<unique_ptr<Expression>> columns;
-	for (idx_t i = 0; i < query.types.size(); i++) {
-		unique_ptr<Expression> column = make_uniq<BoundColumnRefExpression>(query.types[i], bindings[i]);
-		if (i < return_types.size() && MacroFunction::ResultNeedsCast(query.types[i], return_types[i])) {
-			column = BoundCastExpression::AddCastToType(context, std::move(column), return_types[i]);
+static vector<LogicalType> ReturnTypesOf(const BoundStatement &query, const vector<LogicalType> &return_types) {
+	auto targets = query.types;
+	if (return_types.size() <= targets.size()) {
+		for (idx_t i = 0; i < return_types.size(); i++) {
+			if (MacroFunction::ResultNeedsCast(targets[i], return_types[i])) {
+				targets[i] = return_types[i];
+			}
 		}
-		query.types[i] = column->GetReturnType();
-		columns.emplace_back(std::move(column));
 	}
-	auto projection = make_uniq<LogicalProjection>(binder.GenerateTableIndex(), std::move(columns));
-	projection->AddChild(std::move(query.plan));
-	query.plan = std::move(projection);
+	return targets;
 }
 
 static void RejectColumnDefinitions(const TableFunctionRef &ref, const MacroFunction &definition) {
@@ -581,7 +566,9 @@ BoundStatement Binder::Bind(TableFunctionRef &ref) {
 			error.AddQueryLocation(ref);
 			error.Throw();
 		}
-		CastToReturnTypes(*this, context, query, definition->return_types);
+		auto targets = ReturnTypesOf(query, definition->return_types);
+		query.plan = CastLogicalOperatorToTypes(query.types, targets, std::move(query.plan));
+		query.types = std::move(targets);
 		auto base_column_name = ApplyPostgresBaseResultAlias(*definition, ref, query.names);
 		auto bind_index = query.plan->GetRootIndex();
 		string alias =

@@ -65,49 +65,6 @@
 
 namespace duckdb {
 
-static bool IsAssignmentCast(ClientContext &context, const LogicalType &source, const LogicalType &target) {
-	if (StructType::IsStruct(source) && StructType::IsStruct(target)) {
-		auto &source_fields = StructType::GetChildTypes(source);
-		auto &target_fields = StructType::GetChildTypes(target);
-		if (source_fields.size() != target_fields.size()) {
-			return false;
-		}
-		for (idx_t i = 0; i < source_fields.size(); i++) {
-			if (!IsAssignmentCast(context, source_fields[i].second, target_fields[i].second)) {
-				return false;
-			}
-		}
-		return true;
-	}
-	if (source.id() == LogicalTypeId::LIST && target.id() == LogicalTypeId::LIST) {
-		return IsAssignmentCast(context, ListType::GetChildType(source), ListType::GetChildType(target));
-	}
-	if (source.id() == LogicalTypeId::ARRAY && target.id() == LogicalTypeId::ARRAY) {
-		return IsAssignmentCast(context, ArrayType::GetChildType(source), ArrayType::GetChildType(target));
-	}
-	if (CastFunctionSet::ImplicitCastCost(context, source, target) >= 0) {
-		return true;
-	}
-	if (source.IsNumeric() && target.IsNumeric()) {
-		return true;
-	}
-	if (target.id() == LogicalTypeId::VARCHAR && (!target.HasAlias() || target.GetAlias() == "name")) {
-		return true;
-	}
-	const auto from = source.id();
-	const auto to = target.id();
-	if (LogicalType::TypeIsTimestamp(from)) {
-		const bool zoned = from == LogicalTypeId::TIMESTAMP_TZ;
-		return to == LogicalTypeId::DATE || to == LogicalTypeId::TIME ||
-		       (LogicalType::TypeIsTimestamp(to) && zoned == (to == LogicalTypeId::TIMESTAMP_TZ)) ||
-		       (zoned && (to == LogicalTypeId::TIMESTAMP || to == LogicalTypeId::TIME_TZ));
-	}
-	if (from == LogicalTypeId::TIME) {
-		return to == LogicalTypeId::INTERVAL || to == LogicalTypeId::TIME_TZ;
-	}
-	return (from == LogicalTypeId::TIME_TZ || from == LogicalTypeId::INTERVAL) && to == LogicalTypeId::TIME;
-}
-
 static LogicalType WithoutTypmod(const LogicalType &type) {
 	if (type.HasAlias()) {
 		return type;
@@ -722,7 +679,8 @@ SchemaCatalogEntry &Binder::BindCreateFunctionInfo(CreateInfo &info) {
 			if (actual == expected) {
 				return true;
 			}
-			return IsAssignmentCast(context, actual, expected);
+			GetCastFunctionInput input(context);
+			return !CastFunctionSet::Get(context).GetCastFunction(actual, expected, input).IsNullCast();
 		};
 		for (auto &return_type : function->return_types) {
 			BindLogicalType(return_type);

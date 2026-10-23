@@ -746,7 +746,6 @@ public:
 	                                                           ParseResultAllocator &parse_result_allocator,
 	                                                           idx_t &height);
 	static ParseResult &ExtractResultFromParens(ParseResult &parse_result);
-	static KeywordParseResult &FirstKeyword(ParseResult &parse_result);
 	static vector<reference<ParseResult>> ExtractParseResultsFromList(ParseResult &parse_result);
 	static bool ExpressionIsEmptyStar(const ParsedExpression &expr);
 	static QualifiedName StringToQualifiedName(std::span<const string> input);

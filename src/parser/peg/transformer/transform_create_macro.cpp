@@ -57,11 +57,7 @@ static void ReplacePositionalParams(unique_ptr<ParsedExpression> &expr, const ve
 
 static void ReplacePositionalParamsInQuery(QueryNode &node, const vector<Identifier> &param_names) {
 	ParsedExpressionIterator::EnumerateQueryNodeChildren(
-	    node, [&](unique_ptr<ParsedExpression> &child) { ReplacePositionalParams(child, param_names); },
-	    [&](TableRef &ref) {
-		    ParsedExpressionIterator::EnumerateTableRefChildren(
-		        ref, [&](unique_ptr<ParsedExpression> &child) { ReplacePositionalParams(child, param_names); });
-	    });
+	    node, [&](unique_ptr<ParsedExpression> &child) { ReplacePositionalParams(child, param_names); });
 }
 
 static void ApplyPositionalParamRewrite(MacroFunction &macro) {
@@ -200,14 +196,9 @@ static void ApplyFunctionDecorators(PEGTransformer &transformer, RepeatParseResu
 }
 
 static void MoveMacroProperties(MacroFunction &source, MacroFunction &target) {
-	target.parameters = std::move(source.parameters);
-	target.default_parameters = std::move(source.default_parameters);
-	target.types = std::move(source.types);
-	target.return_types = std::move(source.return_types);
-	target.return_names = std::move(source.return_names);
-	target.parameter_modes = std::move(source.parameter_modes);
-	target.is_procedure = source.is_procedure;
-	target.source = std::move(source.source);
+	const auto type = target.type;
+	source.CopyProperties(target);
+	target.type = type;
 }
 
 static unique_ptr<MacroFunction> TableMacro(MacroFunction &source, unique_ptr<QueryNode> query_node) {
@@ -491,30 +482,27 @@ vector<MacroParameter> PEGTransformerFactory::TransformMacroParameters(PEGTransf
 	return macro_parameter;
 }
 
-static char TransformParameterMode(ParseResult &mode_pr) {
-	const auto keyword = StringUtil::Upper(PEGTransformerFactory::FirstKeyword(mode_pr).keyword);
-	if (keyword == "OUT") {
-		return 'o';
-	}
-	if (keyword == "INOUT") {
-		return 'b';
-	}
-	if (keyword == "VARIADIC") {
-		throw NotImplementedException("VARIADIC parameters are not supported");
-	}
+char PEGTransformerFactory::TransformInArgMode(PEGTransformer &transformer) {
 	return 'i';
 }
 
-// ModeParameter <- FuncArgMode TypeFuncName Type?
-MacroParameter PEGTransformerFactory::TransformModeParameter(PEGTransformer &transformer, ParseResult &parse_result) {
-	auto &list_pr = parse_result.Cast<ListParseResult>();
-	optional<LogicalType> type;
-	auto &type_pr = list_pr.Child<OptionalParseResult>(2);
-	if (type_pr.HasResult()) {
-		type = transformer.Transform<LogicalType>(type_pr.GetResult());
-	}
-	auto result = TransformSimpleParameter(transformer, transformer.Transform<Identifier>(list_pr.GetChild(1)), type);
-	result.mode = TransformParameterMode(list_pr.GetChild(0));
+char PEGTransformerFactory::TransformOutArgMode(PEGTransformer &transformer) {
+	return 'o';
+}
+
+char PEGTransformerFactory::TransformInoutArgMode(PEGTransformer &transformer) {
+	return 'b';
+}
+
+char PEGTransformerFactory::TransformVariadicArgMode(PEGTransformer &transformer) {
+	throw NotImplementedException("VARIADIC parameters are not supported");
+}
+
+MacroParameter PEGTransformerFactory::TransformModeParameter(PEGTransformer &transformer, char func_arg_mode,
+                                                             const Identifier &type_func_name,
+                                                             const optional<LogicalType> &type) {
+	auto result = TransformSimpleParameter(transformer, type_func_name, type);
+	result.mode = func_arg_mode;
 	return result;
 }
 
