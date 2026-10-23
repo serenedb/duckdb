@@ -26,7 +26,6 @@ struct LambdaFunctionData : public FunctionData {
 	}
 
 	DUCKDB_API virtual optional_ptr<const Expression> GetLambdaExpression() const = 0;
-	DUCKDB_API virtual void SetLambdaExpression(shared_ptr<Expression> expr) = 0;
 	//! Rebuilds the BoundLambdaExpression child from the bind data. Plans serialized before the lambda was
 	//! kept in the children do not contain it, so it has to be recovered when they are deserialized.
 	//! Returns nullptr if this bind data carries no lambda (e.g. a NULL list argument).
@@ -69,10 +68,6 @@ public:
 
 	optional_ptr<const Expression> GetLambdaExpression() const override {
 		return lambda_expr.get();
-	}
-
-	void SetLambdaExpression(shared_ptr<Expression> expr) override {
-		lambda_expr = std::move(expr);
 	}
 
 	//! Defined inline so that this class keeps emitting its vtable in every translation unit that uses it -

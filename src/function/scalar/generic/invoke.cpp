@@ -69,10 +69,6 @@ struct LambdaInvokeData final : public LambdaFunctionData {
 	optional_ptr<const Expression> GetLambdaExpression() const override {
 		return lambda_expr.get();
 	}
-
-	void SetLambdaExpression(shared_ptr<Expression> expr) override {
-		lambda_expr = std::move(expr);
-	}
 };
 
 struct LambdaInvokeState final : public FunctionLocalState {
