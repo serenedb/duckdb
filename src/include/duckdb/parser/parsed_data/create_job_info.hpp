@@ -11,6 +11,7 @@
 #include "duckdb/catalog/job_schedule.hpp"
 #include "duckdb/parser/parsed_data/create_info.hpp"
 #include "duckdb/parser/parsed_data/job_schedule_info.hpp"
+#include "duckdb/parser/parser_options.hpp"
 #include "duckdb/parser/sql_statement.hpp"
 
 namespace duckdb {
@@ -20,6 +21,7 @@ struct CreateJobInfo : public CreateInfo {
 	}
 
 	static bool IsScript(const vector<unique_ptr<SQLStatement>> &body);
+	static bool CarriesScript(const SQLStatement &statement);
 	static string BodyToString(const vector<unique_ptr<SQLStatement>> &body);
 	static vector<unique_ptr<SQLStatement>> CopyBody(const vector<unique_ptr<SQLStatement>> &body);
 	void SetBody(const string &sql);
@@ -27,6 +29,7 @@ struct CreateJobInfo : public CreateInfo {
 	JobSchedule schedule;
 	bool suspended = false;
 	vector<unique_ptr<SQLStatement>> body;
+	ParserOptions body_parser_options = ParserOptions::Builtin();
 	unique_ptr<JobScheduleInfo> parsed_schedule;
 
 public:

@@ -7,6 +7,14 @@
 
 namespace duckdb {
 
+static ParserOptions JobBodyParserOptions(const ParserOptions &statement_options) {
+	auto options = ParserOptions::Builtin();
+	options.identifier_case_mode = statement_options.identifier_case_mode;
+	options.integer_division = statement_options.integer_division;
+	options.regex_match_operator_semantics = statement_options.regex_match_operator_semantics;
+	return options;
+}
+
 unique_ptr<CreateStatement>
 PEGTransformerFactory::TransformCreateJobStmt(PEGTransformer &transformer, const optional<bool> &if_not_exists,
                                               const QualifiedName &qualified_name, JobScheduleInfo job_schedule,
@@ -15,6 +23,10 @@ PEGTransformerFactory::TransformCreateJobStmt(PEGTransformer &transformer, const
 	if (statement->type == StatementType::MULTI_STATEMENT && statement->query.empty()) {
 		throw ParserException(
 		    "CREATE JOB body cannot be a statement that runs as several statements, unless it is quoted: AS $$ ... $$");
+	}
+	if (statement->type != StatementType::MULTI_STATEMENT && CreateJobInfo::CarriesScript(*statement)) {
+		throw ParserException(
+		    "CREATE JOB body cannot create a job whose body is quoted, unless it is quoted: AS $$ ... $$");
 	}
 	if (transformer.ParamCount() > 0) {
 		throw ParserException("CREATE JOB cannot have parameters");
@@ -29,6 +41,9 @@ PEGTransformerFactory::TransformCreateJobStmt(PEGTransformer &transformer, const
 	if (info->body.size() == 1 && info->body[0]->type == StatementType::TRANSACTION_STATEMENT) {
 		throw ParserException("CREATE JOB body cannot be a transaction statement");
 	}
+	if (CreateJobInfo::IsScript(info->body)) {
+		info->body_parser_options = JobBodyParserOptions(transformer.options);
+	}
 	info->SetQualifiedName(qualified_name);
 	info->on_conflict = if_not_exists ? OnCreateConflict::IGNORE_ON_CONFLICT : OnCreateConflict::ERROR_ON_CONFLICT;
 	info->parsed_schedule = make_uniq<JobScheduleInfo>(std::move(job_schedule));
@@ -39,7 +54,7 @@ PEGTransformerFactory::TransformCreateJobStmt(PEGTransformer &transformer, const
 
 unique_ptr<SQLStatement> PEGTransformerFactory::TransformJobScript(PEGTransformer &transformer,
                                                                    const string &string_literal) {
-	auto parser = Parser::GetBuiltinParser();
+	Parser parser(JobBodyParserOptions(transformer.options));
 	parser.ParseQuery(string_literal);
 	if (parser.statements.empty()) {
 		throw ParserException("CREATE JOB body cannot be empty");

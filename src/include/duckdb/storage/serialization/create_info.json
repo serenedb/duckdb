@@ -929,6 +929,27 @@
         "name": "body",
         "type": "string",
         "serialize_property": "BodyToString(body)"
+      },
+      {
+        "id": 204,
+        "name": "body_identifier_case_mode",
+        "type": "IdentifierCaseMode",
+        "property": "body_parser_options.identifier_case_mode",
+        "default": "IdentifierCaseMode::PRESERVE_CASE"
+      },
+      {
+        "id": 205,
+        "name": "body_integer_division",
+        "type": "bool",
+        "property": "body_parser_options.integer_division",
+        "default": false
+      },
+      {
+        "id": 206,
+        "name": "body_regex_match_operator_semantics",
+        "type": "RegexMatchOperatorSemantics",
+        "property": "body_parser_options.regex_match_operator_semantics",
+        "default": "RegexMatchOperatorSemantics::PARTIAL"
       }
     ],
     "methods": {
