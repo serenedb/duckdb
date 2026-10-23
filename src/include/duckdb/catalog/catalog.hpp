@@ -78,7 +78,6 @@ class DependencyManager;
 
 struct CatalogLookup;
 struct CatalogEntryLookup;
-struct ResolvedSearchPath;
 struct SimilarCatalogEntry;
 
 class Binder;
@@ -606,11 +605,6 @@ private:
 	static CatalogEntryLookup TryLookupEntry(CatalogEntryRetriever &retriever, const vector<CatalogLookup> &lookups,
 	                                         const EntryLookupInfo &lookup_info, OnEntryNotFound if_not_found,
 	                                         bool allow_default_lookup);
-	static optional_ptr<ResolvedSearchPath> ResolveSearchPath(CatalogEntryRetriever &retriever, CatalogType type,
-	                                                          const Identifier &schema);
-	static CatalogEntryLookup TryLookupEntry(CatalogEntryRetriever &retriever, ResolvedSearchPath &path,
-	                                         const EntryLookupInfo &lookup_info);
-	static bool HasDefaultTables(CatalogEntryRetriever &retriever);
 
 	//! Looks for a Catalog with a DefaultTable that matches the lookup
 	static CatalogEntryLookup TryLookupDefaultTable(CatalogEntryRetriever &retriever,
