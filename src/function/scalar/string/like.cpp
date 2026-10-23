@@ -273,7 +273,7 @@ struct LikeSegment {
 
 struct LikeMatcher : public FunctionData {
 	LikeMatcher(string like_pattern_p, bool has_escape, char escape, vector<LikeSegment> segments,
-	            bool has_start_percentage, bool has_end_percentage, unique_ptr<duckdb_re2::SegmentPlan> plan_p)
+	            bool has_start_percentage, bool has_end_percentage, shared_ptr<const duckdb_re2::SegmentPlan> plan_p)
 	    : like_pattern(std::move(like_pattern_p)), has_escape(has_escape), escape(escape),
 	      segments(std::move(segments)), has_start_percentage(has_start_percentage),
 	      has_end_percentage(has_end_percentage), plan(std::move(plan_p)) {
@@ -352,11 +352,8 @@ struct LikeMatcher : public FunctionData {
 	}
 
 	unique_ptr<FunctionData> Copy() const override {
-		if (plan) {
-			return CreateLikeMatcher(like_pattern, has_escape, escape);
-		}
 		return make_uniq<LikeMatcher>(like_pattern, has_escape, escape, segments, has_start_percentage,
-		                              has_end_percentage, nullptr);
+		                              has_end_percentage, plan);
 	}
 
 	bool Equals(const FunctionData &other_p) const override {
@@ -381,9 +378,10 @@ private:
 			}
 			if (ch == '_') {
 				if (!single_characters) {
+					// underscore: could not create efficient like matcher
 					return nullptr;
 				}
-				unique_ptr<duckdb_re2::SegmentPlan> plan(
+				shared_ptr<const duckdb_re2::SegmentPlan> plan(
 				    duckdb_re2::SegmentPlan::MakeLike(like_pattern, has_escape, escape, true));
 				if (!plan) {
 					return nullptr;
@@ -395,10 +393,12 @@ private:
 				literal += ch;
 				continue;
 			}
+			// special character, push a constant pattern
 			if (!literal.empty()) {
 				segments.emplace_back(std::move(literal));
 				literal.clear();
 			}
+			// sample_size
 			if (i == 0) {
 				has_start_percentage = true;
 			}
@@ -422,7 +422,7 @@ private:
 	vector<LikeSegment> segments;
 	bool has_start_percentage;
 	bool has_end_percentage;
-	unique_ptr<duckdb_re2::SegmentPlan> plan;
+	shared_ptr<const duckdb_re2::SegmentPlan> plan;
 };
 
 unique_ptr<FunctionData> LikeBindFunction(BindScalarFunctionInput &input) {
@@ -576,6 +576,7 @@ void LikeMatchPatterns(LikeLocalState &lstate, const Vector &strings, const Vect
 			return;
 		}
 	}
+	// use generic like matcher
 	if (has_escape) {
 		BinaryExecutor::Execute<string_t, string_t, bool>(strings, patterns, result,
 		                                                  [&](string_t str, string_t pattern) {
@@ -630,6 +631,10 @@ bool HasNonAsciiLoweringToAscii(const char *data, idx_t size) {
 }
 
 struct ILikePattern {
+	bool MustLower(const string_t &str, idx_t ascii_end) const {
+		return !ascii || HasNonAsciiLoweringToAscii(str.GetData() + ascii_end, str.GetSize() - ascii_end);
+	}
+
 	template <class READER = StandardCharacterReader>
 	bool Match(string_t &str) {
 		if (!has_escape) {
@@ -654,6 +659,8 @@ struct ILikeMatcher {
 			memcpy(copy, lowered.pattern.GetData(), size);
 			lowered.pattern = string_t(copy, UnsafeNumericCast<uint32_t>(size));
 		}
+		// Build a case-insensitive matcher from the lowercased pattern. Returns null for patterns with '_' or only
+		// '%'; in that case we fall back to the generic matcher on the lowercased values.
 		matcher = LikeMatcher::CreateLiteralMatcher(string(lowered.pattern.GetData(), size), lowered.has_escape,
 		                                            lowered.escape);
 	}
@@ -677,7 +684,7 @@ struct ILikeMatcher {
 	}
 
 	DUCKDB_NOINLINE bool MatchNonAscii(string_t &str, idx_t ascii_end, ILikeBuffer &lowered_str) {
-		if (lowered.ascii && !HasNonAsciiLoweringToAscii(str.GetData() + ascii_end, str.GetSize() - ascii_end)) {
+		if (!lowered.MustLower(str, ascii_end)) {
 			return MatchUnlowered(str);
 		}
 		return MatchLowered(str, lowered_str);
@@ -712,6 +719,7 @@ struct ILikeLocalState : public FunctionLocalState {
 		return {lowered, has_escape, escape_char, ascii};
 	}
 
+	// reusable scratch buffer for lowercasing each string value (grown on demand)
 	ILikeBuffer str;
 	ILikeBuffer escaped;
 	ILikeBuffer pattern;
@@ -729,10 +737,8 @@ template <bool KNOWN_ASCII>
 bool ILikeOperatorFunction(ILikeLocalState &lstate, string_t str, string_t pattern, string_t escape) {
 	auto pat_lcase = lstate.LowerPattern(pattern, escape);
 	if (!KNOWN_ASCII) {
-		auto data = str.GetData();
-		auto size = str.GetSize();
-		auto ascii_end = FirstNonAscii(data, size);
-		if (ascii_end != size && (!pat_lcase.ascii || HasNonAsciiLoweringToAscii(data + ascii_end, size - ascii_end))) {
+		auto ascii_end = FirstNonAscii(str.GetData(), str.GetSize());
+		if (ascii_end != str.GetSize() && pat_lcase.MustLower(str, ascii_end)) {
 			auto str_lcase = lstate.str.Lower(str);
 			return pat_lcase.Match(str_lcase);
 		}
@@ -786,6 +792,8 @@ void ILikeConstantPattern(ILikeLocalState &lstate, const Vector &str_vec, string
 	});
 }
 
+// Execution function for ILIKE / NOT ILIKE ... ESCAPE. Mirrors ILikeFunction: when the pattern and escape are
+// both constant, lowercase the pattern once and reuse a scratch buffer for the per-row string lowercasing.
 template <bool INVERT>
 void ILikeEscapeFunction(DataChunk &args, ExpressionState &state, Vector &result) {
 	auto &lstate = ExecuteFunctionState::GetFunctionState(state)->Cast<ILikeLocalState>();
@@ -799,6 +807,7 @@ void ILikeEscapeFunction(DataChunk &args, ExpressionState &state, Vector &result
 		ILikeConstantPattern<INVERT, false>(lstate, str_vec, pattern, escape, result);
 		return;
 	}
+	// non-constant pattern/escape: fall back to the generic per-row implementation
 	TernaryExecutor::Execute<string_t, string_t, string_t, bool>(
 	    str_vec, pattern_vec, escape_vec, result, [&](string_t str, string_t pattern, string_t escape) {
 		    bool match = ILikeOperatorFunction<false>(lstate, str, pattern, escape);
@@ -806,6 +815,9 @@ void ILikeEscapeFunction(DataChunk &args, ExpressionState &state, Vector &result
 	    });
 }
 
+// Execution function for ILIKE / NOT ILIKE.
+// When the pattern is constant we lowercase it exactly once instead of once per row, and we reuse a single
+// scratch buffer to lowercase each string value instead of heap-allocating per row.
 template <bool INVERT, bool KNOWN_ASCII>
 void ILikeFunction(DataChunk &input, ExpressionState &state, Vector &result) {
 	auto &lstate = ExecuteFunctionState::GetFunctionState(state)->Cast<ILikeLocalState>();
@@ -816,6 +828,7 @@ void ILikeFunction(DataChunk &input, ExpressionState &state, Vector &result) {
 		ILikeConstantPattern<INVERT, KNOWN_ASCII>(lstate, input.data[0], pattern, escape, result);
 		return;
 	}
+	// non-constant pattern: fall back to the generic per-row implementation
 	BinaryExecutor::Execute<string_t, string_t, bool>(
 	    input.data[0], pattern_vec, result, [&](string_t str, string_t pattern) {
 		    bool match = ILikeOperatorFunction<KNOWN_ASCII>(lstate, str, pattern, escape);

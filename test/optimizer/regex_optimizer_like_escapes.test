@@ -1,0 +1,42 @@
+# name: test/optimizer/regex_optimizer_like_escapes.test
+# description: A regex rewritten to LIKE escapes the characters LIKE reads as special, a backslash included
+# group: [optimizer]
+
+statement ok
+CREATE TABLE t AS SELECT * FROM (VALUES ('C:\Windows\System32'), ('C:Windows'), ('a\xyz'), ('a%'), ('a%b'), ('axb'), ('a_c'), ('abc')) t(s);
+
+query III
+SELECT s, regexp_matches(s, '^C:\\Windows'), regexp_matches(s, '^a\\') FROM t ORDER BY s
+----
+C:Windows	false	false
+C:\Windows\System32	true	false
+a%	false	false
+a%b	false	false
+a\xyz	false	true
+a_c	false	false
+abc	false	false
+axb	false	false
+
+query III
+SELECT s, regexp_matches(s, '^a%.*$'), regexp_matches(s, '^a_c$') FROM t ORDER BY s
+----
+C:Windows	false	false
+C:\Windows\System32	false	false
+a%	true	false
+a%b	true	false
+a\xyz	false	false
+a_c	false	true
+abc	false	false
+axb	false	false
+
+query II
+SELECT s, regexp_matches(s, '\\.*System') FROM t ORDER BY s
+----
+C:Windows	false
+C:\Windows\System32	true
+a%	false
+a%b	false
+a\xyz	false
+a_c	false
+abc	false
+axb	false
