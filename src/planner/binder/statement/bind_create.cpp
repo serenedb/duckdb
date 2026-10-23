@@ -65,18 +65,8 @@
 
 namespace duckdb {
 
-static bool IsTimestampType(const LogicalTypeId type) {
-	return type == LogicalTypeId::TIMESTAMP || type == LogicalTypeId::TIMESTAMP_TZ ||
-	       type == LogicalTypeId::TIMESTAMP_SEC || type == LogicalTypeId::TIMESTAMP_MS ||
-	       type == LogicalTypeId::TIMESTAMP_NS;
-}
-
-static bool IsRecordType(const LogicalType &type) {
-	return type.id() == LogicalTypeId::STRUCT || type.id() == LogicalTypeId::TUPLE;
-}
-
 static bool IsAssignmentCast(ClientContext &context, const LogicalType &source, const LogicalType &target) {
-	if (IsRecordType(source) && IsRecordType(target)) {
+	if (StructType::IsStruct(source) && StructType::IsStruct(target)) {
 		auto &source_fields = StructType::GetChildTypes(source);
 		auto &target_fields = StructType::GetChildTypes(target);
 		if (source_fields.size() != target_fields.size()) {
@@ -106,10 +96,10 @@ static bool IsAssignmentCast(ClientContext &context, const LogicalType &source, 
 	}
 	const auto from = source.id();
 	const auto to = target.id();
-	if (IsTimestampType(from)) {
+	if (LogicalType::TypeIsTimestamp(from)) {
 		const bool zoned = from == LogicalTypeId::TIMESTAMP_TZ;
 		return to == LogicalTypeId::DATE || to == LogicalTypeId::TIME ||
-		       (IsTimestampType(to) && zoned == (to == LogicalTypeId::TIMESTAMP_TZ)) ||
+		       (LogicalType::TypeIsTimestamp(to) && zoned == (to == LogicalTypeId::TIMESTAMP_TZ)) ||
 		       (zoned && (to == LogicalTypeId::TIMESTAMP || to == LogicalTypeId::TIME_TZ));
 	}
 	if (from == LogicalTypeId::TIME) {
@@ -734,6 +724,10 @@ SchemaCatalogEntry &Binder::BindCreateFunctionInfo(CreateInfo &info) {
 			}
 			return IsAssignmentCast(context, actual, expected);
 		};
+		for (auto &return_type : function->return_types) {
+			BindLogicalType(return_type);
+			return_type = WithoutTypmod(return_type);
+		}
 		if (info.type == CatalogType::MACRO_ENTRY) {
 			BoundSelectNode sel_node;
 			SelectBinder binder(*this, context, sel_node);
@@ -746,12 +740,6 @@ SchemaCatalogEntry &Binder::BindCreateFunctionInfo(CreateInfo &info) {
 			ExpressionBinder::QualifyColumnNames(*this, expression);
 			try {
 				auto &ret_types = function->return_types;
-				// Resolve UNBOUND types from the grammar to concrete LogicalTypes
-				// so downstream consumers (pg_proc, serialization) see real IDs.
-				for (auto &rt : ret_types) {
-					BindLogicalType(rt);
-					rt = WithoutTypmod(rt);
-				}
 				// PG-compat: RETURNS VOID functions evaluate to a single NULL row
 				// regardless of body. Replace the stored body with a NULL constant
 				// so downstream macro expansion can't trip over the body's actual
@@ -848,10 +836,6 @@ SchemaCatalogEntry &Binder::BindCreateFunctionInfo(CreateInfo &info) {
 			    });
 			try {
 				auto &declared = function->return_types;
-				for (auto &dt : declared) {
-					dummy_binder->BindLogicalType(dt);
-					dt = WithoutTypmod(dt);
-				}
 				auto bound = dummy_binder->Bind(*query_node);
 				if (should_create_dependencies && catalog.Compatibility() == SqlCompatibility::POSTGRES) {
 					ViewColumnDependencies(catalog, dependencies).VisitOperator(*bound.plan);

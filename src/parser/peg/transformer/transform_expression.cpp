@@ -519,33 +519,20 @@ PEGTransformerFactory::TransformParenthesisExpression(PEGTransformer &transforme
 
 unique_ptr<ParsedExpression>
 PEGTransformerFactory::TransformOverlapsExpression(PEGTransformer &transformer,
-                                                   vector<unique_ptr<ParsedExpression>> overlaps_row,
-                                                   vector<unique_ptr<ParsedExpression>> overlaps_row_1) {
-	if (overlaps_row.size() != 2) {
+                                                   unique_ptr<ParsedExpression> overlaps_row,
+                                                   unique_ptr<ParsedExpression> overlaps_row_1) {
+	auto &left = overlaps_row->Cast<FunctionExpression>().GetArgumentsMutable();
+	auto &right = overlaps_row_1->Cast<FunctionExpression>().GetArgumentsMutable();
+	if (left.size() != 2) {
 		throw ParserException("wrong number of parameters on left side of OVERLAPS expression");
 	}
-	if (overlaps_row_1.size() != 2) {
+	if (right.size() != 2) {
 		throw ParserException("wrong number of parameters on right side of OVERLAPS expression");
 	}
-	for (auto &bound : overlaps_row_1) {
-		overlaps_row.push_back(std::move(bound));
+	for (auto &bound : right) {
+		left.push_back(std::move(bound));
 	}
-	return make_uniq<FunctionExpression>("overlaps", std::move(overlaps_row));
-}
-
-vector<unique_ptr<ParsedExpression>>
-PEGTransformerFactory::TransformOverlapsRowConstructor(PEGTransformer &transformer,
-                                                       optional<vector<unique_ptr<ParsedExpression>>> expression) {
-	if (!expression) {
-		return {};
-	}
-	return std::move(*expression);
-}
-
-vector<unique_ptr<ParsedExpression>>
-PEGTransformerFactory::TransformOverlapsRowList(PEGTransformer &transformer,
-                                                vector<unique_ptr<ParsedExpression>> expression) {
-	return expression;
+	return make_uniq<FunctionExpression>("overlaps", std::move(left));
 }
 
 void PEGTransformerFactory::RemoveOrderQualificationRecursive(unique_ptr<ParsedExpression> &root_expr) {

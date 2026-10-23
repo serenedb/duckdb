@@ -125,6 +125,10 @@ Catalog &Catalog::GetCatalog(ClientContext &context, const Identifier &catalog_n
 	return GetCatalog(entry_retriever, catalog_name);
 }
 
+SqlCompatibility Catalog::DefaultCompatibility(ClientContext &context) {
+	return GetCatalog(context, DatabaseManager::GetDefaultDatabase(context)).Compatibility();
+}
+
 //===--------------------------------------------------------------------===//
 // Schema
 //===--------------------------------------------------------------------===//
@@ -859,8 +863,7 @@ vector<CatalogSearchEntry> GetCatalogEntries(CatalogEntryRetriever &retriever, c
 	} else if (IsInvalidCatalog(catalog)) {
 		const bool builtins_in_system_main =
 		    (schema == "pg_catalog" || (schema == "information_schema" && lookup_type == CatalogType::TYPE_ENTRY)) &&
-		    Catalog::GetCatalog(context, DatabaseManager::GetDefaultDatabase(context)).Compatibility() ==
-		        SqlCompatibility::POSTGRES;
+		    Catalog::DefaultCompatibility(context) == SqlCompatibility::POSTGRES;
 		auto catalogs = search_path.GetCatalogsForSchema(schema);
 		for (auto &catalog_name : catalogs) {
 			if (builtins_in_system_main && catalog_name == SYSTEM_CATALOG) {
@@ -1313,12 +1316,13 @@ optional_ptr<ResolvedSearchPath> Catalog::ResolveSearchPath(CatalogEntryRetrieve
 bool Catalog::HasDefaultTables(CatalogEntryRetriever &retriever) {
 	if (!retriever.default_tables) {
 		auto &context = retriever.GetContext();
-		bool found = ClientData::Get(context).temporary_objects->GetCatalog().HasDefaultTable() ||
-		             GetSystemCatalog(context).HasDefaultTable();
-		for (auto &database : DatabaseManager::Get(context).GetDatabases(context)) {
-			found = found || database->GetCatalog().HasDefaultTable();
-		}
-		retriever.default_tables = found;
+		const auto databases = DatabaseManager::Get(context).GetDatabases(context);
+		retriever.default_tables =
+		    ClientData::Get(context).temporary_objects->GetCatalog().HasDefaultTable() ||
+		    GetSystemCatalog(context).HasDefaultTable() ||
+		    std::any_of(databases.begin(), databases.end(), [](const shared_ptr<AttachedDatabase> &database) {
+			    return database->GetCatalog().HasDefaultTable();
+		    });
 	}
 	return *retriever.default_tables;
 }

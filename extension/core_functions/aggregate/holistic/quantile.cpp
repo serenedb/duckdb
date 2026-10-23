@@ -15,7 +15,6 @@
 #include "duckdb/execution/expression_executor.hpp"
 #include "duckdb/function/aggregate/list_aggregate.hpp"
 #include "duckdb/function/create_sort_key.hpp"
-#include "duckdb/main/database_manager.hpp"
 #include "duckdb/planner/expression.hpp"
 
 #include <cmath>
@@ -662,8 +661,7 @@ static Value CheckQuantile(const Value &quantile_val, bool postgres) {
 //! Binds the quantile parameter into the bind data. It stays part of the expression tree, and the aggregate is
 //! handed it along with the input - the update callbacks only consume the leading input argument
 static bool PostgresQuantile(ClientContext &context) {
-	return Catalog::GetCatalog(context, DatabaseManager::GetDefaultDatabase(context)).Compatibility() ==
-	       SqlCompatibility::POSTGRES;
+	return Catalog::DefaultCompatibility(context) == SqlCompatibility::POSTGRES;
 }
 
 unique_ptr<FunctionData> BindQuantile(BindAggregateFunctionInput &input) {

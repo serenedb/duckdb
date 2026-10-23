@@ -505,6 +505,7 @@ Expression:
     - FilterClauseContents
     - ParenthesisExpression
     - OverlapsExpression
+    - OverlapsRow
     - Indirection
     - CastOperator
     - DotOperator
@@ -726,9 +727,6 @@ ExpressionList:
     - MapStructExpression
     - MapStructField
     - ExtractArguments
-    - OverlapsRow
-    - OverlapsRowConstructor
-    - OverlapsRowList
     - NullIfArguments
     - PositionArguments
     - SubstringParameters

@@ -7,7 +7,6 @@
 #include "duckdb/common/vector_operations/ternary_executor.hpp"
 #include "duckdb/function/scalar/string_common.hpp"
 #include "duckdb/function/scalar/string_functions.hpp"
-#include "duckdb/main/database_manager.hpp"
 #include "duckdb/planner/expression/bound_constant_expression.hpp"
 #include "duckdb/planner/expression/bound_function_expression.hpp"
 #include "utf8proc.hpp"
@@ -450,8 +449,7 @@ unique_ptr<BaseStatistics> SubstringGraphemePropagateStats(ClientContext &contex
 
 unique_ptr<FunctionData> SubstringBind(BindScalarFunctionInput &input) {
 	auto &context = input.GetClientContext();
-	const auto postgres = Catalog::GetCatalog(context, DatabaseManager::GetDefaultDatabase(context)).Compatibility() ==
-	                      SqlCompatibility::POSTGRES;
+	const auto postgres = Catalog::DefaultCompatibility(context) == SqlCompatibility::POSTGRES;
 	if (postgres) {
 		auto &function = input.GetBoundFunction();
 		function.SetFunctionCallback(SubstringFunction<SubstringUnicodeOp, true>);

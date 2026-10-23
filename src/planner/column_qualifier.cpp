@@ -1,7 +1,6 @@
 #include "duckdb/planner/column_qualifier.hpp"
 
 #include "duckdb/catalog/catalog.hpp"
-#include "duckdb/main/database_manager.hpp"
 #include "duckdb/parser/parsed_expression_iterator.hpp"
 #include "duckdb/parser/expression/columnref_expression.hpp"
 #include "duckdb/parser/expression/constant_expression.hpp"
@@ -47,8 +46,7 @@ static std::string_view GetSQLValueFunctionName(ClientContext &context, const Id
 	}
 	auto postgres_it = postgres_value_functions.find(column_name.GetIdentifierName());
 	if (postgres_it == postgres_value_functions.end() ||
-	    Catalog::GetCatalog(context, DatabaseManager::GetDefaultDatabase(context)).Compatibility() !=
-	        SqlCompatibility::POSTGRES) {
+	    Catalog::DefaultCompatibility(context) != SqlCompatibility::POSTGRES) {
 		return {};
 	}
 	return postgres_it->second;

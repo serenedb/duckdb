@@ -127,6 +127,7 @@ public:
 	DUCKDB_API static Catalog &GetSystemCatalog(DatabaseInstance &db);
 	//! Get the specified Catalog from the ClientContext
 	DUCKDB_API static Catalog &GetCatalog(ClientContext &context, const Identifier &catalog_name);
+	DUCKDB_API static SqlCompatibility DefaultCompatibility(ClientContext &context);
 	//! Get the specified Catalog from the ClientContext
 	DUCKDB_API static Catalog &GetCatalog(CatalogEntryRetriever &retriever, const Identifier &catalog_name);
 	//! Get the specified Catalog from the DatabaseInstance

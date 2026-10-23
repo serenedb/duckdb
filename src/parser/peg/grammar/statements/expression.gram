@@ -129,9 +129,7 @@ ListComprehensionFilter <- 'IF' Expression
 ParensExpression <- Parens(Expression)
 
 OverlapsExpression <- OverlapsRow 'OVERLAPS' OverlapsRow
-OverlapsRow <- OverlapsRowConstructor / OverlapsRowList
-OverlapsRowConstructor <- 'ROW' Parens(List(Expression)?)
-OverlapsRowList <- Parens(List(Expression))
+OverlapsRow <- RowExpression / ParenthesisExpression
 
 # RUNNING and FINAL say how much of a MATCH_RECOGNIZE match the call below them reads. They are only
 # meaningful in MEASURES, which is where the binder checks for them.

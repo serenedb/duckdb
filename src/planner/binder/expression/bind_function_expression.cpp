@@ -10,7 +10,6 @@
 #include "duckdb/common/assert.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/function/function_binder.hpp"
-#include "duckdb/main/database_manager.hpp"
 #include "duckdb/parser/expression/cast_expression.hpp"
 #include "duckdb/parser/expression/constant_expression.hpp"
 #include "duckdb/parser/expression/function_expression.hpp"
@@ -299,8 +298,7 @@ CatalogEntry &ExpressionBinder::BindFunction(FunctionExpression &function) {
 }
 
 unique_ptr<TypeExpression> ExpressionBinder::FunctionStyleCastType(FunctionExpression &function) {
-	if (Catalog::GetCatalog(context, DatabaseManager::GetDefaultDatabase(context)).Compatibility() !=
-	    SqlCompatibility::POSTGRES) {
+	if (Catalog::DefaultCompatibility(context) != SqlCompatibility::POSTGRES) {
 		return nullptr;
 	}
 	auto &arguments = function.GetArguments();
@@ -443,10 +441,8 @@ BindResult ExpressionBinder::BindExpression(FunctionExpression &function, idx_t 
 		}
 		// PG compat: table functions in SELECT -> unnest their results as rows.
 		// Routes through SelectBinder::BindUnnest, sharing BoundUnnestNode with other SRFs.
-		const bool whole_row =
-		    func.get().type == CatalogType::TABLE_MACRO_ENTRY ||
-		    Catalog::GetCatalog(context, DatabaseManager::GetDefaultDatabase(context)).Compatibility() ==
-		        SqlCompatibility::POSTGRES;
+		const bool whole_row = func.get().type == CatalogType::TABLE_MACRO_ENTRY ||
+		                       Catalog::DefaultCompatibility(context) == SqlCompatibility::POSTGRES;
 		auto unnest_func = make_uniq<FunctionExpression>("unnest", vector<unique_ptr<ParsedExpression>> {});
 		unnest_func->GetArgumentsMutable().push_back(WrapTableFuncAsList(function.Copy(), whole_row));
 		if (whole_row) {

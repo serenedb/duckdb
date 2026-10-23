@@ -156,6 +156,27 @@ ParseResult &PEGTransformerFactory::ExtractResultFromParens(ParseResult &parse_r
 	return list_pr.GetChild(1);
 }
 
+KeywordParseResult &PEGTransformerFactory::FirstKeyword(ParseResult &parse_result) {
+	ParseResult *cur = &parse_result;
+	for (;;) {
+		switch (cur->type) {
+		case ParseResultType::KEYWORD:
+			return cur->Cast<KeywordParseResult>();
+		case ParseResultType::CHOICE:
+			cur = &cur->Cast<ChoiceParseResult>().GetResult();
+			break;
+		case ParseResultType::OPTIONAL:
+			cur = &cur->Cast<OptionalParseResult>().GetResult();
+			break;
+		case ParseResultType::LIST:
+			cur = &cur->Cast<ListParseResult>().GetChild(0);
+			break;
+		default:
+			return cur->Cast<KeywordParseResult>();
+		}
+	}
+}
+
 bool PEGTransformerFactory::ExpressionIsEmptyStar(const ParsedExpression &expr) {
 	if (expr.GetExpressionClass() != ExpressionClass::STAR) {
 		return false;

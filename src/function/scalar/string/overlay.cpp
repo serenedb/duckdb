@@ -2,7 +2,6 @@
 #include "duckdb/common/operator/add.hpp"
 #include "duckdb/function/scalar/string_common.hpp"
 #include "duckdb/function/scalar/string_functions.hpp"
-#include "duckdb/main/database_manager.hpp"
 
 namespace duckdb {
 
@@ -103,8 +102,7 @@ void OverlayFunction(DataChunk &args, ExpressionState &state, Vector &result) {
 
 unique_ptr<FunctionData> OverlayBind(BindScalarFunctionInput &input) {
 	auto &context = input.GetClientContext();
-	if (Catalog::GetCatalog(context, DatabaseManager::GetDefaultDatabase(context)).Compatibility() ==
-	    SqlCompatibility::POSTGRES) {
+	if (Catalog::DefaultCompatibility(context) == SqlCompatibility::POSTGRES) {
 		auto &function = input.GetBoundFunction();
 		function.SetFunctionCallback(OverlayFunction<true>);
 		function.SetFallible();

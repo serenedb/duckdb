@@ -492,15 +492,7 @@ vector<MacroParameter> PEGTransformerFactory::TransformMacroParameters(PEGTransf
 }
 
 static char TransformParameterMode(ParseResult &mode_pr) {
-	reference<ParseResult> result = mode_pr;
-	while (result.get().type != ParseResultType::KEYWORD) {
-		if (result.get().type == ParseResultType::CHOICE) {
-			result = result.get().Cast<ChoiceParseResult>().GetResult();
-		} else {
-			result = result.get().Cast<ListParseResult>().GetChild(0);
-		}
-	}
-	const auto keyword = StringUtil::Upper(result.get().Cast<KeywordParseResult>().keyword);
+	const auto keyword = StringUtil::Upper(PEGTransformerFactory::FirstKeyword(mode_pr).keyword);
 	if (keyword == "OUT") {
 		return 'o';
 	}
