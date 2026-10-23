@@ -55,6 +55,7 @@ struct TopNBoundaryValue {
 	mutex lock;
 	string boundary_value;
 	bool is_set = false;
+	atomic<idx_t> version {0};
 	Vector boundary_vector;
 	OrderModifiers boundary_modifiers;
 
@@ -68,6 +69,7 @@ struct TopNBoundaryValue {
 		if (!is_set || boundary_val < string_t(boundary_value)) {
 			boundary_value = boundary_val.GetString();
 			is_set = true;
+			version.fetch_add(1, std::memory_order_release);
 			if (op.dynamic_filter) {
 				// DecodeSortKey only ever clears validity, so the reused vector has to start out valid:
 				// otherwise the first NULL boundary pins every later one to NULL and the filter never arms.
@@ -115,6 +117,7 @@ public:
 	DataChunk boundary_values;
 	//! Cached global boundary value in sort-key format
 	string boundary_val;
+	idx_t boundary_version = 0;
 	SelectionVector final_sel;
 	SelectionVector true_sel;
 	SelectionVector false_sel;
@@ -280,15 +283,13 @@ void TopNHeap::AddLargeHeap(DataChunk &input, const Vector &sort_keys_vec) {
 }
 
 bool TopNHeap::CheckBoundaryValues(DataChunk &sort_chunk, DataChunk &payload, TopNBoundaryValue &global_boundary) {
-	// get the global boundary value
-	auto current_boundary_val = global_boundary.GetBoundaryValue();
-	if (current_boundary_val.empty()) {
-		// no boundary value (yet) - don't do anything
+	const auto version = global_boundary.version.load(std::memory_order_acquire);
+	if (version == 0) {
 		return true;
 	}
-	if (current_boundary_val != boundary_val) {
-		// new boundary value - decode
-		boundary_val = std::move(current_boundary_val);
+	if (version != boundary_version) {
+		boundary_version = version;
+		boundary_val = global_boundary.GetBoundaryValue();
 		boundary_values.Reset();
 		CreateSortKeyHelpers::DecodeSortKey(string_t(boundary_val), boundary_values, 0, modifiers);
 		for (auto &col : boundary_values.data) {
