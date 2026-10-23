@@ -22,7 +22,6 @@ namespace duckdb {
 //! Copies of blocks that exist elsewhere are dropped when the slots run out; copies of unbacked blocks never are.
 class BlockCacheSpill {
 public:
-	explicit BlockCacheSpill(idx_t slot_size);
 	~BlockCacheSpill();
 
 	//! Spills into [path], keeping at most [backed_limit] bytes of blocks that exist elsewhere
@@ -53,7 +52,6 @@ private:
 	void Release(Slots::iterator entry) DUCKDB_REQUIRES(lock);
 	bool DropOldestBacked() DUCKDB_REQUIRES(lock);
 
-	const idx_t slot_size;
 	mutable annotated_mutex lock;
 	unique_ptr<FileHandle> handle DUCKDB_GUARDED_BY(lock);
 	idx_t backed_limit DUCKDB_GUARDED_BY(lock) = 0;
