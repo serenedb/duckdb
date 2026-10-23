@@ -9,8 +9,8 @@
 #pragma once
 
 #include "duckdb/common/common.hpp"
-#include "duckdb/common/deque.hpp"
 #include "duckdb/common/file_system.hpp"
+#include "duckdb/common/list.hpp"
 #include "duckdb/common/mutex.hpp"
 #include "duckdb/common/unique_ptr.hpp"
 #include "duckdb/common/unordered_map.hpp"
@@ -45,6 +45,8 @@ private:
 	struct Slot {
 		uint32_t index;
 		bool keep;
+		//! The place of a copy that may be dropped in backed_order
+		list<uint64_t>::iterator order;
 	};
 	using Slots = unordered_map<uint64_t, Slot>;
 
@@ -55,11 +57,10 @@ private:
 	mutable annotated_mutex lock;
 	unique_ptr<FileHandle> handle DUCKDB_GUARDED_BY(lock);
 	idx_t backed_limit DUCKDB_GUARDED_BY(lock) = 0;
-	idx_t backed_count DUCKDB_GUARDED_BY(lock) = 0;
 	vector<uint32_t> free_slots DUCKDB_GUARDED_BY(lock);
 	Slots slots DUCKDB_GUARDED_BY(lock);
 	//! Backed copies in the order they were written, dropped oldest first
-	deque<uint64_t> backed_order DUCKDB_GUARDED_BY(lock);
+	list<uint64_t> backed_order DUCKDB_GUARDED_BY(lock);
 };
 
 } // namespace duckdb
