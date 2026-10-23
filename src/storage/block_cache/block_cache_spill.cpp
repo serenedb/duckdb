@@ -11,9 +11,6 @@ constexpr idx_t GROW_SLOTS = 64;
 
 } // namespace
 
-BlockCacheSpill::BlockCacheSpill(idx_t slot_size_p) : slot_size(slot_size_p) {
-}
-
 BlockCacheSpill::~BlockCacheSpill() {
 	annotated_lock_guard<annotated_mutex> guard(lock);
 	if (!handle) {
@@ -27,7 +24,7 @@ BlockCacheSpill::~BlockCacheSpill() {
 
 void BlockCacheSpill::Configure(FileSystem &fs, const string &path, idx_t backed_limit_p) {
 	annotated_lock_guard<annotated_mutex> guard(lock);
-	backed_limit = backed_limit_p / slot_size;
+	backed_limit = backed_limit_p / BlockCache::BLOCK_SIZE;
 	if (handle && handle->GetPath() == path) {
 		while (backed_count > backed_limit && DropOldestBacked()) {
 		}
@@ -117,7 +114,7 @@ bool BlockCacheSpill::Write(uint64_t key, data_ptr_t data, bool keep) {
 	}
 	const auto index = AcquireSlot();
 	try {
-		handle->Write(QueryContext(), data, slot_size, index * slot_size);
+		handle->Write(QueryContext(), data, BlockCache::BLOCK_SIZE, index * BlockCache::BLOCK_SIZE);
 	} catch (...) {
 		free_slots.push_back(index);
 		return false;
@@ -136,7 +133,7 @@ bool BlockCacheSpill::Read(uint64_t key, data_ptr_t data) {
 	if (entry == slots.end()) {
 		return false;
 	}
-	handle->Read(data, slot_size, entry->second.index * slot_size);
+	handle->Read(data, BlockCache::BLOCK_SIZE, entry->second.index * BlockCache::BLOCK_SIZE);
 	return true;
 }
 

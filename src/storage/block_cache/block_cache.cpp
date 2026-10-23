@@ -239,7 +239,7 @@ private:
 //===--------------------------------------------------------------------===//
 
 BlockCache::BlockCache(DatabaseInstance &db_p, idx_t capacity)
-    : db(db_p), buffer_pool(BufferManager::GetBufferManager(db_p).GetBufferPool()), spill(BLOCK_SIZE) {
+    : db(db_p), buffer_pool(BufferManager::GetBufferManager(db_p).GetBufferPool()) {
 	frame_count = NumericCast<uint32_t>(MaxValue<idx_t>(1, capacity / BLOCK_SIZE));
 	region_size = frame_count * BLOCK_SIZE;
 	region = MapRegion(region_size);
