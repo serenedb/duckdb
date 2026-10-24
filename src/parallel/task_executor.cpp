@@ -100,11 +100,13 @@ private:
 };
 
 TaskExecutor::TaskExecutor(TaskScheduler &scheduler, TaskSchedulerType type_p)
-    : scheduler(scheduler), type(type_p), token(scheduler.CreateProducer()) {
+    : scheduler(scheduler), type(type_p == TaskSchedulerType::ASYNC ? scheduler.AsyncPool() : type_p),
+      token(scheduler.CreateProducer()) {
 }
 
 TaskExecutor::TaskExecutor(TaskScheduler &scheduler, shared_ptr<SchedulerAccount> account, TaskSchedulerType type_p)
-    : scheduler(scheduler), type(type_p), token(scheduler.CreateProducer(std::move(account))) {
+    : scheduler(scheduler), type(type_p == TaskSchedulerType::ASYNC ? scheduler.AsyncPool() : type_p),
+      token(scheduler.CreateProducer(std::move(account))) {
 }
 
 TaskExecutor::TaskExecutor(ClientContext &context_p, TaskSchedulerType type_p)

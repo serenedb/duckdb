@@ -1248,9 +1248,7 @@ void BlockCache::ScheduleFetch(const shared_ptr<BlockCacheFile> &file, const Run
 		}
 	}
 	auto &scheduler = TaskScheduler::GetScheduler(db);
-	auto &producer_token = Producer();
-	const auto pool = scheduler.NumberOfAsyncThreads() == 0 ? TaskSchedulerType::REGULAR : TaskSchedulerType::ASYNC;
-	scheduler.ScheduleTask(producer_token, std::move(task), pool);
+	scheduler.ScheduleTask(Producer(), std::move(task), scheduler.AsyncPool());
 }
 
 BlockCachePin BlockCache::CreateBlock(BlockCacheFile &file, idx_t block) {

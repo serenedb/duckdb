@@ -71,6 +71,8 @@ public:
 	DUCKDB_API static idx_t QueryThreads(ClientContext &context);
 	//! Returns the number of async threads
 	DUCKDB_API idx_t NumberOfAsyncThreads();
+	//! The pool for blocking work outside a client context: the async pool when it has threads, else the regular one
+	DUCKDB_API TaskSchedulerType AsyncPool();
 	DUCKDB_API static idx_t QueryAsyncThreads(ClientContext &context);
 	DUCKDB_API static TaskSchedulerType QueryAsyncPool(ClientContext &context);
 
