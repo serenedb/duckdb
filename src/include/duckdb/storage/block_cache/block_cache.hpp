@@ -391,7 +391,8 @@ private:
 	//! One past the highest frame ever handed out, the range the sampler draws from
 	atomic<uint32_t> high_water {0};
 
-	//! The translation table: twice as many buckets as frames, plus a type-stable overflow pool
+	//! The translation table: twice as many buckets as frames, plus a type-stable overflow pool whose entry [F] is the
+	//! overflow entry of the block in frame F, free once a frame is given up, since that unlinks its entry first
 	unique_ptr<BlockCacheBucket[]> buckets;
 	uint32_t bucket_mask = 0;
 	unique_ptr<BlockCacheEntry[]> pool;
@@ -399,8 +400,6 @@ private:
 	mutable annotated_mutex frame_lock;
 	//! Frames holding no block
 	vector<uint32_t> free_frames DUCKDB_GUARDED_BY(frame_lock);
-	//! Free overflow pool slots
-	vector<uint32_t> free_pool DUCKDB_GUARDED_BY(frame_lock);
 	//! Frames holding a block or about to, all of them reserved from the buffer pool
 	atomic<idx_t> used_frames {0};
 	//! Frames the cache may use
