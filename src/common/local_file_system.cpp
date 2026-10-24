@@ -854,6 +854,16 @@ bool LocalFileSystem::ListFilesExtended(const string &directory,
 	return true;
 }
 
+[[noreturn]] static void ThrowSyncFailure(const char *kind, const string &path, int error) {
+	// Use fatal exception to handle fsyncgate issue: `fsync` only reports EIO for once, which makes it unretriable and
+	// data loss unrecoverable.
+	if (error == EIO) {
+		throw FatalException("fsync of %s \"%s\" failed", kind, path);
+	}
+	// For other types of errors, throw normal IO exception.
+	throw IOException({{"errno", std::to_string(error)}}, "Could not fsync %s \"%s\": %s", kind, path, strerror(error));
+}
+
 void LocalFileSystem::FileSync(FileHandle &handle) {
 	auto &unix_handle = handle.Cast<UnixFileHandle>();
 	auto fsync_mode = unix_handle.db ? Settings::Get<FsyncModeSetting>(*unix_handle.db) : FileSyncMode::STANDARD;
@@ -879,15 +889,8 @@ void LocalFileSystem::FileSync(FileHandle &handle) {
 	if (sync_success) {
 		return;
 	}
-
-	// Use fatal exception to handle fsyncgate issue: `fsync` only reports EIO for once, which makes it unretriable and
-	// data loss unrecoverable.
-	if (errno == EIO) {
-		throw FatalException("fsync failed!");
-	}
-
-	// For other types of errors, throw normal IO exception.
-	throw IOException("Could not fsync file \"%s\": %s", handle.GetPath(), strerror(errno));
+	const int error = errno;
+	ThrowSyncFailure("file", handle.GetPath(), error);
 }
 
 void LocalFileSystem::HintWriteback(FileHandle &handle, idx_t location, idx_t nr_bytes) {
@@ -914,11 +917,7 @@ void LocalFileSystem::SyncDirectory(const string &directory, optional_ptr<FileOp
 	if (synced) {
 		return;
 	}
-	if (sync_errno == EIO) {
-		throw FatalException("fsync of directory \"%s\" failed", path);
-	}
-	throw IOException({{"errno", std::to_string(sync_errno)}}, "Could not fsync directory \"%s\": %s", path,
-	                  strerror(sync_errno));
+	ThrowSyncFailure("directory", path, sync_errno);
 }
 
 FileSyncParallelism LocalFileSystem::SyncParallelism(FileHandle &handle) {
