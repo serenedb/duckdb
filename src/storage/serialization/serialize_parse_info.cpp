@@ -567,6 +567,9 @@ void AttachInfo::Serialize(Serializer &serializer) const {
 	serializer.WritePropertyWithDefault<unordered_map<string, Value>>(202, "options", options);
 	serializer.WritePropertyWithDefault<OnCreateConflict>(203, "on_conflict", on_conflict, OnCreateConflict::ERROR_ON_CONFLICT);
 	serializer.WritePropertyWithDefault<unique_ptr<ExternalResourceOptions>>(204, "external_resource", external_resource);
+	if (serializer.ShouldSerialize(StorageVersion::SERENEDB_V1)) {
+		serializer.WritePropertyWithDefault<idx_t>(16589, "tablespace_oid", tablespace_oid, 0);
+	}
 }
 
 unique_ptr<ParseInfo> AttachInfo::Deserialize(Deserializer &deserializer) {
@@ -576,6 +579,7 @@ unique_ptr<ParseInfo> AttachInfo::Deserialize(Deserializer &deserializer) {
 	deserializer.ReadPropertyWithDefault<unordered_map<string, Value>>(202, "options", result->options);
 	deserializer.ReadPropertyWithExplicitDefault<OnCreateConflict>(203, "on_conflict", result->on_conflict, OnCreateConflict::ERROR_ON_CONFLICT);
 	deserializer.ReadPropertyWithDefault<unique_ptr<ExternalResourceOptions>>(204, "external_resource", result->external_resource);
+	deserializer.ReadPropertyWithExplicitDefault<idx_t>(16589, "tablespace_oid", result->tablespace_oid, 0);
 	return std::move(result);
 }
 
