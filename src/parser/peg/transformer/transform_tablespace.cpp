@@ -1,4 +1,3 @@
-#include "duckdb/common/string_util.hpp"
 #include "duckdb/parser/parsed_data/alter_tablespace_info.hpp"
 #include "duckdb/parser/parsed_data/create_tablespace_info.hpp"
 #include "duckdb/parser/peg/transformer/peg_transformer.hpp"
@@ -15,11 +14,7 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformCreateTablespaceStateme
 	info->SetName(transformer.Transform<Identifier>(list_pr.GetChild(2)));
 	auto &owner = list_pr.Child<OptionalParseResult>(3);
 	if (owner.HasResult()) {
-		auto &role =
-		    owner.GetResult().Cast<ListParseResult>().Child<ListParseResult>(1).Child<ChoiceParseResult>(0).GetResult();
-		info->owner = role.type == ParseResultType::KEYWORD
-		                  ? Identifier(StringUtil::Upper(role.Cast<KeywordParseResult>().keyword))
-		                  : transformer.Transform<Identifier>(role);
+		info->owner = TransformOwnerRoleSpec(transformer, owner.GetResult().Cast<ListParseResult>().GetChild(1));
 	}
 	info->location = transformer.Transform<string>(list_pr.GetChild(5));
 	auto result = make_uniq<CreateStatement>();
