@@ -13,6 +13,7 @@
 #include "duckdb/storage/buffer/block_handle.hpp"
 #include "duckdb/storage/buffer_manager.hpp"
 
+#include <absl/cleanup/cleanup.h>
 #include <cstring>
 
 #ifndef _WIN32
@@ -1044,6 +1045,54 @@ BlockCachePin BlockCache::ReadPrivate(BlockCacheFile &file, idx_t block) {
 	return result;
 }
 
+template <class MISSING, class ADMIT>
+BlockCache::RunPlan BlockCache::PlanRun(BlockCacheFile &file, idx_t block, idx_t end, uint64_t flags, MISSING &&missing,
+                                        ADMIT &&admit) {
+	RunPlan plan {Run {block, 0}, {}, 0, block, false};
+	plan.entries.reserve(MAX_REQUEST / BLOCK_SIZE);
+	absl::Cleanup abandon = [&] {
+		for (auto &entry : plan.entries) {
+			if (entry) {
+				FinishLoad(*entry, false);
+				Unpin(*entry);
+			}
+		}
+	};
+	idx_t gap = 0;
+	for (; plan.next < end && (plan.run.block_count + 1) * BLOCK_SIZE <= MAX_REQUEST; plan.next++) {
+		if (missing(plan.next)) {
+			const auto block_bytes = file.BlockBytes(plan.next);
+			uint32_t frame;
+			if (!admit(plan.bytes + block_bytes) || !AcquireFrame(frame)) {
+				plan.exhausted = true;
+				break;
+			}
+			auto entry = InsertLoading(MakeKey(file.number, plan.next), frame, flags);
+			if (entry) {
+				plan.entries.push_back(entry);
+				plan.run.block_count++;
+				plan.bytes += block_bytes;
+				gap = 0;
+				misses.fetch_add(1, std::memory_order_relaxed);
+				continue;
+			}
+			ReleaseFrame(frame);
+		}
+		if ((gap + 1) * BLOCK_SIZE > MERGE_GAP) {
+			break;
+		}
+		gap++;
+		plan.entries.push_back(nullptr);
+		plan.run.block_count++;
+	}
+	while (!plan.entries.empty() && !plan.entries.back()) {
+		plan.entries.pop_back();
+		plan.run.block_count--;
+	}
+	std::move(abandon).Cancel();
+	return plan;
+}
+
 vector<BlockCachePin> BlockCache::PinRange(const shared_ptr<BlockCacheFile> &file_p, idx_t offset, idx_t size) {
 	auto &file = *file_p;
 	vector<BlockCachePin> result;
@@ -1058,57 +1107,34 @@ vector<BlockCachePin> BlockCache::PinRange(const shared_ptr<BlockCacheFile> &fil
 	for (idx_t i = 0; i < count; i++) {
 		PinPresent(file, first + i, result[i]);
 	}
-	idx_t next = 0;
-	while (next < count) {
-		if (result[next].IsValid()) {
-			next++;
+	const auto missing = [&](idx_t block) {
+		return !result[block - first].IsValid();
+	};
+	for (auto block = first; block < first + count;) {
+		if (!missing(block)) {
+			block++;
 			continue;
 		}
-		Run run {first + next, 0};
-		vector<optional_ptr<BlockCacheEntry>> entries;
-		idx_t gap = 0;
-		for (idx_t i = next; i < count && (run.block_count + 1) * BLOCK_SIZE <= MAX_REQUEST; i++) {
-			if (!result[i].IsValid()) {
-				uint32_t frame;
-				if (!AcquireFrame(frame)) {
-					break;
-				}
-				auto entry = InsertLoading(MakeKey(file.number, first + i), frame, FileFlags(file));
-				if (!entry) {
-					ReleaseFrame(frame);
-					break;
-				}
-				result[i] = BlockCachePin(*this, *entry, nullptr, file.BlockBytes(first + i));
-				entries.push_back(entry);
-				run.block_count++;
-				gap = 0;
-				misses.fetch_add(1, std::memory_order_relaxed);
-				continue;
-			}
-			if ((gap + 1) * BLOCK_SIZE > MERGE_GAP) {
-				break;
-			}
-			gap++;
-			entries.push_back(nullptr);
-			run.block_count++;
-		}
-		while (!entries.empty() && !entries.back()) {
-			entries.pop_back();
-			run.block_count--;
-		}
-		if (entries.empty()) {
-			result[next] = Pin(file_p, first + next);
-			next++;
+		auto plan = PlanRun(file, block, first + count, FileFlags(file), missing, [](idx_t) { return true; });
+		if (plan.entries.empty()) {
+			result[block - first] = Pin(file_p, block);
+			block++;
 			continue;
 		}
-		Fetch(file, run, entries);
-		for (idx_t i = 0; i < run.block_count; i++) {
-			if (entries[i]) {
-				auto &pin = result[run.first_block - first + i];
-				pin.data = FrameData(entries[i]->frame.load(std::memory_order_relaxed));
+		for (idx_t i = 0; i < plan.run.block_count; i++) {
+			if (plan.entries[i]) {
+				result[plan.run.first_block - first + i] =
+				    BlockCachePin(*this, *plan.entries[i], nullptr, file.BlockBytes(plan.run.first_block + i));
 			}
 		}
-		next = run.first_block - first + run.block_count;
+		Fetch(file, plan.run, plan.entries);
+		for (idx_t i = 0; i < plan.run.block_count; i++) {
+			if (plan.entries[i]) {
+				result[plan.run.first_block - first + i].data =
+				    FrameData(plan.entries[i]->frame.load(std::memory_order_relaxed));
+			}
+		}
+		block = plan.next;
 	}
 	for (idx_t i = 0; i < count; i++) {
 		auto &pin = result[i];
@@ -1184,64 +1210,27 @@ void BlockCache::Prefetch(const shared_ptr<BlockCacheFile> &file_p, idx_t offset
 		return;
 	}
 	size = MinValue(size, file_size - offset);
-	const auto last = (offset + size - 1) / BLOCK_SIZE;
-	auto block = offset / BLOCK_SIZE;
-	while (block <= last) {
-		while (block <= last && FindEntry(MakeKey(file.number, block))) {
+	const auto end = (offset + size - 1) / BLOCK_SIZE + 1;
+	const auto missing = [&](idx_t block) {
+		return !FindEntry(MakeKey(file.number, block));
+	};
+	const auto admit = [&](idx_t bytes) {
+		return file.in_flight.load(std::memory_order_relaxed) + bytes <= MAX_FILE_IN_FLIGHT &&
+		       in_flight.load(std::memory_order_relaxed) + bytes <= MAX_IN_FLIGHT;
+	};
+	for (auto block = offset / BLOCK_SIZE; block < end;) {
+		if (!missing(block)) {
 			block++;
+			continue;
 		}
-		if (block > last) {
+		auto plan = PlanRun(file, block, end, FileFlags(file) | FLAG_PREFETCHED, missing, admit);
+		if (!plan.entries.empty()) {
+			ScheduleFetch(file_p, plan.run, std::move(plan.entries), plan.bytes);
+		}
+		if (plan.exhausted) {
 			return;
 		}
-		Run run {block, 0};
-		vector<optional_ptr<BlockCacheEntry>> entries;
-		idx_t gap = 0;
-		idx_t bytes = 0;
-		bool exhausted = false;
-		while (block <= last && (run.block_count + 1) * BLOCK_SIZE <= MAX_REQUEST) {
-			const auto key = MakeKey(file.number, block);
-			if (!FindEntry(key)) {
-				const auto block_bytes = file.BlockBytes(block);
-				if (file.in_flight.load(std::memory_order_relaxed) + bytes + block_bytes > MAX_FILE_IN_FLIGHT ||
-				    in_flight.load(std::memory_order_relaxed) + bytes + block_bytes > MAX_IN_FLIGHT) {
-					exhausted = true;
-					break;
-				}
-				uint32_t frame;
-				if (!AcquireFrame(frame)) {
-					exhausted = true;
-					break;
-				}
-				auto entry = InsertLoading(key, frame, FileFlags(file) | FLAG_PREFETCHED);
-				if (entry) {
-					entries.push_back(entry);
-					run.block_count++;
-					bytes += block_bytes;
-					gap = 0;
-					block++;
-					misses.fetch_add(1, std::memory_order_relaxed);
-					continue;
-				}
-				ReleaseFrame(frame);
-			}
-			if ((gap + 1) * BLOCK_SIZE > MERGE_GAP) {
-				break;
-			}
-			gap++;
-			entries.push_back(nullptr);
-			run.block_count++;
-			block++;
-		}
-		while (!entries.empty() && !entries.back()) {
-			entries.pop_back();
-			run.block_count--;
-		}
-		if (!entries.empty()) {
-			ScheduleFetch(file_p, run, std::move(entries), bytes);
-		}
-		if (exhausted) {
-			return;
-		}
+		block = plan.next;
 	}
 }
 
