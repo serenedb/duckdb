@@ -18,6 +18,8 @@ void CreateInfo::CopyProperties(CreateInfo &other) const {
 	other.comment = comment;
 	other.tags = tags;
 	other.permissions = permissions;
+	other.tablespace = tablespace;
+	other.tablespace_oid = tablespace_oid;
 }
 
 unique_ptr<AlterInfo> CreateInfo::GetAlterInfo() const {

@@ -3508,6 +3508,21 @@ static const TransformFrameOps SET_VALUE_ON_OPS = {"SetValueOn", &PEGTransformer
 static const TransformFrameOps SET_VALUE_OFF_OPS = {"SetValueOff",
                                                     &PEGTransformerFactory::InitializeSetValueOffTrampoline,
                                                     &PEGTransformerFactory::FinalizeSetValueOffTrampoline};
+static const TransformFrameOps CREATE_TABLESPACE_STATEMENT_OPS = {
+    "CreateTablespaceStatement", &PEGTransformerFactory::InitializeCreateTablespaceStatementTrampoline,
+    &PEGTransformerFactory::FinalizeCreateTablespaceStatementTrampoline};
+static const TransformFrameOps DROP_TABLESPACE_STATEMENT_OPS = {
+    "DropTablespaceStatement", &PEGTransformerFactory::InitializeDropTablespaceStatementTrampoline,
+    &PEGTransformerFactory::FinalizeDropTablespaceStatementTrampoline};
+static const TransformFrameOps ALTER_TABLESPACE_STATEMENT_OPS = {
+    "AlterTablespaceStatement", &PEGTransformerFactory::InitializeAlterTablespaceStatementTrampoline,
+    &PEGTransformerFactory::FinalizeAlterTablespaceStatementTrampoline};
+static const TransformFrameOps TABLESPACE_CLAUSE_OPS = {"TablespaceClause",
+                                                        &PEGTransformerFactory::InitializeTablespaceClauseTrampoline,
+                                                        &PEGTransformerFactory::FinalizeTablespaceClauseTrampoline};
+static const TransformFrameOps DATABASE_TABLESPACE_OPS = {
+    "DatabaseTablespace", &PEGTransformerFactory::InitializeDatabaseTablespaceTrampoline,
+    &PEGTransformerFactory::FinalizeDatabaseTablespaceTrampoline};
 static const TransformFrameOps TRANSACTION_STATEMENT_OPS = {
     "TransactionStatement", &PEGTransformerFactory::InitializeTransactionStatementTrampoline,
     &PEGTransformerFactory::FinalizeTransactionStatementTrampoline};
@@ -4852,6 +4867,11 @@ PEGTransformerFactory::GeneratedTransformFrameOps() {
 	    {"SetValue", &SET_VALUE_OPS},
 	    {"SetValueOn", &SET_VALUE_ON_OPS},
 	    {"SetValueOff", &SET_VALUE_OFF_OPS},
+	    {"CreateTablespaceStatement", &CREATE_TABLESPACE_STATEMENT_OPS},
+	    {"DropTablespaceStatement", &DROP_TABLESPACE_STATEMENT_OPS},
+	    {"AlterTablespaceStatement", &ALTER_TABLESPACE_STATEMENT_OPS},
+	    {"TablespaceClause", &TABLESPACE_CLAUSE_OPS},
+	    {"DatabaseTablespace", &DATABASE_TABLESPACE_OPS},
 	    {"TransactionStatement", &TRANSACTION_STATEMENT_OPS},
 	    {"BeginTransaction", &BEGIN_TRANSACTION_OPS},
 	    {"RollbackTransaction", &ROLLBACK_TRANSACTION_OPS},
@@ -9351,7 +9371,11 @@ arena_ptr<TransformResultValue> PEGTransformerFactory::FinalizeCopyDataTrampolin
 void PEGTransformerFactory::InitializeCreateDatabaseStatementTrampoline(PEGTransformer &transformer,
                                                                         GeneratedTransformProcess &process) {
 	auto &list_pr = process.parse_result.Cast<ListParseResult>();
-	process.ReserveChildSlots(2);
+	process.ReserveChildSlots(3);
+	auto &database_tablespace_opt = list_pr.GetChild(5).Cast<OptionalParseResult>();
+	if (database_tablespace_opt.HasResult()) {
+		process.PushChild({database_tablespace_opt.GetResult()}, 2);
+	}
 	auto &with_list_opt = list_pr.GetChild(4).Cast<OptionalParseResult>();
 	if (with_list_opt.HasResult()) {
 		process.PushChild({with_list_opt.GetResult()}, 1);
@@ -9375,7 +9399,12 @@ PEGTransformerFactory::FinalizeCreateDatabaseStatementTrampoline(PEGTransformer 
 	if (process.child_results[1]) {
 		with_list = process.TakeResult<case_insensitive_map_t<unique_ptr<ParsedExpression>>>(1);
 	}
-	auto result = TransformCreateDatabaseStatement(transformer, if_not_exists, catalog_name, std::move(with_list));
+	optional<Identifier> database_tablespace {};
+	if (process.child_results[2]) {
+		database_tablespace = process.TakeResult<Identifier>(2);
+	}
+	auto result = TransformCreateDatabaseStatement(transformer, if_not_exists, catalog_name, std::move(with_list),
+	                                               database_tablespace);
 	return transformer.MakeResult<unique_ptr<SQLStatement>>(std::move(result));
 }
 
@@ -9434,10 +9463,14 @@ PEGTransformerFactory::FinalizeDropDatabaseForceTrampoline(PEGTransformer &trans
 void PEGTransformerFactory::InitializeCreateIndexStmtTrampoline(PEGTransformer &transformer,
                                                                 GeneratedTransformProcess &process) {
 	auto &list_pr = process.parse_result.Cast<ListParseResult>();
-	process.ReserveChildSlots(7);
-	auto &where_clause_opt = list_pr.GetChild(9).Cast<OptionalParseResult>();
+	process.ReserveChildSlots(8);
+	auto &where_clause_opt = list_pr.GetChild(10).Cast<OptionalParseResult>();
 	if (where_clause_opt.HasResult()) {
-		process.PushChild({where_clause_opt.GetResult()}, 6);
+		process.PushChild({where_clause_opt.GetResult()}, 7);
+	}
+	auto &tablespace_clause_opt = list_pr.GetChild(9).Cast<OptionalParseResult>();
+	if (tablespace_clause_opt.HasResult()) {
+		process.PushChild({tablespace_clause_opt.GetResult()}, 6);
 	}
 	auto &with_list_opt = list_pr.GetChild(8).Cast<OptionalParseResult>();
 	if (with_list_opt.HasResult()) {
@@ -9486,13 +9519,17 @@ PEGTransformerFactory::FinalizeCreateIndexStmtTrampoline(PEGTransformer &transfo
 	if (process.child_results[5]) {
 		with_list = process.TakeResult<case_insensitive_map_t<unique_ptr<ParsedExpression>>>(5);
 	}
-	optional<unique_ptr<ParsedExpression>> where_clause {};
+	optional<Identifier> tablespace_clause {};
 	if (process.child_results[6]) {
-		where_clause = process.TakeResult<unique_ptr<ParsedExpression>>(6);
+		tablespace_clause = process.TakeResult<Identifier>(6);
 	}
-	auto result =
-	    TransformCreateIndexStmt(transformer, unique_index, if_not_exists, index_name, std::move(base_table_name),
-	                             index_type, std::move(index_columns), std::move(with_list), std::move(where_clause));
+	optional<unique_ptr<ParsedExpression>> where_clause {};
+	if (process.child_results[7]) {
+		where_clause = process.TakeResult<unique_ptr<ParsedExpression>>(7);
+	}
+	auto result = TransformCreateIndexStmt(transformer, unique_index, if_not_exists, index_name,
+	                                       std::move(base_table_name), index_type, std::move(index_columns),
+	                                       std::move(with_list), tablespace_clause, std::move(where_clause));
 	return transformer.MakeResult<unique_ptr<CreateStatement>>(std::move(result));
 }
 
@@ -11288,7 +11325,11 @@ PEGTransformerFactory::FinalizeTemporaryPersistentTrampoline(PEGTransformer &tra
 void PEGTransformerFactory::InitializeCreateTableStmtTrampoline(PEGTransformer &transformer,
                                                                 GeneratedTransformProcess &process) {
 	auto &list_pr = process.parse_result.Cast<ListParseResult>();
-	process.ReserveChildSlots(4);
+	process.ReserveChildSlots(5);
+	auto &tablespace_clause_opt = list_pr.GetChild(5).Cast<OptionalParseResult>();
+	if (tablespace_clause_opt.HasResult()) {
+		process.PushChild({tablespace_clause_opt.GetResult()}, 4);
+	}
 	auto &commit_action_opt = list_pr.GetChild(4).Cast<OptionalParseResult>();
 	if (commit_action_opt.HasResult()) {
 		process.PushChild({commit_action_opt.GetResult()}, 3);
@@ -11314,8 +11355,12 @@ PEGTransformerFactory::FinalizeCreateTableStmtTrampoline(PEGTransformer &transfo
 	if (process.child_results[3]) {
 		commit_action = process.TakeResult<bool>(3);
 	}
+	optional<Identifier> tablespace_clause {};
+	if (process.child_results[4]) {
+		tablespace_clause = process.TakeResult<Identifier>(4);
+	}
 	auto result = TransformCreateTableStmt(transformer, if_not_exists, qualified_name,
-	                                       std::move(create_table_definition), commit_action);
+	                                       std::move(create_table_definition), commit_action, tablespace_clause);
 	return transformer.MakeResult<unique_ptr<CreateStatement>>(std::move(result));
 }
 
@@ -11343,12 +11388,16 @@ PEGTransformerFactory::FinalizeCreateTableDefinitionTrampoline(PEGTransformer &t
 void PEGTransformerFactory::InitializeCreateTableAsTrampoline(PEGTransformer &transformer,
                                                               GeneratedTransformProcess &process) {
 	auto &list_pr = process.parse_result.Cast<ListParseResult>();
-	process.ReserveChildSlots(5);
-	auto &with_data_opt = list_pr.GetChild(5).Cast<OptionalParseResult>();
+	process.ReserveChildSlots(6);
+	auto &with_data_opt = list_pr.GetChild(6).Cast<OptionalParseResult>();
 	if (with_data_opt.HasResult()) {
-		process.PushChild({with_data_opt.GetResult()}, 4);
+		process.PushChild({with_data_opt.GetResult()}, 5);
 	}
-	process.PushChild({list_pr.GetChild(4)}, 3);
+	process.PushChild({list_pr.GetChild(5)}, 4);
+	auto &tablespace_clause_opt = list_pr.GetChild(3).Cast<OptionalParseResult>();
+	if (tablespace_clause_opt.HasResult()) {
+		process.PushChild({tablespace_clause_opt.GetResult()}, 3);
+	}
 	auto &with_list_opt = list_pr.GetChild(2).Cast<OptionalParseResult>();
 	if (with_list_opt.HasResult()) {
 		process.PushChild({with_list_opt.GetResult()}, 2);
@@ -11378,13 +11427,17 @@ PEGTransformerFactory::FinalizeCreateTableAsTrampoline(PEGTransformer &transform
 	if (process.child_results[2]) {
 		with_list = process.TakeResult<case_insensitive_map_t<unique_ptr<ParsedExpression>>>(2);
 	}
-	auto statement = process.TakeResult<unique_ptr<SQLStatement>>(3);
+	optional<Identifier> tablespace_clause {};
+	if (process.child_results[3]) {
+		tablespace_clause = process.TakeResult<Identifier>(3);
+	}
+	auto statement = process.TakeResult<unique_ptr<SQLStatement>>(4);
 	optional<bool> with_data {};
-	if (process.child_results[4]) {
-		with_data = process.TakeResult<bool>(4);
+	if (process.child_results[5]) {
+		with_data = process.TakeResult<bool>(5);
 	}
 	auto result = TransformCreateTableAs(transformer, std::move(identifier_list), std::move(partition_sorted_options),
-	                                     std::move(with_list), std::move(statement), with_data);
+	                                     std::move(with_list), tablespace_clause, std::move(statement), with_data);
 	return transformer.MakeResult<CreateTableDefinition>(std::move(result));
 }
 
@@ -28809,6 +28862,69 @@ arena_ptr<TransformResultValue>
 PEGTransformerFactory::FinalizeSetValueOffTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process) {
 	auto result = TransformSetValueOff(transformer);
 	return transformer.MakeResult<unique_ptr<ParsedExpression>>(std::move(result));
+}
+
+void PEGTransformerFactory::InitializeCreateTablespaceStatementTrampoline(PEGTransformer &transformer,
+                                                                          GeneratedTransformProcess &process) {
+	process.ReserveChildSlots(0);
+}
+
+arena_ptr<TransformResultValue>
+PEGTransformerFactory::FinalizeCreateTablespaceStatementTrampoline(PEGTransformer &transformer,
+                                                                   GeneratedTransformProcess &process) {
+	auto result = TransformCreateTablespaceStatement(transformer, process.parse_result);
+	return transformer.MakeResult<unique_ptr<SQLStatement>>(std::move(result));
+}
+
+void PEGTransformerFactory::InitializeDropTablespaceStatementTrampoline(PEGTransformer &transformer,
+                                                                        GeneratedTransformProcess &process) {
+	process.ReserveChildSlots(0);
+}
+
+arena_ptr<TransformResultValue>
+PEGTransformerFactory::FinalizeDropTablespaceStatementTrampoline(PEGTransformer &transformer,
+                                                                 GeneratedTransformProcess &process) {
+	auto result = TransformDropTablespaceStatement(transformer, process.parse_result);
+	return transformer.MakeResult<unique_ptr<SQLStatement>>(std::move(result));
+}
+
+void PEGTransformerFactory::InitializeAlterTablespaceStatementTrampoline(PEGTransformer &transformer,
+                                                                         GeneratedTransformProcess &process) {
+	process.ReserveChildSlots(0);
+}
+
+arena_ptr<TransformResultValue>
+PEGTransformerFactory::FinalizeAlterTablespaceStatementTrampoline(PEGTransformer &transformer,
+                                                                  GeneratedTransformProcess &process) {
+	auto result = TransformAlterTablespaceStatement(transformer, process.parse_result);
+	return transformer.MakeResult<unique_ptr<SQLStatement>>(std::move(result));
+}
+
+void PEGTransformerFactory::InitializeTablespaceClauseTrampoline(PEGTransformer &transformer,
+                                                                 GeneratedTransformProcess &process) {
+	auto &list_pr = process.parse_result.Cast<ListParseResult>();
+	process.ReserveChildSlots(1);
+	process.PushChild({list_pr.GetChild(1)}, 0);
+}
+
+arena_ptr<TransformResultValue>
+PEGTransformerFactory::FinalizeTablespaceClauseTrampoline(PEGTransformer &transformer,
+                                                          GeneratedTransformProcess &process) {
+	auto col_id = process.TakeResult<Identifier>(0);
+	auto result = TransformTablespaceClause(transformer, col_id);
+	return transformer.MakeResult<Identifier>(result);
+}
+
+void PEGTransformerFactory::InitializeDatabaseTablespaceTrampoline(PEGTransformer &transformer,
+                                                                   GeneratedTransformProcess &process) {
+	process.ReserveChildSlots(0);
+}
+
+arena_ptr<TransformResultValue>
+PEGTransformerFactory::FinalizeDatabaseTablespaceTrampoline(PEGTransformer &transformer,
+                                                            GeneratedTransformProcess &process) {
+	auto result = TransformDatabaseTablespace(transformer, process.parse_result);
+	return transformer.MakeResult<Identifier>(result);
 }
 
 void PEGTransformerFactory::InitializeTransactionStatementTrampoline(PEGTransformer &transformer,

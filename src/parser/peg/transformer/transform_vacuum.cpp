@@ -14,8 +14,9 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformVacuumStatement(PEGTran
 		options = *vacuum_options;
 	}
 	// SereneDB extension: VACUUM (REFRESH_*) / VACUUM (COMPACT_*) /
-	// VACUUM (RECOMPUTE_STATS_*) lower to a PRAGMA call instead of the standard
-	// VacuumStatement. Parameters are positional: option, name, schema, catalog.
+	// VACUUM (RECOMPUTE_STATS_*) / VACUUM (OPTIMIZE_IN_MEMORY_TABLE) lower to a
+	// PRAGMA call instead of the standard VacuumStatement. Parameters are
+	// positional: option, name, schema, catalog.
 	if (!options.serenedb_pragma_option.empty()) {
 		auto pragma = make_uniq<PragmaStatement>();
 		pragma->info->name = "serenedb_vacuum";
@@ -77,6 +78,7 @@ VacuumOptions PEGTransformerFactory::TransformVacuumParensOptions(PEGTransformer
 	    "recompute_stats_database",
 	    "recompute_stats_all",
 	    "recompute_stats_column",
+	    "optimize_in_memory_table",
 	};
 	VacuumOptions options;
 	options.vacuum = true;

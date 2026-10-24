@@ -1,0 +1,6 @@
+CreateTablespaceStatement <- 'CREATE' 'TABLESPACE' ColId TablespaceOwner? 'LOCATION' StringLiteral
+TablespaceOwner <- 'OWNER' OwnerRoleSpec
+DropTablespaceStatement <- 'DROP' 'TABLESPACE' IfExists? ColId
+AlterTablespaceStatement <- 'ALTER' 'TABLESPACE' ColId 'RENAME' 'TO' ColId
+TablespaceClause <- 'TABLESPACE' ColId
+DatabaseTablespace <- 'WITH'? 'TABLESPACE' '='? ColId

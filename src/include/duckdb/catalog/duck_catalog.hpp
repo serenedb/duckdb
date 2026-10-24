@@ -72,6 +72,7 @@ public:
 	DUCKDB_API virtual unique_ptr<InCatalogEntry> MakeDatabaseEntry(CreateDatabaseInfo &info);
 	DUCKDB_API virtual unique_ptr<InCatalogEntry> MakeForeignServerEntry(CreateForeignServerInfo &info);
 	DUCKDB_API virtual unique_ptr<InCatalogEntry> MakeSubscriptionEntry(CreateSubscriptionInfo &info);
+	DUCKDB_API virtual unique_ptr<InCatalogEntry> MakeTablespaceEntry(CreateTablespaceInfo &info);
 	DUCKDB_API virtual unique_ptr<StandardEntry> MakeTokenizerEntry(CatalogTransaction transaction,
 	                                                                DuckSchemaEntry &schema, CreateTokenizerInfo &info);
 	DUCKDB_API virtual unique_ptr<StandardEntry> MakeJobEntry(CatalogTransaction transaction, DuckSchemaEntry &schema,
@@ -88,6 +89,9 @@ public:
 	                                                         CreateSubscriptionInfo &info);
 	DUCKDB_API optional_ptr<CatalogEntry> CreateReplicationOrigin(CatalogTransaction transaction,
 	                                                              CreateReplicationOriginInfo &info);
+	DUCKDB_API optional_ptr<CatalogEntry> CreateTablespace(CatalogTransaction transaction,
+	                                                       CreateTablespaceInfo &info) override;
+	DUCKDB_API void DropTablespace(CatalogTransaction transaction, DropInfo &info) override;
 	DUCKDB_API void DropRole(CatalogTransaction transaction, DropInfo &info) override;
 	DUCKDB_API void DropDatabase(CatalogTransaction transaction, DropInfo &info) override;
 	DUCKDB_API void DropForeignServer(CatalogTransaction transaction, DropInfo &info) override;
@@ -154,6 +158,8 @@ private:
 	optional_ptr<CatalogEntry> CreateSchemaInternal(CatalogTransaction transaction, CreateSchemaInfo &info);
 	optional_ptr<CatalogEntry> AddEntry(CatalogTransaction transaction, unique_ptr<InCatalogEntry> entry,
 	                                    OnCreateConflict on_conflict);
+	//! Drops the entry of [type] that [info] names; false when there is none and [info] allows that
+	bool RemoveEntry(CatalogTransaction transaction, CatalogType type, DropInfo &info);
 	void Verify() override;
 
 private:
@@ -169,6 +175,7 @@ private:
 	unique_ptr<CatalogSet> foreign_servers;
 	unique_ptr<CatalogSet> subscriptions;
 	unique_ptr<CatalogSet> replication_origins;
+	unique_ptr<CatalogSet> tablespaces;
 
 	//! Identifies whether the db is encrypted
 	bool is_encrypted = false;

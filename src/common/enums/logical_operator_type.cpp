@@ -126,6 +126,8 @@ string LogicalOperatorToString(LogicalOperatorType type) {
 		return "CREATE_FOREIGN_SERVER";
 	case LogicalOperatorType::LOGICAL_CREATE_TOKENIZER:
 		return "CREATE_TOKENIZER";
+	case LogicalOperatorType::LOGICAL_CREATE_TABLESPACE:
+		return "CREATE_TABLESPACE";
 	case LogicalOperatorType::LOGICAL_DROP:
 		return "DROP";
 	case LogicalOperatorType::LOGICAL_PRAGMA:

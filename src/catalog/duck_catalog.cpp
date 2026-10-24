@@ -12,6 +12,7 @@
 #include "duckdb/parser/parsed_data/create_role_info.hpp"
 #include "duckdb/parser/parsed_data/create_schema_info.hpp"
 #include "duckdb/parser/parsed_data/create_subscription_info.hpp"
+#include "duckdb/parser/parsed_data/create_tablespace_info.hpp"
 #include "duckdb/catalog/catalog_entry/replication_origin_catalog_entry.hpp"
 #include "duckdb/parser/parsed_data/create_tokenizer_info.hpp"
 #include "duckdb/catalog/default/default_schemas.hpp"
@@ -32,7 +33,8 @@ DuckCatalog::DuckCatalog(AttachedDatabase &db, bool case_sensitive_names)
       databases(make_uniq<CatalogSet>(*this, nullptr, case_sensitive_names)),
       foreign_servers(make_uniq<CatalogSet>(*this, nullptr, case_sensitive_names)),
       subscriptions(make_uniq<CatalogSet>(*this, nullptr, case_sensitive_names)),
-      replication_origins(make_uniq<CatalogSet>(*this, nullptr, case_sensitive_names)) {
+      replication_origins(make_uniq<CatalogSet>(*this, nullptr, case_sensitive_names)),
+      tablespaces(make_uniq<CatalogSet>(*this, nullptr, case_sensitive_names)) {
 }
 
 DuckCatalog::~DuckCatalog() {
@@ -232,6 +234,10 @@ unique_ptr<InCatalogEntry> DuckCatalog::MakeSubscriptionEntry(CreateSubscription
 	throw NotImplementedException("Subscriptions are not supported by this catalog");
 }
 
+unique_ptr<InCatalogEntry> DuckCatalog::MakeTablespaceEntry(CreateTablespaceInfo &info) {
+	throw NotImplementedException("Tablespaces are not supported by this catalog");
+}
+
 unique_ptr<StandardEntry> DuckCatalog::MakeTokenizerEntry(CatalogTransaction transaction, DuckSchemaEntry &schema,
                                                           CreateTokenizerInfo &info) {
 	throw NotImplementedException("Text search dictionaries are not supported by this catalog");
@@ -290,56 +296,48 @@ optional_ptr<CatalogEntry> DuckCatalog::CreateReplicationOrigin(CatalogTransacti
 	return AddEntry(transaction, make_uniq<ReplicationOriginCatalogEntry>(*this, info), info.on_conflict);
 }
 
-void DuckCatalog::DropRole(CatalogTransaction transaction, DropInfo &info) {
-	D_ASSERT(!info.GetQualifiedName().Name().empty());
-	if (!roles->DropEntry(transaction, info.GetQualifiedName().Name(), info.cascade)) {
-		if (info.if_not_found == OnEntryNotFound::THROW_EXCEPTION) {
-			throw CatalogException::MissingEntry(CatalogType::ROLE_ENTRY, info.GetQualifiedName().Name(), string());
-		}
+optional_ptr<CatalogEntry> DuckCatalog::CreateTablespace(CatalogTransaction transaction, CreateTablespaceInfo &info) {
+	return AddEntry(transaction, MakeTablespaceEntry(info), info.on_conflict);
+}
+
+bool DuckCatalog::RemoveEntry(CatalogTransaction transaction, CatalogType type, DropInfo &info) {
+	auto &name = info.GetQualifiedName().Name();
+	D_ASSERT(!name.empty());
+	if (GetCatalogSet(type).DropEntry(transaction, name, info.cascade)) {
+		return true;
 	}
+	if (info.if_not_found == OnEntryNotFound::THROW_EXCEPTION) {
+		throw CatalogException::MissingEntry(type, name, string());
+	}
+	return false;
+}
+
+void DuckCatalog::DropRole(CatalogTransaction transaction, DropInfo &info) {
+	RemoveEntry(transaction, CatalogType::ROLE_ENTRY, info);
 }
 
 void DuckCatalog::DropDatabase(CatalogTransaction transaction, DropInfo &info) {
-	auto &name = info.GetQualifiedName().Name();
-	D_ASSERT(!name.empty());
-	if (!databases->DropEntry(transaction, name, info.cascade)) {
-		if (info.if_not_found == OnEntryNotFound::THROW_EXCEPTION) {
-			throw CatalogException::MissingEntry(CatalogType::DATABASE_ENTRY, name, string());
-		}
+	if (!RemoveEntry(transaction, CatalogType::DATABASE_ENTRY, info)) {
 		return;
 	}
 	auto &context = transaction.GetContext();
-	DatabaseManager::Get(context).DetachDatabase(context, name, OnEntryNotFound::RETURN_NULL);
+	DatabaseManager::Get(context).DetachDatabase(context, info.GetQualifiedName().Name(), OnEntryNotFound::RETURN_NULL);
 }
 
 void DuckCatalog::DropForeignServer(CatalogTransaction transaction, DropInfo &info) {
-	D_ASSERT(!info.GetQualifiedName().Name().empty());
-	if (!foreign_servers->DropEntry(transaction, info.GetQualifiedName().Name(), info.cascade)) {
-		if (info.if_not_found == OnEntryNotFound::THROW_EXCEPTION) {
-			throw CatalogException::MissingEntry(CatalogType::FOREIGN_SERVER_ENTRY, info.GetQualifiedName().Name(),
-			                                     string());
-		}
-	}
+	RemoveEntry(transaction, CatalogType::FOREIGN_SERVER_ENTRY, info);
+}
+
+void DuckCatalog::DropTablespace(CatalogTransaction transaction, DropInfo &info) {
+	RemoveEntry(transaction, CatalogType::TABLESPACE_ENTRY, info);
 }
 
 void DuckCatalog::DropReplicationOrigin(CatalogTransaction transaction, DropInfo &info) {
-	D_ASSERT(!info.GetQualifiedName().Name().empty());
-	if (!replication_origins->DropEntry(transaction, info.GetQualifiedName().Name(), info.cascade)) {
-		if (info.if_not_found == OnEntryNotFound::THROW_EXCEPTION) {
-			throw CatalogException::MissingEntry(CatalogType::REPLICATION_ORIGIN_ENTRY, info.GetQualifiedName().Name(),
-			                                     string());
-		}
-	}
+	RemoveEntry(transaction, CatalogType::REPLICATION_ORIGIN_ENTRY, info);
 }
 
 void DuckCatalog::DropSubscription(CatalogTransaction transaction, DropInfo &info) {
-	D_ASSERT(!info.GetQualifiedName().Name().empty());
-	if (!subscriptions->DropEntry(transaction, info.GetQualifiedName().Name(), info.cascade)) {
-		if (info.if_not_found == OnEntryNotFound::THROW_EXCEPTION) {
-			throw CatalogException::MissingEntry(CatalogType::SUBSCRIPTION_ENTRY, info.GetQualifiedName().Name(),
-			                                     string());
-		}
-	}
+	RemoveEntry(transaction, CatalogType::SUBSCRIPTION_ENTRY, info);
 }
 
 CatalogSet &DuckCatalog::GetCatalogSet(CatalogType type) {
@@ -356,6 +354,8 @@ CatalogSet &DuckCatalog::GetCatalogSet(CatalogType type) {
 		return *subscriptions;
 	case CatalogType::REPLICATION_ORIGIN_ENTRY:
 		return *replication_origins;
+	case CatalogType::TABLESPACE_ENTRY:
+		return *tablespaces;
 	default:
 		throw InternalException("Unsupported catalog type in catalog: %s", CatalogTypeToString(type));
 	}
@@ -428,6 +428,7 @@ void DuckCatalog::Verify() {
 	foreign_servers->Verify(*this);
 	subscriptions->Verify(*this);
 	replication_origins->Verify(*this);
+	tablespaces->Verify(*this);
 #endif
 }
 

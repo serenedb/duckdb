@@ -22,6 +22,7 @@ namespace duckdb {
 
 class TemporaryMemoryManager;
 class ObjectCache;
+class BlockCache;
 struct EvictionQueue;
 
 struct BufferEvictionNode {
@@ -78,6 +79,11 @@ public:
 		object_cache = object_cache_p;
 	}
 
+	//! Lets the buffer pool take memory back from the block cache, whose frames it accounts for
+	void SetBlockCache(optional_ptr<BlockCache> block_cache_p) {
+		block_cache = block_cache_p;
+	}
+
 protected:
 	//! Evict blocks until the currently used memory + extra_memory fit, returns false if this was not possible
 	//! (i.e. not enough blocks could be evicted)
@@ -97,6 +103,12 @@ protected:
 
 	//! Evict object cache entries if needed.
 	EvictionResult EvictObjectCacheEntries(MemoryTag tag, idx_t extra_memory, idx_t memory_limit);
+	//! Evict unpinned block cache blocks if needed.
+	EvictionResult EvictBlockCacheFrames(MemoryTag tag, idx_t extra_memory, idx_t memory_limit);
+	//! Calls [evict] with the bytes the used memory exceeds [memory_limit] by, with [extra_memory] reserved, until it
+	//! fits or [evict] frees nothing; [evict] returns the bytes it freed
+	template <class EVICT>
+	EvictionResult EvictCacheEntries(MemoryTag tag, idx_t extra_memory, idx_t memory_limit, EVICT &&evict);
 
 	//! Return freed memory to the OS, optionally releasing up to extra_memory from the block allocator's pool
 	void FlushAllocator(optional_idx extra_memory = optional_idx());
@@ -194,6 +206,8 @@ protected:
 	BlockAllocator &block_allocator;
 	//! Per-database singleton object cache managed by buffer pool.
 	optional_ptr<ObjectCache> object_cache = nullptr;
+	//! The block cache, whose memory the buffer pool accounts for and can take back.
+	optional_ptr<BlockCache> block_cache = nullptr;
 };
 
 } // namespace duckdb

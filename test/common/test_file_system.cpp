@@ -5,6 +5,7 @@
 #include "duckdb/common/file_system.hpp"
 #include "duckdb/common/fstream.hpp"
 #include "duckdb/common/local_file_system.hpp"
+#include "duckdb/common/memory_mapped_file.hpp"
 #include "duckdb/common/opener_file_system.hpp"
 #include "duckdb/common/string.hpp"
 #include "duckdb/common/string_util.hpp"
@@ -528,6 +529,115 @@ TEST_CASE("re-register subsystem", "[file_system]") {
 	REQUIRE_THROWS(vfs.RegisterSubSystem(std::move(second_local_filesystem)));
 }
 
+TEST_CASE("Combined open flags keep the caching mode", "[file_system]") {
+	FileOpenFlags cached(FileFlags::FILE_FLAGS_READ);
+	cached.SetCachingMode(CachingMode::ALWAYS_CACHE);
+	REQUIRE((cached | FileFlags::FILE_FLAGS_PARALLEL_ACCESS).GetCachingMode() == CachingMode::ALWAYS_CACHE);
+	REQUIRE((FileOpenFlags(FileFlags::FILE_FLAGS_PARALLEL_ACCESS) | cached).GetCachingMode() ==
+	        CachingMode::ALWAYS_CACHE);
+}
+
+namespace {
+
+class PrefixFileSystem : public LocalFileSystem {
+public:
+	explicit PrefixFileSystem(string name_p) : name(std::move(name_p)) {
+	}
+
+	string GetName() const override {
+		return name;
+	}
+
+	bool CanHandleFile(const string &fpath) override {
+		return StringUtil::StartsWith(fpath, name + "://");
+	}
+
+private:
+	string name;
+};
+
+} // namespace
+
+TEST_CASE("Path calls run while filesystems are registered and disabled", "[file_system]") {
+	VirtualFileSystem vfs;
+	constexpr idx_t file_systems = 16;
+	atomic<bool> done {false};
+	atomic<idx_t> shrunk {0};
+	vector<std::thread> readers;
+	for (idx_t t = 0; t < 4; t++) {
+		readers.emplace_back([&]() {
+			idx_t seen = 0;
+			while (!done.load()) {
+				auto names = vfs.ListSubSystems();
+				if (names.size() < seen) {
+					shrunk++;
+				}
+				seen = names.size();
+				vfs.IsDisabledForPath("fs3://file");
+				vfs.SubSystemIsDisabled("fs7");
+			}
+		});
+	}
+	for (idx_t i = 0; i < file_systems; i++) {
+		vfs.RegisterSubSystem(make_uniq<PrefixFileSystem>("fs" + std::to_string(i)));
+	}
+	vfs.SetDisabledFileSystems({"fs3"});
+	vfs.SetDisabledFileSystems({"fs3", "fs7"});
+	done = true;
+	for (auto &reader : readers) {
+		reader.join();
+	}
+	REQUIRE(shrunk == 0);
+	REQUIRE(vfs.ListSubSystems().size() == file_systems);
+	REQUIRE(vfs.IsDisabledForPath("fs3://file"));
+	REQUIRE(vfs.SubSystemIsDisabled("fs7"));
+}
+
+TEST_CASE("Mapped files take read-ahead hints", "[file_system]") {
+	LocalFileSystem fs;
+	auto path = TestCreatePath("mapped_file_hints.bin");
+	constexpr idx_t size = 1024 * 1024;
+	{
+		auto handle = fs.OpenFile(path, FileFlags::FILE_FLAGS_WRITE | FileFlags::FILE_FLAGS_FILE_CREATE_NEW);
+		vector<data_t> data(size, 7);
+		handle->Write(QueryContext(), data.data(), size, 0);
+	}
+	auto mapped = fs.MemoryMapFile(path, FileFlags::FILE_FLAGS_READ, MMapOptions());
+	REQUIRE(mapped->Size() == size);
+	mapped->Advise(MappedFileAccess::RANDOM);
+	mapped->Advise(MappedFileAccess::SEQUENTIAL);
+	mapped->Advise(MappedFileAccess::NORMAL);
+	mapped->Prefetch(0, size);
+	mapped->Prefetch(size + 10, 100);
+	idx_t sum = 0;
+	for (idx_t offset = 0; offset < size; offset += 512) {
+		sum += mapped->GetData(offset, 1)[0];
+	}
+	REQUIRE(sum == 7 * size / 512);
+	mapped->Close();
+	fs.RemoveFile(path);
+}
+
+TEST_CASE("Directory syncs and writeback hints reach the local filesystem", "[file_system]") {
+	LocalFileSystem fs;
+	auto directory = TestCreatePath("sync_directory");
+	fs.CreateDirectory(directory);
+	auto path = fs.JoinPath(directory, "written.bin");
+	{
+		auto handle = fs.OpenFile(path, FileFlags::FILE_FLAGS_WRITE | FileFlags::FILE_FLAGS_FILE_CREATE_NEW);
+		vector<data_t> data(64 * 1024, 3);
+		handle->Write(QueryContext(), data.data(), data.size(), 0);
+		handle->HintWriteback(0, data.size());
+		handle->Sync();
+	}
+	fs.SyncDirectory(directory);
+	REQUIRE_THROWS_AS(fs.SyncDirectory(fs.JoinPath(directory, "missing")), IOException);
+
+	VirtualFileSystem vfs;
+	vfs.SyncDirectory(directory);
+	fs.RemoveDirectory(directory);
+}
+
 struct CanonicalizationTest {
 	CanonicalizationTest(string a_p, string b_p, string description_p)
 	    : a(std::move(a_p)), b(std::move(b_p)), description(std::move(description_p)) {
@@ -689,6 +799,24 @@ TEST_CASE("Existence checks tell a missing path from one they cannot check", "[f
 
 	fs->RemoveDirectory(dir);
 	REQUIRE(!fs->DirectoryExists(dir));
+}
+
+TEST_CASE("Removing a file that may be missing tells whether there was one", "[file_system]") {
+	auto fs = FileSystem::CreateLocal();
+	auto dir = TestCreatePath("try_remove_file");
+	if (fs->DirectoryExists(dir)) {
+		fs->RemoveDirectory(dir);
+	}
+	fs->CreateDirectory(dir);
+	auto file = fs->JoinPath(dir, "file");
+	CreateDummyFile(file);
+
+	REQUIRE(!fs->TryRemoveFile(fs->JoinPath(file, "below_a_file")));
+	REQUIRE(fs->TryRemoveFile(file));
+	REQUIRE(!fs->FileExists(file));
+	REQUIRE(!fs->TryRemoveFile(file));
+
+	fs->RemoveDirectory(dir);
 }
 
 TEST_CASE("Removing a directory removes its symlinks without following them", "[file_system]") {

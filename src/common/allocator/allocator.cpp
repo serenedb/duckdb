@@ -142,21 +142,41 @@ static idx_t GetHugePageSize() {
 }
 #endif
 
-AllocatedData Allocator::TryAllocateHuge(idx_t size) {
-	auto result = Allocate(size);
+idx_t Allocator::HugePageSize() {
 #if defined(__linux__) && INTPTR_MAX == INT64_MAX && defined(MADV_HUGEPAGE)
-	static constexpr idx_t MIN_ADVISE_SIZE = 8ULL * 1024 * 1024;
-	if (size >= MIN_ADVISE_SIZE) {
-		static const idx_t huge_page_size = GetHugePageSize();
-		if (huge_page_size != 0 && size / huge_page_size >= 4) {
-			const auto base = reinterpret_cast<uintptr_t>(result.get());
-			const auto offset = (huge_page_size - base % huge_page_size) % huge_page_size;
-			const auto length = ((size - offset) / huge_page_size) * huge_page_size;
-			// Only advise complete huge pages contained in this allocation.
-			madvise(result.get() + offset, length, MADV_HUGEPAGE);
-		}
+	static const idx_t huge_page_size = GetHugePageSize();
+	return huge_page_size;
+#else
+	return 0;
+#endif
+}
+
+void Allocator::AdviseHugePages(data_ptr_t pointer, idx_t size) {
+#if defined(__linux__) && INTPTR_MAX == INT64_MAX && defined(MADV_HUGEPAGE)
+	const auto huge_page_size = HugePageSize();
+	if (huge_page_size == 0) {
+		return;
+	}
+	const auto base = reinterpret_cast<uintptr_t>(pointer);
+	const auto offset = (huge_page_size - base % huge_page_size) % huge_page_size;
+	if (size <= offset) {
+		return;
+	}
+	const auto length = ((size - offset) / huge_page_size) * huge_page_size;
+	// Only advise complete huge pages contained in this allocation.
+	if (length != 0) {
+		madvise(pointer + offset, length, MADV_HUGEPAGE);
 	}
 #endif
+}
+
+AllocatedData Allocator::TryAllocateHuge(idx_t size) {
+	auto result = Allocate(size);
+	static constexpr idx_t MIN_ADVISE_SIZE = 8ULL * 1024 * 1024;
+	const auto huge_page_size = HugePageSize();
+	if (size >= MIN_ADVISE_SIZE && huge_page_size != 0 && size / huge_page_size >= 4) {
+		AdviseHugePages(result.get(), size);
+	}
 	return result;
 }
 
