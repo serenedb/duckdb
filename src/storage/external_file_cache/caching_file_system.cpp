@@ -185,7 +185,7 @@ shared_ptr<BlockCacheFile> CachingFileHandle::GetCachedFile() {
 		file = cached_file;
 	}
 	const auto &cached = file->Info().validation;
-	if (cached.IsCacheReuseProhibited() || cached.IsExpired()) {
+	if (cached.IsExpired()) {
 		return nullptr;
 	}
 	return file;
