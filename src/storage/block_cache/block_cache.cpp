@@ -49,7 +49,6 @@ uint64_t Pins(uint64_t state) {
 	return state & PIN_MASK;
 }
 
-//! Whether a block in [state] can be evicted: loaded, unpinned and neither failed nor being evicted already
 bool Evictable(uint64_t state) {
 	D_ASSERT(!(state & FLAG_LOADED) || !(state & FLAG_LOADING));
 	return Pins(state) == 0 && (state & FLAG_LOADED) && !(state & UNPINNABLE);
