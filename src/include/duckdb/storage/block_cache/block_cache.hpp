@@ -27,6 +27,8 @@
 #include "duckdb/storage/buffer_manager.hpp"
 #include "duckdb/storage/external_file_cache/cache_validation.hpp"
 
+#include <span>
+
 namespace duckdb {
 
 class BlockCache;
@@ -347,15 +349,18 @@ private:
 	static uint64_t FileFlags(const BlockCacheFile &file);
 	void Unpin(BlockCacheEntry &entry);
 	void Unlink(BlockCacheEntry &entry);
-	//! Removes [entry] of [key] from lookups: an unpinned block goes now, a pinned or loading one with its last pin;
-	//! a block of an unbacked file only when [drop_unbacked]
-	void DropEntry(BlockCacheEntry &entry, uint64_t key, bool drop_unbacked);
+	//! Removes [entry] of [key] from lookups: an unpinned block goes now, adding its frame to [released], a pinned or
+	//! loading one with its last pin; a block of an unbacked file only when [drop_unbacked]
+	void DropEntry(BlockCacheEntry &entry, uint64_t key, bool drop_unbacked, vector<uint32_t> &released);
 
 	//! A frame for a new block: a free one while the cache is below its capacity, else a victim's
 	bool AcquireFrame(uint32_t &frame);
 	//! A free frame whose memory the buffer pool grants
 	bool TakeFreeFrame(uint32_t &frame);
 	void ReleaseFrame(uint32_t frame);
+	//! Gives [frames] back to the system and the buffer pool, a run of adjacent frames at once, and frees them to be
+	//! handed out lowest first
+	void ReleaseFrames(std::span<uint32_t> frames);
 	//! Evicts one unpinned block chosen by sampling and returns its frame
 	bool EvictOne(uint32_t &frame);
 	//! Evicts [entry] when it is unpinned and still in [state]; [keep_copy] spills it first where the tier allows, and
