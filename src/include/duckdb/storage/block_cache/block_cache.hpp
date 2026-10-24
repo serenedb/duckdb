@@ -49,8 +49,6 @@ struct BlockCacheEntry {
 	atomic<uint32_t> frame {0};
 	//! The next entry of the bucket's chain: its overflow pool index plus one, zero at the end
 	atomic<uint32_t> next {0};
-	//! The bucket whose chain holds the entry
-	atomic<uint32_t> bucket {0};
 };
 
 //! A bucket of the translation table: a version that is odd while the chain changes, and the chain's first entry
