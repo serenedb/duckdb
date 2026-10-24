@@ -726,6 +726,10 @@ idx_t TaskScheduler::NumberOfAsyncThreads() {
 	return async_threads.load(std::memory_order_relaxed);
 }
 
+TaskSchedulerType TaskScheduler::AsyncPool() {
+	return NumberOfAsyncThreads() == 0 ? TaskSchedulerType::REGULAR : TaskSchedulerType::ASYNC;
+}
+
 idx_t TaskScheduler::QueryAsyncThreads(ClientContext &context) {
 	const auto async_threads = Settings::Get<AsyncThreadsSetting>(context);
 	return async_threads < 0 ? GetScheduler(context).NumberOfAsyncThreads() : NumericCast<idx_t>(async_threads);
