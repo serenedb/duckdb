@@ -49,6 +49,12 @@ uint64_t Pins(uint64_t state) {
 	return state & PIN_MASK;
 }
 
+//! Whether a block in [state] can be evicted: loaded, unpinned and neither failed nor being evicted already
+bool Evictable(uint64_t state) {
+	D_ASSERT(!(state & FLAG_LOADED) || !(state & FLAG_LOADING));
+	return Pins(state) == 0 && (state & FLAG_LOADED) && !(state & UNPINNABLE);
+}
+
 idx_t BlockBytesOf(idx_t file_size, idx_t block) {
 	const auto start = block * BlockCache::BLOCK_SIZE;
 	return start >= file_size ? 0 : MinValue(BlockCache::BLOCK_SIZE, file_size - start);
@@ -356,22 +362,15 @@ shared_ptr<BlockCacheFile> BlockCache::OpenFile(const string &path, const BlockC
 	{
 		annotated_lock_guard<annotated_mutex> guard(file_lock);
 		auto &record = files[path];
-		if (record.number == 0) {
+		if (record.number == 0 ||
+		    (validate ? !CacheValidation::IsValid(validate, record.info.validation, current.validation)
+		              : record.info.validation.IsExpired())) {
 			replaced = Renumber(record, current, 0, sweep);
-		} else {
-			const bool expired = !validate && record.info.validation.IsExpired();
-			if (validate || expired) {
-				const bool valid =
-				    !expired && CacheValidation::IsValid(validate, record.info.validation, current.validation);
-				if (valid) {
-					const auto preserved = record.info.validation.cache_valid_until;
-					record.info = current;
-					if (!CacheValidation::HasValidationMetadata(current.validation)) {
-						record.info.validation.cache_valid_until = preserved;
-					}
-				} else {
-					replaced = Renumber(record, current, 0, sweep);
-				}
+		} else if (validate) {
+			const auto preserved = record.info.validation.cache_valid_until;
+			record.info = current;
+			if (!CacheValidation::HasValidationMetadata(current.validation)) {
+				record.info.validation.cache_valid_until = preserved;
 			}
 		}
 		record.opens++;
@@ -668,8 +667,7 @@ uint64_t BlockCache::FileFlags(const BlockCacheFile &file) {
 }
 
 optional_ptr<BlockCacheEntry> BlockCache::InsertLoading(uint64_t key, uint32_t frame, uint64_t flags) {
-	const auto bucket_index = NumericCast<uint32_t>(MurmurHash64(key) & bucket_mask);
-	auto &bucket = buckets[bucket_index];
+	auto &bucket = BucketFor(key);
 	LockBucket(bucket);
 	for (auto entry = &bucket.first;;) {
 		if (entry->key.load(std::memory_order_relaxed) == key &&
@@ -699,7 +697,6 @@ optional_ptr<BlockCacheEntry> BlockCache::InsertLoading(uint64_t key, uint32_t f
 	}
 	slot->key.store(key, std::memory_order_relaxed);
 	slot->frame.store(frame, std::memory_order_relaxed);
-	slot->bucket.store(bucket_index, std::memory_order_relaxed);
 	const auto version = (slot->state.load(std::memory_order_relaxed) & VERSION_MASK) + VERSION_ONE;
 	slot->state.store(version | FLAG_LOADING | FLAG_PROBATION | flags | 1, std::memory_order_release);
 	if (slot != &bucket.first) {
@@ -722,7 +719,7 @@ void BlockCache::Unpin(BlockCacheEntry &entry) {
 }
 
 void BlockCache::Unlink(BlockCacheEntry &entry) {
-	auto &bucket = buckets[entry.bucket.load(std::memory_order_relaxed)];
+	auto &bucket = BucketFor(entry.key.load(std::memory_order_relaxed));
 	LockBucket(bucket);
 	entry.key.store(0, std::memory_order_relaxed);
 	if (&entry != &bucket.first) {
@@ -803,7 +800,7 @@ bool BlockCache::EvictOne(uint32_t &frame) {
 				continue;
 			}
 			auto state = candidate->state.load(std::memory_order_acquire);
-			if (Pins(state) != 0 || !(state & FLAG_LOADED) || (state & (FLAG_LOADING | UNPINNABLE))) {
+			if (!Evictable(state)) {
 				continue;
 			}
 			if ((state & FLAG_UNBACKED) && !(state & FLAG_SPILLED) && !CanSpillUnbacked() &&
@@ -832,7 +829,7 @@ bool BlockCache::EvictOne(uint32_t &frame) {
 }
 
 bool BlockCache::TryEvict(BlockCacheEntry &entry, uint64_t state, uint32_t &frame, bool keep_copy) {
-	if (Pins(state) != 0 || !(state & FLAG_LOADED) || (state & (FLAG_LOADING | UNPINNABLE))) {
+	if (!Evictable(state)) {
 		return false;
 	}
 	if (!entry.state.compare_exchange_strong(state, state | FLAG_EVICTING, std::memory_order_acq_rel,
@@ -983,9 +980,9 @@ void BlockCache::Fetch(BlockCacheFile &file, const Run &run, vector<optional_ptr
 			fetched_bytes.fetch_add(end - start, std::memory_order_relaxed);
 		}
 	} catch (...) {
-		for (idx_t i = 0; i < entries.size(); i++) {
-			if (pending[i] || (entries[i] && (entries[i]->state.load(std::memory_order_relaxed) & FLAG_LOADING))) {
-				FinishLoad(*entries[i], false);
+		for (auto &entry : entries) {
+			if (entry && (entry->state.load(std::memory_order_relaxed) & FLAG_LOADING)) {
+				FinishLoad(*entry, false);
 			}
 		}
 		throw;
