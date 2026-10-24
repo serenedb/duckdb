@@ -564,6 +564,27 @@ TEST_CASE("Block cache unbacked blocks spill and are never dropped", "[block_cac
 	}
 }
 
+#ifdef DEBUG
+TEST_CASE("Block cache keeps no copy of a block whose in-memory file goes while the block is evicted",
+          "[block_cache]") {
+	DuckDB db(nullptr);
+	BlockCache cache(*db.instance, 4 * BLOCK);
+	cache.SetSpill(TestCreatePath("block_cache_released_spill"), 0);
+	auto file = cache.CreateUnbackedFile("memory://released.bin");
+	for (idx_t block = 0; block < 4; block++) {
+		memset(cache.CreateBlock(*file, block).GetDataMutable(), int(block + 1), BLOCK);
+	}
+	cache.SetUnbackedSize(*file, 4 * BLOCK);
+	cache.debug_before_keep_copy = [&]() {
+		file.reset();
+	};
+	auto other = cache.CreateUnbackedFile("memory://other.bin");
+	auto pin = cache.CreateBlock(*other, 0);
+	REQUIRE_FALSE(file);
+	REQUIRE_NOTHROW(cache.SetSpill(TestCreatePath("block_cache_released_spill_moved"), 0));
+}
+#endif
+
 TEST_CASE("Block cache gives memory back to the buffer pool", "[block_cache]") {
 	DuckDB db(nullptr);
 	Connection con(db);

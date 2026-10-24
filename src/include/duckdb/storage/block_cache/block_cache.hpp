@@ -402,6 +402,10 @@ private:
 public:
 	//! Waits for the fetch tasks in flight and refuses new ones; the database calls it before its scheduler stops
 	void StopFetching();
+#ifdef DEBUG
+	//! Runs once, the next time an eviction is about to write the copy of a block of a live unbacked file
+	std::function<void()> debug_before_keep_copy;
+#endif
 
 private:
 	DatabaseInstance &db;
