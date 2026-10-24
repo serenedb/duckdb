@@ -3,6 +3,7 @@
 #include "duckdb/common/atomic.hpp"
 #include "duckdb/common/local_file_system.hpp"
 #include "duckdb/common/mutex.hpp"
+#include "duckdb/common/unordered_set.hpp"
 #include "duckdb/main/connection.hpp"
 #include "duckdb/main/database.hpp"
 #include "duckdb/parallel/task_executor.hpp"
@@ -31,7 +32,7 @@ public:
 			annotated_lock_guard<annotated_mutex> guard(lock);
 			reads.emplace_back(location, NumericCast<idx_t>(nr_bytes));
 			auto released = [&]() DUCKDB_NO_THREAD_SAFETY_ANALYSIS {
-				return !hold;
+				return !hold || released_reads.contains(location);
 			};
 			lock.Await(absl::Condition(&released));
 			if (failures > 0) {
@@ -78,6 +79,21 @@ public:
 		lock.Await(absl::Condition(&arrived));
 	}
 
+	//! Whether [count] reads arrive within [timeout]
+	bool AwaitReadsFor(idx_t count, absl::Duration timeout) {
+		annotated_lock_guard<annotated_mutex> guard(lock);
+		auto arrived = [&]() DUCKDB_NO_THREAD_SAFETY_ANALYSIS {
+			return reads.size() >= count;
+		};
+		return lock.AwaitWithTimeout(absl::Condition(&arrived), timeout);
+	}
+
+	//! Lets the read at [location] go while the others are held
+	void ReleaseRead(idx_t location) {
+		annotated_lock_guard<annotated_mutex> guard(lock);
+		released_reads.insert(location);
+	}
+
 	vector<pair<idx_t, idx_t>> TakeReads() {
 		annotated_lock_guard<annotated_mutex> guard(lock);
 		return std::move(reads);
@@ -111,6 +127,7 @@ public:
 	vector<idx_t> writes DUCKDB_GUARDED_BY(lock);
 	idx_t failures DUCKDB_GUARDED_BY(lock) = 0;
 	bool hold DUCKDB_GUARDED_BY(lock) = false;
+	unordered_set<idx_t> released_reads DUCKDB_GUARDED_BY(lock);
 	bool no_store DUCKDB_GUARDED_BY(lock) = false;
 	absl::Duration latency DUCKDB_GUARDED_BY(lock) = absl::ZeroDuration();
 	double bandwidth DUCKDB_GUARDED_BY(lock) = 0;
@@ -288,12 +305,123 @@ TEST_CASE("Block cache prefetch merges runs across small gaps and caps each requ
 	auto reads = fs.TakeReads();
 	idx_t covered = 0;
 	for (auto &read : reads) {
-		REQUIRE(read.second <= BlockCache::MAX_REQUEST);
+		REQUIRE(read.second <= BlockCache::PIECE_SIZE);
 		REQUIRE(read.first % BLOCK == 0);
 		covered += read.second;
 	}
-	REQUIRE(reads.size() == 2);
+	REQUIRE(reads.size() == 7);
 	REQUIRE(covered == 100 * BLOCK);
+}
+
+TEST_CASE("Block cache fetches a long run in concurrent pieces and hands out each piece's blocks as it lands",
+          "[block_cache]") {
+	DBConfig config;
+	config.options.maximum_threads = 4;
+	DuckDB db(nullptr, &config);
+	BlockCache cache(*db.instance, 128 * BLOCK);
+	CountingSourceFileSystem fs;
+	TestFile file("block_cache_pieces.bin", 64 * BLOCK);
+	auto cached = file.Open(cache, fs);
+
+	fs.Hold(true);
+	cache.Prefetch(cached, 0, 64 * BLOCK);
+	const bool concurrent = fs.AwaitReadsFor(4, absl::Seconds(10));
+	fs.ReleaseRead(0);
+	atomic<bool> right {false};
+	Signal pinned;
+	TaskExecutor executor(TaskScheduler::GetScheduler(*db.instance));
+	executor.ScheduleTask(make_uniq<FunctionExecutorTask>(
+	    executor,
+	    [&]() {
+		    absl::Cleanup done = [&]() {
+			    pinned.Set();
+		    };
+		    right = HoldsExpectedBytes(cache.Pin(cached, 0), 0);
+	    },
+	    "BlockCacheTestTask"));
+	const bool first_landed = pinned.AwaitFor(absl::Seconds(10));
+	fs.Hold(false);
+	executor.WorkOnTasks();
+	REQUIRE(concurrent);
+	REQUIRE(first_landed);
+	REQUIRE(right);
+
+	auto pins = cache.PinRange(cached, 0, 64 * BLOCK);
+	REQUIRE(pins.size() == 64);
+	for (idx_t block = 0; block < 64; block++) {
+		REQUIRE(HoldsExpectedBytes(pins[block], block));
+	}
+	auto reads = fs.TakeReads();
+	REQUIRE(reads.size() == 4);
+	idx_t covered = 0;
+	for (auto &read : reads) {
+		REQUIRE(read.second <= BlockCache::PIECE_SIZE);
+		covered += read.second;
+	}
+	REQUIRE(covered == 64 * BLOCK);
+}
+
+TEST_CASE("Block cache range pins fetch the runs and pieces of a range concurrently", "[block_cache]") {
+	DBConfig config;
+	config.options.maximum_threads = 4;
+	DuckDB db(nullptr, &config);
+	BlockCache cache(*db.instance, 128 * BLOCK);
+	CountingSourceFileSystem fs;
+	TestFile file("block_cache_concurrent_runs.bin", 48 * BLOCK + 100);
+	auto cached = file.Open(cache, fs);
+	for (idx_t block = 8; block < 16; block++) {
+		cache.Pin(cached, block);
+	}
+	fs.TakeReads();
+
+	fs.Hold(true);
+	vector<BlockCachePin> pins;
+	TaskExecutor executor(TaskScheduler::GetScheduler(*db.instance));
+	executor.ScheduleTask(make_uniq<FunctionExecutorTask>(
+	    executor, [&]() { pins = cache.PinRange(cached, 0, 48 * BLOCK + 100); }, "BlockCacheTestTask"));
+	const bool concurrent = fs.AwaitReadsFor(4, absl::Seconds(10));
+	fs.Hold(false);
+	executor.WorkOnTasks();
+	REQUIRE(concurrent);
+	REQUIRE(pins.size() == 49);
+	for (idx_t block = 0; block < 49; block++) {
+		REQUIRE(HoldsExpectedBytes(pins[block], block));
+	}
+	auto reads = fs.TakeReads();
+	REQUIRE(reads.size() == 4);
+	idx_t covered = 0;
+	for (auto &read : reads) {
+		REQUIRE(read.second <= BlockCache::PIECE_SIZE);
+		covered += read.second;
+	}
+	REQUIRE(covered == 40 * BLOCK + 100);
+}
+
+TEST_CASE("Block cache fetches the pieces of long runs when the scheduler has no workers", "[block_cache]") {
+	DBConfig config;
+	config.options.maximum_threads = 1;
+	DuckDB db(nullptr, &config);
+	BlockCache cache(*db.instance, 128 * BLOCK);
+	CountingSourceFileSystem fs;
+	TestFile file("block_cache_no_workers_pieces.bin", 40 * BLOCK);
+	{
+		auto cached = file.Open(cache, fs);
+		cache.Prefetch(cached, 0, 40 * BLOCK);
+		REQUIRE(HoldsExpectedBytes(cache.Pin(cached, 39), 39));
+		auto pins = cache.PinRange(cached, 0, 40 * BLOCK);
+		REQUIRE(pins.size() == 40);
+		for (idx_t block = 0; block < 40; block++) {
+			REQUIRE(HoldsExpectedBytes(pins[block], block));
+		}
+		REQUIRE(fs.TakeReads().size() == 3);
+	}
+	auto changed = file.Open(cache, fs, "v2");
+	auto pins = cache.PinRange(changed, 0, 40 * BLOCK);
+	REQUIRE(pins.size() == 40);
+	for (idx_t block = 0; block < 40; block++) {
+		REQUIRE(HoldsExpectedBytes(pins[block], block));
+	}
+	REQUIRE(fs.TakeReads().size() == 3);
 }
 
 TEST_CASE("Block cache range pins fetch the missing blocks of a range in one request", "[block_cache]") {

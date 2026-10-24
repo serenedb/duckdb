@@ -219,8 +219,11 @@ public:
 	static constexpr idx_t BLOCK_SIZE = 256ULL * 1024ULL;
 	//! Missing runs closer than this are fetched by one request
 	static constexpr idx_t MERGE_GAP = 1024ULL * 1024ULL;
-	//! The largest request
+	//! The largest run of blocks fetched together
 	static constexpr idx_t MAX_REQUEST = 16ULL * 1024ULL * 1024ULL;
+	//! A longer run is fetched as concurrent requests of at most this size, and the blocks of each are handed out as
+	//! soon as it lands
+	static constexpr idx_t PIECE_SIZE = 4ULL * 1024ULL * 1024ULL;
 	//! Bytes one file may have in flight, which bounds hints tuned for the page cache
 	static constexpr idx_t MAX_FILE_IN_FLIGHT = 64ULL * 1024ULL * 1024ULL;
 
@@ -389,8 +392,13 @@ private:
 	//! MAX_REQUEST and never ends in a gap
 	template <class MISSING, class ADMIT>
 	RunPlan PlanRun(BlockCacheFile &file, idx_t block, idx_t end, uint64_t flags, MISSING &&missing, ADMIT &&admit);
-	//! Reads the blocks of [run] of [file] into the loading entries the caller inserted; null entries are cached gaps
-	void Fetch(BlockCacheFile &file, const Run &run, vector<optional_ptr<BlockCacheEntry>> &entries);
+	//! Reads the blocks of [run] of [file] into the loading entries the caller inserted with one request; null entries
+	//! are cached gaps
+	void Fetch(BlockCacheFile &file, const Run &run, std::span<optional_ptr<BlockCacheEntry>> entries);
+	//! Fetches the runs of [plans] of [file] as concurrent pieces of at most PIECE_SIZE, throwing the first error; the
+	//! caller ends the loads an error leaves unfinished
+	void FetchConcurrently(BlockCacheFile &file, vector<RunPlan> &plans);
+	void FetchMissing(const shared_ptr<BlockCacheFile> &file, idx_t first, vector<BlockCachePin> &pins);
 	//! Reads block [block] of [file] into a buffer of its own, for a miss that found no frame
 	BlockCachePin ReadPrivate(BlockCacheFile &file, idx_t block);
 	//! Ends the load of [entry]: its bytes are shared when [shared]; otherwise the load failed or its bytes serve only
@@ -402,8 +410,9 @@ private:
 	//! Whether blocks of unbacked files can spill, configuring a file in the temporary directory when none is set
 	bool CanSpillUnbacked();
 
+	//! Fetches [run] of [file] in the background, a task per piece of at most PIECE_SIZE
 	void ScheduleFetch(const shared_ptr<BlockCacheFile> &file, const Run &run,
-	                   vector<optional_ptr<BlockCacheEntry>> entries, idx_t bytes);
+	                   vector<optional_ptr<BlockCacheEntry>> entries);
 	ProducerToken &Producer();
 	void FinishFetchTask(idx_t bytes);
 	//! Takes a queued fetch task, which a waiter runs itself and shutdown abandons
