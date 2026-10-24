@@ -242,6 +242,37 @@ TEST_CASE("Make sure file system operators work as advertised", "[file_system]")
 	REQUIRE(!fs->FileExists(fname_in_dir2));
 }
 
+TEST_CASE("ListFilesRecursive lists every file below a directory and no directory", "[file_system]") {
+	DuckDB db(nullptr);
+	Connection con(db);
+	auto &fs = FileSystem::GetFileSystem(*con.context);
+	auto root = TestCreatePath("list_files_recursive");
+	if (fs.DirectoryExists(root)) {
+		fs.RemoveDirectory(root);
+	}
+	auto deeper = fs.JoinPath(fs.JoinPath(root, "sub"), "deeper");
+	fs.CreateDirectoriesRecursive(deeper);
+	fs.CreateDirectory(fs.JoinPath(root, "empty"));
+	CreateDummyFile(fs.JoinPath(root, "a"));
+	CreateDummyFile(fs.JoinPath(fs.JoinPath(root, "sub"), "b"));
+	CreateDummyFile(fs.JoinPath(deeper, "c"));
+
+	vector<string> listed;
+	fs.ListFilesRecursive(root, [&](OpenFileInfo &info) {
+		REQUIRE(!FileSystem::IsDirectory(info));
+		listed.push_back(info.path);
+	});
+	std::sort(listed.begin(), listed.end());
+	auto sub = fs.JoinPath("sub", "b");
+	auto sub_deeper = fs.JoinPath(fs.JoinPath("sub", "deeper"), "c");
+	REQUIRE(listed == vector<string> {"a", sub, sub_deeper});
+
+	listed.clear();
+	fs.ListFilesRecursive(fs.JoinPath(root, "empty"), [&](OpenFileInfo &info) { listed.push_back(info.path); });
+	REQUIRE(listed.empty());
+	fs.RemoveDirectory(root);
+}
+
 #ifndef _WIN32
 TEST_CASE("Character devices use streaming file semantics", "[file_system]") {
 	auto fs = FileSystem::CreateLocal();
