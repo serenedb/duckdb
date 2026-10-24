@@ -208,7 +208,9 @@ void BlockCacheAppender::Append(const_data_ptr_t data, idx_t count) {
 		data += chunk;
 		count -= chunk;
 		size += chunk;
-		cache.SetUnbackedSize(*file, size);
+		if (file->IsUnbacked()) {
+			cache.SetUnbackedSize(*file, size);
+		}
 		if (offset + chunk == BlockCache::BLOCK_SIZE) {
 			current.Reset();
 		}
@@ -217,6 +219,15 @@ void BlockCacheAppender::Append(const_data_ptr_t data, idx_t count) {
 
 void BlockCacheAppender::Finish() {
 	current.Reset();
+	if (!file->IsUnbacked()) {
+		cache.FinishWrittenFile(*file, size, true);
+	}
+}
+
+void BlockCacheAppender::Abandon() {
+	D_ASSERT(!file->IsUnbacked());
+	current.Reset();
+	cache.FinishWrittenFile(*file, size, false);
 }
 
 //===--------------------------------------------------------------------===//

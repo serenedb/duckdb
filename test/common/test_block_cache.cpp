@@ -344,6 +344,37 @@ TEST_CASE("Block cache drops the blocks of a written file that is abandoned", "[
 	REQUIRE(fs.ReadCount() == 1);
 }
 
+TEST_CASE("Block cache appender publishes a written file at the size appended, or drops it", "[block_cache]") {
+	DuckDB db(nullptr);
+	BlockCache cache(*db.instance, 64 * BLOCK);
+	CountingSourceFileSystem fs;
+	TestFile file("block_cache_appended.bin", 2 * BLOCK + 100);
+	vector<uint8_t> data(2 * BLOCK + 100);
+	for (idx_t i = 0; i < data.size(); i++) {
+		data[i] = ExpectedByte(i);
+	}
+	{
+		BlockCacheAppender appender(cache, cache.CreateWrittenFile(file.path));
+		appender.Append(data.data(), 1000);
+		appender.Append(data.data() + 1000, data.size() - 1000);
+		REQUIRE(appender.Size() == data.size());
+		appender.Finish();
+	}
+	auto cached = OpenToRead(cache, fs, file);
+	REQUIRE(cached->GetSize() == data.size());
+	for (idx_t block = 0; block < 3; block++) {
+		auto pin = cache.Pin(cached, block);
+		REQUIRE(HoldsExpectedBytes(pin, block));
+	}
+	REQUIRE(fs.ReadCount() == 0);
+
+	BlockCacheAppender abandoned(cache, cache.CreateWrittenFile(file.path));
+	abandoned.Append(data.data(), BLOCK + 1);
+	REQUIRE(cache.GetStatistics().used == 2 * BLOCK);
+	abandoned.Abandon();
+	REQUIRE(cache.GetStatistics().used == 0);
+}
+
 TEST_CASE("Block cache forgets files no one opens and holds no block of", "[block_cache]") {
 	DuckDB db(nullptr);
 	BlockCache cache(*db.instance, 64 * BLOCK);
