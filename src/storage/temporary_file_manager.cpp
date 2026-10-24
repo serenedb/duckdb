@@ -663,6 +663,10 @@ void TemporaryFileManager::DecreaseSizeOnDisk(idx_t bytes) {
 	size_on_disk -= bytes;
 }
 
+string TemporaryFileManager::TemporaryFilePath(const string &name) const {
+	return FileSystem::GetFileSystem(db).JoinPath(temp_directory, file_prefix + name);
+}
+
 bool TemporaryFileManager::IsEncrypted() const {
 	return Settings::Get<TempFileEncryptionSetting>(db);
 }
