@@ -999,8 +999,7 @@ void DependencyManager::VerifyForeignSubjects(const vector<reference<DependencyE
 		}
 		auto &subjects = db->GetCatalog().Cast<DuckCatalog>();
 		subjects.GetDependencyManager()->VerifyExistence(
-		    CatalogTransaction(subjects.GetDatabase(), MAX_TRANSACTION_ID, VisibilityBound::AllCommitted()),
-		    dependency);
+		    CatalogTransaction::GetCommittedTransaction(subjects.GetDatabase()), dependency);
 	}
 }
 
@@ -1019,7 +1018,7 @@ void DependencyManager::VerifyForeignDependents(const vector<reference<CatalogEn
 	if (objects.empty()) {
 		return;
 	}
-	CatalogTransaction committed(catalog.GetDatabase(), MAX_TRANSACTION_ID, VisibilityBound::AllCommitted());
+	auto committed = CatalogTransaction::GetCommittedTransaction(catalog.GetDatabase());
 	vector<pair<reference<DependencyManager>, CatalogTransaction>> holders;
 	ForEachCatalog(
 	    committed, [&](DuckCatalog &other) { return other.GetDependencyManager()->MayDependOn(catalog.GetName()); },
