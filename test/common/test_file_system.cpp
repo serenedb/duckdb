@@ -801,6 +801,24 @@ TEST_CASE("Existence checks tell a missing path from one they cannot check", "[f
 	REQUIRE(!fs->DirectoryExists(dir));
 }
 
+TEST_CASE("Removing a file that may be missing tells whether there was one", "[file_system]") {
+	auto fs = FileSystem::CreateLocal();
+	auto dir = TestCreatePath("try_remove_file");
+	if (fs->DirectoryExists(dir)) {
+		fs->RemoveDirectory(dir);
+	}
+	fs->CreateDirectory(dir);
+	auto file = fs->JoinPath(dir, "file");
+	CreateDummyFile(file);
+
+	REQUIRE(!fs->TryRemoveFile(fs->JoinPath(file, "below_a_file")));
+	REQUIRE(fs->TryRemoveFile(file));
+	REQUIRE(!fs->FileExists(file));
+	REQUIRE(!fs->TryRemoveFile(file));
+
+	fs->RemoveDirectory(dir);
+}
+
 TEST_CASE("Removing a directory removes its symlinks without following them", "[file_system]") {
 	auto fs = FileSystem::CreateLocal();
 	auto target = TestCreatePath("remove_symlinks_target");

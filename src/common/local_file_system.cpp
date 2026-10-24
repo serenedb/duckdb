@@ -806,6 +806,19 @@ void LocalFileSystem::RemoveFile(const string &filename, optional_ptr<FileOpener
 	}
 }
 
+bool LocalFileSystem::TryRemoveFile(const string &filename, optional_ptr<FileOpener> opener) {
+	auto normalized_file = ExpandPath(filename, opener);
+	if (::unlink(normalized_file.c_str()) == 0) {
+		return true;
+	}
+	const int error = errno;
+	if (error == ENOENT || error == ENOTDIR || error == EISDIR) {
+		return false;
+	}
+	throw IOException({{"errno", std::to_string(error)}}, "Could not remove file \"%s\": %s", filename,
+	                  strerror(error));
+}
+
 bool LocalFileSystem::ListFilesExtended(const string &directory,
                                         const std::function<void(OpenFileInfo &info)> &callback,
                                         optional_ptr<FileOpener> opener) {
@@ -1719,6 +1732,19 @@ void LocalFileSystem::RemoveFile(const string &filename, optional_ptr<FileOpener
 		auto abs_path = WindowsUtil::UnicodeToUTF8(unicode_path.c_str());
 		throw IOException("Failed to delete file \"%s\": %s", abs_path, error);
 	}
+}
+
+bool LocalFileSystem::TryRemoveFile(const string &filename, optional_ptr<FileOpener> opener) {
+	auto unicode_path = NormalizePathAndConvertToUnicode(*this, filename, opener);
+	if (DeleteFileW(unicode_path.c_str())) {
+		return true;
+	}
+	auto error = GetLastError();
+	if (error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND) {
+		return false;
+	}
+	auto abs_path = WindowsUtil::UnicodeToUTF8(unicode_path.c_str());
+	throw IOException("Failed to delete file \"%s\": %s", abs_path, GetLastErrorAsString());
 }
 
 bool LocalFileSystem::ListFilesExtended(const string &directory,
