@@ -773,20 +773,32 @@ const char *StandardBufferManager::InMemoryWarning() {
 	       "\nOr set SET temp_directory='/path/to/tmp.tmp'";
 }
 
-void StandardBufferManager::ReserveMemory(idx_t size) {
+void StandardBufferManager::ReserveMemory(MemoryTag tag, idx_t size) {
 	if (size == 0) {
 		return;
 	}
-	auto reservation = EvictBlocksOrThrow(QueryContext(), MemoryTag::EXTENSION, size, nullptr,
-	                                      "failed to reserve memory data of size %s%s");
+	auto reservation =
+	    EvictBlocksOrThrow(QueryContext(), tag, size, nullptr, "failed to reserve memory data of size %s%s");
 	reservation.size = 0;
 }
 
-void StandardBufferManager::FreeReservedMemory(idx_t size) {
+bool StandardBufferManager::TryReserveMemory(MemoryTag tag, idx_t size) {
+	if (size == 0) {
+		return true;
+	}
+	auto result = buffer_pool.EvictBlocks(QueryContext(), tag, size, buffer_pool.maximum_memory);
+	if (!result.success) {
+		return false;
+	}
+	result.reservation.size = 0;
+	return true;
+}
+
+void StandardBufferManager::FreeReservedMemory(MemoryTag tag, idx_t size) {
 	if (size == 0) {
 		return;
 	}
-	buffer_pool.memory_usage.UpdateUsedMemory(MemoryTag::EXTENSION, -(int64_t)size);
+	buffer_pool.memory_usage.UpdateUsedMemory(tag, -(int64_t)size);
 }
 
 //===--------------------------------------------------------------------===//

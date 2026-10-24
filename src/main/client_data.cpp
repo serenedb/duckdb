@@ -154,11 +154,14 @@ public:
 	Allocator &GetBufferAllocator() override {
 		return buffer_manager.GetBufferAllocator();
 	}
-	void ReserveMemory(idx_t size) override {
-		return buffer_manager.ReserveMemory(size);
+	void ReserveMemory(MemoryTag tag, idx_t size) override {
+		return buffer_manager.ReserveMemory(tag, size);
 	}
-	void FreeReservedMemory(idx_t size) override {
-		return buffer_manager.FreeReservedMemory(size);
+	bool TryReserveMemory(MemoryTag tag, idx_t size) override {
+		return buffer_manager.TryReserveMemory(tag, size);
+	}
+	void FreeReservedMemory(MemoryTag tag, idx_t size) override {
+		return buffer_manager.FreeReservedMemory(tag, size);
 	}
 	vector<MemoryInformation> GetMemoryUsageInfo() const override {
 		return buffer_manager.GetMemoryUsageInfo();

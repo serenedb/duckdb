@@ -44,7 +44,6 @@ class BufferPool {
 	friend class BlockManager;
 	friend class BufferManager;
 	friend class StandardBufferManager;
-	friend class BlockCache;
 
 public:
 	BufferPool(BlockAllocator &block_allocator, idx_t maximum_memory, bool track_eviction_timestamps,

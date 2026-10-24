@@ -23,8 +23,8 @@
 #include "duckdb/parallel/task_scheduler.hpp"
 #include "duckdb/storage/block_cache/block_cache_spill.hpp"
 #include "duckdb/storage/buffer/buffer_handle.hpp"
-#include "duckdb/storage/buffer/buffer_pool.hpp"
 #include "duckdb/storage/buffer/temporary_file_information.hpp"
+#include "duckdb/storage/buffer_manager.hpp"
 #include "duckdb/storage/external_file_cache/cache_validation.hpp"
 
 namespace duckdb {
@@ -380,7 +380,7 @@ public:
 
 private:
 	DatabaseInstance &db;
-	BufferPool &buffer_pool;
+	BufferManager &buffer_manager;
 
 	//! Frames: one region of BLOCK_SIZE slots on huge pages
 	data_ptr_t region = nullptr;
