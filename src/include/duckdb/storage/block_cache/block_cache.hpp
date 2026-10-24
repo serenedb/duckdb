@@ -172,20 +172,22 @@ private:
 	atomic<idx_t> in_flight {0};
 };
 
-//! Writes an unbacked file from start to end: it creates each block as the write reaches it and pins the block it
-//! fills until the block is full or the write ends
+//! Writes an unbacked or written file from start to end: it creates each block as the write reaches it and pins the
+//! block it fills until the block is full or the write ends
 class BlockCacheAppender {
 public:
 	BlockCacheAppender(BlockCache &cache, shared_ptr<BlockCacheFile> file);
 
-	//! Appends [count] bytes of [data], which readers of the file see once they are appended
+	//! Appends [count] bytes of [data]; readers of an unbacked file see them once they are appended
 	void Append(const_data_ptr_t data, idx_t count);
 	//! The bytes appended
 	idx_t Size() const {
 		return size;
 	}
-	//! Ends the write
+	//! Ends the write; a written file is published at the size appended
 	void Finish();
+	//! Ends the write of a written file and drops its blocks
+	void Abandon();
 
 private:
 	BlockCache &cache;
