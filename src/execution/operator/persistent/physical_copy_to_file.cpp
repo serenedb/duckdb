@@ -1568,19 +1568,8 @@ void CheckDirectory(FileSystem &fs, const string &file_path, CopyOverwriteMode o
 		return;
 	}
 	vector<string> file_list;
-	vector<string> directory_list;
-	directory_list.push_back(file_path);
-	for (idx_t dir_idx = 0; dir_idx < directory_list.size(); dir_idx++) {
-		auto directory = directory_list[dir_idx];
-		fs.ListFiles(directory, [&](const string &path, bool is_directory) {
-			auto full_path = fs.JoinPath(directory, path);
-			if (is_directory) {
-				directory_list.emplace_back(std::move(full_path));
-			} else {
-				file_list.emplace_back(std::move(full_path));
-			}
-		});
-	}
+	fs.ListFilesRecursive(file_path,
+	                      [&](OpenFileInfo &info) { file_list.push_back(fs.JoinPath(file_path, info.path)); });
 	if (file_list.empty()) {
 		return;
 	}

@@ -664,6 +664,27 @@ bool FileSystem::ListFiles(const string &directory, const std::function<void(Ope
 	}
 }
 
+void FileSystem::ListFilesRecursive(const string &directory, const std::function<void(OpenFileInfo &info)> &callback,
+                                    optional_ptr<FileOpener> opener) {
+	vector<string> directories {string()};
+	for (idx_t i = 0; i < directories.size(); i++) {
+		const auto relative = directories[i];
+		ListFiles(
+		    relative.empty() ? directory : JoinPath(directory, relative),
+		    [&](OpenFileInfo &info) {
+			    if (!relative.empty()) {
+				    info.path = JoinPath(relative, info.path);
+			    }
+			    if (IsDirectory(info)) {
+				    directories.push_back(std::move(info.path));
+			    } else {
+				    callback(info);
+			    }
+		    },
+		    opener);
+	}
+}
+
 void FileSystem::MoveFile(const string &source, const string &target, optional_ptr<FileOpener> opener) {
 	throw NotImplementedException("%s: MoveFile is not implemented!", GetName());
 }
