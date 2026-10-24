@@ -157,8 +157,8 @@ public:
 	void ReserveMemory(MemoryTag tag, idx_t size) override {
 		return buffer_manager.ReserveMemory(tag, size);
 	}
-	bool TryReserveMemory(MemoryTag tag, idx_t size) override {
-		return buffer_manager.TryReserveMemory(tag, size);
+	bool TryReserveMemory(MemoryTag tag, idx_t size, bool evict_caches) override {
+		return buffer_manager.TryReserveMemory(tag, size, evict_caches);
 	}
 	void FreeReservedMemory(MemoryTag tag, idx_t size) override {
 		return buffer_manager.FreeReservedMemory(tag, size);

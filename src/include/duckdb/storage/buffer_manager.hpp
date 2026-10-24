@@ -100,8 +100,9 @@ public:
 	virtual DUCKDB_API Allocator &GetBufferAllocator();
 	//! Reserve memory.
 	virtual DUCKDB_API void ReserveMemory(MemoryTag tag, idx_t size);
-	//! Reserves memory, evicting what it can; false when the memory limit leaves no room
-	virtual DUCKDB_API bool TryReserveMemory(MemoryTag tag, idx_t size);
+	//! Reserves memory, evicting unpinned buffers and, when [evict_caches], the block and object caches; false when the
+	//! memory limit leaves no room
+	virtual DUCKDB_API bool TryReserveMemory(MemoryTag tag, idx_t size, bool evict_caches);
 	//! Free reserved memory.
 	virtual DUCKDB_API void FreeReservedMemory(MemoryTag tag, idx_t size);
 	//! GetMemoryUsageInfo returns MemoryInformation for each memory tag.

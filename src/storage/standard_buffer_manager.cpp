@@ -787,11 +787,12 @@ void StandardBufferManager::ReserveMemory(MemoryTag tag, idx_t size) {
 	reservation.size = 0;
 }
 
-bool StandardBufferManager::TryReserveMemory(MemoryTag tag, idx_t size) {
+bool StandardBufferManager::TryReserveMemory(MemoryTag tag, idx_t size, bool evict_caches) {
 	if (size == 0) {
 		return true;
 	}
-	auto result = buffer_pool.EvictBlocks(QueryContext(), tag, size, buffer_pool.maximum_memory);
+	auto result = evict_caches ? buffer_pool.EvictBlocks(QueryContext(), tag, size, buffer_pool.maximum_memory)
+	                           : buffer_pool.EvictBuffers(QueryContext(), tag, size, buffer_pool.maximum_memory);
 	if (!result.success) {
 		return false;
 	}

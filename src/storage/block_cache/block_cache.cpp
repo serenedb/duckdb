@@ -765,7 +765,7 @@ void BlockCache::Unlink(BlockCacheEntry &entry) {
 	UnlockBucket(bucket);
 }
 
-bool BlockCache::TakeFreeFrame(uint32_t &frame) {
+bool BlockCache::TakeFreeFrame(uint32_t &frame, bool evict_caches) {
 	{
 		annotated_lock_guard<annotated_mutex> guard(frame_lock);
 		if (free_frames.empty()) {
@@ -780,7 +780,7 @@ bool BlockCache::TakeFreeFrame(uint32_t &frame) {
 		annotated_lock_guard<annotated_mutex> guard(frame_lock);
 		free_frames.push_back(frame);
 	};
-	if (!buffer_manager.TryReserveMemory(MemoryTag::EXTERNAL_FILE_CACHE, BLOCK_SIZE)) {
+	if (!buffer_manager.TryReserveMemory(MemoryTag::EXTERNAL_FILE_CACHE, BLOCK_SIZE, evict_caches)) {
 		return false;
 	}
 	std::move(give_back).Cancel();
@@ -793,14 +793,14 @@ bool BlockCache::TakeFreeFrame(uint32_t &frame) {
 bool BlockCache::AcquireFrame(uint32_t &frame) {
 	for (idx_t attempt = 0; attempt < ACQUIRE_ATTEMPTS; attempt++) {
 		if (used_frames.load(std::memory_order_relaxed) < capacity_frames.load(std::memory_order_relaxed) &&
-		    TakeFreeFrame(frame)) {
+		    TakeFreeFrame(frame, false)) {
 			return true;
 		}
 		if (EvictOne(frame)) {
 			return true;
 		}
 	}
-	return TakeFreeFrame(frame);
+	return TakeFreeFrame(frame, true);
 }
 
 void BlockCache::ReleaseFrame(uint32_t frame) {

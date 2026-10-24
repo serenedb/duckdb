@@ -381,12 +381,9 @@ BufferPool::EvictionResult BufferPool::EvictObjectCacheEntries(MemoryTag tag, id
 
 BufferPool::EvictionResult BufferPool::EvictBlocks(QueryContext context, MemoryTag tag, idx_t extra_memory,
                                                    idx_t memory_limit, unique_ptr<FileBuffer> *buffer) {
-	FlushOnBulkDeallocation();
-	for (auto &queue : queues) {
-		auto block_result = EvictBlocksInternal(context, *queue, tag, extra_memory, memory_limit, buffer);
-		if (block_result.success) {
-			return block_result;
-		}
+	auto block_result = EvictBuffers(context, tag, extra_memory, memory_limit, buffer);
+	if (block_result.success) {
+		return block_result;
 	}
 
 	if (block_cache) {
@@ -399,6 +396,18 @@ BufferPool::EvictionResult BufferPool::EvictBlocks(QueryContext context, MemoryT
 	// Evict object cache, which is usually used to cache metadata and configs, when flushing buffer blocks alone is not
 	// enough to limit overall memory consumption.
 	return EvictObjectCacheEntries(tag, extra_memory, memory_limit);
+}
+
+BufferPool::EvictionResult BufferPool::EvictBuffers(QueryContext context, MemoryTag tag, idx_t extra_memory,
+                                                    idx_t memory_limit, unique_ptr<FileBuffer> *buffer) {
+	FlushOnBulkDeallocation();
+	for (auto &queue : queues) {
+		auto block_result = EvictBlocksInternal(context, *queue, tag, extra_memory, memory_limit, buffer);
+		if (block_result.success) {
+			return block_result;
+		}
+	}
+	return {false, TempBufferPoolReservation(tag, *this, 0)};
 }
 
 BufferPool::EvictionResult BufferPool::EvictBlockCacheFrames(MemoryTag tag, idx_t extra_memory, idx_t memory_limit) {
