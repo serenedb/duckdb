@@ -315,6 +315,28 @@ uint32_t BlockCache::WaitStripe(const BlockCacheEntry &entry) {
 	return NumericCast<uint32_t>((reinterpret_cast<uintptr_t>(&entry) / CACHE_LINE) % WAIT_STRIPES);
 }
 
+optional<BlockCache::FileRecord> BlockCache::Renumber(FileRecord &record, const BlockCacheFileInfo &info, idx_t opens,
+                                                      bool &sweep) {
+	optional<FileRecord> replaced;
+	if (record.number != 0) {
+		replaced = std::move(record);
+	} else if (files.size() >= sweep_at) {
+		sweep = true;
+		sweep_at = NumericLimits<idx_t>::Maximum();
+	}
+	record = FileRecord {next_file_number++, info, opens};
+	return replaced;
+}
+
+void BlockCache::Retire(const optional<FileRecord> &replaced, bool sweep) {
+	if (replaced) {
+		DropBlocks(replaced->number, BlockCountOf(replaced->info.validation.file_size));
+	}
+	if (sweep) {
+		SweepFiles();
+	}
+}
+
 shared_ptr<BlockCacheFile> BlockCache::OpenFile(const string &path, const BlockCacheFileInfo &current, bool validate,
                                                 shared_ptr<FileHandle> source) {
 	FileRecord opened;
@@ -324,11 +346,7 @@ shared_ptr<BlockCacheFile> BlockCache::OpenFile(const string &path, const BlockC
 		annotated_lock_guard<annotated_mutex> guard(file_lock);
 		auto &record = files[path];
 		if (record.number == 0) {
-			record = FileRecord {next_file_number++, current, 0};
-			if (files.size() >= sweep_at) {
-				sweep = true;
-				sweep_at = NumericLimits<idx_t>::Maximum();
-			}
+			replaced = Renumber(record, current, 0, sweep);
 		} else {
 			const bool expired = !validate && record.info.validation.IsExpired();
 			if (validate || expired) {
@@ -341,20 +359,14 @@ shared_ptr<BlockCacheFile> BlockCache::OpenFile(const string &path, const BlockC
 						record.info.validation.cache_valid_until = preserved;
 					}
 				} else {
-					replaced = record;
-					record = FileRecord {next_file_number++, current, 0};
+					replaced = Renumber(record, current, 0, sweep);
 				}
 			}
 		}
 		record.opens++;
 		opened = record;
 	}
-	if (replaced) {
-		DropBlocks(replaced->number, BlockCountOf(replaced->info.validation.file_size));
-	}
-	if (sweep) {
-		SweepFiles();
-	}
+	Retire(replaced, sweep);
 	return make_shared_ptr<BlockCacheFile>(*this, path, opened.number, false, std::move(opened.info),
 	                                       std::move(source));
 }
@@ -482,17 +494,17 @@ bool BlockCache::IsLiveUnbacked(uint32_t number) const {
 }
 
 void BlockCache::ForgetFile(const string &path) {
-	FileRecord record;
+	optional<FileRecord> forgotten;
 	{
 		annotated_lock_guard<annotated_mutex> guard(file_lock);
 		auto entry = files.find(path);
 		if (entry == files.end()) {
 			return;
 		}
-		record = entry->second;
+		forgotten = std::move(entry->second);
 		files.erase(entry);
 	}
-	DropBlocks(record.number, BlockCountOf(record.info.validation.file_size));
+	Retire(forgotten, false);
 }
 
 void BlockCache::DropFile(BlockCacheFile &file) {

@@ -280,6 +280,12 @@ private:
 		idx_t first_block;
 		idx_t block_count;
 	};
+	struct FileRecord {
+		uint32_t number = 0;
+		BlockCacheFileInfo info;
+		//! Opens of this version of the file that are still live
+		idx_t opens = 0;
+	};
 
 	static uint64_t MakeKey(uint32_t file, idx_t block);
 	static uint32_t WaitStripe(const BlockCacheEntry &entry);
@@ -320,6 +326,12 @@ private:
 	void DropBlocks(uint32_t number, idx_t block_count);
 	void ReleaseUnbacked(uint32_t number, idx_t block_count);
 	bool IsLiveUnbacked(uint32_t number) const;
+	//! Gives [record] a new number for [info] with [opens] opens, returning the version it replaces; sets [sweep] when
+	//! the record is new and the records are due a sweep
+	optional<FileRecord> Renumber(FileRecord &record, const BlockCacheFileInfo &info, idx_t opens, bool &sweep)
+	    DUCKDB_REQUIRES(file_lock);
+	//! Drops the blocks of [replaced], a version of a file no open shares anymore, and sweeps the records when [sweep]
+	void Retire(const optional<FileRecord> &replaced, bool sweep);
 	//! Counts the end of an open of a backed file
 	void CloseFile(const BlockCacheFile &file);
 	//! Forgets the files no one has open and the cache holds no block of
@@ -384,12 +396,6 @@ private:
 	mutable mutex wait_locks[WAIT_STRIPES];
 
 	mutable annotated_mutex file_lock;
-	struct FileRecord {
-		uint32_t number = 0;
-		BlockCacheFileInfo info;
-		//! Opens of this version of the file that are still live
-		idx_t opens = 0;
-	};
 	unordered_map<string, FileRecord> files DUCKDB_GUARDED_BY(file_lock);
 	uint32_t next_file_number DUCKDB_GUARDED_BY(file_lock) = 1;
 	static constexpr idx_t MIN_SWEEP_RECORDS = 1024;
