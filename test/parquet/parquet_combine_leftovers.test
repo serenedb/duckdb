@@ -1,0 +1,25 @@
+# name: test/parquet/parquet_combine_leftovers.test
+# group: [parquet]
+
+require parquet
+
+require vector_size 2048
+
+statement ok
+set threads=1;
+
+statement ok
+set preserve_insertion_order=false;
+
+statement ok
+copy (from range(50_000) union all from range(50_000) union all from range(50_000) union all from range(50_000)) to '{TEST_DIR}/parquet_combine_leftovers.parquet' (row_group_size_bytes 750_000);
+
+query I
+select count(*) from parquet_metadata('{TEST_DIR}/parquet_combine_leftovers.parquet')
+----
+3
+
+query I
+select count(*) from '{TEST_DIR}/parquet_combine_leftovers.parquet'
+----
+200000

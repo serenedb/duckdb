@@ -285,7 +285,7 @@ public:
 	void Append(bool null, uint16_t amount = 1);
 	void OverrideArray(data_ptr_t &destination, bool nulls, idx_t count);
 	void OverrideRun(data_ptr_t &destination, idx_t count);
-	void OverrideUncompressed(data_ptr_t &destination);
+	void OverrideUncompressed(data_ptr_t &destination, idx_t container_size);
 	void Finalize();
 	ContainerMetadata GetResult();
 	void Reset();
@@ -323,6 +323,7 @@ public:
 	uint8_t base_run_counts[COMPRESSED_SEGMENT_COUNT];
 
 	validity_t *uncompressed = nullptr;
+	idx_t uncompressed_size = 0;
 	//! Whether the state has been finalized
 	bool finalized = false;
 	//! The function called to append to the state

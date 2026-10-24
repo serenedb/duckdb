@@ -15,7 +15,7 @@ public:
 
 public:
 	TaskExecutionResult Execute(TaskExecutionMode mode) override {
-		FinishGuard guard(executor);
+		FinishGuard guard(executor, task);
 		if (executor.HasError() || executor.IsCancelled()) {
 			// another task encountered an error, or the executor was cancelled - retire without doing the work
 			return RunGuarded([&]() { task->Cancel(); }, "Unknown exception while cancelling a task");
@@ -63,10 +63,11 @@ private:
 	//! Settles the executor's task counter on every exit path, so that a drain always terminates
 	class FinishGuard {
 	public:
-		explicit FinishGuard(TaskExecutor &executor) : executor(executor) {
+		FinishGuard(TaskExecutor &executor, unique_ptr<BaseExecutorTask> &task) : executor(executor), task(task) {
 		}
 		~FinishGuard() {
 			if (!dismissed) {
+				task.reset();
 				executor.FinishTask();
 			}
 		}
@@ -77,6 +78,7 @@ private:
 
 	private:
 		TaskExecutor &executor;
+		unique_ptr<BaseExecutorTask> &task;
 		bool dismissed = false;
 	};
 

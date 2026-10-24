@@ -32,14 +32,13 @@ SELECT name, value, input_type FROM duckdb_settings() WHERE name = 'max_executio
 ----
 max_execution_time	0	BIGINT
 
-# set small value and verify it shows
 statement ok
-SET max_execution_time=100
+SET max_execution_time=100000
 
 query III
 SELECT name, value, input_type FROM duckdb_settings() WHERE name = 'max_execution_time'
 ----
-max_execution_time	100	BIGINT
+max_execution_time	100000	BIGINT
 
 # test timeout triggers (50ms timeout on slow cross-product query)
 statement ok

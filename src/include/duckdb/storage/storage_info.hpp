@@ -387,14 +387,14 @@ public:
 	static MainHeader Read(ReadStream &source);
 
 private:
-	data_t library_git_desc[MAX_VERSION_SIZE];
-	data_t library_git_hash[MAX_VERSION_SIZE];
-	data_t encryption_metadata[ENCRYPTION_METADATA_LEN];
+	data_t library_git_desc[MAX_VERSION_SIZE] = {};
+	data_t library_git_hash[MAX_VERSION_SIZE] = {};
+	data_t encryption_metadata[ENCRYPTION_METADATA_LEN] = {};
 	//! The unique database identifier and optional encryption salt.
-	data_t db_identifier[DB_IDENTIFIER_LEN];
-	data_t encrypted_canary[CANARY_BYTE_SIZE];
-	data_t canary_iv[AES_NONCE_LEN];
-	data_t canary_tag[AES_TAG_LEN];
+	data_t db_identifier[DB_IDENTIFIER_LEN] = {};
+	data_t encrypted_canary[CANARY_BYTE_SIZE] = {};
+	data_t canary_iv[AES_NONCE_LEN] = {};
+	data_t canary_tag[AES_TAG_LEN] = {};
 };
 
 //! The DatabaseHeader contains information about the current state of the database. Every storage file has two

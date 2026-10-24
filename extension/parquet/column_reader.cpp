@@ -428,7 +428,7 @@ void ColumnReader::ResetPage() {
 void ColumnReader::PreparePageV2(PageHeader &page_hdr) {
 	D_ASSERT(page_hdr.type == PageType::DATA_PAGE_V2);
 
-	AllocateBlock(page_hdr.uncompressed_page_size + 1);
+	AllocateBlock(page_hdr.uncompressed_page_size);
 	bool uncompressed = false;
 	if (page_hdr.data_page_header_v2.__isset.is_compressed && !page_hdr.data_page_header_v2.is_compressed) {
 		uncompressed = true;
@@ -507,14 +507,16 @@ void ColumnReader::PreparePageV2(PageHeader &page_hdr) {
 
 void ColumnReader::AllocateBlock(idx_t size) {
 	if (!block || block.use_count() > 1) {
-		block = make_shared_ptr<ResizeableBuffer>(GetAllocator(), size);
+		block = make_shared_ptr<ResizeableBuffer>(GetAllocator(), size + 1);
 	} else {
-		block->resize(GetAllocator(), size);
+		block->resize(GetAllocator(), size + 1);
 	}
+	block->ptr[size] = 0;
+	block->len = size;
 }
 
 void ColumnReader::PreparePage(PageHeader &page_hdr) {
-	AllocateBlock(page_hdr.uncompressed_page_size + 1);
+	AllocateBlock(page_hdr.uncompressed_page_size);
 	uint32_t compressed_page_size = page_hdr.compressed_page_size;
 
 	if (chunk->__isset.crypto_metadata) {

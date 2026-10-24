@@ -294,8 +294,6 @@ public:
 	Identifier alias;
 	//! Macro parameter bindings (if any)
 	optional_ptr<DummyBinding> macro_binding;
-	//! The intermediate lambda bindings to bind nested lambdas (if any)
-	optional_ptr<vector<DummyBinding>> lambda_bindings;
 
 	unordered_map<TableIndex, LogicalOperator *> recursive_ctes;
 

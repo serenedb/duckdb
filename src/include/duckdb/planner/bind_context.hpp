@@ -196,6 +196,7 @@ private:
 		idx_t order = 0; //! insertion order for PG-compatible SELECT * output
 	};
 	identifier_map_t<UsingColumnInfo> using_columns;
+	idx_t using_column_counter = 0;
 	//! The set of CTE bindings
 	vector<unique_ptr<CTEBinding>> cte_bindings;
 };

@@ -73,7 +73,7 @@ public:
 	//! True, if the ART owns its data.
 	bool owns_data;
 	//! Storage version that the ART was created in, used for backwards compatible key generation
-	StorageVersion storage_version;
+	StorageVersion storage_version = StorageVersion::INVALID;
 
 public:
 	//! Try to initialize a scan on the ART with the given expression and filter.

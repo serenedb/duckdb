@@ -50,9 +50,10 @@ MacroBindResult MacroFunction::BindMacroFunction(
     Binder &binder, const vector<unique_ptr<MacroFunction>> &functions, const Identifier &name,
     FunctionExpression &function_expr, vector<unique_ptr<ParsedExpression>> &positional_arguments,
     InsertionOrderPreservingMap<unique_ptr<ParsedExpression>, Identifier, identifier_map_t<idx_t>> &named_arguments,
-    idx_t depth, optional_ptr<ExpressionBinder> argument_binder, optional_ptr<MacroBoundArguments> bound_arguments) {
+    idx_t depth, optional_ptr<vector<DummyBinding>> lambda_bindings, optional_ptr<ExpressionBinder> argument_binder,
+    optional_ptr<MacroBoundArguments> bound_arguments) {
 	ExpressionBinder expr_binder(binder, binder.context);
-	expr_binder.lambda_bindings = binder.lambda_bindings;
+	expr_binder.lambda_bindings = lambda_bindings;
 
 	// Figure out whether we even need to bind arguments
 	bool requires_bind = false;

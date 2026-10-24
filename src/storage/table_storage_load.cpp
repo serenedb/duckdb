@@ -2,6 +2,8 @@
 
 #include <absl/cleanup/cleanup.h>
 
+#include <optional>
+
 #include "duckdb/catalog/catalog_entry/duck_index_entry.hpp"
 #include "duckdb/catalog/catalog_entry/duck_table_entry.hpp"
 #include "duckdb/catalog/catalog_entry/schema_catalog_entry.hpp"
@@ -93,6 +95,15 @@ vector<IndexDefinition> GetIndexDefinitions(DuckTableEntry &table, const DataTab
 		result.push_back(std::move(definition));
 	});
 	return result;
+}
+
+std::optional<IndexDefinition> FindIndexDefinition(DuckTableEntry &table, idx_t index_oid) {
+	for (auto &definition : GetIndexDefinitions(table, *table.GetStorage().GetDataTableInfo())) {
+		if (definition.oid == index_oid) {
+			return std::move(definition);
+		}
+	}
+	return std::nullopt;
 }
 
 IndexStorageInfo FreshIndexInfo(const IndexDefinition &definition) {
@@ -286,6 +297,14 @@ void TableStorageLoad::Drop(optional_idx table_oid) {
 	storage.erase(entry);
 }
 
+bool TableStorageLoad::KeepsIndex(optional_idx table_oid, idx_t index_oid) {
+	if (!table_oid.IsValid() || !storage.contains(table_oid.GetIndex())) {
+		return false;
+	}
+	auto table = tables.find(table_oid.GetIndex());
+	return table != tables.end() && FindIndexDefinition(table->second.get(), index_oid);
+}
+
 void TableStorageLoad::CreateIndex(optional_idx table_oid, unique_ptr<CreateInfo> info, IndexStorageInfo storage_info) {
 	if (!table_oid.IsValid()) {
 		return;
@@ -315,20 +334,18 @@ void TableStorageLoad::AttachIndex(PendingIndex pending) {
 		return;
 	}
 	auto &final_table = table->second.get();
-	auto &shadow = entry->second->Cast<DuckTableEntry>();
-	for (auto &definition : GetIndexDefinitions(final_table, *final_table.GetStorage().GetDataTableInfo())) {
-		if (definition.oid != pending.index_oid) {
-			continue;
-		}
-		pending.storage_info.options["catalog_oid"] = Value::UBIGINT(pending.index_oid);
-		UseIndexLayoutOf(final_table, *shadow.GetStorage().GetDataTableInfo());
-		AttachIndexInstance(final_table, shadow.GetStorage(), definition, std::move(pending.storage_info));
-		BindExternalIndexes(final_table, *shadow.GetStorage().GetDataTableInfo());
-		shadow.SetAsRoot(nullptr, nullptr);
-		loaded_indexes[pending.table_oid].insert(pending.index_oid);
-		index_entry_oids[pending.index_oid] = definition.entry_oid;
+	auto definition = FindIndexDefinition(final_table, pending.index_oid);
+	if (!definition) {
 		return;
 	}
+	auto &shadow = entry->second->Cast<DuckTableEntry>();
+	pending.storage_info.options["catalog_oid"] = Value::UBIGINT(pending.index_oid);
+	UseIndexLayoutOf(final_table, *shadow.GetStorage().GetDataTableInfo());
+	AttachIndexInstance(final_table, shadow.GetStorage(), *definition, std::move(pending.storage_info));
+	BindExternalIndexes(final_table, *shadow.GetStorage().GetDataTableInfo());
+	shadow.SetAsRoot(nullptr, nullptr);
+	loaded_indexes[pending.table_oid].insert(pending.index_oid);
+	index_entry_oids[pending.index_oid] = definition->entry_oid;
 }
 
 void TableStorageLoad::DropIndex(optional_idx table_oid, idx_t index_oid) {

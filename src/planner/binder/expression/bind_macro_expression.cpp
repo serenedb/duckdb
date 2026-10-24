@@ -771,7 +771,6 @@ void ExpressionBinder::UnfoldMacroExpression(FunctionExpression &function, Scala
 	// validate the arguments and separate positional and default arguments
 	vector<unique_ptr<ParsedExpression>> positional_arguments;
 	InsertionOrderPreservingMap<unique_ptr<ParsedExpression>, Identifier, identifier_map_t<idx_t>> named_arguments;
-	binder.lambda_bindings = lambda_bindings;
 	const bool binds_values =
 	    binder.GetBindingMode() == BindingMode::STANDARD_BINDING || binder.GetBindingMode() == BindingMode::PREPARE;
 	const bool can_bind_arguments = expr->GetExpressionClass() != ExpressionClass::WINDOW && binds_values;
@@ -781,7 +780,7 @@ void ExpressionBinder::UnfoldMacroExpression(FunctionExpression &function, Scala
 	}
 	auto bind_result = MacroFunction::BindMacroFunction(
 	    binder, macro_func.macros, macro_func.name, function, positional_arguments, named_arguments, depth,
-	    can_bind_arguments ? this : nullptr, can_bind_arguments ? &bound_arguments : nullptr);
+	    lambda_bindings, can_bind_arguments ? this : nullptr, can_bind_arguments ? &bound_arguments : nullptr);
 	if (!bind_result.error.empty()) {
 		throw BinderException(*expr, bind_result.error);
 	}

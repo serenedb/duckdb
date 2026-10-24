@@ -20,13 +20,17 @@ struct ICUTableRange {
 		      calendar(other.calendar->Copy()), cardinality(other.cardinality) {
 		}
 
-		explicit ICURangeBindData(ClientContext &context, const vector<Value> &inputs) : cal_setting("gregorian") {
+		explicit ICURangeBindData(ClientContext &context, const vector<Value> &inputs)
+		    : cal_setting("gregorian"), cardinality(0) {
 			context.TryGetCurrentSetting("TimeZone", tz_setting);
 			context.TryGetCurrentSetting("Calendar", cal_setting);
 			auto tz = TimeZone::TryCreate(tz_setting);
 			calendar = Calendar::TryCreate(cal_setting, tz ? std::move(tz) : TimeZone::TryCreate("UTC"));
 			if (!calendar) {
 				throw InternalException("Unable to create calendar.");
+			}
+			if (inputs.size() != 3) {
+				return;
 			}
 
 			timestamp_tz_t bounds[2];

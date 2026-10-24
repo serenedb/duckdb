@@ -47,7 +47,10 @@ void ClientContext::BeginQueryInternal(ClientContextLock &lock, const SQLStateme
 	LogQueryInternal(lock, query);
 	active_query->query = query;
 
-	query_progress.Initialize();
+	{
+		lock_guard<mutex> guard(query_progress_lock);
+		query_progress.Initialize();
+	}
 	// Set query deadline if max_execution_time is configured
 	auto max_execution_time = Settings::Get<MaxExecutionTimeSetting>(*this);
 	if (max_execution_time > 0) {
@@ -81,7 +84,10 @@ ErrorData ClientContext::EndQueryInternal(ClientContextLock &lock, bool success,
 	D_ASSERT(active_query.get());
 	active_query.reset();
 	query_deadline.SetInvalid();
-	query_progress.Initialize();
+	{
+		lock_guard<mutex> guard(query_progress_lock);
+		query_progress.Initialize();
+	}
 	ErrorData error;
 	try {
 		if (transaction.HasActiveTransaction()) {
@@ -211,6 +217,7 @@ unique_ptr<QueryResult> ClientContext::SubmitPreparedStatementInternal(
 		    make_uniq<ProgressBar>(executor, NumericCast<idx_t>(config.wait_time),
 		                           NumericCast<idx_t>(config.progress_update_interval_ms), display_create_func);
 		active_query->progress_bar->Start();
+		lock_guard<mutex> guard(query_progress_lock);
 		query_progress.Restart();
 	}
 
@@ -356,7 +363,9 @@ void ClientContext::UpdateProgressInternal(QueryResultState state) {
 	}
 	// todo: this is not correct for streaming results
 	if (active_query->progress_bar->Update(IsObservable(state))) {
-		query_progress = active_query->progress_bar->GetDetailedQueryProgress();
+		auto progress = active_query->progress_bar->GetDetailedQueryProgress();
+		lock_guard<mutex> guard(query_progress_lock);
+		query_progress = progress;
 	}
 }
 

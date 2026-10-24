@@ -375,6 +375,7 @@ shared_ptr<PreparedStatementData> ClientContext::CreatePreparedStatement(ClientC
 }
 
 QueryProgress ClientContext::GetQueryProgress() {
+	lock_guard<mutex> guard(query_progress_lock);
 	return query_progress;
 }
 

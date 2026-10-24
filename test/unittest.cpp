@@ -726,7 +726,8 @@ private:
 		Catch::Totals test_totals;
 		string failures;
 		string skip_summary;
-		if (ParseResult(test.result, test_totals, failures, skip_summary)) {
+		auto reported = ParseResult(test.result, test_totals, failures, skip_summary);
+		if (reported) {
 			totals += test_totals;
 			if (!failures.empty()) {
 				FailureSummary::Log(RenumberText(test, failures));
@@ -744,15 +745,16 @@ private:
 				}
 				offset = newline + 1;
 			}
-		} else {
+		}
+		auto expected_status = static_cast<int>(std::min<std::size_t>(255, test_totals.assertions.failed));
+		if (!reported || !WIFEXITED(test.status) || WEXITSTATUS(test.status) != expected_status) {
 			totals.testCases.failed++;
 			totals.assertions.failed++;
-			if (WIFSIGNALED(test.status)) {
-				Emit(test, test.name + " was terminated by signal " + std::to_string(WTERMSIG(test.status)));
-			} else {
-				Emit(test, test.name + " exited with status " + std::to_string(WEXITSTATUS(test.status)) +
-				               " before reporting its result");
-			}
+			auto ended = WIFSIGNALED(test.status) ? " was terminated by signal " + std::to_string(WTERMSIG(test.status))
+			                                      : " exited with status " + std::to_string(WEXITSTATUS(test.status));
+			test.newline_owed = true;
+			Emit(test, test.name + " (pid " + std::to_string(test.pid) + ")" + ended +
+			               (reported ? " after" : " before") + " reporting its result");
 		}
 		failures_before += test.failure_headers;
 		auto elapsed = test.took >= 0 ? test.took : std::chrono::duration<double>(test.end - test.start).count();

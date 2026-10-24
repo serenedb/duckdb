@@ -4006,6 +4006,34 @@ SinkResultType PhysicalCopyToFile::Sink(ExecutionContext &context, DataChunk &ch
 	return SinkResultType::NEED_MORE_INPUT;
 }
 
+static unique_ptr<ColumnDataCollection> TopUpBatch(ClientContext &context, const PhysicalCopyToFile &op,
+                                                   CopyBatchSlicer &slicer, ColumnDataCollection &batch,
+                                                   ColumnDataCollection &source) {
+	ColumnDataAppendState batch_append;
+	batch.InitializeAppend(batch_append);
+	unique_ptr<ColumnDataCollection> rest;
+	ColumnDataAppendState rest_append;
+	DataChunk chunk;
+	ColumnDataScanState scan_state;
+	source.InitializeScan(scan_state);
+	source.InitializeScanChunk(scan_state, chunk);
+	while (source.Scan(scan_state, chunk)) {
+		idx_t offset = 0;
+		while (offset < chunk.size()) {
+			if (!CopyFunctionBatchAnalyzer(batch, op.batch_size, op.batch_size_bytes).MeetsFlushCriteria()) {
+				batch.Append(batch_append, slicer.Slice(chunk, offset, batch));
+				continue;
+			}
+			if (!rest) {
+				rest = make_uniq<ColumnDataCollection>(context, op.expected_types);
+				rest->InitializeAppend(rest_append);
+			}
+			rest->Append(rest_append, slicer.Slice(chunk, offset, *rest));
+		}
+	}
+	return rest;
+}
+
 SinkCombineResultType PhysicalCopyToFile::Combine(ExecutionContext &context, OperatorSinkCombineInput &input) const {
 	auto &gstate = input.global_state.Cast<CopyToFileGlobalState>();
 	auto &lstate = input.local_state.Cast<CopyToFileLocalState>();
@@ -4046,11 +4074,11 @@ SinkCombineResultType PhysicalCopyToFile::Combine(ExecutionContext &context, Ope
 			const auto size_in_bytes = gstate.last_batch->SizeInBytes() + lstate.batch->SizeInBytes();
 			const CopyFunctionBatchAnalyzer batch_analyzer(count, size_in_bytes, batch_size, batch_size_bytes);
 			if (batch_analyzer.MeetsFlushCriteria()) {
-				// Combining makes us overshoot, make sure the smallest one gets flushed now
 				auto &small = lstate.batch->Count() < gstate.last_batch->Count() ? lstate.batch : gstate.last_batch;
 				auto &large = lstate.batch->Count() < gstate.last_batch->Count() ? gstate.last_batch : lstate.batch;
 				batch = std::move(large);
-				gstate.last_batch = std::move(small);
+				auto source = std::move(small);
+				gstate.last_batch = TopUpBatch(context.client, *this, *lstate.batch_slicer, *batch, *source);
 			} else {
 				gstate.last_batch->Combine(*lstate.batch);
 			}

@@ -95,7 +95,7 @@ vector<Identifier> BindContext::GetSimilarBindings(const Identifier &column_name
 void BindContext::AddUsingBinding(const Identifier &column_name, UsingColumnSet &set) {
 	auto &info = using_columns[column_name];
 	if (info.bindings.empty()) {
-		info.order = using_columns.size() - 1;
+		info.order = using_column_counter++;
 	}
 	info.bindings.insert(set);
 }
@@ -906,11 +906,17 @@ void BindContext::AddContext(BindContext other) {
 	for (auto &binding : other.bindings_list) {
 		AddBinding(std::move(binding));
 	}
+	vector<reference<const identifier_map_t<UsingColumnInfo>::value_type>> ordered;
 	for (auto &entry : other.using_columns) {
-		for (auto &alias : entry.second.bindings) {
-			auto &info = using_columns[entry.first];
+		ordered.push_back(entry);
+	}
+	std::sort(ordered.begin(), ordered.end(),
+	          [](const auto &a, const auto &b) { return a.get().second.order < b.get().second.order; });
+	for (auto &entry : ordered) {
+		for (auto &alias : entry.get().second.bindings) {
+			auto &info = using_columns[entry.get().first];
 			if (info.bindings.empty()) {
-				info.order = using_columns.size() - 1;
+				info.order = using_column_counter++;
 			}
 			info.bindings.insert(alias);
 		}

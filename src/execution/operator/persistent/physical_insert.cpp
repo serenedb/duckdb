@@ -262,7 +262,7 @@ SinkFinalizeType PhysicalInsert::Finalize(Pipeline &pipeline, Event &event, Clie
 		for (auto &collection_index : gstate.unmerged_collections) {
 			auto &optimistic_collection = data_table.GetOptimisticCollection(context, collection_index);
 			for (auto &insert_chunk : optimistic_collection.collection->Chunks(transaction)) {
-				data_table.LocalAppend(append_state, table, context, insert_chunk, false);
+				data_table.LocalAppend(append_state, context, insert_chunk, false);
 			}
 			data_table.ResetOptimisticCollection(context, collection_index);
 		}

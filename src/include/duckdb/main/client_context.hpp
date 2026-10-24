@@ -432,6 +432,7 @@ private:
 	unique_ptr<ActiveQueryContext> active_query;
 	//! The current query progress
 	QueryProgress query_progress;
+	mutex query_progress_lock;
 	//! The connection corresponding to this client context
 	connection_t connection_id;
 	//! Routing target for SQL execution while CONNECT-ed (CONNECT/DISCONNECT). When is_connected is

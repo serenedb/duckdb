@@ -80,7 +80,8 @@ public:
 	    Binder &binder, const vector<unique_ptr<MacroFunction>> &macro_functions, const Identifier &name,
 	    FunctionExpression &function_expr, vector<unique_ptr<ParsedExpression>> &positional_arguments,
 	    InsertionOrderPreservingMap<unique_ptr<ParsedExpression>, Identifier, identifier_map_t<idx_t>> &named_arguments,
-	    idx_t depth, optional_ptr<ExpressionBinder> argument_binder = nullptr,
+	    idx_t depth, optional_ptr<vector<DummyBinding>> lambda_bindings = nullptr,
+	    optional_ptr<ExpressionBinder> argument_binder = nullptr,
 	    optional_ptr<MacroBoundArguments> bound_arguments = nullptr);
 	static unique_ptr<DummyBinding>
 	CreateDummyBinding(const MacroFunction &macro_def, const Identifier &name,

@@ -64,10 +64,7 @@ Binder::Binder(ClientContext &context, shared_ptr<Binder> parent_p, BinderType b
 	if (parent) {
 		entry_retriever.Inherit(parent->entry_retriever);
 		inside_subquery = parent->inside_subquery;
-
-		// We have to inherit macro and lambda parameter bindings and from the parent binder, if there is a parent.
 		macro_binding = parent->macro_binding;
-		lambda_bindings = parent->lambda_bindings;
 		if (binder_type != BinderType::VIEW_BINDER) {
 			// inherit expression binders from parent
 			active_binders = parent->active_binders;

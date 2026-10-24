@@ -71,3 +71,19 @@ CREATE OR REPLACE MACRO foo(bar) AS (SELECT apply([bar], lambda x: 0));
 statement ok
 SELECT foo(v) FROM (SELECT 0 AS v);
 
+statement ok
+CREATE MACRO plus_one(a) AS a + 1;
+
+statement ok
+CREATE MACRO one_row(n INTEGER) AS TABLE SELECT n AS v;
+
+query I
+SELECT list_transform([1], lambda x: plus_one(x)) = [2] AND EXISTS (SELECT * FROM (SELECT 1 AS j) t, one_row(j));
+----
+true
+
+query I
+SELECT list_transform([1], lambda x: plus_one(x)) = [2] AND EXISTS (SELECT * FROM (SELECT 1 AS j) t, one_row(t.j));
+----
+true
+

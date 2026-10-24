@@ -32,24 +32,24 @@ namespace duckdb {
 template <class T>
 struct QuantileHistogram {
 	static constexpr bool SUPPORTED = std::is_integral<T>::value && !std::is_same<T, bool>::value && sizeof(T) <= 2;
-	static constexpr idx_t DOMAIN = idx_t(1) << (8 * sizeof(T));
+	static constexpr idx_t DOMAIN_SIZE = idx_t(1) << (8 * sizeof(T));
 	static constexpr idx_t MIN_VALUES_PER_BUCKET = 8;
 
 	static bool Select(const T *data, idx_t n, idx_t first, idx_t second, bool desc, T result[2]) {
-		if (n < DOMAIN * MIN_VALUES_PER_BUCKET) {
+		if (n < DOMAIN_SIZE * MIN_VALUES_PER_BUCKET) {
 			return false;
 		}
 		using UNSIGNED = typename std::make_unsigned<T>::type;
 		constexpr UNSIGNED BIAS = std::is_signed<T>::value ? UNSIGNED(UNSIGNED(1) << (8 * sizeof(T) - 1)) : 0;
-		vector<idx_t> counts(DOMAIN, 0);
+		vector<idx_t> counts(DOMAIN_SIZE, 0);
 		for (idx_t i = 0; i < n; i++) {
 			counts[UNSIGNED(UNSIGNED(data[i]) ^ BIAS)]++;
 		}
 		idx_t ranks[2] = {first, second};
 		for (idx_t r = 0; r < 2; r++) {
 			idx_t remaining = ranks[r];
-			for (idx_t step = 0; step < DOMAIN; step++) {
-				idx_t bucket = desc ? DOMAIN - 1 - step : step;
+			for (idx_t step = 0; step < DOMAIN_SIZE; step++) {
+				idx_t bucket = desc ? DOMAIN_SIZE - 1 - step : step;
 				if (remaining < counts[bucket]) {
 					result[r] = T(UNSIGNED(UNSIGNED(bucket) ^ BIAS));
 					break;
