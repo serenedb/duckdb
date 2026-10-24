@@ -315,6 +315,17 @@ uint32_t BlockCache::WaitStripe(const BlockCacheEntry &entry) {
 	return NumericCast<uint32_t>((reinterpret_cast<uintptr_t>(&entry) / CACHE_LINE) % WAIT_STRIPES);
 }
 
+template <class FUNC>
+void BlockCache::ForEachEntry(FUNC &&callback) const {
+	const auto high = high_water.load(std::memory_order_acquire);
+	for (idx_t frame = 0; frame < high; frame++) {
+		auto entry = frame_owner[frame].load(std::memory_order_acquire);
+		if (entry) {
+			callback(*entry);
+		}
+	}
+}
+
 optional<BlockCache::FileRecord> BlockCache::Renumber(FileRecord &record, const BlockCacheFileInfo &info, idx_t opens,
                                                       bool &sweep) {
 	optional<FileRecord> replaced;
@@ -382,13 +393,7 @@ void BlockCache::CloseFile(const BlockCacheFile &file) {
 
 void BlockCache::SweepFiles() {
 	unordered_set<uint32_t> cached;
-	const auto high = high_water.load(std::memory_order_acquire);
-	for (idx_t frame = 0; frame < high; frame++) {
-		auto entry = frame_owner[frame].load(std::memory_order_acquire);
-		if (entry) {
-			cached.insert(FileOf(entry->key.load(std::memory_order_relaxed)));
-		}
-	}
+	ForEachEntry([&](BlockCacheEntry &entry) { cached.insert(FileOf(entry.key.load(std::memory_order_relaxed))); });
 	for (auto key : spill.Keys()) {
 		cached.insert(FileOf(key));
 	}
@@ -502,18 +507,13 @@ void BlockCache::DropFile(BlockCacheFile &file) {
 
 void BlockCache::DropBlocks(uint32_t number, idx_t block_count) {
 	spill.EraseFile(number);
-	const auto high = high_water.load(std::memory_order_acquire);
-	if (block_count > high) {
-		for (idx_t frame = 0; frame < high; frame++) {
-			auto entry = frame_owner[frame].load(std::memory_order_acquire);
-			if (!entry) {
-				continue;
-			}
-			const auto key = entry->key.load(std::memory_order_relaxed);
+	if (block_count > high_water.load(std::memory_order_acquire)) {
+		ForEachEntry([&](BlockCacheEntry &entry) {
+			const auto key = entry.key.load(std::memory_order_relaxed);
 			if (FileOf(key) == number) {
-				DropEntry(*entry, key, true);
+				DropEntry(entry, key, true);
 			}
-		}
+		});
 		return;
 	}
 	for (idx_t block = 0; block < block_count; block++) {
@@ -916,13 +916,7 @@ bool BlockCache::CanSpillUnbacked() {
 
 void BlockCache::Clear() {
 	spill.EraseBacked();
-	const auto high = high_water.load(std::memory_order_acquire);
-	for (idx_t index = 0; index < high; index++) {
-		auto entry = frame_owner[index].load(std::memory_order_acquire);
-		if (entry) {
-			DropEntry(*entry, entry->key.load(std::memory_order_relaxed), false);
-		}
-	}
+	ForEachEntry([&](BlockCacheEntry &entry) { DropEntry(entry, entry.key.load(std::memory_order_relaxed), false); });
 }
 
 void BlockCache::SetEnabled(bool enabled_p) {
@@ -1318,13 +1312,11 @@ idx_t BlockCache::EvictToReduceMemory(idx_t target) {
 }
 
 void BlockCache::SetCapacity(idx_t capacity) {
-	capacity_frames.store(MinValue<idx_t>(frame_count, capacity / BLOCK_SIZE), std::memory_order_relaxed);
-	while (used_frames.load(std::memory_order_relaxed) > capacity_frames.load(std::memory_order_relaxed)) {
-		uint32_t frame;
-		if (!EvictOne(frame)) {
-			break;
-		}
-		ReleaseFrame(frame);
+	const auto frames = MinValue<idx_t>(frame_count, capacity / BLOCK_SIZE);
+	capacity_frames.store(frames, std::memory_order_relaxed);
+	const auto used = used_frames.load(std::memory_order_relaxed);
+	if (used > frames) {
+		EvictToReduceMemory((used - frames) * BLOCK_SIZE);
 	}
 }
 
@@ -1359,25 +1351,20 @@ vector<CachedFileInformation> BlockCache::GetBlockInformation() const {
 	}
 	vector<CachedFileInformation> result;
 	unordered_set<uint64_t> in_memory;
-	const auto high = high_water.load(std::memory_order_relaxed);
-	for (idx_t frame = 0; frame < high; frame++) {
-		auto entry = frame_owner[frame].load(std::memory_order_acquire);
-		if (!entry) {
-			continue;
-		}
-		const auto state = entry->state.load(std::memory_order_acquire);
-		const auto key = entry->key.load(std::memory_order_relaxed);
+	ForEachEntry([&](BlockCacheEntry &entry) {
+		const auto state = entry.state.load(std::memory_order_acquire);
+		const auto key = entry.key.load(std::memory_order_relaxed);
 		if (!(state & FLAG_LOADED) || key == 0) {
-			continue;
+			return;
 		}
 		auto path = paths.find(FileOf(key));
 		if (path == paths.end()) {
-			continue;
+			return;
 		}
 		in_memory.insert(key);
 		result.push_back({path->second.first, BlockBytesOf(path->second.second, BlockOf(key)),
 		                  BlockOf(key) * BLOCK_SIZE, true, spill.Contains(key)});
-	}
+	});
 	for (auto key : spill.Keys()) {
 		auto path = paths.find(FileOf(key));
 		if (path == paths.end() || in_memory.find(key) != in_memory.end()) {
