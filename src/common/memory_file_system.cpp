@@ -6,6 +6,7 @@
 #include "duckdb/common/types/timestamp.hpp"
 #include "duckdb/common/unordered_map.hpp"
 #include "duckdb/common/unordered_set.hpp"
+#include "duckdb/common/vector.hpp"
 #include "duckdb/main/database.hpp"
 #include "duckdb/storage/buffer_manager.hpp"
 
@@ -32,8 +33,7 @@ struct MemoryFile {
 	//! A compacted file of a registered instance, in one buffer-managed allocation
 	shared_ptr<BlockHandle> span DUCKDB_GUARDED_BY(lock);
 	//! A heap file
-	unique_ptr<data_t[]> heap DUCKDB_GUARDED_BY(lock);
-	idx_t capacity DUCKDB_GUARDED_BY(lock) = 0;
+	vector<data_t> heap DUCKDB_GUARDED_BY(lock);
 	//! Open write handles; a heap file moves while it grows, so it maps only once they are closed
 	idx_t writers DUCKDB_GUARDED_BY(lock) = 0;
 };
@@ -235,7 +235,7 @@ unique_ptr<MemoryMappedFile> MemoryFileSystem::MemoryMapFile(const OpenFileInfo 
 		}
 		if (!file->span) {
 			const auto size = file->size.load(std::memory_order_acquire);
-			auto result = make_uniq<MemoryFileMapping>(file->path, flags, file->heap.get(), size);
+			auto result = make_uniq<MemoryFileMapping>(file->path, flags, file->heap.data(), size);
 			result->file = file;
 			return std::move(result);
 		}
@@ -315,18 +315,8 @@ int64_t MemoryFileSystem::Write(FileHandle &handle_p, void *buffer, int64_t nr_b
 			throw IOException("Cannot write to \"%s\": it is not open for writing", handle.path);
 		}
 		annotated_lock_guard<annotated_mutex> guard(file.lock);
-		const auto size = file.size.load(std::memory_order_relaxed);
-		if (size + remaining > file.capacity) {
-			const auto capacity = MaxValue<idx_t>(size + remaining, MaxValue<idx_t>(file.capacity * 2, 4096));
-			auto grown = unique_ptr<data_t[]>(new data_t[capacity]);
-			if (size > 0) {
-				memcpy(grown.get(), file.heap.get(), size);
-			}
-			file.heap = std::move(grown);
-			file.capacity = capacity;
-		}
-		memcpy(file.heap.get() + size, source, remaining);
-		file.size.store(size + remaining, std::memory_order_release);
+		file.heap.insert(file.heap.end(), source, source + remaining);
+		file.size.store(file.heap.size(), std::memory_order_release);
 	}
 	handle.position += NumericCast<idx_t>(nr_bytes);
 	return nr_bytes;
@@ -358,8 +348,8 @@ void MemoryFileSystem::Read(FileHandle &handle_p, void *buffer, int64_t nr_bytes
 	shared_ptr<BlockHandle> span;
 	{
 		annotated_lock_guard<annotated_mutex> guard(file.lock);
-		if (file.heap) {
-			memcpy(target, file.heap.get() + location, bytes);
+		if (!file.heap.empty()) {
+			memcpy(target, file.heap.data() + location, bytes);
 			return;
 		}
 		blocks = file.blocks;
