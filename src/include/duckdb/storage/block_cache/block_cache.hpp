@@ -404,6 +404,7 @@ private:
 	//! Ends the load of [entry]: its bytes are shared when [shared]; otherwise the load failed or its bytes serve only
 	//! the loader, and every other reader fetches the block again
 	void FinishLoad(BlockCacheEntry &entry, bool shared);
+	//! Waits while [entry] loads; when the scheduler has no workers to run queued fetches, runs them until it loads
 	void WaitForLoad(BlockCacheEntry &entry);
 	//! Fills [entry] from the spill tier when it holds [key]
 	bool ReadSpilled(uint64_t key, BlockCacheEntry &entry);
