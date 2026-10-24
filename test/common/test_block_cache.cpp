@@ -3,9 +3,9 @@
 #include "duckdb/common/atomic.hpp"
 #include "duckdb/common/local_file_system.hpp"
 #include "duckdb/common/mutex.hpp"
-#include "duckdb/common/thread.hpp"
 #include "duckdb/main/connection.hpp"
 #include "duckdb/main/database.hpp"
+#include "duckdb/parallel/task_executor.hpp"
 #include "duckdb/storage/block_cache/block_cache.hpp"
 #include "duckdb/storage/buffer_manager.hpp"
 
@@ -40,6 +40,14 @@ public:
 	idx_t ReadCount() {
 		annotated_lock_guard<annotated_mutex> guard(lock);
 		return reads.size();
+	}
+
+	void AwaitReads(idx_t count) {
+		annotated_lock_guard<annotated_mutex> guard(lock);
+		auto arrived = [&]() DUCKDB_NO_THREAD_SAFETY_ANALYSIS {
+			return reads.size() >= count;
+		};
+		lock.Await(absl::Condition(&arrived));
 	}
 
 	vector<pair<idx_t, idx_t>> TakeReads() {
@@ -179,22 +187,21 @@ TEST_CASE("Block cache fetches a missing block once for concurrent readers", "[b
 
 	fs.Hold(true);
 	atomic<idx_t> correct {0};
-	vector<thread> readers;
+	TaskExecutor executor(TaskScheduler::GetScheduler(*db.instance));
 	for (idx_t i = 0; i < 16; i++) {
-		readers.emplace_back([&]() {
-			auto pin = cache.Pin(cached, 2);
-			if (HoldsExpectedBytes(pin, 2)) {
-				correct++;
-			}
-		});
+		executor.ScheduleTask(make_uniq<FunctionExecutorTask>(
+		    executor,
+		    [&]() {
+			    auto pin = cache.Pin(cached, 2);
+			    if (HoldsExpectedBytes(pin, 2)) {
+				    correct++;
+			    }
+		    },
+		    "BlockCacheTestTask"));
 	}
-	while (fs.ReadCount() == 0) {
-		std::this_thread::yield();
-	}
+	fs.AwaitReads(1);
 	fs.Hold(false);
-	for (auto &reader : readers) {
-		reader.join();
-	}
+	executor.WorkOnTasks();
 	REQUIRE(correct == 16);
 	REQUIRE(fs.ReadCount() == 1);
 }
@@ -659,37 +666,38 @@ TEST_CASE("Block cache concurrent pins and evictions return the right bytes", "[
 	auto cached = file.Open(cache, fs);
 
 	atomic<idx_t> wrong {0};
-	vector<thread> readers;
+	TaskExecutor executor(TaskScheduler::GetScheduler(*db.instance));
 	for (idx_t t = 0; t < 16; t++) {
-		readers.emplace_back([&, t]() {
-			uint64_t seed = t * 7919 + 1;
-			try {
-				for (idx_t i = 0; i < 400; i++) {
-					seed = seed * 6364136223846793005ULL + 1442695040888963407ULL;
-					const auto block = (seed >> 33) % 128;
-					if (i % 3 == 0) {
-						auto pins = cache.TryPinRange(*cached, block * BLOCK, BLOCK);
-						if (!pins.empty() && !HoldsExpectedBytes(pins[0], block)) {
-							wrong++;
-						}
-						continue;
-					}
-					if (i % 7 == 0) {
-						cache.Prefetch(cached, block * BLOCK, 4 * BLOCK);
-					}
-					auto pin = cache.Pin(cached, block);
-					if (!HoldsExpectedBytes(pin, block)) {
-						wrong++;
-					}
-				}
-			} catch (std::exception &) {
-				wrong++;
-			}
-		});
+		executor.ScheduleTask(make_uniq<FunctionExecutorTask>(
+		    executor,
+		    [&, t]() {
+			    uint64_t seed = t * 7919 + 1;
+			    try {
+				    for (idx_t i = 0; i < 400; i++) {
+					    seed = seed * 6364136223846793005ULL + 1442695040888963407ULL;
+					    const auto block = (seed >> 33) % 128;
+					    if (i % 3 == 0) {
+						    auto pins = cache.TryPinRange(*cached, block * BLOCK, BLOCK);
+						    if (!pins.empty() && !HoldsExpectedBytes(pins[0], block)) {
+							    wrong++;
+						    }
+						    continue;
+					    }
+					    if (i % 7 == 0) {
+						    cache.Prefetch(cached, block * BLOCK, 4 * BLOCK);
+					    }
+					    auto pin = cache.Pin(cached, block);
+					    if (!HoldsExpectedBytes(pin, block)) {
+						    wrong++;
+					    }
+				    }
+			    } catch (std::exception &) {
+				    wrong++;
+			    }
+		    },
+		    "BlockCacheTestTask"));
 	}
-	for (auto &reader : readers) {
-		reader.join();
-	}
+	executor.WorkOnTasks();
 	REQUIRE(wrong == 0);
 }
 
