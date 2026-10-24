@@ -273,6 +273,9 @@ public:
 	                                  FileOpener *opener = nullptr);
 	DUCKDB_API bool ListFiles(const string &directory, const std::function<void(OpenFileInfo &info)> &callback,
 	                          optional_ptr<FileOpener> opener = nullptr);
+	DUCKDB_API virtual void ListFilesRecursive(const string &directory,
+	                                           const std::function<void(OpenFileInfo &info)> &callback,
+	                                           optional_ptr<FileOpener> opener = nullptr);
 
 	//! Move a file from source path to the target, StorageManager relies on this being an atomic action for ACID
 	//! properties

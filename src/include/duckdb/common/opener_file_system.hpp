@@ -127,6 +127,12 @@ public:
 		VerifyCanAccessDirectory(directory);
 		return GetFileSystem().RemoveDirectoryExtended(directory, options, GetOpener());
 	}
+	void ListFilesRecursive(const string &directory, const std::function<void(OpenFileInfo &info)> &callback,
+	                        optional_ptr<FileOpener> opener = nullptr) override {
+		VerifyNoOpener(opener);
+		VerifyCanAccessDirectory(directory);
+		GetFileSystem().ListFilesRecursive(directory, callback, GetOpener());
+	}
 
 	void MoveFile(const string &source, const string &target, optional_ptr<FileOpener> opener) override {
 		VerifyNoOpener(opener);

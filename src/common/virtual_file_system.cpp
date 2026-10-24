@@ -327,6 +327,12 @@ bool VirtualFileSystem::ListFilesExtended(const string &directory,
 	return FindFileSystem(directory, opener).ListFiles(directory, callback, opener);
 }
 
+void VirtualFileSystem::ListFilesRecursive(const string &directory,
+                                           const std::function<void(OpenFileInfo &info)> &callback,
+                                           optional_ptr<FileOpener> opener) {
+	FindFileSystem(directory, opener).ListFilesRecursive(directory, callback, opener);
+}
+
 void VirtualFileSystem::MoveFile(const string &source, const string &target, optional_ptr<FileOpener> opener) {
 	FindFileSystem(source, opener).MoveFile(source, target, opener);
 }

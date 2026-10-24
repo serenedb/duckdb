@@ -91,6 +91,8 @@ public:
 
 	DUCKDB_API bool ListFiles(const string &directory, const std::function<void(const string &, bool)> &callback,
 	                          FileOpener *opener = nullptr) override;
+	DUCKDB_API void ListFilesRecursive(const string &directory, const std::function<void(OpenFileInfo &info)> &callback,
+	                                   optional_ptr<FileOpener> opener = nullptr) override;
 
 	DUCKDB_API void MoveFile(const string &source, const string &target,
 	                         optional_ptr<FileOpener> opener = nullptr) override;
