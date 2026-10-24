@@ -9,6 +9,8 @@
 #include "duckdb/storage/block_cache/block_cache.hpp"
 #include "duckdb/storage/buffer_manager.hpp"
 
+#include <absl/cleanup/cleanup.h>
+
 namespace duckdb {
 
 namespace {
@@ -123,6 +125,27 @@ bool HoldsExpectedBytes(const BlockCachePin &pin, idx_t block) {
 	}
 	return true;
 }
+
+//! A flag one task sets and another awaits
+class Signal {
+public:
+	void Set() {
+		annotated_lock_guard<annotated_mutex> guard(lock);
+		set = true;
+	}
+	//! Whether the flag is set within [timeout]
+	bool AwaitFor(absl::Duration timeout) {
+		annotated_lock_guard<annotated_mutex> guard(lock);
+		auto is_set = [&]() DUCKDB_NO_THREAD_SAFETY_ANALYSIS {
+			return set;
+		};
+		return lock.AwaitWithTimeout(absl::Condition(&is_set), timeout);
+	}
+
+private:
+	annotated_mutex lock;
+	bool set DUCKDB_GUARDED_BY(lock) = false;
+};
 
 idx_t CountSpillFiles(const string &directory) {
 	LocalFileSystem local;
@@ -646,6 +669,39 @@ TEST_CASE("Block cache keeps no copy of a block whose in-memory file goes while 
 	auto pin = cache.CreateBlock(*other, 0);
 	REQUIRE_FALSE(file);
 	REQUIRE_NOTHROW(cache.SetSpill(TestCreatePath("block_cache_released_spill_moved"), 0));
+}
+
+TEST_CASE("Block cache readers of an in-memory block an eviction is copying get the copy", "[block_cache]") {
+	DuckDB db(nullptr);
+	BlockCache cache(*db.instance, 2 * BLOCK);
+	cache.SetSpill(TestCreatePath("block_cache_copying_spill"), 0);
+	auto file = cache.CreateUnbackedFile("memory://copying.bin");
+	for (idx_t block = 0; block < 2; block++) {
+		memset(cache.CreateBlock(*file, block).GetDataMutable(), int(block + 1), BLOCK);
+	}
+	cache.SetUnbackedSize(*file, 2 * BLOCK);
+	auto held = cache.Pin(file, 1);
+
+	TaskExecutor executor(TaskScheduler::GetScheduler(*db.instance));
+	atomic<bool> right {false};
+	Signal finished;
+	cache.debug_before_keep_copy = [&]() {
+		executor.ScheduleTask(make_uniq<FunctionExecutorTask>(
+		    executor,
+		    [&]() {
+			    absl::Cleanup finish = [&]() {
+				    finished.Set();
+			    };
+			    auto pin = cache.Pin(file, 0);
+			    right = pin.Ptr()[0] == 1 && pin.Ptr()[BLOCK - 1] == 1;
+		    },
+		    "BlockCacheTestTask"));
+		finished.AwaitFor(absl::Milliseconds(500));
+	};
+	auto other = cache.CreateUnbackedFile("memory://copying_other.bin");
+	auto pin = cache.CreateBlock(*other, 0);
+	executor.WorkOnTasks();
+	REQUIRE(right);
 }
 #endif
 
