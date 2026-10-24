@@ -224,6 +224,8 @@ public:
 	static idx_t BlockCountOf(idx_t size) {
 		return (size + BLOCK_SIZE - 1) / BLOCK_SIZE;
 	}
+	//! The key of block [block] of the file numbered [file]; the keys of a file are one range, in block order
+	static uint64_t MakeKey(uint32_t file, idx_t block);
 	static uint32_t FileOf(uint64_t key) {
 		return static_cast<uint32_t>(key >> 32);
 	}
@@ -322,7 +324,6 @@ private:
 		idx_t opens = 0;
 	};
 
-	static uint64_t MakeKey(uint32_t file, idx_t block);
 	static uint32_t WaitStripe(const BlockCacheEntry &entry);
 	BlockCacheBucket &BucketFor(uint64_t key) const;
 	data_ptr_t FrameData(uint32_t frame) const;
