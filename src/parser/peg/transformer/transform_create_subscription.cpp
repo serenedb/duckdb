@@ -150,11 +150,8 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformAlterSubscriptionStatem
 		return AlterSubscriptionPragma(name, "rename", transformer.Transform<string>(action_list.GetChild(2)));
 	}
 	if (action_list.Name() == "SubscriptionOwnerAction") {
-		auto &role = SubscriptionUnwrap(action_list.GetChild(2));
-		auto owner = role.type == ParseResultType::KEYWORD
-		                 ? StringUtil::Upper(string(role.Cast<KeywordParseResult>().keyword))
-		                 : transformer.Transform<string>(role);
-		return AlterSubscriptionPragma(name, "owner", owner);
+		return AlterSubscriptionPragma(
+		    name, "owner", TransformOwnerRoleSpec(transformer, action_list.GetChild(2)).GetIdentifierName());
 	}
 	auto result = AlterSubscriptionPragma(name, "set", string());
 	SubscriptionOptionListInto(transformer, action_list.GetChild(1), *result->info);
