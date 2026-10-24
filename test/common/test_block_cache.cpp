@@ -1310,4 +1310,44 @@ TEST_CASE("Block cache benchmark: pins that evict while the buffer pool is full"
 	}
 }
 
+TEST_CASE("Block cache benchmark: concurrent pins of one block and of distinct blocks", "[.][block_cache_bench]") {
+	constexpr idx_t PINS = 500000;
+	constexpr idx_t BLOCKS = 64;
+	for (const idx_t threads : {idx_t(1), idx_t(8), idx_t(16), idx_t(32), idx_t(64)}) {
+		DBConfig config;
+		config.options.maximum_threads = threads;
+		DuckDB db(nullptr, &config);
+		BlockCache cache(*db.instance, 2 * BLOCKS * BLOCK);
+		auto file = cache.CreateUnbackedFile("memory://bench_pins.bin");
+		for (idx_t block = 0; block < BLOCKS; block++) {
+			memset(cache.CreateBlock(*file, block).GetDataMutable(), BenchByte(block), BLOCK);
+		}
+		cache.SetUnbackedSize(*file, BLOCKS * BLOCK);
+		for (const bool one_block : {true, false}) {
+			atomic<idx_t> wrong {0};
+			const auto start = std::chrono::steady_clock::now();
+			TaskExecutor executor(TaskScheduler::GetScheduler(*db.instance));
+			for (idx_t thread = 0; thread < threads; thread++) {
+				executor.ScheduleTask(make_uniq<FunctionExecutorTask>(
+				    executor,
+				    [&, thread]() {
+					    const auto block = one_block ? 0 : thread % BLOCKS;
+					    idx_t mismatches = 0;
+					    for (idx_t i = 0; i < PINS; i++) {
+						    mismatches += cache.Pin(file, block).Ptr()[0] != BenchByte(block);
+					    }
+					    wrong += mismatches;
+				    },
+				    "BlockCacheBenchTask"));
+			}
+			executor.WorkOnTasks();
+			const auto elapsed = MillisecondsSince(start);
+			REQUIRE(wrong == 0);
+			Printer::PrintF("pins of %s, %llu threads: %.1f M pins/s, %.1f ns per pin and unpin in a thread",
+			                one_block ? "one block" : "distinct blocks", threads,
+			                double(threads * PINS) / elapsed / 1000.0, elapsed * 1000000.0 / double(PINS));
+		}
+	}
+}
+
 } // namespace duckdb
