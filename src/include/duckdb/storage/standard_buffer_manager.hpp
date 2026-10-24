@@ -116,6 +116,7 @@ public:
 	DUCKDB_API void FreeReservedMemory(MemoryTag tag, idx_t size) final;
 	bool HasTemporaryDirectory() const final;
 	bool HasFilesInTemporaryDirectory() const final;
+	TemporaryFileManager &GetTemporaryFileManager() final;
 
 protected:
 	//! Helper

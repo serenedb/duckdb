@@ -12,9 +12,11 @@
 #include "duckdb/common/file_system.hpp"
 #include "duckdb/common/list.hpp"
 #include "duckdb/common/mutex.hpp"
+#include "duckdb/common/optional_ptr.hpp"
 #include "duckdb/common/unique_ptr.hpp"
 #include "duckdb/common/unordered_map.hpp"
 #include "duckdb/common/vector.hpp"
+#include "duckdb/storage/temporary_file_manager.hpp"
 
 namespace duckdb {
 
@@ -27,8 +29,9 @@ public:
 	//! Spills into [path], keeping at most [backed_limit] bytes of blocks that exist elsewhere; an empty [path] keeps
 	//! the file ConfigureDefault opened
 	void Configure(FileSystem &fs, const string &path, idx_t backed_limit);
-	//! Spills only blocks that exist nowhere else into [path], unless a file is configured
-	void ConfigureDefault(FileSystem &fs, const string &path);
+	//! Spills only blocks that exist nowhere else, unless a file is configured, into a file among [temporary_files],
+	//! whose size counts against their limit
+	void ConfigureDefault(FileSystem &fs, TemporaryFileManager &temporary_files);
 	//! Whether a file is configured, which unbacked blocks need
 	bool IsConfigured() const;
 
@@ -54,6 +57,8 @@ private:
 	using Slots = unordered_map<uint64_t, Slot>;
 
 	void Open(FileSystem &fs, const string &path) DUCKDB_REQUIRES(lock);
+	//! Closes and removes the file, which drops every copy
+	void Close() DUCKDB_REQUIRES(lock);
 	uint32_t AcquireSlot() DUCKDB_REQUIRES(lock);
 	void Release(Slots::iterator entry) DUCKDB_REQUIRES(lock);
 	bool DropOldestBacked() DUCKDB_REQUIRES(lock);
@@ -62,6 +67,10 @@ private:
 	unique_ptr<FileHandle> handle DUCKDB_GUARDED_BY(lock);
 	//! Whether ConfigureDefault opened the file
 	bool is_default DUCKDB_GUARDED_BY(lock) = false;
+	//! The temporary files whose limit the file counts against
+	optional_ptr<TemporaryFileManager> temporary_files DUCKDB_GUARDED_BY(lock);
+	//! The slots the file spans
+	idx_t extent DUCKDB_GUARDED_BY(lock) = 0;
 	idx_t backed_limit DUCKDB_GUARDED_BY(lock) = 0;
 	vector<uint32_t> free_slots DUCKDB_GUARDED_BY(lock);
 	Slots slots DUCKDB_GUARDED_BY(lock);

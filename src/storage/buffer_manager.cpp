@@ -94,6 +94,10 @@ bool BufferManager::HasTemporaryDirectory() const {
 	return false;
 }
 
+TemporaryFileManager &BufferManager::GetTemporaryFileManager() {
+	throw NotImplementedException("This type of BufferManager does not have temporary files");
+}
+
 bool BufferManager::HasFilesInTemporaryDirectory() const {
 	return false;
 }

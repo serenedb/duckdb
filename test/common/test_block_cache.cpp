@@ -116,6 +116,17 @@ bool HoldsExpectedBytes(const BlockCachePin &pin, idx_t block) {
 	return true;
 }
 
+idx_t CountSpillFiles(const string &directory) {
+	LocalFileSystem local;
+	idx_t count = 0;
+	local.ListFiles(directory, [&](const string &name, bool is_directory) {
+		if (!is_directory && StringUtil::EndsWith(name, "block_cache.spill")) {
+			count++;
+		}
+	});
+	return count;
+}
+
 } // namespace
 
 TEST_CASE("Block cache pins hold the bytes of their block", "[block_cache]") {
@@ -668,9 +679,41 @@ TEST_CASE("Changing the spill size keeps the spill file of in-memory blocks", "[
 	}
 
 	file.reset();
-	LocalFileSystem local;
 	REQUIRE_NO_FAIL(con.Query("SET external_file_cache_spill_size='64MiB'"));
-	REQUIRE(local.FileExists(local.JoinPath(directory, "duckdb_block_cache.spill")));
+	REQUIRE(CountSpillFiles(directory) == 1);
+}
+
+TEST_CASE("Instances sharing a temporary directory spill in-memory blocks to files of their own", "[block_cache]") {
+	const auto directory = TestCreatePath("block_cache_shared_spill");
+	{
+		DuckDB first(nullptr);
+		DuckDB second(nullptr);
+		vector<shared_ptr<BlockCacheFile>> files;
+		for (auto db : {&first, &second}) {
+			Connection con(*db);
+			REQUIRE_NO_FAIL(con.Query("SET temp_directory='" + directory + "'"));
+			REQUIRE_NO_FAIL(con.Query("SET external_file_cache_size='1MiB'"));
+			auto &cache = BlockCache::Get(*db->instance);
+			auto file = cache.CreateUnbackedFile("memory://shared_spill.bin");
+			const auto fill = files.size() * 100 + 1;
+			for (idx_t block = 0; block < 16; block++) {
+				memset(cache.CreateBlock(*file, block).GetDataMutable(), int(fill + block), BLOCK);
+			}
+			cache.SetUnbackedSize(*file, 16 * BLOCK);
+			REQUIRE(BufferManager::GetBufferManager(*db->instance).GetUsedSwap() == 12 * BLOCK);
+			files.push_back(std::move(file));
+		}
+		REQUIRE(CountSpillFiles(directory) == 2);
+		for (idx_t i = 0; i < files.size(); i++) {
+			auto &cache = BlockCache::Get(*(i == 0 ? first : second).instance);
+			for (idx_t block = 0; block < 16; block++) {
+				auto pin = cache.Pin(files[i], block);
+				REQUIRE(pin.Ptr()[0] == uint8_t(i * 100 + 1 + block));
+				REQUIRE(pin.Ptr()[BLOCK - 1] == uint8_t(i * 100 + 1 + block));
+			}
+		}
+	}
+	REQUIRE(CountSpillFiles(directory) == 0);
 }
 
 } // namespace duckdb
