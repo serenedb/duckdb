@@ -75,6 +75,10 @@ Optimizer::Optimizer(Binder &binder, ClientContext &context)
     : context(context), binder(binder), rewriter(context),
       enable_optimizer(Settings::Get<EnableOptimizerSetting>(context)),
       optimizer_extensions(OptimizerExtension::Iterate(context)) {
+	AddExpressionRules(rewriter);
+}
+
+void Optimizer::AddExpressionRules(ExpressionRewriter &rewriter) {
 	rewriter.rules.push_back(make_uniq<ConstantOrderNormalizationRule>(rewriter));
 	rewriter.rules.push_back(make_uniq<ConstantFoldingRule>(rewriter));
 	rewriter.rules.push_back(make_uniq<ConcatFlatteningRule>(rewriter));
