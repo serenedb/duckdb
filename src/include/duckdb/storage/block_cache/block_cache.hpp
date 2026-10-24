@@ -278,6 +278,17 @@ private:
 		idx_t first_block;
 		idx_t block_count;
 	};
+	struct RunPlan {
+		Run run;
+		//! A loading entry, pinned for the fetch, per block to fetch; null for the cached blocks between them
+		vector<optional_ptr<BlockCacheEntry>> entries;
+		//! The bytes of the blocks to fetch
+		idx_t bytes;
+		//! The first block the run did not take
+		idx_t next;
+		//! Whether the budget or the frames ran out
+		bool exhausted;
+	};
 	struct FileRecord {
 		uint32_t number = 0;
 		BlockCacheFileInfo info;
@@ -338,6 +349,11 @@ private:
 	//! Forgets the files no one has open and the cache holds no block of
 	void SweepFiles();
 
+	//! Plans a run of [file] from [block] up to [end]: a loading entry flagged [flags] for each block [missing] reports
+	//! while [admit] accepts the run's bytes with it, bridging cached gaps of up to MERGE_GAP; the run takes at most
+	//! MAX_REQUEST and never ends in a gap
+	template <class MISSING, class ADMIT>
+	RunPlan PlanRun(BlockCacheFile &file, idx_t block, idx_t end, uint64_t flags, MISSING &&missing, ADMIT &&admit);
 	//! Reads the blocks of [run] of [file] into the loading entries the caller inserted; null entries are cached gaps
 	void Fetch(BlockCacheFile &file, const Run &run, vector<optional_ptr<BlockCacheEntry>> &entries);
 	//! Reads block [block] of [file] into a buffer of its own, for a miss that found no frame
