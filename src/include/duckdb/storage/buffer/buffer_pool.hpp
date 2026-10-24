@@ -97,6 +97,9 @@ protected:
 	};
 	virtual EvictionResult EvictBlocks(QueryContext context, MemoryTag tag, idx_t extra_memory, idx_t memory_limit,
 	                                   unique_ptr<FileBuffer> *buffer = nullptr);
+	//! Like EvictBlocks, but evicts only unpinned buffers, neither the block cache nor the object cache
+	EvictionResult EvictBuffers(QueryContext context, MemoryTag tag, idx_t extra_memory, idx_t memory_limit,
+	                            unique_ptr<FileBuffer> *buffer = nullptr);
 	virtual EvictionResult EvictBlocksInternal(QueryContext context, EvictionQueue &queue, MemoryTag tag,
 	                                           idx_t extra_memory, idx_t memory_limit,
 	                                           unique_ptr<FileBuffer> *buffer = nullptr);
