@@ -405,7 +405,7 @@ protected:
 	void ReplayCheckpoint();
 
 private:
-	void ReplayIndexData(IndexStorageInfo &info);
+	void ReplayIndexData(IndexStorageInfo &info, bool keep);
 
 private:
 	ReplayState &state;
@@ -1299,7 +1299,7 @@ void ReplayWithoutIndex(ClientContext &context, Catalog &catalog, AlterInfo &inf
 	catalog.Alter(context, info);
 }
 
-void WriteAheadLogDeserializer::ReplayIndexData(IndexStorageInfo &info) {
+void WriteAheadLogDeserializer::ReplayIndexData(IndexStorageInfo &info, bool keep) {
 	D_ASSERT(!info.name.empty());
 
 	auto &single_file_sm = db.GetStorageManager().Cast<SingleFileStorageManager>();
@@ -1319,6 +1319,9 @@ void WriteAheadLogDeserializer::ReplayIndexData(IndexStorageInfo &info) {
 
 			list.ReadElement<bool>(data_ptr, allocation_size);
 			memset(data_ptr + allocation_size, 0, buffer_handle.GetFileBuffer().Size() - allocation_size);
+			if (!keep) {
+				continue;
+			}
 
 			// For read-only mode, retain the transient block handle and release the pin held by the buffer handle. The
 			// buffer can then be evicted to temporary storage until the index is bound.
@@ -1331,12 +1334,9 @@ void WriteAheadLogDeserializer::ReplayIndexData(IndexStorageInfo &info) {
 			}
 
 			// Convert the buffer handle to a persistent block and store the block id.
-			if (!deserialize_only) {
-				auto block_id = block_manager->GetFreeBlockIdForCheckpoint();
-				block_manager->ConvertToPersistent(context, block_id, std::move(block_handle),
-				                                   std::move(buffer_handle));
-				data_info.block_pointers[j].block_id = block_id;
-			}
+			auto block_id = block_manager->GetFreeBlockIdForCheckpoint();
+			block_manager->ConvertToPersistent(context, block_id, std::move(block_handle), std::move(buffer_handle));
+			data_info.block_pointers[j].block_id = block_id;
 		}
 	});
 }
@@ -1366,7 +1366,7 @@ void WriteAheadLogDeserializer::ReplayAlter() {
 	}
 
 	auto index_storage_info = deserializer.ReadProperty<IndexStorageInfo>(102, "index_storage_info");
-	ReplayIndexData(index_storage_info);
+	ReplayIndexData(index_storage_info, !DeserializeOnly());
 	if (DeserializeOnly()) {
 		return;
 	}
@@ -1883,7 +1883,10 @@ void WriteAheadLogDeserializer::ReplayCreateIndex() {
 	auto create_info = deserializer.ReadProperty<unique_ptr<CreateInfo>>(101, "index_catalog_entry");
 	auto index_info = deserializer.ReadProperty<IndexStorageInfo>(102, "index_storage_info");
 
-	ReplayIndexData(index_info);
+	auto keep = !DeserializeOnly() &&
+	            (state.table_storage ? state.table_storage->KeepsIndex(state.current_table_oid, create_info->oid)
+	                                 : !catalog.UsesCatalogLog());
+	ReplayIndexData(index_info, keep);
 	if (DeserializeOnly()) {
 		return;
 	}
@@ -1894,7 +1897,9 @@ void WriteAheadLogDeserializer::ReplayCreateIndex() {
 		info.index_type = ART::TYPE_NAME;
 	}
 	if (state.table_storage) {
-		state.table_storage->CreateIndex(state.current_table_oid, std::move(create_info), std::move(index_info));
+		if (keep) {
+			state.table_storage->CreateIndex(state.current_table_oid, std::move(create_info), std::move(index_info));
+		}
 		return;
 	}
 

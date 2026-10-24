@@ -40,6 +40,7 @@ public:
 	void Create(ClientContext &context, unique_ptr<CreateInfo> info);
 	void Alter(ClientContext &context, optional_idx table_oid, AlterInfo &info);
 	void Drop(optional_idx table_oid);
+	bool KeepsIndex(optional_idx table_oid, idx_t index_oid);
 	void CreateIndex(optional_idx table_oid, unique_ptr<CreateInfo> info, IndexStorageInfo storage_info);
 	void DropIndex(optional_idx table_oid, idx_t index_oid);
 	void AttachPendingIndexes();
