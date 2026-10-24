@@ -42,7 +42,6 @@ constexpr uint64_t UNPINNABLE = FLAG_EVICTING | FLAG_FAILED;
 constexpr idx_t SAMPLE_SIZE = 8;
 constexpr idx_t EVICTION_ATTEMPTS = 64;
 constexpr idx_t ACQUIRE_ATTEMPTS = 4;
-constexpr idx_t HUGE_PAGE_SIZE = 2ULL * 1024ULL * 1024ULL;
 constexpr idx_t MAX_IN_FLIGHT = 16 * BlockCache::MAX_FILE_IN_FLIGHT;
 constexpr uintptr_t CACHE_LINE = 64;
 
@@ -96,24 +95,26 @@ data_ptr_t MapRegion(idx_t size) {
 #ifdef _WIN32
 	return Allocator::DefaultAllocator().AllocateData(size);
 #else
-	const auto mapped = mmap(nullptr, size + HUGE_PAGE_SIZE, PROT_READ | PROT_WRITE,
+	const uintptr_t huge_page_size = Allocator::HugePageSize();
+	const auto mapped = mmap(nullptr, size + huge_page_size, PROT_READ | PROT_WRITE,
 	                         MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
 	if (mapped == MAP_FAILED) {
 		throw OutOfMemoryException("Could not reserve %s of address space for the block cache",
 		                           StringUtil::BytesToHumanReadableString(size));
 	}
+	if (huge_page_size == 0) {
+		return reinterpret_cast<data_ptr_t>(mapped);
+	}
 	const auto base = reinterpret_cast<uintptr_t>(mapped);
-	const auto aligned = AlignValue<uintptr_t, HUGE_PAGE_SIZE>(base);
+	const auto aligned = AlignValue(base, huge_page_size);
 	if (aligned > base) {
 		munmap(mapped, aligned - base);
 	}
-	const auto end = base + size + HUGE_PAGE_SIZE;
+	const auto end = base + size + huge_page_size;
 	if (end > aligned + size) {
 		munmap(reinterpret_cast<void *>(aligned + size), end - aligned - size);
 	}
-#ifdef MADV_HUGEPAGE
-	madvise(reinterpret_cast<void *>(aligned), size, MADV_HUGEPAGE);
-#endif
+	Allocator::AdviseHugePages(reinterpret_cast<data_ptr_t>(aligned), size);
 	return reinterpret_cast<data_ptr_t>(aligned);
 #endif
 }
