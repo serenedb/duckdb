@@ -1169,20 +1169,6 @@ static optional_ptr<CatalogEntry> ReplayEntryByOid(Catalog &catalog, const Catal
 	return catalog.Cast<DuckCatalog>().GetOidIndex().GetVisible(oid, transaction.view);
 }
 
-static bool ReplayHasSchemaPath(const CatalogEntry &entry) {
-	switch (entry.type) {
-	case CatalogType::ROLE_ENTRY:
-	case CatalogType::DATABASE_ENTRY:
-	case CatalogType::FOREIGN_SERVER_ENTRY:
-	case CatalogType::SUBSCRIPTION_ENTRY:
-	case CatalogType::REPLICATION_ORIGIN_ENTRY:
-	case CatalogType::TABLESPACE_ENTRY:
-		return false;
-	default:
-		return true;
-	}
-}
-
 static optional_ptr<const SchemaInfo> ReplayContainingSchema(const CatalogEntry &entry) {
 	if (entry.type == CatalogType::SCHEMA_ENTRY) {
 		return entry.Cast<SchemaCatalogEntry>().GetSchemaInfo()->parent.get();
@@ -1214,7 +1200,7 @@ static void ReplayParentSchema(Catalog &catalog, ClientContext &context, CreateI
 static void ReplayDropTarget(Catalog &catalog, ClientContext &context, idx_t oid, DropInfo &info) {
 	auto transaction = catalog.GetCatalogTransaction(context);
 	auto target = ReplayEntryByOid(catalog, transaction, oid);
-	if (!target || !ReplayHasSchemaPath(*target)) {
+	if (!target || IsCatalogLevelType(target->type)) {
 		return;
 	}
 	auto path = ReplaySchemaPath(transaction, ReplayContainingSchema(*target));
@@ -1230,7 +1216,7 @@ static void ReplayDropTarget(Catalog &catalog, ClientContext &context, idx_t oid
 static void ReplayAlterTarget(Catalog &catalog, ClientContext &context, AlterInfo &info) {
 	auto transaction = catalog.GetCatalogTransaction(context);
 	auto target = ReplayEntryByOid(catalog, transaction, info.oid);
-	if (!target || !ReplayHasSchemaPath(*target)) {
+	if (!target || IsCatalogLevelType(target->type)) {
 		return;
 	}
 	auto path = ReplaySchemaPath(transaction, ReplayContainingSchema(*target));
