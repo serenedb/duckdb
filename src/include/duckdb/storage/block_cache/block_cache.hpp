@@ -184,7 +184,7 @@ public:
 	idx_t Size() const {
 		return size;
 	}
-	//! Ends the write; a written file is published at the size appended
+	//! Ends the write, zeroing the rest of the last block; a written file is published at the size appended
 	void Finish();
 	//! Ends the write of a written file and drops its blocks
 	void Abandon();
@@ -270,7 +270,8 @@ public:
 	bool IsCached(BlockCacheFile &file, idx_t offset, idx_t size) const;
 	//! Starts fetching the missing blocks of [offset, offset + size) and returns
 	void Prefetch(const shared_ptr<BlockCacheFile> &file, idx_t offset, idx_t size);
-	//! Pins a new, zeroed block [block] of the unbacked or written [file] for its writer
+	//! Pins a new block [block] of the unbacked or written [file] for its writer, holding whatever its frame held
+	//! before; BlockCacheAppender fills it and zeroes what lies past the end of the file
 	BlockCachePin CreateBlock(BlockCacheFile &file, idx_t block);
 	//! Extends the unbacked [file] to [size] bytes once its blocks are written
 	void SetUnbackedSize(BlockCacheFile &file, idx_t size);
