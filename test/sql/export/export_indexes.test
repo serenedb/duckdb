@@ -46,4 +46,4 @@ insert into tbl VALUES (10, 'hello');
 statement error
 insert into tbl VALUES (10, 'world');
 ----
-Constraint Error: Duplicate key "(x + 7): 17" violates unique constraint.
+Constraint Error: Duplicate key "elaborate_macro(x): 17" violates unique constraint.

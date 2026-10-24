@@ -20,53 +20,54 @@ static void PropagateLambdaProperties(BoundScalarFunction &function, const Expre
 
 struct LambdaInvokeData final : public LambdaFunctionData {
 	shared_ptr<Expression> lambda_expr;
+	idx_t parameter_count;
 
-	explicit LambdaInvokeData(shared_ptr<Expression> lambda_expr_p) : lambda_expr(std::move(lambda_expr_p)) {
+	LambdaInvokeData(shared_ptr<Expression> lambda_expr_p, const idx_t parameter_count_p)
+	    : lambda_expr(std::move(lambda_expr_p)), parameter_count(parameter_count_p) {
 	}
 
 	unique_ptr<FunctionData> Copy() const override {
-		return make_uniq<LambdaInvokeData>(lambda_expr);
+		return make_uniq<LambdaInvokeData>(lambda_expr, parameter_count);
 	}
 
 	bool Equals(const FunctionData &other_p) const override {
 		auto &other = other_p.Cast<LambdaInvokeData>();
-		return LambdaExpressionEquals(lambda_expr, other.lambda_expr);
+		return LambdaExpressionEquals(lambda_expr, other.lambda_expr) && parameter_count == other.parameter_count;
 	}
 
-	//! Serializes a lambda function's bind data
-	static void Serialize(Serializer &serializer, const optional_ptr<FunctionData> bind_data_p,
-	                      const BoundScalarFunction &function) {
-		auto &bind_data = bind_data_p->Cast<LambdaInvokeData>();
-		serializer.WritePropertyWithDefault(101, "lambda_expr", bind_data.lambda_expr, shared_ptr<Expression>());
+	//! Writes nothing: the lambda is serialized as the first child
+	static void Serialize(Serializer &, const optional_ptr<FunctionData>, const BoundScalarFunction &) {
 	}
 
 	//! Deserializes a lambda function's bind data
 	static unique_ptr<FunctionData> Deserialize(Deserializer &deserializer, BoundScalarFunction &function) {
-		auto lambda_expr = deserializer.ReadPropertyWithExplicitDefault<unique_ptr<Expression>>(
-		    101, "lambda_expr", unique_ptr<Expression>());
-		if (lambda_expr) {
-			auto &bound_lambda_expr = lambda_expr->Cast<BoundLambdaExpression>();
-			PropagateLambdaProperties(function, *bound_lambda_expr.LambdaExpr());
+		auto written = deserializer.ReadPropertyWithExplicitDefault<unique_ptr<Expression>>(101, "lambda_expr",
+		                                                                                    unique_ptr<Expression>());
+		optional_ptr<const Expression> lambda = written.get();
+		if (!lambda) {
+			auto &children = deserializer.Get<const const_expression_list_t &>();
+			if (!children.empty() && children[0].get().GetExpressionClass() == ExpressionClass::BOUND_LAMBDA) {
+				lambda = children[0].get();
+			}
 		}
-		return make_uniq<LambdaInvokeData>(std::move(lambda_expr));
+		if (!lambda) {
+			return make_uniq<LambdaInvokeData>(nullptr, 0);
+		}
+		auto &bound_lambda_expr = lambda->Cast<BoundLambdaExpression>();
+		PropagateLambdaProperties(function, *bound_lambda_expr.LambdaExpr());
+		return make_uniq<LambdaInvokeData>(bound_lambda_expr.SharedLambdaExpr(), bound_lambda_expr.ParameterCount());
 	}
 
 	unique_ptr<Expression> RecoverLambdaChild() const override {
-		return lambda_expr ? lambda_expr->Copy() : nullptr;
-	}
-
-	optional_ptr<const Expression> GetLambdaExpression() const override {
 		if (!lambda_expr) {
 			return nullptr;
 		}
-		auto &bound_lambda_expr = lambda_expr->Cast<BoundLambdaExpression>();
-		return bound_lambda_expr.LambdaExpr().get();
+		return make_uniq<BoundLambdaExpression>(ExpressionType::LAMBDA, LogicalType::LAMBDA, lambda_expr,
+		                                        parameter_count);
 	}
 
-	void SetLambdaExpression(shared_ptr<Expression> expr) override {
-		auto lambda = lambda_expr->Copy();
-		lambda->Cast<BoundLambdaExpression>().SetLambdaExpr(std::move(expr));
-		lambda_expr = shared_ptr<Expression>(std::move(lambda));
+	optional_ptr<const Expression> GetLambdaExpression() const override {
+		return lambda_expr.get();
 	}
 };
 
@@ -87,8 +88,7 @@ struct LambdaInvokeState final : public FunctionLocalState {
 		if (!bdata.lambda_expr) {
 			throw InternalException("Invoke function is missing its bound lambda expression");
 		}
-		auto &bound_lambda_expr = bdata.lambda_expr->Cast<BoundLambdaExpression>();
-		const auto parameter_count = bound_lambda_expr.ParameterCount();
+		const auto parameter_count = bdata.parameter_count;
 		D_ASSERT(parameter_count < expr.GetChildren().size());
 
 		// children[0] is the lambda placeholder itself, the parameters follow it. The lambda body refers
@@ -102,7 +102,7 @@ struct LambdaInvokeState final : public FunctionLocalState {
 			input_types.push_back(expr.GetChildren()[i]->GetReturnType());
 		}
 
-		auto executor = make_uniq<ExpressionExecutor>(state, *bound_lambda_expr.LambdaExpr());
+		auto executor = make_uniq<ExpressionExecutor>(state, *bdata.lambda_expr);
 		return make_uniq<LambdaInvokeState>(std::move(executor), input_types, parameter_count);
 	}
 };
@@ -137,7 +137,7 @@ unique_ptr<FunctionData> LambdaInvokeBind(BindScalarFunctionInput &input) {
 	bound_function.SetReturnType(bound_lambda_expr.LambdaExpr()->GetReturnType());
 	PropagateLambdaProperties(bound_function, *bound_lambda_expr.LambdaExpr());
 
-	return make_uniq<LambdaInvokeData>(bound_lambda_expr.Copy());
+	return make_uniq<LambdaInvokeData>(bound_lambda_expr.SharedLambdaExpr(), bound_lambda_expr.ParameterCount());
 }
 
 LogicalType LambdaInvokeBindParameters(ClientContext &context, const vector<LogicalType> &function_child_types,

@@ -71,6 +71,7 @@ public:
 
 	vector<string> ExpressionsToList() const;
 	string ExpressionsToString() const;
+	Identifier ExpressionName(idx_t index) const;
 
 	vector<string> GetOpclassesForSerialization() const;
 	vector<std::optional<case_insensitive_map_t<Value>>> GetOpclassOptionsForSerialization() const;

@@ -94,4 +94,4 @@ insert into tbl_m VALUES (10, 'hello');
 statement error
 insert into tbl_m VALUES (10, 'world');
 ----
-Constraint Error: Duplicate key "(x + 7): 17" violates unique constraint.
+Constraint Error: Duplicate key "m(x): 17" violates unique constraint.

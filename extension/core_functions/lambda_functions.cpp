@@ -290,19 +290,27 @@ void ListLambdaBindData::Serialize(Serializer &serializer, const optional_ptr<Fu
                                    const BoundScalarFunction &) {
 	auto &bind_data = bind_data_p->Cast<ListLambdaBindData>();
 	serializer.WriteProperty(100, "return_type", bind_data.return_type);
-	serializer.WritePropertyWithDefault(101, "lambda_expr", bind_data.lambda_expr, shared_ptr<Expression>());
 	serializer.WriteProperty(102, "has_index", bind_data.has_index);
 	serializer.WritePropertyWithDefault<bool>(103, "has_initial", bind_data.has_initial, false);
 	serializer.WritePropertyWithDefault<idx_t>(16488, "index_offset", bind_data.index_offset, 1);
+	serializer.WritePropertyWithDefault<bool>(16489, "lambda_in_child", bind_data.lambda_expr != nullptr, false);
 }
 
 unique_ptr<FunctionData> ListLambdaBindData::Deserialize(Deserializer &deserializer, BoundScalarFunction &) {
 	auto return_type = deserializer.ReadProperty<LogicalType>(100, "return_type");
-	auto lambda_expr = deserializer.ReadPropertyWithExplicitDefault<unique_ptr<Expression>>(101, "lambda_expr",
-	                                                                                        unique_ptr<Expression>());
+	shared_ptr<Expression> lambda_expr = deserializer.ReadPropertyWithExplicitDefault<unique_ptr<Expression>>(
+	    101, "lambda_expr", unique_ptr<Expression>());
 	auto has_index = deserializer.ReadProperty<bool>(102, "has_index");
 	auto has_initial = deserializer.ReadPropertyWithExplicitDefault<bool>(103, "has_initial", false);
 	auto index_offset = deserializer.ReadPropertyWithExplicitDefault<idx_t>(16488, "index_offset", 1);
+	if (deserializer.ReadPropertyWithExplicitDefault<bool>(16489, "lambda_in_child", false)) {
+		for (auto &child : deserializer.Get<const const_expression_list_t &>()) {
+			if (child.get().GetExpressionClass() == ExpressionClass::BOUND_LAMBDA) {
+				lambda_expr = child.get().Cast<BoundLambdaExpression>().SharedLambdaExpr();
+				break;
+			}
+		}
+	}
 	return make_uniq<ListLambdaBindData>(return_type, std::move(lambda_expr), has_index, has_initial, index_offset);
 }
 

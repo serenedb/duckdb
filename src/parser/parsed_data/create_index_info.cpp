@@ -26,16 +26,30 @@ static void RemoveTableQualificationRecursive(unique_ptr<ParsedExpression> &root
 	    });
 }
 
+static unique_ptr<ParsedExpression> UnqualifiedExpression(const ParsedExpression &expr, const Identifier &table_name) {
+	auto copy = expr.Copy();
+	// Column reference expressions are qualified with the table name.
+	// We need to remove them to reproduce the original query.
+	RemoveTableQualificationRecursive(copy, table_name);
+	return copy;
+}
+
+Identifier CreateIndexInfo::ExpressionName(idx_t index) const {
+	auto expr = UnqualifiedExpression(*parsed_expressions[index], table);
+	if (expr->GetExpressionType() == ExpressionType::COLUMN_REF) {
+		auto &column_ref = expr->Cast<ColumnRefExpression>();
+		if (!column_ref.IsQualified()) {
+			return std::move(column_ref.ColumnNamesMutable().back());
+		}
+	}
+	return Identifier(expr->ToString());
+}
+
 vector<string> CreateIndexInfo::ExpressionsToList() const {
 	vector<string> list;
 
 	for (idx_t i = 0; i < parsed_expressions.size(); i++) {
-		auto &expr = parsed_expressions[i];
-		auto copy = expr->Copy();
-
-		// Column reference expressions are qualified with the table name.
-		// We need to remove them to reproduce the original query.
-		RemoveTableQualificationRecursive(copy, table);
+		auto copy = UnqualifiedExpression(*parsed_expressions[i], table);
 		bool add_parenthesis = true;
 		if (copy->GetExpressionType() == ExpressionType::COLUMN_REF) {
 			auto &column_ref = copy->Cast<ColumnRefExpression>();
