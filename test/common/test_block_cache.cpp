@@ -495,6 +495,45 @@ TEST_CASE("Block cache reads a block into a buffer of its own when every frame i
 	REQUIRE(HoldsExpectedBytes(second, 1));
 }
 
+TEST_CASE("Block cache zeroes a fetched last block past the end of its file", "[block_cache]") {
+	DuckDB db(nullptr);
+	BlockCache cache(*db.instance, 2 * BLOCK);
+	CountingSourceFileSystem fs;
+	TestFile full("block_cache_full.bin", 2 * BLOCK);
+	TestFile partial("block_cache_partial.bin", BLOCK + 1000);
+	auto full_cached = full.Open(cache, fs);
+	const auto fill_frames = [&] {
+		for (idx_t block = 0; block < 2; block++) {
+			REQUIRE(HoldsExpectedBytes(cache.Pin(full_cached, block), block));
+		}
+	};
+	const auto zeroed_past_end = [](const BlockCachePin &pin) {
+		for (idx_t i = pin.Size(); i < BLOCK; i++) {
+			if (pin.Ptr()[i] != 0) {
+				return false;
+			}
+		}
+		return true;
+	};
+
+	fill_frames();
+	auto cached = partial.Open(cache, fs);
+	auto single = cache.Pin(cached, 1);
+	REQUIRE(single.Size() == 1000);
+	REQUIRE(HoldsExpectedBytes(single, 1));
+	REQUIRE(zeroed_past_end(single));
+	single.Reset();
+	cached.reset();
+	cache.ForgetFile(partial.path);
+
+	fill_frames();
+	cached = partial.Open(cache, fs);
+	auto pins = cache.PinRange(cached, 0, BLOCK + 1000);
+	REQUIRE(pins.size() == 2);
+	REQUIRE(HoldsExpectedBytes(pins[1], 1));
+	REQUIRE(zeroed_past_end(pins[1]));
+}
+
 TEST_CASE("Block cache pins fail with the read error and later pins fetch again", "[block_cache]") {
 	DuckDB db(nullptr);
 	BlockCache cache(*db.instance, 16 * BLOCK);
