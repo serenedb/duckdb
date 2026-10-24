@@ -471,6 +471,29 @@ TEST_CASE("Block cache range read uses a response that forbids reuse once, witho
 	REQUIRE(fs.ReadCount() == 2);
 }
 
+TEST_CASE("Block cache readers of prefetched blocks run the fetches when the scheduler has no workers",
+          "[block_cache]") {
+	DBConfig config;
+	config.options.maximum_threads = 1;
+	DuckDB db(nullptr, &config);
+	BlockCache cache(*db.instance, 64 * BLOCK);
+	CountingSourceFileSystem fs;
+	TestFile file("block_cache_no_workers.bin", 16 * BLOCK);
+	auto cached = file.Open(cache, fs);
+
+	cache.Prefetch(cached, 0, 8 * BLOCK);
+	REQUIRE(HoldsExpectedBytes(cache.Pin(cached, 3), 3));
+	cache.Prefetch(cached, 8 * BLOCK, 4 * BLOCK);
+	cache.Prefetch(cached, 12 * BLOCK, 4 * BLOCK);
+	REQUIRE(HoldsExpectedBytes(cache.Pin(cached, 14), 14));
+	auto pins = cache.PinRange(cached, 0, 16 * BLOCK);
+	REQUIRE(pins.size() == 16);
+	for (idx_t block = 0; block < 16; block++) {
+		REQUIRE(HoldsExpectedBytes(pins[block], block));
+	}
+	REQUIRE(fs.ReadCount() == 3);
+}
+
 TEST_CASE("Block cache drops pinned blocks of a forgotten file with their last pin", "[block_cache]") {
 	DuckDB db(nullptr);
 	BlockCache cache(*db.instance, 64 * BLOCK);
