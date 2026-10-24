@@ -238,7 +238,8 @@ public:
 	static BlockCache &Get(DatabaseInstance &db);
 	//! The capacity the settings ask for: external_file_cache_size, or a quarter of the memory limit
 	static idx_t ConfiguredCapacity(DatabaseInstance &db);
-	//! A pin owning a new buffer of [size] bytes for a read the cache does not keep
+	//! A pin owning a new buffer of [size] bytes for a read the cache does not keep, aligned for direct I/O such as a
+	//! read from the spill tier
 	static BlockCachePin AllocateUncached(DatabaseInstance &db, idx_t size);
 
 	//! Registers an open of [path] whose metadata is [current], reading missing blocks from [source], which may be
