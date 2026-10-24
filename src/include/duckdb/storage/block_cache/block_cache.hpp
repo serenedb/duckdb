@@ -357,7 +357,8 @@ private:
 	void ReleaseFrame(uint32_t frame);
 	//! Evicts one unpinned block chosen by sampling and returns its frame
 	bool EvictOne(uint32_t &frame);
-	//! Evicts [entry] when it is unpinned and still in [state]; [keep_copy] spills it first where the tier allows
+	//! Evicts [entry] when it is unpinned and still in [state]; [keep_copy] spills it first where the tier allows, and
+	//! a reader that misses the block then finds its copy or waits for it
 	bool TryEvict(BlockCacheEntry &entry, uint64_t state, uint32_t &frame, bool keep_copy);
 	//! Drops the blocks of [file], which no one reads anymore
 	void DropFile(BlockCacheFile &file);

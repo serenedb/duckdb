@@ -857,18 +857,27 @@ bool BlockCache::TryEvict(BlockCacheEntry &entry, uint64_t state, uint32_t &fram
 	if (!Evictable(state)) {
 		return false;
 	}
-	if (!entry.state.compare_exchange_strong(state, state | FLAG_EVICTING, std::memory_order_acq_rel,
-	                                         std::memory_order_relaxed)) {
-		return false;
-	}
 	const auto key = entry.key.load(std::memory_order_relaxed);
-	frame = entry.frame.load(std::memory_order_relaxed);
 	const bool unbacked = state & FLAG_UNBACKED;
 	if (keep_copy && unbacked && !IsLiveUnbacked(FileOf(key))) {
 		keep_copy = false;
 		spill.Erase(key);
 	}
-	if (keep_copy && !(state & (FLAG_SPILLED | FLAG_LOCAL))) {
+	keep_copy = keep_copy && !(state & (FLAG_SPILLED | FLAG_LOCAL));
+	BlockCacheSpill::Reservation copy;
+	if (keep_copy && !spill.Reserve(key, unbacked, copy)) {
+		if (unbacked) {
+			return false;
+		}
+		keep_copy = false;
+	}
+	if (!entry.state.compare_exchange_strong(state, state | FLAG_EVICTING, std::memory_order_acq_rel,
+	                                         std::memory_order_relaxed)) {
+		spill.Cancel(copy);
+		return false;
+	}
+	frame = entry.frame.load(std::memory_order_relaxed);
+	if (keep_copy) {
 #ifdef DEBUG
 		if (unbacked && debug_before_keep_copy) {
 			auto hook = std::move(debug_before_keep_copy);
@@ -876,7 +885,7 @@ bool BlockCache::TryEvict(BlockCacheEntry &entry, uint64_t state, uint32_t &fram
 			hook();
 		}
 #endif
-		const bool written = spill.Write(key, FrameData(frame), unbacked);
+		const bool written = spill.Write(copy, FrameData(frame));
 		if (unbacked && !written) {
 			entry.state.fetch_and(~FLAG_EVICTING, std::memory_order_release);
 			return false;

@@ -10,6 +10,7 @@
 
 #include "duckdb/common/common.hpp"
 #include "duckdb/common/file_system.hpp"
+#include "duckdb/common/limits.hpp"
 #include "duckdb/common/list.hpp"
 #include "duckdb/common/mutex.hpp"
 #include "duckdb/common/optional_ptr.hpp"
@@ -24,6 +25,15 @@ namespace duckdb {
 //! Copies of blocks that exist elsewhere are dropped when the slots run out; copies of unbacked blocks never are.
 class BlockCacheSpill {
 public:
+	static constexpr uint32_t NO_SLOT = NumericLimits<uint32_t>::Maximum();
+
+	//! The slot reserved for the copy of a block, which readers of the block wait for until it is written or cancelled
+	struct Reservation {
+		uint64_t key = 0;
+		//! NO_SLOT when the copy existed already
+		uint32_t slot = NO_SLOT;
+	};
+
 	~BlockCacheSpill();
 
 	//! Spills into [path], keeping at most [backed_limit] bytes of blocks that exist elsewhere; an empty [path] keeps
@@ -35,9 +45,14 @@ public:
 	//! Whether a file is configured, which unbacked blocks need
 	bool IsConfigured() const;
 
-	//! Stores [data] as the copy of [key]; false when no slot can be had. [keep] copies are never dropped.
-	bool Write(uint64_t key, data_ptr_t data, bool keep);
-	//! Reads the copy of [key] into [data]; false when there is none
+	//! Reserves a slot for the copy of [key], or finds the copy there is; false when no slot can be had. [keep] copies
+	//! are never dropped.
+	bool Reserve(uint64_t key, bool keep, Reservation &result);
+	//! Writes [data] into the slot of [reservation], which publishes the copy; false when the write fails
+	bool Write(const Reservation &reservation, data_ptr_t data);
+	//! Gives up [reservation] without writing it
+	void Cancel(const Reservation &reservation);
+	//! Reads the copy of [key] into [data], waiting while it is reserved but not written; false when there is none
 	bool Read(uint64_t key, data_ptr_t data);
 	bool Contains(uint64_t key) const;
 	vector<uint64_t> Keys() const;
@@ -51,6 +66,8 @@ private:
 	struct Slot {
 		uint32_t index;
 		bool keep;
+		//! Whether the slot holds the copy; until it does, readers of the copy wait
+		bool written;
 		//! The place of a copy that may be dropped in backed_order
 		list<uint64_t>::iterator order;
 	};

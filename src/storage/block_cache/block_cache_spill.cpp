@@ -118,8 +118,9 @@ bool BlockCacheSpill::DropOldestBacked() {
 	return true;
 }
 
-bool BlockCacheSpill::Write(uint64_t key, data_ptr_t data, bool keep) {
+bool BlockCacheSpill::Reserve(uint64_t key, bool keep, Reservation &result) {
 	annotated_lock_guard<annotated_mutex> guard(lock);
+	result = Reservation {key, NO_SLOT};
 	if (!handle || (!keep && backed_limit == 0)) {
 		return false;
 	}
@@ -134,29 +135,67 @@ bool BlockCacheSpill::Write(uint64_t key, data_ptr_t data, bool keep) {
 	while (!keep && backed_order.size() >= backed_limit && DropOldestBacked()) {
 	}
 	const auto index = AcquireSlot();
-	try {
-		if (index >= extent) {
+	if (index >= extent) {
+		try {
 			if (temporary_files) {
 				temporary_files->IncreaseSizeOnDisk((index + 1 - extent) * BlockCache::BLOCK_SIZE);
 			}
-			extent = index + 1;
+		} catch (...) {
+			free_slots.push_back(index);
+			return false;
 		}
-		handle->Write(QueryContext(), data, BlockCache::BLOCK_SIZE, index * BlockCache::BLOCK_SIZE);
-	} catch (...) {
-		free_slots.push_back(index);
-		return false;
+		extent = index + 1;
 	}
 	auto order = backed_order.end();
 	if (!keep) {
 		order = backed_order.insert(order, key);
 	}
-	slots[key] = Slot {index, keep, order};
+	slots.emplace(key, Slot {index, keep, false, order});
+	result.slot = index;
 	return true;
+}
+
+bool BlockCacheSpill::Write(const Reservation &reservation, data_ptr_t data) {
+	if (reservation.slot == NO_SLOT) {
+		return true;
+	}
+	annotated_lock_guard<annotated_mutex> guard(lock);
+	auto entry = slots.find(reservation.key);
+	if (entry == slots.end() || entry->second.index != reservation.slot) {
+		return true;
+	}
+	try {
+		handle->Write(QueryContext(), data, BlockCache::BLOCK_SIZE, entry->second.index * BlockCache::BLOCK_SIZE);
+	} catch (...) {
+		Release(entry);
+		return false;
+	}
+	entry->second.written = true;
+	return true;
+}
+
+void BlockCacheSpill::Cancel(const Reservation &reservation) {
+	if (reservation.slot == NO_SLOT) {
+		return;
+	}
+	annotated_lock_guard<annotated_mutex> guard(lock);
+	auto entry = slots.find(reservation.key);
+	if (entry != slots.end() && entry->second.index == reservation.slot) {
+		Release(entry);
+	}
 }
 
 bool BlockCacheSpill::Read(uint64_t key, data_ptr_t data) {
 	annotated_lock_guard<annotated_mutex> guard(lock);
 	auto entry = slots.find(key);
+	if (entry != slots.end() && !entry->second.written) {
+		auto settled = [&]() DUCKDB_NO_THREAD_SAFETY_ANALYSIS {
+			auto reserved = slots.find(key);
+			return reserved == slots.end() || reserved->second.written;
+		};
+		lock.Await(absl::Condition(&settled));
+		entry = slots.find(key);
+	}
 	if (entry == slots.end()) {
 		return false;
 	}
