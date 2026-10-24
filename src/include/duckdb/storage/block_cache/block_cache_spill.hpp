@@ -15,14 +15,16 @@
 #include "duckdb/common/mutex.hpp"
 #include "duckdb/common/optional_ptr.hpp"
 #include "duckdb/common/unique_ptr.hpp"
-#include "duckdb/common/unordered_map.hpp"
 #include "duckdb/common/vector.hpp"
 #include "duckdb/storage/temporary_file_manager.hpp"
+
+#include <absl/container/btree_map.h>
 
 namespace duckdb {
 
 //! Evicted blocks on local disk: one file of fixed slots, written with direct I/O where the filesystem allows it.
 //! Copies of blocks that exist elsewhere are dropped when the slots run out; copies of unbacked blocks never are.
+//! Slots are read and written outside the lock, so reads and writes of different blocks overlap.
 class BlockCacheSpill {
 public:
 	static constexpr uint32_t NO_SLOT = NumericLimits<uint32_t>::Maximum();
@@ -32,6 +34,8 @@ public:
 		uint64_t key = 0;
 		//! NO_SLOT when the copy existed already
 		uint32_t slot = NO_SLOT;
+		//! The file of the slot, which stays open until the reservation is written or cancelled
+		optional_ptr<FileHandle> file;
 	};
 
 	~BlockCacheSpill();
@@ -63,22 +67,34 @@ public:
 	void EraseBacked();
 
 private:
-	struct Slot {
-		uint32_t index;
+	struct Copy {
+		uint32_t slot;
 		bool keep;
 		//! Whether the slot holds the copy; until it does, readers of the copy wait
 		bool written;
 		//! The place of a copy that may be dropped in backed_order
 		list<uint64_t>::iterator order;
 	};
-	using Slots = unordered_map<uint64_t, Slot>;
+	//! Copies by block key, so that the copies of a file are one range
+	using Copies = absl::btree_map<uint64_t, Copy>;
+	struct SlotUse {
+		//! Whether a copy holds the slot
+		bool held = false;
+		//! Reads and writes of the slot in flight; a slot no copy holds is reused only once they end
+		uint32_t pins = 0;
+	};
 
 	void Open(FileSystem &fs, const string &path) DUCKDB_REQUIRES(lock);
-	//! Closes and removes the file, which drops every copy
+	//! Closes and removes the file once no read or write is in flight, which drops every copy
 	void Close() DUCKDB_REQUIRES(lock);
+	//! Waits until no Close waits for the reads and writes in flight
+	void AwaitClose() DUCKDB_REQUIRES(lock);
 	uint32_t AcquireSlot() DUCKDB_REQUIRES(lock);
-	void Release(Slots::iterator entry) DUCKDB_REQUIRES(lock);
+	//! Drops [copy], returning the copy after it
+	Copies::iterator Release(Copies::iterator copy) DUCKDB_REQUIRES(lock);
 	bool DropOldestBacked() DUCKDB_REQUIRES(lock);
+	void Pin(uint32_t slot) DUCKDB_REQUIRES(lock);
+	void Unpin(uint32_t slot) DUCKDB_REQUIRES(lock);
 
 	mutable annotated_mutex lock;
 	unique_ptr<FileHandle> handle DUCKDB_GUARDED_BY(lock);
@@ -90,8 +106,14 @@ private:
 	idx_t extent DUCKDB_GUARDED_BY(lock) = 0;
 	idx_t backed_limit DUCKDB_GUARDED_BY(lock) = 0;
 	vector<uint32_t> free_slots DUCKDB_GUARDED_BY(lock);
-	Slots slots DUCKDB_GUARDED_BY(lock);
-	//! Backed copies in the order they were written, dropped oldest first
+	//! Every slot handed out, by index
+	vector<SlotUse> slot_uses DUCKDB_GUARDED_BY(lock);
+	//! Reads and writes in flight, which Close waits for
+	idx_t in_flight DUCKDB_GUARDED_BY(lock) = 0;
+	//! Whether Close waits for the reads and writes in flight; none starts meanwhile
+	bool closing DUCKDB_GUARDED_BY(lock) = false;
+	Copies copies DUCKDB_GUARDED_BY(lock);
+	//! Backed copies in the order they were reserved, dropped oldest first
 	list<uint64_t> backed_order DUCKDB_GUARDED_BY(lock);
 };
 

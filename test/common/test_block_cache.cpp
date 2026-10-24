@@ -40,6 +40,19 @@ public:
 		LocalFileSystem::Read(handle, buffer, nr_bytes, location);
 	}
 
+	void Write(FileHandle &handle, void *buffer, int64_t nr_bytes, idx_t location) override {
+		{
+			annotated_lock_guard<annotated_mutex> guard(lock);
+			writes.push_back(location);
+		}
+		LocalFileSystem::Write(handle, buffer, nr_bytes, location);
+	}
+
+	vector<idx_t> TakeWrites() {
+		annotated_lock_guard<annotated_mutex> guard(lock);
+		return std::move(writes);
+	}
+
 	idx_t ReadCount() {
 		annotated_lock_guard<annotated_mutex> guard(lock);
 		return reads.size();
@@ -83,6 +96,7 @@ public:
 
 	annotated_mutex lock;
 	vector<pair<idx_t, idx_t>> reads DUCKDB_GUARDED_BY(lock);
+	vector<idx_t> writes DUCKDB_GUARDED_BY(lock);
 	idx_t failures DUCKDB_GUARDED_BY(lock) = 0;
 	bool hold DUCKDB_GUARDED_BY(lock) = false;
 	bool no_store DUCKDB_GUARDED_BY(lock) = false;
@@ -797,6 +811,259 @@ TEST_CASE("Block cache spill drops the oldest copy first after the copies of a f
 	auto pin = cache.Pin(cached, 0);
 	REQUIRE(HoldsExpectedBytes(pin, 0));
 	REQUIRE(fs.ReadCount() == reads);
+}
+
+namespace {
+
+uint8_t FillOf(uint64_t key) {
+	return static_cast<uint8_t>(key % 251 + 1);
+}
+
+//! Spills a copy of [key] filled with FillOf([key]) from [buffer]
+bool WriteCopy(BlockCacheSpill &spill, uint64_t key, BlockCachePin &buffer) {
+	memset(buffer.GetDataMutable(), FillOf(key), BLOCK);
+	BlockCacheSpill::Reservation copy;
+	return spill.Reserve(key, true, copy) && spill.Write(copy, buffer.GetDataMutable());
+}
+
+//! Whether the copy of [key] reads back into [buffer] as WriteCopy wrote it
+bool ReadsCopy(BlockCacheSpill &spill, uint64_t key, BlockCachePin &buffer) {
+	return spill.Read(key, buffer.GetDataMutable()) && buffer.Ptr()[0] == FillOf(key) &&
+	       buffer.Ptr()[BLOCK - 1] == FillOf(key);
+}
+
+} // namespace
+
+TEST_CASE("Block cache spill reads and writes of concurrent tasks return the right bytes", "[block_cache]") {
+	DuckDB db(nullptr);
+	LocalFileSystem fs;
+	BlockCacheSpill spill;
+	spill.Configure(fs, TestCreatePath("block_cache_spill_concurrent"), 0);
+	constexpr idx_t TASKS = 8;
+	constexpr idx_t BLOCKS = 32;
+	atomic<idx_t> wrong {0};
+	TaskExecutor executor(TaskScheduler::GetScheduler(*db.instance));
+	for (idx_t task = 0; task < TASKS; task++) {
+		executor.ScheduleTask(make_uniq<FunctionExecutorTask>(
+		    executor,
+		    [&, task]() {
+			    auto buffer = BlockCache::AllocateUncached(*db.instance, BLOCK);
+			    uint64_t seed = task * 7919 + 1;
+			    for (idx_t block = 0; block < BLOCKS; block++) {
+				    if (!WriteCopy(spill, BlockCache::MakeKey(NumericCast<uint32_t>(task + 1), block), buffer)) {
+					    wrong++;
+				    }
+				    seed = seed * 6364136223846793005ULL + 1442695040888963407ULL;
+				    const auto file = NumericCast<uint32_t>((seed >> 33) % TASKS + 1);
+				    const auto key = BlockCache::MakeKey(file, (seed >> 13) % BLOCKS);
+				    if (spill.Contains(key) && !ReadsCopy(spill, key, buffer)) {
+					    wrong++;
+				    }
+			    }
+		    },
+		    "BlockCacheTestTask"));
+	}
+	executor.WorkOnTasks();
+	REQUIRE(wrong == 0);
+	auto buffer = BlockCache::AllocateUncached(*db.instance, BLOCK);
+	for (idx_t task = 0; task < TASKS; task++) {
+		for (idx_t block = 0; block < BLOCKS; block++) {
+			REQUIRE(ReadsCopy(spill, BlockCache::MakeKey(NumericCast<uint32_t>(task + 1), block), buffer));
+		}
+	}
+}
+
+TEST_CASE("Block cache spill reuses the slot of a copy dropped while it is read only after the read", "[block_cache]") {
+	DuckDB db(nullptr);
+	CountingSourceFileSystem fs;
+	BlockCacheSpill spill;
+	spill.Configure(fs, TestCreatePath("block_cache_spill_slot_reuse"), 0);
+	auto buffer = BlockCache::AllocateUncached(*db.instance, BLOCK);
+	const auto dropped = BlockCache::MakeKey(1, 0);
+	REQUIRE(WriteCopy(spill, dropped, buffer));
+	const auto dropped_slot = fs.TakeWrites();
+	REQUIRE(dropped_slot.size() == 1);
+
+	fs.Hold(true);
+	atomic<bool> right {false};
+	TaskExecutor executor(TaskScheduler::GetScheduler(*db.instance));
+	executor.ScheduleTask(make_uniq<FunctionExecutorTask>(
+	    executor,
+	    [&]() {
+		    auto target = BlockCache::AllocateUncached(*db.instance, BLOCK);
+		    right = ReadsCopy(spill, dropped, target);
+	    },
+	    "BlockCacheTestTask"));
+	fs.AwaitReads(1);
+	spill.Erase(dropped);
+	REQUIRE_FALSE(spill.Contains(dropped));
+	REQUIRE(WriteCopy(spill, BlockCache::MakeKey(2, 0), buffer));
+	REQUIRE(fs.TakeWrites() != dropped_slot);
+	fs.Hold(false);
+	executor.WorkOnTasks();
+	REQUIRE(right);
+
+	REQUIRE(WriteCopy(spill, BlockCache::MakeKey(3, 0), buffer));
+	REQUIRE(fs.TakeWrites() == dropped_slot);
+	REQUIRE(ReadsCopy(spill, BlockCache::MakeKey(2, 0), buffer));
+	REQUIRE(ReadsCopy(spill, BlockCache::MakeKey(3, 0), buffer));
+}
+
+TEST_CASE("Block cache spill drops the copies of one file and keeps the copies of the others", "[block_cache]") {
+	DuckDB db(nullptr);
+	LocalFileSystem fs;
+	BlockCacheSpill spill;
+	spill.Configure(fs, TestCreatePath("block_cache_spill_erase_file"), 0);
+	auto buffer = BlockCache::AllocateUncached(*db.instance, BLOCK);
+	const vector<uint32_t> files {1, 2, 3, NumericLimits<uint32_t>::Maximum()};
+	for (auto file : files) {
+		for (idx_t block = 0; block < 4; block++) {
+			REQUIRE(WriteCopy(spill, BlockCache::MakeKey(file, block), buffer));
+		}
+	}
+	spill.EraseFile(2);
+	spill.EraseFile(NumericLimits<uint32_t>::Maximum());
+	REQUIRE(spill.Keys().size() == 8);
+	for (auto file : files) {
+		const bool kept = file == 1 || file == 3;
+		for (idx_t block = 0; block < 4; block++) {
+			const auto key = BlockCache::MakeKey(file, block);
+			REQUIRE(spill.Contains(key) == kept);
+			REQUIRE(ReadsCopy(spill, key, buffer) == kept);
+		}
+	}
+}
+
+TEST_CASE("Block cache spill readers of a reserved copy wait until it is written or cancelled", "[block_cache]") {
+	DuckDB db(nullptr);
+	LocalFileSystem fs;
+	BlockCacheSpill spill;
+	spill.Configure(fs, TestCreatePath("block_cache_spill_reserved"), 0);
+	const auto written = BlockCache::MakeKey(1, 0);
+	const auto cancelled = BlockCache::MakeKey(1, 1);
+	BlockCacheSpill::Reservation written_copy;
+	BlockCacheSpill::Reservation cancelled_copy;
+	REQUIRE(spill.Reserve(written, true, written_copy));
+	REQUIRE(spill.Reserve(cancelled, true, cancelled_copy));
+
+	atomic<bool> read_written {false};
+	atomic<bool> read_cancelled {true};
+	Signal finished;
+	TaskExecutor executor(TaskScheduler::GetScheduler(*db.instance));
+	executor.ScheduleTask(make_uniq<FunctionExecutorTask>(
+	    executor,
+	    [&]() {
+		    absl::Cleanup finish = [&]() {
+			    finished.Set();
+		    };
+		    auto target = BlockCache::AllocateUncached(*db.instance, BLOCK);
+		    read_written = ReadsCopy(spill, written, target);
+		    read_cancelled = spill.Read(cancelled, target.GetDataMutable());
+	    },
+	    "BlockCacheTestTask"));
+	REQUIRE_FALSE(finished.AwaitFor(absl::Milliseconds(100)));
+	auto buffer = BlockCache::AllocateUncached(*db.instance, BLOCK);
+	memset(buffer.GetDataMutable(), FillOf(written), BLOCK);
+	REQUIRE(spill.Write(written_copy, buffer.GetDataMutable()));
+	REQUIRE_FALSE(finished.AwaitFor(absl::Milliseconds(100)));
+	spill.Cancel(cancelled_copy);
+	executor.WorkOnTasks();
+	REQUIRE(read_written);
+	REQUIRE_FALSE(read_cancelled);
+	REQUIRE_FALSE(spill.Contains(cancelled));
+}
+
+TEST_CASE("Block cache spill moves its file only after the reads in flight end", "[block_cache]") {
+	DuckDB db(nullptr);
+	CountingSourceFileSystem fs;
+	BlockCacheSpill spill;
+	spill.Configure(fs, TestCreatePath("block_cache_spill_move"), 16 * BLOCK);
+	const auto moved_path = TestCreatePath("block_cache_spill_moved");
+	auto buffer = BlockCache::AllocateUncached(*db.instance, BLOCK);
+	const auto key = BlockCache::MakeKey(1, 0);
+	memset(buffer.GetDataMutable(), FillOf(key), BLOCK);
+	BlockCacheSpill::Reservation copy;
+	REQUIRE(spill.Reserve(key, false, copy));
+	REQUIRE(spill.Write(copy, buffer.GetDataMutable()));
+
+	fs.Hold(true);
+	atomic<bool> right {false};
+	Signal moved;
+	TaskExecutor executor(TaskScheduler::GetScheduler(*db.instance));
+	executor.ScheduleTask(make_uniq<FunctionExecutorTask>(
+	    executor,
+	    [&]() {
+		    auto target = BlockCache::AllocateUncached(*db.instance, BLOCK);
+		    right = ReadsCopy(spill, key, target);
+	    },
+	    "BlockCacheTestTask"));
+	fs.AwaitReads(1);
+	executor.ScheduleTask(make_uniq<FunctionExecutorTask>(
+	    executor,
+	    [&]() {
+		    absl::Cleanup finish = [&]() {
+			    moved.Set();
+		    };
+		    spill.Configure(fs, moved_path, 16 * BLOCK);
+	    },
+	    "BlockCacheTestTask"));
+	REQUIRE_FALSE(moved.AwaitFor(absl::Milliseconds(100)));
+	fs.Hold(false);
+	executor.WorkOnTasks();
+	REQUIRE(right);
+	REQUIRE(spill.IsConfigured());
+	REQUIRE_FALSE(spill.Contains(key));
+}
+
+TEST_CASE("Block cache pins of an in-memory file return the right bytes while it grows and spills", "[block_cache]") {
+	DuckDB db(nullptr);
+	BlockCache cache(*db.instance, 4 * BLOCK);
+	cache.SetSpill(TestCreatePath("block_cache_growing_spill"), 0);
+	auto file = cache.CreateUnbackedFile("memory://growing.bin");
+	constexpr idx_t BLOCKS = 256;
+	constexpr idx_t RECENT = 6;
+	const auto fill = [](idx_t block) {
+		return static_cast<uint8_t>(block % 251 + 1);
+	};
+	atomic<idx_t> created {0};
+	const auto create = [&](idx_t block) {
+		memset(cache.CreateBlock(*file, block).GetDataMutable(), fill(block), BLOCK);
+		cache.SetUnbackedSize(*file, (block + 1) * BLOCK);
+		created.store(block + 1, std::memory_order_release);
+	};
+	for (idx_t block = 0; block < RECENT; block++) {
+		create(block);
+	}
+	atomic<bool> done {false};
+	atomic<idx_t> wrong {0};
+	TaskExecutor executor(TaskScheduler::GetScheduler(*db.instance));
+	for (idx_t task = 0; task < 3; task++) {
+		executor.ScheduleTask(make_uniq<FunctionExecutorTask>(
+		    executor,
+		    [&, task]() {
+			    uint64_t seed = task * 7919 + 1;
+			    while (!done.load(std::memory_order_acquire)) {
+				    seed = seed * 6364136223846793005ULL + 1442695040888963407ULL;
+				    const auto block = created.load(std::memory_order_acquire) - 1 - (seed >> 33) % RECENT;
+				    auto pin = cache.Pin(file, block);
+				    if (pin.Ptr()[0] != fill(block) || pin.Ptr()[BLOCK - 1] != fill(block)) {
+					    wrong++;
+				    }
+			    }
+		    },
+		    "BlockCacheTestTask"));
+	}
+	for (idx_t block = RECENT; block < BLOCKS; block++) {
+		create(block);
+	}
+	done.store(true, std::memory_order_release);
+	executor.WorkOnTasks();
+	REQUIRE(wrong == 0);
+	for (idx_t block = 0; block < BLOCKS; block++) {
+		auto pin = cache.Pin(file, block);
+		REQUIRE(pin.Ptr()[0] == fill(block));
+		REQUIRE(pin.Ptr()[BLOCK - 1] == fill(block));
+	}
 }
 
 TEST_CASE("Changing the spill size keeps the spill file of in-memory blocks", "[block_cache]") {
