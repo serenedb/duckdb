@@ -9,6 +9,7 @@
 #include "duckdb/main/database.hpp"
 #include "duckdb/storage/buffer_manager.hpp"
 
+#include <absl/cleanup/cleanup.h>
 #include <cerrno>
 #include <cstring>
 #ifndef _WIN32
@@ -64,11 +65,15 @@ void AdviseHugePages(data_ptr_t data, idx_t size) {
 
 class MemoryFileHandle : public FileHandle {
 public:
-	MemoryFileHandle(MemoryFileSystem &fs, shared_ptr<MemoryFile> file_p, FileOpenFlags flags)
+	MemoryFileHandle(MemoryFileSystem &fs, shared_ptr<MemoryFile> file_p, FileOpenFlags flags,
+	                 optional_ptr<BlockCache> cache)
 	    : FileHandle(fs, file_p->path, flags), file(std::move(file_p)), writing(flags.OpenForWriting()) {
 		if (writing) {
 			annotated_lock_guard<annotated_mutex> guard(file->lock);
 			file->writers++;
+			if (file->blocks) {
+				appender.emplace(*cache, file->blocks);
+			}
 		}
 	}
 	~MemoryFileHandle() override {
@@ -76,7 +81,10 @@ public:
 	}
 
 	void Close() override {
-		current.Reset();
+		if (appender) {
+			appender->Finish();
+			appender.reset();
+		}
 		if (writing) {
 			annotated_lock_guard<annotated_mutex> guard(file->lock);
 			file->writers--;
@@ -85,8 +93,8 @@ public:
 	}
 
 	shared_ptr<MemoryFile> file;
-	//! The block a writer fills
-	BlockCachePin current;
+	//! Writes a file in block cache blocks
+	optional<BlockCacheAppender> appender;
 	idx_t position = 0;
 	bool writing;
 };
@@ -190,7 +198,7 @@ unique_ptr<FileHandle> MemoryFileSystem::OpenFile(const string &path, FileOpenFl
 			}
 			throw IOException(ErrnoInfo(ENOENT), "Cannot open file \"%s\": No such file or directory", path);
 		}
-		return make_uniq<MemoryFileHandle>(*this, Create(name), flags);
+		return make_uniq<MemoryFileHandle>(*this, Create(name), flags, db ? &BlockCache::Get(*db) : nullptr);
 	}
 	auto file = Find(name);
 	if (!file) {
@@ -199,7 +207,7 @@ unique_ptr<FileHandle> MemoryFileSystem::OpenFile(const string &path, FileOpenFl
 		}
 		throw IOException(ErrnoInfo(ENOENT), "Cannot open file \"%s\": No such file or directory", path);
 	}
-	return make_uniq<MemoryFileHandle>(*this, std::move(file), flags);
+	return make_uniq<MemoryFileHandle>(*this, std::move(file), flags, nullptr);
 }
 
 unique_ptr<MemoryMappedFile> MemoryFileSystem::MemoryMapFile(const OpenFileInfo &path, FileOpenFlags flags,
@@ -297,26 +305,16 @@ int64_t MemoryFileSystem::Write(FileHandle &handle_p, void *buffer, int64_t nr_b
 	auto &file = *handle.file;
 	auto source = const_data_ptr_cast(buffer);
 	idx_t remaining = NumericCast<idx_t>(nr_bytes);
-	annotated_lock_guard<annotated_mutex> guard(file.lock);
-	if (file.blocks) {
-		auto &cache = BlockCache::Get(*db);
-		while (remaining > 0) {
-			const auto size = file.size.load(std::memory_order_relaxed);
-			const auto offset = size % BlockCache::BLOCK_SIZE;
-			if (!handle.current.IsValid()) {
-				handle.current = cache.CreateBlock(*file.blocks, size / BlockCache::BLOCK_SIZE);
-			}
-			const auto chunk = MinValue(remaining, BlockCache::BLOCK_SIZE - offset);
-			memcpy(handle.current.GetDataMutable() + offset, source, chunk);
-			source += chunk;
-			remaining -= chunk;
-			cache.SetUnbackedSize(*file.blocks, size + chunk);
-			file.size.store(size + chunk, std::memory_order_release);
-			if (offset + chunk == BlockCache::BLOCK_SIZE) {
-				handle.current.Reset();
-			}
-		}
+	if (handle.appender) {
+		absl::Cleanup publish = [&] {
+			file.size.store(handle.appender->Size(), std::memory_order_release);
+		};
+		handle.appender->Append(source, remaining);
 	} else {
+		if (db) {
+			throw IOException("Cannot write to \"%s\": it is not open for writing", handle.path);
+		}
+		annotated_lock_guard<annotated_mutex> guard(file.lock);
 		const auto size = file.size.load(std::memory_order_relaxed);
 		if (size + remaining > file.capacity) {
 			const auto capacity = MaxValue<idx_t>(size + remaining, MaxValue<idx_t>(file.capacity * 2, 4096));
