@@ -10,6 +10,7 @@
 #include "duckdb/storage/buffer_manager.hpp"
 
 #include <absl/cleanup/cleanup.h>
+#include <absl/time/clock.h>
 #include <chrono>
 
 namespace duckdb {
@@ -25,6 +26,7 @@ uint8_t ExpectedByte(idx_t offset) {
 class CountingSourceFileSystem : public LocalFileSystem {
 public:
 	void Read(FileHandle &handle, void *buffer, int64_t nr_bytes, idx_t location) override {
+		absl::Duration delay;
 		{
 			annotated_lock_guard<annotated_mutex> guard(lock);
 			reads.emplace_back(location, NumericCast<idx_t>(nr_bytes));
@@ -36,8 +38,18 @@ public:
 				failures--;
 				throw IOException("injected read failure");
 			}
+			delay = latency + absl::Seconds(bandwidth > 0 ? double(nr_bytes) / bandwidth : 0);
 		}
+		absl::SleepFor(delay);
 		LocalFileSystem::Read(handle, buffer, nr_bytes, location);
+	}
+
+	//! Makes every read take [latency_p] plus the time its bytes take at [bandwidth_p] bytes per second, as one request
+	//! to an object store does
+	void Throttle(absl::Duration latency_p, double bandwidth_p) {
+		annotated_lock_guard<annotated_mutex> guard(lock);
+		latency = latency_p;
+		bandwidth = bandwidth_p;
 	}
 
 	void Write(FileHandle &handle, void *buffer, int64_t nr_bytes, idx_t location) override {
@@ -100,6 +112,8 @@ public:
 	idx_t failures DUCKDB_GUARDED_BY(lock) = 0;
 	bool hold DUCKDB_GUARDED_BY(lock) = false;
 	bool no_store DUCKDB_GUARDED_BY(lock) = false;
+	absl::Duration latency DUCKDB_GUARDED_BY(lock) = absl::ZeroDuration();
+	double bandwidth DUCKDB_GUARDED_BY(lock) = 0;
 };
 
 class TestFile {
@@ -1380,6 +1394,50 @@ TEST_CASE("Block cache benchmark: concurrent pins of one block and of distinct b
 			Printer::PrintF("pins of %s, %llu threads: %.1f M pins/s, %.1f ns per pin and unpin in a thread",
 			                one_block ? "one block" : "distinct blocks", threads,
 			                double(threads * PINS) / elapsed / 1000.0, elapsed * 1000000.0 / double(PINS));
+		}
+	}
+}
+
+TEST_CASE("Block cache benchmark: cold reads of a 16 MiB range from a slow source", "[.][block_cache_bench]") {
+	constexpr idx_t BLOCKS = 64;
+	DuckDB db(nullptr);
+	BlockCache cache(*db.instance, 4 * BLOCKS * BLOCK);
+	CountingSourceFileSystem fs;
+	TestFile file("block_cache_bench_slow.bin", BLOCKS * BLOCK);
+	fs.Throttle(absl::Milliseconds(20), 50.0 * 1024.0 * 1024.0);
+	const auto holds_range = [](const vector<BlockCachePin> &pins) {
+		for (idx_t block = 0; block < pins.size(); block++) {
+			if (pins[block].Ptr()[0] != ExpectedByte(block * BLOCK)) {
+				return false;
+			}
+		}
+		return pins.size() == BLOCKS;
+	};
+	for (idx_t round = 0; round < 3; round++) {
+		{
+			auto cached = file.Open(cache, fs, "prefetched" + to_string(round));
+			const auto start = std::chrono::steady_clock::now();
+			cache.Prefetch(cached, 0, BLOCKS * BLOCK);
+			auto first = cache.Pin(cached, 0);
+			const auto first_ms = MillisecondsSince(start);
+			auto pins = cache.PinRange(cached, 0, BLOCKS * BLOCK);
+			const auto all_ms = MillisecondsSince(start);
+			REQUIRE(HoldsExpectedBytes(first, 0));
+			REQUIRE(holds_range(pins));
+			Printer::PrintF(
+			    "16 MiB prefetched from a source of 20 ms and 50 MiB/s per request, round %llu: first block "
+			    "in %.1f ms, every block in %.1f ms, %llu requests",
+			    round, first_ms, all_ms, idx_t(fs.TakeReads().size()));
+		}
+		{
+			auto cached = file.Open(cache, fs, "pinned" + to_string(round));
+			const auto start = std::chrono::steady_clock::now();
+			auto pins = cache.PinRange(cached, 0, BLOCKS * BLOCK);
+			const auto all_ms = MillisecondsSince(start);
+			REQUIRE(holds_range(pins));
+			Printer::PrintF("16 MiB range pinned from a source of 20 ms and 50 MiB/s per request, round %llu: every "
+			                "block in %.1f ms, %llu requests",
+			                round, all_ms, idx_t(fs.TakeReads().size()));
 		}
 	}
 }
