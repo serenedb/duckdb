@@ -10,6 +10,7 @@
 #include "duckdb/storage/buffer_manager.hpp"
 
 #include <absl/cleanup/cleanup.h>
+#include <chrono>
 
 namespace duckdb {
 
@@ -856,6 +857,130 @@ TEST_CASE("Instances sharing a temporary directory spill in-memory blocks to fil
 		}
 	}
 	REQUIRE(CountSpillFiles(directory) == 0);
+}
+
+namespace {
+
+double MillisecondsSince(std::chrono::steady_clock::time_point start) {
+	return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
+}
+
+uint8_t BenchByte(idx_t block) {
+	return static_cast<uint8_t>(block % 251 + 1);
+}
+
+} // namespace
+
+TEST_CASE("Block cache benchmark: concurrent reads of spilled blocks", "[.][block_cache_bench]") {
+	constexpr idx_t FRAMES = 64;
+	constexpr idx_t BLOCKS = 1024;
+	constexpr idx_t READS = 256;
+	vector<pair<string, string>> spills {
+	    {"direct I/O in the test directory", TestCreatePath("block_cache_bench_spill")}};
+	LocalFileSystem local;
+	if (local.DirectoryExists("/dev/shm")) {
+		spills.emplace_back("tmpfs", "/dev/shm/duckdb_block_cache_bench_spill_" + to_string(getpid()));
+	}
+	for (auto &spill : spills) {
+		DuckDB db(nullptr);
+		BlockCache cache(*db.instance, FRAMES * BLOCK);
+		cache.SetSpill(spill.second, 0);
+		auto file = cache.CreateUnbackedFile("memory://bench_spill.bin");
+		for (idx_t block = 0; block < BLOCKS; block++) {
+			memset(cache.CreateBlock(*file, block).GetDataMutable(), BenchByte(block), BLOCK);
+		}
+		cache.SetUnbackedSize(*file, BLOCKS * BLOCK);
+		for (idx_t block = 0; block < BLOCKS; block++) {
+			cache.Pin(file, block);
+		}
+		for (const idx_t readers : {idx_t(1), idx_t(8)}) {
+			for (idx_t round = 0; round < 3; round++) {
+				atomic<idx_t> wrong {0};
+				const auto spill_reads = cache.GetStatistics().spill_reads;
+				const auto start = std::chrono::steady_clock::now();
+				TaskExecutor executor(TaskScheduler::GetScheduler(*db.instance));
+				for (idx_t reader = 0; reader < readers; reader++) {
+					executor.ScheduleTask(make_uniq<FunctionExecutorTask>(
+					    executor,
+					    [&, reader]() {
+						    uint64_t seed = (round * 8 + reader) * 7919 + 1;
+						    for (idx_t i = 0; i < READS; i++) {
+							    seed = seed * 6364136223846793005ULL + 1442695040888963407ULL;
+							    const auto block = (seed >> 33) % BLOCKS;
+							    if (cache.Pin(file, block).Ptr()[BLOCK - 1] != BenchByte(block)) {
+								    wrong++;
+							    }
+						    }
+					    },
+					    "BlockCacheBenchTask"));
+				}
+				executor.WorkOnTasks();
+				const auto elapsed = MillisecondsSince(start);
+				REQUIRE(wrong == 0);
+				const idx_t read = cache.GetStatistics().spill_reads - spill_reads;
+				Printer::PrintF(
+				    "spill reads (%s), %llu concurrent readers, round %llu: %llu blocks in %.1f ms, %.0f MiB/s",
+				    spill.first, readers, round, read, elapsed,
+				    double(read * BLOCK) / (1024.0 * 1024.0) / (elapsed / 1000.0));
+			}
+		}
+	}
+}
+
+TEST_CASE("Block cache benchmark: releasing the frames of a 1 GiB in-memory file", "[.][block_cache_bench]") {
+	constexpr idx_t BLOCKS = 4096;
+	DuckDB db(nullptr);
+	BlockCache cache(*db.instance, BLOCKS * BLOCK);
+	for (idx_t round = 0; round < 5; round++) {
+		auto file = cache.CreateUnbackedFile("memory://bench_release.bin");
+		for (idx_t block = 0; block < BLOCKS; block++) {
+			memset(cache.CreateBlock(*file, block).GetDataMutable(), BenchByte(block), BLOCK);
+		}
+		cache.SetUnbackedSize(*file, BLOCKS * BLOCK);
+		REQUIRE(cache.GetStatistics().used == BLOCKS * BLOCK);
+		const auto start = std::chrono::steady_clock::now();
+		file.reset();
+		const auto elapsed = MillisecondsSince(start);
+		REQUIRE(cache.GetStatistics().used == 0);
+		Printer::PrintF("releasing the frames of a 1 GiB in-memory file, round %llu: %.2f ms", round, elapsed);
+	}
+}
+
+TEST_CASE("Block cache benchmark: pins that evict while the buffer pool is full", "[.][block_cache_bench]") {
+	constexpr idx_t BLOCKS = 1024;
+	constexpr idx_t RESIDENT = 64;
+	constexpr idx_t HEADROOM = 2ULL * 1024ULL * 1024ULL;
+	DBConfig config;
+	config.options.maximum_memory = 256ULL * 1024ULL * 1024ULL;
+	DuckDB db(nullptr, &config);
+	auto &cache = BlockCache::Get(*db.instance);
+	auto &buffer_manager = BufferManager::GetBufferManager(*db.instance);
+	CountingSourceFileSystem fs;
+	TestFile file("block_cache_bench_source.bin", BLOCKS * BLOCK);
+	for (idx_t round = 0; round < 3; round++) {
+		auto cached = file.Open(cache, fs, "v" + to_string(round));
+		for (idx_t block = 0; block < RESIDENT; block++) {
+			cache.Pin(cached, block);
+		}
+		const auto used = buffer_manager.GetUsedMemory();
+		const auto limit = buffer_manager.GetMaxMemory();
+		const idx_t reserved = limit > used + HEADROOM ? limit - used - HEADROOM : 0;
+		buffer_manager.ReserveMemory(MemoryTag::IN_MEMORY_TABLE, reserved);
+		const auto evictions = cache.GetStatistics().evictions;
+		idx_t wrong = 0;
+		const auto start = std::chrono::steady_clock::now();
+		for (idx_t block = RESIDENT; block < BLOCKS; block++) {
+			if (cache.Pin(cached, block).Ptr()[0] != ExpectedByte(block * BLOCK)) {
+				wrong++;
+			}
+		}
+		const auto elapsed = MillisecondsSince(start);
+		const idx_t evicted = cache.GetStatistics().evictions - evictions;
+		buffer_manager.FreeReservedMemory(MemoryTag::IN_MEMORY_TABLE, reserved);
+		REQUIRE(wrong == 0);
+		Printer::PrintF("pins that evict with the buffer pool full, round %llu: %.1f us per block, %llu evictions",
+		                round, elapsed * 1000.0 / double(BLOCKS - RESIDENT), evicted);
+	}
 }
 
 } // namespace duckdb
