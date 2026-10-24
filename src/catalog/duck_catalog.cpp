@@ -300,66 +300,44 @@ optional_ptr<CatalogEntry> DuckCatalog::CreateTablespace(CatalogTransaction tran
 	return AddEntry(transaction, MakeTablespaceEntry(info), info.on_conflict);
 }
 
-void DuckCatalog::DropRole(CatalogTransaction transaction, DropInfo &info) {
-	D_ASSERT(!info.GetQualifiedName().Name().empty());
-	if (!roles->DropEntry(transaction, info.GetQualifiedName().Name(), info.cascade)) {
-		if (info.if_not_found == OnEntryNotFound::THROW_EXCEPTION) {
-			throw CatalogException::MissingEntry(CatalogType::ROLE_ENTRY, info.GetQualifiedName().Name(), string());
-		}
+bool DuckCatalog::RemoveEntry(CatalogTransaction transaction, CatalogType type, DropInfo &info) {
+	auto &name = info.GetQualifiedName().Name();
+	D_ASSERT(!name.empty());
+	if (GetCatalogSet(type).DropEntry(transaction, name, info.cascade)) {
+		return true;
 	}
+	if (info.if_not_found == OnEntryNotFound::THROW_EXCEPTION) {
+		throw CatalogException::MissingEntry(type, name, string());
+	}
+	return false;
+}
+
+void DuckCatalog::DropRole(CatalogTransaction transaction, DropInfo &info) {
+	RemoveEntry(transaction, CatalogType::ROLE_ENTRY, info);
 }
 
 void DuckCatalog::DropDatabase(CatalogTransaction transaction, DropInfo &info) {
-	auto &name = info.GetQualifiedName().Name();
-	D_ASSERT(!name.empty());
-	if (!databases->DropEntry(transaction, name, info.cascade)) {
-		if (info.if_not_found == OnEntryNotFound::THROW_EXCEPTION) {
-			throw CatalogException::MissingEntry(CatalogType::DATABASE_ENTRY, name, string());
-		}
+	if (!RemoveEntry(transaction, CatalogType::DATABASE_ENTRY, info)) {
 		return;
 	}
 	auto &context = transaction.GetContext();
-	DatabaseManager::Get(context).DetachDatabase(context, name, OnEntryNotFound::RETURN_NULL);
+	DatabaseManager::Get(context).DetachDatabase(context, info.GetQualifiedName().Name(), OnEntryNotFound::RETURN_NULL);
 }
 
 void DuckCatalog::DropForeignServer(CatalogTransaction transaction, DropInfo &info) {
-	D_ASSERT(!info.GetQualifiedName().Name().empty());
-	if (!foreign_servers->DropEntry(transaction, info.GetQualifiedName().Name(), info.cascade)) {
-		if (info.if_not_found == OnEntryNotFound::THROW_EXCEPTION) {
-			throw CatalogException::MissingEntry(CatalogType::FOREIGN_SERVER_ENTRY, info.GetQualifiedName().Name(),
-			                                     string());
-		}
-	}
+	RemoveEntry(transaction, CatalogType::FOREIGN_SERVER_ENTRY, info);
 }
 
 void DuckCatalog::DropTablespace(CatalogTransaction transaction, DropInfo &info) {
-	D_ASSERT(!info.GetQualifiedName().Name().empty());
-	if (!tablespaces->DropEntry(transaction, info.GetQualifiedName().Name(), info.cascade)) {
-		if (info.if_not_found == OnEntryNotFound::THROW_EXCEPTION) {
-			throw CatalogException::MissingEntry(CatalogType::TABLESPACE_ENTRY, info.GetQualifiedName().Name(),
-			                                     string());
-		}
-	}
+	RemoveEntry(transaction, CatalogType::TABLESPACE_ENTRY, info);
 }
 
 void DuckCatalog::DropReplicationOrigin(CatalogTransaction transaction, DropInfo &info) {
-	D_ASSERT(!info.GetQualifiedName().Name().empty());
-	if (!replication_origins->DropEntry(transaction, info.GetQualifiedName().Name(), info.cascade)) {
-		if (info.if_not_found == OnEntryNotFound::THROW_EXCEPTION) {
-			throw CatalogException::MissingEntry(CatalogType::REPLICATION_ORIGIN_ENTRY, info.GetQualifiedName().Name(),
-			                                     string());
-		}
-	}
+	RemoveEntry(transaction, CatalogType::REPLICATION_ORIGIN_ENTRY, info);
 }
 
 void DuckCatalog::DropSubscription(CatalogTransaction transaction, DropInfo &info) {
-	D_ASSERT(!info.GetQualifiedName().Name().empty());
-	if (!subscriptions->DropEntry(transaction, info.GetQualifiedName().Name(), info.cascade)) {
-		if (info.if_not_found == OnEntryNotFound::THROW_EXCEPTION) {
-			throw CatalogException::MissingEntry(CatalogType::SUBSCRIPTION_ENTRY, info.GetQualifiedName().Name(),
-			                                     string());
-		}
-	}
+	RemoveEntry(transaction, CatalogType::SUBSCRIPTION_ENTRY, info);
 }
 
 CatalogSet &DuckCatalog::GetCatalogSet(CatalogType type) {
