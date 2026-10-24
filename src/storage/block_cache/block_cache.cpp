@@ -66,14 +66,6 @@ uint64_t Referenced(uint64_t state) {
 	return (state & ~FLAG_PROBATION) | FLAG_HOT;
 }
 
-void Pause() {
-#if defined(__x86_64__) || defined(_M_X64)
-	__builtin_ia32_pause();
-#elif defined(__aarch64__)
-	asm volatile("yield");
-#endif
-}
-
 void LockBucket(BlockCacheBucket &bucket) {
 	auto version = bucket.version.load(std::memory_order_relaxed);
 	while (true) {
@@ -81,7 +73,6 @@ void LockBucket(BlockCacheBucket &bucket) {
 		                                                           std::memory_order_relaxed)) {
 			return;
 		}
-		Pause();
 		version = bucket.version.load(std::memory_order_relaxed);
 	}
 }
@@ -594,7 +585,6 @@ BlockCacheEntry *BlockCache::FindEntry(uint64_t key, uint64_t &state) const {
 	while (true) {
 		const auto version = bucket.version.load(std::memory_order_acquire);
 		if (version & 1) {
-			Pause();
 			continue;
 		}
 		bool consistent = true;
