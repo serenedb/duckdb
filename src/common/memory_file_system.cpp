@@ -50,6 +50,10 @@ unordered_map<string, string> ErrnoInfo(int error) {
 	return {{"errno", std::to_string(error)}};
 }
 
+[[noreturn]] void ThrowMissing(const char *verb, const string &path) {
+	throw IOException(ErrnoInfo(ENOENT), "Cannot %s file \"%s\": No such file or directory", verb, path);
+}
+
 constexpr uintptr_t HUGE_PAGE_SIZE = 2ULL * 1024ULL * 1024ULL;
 
 void AdviseHugePages(data_ptr_t data, idx_t size) {
@@ -162,6 +166,14 @@ shared_ptr<MemoryFile> MemoryFileSystem::Find(std::string_view path) {
 	return entry == files.end() ? nullptr : entry->second;
 }
 
+shared_ptr<MemoryFile> MemoryFileSystem::FindExisting(const string &path, const char *verb, bool null_if_missing) {
+	auto file = Find(path);
+	if (!file && !null_if_missing) {
+		ThrowMissing(verb, path);
+	}
+	return file;
+}
+
 shared_ptr<MemoryFile> MemoryFileSystem::Create(std::string_view path) {
 	auto file = make_shared_ptr<MemoryFile>(string(path));
 	if (db) {
@@ -196,16 +208,13 @@ unique_ptr<FileHandle> MemoryFileSystem::OpenFile(const string &path, FileOpenFl
 			if (flags.ReturnNullIfNotExists()) {
 				return nullptr;
 			}
-			throw IOException(ErrnoInfo(ENOENT), "Cannot open file \"%s\": No such file or directory", path);
+			ThrowMissing("open", path);
 		}
 		return make_uniq<MemoryFileHandle>(*this, Create(name), flags, db ? &BlockCache::Get(*db) : nullptr);
 	}
-	auto file = Find(name);
+	auto file = FindExisting(path, "open", flags.ReturnNullIfNotExists());
 	if (!file) {
-		if (flags.ReturnNullIfNotExists()) {
-			return nullptr;
-		}
-		throw IOException(ErrnoInfo(ENOENT), "Cannot open file \"%s\": No such file or directory", path);
+		return nullptr;
 	}
 	return make_uniq<MemoryFileHandle>(*this, std::move(file), flags, nullptr);
 }
@@ -216,12 +225,9 @@ unique_ptr<MemoryMappedFile> MemoryFileSystem::MemoryMapFile(const OpenFileInfo 
 	if (flags.OpenForWriting()) {
 		throw NotImplementedException("Files under %s are mapped read-only", PREFIX);
 	}
-	auto file = Find(path.path);
+	auto file = FindExisting(path.path, "open", flags.ReturnNullIfNotExists());
 	if (!file) {
-		if (flags.ReturnNullIfNotExists()) {
-			return nullptr;
-		}
-		throw IOException(ErrnoInfo(ENOENT), "Cannot open file \"%s\": No such file or directory", path.path);
+		return nullptr;
 	}
 	shared_ptr<BlockHandle> span;
 	{
@@ -250,10 +256,7 @@ unique_ptr<MemoryMappedFile> MemoryFileSystem::MemoryMapFile(const OpenFileInfo 
 }
 
 shared_ptr<BlockCacheFile> MemoryFileSystem::GetBlockFile(const string &path) {
-	auto file = Find(path);
-	if (!file) {
-		throw IOException(ErrnoInfo(ENOENT), "Cannot open file \"%s\": No such file or directory", path);
-	}
+	auto file = FindExisting(path, "open", false);
 	annotated_lock_guard<annotated_mutex> guard(file->lock);
 	return file->blocks;
 }
