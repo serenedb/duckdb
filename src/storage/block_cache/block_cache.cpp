@@ -327,7 +327,7 @@ BlockCachePin BlockCache::AllocateUncached(DatabaseInstance &db, idx_t size) {
 	BlockCachePin result;
 	result.owned = BufferManager::GetBufferManager(db).Allocate(MemoryTag::EXTERNAL_FILE_CACHE, size);
 	result.owned.GetBlockHandle()->GetMemory().SetDestroyBufferUpon(DestroyBufferUpon::UNPIN);
-	result.data = result.owned.GetDataMutable();
+	result.data = result.owned.GetFileBuffer().InternalBuffer();
 	result.size = size;
 	return result;
 }

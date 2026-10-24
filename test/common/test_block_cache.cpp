@@ -610,6 +610,24 @@ TEST_CASE("Block cache unbacked blocks spill and are never dropped", "[block_cac
 	}
 }
 
+TEST_CASE("Block cache reads a spilled block into a buffer of its own when every frame is pinned", "[block_cache]") {
+	DuckDB db(nullptr);
+	BlockCache cache(*db.instance, 2 * BLOCK);
+	cache.SetSpill(TestCreatePath("block_cache_private_spill"), 0);
+	auto file = cache.CreateUnbackedFile("memory://private_spill.bin");
+	memset(cache.CreateBlock(*file, 0).GetDataMutable(), 1, BLOCK);
+	auto first = cache.CreateBlock(*file, 1);
+	memset(first.GetDataMutable(), 2, BLOCK);
+	auto second = cache.CreateBlock(*file, 2);
+	memset(second.GetDataMutable(), 3, BLOCK);
+	cache.SetUnbackedSize(*file, 3 * BLOCK);
+
+	auto spilled = cache.Pin(file, 0);
+	REQUIRE(spilled.Ptr()[0] == 1);
+	REQUIRE(spilled.Ptr()[BLOCK - 1] == 1);
+	REQUIRE(cache.GetStatistics().used == 2 * BLOCK);
+}
+
 #ifdef DEBUG
 TEST_CASE("Block cache keeps no copy of a block whose in-memory file goes while the block is evicted",
           "[block_cache]") {
