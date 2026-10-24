@@ -401,14 +401,6 @@ FileType MemoryFileSystem::GetFileType(FileHandle &handle) {
 	return FileType::FILE_TYPE_REGULAR;
 }
 
-FileMetadata MemoryFileSystem::Stats(FileHandle &handle) {
-	FileMetadata result;
-	result.file_size = GetFileSize(handle);
-	result.last_modification_time = GetLastModifiedTime(handle);
-	result.file_type = FileType::FILE_TYPE_REGULAR;
-	return result;
-}
-
 void MemoryFileSystem::Truncate(FileHandle &handle, int64_t new_size) {
 	throw NotImplementedException("Files under %s cannot be truncated", PREFIX);
 }
