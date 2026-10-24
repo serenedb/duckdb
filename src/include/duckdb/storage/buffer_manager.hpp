@@ -20,6 +20,7 @@ class Allocator;
 class AsyncTask;
 class BufferPool;
 class TemporaryMemoryManager;
+class TemporaryFileManager;
 class AttachedDatabase;
 class BlockManager;
 class DatabaseInstance;
@@ -121,6 +122,8 @@ public:
 	virtual void SetTemporaryDirectory(const string &new_dir);
 	//! Returns true, if the path to the temporary file directory is not empty.
 	virtual bool HasTemporaryDirectory() const;
+	//! The manager of this instance's temporary files, which creates the temporary directory
+	virtual TemporaryFileManager &GetTemporaryFileManager();
 	//! Returns true if there are files found in the temporary directory
 	virtual bool HasFilesInTemporaryDirectory() const;
 

@@ -13,12 +13,24 @@ constexpr idx_t GROW_SLOTS = 64;
 
 BlockCacheSpill::~BlockCacheSpill() {
 	annotated_lock_guard<annotated_mutex> guard(lock);
+	try {
+		Close();
+	} catch (...) { // NOLINT
+	}
+}
+
+void BlockCacheSpill::Close() {
 	if (!handle) {
 		return;
 	}
 	auto path = handle->GetPath();
 	auto &fs = handle->file_system;
 	handle.reset();
+	if (temporary_files) {
+		temporary_files->DecreaseSizeOnDisk(extent * BlockCache::BLOCK_SIZE);
+		temporary_files = nullptr;
+	}
+	extent = 0;
 	fs.TryRemoveFile(path);
 }
 
@@ -40,11 +52,7 @@ void BlockCacheSpill::Configure(FileSystem &fs, const string &path, idx_t backed
 			    "Cannot move the block cache spill file while it holds blocks of in-memory files");
 		}
 	}
-	if (handle) {
-		auto old_path = handle->GetPath();
-		handle.reset();
-		fs.TryRemoveFile(old_path);
-	}
+	Close();
 	slots.clear();
 	free_slots.clear();
 	backed_order.clear();
@@ -55,14 +63,15 @@ void BlockCacheSpill::Configure(FileSystem &fs, const string &path, idx_t backed
 	Open(fs, path);
 }
 
-void BlockCacheSpill::ConfigureDefault(FileSystem &fs, const string &path) {
+void BlockCacheSpill::ConfigureDefault(FileSystem &fs, TemporaryFileManager &temporary_files_p) {
 	annotated_lock_guard<annotated_mutex> guard(lock);
 	if (handle) {
 		return;
 	}
 	backed_limit = 0;
-	Open(fs, path);
+	Open(fs, temporary_files_p.TemporaryFilePath("block_cache.spill"));
 	is_default = true;
+	temporary_files = &temporary_files_p;
 }
 
 void BlockCacheSpill::Open(FileSystem &fs, const string &path) {
@@ -126,6 +135,12 @@ bool BlockCacheSpill::Write(uint64_t key, data_ptr_t data, bool keep) {
 	}
 	const auto index = AcquireSlot();
 	try {
+		if (index >= extent) {
+			if (temporary_files) {
+				temporary_files->IncreaseSizeOnDisk((index + 1 - extent) * BlockCache::BLOCK_SIZE);
+			}
+			extent = index + 1;
+		}
 		handle->Write(QueryContext(), data, BlockCache::BLOCK_SIZE, index * BlockCache::BLOCK_SIZE);
 	} catch (...) {
 		free_slots.push_back(index);

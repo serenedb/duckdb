@@ -703,6 +703,11 @@ bool StandardBufferManager::HasTemporaryDirectory() const {
 	return !temporary_directory.path.empty();
 }
 
+TemporaryFileManager &StandardBufferManager::GetTemporaryFileManager() {
+	RequireTemporaryDirectory();
+	return temporary_directory.handle->GetTempFile();
+}
+
 bool StandardBufferManager::HasFilesInTemporaryDirectory() const {
 	if (temporary_directory.path.empty()) {
 		return false;
