@@ -915,10 +915,9 @@ void TemporaryDirectoryHandle::SweepAbandonedInstances() {
 TemporaryDirectoryHandle::~TemporaryDirectoryHandle() {
 	// first release any temporary files
 	temp_file.reset();
-	// Nothing here may throw - this is a destructor - but it reaches RemoveFile, which does: another
-	// instance removing a file between TryRemoveFile's existence check and its removal raises ENOENT,
-	// and Windows refuses to remove a file another instance holds open. A later instance reaps
-	// whatever is left, so there is nothing to do but log.
+	// Nothing here may throw - this is a destructor - but it reaches RemoveFile, which does: Windows
+	// refuses to remove a file another instance holds open. A later instance reaps whatever is left,
+	// so there is nothing to do but log.
 	try {
 		CleanupTemporaryDirectory();
 	} catch (...) { // NOLINT
