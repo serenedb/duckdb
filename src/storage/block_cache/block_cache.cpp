@@ -218,7 +218,11 @@ void BlockCacheAppender::Append(const_data_ptr_t data, idx_t count) {
 }
 
 void BlockCacheAppender::Finish() {
-	current.Reset();
+	if (current.IsValid()) {
+		const auto end = size % BlockCache::BLOCK_SIZE;
+		memset(current.GetDataMutable() + end, 0, BlockCache::BLOCK_SIZE - end);
+		current.Reset();
+	}
 	if (!file->IsUnbacked()) {
 		cache.FinishWrittenFile(*file, size, true);
 	}
@@ -1304,7 +1308,6 @@ BlockCachePin BlockCache::CreateBlock(BlockCacheFile &file, idx_t block) {
 		ReleaseFrame(frame);
 		throw InternalException("Block %llu of \"%s\" is written twice", block, file.path);
 	}
-	memset(FrameData(frame), 0, BLOCK_SIZE);
 	FinishLoad(*entry, true);
 	return BlockCachePin(*this, *entry, FrameData(frame), BLOCK_SIZE);
 }
