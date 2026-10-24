@@ -747,6 +747,39 @@ TEST_CASE("Block cache gives memory back to the buffer pool", "[block_cache]") {
 	}
 }
 
+TEST_CASE("Block cache returns the frames of a dropped file and hands them out again in address order",
+          "[block_cache]") {
+	DuckDB db(nullptr);
+	BlockCache cache(*db.instance, 64 * BLOCK);
+	auto &buffer_manager = BufferManager::GetBufferManager(*db.instance);
+	const auto reserved = [&]() {
+		for (auto &info : buffer_manager.GetMemoryUsageInfo()) {
+			if (info.tag == MemoryTag::EXTERNAL_FILE_CACHE) {
+				return info.size;
+			}
+		}
+		return idx_t(0);
+	};
+	const auto before = reserved();
+	for (idx_t round = 0; round < 2; round++) {
+		auto file = cache.CreateUnbackedFile("memory://dropped.bin");
+		vector<const_data_ptr_t> frames;
+		for (idx_t block = 0; block < 32; block++) {
+			auto pin = cache.CreateBlock(*file, block);
+			memset(pin.GetDataMutable(), int(block + 1), BLOCK);
+			frames.push_back(pin.Ptr());
+		}
+		cache.SetUnbackedSize(*file, 32 * BLOCK);
+		REQUIRE(reserved() == before + 32 * BLOCK);
+		for (idx_t block = 1; block < 32; block++) {
+			REQUIRE(frames[block] == frames[0] + block * BLOCK);
+		}
+		file.reset();
+		REQUIRE(cache.GetStatistics().used == 0);
+		REQUIRE(reserved() == before);
+	}
+}
+
 TEST_CASE("Block cache concurrent pins and evictions return the right bytes", "[block_cache]") {
 	DuckDB db(nullptr);
 	BlockCache cache(*db.instance, 16 * BLOCK);

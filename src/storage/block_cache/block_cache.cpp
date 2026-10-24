@@ -13,7 +13,9 @@
 #include "duckdb/storage/buffer/block_handle.hpp"
 #include "duckdb/storage/buffer_manager.hpp"
 
+#include <absl/algorithm/container.h>
 #include <absl/cleanup/cleanup.h>
+#include <absl/container/inlined_vector.h>
 #include <cstring>
 
 #ifndef _WIN32
@@ -539,32 +541,34 @@ void BlockCache::DropFile(BlockCacheFile &file) {
 
 void BlockCache::DropBlocks(uint32_t number, idx_t block_count) {
 	spill.EraseFile(number);
+	vector<uint32_t> released;
 	if (block_count > high_water.load(std::memory_order_acquire)) {
 		ForEachEntry([&](BlockCacheEntry &entry) {
 			const auto key = entry.key.load(std::memory_order_relaxed);
 			if (FileOf(key) == number) {
-				DropEntry(entry, key, true);
+				DropEntry(entry, key, true, released);
 			}
 		});
-		return;
-	}
-	for (idx_t block = 0; block < block_count; block++) {
-		const auto key = MakeKey(number, block);
-		auto entry = FindEntry(key);
-		if (entry) {
-			DropEntry(*entry, key, true);
+	} else {
+		for (idx_t block = 0; block < block_count; block++) {
+			const auto key = MakeKey(number, block);
+			auto entry = FindEntry(key);
+			if (entry) {
+				DropEntry(*entry, key, true, released);
+			}
 		}
 	}
+	ReleaseFrames(released);
 }
 
-void BlockCache::DropEntry(BlockCacheEntry &entry, uint64_t key, bool drop_unbacked) {
+void BlockCache::DropEntry(BlockCacheEntry &entry, uint64_t key, bool drop_unbacked, vector<uint32_t> &released) {
 	auto state = entry.state.load(std::memory_order_acquire);
 	while ((state & (FLAG_LOADING | FLAG_LOADED)) && !(state & UNPINNABLE) &&
 	       entry.key.load(std::memory_order_relaxed) == key && (drop_unbacked || !(state & FLAG_UNBACKED))) {
 		if (Pins(state) == 0) {
 			uint32_t frame;
 			if (TryEvict(entry, state, frame, false)) {
-				ReleaseFrame(frame);
+				released.push_back(frame);
 				return;
 			}
 		} else if (entry.state.compare_exchange_weak(state, state | FLAG_FAILED, std::memory_order_acq_rel,
@@ -800,13 +804,28 @@ bool BlockCache::AcquireFrame(uint32_t &frame) {
 }
 
 void BlockCache::ReleaseFrame(uint32_t frame) {
-	DiscardFrame(FrameData(frame), BLOCK_SIZE);
+	ReleaseFrames(std::span<uint32_t>(&frame, 1));
+}
+
+void BlockCache::ReleaseFrames(std::span<uint32_t> frames) {
+	if (frames.empty()) {
+		return;
+	}
+	absl::c_sort(frames);
+	for (idx_t first = 0; first < frames.size();) {
+		auto last = first + 1;
+		while (last < frames.size() && frames[last] == frames[last - 1] + 1) {
+			last++;
+		}
+		DiscardFrame(FrameData(frames[first]), (last - first) * BLOCK_SIZE);
+		first = last;
+	}
 	{
 		annotated_lock_guard<annotated_mutex> guard(frame_lock);
-		free_frames.push_back(frame);
+		free_frames.insert(free_frames.end(), frames.rbegin(), frames.rend());
 	}
-	used_frames.fetch_sub(1, std::memory_order_relaxed);
-	buffer_manager.FreeReservedMemory(MemoryTag::EXTERNAL_FILE_CACHE, BLOCK_SIZE);
+	used_frames.fetch_sub(frames.size(), std::memory_order_relaxed);
+	buffer_manager.FreeReservedMemory(MemoryTag::EXTERNAL_FILE_CACHE, frames.size() * BLOCK_SIZE);
 }
 
 bool BlockCache::EvictOne(uint32_t &frame) {
@@ -951,7 +970,10 @@ bool BlockCache::CanSpillUnbacked() {
 
 void BlockCache::Clear() {
 	spill.EraseBacked();
-	ForEachEntry([&](BlockCacheEntry &entry) { DropEntry(entry, entry.key.load(std::memory_order_relaxed), false); });
+	vector<uint32_t> released;
+	ForEachEntry(
+	    [&](BlockCacheEntry &entry) { DropEntry(entry, entry.key.load(std::memory_order_relaxed), false, released); });
+	ReleaseFrames(released);
 }
 
 void BlockCache::SetEnabled(bool enabled_p) {
@@ -1323,16 +1345,16 @@ void BlockCache::SetUnbackedSize(BlockCacheFile &file, idx_t size) {
 }
 
 idx_t BlockCache::EvictToReduceMemory(idx_t target) {
-	idx_t freed = 0;
-	while (freed < target) {
+	absl::InlinedVector<uint32_t, 16> released;
+	while (released.size() * BLOCK_SIZE < target) {
 		uint32_t frame;
 		if (!EvictOne(frame)) {
 			break;
 		}
-		ReleaseFrame(frame);
-		freed += BLOCK_SIZE;
+		released.push_back(frame);
 	}
-	return freed;
+	ReleaseFrames(released);
+	return released.size() * BLOCK_SIZE;
 }
 
 void BlockCache::SetCapacity(idx_t capacity) {
