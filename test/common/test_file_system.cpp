@@ -14,6 +14,7 @@
 #include "duckdb/common/virtual_file_system.hpp"
 #include "duckdb/main/client_context_file_opener.hpp"
 #include "duckdb/main/database_manager.hpp"
+#include "duckdb/parallel/task_executor.hpp"
 #include "test_helpers.hpp"
 #if (!defined(_WIN32) && !defined(WIN32))
 #define TEST_HAVE_SYMLINK
@@ -590,24 +591,30 @@ private:
 } // namespace
 
 TEST_CASE("Path calls run while filesystems are registered and disabled", "[file_system]") {
+	DBConfig config;
+	config.options.maximum_threads = 5;
+	DuckDB db(nullptr, &config);
 	VirtualFileSystem vfs;
 	constexpr idx_t file_systems = 16;
 	atomic<bool> done {false};
 	atomic<idx_t> shrunk {0};
-	vector<std::thread> readers;
+	TaskExecutor executor(TaskScheduler::GetScheduler(*db.instance));
 	for (idx_t t = 0; t < 4; t++) {
-		readers.emplace_back([&]() {
-			idx_t seen = 0;
-			while (!done.load()) {
-				auto names = vfs.ListSubSystems();
-				if (names.size() < seen) {
-					shrunk++;
-				}
-				seen = names.size();
-				vfs.IsDisabledForPath("fs3://file");
-				vfs.SubSystemIsDisabled("fs7");
-			}
-		});
+		executor.ScheduleTask(make_uniq<FunctionExecutorTask>(
+		    executor,
+		    [&]() {
+			    idx_t seen = 0;
+			    while (!done.load()) {
+				    auto names = vfs.ListSubSystems();
+				    if (names.size() < seen) {
+					    shrunk++;
+				    }
+				    seen = names.size();
+				    vfs.IsDisabledForPath("fs3://file");
+				    vfs.SubSystemIsDisabled("fs7");
+			    }
+		    },
+		    "FileSystemTestTask"));
 	}
 	for (idx_t i = 0; i < file_systems; i++) {
 		vfs.RegisterSubSystem(make_uniq<PrefixFileSystem>("fs" + std::to_string(i)));
@@ -615,9 +622,7 @@ TEST_CASE("Path calls run while filesystems are registered and disabled", "[file
 	vfs.SetDisabledFileSystems({"fs3"});
 	vfs.SetDisabledFileSystems({"fs3", "fs7"});
 	done = true;
-	for (auto &reader : readers) {
-		reader.join();
-	}
+	executor.WorkOnTasks();
 	REQUIRE(shrunk == 0);
 	REQUIRE(vfs.ListSubSystems().size() == file_systems);
 	REQUIRE(vfs.IsDisabledForPath("fs3://file"));
