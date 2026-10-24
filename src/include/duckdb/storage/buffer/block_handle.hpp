@@ -152,6 +152,9 @@ public:
 	bool MustWriteToTemporaryFile() const {
 		return destroy_buffer_upon == DestroyBufferUpon::BLOCK;
 	}
+	void SetHasTemporaryFile(bool has_temporary_file_p) {
+		has_temporary_file = has_temporary_file_p;
+	}
 	//! Returns the memory usage.
 	idx_t GetMemoryUsage() const {
 		return memory_usage;
@@ -235,6 +238,7 @@ private:
 	//! number matches eviction_seq_num and which has not been counted as a dead node.
 	//! Guarded by the block lock (read without it only by the destructor, which has exclusive ownership).
 	bool has_queue_entry;
+	bool has_temporary_file = false;
 	//! The LRU timestamp for age-based eviction.
 	atomic<int64_t> lru_timestamp_msec;
 	//! When to destroy the data buffer.

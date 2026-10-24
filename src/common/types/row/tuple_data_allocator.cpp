@@ -761,6 +761,9 @@ void TupleDataAllocator::ReleaseOrStoreHandlesInternal(TupleDataSegment &segment
 			switch (properties) {
 			case TupleDataPinProperties::KEEP_EVERYTHING_PINNED: {
 				lock_guard<mutex> guard(segment.pinned_handles_lock);
+				if (pinned_handles.size() < blocks.size()) {
+					pinned_handles.resize(blocks.size());
+				}
 				D_ASSERT(blocks.size() == pinned_handles.size());
 				pinned_handles[block_id] = std::move(it->second);
 				break;

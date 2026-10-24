@@ -37,6 +37,7 @@ public:
 
 protected:
 	Vector addresses;
+	Vector new_state_addresses;
 	//! The required bits per group
 	vector<idx_t> required_bits;
 	//! The total required bits for the HT (this determines the max capacity)
@@ -71,6 +72,8 @@ protected:
 private:
 	//! Try adding a chunk using the clustered aggregation path. Returns false if not applicable.
 	bool AddChunkClustered(uintptr_t *address_data, DataChunk &payload);
+	data_ptr_t SetGroup(idx_t group, idx_t &new_count);
+	void InitializeNewStates(idx_t new_count);
 	//! Destroy the perfect aggregate HT (called automatically by the destructor)
 	void Destroy();
 };

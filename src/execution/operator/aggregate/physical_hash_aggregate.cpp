@@ -1058,6 +1058,9 @@ InsertionOrderPreservingMap<string> PhysicalHashAggregate::ParamsToString() cons
 		}
 	}
 	result["Aggregates"] = aggregate_info;
+	if (grouped_aggregate_data.group_limit.IsValid()) {
+		result["Group Limit"] = to_string(grouped_aggregate_data.group_limit.GetIndex());
+	}
 	SetEstimatedCardinality(result, estimated_cardinality);
 	return result;
 }
