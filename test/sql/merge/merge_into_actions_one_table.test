@@ -1,0 +1,44 @@
+# name: test/sql/merge/merge_into_actions_one_table.test
+# group: [merge]
+
+statement ok
+SET threads=8
+
+statement ok
+CREATE TABLE t (id INTEGER PRIMARY KEY, v INTEGER)
+
+statement ok
+INSERT INTO t SELECT range, 0 FROM range(100)
+
+statement ok
+MERGE INTO t USING (SELECT range AS id FROM range(60)) s ON t.id = s.id
+WHEN MATCHED AND t.id % 2 = 0 THEN DELETE
+WHEN MATCHED THEN DELETE
+
+query I
+SELECT count(*) FROM t
+----
+40
+
+statement ok
+MERGE INTO t USING (SELECT range AS id FROM range(200)) s ON t.id = s.id
+WHEN NOT MATCHED AND s.id % 2 = 0 THEN INSERT VALUES (s.id, 1)
+WHEN NOT MATCHED THEN INSERT VALUES (s.id, 2)
+
+query II
+SELECT v, count(*) FROM t GROUP BY v ORDER BY v
+----
+0	40
+1	80
+2	80
+
+statement ok
+MERGE INTO t USING (SELECT range AS id FROM range(200)) s ON t.id = s.id
+WHEN MATCHED AND t.v = 1 THEN UPDATE SET v = 3
+WHEN MATCHED AND t.v = 2 THEN DELETE
+
+query II
+SELECT v, count(*) FROM t GROUP BY v ORDER BY v
+----
+0	40
+3	80

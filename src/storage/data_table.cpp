@@ -1152,8 +1152,7 @@ void DataTable::InitializeLocalStorage(LocalAppendState &state, DuckTableEntry &
 	state.constraint_state = InitializeConstraintState(table, bound_constraints);
 }
 
-void DataTable::LocalAppend(LocalAppendState &state, DuckTableEntry &table_entry, ClientContext &context,
-                            DataChunk &chunk, bool unsafe) {
+void DataTable::LocalAppend(LocalAppendState &state, ClientContext &context, DataChunk &chunk, bool unsafe) {
 	if (chunk.size() == 0) {
 		return;
 	}
@@ -1172,14 +1171,14 @@ void DataTable::LocalAppend(LocalAppendState &state, DuckTableEntry &table_entry
 	}
 
 	// Append to the transaction-local data.
-	LocalStorage::Append(state, table_entry, chunk);
+	LocalStorage::Append(state, chunk);
 }
 
 void DataTable::LocalAppend(DuckTableEntry &table, ClientContext &context, DataChunk &chunk,
                             const vector<unique_ptr<BoundConstraint>> &bound_constraints, bool unsafe) {
 	LocalAppendState append_state;
 	InitializeLocalAppend(append_state, table, context, bound_constraints);
-	LocalAppend(append_state, table, context, chunk, unsafe);
+	LocalAppend(append_state, context, chunk, unsafe);
 	FinalizeLocalAppend(append_state);
 }
 
@@ -1220,7 +1219,7 @@ void DataTable::LocalWALAppend(DuckTableEntry &table, ClientContext &context, Da
 	auto &storage = table.GetStorage();
 	storage.InitializeLocalAppend(append_state, table, context, bound_constraints);
 
-	storage.LocalAppend(append_state, table, context, chunk, true);
+	storage.LocalAppend(append_state, context, chunk, true);
 	append_state.storage->index_append_mode = IndexAppendMode::INSERT_DUPLICATES;
 	storage.FinalizeLocalAppend(append_state);
 }
@@ -1233,7 +1232,7 @@ void DataTable::LocalAppend(DuckTableEntry &table, ClientContext &context, DataC
 	storage.InitializeLocalAppend(append_state, table, context, bound_constraints);
 	append_state.storage->AppendToDeleteIndexes(row_ids, delete_chunk);
 
-	storage.LocalAppend(append_state, table, context, chunk, false);
+	storage.LocalAppend(append_state, context, chunk, false);
 	storage.FinalizeLocalAppend(append_state);
 }
 
@@ -1246,7 +1245,7 @@ void DataTable::LocalAppend(DuckTableEntry &table, ClientContext &context, Colum
 
 	if (!column_ids || column_ids->empty()) {
 		for (auto &chunk : collection.Chunks()) {
-			storage.LocalAppend(append_state, table, context, chunk, false);
+			storage.LocalAppend(append_state, context, chunk, false);
 		}
 		storage.FinalizeLocalAppend(append_state);
 		return;
@@ -1289,7 +1288,7 @@ void DataTable::LocalAppend(DuckTableEntry &table, ClientContext &context, Colum
 
 	for (auto &chunk : collection.Chunks()) {
 		expression_executor.Execute(chunk, result);
-		storage.LocalAppend(append_state, table, context, result, false);
+		storage.LocalAppend(append_state, context, result, false);
 		result.Reset();
 	}
 	storage.FinalizeLocalAppend(append_state);
