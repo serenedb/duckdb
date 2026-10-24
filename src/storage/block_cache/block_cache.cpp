@@ -249,7 +249,7 @@ private:
 //===--------------------------------------------------------------------===//
 
 BlockCache::BlockCache(DatabaseInstance &db_p, idx_t capacity)
-    : db(db_p), buffer_pool(BufferManager::GetBufferManager(db_p).GetBufferPool()) {
+    : db(db_p), buffer_manager(BufferManager::GetBufferManager(db_p)) {
 	frame_count = NumericCast<uint32_t>(MaxValue<idx_t>(1, capacity / BLOCK_SIZE));
 	region_size = frame_count * BLOCK_SIZE;
 	region = MapRegion(region_size);
@@ -270,10 +270,8 @@ BlockCache::BlockCache(DatabaseInstance &db_p, idx_t capacity)
 
 BlockCache::~BlockCache() {
 	StopFetching();
-	const auto used = used_frames.load(std::memory_order_relaxed);
-	if (used) {
-		buffer_pool.UpdateUsedMemory(MemoryTag::EXTERNAL_FILE_CACHE, -NumericCast<int64_t>(used * BLOCK_SIZE));
-	}
+	buffer_manager.FreeReservedMemory(MemoryTag::EXTERNAL_FILE_CACHE,
+	                                  used_frames.load(std::memory_order_relaxed) * BLOCK_SIZE);
 	UnmapRegion(region, region_size);
 }
 
@@ -286,7 +284,7 @@ idx_t BlockCache::ConfiguredCapacity(DatabaseInstance &db) {
 	if (configured != DConstants::INVALID_INDEX) {
 		return configured;
 	}
-	return BufferManager::GetBufferManager(db).GetBufferPool().GetMaxMemory() / 4;
+	return BufferManager::GetBufferManager(db).GetMaxMemory() / 4;
 }
 
 BlockCachePin BlockCache::AllocateUncached(DatabaseInstance &db, idx_t size) {
@@ -738,15 +736,15 @@ bool BlockCache::TakeFreeFrame(uint32_t &frame) {
 		free_frames.pop_back();
 	}
 	used_frames.fetch_add(1, std::memory_order_relaxed);
-	auto reserved =
-	    buffer_pool.EvictBlocks(QueryContext(), MemoryTag::EXTERNAL_FILE_CACHE, BLOCK_SIZE, buffer_pool.GetMaxMemory());
-	if (!reserved.success) {
+	absl::Cleanup give_back = [&] {
 		used_frames.fetch_sub(1, std::memory_order_relaxed);
 		annotated_lock_guard<annotated_mutex> guard(frame_lock);
 		free_frames.push_back(frame);
+	};
+	if (!buffer_manager.TryReserveMemory(MemoryTag::EXTERNAL_FILE_CACHE, BLOCK_SIZE)) {
 		return false;
 	}
-	reserved.reservation.size = 0;
+	std::move(give_back).Cancel();
 	auto high = high_water.load(std::memory_order_relaxed);
 	while (high <= frame && !high_water.compare_exchange_weak(high, frame + 1, std::memory_order_relaxed)) {
 	}
@@ -773,7 +771,7 @@ void BlockCache::ReleaseFrame(uint32_t frame) {
 		free_frames.push_back(frame);
 	}
 	used_frames.fetch_sub(1, std::memory_order_relaxed);
-	buffer_pool.UpdateUsedMemory(MemoryTag::EXTERNAL_FILE_CACHE, -NumericCast<int64_t>(BLOCK_SIZE));
+	buffer_manager.FreeReservedMemory(MemoryTag::EXTERNAL_FILE_CACHE, BLOCK_SIZE);
 }
 
 bool BlockCache::EvictOne(uint32_t &frame) {
