@@ -43,7 +43,8 @@ struct BlockCacheFileInfo {
 
 //! One slot of the translation table: the key of a cached block and the header of the frame holding it
 struct BlockCacheEntry {
-	//! Version (high 32 bits), flags (10 bits) and pin count (low 22 bits)
+	//! Version (high 32 bits), flags (10 bits) and pin count (low 22 bits). A lookup pins before it checks the version
+	//! and flags and unpins when they changed, so every change of the state keeps the pin count it finds.
 	atomic<uint64_t> state {0};
 	//! File number (high 32 bits) and block number (low 32 bits); zero when the slot is free
 	atomic<uint64_t> key {0};
@@ -469,13 +470,13 @@ private:
 	BlockCacheSpill spill;
 	atomic<bool> unbacked_spill_ready {false};
 
-	//! Hits, counted per shard so that threads pinning different blocks do not share a cache line
+	//! Hits, counted per CPU so that threads pinning one block do not share a cache line
 	struct alignas(64) CounterShard {
 		atomic<idx_t> value {0};
 	};
 	static constexpr idx_t COUNTER_SHARDS = 32;
 	CounterShard hits[COUNTER_SHARDS];
-	void CountHit(const BlockCacheEntry &entry);
+	void CountHit();
 	atomic<idx_t> misses {0};
 	atomic<idx_t> fetched_bytes {0};
 	atomic<idx_t> fetches {0};

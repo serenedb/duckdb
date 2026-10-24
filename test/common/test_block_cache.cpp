@@ -850,6 +850,40 @@ TEST_CASE("Block cache concurrent pins and evictions return the right bytes", "[
 	REQUIRE(wrong == 0);
 }
 
+TEST_CASE("Block cache counts every hit of concurrent pins of one block and lets the block go after them",
+          "[block_cache]") {
+	DuckDB db(nullptr);
+	BlockCache cache(*db.instance, 4 * BLOCK);
+	auto file = cache.CreateUnbackedFile("memory://hot.bin");
+	memset(cache.CreateBlock(*file, 0).GetDataMutable(), 9, BLOCK);
+	cache.SetUnbackedSize(*file, BLOCK);
+	const auto before = cache.GetStatistics();
+	constexpr idx_t TASKS = 8;
+	constexpr idx_t PINS = 10000;
+	atomic<idx_t> wrong {0};
+	TaskExecutor executor(TaskScheduler::GetScheduler(*db.instance));
+	for (idx_t task = 0; task < TASKS; task++) {
+		executor.ScheduleTask(make_uniq<FunctionExecutorTask>(
+		    executor,
+		    [&]() {
+			    for (idx_t i = 0; i < PINS; i++) {
+				    auto pin = cache.Pin(file, 0);
+				    if (pin.Ptr()[0] != 9 || pin.Ptr()[BLOCK - 1] != 9) {
+					    wrong++;
+				    }
+			    }
+		    },
+		    "BlockCacheTestTask"));
+	}
+	executor.WorkOnTasks();
+	REQUIRE(wrong == 0);
+	const auto after = cache.GetStatistics();
+	REQUIRE(after.hits - before.hits == TASKS * PINS);
+	REQUIRE(after.misses == before.misses);
+	file.reset();
+	REQUIRE(cache.GetStatistics().used == 0);
+}
+
 TEST_CASE("Block cache spill drops the oldest copy first after the copies of a forgotten file go", "[block_cache]") {
 	DuckDB db(nullptr);
 	BlockCache cache(*db.instance, BLOCK);

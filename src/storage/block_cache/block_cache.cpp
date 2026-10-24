@@ -347,9 +347,8 @@ data_ptr_t BlockCache::FrameData(uint32_t frame) const {
 	return region + idx_t(frame) * BLOCK_SIZE;
 }
 
-void BlockCache::CountHit(const BlockCacheEntry &entry) {
-	hits[(reinterpret_cast<uintptr_t>(&entry) / CACHE_LINE) % COUNTER_SHARDS].value.fetch_add(
-	    1, std::memory_order_relaxed);
+void BlockCache::CountHit() {
+	hits[TaskScheduler::GetEstimatedCPUId() % COUNTER_SHARDS].value.fetch_add(1, std::memory_order_relaxed);
 }
 
 uint32_t BlockCache::WaitStripe(const BlockCacheEntry &entry) {
@@ -630,19 +629,22 @@ bool BlockCache::PinPresent(const BlockCacheFile &file, idx_t block, BlockCacheP
 		if (Pins(state) == PIN_MASK) {
 			throw InternalException("Too many pins of one block cache block");
 		}
-		auto desired = state + 1;
-		if (state & FLAG_LOADED) {
-			desired = Referenced(desired);
-		}
-		if (!found->state.compare_exchange_weak(state, desired, std::memory_order_acq_rel, std::memory_order_relaxed)) {
+		auto pinned = found->state.fetch_add(1, std::memory_order_acq_rel) + 1;
+		if ((pinned & VERSION_MASK) != (state & VERSION_MASK) || (pinned & UNPINNABLE) ||
+		    !(pinned & (FLAG_LOADING | FLAG_LOADED))) {
+			Unpin(*found);
 			continue;
 		}
 		result.cache = this;
 		result.entry = found;
 		result.size = file.BlockBytes(block);
-		if (desired & FLAG_LOADED) {
+		if (pinned & FLAG_LOADED) {
+			while (Referenced(pinned) != pinned && !(pinned & UNPINNABLE) &&
+			       !found->state.compare_exchange_weak(pinned, Referenced(pinned), std::memory_order_acq_rel,
+			                                           std::memory_order_acquire)) {
+			}
 			result.data = FrameData(found->frame.load(std::memory_order_relaxed));
-			CountHit(*found);
+			CountHit();
 		}
 		return true;
 	}
@@ -661,7 +663,7 @@ bool BlockCache::AwaitLoad(BlockCachePin &pin) {
 	                                          std::memory_order_acquire)) {
 	}
 	pin.data = FrameData(entry.frame.load(std::memory_order_relaxed));
-	CountHit(entry);
+	CountHit();
 	return true;
 }
 
@@ -727,8 +729,11 @@ optional_ptr<BlockCacheEntry> BlockCache::InsertLoading(uint64_t key, uint32_t f
 	}
 	slot->key.store(key, std::memory_order_relaxed);
 	slot->frame.store(frame, std::memory_order_relaxed);
-	const auto version = (slot->state.load(std::memory_order_relaxed) & VERSION_MASK) + VERSION_ONE;
-	slot->state.store(version | FLAG_LOADING | FLAG_PROBATION | flags | 1, std::memory_order_release);
+	auto state = slot->state.load(std::memory_order_relaxed);
+	while (!slot->state.compare_exchange_weak(
+	    state, ((state & VERSION_MASK) + VERSION_ONE) | FLAG_LOADING | FLAG_PROBATION | flags | (Pins(state) + 1),
+	    std::memory_order_release, std::memory_order_relaxed)) {
+	}
 	if (slot != &bucket.first) {
 		bucket.first.next.store(frame + 1, std::memory_order_release);
 	}
@@ -740,11 +745,16 @@ optional_ptr<BlockCacheEntry> BlockCache::InsertLoading(uint64_t key, uint32_t f
 void BlockCache::Unpin(BlockCacheEntry &entry) {
 	const auto previous = entry.state.fetch_sub(1, std::memory_order_acq_rel);
 	D_ASSERT(Pins(previous) > 0);
-	if (Pins(previous) == 1 && (previous & FLAG_FAILED)) {
-		const auto frame = entry.frame.load(std::memory_order_relaxed);
-		frame_owner[frame].store(nullptr, std::memory_order_relaxed);
-		Unlink(entry);
-		ReleaseFrame(frame);
+	auto state = previous - 1;
+	while (Pins(state) == 0 && (state & FLAG_FAILED)) {
+		if (entry.state.compare_exchange_weak(state, (state & ~FLAG_FAILED) | FLAG_EVICTING, std::memory_order_acq_rel,
+		                                      std::memory_order_acquire)) {
+			const auto frame = entry.frame.load(std::memory_order_relaxed);
+			frame_owner[frame].store(nullptr, std::memory_order_relaxed);
+			Unlink(entry);
+			ReleaseFrame(frame);
+			return;
+		}
 	}
 }
 
@@ -761,7 +771,7 @@ void BlockCache::Unlink(BlockCacheEntry &entry) {
 		}
 		previous->next.store(entry.next.load(std::memory_order_relaxed), std::memory_order_release);
 	}
-	entry.state.store(entry.state.load(std::memory_order_relaxed) & VERSION_MASK, std::memory_order_release);
+	entry.state.fetch_and(VERSION_MASK | PIN_MASK, std::memory_order_release);
 	UnlockBucket(bucket);
 }
 
