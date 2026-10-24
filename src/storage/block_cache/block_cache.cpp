@@ -873,12 +873,19 @@ bool BlockCache::TryEvict(BlockCacheEntry &entry, uint64_t state, uint32_t &fram
 	}
 	const auto key = entry.key.load(std::memory_order_relaxed);
 	frame = entry.frame.load(std::memory_order_relaxed);
-	if (keep_copy && (state & FLAG_UNBACKED) && !IsLiveUnbacked(FileOf(key))) {
+	const bool unbacked = state & FLAG_UNBACKED;
+	if (keep_copy && unbacked && !IsLiveUnbacked(FileOf(key))) {
 		keep_copy = false;
 		spill.Erase(key);
 	}
 	if (keep_copy && !(state & (FLAG_SPILLED | FLAG_LOCAL))) {
-		const bool unbacked = state & FLAG_UNBACKED;
+#ifdef DEBUG
+		if (unbacked && debug_before_keep_copy) {
+			auto hook = std::move(debug_before_keep_copy);
+			debug_before_keep_copy = nullptr;
+			hook();
+		}
+#endif
 		const bool written = spill.Write(key, FrameData(frame), unbacked);
 		if (unbacked && !written) {
 			entry.state.fetch_and(~FLAG_EVICTING, std::memory_order_release);
@@ -886,6 +893,9 @@ bool BlockCache::TryEvict(BlockCacheEntry &entry, uint64_t state, uint32_t &fram
 		}
 		if (written) {
 			spilled.fetch_add(1, std::memory_order_relaxed);
+		}
+		if (written && unbacked && !IsLiveUnbacked(FileOf(key))) {
+			spill.Erase(key);
 		}
 	}
 	frame_owner[frame].store(nullptr, std::memory_order_relaxed);
