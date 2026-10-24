@@ -54,6 +54,18 @@ unordered_map<string, string> ErrnoInfo(int error) {
 	throw IOException(ErrnoInfo(ENOENT), "Cannot %s file \"%s\": No such file or directory", verb, path);
 }
 
+void CopyRange(BlockCache &cache, const shared_ptr<BlockCacheFile> &file, idx_t offset, idx_t count,
+               data_ptr_t target) {
+	for (idx_t done = 0; done < count;) {
+		const auto at = offset + done;
+		auto pin = cache.Pin(file, at / BlockCache::BLOCK_SIZE);
+		const auto in_block = at % BlockCache::BLOCK_SIZE;
+		const auto chunk = MinValue(count - done, BlockCache::BLOCK_SIZE - in_block);
+		memcpy(target + done, pin.Ptr() + in_block, chunk);
+		done += chunk;
+	}
+}
+
 constexpr uintptr_t HUGE_PAGE_SIZE = 2ULL * 1024ULL * 1024ULL;
 
 void AdviseHugePages(data_ptr_t data, idx_t size) {
@@ -363,16 +375,7 @@ void MemoryFileSystem::Read(FileHandle &handle_p, void *buffer, int64_t nr_bytes
 		memcpy(target, pin.Ptr() + location, bytes);
 		return;
 	}
-	auto &cache = BlockCache::Get(*db);
-	idx_t done = 0;
-	while (done < bytes) {
-		const auto at = location + done;
-		auto pin = cache.Pin(blocks, at / BlockCache::BLOCK_SIZE);
-		const auto offset = at % BlockCache::BLOCK_SIZE;
-		const auto chunk = MinValue(bytes - done, BlockCache::BLOCK_SIZE - offset);
-		memcpy(target + done, pin.Ptr() + offset, chunk);
-		done += chunk;
-	}
+	CopyRange(BlockCache::Get(*db), blocks, location, bytes, target);
 }
 
 int64_t MemoryFileSystem::Read(FileHandle &handle_p, void *buffer, int64_t nr_bytes) {
