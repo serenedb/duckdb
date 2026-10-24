@@ -162,6 +162,16 @@ private:
 	bool set DUCKDB_GUARDED_BY(lock) = false;
 };
 
+//! The memory the buffer pool of [db] accounts to block cache frames
+idx_t CacheReservation(DatabaseInstance &db) {
+	for (auto &info : BufferManager::GetBufferManager(db).GetMemoryUsageInfo()) {
+		if (info.tag == MemoryTag::EXTERNAL_FILE_CACHE) {
+			return info.size;
+		}
+	}
+	return 0;
+}
+
 idx_t CountSpillFiles(const string &directory) {
 	LocalFileSystem local;
 	idx_t count = 0;
@@ -751,16 +761,7 @@ TEST_CASE("Block cache returns the frames of a dropped file and hands them out a
           "[block_cache]") {
 	DuckDB db(nullptr);
 	BlockCache cache(*db.instance, 64 * BLOCK);
-	auto &buffer_manager = BufferManager::GetBufferManager(*db.instance);
-	const auto reserved = [&]() {
-		for (auto &info : buffer_manager.GetMemoryUsageInfo()) {
-			if (info.tag == MemoryTag::EXTERNAL_FILE_CACHE) {
-				return info.size;
-			}
-		}
-		return idx_t(0);
-	};
-	const auto before = reserved();
+	const auto before = CacheReservation(*db.instance);
 	for (idx_t round = 0; round < 2; round++) {
 		auto file = cache.CreateUnbackedFile("memory://dropped.bin");
 		vector<const_data_ptr_t> frames;
@@ -770,14 +771,40 @@ TEST_CASE("Block cache returns the frames of a dropped file and hands them out a
 			frames.push_back(pin.Ptr());
 		}
 		cache.SetUnbackedSize(*file, 32 * BLOCK);
-		REQUIRE(reserved() == before + 32 * BLOCK);
+		REQUIRE(CacheReservation(*db.instance) == before + 32 * BLOCK);
 		for (idx_t block = 1; block < 32; block++) {
 			REQUIRE(frames[block] == frames[0] + block * BLOCK);
 		}
 		file.reset();
 		REQUIRE(cache.GetStatistics().used == 0);
-		REQUIRE(reserved() == before);
+		REQUIRE(CacheReservation(*db.instance) == before);
 	}
+}
+
+TEST_CASE("Block cache reuses the frame it evicts when the buffer pool has no room for another", "[block_cache]") {
+	DBConfig config;
+	config.options.maximum_memory = 64ULL * 1024ULL * 1024ULL;
+	DuckDB db(nullptr, &config);
+	auto &cache = BlockCache::Get(*db.instance);
+	auto &buffer_manager = BufferManager::GetBufferManager(*db.instance);
+	CountingSourceFileSystem fs;
+	TestFile file("block_cache_reuse.bin", 3 * BLOCK);
+	auto cached = file.Open(cache, fs);
+	const auto evicted = cache.Pin(cached, 0).Ptr();
+	auto held = cache.Pin(cached, 1);
+	idx_t reserved = 0;
+	while (buffer_manager.TryReserveMemory(MemoryTag::IN_MEMORY_TABLE, BLOCK, false)) {
+		reserved += BLOCK;
+	}
+
+	auto pin = cache.Pin(cached, 2);
+	buffer_manager.FreeReservedMemory(MemoryTag::IN_MEMORY_TABLE, reserved);
+	REQUIRE(pin.Ptr() == evicted);
+	REQUIRE(HoldsExpectedBytes(pin, 2));
+	REQUIRE(HoldsExpectedBytes(held, 1));
+	REQUIRE_FALSE(cache.IsCached(*cached, 0, BLOCK));
+	REQUIRE(cache.GetStatistics().used == 2 * BLOCK);
+	REQUIRE(CacheReservation(*db.instance) == 2 * BLOCK);
 }
 
 TEST_CASE("Block cache concurrent pins and evictions return the right bytes", "[block_cache]") {

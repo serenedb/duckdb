@@ -353,10 +353,11 @@ private:
 	//! loading one with its last pin; a block of an unbacked file only when [drop_unbacked]
 	void DropEntry(BlockCacheEntry &entry, uint64_t key, bool drop_unbacked, vector<uint32_t> &released);
 
-	//! A frame for a new block: a free one while the cache is below its capacity, else a victim's
+	//! A frame for a new block: a free one while the cache is below its capacity and the buffer pool has room for it
+	//! once it evicts unpinned buffers, else a victim's, whose frame is used as it is
 	bool AcquireFrame(uint32_t &frame);
-	//! A free frame whose memory the buffer pool grants
-	bool TakeFreeFrame(uint32_t &frame);
+	//! A free frame whose memory the buffer pool grants, evicting the caches for it only when [evict_caches]
+	bool TakeFreeFrame(uint32_t &frame, bool evict_caches);
 	void ReleaseFrame(uint32_t frame);
 	//! Gives [frames] back to the system and the buffer pool, a run of adjacent frames at once, and frees them to be
 	//! handed out lowest first
