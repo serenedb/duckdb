@@ -262,10 +262,8 @@ BlockCache::BlockCache(DatabaseInstance &db_p, idx_t capacity)
 	bucket_mask = NumericCast<uint32_t>(bucket_count - 1);
 	pool = unique_ptr<BlockCacheEntry[]>(new BlockCacheEntry[frame_count]);
 	free_frames.reserve(frame_count);
-	free_pool.reserve(frame_count);
 	for (uint32_t i = frame_count; i > 0; i--) {
 		free_frames.push_back(i - 1);
-		free_pool.push_back(i - 1);
 	}
 	capacity_frames = frame_count;
 }
@@ -683,17 +681,11 @@ optional_ptr<BlockCacheEntry> BlockCache::InsertLoading(uint64_t key, uint32_t f
 		entry = &pool[next - 1];
 	}
 	BlockCacheEntry *slot;
-	uint32_t pool_index = 0;
 	if (bucket.first.key.load(std::memory_order_relaxed) == 0) {
 		slot = &bucket.first;
 	} else {
-		{
-			annotated_lock_guard<annotated_mutex> guard(frame_lock);
-			D_ASSERT(!free_pool.empty());
-			pool_index = free_pool.back();
-			free_pool.pop_back();
-		}
-		slot = &pool[pool_index];
+		slot = &pool[frame];
+		D_ASSERT(slot->key.load(std::memory_order_relaxed) == 0);
 		slot->next.store(bucket.first.next.load(std::memory_order_relaxed), std::memory_order_relaxed);
 	}
 	slot->key.store(key, std::memory_order_relaxed);
@@ -701,7 +693,7 @@ optional_ptr<BlockCacheEntry> BlockCache::InsertLoading(uint64_t key, uint32_t f
 	const auto version = (slot->state.load(std::memory_order_relaxed) & VERSION_MASK) + VERSION_ONE;
 	slot->state.store(version | FLAG_LOADING | FLAG_PROBATION | flags | 1, std::memory_order_release);
 	if (slot != &bucket.first) {
-		bucket.first.next.store(pool_index + 1, std::memory_order_release);
+		bucket.first.next.store(frame + 1, std::memory_order_release);
 	}
 	frame_owner[frame].store(slot, std::memory_order_release);
 	UnlockBucket(bucket);
@@ -725,13 +717,12 @@ void BlockCache::Unlink(BlockCacheEntry &entry) {
 	entry.key.store(0, std::memory_order_relaxed);
 	if (&entry != &bucket.first) {
 		const auto index = NumericCast<uint32_t>(&entry - pool.get());
+		D_ASSERT(index == entry.frame.load(std::memory_order_relaxed));
 		auto previous = &bucket.first;
 		while (previous->next.load(std::memory_order_relaxed) != index + 1) {
 			previous = &pool[previous->next.load(std::memory_order_relaxed) - 1];
 		}
 		previous->next.store(entry.next.load(std::memory_order_relaxed), std::memory_order_release);
-		annotated_lock_guard<annotated_mutex> guard(frame_lock);
-		free_pool.push_back(index);
 	}
 	entry.state.store(entry.state.load(std::memory_order_relaxed) & VERSION_MASK, std::memory_order_release);
 	UnlockBucket(bucket);
