@@ -1,5 +1,6 @@
 #include "duckdb/common/memory_file_system.hpp"
 
+#include "duckdb/common/allocator.hpp"
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/helper.hpp"
 #include "duckdb/common/string_util.hpp"
@@ -13,9 +14,6 @@
 #include <absl/cleanup/cleanup.h>
 #include <cerrno>
 #include <cstring>
-#ifndef _WIN32
-#include <sys/mman.h>
-#endif
 
 namespace duckdb {
 
@@ -64,19 +62,6 @@ void CopyRange(BlockCache &cache, const shared_ptr<BlockCacheFile> &file, idx_t 
 		memcpy(target + done, pin.Ptr() + in_block, chunk);
 		done += chunk;
 	}
-}
-
-constexpr uintptr_t HUGE_PAGE_SIZE = 2ULL * 1024ULL * 1024ULL;
-
-void AdviseHugePages(data_ptr_t data, idx_t size) {
-#if !defined(_WIN32) && defined(MADV_HUGEPAGE)
-	const auto start = reinterpret_cast<uintptr_t>(data);
-	const auto begin = AlignValue<uintptr_t, HUGE_PAGE_SIZE>(start);
-	const auto end = AlignValueFloor<uintptr_t, HUGE_PAGE_SIZE>(start + size);
-	if (end > begin) {
-		madvise(reinterpret_cast<void *>(begin), end - begin, MADV_HUGEPAGE);
-	}
-#endif
 }
 
 class MemoryFileHandle : public FileHandle {
@@ -274,10 +259,7 @@ shared_ptr<BlockCacheFile> MemoryFileSystem::GetBlockFile(const string &path) {
 }
 
 void MemoryFileSystem::Compact(const string &path) {
-	auto file = Find(path);
-	if (!file) {
-		throw IOException(ErrnoInfo(ENOENT), "Cannot compact file \"%s\": No such file or directory", path);
-	}
+	auto file = FindExisting(path, "compact", false);
 	shared_ptr<BlockCacheFile> blocks;
 	{
 		annotated_lock_guard<annotated_mutex> guard(file->lock);
@@ -290,14 +272,10 @@ void MemoryFileSystem::Compact(const string &path) {
 		return;
 	}
 	const auto size = file->size.load(std::memory_order_acquire);
-	auto &cache = BlockCache::Get(*db);
 	auto span =
 	    BufferManager::GetBufferManager(*db).Allocate(MemoryTag::IN_MEMORY_TABLE, MaxValue<idx_t>(size, 1), false);
-	AdviseHugePages(span.GetDataMutable(), size);
-	for (idx_t offset = 0; offset < size; offset += BlockCache::BLOCK_SIZE) {
-		auto pin = cache.Pin(blocks, offset / BlockCache::BLOCK_SIZE);
-		memcpy(span.GetDataMutable() + offset, pin.Ptr(), MinValue(size - offset, BlockCache::BLOCK_SIZE));
-	}
+	Allocator::AdviseHugePages(span.GetDataMutable(), size);
+	CopyRange(BlockCache::Get(*db), blocks, 0, size, span.GetDataMutable());
 	annotated_lock_guard<annotated_mutex> guard(file->lock);
 	if (file->blocks == blocks) {
 		file->span = span.GetBlockHandle();
