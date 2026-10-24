@@ -1280,7 +1280,7 @@ BlockCachePin BlockCache::CreateBlock(BlockCacheFile &file, idx_t block) {
 	if (!AcquireFrame(frame)) {
 		throw OutOfMemoryException("The block cache has no free frame for a block of \"%s\"", file.path);
 	}
-	auto entry = InsertLoading(key, frame, file.IsUnbacked() ? FLAG_UNBACKED : 0);
+	auto entry = InsertLoading(key, frame, FileFlags(file));
 	if (!entry) {
 		ReleaseFrame(frame);
 		throw InternalException("Block %llu of \"%s\" is written twice", block, file.path);
