@@ -716,6 +716,10 @@ idx_t TaskScheduler::NumberOfThreads() {
 	return pool->NumberOfThreads();
 }
 
+bool TaskScheduler::HasWorkers() const {
+	return target.load(std::memory_order_relaxed) != 0;
+}
+
 idx_t TaskScheduler::QueryThreads(ClientContext &context) {
 	const auto pool = GetScheduler(context).NumberOfThreads();
 	const auto &cap = ClientConfig::GetConfig(context).threads;
