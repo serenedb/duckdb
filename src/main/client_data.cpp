@@ -191,6 +191,9 @@ public:
 	bool HasFilesInTemporaryDirectory() const override {
 		return buffer_manager.HasFilesInTemporaryDirectory();
 	}
+	TemporaryFileManager &GetTemporaryFileManager() override {
+		return buffer_manager.GetTemporaryFileManager();
+	}
 
 	unique_ptr<FileBuffer> ConstructManagedBuffer(idx_t size, idx_t block_header_size, unique_ptr<FileBuffer> &&source,
 	                                              FileBufferType type = FileBufferType::MANAGED_BUFFER) override {

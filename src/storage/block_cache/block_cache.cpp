@@ -927,17 +927,11 @@ bool BlockCache::CanSpillUnbacked() {
 		return true;
 	}
 	if (!spill.IsConfigured()) {
-		auto &buffer_manager = BufferManager::GetBufferManager(db);
 		if (!buffer_manager.HasTemporaryDirectory()) {
 			return false;
 		}
-		auto &fs = FileSystem::GetFileSystem(db);
-		const auto &directory = buffer_manager.GetTemporaryDirectory();
 		try {
-			if (!fs.DirectoryExists(directory)) {
-				fs.CreateDirectory(directory);
-			}
-			spill.ConfigureDefault(fs, fs.JoinPath(directory, "duckdb_block_cache.spill"));
+			spill.ConfigureDefault(FileSystem::GetFileSystem(db), buffer_manager.GetTemporaryFileManager());
 		} catch (std::exception &) { // NOLINT
 			return false;
 		}
