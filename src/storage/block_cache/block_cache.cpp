@@ -10,6 +10,7 @@
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/main/database.hpp"
 #include "duckdb/parallel/task.hpp"
+#include "duckdb/parallel/task_executor.hpp"
 #include "duckdb/storage/buffer/block_handle.hpp"
 #include "duckdb/storage/buffer_manager.hpp"
 
@@ -59,6 +60,13 @@ bool Evictable(uint64_t state) {
 idx_t BlockBytesOf(idx_t file_size, idx_t block) {
 	const auto start = block * BlockCache::BLOCK_SIZE;
 	return start >= file_size ? 0 : MinValue(BlockCache::BLOCK_SIZE, file_size - start);
+}
+
+//! The blocks of each piece of a run of [block_count] blocks: equal pieces of at most PIECE_SIZE
+idx_t PieceBlocks(idx_t block_count) {
+	constexpr idx_t MAX_BLOCKS = BlockCache::PIECE_SIZE / BlockCache::BLOCK_SIZE;
+	const auto pieces = (block_count + MAX_BLOCKS - 1) / MAX_BLOCKS;
+	return (block_count + pieces - 1) / pieces;
 }
 
 uint64_t Referenced(uint64_t state) {
@@ -1001,7 +1009,7 @@ bool BlockCache::ReadSpilled(uint64_t key, BlockCacheEntry &entry) {
 	return true;
 }
 
-void BlockCache::Fetch(BlockCacheFile &file, const Run &run, vector<optional_ptr<BlockCacheEntry>> &entries) {
+void BlockCache::Fetch(BlockCacheFile &file, const Run &run, std::span<optional_ptr<BlockCacheEntry>> entries) {
 	D_ASSERT(entries.size() == run.block_count);
 	vector<bool> pending(entries.size(), false);
 	idx_t first_pending = entries.size();
@@ -1030,10 +1038,15 @@ void BlockCache::Fetch(BlockCacheFile &file, const Run &run, vector<optional_ptr
 			const auto start = (run.first_block + first_pending) * BLOCK_SIZE;
 			const auto end = MinValue(file.GetSize(), (run.first_block + last_pending + 1) * BLOCK_SIZE);
 			auto source = file.Source();
-			if (first_pending == last_pending) {
-				auto frame = FrameData(entries[first_pending]->frame.load(std::memory_order_relaxed));
-				source->Read(frame, end - start, start);
-				memset(frame + (end - start), 0, BLOCK_SIZE - (end - start));
+			auto frames = FrameData(entries[first_pending]->frame.load(std::memory_order_relaxed));
+			bool adjacent = true;
+			for (idx_t i = first_pending; i <= last_pending && adjacent; i++) {
+				adjacent = pending[i] && FrameData(entries[i]->frame.load(std::memory_order_relaxed)) ==
+				                             frames + (i - first_pending) * BLOCK_SIZE;
+			}
+			if (adjacent) {
+				source->Read(frames, end - start, start);
+				memset(frames + (end - start), 0, (last_pending - first_pending + 1) * BLOCK_SIZE - (end - start));
 			} else {
 				auto buffer = Allocator::DefaultAllocator().Allocate(end - start);
 				source->Read(buffer.get(), end - start, start);
@@ -1088,9 +1101,8 @@ BlockCachePin BlockCache::Pin(const shared_ptr<BlockCacheFile> &file_p, idx_t bl
 			continue;
 		}
 		misses.fetch_add(1, std::memory_order_relaxed);
-		vector<optional_ptr<BlockCacheEntry>> entries {entry};
 		try {
-			Fetch(file, Run {block, 1}, entries);
+			Fetch(file, Run {block, 1}, std::span(&entry, 1));
 		} catch (...) {
 			Unpin(*entry);
 			throw;
@@ -1175,11 +1187,37 @@ vector<BlockCachePin> BlockCache::PinRange(const shared_ptr<BlockCacheFile> &fil
 	const auto first = offset / BLOCK_SIZE;
 	const auto count = (end - 1) / BLOCK_SIZE - first + 1;
 	result.resize(count);
+	bool complete = true;
 	for (idx_t i = 0; i < count; i++) {
-		PinPresent(file, first + i, result[i]);
+		complete = PinPresent(file, first + i, result[i]) && complete;
 	}
+	if (!complete) {
+		FetchMissing(file_p, first, result);
+	}
+	for (idx_t i = 0; i < count; i++) {
+		auto &pin = result[i];
+		if (!pin.data && !(pin.IsValid() && AwaitLoad(pin))) {
+			pin = Pin(file_p, first + i);
+		}
+	}
+	return result;
+}
+
+void BlockCache::FetchMissing(const shared_ptr<BlockCacheFile> &file_p, idx_t first, vector<BlockCachePin> &result) {
+	auto &file = *file_p;
+	const auto count = result.size();
 	const auto missing = [&](idx_t block) {
 		return !result[block - first].IsValid();
+	};
+	vector<RunPlan> plans;
+	absl::Cleanup abandon = [&] {
+		for (auto &plan : plans) {
+			for (auto &entry : plan.entries) {
+				if (entry && (entry->state.load(std::memory_order_acquire) & FLAG_LOADING)) {
+					FinishLoad(*entry, false);
+				}
+			}
+		}
 	};
 	for (auto block = first; block < first + count;) {
 		if (!missing(block)) {
@@ -1198,22 +1236,46 @@ vector<BlockCachePin> BlockCache::PinRange(const shared_ptr<BlockCacheFile> &fil
 				    BlockCachePin(*this, *plan.entries[i], nullptr, file.BlockBytes(plan.run.first_block + i));
 			}
 		}
-		Fetch(file, plan.run, plan.entries);
+		block = plan.next;
+		plans.push_back(std::move(plan));
+	}
+	FetchConcurrently(file, plans);
+	std::move(abandon).Cancel();
+	for (auto &plan : plans) {
 		for (idx_t i = 0; i < plan.run.block_count; i++) {
 			if (plan.entries[i]) {
 				result[plan.run.first_block - first + i].data =
 				    FrameData(plan.entries[i]->frame.load(std::memory_order_relaxed));
 			}
 		}
-		block = plan.next;
 	}
-	for (idx_t i = 0; i < count; i++) {
-		auto &pin = result[i];
-		if (!pin.data && !(pin.IsValid() && AwaitLoad(pin))) {
-			pin = Pin(file_p, first + i);
+}
+
+void BlockCache::FetchConcurrently(BlockCacheFile &file, vector<RunPlan> &plans) {
+	const auto for_each_piece = [&](auto &&callback) {
+		for (auto &plan : plans) {
+			const auto piece_blocks = PieceBlocks(plan.run.block_count);
+			for (idx_t first = 0; first < plan.run.block_count; first += piece_blocks) {
+				const Run piece {plan.run.first_block + first, MinValue(piece_blocks, plan.run.block_count - first)};
+				callback(piece, std::span(plan.entries).subspan(first, piece.block_count));
+			}
 		}
+	};
+	idx_t pieces = 0;
+	for_each_piece([&](const Run &, std::span<optional_ptr<BlockCacheEntry>>) { pieces++; });
+	if (pieces == 0) {
+		return;
 	}
-	return result;
+	if (pieces == 1) {
+		Fetch(file, plans[0].run, plans[0].entries);
+		return;
+	}
+	TaskExecutor executor(TaskScheduler::GetScheduler(db), TaskSchedulerType::ASYNC);
+	for_each_piece([&](const Run &piece, std::span<optional_ptr<BlockCacheEntry>> entries) {
+		executor.ScheduleTask(make_uniq<FunctionExecutorTask>(
+		    executor, [this, &file, piece, entries]() { Fetch(file, piece, entries); }, "BlockCacheFetchTask"));
+	});
+	executor.WorkOnTasks();
 }
 
 vector<BlockCachePin> BlockCache::TryPinRange(BlockCacheFile &file, idx_t offset, idx_t size) {
@@ -1296,7 +1358,7 @@ void BlockCache::Prefetch(const shared_ptr<BlockCacheFile> &file_p, idx_t offset
 		}
 		auto plan = PlanRun(file, block, end, FileFlags(file) | FLAG_PREFETCHED, missing, admit);
 		if (!plan.entries.empty()) {
-			ScheduleFetch(file_p, plan.run, std::move(plan.entries), plan.bytes);
+			ScheduleFetch(file_p, plan.run, std::move(plan.entries));
 		}
 		if (plan.exhausted) {
 			return;
@@ -1306,31 +1368,42 @@ void BlockCache::Prefetch(const shared_ptr<BlockCacheFile> &file_p, idx_t offset
 }
 
 void BlockCache::ScheduleFetch(const shared_ptr<BlockCacheFile> &file, const Run &run,
-                               vector<optional_ptr<BlockCacheEntry>> entries, idx_t bytes) {
-	shared_ptr<Task> task;
-	{
-		absl::Cleanup abandon = [&] {
-			for (auto &entry : entries) {
-				if (entry) {
-					FinishLoad(*entry, false);
-					Unpin(*entry);
-				}
+                               vector<optional_ptr<BlockCacheEntry>> entries) {
+	idx_t handed = 0;
+	absl::Cleanup abandon = [&] {
+		for (idx_t i = handed; i < entries.size(); i++) {
+			if (entries[i]) {
+				FinishLoad(*entries[i], false);
+				Unpin(*entries[i]);
 			}
-		};
-		task = make_shared_ptr<BlockCacheFetchTask>(*this, file, run, std::move(entries), bytes);
-		std::move(abandon).Cancel();
-	}
-	file->in_flight.fetch_add(bytes, std::memory_order_relaxed);
-	in_flight.fetch_add(bytes, std::memory_order_relaxed);
-	{
-		annotated_lock_guard<annotated_mutex> guard(fetch_lock);
-		pending_tasks++;
-		if (stopped) {
-			return;
 		}
-	}
+	};
 	auto &scheduler = TaskScheduler::GetScheduler(db);
-	scheduler.ScheduleTask(Producer(), std::move(task), scheduler.AsyncPool());
+	const auto piece_blocks = PieceBlocks(run.block_count);
+	for (idx_t first = 0; first < run.block_count; first += piece_blocks) {
+		const Run piece {run.first_block + first, MinValue(piece_blocks, run.block_count - first)};
+		const auto range = std::span(entries).subspan(first, piece.block_count);
+		vector<optional_ptr<BlockCacheEntry>> piece_entries(range.begin(), range.end());
+		idx_t bytes = 0;
+		for (idx_t i = 0; i < piece.block_count; i++) {
+			if (piece_entries[i]) {
+				bytes += file->BlockBytes(piece.first_block + i);
+			}
+		}
+		shared_ptr<Task> task =
+		    make_shared_ptr<BlockCacheFetchTask>(*this, file, piece, std::move(piece_entries), bytes);
+		handed = first + piece.block_count;
+		file->in_flight.fetch_add(bytes, std::memory_order_relaxed);
+		in_flight.fetch_add(bytes, std::memory_order_relaxed);
+		{
+			annotated_lock_guard<annotated_mutex> guard(fetch_lock);
+			pending_tasks++;
+			if (stopped) {
+				continue;
+			}
+		}
+		scheduler.ScheduleTask(Producer(), std::move(task), scheduler.AsyncPool());
+	}
 }
 
 BlockCachePin BlockCache::CreateBlock(BlockCacheFile &file, idx_t block) {
