@@ -84,6 +84,8 @@ public:
 
 private:
 	shared_ptr<MemoryFile> Find(std::string_view path);
+	//! The file at [path]; when there is none, null if [null_if_missing], else an error that [verb] found none
+	shared_ptr<MemoryFile> FindExisting(const string &path, const char *verb, bool null_if_missing);
 	shared_ptr<MemoryFile> Create(std::string_view path);
 	static std::string_view Normalize(std::string_view path);
 
