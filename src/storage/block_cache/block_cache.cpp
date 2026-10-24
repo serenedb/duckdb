@@ -1000,16 +1000,18 @@ void BlockCache::Fetch(BlockCacheFile &file, const Run &run, vector<optional_ptr
 			const auto end = MinValue(file.GetSize(), (run.first_block + last_pending + 1) * BLOCK_SIZE);
 			auto source = file.Source();
 			if (first_pending == last_pending) {
-				source->Read(FrameData(entries[first_pending]->frame.load(std::memory_order_relaxed)), end - start,
-				             start);
+				auto frame = FrameData(entries[first_pending]->frame.load(std::memory_order_relaxed));
+				source->Read(frame, end - start, start);
+				memset(frame + (end - start), 0, BLOCK_SIZE - (end - start));
 			} else {
 				auto buffer = Allocator::DefaultAllocator().Allocate(end - start);
 				source->Read(buffer.get(), end - start, start);
 				for (idx_t i = first_pending; i <= last_pending; i++) {
 					if (pending[i]) {
 						const auto block_bytes = file.BlockBytes(run.first_block + i);
-						memcpy(FrameData(entries[i]->frame.load(std::memory_order_relaxed)),
-						       buffer.get() + (i - first_pending) * BLOCK_SIZE, block_bytes);
+						auto frame = FrameData(entries[i]->frame.load(std::memory_order_relaxed));
+						memcpy(frame, buffer.get() + (i - first_pending) * BLOCK_SIZE, block_bytes);
+						memset(frame + block_bytes, 0, BLOCK_SIZE - block_bytes);
 					}
 				}
 			}
