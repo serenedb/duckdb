@@ -368,8 +368,9 @@ unique_ptr<MacroFunction> PEGTransformerFactory::TransformMacroDefinition(PEGTra
 				default:
 					throw ParserException("Unsupported statement type in SQL function/procedure body: %s", body_string);
 				}
-				macro_function = TableMacro(*macro_function, std::move(body_node));
-				macro_function->source = body_string;
+				auto table_macro = TableMacro(*macro_function, std::move(body_node));
+				table_macro->source = body_string;
+				macro_function = std::move(table_macro);
 			}
 		}
 	}
