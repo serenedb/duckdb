@@ -141,6 +141,7 @@ public:
 
 	void Reset();
 	void SetRadixBits(const idx_t &radix_bits_p);
+	idx_t InitialRadixBits() const;
 	bool SetRadixBitsToExternal();
 	idx_t GetRadixBits() const;
 	idx_t GetMaximumSinkRadixBits() const;
@@ -410,6 +411,10 @@ void RadixHTConfig::Reset() {
 void RadixHTConfig::SetRadixBits(const idx_t &radix_bits_p) {
 	const auto max_bits = MinValue(maximum_sink_radix_bits, ExternalRadixBits(true));
 	SetRadixBitsInternal(MinValue(radix_bits_p, max_bits), false);
+}
+
+idx_t RadixHTConfig::InitialRadixBits() const {
+	return InitialSinkRadixBits();
 }
 
 bool RadixHTConfig::SetRadixBitsToExternal() {
@@ -954,7 +959,9 @@ void MaybeRepartition(ClientContext &context, RadixHTGlobalSinkState &gstate, Ra
 	if (row_size_per_partition >
 	    LossyNumericCast<idx_t>(config.BLOCK_FILL_FACTOR * static_cast<double>(gstate.block_alloc_size))) {
 		// We crossed our block filling threshold, try to increment radix bits
-		config.SetRadixBits(current_radix_bits + config.REPARTITION_RADIX_BITS);
+		if (current_radix_bits == config.InitialRadixBits() || ht.GetPartitionedData().GetLayout().AllConstant()) {
+			config.SetRadixBits(current_radix_bits + config.REPARTITION_RADIX_BITS);
+		}
 	}
 
 	const auto global_radix_bits = config.GetRadixBits();
