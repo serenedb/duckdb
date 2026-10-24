@@ -401,6 +401,7 @@ int64_t SequenceCatalogEntry::NextValue(DuckTransaction &transaction, SequenceSe
 		cached.next += cached.increment;
 	}
 	session_value.last = result;
+	session.last_used = oid;
 	if (!temporary) {
 		transaction.PushSequenceUsage(SequenceValue {this, cached.usage_count, cached.counter, cached.block_last});
 	}
@@ -434,6 +435,7 @@ void SequenceCatalogEntry::NextValues(DuckTransaction &transaction, SequenceSess
 			    Hugeint::Cast<int64_t>(hugeint_t(cached.next) + hugeint_t(take) * hugeint_t(cached.increment));
 		}
 	}
+	session.last_used = oid;
 	if (!temporary) {
 		transaction.PushSequenceUsage(SequenceValue {this, cached.usage_count, cached.counter, cached.block_last});
 	}

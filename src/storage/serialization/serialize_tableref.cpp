@@ -272,6 +272,7 @@ void TableFunctionRef::Serialize(Serializer &serializer) const {
 	serializer.WritePropertyWithDefault<unique_ptr<ParsedExpression>>(200, "function", SerializableFunction());
 	serializer.WritePropertyWithDefault<vector<Identifier>>(201, "column_name_alias", column_name_alias);
 	serializer.WritePropertyWithDefault<OrdinalityType>(202, "with_ordinality", with_ordinality, OrdinalityType::WITHOUT_ORDINALITY);
+	serializer.WritePropertyWithDefault<vector<LogicalType>>(16587, "column_types", column_types);
 }
 
 unique_ptr<TableRef> TableFunctionRef::Deserialize(Deserializer &deserializer) {
@@ -279,6 +280,7 @@ unique_ptr<TableRef> TableFunctionRef::Deserialize(Deserializer &deserializer) {
 	deserializer.ReadPropertyWithDefault<unique_ptr<ParsedExpression>>(200, "function", result->function);
 	deserializer.ReadPropertyWithDefault<vector<Identifier>>(201, "column_name_alias", result->column_name_alias);
 	deserializer.ReadPropertyWithExplicitDefault<OrdinalityType>(202, "with_ordinality", result->with_ordinality, OrdinalityType::WITHOUT_ORDINALITY);
+	deserializer.ReadPropertyWithDefault<vector<LogicalType>>(16587, "column_types", result->column_types);
 	return std::move(result);
 }
 

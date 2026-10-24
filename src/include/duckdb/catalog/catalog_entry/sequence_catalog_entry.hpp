@@ -43,6 +43,7 @@ struct SequenceSession {
 
 	mutex lock;
 	unordered_map<idx_t, SequenceSessionValue> values;
+	optional_idx last_used;
 };
 
 struct SequenceRuns {

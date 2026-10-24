@@ -1,0 +1,53 @@
+# name: test/sql/settings/question_mark_operators_setting.test
+# description: Test question mark operators setting
+# group: [settings]
+
+statement ok
+PREPARE s1 AS SELECT ?-1, ?||'b', ?|1
+
+query III
+EXECUTE s1(5, 'a', 2)
+----
+4	ab	3
+
+statement ok
+SET question_mark_operators=true
+
+statement error
+SELECT 1 ?# 2
+----
+<REGEX>:.*\?#.*
+
+statement error
+SELECT ?- 1
+----
+<REGEX>:.*\?-.*
+
+statement error
+SELECT 1 ?-| 2, 1 ?|| 2
+----
+<REGEX>:.*\?-\|.*
+
+query III
+EXECUTE s1(5, 'a', 2)
+----
+4	ab	3
+
+statement ok
+PREPARE s2 AS SELECT ? - 1, ? || 'b'
+
+query II
+EXECUTE s2(5, 'a')
+----
+4	ab
+
+statement ok
+SET question_mark_operators=false
+
+statement ok
+PREPARE s3 AS SELECT ?-1, ?||'b'
+
+query II
+EXECUTE s3(5, 'a')
+----
+4	ab

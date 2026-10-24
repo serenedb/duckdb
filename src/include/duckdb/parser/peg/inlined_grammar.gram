@@ -1026,7 +1026,8 @@ ReturnMacroBody <- 'RETURN' Expression
 MacroDefinitionBody <- TableMacroDefinition / ScalarMacroDefinition
 
 MacroParameters <- List(MacroParameter)
-MacroParameter <- NamedParameter / SimpleParameter
+MacroParameter <- NamedParameter / ModeParameter / SimpleParameter
+ModeParameter <- FuncArgMode TypeFuncName Type?
 SimpleParameter <- TypeFuncName Type?
 
 ScalarMacroDefinition <- Expression
@@ -1559,6 +1560,9 @@ ListComprehensionFilter <- 'IF' Expression
 
 ParensExpression <- Parens(Expression)
 
+OverlapsExpression <- OverlapsRow 'OVERLAPS' OverlapsRow
+OverlapsRow <- RowExpression / ParenthesisExpression
+
 # RUNNING and FINAL say how much of a MATCH_RECOGNIZE match the call below them reads. They are only
 # meaningful in MEASURES, which is where the binder checks for them.
 MeasureSemanticsExpression <- MeasureSemantics FunctionExpression
@@ -1568,6 +1572,7 @@ SingleExpression <-
 	LiteralExpression /
 	Parameter /
     SubqueryExpression /
+    OverlapsExpression /
     SpecialFunctionExpression /
     ParenthesisExpression /
     IntervalLiteral /
@@ -1613,8 +1618,9 @@ IsTestTail <- IsTest
 IsDistinctTail <- IsDistinctFromTail
 IsComparisonTail <- ComparisonExpressionTail
 IsOtherOperatorTail <- OtherOperatorTail
-IsTest <- IsLiteral / NotNull / IsNull
+IsTest <- IsLiteral / IsDocument / NotNull / IsNull
 IsLiteral <- 'IS' 'NOT'? IsLiteralValue
+IsDocument <- 'IS' 'NOT'? 'DOCUMENT'
 IsLiteralValue <- TrueLiteral / FalseLiteral / NullLiteral / UnknownLiteral
 UnknownLiteral <- 'UNKNOWN'
 NotNull <- NotNullKeyword / NotNullOperator
@@ -1729,9 +1735,10 @@ IndirectionList <- Indirection+
 
 Indirection <- CastOperator / DotOperator / SliceExpression / PostfixOperator
 CastOperator <- '::' Type
-DotOperator <- DotMethodOperator / DotColumnOperator
+DotOperator <- DotMethodOperator / DotColumnOperator / DotStarOperator
 DotMethodOperator <- '.' MethodExpression
 DotColumnOperator <- '.' ColLabel
+DotStarOperator <- '.' '*'
 MethodExpression <- ColLabel MethodExpressionArguments
 MethodExpressionArguments <- Parens(MethodExpressionArgumentList)
 MethodExpressionArgumentList <- DistinctOrAll? MethodFunctionArguments? OrderByClause? IgnoreOrRespectNulls?
@@ -1745,8 +1752,9 @@ StepSliceBound <- ':' Expression?
 PostfixOperator <- '!'
 
 
-SpecialFunctionExpression <- CoalesceExpression / UnpackExpression / TryExpression / ColumnsExpression / ExtractExpression / LambdaExpression / NullIfExpression / PositionExpression / RowExpression / SubstringSimilarExpression / SubstringExpression / TrimExpression / OverlayExpression
+SpecialFunctionExpression <- CoalesceExpression / UnpackExpression / TryExpression / ColumnsExpression / ExtractExpression / LambdaExpression / NullIfExpression / PositionExpression / RowExpression / SubstringSimilarExpression / SubstringExpression / TrimExpression / OverlayExpression / XmlConcatExpression
 CoalesceExpression <- 'COALESCE' Parens(List(Expression))
+XmlConcatExpression <- 'XMLCONCAT' Parens(List(Expression))
 UnpackExpression <- 'UNPACK' Parens(Expression)
 TryExpression <- 'TRY' Parens(Expression)
 ColumnsExpression <- StarSymbol? 'COLUMNS' Parens(Expression)
@@ -2101,7 +2109,11 @@ GrantFunctionTarget <- GrantRoutineKind QualifiedName FuncArgSignature?
 GrantRoutineKind <- 'FUNCTION' / 'ROUTINE' / 'PROCEDURE'
 FuncArgSignature <- Parens(List(FuncArg)?)
 FuncArg <- (FuncArgMode? ColId Type) / (FuncArgMode? Type)
-FuncArgMode <- 'IN' / 'OUT' / 'INOUT' / 'VARIADIC'
+FuncArgMode <- InArgMode / OutArgMode / InoutArgMode / VariadicArgMode
+InArgMode <- 'IN'
+OutArgMode <- 'OUT'
+InoutArgMode <- 'INOUT'
+VariadicArgMode <- 'VARIADIC'
 GrantNamedTarget <- GrantObjType? QualifiedName
 
 # Optional WITH GRANT OPTION suffix on a table GRANT: the grantee may re-grant.
@@ -2261,7 +2273,7 @@ SchemaReservedTable <- SchemaQualification ReservedTableName
 CatalogReservedSchemaTable <- CatalogQualification ReservedSchemaQualification+ ReservedTableName
 
 TableFunction <- TableFunctionLateralOpt / TableFunctionAliasColon
-TableFunctionLateralOpt <- Lateral? QualifiedTableFunction TableFunctionArguments WithOrdinality? TableAlias?
+TableFunctionLateralOpt <- Lateral? QualifiedTableFunction TableFunctionArguments WithOrdinality? TableFunctionAlias?
 TableFunctionAliasColon <- TableAliasColon QualifiedTableFunction TableFunctionArguments WithOrdinality? SampleClause?
 WithOrdinality <- 'WITH' 'ORDINALITY'
 QualifiedTableFunction <- CatalogQualification? SchemaQualification* TableFunctionName
@@ -2276,6 +2288,9 @@ NamedParameterAssignment <- ':=' / '=>'
 TableAlias <- TableAliasAs / TableAliasWithoutAs
 TableAliasAs <- 'AS' IdentifierOrStringLiteral ColumnAliases?
 TableAliasWithoutAs <- Identifier ColumnAliases?
+TableFunctionAlias <- ColumnDefinitionAliasAs / ColumnDefinitionAliasWithoutAs / TableAlias
+ColumnDefinitionAliasAs <- 'AS' IdentifierOrStringLiteral? ColIdTypeList
+ColumnDefinitionAliasWithoutAs <- Identifier ColIdTypeList
 
 AtClause <- 'AT' Parens(AtSpecifier)
 AtSpecifier <- AtUnit '=>' Expression

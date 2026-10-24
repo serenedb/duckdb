@@ -17,6 +17,54 @@ static bool IsValidTypeLookup(optional_ptr<CatalogEntry> entry) {
 	return entry->Cast<TypeCatalogEntry>().user_type.id() != LogicalTypeId::INVALID;
 }
 
+optional_ptr<CatalogEntry> ExpressionBinder::GetTypeEntry(const QualifiedName &name, QueryErrorContext error_context,
+                                                          OnEntryNotFound on_entry_not_found) {
+	EntryLookupInfo type_lookup(CatalogType::TYPE_ENTRY, QualifiedName(name.Name()), error_context);
+
+	// Resolve the qualification the same way a table reference is resolved: a leading component is the catalog when
+	// it names an attached database, and otherwise the outermost schema of a (possibly nested) schema path.
+	auto bound_name = Binder::BindTableName(binder.EntryRetriever(), name);
+	auto &type_catalog = bound_name.Catalog();
+	bool is_qualified = bound_name.Path().size() > 1;
+
+	if (type_catalog.empty() && !DatabaseManager::Get(context).HasAttachedDatabase()) {
+		// Look in the system catalog if no catalog was specified
+		return binder.entry_retriever.GetEntry(
+		    EntryLookupInfo(type_lookup, bound_name.WithCatalog(Identifier::SystemCatalog())), on_entry_not_found);
+	}
+	// Try to search from most specific to least specific
+	// The search path should already have been set to the correct catalog/schema,
+	// in case we are looking for a type in the same schema as a table we are creating
+	auto entry =
+	    binder.entry_retriever.GetEntry(EntryLookupInfo(type_lookup, bound_name), OnEntryNotFound::RETURN_NULL);
+	if (!IsValidTypeLookup(entry)) {
+		if (is_qualified) {
+			// re-run the lookup to report the qualification that was given
+			entry = binder.entry_retriever.GetEntry(EntryLookupInfo(type_lookup, bound_name), on_entry_not_found);
+			if (!entry) {
+				return nullptr;
+			}
+		}
+		entry = binder.entry_retriever.GetEntry(
+		    EntryLookupInfo(type_lookup,
+		                    QualifiedName(type_catalog, Identifier::InvalidSchema(), type_lookup.GetEntryIdentifier())),
+		    OnEntryNotFound::RETURN_NULL);
+	}
+	if (!IsValidTypeLookup(entry)) {
+		entry = binder.entry_retriever.GetEntry(
+		    EntryLookupInfo(type_lookup, QualifiedName(Identifier::InvalidCatalog(), Identifier::InvalidSchema(),
+		                                               type_lookup.GetEntryIdentifier())),
+		    OnEntryNotFound::RETURN_NULL);
+	}
+	if (!IsValidTypeLookup(entry)) {
+		entry = binder.entry_retriever.GetEntry(
+		    EntryLookupInfo(type_lookup, QualifiedName(Identifier::SystemCatalog(), Identifier::DefaultSchema(),
+		                                               type_lookup.GetEntryIdentifier())),
+		    on_entry_not_found);
+	}
+	return entry;
+}
+
 BindResult ExpressionBinder::BindExpression(TypeExpression &type_expr, idx_t depth) {
 	auto result_expr = make_uniq<BoundConstantExpression>(Value::TYPE(BindTypeExpression(type_expr)));
 	result_expr->SetQueryLocation(type_expr.GetQueryLocation());
@@ -29,52 +77,8 @@ LogicalType ExpressionBinder::BindTypeExpression(TypeExpression &type_expr) {
 	}
 	auto &type_name = type_expr.GetTypeName();
 
-	QueryErrorContext error_context(type_expr);
-	EntryLookupInfo type_lookup(CatalogType::TYPE_ENTRY, QualifiedName(type_name), error_context);
-
-	optional_ptr<CatalogEntry> entry = nullptr;
-
-	// Resolve the qualification the same way a table reference is resolved: a leading component is the catalog when
-	// it names an attached database, and otherwise the outermost schema of a (possibly nested) schema path.
-	auto bound_name = Binder::BindTableName(binder.EntryRetriever(), type_expr.GetQualifiedName());
-	auto &type_catalog = bound_name.Catalog();
-	bool is_qualified = bound_name.Path().size() > 1;
-
-	if (type_catalog.empty() && !DatabaseManager::Get(context).HasAttachedDatabase()) {
-		// Look in the system catalog if no catalog was specified
-		entry = binder.entry_retriever.GetEntry(
-		    EntryLookupInfo(type_lookup, bound_name.WithCatalog(Identifier::SystemCatalog())));
-	} else {
-		// Try to search from most specific to least specific
-		// The search path should already have been set to the correct catalog/schema,
-		// in case we are looking for a type in the same schema as a table we are creating
-
-		entry = binder.entry_retriever.GetEntry(EntryLookupInfo(type_lookup, bound_name), OnEntryNotFound::RETURN_NULL);
-
-		if (!IsValidTypeLookup(entry)) {
-			if (is_qualified) {
-				// re-run the lookup to report the qualification that was given
-				entry = binder.entry_retriever.GetEntry(EntryLookupInfo(type_lookup, bound_name),
-				                                        OnEntryNotFound::THROW_EXCEPTION);
-			}
-			entry = binder.entry_retriever.GetEntry(
-			    EntryLookupInfo(type_lookup, QualifiedName(type_catalog, Identifier::InvalidSchema(),
-			                                               type_lookup.GetEntryIdentifier())),
-			    OnEntryNotFound::RETURN_NULL);
-		}
-		if (!IsValidTypeLookup(entry)) {
-			entry = binder.entry_retriever.GetEntry(
-			    EntryLookupInfo(type_lookup, QualifiedName(Identifier::InvalidCatalog(), Identifier::InvalidSchema(),
-			                                               type_lookup.GetEntryIdentifier())),
-			    OnEntryNotFound::RETURN_NULL);
-		}
-		if (!IsValidTypeLookup(entry)) {
-			entry = binder.entry_retriever.GetEntry(
-			    EntryLookupInfo(type_lookup, QualifiedName(Identifier::SystemCatalog(), Identifier::DefaultSchema(),
-			                                               type_lookup.GetEntryIdentifier())),
-			    OnEntryNotFound::THROW_EXCEPTION);
-		}
-	}
+	auto entry =
+	    GetTypeEntry(type_expr.GetQualifiedName(), QueryErrorContext(type_expr), OnEntryNotFound::THROW_EXCEPTION);
 
 	// By this point we have to have found a type in the catalog
 	D_ASSERT(entry != nullptr);

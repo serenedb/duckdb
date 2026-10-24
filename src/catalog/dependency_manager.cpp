@@ -630,11 +630,14 @@ void DependencyManager::ScanAllDependents(CatalogTransaction transaction, const 
 
 void DependencyManager::ScanDependentEntries(CatalogTransaction transaction, CatalogEntry &object,
                                              const std::function<void(CatalogEntry &)> &callback) {
-	ScanAllDependents(transaction, GetLookupProperties(object), [&](DependencyEntry &dep) {
-		if (auto entry = LookupEntry(transaction, dep)) {
+	vector<reference<DependencyEntry>> dependents;
+	ScanAllDependents(transaction, GetLookupProperties(object),
+	                  [&](DependencyEntry &dep) { dependents.push_back(dep); });
+	for (auto &dep : dependents) {
+		if (auto entry = LookupEntry(transaction, dep.get())) {
 			callback(*entry);
 		}
-	});
+	}
 }
 
 void DependencyManager::CleanupDependencies(CatalogTransaction transaction, CatalogEntry &object) {
@@ -1484,6 +1487,22 @@ void DependencyManager::Scan(
 			auto &dependent_entry = *dep;
 			callback(entry, dependent_entry, dependent.Dependent().flags);
 		});
+	}
+}
+
+void DependencyManager::ScanEdges(
+    CatalogTransaction transaction, CatalogEntry &entry, bool subjects,
+    const std::function<void(CatalogEntry &, const DependencyDependentFlags &)> &callback) {
+	if (IsSystemEntry(entry)) {
+		return;
+	}
+	vector<reference<DependencyEntry>> edges;
+	ScanSetInternal(transaction, GetLookupProperties(transaction, entry), subjects,
+	                [&](DependencyEntry &edge) { edges.push_back(edge); });
+	for (auto &edge : edges) {
+		if (auto other = LookupEntry(transaction, edge.get())) {
+			callback(*other, edge.get().Dependent().flags);
+		}
 	}
 }
 

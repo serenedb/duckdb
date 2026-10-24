@@ -9,8 +9,11 @@ namespace duckdb {
 AggregateFunctionCatalogEntry::AggregateFunctionCatalogEntry(Catalog &catalog, SchemaCatalogEntry &schema,
                                                              CreateAggregateFunctionInfo &info)
     : FunctionEntry(CatalogType::AGGREGATE_FUNCTION_ENTRY, catalog, schema, info), functions(info.functions) {
-	functions.ApplyToFunctions(
-	    [&](AggregateFunction &function) { function.SetQualifiedName(schema.GetQualifiedName(name)); });
+	functions.ApplyToFunctions([&](AggregateFunction &function) { FinalizeFunction(function); });
+}
+
+void AggregateFunctionCatalogEntry::FinalizeFunction(AggregateFunction &function) const {
+	function.SetQualifiedName(GetQualifiedName(name));
 }
 
 } // namespace duckdb

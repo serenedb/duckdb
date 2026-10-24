@@ -5,6 +5,7 @@
 #include "duckdb/catalog/catalog_entry/scalar_function_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/window_function_catalog_entry.hpp"
 #include "duckdb/common/limits.hpp"
+#include "duckdb/common/string_util.hpp"
 #include "duckdb/common/type_visitor.hpp"
 #include "duckdb/execution/expression_executor.hpp"
 #include "duckdb/function/aggregate_function.hpp"
@@ -278,6 +279,30 @@ MultipleCandidateException(const Identifier &catalog_name, const Identifier &sch
 	return optional_idx();
 }
 
+static bool IsOperatorName(const Identifier &name) {
+	auto &text = name.GetIdentifierName();
+	return !text.empty() && std::all_of(text.begin(), text.end(), StringUtil::CharacterIsOperator);
+}
+
+template <class T>
+static optional_idx UnknownOperandMatch(optional_ptr<ClientContext> context, const Identifier &name,
+                                        const FunctionSet<T> &functions, const vector<idx_t> &candidate_functions,
+                                        const vector<LogicalType> &arguments) {
+	if (!context || arguments.size() != 2 || arguments[0].IsUnknown() == arguments[1].IsUnknown() ||
+	    !IsOperatorName(name) || Catalog::DefaultCompatibility(*context) != SqlCompatibility::POSTGRES) {
+		return optional_idx();
+	}
+	auto &operand = arguments[0].IsUnknown() ? arguments[1] : arguments[0];
+	for (auto f_idx : candidate_functions) {
+		auto &sig = functions.functions[f_idx]->GetSignature();
+		if (sig.GetParameterCount() == 2 && !sig.IsVariadic() && sig.GetParameter(0).GetType() == operand &&
+		    sig.GetParameter(1).GetType() == operand) {
+			return f_idx;
+		}
+	}
+	return optional_idx();
+}
+
 template <class T>
 optional_idx FunctionOverloads::Select(optional_ptr<ClientContext> context, const Identifier &name,
                                        const FunctionSet<T> &functions, const vector<LogicalType> &arguments,
@@ -291,6 +316,10 @@ optional_idx FunctionOverloads::Select(optional_ptr<ClientContext> context, cons
 		// Multiple candidates, check if there are any unknown arguments.
 		for (auto &arg_type : arguments) {
 			if (arg_type.IsUnknown()) {
+				auto match = UnknownOperandMatch(context, name, functions, candidate_functions, arguments);
+				if (match.IsValid()) {
+					return match;
+				}
 				// We cannot resolve the parameters to a function.
 				throw ParameterNotResolvedException();
 			}
@@ -840,15 +869,25 @@ unique_ptr<Expression> FunctionBinder::BindScalarFunction(const ScalarFunctionCa
                                                           vector<pair<Identifier, unique_ptr<Expression>>> arguments,
                                                           ErrorData &error, bool is_operator,
                                                           optional_ptr<Binder> binder) {
-	// select the best matching overload (this may name positional arguments by their alias for functions that opt
-	// into implicit argument naming, e.g. struct_pack/row)
-	auto best_function = BindFunctionFromArguments(func.name, func.functions, arguments, error);
+	auto best_function = SelectScalarFunction(func, arguments, error);
 	if (!best_function.IsValid()) {
 		return nullptr;
 	}
+	return BindScalarFunction(func, best_function.GetIndex(), std::move(arguments), is_operator, binder);
+}
 
-	// found a matching function!
-	auto selected_function = func.functions.GetFunctionByOffset(best_function.GetIndex());
+optional_idx FunctionBinder::SelectScalarFunction(const ScalarFunctionCatalogEntry &func,
+                                                  vector<pair<Identifier, unique_ptr<Expression>>> &arguments,
+                                                  ErrorData &error) {
+	// select the best matching overload (this may name positional arguments by their alias for functions that opt
+	// into implicit argument naming, e.g. struct_pack/row)
+	return BindFunctionFromArguments(func.name, func.functions, arguments, error);
+}
+
+unique_ptr<Expression> FunctionBinder::BindScalarFunction(const ScalarFunctionCatalogEntry &func, idx_t overload,
+                                                          vector<pair<Identifier, unique_ptr<Expression>>> arguments,
+                                                          bool is_operator, optional_ptr<Binder> binder) {
+	auto selected_function = func.functions.GetFunctionByOffset(overload);
 	auto &bound_function = *selected_function;
 
 	// now that the overload is fixed, split the arguments into their final positional/named children

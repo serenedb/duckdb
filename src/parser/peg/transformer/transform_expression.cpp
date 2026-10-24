@@ -224,6 +224,11 @@ PEGTransformerFactory::TransformBaseExpression(PEGTransformer &transformer,
 			    make_uniq<OperatorExpression>(ExpressionType::STRUCT_EXTRACT, std::move(struct_children));
 			expr = std::move(struct_expr);
 			prev_indirection_was_cast = false;
+		} else if (indirection_expr->GetExpressionClass() == ExpressionClass::STAR) {
+			auto star_expr = unique_ptr_cast<ParsedExpression, StarExpression>(std::move(indirection_expr));
+			star_expr->ExpressionMutable() = std::move(expr);
+			expr = std::move(star_expr);
+			prev_indirection_was_cast = false;
 		} else {
 			throw NotImplementedException("Unhandled case for Base Expression with indirection");
 		}
@@ -512,6 +517,24 @@ PEGTransformerFactory::TransformParenthesisExpression(PEGTransformer &transforme
 	return make_uniq<FunctionExpression>("row", std::move(children));
 }
 
+unique_ptr<ParsedExpression>
+PEGTransformerFactory::TransformOverlapsExpression(PEGTransformer &transformer,
+                                                   unique_ptr<ParsedExpression> overlaps_row,
+                                                   unique_ptr<ParsedExpression> overlaps_row_1) {
+	auto &left = overlaps_row->Cast<FunctionExpression>().GetArgumentsMutable();
+	auto &right = overlaps_row_1->Cast<FunctionExpression>().GetArgumentsMutable();
+	if (left.size() != 2) {
+		throw ParserException("wrong number of parameters on left side of OVERLAPS expression");
+	}
+	if (right.size() != 2) {
+		throw ParserException("wrong number of parameters on right side of OVERLAPS expression");
+	}
+	for (auto &bound : right) {
+		left.push_back(std::move(bound));
+	}
+	return make_uniq<FunctionExpression>("overlaps", std::move(left));
+}
+
 void PEGTransformerFactory::RemoveOrderQualificationRecursive(unique_ptr<ParsedExpression> &root_expr) {
 	ParsedExpressionIterator::VisitExpressionMutable<ColumnRefExpression>(
 	    *root_expr, [&](ColumnRefExpression &col_ref) {
@@ -761,6 +784,16 @@ static unique_ptr<ParsedExpression> ApplyIsTest(unique_ptr<ParsedExpression> exp
 		compare_expr->LeftMutable() = make_uniq<CastExpression>(LogicalType::BOOLEAN, std::move(expr));
 		return std::move(compare_expr);
 	}
+	if (is_expr->GetExpressionType() == ExpressionType::OPERATOR_NOT) {
+		auto &test = is_expr->Cast<OperatorExpression>().GetChildrenMutable()[0];
+		test = ApplyIsTest(std::move(expr), std::move(test));
+		return is_expr;
+	}
+	if (is_expr->GetExpressionClass() == ExpressionClass::FUNCTION) {
+		auto &arguments = is_expr->Cast<FunctionExpression>().GetArgumentsMutable();
+		arguments.insert(arguments.begin(), FunctionArgument(std::move(expr)));
+		return is_expr;
+	}
 	if (is_expr->GetExpressionClass() == ExpressionClass::OPERATOR) {
 		auto operator_expr = unique_ptr_cast<ParsedExpression, OperatorExpression>(std::move(is_expr));
 		operator_expr->GetChildrenMutable().insert(operator_expr->GetChildrenMutable().begin(), std::move(expr));
@@ -879,6 +912,17 @@ unique_ptr<ParsedExpression> PEGTransformerFactory::TransformIsLiteral(PEGTransf
 	auto expr_type = has_result ? ExpressionType::COMPARE_DISTINCT_FROM : ExpressionType::COMPARE_NOT_DISTINCT_FROM;
 	transformer.AddDepth(1);
 	return make_uniq<ComparisonExpression>(expr_type, nullptr, ConstantExpression::FromValue(is_literal_value));
+}
+
+unique_ptr<ParsedExpression> PEGTransformerFactory::TransformIsDocument(PEGTransformer &transformer,
+                                                                        const bool &has_result) {
+	auto is_document =
+	    make_uniq<FunctionExpression>("xml_is_well_formed_document", vector<unique_ptr<ParsedExpression>>());
+	if (!has_result) {
+		return std::move(is_document);
+	}
+	transformer.AddDepth(1);
+	return make_uniq<OperatorExpression>(ExpressionType::OPERATOR_NOT, std::move(is_document));
 }
 
 unique_ptr<ParsedExpression> PEGTransformerFactory::TransformNotNullKeyword(PEGTransformer &transformer) {
@@ -2139,6 +2183,10 @@ unique_ptr<ParsedExpression> PEGTransformerFactory::TransformDotColumnOperator(P
 	return ConstantExpression::String(col_label);
 }
 
+unique_ptr<ParsedExpression> PEGTransformerFactory::TransformDotStarOperator(PEGTransformer &transformer) {
+	return make_uniq<StarExpression>();
+}
+
 unique_ptr<ParsedExpression>
 PEGTransformerFactory::TransformMethodExpression(PEGTransformer &transformer, const string &col_label,
                                                  MethodArguments method_expression_arguments) {
@@ -2646,6 +2694,12 @@ PEGTransformerFactory::TransformCoalesceExpression(PEGTransformer &transformer,
 		result->GetChildrenMutable().push_back(std::move(expr));
 	}
 	return std::move(result);
+}
+
+unique_ptr<ParsedExpression>
+PEGTransformerFactory::TransformXmlConcatExpression(PEGTransformer &transformer,
+                                                    vector<unique_ptr<ParsedExpression>> expression) {
+	return make_uniq<FunctionExpression>("xmlconcat", std::move(expression));
 }
 
 unique_ptr<ParsedExpression> PEGTransformerFactory::TransformUnpackExpression(PEGTransformer &transformer,

@@ -1,0 +1,24 @@
+# name: test/sql/prepared/prepare_current_setting.test
+# description: A prepared current_setting reads the setting of every execution
+# group: [prepared]
+
+require skip_reload
+
+statement ok
+SET null_order='NULLS_FIRST'
+
+statement ok
+PREPARE setting AS SELECT current_setting('null_order')
+
+query I
+EXECUTE setting
+----
+NULLS_FIRST
+
+statement ok
+SET null_order='NULLS_LAST'
+
+query I
+EXECUTE setting
+----
+NULLS_LAST

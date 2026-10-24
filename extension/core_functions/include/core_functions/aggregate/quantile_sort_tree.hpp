@@ -12,9 +12,11 @@
 #include "duckdb/common/vector/flat_vector.hpp"
 #include "duckdb/common/vector/list_vector.hpp"
 #include "core_functions/aggregate/quantile_helpers.hpp"
+#include "duckdb/common/operator/add.hpp"
 #include "duckdb/common/operator/cast_operators.hpp"
 #include "duckdb/common/operator/interpolate.hpp"
 #include "duckdb/common/operator/multiply.hpp"
+#include "duckdb/common/operator/subtract.hpp"
 #include "duckdb/planner/expression/bound_constant_expression.hpp"
 #include "duckdb/function/window/window_index_tree.hpp"
 #include <algorithm>
@@ -169,9 +171,27 @@ string_t QuantileCast::Operation(const string_t &src, Vector &result);
 // Continuous interpolation
 template <bool DISCRETE>
 struct QuantileInterpolator {
-	QuantileInterpolator(const QuantileValue &q, const idx_t n_p, const bool desc_p)
-	    : desc(desc_p), RN((double)(n_p - 1) * q.dbl), FRN(ExactNumericCast<idx_t>(floor(RN))),
+	QuantileInterpolator(const QuantileValue &q, const idx_t n_p, const bool desc_p, const bool postgres_p)
+	    : desc(desc_p), postgres(postgres_p), RN((double)(n_p - 1) * q.dbl), FRN(ExactNumericCast<idx_t>(floor(RN))),
 	      CRN(ExactNumericCast<idx_t>(ceil(RN))), begin(0), end(n_p) {
+	}
+
+	template <class TARGET_TYPE>
+	TARGET_TYPE Lerp(const TARGET_TYPE &lo, const TARGET_TYPE &hi) const {
+		const double d = RN - FRN;
+		if constexpr (std::is_same_v<TARGET_TYPE, double>) {
+			if (postgres) {
+#pragma clang fp contract(off)
+				return lo + d * (hi - lo);
+			}
+		} else if constexpr (std::is_same_v<TARGET_TYPE, interval_t>) {
+			if (postgres) {
+				const auto delta = SubtractOperator::Operation<interval_t, interval_t, interval_t>(hi, lo);
+				return AddOperator::Operation<interval_t, interval_t, interval_t>(
+				    MultiplyOperator::Operation<interval_t, double, interval_t>(delta, d), lo);
+			}
+		}
+		return InterpolateOperator::Operation<TARGET_TYPE>(lo, d, hi);
 	}
 
 	template <class INPUT_TYPE, class TARGET_TYPE, typename ACCESSOR = QuantileDirect<INPUT_TYPE>>
@@ -182,7 +202,7 @@ struct QuantileInterpolator {
 		} else {
 			auto lo = QuantileCast::Operation<ACCESS_TYPE, TARGET_TYPE>(accessor(lidx), result);
 			auto hi = QuantileCast::Operation<ACCESS_TYPE, TARGET_TYPE>(accessor(hidx), result);
-			return InterpolateOperator::Operation<TARGET_TYPE>(lo, RN - FRN, hi);
+			return Lerp(lo, hi);
 		}
 	}
 
@@ -198,7 +218,7 @@ struct QuantileInterpolator {
 			std::nth_element(v_t + FRN, v_t + CRN, v_t + end, comp);
 			auto lo = QuantileCast::Operation<ACCESS_TYPE, TARGET_TYPE>(accessor(v_t[FRN]), result);
 			auto hi = QuantileCast::Operation<ACCESS_TYPE, TARGET_TYPE>(accessor(v_t[CRN]), result);
-			return InterpolateOperator::Operation<TARGET_TYPE>(lo, RN - FRN, hi);
+			return Lerp(lo, hi);
 		}
 	}
 
@@ -209,11 +229,12 @@ struct QuantileInterpolator {
 		} else {
 			auto lo = QuantileCast::Operation<INPUT_TYPE, TARGET_TYPE>(dest[0], result);
 			auto hi = QuantileCast::Operation<INPUT_TYPE, TARGET_TYPE>(dest[1], result);
-			return InterpolateOperator::Operation<TARGET_TYPE>(lo, RN - FRN, hi);
+			return Lerp(lo, hi);
 		}
 	}
 
 	const bool desc;
+	const bool postgres;
 	const double RN;
 	const idx_t FRN;
 	const idx_t CRN;
@@ -248,7 +269,7 @@ struct QuantileInterpolator<true> {
 		return MaxValue<idx_t>(1, n - floored) - 1;
 	}
 
-	QuantileInterpolator(const QuantileValue &q, const idx_t n_p, bool desc_p)
+	QuantileInterpolator(const QuantileValue &q, const idx_t n_p, bool desc_p, bool)
 	    : desc(desc_p), FRN(Index(q, n_p)), CRN(FRN), begin(0), end(n_p) {
 	}
 
@@ -363,14 +384,14 @@ struct QuantileSortTree {
 
 	template <typename INPUT_TYPE, typename RESULT_TYPE, bool DISCRETE>
 	RESULT_TYPE WindowScalar(QuantileCursor<INPUT_TYPE> &data, const SubFrames &frames, const idx_t n, Vector &result,
-	                         const QuantileValue &q) {
+	                         const QuantileValue &q, const bool postgres) {
 		D_ASSERT(n > 0);
 
 		//	Thread safe and idempotent.
 		index_tree->Build();
 
 		//	Find the interpolated indices within the frame
-		QuantileInterpolator<DISCRETE> interp(q, n, false);
+		QuantileInterpolator<DISCRETE> interp(q, n, false, postgres);
 		const auto lo_data = SelectNth(frames, interp.FRN);
 		auto hi_data = lo_data;
 		if (interp.CRN != interp.FRN) {
@@ -406,7 +427,7 @@ struct QuantileSortTree {
 		ID indirect(data);
 		for (const auto &q : bind_data.order) {
 			const auto &quantile = bind_data.quantiles[q];
-			QuantileInterpolator<DISCRETE> interp(quantile, n, false);
+			QuantileInterpolator<DISCRETE> interp(quantile, n, false, bind_data.postgres_interpolation);
 
 			const auto lo_data = SelectNth(frames, interp.FRN);
 			auto hi_data = lo_data;
@@ -418,6 +439,7 @@ struct QuantileSortTree {
 			rdata[lentry.offset + q] =
 			    interp.template Interpolate<idx_t, CHILD_TYPE, ID>(lo_data, hi_data, result, indirect);
 		}
+		bind_data.SetNullQuantiles(result, lentry.offset);
 	}
 };
 

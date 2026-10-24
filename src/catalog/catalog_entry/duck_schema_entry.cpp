@@ -103,6 +103,7 @@ DuckSchemaSets::DuckSchemaSets(Catalog &catalog, DuckSchemaEntry &schema)
 		tables.ShareNamespace(indexes);
 		tables.ShareNamespace(sequences);
 		indexes.ShareNamespace(sequences);
+		tables.ShareNamespace(types);
 	}
 }
 

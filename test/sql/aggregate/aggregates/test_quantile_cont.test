@@ -107,10 +107,10 @@ SELECT quantile_cont('00:00:00'::TIME + interval (r/100) second, 0.5) FROM quant
 ----
 01:23:19.5
 
-statement error
+query I
 SELECT quantile_cont(interval (r/100) second, 0.5) FROM quantile
 ----
-<REGEX>:.*Binder Error: No function matches.*'quantile_cont.*
+01:23:19.5
 
 # WITH TIME ZONE
 query I

@@ -8,6 +8,7 @@ struct MacroParameter {
 	Identifier name;
 	LogicalType type = LogicalType::UNKNOWN;
 	bool is_default = false;
+	char mode = 'i';
 	// PG-compat: bare `TYPE` (no name part) collides with DuckDB's named
 	// parameter form. We mark `(TYPE)` as ambiguous in TransformSimpleParameter
 	// and resolve later: with LANGUAGE present, treat it as a positional type

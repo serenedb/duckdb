@@ -15,11 +15,11 @@ create macro m() as table (select 42 i);
 statement ok
 drop macro m;
 
-# scalar macros are dropped first so this fails
-statement error
+# scalar macros are dropped first
+query I
 select m();
 ----
-Unsupported catalog type when binding function
+42
 
 # table macro is still available
 query I
