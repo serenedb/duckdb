@@ -190,6 +190,36 @@ idx_t BlockCacheFile::BlockBytes(idx_t block) const {
 }
 
 //===--------------------------------------------------------------------===//
+// BlockCacheAppender
+//===--------------------------------------------------------------------===//
+
+BlockCacheAppender::BlockCacheAppender(BlockCache &cache_p, shared_ptr<BlockCacheFile> file_p)
+    : cache(cache_p), file(std::move(file_p)) {
+}
+
+void BlockCacheAppender::Append(const_data_ptr_t data, idx_t count) {
+	while (count > 0) {
+		const auto offset = size % BlockCache::BLOCK_SIZE;
+		if (!current.IsValid()) {
+			current = cache.CreateBlock(*file, size / BlockCache::BLOCK_SIZE);
+		}
+		const auto chunk = MinValue(count, BlockCache::BLOCK_SIZE - offset);
+		memcpy(current.GetDataMutable() + offset, data, chunk);
+		data += chunk;
+		count -= chunk;
+		size += chunk;
+		cache.SetUnbackedSize(*file, size);
+		if (offset + chunk == BlockCache::BLOCK_SIZE) {
+			current.Reset();
+		}
+	}
+}
+
+void BlockCacheAppender::Finish() {
+	current.Reset();
+}
+
+//===--------------------------------------------------------------------===//
 // BlockCacheFetchTask
 //===--------------------------------------------------------------------===//
 
