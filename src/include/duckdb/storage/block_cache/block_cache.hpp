@@ -291,6 +291,9 @@ private:
 	static uint32_t WaitStripe(const BlockCacheEntry &entry);
 	BlockCacheBucket &BucketFor(uint64_t key) const;
 	data_ptr_t FrameData(uint32_t frame) const;
+	//! Calls [callback] with the entry of every frame that holds one
+	template <class FUNC>
+	void ForEachEntry(FUNC &&callback) const;
 
 	//! Finds block [block] of [file] and pins it, waiting while it loads when [wait_for_load]; false when it is not
 	//! cached
