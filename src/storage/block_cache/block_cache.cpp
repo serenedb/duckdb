@@ -1227,26 +1227,28 @@ void BlockCache::Prefetch(const shared_ptr<BlockCacheFile> &file_p, idx_t offset
 
 void BlockCache::ScheduleFetch(const shared_ptr<BlockCacheFile> &file, const Run &run,
                                vector<optional_ptr<BlockCacheEntry>> entries, idx_t bytes) {
-	bool accepted;
+	shared_ptr<Task> task;
 	{
-		annotated_lock_guard<annotated_mutex> guard(fetch_lock);
-		accepted = !stopped;
-		if (accepted) {
-			pending_tasks++;
-		}
-	}
-	if (!accepted) {
-		for (auto &entry : entries) {
-			if (entry) {
-				FinishLoad(*entry, false);
-				Unpin(*entry);
+		absl::Cleanup abandon = [&] {
+			for (auto &entry : entries) {
+				if (entry) {
+					FinishLoad(*entry, false);
+					Unpin(*entry);
+				}
 			}
-		}
-		return;
+		};
+		task = make_shared_ptr<BlockCacheFetchTask>(*this, file, run, std::move(entries), bytes);
+		std::move(abandon).Cancel();
 	}
 	file->in_flight.fetch_add(bytes, std::memory_order_relaxed);
 	in_flight.fetch_add(bytes, std::memory_order_relaxed);
-	auto task = make_shared_ptr<BlockCacheFetchTask>(*this, file, run, std::move(entries), bytes);
+	{
+		annotated_lock_guard<annotated_mutex> guard(fetch_lock);
+		pending_tasks++;
+		if (stopped) {
+			return;
+		}
+	}
 	auto &scheduler = TaskScheduler::GetScheduler(db);
 	auto &producer_token = Producer();
 	const auto pool = scheduler.NumberOfAsyncThreads() == 0 ? TaskSchedulerType::REGULAR : TaskSchedulerType::ASYNC;
