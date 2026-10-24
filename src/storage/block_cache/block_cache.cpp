@@ -443,21 +443,10 @@ shared_ptr<BlockCacheFile> BlockCache::CreateWrittenFile(const string &path) {
 	{
 		annotated_lock_guard<annotated_mutex> guard(file_lock);
 		auto &record = files[path];
-		if (record.number != 0) {
-			replaced = record;
-		} else if (files.size() >= sweep_at) {
-			sweep = true;
-			sweep_at = NumericLimits<idx_t>::Maximum();
-		}
-		record = FileRecord {next_file_number++, info, 1};
+		replaced = Renumber(record, info, 1, sweep);
 		number = record.number;
 	}
-	if (replaced) {
-		DropBlocks(replaced->number, BlockCountOf(replaced->info.validation.file_size));
-	}
-	if (sweep) {
-		SweepFiles();
-	}
+	Retire(replaced, sweep);
 	return make_shared_ptr<BlockCacheFile>(*this, path, number, false, info, nullptr);
 }
 
