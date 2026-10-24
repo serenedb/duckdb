@@ -158,4 +158,13 @@ CatalogType CatalogTypeFromString(const string &type) {
 
 // LCOV_EXCL_STOP
 
+bool IsCatalogLevelType(CatalogType type) {
+	for (auto catalog_level : CATALOG_LEVEL_TYPES) {
+		if (catalog_level == type) {
+			return true;
+		}
+	}
+	return false;
+}
+
 } // namespace duckdb
