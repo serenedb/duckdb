@@ -105,6 +105,10 @@ protected:
 	EvictionResult EvictObjectCacheEntries(MemoryTag tag, idx_t extra_memory, idx_t memory_limit);
 	//! Evict unpinned block cache blocks if needed.
 	EvictionResult EvictBlockCacheFrames(MemoryTag tag, idx_t extra_memory, idx_t memory_limit);
+	//! Calls [evict] with the bytes the used memory exceeds [memory_limit] by, with [extra_memory] reserved, until it
+	//! fits or [evict] frees nothing; [evict] returns the bytes it freed
+	template <class EVICT>
+	EvictionResult EvictCacheEntries(MemoryTag tag, idx_t extra_memory, idx_t memory_limit, EVICT &&evict);
 
 	//! Return freed memory to the OS, optionally releasing up to extra_memory from the block allocator's pool
 	void FlushAllocator(optional_idx extra_memory = optional_idx());

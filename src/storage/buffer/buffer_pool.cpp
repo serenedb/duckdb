@@ -346,29 +346,19 @@ TemporaryMemoryManager &BufferPool::GetTemporaryMemoryManager() {
 	return *temporary_memory_manager;
 }
 
-BufferPool::EvictionResult BufferPool::EvictObjectCacheEntries(MemoryTag tag, idx_t extra_memory, idx_t memory_limit) {
+template <class EVICT>
+BufferPool::EvictionResult BufferPool::EvictCacheEntries(MemoryTag tag, idx_t extra_memory, idx_t memory_limit,
+                                                         EVICT &&evict) {
 	TempBufferPoolReservation r(tag, *this, extra_memory);
-
-	if (memory_usage.GetUsedMemory(MemoryUsageCaches::NO_FLUSH) <= memory_limit) {
-		if (extra_memory > allocator_bulk_deallocation_flush_threshold) {
-			FlushAllocator(extra_memory);
-		}
-		return {true, std::move(r)};
-	}
-
 	bool success = false;
-	while (!object_cache->IsEmpty()) {
+	while (true) {
 		const idx_t used = memory_usage.GetUsedMemory(MemoryUsageCaches::NO_FLUSH);
-		const idx_t overshoot = used > memory_limit ? (used - memory_limit) : 0;
-		const idx_t target = MaxValue(extra_memory, overshoot);
-		const idx_t freed_mem = object_cache->EvictToReduceMemory(target);
-		// Break if all entries cannot be evicted.
-		if (freed_mem == 0) {
+		if (used <= memory_limit) {
+			success = true;
 			break;
 		}
-
-		if (memory_usage.GetUsedMemory(MemoryUsageCaches::NO_FLUSH) <= memory_limit) {
-			success = true;
+		// Break if all entries cannot be evicted.
+		if (evict(used - memory_limit) == 0) {
 			break;
 		}
 	}
@@ -377,8 +367,16 @@ BufferPool::EvictionResult BufferPool::EvictObjectCacheEntries(MemoryTag tag, id
 	} else if (extra_memory > allocator_bulk_deallocation_flush_threshold) {
 		FlushAllocator(extra_memory);
 	}
-
 	return {success, std::move(r)};
+}
+
+BufferPool::EvictionResult BufferPool::EvictObjectCacheEntries(MemoryTag tag, idx_t extra_memory, idx_t memory_limit) {
+	return EvictCacheEntries(tag, extra_memory, memory_limit, [&](idx_t overshoot) -> idx_t {
+		if (object_cache->IsEmpty()) {
+			return 0;
+		}
+		return object_cache->EvictToReduceMemory(MaxValue(extra_memory, overshoot));
+	});
 }
 
 BufferPool::EvictionResult BufferPool::EvictBlocks(QueryContext context, MemoryTag tag, idx_t extra_memory,
@@ -404,19 +402,8 @@ BufferPool::EvictionResult BufferPool::EvictBlocks(QueryContext context, MemoryT
 }
 
 BufferPool::EvictionResult BufferPool::EvictBlockCacheFrames(MemoryTag tag, idx_t extra_memory, idx_t memory_limit) {
-	TempBufferPoolReservation r(tag, *this, extra_memory);
-	const idx_t used = memory_usage.GetUsedMemory(MemoryUsageCaches::NO_FLUSH);
-	if (used > memory_limit) {
-		block_cache->EvictToReduceMemory(used - memory_limit);
-	}
-	if (memory_usage.GetUsedMemory(MemoryUsageCaches::NO_FLUSH) > memory_limit) {
-		r.Resize(0);
-		return {false, std::move(r)};
-	}
-	if (extra_memory > allocator_bulk_deallocation_flush_threshold) {
-		FlushAllocator(extra_memory);
-	}
-	return {true, std::move(r)};
+	return EvictCacheEntries(tag, extra_memory, memory_limit,
+	                         [&](idx_t overshoot) { return block_cache->EvictToReduceMemory(overshoot); });
 }
 
 BufferPool::EvictionResult BufferPool::EvictBlocksInternal(QueryContext context, EvictionQueue &queue, MemoryTag tag,
