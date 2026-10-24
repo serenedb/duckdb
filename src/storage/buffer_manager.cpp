@@ -62,7 +62,7 @@ void BufferManager::ReserveMemory(MemoryTag tag, idx_t size) {
 	throw NotImplementedException("This type of BufferManager can not reserve memory");
 }
 
-bool BufferManager::TryReserveMemory(MemoryTag tag, idx_t size) {
+bool BufferManager::TryReserveMemory(MemoryTag tag, idx_t size, bool evict_caches) {
 	throw NotImplementedException("This type of BufferManager can not reserve memory");
 }
 
