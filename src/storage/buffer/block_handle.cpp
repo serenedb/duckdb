@@ -53,7 +53,7 @@ BlockMemory::~BlockMemory() { // NOLINT: allow internal exceptions
 	}
 
 	try {
-		if (BlockId() >= MAXIMUM_BLOCK) {
+		if (BlockId() >= MAXIMUM_BLOCK && has_temporary_file) {
 			// The memory buffer lives in memory.
 			// Thus, it could've been offloaded to disk, and we should remove the file.
 			GetBufferManager().DeleteTemporaryFile(*this);
@@ -138,6 +138,7 @@ unique_ptr<FileBuffer> BlockMemory::UnloadAndTakeBlock(BlockLock &l, QueryContex
 		// This is a temporary block that cannot be destroyed upon evict/unpin.
 		// Thus, we write to it to a temporary file.
 		buffer_manager.WriteTemporaryBuffer(context, GetMemoryTag(), BlockId(), *GetBuffer());
+		has_temporary_file = true;
 	}
 	memory_charge.Resize(0);
 	SetState(BlockState::BLOCK_UNLOADED);
@@ -236,6 +237,7 @@ BufferHandle BlockHandle::Load(QueryContext context, unique_ptr<FileBuffer> reus
 		auto &buffer_manager = memory.GetBufferManager();
 		auto &buffer = memory.GetBuffer();
 		buffer = buffer_manager.ReadTemporaryBuffer(context, memory.GetMemoryTag(), *this, std::move(reusable_buffer));
+		memory.SetHasTemporaryFile(false);
 	}
 	memory.SetState(BlockState::BLOCK_LOADED);
 	memory.SetReaders(1);
