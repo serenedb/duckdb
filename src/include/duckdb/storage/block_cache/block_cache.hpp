@@ -11,6 +11,7 @@
 #include "duckdb/common/atomic.hpp"
 #include "duckdb/common/common.hpp"
 #include "duckdb/common/file_system.hpp"
+#include "duckdb/common/limits.hpp"
 #include "duckdb/common/mutex.hpp"
 #include "duckdb/common/optional.hpp"
 #include "duckdb/common/types/timestamp.hpp"
@@ -199,6 +200,16 @@ private:
 	idx_t size = 0;
 };
 
+//! Where one reader of a file is in it, so that the cache reads ahead of a reader that pins the file's blocks in order
+struct BlockCacheReadAhead {
+	//! The block a reader that keeps reading in order pins next
+	idx_t next_block = NumericLimits<idx_t>::Maximum();
+	//! The end of the blocks fetched ahead so far
+	idx_t end = 0;
+	//! The blocks the last read-ahead fetched
+	idx_t blocks = 0;
+};
+
 struct BlockCacheStatistics {
 	idx_t capacity = 0;
 	idx_t used = 0;
@@ -226,6 +237,8 @@ public:
 	static constexpr idx_t PIECE_SIZE = 4ULL * 1024ULL * 1024ULL;
 	//! Bytes one file may have in flight, which bounds hints tuned for the page cache
 	static constexpr idx_t MAX_FILE_IN_FLIGHT = 64ULL * 1024ULL * 1024ULL;
+	//! The most blocks one read-ahead fetches
+	static constexpr idx_t READ_AHEAD_BLOCKS = 64;
 
 	static idx_t BlockCountOf(idx_t size) {
 		return (size + BLOCK_SIZE - 1) / BLOCK_SIZE;
@@ -271,6 +284,11 @@ public:
 
 	//! Pins block [block] of [file], fetching it when missing; throws when the fetch fails
 	BlockCachePin Pin(const shared_ptr<BlockCacheFile> &file, idx_t block);
+	//! Pins block [block] of [file] for a reader that may read it in order: when the reader's last pin was of the
+	//! block before and [ahead] holds, the blocks from [block] on are fetched ahead, twice as many as the time before
+	//! (2 to READ_AHEAD_BLOCKS), but none at or past byte [limit]
+	BlockCachePin PinInOrder(const shared_ptr<BlockCacheFile> &file, idx_t block, BlockCacheReadAhead &read_ahead,
+	                         idx_t limit, bool ahead);
 	//! Pins the blocks of [offset, offset + size) of [file], fetching the missing ones together
 	vector<BlockCachePin> PinRange(const shared_ptr<BlockCacheFile> &file, idx_t offset, idx_t size);
 	//! Pins the blocks of [offset, offset + size) of [file] when all of them are cached; empty otherwise
