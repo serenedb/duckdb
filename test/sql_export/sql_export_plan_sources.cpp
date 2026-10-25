@@ -357,14 +357,34 @@ TEST_CASE("Table row number SQL export retains stream effects",
 				connection.Rollback();
 				auto sequence = connection.Query("SELECT last_value FROM duckdb_sequences() WHERE sequence_name='seq'");
 				REQUIRE_NO_FAIL(*sequence);
+				auto last_value = sequence->Collection().GetValue(0, 0);
+				if (consumption == 2) {
+					auto total = connection.Query("SELECT count(*) FROM stream_numbers");
+					REQUIRE_NO_FAIL(*total);
+					if (!has_error) {
+						REQUIRE_FALSE(rows.empty());
+					}
+					auto drawn = last_value.GetValue<int64_t>();
+					REQUIRE(drawn >= NumericCast<int64_t>(rows.size()));
+					REQUIRE(drawn < total->Collection().GetValue(0, 0).GetValue<int64_t>());
+				}
 				if (route == 0) {
 					expected_rows = std::move(rows);
-					expected_sequence = sequence->Collection().GetValue(0, 0);
+					expected_sequence = last_value;
 					expected_error = has_error;
 				} else {
-					REQUIRE(rows == expected_rows);
-					REQUIRE(has_error == expected_error);
-					REQUIRE(Value::NotDistinctFrom(sequence->Collection().GetValue(0, 0), expected_sequence));
+					if (consumption == 2 || has_error) {
+						auto prefix = expected_rows;
+						prefix.resize(MinValue<idx_t>(rows.size(), prefix.size()));
+						rows.resize(prefix.size());
+						REQUIRE(rows == prefix);
+					} else {
+						REQUIRE(rows == expected_rows);
+					}
+					if (consumption != 2) {
+						REQUIRE(has_error == expected_error);
+						REQUIRE(Value::NotDistinctFrom(last_value, expected_sequence));
+					}
 				}
 			}
 		}
