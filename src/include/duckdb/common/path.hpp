@@ -49,7 +49,7 @@ namespace duckdb {
 class Path {
 public:
 	// Primary Constructor
-	static Path FromString(const string &raw);
+	static Path FromString(std::string_view raw);
 
 	string ToString() const;
 
@@ -147,13 +147,13 @@ private:
 	bool has_trailing_separator = false;
 	bool is_absolute = false;
 
-	void NormalizeSegments(const string &raw, size_t path_offset);
+	void NormalizeSegments(std::string_view raw, size_t path_offset);
 
-	static size_t ParseURIScheme(const string &input, Path &parsed);
-	static size_t ParseFilePathTail(const string &input, size_t start, Path &parsed);
-	static size_t ParseFileSchemes(const string &input, Path &parsed);
+	static size_t ParseURIScheme(std::string_view input, Path &parsed);
+	static size_t ParseFilePathTail(std::string_view input, size_t start, Path &parsed);
+	static size_t ParseFileSchemes(std::string_view input, Path &parsed);
 #if defined(_WIN32)
-	static size_t ParseUNCScheme(const string &input, Path &parsed);
+	static size_t ParseUNCScheme(std::string_view input, Path &parsed);
 #endif
 };
 

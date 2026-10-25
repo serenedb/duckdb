@@ -1488,6 +1488,17 @@ TEST_CASE("Path one-off tests", "[file_system]") {
 	CHECK(Path::FromString("a").Join(std::vector<string>({"b", "c"})).ToString() == "a/b/c");
 }
 
+TEST_CASE("Path::FromString parses only the bytes of its view", "[file_system]") {
+	const string text = "s3://bucket/a/b and more/";
+	const auto remote = Path::FromString(std::string_view(text).substr(0, 15));
+	CHECK(remote.ToString() == "s3://bucket/a/b");
+	CHECK(remote.IsRemote());
+	CHECK_FALSE(remote.HasTrailingSeparator());
+
+	const string local = "/x/y/../z/tail";
+	CHECK(Path::FromString(std::string_view(local).substr(0, 9)).ToString() == "/x/z");
+}
+
 #ifdef _WIN32
 TEST_CASE("Check path canonicalization on Windows", "[file_system]") {
 	auto fs = FileSystem::CreateLocal();
