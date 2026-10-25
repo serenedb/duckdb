@@ -17,6 +17,7 @@
 #include "duckdb/parser/parsed_data/create_role_info.hpp"
 #include "duckdb/parser/parsed_data/create_database_info.hpp"
 #include "duckdb/parser/parsed_data/create_foreign_server_info.hpp"
+#include "duckdb/parser/parsed_data/create_tablespace_info.hpp"
 #include "duckdb/parser/parsed_data/create_subscription_info.hpp"
 #include "duckdb/parser/parsed_data/create_replication_origin_info.hpp"
 #include "duckdb/parser/parsed_data/create_tokenizer_info.hpp"
@@ -52,6 +53,9 @@ void CreateInfo::Serialize(Serializer &serializer) const {
 	if (serializer.ShouldSerialize(StorageVersion::SERENEDB_V1)) {
 		serializer.WritePropertyWithDefault<idx_t>(16486, "schema_oid", schema_oid);
 	}
+	if (serializer.ShouldSerialize(StorageVersion::SERENEDB_V1)) {
+		serializer.WritePropertyWithDefault<idx_t>(16487, "tablespace_oid", tablespace_oid, 0);
+	}
 }
 
 unique_ptr<CreateInfo> CreateInfo::Deserialize(Deserializer &deserializer) {
@@ -70,6 +74,7 @@ unique_ptr<CreateInfo> CreateInfo::Deserialize(Deserializer &deserializer) {
 	auto permissions = deserializer.ReadPropertyWithExplicitDefault<Permissions>(16484, "permissions", Permissions());
 	auto oid = deserializer.ReadPropertyWithDefault<idx_t>(16485, "oid");
 	auto schema_oid = deserializer.ReadPropertyWithDefault<idx_t>(16486, "schema_oid");
+	auto tablespace_oid = deserializer.ReadPropertyWithExplicitDefault<idx_t>(16487, "tablespace_oid", 0);
 	deserializer.Set<CatalogType>(type);
 	unique_ptr<CreateInfo> result;
 	switch (type) {
@@ -102,6 +107,9 @@ unique_ptr<CreateInfo> CreateInfo::Deserialize(Deserializer &deserializer) {
 		break;
 	case CatalogType::SUBSCRIPTION_ENTRY:
 		result = CreateSubscriptionInfo::Deserialize(deserializer);
+		break;
+	case CatalogType::TABLESPACE_ENTRY:
+		result = CreateTablespaceInfo::Deserialize(deserializer);
 		break;
 	case CatalogType::TABLE_ENTRY:
 		result = CreateTableInfo::Deserialize(deserializer);
@@ -136,6 +144,7 @@ unique_ptr<CreateInfo> CreateInfo::Deserialize(Deserializer &deserializer) {
 	result->permissions = permissions;
 	result->oid = oid;
 	result->schema_oid = schema_oid;
+	result->tablespace_oid = tablespace_oid;
 	result->SetQualification(std::move(catalog), std::move(schema));
 	if (!qualified_name.Path().empty()) {
 		result->qualified_name = std::move(qualified_name);
@@ -417,6 +426,20 @@ unique_ptr<CreateInfo> CreateTableInfo::Deserialize(Deserializer &deserializer) 
 	deserializer.ReadPropertyWithDefault<vector<unique_ptr<ParsedExpression>>>(205, "sort_keys", result->sort_keys);
 	deserializer.ReadPropertyWithDefault<case_insensitive_map_t<unique_ptr<ParsedExpression>>>(206, "options", result->options);
 	result->SetName(std::move(table));
+	return std::move(result);
+}
+
+void CreateTablespaceInfo::Serialize(Serializer &serializer) const {
+	CreateInfo::Serialize(serializer);
+	serializer.WritePropertyWithDefault<Identifier>(200, "name", qualified_name.Name());
+	serializer.WritePropertyWithDefault<string>(201, "location", location);
+}
+
+unique_ptr<CreateInfo> CreateTablespaceInfo::Deserialize(Deserializer &deserializer) {
+	auto result = duckdb::unique_ptr<CreateTablespaceInfo>(new CreateTablespaceInfo());
+	auto name = deserializer.ReadPropertyWithDefault<Identifier>(200, "name");
+	deserializer.ReadPropertyWithDefault<string>(201, "location", result->location);
+	result->SetName(std::move(name));
 	return std::move(result);
 }
 

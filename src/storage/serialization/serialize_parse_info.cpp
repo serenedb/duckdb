@@ -27,6 +27,7 @@
 #include "duckdb/parser/parsed_data/vacuum_info.hpp"
 #include "duckdb/parser/parsed_data/exported_table_data.hpp"
 #include "duckdb/parser/parsed_data/alter_job_info.hpp"
+#include "duckdb/parser/parsed_data/alter_tablespace_info.hpp"
 
 namespace duckdb {
 
@@ -139,6 +140,9 @@ unique_ptr<ParseInfo> AlterInfo::Deserialize(Deserializer &deserializer) {
 		break;
 	case AlterType::ALTER_TABLE:
 		result = AlterTableInfo::Deserialize(deserializer);
+		break;
+	case AlterType::ALTER_TABLESPACE:
+		result = AlterTablespaceInfo::Deserialize(deserializer);
 		break;
 	case AlterType::ALTER_VIEW:
 		result = AlterViewInfo::Deserialize(deserializer);
@@ -542,6 +546,17 @@ unique_ptr<AlterInfo> AlterRoleInfo::Deserialize(Deserializer &deserializer) {
 	deserializer.ReadPropertyWithDefault<int8_t>(318, "set_option", result->set_option);
 	deserializer.ReadPropertyWithDefault<idx_t>(319, "grant_role_id", result->grant_role_id);
 	deserializer.ReadPropertyWithDefault<idx_t>(320, "grantor_id", result->grantor_id);
+	return std::move(result);
+}
+
+void AlterTablespaceInfo::Serialize(Serializer &serializer) const {
+	AlterInfo::Serialize(serializer);
+	serializer.WritePropertyWithDefault<Identifier>(300, "new_name", new_name);
+}
+
+unique_ptr<AlterInfo> AlterTablespaceInfo::Deserialize(Deserializer &deserializer) {
+	auto result = duckdb::unique_ptr<AlterTablespaceInfo>(new AlterTablespaceInfo());
+	deserializer.ReadPropertyWithDefault<Identifier>(300, "new_name", result->new_name);
 	return std::move(result);
 }
 
