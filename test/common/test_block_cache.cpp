@@ -313,6 +313,39 @@ TEST_CASE("Block cache prefetch merges runs across small gaps and caps each requ
 	REQUIRE(covered == 100 * BLOCK);
 }
 
+TEST_CASE("Block cache reads ahead of a reader that pins blocks in order", "[block_cache]") {
+	DuckDB db(nullptr);
+	BlockCache cache(*db.instance, 256 * BLOCK);
+	CountingSourceFileSystem fs;
+	TestFile file("block_cache_read_ahead.bin", 200 * BLOCK);
+	auto cached = file.Open(cache, fs);
+	const auto size = cached->GetSize();
+
+	BlockCacheReadAhead in_order;
+	for (idx_t block = 0; block < 3; block++) {
+		auto pin = cache.PinInOrder(cached, block, in_order, size, true);
+		REQUIRE(HoldsExpectedBytes(pin, block));
+	}
+	REQUIRE(cache.IsCached(*cached, 3 * BLOCK, 5 * BLOCK));
+	REQUIRE_FALSE(cache.IsCached(*cached, 8 * BLOCK, BLOCK));
+
+	auto jump = cache.PinInOrder(cached, 100, in_order, size, true);
+	REQUIRE(HoldsExpectedBytes(jump, 100));
+	REQUIRE_FALSE(cache.IsCached(*cached, 101 * BLOCK, BLOCK));
+
+	BlockCacheReadAhead held_back;
+	cache.PinInOrder(cached, 50, held_back, size, false);
+	cache.PinInOrder(cached, 51, held_back, size, false);
+	REQUIRE_FALSE(cache.IsCached(*cached, 52 * BLOCK, BLOCK));
+	cache.PinInOrder(cached, 52, held_back, size, true);
+	REQUIRE(cache.IsCached(*cached, 53 * BLOCK, 2 * BLOCK));
+
+	BlockCacheReadAhead limited;
+	cache.PinInOrder(cached, 150, limited, 152 * BLOCK, true);
+	cache.PinInOrder(cached, 151, limited, 152 * BLOCK, true);
+	REQUIRE_FALSE(cache.IsCached(*cached, 152 * BLOCK, BLOCK));
+}
+
 TEST_CASE("Block cache fetches a long run in concurrent pieces and hands out each piece's blocks as it lands",
           "[block_cache]") {
 	DBConfig config;
