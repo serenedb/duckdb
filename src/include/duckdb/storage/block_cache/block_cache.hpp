@@ -286,9 +286,9 @@ public:
 	BlockCachePin Pin(const shared_ptr<BlockCacheFile> &file, idx_t block);
 	//! Pins block [block] of [file] for a reader that may read it in order: when the reader's last pin was of the
 	//! block before and [ahead] holds, the blocks from [block] on are fetched ahead, twice as many as the time before
-	//! (2 to READ_AHEAD_BLOCKS), but none at or past byte [limit]
+	//! (2 to READ_AHEAD_BLOCKS)
 	BlockCachePin PinInOrder(const shared_ptr<BlockCacheFile> &file, idx_t block, BlockCacheReadAhead &read_ahead,
-	                         idx_t limit, bool ahead);
+	                         bool ahead);
 	//! Pins the blocks of [offset, offset + size) of [file], fetching the missing ones together
 	vector<BlockCachePin> PinRange(const shared_ptr<BlockCacheFile> &file, idx_t offset, idx_t size);
 	//! Pins the blocks of [offset, offset + size) of [file] when all of them are cached; empty otherwise

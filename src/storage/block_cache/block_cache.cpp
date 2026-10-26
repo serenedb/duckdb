@@ -1112,7 +1112,7 @@ BlockCachePin BlockCache::Pin(const shared_ptr<BlockCacheFile> &file_p, idx_t bl
 }
 
 BlockCachePin BlockCache::PinInOrder(const shared_ptr<BlockCacheFile> &file, idx_t block,
-                                     BlockCacheReadAhead &read_ahead, idx_t limit, bool ahead) {
+                                     BlockCacheReadAhead &read_ahead, bool ahead) {
 	if (file->IsUnbacked()) {
 		return Pin(file, block);
 	}
@@ -1122,12 +1122,9 @@ BlockCachePin BlockCache::PinInOrder(const shared_ptr<BlockCacheFile> &file, idx
 	} else if (ahead && read_ahead.end <= block + 1 + read_ahead.blocks / 2) {
 		read_ahead.blocks = MinValue<idx_t>(MaxValue<idx_t>(read_ahead.blocks * 2, 2), READ_AHEAD_BLOCKS);
 		read_ahead.end = MaxValue(block + 1, read_ahead.end) + read_ahead.blocks;
-		const auto offset = block * BLOCK_SIZE;
-		if (offset < limit) {
-			try {
-				Prefetch(file, offset, MinValue((read_ahead.end - block) * BLOCK_SIZE, limit - offset));
-			} catch (...) {
-			}
+		try {
+			Prefetch(file, block * BLOCK_SIZE, (read_ahead.end - block) * BLOCK_SIZE);
+		} catch (...) {
 		}
 	}
 	return Pin(file, block);
