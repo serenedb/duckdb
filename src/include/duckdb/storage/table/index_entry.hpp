@@ -15,6 +15,7 @@
 #include "duckdb/execution/index/bound_index.hpp"
 #include "duckdb/storage/index.hpp"
 #include "duckdb/storage/storage_lock.hpp"
+#include "duckdb/transaction/transaction_data.hpp"
 
 #include <functional>
 #include <memory>
@@ -113,7 +114,8 @@ private:
 //! The IndexEntry provides a stable logical identity which refers to an interchangeable snapshot of an index.
 class IndexEntry : public enable_shared_from_this<IndexEntry> {
 public:
-	IndexEntry(unique_ptr<Index> index, idx_t index_oid, ConstraintCheckMode check_mode);
+	IndexEntry(unique_ptr<Index> index, idx_t index_oid, ConstraintCheckMode check_mode,
+	           transaction_t built_through = 0);
 	//! Append a chunk to the physical index, buffering it while the index is unbound.
 	void Append(DataChunk &chunk, Vector &row_ids);
 	//! Appends a chunk using delete and checkpoint indexes where required.
@@ -127,6 +129,9 @@ public:
 	//! Applies a removal or removal rollback to the physical index and its deltas.
 	void RemoveFromIndex(DataChunk &chunk, Vector &row_ids, IndexRemovalType removal_type,
 	                     optional_idx active_checkpoint);
+	bool ServesSnapshot(const SnapshotView &view) const {
+		return view.Sees(built_through);
+	}
 	//! Returns whether the physical index enforces a unique constraint.
 	bool IsUnique() const;
 	bool IsForeign() const;
@@ -221,6 +226,7 @@ private:
 	unique_ptr<Index> owned_index;
 	//! Whether the enforced constraint is deferred. Derived from the catalog constraint, not serialized.
 	const ConstraintCheckMode check_mode;
+	const transaction_t built_through;
 	IndexDeltas deltas;
 };
 

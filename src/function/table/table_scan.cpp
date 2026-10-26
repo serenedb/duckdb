@@ -1056,8 +1056,10 @@ unique_ptr<GlobalTableFunctionState> TableScanInitGlobal(ClientContext &context,
 		vacuum_lock = DuckTransactionManager::Get(attached).SharedVacuumLock();
 	}
 
+	const auto transaction = TransactionData(DuckTransaction::Get(context, storage.GetAttached()));
 	for (auto entry : indexes.IndexEntries()) {
-		if (entry->GetBindState() != IndexBindState::BOUND || entry->GetIndexType() != ART::TYPE_NAME) {
+		if (entry->GetBindState() != IndexBindState::BOUND || entry->GetIndexType() != ART::TYPE_NAME ||
+		    !entry->ServesSnapshot(transaction.view)) {
 			continue;
 		}
 		{

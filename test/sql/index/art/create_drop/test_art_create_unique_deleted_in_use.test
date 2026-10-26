@@ -1,0 +1,87 @@
+# name: test/sql/index/art/create_drop/test_art_create_unique_deleted_in_use.test
+# description: A unique index built while an older transaction still sees a deleted duplicate
+# group: [create_drop]
+
+statement ok
+SET immediate_transaction_mode = true;
+
+statement ok
+CREATE TABLE tbl (id INTEGER, payload VARCHAR);
+
+statement ok
+INSERT INTO tbl VALUES (1, 'first'), (2, 'second'), (1, 'duplicate');
+
+statement ok old
+BEGIN;
+
+query I old
+SELECT count(*) FROM tbl;
+----
+3
+
+statement ok
+DELETE FROM tbl WHERE payload = 'duplicate';
+
+statement ok
+CREATE UNIQUE INDEX tbl_id ON tbl (id);
+
+query T old
+SELECT payload FROM tbl WHERE id = 1 ORDER BY payload;
+----
+duplicate
+first
+
+query T
+SELECT payload FROM tbl WHERE id = 1;
+----
+first
+
+statement error
+INSERT INTO tbl VALUES (1, 'again');
+----
+<REGEX>:Constraint Error.*Duplicate key.*
+
+statement ok old
+COMMIT;
+
+statement ok
+INSERT INTO tbl VALUES (3, 'third');
+
+query T
+SELECT payload FROM tbl WHERE id = 1;
+----
+first
+
+statement ok
+CREATE TABLE pk (id INTEGER, payload VARCHAR);
+
+statement ok
+INSERT INTO pk VALUES (1, 'first'), (1, 'duplicate');
+
+statement ok old
+BEGIN;
+
+query I old
+SELECT count(*) FROM pk;
+----
+2
+
+statement ok
+DELETE FROM pk WHERE payload = 'duplicate';
+
+statement ok
+ALTER TABLE pk ADD PRIMARY KEY (id);
+
+query T old
+SELECT payload FROM pk WHERE id = 1 ORDER BY payload;
+----
+duplicate
+first
+
+statement error
+INSERT INTO pk VALUES (1, 'again');
+----
+<REGEX>:Constraint Error.*Duplicate key.*
+
+statement ok old
+COMMIT;
