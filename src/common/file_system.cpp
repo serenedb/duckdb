@@ -738,6 +738,10 @@ void FileSystem::HintWriteback(FileHandle &handle, idx_t location, idx_t nr_byte
 void FileSystem::SyncDirectory(const string &directory, optional_ptr<FileOpener> opener) {
 }
 
+shared_ptr<BlockCacheFile> FileSystem::GetBlockFile(const string &path) {
+	return nullptr;
+}
+
 void FileSystem::AbortFileWrite(FileHandle &handle) {
 	handle.Close();
 }
