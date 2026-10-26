@@ -217,6 +217,10 @@ public:
 	//! The block cache's view of [path] when this filesystem keeps the file in cache blocks, whose blocks a reader
 	//! pins; null for any other file
 	DUCKDB_API virtual shared_ptr<BlockCacheFile> GetBlockFile(const string &path);
+	//! Copies a closed file this filesystem keeps in cache blocks into one buffer-managed allocation, which spills
+	//! only while nothing maps it; readers that pinned its blocks keep them until they close. Any other file stays
+	//! as it is
+	DUCKDB_API virtual void Compact(const string &path);
 
 	//! Read exactly nr_bytes from the specified location in the file. Fails if nr_bytes could not be read. This is
 	//! equivalent to calling SetFilePointer(location) followed by calling Read().

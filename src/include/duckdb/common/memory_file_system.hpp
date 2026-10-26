@@ -74,9 +74,7 @@ public:
 
 	//! Null for a heap or compacted file
 	shared_ptr<BlockCacheFile> GetBlockFile(const string &path) override;
-	//! Copies a closed file of a registered instance from its blocks into one buffer-managed allocation, which spills
-	//! only while nothing maps it; readers that pinned its blocks keep them until they close
-	void Compact(const string &path);
+	void Compact(const string &path) override;
 	//! Removes every file; the database calls it before its block cache goes
 	void Clear();
 
