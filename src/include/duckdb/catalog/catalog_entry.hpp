@@ -78,6 +78,8 @@ public:
 	virtual void UndoAlter(ClientContext &context, AlterInfo &info);
 	virtual void Rollback(CatalogEntry &prev_entry);
 	static bool CreatedObject(const CatalogEntry &prev_entry);
+	//! Called by the statement that drops this entry, before the drop is installed
+	virtual void BeforeDrop(CatalogTransaction transaction);
 	virtual void OnDrop();
 
 	virtual unique_ptr<CatalogEntry> Copy(ClientContext &context) const;

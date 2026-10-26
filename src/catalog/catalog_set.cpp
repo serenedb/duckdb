@@ -574,6 +574,9 @@ bool CatalogSet::DropEntry(CatalogTransaction transaction, const Identifier &nam
 		return false;
 	}
 	auto entry = GetEntry(transaction, name);
+	if (entry) {
+		entry->BeforeDrop(transaction);
+	}
 	auto table_lock = entry ? LockTableStorage(*entry) : nullptr;
 	lock_guard<mutex> write_lock(catalog.GetWriteLock());
 	lock_guard<mutex> read_lock(catalog_lock);

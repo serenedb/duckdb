@@ -171,6 +171,9 @@ bool CatalogEntry::CreatedObject(const CatalogEntry &prev_entry) {
 	return prev_entry.type == CatalogType::INVALID || prev_entry.type == CatalogType::DELETED_ENTRY;
 }
 
+void CatalogEntry::BeforeDrop(CatalogTransaction transaction) {
+}
+
 void CatalogEntry::OnDrop() {
 }
 
