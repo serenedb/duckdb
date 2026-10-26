@@ -44,6 +44,7 @@ class CompressedFileSystem;
 class QueryContext;
 class MemoryMappedFile;
 struct MMapOptions;
+class BlockCacheFile;
 class MultiFileList;
 
 enum class CreateDirectoryMode : uint8_t {
@@ -213,6 +214,9 @@ public:
 	DUCKDB_API virtual unique_ptr<MemoryMappedFile> MemoryMapFile(const OpenFileInfo &path, FileOpenFlags flags,
 	                                                              const MMapOptions &options,
 	                                                              optional_ptr<FileOpener> opener = nullptr);
+	//! The block cache's view of [path] when this filesystem keeps the file in cache blocks, whose blocks a reader
+	//! pins; null for any other file
+	DUCKDB_API virtual shared_ptr<BlockCacheFile> GetBlockFile(const string &path);
 
 	//! Read exactly nr_bytes from the specified location in the file. Fails if nr_bytes could not be read. This is
 	//! equivalent to calling SetFilePointer(location) followed by calling Read().

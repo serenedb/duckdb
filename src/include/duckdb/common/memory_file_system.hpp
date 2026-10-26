@@ -72,9 +72,8 @@ public:
 	string GetName() const override;
 	string PathSeparator(const string &path) override;
 
-	//! The block cache's view of a file of a registered instance, whose blocks a reader pins; null for a heap or
-	//! compacted file
-	shared_ptr<BlockCacheFile> GetBlockFile(const string &path);
+	//! Null for a heap or compacted file
+	shared_ptr<BlockCacheFile> GetBlockFile(const string &path) override;
 	//! Copies a closed file of a registered instance from its blocks into one buffer-managed allocation, which spills
 	//! only while nothing maps it; readers that pinned its blocks keep them until they close
 	void Compact(const string &path);
