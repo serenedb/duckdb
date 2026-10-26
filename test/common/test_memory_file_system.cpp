@@ -165,6 +165,23 @@ TEST_CASE("Compacted memory files map in place", "[memory_file_system]") {
 	REQUIRE(ReadsBack(heap, "memory://heap.bin", MEMORY_BLOCK + 1));
 }
 
+TEST_CASE("The virtual filesystem finds and compacts the block files of memory files", "[memory_file_system]") {
+	DuckDB db(nullptr);
+	auto &vfs = FileSystem::GetFileSystem(*db.instance);
+	const string path = "memory://forwarded/file";
+	WriteFile(vfs, path, MEMORY_BLOCK + 1);
+	REQUIRE(vfs.GetBlockFile(path));
+	vfs.Compact(path);
+	REQUIRE(!vfs.GetBlockFile(path));
+	REQUIRE(ReadsBack(vfs, path, MEMORY_BLOCK + 1));
+
+	auto local = TestCreatePath("not_in_blocks.bin");
+	WriteFile(vfs, local, 1);
+	REQUIRE(!vfs.GetBlockFile(local));
+	vfs.Compact(local);
+	REQUIRE(ReadsBack(vfs, local, 1));
+}
+
 TEST_CASE("Compacted memory files spill while nothing maps them", "[memory_file_system]") {
 	DuckDB db(nullptr);
 	Connection con(db);

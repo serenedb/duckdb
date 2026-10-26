@@ -742,6 +742,9 @@ shared_ptr<BlockCacheFile> FileSystem::GetBlockFile(const string &path) {
 	return nullptr;
 }
 
+void FileSystem::Compact(const string &path) {
+}
+
 void FileSystem::AbortFileWrite(FileHandle &handle) {
 	handle.Close();
 }

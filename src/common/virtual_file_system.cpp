@@ -142,6 +142,10 @@ shared_ptr<BlockCacheFile> VirtualFileSystem::GetBlockFile(const string &path) {
 	return FindFileSystem(path, nullptr).GetBlockFile(path);
 }
 
+void VirtualFileSystem::Compact(const string &path) {
+	FindFileSystem(path, nullptr).Compact(path);
+}
+
 FileSystem &VirtualFileSystem::GetDefaultFileSystem() {
 	auto &fs = *CurrentRegistry().default_fs->file_system;
 	if (SubSystemIsDisabled(fs.GetName())) {
