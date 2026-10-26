@@ -138,6 +138,10 @@ unique_ptr<MemoryMappedFile> VirtualFileSystem::MemoryMapFile(const OpenFileInfo
 	return internal_filesystem.MemoryMapFile(path, flags, options, opener);
 }
 
+shared_ptr<BlockCacheFile> VirtualFileSystem::GetBlockFile(const string &path) {
+	return FindFileSystem(path, nullptr).GetBlockFile(path);
+}
+
 FileSystem &VirtualFileSystem::GetDefaultFileSystem() {
 	auto &fs = *CurrentRegistry().default_fs->file_system;
 	if (SubSystemIsDisabled(fs.GetName())) {

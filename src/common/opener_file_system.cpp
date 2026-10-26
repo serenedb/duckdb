@@ -23,6 +23,11 @@ unique_ptr<MemoryMappedFile> OpenerFileSystem::MemoryMapFile(const OpenFileInfo 
 	return GetFileSystem().MemoryMapFile(path, flags, options, GetOpener());
 }
 
+shared_ptr<BlockCacheFile> OpenerFileSystem::GetBlockFile(const string &path) {
+	VerifyCanAccessFile(path);
+	return GetFileSystem().GetBlockFile(path);
+}
+
 unique_ptr<MultiFileList> OpenerFileSystem::GlobFilesExtended(const string &path, const FileGlobInput &input,
                                                               optional_ptr<FileOpener> opener) {
 	VerifyNoOpener(opener);
