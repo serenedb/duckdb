@@ -298,6 +298,7 @@ public:
 	                                           const MMapOptions &options,
 	                                           optional_ptr<FileOpener> opener = nullptr) override;
 	shared_ptr<BlockCacheFile> GetBlockFile(const string &path) override;
+	void Compact(const string &path) override;
 
 protected:
 	bool ListFilesExtended(const string &directory, const std::function<void(OpenFileInfo &info)> &callback,
