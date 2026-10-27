@@ -233,21 +233,27 @@ void BlockCacheAppender::Commit(idx_t count) {
 	}
 }
 
-void BlockCacheAppender::Finish() {
+void BlockCacheAppender::Finish(const string &version_tag, timestamp_t last_modified) {
 	if (current.IsValid()) {
 		const auto end = size % BlockCache::BLOCK_SIZE;
 		memset(current.GetDataMutable() + end, 0, BlockCache::BLOCK_SIZE - end);
 		current.Reset();
 	}
 	if (!file->IsUnbacked()) {
-		cache.FinishWrittenFile(*file, size, true);
+		CacheValidationInfo written;
+		written.file_size = size;
+		written.version_tag = version_tag;
+		written.last_modified = last_modified;
+		cache.FinishWrittenFile(*file, written, true);
 	}
 }
 
 void BlockCacheAppender::Abandon() {
 	D_ASSERT(!file->IsUnbacked());
 	current.Reset();
-	cache.FinishWrittenFile(*file, size, false);
+	CacheValidationInfo written;
+	written.file_size = size;
+	cache.FinishWrittenFile(*file, written, false);
 }
 
 //===--------------------------------------------------------------------===//
@@ -511,15 +517,15 @@ shared_ptr<BlockCacheFile> BlockCache::CreateWrittenFile(const string &path) {
 	return make_shared_ptr<BlockCacheFile>(*this, path, number, false, info, nullptr);
 }
 
-void BlockCache::FinishWrittenFile(BlockCacheFile &file, idx_t size, bool published) {
+void BlockCache::FinishWrittenFile(BlockCacheFile &file, const CacheValidationInfo &written, bool published) {
 	D_ASSERT(!file.IsUnbacked());
-	file.size.store(size, std::memory_order_release);
+	file.size.store(written.file_size, std::memory_order_release);
 	{
 		annotated_lock_guard<annotated_mutex> guard(file_lock);
 		auto entry = files.find(file.path);
 		if (entry != files.end() && entry->second.number == file.number) {
 			if (published) {
-				entry->second.info.validation.file_size = size;
+				entry->second.info.validation = written;
 			} else {
 				files.erase(entry);
 			}
