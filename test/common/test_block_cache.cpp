@@ -238,6 +238,36 @@ TEST_CASE("Block cache pins hold the bytes of their block", "[block_cache]") {
 	REQUIRE(fs.ReadCount() == 6);
 }
 
+TEST_CASE("Block cache pins a byte range in one piece", "[block_cache]") {
+	DuckDB db(nullptr);
+	BlockCache cache(*db.instance, 64 * BLOCK);
+	CountingSourceFileSystem fs;
+	TestFile file("block_cache_pin_bytes.bin", 5 * BLOCK + 1000);
+	auto cached = file.Open(cache, fs);
+
+	const auto holds = [](const BlockCachePin &pin, idx_t offset) {
+		for (idx_t i = 0; i < pin.Size(); i++) {
+			if (pin.Ptr()[i] != ExpectedByte(offset + i)) {
+				return false;
+			}
+		}
+		return true;
+	};
+	auto inside = cache.PinBytes(cached, BLOCK + 100, 1000);
+	REQUIRE(inside.Size() == 1000);
+	REQUIRE(holds(inside, BLOCK + 100));
+	auto block = cache.Pin(cached, 1);
+	REQUIRE(inside.Ptr() == block.Ptr() + 100);
+
+	auto across = cache.PinBytes(cached, 2 * BLOCK - 16, 2 * BLOCK + 32);
+	REQUIRE(across.Size() == 2 * BLOCK + 32);
+	REQUIRE(holds(across, 2 * BLOCK - 16));
+
+	auto tail = cache.PinBytes(cached, 5 * BLOCK + 900, 100);
+	REQUIRE(tail.Size() == 100);
+	REQUIRE(holds(tail, 5 * BLOCK + 900));
+}
+
 TEST_CASE("Block cache reopens of an unchanged file share its blocks", "[block_cache]") {
 	DuckDB db(nullptr);
 	BlockCache cache(*db.instance, 64 * BLOCK);
