@@ -12,9 +12,16 @@ namespace duckdb {
 //! The ConstantFoldingExpressionMatcher matches on any scalar expression (i.e. Expression::IsFoldable is true)
 class ConstantFoldingExpressionMatcher : public FoldableConstantMatcher {
 public:
+	explicit ConstantFoldingExpressionMatcher(ExpressionRewriter &rewriter) : rewriter(rewriter) {
+	}
+
 	bool Match(Expression &expr, vector<reference<Expression>> &bindings) override {
 		// we also do not match on ConstantExpressions, because we cannot fold those any further
 		if (expr.GetExpressionType() == ExpressionType::VALUE_CONSTANT) {
+			return false;
+		}
+		if (rewriter.ChildNotFoldable() || !expr.IsFoldable()) {
+			rewriter.MarkNotFoldable();
 			return false;
 		}
 		return FoldableConstantMatcher::Match(expr, bindings);
@@ -24,10 +31,13 @@ public:
 		return expression_type != ExpressionType::VALUE_CONSTANT &&
 		       FoldableConstantMatcher::CanMatch(expression_class, expression_type, function_name);
 	}
+
+private:
+	ExpressionRewriter &rewriter;
 };
 
 ConstantFoldingRule::ConstantFoldingRule(ExpressionRewriter &rewriter) : Rule(rewriter) {
-	auto op = make_uniq<ConstantFoldingExpressionMatcher>();
+	auto op = make_uniq<ConstantFoldingExpressionMatcher>(rewriter);
 	root = std::move(op);
 }
 

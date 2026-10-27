@@ -19,6 +19,7 @@ struct RewriteFrame {
 	optional_ptr<Expression> parent;
 	optional_idx parent_frame;
 	bool child_throws = false;
+	bool child_not_foldable = false;
 };
 
 static bool ApplyRule(LogicalOperator &op, const vector<reference<Rule>> &rules, unique_ptr<Expression> &expr,
@@ -111,6 +112,7 @@ unique_ptr<Expression> ExpressionRewriter::ApplyRules(LogicalOperator &op, const
 		if (!frame.children_visited) {
 			frame.children_visited = true;
 			frame.child_throws = false;
+			frame.child_not_foldable = false;
 			// Rewrite the subtree bottom-up so parent rules see already-simplified children.
 			CollectChildren(*current_expr, children);
 			const bool children_frozen = FreezesChildren(barriers, *current_expr, frame.frozen);
@@ -127,14 +129,18 @@ unique_ptr<Expression> ExpressionRewriter::ApplyRules(LogicalOperator &op, const
 		}
 		current_parent = frame.parent;
 		child_throws = frame.child_throws;
+		child_not_foldable = frame.child_not_foldable;
 		throws = false;
+		not_foldable = false;
 		if (ApplyRule(op, RulesFor(*current_expr), current_expr, frame.is_root)) {
 			changes_made = true;
 			frame.children_visited = false;
 			continue;
 		}
-		if (throws && frame.parent_frame.IsValid()) {
-			stack[frame.parent_frame.GetIndex()].child_throws = true;
+		if (frame.parent_frame.IsValid()) {
+			auto &parent_frame = stack[frame.parent_frame.GetIndex()];
+			parent_frame.child_throws |= throws;
+			parent_frame.child_not_foldable |= not_foldable;
 		}
 		stack.pop_back();
 	}

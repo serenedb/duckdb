@@ -48,6 +48,12 @@ public:
 	void MarkThrows() {
 		throws = true;
 	}
+	bool ChildNotFoldable() const {
+		return child_not_foldable;
+	}
+	void MarkNotFoldable() {
+		not_foldable = true;
+	}
 
 private:
 	struct RuleSet {
@@ -66,6 +72,8 @@ private:
 	optional_ptr<Expression> current_parent;
 	bool child_throws = false;
 	bool throws = false;
+	bool child_not_foldable = false;
+	bool not_foldable = false;
 	vector<rewrite_barrier_t> to_apply_barriers;
 	unordered_map<uint16_t, RuleSet> rule_sets;
 	idx_t rule_sets_rule_count = 0;
