@@ -11,6 +11,7 @@
 #include "duckdb/catalog/standard_entry.hpp"
 #include "duckdb/catalog/duck_catalog.hpp"
 #include "duckdb/common/checksum.hpp"
+#include "duckdb/common/fault_points.hpp"
 #include "duckdb/common/thread.hpp"
 #include "duckdb/main/settings.hpp"
 #include "duckdb/common/encryption_functions.hpp"
@@ -864,6 +865,7 @@ void WriteAheadLog::SyncUpTo(idx_t offset, absl::FunctionRef<void(idx_t)> on_syn
 			if (fsync_sleep_ms > 0) {
 				ThreadUtil::SleepMs(fsync_sleep_ms);
 			}
+			SDB_PARK_ONCE_ON_FAILURE("pause_wal_sync");
 			if (force_fsync_failure) {
 				throw IOException("debug_force_wal_fsync_failure: injected WAL fsync failure");
 			}

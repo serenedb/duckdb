@@ -18,6 +18,7 @@
 #include "duckdb/common/assert.hpp"
 #include "duckdb/catalog/standard_entry.hpp"
 #include "duckdb/common/enums/checkpoint_abort.hpp"
+#include "duckdb/common/fault_points.hpp"
 #include "duckdb/common/serializer/binary_deserializer.hpp"
 #include "duckdb/common/serializer/binary_serializer.hpp"
 #include "duckdb/common/thread.hpp"
@@ -316,6 +317,7 @@ void SingleFileCheckpointWriter::CreateCheckpoint() {
 	if (checkpoint_sleep_ms > 0) {
 		ThreadUtil::SleepMs(checkpoint_sleep_ms);
 	}
+	SDB_PARK_ONCE_ON_FAILURE("pause_checkpoint");
 
 	vector<reference<SchemaCatalogEntry>> schemas;
 	// we scan the set of committed schemas

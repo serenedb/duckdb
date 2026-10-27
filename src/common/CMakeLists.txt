@@ -47,6 +47,7 @@ add_library_unity(
   exception_format_value.cpp
   explain_value.cpp
   logical_type_info.cpp
+  fault_points.cpp
   file_buffer.cpp
   file_system.cpp
   filename_pattern.cpp
