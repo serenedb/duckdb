@@ -86,6 +86,14 @@ public:
 		GetFileSystem().HintWriteback(handle, location, nr_bytes);
 	}
 
+	FileWriteWindow GetWriteWindow(FileHandle &handle) override {
+		return GetFileSystem().GetWriteWindow(handle);
+	}
+
+	void CommitWriteWindow(FileHandle &handle, idx_t nr_bytes) override {
+		GetFileSystem().CommitWriteWindow(handle, nr_bytes);
+	}
+
 	void SyncDirectory(const string &directory, optional_ptr<FileOpener> opener) override {
 		VerifyNoOpener(opener);
 		VerifyCanAccessDirectory(directory);
