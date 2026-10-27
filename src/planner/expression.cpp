@@ -62,8 +62,8 @@ bool Expression::PropagatesNullValues() const {
 	return ExpressionIterator::AllChild(*this, [](const Expression &child) { return child.PropagatesNullValues(); });
 }
 
-static bool IsNeverFoldable(const Expression &expr) {
-	switch (expr.GetExpressionClass()) {
+bool Expression::IsNeverFoldable(ExpressionClass expression_class) {
+	switch (expression_class) {
 	case ExpressionClass::BOUND_AGGREGATE:
 	case ExpressionClass::BOUND_COLUMN_REF:
 	case ExpressionClass::BOUND_DEFAULT:
@@ -73,7 +73,6 @@ static bool IsNeverFoldable(const Expression &expr) {
 	case ExpressionClass::BOUND_SUBQUERY:
 	case ExpressionClass::BOUND_UNNEST:
 	case ExpressionClass::BOUND_WINDOW:
-		D_ASSERT(!expr.IsFoldable());
 		return true;
 	default:
 		return false;
@@ -81,7 +80,13 @@ static bool IsNeverFoldable(const Expression &expr) {
 }
 
 bool Expression::IsFoldable() const {
-	if (ExpressionIterator::AnyChild(*this, [](const Expression &child) { return IsNeverFoldable(child); })) {
+	if (ExpressionIterator::AnyChild(*this, [](const Expression &child) {
+		    if (!IsNeverFoldable(child.GetExpressionClass())) {
+			    return false;
+		    }
+		    D_ASSERT(!child.IsFoldable());
+		    return true;
+	    })) {
 		return false;
 	}
 	return ExpressionIterator::AllChild(*this, [](const Expression &child) { return child.IsFoldable(); });

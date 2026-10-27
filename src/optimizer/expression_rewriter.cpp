@@ -67,8 +67,38 @@ static bool FreezesChildren(const vector<rewrite_barrier_t> &barriers, const Exp
 	return false;
 }
 
-unique_ptr<Expression> ExpressionRewriter::ApplyRules(LogicalOperator &op, const vector<reference<Rule>> &rules,
-                                                      const vector<rewrite_barrier_t> &barriers,
+vector<reference<Rule>> ExpressionRewriter::SelectRules(ExpressionClass expression_class,
+                                                        ExpressionType expression_type,
+                                                        optional_ptr<const Identifier> function_name) const {
+	vector<reference<Rule>> result;
+	for (auto &rule : rules) {
+		if (rule->root->CanMatch(expression_class, expression_type, function_name)) {
+			result.push_back(*rule);
+		}
+	}
+	return result;
+}
+
+const vector<reference<Rule>> &ExpressionRewriter::RulesFor(const Expression &expr) {
+	const auto expression_class = expr.GetExpressionClass();
+	const auto expression_type = expr.GetExpressionType();
+	auto [rule_set, inserted] = rule_sets.try_emplace(
+	    static_cast<uint16_t>(static_cast<uint16_t>(expression_class) << 8 | static_cast<uint16_t>(expression_type)));
+	if (expression_class != ExpressionClass::BOUND_FUNCTION) {
+		if (inserted) {
+			rule_set->second.rules = SelectRules(expression_class, expression_type, nullptr);
+		}
+		return rule_set->second.rules;
+	}
+	auto &name = expr.Cast<BoundFunctionExpression>().Function().GetName();
+	auto [function_rules, function_inserted] = rule_set->second.function_rules.try_emplace(name);
+	if (function_inserted) {
+		function_rules->second = SelectRules(expression_class, expression_type, name);
+	}
+	return function_rules->second;
+}
+
+unique_ptr<Expression> ExpressionRewriter::ApplyRules(LogicalOperator &op, const vector<rewrite_barrier_t> &barriers,
                                                       unique_ptr<Expression> expr, bool &changes_made, bool is_root) {
 	vector<RewriteFrame> stack;
 	vector<reference<unique_ptr<Expression>>> children;
@@ -98,7 +128,7 @@ unique_ptr<Expression> ExpressionRewriter::ApplyRules(LogicalOperator &op, const
 		current_parent = frame.parent;
 		child_throws = frame.child_throws;
 		throws = false;
-		if (ApplyRule(op, rules, current_expr, frame.is_root)) {
+		if (ApplyRule(op, RulesFor(*current_expr), current_expr, frame.is_root)) {
 			changes_made = true;
 			frame.children_visited = false;
 			continue;
@@ -129,9 +159,9 @@ void ExpressionRewriter::VisitOperator(LogicalOperator &op) {
 	VisitOperatorChildren(op);
 	this->op = &op;
 
-	to_apply_rules.clear();
-	for (auto &rule : rules) {
-		to_apply_rules.push_back(*rule);
+	if (rule_sets_rule_count != rules.size()) {
+		rule_sets.clear();
+		rule_sets_rule_count = rules.size();
 	}
 	to_apply_barriers.clear();
 	for (auto &extension : OptimizerExtension::Iterate(context)) {
@@ -158,7 +188,7 @@ void ExpressionRewriter::VisitOperator(LogicalOperator &op) {
 
 void ExpressionRewriter::VisitExpression(unique_ptr<Expression> *expression) {
 	bool changes_made = false;
-	*expression = ApplyRules(*op, to_apply_rules, to_apply_barriers, std::move(*expression), changes_made, true);
+	*expression = ApplyRules(*op, to_apply_barriers, std::move(*expression), changes_made, true);
 	current_parent = nullptr;
 }
 

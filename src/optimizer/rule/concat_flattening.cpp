@@ -45,6 +45,11 @@ public:
 		}
 		return false;
 	}
+	bool CanMatch(ExpressionClass expression_class, ExpressionType expression_type,
+	              optional_ptr<const Identifier> function_name) const override {
+		return expression_class == ExpressionClass::BOUND_FUNCTION && function_name &&
+		       *function_name == ConcatOperatorFun::Name;
+	}
 
 private:
 	ExpressionRewriter &rewriter;

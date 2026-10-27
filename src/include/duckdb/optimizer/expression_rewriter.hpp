@@ -11,7 +11,9 @@
 #include "duckdb/optimizer/optimizer_extension.hpp"
 #include "duckdb/optimizer/rule.hpp"
 #include "duckdb/planner/logical_operator_visitor.hpp"
+#include "duckdb/common/identifier.hpp"
 #include "duckdb/common/types/value.hpp"
+#include "duckdb/common/unordered_map.hpp"
 
 namespace duckdb {
 class ClientContext;
@@ -48,17 +50,25 @@ public:
 	}
 
 private:
+	struct RuleSet {
+		vector<reference<Rule>> rules;
+		identifier_map_t<vector<reference<Rule>>> function_rules;
+	};
+
 	//! Apply a set of rules to a specific expression
-	unique_ptr<Expression> ApplyRules(LogicalOperator &op, const vector<reference<Rule>> &rules,
-	                                  const vector<rewrite_barrier_t> &barriers, unique_ptr<Expression> expr,
-	                                  bool &changes_made, bool is_root = false);
+	unique_ptr<Expression> ApplyRules(LogicalOperator &op, const vector<rewrite_barrier_t> &barriers,
+	                                  unique_ptr<Expression> expr, bool &changes_made, bool is_root = false);
+	const vector<reference<Rule>> &RulesFor(const Expression &expr);
+	vector<reference<Rule>> SelectRules(ExpressionClass expression_class, ExpressionType expression_type,
+	                                    optional_ptr<const Identifier> function_name) const;
 
 	optional_ptr<LogicalOperator> op;
 	optional_ptr<Expression> current_parent;
 	bool child_throws = false;
 	bool throws = false;
-	vector<reference<Rule>> to_apply_rules;
 	vector<rewrite_barrier_t> to_apply_barriers;
+	unordered_map<uint16_t, RuleSet> rule_sets;
+	idx_t rule_sets_rule_count = 0;
 };
 
 } // namespace duckdb

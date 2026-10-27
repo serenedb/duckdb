@@ -46,6 +46,15 @@ public:
 		bindings.push_back(expr);
 		return true;
 	}
+	bool CanMatch(ExpressionClass expression_class, ExpressionType expression_type,
+	              optional_ptr<const Identifier> function_name) const override {
+		for (const auto &matcher : func_matchers) {
+			if (matcher->CanMatch(expression_class, expression_type, function_name)) {
+				return true;
+			}
+		}
+		return false;
+	}
 
 private:
 	void RecursiveMatch(FunctionExpressionMatcher *func_matcher, Expression &expr,

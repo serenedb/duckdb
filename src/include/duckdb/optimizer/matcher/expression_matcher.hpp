@@ -28,6 +28,8 @@ public:
 	//! Checks if the given expression matches this ExpressionMatcher. If it does, the expression is appended to the
 	//! bindings list and true is returned. Otherwise, false is returned.
 	virtual bool Match(Expression &expr, vector<reference<Expression>> &bindings);
+	virtual bool CanMatch(ExpressionClass expression_class, ExpressionType expression_type,
+	                      optional_ptr<const Identifier> function_name) const;
 
 	//! The ExpressionClass of the to-be-matched expression. ExpressionClass::INVALID for ANY.
 	ExpressionClass expr_class;
@@ -75,6 +77,8 @@ public:
 	SetMatcher::Policy policy;
 
 	bool Match(Expression &expr, vector<reference<Expression>> &bindings) override;
+	bool CanMatch(ExpressionClass expression_class, ExpressionType expression_type,
+	              optional_ptr<const Identifier> function_name) const override;
 };
 
 class CastExpressionMatcher : public ExpressionMatcher {
@@ -97,6 +101,8 @@ public:
 	SetMatcher::Policy policy;
 
 	bool Match(Expression &expr, vector<reference<Expression>> &bindings) override;
+	bool CanMatch(ExpressionClass expression_class, ExpressionType expression_type,
+	              optional_ptr<const Identifier> function_name) const override;
 };
 
 class InUniformExpressionMatcher : public ExpressionMatcher {
@@ -135,6 +141,8 @@ public:
 	unique_ptr<FunctionMatcher> function;
 
 	bool Match(Expression &expr, vector<reference<Expression>> &bindings) override;
+	bool CanMatch(ExpressionClass expression_class, ExpressionType expression_type,
+	              optional_ptr<const Identifier> function_name) const override;
 };
 
 class AggregateExpressionMatcher : public ExpressionMatcher {
@@ -159,6 +167,8 @@ public:
 	}
 
 	bool Match(Expression &expr, vector<reference<Expression>> &bindings) override;
+	bool CanMatch(ExpressionClass expression_class, ExpressionType expression_type,
+	              optional_ptr<const Identifier> function_name) const override;
 };
 
 //! The stable expression matcher matches only stable expressions (non-volatile)

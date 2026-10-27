@@ -961,10 +961,35 @@ unique_ptr<Expression> RewriteConjunction(Rewriter &rewriter, BoundConjunctionEx
 	return copy;
 }
 
+class MonotonePredicateMatcher : public ExpressionMatcher {
+public:
+	bool Match(Expression &expr, vector<reference<Expression>> &bindings) override {
+		if (!CanMatch(expr.GetExpressionClass(), expr.GetExpressionType(), nullptr)) {
+			return false;
+		}
+		bindings.push_back(expr);
+		return true;
+	}
+	bool CanMatch(ExpressionClass expression_class, ExpressionType expression_type,
+	              optional_ptr<const Identifier> function_name) const override {
+		switch (expression_class) {
+		case ExpressionClass::BOUND_FUNCTION:
+			return BoundComparisonExpression::IsComparison(expression_type) ||
+			       expression_type == ExpressionType::COMPARE_BETWEEN;
+		case ExpressionClass::BOUND_OPERATOR:
+			return expression_type == ExpressionType::COMPARE_IN;
+		case ExpressionClass::BOUND_CONJUNCTION:
+			return true;
+		default:
+			return false;
+		}
+	}
+};
+
 } // namespace
 
 MonotonePredicateRule::MonotonePredicateRule(ExpressionRewriter &rewriter) : Rule(rewriter) {
-	root = make_uniq<ExpressionMatcher>();
+	root = make_uniq<MonotonePredicateMatcher>();
 }
 
 unique_ptr<Expression> MonotonePredicateRule::Apply(LogicalOperator &op, vector<reference<Expression>> &bindings,

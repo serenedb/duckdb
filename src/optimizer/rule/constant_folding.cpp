@@ -19,6 +19,11 @@ public:
 		}
 		return FoldableConstantMatcher::Match(expr, bindings);
 	}
+	bool CanMatch(ExpressionClass expression_class, ExpressionType expression_type,
+	              optional_ptr<const Identifier> function_name) const override {
+		return expression_type != ExpressionType::VALUE_CONSTANT &&
+		       FoldableConstantMatcher::CanMatch(expression_class, expression_type, function_name);
+	}
 };
 
 ConstantFoldingRule::ConstantFoldingRule(ExpressionRewriter &rewriter) : Rule(rewriter) {

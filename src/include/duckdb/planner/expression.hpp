@@ -57,6 +57,7 @@ public:
 	virtual bool IsConsistent() const;
 	virtual bool PropagatesNullValues() const;
 	virtual bool IsFoldable() const;
+	static bool IsNeverFoldable(ExpressionClass expression_class);
 	virtual bool CanThrow() const;
 	virtual bool RequiresOrderedExecution() const;
 
