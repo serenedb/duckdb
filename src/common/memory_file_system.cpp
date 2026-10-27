@@ -30,8 +30,9 @@ struct MemoryFile {
 	shared_ptr<BlockCacheFile> blocks DUCKDB_GUARDED_BY(lock);
 	//! A compacted file of a registered instance, in one buffer-managed allocation
 	shared_ptr<BlockHandle> span DUCKDB_GUARDED_BY(lock);
-	//! A heap file
-	vector<data_t> heap DUCKDB_GUARDED_BY(lock);
+	//! A heap file, grown without zeroing; the bytes past its size are its writer's window
+	unsafe_unique_array<data_t> heap DUCKDB_GUARDED_BY(lock);
+	idx_t heap_capacity DUCKDB_GUARDED_BY(lock) = 0;
 	//! Open write handles; a heap file moves while it grows, so it maps only once they are closed
 	idx_t writers DUCKDB_GUARDED_BY(lock) = 0;
 };
@@ -50,6 +51,21 @@ unordered_map<string, string> ErrnoInfo(int error) {
 
 [[noreturn]] void ThrowMissing(const char *verb, const string &path) {
 	throw IOException(ErrnoInfo(ENOENT), "Cannot %s file \"%s\": No such file or directory", verb, path);
+}
+
+constexpr idx_t MIN_HEAP_CAPACITY = 4096;
+
+void GrowHeap(MemoryFile &file, idx_t size, idx_t needed) DUCKDB_REQUIRES(file.lock) {
+	if (needed <= file.heap_capacity) {
+		return;
+	}
+	const auto capacity = MaxValue(needed, MaxValue(2 * file.heap_capacity, MIN_HEAP_CAPACITY));
+	auto grown = make_unsafe_uniq_array_uninitialized<data_t>(capacity);
+	if (size != 0) {
+		memcpy(grown.get(), file.heap.get(), size);
+	}
+	file.heap = std::move(grown);
+	file.heap_capacity = capacity;
 }
 
 void CopyRange(BlockCache &cache, const shared_ptr<BlockCacheFile> &file, idx_t offset, idx_t count,
@@ -238,7 +254,7 @@ unique_ptr<MemoryMappedFile> MemoryFileSystem::MemoryMapFile(const OpenFileInfo 
 		}
 		if (!file->span) {
 			const auto size = file->size.load(std::memory_order_acquire);
-			auto result = make_uniq<MemoryFileMapping>(file->path, flags, file->heap.data(), size);
+			auto result = make_uniq<MemoryFileMapping>(file->path, flags, file->heap.get(), size);
 			result->file = file;
 			return std::move(result);
 		}
@@ -308,11 +324,45 @@ int64_t MemoryFileSystem::Write(FileHandle &handle_p, void *buffer, int64_t nr_b
 			throw IOException("Cannot write to \"%s\": it is not open for writing", handle.path);
 		}
 		annotated_lock_guard<annotated_mutex> guard(file.lock);
-		file.heap.insert(file.heap.end(), source, source + remaining);
-		file.size.store(file.heap.size(), std::memory_order_release);
+		const auto size = file.size.load(std::memory_order_relaxed);
+		GrowHeap(file, size, size + remaining);
+		if (remaining != 0) {
+			memcpy(file.heap.get() + size, source, remaining);
+		}
+		file.size.store(size + remaining, std::memory_order_release);
 	}
 	handle.position += NumericCast<idx_t>(nr_bytes);
 	return nr_bytes;
+}
+
+FileWriteWindow MemoryFileSystem::GetWriteWindow(FileHandle &handle_p) {
+	auto &handle = handle_p.Cast<MemoryFileHandle>();
+	if (handle.appender) {
+		return handle.appender->Window();
+	}
+	if (db) {
+		throw IOException("Cannot write to \"%s\": it is not open for writing", handle.path);
+	}
+	auto &file = *handle.file;
+	annotated_lock_guard<annotated_mutex> guard(file.lock);
+	const auto size = file.size.load(std::memory_order_relaxed);
+	GrowHeap(file, size, size + 1);
+	return {file.heap.get() + size, file.heap_capacity - size};
+}
+
+void MemoryFileSystem::CommitWriteWindow(FileHandle &handle_p, idx_t nr_bytes) {
+	auto &handle = handle_p.Cast<MemoryFileHandle>();
+	auto &file = *handle.file;
+	if (handle.appender) {
+		handle.appender->Commit(nr_bytes);
+		file.size.store(handle.appender->Size(), std::memory_order_release);
+	} else {
+		annotated_lock_guard<annotated_mutex> guard(file.lock);
+		const auto size = file.size.load(std::memory_order_relaxed);
+		D_ASSERT(size + nr_bytes <= file.heap_capacity);
+		file.size.store(size + nr_bytes, std::memory_order_release);
+	}
+	handle.position += nr_bytes;
 }
 
 void MemoryFileSystem::Write(FileHandle &handle_p, void *buffer, int64_t nr_bytes, idx_t location) {
@@ -341,8 +391,8 @@ void MemoryFileSystem::Read(FileHandle &handle_p, void *buffer, int64_t nr_bytes
 	shared_ptr<BlockHandle> span;
 	{
 		annotated_lock_guard<annotated_mutex> guard(file.lock);
-		if (!file.heap.empty()) {
-			memcpy(target, file.heap.data() + location, bytes);
+		if (file.heap) {
+			memcpy(target, file.heap.get() + location, bytes);
 			return;
 		}
 		blocks = file.blocks;

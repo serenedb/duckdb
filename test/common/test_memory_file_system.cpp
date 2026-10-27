@@ -1,6 +1,7 @@
 #include "catch.hpp"
 #include "test_helpers.hpp"
 #include "duckdb/common/error_data.hpp"
+#include "duckdb/common/local_file_system.hpp"
 #include "duckdb/common/memory_file_system.hpp"
 #include "duckdb/common/memory_mapped_file.hpp"
 #include "duckdb/main/connection.hpp"
@@ -94,6 +95,38 @@ TEST_CASE("Memory files are written once, from start to end", "[memory_file_syst
 	REQUIRE(missing.ExtraInfo().at("errno") == std::to_string(ENOENT));
 	REQUIRE(
 	    !fs.OpenFile("memory://missing.bin", FileFlags::FILE_FLAGS_READ | FileFlags::FILE_FLAGS_NULL_IF_NOT_EXISTS));
+}
+
+TEST_CASE("Memory files are filled in place through write windows", "[memory_file_system]") {
+	DuckDB db(nullptr);
+	MemoryFileSystem blocks(*db.instance);
+	MemoryFileSystem heap;
+	const idx_t size = 3 * MEMORY_BLOCK + 123;
+	for (auto fs : {&blocks, &heap}) {
+		auto handle =
+		    fs->OpenFile("memory://window.bin", FileFlags::FILE_FLAGS_WRITE | FileFlags::FILE_FLAGS_FILE_CREATE_NEW);
+		for (idx_t written = 0; written < size;) {
+			const auto window = handle->GetWriteWindow();
+			REQUIRE(window.size != 0);
+			const auto count = MinValue(window.size, MinValue(size - written, 1000 + written % 7000));
+			for (idx_t i = 0; i < count; i++) {
+				window.data[i] = ByteAt(written + i);
+			}
+			handle->CommitWriteWindow(count);
+			written += count;
+			if (written < size) {
+				auto byte = ByteAt(written);
+				handle->Write(&byte, 1);
+				written++;
+			}
+		}
+		handle->Close();
+		REQUIRE(ReadsBack(*fs, "memory://window.bin", size));
+	}
+	LocalFileSystem local;
+	auto path = TestCreatePath("write_window.bin");
+	auto file = local.OpenFile(path, FileFlags::FILE_FLAGS_WRITE | FileFlags::FILE_FLAGS_FILE_CREATE_NEW);
+	REQUIRE(file->GetWriteWindow().size == 0);
 }
 
 TEST_CASE("Heap memory files map in place, block files do not", "[memory_file_system]") {

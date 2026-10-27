@@ -294,6 +294,14 @@ void VirtualFileSystem::HintWriteback(FileHandle &handle, idx_t location, idx_t 
 	handle.file_system.HintWriteback(handle, location, nr_bytes);
 }
 
+FileWriteWindow VirtualFileSystem::GetWriteWindow(FileHandle &handle) {
+	return handle.file_system.GetWriteWindow(handle);
+}
+
+void VirtualFileSystem::CommitWriteWindow(FileHandle &handle, idx_t nr_bytes) {
+	handle.file_system.CommitWriteWindow(handle, nr_bytes);
+}
+
 void VirtualFileSystem::SyncDirectory(const string &directory, optional_ptr<FileOpener> opener) {
 	FindFileSystem(directory, opener).SyncDirectory(directory, opener);
 }

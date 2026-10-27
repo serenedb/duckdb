@@ -200,21 +200,36 @@ BlockCacheAppender::BlockCacheAppender(BlockCache &cache_p, shared_ptr<BlockCach
 
 void BlockCacheAppender::Append(const_data_ptr_t data, idx_t count) {
 	while (count > 0) {
-		const auto offset = size % BlockCache::BLOCK_SIZE;
-		if (!current.IsValid()) {
-			current = cache.CreateBlock(*file, size / BlockCache::BLOCK_SIZE);
-		}
-		const auto chunk = MinValue(count, BlockCache::BLOCK_SIZE - offset);
-		memcpy(current.GetDataMutable() + offset, data, chunk);
+		const auto window = Window();
+		const auto chunk = MinValue(count, window.size);
+		memcpy(window.data, data, chunk);
+		Commit(chunk);
 		data += chunk;
 		count -= chunk;
-		size += chunk;
-		if (file->IsUnbacked()) {
-			cache.SetUnbackedSize(*file, size);
-		}
-		if (offset + chunk == BlockCache::BLOCK_SIZE) {
-			current.Reset();
-		}
+	}
+}
+
+FileWriteWindow BlockCacheAppender::Window() {
+	const auto offset = size % BlockCache::BLOCK_SIZE;
+	if (!current.IsValid()) {
+		current = cache.CreateBlock(*file, size / BlockCache::BLOCK_SIZE);
+	}
+	return {current.GetDataMutable() + offset, BlockCache::BLOCK_SIZE - offset};
+}
+
+void BlockCacheAppender::Commit(idx_t count) {
+	const auto offset = size % BlockCache::BLOCK_SIZE;
+	D_ASSERT(current.IsValid() || count == 0);
+	D_ASSERT(offset + count <= BlockCache::BLOCK_SIZE);
+	if (count == 0) {
+		return;
+	}
+	size += count;
+	if (file->IsUnbacked()) {
+		cache.SetUnbackedSize(*file, size);
+	}
+	if (offset + count == BlockCache::BLOCK_SIZE) {
+		current.Reset();
 	}
 }
 
