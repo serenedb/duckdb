@@ -607,7 +607,9 @@ TEST_CASE("Block cache shares the blocks a writer created once the file is publi
 	{
 		auto written = cache.CreateWrittenFile(file.path);
 		WriteBlocks(cache, *written, 2 * BLOCK + 100);
-		cache.FinishWrittenFile(*written, 2 * BLOCK + 100, true);
+		CacheValidationInfo validation;
+		validation.file_size = 2 * BLOCK + 100;
+		cache.FinishWrittenFile(*written, validation, true);
 	}
 	auto cached = OpenToRead(cache, fs, file);
 	REQUIRE(cached->GetSize() == 2 * BLOCK + 100);
@@ -628,7 +630,9 @@ TEST_CASE("Block cache drops the blocks of a written file that is abandoned", "[
 		auto written = cache.CreateWrittenFile(file.path);
 		WriteBlocks(cache, *written, 2 * BLOCK);
 		REQUIRE(cache.GetStatistics().used == 2 * BLOCK);
-		cache.FinishWrittenFile(*written, 2 * BLOCK, false);
+		CacheValidationInfo validation;
+		validation.file_size = 2 * BLOCK;
+		cache.FinishWrittenFile(*written, validation, false);
 	}
 	REQUIRE(cache.GetStatistics().used == 0);
 	auto cached = OpenToRead(cache, fs, file);
@@ -666,6 +670,28 @@ TEST_CASE("Block cache appender publishes a written file at the size appended, o
 	REQUIRE(cache.GetStatistics().used == 2 * BLOCK);
 	abandoned.Abandon();
 	REQUIRE(cache.GetStatistics().used == 0);
+}
+
+TEST_CASE("Block cache knows a published written file as the version its writer names", "[block_cache]") {
+	DuckDB db(nullptr);
+	BlockCache cache(*db.instance, 64 * BLOCK);
+	const string path = "block_cache_versioned.bin";
+	const auto modified = Timestamp::FromEpochSeconds(1700000000);
+	{
+		BlockCacheAppender appender(cache, cache.CreateWrittenFile(path));
+		vector<uint8_t> data(BLOCK + 10, 7);
+		appender.Append(data.data(), data.size());
+		appender.Finish("\"etag-1\"", modified);
+	}
+	BlockCacheFileInfo found;
+	REQUIRE(cache.TryGetFile(path, found));
+	REQUIRE(found.validation.file_size == BLOCK + 10);
+	REQUIRE(found.validation.version_tag == "\"etag-1\"");
+	REQUIRE(found.validation.last_modified == modified);
+
+	auto reopened = cache.OpenFile(path, found, false, nullptr);
+	REQUIRE(reopened->Info().validation.version_tag == "\"etag-1\"");
+	REQUIRE(cache.IsCached(*reopened, 0, BLOCK + 10));
 }
 
 TEST_CASE("Block cache forgets files no one opens and holds no block of", "[block_cache]") {

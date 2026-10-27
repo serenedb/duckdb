@@ -192,8 +192,9 @@ public:
 	idx_t Size() const {
 		return size;
 	}
-	//! Ends the write, zeroing the rest of the last block; a written file is published at the size appended
-	void Finish();
+	//! Ends the write, zeroing the rest of the last block; a written file is published at the size appended, as the
+	//! version [version_tag] of its source, last modified at [last_modified]
+	void Finish(const string &version_tag = string(), timestamp_t last_modified = timestamp_t(0));
 	//! Ends the write of a written file and drops its blocks
 	void Abandon();
 
@@ -281,8 +282,9 @@ public:
 	//! A file the caller writes under [path], replacing earlier opens of [path]: its writer creates the blocks, and
 	//! once FinishWrittenFile publishes it, opens of [path] share them like fetched blocks
 	shared_ptr<BlockCacheFile> CreateWrittenFile(const string &path);
-	//! Ends the write of [file] at [size] bytes; a published file keeps its blocks, an abandoned one drops them
-	void FinishWrittenFile(BlockCacheFile &file, idx_t size, bool published);
+	//! Ends the write of [file], which wrote the version [written] describes; a published file keeps its blocks, and
+	//! TryGetFile reports [written] for it, an abandoned one drops them
+	void FinishWrittenFile(BlockCacheFile &file, const CacheValidationInfo &written, bool published);
 	//! Drops the blocks of every open of [path]; current pins keep their bytes
 	void ForgetFile(const string &path);
 
