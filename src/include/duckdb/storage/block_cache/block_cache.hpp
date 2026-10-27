@@ -69,16 +69,16 @@ public:
 	BlockCachePin(BlockCache &cache_p, BlockCacheEntry &entry_p, data_ptr_t data_p, idx_t size_p)
 	    : cache(&cache_p), entry(&entry_p), data(data_p), size(size_p) {
 	}
-	~BlockCachePin() {
+	[[gnu::always_inline]] ~BlockCachePin() {
 		Reset();
 	}
-	BlockCachePin(BlockCachePin &&other) noexcept
+	[[gnu::always_inline]] BlockCachePin(BlockCachePin &&other) noexcept
 	    : cache(other.cache), entry(other.entry), data(other.data), size(other.size), owned(std::move(other.owned)) {
 		other.entry = nullptr;
 		other.data = nullptr;
 		other.size = 0;
 	}
-	BlockCachePin &operator=(BlockCachePin &&other) noexcept {
+	[[gnu::always_inline]] BlockCachePin &operator=(BlockCachePin &&other) noexcept {
 		if (this != &other) {
 			Reset();
 			cache = other.cache;
@@ -108,7 +108,7 @@ public:
 	idx_t Size() const {
 		return size;
 	}
-	void Reset() {
+	[[gnu::always_inline]] void Reset() {
 		if (entry) {
 			Unpin();
 		}
