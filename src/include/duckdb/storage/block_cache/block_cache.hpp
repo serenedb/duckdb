@@ -96,7 +96,7 @@ public:
 	BlockCachePin &operator=(const BlockCachePin &) = delete;
 
 	bool IsValid() const {
-		return entry || owned.IsValid();
+		return entry || owned;
 	}
 	const_data_ptr_t Ptr() const {
 		return data;
@@ -112,7 +112,7 @@ public:
 		if (entry) {
 			Unpin();
 		}
-		owned.Destroy();
+		owned.reset();
 		data = nullptr;
 		size = 0;
 	}
@@ -126,7 +126,7 @@ private:
 	optional_ptr<BlockCacheEntry> entry;
 	data_ptr_t data = nullptr;
 	idx_t size = 0;
-	BufferHandle owned;
+	unique_ptr<BufferHandle> owned;
 };
 
 //! An open file whose blocks the cache holds; opens of the same path and version share one file number
