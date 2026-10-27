@@ -184,6 +184,10 @@ public:
 
 	//! Appends [count] bytes of [data]; readers of an unbacked file see them once they are appended
 	void Append(const_data_ptr_t data, idx_t count);
+	//! The rest of the block the write has reached, created if needed, to fill in place and append with Commit
+	FileWriteWindow Window();
+	//! Appends the first [count] bytes of the last window
+	void Commit(idx_t count);
 	//! The bytes appended
 	idx_t Size() const {
 		return size;

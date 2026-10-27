@@ -735,6 +735,14 @@ FileSyncParallelism FileSystem::SyncParallelism(FileHandle &handle) {
 void FileSystem::HintWriteback(FileHandle &handle, idx_t location, idx_t nr_bytes) {
 }
 
+FileWriteWindow FileSystem::GetWriteWindow(FileHandle &handle) {
+	return {};
+}
+
+void FileSystem::CommitWriteWindow(FileHandle &handle, idx_t nr_bytes) {
+	throw NotImplementedException("%s: CommitWriteWindow is not implemented!", GetName());
+}
+
 void FileSystem::SyncDirectory(const string &directory, optional_ptr<FileOpener> opener) {
 }
 
@@ -1036,6 +1044,14 @@ void FileHandle::Sync() {
 
 void FileHandle::HintWriteback(idx_t location, idx_t nr_bytes) {
 	file_system.HintWriteback(*this, location, nr_bytes);
+}
+
+FileWriteWindow FileHandle::GetWriteWindow() {
+	return file_system.GetWriteWindow(*this);
+}
+
+void FileHandle::CommitWriteWindow(idx_t nr_bytes) {
+	file_system.CommitWriteWindow(*this, nr_bytes);
 }
 
 void FileHandle::Truncate(int64_t new_size) {
