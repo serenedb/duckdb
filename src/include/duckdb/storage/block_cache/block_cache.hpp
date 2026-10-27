@@ -295,6 +295,9 @@ public:
 	                         bool ahead);
 	//! Pins the blocks of [offset, offset + size) of [file], fetching the missing ones together
 	vector<BlockCachePin> PinRange(const shared_ptr<BlockCacheFile> &file, idx_t offset, idx_t size);
+	//! Pins the [size] bytes at [offset] of [file] in one piece: in their block when they lie in one, otherwise in a
+	//! copy the pin owns; Ptr() and Size() are the bytes either way
+	BlockCachePin PinBytes(const shared_ptr<BlockCacheFile> &file, idx_t offset, idx_t size);
 	//! Pins the blocks of [offset, offset + size) of [file] when all of them are cached; empty otherwise
 	vector<BlockCachePin> TryPinRange(BlockCacheFile &file, idx_t offset, idx_t size);
 	//! Whether every block of [offset, offset + size) is cached or loading

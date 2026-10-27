@@ -1237,6 +1237,27 @@ vector<BlockCachePin> BlockCache::PinRange(const shared_ptr<BlockCacheFile> &fil
 	return result;
 }
 
+BlockCachePin BlockCache::PinBytes(const shared_ptr<BlockCacheFile> &file, idx_t offset, idx_t size) {
+	D_ASSERT(size != 0 && offset + size <= file->GetSize());
+	const auto first = offset / BLOCK_SIZE;
+	if ((offset + size - 1) / BLOCK_SIZE == first) {
+		auto pin = Pin(file, first);
+		pin.data += offset % BLOCK_SIZE;
+		pin.size = size;
+		return pin;
+	}
+	const auto pins = PinRange(file, offset, size);
+	auto result = AllocateUncached(db, size);
+	for (idx_t done = 0; done < size;) {
+		const auto at = offset + done;
+		const auto in_block = at % BLOCK_SIZE;
+		const auto chunk = MinValue(size - done, BLOCK_SIZE - in_block);
+		memcpy(result.data + done, pins[at / BLOCK_SIZE - first].Ptr() + in_block, chunk);
+		done += chunk;
+	}
+	return result;
+}
+
 void BlockCache::FetchMissing(const shared_ptr<BlockCacheFile> &file_p, idx_t first, vector<BlockCachePin> &result) {
 	auto &file = *file_p;
 	const auto count = result.size();
