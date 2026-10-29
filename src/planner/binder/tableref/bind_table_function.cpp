@@ -568,6 +568,9 @@ BoundStatement Binder::Bind(TableFunctionRef &ref) {
 	}
 	D_ASSERT(func_catalog.type == CatalogType::TABLE_FUNCTION_ENTRY);
 	auto &function = func_catalog.Cast<TableFunctionCatalogEntry>();
+	if (!InViewBody()) {
+		context.CheckEntryReference(function);
+	}
 
 	// bind the input parameters to the function - they are folded to constants after the overload is chosen
 	vector<unique_ptr<Expression>> positional_arguments;
