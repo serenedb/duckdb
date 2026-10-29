@@ -144,6 +144,15 @@ void BlockCachePin::Unpin() {
 	entry = nullptr;
 }
 
+BlockCachePin BlockCachePin::Share(idx_t offset, idx_t size_p) {
+	if (!entry) {
+		return {};
+	}
+	D_ASSERT(data && offset <= size && size_p <= size - offset);
+	cache->Repin(*entry);
+	return BlockCachePin(*cache, *entry, data + offset, size_p);
+}
+
 //===--------------------------------------------------------------------===//
 // BlockCacheFile
 //===--------------------------------------------------------------------===//
@@ -770,6 +779,15 @@ optional_ptr<BlockCacheEntry> BlockCache::InsertLoading(uint64_t key, uint32_t f
 	frame_owner[frame].store(slot, std::memory_order_release);
 	UnlockBucket(bucket);
 	return slot;
+}
+
+void BlockCache::Repin(BlockCacheEntry &entry) {
+	const auto state = entry.state.load(std::memory_order_relaxed);
+	D_ASSERT(Pins(state) > 0);
+	if (Pins(state) == PIN_MASK) {
+		throw InternalException("Too many pins of one block cache block");
+	}
+	entry.state.fetch_add(1, std::memory_order_acq_rel);
 }
 
 void BlockCache::Unpin(BlockCacheEntry &entry) {

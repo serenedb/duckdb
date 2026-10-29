@@ -268,6 +268,29 @@ TEST_CASE("Block cache pins a byte range in one piece", "[block_cache]") {
 	REQUIRE(holds(tail, 5 * BLOCK + 900));
 }
 
+TEST_CASE("Block cache pins share their block, and a pin of a buffer of its own shares nothing", "[block_cache]") {
+	DuckDB db(nullptr);
+	BlockCache cache(*db.instance, 2 * BLOCK);
+	CountingSourceFileSystem fs;
+	TestFile file("block_cache_shared_pins.bin", 8 * BLOCK);
+	auto cached = file.Open(cache, fs);
+
+	auto pin = cache.Pin(cached, 0);
+	auto shared = pin.Share(100, 1000);
+	REQUIRE(shared.IsValid());
+	REQUIRE(shared.Ptr() == pin.Ptr() + 100);
+	REQUIRE(shared.Size() == 1000);
+	pin.Reset();
+	auto second = cache.Pin(cached, 1);
+	auto own = cache.Pin(cached, 5);
+	REQUIRE(own.IsValid());
+	REQUIRE_FALSE(own.Share(0, 10).IsValid());
+	REQUIRE(cache.IsCached(*cached, 0, BLOCK));
+	for (idx_t i = 0; i < shared.Size(); i++) {
+		REQUIRE(shared.Ptr()[i] == ExpectedByte(100 + i));
+	}
+}
+
 TEST_CASE("Block cache reopens of an unchanged file share its blocks", "[block_cache]") {
 	DuckDB db(nullptr);
 	BlockCache cache(*db.instance, 64 * BLOCK);
