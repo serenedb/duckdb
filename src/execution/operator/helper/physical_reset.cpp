@@ -97,6 +97,9 @@ void PhysicalReset::ResetOption(ExecutionContext &context, DBConfig &config, con
 		if (!option.set_global) {
 			throw CatalogException("option \"%s\" cannot be reset globally", option.name);
 		}
+		if (context.client.setting_change_handler) {
+			context.client.setting_change_handler(context.client, option.name, variable_scope, nullptr);
+		}
 		auto &db = DatabaseInstance::GetDatabase(context.client);
 		config.ResetOption(&db, option);
 		break;
