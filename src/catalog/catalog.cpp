@@ -1057,9 +1057,19 @@ CatalogException Catalog::UnrecognizedConfigurationError(ClientContext &context,
 	}
 	// the setting is not in an extension
 	// get a list of all options
-	vector<Identifier> potential_names = DBConfig::GetOptionNames();
+	const auto visible = [&](const Identifier &setting) {
+		return !context.setting_visibility || context.setting_visibility(context, setting.GetIdentifierName());
+	};
+	vector<Identifier> potential_names;
+	for (auto &option : DBConfig::GetOptionNames()) {
+		if (visible(option)) {
+			potential_names.push_back(option);
+		}
+	}
 	for (auto &entry : DBConfig::GetConfig(context).GetExtensionSettings()) {
-		potential_names.push_back(entry.first);
+		if (visible(entry.first)) {
+			potential_names.push_back(entry.first);
+		}
 	}
 	throw CatalogException::MissingEntry("configuration parameter", name, potential_names);
 }
