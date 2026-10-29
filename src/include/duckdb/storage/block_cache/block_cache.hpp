@@ -108,6 +108,7 @@ public:
 	idx_t Size() const {
 		return size;
 	}
+	BlockCachePin Share(idx_t offset, idx_t size);
 	[[gnu::always_inline]] void Reset() {
 		if (entry) {
 			Unpin();
@@ -378,6 +379,7 @@ private:
 	optional_ptr<BlockCacheEntry> InsertLoading(uint64_t key, uint32_t frame, uint64_t flags);
 	//! The entry flags of blocks of [file]
 	static uint64_t FileFlags(const BlockCacheFile &file);
+	void Repin(BlockCacheEntry &entry);
 	void Unpin(BlockCacheEntry &entry);
 	void Unlink(BlockCacheEntry &entry);
 	//! Removes [entry] of [key] from lookups: an unpinned block goes now, adding its frame to [released], a pinned or
