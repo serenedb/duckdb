@@ -1,5 +1,7 @@
 #include "duckdb/main/client_context.hpp"
 
+#include <absl/cleanup/cleanup.h>
+
 #include "duckdb/catalog/catalog_entry/scalar_function_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_search_path.hpp"
@@ -299,6 +301,11 @@ shared_ptr<PreparedStatementData> ClientContext::CreatePreparedStatementInternal
 		D_ASSERT(logical_planner.plan || !logical_planner.properties.bound_all_parameters);
 	}
 
+	const auto previous_properties = planned_properties;
+	planned_properties = &logical_planner.properties;
+	absl::Cleanup restore_properties = [&]() noexcept {
+		planned_properties = previous_properties;
+	};
 	if (logical_planner.properties.bound_all_parameters) {
 		OnBoundPlan(*logical_planner.binder, *logical_planner.plan);
 		logical_planner.Optimize();

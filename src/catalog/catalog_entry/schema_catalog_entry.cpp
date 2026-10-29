@@ -5,6 +5,7 @@
 #include "duckdb/common/algorithm.hpp"
 #include "duckdb/common/exception.hpp"
 #include "duckdb/catalog/dependency_list.hpp"
+#include "duckdb/main/client_context.hpp"
 #include "duckdb/parser/parsed_data/create_schema_info.hpp"
 #include "duckdb/original/std/sstream.hpp"
 
@@ -52,14 +53,20 @@ optional_ptr<CatalogEntry> SchemaCatalogEntry::CreateIndex(ClientContext &contex
 
 SimilarCatalogEntry SchemaCatalogEntry::GetSimilarEntry(CatalogTransaction transaction,
                                                         const EntryLookupInfo &lookup_info) {
+	vector<reference<CatalogEntry>> entries;
+	Scan(transaction, lookup_info.GetCatalogType(), [&](CatalogEntry &entry) { entries.push_back(entry); });
 	SimilarCatalogEntry result;
-	Scan(transaction, lookup_info.GetCatalogType(), [&](CatalogEntry &entry) {
+	for (auto &entry_ref : entries) {
+		auto &entry = entry_ref.get();
+		if (transaction.context && !transaction.context->CanSee(entry)) {
+			continue;
+		}
 		auto entry_score = StringUtil::SimilarityRating(entry.name.GetIdentifierName(), lookup_info.GetEntryName());
 		if (entry_score > result.score) {
 			result.score = entry_score;
 			result.name = Identifier(entry.name.GetIdentifierName());
 		}
-	});
+	}
 	return result;
 }
 
