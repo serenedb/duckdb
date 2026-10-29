@@ -15,6 +15,7 @@
 #include "duckdb/parser/tableref/subqueryref.hpp"
 #include "duckdb/parser/tableref/table_function_ref.hpp"
 #include "duckdb/function/macro_function.hpp"
+#include "duckdb/main/client_context.hpp"
 #include "duckdb/planner/binder.hpp"
 #include "duckdb/planner/expression_binder/table_function_binder.hpp"
 #include "duckdb/planner/operator/logical_get.hpp"
@@ -255,6 +256,13 @@ BoundStatement Binder::BindTableFunctionInternal(BoundTableFunction &table_funct
 	// the function binder has placed them already, but not for a table in-out call or a direct bind
 	table_function.GetSignature().FillNamedDefaults(context, named_parameters);
 	table_function.SetCallArguments(parameters, named_parameters);
+	ClientContext::FileAccessScope file_access_scope;
+	for (auto binder = this; binder; binder = binder->parent.get()) {
+		for (auto &view : binder->bound_views) {
+			file_access_scope.views.push_back(view.get());
+		}
+	}
+	ClientContext::FileAccessScopeGuard file_access_guard(context, file_access_scope);
 	if (table_function.bind || table_function.bind_replace || table_function.bind_operator) {
 		TableFunctionBindInput bind_input(parameters, named_parameters, input_table_types, input_table_names,
 		                                  table_function.function_info.get(), this, table_function, ref, input_plan);

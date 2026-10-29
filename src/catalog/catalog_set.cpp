@@ -22,6 +22,7 @@
 #include "duckdb/catalog/dependency_list.hpp"
 #include "duckdb/common/exception/transaction_exception.hpp"
 #include "duckdb/catalog/catalog_entry/schema_catalog_entry.hpp"
+#include "duckdb/main/client_context.hpp"
 
 #include <absl/algorithm/container.h>
 
@@ -694,15 +695,27 @@ CatalogEntry &CatalogSet::GetCommittedEntry(CatalogEntry &current) {
 }
 
 SimilarCatalogEntry CatalogSet::SimilarEntry(CatalogTransaction transaction, const Identifier &name) {
-	unique_lock<mutex> lock(catalog_lock);
-	CreateDefaultEntries(transaction, lock);
+	vector<pair<Identifier, reference<CatalogEntry>>> entries;
+	{
+		unique_lock<mutex> lock(catalog_lock);
+		CreateDefaultEntries(transaction, lock);
+		for (auto &kv : map.Entries()) {
+			auto &entry = GetEntryForTransaction(transaction, *kv.second);
+			if (!entry.deleted) {
+				entries.emplace_back(kv.first, entry);
+			}
+		}
+	}
 
 	SimilarCatalogEntry result;
-	for (auto &kv : map.Entries()) {
-		auto entry_score = StringUtil::SimilarityRating(kv.first.GetIdentifierName(), name.GetIdentifierName());
+	for (auto &[key, entry] : entries) {
+		if (transaction.context && !transaction.context->CanSee(entry.get())) {
+			continue;
+		}
+		auto entry_score = StringUtil::SimilarityRating(key.GetIdentifierName(), name.GetIdentifierName());
 		if (entry_score > result.score) {
 			result.score = entry_score;
-			result.name = Identifier(kv.first.GetIdentifierName());
+			result.name = Identifier(key.GetIdentifierName());
 		}
 	}
 	return result;

@@ -9,6 +9,7 @@
 #pragma once
 
 #include "duckdb/catalog/catalog_entry/schema_catalog_entry.hpp"
+#include "duckdb/catalog/catalog_entry/view_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_set.hpp"
 #include "duckdb/common/atomic.hpp"
 #include "duckdb/common/deque.hpp"
@@ -144,6 +145,47 @@ public:
 	                                         const Value *new_value);
 	setting_change_handler_t setting_change_handler = nullptr;
 
+	typedef bool (*entry_visibility_t)(ClientContext &context, CatalogEntry &entry);
+	entry_visibility_t entry_visibility = nullptr;
+
+	typedef bool (*database_visibility_t)(ClientContext &context, AttachedDatabase &database);
+	database_visibility_t database_visibility = nullptr;
+
+	typedef void (*file_access_handler_t)(ClientContext &context, const string &path);
+	file_access_handler_t file_access_handler = nullptr;
+
+	typedef void (*entry_reference_handler_t)(ClientContext &context, CatalogEntry &entry);
+	entry_reference_handler_t entry_reference_handler = nullptr;
+
+	struct FileAccessScope {
+		vector<reference<const ViewCatalogEntry>> views;
+		bool catalog = false;
+	};
+	optional_ptr<const FileAccessScope> file_access_scope;
+	optional_ptr<const StatementProperties> planned_properties;
+
+	class FileAccessScopeGuard {
+	public:
+		FileAccessScopeGuard(optional_ptr<ClientContext> context_p, const FileAccessScope &scope)
+		    : context(context_p && !context_p->ActiveStatementProperties() ? context_p : nullptr),
+		      previous(context ? context->file_access_scope : nullptr) {
+			if (context) {
+				context->file_access_scope = &scope;
+			}
+		}
+		~FileAccessScopeGuard() {
+			if (context) {
+				context->file_access_scope = previous;
+			}
+		}
+		FileAccessScopeGuard(const FileAccessScopeGuard &) = delete;
+		FileAccessScopeGuard &operator=(const FileAccessScopeGuard &) = delete;
+
+	private:
+		optional_ptr<ClientContext> context;
+		optional_ptr<const FileAccessScope> previous;
+	};
+
 public:
 	//! Connect this client to a remote-style AttachedDatabase. Subsequent non-control SQL routes via
 	//! Catalog::GetConnectFunctionName. Use DisconnectFromCatalog() to revert to LOCAL.
@@ -171,6 +213,18 @@ public:
 	bool EmitWarning(const char *message) {
 		return warning_handler && warning_handler(*this, message);
 	}
+	bool CanSee(CatalogEntry &entry) {
+		return !entry_visibility || entry_visibility(*this, entry);
+	}
+	bool CanSeeDatabase(AttachedDatabase &database) {
+		return !database_visibility || database_visibility(*this, database);
+	}
+	void CheckEntryReference(CatalogEntry &entry) {
+		if (entry_reference_handler) {
+			entry_reference_handler(*this, entry);
+		}
+	}
+	DUCKDB_API optional_ptr<const StatementProperties> ActiveStatementProperties() const;
 	DUCKDB_API void WarnUser(const string &message);
 
 	//! Interrupts the running query. Async-signal-safe: sets a flag and nothing else
