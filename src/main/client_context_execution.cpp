@@ -189,6 +189,13 @@ const string &ClientContext::GetCurrentQuery() {
 	return active_query->query;
 }
 
+optional_ptr<const StatementProperties> ClientContext::ActiveStatementProperties() const {
+	if (!active_query || !active_query->prepared) {
+		return planned_properties;
+	}
+	return &active_query->prepared->properties;
+}
+
 void BindPreparedStatementParameters(ClientContext &context, PreparedStatementData &statement,
                                      const QueryParameters &parameters) {
 	identifier_map_t<BoundParameterData> owned_values;

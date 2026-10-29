@@ -1,4 +1,5 @@
 #include "duckdb/catalog/catalog.hpp"
+#include "duckdb/main/client_context.hpp"
 #include "duckdb/parser/expression/comparison_expression.hpp"
 #include "duckdb/parser/expression/conjunction_expression.hpp"
 #include "duckdb/parser/expression/constant_expression.hpp"
@@ -356,6 +357,9 @@ void Binder::BindInsertColumnList(TableCatalogEntry &table, vector<Identifier> &
 			auto entry = column_name_map.insert(make_pair(columns[i], i));
 			if (!entry.second) {
 				throw BinderException("Duplicate column name %s in INSERT", columns[i]);
+			}
+			if (!table.ColumnExists(columns[i]) && !InViewBody()) {
+				context.CheckEntryReference(table);
 			}
 			auto column_index = table.GetColumnIndex(columns[i]);
 			if (column_index.index == COLUMN_IDENTIFIER_ROW_ID) {
