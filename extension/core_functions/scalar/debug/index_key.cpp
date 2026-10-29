@@ -135,10 +135,7 @@ static unique_ptr<FunctionData> IndexKeyBind(BindScalarFunctionInput &input) {
 
 	// index_key resolves index metadata during binding.
 	// Register the owning catalog so cached prepared statements rebind after catalog changes.
-	if (input.HasBinder()) {
-		auto &binder = input.GetBinder();
-		binder.GetStatementProperties().RegisterDBRead(table_entry.ParentCatalog(), context);
-	}
+	Binder::RegisterEntryRead(input.HasBinder() ? &input.GetBinder() : nullptr, context, table_entry);
 	auto &data_table = duck_table->GetStorage();
 	auto &data_table_info = *data_table.GetDataTableInfo();
 
