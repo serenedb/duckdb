@@ -275,6 +275,15 @@ void Binder::AddBoundView(ViewCatalogEntry &view) {
 	bound_views.insert(view);
 }
 
+bool Binder::InViewBody() const {
+	for (auto binder = this; binder; binder = binder->parent.get()) {
+		if (!binder->bound_views.empty()) {
+			return true;
+		}
+	}
+	return false;
+}
+
 TableIndex Binder::GenerateTableIndex() {
 	return TableIndex(global_binder_state->bound_tables++);
 }

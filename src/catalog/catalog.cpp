@@ -1084,7 +1084,8 @@ CatalogException Catalog::CreateMissingEntryException(CatalogEntryRetriever &ret
 			break;
 		}
 		if (database->GetVisibility() == AttachVisibility::HIDDEN ||
-		    (!database->GetCatalog().IsDuckCatalog() && !search_path_catalogs.count(database->GetName()))) {
+		    (!database->GetCatalog().IsDuckCatalog() && !search_path_catalogs.count(database->GetName())) ||
+		    !context.CanSeeDatabase(*database)) {
 			continue;
 		}
 		vector<reference<SchemaCatalogEntry>> current_schemas;
@@ -1754,6 +1755,9 @@ Catalog::GetAllSchemas(ClientContext &context, bool include_hidden,
 		if (needs_database && !needs_database(*database)) {
 			continue;
 		}
+		if (!context.CanSeeDatabase(*database)) {
+			continue;
+		}
 		// Pin the database for the meta transaction: the returned schema (and downstream entry) references
 		// outlive this scope, and a catalog whose scan path starts no transaction (e.g. snapshot-backed
 		// catalogs) would otherwise be destroyed by a concurrent DETACH/DROP DATABASE mid-statement.
@@ -1767,7 +1771,11 @@ Catalog::GetAllSchemas(ClientContext &context, bool include_hidden,
 			LogSkippedListing(context, StringUtil::Format("database \"%s\"", database->GetName()), ex);
 			continue;
 		}
-		result.insert(result.end(), new_schemas.begin(), new_schemas.end());
+		for (auto &schema : new_schemas) {
+			if (context.CanSee(schema.get())) {
+				result.push_back(schema);
+			}
+		}
 	}
 	sort(result.begin(), result.end(),
 	     [&](reference<SchemaCatalogEntry> left_p, reference<SchemaCatalogEntry> right_p) {
@@ -1803,6 +1811,9 @@ void Catalog::ScanListedEntries(ClientContext &context, SchemaCatalogEntry &sche
 		return;
 	}
 	for (auto &entry : entries) {
+		if (!context.CanSee(entry.get())) {
+			continue;
+		}
 		try {
 			callback(entry.get());
 		} catch (const InterruptException &) {

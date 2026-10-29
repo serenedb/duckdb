@@ -489,6 +489,7 @@ void Binder::ExpandStarExpression(unique_ptr<ParsedExpression> expr,
 				new_list.push_back(std::move(expanded_expr));
 			}
 			if (new_list.empty()) {
+				bind_context.CheckColumnsVisible();
 				vector<string> candidates;
 				for (auto &expanded_expr : star_list) {
 					auto child_expr = GetResolvedColumnExpression(*expanded_expr);

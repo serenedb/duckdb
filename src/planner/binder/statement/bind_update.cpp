@@ -1,4 +1,5 @@
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
+#include "duckdb/main/client_context.hpp"
 #include "duckdb/parser/expression/columnref_expression.hpp"
 #include "duckdb/parser/expression/constant_expression.hpp"
 #include "duckdb/parser/parsed_expression_iterator.hpp"
@@ -110,6 +111,9 @@ void Binder::BindUpdateSet(TableIndex proj_index, unique_ptr<LogicalOperator> &r
 		auto &colname = set_info.columns[i];
 		auto &expr = set_info.expressions[i];
 		if (!table.ColumnExists(colname)) {
+			if (!InViewBody()) {
+				context.CheckEntryReference(table);
+			}
 			vector<string> column_names;
 			for (auto &col : all_columns.Physical()) {
 				column_names.emplace_back(col.Name().GetIdentifierName());

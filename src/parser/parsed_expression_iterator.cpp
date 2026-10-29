@@ -179,7 +179,9 @@ void ParsedExpressionIterator::EnumerateQueryNodeChildren(
 			expr_callback(sel_node.qualify);
 		}
 
-		EnumerateTableRefChildren(*sel_node.from_table.get(), expr_callback, ref_callback);
+		if (sel_node.from_table) {
+			EnumerateTableRefChildren(*sel_node.from_table, expr_callback, ref_callback);
+		}
 		break;
 	}
 	case QueryNodeType::SET_OPERATION_NODE: {

@@ -3,6 +3,7 @@
 #include "duckdb/common/multi_file/multi_file_list.hpp"
 #include "duckdb/common/file_opener.hpp"
 #include "duckdb/common/memory_mapped_file.hpp"
+#include "duckdb/main/client_context.hpp"
 #include "duckdb/main/database.hpp"
 #include "duckdb/main/config.hpp"
 
@@ -39,6 +40,10 @@ void OpenerFileSystem::VerifyCanAccessFileInternal(const string &path, FileType 
 	auto opener = GetOpener();
 	if (!opener) {
 		return;
+	}
+	auto context = opener->TryGetClientContext();
+	if (context && context->file_access_handler) {
+		context->file_access_handler(*context, path);
 	}
 	auto db = opener->TryGetDatabase();
 	if (!db) {
