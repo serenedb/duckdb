@@ -2,6 +2,7 @@
 #include "test_helpers.hpp"
 #include "duckdb/main/http/http_util.hpp"
 #include "duckdb/common/local_file_system.hpp"
+#include "duckdb/main/extension_helper.hpp"
 
 #include <set>
 #include <map>
@@ -110,6 +111,41 @@ TEST_CASE("Test allowed options", "[api]") {
 		REQUIRE(error_data.Type() == ExceptionType::INVALID_INPUT);
 		REQUIRE(error_data.RawMessage() ==
 		        StringUtil::Format("Cannot change/set %s before the database is started", option));
+	}
+}
+
+TEST_CASE("DB config applies statically linked extension settings", "[api]") {
+	if (!ExtensionHelper::IsLinkedExtension("icu")) {
+		return;
+	}
+	DBConfig config;
+	config.SetOptionByName("autoinstall_known_extensions", Value::BOOLEAN(false));
+	config.SetOptionByName("TimeZone", Value("UTC"));
+	config.SetOptionByName("Calendar", Value("gregorian"));
+
+	SECTION("Initial settings apply without a user transaction") {
+		DuckDB db(nullptr, &config);
+		CHECK(db.ExtensionIsLoaded("icu"));
+		CHECK(DBConfig::GetConfig(*db.instance).options.unrecognized_options.empty());
+		Connection con(db);
+		auto result = con.Query("SELECT current_setting('TimeZone'), current_setting('Calendar')");
+		REQUIRE_FALSE(result->HasError());
+		REQUIRE(result->RowCount() == 1);
+		CHECK(result->Collection().GetValue(0, 0).ToString() == "UTC");
+		CHECK(result->Collection().GetValue(1, 0).ToString() == "gregorian");
+		REQUIRE_FALSE(con.Query("BEGIN")->HasError());
+		auto global = con.Query("SET GLOBAL TimeZone = 'Europe/Berlin'");
+		REQUIRE(global->HasError());
+		CHECK(StringUtil::Contains(global->GetError(), "global and cannot be set inside a transaction"));
+		REQUIRE_FALSE(con.Query("ROLLBACK")->HasError());
+	}
+	SECTION("Invalid initial values still run extension validation") {
+		config.SetOptionByName("TimeZone", Value("not/a/timezone"));
+		REQUIRE_THROWS_WITH(make_uniq<DuckDB>(nullptr, &config), Catch::Matchers::Contains("Unknown TimeZone"));
+	}
+	SECTION("Unknown settings remain errors") {
+		config.SetOptionByName("unknown_extension_setting", Value("value"));
+		REQUIRE_THROWS_WITH(make_uniq<DuckDB>(nullptr, &config), Catch::Matchers::Contains("not recognized"));
 	}
 }
 
