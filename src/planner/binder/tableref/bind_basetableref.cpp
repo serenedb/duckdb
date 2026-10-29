@@ -256,6 +256,9 @@ BoundStatement Binder::Bind(BaseTableRef &ref) {
 		GetStatementProperties().RegisterDataRead(table, context, table_index);
 
 		unique_ptr<FunctionData> bind_data;
+		ClientContext::FileAccessScope file_access_scope;
+		file_access_scope.catalog = true;
+		ClientContext::FileAccessScopeGuard file_access_guard(context, file_access_scope);
 		auto scan_function = table.GetScanFunction(context, bind_data, table_lookup);
 		if (bind_data && !bind_data->SupportStatementCache()) {
 			SetAlwaysRequireRebind();
