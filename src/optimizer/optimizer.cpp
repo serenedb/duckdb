@@ -271,15 +271,32 @@ static bool CollectDataVersions(const LogicalOperator &op, vector<shared_ptr<Pla
 	return true;
 }
 
-static void TrackDataVersions(const LogicalOperator &plan, PreparedStatementData &prepared) {
-	if (prepared.properties.read_databases.empty()) {
-		return;
+class SecurityVersion final : public PlanDataVersion {
+public:
+	SecurityVersion(shared_ptr<const SecuritySnapshot> snapshot_p, idx_t role_p)
+	    : snapshot(std::move(snapshot_p)), role(role_p) {
 	}
-	vector<shared_ptr<PlanDataVersion>> versions;
-	if (CollectDataVersions(plan, versions)) {
+
+	bool IsCurrent(ClientContext &context) const override {
+		return context.security == snapshot && context.principal_role == role;
+	}
+
+private:
+	shared_ptr<const SecuritySnapshot> snapshot;
+	idx_t role;
+};
+
+static void TrackDataVersions(ClientContext &context, const LogicalOperator &plan, PreparedStatementData &prepared) {
+	if (!prepared.properties.read_databases.empty()) {
+		vector<shared_ptr<PlanDataVersion>> versions;
+		if (!CollectDataVersions(plan, versions)) {
+			prepared.properties.always_require_rebind = true;
+			return;
+		}
 		prepared.data_versions = std::move(versions);
-	} else {
-		prepared.properties.always_require_rebind = true;
+	}
+	if (context.security) {
+		prepared.data_versions.push_back(make_shared_ptr<SecurityVersion>(context.security, context.principal_role));
 	}
 }
 
@@ -663,9 +680,9 @@ unique_ptr<LogicalOperator> Optimizer::Optimize(unique_ptr<LogicalOperator> plan
 	for (optional_ptr<LogicalOperator> op = plan.get(); op;
 	     op = op->children.empty() ? nullptr : op->children[0].get()) {
 		if (op->type == LogicalOperatorType::LOGICAL_PREPARE) {
-			TrackDataVersions(*plan, *op->Cast<LogicalPrepare>().prepared);
+			TrackDataVersions(context, *plan, *op->Cast<LogicalPrepare>().prepared);
 		} else if (op->type == LogicalOperatorType::LOGICAL_EXECUTE && op->Cast<LogicalExecute>().replaces) {
-			TrackDataVersions(*op->children[0], *op->Cast<LogicalExecute>().prepared);
+			TrackDataVersions(context, *op->children[0], *op->Cast<LogicalExecute>().prepared);
 		} else {
 			break;
 		}
