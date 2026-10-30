@@ -1,6 +1,9 @@
 #include "duckdb/catalog/permissions.hpp"
 
+#include "duckdb/catalog/catalog.hpp"
+#include "duckdb/catalog/catalog_entry.hpp"
 #include "duckdb/common/case_insensitive_map.hpp"
+#include "duckdb/main/attached_database.hpp"
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/parser/column_list.hpp"
@@ -383,6 +386,54 @@ optional_ptr<const RoleAccess> SecuritySnapshot::Access(idx_t role) const {
 		return nullptr;
 	}
 	return &*it;
+}
+
+bool IsUnowned(const CatalogEntry &entry) {
+	auto &catalog = entry.ParentCatalog();
+	if (!entry.internal && catalog.GetAttached().IsReadOnly()) {
+		return true;
+	}
+	const bool stores_owners = catalog.Compatibility() == SqlCompatibility::POSTGRES;
+	return entry.permissions.owner == 0 && (entry.internal || !stores_owners);
+}
+
+string PermissionKindName(CatalogType type) {
+	switch (type) {
+	case CatalogType::TABLE_ENTRY:
+		return "table";
+	case CatalogType::VIEW_ENTRY:
+		return "view";
+	case CatalogType::SEQUENCE_ENTRY:
+		return "sequence";
+	case CatalogType::MACRO_ENTRY:
+	case CatalogType::TABLE_MACRO_ENTRY:
+	case CatalogType::TABLE_FUNCTION_ENTRY:
+	case CatalogType::SCALAR_FUNCTION_ENTRY:
+		return "function";
+	case CatalogType::TYPE_ENTRY:
+		return "type";
+	case CatalogType::SCHEMA_ENTRY:
+		return "schema";
+	case CatalogType::DATABASE_ENTRY:
+		return "database";
+	case CatalogType::INDEX_ENTRY:
+		return "index";
+	case CatalogType::TOKENIZER_ENTRY:
+		return "text search dictionary";
+	case CatalogType::FOREIGN_SERVER_ENTRY:
+		return "foreign server";
+	case CatalogType::SUBSCRIPTION_ENTRY:
+		return "subscription";
+	case CatalogType::JOB_ENTRY:
+		return "job";
+	default:
+		return "object";
+	}
+}
+
+void ThrowPermissionDenied(const CatalogEntry &entry) {
+	throw PermissionException("permission denied for %s %s", PermissionKindName(entry.type),
+	                          entry.name.GetIdentifierName());
 }
 
 } // namespace duckdb

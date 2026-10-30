@@ -95,20 +95,20 @@ public:
 	void GetTypesAndNames(vector<Identifier> &result_names, vector<LogicalType> &result_types);
 
 	//! Adds a base table with the given alias to the BindContext.
-	void AddBaseTable(TableIndex index, const Identifier &alias, const vector<Identifier> &names,
-	                  const vector<LogicalType> &types, vector<ColumnIndex> &bound_column_ids, TableCatalogEntry &entry,
-	                  bool add_row_id = true);
+	TableBinding &AddBaseTable(TableIndex index, const Identifier &alias, const vector<Identifier> &names,
+	                           const vector<LogicalType> &types, vector<ColumnIndex> &bound_column_ids,
+	                           TableCatalogEntry &entry, bool add_row_id = true);
 	void AddBaseTable(TableIndex index, const Identifier &alias, const vector<Identifier> &names,
 	                  const vector<LogicalType> &types, vector<ColumnIndex> &bound_column_ids,
 	                  const Identifier &table_name);
-	void AddBaseTable(TableIndex index, const Identifier &alias, const vector<Identifier> &names,
-	                  const vector<LogicalType> &types, vector<ColumnIndex> &bound_column_ids, TableCatalogEntry &entry,
-	                  virtual_column_map_t virtual_columns);
+	TableBinding &AddBaseTable(TableIndex index, const Identifier &alias, const vector<Identifier> &names,
+	                           const vector<LogicalType> &types, vector<ColumnIndex> &bound_column_ids,
+	                           TableCatalogEntry &entry, virtual_column_map_t virtual_columns);
 	//! Adds a call to a table function with the given alias to the BindContext.
-	void AddTableFunction(TableIndex index, const Identifier &alias, const vector<Identifier> &names,
-	                      const vector<LogicalType> &types, vector<ColumnIndex> &bound_column_ids,
-	                      optional_ptr<StandardEntry> entry, virtual_column_map_t virtual_columns,
-	                      vector<column_t> row_id_columns = {});
+	TableBinding &AddTableFunction(TableIndex index, const Identifier &alias, const vector<Identifier> &names,
+	                               const vector<LogicalType> &types, vector<ColumnIndex> &bound_column_ids,
+	                               optional_ptr<StandardEntry> entry, virtual_column_map_t virtual_columns,
+	                               vector<column_t> row_id_columns = {});
 	//! Adds a table view with a given alias to the BindContext.
 	void AddView(TableIndex index, const Identifier &alias, SubqueryRef &ref, BoundStatement &subquery,
 	             ViewCatalogEntry &view);

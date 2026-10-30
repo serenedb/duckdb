@@ -250,7 +250,7 @@ BoundStatement Binder::BindNode(UpdateQueryNode &node) {
 	unique_ptr<LogicalOperator> root;
 
 	// visit the table reference
-	auto bound_table = Bind(*node.table);
+	auto bound_table = BindTarget(*node.table, TableRefUse::DML_TARGET);
 	if (bound_table.plan->type != LogicalOperatorType::LOGICAL_GET) {
 		throw BinderException("Can only update base table");
 	}
@@ -344,6 +344,17 @@ BoundStatement Binder::BindNode(UpdateQueryNode &node) {
 		storage_table->BindUpdateConstraints(*this, *get, *proj, *update, context);
 	} else {
 		table.BindUpdateConstraints(*this, *get, *proj, *update, context);
+	}
+	if (principal) {
+		vector<std::span<const AclItem>> acls;
+		if (!update->update_is_del_and_insert) {
+			for (auto index : update->columns) {
+				acls.emplace_back(table.GetColumns().GetColumn(index).Acl());
+			}
+		}
+		if (!principal->CanColumns(table.permissions, AclMode::Update, acls)) {
+			ThrowPermissionDenied(table);
+		}
 	}
 
 	// capture the pre-update (OLD) row image before rowid so rowid stays the final input column

@@ -298,7 +298,8 @@ BoundStatement Binder::Bind(BaseTableRef &ref) {
 		// column validation). A facade catalog delegates the scan to a storage
 		// table in another catalog, so bind the alias to the catalog-resolved
 		// entry the user named -- not the storage table inside the LogicalGet.
-		bind_context.AddBaseTable(table_index, ref.alias, table_names, table_types, col_ids, table);
+		CheckTableRead(bind_context.AddBaseTable(table_index, ref.alias, table_names, table_types, col_ids, table),
+		               table);
 		BoundStatement result;
 		result.types = table_types;
 		result.names = table_names;
@@ -308,6 +309,11 @@ BoundStatement Binder::Bind(BaseTableRef &ref) {
 	case CatalogType::VIEW_ENTRY: {
 		// the node is a view: get the query that the view represents
 		auto &view_catalog_entry = table_or_view->Cast<ViewCatalogEntry>();
+		if (principal && table_ref_use != TableRefUse::UTILITY_TARGET &&
+		    (!IsUnowned(view_catalog_entry) || view_catalog_entry.ParentCatalog().IsSystemCatalog()) &&
+		    !principal->Can(CatalogType::TABLE_ENTRY, view_catalog_entry.permissions, AclMode::Select)) {
+			ThrowPermissionDenied(view_catalog_entry);
+		}
 		const auto scope_begin = global_binder_state->bound_tables;
 		const auto resolved_begin = GetStatementProperties().resolved_entries.size();
 		// We need to use a new binder for the view that doesn't reference any CTEs
@@ -315,6 +321,15 @@ BoundStatement Binder::Bind(BaseTableRef &ref) {
 		// for the view and for the current query
 		auto view_binder = Binder::CreateBinder(context, this, BinderType::VIEW_BINDER);
 		view_binder->SetCanContainNulls(true);
+		if (principal && view_catalog_entry.security_invoker) {
+			view_binder->principal = context.principal;
+		} else if (principal && !IsUnowned(view_catalog_entry)) {
+			const auto owner = view_catalog_entry.permissions.owner;
+			const auto access = context.security ? context.security->Access(owner) : nullptr;
+			view_binder->view_principal = access ? *access : RoleAccess();
+			view_binder->view_principal.role = owner;
+			view_binder->principal = &view_binder->view_principal;
+		}
 
 		// The view may contain CTEs, but maybe only in the cte_map, so we need create CTE nodes for them
 		auto query = view_catalog_entry.GetQuery().Copy();

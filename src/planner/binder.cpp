@@ -10,8 +10,10 @@
 #include "duckdb/common/enum_util.hpp"
 #include "duckdb/common/helper.hpp"
 #include "duckdb/common/stack_depth.hpp"
+#include "duckdb/main/attached_database.hpp"
 #include "duckdb/main/config.hpp"
 #include "duckdb/main/database.hpp"
+#include "duckdb/main/database_manager.hpp"
 #include "duckdb/main/settings.hpp"
 #include "duckdb/optimizer/optimizer.hpp"
 #include "duckdb/parser/expression/function_expression.hpp"
@@ -51,6 +53,7 @@ Binder::Binder(ClientContext &context, shared_ptr<Binder> parent_p, BinderType b
 		entry_retriever.Inherit(parent->entry_retriever);
 		inside_subquery = parent->inside_subquery;
 		macro_binding = parent->macro_binding;
+		principal = parent->principal;
 		if (binder_type != BinderType::VIEW_BINDER) {
 			// inherit expression binders from parent
 			active_binders = parent->active_binders;
@@ -63,6 +66,10 @@ Binder::Binder(ClientContext &context, shared_ptr<Binder> parent_p, BinderType b
 			}
 			auto &properties = GetStatementProperties();
 			if (!properties.read_databases.count(catalog.GetName())) {
+				if (principal && !catalog.IsTemporaryCatalog() &&
+				    catalog.GetName() != DatabaseManager::TryGetDefaultDatabase(this->context)) {
+					this->context.CheckEntryReference(catalog.GetAttached());
+				}
 				properties.RegisterDBRead(catalog, this->context);
 			}
 			properties.resolved_entries.push_back(&entry);
@@ -278,6 +285,40 @@ bool Binder::InViewBody() const {
 		}
 	}
 	return false;
+}
+
+BoundStatement Binder::BindTarget(TableRef &ref, TableRefUse use) {
+	table_ref_use = use;
+	auto result = Bind(ref);
+	table_ref_use = TableRefUse::READ;
+	return result;
+}
+
+void Binder::CheckTableRead(TableBinding &binding, TableCatalogEntry &table) {
+	if (!principal || table_ref_use == TableRefUse::UTILITY_TARGET || IsUnowned(table) ||
+	    principal->Can(CatalogType::TABLE_ENTRY, table.permissions, AclMode::Select)) {
+		return;
+	}
+	const bool target = table_ref_use == TableRefUse::DML_TARGET;
+	binding.column_read = make_shared_ptr<ColumnReadCheck>(table, *principal, target);
+	if (!target) {
+		global_binder_state->column_reads.push_back(binding.column_read);
+	}
+}
+
+void Binder::CheckTableReads() {
+	for (auto &read : global_binder_state->column_reads) {
+		if (read->referenced) {
+			continue;
+		}
+		vector<std::span<const AclItem>> acls;
+		for (auto &column : read->table.GetColumns().Logical()) {
+			acls.emplace_back(column.Acl());
+		}
+		if (!read->principal.CanAnyColumn(read->table.permissions, AclMode::Select, acls)) {
+			ThrowPermissionDenied(read->table);
+		}
+	}
 }
 
 TableIndex Binder::GenerateTableIndex() {
@@ -632,8 +673,11 @@ BoundStatement Binder::BindReturning(vector<unique_ptr<ParsedExpression>> return
 	}
 	const auto table_column_count = bound_columns.size();
 
-	binder->bind_context.AddBaseTable(update_table_index, alias, names, types, bound_columns, table,
-	                                  std::move(virtual_columns));
+	auto &binding = binder->bind_context.AddBaseTable(update_table_index, alias, names, types, bound_columns, table,
+	                                                  std::move(virtual_columns));
+	binder->principal = principal;
+	binder->table_ref_use = TableRefUse::DML_TARGET;
+	binder->CheckTableRead(binding, table);
 	ReturningBinder returning_binder(*binder, context);
 
 	vector<unique_ptr<Expression>> projection_expressions;

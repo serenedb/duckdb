@@ -358,6 +358,15 @@ BindResult TableBinding::Bind(ColumnRefExpression &colref, idx_t depth) {
 		// normal column: fetch type from base column
 		col_type = types[column_index];
 		SetBoundColumnAlias(colref);
+		if (column_read) {
+			auto &table = column_read->table;
+			const std::span<const AclItem> acl(table.GetColumn(LogicalIndex(column_index)).Acl());
+			if (!column_read->principal.CanColumns(table.permissions, AclMode::Select,
+			                                       std::span<const std::span<const AclItem>>(&acl, 1))) {
+				ThrowPermissionDenied(table);
+			}
+			column_read->referenced = true;
+		}
 	}
 	ColumnBinding binding = GetColumnBinding(column_index);
 	return BindResult(make_uniq<BoundColumnRefExpression>(Identifier(colref.GetName()), col_type, binding, depth));

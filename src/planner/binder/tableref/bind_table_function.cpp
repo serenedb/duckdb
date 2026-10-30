@@ -383,12 +383,17 @@ BoundStatement Binder::BindTableFunctionInternal(BoundTableFunction &table_funct
 		}
 	}
 
-	if (ref.with_ordinality == OrdinalityType::WITH_ORDINALITY && correlated_columns.empty()) {
-		bind_context.AddTableFunction(bind_index, Identifier(function_name), return_names, return_types,
-		                              get->GetMutableColumnIds(), get->GetTable().get(), std::move(virtual_columns),
-		                              std::move(row_id_columns));
-		AddPostgresSetofColumnAlias(bind_context, bind_index, setof_column_name);
+	// now add the table function to the bind context so its columns can be bound
+	auto table = get->GetTable();
+	auto &binding = bind_context.AddTableFunction(bind_index, Identifier(function_name), return_names, return_types,
+	                                              get->GetMutableColumnIds(), table.get(), std::move(virtual_columns),
+	                                              std::move(row_id_columns));
+	if (table) {
+		CheckTableRead(binding, *table);
+	}
+	AddPostgresSetofColumnAlias(bind_context, bind_index, setof_column_name);
 
+	if (ref.with_ordinality == OrdinalityType::WITH_ORDINALITY && correlated_columns.empty()) {
 		auto window_index = GenerateTableIndex();
 		auto window = make_uniq<duckdb::LogicalWindow>(window_index);
 		auto row_number = GetBuiltinWindowFunction(context, RowNumberFun::Name, {})->Bind(context);
@@ -415,12 +420,7 @@ BoundStatement Binder::BindTableFunctionInternal(BoundTableFunction &table_funct
 		result.plan = std::move(window);
 		return result;
 	}
-	// now add the table function to the bind context so its columns can be bound
 	BoundStatement result;
-	bind_context.AddTableFunction(bind_index, Identifier(function_name), return_names, return_types,
-	                              get->GetMutableColumnIds(), get->GetTable().get(), std::move(virtual_columns),
-	                              std::move(row_id_columns));
-	AddPostgresSetofColumnAlias(bind_context, bind_index, setof_column_name);
 	result.names = std::move(return_names);
 	result.types = std::move(return_types);
 	result.plan = std::move(get);

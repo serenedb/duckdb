@@ -235,7 +235,7 @@ BoundStatement Binder::BindNode(MergeQueryNode &node) {
 	// bind the target table
 	auto target_binder = Binder::CreateBinder(context, this);
 	auto table_alias = node.target->alias;
-	auto bound_table = target_binder->Bind(*node.target);
+	auto bound_table = target_binder->BindTarget(*node.target, TableRefUse::DML_TARGET);
 	if (bound_table.plan->type != LogicalOperatorType::LOGICAL_GET) {
 		throw BinderException("Can only merge into base tables!");
 	}
@@ -254,6 +254,29 @@ BoundStatement Binder::BindNode(MergeQueryNode &node) {
 		}
 	}
 	auto &table = *table_ptr;
+	if (principal) {
+		for (auto &entry : node.actions) {
+			for (auto &action : entry.second) {
+				AclMode need = AclMode::NoRights;
+				switch (action->action_type) {
+				case MergeActionType::MERGE_UPDATE:
+					need = AclMode::Update;
+					break;
+				case MergeActionType::MERGE_DELETE:
+					need = AclMode::Delete;
+					break;
+				case MergeActionType::MERGE_INSERT:
+					need = AclMode::Insert;
+					break;
+				default:
+					continue;
+				}
+				if (!principal->Can(CatalogType::TABLE_ENTRY, table.permissions, need)) {
+					ThrowPermissionDenied(table);
+				}
+			}
+		}
+	}
 
 	bool has_triggers = false;
 	auto transaction = table.ParentCatalog().GetCatalogTransaction(context);

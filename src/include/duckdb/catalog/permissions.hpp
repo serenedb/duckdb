@@ -20,6 +20,7 @@
 #include <span>
 
 namespace duckdb {
+class CatalogEntry;
 
 constexpr idx_t ACL_ID_PUBLIC = 0;
 
@@ -196,5 +197,9 @@ private:
 	vector<idx_t> arena;
 	vector<RoleAccess> roles;
 };
+
+DUCKDB_API bool IsUnowned(const CatalogEntry &entry);
+DUCKDB_API string PermissionKindName(CatalogType type);
+[[noreturn]] DUCKDB_API void ThrowPermissionDenied(const CatalogEntry &entry);
 
 } // namespace duckdb

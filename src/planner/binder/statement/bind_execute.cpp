@@ -133,6 +133,7 @@ BoundStatement Binder::Bind(ExecuteStatement &stmt) {
 	if (rebind != RebindQueryInfo::ATTEMPT_TO_REBIND &&
 	    (!prepared->CatalogIsCurrent(context) || !prepared->DataIsCurrent(context))) {
 		Planner generic_planner(context);
+		generic_planner.binder->principal = principal;
 		generic_planner.parameter_type_hints = prepared->parameter_type_hints;
 		auto replanned = generic_planner.PrepareSQLStatement(prepared->unbound_statement->Copy());
 		if (replanned->properties.bound_all_parameters) {
@@ -151,6 +152,7 @@ BoundStatement Binder::Bind(ExecuteStatement &stmt) {
 	}
 	if (rebind == RebindQueryInfo::ATTEMPT_TO_REBIND) {
 		Planner prepared_planner(context);
+		prepared_planner.binder->principal = principal;
 		prepared_planner.parameter_data = bind_values;
 		prepared_planner.parameter_type_hints = entry->second->parameter_type_hints;
 		prepared = prepared_planner.PrepareSQLStatement(entry->second->unbound_statement->Copy());

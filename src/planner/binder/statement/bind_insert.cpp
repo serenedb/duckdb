@@ -744,6 +744,18 @@ BoundStatement Binder::BindNode(InsertQueryNode &node) {
 	vector<LogicalIndex> named_column_map;
 	BindInsertColumnList(table, node.columns, node.default_values, named_column_map, insert->expected_types,
 	                     column_index_map);
+	const auto check_insert = [&](idx_t source_columns) {
+		if (!principal) {
+			return;
+		}
+		vector<std::span<const AclItem>> acls;
+		for (idx_t i = 0; i < source_columns && i < named_column_map.size(); i++) {
+			acls.emplace_back(table.GetColumn(named_column_map[i]).Acl());
+		}
+		if (!principal->CanColumns(table.permissions, AclMode::Insert, acls)) {
+			ThrowPermissionDenied(table);
+		}
+	};
 
 	// An INSERT ... SELECT supplies a value for every targeted column, so naming a
 	// generated column there is not allowed -- a generated column only accepts
@@ -765,6 +777,7 @@ BoundStatement Binder::BindNode(InsertQueryNode &node) {
 	                  schema_name.GetIdentifierName());
 	insert->bound_constraints = BindConstraints(table);
 	if (!node.select_statement && !node.default_values) {
+		check_insert(named_column_map.size());
 		result.plan = std::move(insert);
 		return result;
 	}
@@ -782,6 +795,7 @@ BoundStatement Binder::BindNode(InsertQueryNode &node) {
 		}
 		// inserting from a select - check if the column count matches
 		CheckInsertColumnCountMismatch(expected_columns, root_select.types.size(), !node.columns.empty(), table.name);
+		check_insert(root_select.types.size());
 
 		auto source_types = root_select.types;
 		auto target_types = insert->expected_types;
@@ -796,6 +810,7 @@ BoundStatement Binder::BindNode(InsertQueryNode &node) {
 		}
 		root = CastLogicalOperatorToTypes(source_types, target_types, std::move(root_select.plan));
 	} else {
+		check_insert(0);
 		root = make_uniq<LogicalDummyScan>(GenerateTableIndex());
 		if (node.default_values) {
 			root = ResolveInputProjection(*insert, column_index_map, std::move(root), {});

@@ -109,6 +109,7 @@ enum class BindingMode : uint8_t {
 	EXTRACT_QUALIFIED_NAMES
 };
 enum class BinderType : uint8_t { REGULAR_BINDER, VIEW_BINDER };
+enum class TableRefUse : uint8_t { READ, DML_TARGET, UTILITY_TARGET };
 
 struct CorrelatedColumnInfo {
 	ColumnBinding binding;
@@ -262,6 +263,7 @@ struct GlobalBinderState {
 	idx_t macro_type_probing = 0;
 	//! Statement properties
 	StatementProperties prop;
+	vector<shared_ptr<ColumnReadCheck>> column_reads;
 	//! Binding mode
 	BindingMode mode = BindingMode::STANDARD_BINDING;
 	//! Table names extracted for BindingMode::EXTRACT_NAMES or BindingMode::EXTRACT_QUALIFIED_NAMES.
@@ -412,6 +414,12 @@ public:
 	void AddBoundView(ViewCatalogEntry &view);
 	bool InViewBody() const;
 
+	optional_ptr<const RoleAccess> principal;
+	TableRefUse table_ref_use = TableRefUse::READ;
+	BoundStatement BindTarget(TableRef &ref, TableRefUse use);
+	void CheckTableRead(TableBinding &binding, TableCatalogEntry &table);
+	void CheckTableReads();
+
 	void BeginSubqueryBind(Binder &parent, ExpressionBinder &binder);
 	//! The innermost enclosing scope
 	ExpressionBinder &GetInnermostScope();
@@ -519,6 +527,7 @@ private:
 	bool allow_procedure_call = false;
 	//! The set of bound views
 	reference_set_t<ViewCatalogEntry> bound_views;
+	RoleAccess view_principal;
 	//! Used to retrieve CatalogEntry's
 	CatalogEntryRetriever entry_retriever;
 	//! Unnamed subquery index
