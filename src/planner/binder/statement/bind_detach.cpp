@@ -7,6 +7,10 @@ namespace duckdb {
 
 BoundStatement Binder::Bind(DetachStatement &stmt) {
 	BoundStatement result;
+	if (ClusterEntry(CatalogType::DATABASE_ENTRY, stmt.info->name)) {
+		throw NotImplementedException("cannot detach database \"%s\", use DROP DATABASE",
+		                              stmt.info->name.GetIdentifierName());
+	}
 
 	result.plan = make_uniq<LogicalDetach>(std::move(stmt.info));
 	result.names = {"Success"};
