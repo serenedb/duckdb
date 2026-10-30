@@ -8,6 +8,7 @@
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/main/database.hpp"
 #include "duckdb/main/database_manager.hpp"
+#include "duckdb/transaction/duck_transaction.hpp"
 #include "duckdb/transaction/meta_transaction.hpp"
 #include "duckdb/parser/expression/constant_expression.hpp"
 #include "duckdb/catalog/dependency_list.hpp"
@@ -350,16 +351,6 @@ static std::function<bool(DuckCatalog &)> HoldsEntries(CatalogType type) {
 	};
 }
 
-static LogicalDependencyList Without(const LogicalDependencyList &dependencies, const LogicalDependencyList &removed) {
-	LogicalDependencyList result;
-	for (auto &dependency : dependencies.Set()) {
-		if (!removed.Set().count(dependency)) {
-			result.AddDependency(dependency);
-		}
-	}
-	return result;
-}
-
 void DependencyManager::CreateDependencies(CatalogTransaction transaction, const CatalogEntry &object,
                                            const LogicalDependencyList &dependencies) {
 	const auto object_info = GetLookupProperties(transaction, object);
@@ -421,17 +412,6 @@ void DependencyManager::CreateDependencies(CatalogTransaction transaction, const
 	}
 }
 
-void DependencyManager::RemoveDependencies(CatalogTransaction transaction, const CatalogEntry &object,
-                                           const LogicalDependencyList &dependencies) {
-	for (auto &dependency : dependencies.Set()) {
-		RemoveDependency(transaction,
-		                 DependencyInfo {DependencyDependent {GetLookupProperties(transaction, object),
-		                                                      DependencyDependentFlags(), subdependency_set_t()},
-		                                 DependencySubject {SubjectInfo(object, dependency), DependencySubjectFlags(),
-		                                                    optional_idx()}});
-	}
-}
-
 void DependencyManager::ForEachCatalog(CatalogTransaction transaction, const std::function<bool(DuckCatalog &)> &visit,
                                        const std::function<void(DuckCatalog &, CatalogTransaction)> &callback) {
 	callback(catalog, transaction);
@@ -480,38 +460,92 @@ bool DependencyManager::MayDependOn(const Identifier &catalog_name) {
 	return foreign_catalogs.count(catalog_name.GetIdentifierName()) != 0;
 }
 
-LogicalDependencyList DependencyManager::EntryDependencies(CatalogTransaction transaction, CatalogEntry &object) {
-	auto &permissions = object.permissions;
-	unordered_set<idx_t> oids {permissions.owner};
-	const auto add_acl = [&](const vector<AclItem> &acl) {
-		for (auto &item : acl) {
-			oids.insert(item.grantee);
-			oids.insert(item.grantor);
-		}
-	};
-	add_acl(permissions.acl);
-	for (auto &row : permissions.defaults) {
-		oids.insert(row.role);
-		add_acl(row.acl);
+void DependencyManager::ScanAllEntries(CatalogTransaction transaction,
+                                       const std::function<void(CatalogEntry &)> &callback) {
+	ForEachCatalog(
+	    transaction, [](DuckCatalog &) { return true; },
+	    [&](DuckCatalog &holder, CatalogTransaction holder_transaction) {
+		    auto &manager = *holder.GetDependencyManager();
+		    holder.GetOidIndex().ScanVisible(holder_transaction.view, [&](CatalogEntry &entry) {
+			    if (!manager.IsSystemEntry(entry)) {
+				    callback(entry);
+			    }
+		    });
+	    });
+}
+
+void DependencyManager::CommitRoleReferences(DuckTransaction &transaction, transaction_t commit_id,
+                                             const CatalogEntry &old_entry, const CatalogEntry &new_entry) {
+	if (IsSystemEntry(new_entry)) {
+		return;
 	}
-	if (object.type == CatalogType::TABLE_ENTRY) {
-		for (auto &column : object.Cast<TableCatalogEntry>().GetColumns().Logical()) {
-			add_acl(column.Acl());
+	auto named = RoleReferences(new_entry);
+	if (named.empty()) {
+		return;
+	}
+	auto previous = RoleReferences(old_entry);
+	vector<idx_t> added;
+	std::set_difference(named.begin(), named.end(), previous.begin(), previous.end(), std::back_inserter(added));
+	for (auto role : added) {
+		role_stamps[role] = commit_id;
+	}
+	if (transaction.prepared) {
+		auto &references = transaction.prepared->role_references;
+		references.insert(references.end(), added.begin(), added.end());
+		return;
+	}
+	VerifyRolesExist(catalog, added);
+}
+
+void DependencyManager::VerifyRolesExist(DuckCatalog &holder, const vector<idx_t> &roles) {
+	for (auto role : roles) {
+		if (auto dropped = holder.GetOidIndex().GetCommittedDrop(role)) {
+			throw DependencyException("Could not commit creation of dependency, subject %s has been deleted",
+			                          dropped->name);
 		}
 	}
-	oids.erase(ACL_ID_PUBLIC);
-	LogicalDependencyList dependencies;
-	ForEachHolder(transaction, CatalogType::ROLE_ENTRY,
-	              [&](DuckCatalog &holder, CatalogTransaction holder_transaction) {
-		              for (auto oid : oids) {
-			              auto subject = holder.GetOidIndex().GetVisible(oid, holder_transaction.view);
-			              if (subject && !holder.IsPinnedEntry(*subject)) {
-				              dependencies.AddDependency(
-				                  LogicalDependency(nullptr, GetLookupProperties(*subject), holder.GetName()));
-			              }
-		              }
-	              });
-	return dependencies;
+}
+
+void DependencyManager::VerifyRoleReferences(const vector<idx_t> &roles) {
+	if (roles.empty()) {
+		return;
+	}
+	CatalogTransaction committed(catalog.GetDatabase(), MAX_TRANSACTION_ID, VisibilityBound::AllCommitted());
+	ForEachHolder(committed, CatalogType::ROLE_ENTRY,
+	              [&](DuckCatalog &holder, CatalogTransaction) { VerifyRolesExist(holder, roles); });
+}
+
+void DependencyManager::VerifyDroppedRoles(
+    const vector<reference<CatalogEntry>> &dropped,
+    const std::function<optional_ptr<DuckTransaction>(AttachedDatabase &)> &snapshot) {
+	vector<reference<CatalogEntry>> roles;
+	for (auto &entry : dropped) {
+		if (entry.get().type == CatalogType::ROLE_ENTRY) {
+			roles.push_back(entry);
+		}
+	}
+	if (roles.empty()) {
+		return;
+	}
+	CatalogTransaction committed(catalog.GetDatabase(), MAX_TRANSACTION_ID, VisibilityBound::AllCommitted());
+	ForEachCatalog(
+	    committed, [](DuckCatalog &) { return true; },
+	    [&](DuckCatalog &holder, CatalogTransaction) {
+		    if (&holder == &catalog) {
+			    return;
+		    }
+		    auto reader = snapshot(holder.GetAttached());
+		    auto &stamps = holder.GetDependencyManager()->role_stamps;
+		    lock_guard<mutex> write_lock(holder.GetWriteLock());
+		    for (auto &role : roles) {
+			    auto stamp = stamps.find(role.get().oid);
+			    if (stamp != stamps.end() && (!reader || stamp->second >= reader->view.visibility_bound)) {
+				    throw DependencyException(
+				        "Could not commit DROP of %s because a dependency was created after the transaction started",
+				        role.get().name);
+			    }
+		    }
+	    });
 }
 
 void DependencyManager::AddObject(CatalogTransaction transaction, CatalogEntry &object,
@@ -521,7 +555,6 @@ void DependencyManager::AddObject(CatalogTransaction transaction, CatalogEntry &
 		return;
 	}
 	CreateDependencies(transaction, object, dependencies);
-	CreateDependencies(transaction, object, EntryDependencies(transaction, object));
 }
 
 static bool CascadeDrop(bool cascade, const DependencyDependentFlags &flags) {
@@ -1003,6 +1036,14 @@ void DependencyManager::VerifyCommitDrop(CatalogTransaction transaction, Visibil
 	if (IsSystemEntry(object)) {
 		return;
 	}
+	if (object.type == CatalogType::ROLE_ENTRY) {
+		auto stamp = role_stamps.find(object.oid);
+		if (stamp != role_stamps.end() && stamp->second >= visibility_bound) {
+			throw DependencyException(
+			    "Could not commit DROP of %s because a dependency was created after the transaction started",
+			    object.name);
+		}
+	}
 	auto info = GetLookupProperties(transaction, object);
 	ScanDependents(transaction, info, [&](DependencyEntry &dep) {
 		auto dep_committed_at = dep.timestamp.load();
@@ -1129,6 +1170,13 @@ catalog_entry_map_t<subdependency_set_t> DependencyManager::CheckDropDependencie
 			to_drop[*entry] = dep.Dependent().subdependencies;
 		}
 	});
+	if (object.type == CatalogType::ROLE_ENTRY) {
+		ScanAllEntries(transaction, [&](CatalogEntry &entry) {
+			if (entry.oid != object.oid && ReferencesRole(entry, object.oid)) {
+				blocking_dependents.insert(entry);
+			}
+		});
+	}
 	if (!blocking_dependents.empty()) {
 		catalog_entry_set_t listed {object};
 		throw DependencyException(
@@ -1461,15 +1509,10 @@ void DependencyManager::AlterObject(CatalogTransaction transaction, CatalogEntry
 		    "first and recreate them after the change.",
 		    old_obj.name.GetIdentifierName(), blockers));
 	}
-	const auto old_roles = EntryDependencies(transaction, old_obj);
-	const auto new_roles = EntryDependencies(transaction, new_obj);
 	const bool has_new_dependencies = alter_info.new_dependencies.get();
 	if (old_info == new_info && !has_new_dependencies) {
-		RemoveDependencies(transaction, old_obj, Without(old_roles, new_roles));
-		CreateDependencies(transaction, new_obj, Without(new_roles, old_roles));
 		return;
 	}
-	RemoveDependencies(transaction, old_obj, old_roles);
 
 	// Keep old dependencies
 	ScanSubjects(transaction, old_info, [&](DependencyEntry &dep) {
@@ -1507,7 +1550,6 @@ void DependencyManager::AlterObject(CatalogTransaction transaction, CatalogEntry
 	for (auto &dep : dependencies) {
 		CreateDependency(transaction, dep);
 	}
-	CreateDependencies(transaction, new_obj, new_roles);
 
 	for (auto &edge : foreign_edges) {
 		auto &holder = edge.first.get();

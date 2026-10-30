@@ -22,7 +22,9 @@
 #include <functional>
 
 namespace duckdb {
+class AttachedDatabase;
 class DuckCatalog;
+class DuckTransaction;
 class ClientContext;
 class DependencyEntry;
 class LogicalDependencyList;
@@ -114,8 +116,14 @@ public:
 	static bool CanDepend(Catalog &dependent, Catalog &subject);
 	void ScanDependentEntries(CatalogTransaction transaction, CatalogEntry &object,
 	                          const std::function<void(CatalogEntry &)> &callback);
+	void ScanAllEntries(CatalogTransaction transaction, const std::function<void(CatalogEntry &)> &callback);
 	void VerifyForeignSubjects(const vector<reference<DependencyEntry>> &dependencies);
 	void VerifyForeignDependents(const vector<reference<CatalogEntry>> &dropped);
+	void CommitRoleReferences(DuckTransaction &transaction, transaction_t commit_id, const CatalogEntry &old_entry,
+	                          const CatalogEntry &new_entry);
+	void VerifyRoleReferences(const vector<idx_t> &roles);
+	void VerifyDroppedRoles(const vector<reference<CatalogEntry>> &dropped,
+	                        const std::function<optional_ptr<DuckTransaction>(AttachedDatabase &)> &snapshot);
 
 private:
 	DuckCatalog &catalog;
@@ -123,6 +131,7 @@ private:
 	CatalogSet dependents;
 	mutex foreign_lock;
 	case_insensitive_set_t foreign_catalogs;
+	unordered_map<idx_t, transaction_t> role_stamps;
 
 private:
 	bool IsSystemEntry(const CatalogEntry &entry) const;
@@ -194,9 +203,7 @@ private:
 	void ForEachHolder(CatalogTransaction transaction, CatalogType type,
 	                   const std::function<void(DuckCatalog &, CatalogTransaction)> &callback);
 	bool MayDependOn(const Identifier &catalog_name);
-	LogicalDependencyList EntryDependencies(CatalogTransaction transaction, CatalogEntry &object);
-	void RemoveDependencies(CatalogTransaction transaction, const CatalogEntry &object,
-	                        const LogicalDependencyList &dependencies);
+	static void VerifyRolesExist(DuckCatalog &holder, const vector<idx_t> &roles);
 	void ScanSetInternal(CatalogTransaction transaction, const CatalogEntryInfo &info, bool subjects,
 	                     dependency_callback_t &callback);
 	void PrintSubjects(CatalogTransaction transaction, const CatalogEntryInfo &info);

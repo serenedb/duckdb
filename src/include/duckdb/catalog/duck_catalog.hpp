@@ -76,10 +76,6 @@ public:
 	                                                                DuckSchemaEntry &schema, CreateTokenizerInfo &info);
 	DUCKDB_API virtual unique_ptr<StandardEntry> MakeJobEntry(CatalogTransaction transaction, DuckSchemaEntry &schema,
 	                                                          CreateJobInfo &info);
-	DUCKDB_API virtual bool IsPinnedEntry(const CatalogEntry &entry) const {
-		return false;
-	}
-
 	DUCKDB_API optional_ptr<CatalogEntry> CreateRole(CatalogTransaction transaction, CreateRoleInfo &info) override;
 	DUCKDB_API optional_ptr<CatalogEntry> CreateDatabase(CatalogTransaction transaction, CreateDatabaseInfo &info);
 	DUCKDB_API optional_ptr<CatalogEntry> CreateForeignServer(CatalogTransaction transaction,

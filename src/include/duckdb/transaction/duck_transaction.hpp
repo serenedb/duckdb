@@ -153,6 +153,7 @@ public:
 		UndoBuffer::IteratorState iterator_state;
 		CommitDropState drop_state;
 		vector<reference<DependencyEntry>> foreign_dependencies;
+		vector<idx_t> role_references;
 		bool applied = false;
 	};
 	unique_ptr<PreparedCommit> prepared;

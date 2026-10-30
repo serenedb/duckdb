@@ -2,6 +2,7 @@
 
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/catalog/catalog_entry.hpp"
+#include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/common/case_insensitive_map.hpp"
 #include "duckdb/main/attached_database.hpp"
 #include "duckdb/common/exception.hpp"
@@ -452,6 +453,53 @@ bool CanUseSchema(optional_ptr<const RoleAccess> principal, const CatalogEntry &
 	return !principal || schema.internal || IsUnowned(schema) ||
 	       schema.ParentCatalog().Compatibility() != SqlCompatibility::POSTGRES ||
 	       principal->Can(CatalogType::SCHEMA_ENTRY, schema.permissions, AclMode::Usage);
+}
+
+template <class F>
+static bool AnyRoleReference(const CatalogEntry &entry, F &&named) {
+	auto &permissions = entry.permissions;
+	const auto any_acl = [&](const vector<AclItem> &acl) {
+		return std::any_of(acl.begin(), acl.end(),
+		                   [&](const AclItem &item) { return named(item.grantee) || named(item.grantor); });
+	};
+	if (named(permissions.owner) || any_acl(permissions.acl)) {
+		return true;
+	}
+	for (auto &row : permissions.defaults) {
+		if (named(row.role) || any_acl(row.acl)) {
+			return true;
+		}
+	}
+	if (entry.type != CatalogType::TABLE_ENTRY) {
+		return false;
+	}
+	for (auto &column : entry.Cast<TableCatalogEntry>().GetColumns().Logical()) {
+		if (any_acl(column.Acl())) {
+			return true;
+		}
+	}
+	return false;
+}
+
+bool ReferencesRole(const CatalogEntry &entry, idx_t role) {
+	return AnyRoleReference(entry, [&](idx_t oid) { return oid == role; });
+}
+
+void ForEachRoleReference(const CatalogEntry &entry, const std::function<void(idx_t role)> &callback) {
+	AnyRoleReference(entry, [&](idx_t oid) {
+		if (oid != ACL_ID_PUBLIC) {
+			callback(oid);
+		}
+		return false;
+	});
+}
+
+vector<idx_t> RoleReferences(const CatalogEntry &entry) {
+	vector<idx_t> roles;
+	ForEachRoleReference(entry, [&](idx_t role) { roles.push_back(role); });
+	std::sort(roles.begin(), roles.end());
+	roles.erase(std::unique(roles.begin(), roles.end()), roles.end());
+	return roles;
 }
 
 string PermissionKindName(CatalogType type) {
