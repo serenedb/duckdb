@@ -117,8 +117,8 @@ optional_ptr<DependencyManager> DuckCatalog::GetDependencyManager() {
 //===--------------------------------------------------------------------===//
 // Schema
 //===--------------------------------------------------------------------===//
-unique_ptr<IndexCatalogEntry> DuckCatalog::MakeIndexEntry(DuckSchemaEntry &schema, CreateIndexInfo &info,
-                                                          CatalogEntry &relation) {
+unique_ptr<IndexCatalogEntry> DuckCatalog::MakeIndexEntry(CatalogTransaction transaction, DuckSchemaEntry &schema,
+                                                          CreateIndexInfo &info, CatalogEntry &relation) {
 	return make_uniq<DuckIndexEntry>(*this, schema, info, relation.Cast<TableCatalogEntry>());
 }
 
@@ -222,7 +222,7 @@ unique_ptr<InCatalogEntry> DuckCatalog::MakeRoleEntry(CreateRoleInfo &info) {
 	throw NotImplementedException("Roles are not supported by this catalog");
 }
 
-unique_ptr<InCatalogEntry> DuckCatalog::MakeDatabaseEntry(CreateDatabaseInfo &info) {
+unique_ptr<InCatalogEntry> DuckCatalog::MakeDatabaseEntry(CatalogTransaction transaction, CreateDatabaseInfo &info) {
 	throw NotImplementedException("Database entries are not supported by this catalog");
 }
 
@@ -278,7 +278,7 @@ optional_ptr<CatalogEntry> DuckCatalog::CreateRole(CatalogTransaction transactio
 }
 
 optional_ptr<CatalogEntry> DuckCatalog::CreateDatabase(CatalogTransaction transaction, CreateDatabaseInfo &info) {
-	return AddEntry(transaction, MakeDatabaseEntry(info), info.on_conflict);
+	return AddEntry(transaction, MakeDatabaseEntry(transaction, info), info.on_conflict);
 }
 
 optional_ptr<CatalogEntry> DuckCatalog::CreateForeignServer(CatalogTransaction transaction,
