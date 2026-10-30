@@ -27,6 +27,10 @@ BindResult HavingBinder::BindColumnRef(unique_ptr<ParsedExpression> &expr_ptr, i
 	auto col_ref = expr_ptr->Cast<ColumnRefExpression>();
 	const auto &column_name = col_ref.GetColumnName();
 
+	auto &names = col_ref.ColumnNames();
+	if (binder.macro_binding && col_ref.IsQualified() && names[names.size() - 2] == binder.macro_binding->GetAlias()) {
+		return ExpressionBinder::BindExpression(expr_ptr, depth);
+	}
 	if (!col_ref.IsQualified()) {
 		// Try binding as a lambda parameter.
 		auto lambda_ref = LambdaRefExpression::FindMatchingBinding(lambda_bindings, col_ref.GetColumnName());

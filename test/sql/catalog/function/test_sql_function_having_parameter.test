@@ -1,0 +1,15 @@
+# name: test/sql/catalog/function/test_sql_function_having_parameter.test
+# group: [function]
+
+statement ok
+CREATE FUNCTION positive_only(x BIGINT) RETURNS BIGINT LANGUAGE sql AS 'SELECT x HAVING x > 0';
+
+statement ok
+CREATE FUNCTION above_count(x BIGINT) RETURNS BIGINT LANGUAGE sql AS 'SELECT x + count(*) FROM range(3) HAVING count(*) < x';
+
+query III
+SELECT i, positive_only(i - 1), above_count(i * 2) FROM range(3) t(i) ORDER BY i
+----
+0	NULL	NULL
+1	NULL	NULL
+2	1	7
