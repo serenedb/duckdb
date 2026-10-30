@@ -1287,6 +1287,7 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 		if (table_ptr) {
 			auto &table = *table_ptr;
 			RequireOwner(table);
+			RequireSchemaCreate(table.ParentSchema(context));
 			RequireReplaceOwner(table.ParentSchema(context), create_index_info, create_index_info.GetIndexName());
 			if (table.temporary) {
 				stmt.info->temporary = true;
@@ -1299,6 +1300,7 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 			    BindTableName(create_index_info.GetQualifiedName().WithName(create_index_info.table)));
 			auto &view = EntryRetriever().GetEntry(view_lookup)->Cast<ViewCatalogEntry>();
 			RequireOwner(view);
+			RequireSchemaCreate(view.ParentSchema(context));
 			RequireReplaceOwner(view.ParentSchema(context), create_index_info, create_index_info.GetIndexName());
 			properties.RegisterDBModify(view.catalog, context, DatabaseModificationType::CREATE_INDEX);
 			result.plan = view.catalog.BindCreateViewIndex(*this, stmt, view, std::move(plan));

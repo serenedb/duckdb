@@ -355,7 +355,9 @@ static void ResolveOwner(Binder &binder, AlterPermissionsInfo &info) {
 	if (!principal->CanSet(info.new_owner_id)) {
 		throw PermissionException("must be able to SET ROLE \"%s\"", RoleName(context, info.new_owner_id));
 	}
-	if (entry.type != CatalogType::SCHEMA_ENTRY) {
+	if (entry.type == CatalogType::SCHEMA_ENTRY) {
+		binder.RequireDatabasePrivilege(entry.ParentCatalog().GetName(), AclMode::Create);
+	} else {
 		auto &schema = entry.ParentSchema(context);
 		if (!AccessOf(context, info.new_owner_id).Can(CatalogType::SCHEMA_ENTRY, schema.permissions, AclMode::Create)) {
 			ThrowPermissionDenied(schema);
