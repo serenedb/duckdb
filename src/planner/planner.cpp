@@ -59,6 +59,7 @@ void Planner::Optimize() {
 			optimize = false;
 		}
 	}
+	Optimizer::TrackDataVersions(context, *plan);
 	if (plan->RequireOptimizer()) {
 		{
 			auto optimizer_timer = profiler.StartTimer<MetricOptimizerTotalTime>();
