@@ -17,7 +17,7 @@ static void DropTemporaryObjects(ClientContext &context) {
 	vector<unique_ptr<DropInfo>> drops;
 	catalog.ScanSchemas(context, [&](SchemaCatalogEntry &schema) {
 		for (auto type : {CatalogType::TABLE_ENTRY, CatalogType::SEQUENCE_ENTRY, CatalogType::MACRO_ENTRY,
-		                  CatalogType::TABLE_MACRO_ENTRY, CatalogType::TYPE_ENTRY}) {
+		                  CatalogType::TABLE_MACRO_ENTRY, CatalogType::TYPE_ENTRY, CatalogType::JOB_ENTRY}) {
 			schema.Scan(context, type, [&](CatalogEntry &entry) {
 				if (entry.internal) {
 					return;
