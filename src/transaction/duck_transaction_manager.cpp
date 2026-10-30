@@ -477,6 +477,29 @@ void DuckTransactionManager::AdvanceStartTime(DuckTransaction &transaction) {
 	}
 }
 
+void DuckTransactionManager::WaitForOlderWriters(ClientContext &context, DuckTransaction &transaction,
+                                                 DataTableInfo &table) {
+	lock_guard<mutex> lock(transaction_lock);
+	const auto horizon = current_transaction_id;
+	auto older_ended = [&] {
+		for (auto &active : active_transactions) {
+			if (active.get() != &transaction && active->commit_id == 0 && !active->waits_for_older &&
+			    active->GetTransactionId() < horizon && active->IntendsToModify(table)) {
+				return false;
+			}
+		}
+		return true;
+	};
+	transaction.waits_for_older = true;
+	while (!transaction_lock.AwaitWithTimeout(absl::Condition(&older_ended), absl::Milliseconds(100))) {
+		if (context.IsInterrupted()) {
+			transaction.waits_for_older = false;
+			throw InterruptException();
+		}
+	}
+	transaction.waits_for_older = false;
+}
+
 void DuckTransactionManager::CleanupTransactions() {
 	lock_guard<mutex> c_lock(cleanup_lock);
 	while (true) {

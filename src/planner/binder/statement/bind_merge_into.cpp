@@ -265,7 +265,6 @@ BoundStatement Binder::BindNode(MergeQueryNode &node) {
 
 	if (!table.temporary) {
 		// update of persistent table: not read only!
-		auto &properties = GetStatementProperties();
 		// modification type depends on actions
 		DatabaseModificationType modification;
 		for (auto &action_condition : node.actions) {
@@ -285,7 +284,7 @@ BoundStatement Binder::BindNode(MergeQueryNode &node) {
 				}
 			}
 		}
-		properties.RegisterDBModify(table.GetStorageCatalog(context), context, modification);
+		RegisterTableModify(table, modification);
 	}
 
 	// bind the source
