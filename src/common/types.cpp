@@ -2103,6 +2103,13 @@ const unique_ptr<ParsedExpression> &UnboundType::GetTypeExpression(const Logical
 	return info.Cast<UnboundTypeInfo>().expr;
 }
 
+LogicalType UnboundType::GetDeclaredType(const LogicalType &type) {
+	if (type.id() != LogicalTypeId::UNBOUND || !type.HasParameters()) {
+		return LogicalType();
+	}
+	return type;
+}
+
 LogicalType UnboundType::TryParseAndDefaultBind(const string &type_str) {
 	if (type_str.empty()) {
 		return LogicalType::INVALID;

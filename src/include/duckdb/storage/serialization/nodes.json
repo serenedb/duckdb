@@ -626,6 +626,13 @@
         "name": "catalog_oid",
         "type": "idx_t",
         "version": "serenedb_v1"
+      },
+      {
+        "id": 16486,
+        "name": "declared_type",
+        "type": "LogicalType",
+        "default": "LogicalType()",
+        "version": "serenedb_v1"
       }
     ],
     "constructor": [

@@ -94,6 +94,7 @@ static void BindAlterTypes(Binder &binder, AlterStatement &stmt) {
 		switch (table_info.alter_table_type) {
 		case AlterTableType::ADD_COLUMN: {
 			auto &add_info = table_info.Cast<AddColumnInfo>();
+			add_info.new_column.SetDeclaredType(UnboundType::GetDeclaredType(add_info.new_column.Type()));
 			binder.BindLogicalType(add_info.new_column.TypeMutable());
 		} break;
 		case AlterTableType::ADD_FIELD: {
@@ -102,6 +103,7 @@ static void BindAlterTypes(Binder &binder, AlterStatement &stmt) {
 		} break;
 		case AlterTableType::ALTER_COLUMN_TYPE: {
 			auto &alter_column_info = table_info.Cast<ChangeColumnTypeInfo>();
+			alter_column_info.declared_type = UnboundType::GetDeclaredType(alter_column_info.target_type);
 			binder.BindLogicalType(alter_column_info.target_type);
 			if (!alter_column_info.expression) {
 				// without USING, the column is cast to the target type

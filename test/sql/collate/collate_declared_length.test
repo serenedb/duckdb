@@ -1,0 +1,19 @@
+# name: test/sql/collate/collate_declared_length.test
+# description: A collation keeps the declared character type and its length
+# group: [collate]
+
+statement ok
+CREATE TABLE beast (title VARCHAR(67) COLLATE NOCASE, code CHAR(6) COLLATE NOCASE, bio TEXT COLLATE NOCASE, channel VARCHAR COLLATE NOCASE)
+
+statement ok
+INSERT INTO beast VALUES ('MrBeast', 'SIX', 'Seven', 'Feastables')
+
+query IIII
+SELECT title = 'mrbeast', code = 'six', bio = 'SEVEN', channel = 'FEASTABLES' FROM beast
+----
+true	true	true	true
+
+statement error
+CREATE TABLE beast_empty (title VARCHAR(0) COLLATE NOCASE)
+----
+length for type varchar must be at least 1

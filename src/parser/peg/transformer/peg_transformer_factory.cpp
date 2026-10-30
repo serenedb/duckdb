@@ -258,8 +258,12 @@ LogicalType PEGTransformerFactory::ApplyColumnCollation(const optional<LogicalTy
 		throw ParserException("Only VARCHAR columns can have collations!");
 	}
 	vector<unique_ptr<ParsedExpression>> type_children;
+	for (auto &child : type_expr.GetChildren()) {
+		type_children.push_back(child->Copy());
+	}
+	collation->SetAlias(Identifier("collation"));
 	type_children.push_back(std::move(collation));
-	return LogicalType::UNBOUND(make_uniq<TypeExpression>(Identifier("VARCHAR"), std::move(type_children)));
+	return LogicalType::UNBOUND(make_uniq<TypeExpression>(type_expr.GetTypeName(), std::move(type_children)));
 }
 
 } // namespace duckdb

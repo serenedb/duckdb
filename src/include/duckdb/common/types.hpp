@@ -621,6 +621,7 @@ struct UnboundType {
 	DUCKDB_API static LogicalType TryDefaultBind(const LogicalType &unbound_type);
 	DUCKDB_API static LogicalType TryDefaultBind(const ParsedExpression &type_expr);
 	DUCKDB_API static const unique_ptr<ParsedExpression> &GetTypeExpression(const LogicalType &type);
+	DUCKDB_API static LogicalType GetDeclaredType(const LogicalType &type);
 };
 
 struct EnumType {

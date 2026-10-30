@@ -156,21 +156,7 @@ PEGTransformerFactory::TransformTimeType(PEGTransformer &transformer, const Logi
 		if (timestamp_precision < 0) {
 			throw ParserException("TIMESTAMP precision should be between 0 and 10 (inclusive)");
 		}
-		if (timestamp_precision == 0) {
-			return make_uniq<TypeExpression>(Identifier(EnumUtil::ToString(LogicalType::TIMESTAMP_S)),
-			                                 vector<unique_ptr<ParsedExpression>> {});
-		}
-		if (timestamp_precision <= 3) {
-			return make_uniq<TypeExpression>(Identifier(EnumUtil::ToString(LogicalType::TIMESTAMP_MS)),
-			                                 vector<unique_ptr<ParsedExpression>> {});
-		}
-		if (timestamp_precision <= 6) {
-			// Corresponds to microseconds, which is the default TIMESTAMP
-			return make_uniq<TypeExpression>(Identifier(EnumUtil::ToString(LogicalType::TIMESTAMP)),
-			                                 vector<unique_ptr<ParsedExpression>> {});
-		}
-		return make_uniq<TypeExpression>(Identifier(EnumUtil::ToString(LogicalType::TIMESTAMP_NS)),
-		                                 vector<unique_ptr<ParsedExpression>> {});
+		return make_uniq<TypeExpression>(Identifier(EnumUtil::ToString(LogicalType::TIMESTAMP)), std::move(modifiers));
 	}
 	throw ParserException("Unexpected time type encountered");
 }
