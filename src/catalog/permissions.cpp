@@ -454,6 +454,7 @@ bool IsUnowned(const CatalogEntry &entry) {
 
 bool CanUseSchema(optional_ptr<const RoleAccess> principal, const CatalogEntry &schema) {
 	return !principal || schema.internal || IsUnowned(schema) ||
+	       schema.ParentCatalog().Compatibility() != SqlCompatibility::POSTGRES ||
 	       principal->Can(CatalogType::SCHEMA_ENTRY, schema.permissions, AclMode::Usage);
 }
 
