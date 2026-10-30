@@ -406,6 +406,7 @@ struct ChangeColumnTypeInfo : public AlterTableInfo {
 	LogicalType target_type;
 	//! The expression used for data conversion
 	unique_ptr<ParsedExpression> expression;
+	LogicalType declared_type;
 
 public:
 	unique_ptr<AlterInfo> Copy() const override;

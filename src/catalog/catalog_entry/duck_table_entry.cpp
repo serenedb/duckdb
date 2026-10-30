@@ -1331,6 +1331,7 @@ unique_ptr<CatalogEntry> DuckTableEntry::ChangeColumnType(ClientContext &context
 				throw NotImplementedException("Changing types of generated columns is not supported yet");
 			}
 			copy.SetType(info.target_type);
+			copy.SetDeclaredType(info.declared_type);
 			if (alter_table_type == AlterTableType::RENAME_FIELD && copy.HasDefaultValue()) {
 				copy.SetDefaultValue(
 				    RemapStructDefault(copy.DefaultValue().Copy(), info.target_type, GetRemapStructMapping(info)));

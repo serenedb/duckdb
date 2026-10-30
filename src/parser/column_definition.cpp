@@ -27,6 +27,7 @@ ColumnDefinition ColumnDefinition::Copy() const {
 	copy.comment = comment;
 	copy.tags = tags;
 	copy.acl = acl;
+	copy.declared_type = declared_type;
 	return copy;
 }
 
@@ -95,6 +96,14 @@ const InsertionOrderPreservingMap<string> &ColumnDefinition::Tags() const {
 
 void ColumnDefinition::SetTags(InsertionOrderPreservingMap<string> new_tags) {
 	this->tags = std::move(new_tags);
+}
+
+const LogicalType &ColumnDefinition::DeclaredType() const {
+	return declared_type;
+}
+
+void ColumnDefinition::SetDeclaredType(LogicalType new_declared_type) {
+	declared_type = std::move(new_declared_type);
 }
 
 const duckdb::CompressionType &ColumnDefinition::CompressionType() const {

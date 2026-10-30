@@ -112,8 +112,17 @@ void RegisterTimestampConstructors(TypeConstructorSet &set) {
 // VARCHAR Type
 //----------------------------------------------------------------------------------------------------------------------
 LogicalType BindVarcharType(BindLogicalTypeInput &input) {
-	if (!input.modifiers.empty() && input.modifiers[0].GetValue().GetValue<int64_t>() < 1) {
+	static constexpr int64_t MAX_POSTGRES_LENGTH = 10485760;
+	if (input.modifiers.empty()) {
+		return LogicalType::VARCHAR;
+	}
+	const auto length = input.modifiers[0].GetValue().GetValue<int64_t>();
+	if (length < 1) {
 		throw BinderException(input.GetLocation(0), "length for type varchar must be at least 1");
+	}
+	if (length > MAX_POSTGRES_LENGTH && input.context &&
+	    Catalog::DefaultCompatibility(*input.context) == SqlCompatibility::POSTGRES) {
+		throw BinderException(input.GetLocation(0), "length for type varchar cannot exceed %d", MAX_POSTGRES_LENGTH);
 	}
 	return LogicalType::VARCHAR;
 }

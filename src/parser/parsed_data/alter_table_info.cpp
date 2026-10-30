@@ -524,8 +524,10 @@ ChangeColumnTypeInfo::~ChangeColumnTypeInfo() {
 }
 
 unique_ptr<AlterInfo> ChangeColumnTypeInfo::Copy() const {
-	return make_uniq_base<AlterInfo, ChangeColumnTypeInfo>(GetAlterEntryData(), column_path, target_type,
-	                                                       expression ? expression->Copy() : nullptr);
+	auto result = make_uniq<ChangeColumnTypeInfo>(GetAlterEntryData(), column_path, target_type,
+	                                              expression ? expression->Copy() : nullptr);
+	result->declared_type = declared_type;
+	return std::move(result);
 }
 
 string ChangeColumnTypeInfo::ToString() const {

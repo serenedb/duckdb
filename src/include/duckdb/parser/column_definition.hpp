@@ -54,6 +54,8 @@ public:
 
 	DUCKDB_API const vector<AclItem> &Acl() const;
 	void SetAcl(vector<AclItem> new_acl);
+	DUCKDB_API const LogicalType &DeclaredType() const;
+	void SetDeclaredType(LogicalType declared_type);
 
 	//! compression_type
 	const duckdb::CompressionType &CompressionType() const;
@@ -125,6 +127,7 @@ private:
 	//! Tags on this column
 	InsertionOrderPreservingMap<string> tags;
 	vector<AclItem> acl;
+	LogicalType declared_type;
 };
 
 } // namespace duckdb

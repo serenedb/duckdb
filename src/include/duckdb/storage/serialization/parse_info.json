@@ -288,6 +288,13 @@
         "type": "vector<Identifier>",
         "serialize_property": "column_path.size() > 1 ? column_path : vector<Identifier>()",
         "default": "vector<Identifier>()"
+      },
+      {
+        "id": 16784,
+        "name": "declared_type",
+        "type": "LogicalType",
+        "default": "LogicalType()",
+        "version": "serenedb_v1"
       }
     ]
   },
