@@ -253,6 +253,7 @@ optional_ptr<CatalogEntry> DuckCatalog::AddEntry(CatalogTransaction transaction,
 	auto entry_name = entry->name;
 	auto entry_type = entry->type;
 	auto result = entry.get();
+	auto dependencies = entry->dependencies;
 	auto &set = GetCatalogSet(entry_type);
 	if (on_conflict == OnCreateConflict::IGNORE_ON_CONFLICT && set.GetEntry(transaction, entry_name)) {
 		return nullptr;
@@ -264,7 +265,7 @@ optional_ptr<CatalogEntry> DuckCatalog::AddEntry(CatalogTransaction transaction,
 			(void)set.DropEntry(transaction, entry_name, false, entry->internal);
 		}
 	}
-	if (!set.CreateEntry(transaction, entry_name, std::move(entry), LogicalDependencyList())) {
+	if (!set.CreateEntry(transaction, entry_name, std::move(entry), dependencies)) {
 		if (on_conflict == OnCreateConflict::ERROR_ON_CONFLICT) {
 			throw CatalogException::EntryAlreadyExists(entry_type, entry_name);
 		}
