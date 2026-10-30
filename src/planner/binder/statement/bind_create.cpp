@@ -933,7 +933,7 @@ SchemaCatalogEntry &Binder::BindCreateTriggerInfo(CreateTriggerInfo &create_trig
 	// Resolve the base table first — triggers inherit catalog/schema from their table (like Postgres).
 	TableDescription table_description(create_trigger_info.base_table->GetQualifiedName());
 	auto table_ref = make_uniq<BaseTableRef>(table_description);
-	auto bound_table = Bind(*table_ref);
+	auto bound_table = BindTarget(*table_ref, TableRefUse::UTILITY_TARGET);
 	if (bound_table.plan->type != LogicalOperatorType::LOGICAL_GET) {
 		throw BinderException("CREATE TRIGGER requires a base table, not a view or subquery");
 	}
@@ -1189,7 +1189,7 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 		// Plan the table scan - the table lives in the same (possibly nested) schema as the index.
 		TableDescription table_description(create_index_info.GetQualifiedName().WithName(create_index_info.table));
 		auto table_ref = make_uniq<BaseTableRef>(table_description);
-		auto bound_table = Bind(*table_ref);
+		auto bound_table = BindTarget(*table_ref, TableRefUse::UTILITY_TARGET);
 		auto plan = std::move(bound_table.plan);
 		// Tables go through the LOGICAL_GET; otherwise resolve a view and let its catalog decide.
 		optional_ptr<TableCatalogEntry> table_ptr;

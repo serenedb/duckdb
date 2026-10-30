@@ -792,21 +792,24 @@ static BindingAlias GetEntryAlias(ClientContext &context, const Identifier &alia
 	return Binding::GetAlias(alias, entry);
 }
 
-void BindContext::AddBaseTable(TableIndex index, const Identifier &alias, const vector<Identifier> &names,
-                               const vector<LogicalType> &types, vector<ColumnIndex> &bound_column_ids,
-                               TableCatalogEntry &entry, virtual_column_map_t virtual_columns) {
-	AddBinding(make_uniq<TableBinding>(GetEntryAlias(binder.context, alias, &entry), types, names, bound_column_ids,
-	                                   &entry, index, std::move(virtual_columns)));
+TableBinding &BindContext::AddBaseTable(TableIndex index, const Identifier &alias, const vector<Identifier> &names,
+                                        const vector<LogicalType> &types, vector<ColumnIndex> &bound_column_ids,
+                                        TableCatalogEntry &entry, virtual_column_map_t virtual_columns) {
+	auto binding = make_uniq<TableBinding>(GetEntryAlias(binder.context, alias, &entry), types, names, bound_column_ids,
+	                                       &entry, index, std::move(virtual_columns));
+	auto &result = *binding;
+	AddBinding(std::move(binding));
+	return result;
 }
 
-void BindContext::AddBaseTable(TableIndex index, const Identifier &alias, const vector<Identifier> &names,
-                               const vector<LogicalType> &types, vector<ColumnIndex> &bound_column_ids,
-                               TableCatalogEntry &entry, bool add_virtual_columns) {
+TableBinding &BindContext::AddBaseTable(TableIndex index, const Identifier &alias, const vector<Identifier> &names,
+                                        const vector<LogicalType> &types, vector<ColumnIndex> &bound_column_ids,
+                                        TableCatalogEntry &entry, bool add_virtual_columns) {
 	virtual_column_map_t virtual_columns;
 	if (add_virtual_columns) {
 		virtual_columns = entry.GetVirtualColumns();
 	}
-	AddBaseTable(index, alias, names, types, bound_column_ids, entry, std::move(virtual_columns));
+	return AddBaseTable(index, alias, names, types, bound_column_ids, entry, std::move(virtual_columns));
 }
 
 void BindContext::AddBaseTable(TableIndex index, const Identifier &alias, const vector<Identifier> &names,
@@ -817,12 +820,15 @@ void BindContext::AddBaseTable(TableIndex index, const Identifier &alias, const 
 	                                   nullptr, index, std::move(virtual_columns)));
 }
 
-void BindContext::AddTableFunction(TableIndex index, const Identifier &alias, const vector<Identifier> &names,
-                                   const vector<LogicalType> &types, vector<ColumnIndex> &bound_column_ids,
-                                   optional_ptr<StandardEntry> entry, virtual_column_map_t virtual_columns,
-                                   vector<column_t> row_id_columns) {
-	AddBinding(make_uniq<TableBinding>(GetEntryAlias(binder.context, alias, entry), types, names, bound_column_ids,
-	                                   entry, index, std::move(virtual_columns), std::move(row_id_columns)));
+TableBinding &BindContext::AddTableFunction(TableIndex index, const Identifier &alias, const vector<Identifier> &names,
+                                            const vector<LogicalType> &types, vector<ColumnIndex> &bound_column_ids,
+                                            optional_ptr<StandardEntry> entry, virtual_column_map_t virtual_columns,
+                                            vector<column_t> row_id_columns) {
+	auto binding = make_uniq<TableBinding>(GetEntryAlias(binder.context, alias, entry), types, names, bound_column_ids,
+	                                       entry, index, std::move(virtual_columns), std::move(row_id_columns));
+	auto &result = *binding;
+	AddBinding(std::move(binding));
+	return result;
 }
 
 static Identifier AddColumnNameToBinding(const Identifier &base_name, identifier_set_t &current_names) {
