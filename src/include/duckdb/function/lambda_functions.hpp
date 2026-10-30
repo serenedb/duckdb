@@ -25,6 +25,7 @@ struct LambdaFunctionData : public FunctionData {
 	}
 
 	DUCKDB_API virtual optional_ptr<const Expression> GetLambdaExpression() const = 0;
+	DUCKDB_API virtual void SetLambdaExpression(shared_ptr<Expression> lambda_expr) = 0;
 };
 
 struct ListLambdaBindData final : public LambdaFunctionData {
@@ -63,6 +64,11 @@ public:
 
 	optional_ptr<const Expression> GetLambdaExpression() const override {
 		return lambda_expr.get();
+	}
+
+	void SetLambdaExpression(shared_ptr<Expression> lambda_expr_p) override {
+		lambda_expr = std::move(lambda_expr_p);
+		is_volatile = lambda_expr->IsVolatile();
 	}
 };
 

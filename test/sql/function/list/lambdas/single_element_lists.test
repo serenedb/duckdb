@@ -44,7 +44,12 @@ SELECT list_value(42)[1], [NULL::INTEGER][1]
 query II
 EXPLAIN SELECT list_transform([i], lambda x: x * 3)[1] FROM range(3) t(i)
 ----
-physical_plan	<REGEX>:.*invoke\(lambda x.*
+physical_plan	<REGEX>:.*Projections: i \* 3.*
+
+query II
+EXPLAIN SELECT list_transform([i], lambda x: x * 3)[1] FROM range(3) t(i)
+----
+physical_plan	<!REGEX>:.*(invoke|list_transform|list_extract).*
 
 query IIII
 SELECT list_transform([NULL::INTEGER], lambda x: coalesce(x, 7))[1], list_filter([i], lambda x: x > 0)[1], list_transform([i], lambda x: x + 1)[2], list_transform([i, 5], lambda x: x + 1)[1] FROM range(2) t(i) ORDER BY i

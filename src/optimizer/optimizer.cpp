@@ -64,6 +64,7 @@
 #include "duckdb/planner/operator/logical_execute.hpp"
 #include "duckdb/planner/operator/logical_get.hpp"
 #include "duckdb/planner/operator/logical_prepare.hpp"
+#include "duckdb/planner/operator/logical_projection.hpp"
 #include "duckdb/planner/operator/logical_secure_view.hpp"
 #include "duckdb/optimizer/remote_pushdown_optimizer.hpp"
 #include "duckdb/main/database_manager.hpp"
@@ -75,10 +76,16 @@ Optimizer::Optimizer(Binder &binder, ClientContext &context)
     : context(context), binder(binder), rewriter(context),
       enable_optimizer(Settings::Get<EnableOptimizerSetting>(context)),
       optimizer_extensions(OptimizerExtension::Iterate(context)) {
+	AddExpressionRules(rewriter);
+}
+
+void Optimizer::AddExpressionRules(ExpressionRewriter &rewriter) {
 	rewriter.rules.push_back(make_uniq<ConstantFoldingRule>(rewriter));
 	rewriter.rules.push_back(make_uniq<ConcatFlatteningRule>(rewriter));
 	rewriter.rules.push_back(make_uniq<StructExtractStructPackFoldingRule>(rewriter));
 	rewriter.rules.push_back(make_uniq<ListExtractListValueFoldingRule>(rewriter));
+	rewriter.rules.push_back(make_uniq<InvokeInliningRule>(rewriter));
+	rewriter.rules.push_back(make_uniq<ListTransformUnrollingRule>(rewriter));
 	rewriter.rules.push_back(make_uniq<DistributivityRule>(rewriter));
 	rewriter.rules.push_back(make_uniq<ArithmeticSimplificationRule>(rewriter));
 	rewriter.rules.push_back(make_uniq<LeastGreatestSimplificationRule>(rewriter));
@@ -121,6 +128,19 @@ Optimizer::Optimizer(Binder &binder, ClientContext &context)
 		D_ASSERT(rule->root);
 	}
 #endif
+}
+
+unique_ptr<Expression> Optimizer::OptimizeExpression(ClientContext &context, unique_ptr<Expression> expr) {
+	if (OptimizerDisabled(context, OptimizerType::EXPRESSION_REWRITER)) {
+		return expr;
+	}
+	ExpressionRewriter rewriter(context);
+	AddExpressionRules(rewriter);
+	vector<unique_ptr<Expression>> expressions;
+	expressions.push_back(std::move(expr));
+	LogicalProjection projection(TableIndex(0), std::move(expressions));
+	rewriter.VisitOperator(projection);
+	return std::move(projection.expressions[0]);
 }
 
 ClientContext &Optimizer::GetContext() {

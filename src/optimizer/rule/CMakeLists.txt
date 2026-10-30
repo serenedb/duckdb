@@ -29,6 +29,8 @@ add_library_unity(
   regex_optimizations.cpp
   struct_extract_struct_pack_folding.cpp
   list_extract_list_value_folding.cpp
+  invoke_inlining.cpp
+  list_transform_unrolling.cpp
   timestamp_comparison.cpp
   concat_flattening.cpp
   contains_to_in_clause.cpp)

@@ -38,6 +38,8 @@ public:
 
 	//! Pre-binder statement-level optimization pass
 	static void OptimizeStatement(Binder &binder, ClientContext &context, unique_ptr<SQLStatement> &statement);
+	static void AddExpressionRules(ExpressionRewriter &rewriter);
+	static unique_ptr<Expression> OptimizeExpression(ClientContext &context, unique_ptr<Expression> expr);
 
 public:
 	ClientContext &context;

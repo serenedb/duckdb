@@ -64,6 +64,7 @@ private:
 	//! Apply a set of rules to a specific expression
 	unique_ptr<Expression> ApplyRules(LogicalOperator &op, const vector<rewrite_barrier_t> &barriers,
 	                                  unique_ptr<Expression> expr, bool &changes_made, bool is_root = false);
+	bool RewriteLambdaBody(LogicalOperator &op, const vector<rewrite_barrier_t> &barriers, Expression &expr);
 	const vector<reference<Rule>> &RulesFor(const Expression &expr);
 	vector<reference<Rule>> SelectRules(ExpressionClass expression_class, ExpressionType expression_type,
 	                                    optional_ptr<const Identifier> function_name) const;

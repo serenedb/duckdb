@@ -20,5 +20,7 @@
 #include "duckdb/optimizer/rule/regex_optimizations.hpp"
 #include "duckdb/optimizer/rule/struct_extract_struct_pack_folding.hpp"
 #include "duckdb/optimizer/rule/list_extract_list_value_folding.hpp"
+#include "duckdb/optimizer/rule/invoke_inlining.hpp"
+#include "duckdb/optimizer/rule/list_transform_unrolling.hpp"
 #include "duckdb/optimizer/rule/ordered_aggregate_optimizer.hpp"
 #include "duckdb/optimizer/rule/timestamp_comparison.hpp"
