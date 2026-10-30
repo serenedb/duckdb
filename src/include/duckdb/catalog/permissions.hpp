@@ -11,10 +11,13 @@
 #include "duckdb/common/constants.hpp"
 #include "duckdb/common/enums/catalog_type.hpp"
 #include "duckdb/common/identifier.hpp"
+#include "duckdb/common/optional_ptr.hpp"
 #include "duckdb/common/serializer/deserializer.hpp"
 #include "duckdb/common/serializer/serializer.hpp"
 #include "duckdb/common/string.hpp"
 #include "duckdb/common/vector.hpp"
+
+#include <span>
 
 namespace duckdb {
 
@@ -145,6 +148,53 @@ struct Permissions {
 
 	void Serialize(Serializer &serializer) const;
 	static Permissions Deserialize(Deserializer &deserializer);
+};
+
+struct RoleAccess {
+	idx_t role = 0;
+	RoleOption options = RoleOption::None;
+	bool is_superuser = false;
+	uint64_t closure_mask = 0;
+	std::span<const idx_t> closure;
+
+	bool Has(RoleOption option) const {
+		return HasOption(options, option);
+	}
+	bool Uses(idx_t other) const;
+	bool MemberOf(idx_t other) const {
+		return is_superuser || Uses(other);
+	}
+	bool Owns(idx_t owner) const {
+		return MemberOf(owner);
+	}
+	bool Can(CatalogType type, const Permissions &permissions, AclMode need) const;
+	bool CanAny(CatalogType type, const Permissions &permissions, AclMode need) const;
+	bool CanColumns(const Permissions &permissions, AclMode need, std::span<const std::span<const AclItem>> acls) const;
+	bool CanAnyColumn(const Permissions &permissions, AclMode need,
+	                  std::span<const std::span<const AclItem>> acls) const;
+	AclMode HeldModes(std::span<const AclItem> acl) const;
+	AclMode GrantableModes(std::span<const AclItem> acl) const;
+};
+
+class SecuritySnapshot {
+public:
+	struct Role {
+		idx_t role = 0;
+		RoleOption options = RoleOption::None;
+		vector<idx_t> closure;
+	};
+
+	explicit SecuritySnapshot(vector<Role> roles);
+	virtual ~SecuritySnapshot();
+
+	SecuritySnapshot(const SecuritySnapshot &) = delete;
+	SecuritySnapshot &operator=(const SecuritySnapshot &) = delete;
+
+	optional_ptr<const RoleAccess> Access(idx_t role) const;
+
+private:
+	vector<idx_t> arena;
+	vector<RoleAccess> roles;
 };
 
 } // namespace duckdb
