@@ -1362,6 +1362,7 @@ void DependencyManager::AlterObject(CatalogTransaction transaction, CatalogEntry
 		case AlterType::ALTER_PERMISSIONS:
 		case AlterType::ALTER_ROLE:
 		case AlterType::ALTER_JOB:
+		case AlterType::ALTER_TABLESPACE:
 		case AlterType::CHANGE_OWNERSHIP: {
 			disallow_alter = false;
 			break;
