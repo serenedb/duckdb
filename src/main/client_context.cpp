@@ -1041,14 +1041,27 @@ static absl::Duration TimeLeft(const optional_idx &deadline) {
 	return absl::Nanoseconds(TimePoint::ToNanos(left));
 }
 
+void ClientContext::ResolvePrincipal() {
+	if (principal_role == DConstants::INVALID_INDEX) {
+		principal = nullptr;
+		return;
+	}
+	principal = security ? security->Access(principal_role) : nullptr;
+	if (!principal) {
+		unknown_principal = RoleAccess();
+		unknown_principal.role = principal_role;
+		principal = &unknown_principal;
+	}
+}
+
 void ClientContext::SetPrincipalRole(idx_t role) {
 	principal_role = role;
-	principal = security ? security->Access(role) : nullptr;
+	InstallSecurity(db->GetSecurity());
 }
 
 void ClientContext::InstallSecurity(shared_ptr<const SecuritySnapshot> snapshot) {
 	security = std::move(snapshot);
-	principal = security ? security->Access(principal_role) : nullptr;
+	ResolvePrincipal();
 }
 
 void ClientContext::RefreshSecurity() {
