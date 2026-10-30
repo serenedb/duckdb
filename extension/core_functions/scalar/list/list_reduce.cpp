@@ -337,8 +337,12 @@ unique_ptr<FunctionData> ListReduceBind(BindScalarFunctionInput &input) {
 		bound_lambda_expr.SetLambdaExpr(std::move(cast_lambda_expr));
 	}
 	bound_function.SetReturnType(bound_lambda_expr.LambdaExpr()->GetReturnType());
-	return make_uniq<ListLambdaBindData>(bound_function.GetReturnType(), bound_lambda_expr.SharedLambdaExpr(),
-	                                     has_index, has_initial);
+	auto reduce_bind_data = make_uniq<ListLambdaBindData>(bound_function.GetReturnType(),
+	                                                      bound_lambda_expr.SharedLambdaExpr(), has_index, has_initial);
+	if (reduce_bind_data->is_volatile) {
+		bound_function.SetVolatile();
+	}
+	return std::move(reduce_bind_data);
 }
 
 LogicalType BindReduceChildren(ClientContext &context, const vector<LogicalType> &function_child_types,

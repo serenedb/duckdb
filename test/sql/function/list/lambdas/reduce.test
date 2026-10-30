@@ -452,3 +452,8 @@ statement error
 SELECT list_reduce(['1', 'a'], lambda x, y: (x::INT + y::INT)::VARCHAR);
 ----
 Conversion Error
+
+query I
+SELECT count(DISTINCT list_reduce([1, 2], lambda x, y: x + y + random())) FROM range(3)
+----
+3
