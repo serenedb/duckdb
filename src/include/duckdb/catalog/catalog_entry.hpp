@@ -12,6 +12,7 @@
 #include "duckdb/common/identifier.hpp"
 #include "duckdb/common/enums/catalog_type.hpp"
 #include "duckdb/common/exception.hpp"
+#include "duckdb/catalog/dependency_list.hpp"
 #include "duckdb/catalog/permissions.hpp"
 #include "duckdb/common/atomic.hpp"
 #include "duckdb/common/optional_ptr.hpp"
@@ -138,6 +139,8 @@ public:
 
 	//! The catalog the entry belongs to
 	Catalog &catalog;
+	//! The dependencies of the entry, can be empty
+	LogicalDependencyList dependencies;
 
 public:
 	Catalog &ParentCatalog() override {
