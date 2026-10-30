@@ -85,9 +85,9 @@ public:
 	PresortedMerge(const PresortedMerge &) = delete;
 	PresortedMerge &operator=(const PresortedMerge &) = delete;
 
-	void Partition(idx_t max_partitions, bool keep_equal_keys = false);
-	//! Partition with the reads of the inputs spread over at most `threads` tasks of `scheduler`
-	void Partition(idx_t max_partitions, bool keep_equal_keys, TaskScheduler &scheduler, idx_t threads);
+	//! With a scheduler, the reads of the inputs spread over at most `threads` of its tasks
+	void Partition(idx_t max_partitions, bool keep_equal_keys = false, optional_ptr<TaskScheduler> scheduler = nullptr,
+	               idx_t threads = 1);
 	idx_t PartitionCount() const;
 	idx_t PartitionBegin(idx_t partition, idx_t input) const;
 	unique_ptr<PresortedMergeState> BeginMerge(idx_t partition) const;
@@ -99,8 +99,6 @@ public:
 	}
 
 private:
-	void PartitionOn(idx_t max_partitions, bool keep_equal_keys, optional_ptr<TaskScheduler> scheduler, idx_t threads);
-
 	vector<LogicalType> key_types;
 	vector<OrderModifiers> modifiers;
 	vector<shared_ptr<PresortedMergeInput>> inputs;

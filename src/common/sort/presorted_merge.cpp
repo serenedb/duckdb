@@ -409,16 +409,8 @@ PresortedMerge::PresortedMerge(vector<shared_ptr<PresortedMergeInput>> inputs_p)
 PresortedMerge::~PresortedMerge() {
 }
 
-void PresortedMerge::Partition(idx_t max_partitions, bool keep_equal_keys) {
-	PartitionOn(max_partitions, keep_equal_keys, nullptr, 1);
-}
-
-void PresortedMerge::Partition(idx_t max_partitions, bool keep_equal_keys, TaskScheduler &scheduler, idx_t threads) {
-	PartitionOn(max_partitions, keep_equal_keys, &scheduler, threads);
-}
-
-void PresortedMerge::PartitionOn(idx_t max_partitions, bool keep_equal_keys, optional_ptr<TaskScheduler> scheduler,
-                                 idx_t threads) {
+void PresortedMerge::Partition(idx_t max_partitions, bool keep_equal_keys, optional_ptr<TaskScheduler> scheduler,
+                               idx_t threads) {
 	bounds.clear();
 	bounds.emplace_back(inputs.size(), 0);
 	idx_t total = 0;
