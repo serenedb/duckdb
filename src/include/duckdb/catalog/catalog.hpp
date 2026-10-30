@@ -149,6 +149,7 @@ public:
 	virtual SqlCompatibility Compatibility() const {
 		return SqlCompatibility::DUCK;
 	}
+	DUCKDB_API static SqlCompatibility DefaultCompatibility(ClientContext &context);
 	bool IsCaseSensitive() const {
 		return Compatibility() == SqlCompatibility::POSTGRES;
 	}

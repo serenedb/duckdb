@@ -1,3 +1,4 @@
+#include "duckdb/catalog/catalog.hpp"
 #include "duckdb/common/assert.hpp"
 #include "duckdb/common/types.hpp"
 #include "duckdb/common/types/value.hpp"
@@ -1212,10 +1213,15 @@ interval_t DivideOperator::Operation(interval_t left, double right) {
 
 namespace {
 
-[[noreturn]] void ThrowDivisionByZero(const Expression &expr) {
-	throw InvalidInputException("Division by zero in expression %s. Use TRY(...) to return NULL for this expression, "
-	                            "or SET error_on_division_by_zero=false to return NULL for all divisions by zero.",
-	                            expr.ToString());
+[[noreturn]] void ThrowDivisionByZero(ExpressionState &state) {
+	auto message = StringUtil::Format("Division by zero in expression %s. Use TRY(...) to return NULL for this "
+	                                  "expression, or SET error_on_division_by_zero=false to return NULL for all "
+	                                  "divisions by zero.",
+	                                  state.expr.ToString());
+	if (state.HasContext() && Catalog::DefaultCompatibility(state.GetContext()) == SqlCompatibility::POSTGRES) {
+		throw Exception(ExceptionType::DIVIDE_BY_ZERO, message);
+	}
+	throw InvalidInputException(message);
 }
 
 template <bool NULL_ON_ZERO>
@@ -1293,7 +1299,7 @@ struct BinaryNumericDivideHugeintWrapper {
 template <class TA, class TB, class TC, class OP, class ZWRAPPER>
 void BinaryScalarFunctionZeroCheck(DataChunk &input, ExpressionState &state, Vector &result) {
 	BinaryExecutor::ExecuteWithWrapper<TA, TB, TC, OP, ZWRAPPER>(input.data[0], input.data[1], result, input.size(),
-	                                                             reference<const Expression>(state.expr));
+	                                                             reference<ExpressionState>(state));
 }
 
 template <class OP, bool NULL_ON_ZERO>
