@@ -2,6 +2,7 @@
 #include "duckdb/catalog/catalog.hpp"
 
 #include "duckdb/catalog/catalog_search_path.hpp"
+#include "duckdb/catalog/permissions.hpp"
 #include "duckdb/catalog/catalog_entry/list.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/duck_schema_entry.hpp"
@@ -1222,6 +1223,12 @@ CatalogException Catalog::CreateMissingEntryException(CatalogEntryRetriever &ret
 	return CatalogException::MissingEntry(lookup_info, did_you_mean);
 }
 
+static bool CanUseSchema(CatalogEntryRetriever &retriever, SchemaCatalogEntry &schema) {
+	auto principal = retriever.GetPrincipal();
+	return !principal || schema.internal || IsUnowned(schema) ||
+	       principal->Can(CatalogType::SCHEMA_ENTRY, schema.permissions, AclMode::Usage);
+}
+
 CatalogEntryLookup Catalog::TryLookupEntryInternal(CatalogTransaction transaction, const EntryLookupInfo &lookup_info) {
 	if (lookup_info.GetAtClause() && !SupportsTimeTravel()) {
 		return {nullptr, nullptr, ErrorData(BinderException("Catalog type does not support time travel"))};
@@ -1258,6 +1265,9 @@ CatalogEntryLookup Catalog::TryLookupEntry(CatalogEntryRetriever &retriever, con
 			auto result = TryLookupEntryInternal(
 			    transaction, EntryLookupInfo(lookup_info, QualifiedName(GetName(), candidate_schema,
 			                                                            lookup_info.GetEntryIdentifier())));
+			if (result.schema && !CanUseSchema(retriever, *result.schema)) {
+				continue;
+			}
 			if (result.Found()) {
 				return result;
 			}
@@ -1268,6 +1278,9 @@ CatalogEntryLookup Catalog::TryLookupEntry(CatalogEntryRetriever &retriever, con
 	} else {
 		auto transaction = GetCatalogTransaction(context);
 		auto result = TryLookupEntryInternal(transaction, lookup_info);
+		if (result.schema && !CanUseSchema(retriever, *result.schema)) {
+			ThrowPermissionDenied(*result.schema);
+		}
 		if (result.Found()) {
 			return result;
 		}
@@ -1398,6 +1411,14 @@ CatalogEntryLookup Catalog::TryLookupEntry(CatalogEntryRetriever &retriever, con
 	for (auto &lookup : lookups) {
 		auto transaction = lookup.catalog.GetCatalogTransaction(context);
 		result = lookup.catalog.TryLookupEntryInternal(transaction, lookup.lookup_info);
+		if (result.schema && !CanUseSchema(retriever, *result.schema)) {
+			if (!IsInvalidSchema(lookup_info.GetSchema())) {
+				ThrowPermissionDenied(*result.schema);
+			}
+			result = {nullptr, nullptr, ErrorData()};
+			all_errors = false;
+			continue;
+		}
 		if (result.Found()) {
 			break;
 		}
@@ -1515,7 +1536,11 @@ CatalogEntryLookup Catalog::TryLookupDefaultTable(CatalogEntryRetriever &retriev
 
 		EntryLookupInfo info(CatalogType::TABLE_ENTRY,
 		                     QualifiedName(catalog_by_name->GetName(), table_schema, table_name), at_clause, context);
-		return catalog_by_name->TryLookupEntryInternal(transaction, info);
+		auto result = catalog_by_name->TryLookupEntryInternal(transaction, info);
+		if (result.schema && !CanUseSchema(retriever, *result.schema)) {
+			return {nullptr, nullptr, ErrorData()};
+		}
+		return result;
 	}
 
 	return {nullptr, nullptr, ErrorData()};
@@ -1538,6 +1563,9 @@ CatalogEntryLookup Catalog::TryLookupDefaultSchema(CatalogEntryRetriever &retrie
 		EntryLookupInfo default_schema_lookup(
 		    lookup_info, QualifiedName(catalog_entry->GetName(), *default_schema, lookup_info.GetEntryIdentifier()));
 		auto result = catalog_entry->TryLookupEntryInternal(transaction, default_schema_lookup);
+		if (result.schema && !CanUseSchema(retriever, *result.schema)) {
+			continue;
+		}
 		if (result.Found() || result.error.HasError()) {
 			return result;
 		}

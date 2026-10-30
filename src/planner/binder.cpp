@@ -57,6 +57,8 @@ Binder::Binder(ClientContext &context, shared_ptr<Binder> parent_p, BinderType b
 		if (binder_type != BinderType::VIEW_BINDER) {
 			// inherit expression binders from parent
 			active_binders = parent->active_binders;
+		} else {
+			entry_retriever.SetPrincipal(nullptr);
 		}
 	} else {
 		entry_retriever.SetCallback([this](CatalogEntry &entry) {
@@ -285,6 +287,11 @@ bool Binder::InViewBody() const {
 		}
 	}
 	return false;
+}
+
+void Binder::SetPrincipal(optional_ptr<const RoleAccess> principal_p) {
+	principal = principal_p;
+	entry_retriever.SetPrincipal(principal_p);
 }
 
 BoundStatement Binder::BindTarget(TableRef &ref, TableRefUse use) {
@@ -683,7 +690,7 @@ BoundStatement Binder::BindReturning(vector<unique_ptr<ParsedExpression>> return
 
 	auto &binding = binder->bind_context.AddBaseTable(update_table_index, alias, names, types, bound_columns, table,
 	                                                  std::move(virtual_columns));
-	binder->principal = principal;
+	binder->SetPrincipal(principal);
 	binder->table_ref_use = TableRefUse::DML_TARGET;
 	binder->CheckTableRead(binding, table);
 	ReturningBinder returning_binder(*binder, context);

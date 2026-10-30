@@ -16,6 +16,7 @@
 #include "duckdb/catalog/catalog_entry/schema_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_search_path.hpp"
 #include "duckdb/catalog/entry_lookup_info.hpp"
+#include "duckdb/catalog/permissions.hpp"
 
 namespace duckdb {
 
@@ -30,7 +31,8 @@ class CatalogEntryRetriever {
 public:
 	explicit CatalogEntryRetriever(ClientContext &context) : context(context) {
 	}
-	CatalogEntryRetriever(const CatalogEntryRetriever &other) : callback(other.callback), context(other.context) {
+	CatalogEntryRetriever(const CatalogEntryRetriever &other)
+	    : callback(other.callback), context(other.context), principal(other.principal) {
 	}
 
 public:
@@ -78,6 +80,13 @@ public:
 	optional_ptr<BoundAtClause> GetAtClause() const;
 	void SetAtClause(optional_ptr<BoundAtClause> at_clause);
 
+	optional_ptr<const RoleAccess> GetPrincipal() const {
+		return principal;
+	}
+	void SetPrincipal(optional_ptr<const RoleAccess> principal_p) {
+		principal = principal_p;
+	}
+
 private:
 	optional_ptr<CatalogEntry> ReturnAndCallback(optional_ptr<CatalogEntry> result);
 
@@ -87,6 +96,7 @@ private:
 	ClientContext &context;
 	shared_ptr<CatalogSearchPath> search_path;
 	optional_ptr<BoundAtClause> at_clause;
+	optional_ptr<const RoleAccess> principal;
 };
 
 } // namespace duckdb

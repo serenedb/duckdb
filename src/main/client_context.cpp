@@ -307,7 +307,7 @@ shared_ptr<PreparedStatementData> ClientContext::CreatePreparedStatementInternal
 	auto &profiler = QueryProfiler::Get(*this);
 	profiler.StartQuery(statement->query, IsExplainAnalyze(*this, statement.get()));
 	Planner logical_planner(*this);
-	logical_planner.binder->principal = principal;
+	logical_planner.binder->SetPrincipal(principal);
 	if (parameters.statement_args) {
 		auto &parameter_values = *parameters.statement_args;
 		for (auto &value : parameter_values) {

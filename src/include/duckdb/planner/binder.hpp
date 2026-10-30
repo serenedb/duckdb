@@ -416,6 +416,7 @@ public:
 	bool InViewBody() const;
 
 	optional_ptr<const RoleAccess> principal;
+	void SetPrincipal(optional_ptr<const RoleAccess> principal_p);
 	TableRefUse table_ref_use = TableRefUse::READ;
 	BoundStatement BindTarget(TableRef &ref, TableRefUse use);
 	void CheckTableRead(TableBinding &binding, TableCatalogEntry &table);
