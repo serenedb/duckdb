@@ -1,0 +1,130 @@
+# name: test/sql/storage/compression/dict_fsst/filter_null_slot.test
+# description: dictionary filters that reach the NULL slot late in a window, after dropped rows and under a narrowed selection, agree with an uncompressed copy
+# group: [dict_fsst]
+
+load __TEST_DIR__/dict_fsst_filter_null_slot.db
+
+statement ok
+pragma force_compression='DICT_FSST';
+
+statement ok
+CREATE TABLE t AS SELECT i AS id, CASE WHEN i % 7 = 3 THEN NULL WHEN i % 5 = 0 THEN '' ELSE 'v' || (i % 11)::VARCHAR END AS s FROM range(300000) r(i);
+
+statement ok
+CHECKPOINT;
+
+statement ok
+pragma force_compression='uncompressed';
+
+statement ok
+CREATE TABLE u AS SELECT * FROM t;
+
+statement ok
+CHECKPOINT;
+
+restart
+
+query I
+SELECT count(*) FROM pragma_storage_info('t') WHERE column_name = 's' AND segment_type = 'VARCHAR' AND compression <> 'DICT_FSST';
+----
+0
+
+query I
+SELECT count(*) FROM (SELECT id, s FROM t WHERE s <> '' EXCEPT ALL SELECT id, s FROM u WHERE s <> '');
+----
+0
+
+query I
+SELECT count(*) FROM (SELECT id, s FROM u WHERE s <> '' EXCEPT ALL SELECT id, s FROM t WHERE s <> '');
+----
+0
+
+query I
+SELECT count(*) FROM (SELECT id, s FROM t WHERE s = '' EXCEPT ALL SELECT id, s FROM u WHERE s = '');
+----
+0
+
+query I
+SELECT count(*) FROM (SELECT id, s FROM u WHERE s = '' EXCEPT ALL SELECT id, s FROM t WHERE s = '');
+----
+0
+
+query I
+SELECT count(*) FROM (SELECT id, s FROM t WHERE s > 'v5' EXCEPT ALL SELECT id, s FROM u WHERE s > 'v5');
+----
+0
+
+query I
+SELECT count(*) FROM (SELECT id, s FROM u WHERE s > 'v5' EXCEPT ALL SELECT id, s FROM t WHERE s > 'v5');
+----
+0
+
+query I
+SELECT count(*) FROM (SELECT id, s FROM t WHERE s = 'nothing' EXCEPT ALL SELECT id, s FROM u WHERE s = 'nothing');
+----
+0
+
+query I
+SELECT count(*) FROM (SELECT id, s FROM u WHERE s = 'nothing' EXCEPT ALL SELECT id, s FROM t WHERE s = 'nothing');
+----
+0
+
+query I
+SELECT count(*) FROM (SELECT id, s FROM t WHERE s IS NULL EXCEPT ALL SELECT id, s FROM u WHERE s IS NULL);
+----
+0
+
+query I
+SELECT count(*) FROM (SELECT id, s FROM u WHERE s IS NULL EXCEPT ALL SELECT id, s FROM t WHERE s IS NULL);
+----
+0
+
+query I
+SELECT count(*) FROM (SELECT id, s FROM t WHERE s IS NOT NULL EXCEPT ALL SELECT id, s FROM u WHERE s IS NOT NULL);
+----
+0
+
+query I
+SELECT count(*) FROM (SELECT id, s FROM u WHERE s IS NOT NULL EXCEPT ALL SELECT id, s FROM t WHERE s IS NOT NULL);
+----
+0
+
+query I
+SELECT count(*) FROM (SELECT id, s FROM t WHERE coalesce(s, 'n') = 'n' EXCEPT ALL SELECT id, s FROM u WHERE coalesce(s, 'n') = 'n');
+----
+0
+
+query I
+SELECT count(*) FROM (SELECT id, s FROM u WHERE coalesce(s, 'n') = 'n' EXCEPT ALL SELECT id, s FROM t WHERE coalesce(s, 'n') = 'n');
+----
+0
+
+query I
+SELECT count(*) FROM (SELECT id, s FROM t WHERE s <> '' AND id % 3 = 0 EXCEPT ALL SELECT id, s FROM u WHERE s <> '' AND id % 3 = 0);
+----
+0
+
+query I
+SELECT count(*) FROM (SELECT id, s FROM u WHERE s <> '' AND id % 3 = 0 EXCEPT ALL SELECT id, s FROM t WHERE s <> '' AND id % 3 = 0);
+----
+0
+
+query I
+SELECT count(*) FROM (SELECT id, s FROM t WHERE s IS NULL AND id % 4 <> 1 EXCEPT ALL SELECT id, s FROM u WHERE s IS NULL AND id % 4 <> 1);
+----
+0
+
+query I
+SELECT count(*) FROM (SELECT id, s FROM u WHERE s IS NULL AND id % 4 <> 1 EXCEPT ALL SELECT id, s FROM t WHERE s IS NULL AND id % 4 <> 1);
+----
+0
+
+query I
+SELECT count(*) FROM (SELECT id, s FROM t WHERE coalesce(s, '') = '' AND id % 2 = 0 EXCEPT ALL SELECT id, s FROM u WHERE coalesce(s, '') = '' AND id % 2 = 0);
+----
+0
+
+query I
+SELECT count(*) FROM (SELECT id, s FROM u WHERE coalesce(s, '') = '' AND id % 2 = 0 EXCEPT ALL SELECT id, s FROM t WHERE coalesce(s, '') = '' AND id % 2 = 0);
+----
+0
