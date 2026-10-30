@@ -113,6 +113,7 @@ public:
 	bool InlineSqlFunctionBody(ScalarMacroFunction &function);
 	void ExpandSqlFunctionBody(DummyBinding &binding, vector<unique_ptr<ParsedExpression>> &arguments,
 	                           unique_ptr<ParsedExpression> &expr);
+	BindResult BindMacroArgumentType(unique_ptr<ParsedExpression> &argument, idx_t depth);
 
 	//! The target type that should result from the binder. If the result is not of this type, a cast to this type will
 	//! be added. Defaults to INVALID.
@@ -323,17 +324,19 @@ protected:
 	void UnfoldWindowMacroExpression(unique_ptr<ParsedExpression> &expr, ScalarMacroFunction &macro_def);
 	ScalarMacroFunction &UnfoldMacroExpression(FunctionExpression &function, ScalarMacroCatalogEntry &macro_func,
 	                                           unique_ptr<ParsedExpression> &expr, idx_t depth,
-	                                           vector<unique_ptr<Expression>> &shared_arguments);
+	                                           vector<unique_ptr<Expression>> &shared_arguments, bool &probed);
 	MacroFunctionLookup LookupMacroFunction(const FunctionExpression &function);
 	const MacroBodyUse &GetMacroBodyUse(const ScalarMacroFunction &macro_def, const Identifier &name);
-	vector<bool> MacroArgumentsBindInPlace(const FunctionExpression &function, ScalarMacroCatalogEntry &macro_func);
+	vector<bool> MacroArgumentsBindInPlace(FunctionExpression &function, ScalarMacroCatalogEntry &macro_func);
 	bool IsSetReturningFunction(const FunctionExpression &function);
 	bool ReturnsAtMostOneRow(SelectNode &node, bool from_parameters_only);
 	void AddSqlFunctionParameters(unique_ptr<ParsedExpression> &expr, const Identifier &alias,
 	                              const vector<Identifier> &names, vector<unique_ptr<ParsedExpression>> arguments);
-	void AnalyzeMacroBody(ParsedExpression &expr, bool conditional, bool shareable,
-	                      vector<identifier_set_t> &lambda_params, DummyBinding &parameters, MacroBodyUse &use);
+	void AnalyzeMacroBody(ParsedExpression &expr, bool shareable, vector<identifier_set_t> &lambda_params,
+	                      DummyBinding &parameters, MacroBodyUse &use);
 	void ScanMacroArgument(ParsedExpression &argument, MacroArgumentScan &scan);
+	bool IsLambdaSafeMacroArgument(ParsedExpression &argument);
+	bool IsLevelIndependentMacroArgument(ParsedExpression &argument);
 
 	virtual string UnsupportedAggregateMessage();
 	virtual string UnsupportedWindowMessage();

@@ -681,6 +681,12 @@ SchemaCatalogEntry &Binder::BindCreateFunctionInfo(CreateInfo &info) {
 					function->Cast<ScalarMacroFunction>().query_body = false;
 					expression = function->Cast<ScalarMacroFunction>().expression->Copy();
 				}
+				auto &scalar_function = function->Cast<ScalarMacroFunction>();
+				if (binder.InlineSqlFunctionBody(scalar_function)) {
+					expression = scalar_function.expression->Copy();
+					ExpressionBinder::QualifyColumnNames(*this, expression);
+				}
+				bool query_validated = false;
 				// Scalar RETURNS with BEGIN ATOMIC/AS $$ SELECT $$ body was
 				// converted to ScalarMacroFunction wrapping a SubqueryExpression.
 				// Validate the inner SELECT against the declared RETURNS type by
@@ -689,6 +695,7 @@ SchemaCatalogEntry &Binder::BindCreateFunctionInfo(CreateInfo &info) {
 				if (!ret_types.empty() && expression->GetExpressionClass() == ExpressionClass::SUBQUERY) {
 					auto &sub_expr = expression->Cast<SubqueryExpression>();
 					if (sub_expr.Subquery() && sub_expr.Subquery()->node) {
+						query_validated = true;
 						auto dummy_binder = CreateBinder(context, this);
 						if (should_create_dependencies) {
 							dummy_binder->SetCatalogLookupCallback(binder_callback);
@@ -727,25 +734,22 @@ SchemaCatalogEntry &Binder::BindCreateFunctionInfo(CreateInfo &info) {
 					}
 				}
 
-				auto &scalar_function = function->Cast<ScalarMacroFunction>();
-				if (binder.InlineSqlFunctionBody(scalar_function)) {
-					expression = scalar_function.expression->Copy();
-					ExpressionBinder::QualifyColumnNames(*this, expression);
-				}
-				auto bind_result = binder.Bind(expression, 0, false);
-				if (bind_result.HasError()) {
-					error = std::move(bind_result.error);
-					error.Throw();
-				}
-				// Validate scalar RETURN expr (non-subquery body).
-				if (!ret_types.empty() && bind_result.expression) {
-					const auto resolved = function->ResultType();
-					auto &actual = bind_result.expression->GetReturnType();
-					if (!types_compatible(actual, resolved)) {
-						throw BinderException("return type mismatch in function declared to return %s\n"
-						                      "DETAIL: Actual return type is %s.",
-						                      StringUtil::Lower(resolved.ToString()),
-						                      StringUtil::Lower(actual.ToString()));
+				if (!query_validated) {
+					auto bind_result = binder.Bind(expression, 0, false);
+					if (bind_result.HasError()) {
+						error = std::move(bind_result.error);
+						error.Throw();
+					}
+					// Validate scalar RETURN expr (non-subquery body).
+					if (!ret_types.empty()) {
+						const auto resolved = function->ResultType();
+						auto &actual = bind_result.expression->GetReturnType();
+						if (!types_compatible(actual, resolved)) {
+							throw BinderException("return type mismatch in function declared to return %s\n"
+							                      "DETAIL: Actual return type is %s.",
+							                      StringUtil::Lower(resolved.ToString()),
+							                      StringUtil::Lower(actual.ToString()));
+						}
 					}
 				}
 			} catch (const std::exception &ex) {

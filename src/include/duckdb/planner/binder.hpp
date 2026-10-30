@@ -20,6 +20,7 @@
 #include "duckdb/parser/column_definition.hpp"
 #include "duckdb/parser/tableref/match_recognize_ref.hpp"
 #include "duckdb/parser/qualified_name.hpp"
+#include "duckdb/parser/qualified_name_set.hpp"
 #include "duckdb/parser/query_node.hpp"
 #include "duckdb/parser/tableref/table_function_ref.hpp"
 #include "duckdb/parser/result_modifier.hpp"
@@ -194,7 +195,6 @@ private:
 //! GlobalBinderState is state shared over the ENTIRE query, including subqueries, views, etc
 struct MacroParameterUse {
 	idx_t references = 0;
-	bool unconditional = false;
 	bool shareable = true;
 	identifier_set_t lambda_names;
 };
@@ -205,6 +205,7 @@ struct MacroArgumentScan {
 	bool constant = true;
 	bool has_parameter = false;
 	bool lambda_body = true;
+	bool level_independent = true;
 	identifier_set_t names;
 };
 
@@ -212,6 +213,8 @@ struct MacroBodyUse {
 	identifier_map_t<MacroParameterUse> parameters;
 	bool is_volatile = false;
 	bool lambda_body = true;
+	bool level_independent = true;
+	optional_ptr<const ParsedExpression> select_item;
 };
 
 enum class MacroFunctionKind : uint8_t {
@@ -232,8 +235,10 @@ struct GlobalBinderState {
 	idx_t bound_tables = 0;
 	unordered_map<const MacroFunction *, MacroBodyUse> macro_body_uses;
 	unordered_map<const ScalarMacroCatalogEntry *, Value> constant_macros;
-	identifier_map_t<MacroFunctionLookup> macro_functions;
+	qualified_name_map_t<MacroFunctionLookup> macro_functions;
 	idx_t shared_macro_arguments = 0;
+	identifier_map_t<unique_ptr<Expression>> bound_macro_arguments;
+	idx_t macro_type_probing = 0;
 	//! Statement properties
 	StatementProperties prop;
 	//! Binding mode

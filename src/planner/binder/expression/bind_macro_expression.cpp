@@ -15,7 +15,6 @@
 #include "duckdb/common/unique_ptr.hpp"
 #include "duckdb/execution/expression_executor.hpp"
 #include "duckdb/function/scalar_macro_function.hpp"
-#include "duckdb/parser/expression/case_expression.hpp"
 #include "duckdb/parser/expression/cast_expression.hpp"
 #include "duckdb/parser/expression/conjunction_expression.hpp"
 #include "duckdb/parser/expression/constant_expression.hpp"
@@ -35,6 +34,7 @@
 #include "duckdb/parser/parsed_expression_iterator.hpp"
 #include "duckdb/planner/expression_binder.hpp"
 #include "duckdb/planner/expression/bound_constant_expression.hpp"
+#include "duckdb/planner/expression/bound_reference_expression.hpp"
 #include "duckdb/parser/expression/lambda_expression.hpp"
 
 namespace duckdb {
@@ -43,10 +43,14 @@ namespace {
 
 constexpr idx_t MAX_ARGUMENT_LITERAL_SIZE = 1 << 12;
 
-bool IsTrivialMacroArgument(const ParsedExpression &argument) {
+bool IsTrivialMacroArgument(const ParsedExpression &argument,
+                            const identifier_map_t<unique_ptr<Expression>> &bound_arguments) {
 	switch (argument.GetExpressionClass()) {
+	case ExpressionClass::COLUMN_REF: {
+		auto &column = argument.Cast<ColumnRefExpression>();
+		return column.IsQualified() || !bound_arguments.count(column.GetColumnName());
+	}
 	case ExpressionClass::CONSTANT:
-	case ExpressionClass::COLUMN_REF:
 	case ExpressionClass::LAMBDA_REF:
 	case ExpressionClass::PARAMETER:
 	case ExpressionClass::POSITIONAL_REFERENCE:
@@ -66,6 +70,49 @@ bool IsTrivialMacroArgument(const ParsedExpression &argument) {
 	default:
 		return false;
 	}
+}
+
+optional_ptr<SelectNode> SingleItemSelect(ParsedExpression &expr) {
+	if (expr.GetExpressionClass() != ExpressionClass::SUBQUERY) {
+		return nullptr;
+	}
+	auto &subquery = expr.Cast<SubqueryExpression>();
+	auto &node = subquery.SubqueryMutable()->node;
+	if (subquery.GetSubqueryType() != SubqueryType::SCALAR || node->type != QueryNodeType::SELECT_NODE) {
+		return nullptr;
+	}
+	auto &select = node->Cast<SelectNode>();
+	if (!select.cte_map.map.empty() || select.select_list.size() != 1 || !select.modifiers.empty() ||
+	    select.from_table->type != TableReferenceType::EMPTY_FROM || select.where_clause ||
+	    !select.groups.group_expressions.empty() || !select.groups.grouping_sets.empty() || select.having ||
+	    select.qualify || select.sample || select.aggregate_handling != AggregateHandling::STANDARD_HANDLING) {
+		return nullptr;
+	}
+	return select;
+}
+
+bool HasExactResultType(const MacroFunction &macro) {
+	if (macro.return_types.empty()) {
+		return false;
+	}
+	return !TypeVisitor::Contains(macro.ResultType(), [](const LogicalType &type) {
+		switch (type.id()) {
+		case LogicalTypeId::INVALID:
+		case LogicalTypeId::SQLNULL:
+		case LogicalTypeId::UNKNOWN:
+		case LogicalTypeId::ANY:
+		case LogicalTypeId::TEMPLATE:
+		case LogicalTypeId::UNBOUND:
+		case LogicalTypeId::DECIMAL:
+		case LogicalTypeId::TIMESTAMP:
+		case LogicalTypeId::TIMESTAMP_SEC:
+		case LogicalTypeId::TIMESTAMP_MS:
+		case LogicalTypeId::TIMESTAMP_NS:
+			return true;
+		default:
+			return false;
+		}
+	});
 }
 
 bool IsLambdaParameterList(const LambdaExpression &lambda, DummyBinding &parameters,
@@ -91,17 +138,17 @@ bool IsLambdaParameterList(const LambdaExpression &lambda, DummyBinding &paramet
 
 MacroFunctionLookup ExpressionBinder::LookupMacroFunction(const FunctionExpression &function) {
 	auto &name = function.FunctionName();
-	if (function.GetQualifiedName().Path().size() > 1 || IsUnnestFunction(name) ||
-	    IsSelectListSetReturningFunction(name)) {
+	if (IsUnnestFunction(name) || IsSelectListSetReturningFunction(name)) {
 		return MacroFunctionLookup();
 	}
+	auto &qualified_name = function.GetQualifiedName();
 	auto &functions = binder.global_binder_state->macro_functions;
-	auto cached = functions.find(name);
+	auto cached = functions.find(qualified_name);
 	if (cached != functions.end()) {
 		return cached->second;
 	}
 	MacroFunctionLookup lookup;
-	auto entry = GetCatalogEntry(EntryLookupInfo(CatalogType::SCALAR_FUNCTION_ENTRY, QualifiedName(name)),
+	auto entry = GetCatalogEntry(EntryLookupInfo(CatalogType::SCALAR_FUNCTION_ENTRY, qualified_name),
 	                             OnEntryNotFound::RETURN_NULL);
 	if (entry) {
 		switch (entry->type) {
@@ -125,15 +172,14 @@ MacroFunctionLookup ExpressionBinder::LookupMacroFunction(const FunctionExpressi
 			break;
 		}
 	}
-	functions.emplace(name, lookup);
+	functions.emplace(qualified_name, lookup);
 	return lookup;
 }
 
-void ExpressionBinder::AnalyzeMacroBody(ParsedExpression &expr, bool conditional, bool shareable,
-                                        vector<identifier_set_t> &lambda_params, DummyBinding &parameters,
-                                        MacroBodyUse &use) {
-	auto analyze = [&](ParsedExpression &child, bool child_conditional, bool child_shareable) {
-		AnalyzeMacroBody(child, child_conditional, child_shareable, lambda_params, parameters, use);
+void ExpressionBinder::AnalyzeMacroBody(ParsedExpression &expr, bool shareable, vector<identifier_set_t> &lambda_params,
+                                        DummyBinding &parameters, MacroBodyUse &use) {
+	auto analyze = [&](ParsedExpression &child, bool child_shareable) {
+		AnalyzeMacroBody(child, child_shareable, lambda_params, parameters, use);
 	};
 	switch (expr.GetExpressionClass()) {
 	case ExpressionClass::COLUMN_REF: {
@@ -156,7 +202,6 @@ void ExpressionBinder::AnalyzeMacroBody(ParsedExpression &expr, bool conditional
 			return;
 		}
 		parameter->second.references++;
-		parameter->second.unconditional |= !conditional;
 		parameter->second.shareable &= shareable;
 		for (auto &names : lambda_params) {
 			parameter->second.lambda_names.insert(names.begin(), names.end());
@@ -179,29 +224,26 @@ void ExpressionBinder::AnalyzeMacroBody(ParsedExpression &expr, bool conditional
 				auto &overload_use = GetMacroBodyUse(overload->Cast<ScalarMacroFunction>(), lookup.macro->name);
 				use.is_volatile |= overload_use.is_volatile;
 				use.lambda_body &= overload_use.lambda_body;
+				use.level_independent &= overload_use.level_independent;
 				if (lookup.macro->macros.size() == 1) {
 					inner_use = &overload_use;
 					inner_def = &overload->Cast<ScalarMacroFunction>();
 				}
 			}
 			if (!inner_use) {
-				conditional = true;
+				shareable = false;
 			}
 			break;
 		case MacroFunctionKind::AGGREGATE:
-			use.lambda_body = false;
-			shareable = false;
-			break;
 		case MacroFunctionKind::OTHER:
 			use.lambda_body = false;
-			conditional = true;
+			use.level_independent = false;
 			shareable = false;
 			break;
 		}
 		idx_t position = 0;
 		for (auto &argument : function.GetArgumentsMutable()) {
 			auto &child = *argument.GetExpressionMutable();
-			bool child_conditional = conditional;
 			bool child_shareable = shareable;
 			if (inner_use) {
 				Identifier parameter_name;
@@ -211,37 +253,32 @@ void ExpressionBinder::AnalyzeMacroBody(ParsedExpression &expr, bool conditional
 					parameter_name = inner_def->parameters[position++]->Cast<ColumnRefExpression>().GetColumnName();
 				}
 				auto parameter = inner_use->parameters.find(parameter_name);
-				if (parameter == inner_use->parameters.end()) {
-					child_conditional = true;
-				} else {
-					child_conditional |= !parameter->second.unconditional;
-					child_shareable &= parameter->second.shareable;
-				}
+				child_shareable &= parameter != inner_use->parameters.end() && parameter->second.shareable;
 			}
 			if (child.GetExpressionClass() != ExpressionClass::LAMBDA) {
-				analyze(child, child_conditional, child_shareable);
+				analyze(child, child_shareable);
 				continue;
 			}
 			auto &lambda = child.Cast<LambdaExpression>();
 			vector<reference<const ParsedExpression>> column_refs;
 			if (!IsLambdaParameterList(lambda, parameters, column_refs)) {
-				analyze(*lambda.LeftMutable(), child_conditional, child_shareable);
-				analyze(*lambda.RightMutable(), child_conditional, child_shareable);
+				analyze(*lambda.LeftMutable(), child_shareable);
+				analyze(*lambda.RightMutable(), child_shareable);
 				continue;
 			}
 			lambda_params.emplace_back();
 			for (auto &column_ref : column_refs) {
 				lambda_params.back().insert(column_ref.get().Cast<ColumnRefExpression>().GetName());
 			}
-			analyze(*lambda.RightMutable(), true, child_shareable);
+			analyze(*lambda.RightMutable(), child_shareable);
 			lambda_params.pop_back();
 		}
 		if (function.Filter()) {
-			analyze(*function.FilterMutable(), conditional, false);
+			analyze(*function.FilterMutable(), false);
 		}
 		if (function.OrderBy()) {
 			for (auto &order : function.OrderByMutable()->orders) {
-				analyze(*order.expression, conditional, false);
+				analyze(*order.expression, false);
 			}
 		}
 		return;
@@ -249,48 +286,21 @@ void ExpressionBinder::AnalyzeMacroBody(ParsedExpression &expr, bool conditional
 	case ExpressionClass::SUBQUERY: {
 		use.lambda_body = false;
 		auto &subquery = expr.Cast<SubqueryExpression>().Subquery();
+		const auto level_independent = use.level_independent;
 		ParsedExpressionIterator::EnumerateQueryNodeChildren(
-		    *subquery->node, [&](unique_ptr<ParsedExpression> &child) { analyze(*child, true, false); });
-		ParsedExpressionIterator::EnumerateChildren(expr,
-		                                            [&](ParsedExpression &child) { analyze(child, true, false); });
+		    *subquery->node, [&](unique_ptr<ParsedExpression> &child) { analyze(*child, false); });
+		use.level_independent = level_independent;
+		ParsedExpressionIterator::EnumerateChildren(expr, [&](ParsedExpression &child) { analyze(child, false); });
 		return;
 	}
 	case ExpressionClass::WINDOW:
 	case ExpressionClass::STAR:
 		use.lambda_body = false;
-		ParsedExpressionIterator::EnumerateChildren(
-		    expr, [&](ParsedExpression &child) { analyze(child, conditional, false); });
-		return;
-	case ExpressionClass::CASE: {
-		auto &case_expr = expr.Cast<CaseExpression>();
-		bool first = true;
-		for (auto &check : case_expr.CaseChecksMutable()) {
-			analyze(*check.when_expr, conditional || !first, shareable);
-			analyze(*check.then_expr, true, shareable);
-			first = false;
-		}
-		analyze(*case_expr.ElseMutable(), true, shareable);
-		return;
-	}
-	case ExpressionClass::CONJUNCTION:
-	case ExpressionClass::OPERATOR: {
-		const bool all_conditional = expr.GetExpressionType() == ExpressionType::OPERATOR_TRY;
-		const bool tail_conditional = expr.GetExpressionClass() == ExpressionClass::CONJUNCTION ||
-		                              expr.GetExpressionType() == ExpressionType::OPERATOR_COALESCE;
-		bool first = true;
-		ParsedExpressionIterator::EnumerateChildren(expr, [&](ParsedExpression &child) {
-			analyze(child, conditional || all_conditional || (tail_conditional && !first), shareable);
-			first = false;
-		});
-		return;
-	}
-	case ExpressionClass::CAST:
-		analyze(*expr.Cast<CastExpression>().ChildMutable(), conditional || expr.Cast<CastExpression>().IsTryCast(),
-		        shareable);
+		use.level_independent = false;
+		ParsedExpressionIterator::EnumerateChildren(expr, [&](ParsedExpression &child) { analyze(child, false); });
 		return;
 	default:
-		ParsedExpressionIterator::EnumerateChildren(
-		    expr, [&](ParsedExpression &child) { analyze(child, conditional, shareable); });
+		ParsedExpressionIterator::EnumerateChildren(expr, [&](ParsedExpression &child) { analyze(child, shareable); });
 		return;
 	}
 }
@@ -304,27 +314,66 @@ const MacroBodyUse &ExpressionBinder::GetMacroBodyUse(const ScalarMacroFunction 
 	auto &use = uses[&macro_def];
 	use.is_volatile = true;
 	use.lambda_body = false;
+	use.level_independent = false;
 
-	MacroBodyUse result;
 	vector<Identifier> names;
 	names.reserve(macro_def.parameters.size());
 	for (auto &parameter : macro_def.parameters) {
 		names.push_back(parameter->Cast<ColumnRefExpression>().GetColumnName());
-		result.parameters[names.back()];
 	}
 	vector<LogicalType> types(names.size(), LogicalType::UNKNOWN);
 	DummyBinding parameters(std::move(types), std::move(names), name.GetIdentifierName());
-	auto body = macro_def.expression->Copy();
-	auto dummy_binder = Binder::CreateBinder(context);
-	dummy_binder->macro_binding = &parameters;
-	ExpressionBinder::QualifyColumnNames(*dummy_binder, body);
-	vector<identifier_set_t> lambda_params;
-	AnalyzeMacroBody(*body, false, true, lambda_params, parameters, result);
-	use = std::move(result);
+	auto analyze = [&](const ParsedExpression &expression) {
+		MacroBodyUse result;
+		for (auto &parameter : parameters.GetColumnNames()) {
+			result.parameters[parameter];
+		}
+		auto body = expression.Copy();
+		auto dummy_binder = Binder::CreateBinder(context);
+		dummy_binder->macro_binding = &parameters;
+		ExpressionBinder::QualifyColumnNames(*dummy_binder, body);
+		vector<identifier_set_t> lambda_params;
+		AnalyzeMacroBody(*body, true, lambda_params, parameters, result);
+		return result;
+	};
+	if (!macro_def.query_body) {
+		auto select = SingleItemSelect(*macro_def.expression);
+		if (select) {
+			auto &item = *select->select_list[0];
+			auto result = analyze(item);
+			if (result.level_independent && !result.is_volatile) {
+				result.select_item = item;
+				use = std::move(result);
+				return use;
+			}
+		}
+	}
+	use = analyze(*macro_def.expression);
 	return use;
 }
 
-vector<bool> ExpressionBinder::MacroArgumentsBindInPlace(const FunctionExpression &function,
+BindResult ExpressionBinder::BindMacroArgumentType(unique_ptr<ParsedExpression> &argument, idx_t depth) {
+	auto &probing = binder.global_binder_state->macro_type_probing;
+	probing++;
+	absl::Cleanup end_probe = [&probing] {
+		probing--;
+	};
+	return BindExpression(argument, depth);
+}
+
+bool ExpressionBinder::IsLambdaSafeMacroArgument(ParsedExpression &argument) {
+	MacroArgumentScan scan;
+	ScanMacroArgument(argument, scan);
+	return scan.lambda_body;
+}
+
+bool ExpressionBinder::IsLevelIndependentMacroArgument(ParsedExpression &argument) {
+	MacroArgumentScan scan;
+	ScanMacroArgument(argument, scan);
+	return scan.level_independent;
+}
+
+vector<bool> ExpressionBinder::MacroArgumentsBindInPlace(FunctionExpression &function,
                                                          ScalarMacroCatalogEntry &macro_func) {
 	vector<bool> result;
 	const bool typed = absl::c_any_of(macro_func.macros, [](const unique_ptr<MacroFunction> &macro) {
@@ -334,11 +383,14 @@ vector<bool> ExpressionBinder::MacroArgumentsBindInPlace(const FunctionExpressio
 	if (!typed) {
 		return result;
 	}
-	auto &arguments = function.GetArguments();
+	const bool select_item = absl::c_any_of(macro_func.macros, [&](const unique_ptr<MacroFunction> &macro) {
+		return GetMacroBodyUse(macro->Cast<ScalarMacroFunction>(), macro_func.name).select_item;
+	});
+	auto &arguments = function.GetArgumentsMutable();
 	result.reserve(arguments.size());
 	idx_t position = 0;
 	for (auto &argument : arguments) {
-		auto &expression = argument.GetExpression();
+		auto &expression = *argument.GetExpressionMutable();
 		const bool named = expression.IsNamedParameter();
 		bool in_place = true;
 		for (auto &macro : macro_func.macros) {
@@ -361,7 +413,7 @@ vector<bool> ExpressionBinder::MacroArgumentsBindInPlace(const FunctionExpressio
 		if (!named) {
 			position++;
 		}
-		result.push_back(in_place);
+		result.push_back(in_place && (!select_item || IsLevelIndependentMacroArgument(expression)));
 	}
 	return result;
 }
@@ -544,20 +596,24 @@ void ExpressionBinder::ScanMacroArgument(ParsedExpression &argument, MacroArgume
 		scan.constant = false;
 		scan.lambda_body = false;
 		auto &subquery = argument.Cast<SubqueryExpression>().SubqueryMutable();
+		const auto level_independent = scan.level_independent;
 		ParsedExpressionIterator::EnumerateQueryNodeChildren(*subquery->node, [&](unique_ptr<ParsedExpression> &child) {
 			if (!scan.blocked && !scan.is_volatile) {
 				ScanMacroArgument(*child, scan);
 			}
 		});
+		scan.level_independent = level_independent;
 		break;
 	}
 	case ExpressionClass::WINDOW:
 		scan.constant = false;
 		scan.lambda_body = false;
+		scan.level_independent = false;
 		break;
 	case ExpressionClass::STAR:
 		scan.blocked = true;
 		scan.lambda_body = false;
+		scan.level_independent = false;
 		return;
 	case ExpressionClass::FUNCTION: {
 		auto lookup = LookupMacroFunction(argument.Cast<FunctionExpression>());
@@ -572,15 +628,18 @@ void ExpressionBinder::ScanMacroArgument(ParsedExpression &argument, MacroArgume
 				auto &overload_use = GetMacroBodyUse(overload->Cast<ScalarMacroFunction>(), lookup.macro->name);
 				scan.is_volatile |= overload_use.is_volatile;
 				scan.lambda_body &= overload_use.lambda_body;
+				scan.level_independent &= overload_use.level_independent;
 			}
 			break;
 		case MacroFunctionKind::AGGREGATE:
 			scan.constant = false;
 			scan.lambda_body = false;
+			scan.level_independent = false;
 			break;
 		case MacroFunctionKind::OTHER:
 			scan.blocked = true;
 			scan.lambda_body = false;
+			scan.level_independent = false;
 			return;
 		}
 		break;
@@ -589,7 +648,7 @@ void ExpressionBinder::ScanMacroArgument(ParsedExpression &argument, MacroArgume
 		break;
 	}
 	ParsedExpressionIterator::EnumerateChildren(argument, [&](ParsedExpression &child) {
-		if (scan.lambda_body || (!scan.blocked && !scan.is_volatile)) {
+		if (scan.lambda_body || scan.level_independent || (!scan.blocked && !scan.is_volatile)) {
 			ScanMacroArgument(child, scan);
 		}
 	});
@@ -611,18 +670,11 @@ bool ExpressionBinder::InlineSqlFunctionBody(ScalarMacroFunction &function) {
 	if (!function.query_body) {
 		return false;
 	}
-	auto &subquery = function.expression->Cast<SubqueryExpression>();
-	if (subquery.Subquery()->node->type != QueryNodeType::SELECT_NODE) {
+	auto select = SingleItemSelect(*function.expression);
+	if (!select) {
 		return false;
 	}
-	auto &node = subquery.SubqueryMutable()->node->Cast<SelectNode>();
-	if (!node.cte_map.map.empty() || node.select_list.size() != 1 || !node.modifiers.empty() ||
-	    (node.from_table && node.from_table->type != TableReferenceType::EMPTY_FROM) || node.where_clause ||
-	    !node.groups.group_expressions.empty() || !node.groups.grouping_sets.empty() || node.having || node.qualify ||
-	    node.sample || node.aggregate_handling != AggregateHandling::STANDARD_HANDLING) {
-		return false;
-	}
-	auto &item = node.select_list[0];
+	auto &item = select->select_list[0];
 	bool blocked = false;
 	for (auto expression_class : {ExpressionClass::WINDOW, ExpressionClass::STAR, ExpressionClass::SUBQUERY}) {
 		ParsedExpressionIterator::VisitExpressionClass(*item, expression_class,
@@ -771,7 +823,8 @@ void ExpressionBinder::AddSqlFunctionParameters(unique_ptr<ParsedExpression> &ex
 ScalarMacroFunction &ExpressionBinder::UnfoldMacroExpression(FunctionExpression &function,
                                                              ScalarMacroCatalogEntry &macro_func,
                                                              unique_ptr<ParsedExpression> &expr, idx_t depth,
-                                                             vector<unique_ptr<Expression>> &shared_arguments) {
+                                                             vector<unique_ptr<Expression>> &shared_arguments,
+                                                             bool &probed) {
 	// validate the arguments and separate positional and default arguments
 	vector<unique_ptr<ParsedExpression>> positional_arguments;
 	InsertionOrderPreservingMap<unique_ptr<ParsedExpression>, Identifier, identifier_map_t<idx_t>> named_arguments;
@@ -790,6 +843,11 @@ ScalarMacroFunction &ExpressionBinder::UnfoldMacroExpression(FunctionExpression 
 		throw BinderException(*expr, bind_result.error);
 	}
 	auto &macro_def = macro_func.macros[bind_result.function_idx.GetIndex()]->Cast<ScalarMacroFunction>();
+	if (binder.global_binder_state->macro_type_probing && expr->GetExpressionClass() != ExpressionClass::WINDOW &&
+	    HasExactResultType(macro_def)) {
+		probed = true;
+		return macro_def;
+	}
 
 	vector<unique_ptr<Expression>> prebound = std::move(bound_arguments.positional);
 	prebound.resize(positional_arguments.size());
@@ -805,6 +863,14 @@ ScalarMacroFunction &ExpressionBinder::UnfoldMacroExpression(FunctionExpression 
 	// special case: If this is a window function, then we need to return a window expression
 	const bool is_window = expr->GetExpressionClass() == ExpressionClass::WINDOW;
 	const bool distinct = !is_window && function.Distinct();
+	optional_ptr<const MacroBodyUse> use;
+	if (!is_window && binds_values) {
+		use = GetMacroBodyUse(macro_def, macro_func.name);
+	}
+	const bool inline_body = use && use->select_item &&
+	                         absl::c_all_of(positional_arguments, [&](const unique_ptr<ParsedExpression> &argument) {
+		                         return IsLevelIndependentMacroArgument(*argument);
+	                         });
 	unique_ptr<ParsedExpression> filter;
 	unique_ptr<OrderModifier> order_by;
 	Identifier function_name;
@@ -814,7 +880,12 @@ ScalarMacroFunction &ExpressionBinder::UnfoldMacroExpression(FunctionExpression 
 		filter = std::move(function.FilterMutable());
 		order_by = std::move(function.OrderByMutable());
 		function_name = function.FunctionName();
-		expr = macro_def.expression->Copy();
+		if (inline_body) {
+			expr = use->select_item->Copy();
+			expr->ClearAlias();
+		} else {
+			expr = macro_def.expression->Copy();
+		}
 	}
 	const bool ordered = order_by && !order_by->orders.empty();
 	const bool call_modifiers = distinct || filter || ordered;
@@ -831,28 +902,28 @@ ScalarMacroFunction &ExpressionBinder::UnfoldMacroExpression(FunctionExpression 
 
 	vector<string> shared_names;
 	vector<unique_ptr<ParsedExpression>> shared_parsed;
-	if (!is_window && binds_values) {
-		auto &use = GetMacroBodyUse(macro_def, macro_func.name);
-		const bool can_share = use.lambda_body && CanShareMacroArguments();
+	if (use) {
+		const bool can_share = (!use->select_item || inline_body) && use->lambda_body && CanShareMacroArguments();
+		const bool function_arguments = !macro_def.return_types.empty();
 		auto &names = new_macro_binding->GetColumnNames();
 		vector<idx_t> shared_positions;
 		for (idx_t i = 0; i < positional_arguments.size(); i++) {
 			auto &argument = positional_arguments[i];
-			auto parameter = use.parameters.find(names[i]);
+			auto parameter = use->parameters.find(names[i]);
+			D_ASSERT(parameter != use->parameters.end());
 			const bool prebound_argument = i < prebound.size() && prebound[i];
-			if (parameter == use.parameters.end() || parameter->second.references == 0 ||
-			    (parameter->second.references == 1 && !prebound_argument) || IsTrivialMacroArgument(*argument)) {
+			if (parameter->second.references == 0 || (parameter->second.references == 1 && !prebound_argument) ||
+			    IsTrivialMacroArgument(*argument, binder.global_binder_state->bound_macro_arguments)) {
 				continue;
 			}
 			MacroArgumentScan scan;
 			ScanMacroArgument(*argument, scan);
-			if (scan.blocked || scan.is_volatile) {
+			if (scan.blocked || (scan.is_volatile && !function_arguments)) {
 				continue;
 			}
-			const bool share = can_share && parameter->second.unconditional && parameter->second.shareable &&
-			                   absl::c_none_of(scan.names, [&](const Identifier &name) {
-				                   return parameter->second.lambda_names.count(name) > 0;
-			                   });
+			const bool uncaptured = absl::c_none_of(
+			    scan.names, [&](const Identifier &name) { return parameter->second.lambda_names.count(name) > 0; });
+			const bool share = can_share && parameter->second.shareable && uncaptured;
 			if (!share && !scan.constant && !prebound_argument) {
 				continue;
 			}
@@ -877,6 +948,13 @@ ScalarMacroFunction &ExpressionBinder::UnfoldMacroExpression(FunctionExpression 
 				}
 			}
 			if (!share) {
+				if (prebound_argument && (!use->select_item || inline_body) && parameter->second.shareable &&
+				    uncaptured && scan.lambda_body && CanShareMacroArguments()) {
+					auto &reused = binder.global_binder_state->bound_macro_arguments;
+					Identifier name("0_macro_bound_" + to_string(reused.size()));
+					reused.emplace(name, std::move(bound));
+					argument = make_uniq<ColumnRefExpression>(std::move(name));
+				}
 				continue;
 			}
 			shared_positions.push_back(i);
@@ -884,14 +962,14 @@ ScalarMacroFunction &ExpressionBinder::UnfoldMacroExpression(FunctionExpression 
 			shared_arguments.push_back(std::move(bound));
 		}
 		for (idx_t i = 0; i < positional_arguments.size() && !shared_positions.empty(); i++) {
-			auto parameter = use.parameters.find(names[i]);
-			if (parameter == use.parameters.end() || parameter->second.references == 0 ||
-			    IsTrivialMacroArgument(*positional_arguments[i]) || absl::c_linear_search(shared_positions, i)) {
+			auto parameter = use->parameters.find(names[i]);
+			D_ASSERT(parameter != use->parameters.end());
+			if (parameter->second.references == 0 ||
+			    IsTrivialMacroArgument(*positional_arguments[i], binder.global_binder_state->bound_macro_arguments) ||
+			    absl::c_linear_search(shared_positions, i)) {
 				continue;
 			}
-			MacroArgumentScan scan;
-			ScanMacroArgument(*positional_arguments[i], scan);
-			if (!scan.lambda_body) {
+			if (!IsLambdaSafeMacroArgument(*positional_arguments[i])) {
 				shared_positions.clear();
 				shared_parsed.clear();
 				shared_arguments.clear();
@@ -979,7 +1057,11 @@ BindResult ExpressionBinder::BindMacro(FunctionExpression &function, ScalarMacro
 
 	// unfold the macro expression
 	vector<unique_ptr<Expression>> shared_arguments;
-	auto &macro_def = UnfoldMacroExpression(function, macro_func, expr, depth, shared_arguments);
+	bool probed = false;
+	auto &macro_def = UnfoldMacroExpression(function, macro_func, expr, depth, shared_arguments, probed);
+	if (probed) {
+		return BindResult(make_uniq<BoundReferenceExpression>(macro_def.ResultType(), 0));
+	}
 	BindResult result;
 	if (shared_arguments.empty()) {
 		// bind the unfolded macro

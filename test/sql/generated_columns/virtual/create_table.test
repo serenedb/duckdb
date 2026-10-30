@@ -55,7 +55,7 @@ Parser Error: Expression of generated column "total_profit" contains a subquery,
 
 statement ok
 CREATE MACRO my_macro() AS (
-    (select 42)
+    (select max(x) from range(43) t(x))
 );
 
 # Expression contains a subquery - through a macro

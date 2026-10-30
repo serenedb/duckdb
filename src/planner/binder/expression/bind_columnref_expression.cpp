@@ -74,6 +74,13 @@ BindResult ExpressionBinder::BindExpression(ColumnRefExpression &col_ref_p, idx_
 	    binder.GetBindingMode() == BindingMode::EXTRACT_QUALIFIED_NAMES) {
 		return BindResult(make_uniq<BoundConstantExpression>(Value(LogicalType::SQLNULL)));
 	}
+	auto &bound_macro_arguments = binder.global_binder_state->bound_macro_arguments;
+	if (!bound_macro_arguments.empty() && !col_ref_p.IsQualified()) {
+		auto bound = bound_macro_arguments.find(col_ref_p.GetColumnName());
+		if (bound != bound_macro_arguments.end()) {
+			return BindResult(bound->second->Copy());
+		}
+	}
 
 	ErrorData error;
 	auto expr = QualifyColumnName(col_ref_p, error);

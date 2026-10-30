@@ -103,7 +103,7 @@ MacroBindResult MacroFunction::BindMacroFunction(
 			}
 		} else if (requires_bind) {
 			const auto correlated_columns = binder.correlated_columns;
-			const auto arg_bind_result = expr_binder.BindExpression(arg_copy, depth + 1);
+			const auto arg_bind_result = expr_binder.BindMacroArgumentType(arg_copy, depth + 1);
 			binder.correlated_columns = correlated_columns;
 			arg_type = arg_bind_result.HasError() ? LogicalType::UNKNOWN : argument_type(*arg_bind_result.expression);
 		}
