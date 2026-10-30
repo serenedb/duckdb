@@ -524,6 +524,8 @@ private:
 
 	bool ErrorInvalidatesTransaction(ExceptionType type);
 
+	void ResolvePrincipal();
+
 private:
 	//! Lock on using the ClientContext in parallel
 	mutex context_lock;
@@ -541,6 +543,7 @@ private:
 	weak_ptr<AttachedDatabase> connected_to_database;
 	bool is_connected = false;
 	shared_ptr<SchedulerAccount> scheduler_account;
+	RoleAccess unknown_principal;
 };
 
 class ClientContextLock {
