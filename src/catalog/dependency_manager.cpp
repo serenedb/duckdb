@@ -1277,7 +1277,8 @@ void DependencyManager::AlterObject(CatalogTransaction transaction, CatalogEntry
 		return dep.Dependent().subdependencies.contains(SubDependency {AlterTableType::REMOVE_COLUMN, column});
 	};
 	string blockers;
-	const bool renamed = !IdentifierEquality(true)(old_obj.name, new_obj.name);
+	const bool renamed = !IdentifierEquality(true)(old_obj.name, new_obj.name) ||
+	                     !CatalogEntryInfo::SamePath(old_info.schema_path, new_info.schema_path);
 	vector<pair<reference<Catalog>, DependencyInfo>> foreign_edges;
 	// Other entries that depend on us
 	ScanAllDependents(transaction, old_info, [&](DependencyEntry &dep) {
@@ -1317,6 +1318,13 @@ void DependencyManager::AlterObject(CatalogTransaction transaction, CatalogEntry
 					disallow_alter = false;
 				} else if (alter_table.alter_table_type == AlterTableType::RENAME_COLUMN &&
 				           !reads_column(dep, alter_table.Cast<RenameColumnInfo>().old_name)) {
+					disallow_alter = false;
+				}
+				break;
+			}
+			case AlterTableType::SET_SCHEMA: {
+				if (dep.EntryInfo().type == CatalogType::INDEX_ENTRY ||
+				    (old_obj.type == CatalogType::SEQUENCE_ENTRY && dep.Dependent().flags.IsOwnedBy())) {
 					disallow_alter = false;
 				}
 				break;
@@ -1383,8 +1391,10 @@ void DependencyManager::AlterObject(CatalogTransaction transaction, CatalogEntry
 			break;
 		}
 
-		bool renames_owning_table = alter_info.type == AlterType::ALTER_TABLE &&
-		                            alter_info.Cast<AlterTableInfo>().alter_table_type == AlterTableType::RENAME_TABLE;
+		bool renames_owning_table =
+		    (alter_info.type == AlterType::ALTER_TABLE &&
+		     alter_info.Cast<AlterTableInfo>().alter_table_type == AlterTableType::RENAME_TABLE) ||
+		    alter_info.GetNewSchema();
 		if (dep.EntryInfo().type == CatalogType::TRIGGER_ENTRY && !dep.Dependent().flags.IsAlterBlocking() &&
 		    !renames_owning_table) {
 			// a trigger does not prevent altering the table it is defined on unless its body reads from it too

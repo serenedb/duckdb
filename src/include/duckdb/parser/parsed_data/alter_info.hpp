@@ -104,6 +104,9 @@ public:
 	virtual optional_ptr<const Identifier> GetNewName() const {
 		return nullptr;
 	}
+	virtual optional_ptr<const Identifier> GetNewSchema() const {
+		return nullptr;
+	}
 
 	AlterEntryData GetAlterEntryData() const;
 	bool IsAddPrimaryKey() const;

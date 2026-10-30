@@ -643,12 +643,29 @@ bool DataTable::IndexNameIsUnique(const string &name, optional_ptr<const unorder
 	return info->indexes.NameIsUnique(name, dropped, replaced);
 }
 
+shared_ptr<SchemaInfo> DataTableInfo::CurrentSchemaInfo() const {
+	auto &catalog = db.GetCatalog();
+	if (catalog.UsesCatalogLog()) {
+		auto entry = catalog.Cast<DuckCatalog>().GetOidIndex().GetCommitted(GetTableOid());
+		if (entry) {
+			return entry->Cast<StandardEntry>().schema_info;
+		}
+	}
+	lock_guard<mutex> l(name_lock);
+	return schema_info;
+}
+
 Identifier DataTableInfo::GetSchemaName() {
-	return schema_info->Name();
+	return CurrentSchemaInfo()->Name();
 }
 
 vector<Identifier> DataTableInfo::GetSchemaPath() const {
-	return schema_info->Path();
+	return CurrentSchemaInfo()->Path();
+}
+
+void DataTableInfo::SetSchemaInfo(shared_ptr<SchemaInfo> info) {
+	lock_guard<mutex> l(name_lock);
+	schema_info = std::move(info);
 }
 
 Identifier DataTableInfo::GetTableName() {

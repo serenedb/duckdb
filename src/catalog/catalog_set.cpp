@@ -394,14 +394,17 @@ bool CatalogSet::AlterOwnership(CatalogTransaction transaction, ChangeOwnershipI
 
 bool CatalogSet::RenameEntryInternal(CatalogTransaction transaction, CatalogEntry &old, const Identifier &new_name,
                                      AlterInfo &alter_info, unique_lock<mutex> &read_lock, bool namespace_vacant) {
-	auto &original_name = old.name;
-
 	auto &context = *transaction.context;
 	auto entry_value = map.GetEntry(new_name);
 	if ((entry_value && !GetEntryForTransaction(transaction, *entry_value).deleted) || !namespace_vacant) {
 		old.UndoAlter(context, alter_info);
 		ThrowRenameConflict(old, new_name);
 	}
+	return RenameFrom(transaction, old, read_lock) && RenameTo(transaction, new_name, read_lock);
+}
+
+bool CatalogSet::RenameFrom(CatalogTransaction transaction, CatalogEntry &old, unique_lock<mutex> &read_lock) {
+	auto &original_name = old.name;
 
 	// Add a RENAMED_ENTRY before adding a DELETED_ENTRY, this makes it so that when this is committed
 	// we know that this was not a DROP statement.
@@ -413,10 +416,10 @@ bool CatalogSet::RenameEntryInternal(CatalogTransaction transaction, CatalogEntr
 	                         /*should_be_empty = */ false)) {
 		return false;
 	}
-	if (!DropEntryInternal(transaction, original_name, false)) {
-		return false;
-	}
+	return DropEntryInternal(transaction, original_name, false);
+}
 
+bool CatalogSet::RenameTo(CatalogTransaction transaction, const Identifier &new_name, unique_lock<mutex> &read_lock) {
 	// Add the renamed entry
 	// Start this off with a RENAMED_ENTRY node, for commit/cleanup/rollback purposes
 	auto renamed_node = make_uniq<InCatalogEntry>(CatalogType::RENAMED_ENTRY, catalog, new_name);
@@ -492,16 +495,7 @@ bool CatalogSet::AlterEntry(CatalogTransaction transaction, const Identifier &na
 	// push the old entry in the undo buffer for this transaction
 	unique_ptr<CatalogEntry> entry_to_destroy;
 	if (transaction.transaction) {
-		// serialize the AlterInfo into a temporary buffer
-		MemoryStream stream(Allocator::Get(*transaction.db));
-		BinarySerializer serializer(stream);
-		serializer.Begin();
-		serializer.WriteProperty(100, "column_name", alter_info.GetColumnName());
-		serializer.WriteProperty(101, "alter_info", &alter_info);
-		serializer.End();
-
-		DuckTransactionManager::Get(GetCatalog().GetAttached())
-		    .PushCatalogEntry(*transaction.transaction, new_entry->Child(), stream.GetData(), stream.GetPosition());
+		PushAlter(transaction, *new_entry, alter_info);
 	} else {
 		// if we don't have a transaction this alter is non-transactional
 		// in that case we are able to just directly destroy the child (if there is any)
@@ -518,6 +512,76 @@ bool CatalogSet::AlterEntry(CatalogTransaction transaction, const Identifier &na
 	write_lock.unlock();
 
 	// Check the dependency manager to verify that there are no conflicting dependencies with this alter
+	catalog.GetDependencyManager()->AlterObject(transaction, *entry, *new_entry, alter_info);
+	return true;
+}
+
+void CatalogSet::PushAlter(CatalogTransaction transaction, CatalogEntry &altered, AlterInfo &alter_info) {
+	// serialize the AlterInfo into a temporary buffer
+	MemoryStream stream(Allocator::Get(*transaction.db));
+	BinarySerializer serializer(stream);
+	serializer.Begin();
+	serializer.WriteProperty(100, "column_name", alter_info.GetColumnName());
+	serializer.WriteProperty(101, "alter_info", &alter_info);
+	serializer.End();
+
+	DuckTransactionManager::Get(GetCatalog().GetAttached())
+	    .PushCatalogEntry(*transaction.transaction, altered.Child(), stream.GetData(), stream.GetPosition());
+}
+
+bool CatalogSet::MoveEntry(CatalogTransaction transaction, const Identifier &name, CatalogSet &target,
+                           AlterInfo &alter_info) {
+	D_ASSERT(transaction.transaction);
+	auto entry = GetEntry(transaction, name);
+	if (!entry) {
+		return false;
+	}
+	if (!alter_info.allow_internal && entry->internal) {
+		throw CatalogException("Cannot alter entry %s because it is an internal system entry", entry->name);
+	}
+	auto table_lock = LockTableStorage(*entry);
+	auto value = entry->AlterEntry(transaction, alter_info);
+	value->permissions = entry->permissions;
+
+	unique_lock<mutex> write_lock(catalog.GetWriteLock());
+	bool vacant = target.NamespaceVacant(transaction, name);
+	if (vacant) {
+		lock_guard<mutex> target_lock(target.catalog_lock);
+		auto existing = target.map.GetEntry(name);
+		vacant = !existing || target.VerifyVacancy(transaction, *existing);
+	}
+	if (!vacant) {
+		auto extra_info = Exception::InitializeExtraInfo("ENTRY_ALREADY_EXISTS", optional_idx());
+		extra_info["name"] = name.GetIdentifierName();
+		extra_info["type"] = CatalogTypeToString(entry->type);
+		throw CatalogException(extra_info, StringUtil::Format("relation \"%s\" already exists in schema \"%s\"",
+		                                                      name.GetIdentifierName(),
+		                                                      alter_info.GetNewSchema()->GetIdentifierName()));
+	}
+
+	unique_lock<mutex> read_lock(catalog_lock);
+	entry = GetEntryInternal(transaction, name);
+	if (!entry || !RenameFrom(transaction, *entry, read_lock)) {
+		return false;
+	}
+	read_lock.unlock();
+
+	unique_lock<mutex> target_lock(target.catalog_lock);
+	if (!target.RenameTo(transaction, name, target_lock)) {
+		return false;
+	}
+	value->timestamp = transaction.GetTransactionId();
+	value->set = &target;
+	value->oid = entry->oid;
+	auto new_entry = value.get();
+	target.map.UpdateEntry(std::move(value));
+	GetCatalog().GetOidIndex().Install(*new_entry, *new_entry);
+	target.PushAlter(transaction, *new_entry, alter_info);
+	new_entry->SetAsRoot(&transaction, entry);
+
+	target_lock.unlock();
+	write_lock.unlock();
+
 	catalog.GetDependencyManager()->AlterObject(transaction, *entry, *new_entry, alter_info);
 	return true;
 }

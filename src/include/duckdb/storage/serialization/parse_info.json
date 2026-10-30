@@ -1491,6 +1491,18 @@
     ]
   },
   {
+    "class": "SetSchemaInfo",
+    "base": "AlterTableInfo",
+    "enum": "SET_SCHEMA",
+    "members": [
+      {
+        "id": 400,
+        "name": "new_schema",
+        "type": "Identifier"
+      }
+    ]
+  },
+  {
     "class": "SetPartitionedByInfo",
     "base": "AlterTableInfo",
     "enum": "SET_PARTITIONED_BY",

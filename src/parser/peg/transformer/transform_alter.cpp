@@ -633,6 +633,11 @@ unique_ptr<AlterTableInfo> PEGTransformerFactory::TransformRenameAlter(PEGTransf
 	return make_uniq<RenameTableInfo>(AlterEntryData(), identifier);
 }
 
+unique_ptr<AlterTableInfo> PEGTransformerFactory::TransformSetSchemaAlter(PEGTransformer &transformer,
+                                                                          const Identifier &col_id) {
+	return make_uniq<SetSchemaInfo>(AlterEntryData(), col_id);
+}
+
 unique_ptr<AlterTableInfo>
 PEGTransformerFactory::TransformSetPartitionedBy(PEGTransformer &transformer,
                                                  vector<unique_ptr<ParsedExpression>> expression) {

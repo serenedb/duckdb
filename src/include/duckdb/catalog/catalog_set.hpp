@@ -77,6 +77,8 @@ public:
 	DUCKDB_API optional_ptr<CatalogEntry> GetNamespaceEntry(CatalogTransaction transaction, const Identifier &name);
 
 	DUCKDB_API bool AlterEntry(CatalogTransaction transaction, const Identifier &name, AlterInfo &alter_info);
+	DUCKDB_API bool MoveEntry(CatalogTransaction transaction, const Identifier &name, CatalogSet &target,
+	                          AlterInfo &alter_info);
 
 	DUCKDB_API bool DropEntry(CatalogTransaction transaction, const Identifier &name, bool cascade,
 	                          bool allow_drop_internal = false);
@@ -179,7 +181,10 @@ private:
 	bool StartChain(CatalogTransaction transaction, const Identifier &name, unique_lock<mutex> &read_lock);
 	bool RenameEntryInternal(CatalogTransaction transaction, CatalogEntry &old, const Identifier &new_name,
 	                         AlterInfo &alter_info, unique_lock<mutex> &read_lock, bool namespace_vacant);
+	bool RenameFrom(CatalogTransaction transaction, CatalogEntry &old, unique_lock<mutex> &read_lock);
+	bool RenameTo(CatalogTransaction transaction, const Identifier &new_name, unique_lock<mutex> &read_lock);
 	bool NamespaceVacant(CatalogTransaction transaction, const Identifier &name);
+	void PushAlter(CatalogTransaction transaction, CatalogEntry &altered, AlterInfo &alter_info);
 
 private:
 	DuckCatalog &catalog;

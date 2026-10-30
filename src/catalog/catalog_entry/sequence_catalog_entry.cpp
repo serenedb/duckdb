@@ -83,11 +83,14 @@ unique_ptr<CatalogEntry> SequenceCatalogEntry::AlterEntry(ClientContext &context
 	}
 	const bool restart = info.type == AlterType::ALTER_SEQUENCE &&
 	                     info.Cast<AlterSequenceInfo>().alter_sequence_type == AlterSequenceType::RESTART_SEQUENCE;
-	if (!restart && !info.GetNewName()) {
+	const auto new_schema = info.GetNewSchema();
+	if (!restart && !new_schema && !info.GetNewName()) {
 		return CatalogEntry::AlterEntry(context, info);
 	}
-	auto result = unique_ptr_cast<CatalogEntry, SequenceCatalogEntry>(
-	    restart ? Copy(context) : CatalogEntry::AlterEntry(context, info));
+	auto altered = restart      ? Copy(context)
+	               : new_schema ? CopyToSchema(context, *new_schema)
+	                            : CatalogEntry::AlterEntry(context, info);
+	auto result = unique_ptr_cast<CatalogEntry, SequenceCatalogEntry>(std::move(altered));
 	{
 		lock_guard<mutex> writer(state->log_lock);
 		lock_guard<mutex> seqlock(state->lock);

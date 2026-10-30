@@ -459,6 +459,29 @@ unique_ptr<CatalogEntry> DuckTableEntry::AlterEntry(ClientContext &context, Alte
 		SetTriggerFiring(context, table_info.Cast<SetTriggerFiringInfo>());
 		return Copy(context);
 	}
+	case AlterTableType::SET_SCHEMA: {
+		auto transaction = catalog.GetCatalogTransaction(context);
+		auto previous = ParentSchemaPath(transaction);
+		auto owned = catalog.GetDependencyManager()->OwnedEntries(transaction, *this);
+		auto result = CopyToSchema(context, table_info.Cast<SetSchemaInfo>().new_schema);
+		auto &moved = result->Cast<DuckTableEntry>();
+		LogicalDependencyList dependencies;
+		for (auto &dependency : moved.dependencies.Set()) {
+			auto rewritten = dependency;
+			if (dependency.entry.type == CatalogType::SEQUENCE_ENTRY &&
+			    CatalogEntryInfo::SamePath(dependency.entry.schema_path, previous)) {
+				for (auto &sequence : owned) {
+					if (sequence.get().type == CatalogType::SEQUENCE_ENTRY &&
+					    sequence.get().name == dependency.entry.name) {
+						rewritten.entry.schema_path = sequence.get().ParentSchemaPath(transaction);
+					}
+				}
+			}
+			dependencies.AddDependency(rewritten);
+		}
+		moved.dependencies = std::move(dependencies);
+		return result;
+	}
 	case AlterTableType::DROP_NOT_NULL: {
 		auto &drop_not_null_info = table_info.Cast<DropNotNullInfo>();
 		return DropNotNull(context, drop_not_null_info);
@@ -1634,6 +1657,7 @@ void DuckTableEntry::SetAsRoot(optional_ptr<CatalogTransaction> transaction, opt
 	storage->SetAsMainTable();
 	storage->GetDataTableInfo()->SetTableOid(oid);
 	if (!catalog.UsesCatalogLog()) {
+		storage->GetDataTableInfo()->SetSchemaInfo(schema_info);
 		storage->SetTableName(name);
 		for (auto &column : columns.Physical()) {
 			storage->SetColumnName(column.Physical(), column.Name());

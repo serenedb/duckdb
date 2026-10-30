@@ -48,4 +48,11 @@ QualifiedName StandardEntry::GetQualifiedName(const Identifier &entry_name) cons
 	return QualifiedName::FromCatalogSchema(catalog.GetName(), schema_info->Path(), entry_name);
 }
 
+unique_ptr<CatalogEntry> StandardEntry::CopyToSchema(ClientContext &context, const Identifier &schema) const {
+	auto &target = catalog.GetSchema(context, schema);
+	auto result = Copy(context);
+	result->Cast<StandardEntry>().schema_info = target.GetSchemaInfo();
+	return result;
+}
+
 } // namespace duckdb
