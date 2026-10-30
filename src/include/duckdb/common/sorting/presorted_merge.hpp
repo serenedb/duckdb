@@ -93,15 +93,7 @@ public:
 	unique_ptr<PresortedMergeState> BeginMerge(idx_t partition) const;
 	bool Merge(PresortedMergeState &state, vector<PresortedRun> &runs, idx_t max_runs,
 	           const std::function<bool()> &proceed, optional_idx &unsorted_input) const;
-	bool Merge(idx_t partition, vector<PresortedRun> &runs, const std::function<bool()> &proceed,
-	           optional_idx &unsorted_input) const;
 
-	const vector<LogicalType> &KeyTypes() const {
-		return key_types;
-	}
-	const vector<OrderModifiers> &Modifiers() const {
-		return modifiers;
-	}
 	idx_t InputCount() const {
 		return inputs.size();
 	}

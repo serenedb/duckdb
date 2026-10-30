@@ -23,7 +23,6 @@
 #include "duckdb/common/allocator.hpp"
 #include "duckdb/common/bswap.hpp"
 #include "duckdb/common/helper.hpp"
-#include "duckdb/common/limits.hpp"
 #include "duckdb/common/types/string_type.hpp"
 #include "duckdb/common/types/vector.hpp"
 #include "duckdb/common/vector/flat_vector.hpp"
@@ -528,12 +527,6 @@ unique_ptr<PresortedMergeState> PresortedMerge::BeginMerge(idx_t partition) cons
 bool PresortedMerge::Merge(PresortedMergeState &state, vector<PresortedRun> &runs, idx_t max_runs,
                            const std::function<bool()> &proceed, optional_idx &unsorted_input) const {
 	return state.Cast<CursorMerge>().Run(runs, max_runs, proceed, unsorted_input);
-}
-
-bool PresortedMerge::Merge(idx_t partition, vector<PresortedRun> &runs, const std::function<bool()> &proceed,
-                           optional_idx &unsorted_input) const {
-	const auto state = BeginMerge(partition);
-	return Merge(*state, runs, NumericLimits<idx_t>::Maximum(), proceed, unsorted_input);
 }
 
 } // namespace duckdb
