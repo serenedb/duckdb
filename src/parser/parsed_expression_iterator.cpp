@@ -132,7 +132,7 @@ void ParsedExpressionIterator::EnumerateTableRefChildren(
 			expr_callback(mr_ref.config->pattern);
 		}
 		if (mr_ref.input) {
-			ref_callback(*mr_ref.input);
+			EnumerateTableRefChildren(*mr_ref.input, expr_callback, ref_callback);
 		}
 		break;
 	}

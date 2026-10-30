@@ -340,6 +340,26 @@ FROM (VALUES (10), (20)) t(x) MATCH_RECOGNIZE (
 ----
 11
 
+statement ok
+CREATE MACRO m_input(k) AS TABLE FROM (FROM (VALUES (1, 1), (2, 5), (3, 2)) t(o, v) WHERE v < k) MATCH_RECOGNIZE (
+    ORDER BY o MEASURES count(*) AS c PATTERN (A+)
+ DEFINE A AS true);
+
+query I
+FROM m_input(4)
+----
+2
+
+statement ok
+CREATE MACRO m_input_scalar(k) AS (FROM (FROM (VALUES (1, 1), (2, 5), (3, 2)) t(o, v) WHERE v < k) MATCH_RECOGNIZE (
+    ORDER BY o MEASURES count(*) AS c PATTERN (A+)
+ DEFINE A AS true));
+
+query I
+SELECT m_input_scalar(6)
+----
+3
+
 # the overload the arguments select is the one that is expanded
 statement ok
 CREATE MACRO m_over(a) AS sum(a), (a, b) AS sum(a) + sum(b);
