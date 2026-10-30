@@ -865,8 +865,8 @@ void Binder::BindDeleteIndexColumns(TableCatalogEntry &table, LogicalGet &get, v
 	}
 }
 
-BoundStatement Binder::BindReturning(vector<unique_ptr<ParsedExpression>> returning_list, TableCatalogEntry &table,
-                                     const Identifier &alias, TableIndex update_table_index,
+BoundStatement Binder::BindReturning(QueryNode &node, vector<unique_ptr<ParsedExpression>> returning_list,
+                                     TableCatalogEntry &table, const Identifier &alias, TableIndex update_table_index,
                                      unique_ptr<LogicalOperator> child_operator, virtual_column_map_t virtual_columns,
                                      optional_ptr<vector<column_t>> bound_virtual_columns) {
 	vector<LogicalType> types;
@@ -890,7 +890,9 @@ BoundStatement Binder::BindReturning(vector<unique_ptr<ParsedExpression>> return
 	                                                  std::move(virtual_columns));
 	binder->SetPrincipal(principal);
 	binder->table_ref_use = TableRefUse::DML_TARGET;
-	binder->CheckTableRead(binding, table);
+	if (!global_binder_state->trigger_base_nodes.count(node)) {
+		binder->CheckTableRead(binding, table);
+	}
 	ReturningBinder returning_binder(*binder, context);
 
 	vector<unique_ptr<Expression>> projection_expressions;
