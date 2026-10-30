@@ -88,12 +88,12 @@ SELECT sum(i ORDER BY j), min(DISTINCT i), max(DISTINCT j) FROM t
 4950	0	6
 
 query II
-EXPLAIN SELECT max(DISTINCT i) OVER (), 1 + i + 2 FROM t
+EXPLAIN SELECT max(DISTINCT i) OVER (), i + (1 + 2) FROM t
 ----
-logical_opt	<REGEX>:(?s).*3 \+ i.*
+logical_opt	<REGEX>:(?s).*i \+ 3.*
 
 query II
-SELECT max(DISTINCT i) OVER (), 1 + i + 2 FROM t WHERE i = 5
+SELECT max(DISTINCT i) OVER (), i + (1 + 2) FROM t WHERE i = 5
 ----
 5	8
 
