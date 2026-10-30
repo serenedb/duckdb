@@ -39,9 +39,6 @@ size_t compressSIMD(SymbolTable &symbolTable, u8* symbolBase, size_t nlines, con
       do {
          do {
             chunk = len[curLine] - curOff;
-            if (chunk > 511) {
-               chunk = 511; // large strings need to be chopped up into segments of 511 bytes
-            }
             // create a job in this batch
             SIMDjob job;
             job.cur = inOff;
@@ -70,7 +67,7 @@ size_t compressSIMD(SymbolTable &symbolTable, u8* symbolBase, size_t nlines, con
          } while(curOff < len[curLine]);
    
          if ((batchPos == 512) || (outOff > (1<<19)) || (++curLine >= nlines) || (((len[curLine])*2 + 7) > budget)) { // cannot accumulate more?
-            if (batchPos-empty >= 32) { // if we have enough work, fire off fsst_compressAVX512 (32 is due to max 4x8 unrolling)
+            if (batchPos-empty >= 32) { // if we have enough work, fire off fsst_compressAVX512
                // radix-sort jobs on length (longest string first) 
                // -- this provides best load balancing and allows to skip empty jobs at the end
                u16 sortpos[513]; 

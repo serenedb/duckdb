@@ -34,10 +34,10 @@ bool fsst_avx512Compiled() {
 // BULK COMPRESSION OF STRINGS
 //
 // In one call of this function, we can compress 512 strings, each of maximum length 511 bytes.
-// strings can be shorter than 511 bytes, no problem, but if they are longer we need to cut them up.
+// strings can be shorter than 511 bytes, no problem; longer ones are encoded with the scalar method.
 //
-// In each iteration of the while loop, we find one code in each of the unroll*8 strings, i.e. (8,16,24 or 32) for resp. unroll=1,2,3,4 
-// unroll3 performs best on my hardware
+// In each iteration of the while loop, we find one code in each of the unroll*8 = 24 strings, as unroll3 performs best on my hardware;
+// any other unroll leaves all strings to the scalar method.
 //
 // In the worst case, each final encoded string occupies 512KB bytes (512*1024; with 1024=512xexception, exception = 2 bytes).
 // - hence codeBase is a buffer of 512KB (needs 19 bits jobs), symbolBase of 256KB (needs 18 bits jobs). 
@@ -46,7 +46,7 @@ bool fsst_avx512Compiled() {
 // The field 'pos' tells which string we are processing (0..511). We need this info as strings will complete compressing out-of-order.
 //
 // Strings will have different lengths, and when a string is finished, we reload from the buffer of 512 input strings.
-// This continues until we have less than (8,16,24 or 32; depending on unroll) strings left to process.
+// This continues until we have less than 24 strings left to process.
 // - so 'processed' is the amount of strings we started processing and it is between [480,512].
 // Note that when we quit, there will still be some (<32) strings that we started to process but which are unfinished.
 // - so 'unfinished' is that amount. These unfinished strings will be encoded further using the scalar method.
@@ -82,25 +82,13 @@ size_t fsst_compressAVX512(SymbolTable &symbolTable, u8* codeBase, u8* symbolBas
 
    SIMDjob *inputEnd = input+n;
    assert(n >= unroll*8 && n <= 512); // should be close to 512 
-   __m512i job1, job2, job3, job4; // will contain current jobs, for each unroll 1,2,3,4
-   __mmask8 loadmask1 = 255, loadmask2 = 255*(unroll>1), loadmask3 = 255*(unroll>2), loadmask4 = 255*(unroll>3); // 2b loaded new strings bitmask per unroll
-   u32 delta1 = 8, delta2 = 8*(unroll>1), delta3 = 8*(unroll>2), delta4 = 8*(unroll>3); // #new loads this SIMD iteration per unroll
+   __m512i job1, job2, job3; // will contain current jobs, for each unroll 1,2,3
+   __mmask8 loadmask1 = 255, loadmask2 = 255*(unroll>1), loadmask3 = 255*(unroll>2); // 2b loaded new strings bitmask per unroll
+   u32 delta1 = 8, delta2 = 8*(unroll>1), delta3 = 8*(unroll>2); // #new loads this SIMD iteration per unroll
 
-   if (unroll >= 4) {
-      while (input+delta1+delta2+delta3+delta4 < inputEnd) {
-         #include "fsst_avx512_unroll4.inc"
-      }
-   } else if (unroll == 3) {
+   if (unroll == 3) {
       while (input+delta1+delta2+delta3 < inputEnd) {
          #include "fsst_avx512_unroll3.inc"
-      }
-   } else if (unroll == 2) {
-      while (input+delta1+delta2 < inputEnd) {
-         #include "fsst_avx512_unroll2.inc"
-      }
-   } else {
-      while (input+delta1 < inputEnd) {
-         #include "fsst_avx512_unroll1.inc"
       }
    }
 
@@ -108,11 +96,7 @@ size_t fsst_compressAVX512(SymbolTable &symbolTable, u8* codeBase, u8* symbolBas
    processed = n - (inputEnd - input);
    u32 unfinished = 0;
    if (unroll > 1) { 
-      if (unroll > 2) { 
-         if (unroll > 3) { 
-            _mm512_mask_compressstoreu_epi64(output+unfinished, loadmask4=~loadmask4, job4); 
-            unfinished += _mm_popcnt_u32((int) loadmask4);
-         }
+      if (unroll > 2) {
          _mm512_mask_compressstoreu_epi64(output+unfinished, loadmask3=~loadmask3, job3); 
          unfinished += _mm_popcnt_u32((int) loadmask3);
       }
