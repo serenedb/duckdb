@@ -6,6 +6,9 @@
 #include "duckdb/planner/operator/logical_projection.hpp"
 #include "duckdb/planner/operator/logical_vacuum.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
+#include "duckdb/catalog/permissions.hpp"
+#include "duckdb/common/string_util.hpp"
+#include "duckdb/main/client_context.hpp"
 
 namespace duckdb {
 
@@ -28,13 +31,22 @@ void Binder::BindVacuumTable(LogicalVacuum &vacuum, unique_ptr<LogicalOperator> 
 		throw BinderException("Can only vacuum or analyze base tables");
 	}
 	auto &table = *table_ptr;
+	auto &base_ref = info.ref->Cast<BaseTableRef>();
+	if (principal && !IsUnowned(table) &&
+	    !principal->Can(CatalogType::TABLE_ENTRY, table.permissions, AclMode::Maintain)) {
+		context.WarnUser(StringUtil::Format("permission denied to %s \"%s\", skipping it",
+		                                    info.options.vacuum ? "vacuum" : "analyze",
+		                                    base_ref.Table().GetIdentifierName()));
+		info.has_table = false;
+		info.columns.clear();
+		return;
+	}
 	vacuum.SetTable(table);
 
 	// Bind columns against the name the table ref was bound under, not the
 	// catalog entry's name: for facade tables the resolved entry is the hidden
 	// store table (a different, qualified name), so table.name would not match
 	// the binding alias.
-	auto &base_ref = info.ref->Cast<BaseTableRef>();
 	auto &binding_name = info.ref->alias.empty() ? base_ref.Table() : info.ref->alias;
 
 	vector<unique_ptr<Expression>> select_list;
