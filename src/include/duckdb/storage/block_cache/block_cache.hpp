@@ -216,6 +216,9 @@ struct BlockCacheReadAhead {
 	idx_t blocks = 0;
 };
 
+//! Whether a prefetch is a guess at what a reader may read next or the blocks it will read
+enum class BlockCachePrefetch : uint8_t { HINT, NEED };
+
 struct BlockCacheStatistics {
 	idx_t capacity = 0;
 	idx_t used = 0;
@@ -305,8 +308,9 @@ public:
 	vector<BlockCachePin> TryPinRange(BlockCacheFile &file, idx_t offset, idx_t size);
 	//! Whether every block of [offset, offset + size) is cached or loading
 	bool IsCached(BlockCacheFile &file, idx_t offset, idx_t size) const;
-	//! Starts fetching the missing blocks of [offset, offset + size) and returns
-	void Prefetch(const shared_ptr<BlockCacheFile> &file, idx_t offset, idx_t size);
+	//! Starts fetching the missing blocks of [offset, offset + size) and returns; a HINT stops at the bytes a file and
+	//! the cache may have in flight, a NEED only when frames run out
+	void Prefetch(const shared_ptr<BlockCacheFile> &file, idx_t offset, idx_t size, BlockCachePrefetch kind);
 	//! Pins a new block [block] of the unbacked or written [file] for its writer, holding whatever its frame held
 	//! before; BlockCacheAppender fills it and zeroes what lies past the end of the file
 	BlockCachePin CreateBlock(BlockCacheFile &file, idx_t block);

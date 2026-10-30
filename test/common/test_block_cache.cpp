@@ -350,7 +350,7 @@ TEST_CASE("Block cache prefetch merges runs across small gaps and caps each requ
 	}
 	fs.TakeReads();
 
-	cache.Prefetch(cached, 0, 100 * BLOCK);
+	cache.Prefetch(cached, 0, 100 * BLOCK, BlockCachePrefetch::HINT);
 	for (idx_t block = 0; block < 100; block++) {
 		auto pin = cache.Pin(cached, block);
 		REQUIRE(HoldsExpectedBytes(pin, block));
@@ -364,6 +364,29 @@ TEST_CASE("Block cache prefetch merges runs across small gaps and caps each requ
 	}
 	REQUIRE(reads.size() == 7);
 	REQUIRE(covered == 100 * BLOCK);
+}
+
+TEST_CASE("Block cache drops a hinted prefetch past the bytes a file has in flight but never a needed one",
+          "[block_cache]") {
+	DuckDB db(nullptr);
+	BlockCache cache(*db.instance, 512 * BLOCK);
+	CountingSourceFileSystem fs;
+	TestFile file("block_cache_need.bin", 300 * BLOCK);
+	auto cached = file.Open(cache, fs);
+	constexpr idx_t in_flight = BlockCache::MAX_FILE_IN_FLIGHT / BLOCK;
+
+	fs.Hold(true);
+	cache.Prefetch(cached, 0, in_flight * BLOCK, BlockCachePrefetch::HINT);
+	cache.Prefetch(cached, in_flight * BLOCK, 4 * BLOCK, BlockCachePrefetch::HINT);
+	const bool hint_dropped = !cache.IsCached(*cached, in_flight * BLOCK, 4 * BLOCK);
+	cache.Prefetch(cached, in_flight * BLOCK, 4 * BLOCK, BlockCachePrefetch::NEED);
+	const bool need_started = cache.IsCached(*cached, in_flight * BLOCK, 4 * BLOCK);
+	fs.Hold(false);
+	REQUIRE(hint_dropped);
+	REQUIRE(need_started);
+	for (idx_t block = 0; block < in_flight + 4; block++) {
+		REQUIRE(HoldsExpectedBytes(cache.Pin(cached, block), block));
+	}
 }
 
 TEST_CASE("Block cache reads ahead of a reader that pins blocks in order", "[block_cache]") {
@@ -409,7 +432,7 @@ TEST_CASE("Block cache fetches a long run in concurrent pieces and hands out eac
 	auto cached = file.Open(cache, fs);
 
 	fs.Hold(true);
-	cache.Prefetch(cached, 0, 64 * BLOCK);
+	cache.Prefetch(cached, 0, 64 * BLOCK, BlockCachePrefetch::HINT);
 	const bool concurrent = fs.AwaitReadsFor(4, absl::Seconds(10));
 	fs.ReleaseRead(0);
 	atomic<bool> right {false};
@@ -491,7 +514,7 @@ TEST_CASE("Block cache fetches the pieces of long runs when the scheduler has no
 	TestFile file("block_cache_no_workers_pieces.bin", 40 * BLOCK);
 	{
 		auto cached = file.Open(cache, fs);
-		cache.Prefetch(cached, 0, 40 * BLOCK);
+		cache.Prefetch(cached, 0, 40 * BLOCK, BlockCachePrefetch::HINT);
 		REQUIRE(HoldsExpectedBytes(cache.Pin(cached, 39), 39));
 		auto pins = cache.PinRange(cached, 0, 40 * BLOCK);
 		REQUIRE(pins.size() == 40);
@@ -566,10 +589,10 @@ TEST_CASE("Block cache readers of prefetched blocks run the fetches when the sch
 	TestFile file("block_cache_no_workers.bin", 16 * BLOCK);
 	auto cached = file.Open(cache, fs);
 
-	cache.Prefetch(cached, 0, 8 * BLOCK);
+	cache.Prefetch(cached, 0, 8 * BLOCK, BlockCachePrefetch::HINT);
 	REQUIRE(HoldsExpectedBytes(cache.Pin(cached, 3), 3));
-	cache.Prefetch(cached, 8 * BLOCK, 4 * BLOCK);
-	cache.Prefetch(cached, 12 * BLOCK, 4 * BLOCK);
+	cache.Prefetch(cached, 8 * BLOCK, 4 * BLOCK, BlockCachePrefetch::HINT);
+	cache.Prefetch(cached, 12 * BLOCK, 4 * BLOCK, BlockCachePrefetch::HINT);
 	REQUIRE(HoldsExpectedBytes(cache.Pin(cached, 14), 14));
 	auto pins = cache.PinRange(cached, 0, 16 * BLOCK);
 	REQUIRE(pins.size() == 16);
@@ -878,7 +901,7 @@ TEST_CASE("Block cache pins fail with the read error and later pins fetch again"
 	REQUIRE(HoldsExpectedBytes(pin, 1));
 
 	fs.Fail(1);
-	cache.Prefetch(cached, 2 * BLOCK, BLOCK);
+	cache.Prefetch(cached, 2 * BLOCK, BLOCK, BlockCachePrefetch::HINT);
 	auto prefetched = cache.Pin(cached, 2);
 	REQUIRE(HoldsExpectedBytes(prefetched, 2));
 }
@@ -1109,7 +1132,7 @@ TEST_CASE("Block cache concurrent pins and evictions return the right bytes", "[
 						    continue;
 					    }
 					    if (i % 7 == 0) {
-						    cache.Prefetch(cached, block * BLOCK, 4 * BLOCK);
+						    cache.Prefetch(cached, block * BLOCK, 4 * BLOCK, BlockCachePrefetch::HINT);
 					    }
 					    auto pin = cache.Pin(cached, block);
 					    if (!HoldsExpectedBytes(pin, block)) {
@@ -1679,7 +1702,7 @@ TEST_CASE("Block cache benchmark: cold reads of a 16 MiB range from a slow sourc
 		{
 			auto cached = file.Open(cache, fs, "prefetched" + to_string(round));
 			const auto start = std::chrono::steady_clock::now();
-			cache.Prefetch(cached, 0, BLOCKS * BLOCK);
+			cache.Prefetch(cached, 0, BLOCKS * BLOCK, BlockCachePrefetch::HINT);
 			auto first = cache.Pin(cached, 0);
 			const auto first_ms = MillisecondsSince(start);
 			auto pins = cache.PinRange(cached, 0, BLOCKS * BLOCK);

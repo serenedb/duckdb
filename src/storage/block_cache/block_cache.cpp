@@ -1163,7 +1163,7 @@ BlockCachePin BlockCache::PinInOrder(const shared_ptr<BlockCacheFile> &file, idx
 		read_ahead.blocks = MinValue<idx_t>(MaxValue<idx_t>(read_ahead.blocks * 2, 2), READ_AHEAD_BLOCKS);
 		read_ahead.end = MaxValue(block + 1, read_ahead.end) + read_ahead.blocks;
 		try {
-			Prefetch(file, block * BLOCK_SIZE, (read_ahead.end - block) * BLOCK_SIZE);
+			Prefetch(file, block * BLOCK_SIZE, (read_ahead.end - block) * BLOCK_SIZE, BlockCachePrefetch::HINT);
 		} catch (...) {
 		}
 	}
@@ -1416,7 +1416,7 @@ void BlockCache::StopFetching() {
 	producer.reset();
 }
 
-void BlockCache::Prefetch(const shared_ptr<BlockCacheFile> &file_p, idx_t offset, idx_t size) {
+void BlockCache::Prefetch(const shared_ptr<BlockCacheFile> &file_p, idx_t offset, idx_t size, BlockCachePrefetch kind) {
 	auto &file = *file_p;
 	const auto file_size = file.GetSize();
 	if (file.IsUnbacked() || size == 0 || offset >= file_size) {
@@ -1428,8 +1428,9 @@ void BlockCache::Prefetch(const shared_ptr<BlockCacheFile> &file_p, idx_t offset
 		return !FindEntry(MakeKey(file.number, block));
 	};
 	const auto admit = [&](idx_t bytes) {
-		return file.in_flight.load(std::memory_order_relaxed) + bytes <= MAX_FILE_IN_FLIGHT &&
-		       in_flight.load(std::memory_order_relaxed) + bytes <= MAX_IN_FLIGHT;
+		return kind == BlockCachePrefetch::NEED ||
+		       (file.in_flight.load(std::memory_order_relaxed) + bytes <= MAX_FILE_IN_FLIGHT &&
+		        in_flight.load(std::memory_order_relaxed) + bytes <= MAX_IN_FLIGHT);
 	};
 	for (auto block = offset / BLOCK_SIZE; block < end;) {
 		if (!missing(block)) {
