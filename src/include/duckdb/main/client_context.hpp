@@ -60,6 +60,7 @@ class ClientContextState;
 class Connection;
 class PhysicalTransaction;
 class RegisteredStateManager;
+class TaskScheduler;
 struct TransactionInfo;
 
 //! A statement parameter: identifier ($1 -> "1"), binding index, and inferred type (UNKNOWN if not inferred).
@@ -144,6 +145,8 @@ public:
 	                                         const Value *new_value);
 	setting_change_handler_t setting_change_handler = nullptr;
 
+	optional_ptr<TaskScheduler> task_scheduler;
+
 public:
 	//! Connect this client to a remote-style AttachedDatabase. Subsequent non-control SQL routes via
 	//! Catalog::GetConnectFunctionName. Use DisconnectFromCatalog() to revert to LOCAL.
@@ -181,6 +184,8 @@ public:
 	DUCKDB_API void SuppressInterrupts();
 	DUCKDB_API void CancelTransaction();
 
+	//! Whether the running query is past its deadline
+	DUCKDB_API bool DeadlinePassed() const;
 	//! Check for interrupt or timeout, throws InterruptException if triggered
 	DUCKDB_API void InterruptCheck() const;
 

@@ -2,6 +2,7 @@
 #include "duckdb/catalog/catalog_entry/schema_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/catalog/catalog.hpp"
+#include "duckdb/common/string_util.hpp"
 #include "duckdb/parser/constraints/not_null_constraint.hpp"
 
 namespace duckdb {
@@ -29,6 +30,9 @@ unique_ptr<CreateInfo> CreateTableInfo::Copy() const {
 	}
 	for (auto &order : sort_keys) {
 		result->sort_keys.push_back(order->Copy());
+	}
+	for (auto &order : sort_orders) {
+		result->sort_orders.emplace_back(order.type, order.null_order, order.expression->Copy());
 	}
 	result->serial_columns = serial_columns;
 	for (auto &option : options) {
@@ -67,6 +71,13 @@ string CreateTableInfo::ExtraOptionsToString() const {
 		}
 		ret.pop_back();
 		ret += ")";
+	}
+	if (!sort_orders.empty()) {
+		vector<string> keys;
+		for (auto &order : sort_orders) {
+			keys.push_back(order.ToString());
+		}
+		ret += " SORTED BY (" + StringUtil::Join(keys, ", ") + ")";
 	}
 	if (!options.empty()) {
 		ret += " WITH (";
