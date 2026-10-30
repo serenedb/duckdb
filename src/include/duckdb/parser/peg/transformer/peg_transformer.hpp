@@ -935,6 +935,9 @@ public:
 	static void InitializeRenameAlterTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
 	static arena_ptr<TransformResultValue> FinalizeRenameAlterTrampoline(PEGTransformer &transformer,
 	                                                                     GeneratedTransformProcess &process);
+	static void InitializeSetSchemaAlterTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
+	static arena_ptr<TransformResultValue> FinalizeSetSchemaAlterTrampoline(PEGTransformer &transformer,
+	                                                                        GeneratedTransformProcess &process);
 	static void InitializeSetPartitionedByTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
 	static arena_ptr<TransformResultValue> FinalizeSetPartitionedByTrampoline(PEGTransformer &transformer,
 	                                                                          GeneratedTransformProcess &process);
@@ -1145,6 +1148,16 @@ public:
 	                                                    GeneratedTransformProcess &process);
 	static arena_ptr<TransformResultValue> FinalizeQualifiedSimpleTypeTrampoline(PEGTransformer &transformer,
 	                                                                             GeneratedTransformProcess &process);
+	static void InitializeCharacterTypeTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
+	static arena_ptr<TransformResultValue> FinalizeCharacterTypeTrampoline(PEGTransformer &transformer,
+	                                                                       GeneratedTransformProcess &process);
+	static void InitializeVaryingCharacterTypeTrampoline(PEGTransformer &transformer,
+	                                                     GeneratedTransformProcess &process);
+	static arena_ptr<TransformResultValue> FinalizeVaryingCharacterTypeTrampoline(PEGTransformer &transformer,
+	                                                                              GeneratedTransformProcess &process);
+	static void InitializeFixedCharacterTypeTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
+	static arena_ptr<TransformResultValue> FinalizeFixedCharacterTypeTrampoline(PEGTransformer &transformer,
+	                                                                            GeneratedTransformProcess &process);
 	static void InitializeIntervalTypeTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
 	static arena_ptr<TransformResultValue> FinalizeIntervalTypeTrampoline(PEGTransformer &transformer,
 	                                                                      GeneratedTransformProcess &process);
@@ -5001,6 +5014,7 @@ public:
 	                                                                 const Identifier &column_name);
 	static Identifier TransformIdentifierDot(PEGTransformer &transformer, const Identifier &identifier);
 	static unique_ptr<AlterTableInfo> TransformRenameAlter(PEGTransformer &transformer, const Identifier &identifier);
+	static unique_ptr<AlterTableInfo> TransformSetSchemaAlter(PEGTransformer &transformer, const Identifier &col_id);
 	static unique_ptr<AlterTableInfo> TransformSetPartitionedBy(PEGTransformer &transformer,
 	                                                            vector<unique_ptr<ParsedExpression>> expression);
 	static unique_ptr<AlterTableInfo> TransformResetPartitionedBy(PEGTransformer &transformer);
@@ -5102,11 +5116,13 @@ public:
 	static LogicalType TransformType(PEGTransformer &transformer, unique_ptr<ParsedExpression> type_variations,
 	                                 const optional<vector<int64_t>> &array_bounds);
 	static unique_ptr<ParsedExpression>
-	TransformCharacterSimpleType(PEGTransformer &transformer,
+	TransformCharacterSimpleType(PEGTransformer &transformer, const string &character_type,
 	                             optional<vector<unique_ptr<ParsedExpression>>> type_modifiers);
 	static unique_ptr<ParsedExpression>
 	TransformQualifiedSimpleType(PEGTransformer &transformer, const QualifiedName &qualified_type_name,
 	                             optional<vector<unique_ptr<ParsedExpression>>> type_modifiers);
+	static string TransformVaryingCharacterType(PEGTransformer &transformer);
+	static string TransformFixedCharacterType(PEGTransformer &transformer);
 	static unique_ptr<ParsedExpression>
 	TransformIntervalWithRangeSpecifier(PEGTransformer &transformer,
 	                                    const DatePartSpecifier &interval_to_interval_as_type);

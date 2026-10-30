@@ -2178,21 +2178,6 @@ struct MaxExecutionTimeSetting {
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
 };
 
-struct MaxExpressionDepthSetting {
-	using RETURN_TYPE = idx_t;
-	static constexpr const char *Name = "max_expression_depth";
-	static constexpr const char *Description =
-	    "The maximum expression depth limit in the parser. WARNING: increasing this setting and using very deep "
-	    "expressions might lead to stack overflow errors.";
-	static constexpr const char *InputType = "UBIGINT";
-	static constexpr bool IsDebug = false;
-	static constexpr bool IsDeprecated = false;
-	static constexpr bool NoResetAll = false;
-	static constexpr const char *DefaultValue = "1000";
-	static constexpr SettingScopeTarget Scope = SettingScopeTarget::LOCAL_DEFAULT;
-	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
-};
-
 struct MaxMemorySetting {
 	using RETURN_TYPE = string;
 	static constexpr const char *Name = "max_memory";
