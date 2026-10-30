@@ -191,6 +191,8 @@ private:
 	                       dependency_callback_t &callback);
 	void ForEachCatalog(CatalogTransaction transaction, const std::function<bool(DuckCatalog &)> &visit,
 	                    const std::function<void(DuckCatalog &, CatalogTransaction)> &callback);
+	void ForEachHolder(CatalogTransaction transaction, CatalogType type,
+	                   const std::function<void(DuckCatalog &, CatalogTransaction)> &callback);
 	bool MayDependOn(const Identifier &catalog_name);
 	LogicalDependencyList EntryDependencies(CatalogTransaction transaction, CatalogEntry &object);
 	void RemoveDependencies(CatalogTransaction transaction, const CatalogEntry &object,
