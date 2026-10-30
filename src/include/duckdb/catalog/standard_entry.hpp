@@ -24,8 +24,6 @@ public:
 	}
 
 	shared_ptr<SchemaInfo> schema_info;
-	//! The dependencies of the entry, can be empty
-	LogicalDependencyList dependencies;
 
 public:
 	Identifier ParentSchemaName() const override {
