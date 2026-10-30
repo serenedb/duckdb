@@ -699,10 +699,12 @@ unique_ptr<LogicalOperator> Optimizer::Optimize(unique_ptr<LogicalOperator> plan
 	Verify(*plan_p);
 
 	this->plan = std::move(plan_p);
-	VisitPreparedStatements(*plan, [](const LogicalOperator &planned, PreparedStatementData &prepared) {
+	VisitPreparedStatements(*plan, [&](const LogicalOperator &planned, PreparedStatementData &prepared) {
 		if (!prepared.properties.read_databases.empty() && ContainsUnversionedData(planned)) {
 			prepared.properties.always_require_rebind = true;
 		}
+		prepared.security = context.security;
+		prepared.principal_role = context.principal_role;
 	});
 
 	for (auto &pre_optimizer_extension : optimizer_extensions) {

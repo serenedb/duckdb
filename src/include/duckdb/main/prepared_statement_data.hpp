@@ -8,6 +8,7 @@
 
 #pragma once
 
+#include "duckdb/catalog/permissions.hpp"
 #include "duckdb/common/case_insensitive_map.hpp"
 #include "duckdb/common/enums/statement_type.hpp"
 #include "duckdb/common/types/value.hpp"
@@ -47,6 +48,8 @@ public:
 	bound_parameter_map_t value_map;
 
 	case_insensitive_map_t<LogicalType> parameter_type_hints;
+	shared_ptr<const SecuritySnapshot> security;
+	idx_t principal_role = DConstants::INVALID_INDEX;
 
 public:
 	void CheckParameterCount(idx_t parameter_count);
