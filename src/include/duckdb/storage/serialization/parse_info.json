@@ -969,13 +969,6 @@
         "id": 204,
         "name": "external_resource",
         "type": "unique_ptr<ExternalResourceOptions>"
-      },
-      {
-        "id": 16589,
-        "name": "tablespace_oid",
-        "type": "idx_t",
-        "default": 0,
-        "version": "serenedb_v1"
       }
     ]
   },
