@@ -304,8 +304,7 @@ void ExpressionBinder::AnalyzeMacroBody(ParsedExpression &expr, bool shareable, 
 	case ExpressionClass::FUNCTION: {
 		auto &function = expr.Cast<FunctionExpression>();
 		auto lookup = LookupMacroFunction(function);
-		optional_ptr<const MacroBodyUse> inner_use;
-		optional_ptr<const ScalarMacroFunction> inner_def;
+		vector<reference<const ScalarMacroFunction>> overloads;
 		switch (lookup.kind) {
 		case MacroFunctionKind::FUNCTION:
 			break;
@@ -314,16 +313,23 @@ void ExpressionBinder::AnalyzeMacroBody(ParsedExpression &expr, bool shareable, 
 			break;
 		case MacroFunctionKind::MACRO:
 			for (auto &overload : lookup.macro->macros) {
-				auto &overload_use = GetMacroBodyUse(overload->Cast<ScalarMacroFunction>(), lookup.macro->name);
+				auto &overload_def = overload->Cast<ScalarMacroFunction>();
+				auto &overload_use = GetMacroBodyUse(overload_def, lookup.macro->name);
 				use.is_volatile |= overload_use.is_volatile;
 				use.lambda_body &= overload_use.lambda_body;
 				use.level_independent &= overload_use.level_independent;
-				if (lookup.macro->macros.size() == 1) {
-					inner_use = &overload_use;
-					inner_def = &overload->Cast<ScalarMacroFunction>();
+				const bool takes_named = absl::c_all_of(function.GetArguments(), [&](const FunctionArgument &argument) {
+					auto &expression = argument.GetExpression();
+					return !expression.IsNamedParameter() ||
+					       absl::c_any_of(overload_def.parameters, [&](const unique_ptr<ParsedExpression> &parameter) {
+						       return parameter->Cast<ColumnRefExpression>().GetColumnName() == expression.GetAlias();
+					       });
+				});
+				if (function.GetArguments().size() <= overload_def.parameters.size() && takes_named) {
+					overloads.push_back(overload_def);
 				}
 			}
-			if (!inner_use) {
+			if (overloads.empty()) {
 				shareable = false;
 			}
 			break;
@@ -344,16 +350,18 @@ void ExpressionBinder::AnalyzeMacroBody(ParsedExpression &expr, bool shareable, 
 			auto &child = *argument.GetExpressionMutable();
 			bool child_shareable = shareable;
 			bool inner_aggregated = false;
-			if (inner_use) {
-				Identifier parameter_name;
-				if (child.IsNamedParameter()) {
-					parameter_name = child.GetAlias();
-				} else if (position < inner_def->parameters.size()) {
-					parameter_name = inner_def->parameters[position++]->Cast<ColumnRefExpression>().GetColumnName();
-				}
-				auto parameter = inner_use->parameters.find(parameter_name);
-				child_shareable &= parameter != inner_use->parameters.end() && parameter->second.shareable;
-				inner_aggregated = parameter != inner_use->parameters.end() && parameter->second.aggregated;
+			const bool named = child.IsNamedParameter();
+			for (auto &overload : overloads) {
+				auto &inner_use = GetMacroBodyUse(overload.get(), lookup.macro->name);
+				auto &parameter_name =
+				    named ? child.GetAlias()
+				          : overload.get().parameters[position]->Cast<ColumnRefExpression>().GetColumnName();
+				auto parameter = inner_use.parameters.find(parameter_name);
+				child_shareable &= parameter != inner_use.parameters.end() && parameter->second.shareable;
+				inner_aggregated |= parameter != inner_use.parameters.end() && parameter->second.aggregated;
+			}
+			if (!named) {
+				position++;
 			}
 			const bool child_aggregated =
 			    aggregated || (inner_aggregated && AggregatesOnlyParameters(child, parameters, lambda_params));
