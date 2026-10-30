@@ -329,6 +329,7 @@ protected:
 	const MacroBodyUse &GetMacroBodyUse(const ScalarMacroFunction &macro_def, const Identifier &name);
 	vector<bool> MacroArgumentsBindInPlace(FunctionExpression &function, ScalarMacroCatalogEntry &macro_func);
 	bool IsSetReturningFunction(const FunctionExpression &function);
+	bool HasSetReturningFunction(const ParsedExpression &expr);
 	bool ReturnsAtMostOneRow(SelectNode &node, bool from_parameters_only);
 	bool MayAggregate(SelectNode &node);
 	vector<bool> MacroArgumentsBoundAsValues(const MacroBodyUse &use, bool inline_body, ParsedExpression &body,

@@ -855,7 +855,8 @@ void ExpressionBinder::ScanMacroArgument(ParsedExpression &argument, MacroArgume
 }
 
 bool ExpressionBinder::IsSetReturningFunction(const FunctionExpression &function) {
-	if (function.FunctionName() == "unnest" || function.FunctionName() == "unlist") {
+	auto &name = function.FunctionName();
+	if (IsUnnestFunction(name) || IsSelectListSetReturningFunction(name)) {
 		return true;
 	}
 	if (GetCatalogEntry(EntryLookupInfo(CatalogType::SCALAR_FUNCTION_ENTRY, function.GetQualifiedName()),
@@ -864,6 +865,17 @@ bool ExpressionBinder::IsSetReturningFunction(const FunctionExpression &function
 	}
 	return GetCatalogEntry(EntryLookupInfo(CatalogType::TABLE_FUNCTION_ENTRY, function.GetQualifiedName()),
 	                       OnEntryNotFound::RETURN_NULL) != nullptr;
+}
+
+bool ExpressionBinder::HasSetReturningFunction(const ParsedExpression &expr) {
+	if (expr.GetExpressionClass() == ExpressionClass::FUNCTION &&
+	    IsSetReturningFunction(expr.Cast<FunctionExpression>())) {
+		return true;
+	}
+	bool found = false;
+	ParsedExpressionIterator::EnumerateChildren(
+	    expr, [&](const ParsedExpression &child) { found = found || HasSetReturningFunction(child); });
+	return found;
 }
 
 bool ExpressionBinder::InlineSqlFunctionBody(ScalarMacroFunction &function) {
@@ -880,10 +892,7 @@ bool ExpressionBinder::InlineSqlFunctionBody(ScalarMacroFunction &function) {
 		ParsedExpressionIterator::VisitExpressionClass(*item, expression_class,
 		                                               [&](const ParsedExpression &) { blocked = true; });
 	}
-	ParsedExpressionIterator::VisitExpressionClass(*item, ExpressionClass::FUNCTION, [&](const ParsedExpression &expr) {
-		blocked = blocked || IsSetReturningFunction(expr.Cast<FunctionExpression>());
-	});
-	if (blocked) {
+	if (blocked || HasSetReturningFunction(*item)) {
 		return false;
 	}
 	vector<reference<unique_ptr<ParsedExpression>>> aggregates;
@@ -899,14 +908,8 @@ bool ExpressionBinder::InlineSqlFunctionBody(ScalarMacroFunction &function) {
 }
 
 bool ExpressionBinder::ReturnsAtMostOneRow(SelectNode &node, bool from_parameters_only) {
-	bool blocked = false;
-	for (auto &item : node.select_list) {
-		ParsedExpressionIterator::VisitExpressionClass(
-		    *item, ExpressionClass::FUNCTION, [&](const ParsedExpression &expr) {
-			    blocked = blocked || IsSetReturningFunction(expr.Cast<FunctionExpression>());
-		    });
-	}
-	if (blocked) {
+	if (absl::c_any_of(node.select_list,
+	                   [&](const unique_ptr<ParsedExpression> &item) { return HasSetReturningFunction(*item); })) {
 		return false;
 	}
 	if (from_parameters_only) {
@@ -916,6 +919,7 @@ bool ExpressionBinder::ReturnsAtMostOneRow(SelectNode &node, bool from_parameter
 	    node.aggregate_handling != AggregateHandling::STANDARD_HANDLING) {
 		return false;
 	}
+	bool blocked = false;
 	bool has_aggregate = false;
 	for (auto &item : node.select_list) {
 		ParsedExpressionIterator::VisitExpressionClass(*item, ExpressionClass::WINDOW,
