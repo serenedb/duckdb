@@ -56,8 +56,17 @@ Binder::Binder(ClientContext &context, shared_ptr<Binder> parent_p, BinderType b
 			active_binders = parent->active_binders;
 		}
 	} else {
-		entry_retriever.SetCallback(
-		    [this](CatalogEntry &entry) { GetStatementProperties().resolved_entries.push_back(&entry); });
+		entry_retriever.SetCallback([this](CatalogEntry &entry) {
+			auto &catalog = entry.ParentCatalog();
+			if (catalog.IsSystemCatalog()) {
+				return;
+			}
+			auto &properties = GetStatementProperties();
+			if (!properties.read_databases.count(catalog.GetName())) {
+				properties.RegisterDBRead(catalog, this->context);
+			}
+			properties.resolved_entries.push_back(&entry);
+		});
 	}
 }
 
