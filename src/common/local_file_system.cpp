@@ -1037,6 +1037,7 @@ public:
 	void Close() override;
 	void Advise(MappedFileAccess access) override;
 	void Prefetch(idx_t location, idx_t nr_bytes) override;
+	void Evict(idx_t location, idx_t nr_bytes) override;
 
 private:
 	int fd;
@@ -1123,6 +1124,23 @@ void UnixMemoryMappedFile::Prefetch(idx_t location, idx_t nr_bytes) {
 		::posix_fadvise(fd, NumericCast<off_t>(location + at), NumericCast<off_t>(chunk), POSIX_FADV_WILLNEED);
 #endif
 	}
+}
+
+void UnixMemoryMappedFile::Evict(idx_t location, idx_t nr_bytes) {
+	if (location >= size) {
+		return;
+	}
+	nr_bytes = MinValue(nr_bytes, size - location);
+	static const auto page = NumericCast<idx_t>(sysconf(_SC_PAGESIZE));
+	const auto begin = AlignValue(location, page);
+	const auto end = (location + nr_bytes) / page * page;
+	if (begin >= end) {
+		return;
+	}
+	::madvise(data + begin, end - begin, MADV_DONTNEED);
+#ifndef __APPLE__
+	::posix_fadvise(fd, NumericCast<off_t>(begin), NumericCast<off_t>(end - begin), POSIX_FADV_DONTNEED);
+#endif
 }
 
 unique_ptr<MemoryMappedFile> LocalFileSystem::MemoryMapFile(const OpenFileInfo &path_info, FileOpenFlags flags,
