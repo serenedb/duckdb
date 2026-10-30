@@ -8,6 +8,7 @@
 
 #pragma once
 
+#include "duckdb/catalog/permissions.hpp"
 #include "duckdb/common/common.hpp"
 #include "duckdb/common/case_insensitive_map.hpp"
 #include "duckdb/parser/column_definition.hpp"
@@ -118,6 +119,15 @@ public:
 	optional_ptr<StandardEntry> GetStandardEntry() override;
 };
 
+struct ColumnReadCheck {
+	ColumnReadCheck(TableCatalogEntry &table_p, RoleAccess principal_p) : table(table_p), principal(principal_p) {
+	}
+
+	TableCatalogEntry &table;
+	RoleAccess principal;
+	bool referenced = false;
+};
+
 //! TableBinding is exactly like the Binding, except it keeps track of which columns were bound in the linked LogicalGet
 //! node for projection pushdown purposes.
 struct TableBinding : public Binding {
@@ -136,6 +146,7 @@ public:
 	//! Virtual columns
 	virtual_column_map_t virtual_columns;
 	vector<column_t> row_id_columns;
+	shared_ptr<ColumnReadCheck> column_read;
 
 public:
 	unique_ptr<ParsedExpression> ExpandGeneratedColumn(ClientContext &context, const Identifier &column_name);
