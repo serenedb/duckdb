@@ -4,6 +4,7 @@
 #include "duckdb/catalog/catalog_entry/index_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/view_catalog_entry.hpp"
+#include "duckdb/catalog/duck_catalog.hpp"
 #include "duckdb/common/enums/cte_materialize.hpp"
 #include "duckdb/parser/common_table_expression_info.hpp"
 #include "duckdb/parser/expression/star_expression.hpp"
@@ -12,6 +13,7 @@
 #include "duckdb/common/helper.hpp"
 #include "duckdb/common/stack_depth.hpp"
 #include "duckdb/main/attached_database.hpp"
+#include "duckdb/main/client_data.hpp"
 #include "duckdb/main/config.hpp"
 #include "duckdb/main/database.hpp"
 #include "duckdb/main/database_manager.hpp"
@@ -348,6 +350,44 @@ void Binder::RequireOwner(CatalogEntry &entry) {
 	if (!principal->Owns(owner)) {
 		throw PermissionException("must be owner of %s %s", PermissionKindName(entry.type),
 		                          entry.name.GetIdentifierName());
+	}
+}
+
+optional_ptr<CatalogEntry> Binder::DatabaseEntry(const Identifier &database) {
+	auto &cluster_catalog = DBConfig::GetConfig(context).cluster_catalog;
+	if (cluster_catalog.empty()) {
+		return nullptr;
+	}
+	auto &cluster = Catalog::GetCatalog(context, cluster_catalog).Cast<DuckCatalog>();
+	return cluster.GetCatalogSet(CatalogType::DATABASE_ENTRY)
+	    .GetEntry(cluster.GetCatalogTransaction(context), database);
+}
+
+void Binder::RequireDatabasePrivilege(const Identifier &database, AclMode need) {
+	if (!principal) {
+		return;
+	}
+	auto entry = DatabaseEntry(database);
+	if (entry && !principal->Can(CatalogType::DATABASE_ENTRY, entry->permissions, need)) {
+		ThrowPermissionDenied(*entry);
+	}
+}
+
+void Binder::RequireSchemaCreate(SchemaCatalogEntry &schema) {
+	if (!principal) {
+		return;
+	}
+	if (schema.ParentCatalog().GetAttached().IsTemporary()) {
+		auto &database = ClientData::Get(context).default_database;
+		auto entry = DatabaseEntry(database);
+		if (entry && !principal->Can(CatalogType::DATABASE_ENTRY, entry->permissions, AclMode::CreateTemp)) {
+			throw PermissionException("permission denied to create temporary tables in database \"%s\"",
+			                          database.GetIdentifierName());
+		}
+		return;
+	}
+	if (!principal->Can(CatalogType::SCHEMA_ENTRY, schema.permissions, AclMode::Create)) {
+		ThrowPermissionDenied(schema);
 	}
 }
 
