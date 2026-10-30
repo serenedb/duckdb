@@ -53,6 +53,7 @@ public:
 	Identifier GetSchemaName();
 	//! The full (possibly nested) schema path of the table
 	vector<Identifier> GetSchemaPath() const;
+	void SetSchemaInfo(shared_ptr<SchemaInfo> info);
 	Identifier GetTableName();
 	void SetTableName(Identifier name);
 	idx_t GetTableOid() const {
@@ -67,12 +68,15 @@ public:
 	StorageLock alter_lock;
 
 private:
+	shared_ptr<SchemaInfo> CurrentSchemaInfo() const;
+
+private:
 	//! The database instance of the table
 	AttachedDatabase &db;
 	//! The table IO manager
 	shared_ptr<TableIOManager> table_io_manager;
 	//! Lock for modifying the name
-	mutex name_lock;
+	mutable mutex name_lock;
 	//! The schema of the table
 	shared_ptr<SchemaInfo> schema_info;
 	//! The name of the table

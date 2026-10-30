@@ -53,6 +53,25 @@ unique_ptr<CatalogEntry> DuckIndexEntry::Copy(ClientContext &context) const {
 }
 
 unique_ptr<CatalogEntry> DuckIndexEntry::AlterEntry(CatalogTransaction transaction, AlterInfo &info) {
+	if (auto new_schema = info.GetNewSchema()) {
+		auto &context = transaction.GetContext();
+		auto previous_path = ParentSchemaPath(transaction);
+		auto result = CopyToSchema(context, *new_schema);
+		auto &index = result->Cast<IndexCatalogEntry>();
+		auto new_path = index.ParentSchemaPath(transaction);
+		LogicalDependencyList dependencies;
+		for (auto &dependency : index.dependencies.Set()) {
+			auto moved = dependency;
+			if (moved.entry.type == CatalogType::TABLE_ENTRY &&
+			    CatalogEntryInfo::SamePath(moved.entry.schema_path, previous_path)) {
+				moved.entry.schema_path = new_path;
+			}
+			dependencies.AddDependency(moved);
+		}
+		index.dependencies = std::move(dependencies);
+		index.sql = index.GetInfo()->ToString();
+		return result;
+	}
 	if (info.type != AlterType::REPLACE_DEFINITION) {
 		return IndexCatalogEntry::AlterEntry(transaction, info);
 	}

@@ -286,6 +286,7 @@ AlterTableInfo:
     - AddDefault
     - RenameColumn
     - RenameAlter
+    - SetSchemaAlter
     - AddConstraint
     - RenameConstraint
     - EnableTrigger

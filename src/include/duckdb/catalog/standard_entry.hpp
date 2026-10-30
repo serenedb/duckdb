@@ -43,6 +43,7 @@ public:
 	using CatalogEntry::ParentSchema;
 	//! The fully qualified name of an entry in this entry's schema: [catalog, schema path..., entry_name]
 	QualifiedName GetQualifiedName(const Identifier &entry_name) const;
+	DUCKDB_API unique_ptr<CatalogEntry> CopyToSchema(ClientContext &context, const Identifier &schema) const;
 };
 
 } // namespace duckdb
