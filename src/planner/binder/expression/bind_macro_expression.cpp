@@ -20,6 +20,7 @@
 #include "duckdb/parser/expression/constant_expression.hpp"
 #include "duckdb/parser/expression/function_expression.hpp"
 #include "duckdb/parser/expression/operator_expression.hpp"
+#include "duckdb/parser/expression/positional_reference_expression.hpp"
 #include "duckdb/parser/expression/star_expression.hpp"
 #include "duckdb/parser/expression/subquery_expression.hpp"
 #include "duckdb/parser/expression/window_expression.hpp"
@@ -54,7 +55,6 @@ bool IsTrivialMacroArgument(const ParsedExpression &argument,
 	case ExpressionClass::CONSTANT:
 	case ExpressionClass::LAMBDA_REF:
 	case ExpressionClass::PARAMETER:
-	case ExpressionClass::POSITIONAL_REFERENCE:
 	case ExpressionClass::STAR:
 	case ExpressionClass::LAMBDA:
 	case ExpressionClass::DEFAULT:
@@ -70,6 +70,25 @@ bool IsTrivialMacroArgument(const ParsedExpression &argument,
 	}
 	default:
 		return false;
+	}
+}
+
+void ResolvePositionalReferences(unique_ptr<ParsedExpression> &expr, BindContext &bind_context) {
+	switch (expr->GetExpressionClass()) {
+	case ExpressionClass::POSITIONAL_REFERENCE: {
+		auto column = bind_context.PositionToColumn(expr->Cast<PositionalReferenceExpression>());
+		column->SetAlias(expr->GetAlias());
+		column->SetNamedParameter(expr->IsNamedParameter());
+		column->SetQueryLocation(expr->GetQueryLocation());
+		expr = std::move(column);
+		return;
+	}
+	case ExpressionClass::SUBQUERY:
+		return;
+	default:
+		ParsedExpressionIterator::EnumerateChildren(
+		    *expr, [&](unique_ptr<ParsedExpression> &child) { ResolvePositionalReferences(child, bind_context); });
+		return;
 	}
 }
 
@@ -969,8 +988,6 @@ bool ExpressionBinder::ResolvesInScope(ParsedExpression &argument) {
 
 bool ExpressionBinder::MovesIntoSubquery(ParsedExpression &argument) {
 	switch (argument.GetExpressionClass()) {
-	case ExpressionClass::POSITIONAL_REFERENCE:
-		return false;
 	case ExpressionClass::COLUMN_REF: {
 		auto &column = argument.Cast<ColumnRefExpression>();
 		return column.IsQualified() || !binder.global_binder_state->bound_macro_arguments.count(column.GetColumnName());
@@ -1170,6 +1187,9 @@ ScalarMacroFunction &ExpressionBinder::UnfoldMacroExpression(FunctionExpression 
                                                              unique_ptr<ParsedExpression> &expr, idx_t depth,
                                                              vector<unique_ptr<Expression>> &shared_arguments,
                                                              bool &probed) {
+	for (auto &argument : function.GetArgumentsMutable()) {
+		ResolvePositionalReferences(argument.GetExpressionMutable(), binder.bind_context);
+	}
 	// validate the arguments and separate positional and default arguments
 	vector<unique_ptr<ParsedExpression>> positional_arguments;
 	InsertionOrderPreservingMap<unique_ptr<ParsedExpression>, Identifier, identifier_map_t<idx_t>> named_arguments;
