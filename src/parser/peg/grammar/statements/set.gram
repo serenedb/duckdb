@@ -19,7 +19,8 @@ SetSessionCharacteristics <- 'SESSION' 'CHARACTERISTICS' 'AS' 'TRANSACTION' 'ISO
 # PG: SET ROLE / SESSION AUTHORIZATION accept NonReservedWord_or_Sconst or DEFAULT.
 # RoleSpec reuses the Zone* leaf rules (DEFAULT -> DefaultExpression, string /
 # identifier -> string-typed ConstantExpression) so the choice auto-forwards.
-SetRole <- 'ROLE' RoleSpec
+SetRole <- RoleScope? 'ROLE' RoleSpec
+RoleScope <- LocalScope / SessionScope
 SetSessionAuthorization <- 'SESSION' 'AUTHORIZATION' RoleSpec
 RoleSpec <- ZoneDefault / ZoneStringLiteral / ZoneIdentifier
 

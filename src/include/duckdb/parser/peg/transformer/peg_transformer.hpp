@@ -6894,7 +6894,7 @@ public:
 	                                                                 const TransactionIsolationLevel &isolation_level);
 	static unique_ptr<SetStatement>
 	TransformSetSessionCharacteristics(PEGTransformer &transformer, const TransactionIsolationLevel &isolation_level);
-	static unique_ptr<SetStatement> TransformSetRole(PEGTransformer &transformer,
+	static unique_ptr<SetStatement> TransformSetRole(PEGTransformer &transformer, const optional<SetScope> &role_scope,
 	                                                 unique_ptr<ParsedExpression> role_spec);
 	static unique_ptr<SetStatement> TransformSetSessionAuthorization(PEGTransformer &transformer,
 	                                                                 unique_ptr<ParsedExpression> role_spec);

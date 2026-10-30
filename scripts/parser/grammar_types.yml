@@ -398,6 +398,7 @@ SetScope:
     - SessionScope
     - VariableScope
     - SettingScope
+    - RoleScope
 
 SampleOptions:
   type: "unique_ptr<SampleOptions>"
