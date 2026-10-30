@@ -1916,6 +1916,10 @@ ErrorData Catalog::SupportsCreateTable(BoundCreateTableInfo &info) {
 		    ExceptionType::CATALOG,
 		    StringUtil::Format("WITH clause is not supported for tables in a %s catalog", GetCatalogType()));
 	}
+	if (!base.tablespace.empty()) {
+		return ErrorData(ExceptionType::CATALOG,
+		                 StringUtil::Format("TABLESPACE is not supported for tables in a %s catalog", GetCatalogType()));
+	}
 	return ErrorData();
 }
 
