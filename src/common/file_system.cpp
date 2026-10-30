@@ -664,6 +664,27 @@ bool FileSystem::ListFiles(const string &directory, const std::function<void(Ope
 	}
 }
 
+void FileSystem::ListFilesRecursive(const string &directory, const std::function<void(OpenFileInfo &info)> &callback,
+                                    optional_ptr<FileOpener> opener) {
+	vector<string> directories {string()};
+	for (idx_t i = 0; i < directories.size(); i++) {
+		const auto relative = directories[i];
+		ListFiles(
+		    relative.empty() ? directory : JoinPath(directory, relative),
+		    [&](OpenFileInfo &info) {
+			    if (!relative.empty()) {
+				    info.path = JoinPath(relative, info.path);
+			    }
+			    if (IsDirectory(info)) {
+				    directories.push_back(std::move(info.path));
+			    } else {
+				    callback(info);
+			    }
+		    },
+		    opener);
+	}
+}
+
 void FileSystem::MoveFile(const string &source, const string &target, optional_ptr<FileOpener> opener) {
 	throw NotImplementedException("%s: MoveFile is not implemented!", GetName());
 }
@@ -709,6 +730,27 @@ void FileSystem::FileSync(FileHandle &handle) {
 
 FileSyncParallelism FileSystem::SyncParallelism(FileHandle &handle) {
 	return FileSyncParallelism::SERIAL;
+}
+
+void FileSystem::HintWriteback(FileHandle &handle, idx_t location, idx_t nr_bytes) {
+}
+
+FileWriteWindow FileSystem::GetWriteWindow(FileHandle &handle) {
+	return {};
+}
+
+void FileSystem::CommitWriteWindow(FileHandle &handle, idx_t nr_bytes) {
+	throw NotImplementedException("%s: CommitWriteWindow is not implemented!", GetName());
+}
+
+void FileSystem::SyncDirectory(const string &directory, optional_ptr<FileOpener> opener) {
+}
+
+shared_ptr<BlockCacheFile> FileSystem::GetBlockFile(const string &path) {
+	return nullptr;
+}
+
+void FileSystem::Compact(const string &path) {
 }
 
 void FileSystem::AbortFileWrite(FileHandle &handle) {
@@ -998,6 +1040,18 @@ idx_t FileHandle::GetFileSize() {
 
 void FileHandle::Sync() {
 	file_system.FileSync(*this);
+}
+
+void FileHandle::HintWriteback(idx_t location, idx_t nr_bytes) {
+	file_system.HintWriteback(*this, location, nr_bytes);
+}
+
+FileWriteWindow FileHandle::GetWriteWindow() {
+	return file_system.GetWriteWindow(*this);
+}
+
+void FileHandle::CommitWriteWindow(idx_t nr_bytes) {
+	file_system.CommitWriteWindow(*this, nr_bytes);
 }
 
 void FileHandle::Truncate(int64_t new_size) {

@@ -58,11 +58,15 @@ Allocator &BufferManager::GetBufferAllocator() {
 	throw NotImplementedException("This type of BufferManager does not have an Allocator");
 }
 
-void BufferManager::ReserveMemory(idx_t size) {
+void BufferManager::ReserveMemory(MemoryTag tag, idx_t size) {
 	throw NotImplementedException("This type of BufferManager can not reserve memory");
 }
 
-void BufferManager::FreeReservedMemory(idx_t size) {
+bool BufferManager::TryReserveMemory(MemoryTag tag, idx_t size, bool evict_caches) {
+	throw NotImplementedException("This type of BufferManager can not reserve memory");
+}
+
+void BufferManager::FreeReservedMemory(MemoryTag tag, idx_t size) {
 	throw NotImplementedException("This type of BufferManager can not free reserved memory");
 }
 
@@ -88,6 +92,10 @@ void BufferManager::SetTemporaryDirectory(const string &new_dir) {
 
 bool BufferManager::HasTemporaryDirectory() const {
 	return false;
+}
+
+TemporaryFileManager &BufferManager::GetTemporaryFileManager() {
+	throw NotImplementedException("This type of BufferManager does not have temporary files");
 }
 
 bool BufferManager::HasFilesInTemporaryDirectory() const {

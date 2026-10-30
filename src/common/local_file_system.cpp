@@ -806,6 +806,19 @@ void LocalFileSystem::RemoveFile(const string &filename, optional_ptr<FileOpener
 	}
 }
 
+bool LocalFileSystem::TryRemoveFile(const string &filename, optional_ptr<FileOpener> opener) {
+	auto normalized_file = ExpandPath(filename, opener);
+	if (::unlink(normalized_file.c_str()) == 0) {
+		return true;
+	}
+	const int error = errno;
+	if (error == ENOENT || error == ENOTDIR || error == EISDIR) {
+		return false;
+	}
+	throw IOException({{"errno", std::to_string(error)}}, "Could not remove file \"%s\": %s", filename,
+	                  strerror(error));
+}
+
 bool LocalFileSystem::ListFilesExtended(const string &directory,
                                         const std::function<void(OpenFileInfo &info)> &callback,
                                         optional_ptr<FileOpener> opener) {
@@ -854,6 +867,16 @@ bool LocalFileSystem::ListFilesExtended(const string &directory,
 	return true;
 }
 
+[[noreturn]] static void ThrowSyncFailure(const char *kind, const string &path, int error) {
+	// Use fatal exception to handle fsyncgate issue: `fsync` only reports EIO for once, which makes it unretriable and
+	// data loss unrecoverable.
+	if (error == EIO) {
+		throw FatalException("fsync of %s \"%s\" failed", kind, path);
+	}
+	// For other types of errors, throw normal IO exception.
+	throw IOException({{"errno", std::to_string(error)}}, "Could not fsync %s \"%s\": %s", kind, path, strerror(error));
+}
+
 void LocalFileSystem::FileSync(FileHandle &handle) {
 	auto &unix_handle = handle.Cast<UnixFileHandle>();
 	auto fsync_mode = unix_handle.db ? Settings::Get<FsyncModeSetting>(*unix_handle.db) : FileSyncMode::STANDARD;
@@ -879,15 +902,35 @@ void LocalFileSystem::FileSync(FileHandle &handle) {
 	if (sync_success) {
 		return;
 	}
+	const int error = errno;
+	ThrowSyncFailure("file", handle.GetPath(), error);
+}
 
-	// Use fatal exception to handle fsyncgate issue: `fsync` only reports EIO for once, which makes it unretriable and
-	// data loss unrecoverable.
-	if (errno == EIO) {
-		throw FatalException("fsync failed!");
+void LocalFileSystem::HintWriteback(FileHandle &handle, idx_t location, idx_t nr_bytes) {
+#ifdef __linux__
+	::sync_file_range(handle.Cast<UnixFileHandle>().fd, NumericCast<off64_t>(location), NumericCast<off64_t>(nr_bytes),
+	                  SYNC_FILE_RANGE_WRITE);
+#endif
+}
+
+void LocalFileSystem::SyncDirectory(const string &directory, optional_ptr<FileOpener> opener) {
+	auto db = FileOpener::TryGetDatabase(opener);
+	if (db && Settings::Get<FsyncModeSetting>(*db) == FileSyncMode::NONE) {
+		return;
 	}
-
-	// For other types of errors, throw normal IO exception.
-	throw IOException("Could not fsync file \"%s\": %s", handle.GetPath(), strerror(errno));
+	auto path = ExpandPath(directory, opener);
+	int fd = ::open(path.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+	if (fd == -1) {
+		throw IOException({{"errno", std::to_string(errno)}}, "Could not open directory \"%s\" to sync it: %s", path,
+		                  strerror(errno));
+	}
+	const bool synced = ::fsync(fd) == 0;
+	const int sync_errno = errno;
+	::close(fd);
+	if (synced) {
+		return;
+	}
+	ThrowSyncFailure("directory", path, sync_errno);
 }
 
 FileSyncParallelism LocalFileSystem::SyncParallelism(FileHandle &handle) {
@@ -992,10 +1035,19 @@ public:
 	void Sync() override;
 	bool Trim(idx_t offset, idx_t length) override;
 	void Close() override;
+	void Advise(MappedFileAccess access) override;
+	void Prefetch(idx_t location, idx_t nr_bytes) override;
+	void Evict(idx_t location, idx_t nr_bytes) override;
 
 private:
 	int fd;
 };
+
+namespace {
+
+constexpr idx_t WILL_NEED_CHUNK = 32 * 1024;
+
+} // namespace
 
 UnixMemoryMappedFile::UnixMemoryMappedFile(string path_p, FileOpenFlags flags_p, int fd_p, data_ptr_t data_p,
                                            idx_t size_p)
@@ -1041,6 +1093,54 @@ void UnixMemoryMappedFile::Close() {
 		close(fd);
 		fd = -1;
 	}
+}
+
+void UnixMemoryMappedFile::Advise(MappedFileAccess access) {
+	if (data == nullptr || size == 0) {
+		return;
+	}
+	int advice = MADV_NORMAL;
+	if (access == MappedFileAccess::SEQUENTIAL) {
+		advice = MADV_SEQUENTIAL;
+	} else if (access == MappedFileAccess::RANDOM) {
+		advice = MADV_RANDOM;
+	}
+	::madvise(data, size, advice);
+}
+
+void UnixMemoryMappedFile::Prefetch(idx_t location, idx_t nr_bytes) {
+	if (location >= size) {
+		return;
+	}
+	nr_bytes = MinValue(nr_bytes, size - location);
+	for (idx_t at = 0; at < nr_bytes; at += WILL_NEED_CHUNK) {
+		const auto chunk = MinValue(WILL_NEED_CHUNK, nr_bytes - at);
+#ifdef __APPLE__
+		radvisory advice;
+		advice.ra_offset = NumericCast<off_t>(location + at);
+		advice.ra_count = NumericCast<int>(chunk);
+		::fcntl(fd, F_RDADVISE, &advice);
+#else
+		::posix_fadvise(fd, NumericCast<off_t>(location + at), NumericCast<off_t>(chunk), POSIX_FADV_WILLNEED);
+#endif
+	}
+}
+
+void UnixMemoryMappedFile::Evict(idx_t location, idx_t nr_bytes) {
+	if (location >= size) {
+		return;
+	}
+	nr_bytes = MinValue(nr_bytes, size - location);
+	static const auto page = NumericCast<idx_t>(sysconf(_SC_PAGESIZE));
+	const auto begin = AlignValue(location, page);
+	const auto end = (location + nr_bytes) / page * page;
+	if (begin >= end) {
+		return;
+	}
+	::madvise(data + begin, end - begin, MADV_DONTNEED);
+#ifndef __APPLE__
+	::posix_fadvise(fd, NumericCast<off_t>(begin), NumericCast<off_t>(end - begin), POSIX_FADV_DONTNEED);
+#endif
 }
 
 unique_ptr<MemoryMappedFile> LocalFileSystem::MemoryMapFile(const OpenFileInfo &path_info, FileOpenFlags flags,
@@ -1652,6 +1752,19 @@ void LocalFileSystem::RemoveFile(const string &filename, optional_ptr<FileOpener
 	}
 }
 
+bool LocalFileSystem::TryRemoveFile(const string &filename, optional_ptr<FileOpener> opener) {
+	auto unicode_path = NormalizePathAndConvertToUnicode(*this, filename, opener);
+	if (DeleteFileW(unicode_path.c_str())) {
+		return true;
+	}
+	auto error = GetLastError();
+	if (error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND) {
+		return false;
+	}
+	auto abs_path = WindowsUtil::UnicodeToUTF8(unicode_path.c_str());
+	throw IOException("Failed to delete file \"%s\": %s", abs_path, GetLastErrorAsString());
+}
+
 bool LocalFileSystem::ListFilesExtended(const string &directory,
                                         const std::function<void(OpenFileInfo &info)> &callback,
                                         optional_ptr<FileOpener> opener) {
@@ -1730,6 +1843,12 @@ void LocalFileSystem::FileSync(FileHandle &handle) {
 	if (FlushFileBuffers(hFile) == 0) {
 		throw IOException("Could not flush file handle to disk!");
 	}
+}
+
+void LocalFileSystem::HintWriteback(FileHandle &handle, idx_t location, idx_t nr_bytes) {
+}
+
+void LocalFileSystem::SyncDirectory(const string &directory, optional_ptr<FileOpener> opener) {
 }
 
 FileSyncParallelism LocalFileSystem::SyncParallelism(FileHandle &handle) {

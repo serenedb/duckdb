@@ -110,6 +110,10 @@ void CachingFileSystemWrapper::FileSync(FileHandle &handle) {
 	                              "CachingFileSystemWrapper is a read-only caching filesystem.");
 }
 
+void CachingFileSystemWrapper::SyncDirectory(const string &directory, optional_ptr<FileOpener> opener) {
+	underlying_file_system.SyncDirectory(directory, opener);
+}
+
 //===----------------------------------------------------------------------===//
 // OpenFile Operations
 //===----------------------------------------------------------------------===//
@@ -260,6 +264,12 @@ bool CachingFileSystemWrapper::ListFiles(const string &directory,
                                          const std::function<void(const string &, bool)> &callback,
                                          FileOpener *opener) {
 	return underlying_file_system.ListFiles(directory, callback, opener);
+}
+
+void CachingFileSystemWrapper::ListFilesRecursive(const string &directory,
+                                                  const std::function<void(OpenFileInfo &info)> &callback,
+                                                  optional_ptr<FileOpener> opener) {
+	underlying_file_system.ListFilesRecursive(directory, callback, opener);
 }
 
 bool CachingFileSystemWrapper::ListFilesExtended(const string &directory,

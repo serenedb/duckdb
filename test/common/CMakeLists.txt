@@ -3,8 +3,10 @@ add_library_unity(
   OBJECT
   caching_test_utils.cpp
   test_async_file_writer.cpp
+  test_block_cache.cpp
   test_managed_async_task_queue.cpp
   test_bit_utils.cpp
+  test_memory_file_system.cpp
   test_cast.cpp
   test_checked_integer.cpp
   test_checksum.cpp
@@ -19,6 +21,7 @@ add_library_unity(
   test_literal.cpp
   test_lru_cache.cpp
   test_numeric_utils.cpp
+  test_owner_role_spec.cpp
   test_parse_expression.cpp
   test_parse_load_statement.cpp
   test_parse_external_resource_source.cpp

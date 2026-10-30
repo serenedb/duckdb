@@ -34,6 +34,8 @@ string ParseInfo::TypeToString(CatalogType type) {
 		return "TRIGGER";
 	case CatalogType::JOB_ENTRY:
 		return "JOB";
+	case CatalogType::TABLESPACE_ENTRY:
+		return "TABLESPACE";
 	default:
 		throw InternalException("ParseInfo::TypeToString for CatalogType with type: %s not implemented",
 		                        EnumUtil::ToString(type));

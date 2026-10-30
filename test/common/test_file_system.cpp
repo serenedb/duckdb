@@ -5,6 +5,7 @@
 #include "duckdb/common/file_system.hpp"
 #include "duckdb/common/fstream.hpp"
 #include "duckdb/common/local_file_system.hpp"
+#include "duckdb/common/memory_mapped_file.hpp"
 #include "duckdb/common/opener_file_system.hpp"
 #include "duckdb/common/string.hpp"
 #include "duckdb/common/string_util.hpp"
@@ -13,6 +14,7 @@
 #include "duckdb/common/virtual_file_system.hpp"
 #include "duckdb/main/client_context_file_opener.hpp"
 #include "duckdb/main/database_manager.hpp"
+#include "duckdb/parallel/task_executor.hpp"
 #include "test_helpers.hpp"
 #if (!defined(_WIN32) && !defined(WIN32))
 #define TEST_HAVE_SYMLINK
@@ -239,6 +241,37 @@ TEST_CASE("Make sure file system operators work as advertised", "[file_system]")
 	REQUIRE(!fs->DirectoryExists(dname));
 	REQUIRE(!fs->FileExists(fname_in_dir));
 	REQUIRE(!fs->FileExists(fname_in_dir2));
+}
+
+TEST_CASE("ListFilesRecursive lists every file below a directory and no directory", "[file_system]") {
+	DuckDB db(nullptr);
+	Connection con(db);
+	auto &fs = FileSystem::GetFileSystem(*con.context);
+	auto root = TestCreatePath("list_files_recursive");
+	if (fs.DirectoryExists(root)) {
+		fs.RemoveDirectory(root);
+	}
+	auto deeper = fs.JoinPath(fs.JoinPath(root, "sub"), "deeper");
+	fs.CreateDirectoriesRecursive(deeper);
+	fs.CreateDirectory(fs.JoinPath(root, "empty"));
+	CreateDummyFile(fs.JoinPath(root, "a"));
+	CreateDummyFile(fs.JoinPath(fs.JoinPath(root, "sub"), "b"));
+	CreateDummyFile(fs.JoinPath(deeper, "c"));
+
+	vector<string> listed;
+	fs.ListFilesRecursive(root, [&](OpenFileInfo &info) {
+		REQUIRE(!FileSystem::IsDirectory(info));
+		listed.push_back(info.path);
+	});
+	std::sort(listed.begin(), listed.end());
+	auto sub = fs.JoinPath("sub", "b");
+	auto sub_deeper = fs.JoinPath(fs.JoinPath("sub", "deeper"), "c");
+	REQUIRE(listed == vector<string> {"a", sub, sub_deeper});
+
+	listed.clear();
+	fs.ListFilesRecursive(fs.JoinPath(root, "empty"), [&](OpenFileInfo &info) { listed.push_back(info.path); });
+	REQUIRE(listed.empty());
+	fs.RemoveDirectory(root);
 }
 
 #ifndef _WIN32
@@ -528,6 +561,142 @@ TEST_CASE("re-register subsystem", "[file_system]") {
 	REQUIRE_THROWS(vfs.RegisterSubSystem(std::move(second_local_filesystem)));
 }
 
+TEST_CASE("Combined open flags keep the caching mode", "[file_system]") {
+	FileOpenFlags cached(FileFlags::FILE_FLAGS_READ);
+	cached.SetCachingMode(CachingMode::ALWAYS_CACHE);
+	REQUIRE((cached | FileFlags::FILE_FLAGS_PARALLEL_ACCESS).GetCachingMode() == CachingMode::ALWAYS_CACHE);
+	REQUIRE((FileOpenFlags(FileFlags::FILE_FLAGS_PARALLEL_ACCESS) | cached).GetCachingMode() ==
+	        CachingMode::ALWAYS_CACHE);
+}
+
+namespace {
+
+class PrefixFileSystem : public LocalFileSystem {
+public:
+	explicit PrefixFileSystem(string name_p) : name(std::move(name_p)) {
+	}
+
+	string GetName() const override {
+		return name;
+	}
+
+	bool CanHandleFile(const string &fpath) override {
+		return StringUtil::StartsWith(fpath, name + "://");
+	}
+
+private:
+	string name;
+};
+
+} // namespace
+
+TEST_CASE("Path calls run while filesystems are registered and disabled", "[file_system]") {
+	DBConfig config;
+	config.options.maximum_threads = 5;
+	DuckDB db(nullptr, &config);
+	VirtualFileSystem vfs;
+	constexpr idx_t file_systems = 16;
+	atomic<bool> done {false};
+	atomic<idx_t> shrunk {0};
+	TaskExecutor executor(TaskScheduler::GetScheduler(*db.instance));
+	for (idx_t t = 0; t < 4; t++) {
+		executor.ScheduleTask(make_uniq<FunctionExecutorTask>(
+		    executor,
+		    [&]() {
+			    idx_t seen = 0;
+			    while (!done.load()) {
+				    auto names = vfs.ListSubSystems();
+				    if (names.size() < seen) {
+					    shrunk++;
+				    }
+				    seen = names.size();
+				    vfs.IsDisabledForPath("fs3://file");
+				    vfs.SubSystemIsDisabled("fs7");
+			    }
+		    },
+		    "FileSystemTestTask"));
+	}
+	for (idx_t i = 0; i < file_systems; i++) {
+		vfs.RegisterSubSystem(make_uniq<PrefixFileSystem>("fs" + std::to_string(i)));
+	}
+	vfs.SetDisabledFileSystems({"fs3"});
+	vfs.SetDisabledFileSystems({"fs3", "fs7"});
+	done = true;
+	executor.WorkOnTasks();
+	REQUIRE(shrunk == 0);
+	REQUIRE(vfs.ListSubSystems().size() == file_systems);
+	REQUIRE(vfs.IsDisabledForPath("fs3://file"));
+	REQUIRE(vfs.SubSystemIsDisabled("fs7"));
+}
+
+TEST_CASE("Mapped files take read-ahead hints", "[file_system]") {
+	LocalFileSystem fs;
+	auto path = TestCreatePath("mapped_file_hints.bin");
+	constexpr idx_t size = 1024 * 1024;
+	{
+		auto handle = fs.OpenFile(path, FileFlags::FILE_FLAGS_WRITE | FileFlags::FILE_FLAGS_FILE_CREATE_NEW);
+		vector<data_t> data(size, 7);
+		handle->Write(QueryContext(), data.data(), size, 0);
+	}
+	auto mapped = fs.MemoryMapFile(path, FileFlags::FILE_FLAGS_READ, MMapOptions());
+	REQUIRE(mapped->Size() == size);
+	mapped->Advise(MappedFileAccess::RANDOM);
+	mapped->Advise(MappedFileAccess::SEQUENTIAL);
+	mapped->Advise(MappedFileAccess::NORMAL);
+	mapped->Prefetch(0, size);
+	mapped->Prefetch(size + 10, 100);
+	idx_t sum = 0;
+	for (idx_t offset = 0; offset < size; offset += 512) {
+		sum += mapped->GetData(offset, 1)[0];
+	}
+	REQUIRE(sum == 7 * size / 512);
+	mapped->Close();
+	fs.RemoveFile(path);
+}
+
+TEST_CASE("Mapped files read evicted ranges back from the file", "[file_system]") {
+	LocalFileSystem fs;
+	auto path = TestCreatePath("mapped_file_evict.bin");
+	constexpr idx_t size = 1024 * 1024 + 321;
+	vector<data_t> data(size);
+	for (idx_t i = 0; i < size; i++) {
+		data[i] = static_cast<data_t>(i * 31 % 251);
+	}
+	{
+		auto handle = fs.OpenFile(path, FileFlags::FILE_FLAGS_WRITE | FileFlags::FILE_FLAGS_FILE_CREATE_NEW);
+		handle->Write(QueryContext(), data.data(), size, 0);
+	}
+	auto mapped = fs.MemoryMapFile(path, FileFlags::FILE_FLAGS_READ, MMapOptions());
+	REQUIRE(memcmp(mapped->GetData(0, size), data.data(), size) == 0);
+	mapped->Evict(1000, size - 2000);
+	mapped->Evict(0, size);
+	mapped->Evict(size - 10, 100);
+	mapped->Evict(size + 10, 100);
+	REQUIRE(memcmp(mapped->GetData(0, size), data.data(), size) == 0);
+	mapped->Close();
+	fs.RemoveFile(path);
+}
+
+TEST_CASE("Directory syncs and writeback hints reach the local filesystem", "[file_system]") {
+	LocalFileSystem fs;
+	auto directory = TestCreatePath("sync_directory");
+	fs.CreateDirectory(directory);
+	auto path = fs.JoinPath(directory, "written.bin");
+	{
+		auto handle = fs.OpenFile(path, FileFlags::FILE_FLAGS_WRITE | FileFlags::FILE_FLAGS_FILE_CREATE_NEW);
+		vector<data_t> data(64 * 1024, 3);
+		handle->Write(QueryContext(), data.data(), data.size(), 0);
+		handle->HintWriteback(0, data.size());
+		handle->Sync();
+	}
+	fs.SyncDirectory(directory);
+	REQUIRE_THROWS_AS(fs.SyncDirectory(fs.JoinPath(directory, "missing")), IOException);
+
+	VirtualFileSystem vfs;
+	vfs.SyncDirectory(directory);
+	fs.RemoveDirectory(directory);
+}
+
 struct CanonicalizationTest {
 	CanonicalizationTest(string a_p, string b_p, string description_p)
 	    : a(std::move(a_p)), b(std::move(b_p)), description(std::move(description_p)) {
@@ -689,6 +858,24 @@ TEST_CASE("Existence checks tell a missing path from one they cannot check", "[f
 
 	fs->RemoveDirectory(dir);
 	REQUIRE(!fs->DirectoryExists(dir));
+}
+
+TEST_CASE("Removing a file that may be missing tells whether there was one", "[file_system]") {
+	auto fs = FileSystem::CreateLocal();
+	auto dir = TestCreatePath("try_remove_file");
+	if (fs->DirectoryExists(dir)) {
+		fs->RemoveDirectory(dir);
+	}
+	fs->CreateDirectory(dir);
+	auto file = fs->JoinPath(dir, "file");
+	CreateDummyFile(file);
+
+	REQUIRE(!fs->TryRemoveFile(fs->JoinPath(file, "below_a_file")));
+	REQUIRE(fs->TryRemoveFile(file));
+	REQUIRE(!fs->FileExists(file));
+	REQUIRE(!fs->TryRemoveFile(file));
+
+	fs->RemoveDirectory(dir);
 }
 
 TEST_CASE("Removing a directory removes its symlinks without following them", "[file_system]") {
@@ -1322,6 +1509,17 @@ TEST_CASE("Path one-off tests", "[file_system]") {
 	CHECK(Path::FromString("a").Join(std::vector<string>()).ToString() == "a");
 	CHECK(Path::FromString("a").Join(std::vector<string>({"b"})).ToString() == "a/b");
 	CHECK(Path::FromString("a").Join(std::vector<string>({"b", "c"})).ToString() == "a/b/c");
+}
+
+TEST_CASE("Path::FromString parses only the bytes of its view", "[file_system]") {
+	const string text = "s3://bucket/a/b and more/";
+	const auto remote = Path::FromString(std::string_view(text).substr(0, 15));
+	CHECK(remote.ToString() == "s3://bucket/a/b");
+	CHECK(remote.IsRemote());
+	CHECK_FALSE(remote.HasTrailingSeparator());
+
+	const string local = "/x/y/../z/tail";
+	CHECK(Path::FromString(std::string_view(local).substr(0, 9)).ToString() == "/x/z");
 }
 
 #ifdef _WIN32

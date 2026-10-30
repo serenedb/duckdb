@@ -69,10 +69,15 @@ class DatabaseFilePathManager;
 class ExtensionCallbackManager;
 class TypeManager;
 
+class AttachedDatabase;
+class Catalog;
+
 struct CompressionFunctionSet;
 struct DatabaseCacheEntry;
 struct DBConfig;
 struct SettingLookupResult;
+
+typedef unique_ptr<Catalog> (*create_temporary_catalog_t)(AttachedDatabase &db);
 
 //! NOTE: DBConfigOptions is mostly deprecated.
 //! If you want to add a setting that can be set by the user, add it as a generic setting to `settings.json`.
@@ -98,6 +103,10 @@ struct DBConfigOptions {
 	idx_t maximum_memory = DConstants::INVALID_INDEX;
 	//! The maximum size of the 'temp_directory' folder when set (in bytes). Default: 90% of available disk space.
 	idx_t maximum_swap_space = DConstants::INVALID_INDEX;
+	//! The memory the external file cache may use (in bytes). Default: a quarter of the memory limit.
+	idx_t external_file_cache_size = DConstants::INVALID_INDEX;
+	//! The disk space evicted external file cache blocks of remote files may take in the spill file (in bytes).
+	idx_t external_file_cache_spill_size = 0;
 	//! The maximum amount of CPU threads used by the database system. Default: all available.
 	idx_t maximum_threads = DConstants::INVALID_INDEX;
 	//! HTTP client limit derived from thread counts unless configured
@@ -208,6 +217,8 @@ public:
 	shared_ptr<DatabaseCacheEntry> db_cache_entry;
 	//! Reference to the database file path manager
 	shared_ptr<DatabaseFilePathManager> path_manager;
+	//! Creates the catalog of each connection's temporary objects instead of a DuckCatalog
+	create_temporary_catalog_t create_temporary_catalog = nullptr;
 	//! Database configuration variables as controlled by SET
 	GlobalUserSettings user_settings;
 

@@ -40,6 +40,7 @@ public:
 	OnCreateConflict on_conflict = OnCreateConflict::ERROR_ON_CONFLICT;
 	//! Set iff parsed as `ATTACH TO [NEW TEMPORARY] EXTERNAL RESOURCE ...`: the resource to attach.
 	unique_ptr<ExternalResourceOptions> external_resource;
+	idx_t tablespace_oid = 0;
 
 public:
 	//! Copies this AttachInfo and returns an unique pointer to the new AttachInfo.

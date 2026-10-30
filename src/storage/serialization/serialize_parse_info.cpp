@@ -27,6 +27,7 @@
 #include "duckdb/parser/parsed_data/vacuum_info.hpp"
 #include "duckdb/parser/parsed_data/exported_table_data.hpp"
 #include "duckdb/parser/parsed_data/alter_job_info.hpp"
+#include "duckdb/parser/parsed_data/alter_tablespace_info.hpp"
 
 namespace duckdb {
 
@@ -139,6 +140,9 @@ unique_ptr<ParseInfo> AlterInfo::Deserialize(Deserializer &deserializer) {
 		break;
 	case AlterType::ALTER_TABLE:
 		result = AlterTableInfo::Deserialize(deserializer);
+		break;
+	case AlterType::ALTER_TABLESPACE:
+		result = AlterTablespaceInfo::Deserialize(deserializer);
 		break;
 	case AlterType::ALTER_VIEW:
 		result = AlterViewInfo::Deserialize(deserializer);
@@ -545,6 +549,17 @@ unique_ptr<AlterInfo> AlterRoleInfo::Deserialize(Deserializer &deserializer) {
 	return std::move(result);
 }
 
+void AlterTablespaceInfo::Serialize(Serializer &serializer) const {
+	AlterInfo::Serialize(serializer);
+	serializer.WritePropertyWithDefault<Identifier>(300, "new_name", new_name);
+}
+
+unique_ptr<AlterInfo> AlterTablespaceInfo::Deserialize(Deserializer &deserializer) {
+	auto result = duckdb::unique_ptr<AlterTablespaceInfo>(new AlterTablespaceInfo());
+	deserializer.ReadPropertyWithDefault<Identifier>(300, "new_name", result->new_name);
+	return std::move(result);
+}
+
 void AttachInfo::Serialize(Serializer &serializer) const {
 	ParseInfo::Serialize(serializer);
 	serializer.WritePropertyWithDefault<Identifier>(200, "name", name);
@@ -552,6 +567,9 @@ void AttachInfo::Serialize(Serializer &serializer) const {
 	serializer.WritePropertyWithDefault<unordered_map<string, Value>>(202, "options", options);
 	serializer.WritePropertyWithDefault<OnCreateConflict>(203, "on_conflict", on_conflict, OnCreateConflict::ERROR_ON_CONFLICT);
 	serializer.WritePropertyWithDefault<unique_ptr<ExternalResourceOptions>>(204, "external_resource", external_resource);
+	if (serializer.ShouldSerialize(StorageVersion::SERENEDB_V1)) {
+		serializer.WritePropertyWithDefault<idx_t>(16589, "tablespace_oid", tablespace_oid, 0);
+	}
 }
 
 unique_ptr<ParseInfo> AttachInfo::Deserialize(Deserializer &deserializer) {
@@ -561,6 +579,7 @@ unique_ptr<ParseInfo> AttachInfo::Deserialize(Deserializer &deserializer) {
 	deserializer.ReadPropertyWithDefault<unordered_map<string, Value>>(202, "options", result->options);
 	deserializer.ReadPropertyWithExplicitDefault<OnCreateConflict>(203, "on_conflict", result->on_conflict, OnCreateConflict::ERROR_ON_CONFLICT);
 	deserializer.ReadPropertyWithDefault<unique_ptr<ExternalResourceOptions>>(204, "external_resource", result->external_resource);
+	deserializer.ReadPropertyWithExplicitDefault<idx_t>(16589, "tablespace_oid", result->tablespace_oid, 0);
 	return std::move(result);
 }
 

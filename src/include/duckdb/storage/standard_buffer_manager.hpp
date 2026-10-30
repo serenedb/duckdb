@@ -111,10 +111,12 @@ public:
 	unique_ptr<FileBuffer> ConstructManagedBuffer(idx_t size, idx_t block_header_size, unique_ptr<FileBuffer> &&source,
 	                                              FileBufferType type = FileBufferType::MANAGED_BUFFER) override;
 
-	DUCKDB_API void ReserveMemory(idx_t size) final;
-	DUCKDB_API void FreeReservedMemory(idx_t size) final;
+	DUCKDB_API void ReserveMemory(MemoryTag tag, idx_t size) final;
+	DUCKDB_API bool TryReserveMemory(MemoryTag tag, idx_t size, bool evict_caches) final;
+	DUCKDB_API void FreeReservedMemory(MemoryTag tag, idx_t size) final;
 	bool HasTemporaryDirectory() const final;
 	bool HasFilesInTemporaryDirectory() const final;
+	TemporaryFileManager &GetTemporaryFileManager() final;
 
 protected:
 	//! Helper

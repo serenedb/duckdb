@@ -75,6 +75,8 @@ enum class WALType : uint8_t {
 	TRUNCATE_TABLE = 218,
 	ADOPT_SEGMENTS = 219,
 	DELETE_ROW_RANGES = 220,
+	CREATE_TABLESPACE = 221,
+	DROP_TABLESPACE = 222,
 	// -----------------------------
 	// Flush
 	// -----------------------------

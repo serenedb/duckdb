@@ -789,6 +789,8 @@ public:
 	                                                               unique_ptr<ParsedExpression> expression,
 	                                                               unique_ptr<SQLStatement> before_update);
 	static bool TransformSerialType(LogicalType &type);
+	//! The role an OwnerRoleSpec names: CURRENT_USER, SESSION_USER and CURRENT_ROLE in upper case, else the identifier
+	static Identifier TransformOwnerRoleSpec(PEGTransformer &transformer, ParseResult &owner_role_spec);
 
 	static void InitializePivotStatementTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
 	static arena_ptr<TransformResultValue> FinalizePivotStatementTrampoline(PEGTransformer &transformer,
@@ -4806,6 +4808,24 @@ public:
 	static void InitializeSetValueOffTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
 	static arena_ptr<TransformResultValue> FinalizeSetValueOffTrampoline(PEGTransformer &transformer,
 	                                                                     GeneratedTransformProcess &process);
+	static void InitializeCreateTablespaceStatementTrampoline(PEGTransformer &transformer,
+	                                                          GeneratedTransformProcess &process);
+	static arena_ptr<TransformResultValue>
+	FinalizeCreateTablespaceStatementTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
+	static void InitializeDropTablespaceStatementTrampoline(PEGTransformer &transformer,
+	                                                        GeneratedTransformProcess &process);
+	static arena_ptr<TransformResultValue>
+	FinalizeDropTablespaceStatementTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
+	static void InitializeAlterTablespaceStatementTrampoline(PEGTransformer &transformer,
+	                                                         GeneratedTransformProcess &process);
+	static arena_ptr<TransformResultValue>
+	FinalizeAlterTablespaceStatementTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
+	static void InitializeTablespaceClauseTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
+	static arena_ptr<TransformResultValue> FinalizeTablespaceClauseTrampoline(PEGTransformer &transformer,
+	                                                                          GeneratedTransformProcess &process);
+	static void InitializeDatabaseTablespaceTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
+	static arena_ptr<TransformResultValue> FinalizeDatabaseTablespaceTrampoline(PEGTransformer &transformer,
+	                                                                            GeneratedTransformProcess &process);
 	static void InitializeTransactionStatementTrampoline(PEGTransformer &transformer,
 	                                                     GeneratedTransformProcess &process);
 	static arena_ptr<TransformResultValue> FinalizeTransactionStatementTrampoline(PEGTransformer &transformer,
@@ -5299,20 +5319,20 @@ public:
 	static unique_ptr<SQLStatement>
 	TransformCreateDatabaseStatement(PEGTransformer &transformer, const optional<bool> &if_not_exists,
 	                                 const Identifier &catalog_name,
-	                                 optional<case_insensitive_map_t<unique_ptr<ParsedExpression>>> with_list);
+	                                 optional<case_insensitive_map_t<unique_ptr<ParsedExpression>>> with_list,
+	                                 const optional<Identifier> &database_tablespace);
 	static unique_ptr<SQLStatement> TransformDropDatabaseStatement(PEGTransformer &transformer,
 	                                                               const optional<bool> &if_exists,
 	                                                               const Identifier &catalog_name,
 	                                                               const optional<bool> &drop_database_force,
 	                                                               const optional<bool> &drop_behavior);
 	static bool TransformDropDatabaseForce(PEGTransformer &transformer);
-	static unique_ptr<CreateStatement>
-	TransformCreateIndexStmt(PEGTransformer &transformer, const optional<bool> &unique_index,
-	                         const optional<bool> &if_not_exists, const optional<Identifier> &index_name,
-	                         unique_ptr<BaseTableRef> base_table_name, const optional<Identifier> &index_type,
-	                         IndexColumnsDefinition index_columns,
-	                         optional<case_insensitive_map_t<unique_ptr<ParsedExpression>>> with_list,
-	                         optional<unique_ptr<ParsedExpression>> where_clause);
+	static unique_ptr<CreateStatement> TransformCreateIndexStmt(
+	    PEGTransformer &transformer, const optional<bool> &unique_index, const optional<bool> &if_not_exists,
+	    const optional<Identifier> &index_name, unique_ptr<BaseTableRef> base_table_name,
+	    const optional<Identifier> &index_type, IndexColumnsDefinition index_columns,
+	    optional<case_insensitive_map_t<unique_ptr<ParsedExpression>>> with_list,
+	    const optional<Identifier> &tablespace_clause, optional<unique_ptr<ParsedExpression>> where_clause);
 	static IndexColumnsDefinition TransformIndexKeyColumns(PEGTransformer &transformer,
 	                                                       vector<IndexElementDefinition> index_element,
 	                                                       optional<IndexColumnsDefinition> include_clause);
@@ -5462,16 +5482,16 @@ public:
 	static SecretPersistType TransformPersistent(PEGTransformer &transformer);
 	static SecretPersistType TransformTempPersistent(PEGTransformer &transformer);
 	static SecretPersistType TransformTemporaryPersistent(PEGTransformer &transformer);
-	static unique_ptr<CreateStatement> TransformCreateTableStmt(PEGTransformer &transformer,
-	                                                            const optional<bool> &if_not_exists,
-	                                                            const QualifiedName &qualified_name,
-	                                                            CreateTableDefinition create_table_definition,
-	                                                            const optional<bool> &commit_action);
+	static unique_ptr<CreateStatement>
+	TransformCreateTableStmt(PEGTransformer &transformer, const optional<bool> &if_not_exists,
+	                         const QualifiedName &qualified_name, CreateTableDefinition create_table_definition,
+	                         const optional<bool> &commit_action, const optional<Identifier> &tablespace_clause);
 	static CreateTableDefinition
 	TransformCreateTableAs(PEGTransformer &transformer, optional<ColumnList> identifier_list,
 	                       optional<PartitionSortedOptions> partition_sorted_options,
 	                       optional<case_insensitive_map_t<unique_ptr<ParsedExpression>>> with_list,
-	                       unique_ptr<SQLStatement> statement, const optional<bool> &with_data);
+	                       const optional<Identifier> &tablespace_clause, unique_ptr<SQLStatement> statement,
+	                       const optional<bool> &with_data);
 	static PartitionSortedOptions
 	TransformPartitionOptSortedOptions(PEGTransformer &transformer,
 	                                   vector<unique_ptr<ParsedExpression>> partition_options,
@@ -6902,6 +6922,14 @@ public:
 	                                                                  vector<unique_ptr<ParsedExpression>> set_value);
 	static unique_ptr<ParsedExpression> TransformSetValueOn(PEGTransformer &transformer);
 	static unique_ptr<ParsedExpression> TransformSetValueOff(PEGTransformer &transformer);
+	static unique_ptr<SQLStatement> TransformCreateTablespaceStatement(PEGTransformer &transformer,
+	                                                                   ParseResult &parse_result);
+	static unique_ptr<SQLStatement> TransformDropTablespaceStatement(PEGTransformer &transformer,
+	                                                                 ParseResult &parse_result);
+	static unique_ptr<SQLStatement> TransformAlterTablespaceStatement(PEGTransformer &transformer,
+	                                                                  ParseResult &parse_result);
+	static Identifier TransformTablespaceClause(PEGTransformer &transformer, const Identifier &col_id);
+	static Identifier TransformDatabaseTablespace(PEGTransformer &transformer, ParseResult &parse_result);
 	static unique_ptr<SQLStatement>
 	TransformBeginTransaction(PEGTransformer &transformer, const bool &has_result,
 	                          const optional<TransactionIsolationLevel> &isolation_level_clause,

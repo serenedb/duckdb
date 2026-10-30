@@ -8,6 +8,7 @@
 
 #pragma once
 
+#include "duckdb/common/atomic.hpp"
 #include "duckdb/common/file_system.hpp"
 #include "duckdb/common/map.hpp"
 #include "duckdb/common/unordered_set.hpp"
@@ -31,6 +32,8 @@ public:
 	unique_ptr<MemoryMappedFile> MemoryMapFile(const OpenFileInfo &path, FileOpenFlags flags,
 	                                           const MMapOptions &options,
 	                                           optional_ptr<FileOpener> opener = nullptr) override;
+	shared_ptr<BlockCacheFile> GetBlockFile(const string &path) override;
+	void Compact(const string &path) override;
 
 	int64_t GetFileSize(FileHandle &handle) override;
 	timestamp_t GetLastModifiedTime(FileHandle &handle) override;
@@ -43,6 +46,10 @@ public:
 	void Truncate(FileHandle &handle, int64_t new_size) override;
 
 	void FileSync(FileHandle &handle) override;
+	void HintWriteback(FileHandle &handle, idx_t location, idx_t nr_bytes) override;
+	FileWriteWindow GetWriteWindow(FileHandle &handle) override;
+	void CommitWriteWindow(FileHandle &handle, idx_t nr_bytes) override;
+	void SyncDirectory(const string &directory, optional_ptr<FileOpener> opener = nullptr) override;
 
 	// need to look up correct fs for this
 	FileExistence TryDirectoryExists(const string &directory, optional_ptr<FileOpener> opener,
@@ -55,6 +62,8 @@ public:
 	void RemoveDirectory(const string &directory, optional_ptr<FileOpener> opener) override;
 	bool RemoveDirectoryExtended(const string &directory, const RemoveDirectoryOptions &options,
 	                             optional_ptr<FileOpener> opener = nullptr) override;
+	void ListFilesRecursive(const string &directory, const std::function<void(OpenFileInfo &info)> &callback,
+	                        optional_ptr<FileOpener> opener = nullptr) override;
 
 	void MoveFile(const string &source, const string &target, optional_ptr<FileOpener> opener) override;
 
@@ -107,17 +116,20 @@ protected:
 
 private:
 	FileSystem &FindFileSystem(const string &path, optional_ptr<FileOpener> file_opener);
-	FileSystem &FindFileSystem(shared_ptr<FileSystemRegistry> &registry, const string &path,
+	FileSystem &FindFileSystem(const FileSystemRegistry *&registry, const string &path,
 	                           optional_ptr<FileOpener> file_opener);
-	optional_ptr<FileSystem> FindFileSystemInternal(FileSystemRegistry &registry, const string &path);
+	optional_ptr<FileSystem> FindFileSystemInternal(const FileSystemRegistry &registry, const string &path);
 	// Return nullptr if compression is not involved, throw exception if compression is requested but no usable
 	// filesystem gets registered.
-	optional_ptr<FileSystem> FindCompressionFileSystem(FileSystemRegistry &registry,
+	optional_ptr<FileSystem> FindCompressionFileSystem(const FileSystemRegistry &registry,
 	                                                   const FileCompressionType &compression, const string &path);
+	const FileSystemRegistry &CurrentRegistry() const;
+	void PublishRegistry(shared_ptr<FileSystemRegistry> new_registry);
 
 private:
 	mutex registry_lock;
-	shared_ptr<FileSystemRegistry> file_system_registry;
+	vector<shared_ptr<FileSystemRegistry>> registries;
+	atomic<const FileSystemRegistry *> current_registry {nullptr};
 	vector<unique_ptr<FileSystem>> unregistered_file_systems;
 };
 

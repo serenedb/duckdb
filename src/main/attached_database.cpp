@@ -129,7 +129,12 @@ AttachedDatabase::AttachedDatabase(DatabaseInstance &db, AttachedDatabaseType ty
 		storage = make_uniq<SingleFileStorageManager>(*this, string(IN_MEMORY_PATH), attach_options);
 	}
 
-	catalog = make_uniq<DuckCatalog>(*this);
+	auto create_temporary_catalog = DBConfig::GetConfig(db).create_temporary_catalog;
+	if (type == AttachedDatabaseType::TEMP_DATABASE && create_temporary_catalog) {
+		catalog = create_temporary_catalog(*this);
+	} else {
+		catalog = make_uniq<DuckCatalog>(*this);
+	}
 	transaction_manager = make_uniq<DuckTransactionManager>(*this);
 	internal = true;
 }

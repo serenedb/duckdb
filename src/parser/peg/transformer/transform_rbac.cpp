@@ -187,6 +187,9 @@ CatalogType GrantObjectType(const string &keyword) {
 	if (keyword == "FOREIGN SERVER") {
 		return CatalogType::FOREIGN_SERVER_ENTRY;
 	}
+	if (keyword == "TABLESPACE") {
+		return CatalogType::TABLESPACE_ENTRY;
+	}
 	throw ParserException("unrecognized privilege object type %s", keyword);
 }
 
@@ -626,6 +629,14 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformAlterRoleStatement(PEGT
 	return std::move(result);
 }
 
+Identifier PEGTransformerFactory::TransformOwnerRoleSpec(PEGTransformer &transformer, ParseResult &owner_role_spec) {
+	auto &role = owner_role_spec.Cast<ListParseResult>().Child<ChoiceParseResult>(0).GetResult();
+	if (role.type == ParseResultType::KEYWORD) {
+		return Identifier(StringUtil::Upper(role.Cast<KeywordParseResult>().keyword));
+	}
+	return transformer.Transform<Identifier>(role);
+}
+
 // ALTER <objtype> name OWNER TO role
 //   -> PRAGMA serenedb_alter_owner('objtype', 'name', 'new_owner')
 unique_ptr<SQLStatement> PEGTransformerFactory::TransformAlterOwnerStatement(PEGTransformer &transformer,
@@ -638,15 +649,7 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformAlterOwnerStatement(PEG
 	    list_pr.GetChild(1).Cast<ListParseResult>().Child<ChoiceParseResult>(0).GetResult().Cast<KeywordParseResult>();
 	auto info = make_uniq<AlterPermissionsInfo>(GrantObjectType(StringUtil::Upper(obj_kw.keyword)),
 	                                            transformer.Transform<QualifiedName>(list_pr.GetChild(2)));
-
-	// OwnerRoleSpec: a rule wrapping CHOICE(CURRENT_USER / SESSION_USER /
-	// CURRENT_ROLE keyword / ColId).
-	auto &role_choice = list_pr.GetChild(5).Cast<ListParseResult>().Child<ChoiceParseResult>(0).GetResult();
-	if (role_choice.type == ParseResultType::KEYWORD) {
-		info->new_owner = StringUtil::Upper(role_choice.Cast<KeywordParseResult>().keyword);
-	} else {
-		info->new_owner = transformer.Transform<string>(role_choice);
-	}
+	info->new_owner = TransformOwnerRoleSpec(transformer, list_pr.GetChild(5)).GetIdentifierName();
 
 	auto result = make_uniq<AlterStatement>();
 	result->info = std::move(info);

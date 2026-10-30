@@ -330,6 +330,8 @@ public:
 	void IncreaseSizeOnDisk(idx_t amount);
 	//! Register temporary file size decrease
 	void DecreaseSizeOnDisk(idx_t amount);
+	//! The path of this instance's temporary file called [name], which a later instance removes if this one crashes
+	string TemporaryFilePath(const string &name) const;
 
 private:
 	//! Compress buffer, write it in compressed_buffer and return the size/level

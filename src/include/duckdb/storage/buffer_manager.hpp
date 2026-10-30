@@ -20,6 +20,7 @@ class Allocator;
 class AsyncTask;
 class BufferPool;
 class TemporaryMemoryManager;
+class TemporaryFileManager;
 class AttachedDatabase;
 class BlockManager;
 class DatabaseInstance;
@@ -98,9 +99,12 @@ public:
 	//! Get the buffer allocator.
 	virtual DUCKDB_API Allocator &GetBufferAllocator();
 	//! Reserve memory.
-	virtual DUCKDB_API void ReserveMemory(idx_t size);
+	virtual DUCKDB_API void ReserveMemory(MemoryTag tag, idx_t size);
+	//! Reserves memory, evicting unpinned buffers and, when [evict_caches], the block and object caches; false when the
+	//! memory limit leaves no room
+	virtual DUCKDB_API bool TryReserveMemory(MemoryTag tag, idx_t size, bool evict_caches);
 	//! Free reserved memory.
-	virtual DUCKDB_API void FreeReservedMemory(idx_t size);
+	virtual DUCKDB_API void FreeReservedMemory(MemoryTag tag, idx_t size);
 	//! GetMemoryUsageInfo returns MemoryInformation for each memory tag.
 	virtual vector<MemoryInformation> GetMemoryUsageInfo() const = 0;
 	//! Set a new memory limit.
@@ -119,6 +123,8 @@ public:
 	virtual void SetTemporaryDirectory(const string &new_dir);
 	//! Returns true, if the path to the temporary file directory is not empty.
 	virtual bool HasTemporaryDirectory() const;
+	//! The manager of this instance's temporary files, which creates the temporary directory
+	virtual TemporaryFileManager &GetTemporaryFileManager();
 	//! Returns true if there are files found in the temporary directory
 	virtual bool HasFilesInTemporaryDirectory() const;
 

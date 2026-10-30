@@ -35,6 +35,7 @@ enum class CatalogType : uint8_t {
 	SUBSCRIPTION_ENTRY = 231,
 	REPLICATION_ORIGIN_ENTRY = 232,
 	JOB_ENTRY = 233,
+	TABLESPACE_ENTRY = 234,
 
 	// functions
 	TABLE_FUNCTION_ENTRY = 25,
@@ -60,7 +61,15 @@ enum class CatalogType : uint8_t {
 
 };
 
+//! The types whose entries live in sets of the catalog itself rather than in a schema, in the order a checkpoint
+//! writes them
+static constexpr const CatalogType CATALOG_LEVEL_TYPES[] = {
+    CatalogType::ROLE_ENTRY,           CatalogType::TABLESPACE_ENTRY,   CatalogType::DATABASE_ENTRY,
+    CatalogType::FOREIGN_SERVER_ENTRY, CatalogType::SUBSCRIPTION_ENTRY, CatalogType::REPLICATION_ORIGIN_ENTRY};
+
 DUCKDB_API string CatalogTypeToString(CatalogType type);
 CatalogType CatalogTypeFromString(const string &type);
+//! Whether entries of [type] live in a set of the catalog itself rather than in a schema
+DUCKDB_API bool IsCatalogLevelType(CatalogType type);
 
 } // namespace duckdb
