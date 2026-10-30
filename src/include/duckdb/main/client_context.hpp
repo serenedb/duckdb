@@ -163,6 +163,7 @@ public:
 	shared_ptr<const SecuritySnapshot> security;
 	optional_ptr<const RoleAccess> principal;
 	idx_t principal_role = DConstants::INVALID_INDEX;
+	idx_t session_role = DConstants::INVALID_INDEX;
 
 	class FileAccessScopeGuard {
 	public:
