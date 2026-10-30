@@ -48,6 +48,8 @@ public:
 	DUCKDB_API virtual void Advise(MappedFileAccess access);
 	//! Starts reading [location, location + nr_bytes) of the file into the page cache
 	DUCKDB_API virtual void Prefetch(idx_t location, idx_t nr_bytes);
+	//! Drops the whole pages of [location, location + nr_bytes) from the mapping and the page cache
+	DUCKDB_API virtual void Evict(idx_t location, idx_t nr_bytes);
 
 	DUCKDB_API idx_t Size() const {
 		return size;
