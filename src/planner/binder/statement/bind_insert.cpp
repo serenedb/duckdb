@@ -758,6 +758,32 @@ BoundStatement Binder::BindNode(InsertQueryNode &node) {
 		return std::move(*expanded);
 	}
 
+	if (node.on_conflict_info && principal) {
+		vector<std::span<const AclItem>> acls;
+		if (!node.columns.empty()) {
+			for (auto &name : node.columns) {
+				if (table.ColumnExists(name)) {
+					acls.emplace_back(table.GetColumn(name).Acl());
+				}
+			}
+		} else {
+			auto values_list = node.GetValuesList();
+			const auto count = values_list && !values_list->values.empty() ? values_list->values[0].size()
+			                                                               : table.GetColumns().LogicalColumnCount();
+			for (auto &column : table.GetColumns().Logical()) {
+				if (acls.size() == count) {
+					break;
+				}
+				acls.emplace_back(column.Acl());
+			}
+		}
+		const bool allowed = node.default_values
+		                         ? principal->CanAnyColumn(table.permissions, AclMode::Insert, table.GetColumns())
+		                         : principal->CanColumns(table.permissions, AclMode::Insert, acls);
+		if (!allowed) {
+			ThrowPermissionDenied(table);
+		}
+	}
 	if (principal && !principal->CanAnyColumn(table.permissions, AclMode::Insert, table.GetColumns())) {
 		ThrowPermissionDenied(table);
 	}
@@ -817,6 +843,15 @@ BoundStatement Binder::BindNode(InsertQueryNode &node) {
 				    absl::c_all_of(node.returning_list, [&](const unique_ptr<ParsedExpression> &expr) {
 					    return ReadsOnly(*expr, table, stored);
 				    })) {
+					if (principal) {
+						vector<std::span<const AclItem>> acls;
+						for (auto &column : replaced.columns) {
+							acls.emplace_back(table.GetColumns().GetColumn(column).Acl());
+						}
+						if (!principal->CanColumns(table.permissions, AclMode::Update, acls)) {
+							ThrowPermissionDenied(table);
+						}
+					}
 					merge = false;
 					action_type = OnConflictAction::REPLACE;
 					on_conflict_filter = std::move(key);
@@ -828,6 +863,7 @@ BoundStatement Binder::BindNode(InsertQueryNode &node) {
 		if (merge) {
 			// generate a MERGE INTO statement and bind it instead
 			auto merge_into = GenerateMergeInto(node, table);
+			on_conflict_merge = merge_into->node.get();
 			return Bind(*merge_into);
 		}
 	}
