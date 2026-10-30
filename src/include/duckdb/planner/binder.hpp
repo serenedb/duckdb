@@ -425,6 +425,7 @@ public:
 	void CheckCall(FunctionEntry &function);
 	void CheckStatementKind(SQLStatement &statement);
 	void RequireSuperuser();
+	void RequireOwner(CatalogEntry &entry);
 
 	void BeginSubqueryBind(Binder &parent, ExpressionBinder &binder);
 	//! The innermost enclosing scope

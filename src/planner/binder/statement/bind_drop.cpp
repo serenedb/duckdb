@@ -2,6 +2,7 @@
 #include "duckdb/planner/binder.hpp"
 #include "duckdb/planner/operator/logical_drop.hpp"
 #include "duckdb/catalog/catalog.hpp"
+#include "duckdb/catalog/duck_catalog.hpp"
 #include "duckdb/catalog/standard_entry.hpp"
 #include "duckdb/catalog/catalog_entry/macro_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/schema_catalog_entry.hpp"
@@ -26,7 +27,14 @@ void Binder::BindDropTrigger(DropStatement &stmt, StatementProperties &propertie
 	// resolve the (possibly nested) catalog/schema qualification of the base table
 	base_table_ref.SetQualifiedName(BindTableName(base_table_ref.GetQualifiedName()));
 	// IF EXISTS only guards the trigger, not the table (PostgreSQL-compatible behavior).
-	auto &table_entry = Catalog::GetEntry<TableCatalogEntry>(context, base_table_ref.GetQualifiedName());
+	EntryLookupInfo table_lookup(CatalogType::TABLE_ENTRY, base_table_ref.GetQualifiedName());
+	auto &entry = *entry_retriever.GetEntry(table_lookup, OnEntryNotFound::THROW_EXCEPTION);
+	if (entry.type != CatalogType::TABLE_ENTRY) {
+		throw CatalogException("%s is not an %s", base_table_ref.GetQualifiedName().Name().GetIdentifierName(),
+		                       TableCatalogEntry::Name);
+	}
+	auto &table_entry = entry.Cast<TableCatalogEntry>();
+	RequireOwner(table_entry);
 	// the trigger lives in the same (possibly nested) schema as its base table
 	stmt.info->SetQualifiedName(table_entry.GetQualifiedName(stmt.info->GetQualifiedName().Name()));
 	properties.RegisterDBModify(table_entry.ParentCatalog(), context, DatabaseModificationType::DROP_CATALOG_ENTRY);
@@ -48,8 +56,14 @@ BoundStatement Binder::Bind(DropStatement &stmt) {
 		stmt.info->SetQualifiedName(ResolveCatalog(context, stmt.info->GetQualifiedName()));
 		// dropping a schema is never read-only because there are no temporary schemas. The catalog is the leading
 		// component of the resolved path ([catalog, parent schemas..., schema])
-		auto &catalog = Catalog::GetCatalog(context, stmt.info->GetQualifiedName().Path().front());
+		auto &path = stmt.info->GetQualifiedName().Path();
+		auto &catalog = Catalog::GetCatalog(context, path.front());
 		properties.RegisterDBModify(catalog, context, DatabaseModificationType::DROP_CATALOG_ENTRY);
+		auto schema = Catalog::GetSchema(context, path.front(), vector<Identifier>(path.begin() + 1, path.end()),
+		                                 OnEntryNotFound::RETURN_NULL);
+		if (schema) {
+			RequireOwner(*schema);
+		}
 		break;
 	}
 	case CatalogType::VIEW_ENTRY:
@@ -78,11 +92,11 @@ BoundStatement Binder::Bind(DropStatement &stmt) {
 			// We also support "DROP MACRO" (instead of "DROP MACRO TABLE") for table macros
 			// First try to drop a scalar macro
 			EntryLookupInfo macro_entry_lookup(stmt.info->type, stmt.info->GetQualifiedName());
-			entry = Catalog::GetEntry(context, macro_entry_lookup, OnEntryNotFound::RETURN_NULL);
+			entry = entry_retriever.GetEntry(macro_entry_lookup, OnEntryNotFound::RETURN_NULL);
 			if (!entry) {
 				// Unable to find a scalar macro, try to drop a table macro
 				EntryLookupInfo table_macro_entry_lookup(CatalogType::TABLE_MACRO_ENTRY, stmt.info->GetQualifiedName());
-				entry = Catalog::GetEntry(context, table_macro_entry_lookup, OnEntryNotFound::RETURN_NULL);
+				entry = entry_retriever.GetEntry(table_macro_entry_lookup, OnEntryNotFound::RETURN_NULL);
 				if (entry) {
 					// Change type to table macro so future lookups get the correct one
 					stmt.info->type = CatalogType::TABLE_MACRO_ENTRY;
@@ -91,7 +105,7 @@ BoundStatement Binder::Bind(DropStatement &stmt) {
 
 			if (!entry) {
 				// Unable to find table macro, try again with original OnEntryNotFound to ensure we throw if necessary
-				entry = Catalog::GetEntry(context, macro_entry_lookup, stmt.info->if_not_found);
+				entry = entry_retriever.GetEntry(macro_entry_lookup, stmt.info->if_not_found);
 			}
 		} else {
 			EntryLookupInfo entry_lookup(stmt.info->type, stmt.info->GetQualifiedName());
@@ -100,7 +114,7 @@ BoundStatement Binder::Bind(DropStatement &stmt) {
 			    Catalog::InRelationNamespace(stmt.info->type)) {
 				if_not_found = OnEntryNotFound::RETURN_NULL;
 			}
-			entry = Catalog::GetEntry(context, entry_lookup, if_not_found);
+			entry = entry_retriever.GetEntry(entry_lookup, if_not_found);
 		}
 		if (!entry) {
 			break;
@@ -108,6 +122,7 @@ BoundStatement Binder::Bind(DropStatement &stmt) {
 		if (entry->internal) {
 			throw CatalogException("Cannot drop internal catalog entry %s!", entry->name);
 		}
+		RequireOwner(*entry);
 		if (entry->type == CatalogType::MACRO_ENTRY || entry->type == CatalogType::TABLE_MACRO_ENTRY) {
 			auto &macro = entry->Cast<MacroCatalogEntry>();
 			if (macro.is_procedure != stmt.info->is_procedure) {
@@ -142,8 +157,17 @@ BoundStatement Binder::Bind(DropStatement &stmt) {
 	case CatalogType::FOREIGN_SERVER_ENTRY: {
 		auto catalog = BindCatalog(stmt.info->GetQualifiedName().Catalog());
 		stmt.info->SetQualifiedName(QualifiedName(catalog, Identifier(), stmt.info->GetQualifiedName().Name()));
-		properties.RegisterDBModify(Catalog::GetCatalog(context, catalog), context,
-		                            DatabaseModificationType::DROP_CATALOG_ENTRY);
+		auto &server_catalog = Catalog::GetCatalog(context, catalog);
+		properties.RegisterDBModify(server_catalog, context, DatabaseModificationType::DROP_CATALOG_ENTRY);
+		if (server_catalog.IsDuckCatalog()) {
+			auto &duck_catalog = server_catalog.Cast<DuckCatalog>();
+			auto server =
+			    duck_catalog.GetCatalogSet(CatalogType::FOREIGN_SERVER_ENTRY)
+			        .GetEntry(duck_catalog.GetCatalogTransaction(context), stmt.info->GetQualifiedName().Name());
+			if (server) {
+				RequireOwner(*server);
+			}
+		}
 		break;
 	}
 	default:

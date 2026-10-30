@@ -178,6 +178,11 @@ BoundStatement Binder::Bind(AlterStatement &stmt) {
 		auto &info = stmt.info->Cast<AlterSchemaInfo>();
 		info.SetQualifiedName(ResolveCatalog(context, info.GetQualifiedName()));
 		auto &catalog = Catalog::GetCatalog(context, info.SchemaCatalog());
+		auto schema =
+		    Catalog::GetSchema(context, info.SchemaCatalog(), info.SchemaPath(), OnEntryNotFound::RETURN_NULL);
+		if (schema) {
+			RequireOwner(*schema);
+		}
 		auto &properties = GetStatementProperties();
 		properties.return_type = StatementReturnType::NOTHING;
 		properties.RegisterDBModify(catalog, context, DatabaseModificationType::ALTER_TABLE);
@@ -206,15 +211,15 @@ BoundStatement Binder::Bind(AlterStatement &stmt) {
 	if (stmt.info->type == AlterType::ALTER_SCALAR_FUNCTION &&
 	    stmt.info->Cast<AlterScalarFunctionInfo>().alter_scalar_function_type ==
 	        AlterScalarFunctionType::RENAME_SCALAR_FUNCTION) {
-		if (stmt.info->GetQualifiedName().Schema().empty()) {
-			optional_ptr<CatalogEntry> function;
-			for (auto type : {CatalogType::MACRO_ENTRY, CatalogType::TABLE_MACRO_ENTRY}) {
-				EntryLookupInfo lookup_info(type, stmt.info->GetQualifiedName());
-				function = entry_retriever.GetEntry(lookup_info, OnEntryNotFound::RETURN_NULL);
-				if (function) {
-					break;
-				}
+		optional_ptr<CatalogEntry> function;
+		for (auto type : {CatalogType::MACRO_ENTRY, CatalogType::TABLE_MACRO_ENTRY}) {
+			EntryLookupInfo lookup_info(type, stmt.info->GetQualifiedName());
+			function = entry_retriever.GetEntry(lookup_info, OnEntryNotFound::RETURN_NULL);
+			if (function) {
+				break;
 			}
+		}
+		if (stmt.info->GetQualifiedName().Schema().empty()) {
 			if (!function) {
 				EntryLookupInfo lookup_info(CatalogType::MACRO_ENTRY, stmt.info->GetQualifiedName());
 				function = entry_retriever.GetEntry(lookup_info, stmt.info->if_not_found);
@@ -222,6 +227,9 @@ BoundStatement Binder::Bind(AlterStatement &stmt) {
 			if (function) {
 				stmt.info->SetQualifiedName(function->Cast<StandardEntry>().GetQualifiedName(function->name));
 			}
+		}
+		if (function) {
+			RequireOwner(*function);
 		}
 		auto &catalog = Catalog::GetCatalog(context, stmt.info->GetQualifiedName().Catalog());
 		auto &properties = GetStatementProperties();
@@ -287,6 +295,7 @@ BoundStatement Binder::Bind(AlterStatement &stmt) {
 	}
 
 	D_ASSERT(!entry->deleted);
+	RequireOwner(*entry);
 	auto &catalog = entry->ParentCatalog();
 
 	// Bind types in the same catalog as the entry

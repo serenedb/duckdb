@@ -1,6 +1,7 @@
 #include "duckdb/planner/binder.hpp"
 
 #include "duckdb/catalog/catalog_entry/aggregate_function_catalog_entry.hpp"
+#include "duckdb/catalog/catalog_entry/index_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/view_catalog_entry.hpp"
 #include "duckdb/common/enums/cte_materialize.hpp"
@@ -331,6 +332,25 @@ void Binder::CheckCall(FunctionEntry &function) {
 void Binder::RequireSuperuser() {
 	if (principal && !principal->is_superuser) {
 		throw PermissionException("permission denied: superuser required");
+	}
+}
+
+void Binder::RequireOwner(CatalogEntry &entry) {
+	if (!principal) {
+		return;
+	}
+	auto owner = entry.permissions.owner;
+	if (entry.type == CatalogType::INDEX_ENTRY) {
+		auto relation =
+		    entry.Cast<IndexCatalogEntry>().GetRelation(entry.ParentCatalog().GetCatalogTransaction(context));
+		if (!relation) {
+			return;
+		}
+		owner = relation->permissions.owner;
+	}
+	if (!principal->Owns(owner)) {
+		throw PermissionException("must be owner of %s %s", PermissionKindName(entry.type),
+		                          entry.name.GetIdentifierName());
 	}
 }
 

@@ -354,6 +354,15 @@ SchemaCatalogEntry &Binder::BindCreateSchema(CreateInfo &info) {
 	if (schema.catalog.IsSystemCatalog()) {
 		throw BinderException("Cannot create entry in system catalog");
 	}
+	const bool replaces = info.on_conflict == OnCreateConflict::REPLACE_ON_CONFLICT ||
+	                      info.on_conflict == OnCreateConflict::ALTER_ON_CONFLICT;
+	if (principal && replaces && info.type != CatalogType::TRIGGER_ENTRY) {
+		auto existing =
+		    schema.GetEntry(schema.catalog.GetCatalogTransaction(context), info.type, info.GetQualifiedName().Name());
+		if (existing) {
+			RequireOwner(*existing);
+		}
+	}
 	return schema;
 }
 
@@ -1215,6 +1224,7 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 		}
 		if (table_ptr) {
 			auto &table = *table_ptr;
+			RequireOwner(table);
 			if (table.temporary) {
 				stmt.info->temporary = true;
 			}
@@ -1225,6 +1235,7 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 			    CatalogType::VIEW_ENTRY,
 			    BindTableName(create_index_info.GetQualifiedName().WithName(create_index_info.table)));
 			auto &view = EntryRetriever().GetEntry(view_lookup)->Cast<ViewCatalogEntry>();
+			RequireOwner(view);
 			properties.RegisterDBModify(view.catalog, context, DatabaseModificationType::CREATE_INDEX);
 			result.plan = view.catalog.BindCreateViewIndex(*this, stmt, view, std::move(plan));
 		}
