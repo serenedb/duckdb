@@ -137,19 +137,22 @@ optional_ptr<CatalogEntry> CatalogOidIndex::GetVisible(idx_t oid, const Snapshot
 }
 
 optional_ptr<CatalogEntry> CatalogOidIndex::GetVisibleOwner(idx_t oid, const SnapshotView &view) const {
-	auto object = Find(oid);
-	return object ? object->GetVisible(view) : nullptr;
+	absl::ReaderMutexLock guard(lock);
+	auto it = versions.find(oid);
+	return it == versions.end() ? nullptr : it->second->GetVisible(view);
 }
 
 optional_ptr<CatalogEntry> CatalogOidIndex::GetCommitted(idx_t oid) const {
-	auto object = Find(oid);
-	auto entry = object ? object->GetCommitted() : nullptr;
+	absl::ReaderMutexLock guard(lock);
+	auto it = versions.find(oid);
+	auto entry = it == versions.end() ? nullptr : it->second->GetCommitted();
 	return entry && entry->oid == oid ? entry : nullptr;
 }
 
 optional_ptr<CatalogEntry> CatalogOidIndex::GetCommittedDrop(idx_t oid) const {
-	auto object = Find(oid);
-	auto entry = object ? object->GetLatestCommitted() : nullptr;
+	absl::ReaderMutexLock guard(lock);
+	auto it = versions.find(oid);
+	auto entry = it == versions.end() ? nullptr : it->second->GetLatestCommitted();
 	return entry && entry->deleted && entry->oid == oid ? entry : nullptr;
 }
 
