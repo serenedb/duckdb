@@ -147,6 +147,7 @@ virtual_column_map_t DuckTableEntry::GetVirtualColumns() const {
 	virtual_columns.insert(make_pair(COLUMN_IDENTIFIER_ROW_NUMBER, TableColumn("row_number", LogicalType::BIGINT)));
 	if (catalog.Compatibility() == SqlCompatibility::POSTGRES) {
 		virtual_columns.emplace(COLUMN_IDENTIFIER_TABLE_OID, TableColumn("tableoid", LogicalType::BIGINT));
+		AddPostgresSystemColumns(virtual_columns);
 	}
 	return virtual_columns;
 }

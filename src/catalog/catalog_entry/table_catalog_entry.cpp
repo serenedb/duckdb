@@ -520,6 +520,17 @@ virtual_column_map_t TableCatalogEntry::GetVirtualColumns() const {
 	return virtual_columns;
 }
 
+void TableCatalogEntry::AddPostgresSystemColumns(virtual_column_map_t &virtual_columns) {
+	static const auto tid = LogicalType(LogicalTypeId::BIGINT).WithAlias("tid");
+	static const auto xid = LogicalType(LogicalTypeId::BIGINT).WithAlias("xid");
+	static const auto cid = LogicalType(LogicalTypeId::BIGINT).WithAlias("cid");
+	virtual_columns.emplace(COLUMN_IDENTIFIER_CTID, TableColumn("ctid", tid));
+	virtual_columns.emplace(COLUMN_IDENTIFIER_XMIN, TableColumn("xmin", xid));
+	virtual_columns.emplace(COLUMN_IDENTIFIER_XMAX, TableColumn("xmax", xid));
+	virtual_columns.emplace(COLUMN_IDENTIFIER_CMIN, TableColumn("cmin", cid));
+	virtual_columns.emplace(COLUMN_IDENTIFIER_CMAX, TableColumn("cmax", cid));
+}
+
 vector<idx_t> TableCatalogEntry::GetSubObjectOids() const {
 	vector<idx_t> oids;
 	for (auto &column : GetColumns().Logical()) {
