@@ -405,6 +405,9 @@ BoundStatement Binder::Bind(AlterStatement &stmt) {
 
 	// Special handling for ALTER DATABASE - doesn't use schema binding
 	if (stmt.info->type == AlterType::ALTER_DATABASE) {
+		if (!DBConfig::GetConfig(context).cluster_catalog.empty()) {
+			throw NotImplementedException("renaming a database is not supported");
+		}
 		auto &properties = GetStatementProperties();
 		properties.return_type = StatementReturnType::NOTHING;
 		properties.RegisterDBModify(Catalog::GetSystemCatalog(context), context, DatabaseModificationType::ALTER_TABLE);
