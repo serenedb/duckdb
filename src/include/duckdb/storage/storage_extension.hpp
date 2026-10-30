@@ -41,6 +41,9 @@ public:
 	virtual ~StorageExtension() {
 	}
 
+	virtual void OnLoadStorage(AttachedDatabase &db) {
+	}
+
 	virtual void OnCheckpointStart(AttachedDatabase &db, CheckpointOptions checkpoint_options) {
 	}
 
