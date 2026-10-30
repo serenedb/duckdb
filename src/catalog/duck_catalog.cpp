@@ -119,6 +119,9 @@ optional_ptr<DependencyManager> DuckCatalog::GetDependencyManager() {
 //===--------------------------------------------------------------------===//
 unique_ptr<IndexCatalogEntry> DuckCatalog::MakeIndexEntry(CatalogTransaction transaction, DuckSchemaEntry &schema,
                                                           CreateIndexInfo &info, CatalogEntry &relation) {
+	if (!info.tablespace.empty()) {
+		throw CatalogException("TABLESPACE is not supported for indexes in a %s catalog", GetCatalogType());
+	}
 	return make_uniq<DuckIndexEntry>(*this, schema, info, relation.Cast<TableCatalogEntry>());
 }
 
