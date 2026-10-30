@@ -45,6 +45,9 @@ void CurrentSettingDynamic(DataChunk &args, ExpressionState &state, Vector &resu
 			continue;
 		}
 		Identifier key(entry.GetValue().GetString());
+		if (context.setting_readable && !context.setting_readable(context, key.GetIdentifierName())) {
+			throw PermissionException("must be superuser to examine \"%s\"", key.GetIdentifierName());
+		}
 		Value val;
 		if (!context.TryGetCurrentSetting(key, val)) {
 			Catalog::AutoloadExtensionByConfigName(context, key);
@@ -76,6 +79,9 @@ unique_ptr<FunctionData> CurrentSettingBind(BindScalarFunctionInput &input) {
 	auto key = key_val.GetValue<Identifier>();
 	if (key.empty()) {
 		throw ParserException("Key name for current_setting must not be empty");
+	}
+	if (context.setting_readable && !context.setting_readable(context, key.GetIdentifierName())) {
+		throw PermissionException("must be superuser to examine \"%s\"", key.GetIdentifierName());
 	}
 
 	Value val;
