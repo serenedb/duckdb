@@ -155,6 +155,7 @@ public:
 	static constexpr const BindingType TYPE = BindingType::DUMMY;
 	// NOTE: changing this string conflicts with the storage version
 	static constexpr const char *DUMMY_NAME = "0_macro_parameters";
+	static constexpr const char *VALUES_NAME = "0_macro_values_";
 
 public:
 	DummyBinding(vector<LogicalType> types, vector<Identifier> names, string dummy_name);

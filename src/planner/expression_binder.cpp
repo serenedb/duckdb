@@ -29,6 +29,24 @@ idx_t ExpressionBinder::SharedMacroArguments() const {
 	return binder.global_binder_state->shared_macro_arguments;
 }
 
+bool ExpressionBinder::IsArgumentReference(const ColumnRefExpression &col_ref) {
+	if (col_ref.IsQualified()) {
+		return false;
+	}
+	auto &name = col_ref.GetColumnName();
+	if (binder.global_binder_state->bound_macro_arguments.count(name)) {
+		return true;
+	}
+	if (lambda_bindings) {
+		for (auto &binding : *lambda_bindings) {
+			if (binding.HasMatchingBinding(name)) {
+				return true;
+			}
+		}
+	}
+	return false;
+}
+
 void ExpressionBinder::InitializeStackCheck() {
 	static constexpr idx_t INITIAL_DEPTH = 5;
 	if (binder.HasEnclosingScope()) {

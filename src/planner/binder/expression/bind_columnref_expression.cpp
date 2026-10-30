@@ -131,7 +131,8 @@ BindResult ExpressionBinder::BindExpression(ColumnRefExpression &col_ref_p, idx_
 	auto &names = col_ref.ColumnNames();
 	auto &table_name = names[names.size() - 2];
 
-	if (binder.macro_binding && table_name == binder.macro_binding->GetAlias()) {
+	const bool macro_parameter = binder.macro_binding && table_name == binder.macro_binding->GetAlias();
+	if (macro_parameter) {
 		result = binder.macro_binding->Bind(col_ref, depth);
 	} else {
 		result = binder.bind_context.BindColumn(col_ref, depth);
@@ -139,6 +140,9 @@ BindResult ExpressionBinder::BindExpression(ColumnRefExpression &col_ref_p, idx_
 
 	if (result.HasError()) {
 		result.error.AddQueryLocation(col_ref_p);
+		return result;
+	}
+	if (macro_parameter) {
 		return result;
 	}
 

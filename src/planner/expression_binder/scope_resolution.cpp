@@ -193,6 +193,10 @@ static void CollectResolvableColumns(ParsedExpression &expr, vector<identifier_s
 		if (!col_ref.IsQualified() && LambdaExpression::IsLambdaParameter(lambda_params, col_ref.GetName())) {
 			return;
 		}
+		if (col_ref.IsQualified() &&
+		    col_ref.ColumnNames()[col_ref.ColumnNames().size() - 2].StartsWith(DummyBinding::VALUES_NAME)) {
+			return;
+		}
 		result.push_back(col_ref);
 		return;
 	}

@@ -196,6 +196,7 @@ private:
 struct MacroParameterUse {
 	idx_t references = 0;
 	bool shareable = true;
+	bool aggregated = false;
 	identifier_set_t lambda_names;
 };
 

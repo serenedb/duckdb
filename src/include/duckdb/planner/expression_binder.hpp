@@ -314,6 +314,7 @@ protected:
 		return true;
 	}
 	idx_t SharedMacroArguments() const;
+	bool IsArgumentReference(const ColumnRefExpression &col_ref);
 	virtual BindResult BindAggregate(FunctionExpression &expr, AggregateFunctionCatalogEntry &function, idx_t depth);
 	virtual BindResult BindWindow(FunctionExpression &expr, WindowFunctionCatalogEntry &function, idx_t depth);
 	virtual BindResult BindUnnest(FunctionExpression &expr, idx_t depth, bool root_expression);
@@ -330,10 +331,18 @@ protected:
 	vector<bool> MacroArgumentsBindInPlace(FunctionExpression &function, ScalarMacroCatalogEntry &macro_func);
 	bool IsSetReturningFunction(const FunctionExpression &function);
 	bool ReturnsAtMostOneRow(SelectNode &node, bool from_parameters_only);
+	bool MayAggregate(SelectNode &node);
+	vector<bool> MacroArgumentsBoundAsValues(const MacroBodyUse &use, bool inline_body, ParsedExpression &body,
+	                                         DummyBinding &binding, vector<unique_ptr<ParsedExpression>> &arguments);
+	bool MovesIntoSubquery(ParsedExpression &argument);
+	bool ResolvesInScope(ParsedExpression &argument);
+	void ExpandSubqueryArguments(DummyBinding &binding, vector<unique_ptr<ParsedExpression>> &arguments,
+	                             const vector<bool> &bound_once, unique_ptr<ParsedExpression> &expr, bool sql_function);
 	void AddSqlFunctionParameters(unique_ptr<ParsedExpression> &expr, const Identifier &alias,
-	                              const vector<Identifier> &names, vector<unique_ptr<ParsedExpression>> arguments);
-	void AnalyzeMacroBody(ParsedExpression &expr, bool shareable, vector<identifier_set_t> &lambda_params,
-	                      DummyBinding &parameters, MacroBodyUse &use);
+	                              const vector<Identifier> &names, vector<unique_ptr<ParsedExpression>> arguments,
+	                              bool sql_function);
+	void AnalyzeMacroBody(ParsedExpression &expr, bool shareable, bool aggregated,
+	                      vector<identifier_set_t> &lambda_params, DummyBinding &parameters, MacroBodyUse &use);
 	void ScanMacroArgument(ParsedExpression &argument, MacroArgumentScan &scan);
 	bool IsLambdaSafeMacroArgument(ParsedExpression &argument);
 	bool IsLevelIndependentMacroArgument(ParsedExpression &argument);
