@@ -236,9 +236,9 @@ struct BlockCacheStatistics {
 //! the buffer pool, which can take it back; eviction samples frames and keeps blocks read twice over blocks read once.
 class BlockCache {
 public:
-	static constexpr idx_t BLOCK_SIZE = 256ULL * 1024ULL;
+	static constexpr idx_t BLOCK_SIZE = 64ULL * 1024ULL;
 	//! Missing runs closer than this are fetched by one request
-	static constexpr idx_t MERGE_GAP = 1024ULL * 1024ULL;
+	static constexpr idx_t MERGE_GAP = 256ULL * 1024ULL;
 	//! The largest run of blocks fetched together
 	static constexpr idx_t MAX_REQUEST = 16ULL * 1024ULL * 1024ULL;
 	//! A longer run is fetched as concurrent requests of at most this size, and the blocks of each are handed out as
