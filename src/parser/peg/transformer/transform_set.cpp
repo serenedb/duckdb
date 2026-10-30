@@ -201,16 +201,15 @@ unique_ptr<SetStatement> PEGTransformerFactory::TransformSetTimeZone(PEGTransfor
 	return make_uniq<SetVariableStatement>("timezone", std::move(zone_value), SetScope::AUTOMATIC);
 }
 
-// SetRole <- 'ROLE' RoleSpec
-// Routes to the `role` extension setting (registered in serenedb's
-// server/query/config_variables.cpp with a NoOverwrite callback so the
-// value flows into session state but doesn't perform real role-switch).
+// SetRole <- RoleScope? 'ROLE' RoleSpec
 unique_ptr<SetStatement> PEGTransformerFactory::TransformSetRole(PEGTransformer &transformer,
+                                                                 const optional<SetScope> &role_scope,
                                                                  unique_ptr<ParsedExpression> role_spec) {
+	const auto scope = role_scope ? *role_scope : SetScope::AUTOMATIC;
 	if (role_spec->GetExpressionClass() == ExpressionClass::DEFAULT) {
-		return make_uniq<ResetVariableStatement>("role", SetScope::AUTOMATIC);
+		return make_uniq<ResetVariableStatement>("role", scope);
 	}
-	return make_uniq<SetVariableStatement>("role", std::move(role_spec), SetScope::AUTOMATIC);
+	return make_uniq<SetVariableStatement>("role", std::move(role_spec), scope);
 }
 
 // SetSessionAuthorization <- 'SESSION' 'AUTHORIZATION' RoleSpec
