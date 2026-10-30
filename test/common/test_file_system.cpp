@@ -654,6 +654,29 @@ TEST_CASE("Mapped files take read-ahead hints", "[file_system]") {
 	fs.RemoveFile(path);
 }
 
+TEST_CASE("Mapped files read evicted ranges back from the file", "[file_system]") {
+	LocalFileSystem fs;
+	auto path = TestCreatePath("mapped_file_evict.bin");
+	constexpr idx_t size = 1024 * 1024 + 321;
+	vector<data_t> data(size);
+	for (idx_t i = 0; i < size; i++) {
+		data[i] = static_cast<data_t>(i * 31 % 251);
+	}
+	{
+		auto handle = fs.OpenFile(path, FileFlags::FILE_FLAGS_WRITE | FileFlags::FILE_FLAGS_FILE_CREATE_NEW);
+		handle->Write(QueryContext(), data.data(), size, 0);
+	}
+	auto mapped = fs.MemoryMapFile(path, FileFlags::FILE_FLAGS_READ, MMapOptions());
+	REQUIRE(memcmp(mapped->GetData(0, size), data.data(), size) == 0);
+	mapped->Evict(1000, size - 2000);
+	mapped->Evict(0, size);
+	mapped->Evict(size - 10, 100);
+	mapped->Evict(size + 10, 100);
+	REQUIRE(memcmp(mapped->GetData(0, size), data.data(), size) == 0);
+	mapped->Close();
+	fs.RemoveFile(path);
+}
+
 TEST_CASE("Directory syncs and writeback hints reach the local filesystem", "[file_system]") {
 	LocalFileSystem fs;
 	auto directory = TestCreatePath("sync_directory");
