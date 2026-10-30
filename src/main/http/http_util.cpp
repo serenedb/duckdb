@@ -410,7 +410,7 @@ HTTPUtil::RunRequestWithRetry(const std::function<unique_ptr<HTTPResponse>(void)
 			                        response->status == HTTPStatusCode::NotModified_304;
 			    return HTTPRetryDecision::Finish();
 		    }
-		    if (!HTTPUtil::IsIdempotent(request.type)) {
+		    if (!HTTPUtil::IsIdempotent(request.type) && !(response && response->unsent)) {
 			    return HTTPRetryDecision::Finish();
 		    }
 		    const bool throttled = (response && (response->status == HTTPStatusCode::TooManyRequests_429 ||

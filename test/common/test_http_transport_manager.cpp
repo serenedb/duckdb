@@ -1293,3 +1293,44 @@ TEST_CASE("Extension downloads without an HTTP client", "[http_transport_manager
 }
 
 } // namespace duckdb
+
+TEST_CASE("HTTP retries a request of any method that never reached the server", "[http_transport_manager]") {
+	MockHTTPUtil http_util(HTTPTransportReusePolicy::EPHEMERAL);
+	MockHTTPParams params(http_util);
+	params.retries = 3;
+	params.retry_wait_ms = 0;
+	HTTPHeaders headers;
+	PostRequestInfo request("https://example.com/upload", headers, params, nullptr, 0);
+	request.try_request = true;
+
+	auto failure = [](bool unsent) {
+		auto response = make_uniq<HTTPResponse>(HTTPStatusCode::INVALID);
+		response->request_error = "Timeout was reached";
+		response->unsent = unsent;
+		return response;
+	};
+
+	idx_t attempts = 0;
+	auto response = HTTPUtil::RunRequestWithRetry(
+	    [&]() -> unique_ptr<HTTPResponse> {
+		    if (attempts++ < 2) {
+			    return failure(true);
+		    }
+		    return make_uniq<HTTPResponse>(HTTPStatusCode::OK_200);
+	    },
+	    request, [] {});
+	REQUIRE(response);
+	CHECK(response->status == HTTPStatusCode::OK_200);
+	CHECK(attempts == 3);
+
+	attempts = 0;
+	response = HTTPUtil::RunRequestWithRetry(
+	    [&]() -> unique_ptr<HTTPResponse> {
+		    attempts++;
+		    return failure(false);
+	    },
+	    request, [] {});
+	REQUIRE(response);
+	CHECK(response->HasRequestError());
+	CHECK(attempts == 1);
+}
