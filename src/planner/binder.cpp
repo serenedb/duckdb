@@ -4,6 +4,7 @@
 #include "duckdb/catalog/catalog_entry/index_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/view_catalog_entry.hpp"
+#include "duckdb/catalog/dependency_manager.hpp"
 #include "duckdb/catalog/duck_catalog.hpp"
 #include "duckdb/common/enums/cte_materialize.hpp"
 #include "duckdb/parser/common_table_expression_info.hpp"
@@ -390,6 +391,44 @@ void Binder::RequireSchemaCreate(SchemaCatalogEntry &schema) {
 	}
 	if (!principal->Can(CatalogType::SCHEMA_ENTRY, schema.permissions, AclMode::Create)) {
 		ThrowPermissionDenied(schema);
+	}
+}
+
+void Binder::RequireTypeUsage(optional_ptr<const LogicalDependencyList> dependencies) {
+	if (!principal) {
+		return;
+	}
+	reference_set_t<const CatalogEntry> checked;
+	auto check = [&](const CatalogEntry &entry) {
+		if (entry.type != CatalogType::TYPE_ENTRY || IsUnowned(entry) || !checked.insert(entry).second) {
+			return;
+		}
+		if (!principal->Can(entry.type, entry.permissions, AclMode::Usage)) {
+			ThrowPermissionDenied(entry);
+		}
+	};
+	if (dependencies) {
+		for (auto &dependency : dependencies->Set()) {
+			if (dependency.entry.type != CatalogType::TYPE_ENTRY) {
+				continue;
+			}
+			auto &catalog = Catalog::GetCatalog(context, dependency.catalog);
+			auto dependency_manager = catalog.GetDependencyManager();
+			auto entry = dependency_manager
+			                 ? dependency_manager->LookupEntry(catalog.GetCatalogTransaction(context), dependency)
+			                 : Catalog::GetEntry(context,
+			                                     EntryLookupInfo(CatalogType::TYPE_ENTRY,
+			                                                     QualifiedName::FromCatalogSchema(
+			                                                         dependency.catalog, dependency.entry.schema_path,
+			                                                         dependency.entry.name)),
+			                                     OnEntryNotFound::RETURN_NULL);
+			if (entry) {
+				check(*entry);
+			}
+		}
+	}
+	for (auto entry : GetStatementProperties().resolved_entries) {
+		check(*entry);
 	}
 }
 

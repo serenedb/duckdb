@@ -959,6 +959,9 @@ SchemaCatalogEntry &Binder::BindCreateTriggerInfo(CreateTriggerInfo &create_trig
 		throw BinderException("CREATE TRIGGER requires a base table");
 	}
 	auto &table = *table_ptr;
+	if (principal && !principal->Can(CatalogType::TABLE_ENTRY, table.permissions, AclMode::Trigger)) {
+		ThrowPermissionDenied(table);
+	}
 	// Dropping the trigger's own table must not require CASCADE. If the trigger body also references this table,
 	// the body-reference dependency below merges in ALTER-blocking flags.
 	create_trigger_info.dependencies.AddDependency(table, DependencyDependentFlags());
@@ -1268,6 +1271,7 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 			break;
 		}
 		auto bound_info = BindCreateTableInfo(std::move(stmt.info));
+		RequireTypeUsage(bound_info->Base().dependencies);
 		auto root = std::move(bound_info->query);
 
 		// create the logical operator

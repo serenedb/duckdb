@@ -291,6 +291,7 @@ BoundStatement Binder::Bind(AlterStatement &stmt) {
 	if (!entry) {
 		// Bind types in this binder
 		BindAlterTypes(*this, stmt);
+		RequireTypeUsage(nullptr);
 
 		result.plan = make_uniq<LogicalAlter>(std::move(stmt.info));
 		return result;
@@ -308,6 +309,7 @@ BoundStatement Binder::Bind(AlterStatement &stmt) {
 	type_binder->SetSearchPath(catalog, stmt.info->GetQualifiedName().Schema());
 
 	BindAlterTypes(*type_binder, stmt);
+	RequireTypeUsage(nullptr);
 
 	if (catalog.IsSystemCatalog()) {
 		throw BinderException("Can not comment on System Catalog entries");

@@ -655,6 +655,23 @@ static EntryLookupInfo ReferencedTableLookup(SchemaCatalogEntry &schema, const F
 	return EntryLookupInfo(table_lookup, fk_name);
 }
 
+static void RequireReferences(CatalogEntryRetriever &entry_retriever, CatalogEntry &entry,
+                              const ForeignKeyConstraint &fk) {
+	auto principal = entry_retriever.GetPrincipal();
+	if (!principal || entry.type != CatalogType::TABLE_ENTRY) {
+		return;
+	}
+	auto &table = entry.Cast<TableCatalogEntry>();
+	vector<std::span<const AclItem>> acls;
+	for (auto &column : fk.pk_columns) {
+		Identifier name(column);
+		acls.push_back(table.GetColumn(table.GetColumnIndex(name)).Acl());
+	}
+	if (!principal->CanColumns(table.permissions, AclMode::References, acls)) {
+		ThrowPermissionDenied(table);
+	}
+}
+
 static void BindCreateTableConstraints(BoundCreateTableInfo &info, CatalogEntryRetriever &entry_retriever,
                                        SchemaCatalogEntry &schema) {
 	auto &create_info = info.Base();
@@ -671,7 +688,9 @@ static void BindCreateTableConstraints(BoundCreateTableInfo &info, CatalogEntryR
 		}
 		info.AddSubDependency(AlterTableType::DROP_CONSTRAINT, Identifier(cond->constraint_name));
 		if (!fk.info.pk_keys.empty() && !fk.info.fk_keys.empty()) {
-			entry_retriever.GetEntry(ReferencedTableLookup(schema, fk));
+			if (auto parent = entry_retriever.GetEntry(ReferencedTableLookup(schema, fk))) {
+				RequireReferences(entry_retriever, *parent, fk);
+			}
 			continue;
 		}
 		D_ASSERT(fk.info.pk_keys.empty());
@@ -698,6 +717,7 @@ static void BindCreateTableConstraints(BoundCreateTableInfo &info, CatalogEntryR
 			throw BinderException("Creating foreign keys across different schemas or catalogs is not supported");
 		}
 		FindMatchingPrimaryKeyColumns(pk_table_entry_ptr.GetColumns(), pk_table_entry_ptr.GetConstraints(), fk);
+		RequireReferences(entry_retriever, pk_table_entry_ptr, fk);
 		FindForeignKeyIndexes(pk_table_entry_ptr.GetColumns(), fk.pk_columns, fk.info.pk_keys);
 		CheckForeignKeyTypes(pk_table_entry_ptr.GetColumns(), create_info.columns, fk);
 		if (pk_table_entry_ptr.IsDuckTable()) {

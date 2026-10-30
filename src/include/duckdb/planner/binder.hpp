@@ -430,6 +430,7 @@ public:
 	optional_ptr<CatalogEntry> DatabaseEntry(const Identifier &database);
 	void RequireDatabasePrivilege(const Identifier &database, AclMode need);
 	void RequireSchemaCreate(SchemaCatalogEntry &schema);
+	void RequireTypeUsage(optional_ptr<const LogicalDependencyList> dependencies);
 
 	void BeginSubqueryBind(Binder &parent, ExpressionBinder &binder);
 	//! The innermost enclosing scope
