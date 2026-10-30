@@ -7,6 +7,7 @@
 #include "duckdb/main/attached_database.hpp"
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/string_util.hpp"
+#include "duckdb/common/types/hash.hpp"
 #include "duckdb/parser/column_list.hpp"
 #include "duckdb/parser/parsed_data/alter_table_info.hpp"
 
@@ -298,9 +299,25 @@ void Permissions::AssignOwner(idx_t new_owner, CatalogType objtype, optional_ptr
 	}
 }
 
+static bool FilterMayContain(std::span<const uint64_t> filter, idx_t member) {
+	const auto hash = Hash(uint64_t(member));
+	const auto mask = filter.size() * 64 - 1;
+	const auto first = hash & mask;
+	const auto second = (hash >> 32) & mask;
+	return ((filter[first >> 6] >> (first & 63)) & (filter[second >> 6] >> (second & 63)) & 1) != 0;
+}
+
+static idx_t FilterWords(idx_t members) {
+	idx_t words = 1;
+	while (words * 64 < members * 16) {
+		words *= 2;
+	}
+	return words;
+}
+
 bool RoleAccess::Uses(idx_t other) const {
-	return other == role ||
-	       (((closure_mask >> (other & 63)) & 1) != 0 && std::binary_search(closure.begin(), closure.end(), other));
+	return other == role || (!closure_filter.empty() && FilterMayContain(closure_filter, other) &&
+	                         std::binary_search(closure.begin(), closure.end(), other));
 }
 
 bool RoleAccess::CanSet(idx_t other) const {
@@ -407,6 +424,9 @@ SecuritySnapshot::SecuritySnapshot(vector<Role> roles_p) {
 			list->erase(std::unique(list->begin(), list->end()), list->end());
 			total += list->size();
 		}
+		if (!role.closure.empty()) {
+			total += FilterWords(role.closure.size());
+		}
 	}
 	arena.reserve(total);
 	roles.reserve(roles_p.size());
@@ -415,11 +435,22 @@ SecuritySnapshot::SecuritySnapshot(vector<Role> roles_p) {
 		access.role = role.role;
 		access.options = role.options;
 		access.is_superuser = HasOption(role.options, RoleOption::Superuser);
-		const auto begin = arena.size();
-		for (auto member : role.closure) {
-			arena.push_back(member);
-			access.closure_mask |= uint64_t(1) << (member & 63);
+		if (!role.closure.empty()) {
+			const auto words = FilterWords(role.closure.size());
+			const auto filter_begin = arena.size();
+			arena.resize(filter_begin + words, 0);
+			const auto mask = words * 64 - 1;
+			for (auto member : role.closure) {
+				const auto hash = Hash(uint64_t(member));
+				const auto first = hash & mask;
+				const auto second = (hash >> 32) & mask;
+				arena[filter_begin + (first >> 6)] |= uint64_t(1) << (first & 63);
+				arena[filter_begin + (second >> 6)] |= uint64_t(1) << (second & 63);
+			}
+			access.closure_filter = std::span<const uint64_t>(arena.data() + filter_begin, words);
 		}
+		const auto begin = arena.size();
+		arena.insert(arena.end(), role.closure.begin(), role.closure.end());
 		access.closure = std::span<const idx_t>(arena.data() + begin, role.closure.size());
 		const auto settable_begin = arena.size();
 		arena.insert(arena.end(), role.settable.begin(), role.settable.end());
