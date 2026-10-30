@@ -276,6 +276,9 @@ BoundStatement Binder::BindNode(UpdateQueryNode &node) {
 			return std::move(*expanded);
 		}
 	}
+	if (principal && !principal->CanAnyColumn(table.permissions, AclMode::Update, table.GetColumns())) {
+		ThrowPermissionDenied(table);
+	}
 
 	optional_ptr<LogicalGet> get;
 	if (node.from_table) {
@@ -335,6 +338,15 @@ BoundStatement Binder::BindNode(UpdateQueryNode &node) {
 	                              update->columns, node.prioritize_table_when_binding);
 	D_ASSERT(proj_tmp->type == LogicalOperatorType::LOGICAL_PROJECTION);
 	auto proj = unique_ptr_cast<LogicalOperator, LogicalProjection>(std::move(proj_tmp));
+	if (principal) {
+		vector<std::span<const AclItem>> acls;
+		for (auto index : update->columns) {
+			acls.emplace_back(table.GetColumns().GetColumn(index).Acl());
+		}
+		if (!principal->CanColumns(table.permissions, AclMode::Update, acls)) {
+			ThrowPermissionDenied(table);
+		}
+	}
 
 	// bind any extra columns necessary for CHECK constraints or indexes;
 	// storage-derived decisions (index updates force delete+insert) come
@@ -344,17 +356,6 @@ BoundStatement Binder::BindNode(UpdateQueryNode &node) {
 		storage_table->BindUpdateConstraints(*this, *get, *proj, *update, context);
 	} else {
 		table.BindUpdateConstraints(*this, *get, *proj, *update, context);
-	}
-	if (principal) {
-		vector<std::span<const AclItem>> acls;
-		if (!update->update_is_del_and_insert) {
-			for (auto index : update->columns) {
-				acls.emplace_back(table.GetColumns().GetColumn(index).Acl());
-			}
-		}
-		if (!principal->CanColumns(table.permissions, AclMode::Update, acls)) {
-			ThrowPermissionDenied(table);
-		}
 	}
 
 	// capture the pre-update (OLD) row image before rowid so rowid stays the final input column

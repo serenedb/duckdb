@@ -343,6 +343,18 @@ bool RoleAccess::CanAnyColumn(const Permissions &permissions, AclMode need,
 	});
 }
 
+bool RoleAccess::CanAnyColumn(const Permissions &permissions, AclMode need, const ColumnList &columns) const {
+	if (Can(CatalogType::TABLE_ENTRY, permissions, need)) {
+		return true;
+	}
+	for (auto &column : columns.Logical()) {
+		if (Allows(*this, column.Acl(), CatalogType::TABLE_ENTRY, permissions.owner, need, false)) {
+			return true;
+		}
+	}
+	return false;
+}
+
 AclMode RoleAccess::HeldModes(std::span<const AclItem> acl) const {
 	return Held(*this, acl, &AclItem::privs);
 }

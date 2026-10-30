@@ -706,6 +706,9 @@ BoundStatement Binder::BindNode(InsertQueryNode &node) {
 		auto merge_into = GenerateMergeInto(node, table);
 		return Bind(*merge_into);
 	}
+	if (principal && !principal->CanAnyColumn(table.permissions, AclMode::Insert, table.GetColumns())) {
+		ThrowPermissionDenied(table);
+	}
 	if (table.temporary) {
 		// Temporary inserts still need a catalog dependency so prepared statements are rebound if the table is dropped.
 		GetStatementProperties().RegisterDBRead(table.catalog, context);
@@ -752,7 +755,10 @@ BoundStatement Binder::BindNode(InsertQueryNode &node) {
 		for (idx_t i = 0; i < source_columns && i < named_column_map.size(); i++) {
 			acls.emplace_back(table.GetColumn(named_column_map[i]).Acl());
 		}
-		if (!principal->CanColumns(table.permissions, AclMode::Insert, acls)) {
+		const bool allowed = acls.empty()
+		                         ? principal->CanAnyColumn(table.permissions, AclMode::Insert, table.GetColumns())
+		                         : principal->CanColumns(table.permissions, AclMode::Insert, acls);
+		if (!allowed) {
 			ThrowPermissionDenied(table);
 		}
 	};

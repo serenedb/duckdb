@@ -308,14 +308,8 @@ void Binder::CheckTableRead(TableBinding &binding, TableCatalogEntry &table) {
 
 void Binder::CheckTableReads() {
 	for (auto &read : global_binder_state->column_reads) {
-		if (read->referenced) {
-			continue;
-		}
-		vector<std::span<const AclItem>> acls;
-		for (auto &column : read->table.GetColumns().Logical()) {
-			acls.emplace_back(column.Acl());
-		}
-		if (!read->principal.CanAnyColumn(read->table.permissions, AclMode::Select, acls)) {
+		if (!read->referenced &&
+		    !read->principal.CanAnyColumn(read->table.permissions, AclMode::Select, read->table.GetColumns())) {
 			ThrowPermissionDenied(read->table);
 		}
 	}
