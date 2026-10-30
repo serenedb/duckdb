@@ -466,9 +466,6 @@ const MacroBodyUse &ExpressionBinder::GetMacroBodyUse(const ScalarMacroFunction 
 }
 
 void ExpressionBinder::ShareAliasReferences(unique_ptr<ParsedExpression> &expr, SelectBindState &bind_state) {
-	if (!CanShareMacroArguments()) {
-		return;
-	}
 	vector<Identifier> names;
 	ParsedExpressionIterator::VisitExpressionClass(
 	    *expr, ExpressionClass::COLUMN_REF, [&](const ParsedExpression &child) {
@@ -1251,7 +1248,7 @@ ScalarMacroFunction &ExpressionBinder::UnfoldMacroExpression(FunctionExpression 
 	vector<string> shared_names;
 	vector<unique_ptr<ParsedExpression>> shared_parsed;
 	if (use) {
-		const bool can_share = (!use->select_item || inline_body) && use->lambda_body && CanShareMacroArguments();
+		const bool can_share = (!use->select_item || inline_body) && use->lambda_body;
 		const bool function_arguments = !macro_def.return_types.empty();
 		auto &names = new_macro_binding->GetColumnNames();
 		vector<idx_t> shared_positions;
@@ -1297,7 +1294,7 @@ ScalarMacroFunction &ExpressionBinder::UnfoldMacroExpression(FunctionExpression 
 			}
 			if (!share) {
 				if (prebound_argument && (!use->select_item || inline_body) && parameter->second.shareable &&
-				    uncaptured && scan.lambda_body && CanShareMacroArguments()) {
+				    uncaptured && scan.lambda_body) {
 					auto &reused = binder.global_binder_state->bound_macro_arguments;
 					Identifier name("0_macro_bound_" + to_string(reused.size()));
 					reused.emplace(name, std::move(bound));

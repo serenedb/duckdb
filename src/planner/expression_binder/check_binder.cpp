@@ -20,6 +20,9 @@ BindResult CheckBinder::BindExpression(unique_ptr<ParsedExpression> &expr_ptr, i
 	case ExpressionClass::SUBQUERY:
 		return BindResult("cannot use subquery in check constraint");
 	case ExpressionClass::COLUMN_REF:
+		if (IsArgumentReference(expr.Cast<ColumnRefExpression>())) {
+			return ExpressionBinder::BindExpression(expr_ptr, depth);
+		}
 		return BindCheckColumn(expr.Cast<ColumnRefExpression>());
 	default:
 		return ExpressionBinder::BindExpression(expr_ptr, depth);
@@ -43,19 +46,6 @@ BindResult ExpressionBinder::BindQualifiedColumnName(ColumnRefExpression &colref
 }
 
 BindResult CheckBinder::BindCheckColumn(ColumnRefExpression &colref) {
-	if (!colref.IsQualified()) {
-		if (lambda_bindings) {
-			for (idx_t i = lambda_bindings->size(); i > 0; i--) {
-				if ((*lambda_bindings)[i - 1].HasMatchingBinding(Identifier(colref.GetName()))) {
-					// FIXME: support lambdas in CHECK constraints
-					// FIXME: like so: return (*lambda_bindings)[i - 1].Bind(colref, i, depth);
-					// FIXME: and move this to LambdaRefExpression::FindMatchingBinding
-					throw NotImplementedException("Lambda functions are currently not supported in CHECK constraints.");
-				}
-			}
-		}
-	}
-
 	if (colref.ColumnNames().size() > 1) {
 		return BindQualifiedColumnName(colref, table);
 	}
@@ -70,7 +60,7 @@ BindResult CheckBinder::BindCheckColumn(ColumnRefExpression &colref) {
 	}
 	bound_columns.insert(col.Physical());
 	D_ASSERT(col.StorageOid() != DConstants::INVALID_INDEX);
-	return BindResult(make_uniq<BoundReferenceExpression>(col.Type(), col.StorageOid()));
+	return BindChunkColumn(col.Name(), col.Type(), col.StorageOid());
 }
 
 } // namespace duckdb

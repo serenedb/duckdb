@@ -19,3 +19,18 @@ SELECT * FROM test
 102
 2
 
+statement ok
+CREATE TABLE lists(i INTEGER, l INTEGER[])
+
+statement ok
+INSERT INTO lists VALUES (100, [1, 2]), (200, [3])
+
+statement ok
+ALTER TABLE lists ALTER l TYPE BIGINT[] USING list_transform(l, lambda x: x + i)
+
+query II
+SELECT i, l FROM lists ORDER BY i
+----
+100	[101, 102]
+200	[203]
+

@@ -454,3 +454,17 @@ statement error
 COPY sales TO '{TEST_DIR}/partition_path_error_parent' (FORMAT parquet, PARTITION_BY (region), PARTITION_PATH '../' || coalesce(region, 'none'));
 ----
 PARTITION_PATH cannot contain ".."
+
+statement ok
+CREATE MACRO partition_twice(x) AS x + x
+
+statement ok
+COPY (SELECT i % 2 AS p, i FROM range(4) t(i)) TO '{TEST_DIR}/partition_path_macro' (FORMAT parquet, PARTITION_BY (p), PARTITION_PATH 'p' || partition_twice(partition_twice(partition_twice(partition_twice(partition_twice(partition_twice(partition_twice(partition_twice(partition_twice(partition_twice(partition_twice(partition_twice(partition_twice(partition_twice(partition_twice(partition_twice(partition_twice(partition_twice(partition_twice(partition_twice(p))))))))))))))))))))::VARCHAR);
+
+query II
+SELECT regexp_extract(replace(filename, '\', '/'), 'partition_path_macro/(.*)/[^/]*$', 1) AS dir, count(*)
+FROM read_parquet('{TEST_DIR}/partition_path_macro/**/*.parquet', hive_partitioning = false)
+GROUP BY dir ORDER BY dir;
+----
+p0	2
+p1048576	2

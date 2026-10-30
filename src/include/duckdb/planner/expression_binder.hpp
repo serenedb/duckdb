@@ -311,11 +311,9 @@ protected:
 	                              LambdaExpression &lambda_expr, idx_t lambda_expr_idx,
 	                              vector<unique_ptr<Expression>> bound_children,
 	                              vector<LogicalType> function_child_types, idx_t depth);
-	virtual bool CanShareMacroArguments() const {
-		return true;
-	}
 	idx_t SharedMacroArguments() const;
 	bool IsArgumentReference(const ColumnRefExpression &col_ref);
+	BindResult BindChunkColumn(const Identifier &name, const LogicalType &type, idx_t position);
 	virtual BindResult BindAggregate(FunctionExpression &expr, AggregateFunctionCatalogEntry &function, idx_t depth);
 	virtual BindResult BindWindow(FunctionExpression &expr, WindowFunctionCatalogEntry &function, idx_t depth);
 	virtual BindResult BindUnnest(FunctionExpression &expr, idx_t depth, bool root_expression);
@@ -366,6 +364,9 @@ protected:
 	                               const LambdaSyntaxType syntax_type);
 
 	virtual void ThrowIfUnnestInLambda(const ColumnBinding &column_binding);
+
+private:
+	TableIndex chunk_columns;
 };
 
 } // namespace duckdb

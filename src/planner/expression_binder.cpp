@@ -47,6 +47,14 @@ bool ExpressionBinder::IsArgumentReference(const ColumnRefExpression &col_ref) {
 	return false;
 }
 
+BindResult ExpressionBinder::BindChunkColumn(const Identifier &name, const LogicalType &type, idx_t position) {
+	if (!chunk_columns.IsValid()) {
+		chunk_columns = binder.GenerateTableIndex();
+	}
+	return BindResult(
+	    make_uniq<BoundColumnRefExpression>(name, type, ColumnBinding(chunk_columns, ProjectionIndex(position))));
+}
+
 void ExpressionBinder::InitializeStackCheck() {
 	static constexpr idx_t INITIAL_DEPTH = 5;
 	if (binder.HasEnclosingScope()) {
@@ -297,6 +305,14 @@ unique_ptr<Expression> ExpressionBinder::Bind(unique_ptr<ParsedExpression> &expr
 		bind_result.error.Throw();
 	}
 	unique_ptr<Expression> result = std::move(bind_result.expression);
+	if (chunk_columns.IsValid()) {
+		ExpressionIterator::VisitExpressionMutable<BoundColumnRefExpression>(
+		    result, [&](BoundColumnRefExpression &column, unique_ptr<Expression> &reference) {
+			    D_ASSERT(column.Binding().table_index == chunk_columns);
+			    reference = make_uniq<BoundReferenceExpression>(column.GetAlias(), column.GetReturnType(),
+			                                                    column.Binding().column_index.GetIndex());
+		    });
+	}
 	if (target_type.id() != LogicalTypeId::INVALID) {
 		// the binder has a specific target type: add a cast to that type
 		result = BoundCastExpression::AddCastToType(context, std::move(result), target_type);

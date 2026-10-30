@@ -360,6 +360,9 @@ protected:
 		case ExpressionClass::SUBQUERY:
 			return BindResult(BinderException::Unsupported(expr, "cannot use subquery in PARTITION_PATH"));
 		case ExpressionClass::COLUMN_REF:
+			if (IsArgumentReference(expr.Cast<ColumnRefExpression>())) {
+				return ExpressionBinder::BindExpression(expr_ptr, depth, root_expression);
+			}
 			return BindColumnReference(expr.Cast<ColumnRefExpression>());
 		default:
 			return ExpressionBinder::BindExpression(expr_ptr, depth, root_expression);
@@ -375,10 +378,6 @@ protected:
 		return "aggregate functions are not allowed in PARTITION_PATH";
 	}
 
-	bool CanShareMacroArguments() const override {
-		return false;
-	}
-
 private:
 	BindResult BindColumnReference(ColumnRefExpression &col_ref) {
 		if (col_ref.ColumnNames().size() == 1) {
@@ -386,7 +385,7 @@ private:
 			for (idx_t i = 0; i < partition_columns.size(); i++) {
 				auto column_idx = partition_columns[i];
 				if (names[column_idx] == column_name) {
-					return BindResult(make_uniq<BoundReferenceExpression>(types[column_idx], i));
+					return BindChunkColumn(column_name, types[column_idx], i);
 				}
 			}
 		}

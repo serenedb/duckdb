@@ -166,34 +166,6 @@ SELECT cos([1], x -> x + 1);
 ----
 <REGEX>:Binder Error.*failed to bind function, either.*This scalar function does not support lambdas!.*Referenced column.*was not found because the FROM clause is missing.*
 
-# FIXME: support lambdas in CHECK constraints
-
-statement error
-CREATE TABLE lambda_check (i BIGINT[],
-    CHECK (list_filter(i, x -> x % 2 = 0) == []));
-----
-<REGEX>:Not implemented Error.*Lambda functions are currently not supported in CHECK constraints.*
-
-statement error
-CREATE TABLE lambda_check (i BIGINT[],
-    CHECK (list_transform(i, x -> x % 2) == []));
-----
-<REGEX>:Not implemented Error.*Lambda functions are currently not supported in CHECK constraints.*
-
-statement error
-CREATE TABLE lambda_check (i BIGINT[],
-    CHECK ([x + 1 FOR x IN i IF x > 0] == []));
-----
-<REGEX>:Not implemented Error.*Lambda functions are currently not supported in CHECK constraints.*
-
-statement error
-CREATE TABLE lambda_check (
-	i BIGINT[],
-	j BIGINT[],
-	CHECK ((list_apply(i, x -> list_count(list_filter(j, y -> y%2=0)) + x)) == []));
-----
-<REGEX>:Not implemented Error.*Lambda functions are currently not supported in CHECK constraints.*
-
 # FIXME: allow lambdas in generated columns
 
 statement error

@@ -1,0 +1,74 @@
+# name: test/sql/constraints/check/check_lambdas.test
+# group: [check]
+
+statement ok
+CREATE TABLE lambda_filter (i BIGINT[], CHECK (list_filter(i, lambda x: x % 2 = 0) == []));
+
+statement ok
+INSERT INTO lambda_filter VALUES ([1, 3]), ([]);
+
+statement error
+INSERT INTO lambda_filter VALUES ([1, 2]);
+----
+<REGEX>:Constraint Error.*CHECK constraint failed.*
+
+statement ok
+CREATE TABLE lambda_transform (i BIGINT[], CHECK (list_transform(i, lambda x: x % 2) == []));
+
+statement ok
+INSERT INTO lambda_transform VALUES ([]);
+
+statement error
+INSERT INTO lambda_transform VALUES ([1]);
+----
+<REGEX>:Constraint Error.*CHECK constraint failed.*
+
+statement ok
+CREATE TABLE lambda_comprehension (i BIGINT[], CHECK ([x + 1 FOR x IN i IF x > 0] == []));
+
+statement ok
+INSERT INTO lambda_comprehension VALUES ([-1, 0]);
+
+statement error
+INSERT INTO lambda_comprehension VALUES ([0, 1]);
+----
+<REGEX>:Constraint Error.*CHECK constraint failed.*
+
+statement ok
+CREATE TABLE lambda_nested (
+	i BIGINT[],
+	j BIGINT[],
+	CHECK ((list_apply(i, lambda x: list_count(list_filter(j, lambda y: y % 2 = 0)) + x)) == []));
+
+statement ok
+INSERT INTO lambda_nested VALUES ([], [2, 4]);
+
+statement error
+INSERT INTO lambda_nested VALUES ([1], []);
+----
+<REGEX>:Constraint Error.*CHECK constraint failed.*
+
+statement ok
+CREATE TABLE lambda_capture (n BIGINT, l BIGINT[], CHECK (list_bool_and(list_transform(l, lambda x: x < n))));
+
+statement ok
+INSERT INTO lambda_capture VALUES (10, [1, 9]), (2, [1]);
+
+statement error
+INSERT INTO lambda_capture VALUES (5, [1, 5]);
+----
+<REGEX>:Constraint Error.*CHECK constraint failed.*
+
+statement error
+UPDATE lambda_capture SET n = 1 WHERE n = 2;
+----
+<REGEX>:Constraint Error.*CHECK constraint failed.*
+
+statement ok
+UPDATE lambda_capture SET n = 3 WHERE n = 2;
+
+query II
+SELECT n, l FROM lambda_capture ORDER BY n;
+----
+3	[1]
+10	[1, 9]
