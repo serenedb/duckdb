@@ -161,7 +161,7 @@ struct RoleAccess {
 	idx_t role = 0;
 	RoleOption options = RoleOption::None;
 	bool is_superuser = false;
-	uint64_t closure_mask = 0;
+	std::span<const uint64_t> closure_filter;
 	std::span<const idx_t> closure;
 	std::span<const idx_t> settable;
 
