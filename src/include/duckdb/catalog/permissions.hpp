@@ -11,6 +11,7 @@
 #include "duckdb/common/constants.hpp"
 #include "duckdb/common/enums/catalog_type.hpp"
 #include "duckdb/common/identifier.hpp"
+#include "duckdb/common/optional_idx.hpp"
 #include "duckdb/common/optional_ptr.hpp"
 #include "duckdb/common/serializer/deserializer.hpp"
 #include "duckdb/common/serializer/serializer.hpp"
@@ -148,6 +149,9 @@ struct Permissions {
 	static bool TryParsePrivilege(std::string_view keyword, CatalogType acl_class, AclMode &result);
 	static vector<AclItem> AclDefault(CatalogType acl_class, idx_t owner);
 
+	void AssignOwner(idx_t new_owner, CatalogType objtype, optional_ptr<const Permissions> database,
+	                 optional_idx schema);
+
 	void Serialize(Serializer &serializer) const;
 	static Permissions Deserialize(Deserializer &deserializer);
 };
@@ -158,6 +162,7 @@ struct RoleAccess {
 	bool is_superuser = false;
 	uint64_t closure_mask = 0;
 	std::span<const idx_t> closure;
+	std::span<const idx_t> settable;
 
 	bool Has(RoleOption option) const {
 		return HasOption(options, option);
@@ -169,6 +174,7 @@ struct RoleAccess {
 	bool Owns(idx_t owner) const {
 		return MemberOf(owner);
 	}
+	bool CanSet(idx_t other) const;
 	bool Can(CatalogType type, const Permissions &permissions, AclMode need) const;
 	bool CanAny(CatalogType type, const Permissions &permissions, AclMode need) const;
 	bool CanColumns(const Permissions &permissions, AclMode need, std::span<const std::span<const AclItem>> acls) const;
@@ -185,6 +191,7 @@ public:
 		idx_t role = 0;
 		RoleOption options = RoleOption::None;
 		vector<idx_t> closure;
+		vector<idx_t> settable;
 	};
 
 	explicit SecuritySnapshot(vector<Role> roles);
