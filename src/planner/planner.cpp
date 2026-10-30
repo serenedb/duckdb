@@ -106,15 +106,6 @@ static void RewriteTriggersToDependent(Binder &binder, LogicalOperator &op) {
 	}
 }
 
-static void CheckTreeDepth(const LogicalOperator &op, idx_t max_depth, idx_t depth = 0) {
-	if (depth >= max_depth) {
-		throw ParserException("Maximum tree depth of %lld exceeded in logical planner", max_depth);
-	}
-	for (auto &child : op.children) {
-		CheckTreeDepth(*child, max_depth, depth + 1);
-	}
-}
-
 #ifdef D_ASSERT_IS_ENABLED
 static bool ContainsDependentJoin(const LogicalOperator &op) {
 	if (op.type == LogicalOperatorType::LOGICAL_DEPENDENT_JOIN) {
@@ -237,9 +228,6 @@ void Planner::CreatePlan(SQLStatement &statement) {
 		}
 	}
 	if (this->plan) {
-		auto max_tree_depth = Settings::Get<MaxExpressionDepthSetting>(context);
-		CheckTreeDepth(*plan, max_tree_depth);
-
 		RewriteTriggersToDependent(*this->binder, *this->plan);
 		RecursiveDependentJoinPlanner::Plan(*this->binder, this->plan);
 		this->plan = FlattenDependentJoins::DecorrelateIndependent(*this->binder, std::move(this->plan));

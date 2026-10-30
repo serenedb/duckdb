@@ -3,9 +3,6 @@
 # group: [peg_parser]
 
 statement ok
-SET max_expression_depth=1000000;
-
-statement ok
 CREATE TABLE t(i INTEGER);
 
 statement ok
@@ -32,11 +29,11 @@ FROM query('SELECT count(*) FROM t JOIN ' || repeat('(t JOIN ', 40))
 Parser Error: syntax error at or near "JOIN"
 
 query I
-FROM query('SELECT count(*) FROM ' || repeat('(', 10000) || 't' || repeat(')', 10000))
+FROM query('SELECT count(*) FROM ' || repeat('(', 5000) || 't' || repeat(')', 5000))
 ----
 2
 
 statement error
-FROM query('SELECT ' || repeat('(', 10000))
+FROM query('SELECT ' || repeat('(', 1000))
 ----
 Parser Error: syntax error at or near "("

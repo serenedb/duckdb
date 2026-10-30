@@ -8,8 +8,8 @@
 #include "duckdb/planner/expression/list.hpp"
 #include "duckdb/planner/expression_iterator.hpp"
 #include "duckdb/common/operator/cast_operators.hpp"
+#include "duckdb/common/stack_depth.hpp"
 #include "duckdb/main/client_config.hpp"
-#include "duckdb/main/settings.hpp"
 #include "duckdb/common/string_util.hpp"
 
 namespace duckdb {
@@ -19,7 +19,6 @@ void ExpressionBinder::SetCatalogLookupCallback(catalog_entry_callback_t callbac
 }
 
 ExpressionBinder::ExpressionBinder(Binder &binder, ClientContext &context) : binder(binder), context(context) {
-	InitializeStackCheck();
 }
 
 ExpressionBinder::~ExpressionBinder() {
@@ -29,29 +28,9 @@ idx_t ExpressionBinder::SharedMacroArguments() const {
 	return binder.global_binder_state->shared_macro_arguments;
 }
 
-void ExpressionBinder::InitializeStackCheck() {
-	static constexpr idx_t INITIAL_DEPTH = 5;
-	if (binder.HasEnclosingScope()) {
-		stack_depth = binder.GetInnermostScope().stack_depth + INITIAL_DEPTH;
-	} else {
-		stack_depth = INITIAL_DEPTH;
-	}
-}
-
-StackChecker<ExpressionBinder> ExpressionBinder::StackCheck(const ParsedExpression &expr, idx_t extra_stack) {
-	D_ASSERT(stack_depth != DConstants::INVALID_INDEX);
-	auto max_expression_depth = Settings::Get<MaxExpressionDepthSetting>(context);
-	if (stack_depth + extra_stack >= max_expression_depth) {
-		throw BinderException("Max expression depth limit of %lld exceeded. Use \"SET max_expression_depth TO x\" to "
-		                      "increase the maximum expression depth.",
-		                      max_expression_depth);
-	}
-	return StackChecker<ExpressionBinder>(*this, extra_stack);
-}
-
 BindResult ExpressionBinder::BindExpression(unique_ptr<ParsedExpression> &expr, idx_t depth, bool root_expression) {
 	static constexpr idx_t INTERRUPT_INTERVAL = 256;
-	auto stack_checker = StackCheck(*expr);
+	StackDepth::Check();
 	if (++binds_since_interrupt_check >= INTERRUPT_INTERVAL) {
 		binds_since_interrupt_check = 0;
 		context.InterruptCheck();

@@ -1,4 +1,5 @@
 #include "duckdb/parser/query_node/cte_node.hpp"
+#include "duckdb/common/stack_depth.hpp"
 #include "duckdb/parser/query_node/update_query_node.hpp"
 #include "duckdb/parser/query_node/delete_query_node.hpp"
 #include "duckdb/parser/query_node/insert_query_node.hpp"
@@ -33,6 +34,7 @@ static bool IsSideEffectingQueryNode(QueryNodeType type) {
 }
 
 BoundStatement Binder::BindNode(QueryNode &node) {
+	StackDepth::Check();
 	reference<Binder> current_binder(*this);
 	vector<BoundCTEData> bound_ctes;
 	idx_t dml_cte_count = 0;

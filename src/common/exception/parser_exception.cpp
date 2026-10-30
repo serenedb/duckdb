@@ -18,8 +18,6 @@ ParserException ParserException::SyntaxError(std::string_view query, std::string
 }
 
 void ParserException::ThrowMaxExpressionDepth(idx_t max_expression_depth) {
-	throw ParserException("Max expression depth limit of %lld exceeded. Use \"SET max_expression_depth TO x\" to "
-	                      "increase the maximum expression depth.",
-	                      max_expression_depth);
+	throw ParserException("Max expression depth limit of %lld exceeded", max_expression_depth);
 }
 } // namespace duckdb

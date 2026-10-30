@@ -5,16 +5,10 @@
 statement ok
 SELECT (1+(1+(1+(1+(1+(1+(1+1)))))));
 
-statement ok
-SET max_expression_depth TO 7;
-
 statement error
-SELECT (1+(1+(1+(1+(1+(1+(1+1)))))));
+FROM query('SELECT ' || repeat('(1+', 300000) || '1' || repeat(')', 300000))
 ----
-expression depth limit
-
-statement ok
-SET max_expression_depth TO 1000;
+Max expression depth limit of 1000 exceeded
 
 statement ok
 SELECT (1+(1+(1+(1+(1+(1+(1+1)))))));

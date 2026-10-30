@@ -1,5 +1,6 @@
 #include "duckdb/planner/logical_operator_visitor.hpp"
 
+#include "duckdb/common/stack_depth.hpp"
 #include "duckdb/planner/expression/list.hpp"
 #include "duckdb/planner/expression_iterator.hpp"
 #include "duckdb/planner/operator/list.hpp"
@@ -16,6 +17,7 @@ void LogicalOperatorVisitor::VisitOperator(LogicalOperator &op) {
 }
 
 void LogicalOperatorVisitor::VisitOperatorChildren(LogicalOperator &op) {
+	StackDepth::Check();
 	if (op.HasProjectionMap()) {
 		VisitOperatorWithProjectionMapChildren(op);
 	} else {

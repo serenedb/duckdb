@@ -30,7 +30,6 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
 
 	// Disable progress bar and set memory/row limits to prevent resource exhaustion.
 	con.Query("SET enable_progress_bar=false");
-	con.Query("SET max_expression_depth=50");
 
 	try {
 		switch (selector % 4) {

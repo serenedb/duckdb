@@ -9,7 +9,6 @@
 #pragma once
 
 #include "duckdb/common/exception.hpp"
-#include "duckdb/common/stack_checker.hpp"
 #include "duckdb/common/error_data.hpp"
 #include "duckdb/common/exception/binder_exception.hpp"
 #include "duckdb/parser/expression/lambdaref_expression.hpp"
@@ -88,8 +87,6 @@ struct BindResult {
 };
 
 class ExpressionBinder {
-	friend class StackChecker<ExpressionBinder>;
-
 public:
 	ExpressionBinder(Binder &binder, ClientContext &context);
 	virtual ~ExpressionBinder();
@@ -248,12 +245,7 @@ public:
 	static bool IsSelectListSetReturningFunction(const Identifier &function_name);
 
 private:
-	//! Current stack depth
-	idx_t stack_depth = DConstants::INVALID_INDEX;
 	idx_t binds_since_interrupt_check = 0;
-
-	void InitializeStackCheck();
-	StackChecker<ExpressionBinder> StackCheck(const ParsedExpression &expr, idx_t extra_stack = 1);
 
 protected:
 	BindResult BindExpression(BetweenExpression &expr, idx_t depth);
