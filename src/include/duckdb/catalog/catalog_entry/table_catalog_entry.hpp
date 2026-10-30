@@ -176,6 +176,7 @@ public:
 
 	//! Returns the virtual columns for this table
 	virtual virtual_column_map_t GetVirtualColumns() const;
+	DUCKDB_API static void AddPostgresSystemColumns(virtual_column_map_t &virtual_columns);
 
 	virtual vector<column_t> GetRowIdColumns() const;
 
