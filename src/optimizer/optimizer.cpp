@@ -300,6 +300,27 @@ static void TrackDataVersions(ClientContext &context, const LogicalOperator &pla
 	}
 }
 
+template <class CALLBACK>
+static void ForEachPreparedStatement(LogicalOperator &plan, CALLBACK &&callback) {
+	for (optional_ptr<LogicalOperator> op = &plan; op; op = op->children.empty() ? nullptr : op->children[0].get()) {
+		if (op->type == LogicalOperatorType::LOGICAL_PREPARE) {
+			callback(*op->Cast<LogicalPrepare>().prepared, plan);
+		} else if (op->type == LogicalOperatorType::LOGICAL_EXECUTE) {
+			if (op->Cast<LogicalExecute>().replaces) {
+				callback(*op->Cast<LogicalExecute>().prepared, *op->children[0]);
+			}
+		} else if (op->type != LogicalOperatorType::LOGICAL_EXPLAIN) {
+			break;
+		}
+	}
+}
+
+void Optimizer::TrackDataVersions(ClientContext &context, LogicalOperator &plan) {
+	ForEachPreparedStatement(plan, [&](PreparedStatementData &prepared, const LogicalOperator &statement) {
+		duckdb::TrackDataVersions(context, statement, prepared);
+	});
+}
+
 // Returns true if the plan contains a DML statement inside a CTE body. A top-level
 // DML statement is not flagged. COPY TO is side-effecting, but does not invalidate
 // table statistics and is deliberately excluded here.
@@ -677,16 +698,6 @@ unique_ptr<LogicalOperator> Optimizer::Optimize(unique_ptr<LogicalOperator> plan
 	Verify(*plan_p);
 
 	this->plan = std::move(plan_p);
-	for (optional_ptr<LogicalOperator> op = plan.get(); op;
-	     op = op->children.empty() ? nullptr : op->children[0].get()) {
-		if (op->type == LogicalOperatorType::LOGICAL_PREPARE) {
-			TrackDataVersions(context, *plan, *op->Cast<LogicalPrepare>().prepared);
-		} else if (op->type == LogicalOperatorType::LOGICAL_EXECUTE && op->Cast<LogicalExecute>().replaces) {
-			TrackDataVersions(context, *op->children[0], *op->Cast<LogicalExecute>().prepared);
-		} else {
-			break;
-		}
-	}
 
 	for (auto &pre_optimizer_extension : optimizer_extensions) {
 		if (pre_optimizer_extension.anchor != OptimizerType::INVALID) {
