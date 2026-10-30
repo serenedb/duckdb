@@ -228,6 +228,9 @@ unique_ptr<AlterInfo> AlterTableInfo::Deserialize(Deserializer &deserializer) {
 	case AlterTableType::SET_PARTITIONED_BY:
 		result = SetPartitionedByInfo::Deserialize(deserializer);
 		break;
+	case AlterTableType::SET_SCHEMA:
+		result = SetSchemaInfo::Deserialize(deserializer);
+		break;
 	case AlterTableType::SET_SORTED_BY:
 		result = SetSortedByInfo::Deserialize(deserializer);
 		break;
@@ -581,6 +584,9 @@ void ChangeColumnTypeInfo::Serialize(Serializer &serializer) const {
 	serializer.WriteProperty<LogicalType>(401, "target_type", target_type);
 	serializer.WritePropertyWithDefault<unique_ptr<ParsedExpression>>(402, "expression", expression);
 	serializer.WritePropertyWithDefault<vector<Identifier>>(403, "column_path", column_path.size() > 1 ? column_path : vector<Identifier>(), vector<Identifier>());
+	if (serializer.ShouldSerialize(StorageVersion::SERENEDB_V1)) {
+		serializer.WritePropertyWithDefault<LogicalType>(16784, "declared_type", declared_type, LogicalType());
+	}
 }
 
 unique_ptr<AlterTableInfo> ChangeColumnTypeInfo::Deserialize(Deserializer &deserializer) {
@@ -589,6 +595,7 @@ unique_ptr<AlterTableInfo> ChangeColumnTypeInfo::Deserialize(Deserializer &deser
 	deserializer.ReadProperty<LogicalType>(401, "target_type", result->target_type);
 	deserializer.ReadPropertyWithDefault<unique_ptr<ParsedExpression>>(402, "expression", result->expression);
 	deserializer.ReadPropertyWithExplicitDefault<vector<Identifier>>(403, "column_path", result->column_path, vector<Identifier>());
+	deserializer.ReadPropertyWithExplicitDefault<LogicalType>(16784, "declared_type", result->declared_type, LogicalType());
 	if (result->column_path.empty()) {
 		result->column_path.push_back(std::move(column_name));
 	}
@@ -1107,6 +1114,17 @@ void SetPartitionedByInfo::Serialize(Serializer &serializer) const {
 unique_ptr<AlterTableInfo> SetPartitionedByInfo::Deserialize(Deserializer &deserializer) {
 	auto result = duckdb::unique_ptr<SetPartitionedByInfo>(new SetPartitionedByInfo());
 	deserializer.ReadPropertyWithDefault<vector<unique_ptr<ParsedExpression>>>(400, "partition_keys", result->partition_keys);
+	return std::move(result);
+}
+
+void SetSchemaInfo::Serialize(Serializer &serializer) const {
+	AlterTableInfo::Serialize(serializer);
+	serializer.WritePropertyWithDefault<Identifier>(400, "new_schema", new_schema);
+}
+
+unique_ptr<AlterTableInfo> SetSchemaInfo::Deserialize(Deserializer &deserializer) {
+	auto result = duckdb::unique_ptr<SetSchemaInfo>(new SetSchemaInfo());
+	deserializer.ReadPropertyWithDefault<Identifier>(400, "new_schema", result->new_schema);
 	return std::move(result);
 }
 
