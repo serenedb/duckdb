@@ -16,16 +16,10 @@ namespace duckdb {
 //! A function in the catalog
 class FunctionEntry : public StandardEntry {
 public:
-	FunctionEntry(CatalogType type, Catalog &catalog, SchemaCatalogEntry &schema, CreateFunctionInfo &info)
-	    : StandardEntry(type, schema, catalog, info.GetFunctionName(), info.oid) {
-		descriptions = std::move(info.descriptions);
-		alias_of = std::move(info.alias_of);
-		this->dependencies = info.dependencies;
-		this->internal = info.internal;
-		this->extension_name = info.extension_name;
-	}
+	FunctionEntry(CatalogType type, Catalog &catalog, SchemaCatalogEntry &schema, CreateFunctionInfo &info);
 
 	Identifier alias_of;
 	vector<FunctionDescription> descriptions;
+	bool superuser_only = false;
 };
 } // namespace duckdb
