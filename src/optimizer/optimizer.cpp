@@ -315,6 +315,15 @@ static void ForEachPreparedStatement(LogicalOperator &plan, CALLBACK &&callback)
 	}
 }
 
+static bool HasInvalidatedParameter(const PreparedStatementData &prepared) {
+	for (auto &entry : prepared.value_map) {
+		if (!entry.second->return_type.IsValid()) {
+			return true;
+		}
+	}
+	return false;
+}
+
 void Optimizer::TrackDataVersions(ClientContext &context, LogicalOperator &plan) {
 	ForEachPreparedStatement(plan, [&](PreparedStatementData &prepared, const LogicalOperator &statement) {
 		duckdb::TrackDataVersions(context, statement, prepared);
@@ -563,7 +572,7 @@ void Optimizer::RunBuiltInOptimizers() {
 	});
 
 	RunOptimizer(OptimizerType::ROW_GROUP_PRUNER, [&]() {
-		RowGroupPruner row_group_pruner(context);
+		RowGroupPruner row_group_pruner(*this);
 		plan = row_group_pruner.Optimize(std::move(plan));
 	});
 
@@ -728,7 +737,16 @@ unique_ptr<LogicalOperator> Optimizer::Optimize(unique_ptr<LogicalOperator> plan
 
 	Planner::VerifyPlan(context, plan);
 
+	ForEachPreparedStatement(*plan, [&](PreparedStatementData &prepared, const LogicalOperator &) {
+		if (snapshot_dependent || HasInvalidatedParameter(prepared)) {
+			prepared.properties.always_require_rebind = true;
+		}
+	});
 	return std::move(plan);
+}
+
+void Optimizer::SetSnapshotDependent() {
+	snapshot_dependent = true;
 }
 
 unique_ptr<Expression> Optimizer::BindScalarFunction(const Identifier &name, unique_ptr<Expression> c1) {

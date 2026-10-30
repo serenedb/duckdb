@@ -4,7 +4,10 @@
 #include "duckdb/common/mutex.hpp"
 #include "duckdb/common/optional_idx.hpp"
 #include "duckdb/common/string_util.hpp"
+#include "duckdb/execution/expression_executor.hpp"
 #include "duckdb/planner/expression/bound_conjunction_expression.hpp"
+#include "duckdb/planner/expression/bound_constant_expression.hpp"
+#include "duckdb/planner/expression_iterator.hpp"
 #include "duckdb/planner/filter/expression_filter.hpp"
 #include "duckdb/transaction/transaction.hpp"
 #include "duckdb/main/database.hpp"
@@ -14,6 +17,46 @@
 #include <utility>
 
 namespace duckdb {
+
+static unique_ptr<Expression> &FilterExpression(TableFilter &filter) {
+	return ExpressionFilter::GetExpressionFilter(filter, "PhysicalTableScan").expr;
+}
+
+static bool HasParameter(TableFilterSet &filters) {
+	for (auto &entry : filters) {
+		if (FilterExpression(entry.Filter())->HasParameter()) {
+			return true;
+		}
+	}
+	for (auto &filter : filters.GetMultiColumnFilters()) {
+		if (FilterExpression(*filter)->HasParameter()) {
+			return true;
+		}
+	}
+	return false;
+}
+
+static void FoldParameters(ClientContext &context, unique_ptr<Expression> &expr) {
+	if (!expr->HasParameter()) {
+		return;
+	}
+	Value value;
+	if (expr->IsScalar() && !expr->IsVolatile() && ExpressionExecutor::TryEvaluateScalar(context, *expr, value, true)) {
+		expr = make_uniq<BoundConstantExpression>(std::move(value));
+		return;
+	}
+	ExpressionIterator::EnumerateChildren(*expr,
+	                                      [&](unique_ptr<Expression> &child) { FoldParameters(context, child); });
+}
+
+static void FoldParameters(ClientContext &context, TableFilterSet &filters) {
+	for (auto &entry : filters) {
+		FoldParameters(context, FilterExpression(entry.Filter()));
+	}
+	for (auto &filter : filters.GetMultiColumnFilters()) {
+		FoldParameters(context, FilterExpression(*filter));
+	}
+}
 
 PhysicalTableScan::PhysicalTableScan(PhysicalPlan &physical_plan, vector<LogicalType> types,
                                      BoundTableFunction function_p, unique_ptr<FunctionData> bind_data_p,
@@ -27,7 +70,8 @@ PhysicalTableScan::PhysicalTableScan(PhysicalPlan &physical_plan, vector<Logical
       function(std::move(function_p)), bind_data(std::move(bind_data_p)), returned_types(std::move(returned_types_p)),
       column_ids(std::move(column_ids_p)), projection_ids(std::move(projection_ids_p)), names(std::move(names_p)),
       table_filters(std::move(table_filters_p)), extra_info(std::move(extra_info)), parameters(std::move(parameters_p)),
-      virtual_columns(std::move(virtual_columns_p)) {
+      virtual_columns(std::move(virtual_columns_p)),
+      parameterized_filters(table_filters && HasParameter(*table_filters)) {
 }
 
 static idx_t NextTableFunctionStateId() {
@@ -93,6 +137,12 @@ private:
 		function_state_id = NextTableFunctionStateId();
 		if (op.dynamic_filters && op.dynamic_filters->HasFilters()) {
 			table_filters = op.dynamic_filters->GetFinalTableFilters(op, op.table_filters.get());
+		}
+		if (op.parameterized_filters) {
+			if (!table_filters) {
+				table_filters = op.table_filters->Copy();
+			}
+			FoldParameters(context, *table_filters);
 		}
 		if (!op.function.init_global) {
 			max_threads = 1;

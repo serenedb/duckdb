@@ -1900,6 +1900,10 @@ idx_t DataTable::GetTotalRows() const {
 	return row_groups->GetTotalRows();
 }
 
+idx_t DataTable::GetStatisticsVersion() const {
+	return row_groups->GetStatisticsVersion();
+}
+
 idx_t DataTable::GetNextRowId() const {
 	return row_groups->GetNextRowId();
 }

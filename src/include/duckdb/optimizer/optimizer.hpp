@@ -41,6 +41,7 @@ public:
 	static void AddExpressionRules(ExpressionRewriter &rewriter);
 	static unique_ptr<Expression> OptimizeExpression(ClientContext &context, unique_ptr<Expression> expr);
 	static void TrackDataVersions(ClientContext &context, LogicalOperator &plan);
+	void SetSnapshotDependent();
 
 public:
 	ClientContext &context;
@@ -68,6 +69,7 @@ private:
 	bool enable_optimizer;
 	//! Snapshot of the registered optimizer extensions, taken once per optimizer
 	ExtensionCallbackIteratorHelper<OptimizerExtension> optimizer_extensions;
+	bool snapshot_dependent = false;
 
 private:
 	unique_ptr<Expression> BindScalarFunction(const Identifier &name, vector<unique_ptr<Expression>> children);

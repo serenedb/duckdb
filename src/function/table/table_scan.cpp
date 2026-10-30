@@ -53,6 +53,37 @@
 
 namespace duckdb {
 
+TableScanBindData::TableScanBindData(TableCatalogEntry &table)
+    : table(table),
+      statistics_version(table.IsDuckTable() ? table.Cast<DuckTableEntry>().GetStorage().GetStatisticsVersion() : 0),
+      is_index_scan(false), is_create_index(false) {
+}
+
+class TableDataVersion final : public PlanDataVersion {
+public:
+	TableDataVersion(weak_ptr<DataTable> storage_p, idx_t statistics_version_p)
+	    : storage(std::move(storage_p)), statistics_version(statistics_version_p) {
+	}
+
+	bool IsCurrent(ClientContext &context) const override {
+		auto table = storage.lock();
+		return table && table->GetStatisticsVersion() == statistics_version &&
+		       !LocalStorage::Get(context, table->GetAttached()).GetStorage(*table);
+	}
+
+private:
+	weak_ptr<DataTable> storage;
+	idx_t statistics_version;
+};
+
+shared_ptr<PlanDataVersion> TableScanBindData::GetPlanDataVersion() const {
+	if (!table.IsDuckTable()) {
+		return nullptr;
+	}
+	return make_shared_ptr<TableDataVersion>(table.Cast<DuckTableEntry>().GetStorage().shared_from_this(),
+	                                         statistics_version);
+}
+
 //! A pre-claimed scan assignment whose I/O is scheduled on the async pool ahead of decoding
 struct TableScanJobState {
 	//! Rows of the assignment, counted as scanned by the progress once a thread decodes the job

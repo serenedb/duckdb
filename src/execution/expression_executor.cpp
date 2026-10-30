@@ -263,7 +263,15 @@ static bool TryFoldNestedValue(ClientContext &context, const Expression &expr, V
 }
 
 static bool TryTakeConstant(const Expression &expr, Value &result) {
-	if (expr.GetExpressionClass() != ExpressionClass::BOUND_CONSTANT || expr.GetReturnType().IsNested()) {
+	if (expr.GetReturnType().IsNested()) {
+		return false;
+	}
+	if (expr.GetExpressionClass() == ExpressionClass::BOUND_PARAMETER) {
+		result = expr.Cast<BoundParameterExpression>().ParameterData()->GetValue();
+		D_ASSERT(result.type() == expr.GetReturnType());
+		return true;
+	}
+	if (expr.GetExpressionClass() != ExpressionClass::BOUND_CONSTANT) {
 		return false;
 	}
 	auto &value = expr.Cast<BoundConstantExpression>().GetValue();
@@ -291,9 +299,10 @@ Value ExpressionExecutor::EvaluateScalar(ClientContext &context, const Expressio
 	return result_value.WithType(expr.GetReturnType());
 }
 
-bool ExpressionExecutor::TryEvaluateScalar(ClientContext &context, const Expression &expr, Value &result) {
+bool ExpressionExecutor::TryEvaluateScalar(ClientContext &context, const Expression &expr, Value &result,
+                                           bool allow_unfoldable) {
 	try {
-		result = EvaluateScalar(context, expr);
+		result = EvaluateScalar(context, expr, allow_unfoldable);
 		return true;
 	} catch (InternalException &ex) {
 		throw;

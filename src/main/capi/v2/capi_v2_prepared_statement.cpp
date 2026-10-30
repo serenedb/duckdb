@@ -15,8 +15,7 @@ struct PreparedStatementWrapperV2 {
 
 //! The reuse predicate: the exact negation of the engine's re-bind gate
 //! (PreparedStatementData::RequireRebind). A parameter whose type was not resolved at
-//! prepare time, or a non-cacheable plan -- which a table scan makes it -- forces a
-//! re-bind on every execution.
+//! prepare time, or a non-cacheable plan forces a re-bind on every execution.
 bool PreparedReusesPlanV2(const StatementProperties &properties) {
 	return properties.bound_all_parameters && !properties.always_require_rebind;
 }
@@ -67,8 +66,8 @@ DUCKDB_V2_ERROR duckdb_v2_prepared_statement_create(duckdb_v2_connection_handle 
 		if (require_cacheable && !PreparedReusesPlanV2(prepared->GetStatementProperties())) {
 			throw duckdb::InvalidInputException(
 			    "prepared_statement_create(require_cacheable): this plan is re-bound on every execution (an unresolved "
-			    "parameter type, or a table scan), so executing it is no faster than statement_execute; prepare "
-			    "without require_cacheable to accept that");
+			    "parameter type, or a plan that needs the parameter values), so executing it is no faster than "
+			    "statement_execute; prepare without require_cacheable to accept that");
 		}
 		auto wrapper = duckdb::make_uniq<PreparedStatementWrapperV2>();
 		wrapper->context = connection->context;

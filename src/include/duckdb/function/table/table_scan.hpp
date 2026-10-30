@@ -21,11 +21,11 @@ class DuckTableEntry;
 class TableCatalogEntry;
 
 struct TableScanBindData : public TableFunctionData {
-	explicit TableScanBindData(TableCatalogEntry &table) : table(table), is_index_scan(false), is_create_index(false) {
-	}
+	explicit TableScanBindData(TableCatalogEntry &table);
 
 	//! The table to scan.
 	TableCatalogEntry &table;
+	idx_t statistics_version;
 	//! The old purpose of this field has been deprecated.
 	//! We now use it to express an index scan in the ANALYZE call.
 	//! I.e., we const-cast the bind data and set this to true, if we opt for an index scan.
@@ -46,8 +46,13 @@ public:
 		auto &other = other_p.Cast<TableScanBindData>();
 		return &other.table == &table;
 	}
+	bool ReadsParametersAtExecution() const override {
+		return true;
+	}
+	shared_ptr<PlanDataVersion> GetPlanDataVersion() const override;
 	unique_ptr<FunctionData> Copy() const override {
 		auto bind_data = make_uniq<TableScanBindData>(table);
+		bind_data->statistics_version = statistics_version;
 		bind_data->is_index_scan = is_index_scan;
 		bind_data->is_create_index = is_create_index;
 		bind_data->create_index_row_end = create_index_row_end;

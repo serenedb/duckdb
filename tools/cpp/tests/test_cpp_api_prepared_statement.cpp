@@ -94,13 +94,13 @@ TEST_CASE("Stable C++API: PreparedStatement reports plan reuse", "[cpp_api][prep
 
 	REQUIRE(Prepare("SELECT 42").ReusesPlan());
 	REQUIRE(Prepare("SELECT $1::BIGINT + 1").ReusesPlan());
-	// A table scan re-binds each execution so a catalog change is picked up.
-	REQUIRE_FALSE(Prepare("SELECT x FROM t WHERE x = $1").ReusesPlan());
+	REQUIRE(Prepare("SELECT x FROM t WHERE x = $1").ReusesPlan());
+	REQUIRE_FALSE(Prepare("SELECT x FROM t WHERE x::VARCHAR LIKE $1").ReusesPlan());
 
 	// require_cacheable turns that into a failure at prepare time rather than a silent
 	// slow path.
 	REQUIRE_NOTHROW(Prepare("SELECT $1::BIGINT + 1", true));
-	REQUIRE_THROWS_MATCHES(Prepare("SELECT x FROM t WHERE x = $1", true), Exception,
+	REQUIRE_THROWS_MATCHES(Prepare("SELECT x FROM t WHERE x::VARCHAR LIKE $1", true), Exception,
 	                       HasErrorCode(DUCKDB_V2_ERROR_INPUT_INVALID));
 }
 

@@ -1,5 +1,6 @@
 #include "duckdb/storage/table/table_statistics.hpp"
 
+#include "duckdb/common/atomic.hpp"
 #include "duckdb/common/serializer/deserializer.hpp"
 #include "duckdb/common/serializer/serializer.hpp"
 #include "duckdb/execution/reservoir_sample.hpp"
@@ -177,6 +178,15 @@ ColumnStatistics &TableStatistics::GetStats(TableStatisticsLock &lock, idx_t i) 
 	return *column_stats[i];
 }
 
+idx_t TableStatistics::NextVersion() {
+	static atomic<idx_t> next {0};
+	return next.fetch_add(1, std::memory_order_relaxed) + 1;
+}
+
+idx_t TableStatistics::Version() const {
+	return std::atomic_ref<idx_t>(version).load(std::memory_order_acquire);
+}
+
 // BlockingSample &TableStatistics::GetTableSampleRef(TableStatisticsLock &lock) {
 //	D_ASSERT(table_sample);
 //	return *table_sample;
@@ -275,7 +285,9 @@ void TableStatistics::Deserialize(Deserializer &deserializer, ColumnList &column
 
 unique_ptr<TableStatisticsLock> TableStatistics::GetLock() {
 	D_ASSERT(stats_lock);
-	return make_uniq<TableStatisticsLock>(*stats_lock);
+	auto lock = make_uniq<TableStatisticsLock>(*stats_lock);
+	std::atomic_ref<idx_t>(version).store(NextVersion(), std::memory_order_release);
+	return lock;
 }
 
 bool TableStatistics::Empty() const {

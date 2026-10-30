@@ -91,7 +91,8 @@ public:
 	DUCKDB_API static Value EvaluateScalar(ClientContext &context, const Expression &expr,
 	                                       bool allow_unfoldable = false);
 	//! Try to evaluate a scalar expression and fold it into a single value, returns false if an exception is thrown
-	DUCKDB_API static bool TryEvaluateScalar(ClientContext &context, const Expression &expr, Value &result);
+	DUCKDB_API static bool TryEvaluateScalar(ClientContext &context, const Expression &expr, Value &result,
+	                                         bool allow_unfoldable = false);
 	enum class FoldResult : uint8_t { FOLDED, TOO_LARGE, THROWS };
 	DUCKDB_API static FoldResult EvaluateFoldable(ClientContext &context, const Expression &expr, Value &result,
 	                                              idx_t max_size = MAX_FOLDED_VALUE_SIZE);

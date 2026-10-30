@@ -9,6 +9,7 @@
 #pragma once
 
 #include "duckdb/function/table_function.hpp"
+#include "duckdb/optimizer/optimizer.hpp"
 #include "duckdb/planner/operator/logical_order.hpp"
 #include "duckdb/storage/table/scan_state.hpp"
 
@@ -21,7 +22,7 @@ class LogicalOperator;
 
 class RowGroupPruner {
 public:
-	explicit RowGroupPruner(ClientContext &context);
+	explicit RowGroupPruner(Optimizer &optimizer);
 
 	//! Reorder and try to prune row groups in queries with LIMIT or simple aggregates
 	unique_ptr<LogicalOperator> Optimize(unique_ptr<LogicalOperator> op);
@@ -29,6 +30,7 @@ public:
 	bool TryOptimize(LogicalOperator &op) const;
 
 private:
+	Optimizer &optimizer;
 	ClientContext &context;
 
 private:
