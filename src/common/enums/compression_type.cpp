@@ -10,14 +10,9 @@ namespace duckdb {
 
 vector<string> ListCompressionTypes(void) {
 	vector<string> compression_types;
-	const auto amount_of_compression_options = (uint8_t)CompressionType::ENUM_SIZE;
-	const auto serenedb_begin = (uint8_t)CompressionType::COMPRESSION_DICT_LZ4;
-	const auto serenedb_end = (uint8_t)CompressionType::COMPRESSION_SERENEDB_COUNT;
-	compression_types.reserve(amount_of_compression_options + serenedb_end - serenedb_begin);
+	uint8_t amount_of_compression_options = (uint8_t)CompressionType::ENUM_SIZE;
+	compression_types.reserve(amount_of_compression_options);
 	for (uint8_t i = 0; i < amount_of_compression_options; i++) {
-		compression_types.push_back(CompressionTypeToString((CompressionType)i));
-	}
-	for (uint8_t i = serenedb_begin; i < serenedb_end; i++) {
 		compression_types.push_back(CompressionTypeToString((CompressionType)i));
 	}
 	return compression_types;
