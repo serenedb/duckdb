@@ -10,6 +10,7 @@
 #include "duckdb/planner/expression/bound_constant_expression.hpp"
 #include "duckdb/planner/expression/bound_function_expression.hpp"
 #include "duckdb/planner/expression/bound_lambda_expression.hpp"
+#include "duckdb/optimizer/rule/invoke_inlining.hpp"
 
 #include <absl/algorithm/container.h>
 
@@ -212,6 +213,9 @@ void ExpressionRewriter::VisitOperator(LogicalOperator &op) {
 		// For FILTER we want to ensure we always visit the split predicates
 		// Rewrites can add more predicates, so we need to loop
 		auto &filter = op.Cast<LogicalFilter>();
+		for (auto &expression : filter.expressions) {
+			InvokeInliningRule::InlinePredicate(expression);
+		}
 		idx_t visited_until = 0;
 		do {
 			for (idx_t i = visited_until; i < filter.expressions.size(); i++) {

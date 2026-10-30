@@ -5,6 +5,7 @@
 #include "duckdb/planner/filter/zonemap_checker.hpp"
 #include "duckdb/planner/table_filter_state.hpp"
 #include "duckdb/function/scalar_function.hpp"
+#include "duckdb/function/scalar/generic_functions.hpp"
 #include "duckdb/function/cast/cast_statistics.hpp"
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/planner/expression_iterator.hpp"
@@ -17,6 +18,7 @@
 #include "duckdb/planner/expression/bound_constant_expression.hpp"
 #include "duckdb/planner/expression/bound_reference_expression.hpp"
 #include "duckdb/planner/expression/bound_function_expression.hpp"
+#include "duckdb/planner/expression/bound_lambda_expression.hpp"
 #include "duckdb/planner/expression/bound_operator_expression.hpp"
 #include "duckdb/planner/expression/expression_barrier.hpp"
 #include "duckdb/optimizer/statistics_propagator.hpp"
@@ -252,6 +254,27 @@ static optional_ptr<const BaseStatistics> TryGetExpressionStats(optional_ptr<Cli
 	case ExpressionClass::BOUND_FUNCTION: {
 		auto &func = expr.Cast<BoundFunctionExpression>();
 
+		auto &children = func.GetChildren();
+		if (func.Function().GetName() == InvokeFun::Name) {
+			auto &lambda = children[0]->Cast<BoundLambdaExpression>();
+			const auto parameter_count = lambda.ParameterCount();
+			vector<BaseStatistics> body_stats;
+			body_stats.reserve(children.size() - 1);
+			for (idx_t column = 0; column + 1 < children.size(); column++) {
+				auto &child = *children[column < parameter_count ? parameter_count - column : column + 1];
+				auto child_stats = TryGetExpressionStats(context_p, child, input_stats, owned_stats);
+				body_stats.push_back(child_stats ? child_stats->Copy()
+				                                 : BaseStatistics::CreateUnknown(child.GetReturnType()));
+			}
+			auto body = TryGetExpressionStats(context_p, *lambda.LambdaExpr(),
+			                                  array_ptr<const BaseStatistics>(body_stats.data(), body_stats.size()),
+			                                  owned_stats);
+			if (!body) {
+				return nullptr;
+			}
+			owned_stats.push_back(body->ToUnique());
+			return owned_stats.back().get();
+		}
 		if (ExpressionBarrier::IsBarrier(func)) {
 			// the barrier returns its argument unchanged
 			return TryGetExpressionStats(context_p, *func.GetChildren()[0], input_stats, owned_stats);

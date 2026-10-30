@@ -1,3 +1,4 @@
+#include "duckdb/optimizer/rule/invoke_inlining.hpp"
 #include "duckdb/parser/tableref/joinref.hpp"
 #include "duckdb/parser/tableref/basetableref.hpp"
 #include "duckdb/parser/tableref/subqueryref.hpp"
@@ -366,6 +367,7 @@ BoundStatement Binder::Bind(JoinRef &ref) {
 	if (ref.condition) {
 		WhereBinder condition_binder(*this, context);
 		result->condition = condition_binder.Bind(ref.condition);
+		InvokeInliningRule::InlinePredicate(result->condition);
 	}
 	// AND the USING/NATURAL conditions onto the condition written in the query, in that order
 	for (auto &condition : extra_conditions) {

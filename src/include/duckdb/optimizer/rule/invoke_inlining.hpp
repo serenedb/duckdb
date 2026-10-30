@@ -18,6 +18,8 @@ public:
 
 	unique_ptr<Expression> Apply(LogicalOperator &op, vector<reference<Expression>> &bindings, bool &changes_made,
 	                             bool is_root) override;
+
+	static void InlinePredicate(unique_ptr<Expression> &predicate);
 };
 
 } // namespace duckdb

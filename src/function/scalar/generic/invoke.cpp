@@ -9,6 +9,7 @@
 #include "duckdb/planner/expression/bound_lambda_expression.hpp"
 #include "duckdb/planner/expression/bound_operator_expression.hpp"
 #include "duckdb/planner/expression/bound_reference_expression.hpp"
+#include "duckdb/planner/filter/expression_filter.hpp"
 
 #include <absl/cleanup/cleanup.h>
 
@@ -309,6 +310,20 @@ unique_ptr<FunctionData> LambdaInvokeBind(BindScalarFunctionInput &input) {
 	return make_uniq<LambdaInvokeData>(bound_lambda_expr.SharedLambdaExpr());
 }
 
+unique_ptr<BaseStatistics> LambdaInvokeStatistics(ClientContext &context, FunctionStatisticsInput &input) {
+	auto &children = input.expr.GetChildren();
+	auto &lambda = children[0]->Cast<BoundLambdaExpression>();
+	const auto parameter_count = lambda.ParameterCount();
+	vector<BaseStatistics> body_stats;
+	body_stats.reserve(children.size() - 1);
+	for (idx_t column = 0; column + 1 < children.size(); column++) {
+		body_stats.push_back(
+		    input.child_stats[column < parameter_count ? parameter_count - column : column + 1].Copy());
+	}
+	return ExpressionFilter::TryGetExpressionStatistics(
+	    context, *lambda.LambdaExpr(), array_ptr<const BaseStatistics>(body_stats.data(), body_stats.size()));
+}
+
 LogicalType LambdaInvokeBindParameters(ClientContext &context, const vector<LogicalType> &function_child_types,
                                        const idx_t parameter_idx, optional_ptr<BindLambdaContext> bind_lambda_context) {
 	// The first parameter is always the lambda
@@ -331,6 +346,7 @@ ScalarFunction InvokeFun::GetFunction() {
 	fun.SetNullHandling(FunctionNullHandling::SPECIAL_HANDLING);
 	fun.SetBindLambdaCallback(LambdaInvokeBindParameters);
 	fun.SetInitStateCallback(LambdaInvokeState::Init);
+	fun.SetStatisticsCallback(LambdaInvokeStatistics);
 	fun.SetSerializeCallback(LambdaInvokeData::Serialize);
 	fun.SetDeserializeCallback(LambdaInvokeData::Deserialize);
 	// the lambda expression that is executed for every row can throw

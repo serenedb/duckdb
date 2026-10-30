@@ -1,0 +1,68 @@
+# name: test/optimizer/pushdown/macro_predicate_pushdown.test
+# description: A macro predicate that shares an argument plans like the predicate it expands to
+# group: [pushdown]
+
+statement ok
+CREATE TABLE integers AS SELECT range::BIGINT AS a, (range % 7)::BIGINT AS b FROM range(1, 1001)
+
+statement ok
+CREATE MACRO m_between(x, lo, hi) AS x > lo AND x < hi
+
+statement ok
+CREATE MACRO m_eq(x, y) AS x = y AND x IS NOT NULL
+
+statement ok
+CREATE MACRO m_sq(x) AS x * x + x
+
+query II
+EXPLAIN SELECT a FROM integers WHERE m_between(a + 1, 5, 10)
+----
+physical_plan	<REGEX>:.*SEQ_SCAN.*Column Filter: \(a > 4\) AND \(a < 9\).*
+
+query I
+SELECT a FROM integers WHERE m_between(a + 1, 5, 10) ORDER BY a
+----
+5
+6
+7
+8
+
+query II
+EXPLAIN SELECT a FROM integers WHERE NOT m_between(a + 1, 5, 1000)
+----
+physical_plan	<REGEX>:.*SEQ_SCAN.*\(a <= 4\) OR \(a >= 999\).*
+
+query II
+EXPLAIN SELECT a FROM integers WHERE m_between(a + 1, 5, 10) OR m_between(a, 990, 1000)
+----
+physical_plan	<REGEX>:.*SEQ_SCAN.*\(\(a > 4\) AND \(a < 9\)\) OR \(\(a > 990\) AND \(a < 1000\)\).*
+
+query II
+EXPLAIN SELECT count(*) FROM integers p JOIN integers q ON m_eq(p.a + 1, q.b)
+----
+physical_plan	<REGEX>:.*HASH_JOIN.*\(a \+ 1\) = b.*
+
+query II
+EXPLAIN SELECT count(*) FROM integers p LEFT JOIN integers q ON m_eq(p.a + 1, q.b)
+----
+physical_plan	<REGEX>:.*HASH_JOIN.*LEFT.*\(a \+ 1\) = b.*
+
+query I
+SELECT count(*) FROM integers p LEFT JOIN integers q ON m_eq(p.a + 1, q.b)
+----
+1710
+
+query II
+EXPLAIN SELECT v FROM (SELECT m_sq(b + 1) AS v FROM integers) WHERE v < -100
+----
+physical_plan	<REGEX>:.*EMPTY_RESULT.*
+
+query II
+EXPLAIN SELECT a FROM integers WHERE m_between(m_sq(b + 1), 0, 100)
+----
+physical_plan	<!REGEX>:.*FILTER.*
+
+query I
+SELECT count(*) FROM integers WHERE m_between(m_sq(b + 1), 0, 100)
+----
+1000

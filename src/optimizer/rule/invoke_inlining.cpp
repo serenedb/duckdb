@@ -3,8 +3,10 @@
 #include "duckdb/function/builtin_function_lookup.hpp"
 #include "duckdb/function/scalar/generic_functions.hpp"
 #include "duckdb/optimizer/matcher/expression_matcher.hpp"
+#include "duckdb/planner/expression/bound_conjunction_expression.hpp"
 #include "duckdb/planner/expression/bound_function_expression.hpp"
 #include "duckdb/planner/expression/bound_lambda_expression.hpp"
+#include "duckdb/planner/expression/bound_operator_expression.hpp"
 #include "duckdb/planner/expression/bound_reference_expression.hpp"
 #include "duckdb/planner/expression_iterator.hpp"
 
@@ -82,6 +84,20 @@ void CountUses(const Expression &expr, vector<ColumnUse> &uses) {
 	ExpressionIterator::EnumerateChildren(expr, [&](const Expression &child) { CountUses(child, uses); });
 }
 
+bool CapturesArgument(const BoundFunctionExpression &invoke) {
+	auto &children = invoke.GetChildren();
+	auto &lambda = children[0]->Cast<BoundLambdaExpression>();
+	const auto parameter_count = lambda.ParameterCount();
+	vector<ColumnUse> uses(children.size() - 1);
+	CountUses(*lambda.LambdaExpr(), uses);
+	for (idx_t column = 0; column < parameter_count; column++) {
+		if (uses[column].captured && !IsCheap(*children[parameter_count - column])) {
+			return true;
+		}
+	}
+	return false;
+}
+
 unique_ptr<Expression> BindInvoke(ClientContext &context, shared_ptr<Expression> body, vector<Identifier> names,
                                   vector<unique_ptr<Expression>> parameters, vector<unique_ptr<Expression>> extra) {
 	auto lambda = make_uniq<BoundLambdaExpression>(ExpressionType::LAMBDA, LogicalType::LAMBDA, std::move(body),
@@ -99,6 +115,19 @@ unique_ptr<Expression> BindInvoke(ClientContext &context, shared_ptr<Expression>
 		children.push_back(std::move(child));
 	}
 	return std::move(result);
+}
+
+unique_ptr<Expression> Inline(const BoundFunctionExpression &invoke) {
+	auto &children = invoke.GetChildren();
+	auto &lambda = children[0]->Cast<BoundLambdaExpression>();
+	const idx_t parameter_count = lambda.ParameterCount();
+	auto result = lambda.LambdaExpr()->Copy();
+	ExpressionIterator::VisitExpressionClassMutable(
+	    result, ExpressionClass::BOUND_REF, [&](unique_ptr<Expression> &ref) {
+		    const auto column = ref->Cast<BoundReferenceExpression>().Index();
+		    ref = children[column < parameter_count ? parameter_count - column : column + 1]->Copy();
+	    });
+	return result;
 }
 
 } // namespace
@@ -130,13 +159,7 @@ unique_ptr<Expression> InvokeInliningRule::Apply(LogicalOperator &op, vector<ref
 		inline_all = IsCheap(argument) || (use.references <= 1 && !argument.IsVolatile() && !use.captured);
 	}
 	if (inline_all) {
-		auto result = body.Copy();
-		ExpressionIterator::VisitExpressionClassMutable(
-		    result, ExpressionClass::BOUND_REF, [&](unique_ptr<Expression> &ref) {
-			    const auto column = ref->Cast<BoundReferenceExpression>().Index();
-			    ref = children[column < parameter_count ? parameter_count - column : column + 1]->Copy();
-		    });
-		return result;
+		return Inline(invoke);
 	}
 
 	vector<ParameterAction> actions(parameter_count, ParameterAction::KEEP);
@@ -319,6 +342,34 @@ unique_ptr<Expression> InvokeInliningRule::Apply(LogicalOperator &op, vector<ref
 		}
 	}
 	return BindInvoke(GetContext(), std::move(new_body), std::move(names), std::move(parameters), std::move(extra));
+}
+
+void InvokeInliningRule::InlinePredicate(unique_ptr<Expression> &predicate) {
+	switch (predicate->GetExpressionClass()) {
+	case ExpressionClass::BOUND_CONJUNCTION:
+		for (auto &child : predicate->Cast<BoundConjunctionExpression>().GetChildrenMutable()) {
+			InlinePredicate(child);
+		}
+		break;
+	case ExpressionClass::BOUND_OPERATOR:
+		if (predicate->GetExpressionType() == ExpressionType::OPERATOR_NOT) {
+			InlinePredicate(predicate->Cast<BoundOperatorExpression>().GetChildrenMutable()[0]);
+		}
+		break;
+	case ExpressionClass::BOUND_FUNCTION: {
+		auto &function = predicate->Cast<BoundFunctionExpression>();
+		auto &children = function.GetChildren();
+		if (function.Function().GetName() == InvokeFun::Name &&
+		    std::none_of(children.begin() + 1, children.end(),
+		                 [](const unique_ptr<Expression> &argument) { return argument->IsVolatile(); }) &&
+		    !CapturesArgument(function)) {
+			predicate = Inline(function);
+		}
+		break;
+	}
+	default:
+		break;
+	}
 }
 
 } // namespace duckdb
