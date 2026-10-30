@@ -428,6 +428,7 @@ public:
 	void RequireOwner(CatalogEntry &entry);
 	void RequireReplaceOwner(SchemaCatalogEntry &schema, const CreateInfo &info, const Identifier &name);
 	optional_ptr<CatalogEntry> ClusterEntry(CatalogType type, const Identifier &name);
+	QualifiedName ClusterName(const QualifiedName &name);
 	idx_t RoleId(const Identifier &name);
 	void RequireDatabasePrivilege(const Identifier &database, AclMode need);
 	void RequireSchemaCreate(SchemaCatalogEntry &schema);

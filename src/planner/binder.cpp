@@ -368,6 +368,14 @@ optional_ptr<CatalogEntry> Binder::ClusterEntry(CatalogType type, const Identifi
 	return cluster.GetCatalogSet(type).GetEntry(cluster.GetCatalogTransaction(context), name);
 }
 
+QualifiedName Binder::ClusterName(const QualifiedName &name) {
+	auto &cluster_catalog = DBConfig::GetConfig(context).cluster_catalog;
+	if (cluster_catalog.empty()) {
+		return name;
+	}
+	return QualifiedName(cluster_catalog, Identifier(), name.Name());
+}
+
 idx_t Binder::RoleId(const Identifier &name) {
 	auto role = ClusterEntry(CatalogType::ROLE_ENTRY, name);
 	if (!role) {

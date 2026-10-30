@@ -442,6 +442,10 @@ BoundStatement Binder::Bind(AlterStatement &stmt) {
 		if (stmt.info->type == AlterType::ALTER_PERMISSIONS) {
 			ResolvePermissions(*this, stmt.info->Cast<AlterPermissionsInfo>());
 		}
+		const auto target_type = stmt.info->GetCatalogType();
+		if (target_type == CatalogType::DATABASE_ENTRY || target_type == CatalogType::ROLE_ENTRY) {
+			stmt.info->SetQualifiedName(ClusterName(stmt.info->GetQualifiedName()));
+		}
 		result.plan = make_uniq<LogicalAlter>(std::move(stmt.info));
 		return result;
 	}

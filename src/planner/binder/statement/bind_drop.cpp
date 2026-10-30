@@ -152,11 +152,13 @@ BoundStatement Binder::Bind(DropStatement &stmt) {
 		BindDropTrigger(stmt, properties);
 		break;
 	case CatalogType::ROLE_ENTRY:
+		stmt.info->SetQualifiedName(ClusterName(stmt.info->GetQualifiedName()));
 		break;
 	case CatalogType::DATABASE_ENTRY:
 		if (auto database = ClusterEntry(CatalogType::DATABASE_ENTRY, stmt.info->GetQualifiedName().Name())) {
 			RequireOwner(*database);
 		}
+		stmt.info->SetQualifiedName(ClusterName(stmt.info->GetQualifiedName()));
 		break;
 	case CatalogType::FOREIGN_SERVER_ENTRY: {
 		auto catalog = BindCatalog(stmt.info->GetQualifiedName().Catalog());

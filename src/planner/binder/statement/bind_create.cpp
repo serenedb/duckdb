@@ -13,6 +13,7 @@
 #include "duckdb/function/table/table_scan.hpp"
 #include "duckdb/main/attached_database.hpp"
 #include "duckdb/main/client_context.hpp"
+#include "duckdb/catalog/default/default_schemas.hpp"
 #include "duckdb/main/client_data.hpp"
 #include "duckdb/main/config.hpp"
 #include "duckdb/main/database.hpp"
@@ -388,6 +389,12 @@ SchemaCatalogEntry &Binder::BindCreateSchema(CreateInfo &info) {
 	if (info.type != CatalogType::TRIGGER_ENTRY) {
 		RequireSchemaCreate(schema);
 		RequireReplaceOwner(schema, info, info.GetQualifiedName().Name());
+	}
+	if (schema.internal && DefaultSchemaGenerator::IsDefaultSchema(schema.name)) {
+		throw PermissionException(
+		    unordered_map<string, string> {{"detail", "System catalog modifications are currently disallowed."}},
+		    StringUtil::Format("permission denied to create \"%s.%s\"", schema.name.GetIdentifierName(),
+		                       info.GetQualifiedName().Name().GetIdentifierName()));
 	}
 	if (principal) {
 		AssignOwner(info.permissions, schema.ParentCatalog(), DefaultPrivilegesType(info.type), &schema,
@@ -1470,6 +1477,7 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 		break;
 	}
 	case CatalogType::ROLE_ENTRY:
+		stmt.info->SetQualifiedName(ClusterName(stmt.info->GetQualifiedName()));
 		result.plan = make_uniq<LogicalCreate>(LogicalOperatorType::LOGICAL_CREATE_ROLE, std::move(stmt.info));
 		break;
 	case CatalogType::FOREIGN_SERVER_ENTRY: {
