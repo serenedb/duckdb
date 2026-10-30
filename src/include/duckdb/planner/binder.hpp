@@ -418,6 +418,7 @@ public:
 	optional_ptr<const RoleAccess> principal;
 	void SetPrincipal(optional_ptr<const RoleAccess> principal_p);
 	TableRefUse table_ref_use = TableRefUse::READ;
+	optional_ptr<const MergeQueryNode> on_conflict_merge;
 	BoundStatement BindTarget(TableRef &ref, TableRefUse use);
 	void CheckTableRead(TableBinding &binding, TableCatalogEntry &table);
 	void CheckTableReads();

@@ -255,23 +255,57 @@ BoundStatement Binder::BindNode(MergeQueryNode &node) {
 	}
 	auto &table = *table_ptr;
 	if (principal) {
+		const auto named_acls = [&](const vector<Identifier> &names) {
+			vector<std::span<const AclItem>> acls;
+			for (auto &name : names) {
+				if (table.ColumnExists(name)) {
+					acls.emplace_back(table.GetColumn(name).Acl());
+				}
+			}
+			return acls;
+		};
+		const auto leading_acls = [&](idx_t count) {
+			vector<std::span<const AclItem>> acls;
+			for (auto &column : table.GetColumns().Logical()) {
+				if (acls.size() == count) {
+					break;
+				}
+				acls.emplace_back(column.Acl());
+			}
+			return acls;
+		};
 		for (auto &entry : node.actions) {
 			for (auto &action : entry.second) {
-				AclMode need = AclMode::NoRights;
+				bool allowed;
 				switch (action->action_type) {
 				case MergeActionType::MERGE_UPDATE:
-					need = AclMode::Update;
+					allowed = principal->CanColumns(table.permissions, AclMode::Update,
+					                                action->update_info && !action->update_info->columns.empty()
+					                                    ? named_acls(action->update_info->columns)
+					                                    : leading_acls(table.GetColumns().LogicalColumnCount()));
 					break;
 				case MergeActionType::MERGE_DELETE:
-					need = AclMode::Delete;
+					allowed = principal->Can(CatalogType::TABLE_ENTRY, table.permissions, AclMode::Delete);
 					break;
 				case MergeActionType::MERGE_INSERT:
-					need = AclMode::Insert;
+					if (on_conflict_merge.get() == &node) {
+						allowed = true;
+					} else if (action->default_values) {
+						allowed = principal->CanAnyColumn(table.permissions, AclMode::Insert, table.GetColumns());
+					} else if (!action->insert_columns.empty()) {
+						allowed = principal->CanColumns(table.permissions, AclMode::Insert,
+						                                named_acls(action->insert_columns));
+					} else {
+						const auto count = action->column_order == InsertColumnOrder::INSERT_BY_POSITION
+						                       ? action->expressions.size()
+						                       : table.GetColumns().LogicalColumnCount();
+						allowed = principal->CanColumns(table.permissions, AclMode::Insert, leading_acls(count));
+					}
 					break;
 				default:
 					continue;
 				}
-				if (!principal->Can(CatalogType::TABLE_ENTRY, table.permissions, need)) {
+				if (!allowed) {
 					ThrowPermissionDenied(table);
 				}
 			}
