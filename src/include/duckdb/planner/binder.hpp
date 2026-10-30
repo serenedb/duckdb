@@ -426,6 +426,7 @@ public:
 	void CheckStatementKind(SQLStatement &statement);
 	void RequireSuperuser();
 	void RequireOwner(CatalogEntry &entry);
+	void RequireReplaceOwner(SchemaCatalogEntry &schema, const CreateInfo &info, const Identifier &name);
 
 	void BeginSubqueryBind(Binder &parent, ExpressionBinder &binder);
 	//! The innermost enclosing scope
