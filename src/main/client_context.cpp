@@ -140,7 +140,7 @@ struct DebugClientContextState : public ClientContextState {
 };
 #endif
 
-ClientContext::ClientContext(shared_ptr<DatabaseInstance> database)
+ClientContext::ClientContext(shared_ptr<DatabaseInstance> database, shared_ptr<AttachedDatabase> shared_temporary_objects)
     : db(std::move(database)), interrupt_state(ClientInterruptState::NOT_INTERRUPTED), transaction(*this),
       connection_id(DConstants::INVALID_INDEX),
       scheduler_account(TaskScheduler::GetScheduler(*db).CreateAccount(SchedulerClass::FOREGROUND)) {
@@ -150,7 +150,7 @@ ClientContext::ClientContext(shared_ptr<DatabaseInstance> database)
 #endif
 	LoggingContext context(LogContextScope::CONNECTION);
 	logger = db->GetLogManager().CreateLogger(context, true);
-	client_data = make_uniq<ClientData>(*this);
+	client_data = make_uniq<ClientData>(*this, std::move(shared_temporary_objects));
 
 #ifdef __APPLE__
 	if (OsxRosettaIsActive()) {
@@ -168,7 +168,9 @@ ClientContext::~ClientContext() {
 	// destroy the client context and rollback if there is an active transaction
 	// but only if we are not destroying this client context as part of an exception stack unwind
 	Destroy();
-	client_data->temporary_objects->OnDetach(*this);
+	if (!client_data->shares_temporary_objects) {
+		client_data->temporary_objects->OnDetach(*this);
+	}
 }
 
 unique_ptr<ClientContextLock> ClientContext::LockContext() {

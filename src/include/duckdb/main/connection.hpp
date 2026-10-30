@@ -22,6 +22,7 @@
 
 namespace duckdb {
 
+class AttachedDatabase;
 class ColumnDataCollection;
 class ClientContext;
 
@@ -40,7 +41,8 @@ typedef void (*warning_callback_t)(std::string);
 class Connection {
 public:
 	DUCKDB_API explicit Connection(DuckDB &database);
-	DUCKDB_API explicit Connection(DatabaseInstance &database);
+	DUCKDB_API explicit Connection(DatabaseInstance &database,
+	                               shared_ptr<AttachedDatabase> shared_temporary_objects = nullptr);
 	// disable copy constructors
 	Connection(const Connection &other) = delete;
 	Connection &operator=(const Connection &) = delete;

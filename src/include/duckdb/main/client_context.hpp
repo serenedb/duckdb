@@ -93,7 +93,8 @@ class ClientContext : public enable_shared_from_this<ClientContext> {
 	friend class PhysicalTransaction;
 
 public:
-	DUCKDB_API explicit ClientContext(shared_ptr<DatabaseInstance> db);
+	DUCKDB_API explicit ClientContext(shared_ptr<DatabaseInstance> db,
+	                                  shared_ptr<AttachedDatabase> shared_temporary_objects = nullptr);
 	DUCKDB_API ~ClientContext();
 
 	//! The database that this client is connected to
