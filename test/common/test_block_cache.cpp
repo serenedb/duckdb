@@ -19,6 +19,12 @@ namespace duckdb {
 namespace {
 
 constexpr idx_t BLOCK = BlockCache::BLOCK_SIZE;
+constexpr idx_t PIECE_BLOCKS = BlockCache::PIECE_SIZE / BLOCK;
+constexpr idx_t REQUEST_BLOCKS = BlockCache::MAX_REQUEST / BLOCK;
+//! The blocks of [bytes] of cache
+constexpr idx_t BlocksOf(idx_t bytes) {
+	return bytes / BLOCK;
+}
 
 uint8_t ExpectedByte(idx_t offset) {
 	return static_cast<uint8_t>((offset * 31 + offset / BLOCK * 7) & 0xFF);
@@ -339,10 +345,11 @@ TEST_CASE("Block cache fetches a missing block once for concurrent readers", "[b
 }
 
 TEST_CASE("Block cache prefetch merges runs across small gaps and caps each request", "[block_cache]") {
+	constexpr idx_t RANGE = REQUEST_BLOCKS + 2 * PIECE_BLOCKS + PIECE_BLOCKS / 4;
 	DuckDB db(nullptr);
-	BlockCache cache(*db.instance, 256 * BLOCK);
+	BlockCache cache(*db.instance, 3 * RANGE * BLOCK);
 	CountingSourceFileSystem fs;
-	TestFile file("block_cache_prefetch.bin", 200 * BLOCK);
+	TestFile file("block_cache_prefetch.bin", 2 * RANGE * BLOCK);
 	auto cached = file.Open(cache, fs);
 
 	for (idx_t block : {10, 11, 30}) {
@@ -350,8 +357,8 @@ TEST_CASE("Block cache prefetch merges runs across small gaps and caps each requ
 	}
 	fs.TakeReads();
 
-	cache.Prefetch(cached, 0, 100 * BLOCK, BlockCachePrefetch::HINT);
-	for (idx_t block = 0; block < 100; block++) {
+	cache.Prefetch(cached, 0, RANGE * BLOCK, BlockCachePrefetch::HINT);
+	for (idx_t block = 0; block < RANGE; block++) {
 		auto pin = cache.Pin(cached, block);
 		REQUIRE(HoldsExpectedBytes(pin, block));
 	}
@@ -362,18 +369,18 @@ TEST_CASE("Block cache prefetch merges runs across small gaps and caps each requ
 		REQUIRE(read.first % BLOCK == 0);
 		covered += read.second;
 	}
-	REQUIRE(reads.size() == 7);
-	REQUIRE(covered == 100 * BLOCK);
+	REQUIRE(reads.size() == REQUEST_BLOCKS / PIECE_BLOCKS + 3);
+	REQUIRE(covered == RANGE * BLOCK);
 }
 
 TEST_CASE("Block cache drops a hinted prefetch past the bytes a file has in flight but never a needed one",
           "[block_cache]") {
-	DuckDB db(nullptr);
-	BlockCache cache(*db.instance, 512 * BLOCK);
-	CountingSourceFileSystem fs;
-	TestFile file("block_cache_need.bin", 300 * BLOCK);
-	auto cached = file.Open(cache, fs);
 	constexpr idx_t in_flight = BlockCache::MAX_FILE_IN_FLIGHT / BLOCK;
+	DuckDB db(nullptr);
+	BlockCache cache(*db.instance, 2 * in_flight * BLOCK);
+	CountingSourceFileSystem fs;
+	TestFile file("block_cache_need.bin", (in_flight + 44) * BLOCK);
+	auto cached = file.Open(cache, fs);
 
 	fs.Hold(true);
 	cache.Prefetch(cached, 0, in_flight * BLOCK, BlockCachePrefetch::HINT);
@@ -425,14 +432,15 @@ TEST_CASE("Block cache fetches a long run in concurrent pieces and hands out eac
           "[block_cache]") {
 	DBConfig config;
 	config.options.maximum_threads = 4;
+	constexpr idx_t RUN = 4 * PIECE_BLOCKS;
 	DuckDB db(nullptr, &config);
-	BlockCache cache(*db.instance, 128 * BLOCK);
+	BlockCache cache(*db.instance, 2 * RUN * BLOCK);
 	CountingSourceFileSystem fs;
-	TestFile file("block_cache_pieces.bin", 64 * BLOCK);
+	TestFile file("block_cache_pieces.bin", RUN * BLOCK);
 	auto cached = file.Open(cache, fs);
 
 	fs.Hold(true);
-	cache.Prefetch(cached, 0, 64 * BLOCK, BlockCachePrefetch::HINT);
+	cache.Prefetch(cached, 0, RUN * BLOCK, BlockCachePrefetch::HINT);
 	const bool concurrent = fs.AwaitReadsFor(4, absl::Seconds(10));
 	fs.ReleaseRead(0);
 	atomic<bool> right {false};
@@ -454,9 +462,9 @@ TEST_CASE("Block cache fetches a long run in concurrent pieces and hands out eac
 	REQUIRE(first_landed);
 	REQUIRE(right);
 
-	auto pins = cache.PinRange(cached, 0, 64 * BLOCK);
-	REQUIRE(pins.size() == 64);
-	for (idx_t block = 0; block < 64; block++) {
+	auto pins = cache.PinRange(cached, 0, RUN * BLOCK);
+	REQUIRE(pins.size() == RUN);
+	for (idx_t block = 0; block < RUN; block++) {
 		REQUIRE(HoldsExpectedBytes(pins[block], block));
 	}
 	auto reads = fs.TakeReads();
@@ -466,18 +474,19 @@ TEST_CASE("Block cache fetches a long run in concurrent pieces and hands out eac
 		REQUIRE(read.second <= BlockCache::PIECE_SIZE);
 		covered += read.second;
 	}
-	REQUIRE(covered == 64 * BLOCK);
+	REQUIRE(covered == RUN * BLOCK);
 }
 
 TEST_CASE("Block cache range pins fetch the runs and pieces of a range concurrently", "[block_cache]") {
 	DBConfig config;
 	config.options.maximum_threads = 4;
+	constexpr idx_t FULL = 3 * PIECE_BLOCKS;
 	DuckDB db(nullptr, &config);
-	BlockCache cache(*db.instance, 128 * BLOCK);
+	BlockCache cache(*db.instance, 8 * PIECE_BLOCKS * BLOCK);
 	CountingSourceFileSystem fs;
-	TestFile file("block_cache_concurrent_runs.bin", 48 * BLOCK + 100);
+	TestFile file("block_cache_concurrent_runs.bin", FULL * BLOCK + 100);
 	auto cached = file.Open(cache, fs);
-	for (idx_t block = 8; block < 16; block++) {
+	for (idx_t block = PIECE_BLOCKS / 2; block < PIECE_BLOCKS; block++) {
 		cache.Pin(cached, block);
 	}
 	fs.TakeReads();
@@ -486,13 +495,13 @@ TEST_CASE("Block cache range pins fetch the runs and pieces of a range concurren
 	vector<BlockCachePin> pins;
 	TaskExecutor executor(TaskScheduler::GetScheduler(*db.instance));
 	executor.ScheduleTask(make_uniq<FunctionExecutorTask>(
-	    executor, [&]() { pins = cache.PinRange(cached, 0, 48 * BLOCK + 100); }, "BlockCacheTestTask"));
+	    executor, [&]() { pins = cache.PinRange(cached, 0, FULL * BLOCK + 100); }, "BlockCacheTestTask"));
 	const bool concurrent = fs.AwaitReadsFor(4, absl::Seconds(10));
 	fs.Hold(false);
 	executor.WorkOnTasks();
 	REQUIRE(concurrent);
-	REQUIRE(pins.size() == 49);
-	for (idx_t block = 0; block < 49; block++) {
+	REQUIRE(pins.size() == FULL + 1);
+	for (idx_t block = 0; block <= FULL; block++) {
 		REQUIRE(HoldsExpectedBytes(pins[block], block));
 	}
 	auto reads = fs.TakeReads();
@@ -502,31 +511,32 @@ TEST_CASE("Block cache range pins fetch the runs and pieces of a range concurren
 		REQUIRE(read.second <= BlockCache::PIECE_SIZE);
 		covered += read.second;
 	}
-	REQUIRE(covered == 40 * BLOCK + 100);
+	REQUIRE(covered == (FULL - PIECE_BLOCKS / 2) * BLOCK + 100);
 }
 
 TEST_CASE("Block cache fetches the pieces of long runs when the scheduler has no workers", "[block_cache]") {
 	DBConfig config;
 	config.options.maximum_threads = 1;
+	constexpr idx_t RUN = 2 * PIECE_BLOCKS + PIECE_BLOCKS / 2;
 	DuckDB db(nullptr, &config);
-	BlockCache cache(*db.instance, 128 * BLOCK);
+	BlockCache cache(*db.instance, 8 * PIECE_BLOCKS * BLOCK);
 	CountingSourceFileSystem fs;
-	TestFile file("block_cache_no_workers_pieces.bin", 40 * BLOCK);
+	TestFile file("block_cache_no_workers_pieces.bin", RUN * BLOCK);
 	{
 		auto cached = file.Open(cache, fs);
-		cache.Prefetch(cached, 0, 40 * BLOCK, BlockCachePrefetch::HINT);
-		REQUIRE(HoldsExpectedBytes(cache.Pin(cached, 39), 39));
-		auto pins = cache.PinRange(cached, 0, 40 * BLOCK);
-		REQUIRE(pins.size() == 40);
-		for (idx_t block = 0; block < 40; block++) {
+		cache.Prefetch(cached, 0, RUN * BLOCK, BlockCachePrefetch::HINT);
+		REQUIRE(HoldsExpectedBytes(cache.Pin(cached, RUN - 1), RUN - 1));
+		auto pins = cache.PinRange(cached, 0, RUN * BLOCK);
+		REQUIRE(pins.size() == RUN);
+		for (idx_t block = 0; block < RUN; block++) {
 			REQUIRE(HoldsExpectedBytes(pins[block], block));
 		}
 		REQUIRE(fs.TakeReads().size() == 3);
 	}
 	auto changed = file.Open(cache, fs, "v2");
-	auto pins = cache.PinRange(changed, 0, 40 * BLOCK);
-	REQUIRE(pins.size() == 40);
-	for (idx_t block = 0; block < 40; block++) {
+	auto pins = cache.PinRange(changed, 0, RUN * BLOCK);
+	REQUIRE(pins.size() == RUN);
+	for (idx_t block = 0; block < RUN; block++) {
 		REQUIRE(HoldsExpectedBytes(pins[block], block));
 	}
 	REQUIRE(fs.TakeReads().size() == 3);
@@ -1035,14 +1045,15 @@ TEST_CASE("Block cache gives memory back to the buffer pool", "[block_cache]") {
 	REQUIRE_NO_FAIL(con.Query("SET memory_limit='64MiB'"));
 	auto &cache = BlockCache::Get(*db.instance);
 	REQUIRE(cache.GetStatistics().capacity == 16 * 1024 * 1024);
+	constexpr idx_t FULL = BlocksOf(16 * 1024 * 1024);
 	CountingSourceFileSystem fs;
-	TestFile file("block_cache_shrink.bin", 64 * BLOCK);
+	TestFile file("block_cache_shrink.bin", FULL * BLOCK);
 	auto cached = file.Open(cache, fs);
-	for (idx_t block = 0; block < 64; block++) {
+	for (idx_t block = 0; block < FULL; block++) {
 		cache.Pin(cached, block);
 	}
 	const auto filled = cache.GetStatistics().used;
-	REQUIRE(filled == 64 * BLOCK);
+	REQUIRE(filled == FULL * BLOCK);
 
 	auto &buffer_manager = BufferManager::GetBufferManager(*db.instance);
 	vector<BufferHandle> buffers;
@@ -1050,7 +1061,7 @@ TEST_CASE("Block cache gives memory back to the buffer pool", "[block_cache]") {
 		buffers.push_back(buffer_manager.Allocate(MemoryTag::IN_MEMORY_TABLE, 4ULL * 1024ULL * 1024ULL));
 	}
 	REQUIRE(cache.GetStatistics().used < filled);
-	for (idx_t block = 0; block < 64; block++) {
+	for (idx_t block = 0; block < FULL; block++) {
 		auto pin = cache.Pin(cached, block);
 		REQUIRE(HoldsExpectedBytes(pin, block));
 	}
@@ -1466,16 +1477,17 @@ TEST_CASE("Changing the spill size keeps the spill file of in-memory blocks", "[
 	REQUIRE_NO_FAIL(con.Query("SET temp_directory='" + directory + "'"));
 	REQUIRE_NO_FAIL(con.Query("SET external_file_cache_size='1MiB'"));
 	auto &cache = BlockCache::Get(*db.instance);
+	constexpr idx_t COUNT = 4 * BlocksOf(1024 * 1024);
 	auto file = cache.CreateUnbackedFile("memory://default_spill.bin");
-	for (idx_t block = 0; block < 16; block++) {
+	for (idx_t block = 0; block < COUNT; block++) {
 		memset(cache.CreateBlock(*file, block).GetDataMutable(), int(block + 1), BLOCK);
 	}
-	cache.SetUnbackedSize(*file, 16 * BLOCK);
+	cache.SetUnbackedSize(*file, COUNT * BLOCK);
 	REQUIRE(cache.GetStatistics().spilled > 0);
 
 	REQUIRE_NO_FAIL(con.Query("SET external_file_cache_spill_size='64MiB'"));
 	REQUIRE_NO_FAIL(con.Query("RESET external_file_cache_spill_size"));
-	for (idx_t block = 0; block < 16; block++) {
+	for (idx_t block = 0; block < COUNT; block++) {
 		auto pin = cache.Pin(file, block);
 		REQUIRE(pin.Ptr()[0] == block + 1);
 		REQUIRE(pin.Ptr()[BLOCK - 1] == block + 1);
@@ -1488,6 +1500,7 @@ TEST_CASE("Changing the spill size keeps the spill file of in-memory blocks", "[
 
 TEST_CASE("Instances sharing a temporary directory spill in-memory blocks to files of their own", "[block_cache]") {
 	const auto directory = TestCreatePath("block_cache_shared_spill");
+	constexpr idx_t FIT = BlocksOf(1024 * 1024);
 	{
 		DuckDB first(nullptr);
 		DuckDB second(nullptr);
@@ -1499,17 +1512,17 @@ TEST_CASE("Instances sharing a temporary directory spill in-memory blocks to fil
 			auto &cache = BlockCache::Get(*db->instance);
 			auto file = cache.CreateUnbackedFile("memory://shared_spill.bin");
 			const auto fill = files.size() * 100 + 1;
-			for (idx_t block = 0; block < 16; block++) {
+			for (idx_t block = 0; block < 4 * FIT; block++) {
 				memset(cache.CreateBlock(*file, block).GetDataMutable(), int(fill + block), BLOCK);
 			}
-			cache.SetUnbackedSize(*file, 16 * BLOCK);
-			REQUIRE(BufferManager::GetBufferManager(*db->instance).GetUsedSwap() == 12 * BLOCK);
+			cache.SetUnbackedSize(*file, 4 * FIT * BLOCK);
+			REQUIRE(BufferManager::GetBufferManager(*db->instance).GetUsedSwap() == 3 * FIT * BLOCK);
 			files.push_back(std::move(file));
 		}
 		REQUIRE(CountSpillFiles(directory) == 2);
 		for (idx_t i = 0; i < files.size(); i++) {
 			auto &cache = BlockCache::Get(*(i == 0 ? first : second).instance);
-			for (idx_t block = 0; block < 16; block++) {
+			for (idx_t block = 0; block < 4 * FIT; block++) {
 				auto pin = cache.Pin(files[i], block);
 				REQUIRE(pin.Ptr()[0] == uint8_t(i * 100 + 1 + block));
 				REQUIRE(pin.Ptr()[BLOCK - 1] == uint8_t(i * 100 + 1 + block));
