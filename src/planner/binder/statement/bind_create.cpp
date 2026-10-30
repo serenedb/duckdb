@@ -32,6 +32,7 @@
 #include "duckdb/parser/expression/subquery_expression.hpp"
 #include "duckdb/parser/parsed_data/create_foreign_server_info.hpp"
 #include "duckdb/parser/parsed_data/create_index_info.hpp"
+#include "duckdb/parser/parsed_data/create_sequence_info.hpp"
 #include "duckdb/parser/parsed_data/create_job_info.hpp"
 #include "duckdb/parser/parsed_data/create_macro_info.hpp"
 #include "duckdb/parser/parsed_data/create_tokenizer_info.hpp"
@@ -351,6 +352,34 @@ SchemaCatalogEntry &Binder::BindSchema(CreateInfo &info) {
 	return schema_obj;
 }
 
+static CatalogType DefaultPrivilegesType(CatalogType type) {
+	switch (type) {
+	case CatalogType::VIEW_ENTRY:
+		return CatalogType::TABLE_ENTRY;
+	case CatalogType::TABLE_MACRO_ENTRY:
+		return CatalogType::MACRO_ENTRY;
+	default:
+		return type;
+	}
+}
+
+static idx_t CreationOwner(ClientContext &context, const CreateInfo &info, const RoleAccess &principal) {
+	if (info.type == CatalogType::SEQUENCE_ENTRY) {
+		auto &sequence = info.Cast<CreateSequenceInfo>();
+		if (sequence.serial) {
+			auto table = Catalog::GetEntry(
+			    context,
+			    EntryLookupInfo(CatalogType::TABLE_ENTRY,
+			                    QualifiedName::FromPath({sequence.owned_by.begin(), sequence.owned_by.end() - 1})),
+			    OnEntryNotFound::RETURN_NULL);
+			if (table) {
+				return table->permissions.owner;
+			}
+		}
+	}
+	return principal.role;
+}
+
 SchemaCatalogEntry &Binder::BindCreateSchema(CreateInfo &info) {
 	auto &schema = BindSchema(info);
 	if (schema.catalog.IsSystemCatalog()) {
@@ -359,6 +388,10 @@ SchemaCatalogEntry &Binder::BindCreateSchema(CreateInfo &info) {
 	if (info.type != CatalogType::TRIGGER_ENTRY) {
 		RequireSchemaCreate(schema);
 		RequireReplaceOwner(schema, info, info.GetQualifiedName().Name());
+	}
+	if (principal) {
+		AssignOwner(info.permissions, schema.ParentCatalog(), DefaultPrivilegesType(info.type), &schema,
+		            CreationOwner(context, info, *principal));
 	}
 	return schema;
 }
@@ -1140,7 +1173,18 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 	case CatalogType::SCHEMA_ENTRY: {
 		auto &info = stmt.info->Cast<CreateSchemaInfo>();
 		BindCreateSchema(info);
+		auto owner = principal ? principal->role : idx_t(0);
+		if (principal && !info.authorization.empty()) {
+			owner = RoleId(info.authorization);
+		}
 		RequireDatabasePrivilege(info.SchemaCatalog(), AclMode::Create);
+		if (principal) {
+			if (!principal->CanSet(owner)) {
+				throw PermissionException("must be able to SET ROLE \"%s\"", info.authorization.GetIdentifierName());
+			}
+			AssignOwner(info.permissions, Catalog::GetCatalog(context, info.SchemaCatalog()), CatalogType::SCHEMA_ENTRY,
+			            nullptr, owner);
+		}
 		properties.RegisterDBModify(Catalog::GetCatalog(context, info.SchemaCatalog()), context,
 		                            DatabaseModificationType::CREATE_CATALOG_ENTRY);
 		result.plan = make_uniq<LogicalCreate>(LogicalOperatorType::LOGICAL_CREATE_SCHEMA, std::move(stmt.info));
@@ -1272,6 +1316,12 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 		}
 		auto bound_info = BindCreateTableInfo(std::move(stmt.info));
 		RequireTypeUsage(bound_info->Base().dependencies);
+		if (principal) {
+			for (auto &serial : bound_info->serial_sequences) {
+				AssignOwner(serial.permissions, bound_info->schema.ParentCatalog(), CatalogType::SEQUENCE_ENTRY,
+				            &bound_info->schema, principal->role);
+			}
+		}
 		auto root = std::move(bound_info->query);
 
 		// create the logical operator
@@ -1429,6 +1479,10 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 			RequireSuperuser();
 		}
 		RequireDatabasePrivilege(catalog, AclMode::Create);
+		if (principal) {
+			AssignOwner(stmt.info->permissions, Catalog::GetCatalog(context, catalog),
+			            CatalogType::FOREIGN_SERVER_ENTRY, nullptr, principal->role);
+		}
 		properties.RegisterDBModify(Catalog::GetCatalog(context, catalog), context,
 		                            DatabaseModificationType::CREATE_CATALOG_ENTRY);
 		result.plan =

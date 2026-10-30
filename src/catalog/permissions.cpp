@@ -267,9 +267,43 @@ void AlterPermissionsInfo::ApplyTo(Permissions &permissions, CatalogType entry_t
 	}
 }
 
+void Permissions::AssignOwner(idx_t new_owner, CatalogType objtype, optional_ptr<const Permissions> database,
+                              optional_idx schema) {
+	owner = new_owner;
+	if (!database) {
+		return;
+	}
+	vector<AclItem> granted;
+	auto apply = [&](idx_t scope) {
+		for (auto &defaults_entry : database->defaults) {
+			if (defaults_entry.role != new_owner || defaults_entry.objtype != objtype ||
+			    defaults_entry.scope != scope) {
+				continue;
+			}
+			if (granted.empty()) {
+				granted = AclDefault(objtype, new_owner);
+			}
+			for (auto &item : defaults_entry.acl) {
+				Grant(granted, item.grantee, item.grantor, item.privs, item.grant_option);
+			}
+		}
+	};
+	if (schema.IsValid()) {
+		apply(schema.GetIndex());
+	}
+	apply(0);
+	if (!granted.empty()) {
+		acl = std::move(granted);
+	}
+}
+
 bool RoleAccess::Uses(idx_t other) const {
 	return other == role ||
 	       (((closure_mask >> (other & 63)) & 1) != 0 && std::binary_search(closure.begin(), closure.end(), other));
+}
+
+bool RoleAccess::CanSet(idx_t other) const {
+	return is_superuser || other == role || std::binary_search(settable.begin(), settable.end(), other);
 }
 
 static bool Reaches(const RoleAccess &access, const AclItem &item) {
@@ -367,9 +401,11 @@ SecuritySnapshot::SecuritySnapshot(vector<Role> roles_p) {
 	std::sort(roles_p.begin(), roles_p.end(), [](const Role &lhs, const Role &rhs) { return lhs.role < rhs.role; });
 	idx_t total = 0;
 	for (auto &role : roles_p) {
-		std::sort(role.closure.begin(), role.closure.end());
-		role.closure.erase(std::unique(role.closure.begin(), role.closure.end()), role.closure.end());
-		total += role.closure.size();
+		for (auto list : {&role.closure, &role.settable}) {
+			std::sort(list->begin(), list->end());
+			list->erase(std::unique(list->begin(), list->end()), list->end());
+			total += list->size();
+		}
 	}
 	arena.reserve(total);
 	roles.reserve(roles_p.size());
@@ -384,6 +420,9 @@ SecuritySnapshot::SecuritySnapshot(vector<Role> roles_p) {
 			access.closure_mask |= uint64_t(1) << (member & 63);
 		}
 		access.closure = std::span<const idx_t>(arena.data() + begin, role.closure.size());
+		const auto settable_begin = arena.size();
+		arena.insert(arena.end(), role.settable.begin(), role.settable.end());
+		access.settable = std::span<const idx_t>(arena.data() + settable_begin, role.settable.size());
 		roles.push_back(access);
 	}
 }

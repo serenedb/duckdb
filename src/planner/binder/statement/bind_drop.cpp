@@ -154,7 +154,7 @@ BoundStatement Binder::Bind(DropStatement &stmt) {
 	case CatalogType::ROLE_ENTRY:
 		break;
 	case CatalogType::DATABASE_ENTRY:
-		if (auto database = DatabaseEntry(stmt.info->GetQualifiedName().Name())) {
+		if (auto database = ClusterEntry(CatalogType::DATABASE_ENTRY, stmt.info->GetQualifiedName().Name())) {
 			RequireOwner(*database);
 		}
 		break;

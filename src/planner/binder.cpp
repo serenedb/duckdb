@@ -13,6 +13,7 @@
 #include "duckdb/common/enum_util.hpp"
 #include "duckdb/common/helper.hpp"
 #include "duckdb/common/stack_depth.hpp"
+#include "duckdb/common/string_util.hpp"
 #include "duckdb/main/attached_database.hpp"
 #include "duckdb/main/config.hpp"
 #include "duckdb/main/database.hpp"
@@ -38,6 +39,8 @@
 #include "duckdb/planner/query_node/list.hpp"
 #include "duckdb/planner/tableref/list.hpp"
 #include "duckdb/storage/data_table.hpp"
+#include "duckdb/storage/storage_info.hpp"
+#include "duckdb/storage/storage_manager.hpp"
 #include "duckdb/common/types/uuid.hpp"
 
 #include <algorithm>
@@ -356,21 +359,45 @@ void Binder::RequireOwner(CatalogEntry &entry) {
 	}
 }
 
-optional_ptr<CatalogEntry> Binder::DatabaseEntry(const Identifier &database) {
+optional_ptr<CatalogEntry> Binder::ClusterEntry(CatalogType type, const Identifier &name) {
 	auto &cluster_catalog = DBConfig::GetConfig(context).cluster_catalog;
 	if (cluster_catalog.empty()) {
 		return nullptr;
 	}
 	auto &cluster = Catalog::GetCatalog(context, cluster_catalog).Cast<DuckCatalog>();
-	return cluster.GetCatalogSet(CatalogType::DATABASE_ENTRY)
-	    .GetEntry(cluster.GetCatalogTransaction(context), database);
+	return cluster.GetCatalogSet(type).GetEntry(cluster.GetCatalogTransaction(context), name);
+}
+
+idx_t Binder::RoleId(const Identifier &name) {
+	auto role = ClusterEntry(CatalogType::ROLE_ENTRY, name);
+	if (!role) {
+		throw CatalogException(unordered_map<string, string> {{"type", "Role"}},
+		                       StringUtil::Format("role \"%s\" does not exist", name.GetIdentifierName()));
+	}
+	return role->oid;
+}
+
+static bool StoresPermissions(Catalog &catalog) {
+	return !catalog.IsDuckCatalog() || catalog.GetAttached().IsTemporary() ||
+	       IsSereneDBStorageVersion(catalog.GetAttached().GetStorageManager().GetStorageVersion());
+}
+
+void Binder::AssignOwner(Permissions &permissions, Catalog &catalog, CatalogType objtype,
+                         optional_ptr<SchemaCatalogEntry> schema, idx_t owner) {
+	if (!StoresPermissions(catalog)) {
+		return;
+	}
+	auto database = ClusterEntry(CatalogType::DATABASE_ENTRY, schema ? schema->ParentCatalog().GetName()
+	                                                                 : DatabaseManager::GetDefaultDatabase(context));
+	permissions.AssignOwner(owner, objtype, database ? &database->permissions : nullptr,
+	                        schema ? optional_idx(schema->oid) : optional_idx());
 }
 
 void Binder::RequireDatabasePrivilege(const Identifier &database, AclMode need) {
 	if (!principal) {
 		return;
 	}
-	auto entry = DatabaseEntry(database);
+	auto entry = ClusterEntry(CatalogType::DATABASE_ENTRY, database);
 	if (entry && !principal->Can(CatalogType::DATABASE_ENTRY, entry->permissions, need)) {
 		ThrowPermissionDenied(*entry);
 	}
@@ -382,7 +409,7 @@ void Binder::RequireSchemaCreate(SchemaCatalogEntry &schema) {
 	}
 	if (schema.ParentCatalog().GetAttached().IsTemporary()) {
 		auto database = DatabaseManager::GetDefaultDatabase(context);
-		auto entry = DatabaseEntry(database);
+		auto entry = ClusterEntry(CatalogType::DATABASE_ENTRY, database);
 		if (entry && !principal->Can(CatalogType::DATABASE_ENTRY, entry->permissions, AclMode::CreateTemp)) {
 			throw PermissionException("permission denied to create temporary tables in database \"%s\"",
 			                          database.GetIdentifierName());

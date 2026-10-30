@@ -427,10 +427,13 @@ public:
 	void RequireSuperuser();
 	void RequireOwner(CatalogEntry &entry);
 	void RequireReplaceOwner(SchemaCatalogEntry &schema, const CreateInfo &info, const Identifier &name);
-	optional_ptr<CatalogEntry> DatabaseEntry(const Identifier &database);
+	optional_ptr<CatalogEntry> ClusterEntry(CatalogType type, const Identifier &name);
+	idx_t RoleId(const Identifier &name);
 	void RequireDatabasePrivilege(const Identifier &database, AclMode need);
 	void RequireSchemaCreate(SchemaCatalogEntry &schema);
 	void RequireTypeUsage(optional_ptr<const LogicalDependencyList> dependencies);
+	void AssignOwner(Permissions &permissions, Catalog &catalog, CatalogType objtype,
+	                 optional_ptr<SchemaCatalogEntry> schema, idx_t owner);
 
 	void BeginSubqueryBind(Binder &parent, ExpressionBinder &binder);
 	//! The innermost enclosing scope
