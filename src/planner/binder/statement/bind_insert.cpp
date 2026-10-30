@@ -758,6 +758,10 @@ BoundStatement Binder::BindNode(InsertQueryNode &node) {
 		return std::move(*expanded);
 	}
 
+	if (principal && !principal->CanAnyColumn(table.permissions, AclMode::Insert, table.GetColumns())) {
+		ThrowPermissionDenied(table);
+	}
+
 	auto values_list = node.GetValuesList();
 	BoundStatement root_select;
 	shared_ptr<Binder> select_by_name;
@@ -857,7 +861,10 @@ BoundStatement Binder::BindNode(InsertQueryNode &node) {
 		for (idx_t i = 0; i < source_columns && i < named_column_map.size(); i++) {
 			acls.emplace_back(table.GetColumn(named_column_map[i]).Acl());
 		}
-		if (!principal->CanColumns(table.permissions, AclMode::Insert, acls)) {
+		const bool allowed = acls.empty()
+		                         ? principal->CanAnyColumn(table.permissions, AclMode::Insert, table.GetColumns())
+		                         : principal->CanColumns(table.permissions, AclMode::Insert, acls);
+		if (!allowed) {
 			ThrowPermissionDenied(table);
 		}
 	};
