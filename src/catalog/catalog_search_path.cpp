@@ -2,6 +2,8 @@
 #include "duckdb/catalog/default/default_schemas.hpp"
 
 #include "duckdb/catalog/catalog.hpp"
+#include "duckdb/catalog/catalog_entry/schema_catalog_entry.hpp"
+#include "duckdb/catalog/permissions.hpp"
 #include "duckdb/common/constants.hpp"
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/sql_identifier.hpp"
@@ -481,15 +483,27 @@ CatalogSearchEntry CatalogSearchPath::GetResolvedDefault() const {
 	// search_path entry when "$user" doesn't match a real schema.
 	auto user_end = 1 + set_paths.size();
 	const bool can_check_existence = context.transaction.HasActiveTransaction();
+	bool skipped_unusable = false;
 	for (idx_t i = 1; i < user_end; i++) {
 		auto resolved = ResolveSchema(context, paths[i]);
 		if (resolved.empty()) {
 			continue;
 		}
-		if (!can_check_existence ||
-		    Catalog::GetSchema(context, paths[i].GetCatalog(), Identifier(resolved), OnEntryNotFound::RETURN_NULL)) {
+		if (!can_check_existence) {
 			return CatalogSearchEntry(paths[i].GetCatalog(), Identifier(std::move(resolved)));
 		}
+		auto schema =
+		    Catalog::GetSchema(context, paths[i].GetCatalog(), Identifier(resolved), OnEntryNotFound::RETURN_NULL);
+		if (!schema) {
+			continue;
+		}
+		if (CanUseSchema(context.principal, *schema)) {
+			return CatalogSearchEntry(paths[i].GetCatalog(), Identifier(std::move(resolved)));
+		}
+		skipped_unusable = true;
+	}
+	if (skipped_unusable) {
+		return CatalogSearchEntry(Identifier(), Identifier());
 	}
 	return GetDefault();
 }

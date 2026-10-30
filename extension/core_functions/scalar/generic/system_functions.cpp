@@ -1,5 +1,6 @@
 #include "duckdb/catalog/catalog_search_path.hpp"
 #include "duckdb/catalog/catalog.hpp"
+#include "duckdb/catalog/permissions.hpp"
 #include "core_functions/scalar/generic_functions.hpp"
 #include "duckdb/main/attached_database.hpp"
 #include "duckdb/main/database.hpp"
@@ -38,7 +39,7 @@ void CurrentSchemaFunction(DataChunk &input, ExpressionState &state, Vector &res
 		searched_current_catalog = true;
 		auto schema_entry =
 		    Catalog::GetSchema(context, entry.GetCatalog(), entry.GetSchema(), OnEntryNotFound::RETURN_NULL);
-		if (schema_entry) {
+		if (schema_entry && CanUseSchema(context.principal, *schema_entry)) {
 			result.Reference(Value(entry.GetSchema()), count_t(input.size()));
 			return;
 		}
@@ -130,7 +131,7 @@ unique_ptr<FunctionData> CurrentSchemasBind(BindScalarFunctionInput &input) {
 			}
 			auto schema_entry =
 			    Catalog::GetSchema(context, entry.GetCatalog(), entry.GetSchema(), OnEntryNotFound::RETURN_NULL);
-			if (!schema_entry) {
+			if (!schema_entry || !CanUseSchema(context.principal, *schema_entry)) {
 				continue;
 			}
 			schema_list.emplace_back(entry.GetSchema());

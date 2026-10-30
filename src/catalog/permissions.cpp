@@ -409,6 +409,11 @@ bool IsUnowned(const CatalogEntry &entry) {
 	return entry.permissions.owner == 0 && (entry.internal || !stores_owners);
 }
 
+bool CanUseSchema(optional_ptr<const RoleAccess> principal, const CatalogEntry &schema) {
+	return !principal || schema.internal || IsUnowned(schema) ||
+	       principal->Can(CatalogType::SCHEMA_ENTRY, schema.permissions, AclMode::Usage);
+}
+
 string PermissionKindName(CatalogType type) {
 	switch (type) {
 	case CatalogType::TABLE_ENTRY:
