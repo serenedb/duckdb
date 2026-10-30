@@ -238,6 +238,7 @@ public:
 	create_secret_storage_t create_secret_storage = nullptr;
 	//! Database configuration variables as controlled by SET
 	GlobalUserSettings user_settings;
+	identifier_set_t superuser_functions;
 
 public:
 	DUCKDB_API static DBConfig &GetConfig(ClientContext &context);
