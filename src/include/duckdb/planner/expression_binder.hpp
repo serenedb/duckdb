@@ -114,6 +114,7 @@ public:
 	void ExpandSqlFunctionBody(DummyBinding &binding, vector<unique_ptr<ParsedExpression>> &arguments,
 	                           unique_ptr<ParsedExpression> &expr);
 	BindResult BindMacroArgumentType(unique_ptr<ParsedExpression> &argument, idx_t depth);
+	void ShareAliasReferences(unique_ptr<ParsedExpression> &expr, SelectBindState &bind_state);
 
 	//! The target type that should result from the binder. If the result is not of this type, a cast to this type will
 	//! be added. Defaults to INVALID.

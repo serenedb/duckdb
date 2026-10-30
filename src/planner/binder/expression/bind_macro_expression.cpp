@@ -33,6 +33,7 @@
 #include "duckdb/parser/tableref/subqueryref.hpp"
 #include "duckdb/parser/parsed_expression_iterator.hpp"
 #include "duckdb/planner/expression_binder.hpp"
+#include "duckdb/planner/expression_binder/select_bind_state.hpp"
 #include "duckdb/planner/expression/bound_constant_expression.hpp"
 #include "duckdb/planner/expression/bound_reference_expression.hpp"
 #include "duckdb/parser/expression/lambda_expression.hpp"
@@ -454,6 +455,77 @@ const MacroBodyUse &ExpressionBinder::GetMacroBodyUse(const ScalarMacroFunction 
 	}
 	use = analyze(*macro_def.expression);
 	return use;
+}
+
+void ExpressionBinder::ShareAliasReferences(unique_ptr<ParsedExpression> &expr, SelectBindState &bind_state) {
+	if (!CanShareMacroArguments()) {
+		return;
+	}
+	vector<Identifier> names;
+	ParsedExpressionIterator::VisitExpressionClass(
+	    *expr, ExpressionClass::COLUMN_REF, [&](const ParsedExpression &child) {
+		    auto &column_ref = child.Cast<ColumnRefExpression>();
+		    auto &name = column_ref.GetColumnName();
+		    if (!column_ref.IsQualified() && bind_state.alias_map.count(name) && !absl::c_linear_search(names, name)) {
+			    names.push_back(name);
+		    }
+	    });
+	if (names.empty()) {
+		return;
+	}
+	DummyBinding aliases(vector<LogicalType>(names.size(), LogicalType::UNKNOWN), names, string());
+	MacroBodyUse use;
+	for (auto &name : names) {
+		use.parameters[name];
+	}
+	vector<identifier_set_t> lambda_params;
+	AnalyzeMacroBody(*expr, true, false, lambda_params, aliases, use);
+	if (!use.lambda_body) {
+		return;
+	}
+	vector<Identifier> shared;
+	for (auto &name : names) {
+		auto &parameter = use.parameters[name];
+		if (parameter.references < 2 || !parameter.shareable) {
+			continue;
+		}
+		bool captured = false;
+		auto &aliased = *bind_state.original_expressions[bind_state.alias_map.find(name)->second];
+		ParsedExpressionIterator::VisitExpressionClass(
+		    aliased, ExpressionClass::COLUMN_REF, [&](const ParsedExpression &child) {
+			    auto &column_name = child.Cast<ColumnRefExpression>().GetColumnName();
+			    captured |= parameter.lambda_names.count(column_name) > 0;
+		    });
+		if (!captured) {
+			shared.push_back(name);
+		}
+	}
+	if (shared.empty()) {
+		return;
+	}
+	vector<string> parameter_names;
+	vector<unique_ptr<ParsedExpression>> references;
+	for (idx_t i = 0; i < shared.size(); i++) {
+		parameter_names.push_back("0_alias_" + to_string(binder.global_binder_state->shared_macro_arguments++));
+		references.push_back(make_uniq<ColumnRefExpression>(Identifier(parameter_names.back())));
+	}
+	DummyBinding binding(vector<LogicalType>(shared.size(), LogicalType::UNKNOWN), shared, string());
+	binding.arguments = &references;
+	auto outer_binding = macro_binding;
+	macro_binding = &binding;
+	ReplaceMacroParameters(expr, lambda_params);
+	macro_binding = outer_binding;
+	auto alias = expr->GetAlias();
+	vector<unique_ptr<ParsedExpression>> invoke_arguments;
+	invoke_arguments.reserve(shared.size() + 1);
+	invoke_arguments.push_back(make_uniq<LambdaExpression>(std::move(parameter_names), std::move(expr)));
+	for (auto &name : shared) {
+		invoke_arguments.push_back(make_uniq<ColumnRefExpression>(name));
+	}
+	expr = make_uniq<FunctionExpression>(
+	    QualifiedName(Identifier(SYSTEM_CATALOG), Identifier(DEFAULT_SCHEMA), Identifier("invoke")),
+	    std::move(invoke_arguments));
+	expr->SetAlias(std::move(alias));
 }
 
 BindResult ExpressionBinder::BindMacroArgumentType(unique_ptr<ParsedExpression> &argument, idx_t depth) {
