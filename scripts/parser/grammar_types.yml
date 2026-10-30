@@ -1250,6 +1250,9 @@ String:
     - RealType
     - BooleanType
     - DoubleType
+    - CharacterType
+    - VaryingCharacterType
+    - FixedCharacterType
     - UpdateSetColumnTarget
     - ReindexKind
     - ReindexConcurrently
@@ -2194,7 +2197,6 @@ excluded_rules:
   - StarSymbol
   - PlainIdentifier
   - QuotedIdentifier
-  - CharacterType
   - IntervalNumber
   - AtTimeZoneOperator
   - PublicationFor
