@@ -201,6 +201,7 @@ private:
 };
 
 DUCKDB_API bool IsUnowned(const CatalogEntry &entry);
+DUCKDB_API bool CanUseSchema(optional_ptr<const RoleAccess> principal, const CatalogEntry &schema);
 DUCKDB_API string PermissionKindName(CatalogType type);
 [[noreturn]] DUCKDB_API void ThrowPermissionDenied(const CatalogEntry &entry);
 
