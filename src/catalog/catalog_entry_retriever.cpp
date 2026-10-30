@@ -89,6 +89,7 @@ void CatalogEntryRetriever::Inherit(const CatalogEntryRetriever &parent) {
 	this->callback = parent.callback;
 	this->search_path = parent.search_path;
 	this->at_clause = parent.at_clause;
+	this->principal = parent.principal;
 }
 
 const CatalogSearchPath &CatalogEntryRetriever::GetSearchPath() const {
