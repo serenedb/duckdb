@@ -422,6 +422,8 @@ public:
 	void CheckTableRead(TableBinding &binding, TableCatalogEntry &table);
 	void CheckTableReads();
 	void CheckCall(FunctionEntry &function);
+	void CheckStatementKind(SQLStatement &statement);
+	void RequireSuperuser();
 
 	void BeginSubqueryBind(Binder &parent, ExpressionBinder &binder);
 	//! The innermost enclosing scope

@@ -80,6 +80,7 @@ Binder::Binder(ClientContext &context, shared_ptr<Binder> parent_p, BinderType b
 }
 
 BoundStatement Binder::Bind(SQLStatement &statement) {
+	CheckStatementKind(statement);
 	switch (statement.type) {
 	case StatementType::SELECT_STATEMENT:
 		return Bind(statement.Cast<SelectStatement>());
@@ -324,6 +325,70 @@ void Binder::CheckCall(FunctionEntry &function) {
 	if ((function.type == CatalogType::MACRO_ENTRY || function.type == CatalogType::TABLE_MACRO_ENTRY) &&
 	    !IsUnowned(function) && !caller->Can(function.type, function.permissions, AclMode::Execute)) {
 		ThrowPermissionDenied(function);
+	}
+}
+
+void Binder::RequireSuperuser() {
+	if (principal && !principal->is_superuser) {
+		throw PermissionException("permission denied: superuser required");
+	}
+}
+
+void Binder::CheckStatementKind(SQLStatement &statement) {
+	if (!principal || principal->is_superuser) {
+		return;
+	}
+	switch (statement.type) {
+	case StatementType::EXPORT_STATEMENT:
+	case StatementType::LOAD_STATEMENT:
+	case StatementType::UPDATE_EXTENSIONS_STATEMENT:
+	case StatementType::COPY_DATABASE_STATEMENT:
+	case StatementType::CONNECT_STATEMENT:
+	case StatementType::EXTERNAL_RESOURCE_STATEMENT:
+	case StatementType::DETACH_STATEMENT:
+		RequireSuperuser();
+		break;
+	case StatementType::ATTACH_STATEMENT: {
+		auto &info = *statement.Cast<AttachStatement>().info;
+		auto type = info.options.find("type");
+		if (!info.path.empty() || info.external_resource || type == info.options.end() ||
+		    !StringUtil::CIEquals(type->second.ToString(), "serenedb")) {
+			RequireSuperuser();
+		}
+		if (!principal->Has(RoleOption::CreateDb)) {
+			throw PermissionException("permission denied to create database");
+		}
+		break;
+	}
+	case StatementType::INVALID_STATEMENT:
+	case StatementType::SELECT_STATEMENT:
+	case StatementType::INSERT_STATEMENT:
+	case StatementType::UPDATE_STATEMENT:
+	case StatementType::CREATE_STATEMENT:
+	case StatementType::DELETE_STATEMENT:
+	case StatementType::PREPARE_STATEMENT:
+	case StatementType::EXECUTE_STATEMENT:
+	case StatementType::ALTER_STATEMENT:
+	case StatementType::TRANSACTION_STATEMENT:
+	case StatementType::COPY_STATEMENT:
+	case StatementType::ANALYZE_STATEMENT:
+	case StatementType::VARIABLE_SET_STATEMENT:
+	case StatementType::CREATE_FUNC_STATEMENT:
+	case StatementType::EXPLAIN_STATEMENT:
+	case StatementType::DROP_STATEMENT:
+	case StatementType::PRAGMA_STATEMENT:
+	case StatementType::VACUUM_STATEMENT:
+	case StatementType::CALL_STATEMENT:
+	case StatementType::SET_STATEMENT:
+	case StatementType::RELATION_STATEMENT:
+	case StatementType::EXTENSION_STATEMENT:
+	case StatementType::LOGICAL_PLAN_STATEMENT:
+	case StatementType::MULTI_STATEMENT:
+	case StatementType::MERGE_INTO_STATEMENT:
+	case StatementType::DISCONNECT_STATEMENT:
+	case StatementType::PASSTHROUGH_STATEMENT:
+	case StatementType::ENUM_SIZE:
+		break;
 	}
 }
 

@@ -1304,6 +1304,7 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 		break;
 	}
 	case CatalogType::SECRET_ENTRY: {
+		RequireSuperuser();
 		CatalogTransaction transaction = CatalogTransaction(Catalog::GetSystemCatalog(context), context);
 		return_type = StatementReturnType::QUERY_RESULT;
 
