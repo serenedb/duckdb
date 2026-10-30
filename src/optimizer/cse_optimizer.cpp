@@ -1,6 +1,7 @@
 #include "duckdb/optimizer/cse_optimizer.hpp"
 
 #include "duckdb/planner/expression/bound_columnref_expression.hpp"
+#include "duckdb/planner/expression/bound_function_expression.hpp"
 #include "duckdb/planner/expression_iterator.hpp"
 #include "duckdb/planner/operator/logical_projection.hpp"
 #include "duckdb/planner/column_binding_map.hpp"
@@ -109,7 +110,9 @@ void CommonSubExpressionOptimizer::CountExpressions(Expression &expr, CSEReplace
 	// If we have a function that uses short circuiting, then we can only extract CSEs from the leftmost
 	// side of the argument tree (child_no == 0)
 	const auto save_short_circuit = state.short_circuited;
-	if (expr.GetExpressionType() == ExpressionType::OPERATOR_TRY) {
+	if (expr.GetExpressionType() == ExpressionType::OPERATOR_TRY ||
+	    (expr.GetExpressionClass() == ExpressionClass::BOUND_FUNCTION &&
+	     expr.Cast<BoundFunctionExpression>().Function().GetLazyArguments())) {
 		state.short_circuited = true;
 	}
 	if (ShortCircuits(expr)) {

@@ -23,7 +23,8 @@ namespace duckdb {
 struct LambdaExecuteInfo final : public FunctionLocalState {
 	LambdaExecuteInfo(ExpressionState &state, const ListLambdaBindData &info, const BoundFunctionExpression &expr)
 	    : has_index(info.has_index), index_offset(info.index_offset), index_vector(LogicalType::BIGINT),
-	      child_sel(STANDARD_VECTOR_SIZE), row_sel(STANDARD_VECTOR_SIZE), filter_sel(STANDARD_VECTOR_SIZE) {
+	      child_sel(STANDARD_VECTOR_SIZE), row_sel(STANDARD_VECTOR_SIZE), filter_sel(STANDARD_VECTOR_SIZE),
+	      captures(state, expr, info.has_index ? 2 : 1, 2) {
 		auto &lambda_expr = *info.lambda_expr;
 		expr_executor = make_uniq<ExpressionExecutor>(state, lambda_expr);
 
@@ -47,6 +48,7 @@ struct LambdaExecuteInfo final : public FunctionLocalState {
 
 		// initialize the data chunks
 		input_chunk.InitializeEmpty(input_types);
+		placeholders.InitializeEmpty(input_types);
 		lambda_chunk.Initialize(Allocator::DefaultAllocator(), result_types);
 		slice_sels.reserve(input_types.size());
 		for (idx_t i = 0; i < input_types.size(); i++) {
@@ -70,6 +72,8 @@ struct LambdaExecuteInfo final : public FunctionLocalState {
 	vector<SelectionVector> slice_sels;
 	SelectionVector filter_sel;
 	vector<idx_t> entry_lengths;
+	LambdaCaptures captures;
+	DataChunk placeholders;
 };
 
 struct LambdaBatch {
@@ -269,10 +273,17 @@ static void ExecuteExpression(const LambdaBatch &batch, Vector &child_vector, st
 	SliceBatchInput(info.input_chunk.data[column_idx], child_vector, batch.consecutive_children, batch.first_child,
 	                info.child_sel, batch.count, info.slice_sels[column_idx]);
 	column_idx++;
-	for (auto &column : columns) {
-		SliceBatchInput(info.input_chunk.data[column_idx], column, batch.consecutive_rows, batch.first_row,
-		                info.row_sel, batch.count, info.slice_sels[column_idx]);
-		column_idx++;
+	if (info.expr_executor->lazy_columns) {
+		info.captures.SetRows(info.row_sel, batch.count, batch.consecutive_rows, batch.first_row);
+		for (; column_idx < info.input_chunk.ColumnCount(); column_idx++) {
+			info.input_chunk.data[column_idx].Reference(info.placeholders.data[column_idx]);
+		}
+	} else {
+		for (auto &column : columns) {
+			SliceBatchInput(info.input_chunk.data[column_idx], column, batch.consecutive_rows, batch.first_row,
+			                info.row_sel, batch.count, info.slice_sels[column_idx]);
+			column_idx++;
+		}
 	}
 
 	// ensure all input vectors are sized to the chunk cardinality (some references inherit a different size)
@@ -353,8 +364,142 @@ static bool IsSingleElementRun(const LambdaFunctions::LambdaInfo &info) {
 	return single;
 }
 
+LambdaCaptures::LambdaCaptures(ExpressionState &state_p, const BoundFunctionExpression &expr, idx_t first_column_p,
+                               idx_t first_child_p)
+    : state(state_p), first_column(first_column_p), first_child(first_child_p) {
+	vector<LogicalType> types;
+	for (idx_t child = first_child; child < expr.GetChildren().size(); child++) {
+		types.push_back(expr.GetChildren()[child]->GetReturnType());
+	}
+	captures.resize(types.size());
+	for (auto &capture : captures) {
+		capture.positions.Initialize(STANDARD_VECTOR_SIZE);
+	}
+	if (!types.empty()) {
+		stores.Initialize(state.GetAllocator(), types);
+		views.InitializeEmpty(types);
+	}
+}
+
+void LambdaCaptures::Reset(idx_t rows_p) {
+	chunk_rows = rows_p;
+	all_constant = true;
+	for (auto &capture : captures) {
+		capture.loaded.assign(chunk_rows, false);
+		capture.stored = 0;
+		capture.constant = false;
+		capture.owned = false;
+	}
+}
+
+bool LambdaCaptures::AllConstant(const Vector &list) const {
+	return all_constant && list.GetVectorType() == VectorType::CONSTANT_VECTOR;
+}
+
+void LambdaCaptures::SetRows(const SelectionVector &rows_p, idx_t count, bool consecutive, idx_t first) {
+	rows = &rows_p;
+	row_count = count;
+	consecutive_rows = consecutive;
+	first_row = first;
+	for (auto &capture : captures) {
+		capture.sliced = false;
+	}
+}
+
+bool LambdaCaptures::Load(DataChunk &chunk, idx_t column, const SelectionVector *sel, idx_t count, Vector &) {
+	if (column < first_column) {
+		return false;
+	}
+	const auto index = column - first_column;
+	auto &capture = captures[index];
+	SelectionVector missing;
+	idx_t missing_count = 0;
+	for (idx_t i = 0; i < count; i++) {
+		const auto row = rows->get_index(sel ? sel->get_index(i) : i);
+		if (!capture.loaded[row]) {
+			if (missing_count == 0) {
+				missing.Initialize(count);
+			}
+			capture.loaded[row] = true;
+			missing.set_index(missing_count++, row);
+		}
+	}
+	if (missing_count != 0) {
+		LoadRows(index, missing, missing_count);
+	} else if (capture.sliced) {
+		return false;
+	}
+	capture.slice.Initialize(row_count);
+	SliceBatchInput(chunk.data[column], views.data[index], consecutive_rows, first_row, *rows, row_count,
+	                capture.slice);
+	capture.sliced = true;
+	return false;
+}
+
+void LambdaCaptures::LoadRows(idx_t index, const SelectionVector &missing, idx_t count) {
+	auto &capture = captures[index];
+	auto &store = stores.data[index];
+	auto &view = views.data[index];
+	auto &executor = *state.root.executor;
+	const auto child = first_child + index;
+	if (capture.stored == 0 && !capture.constant) {
+		stores.ResetColumn(index);
+		executor.ExecuteArgument(state, child, &missing, count, store);
+		if (store.GetVectorType() == VectorType::CONSTANT_VECTOR) {
+			capture.constant = true;
+			view.Reference(store);
+			return;
+		}
+		all_constant = false;
+		for (idx_t row = 0; row < chunk_rows; row++) {
+			capture.positions.set_index(row, 0);
+		}
+		for (idx_t i = 0; i < count; i++) {
+			capture.positions.set_index(missing.get_index(i), i);
+		}
+		capture.stored = count;
+		view.Slice(store, capture.positions, chunk_rows);
+		return;
+	}
+	all_constant = false;
+	if (!capture.owned) {
+		Vector owned(store.GetType(), chunk_rows);
+		if (capture.constant) {
+			VectorOperations::Copy(store, owned, 1, 0, 0);
+			for (idx_t row = 0; row < chunk_rows; row++) {
+				capture.positions.set_index(row, 0);
+			}
+			capture.stored = 1;
+			capture.constant = false;
+		} else {
+			VectorOperations::Copy(store, owned, capture.stored, 0, 0);
+		}
+		store.Reference(owned);
+		capture.owned = true;
+	}
+	Vector values(store.GetType(), count);
+	executor.ExecuteArgument(state, child, &missing, count, values);
+	VectorOperations::Copy(values, store, count, 0, capture.stored);
+	for (idx_t i = 0; i < count; i++) {
+		capture.positions.set_index(missing.get_index(i), capture.stored + i);
+	}
+	capture.stored += count;
+	FlatVector::SetSize(store, capture.stored);
+	view.Slice(store, capture.positions, chunk_rows);
+}
+
+void LambdaFunctions::ExecuteArguments(DataChunk &args, ExpressionState &state, idx_t eager_count) {
+	for (idx_t i = 0; i < eager_count; i++) {
+		state.root.executor->ExecuteArgument(state, i, nullptr, args.size(), args.data[i]);
+	}
+}
+
 template <class FUNCTION_FUNCTOR>
 static void ExecuteLambda(DataChunk &args, ExpressionState &state, Vector &result) {
+	const bool lazy = state.root.executor->lazy_columns;
+	if (lazy) {
+		LambdaFunctions::ExecuteArguments(args, state, 2);
+	}
 	bool result_is_null = false;
 	LambdaFunctions::LambdaInfo info(args, state, result, result_is_null);
 	if (result_is_null) {
@@ -363,6 +508,8 @@ static void ExecuteLambda(DataChunk &args, ExpressionState &state, Vector &resul
 
 	auto result_entries = FlatVector::GetDataMutable<list_entry_t>(result);
 	auto &execute_info = ExecuteFunctionState::GetFunctionState(state)->Cast<LambdaExecuteInfo>();
+	execute_info.expr_executor->lazy_columns = lazy ? &execute_info.captures : nullptr;
+	execute_info.captures.Reset(info.row_count);
 	auto index_data = FlatVector::GetDataMutable<int64_t>(execute_info.index_vector);
 
 	// get list_filter specific info
@@ -392,9 +539,6 @@ static void ExecuteLambda(DataChunk &args, ExpressionState &state, Vector &resul
 			ExecuteExpression(batch, *info.child_vector, info.columns, execute_info);
 			FUNCTION_FUNCTOR::AppendResult(result, execute_info.lambda_chunk.data[0], batch.count, result_entries,
 			                               list_filter_info, execute_info);
-			if (info.is_all_constant && !info.is_volatile) {
-				result.SetVectorType(VectorType::CONSTANT_VECTOR);
-			}
 			FlatVector::SetSize(result, count_t(info.row_count));
 			return;
 		}
@@ -446,7 +590,7 @@ static void ExecuteLambda(DataChunk &args, ExpressionState &state, Vector &resul
 
 	FUNCTION_FUNCTOR::AppendResult(result, lambda_vector, batch.count, result_entries, list_filter_info, execute_info);
 
-	if (info.is_all_constant && !info.is_volatile) {
+	if ((lazy ? execute_info.captures.AllConstant(args.data[0]) : info.is_all_constant) && !info.is_volatile) {
 		result.SetVectorType(VectorType::CONSTANT_VECTOR);
 	}
 	FlatVector::SetSize(result, count_t(info.row_count));

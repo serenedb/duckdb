@@ -20,6 +20,7 @@
 #include "duckdb/planner/expression/bound_lambda_expression.hpp"
 #include "duckdb/planner/expression/bound_reference_expression.hpp"
 #include "duckdb/planner/expression_binder.hpp"
+#include "duckdb/planner/expression_iterator.hpp"
 #include "duckdb/planner/column_qualifier.hpp"
 #include "duckdb/planner/expression_binder/select_binder.hpp"
 #include "duckdb/main/settings.hpp"
@@ -627,6 +628,49 @@ BindResult ExpressionBinder::BindLambdaFunction(const FunctionExpression &functi
 	if (captured_body) {
 		bound_lambda_expr.SetLambdaExpr(std::move(captured_body));
 	}
+	vector<bool> used_parameters;
+	if (lambda_bindings) {
+		const auto parameter_count = bound_lambda_expr.ParameterCount();
+		idx_t enclosing_count = 0;
+		for (auto &binding : *lambda_bindings) {
+			enclosing_count += binding.GetColumnCount();
+		}
+		used_parameters.resize(enclosing_count, false);
+		auto &body = bound_lambda_expr.LambdaExprMutable();
+		const auto visit_references = [&](auto &&callback) {
+			if (body.GetExpressionClass() == ExpressionClass::BOUND_REF) {
+				callback(body.Cast<BoundReferenceExpression>());
+				return;
+			}
+			ExpressionIterator::EnumerateChildren(body, [&](unique_ptr<Expression> &child) {
+				ExpressionIterator::VisitExpressionMutable<BoundReferenceExpression>(
+				    child, [&](BoundReferenceExpression &reference, unique_ptr<Expression> &) { callback(reference); });
+			});
+		};
+		visit_references([&](BoundReferenceExpression &reference) {
+			const auto index = reference.Index();
+			if (index >= parameter_count && index < parameter_count + enclosing_count) {
+				used_parameters[index - parameter_count] = true;
+			}
+		});
+		vector<idx_t> kept_index(enclosing_count);
+		idx_t kept = 0;
+		for (idx_t i = 0; i < enclosing_count; i++) {
+			kept_index[i] = kept;
+			kept += used_parameters[i];
+		}
+		if (kept != enclosing_count) {
+			visit_references([&](BoundReferenceExpression &reference) {
+				auto &index = reference.IndexMutable();
+				if (index < parameter_count) {
+					return;
+				}
+				index = index < parameter_count + enclosing_count
+				            ? parameter_count + kept_index[index - parameter_count]
+				            : index - (enclosing_count - kept);
+			});
+		}
+	}
 
 	FunctionBinder function_binder(binder);
 	unique_ptr<Expression> result =
@@ -655,10 +699,11 @@ BindResult ExpressionBinder::BindLambdaFunction(const FunctionExpression &functi
 			D_ASSERT(column_names.size() == column_types.size());
 
 			for (idx_t column_idx = column_names.size(); column_idx > 0; column_idx--) {
-				auto bound_lambda_param = make_uniq<BoundReferenceExpression>(column_names[column_idx - 1],
-				                                                              column_types[column_idx - 1], offset);
+				if (used_parameters[offset]) {
+					bound_function_expr.GetChildrenMutable().push_back(make_uniq<BoundReferenceExpression>(
+					    column_names[column_idx - 1], column_types[column_idx - 1], offset));
+				}
 				offset++;
-				bound_function_expr.GetChildrenMutable().push_back(std::move(bound_lambda_param));
 			}
 		}
 	}

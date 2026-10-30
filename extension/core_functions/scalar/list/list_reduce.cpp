@@ -10,14 +10,17 @@ namespace duckdb {
 namespace {
 
 struct ListReduceLocalState final : public FunctionLocalState {
-	ListReduceLocalState(ExpressionState &state, const Expression &lambda_expr) : expr_executor(state, lambda_expr) {
-		odd_result_chunk.Initialize(Allocator::DefaultAllocator(), {lambda_expr.GetReturnType()});
-		even_result_chunk.Initialize(Allocator::DefaultAllocator(), {lambda_expr.GetReturnType()});
+	ListReduceLocalState(ExpressionState &state, const ListLambdaBindData &info, const BoundFunctionExpression &expr)
+	    : expr_executor(state, *info.lambda_expr),
+	      captures(state, expr, (info.has_index ? 1 : 0) + 2, info.has_initial ? 3 : 2) {
+		odd_result_chunk.Initialize(Allocator::DefaultAllocator(), {info.lambda_expr->GetReturnType()});
+		even_result_chunk.Initialize(Allocator::DefaultAllocator(), {info.lambda_expr->GetReturnType()});
 	}
 
 	ExpressionExecutor expr_executor;
 	DataChunk odd_result_chunk;
 	DataChunk even_result_chunk;
+	LambdaCaptures captures;
 };
 
 struct ReduceExecuteInfo {
@@ -115,6 +118,7 @@ struct ReduceExecuteInfo {
 	unique_ptr<Vector> left_slice;
 	unique_ptr<Vector> accumulator_cast;
 	ExpressionExecutor &expr_executor;
+	optional_ptr<LambdaCaptures> captures;
 	Vector index_vector;
 	vector<LogicalType> input_types;
 
@@ -245,7 +249,10 @@ bool ExecuteReduce(const idx_t loops, ReduceExecuteInfo &execute_info, LambdaFun
 	// skip the initial value if there is one
 	vector<Vector> slices;
 	const idx_t initial_offset = info.has_initial ? 1 : 0;
-	for (idx_t i = 0; i < info.columns.size() - initial_offset; i++) {
+	if (execute_info.captures) {
+		execute_info.captures->SetRows(execute_info.active_rows_sel, reduced_row_idx, false, 0);
+	}
+	for (idx_t i = 0; !execute_info.captures && i < info.columns.size() - initial_offset; i++) {
 		if (info.columns[initial_offset + i].GetVectorType() == VectorType::CONSTANT_VECTOR) {
 			// only reference constant vectors
 			input_chunk.data[accumulator_offset + 1 + i].Reference(info.columns[initial_offset + i]);
@@ -364,12 +371,17 @@ unique_ptr<FunctionLocalState> ListReduceInitLocalState(ExpressionState &state, 
 	if (expr.GetChildren()[0]->GetReturnType().id() == LogicalTypeId::SQLNULL) {
 		return nullptr;
 	}
-	return make_uniq<ListReduceLocalState>(state, *bind_data->Cast<ListLambdaBindData>().lambda_expr);
+	return make_uniq<ListReduceLocalState>(state, bind_data->Cast<ListLambdaBindData>(), expr);
 }
 
 } // namespace
 
 void LambdaFunctions::ListReduceFunction(DataChunk &args, ExpressionState &state, Vector &result) {
+	const bool lazy = state.root.executor->lazy_columns;
+	if (lazy) {
+		auto &bind_info = state.expr.Cast<BoundFunctionExpression>().BindInfo();
+		ExecuteArguments(args, state, bind_info->Cast<ListLambdaBindData>().has_initial ? 3 : 2);
+	}
 	// Initializes the left slice from the list entries, active rows, the expression executor and the input types
 	bool completed = false;
 	LambdaInfo info(args, state, result, completed);
@@ -379,6 +391,11 @@ void LambdaFunctions::ListReduceFunction(DataChunk &args, ExpressionState &state
 
 	auto &local_state = ExecuteFunctionState::GetFunctionState(state)->Cast<ListReduceLocalState>();
 	ReduceExecuteInfo execute_info(info, state.GetContext(), local_state.expr_executor);
+	local_state.expr_executor.lazy_columns = lazy ? &local_state.captures : nullptr;
+	local_state.captures.Reset(info.row_count);
+	if (lazy) {
+		execute_info.captures = &local_state.captures;
+	}
 
 	// Since the left slice references the result chunk, we need to create two result chunks.
 	// This means there is always an empty result chunk for the next iteration,
@@ -402,7 +419,7 @@ void LambdaFunctions::ListReduceFunction(DataChunk &args, ExpressionState &state
 	}
 	execute_info.WriteResult(info.result, info.row_count);
 
-	if (info.is_all_constant && !info.is_volatile) {
+	if ((lazy ? local_state.captures.AllConstant(args.data[0]) : info.is_all_constant) && !info.is_volatile) {
 		info.result.SetVectorType(VectorType::CONSTANT_VECTOR);
 	}
 }

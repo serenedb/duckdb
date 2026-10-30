@@ -76,6 +76,7 @@ public:
 
 public:
 	unique_ptr<FunctionLocalState> local_state;
+	const SelectionVector *input_sel = nullptr;
 
 private:
 	void ResolveDictionaryInput();

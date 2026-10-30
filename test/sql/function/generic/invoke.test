@@ -7,6 +7,164 @@ select invoke(lambda x: x * x, 2) as square_of_x
 ----
 4
 
+query I
+SELECT invoke(lambda x: CASE WHEN i > 0 THEN x + x ELSE 0 END, (CASE WHEN i = 0 THEN 'x' ELSE i::VARCHAR END)::INTEGER) FROM range(3) t(i) ORDER BY i
+----
+0
+2
+4
+
+query I
+SELECT invoke(lambda x: CASE WHEN i = 1 THEN x WHEN i = 2 THEN x * 10 END, (CASE WHEN i = 0 THEN 'x' ELSE i::VARCHAR END)::INTEGER) FROM range(3) t(i) ORDER BY i
+----
+NULL
+1
+20
+
+query I
+SELECT invoke(lambda x: TRY(x + x), (CASE WHEN i = 0 THEN 'x' ELSE i::VARCHAR END)::INTEGER) FROM range(3) t(i) ORDER BY i
+----
+NULL
+2
+4
+
+query II
+SELECT i, CASE WHEN i > 0 THEN invoke(lambda x: CASE WHEN i > 1 THEN x + x END, (CASE WHEN i < 2 THEN 'x' ELSE i::VARCHAR END)::INTEGER) END FROM range(4) t(i) ORDER BY i
+----
+0	NULL
+1	NULL
+2	4
+3	6
+
+query II
+SELECT i, invoke(lambda x: COALESCE(CASE WHEN i > 0 THEN x END, 0) + x, i + 1) FROM range(3) t(i) ORDER BY i
+----
+0	1
+1	4
+2	6
+
+query II
+SELECT i, invoke(lambda x: x + x + list_sum(list_transform(l, lambda y: y * 2)), i + 1) FROM (SELECT i, [i, 1] AS l FROM range(3) t(i)) ORDER BY i
+----
+0	4
+1	8
+2	12
+
+query II
+SELECT i, invoke(lambda x: list_transform(l, lambda y: y + x)[1] + x, i + 1) FROM (SELECT i, [i] AS l FROM range(3) t(i)) ORDER BY i
+----
+0	2
+1	5
+2	8
+
+query II
+SELECT i, invoke(lambda x: list_reduce(l, lambda a, b: a + b + x) + x, i + 10) FROM (SELECT i, [i, 1] AS l FROM range(3) t(i)) ORDER BY i
+----
+0	21
+1	24
+2	27
+
+query I
+SELECT invoke(lambda x: CASE WHEN i > 0 THEN x + x ELSE list_sum(list_transform([i, 1], lambda y: y)) END, (CASE WHEN i = 0 THEN 'x' ELSE i::VARCHAR END)::INTEGER) FROM range(3) t(i) ORDER BY i
+----
+1
+2
+4
+
+query II
+SELECT i, invoke(lambda x: list_sum(list_transform(l, lambda y: y + x)), (CASE WHEN i = 0 THEN 'x' ELSE i::VARCHAR END)::INTEGER) FROM (SELECT i, CASE WHEN i = 0 THEN []::INTEGER[] ELSE [i] END AS l FROM range(3) t(i)) ORDER BY i
+----
+0	NULL
+1	2
+2	4
+
+query II
+SELECT i, invoke(lambda x: list_reduce(l, lambda acc, e: acc + e + x, 0), (CASE WHEN i = 0 THEN 'x' ELSE i::VARCHAR END)::INTEGER) FROM (SELECT i, CASE WHEN i = 0 THEN []::INTEGER[] ELSE [i] END AS l FROM range(3) t(i)) ORDER BY i
+----
+0	0
+1	2
+2	4
+
+query II
+SELECT i, invoke(lambda x: list_sum(list_transform(l, lambda y: CASE WHEN y > 5 THEN x + x END)), (CASE WHEN i = 0 THEN 'x' ELSE i::VARCHAR END)::INTEGER) FROM (SELECT i, CASE WHEN i = 0 THEN [1, 2] ELSE [i * 10] END AS l FROM range(3) t(i)) ORDER BY i
+----
+0	NULL
+1	2
+2	4
+
+query II
+SELECT i, invoke(lambda x: list_reduce(l, lambda acc, e: acc + CASE WHEN e > 5 THEN x + x ELSE 0 END, 0), (CASE WHEN i = 0 THEN 'x' ELSE i::VARCHAR END)::INTEGER) FROM (SELECT i, CASE WHEN i = 0 THEN [1, 2] ELSE [i * 10] END AS l FROM range(3) t(i)) ORDER BY i
+----
+0	0
+1	2
+2	4
+
+statement ok
+PRAGMA disable_optimizer
+
+query II
+SELECT i, invoke(lambda x: CASE WHEN i = 1 THEN x WHEN i = 2 THEN x * 10 + j END, i) FROM (SELECT i, i + 1 AS j FROM range(3) t(i)) ORDER BY i
+----
+0	NULL
+1	1
+2	23
+
+query II
+SELECT i, invoke(lambda x: COALESCE(CASE WHEN i > 0 THEN x END, 0) + x, 5) FROM range(3) t(i) ORDER BY i
+----
+0	5
+1	10
+2	10
+
+query II
+SELECT i, invoke(lambda x: COALESCE(CASE WHEN c1 THEN x END, 0) + COALESCE(CASE WHEN c2 THEN x END, 0) + CASE WHEN c3 THEN x ELSE 0 END, i * 10) FROM (VALUES (0, true, false, true), (1, false, true, true), (2, false, false, true), (3, true, false, true)) t(i, c1, c2, c3) ORDER BY i
+----
+0	0
+1	20
+2	20
+3	60
+
+query II
+SELECT i, invoke(lambda x: list_sum(list_transform(range(3000 + i * 0), lambda a: a + x)), 5) FROM range(2) t(i) ORDER BY i
+----
+0	4513500
+1	4513500
+
+query II
+SELECT i, invoke(lambda x: list_sum(list_transform(range(3000 + i * 0), lambda a: CASE WHEN a % 1000 = 999 THEN x ELSE 0 END)), i + 1) FROM range(2) t(i) ORDER BY i
+----
+0	3
+1	6
+
+query II
+SELECT i, invoke(lambda x: list_reduce(range(3000 + i * 0), lambda acc, a: acc + CASE WHEN a % 1000 = 999 THEN x ELSE 0 END, 0), i + 1) FROM range(2) t(i) ORDER BY i
+----
+0	3
+1	6
+
+query II
+SELECT i, invoke(lambda x: x * 0 + list_sum(list_transform(range(3000 + i * 0), lambda y: y * x)), i + 1) FROM range(3) t(i) ORDER BY i
+----
+0	4498500
+1	8997000
+2	13495500
+
+statement ok
+PRAGMA enable_optimizer
+
+statement ok
+CREATE SEQUENCE invoke_strict_seq START 1
+
+query II
+SELECT count(*), max(r) FROM (SELECT invoke(lambda x: CASE WHEN i < 0 THEN x END, nextval('invoke_strict_seq')) AS r FROM range(5) t(i))
+----
+5	NULL
+
+query I
+SELECT currval('invoke_strict_seq')
+----
+5
+
 # Lambda volatility must be visible to common subexpression elimination.
 statement ok
 CREATE SEQUENCE invoke_cse_seq START 1

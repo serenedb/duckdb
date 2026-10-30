@@ -213,10 +213,36 @@ static void ExecuteConstantSelectFunction(const BoundFunctionExpression &expr, D
 	*ConstantVector::GetData<bool>(result) = true_count == 1;
 }
 
+void ExpressionExecutor::ExecuteArgument(ExpressionState &state, idx_t child, const SelectionVector *sel, idx_t count,
+                                         Vector &result) {
+	auto &function = state.expr.Cast<BoundFunctionExpression>();
+	auto input_sel = state.Cast<ExecuteFunctionState>().input_sel;
+	if (!input_sel) {
+		Execute(*function.GetChildren()[child], state.child_states[child].get(), sel, count, result);
+		return;
+	}
+	if (!sel) {
+		Execute(*function.GetChildren()[child], state.child_states[child].get(), input_sel, count, result);
+		return;
+	}
+	SelectionVector rows(count);
+	for (idx_t i = 0; i < count; i++) {
+		rows.set_index(i, input_sel->get_index(sel->get_index(i)));
+	}
+	Execute(*function.GetChildren()[child], state.child_states[child].get(), &rows, count, result);
+}
+
 void ExpressionExecutor::Execute(const BoundFunctionExpression &expr, ExpressionState *state,
                                  const SelectionVector *sel, idx_t count, Vector &result) {
 	state->intermediate_chunk.Reset();
 	auto &arguments = state->intermediate_chunk;
+	if (expr.Function().GetLazyArguments() || (lazy_columns && expr.Function().HasBindLambdaCallback())) {
+		state->Cast<ExecuteFunctionState>().input_sel = sel;
+		arguments.SetCardinality(count);
+		expr.Function().Execute(arguments, *state, result);
+		D_ASSERT(result.GetType() == expr.GetReturnType());
+		return;
+	}
 	// if the input is constant and there function is non-volatile we only need to run it on one value
 	bool all_constant = true;
 	if (expr.Function().GetStability() == FunctionStability::VOLATILE) {

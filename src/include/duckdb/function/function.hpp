@@ -602,6 +602,7 @@ public:
 	bool requires_expression_names = false;
 	//! Whether calls to this function must follow input order
 	bool requires_ordered_execution = false;
+	bool lazy_arguments = false;
 };
 
 class BoundSimpleFunction {

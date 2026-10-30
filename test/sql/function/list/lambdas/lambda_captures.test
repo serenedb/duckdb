@@ -11,6 +11,11 @@ SELECT sum(list_transform([i], lambda a: list_transform([a + 1], lambda b: list_
 62502500
 
 query I
+SELECT sum(list_transform(l, lambda a: a + i)[1]) FROM (SELECT i, [i] AS l FROM range(5000) t(i))
+----
+24995000
+
+query I
 SELECT sum(list_sum(list_transform(range(i % 4), lambda x: x * 10 + i))) FROM range(3000) t(i)
 ----
 6781500

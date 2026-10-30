@@ -4,7 +4,13 @@
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/serializer/serializer.hpp"
 #include "duckdb/common/serializer/deserializer.hpp"
+#include "duckdb/planner/expression/bound_case_expression.hpp"
+#include "duckdb/planner/expression/bound_conjunction_expression.hpp"
 #include "duckdb/planner/expression/bound_lambda_expression.hpp"
+#include "duckdb/planner/expression/bound_operator_expression.hpp"
+#include "duckdb/planner/expression/bound_reference_expression.hpp"
+
+#include <absl/cleanup/cleanup.h>
 
 namespace duckdb {
 
@@ -58,15 +64,198 @@ struct LambdaInvokeData final : public LambdaFunctionData {
 	}
 };
 
+void MarkUnconditionalReads(const Expression &expr, vector<bool> &read) {
+	switch (expr.GetExpressionClass()) {
+	case ExpressionClass::BOUND_REF: {
+		const auto index = expr.Cast<BoundReferenceExpression>().Index();
+		D_ASSERT(index < read.size());
+		read[index] = true;
+		return;
+	}
+	case ExpressionClass::BOUND_CASE: {
+		auto &checks = expr.Cast<BoundCaseExpression>().CaseChecks();
+		if (!checks.empty()) {
+			MarkUnconditionalReads(*checks[0].when_expr, read);
+		}
+		return;
+	}
+	case ExpressionClass::BOUND_CONJUNCTION: {
+		auto &children = expr.Cast<BoundConjunctionExpression>().GetChildren();
+		if (!children.empty()) {
+			MarkUnconditionalReads(*children[0], read);
+		}
+		return;
+	}
+	case ExpressionClass::BOUND_OPERATOR: {
+		auto &children = expr.Cast<BoundOperatorExpression>().GetChildren();
+		if (expr.GetExpressionType() != ExpressionType::OPERATOR_TRY && !children.empty()) {
+			MarkUnconditionalReads(*children[0], read);
+		}
+		return;
+	}
+	case ExpressionClass::BOUND_FUNCTION: {
+		auto &function = expr.Cast<BoundFunctionExpression>();
+		if (function.Function().GetLazyArguments()) {
+			return;
+		}
+		auto &children = function.GetChildren();
+		const auto eager =
+		    function.Function().HasBindLambdaCallback() ? MinValue<idx_t>(1, children.size()) : children.size();
+		for (idx_t i = 0; i < eager; i++) {
+			MarkUnconditionalReads(*children[i], read);
+		}
+		return;
+	}
+	default:
+		return;
+	}
+}
+
+class InvokeArguments final : public LazyColumns {
+public:
+	InvokeArguments(ExpressionState &state_p, const BoundFunctionExpression &expr, idx_t parameter_count)
+	    : state(state_p) {
+		const auto column_count = expr.GetChildren().size() - 1;
+		vector<bool> read(column_count, false);
+		MarkUnconditionalReads(*expr.GetChildren()[0]->Cast<BoundLambdaExpression>().LambdaExpr(), read);
+		arguments.reserve(column_count);
+		vector<LogicalType> types;
+		types.reserve(column_count);
+		for (idx_t column = 0; column < column_count; column++) {
+			auto &argument = arguments.emplace_back();
+			argument.child = column < parameter_count ? parameter_count - column : column + 1;
+			auto &child = *expr.GetChildren()[argument.child];
+			argument.strict = read[column] || child.IsVolatile();
+			types.push_back(child.GetReturnType());
+		}
+		stores.Initialize(state.GetAllocator(), types);
+		placeholders.InitializeEmpty(types);
+	}
+
+	void Reset(DataChunk &chunk, idx_t count) {
+		rows = count;
+		for (idx_t column = 0; column < arguments.size(); column++) {
+			chunk.data[column].Reference(placeholders.data[column]);
+		}
+		for (idx_t column = 0; column < arguments.size(); column++) {
+			auto &argument = arguments[column];
+			argument.stored = 0;
+			argument.complete = false;
+			argument.partial = false;
+			argument.owned = false;
+			if (argument.strict) {
+				Fill(chunk, column, nullptr, count, nullptr);
+			}
+		}
+	}
+
+	bool Load(DataChunk &chunk, idx_t column, const SelectionVector *sel, idx_t count, Vector &result) override {
+		return Fill(chunk, column, sel, count, &result);
+	}
+
+private:
+	bool Fill(DataChunk &chunk, idx_t column, const SelectionVector *sel, idx_t count, optional_ptr<Vector> result) {
+		auto &argument = arguments[column];
+		if (argument.complete) {
+			return false;
+		}
+		auto &executor = *state.root.executor;
+		if (count == rows && !argument.partial) {
+			auto &values = state.intermediate_chunk.data[argument.child];
+			executor.ExecuteArgument(state, argument.child, nullptr, rows, values);
+			chunk.data[column].Reference(values);
+			argument.complete = true;
+			return false;
+		}
+		auto &values = stores.data[column];
+		if (!argument.partial) {
+			stores.ResetColumn(column);
+			argument.partial = true;
+			argument.loaded.assign(rows, false);
+			argument.positions.Initialize(rows);
+			for (idx_t row = 0; row < rows; row++) {
+				argument.positions.set_index(row, 0);
+			}
+		}
+		SelectionVector missing(count);
+		idx_t missing_count = 0;
+		for (idx_t i = 0; i < count; i++) {
+			const auto row = sel ? sel->get_index(i) : i;
+			if (!argument.loaded[row]) {
+				argument.loaded[row] = true;
+				missing.set_index(missing_count++, row);
+			}
+		}
+		if (missing_count == 0) {
+			return false;
+		}
+		bool computed = false;
+		absl::Cleanup unmark = [&] {
+			if (!computed) {
+				for (idx_t i = 0; i < missing_count; i++) {
+					argument.loaded[missing.get_index(i)] = false;
+				}
+			}
+		};
+		const bool requested = missing_count == count;
+		if (argument.stored == 0) {
+			executor.ExecuteArgument(state, argument.child, &missing, missing_count, values);
+			if (requested) {
+				result->Reference(values);
+			}
+		} else {
+			if (!argument.owned) {
+				Vector owned(values.GetType(), rows);
+				VectorOperations::Copy(values, owned, argument.stored, 0, 0);
+				values.Reference(owned);
+				argument.owned = true;
+			}
+			Vector loaded(values.GetType(), missing_count);
+			executor.ExecuteArgument(state, argument.child, &missing, missing_count, loaded);
+			VectorOperations::Copy(loaded, values, missing_count, 0, argument.stored);
+			FlatVector::SetSize(values, argument.stored + missing_count);
+			if (requested) {
+				result->Reference(loaded);
+			}
+		}
+		for (idx_t i = 0; i < missing_count; i++) {
+			argument.positions.set_index(missing.get_index(i), argument.stored + i);
+		}
+		argument.stored += missing_count;
+		chunk.data[column].Slice(values, argument.positions, rows);
+		argument.complete = argument.stored == rows;
+		computed = true;
+		return requested;
+	}
+
+	struct Argument {
+		idx_t child = 0;
+		bool strict = false;
+		bool complete = false;
+		bool partial = false;
+		bool owned = false;
+		idx_t stored = 0;
+		vector<bool> loaded;
+		SelectionVector positions;
+	};
+
+	ExpressionState &state;
+	vector<Argument> arguments;
+	DataChunk stores;
+	DataChunk placeholders;
+	idx_t rows = 0;
+};
+
 struct LambdaInvokeState final : public FunctionLocalState {
 	unique_ptr<ExpressionExecutor> executor;
 	DataChunk input_chunk;
-	idx_t parameter_count;
+	InvokeArguments arguments;
 
 	LambdaInvokeState(unique_ptr<ExpressionExecutor> executor_p, const vector<LogicalType> &input_types,
-	                  const idx_t parameter_count_p)
-	    : executor(std::move(executor_p)), parameter_count(parameter_count_p) {
+	                  const idx_t parameter_count, ExpressionState &state, const BoundFunctionExpression &expr)
+	    : executor(std::move(executor_p)), arguments(state, expr, parameter_count) {
 		input_chunk.InitializeEmpty(input_types);
+		executor->lazy_columns = &arguments;
 	}
 
 	static unique_ptr<FunctionLocalState> Init(ExpressionState &state, const BoundFunctionExpression &expr,
@@ -87,19 +276,15 @@ struct LambdaInvokeState final : public FunctionLocalState {
 		}
 
 		auto executor = make_uniq<ExpressionExecutor>(state, *bound_lambda_expr.LambdaExpr());
-		return make_uniq<LambdaInvokeState>(std::move(executor), input_types, parameter_count);
+		return make_uniq<LambdaInvokeState>(std::move(executor), input_types, parameter_count, state, expr);
 	}
 };
 
 void LambdaInvokeFunction(DataChunk &args, ExpressionState &state, Vector &result) {
 	auto &lstate = ExecuteFunctionState::GetFunctionState(state)->Cast<LambdaInvokeState>();
-	for (idx_t i = 0; i < lstate.parameter_count; i++) {
-		lstate.input_chunk.data[i].Reference(args.data[lstate.parameter_count - i]);
-	}
-	for (idx_t i = lstate.parameter_count + 1; i < args.ColumnCount(); i++) {
-		lstate.input_chunk.data[i - 1].Reference(args.data[i]);
-	}
-	lstate.input_chunk.SetChildCardinality(args.size());
+	const auto count = args.size();
+	lstate.arguments.Reset(lstate.input_chunk, count);
+	lstate.input_chunk.SetChildCardinality(count);
 	lstate.executor->ExecuteExpression(lstate.input_chunk, result);
 }
 
@@ -150,6 +335,7 @@ ScalarFunction InvokeFun::GetFunction() {
 	fun.SetDeserializeCallback(LambdaInvokeData::Deserialize);
 	// the lambda expression that is executed for every row can throw
 	fun.SetFallible();
+	fun.SetLazyArguments(true);
 	return fun;
 }
 

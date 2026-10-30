@@ -19,6 +19,12 @@ class Allocator;
 class ClientContext;
 class ExecutionContext;
 
+class LazyColumns {
+public:
+	virtual ~LazyColumns() = default;
+	virtual bool Load(DataChunk &chunk, idx_t column, const SelectionVector *sel, idx_t count, Vector &result) = 0;
+};
+
 //! ExpressionExecutor is responsible for executing a set of expressions and storing the result in a data chunk
 class ExpressionExecutor {
 	friend class BoundIndex;
@@ -105,6 +111,11 @@ public:
 	}
 
 	DUCKDB_API vector<unique_ptr<ExpressionExecutorState>> &GetStates();
+
+	DUCKDB_API void ExecuteArgument(ExpressionState &state, idx_t child, const SelectionVector *sel, idx_t count,
+	                                Vector &result);
+
+	optional_ptr<LazyColumns> lazy_columns;
 
 protected:
 	void Initialize(const Expression &expr, ExpressionExecutorState &state);

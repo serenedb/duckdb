@@ -15,6 +15,7 @@ namespace {
 struct ColumnUse {
 	idx_t references = 0;
 	idx_t extracts = 0;
+	bool captured = false;
 };
 
 enum class ParameterAction : uint8_t { KEEP, SUBSTITUTE, SPLIT };
@@ -70,6 +71,13 @@ void CountUses(const Expression &expr, vector<ColumnUse> &uses) {
 		if (IsConstantExtract(function) && children[0]->GetExpressionClass() == ExpressionClass::BOUND_REF) {
 			uses[children[0]->Cast<BoundReferenceExpression>().Index()].extracts++;
 		}
+		if (function.Function().HasBindLambdaCallback() && !function.Function().GetLazyArguments()) {
+			for (idx_t i = 2; i < children.size(); i++) {
+				if (children[i]->GetExpressionClass() == ExpressionClass::BOUND_REF) {
+					uses[children[i]->Cast<BoundReferenceExpression>().Index()].captured = true;
+				}
+			}
+		}
 	}
 	ExpressionIterator::EnumerateChildren(expr, [&](const Expression &child) { CountUses(child, uses); });
 }
@@ -119,7 +127,7 @@ unique_ptr<Expression> InvokeInliningRule::Apply(LogicalOperator &op, vector<ref
 	for (idx_t parameter = 0; parameter < parameter_count && inline_all; parameter++) {
 		auto &argument = *children[parameter + 1];
 		auto &use = uses[column_of(parameter)];
-		inline_all = IsCheap(argument) || use.references == 1 || (use.references == 0 && !argument.IsVolatile());
+		inline_all = IsCheap(argument) || (use.references <= 1 && !argument.IsVolatile() && !use.captured);
 	}
 	if (inline_all) {
 		auto result = body.Copy();
