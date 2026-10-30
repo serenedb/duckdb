@@ -64,12 +64,14 @@ public:
 	                            AlterSchemaInfo &info) override;
 	DUCKDB_API void AlterSchemaEntry(CatalogTransaction transaction, SchemaCatalogEntry &schema,
 	                                 AlterInfo &info) override;
-	DUCKDB_API virtual unique_ptr<IndexCatalogEntry> MakeIndexEntry(DuckSchemaEntry &schema, CreateIndexInfo &info,
+	DUCKDB_API virtual unique_ptr<IndexCatalogEntry> MakeIndexEntry(CatalogTransaction transaction,
+	                                                                DuckSchemaEntry &schema, CreateIndexInfo &info,
 	                                                                CatalogEntry &relation);
 	DUCKDB_API virtual unique_ptr<TableCatalogEntry>
 	MakeTableEntry(CatalogTransaction transaction, DuckSchemaEntry &schema, BoundCreateTableInfo &info);
 	DUCKDB_API virtual unique_ptr<InCatalogEntry> MakeRoleEntry(CreateRoleInfo &info);
-	DUCKDB_API virtual unique_ptr<InCatalogEntry> MakeDatabaseEntry(CreateDatabaseInfo &info);
+	DUCKDB_API virtual unique_ptr<InCatalogEntry> MakeDatabaseEntry(CatalogTransaction transaction,
+	                                                                CreateDatabaseInfo &info);
 	DUCKDB_API virtual unique_ptr<InCatalogEntry> MakeForeignServerEntry(CreateForeignServerInfo &info);
 	DUCKDB_API virtual unique_ptr<InCatalogEntry> MakeSubscriptionEntry(CreateSubscriptionInfo &info);
 	DUCKDB_API virtual unique_ptr<InCatalogEntry> MakeTablespaceEntry(CreateTablespaceInfo &info);
