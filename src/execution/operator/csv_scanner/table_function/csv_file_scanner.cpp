@@ -44,7 +44,8 @@ CSVFileScan::CSVFileScan(ClientContext &context, const OpenFileInfo &file_p, CSV
 		options.dialect_options.num_cols = options.sql_type_list.size();
 	}
 	if (options.dialect_options.state_machine_options.new_line == NewLineIdentifier::NOT_SET) {
-		options.dialect_options.state_machine_options.new_line = CSVSniffer::DetectNewLineDelimiter(*buffer_manager);
+		options.dialect_options.state_machine_options.new_line =
+		    CSVSniffer::DetectNewLineDelimiter(*buffer_manager, options, state_machine_cache);
 	}
 	state_machine = make_shared_ptr<CSVStateMachine>(
 	    state_machine_cache.Get(options.dialect_options.state_machine_options), options);

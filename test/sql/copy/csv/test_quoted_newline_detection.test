@@ -1,0 +1,27 @@
+# name: test/sql/copy/csv/test_quoted_newline_detection.test
+# description: A newline inside a quoted field does not decide the file's newline delimiter
+# group: [csv]
+
+statement ok
+COPY (SELECT ('"x' || chr(10) || 'y",1' || chr(13) || chr(10) || 'z,2' || chr(13) || chr(10))::BLOB) TO '{TEST_DIR}/quoted_lf_crlf.csv' (FORMAT BLOB);
+
+query III
+SELECT replace(a, chr(10), '|'), b, length(b)
+FROM read_csv('{TEST_DIR}/quoted_lf_crlf.csv', auto_detect=false, header=false, delim=',', quote='"',
+    columns={'a': 'VARCHAR', 'b': 'VARCHAR'})
+ORDER BY 1;
+----
+x|y	1	1
+z	2	1
+
+statement ok
+COPY (SELECT ('"x' || chr(13) || 'y",1' || chr(10) || 'z,2' || chr(10))::BLOB) TO '{TEST_DIR}/quoted_cr_lf.csv' (FORMAT BLOB);
+
+query III
+SELECT replace(a, chr(13), '|'), b, length(b)
+FROM read_csv('{TEST_DIR}/quoted_cr_lf.csv', auto_detect=false, header=false, delim=',', quote='"',
+    columns={'a': 'VARCHAR', 'b': 'VARCHAR'})
+ORDER BY 1;
+----
+x|y	1	1
+z	2	1
