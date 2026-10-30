@@ -212,6 +212,8 @@ public:
 	GlobalUserSettings user_settings;
 	identifier_set_t superuser_functions;
 	identifier_set_t file_free_functions;
+	identifier_set_t superuser_foreign_data_wrappers;
+	Identifier cluster_catalog;
 
 public:
 	DUCKDB_API static DBConfig &GetConfig(ClientContext &context);

@@ -14,6 +14,7 @@
 #include "duckdb/main/attached_database.hpp"
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/main/client_data.hpp"
+#include "duckdb/main/config.hpp"
 #include "duckdb/main/database.hpp"
 #include "duckdb/main/database_manager.hpp"
 #include "duckdb/main/secret/secret_manager.hpp"
@@ -29,6 +30,7 @@
 #include "duckdb/parser/expression/function_expression.hpp"
 #include "duckdb/parser/expression/operator_expression.hpp"
 #include "duckdb/parser/expression/subquery_expression.hpp"
+#include "duckdb/parser/parsed_data/create_foreign_server_info.hpp"
 #include "duckdb/parser/parsed_data/create_index_info.hpp"
 #include "duckdb/parser/parsed_data/create_job_info.hpp"
 #include "duckdb/parser/parsed_data/create_macro_info.hpp"
@@ -355,6 +357,7 @@ SchemaCatalogEntry &Binder::BindCreateSchema(CreateInfo &info) {
 		throw BinderException("Cannot create entry in system catalog");
 	}
 	if (info.type != CatalogType::TRIGGER_ENTRY) {
+		RequireSchemaCreate(schema);
 		RequireReplaceOwner(schema, info, info.GetQualifiedName().Name());
 	}
 	return schema;
@@ -1134,6 +1137,7 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 	case CatalogType::SCHEMA_ENTRY: {
 		auto &info = stmt.info->Cast<CreateSchemaInfo>();
 		BindCreateSchema(info);
+		RequireDatabasePrivilege(info.SchemaCatalog(), AclMode::Create);
 		properties.RegisterDBModify(Catalog::GetCatalog(context, info.SchemaCatalog()), context,
 		                            DatabaseModificationType::CREATE_CATALOG_ENTRY);
 		result.plan = make_uniq<LogicalCreate>(LogicalOperatorType::LOGICAL_CREATE_SCHEMA, std::move(stmt.info));
@@ -1416,6 +1420,11 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 		break;
 	case CatalogType::FOREIGN_SERVER_ENTRY: {
 		auto catalog = BindCatalog(stmt.info->GetQualifiedName().Catalog());
+		auto &fdw = stmt.info->Cast<CreateForeignServerInfo>().fdw_name;
+		if (DBConfig::GetConfig(context).superuser_foreign_data_wrappers.count(Identifier(fdw))) {
+			RequireSuperuser();
+		}
+		RequireDatabasePrivilege(catalog, AclMode::Create);
 		properties.RegisterDBModify(Catalog::GetCatalog(context, catalog), context,
 		                            DatabaseModificationType::CREATE_CATALOG_ENTRY);
 		result.plan =

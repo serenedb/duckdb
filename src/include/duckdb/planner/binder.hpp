@@ -427,6 +427,9 @@ public:
 	void RequireSuperuser();
 	void RequireOwner(CatalogEntry &entry);
 	void RequireReplaceOwner(SchemaCatalogEntry &schema, const CreateInfo &info, const Identifier &name);
+	optional_ptr<CatalogEntry> DatabaseEntry(const Identifier &database);
+	void RequireDatabasePrivilege(const Identifier &database, AclMode need);
+	void RequireSchemaCreate(SchemaCatalogEntry &schema);
 
 	void BeginSubqueryBind(Binder &parent, ExpressionBinder &binder);
 	//! The innermost enclosing scope
