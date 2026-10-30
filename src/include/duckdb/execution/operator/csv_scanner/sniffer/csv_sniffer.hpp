@@ -96,7 +96,8 @@ public:
 	//! Function that sniffs up to STANDARD_VECTOR_SIZE rows to detect a header and data types
 	AdaptiveSnifferResult MinimalSniff();
 
-	static NewLineIdentifier DetectNewLineDelimiter(CSVBufferManager &buffer_manager);
+	static NewLineIdentifier DetectNewLineDelimiter(CSVBufferManager &buffer_manager, CSVReaderOptions &options,
+	                                                CSVStateMachineCache &state_machine_cache);
 
 	//! If a string_t value can be cast to a type
 	static bool CanYouCastIt(ClientContext &context, const string_t value, const LogicalType &type,

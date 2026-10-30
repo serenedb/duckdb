@@ -666,9 +666,25 @@ BoundStatement Binder::BindCopyFrom(CopyStatement &stmt, const CopyFunction &fun
 	// lookup the table to copy into
 	stmt.info->SetQualifiedName(BindTableName(stmt.info->GetQualifiedName()));
 	auto &table = Catalog::GetEntry<TableCatalogEntry>(context, stmt.info->GetQualifiedName());
-	if (stmt.info->format == "csv" && !stmt.info->options.contains("allow_quoted_nulls") &&
-	    table.ParentCatalog().Compatibility() == SqlCompatibility::POSTGRES) {
-		stmt.info->options["allow_quoted_nulls"] = {Value::BOOLEAN(false)};
+	const bool postgres_csv =
+	    stmt.info->format == "csv" && table.ParentCatalog().Compatibility() == SqlCompatibility::POSTGRES;
+	if (postgres_csv) {
+		auto &options = stmt.info->options;
+		options.try_emplace("allow_quoted_nulls", vector<Value> {Value::BOOLEAN(false)});
+		if (!stmt.info->is_format_auto_detected && !options.contains("auto_detect")) {
+			bool delimiter_given = false;
+			for (auto &option : options) {
+				delimiter_given |= option.first.StartsWith("delim") || option.first.StartsWith("sep");
+			}
+			if (!delimiter_given) {
+				options.emplace("delimiter", vector<Value> {Value(",")});
+			}
+			auto quote = options.try_emplace("quote", vector<Value> {Value("\"")}).first->second;
+			options.try_emplace("escape", std::move(quote));
+			options.try_emplace("comment", vector<Value> {Value("")});
+			options.try_emplace("skip", vector<Value> {Value::BIGINT(0)});
+			options.try_emplace("header", vector<Value> {Value::BOOLEAN(false)});
+		}
 	}
 	IndexVector<idx_t, PhysicalIndex> column_index_map;
 	vector<LogicalIndex> named_column_map;
