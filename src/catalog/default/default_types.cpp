@@ -2,6 +2,7 @@
 #include "duckdb/common/vector/string_vector.hpp"
 #include "duckdb/catalog/default/default_types.hpp"
 
+#include "duckdb/catalog/catalog.hpp"
 #include "duckdb/catalog/catalog_entry/schema_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/type_catalog_entry.hpp"
 #include "duckdb/common/case_insensitive_map.hpp"
@@ -45,6 +46,9 @@ void RegisterFloatConstructors(TypeConstructorSet &set) {
 // DECIMAL Type
 //----------------------------------------------------------------------------------------------------------------------
 LogicalType BindDefaultDecimalType(BindLogicalTypeInput &input) {
+	if (input.context && Catalog::DefaultCompatibility(*input.context) == SqlCompatibility::POSTGRES) {
+		return LogicalType::DECIMAL(Decimal::MAX_WIDTH_DECIMAL, 10);
+	}
 	return LogicalType::DECIMAL(18, 3);
 }
 
