@@ -42,8 +42,8 @@ void OpenerFileSystem::VerifyCanAccessFileInternal(const string &path, FileType 
 		return;
 	}
 	auto context = opener->TryGetClientContext();
-	if (context && context->file_access_handler) {
-		context->file_access_handler(*context, path);
+	if (context) {
+		context->CheckFileAccess(path);
 	}
 	auto db = opener->TryGetDatabase();
 	if (!db) {

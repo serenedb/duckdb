@@ -211,6 +211,7 @@ public:
 	//! Database configuration variables as controlled by SET
 	GlobalUserSettings user_settings;
 	identifier_set_t superuser_functions;
+	identifier_set_t file_free_functions;
 
 public:
 	DUCKDB_API static DBConfig &GetConfig(ClientContext &context);

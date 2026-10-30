@@ -9,7 +9,6 @@
 #pragma once
 
 #include "duckdb/catalog/catalog_entry/schema_catalog_entry.hpp"
-#include "duckdb/catalog/catalog_entry/view_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_set.hpp"
 #include "duckdb/catalog/permissions.hpp"
 #include "duckdb/common/atomic.hpp"
@@ -149,16 +148,13 @@ public:
 	typedef bool (*database_visibility_t)(ClientContext &context, AttachedDatabase &database);
 	database_visibility_t database_visibility = nullptr;
 
-	typedef void (*file_access_handler_t)(ClientContext &context, const string &path);
-	file_access_handler_t file_access_handler = nullptr;
-
 	setting_visibility_t setting_readable = nullptr;
 
 	typedef void (*entry_reference_handler_t)(ClientContext &context, CatalogEntry &entry);
 	entry_reference_handler_t entry_reference_handler = nullptr;
 
 	struct FileAccessScope {
-		vector<reference<const ViewCatalogEntry>> views;
+		optional_ptr<const RoleAccess> principal;
 		bool catalog = false;
 	};
 	optional_ptr<const FileAccessScope> file_access_scope;
@@ -234,6 +230,7 @@ public:
 	DUCKDB_API void SetPrincipalRole(idx_t role);
 	DUCKDB_API void InstallSecurity(shared_ptr<const SecuritySnapshot> snapshot);
 	DUCKDB_API void RefreshSecurity();
+	DUCKDB_API void CheckFileAccess(const string &path);
 
 	//! Interrupts the running query. Async-signal-safe: sets a flag and nothing else
 	DUCKDB_API void InterruptFromSignal();

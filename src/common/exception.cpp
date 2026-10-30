@@ -306,6 +306,10 @@ ConnectionException::ConnectionException(std::string_view msg) : Exception(Excep
 PermissionException::PermissionException(std::string_view msg) : Exception(ExceptionType::PERMISSION, msg) {
 }
 
+PermissionException::PermissionException(const unordered_map<string, string> &extra_info, std::string_view msg)
+    : Exception(extra_info, ExceptionType::PERMISSION, msg) {
+}
+
 SyntaxException::SyntaxException(std::string_view msg) : Exception(ExceptionType::SYNTAX, msg) {
 }
 

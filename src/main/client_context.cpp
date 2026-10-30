@@ -1057,6 +1057,26 @@ void ClientContext::RefreshSecurity() {
 	}
 }
 
+void ClientContext::CheckFileAccess(const string &path) {
+	if (path == "/dev/stdin" || path == "/dev/stdout") {
+		return;
+	}
+	bool allowed;
+	if (file_access_scope) {
+		auto binding = file_access_scope->principal ? file_access_scope->principal : principal;
+		allowed = file_access_scope->catalog || !binding || binding->is_superuser;
+	} else if (auto properties = ActiveStatementProperties(); properties && properties->file_access_authorized) {
+		allowed = *properties->file_access_authorized;
+	} else {
+		allowed = !principal || principal->is_superuser;
+	}
+	if (!allowed) {
+		throw PermissionException(
+		    {{"detail", "Only roles with the SUPERUSER attribute may access server files and URLs."}},
+		    StringUtil::Format("permission denied to access \"%s\"", path));
+	}
+}
+
 void ClientContext::InterruptFromSignal() {
 	ClientInterruptState expected = ClientInterruptState::NOT_INTERRUPTED;
 	interrupt_state.compare_exchange_strong(expected, ClientInterruptState::INTERRUPTED);

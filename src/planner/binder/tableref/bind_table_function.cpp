@@ -259,11 +259,7 @@ BoundStatement Binder::BindTableFunctionInternal(BoundTableFunction &table_funct
 	table_function.GetSignature().FillNamedDefaults(context, named_parameters);
 	table_function.SetCallArguments(parameters, named_parameters);
 	ClientContext::FileAccessScope file_access_scope;
-	for (auto binder = this; binder; binder = binder->parent.get()) {
-		for (auto &view : binder->bound_views) {
-			file_access_scope.views.push_back(view.get());
-		}
-	}
+	file_access_scope.principal = principal;
 	ClientContext::FileAccessScopeGuard file_access_guard(context, file_access_scope);
 	if (table_function.bind || table_function.bind_replace || table_function.bind_operator) {
 		TableFunctionBindInput bind_input(parameters, named_parameters, input_table_types, input_table_names,
@@ -390,6 +386,9 @@ BoundStatement Binder::BindTableFunctionInternal(BoundTableFunction &table_funct
 	                                              std::move(row_id_columns));
 	if (table) {
 		CheckTableRead(binding, *table);
+	} else if (principal && !principal->is_superuser &&
+	           !DBConfig::GetConfig(context).file_free_functions.count(get->function.GetName())) {
+		GetStatementProperties().file_access_authorized = false;
 	}
 	AddPostgresSetofColumnAlias(bind_context, bind_index, setof_column_name);
 
