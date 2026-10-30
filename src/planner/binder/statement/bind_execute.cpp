@@ -161,10 +161,9 @@ BoundStatement Binder::Bind(ExecuteStatement &stmt) {
 		rebound_plan = std::move(prepared_planner.plan);
 		D_ASSERT(prepared->properties.bound_all_parameters);
 		global_binder_state->bound_tables = prepared_planner.binder->global_binder_state->bound_tables;
-		entry->second->custom_plans++;
-	} else {
-		prepared->generic_plans++;
 	}
+	const bool custom_plan = rebind == RebindQueryInfo::ATTEMPT_TO_REBIND;
+	auto stored = custom_plan ? entry->second : prepared;
 	// copy the properties of the prepared statement into the planner
 	auto &properties = GetStatementProperties();
 	properties = prepared->properties;
@@ -175,14 +174,14 @@ BoundStatement Binder::Bind(ExecuteStatement &stmt) {
 	result.types = prepared->types;
 
 	prepared->Bind(context, bind_values);
+	auto execute_plan = make_uniq<LogicalExecute>(std::move(prepared));
+	execute_plan->stored = std::move(stored);
+	execute_plan->custom_plan = custom_plan;
 	if (rebound_plan) {
-		auto execute_plan = make_uniq<LogicalExecute>(std::move(prepared));
 		execute_plan->replaces = std::move(replaces);
 		execute_plan->children.push_back(std::move(rebound_plan));
-		result.plan = std::move(execute_plan);
-	} else {
-		result.plan = make_uniq<LogicalExecute>(std::move(prepared));
 	}
+	result.plan = std::move(execute_plan);
 	return result;
 }
 
