@@ -336,6 +336,7 @@ BindResult ExpressionBinder::BindExpression(FunctionExpression &function, idx_t 
 			func = *tbl_func;
 		}
 	}
+	binder.CheckCall(func.get().Cast<FunctionEntry>());
 
 	switch (func.get().type) {
 	case CatalogType::AGGREGATE_FUNCTION_ENTRY:

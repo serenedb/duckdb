@@ -210,6 +210,7 @@ public:
 	shared_ptr<DatabaseFilePathManager> path_manager;
 	//! Database configuration variables as controlled by SET
 	GlobalUserSettings user_settings;
+	identifier_set_t superuser_functions;
 
 public:
 	DUCKDB_API static DBConfig &GetConfig(ClientContext &context);

@@ -306,6 +306,20 @@ void Binder::CheckTableRead(TableBinding &binding, TableCatalogEntry &table) {
 	}
 }
 
+void Binder::CheckCall(FunctionEntry &function) {
+	auto caller = principal ? context.principal : nullptr;
+	if (!caller) {
+		return;
+	}
+	if (function.superuser_only && !caller->is_superuser) {
+		ThrowPermissionDenied(function);
+	}
+	if ((function.type == CatalogType::MACRO_ENTRY || function.type == CatalogType::TABLE_MACRO_ENTRY) &&
+	    !IsUnowned(function) && !caller->Can(function.type, function.permissions, AclMode::Execute)) {
+		ThrowPermissionDenied(function);
+	}
+}
+
 void Binder::CheckTableReads() {
 	for (auto &read : global_binder_state->column_reads) {
 		if (!read->referenced &&

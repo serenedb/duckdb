@@ -531,6 +531,7 @@ BoundStatement Binder::Bind(TableFunctionRef &ref) {
 	auto &func_catalog = *func_catalog_ptr;
 	if (func_catalog.type == CatalogType::MACRO_ENTRY || func_catalog.type == CatalogType::TABLE_MACRO_ENTRY) {
 		auto &macro_func = func_catalog.Cast<MacroCatalogEntry>();
+		CheckCall(macro_func);
 		if (macro_func.is_procedure && !allow_procedure_call) {
 			throw BinderException("%s() is a procedure\nHINT: To call a procedure, use CALL.",
 			                      fexpr.FunctionName().GetIdentifierName());
@@ -568,6 +569,7 @@ BoundStatement Binder::Bind(TableFunctionRef &ref) {
 	}
 	D_ASSERT(func_catalog.type == CatalogType::TABLE_FUNCTION_ENTRY);
 	auto &function = func_catalog.Cast<TableFunctionCatalogEntry>();
+	CheckCall(function);
 	if (!InViewBody()) {
 		context.CheckEntryReference(function);
 	}

@@ -44,6 +44,10 @@ unique_ptr<BoundPragmaInfo> Binder::BindPragma(PragmaInfo &info, QueryErrorConte
 		    context, QualifiedName(Identifier::InvalidCatalog(), Identifier::DefaultSchema(), info.name),
 		    OnEntryNotFound::THROW_EXCEPTION);
 	}
+	auto caller = principal ? context.principal : nullptr;
+	if (caller && entry->superuser_only && !caller->is_superuser) {
+		throw PermissionException("permission denied: superuser required");
+	}
 
 	FunctionBinder function_binder(*this);
 	ErrorData error;
