@@ -202,6 +202,7 @@ void ColumnQualifier::QualifyColumnNames(unique_ptr<ParsedExpression> &expr, vec
 
 			// replace the expression with the qualified column reference
 			new_expr->SetQueryLocation(col_ref.GetQueryLocation());
+			new_expr->SetNamedParameter(expr->IsNamedParameter());
 			expr = std::move(new_expr);
 		}
 		return;
