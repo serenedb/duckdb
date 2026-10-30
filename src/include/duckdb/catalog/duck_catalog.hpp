@@ -154,12 +154,14 @@ public:
 		return entry ? &entry->template Cast<T>() : nullptr;
 	}
 
+protected:
+	optional_ptr<CatalogEntry> AddEntry(CatalogTransaction transaction, unique_ptr<InCatalogEntry> entry,
+	                                    OnCreateConflict on_conflict);
+
 private:
 	DUCKDB_API void DropSchema(CatalogTransaction transaction, DropInfo &info);
 	DUCKDB_API void DropSchema(ClientContext &context, DropInfo &info) override;
 	optional_ptr<CatalogEntry> CreateSchemaInternal(CatalogTransaction transaction, CreateSchemaInfo &info);
-	optional_ptr<CatalogEntry> AddEntry(CatalogTransaction transaction, unique_ptr<InCatalogEntry> entry,
-	                                    OnCreateConflict on_conflict);
 	//! Drops the entry of [type] that [info] names; false when there is none and [info] allows that
 	bool RemoveEntry(CatalogTransaction transaction, CatalogType type, DropInfo &info);
 	void Verify() override;
