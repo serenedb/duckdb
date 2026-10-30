@@ -55,6 +55,7 @@ public:
 	void CheckParameterCount(idx_t parameter_count);
 	//! Whether or not the prepared statement data requires the query to rebound for the given parameters
 	bool RequireRebind(ClientContext &context, optional_ptr<identifier_map_t<BoundParameterData>> values);
+	bool CatalogIsCurrent(ClientContext &context) const;
 	bool DataIsCurrent(ClientContext &context) const;
 	//! Fill in missing parameter values from user variables
 	void PopulateMissingParameterValues(ClientContext &context, identifier_map_t<BoundParameterData> &values) const;

@@ -130,7 +130,8 @@ BoundStatement Binder::Bind(ExecuteStatement &stmt) {
 		}
 	}
 	optional<Identifier> replaces;
-	if (rebind != RebindQueryInfo::ATTEMPT_TO_REBIND && !prepared->DataIsCurrent(context)) {
+	if (rebind != RebindQueryInfo::ATTEMPT_TO_REBIND &&
+	    (!prepared->CatalogIsCurrent(context) || !prepared->DataIsCurrent(context))) {
 		Planner generic_planner(context);
 		generic_planner.parameter_type_hints = prepared->parameter_type_hints;
 		auto replanned = generic_planner.PrepareSQLStatement(prepared->unbound_statement->Copy());
@@ -147,7 +148,6 @@ BoundStatement Binder::Bind(ExecuteStatement &stmt) {
 		}
 	}
 	if (rebind == RebindQueryInfo::ATTEMPT_TO_REBIND) {
-		// catalog was modified or statement does not have clear types: rebind the statement before running the execute
 		Planner prepared_planner(context);
 		prepared_planner.parameter_data = bind_values;
 		prepared_planner.parameter_type_hints = entry->second->parameter_type_hints;
