@@ -11,6 +11,7 @@
 #include "duckdb/catalog/catalog_entry/schema_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/view_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_set.hpp"
+#include "duckdb/catalog/permissions.hpp"
 #include "duckdb/common/atomic.hpp"
 #include "duckdb/common/deque.hpp"
 #include "duckdb/common/optional_idx.hpp"
@@ -161,6 +162,10 @@ public:
 	optional_ptr<const FileAccessScope> file_access_scope;
 	optional_ptr<const StatementProperties> planned_properties;
 
+	shared_ptr<const SecuritySnapshot> security;
+	optional_ptr<const RoleAccess> principal;
+	idx_t principal_role = DConstants::INVALID_INDEX;
+
 	class FileAccessScopeGuard {
 	public:
 		FileAccessScopeGuard(optional_ptr<ClientContext> context_p, const FileAccessScope &scope)
@@ -223,6 +228,10 @@ public:
 	}
 	DUCKDB_API optional_ptr<const StatementProperties> ActiveStatementProperties() const;
 	DUCKDB_API void WarnUser(const string &message);
+
+	DUCKDB_API void SetPrincipalRole(idx_t role);
+	DUCKDB_API void InstallSecurity(shared_ptr<const SecuritySnapshot> snapshot);
+	DUCKDB_API void RefreshSecurity();
 
 	//! Interrupts the running query. Async-signal-safe: sets a flag and nothing else
 	DUCKDB_API void InterruptFromSignal();

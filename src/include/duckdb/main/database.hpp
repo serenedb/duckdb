@@ -8,6 +8,9 @@
 
 #pragma once
 
+#include "duckdb/catalog/permissions.hpp"
+#include "duckdb/common/atomic.hpp"
+#include "duckdb/common/mutex.hpp"
 #include "duckdb/common/winapi.hpp"
 #include "duckdb/main/capi/extension_api.hpp"
 #include "duckdb/main/capi_v2/extension_load_v2.hpp"
@@ -94,6 +97,12 @@ public:
 	shared_ptr<AttachedDatabase> CreateAttachedDatabase(ClientContext &context, AttachInfo &info,
 	                                                    AttachOptions &options);
 
+	DUCKDB_API void PublishSecurity(shared_ptr<const SecuritySnapshot> snapshot);
+	DUCKDB_API shared_ptr<const SecuritySnapshot> GetSecurity() const;
+	const SecuritySnapshot *CurrentSecurity() const {
+		return current_security.load(std::memory_order_acquire);
+	}
+
 private:
 	//! Initializes the instance and attaches the main database at `path` (in-memory when null).
 	void Initialize(const char *path, DBConfig *config);
@@ -126,6 +135,9 @@ private:
 	unique_ptr<MetricsManager> metrics_manager;
 	unique_ptr<ExternalFileCache> external_file_cache;
 	unique_ptr<ResultSetManager> result_set_manager;
+	mutable mutex security_lock;
+	shared_ptr<const SecuritySnapshot> security;
+	atomic<const SecuritySnapshot *> current_security {nullptr};
 
 	duckdb_ext_api_v1 (*create_api_v1)();
 	//! Set in Initialize. Loading a V2 C API extension builds the C API function table and opens a connection, both of

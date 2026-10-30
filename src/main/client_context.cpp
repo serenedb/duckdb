@@ -1040,6 +1040,22 @@ static absl::Duration TimeLeft(const optional_idx &deadline) {
 	return absl::Nanoseconds(TimePoint::ToNanos(left));
 }
 
+void ClientContext::SetPrincipalRole(idx_t role) {
+	principal_role = role;
+	principal = security ? security->Access(role) : nullptr;
+}
+
+void ClientContext::InstallSecurity(shared_ptr<const SecuritySnapshot> snapshot) {
+	security = std::move(snapshot);
+	principal = security ? security->Access(principal_role) : nullptr;
+}
+
+void ClientContext::RefreshSecurity() {
+	if (db->CurrentSecurity() != security.get()) {
+		InstallSecurity(db->GetSecurity());
+	}
+}
+
 void ClientContext::InterruptFromSignal() {
 	ClientInterruptState expected = ClientInterruptState::NOT_INTERRUPTED;
 	interrupt_state.compare_exchange_strong(expected, ClientInterruptState::INTERRUPTED);

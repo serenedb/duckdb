@@ -497,6 +497,17 @@ ResultSetManager &DatabaseInstance::GetResultSetManager() {
 	return *result_set_manager;
 }
 
+void DatabaseInstance::PublishSecurity(shared_ptr<const SecuritySnapshot> snapshot) {
+	lock_guard<mutex> guard(security_lock);
+	current_security.store(snapshot.get(), std::memory_order_release);
+	security = std::move(snapshot);
+}
+
+shared_ptr<const SecuritySnapshot> DatabaseInstance::GetSecurity() const {
+	lock_guard<mutex> guard(security_lock);
+	return security;
+}
+
 ConnectionManager &DatabaseInstance::GetConnectionManager() {
 	return *connection_manager;
 }
