@@ -152,6 +152,8 @@ public:
 	typedef void (*file_access_handler_t)(ClientContext &context, const string &path);
 	file_access_handler_t file_access_handler = nullptr;
 
+	setting_visibility_t setting_readable = nullptr;
+
 	typedef void (*entry_reference_handler_t)(ClientContext &context, CatalogEntry &entry);
 	entry_reference_handler_t entry_reference_handler = nullptr;
 
