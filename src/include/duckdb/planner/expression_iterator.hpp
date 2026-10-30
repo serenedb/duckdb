@@ -9,6 +9,7 @@
 #pragma once
 
 #include "duckdb/common/common.hpp"
+#include "duckdb/common/stack_depth.hpp"
 #include "duckdb/planner/expression.hpp"
 #include "duckdb/planner/expression/bound_aggregate_expression.hpp"
 #include "duckdb/planner/expression/bound_case_expression.hpp"
@@ -116,6 +117,7 @@ private:
 
 	template <class F>
 	static bool VisitChildrenUntil(Expression &expr, F &&callback) {
+		StackDepth::Check();
 		switch (expr.GetExpressionClass()) {
 		case ExpressionClass::BOUND_AGGREGATE: {
 			auto &aggr_expr = expr.Cast<BoundAggregateExpression>();

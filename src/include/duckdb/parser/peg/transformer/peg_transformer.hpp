@@ -661,7 +661,7 @@ private:
 #endif
 
 private:
-	static constexpr idx_t HEIGHT_PER_EXPRESSION_LEVEL = 32;
+	static constexpr idx_t HEIGHT_PER_EXPRESSION_LEVEL = 4;
 
 	optional_ptr<TransformStackFrame> running_frame;
 	idx_t max_height;

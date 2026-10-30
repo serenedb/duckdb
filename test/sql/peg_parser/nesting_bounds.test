@@ -1,41 +1,46 @@
 # name: test/sql/peg_parser/nesting_bounds.test
-# description: Input nested far beyond max_expression_depth is rejected while it is parsed
+# description: Input nested far beyond the stack depth limit is rejected while it is parsed
 # group: [peg_parser]
 
 statement error
 FROM query('SELECT ' || repeat('abs(', 300000) || '1' || repeat(')', 300000))
 ----
-<REGEX>:.*Max expression depth limit of 1000 exceeded.*
+<REGEX>:.*stack depth limit exceeded.*
 
 statement error
 FROM query('SELECT ' || repeat('(', 300000) || '1' || repeat(')', 300000))
 ----
-<REGEX>:.*Max expression depth limit of 1000 exceeded.*
+<REGEX>:.*stack depth limit exceeded.*
 
 statement error
 FROM query('SELECT ' || repeat('NOT ', 300000) || 'true')
 ----
-<REGEX>:.*Max expression depth limit of 1000 exceeded.*
+<REGEX>:.*stack depth limit exceeded.*
 
 statement error
-FROM query('SELECT 1' || repeat('::INTEGER', 3000))
+FROM query('SELECT 1' || repeat('::INTEGER', 300000))
 ----
-<REGEX>:.*Max expression depth limit of 1000 exceeded.*
+<REGEX>:.*stack depth limit exceeded.*
 
 statement error
 FROM query('SELECT ' || repeat(repeat('NOT ', 900) || 'abs(', 400) || 'true' || repeat(')', 400))
 ----
-<REGEX>:.*Max expression depth limit of 1000 exceeded.*
+<REGEX>:.*stack depth limit exceeded.*
 
 statement error
-FROM query('SELECT 1 FROM range(1) t0' || repeat(' JOIN range(1) ON true', 2000))
+FROM query('SELECT 1 FROM ' || repeat('(', 60) || 'range(1) t' || repeat(repeat(' JOIN range(1) ON true', 5000) || ')', 60))
 ----
-<REGEX>:.*Max expression depth limit of 1000 exceeded.*
+<REGEX>:.*stack depth limit exceeded.*
 
 statement error
-FROM query('SELECT 1 FROM range(1)' || repeat(', range(1)', 2000))
+FROM query('SELECT 1 FROM range(1) t0' || repeat(' JOIN range(1) ON true', 100000))
 ----
-<REGEX>:.*Max expression depth limit of 1000 exceeded.*
+<REGEX>:.*stack depth limit exceeded.*
+
+statement error
+FROM query('SELECT 1 FROM range(1)' || repeat(', range(1)', 100000))
+----
+<REGEX>:.*stack depth limit exceeded.*
 
 query I
 FROM query('SELECT ' || repeat('- ', 2000) || '1')
@@ -53,19 +58,19 @@ FROM query('SELECT count(*) FROM range(10) t(i) WHERE ' || repeat('i < 11 AND ',
 3
 
 statement error
-FROM query('SELECT NULL::' || repeat('STRUCT(a ', 1000) || 'INTEGER' || repeat(')', 1000))
+FROM query('SELECT NULL::' || repeat('STRUCT(a ', 100000) || 'INTEGER' || repeat(')', 100000))
 ----
-<REGEX>:.*Max expression depth limit of 1000 exceeded.*
+<REGEX>:.*stack depth limit exceeded.*
 
 statement error
-FROM query('SELECT NULL::' || repeat('MAP(INTEGER, ', 1000) || 'INTEGER' || repeat(')', 1000))
+FROM query('SELECT NULL::' || repeat('MAP(INTEGER, ', 100000) || 'INTEGER' || repeat(')', 100000))
 ----
-<REGEX>:.*Max expression depth limit of 1000 exceeded.*
+<REGEX>:.*stack depth limit exceeded.*
 
 statement error
-FROM query('CREATE TABLE deep_type(c ' || repeat('STRUCT(a ', 1000) || 'INTEGER' || repeat(')', 1000) || ')')
+FROM query('CREATE TABLE deep_type(c ' || repeat('STRUCT(a ', 100000) || 'INTEGER' || repeat(')', 100000) || ')')
 ----
-<REGEX>:.*Max expression depth limit of 1000 exceeded.*
+<REGEX>:.*stack depth limit exceeded.*
 
 query I
 FROM query('SELECT (NULL::' || repeat('STRUCT(a ', 100) || 'INTEGER' || repeat(')', 100) || ') IS NULL')

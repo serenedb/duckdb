@@ -3,12 +3,12 @@
 #include "duckdb/common/enums/join_type.hpp"
 #include "duckdb/common/limits.hpp"
 #include "duckdb/common/pair.hpp"
+#include "duckdb/common/stack_depth.hpp"
 #include "duckdb/optimizer/join_order/cardinality_estimator.hpp"
 #include "duckdb/optimizer/join_order/cost_model.hpp"
 #include "duckdb/optimizer/join_order/plan_enumerator.hpp"
 #include "duckdb/planner/expression/list.hpp"
 #include "duckdb/planner/operator/list.hpp"
-#include "duckdb/main/settings.hpp"
 
 namespace duckdb {
 
@@ -56,25 +56,19 @@ JoinOrderOptimizer::JoinOrderOptimizer(ClientContext &context)
 }
 
 JoinOrderOptimizer::JoinOrderOptimizer(ClientContext &context, shared_ptr<CTEScopes> cte_scopes_p)
-    : context(context), cte_scopes(std::move(cte_scopes_p)), query_graph_manager(context), depth(1),
+    : context(context), cte_scopes(std::move(cte_scopes_p)), query_graph_manager(context),
       recursive_cte_indexes(cte_scopes->recursive_cte_indexes) {
 }
 
 JoinOrderOptimizer JoinOrderOptimizer::CreateChildOptimizer() {
 	JoinOrderOptimizer child_optimizer(context, cte_scopes);
 	child_optimizer.delim_scan_stats = delim_scan_stats;
-	child_optimizer.depth = depth + 1;
 	return child_optimizer;
 }
 
 unique_ptr<LogicalOperator> JoinOrderOptimizer::Optimize(unique_ptr<LogicalOperator> plan,
                                                          optional_ptr<RelationStats> stats) {
-	auto max_expression_depth = Settings::Get<MaxExpressionDepthSetting>(query_graph_manager.context);
-	if (depth > max_expression_depth) {
-		// Very deep plans will eventually consume quite some stack space
-		// Returning the current plan is always a valid choice
-		return plan;
-	}
+	StackDepth::Check();
 
 	// make sure query graph manager has not extracted a relation graph already
 	LogicalOperator *op = plan.get();

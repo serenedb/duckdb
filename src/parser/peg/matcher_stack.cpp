@@ -1,5 +1,5 @@
 #include "duckdb/parser/peg/matcher_stack.hpp"
-#include "duckdb/common/exception/parser_exception.hpp"
+#include "duckdb/common/stack_depth.hpp"
 
 #include <absl/cleanup/cleanup.h>
 #include "duckdb/common/limits.hpp"
@@ -347,7 +347,7 @@ MatcherResult MatchStack::MatchRepeat(const RepeatMatcher &matcher, MatchState &
 
 void MatchStack::PushFrame(MatchInput input) {
 	if (frames.size() == frames.capacity() && frames.size() >= frame_limit) {
-		ParserException::ThrowMaxExpressionDepth(input.state.context.max_expression_depth);
+		StackDepth::Throw();
 	}
 	input.state.rule = input.matcher.GetRule();
 	frames.emplace_back(input);
@@ -414,10 +414,7 @@ MatcherResult MatchStack::Execute(MatchInput input) {
 	if (input.matcher.IsAtomic()) {
 		return ExecuteAtomicMatcher(input);
 	}
-	auto max_expression_depth = input.state.context.max_expression_depth;
-	max_frames = max_expression_depth > NumericLimits<idx_t>::Maximum() / FRAMES_PER_EXPRESSION_LEVEL
-	                 ? NumericLimits<idx_t>::Maximum()
-	                 : max_expression_depth * FRAMES_PER_EXPRESSION_LEVEL;
+	max_frames = input.state.context.max_expression_depth * FRAMES_PER_EXPRESSION_LEVEL;
 	recursion_limit = MinValue(max_frames, MAX_RECURSION_DEPTH);
 	return Match(input.matcher, input.state, 0);
 }

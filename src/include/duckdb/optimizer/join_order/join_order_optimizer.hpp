@@ -58,7 +58,6 @@ private:
 
 	//! Stats of Delim Scans of the Delim Join that is currently being optimized
 	optional_ptr<RelationStats> delim_scan_stats;
-	idx_t depth;
 
 public:
 	unordered_set<TableIndex> &recursive_cte_indexes;
