@@ -139,6 +139,8 @@ BoundStatement Binder::Bind(ExecuteStatement &stmt) {
 			VerifyResultTypes(stmt, *entry->second, *replanned, bind_values);
 			replanned->parameter_type_hints = prepared->parameter_type_hints;
 			replanned->prepare_time = prepared->prepare_time;
+			replanned->generic_plans = prepared->generic_plans;
+			replanned->custom_plans = prepared->custom_plans;
 			prepared = std::move(replanned);
 			rebound_plan = std::move(generic_planner.plan);
 			replaces = stmt.name;
@@ -157,6 +159,9 @@ BoundStatement Binder::Bind(ExecuteStatement &stmt) {
 		rebound_plan = std::move(prepared_planner.plan);
 		D_ASSERT(prepared->properties.bound_all_parameters);
 		global_binder_state->bound_tables = prepared_planner.binder->global_binder_state->bound_tables;
+		entry->second->custom_plans++;
+	} else {
+		prepared->generic_plans++;
 	}
 	// copy the properties of the prepared statement into the planner
 	auto &properties = GetStatementProperties();

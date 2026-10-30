@@ -50,6 +50,8 @@ public:
 	case_insensitive_map_t<LogicalType> parameter_type_hints;
 	vector<shared_ptr<PlanDataVersion>> data_versions;
 	timestamp_tz_t prepare_time = timestamp_tz_t::epoch();
+	idx_t generic_plans = 0;
+	idx_t custom_plans = 0;
 
 public:
 	void CheckParameterCount(idx_t parameter_count);
