@@ -21,7 +21,6 @@ unique_ptr<AttachInfo> AttachInfo::Copy() const {
 	if (external_resource) {
 		result->external_resource = external_resource->Copy();
 	}
-	result->tablespace_oid = tablespace_oid;
 	return result;
 }
 
