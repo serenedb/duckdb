@@ -371,7 +371,7 @@ TEST_CASE("Block cache prefetch merges runs across small gaps and caps each requ
 
 TEST_CASE("Block cache drops a hinted prefetch past the bytes a file has in flight but never a needed one",
           "[block_cache]") {
-	constexpr idx_t in_flight = BlockCache::MAX_FILE_IN_FLIGHT / BLOCK;
+	constexpr idx_t in_flight = BlockCache::BlockCountOf(BlockCache::MAX_FILE_IN_FLIGHT);
 	DuckDB db(nullptr);
 	BlockCache cache(*db.instance, 2 * in_flight * BLOCK);
 	CountingSourceFileSystem fs;
