@@ -238,7 +238,7 @@ class BlockCache {
 public:
 	static constexpr idx_t BLOCK_SIZE = 128ULL * 1024ULL;
 	//! Missing runs closer than this are fetched by one request
-	static constexpr idx_t MERGE_GAP = 512ULL * 1024ULL;
+	static constexpr idx_t MERGE_GAP = 4 * BLOCK_SIZE;
 	//! The largest run of blocks fetched together
 	static constexpr idx_t MAX_REQUEST = 16ULL * 1024ULL * 1024ULL;
 	//! A longer run is fetched as concurrent requests of at most this size, and the blocks of each are handed out as
@@ -249,7 +249,7 @@ public:
 	//! The most blocks one read-ahead fetches
 	static constexpr idx_t READ_AHEAD_BLOCKS = 64;
 
-	static idx_t BlockCountOf(idx_t size) {
+	static constexpr idx_t BlockCountOf(idx_t size) {
 		return (size + BLOCK_SIZE - 1) / BLOCK_SIZE;
 	}
 	//! The key of block [block] of the file numbered [file]; the keys of a file are one range, in block order
