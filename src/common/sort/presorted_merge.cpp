@@ -428,8 +428,9 @@ void PresortedMerge::Partition(idx_t max_partitions, bool keep_equal_keys, optio
 				             return;
 			             }
 			             readers[i] = inputs[i]->CreateReader();
-			             for (idx_t s = 0; s < per_input; s++) {
-				             const auto row = (2 * s + 1) * count / (2 * per_input);
+			             const auto samples = MinValue(per_input, count);
+			             for (idx_t s = 0; s < samples; s++) {
+				             const auto row = (2 * s + 1) * count / (2 * samples);
 				             sampled[i].push_back({encoder.Encode(*readers[i], row), i, row});
 			             }
 		             });
@@ -443,7 +444,8 @@ void PresortedMerge::Partition(idx_t max_partitions, bool keep_equal_keys, optio
 		double weight = 0;
 		vector<reference<const KeyRow>> splits;
 		for (const KeyRow &sample : samples) {
-			weight += static_cast<double>(inputs[sample.input]->Count()) / static_cast<double>(per_input);
+			weight +=
+			    static_cast<double>(inputs[sample.input]->Count()) / static_cast<double>(sampled[sample.input].size());
 			if (weight < next || splits.size() + 1 == max_partitions) {
 				continue;
 			}
