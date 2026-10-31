@@ -179,8 +179,6 @@ struct RoleAccess {
 	bool Can(CatalogType type, const Permissions &permissions, AclMode need) const;
 	bool CanAny(CatalogType type, const Permissions &permissions, AclMode need) const;
 	bool CanColumns(const Permissions &permissions, AclMode need, std::span<const std::span<const AclItem>> acls) const;
-	bool CanAnyColumn(const Permissions &permissions, AclMode need,
-	                  std::span<const std::span<const AclItem>> acls) const;
 	bool CanAnyColumn(const Permissions &permissions, AclMode need, const ColumnList &columns) const;
 	AclMode HeldModes(std::span<const AclItem> acl) const;
 	AclMode GrantableModes(std::span<const AclItem> acl) const;

@@ -338,24 +338,18 @@ static AclMode Held(const RoleAccess &access, std::span<const AclItem> acl, AclM
 	return held;
 }
 
-static bool Allows(const RoleAccess &access, std::span<const AclItem> stored, CatalogType type, idx_t owner,
-                   AclMode need, bool any) {
+static bool Allows(const RoleAccess &access, std::span<const AclItem> stored, CatalogType type, AclMode need,
+                   bool any) {
 	if (need == AclMode::NoRights) {
 		return false;
 	}
 	const auto done = [&](AclMode have) {
 		return any ? (have & need) != AclMode::NoRights : (have & need) == need;
 	};
-	AclMode have = AclMode::NoRights;
-	if (access.Uses(owner)) {
-		have |= Permissions::AllPrivileges(type);
-		if (done(have)) {
-			return true;
-		}
-	}
 	if (stored.empty()) {
-		return done(have | Permissions::PublicPrivileges(type));
+		return done(Permissions::PublicPrivileges(type));
 	}
+	AclMode have = AclMode::NoRights;
 	for (auto &item : stored) {
 		if (Reaches(access, item)) {
 			have |= item.privs;
@@ -368,11 +362,11 @@ static bool Allows(const RoleAccess &access, std::span<const AclItem> stored, Ca
 }
 
 bool RoleAccess::Can(CatalogType type, const Permissions &permissions, AclMode need) const {
-	return Owns(permissions.owner) || Allows(*this, permissions.acl, type, permissions.owner, need, false);
+	return Owns(permissions.owner) || Allows(*this, permissions.acl, type, need, false);
 }
 
 bool RoleAccess::CanAny(CatalogType type, const Permissions &permissions, AclMode need) const {
-	return Owns(permissions.owner) || Allows(*this, permissions.acl, type, permissions.owner, need, true);
+	return Owns(permissions.owner) || Allows(*this, permissions.acl, type, need, true);
 }
 
 bool RoleAccess::CanColumns(const Permissions &permissions, AclMode need,
@@ -381,17 +375,7 @@ bool RoleAccess::CanColumns(const Permissions &permissions, AclMode need,
 		return true;
 	}
 	return !acls.empty() && std::all_of(acls.begin(), acls.end(), [&](std::span<const AclItem> acl) {
-		return Allows(*this, acl, CatalogType::TABLE_ENTRY, permissions.owner, need, false);
-	});
-}
-
-bool RoleAccess::CanAnyColumn(const Permissions &permissions, AclMode need,
-                              std::span<const std::span<const AclItem>> acls) const {
-	if (Can(CatalogType::TABLE_ENTRY, permissions, need)) {
-		return true;
-	}
-	return std::any_of(acls.begin(), acls.end(), [&](std::span<const AclItem> acl) {
-		return Allows(*this, acl, CatalogType::TABLE_ENTRY, permissions.owner, need, false);
+		return Allows(*this, acl, CatalogType::TABLE_ENTRY, need, false);
 	});
 }
 
@@ -400,7 +384,7 @@ bool RoleAccess::CanAnyColumn(const Permissions &permissions, AclMode need, cons
 		return true;
 	}
 	for (auto &column : columns.Logical()) {
-		if (Allows(*this, column.Acl(), CatalogType::TABLE_ENTRY, permissions.owner, need, false)) {
+		if (Allows(*this, column.Acl(), CatalogType::TABLE_ENTRY, need, false)) {
 			return true;
 		}
 	}
