@@ -120,7 +120,11 @@ unique_ptr<FunctionData> CurrentSchemasBind(BindScalarFunctionInput &input) {
 					schema_list.emplace_back("pg_temp");
 				}
 			}
-			schema_list.emplace_back("pg_catalog");
+			auto &set_paths = catalog_search_path->GetSetPaths();
+			if (std::none_of(set_paths.begin(), set_paths.end(),
+			                 [](const CatalogSearchEntry &entry) { return entry.GetSchema() == "pg_catalog"; })) {
+				schema_list.emplace_back("pg_catalog");
+			}
 		}
 		// PG-compliant: only include user-set schemas that actually exist,
 		// with "$user" resolved via the current session user.

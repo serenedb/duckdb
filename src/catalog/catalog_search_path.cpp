@@ -292,8 +292,8 @@ static string ResolveSchema(ClientContext &context, const CatalogSearchEntry &en
 
 vector<CatalogSearchEntry> CatalogSearchPath::Get() const {
 	vector<CatalogSearchEntry> res;
-	res.reserve(paths.size());
-	for (auto &path : paths) {
+	res.reserve(lookup_paths.size());
+	for (auto &path : lookup_paths) {
 		auto resolved = ResolveSchema(context, path);
 		if (resolved.empty()) {
 			continue;
@@ -451,7 +451,7 @@ vector<CatalogSearchEntry> CatalogSearchPath::GetImplicitSearchCatalogs() const 
 
 vector<CatalogSearchEntry> CatalogSearchPath::GetWithPrecedenceSchemas(ClientContext &context) const {
 	vector<CatalogSearchEntry> res;
-	for (auto &path : paths) {
+	for (auto &path : lookup_paths) {
 		// Resolve implicit entries with default_schema_precedence to the catalog's default schema.
 		if (path.GetSchema().empty()) {
 			if (path.GetCatalog().empty() || !path.DefaultSchemaPrecedence()) {
@@ -531,6 +531,26 @@ void CatalogSearchPath::SetPathsInternal(vector<CatalogSearchEntry> new_paths) {
 	// set extension schemas on the search path, if any
 	for (auto &schema : ExtensionCallbackManager::Get(context).GetExtensionSchemas()) {
 		paths.emplace_back(Identifier(SYSTEM_CATALOG), Identifier(schema));
+	}
+	lookup_paths = paths;
+	if (!context.client_data) {
+		return;
+	}
+	auto &session_path = *context.client_data->catalog_search_path;
+	if (&session_path == this) {
+		auto default_database = DatabaseManager::TryGetDefaultDatabase(context);
+		auto database =
+		    IsInvalidCatalog(default_database) ? nullptr : DatabaseManager::Get(context).GetDatabase(default_database);
+		postgres_mode = database && database->GetCatalog().Compatibility() == SqlCompatibility::POSTGRES;
+	}
+	const bool pg_catalog_named = std::any_of(set_paths.begin(), set_paths.end(), [](const CatalogSearchEntry &path) {
+		return path.GetSchema() == "pg_catalog";
+	});
+	if (session_path.postgres_mode && !pg_catalog_named) {
+		std::stable_partition(lookup_paths.begin(), lookup_paths.end(), [](const CatalogSearchEntry &path) {
+			return path.GetCatalog() == TEMP_CATALOG || path.GetCatalog() == SYSTEM_CATALOG ||
+			       path.GetSchema() == "pg_catalog";
+		});
 	}
 }
 
