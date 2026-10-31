@@ -324,7 +324,7 @@ shared_ptr<PreparedStatementData> ClientContext::CreatePreparedStatementInternal
 	PlannedPropertiesScope planned_scope(*this, logical_planner.properties);
 	if (logical_planner.properties.bound_all_parameters) {
 		for (auto &state : registered_state->States()) {
-			state->OnBoundPlan(*this, *logical_planner.binder, *logical_planner.plan, logical_planner.properties);
+			state->OnBoundPlan(*this, *logical_planner.binder, *logical_planner.plan);
 		}
 		logical_planner.Optimize();
 	}

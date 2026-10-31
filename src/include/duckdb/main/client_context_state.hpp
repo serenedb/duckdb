@@ -9,7 +9,6 @@
 #pragma once
 
 #include "duckdb/common/enums/prepared_statement_mode.hpp"
-#include "duckdb/common/enums/statement_type.hpp"
 #include "duckdb/common/exception/transaction_exception.hpp"
 #include "duckdb/common/optional_ptr.hpp"
 #include "duckdb/main/valid_checker.hpp"
@@ -80,8 +79,7 @@ public:
 	virtual RebindQueryInfo OnPlanningError(ClientContext &context, SQLStatement &statement, ErrorData &error) {
 		return RebindQueryInfo::DO_NOT_REBIND;
 	}
-	virtual void OnBoundPlan(ClientContext &context, Binder &binder, LogicalOperator &plan,
-	                         StatementProperties &properties) {
+	virtual void OnBoundPlan(ClientContext &context, Binder &binder, LogicalOperator &plan) {
 	}
 	virtual RebindQueryInfo OnFinalizePrepare(ClientContext &context, PreparedStatementData &prepared_statement,
 	                                          PreparedStatementMode mode) {
