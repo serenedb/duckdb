@@ -422,15 +422,15 @@ BoundStatement Binder::Bind(AlterStatement &stmt) {
 		auto &info = stmt.info->Cast<AlterSchemaInfo>();
 		info.SetQualifiedName(ResolveCatalog(context, info.GetQualifiedName()));
 		auto &catalog = Catalog::GetCatalog(context, info.SchemaCatalog());
+		auto &properties = GetStatementProperties();
+		properties.return_type = StatementReturnType::NOTHING;
+		properties.RegisterDBModify(catalog, context, DatabaseModificationType::ALTER_TABLE);
 		auto schema =
 		    Catalog::GetSchema(context, info.SchemaCatalog(), info.SchemaPath(), OnEntryNotFound::RETURN_NULL);
 		if (schema) {
 			RequireOwner(*schema);
 			RequireDatabasePrivilege(info.SchemaCatalog(), AclMode::Create);
 		}
-		auto &properties = GetStatementProperties();
-		properties.return_type = StatementReturnType::NOTHING;
-		properties.RegisterDBModify(catalog, context, DatabaseModificationType::ALTER_TABLE);
 		result.plan = make_uniq<LogicalAlter>(std::move(stmt.info));
 		return result;
 	}

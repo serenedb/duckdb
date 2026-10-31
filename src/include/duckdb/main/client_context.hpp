@@ -225,6 +225,7 @@ public:
 			entry_reference_handler(*this, entry);
 		}
 	}
+	DUCKDB_API void CheckDatabaseReference(Catalog &catalog);
 	DUCKDB_API optional_ptr<const StatementProperties> ActiveStatementProperties() const;
 	DUCKDB_API void WarnUser(const string &message);
 

@@ -1,6 +1,7 @@
 #include "duckdb/common/enums/statement_type.hpp"
 
 #include "duckdb/catalog/catalog.hpp"
+#include "duckdb/main/client_context.hpp"
 
 namespace duckdb {
 
@@ -97,8 +98,11 @@ std::string_view StatementReturnTypeToString(StatementReturnType type) {
 
 void StatementProperties::RegisterDBRead(Catalog &catalog, ClientContext &context) {
 	auto catalog_identity = CatalogIdentity {catalog.GetOid(), catalog.GetCatalogVersion(context)};
-	D_ASSERT(read_databases.count(catalog.GetName()) == 0 || read_databases[catalog.GetName()] == catalog_identity);
-	read_databases[catalog.GetName()] = catalog_identity;
+	auto entry = read_databases.emplace(catalog.GetName(), catalog_identity);
+	D_ASSERT(entry.first->second == catalog_identity);
+	if (entry.second && check_database_references) {
+		context.CheckDatabaseReference(catalog);
+	}
 }
 
 void StatementProperties::RegisterDBModify(Catalog &catalog, ClientContext &context,
@@ -108,6 +112,9 @@ void StatementProperties::RegisterDBModify(Catalog &catalog, ClientContext &cont
 	if (entry.second) {
 		// new entry - set the identity
 		entry.first->second.identity = catalog_identity;
+		if (check_database_references) {
+			context.CheckDatabaseReference(catalog);
+		}
 	} else {
 		// existing entry - verify this has the same identity
 		D_ASSERT(entry.first->second.identity == catalog_identity);

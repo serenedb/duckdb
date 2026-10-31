@@ -74,10 +74,6 @@ Binder::Binder(ClientContext &context, shared_ptr<Binder> parent_p, BinderType b
 			}
 			auto &properties = GetStatementProperties();
 			if (!properties.read_databases.count(catalog.GetName())) {
-				if (principal && !catalog.IsTemporaryCatalog() &&
-				    catalog.GetName() != DatabaseManager::TryGetDefaultDatabase(this->context)) {
-					this->context.CheckEntryReference(catalog.GetAttached());
-				}
 				properties.RegisterDBRead(catalog, this->context);
 			}
 			properties.resolved_entries.push_back(&entry);
@@ -299,6 +295,7 @@ bool Binder::InViewBody() const {
 void Binder::SetPrincipal(optional_ptr<const RoleAccess> principal_p) {
 	principal = principal_p;
 	entry_retriever.SetPrincipal(principal_p);
+	GetStatementProperties().check_database_references = principal_p;
 }
 
 BoundStatement Binder::BindTarget(TableRef &ref, TableRefUse use) {

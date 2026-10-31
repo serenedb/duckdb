@@ -132,6 +132,7 @@ struct StatementProperties {
 	bool always_require_rebind;
 	optional<ReplicationRole> replication_role;
 	optional<bool> file_access_authorized;
+	bool check_database_references = false;
 
 	bool IsReadOnly() {
 		return modified_databases.empty();
