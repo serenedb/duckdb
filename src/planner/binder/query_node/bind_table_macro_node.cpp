@@ -50,6 +50,7 @@ unique_ptr<QueryNode> Binder::BindTableMacro(FunctionExpression &function, Macro
 	vector<identifier_set_t> lambda_params;
 
 	unique_ptr<QueryNode> node;
+	unique_ptr<TableRef> parameters;
 	if (macro_def.type == MacroType::SCALAR_MACRO) {
 		auto &scalar_macro = macro_def.Cast<ScalarMacroFunction>();
 		auto expr = scalar_macro.expression->Copy();
@@ -94,9 +95,22 @@ unique_ptr<QueryNode> Binder::BindTableMacro(FunctionExpression &function, Macro
 		}
 	} else {
 		node = macro_def.Cast<TableMacroFunction>().query_node->Copy();
+		parameters = eb.BindTableMacroArguments(*node, *new_macro_binding, positional_arguments);
 	}
 	ParsedExpressionIterator::EnumerateQueryNodeChildren(
 	    *node, [&](unique_ptr<ParsedExpression> &child) { eb.ReplaceMacroParameters(child, lambda_params); });
+	if (parameters) {
+		const Identifier body_alias("0_macro_body");
+		auto body = make_uniq<SelectStatement>();
+		body->node = std::move(node);
+		auto join = make_uniq<JoinRef>(JoinRefType::CROSS);
+		join->left = std::move(parameters);
+		join->right = make_uniq<SubqueryRef>(std::move(body), body_alias);
+		auto select_node = make_uniq<SelectNode>();
+		select_node->select_list.push_back(make_uniq<StarExpression>(body_alias));
+		select_node->from_table = std::move(join);
+		node = std::move(select_node);
+	}
 
 	if (macro_def.type == MacroType::TABLE_MACRO && !macro_def.return_types.empty()) {
 		auto body = make_uniq<SelectStatement>();

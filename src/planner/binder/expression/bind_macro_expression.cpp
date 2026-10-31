@@ -1055,6 +1055,49 @@ unique_ptr<Expression> ExpressionBinder::BindSubqueryArgument(const ParsedExpres
 	return BindChild(parsed, depth, error);
 }
 
+unique_ptr<TableRef> ExpressionBinder::BindTableMacroArguments(QueryNode &body, DummyBinding &binding,
+                                                               vector<unique_ptr<ParsedExpression>> &arguments) {
+	auto &names = binding.GetColumnNames();
+	MacroBodyUse use;
+	for (auto &name : names) {
+		use.parameters[name];
+	}
+	vector<identifier_set_t> lambda_params;
+	ParsedExpressionIterator::EnumerateQueryNodeChildren(body, [&](unique_ptr<ParsedExpression> &child) {
+		AnalyzeMacroBody(*child, true, false, false, lambda_params, binding, use);
+	});
+	const Identifier alias(DummyBinding::VALUES_NAME + to_string(binder.global_binder_state->shared_macro_arguments++));
+	vector<Identifier> value_names;
+	vector<unique_ptr<ParsedExpression>> values;
+	for (idx_t i = 0; i < arguments.size(); i++) {
+		auto &argument = arguments[i];
+		if (use.parameters[names[i]].references < 2 || argument->HasParameter() ||
+		    IsTrivialMacroArgument(*argument, binder.global_binder_state->bound_macro_arguments)) {
+			continue;
+		}
+		auto parsed = argument->Copy();
+		ErrorData error;
+		auto bound = BindChild(parsed, 0, error);
+		if (!bound) {
+			continue;
+		}
+		Value value;
+		if (bound->IsFoldable() &&
+		    !TypeVisitor::Contains(bound->GetReturnType(), [](const LogicalType &type) { return type.HasAlias(); }) &&
+		    ExpressionExecutor::TryEvaluateFoldable(context, *bound, value, MAX_ARGUMENT_LITERAL_SIZE)) {
+			argument = ConstantExpression::FromValue(value);
+			continue;
+		}
+		value_names.emplace_back("0_" + names[i].GetIdentifierName());
+		values.push_back(std::move(argument));
+		argument = make_uniq<ColumnRefExpression>(value_names.back(), alias);
+	}
+	if (values.empty()) {
+		return nullptr;
+	}
+	return ValuesTable(alias, value_names, std::move(values));
+}
+
 unique_ptr<Expression> ExpressionBinder::BindMacroArgument(const BoundMacroArgument &argument) {
 	auto result = argument.expression->Copy();
 	for (idx_t scope = 1; scope < ScopeCount(); scope++) {

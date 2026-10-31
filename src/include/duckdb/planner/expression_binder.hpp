@@ -15,6 +15,7 @@
 #include "duckdb/parser/expression/lambdaref_expression.hpp"
 #include "duckdb/parser/expression/type_expression.hpp"
 #include "duckdb/parser/parsed_expression.hpp"
+#include "duckdb/parser/tableref.hpp"
 #include "duckdb/parser/tokens.hpp"
 #include "duckdb/planner/expression.hpp"
 #include "duckdb/catalog/catalog_entry_retriever.hpp"
@@ -117,6 +118,8 @@ public:
 	void ExpandSqlFunctionBody(DummyBinding &binding, vector<unique_ptr<ParsedExpression>> &arguments,
 	                           unique_ptr<ParsedExpression> &expr);
 	BindResult BindMacroArgumentType(unique_ptr<ParsedExpression> &argument, idx_t depth);
+	unique_ptr<TableRef> BindTableMacroArguments(QueryNode &body, DummyBinding &binding,
+	                                             vector<unique_ptr<ParsedExpression>> &arguments);
 	void ShareAliasReferences(unique_ptr<ParsedExpression> &expr, SelectBindState &bind_state);
 
 	//! The target type that should result from the binder. If the result is not of this type, a cast to this type will
