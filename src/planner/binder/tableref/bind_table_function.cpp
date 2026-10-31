@@ -2,6 +2,7 @@
 #include "duckdb/catalog/catalog_entry/macro_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/scalar_function_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/table_macro_catalog_entry.hpp"
+#include "duckdb/catalog/permissions.hpp"
 #include "duckdb/function/builtin_function_lookup.hpp"
 #include "duckdb/parser/expression/columnref_expression.hpp"
 #include "duckdb/parser/expression/comparison_expression.hpp"
@@ -385,6 +386,11 @@ BoundStatement Binder::BindTableFunctionInternal(BoundTableFunction &table_funct
 	                                              get->GetMutableColumnIds(), table.get(), std::move(virtual_columns),
 	                                              std::move(row_id_columns));
 	if (table) {
+		GetStatementProperties().RegisterDBRead(table->ParentCatalog(), context);
+		auto &schema = table->ParentSchema(context);
+		if (!CanUseSchema(principal, schema)) {
+			ThrowPermissionDenied(schema);
+		}
 		CheckTableRead(binding, *table);
 	} else if (principal && !principal->is_superuser &&
 	           !DBConfig::GetConfig(context).file_free_functions.count(get->function.GetName())) {

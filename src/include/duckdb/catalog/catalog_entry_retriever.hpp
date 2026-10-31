@@ -11,6 +11,7 @@
 #include <functional>
 #include "duckdb/common/enums/catalog_type.hpp"
 #include "duckdb/common/enums/on_entry_not_found.hpp"
+#include "duckdb/common/exception.hpp"
 #include "duckdb/common/string.hpp"
 #include "duckdb/parser/query_error_context.hpp"
 #include "duckdb/catalog/catalog_entry/schema_catalog_entry.hpp"
@@ -44,6 +45,14 @@ public:
 	//! Look up an entry described by the (catalog/schema-qualified) EntryLookupInfo
 	optional_ptr<CatalogEntry> GetEntry(const EntryLookupInfo &lookup_info,
 	                                    OnEntryNotFound on_entry_not_found = OnEntryNotFound::THROW_EXCEPTION);
+	template <class T>
+	T &GetEntry(const QualifiedName &name) {
+		auto entry = GetEntry(EntryLookupInfo(T::Type, name), OnEntryNotFound::THROW_EXCEPTION);
+		if (entry->type != T::Type) {
+			throw CatalogException("%s is not an %s", name.Name().GetIdentifierName(), T::Name);
+		}
+		return entry->template Cast<T>();
+	}
 	//! Look up a (catalog/schema-qualified) type
 	LogicalType GetType(const QualifiedName &name, OnEntryNotFound on_entry_not_found = OnEntryNotFound::RETURN_NULL);
 	//! Look up the schema described by the (catalog-qualified) EntryLookupInfo

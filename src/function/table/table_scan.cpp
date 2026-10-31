@@ -1469,7 +1469,9 @@ static unique_ptr<FunctionData> IndexScanBind(ClientContext &context, TableFunct
 	for (auto &part : ListValue::GetChildren(input.inputs[0])) {
 		path.emplace_back(StringValue::Get(part));
 	}
-	auto &index = Catalog::GetEntry<IndexCatalogEntry>(context, QualifiedName::FromPath(std::move(path)));
+	CatalogEntryRetriever own_retriever(context);
+	auto &retriever = input.binder ? input.binder->EntryRetriever() : own_retriever;
+	auto &index = retriever.GetEntry<IndexCatalogEntry>(QualifiedName::FromPath(std::move(path)));
 	auto relation = index.GetRelation(index.catalog.GetCatalogTransaction(context));
 	auto &table = relation && relation->type == CatalogType::TABLE_ENTRY
 	                  ? relation->Cast<TableCatalogEntry>()
