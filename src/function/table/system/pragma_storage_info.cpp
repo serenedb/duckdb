@@ -124,18 +124,18 @@ static unique_ptr<FunctionData> PragmaStorageInfoBind(ClientContext &context, Ta
 	auto qname = QualifiedName::Parse(input.inputs[0].GetValue<string>());
 
 	// look up the table name in the catalog
-	CatalogEntryRetriever retriever(context);
+	CatalogEntryRetriever own_retriever(context);
+	auto &retriever = input.binder ? input.binder->EntryRetriever() : own_retriever;
 	qname = Binder::BindTableName(retriever, qname);
 	optional_ptr<IndexCatalogEntry> index;
-	if (!Catalog::GetEntry(context, EntryLookupInfo(CatalogType::TABLE_ENTRY, qname), OnEntryNotFound::RETURN_NULL)) {
-		auto entry =
-		    Catalog::GetEntry(context, EntryLookupInfo(CatalogType::INDEX_ENTRY, qname), OnEntryNotFound::RETURN_NULL);
+	if (!retriever.GetEntry(EntryLookupInfo(CatalogType::TABLE_ENTRY, qname), OnEntryNotFound::RETURN_NULL)) {
+		auto entry = retriever.GetEntry(EntryLookupInfo(CatalogType::INDEX_ENTRY, qname), OnEntryNotFound::RETURN_NULL);
 		if (entry && entry->ParentCatalog().Compatibility() == SqlCompatibility::POSTGRES) {
 			index = &entry->Cast<IndexCatalogEntry>();
 			qname = index->GetQualifiedName(index->GetTableName());
 		}
 	}
-	auto &table_entry = Catalog::GetEntry<TableCatalogEntry>(context, qname);
+	auto &table_entry = retriever.GetEntry<TableCatalogEntry>(qname);
 	Binder::RegisterEntryRead(input.binder, context, table_entry);
 	auto result = make_uniq<PragmaStorageFunctionData>(table_entry, options);
 	result->index = index;

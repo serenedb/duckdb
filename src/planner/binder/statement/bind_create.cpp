@@ -294,13 +294,6 @@ QualifiedName Binder::BindTableName(const QualifiedName &name) {
 }
 
 void Binder::RegisterEntryRead(optional_ptr<Binder> binder, ClientContext &context, CatalogEntry &entry) {
-	if (binder) {
-		binder->GetStatementProperties().RegisterDBRead(entry.ParentCatalog(), context);
-		auto &schema = entry.ParentSchema(context);
-		if (!CanUseSchema(binder->principal, schema)) {
-			ThrowPermissionDenied(schema);
-		}
-	}
 	if (!binder || !binder->InViewBody()) {
 		context.CheckEntryReference(entry);
 	}
