@@ -120,13 +120,11 @@ public:
 };
 
 struct ColumnReadCheck {
-	ColumnReadCheck(TableCatalogEntry &table_p, RoleAccess principal_p, bool target_p)
-	    : table(table_p), principal(principal_p), target(target_p) {
+	ColumnReadCheck(TableCatalogEntry &table_p, RoleAccess principal_p) : table(table_p), principal(principal_p) {
 	}
 
 	TableCatalogEntry &table;
 	RoleAccess principal;
-	bool target;
 	bool referenced = false;
 };
 

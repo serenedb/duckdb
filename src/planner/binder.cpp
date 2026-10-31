@@ -310,9 +310,8 @@ void Binder::CheckTableRead(TableBinding &binding, TableCatalogEntry &table) {
 	    principal->Can(CatalogType::TABLE_ENTRY, table.permissions, AclMode::Select)) {
 		return;
 	}
-	const bool target = table_ref_use == TableRefUse::DML_TARGET;
-	binding.column_read = make_shared_ptr<ColumnReadCheck>(table, *principal, target);
-	if (!target) {
+	binding.column_read = make_shared_ptr<ColumnReadCheck>(table, *principal);
+	if (table_ref_use != TableRefUse::DML_TARGET) {
 		global_binder_state->column_reads.push_back(binding.column_read);
 	}
 }
