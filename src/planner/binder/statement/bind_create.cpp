@@ -346,9 +346,8 @@ SchemaCatalogEntry &Binder::BindSchema(CreateInfo &info) {
 	SearchSchema(info);
 	auto &path = info.GetQualifiedName().Path();
 	vector<Identifier> schema_path(path.begin() + 1, path.end() - 1);
-	if (!info.temporary) {
-		GetStatementProperties().RegisterDBModify(Catalog::GetCatalog(context, path.front()), context,
-		                                          DatabaseModificationType::CREATE_CATALOG_ENTRY);
+	if (auto catalog = info.temporary ? nullptr : Catalog::GetCatalogEntry(context, path.front())) {
+		GetStatementProperties().RegisterDBModify(*catalog, context, DatabaseModificationType::CREATE_CATALOG_ENTRY);
 	}
 	auto &schema_obj = *Catalog::GetSchema(context, path.front(), schema_path, OnEntryNotFound::THROW_EXCEPTION);
 	D_ASSERT(schema_obj.type == CatalogType::SCHEMA_ENTRY);
