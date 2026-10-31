@@ -2,18 +2,12 @@
 # description: Test deeply nested input with the PEG parser
 # group: [peg_parser]
 
-statement ok
-SET max_expression_depth=1000000;
-
 query I
-FROM query('SELECT ' || repeat('(', 10000) || '1' || repeat(')', 10000));
+FROM query('SELECT ' || repeat('(', 5000) || '1' || repeat(')', 5000));
 ----
 1
 
 # Exercise nested list expressions through transformation and binding.
-statement ok
-SET max_expression_depth=1000;
-
 foreach depth 1 10 100
 
 query I
@@ -28,16 +22,10 @@ FROM query('SELECT ' || repeat('1 - (2 - (', 50) || '3' || repeat('))', 50));
 ----
 -47
 
-statement ok
-SET max_expression_depth=100;
-
 statement error
-FROM query('SELECT (' || repeat('[', 500) || '1' || repeat(']', 500) || ') IS NOT NULL AS result');
+FROM query('SELECT (' || repeat('[', 300000) || '1' || repeat(']', 300000) || ') IS NOT NULL AS result');
 ----
-<REGEX>:.*Max expression depth limit of 100 exceeded.*
-
-statement ok
-SET max_expression_depth=1000;
+<REGEX>:.*stack depth limit exceeded.*
 
 query I
 FROM query('SELECT (NULL::INT' || repeat('[]', 100) || ') IS NULL');
@@ -45,6 +33,6 @@ FROM query('SELECT (NULL::INT' || repeat('[]', 100) || ') IS NULL');
 true
 
 statement error
-FROM query('SELECT (NULL::INT' || repeat('[]', 10000) || ') IS NULL');
+FROM query('SELECT (NULL::INT' || repeat('[]', 300000) || ') IS NULL');
 ----
-<REGEX>:.*Max expression depth limit of 1000 exceeded.*
+<REGEX>:.*stack depth limit exceeded.*

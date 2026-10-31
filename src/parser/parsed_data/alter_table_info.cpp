@@ -524,8 +524,10 @@ ChangeColumnTypeInfo::~ChangeColumnTypeInfo() {
 }
 
 unique_ptr<AlterInfo> ChangeColumnTypeInfo::Copy() const {
-	return make_uniq_base<AlterInfo, ChangeColumnTypeInfo>(GetAlterEntryData(), column_path, target_type,
-	                                                       expression ? expression->Copy() : nullptr);
+	auto result = make_uniq<ChangeColumnTypeInfo>(GetAlterEntryData(), column_path, target_type,
+	                                              expression ? expression->Copy() : nullptr);
+	result->declared_type = declared_type;
+	return std::move(result);
 }
 
 string ChangeColumnTypeInfo::ToString() const {
@@ -965,6 +967,35 @@ string SetTriggerFiringInfo::ToString() const {
 	} else {
 		result += SQLIdentifier(trigger_name);
 	}
+	result += ";";
+	return result;
+}
+
+//===--------------------------------------------------------------------===//
+// SetSchemaInfo
+//===--------------------------------------------------------------------===//
+SetSchemaInfo::SetSchemaInfo() : AlterTableInfo(AlterTableType::SET_SCHEMA) {
+}
+
+SetSchemaInfo::SetSchemaInfo(const AlterEntryData &data, Identifier new_schema_p)
+    : AlterTableInfo(AlterTableType::SET_SCHEMA, data), new_schema(std::move(new_schema_p)) {
+}
+
+SetSchemaInfo::~SetSchemaInfo() {
+}
+
+unique_ptr<AlterInfo> SetSchemaInfo::Copy() const {
+	return make_uniq_base<AlterInfo, SetSchemaInfo>(GetAlterEntryData(), new_schema);
+}
+
+string SetSchemaInfo::ToString() const {
+	string result = "ALTER TABLE ";
+	if (if_not_found == OnEntryNotFound::RETURN_NULL) {
+		result += "IF EXISTS ";
+	}
+	result += GetQualifiedName().ToString(QualifiedNameToStringMode::HIDE_DEFAULT_SCHEMA);
+	result += " SET SCHEMA ";
+	result += SQLIdentifier(new_schema);
 	result += ";";
 	return result;
 }

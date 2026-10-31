@@ -288,6 +288,13 @@
         "type": "vector<Identifier>",
         "serialize_property": "column_path.size() > 1 ? column_path : vector<Identifier>()",
         "default": "vector<Identifier>()"
+      },
+      {
+        "id": 16784,
+        "name": "declared_type",
+        "type": "LogicalType",
+        "default": "LogicalType()",
+        "version": "serenedb_v1"
       }
     ]
   },
@@ -1480,6 +1487,18 @@
         "id": 401,
         "name": "firing",
         "type": "TriggerFiring"
+      }
+    ]
+  },
+  {
+    "class": "SetSchemaInfo",
+    "base": "AlterTableInfo",
+    "enum": "SET_SCHEMA",
+    "members": [
+      {
+        "id": 400,
+        "name": "new_schema",
+        "type": "Identifier"
       }
     ]
   },

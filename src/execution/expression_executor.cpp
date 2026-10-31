@@ -2,6 +2,7 @@
 
 #include <absl/cleanup/cleanup.h>
 
+#include "duckdb/common/stack_depth.hpp"
 #include "duckdb/common/vector/array_vector.hpp"
 #include "duckdb/common/vector/flat_vector.hpp"
 #include "duckdb/common/vector/list_vector.hpp"
@@ -425,6 +426,7 @@ void ExpressionExecutor::Verify(const Expression &expr, Vector &vector, idx_t co
 
 unique_ptr<ExpressionState> ExpressionExecutor::InitializeState(const Expression &expr,
                                                                 ExpressionExecutorState &state) {
+	StackDepth::Check();
 	switch (expr.GetExpressionClass()) {
 	case ExpressionClass::BOUND_REF:
 		return InitializeState(expr.Cast<BoundReferenceExpression>(), state);
@@ -449,6 +451,7 @@ unique_ptr<ExpressionState> ExpressionExecutor::InitializeState(const Expression
 
 void ExpressionExecutor::Execute(const Expression &expr, ExpressionState *state, const SelectionVector *sel,
                                  idx_t count, Vector &result) {
+	StackDepth::Check();
 #ifdef DEBUG
 	// The result vector must be used for the first time, or must be reset.
 	// Otherwise, the validity mask can contain previous (now incorrect) data.

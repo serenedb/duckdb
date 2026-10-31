@@ -101,12 +101,18 @@ TypeVariations <- TimeType / IntervalType / BitType / RowType / VariantType / Ma
 SimpleType <- CharacterSimpleType / QualifiedSimpleType
 CharacterSimpleType <- CharacterType TypeModifiers?
 QualifiedSimpleType <- QualifiedTypeName TypeModifiers?
-CharacterType <- ('CHARACTER' 'VARYING'?) /
-                 ('CHAR' 'VARYING'?) /
-                 ('NATIONAL' 'CHARACTER' 'VARYING'?) /
-                 ('NATIONAL' 'CHAR' 'VARYING'?) /
-                 ('NCHAR' 'VARYING'?) /
-                 'VARCHAR'
+CharacterType <- VaryingCharacterType / FixedCharacterType
+VaryingCharacterType <- ('CHARACTER' 'VARYING') /
+                        ('CHAR' 'VARYING') /
+                        ('NATIONAL' 'CHARACTER' 'VARYING') /
+                        ('NATIONAL' 'CHAR' 'VARYING') /
+                        ('NCHAR' 'VARYING') /
+                        'VARCHAR'
+FixedCharacterType <- 'CHARACTER' /
+                      'CHAR' /
+                      ('NATIONAL' 'CHARACTER') /
+                      ('NATIONAL' 'CHAR') /
+                      'NCHAR'
 
 IntervalType <- IntervalInterval / IntervalNumber
 IntervalInterval <- IntervalWithSpecifier / IntervalWithoutSpecifier
@@ -781,7 +787,7 @@ AlterSchemaStmt <- 'SCHEMA' IfExists? QualifiedName AlterSchemaOptions
 AlterSchemaOptions <- RenameAlter / SetOptions / ResetOptions
 
 AlterTableOptions <- AddColumn / DropConstraint / DropColumn / AlterColumn / AddConstraint / ChangeNullability /
-        RenameConstraint / RenameColumn / RenameAlter / SetPartitionedBy / ResetPartitionedBy / SetSortedBy / ResetSortedBy / SetOptions / ResetOptions /
+        RenameConstraint / RenameColumn / RenameAlter / SetSchemaAlter / SetPartitionedBy / ResetPartitionedBy / SetSortedBy / ResetSortedBy / SetOptions / ResetOptions /
         EnableTrigger / DisableTrigger
 
 AddConstraint <- 'ADD' TopLevelConstraint
@@ -803,6 +809,7 @@ RenameColumn <- 'RENAME' 'COLUMN'? NestedColumnName 'TO' ColIdOrString
 NestedColumnName <- IdentifierDot* ColumnName
 IdentifierDot <- Identifier '.'
 RenameAlter <- 'RENAME' 'TO' ColIdOrString
+SetSchemaAlter <- 'SET' 'SCHEMA' ColId
 SetPartitionedBy <- 'SET' 'PARTITIONED' 'BY' Parens(List(Expression))
 ResetPartitionedBy <- 'RESET' 'PARTITIONED' 'BY'
 SetSortedBy <- 'SET' 'SORTED' 'BY' Parens(OrderByExpressions)

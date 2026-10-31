@@ -204,7 +204,7 @@ struct MatchContext {
 	ParserPackratCache *packrat_cache;
 	MatchMode mode;
 	bool annotate_tokens = false;
-	idx_t max_expression_depth = ParserOptions::DEFAULT_MAX_EXPRESSION_DEPTH;
+	idx_t max_expression_depth = StackDepth::NestingLimit();
 	vector<unique_ptr<reference_set_t<const Matcher>>> suggestion_scopes;
 };
 

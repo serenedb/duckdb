@@ -321,7 +321,7 @@ arena_ptr<TransformResultValue>
 TransformStack::FinishFrame(TransformStackFrame &frame, arena_ptr<TransformResultValue> result, idx_t &result_height) {
 	result_height = frame.height + 1;
 	if (result_height >= transformer.max_height) {
-		ParserException::ThrowMaxExpressionDepth(transformer.options.max_expression_depth);
+		StackDepth::Throw();
 	}
 #ifdef D_ASSERT_IS_ENABLED
 	transformer.VerifyResultHeight(frame.parse_result, *result, result_height);
@@ -462,22 +462,19 @@ arena_ptr<TransformResultValue> PEGTransformer::TransformInternal(ParseResult &p
 PEGTransformer::PEGTransformer(ArenaAllocator &allocator, TokenIterator &token_iterator, ParserOptions &options_p,
                                const CompiledGrammar &grammar_p)
     : allocator(allocator), token_iterator(token_iterator), type_depth_check {options_p.max_expression_depth, {}},
-      options(options_p), grammar(grammar_p),
-      max_height(options_p.max_expression_depth > NumericLimits<idx_t>::Maximum() / HEIGHT_PER_EXPRESSION_LEVEL
-                     ? NumericLimits<idx_t>::Maximum()
-                     : options_p.max_expression_depth * HEIGHT_PER_EXPRESSION_LEVEL) {
+      options(options_p), grammar(grammar_p), max_height(options_p.max_expression_depth * HEIGHT_PER_EXPRESSION_LEVEL) {
 }
 
 void PEGTransformer::AddDepth(idx_t levels) {
 	if (levels >= options.max_expression_depth) {
-		ParserException::ThrowMaxExpressionDepth(options.max_expression_depth);
+		StackDepth::Throw();
 	}
 	if (!running_frame) {
 		return;
 	}
 	running_frame->height += levels;
 	if (running_frame->height >= max_height) {
-		ParserException::ThrowMaxExpressionDepth(options.max_expression_depth);
+		StackDepth::Throw();
 	}
 }
 

@@ -965,8 +965,6 @@ ScalarMacroFunction &ExpressionBinder::UnfoldMacroExpression(FunctionExpression 
 
 BindResult ExpressionBinder::BindMacro(FunctionExpression &function, ScalarMacroCatalogEntry &macro_func, idx_t depth,
                                        unique_ptr<ParsedExpression> &expr) {
-	auto stack_checker = StackCheck(*expr, 3);
-
 	const bool constant_candidate =
 	    function.GetArguments().empty() && expr->GetExpressionClass() == ExpressionClass::FUNCTION;
 	auto &constant_macros = binder.global_binder_state->constant_macros;

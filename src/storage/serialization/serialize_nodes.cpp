@@ -261,6 +261,9 @@ void ColumnDefinition::Serialize(Serializer &serializer) const {
 	if (serializer.ShouldSerialize(StorageVersion::SERENEDB_V1)) {
 		serializer.WritePropertyWithDefault<idx_t>(16485, "catalog_oid", catalog_oid);
 	}
+	if (serializer.ShouldSerialize(StorageVersion::SERENEDB_V1)) {
+		serializer.WritePropertyWithDefault<LogicalType>(16486, "declared_type", declared_type, LogicalType());
+	}
 }
 
 ColumnDefinition ColumnDefinition::Deserialize(Deserializer &deserializer) {
@@ -274,6 +277,7 @@ ColumnDefinition ColumnDefinition::Deserialize(Deserializer &deserializer) {
 	deserializer.ReadPropertyWithDefault<InsertionOrderPreservingMap<string>>(106, "tags", result.tags);
 	deserializer.ReadPropertyWithDefault<vector<AclItem>>(16484, "acl", result.acl);
 	deserializer.ReadPropertyWithDefault<idx_t>(16485, "catalog_oid", result.catalog_oid);
+	deserializer.ReadPropertyWithExplicitDefault<LogicalType>(16486, "declared_type", result.declared_type, LogicalType());
 	return result;
 }
 

@@ -629,6 +629,11 @@ void DuckSchemaEntry::Alter(CatalogTransaction transaction, AlterInfo &info) {
 		return;
 	}
 
+	if (info.GetNewSchema()) {
+		MoveTable(transaction, info.Cast<SetSchemaInfo>());
+		return;
+	}
+
 	auto &set = GetCatalogSet(type);
 	if (info.type == AlterType::CHANGE_OWNERSHIP) {
 		if (!set.AlterEntry(transaction, info.GetQualifiedName().Name(), info) ||
@@ -707,6 +712,44 @@ void DuckSchemaEntry::Alter(CatalogTransaction transaction, AlterInfo &info) {
 		for (auto &fk_array : fk_arrays) {
 			Alter(transaction, *fk_array);
 		}
+	}
+}
+
+void DuckSchemaEntry::MoveTable(CatalogTransaction transaction, SetSchemaInfo &info) {
+	auto &target = catalog.GetSchema(transaction, info.new_schema).Cast<DuckSchemaEntry>();
+	if (target.GetSchemaInfo() == GetSchemaInfo()) {
+		return;
+	}
+	auto &name = info.GetQualifiedName().Name();
+	auto &tables = GetCatalogSet(CatalogType::TABLE_ENTRY);
+	auto table = tables.GetEntry(transaction, name);
+	if (!table || table->type != CatalogType::TABLE_ENTRY) {
+		throw CatalogException::MissingEntry(CatalogType::TABLE_ENTRY, name, string());
+	}
+	if (!table->Cast<TableCatalogEntry>().IsDuckTable()) {
+		throw NotImplementedException("ALTER TABLE ... SET SCHEMA is not supported for table \"%s\"",
+		                              name.GetIdentifierName());
+	}
+	auto &indexes = GetCatalogSet(CatalogType::INDEX_ENTRY);
+	vector<Identifier> moved_indexes;
+	indexes.Scan(transaction, [&](CatalogEntry &entry) {
+		if (entry.Cast<IndexCatalogEntry>().table_oid == table->oid) {
+			moved_indexes.push_back(entry.name);
+		}
+	});
+	auto &sequences = GetCatalogSet(CatalogType::SEQUENCE_ENTRY);
+	for (auto &owned : catalog.GetDependencyManager()->OwnedEntries(transaction, *table)) {
+		auto &sequence = owned.get();
+		if (sequence.type == CatalogType::SEQUENCE_ENTRY &&
+		    sequence.ParentSchema(transaction).GetSchemaInfo() == GetSchemaInfo()) {
+			sequences.MoveEntry(transaction, sequence.name, target.GetCatalogSet(CatalogType::SEQUENCE_ENTRY), info);
+		}
+	}
+	if (!tables.MoveEntry(transaction, name, target.GetCatalogSet(CatalogType::TABLE_ENTRY), info)) {
+		throw CatalogException::MissingEntry(CatalogType::TABLE_ENTRY, name, string());
+	}
+	for (auto &index : moved_indexes) {
+		indexes.MoveEntry(transaction, index, target.GetCatalogSet(CatalogType::INDEX_ENTRY), info);
 	}
 }
 

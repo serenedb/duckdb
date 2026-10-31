@@ -112,6 +112,15 @@ optional_ptr<Catalog> Catalog::GetCatalogEntry(ClientContext &context, const Ide
 	return GetCatalogEntry(entry_retriever, catalog_name);
 }
 
+SqlCompatibility Catalog::DefaultCompatibility(ClientContext &context) {
+	auto default_database = DatabaseManager::TryGetDefaultDatabase(context);
+	if (IsInvalidCatalog(default_database)) {
+		return SqlCompatibility::DUCK;
+	}
+	auto catalog = GetCatalogEntry(context, default_database);
+	return catalog ? catalog->Compatibility() : SqlCompatibility::DUCK;
+}
+
 Catalog &Catalog::GetCatalog(CatalogEntryRetriever &retriever, const Identifier &catalog_name) {
 	auto catalog = Catalog::GetCatalogEntry(retriever, catalog_name);
 	if (!catalog) {

@@ -147,6 +147,7 @@ virtual_column_map_t DuckTableEntry::GetVirtualColumns() const {
 	virtual_columns.insert(make_pair(COLUMN_IDENTIFIER_ROW_NUMBER, TableColumn("row_number", LogicalType::BIGINT)));
 	if (catalog.Compatibility() == SqlCompatibility::POSTGRES) {
 		virtual_columns.emplace(COLUMN_IDENTIFIER_TABLE_OID, TableColumn("tableoid", LogicalType::BIGINT));
+		AddPostgresSystemColumns(virtual_columns);
 	}
 	return virtual_columns;
 }
@@ -457,6 +458,29 @@ unique_ptr<CatalogEntry> DuckTableEntry::AlterEntry(ClientContext &context, Alte
 	case AlterTableType::SET_TRIGGER_FIRING: {
 		SetTriggerFiring(context, table_info.Cast<SetTriggerFiringInfo>());
 		return Copy(context);
+	}
+	case AlterTableType::SET_SCHEMA: {
+		auto transaction = catalog.GetCatalogTransaction(context);
+		auto previous = ParentSchemaPath(transaction);
+		auto owned = catalog.GetDependencyManager()->OwnedEntries(transaction, *this);
+		auto result = CopyToSchema(context, table_info.Cast<SetSchemaInfo>().new_schema);
+		auto &moved = result->Cast<DuckTableEntry>();
+		LogicalDependencyList dependencies;
+		for (auto &dependency : moved.dependencies.Set()) {
+			auto rewritten = dependency;
+			if (dependency.entry.type == CatalogType::SEQUENCE_ENTRY &&
+			    CatalogEntryInfo::SamePath(dependency.entry.schema_path, previous)) {
+				for (auto &sequence : owned) {
+					if (sequence.get().type == CatalogType::SEQUENCE_ENTRY &&
+					    sequence.get().name == dependency.entry.name) {
+						rewritten.entry.schema_path = sequence.get().ParentSchemaPath(transaction);
+					}
+				}
+			}
+			dependencies.AddDependency(rewritten);
+		}
+		moved.dependencies = std::move(dependencies);
+		return result;
 	}
 	case AlterTableType::DROP_NOT_NULL: {
 		auto &drop_not_null_info = table_info.Cast<DropNotNullInfo>();
@@ -1331,6 +1355,7 @@ unique_ptr<CatalogEntry> DuckTableEntry::ChangeColumnType(ClientContext &context
 				throw NotImplementedException("Changing types of generated columns is not supported yet");
 			}
 			copy.SetType(info.target_type);
+			copy.SetDeclaredType(info.declared_type);
 			if (alter_table_type == AlterTableType::RENAME_FIELD && copy.HasDefaultValue()) {
 				copy.SetDefaultValue(
 				    RemapStructDefault(copy.DefaultValue().Copy(), info.target_type, GetRemapStructMapping(info)));
@@ -1632,6 +1657,7 @@ void DuckTableEntry::SetAsRoot(optional_ptr<CatalogTransaction> transaction, opt
 	storage->SetAsMainTable();
 	storage->GetDataTableInfo()->SetTableOid(oid);
 	if (!catalog.UsesCatalogLog()) {
+		storage->GetDataTableInfo()->SetSchemaInfo(schema_info);
 		storage->SetTableName(name);
 		for (auto &column : columns.Physical()) {
 			storage->SetColumnName(column.Physical(), column.Name());

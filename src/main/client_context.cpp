@@ -1400,7 +1400,6 @@ ParserOptions ClientContext::GetParserOptions() {
 	options.identifier_case_mode = Settings::Get<PreserveIdentifierCaseSetting>(*this);
 	options.integer_division = Settings::Get<IntegerDivisionSetting>(*this);
 	options.regex_match_operator_semantics = Settings::Get<RegexMatchOperatorSemanticsSetting>(*this);
-	options.max_expression_depth = Settings::Get<MaxExpressionDepthSetting>(*this);
 	options.grammar = CompiledGrammar::Get(*this);
 	return options;
 }

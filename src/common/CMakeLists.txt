@@ -71,6 +71,7 @@ add_library_unity(
   radix_partitioning.cpp
   re2_regex.cpp
   random_engine.cpp
+  stack_depth.cpp
   stacktrace.cpp
   string_format.cpp
   string_util.cpp

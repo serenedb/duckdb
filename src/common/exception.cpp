@@ -206,6 +206,7 @@ bool Exception::IsExecutionError(ExceptionType type) {
 	case ExceptionType::INVALID_INPUT:
 	case ExceptionType::OUT_OF_RANGE:
 	case ExceptionType::CONVERSION:
+	case ExceptionType::DIVIDE_BY_ZERO:
 		return true;
 	default:
 		return false;

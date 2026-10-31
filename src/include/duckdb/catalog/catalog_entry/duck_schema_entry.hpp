@@ -9,6 +9,7 @@
 #pragma once
 
 #include "duckdb/catalog/catalog_entry/schema_catalog_entry.hpp"
+#include "duckdb/parser/parsed_data/alter_table_info.hpp"
 #include "duckdb/parser/parsed_data/create_coordinate_system_info.hpp"
 #include "duckdb/parser/parsed_data/create_job_info.hpp"
 #include "duckdb/parser/parsed_data/create_tokenizer_info.hpp"
@@ -120,5 +121,6 @@ private:
 	bool DropEntryInternal(CatalogTransaction transaction, CatalogEntry &entry, const Identifier &name, bool cascade,
 	                       bool allow_drop_internal);
 	void OnDropEntry(CatalogTransaction transaction, CatalogEntry &entry);
+	void MoveTable(CatalogTransaction transaction, SetSchemaInfo &info);
 };
 } // namespace duckdb

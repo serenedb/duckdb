@@ -183,6 +183,7 @@ enum class AlterTableType : uint8_t {
 	DROP_CONSTRAINT = 200,
 	RENAME_CONSTRAINT = 201,
 	SET_TRIGGER_FIRING = 202,
+	SET_SCHEMA = 203,
 };
 
 struct AlterTableInfo : public AlterInfo {
@@ -406,6 +407,7 @@ struct ChangeColumnTypeInfo : public AlterTableInfo {
 	LogicalType target_type;
 	//! The expression used for data conversion
 	unique_ptr<ParsedExpression> expression;
+	LogicalType declared_type;
 
 public:
 	unique_ptr<AlterInfo> Copy() const override;
@@ -708,6 +710,29 @@ public:
 
 private:
 	SetTriggerFiringInfo();
+};
+
+//===--------------------------------------------------------------------===//
+// SetSchemaInfo
+//===--------------------------------------------------------------------===//
+struct SetSchemaInfo : public AlterTableInfo {
+	SetSchemaInfo(const AlterEntryData &data, Identifier new_schema);
+	~SetSchemaInfo() override;
+
+	Identifier new_schema;
+
+public:
+	unique_ptr<AlterInfo> Copy() const override;
+	string ToString() const override;
+	optional_ptr<const Identifier> GetNewSchema() const override {
+		return &new_schema;
+	}
+
+	void Serialize(Serializer &serializer) const override;
+	static unique_ptr<AlterTableInfo> Deserialize(Deserializer &deserializer);
+
+private:
+	SetSchemaInfo();
 };
 
 //===--------------------------------------------------------------------===//

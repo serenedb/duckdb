@@ -1,6 +1,6 @@
 #include "duckdb/parser/expression_depth_check.hpp"
 
-#include "duckdb/common/exception/parser_exception.hpp"
+#include "duckdb/common/stack_depth.hpp"
 #include "duckdb/parser/expression/subquery_expression.hpp"
 #include "duckdb/parser/parsed_expression_iterator.hpp"
 #include "duckdb/parser/statement/select_statement.hpp"
@@ -16,7 +16,7 @@ void ExpressionDepthCheck::Verify(ParsedExpression &root) {
 		auto &expr = entry.first.get();
 		auto depth = entry.second;
 		if (depth > max_expression_depth) {
-			ParserException::ThrowMaxExpressionDepth(max_expression_depth);
+			StackDepth::Throw();
 		}
 		deepest = MaxValue(deepest, depth);
 		auto push = [&](unique_ptr<ParsedExpression> &child) {

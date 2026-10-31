@@ -147,7 +147,11 @@ void WALWriteState::WriteCatalogEntry(CatalogEntry &entry, idx_t change, data_pt
 		parse_info->Cast<AlterInfo>().oid = parent.oid;
 	}
 	auto alter_info = parse_info ? &parse_info->Cast<AlterInfo>() : nullptr;
+	const bool moved_with_table = alter_info && alter_info->GetNewSchema() && parent.type != CatalogType::TABLE_ENTRY;
 	if (parent.type == CatalogType::INDEX_ENTRY && alter_info && alter_info->type == AlterType::REPLACE_DEFINITION) {
+		return;
+	}
+	if (moved_with_table) {
 		return;
 	}
 	if (!catalog_run) {

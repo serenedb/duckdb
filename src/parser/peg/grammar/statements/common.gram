@@ -101,12 +101,18 @@ TypeVariations <- TimeType / IntervalType / BitType / RowType / VariantType / Ma
 SimpleType <- CharacterSimpleType / QualifiedSimpleType
 CharacterSimpleType <- CharacterType TypeModifiers?
 QualifiedSimpleType <- QualifiedTypeName TypeModifiers?
-CharacterType <- ('CHARACTER' 'VARYING'?) /
-                 ('CHAR' 'VARYING'?) /
-                 ('NATIONAL' 'CHARACTER' 'VARYING'?) /
-                 ('NATIONAL' 'CHAR' 'VARYING'?) /
-                 ('NCHAR' 'VARYING'?) /
-                 'VARCHAR'
+CharacterType <- VaryingCharacterType / FixedCharacterType
+VaryingCharacterType <- ('CHARACTER' 'VARYING') /
+                        ('CHAR' 'VARYING') /
+                        ('NATIONAL' 'CHARACTER' 'VARYING') /
+                        ('NATIONAL' 'CHAR' 'VARYING') /
+                        ('NCHAR' 'VARYING') /
+                        'VARCHAR'
+FixedCharacterType <- 'CHARACTER' /
+                      'CHAR' /
+                      ('NATIONAL' 'CHARACTER') /
+                      ('NATIONAL' 'CHAR') /
+                      'NCHAR'
 
 IntervalType <- IntervalInterval / IntervalNumber
 IntervalInterval <- IntervalWithSpecifier / IntervalWithoutSpecifier

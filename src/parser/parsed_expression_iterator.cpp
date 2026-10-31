@@ -1,5 +1,6 @@
 #include "duckdb/parser/parsed_expression_iterator.hpp"
 
+#include "duckdb/common/stack_depth.hpp"
 #include "duckdb/parser/expression/list.hpp"
 #include "duckdb/parser/query_node.hpp"
 #include "duckdb/parser/query_node/recursive_cte_node.hpp"
@@ -20,6 +21,7 @@ namespace duckdb {
 
 void ParsedExpressionIterator::EnumerateChildren(const ParsedExpression &expression,
                                                  const std::function<void(const ParsedExpression &child)> &callback) {
+	StackDepth::Check();
 	for (const auto &child : expression.Children()) {
 		callback(child);
 	}
@@ -35,6 +37,7 @@ void ParsedExpressionIterator::EnumerateChildren(ParsedExpression &expr,
 
 void ParsedExpressionIterator::EnumerateChildren(
     ParsedExpression &expr, const std::function<void(unique_ptr<ParsedExpression> &child)> &callback) {
+	StackDepth::Check();
 	for (auto &child : expr.ChildrenMutable()) {
 		callback(child);
 	}

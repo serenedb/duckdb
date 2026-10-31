@@ -343,6 +343,7 @@ void Binder::BindGeneratedColumns(BoundCreateTableInfo &info) {
 			table_binding->SetColumnType(i.index, col.Type());
 		} else if (col.Type().id() == LogicalTypeId::UNBOUND) {
 			// Bind column type
+			col.SetDeclaredType(UnboundType::GetDeclaredType(col.Type()));
 			BindLogicalType(col.TypeMutable());
 			table_binding->SetColumnType(i.index, col.Type());
 		}
@@ -886,6 +887,9 @@ unique_ptr<BoundCreateTableInfo> Binder::BindCreateTableInfo(unique_ptr<CreateIn
 		for (idx_t i = 0; i < base.columns.PhysicalColumnCount(); i++) {
 			auto &column = base.columns.GetColumnMutable(PhysicalIndex(i));
 			result->AddSubDependency(AlterTableType::REMOVE_COLUMN, column.Name());
+			if (column.Type().id() == LogicalTypeId::UNBOUND) {
+				column.SetDeclaredType(UnboundType::GetDeclaredType(column.Type()));
+			}
 			type_binder->BindLogicalType(column.TypeMutable());
 			if (!column_types_are_dependencies || !column.Type().HasAlias()) {
 				continue;

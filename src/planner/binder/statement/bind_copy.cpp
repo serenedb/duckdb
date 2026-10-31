@@ -666,9 +666,13 @@ BoundStatement Binder::BindCopyFrom(CopyStatement &stmt, const CopyFunction &fun
 	// lookup the table to copy into
 	stmt.info->SetQualifiedName(BindTableName(stmt.info->GetQualifiedName()));
 	auto &table = Catalog::GetEntry<TableCatalogEntry>(context, stmt.info->GetQualifiedName());
-	if (stmt.info->format == "csv" && !stmt.info->options.contains("allow_quoted_nulls") &&
-	    table.ParentCatalog().Compatibility() == SqlCompatibility::POSTGRES) {
-		stmt.info->options["allow_quoted_nulls"] = {Value::BOOLEAN(false)};
+	const bool postgres_csv =
+	    stmt.info->format == "csv" && table.ParentCatalog().Compatibility() == SqlCompatibility::POSTGRES;
+	if (postgres_csv) {
+		stmt.info->options.try_emplace("allow_quoted_nulls", vector<Value> {Value::BOOLEAN(false)});
+		if (!stmt.info->is_format_auto_detected) {
+			stmt.info->options.try_emplace("auto_detect", vector<Value> {Value::BOOLEAN(false)});
+		}
 	}
 	IndexVector<idx_t, PhysicalIndex> column_index_map;
 	vector<LogicalIndex> named_column_map;

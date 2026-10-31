@@ -9,6 +9,7 @@
 #include "duckdb/parser/tableref/basetableref.hpp"
 #include "duckdb/common/enum_util.hpp"
 #include "duckdb/common/helper.hpp"
+#include "duckdb/common/stack_depth.hpp"
 #include "duckdb/main/config.hpp"
 #include "duckdb/main/database.hpp"
 #include "duckdb/main/settings.hpp"
@@ -38,20 +39,6 @@
 
 namespace duckdb {
 
-idx_t Binder::GetBinderDepth() const {
-	return depth;
-}
-
-void Binder::IncreaseDepth() {
-	depth++;
-	auto max_expression_depth = Settings::Get<MaxExpressionDepthSetting>(context);
-	if (depth > max_expression_depth) {
-		throw BinderException("Max expression depth limit of %lld exceeded. Use \"SET max_expression_depth TO x\" to "
-		                      "increase the maximum expression depth.",
-		                      max_expression_depth);
-	}
-}
-
 shared_ptr<Binder> Binder::CreateBinder(ClientContext &context, optional_ptr<Binder> parent, BinderType binder_type) {
 	return shared_ptr<Binder>(new Binder(context, parent ? parent->shared_from_this() : nullptr, binder_type));
 }
@@ -59,8 +46,7 @@ shared_ptr<Binder> Binder::CreateBinder(ClientContext &context, optional_ptr<Bin
 Binder::Binder(ClientContext &context, shared_ptr<Binder> parent_p, BinderType binder_type)
     : context(context), bind_context(*this), parent(std::move(parent_p)), binder_type(binder_type),
       global_binder_state(parent ? parent->global_binder_state : make_shared_ptr<GlobalBinderState>()),
-      entry_retriever(context), depth(parent ? parent->GetBinderDepth() : 1) {
-	IncreaseDepth();
+      entry_retriever(context) {
 	if (parent) {
 		entry_retriever.Inherit(parent->entry_retriever);
 		inside_subquery = parent->inside_subquery;
@@ -144,6 +130,7 @@ BoundStatement Binder::Bind(QueryNode &node) {
 }
 
 BoundStatement Binder::Bind(TableRef &ref) {
+	StackDepth::Check();
 	BoundStatement result;
 	switch (ref.type) {
 	case TableReferenceType::BASE_TABLE:
@@ -324,14 +311,6 @@ void Binder::BeginSubqueryBind(Binder &parent, ExpressionBinder &binder) {
 
 void Binder::FinishSubqueryBind() {
 	active_binders.clear();
-}
-
-ExpressionBinder &Binder::GetInnermostScope() {
-	return active_binders.back();
-}
-
-bool Binder::HasEnclosingScope() {
-	return !active_binders.empty();
 }
 
 const vector<reference<ExpressionBinder>> &Binder::GetEnclosingScopes() const {
