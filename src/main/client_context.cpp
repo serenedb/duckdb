@@ -1,5 +1,7 @@
 #include "duckdb/main/client_context.hpp"
 
+#include <absl/cleanup/cleanup.h>
+
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/catalog/catalog_entry/scalar_function_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
@@ -262,27 +264,6 @@ connection_t ClientContext::GetConnectionId() const {
 	return connection_id;
 }
 
-namespace {
-
-class PlannedPropertiesScope {
-public:
-	PlannedPropertiesScope(ClientContext &context_p, const StatementProperties &properties)
-	    : context(context_p), previous(context_p.planned_properties) {
-		context.planned_properties = &properties;
-	}
-	~PlannedPropertiesScope() {
-		context.planned_properties = previous;
-	}
-	PlannedPropertiesScope(const PlannedPropertiesScope &) = delete;
-	PlannedPropertiesScope &operator=(const PlannedPropertiesScope &) = delete;
-
-private:
-	ClientContext &context;
-	optional_ptr<const StatementProperties> previous;
-};
-
-} // namespace
-
 static bool IsExplainAnalyze(ClientContext &context, SQLStatement *statement) {
 	if (statement && statement->type == StatementType::EXECUTE_STATEMENT) {
 		auto &prepared_statements = ClientData::Get(context).prepared_statements;
@@ -321,7 +302,11 @@ shared_ptr<PreparedStatementData> ClientContext::CreatePreparedStatementInternal
 		D_ASSERT(logical_planner.plan || !logical_planner.properties.bound_all_parameters);
 	}
 
-	PlannedPropertiesScope planned_scope(*this, logical_planner.properties);
+	const auto previous_properties = planned_properties;
+	planned_properties = &logical_planner.properties;
+	absl::Cleanup restore_properties = [&]() noexcept {
+		planned_properties = previous_properties;
+	};
 	if (logical_planner.properties.bound_all_parameters) {
 		for (auto &state : registered_state->States()) {
 			state->OnBoundPlan(*this, *logical_planner.binder, *logical_planner.plan);

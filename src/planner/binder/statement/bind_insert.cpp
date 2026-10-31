@@ -359,7 +359,7 @@ void Binder::BindInsertColumnList(TableCatalogEntry &table, vector<Identifier> &
 			if (!entry.second) {
 				throw BinderException("Duplicate column name %s in INSERT", columns[i]);
 			}
-			if (!table.ColumnExists(columns[i]) && !InViewBody()) {
+			if (!table.ColumnExists(columns[i])) {
 				context.CheckEntryReference(table);
 			}
 			auto column_index = table.GetColumnIndex(columns[i]);

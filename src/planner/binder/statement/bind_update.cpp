@@ -111,9 +111,7 @@ void Binder::BindUpdateSet(TableIndex proj_index, unique_ptr<LogicalOperator> &r
 		auto &colname = set_info.columns[i];
 		auto &expr = set_info.expressions[i];
 		if (!table.ColumnExists(colname)) {
-			if (!InViewBody()) {
-				context.CheckEntryReference(table);
-			}
+			context.CheckEntryReference(table);
 			vector<string> column_names;
 			for (auto &col : all_columns.Physical()) {
 				column_names.emplace_back(col.Name().GetIdentifierName());

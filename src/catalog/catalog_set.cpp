@@ -728,6 +728,9 @@ SimilarCatalogEntry CatalogSet::SimilarEntry(CatalogTransaction transaction, con
 	}
 
 	SimilarCatalogEntry result;
+	if (transaction.context && !transaction.context->CanSeeDatabase(catalog.GetAttached())) {
+		return result;
+	}
 	for (auto &[key, entry] : entries) {
 		if (transaction.context && !transaction.context->CanSee(entry.get())) {
 			continue;
