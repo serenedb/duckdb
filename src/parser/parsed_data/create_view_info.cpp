@@ -50,6 +50,7 @@ unique_ptr<CreateInfo> CreateViewInfo::Copy() const {
 	result->security_invoker = security_invoker;
 	result->rule_oid = rule_oid;
 	result->row_type_oid = row_type_oid;
+	result->column_acls = column_acls;
 	result->query = unique_ptr_cast<SQLStatement, SelectStatement>(query->Copy());
 	return std::move(result);
 }

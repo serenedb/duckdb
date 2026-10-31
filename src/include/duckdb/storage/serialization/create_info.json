@@ -361,6 +361,12 @@
         "type": "idx_t",
         "default": 0,
         "version": "sdb_v1"
+      },
+      {
+        "id": 16587,
+        "name": "column_acls",
+        "type": "vector<vector<AclItem>>",
+        "default": "vector<vector<AclItem>>()"
       }
     ],
     "constructor": [

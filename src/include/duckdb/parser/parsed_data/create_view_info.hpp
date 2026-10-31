@@ -52,6 +52,7 @@ public:
 	bool security_invoker = false;
 	idx_t rule_oid = 0;
 	idx_t row_type_oid = 0;
+	vector<vector<AclItem>> column_acls;
 
 public:
 	unique_ptr<CreateInfo> Copy() const override;

@@ -308,10 +308,14 @@ BoundStatement Binder::Bind(BaseTableRef &ref) {
 	case CatalogType::VIEW_ENTRY: {
 		// the node is a view: get the query that the view represents
 		auto &view_catalog_entry = table_or_view->Cast<ViewCatalogEntry>();
+		unique_ptr<ColumnReadCheck> column_read;
 		if (principal && table_ref_use != TableRefUse::UTILITY_TARGET &&
 		    (!IsUnowned(view_catalog_entry) || view_catalog_entry.ParentCatalog().IsSystemCatalog()) &&
 		    !principal->Can(CatalogType::TABLE_ENTRY, view_catalog_entry.permissions, AclMode::Select)) {
-			ThrowPermissionDenied(view_catalog_entry);
+			column_read = make_uniq<ColumnReadCheck>(view_catalog_entry, *principal);
+			if (!column_read->CanReadAny()) {
+				ThrowPermissionDenied(view_catalog_entry);
+			}
 		}
 		const auto scope_begin = global_binder_state->bound_tables;
 		const auto resolved_begin = GetStatementProperties().resolved_entries.size();
@@ -370,7 +374,8 @@ BoundStatement Binder::Bind(BaseTableRef &ref) {
 			    view_catalog_entry.ParentSchema(context).GetQualifiedName(view_catalog_entry.name), bound_child.types,
 			    entry_at_clause, std::move(bound_child.plan));
 		}
-		bind_context.AddView(root_index, subquery.alias, subquery, bound_child, view_catalog_entry);
+		bind_context.AddView(root_index, subquery.alias, subquery, bound_child, view_catalog_entry).column_read =
+		    std::move(column_read);
 		GetStatementProperties().view_scopes.push_back({&view_catalog_entry, scope_begin,
 		                                                global_binder_state->bound_tables, resolved_begin,
 		                                                GetStatementProperties().resolved_entries.size()});
