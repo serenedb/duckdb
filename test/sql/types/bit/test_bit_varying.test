@@ -1,0 +1,29 @@
+# name: test/sql/types/bit/test_bit_varying.test
+# description: BIT VARYING and VARBIT take a length, as BIT does
+# group: [bit]
+
+query III
+SELECT '0110111'::BIT VARYING(67), '0110111'::VARBIT(67), '0110111'::VARBIT
+----
+0110111	0110111	0110111
+
+statement ok
+CREATE TABLE beast_bits (flags BIT(6), mask BIT VARYING(7), one BIT, any_mask VARBIT)
+
+query II
+SELECT column_name, data_type FROM duckdb_columns() WHERE table_name = 'beast_bits' ORDER BY column_index
+----
+flags	BIT
+mask	BIT
+one	BIT
+any_mask	BIT
+
+statement error
+SELECT '1'::VARBIT(0)
+----
+length for type varbit must be at least 1
+
+statement error
+SELECT '1'::BIT(0)
+----
+length for type bit must be at least 1

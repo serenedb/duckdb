@@ -164,20 +164,45 @@ void RegisterVarcharConstructors(TypeConstructorSet &set) {
 //----------------------------------------------------------------------------------------------------------------------
 // BIT Type
 //----------------------------------------------------------------------------------------------------------------------
-LogicalType BindBitType(BindLogicalTypeInput &input) {
-	if (!input.modifiers.empty() && input.modifiers[0].GetValue().GetValue<int64_t>() < 1) {
-		throw BinderException(input.GetLocation(0), "length for type bit must be at least 1");
+LogicalType BindBitLength(BindLogicalTypeInput &input, const char *name) {
+	static constexpr int64_t MAX_POSTGRES_LENGTH = 83886080;
+	if (input.modifiers.empty()) {
+		return LogicalType::BIT;
+	}
+	const auto length = input.modifiers[0].GetValue().GetValue<int64_t>();
+	if (length < 1) {
+		throw BinderException(input.GetLocation(0), "length for type %s must be at least 1", name);
+	}
+	if (length > MAX_POSTGRES_LENGTH && input.context &&
+	    Catalog::DefaultCompatibility(*input.context) == SqlCompatibility::POSTGRES) {
+		throw BinderException(input.GetLocation(0), "length for type %s cannot exceed %d", name, MAX_POSTGRES_LENGTH);
 	}
 	return LogicalType::BIT;
 }
 
-void RegisterBitConstructors(TypeConstructorSet &set) {
-	set.AddFunction(TypeConstructor(TypeConstructor::Signature(), BindBitType));
+LogicalType BindBitType(BindLogicalTypeInput &input) {
+	return BindBitLength(input, "bit");
+}
+
+LogicalType BindVarbitType(BindLogicalTypeInput &input) {
+	return BindBitLength(input, "varbit");
+}
+
+void AddBitConstructors(TypeConstructorSet &set, bind_logical_type_function_t bind) {
+	set.AddFunction(TypeConstructor(TypeConstructor::Signature(), bind));
 
 	// The length is accepted for compatibility, but BIT is not length-limited so it is ignored
 	auto signature = TypeConstructor::Signature();
 	signature.AddParameter("length", LogicalType::BIGINT);
-	set.AddFunction(TypeConstructor(std::move(signature), BindBitType));
+	set.AddFunction(TypeConstructor(std::move(signature), bind));
+}
+
+void RegisterBitConstructors(TypeConstructorSet &set) {
+	AddBitConstructors(set, BindBitType);
+}
+
+void RegisterVarbitConstructors(TypeConstructorSet &set) {
+	AddBitConstructors(set, BindVarbitType);
 }
 
 //----------------------------------------------------------------------------------------------------------------------
@@ -413,7 +438,7 @@ extern "C" __attribute__((weak)) const duckdb::DefaultType *duckdb_external_type
 
 namespace {
 
-using builtin_type_array = std::array<DefaultType, 83>;
+using builtin_type_array = std::array<DefaultType, 84>;
 
 // Lazy-initialized to avoid static initialization order issues with LogicalType.
 static const builtin_type_array &GetBuiltinTypes() {
@@ -484,6 +509,7 @@ static const builtin_type_array &GetBuiltinTypes() {
 	     {"union", LogicalTypeId::UNION, RegisterUnionConstructors},
 	     {"bit", LogicalTypeId::BIT, RegisterBitConstructors},
 	     {"bitstring", LogicalTypeId::BIT, RegisterBitConstructors},
+	     {"varbit", LogicalTypeId::BIT, RegisterVarbitConstructors},
 	     {"variant", LogicalTypeId::VARIANT, RegisterVariantConstructors},
 	     {"bignum", LogicalTypeId::BIGNUM, nullptr},
 	     {"varint", LogicalTypeId::BIGNUM, nullptr},

@@ -404,8 +404,10 @@ unique_ptr<ParsedExpression> PEGTransformerFactory::TransformBitType(
 	vector<unique_ptr<ParsedExpression>> modifiers;
 	if (expression) {
 		modifiers = std::move(*expression);
+	} else if (!has_result) {
+		modifiers.push_back(ConstantExpression::Integer(1));
 	}
-	return make_uniq<TypeExpression>(Identifier("BIT"), std::move(modifiers));
+	return make_uniq<TypeExpression>(Identifier(has_result ? "VARBIT" : "BIT"), std::move(modifiers));
 }
 
 unique_ptr<ParsedExpression> PEGTransformerFactory::TransformIntervalWithoutSpecifier(PEGTransformer &transformer) {
