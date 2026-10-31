@@ -1,3 +1,5 @@
+#include <absl/cleanup/cleanup.h>
+
 #include "duckdb/parser/constraints/list.hpp"
 #include "duckdb/parser/expression/cast_expression.hpp"
 #include "duckdb/planner/binder.hpp"
@@ -360,10 +362,13 @@ void Binder::BindDefaultValue(const ColumnDefinition &column, vector<unique_ptr<
 }
 
 void Binder::BindDefaultValues(const TableCatalogEntry &table, vector<unique_ptr<Expression>> &bound_defaults) {
-	auto stored = Binder::CreateBinder(context, this);
-	stored->entry_retriever.SetPrincipal(nullptr);
-	stored->BindDefaultValues(table.GetColumns(), bound_defaults, table.ParentCatalog().GetName().GetIdentifierName(),
-	                          table.ParentSchema(context).name.GetIdentifierName());
+	const auto lookup_principal = entry_retriever.GetPrincipal();
+	entry_retriever.SetPrincipal(nullptr);
+	absl::Cleanup restore_principal = [&] {
+		entry_retriever.SetPrincipal(lookup_principal);
+	};
+	BindDefaultValues(table.GetColumns(), bound_defaults, table.ParentCatalog().GetName().GetIdentifierName(),
+	                  table.ParentSchema(context).name.GetIdentifierName());
 }
 
 void Binder::BindDefaultValues(const ColumnList &columns, vector<unique_ptr<Expression>> &bound_defaults,
