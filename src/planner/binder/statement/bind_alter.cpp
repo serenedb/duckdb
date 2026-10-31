@@ -165,18 +165,6 @@ static optional_ptr<CatalogEntry> BindSetSchemaEntry(SetSchemaInfo &info, const 
 	return lookup(declared, info.if_not_found);
 }
 
-static bool IsRelation(CatalogType type) {
-	switch (type) {
-	case CatalogType::TABLE_ENTRY:
-	case CatalogType::VIEW_ENTRY:
-	case CatalogType::SEQUENCE_ENTRY:
-	case CatalogType::INDEX_ENTRY:
-		return true;
-	default:
-		return false;
-	}
-}
-
 static RoleAccess AccessOf(ClientContext &context, idx_t role) {
 	if (auto access = context.security ? context.security->Access(role) : nullptr) {
 		return *access;
@@ -336,7 +324,7 @@ static void ResolveOwner(Binder &binder, AlterPermissionsInfo &info) {
 	info.new_owner_id = RoleSpecId(binder, info.new_owner);
 	auto principal = binder.principal;
 	const bool enforce = principal && !principal->is_superuser;
-	const bool relation = IsRelation(entry.type);
+	const bool relation = Catalog::InRelationNamespace(entry.type);
 	if (enforce && relation) {
 		binder.RequireOwner(entry);
 	}
