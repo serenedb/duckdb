@@ -282,11 +282,7 @@ static void ResolveGrant(Binder &binder, AlterPermissionsInfo &info) {
 		info.grantors = {granted_by};
 	} else if (principal && !principal->is_superuser) {
 		info.grantors.push_back(principal->role);
-		for (auto role : principal->closure) {
-			if (role != principal->role) {
-				info.grantors.push_back(role);
-			}
-		}
+		info.grantors.insert(info.grantors.end(), principal->closure.begin(), principal->closure.end());
 	}
 	if (info.entry_catalog_type == CatalogType::DATABASE_ENTRY) {
 		auto &name = info.GetQualifiedName().Name();
