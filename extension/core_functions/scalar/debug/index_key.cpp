@@ -127,7 +127,9 @@ static unique_ptr<FunctionData> IndexKeyBind(BindScalarFunctionInput &input) {
 	auto index_name = GetStringArgument(input.GetConstant(1), "index_name");
 
 	auto qualified_table = path.qualified_name.ToString(QualifiedNameToStringMode::HIDE_DEFAULT_SCHEMA);
-	auto &table_entry = Catalog::GetEntry<TableCatalogEntry>(context, path.qualified_name);
+	CatalogEntryRetriever own_retriever(context);
+	auto &retriever = input.HasBinder() ? input.GetBinder().EntryRetriever() : own_retriever;
+	auto &table_entry = retriever.GetEntry<TableCatalogEntry>(path.qualified_name);
 	auto duck_table = table_entry.TryGetDuckTableEntry();
 	if (!duck_table) {
 		throw BinderException("index_key: table '%s' is not a DuckDB table", qualified_table);
