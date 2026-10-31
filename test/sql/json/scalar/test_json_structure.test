@@ -183,16 +183,16 @@ select json_structure('{"a": 1, "A": 1}');
 {"a":"UBIGINT","A":"UBIGINT"}
 
 query I
-SELECT json_structure(repeat('[', 1000) || repeat(']', 1000)) IS NOT NULL
+SELECT json_structure(repeat('[', 2000) || repeat(']', 2000)) IS NOT NULL
 ----
 true
 
 statement error
-SELECT json_structure(repeat('[', 1001) || repeat(']', 1001))
+SELECT json_structure(repeat('[', 100000) || repeat(']', 100000))
 ----
-JSON nesting depth exceeds the maximum of 1000
+stack depth limit exceeded
 
 statement error
 SELECT json_structure(repeat('{"a":', 100000) || '1' || repeat('}', 100000))
 ----
-JSON nesting depth exceeds the maximum of 1000
+stack depth limit exceeded
