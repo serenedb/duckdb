@@ -49,13 +49,13 @@ bool PEGTransformerFactory::TransformFunctionTypeProcedure(PEGTransformer &trans
 unique_ptr<DropStatement>
 PEGTransformerFactory::TransformDropTableFunction(PEGTransformer &transformer, const CatalogType &comment_macro_table,
                                                   const optional<bool> &if_exists,
-                                                  const vector<Identifier> &table_function_name) {
+                                                  const vector<QualifiedName> &qualified_name) {
 	auto result = make_uniq<DropStatement>();
 	auto info = make_uniq<DropInfo>();
-	if (table_function_name.size() > 1) {
+	if (qualified_name.size() > 1) {
 		throw NotImplementedException("Can only drop one object at a time");
 	}
-	info->SetQualifiedName(QualifiedName(table_function_name[0]));
+	info->SetQualifiedName(qualified_name[0]);
 	info->type = comment_macro_table;
 	info->if_not_found = if_exists ? OnEntryNotFound::RETURN_NULL : OnEntryNotFound::THROW_EXCEPTION;
 	result->info = std::move(info);
