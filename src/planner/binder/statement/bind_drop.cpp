@@ -27,13 +27,7 @@ void Binder::BindDropTrigger(DropStatement &stmt, StatementProperties &propertie
 	// resolve the (possibly nested) catalog/schema qualification of the base table
 	base_table_ref.SetQualifiedName(BindTableName(base_table_ref.GetQualifiedName()));
 	// IF EXISTS only guards the trigger, not the table (PostgreSQL-compatible behavior).
-	EntryLookupInfo table_lookup(CatalogType::TABLE_ENTRY, base_table_ref.GetQualifiedName());
-	auto &entry = *entry_retriever.GetEntry(table_lookup, OnEntryNotFound::THROW_EXCEPTION);
-	if (entry.type != CatalogType::TABLE_ENTRY) {
-		throw CatalogException("%s is not an %s", base_table_ref.GetQualifiedName().Name().GetIdentifierName(),
-		                       TableCatalogEntry::Name);
-	}
-	auto &table_entry = entry.Cast<TableCatalogEntry>();
+	auto &table_entry = entry_retriever.GetEntry<TableCatalogEntry>(base_table_ref.GetQualifiedName());
 	RequireOwner(table_entry);
 	// the trigger lives in the same (possibly nested) schema as its base table
 	stmt.info->SetQualifiedName(table_entry.GetQualifiedName(stmt.info->GetQualifiedName().Name()));
