@@ -707,18 +707,6 @@ void DependencyManager::ScanAllDependents(CatalogTransaction transaction, const 
 	    });
 }
 
-void DependencyManager::ScanDependentEntries(CatalogTransaction transaction, CatalogEntry &object,
-                                             const std::function<void(CatalogEntry &)> &callback) {
-	vector<reference<DependencyEntry>> dependents;
-	ScanAllDependents(transaction, GetLookupProperties(object),
-	                  [&](DependencyEntry &dep) { dependents.push_back(dep); });
-	for (auto &dep : dependents) {
-		if (auto entry = LookupEntry(transaction, dep.get())) {
-			callback(*entry);
-		}
-	}
-}
-
 void DependencyManager::CleanupDependencies(CatalogTransaction transaction, CatalogEntry &object) {
 	// Collect the dependencies
 	vector<DependencyInfo> to_remove;

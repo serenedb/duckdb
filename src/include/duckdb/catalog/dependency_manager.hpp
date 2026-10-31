@@ -114,8 +114,6 @@ public:
 	                    const created_by_owner_t &created_by_owner);
 
 	static bool CanDepend(Catalog &dependent, Catalog &subject);
-	void ScanDependentEntries(CatalogTransaction transaction, CatalogEntry &object,
-	                          const std::function<void(CatalogEntry &)> &callback);
 	void ScanAllEntries(CatalogTransaction transaction, const std::function<void(CatalogEntry &)> &callback);
 	void VerifyForeignSubjects(const vector<reference<DependencyEntry>> &dependencies);
 	void VerifyForeignDependents(const vector<reference<CatalogEntry>> &dropped);
