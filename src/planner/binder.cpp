@@ -15,6 +15,7 @@
 #include "duckdb/common/stack_depth.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/main/attached_database.hpp"
+#include "duckdb/main/client_data.hpp"
 #include "duckdb/main/config.hpp"
 #include "duckdb/main/database.hpp"
 #include "duckdb/main/database_manager.hpp"
@@ -413,7 +414,7 @@ void Binder::RequireSchemaCreate(SchemaCatalogEntry &schema) {
 		return;
 	}
 	if (schema.ParentCatalog().GetAttached().IsTemporary()) {
-		auto database = DatabaseManager::GetDefaultDatabase(context);
+		auto &database = ClientData::Get(context).default_database;
 		auto entry = ClusterEntry(CatalogType::DATABASE_ENTRY, database);
 		if (entry && !principal->Can(CatalogType::DATABASE_ENTRY, entry->permissions, AclMode::CreateTemp)) {
 			throw PermissionException("permission denied to create temporary tables in database \"%s\"",
