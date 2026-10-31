@@ -12,6 +12,7 @@
 #include "duckdb/parser/parsed_data/alter_table_info.hpp"
 
 #include <algorithm>
+#include <bit>
 
 namespace duckdb {
 
@@ -308,11 +309,7 @@ static bool FilterMayContain(std::span<const uint64_t> filter, idx_t member) {
 }
 
 static idx_t FilterWords(idx_t members) {
-	idx_t words = 1;
-	while (words * 64 < members * 16) {
-		words *= 2;
-	}
-	return words;
+	return std::bit_ceil(std::max<idx_t>(1, (members + 3) / 4));
 }
 
 bool RoleAccess::Uses(idx_t other) const {
