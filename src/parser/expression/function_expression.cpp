@@ -150,6 +150,15 @@ optional_ptr<ParsedExpression> FunctionExpression::IsLambdaFunction() {
 	return nullptr;
 }
 
+idx_t FunctionExpression::PositionalArgumentCount() const {
+	for (auto &argument : arguments) {
+		if (argument.HasName() || argument.GetExpression().GetExpressionClass() == ExpressionClass::STAR) {
+			return DConstants::INVALID_INDEX;
+		}
+	}
+	return arguments.size();
+}
+
 void FunctionExpression::Serialize(Serializer &serializer) const {
 	ParsedExpression::Serialize(serializer);
 	const bool serenedb = serializer.ShouldSerialize(StorageVersion::SDB_V1);
