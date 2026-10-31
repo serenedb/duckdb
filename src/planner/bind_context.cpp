@@ -865,15 +865,18 @@ void BindContext::AddSubquery(TableIndex index, const Identifier &alias, Subquer
 	AddGenericBinding(index, alias, names, subquery.types);
 }
 
-void BindContext::AddEntryBinding(TableIndex index, const Identifier &alias, const vector<Identifier> &names,
-                                  const vector<LogicalType> &types, StandardEntry &entry) {
-	AddBinding(make_uniq<EntryBinding>(GetEntryAlias(binder.context, alias, &entry), types, names, index, entry));
+EntryBinding &BindContext::AddEntryBinding(TableIndex index, const Identifier &alias, const vector<Identifier> &names,
+                                           const vector<LogicalType> &types, StandardEntry &entry) {
+	auto binding = make_uniq<EntryBinding>(GetEntryAlias(binder.context, alias, &entry), types, names, index, entry);
+	auto &result = *binding;
+	AddBinding(std::move(binding));
+	return result;
 }
 
-void BindContext::AddView(TableIndex index, const Identifier &alias, SubqueryRef &ref, BoundStatement &subquery,
-                          ViewCatalogEntry &view) {
+EntryBinding &BindContext::AddView(TableIndex index, const Identifier &alias, SubqueryRef &ref,
+                                   BoundStatement &subquery, ViewCatalogEntry &view) {
 	auto names = AliasColumnNames(alias, subquery.names, ref.column_name_alias);
-	AddEntryBinding(index, alias, names, subquery.types, view.Cast<StandardEntry>());
+	return AddEntryBinding(index, alias, names, subquery.types, view.Cast<StandardEntry>());
 }
 
 void BindContext::AddSubquery(TableIndex index, const Identifier &alias, TableFunctionRef &ref,

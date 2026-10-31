@@ -3,6 +3,7 @@
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/table_function_catalog_entry.hpp"
+#include "duckdb/catalog/catalog_entry/view_catalog_entry.hpp"
 #include "duckdb/parser/expression/columnref_expression.hpp"
 #include "duckdb/parser/tableref/subqueryref.hpp"
 #include "duckdb/planner/bind_context.hpp"
@@ -179,8 +180,39 @@ EntryBinding::EntryBinding(BindingAlias alias, vector<LogicalType> types_p, vect
       entry(entry) {
 }
 
+BindResult EntryBinding::Bind(ColumnRefExpression &colref, idx_t depth) {
+	column_t column_index;
+	if (column_read && TryGetBindingIndex(colref.GetColumnName(), column_index)) {
+		if (!column_read->CanRead(column_index)) {
+			ThrowPermissionDenied(column_read->entry);
+		}
+		column_read->referenced = true;
+	}
+	return Binding::Bind(colref, depth);
+}
+
 optional_ptr<StandardEntry> EntryBinding::GetStandardEntry() {
 	return &entry;
+}
+
+bool ColumnReadCheck::CanRead(idx_t column_index) const {
+	const auto acl =
+	    entry.type == CatalogType::VIEW_ENTRY
+	        ? entry.Cast<ViewCatalogEntry>().ColumnAcl(column_index)
+	        : std::span<const AclItem>(entry.Cast<TableCatalogEntry>().GetColumn(LogicalIndex(column_index)).Acl());
+	return principal.CanColumns(entry.permissions, AclMode::Select, std::span<const std::span<const AclItem>>(&acl, 1));
+}
+
+bool ColumnReadCheck::CanReadAny() const {
+	if (entry.type != CatalogType::VIEW_ENTRY) {
+		auto &table = entry.Cast<TableCatalogEntry>();
+		return principal.CanAnyColumn(table.permissions, AclMode::Select, table.GetColumns());
+	}
+	auto &column_acls = entry.Cast<ViewCatalogEntry>().column_acls;
+	return principal.Can(CatalogType::TABLE_ENTRY, entry.permissions, AclMode::Select) ||
+	       std::any_of(column_acls.begin(), column_acls.end(), [&](const auto &column) {
+		       return (principal.HeldModes(column.second) & AclMode::Select) != AclMode::NoRights;
+	       });
 }
 
 TableBinding::TableBinding(BindingAlias alias, vector<LogicalType> types_p, vector<Identifier> names_p,
@@ -359,11 +391,8 @@ BindResult TableBinding::Bind(ColumnRefExpression &colref, idx_t depth) {
 		col_type = types[column_index];
 		SetBoundColumnAlias(colref);
 		if (column_read) {
-			auto &table = column_read->table;
-			const std::span<const AclItem> acl(table.GetColumn(LogicalIndex(column_index)).Acl());
-			if (!column_read->principal.CanColumns(table.permissions, AclMode::Select,
-			                                       std::span<const std::span<const AclItem>>(&acl, 1))) {
-				ThrowPermissionDenied(table);
+			if (!column_read->CanRead(column_index)) {
+				ThrowPermissionDenied(column_read->entry);
 			}
 			column_read->referenced = true;
 		}

@@ -49,7 +49,9 @@ public:
 	ViewSecurityType security_type = ViewSecurityType::REGULAR_VIEW;
 
 	bool security_invoker = false;
+	identifier_map_t<vector<AclItem>> column_acls;
 
+	std::span<const AclItem> ColumnAcl(idx_t column_index) const;
 	//! Returns the view column info, if the view is bound. Otherwise returns `nullptr`
 	virtual shared_ptr<ViewColumnInfo> GetColumnInfo() const;
 	//! Bind a view so we know the types / names returned by it

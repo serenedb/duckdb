@@ -42,6 +42,7 @@ void ViewCatalogEntry::Initialize(CreateViewInfo &info) {
 	this->permissions = info.permissions;
 	this->column_comments = info.column_comments_map;
 	this->security_invoker = info.security_invoker;
+	this->column_acls = info.column_acls;
 }
 
 ViewCatalogEntry::ViewCatalogEntry(Catalog &catalog, SchemaCatalogEntry &schema, CreateViewInfo &info)
@@ -69,6 +70,7 @@ unique_ptr<CreateInfo> ViewCatalogEntry::GetInfo() const {
 	result->permissions = permissions;
 	result->column_comments_map = column_comments;
 	result->security_invoker = security_invoker;
+	result->column_acls = column_acls;
 	return std::move(result);
 }
 
@@ -106,7 +108,34 @@ unique_ptr<CatalogEntry> ViewCatalogEntry::AlterEntry(ClientContext &context, Al
 		replaced_view.comment = comment;
 		replaced_view.tags = tags;
 		replaced_view.column_comments_map = column_comments;
+		replaced_view.column_acls = column_acls;
 		return make_uniq<ViewCatalogEntry>(catalog, ParentSchema(context), replaced_view);
+	}
+
+	if (info.type == AlterType::ALTER_PERMISSIONS) {
+		auto columns = GetColumnInfo();
+		if (!columns) {
+			BindView(context);
+			columns = GetColumnInfo();
+		}
+		ColumnList column_list(false, catalog.IsCaseSensitive());
+		for (idx_t i = 0; i < columns->names.size(); i++) {
+			ColumnDefinition column(i < aliases.size() ? aliases[i] : columns->names[i], columns->types[i]);
+			const auto acl = ColumnAcl(i);
+			column.SetAcl(vector<AclItem>(acl.begin(), acl.end()));
+			column_list.AddColumn(std::move(column));
+		}
+		auto result = Copy(context);
+		auto &view = result->Cast<ViewCatalogEntry>();
+		info.Cast<AlterPermissionsInfo>().ApplyTo(view.permissions, type, &column_list);
+		view.column_acls.clear();
+		for (idx_t i = 0; i < columns->names.size(); i++) {
+			auto &acl = column_list.GetColumn(LogicalIndex(i)).Acl();
+			if (!acl.empty()) {
+				view.column_acls[columns->names[i]] = acl;
+			}
+		}
+		return result;
 	}
 
 	// Column comments have a special alter type
@@ -125,6 +154,18 @@ unique_ptr<CatalogEntry> ViewCatalogEntry::AlterEntry(ClientContext &context, Al
 
 shared_ptr<ViewColumnInfo> ViewCatalogEntry::GetColumnInfo() const {
 	return view_columns.atomic_load();
+}
+
+std::span<const AclItem> ViewCatalogEntry::ColumnAcl(idx_t column_index) const {
+	auto columns = GetColumnInfo();
+	if (!columns || column_index >= columns->names.size()) {
+		return {};
+	}
+	auto entry = column_acls.find(columns->names[column_index]);
+	if (entry == column_acls.end()) {
+		return {};
+	}
+	return entry->second;
 }
 
 Value ViewCatalogEntry::GetColumnComment(idx_t column_index) {

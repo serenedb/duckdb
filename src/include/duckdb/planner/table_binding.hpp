@@ -106,6 +106,18 @@ protected:
 	bool null_extended = false;
 };
 
+struct ColumnReadCheck {
+	ColumnReadCheck(StandardEntry &entry_p, RoleAccess principal_p) : entry(entry_p), principal(principal_p) {
+	}
+
+	bool CanRead(idx_t column_index) const;
+	bool CanReadAny() const;
+
+	StandardEntry &entry;
+	RoleAccess principal;
+	bool referenced = false;
+};
+
 struct EntryBinding : public Binding {
 public:
 	static constexpr const BindingType TYPE = BindingType::CATALOG_ENTRY;
@@ -114,18 +126,11 @@ public:
 	EntryBinding(BindingAlias alias, vector<LogicalType> types, vector<Identifier> names, TableIndex index,
 	             StandardEntry &entry);
 	StandardEntry &entry;
+	shared_ptr<ColumnReadCheck> column_read;
 
 public:
+	BindResult Bind(ColumnRefExpression &colref, idx_t depth) override;
 	optional_ptr<StandardEntry> GetStandardEntry() override;
-};
-
-struct ColumnReadCheck {
-	ColumnReadCheck(TableCatalogEntry &table_p, RoleAccess principal_p) : table(table_p), principal(principal_p) {
-	}
-
-	TableCatalogEntry &table;
-	RoleAccess principal;
-	bool referenced = false;
 };
 
 //! TableBinding is exactly like the Binding, except it keeps track of which columns were bound in the linked LogicalGet

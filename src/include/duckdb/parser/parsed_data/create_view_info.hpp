@@ -50,6 +50,7 @@ public:
 	//! WITH (security_invoker=true) -> the view runs with the caller's privileges;
 	//! false (default) is definer rights (the view owner's), matching PostgreSQL.
 	bool security_invoker = false;
+	identifier_map_t<vector<AclItem>> column_acls;
 
 public:
 	unique_ptr<CreateInfo> Copy() const override;

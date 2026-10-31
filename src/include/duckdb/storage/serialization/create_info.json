@@ -333,6 +333,12 @@
         "id": 16584,
         "name": "security_invoker",
         "type": "bool"
+      },
+      {
+        "id": 16585,
+        "name": "column_acls",
+        "type": "identifier_map_t<vector<AclItem>>",
+        "default": "identifier_map_t<vector<AclItem>>()"
       }
     ],
     "constructor": [

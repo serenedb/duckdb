@@ -3,6 +3,7 @@
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/catalog/catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
+#include "duckdb/catalog/catalog_entry/view_catalog_entry.hpp"
 #include "duckdb/common/case_insensitive_map.hpp"
 #include "duckdb/main/attached_database.hpp"
 #include "duckdb/common/exception.hpp"
@@ -482,6 +483,11 @@ static bool AnyRoleReference(const CatalogEntry &entry, F &&named) {
 		if (named(row.role) || any_acl(row.acl)) {
 			return true;
 		}
+	}
+	if (entry.type == CatalogType::VIEW_ENTRY) {
+		auto &column_acls = entry.Cast<ViewCatalogEntry>().column_acls;
+		return std::any_of(column_acls.begin(), column_acls.end(),
+		                   [&](const auto &column) { return any_acl(column.second); });
 	}
 	if (entry.type != CatalogType::TABLE_ENTRY) {
 		return false;

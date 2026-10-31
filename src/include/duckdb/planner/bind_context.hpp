@@ -110,15 +110,15 @@ public:
 	                               optional_ptr<StandardEntry> entry, virtual_column_map_t virtual_columns,
 	                               vector<column_t> row_id_columns = {});
 	//! Adds a table view with a given alias to the BindContext.
-	void AddView(TableIndex index, const Identifier &alias, SubqueryRef &ref, BoundStatement &subquery,
-	             ViewCatalogEntry &view);
+	EntryBinding &AddView(TableIndex index, const Identifier &alias, SubqueryRef &ref, BoundStatement &subquery,
+	                      ViewCatalogEntry &view);
 	//! Adds a subquery with a given alias to the BindContext.
 	void AddSubquery(TableIndex index, const Identifier &alias, SubqueryRef &ref, BoundStatement &subquery);
 	//! Adds a subquery with a given alias to the BindContext.
 	void AddSubquery(TableIndex index, const Identifier &alias, TableFunctionRef &ref, BoundStatement &subquery);
 	//! Adds a binding to a catalog entry with a given alias to the BindContext.
-	void AddEntryBinding(TableIndex index, const Identifier &alias, const vector<Identifier> &names,
-	                     const vector<LogicalType> &types, StandardEntry &entry);
+	EntryBinding &AddEntryBinding(TableIndex index, const Identifier &alias, const vector<Identifier> &names,
+	                              const vector<LogicalType> &types, StandardEntry &entry);
 	//! Adds a base table with the given alias to the BindContext.
 	void AddGenericBinding(TableIndex index, const Identifier &alias, const vector<Identifier> &names,
 	                       const vector<LogicalType> &types, bool case_sensitive = false);

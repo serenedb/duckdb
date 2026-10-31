@@ -522,9 +522,8 @@ void Binder::CheckStatementKind(SQLStatement &statement) {
 
 void Binder::CheckTableReads() {
 	for (auto &read : global_binder_state->column_reads) {
-		if (!read->referenced &&
-		    !read->principal.CanAnyColumn(read->table.permissions, AclMode::Select, read->table.GetColumns())) {
-			ThrowPermissionDenied(read->table);
+		if (!read->referenced && !read->CanReadAny()) {
+			ThrowPermissionDenied(read->entry);
 		}
 	}
 }
