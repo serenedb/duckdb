@@ -2,6 +2,7 @@
 
 #include "duckdb/common/enum_util.hpp"
 #include "duckdb/common/logical_type_info.hpp"
+#include "duckdb/common/stack_depth.hpp"
 #include "json_executors.hpp"
 #include "json_geojson.hpp"
 #include "json_scan.hpp"
@@ -576,24 +577,9 @@ static void ExtractStructureVal(yyjson_val *val, JSONStructureNode &node) {
 	}
 }
 
-static constexpr idx_t MAX_JSON_STRUCTURE_DEPTH = 1000;
-static thread_local idx_t json_structure_depth = 0;
-
-struct JSONStructureDepthGuard {
-	JSONStructureDepthGuard() {
-		if (json_structure_depth >= MAX_JSON_STRUCTURE_DEPTH) {
-			throw InvalidInputException("JSON nesting depth exceeds the maximum of %llu", MAX_JSON_STRUCTURE_DEPTH);
-		}
-		json_structure_depth++;
-	}
-	~JSONStructureDepthGuard() {
-		json_structure_depth--;
-	}
-};
-
 void JSONStructure::ExtractStructure(yyjson_val *val, JSONStructureNode &node, const bool ignore_errors,
                                      const bool detect_geojson) {
-	JSONStructureDepthGuard depth_guard;
+	StackDepth::Check();
 	node.count++;
 	const auto tag = yyjson_get_tag(val);
 	if (tag == (YYJSON_TYPE_NULL | YYJSON_SUBTYPE_NONE)) {
