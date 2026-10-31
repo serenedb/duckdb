@@ -133,6 +133,7 @@ private:
 	unique_ptr<BaseStatistics> PropagateExpression(BoundConstantExpression &expr, unique_ptr<Expression> &expr_ptr);
 	unique_ptr<BaseStatistics> PropagateExpression(BoundColumnRefExpression &expr, unique_ptr<Expression> &expr_ptr);
 	unique_ptr<BaseStatistics> PropagateExpression(BoundOperatorExpression &expr, unique_ptr<Expression> &expr_ptr);
+	unique_ptr<BaseStatistics> PropagateInvoke(BoundFunctionExpression &invoke, const vector<BaseStatistics> &stats);
 
 	unique_ptr<BaseStatistics> PropagateComparison(BoundFunctionExpression &expr, unique_ptr<Expression> &expr_ptr);
 
@@ -153,6 +154,7 @@ private:
 	unique_ptr<LogicalOperator> &root;
 	//! The map of ColumnBinding -> statistics for the various nodes
 	column_binding_map_t<unique_ptr<BaseStatistics>> statistics_map;
+	optional_ptr<const vector<BaseStatistics>> lambda_columns;
 	bool types_resolved = true;
 	vector<reference<unique_ptr<LogicalOperator>>> path;
 	optional_ptr<LogicalOperator> uncompressed;

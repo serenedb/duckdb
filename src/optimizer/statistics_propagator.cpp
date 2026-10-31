@@ -157,6 +157,13 @@ unique_ptr<BaseStatistics> StatisticsPropagator::PropagateExpression(Expression 
 		return PropagateExpression(expr.Cast<BoundColumnRefExpression>(), expr_ptr);
 	case ExpressionClass::BOUND_OPERATOR:
 		return PropagateExpression(expr.Cast<BoundOperatorExpression>(), expr_ptr);
+	case ExpressionClass::BOUND_REF:
+		if (lambda_columns) {
+			auto index = expr.Cast<BoundReferenceExpression>().Index();
+			D_ASSERT(index < lambda_columns->size());
+			return (*lambda_columns)[index].ToUnique();
+		}
+		break;
 	default:
 		break;
 	}

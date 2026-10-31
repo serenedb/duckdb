@@ -2,9 +2,12 @@
 
 #include "duckdb/execution/expression_executor.hpp"
 #include "duckdb/function/arg_properties.hpp"
+#include "duckdb/function/lambda_functions.hpp"
+#include "duckdb/function/scalar/generic_functions.hpp"
 #include "duckdb/planner/expression/bound_comparison_expression.hpp"
 #include "duckdb/planner/expression/bound_constant_expression.hpp"
 #include "duckdb/planner/expression/bound_function_expression.hpp"
+#include "duckdb/planner/expression/bound_lambda_expression.hpp"
 #include "duckdb/storage/statistics/numeric_stats.hpp"
 #include "duckdb/storage/statistics/string_stats.hpp"
 
@@ -220,6 +223,9 @@ unique_ptr<BaseStatistics> StatisticsPropagator::PropagateExpression(BoundFuncti
 			stats.push_back(stat->Copy());
 		}
 	}
+	if (func.Function().GetName() == InvokeFun::Name) {
+		return PropagateInvoke(func, stats);
+	}
 	auto constant_stats = PropagateConstantInputs(context, func, stats);
 	if (constant_stats) {
 		return constant_stats;
@@ -229,6 +235,27 @@ unique_ptr<BaseStatistics> StatisticsPropagator::PropagateExpression(BoundFuncti
 		return func.Function().GetStatisticsCallback()(context, input);
 	}
 	return PropagateMonotoneBounds(context, func, stats);
+}
+
+unique_ptr<BaseStatistics> StatisticsPropagator::PropagateInvoke(BoundFunctionExpression &invoke,
+                                                                 const vector<BaseStatistics> &stats) {
+	auto &children = invoke.GetChildrenMutable();
+	auto &lambda = children[0]->Cast<BoundLambdaExpression>();
+	const auto parameter_count = lambda.ParameterCount();
+	vector<BaseStatistics> columns;
+	columns.reserve(children.size() - 1);
+	for (idx_t column = 0; column + 1 < children.size(); column++) {
+		columns.push_back(stats[column < parameter_count ? parameter_count - column : column + 1].Copy());
+	}
+	auto body = lambda.LambdaExpr()->Copy();
+	auto outer_columns = lambda_columns;
+	lambda_columns = &columns;
+	auto result = PropagateExpression(body);
+	lambda_columns = outer_columns;
+	shared_ptr<Expression> shared_body = std::move(body);
+	lambda.SetLambdaExpr(shared_body);
+	invoke.BindInfoMutable()->Cast<LambdaFunctionData>().SetLambdaExpression(std::move(shared_body));
+	return result;
 }
 
 } // namespace duckdb
