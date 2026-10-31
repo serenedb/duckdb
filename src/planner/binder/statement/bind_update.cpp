@@ -136,6 +136,9 @@ void Binder::BindUpdateSet(TableIndex proj_index, unique_ptr<LogicalOperator> &r
 	if (!has_stored_generated) {
 		return;
 	}
+	auto &retriever = expr_binder_ptr->entry_retriever;
+	const auto lookup_principal = retriever.GetPrincipal();
+	retriever.SetPrincipal(nullptr);
 	// Recompute each stored generated column whose value depends on an assigned
 	// column. Generated-column references are expanded inline -- the same
 	// recursion the binder uses for INSERT defaults and SELECT -- and assigned
@@ -166,6 +169,7 @@ void Binder::BindUpdateSet(TableIndex proj_index, unique_ptr<LogicalOperator> &r
 			append_assignment(column, recompute);
 		}
 	}
+	retriever.SetPrincipal(lookup_principal);
 }
 
 // This creates a LogicalProjection and moves 'root' into it as a child
@@ -314,10 +318,7 @@ BoundStatement Binder::BindNode(UpdateQueryNode &node) {
 	// a plain UPDATE cannot produce duplicate row-ids, so it keeps the lock-free path.
 	update->row_id_handling = node.from_table ? RowIdHandling::KEEP_FIRST : RowIdHandling::ASSUME_UNIQUE;
 	// bind the default values
-	auto &catalog_name = table.ParentCatalog().GetName();
-	auto schema_name = table.ParentSchema(context).name;
-	BindDefaultValues(table.GetColumns(), update->bound_defaults, catalog_name.GetIdentifierName(),
-	                  schema_name.GetIdentifierName());
+	BindDefaultValues(table, update->bound_defaults);
 	update->bound_constraints = BindConstraints(table);
 
 	// project any additional columns required for the condition/expressions

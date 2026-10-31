@@ -92,6 +92,7 @@ vector<unique_ptr<BoundConstraint>> Binder::BindConstraints(ClientContext &conte
 
 vector<unique_ptr<BoundConstraint>> Binder::BindConstraints(const TableCatalogEntry &table) {
 	auto binder = CreateBinderWithSearchPath(table.ParentCatalog().GetName(), table.ParentSchema(context).name);
+	binder->entry_retriever.SetPrincipal(nullptr);
 	return binder->BindConstraints(table.GetConstraints(), table.name, table.GetColumns());
 }
 
@@ -356,6 +357,13 @@ void Binder::BindDefaultValue(const ColumnDefinition &column, vector<unique_ptr<
 	ColumnList col_list;
 	col_list.AddColumn(column.Copy());
 	BindDefaultValues(col_list, bound_defaults, catalog, schema);
+}
+
+void Binder::BindDefaultValues(const TableCatalogEntry &table, vector<unique_ptr<Expression>> &bound_defaults) {
+	auto stored = Binder::CreateBinder(context, this);
+	stored->entry_retriever.SetPrincipal(nullptr);
+	stored->BindDefaultValues(table.GetColumns(), bound_defaults, table.ParentCatalog().GetName().GetIdentifierName(),
+	                          table.ParentSchema(context).name.GetIdentifierName());
 }
 
 void Binder::BindDefaultValues(const ColumnList &columns, vector<unique_ptr<Expression>> &bound_defaults,

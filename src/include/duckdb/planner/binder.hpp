@@ -566,6 +566,7 @@ private:
 	//! Bind the default values of the columns of a table
 	void BindDefaultValues(const ColumnList &columns, vector<unique_ptr<Expression>> &bound_defaults,
 	                       const string &catalog = "", const string &schema = "");
+	void BindDefaultValues(const TableCatalogEntry &table, vector<unique_ptr<Expression>> &bound_defaults);
 	//! Bind a limit value (LIMIT or OFFSET)
 	BoundLimitNode BindLimitValue(OrderBinder &order_binder, unique_ptr<ParsedExpression> limit_val,
 	                              LimitValueType value_type, bool is_offset);

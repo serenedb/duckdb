@@ -128,6 +128,7 @@ void Binder::ComputeStoredGeneratedColumns(TableCatalogEntry &table, vector<uniq
 	}
 	auto column_index = GenerateTableIndex();
 	auto generated_binder = Binder::CreateBinder(context, this);
+	generated_binder->entry_retriever.SetPrincipal(nullptr);
 	generated_binder->bind_context.AddGenericBinding(column_index, table.name, names, types, columns.IsCaseSensitive());
 	ExpressionBinder generated_expr_binder(*generated_binder, context);
 	idx_t pos = 0;
@@ -805,10 +806,7 @@ BoundStatement Binder::BindNode(InsertQueryNode &node) {
 	}
 
 	// bind the default values
-	auto &catalog_name = table.ParentCatalog().GetName();
-	auto schema_name = table.ParentSchema(context).name;
-	BindDefaultValues(table.GetColumns(), insert->bound_defaults, catalog_name.GetIdentifierName(),
-	                  schema_name.GetIdentifierName());
+	BindDefaultValues(table, insert->bound_defaults);
 	insert->bound_constraints = BindConstraints(table);
 	if (!node.select_statement && !node.default_values) {
 		check_insert(named_column_map.size());
