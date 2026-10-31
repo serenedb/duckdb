@@ -103,9 +103,6 @@ BoundStatement Binder::BindDescribeQuery(ShowRef &ref) {
 	// bind the child plan of the DESCRIBE statement
 	auto child_binder = Binder::CreateBinder(context, this);
 	auto plan = child_binder->Bind(*ref.query);
-	for (auto &state : context.registered_state->States()) {
-		state->OnBoundPlan(context, *child_binder, *plan.plan, GetStatementProperties());
-	}
 
 	// construct a column data collection with the result
 	vector<Identifier> return_names = {"column_name", "column_type", "null", "key", "default", "extra"};
