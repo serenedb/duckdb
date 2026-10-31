@@ -174,18 +174,18 @@ static unique_ptr<FunctionData> PragmaTableInfoBind(ClientContext &context, Tabl
 	CatalogEntryRetriever own_retriever(context);
 	auto &retriever = input.binder ? input.binder->EntryRetriever() : own_retriever;
 	qname = Binder::BindTableName(retriever, qname);
-	optional_ptr<CatalogEntry> indexed_relation;
-	if (!retriever.GetEntry(EntryLookupInfo(CatalogType::TABLE_ENTRY, qname), OnEntryNotFound::RETURN_NULL)) {
+	auto relation = retriever.GetEntry(EntryLookupInfo(CatalogType::TABLE_ENTRY, qname), OnEntryNotFound::RETURN_NULL);
+	if (!relation) {
 		auto index = retriever.GetEntry(EntryLookupInfo(CatalogType::INDEX_ENTRY, qname), OnEntryNotFound::RETURN_NULL);
 		const bool index_is_relation = index && index->ParentCatalog().Compatibility() == SqlCompatibility::POSTGRES;
 		if (index_is_relation) {
 			auto &index_entry = index->Cast<IndexCatalogEntry>();
-			indexed_relation = index_entry.GetRelation(index_entry.catalog.GetCatalogTransaction(context));
+			relation = index_entry.GetRelation(index_entry.catalog.GetCatalogTransaction(context));
 		}
 	}
-	auto &entry = indexed_relation ? *indexed_relation
-	                               : *retriever.GetEntry(EntryLookupInfo(CatalogType::TABLE_ENTRY, qname),
-	                                                     OnEntryNotFound::THROW_EXCEPTION);
+	auto &entry = relation ? *relation
+	                       : *retriever.GetEntry(EntryLookupInfo(CatalogType::TABLE_ENTRY, qname),
+	                                             OnEntryNotFound::THROW_EXCEPTION);
 	Binder::RegisterEntryRead(input.binder, context, entry);
 	return make_uniq<PragmaTableFunctionData>(entry, IS_PRAGMA_TABLE_INFO);
 }
