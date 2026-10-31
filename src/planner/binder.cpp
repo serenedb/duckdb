@@ -18,7 +18,6 @@
 #include "duckdb/main/client_data.hpp"
 #include "duckdb/main/config.hpp"
 #include "duckdb/main/database.hpp"
-#include "duckdb/main/database_manager.hpp"
 #include "duckdb/main/settings.hpp"
 #include "duckdb/optimizer/optimizer.hpp"
 #include "duckdb/parser/expression/function_expression.hpp"
@@ -393,8 +392,7 @@ void Binder::AssignOwner(Permissions &permissions, Catalog &catalog, CatalogType
 	if (!StoresPermissions(catalog)) {
 		return;
 	}
-	auto database = ClusterEntry(CatalogType::DATABASE_ENTRY, schema ? schema->ParentCatalog().GetName()
-	                                                                 : DatabaseManager::GetDefaultDatabase(context));
+	auto database = ClusterEntry(CatalogType::DATABASE_ENTRY, catalog.GetName());
 	permissions.AssignOwner(owner, objtype, database ? &database->permissions : nullptr,
 	                        schema ? optional_idx(schema->oid) : optional_idx());
 }

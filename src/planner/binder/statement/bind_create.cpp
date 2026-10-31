@@ -353,17 +353,6 @@ SchemaCatalogEntry &Binder::BindSchema(CreateInfo &info) {
 	return schema_obj;
 }
 
-static CatalogType DefaultPrivilegesType(CatalogType type) {
-	switch (type) {
-	case CatalogType::VIEW_ENTRY:
-		return CatalogType::TABLE_ENTRY;
-	case CatalogType::TABLE_MACRO_ENTRY:
-		return CatalogType::MACRO_ENTRY;
-	default:
-		return type;
-	}
-}
-
 static idx_t CreationOwner(ClientContext &context, const CreateInfo &info, const RoleAccess &principal) {
 	if (info.type == CatalogType::SEQUENCE_ENTRY) {
 		auto &sequence = info.Cast<CreateSequenceInfo>();
@@ -397,7 +386,7 @@ SchemaCatalogEntry &Binder::BindCreateSchema(CreateInfo &info) {
 		                       info.GetQualifiedName().Name().GetIdentifierName()));
 	}
 	if (principal) {
-		AssignOwner(info.permissions, schema.ParentCatalog(), DefaultPrivilegesType(info.type), &schema,
+		AssignOwner(info.permissions, schema.ParentCatalog(), Permissions::AclClass(info.type), &schema,
 		            CreationOwner(context, info, *principal));
 	}
 	return schema;
