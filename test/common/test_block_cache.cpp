@@ -19,12 +19,8 @@ namespace duckdb {
 namespace {
 
 constexpr idx_t BLOCK = BlockCache::BLOCK_SIZE;
-constexpr idx_t PIECE_BLOCKS = BlockCache::PIECE_SIZE / BLOCK;
-constexpr idx_t REQUEST_BLOCKS = BlockCache::MAX_REQUEST / BLOCK;
-//! The blocks of [bytes] of cache
-constexpr idx_t BlocksOf(idx_t bytes) {
-	return bytes / BLOCK;
-}
+constexpr idx_t PIECE_BLOCKS = BlockCache::BlockCountOf(BlockCache::PIECE_SIZE);
+constexpr idx_t REQUEST_BLOCKS = BlockCache::BlockCountOf(BlockCache::MAX_REQUEST);
 
 uint8_t ExpectedByte(idx_t offset) {
 	return static_cast<uint8_t>((offset * 31 + offset / BLOCK * 7) & 0xFF);
@@ -1045,7 +1041,7 @@ TEST_CASE("Block cache gives memory back to the buffer pool", "[block_cache]") {
 	REQUIRE_NO_FAIL(con.Query("SET memory_limit='64MiB'"));
 	auto &cache = BlockCache::Get(*db.instance);
 	REQUIRE(cache.GetStatistics().capacity == 16 * 1024 * 1024);
-	constexpr idx_t FULL = BlocksOf(16 * 1024 * 1024);
+	constexpr idx_t FULL = BlockCache::BlockCountOf(16 * 1024 * 1024);
 	CountingSourceFileSystem fs;
 	TestFile file("block_cache_shrink.bin", FULL * BLOCK);
 	auto cached = file.Open(cache, fs);
@@ -1477,7 +1473,7 @@ TEST_CASE("Changing the spill size keeps the spill file of in-memory blocks", "[
 	REQUIRE_NO_FAIL(con.Query("SET temp_directory='" + directory + "'"));
 	REQUIRE_NO_FAIL(con.Query("SET external_file_cache_size='1MiB'"));
 	auto &cache = BlockCache::Get(*db.instance);
-	constexpr idx_t COUNT = 4 * BlocksOf(1024 * 1024);
+	constexpr idx_t COUNT = BlockCache::BlockCountOf(4 * 1024 * 1024);
 	auto file = cache.CreateUnbackedFile("memory://default_spill.bin");
 	for (idx_t block = 0; block < COUNT; block++) {
 		memset(cache.CreateBlock(*file, block).GetDataMutable(), int(block + 1), BLOCK);
@@ -1500,7 +1496,7 @@ TEST_CASE("Changing the spill size keeps the spill file of in-memory blocks", "[
 
 TEST_CASE("Instances sharing a temporary directory spill in-memory blocks to files of their own", "[block_cache]") {
 	const auto directory = TestCreatePath("block_cache_shared_spill");
-	constexpr idx_t FIT = BlocksOf(1024 * 1024);
+	constexpr idx_t FIT = BlockCache::BlockCountOf(1024 * 1024);
 	{
 		DuckDB first(nullptr);
 		DuckDB second(nullptr);
