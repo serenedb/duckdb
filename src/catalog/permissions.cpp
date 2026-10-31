@@ -419,6 +419,7 @@ SecuritySnapshot::SecuritySnapshot(vector<Role> roles_p) {
 	std::sort(roles_p.begin(), roles_p.end(), [](const Role &lhs, const Role &rhs) { return lhs.role < rhs.role; });
 	idx_t total = 0;
 	for (auto &role : roles_p) {
+		role.closure.erase(std::remove(role.closure.begin(), role.closure.end(), role.role), role.closure.end());
 		for (auto list : {&role.closure, &role.settable}) {
 			std::sort(list->begin(), list->end());
 			list->erase(std::unique(list->begin(), list->end()), list->end());
