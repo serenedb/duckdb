@@ -136,6 +136,17 @@ optional_ptr<CatalogEntry> CatalogOidIndex::GetVisible(idx_t oid, const Snapshot
 	return entry && entry->oid == oid ? entry : nullptr;
 }
 
+void CatalogOidIndex::GetVisible(std::span<const idx_t> oids, const SnapshotView &view,
+                                 std::span<optional_ptr<CatalogEntry>> entries) const {
+	D_ASSERT(oids.size() == entries.size());
+	absl::ReaderMutexLock guard(lock);
+	for (idx_t i = 0; i < oids.size(); i++) {
+		auto it = versions.find(oids[i]);
+		auto entry = it == versions.end() ? nullptr : it->second->GetVisible(view);
+		entries[i] = entry && entry->oid == oids[i] ? entry : nullptr;
+	}
+}
+
 optional_ptr<CatalogEntry> CatalogOidIndex::GetVisibleOwner(idx_t oid, const SnapshotView &view) const {
 	absl::ReaderMutexLock guard(lock);
 	auto it = versions.find(oid);

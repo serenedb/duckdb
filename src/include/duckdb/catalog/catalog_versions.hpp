@@ -17,6 +17,7 @@
 #include "duckdb/transaction/transaction_data.hpp"
 
 #include <functional>
+#include <span>
 
 namespace duckdb {
 
@@ -46,6 +47,8 @@ public:
 
 	shared_ptr<CatalogVersions> Find(idx_t oid) const;
 	optional_ptr<CatalogEntry> GetVisible(idx_t oid, const SnapshotView &view) const;
+	void GetVisible(std::span<const idx_t> oids, const SnapshotView &view,
+	                std::span<optional_ptr<CatalogEntry>> entries) const;
 	optional_ptr<CatalogEntry> GetVisibleOwner(idx_t oid, const SnapshotView &view) const;
 	optional_ptr<CatalogEntry> GetCommitted(idx_t oid) const;
 	optional_ptr<CatalogEntry> GetCommittedDrop(idx_t oid) const;
