@@ -49,6 +49,9 @@ bool BaseSelectBinder::ClaimsAlias(ColumnRefExpression &colref) {
 }
 
 bool BaseSelectBinder::MatchesGroup(ParsedExpression &expr) {
+	if (inside_aggregate || node.bind_state.group_map.empty()) {
+		return false;
+	}
 	// the groups are keyed by the qualified form, so qualify against this scope before matching
 	auto qualified = expr.Copy();
 	ExpressionBinder::QualifyColumnNames(binder, qualified);

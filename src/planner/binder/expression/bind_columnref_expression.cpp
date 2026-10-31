@@ -78,7 +78,7 @@ BindResult ExpressionBinder::BindExpression(ColumnRefExpression &col_ref_p, idx_
 	if (!bound_macro_arguments.empty() && !col_ref_p.IsQualified()) {
 		auto bound = bound_macro_arguments.find(col_ref_p.GetColumnName());
 		if (bound != bound_macro_arguments.end()) {
-			return BindResult(bound->second->Copy());
+			return BindResult(BindMacroArgument(bound->second));
 		}
 	}
 

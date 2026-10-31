@@ -154,8 +154,10 @@ bool Binder::BindTableFunctionParameters(TableFunctionCatalogEntry &table_functi
 			throw ParameterNotResolvedException();
 		}
 		if (!expr->IsScalar()) {
-			// should have been eliminated before
-			throw InternalException("Table function requires a constant parameter");
+			throw BinderException(expr->GetQueryLocation(),
+			                      "Table function \"%s\" does not support lateral join column parameters - cannot use "
+			                      "column \"%s\" in this context.\nThe function only supports literals as parameters.",
+			                      table_function.name.GetIdentifierName(), expr->GetName().GetIdentifierName());
 		}
 		// The argument is folded to a constant only after the overload has been chosen, so that the bound
 		// expression's STRING_LITERAL / INTEGER_LITERAL type reaches overload selection - which is what lets

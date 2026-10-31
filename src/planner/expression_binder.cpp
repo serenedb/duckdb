@@ -338,7 +338,18 @@ unique_ptr<Expression> ExpressionBinder::Bind(unique_ptr<ParsedExpression> &expr
 BindResult ExpressionBinder::Bind(unique_ptr<ParsedExpression> &expr, idx_t depth, bool root_expression) {
 	auto query_location = expr->GetQueryLocation();
 	auto alias = expr->GetAlias();
-	BindResult result = BindExpression(expr, depth, root_expression);
+	BindResult result;
+	auto &bound_macro_arguments = binder.global_binder_state->bound_macro_arguments;
+	if (!bound_macro_arguments.empty() && expr->GetExpressionClass() == ExpressionClass::COLUMN_REF &&
+	    !expr->Cast<ColumnRefExpression>().IsQualified()) {
+		auto bound = bound_macro_arguments.find(expr->Cast<ColumnRefExpression>().GetColumnName());
+		if (bound != bound_macro_arguments.end()) {
+			result = BindResult(BindMacroArgument(bound->second));
+		}
+	}
+	if (!result.expression) {
+		result = BindExpression(expr, depth, root_expression);
+	}
 	if (result.HasError()) {
 		return result;
 	}

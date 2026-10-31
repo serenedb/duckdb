@@ -197,16 +197,16 @@ struct MacroParameterUse {
 	idx_t references = 0;
 	bool shareable = true;
 	bool aggregated = false;
+	bool caller_aggregated = false;
 	identifier_set_t lambda_names;
 };
 
 struct MacroArgumentScan {
 	bool blocked = false;
-	bool is_volatile = false;
 	bool constant = true;
 	bool has_parameter = false;
 	bool lambda_body = true;
-	bool level_independent = true;
+	bool subquery = false;
 	identifier_set_t names;
 };
 
@@ -215,7 +215,13 @@ struct MacroBodyUse {
 	bool is_volatile = false;
 	bool lambda_body = true;
 	bool level_independent = true;
+	bool subquery = false;
 	optional_ptr<const ParsedExpression> select_item;
+};
+
+struct BoundMacroArgument {
+	unique_ptr<Expression> expression;
+	optional_ptr<const ExpressionBinder> owner;
 };
 
 enum class MacroFunctionKind : uint8_t {
@@ -238,7 +244,7 @@ struct GlobalBinderState {
 	unordered_map<const ScalarMacroCatalogEntry *, Value> constant_macros;
 	qualified_name_map_t<MacroFunctionLookup> macro_functions;
 	idx_t shared_macro_arguments = 0;
-	identifier_map_t<unique_ptr<Expression>> bound_macro_arguments;
+	identifier_map_t<BoundMacroArgument> bound_macro_arguments;
 	idx_t macro_type_probing = 0;
 	//! Statement properties
 	StatementProperties prop;

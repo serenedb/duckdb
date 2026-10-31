@@ -23,6 +23,8 @@
 #include "duckdb/planner/column_binding.hpp"
 #include "duckdb/common/enums/collation_type.hpp"
 
+#include <optional>
+
 namespace duckdb {
 
 class Binder;
@@ -43,6 +45,7 @@ class ColumnAliasBinder;
 
 struct DummyBinding;
 struct SelectBindState;
+struct BoundMacroArgument;
 struct MacroArgumentScan;
 struct MacroBodyUse;
 struct MacroFunctionLookup;
@@ -327,25 +330,29 @@ protected:
 	                                           vector<unique_ptr<Expression>> &shared_arguments, bool &probed);
 	MacroFunctionLookup LookupMacroFunction(const FunctionExpression &function);
 	const MacroBodyUse &GetMacroBodyUse(const ScalarMacroFunction &macro_def, const Identifier &name);
-	vector<bool> MacroArgumentsBindInPlace(FunctionExpression &function, ScalarMacroCatalogEntry &macro_func);
+	vector<bool> MacroArgumentsBindInPlace(FunctionExpression &function, ScalarMacroCatalogEntry &macro_func,
+	                                       vector<std::optional<MacroArgumentScan>> &scans);
 	bool IsSetReturningFunction(const FunctionExpression &function);
 	bool HasSetReturningFunction(const ParsedExpression &expr);
 	bool ReturnsAtMostOneRow(SelectNode &node, bool from_parameters_only);
 	bool MayAggregate(SelectNode &node);
-	vector<bool> MacroArgumentsBoundAsValues(const MacroBodyUse &use, bool inline_body, ParsedExpression &body,
-	                                         DummyBinding &binding, vector<unique_ptr<ParsedExpression>> &arguments);
-	bool MovesIntoSubquery(ParsedExpression &argument);
-	bool ResolvesInScope(ParsedExpression &argument);
+	vector<bool> BindSubqueryBodyArguments(const MacroBodyUse &use, DummyBinding &binding,
+	                                       vector<unique_ptr<ParsedExpression>> &arguments,
+	                                       vector<std::optional<MacroArgumentScan>> &scans,
+	                                       vector<unique_ptr<Expression>> &prebound, idx_t depth);
+	unique_ptr<Expression> BindMacroArgument(const BoundMacroArgument &argument);
 	void ExpandSubqueryArguments(DummyBinding &binding, vector<unique_ptr<ParsedExpression>> &arguments,
 	                             const vector<bool> &bound_once, unique_ptr<ParsedExpression> &expr, bool sql_function);
 	void AddSqlFunctionParameters(unique_ptr<ParsedExpression> &expr, const Identifier &alias,
 	                              const vector<Identifier> &names, vector<unique_ptr<ParsedExpression>> arguments,
 	                              bool sql_function);
-	void AnalyzeMacroBody(ParsedExpression &expr, bool shareable, bool aggregated,
+	void AnalyzeMacroBody(ParsedExpression &expr, bool shareable, bool aggregated, bool in_subquery,
 	                      vector<identifier_set_t> &lambda_params, DummyBinding &parameters, MacroBodyUse &use);
+	bool ResolvesInScope(ParsedExpression &argument);
+	void LiftCallerExpressions(unique_ptr<ParsedExpression> &expr, idx_t depth);
+	unique_ptr<Expression> BindSubqueryArgument(const ParsedExpression &argument, idx_t depth, ErrorData &error);
 	void ScanMacroArgument(ParsedExpression &argument, MacroArgumentScan &scan);
-	bool IsLambdaSafeMacroArgument(ParsedExpression &argument);
-	bool IsLevelIndependentMacroArgument(ParsedExpression &argument);
+	const MacroArgumentScan &ScanMacroArgument(ParsedExpression &argument, std::optional<MacroArgumentScan> &scan);
 
 	virtual string UnsupportedAggregateMessage();
 	virtual string UnsupportedWindowMessage();
@@ -360,6 +367,7 @@ protected:
 	vector<BoundColumnReferenceInfo> bound_columns;
 	bool inside_try = false;
 	bool whole_row_call = false;
+	bool binding_subquery_argument = false;
 
 	BindResult TryBindLambdaOrJson(FunctionExpression &function, idx_t depth, CatalogEntry &func,
 	                               const LambdaSyntaxType syntax_type);

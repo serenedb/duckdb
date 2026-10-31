@@ -32,7 +32,7 @@ bool SelectBinder::TryResolveAliasReference(ColumnRefExpression &colref, idx_t d
 	}
 
 	if (depth == 0 && node.lateral_aliases_by_value && !inside_window && !inside_aggregate &&
-	    !inside_aggregate_filter && !node.bind_state.IsExpandedColumn(alias_index)) {
+	    !inside_aggregate_filter && !binding_subquery_argument && !node.bind_state.IsExpandedColumn(alias_index)) {
 		if (!node.lateral_index.IsValid()) {
 			node.lateral_index = binder.GenerateTableIndex();
 		}
