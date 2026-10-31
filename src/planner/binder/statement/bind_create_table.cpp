@@ -1,3 +1,5 @@
+#include <absl/cleanup/cleanup.h>
+
 #include "duckdb/parser/constraints/list.hpp"
 #include "duckdb/parser/expression/cast_expression.hpp"
 #include "duckdb/parser/keyword_helper.hpp"
@@ -101,6 +103,7 @@ vector<unique_ptr<BoundConstraint>> Binder::BindConstraints(ClientContext &conte
 
 vector<unique_ptr<BoundConstraint>> Binder::BindConstraints(const TableCatalogEntry &table) {
 	auto binder = CreateTableBinder(context, table.ParentSchema(context), this);
+	binder->entry_retriever.SetPrincipal(nullptr);
 	return binder->BindConstraints(table.GetConstraints(), table.name, table.GetColumns());
 }
 
@@ -743,6 +746,15 @@ void Binder::BindDefaultValue(const ColumnDefinition &column, vector<unique_ptr<
 	ColumnList col_list;
 	col_list.AddColumn(column.Copy());
 	BindDefaultValues(col_list, bound_defaults, schema);
+}
+
+void Binder::BindDefaultValues(const TableCatalogEntry &table, vector<unique_ptr<Expression>> &bound_defaults) {
+	const auto lookup_principal = entry_retriever.GetPrincipal();
+	entry_retriever.SetPrincipal(nullptr);
+	absl::Cleanup restore_principal = [&] {
+		entry_retriever.SetPrincipal(lookup_principal);
+	};
+	BindDefaultValues(table.GetColumns(), bound_defaults, table.ParentSchema(context));
 }
 
 void Binder::BindDefaultValues(const ColumnList &columns, vector<unique_ptr<Expression>> &bound_defaults,

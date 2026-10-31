@@ -374,7 +374,7 @@ BoundStatement Binder::BindNode(MergeQueryNode &node) {
 	vector<unique_ptr<Expression>> projection_expressions;
 
 	// bind table constraints/default values in case these are referenced
-	BindDefaultValues(table.GetColumns(), merge_into->bound_defaults, table.ParentSchema(context));
+	BindDefaultValues(table, merge_into->bound_defaults);
 
 	merge_into->bound_constraints = BindConstraints(table);
 

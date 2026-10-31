@@ -21,6 +21,7 @@
 #include "duckdb/storage/data_table.hpp"
 
 #include <absl/algorithm/container.h>
+#include <absl/cleanup/cleanup.h>
 
 namespace duckdb {
 
@@ -134,6 +135,12 @@ void Binder::BindUpdateSet(TableIndex proj_index, unique_ptr<LogicalOperator> &r
 	if (!has_stored_generated) {
 		return;
 	}
+	auto &retriever = expr_binder_ptr->entry_retriever;
+	const auto lookup_principal = retriever.GetPrincipal();
+	retriever.SetPrincipal(nullptr);
+	absl::Cleanup restore_principal = [&] {
+		retriever.SetPrincipal(lookup_principal);
+	};
 	// Recompute each stored generated column whose value depends on an assigned
 	// column. Generated-column references are expanded inline -- the same
 	// recursion the binder uses for INSERT defaults and SELECT -- and assigned
@@ -313,7 +320,7 @@ BoundStatement Binder::BindNode(UpdateQueryNode &node) {
 	// a plain UPDATE cannot produce duplicate row-ids, so it keeps the lock-free path.
 	update->row_id_handling = node.from_table ? RowIdHandling::KEEP_FIRST : RowIdHandling::ASSUME_UNIQUE;
 	// bind the default values
-	BindDefaultValues(table.GetColumns(), update->bound_defaults, table.ParentSchema(context));
+	BindDefaultValues(table, update->bound_defaults);
 	update->bound_constraints = BindConstraints(table);
 
 	// project any additional columns required for the condition/expressions
