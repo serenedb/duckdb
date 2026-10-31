@@ -1302,6 +1302,37 @@ void BinaryScalarFunctionZeroCheck(DataChunk &input, ExpressionState &state, Vec
 	                                                             reference<ExpressionState>(state));
 }
 
+template <class T>
+bool HasZeroDivisor(Vector &divisor, idx_t count) {
+	if (divisor.GetVectorType() == VectorType::CONSTANT_VECTOR) {
+		return !ConstantVector::IsNull(divisor) && *ConstantVector::GetData<T>(divisor) == 0;
+	}
+	UnifiedVectorFormat format;
+	divisor.ToUnifiedFormat(count, format);
+	auto data = UnifiedVectorFormat::GetData<T>(format);
+	bool zero = false;
+	if (!format.sel->IsSet() && format.validity.AllValid()) {
+		for (idx_t i = 0; i < count; i++) {
+			zero |= data[i] == 0;
+		}
+		return zero;
+	}
+	for (idx_t i = 0; i < count; i++) {
+		auto idx = format.sel->get_index(i);
+		zero |= format.validity.RowIsValid(idx) && data[idx] == 0;
+	}
+	return zero;
+}
+
+template <class T, class OP, bool NULL_ON_ZERO>
+void BinaryFloatingPointZeroCheck(DataChunk &input, ExpressionState &state, Vector &result) {
+	if (HasZeroDivisor<T>(input.data[1], input.size())) {
+		BinaryScalarFunctionZeroCheck<T, T, T, OP, BinaryZeroCheckWrapper<NULL_ON_ZERO>>(input, state, result);
+		return;
+	}
+	ScalarFunction::BinaryFunction<T, T, T, OP>(input, state, result);
+}
+
 template <class OP, bool NULL_ON_ZERO>
 scalar_function_t GetBinaryFunctionZeroCheck(PhysicalType type) {
 	switch (type) {
@@ -1328,9 +1359,9 @@ scalar_function_t GetBinaryFunctionZeroCheck(PhysicalType type) {
 		return BinaryScalarFunctionZeroCheck<uhugeint_t, uhugeint_t, uhugeint_t, OP,
 		                                     BinaryZeroCheckWrapper<NULL_ON_ZERO>>;
 	case PhysicalType::FLOAT:
-		return BinaryScalarFunctionZeroCheck<float, float, float, OP, BinaryZeroCheckWrapper<NULL_ON_ZERO>>;
+		return BinaryFloatingPointZeroCheck<float, OP, NULL_ON_ZERO>;
 	case PhysicalType::DOUBLE:
-		return BinaryScalarFunctionZeroCheck<double, double, double, OP, BinaryZeroCheckWrapper<NULL_ON_ZERO>>;
+		return BinaryFloatingPointZeroCheck<double, OP, NULL_ON_ZERO>;
 	default:
 		throw NotImplementedException("Unimplemented type for GetBinaryFunctionZeroCheck");
 	}
