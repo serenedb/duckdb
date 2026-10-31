@@ -195,7 +195,6 @@ private:
 	                                 bool right_equal, RowIdVectorOutput &row_ids) const;
 
 	string GenerateErrorKeyName(DataChunk &input, idx_t row) const;
-	string GenerateConstraintErrorMessage(VerifyExistenceType verify_type, const string &key_name) const;
 	void VerifyLeaf(const NodePtr &leaf_ptr, const ARTKey &key, DeleteIndexInfo delete_index_info,
 	                ConflictManager &manager, optional_idx &conflict_idx, idx_t i) const;
 	void VerifyConstraint(DataChunk &chunk, IndexAppendInfo &info, ConflictManager &manager) override
