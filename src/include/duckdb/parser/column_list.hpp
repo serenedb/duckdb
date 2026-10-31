@@ -37,6 +37,9 @@ public:
 
 	DUCKDB_API bool ColumnExists(const Identifier &name) const;
 
+	static constexpr const char *SHARED_GENERATED_PREFIX = "0_generated_";
+	unique_ptr<ParsedExpression> SharedGeneratedExpression(const ColumnDefinition &column) const;
+
 	DUCKDB_API LogicalIndex GetColumnIndex(Identifier &column_name) const;
 	DUCKDB_API PhysicalIndex LogicalToPhysical(LogicalIndex index) const;
 	DUCKDB_API LogicalIndex PhysicalToLogical(PhysicalIndex index) const;

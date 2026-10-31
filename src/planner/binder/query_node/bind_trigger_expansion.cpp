@@ -182,7 +182,7 @@ static void InlineGeneratedColumnRefs(unique_ptr<ParsedExpression> &expr, const 
 		if (!colref.IsQualified() && table.GetColumns().ColumnExists(colref.GetColumnName())) {
 			auto &column = table.GetColumns().GetColumn(colref.GetColumnName());
 			if (column.Generated()) {
-				expr = column.GeneratedExpression().Copy();
+				expr = table.GetColumns().SharedGeneratedExpression(column);
 				InlineGeneratedColumnRefs(expr, table);
 				return;
 			}
@@ -228,7 +228,7 @@ static unique_ptr<CommonTableExpressionInfo> MakeUpdateOldAliasCTE(const TableCa
 	auto outer = make_uniq<SelectNode>();
 	for (auto &column : table.GetColumns().Logical()) {
 		if (column.Generated()) {
-			auto expr = column.GeneratedExpression().Copy();
+			auto expr = table.GetColumns().SharedGeneratedExpression(column);
 			InlineGeneratedColumnRefs(expr, table);
 			expr->SetAlias(column.Name());
 			outer->select_list.push_back(std::move(expr));

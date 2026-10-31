@@ -214,6 +214,9 @@ static void ReplaceAliases(ParsedExpression &root_expr, const ColumnList &list,
 		D_ASSERT(!colref.IsQualified());
 		auto &col_names = colref.ColumnNamesMutable();
 		D_ASSERT(col_names.size() == 1);
+		if (col_names[0].StartsWith(ColumnList::SHARED_GENERATED_PREFIX)) {
+			return;
+		}
 		auto idx_entry = list.GetColumnIndex(col_names[0]);
 		auto &alias = alias_map.at(idx_entry.index);
 		col_names = vector<Identifier> {alias};
@@ -224,6 +227,9 @@ static void BakeTableName(ParsedExpression &root_expr, const BindingAlias &bindi
 	ParsedExpressionIterator::VisitExpressionMutable<ColumnRefExpression>(root_expr, [&](ColumnRefExpression &colref) {
 		D_ASSERT(!colref.IsQualified());
 		auto &col_names = colref.ColumnNamesMutable();
+		if (col_names[0].StartsWith(ColumnList::SHARED_GENERATED_PREFIX)) {
+			return;
+		}
 		col_names.insert(col_names.begin(), binding_alias.GetAlias());
 		if (!binding_alias.GetSchema().empty()) {
 			col_names.insert(col_names.begin(), binding_alias.GetSchema());
@@ -245,7 +251,8 @@ unique_ptr<ParsedExpression> TableBinding::ExpandGeneratedColumn(const Identifie
 	auto column_index = GetBindingIndex(column_name);
 	D_ASSERT(table_entry.GetColumn(LogicalIndex(column_index)).Generated());
 	// Get a copy of the generated column
-	auto expression = table_entry.GetColumn(LogicalIndex(column_index)).GeneratedExpression().Copy();
+	auto expression =
+	    table_entry.GetColumns().SharedGeneratedExpression(table_entry.GetColumn(LogicalIndex(column_index)));
 	unordered_map<idx_t, Identifier> alias_map;
 	for (auto &entry : name_map) {
 		alias_map[entry.second] = entry.first;

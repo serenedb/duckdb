@@ -2,6 +2,11 @@
 #include "duckdb/common/string.hpp"
 #include "duckdb/common/to_string.hpp"
 #include "duckdb/common/exception/catalog_exception.hpp"
+#include "duckdb/parser/expression/columnref_expression.hpp"
+#include "duckdb/parser/expression/function_expression.hpp"
+#include "duckdb/parser/expression/lambda_expression.hpp"
+#include "duckdb/parser/parsed_expression_iterator.hpp"
+#include "duckdb/parser/qualified_name.hpp"
 
 namespace duckdb {
 
@@ -139,6 +144,44 @@ vector<LogicalType> ColumnList::GetColumnTypes() const {
 bool ColumnList::ColumnExists(const Identifier &name) const {
 	auto entry = name_map.find(name);
 	return entry != name_map.end();
+}
+
+unique_ptr<ParsedExpression> ColumnList::SharedGeneratedExpression(const ColumnDefinition &column) const {
+	auto expression = column.GeneratedExpression().Copy();
+	vector<idx_t> uses(columns.size(), 0);
+	ParsedExpressionIterator::VisitExpression<ColumnRefExpression>(*expression, [&](const ColumnRefExpression &colref) {
+		auto &referenced = GetColumn(colref.GetColumnName());
+		if (referenced.Generated()) {
+			uses[referenced.Logical().index]++;
+		}
+	});
+	vector<string> parameters;
+	vector<unique_ptr<ParsedExpression>> arguments;
+	arguments.emplace_back();
+	identifier_map_t<Identifier> renamed;
+	for (auto &referenced : Logical()) {
+		if (uses[referenced.Logical().index] < 2) {
+			continue;
+		}
+		Identifier parameter(SHARED_GENERATED_PREFIX + referenced.Name().GetIdentifierName());
+		parameters.push_back(parameter.GetIdentifierName());
+		renamed.emplace(referenced.Name(), std::move(parameter));
+		arguments.push_back(make_uniq<ColumnRefExpression>(referenced.Name()));
+	}
+	if (parameters.empty()) {
+		return expression;
+	}
+	ParsedExpressionIterator::VisitExpressionMutable<ColumnRefExpression>(
+	    *expression, [&](ColumnRefExpression &colref) {
+		    auto entry = renamed.find(colref.GetColumnName());
+		    if (entry != renamed.end()) {
+			    colref.ColumnNamesMutable() = vector<Identifier> {entry->second};
+		    }
+	    });
+	arguments[0] = make_uniq<LambdaExpression>(std::move(parameters), std::move(expression));
+	return make_uniq<FunctionExpression>(
+	    QualifiedName(Identifier(SYSTEM_CATALOG), Identifier(DEFAULT_SCHEMA), Identifier("invoke")),
+	    std::move(arguments));
 }
 
 PhysicalIndex ColumnList::LogicalToPhysical(LogicalIndex logical) const {

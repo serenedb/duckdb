@@ -55,7 +55,7 @@ BindResult CheckBinder::BindCheckColumn(ColumnRefExpression &colref) {
 	}
 	auto &col = columns.GetColumn(colref.ColumnNames()[0]);
 	if (col.Generated()) {
-		auto bound_expression = col.GeneratedExpression().Copy();
+		auto bound_expression = columns.SharedGeneratedExpression(col);
 		return BindExpression(bound_expression, 0, false);
 	}
 	bound_columns.insert(col.Physical());

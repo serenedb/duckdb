@@ -43,7 +43,7 @@ void Binder::ExpandStoredGeneratedExpression(
 	}
 	// A reference to another generated column is inlined and expanded, so chains resolve here.
 	if (table.ColumnExists(name) && table.GetColumn(name).Generated()) {
-		expr = table.GetColumn(name).GeneratedExpression().Copy();
+		expr = table.GetColumns().SharedGeneratedExpression(table.GetColumn(name));
 		ExpandStoredGeneratedExpression(expr, table, substitute);
 	}
 }
@@ -141,7 +141,7 @@ void Binder::BindUpdateSet(TableIndex proj_index, unique_ptr<LogicalOperator> &r
 		if (column.Category() != TableColumnType::GENERATED_STORED) {
 			continue;
 		}
-		auto recompute = column.GeneratedExpression().Copy();
+		auto recompute = table.GetColumns().SharedGeneratedExpression(column);
 		bool depends_on_update = false;
 		ExpandStoredGeneratedExpression(recompute, table, [&](const Identifier &name) -> unique_ptr<ParsedExpression> {
 			auto entry = parsed_set_exprs.find(name);

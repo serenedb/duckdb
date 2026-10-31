@@ -1059,7 +1059,7 @@ void DataTable::VerifyAppendConstraints(ConstraintState &constraint_state, Clien
 			}
 			D_ASSERT(col.Type().id() != LogicalTypeId::ANY);
 			generated_check_binder.target_type = col.Type();
-			auto to_be_bound_expression = col.GeneratedExpression().Copy();
+			auto to_be_bound_expression = table.GetColumns().SharedGeneratedExpression(col);
 			auto bound_expression = generated_check_binder.Bind(to_be_bound_expression);
 			VerifyGeneratedExpressionSuccess(context, table, chunk, *bound_expression, col.Oid());
 		}

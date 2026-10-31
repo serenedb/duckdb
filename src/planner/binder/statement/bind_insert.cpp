@@ -132,7 +132,7 @@ void Binder::ComputeStoredGeneratedColumns(TableCatalogEntry &table, vector<uniq
 	idx_t pos = 0;
 	for (auto &col : columns.Physical()) {
 		if (col.Category() == TableColumnType::GENERATED_STORED) {
-			auto generated_expr = col.GeneratedExpression().Copy();
+			auto generated_expr = table.GetColumns().SharedGeneratedExpression(col);
 			ExpandStoredGeneratedExpression(generated_expr, table);
 			auto bound = generated_expr_binder.Bind(generated_expr);
 			ExpressionIterator::VisitExpressionMutable<BoundColumnRefExpression>(
