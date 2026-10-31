@@ -133,6 +133,7 @@ struct StatementProperties {
 	optional<ReplicationRole> replication_role;
 	optional<bool> file_access_authorized;
 	bool check_database_references = false;
+	bool hide_constraint_keys = false;
 
 	bool IsReadOnly() {
 		return modified_databases.empty();

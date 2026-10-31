@@ -423,6 +423,7 @@ public:
 	BoundStatement BindTarget(TableRef &ref, TableRefUse use);
 	void CheckTableRead(TableBinding &binding, TableCatalogEntry &table);
 	void CheckTableReads();
+	void RecordConstraintKeyVisibility(TableCatalogEntry &table);
 	void CheckCall(FunctionEntry &function);
 	void CheckStatementKind(SQLStatement &statement);
 	void RequireSuperuser();

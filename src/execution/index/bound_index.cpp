@@ -219,6 +219,34 @@ string BoundIndex::AppendRowError(DataChunk &input, idx_t index) {
 	return error;
 }
 
+string BoundIndex::ConstraintViolationMessage(VerifyExistenceType verify_type, bool primary, const string &key_name) {
+	const auto key = key_name.empty() ? string("a key") : StringUtil::Format("key \"%s\"", key_name);
+	switch (verify_type) {
+	case VerifyExistenceType::APPEND: {
+		// APPEND to PK/UNIQUE table, but node/key already exists in PK/UNIQUE table.
+		string type = primary ? "primary key" : "unique";
+		if (key_name.empty()) {
+			return StringUtil::Format("Duplicate key violates %s constraint.", type);
+		}
+		return StringUtil::Format("Duplicate key \"%s\" violates %s constraint.", key_name, type);
+	}
+	case VerifyExistenceType::APPEND_FK: {
+		// APPEND_FK to FK table, node/key does not exist in PK/UNIQUE table.
+		return StringUtil::Format("Violates foreign key constraint because %s does not exist in the referenced table",
+		                          key);
+	}
+	case VerifyExistenceType::DELETE_FK: {
+		// DELETE_FK that still exists in a FK table, i.e., not a valid delete.
+		return StringUtil::Format("Violates foreign key constraint because %s is still referenced by a foreign "
+		                          "key in a different table. If this is an unexpected constraint violation, please "
+		                          "refer to our foreign key limitations in the documentation",
+		                          key);
+	}
+	default:
+		throw NotImplementedException("Type not implemented for VerifyExistenceType");
+	}
+}
+
 namespace {
 
 struct BufferedReplayState {

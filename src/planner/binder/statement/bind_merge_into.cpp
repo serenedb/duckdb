@@ -254,6 +254,7 @@ BoundStatement Binder::BindNode(MergeQueryNode &node) {
 		}
 	}
 	auto &table = *table_ptr;
+	RecordConstraintKeyVisibility(table);
 	if (principal) {
 		const auto named_acls = [&](const vector<Identifier> &names) {
 			vector<std::span<const AclItem>> acls;

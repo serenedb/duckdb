@@ -222,6 +222,7 @@ public:
 	void ExecuteExpressions(DataChunk &input, DataChunk &result) const;
 	void ExecuteExpressions(ClientContext &context, DataChunk &input, DataChunk &result) const;
 	static string AppendRowError(DataChunk &input, idx_t index);
+	static string ConstraintViolationMessage(VerifyExistenceType verify_type, bool primary, const string &key_name);
 
 	//! Throw a constraint violation exception
 	virtual string GetConstraintViolationMessage(VerifyExistenceType verify_type, idx_t failed_index,

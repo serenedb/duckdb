@@ -275,6 +275,7 @@ BoundStatement Binder::BindNode(UpdateQueryNode &node) {
 		}
 	}
 	auto &table = *table_ptr;
+	RecordConstraintKeyVisibility(table);
 
 	if (!node.prioritize_table_when_binding) {
 		if (auto expanded = TryExpandTriggers(node, table, TriggerEventType::UPDATE_EVENT)) {

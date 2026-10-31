@@ -40,6 +40,7 @@ void TransactionContext::BeginTransaction() {
 	auto start_timestamp = Timestamp::GetCurrentTimestamp();
 	auto global_transaction_id = context.db->GetDatabaseManager().GetNewTransactionNumber();
 	current_transaction = make_uniq<MetaTransaction>(context, start_timestamp, global_transaction_id);
+	context.hide_constraint_keys = false;
 
 	// Notify any registered state of transaction begin
 	for (auto &state : context.registered_state->States()) {

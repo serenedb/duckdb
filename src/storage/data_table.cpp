@@ -16,6 +16,7 @@
 #include "duckdb/common/vector_size.hpp"
 #include "duckdb/common/vector_operations/vector_operations.hpp"
 #include "duckdb/execution/expression_executor.hpp"
+#include "duckdb/execution/index/bound_index.hpp"
 #include "duckdb/execution/index/unbound_index.hpp"
 #include "duckdb/catalog/catalog_entry/schema_catalog_entry.hpp"
 #include "duckdb/execution/index/index_type_set.hpp"
@@ -891,10 +892,12 @@ idx_t LocateErrorIndex(ConflictManager &manager, const bool is_append, const idx
 	return FirstMissingMatch(manager, count);
 }
 
-static string ConstructForeignKeyError(optional_idx conflict, bool is_append, const shared_ptr<IndexEntry> &entry,
-                                       DataChunk &input) {
+[[noreturn]] static void ThrowForeignKeyError(optional_idx conflict, bool is_append,
+                                              const shared_ptr<IndexEntry> &entry, DataChunk &input) {
 	const auto verify_type = is_append ? VerifyExistenceType::APPEND_FK : VerifyExistenceType::DELETE_FK;
-	return entry->GetConstraintViolationMessage(verify_type, conflict.GetIndex(), input);
+	throw ConstraintException(
+	    {{"message_without_key", BoundIndex::ConstraintViolationMessage(verify_type, false, string())}},
+	    entry->GetConstraintViolationMessage(verify_type, conflict.GetIndex(), input));
 }
 
 bool IsForeignKeyConstraintError(const ConflictManager &manager, const bool is_append, const idx_t input_count) {
@@ -987,8 +990,7 @@ void DataTable::VerifyForeignKeyConstraint(optional_ptr<LocalTableStorage> stora
 	index_entry = data_table.info->indexes.FindForeignKeyIndex(dst_keys_ptr.get(), fk_type);
 	if (!local_verification) {
 		auto conflict = LocateErrorIndex(global_conflict_manager, is_append, count);
-		auto message = ConstructForeignKeyError(conflict, is_append, index_entry, dst_chunk);
-		throw ConstraintException(message);
+		ThrowForeignKeyError(conflict, is_append, index_entry, dst_chunk);
 	}
 
 	auto &transact_index = local_storage.GetIndexes(context, data_table);
@@ -1022,21 +1024,18 @@ void DataTable::VerifyForeignKeyConstraint(optional_ptr<LocalTableStorage> stora
 			// We don't throw, every value was present in either regular or transaction storage
 			return;
 		}
-		auto message = ConstructForeignKeyError(conflict, true, index_entry, dst_chunk);
-		throw ConstraintException(message);
+		ThrowForeignKeyError(conflict, true, index_entry, dst_chunk);
 	}
 
 	if (!is_append) {
 		if (global_error) {
 			auto conflict = LocateErrorIndex(global_conflict_manager, false, count);
-			auto message = ConstructForeignKeyError(conflict, false, index_entry, dst_chunk);
-			throw ConstraintException(message);
+			ThrowForeignKeyError(conflict, false, index_entry, dst_chunk);
 		}
 
 		D_ASSERT(local_conflict_manager.HasConflicts());
 		auto conflict = LocateErrorIndex(local_conflict_manager, false, count);
-		auto message = ConstructForeignKeyError(conflict, false, transaction_index_entry, dst_chunk);
-		throw ConstraintException(message);
+		ThrowForeignKeyError(conflict, false, transaction_index_entry, dst_chunk);
 	}
 }
 

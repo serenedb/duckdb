@@ -164,6 +164,7 @@ public:
 	optional_ptr<const RoleAccess> principal;
 	idx_t principal_role = DConstants::INVALID_INDEX;
 	idx_t session_role = DConstants::INVALID_INDEX;
+	bool hide_constraint_keys = false;
 
 	class FileAccessScopeGuard {
 	public:

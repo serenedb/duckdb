@@ -230,6 +230,12 @@ void ClientContext::Destroy() {
 }
 
 void ClientContext::ProcessError(ErrorData &error, std::string_view query) const {
+	if (hide_constraint_keys && error.Type() == ExceptionType::CONSTRAINT) {
+		auto message_without_key = error.ExtraInfo().find("message_without_key");
+		if (message_without_key != error.ExtraInfo().end()) {
+			error = ErrorData(ExceptionType::CONSTRAINT, message_without_key->second);
+		}
+	}
 	error.FinalizeError();
 	if (Settings::Get<ErrorsAsJSONSetting>(*this)) {
 		error.ConvertErrorToJSON();

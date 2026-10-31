@@ -529,6 +529,24 @@ void Binder::CheckTableReads() {
 	}
 }
 
+void Binder::RecordConstraintKeyVisibility(TableCatalogEntry &table) {
+	auto &properties = GetStatementProperties();
+	if (!principal || properties.hide_constraint_keys ||
+	    principal->Can(CatalogType::TABLE_ENTRY, table.permissions, AclMode::Select)) {
+		return;
+	}
+	if (!table.IsDuckTable()) {
+		properties.hide_constraint_keys = true;
+		return;
+	}
+	auto &columns = table.GetColumns();
+	vector<std::span<const AclItem>> acls;
+	for (auto column_id : table.GetStorage().GetDataTableInfo()->GetIndexes().GetIndexedColumns()) {
+		acls.emplace_back(columns.GetColumn(columns.PhysicalToLogical(PhysicalIndex(column_id))).Acl());
+	}
+	properties.hide_constraint_keys = !acls.empty() && !principal->CanColumns(table.permissions, AclMode::Select, acls);
+}
+
 TableIndex Binder::GenerateTableIndex() {
 	return TableIndex(global_binder_state->bound_tables++);
 }
