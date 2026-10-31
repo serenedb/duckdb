@@ -145,6 +145,7 @@ struct StatementProperties {
 	idx_t binding_generation = 0;
 	optional<ReplicationRole> replication_role;
 	optional<bool> file_access_authorized;
+	bool check_database_references = false;
 
 	bool IsReadOnly() {
 		return modified_databases.empty();
