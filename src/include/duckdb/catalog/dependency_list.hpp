@@ -80,6 +80,7 @@ struct NameBinding {
 	Identifier catalog;
 	vector<Identifier> schema_path;
 
+	bool operator==(const NameBinding &other) const = default;
 	void Serialize(Serializer &serializer) const;
 	static NameBinding Deserialize(Deserializer &deserializer);
 };

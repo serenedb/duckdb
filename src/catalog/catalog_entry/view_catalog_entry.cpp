@@ -3,6 +3,7 @@
 #include "duckdb/catalog/catalog_entry/schema_catalog_entry.hpp"
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/exception/binder_exception.hpp"
+#include "duckdb/common/fault_points.hpp"
 #include "duckdb/parser/parsed_data/create_view_info.hpp"
 #include "duckdb/parser/parsed_data/alter_table_info.hpp"
 #include "duckdb/parser/parsed_data/comment_on_column_info.hpp"
@@ -73,6 +74,9 @@ unique_ptr<CreateInfo> ViewCatalogEntry::GetInfo() const {
 	result->security_invoker = security_invoker;
 	result->column_acls = column_acls;
 	result->name_bindings = name_bindings;
+	SDB_IF_FAILURE("view_without_name_bindings") {
+		result->name_bindings.clear();
+	}
 	return std::move(result);
 }
 
