@@ -485,7 +485,7 @@ const MacroBodyUse &ExpressionBinder::GetMacroBodyUse(const ScalarMacroFunction 
 		if (select) {
 			auto &item = *select->select_list[0];
 			auto result = analyze(item);
-			if (result.level_independent && !result.is_volatile) {
+			if (result.level_independent) {
 				result.select_item = item;
 				use = std::move(result);
 				return use;
@@ -1143,6 +1143,7 @@ void ExpressionBinder::ExpandSubqueryArguments(DummyBinding &binding, vector<uni
 	auto subquery = make_uniq<SubqueryExpression>();
 	subquery->GetSubqueryTypeMutable() = SubqueryType::SCALAR;
 	subquery->SubqueryMutable() = std::move(statement);
+	subquery->SetPerCall();
 	expr = std::move(subquery);
 }
 
@@ -1363,6 +1364,9 @@ ScalarMacroFunction &ExpressionBinder::UnfoldMacroExpression(FunctionExpression 
 		} else {
 			expr = macro_def.expression->Copy();
 		}
+		ParsedExpressionIterator::VisitExpressionClassMutable(
+		    *expr, ExpressionClass::SUBQUERY,
+		    [](ParsedExpression &subquery) { subquery.Cast<SubqueryExpression>().SetPerCall(); });
 	}
 	const bool ordered = order_by && !order_by->orders.empty();
 	const bool call_modifiers = distinct || filter || ordered;

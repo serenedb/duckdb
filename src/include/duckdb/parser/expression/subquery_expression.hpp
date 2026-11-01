@@ -47,6 +47,12 @@ public:
 	ExpressionType &GetComparisonTypeMutable() {
 		return comparison_type;
 	}
+	bool IsPerCall() const {
+		return per_call;
+	}
+	void SetPerCall() {
+		per_call = true;
+	}
 
 	bool HasSubquery() const override {
 		return true;
@@ -75,5 +81,6 @@ private:
 	unique_ptr<ParsedExpression> child;
 	//! The comparison type of the child expression with the subquery (in case of ANY, ALL operators), empty otherwise
 	ExpressionType comparison_type;
+	bool per_call = false;
 };
 } // namespace duckdb

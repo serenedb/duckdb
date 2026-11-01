@@ -25,6 +25,12 @@ public:
 	bool IsCorrelated() const {
 		return !binder->correlated_columns.empty();
 	}
+	bool IsPerCall() const {
+		return per_call;
+	}
+	void SetPerCall() {
+		per_call = true;
+	}
 
 public:
 	const shared_ptr<Binder> &GetBinder() const {
@@ -106,5 +112,6 @@ private:
 	//! The target LogicalType of the subquery result (i.e. to which type it should be casted, if child_type <>
 	//! child_target). Only used for ANY expressions.
 	vector<LogicalType> child_targets;
+	bool per_call = false;
 };
 } // namespace duckdb

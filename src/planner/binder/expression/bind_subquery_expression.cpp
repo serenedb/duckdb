@@ -178,6 +178,9 @@ BindResult ExpressionBinder::BindExpression(SubqueryExpression &expr, idx_t dept
 	result->SubqueryMutable() = std::move(bound_node);
 	result->SubqueryTypeMutable() = expr.GetSubqueryType();
 	result->ComparisonTypeMutable() = expr.GetComparisonType();
+	if (expr.IsPerCall()) {
+		result->SetPerCall();
+	}
 
 	return BindResult(std::move(result));
 }

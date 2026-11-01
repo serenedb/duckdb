@@ -893,7 +893,7 @@ unique_ptr<Expression> Binder::PlanSubquery(BoundSubqueryExpression &expr, uniqu
 	auto plan = std::move(subquery_root);
 
 	unique_ptr<Expression> result_expression;
-	if (!expr.IsCorrelated()) {
+	if (!expr.IsCorrelated() && !(expr.IsPerCall() && plan->HasVolatileExpressions())) {
 		result_expression = PlanUncorrelatedSubquery(*this, expr, root, std::move(plan));
 	} else {
 		result_expression = PlanCorrelatedSubquery(*this, expr, root, std::move(plan));

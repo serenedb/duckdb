@@ -498,6 +498,12 @@
         "id": 203,
         "name": "comparison_type",
         "type": "ExpressionType"
+      },
+      {
+        "name": "per_call",
+        "type": "bool",
+        "serialize_skip": true,
+        "hash_skip": true
       }
     ]
   },
