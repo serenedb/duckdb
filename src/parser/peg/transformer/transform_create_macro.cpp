@@ -199,9 +199,22 @@ static void ApplyFunctionDecorators(PEGTransformer &transformer, RepeatParseResu
 		} else if (decorator_name == "StrictClause") {
 			auto &strict_choice = decorator_choice.Cast<ListParseResult>().Child<ChoiceParseResult>(0).GetResult();
 			macro_function.strict = strict_choice.type == ParseResultType::KEYWORD;
+		} else if (decorator_name == "VolatilityKeyword") {
+			auto keyword = decorator_choice.Cast<ListParseResult>()
+			                   .Child<ChoiceParseResult>(0)
+			                   .GetResult()
+			                   .Cast<KeywordParseResult>()
+			                   .keyword;
+			if (StringUtil::CIEquals(keyword, "IMMUTABLE")) {
+				macro_function.stability = FunctionStability::CONSISTENT;
+			} else if (StringUtil::CIEquals(keyword, "STABLE")) {
+				macro_function.stability = FunctionStability::CONSISTENT_WITHIN_QUERY;
+			} else {
+				macro_function.stability = FunctionStability::VOLATILE;
+			}
 		}
-		// Other decorators (volatility, security, cost, rows, parallel, leakproof) are accepted for PG-syntax
-		// compat but their semantics are dropped.
+		// Other decorators (security, cost, rows, parallel, leakproof) are accepted for PG-syntax compat but their
+		// semantics are dropped.
 	}
 }
 

@@ -56,6 +56,7 @@ public:
 	//! Whether this overload is a procedure (CALL only, not usable in SELECT/FROM)
 	bool is_procedure = false;
 	bool strict = false;
+	FunctionStability stability = FunctionStability::VOLATILE;
 	string source;
 
 public:
