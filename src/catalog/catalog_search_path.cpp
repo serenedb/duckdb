@@ -479,7 +479,10 @@ vector<CatalogSearchEntry> CatalogSearchPath::GetWithPrecedenceSchemas(ClientCon
 	ForEachInLookupOrder(paths, builtins_first && builtins_first_order, [&](const CatalogSearchEntry &path) {
 		// Resolve implicit entries with default_schema_precedence to the catalog's default schema.
 		if (!path.GetSchema().empty()) {
-			res.emplace_back(path);
+			auto resolved = ResolveSchema(context, path);
+			if (!resolved.empty()) {
+				res.emplace_back(path.GetCatalog(), Identifier(std::move(resolved)));
+			}
 			return;
 		}
 		if (path.GetCatalog().empty() || !path.DefaultSchemaPrecedence()) {
