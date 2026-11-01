@@ -390,7 +390,9 @@ BoundStatement Binder::BindNode(UpdateQueryNode &node) {
 
 	auto &properties = GetStatementProperties();
 	properties.result_eagerness = ResultEagerness::FORCED;
-	properties.return_type = StatementReturnType::CHANGED_ROWS;
+	if (!IsInsideSubquery()) {
+		properties.return_type = StatementReturnType::CHANGED_ROWS;
+	}
 	return result;
 }
 
