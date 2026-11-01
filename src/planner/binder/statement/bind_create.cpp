@@ -367,6 +367,9 @@ public:
 			if (table && DependencyManager::CanDepend(catalog, table->ParentCatalog())) {
 				LogicalDependency dependency(*table);
 				for (auto &column : get.GetColumnIds()) {
+					if (column.IsVirtualColumn()) {
+						continue;
+					}
 					dependency.subdependencies.insert(
 					    SubDependency {AlterTableType::REMOVE_COLUMN, table->GetColumn(column.ToLogical()).Name()});
 				}
