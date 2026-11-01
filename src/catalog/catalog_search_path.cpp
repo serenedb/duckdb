@@ -290,8 +290,8 @@ static string ResolveSchema(ClientContext &context, const CatalogSearchEntry &en
 	return entry.GetSchema().GetIdentifierName();
 }
 
-vector<CatalogSearchEntry> CatalogSearchPath::Get() const {
-	auto &ordered = lookup_paths.empty() ? paths : lookup_paths;
+vector<CatalogSearchEntry> CatalogSearchPath::Get(bool builtins_first) const {
+	auto &ordered = builtins_first && !lookup_paths.empty() ? lookup_paths : paths;
 	vector<CatalogSearchEntry> res;
 	res.reserve(ordered.size());
 	for (auto &path : ordered) {
@@ -450,9 +450,10 @@ vector<CatalogSearchEntry> CatalogSearchPath::GetImplicitSearchCatalogs() const 
 	return catalogs;
 }
 
-vector<CatalogSearchEntry> CatalogSearchPath::GetWithPrecedenceSchemas(ClientContext &context) const {
+vector<CatalogSearchEntry> CatalogSearchPath::GetWithPrecedenceSchemas(ClientContext &context,
+                                                                       bool builtins_first) const {
 	vector<CatalogSearchEntry> res;
-	for (auto &path : lookup_paths.empty() ? paths : lookup_paths) {
+	for (auto &path : builtins_first && !lookup_paths.empty() ? lookup_paths : paths) {
 		// Resolve implicit entries with default_schema_precedence to the catalog's default schema.
 		if (path.GetSchema().empty()) {
 			if (path.GetCatalog().empty() || !path.DefaultSchemaPrecedence()) {

@@ -213,6 +213,7 @@ public:
 	identifier_set_t superuser_functions;
 	identifier_set_t file_free_functions;
 	identifier_set_t superuser_foreign_data_wrappers;
+	identifier_set_t builtin_relations;
 	Identifier cluster_catalog;
 
 public:
