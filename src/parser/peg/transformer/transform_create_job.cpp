@@ -7,6 +7,14 @@
 
 namespace duckdb {
 
+static ParserOptions JobBodyParserOptions(const ParserOptions &statement_options) {
+	auto options = ParserOptions::Builtin();
+	options.identifier_case_mode = statement_options.identifier_case_mode;
+	options.integer_division = statement_options.integer_division;
+	options.regex_match_operator_semantics = statement_options.regex_match_operator_semantics;
+	return options;
+}
+
 unique_ptr<CreateStatement>
 PEGTransformerFactory::TransformCreateJobStmt(PEGTransformer &transformer, const optional<bool> &if_not_exists,
                                               const QualifiedName &qualified_name, JobScheduleInfo job_schedule,
@@ -39,7 +47,7 @@ PEGTransformerFactory::TransformCreateJobStmt(PEGTransformer &transformer, const
 
 unique_ptr<SQLStatement> PEGTransformerFactory::TransformJobScript(PEGTransformer &transformer,
                                                                    const string &string_literal) {
-	auto parser = Parser::GetBuiltinParser();
+	Parser parser(JobBodyParserOptions(transformer.options));
 	parser.ParseQuery(string_literal);
 	if (parser.statements.empty()) {
 		throw ParserException("CREATE JOB body cannot be empty");
