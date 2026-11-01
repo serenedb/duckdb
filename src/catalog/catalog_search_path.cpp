@@ -558,7 +558,6 @@ void CatalogSearchPath::SetPathsInternal(vector<CatalogSearchEntry> new_paths) {
 	for (auto &schema : ExtensionCallbackManager::Get(context).GetExtensionSchemas()) {
 		paths.emplace_back(Identifier(SYSTEM_CATALOG), Identifier(schema));
 	}
-	builtins_first_order = false;
 	if (!context.client_data) {
 		return;
 	}
