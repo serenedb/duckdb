@@ -52,6 +52,7 @@ public:
 	idx_t rule_oid = 0;
 	idx_t row_type_oid = 0;
 	vector<vector<AclItem>> column_acls;
+	vector<NameBinding> name_bindings;
 
 	vector<idx_t> GetSubObjectOids() const;
 

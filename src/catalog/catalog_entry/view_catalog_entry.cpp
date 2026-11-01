@@ -45,6 +45,7 @@ void ViewCatalogEntry::Initialize(CreateViewInfo &info) {
 	this->rule_oid = AssignPostgresOid(catalog, info.internal, info.rule_oid, 1);
 	this->row_type_oid = AssignPostgresOid(catalog, info.internal, info.row_type_oid, 2);
 	this->column_acls = info.column_acls;
+	this->name_bindings = info.name_bindings;
 }
 
 ViewCatalogEntry::ViewCatalogEntry(Catalog &catalog, SchemaCatalogEntry &schema, CreateViewInfo &info)
@@ -75,6 +76,7 @@ unique_ptr<CreateInfo> ViewCatalogEntry::GetInfo() const {
 	result->rule_oid = rule_oid;
 	result->row_type_oid = row_type_oid;
 	result->column_acls = column_acls;
+	result->name_bindings = name_bindings;
 	return std::move(result);
 }
 
@@ -224,8 +226,8 @@ void ViewCatalogEntry::BindView(ClientContext &context, BindViewAction action) {
 	bind_thread = ThreadUtil::GetThreadId();
 	try {
 		auto columns = make_shared_ptr<ViewColumnInfo>();
-		Binder::BindView(context, GetQuery(), ParentCatalog().GetName(), ParentSchema(context).name, nullptr, aliases,
-		                 columns->types, columns->names);
+		Binder::BindView(context, GetQuery(), ParentCatalog().GetName(), ParentSchema(context).name, nullptr, nullptr,
+		                 aliases, columns->types, columns->names);
 		view_columns.atomic_store(columns);
 	} catch (...) {
 		bind_state = prev_bind_state;

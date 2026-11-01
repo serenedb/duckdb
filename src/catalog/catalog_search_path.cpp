@@ -153,8 +153,9 @@ vector<CatalogSearchEntry> CatalogSearchEntry::ParseList(const string &input) {
 	return result;
 }
 
-CatalogSearchPath::CatalogSearchPath(ClientContext &context_p, vector<CatalogSearchEntry> entries)
-    : context(context_p) {
+CatalogSearchPath::CatalogSearchPath(ClientContext &context_p, vector<CatalogSearchEntry> entries,
+                                     bool session_objects_p)
+    : context(context_p), session_objects(session_objects_p) {
 	SetPathsInternal(std::move(entries));
 }
 
@@ -551,12 +552,14 @@ vector<CatalogSearchEntry> CatalogSearchPath::GetWithPrecedenceSchemas(ClientCon
 }
 
 const CatalogSearchEntry &CatalogSearchPath::GetDefault() const {
-	D_ASSERT(paths.size() >= 2);
-	return paths[1];
+	const idx_t first = session_objects ? 1 : 0;
+	D_ASSERT(paths.size() >= first + 1);
+	return paths[first];
 }
 
 CatalogSearchEntry CatalogSearchPath::GetResolvedDefault() const {
-	D_ASSERT(paths.size() >= set_paths.size() + 2);
+	const idx_t first = session_objects ? 1 : 0;
+	D_ASSERT(paths.size() >= set_paths.size() + first + 1);
 	// No user-set entries -> no default schema (PG: current_schema is NULL,
 	// CREATE without schema prefix errors with "no schema has been selected").
 	if (set_paths.empty()) {
@@ -565,10 +568,10 @@ CatalogSearchEntry CatalogSearchPath::GetResolvedDefault() const {
 	// Walk the user-set range and return the first entry whose schema resolves
 	// AND actually exists in the target catalog. PG falls through to the next
 	// search_path entry when "$user" doesn't match a real schema.
-	auto user_end = 1 + set_paths.size();
+	auto user_end = first + set_paths.size();
 	const bool can_check_existence = context.transaction.HasActiveTransaction();
 	bool skipped_unusable = false;
-	for (idx_t i = 1; i < user_end; i++) {
+	for (idx_t i = first; i < user_end; i++) {
 		auto resolved = ResolveSchema(context, paths[i]);
 		if (resolved.empty()) {
 			continue;
@@ -606,7 +609,9 @@ void CatalogSearchPath::SetPathsInternal(vector<CatalogSearchEntry> new_paths) {
 
 	paths.clear();
 	paths.reserve(set_paths.size() + 5);
-	paths.emplace_back(TEMP_CATALOG, TemporarySchema(context));
+	if (session_objects) {
+		paths.emplace_back(TEMP_CATALOG, TemporarySchema(context));
+	}
 	for (auto &path : set_paths) {
 		paths.push_back(path);
 	}

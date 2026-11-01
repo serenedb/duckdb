@@ -53,6 +53,7 @@ public:
 	idx_t rule_oid = 0;
 	idx_t row_type_oid = 0;
 	vector<vector<AclItem>> column_acls;
+	vector<NameBinding> name_bindings;
 
 public:
 	unique_ptr<CreateInfo> Copy() const override;
