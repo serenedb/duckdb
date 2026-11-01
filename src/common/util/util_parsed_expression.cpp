@@ -508,6 +508,9 @@ bool ColumnRefExpression::Equals(const ParsedExpression &other) const {
 			return false;
 		}
 	}
+	if (macro_parameter != other_p.macro_parameter) {
+		return false;
+	}
 	return true;
 }
 
@@ -522,6 +525,7 @@ hash_t ColumnRefExpression::NodeHash() const {
 unique_ptr<ParsedExpression> ColumnRefExpression::Copy() const {
 	auto copy = duckdb::unique_ptr<ColumnRefExpression>(new ColumnRefExpression());
 	copy->column_names = column_names;
+	copy->macro_parameter = macro_parameter;
 	copy->CopyBase(*this);
 	return std::move(copy);
 }
@@ -855,6 +859,9 @@ bool SubqueryExpression::Equals(const ParsedExpression &other) const {
 	if (comparison_type != other_p.comparison_type) {
 		return false;
 	}
+	if (per_call != other_p.per_call) {
+		return false;
+	}
 	return true;
 }
 
@@ -871,6 +878,7 @@ unique_ptr<ParsedExpression> SubqueryExpression::Copy() const {
 	copy->subquery = subquery ? unique_ptr_cast<SQLStatement, SelectStatement>(subquery->Copy()) : nullptr;
 	copy->child = child ? child->Copy() : nullptr;
 	copy->comparison_type = comparison_type;
+	copy->per_call = per_call;
 	copy->CopyBase(*this);
 	return std::move(copy);
 }

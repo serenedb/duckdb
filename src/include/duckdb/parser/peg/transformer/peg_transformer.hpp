@@ -1760,6 +1760,12 @@ public:
 	static void InitializeMacroParameterTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
 	static arena_ptr<TransformResultValue> FinalizeMacroParameterTrampoline(PEGTransformer &transformer,
 	                                                                        GeneratedTransformProcess &process);
+	static void InitializeDefaultParameterTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
+	static arena_ptr<TransformResultValue> FinalizeDefaultParameterTrampoline(PEGTransformer &transformer,
+	                                                                          GeneratedTransformProcess &process);
+	static void InitializeParameterSignatureTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
+	static arena_ptr<TransformResultValue> FinalizeParameterSignatureTrampoline(PEGTransformer &transformer,
+	                                                                            GeneratedTransformProcess &process);
 	static void InitializeModeParameterTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
 	static arena_ptr<TransformResultValue> FinalizeModeParameterTrampoline(PEGTransformer &transformer,
 	                                                                       GeneratedTransformProcess &process);
@@ -5395,6 +5401,8 @@ public:
 	                                                          unique_ptr<ParsedExpression> expression);
 	static vector<MacroParameter> TransformMacroParameters(PEGTransformer &transformer,
 	                                                       vector<MacroParameter> macro_parameter);
+	static MacroParameter TransformDefaultParameter(PEGTransformer &transformer, MacroParameter parameter_signature,
+	                                                unique_ptr<ParsedExpression> expression);
 	static MacroParameter TransformModeParameter(PEGTransformer &transformer, char func_arg_mode,
 	                                             const Identifier &type_func_name, const optional<LogicalType> &type);
 	static MacroParameter TransformSimpleParameter(PEGTransformer &transformer, const Identifier &type_func_name,

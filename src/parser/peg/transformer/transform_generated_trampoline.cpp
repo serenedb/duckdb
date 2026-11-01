@@ -864,6 +864,12 @@ static const TransformFrameOps MACRO_PARAMETERS_OPS = {"MacroParameters",
 static const TransformFrameOps MACRO_PARAMETER_OPS = {"MacroParameter",
                                                       &PEGTransformerFactory::InitializeMacroParameterTrampoline,
                                                       &PEGTransformerFactory::FinalizeMacroParameterTrampoline, true};
+static const TransformFrameOps DEFAULT_PARAMETER_OPS = {"DefaultParameter",
+                                                        &PEGTransformerFactory::InitializeDefaultParameterTrampoline,
+                                                        &PEGTransformerFactory::FinalizeDefaultParameterTrampoline};
+static const TransformFrameOps PARAMETER_SIGNATURE_OPS = {
+    "ParameterSignature", &PEGTransformerFactory::InitializeParameterSignatureTrampoline,
+    &PEGTransformerFactory::FinalizeParameterSignatureTrampoline, true};
 static const TransformFrameOps MODE_PARAMETER_OPS = {"ModeParameter",
                                                      &PEGTransformerFactory::InitializeModeParameterTrampoline,
                                                      &PEGTransformerFactory::FinalizeModeParameterTrampoline};
@@ -3969,6 +3975,8 @@ PEGTransformerFactory::GeneratedTransformFrameOps() {
 	    {"MacroDefinitionBody", &MACRO_DEFINITION_BODY_OPS},
 	    {"MacroParameters", &MACRO_PARAMETERS_OPS},
 	    {"MacroParameter", &MACRO_PARAMETER_OPS},
+	    {"DefaultParameter", &DEFAULT_PARAMETER_OPS},
+	    {"ParameterSignature", &PARAMETER_SIGNATURE_OPS},
 	    {"ModeParameter", &MODE_PARAMETER_OPS},
 	    {"SimpleParameter", &SIMPLE_PARAMETER_OPS},
 	    {"ScalarMacroDefinition", &SCALAR_MACRO_DEFINITION_OPS},
@@ -10634,6 +10642,44 @@ void PEGTransformerFactory::InitializeMacroParameterTrampoline(PEGTransformer &t
 arena_ptr<TransformResultValue>
 PEGTransformerFactory::FinalizeMacroParameterTrampoline(PEGTransformer &transformer,
                                                         GeneratedTransformProcess &process) {
+	auto result = process.TakeResult<MacroParameter>(0);
+	return transformer.MakeResult<MacroParameter>(std::move(result));
+}
+
+void PEGTransformerFactory::InitializeDefaultParameterTrampoline(PEGTransformer &transformer,
+                                                                 GeneratedTransformProcess &process) {
+	auto &list_pr = process.parse_result.Cast<ListParseResult>();
+	process.ReserveChildSlots(2);
+	process.PushChild({list_pr.GetChild(2)}, 1);
+	process.PushChild({list_pr.GetChild(0)}, 0);
+}
+
+arena_ptr<TransformResultValue>
+PEGTransformerFactory::FinalizeDefaultParameterTrampoline(PEGTransformer &transformer,
+                                                          GeneratedTransformProcess &process) {
+	auto parameter_signature = process.TakeResult<MacroParameter>(0);
+	auto expression = process.TakeResult<unique_ptr<ParsedExpression>>(1);
+	auto result = TransformDefaultParameter(transformer, std::move(parameter_signature), std::move(expression));
+	return transformer.MakeResult<MacroParameter>(std::move(result));
+}
+
+void PEGTransformerFactory::InitializeParameterSignatureTrampoline(PEGTransformer &transformer,
+                                                                   GeneratedTransformProcess &process) {
+	auto &list_pr = process.parse_result.Cast<ListParseResult>();
+	auto &choice_pr = list_pr.Child<ChoiceParseResult>(0);
+	auto &choice_result = choice_pr.GetResult();
+	process.ReserveChildSlots(1);
+	auto child_rule = choice_result.GetRule();
+	auto has_transform_process = child_rule && child_rule->transform_process;
+	if (!has_transform_process) {
+		throw InternalException("No transform process registered for rule '%s'", choice_result.Name());
+	}
+	process.PushChild({*child_rule, choice_result}, 0);
+}
+
+arena_ptr<TransformResultValue>
+PEGTransformerFactory::FinalizeParameterSignatureTrampoline(PEGTransformer &transformer,
+                                                            GeneratedTransformProcess &process) {
 	auto result = process.TakeResult<MacroParameter>(0);
 	return transformer.MakeResult<MacroParameter>(std::move(result));
 }

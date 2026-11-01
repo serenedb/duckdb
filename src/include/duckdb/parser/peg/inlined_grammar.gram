@@ -1026,7 +1026,10 @@ ReturnMacroBody <- 'RETURN' Expression
 MacroDefinitionBody <- TableMacroDefinition / ScalarMacroDefinition
 
 MacroParameters <- List(MacroParameter)
-MacroParameter <- NamedParameter / ModeParameter / SimpleParameter
+MacroParameter <- NamedParameter / DefaultParameter / ModeParameter / SimpleParameter
+DefaultParameter <- ParameterSignature ParameterDefault Expression
+ParameterSignature <- ModeParameter / SimpleParameter
+ParameterDefault <- 'DEFAULT' / '='
 ModeParameter <- FuncArgMode TypeFuncName Type?
 SimpleParameter <- TypeFuncName Type?
 
