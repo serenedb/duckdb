@@ -266,7 +266,7 @@ bool AggregatesOnlyParameters(ParsedExpression &expr, DummyBinding &parameters,
 MacroFunctionLookup ExpressionBinder::LookupMacroFunction(const FunctionExpression &function) {
 	auto &name = function.FunctionName();
 	if (IsUnnestFunction(name) || IsSelectListSetReturningFunction(name)) {
-		return MacroFunctionLookup();
+		return MacroFunctionLookup {MacroFunctionKind::SET_RETURNING, nullptr};
 	}
 	auto &qualified_name = function.GetQualifiedName();
 	auto &functions = binder.global_binder_state->macro_functions;
@@ -368,6 +368,7 @@ void ExpressionBinder::AnalyzeMacroBody(ParsedExpression &expr, bool shareable, 
 			use.level_independent = false;
 			shareable = false;
 			break;
+		case MacroFunctionKind::SET_RETURNING:
 		case MacroFunctionKind::OTHER:
 			use.lambda_body = false;
 			use.level_independent = false;
@@ -613,7 +614,7 @@ vector<bool> ExpressionBinder::MacroArgumentsBindInPlace(FunctionExpression &fun
 		}
 		if (in_place) {
 			auto &scan = ScanMacroArgument(expression, scans[i]);
-			in_place = !scan.blocked && !scan.subquery;
+			in_place = !scan.blocked && !scan.set_returning && !scan.subquery;
 		}
 		if (!named) {
 			position++;
@@ -837,6 +838,11 @@ void ExpressionBinder::ScanMacroArgument(ParsedExpression &argument, MacroArgume
 			scan.constant = false;
 			scan.lambda_body = false;
 			break;
+		case MacroFunctionKind::SET_RETURNING:
+			scan.constant = false;
+			scan.lambda_body = false;
+			scan.set_returning = true;
+			break;
 		case MacroFunctionKind::OTHER:
 			scan.blocked = true;
 			scan.lambda_body = false;
@@ -1025,6 +1031,11 @@ void ExpressionBinder::LiftCallerExpressions(unique_ptr<ParsedExpression> &expr,
 		return;
 	case ExpressionClass::WINDOW:
 		break;
+	case ExpressionClass::FUNCTION:
+		if (LookupMacroFunction(expr->Cast<FunctionExpression>()).kind == MacroFunctionKind::SET_RETURNING) {
+			break;
+		}
+		[[fallthrough]];
 	default:
 		if (!MatchesGroup(*expr)) {
 			ParsedExpressionIterator::EnumerateChildren(
@@ -1252,7 +1263,8 @@ bool ExpressionBinder::MayAggregate(SelectNode &node) {
 			return;
 		case ExpressionClass::FUNCTION: {
 			auto lookup = LookupMacroFunction(expr.Cast<FunctionExpression>());
-			if (lookup.kind == MacroFunctionKind::AGGREGATE || lookup.kind == MacroFunctionKind::OTHER) {
+			if (lookup.kind == MacroFunctionKind::AGGREGATE || lookup.kind == MacroFunctionKind::SET_RETURNING ||
+			    lookup.kind == MacroFunctionKind::OTHER) {
 				found = true;
 				return;
 			}
@@ -1347,7 +1359,8 @@ ScalarMacroFunction &ExpressionBinder::UnfoldMacroExpression(FunctionExpression 
 	}
 	bool inline_body = use && use->select_item;
 	for (idx_t i = 0; inline_body && i < positional_arguments.size(); i++) {
-		inline_body = !ScanMacroArgument(*positional_arguments[i], scans[i]).blocked;
+		auto &scan = ScanMacroArgument(*positional_arguments[i], scans[i]);
+		inline_body = !scan.blocked && !scan.set_returning;
 	}
 	unique_ptr<ParsedExpression> filter;
 	unique_ptr<OrderModifier> order_by;
@@ -1403,7 +1416,7 @@ ScalarMacroFunction &ExpressionBinder::UnfoldMacroExpression(FunctionExpression 
 				continue;
 			}
 			auto &scan = ScanMacroArgument(*argument, scans[i]);
-			if (scan.blocked) {
+			if (scan.blocked || scan.set_returning) {
 				continue;
 			}
 			const bool uncaptured = absl::c_none_of(
@@ -1463,7 +1476,7 @@ ScalarMacroFunction &ExpressionBinder::UnfoldMacroExpression(FunctionExpression 
 			    scan.names, [&](const Identifier &name) { return parameter->second.lambda_names.count(name) > 0; });
 			unique_ptr<Expression> bound;
 			auto parsed = argument->Copy();
-			if (!scan.blocked && parameter->second.shareable && uncaptured) {
+			if (!scan.blocked && !scan.set_returning && parameter->second.shareable && uncaptured) {
 				ErrorData error;
 				bound = BindChild(parsed, depth, error);
 			}

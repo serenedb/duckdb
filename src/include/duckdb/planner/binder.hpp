@@ -207,6 +207,7 @@ struct MacroArgumentScan {
 	bool has_parameter = false;
 	bool lambda_body = true;
 	bool subquery = false;
+	bool set_returning = false;
 	identifier_set_t names;
 };
 
@@ -229,6 +230,7 @@ enum class MacroFunctionKind : uint8_t {
 	VOLATILE_FUNCTION,
 	MACRO,
 	AGGREGATE,
+	SET_RETURNING,
 	OTHER,
 };
 
