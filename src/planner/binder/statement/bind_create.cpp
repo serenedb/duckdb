@@ -450,7 +450,7 @@ void Binder::BindView(ClientContext &context, const SelectStatement &stmt, const
 	auto view_search_path = view_binder->GetSearchPath(catalog, schema_name, true);
 	view_binder->entry_retriever.SetSearchPath(std::move(view_search_path));
 	if (name_bindings) {
-		view_binder->entry_retriever.RecordBindings(*name_bindings);
+		view_binder->entry_retriever.RecordBindings(catalog.GetName(), *name_bindings);
 	}
 
 	auto copy = stmt.Copy();

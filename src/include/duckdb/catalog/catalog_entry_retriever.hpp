@@ -83,8 +83,9 @@ public:
 
 	const CatalogSearchPath &GetSearchPath() const;
 	void SetSearchPath(vector<CatalogSearchEntry> entries);
-	void SetSearchPath(vector<CatalogSearchEntry> entries, const vector<NameBinding> &bindings);
-	void RecordBindings(vector<NameBinding> &bindings);
+	void SetSearchPath(vector<CatalogSearchEntry> entries, const Identifier &view_catalog,
+	                   const vector<NameBinding> &bindings);
+	void RecordBindings(const Identifier &view_catalog, vector<NameBinding> &bindings);
 
 	void SetCallback(catalog_entry_callback_t callback);
 	catalog_entry_callback_t GetCallback();
@@ -113,6 +114,7 @@ private:
 	optional_ptr<const RoleAccess> principal;
 	optional_ptr<const vector<NameBinding>> bindings;
 	optional_ptr<vector<NameBinding>> recorded_bindings;
+	Identifier bindings_catalog;
 };
 
 } // namespace duckdb
