@@ -1736,6 +1736,35 @@ TEST_CASE("Block cache benchmark: concurrent buffer manager pins of one buffer a
 	}
 }
 
+TEST_CASE("Block cache benchmark: concurrent buffer manager allocations and frees", "[.][block_cache_bench]") {
+	constexpr idx_t ALLOCATIONS = 20000;
+	for (const idx_t threads : {idx_t(1), idx_t(8), idx_t(32), idx_t(64)}) {
+		DBConfig config;
+		config.options.maximum_threads = threads;
+		DuckDB db(nullptr, &config);
+		auto &buffers = BufferManager::GetBufferManager(*db.instance);
+		const auto start = std::chrono::steady_clock::now();
+		TaskExecutor executor(TaskScheduler::GetScheduler(*db.instance));
+		for (idx_t thread = 0; thread < threads; thread++) {
+			executor.ScheduleTask(make_uniq<FunctionExecutorTask>(
+			    executor,
+			    [&]() {
+				    for (idx_t i = 0; i < ALLOCATIONS; i++) {
+					    auto buffer = buffers.Allocate(MemoryTag::HASH_TABLE, BLOCK, true);
+					    buffer.GetDataMutable()[0] = 1;
+				    }
+			    },
+			    "BufferManagerAllocateBenchTask"));
+		}
+		executor.WorkOnTasks();
+		const auto elapsed = MillisecondsSince(start);
+		Printer::PrintF("buffer manager allocations, %llu threads: %.2f M allocations/s, %.1f ns per allocation in a "
+		                "thread",
+		                threads, double(threads * ALLOCATIONS) / elapsed / 1000.0,
+		                elapsed * 1000000.0 / double(ALLOCATIONS));
+	}
+}
+
 TEST_CASE("Block cache benchmark: cold reads of a 16 MiB range from a slow source", "[.][block_cache_bench]") {
 	constexpr idx_t BLOCKS = 64;
 	DuckDB db(nullptr);

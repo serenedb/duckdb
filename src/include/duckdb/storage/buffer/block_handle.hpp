@@ -270,8 +270,9 @@ private:
 	const FileBufferType buffer_type;
 	//! A pointer to the loaded data, if any.
 	unique_ptr<FileBuffer> buffer;
-	//! The eviction queue the loaded block is in, and its slot there; guarded by that queue's lock.
+	//! The eviction queue the loaded block is in, and its stripe and slot there; guarded by that stripe's lock.
 	optional_ptr<EvictionQueue> queue;
+	idx_t queue_stripe = 0;
 	idx_t queue_slot = 0;
 	//! The block handle of this memory.
 	weak_ptr<BlockHandle> owner;

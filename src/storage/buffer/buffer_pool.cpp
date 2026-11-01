@@ -40,76 +40,91 @@ static vector<FileBufferType> EvictionQueueTypeIdxToFileBufferTypes(const idx_t 
 
 //! A clock over the loaded blocks of one type and priority. Pins and unpins never touch it: a block joins it once
 //! it is loaded and leaves it once it is unloaded or destroyed. Eviction moves the hand past pinned blocks and gives
-//! used blocks one more round.
+//! used blocks one more round. Blocks join the stripe of the CPU they are loaded on, so threads that allocate and
+//! free blocks at once take different locks; eviction goes around the stripes in turn.
 struct EvictionQueue {
 public:
 	explicit EvictionQueue(const vector<FileBufferType> &file_buffer_types_p) : file_buffer_types(file_buffer_types_p) {
 	}
 
 	void Add(BlockMemory &memory) {
-		annotated_lock_guard<annotated_mutex> guard(lock);
+		const auto index = TaskScheduler::GetEstimatedCPUId() % STRIPES;
+		auto &stripe = stripes[index];
+		annotated_lock_guard<annotated_mutex> guard(stripe.lock);
 		idx_t slot;
-		if (free_slots.empty()) {
-			slot = slots.size();
-			slots.push_back(&memory);
+		if (stripe.free_slots.empty()) {
+			slot = stripe.slots.size();
+			stripe.slots.push_back(&memory);
 		} else {
-			slot = free_slots.back();
-			free_slots.pop_back();
-			slots[slot] = &memory;
+			slot = stripe.free_slots.back();
+			stripe.free_slots.pop_back();
+			stripe.slots[slot] = &memory;
 		}
 		memory.queue = this;
+		memory.queue_stripe = index;
 		memory.queue_slot = slot;
-		blocks++;
-		insertions++;
+		stripe.blocks.store(stripe.blocks.load(std::memory_order_relaxed) + 1, std::memory_order_relaxed);
+		stripe.insertions.store(stripe.insertions.load(std::memory_order_relaxed) + 1, std::memory_order_relaxed);
 	}
 
 	void Remove(BlockMemory &memory) {
-		annotated_lock_guard<annotated_mutex> guard(lock);
-		D_ASSERT(slots[memory.queue_slot] == &memory);
-		slots[memory.queue_slot] = nullptr;
-		free_slots.push_back(memory.queue_slot);
+		auto &stripe = stripes[memory.queue_stripe];
+		annotated_lock_guard<annotated_mutex> guard(stripe.lock);
+		D_ASSERT(stripe.slots[memory.queue_slot] == &memory);
+		stripe.slots[memory.queue_slot] = nullptr;
+		stripe.free_slots.push_back(memory.queue_slot);
 		memory.queue = nullptr;
-		blocks--;
+		stripe.blocks.store(stripe.blocks.load(std::memory_order_relaxed) - 1, std::memory_order_relaxed);
 	}
 
 	//! The next block to evict, or nothing once [budget] slots were passed without one. A budget of
 	//! INVALID_INDEX starts at two rounds of the clock: one clears the marks of used blocks, the next evicts them.
 	shared_ptr<BlockMemory> NextVictim(idx_t &budget) {
-		annotated_lock_guard<annotated_mutex> guard(lock);
 		if (budget == DConstants::INVALID_INDEX) {
-			budget = 2 * slots.size() + 1;
+			budget = 2 * GetApproximateSize() + STRIPES;
 		}
-		while (budget > 0 && !slots.empty()) {
-			budget--;
-			hand = hand + 1 < slots.size() ? hand + 1 : 0;
-			auto memory = slots[hand];
-			if (!memory || !memory->IsUnpinnedAndLoaded() || memory->TakeReferenced()) {
-				continue;
+		while (budget > 0) {
+			auto &stripe = stripes[next_stripe.load(std::memory_order_relaxed) % STRIPES];
+			{
+				annotated_lock_guard<annotated_mutex> guard(stripe.lock);
+				// Go around this stripe once, then on to the next.
+				for (idx_t passed = 0; passed < stripe.slots.size() && budget > 0; passed++) {
+					budget--;
+					stripe.hand = stripe.hand + 1 < stripe.slots.size() ? stripe.hand + 1 : 0;
+					auto memory = stripe.slots[stripe.hand];
+					if (!memory || !memory->IsUnpinnedAndLoaded() || memory->TakeReferenced()) {
+						continue;
+					}
+					// A block being destroyed waits for the lock to leave the queue, and cannot be locked anymore.
+					auto victim = memory->weak_from_this().lock();
+					if (victim) {
+						return victim;
+					}
+				}
 			}
-			// A block being destroyed waits for the lock to leave the queue, and cannot be locked anymore.
-			auto victim = memory->weak_from_this().lock();
-			if (victim) {
-				return victim;
-			}
+			budget -= budget > 0;
+			next_stripe.fetch_add(1, std::memory_order_relaxed);
 		}
 		return nullptr;
 	}
 
 	//! The blocks that have not been used since [limit]
 	vector<shared_ptr<BlockMemory>> UnusedSince(int64_t limit, int64_t now) {
-		annotated_lock_guard<annotated_mutex> guard(lock);
 		vector<shared_ptr<BlockMemory>> result;
-		for (auto memory : slots) {
-			if (!memory || !memory->IsUnpinnedAndLoaded()) {
-				continue;
-			}
-			const auto used = memory->GetLRUTimestamp();
-			if (used >= limit && used <= now) {
-				continue;
-			}
-			auto block = memory->weak_from_this().lock();
-			if (block) {
-				result.push_back(std::move(block));
+		for (auto &stripe : stripes) {
+			annotated_lock_guard<annotated_mutex> guard(stripe.lock);
+			for (auto memory : stripe.slots) {
+				if (!memory || !memory->IsUnpinnedAndLoaded()) {
+					continue;
+				}
+				const auto used = memory->GetLRUTimestamp();
+				if (used >= limit && used <= now) {
+					continue;
+				}
+				auto block = memory->weak_from_this().lock();
+				if (block) {
+					result.push_back(std::move(block));
+				}
 			}
 		}
 		return result;
@@ -119,10 +134,18 @@ public:
 		return std::find(file_buffer_types.begin(), file_buffer_types.end(), type) != file_buffer_types.end();
 	}
 	idx_t GetApproximateSize() const {
-		return blocks.load(std::memory_order_relaxed);
+		idx_t result = 0;
+		for (auto &stripe : stripes) {
+			result += stripe.blocks.load(std::memory_order_relaxed);
+		}
+		return result;
 	}
 	idx_t GetTotalInsertions() const {
-		return insertions.load(std::memory_order_relaxed);
+		idx_t result = 0;
+		for (auto &stripe : stripes) {
+			result += stripe.insertions.load(std::memory_order_relaxed);
+		}
+		return result;
 	}
 
 public:
@@ -130,14 +153,21 @@ public:
 	const vector<FileBufferType> file_buffer_types;
 
 private:
-	annotated_mutex lock;
-	//! The blocks in the queue, and the slots of blocks that left it
-	vector<optional_ptr<BlockMemory>> slots DUCKDB_GUARDED_BY(lock);
-	vector<idx_t> free_slots DUCKDB_GUARDED_BY(lock);
-	//! The clock hand
-	idx_t hand DUCKDB_GUARDED_BY(lock) = 0;
-	atomic<idx_t> blocks {0};
-	atomic<idx_t> insertions {0};
+	static constexpr idx_t STRIPES = 64;
+	struct alignas(64) Stripe {
+		annotated_mutex lock;
+		//! The blocks in the stripe, and the slots of blocks that left it
+		vector<optional_ptr<BlockMemory>> slots DUCKDB_GUARDED_BY(lock);
+		vector<idx_t> free_slots DUCKDB_GUARDED_BY(lock);
+		//! The clock hand
+		idx_t hand DUCKDB_GUARDED_BY(lock) = 0;
+		//! Written under the lock, read without it
+		atomic<idx_t> blocks {0};
+		atomic<idx_t> insertions {0};
+	};
+	array<Stripe, STRIPES> stripes;
+	//! The stripe eviction looks at
+	atomic<idx_t> next_stripe {0};
 };
 
 BufferPool::BufferPool(BlockAllocator &block_allocator, idx_t maximum_memory, bool track_eviction_timestamps,
