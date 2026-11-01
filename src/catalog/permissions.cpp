@@ -277,28 +277,30 @@ void Permissions::AssignOwner(idx_t new_owner, CatalogType objtype, optional_ptr
 	if (!database) {
 		return;
 	}
-	vector<AclItem> granted;
-	auto apply = [&](idx_t scope) {
+	auto row = [&](idx_t scope) -> optional_ptr<const DefaultAcl> {
 		for (auto &defaults_entry : database->defaults) {
-			if (defaults_entry.role != new_owner || defaults_entry.objtype != objtype ||
-			    defaults_entry.scope != scope) {
-				continue;
-			}
-			if (granted.empty()) {
-				granted = AclDefault(objtype, new_owner);
-			}
-			for (auto &item : defaults_entry.acl) {
-				Grant(granted, item.grantee, item.grantor, item.privs, item.grant_option);
+			if (defaults_entry.role == new_owner && defaults_entry.objtype == objtype &&
+			    defaults_entry.scope == scope) {
+				return &defaults_entry;
 			}
 		}
+		return nullptr;
 	};
+	auto global = row(0);
+	optional_ptr<const DefaultAcl> in_schema;
 	if (schema.IsValid()) {
-		apply(schema.GetIndex());
+		in_schema = row(schema.GetIndex());
 	}
-	apply(0);
-	if (!granted.empty()) {
-		acl = std::move(granted);
+	if (!global && !in_schema) {
+		return;
 	}
+	auto granted = global ? global->acl : AclDefault(objtype, new_owner);
+	if (in_schema) {
+		for (auto &item : in_schema->acl) {
+			Grant(granted, item.grantee, item.grantor, item.privs, item.grant_option);
+		}
+	}
+	acl = std::move(granted);
 }
 
 static bool FilterMayContain(std::span<const uint64_t> filter, idx_t member) {
