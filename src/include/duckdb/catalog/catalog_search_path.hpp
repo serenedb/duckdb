@@ -114,7 +114,7 @@ private:
 private:
 	ClientContext &context;
 	vector<CatalogSearchEntry> paths;
-	vector<CatalogSearchEntry> lookup_paths;
+	bool builtins_first_order = false;
 	bool postgres_mode = false;
 	//! Only the paths that were explicitly set (minus the always included paths)
 	vector<CatalogSearchEntry> set_paths;
