@@ -1404,6 +1404,42 @@ static void ThrowDefaultTableAmbiguityException(CatalogEntryLookup &base_lookup,
 	    name, entry_type, name, name, entry_type, fully_qualified_name_hint, fully_qualified_catalog_name_hint);
 }
 
+static bool TakesPositionalArguments(const FunctionSignature &signature, idx_t count) {
+	return signature.GetRequiredParameterCount() <= count &&
+	       (signature.GetArgs() || count <= signature.GetPositionalParameterCount());
+}
+
+template <class T>
+static bool AnyTakesPositionalArguments(const vector<shared_ptr<const T>> &functions, idx_t count) {
+	return std::any_of(functions.begin(), functions.end(), [&](const shared_ptr<const T> &function) {
+		return TakesPositionalArguments(function->GetSignature(), count);
+	});
+}
+
+static bool TakesPositionalArguments(CatalogEntry &entry, idx_t count) {
+	if (count == DConstants::INVALID_INDEX) {
+		return true;
+	}
+	switch (entry.type) {
+	case CatalogType::SCALAR_FUNCTION_ENTRY:
+		return AnyTakesPositionalArguments(entry.Cast<ScalarFunctionCatalogEntry>().functions.functions, count);
+	case CatalogType::AGGREGATE_FUNCTION_ENTRY:
+		return AnyTakesPositionalArguments(entry.Cast<AggregateFunctionCatalogEntry>().functions.functions, count);
+	case CatalogType::TABLE_FUNCTION_ENTRY:
+		return AnyTakesPositionalArguments(entry.Cast<TableFunctionCatalogEntry>().functions.functions, count);
+	case CatalogType::MACRO_ENTRY:
+	case CatalogType::TABLE_MACRO_ENTRY: {
+		auto &macros = entry.Cast<MacroCatalogEntry>().macros;
+		return std::any_of(macros.begin(), macros.end(), [&](const unique_ptr<MacroFunction> &macro) {
+			return count <= macro->parameters.size() &&
+			       count + macro->default_parameters.size() >= macro->parameters.size();
+		});
+	}
+	default:
+		return true;
+	}
+}
+
 CatalogEntryLookup Catalog::TryLookupEntry(CatalogEntryRetriever &retriever, const vector<CatalogLookup> &lookups,
                                            const EntryLookupInfo &lookup_info, OnEntryNotFound if_not_found,
                                            bool allow_default_lookup) {
@@ -1412,12 +1448,21 @@ CatalogEntryLookup Catalog::TryLookupEntry(CatalogEntryRetriever &retriever, con
 	bool all_errors = true;
 	ErrorData error_data;
 	CatalogEntryLookup result;
+	CatalogEntryLookup other_arguments;
 	for (auto &lookup : lookups) {
 		auto transaction = lookup.catalog.GetCatalogTransaction(context);
 		result = lookup.catalog.TryLookupEntryInternal(transaction, lookup.lookup_info);
 		if (result.schema && !CanUseSchema(retriever.GetPrincipal(), *result.schema)) {
 			if (!IsInvalidSchema(lookup_info.GetSchema())) {
 				ThrowPermissionDenied(*result.schema);
+			}
+			result = {nullptr, nullptr, ErrorData()};
+			all_errors = false;
+			continue;
+		}
+		if (result.Found() && !TakesPositionalArguments(*result.entry, lookup_info.GetArgumentCount())) {
+			if (!other_arguments.Found()) {
+				other_arguments = std::move(result);
 			}
 			result = {nullptr, nullptr, ErrorData()};
 			all_errors = false;
@@ -1469,6 +1514,9 @@ CatalogEntryLookup Catalog::TryLookupEntry(CatalogEntryRetriever &retriever, con
 		}
 	}
 
+	if (!result.Found() && other_arguments.Found()) {
+		result = std::move(other_arguments);
+	}
 	if (result.Found()) {
 		return result;
 	}

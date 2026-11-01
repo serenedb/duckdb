@@ -183,6 +183,7 @@ public:
 	vector<FunctionArgument> &GetArgumentsMutable() {
 		return arguments;
 	}
+	idx_t PositionalArgumentCount() const;
 
 private:
 	//! Qualified name of the function (catalog.schema.name)

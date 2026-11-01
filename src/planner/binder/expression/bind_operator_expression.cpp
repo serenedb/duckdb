@@ -107,9 +107,9 @@ BindResult ExpressionBinder::BindOperatorAsFunction(OperatorExpression &op, cons
 	    binder.GetBindingMode() == BindingMode::EXTRACT_QUALIFIED_NAMES) {
 		return BindResult(make_uniq<BoundConstantExpression>(Value(LogicalType::SQLNULL)));
 	}
-	FunctionExpression lookup(function_name, vector<unique_ptr<ParsedExpression>>());
-	lookup.SetQueryLocation(op.GetQueryLocation());
-	auto &func = BindFunction(lookup);
+	auto &func = *GetCatalogEntry(EntryLookupInfo(CatalogType::SCALAR_FUNCTION_ENTRY, QualifiedName(function_name),
+	                                              QueryErrorContext(op.GetQueryLocation())),
+	                              OnEntryNotFound::THROW_EXCEPTION);
 	if (func.type != CatalogType::SCALAR_FUNCTION_ENTRY) {
 		throw BinderException(op, "%s is not a scalar function", function_name.GetIdentifierName());
 	}

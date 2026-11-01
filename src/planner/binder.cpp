@@ -2,9 +2,6 @@
 
 #include "duckdb/catalog/catalog_entry/aggregate_function_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/index_catalog_entry.hpp"
-#include "duckdb/catalog/catalog_entry/macro_catalog_entry.hpp"
-#include "duckdb/catalog/catalog_entry/scalar_function_catalog_entry.hpp"
-#include "duckdb/catalog/catalog_entry/table_function_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/view_catalog_entry.hpp"
 #include "duckdb/catalog/dependency_manager.hpp"
@@ -955,71 +952,6 @@ optional_ptr<CatalogEntry> Binder::GetCatalogEntry(const Identifier &catalog, co
 optional_ptr<CatalogEntry> Binder::GetCatalogEntry(const EntryLookupInfo &lookup_info,
                                                    OnEntryNotFound on_entry_not_found) {
 	return entry_retriever.GetEntry(lookup_info, on_entry_not_found);
-}
-
-static bool TakesPositionalArguments(const FunctionSignature &signature, idx_t count) {
-	return signature.GetRequiredParameterCount() <= count &&
-	       (signature.GetArgs() || count <= signature.GetPositionalParameterCount());
-}
-
-template <class T>
-static bool AnyTakesPositionalArguments(const vector<shared_ptr<const T>> &functions, idx_t count) {
-	return std::any_of(functions.begin(), functions.end(), [&](const shared_ptr<const T> &function) {
-		return TakesPositionalArguments(function->GetSignature(), count);
-	});
-}
-
-static bool TakesPositionalArguments(CatalogEntry &entry, idx_t count) {
-	switch (entry.type) {
-	case CatalogType::SCALAR_FUNCTION_ENTRY:
-		return AnyTakesPositionalArguments(entry.Cast<ScalarFunctionCatalogEntry>().functions.functions, count);
-	case CatalogType::AGGREGATE_FUNCTION_ENTRY:
-		return AnyTakesPositionalArguments(entry.Cast<AggregateFunctionCatalogEntry>().functions.functions, count);
-	case CatalogType::TABLE_FUNCTION_ENTRY:
-		return AnyTakesPositionalArguments(entry.Cast<TableFunctionCatalogEntry>().functions.functions, count);
-	case CatalogType::MACRO_ENTRY:
-	case CatalogType::TABLE_MACRO_ENTRY: {
-		auto &macros = entry.Cast<MacroCatalogEntry>().macros;
-		return std::any_of(macros.begin(), macros.end(), [&](const unique_ptr<MacroFunction> &macro) {
-			return count <= macro->parameters.size() &&
-			       count + macro->default_parameters.size() >= macro->parameters.size();
-		});
-	}
-	default:
-		return true;
-	}
-}
-
-optional_ptr<CatalogEntry> Binder::GetFunctionEntry(const EntryLookupInfo &lookup_info,
-                                                    const FunctionExpression &call) {
-	auto entry = GetCatalogEntry(lookup_info, OnEntryNotFound::RETURN_NULL);
-	auto &arguments = call.GetArguments();
-	if (!entry || !entry->ParentCatalog().IsSystemCatalog() || !IsInvalidCatalog(lookup_info.GetCatalog()) ||
-	    !IsInvalidSchema(lookup_info.GetSchema()) ||
-	    std::any_of(arguments.begin(), arguments.end(),
-	                [](const FunctionArgument &argument) { return argument.HasName(); }) ||
-	    TakesPositionalArguments(*entry, arguments.size())) {
-		return entry;
-	}
-	for (auto &path : entry_retriever.GetSearchPath().Get(false)) {
-		if (path.GetCatalog() == SYSTEM_CATALOG) {
-			continue;
-		}
-		auto schema =
-		    entry_retriever.GetSchema(EntryLookupInfo(CatalogType::SCHEMA_ENTRY,
-		                                              QualifiedName(path.GetCatalog(), Identifier(), path.GetSchema())),
-		                              OnEntryNotFound::RETURN_NULL);
-		if (!schema || !CanUseSchema(entry_retriever.GetPrincipal(), *schema)) {
-			continue;
-		}
-		auto candidate = GetCatalogEntry(EntryLookupInfo(lookup_info, QualifiedName(path.GetCatalog(), path.GetSchema(),
-		                                                                            lookup_info.GetEntryIdentifier())),
-		                                 OnEntryNotFound::RETURN_NULL);
-		if (candidate && TakesPositionalArguments(*candidate, arguments.size())) {
-			return candidate;
-		}
-	}
-	return entry;
 }
 
 //! Create a binder whose catalog search path is anchored to the table's catalog+schema
