@@ -883,6 +883,36 @@ unique_ptr<Expression> RecursiveDependentJoinPlanner::VisitReplace(BoundSubquery
 	return binder.PlanSubquery(expr, root);
 }
 
+static bool ModifiesData(const LogicalOperator &op) {
+	switch (op.type) {
+	case LogicalOperatorType::LOGICAL_INSERT:
+	case LogicalOperatorType::LOGICAL_UPDATE:
+	case LogicalOperatorType::LOGICAL_DELETE:
+	case LogicalOperatorType::LOGICAL_MERGE_INTO:
+		return true;
+	default:
+		return absl::c_any_of(op.children,
+		                      [](const unique_ptr<LogicalOperator> &child) { return ModifiesData(*child); });
+	}
+}
+
+static bool ReturnsOneRow(const LogicalOperator &op) {
+	switch (op.type) {
+	case LogicalOperatorType::LOGICAL_DUMMY_SCAN:
+		return true;
+	case LogicalOperatorType::LOGICAL_PROJECTION:
+		return ReturnsOneRow(*op.children[0]);
+	case LogicalOperatorType::LOGICAL_EXPRESSION_GET:
+		return op.Cast<LogicalExpressionGet>().expressions.size() == 1 && ReturnsOneRow(*op.children[0]);
+	case LogicalOperatorType::LOGICAL_AGGREGATE_AND_GROUP_BY: {
+		auto &aggregate = op.Cast<LogicalAggregate>();
+		return aggregate.groups.empty() && aggregate.grouping_sets.size() <= 1;
+	}
+	default:
+		return false;
+	}
+}
+
 unique_ptr<Expression> Binder::PlanSubquery(BoundSubqueryExpression &expr, unique_ptr<LogicalOperator> &root) {
 	D_ASSERT(root);
 	// first we translate the QueryNode of the subquery into a logical plan
@@ -891,6 +921,9 @@ unique_ptr<Expression> Binder::PlanSubquery(BoundSubqueryExpression &expr, uniqu
 
 	// now we actually flatten the subquery
 	auto plan = std::move(subquery_root);
+	if (ModifiesData(*plan) && (expr.IsCorrelated() || !ReturnsOneRow(*root))) {
+		throw BinderException("A function whose body modifies data cannot be called for each row of a query");
+	}
 
 	unique_ptr<Expression> result_expression;
 	if (!expr.IsCorrelated() && !(expr.IsPerCall() && plan->HasVolatileExpressions())) {
@@ -927,6 +960,9 @@ unique_ptr<LogicalOperator> Binder::PlanLateralJoin(unique_ptr<LogicalOperator> 
 		if (condition->HasSubquery()) {
 			throw BinderException(*condition, "Subqueries are not supported in LATERAL join conditions");
 		}
+	}
+	if (ModifiesData(*right)) {
+		throw BinderException("A function whose body modifies data cannot be called for each row of a query");
 	}
 
 	auto perform_delim = PerformDuplicateElimination(*this, correlated, right->HasVolatileExpressions());
