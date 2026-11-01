@@ -1008,7 +1008,7 @@ bool ExpressionBinder::ResolvesInScope(ParsedExpression &argument) {
 		return true;
 	case ExpressionClass::COLUMN_REF: {
 		auto &column = argument.Cast<ColumnRefExpression>();
-		return IsArgumentReference(column) || ResolveColumn(column, 0).found;
+		return IsArgumentReference(column) || ResolveColumn(column, 0, false).found;
 	}
 	default:
 		break;

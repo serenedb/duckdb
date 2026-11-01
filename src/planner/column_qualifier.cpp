@@ -11,6 +11,8 @@
 #include "duckdb/planner/planner_extension.hpp"
 #include "duckdb/common/case_insensitive_map.hpp"
 
+#include <absl/algorithm/container.h>
+
 namespace duckdb {
 
 ColumnQualifier::ColumnQualifier(Binder &binder_p, optional_ptr<vector<DummyBinding>> lambda_bindings_p,
@@ -174,8 +176,10 @@ unique_ptr<ParsedExpression> ColumnQualifier::QualifyColumnName(const ParsedExpr
 	}
 
 	// it's not, find candidates and error
-	auto similar_bindings = binder.bind_context.GetSimilarBindings(column_name);
-	error = ErrorData(BinderException::ColumnNotFound(column_name, similar_bindings));
+	if (report_errors) {
+		auto similar_bindings = binder.bind_context.GetSimilarBindings(column_name);
+		error = ErrorData(BinderException::ColumnNotFound(column_name, similar_bindings));
+	}
 	return nullptr;
 }
 
@@ -414,13 +418,9 @@ bool ColumnQualifier::TableNameExists(const Identifier &table_name) {
 }
 
 bool ColumnQualifier::TableBindingExists(const BindingAlias &alias) {
-	try {
-		ErrorData error;
-		return binder.bind_context.GetBinding(alias, error) != nullptr;
-	} catch (const std::exception &) {
-		// an ambiguity between multiple matching tables still means the table qualification exists
-		return true;
-	}
+	return absl::c_any_of(binder.bind_context.GetBindingsList(), [&](const unique_ptr<Binding> &binding) {
+		return binding->GetBindingAlias().Matches(alias);
+	});
 }
 
 unique_ptr<ParsedExpression> ColumnQualifier::QualifyColumnNameWithManyDots(ColumnRefExpression &col_ref,

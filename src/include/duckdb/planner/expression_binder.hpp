@@ -190,7 +190,7 @@ public:
 	//! Resolve a column reference against the scopes at or beyond the given depth, without binding it.
 	//! Resolution consults exactly what a real bind against a scope would, by reusing the qualifier
 	//! that scope builds for itself.
-	ColumnResolution ResolveColumn(ColumnRefExpression &colref, idx_t start);
+	ColumnResolution ResolveColumn(ColumnRefExpression &colref, idx_t start, bool report_errors = true);
 	//! The scope that owns an aggregate: the innermost one at or beyond `start` in which any of its
 	//! arguments resolves a column. Invalid when no argument resolves a column at or beyond `start` -
 	//! at `start == 0` that pins a constant-only aggregate to the scope it appears in.

@@ -140,7 +140,7 @@ void ExpressionBinder::CombineErrors(ErrorData &current, ErrorData new_error) {
 	current = std::move(new_error);
 }
 
-ColumnResolution ExpressionBinder::ResolveColumn(ColumnRefExpression &colref, idx_t start) {
+ColumnResolution ExpressionBinder::ResolveColumn(ColumnRefExpression &colref, idx_t start, bool report_errors) {
 	ColumnResolution result;
 	for (idx_t depth = start; depth < ScopeCount(); depth++) {
 		auto &scope = ScopeAt(depth);
@@ -152,6 +152,7 @@ ColumnResolution ExpressionBinder::ResolveColumn(ColumnRefExpression &colref, id
 			return result;
 		}
 		auto qualifier = scope.CreateColumnQualifier();
+		qualifier->report_errors = report_errors;
 		ErrorData error;
 		auto qualified = qualifier->QualifyColumnName(colref, error);
 		if (qualified) {
@@ -244,7 +245,7 @@ optional_idx ExpressionBinder::ResolveAggregateOwner(FunctionExpression &aggrega
 	auto owner = start;
 	bool found = false;
 	for (auto &colref : columns) {
-		auto resolution = ResolveColumn(colref.get(), start);
+		auto resolution = ResolveColumn(colref.get(), start, false);
 		if (!resolution.found) {
 			// an alias or a column that does not resolve at all - it says nothing about ownership,
 			// and the scope we settle on reports the error

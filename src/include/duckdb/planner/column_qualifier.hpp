@@ -21,6 +21,8 @@ public:
 	                         optional_ptr<HavingBinder> having_binder = nullptr);
 	virtual ~ColumnQualifier() = default;
 
+	bool report_errors = true;
+
 	//! Returns the STRUCT_EXTRACT operator expression
 	unique_ptr<ParsedExpression> CreateStructExtract(unique_ptr<ParsedExpression> base, const Identifier &field_name);
 	//! Returns a STRUCT_PACK function expression
