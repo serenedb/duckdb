@@ -126,7 +126,7 @@ public:
 	EntryBinding(BindingAlias alias, vector<LogicalType> types, vector<Identifier> names, TableIndex index,
 	             StandardEntry &entry);
 	StandardEntry &entry;
-	shared_ptr<ColumnReadCheck> column_read;
+	unique_ptr<ColumnReadCheck> column_read;
 
 public:
 	BindResult Bind(ColumnRefExpression &colref, idx_t depth) override;

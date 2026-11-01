@@ -186,7 +186,6 @@ BindResult EntryBinding::Bind(ColumnRefExpression &colref, idx_t depth) {
 		if (!column_read->CanRead(column_index)) {
 			ThrowPermissionDenied(column_read->entry);
 		}
-		column_read->referenced = true;
 	}
 	return Binding::Bind(colref, depth);
 }
@@ -209,10 +208,9 @@ bool ColumnReadCheck::CanReadAny() const {
 		return principal.CanAnyColumn(table.permissions, AclMode::Select, table.GetColumns());
 	}
 	auto &column_acls = entry.Cast<ViewCatalogEntry>().column_acls;
-	return principal.Can(CatalogType::TABLE_ENTRY, entry.permissions, AclMode::Select) ||
-	       std::any_of(column_acls.begin(), column_acls.end(), [&](const auto &column) {
-		       return (principal.HeldModes(column.second) & AclMode::Select) != AclMode::NoRights;
-	       });
+	return std::any_of(column_acls.begin(), column_acls.end(), [&](const vector<AclItem> &acl) {
+		return (principal.HeldModes(acl) & AclMode::Select) != AclMode::NoRights;
+	});
 }
 
 TableBinding::TableBinding(BindingAlias alias, vector<LogicalType> types_p, vector<Identifier> names_p,

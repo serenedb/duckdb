@@ -221,6 +221,10 @@ static void RequireGrantable(Binder &binder, CatalogEntry &entry) {
 		for (auto &column : entry.Cast<TableCatalogEntry>().GetColumns().Logical()) {
 			held |= principal->HeldModes(column.Acl()) | principal->GrantableModes(column.Acl());
 		}
+	} else if (entry.type == CatalogType::VIEW_ENTRY) {
+		for (auto &acl : entry.Cast<ViewCatalogEntry>().column_acls) {
+			held |= principal->HeldModes(acl) | principal->GrantableModes(acl);
+		}
 	}
 	if (held == AclMode::NoRights) {
 		ThrowPermissionDenied(entry);

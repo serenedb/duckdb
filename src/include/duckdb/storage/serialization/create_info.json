@@ -337,8 +337,8 @@
       {
         "id": 16585,
         "name": "column_acls",
-        "type": "identifier_map_t<vector<AclItem>>",
-        "default": "identifier_map_t<vector<AclItem>>()"
+        "type": "vector<vector<AclItem>>",
+        "default": "vector<vector<AclItem>>()"
       }
     ],
     "constructor": [

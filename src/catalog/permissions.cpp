@@ -487,7 +487,7 @@ static bool AnyRoleReference(const CatalogEntry &entry, F &&named) {
 	if (entry.type == CatalogType::VIEW_ENTRY) {
 		auto &column_acls = entry.Cast<ViewCatalogEntry>().column_acls;
 		return std::any_of(column_acls.begin(), column_acls.end(),
-		                   [&](const auto &column) { return any_acl(column.second); });
+		                   [&](const vector<AclItem> &acl) { return any_acl(acl); });
 	}
 	if (entry.type != CatalogType::TABLE_ENTRY) {
 		return false;

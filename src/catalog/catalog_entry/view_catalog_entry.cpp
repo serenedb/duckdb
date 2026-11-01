@@ -113,11 +113,8 @@ unique_ptr<CatalogEntry> ViewCatalogEntry::AlterEntry(ClientContext &context, Al
 	}
 
 	if (info.type == AlterType::ALTER_PERMISSIONS) {
+		BindView(context);
 		auto columns = GetColumnInfo();
-		if (!columns) {
-			BindView(context);
-			columns = GetColumnInfo();
-		}
 		ColumnList column_list(false, catalog.IsCaseSensitive());
 		for (idx_t i = 0; i < columns->names.size(); i++) {
 			ColumnDefinition column(i < aliases.size() ? aliases[i] : columns->names[i], columns->types[i]);
@@ -130,10 +127,10 @@ unique_ptr<CatalogEntry> ViewCatalogEntry::AlterEntry(ClientContext &context, Al
 		info.Cast<AlterPermissionsInfo>().ApplyTo(view.permissions, type, &column_list);
 		view.column_acls.clear();
 		for (idx_t i = 0; i < columns->names.size(); i++) {
-			auto &acl = column_list.GetColumn(LogicalIndex(i)).Acl();
-			if (!acl.empty()) {
-				view.column_acls[columns->names[i]] = acl;
-			}
+			view.column_acls.push_back(column_list.GetColumn(LogicalIndex(i)).Acl());
+		}
+		while (!view.column_acls.empty() && view.column_acls.back().empty()) {
+			view.column_acls.pop_back();
 		}
 		return result;
 	}
@@ -157,15 +154,10 @@ shared_ptr<ViewColumnInfo> ViewCatalogEntry::GetColumnInfo() const {
 }
 
 std::span<const AclItem> ViewCatalogEntry::ColumnAcl(idx_t column_index) const {
-	auto columns = GetColumnInfo();
-	if (!columns || column_index >= columns->names.size()) {
+	if (column_index >= column_acls.size()) {
 		return {};
 	}
-	auto entry = column_acls.find(columns->names[column_index]);
-	if (entry == column_acls.end()) {
-		return {};
-	}
-	return entry->second;
+	return column_acls[column_index];
 }
 
 Value ViewCatalogEntry::GetColumnComment(idx_t column_index) {
