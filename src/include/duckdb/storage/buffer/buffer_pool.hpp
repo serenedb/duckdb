@@ -25,17 +25,6 @@ class ObjectCache;
 class BlockCache;
 struct EvictionQueue;
 
-struct BufferEvictionNode {
-	BufferEvictionNode() {
-	}
-	BufferEvictionNode(weak_ptr<BlockMemory> block_memory_p, idx_t eviction_seq_num);
-
-	weak_ptr<BlockMemory> memory_p;
-	idx_t handle_sequence_number;
-
-	bool IsDeadNode(optional_idx debug_sleep_micros = optional_idx());
-};
-
 //! The BufferPool is in charge of handling memory management for one or more databases. It defines memory limits
 //! and implements priority eviction among all users of the pool.
 class BufferPool {
@@ -122,17 +111,15 @@ protected:
 
 	//! Purge all blocks that haven't been pinned within the last N seconds
 	idx_t PurgeAgedBlocks(uint32_t max_age_sec);
-	idx_t PurgeAgedBlocksInternal(EvictionQueue &queue, uint32_t max_age_sec, int64_t now, int64_t limit);
 
-	//! Garbage collect dead nodes in the eviction queue.
-	void PurgeQueue(const BlockHandle &handle);
-	//! Add a buffer handle to the eviction queue. Returns true, if the queue is
-	//! ready to be purged, and false otherwise. Requires the handle's block lock.
-	bool AddToEvictionQueue(BlockLock &lock, shared_ptr<BlockHandle> &handle);
+	//! A loaded block joins the eviction queue of its type and priority, and leaves it once it is unloaded or
+	//! destroyed. Requires the block lock, or exclusive ownership of the block.
+	void AddBlock(BlockMemory &memory);
+	void RemoveBlock(BlockMemory &memory);
+	//! Marks a block as used, which spares it one round of eviction. Takes no lock.
+	void MarkUsed(BlockMemory &memory);
 	//! Gets the eviction queue for the specified type
 	EvictionQueue &GetEvictionQueueForBlockMemory(const BlockMemory &memory);
-	//! Increments the dead nodes for the queue with specified type
-	void IncrementDeadNodes(const BlockMemory &memory);
 
 	//! How many eviction queue types we have (BLOCK and EXTERNAL_FILE go into same queue)
 	static constexpr idx_t EVICTION_QUEUE_TYPES = FILE_BUFFER_TYPE_COUNT - 1;

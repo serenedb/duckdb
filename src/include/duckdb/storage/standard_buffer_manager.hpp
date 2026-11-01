@@ -78,6 +78,7 @@ public:
 	vector<unique_ptr<AsyncTask>> CreatePrefetchTasks(QueryContext context,
 	                                                  vector<shared_ptr<BlockHandle>> &handles) final;
 	void Unpin(shared_ptr<BlockHandle> &handle) final;
+	void Unpin(BlockMemory &memory) final;
 
 	//! Set a new memory limit to the buffer manager, throws an exception if the new limit is too low and not enough
 	//! blocks can be evicted
@@ -138,9 +139,6 @@ protected:
 	//! Get allocated size for a block
 	idx_t GetBlockAllocSize(idx_t block_size) const;
 
-	//! Garbage collect eviction queue
-	void PurgeQueue(const BlockHandle &handle) final;
-
 	BufferPool &GetBufferPool() const final;
 	TemporaryMemoryManager &GetTemporaryMemoryManager() final;
 
@@ -156,8 +154,6 @@ protected:
 
 	void RequireTemporaryDirectory();
 
-	void AddToEvictionQueue(shared_ptr<BlockHandle> &handle) final;
-
 	const char *InMemoryWarning();
 
 	static data_ptr_t BufferAllocatorAllocate(PrivateAllocatorData *private_data, idx_t size);
@@ -167,7 +163,9 @@ protected:
 
 	//! When the BlockHandle reaches 0 readers, this creates a new FileBuffer for this BlockHandle and
 	//! overwrites the data within with garbage. Any readers that do not hold the pin will notice
-	void VerifyZeroReaders(BlockLock &l, shared_ptr<BlockHandle> &handle);
+	void VerifyZeroReaders(BlockLock &l, BlockMemory &memory);
+	//! Pins [handle]; the pin owns a reference to it when [own] is set
+	BufferHandle Pin(const QueryContext &context, shared_ptr<BlockHandle> &handle, bool own);
 
 	//! A run of handles with adjacent block ids starting at first_block
 	struct PrefetchRun {

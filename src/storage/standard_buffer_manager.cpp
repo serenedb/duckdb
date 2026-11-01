@@ -20,8 +20,8 @@
 namespace duckdb {
 
 #ifdef DUCKDB_DEBUG_DESTROY_BLOCKS
-static void WriteGarbageIntoBuffer(BlockLock &lock, BlockHandle &block) {
-	auto &buffer = block.GetMemory().GetBuffer(lock);
+static void WriteGarbageIntoBuffer(BlockLock &lock, BlockMemory &memory) {
+	auto &buffer = memory.GetBuffer(lock);
 	if (!buffer->OwnsInternalBuffer()) {
 		// don't write garbage into mmap buffers
 		// this would directly be written back into the file
@@ -32,7 +32,7 @@ static void WriteGarbageIntoBuffer(BlockLock &lock, BlockHandle &block) {
 
 static void WriteGarbageIntoBuffer(BlockHandle &block) {
 	auto lock = block.GetMemory().GetLock();
-	WriteGarbageIntoBuffer(lock, block);
+	WriteGarbageIntoBuffer(lock, block.GetMemory());
 }
 #endif
 
@@ -160,6 +160,7 @@ shared_ptr<BlockHandle> StandardBufferManager::RegisterSmallMemory(MemoryTag tag
 	// Create a new block pointer for this block.
 	auto result = make_shared_ptr<BlockHandle>(*temp_block_manager, ++temporary_id, tag, std::move(buffer),
 	                                           DestroyBufferUpon::BLOCK, size, std::move(reservation));
+	result->GetMemory().SetOwner(result);
 #ifdef DUCKDB_DEBUG_DESTROY_BLOCKS
 	// Initialize the memory with garbage data
 	WriteGarbageIntoBuffer(*result);
@@ -180,8 +181,10 @@ shared_ptr<BlockHandle> StandardBufferManager::RegisterMemory(MemoryTag tag, idx
 	    tag == MemoryTag::EXTERNAL_FILE_CACHE ? FileBufferType::EXTERNAL_FILE : FileBufferType::MANAGED_BUFFER;
 	auto buffer = ConstructManagedBuffer(block_size, block_header_size, std::move(reusable_buffer), file_buffer_type);
 	const auto destroy_buffer_upon = can_destroy ? DestroyBufferUpon::EVICTION : DestroyBufferUpon::BLOCK;
-	return make_shared_ptr<BlockHandle>(*temp_block_manager, ++temporary_id, tag, std::move(buffer),
-	                                    destroy_buffer_upon, alloc_size, std::move(res));
+	auto result = make_shared_ptr<BlockHandle>(*temp_block_manager, ++temporary_id, tag, std::move(buffer),
+	                                           destroy_buffer_upon, alloc_size, std::move(res));
+	result->GetMemory().SetOwner(result);
+	return result;
 }
 
 shared_ptr<BlockHandle> StandardBufferManager::AllocateTemporaryMemory(MemoryTag tag, idx_t block_size,
@@ -201,7 +204,7 @@ BufferHandle StandardBufferManager::Allocate(MemoryTag tag, BlockManager *block_
 	// Initialize the memory with garbage data
 	WriteGarbageIntoBuffer(*block);
 #endif
-	return Pin(block);
+	return Pin(QueryContext(), block, true);
 }
 
 BufferHandle StandardBufferManager::Allocate(MemoryTag tag, idx_t block_size, bool can_destroy) {
@@ -211,7 +214,7 @@ BufferHandle StandardBufferManager::Allocate(MemoryTag tag, idx_t block_size, bo
 	// Initialize the memory with garbage data
 	WriteGarbageIntoBuffer(*block);
 #endif
-	return Pin(block);
+	return Pin(QueryContext(), block, true);
 }
 
 BufferHandle StandardBufferManager::Allocate(QueryContext context, MemoryTag tag, idx_t block_size, bool can_destroy) {
@@ -221,7 +224,7 @@ BufferHandle StandardBufferManager::Allocate(QueryContext context, MemoryTag tag
 	// Initialize the memory with garbage data
 	WriteGarbageIntoBuffer(*block);
 #endif
-	return Pin(context, block);
+	return Pin(context, block, true);
 }
 
 BufferHandle StandardBufferManager::Allocate(QueryContext context, MemoryTag tag, BlockManager *block_manager,
@@ -233,7 +236,7 @@ BufferHandle StandardBufferManager::Allocate(QueryContext context, MemoryTag tag
 	// Initialize the memory with garbage data
 	WriteGarbageIntoBuffer(*block);
 #endif
-	return Pin(context, block);
+	return Pin(context, block, true);
 }
 
 void StandardBufferManager::BatchRead(QueryContext context, PrefetchRun &run) {
@@ -360,6 +363,10 @@ BufferHandle StandardBufferManager::Pin(shared_ptr<BlockHandle> &handle) {
 }
 
 BufferHandle StandardBufferManager::Pin(const QueryContext &context, shared_ptr<BlockHandle> &handle) {
+	return Pin(context, handle, false);
+}
+
+BufferHandle StandardBufferManager::Pin(const QueryContext &context, shared_ptr<BlockHandle> &handle, bool own) {
 	// we need to be careful not to return the BufferHandle to this block while holding the BlockHandle's lock
 	// as exiting this function's scope may cause the destructor of the BufferHandle to be called while holding the lock
 	// the destructor calls Unpin, which grabs the BlockHandle's lock again, causing a deadlock
@@ -367,6 +374,13 @@ BufferHandle StandardBufferManager::Pin(const QueryContext &context, shared_ptr<
 
 	idx_t required_memory;
 	auto &block_memory = handle->GetMemory();
+	if (block_memory.TryPinLoaded()) {
+		// Tiny buffers keep no reader count, so their pins own the block.
+		if (own || block_memory.GetBufferType() == FileBufferType::TINY_BUFFER) {
+			return BufferHandle(handle, block_memory.GetBuffer().get());
+		}
+		return BufferHandle(block_memory, block_memory.GetBuffer().get());
+	}
 	{
 		// lock the block
 		auto lock = block_memory.GetLock();
@@ -396,7 +410,6 @@ BufferHandle StandardBufferManager::Pin(const QueryContext &context, shared_ptr<
 		buf = handle->Load(context);
 	} else {
 		// now we can actually load the current block
-		D_ASSERT(block_memory.GetReaders() == 0);
 		buf = handle->Load(context, std::move(reusable_buffer));
 		if (!buf.IsValid()) {
 			reservation.Resize(0);
@@ -422,23 +435,14 @@ BufferHandle StandardBufferManager::Pin(const QueryContext &context, shared_ptr<
 	return buf;
 }
 
-void StandardBufferManager::PurgeQueue(const BlockHandle &handle) {
-	buffer_pool.PurgeQueue(handle);
-}
-
-void StandardBufferManager::AddToEvictionQueue(shared_ptr<BlockHandle> &handle) {
-	auto lock = handle->GetMemory().GetLock();
-	buffer_pool.AddToEvictionQueue(lock, handle);
-}
-
-void StandardBufferManager::VerifyZeroReaders(BlockLock &lock, shared_ptr<BlockHandle> &handle) {
+void StandardBufferManager::VerifyZeroReaders(BlockLock &lock, BlockMemory &memory) {
 #ifdef DUCKDB_DEBUG_DESTROY_BLOCKS
 	unique_ptr<FileBuffer> replacement_buffer;
 	auto &block_allocator = BlockAllocator::Get(db);
-	auto &buffer = handle->GetMemory().GetBuffer(lock);
+	auto &buffer = memory.GetBuffer(lock);
 	auto block_header_size = buffer->GetHeaderSize();
 	auto alloc_size = buffer->AllocSize() - block_header_size;
-	if (handle->GetMemory().GetBufferType() == FileBufferType::BLOCK) {
+	if (memory.GetBufferType() == FileBufferType::BLOCK) {
 		auto block = reinterpret_cast<Block *>(buffer.get());
 		replacement_buffer = make_uniq<Block>(block_allocator, block->id, alloc_size, block_header_size);
 	} else {
@@ -446,34 +450,46 @@ void StandardBufferManager::VerifyZeroReaders(BlockLock &lock, shared_ptr<BlockH
 		    make_uniq<FileBuffer>(block_allocator, buffer->GetBufferType(), alloc_size, block_header_size);
 	}
 	memcpy(replacement_buffer->GetDataMutable(), buffer->GetData(), buffer->Size());
-	WriteGarbageIntoBuffer(lock, *handle);
+	WriteGarbageIntoBuffer(lock, memory);
 	buffer = std::move(replacement_buffer);
 #endif
 }
 
 void StandardBufferManager::Unpin(shared_ptr<BlockHandle> &handle) {
-	bool purge = false;
-	auto &block_memory = handle->GetMemory();
-	{
-		auto lock = block_memory.GetLock();
-		if (!block_memory.GetBuffer(lock) || block_memory.GetBufferType() == FileBufferType::TINY_BUFFER) {
-			return;
+	Unpin(handle->GetMemory());
+}
+
+void StandardBufferManager::Unpin(BlockMemory &memory) {
+	if (memory.GetBufferType() == FileBufferType::TINY_BUFFER) {
+		return;
+	}
+	buffer_pool.MarkUsed(memory);
+	// The memory may be gone once the reader is released, unless the block is orphaned: whatever the last reader
+	// does after that happens under the block lock, which the block handle's destructor takes too.
+#ifndef DUCKDB_DEBUG_DESTROY_BLOCKS
+	if (!memory.DestroyedUponUnpin()) {
+		if ((memory.ReleaseReader() & ~BlockMemory::LOADED) == BlockMemory::ORPHANED + 1) {
+			shared_ptr<BlockMemory> owner;
+			auto lock = memory.GetLock();
+			owner = memory.TakeOrphanOwner(lock);
 		}
-		D_ASSERT(block_memory.GetReaders() > 0);
-		auto new_readers = block_memory.DecrementReaders();
-		if (new_readers == 0) {
-			VerifyZeroReaders(lock, handle);
-			if (!block_memory.MustAddToEvictionQueue()) {
-				block_memory.Unload(lock);
-			} else if (block_memory.GetMemoryUsage() != 0) {
-				purge = buffer_pool.AddToEvictionQueue(lock, handle);
-			}
+		return;
+	}
+#endif
+	shared_ptr<BlockMemory> owner;
+	auto lock = memory.GetLock();
+	const auto before = memory.ReleaseReader();
+	if ((before & BlockMemory::READERS) != 1) {
+		return;
+	}
+	if (memory.GetBuffer(lock)) {
+		VerifyZeroReaders(lock, memory);
+		if (memory.DestroyedUponUnpin()) {
+			memory.Unload(lock);
 		}
 	}
-
-	// We do not have to keep the handle locked while purging.
-	if (purge) {
-		PurgeQueue(*handle);
+	if (before & BlockMemory::ORPHANED) {
+		owner = memory.TakeOrphanOwner(lock);
 	}
 }
 

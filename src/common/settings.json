@@ -345,14 +345,6 @@
         "struct": "EnableCachingOperatorsSetting"
     },
     {
-        "name": "debug_eviction_queue_sleep_micro_seconds",
-        "description": "Set a time for the eviction queue to sleep before acquiring the shared ownership of some block memory.",
-        "type": "UBIGINT",
-        "scope": "global",
-        "default_value": "0",
-        "is_debug": true
-    },
-    {
         "name": "debug_force_bitpacking_mode",
         "description": "Forces a specific bitpacking mode.",
         "type": "ENUM<BitpackingMode>",

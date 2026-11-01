@@ -8,13 +8,15 @@
 #include "duckdb/storage/buffer/buffer_pool.hpp"
 #include "duckdb/storage/buffer_manager.hpp"
 
+#include <absl/cleanup/cleanup.h>
+
 namespace duckdb {
 
 BlockMemory::BlockMemory(BufferManager &buffer_manager, block_id_t block_id_p, MemoryTag tag_p,
                          idx_t block_alloc_size_p)
     : buffer_manager(buffer_manager), block_id(block_id_p), state(BlockState::BLOCK_UNLOADED), readers(0), tag(tag_p),
-      buffer_type(FileBufferType::BLOCK), buffer(nullptr), eviction_seq_num(0), has_queue_entry(false),
-      lru_timestamp_msec(), destroy_buffer_upon(DestroyBufferUpon::BLOCK), memory_usage(block_alloc_size_p),
+      buffer_type(FileBufferType::BLOCK), buffer(nullptr), lru_timestamp_msec(),
+      destroy_buffer_upon(DestroyBufferUpon::BLOCK), memory_usage(block_alloc_size_p),
       memory_charge(tag, buffer_manager.GetBufferPool()), unswizzled(nullptr),
       eviction_queue_idx(DConstants::INVALID_INDEX) {
 }
@@ -22,26 +24,21 @@ BlockMemory::BlockMemory(BufferManager &buffer_manager, block_id_t block_id_p, M
 BlockMemory::BlockMemory(BufferManager &buffer_manager, block_id_t block_id_p, MemoryTag tag_p,
                          unique_ptr<FileBuffer> buffer_p, DestroyBufferUpon destroy_buffer_upon_p, idx_t size_p,
                          BufferPoolReservation &&reservation)
-    : buffer_manager(buffer_manager), block_id(block_id_p), state(BlockState::BLOCK_LOADED), readers(0), tag(tag_p),
-      buffer_type(buffer_p->GetBufferType()), buffer(std::move(buffer_p)), eviction_seq_num(0), has_queue_entry(false),
-      lru_timestamp_msec(), destroy_buffer_upon(destroy_buffer_upon_p), memory_usage(size_p),
+    : buffer_manager(buffer_manager), block_id(block_id_p), state(BlockState::BLOCK_LOADED), readers(LOADED),
+      tag(tag_p), buffer_type(buffer_p->GetBufferType()), buffer(std::move(buffer_p)), lru_timestamp_msec(),
+      destroy_buffer_upon(destroy_buffer_upon_p), memory_usage(size_p),
       memory_charge(tag, buffer_manager.GetBufferPool()), unswizzled(nullptr),
       eviction_queue_idx(DConstants::INVALID_INDEX) {
 	memory_charge = std::move(reservation); // Moved to constructor body due to tidy check.
+	buffer_manager.GetBufferPool().AddBlock(*this);
 }
 
 BlockMemory::~BlockMemory() { // NOLINT: allow internal exceptions
+	// Leave the eviction queue first: eviction reads the queued block until then.
+	GetBufferManager().GetBufferPool().RemoveBlock(*this);
 	// The block memory is being destroyed, meaning that any unswizzled pointers are now binary junk.
 	SetSwizzling(nullptr);
 	D_ASSERT(!GetBuffer() || GetBuffer()->GetBufferType() == GetBufferType());
-	if (HasLiveQueueEntry() && GetBufferType() != FileBufferType::TINY_BUFFER) {
-		// The block still has a live entry in the eviction queue. That entry is now dead;
-		// account for it. (No lock needed: the destructor has exclusive ownership.)
-		// Note: the weak pointer in the queue entry can become unlockable before this
-		// destructor body runs, so a queue consumer can briefly decrement before this increment.
-		// This increment repairs the final count for that expired live entry.
-		GetBufferManager().GetBufferPool().IncrementDeadNodes(*this);
-	}
 
 	// Erase the block memory, if it is still loaded.
 	if (GetBuffer() && GetState() == BlockState::BLOCK_LOADED) {
@@ -91,9 +88,25 @@ void BlockMemory::ConvertToPersistent(BlockLock &l, BlockHandle &new_block, uniq
 	new_block_memory.memory_charge = std::move(memory_charge);
 
 	// Clear the buffered data of this block.
+	buffer_manager.GetBufferPool().RemoveBlock(*this);
 	buffer.reset();
 	SetState(BlockState::BLOCK_UNLOADED);
 	memory_usage = 0;
+}
+
+void BlockMemory::SetEvictionQueueIndex(const idx_t index) {
+	// The index can only be set once.
+	D_ASSERT(eviction_queue_idx == DConstants::INVALID_INDEX);
+	// It can only be set for managed buffers (for now).
+	D_ASSERT(GetBufferType() == FileBufferType::MANAGED_BUFFER);
+	auto l = GetLock();
+	auto &pool = buffer_manager.GetBufferPool();
+	const bool queued = queue != nullptr;
+	pool.RemoveBlock(*this);
+	eviction_queue_idx = index;
+	if (queued) {
+		pool.AddBlock(*this);
+	}
 }
 
 void BlockMemory::ResizeBuffer(BlockLock &l, idx_t block_size, idx_t block_header_size, int64_t memory_delta) {
@@ -132,16 +145,23 @@ unique_ptr<FileBuffer> BlockMemory::UnloadAndTakeBlock(BlockLock &l, QueryContex
 		return nullptr;
 	}
 	D_ASSERT(IsSwizzled());
-	D_ASSERT(CanUnload() == CanUnloadResult::CAN_UNLOAD);
+	if (!TryMarkUnloaded()) {
+		// A reader pinned the block without the block lock.
+		return nullptr;
+	}
 
 	if (BlockId() >= MAXIMUM_BLOCK && MustWriteToTemporaryFile()) {
 		// This is a temporary block that cannot be destroyed upon evict/unpin.
 		// Thus, we write to it to a temporary file.
+		absl::Cleanup restore = [&] {
+			SetState(BlockState::BLOCK_LOADED);
+		};
 		buffer_manager.WriteTemporaryBuffer(context, GetMemoryTag(), BlockId(), *GetBuffer());
+		std::move(restore).Cancel();
 		has_temporary_file = true;
 	}
 	memory_charge.Resize(0);
-	SetState(BlockState::BLOCK_UNLOADED);
+	buffer_manager.GetBufferPool().RemoveBlock(*this);
 	return std::move(GetBuffer());
 }
 
@@ -168,6 +188,10 @@ BlockHandle::BlockHandle(BlockManager &block_manager, block_id_t block_id_p, Mem
 }
 
 BlockHandle::~BlockHandle() { // NOLINT: allow internal exceptions
+	{
+		auto lock = memory.GetLock();
+		memory.Orphan(lock, memory_p);
+	}
 	// Early-out for temporary blocks.
 	if (block_id >= MAXIMUM_BLOCK) {
 		return;
@@ -207,13 +231,13 @@ BufferHandle BlockHandle::LoadFromBuffer(BlockLock &l, data_ptr_t data, unique_p
 	memory.VerifyMutex(l);
 	// Copy the data of the file buffer into the block.
 	D_ASSERT(memory.GetState() != BlockState::BLOCK_LOADED);
-	D_ASSERT(memory.GetReaders() == 0);
 	auto block = AllocateBlock(block_manager, std::move(reusable_buffer), block_id);
 	memcpy(block->InternalBuffer(), data, block->AllocSize());
 	memory.GetBuffer() = std::move(block);
 	memory.SetState(BlockState::BLOCK_LOADED);
-	memory.SetReaders(1);
+	memory.IncrementReaders();
 	memory.GetMemoryCharge() = std::move(reservation);
+	memory.GetBufferManager().GetBufferPool().AddBlock(memory);
 	return BufferHandle(shared_from_this(), memory.GetBuffer());
 }
 
@@ -240,7 +264,8 @@ BufferHandle BlockHandle::Load(QueryContext context, unique_ptr<FileBuffer> reus
 		memory.SetHasTemporaryFile(false);
 	}
 	memory.SetState(BlockState::BLOCK_LOADED);
-	memory.SetReaders(1);
+	memory.IncrementReaders();
+	memory.GetBufferManager().GetBufferPool().AddBlock(memory);
 	return BufferHandle(shared_from_this(), memory.GetBuffer());
 }
 
