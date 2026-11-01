@@ -432,8 +432,8 @@ private:
 
 void Binder::BindView(ClientContext &context, const SelectStatement &stmt, const Identifier &catalog_name,
                       const Identifier &schema_name, optional_ptr<LogicalDependencyList> dependencies,
-                      const vector<Identifier> &aliases, vector<LogicalType> &result_types,
-                      vector<Identifier> &result_names) {
+                      optional_ptr<vector<NameBinding>> name_bindings, const vector<Identifier> &aliases,
+                      vector<LogicalType> &result_types, vector<Identifier> &result_names) {
 	auto view_binder = Binder::CreateBinder(context);
 	auto &catalog = Catalog::GetCatalog(context, catalog_name);
 
@@ -449,6 +449,9 @@ void Binder::BindView(ClientContext &context, const SelectStatement &stmt, const
 
 	auto view_search_path = view_binder->GetSearchPath(catalog, schema_name, true);
 	view_binder->entry_retriever.SetSearchPath(std::move(view_search_path));
+	if (name_bindings) {
+		view_binder->entry_retriever.RecordBindings(*name_bindings);
+	}
 
 	auto copy = stmt.Copy();
 	auto query_node = view_binder->Bind(*copy);
@@ -494,8 +497,13 @@ void Binder::BindCreateViewInfo(CreateViewInfo &base) {
 	if (Settings::Get<EnableViewDependenciesSetting>(context)) {
 		dependencies = base.dependencies;
 	}
+	auto &catalog = Catalog::GetCatalog(context, base.GetQualifiedName().Catalog());
+	optional_ptr<vector<NameBinding>> name_bindings;
+	if (catalog.Compatibility() == SqlCompatibility::POSTGRES && !catalog.IsTemporaryCatalog()) {
+		name_bindings = base.name_bindings;
+	}
 	BindView(context, *base.query, base.GetQualifiedName().Catalog(), base.GetQualifiedName().Schema(), dependencies,
-	         base.aliases, base.types, base.names);
+	         name_bindings, base.aliases, base.types, base.names);
 }
 
 void Binder::MergeMacroOverloads(CreateInfo &info) {

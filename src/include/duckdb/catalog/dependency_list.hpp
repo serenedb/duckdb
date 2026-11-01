@@ -73,4 +73,15 @@ private:
 	create_info_set_t set;
 };
 
+struct NameBinding {
+	CatalogType type = CatalogType::INVALID;
+	Identifier name;
+	idx_t argument_count = DConstants::INVALID_INDEX;
+	Identifier catalog;
+	vector<Identifier> schema_path;
+
+	void Serialize(Serializer &serializer) const;
+	static NameBinding Deserialize(Deserializer &deserializer);
+};
+
 } // namespace duckdb

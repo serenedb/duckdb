@@ -339,6 +339,12 @@
         "name": "column_acls",
         "type": "vector<vector<AclItem>>",
         "default": "vector<vector<AclItem>>()"
+      },
+      {
+        "id": 16586,
+        "name": "name_bindings",
+        "type": "vector<NameBinding>",
+        "default": "vector<NameBinding>()"
       }
     ],
     "constructor": [

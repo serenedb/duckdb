@@ -352,11 +352,10 @@ BoundStatement Binder::Bind(BaseTableRef &ref) {
 			}
 		}
 
-		// when binding a view, we always look into the catalog/schema where the view is stored first
 		auto view_search_path =
 		    GetSearchPath(view_catalog_entry.ParentCatalog(), view_catalog_entry.ParentSchema(context).name, true);
 		if (principal && !IsUnowned(view_catalog_entry) && !view_catalog_entry.ParentCatalog().IsTemporaryCatalog()) {
-			view_binder->entry_retriever.SetSearchPath(std::move(view_search_path), view_catalog_entry.dependencies);
+			view_binder->entry_retriever.SetSearchPath(std::move(view_search_path), view_catalog_entry.name_bindings);
 		} else {
 			view_binder->entry_retriever.SetSearchPath(std::move(view_search_path));
 		}

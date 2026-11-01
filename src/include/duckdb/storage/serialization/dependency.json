@@ -137,5 +137,39 @@
 			}
 		],
 		"pointer_type": "none"
+	},
+	{
+		"class": "NameBinding",
+		"includes": [
+			"duckdb/catalog/dependency_list.hpp"
+		],
+		"members": [
+			{
+				"id": 100,
+				"name": "type",
+				"type": "CatalogType"
+			},
+			{
+				"id": 101,
+				"name": "name",
+				"type": "Identifier"
+			},
+			{
+				"id": 102,
+				"name": "argument_count",
+				"type": "idx_t"
+			},
+			{
+				"id": 103,
+				"name": "catalog",
+				"type": "Identifier"
+			},
+			{
+				"id": 104,
+				"name": "schema_path",
+				"type": "vector<Identifier>"
+			}
+		],
+		"pointer_type": "none"
 	}
 ]
