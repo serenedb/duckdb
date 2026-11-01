@@ -551,6 +551,14 @@ char PEGTransformerFactory::TransformVariadicArgMode(PEGTransformer &transformer
 	throw NotImplementedException("VARIADIC parameters are not supported");
 }
 
+MacroParameter PEGTransformerFactory::TransformDefaultParameter(PEGTransformer &transformer,
+                                                                MacroParameter parameter_signature,
+                                                                unique_ptr<ParsedExpression> expression) {
+	parameter_signature.expression = std::move(expression);
+	parameter_signature.is_default = true;
+	return parameter_signature;
+}
+
 MacroParameter PEGTransformerFactory::TransformModeParameter(PEGTransformer &transformer, char func_arg_mode,
                                                              const Identifier &type_func_name,
                                                              const optional<LogicalType> &type) {
