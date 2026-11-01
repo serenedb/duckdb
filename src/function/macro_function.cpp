@@ -400,6 +400,7 @@ void MacroFunction::CopyProperties(MacroFunction &other) const {
 	other.return_names = return_names;
 	other.parameter_modes = parameter_modes;
 	other.is_procedure = is_procedure;
+	other.strict = strict;
 	other.source = source;
 }
 

@@ -12,7 +12,10 @@
 #include "duckdb/parser/statement/insert_statement.hpp"
 #include "duckdb/parser/statement/update_statement.hpp"
 #include "duckdb/parser/statement/delete_statement.hpp"
+#include "duckdb/parser/expression/case_expression.hpp"
+#include "duckdb/parser/expression/conjunction_expression.hpp"
 #include "duckdb/parser/expression/constant_expression.hpp"
+#include "duckdb/parser/expression/operator_expression.hpp"
 #include "duckdb/parser/expression/parameter_expression.hpp"
 #include "duckdb/parser/expression/columnref_expression.hpp"
 #include "duckdb/parser/expression/subquery_expression.hpp"
@@ -182,17 +185,68 @@ static void ApplyFunctionDecorators(PEGTransformer &transformer, RepeatParseResu
 				}
 				info.returns_set = true;
 			} else if (returns_name == "ReturnsNull") {
-				// RETURNS NULL ON NULL INPUT -- a strictness marker, not a return type.
+				macro_function.strict = true;
 			} else {
 				info.returns_set = IsSetofType(returns_choice);
 				macro_function.return_types.push_back(transformer.Transform<LogicalType>(returns_choice));
 			}
 		} else if (decorator_name == "LanguageClause") {
 			info.has_language = true;
+		} else if (decorator_name == "StrictClause") {
+			auto &strict_choice = decorator_choice.Cast<ListParseResult>().Child<ChoiceParseResult>(0).GetResult();
+			macro_function.strict = strict_choice.type == ParseResultType::KEYWORD;
 		}
-		// Other decorators (volatility, strict, security, cost, rows, parallel, leakproof) are accepted for PG-syntax
+		// Other decorators (volatility, security, cost, rows, parallel, leakproof) are accepted for PG-syntax
 		// compat but their semantics are dropped.
 	}
+}
+
+static void WrapStrictBody(MacroFunction &macro_function) {
+	if (!macro_function.strict || macro_function.parameters.empty()) {
+		return;
+	}
+	auto null_argument = [&]() {
+		unique_ptr<ParsedExpression> result;
+		for (auto &parameter : macro_function.parameters) {
+			unique_ptr<ParsedExpression> is_null =
+			    make_uniq<OperatorExpression>(ExpressionType::OPERATOR_IS_NULL, parameter->Copy());
+			if (result) {
+				result = make_uniq<ConjunctionExpression>(ExpressionType::CONJUNCTION_OR, std::move(result),
+				                                          std::move(is_null));
+			} else {
+				result = std::move(is_null);
+			}
+		}
+		return result;
+	};
+	auto filter_rows = [&](unique_ptr<QueryNode> body) {
+		auto inner = make_uniq<SelectStatement>();
+		inner->node = std::move(body);
+		auto node = make_uniq<SelectNode>();
+		node->select_list.push_back(make_uniq<StarExpression>());
+		node->from_table = make_uniq<SubqueryRef>(std::move(inner));
+		node->where_clause = make_uniq<OperatorExpression>(ExpressionType::OPERATOR_NOT, null_argument());
+		return node;
+	};
+	if (macro_function.type == MacroType::TABLE_MACRO) {
+		auto &table_macro = macro_function.Cast<TableMacroFunction>();
+		table_macro.query_node = filter_rows(std::move(table_macro.query_node));
+		return;
+	}
+	auto &scalar = macro_function.Cast<ScalarMacroFunction>();
+	if (scalar.query_body) {
+		auto &statement = scalar.expression->Cast<SubqueryExpression>().SubqueryMutable();
+		statement->node = filter_rows(std::move(statement->node));
+		return;
+	}
+	macro_function.source = scalar.expression->ToString();
+	auto checked = make_uniq<CaseExpression>();
+	CaseCheck check;
+	check.when_expr = null_argument();
+	check.then_expr = ConstantExpression::FromValue(Value());
+	checked->CaseChecksMutable().push_back(std::move(check));
+	checked->ElseMutable() = std::move(scalar.expression);
+	scalar.expression = std::move(checked);
 }
 
 static void MoveMacroProperties(MacroFunction &source, MacroFunction &target) {
@@ -431,6 +485,7 @@ unique_ptr<MacroFunction> PEGTransformerFactory::TransformMacroDefinition(PEGTra
 		}
 	}
 
+	WrapStrictBody(*macro_function);
 	return macro_function;
 }
 
