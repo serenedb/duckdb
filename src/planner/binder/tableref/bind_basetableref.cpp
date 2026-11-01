@@ -139,6 +139,10 @@ void Binder::SetSearchPath(Catalog &catalog, const Identifier &schema) {
 	entry_retriever.SetSearchPath(std::move(search_path));
 }
 
+void Binder::SetSearchPath(Catalog &catalog, const Identifier &schema, const vector<NameBinding> &bindings) {
+	entry_retriever.SetSearchPath(GetSearchPath(catalog, schema, true), catalog.GetName(), bindings);
+}
+
 BoundStatement Binder::Bind(BaseTableRef &ref) {
 	QueryErrorContext error_context(ref.query_location);
 	// CTEs and views are also referred to using BaseTableRefs, hence need to distinguish here
@@ -351,10 +355,13 @@ BoundStatement Binder::Bind(BaseTableRef &ref) {
 			}
 		}
 
-		// when binding a view, we always look into the catalog/schema where the view is stored first
-		auto view_search_path =
-		    GetSearchPath(view_catalog_entry.ParentCatalog(), view_catalog_entry.ParentSchema(context).name, true);
-		view_binder->entry_retriever.SetSearchPath(std::move(view_search_path));
+		auto &view_catalog = view_catalog_entry.ParentCatalog();
+		auto &view_schema = view_catalog_entry.ParentSchema(context).name;
+		if (!IsUnowned(view_catalog_entry) && !view_catalog.IsTemporaryCatalog()) {
+			view_binder->SetSearchPath(view_catalog, view_schema, view_catalog_entry.name_bindings);
+		} else {
+			view_binder->entry_retriever.SetSearchPath(GetSearchPath(view_catalog, view_schema, true));
+		}
 		// propagate the AT clause through the view
 		view_binder->entry_retriever.SetAtClause(entry_at_clause);
 

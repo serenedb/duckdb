@@ -387,8 +387,8 @@ public:
 	void BindCreateViewInfo(CreateViewInfo &base);
 	static void BindView(ClientContext &context, const SelectStatement &stmt, const Identifier &catalog_name,
 	                     const Identifier &schema_name, optional_ptr<LogicalDependencyList> dependencies,
-	                     const vector<Identifier> &aliases, vector<LogicalType> &result_types,
-	                     vector<Identifier> &result_names);
+	                     optional_ptr<vector<NameBinding>> name_bindings, const vector<Identifier> &aliases,
+	                     vector<LogicalType> &result_types, vector<Identifier> &result_names);
 
 	void SearchSchema(CreateInfo &info);
 	//! Resolve the leading component of a (possibly qualified) name into a catalog: if it names an attached database it
@@ -540,6 +540,7 @@ public:
 	                                           TableIndex table_index = TableIndex());
 
 	void SetSearchPath(Catalog &catalog, const Identifier &schema);
+	void SetSearchPath(Catalog &catalog, const Identifier &schema, const vector<NameBinding> &bindings);
 
 	void BindDefaultValue(const ColumnDefinition &column, vector<unique_ptr<Expression>> &bound_defaults,
 	                      const SchemaCatalogEntry &schema);

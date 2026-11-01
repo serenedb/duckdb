@@ -51,6 +51,7 @@ public:
 	//! false (default) is definer rights (the view owner's), matching PostgreSQL.
 	bool security_invoker = false;
 	vector<vector<AclItem>> column_acls;
+	vector<NameBinding> name_bindings;
 
 public:
 	unique_ptr<CreateInfo> Copy() const override;

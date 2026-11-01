@@ -50,6 +50,7 @@ public:
 
 	bool security_invoker = false;
 	vector<vector<AclItem>> column_acls;
+	vector<NameBinding> name_bindings;
 
 	std::span<const AclItem> ColumnAcl(idx_t column_index) const;
 	//! Returns the view column info, if the view is bound. Otherwise returns `nullptr`
