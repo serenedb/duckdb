@@ -191,6 +191,10 @@ static void ApplyFunctionDecorators(PEGTransformer &transformer, RepeatParseResu
 				macro_function.return_types.push_back(transformer.Transform<LogicalType>(returns_choice));
 			}
 		} else if (decorator_name == "LanguageClause") {
+			const string language = decorator_choice.Cast<ListParseResult>().Child<IdentifierParseResult>(1).identifier;
+			if (!StringUtil::CIEquals(language, "sql")) {
+				throw NotImplementedException("language \"%s\" is not supported", language);
+			}
 			info.has_language = true;
 		} else if (decorator_name == "StrictClause") {
 			auto &strict_choice = decorator_choice.Cast<ListParseResult>().Child<ChoiceParseResult>(0).GetResult();
