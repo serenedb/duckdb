@@ -130,12 +130,22 @@ bool ReferencesColumn(unique_ptr<ParsedExpression> &expr,
 	return found;
 }
 
-bool IsMacroParameter(const ColumnRefExpression &column_ref, DummyBinding &parameters) {
-	if (column_ref.IsQualified()) {
-		auto &names = column_ref.ColumnNames();
-		return names[names.size() - 2].StartsWith(DummyBinding::DUMMY_NAME);
+optional_idx ParameterPosition(const ColumnRefExpression &column_ref, DummyBinding &parameters) {
+	auto &names = column_ref.ColumnNames();
+	if (names.size() == 2 && names[0].StartsWith(DummyBinding::DUMMY_NAME) && parameters.HasMatchingBinding(names[1])) {
+		return 1;
 	}
-	return parameters.HasMatchingBinding(column_ref.GetColumnName());
+	if (names.size() > 1 && names[0] == parameters.dummy_name && parameters.HasMatchingBinding(names[1])) {
+		return 1;
+	}
+	if (parameters.HasMatchingBinding(names[0])) {
+		return 0;
+	}
+	return optional_idx();
+}
+
+bool IsLambdaParameter(const vector<identifier_set_t> &lambda_params, const ColumnRefExpression &column_ref) {
+	return !column_ref.IsQualified() && LambdaExpression::IsLambdaParameter(lambda_params, column_ref.GetName());
 }
 
 bool ContainsSubquery(const ParsedExpression &expr) {
@@ -224,10 +234,10 @@ bool NamesOnlyParameters(ParsedExpression &expr, DummyBinding &parameters, vecto
 		return true;
 	case ExpressionClass::COLUMN_REF: {
 		auto &column_ref = expr.Cast<ColumnRefExpression>();
-		if (LambdaExpression::IsLambdaParameter(lambda_params, column_ref.GetName())) {
+		if (IsLambdaParameter(lambda_params, column_ref)) {
 			return true;
 		}
-		const bool parameter = IsMacroParameter(column_ref, parameters);
+		const bool parameter = ParameterPosition(column_ref, parameters).IsValid();
 		names_parameter |= parameter;
 		return parameter;
 	}
@@ -312,11 +322,11 @@ void ExpressionBinder::AnalyzeMacroBody(ParsedExpression &expr, bool shareable, 
 	switch (expr.GetExpressionClass()) {
 	case ExpressionClass::COLUMN_REF: {
 		auto &column_ref = expr.Cast<ColumnRefExpression>();
-		if (LambdaExpression::IsLambdaParameter(lambda_params, column_ref.GetName()) ||
-		    !IsMacroParameter(column_ref, parameters)) {
+		auto position = ParameterPosition(column_ref, parameters);
+		if (IsLambdaParameter(lambda_params, column_ref) || !position.IsValid()) {
 			return;
 		}
-		auto parameter = use.parameters.find(column_ref.GetColumnName());
+		auto parameter = use.parameters.find(column_ref.ColumnNames()[position.GetIndex()]);
 		if (parameter == use.parameters.end()) {
 			return;
 		}
@@ -331,6 +341,7 @@ void ExpressionBinder::AnalyzeMacroBody(ParsedExpression &expr, bool shareable, 
 	}
 	case ExpressionClass::FUNCTION: {
 		auto &function = expr.Cast<FunctionExpression>();
+		UnfoldParameterDotCall(function, parameters);
 		auto lookup = LookupMacroFunction(function);
 		vector<reference<const ScalarMacroFunction>> overloads;
 		switch (lookup.kind) {
@@ -625,10 +636,11 @@ vector<bool> ExpressionBinder::MacroArgumentsBindInPlace(FunctionExpression &fun
 }
 
 void ExpressionBinder::ReplaceMacroParametersInLambda(FunctionExpression &function,
-                                                      vector<identifier_set_t> &lambda_params) {
+                                                      vector<identifier_set_t> &lambda_params,
+                                                      optional_ptr<MacroCall> call, bool in_query) {
 	for (auto &child : function.GetArgumentsMutable()) {
 		if (child.GetExpression().GetExpressionClass() != ExpressionClass::LAMBDA) {
-			ReplaceMacroParameters(child.GetExpressionMutable(), lambda_params);
+			ReplaceMacroParameters(child.GetExpressionMutable(), lambda_params, call, in_query);
 			continue;
 		}
 
@@ -652,8 +664,8 @@ void ExpressionBinder::ReplaceMacroParametersInLambda(FunctionExpression &functi
 		}
 		if (treat_as_json_extract) {
 			// Possibly a JSON function, replace both LHS and RHS.
-			ReplaceMacroParameters(lambda_expr.LeftMutable(), lambda_params);
-			ReplaceMacroParameters(lambda_expr.RightMutable(), lambda_params);
+			ReplaceMacroParameters(lambda_expr.LeftMutable(), lambda_params, call, in_query);
+			ReplaceMacroParameters(lambda_expr.RightMutable(), lambda_params, call, in_query);
 			continue;
 		}
 
@@ -665,19 +677,93 @@ void ExpressionBinder::ReplaceMacroParametersInLambda(FunctionExpression &functi
 		}
 
 		// Only replace in the RHS of the expression.
-		ReplaceMacroParameters(lambda_expr.RightMutable(), lambda_params);
+		ReplaceMacroParameters(lambda_expr.RightMutable(), lambda_params, call, in_query);
 
 		lambda_params.pop_back();
 	}
 }
 
+void ExpressionBinder::UnfoldParameterDotCall(FunctionExpression &function, DummyBinding &parameters) {
+	auto &name = function.GetQualifiedName();
+	if (name.Schema().empty() || !parameters.HasMatchingBinding(name.Schema())) {
+		return;
+	}
+	vector<Identifier> column;
+	if (!name.Catalog().empty()) {
+		if (name.Catalog() != parameters.dummy_name) {
+			return;
+		}
+		column.push_back(name.Catalog());
+	}
+	column.push_back(name.Schema());
+	if (GetCatalogEntry(EntryLookupInfo(CatalogType::SCALAR_FUNCTION_ENTRY, name), OnEntryNotFound::RETURN_NULL)) {
+		return;
+	}
+	QualifiedName unqualified(name.Name());
+	if (!GetCatalogEntry(EntryLookupInfo(CatalogType::SCALAR_FUNCTION_ENTRY, unqualified),
+	                     OnEntryNotFound::RETURN_NULL)) {
+		return;
+	}
+	unique_ptr<ParsedExpression> parameter = make_uniq<ColumnRefExpression>(std::move(column));
+	auto &arguments = function.GetArgumentsMutable();
+	arguments.insert(arguments.begin(), std::move(parameter));
+	function.SetQualifiedName(std::move(unqualified));
+}
+
+idx_t ExpressionBinder::MacroParameterReferenceFor(MacroCall &call, const ColumnRefExpression &colref, idx_t names) {
+	auto index = macro_binding->GetBindingIndex(colref.ColumnNames()[names - 1]);
+	if (call.references.empty()) {
+		call.references.resize(2 * macro_binding->GetColumnNames().size());
+	}
+	auto &reference = call.references[index * 2 + names - 1];
+	if (!reference.IsValid()) {
+		auto argument = (*macro_binding->arguments)[index]->Copy();
+		MaterializeMacroParameters(argument);
+		auto &parameters = binder.global_binder_state->macro_parameters;
+		reference = parameters.size();
+		parameters.push_back(MacroParameterReference {std::move(argument), call.caller, names});
+	}
+	return reference.GetIndex();
+}
+
+void ExpressionBinder::MaterializeMacroParameters(unique_ptr<ParsedExpression> &expr) {
+	switch (expr->GetExpressionClass()) {
+	case ExpressionClass::SUBQUERY:
+		return;
+	case ExpressionClass::COLUMN_REF: {
+		auto &column = expr->Cast<ColumnRefExpression>();
+		if (!column.MacroParameter().IsValid()) {
+			return;
+		}
+		if (ResolveMacroParameter(column).found) {
+			column.SetMacroParameter(optional_idx());
+		} else {
+			expr = MacroParameterArgument(column);
+		}
+		return;
+	}
+	default:
+		ParsedExpressionIterator::EnumerateChildren(
+		    *expr, [&](unique_ptr<ParsedExpression> &child) { MaterializeMacroParameters(child); });
+		return;
+	}
+}
+
 void ExpressionBinder::ReplaceMacroParameters(unique_ptr<ParsedExpression> &expr,
-                                              vector<identifier_set_t> &lambda_params) {
+                                              vector<identifier_set_t> &lambda_params, optional_ptr<MacroCall> call,
+                                              bool in_query) {
 	switch (expr->GetExpressionClass()) {
 	case ExpressionClass::COLUMN_REF: {
 		// If the expression is a column reference, we replace it with its argument.
 		auto &col_ref = expr->Cast<ColumnRefExpression>();
-		if (LambdaExpression::IsLambdaParameter(lambda_params, col_ref.GetName())) {
+		if (col_ref.MacroParameter().IsValid() || IsLambdaParameter(lambda_params, col_ref)) {
+			return;
+		}
+		if (call && in_query) {
+			auto position = ParameterPosition(col_ref, *macro_binding);
+			if (position.IsValid()) {
+				col_ref.SetMacroParameter(MacroParameterReferenceFor(*call, col_ref, position.GetIndex() + 1));
+			}
 			return;
 		}
 
@@ -701,23 +787,28 @@ void ExpressionBinder::ReplaceMacroParameters(unique_ptr<ParsedExpression> &expr
 	case ExpressionClass::FUNCTION: {
 		// Special-handling for lambdas, which are inside function expressions.
 		auto &function = expr->Cast<FunctionExpression>();
+		if (call && in_query) {
+			UnfoldParameterDotCall(function, *macro_binding);
+		}
 		if (function.IsLambdaFunction()) {
-			return ReplaceMacroParametersInLambda(function, lambda_params);
+			return ReplaceMacroParametersInLambda(function, lambda_params, call, in_query);
 		}
 		break;
 	}
 	case ExpressionClass::SUBQUERY: {
 		auto &sq = (expr->Cast<SubqueryExpression>()).Subquery();
-		ParsedExpressionIterator::EnumerateQueryNodeChildren(
-		    *sq->node, [&](unique_ptr<ParsedExpression> &child) { ReplaceMacroParameters(child, lambda_params); });
+		ParsedExpressionIterator::EnumerateQueryNodeChildren(*sq->node, [&](unique_ptr<ParsedExpression> &child) {
+			ReplaceMacroParameters(child, lambda_params, call, true);
+		});
 		break;
 	}
 	default:
 		break;
 	}
 
-	ParsedExpressionIterator::EnumerateChildren(
-	    *expr, [&](unique_ptr<ParsedExpression> &child) { ReplaceMacroParameters(child, lambda_params); });
+	ParsedExpressionIterator::EnumerateChildren(*expr, [&](unique_ptr<ParsedExpression> &child) {
+		ReplaceMacroParameters(child, lambda_params, call, in_query);
+	});
 }
 
 // Find aggregate expression children
@@ -946,8 +1037,9 @@ bool ExpressionBinder::ReturnsAtMostOneRow(SelectNode &node, bool from_parameter
 }
 
 void ExpressionBinder::ExpandSqlFunctionBody(DummyBinding &binding, vector<unique_ptr<ParsedExpression>> &arguments,
-                                             unique_ptr<ParsedExpression> &expr) {
-	ExpandSubqueryArguments(binding, arguments, vector<bool>(arguments.size(), true), expr, true);
+                                             unique_ptr<ParsedExpression> &expr,
+                                             optional_ptr<const ExpressionBinder> caller) {
+	ExpandSubqueryArguments(binding, arguments, vector<bool>(arguments.size(), true), expr, true, caller);
 }
 
 vector<bool> ExpressionBinder::BindSubqueryBodyArguments(const MacroBodyUse &use, DummyBinding &binding,
@@ -1014,7 +1106,8 @@ bool ExpressionBinder::ResolvesInScope(ParsedExpression &argument) {
 		return true;
 	case ExpressionClass::COLUMN_REF: {
 		auto &column = argument.Cast<ColumnRefExpression>();
-		return IsArgumentReference(column) || ResolveColumn(column, 0, false).found;
+		return IsArgumentReference(column) || column.MacroParameter().IsValid() ||
+		       ResolveColumn(column, 0, false).found;
 	}
 	default:
 		break;
@@ -1123,7 +1216,7 @@ unique_ptr<Expression> ExpressionBinder::BindMacroArgument(const BoundMacroArgum
 
 void ExpressionBinder::ExpandSubqueryArguments(DummyBinding &binding, vector<unique_ptr<ParsedExpression>> &arguments,
                                                const vector<bool> &bound_once, unique_ptr<ParsedExpression> &expr,
-                                               bool sql_function) {
+                                               bool sql_function, optional_ptr<const ExpressionBinder> caller) {
 	const Identifier alias(DummyBinding::VALUES_NAME + to_string(binder.global_binder_state->shared_macro_arguments++));
 	auto &names = binding.GetColumnNames();
 	vector<Identifier> value_names;
@@ -1138,7 +1231,8 @@ void ExpressionBinder::ExpandSubqueryArguments(DummyBinding &binding, vector<uni
 	}
 	macro_binding = &binding;
 	vector<identifier_set_t> lambda_params;
-	ReplaceMacroParameters(expr, lambda_params);
+	MacroCall call {caller, {}};
+	ReplaceMacroParameters(expr, lambda_params, call);
 	if (expr->GetExpressionClass() == ExpressionClass::SUBQUERY) {
 		const auto subquery_type = expr->Cast<SubqueryExpression>().GetSubqueryType();
 		if (subquery_type == SubqueryType::SCALAR || subquery_type == SubqueryType::EXISTS) {
@@ -1218,10 +1312,19 @@ void ExpressionBinder::AddSqlFunctionParameters(unique_ptr<ParsedExpression> &ex
 		}
 	};
 	bool outside = MayAggregate(node);
+	auto is_parameter = [&](const ColumnRefExpression &column) {
+		auto &column_names = column.ColumnNames();
+		return column_names.size() > 1 && column_names[column_names.size() - 2] == alias;
+	};
 	auto find_parameters = [&](unique_ptr<ParsedExpression> &child) {
 		outside = outside || ReferencesColumn(child, [&](const ColumnRefExpression &column) {
-			          auto &column_names = column.ColumnNames();
-			          return column_names.size() > 1 && column_names[column_names.size() - 2] == alias;
+			          if (!column.MacroParameter().IsValid()) {
+				          return is_parameter(column);
+			          }
+			          auto &argument =
+			              *binder.global_binder_state->macro_parameters[column.MacroParameter().GetIndex()].argument;
+			          return argument.GetExpressionClass() == ExpressionClass::COLUMN_REF &&
+			                 is_parameter(argument.Cast<ColumnRefExpression>());
 		          });
 	};
 	for (auto &cte : node.cte_map.map) {
@@ -1399,7 +1502,7 @@ ScalarMacroFunction &ExpressionBinder::UnfoldMacroExpression(FunctionExpression 
 	if (use && !call_modifiers && (macro_def.query_body || use->subquery || ContainsSubquery(*expr))) {
 		auto values = BindSubqueryBodyArguments(*use, *new_macro_binding, positional_arguments, scans, prebound, depth);
 		if (macro_def.query_body || absl::c_linear_search(values, true)) {
-			ExpandSubqueryArguments(*new_macro_binding, positional_arguments, values, expr, macro_def.query_body);
+			ExpandSubqueryArguments(*new_macro_binding, positional_arguments, values, expr, macro_def.query_body, this);
 			return macro_def;
 		}
 	} else if (use) {
@@ -1503,14 +1606,15 @@ ScalarMacroFunction &ExpressionBinder::UnfoldMacroExpression(FunctionExpression 
 			throw modifiers_error();
 		}
 		D_ASSERT(shared_names.empty());
-		ExpandSqlFunctionBody(*new_macro_binding, positional_arguments, expr);
+		ExpandSqlFunctionBody(*new_macro_binding, positional_arguments, expr, this);
 		return macro_def;
 	}
 
 	// now replace the parameters
 	macro_binding = new_macro_binding.get();
 	vector<identifier_set_t> lambda_params;
-	ReplaceMacroParameters(expr, lambda_params);
+	MacroCall call {this, {}};
+	ReplaceMacroParameters(expr, lambda_params, call);
 	if (call_modifiers) {
 		vector<reference<unique_ptr<ParsedExpression>>> aggregates;
 		FindAggregateExprs(expr, aggregates);

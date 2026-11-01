@@ -42,7 +42,7 @@ static idx_t GetLambdaParamIndex(vector<DummyBinding> &lambda_bindings, const Bo
 static void ExtractParameter(const ParsedExpression &expr, vector<Identifier> &column_names,
                              vector<string> &column_aliases) {
 	auto &column_ref = expr.Cast<ColumnRefExpression>();
-	if (column_ref.IsQualified()) {
+	if (column_ref.IsQualified() || column_ref.MacroParameter().IsValid()) {
 		throw BinderException(LambdaExpression::InvalidParametersErrorMessage());
 	}
 

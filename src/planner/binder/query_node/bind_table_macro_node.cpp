@@ -48,6 +48,11 @@ unique_ptr<QueryNode> Binder::BindTableMacro(FunctionExpression &function, Macro
 
 	eb.macro_binding = new_macro_binding.get();
 	vector<identifier_set_t> lambda_params;
+	optional_ptr<const ExpressionBinder> caller;
+	if (HasEnclosingScope()) {
+		caller = GetInnermostScope();
+	}
+	MacroCall call {caller, {}};
 
 	unique_ptr<QueryNode> node;
 	unique_ptr<TableRef> parameters;
@@ -83,7 +88,7 @@ unique_ptr<QueryNode> Binder::BindTableMacro(FunctionExpression &function, Macro
 		} else {
 			auto select_node = make_uniq<SelectNode>();
 			if (scalar_macro.query_body) {
-				eb.ExpandSqlFunctionBody(*new_macro_binding, positional_arguments, expr);
+				eb.ExpandSqlFunctionBody(*new_macro_binding, positional_arguments, expr, caller);
 			}
 			expr->SetAlias(macro_def.return_names.empty() ? macro_func.name : Identifier(macro_def.return_names[0]));
 			select_node->select_list.push_back(std::move(expr));
@@ -97,8 +102,9 @@ unique_ptr<QueryNode> Binder::BindTableMacro(FunctionExpression &function, Macro
 		node = macro_def.Cast<TableMacroFunction>().query_node->Copy();
 		parameters = eb.BindTableMacroArguments(*node, *new_macro_binding, positional_arguments);
 	}
-	ParsedExpressionIterator::EnumerateQueryNodeChildren(
-	    *node, [&](unique_ptr<ParsedExpression> &child) { eb.ReplaceMacroParameters(child, lambda_params); });
+	ParsedExpressionIterator::EnumerateQueryNodeChildren(*node, [&](unique_ptr<ParsedExpression> &child) {
+		eb.ReplaceMacroParameters(child, lambda_params, call, true);
+	});
 	if (parameters) {
 		const Identifier body_alias("0_macro_body");
 		auto body = make_uniq<SelectStatement>();

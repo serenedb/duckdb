@@ -66,7 +66,7 @@ ProjectionIndex BaseSelectBinder::TryBindGroup(ParsedExpression &expr) {
 	auto &alias_map = node.bind_state.group_alias_map;
 	if (expr.GetExpressionType() == ExpressionType::COLUMN_REF) {
 		auto &colref = expr.Cast<ColumnRefExpression>();
-		if (!colref.IsQualified()) {
+		if (!colref.IsQualified() && !colref.MacroParameter().IsValid()) {
 			auto alias_entry = alias_map.find(colref.ColumnNames()[0]);
 			if (alias_entry != alias_map.end()) {
 				// found entry!

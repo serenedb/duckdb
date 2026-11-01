@@ -143,36 +143,25 @@ unique_ptr<ParsedExpression> ColumnQualifier::QualifyColumnName(const ParsedExpr
 		}
 	}
 
-	// try binding as a lambda parameter
-	auto lambda_ref = LambdaRefExpression::FindMatchingBinding(lambda_bindings, column_name);
-	if (lambda_ref) {
-		return lambda_ref;
-	}
+	const bool macro_parameter = expr.Cast<ColumnRefExpression>().MacroParameter().IsValid();
+	if (!macro_parameter) {
+		// try binding as a lambda parameter
+		auto lambda_ref = LambdaRefExpression::FindMatchingBinding(lambda_bindings, column_name);
+		if (lambda_ref) {
+			return lambda_ref;
+		}
 
-	if (binder.global_binder_state->bound_macro_arguments.count(column_name)) {
-		return make_uniq<ColumnRefExpression>(column_name);
-	}
-
-	// find a table binding that contains this column name
-	auto table_binding = binder.bind_context.GetMatchingBinding(column_name, expr);
-
-	// throw an error if a macro parameter name conflicts with a column name
-	auto is_macro_column = false;
-	if (binder.macro_binding && binder.macro_binding->HasMatchingBinding(column_name)) {
-		is_macro_column = true;
-		if (table_binding) {
-			throw BinderException(expr, "Conflicting column names for column " + column_name + "!");
+		if (binder.global_binder_state->bound_macro_arguments.count(column_name)) {
+			return make_uniq<ColumnRefExpression>(column_name);
 		}
 	}
 
-	// bind as a macro column
-	if (is_macro_column) {
-		return binder.bind_context.CreateColumnReference(binder.macro_binding->GetBindingAlias(), column_name);
-	}
-
-	// bind as a regular column
+	auto table_binding = binder.bind_context.GetMatchingBinding(column_name, expr);
 	if (table_binding) {
 		return binder.bind_context.CreateColumnReference(table_binding->GetBindingAlias(), column_name);
+	}
+	if (!macro_parameter && binder.macro_binding && binder.macro_binding->HasMatchingBinding(column_name)) {
+		return binder.bind_context.CreateColumnReference(binder.macro_binding->GetBindingAlias(), column_name);
 	}
 
 	// it's not, find candidates and error
@@ -390,6 +379,11 @@ unique_ptr<ParsedExpression> ColumnQualifier::QualifyColumnNameWithManyDotsInter
 			break;
 		}
 	}
+	auto parameter = QualifyFunctionParameter(col_ref);
+	if (parameter) {
+		struct_extract_start = 2;
+		return parameter;
+	}
 	// part1 could be a column
 	ErrorData unused_error;
 	auto result_expr = QualifyColumnName(col_ref, names[0], unused_error);
@@ -439,15 +433,25 @@ unique_ptr<ParsedExpression> ColumnQualifier::QualifyColumnNameWithManyDots(Colu
 	return result_expr;
 }
 
+unique_ptr<ParsedExpression> ColumnQualifier::QualifyFunctionParameter(const ColumnRefExpression &col_ref) {
+	auto &names = col_ref.ColumnNames();
+	if (col_ref.MacroParameter().IsValid() || !binder.macro_binding || names[0] != binder.macro_binding->dummy_name ||
+	    !binder.macro_binding->HasMatchingBinding(names[1])) {
+		return nullptr;
+	}
+	return binder.bind_context.CreateColumnReference(binder.macro_binding->GetBindingAlias(), names[1]);
+}
+
 unique_ptr<ParsedExpression> ColumnQualifier::QualifyColumnName(ColumnRefExpression &colref, ErrorData &error) {
 	auto qualified_colref = QualifyColumnNameInternal(colref, error);
+	const bool macro_parameter = colref.MacroParameter().IsValid();
 	if (!qualified_colref) {
-		if (alias_binder) {
+		if (alias_binder && !macro_parameter) {
 			return alias_binder->ResolveAlias(colref);
 		}
 		return nullptr;
 	}
-	if (!having_binder) {
+	if (!having_binder || macro_parameter) {
 		return qualified_colref;
 	}
 	auto group_index = having_binder->TryBindGroup(*qualified_colref);
@@ -462,7 +466,7 @@ unique_ptr<ParsedExpression> ColumnQualifier::QualifyColumnName(ColumnRefExpress
 
 unique_ptr<ParsedExpression> ColumnQualifier::QualifyColumnNameInternal(ColumnRefExpression &col_ref,
                                                                         ErrorData &error) {
-	if (!col_ref.IsQualified()) {
+	if (!col_ref.IsQualified() && !col_ref.MacroParameter().IsValid()) {
 		// Try binding as a lambda parameter.
 		auto lambda_ref = LambdaRefExpression::FindMatchingBinding(lambda_bindings, col_ref.GetColumnName());
 		if (lambda_ref) {
@@ -498,6 +502,10 @@ unique_ptr<ParsedExpression> ColumnQualifier::QualifyColumnNameInternal(ColumnRe
 		if (binding) {
 			// it is! return the column reference directly
 			return binder.bind_context.CreateColumnReference(binding->GetBindingAlias(), col_ref.GetColumnName());
+		}
+		auto parameter = QualifyFunctionParameter(col_ref);
+		if (parameter) {
+			return parameter;
 		}
 
 		// otherwise check if we can turn this into a struct extract

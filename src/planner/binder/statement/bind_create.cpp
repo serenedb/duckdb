@@ -646,8 +646,22 @@ SchemaCatalogEntry &Binder::BindCreateFunctionInfo(CreateInfo &info) {
 			    base.GetFunctionName().GetIdentifierName());
 		}
 
-		auto this_macro_binding = make_uniq<DummyBinding>(dummy_types, dummy_names, string());
+		auto this_macro_binding =
+		    make_uniq<DummyBinding>(dummy_types, dummy_names, base.GetFunctionName().GetIdentifierName());
 		macro_binding = this_macro_binding.get();
+		vector<unique_ptr<ParsedExpression>> parameter_references;
+		for (auto &name : dummy_names) {
+			parameter_references.push_back(
+			    bind_context.CreateColumnReference(this_macro_binding->GetBindingAlias(), name));
+		}
+		this_macro_binding->arguments = &parameter_references;
+		ExpressionBinder parameter_binder(*this, context);
+		parameter_binder.macro_binding = this_macro_binding.get();
+		MacroCall call {nullptr, {}};
+		auto reference_parameters = [&](unique_ptr<ParsedExpression> &expr, bool in_query) {
+			vector<identifier_set_t> lambda_params;
+			parameter_binder.ReplaceMacroParameters(expr, lambda_params, call, in_query);
+		};
 
 		// bind it to verify the function was defined correctly
 		ErrorData error;
@@ -669,6 +683,7 @@ SchemaCatalogEntry &Binder::BindCreateFunctionInfo(CreateInfo &info) {
 
 			// create a copy of the expression because we do not want to alter the original
 			auto expression = function->Cast<ScalarMacroFunction>().expression->Copy();
+			reference_parameters(expression, false);
 			ExpressionBinder::QualifyColumnNames(*this, expression);
 			try {
 				auto &ret_types = function->return_types;
@@ -684,6 +699,7 @@ SchemaCatalogEntry &Binder::BindCreateFunctionInfo(CreateInfo &info) {
 				auto &scalar_function = function->Cast<ScalarMacroFunction>();
 				if (binder.InlineSqlFunctionBody(scalar_function)) {
 					expression = scalar_function.expression->Copy();
+					reference_parameters(expression, false);
 					ExpressionBinder::QualifyColumnNames(*this, expression);
 				}
 				bool query_validated = false;
@@ -765,7 +781,8 @@ SchemaCatalogEntry &Binder::BindCreateFunctionInfo(CreateInfo &info) {
 			// create a copy of the query node because we do not want to alter the original
 			auto query_node = function->Cast<TableMacroFunction>().query_node->Copy();
 			ParsedExpressionIterator::EnumerateQueryNodeChildren(
-			    *query_node, [&dummy_binder](unique_ptr<ParsedExpression> &child) {
+			    *query_node, [&dummy_binder, &reference_parameters](unique_ptr<ParsedExpression> &child) {
+				    reference_parameters(child, true);
 				    ExpressionBinder::QualifyColumnNames(*dummy_binder, child);
 			    });
 			try {

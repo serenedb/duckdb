@@ -345,15 +345,27 @@ BindResult ExpressionBinder::Bind(unique_ptr<ParsedExpression> &expr, idx_t dept
 	auto query_location = expr->GetQueryLocation();
 	auto alias = expr->GetAlias();
 	BindResult result;
+	if (expr->GetExpressionClass() == ExpressionClass::COLUMN_REF &&
+	    expr->Cast<ColumnRefExpression>().MacroParameter().IsValid() && !MatchesGroup(*expr)) {
+		auto &column = expr->Cast<ColumnRefExpression>();
+		auto resolution = ResolveMacroParameter(column);
+		if (!resolution.found) {
+			expr = MacroParameterArgument(column);
+			return Bind(expr, depth, root_expression);
+		}
+		expr = std::move(resolution.qualified);
+		result = resolution.depth == 0 ? BindExpression(expr, depth, root_expression)
+		                               : DispatchToScope(resolution.depth, expr, depth);
+	}
 	auto &bound_macro_arguments = binder.global_binder_state->bound_macro_arguments;
-	if (!bound_macro_arguments.empty() && expr->GetExpressionClass() == ExpressionClass::COLUMN_REF &&
-	    !expr->Cast<ColumnRefExpression>().IsQualified()) {
+	if (!result.expression && !result.HasError() && !bound_macro_arguments.empty() &&
+	    expr->GetExpressionClass() == ExpressionClass::COLUMN_REF && !expr->Cast<ColumnRefExpression>().IsQualified()) {
 		auto bound = bound_macro_arguments.find(expr->Cast<ColumnRefExpression>().GetColumnName());
 		if (bound != bound_macro_arguments.end()) {
 			result = BindResult(BindMacroArgument(bound->second));
 		}
 	}
-	if (!result.expression) {
+	if (!result.expression && !result.HasError()) {
 		result = BindExpression(expr, depth, root_expression);
 	}
 	if (result.HasError()) {

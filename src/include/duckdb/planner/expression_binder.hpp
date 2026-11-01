@@ -47,6 +47,7 @@ class ColumnAliasBinder;
 struct DummyBinding;
 struct SelectBindState;
 struct BoundMacroArgument;
+struct MacroCall;
 struct MacroArgumentScan;
 struct MacroBodyUse;
 struct MacroFunctionLookup;
@@ -116,7 +117,7 @@ public:
 
 	bool InlineSqlFunctionBody(ScalarMacroFunction &function);
 	void ExpandSqlFunctionBody(DummyBinding &binding, vector<unique_ptr<ParsedExpression>> &arguments,
-	                           unique_ptr<ParsedExpression> &expr);
+	                           unique_ptr<ParsedExpression> &expr, optional_ptr<const ExpressionBinder> caller);
 	BindResult BindMacroArgumentType(unique_ptr<ParsedExpression> &argument, idx_t depth);
 	unique_ptr<TableRef> BindTableMacroArguments(QueryNode &body, DummyBinding &binding,
 	                                             vector<unique_ptr<ParsedExpression>> &arguments);
@@ -238,10 +239,14 @@ public:
 
 	//! FIXME: Generalise this for extensibility.
 	//! Recursively replaces macro parameters with the provided input parameters.
-	void ReplaceMacroParameters(unique_ptr<ParsedExpression> &expr, vector<identifier_set_t> &lambda_params);
+	void ReplaceMacroParameters(unique_ptr<ParsedExpression> &expr, vector<identifier_set_t> &lambda_params,
+	                            optional_ptr<MacroCall> call = nullptr, bool in_query = false);
 	//! Enables special-handling of lambda parameters during macro replacement by tracking them in the lambda_params
 	//! vector.
-	void ReplaceMacroParametersInLambda(FunctionExpression &function, vector<identifier_set_t> &lambda_params);
+	void ReplaceMacroParametersInLambda(FunctionExpression &function, vector<identifier_set_t> &lambda_params,
+	                                    optional_ptr<MacroCall> call, bool in_query);
+	ColumnResolution ResolveMacroParameter(ColumnRefExpression &colref);
+	unique_ptr<ParsedExpression> MacroParameterArgument(const ColumnRefExpression &colref);
 
 	static LogicalType GetExpressionReturnType(const Expression &expr);
 
@@ -345,7 +350,11 @@ protected:
 	                                       vector<unique_ptr<Expression>> &prebound, idx_t depth);
 	unique_ptr<Expression> BindMacroArgument(const BoundMacroArgument &argument);
 	void ExpandSubqueryArguments(DummyBinding &binding, vector<unique_ptr<ParsedExpression>> &arguments,
-	                             const vector<bool> &bound_once, unique_ptr<ParsedExpression> &expr, bool sql_function);
+	                             const vector<bool> &bound_once, unique_ptr<ParsedExpression> &expr, bool sql_function,
+	                             optional_ptr<const ExpressionBinder> caller);
+	idx_t MacroParameterReferenceFor(MacroCall &call, const ColumnRefExpression &colref, idx_t names);
+	void MaterializeMacroParameters(unique_ptr<ParsedExpression> &expr);
+	void UnfoldParameterDotCall(FunctionExpression &function, DummyBinding &parameters);
 	void AddSqlFunctionParameters(unique_ptr<ParsedExpression> &expr, const Identifier &alias,
 	                              const vector<Identifier> &names, vector<unique_ptr<ParsedExpression>> arguments,
 	                              bool sql_function);

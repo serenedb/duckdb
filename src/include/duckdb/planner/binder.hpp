@@ -225,6 +225,17 @@ struct BoundMacroArgument {
 	optional_ptr<const ExpressionBinder> owner;
 };
 
+struct MacroParameterReference {
+	unique_ptr<ParsedExpression> argument;
+	optional_ptr<const ExpressionBinder> caller;
+	idx_t names;
+};
+
+struct MacroCall {
+	optional_ptr<const ExpressionBinder> caller;
+	vector<optional_idx> references;
+};
+
 enum class MacroFunctionKind : uint8_t {
 	FUNCTION,
 	VOLATILE_FUNCTION,
@@ -247,6 +258,7 @@ struct GlobalBinderState {
 	qualified_name_map_t<MacroFunctionLookup> macro_functions;
 	idx_t shared_macro_arguments = 0;
 	identifier_map_t<BoundMacroArgument> bound_macro_arguments;
+	vector<MacroParameterReference> macro_parameters;
 	idx_t macro_type_probing = 0;
 	//! Statement properties
 	StatementProperties prop;

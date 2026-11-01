@@ -142,9 +142,17 @@ void ExpressionBinder::CombineErrors(ErrorData &current, ErrorData new_error) {
 
 ColumnResolution ExpressionBinder::ResolveColumn(ColumnRefExpression &colref, idx_t start, bool report_errors) {
 	ColumnResolution result;
+	const auto macro_parameter = colref.MacroParameter();
+	optional_ptr<const ExpressionBinder> caller;
+	if (macro_parameter.IsValid()) {
+		caller = binder.global_binder_state->macro_parameters[macro_parameter.GetIndex()].caller;
+	}
 	for (idx_t depth = start; depth < ScopeCount(); depth++) {
 		auto &scope = ScopeAt(depth);
-		if (scope.ClaimsAlias(colref)) {
+		if (macro_parameter.IsValid() && &scope == caller.get()) {
+			break;
+		}
+		if (!macro_parameter.IsValid() && scope.ClaimsAlias(colref)) {
 			// the scope has a select-list alias of this name: it owns the reference even though
 			// qualification cannot produce a replacement for it
 			result.found = true;
@@ -161,7 +169,7 @@ ColumnResolution ExpressionBinder::ResolveColumn(ColumnRefExpression &colref, id
 			result.qualified = std::move(qualified);
 			return result;
 		}
-		if (scope.MatchesGroup(colref)) {
+		if (!macro_parameter.IsValid() && scope.MatchesGroup(colref)) {
 			// the name is one of this scope's groups by alias, which qualification cannot see
 			result.found = true;
 			result.depth = depth;
@@ -173,6 +181,22 @@ ColumnResolution ExpressionBinder::ResolveColumn(ColumnRefExpression &colref, id
 			CombineErrors(result.error, std::move(error));
 		}
 	}
+	return result;
+}
+
+ColumnResolution ExpressionBinder::ResolveMacroParameter(ColumnRefExpression &colref) {
+	return ResolveColumn(colref, 0, false);
+}
+
+unique_ptr<ParsedExpression> ExpressionBinder::MacroParameterArgument(const ColumnRefExpression &colref) {
+	auto &parameter = binder.global_binder_state->macro_parameters[colref.MacroParameter().GetIndex()];
+	auto result = parameter.argument->Copy();
+	auto &names = colref.ColumnNames();
+	for (idx_t i = parameter.names; i < names.size(); i++) {
+		result = CreateStructExtract(std::move(result), names[i]);
+	}
+	result->SetAlias(colref.GetAlias());
+	result->SetNamedParameter(colref.IsNamedParameter());
 	return result;
 }
 

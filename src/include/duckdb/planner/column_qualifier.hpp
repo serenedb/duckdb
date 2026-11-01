@@ -59,6 +59,7 @@ private:
 	bool TableNameExists(const Identifier &table_name);
 
 	unique_ptr<ParsedExpression> QualifyColumnNameInternal(ColumnRefExpression &col_ref, ErrorData &error);
+	unique_ptr<ParsedExpression> QualifyFunctionParameter(const ColumnRefExpression &col_ref);
 };
 
 } // namespace duckdb
