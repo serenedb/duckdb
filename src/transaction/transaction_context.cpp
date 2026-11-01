@@ -118,6 +118,10 @@ void TransactionContext::Commit() {
 		if (error.Type() == ExceptionType::INVALID) {
 			error.Throw();
 		}
+		auto message_without_key = error.ExtraInfo().find("message_without_key");
+		if (context.hide_constraint_keys && message_without_key != error.ExtraInfo().end()) {
+			throw TransactionException("Failed to commit: %s", message_without_key->second);
+		}
 		throw TransactionException("Failed to commit: %s", error.RawMessage());
 	}
 	for (auto &state : context.registered_state->States()) {

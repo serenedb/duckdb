@@ -541,7 +541,7 @@ void Binder::RecordConstraintKeyVisibility(TableCatalogEntry &table) {
 	auto &columns = table.GetColumns();
 	vector<std::span<const AclItem>> acls;
 	for (auto column_id : table.GetStorage().GetDataTableInfo()->GetIndexes().GetIndexedColumns()) {
-		acls.emplace_back(columns.GetColumn(columns.PhysicalToLogical(PhysicalIndex(column_id))).Acl());
+		acls.emplace_back(columns.GetColumn(PhysicalIndex(column_id)).Acl());
 	}
 	properties.hide_constraint_keys = !acls.empty() && !principal->CanColumns(table.permissions, AclMode::Select, acls);
 }
