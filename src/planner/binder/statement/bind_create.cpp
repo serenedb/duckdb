@@ -22,8 +22,12 @@
 #include "duckdb/parser/constraints/list.hpp"
 #include "duckdb/parser/constraints/unique_constraint.hpp"
 #include "duckdb/common/string_util.hpp"
+#include "duckdb/parser/expression/case_expression.hpp"
+#include "duckdb/parser/expression/cast_expression.hpp"
+#include "duckdb/parser/expression/columnref_expression.hpp"
 #include "duckdb/parser/expression/constant_expression.hpp"
 #include "duckdb/parser/expression/function_expression.hpp"
+#include "duckdb/parser/expression/operator_expression.hpp"
 #include "duckdb/parser/expression/subquery_expression.hpp"
 #include "duckdb/parser/parsed_data/create_index_info.hpp"
 #include "duckdb/parser/parsed_data/create_job_info.hpp"
@@ -690,14 +694,33 @@ SchemaCatalogEntry &Binder::BindCreateFunctionInfo(CreateInfo &info) {
 			ExpressionBinder::QualifyColumnNames(*this, expression);
 			try {
 				auto &ret_types = function->return_types;
-				// PG-compat: RETURNS VOID functions evaluate to a single NULL row
-				// regardless of body. Replace the stored body with a NULL constant
-				// so downstream macro expansion can't trip over the body's actual
-				// shape (e.g. multiple-column SELECTs).
 				if (ret_types.size() == 1 && MacroFunction::IsVoid(ret_types[0])) {
-					function->Cast<ScalarMacroFunction>().expression = ConstantExpression::Null();
-					function->Cast<ScalarMacroFunction>().query_body = false;
-					expression = function->Cast<ScalarMacroFunction>().expression->Copy();
+					auto &void_function = function->Cast<ScalarMacroFunction>();
+					if (void_function.query_body) {
+						auto &statement = void_function.expression->Cast<SubqueryExpression>().SubqueryMutable();
+						auto body = make_uniq<SelectStatement>();
+						body->node = std::move(statement->node);
+						const Identifier body_alias("0_void_body");
+						vector<unique_ptr<ParsedExpression>> row;
+						row.push_back(make_uniq<ColumnRefExpression>(body_alias));
+						vector<unique_ptr<ParsedExpression>> row_hash;
+						row_hash.push_back(make_uniq<FunctionExpression>(Identifier("hash"), std::move(row)));
+						auto no_rows = make_uniq<OperatorExpression>(
+						    ExpressionType::OPERATOR_IS_NULL,
+						    make_uniq<FunctionExpression>(Identifier("max"), std::move(row_hash)));
+						auto rows_read = make_uniq<CaseExpression>();
+						rows_read->CaseChecksMutable().push_back(CaseCheck {
+						    std::move(no_rows), make_uniq<CastExpression>(ret_types[0], ConstantExpression::Null())});
+						rows_read->ElseMutable() = make_uniq<CastExpression>(ret_types[0], ConstantExpression::Null());
+						auto result = make_uniq<SelectNode>();
+						result->select_list.push_back(std::move(rows_read));
+						result->from_table = make_uniq<SubqueryRef>(std::move(body), body_alias);
+						statement->node = std::move(result);
+					} else {
+						void_function.expression = make_uniq<CastExpression>(ret_types[0], ConstantExpression::Null());
+					}
+					expression = void_function.expression->Copy();
+					reference_parameters(expression, false);
 				}
 				auto &scalar_function = function->Cast<ScalarMacroFunction>();
 				if (binder.InlineSqlFunctionBody(scalar_function)) {
