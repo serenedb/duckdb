@@ -115,10 +115,6 @@ TemporaryMemoryManager &BufferManager::GetTemporaryMemoryManager() {
 	throw NotImplementedException("This type of BufferManager does not have a TemporaryMemoryManager");
 }
 
-void BufferManager::AddToEvictionQueue(shared_ptr<BlockHandle> &handle) {
-	throw NotImplementedException("This type of BufferManager does not support 'AddToEvictionQueue");
-}
-
 BufferHandle BufferManager::Allocate(QueryContext context, MemoryTag tag, idx_t block_size, bool can_destroy) {
 	return Allocate(tag, block_size, can_destroy);
 }

@@ -107,6 +107,9 @@ public:
 	void Unpin(shared_ptr<BlockHandle> &handle) override {
 		return buffer_manager.Unpin(handle);
 	}
+	void Unpin(BlockMemory &memory) override {
+		return buffer_manager.Unpin(memory);
+	}
 
 	idx_t GetUsedMemory() const override {
 		return buffer_manager.GetUsedMemory();
@@ -212,12 +215,6 @@ public:
 		return buffer_manager.GetTemporaryMemoryManager();
 	}
 
-	void PurgeQueue(const BlockHandle &handle) override {
-		return buffer_manager.PurgeQueue(handle);
-	}
-	void AddToEvictionQueue(shared_ptr<BlockHandle> &handle) override {
-		return buffer_manager.AddToEvictionQueue(handle);
-	}
 	void WriteTemporaryBuffer(QueryContext context, MemoryTag tag, block_id_t block_id, FileBuffer &buffer) override {
 		return buffer_manager.WriteTemporaryBuffer(context, tag, block_id, buffer);
 	}

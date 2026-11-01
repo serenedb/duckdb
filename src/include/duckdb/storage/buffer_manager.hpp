@@ -73,6 +73,8 @@ public:
 	                                                          vector<shared_ptr<BlockHandle>> &handles);
 	//! Unpin a block handle.
 	virtual void Unpin(shared_ptr<BlockHandle> &handle) = 0;
+	//! Unpin a pin of block memory.
+	virtual void Unpin(BlockMemory &memory) = 0;
 
 	//! Returns the currently allocated memory.
 	virtual idx_t GetUsedMemory() const = 0;
@@ -141,10 +143,6 @@ public:
 	//! Get the manager assigning reservations for temporary memory, e.g., for query intermediates.
 	virtual TemporaryMemoryManager &GetTemporaryMemoryManager();
 
-	//! Purge the eviction queue of the block handle.
-	virtual void PurgeQueue(const BlockHandle &handle) = 0;
-	//! Add the block handle to the eviction queue.
-	virtual void AddToEvictionQueue(shared_ptr<BlockHandle> &handle);
 	//! Write a temporary file buffer.
 	virtual void WriteTemporaryBuffer(QueryContext context, MemoryTag tag, block_id_t block_id, FileBuffer &buffer);
 	//! Read a temporary buffer.

@@ -1692,6 +1692,50 @@ TEST_CASE("Block cache benchmark: concurrent pins of one block and of distinct b
 	}
 }
 
+TEST_CASE("Block cache benchmark: concurrent buffer manager pins of one buffer and of distinct buffers",
+          "[.][block_cache_bench]") {
+	constexpr idx_t PINS = 500000;
+	constexpr idx_t BLOCKS = 64;
+	for (const idx_t threads : {idx_t(1), idx_t(8), idx_t(16), idx_t(32), idx_t(64)}) {
+		DBConfig config;
+		config.options.maximum_threads = threads;
+		DuckDB db(nullptr, &config);
+		auto &buffers = BufferManager::GetBufferManager(*db.instance);
+		vector<shared_ptr<BlockHandle>> handles;
+		for (idx_t block = 0; block < BLOCKS; block++) {
+			auto buffer = buffers.Allocate(MemoryTag::IN_MEMORY_TABLE, BLOCK, false);
+			memset(buffer.GetDataMutable(), BenchByte(block), BLOCK);
+			handles.push_back(buffer.GetBlockHandle());
+		}
+		for (const bool one_block : {true, false}) {
+			atomic<idx_t> wrong {0};
+			const auto start = std::chrono::steady_clock::now();
+			TaskExecutor executor(TaskScheduler::GetScheduler(*db.instance));
+			for (idx_t thread = 0; thread < threads; thread++) {
+				executor.ScheduleTask(make_uniq<FunctionExecutorTask>(
+				    executor,
+				    [&, thread]() {
+					    const auto block = one_block ? 0 : thread % BLOCKS;
+					    auto handle = handles[block];
+					    idx_t mismatches = 0;
+					    for (idx_t i = 0; i < PINS; i++) {
+						    mismatches += buffers.Pin(handle).Ptr()[0] != BenchByte(block);
+					    }
+					    wrong += mismatches;
+				    },
+				    "BufferManagerBenchTask"));
+			}
+			executor.WorkOnTasks();
+			const auto elapsed = MillisecondsSince(start);
+			REQUIRE(wrong == 0);
+			Printer::PrintF("buffer manager pins of %s, %llu threads: %.1f M pins/s, %.1f ns per pin and unpin in a "
+			                "thread",
+			                one_block ? "one buffer" : "distinct buffers", threads,
+			                double(threads * PINS) / elapsed / 1000.0, elapsed * 1000000.0 / double(PINS));
+		}
+	}
+}
+
 TEST_CASE("Block cache benchmark: cold reads of a 16 MiB range from a slow source", "[.][block_cache_bench]") {
 	constexpr idx_t BLOCKS = 64;
 	DuckDB db(nullptr);
