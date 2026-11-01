@@ -62,7 +62,8 @@ enum class CatalogSetPathType { SET_SCHEMA, SET_SCHEMAS, SET_DIRECTLY };
 class CatalogSearchPath {
 public:
 	DUCKDB_API explicit CatalogSearchPath(ClientContext &client_p);
-	DUCKDB_API CatalogSearchPath(ClientContext &client_p, vector<CatalogSearchEntry> entries);
+	DUCKDB_API CatalogSearchPath(ClientContext &client_p, vector<CatalogSearchEntry> entries,
+	                             bool session_objects = true);
 	CatalogSearchPath(const CatalogSearchPath &other) = delete;
 
 	DUCKDB_API void Set(CatalogSearchEntry new_value, CatalogSetPathType set_type);
@@ -114,6 +115,7 @@ private:
 private:
 	ClientContext &context;
 	vector<CatalogSearchEntry> paths;
+	bool session_objects = true;
 	bool builtins_first_order = false;
 	bool postgres_mode = false;
 	//! Only the paths that were explicitly set (minus the always included paths)

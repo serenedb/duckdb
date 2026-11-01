@@ -16,6 +16,7 @@
 #include "duckdb/parser/query_error_context.hpp"
 #include "duckdb/catalog/catalog_entry/schema_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_search_path.hpp"
+#include "duckdb/catalog/dependency_list.hpp"
 #include "duckdb/catalog/entry_lookup_info.hpp"
 #include "duckdb/catalog/permissions.hpp"
 
@@ -82,6 +83,7 @@ public:
 
 	const CatalogSearchPath &GetSearchPath() const;
 	void SetSearchPath(vector<CatalogSearchEntry> entries);
+	void SetSearchPath(vector<CatalogSearchEntry> entries, const LogicalDependencyList &bindings);
 
 	void SetCallback(catalog_entry_callback_t callback);
 	catalog_entry_callback_t GetCallback();
@@ -98,6 +100,7 @@ public:
 
 private:
 	optional_ptr<CatalogEntry> ReturnAndCallback(optional_ptr<CatalogEntry> result);
+	optional_ptr<CatalogEntry> GetBoundEntry(const EntryLookupInfo &lookup_info);
 
 private:
 	//! (optional) callback, called on every successful entry retrieval
@@ -106,6 +109,7 @@ private:
 	shared_ptr<CatalogSearchPath> search_path;
 	optional_ptr<BoundAtClause> at_clause;
 	optional_ptr<const RoleAccess> principal;
+	optional_ptr<const LogicalDependencyList> bindings;
 };
 
 } // namespace duckdb

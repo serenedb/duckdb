@@ -12,8 +12,59 @@
 
 namespace duckdb {
 
+enum class EntryNamespace : uint8_t { NONE, RELATION, FUNCTION, TYPE };
+
+static EntryNamespace NamespaceOf(CatalogType type) {
+	if (Catalog::InRelationNamespace(type)) {
+		return EntryNamespace::RELATION;
+	}
+	switch (type) {
+	case CatalogType::TABLE_FUNCTION_ENTRY:
+	case CatalogType::SCALAR_FUNCTION_ENTRY:
+	case CatalogType::AGGREGATE_FUNCTION_ENTRY:
+	case CatalogType::PRAGMA_FUNCTION_ENTRY:
+	case CatalogType::COPY_FUNCTION_ENTRY:
+	case CatalogType::MACRO_ENTRY:
+	case CatalogType::TABLE_MACRO_ENTRY:
+	case CatalogType::WINDOW_FUNCTION_ENTRY:
+		return EntryNamespace::FUNCTION;
+	case CatalogType::TYPE_ENTRY:
+		return EntryNamespace::TYPE;
+	default:
+		return EntryNamespace::NONE;
+	}
+}
+
+optional_ptr<CatalogEntry> CatalogEntryRetriever::GetBoundEntry(const EntryLookupInfo &lookup_info) {
+	const auto name_space = NamespaceOf(lookup_info.GetCatalogType());
+	if (name_space == EntryNamespace::NONE) {
+		return nullptr;
+	}
+	for (auto &dependency : bindings->Set()) {
+		if (dependency.entry.name != lookup_info.GetEntryIdentifier() ||
+		    NamespaceOf(dependency.entry.type) != name_space) {
+			continue;
+		}
+		vector<Identifier> path {dependency.catalog};
+		path.insert(path.end(), dependency.entry.schema_path.begin(), dependency.entry.schema_path.end());
+		auto entry = Catalog::GetEntry(
+		    *this, EntryLookupInfo(lookup_info, QualifiedName(std::move(path), dependency.entry.name)),
+		    OnEntryNotFound::RETURN_NULL);
+		if (entry) {
+			return entry;
+		}
+	}
+	return nullptr;
+}
+
 optional_ptr<CatalogEntry> CatalogEntryRetriever::GetEntry(const EntryLookupInfo &lookup_info,
                                                            OnEntryNotFound on_entry_not_found) {
+	if (bindings && IsInvalidCatalog(lookup_info.GetCatalog()) && IsInvalidSchema(lookup_info.GetSchema())) {
+		auto entry = GetBoundEntry(lookup_info);
+		if (entry) {
+			return ReturnAndCallback(entry);
+		}
+	}
 	return ReturnAndCallback(Catalog::GetEntry(*this, lookup_info, on_entry_not_found));
 }
 
@@ -90,6 +141,7 @@ void CatalogEntryRetriever::Inherit(const CatalogEntryRetriever &parent) {
 	this->search_path = parent.search_path;
 	this->at_clause = parent.at_clause;
 	this->principal = parent.principal;
+	this->bindings = parent.bindings;
 }
 
 const CatalogSearchPath &CatalogEntryRetriever::GetSearchPath() const {
@@ -99,7 +151,7 @@ const CatalogSearchPath &CatalogEntryRetriever::GetSearchPath() const {
 	return *ClientData::Get(context).catalog_search_path;
 }
 
-void CatalogEntryRetriever::SetSearchPath(vector<CatalogSearchEntry> entries) {
+static vector<CatalogSearchEntry> SearchEntriesOfCatalogs(vector<CatalogSearchEntry> entries) {
 	vector<CatalogSearchEntry> new_path;
 	for (auto &entry : entries) {
 		if (IsInvalidCatalog(entry.GetCatalog()) || entry.GetCatalog() == SYSTEM_CATALOG ||
@@ -108,6 +160,17 @@ void CatalogEntryRetriever::SetSearchPath(vector<CatalogSearchEntry> entries) {
 		}
 		new_path.push_back(std::move(entry));
 	}
+	return new_path;
+}
+
+void CatalogEntryRetriever::SetSearchPath(vector<CatalogSearchEntry> entries, const LogicalDependencyList &bindings_p) {
+	search_path = make_shared_ptr<CatalogSearchPath>(context, SearchEntriesOfCatalogs(std::move(entries)), false);
+	bindings = &bindings_p;
+}
+
+void CatalogEntryRetriever::SetSearchPath(vector<CatalogSearchEntry> entries) {
+	bindings = nullptr;
+	auto new_path = SearchEntriesOfCatalogs(std::move(entries));
 	if (new_path.empty()) {
 		return;
 	}
