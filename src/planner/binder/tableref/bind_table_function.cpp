@@ -480,8 +480,7 @@ BoundStatement Binder::Bind(TableFunctionRef &ref) {
 	EntryLookupInfo table_function_lookup(CatalogType::TABLE_FUNCTION_ENTRY, QualifiedName(fexpr.FunctionName()),
 	                                      error_context);
 	auto bound_name = BindTableName(fexpr.GetQualifiedName());
-	auto func_catalog_ptr =
-	    GetCatalogEntry(EntryLookupInfo(table_function_lookup, bound_name), OnEntryNotFound::RETURN_NULL);
+	auto func_catalog_ptr = GetFunctionEntry(EntryLookupInfo(table_function_lookup, bound_name), fexpr);
 
 	// DuckDB's typed catalog lookup can return a MACRO_ENTRY even when asked
 	// for TABLE_FUNCTION_ENTRY (internal fallback). If we found a MACRO_ENTRY

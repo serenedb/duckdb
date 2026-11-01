@@ -252,7 +252,7 @@ optional_ptr<CatalogEntry> ColumnQualifier::QualifyFunction(FunctionExpression &
 	// catalog or the outermost schema of a nested schema path. The name as written is left alone - the dot-call
 	// rewrite below turns the qualification into a column reference and needs it unresolved.
 	auto bound_name = binder.BindTableName(function.GetQualifiedName());
-	auto func = binder.GetCatalogEntry(EntryLookupInfo(function_lookup, bound_name), OnEntryNotFound::RETURN_NULL);
+	auto func = binder.GetFunctionEntry(EntryLookupInfo(function_lookup, bound_name), function);
 	if (func) {
 		// found the function - we are done
 		return func;
