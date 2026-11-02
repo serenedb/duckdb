@@ -562,7 +562,6 @@ static bool TracksOwner(CatalogType type) {
 	case CatalogType::TOKENIZER_ENTRY:
 	case CatalogType::JOB_ENTRY:
 	case CatalogType::FOREIGN_SERVER_ENTRY:
-	case CatalogType::SUBSCRIPTION_ENTRY:
 		return true;
 	default:
 		return false;
@@ -624,6 +623,15 @@ void DependencyManager::ReassignOwned(CatalogTransaction transaction, const Reas
 		    auto &manager = *holder.GetDependencyManager();
 		    holder.GetCatalogSet(CatalogType::DATABASE_ENTRY).Scan(holder_transaction, [&](CatalogEntry &entry) {
 			    if (!manager.IsSystemEntry(entry) && reassigned(entry)) {
+				    reassign(holder, holder_transaction, entry);
+			    }
+		    });
+	    });
+	ForEachCatalog(
+	    transaction, HoldsEntries(CatalogType::SUBSCRIPTION_ENTRY),
+	    [&](DuckCatalog &holder, CatalogTransaction holder_transaction) {
+		    holder.GetCatalogSet(CatalogType::SUBSCRIPTION_ENTRY).Scan(holder_transaction, [&](CatalogEntry &entry) {
+			    if (reassigned(entry)) {
 				    reassign(holder, holder_transaction, entry);
 			    }
 		    });
