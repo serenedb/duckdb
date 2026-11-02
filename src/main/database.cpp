@@ -595,7 +595,6 @@ void DatabaseInstance::Configure(DBConfig &new_config, const char *database_path
 	config.replacement_scans = std::move(new_config.replacement_scans);
 	config.superuser_functions = std::move(new_config.superuser_functions);
 	config.file_free_functions = std::move(new_config.file_free_functions);
-	config.superuser_foreign_data_wrappers = std::move(new_config.superuser_foreign_data_wrappers);
 	config.cluster_catalog = std::move(new_config.cluster_catalog);
 	if (new_config.callback_manager) {
 		config.callback_manager = std::move(new_config.callback_manager);
