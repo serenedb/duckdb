@@ -81,6 +81,8 @@ public:
 	//! Called by the statement that drops this entry, before the drop is installed
 	virtual void BeforeDrop(CatalogTransaction transaction);
 	virtual void OnDrop();
+	//! Called on the version an ALTER created, with that ALTER, once its commit is final
+	virtual void OnAlter(const AlterInfo &info);
 
 	virtual unique_ptr<CatalogEntry> Copy(ClientContext &context) const;
 
