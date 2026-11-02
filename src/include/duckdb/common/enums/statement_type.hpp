@@ -10,6 +10,7 @@
 
 #include "duckdb/common/constants.hpp"
 #include "duckdb/common/enums/result_eagerness.hpp"
+#include "duckdb/common/enums/role_capability.hpp"
 #include "duckdb/common/identifier.hpp"
 #include "duckdb/common/optional_idx.hpp"
 #include "duckdb/common/unordered_set.hpp"
@@ -131,7 +132,7 @@ struct StatementProperties {
 	//! Whether or not the statement ALWAYS requires a rebind
 	bool always_require_rebind;
 	optional<ReplicationRole> replication_role;
-	optional<bool> file_access_authorized;
+	optional<RoleCapability> file_access_authorized;
 	bool check_database_references = false;
 	bool hide_constraint_keys = false;
 

@@ -1499,6 +1499,13 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 		auto &catalog = subscription_catalog.GetName();
 		stmt.info->SetQualifiedName(QualifiedName(catalog, Identifier(), stmt.info->GetQualifiedName().Name()));
 		if (principal) {
+			if (!principal->Has(RoleCapability::CreateSubscription)) {
+				throw PermissionException(
+				    unordered_map<string, string> {{"detail",
+				                                    "Only roles with privileges of the "
+				                                    "\"pg_create_subscription\" role may create subscriptions."}},
+				    "permission denied to create subscription");
+			}
 			RequireDatabasePrivilege(catalog, AclMode::Create);
 			AssignOwner(stmt.info->permissions, subscription_catalog, CatalogType::SUBSCRIPTION_ENTRY, nullptr,
 			            principal->role);

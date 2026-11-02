@@ -386,6 +386,39 @@ static AclMode Held(const RoleAccess &access, std::span<const AclItem> acl, AclM
 	return held;
 }
 
+static AclMode CapabilityModes(const RoleAccess &access, CatalogType type) {
+	AclMode modes = AclMode::NoRights;
+	if (access.capabilities == RoleCapability::None) {
+		return modes;
+	}
+	const auto has = [&](RoleCapability capability) {
+		return (access.capabilities & capability) == capability;
+	};
+	switch (type) {
+	case CatalogType::TABLE_ENTRY:
+	case CatalogType::VIEW_ENTRY:
+	case CatalogType::SEQUENCE_ENTRY:
+		if (has(RoleCapability::ReadAllData)) {
+			modes |= AclMode::Select;
+		}
+		if (has(RoleCapability::WriteAllData)) {
+			modes |= AclMode::Insert | AclMode::Update | AclMode::Delete;
+		}
+		if (has(RoleCapability::Maintain) && type != CatalogType::SEQUENCE_ENTRY) {
+			modes |= AclMode::Maintain;
+		}
+		break;
+	case CatalogType::SCHEMA_ENTRY:
+		if (has(RoleCapability::ReadAllData) || has(RoleCapability::WriteAllData)) {
+			modes |= AclMode::Usage;
+		}
+		break;
+	default:
+		break;
+	}
+	return modes;
+}
+
 static bool Allows(const RoleAccess &access, std::span<const AclItem> stored, CatalogType type, AclMode need,
                    bool any) {
 	if (need == AclMode::NoRights) {
@@ -394,10 +427,13 @@ static bool Allows(const RoleAccess &access, std::span<const AclItem> stored, Ca
 	const auto done = [&](AclMode have) {
 		return any ? (have & need) != AclMode::NoRights : (have & need) == need;
 	};
+	AclMode have = CapabilityModes(access, type);
 	if (stored.empty()) {
-		return done(Permissions::PublicPrivileges(type));
+		return done(have | Permissions::PublicPrivileges(type));
 	}
-	AclMode have = AclMode::NoRights;
+	if (done(have)) {
+		return true;
+	}
 	for (auto &item : stored) {
 		if (Reaches(access, item)) {
 			have |= item.privs;
@@ -467,6 +503,7 @@ SecuritySnapshot::SecuritySnapshot(vector<Role> roles_p) {
 		RoleAccess access;
 		access.role = role.role;
 		access.options = role.options;
+		access.capabilities = role.capabilities;
 		access.is_superuser = HasOption(role.options, RoleOption::Superuser);
 		if (!role.closure.empty()) {
 			const auto words = FilterWords(role.closure.size());

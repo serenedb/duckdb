@@ -9,6 +9,7 @@
 #pragma once
 
 #include "duckdb/storage/storage_info.hpp"
+#include "duckdb/common/enums/role_capability.hpp"
 #include "duckdb/common/allocator.hpp"
 #include "duckdb/common/case_insensitive_map.hpp"
 #include "duckdb/common/cgroups.hpp"
@@ -215,7 +216,7 @@ public:
 	shared_ptr<DatabaseFilePathManager> path_manager;
 	//! Database configuration variables as controlled by SET
 	GlobalUserSettings user_settings;
-	identifier_set_t superuser_functions;
+	identifier_map_t<RoleCapability> superuser_functions;
 	identifier_set_t file_free_functions;
 	identifier_set_t builtin_relations;
 	unordered_map<string, ForeignDataWrapper> foreign_data_wrappers;

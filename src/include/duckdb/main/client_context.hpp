@@ -235,7 +235,7 @@ public:
 	DUCKDB_API void SetPrincipalRole(idx_t role);
 	DUCKDB_API void InstallSecurity(shared_ptr<const SecuritySnapshot> snapshot);
 	DUCKDB_API void RefreshSecurity();
-	DUCKDB_API void CheckFileAccess(const string &path);
+	DUCKDB_API void CheckFileAccess(const string &path, RoleCapability sufficient);
 
 	//! Interrupts the running query. Async-signal-safe: sets a flag and nothing else
 	DUCKDB_API void InterruptFromSignal();

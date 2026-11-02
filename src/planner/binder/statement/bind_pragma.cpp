@@ -44,7 +44,7 @@ unique_ptr<BoundPragmaInfo> Binder::BindPragma(PragmaInfo &info, QueryErrorConte
 		    context, QualifiedName(Identifier::InvalidCatalog(), Identifier::DefaultSchema(), info.name),
 		    OnEntryNotFound::THROW_EXCEPTION);
 	}
-	if (entry->superuser_only) {
+	if (principal && !entry->MayCall(*principal)) {
 		RequireSuperuser();
 	}
 

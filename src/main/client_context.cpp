@@ -1069,22 +1069,29 @@ void ClientContext::RefreshSecurity() {
 	}
 }
 
-void ClientContext::CheckFileAccess(const string &path) {
+void ClientContext::CheckFileAccess(const string &path, RoleCapability sufficient) {
 	if (path == "/dev/stdin" || path == "/dev/stdout") {
 		return;
 	}
+	const auto holds = [&](optional_ptr<const RoleAccess> role) {
+		return !role || role->is_superuser || (role->capabilities & sufficient) != RoleCapability::None;
+	};
 	bool allowed;
 	if (file_access_scope) {
-		auto binding = file_access_scope->principal ? file_access_scope->principal : principal;
-		allowed = file_access_scope->catalog || !binding || binding->is_superuser;
+		allowed = file_access_scope->catalog ||
+		          holds(file_access_scope->principal ? file_access_scope->principal : principal);
 	} else if (auto properties = ActiveStatementProperties(); properties && properties->file_access_authorized) {
-		allowed = *properties->file_access_authorized;
+		allowed = (*properties->file_access_authorized & sufficient) != RoleCapability::None;
 	} else {
-		allowed = !principal || principal->is_superuser;
+		allowed = holds(principal);
 	}
 	if (!allowed) {
 		throw PermissionException(
-		    {{"detail", "Only roles with the SUPERUSER attribute may access server files and URLs."}},
+		    {{"detail", sufficient == RoleCapability::WriteServerFiles
+		                    ? "Only roles with privileges of the \"pg_write_server_files\" role may write to server "
+		                      "files and URLs."
+		                    : "Only roles with privileges of the \"pg_read_server_files\" role may read server files "
+		                      "and URLs."}},
 		    StringUtil::Format("permission denied to access \"%s\"", path));
 	}
 }

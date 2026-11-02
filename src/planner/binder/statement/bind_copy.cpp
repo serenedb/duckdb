@@ -893,7 +893,8 @@ void Binder::BindCopyOptions(CopyInfo &info) {
 BoundStatement Binder::Bind(CopyStatement &stmt, CopyToType copy_to_type) {
 	// bind the copy options
 	BindCopyOptions(*stmt.info);
-	context.CheckFileAccess(stmt.info->file_path);
+	context.CheckFileAccess(stmt.info->file_path,
+	                        stmt.info->is_from ? RoleCapability::ReadServerFiles : RoleCapability::WriteServerFiles);
 	if (stmt.info->is_from && stmt.info->parsed_options.find("partition_path") != stmt.info->parsed_options.end()) {
 		throw InvalidInputException("Option partition_path is not supported for reading - only for writing");
 	}

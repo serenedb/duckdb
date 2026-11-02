@@ -394,7 +394,8 @@ BoundStatement Binder::BindTableFunctionInternal(BoundTableFunction &table_funct
 		CheckTableRead(binding, *table);
 	} else if (principal && !principal->is_superuser &&
 	           !DBConfig::GetConfig(context).file_free_functions.count(get->function.GetName())) {
-		GetStatementProperties().file_access_authorized = false;
+		auto &file_access = GetStatementProperties().file_access_authorized;
+		file_access = file_access ? *file_access & principal->capabilities : principal->capabilities;
 	}
 	AddPostgresSetofColumnAlias(bind_context, bind_index, setof_column_name);
 

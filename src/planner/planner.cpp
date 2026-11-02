@@ -195,7 +195,7 @@ void Planner::CreatePlan(SQLStatement &statement) {
 		binder->CheckTableReads();
 		auto &file_access = binder->GetStatementProperties().file_access_authorized;
 		if (!file_access) {
-			file_access = true;
+			file_access = RoleCapability::ReadServerFiles | RoleCapability::WriteServerFiles;
 		}
 		binding_timer.EndTimer();
 

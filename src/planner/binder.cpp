@@ -354,7 +354,7 @@ void Binder::CheckCall(FunctionEntry &function) {
 	if (!calling) {
 		return;
 	}
-	if (function.superuser_only && !calling->is_superuser) {
+	if (!function.MayCall(*calling)) {
 		ThrowPermissionDenied(function);
 	}
 	if ((function.type == CatalogType::MACRO_ENTRY || function.type == CatalogType::TABLE_MACRO_ENTRY) &&
