@@ -333,6 +333,9 @@ BoundStatement SecretManager::BindCreateSecret(CatalogTransaction transaction, C
 }
 
 SecretMatch SecretManager::LookupSecret(CatalogTransaction transaction, const string &path, const string &type) {
+	if (transaction.HasContext() && transaction.GetContext().hide_secrets) {
+		return SecretMatch();
+	}
 	InitializeSecrets(transaction);
 
 	int64_t best_match_score = NumericLimits<int64_t>::Minimum();
@@ -365,6 +368,9 @@ SecretMatch SecretManager::LookupSecret(CatalogTransaction transaction, const st
 
 unique_ptr<SecretEntry> SecretManager::GetSecretByName(CatalogTransaction transaction, const string &name,
                                                        const string &storage_p) {
+	if (transaction.HasContext() && transaction.GetContext().hide_secrets) {
+		return nullptr;
+	}
 	InitializeSecrets(transaction);
 	auto storage = Identifier(storage_p);
 	if (storage.empty() || storage == TRANSACTION_STORAGE_NAME) {
