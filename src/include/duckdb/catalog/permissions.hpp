@@ -224,6 +224,7 @@ DUCKDB_API bool ReferencesRole(const CatalogEntry &entry, idx_t role);
 DUCKDB_API void ForEachRoleReference(const CatalogEntry &entry, const std::function<void(idx_t role)> &callback);
 DUCKDB_API vector<idx_t> RoleReferences(const CatalogEntry &entry);
 DUCKDB_API string PermissionKindName(CatalogType type);
+DUCKDB_API string PermissionKindName(const CatalogEntry &entry);
 [[noreturn]] DUCKDB_API void ThrowPermissionDenied(const CatalogEntry &entry);
 
 } // namespace duckdb
