@@ -39,7 +39,7 @@ public:
 		return true;
 	}
 
-	static void ResetAll(ClientContext &context, SetScope scope);
+	static void ResetAll(ClientContext &context, SetScope scope, bool discard);
 	static void ResetVariable(ClientContext &context, const Identifier &name, SetScope scope);
 
 public:
