@@ -779,13 +779,10 @@ struct RLEScanState : public SegmentScanState {
 				}
 				if (total && total <= scan_count - written) {
 					ValidateThrough<true>(entry_pos + runs - 1);
-					for (idx_t r = 0; r < runs; r++) {
-						const T element = value_window[lane + r];
-						const idx_t run_count = count_window[lane + r];
-						for (idx_t i = 0; i < run_count; i++) {
-							result[written + i] = element;
-						}
-						written += run_count;
+					if (total >= runs * SHORT_BURST) {
+						FillGroup<LONG_BURST>(result, written, lane, runs, scan_count);
+					} else {
+						FillGroup<SHORT_BURST>(result, written, lane, runs, scan_count);
 					}
 					entry_pos += runs;
 					if (entry_pos < max_entry_pos) {
@@ -805,11 +802,38 @@ struct RLEScanState : public SegmentScanState {
 				position_in_entry += remaining;
 				return;
 			}
-			for (idx_t i = 0; i < run_count; i++) {
-				result[written + i] = element;
-			}
+			FillRun<SHORT_BURST>(result, written, run_count, scan_count, element);
 			written += run_count;
 			ForwardToNextRun();
+		}
+	}
+
+	static constexpr idx_t SHORT_BURST = 32 / sizeof(T);
+	static constexpr idx_t LONG_BURST = 128 / sizeof(T);
+	static_assert(SHORT_BURST > 0);
+
+	template <idx_t BURST>
+	void FillGroup(T *result, idx_t &written, idx_t lane, idx_t runs, idx_t end) {
+		for (idx_t r = 0; r < runs; r++) {
+			const idx_t run_count = count_window[lane + r];
+			FillRun<BURST>(result, written, run_count, end, value_window[lane + r]);
+			written += run_count;
+		}
+	}
+
+	template <idx_t BURST>
+	static void FillRun(T *result, idx_t written, idx_t run_count, idx_t end, const T element) {
+		if (written + BURST <= end) {
+			for (idx_t i = 0; i < BURST; i++) {
+				result[written + i] = element;
+			}
+			for (idx_t i = BURST; i < run_count; i++) {
+				result[written + i] = element;
+			}
+			return;
+		}
+		for (idx_t i = 0; i < run_count; i++) {
+			result[written + i] = element;
 		}
 	}
 
