@@ -1,3 +1,5 @@
+#include <absl/cleanup/cleanup.h>
+
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/catalog/catalog_entry/trigger_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/macro_catalog_entry.hpp"
@@ -587,6 +589,11 @@ SchemaCatalogEntry &Binder::BindCreateFunctionInfo(CreateInfo &info) {
 	// try to bind each of the included functions
 	vector_of_logical_type_set_t type_overloads;
 	auto &base = info.Cast<CreateMacroInfo>();
+	const auto creator = principal;
+	principal = nullptr;
+	absl::Cleanup restore_principal = [&] {
+		principal = creator;
+	};
 	for (auto &function : base.macros) {
 		if (!store_types) {
 			for (const auto &type : function->types) {
@@ -921,6 +928,7 @@ SchemaCatalogEntry &Binder::BindCreateFunctionInfo(CreateInfo &info) {
 			error.Throw();
 		}
 	}
+	std::move(restore_principal).Invoke();
 
 	return BindCreateSchema(info);
 }
