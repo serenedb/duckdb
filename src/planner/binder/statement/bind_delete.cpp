@@ -67,10 +67,7 @@ BoundStatement Binder::BindNode(DeleteQueryNode &node) {
 		get.function.verify_dml_target(context, get.bind_data.get());
 	}
 	auto &table = *table_ptr;
-	if (!CheckAs().Can(CatalogType::TABLE_ENTRY, table.permissions,
-	                   node.is_truncate ? AclMode::Truncate : AclMode::Delete)) {
-		ThrowPermissionDenied(table);
-	}
+	RequirePrivilege(table, node.is_truncate ? AclMode::Truncate : AclMode::Delete, {}, false);
 	RecordConstraintKeyVisibility(table);
 
 	if (auto expanded = TryExpandTriggers(node, table, TriggerEventType::DELETE_EVENT)) {
