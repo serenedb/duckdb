@@ -402,10 +402,6 @@ static void ResolveDefaultPrivileges(Binder &binder, AlterPermissionsInfo &info)
 	auto database = DatabaseManager::GetDefaultDatabase(context);
 	if (!info.default_schema.empty()) {
 		auto &schema = Catalog::GetSchema(context, Identifier(), Identifier(info.default_schema));
-		if (principal && !principal->is_superuser &&
-		    !AccessOf(context, info.target_role).Can(CatalogType::SCHEMA_ENTRY, schema.permissions, AclMode::Create)) {
-			ThrowPermissionDenied(schema);
-		}
 		info.default_scope = schema.oid;
 		database = schema.ParentCatalog().GetName();
 	}
