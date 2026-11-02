@@ -78,7 +78,7 @@ void PhysicalSet::SetVariable(ClientContext &context, const Identifier &name, Se
 		// valid option names and can safely snapshot the current value.
 		Value casted_value = value.CastAs(context, extension_option.type);
 		context.OnSettingChange(name.GetIdentifierName(), scope,
-		                        SessionValue(context, name, extension_option.setting_index));
+		                        SessionValue(context, name, extension_option.setting_index), false);
 		SetExtensionVariable(context, extension_option, name, scope, casted_value);
 		if (extension_option.rebind) {
 			Rebind(context, GetSettingScope(extension_option, scope));
@@ -90,7 +90,8 @@ void PhysicalSet::SetVariable(ClientContext &context, const Identifier &name, Se
 	context.OnSettingChange(
 	    name.GetIdentifierName(), scope,
 	    option->get_local ? option->get_local(context)
-	                      : SessionValue(context, name, option->default_value ? option->setting_idx : optional_idx()));
+	                      : SessionValue(context, name, option->default_value ? option->setting_idx : optional_idx()),
+	    false);
 	if (option->default_value) {
 		if (option->set_callback) {
 			SettingCallbackInfo info(context, variable_scope);
