@@ -20,6 +20,7 @@
 #include "duckdb/main/config.hpp"
 #include "duckdb/main/database.hpp"
 #include "duckdb/main/database_manager.hpp"
+#include "duckdb/main/extension_helper.hpp"
 #include "duckdb/main/settings.hpp"
 #include "duckdb/optimizer/optimizer.hpp"
 #include "duckdb/parser/expression/function_expression.hpp"
@@ -41,6 +42,7 @@
 #include "duckdb/planner/query_node/list.hpp"
 #include "duckdb/planner/tableref/list.hpp"
 #include "duckdb/storage/data_table.hpp"
+#include "duckdb/storage/storage_extension.hpp"
 #include "duckdb/storage/storage_info.hpp"
 #include "duckdb/storage/storage_manager.hpp"
 #include "duckdb/common/types/uuid.hpp"
@@ -592,8 +594,12 @@ void Binder::CheckStatementKind(SQLStatement &statement) {
 	case StatementType::ATTACH_STATEMENT: {
 		auto &info = *statement.Cast<AttachStatement>().info;
 		auto type = info.options.find("type");
-		if (!info.path.empty() || info.external_resource || type == info.options.end() ||
-		    !StringUtil::CIEquals(type->second.ToString(), "serenedb")) {
+		optional_ptr<StorageExtension> storage;
+		if (info.path.empty() && !info.external_resource && type != info.options.end()) {
+			storage = StorageExtension::Find(DBConfig::GetConfig(context),
+			                                 ExtensionHelper::ApplyExtensionAlias(type->second.ToString()));
+		}
+		if (!storage || !storage->creates_database) {
 			RequireSuperuser();
 		}
 		if (!role.Has(RoleOption::CreateDb)) {
