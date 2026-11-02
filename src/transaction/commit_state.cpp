@@ -12,6 +12,7 @@
 #include "duckdb/catalog/duck_catalog.hpp"
 #include "duckdb/common/serializer/binary_deserializer.hpp"
 #include "duckdb/common/serializer/memory_stream.hpp"
+#include "duckdb/main/database_manager.hpp"
 #include "duckdb/storage/block_manager.hpp"
 #include "duckdb/storage/table/chunk_info.hpp"
 #include "duckdb/storage/table/column_data.hpp"
@@ -47,6 +48,11 @@ void CommitDropState::DropEntry(CatalogEntry &entry) {
 	dropped_entries.push_back(entry);
 }
 
+void CommitDropState::CommitAttach(AttachedDatabase &db, shared_ptr<ClientContext> context) {
+	attached_databases.push_back(db);
+	attach_context = std::move(context);
+}
+
 void CommitDropState::FinalizeCommit() {
 	if (block_manager) {
 		for (auto block_id : dropped_block_ids) {
@@ -62,13 +68,29 @@ void CommitDropState::FinalizeCommit() {
 	for (auto &entry : dropped_entries) {
 		entry.get().OnDrop();
 	}
+	for (auto &db : attached_databases) {
+		auto replaced = db.get().TakeReplaced();
+		if (!replaced) {
+			continue;
+		}
+		auto deleter = replaced->ExtractDeleter();
+		if (attach_context) {
+			replaced->OnDetach(*attach_context);
+		}
+		if (deleter) {
+			DatabaseManager::Get(replaced->GetDatabase()).AddPendingTeardown(std::move(deleter));
+		}
+	}
 	dropped_block_ids.clear();
 	pending_index_removals.clear();
 	dropped_entries.clear();
+	attached_databases.clear();
+	attach_context.reset();
 }
 
 bool CommitDropState::Empty() const {
-	return dropped_block_ids.empty() && pending_index_removals.empty() && dropped_entries.empty();
+	return dropped_block_ids.empty() && pending_index_removals.empty() && dropped_entries.empty() &&
+	       attached_databases.empty();
 }
 
 //===--------------------------------------------------------------------===//
@@ -415,6 +437,8 @@ void CommitState::CommitEntry(UndoFlags type, data_ptr_t data, CommitInfo &info)
 		break;
 	}
 	case UndoFlags::ATTACHED_DATABASE:
+		info.drop_state->CommitAttach(*Load<AttachedDatabase *>(data), transaction.context.lock());
+		break;
 	case UndoFlags::SEQUENCE_VALUE: {
 		break;
 	}

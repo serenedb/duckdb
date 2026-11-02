@@ -54,11 +54,30 @@ ATTACH '{TEST_DIR}/attach_or_replace.db' AS db2;
 statement ok
 SELECT * FROM db2.all_types;
 
-# ATTACH is not transactional: rolling back a transaction that replaced an attachment does not restore
-# the replaced one. The replacement is undone and the original stays detached, so the name is left
-# unattached entirely.
 statement ok
 ATTACH '{TEST_DIR}/attach_or_replace_txn.db' AS db3;
+
+statement ok
+CREATE TABLE db3.kept AS SELECT 42 AS i;
+
+statement ok
+BEGIN;
+
+statement ok
+ATTACH OR REPLACE '{TEST_DIR}/attach_or_replace_txn_new.db' AS db3;
+
+query I
+SELECT path LIKE '%attach_or_replace_txn_new.db' FROM duckdb_databases() WHERE database_name = 'db3';
+----
+true
+
+statement ok
+ROLLBACK;
+
+query I
+SELECT i FROM db3.kept;
+----
+42
 
 statement ok
 BEGIN;
@@ -67,10 +86,18 @@ statement ok
 ATTACH OR REPLACE '{TEST_DIR}/attach_or_replace_txn_new.db' AS db3;
 
 statement ok
-ROLLBACK;
+COMMIT;
+
+statement error
+SELECT i FROM db3.kept;
+----
+does not exist
+
+statement ok
+ATTACH '{TEST_DIR}/attach_or_replace_txn.db' AS db4;
 
 query I
-SELECT count(*) FROM duckdb_databases() WHERE database_name = 'db3';
+SELECT i FROM db4.kept;
 ----
-0
+42
 

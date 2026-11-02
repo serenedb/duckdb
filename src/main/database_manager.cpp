@@ -364,15 +364,8 @@ shared_ptr<AttachedDatabase> DatabaseManager::FinalizeAttach(ClientContext &cont
 		if (detached_db->GetCatalog().Supports(RemoteCapability::IS_REMOTE)) {
 			--remote_catalog_count;
 		}
-		auto deleter = detached_db->ExtractDeleter();
 		meta_transaction.DetachDatabase(*detached_db);
-		detached_db->OnDetach(context);
-		detached_db.reset();
-		// Best-effort teardown: the replacement is already in effect, so a deleter failure must not
-		// abort the statement mid-swap; TryDelete logs it as a warning instead.
-		if (deleter) {
-			deleter->TryDelete();
-		}
+		attached_db->SetReplaced(std::move(detached_db));
 	}
 	if (attached_db->GetCatalog().Supports(RemoteCapability::IS_REMOTE)) {
 		++remote_catalog_count;
@@ -537,6 +530,25 @@ shared_ptr<AttachedDatabase> DatabaseManager::DetachInternal(const Identifier &n
 		--remote_catalog_count;
 	}
 	return attached_db;
+}
+
+shared_ptr<AttachedDatabase> DatabaseManager::RevertAttach(AttachedDatabase &db) {
+	auto replaced = db.TakeReplaced();
+	if (!replaced) {
+		return DetachInternal(db.GetName());
+	}
+	shared_ptr<AttachedDatabase> reverted;
+	{
+		lock_guard<mutex> guard(databases_lock);
+		reverted = std::exchange(databases[replaced->GetName()], replaced);
+	}
+	if (reverted && reverted->GetCatalog().Supports(RemoteCapability::IS_REMOTE)) {
+		--remote_catalog_count;
+	}
+	if (replaced->GetCatalog().Supports(RemoteCapability::IS_REMOTE)) {
+		++remote_catalog_count;
+	}
+	return reverted;
 }
 
 idx_t DatabaseManager::ApproxDatabaseCount() {

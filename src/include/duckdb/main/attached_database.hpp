@@ -165,6 +165,12 @@ public:
 	//! Move the deleter binding out, if any. Call once the attachment is out of the databases map and
 	//! held exclusively, and run the deleter only with no lock held -- it executes SQL.
 	unique_ptr<ResourceDeleter> ExtractDeleter();
+	void SetReplaced(shared_ptr<AttachedDatabase> database) {
+		replaced = std::move(database);
+	}
+	shared_ptr<AttachedDatabase> TakeReplaced() {
+		return std::move(replaced);
+	}
 	bool IsSystem() const;
 	bool IsTemporary() const;
 	bool IsReadOnly() const;
@@ -241,6 +247,7 @@ private:
 	string deleter_resource_name;
 	//! Registered resource this attachment borrows without owning; see AttachOptions.
 	string borrowed_resource_name;
+	shared_ptr<AttachedDatabase> replaced;
 
 private:
 	//! Clean any (shared) resources held by the database.
