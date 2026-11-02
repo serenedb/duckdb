@@ -179,7 +179,7 @@ void PhysicalReset::ResetAll(ExecutionContext &context, SetScope scope, bool dis
 	auto options_count = DBConfig::GetOptionCount();
 	for (idx_t i = 0; i < options_count; i++) {
 		auto option = DBConfig::GetOptionByIndex(i);
-		if (!option || (option->no_reset_all && !discard) || !CanResetBelowGlobal(*option)) {
+		if (!option || option->no_reset_all || !CanResetBelowGlobal(*option)) {
 			continue;
 		}
 		auto variable_scope = PhysicalSet::GetSettingScope(*option, scope);
@@ -190,8 +190,8 @@ void PhysicalReset::ResetAll(ExecutionContext &context, SetScope scope, bool dis
 	}
 	for (auto &ext : config.GetExtensionSettings()) {
 		auto variable_scope = PhysicalSet::GetSettingScope(ext.second, scope);
-		if ((ext.second.no_reset_all && !discard) || variable_scope == SetScope::GLOBAL ||
-		    !CanResetAt(ext.second, variable_scope)) {
+		if ((ext.second.no_reset_all && !(discard && ext.second.reset_function)) ||
+		    variable_scope == SetScope::GLOBAL || !CanResetAt(ext.second, variable_scope)) {
 			continue;
 		}
 		ResetExtensionVariable(context, config, ext.first, ext.second, variable_scope, true);
