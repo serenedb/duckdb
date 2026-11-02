@@ -251,6 +251,15 @@ static CatalogEntry &ResolvePermissionsTarget(Binder &binder, AlterPermissionsIn
 		info.SetQualifiedName(server->ParentCatalog().GetName(), Identifier(), server->name);
 		return *server;
 	}
+	if (info.entry_catalog_type == CatalogType::DATABASE_ENTRY) {
+		auto database = binder.ClusterEntry(CatalogType::DATABASE_ENTRY, name.Name());
+		if (!database) {
+			throw CatalogException(
+			    unordered_map<string, string> {{"type", "Database"}},
+			    StringUtil::Format("database \"%s\" does not exist", name.Name().GetIdentifierName()));
+		}
+		return *database;
+	}
 	auto entry = binder.GetCatalogEntry(EntryLookupInfo(info.entry_catalog_type, name), OnEntryNotFound::RETURN_NULL);
 	if (!entry && info.entry_catalog_type == CatalogType::MACRO_ENTRY) {
 		entry =
@@ -299,16 +308,6 @@ static void ResolveGrant(Binder &binder, AlterPermissionsInfo &info) {
 	} else if (principal && !principal->is_superuser) {
 		info.grantors.push_back(principal->role);
 		info.grantors.insert(info.grantors.end(), principal->closure.begin(), principal->closure.end());
-	}
-	if (info.entry_catalog_type == CatalogType::DATABASE_ENTRY) {
-		auto &name = info.GetQualifiedName().Name();
-		auto database = binder.ClusterEntry(CatalogType::DATABASE_ENTRY, name);
-		if (!database) {
-			throw CatalogException(unordered_map<string, string> {{"type", "Database"}},
-			                       StringUtil::Format("database \"%s\" does not exist", name.GetIdentifierName()));
-		}
-		RequireGrantable(binder, *database);
-		return;
 	}
 	if (info.entry_catalog_type == CatalogType::FOREIGN_DATA_WRAPPER_ENTRY) {
 		auto &name = info.GetQualifiedName().Name().GetIdentifierName();
@@ -364,6 +363,10 @@ static void ResolveOwner(Binder &binder, AlterPermissionsInfo &info) {
 	}
 	if (entry.type == CatalogType::SCHEMA_ENTRY) {
 		binder.RequireDatabasePrivilege(entry.ParentCatalog().GetName(), AclMode::Create);
+	} else if (entry.type == CatalogType::DATABASE_ENTRY) {
+		if (!principal->Has(RoleOption::CreateDb)) {
+			throw PermissionException("permission denied to change owner of database");
+		}
 	} else if (entry.type == CatalogType::FOREIGN_SERVER_ENTRY) {
 		binder.RequireForeignDataWrapperUsage(AccessOf(context, info.new_owner_id), entry.ParentCatalog().GetName(),
 		                                      entry.GetInfo()->Cast<CreateForeignServerInfo>().fdw_name);

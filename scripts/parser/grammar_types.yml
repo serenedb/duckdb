@@ -2133,6 +2133,8 @@ excluded_rules:
   - AlterRoleOption
   - ConnLimitOption
   - ValidUntilOption
+  - OwnerTarget
+  - OwnerNamedTarget
   - OwnerRoleSpec
   - DefaultPrivForRole
   - DefaultPrivInSchema

@@ -190,7 +190,33 @@ CatalogType GrantObjectType(const string &keyword) {
 	if (keyword == "FOREIGN DATA WRAPPER") {
 		return CatalogType::FOREIGN_DATA_WRAPPER_ENTRY;
 	}
+	if (keyword == "TEXT SEARCH DICTIONARY") {
+		return CatalogType::TOKENIZER_ENTRY;
+	}
 	throw ParserException("unrecognized privilege object type %s", keyword);
+}
+
+string ObjectTypeKeyword(ParseResult &objtype) {
+	auto &chosen = objtype.Cast<ListParseResult>().Child<ChoiceParseResult>(0).GetResult();
+	if (chosen.type == ParseResultType::KEYWORD) {
+		return StringUtil::Upper(chosen.Cast<KeywordParseResult>().keyword);
+	}
+	// A multi-keyword object type (e.g. FOREIGN SERVER) is a rule whose
+	// body is a keyword sequence; join them into one space-separated word.
+	vector<string> words;
+	for (auto &child : chosen.Cast<ListParseResult>().GetChildren()) {
+		words.push_back(StringUtil::Upper(child.get().Cast<KeywordParseResult>().keyword));
+	}
+	return StringUtil::Join(words, " ");
+}
+
+void SetObjectTarget(AlterPermissionsInfo &info, CatalogType type, QualifiedName name) {
+	info.entry_catalog_type = type;
+	if (type == CatalogType::DATABASE_ENTRY) {
+		info.SetQualifiedName(Identifier(), Identifier(), name.Name());
+	} else {
+		info.SetQualifiedName(std::move(name));
+	}
 }
 
 } // namespace
@@ -634,17 +660,17 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformAlterRoleStatement(PEGT
 unique_ptr<SQLStatement> PEGTransformerFactory::TransformAlterOwnerStatement(PEGTransformer &transformer,
                                                                              ParseResult &parse_result) {
 	auto &list_pr = parse_result.Cast<ListParseResult>();
-	// 0:'ALTER' 1:OwnerObjectType 2:QualifiedName 3:'OWNER' 4:'TO' 5:OwnerRoleSpec
-	// OwnerObjectType is a rule wrapping a CHOICE of keywords; child 0 of its
-	// LIST is the CHOICE (mirrors LoginOption handling above).
-	auto &obj_kw =
-	    list_pr.GetChild(1).Cast<ListParseResult>().Child<ChoiceParseResult>(0).GetResult().Cast<KeywordParseResult>();
-	auto info = make_uniq<AlterPermissionsInfo>(GrantObjectType(StringUtil::Upper(obj_kw.keyword)),
-	                                            transformer.Transform<QualifiedName>(list_pr.GetChild(2)));
+	auto &target =
+	    list_pr.GetChild(1).Cast<ListParseResult>().Child<ChoiceParseResult>(0).GetResult().Cast<ListParseResult>();
+	auto info = make_uniq<AlterPermissionsInfo>(CatalogType::INVALID, QualifiedName());
+	SetObjectTarget(*info,
+	                target.Name() == "GrantFunctionTarget" ? CatalogType::MACRO_ENTRY
+	                                                       : GrantObjectType(ObjectTypeKeyword(target.GetChild(0))),
+	                transformer.Transform<QualifiedName>(target.GetChild(1)));
 
 	// OwnerRoleSpec: a rule wrapping CHOICE(CURRENT_USER / SESSION_USER /
 	// CURRENT_ROLE keyword / ColId).
-	auto &role_choice = list_pr.GetChild(5).Cast<ListParseResult>().Child<ChoiceParseResult>(0).GetResult();
+	auto &role_choice = list_pr.GetChild(4).Cast<ListParseResult>().Child<ChoiceParseResult>(0).GetResult();
 	if (role_choice.type == ParseResultType::KEYWORD) {
 		info->new_owner = StringUtil::Upper(role_choice.Cast<KeywordParseResult>().keyword);
 	} else {
@@ -726,35 +752,16 @@ static void TransformGrantTarget(PEGTransformer &transformer, ParseResult &targe
 	}
 	if (chosen.Name() == "GrantFunctionTarget") {
 		// 0:GrantRoutineKind 1:QualifiedName 2:FuncArgSignature?
-		info.entry_catalog_type = CatalogType::MACRO_ENTRY;
-		info.SetQualifiedName(transformer.Transform<QualifiedName>(chosen.Cast<ListParseResult>().GetChild(1)));
+		SetObjectTarget(info, CatalogType::MACRO_ENTRY,
+		                transformer.Transform<QualifiedName>(chosen.Cast<ListParseResult>().GetChild(1)));
 		return;
 	}
 	// GrantNamedTarget: 0:GrantObjType? 1:QualifiedName
 	auto &named = chosen.Cast<ListParseResult>();
-	string objtype = "TABLE";
 	auto &objtype_opt = named.Child<OptionalParseResult>(0);
-	if (objtype_opt.HasResult()) {
-		auto &chosen = objtype_opt.GetResult().Cast<ListParseResult>().Child<ChoiceParseResult>(0).GetResult();
-		if (chosen.type == ParseResultType::KEYWORD) {
-			objtype = StringUtil::Upper(chosen.Cast<KeywordParseResult>().keyword);
-		} else {
-			// A multi-keyword object type (e.g. FOREIGN SERVER) is a rule whose
-			// body is a keyword sequence; join them into one space-separated word.
-			vector<string> words;
-			for (auto &child : chosen.Cast<ListParseResult>().GetChildren()) {
-				words.push_back(StringUtil::Upper(child.get().Cast<KeywordParseResult>().keyword));
-			}
-			objtype = StringUtil::Join(words, " ");
-		}
-	}
-	info.entry_catalog_type = GrantObjectType(objtype);
-	auto name = transformer.Transform<QualifiedName>(named.GetChild(1));
-	if (info.entry_catalog_type == CatalogType::DATABASE_ENTRY) {
-		info.SetQualifiedName(Identifier(), Identifier(), name.Name());
-	} else {
-		info.SetQualifiedName(std::move(name));
-	}
+	SetObjectTarget(info,
+	                GrantObjectType(objtype_opt.HasResult() ? ObjectTypeKeyword(objtype_opt.GetResult()) : "TABLE"),
+	                transformer.Transform<QualifiedName>(named.GetChild(1)));
 }
 
 // Children from `privs_child`: 0:PrivilegeList 1:'ON' 2:GrantTarget 3:TO/FROM
