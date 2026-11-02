@@ -28,6 +28,7 @@ unique_ptr<CreateInfo> CreateSubscriptionInfo::Copy() const {
 	result->relations = relations;
 	result->remote_lsn = remote_lsn;
 	result->skip_lsn = skip_lsn;
+	result->options = options;
 	return std::move(result);
 }
 

@@ -81,7 +81,7 @@ public:
 	DUCKDB_API optional_ptr<CatalogEntry> CreateForeignServer(CatalogTransaction transaction,
 	                                                          CreateForeignServerInfo &info) override;
 	DUCKDB_API optional_ptr<CatalogEntry> CreateSubscription(CatalogTransaction transaction,
-	                                                         CreateSubscriptionInfo &info);
+	                                                         CreateSubscriptionInfo &info) override;
 	DUCKDB_API optional_ptr<CatalogEntry> CreateReplicationOrigin(CatalogTransaction transaction,
 	                                                              CreateReplicationOriginInfo &info);
 	DUCKDB_API void DropRole(CatalogTransaction transaction, DropInfo &info) override;

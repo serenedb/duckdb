@@ -8,6 +8,7 @@ add_library_unity(
   alter_database_info.cpp
   alter_schema_info.cpp
   alter_sequence_info.cpp
+  alter_subscription_info.cpp
   attach_info.cpp
   comment_on_column_info.cpp
   connect_info.cpp

@@ -19,6 +19,7 @@
 #include "duckdb/parser/parsed_data/alter_table_info.hpp"
 #include "duckdb/parser/parsed_data/comment_on_column_info.hpp"
 #include "duckdb/parser/parsed_data/create_foreign_server_info.hpp"
+#include "duckdb/parser/parsed_data/create_subscription_info.hpp"
 #include "duckdb/parser/statement/alter_statement.hpp"
 #include "duckdb/parser/tableref/basetableref.hpp"
 #include "duckdb/planner/binder.hpp"
@@ -232,6 +233,36 @@ static void RequireGrantable(Binder &binder, CatalogEntry &entry) {
 	}
 }
 
+static CatalogEntry &ResolveDatabaseEntry(Binder &binder, CatalogType type, AlterInfo &info) {
+	auto &context = binder.context;
+	auto &name = info.GetQualifiedName().Name();
+	auto &catalog =
+	    type == CatalogType::SUBSCRIPTION_ENTRY
+	        ? binder.SubscriptionCatalog(Identifier()).Cast<DuckCatalog>()
+	        : Catalog::GetCatalog(context, DatabaseManager::GetDefaultDatabase(context)).Cast<DuckCatalog>();
+	auto entry = catalog.GetCatalogSet(type).GetEntry(catalog.GetCatalogTransaction(context), name);
+	if (!entry) {
+		const bool server = type == CatalogType::FOREIGN_SERVER_ENTRY;
+		throw CatalogException(unordered_map<string, string> {{"type", server ? "Foreign Server" : "Subscription"}},
+		                       StringUtil::Format("%s \"%s\" does not exist", server ? "server" : "subscription",
+		                                          name.GetIdentifierName()));
+	}
+	info.SetQualifiedName(entry->ParentCatalog().GetName(), Identifier(), entry->name);
+	return *entry;
+}
+
+static void RequireSubscriptionOwner(Binder &binder, CatalogEntry &subscription) {
+	binder.RequireOwner(subscription);
+	auto principal = binder.principal;
+	if (principal && !principal->is_superuser &&
+	    !subscription.GetInfo()->Cast<CreateSubscriptionInfo>().password_required) {
+		throw PermissionException(unordered_map<string, string> {{"hint", "Subscriptions with the password_required "
+		                                                                  "option set to false may only be created or "
+		                                                                  "modified by the superuser."}},
+		                          "password_required=false is superuser-only");
+	}
+}
+
 static CatalogEntry &ResolvePermissionsTarget(Binder &binder, AlterPermissionsInfo &info) {
 	auto &context = binder.context;
 	auto &name = info.GetQualifiedName();
@@ -240,16 +271,9 @@ static CatalogEntry &ResolvePermissionsTarget(Binder &binder, AlterPermissionsIn
 		info.SetQualifiedName(schema.ParentCatalog().GetName(), Identifier(), schema.name);
 		return schema;
 	}
-	if (info.entry_catalog_type == CatalogType::FOREIGN_SERVER_ENTRY) {
-		auto &catalog = Catalog::GetCatalog(context, DatabaseManager::GetDefaultDatabase(context)).Cast<DuckCatalog>();
-		auto server = catalog.GetCatalogSet(CatalogType::FOREIGN_SERVER_ENTRY)
-		                  .GetEntry(catalog.GetCatalogTransaction(context), name.Name());
-		if (!server) {
-			throw CatalogException(unordered_map<string, string> {{"type", "Foreign Server"}},
-			                       StringUtil::Format("server \"%s\" does not exist", name.Name().GetIdentifierName()));
-		}
-		info.SetQualifiedName(server->ParentCatalog().GetName(), Identifier(), server->name);
-		return *server;
+	if (info.entry_catalog_type == CatalogType::FOREIGN_SERVER_ENTRY ||
+	    info.entry_catalog_type == CatalogType::SUBSCRIPTION_ENTRY) {
+		return ResolveDatabaseEntry(binder, info.entry_catalog_type, info);
 	}
 	if (info.entry_catalog_type == CatalogType::DATABASE_ENTRY) {
 		auto database = binder.ClusterEntry(CatalogType::DATABASE_ENTRY, name.Name());
@@ -364,13 +388,15 @@ static void ResolveOwner(Binder &binder, AlterPermissionsInfo &info) {
 	if (!enforce) {
 		return;
 	}
-	if (!relation) {
+	if (entry.type == CatalogType::SUBSCRIPTION_ENTRY) {
+		RequireSubscriptionOwner(binder, entry);
+	} else if (!relation) {
 		binder.RequireOwner(entry);
 	}
 	if (!principal->CanSet(info.new_owner_id)) {
 		throw PermissionException("must be able to SET ROLE \"%s\"", RoleName(context, info.new_owner_id));
 	}
-	if (entry.type == CatalogType::SCHEMA_ENTRY) {
+	if (entry.type == CatalogType::SCHEMA_ENTRY || entry.type == CatalogType::SUBSCRIPTION_ENTRY) {
 		binder.RequireDatabasePrivilege(entry.ParentCatalog().GetName(), AclMode::Create);
 	} else if (entry.type == CatalogType::DATABASE_ENTRY) {
 		if (!principal->Has(RoleOption::CreateDb)) {
@@ -486,6 +512,16 @@ BoundStatement Binder::Bind(AlterStatement &stmt) {
 			RequireOwner(*schema);
 			RequireDatabasePrivilege(info.SchemaCatalog(), AclMode::Create);
 		}
+		result.plan = make_uniq<LogicalAlter>(std::move(stmt.info));
+		return result;
+	}
+
+	if (stmt.info->type == AlterType::ALTER_SUBSCRIPTION) {
+		auto &subscription = ResolveDatabaseEntry(*this, CatalogType::SUBSCRIPTION_ENTRY, *stmt.info);
+		RequireSubscriptionOwner(*this, subscription);
+		auto &properties = GetStatementProperties();
+		properties.return_type = StatementReturnType::NOTHING;
+		properties.RegisterDBModify(subscription.ParentCatalog(), context, DatabaseModificationType::ALTER_TABLE);
 		result.plan = make_uniq<LogicalAlter>(std::move(stmt.info));
 		return result;
 	}

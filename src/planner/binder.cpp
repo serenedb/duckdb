@@ -363,6 +363,15 @@ optional_ptr<CatalogEntry> Binder::ClusterEntry(CatalogType type, const Identifi
 	return cluster.GetCatalogSet(type).GetEntry(cluster.GetCatalogTransaction(context), name);
 }
 
+Catalog &Binder::SubscriptionCatalog(const Identifier &catalog_name) {
+	auto &catalog = Catalog::GetCatalog(context, BindCatalog(catalog_name));
+	if (!catalog.SupportsSubscriptions()) {
+		throw NotImplementedException("subscriptions are not supported by database \"%s\"",
+		                              catalog.GetName().GetIdentifierName());
+	}
+	return catalog;
+}
+
 QualifiedName Binder::ClusterName(const QualifiedName &name) {
 	auto &cluster_catalog = DBConfig::GetConfig(context).cluster_catalog;
 	if (cluster_catalog.empty()) {

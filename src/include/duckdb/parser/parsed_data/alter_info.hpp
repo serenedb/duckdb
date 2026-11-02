@@ -37,7 +37,8 @@ enum class AlterType : uint8_t {
 	ALTER_JOB = 204,
 	SET_SCHEMA = 205,
 	REASSIGN_OWNED = 206,
-	DROP_OWNED = 207
+	DROP_OWNED = 207,
+	ALTER_SUBSCRIPTION = 208
 };
 
 enum class AlterBindMode { BIND_ON_ALTER, SKIP_BINDING };

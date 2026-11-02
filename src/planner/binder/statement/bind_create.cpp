@@ -1486,6 +1486,19 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 		    make_uniq<LogicalCreate>(LogicalOperatorType::LOGICAL_CREATE_FOREIGN_SERVER, std::move(stmt.info));
 		break;
 	}
+	case CatalogType::SUBSCRIPTION_ENTRY: {
+		auto &subscription_catalog = SubscriptionCatalog(stmt.info->GetQualifiedName().Catalog());
+		auto &catalog = subscription_catalog.GetName();
+		stmt.info->SetQualifiedName(QualifiedName(catalog, Identifier(), stmt.info->GetQualifiedName().Name()));
+		if (principal) {
+			RequireDatabasePrivilege(catalog, AclMode::Create);
+			AssignOwner(stmt.info->permissions, subscription_catalog, CatalogType::SUBSCRIPTION_ENTRY, nullptr,
+			            principal->role);
+		}
+		properties.RegisterDBModify(subscription_catalog, context, DatabaseModificationType::CREATE_CATALOG_ENTRY);
+		result.plan = make_uniq<LogicalCreate>(LogicalOperatorType::LOGICAL_CREATE_SUBSCRIPTION, std::move(stmt.info));
+		break;
+	}
 	case CatalogType::TOKENIZER_ENTRY: {
 		auto &info = stmt.info->Cast<CreateTokenizerInfo>();
 		auto &schema = BindCreateSchema(info);

@@ -1643,5 +1643,41 @@
         "default": "Identifier()"
       }
     ]
+  },
+  {
+    "class": "AlterSubscriptionInfo",
+    "base": "AlterInfo",
+    "enum": "ALTER_SUBSCRIPTION",
+    "includes": [
+      "duckdb/parser/parsed_data/alter_subscription_info.hpp"
+    ],
+    "members": [
+      {
+        "id": 300,
+        "name": "alter_subscription_type",
+        "type": "AlterSubscriptionType"
+      },
+      {
+        "id": 301,
+        "name": "connection",
+        "type": "string"
+      },
+      {
+        "id": 302,
+        "name": "publications",
+        "type": "vector<string>"
+      },
+      {
+        "id": 303,
+        "name": "options",
+        "type": "case_insensitive_map_t<Value>"
+      },
+      {
+        "id": 304,
+        "name": "new_name",
+        "type": "Identifier",
+        "default": "Identifier()"
+      }
+    ]
   }
 ]

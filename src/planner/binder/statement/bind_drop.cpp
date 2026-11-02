@@ -170,6 +170,22 @@ BoundStatement Binder::Bind(DropStatement &stmt) {
 		}
 		break;
 	}
+	case CatalogType::SUBSCRIPTION_ENTRY: {
+		auto &subscription_catalog = SubscriptionCatalog(stmt.info->GetQualifiedName().Catalog());
+		auto name = stmt.info->GetQualifiedName().Name();
+		stmt.info->SetQualifiedName(QualifiedName(subscription_catalog.GetName(), Identifier(), name));
+		properties.RegisterDBModify(subscription_catalog, context, DatabaseModificationType::DROP_CATALOG_ENTRY);
+		auto subscription = subscription_catalog.Cast<DuckCatalog>()
+		                        .GetCatalogSet(CatalogType::SUBSCRIPTION_ENTRY)
+		                        .GetEntry(subscription_catalog.GetCatalogTransaction(context), name);
+		if (subscription) {
+			RequireOwner(*subscription);
+		} else if (stmt.info->if_not_found == OnEntryNotFound::THROW_EXCEPTION) {
+			throw CatalogException(unordered_map<string, string> {{"type", "Subscription"}},
+			                       StringUtil::Format("subscription \"%s\" does not exist", name.GetIdentifierName()));
+		}
+		break;
+	}
 	default:
 		throw BinderException("Unknown catalog type for drop statement: '%s'", CatalogTypeToString(stmt.info->type));
 	}

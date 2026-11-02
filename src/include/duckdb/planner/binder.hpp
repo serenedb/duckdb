@@ -431,6 +431,7 @@ public:
 	void RequireReplaceOwner(SchemaCatalogEntry &schema, const CreateInfo &info, const Identifier &name);
 	optional_ptr<CatalogEntry> ClusterEntry(CatalogType type, const Identifier &name);
 	QualifiedName ClusterName(const QualifiedName &name);
+	Catalog &SubscriptionCatalog(const Identifier &catalog_name);
 	idx_t RoleId(const Identifier &name);
 	void RequireDatabasePrivilege(const Identifier &database, AclMode need);
 	void RequireForeignDataWrapperUsage(const RoleAccess &role, const Identifier &database, const string &wrapper);
