@@ -306,6 +306,7 @@ static void LoadInternal(ExtensionLoader &loader) {
 	dsdgen_func.call_return_type = StatementReturnType::NOTHING;
 	dsdgen_func.table_scan_progress = DsdgenProgress;
 	dsdgen_func.cardinality = DsdgenCardinality;
+	dsdgen_func.required_capability = RoleCapability::Superuser;
 
 	loader.RegisterFunction(dsdgen_func);
 

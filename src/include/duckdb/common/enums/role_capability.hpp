@@ -24,6 +24,7 @@ enum class RoleCapability : uint32_t {
 	Checkpoint = 0x80,
 	Maintain = 0x100,
 	CreateSubscription = 0x200,
+	Superuser = 0x400,
 };
 
 constexpr RoleCapability operator|(RoleCapability a, RoleCapability b) {

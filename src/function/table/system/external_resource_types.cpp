@@ -166,12 +166,15 @@ void RegisterExternalResourceTypeFun::RegisterFunction(BuiltinFunctions &set) {
 		        .Add("list_function", LogicalType::VARCHAR);
 	    });
 
+	fn.required_capability = RoleCapability::Superuser;
 	set.AddFunction(fn);
 }
 
 void DuckDBExternalResourceTypesFun::RegisterFunction(BuiltinFunctions &set) {
-	set.AddFunction(TableFunction(set.SystemObjectName("external_resource_types"), {}, ExternalResourceTypesFunction,
-	                              ExternalResourceTypesBind, ExternalResourceTypesInit));
+	TableFunction fn(set.SystemObjectName("external_resource_types"), {}, ExternalResourceTypesFunction,
+	                 ExternalResourceTypesBind, ExternalResourceTypesInit);
+	fn.required_capability = RoleCapability::Superuser;
+	set.AddFunction(fn);
 }
 
 } // namespace duckdb

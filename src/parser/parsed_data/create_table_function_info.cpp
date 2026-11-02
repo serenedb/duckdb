@@ -7,6 +7,7 @@ CreateTableFunctionInfo::CreateTableFunctionInfo(TableFunction function)
     : CreateFunctionInfo(CatalogType::TABLE_FUNCTION_ENTRY), functions(function.name) {
 	SetFunctionName(function.name);
 	function.GetSignature().Verify();
+	required_capability = function.required_capability;
 	functions.AddFunction(std::move(function));
 	internal = true;
 }
@@ -15,6 +16,7 @@ CreateTableFunctionInfo::CreateTableFunctionInfo(TableFunctionSet set)
 	SetFunctionName(functions.name);
 	for (auto &func : functions.functions) {
 		func->GetSignature().Verify();
+		required_capability |= func->required_capability;
 	}
 	functions.ApplyToFunctions([&](TableFunction &func) { func.name = functions.name; });
 	internal = true;

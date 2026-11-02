@@ -53,8 +53,10 @@ void DuckDBTemporaryFilesFunction(ClientContext &context, TableFunctionInput &da
 }
 
 void DuckDBTemporaryFilesFun::RegisterFunction(BuiltinFunctions &set) {
-	set.AddFunction(TableFunction(set.SystemObjectName("temporary_files"), {}, DuckDBTemporaryFilesFunction,
-	                              DuckDBTemporaryFilesBind, DuckDBTemporaryFilesInit));
+	TableFunction temporary_files(set.SystemObjectName("temporary_files"), {}, DuckDBTemporaryFilesFunction,
+	                              DuckDBTemporaryFilesBind, DuckDBTemporaryFilesInit);
+	temporary_files.required_capability = RoleCapability::Superuser;
+	set.AddFunction(temporary_files);
 }
 
 } // namespace duckdb
