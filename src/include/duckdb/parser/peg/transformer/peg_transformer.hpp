@@ -785,6 +785,8 @@ public:
 	static bool TransformSerialType(LogicalType &type);
 	//! The role an OwnerRoleSpec names: CURRENT_USER, SESSION_USER and CURRENT_ROLE in upper case, else the identifier
 	static Identifier TransformOwnerRoleSpec(PEGTransformer &transformer, ParseResult &owner_role_spec);
+	static void CollectConfigClause(PEGTransformer &transformer, ParseResult &config, vector<string> &set_config,
+	                                vector<string> &reset_config, bool &reset_all_config);
 
 	static void InitializePivotStatementTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
 	static arena_ptr<TransformResultValue> FinalizePivotStatementTrampoline(PEGTransformer &transformer,
