@@ -67,8 +67,8 @@ BoundStatement Binder::BindNode(DeleteQueryNode &node) {
 		get.function.verify_dml_target(context, get.bind_data.get());
 	}
 	auto &table = *table_ptr;
-	if (principal && !principal->Can(CatalogType::TABLE_ENTRY, table.permissions,
-	                                 node.is_truncate ? AclMode::Truncate : AclMode::Delete)) {
+	if (!CheckAs().Can(CatalogType::TABLE_ENTRY, table.permissions,
+	                   node.is_truncate ? AclMode::Truncate : AclMode::Delete)) {
 		ThrowPermissionDenied(table);
 	}
 	RecordConstraintKeyVisibility(table);

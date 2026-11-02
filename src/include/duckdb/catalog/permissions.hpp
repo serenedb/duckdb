@@ -179,6 +179,10 @@ struct RoleAccess {
 	std::span<const idx_t> closure;
 	std::span<const idx_t> settable;
 
+	DUCKDB_API static const RoleAccess &System();
+	bool IsSystem() const {
+		return this == &System();
+	}
 	bool Has(RoleOption option) const {
 		return HasOption(options, option);
 	}
@@ -225,7 +229,7 @@ private:
 };
 
 DUCKDB_API bool IsUnowned(const CatalogEntry &entry);
-DUCKDB_API bool CanUseSchema(optional_ptr<const RoleAccess> principal, const CatalogEntry &schema);
+DUCKDB_API bool CanUseSchema(const RoleAccess &role, const CatalogEntry &schema);
 DUCKDB_API bool ReferencesRole(const CatalogEntry &entry, idx_t role);
 DUCKDB_API void ForEachRoleReference(const CatalogEntry &entry, const std::function<void(idx_t role)> &callback);
 DUCKDB_API vector<idx_t> RoleReferences(const CatalogEntry &entry);

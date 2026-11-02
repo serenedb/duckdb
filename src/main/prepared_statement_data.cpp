@@ -152,7 +152,7 @@ bool PreparedStatementData::RequireRebind(ClientContext &context,
 
 bool PreparedStatementData::IsCurrent(ClientContext &context) const {
 	if (properties.binding_generation != context.BindingGeneration() || context.security != security ||
-	    context.principal_role != principal_role) {
+	    context.current_role_id != principal_role) {
 		return false;
 	}
 	for (auto &it : properties.read_databases) {
