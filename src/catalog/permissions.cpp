@@ -2,13 +2,20 @@
 
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/catalog/catalog_entry.hpp"
+#include "duckdb/catalog/catalog_entry/function_entry.hpp"
+#include "duckdb/catalog/catalog_entry/index_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/macro_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/role_entry.hpp"
 #include "duckdb/catalog/catalog_set.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/view_catalog_entry.hpp"
+#include "duckdb/catalog/duck_catalog.hpp"
 #include "duckdb/common/case_insensitive_map.hpp"
 #include "duckdb/main/attached_database.hpp"
+#include "duckdb/main/client_context.hpp"
+#include "duckdb/main/client_data.hpp"
+#include "duckdb/main/config.hpp"
+#include "duckdb/main/database_manager.hpp"
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/common/types/hash.hpp"
@@ -682,6 +689,121 @@ bool CanUseSchema(const RoleAccess &role, const CatalogEntry &schema) {
 	return role.is_superuser || schema.internal || IsUnowned(schema) ||
 	       schema.ParentCatalog().Compatibility() != SqlCompatibility::POSTGRES ||
 	       role.Can(CatalogType::SCHEMA_ENTRY, schema.permissions, AclMode::Usage);
+}
+
+static bool IsClusterDatabase(AttachedDatabase &database) {
+	return database.GetCatalog().UsesCatalogLog() && !database.IsReadOnly();
+}
+
+static optional_ptr<CatalogEntry> FindForeignServer(ClientContext &context, const Identifier &name) {
+	for (auto &db : DatabaseManager::Get(*context.db).GetDatabases()) {
+		if (!IsClusterDatabase(*db)) {
+			continue;
+		}
+		auto &duck_catalog = db->GetCatalog().Cast<DuckCatalog>();
+		auto server = duck_catalog.GetCatalogSet(CatalogType::FOREIGN_SERVER_ENTRY)
+		                  .GetEntry(duck_catalog.GetCatalogTransaction(context), name);
+		if (server) {
+			return server;
+		}
+	}
+	return nullptr;
+}
+
+static bool CanUseDatabase(ClientContext &context, const RoleAccess &role, const Identifier &name) {
+	auto &cluster_catalog = DBConfig::GetConfig(context).cluster_catalog;
+	if (cluster_catalog.empty() ||
+	    name.GetIdentifierName() == ClientData::Get(context).default_database.GetIdentifierName()) {
+		return true;
+	}
+	auto &cluster = Catalog::GetCatalog(context, cluster_catalog).Cast<DuckCatalog>();
+	auto database =
+	    cluster.GetCatalogSet(CatalogType::DATABASE_ENTRY).GetEntry(cluster.GetCatalogTransaction(context), name);
+	return !database || role.Can(CatalogType::DATABASE_ENTRY, database->permissions, AclMode::Connect);
+}
+
+bool DatabaseVisible(ClientContext &context, const RoleAccess &role, AttachedDatabase &database) {
+	if (database.IsSystem() || database.IsTemporary() ||
+	    database.GetName() == DBConfig::GetConfig(context).cluster_catalog) {
+		return true;
+	}
+	if (IsClusterDatabase(database)) {
+		return CanUseDatabase(context, role, database.GetName());
+	}
+	auto server = FindForeignServer(context, database.GetName());
+	return server && role.Can(CatalogType::FOREIGN_SERVER_ENTRY, server->permissions, AclMode::Usage);
+}
+
+bool EntryVisible(ClientContext &context, const RoleAccess &role, CatalogEntry &entry) {
+	if (entry.type == CatalogType::DATABASE_ENTRY) {
+		return CanUseDatabase(context, role, entry.name);
+	}
+	if ((entry.type == CatalogType::TABLE_FUNCTION_ENTRY || entry.type == CatalogType::SCALAR_FUNCTION_ENTRY) &&
+	    !entry.Cast<FunctionEntry>().MayCall(role)) {
+		return false;
+	}
+	if (entry.internal || IsUnowned(entry)) {
+		return true;
+	}
+	auto &permissions = entry.permissions;
+	switch (entry.type) {
+	case CatalogType::SCHEMA_ENTRY:
+		return role.CanAny(entry.type, permissions, AclMode::Usage | AclMode::Create);
+	case CatalogType::TABLE_ENTRY:
+	case CatalogType::VIEW_ENTRY: {
+		if (role.CanAny(CatalogType::TABLE_ENTRY, permissions, Permissions::AllPrivileges(CatalogType::TABLE_ENTRY))) {
+			return true;
+		}
+		const auto grants = [&](std::span<const AclItem> acl) {
+			return (role.HeldModes(acl) & ACL_COLUMN_PRIVILEGES) != AclMode::NoRights;
+		};
+		if (entry.type == CatalogType::VIEW_ENTRY) {
+			auto &column_acls = entry.Cast<ViewCatalogEntry>().column_acls;
+			return std::any_of(column_acls.begin(), column_acls.end(), grants);
+		}
+		auto columns = entry.Cast<TableCatalogEntry>().GetColumns().Logical();
+		return std::any_of(columns.begin(), columns.end(),
+		                   [&](const ColumnDefinition &column) { return grants(column.Acl()); });
+	}
+	case CatalogType::SEQUENCE_ENTRY:
+		return role.CanAny(entry.type, permissions, AclMode::Usage | AclMode::Select | AclMode::Update);
+	case CatalogType::MACRO_ENTRY:
+	case CatalogType::TABLE_MACRO_ENTRY:
+		return role.Can(entry.type, permissions, AclMode::Execute);
+	case CatalogType::TYPE_ENTRY:
+		return role.Can(entry.type, permissions, AclMode::Usage);
+	case CatalogType::JOB_ENTRY:
+		return role.Owns(permissions.owner);
+	case CatalogType::INDEX_ENTRY: {
+		auto &index = entry.Cast<IndexCatalogEntry>();
+		auto relation = index.GetRelation(index.ParentCatalog().GetCatalogTransaction(context));
+		return !relation || EntryVisible(context, role, *relation);
+	}
+	default:
+		return true;
+	}
+}
+
+void CheckReference(ClientContext &context, const RoleAccess &role, CatalogEntry &entry) {
+	auto &database = entry.type == CatalogType::DATABASE_ENTRY ? entry.Cast<AttachedDatabase>()
+	                                                           : entry.ParentCatalog().GetAttached();
+	if (!DatabaseVisible(context, role, database)) {
+		auto &name = database.GetName().GetIdentifierName();
+		if (IsClusterDatabase(database)) {
+			throw PermissionException({{"detail", "User does not have CONNECT privilege."}},
+			                          StringUtil::Format("permission denied for database \"%s\"", name));
+		}
+		if (auto server = FindForeignServer(context, database.GetName())) {
+			ThrowPermissionDenied(*server);
+		}
+		throw PermissionException(
+		    {{"detail",
+		      "Only roles with the SUPERUSER attribute may use a database attached without a foreign server."}},
+		    StringUtil::Format("permission denied for database \"%s\"", name));
+	}
+	if (entry.type != CatalogType::DATABASE_ENTRY && !EntryVisible(context, role, entry)) {
+		ThrowPermissionDenied(entry);
+	}
 }
 
 template <class F>

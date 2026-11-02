@@ -27,8 +27,10 @@
 #include <span>
 
 namespace duckdb {
+class AttachedDatabase;
 class CatalogEntry;
 class CatalogSet;
+class ClientContext;
 class ColumnList;
 
 constexpr idx_t ACL_ID_PUBLIC = 0;
@@ -272,6 +274,9 @@ private:
 
 DUCKDB_API bool IsUnowned(const CatalogEntry &entry);
 DUCKDB_API bool CanUseSchema(const RoleAccess &role, const CatalogEntry &schema);
+DUCKDB_API bool EntryVisible(ClientContext &context, const RoleAccess &role, CatalogEntry &entry);
+DUCKDB_API bool DatabaseVisible(ClientContext &context, const RoleAccess &role, AttachedDatabase &database);
+DUCKDB_API void CheckReference(ClientContext &context, const RoleAccess &role, CatalogEntry &entry);
 DUCKDB_API bool ReferencesRole(const CatalogEntry &entry, idx_t role);
 DUCKDB_API void ForEachRoleReference(const CatalogEntry &entry, const std::function<void(idx_t role)> &callback);
 DUCKDB_API vector<idx_t> RoleReferences(const CatalogEntry &entry);

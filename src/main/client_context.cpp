@@ -1035,10 +1035,26 @@ static absl::Duration TimeLeft(const optional_idx &deadline) {
 	return absl::Nanoseconds(TimePoint::ToNanos(left));
 }
 
+bool ClientContext::CanSee(CatalogEntry &entry) {
+	auto &role = CurrentRole();
+	return role.is_superuser || EntryVisible(*this, role, entry);
+}
+
+bool ClientContext::CanSeeDatabase(AttachedDatabase &database) {
+	auto &role = CurrentRole();
+	return role.is_superuser || DatabaseVisible(*this, role, database);
+}
+
+void ClientContext::CheckEntryReference(const RoleAccess &role, CatalogEntry &entry) {
+	if (!role.is_superuser) {
+		CheckReference(*this, role, entry);
+	}
+}
+
 void ClientContext::CheckDatabaseReference(const RoleAccess &role, Catalog &catalog) {
-	if (entry_reference_handler && !role.is_superuser && !catalog.IsSystemCatalog() && !catalog.IsTemporaryCatalog() &&
+	if (!role.is_superuser && !catalog.IsSystemCatalog() && !catalog.IsTemporaryCatalog() &&
 	    catalog.GetName() != client_data->default_database) {
-		entry_reference_handler(*this, role, catalog.GetAttached());
+		CheckReference(*this, role, catalog.GetAttached());
 	}
 }
 
