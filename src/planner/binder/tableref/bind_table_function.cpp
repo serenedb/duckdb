@@ -260,7 +260,7 @@ BoundStatement Binder::BindTableFunctionInternal(BoundTableFunction &table_funct
 	table_function.GetSignature().FillNamedDefaults(context, named_parameters);
 	table_function.SetCallArguments(parameters, named_parameters);
 	ClientContext::FileAccessScope file_access_scope;
-	file_access_scope.principal = principal;
+	file_access_scope.role = &CheckAs();
 	ClientContext::FileAccessScopeGuard file_access_guard(context, file_access_scope);
 	if (table_function.bind || table_function.bind_replace || table_function.bind_operator) {
 		TableFunctionBindInput bind_input(parameters, named_parameters, input_table_types, input_table_names,
@@ -388,14 +388,14 @@ BoundStatement Binder::BindTableFunctionInternal(BoundTableFunction &table_funct
 	if (table) {
 		GetStatementProperties().RegisterDBRead(table->ParentCatalog(), context);
 		auto &schema = table->ParentSchema(context);
-		if (!CanUseSchema(principal, schema)) {
+		if (!CanUseSchema(CheckAs(), schema)) {
 			ThrowPermissionDenied(schema);
 		}
 		CheckTableRead(binding, *table);
-	} else if (principal && !principal->is_superuser &&
+	} else if (!CheckAs().is_superuser &&
 	           !DBConfig::GetConfig(context).file_free_functions.count(get->function.GetName())) {
 		auto &file_access = GetStatementProperties().file_access_authorized;
-		file_access = file_access ? *file_access & principal->capabilities : principal->capabilities;
+		file_access = file_access ? *file_access & CheckAs().capabilities : CheckAs().capabilities;
 	}
 	AddPostgresSetofColumnAlias(bind_context, bind_index, setof_column_name);
 
@@ -578,7 +578,7 @@ BoundStatement Binder::Bind(TableFunctionRef &ref) {
 	auto &function = func_catalog.Cast<TableFunctionCatalogEntry>();
 	CheckCall(function);
 	if (!InViewBody()) {
-		context.CheckEntryReference(principal, function);
+		context.CheckEntryReference(CheckAs(), function);
 	}
 
 	// bind the input parameters to the function - they are folded to constants after the overload is chosen

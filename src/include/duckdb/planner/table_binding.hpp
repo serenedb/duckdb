@@ -107,14 +107,14 @@ protected:
 };
 
 struct ColumnReadCheck {
-	ColumnReadCheck(StandardEntry &entry_p, RoleAccess principal_p) : entry(entry_p), principal(principal_p) {
+	ColumnReadCheck(StandardEntry &entry_p, RoleAccess role_p) : entry(entry_p), role(role_p) {
 	}
 
 	bool CanRead(idx_t column_index) const;
 	bool CanReadAny() const;
 
 	StandardEntry &entry;
-	RoleAccess principal;
+	RoleAccess role;
 	bool referenced = false;
 };
 

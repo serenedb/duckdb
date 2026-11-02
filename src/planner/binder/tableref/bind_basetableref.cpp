@@ -314,10 +314,11 @@ BoundStatement Binder::Bind(BaseTableRef &ref) {
 		// the node is a view: get the query that the view represents
 		auto &view_catalog_entry = table_or_view->Cast<ViewCatalogEntry>();
 		unique_ptr<ColumnReadCheck> column_read;
-		if (principal && table_ref_use != TableRefUse::UTILITY_TARGET &&
+		auto &role = CheckAs();
+		if (table_ref_use != TableRefUse::UTILITY_TARGET &&
 		    (!IsUnowned(view_catalog_entry) || view_catalog_entry.ParentCatalog().IsSystemCatalog()) &&
-		    !principal->Can(CatalogType::TABLE_ENTRY, view_catalog_entry.permissions, AclMode::Select)) {
-			column_read = make_uniq<ColumnReadCheck>(view_catalog_entry, *principal);
+		    !role.Can(CatalogType::TABLE_ENTRY, view_catalog_entry.permissions, AclMode::Select)) {
+			column_read = make_uniq<ColumnReadCheck>(view_catalog_entry, role);
 			if (!column_read->CanReadAny()) {
 				ThrowPermissionDenied(view_catalog_entry);
 			}
@@ -329,10 +330,10 @@ BoundStatement Binder::Bind(BaseTableRef &ref) {
 		// for the view and for the current query
 		auto view_binder = Binder::CreateBinder(context, this, BinderType::VIEW_BINDER);
 		view_binder->SetCanContainNulls(true);
-		if (principal && view_catalog_entry.security_invoker) {
-			view_binder->principal = Caller();
-		} else if (principal && !IsUnowned(view_catalog_entry)) {
-			view_binder->principal = &AccessOf(view_catalog_entry.permissions.owner);
+		if (!role.IsSystem() && view_catalog_entry.security_invoker) {
+			view_binder->check_as = &CurrentRole();
+		} else if (!role.IsSystem() && !IsUnowned(view_catalog_entry)) {
+			view_binder->check_as = &AccessOf(view_catalog_entry.permissions.owner);
 		}
 
 		// The view may contain CTEs, but maybe only in the cte_map, so we need create CTE nodes for them

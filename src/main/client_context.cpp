@@ -295,7 +295,6 @@ shared_ptr<PreparedStatementData> ClientContext::CreatePreparedStatementInternal
 	auto &profiler = QueryProfiler::Get(*this);
 	profiler.StartQuery(statement->query, IsExplainAnalyze(*this, statement.get()));
 	Planner logical_planner(*this);
-	logical_planner.binder->SetPrincipal(principal);
 	if (parameters.statement_args) {
 		auto &parameter_values = *parameters.statement_args;
 		for (auto &value : parameter_values) {
@@ -1033,34 +1032,43 @@ static absl::Duration TimeLeft(const optional_idx &deadline) {
 	return absl::Nanoseconds(TimePoint::ToNanos(left));
 }
 
-void ClientContext::CheckDatabaseReference(optional_ptr<const RoleAccess> role, Catalog &catalog) {
-	if (entry_reference_handler && role && !catalog.IsSystemCatalog() && !catalog.IsTemporaryCatalog() &&
+void ClientContext::CheckDatabaseReference(const RoleAccess &role, Catalog &catalog) {
+	if (entry_reference_handler && !role.is_superuser && !catalog.IsSystemCatalog() && !catalog.IsTemporaryCatalog() &&
 	    catalog.GetName() != client_data->default_database) {
-		entry_reference_handler(*this, *role, catalog.GetAttached());
+		entry_reference_handler(*this, role, catalog.GetAttached());
 	}
 }
 
-void ClientContext::ResolvePrincipal() {
-	if (principal_role == DConstants::INVALID_INDEX) {
-		principal = nullptr;
+void ClientContext::ResolveCurrentRole() {
+	if (current_role_id == DConstants::INVALID_INDEX) {
+		current_role = &RoleAccess::System();
 		return;
 	}
-	principal = security ? security->Access(principal_role) : nullptr;
-	if (!principal) {
-		unknown_principal = RoleAccess();
-		unknown_principal.role = principal_role;
-		principal = &unknown_principal;
+	current_role = security ? security->Access(current_role_id) : nullptr;
+	if (!current_role) {
+		unknown_role = RoleAccess();
+		unknown_role.role = current_role_id;
+		current_role = &unknown_role;
 	}
 }
 
-void ClientContext::SetPrincipalRole(idx_t role) {
-	principal_role = role;
+RoleAccess ClientContext::AccessOf(idx_t role) const {
+	if (auto access = security ? security->Access(role) : nullptr) {
+		return *access;
+	}
+	RoleAccess missing;
+	missing.role = role;
+	return missing;
+}
+
+void ClientContext::SetCurrentRole(idx_t role) {
+	current_role_id = role;
 	InstallSecurity(db->GetSecurity());
 }
 
 void ClientContext::InstallSecurity(shared_ptr<const SecuritySnapshot> snapshot) {
 	security = std::move(snapshot);
-	ResolvePrincipal();
+	ResolveCurrentRole();
 }
 
 void ClientContext::RefreshSecurity() {
@@ -1073,17 +1081,17 @@ void ClientContext::CheckFileAccess(const string &path, RoleCapability sufficien
 	if (path == "/dev/stdin" || path == "/dev/stdout") {
 		return;
 	}
-	const auto holds = [&](optional_ptr<const RoleAccess> role) {
-		return !role || role->is_superuser || (role->capabilities & sufficient) != RoleCapability::None;
+	const auto holds = [&](const RoleAccess &role) {
+		return role.is_superuser || (role.capabilities & sufficient) != RoleCapability::None;
 	};
 	bool allowed;
 	if (file_access_scope) {
-		allowed = file_access_scope->catalog ||
-		          holds(file_access_scope->principal ? file_access_scope->principal : principal);
+		allowed =
+		    file_access_scope->catalog || holds(file_access_scope->role ? *file_access_scope->role : CurrentRole());
 	} else if (auto properties = ActiveStatementProperties(); properties && properties->file_access_authorized) {
 		allowed = (*properties->file_access_authorized & sufficient) != RoleCapability::None;
 	} else {
-		allowed = holds(principal);
+		allowed = holds(CurrentRole());
 	}
 	if (!allowed) {
 		throw PermissionException(

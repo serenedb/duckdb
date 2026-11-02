@@ -34,10 +34,15 @@ public:
 	explicit CatalogEntryRetriever(ClientContext &context) : context(context) {
 	}
 	CatalogEntryRetriever(const CatalogEntryRetriever &other)
-	    : callback(other.callback), context(other.context), principal(other.principal) {
+	    : callback(other.callback), context(other.context), check_as(other.check_as) {
 	}
 
 public:
+	static CatalogEntryRetriever Internal(ClientContext &context) {
+		CatalogEntryRetriever retriever(context);
+		retriever.check_as = &RoleAccess::System();
+		return retriever;
+	}
 	void Inherit(const CatalogEntryRetriever &parent);
 	ClientContext &GetContext() {
 		return context;
@@ -95,11 +100,12 @@ public:
 	optional_ptr<BoundAtClause> GetAtClause() const;
 	void SetAtClause(optional_ptr<BoundAtClause> at_clause);
 
-	optional_ptr<const RoleAccess> GetPrincipal() const {
-		return principal;
+	DUCKDB_API const RoleAccess &CheckAs() const;
+	optional_ptr<const RoleAccess> GetCheckAs() const {
+		return check_as;
 	}
-	void SetPrincipal(optional_ptr<const RoleAccess> principal_p) {
-		principal = principal_p;
+	void SetCheckAs(optional_ptr<const RoleAccess> role) {
+		check_as = role;
 	}
 
 private:
@@ -113,7 +119,7 @@ private:
 	ClientContext &context;
 	shared_ptr<CatalogSearchPath> search_path;
 	optional_ptr<BoundAtClause> at_clause;
-	optional_ptr<const RoleAccess> principal;
+	optional_ptr<const RoleAccess> check_as;
 	optional_ptr<const vector<NameBinding>> bindings;
 	optional_ptr<vector<NameBinding>> recorded_bindings;
 	Identifier bindings_catalog;

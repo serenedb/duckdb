@@ -297,7 +297,7 @@ QualifiedName Binder::BindTableName(const QualifiedName &name) {
 
 void Binder::RegisterEntryRead(optional_ptr<Binder> binder, ClientContext &context, CatalogEntry &entry) {
 	if (!binder || !binder->InViewBody()) {
-		context.CheckEntryReference(binder ? binder->principal : context.principal, entry);
+		context.CheckEntryReference(binder ? binder->CheckAs() : context.CurrentRole(), entry);
 	}
 }
 
@@ -349,7 +349,7 @@ SchemaCatalogEntry &Binder::BindSchema(CreateInfo &info) {
 	return schema_obj;
 }
 
-static idx_t CreationOwner(ClientContext &context, const CreateInfo &info, const RoleAccess &principal) {
+static idx_t CreationOwner(ClientContext &context, const CreateInfo &info, const RoleAccess &creator) {
 	if (info.type == CatalogType::SEQUENCE_ENTRY) {
 		auto &sequence = info.Cast<CreateSequenceInfo>();
 		if (sequence.serial) {
@@ -363,7 +363,7 @@ static idx_t CreationOwner(ClientContext &context, const CreateInfo &info, const
 			}
 		}
 	}
-	return principal.role;
+	return creator.role;
 }
 
 SchemaCatalogEntry &Binder::BindCreateSchema(CreateInfo &info) {
@@ -381,16 +381,16 @@ SchemaCatalogEntry &Binder::BindCreateSchema(CreateInfo &info) {
 		    StringUtil::Format("permission denied to create \"%s.%s\"", schema.name.GetIdentifierName(),
 		                       info.GetQualifiedName().Name().GetIdentifierName()));
 	}
-	if (principal) {
+	if (!CheckAs().IsSystem()) {
 		AssignOwner(info.permissions, schema.ParentCatalog(), Permissions::AclClass(info.type), &schema,
-		            CreationOwner(context, info, *principal));
+		            CreationOwner(context, info, CheckAs()));
 	}
 	return schema;
 }
 
 void Binder::RequireReplaceOwner(SchemaCatalogEntry &schema, const CreateInfo &info, const Identifier &name) {
-	if (!principal || (info.on_conflict != OnCreateConflict::REPLACE_ON_CONFLICT &&
-	                   info.on_conflict != OnCreateConflict::ALTER_ON_CONFLICT)) {
+	if (CheckAs().is_superuser || (info.on_conflict != OnCreateConflict::REPLACE_ON_CONFLICT &&
+	                               info.on_conflict != OnCreateConflict::ALTER_ON_CONFLICT)) {
 		return;
 	}
 	if (auto existing = schema.GetEntry(schema.catalog.GetCatalogTransaction(context), info.type, name)) {
@@ -437,6 +437,7 @@ void Binder::BindView(ClientContext &context, const SelectStatement &stmt, const
                       optional_ptr<vector<NameBinding>> name_bindings, const vector<Identifier> &aliases,
                       vector<LogicalType> &result_types, vector<Identifier> &result_names) {
 	auto view_binder = Binder::CreateBinder(context);
+	view_binder->BindUnchecked();
 	auto &catalog = Catalog::GetCatalog(context, catalog_name);
 
 	if (dependencies) {
@@ -589,11 +590,11 @@ SchemaCatalogEntry &Binder::BindCreateFunctionInfo(CreateInfo &info) {
 	// try to bind each of the included functions
 	vector_of_logical_type_set_t type_overloads;
 	auto &base = info.Cast<CreateMacroInfo>();
-	const auto creator = principal;
-	principal = nullptr;
-	absl::Cleanup restore_principal = [&] {
-		principal = creator;
+	absl::Cleanup restore_roles = [&, creator_check_as = check_as, creator_role = current_role] {
+		check_as = creator_check_as;
+		current_role = creator_role;
 	};
+	BindUnchecked();
 	for (auto &function : base.macros) {
 		Settings::ResolveCurrentValues(context, function->config);
 		unique_ptr<CatalogEntryRetriever> creator_path;
@@ -940,7 +941,7 @@ SchemaCatalogEntry &Binder::BindCreateFunctionInfo(CreateInfo &info) {
 			error.Throw();
 		}
 	}
-	std::move(restore_principal).Invoke();
+	std::move(restore_roles).Invoke();
 
 	return BindCreateSchema(info);
 }
@@ -1010,7 +1011,7 @@ SchemaCatalogEntry &Binder::BindCreateTriggerInfo(CreateTriggerInfo &create_trig
 		throw BinderException("CREATE TRIGGER requires a base table");
 	}
 	auto &table = *table_ptr;
-	if (principal && !principal->Can(CatalogType::TABLE_ENTRY, table.permissions, AclMode::Trigger)) {
+	if (!CheckAs().Can(CatalogType::TABLE_ENTRY, table.permissions, AclMode::Trigger)) {
 		ThrowPermissionDenied(table);
 	}
 	// Dropping the trigger's own table must not require CASCADE. If the trigger body also references this table,
@@ -1100,6 +1101,7 @@ SchemaCatalogEntry &Binder::BindCreateTriggerInfo(CreateTriggerInfo &create_trig
 	// Set up trigger_expanded_tables to match runtime behavior.
 	// Set up trigger_creation_table to detect recursive triggers during the validation.
 	auto validation_binder = Binder::CreateBinder(context);
+	validation_binder->BindUnchecked();
 	validation_binder->global_binder_state->trigger_expanded_tables.insert(table);
 	validation_binder->global_binder_state->trigger_creation_table = &table;
 	validation_binder->global_binder_state->trigger_creation_name = create_trigger_info.GetTriggerName();
@@ -1201,13 +1203,14 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 			info.authorization = role_name;
 		}
 		BindCreateSchema(info);
-		auto owner = principal ? principal->role : idx_t(0);
-		if (principal && !info.authorization.empty()) {
+		auto &role = CheckAs();
+		auto owner = role.role;
+		if (!role.IsSystem() && !info.authorization.empty()) {
 			owner = RoleId(info.authorization);
 		}
 		RequireDatabasePrivilege(info.SchemaCatalog(), AclMode::Create);
-		if (principal) {
-			if (!principal->CanSet(owner)) {
+		if (!role.IsSystem()) {
+			if (!role.CanSet(owner)) {
 				throw PermissionException("must be able to SET ROLE \"%s\"", info.authorization.GetIdentifierName());
 			}
 			AssignOwner(info.permissions, Catalog::GetCatalog(context, info.SchemaCatalog()), CatalogType::SCHEMA_ENTRY,
@@ -1346,10 +1349,10 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 		}
 		auto bound_info = BindCreateTableInfo(std::move(stmt.info));
 		RequireTypeUsage(bound_info->Base().dependencies);
-		if (principal) {
+		if (!CheckAs().IsSystem()) {
 			for (auto &serial : bound_info->serial_sequences) {
 				AssignOwner(serial.permissions, bound_info->schema.ParentCatalog(), CatalogType::SEQUENCE_ENTRY,
-				            &bound_info->schema, principal->role);
+				            &bound_info->schema, CheckAs().role);
 			}
 		}
 		auto root = std::move(bound_info->query);
@@ -1505,10 +1508,10 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 		break;
 	case CatalogType::FOREIGN_SERVER_ENTRY: {
 		auto catalog = BindCatalog(stmt.info->GetQualifiedName().Catalog());
-		if (principal) {
-			RequireForeignDataWrapperUsage(*principal, catalog, stmt.info->Cast<CreateForeignServerInfo>().fdw_name);
+		if (auto &role = CheckAs(); !role.IsSystem()) {
+			RequireForeignDataWrapperUsage(role, catalog, stmt.info->Cast<CreateForeignServerInfo>().fdw_name);
 			AssignOwner(stmt.info->permissions, Catalog::GetCatalog(context, catalog),
-			            CatalogType::FOREIGN_SERVER_ENTRY, nullptr, principal->role);
+			            CatalogType::FOREIGN_SERVER_ENTRY, nullptr, role.role);
 		}
 		properties.RegisterDBModify(Catalog::GetCatalog(context, catalog), context,
 		                            DatabaseModificationType::CREATE_CATALOG_ENTRY);
@@ -1520,8 +1523,8 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 		auto &subscription_catalog = SubscriptionCatalog(stmt.info->GetQualifiedName().Catalog());
 		auto &catalog = subscription_catalog.GetName();
 		stmt.info->SetQualifiedName(QualifiedName(catalog, Identifier(), stmt.info->GetQualifiedName().Name()));
-		if (principal) {
-			if (!principal->Has(RoleCapability::CreateSubscription)) {
+		if (auto &role = CheckAs(); !role.IsSystem()) {
+			if (!role.Has(RoleCapability::CreateSubscription)) {
 				throw PermissionException(
 				    unordered_map<string, string> {{"detail",
 				                                    "Only roles with privileges of the "
@@ -1530,7 +1533,7 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 			}
 			RequireDatabasePrivilege(catalog, AclMode::Create);
 			AssignOwner(stmt.info->permissions, subscription_catalog, CatalogType::SUBSCRIPTION_ENTRY, nullptr,
-			            principal->role);
+			            role.role);
 		}
 		properties.RegisterDBModify(subscription_catalog, context, DatabaseModificationType::CREATE_CATALOG_ENTRY);
 		result.plan = make_uniq<LogicalCreate>(LogicalOperatorType::LOGICAL_CREATE_SUBSCRIPTION, std::move(stmt.info));

@@ -100,8 +100,8 @@ void StatementProperties::RegisterDBRead(Catalog &catalog, ClientContext &contex
 	auto catalog_identity = CatalogIdentity {catalog.GetOid(), catalog.GetCatalogVersion(context)};
 	auto entry = read_databases.emplace(catalog.GetName(), catalog_identity);
 	D_ASSERT(entry.first->second == catalog_identity);
-	if (entry.second && check_database_references) {
-		context.CheckDatabaseReference(context.principal, catalog);
+	if (entry.second) {
+		context.CheckDatabaseReference(context.CurrentRole(), catalog);
 	}
 }
 
@@ -112,9 +112,7 @@ void StatementProperties::RegisterDBModify(Catalog &catalog, ClientContext &cont
 	if (entry.second) {
 		// new entry - set the identity
 		entry.first->second.identity = catalog_identity;
-		if (check_database_references) {
-			context.CheckDatabaseReference(context.principal, catalog);
-		}
+		context.CheckDatabaseReference(context.CurrentRole(), catalog);
 	} else {
 		// existing entry - verify this has the same identity
 		D_ASSERT(entry.first->second.identity == catalog_identity);

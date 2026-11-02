@@ -87,15 +87,8 @@ unique_ptr<FunctionLocalState> NextValLocalFunction(ExpressionState &state, cons
 	auto &context = state.GetContext();
 	auto &info = bind_data->Cast<NextvalBindData>();
 	auto &sequence = info.sequence;
-	auto principal = context.principal;
-	if (principal && info.role.IsValid()) {
-		principal = context.security ? context.security->Access(info.role.GetIndex()) : nullptr;
-		if (!principal) {
-			ThrowPermissionDenied(sequence);
-		}
-	}
-	if (principal && !IsUnowned(sequence) &&
-	    !principal->CanAny(CatalogType::SEQUENCE_ENTRY, sequence.permissions, OP::MODES)) {
+	const auto role = info.role.IsValid() ? context.AccessOf(info.role.GetIndex()) : context.CurrentRole();
+	if (!IsUnowned(sequence) && !role.CanAny(CatalogType::SEQUENCE_ENTRY, sequence.permissions, OP::MODES)) {
 		ThrowPermissionDenied(sequence);
 	}
 	auto &transaction = DuckTransaction::Get(context, sequence.catalog);
@@ -186,9 +179,9 @@ unique_ptr<FunctionData> NextValBind(BindScalarFunctionInput &input) {
 	}
 	auto &binder = input.GetBinder();
 	auto &seq = BindSequence(binder, Identifier(seqname.ToString()));
-	const auto caller = binder.Caller();
-	return make_uniq<NextvalBindData>(seq, caller && caller != binder.context.principal ? optional_idx(caller->role)
-	                                                                                    : optional_idx());
+	auto &caller = binder.CurrentRole();
+	return make_uniq<NextvalBindData>(seq, &caller != &binder.context.CurrentRole() ? optional_idx(caller.role)
+	                                                                                : optional_idx());
 }
 
 void Serialize(Serializer &serializer, const optional_ptr<FunctionData> bind_data, const BoundScalarFunction &) {

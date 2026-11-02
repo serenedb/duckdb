@@ -87,7 +87,7 @@ void BindContext::CheckColumnsVisible(Binding &binding) {
 	}
 	auto entry = binding.GetStandardEntry();
 	if (entry) {
-		binder.context.CheckEntryReference(binder.principal, *entry);
+		binder.context.CheckEntryReference(binder.CheckAs(), *entry);
 	}
 }
 

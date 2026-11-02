@@ -155,15 +155,14 @@ public:
 	entry_reference_handler_t entry_reference_handler = nullptr;
 
 	struct FileAccessScope {
-		optional_ptr<const RoleAccess> principal;
+		optional_ptr<const RoleAccess> role;
 		bool catalog = false;
 	};
 	optional_ptr<const FileAccessScope> file_access_scope;
 	optional_ptr<const StatementProperties> planned_properties;
 
 	shared_ptr<const SecuritySnapshot> security;
-	optional_ptr<const RoleAccess> principal;
-	idx_t principal_role = DConstants::INVALID_INDEX;
+	idx_t current_role_id = DConstants::INVALID_INDEX;
 	idx_t session_role = DConstants::INVALID_INDEX;
 	bool hide_constraint_keys = false;
 	bool hide_secrets = false;
@@ -223,16 +222,20 @@ public:
 	bool CanSeeDatabase(AttachedDatabase &database) {
 		return !database_visibility || database_visibility(*this, database);
 	}
-	void CheckEntryReference(optional_ptr<const RoleAccess> role, CatalogEntry &entry) {
-		if (entry_reference_handler && role) {
-			entry_reference_handler(*this, *role, entry);
+	void CheckEntryReference(const RoleAccess &role, CatalogEntry &entry) {
+		if (entry_reference_handler && !role.is_superuser) {
+			entry_reference_handler(*this, role, entry);
 		}
 	}
-	DUCKDB_API void CheckDatabaseReference(optional_ptr<const RoleAccess> role, Catalog &catalog);
+	DUCKDB_API void CheckDatabaseReference(const RoleAccess &role, Catalog &catalog);
 	DUCKDB_API optional_ptr<const StatementProperties> ActiveStatementProperties() const;
 	DUCKDB_API void WarnUser(const string &message);
 
-	DUCKDB_API void SetPrincipalRole(idx_t role);
+	const RoleAccess &CurrentRole() const {
+		return *current_role;
+	}
+	DUCKDB_API RoleAccess AccessOf(idx_t role) const;
+	DUCKDB_API void SetCurrentRole(idx_t role);
 	DUCKDB_API void InstallSecurity(shared_ptr<const SecuritySnapshot> snapshot);
 	DUCKDB_API void RefreshSecurity();
 	DUCKDB_API void CheckFileAccess(const string &path, RoleCapability sufficient);
@@ -505,7 +508,7 @@ private:
 
 	bool ErrorInvalidatesTransaction(ExceptionType type);
 
-	void ResolvePrincipal();
+	void ResolveCurrentRole();
 
 private:
 	//! Lock on using the ClientContext in parallel
@@ -523,7 +526,8 @@ private:
 	weak_ptr<AttachedDatabase> connected_to_database;
 	bool is_connected = false;
 	shared_ptr<SchedulerAccount> scheduler_account;
-	RoleAccess unknown_principal;
+	optional_ptr<const RoleAccess> current_role = &RoleAccess::System();
+	RoleAccess unknown_role;
 };
 
 class ClientContextLock {

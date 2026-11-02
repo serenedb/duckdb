@@ -1582,9 +1582,9 @@ ScalarMacroFunction &ExpressionBinder::UnfoldMacroExpression(FunctionExpression 
 		throw modifiers_error();
 	}
 	optional_ptr<const RoleAccess> role;
-	if (owned && use && !call_modifiers && binder.principal) {
-		role = binder.FunctionBodyRole(owner);
-		if (role == binder.principal && role == binder.Caller()) {
+	if (owned && use && !call_modifiers && !binder.CheckAs().IsSystem()) {
+		role = &binder.FunctionBodyRole(owner);
+		if (role.get() == &binder.CheckAs() && role.get() == &binder.CurrentRole()) {
 			role = nullptr;
 		}
 	}
@@ -1768,8 +1768,8 @@ ScalarMacroFunction &ExpressionBinder::UnfoldMacroExpression(FunctionExpression 
 
 BindResult ExpressionBinder::BindMacro(FunctionExpression &function, ScalarMacroCatalogEntry &macro_func, idx_t depth,
                                        unique_ptr<ParsedExpression> &expr) {
-	const bool constant_candidate =
-	    function.GetArguments().empty() && expr->GetExpressionClass() == ExpressionClass::FUNCTION && !binder.caller;
+	const bool constant_candidate = function.GetArguments().empty() &&
+	                                expr->GetExpressionClass() == ExpressionClass::FUNCTION && !binder.current_role;
 	auto &constant_macros = binder.global_binder_state->constant_macros;
 	if (constant_candidate) {
 		auto constant = constant_macros.find(&macro_func);
@@ -1799,16 +1799,16 @@ BindResult ExpressionBinder::BindMacro(FunctionExpression &function, ScalarMacro
 			binder.EntryRetriever().SwapSearchPath(*caller_path);
 		}
 	};
-	absl::Cleanup restore_role = [&, principal = binder.principal, caller = binder.caller,
-	                              lookups = binder.EntryRetriever().GetPrincipal()] {
+	absl::Cleanup restore_role = [&, check_as = binder.check_as, current_role = binder.current_role,
+	                              lookups = binder.EntryRetriever().GetCheckAs()] {
 		if (body_role) {
-			binder.principal = principal;
-			binder.caller = caller;
-			binder.EntryRetriever().SetPrincipal(lookups);
+			binder.check_as = check_as;
+			binder.current_role = current_role;
+			binder.EntryRetriever().SetCheckAs(lookups);
 		}
 	};
 	if (body_role) {
-		binder.BindAsFunctionBody(body_role);
+		binder.BindAsFunctionBody(*body_role);
 	}
 	BindResult result;
 	if (shared_arguments.empty()) {

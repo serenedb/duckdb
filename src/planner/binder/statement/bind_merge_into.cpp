@@ -255,7 +255,7 @@ BoundStatement Binder::BindNode(MergeQueryNode &node) {
 	}
 	auto &table = *table_ptr;
 	RecordConstraintKeyVisibility(table);
-	if (principal) {
+	if (auto &role = CheckAs(); !role.is_superuser) {
 		const auto named_acls = [&](const vector<Identifier> &names) {
 			vector<std::span<const AclItem>> acls;
 			for (auto &name : names) {
@@ -280,27 +280,27 @@ BoundStatement Binder::BindNode(MergeQueryNode &node) {
 				bool allowed;
 				switch (action->action_type) {
 				case MergeActionType::MERGE_UPDATE:
-					allowed = principal->CanColumns(table.permissions, AclMode::Update,
-					                                action->update_info && !action->update_info->columns.empty()
-					                                    ? named_acls(action->update_info->columns)
-					                                    : leading_acls(table.GetColumns().LogicalColumnCount()));
+					allowed = role.CanColumns(table.permissions, AclMode::Update,
+					                          action->update_info && !action->update_info->columns.empty()
+					                              ? named_acls(action->update_info->columns)
+					                              : leading_acls(table.GetColumns().LogicalColumnCount()));
 					break;
 				case MergeActionType::MERGE_DELETE:
-					allowed = principal->Can(CatalogType::TABLE_ENTRY, table.permissions, AclMode::Delete);
+					allowed = role.Can(CatalogType::TABLE_ENTRY, table.permissions, AclMode::Delete);
 					break;
 				case MergeActionType::MERGE_INSERT:
 					if (on_conflict_merge.get() == &node) {
 						allowed = true;
 					} else if (action->default_values) {
-						allowed = principal->CanAnyColumn(table.permissions, AclMode::Insert, table.GetColumns());
+						allowed = role.CanAnyColumn(table.permissions, AclMode::Insert, table.GetColumns());
 					} else if (!action->insert_columns.empty()) {
-						allowed = principal->CanColumns(table.permissions, AclMode::Insert,
-						                                named_acls(action->insert_columns));
+						allowed =
+						    role.CanColumns(table.permissions, AclMode::Insert, named_acls(action->insert_columns));
 					} else {
 						const auto count = action->column_order == InsertColumnOrder::INSERT_BY_POSITION
 						                       ? action->expressions.size()
 						                       : table.GetColumns().LogicalColumnCount();
-						allowed = principal->CanColumns(table.permissions, AclMode::Insert, leading_acls(count));
+						allowed = role.CanColumns(table.permissions, AclMode::Insert, leading_acls(count));
 					}
 					break;
 				default:

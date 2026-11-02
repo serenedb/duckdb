@@ -112,7 +112,7 @@ void Binder::BindUpdateSet(TableIndex proj_index, unique_ptr<LogicalOperator> &r
 		auto &colname = set_info.columns[i];
 		auto &expr = set_info.expressions[i];
 		if (!table.ColumnExists(colname)) {
-			context.CheckEntryReference(principal, table);
+			context.CheckEntryReference(CheckAs(), table);
 			vector<string> column_names;
 			for (auto &col : all_columns.Physical()) {
 				column_names.emplace_back(col.Name().GetIdentifierName());
@@ -136,10 +136,10 @@ void Binder::BindUpdateSet(TableIndex proj_index, unique_ptr<LogicalOperator> &r
 		return;
 	}
 	auto &retriever = expr_binder_ptr->entry_retriever;
-	const auto lookup_principal = retriever.GetPrincipal();
-	retriever.SetPrincipal(nullptr);
-	absl::Cleanup restore_principal = [&] {
-		retriever.SetPrincipal(lookup_principal);
+	const auto lookup_role = retriever.GetCheckAs();
+	retriever.SetCheckAs(&RoleAccess::System());
+	absl::Cleanup restore_role = [&] {
+		retriever.SetCheckAs(lookup_role);
 	};
 	// Recompute each stored generated column whose value depends on an assigned
 	// column. Generated-column references are expanded inline -- the same
@@ -282,7 +282,8 @@ BoundStatement Binder::BindNode(UpdateQueryNode &node) {
 			return std::move(*expanded);
 		}
 	}
-	if (principal && !principal->CanAnyColumn(table.permissions, AclMode::Update, table.GetColumns())) {
+	auto &role = CheckAs();
+	if (!role.CanAnyColumn(table.permissions, AclMode::Update, table.GetColumns())) {
 		ThrowPermissionDenied(table);
 	}
 
@@ -341,12 +342,12 @@ BoundStatement Binder::BindNode(UpdateQueryNode &node) {
 	                              update->columns, node.prioritize_table_when_binding);
 	D_ASSERT(proj_tmp->type == LogicalOperatorType::LOGICAL_PROJECTION);
 	auto proj = unique_ptr_cast<LogicalOperator, LogicalProjection>(std::move(proj_tmp));
-	if (principal) {
+	if (!role.is_superuser) {
 		vector<std::span<const AclItem>> acls;
 		for (auto index : update->columns) {
 			acls.emplace_back(table.GetColumns().GetColumn(index).Acl());
 		}
-		if (!principal->CanColumns(table.permissions, AclMode::Update, acls)) {
+		if (!role.CanColumns(table.permissions, AclMode::Update, acls)) {
 			ThrowPermissionDenied(table);
 		}
 	}

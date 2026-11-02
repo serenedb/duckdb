@@ -417,13 +417,15 @@ public:
 	void AddBoundView(ViewCatalogEntry &view);
 	bool InViewBody() const;
 
-	optional_ptr<const RoleAccess> principal;
-	optional_ptr<const RoleAccess> caller;
-	void SetPrincipal(optional_ptr<const RoleAccess> principal_p);
-	optional_ptr<const RoleAccess> Caller() const;
+	optional_ptr<const RoleAccess> check_as;
+	optional_ptr<const RoleAccess> current_role;
+	const RoleAccess &CheckAs() const;
+	const RoleAccess &CurrentRole() const;
 	const RoleAccess &AccessOf(idx_t role);
-	optional_ptr<const RoleAccess> FunctionBodyRole(optional_idx owner);
-	void BindAsFunctionBody(optional_ptr<const RoleAccess> role);
+	const RoleAccess &FunctionBodyRole(optional_idx owner);
+	void BindAsFunctionBody(const RoleAccess &role);
+	void InheritRoles(Binder &other);
+	void BindUnchecked();
 	void BindAsFunctionBody(const SelectStatement &statement);
 	void UseFunctionSearchPath(const vector<string> &config);
 	TableRefUse table_ref_use = TableRefUse::READ;

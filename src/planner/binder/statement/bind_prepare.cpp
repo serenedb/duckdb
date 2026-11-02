@@ -10,7 +10,6 @@ BoundStatement Binder::Bind(PrepareStatement &stmt) {
 		BindLogicalType(entry.second);
 	}
 	Planner prepared_planner(context);
-	prepared_planner.binder->SetPrincipal(principal);
 	prepared_planner.parameter_type_hints = stmt.parameter_type_hints;
 	stmt.statement->query = stmt.query;
 	auto prepared_data = prepared_planner.PrepareSQLStatement(std::move(stmt.statement));

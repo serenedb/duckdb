@@ -85,8 +85,8 @@ BoundStatement Binder::BindNode(DeleteQueryNode &node) {
 		throw BinderException("Can only delete from base table");
 	}
 	auto &table = *table_ptr;
-	if (principal && !principal->Can(CatalogType::TABLE_ENTRY, table.permissions,
-	                                 node.is_truncate ? AclMode::Truncate : AclMode::Delete)) {
+	if (!CheckAs().Can(CatalogType::TABLE_ENTRY, table.permissions,
+	                   node.is_truncate ? AclMode::Truncate : AclMode::Delete)) {
 		ThrowPermissionDenied(table);
 	}
 	RecordConstraintKeyVisibility(table);

@@ -94,7 +94,7 @@ vector<unique_ptr<BoundConstraint>> Binder::BindConstraints(ClientContext &conte
 
 vector<unique_ptr<BoundConstraint>> Binder::BindConstraints(const TableCatalogEntry &table) {
 	auto binder = CreateBinderWithSearchPath(table.ParentCatalog().GetName(), table.ParentSchema(context).name);
-	binder->entry_retriever.SetPrincipal(nullptr);
+	binder->entry_retriever.SetCheckAs(&RoleAccess::System());
 	return binder->BindConstraints(table.GetConstraints(), table.name, table.GetColumns());
 }
 
@@ -362,10 +362,10 @@ void Binder::BindDefaultValue(const ColumnDefinition &column, vector<unique_ptr<
 }
 
 void Binder::BindDefaultValues(const TableCatalogEntry &table, vector<unique_ptr<Expression>> &bound_defaults) {
-	const auto lookup_principal = entry_retriever.GetPrincipal();
-	entry_retriever.SetPrincipal(nullptr);
-	absl::Cleanup restore_principal = [&] {
-		entry_retriever.SetPrincipal(lookup_principal);
+	const auto lookup_role = entry_retriever.GetCheckAs();
+	entry_retriever.SetCheckAs(&RoleAccess::System());
+	absl::Cleanup restore_role = [&] {
+		entry_retriever.SetCheckAs(lookup_role);
 	};
 	BindDefaultValues(table.GetColumns(), bound_defaults, table.ParentCatalog().GetName().GetIdentifierName(),
 	                  table.ParentSchema(context).name.GetIdentifierName());
@@ -670,8 +670,8 @@ static EntryLookupInfo ReferencedTableLookup(SchemaCatalogEntry &schema, const F
 
 static void RequireReferences(CatalogEntryRetriever &entry_retriever, CatalogEntry &entry,
                               const ForeignKeyConstraint &fk) {
-	auto principal = entry_retriever.GetPrincipal();
-	if (!principal || entry.type != CatalogType::TABLE_ENTRY) {
+	auto &role = entry_retriever.CheckAs();
+	if (role.is_superuser || entry.type != CatalogType::TABLE_ENTRY) {
 		return;
 	}
 	auto &table = entry.Cast<TableCatalogEntry>();
@@ -680,7 +680,7 @@ static void RequireReferences(CatalogEntryRetriever &entry_retriever, CatalogEnt
 		Identifier name(column);
 		acls.push_back(table.GetColumn(table.GetColumnIndex(name)).Acl());
 	}
-	if (!principal->CanColumns(table.permissions, AclMode::References, acls)) {
+	if (!role.CanColumns(table.permissions, AclMode::References, acls)) {
 		ThrowPermissionDenied(table);
 	}
 }

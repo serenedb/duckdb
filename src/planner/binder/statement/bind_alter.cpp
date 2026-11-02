@@ -171,23 +171,14 @@ static optional_ptr<CatalogEntry> BindSetSchemaEntry(SetSchemaInfo &info, const 
 	return lookup(declared, info.if_not_found);
 }
 
-static RoleAccess AccessOf(ClientContext &context, idx_t role) {
-	if (auto access = context.security ? context.security->Access(role) : nullptr) {
-		return *access;
-	}
-	RoleAccess missing;
-	missing.role = role;
-	return missing;
-}
-
 static idx_t GranteeId(Binder &binder, const string &name) {
 	return name == "public" ? ACL_ID_PUBLIC : binder.RoleSpecId(name);
 }
 
 static void RequireGrantable(Binder &binder, CatalogEntry &entry) {
-	auto principal = binder.principal;
+	auto &role = binder.CheckAs();
 	auto &permissions = entry.permissions;
-	if (!principal || principal->Owns(permissions.owner)) {
+	if (role.Owns(permissions.owner)) {
 		return;
 	}
 	vector<AclItem> defaults;
@@ -196,14 +187,14 @@ static void RequireGrantable(Binder &binder, CatalogEntry &entry) {
 		defaults = Permissions::AclDefault(Permissions::AclClass(entry.type), permissions.owner);
 		stored = defaults;
 	}
-	auto held = principal->HeldModes(stored) | principal->GrantableModes(stored);
+	auto held = role.HeldModes(stored) | role.GrantableModes(stored);
 	if (entry.type == CatalogType::TABLE_ENTRY) {
 		for (auto &column : entry.Cast<TableCatalogEntry>().GetColumns().Logical()) {
-			held |= principal->HeldModes(column.Acl()) | principal->GrantableModes(column.Acl());
+			held |= role.HeldModes(column.Acl()) | role.GrantableModes(column.Acl());
 		}
 	} else if (entry.type == CatalogType::VIEW_ENTRY) {
 		for (auto &acl : entry.Cast<ViewCatalogEntry>().column_acls) {
-			held |= principal->HeldModes(acl) | principal->GrantableModes(acl);
+			held |= role.HeldModes(acl) | role.GrantableModes(acl);
 		}
 	}
 	if (held == AclMode::NoRights) {
@@ -231,9 +222,7 @@ static CatalogEntry &ResolveDatabaseEntry(Binder &binder, CatalogType type, Alte
 
 static void RequireSubscriptionOwner(Binder &binder, CatalogEntry &subscription) {
 	binder.RequireOwner(subscription);
-	auto principal = binder.principal;
-	if (principal && !principal->is_superuser &&
-	    !subscription.GetInfo()->Cast<CreateSubscriptionInfo>().password_required) {
+	if (!binder.CheckAs().is_superuser && !subscription.GetInfo()->Cast<CreateSubscriptionInfo>().password_required) {
 		throw PermissionException(unordered_map<string, string> {{"hint", "Subscriptions with the password_required "
 		                                                                  "option set to false may only be created or "
 		                                                                  "modified by the superuser."}},
@@ -300,20 +289,20 @@ static void RefuseOwnedSequence(ClientContext &context, CatalogEntry &sequence) 
 
 static vector<idx_t> CallerGrantors(Binder &binder) {
 	vector<idx_t> grantors;
-	auto principal = binder.principal;
-	if (principal && !principal->is_superuser) {
-		grantors.push_back(principal->role);
-		grantors.insert(grantors.end(), principal->closure.begin(), principal->closure.end());
+	auto &role = binder.CheckAs();
+	if (!role.is_superuser) {
+		grantors.push_back(role.role);
+		grantors.insert(grantors.end(), role.closure.begin(), role.closure.end());
 	}
 	return grantors;
 }
 
 static void ResolveGrant(Binder &binder, AlterPermissionsInfo &info) {
-	auto principal = binder.principal;
+	auto &role = binder.CheckAs();
 	info.grantee_id = GranteeId(binder, info.grantee);
 	if (!info.granted_by.empty()) {
 		auto granted_by = binder.RoleSpecId(info.granted_by);
-		if (principal && !principal->MemberOf(granted_by)) {
+		if (!role.MemberOf(granted_by)) {
 			throw PermissionException("must be member of role \"%s\"", binder.RoleName(granted_by));
 		}
 		info.grantors = {granted_by};
@@ -331,8 +320,7 @@ static void ResolveGrant(Binder &binder, AlterPermissionsInfo &info) {
 			    StringUtil::Format("database \"%s\" does not exist", database_name.GetIdentifierName()));
 		}
 		auto acl = database->permissions.ForeignDataWrapperAcl(wrapper.oid);
-		if (principal && !principal->Owns(wrapper.owner) &&
-		    (principal->HeldModes(acl) | principal->GrantableModes(acl)) == AclMode::NoRights) {
+		if (!role.Owns(wrapper.owner) && (role.HeldModes(acl) | role.GrantableModes(acl)) == AclMode::NoRights) {
 			throw PermissionException("permission denied for foreign-data wrapper %s", name);
 		}
 		info.foreign_data_wrapper_id = wrapper.oid;
@@ -351,8 +339,8 @@ static void ResolveOwner(Binder &binder, AlterPermissionsInfo &info) {
 	auto &context = binder.context;
 	auto &entry = ResolvePermissionsTarget(binder, info);
 	info.new_owner_id = binder.RoleSpecId(info.new_owner);
-	auto principal = binder.principal;
-	const bool enforce = principal && !principal->is_superuser;
+	auto &role = binder.CheckAs();
+	const bool enforce = !role.is_superuser;
 	const bool relation = Catalog::InRelationNamespace(entry.type);
 	if (enforce && relation) {
 		binder.RequireOwner(entry);
@@ -371,21 +359,21 @@ static void ResolveOwner(Binder &binder, AlterPermissionsInfo &info) {
 	} else if (!relation) {
 		binder.RequireOwner(entry);
 	}
-	if (!principal->CanSet(info.new_owner_id)) {
+	if (!role.CanSet(info.new_owner_id)) {
 		throw PermissionException("must be able to SET ROLE \"%s\"", binder.RoleName(info.new_owner_id));
 	}
 	if (entry.type == CatalogType::SCHEMA_ENTRY || entry.type == CatalogType::SUBSCRIPTION_ENTRY) {
 		binder.RequireDatabasePrivilege(entry.ParentCatalog().GetName(), AclMode::Create);
 	} else if (entry.type == CatalogType::DATABASE_ENTRY) {
-		if (!principal->Has(RoleOption::CreateDb)) {
+		if (!role.Has(RoleOption::CreateDb)) {
 			throw PermissionException("permission denied to change owner of database");
 		}
 	} else if (entry.type == CatalogType::FOREIGN_SERVER_ENTRY) {
-		binder.RequireForeignDataWrapperUsage(AccessOf(context, info.new_owner_id), entry.ParentCatalog().GetName(),
+		binder.RequireForeignDataWrapperUsage(context.AccessOf(info.new_owner_id), entry.ParentCatalog().GetName(),
 		                                      entry.GetInfo()->Cast<CreateForeignServerInfo>().fdw_name);
 	} else {
 		auto &schema = entry.ParentSchema(context);
-		if (!AccessOf(context, info.new_owner_id).Can(CatalogType::SCHEMA_ENTRY, schema.permissions, AclMode::Create)) {
+		if (!context.AccessOf(info.new_owner_id).Can(CatalogType::SCHEMA_ENTRY, schema.permissions, AclMode::Create)) {
 			ThrowPermissionDenied(schema);
 		}
 	}
@@ -393,9 +381,8 @@ static void ResolveOwner(Binder &binder, AlterPermissionsInfo &info) {
 
 static void ResolveDefaultPrivileges(Binder &binder, AlterPermissionsInfo &info) {
 	auto &context = binder.context;
-	auto principal = binder.principal;
-	info.target_role = info.for_role.empty() ? context.principal_role : binder.RoleSpecId(info.for_role);
-	if (principal && !principal->MemberOf(info.target_role)) {
+	info.target_role = info.for_role.empty() ? context.current_role_id : binder.RoleSpecId(info.for_role);
+	if (!binder.CheckAs().MemberOf(info.target_role)) {
 		throw PermissionException("permission denied to change default privileges");
 	}
 	info.grantee_id = GranteeId(binder, info.grantee);
@@ -414,7 +401,7 @@ static void ResolveDefaultPrivileges(Binder &binder, AlterPermissionsInfo &info)
 
 static idx_t ResolveOwnedRole(Binder &binder, const string &name, const string &action, const string &detail) {
 	auto role = binder.RoleSpecId(name);
-	if (binder.principal && !binder.principal->MemberOf(role)) {
+	if (!binder.CheckAs().MemberOf(role)) {
 		throw PermissionException(
 		    unordered_map<string, string> {{"detail", StringUtil::Format(detail, binder.RoleName(role), action)}},
 		    StringUtil::Format("permission denied to %s objects", action));

@@ -363,6 +363,16 @@ static idx_t FilterWords(idx_t members) {
 	return std::bit_ceil(std::max<idx_t>(1, (members + 3) / 4));
 }
 
+const RoleAccess &RoleAccess::System() {
+	static const RoleAccess system = [] {
+		RoleAccess access;
+		access.options = ~RoleOption::None;
+		access.is_superuser = true;
+		return access;
+	}();
+	return system;
+}
+
 bool RoleAccess::Uses(idx_t other) const {
 	return other == role || (!closure_filter.empty() && FilterMayContain(closure_filter, other) &&
 	                         std::binary_search(closure.begin(), closure.end(), other));
@@ -550,10 +560,10 @@ bool IsUnowned(const CatalogEntry &entry) {
 	return entry.permissions.owner == 0 && (entry.internal || !stores_owners);
 }
 
-bool CanUseSchema(optional_ptr<const RoleAccess> principal, const CatalogEntry &schema) {
-	return !principal || schema.internal || IsUnowned(schema) ||
+bool CanUseSchema(const RoleAccess &role, const CatalogEntry &schema) {
+	return role.is_superuser || schema.internal || IsUnowned(schema) ||
 	       schema.ParentCatalog().Compatibility() != SqlCompatibility::POSTGRES ||
-	       principal->Can(CatalogType::SCHEMA_ENTRY, schema.permissions, AclMode::Usage);
+	       role.Can(CatalogType::SCHEMA_ENTRY, schema.permissions, AclMode::Usage);
 }
 
 template <class F>

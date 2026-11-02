@@ -199,17 +199,17 @@ bool ColumnReadCheck::CanRead(idx_t column_index) const {
 	    entry.type == CatalogType::VIEW_ENTRY
 	        ? entry.Cast<ViewCatalogEntry>().ColumnAcl(column_index)
 	        : std::span<const AclItem>(entry.Cast<TableCatalogEntry>().GetColumn(LogicalIndex(column_index)).Acl());
-	return principal.CanColumns(entry.permissions, AclMode::Select, std::span<const std::span<const AclItem>>(&acl, 1));
+	return role.CanColumns(entry.permissions, AclMode::Select, std::span<const std::span<const AclItem>>(&acl, 1));
 }
 
 bool ColumnReadCheck::CanReadAny() const {
 	if (entry.type != CatalogType::VIEW_ENTRY) {
 		auto &table = entry.Cast<TableCatalogEntry>();
-		return principal.CanAnyColumn(table.permissions, AclMode::Select, table.GetColumns());
+		return role.CanAnyColumn(table.permissions, AclMode::Select, table.GetColumns());
 	}
 	auto &column_acls = entry.Cast<ViewCatalogEntry>().column_acls;
 	return std::any_of(column_acls.begin(), column_acls.end(), [&](const vector<AclItem> &acl) {
-		return (principal.HeldModes(acl) & AclMode::Select) != AclMode::NoRights;
+		return (role.HeldModes(acl) & AclMode::Select) != AclMode::NoRights;
 	});
 }
 

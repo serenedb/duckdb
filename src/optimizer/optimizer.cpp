@@ -278,7 +278,7 @@ public:
 	}
 
 	bool IsCurrent(ClientContext &context) const override {
-		return context.security == snapshot && context.principal_role == role;
+		return context.security == snapshot && context.current_role_id == role;
 	}
 
 private:
@@ -296,7 +296,7 @@ static void TrackDataVersions(ClientContext &context, const LogicalOperator &pla
 		prepared.data_versions = std::move(versions);
 	}
 	if (context.security) {
-		prepared.data_versions.push_back(make_shared_ptr<SecurityVersion>(context.security, context.principal_role));
+		prepared.data_versions.push_back(make_shared_ptr<SecurityVersion>(context.security, context.current_role_id));
 	}
 }
 
