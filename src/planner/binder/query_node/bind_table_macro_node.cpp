@@ -43,9 +43,9 @@ unique_ptr<QueryNode> Binder::BindTableMacro(FunctionExpression &function, Macro
 	const auto owner =
 	    owned && macro_def.security_definer ? optional_idx(macro_func.permissions.owner) : optional_idx();
 	bool other_role = false;
-	if (owned && principal) {
-		const auto role = FunctionBodyRole(owner);
-		other_role = role != principal || role != Caller();
+	if (owned && !CheckAs().IsSystem()) {
+		auto &role = FunctionBodyRole(owner);
+		other_role = &role != &CheckAs() || &role != &CurrentRole();
 	}
 	const bool own_body = other_role || !macro_def.config.empty();
 

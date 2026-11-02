@@ -312,7 +312,7 @@ void CatalogSearchPath::Set(vector<CatalogSearchEntry> new_paths, CatalogSetPath
 	if (set_type != CatalogSetPathType::SET_DIRECTLY) {
 		for (auto &path : new_paths) {
 			if (auto catalog = Catalog::GetCatalogEntry(context, path.GetCatalog())) {
-				context.CheckDatabaseReference(context.principal, *catalog);
+				context.CheckDatabaseReference(context.CurrentRole(), *catalog);
 			}
 		}
 	}
@@ -587,7 +587,7 @@ CatalogSearchEntry CatalogSearchPath::GetResolvedDefault() const {
 		if (!schema) {
 			continue;
 		}
-		if (CanUseSchema(context.principal, *schema)) {
+		if (CanUseSchema(context.CurrentRole(), *schema)) {
 			return CatalogSearchEntry(paths[i].GetCatalog(), Identifier(std::move(resolved)));
 		}
 		skipped_unusable = true;

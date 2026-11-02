@@ -120,10 +120,15 @@ optional_ptr<SchemaCatalogEntry> CatalogEntryRetriever::GetSchema(const Identifi
 	    on_entry_not_found);
 }
 
+const RoleAccess &CatalogEntryRetriever::CheckAs() const {
+	return check_as ? *check_as : context.CurrentRole();
+}
+
 optional_ptr<CatalogEntry> CatalogEntryRetriever::ReturnAndCallback(optional_ptr<CatalogEntry> result) {
 	if (!result) {
 		return result;
 	}
+	context.CheckDatabaseReference(CheckAs(), result->ParentCatalog());
 	if (callback) {
 		// Call the callback if it's set
 		callback(*result);
@@ -135,7 +140,7 @@ void CatalogEntryRetriever::Inherit(const CatalogEntryRetriever &parent) {
 	this->callback = parent.callback;
 	this->search_path = parent.search_path;
 	this->at_clause = parent.at_clause;
-	this->principal = parent.principal;
+	this->check_as = parent.check_as;
 	this->bindings = parent.bindings;
 	this->recorded_bindings = parent.recorded_bindings;
 	this->bindings_catalog = parent.bindings_catalog;

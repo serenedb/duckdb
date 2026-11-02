@@ -146,7 +146,6 @@ struct StatementProperties {
 	idx_t binding_generation = 0;
 	optional<ReplicationRole> replication_role;
 	optional<RoleCapability> file_access_authorized;
-	bool check_database_references = false;
 	bool hide_constraint_keys = false;
 
 	bool IsReadOnly() {

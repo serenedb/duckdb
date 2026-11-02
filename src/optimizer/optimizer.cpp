@@ -330,7 +330,7 @@ void Optimizer::TrackDataVersions(ClientContext &context, LogicalOperator &plan)
 			prepared.properties.always_require_rebind = true;
 		}
 		prepared.security = context.security;
-		prepared.principal_role = context.principal_role;
+		prepared.principal_role = context.current_role_id;
 	});
 }
 
