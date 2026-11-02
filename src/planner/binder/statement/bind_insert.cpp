@@ -807,7 +807,9 @@ BoundStatement Binder::BindNode(InsertQueryNode &node) {
 	}
 
 	// bind the default values
-	BindDefaultValues(table, insert->bound_defaults);
+	BindDefaultValues(table, insert->bound_defaults, [&](const ColumnDefinition &column) {
+		return column_index_map.empty() || column_index_map[column.Physical()] == DConstants::INVALID_INDEX;
+	});
 	insert->bound_constraints = BindConstraints(table);
 	if (!node.select_statement && !node.default_values) {
 		check_insert(named_column_map.size());
