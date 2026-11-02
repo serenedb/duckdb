@@ -62,7 +62,6 @@ private:
 //===--------------------------------------------------------------------===//
 // AlterFunctionAttributesInfo
 //===--------------------------------------------------------------------===//
-//! ALTER FUNCTION name[(argument types)] SECURITY ..., IMMUTABLE / STABLE / VOLATILE, STRICT
 struct AlterFunctionAttributesInfo : public AlterScalarFunctionInfo {
 	explicit AlterFunctionAttributesInfo(const AlterEntryData &data);
 

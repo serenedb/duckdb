@@ -610,7 +610,6 @@ MacroParameter PEGTransformerFactory::TransformSimpleParameter(PEGTransformer &t
 	return result;
 }
 
-// AlterFunctionAttributesStmt <- GrantRoutineKind QualifiedName FuncArgSignature? FunctionDecorator+ 'RESTRICT'?
 unique_ptr<AlterInfo> PEGTransformerFactory::TransformAlterFunctionAttributesStmt(PEGTransformer &transformer,
                                                                                   ParseResult &parse_result) {
 	auto &list_pr = parse_result.Cast<ListParseResult>();
