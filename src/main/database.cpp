@@ -497,10 +497,19 @@ ResultSetManager &DatabaseInstance::GetResultSetManager() {
 	return *result_set_manager;
 }
 
-void DatabaseInstance::PublishSecurity(shared_ptr<const SecuritySnapshot> snapshot) {
+void DatabaseInstance::PublishSecurity(shared_ptr<const SecuritySnapshot> snapshot, idx_t catalog_version) {
 	lock_guard<mutex> guard(security_lock);
+	if (security && catalog_version <= security_version) {
+		return;
+	}
+	security_version = catalog_version;
 	current_security.store(snapshot.get(), std::memory_order_release);
 	security = std::move(snapshot);
+}
+
+bool DatabaseInstance::SecurityCurrent(idx_t catalog_version) const {
+	lock_guard<mutex> guard(security_lock);
+	return security && security_version >= catalog_version;
 }
 
 shared_ptr<const SecuritySnapshot> DatabaseInstance::GetSecurity() const {

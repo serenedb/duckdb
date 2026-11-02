@@ -117,6 +117,7 @@ public:
 
 	CatalogSet &GetSchemaCatalogSet();
 	CatalogSet &GetCatalogSet(CatalogType type);
+	DUCKDB_API void PublishSecurity();
 
 	DatabaseSize GetDatabaseSize(ClientContext &context) override;
 	vector<MetadataBlockInfo> GetMetadataInfo(ClientContext &context) override;

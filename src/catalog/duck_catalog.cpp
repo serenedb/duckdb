@@ -1,5 +1,7 @@
 #include "duckdb/catalog/duck_catalog.hpp"
 #include "duckdb/catalog/dependency_manager.hpp"
+#include "duckdb/catalog/permissions.hpp"
+#include "duckdb/main/database.hpp"
 #include "duckdb/catalog/catalog_entry/duck_schema_entry.hpp"
 #include "duckdb/catalog/catalog_entry/duck_index_entry.hpp"
 #include "duckdb/catalog/catalog_entry/duck_table_entry.hpp"
@@ -340,6 +342,17 @@ void DuckCatalog::DropSubscription(CatalogTransaction transaction, DropInfo &inf
 			                                     string());
 		}
 	}
+}
+
+void DuckCatalog::PublishSecurity() {
+	auto &db = GetDatabase();
+	const auto durable = DuckTransactionManager::Get(GetAttached()).GetDurableSnapshot();
+	if (db.SecurityCurrent(durable.catalog_version)) {
+		return;
+	}
+	db.PublishSecurity(
+	    SecuritySnapshot::Build(*roles, CatalogTransaction(db, TRANSACTION_ID_START - 1, durable.visibility_bound)),
+	    durable.catalog_version);
 }
 
 CatalogSet &DuckCatalog::GetCatalogSet(CatalogType type) {

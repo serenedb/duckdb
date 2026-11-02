@@ -8,6 +8,7 @@
 
 #pragma once
 
+#include "duckdb/catalog/catalog_transaction.hpp"
 #include "duckdb/common/constants.hpp"
 #include "duckdb/common/enums/catalog_type.hpp"
 #include "duckdb/common/enums/role_capability.hpp"
@@ -16,14 +17,18 @@
 #include "duckdb/common/optional_ptr.hpp"
 #include "duckdb/common/serializer/deserializer.hpp"
 #include "duckdb/common/serializer/serializer.hpp"
+#include "duckdb/common/shared_ptr.hpp"
 #include "duckdb/common/string.hpp"
+#include "duckdb/common/unordered_map.hpp"
 #include "duckdb/common/vector.hpp"
 
+#include <algorithm>
 #include <functional>
 #include <span>
 
 namespace duckdb {
 class CatalogEntry;
+class CatalogSet;
 class ColumnList;
 
 constexpr idx_t ACL_ID_PUBLIC = 0;
@@ -217,6 +222,18 @@ struct RoleAccess {
 	AclMode GrantableModes(std::span<const AclItem> acl) const;
 };
 
+struct RoleMemberships {
+	vector<idx_t> members;
+	vector<idx_t> admin;
+
+	bool IsMember(idx_t role) const {
+		return std::binary_search(members.begin(), members.end(), role);
+	}
+	bool IsAdminOf(idx_t role) const {
+		return std::binary_search(admin.begin(), admin.end(), role);
+	}
+};
+
 class SecuritySnapshot {
 public:
 	struct Role {
@@ -226,18 +243,31 @@ public:
 		vector<idx_t> closure;
 		vector<idx_t> settable;
 	};
+	struct Node {
+		string name;
+		RoleOption options = RoleOption::None;
+		vector<Membership> member_of;
+	};
 
-	explicit SecuritySnapshot(vector<Role> roles);
-	virtual ~SecuritySnapshot();
+	SecuritySnapshot(vector<Role> roles, unordered_map<idx_t, Node> nodes);
+	~SecuritySnapshot();
 
 	SecuritySnapshot(const SecuritySnapshot &) = delete;
 	SecuritySnapshot &operator=(const SecuritySnapshot &) = delete;
 
+	DUCKDB_API static shared_ptr<const SecuritySnapshot> Build(CatalogSet &roles, CatalogTransaction transaction);
+
 	optional_ptr<const RoleAccess> Access(idx_t role) const;
+	optional_ptr<const Node> Find(idx_t role) const;
+	optional_idx FindByName(std::string_view name) const;
+	std::string_view NameOf(idx_t role) const;
+	RoleMemberships MembershipsOf(idx_t role) const;
 
 private:
 	vector<idx_t> arena;
 	vector<RoleAccess> roles;
+	unordered_map<idx_t, Node> nodes;
+	unordered_map<string, idx_t> by_name;
 };
 
 DUCKDB_API bool IsUnowned(const CatalogEntry &entry);

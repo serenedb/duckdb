@@ -146,6 +146,7 @@ BoundStatement Binder::Bind(DropStatement &stmt) {
 		BindDropTrigger(stmt, properties);
 		break;
 	case CatalogType::ROLE_ENTRY:
+		CheckDropRole(*stmt.info);
 		stmt.info->SetQualifiedName(ClusterName(stmt.info->GetQualifiedName()));
 		break;
 	case CatalogType::DATABASE_ENTRY:

@@ -24,6 +24,7 @@ add_library_unity(
   bind_pragma.cpp
   bind_prepare.cpp
   bind_relation.cpp
+  bind_role.cpp
   bind_select.cpp
   bind_set.cpp
   bind_summarize.cpp

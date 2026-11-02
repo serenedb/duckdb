@@ -524,6 +524,8 @@ private:
 	shared_ptr<SchedulerAccount> scheduler_account;
 	optional_ptr<const RoleAccess> current_role = &RoleAccess::System();
 	RoleAccess unknown_role;
+	shared_ptr<const SecuritySnapshot> local_security;
+	idx_t local_security_version = 0;
 };
 
 class ClientContextLock {

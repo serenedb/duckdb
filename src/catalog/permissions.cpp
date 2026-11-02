@@ -3,6 +3,8 @@
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/catalog/catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/macro_catalog_entry.hpp"
+#include "duckdb/catalog/catalog_entry/role_entry.hpp"
+#include "duckdb/catalog/catalog_set.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/view_catalog_entry.hpp"
 #include "duckdb/common/case_insensitive_map.hpp"
@@ -526,7 +528,11 @@ AclMode RoleAccess::GrantableModes(std::span<const AclItem> acl) const {
 	return Held(*this, acl, &AclItem::grant_option);
 }
 
-SecuritySnapshot::SecuritySnapshot(vector<Role> roles_p) {
+SecuritySnapshot::SecuritySnapshot(vector<Role> roles_p, unordered_map<idx_t, Node> nodes_p)
+    : nodes(std::move(nodes_p)) {
+	for (auto &[oid, node] : nodes) {
+		by_name.emplace(node.name, oid);
+	}
 	std::sort(roles_p.begin(), roles_p.end(), [](const Role &lhs, const Role &rhs) { return lhs.role < rhs.role; });
 	idx_t total = 0;
 	for (auto &role : roles_p) {
@@ -575,6 +581,49 @@ SecuritySnapshot::SecuritySnapshot(vector<Role> roles_p) {
 SecuritySnapshot::~SecuritySnapshot() {
 }
 
+static vector<idx_t> Reachable(const unordered_map<idx_t, SecuritySnapshot::Node> &nodes, idx_t role,
+                               bool Membership::*option) {
+	unordered_set<idx_t> seen {role};
+	vector<idx_t> work {role};
+	while (!work.empty()) {
+		auto it = nodes.find(work.back());
+		work.pop_back();
+		if (it == nodes.end()) {
+			continue;
+		}
+		for (auto &edge : it->second.member_of) {
+			if ((!option || edge.*option) && nodes.count(edge.role) && seen.insert(edge.role).second) {
+				work.push_back(edge.role);
+			}
+		}
+	}
+	vector<idx_t> result(seen.begin(), seen.end());
+	std::sort(result.begin(), result.end());
+	return result;
+}
+
+shared_ptr<const SecuritySnapshot> SecuritySnapshot::Build(CatalogSet &set, CatalogTransaction transaction) {
+	unordered_map<idx_t, Node> nodes;
+	unordered_map<idx_t, RoleCapability> declared;
+	set.Scan(transaction, [&](CatalogEntry &entry) {
+		auto &role = entry.Cast<RoleEntry>();
+		nodes[role.oid] = Node {role.name.GetIdentifierName(), role.Options(), role.MemberOf()};
+		declared[role.oid] = role.Capabilities();
+	});
+	vector<Role> roles;
+	roles.reserve(nodes.size());
+	for (auto &[oid, node] : nodes) {
+		auto closure = Reachable(nodes, oid, &Membership::inherit_option);
+		auto capabilities = RoleCapability::None;
+		for (auto member : closure) {
+			capabilities |= declared[member];
+		}
+		roles.push_back(
+		    Role {oid, node.options, capabilities, std::move(closure), Reachable(nodes, oid, &Membership::set_option)});
+	}
+	return make_shared_ptr<const SecuritySnapshot>(std::move(roles), std::move(nodes));
+}
+
 optional_ptr<const RoleAccess> SecuritySnapshot::Access(idx_t role) const {
 	auto it = std::lower_bound(roles.begin(), roles.end(), role,
 	                           [](const RoleAccess &access, idx_t value) { return access.role < value; });
@@ -582,6 +631,42 @@ optional_ptr<const RoleAccess> SecuritySnapshot::Access(idx_t role) const {
 		return nullptr;
 	}
 	return &*it;
+}
+
+optional_ptr<const SecuritySnapshot::Node> SecuritySnapshot::Find(idx_t role) const {
+	auto it = nodes.find(role);
+	return it == nodes.end() ? nullptr : &it->second;
+}
+
+optional_idx SecuritySnapshot::FindByName(std::string_view name) const {
+	auto it = by_name.find(name);
+	return it == by_name.end() ? optional_idx() : optional_idx(it->second);
+}
+
+std::string_view SecuritySnapshot::NameOf(idx_t role) const {
+	auto node = Find(role);
+	return node ? std::string_view(node->name) : std::string_view();
+}
+
+RoleMemberships SecuritySnapshot::MembershipsOf(idx_t role) const {
+	RoleMemberships result;
+	if (role == 0) {
+		return result;
+	}
+	result.members = Reachable(nodes, role, nullptr);
+	for (auto member : result.members) {
+		auto node = Find(member);
+		if (!node) {
+			continue;
+		}
+		for (auto &edge : node->member_of) {
+			if (edge.admin_option) {
+				result.admin.push_back(edge.role);
+			}
+		}
+	}
+	std::sort(result.admin.begin(), result.admin.end());
+	return result;
 }
 
 bool IsUnowned(const CatalogEntry &entry) {

@@ -18,6 +18,9 @@
 #include "duckdb/common/unordered_map.hpp"
 #include "duckdb/common/unordered_set.hpp"
 #include "duckdb/parser/column_definition.hpp"
+#include "duckdb/parser/parsed_data/alter_table_info.hpp"
+#include "duckdb/parser/parsed_data/create_role_info.hpp"
+#include "duckdb/parser/parsed_data/drop_info.hpp"
 #include "duckdb/parser/tableref/match_recognize_ref.hpp"
 #include "duckdb/parser/qualified_name.hpp"
 #include "duckdb/parser/qualified_name_set.hpp"
@@ -452,6 +455,10 @@ public:
 	void RequireTypeUsage(optional_ptr<const LogicalDependencyList> dependencies);
 	void AssignOwner(Permissions &permissions, Catalog &catalog, CatalogType objtype,
 	                 optional_ptr<SchemaCatalogEntry> schema, idx_t owner);
+	void CheckCreateRole(const CreateRoleInfo &info);
+	void CheckAlterRole(AlterRoleInfo &info);
+	void CheckDropRole(const DropInfo &info);
+	void CheckAlterDatabaseSettings(AlterDatabaseSettingsInfo &info);
 
 	void BeginSubqueryBind(Binder &parent, ExpressionBinder &binder);
 	//! The innermost enclosing scope

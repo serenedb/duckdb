@@ -15,6 +15,7 @@ add_library_unity(
   pragma_function_catalog_entry.cpp
   replication_lsn_entry.cpp
   replication_origin_catalog_entry.cpp
+  role_entry.cpp
   schema_catalog_entry.cpp
   sequence_catalog_entry.cpp
   subscription_catalog_entry.cpp

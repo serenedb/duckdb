@@ -6,6 +6,7 @@
 #include "duckdb/catalog/catalog_entry/scalar_function_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_search_path.hpp"
+#include "duckdb/catalog/duck_catalog.hpp"
 #include "duckdb/common/chrono.hpp"
 #include "duckdb/common/error_data.hpp"
 #include "duckdb/common/exception/transaction_exception.hpp"
@@ -1074,6 +1075,22 @@ void ClientContext::InstallSecurity(shared_ptr<const SecuritySnapshot> snapshot)
 }
 
 void ClientContext::RefreshSecurity() {
+	auto &cluster_name = DBConfig::GetConfig(*this).cluster_catalog;
+	if (!cluster_name.empty() && transaction.HasActiveTransaction()) {
+		auto &meta = MetaTransaction::Get(*this);
+		auto cluster_db = meta.ModifiedDatabase() ? meta.GetReferencedDatabase(cluster_name) : nullptr;
+		if (cluster_db && !meta.GetTransaction(*cluster_db).IsReadOnly()) {
+			auto &cluster = cluster_db->GetCatalog().Cast<DuckCatalog>();
+			const auto version = cluster.GetCatalogVersion(*this).GetIndex();
+			if (!local_security || local_security_version != version) {
+				local_security_version = version;
+				local_security = SecuritySnapshot::Build(cluster.GetCatalogSet(CatalogType::ROLE_ENTRY),
+				                                         cluster.GetCatalogTransaction(*this));
+			}
+			InstallSecurity(local_security);
+			return;
+		}
+	}
 	if (db->CurrentSecurity() != security.get()) {
 		InstallSecurity(db->GetSecurity());
 	}

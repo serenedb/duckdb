@@ -541,9 +541,13 @@ BoundStatement Binder::Bind(AlterStatement &stmt) {
 			if (!settings.role.empty()) {
 				settings.role_id = RoleSpecId(settings.role);
 			}
-		} else if (const auto role = RoleSpecKeyword(stmt.info->GetQualifiedName().Name().GetIdentifierName());
-		           role.IsValid()) {
-			stmt.info->SetQualifiedName(Identifier(), Identifier(), Identifier(RoleName(role.GetIndex())));
+			CheckAlterDatabaseSettings(settings);
+		} else {
+			if (const auto role = RoleSpecKeyword(stmt.info->GetQualifiedName().Name().GetIdentifierName());
+			    role.IsValid()) {
+				stmt.info->SetQualifiedName(Identifier(), Identifier(), Identifier(RoleName(role.GetIndex())));
+			}
+			CheckAlterRole(stmt.info->Cast<AlterRoleInfo>());
 		}
 		const auto target_type = stmt.info->GetCatalogType();
 		if (target_type == CatalogType::DATABASE_ENTRY || target_type == CatalogType::ROLE_ENTRY) {

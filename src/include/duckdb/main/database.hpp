@@ -97,7 +97,8 @@ public:
 	shared_ptr<AttachedDatabase> CreateAttachedDatabase(ClientContext &context, AttachInfo &info,
 	                                                    AttachOptions &options);
 
-	DUCKDB_API void PublishSecurity(shared_ptr<const SecuritySnapshot> snapshot);
+	DUCKDB_API void PublishSecurity(shared_ptr<const SecuritySnapshot> snapshot, idx_t catalog_version);
+	DUCKDB_API bool SecurityCurrent(idx_t catalog_version) const;
 	DUCKDB_API shared_ptr<const SecuritySnapshot> GetSecurity() const;
 	const SecuritySnapshot *CurrentSecurity() const {
 		return current_security.load(std::memory_order_acquire);
@@ -137,6 +138,7 @@ private:
 	unique_ptr<ResultSetManager> result_set_manager;
 	mutable mutex security_lock;
 	shared_ptr<const SecuritySnapshot> security;
+	idx_t security_version = 0;
 	atomic<const SecuritySnapshot *> current_security {nullptr};
 
 	duckdb_ext_api_v1 (*create_api_v1)();
