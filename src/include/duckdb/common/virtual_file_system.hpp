@@ -25,6 +25,7 @@ public:
 	~VirtualFileSystem() override;
 
 	void Read(FileHandle &handle, void *buffer, int64_t nr_bytes, idx_t location) override;
+	void ReadScattered(FileHandle &handle, std::span<const FileReadTarget> targets, idx_t location) override;
 	void Write(FileHandle &handle, void *buffer, int64_t nr_bytes, idx_t location) override;
 	int64_t Read(FileHandle &handle, void *buffer, int64_t nr_bytes) override;
 	int64_t Write(FileHandle &handle, void *buffer, int64_t nr_bytes) override;

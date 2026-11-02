@@ -1713,3 +1713,42 @@ TEST_CASE("JoinPath keeps a remote URL's query string at the end of the path", "
 	// A '?' in a plain (non-URL) path is a literal character, not a query delimiter.
 	REQUIRE(fs.JoinPath("/tmp/weird?name", "file.parquet") == "/tmp/weird?name/file.parquet");
 }
+
+TEST_CASE("Scattered reads fill their buffers in order", "[file_system]") {
+	constexpr idx_t SIZE = 4096;
+	auto fs = FileSystem::CreateLocal();
+	const auto path = TestCreatePath("scattered_read.bin");
+	vector<data_t> bytes(SIZE);
+	for (idx_t i = 0; i < SIZE; i++) {
+		bytes[i] = data_t(i * 31 + 7);
+	}
+	{
+		auto handle = fs->OpenFile(path, FileFlags::FILE_FLAGS_WRITE | FileFlags::FILE_FLAGS_FILE_CREATE_NEW);
+		handle->Write(QueryContext(), bytes.data(), SIZE, 0);
+		handle->Sync();
+	}
+	VirtualFileSystem vfs;
+	for (const bool through_vfs : {false, true}) {
+		for (const bool staged : {false, true}) {
+			auto &file_system = through_vfs ? static_cast<FileSystem &>(vfs) : *fs;
+			auto handle = file_system.OpenFile(path, FileFlags::FILE_FLAGS_READ);
+			vector<data_t> a(3), b(1000), c(97);
+			const FileReadTarget targets[] = {
+			    {a.data(), a.size()}, {nullptr, 0}, {b.data(), b.size()}, {c.data(), c.size()}};
+			constexpr idx_t LOCATION = 7;
+			if (staged) {
+				file_system.FileSystem::ReadScattered(*handle, targets, LOCATION);
+			} else {
+				file_system.ReadScattered(*handle, targets, LOCATION);
+			}
+			idx_t offset = LOCATION;
+			for (auto *part : {&a, &b, &c}) {
+				REQUIRE(memcmp(part->data(), bytes.data() + offset, part->size()) == 0);
+				offset += part->size();
+			}
+			const FileReadTarget past_end[] = {{b.data(), b.size()}, {c.data(), c.size()}};
+			REQUIRE_THROWS(file_system.ReadScattered(*handle, past_end, SIZE - 500));
+		}
+	}
+	fs->RemoveFile(path);
+}

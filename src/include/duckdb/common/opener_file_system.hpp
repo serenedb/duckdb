@@ -45,6 +45,9 @@ public:
 	void Read(FileHandle &handle, void *buffer, int64_t nr_bytes, idx_t location) override {
 		GetFileSystem().Read(handle, buffer, nr_bytes, location);
 	}
+	void ReadScattered(FileHandle &handle, std::span<const FileReadTarget> targets, idx_t location) override {
+		GetFileSystem().ReadScattered(handle, targets, location);
+	}
 
 	void Write(FileHandle &handle, void *buffer, int64_t nr_bytes, idx_t location) override {
 		throw InternalException("writing on the OpenerFileSystem is undefined");
