@@ -4,6 +4,7 @@
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/catalog/catalog_entry/scalar_function_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/scalar_macro_catalog_entry.hpp"
+#include "duckdb/catalog/permissions.hpp"
 #include "duckdb/planner/binder.hpp"
 #include "duckdb/planner/expression/bound_cast_expression.hpp"
 #include "duckdb/parser/expression/columnref_expression.hpp"
@@ -73,6 +74,31 @@ bool IsTrivialMacroArgument(const ParsedExpression &argument,
 	default:
 		return false;
 	}
+}
+
+bool BindsAnywhere(const ParsedExpression &argument) {
+	switch (argument.GetExpressionClass()) {
+	case ExpressionClass::CONSTANT:
+	case ExpressionClass::PARAMETER:
+	case ExpressionClass::COLUMN_REF:
+	case ExpressionClass::POSITIONAL_REFERENCE:
+	case ExpressionClass::LAMBDA_REF:
+	case ExpressionClass::DEFAULT:
+	case ExpressionClass::CAST:
+	case ExpressionClass::COLLATE:
+	case ExpressionClass::COMPARISON:
+	case ExpressionClass::CONJUNCTION:
+	case ExpressionClass::OPERATOR:
+	case ExpressionClass::BETWEEN:
+	case ExpressionClass::CASE:
+		break;
+	default:
+		return false;
+	}
+	bool anywhere = true;
+	ParsedExpressionIterator::EnumerateChildren(
+	    argument, [&](const ParsedExpression &child) { anywhere = anywhere && BindsAnywhere(child); });
+	return anywhere;
 }
 
 void ResolvePositionalReferences(unique_ptr<ParsedExpression> &expr, BindContext &bind_context) {
@@ -168,6 +194,21 @@ void ShiftCorrelation(Expression &expr, idx_t levels) {
 		expr.Cast<BoundColumnRefExpression>().DepthMutable() += levels;
 	}
 	ExpressionIterator::EnumerateChildren(expr, [&](Expression &child) { ShiftCorrelation(child, levels); });
+}
+
+unique_ptr<ParsedExpression> FunctionBodySubquery(unique_ptr<ParsedExpression> body, optional_idx owner) {
+	auto node = make_uniq<SelectNode>();
+	node->select_list.push_back(std::move(body));
+	node->from_table = make_uniq<EmptyTableRef>();
+	auto statement = make_uniq<SelectStatement>();
+	statement->node = std::move(node);
+	statement->function_body = true;
+	statement->function_owner = owner;
+	auto subquery = make_uniq<SubqueryExpression>();
+	subquery->GetSubqueryTypeMutable() = SubqueryType::SCALAR;
+	subquery->SubqueryMutable() = std::move(statement);
+	subquery->SetPerCall();
+	return std::move(subquery);
 }
 
 unique_ptr<TableRef> ValuesTable(const Identifier &alias, const vector<Identifier> &names,
@@ -272,6 +313,15 @@ bool AggregatesOnlyParameters(ParsedExpression &expr, DummyBinding &parameters,
 }
 
 } // namespace
+
+void ExpressionBinder::MarkFunctionBody(ParsedExpression &body, optional_idx owner) {
+	ParsedExpressionIterator::VisitExpressionClassMutable(
+	    body, ExpressionClass::SUBQUERY, [&](ParsedExpression &subquery) {
+		    auto &statement = *subquery.Cast<SubqueryExpression>().SubqueryMutable();
+		    statement.function_body = true;
+		    statement.function_owner = owner;
+	    });
+}
 
 MacroFunctionLookup ExpressionBinder::LookupMacroFunction(const FunctionExpression &function) {
 	auto &name = function.FunctionName();
@@ -1160,7 +1210,8 @@ unique_ptr<Expression> ExpressionBinder::BindSubqueryArgument(const ParsedExpres
 }
 
 unique_ptr<TableRef> ExpressionBinder::BindTableMacroArguments(QueryNode &body, DummyBinding &binding,
-                                                               vector<unique_ptr<ParsedExpression>> &arguments) {
+                                                               vector<unique_ptr<ParsedExpression>> &arguments,
+                                                               bool other_role) {
 	auto &names = binding.GetColumnNames();
 	MacroBodyUse use;
 	for (auto &name : names) {
@@ -1175,22 +1226,26 @@ unique_ptr<TableRef> ExpressionBinder::BindTableMacroArguments(QueryNode &body, 
 	vector<unique_ptr<ParsedExpression>> values;
 	for (idx_t i = 0; i < arguments.size(); i++) {
 		auto &argument = arguments[i];
-		if (use.parameters[names[i]].references < 2 || argument->HasParameter() ||
-		    IsTrivialMacroArgument(*argument, binder.global_binder_state->bound_macro_arguments)) {
+		if (other_role ? BindsAnywhere(*argument)
+		               : (use.parameters[names[i]].references < 2 || argument->HasParameter() ||
+		                  IsTrivialMacroArgument(*argument, binder.global_binder_state->bound_macro_arguments))) {
 			continue;
 		}
-		auto parsed = argument->Copy();
-		ErrorData error;
-		auto bound = BindChild(parsed, 0, error);
-		if (!bound) {
-			continue;
-		}
-		Value value;
-		if (bound->IsFoldable() &&
-		    !TypeVisitor::Contains(bound->GetReturnType(), [](const LogicalType &type) { return type.HasAlias(); }) &&
-		    ExpressionExecutor::TryEvaluateFoldable(context, *bound, value, MAX_ARGUMENT_LITERAL_SIZE)) {
-			argument = ConstantExpression::FromValue(value);
-			continue;
+		if (!argument->HasParameter()) {
+			auto parsed = argument->Copy();
+			ErrorData error;
+			auto bound = BindChild(parsed, 0, error);
+			if (!bound && !other_role) {
+				continue;
+			}
+			Value value;
+			if (bound && bound->IsFoldable() &&
+			    !TypeVisitor::Contains(bound->GetReturnType(),
+			                           [](const LogicalType &type) { return type.HasAlias(); }) &&
+			    ExpressionExecutor::TryEvaluateFoldable(context, *bound, value, MAX_ARGUMENT_LITERAL_SIZE)) {
+				argument = ConstantExpression::FromValue(value);
+				continue;
+			}
 		}
 		value_names.emplace_back("0_" + names[i].GetIdentifierName());
 		values.push_back(std::move(argument));
@@ -1234,10 +1289,17 @@ void ExpressionBinder::ExpandSubqueryArguments(DummyBinding &binding, vector<uni
 	MacroCall call {caller, {}};
 	ReplaceMacroParameters(expr, lambda_params, call);
 	if (expr->GetExpressionClass() == ExpressionClass::SUBQUERY) {
-		const auto subquery_type = expr->Cast<SubqueryExpression>().GetSubqueryType();
+		auto &subquery = expr->Cast<SubqueryExpression>();
+		const auto subquery_type = subquery.GetSubqueryType();
 		if (subquery_type == SubqueryType::SCALAR || subquery_type == SubqueryType::EXISTS) {
-			AddSqlFunctionParameters(expr, alias, value_names, std::move(values), sql_function);
-			return;
+			if (!subquery.Subquery()->function_body) {
+				AddSqlFunctionParameters(expr, alias, value_names, std::move(values), sql_function);
+				return;
+			}
+			AddSqlFunctionParameters(expr, alias, value_names, {}, sql_function);
+			if (values.empty()) {
+				return;
+			}
 		}
 	}
 	auto node = make_uniq<SelectNode>();
@@ -1402,7 +1464,7 @@ ScalarMacroFunction &ExpressionBinder::UnfoldMacroExpression(FunctionExpression 
                                                              ScalarMacroCatalogEntry &macro_func,
                                                              unique_ptr<ParsedExpression> &expr, idx_t depth,
                                                              vector<unique_ptr<Expression>> &shared_arguments,
-                                                             bool &probed) {
+                                                             bool &probed, optional_ptr<const RoleAccess> &body_role) {
 	for (auto &argument : function.GetArgumentsMutable()) {
 		ResolvePositionalReferences(argument.GetExpressionMutable(), binder.bind_context);
 	}
@@ -1436,6 +1498,9 @@ ScalarMacroFunction &ExpressionBinder::UnfoldMacroExpression(FunctionExpression 
 		throw BinderException(*expr, bind_result.error);
 	}
 	auto &macro_def = macro_func.macros[bind_result.function_idx.GetIndex()]->Cast<ScalarMacroFunction>();
+	const bool owned = !IsUnowned(macro_func);
+	const auto owner =
+	    owned && macro_def.security_definer ? optional_idx(macro_func.permissions.owner) : optional_idx();
 	if (binder.global_binder_state->macro_type_probing && expr->GetExpressionClass() != ExpressionClass::WINDOW &&
 	    HasExactResultType(macro_def)) {
 		probed = true;
@@ -1455,6 +1520,9 @@ ScalarMacroFunction &ExpressionBinder::UnfoldMacroExpression(FunctionExpression 
 	// replace current expression with stored macro expression
 	// special case: If this is a window function, then we need to return a window expression
 	const bool is_window = expr->GetExpressionClass() == ExpressionClass::WINDOW;
+	if (is_window && owner.IsValid()) {
+		throw NotImplementedException("a SECURITY DEFINER function cannot be called as a window function");
+	}
 	const bool distinct = !is_window && function.Distinct();
 	optional_ptr<const MacroBodyUse> use;
 	if (!is_window && binds_values) {
@@ -1497,10 +1565,33 @@ ScalarMacroFunction &ExpressionBinder::UnfoldMacroExpression(FunctionExpression 
 	dummy_binder->macro_binding = new_macro_binding.get();
 	ExpressionBinder::QualifyColumnNames(*dummy_binder, expr);
 
+	if (owner.IsValid() && call_modifiers) {
+		throw modifiers_error();
+	}
+	optional_ptr<const RoleAccess> role;
+	if (owned && use && !call_modifiers && binder.principal) {
+		role = binder.FunctionBodyRole(owner);
+		if (role == binder.principal && role == binder.Caller()) {
+			role = nullptr;
+		}
+	}
+
 	vector<string> shared_names;
 	vector<unique_ptr<ParsedExpression>> shared_parsed;
-	if (use && !call_modifiers && (macro_def.query_body || use->subquery || ContainsSubquery(*expr))) {
+	if (use && !call_modifiers && (role || macro_def.query_body || use->subquery || ContainsSubquery(*expr))) {
 		auto values = BindSubqueryBodyArguments(*use, *new_macro_binding, positional_arguments, scans, prebound, depth);
+		if (role && !absl::c_all_of(positional_arguments, [](const unique_ptr<ParsedExpression> &argument) {
+			    return BindsAnywhere(*argument);
+		    })) {
+			MarkFunctionBody(*expr, owner);
+			if (expr->GetExpressionClass() != ExpressionClass::SUBQUERY) {
+				expr = FunctionBodySubquery(std::move(expr), owner);
+			}
+			ExpandSubqueryArguments(*new_macro_binding, positional_arguments,
+			                        vector<bool>(positional_arguments.size(), true), expr, macro_def.query_body, this);
+			return macro_def;
+		}
+		body_role = role;
 		if (macro_def.query_body || absl::c_linear_search(values, true)) {
 			ExpandSubqueryArguments(*new_macro_binding, positional_arguments, values, expr, macro_def.query_body, this);
 			return macro_def;
@@ -1663,7 +1754,7 @@ ScalarMacroFunction &ExpressionBinder::UnfoldMacroExpression(FunctionExpression 
 BindResult ExpressionBinder::BindMacro(FunctionExpression &function, ScalarMacroCatalogEntry &macro_func, idx_t depth,
                                        unique_ptr<ParsedExpression> &expr) {
 	const bool constant_candidate =
-	    function.GetArguments().empty() && expr->GetExpressionClass() == ExpressionClass::FUNCTION;
+	    function.GetArguments().empty() && expr->GetExpressionClass() == ExpressionClass::FUNCTION && !binder.caller;
 	auto &constant_macros = binder.global_binder_state->constant_macros;
 	if (constant_candidate) {
 		auto constant = constant_macros.find(&macro_func);
@@ -1675,9 +1766,21 @@ BindResult ExpressionBinder::BindMacro(FunctionExpression &function, ScalarMacro
 	// unfold the macro expression
 	vector<unique_ptr<Expression>> shared_arguments;
 	bool probed = false;
-	auto &macro_def = UnfoldMacroExpression(function, macro_func, expr, depth, shared_arguments, probed);
+	optional_ptr<const RoleAccess> body_role;
+	auto &macro_def = UnfoldMacroExpression(function, macro_func, expr, depth, shared_arguments, probed, body_role);
 	if (probed) {
 		return BindResult(make_uniq<BoundReferenceExpression>(macro_def.ResultType(), 0));
+	}
+	absl::Cleanup restore_role = [&, principal = binder.principal, caller = binder.caller,
+	                              lookups = binder.EntryRetriever().GetPrincipal()] {
+		if (body_role) {
+			binder.principal = principal;
+			binder.caller = caller;
+			binder.EntryRetriever().SetPrincipal(lookups);
+		}
+	};
+	if (body_role) {
+		binder.BindAsFunctionBody(body_role);
 	}
 	BindResult result;
 	if (shared_arguments.empty()) {
@@ -1689,7 +1792,7 @@ BindResult ExpressionBinder::BindMacro(FunctionExpression &function, ScalarMacro
 		if (constant_candidate) {
 			lambda_bindings = nullptr;
 		}
-		result = BindExpression(expr, depth);
+		result = Bind(expr, depth);
 	} else {
 		auto &invoke = expr->Cast<FunctionExpression>();
 		auto &invoke_entry =
