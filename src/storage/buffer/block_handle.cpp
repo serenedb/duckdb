@@ -30,7 +30,6 @@ BlockMemory::BlockMemory(BufferManager &buffer_manager, block_id_t block_id_p, M
       memory_charge(tag, buffer_manager.GetBufferPool()), unswizzled(nullptr),
       eviction_queue_idx(DConstants::INVALID_INDEX) {
 	memory_charge = std::move(reservation); // Moved to constructor body due to tidy check.
-	buffer_manager.GetBufferPool().AddBlock(*this);
 }
 
 BlockMemory::~BlockMemory() { // NOLINT: allow internal exceptions
