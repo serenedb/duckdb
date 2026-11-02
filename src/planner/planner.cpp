@@ -193,10 +193,6 @@ void Planner::CreatePlan(SQLStatement &statement) {
 		binder->SetParameters(bound_parameters);
 		auto bound_statement = binder->Bind(statement);
 		binder->CheckTableReads();
-		auto &file_access = binder->GetStatementProperties().file_access_authorized;
-		if (!file_access) {
-			file_access = RoleCapability::ReadServerFiles | RoleCapability::WriteServerFiles;
-		}
 		binding_timer.EndTimer();
 
 		RunPostBindExtensions(context, *binder, bound_statement);
