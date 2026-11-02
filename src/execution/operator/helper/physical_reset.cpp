@@ -6,6 +6,7 @@
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/main/database.hpp"
+#include "duckdb/main/settings.hpp"
 
 namespace duckdb {
 
@@ -28,7 +29,7 @@ static bool ResetToStartValue(ClientContext &context, const Identifier &name, Se
 	if (entry == start_values.end()) {
 		return false;
 	}
-	PhysicalSet::SetVariable(context, name, effective_scope, entry->second);
+	PhysicalSet::SetVariable(context, name, effective_scope, entry->second, false);
 	return true;
 }
 
@@ -42,6 +43,9 @@ void PhysicalReset::ResetExtensionVariable(ExecutionContext &context, DBConfig &
 	if (effective_scope == SetScope::GLOBAL && !context.client.transaction.IsAutoCommit()) {
 		throw InvalidInputException("parameter \"%s\" is global and cannot be reset inside a transaction",
 		                            extension_option.description);
+	}
+	if (!reset_all) {
+		Settings::CheckChange(context.client, name, extension_option.access, effective_scope);
 	}
 	if (ResetToStartValue(context.client, name, effective_scope)) {
 		return;
@@ -60,8 +64,7 @@ void PhysicalReset::ResetExtensionVariable(ExecutionContext &context, DBConfig &
 	// The rollback observer only needs to see real changes; gate it with
 	// is_user_set so RESET ALL no-ops don't reach the sdb tracker.
 	context.client.OnSettingChange(name.GetIdentifierName(), effective_scope,
-	                               PhysicalSet::SessionValue(context.client, name, extension_option.setting_index),
-	                               reset_all);
+	                               PhysicalSet::SessionValue(context.client, name, extension_option.setting_index));
 
 	if (extension_option.reset_function) {
 		extension_option.reset_function(context.client, effective_scope);
@@ -81,6 +84,9 @@ void PhysicalReset::ResetExtensionVariable(ExecutionContext &context, DBConfig &
 void PhysicalReset::ResetOption(ExecutionContext &context, DBConfig &config, const ConfigurationOption &option,
                                 const char *name, SetScope variable_scope, bool reset_all) {
 	config.CheckLock(option.name);
+	if (!reset_all) {
+		Settings::CheckChange(context.client, Identifier(name), option.access, variable_scope);
+	}
 	if (ResetToStartValue(context.client, Identifier(name), variable_scope)) {
 		return;
 	}
@@ -97,8 +103,7 @@ void PhysicalReset::ResetOption(ExecutionContext &context, DBConfig &config, con
 		// Gate the rollback observer on is_user_set so RESET ALL no-ops don't
 		// reach the sdb tracker.
 		context.client.OnSettingChange(name, variable_scope,
-		                               PhysicalSet::SessionValue(context.client, Identifier(name), setting_index),
-		                               reset_all);
+		                               PhysicalSet::SessionValue(context.client, Identifier(name), setting_index));
 		if (option.set_callback) {
 			SettingCallbackInfo info(context.client, variable_scope);
 			info.is_reset = true;
@@ -121,7 +126,7 @@ void PhysicalReset::ResetOption(ExecutionContext &context, DBConfig &config, con
 		if (!option.set_global) {
 			throw CatalogException("option \"%s\" cannot be reset globally", option.name);
 		}
-		context.client.OnSettingChange(name, variable_scope, Value(), reset_all);
+		context.client.OnSettingChange(name, variable_scope, Value());
 		auto &db = DatabaseInstance::GetDatabase(context.client);
 		config.ResetOption(&db, option);
 		break;
@@ -136,7 +141,7 @@ void PhysicalReset::ResetOption(ExecutionContext &context, DBConfig &config, con
 			if (local_value.IsNull()) {
 				return;
 			}
-			context.client.OnSettingChange(name, variable_scope, local_value, reset_all);
+			context.client.OnSettingChange(name, variable_scope, local_value);
 			option.reset_local(context.client);
 			break;
 		}
@@ -150,7 +155,7 @@ void PhysicalReset::ResetOption(ExecutionContext &context, DBConfig &config, con
 		const bool had_post = context.client.TryGetCurrentSetting(option.name, post_value);
 		const bool changed = had_pre != had_post || !Value::NotDistinctFrom(pre_value, post_value);
 		if (changed) {
-			context.client.OnSettingChange(name, variable_scope, pre_value, reset_all);
+			context.client.OnSettingChange(name, variable_scope, pre_value);
 		}
 		break;
 	}

@@ -45,12 +45,7 @@ void CurrentSettingDynamic(DataChunk &args, ExpressionState &state, Vector &resu
 			continue;
 		}
 		Identifier key(entry.GetValue().GetString());
-		if (context.setting_readable && !context.setting_readable(context, key.GetIdentifierName())) {
-			throw PermissionException(
-			    {{"detail",
-			      "Only roles with privileges of the \"pg_read_all_settings\" role may examine this parameter."}},
-			    StringUtil::Format("permission denied to examine \"%s\"", key.GetIdentifierName()));
-		}
+		Settings::CheckRead(context, key);
 		Value val;
 		if (!context.TryGetCurrentSetting(key, val)) {
 			Catalog::AutoloadExtensionByConfigName(context, key);
@@ -83,11 +78,7 @@ unique_ptr<FunctionData> CurrentSettingBind(BindScalarFunctionInput &input) {
 	if (key.empty()) {
 		throw ParserException("Key name for current_setting must not be empty");
 	}
-	if (context.setting_readable && !context.setting_readable(context, key.GetIdentifierName())) {
-		throw PermissionException(
-		    {{"detail", "Only roles with privileges of the \"pg_read_all_settings\" role may examine this parameter."}},
-		    StringUtil::Format("permission denied to examine \"%s\"", key.GetIdentifierName()));
-	}
+	Settings::CheckRead(context, key);
 
 	Value val;
 	if (!context.TryGetCurrentSetting(key, val)) {
