@@ -8,6 +8,8 @@
 
 #pragma once
 
+#include "duckdb/common/case_insensitive_map.hpp"
+#include "duckdb/common/types/value.hpp"
 #include "duckdb/parser/parsed_data/create_info.hpp"
 
 namespace duckdb {
@@ -49,6 +51,7 @@ struct CreateSubscriptionInfo : public CreateInfo {
 	vector<SubscriptionRelation> relations;
 	uint64_t remote_lsn = 0;
 	uint64_t skip_lsn = 0;
+	case_insensitive_map_t<Value> options;
 
 public:
 	DUCKDB_API void Serialize(Serializer &serializer) const override;

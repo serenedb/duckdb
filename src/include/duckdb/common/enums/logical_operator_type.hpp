@@ -95,6 +95,7 @@ enum class LogicalOperatorType : uint8_t {
 	LOGICAL_CREATE_TOKENIZER = 142,
 	LOGICAL_CREATE_DATABASE = 143,
 	LOGICAL_CREATE_TABLESPACE = 144,
+	LOGICAL_CREATE_SUBSCRIPTION = 145,
 
 	// -----------------------------
 	// Explain

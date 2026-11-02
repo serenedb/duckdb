@@ -130,6 +130,8 @@ string LogicalOperatorToString(LogicalOperatorType type) {
 		return "CREATE_TABLESPACE";
 	case LogicalOperatorType::LOGICAL_CREATE_DATABASE:
 		return "CREATE_DATABASE";
+	case LogicalOperatorType::LOGICAL_CREATE_SUBSCRIPTION:
+		return "CREATE_SUBSCRIPTION";
 	case LogicalOperatorType::LOGICAL_DROP:
 		return "DROP";
 	case LogicalOperatorType::LOGICAL_PRAGMA:

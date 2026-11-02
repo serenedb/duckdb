@@ -53,6 +53,7 @@ struct CreateRoleInfo;
 struct CreateDatabaseInfo;
 struct CreateForeignServerInfo;
 struct CreateTablespaceInfo;
+struct CreateSubscriptionInfo;
 struct CreateCollationInfo;
 struct CreateCoordinateSystemInfo;
 struct CreateIndexInfo;
@@ -237,6 +238,8 @@ public:
 	                                                                  CreateForeignServerInfo &info);
 	DUCKDB_API virtual optional_ptr<CatalogEntry> CreateTablespace(CatalogTransaction transaction,
 	                                                               CreateTablespaceInfo &info);
+	DUCKDB_API virtual optional_ptr<CatalogEntry> CreateSubscription(CatalogTransaction transaction,
+	                                                                 CreateSubscriptionInfo &info);
 	DUCKDB_API virtual void DropRole(CatalogTransaction transaction, DropInfo &info);
 	DUCKDB_API virtual void DropDatabase(CatalogTransaction transaction, DropInfo &info);
 	DUCKDB_API virtual void DropForeignServer(CatalogTransaction transaction, DropInfo &info);
@@ -299,6 +302,9 @@ public:
 
 	//! Whether schema strings can denote nested paths as well as literal schema names.
 	virtual bool SupportsNestedSchemas() const {
+		return false;
+	}
+	virtual bool SupportsSubscriptions() const {
 		return false;
 	}
 	//! Resolve a string schema argument, preferring an existing nested entry over a literal dotted schema.
