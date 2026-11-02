@@ -145,7 +145,7 @@ SourceResultType PhysicalReset::GetDataInternal(ExecutionContext &context, DataC
 		return SourceResultType::FINISHED;
 	}
 	if (name.empty()) {
-		ResetAll(context, scope);
+		ResetAll(context, scope, false);
 		return SourceResultType::FINISHED;
 	}
 	auto &config = DBConfig::GetConfig(context.client);
@@ -171,7 +171,7 @@ SourceResultType PhysicalReset::GetDataInternal(ExecutionContext &context, DataC
 	return SourceResultType::FINISHED;
 }
 
-void PhysicalReset::ResetAll(ExecutionContext &context, SetScope scope) {
+void PhysicalReset::ResetAll(ExecutionContext &context, SetScope scope, bool discard) {
 	// RESET ALL / RESET LOCAL ALL: reset every session-level option. Skip
 	// GLOBAL-scoped settings — those live DB-wide and PG's RESET ALL does not
 	// touch them.
@@ -179,7 +179,7 @@ void PhysicalReset::ResetAll(ExecutionContext &context, SetScope scope) {
 	auto options_count = DBConfig::GetOptionCount();
 	for (idx_t i = 0; i < options_count; i++) {
 		auto option = DBConfig::GetOptionByIndex(i);
-		if (!option || option->no_reset_all || !CanResetBelowGlobal(*option)) {
+		if (!option || (option->no_reset_all && !discard) || !CanResetBelowGlobal(*option)) {
 			continue;
 		}
 		auto variable_scope = PhysicalSet::GetSettingScope(*option, scope);
@@ -190,7 +190,8 @@ void PhysicalReset::ResetAll(ExecutionContext &context, SetScope scope) {
 	}
 	for (auto &ext : config.GetExtensionSettings()) {
 		auto variable_scope = PhysicalSet::GetSettingScope(ext.second, scope);
-		if (ext.second.no_reset_all || variable_scope == SetScope::GLOBAL || !CanResetAt(ext.second, variable_scope)) {
+		if ((ext.second.no_reset_all && !discard) || variable_scope == SetScope::GLOBAL ||
+		    !CanResetAt(ext.second, variable_scope)) {
 			continue;
 		}
 		ResetExtensionVariable(context, config, ext.first, ext.second, variable_scope, true);

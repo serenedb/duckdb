@@ -39,7 +39,7 @@ public:
 		return true;
 	}
 
-	static void ResetAll(ExecutionContext &context, SetScope scope);
+	static void ResetAll(ExecutionContext &context, SetScope scope, bool discard);
 
 public:
 	const String name;
