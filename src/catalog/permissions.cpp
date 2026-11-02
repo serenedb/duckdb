@@ -49,6 +49,8 @@ AclMode Permissions::AllPrivileges(CatalogType acl_class) {
 		return AclMode::Usage;
 	case CatalogType::TABLESPACE_ENTRY:
 		return AclMode::Create;
+	case CatalogType::PARAMETER_ENTRY:
+		return AclMode::Set | AclMode::AlterSystem;
 	default:
 		return AclMode::NoRights;
 	}
@@ -70,11 +72,14 @@ AclMode Permissions::PublicPrivileges(CatalogType acl_class) {
 
 bool Permissions::TryParsePrivilege(std::string_view keyword, CatalogType acl_class, AclMode &result) {
 	static const case_insensitive_map_view_t<AclMode> names {
-	    {"select", AclMode::Select},   {"insert", AclMode::Insert},     {"update", AclMode::Update},
-	    {"delete", AclMode::Delete},   {"truncate", AclMode::Truncate}, {"references", AclMode::References},
-	    {"trigger", AclMode::Trigger}, {"maintain", AclMode::Maintain}, {"execute", AclMode::Execute},
-	    {"usage", AclMode::Usage},     {"create", AclMode::Create},     {"temporary", AclMode::CreateTemp},
-	    {"temp", AclMode::CreateTemp}, {"connect", AclMode::Connect},
+	    {"select", AclMode::Select},     {"insert", AclMode::Insert},
+	    {"update", AclMode::Update},     {"delete", AclMode::Delete},
+	    {"truncate", AclMode::Truncate}, {"references", AclMode::References},
+	    {"trigger", AclMode::Trigger},   {"maintain", AclMode::Maintain},
+	    {"execute", AclMode::Execute},   {"usage", AclMode::Usage},
+	    {"create", AclMode::Create},     {"temporary", AclMode::CreateTemp},
+	    {"temp", AclMode::CreateTemp},   {"connect", AclMode::Connect},
+	    {"set", AclMode::Set},           {"alter system", AclMode::AlterSystem},
 	};
 	const auto allowed = AllPrivileges(acl_class);
 	if (StringUtil::CIEquals(keyword, "ALL")) {
@@ -106,6 +111,15 @@ vector<AclItem> Permissions::AclDefault(CatalogType acl_class, idx_t owner) {
 std::span<const AclItem> Permissions::ForeignDataWrapperAcl(idx_t wrapper) const {
 	for (auto &row : foreign_data_wrappers) {
 		if (row.oid == wrapper) {
+			return row.acl;
+		}
+	}
+	return {};
+}
+
+std::span<const AclItem> Permissions::ParameterAcl(std::string_view parameter) const {
+	for (auto &row : parameters) {
+		if (StringUtil::CIEquals(row.name, parameter)) {
 			return row.acl;
 		}
 	}
@@ -305,13 +319,32 @@ void AlterPermissionsInfo::ApplyTo(Permissions &permissions, CatalogType entry_t
 		auto row = std::find_if(wrappers.begin(), wrappers.end(),
 		                        [&](const ObjectAcl &entry) { return entry.oid == info.foreign_data_wrapper_id; });
 		auto row_acl = row == wrappers.end() ? vector<AclItem> {} : row->acl;
-		ApplyGrant(info, info.foreign_data_wrapper_owner_id, row_acl, CatalogType::FOREIGN_DATA_WRAPPER_ENTRY, nullptr);
+		ApplyGrant(info, info.object_owner_id, row_acl, CatalogType::FOREIGN_DATA_WRAPPER_ENTRY, nullptr);
 		if (row_acl.empty()) {
 			if (row != wrappers.end()) {
 				wrappers.erase(row);
 			}
 		} else if (row == wrappers.end()) {
 			wrappers.push_back(ObjectAcl {info.foreign_data_wrapper_id, std::move(row_acl)});
+		} else {
+			row->acl = std::move(row_acl);
+		}
+		return;
+	}
+
+	if (!info.parameter.empty()) {
+		auto &rows = permissions.parameters;
+		auto row = std::find_if(rows.begin(), rows.end(), [&](const NamedAcl &entry) {
+			return StringUtil::CIEquals(entry.name, info.parameter);
+		});
+		auto row_acl = row == rows.end() ? vector<AclItem> {} : row->acl;
+		ApplyGrant(info, info.object_owner_id, row_acl, CatalogType::PARAMETER_ENTRY, nullptr);
+		if (row_acl.empty() || row_acl == Permissions::AclDefault(CatalogType::PARAMETER_ENTRY, info.object_owner_id)) {
+			if (row != rows.end()) {
+				rows.erase(row);
+			}
+		} else if (row == rows.end()) {
+			rows.push_back(NamedAcl {info.parameter, std::move(row_acl)});
 		} else {
 			row->acl = std::move(row_acl);
 		}
@@ -588,6 +621,11 @@ static bool AnyRoleReference(const CatalogEntry &entry, F &&named) {
 			return true;
 		}
 	}
+	for (auto &row : permissions.parameters) {
+		if (any_acl(row.acl)) {
+			return true;
+		}
+	}
 	if (entry.type == CatalogType::VIEW_ENTRY) {
 		auto &column_acls = entry.Cast<ViewCatalogEntry>().column_acls;
 		return std::any_of(column_acls.begin(), column_acls.end(),
@@ -652,6 +690,8 @@ string PermissionKindName(CatalogType type) {
 		return "foreign server";
 	case CatalogType::FOREIGN_DATA_WRAPPER_ENTRY:
 		return "foreign-data wrapper";
+	case CatalogType::PARAMETER_ENTRY:
+		return "parameter";
 	case CatalogType::SUBSCRIPTION_ENTRY:
 		return "subscription";
 	case CatalogType::JOB_ENTRY:
