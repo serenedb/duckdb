@@ -355,13 +355,12 @@ data_ptr_t BlockAllocator::AllocateData(const idx_t size) const {
 }
 
 void BlockAllocator::FreeData(const data_ptr_t pointer, const idx_t size) const {
+	deallocated_since_flush.fetch_add(size, std::memory_order_relaxed);
 	if (huge_page_pool && huge_page_pool->IsActive() && huge_page_pool->IsInPool(pointer)) {
-		deallocated_since_flush.fetch_add(size, std::memory_order_relaxed);
 		D_ASSERT(size == huge_page_pool->block_size);
 		GetBlockAllocatorThreadLocalState(*huge_page_pool, true).Free(pointer);
 		return;
 	}
-	deallocated_since_flush.fetch_add(size, std::memory_order_relaxed);
 	if (!IsActive() || !IsInPool(pointer)) {
 		return allocator.FreeData(pointer, size);
 	}
