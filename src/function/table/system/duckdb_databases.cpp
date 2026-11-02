@@ -146,6 +146,7 @@ void DuckDBDatabasesFun::RegisterFunction(BuiltinFunctions &set) {
 	                 DuckDBDatabasesInit);
 	fn.GetSignature().AddKeywordOnly("include_hidden", LogicalType::BOOLEAN, Value::BOOLEAN(false));
 	fn.pushdown_complex_filter = DuckDBSystemIncludeHiddenBindData::PushdownDatabaseFilters;
+	fn.required_capability = RoleCapability::Superuser;
 	set.AddFunction(fn);
 }
 

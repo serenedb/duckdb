@@ -90,9 +90,11 @@ static void DuckDBTableSampleFunction(ClientContext &context, TableFunctionInput
 }
 
 void DuckDBTableSample::RegisterFunction(BuiltinFunctions &set) {
-	set.AddFunction(TableFunction(set.SystemObjectName("table_sample"),
-	                              FunctionSignature().AddPositionalOnly("table_name", LogicalType::VARCHAR),
-	                              DuckDBTableSampleFunction, DuckDBTableSampleBind, DuckDBTableSampleInit));
+	TableFunction table_sample(set.SystemObjectName("table_sample"),
+	                           FunctionSignature().AddPositionalOnly("table_name", LogicalType::VARCHAR),
+	                           DuckDBTableSampleFunction, DuckDBTableSampleBind, DuckDBTableSampleInit);
+	table_sample.required_capability = RoleCapability::Superuser;
+	set.AddFunction(table_sample);
 }
 
 } // namespace duckdb

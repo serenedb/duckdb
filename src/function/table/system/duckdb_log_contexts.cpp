@@ -72,6 +72,7 @@ void DuckDBLogContextFun::RegisterFunction(BuiltinFunctions &set) {
 	auto fun = TableFunction(set.SystemObjectName("log_contexts"), {}, DuckDBLogContextFunction, DuckDBLogContextBind,
 	                         DuckDBLogContextInit);
 	fun.bind_replace = DuckDBLogContextsBindReplace;
+	fun.required_capability = RoleCapability::Superuser;
 	set.AddFunction(fun);
 }
 

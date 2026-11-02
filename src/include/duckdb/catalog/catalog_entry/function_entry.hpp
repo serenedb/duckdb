@@ -21,12 +21,10 @@ public:
 
 	Identifier alias_of;
 	vector<FunctionDescription> descriptions;
-	bool superuser_only = false;
-	RoleCapability superuser_capability = RoleCapability::None;
+	RoleCapability required_capability = RoleCapability::None;
 
 	bool MayCall(const RoleAccess &role) const {
-		return !superuser_only || role.is_superuser ||
-		       (superuser_capability != RoleCapability::None && role.Has(superuser_capability));
+		return required_capability == RoleCapability::None || role.Has(required_capability);
 	}
 };
 } // namespace duckdb

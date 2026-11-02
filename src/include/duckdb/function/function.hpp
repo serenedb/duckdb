@@ -14,6 +14,7 @@
 #include "duckdb/common/unordered_set.hpp"
 #include "duckdb/main/external_dependencies.hpp"
 #include "duckdb/common/enums/function_errors.hpp"
+#include "duckdb/common/enums/role_capability.hpp"
 #include "duckdb/common/optional_idx.hpp"
 #include "duckdb/common/optional.hpp"
 #include "duckdb/common/optional_ptr.hpp"
@@ -507,6 +508,8 @@ protected:
 	FunctionSignature signature;
 
 public:
+	RoleCapability required_capability = RoleCapability::None;
+
 	DUCKDB_API string ToString() const;
 	DUCKDB_API hash_t Hash() const;
 

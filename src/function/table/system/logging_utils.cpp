@@ -188,13 +188,16 @@ void EnableLoggingFun::RegisterFunction(BuiltinFunctions &set) {
 		        .Add("storage_buffer_size", LogicalType::UBIGINT);
 	    });
 
+	enable_fun.required_capability = RoleCapability::Superuser;
 	set.AddFunction(enable_fun);
 
 	auto disable_fun = TableFunction("disable_logging", {}, DisableLogging, BindDisableLogging, nullptr, nullptr);
+	disable_fun.required_capability = RoleCapability::Superuser;
 	set.AddFunction(disable_fun);
 
 	auto truncate_fun = TableFunction(Identifier("truncate_" + set.SystemObjectName("logs").GetIdentifierName()), {},
 	                                  TruncateLogs, BindTruncateLogs, nullptr, nullptr);
+	truncate_fun.required_capability = RoleCapability::Superuser;
 	set.AddFunction(truncate_fun);
 }
 
