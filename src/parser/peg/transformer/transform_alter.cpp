@@ -269,7 +269,7 @@ unique_ptr<AlterInfo> PEGTransformerFactory::TransformAlterIndexStmt(PEGTransfor
 // AlterFunctionStmt <- 'FUNCTION' IfExists? QualifiedName RenameAlter
 unique_ptr<AlterInfo> PEGTransformerFactory::TransformAlterFunctionStmt(PEGTransformer &transformer,
                                                                         const optional<bool> &if_exists,
-                                                                        const QualifiedName &qualified_name,
+                                                                        const QualifiedName &qualified_name, bool,
                                                                         unique_ptr<AlterTableInfo> rename_alter) {
 	auto rename_info = unique_ptr_cast<AlterTableInfo, RenameTableInfo>(std::move(rename_alter));
 	auto not_found = if_exists ? OnEntryNotFound::RETURN_NULL : OnEntryNotFound::THROW_EXCEPTION;

@@ -4972,7 +4972,7 @@ public:
 	                                                     unique_ptr<AlterTableInfo> alter_index_alter);
 	static unique_ptr<AlterInfo> TransformAlterFunctionStmt(PEGTransformer &transformer,
 	                                                        const optional<bool> &if_exists,
-	                                                        const QualifiedName &qualified_name,
+	                                                        const QualifiedName &qualified_name, bool has_arguments,
 	                                                        unique_ptr<AlterTableInfo> rename_alter);
 	static unique_ptr<AlterInfo> TransformAlterTableStmt(PEGTransformer &transformer, const optional<bool> &if_exists,
 	                                                     const bool &has_result,

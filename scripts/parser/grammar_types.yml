@@ -2136,6 +2136,7 @@ excluded_rules:
   - ConnLimitOption
   - ValidUntilOption
   - OwnerTarget
+  - GrantRoutineKind
   - OwnerRoutineTarget
   - OwnerNamedTarget
   - OwnerRoleSpec
