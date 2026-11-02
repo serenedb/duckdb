@@ -18,6 +18,7 @@
 #include "duckdb/parser/parsed_data/alter_schema_info.hpp"
 #include "duckdb/parser/parsed_data/alter_table_info.hpp"
 #include "duckdb/parser/parsed_data/comment_on_column_info.hpp"
+#include "duckdb/parser/parsed_data/create_foreign_server_info.hpp"
 #include "duckdb/parser/statement/alter_statement.hpp"
 #include "duckdb/parser/tableref/basetableref.hpp"
 #include "duckdb/planner/binder.hpp"
@@ -239,6 +240,17 @@ static CatalogEntry &ResolvePermissionsTarget(Binder &binder, AlterPermissionsIn
 		info.SetQualifiedName(schema.ParentCatalog().GetName(), Identifier(), schema.name);
 		return schema;
 	}
+	if (info.entry_catalog_type == CatalogType::FOREIGN_SERVER_ENTRY) {
+		auto &catalog = Catalog::GetCatalog(context, DatabaseManager::GetDefaultDatabase(context)).Cast<DuckCatalog>();
+		auto server = catalog.GetCatalogSet(CatalogType::FOREIGN_SERVER_ENTRY)
+		                  .GetEntry(catalog.GetCatalogTransaction(context), name.Name());
+		if (!server) {
+			throw CatalogException(unordered_map<string, string> {{"type", "Foreign Server"}},
+			                       StringUtil::Format("server \"%s\" does not exist", name.Name().GetIdentifierName()));
+		}
+		info.SetQualifiedName(server->ParentCatalog().GetName(), Identifier(), server->name);
+		return *server;
+	}
 	auto entry = binder.GetCatalogEntry(EntryLookupInfo(info.entry_catalog_type, name), OnEntryNotFound::RETURN_NULL);
 	if (!entry && info.entry_catalog_type == CatalogType::MACRO_ENTRY) {
 		entry =
@@ -298,20 +310,6 @@ static void ResolveGrant(Binder &binder, AlterPermissionsInfo &info) {
 		RequireGrantable(binder, *database);
 		return;
 	}
-	if (info.entry_catalog_type == CatalogType::FOREIGN_SERVER_ENTRY) {
-		auto &name = info.GetQualifiedName().Name();
-		auto &catalog = Catalog::GetCatalog(binder.context, DatabaseManager::GetDefaultDatabase(binder.context))
-		                    .Cast<DuckCatalog>();
-		auto server = catalog.GetCatalogSet(CatalogType::FOREIGN_SERVER_ENTRY)
-		                  .GetEntry(catalog.GetCatalogTransaction(binder.context), name);
-		if (!server) {
-			throw CatalogException(unordered_map<string, string> {{"type", "Foreign Server"}},
-			                       StringUtil::Format("server \"%s\" does not exist", name.GetIdentifierName()));
-		}
-		info.SetQualifiedName(server->ParentCatalog().GetName(), Identifier(), server->name);
-		RequireGrantable(binder, *server);
-		return;
-	}
 	if (info.entry_catalog_type == CatalogType::FOREIGN_DATA_WRAPPER_ENTRY) {
 		auto &name = info.GetQualifiedName().Name().GetIdentifierName();
 		auto &wrapper = DBConfig::GetConfig(binder.context).GetForeignDataWrapper(name);
@@ -366,6 +364,9 @@ static void ResolveOwner(Binder &binder, AlterPermissionsInfo &info) {
 	}
 	if (entry.type == CatalogType::SCHEMA_ENTRY) {
 		binder.RequireDatabasePrivilege(entry.ParentCatalog().GetName(), AclMode::Create);
+	} else if (entry.type == CatalogType::FOREIGN_SERVER_ENTRY) {
+		binder.RequireForeignDataWrapperUsage(AccessOf(context, info.new_owner_id), entry.ParentCatalog().GetName(),
+		                                      entry.GetInfo()->Cast<CreateForeignServerInfo>().fdw_name);
 	} else {
 		auto &schema = entry.ParentSchema(context);
 		if (!AccessOf(context, info.new_owner_id).Can(CatalogType::SCHEMA_ENTRY, schema.permissions, AclMode::Create)) {

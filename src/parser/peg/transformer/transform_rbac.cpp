@@ -184,7 +184,7 @@ CatalogType GrantObjectType(const string &keyword) {
 	if (keyword == "JOB") {
 		return CatalogType::JOB_ENTRY;
 	}
-	if (keyword == "FOREIGN SERVER") {
+	if (keyword == "FOREIGN SERVER" || keyword == "SERVER") {
 		return CatalogType::FOREIGN_SERVER_ENTRY;
 	}
 	if (keyword == "FOREIGN DATA WRAPPER") {
