@@ -2134,6 +2134,7 @@ excluded_rules:
   - ConnLimitOption
   - ValidUntilOption
   - OwnerTarget
+  - OwnerRoutineTarget
   - OwnerNamedTarget
   - OwnerRoleSpec
   - DefaultPrivForRole
@@ -2150,6 +2151,7 @@ excluded_rules:
   - GrantTarget
   - GrantAllInSchema
   - GrantFunctionTarget
+  - RoutineSignature
   - FuncArgSignature
   - FuncArg
   - GrantNamedTarget

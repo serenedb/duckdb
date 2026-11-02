@@ -36,7 +36,8 @@ PasswordNullOption  <- 'PASSWORD' 'NULL'
 # before the native AlterStatement so OWNER TO is intercepted (DuckDB's alter
 # binder does not support ownership changes).
 AlterOwnerStatement <- 'ALTER' OwnerTarget 'OWNER' 'TO' OwnerRoleSpec
-OwnerTarget <- GrantFunctionTarget / OwnerNamedTarget
+OwnerTarget <- OwnerRoutineTarget / OwnerNamedTarget
+OwnerRoutineTarget <- GrantRoutineKind RoutineSignature
 OwnerNamedTarget <- OwnerObjectType QualifiedName
 OwnerObjectType <- TextSearchDictionaryObjType / 'TABLE' / 'VIEW' / 'SEQUENCE' / 'SCHEMA' / 'TYPE' / 'JOB' / 'SERVER' / 'DATABASE'
 TextSearchDictionaryObjType <- 'TEXT' 'SEARCH' 'DICTIONARY'
@@ -48,8 +49,8 @@ AlterDefaultPrivilegesStatement <- 'ALTER' 'DEFAULT' 'PRIVILEGES' DefaultPrivFor
 DefaultPrivForRole <- 'FOR' RoleOrUser List(ColId)
 DefaultPrivInSchema <- 'IN' 'SCHEMA' List(QualifiedName)
 DefaultPrivAction <- DefaultPrivGrant / DefaultPrivRevoke
-DefaultPrivGrant <- 'GRANT' PrivilegeList 'ON' DefaultPrivObjType 'TO' Grantee WithGrantOption?
-DefaultPrivRevoke <- 'REVOKE' DefaultPrivRevokeGrantOpt? PrivilegeList 'ON' DefaultPrivObjType 'FROM' Grantee DropBehavior?
+DefaultPrivGrant <- 'GRANT' PrivilegeList 'ON' DefaultPrivObjType 'TO' List(Grantee) WithGrantOption?
+DefaultPrivRevoke <- 'REVOKE' DefaultPrivRevokeGrantOpt? PrivilegeList 'ON' DefaultPrivObjType 'FROM' List(Grantee) DropBehavior?
 DefaultPrivRevokeGrantOpt <- 'GRANT' 'OPTION' 'FOR'
 DefaultPrivObjType <- 'TABLES' / 'SEQUENCES' / 'FUNCTIONS' / 'ROUTINES' / 'TYPES' / 'SCHEMAS'
 
@@ -59,24 +60,25 @@ DefaultPrivObjType <- 'TABLES' / 'SEQUENCES' / 'FUNCTIONS' / 'ROUTINES' / 'TYPES
 GrantStatement  <- 'GRANT'  (GrantTablePrivilege  / GrantRoleMembership)
 RevokeStatement <- 'REVOKE' (RevokeGrantOptionFor / RevokeAdminOptionFor / RevokeTablePrivilege / RevokeRoleMembership)
 
-GrantTablePrivilege   <- PrivilegeList 'ON' GrantTarget 'TO'   Grantee WithGrantOption? GrantedBy?
-RevokeTablePrivilege  <- PrivilegeList 'ON' GrantTarget 'FROM' Grantee GrantedBy? DropBehavior?
-GrantRoleMembership   <- ColId 'TO'   ColId MemberOptionList? GrantedBy?
-RevokeRoleMembership  <- ColId 'FROM' ColId GrantedBy? DropBehavior?
+GrantTablePrivilege   <- PrivilegeList 'ON' GrantTarget 'TO'   List(Grantee) WithGrantOption? GrantedBy?
+RevokeTablePrivilege  <- PrivilegeList 'ON' GrantTarget 'FROM' List(Grantee) GrantedBy? DropBehavior?
+GrantRoleMembership   <- List(ColId) 'TO'   List(ColId) MemberOptionList? GrantedBy?
+RevokeRoleMembership  <- List(ColId) 'FROM' List(ColId) GrantedBy? DropBehavior?
 
 # REVOKE [GRANT OPTION FOR <priv> ... | ADMIN OPTION FOR <role> ...]: strip only
 # the grant/admin option, keeping the underlying privilege / membership edge.
-RevokeGrantOptionFor  <- 'GRANT' 'OPTION' 'FOR' PrivilegeList 'ON' GrantTarget 'FROM' Grantee GrantedBy? DropBehavior?
-RevokeAdminOptionFor  <- 'ADMIN' 'OPTION' 'FOR' ColId 'FROM' ColId GrantedBy? DropBehavior?
+RevokeGrantOptionFor  <- 'GRANT' 'OPTION' 'FOR' PrivilegeList 'ON' GrantTarget 'FROM' List(Grantee) GrantedBy? DropBehavior?
+RevokeAdminOptionFor  <- 'ADMIN' 'OPTION' 'FOR' List(ColId) 'FROM' List(ColId) GrantedBy? DropBehavior?
 
 # The object(s) a privilege is granted on. ALL ... IN SCHEMA (bulk) is tried
 # first so 'ALL' is not mistaken for a relation name. A FUNCTION/ROUTINE target
 # may carry an argument-type signature -- fn(int) -- to pick a specific
 # overload; PROCEDURE is accepted as a routine synonym too.
 GrantTarget <- GrantAllInSchema / GrantFunctionTarget / GrantNamedTarget
-GrantAllInSchema <- 'ALL' GrantObjTypePlural 'IN' 'SCHEMA' QualifiedName
+GrantAllInSchema <- 'ALL' GrantObjTypePlural 'IN' 'SCHEMA' List(QualifiedName)
 GrantObjTypePlural <- 'TABLES' / 'SEQUENCES' / 'FUNCTIONS' / 'ROUTINES' / 'PROCEDURES'
-GrantFunctionTarget <- GrantRoutineKind QualifiedName FuncArgSignature?
+GrantFunctionTarget <- GrantRoutineKind List(RoutineSignature)
+RoutineSignature <- QualifiedName FuncArgSignature?
 GrantRoutineKind <- 'FUNCTION' / 'ROUTINE' / 'PROCEDURE'
 FuncArgSignature <- Parens(List(FuncArg)?)
 FuncArg <- (FuncArgMode? ColId Type) / (FuncArgMode? Type)
@@ -85,7 +87,7 @@ InArgMode <- 'IN'
 OutArgMode <- 'OUT'
 InoutArgMode <- 'INOUT'
 VariadicArgMode <- 'VARIADIC'
-GrantNamedTarget <- GrantObjType? QualifiedName
+GrantNamedTarget <- GrantObjType? List(QualifiedName)
 
 # Optional WITH GRANT OPTION suffix on a table GRANT: the grantee may re-grant.
 WithGrantOption <- 'WITH' 'GRANT' 'OPTION'

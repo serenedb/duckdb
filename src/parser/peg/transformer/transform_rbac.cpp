@@ -663,10 +663,13 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformAlterOwnerStatement(PEG
 	auto &target =
 	    list_pr.GetChild(1).Cast<ListParseResult>().Child<ChoiceParseResult>(0).GetResult().Cast<ListParseResult>();
 	auto info = make_uniq<AlterPermissionsInfo>(CatalogType::INVALID, QualifiedName());
-	SetObjectTarget(*info,
-	                target.Name() == "GrantFunctionTarget" ? CatalogType::MACRO_ENTRY
-	                                                       : GrantObjectType(ObjectTypeKeyword(target.GetChild(0))),
-	                transformer.Transform<QualifiedName>(target.GetChild(1)));
+	if (target.Name() == "OwnerRoutineTarget") {
+		SetObjectTarget(*info, CatalogType::MACRO_ENTRY,
+		                transformer.Transform<QualifiedName>(target.Child<ListParseResult>(1).GetChild(0)));
+	} else {
+		SetObjectTarget(*info, GrantObjectType(ObjectTypeKeyword(target.GetChild(0))),
+		                transformer.Transform<QualifiedName>(target.GetChild(1)));
+	}
 
 	// OwnerRoleSpec: a rule wrapping CHOICE(CURRENT_USER / SESSION_USER /
 	// CURRENT_ROLE keyword / ColId).
@@ -727,12 +730,13 @@ static void TransformPrivilegeList(PEGTransformer &transformer, ParseResult &pri
 	}
 }
 
-static void TransformGrantTarget(PEGTransformer &transformer, ParseResult &target_choice_holder,
-                                 AlterPermissionsInfo &info) {
+static vector<QualifiedName> TransformGrantTarget(PEGTransformer &transformer, ParseResult &target_choice_holder,
+                                                  AlterPermissionsInfo &info) {
 	auto &chosen = target_choice_holder.Cast<ListParseResult>().Child<ChoiceParseResult>(0).GetResult();
+	auto &target = chosen.Cast<ListParseResult>();
+	vector<QualifiedName> names;
 	if (chosen.Name() == "GrantAllInSchema") {
-		auto &all = chosen.Cast<ListParseResult>();
-		auto kind = StringUtil::Upper(all.GetChild(1)
+		auto kind = StringUtil::Upper(target.GetChild(1)
 		                                  .Cast<ListParseResult>()
 		                                  .Child<ChoiceParseResult>(0)
 		                                  .GetResult()
@@ -745,67 +749,86 @@ static void TransformGrantTarget(PEGTransformer &transformer, ParseResult &targe
 		} else {
 			info.entry_catalog_type = CatalogType::MACRO_ENTRY;
 		}
-		auto schema = transformer.Transform<QualifiedName>(all.GetChild(4));
-		info.SetQualifiedName(schema.Schema(), schema.Name(), Identifier());
 		info.all_in_schema = true;
-		return;
+		for (auto &schema_ref : PEGTransformerFactory::ExtractParseResultsFromList(target.GetChild(4))) {
+			auto schema = transformer.Transform<QualifiedName>(schema_ref.get());
+			names.emplace_back(schema.Schema(), schema.Name(), Identifier());
+		}
+		return names;
 	}
 	if (chosen.Name() == "GrantFunctionTarget") {
-		// 0:GrantRoutineKind 1:QualifiedName 2:FuncArgSignature?
-		SetObjectTarget(info, CatalogType::MACRO_ENTRY,
-		                transformer.Transform<QualifiedName>(chosen.Cast<ListParseResult>().GetChild(1)));
-		return;
+		// 0:GrantRoutineKind 1:List(RoutineSignature)
+		info.entry_catalog_type = CatalogType::MACRO_ENTRY;
+		for (auto &routine : PEGTransformerFactory::ExtractParseResultsFromList(target.GetChild(1))) {
+			names.push_back(transformer.Transform<QualifiedName>(routine.get().Cast<ListParseResult>().GetChild(0)));
+		}
+		return names;
 	}
-	// GrantNamedTarget: 0:GrantObjType? 1:QualifiedName
-	auto &named = chosen.Cast<ListParseResult>();
-	auto &objtype_opt = named.Child<OptionalParseResult>(0);
-	SetObjectTarget(info,
-	                GrantObjectType(objtype_opt.HasResult() ? ObjectTypeKeyword(objtype_opt.GetResult()) : "TABLE"),
-	                transformer.Transform<QualifiedName>(named.GetChild(1)));
+	// GrantNamedTarget: 0:GrantObjType? 1:List(QualifiedName)
+	auto &objtype_opt = target.Child<OptionalParseResult>(0);
+	info.entry_catalog_type =
+	    GrantObjectType(objtype_opt.HasResult() ? ObjectTypeKeyword(objtype_opt.GetResult()) : "TABLE");
+	for (auto &name : PEGTransformerFactory::ExtractParseResultsFromList(target.GetChild(1))) {
+		names.push_back(transformer.Transform<QualifiedName>(name.get()));
+	}
+	return names;
+}
+
+static unique_ptr<SQLStatement> SingleOrMulti(unique_ptr<MultiStatement> statements) {
+	if (statements->statements.size() == 1) {
+		return std::move(statements->statements[0]);
+	}
+	return std::move(statements);
 }
 
 // Children from `privs_child`: 0:PrivilegeList 1:'ON' 2:GrantTarget 3:TO/FROM
-// 4:Grantee 5:WithGrantOption?/DropBehavior? 6:GrantedBy?
+// 4:List(Grantee) 5:WithGrantOption?/DropBehavior? 6:GrantedBy?
 static unique_ptr<SQLStatement> BuildGrantTable(PEGTransformer &transformer, ListParseResult &list_pr, bool revoke,
                                                 idx_t privs_child, bool option_only) {
-	auto info = make_uniq<AlterPermissionsInfo>(CatalogType::INVALID, QualifiedName());
-	TransformGrantTarget(transformer, list_pr.GetChild(privs_child + 2), *info);
-	TransformPrivilegeList(transformer, list_pr.GetChild(privs_child), *info);
-	info->grantee = TransformGrantee(transformer, list_pr.GetChild(privs_child + 4));
-	info->revoke = revoke;
-	info->option_only = option_only;
+	AlterPermissionsInfo info(CatalogType::INVALID, QualifiedName());
+	auto targets = TransformGrantTarget(transformer, list_pr.GetChild(privs_child + 2), info);
+	TransformPrivilegeList(transformer, list_pr.GetChild(privs_child), info);
+	info.revoke = revoke;
+	info.option_only = option_only;
 
 	// GRANT: WithGrantOption? at +5, GrantedBy? at +6.
 	// REVOKE table: GrantedBy? at +5, DropBehavior? at +6.
 	if (revoke) {
-		info->granted_by = TransformGrantedBy(transformer, list_pr, privs_child + 5);
-		info->cascade = TransformCascade(list_pr, privs_child + 6);
+		info.granted_by = TransformGrantedBy(transformer, list_pr, privs_child + 5);
+		info.cascade = TransformCascade(list_pr, privs_child + 6);
 	} else {
-		info->with_grant_option = list_pr.Child<OptionalParseResult>(privs_child + 5).HasResult();
-		info->granted_by = TransformGrantedBy(transformer, list_pr, privs_child + 6);
+		info.with_grant_option = list_pr.Child<OptionalParseResult>(privs_child + 5).HasResult();
+		info.granted_by = TransformGrantedBy(transformer, list_pr, privs_child + 6);
 	}
 
-	auto result = make_uniq<AlterStatement>();
-	result->info = std::move(info);
-	return std::move(result);
+	auto statements = make_uniq<MultiStatement>();
+	for (auto &target : targets) {
+		for (auto &grantee : PEGTransformerFactory::ExtractParseResultsFromList(list_pr.GetChild(privs_child + 4))) {
+			auto alter = info.Copy();
+			auto &permissions = alter->Cast<AlterPermissionsInfo>();
+			SetObjectTarget(permissions, info.entry_catalog_type, target);
+			permissions.grantee = TransformGrantee(transformer, grantee.get());
+			PEGTransformerFactory::AddToMultiStatement(statements, std::move(alter));
+		}
+	}
+	return SingleOrMulti(std::move(statements));
 }
 
-// Build a serenedb_grant_role pragma. `option_only` marks REVOKE ADMIN OPTION
-// FOR (keep the membership edge, drop only its admin option).
-static unique_ptr<SQLStatement> BuildGrantRole(PEGTransformer &transformer, ListParseResult &list_pr, bool revoke,
-                                               bool option_only, idx_t opts_child) {
-	auto info = make_uniq<AlterRoleInfo>(Identifier(TransformColIdName(transformer, list_pr.GetChild(2))));
-	info->grant_role = TransformColIdName(transformer, list_pr.GetChild(0));
-	info->revoke = revoke;
-	info->option_only = option_only;
+// Roles at `roles_child`, members two children later. `option_only` marks
+// REVOKE ADMIN OPTION FOR (keep the membership edge, drop only its admin option).
+static unique_ptr<SQLStatement> BuildGrantRole(PEGTransformer &transformer, ListParseResult &list_pr, idx_t roles_child,
+                                               bool revoke, bool option_only) {
+	AlterRoleInfo info {Identifier()};
+	info.revoke = revoke;
+	info.option_only = option_only;
 
 	// Per-edge options, tri-state (-1 unspecified / 0 false / 1 true). REVOKE has
 	// no option list. ADMIN OPTION FOR forces admin := 0.
 	if (option_only) {
-		info->admin_option = 0;
+		info.admin_option = 0;
 	}
 	if (!revoke) {
-		auto &opts_opt = list_pr.Child<OptionalParseResult>(opts_child);
+		auto &opts_opt = list_pr.Child<OptionalParseResult>(roles_child + 3);
 		if (opts_opt.HasResult()) {
 			// LIST(MemberOptionList): 0:'WITH' 1:List(MemberOption). Flatten the
 			// List into its MemberOption elements (each a CHOICE of the 3 forms).
@@ -817,19 +840,28 @@ static unique_ptr<SQLStatement> BuildGrantRole(PEGTransformer &transformer, List
 					v = 1; // bare 'WITH ADMIN OPTION' / 'WITH INHERIT' means TRUE
 				}
 				if (chosen.Name() == "AdminOption") {
-					info->admin_option = NumericCast<int8_t>(v);
+					info.admin_option = NumericCast<int8_t>(v);
 				} else if (chosen.Name() == "InheritMemberOption") {
-					info->inherit_option = NumericCast<int8_t>(v);
+					info.inherit_option = NumericCast<int8_t>(v);
 				} else {
-					info->set_option = NumericCast<int8_t>(v);
+					info.set_option = NumericCast<int8_t>(v);
 				}
 			}
 		}
 	}
 
-	auto result = make_uniq<AlterStatement>();
-	result->info = std::move(info);
-	return std::move(result);
+	auto statements = make_uniq<MultiStatement>();
+	for (auto &role : PEGTransformerFactory::ExtractParseResultsFromList(list_pr.GetChild(roles_child))) {
+		for (auto &member : PEGTransformerFactory::ExtractParseResultsFromList(list_pr.GetChild(roles_child + 2))) {
+			auto alter = info.Copy();
+			auto &membership = alter->Cast<AlterRoleInfo>();
+			membership.SetQualifiedName(Identifier(), Identifier(),
+			                            Identifier(TransformColIdName(transformer, member.get())));
+			membership.grant_role = TransformColIdName(transformer, role.get());
+			PEGTransformerFactory::AddToMultiStatement(statements, std::move(alter));
+		}
+	}
+	return SingleOrMulti(std::move(statements));
 }
 
 // Shared body for GRANT/REVOKE. `revoke` selects the direction; `inner` is the
@@ -849,24 +881,15 @@ static unique_ptr<SQLStatement> BuildGrant(PEGTransformer &transformer, ChoicePa
 		return BuildGrantTable(transformer, form.Cast<ListParseResult>(), /*revoke=*/true, /*privs_child=*/3,
 		                       /*option_only=*/true);
 	}
-	// REVOKE ADMIN OPTION FOR <role> FROM <member>: 0:'ADMIN' 1:'OPTION' 2:'FOR'
-	// 3:ColId(role) 4:'FROM' 5:ColId(member) 6:DropBehavior?. Reuse the role
-	// builder by viewing children 3.. as role/from/member.
+	// REVOKE ADMIN OPTION FOR <roles> FROM <members>: 0:'ADMIN' 1:'OPTION' 2:'FOR'
+	// 3:List(ColId) 4:'FROM' 5:List(ColId).
 	if (form.Name() == "RevokeAdminOptionFor") {
-		auto &list_pr = form.Cast<ListParseResult>();
-		auto info = make_uniq<AlterRoleInfo>(Identifier(TransformColIdName(transformer, list_pr.GetChild(5))));
-		info->grant_role = TransformColIdName(transformer, list_pr.GetChild(3));
-		info->revoke = true;
-		info->option_only = true;
-		info->admin_option = 0;
-		auto result = make_uniq<AlterStatement>();
-		result->info = std::move(info);
-		return std::move(result);
+		return BuildGrantRole(transformer, form.Cast<ListParseResult>(), /*roles_child=*/3, /*revoke=*/true,
+		                      /*option_only=*/true);
 	}
 
-	// GrantRoleMembership / RevokeRoleMembership: 0:role 2:member, options at 3.
-	return BuildGrantRole(transformer, form.Cast<ListParseResult>(), revoke, /*option_only=*/false,
-	                      /*opts_child=*/3);
+	// GrantRoleMembership / RevokeRoleMembership: 0:roles 2:members, options at 3.
+	return BuildGrantRole(transformer, form.Cast<ListParseResult>(), /*roles_child=*/0, revoke, /*option_only=*/false);
 }
 
 unique_ptr<SQLStatement> PEGTransformerFactory::TransformGrantStatement(PEGTransformer &transformer,
@@ -890,22 +913,28 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformAlterDefaultPrivilegesS
 	auto &list_pr = parse_result.Cast<ListParseResult>();
 	// 0:'ALTER' 1:'DEFAULT' 2:'PRIVILEGES' 3:DefaultPrivForRole? 4:DefaultPrivInSchema?
 	// 5:DefaultPrivAction
-	auto info = make_uniq<AlterPermissionsInfo>(CatalogType::DATABASE_ENTRY, QualifiedName());
+	AlterPermissionsInfo info(CatalogType::DATABASE_ENTRY, QualifiedName());
+	vector<string> for_roles {string()};
 	if (auto &for_opt = list_pr.Child<OptionalParseResult>(3); for_opt.HasResult()) {
 		// LIST(DefaultPrivForRole): 0:'FOR' 1:RoleOrUser 2:List(ColId)
-		auto &for_role_pr = for_opt.GetResult().Cast<ListParseResult>();
-		info->for_role = TransformColIdName(
-		    transformer, PEGTransformerFactory::ExtractParseResultsFromList(for_role_pr.GetChild(2))[0].get());
+		for_roles.clear();
+		for (auto &role : PEGTransformerFactory::ExtractParseResultsFromList(
+		         for_opt.GetResult().Cast<ListParseResult>().GetChild(2))) {
+			for_roles.push_back(TransformColIdName(transformer, role.get()));
+		}
 	}
+	vector<string> schemas {string()};
 	if (auto &schema_opt = list_pr.Child<OptionalParseResult>(4); schema_opt.HasResult()) {
 		// LIST(DefaultPrivInSchema): 0:'IN' 1:'SCHEMA' 2:List(QualifiedName)
-		auto &schema_pr = schema_opt.GetResult().Cast<ListParseResult>();
-		info->default_schema = QualifiedTableName(
-		    transformer, PEGTransformerFactory::ExtractParseResultsFromList(schema_pr.GetChild(2))[0].get());
+		schemas.clear();
+		for (auto &schema : PEGTransformerFactory::ExtractParseResultsFromList(
+		         schema_opt.GetResult().Cast<ListParseResult>().GetChild(2))) {
+			schemas.push_back(QualifiedTableName(transformer, schema.get()));
+		}
 	}
 
 	auto &action = list_pr.GetChild(5).Cast<ListParseResult>().Child<ChoiceParseResult>(0).GetResult();
-	info->revoke = action.Name() == "DefaultPrivRevoke";
+	info.revoke = action.Name() == "DefaultPrivRevoke";
 	auto &g = action.Cast<ListParseResult>();
 	const auto objtype_of = [&](idx_t child) {
 		auto &kw = g.GetChild(child)
@@ -915,26 +944,38 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformAlterDefaultPrivilegesS
 		               .Cast<KeywordParseResult>();
 		return GrantObjectType(StringUtil::Upper(kw.keyword));
 	};
-	if (!info->revoke) {
+	idx_t grantees_child;
+	if (!info.revoke) {
 		// DefaultPrivGrant: 0:'GRANT' 1:PrivilegeList 2:'ON' 3:DefaultPrivObjType
-		// 4:'TO' 5:Grantee 6:WithGrantOption?
-		info->default_objtype = objtype_of(3);
-		TransformPrivilegeList(transformer, g.GetChild(1), *info);
-		info->grantee = TransformGrantee(transformer, g.GetChild(5));
-		info->with_grant_option = g.Child<OptionalParseResult>(6).HasResult();
+		// 4:'TO' 5:List(Grantee) 6:WithGrantOption?
+		info.default_objtype = objtype_of(3);
+		TransformPrivilegeList(transformer, g.GetChild(1), info);
+		grantees_child = 5;
+		info.with_grant_option = g.Child<OptionalParseResult>(6).HasResult();
 	} else {
 		// DefaultPrivRevoke: 0:'REVOKE' 1:DefaultPrivRevokeGrantOpt? 2:PrivilegeList
-		// 3:'ON' 4:DefaultPrivObjType 5:'FROM' 6:Grantee 7:DropBehavior?
-		info->option_only = g.Child<OptionalParseResult>(1).HasResult();
-		info->default_objtype = objtype_of(4);
-		TransformPrivilegeList(transformer, g.GetChild(2), *info);
-		info->grantee = TransformGrantee(transformer, g.GetChild(6));
-		info->cascade = TransformCascade(g, 7);
+		// 3:'ON' 4:DefaultPrivObjType 5:'FROM' 6:List(Grantee) 7:DropBehavior?
+		info.option_only = g.Child<OptionalParseResult>(1).HasResult();
+		info.default_objtype = objtype_of(4);
+		TransformPrivilegeList(transformer, g.GetChild(2), info);
+		grantees_child = 6;
+		info.cascade = TransformCascade(g, 7);
 	}
 
-	auto result = make_uniq<AlterStatement>();
-	result->info = std::move(info);
-	return std::move(result);
+	auto statements = make_uniq<MultiStatement>();
+	for (auto &for_role : for_roles) {
+		for (auto &schema : schemas) {
+			for (auto &grantee : PEGTransformerFactory::ExtractParseResultsFromList(g.GetChild(grantees_child))) {
+				auto alter = info.Copy();
+				auto &defaults = alter->Cast<AlterPermissionsInfo>();
+				defaults.for_role = for_role;
+				defaults.default_schema = schema;
+				defaults.grantee = TransformGrantee(transformer, grantee.get());
+				PEGTransformerFactory::AddToMultiStatement(statements, std::move(alter));
+			}
+		}
+	}
+	return SingleOrMulti(std::move(statements));
 }
 
 } // namespace duckdb
