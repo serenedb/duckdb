@@ -165,6 +165,7 @@ public:
 	idx_t principal_role = DConstants::INVALID_INDEX;
 	idx_t session_role = DConstants::INVALID_INDEX;
 	bool hide_constraint_keys = false;
+	bool hide_secrets = false;
 
 	class FileAccessScopeGuard {
 	public:
