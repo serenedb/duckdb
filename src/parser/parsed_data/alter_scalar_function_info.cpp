@@ -42,6 +42,8 @@ unique_ptr<AlterInfo> AlterFunctionAttributesInfo::Copy() const {
 	result->stability = stability;
 	result->set_strict = set_strict;
 	result->strict = strict;
+	result->replace_config = replace_config;
+	result->config = config;
 	return std::move(result);
 }
 
@@ -64,6 +66,15 @@ string AlterFunctionAttributesInfo::ToString() const {
 	}
 	if (set_strict) {
 		result += strict ? " STRICT" : " CALLED ON NULL INPUT";
+	}
+	if (replace_config && config.empty()) {
+		result += " RESET ALL";
+	}
+	for (auto &entry : config) {
+		auto separator = entry.find('=');
+		result += separator == string::npos
+		              ? " SET " + entry + " FROM CURRENT"
+		              : " SET " + entry.substr(0, separator) + " TO " + entry.substr(separator + 1);
 	}
 	return result + ";";
 }
