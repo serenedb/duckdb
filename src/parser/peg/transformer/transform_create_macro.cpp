@@ -163,9 +163,6 @@ static bool IsSetofType(ParseResult &type_pr) {
 	}
 }
 
-// Process the FunctionDecorator* repeat block of a MacroDefinition and apply it to the macro function. The decorators
-// are PG-compat extras (RETURNS, ...). Most semantics are dropped, but RETURNS TABLE/Type populates
-// return_types/return_names which the catalog uses to expose schema.
 static void ApplyFunctionDecorators(PEGTransformer &transformer, RepeatParseResult &decorators_pr,
                                     MacroFunction &macro_function, FunctionDecoratorInfo &info) {
 	auto children = decorators_pr.GetChildren();
@@ -231,8 +228,6 @@ static void ApplyFunctionDecorators(PEGTransformer &transformer, RepeatParseResu
 				macro_function.stability = FunctionStability::VOLATILE;
 			}
 		}
-		// Other decorators (security, cost, rows, parallel, leakproof) are accepted for PG-syntax compat but their
-		// semantics are dropped.
 	}
 }
 
