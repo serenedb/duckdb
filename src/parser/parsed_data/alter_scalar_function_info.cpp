@@ -22,6 +22,53 @@ CatalogType AlterScalarFunctionInfo::GetCatalogType() const {
 }
 
 //===--------------------------------------------------------------------===//
+// AlterFunctionAttributesInfo
+//===--------------------------------------------------------------------===//
+AlterFunctionAttributesInfo::AlterFunctionAttributesInfo()
+    : AlterScalarFunctionInfo(AlterScalarFunctionType::SET_FUNCTION_ATTRIBUTES) {
+}
+
+AlterFunctionAttributesInfo::AlterFunctionAttributesInfo(const AlterEntryData &data)
+    : AlterScalarFunctionInfo(AlterScalarFunctionType::SET_FUNCTION_ATTRIBUTES, data) {
+}
+
+unique_ptr<AlterInfo> AlterFunctionAttributesInfo::Copy() const {
+	auto result = make_uniq<AlterFunctionAttributesInfo>(GetAlterEntryData());
+	result->parameter_types = parameter_types;
+	result->has_parameter_types = has_parameter_types;
+	result->set_security = set_security;
+	result->security_definer = security_definer;
+	result->set_stability = set_stability;
+	result->stability = stability;
+	result->set_strict = set_strict;
+	result->strict = strict;
+	return std::move(result);
+}
+
+string AlterFunctionAttributesInfo::ToString() const {
+	string result = "ALTER FUNCTION " + GetQualifiedName().ToString(QualifiedNameToStringMode::HIDE_DEFAULT_SCHEMA);
+	if (has_parameter_types) {
+		result += "(";
+		for (idx_t i = 0; i < parameter_types.size(); i++) {
+			result += (i ? ", " : "") + parameter_types[i].ToString();
+		}
+		result += ")";
+	}
+	if (set_security) {
+		result += security_definer ? " SECURITY DEFINER" : " SECURITY INVOKER";
+	}
+	if (set_stability) {
+		result += stability == FunctionStability::CONSISTENT
+		              ? " IMMUTABLE"
+		              : (stability == FunctionStability::CONSISTENT_WITHIN_QUERY ? " STABLE" : " VOLATILE");
+	}
+	if (set_strict) {
+		result += strict ? " STRICT" : " CALLED ON NULL INPUT";
+	}
+	return result + ";";
+}
+
+//===--------------------------------------------------------------------===//
 // AddScalarFunctionOverloadInfo
 //===--------------------------------------------------------------------===//
 AddScalarFunctionOverloadInfo::AddScalarFunctionOverloadInfo(const AlterEntryData &data,
