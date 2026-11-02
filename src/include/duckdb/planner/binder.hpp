@@ -425,6 +425,7 @@ public:
 	optional_ptr<const RoleAccess> FunctionBodyRole(optional_idx owner);
 	void BindAsFunctionBody(optional_ptr<const RoleAccess> role);
 	void BindAsFunctionBody(const SelectStatement &statement);
+	void UseFunctionSearchPath(const vector<string> &config);
 	TableRefUse table_ref_use = TableRefUse::READ;
 	optional_ptr<const MergeQueryNode> on_conflict_merge;
 	BoundStatement BindTarget(TableRef &ref, TableRefUse use);

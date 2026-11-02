@@ -73,6 +73,8 @@ struct AlterFunctionAttributesInfo : public AlterScalarFunctionInfo {
 	FunctionStability stability = FunctionStability::VOLATILE;
 	bool set_strict = false;
 	bool strict = false;
+	bool replace_config = false;
+	vector<string> config;
 
 public:
 	unique_ptr<AlterInfo> Copy() const override;

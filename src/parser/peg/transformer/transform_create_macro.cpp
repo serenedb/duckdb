@@ -139,6 +139,7 @@ struct FunctionDecoratorInfo {
 	bool has_strict = false;
 	bool has_security = false;
 	bool has_stability = false;
+	bool has_config = false;
 };
 
 static bool IsSetofType(ParseResult &type_pr) {
@@ -226,6 +227,28 @@ static void ApplyFunctionDecorators(PEGTransformer &transformer, RepeatParseResu
 				macro_function.stability = FunctionStability::CONSISTENT_WITHIN_QUERY;
 			} else {
 				macro_function.stability = FunctionStability::VOLATILE;
+			}
+		} else if (decorator_name == "AlterRoleConfig") {
+			vector<string> set_config;
+			vector<string> reset_config;
+			bool reset_all_config = false;
+			PEGTransformerFactory::CollectConfigClause(transformer, decorator_choice, set_config, reset_config,
+			                                           reset_all_config);
+			for (auto &entry : set_config) {
+				const auto key = entry.substr(0, entry.find('='));
+				if (!StringUtil::CIEquals(key, "search_path")) {
+					throw NotImplementedException({{"detail", "A function can set only search_path."}},
+					                              "SET of parameter \"%s\" on a function is not supported",
+					                              StringUtil::Lower(key));
+				}
+				macro_function.config = {"search_path" + entry.substr(key.size())};
+				info.has_config = true;
+			}
+			if (reset_all_config || std::any_of(reset_config.begin(), reset_config.end(), [](const string &key) {
+				    return StringUtil::CIEquals(key, "search_path");
+			    })) {
+				macro_function.config.clear();
+				info.has_config = true;
 			}
 		}
 	}
@@ -648,6 +671,8 @@ unique_ptr<AlterInfo> PEGTransformerFactory::TransformAlterFunctionAttributesStm
 	result->stability = attributes.stability;
 	result->set_strict = info.has_strict;
 	result->strict = attributes.strict;
+	result->replace_config = info.has_config;
+	result->config = std::move(attributes.config);
 	return std::move(result);
 }
 

@@ -85,6 +85,8 @@ public:
 	void SetSearchPath(vector<CatalogSearchEntry> entries);
 	void SetSearchPath(vector<CatalogSearchEntry> entries, const Identifier &view_catalog,
 	                   const vector<NameBinding> &bindings);
+	void ReplaceSearchPath(vector<CatalogSearchEntry> entries);
+	void SwapSearchPath(CatalogEntryRetriever &other);
 	void RecordBindings(const Identifier &view_catalog, vector<NameBinding> &bindings);
 
 	void SetCallback(catalog_entry_callback_t callback);

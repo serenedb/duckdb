@@ -892,6 +892,16 @@
         "id": 407,
         "name": "strict",
         "type": "bool"
+      },
+      {
+        "id": 408,
+        "name": "replace_config",
+        "type": "bool"
+      },
+      {
+        "id": 409,
+        "name": "config",
+        "type": "vector<string>"
       }
     ]
   },

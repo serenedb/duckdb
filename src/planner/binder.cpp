@@ -4,6 +4,7 @@
 #include "duckdb/catalog/catalog_entry/index_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/view_catalog_entry.hpp"
+#include "duckdb/catalog/catalog_search_path.hpp"
 #include "duckdb/catalog/dependency_manager.hpp"
 #include "duckdb/catalog/duck_catalog.hpp"
 #include "duckdb/common/enums/cte_materialize.hpp"
@@ -18,6 +19,7 @@
 #include "duckdb/main/client_data.hpp"
 #include "duckdb/main/config.hpp"
 #include "duckdb/main/database.hpp"
+#include "duckdb/main/database_manager.hpp"
 #include "duckdb/main/settings.hpp"
 #include "duckdb/optimizer/optimizer.hpp"
 #include "duckdb/parser/expression/function_expression.hpp"
@@ -326,8 +328,31 @@ void Binder::BindAsFunctionBody(optional_ptr<const RoleAccess> role) {
 }
 
 void Binder::BindAsFunctionBody(const SelectStatement &statement) {
-	if (statement.function_body && principal) {
+	if (!statement.function_body) {
+		return;
+	}
+	if (principal) {
 		BindAsFunctionBody(FunctionBodyRole(statement.function_owner));
+	}
+	if (statement.function_config) {
+		UseFunctionSearchPath(*statement.function_config);
+	}
+}
+
+void Binder::UseFunctionSearchPath(const vector<string> &config) {
+	for (auto &entry : config) {
+		const auto separator = entry.find('=');
+		if (entry.compare(0, separator, "search_path") != 0) {
+			continue;
+		}
+		auto paths = CatalogSearchEntry::ParseList(entry.substr(separator + 1));
+		const auto database = DatabaseManager::TryGetDefaultDatabase(context);
+		for (auto &path : paths) {
+			if (path.GetCatalog().empty()) {
+				path.SetCatalog(database);
+			}
+		}
+		entry_retriever.ReplaceSearchPath(std::move(paths));
 	}
 }
 

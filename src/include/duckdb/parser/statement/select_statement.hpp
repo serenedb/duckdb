@@ -32,6 +32,7 @@ public:
 	unique_ptr<QueryNode> node;
 	bool function_body = false;
 	optional_idx function_owner;
+	optional_ptr<const vector<string>> function_config;
 
 protected:
 	SelectStatement(const SelectStatement &other);

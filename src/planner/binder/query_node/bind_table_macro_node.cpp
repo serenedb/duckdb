@@ -47,6 +47,7 @@ unique_ptr<QueryNode> Binder::BindTableMacro(FunctionExpression &function, Macro
 		const auto role = FunctionBodyRole(owner);
 		other_role = role != principal || role != Caller();
 	}
+	const bool own_body = other_role || !macro_def.config.empty();
 
 	auto new_macro_binding =
 	    MacroFunction::CreateDummyBinding(macro_def, macro_func.name, positional_arguments, named_arguments);
@@ -68,8 +69,8 @@ unique_ptr<QueryNode> Binder::BindTableMacro(FunctionExpression &function, Macro
 	if (macro_def.type == MacroType::SCALAR_MACRO) {
 		auto &scalar_macro = macro_def.Cast<ScalarMacroFunction>();
 		auto expr = scalar_macro.expression->Copy();
-		if (other_role) {
-			ExpressionBinder::MarkFunctionBody(*expr, owner);
+		if (own_body) {
+			ExpressionBinder::MarkFunctionBody(*expr, owner, macro_def);
 		}
 		if (macro_def.return_names.size() > 1 && scalar_macro.query_body) {
 			auto &record = expr->Cast<SubqueryExpression>().SubqueryMutable()->node->Cast<SelectNode>();
@@ -113,18 +114,21 @@ unique_ptr<QueryNode> Binder::BindTableMacro(FunctionExpression &function, Macro
 	} else {
 		node = macro_def.Cast<TableMacroFunction>().query_node->Copy();
 	}
-	if (macro_def.type == MacroType::TABLE_MACRO || other_role) {
-		parameters = eb.BindTableMacroArguments(*node, *new_macro_binding, positional_arguments, other_role);
+	if (macro_def.type == MacroType::TABLE_MACRO || own_body) {
+		parameters = eb.BindTableMacroArguments(*node, *new_macro_binding, positional_arguments, own_body);
 	}
 	ParsedExpressionIterator::EnumerateQueryNodeChildren(*node, [&](unique_ptr<ParsedExpression> &child) {
 		eb.ReplaceMacroParameters(child, lambda_params, call, true);
 	});
-	if (parameters || other_role) {
+	if (parameters || own_body) {
 		const Identifier body_alias("0_macro_body");
 		auto body = make_uniq<SelectStatement>();
 		body->node = std::move(node);
-		body->function_body = other_role;
+		body->function_body = own_body;
 		body->function_owner = owner;
+		if (!macro_def.config.empty()) {
+			body->function_config = &macro_def.config;
+		}
 		auto body_ref = make_uniq<SubqueryRef>(std::move(body), body_alias);
 		auto select_node = make_uniq<SelectNode>();
 		select_node->select_list.push_back(make_uniq<StarExpression>(body_alias));

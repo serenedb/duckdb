@@ -168,6 +168,19 @@ void CatalogEntryRetriever::SetSearchPath(vector<CatalogSearchEntry> entries, co
 	bindings_catalog = view_catalog;
 }
 
+void CatalogEntryRetriever::ReplaceSearchPath(vector<CatalogSearchEntry> entries) {
+	search_path = make_shared_ptr<CatalogSearchPath>(context, std::move(entries));
+	bindings = nullptr;
+	recorded_bindings = nullptr;
+}
+
+void CatalogEntryRetriever::SwapSearchPath(CatalogEntryRetriever &other) {
+	std::swap(search_path, other.search_path);
+	std::swap(bindings, other.bindings);
+	std::swap(recorded_bindings, other.recorded_bindings);
+	std::swap(bindings_catalog, other.bindings_catalog);
+}
+
 void CatalogEntryRetriever::RecordBindings(const Identifier &view_catalog, vector<NameBinding> &bindings_p) {
 	recorded_bindings = &bindings_p;
 	bindings_catalog = view_catalog;

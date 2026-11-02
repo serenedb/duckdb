@@ -58,6 +58,7 @@ public:
 	bool strict = false;
 	bool security_definer = false;
 	FunctionStability stability = FunctionStability::VOLATILE;
+	vector<string> config;
 	string source;
 
 public:

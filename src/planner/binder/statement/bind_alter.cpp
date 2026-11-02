@@ -11,6 +11,7 @@
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/main/config.hpp"
 #include "duckdb/main/database_manager.hpp"
+#include "duckdb/main/settings.hpp"
 #include "duckdb/parser/constraints/unique_constraint.hpp"
 #include "duckdb/parser/expression/cast_expression.hpp"
 #include "duckdb/parser/expression/columnref_expression.hpp"
@@ -619,6 +620,10 @@ BoundStatement Binder::Bind(AlterStatement &stmt) {
 		}
 		if (info.set_stability) {
 			macro.stability = info.stability;
+		}
+		if (info.replace_config) {
+			macro.config = info.config;
+			Settings::ResolveCurrentValues(context, macro.config);
 		}
 		create_info->on_conflict = OnCreateConflict::ALTER_ON_CONFLICT;
 		auto &schema = function->ParentSchema(context);
