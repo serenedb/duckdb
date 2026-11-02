@@ -207,6 +207,12 @@ public:
 		const lock_guard<mutex> lock(lock_mutex);
 		return lru_cache.CurrentTotalWeight();
 	}
+	idx_t GetMaxMemoryRacy() const {
+		return lru_cache.CapacityRacy();
+	}
+	idx_t GetCurrentMemoryRacy() const {
+		return lru_cache.CurrentTotalWeightRacy();
+	}
 	size_t GetEntryCount() const {
 		const lock_guard<mutex> lock(lock_mutex);
 		return lru_cache.Size() + non_evictable_entries.size();
