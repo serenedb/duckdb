@@ -174,6 +174,9 @@ public:
 	virtual bool RemovalNeedsColumnValues() const {
 		return true;
 	}
+	virtual bool IsBuilding() const {
+		return false;
+	}
 	void RemapColumnIds(const vector<column_t> &new_column_ids) override;
 
 	//! Returns the in-memory usage of the index. The index lock must be held

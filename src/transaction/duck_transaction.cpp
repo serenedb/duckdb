@@ -308,6 +308,16 @@ vector<unique_ptr<StorageLockKey>> DuckTransaction::LockModifiedTables() {
 	return locks;
 }
 
+void DuckTransaction::IntendToModify(DataTableInfo &table) {
+	lock_guard<mutex> lock(intended_writes_lock);
+	intended_writes.insert(table);
+}
+
+bool DuckTransaction::IntendsToModify(DataTableInfo &table) {
+	lock_guard<mutex> lock(intended_writes_lock);
+	return intended_writes.find(table) != intended_writes.end();
+}
+
 bool DuckTransaction::AutomaticCheckpoint(AttachedDatabase &db, const UndoBufferProperties &properties) {
 	if (is_checkpoint_transaction) {
 		return false;

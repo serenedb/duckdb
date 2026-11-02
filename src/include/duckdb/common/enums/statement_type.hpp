@@ -17,6 +17,7 @@
 #include "duckdb/common/enums/database_modification_type.hpp"
 #include "duckdb/common/enums/trigger_type.hpp"
 #include "duckdb/common/optional.hpp"
+#include "duckdb/common/shared_ptr.hpp"
 
 namespace duckdb {
 
@@ -75,6 +76,7 @@ std::string_view StatementReturnTypeToString(StatementReturnType type);
 class Catalog;
 class CatalogEntry;
 class ClientContext;
+struct DataTableInfo;
 class ViewCatalogEntry;
 
 //! A struct containing various properties of a SQL statement
@@ -114,6 +116,7 @@ struct StatementProperties {
 	identifier_map_t<CatalogIdentity> read_databases;
 	//! The set of databases this statement will modify
 	identifier_map_t<ModificationInfo> modified_databases;
+	vector<weak_ptr<DataTableInfo>> modified_tables;
 	vector<ViewScope> view_scopes;
 	vector<const CatalogEntry *> resolved_entries;
 	//! Whether or not the statement requires a valid transaction. Almost all statements require this, with the

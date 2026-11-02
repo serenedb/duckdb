@@ -1,6 +1,7 @@
 #include "duckdb/planner/binder.hpp"
 
 #include "duckdb/catalog/catalog_entry/aggregate_function_catalog_entry.hpp"
+#include "duckdb/catalog/catalog_entry/duck_table_entry.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/view_catalog_entry.hpp"
 #include "duckdb/common/enums/cte_materialize.hpp"
@@ -32,6 +33,7 @@
 #include "duckdb/planner/query_node/list.hpp"
 #include "duckdb/planner/tableref/list.hpp"
 #include "duckdb/storage/data_table.hpp"
+#include "duckdb/transaction/duck_transaction.hpp"
 #include "duckdb/common/types/uuid.hpp"
 
 #include <algorithm>
@@ -281,6 +283,18 @@ TableIndex Binder::GenerateTableIndex() {
 
 StatementProperties &Binder::GetStatementProperties() {
 	return global_binder_state->prop;
+}
+
+void Binder::RegisterTableModify(TableCatalogEntry &table, DatabaseModificationType modification) {
+	auto &properties = GetStatementProperties();
+	properties.RegisterDBModify(table.GetStorageCatalog(context), context, modification);
+	if (!table.IsDuckTable()) {
+		return;
+	}
+	auto &storage_table = table.GetStorageTableEntry(context);
+	auto &info = storage_table.GetStorage().GetDataTableInfo();
+	properties.modified_tables.emplace_back(info);
+	DuckTransaction::Get(context, storage_table.ParentCatalog()).IntendToModify(*info);
 }
 
 optional_ptr<LogicalGet> Binder::GetPassthroughTableFunctionGet(LogicalOperator &op) {

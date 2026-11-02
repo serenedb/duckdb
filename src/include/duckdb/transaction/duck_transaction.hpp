@@ -18,6 +18,7 @@
 
 namespace duckdb {
 class CommitDropState;
+struct DataTableInfo;
 class DependencyEntry;
 class DuckTableEntry;
 class RowGroupCollection;
@@ -64,6 +65,7 @@ public:
 	//! Some (after rollback) enter cleanup_queue, but do not require Cleanup.
 	bool awaiting_cleanup;
 	idx_t active_index = 0;
+	bool waits_for_older = false;
 
 public:
 	static DuckTransaction &Get(ClientContext &context, AttachedDatabase &db);
@@ -102,6 +104,8 @@ public:
 	bool ChangesMade();
 	UndoBufferProperties GetUndoProperties();
 	vector<unique_ptr<StorageLockKey>> LockModifiedTables();
+	void IntendToModify(DataTableInfo &table);
+	bool IntendsToModify(DataTableInfo &table);
 
 	void PushDelete(DuckTableEntry &table_entry, RowVersionManager &info, idx_t vector_idx, row_t rows[], idx_t count,
 	                idx_t base_row);
@@ -183,6 +187,8 @@ private:
 		uint64_t remote_lsn;
 	};
 	vector<RelationSync> relation_syncs;
+	mutex intended_writes_lock;
+	reference_set_t<DataTableInfo> intended_writes;
 	//! Flag to prevent auto-checkpointing inside a checkpoint transaction.
 	bool is_checkpoint_transaction = false;
 };
