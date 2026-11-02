@@ -58,7 +58,7 @@ void PhysicalSet::SetVariable(ClientContext &context, const Identifier &name, Se
 		// valid option names and can safely snapshot the current value.
 		Value casted_value = value.CastAs(context, extension_option.type);
 		if (context.setting_change_handler) {
-			context.setting_change_handler(context, name.GetIdentifierName(), scope);
+			context.setting_change_handler(context, name.GetIdentifierName(), scope, false);
 		}
 		SetExtensionVariable(context, extension_option, name, scope, casted_value);
 		return;
@@ -66,7 +66,7 @@ void PhysicalSet::SetVariable(ClientContext &context, const Identifier &name, Se
 	SetScope variable_scope = GetSettingScope(*option, scope);
 	Value input_val = value.CastAs(context, DBConfig::ParseLogicalType(option->parameter_type));
 	if (context.setting_change_handler) {
-		context.setting_change_handler(context, name.GetIdentifierName(), scope);
+		context.setting_change_handler(context, name.GetIdentifierName(), scope, false);
 	}
 	if (option->default_value) {
 		if (option->set_callback) {

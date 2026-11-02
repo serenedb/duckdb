@@ -139,7 +139,8 @@ public:
 	//! Invoked before a SET/RESET <name> is applied. Used by SereneDB to track
 	//! session-level changes for PG-style rollback inside a transaction.
 	//! nullptr handler = no tracking.
-	typedef void (*setting_change_handler_t)(ClientContext &context, const string &name, SetScope scope);
+	typedef void (*setting_change_handler_t)(ClientContext &context, const string &name, SetScope scope,
+	                                         bool reset_all);
 	setting_change_handler_t setting_change_handler = nullptr;
 
 	typedef bool (*entry_visibility_t)(ClientContext &context, CatalogEntry &entry);

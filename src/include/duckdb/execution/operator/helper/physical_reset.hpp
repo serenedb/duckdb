@@ -47,9 +47,9 @@ public:
 
 private:
 	static void ResetOption(ExecutionContext &context, DBConfig &config, const ConfigurationOption &option,
-	                        const char *name, SetScope effective_scope);
+	                        const char *name, SetScope effective_scope, bool reset_all);
 	static void ResetExtensionVariable(ExecutionContext &context, DBConfig &config, const Identifier &name,
-	                                   ExtensionOption &extension_option, SetScope effective_scope);
+	                                   ExtensionOption &extension_option, SetScope effective_scope, bool reset_all);
 };
 
 } // namespace duckdb
