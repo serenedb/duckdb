@@ -119,7 +119,8 @@ struct AlterPermissionsInfo : public AlterInfo {
 	bool include_functions = true;
 	bool include_procedures = true;
 	idx_t foreign_data_wrapper_id = 0;
-	idx_t foreign_data_wrapper_owner_id = 0;
+	idx_t object_owner_id = 0;
+	string parameter;
 	idx_t drop_owned_role_id = 0;
 
 public:

@@ -772,6 +772,11 @@
         "id": 103,
         "name": "foreign_data_wrappers",
         "type": "vector<ObjectAcl>"
+      },
+      {
+        "id": 104,
+        "name": "parameters",
+        "type": "vector<NamedAcl>"
       }
     ],
     "pointer_type": "none"
@@ -786,6 +791,25 @@
         "id": 100,
         "name": "oid",
         "type": "idx_t"
+      },
+      {
+        "id": 101,
+        "name": "acl",
+        "type": "vector<AclItem>"
+      }
+    ],
+    "pointer_type": "none"
+  },
+  {
+    "class": "NamedAcl",
+    "includes": [
+      "duckdb/catalog/permissions.hpp"
+    ],
+    "members": [
+      {
+        "id": 100,
+        "name": "name",
+        "type": "string"
       },
       {
         "id": 101,

@@ -583,6 +583,7 @@ static QualifiedName OwnedEntryName(CatalogTransaction transaction, CatalogEntry
 	case CatalogType::FOREIGN_SERVER_ENTRY:
 	case CatalogType::SUBSCRIPTION_ENTRY:
 	case CatalogType::DATABASE_ENTRY:
+	case CatalogType::ROLE_ENTRY:
 		return QualifiedName(catalog_name, Identifier(), entry.name);
 	default:
 		return QualifiedName::FromCatalogSchema(catalog_name, entry.ParentSchemaPath(transaction), entry.name);
@@ -692,7 +693,7 @@ void DependencyManager::DropOwned(CatalogTransaction transaction, const DropOwne
 					    auto &alter =
 					        revoke(holder, holder_transaction, entry, role, CatalogType::FOREIGN_DATA_WRAPPER_ENTRY);
 					    alter.foreign_data_wrapper_id = row.oid;
-					    alter.foreign_data_wrapper_owner_id = wrapper == wrappers.end() ? 0 : wrapper->second.owner;
+					    alter.object_owner_id = wrapper == wrappers.end() ? 0 : wrapper->second.owner;
 				    }
 				    if (std::any_of(
 				            permissions.defaults.begin(), permissions.defaults.end(),
@@ -701,6 +702,23 @@ void DependencyManager::DropOwned(CatalogTransaction transaction, const DropOwne
 				    }
 			    }
 		    });
+	    });
+	ForEachHolder(
+	    transaction, CatalogType::ROLE_ENTRY, [&](DuckCatalog &holder, CatalogTransaction holder_transaction) {
+		    const auto owner = DBConfig::GetConfig(holder.GetDatabase()).bootstrap_role;
+		    auto entry = holder.GetOidIndex().GetVisible(owner, holder_transaction.view);
+		    if (!entry) {
+			    return;
+		    }
+		    for (auto &row : entry->permissions.parameters) {
+			    for (auto role : info.role_ids) {
+				    if (GrantsTo(row.acl, role)) {
+					    auto &alter = revoke(holder, holder_transaction, *entry, role, CatalogType::PARAMETER_ENTRY);
+					    alter.parameter = row.name;
+					    alter.object_owner_id = owner;
+				    }
+			    }
+		    }
 	    });
 	for (auto &alter : alters) {
 		alter.holder.get().Alter(alter.transaction, *alter.info);

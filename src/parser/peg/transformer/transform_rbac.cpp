@@ -183,6 +183,9 @@ CatalogType GrantObjectType(const string &keyword) {
 	if (keyword == "FOREIGN DATA WRAPPER") {
 		return CatalogType::FOREIGN_DATA_WRAPPER_ENTRY;
 	}
+	if (keyword == "PARAMETER") {
+		return CatalogType::PARAMETER_ENTRY;
+	}
 	if (keyword == "TEXT SEARCH DICTIONARY") {
 		return CatalogType::TOKENIZER_ENTRY;
 	}
@@ -606,10 +609,8 @@ static void TransformPrivilegeList(PEGTransformer &transformer, ParseResult &pri
 	}
 	for (auto &elem_ref : PEGTransformerFactory::ExtractParseResultsFromList(chosen)) {
 		auto &priv_list = elem_ref.get().Cast<ListParseResult>();
-		auto &priv = priv_list.Child<ListParseResult>(0).Child<ChoiceParseResult>(0).GetResult();
 		auto &columns = priv_list.Child<OptionalParseResult>(1);
-		add(StringUtil::Upper(priv.Cast<KeywordParseResult>().keyword),
-		    columns.HasResult() ? &columns.GetResult() : nullptr);
+		add(ObjectTypeKeyword(priv_list.GetChild(0)), columns.HasResult() ? &columns.GetResult() : nullptr);
 	}
 }
 

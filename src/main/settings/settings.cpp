@@ -1,4 +1,5 @@
 #include "duckdb/main/settings.hpp"
+#include "duckdb/catalog/duck_catalog.hpp"
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/main/config.hpp"
 
@@ -70,6 +71,19 @@ optional<SettingAccess> Settings::GetAccess(ClientContext &context, const Identi
 	return optional<SettingAccess>();
 }
 
+static AclMode HeldParameterPrivileges(ClientContext &context, const Identifier &name) {
+	auto &config = DBConfig::GetConfig(context);
+	if (config.cluster_catalog.empty()) {
+		return AclMode::NoRights;
+	}
+	auto &cluster = Catalog::GetCatalog(context, config.cluster_catalog).Cast<DuckCatalog>();
+	auto holder = cluster.GetOidIndex().GetVisible(config.bootstrap_role, cluster.GetCatalogTransaction(context).view);
+	if (!holder) {
+		return AclMode::NoRights;
+	}
+	return context.CurrentRole().HeldModes(holder->permissions.ParameterAcl(name.GetIdentifierName()));
+}
+
 void Settings::CheckChange(ClientContext &context, const Identifier &name, const SettingAccess &access,
                            SetScope scope) {
 	if (access.context == SettingContext::INTERNAL) {
@@ -81,11 +95,15 @@ void Settings::CheckChange(ClientContext &context, const Identifier &name, const
 		return;
 	}
 	if (scope == SetScope::GLOBAL) {
+		if ((HeldParameterPrivileges(context, name) & AclMode::AlterSystem) != AclMode::NoRights) {
+			return;
+		}
 		throw PermissionException(
 		    {{"detail", "Only roles with the SUPERUSER attribute may change the server-wide value of a parameter."}},
 		    StringUtil::Format("permission denied to set parameter \"%s\"", name.GetIdentifierName()));
 	}
-	if (access.context == SettingContext::SUPERUSER) {
+	if (access.context == SettingContext::SUPERUSER &&
+	    (HeldParameterPrivileges(context, name) & AclMode::Set) == AclMode::NoRights) {
 		throw PermissionException(
 		    {{"detail", "Only roles with the SUPERUSER attribute may change this parameter."}},
 		    StringUtil::Format("permission denied to set parameter \"%s\"", name.GetIdentifierName()));

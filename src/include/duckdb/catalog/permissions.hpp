@@ -138,6 +138,16 @@ struct ObjectAcl {
 	static ObjectAcl Deserialize(Deserializer &deserializer);
 };
 
+struct NamedAcl {
+	string name;
+	vector<AclItem> acl;
+
+	bool operator==(const NamedAcl &rhs) const = default;
+
+	void Serialize(Serializer &serializer) const;
+	static NamedAcl Deserialize(Deserializer &deserializer);
+};
+
 struct ColumnPrivilege {
 	Identifier column;
 	AclMode privileges = AclMode::NoRights;
@@ -153,6 +163,7 @@ struct Permissions {
 	vector<AclItem> acl;
 	vector<DefaultAcl> defaults;
 	vector<ObjectAcl> foreign_data_wrappers;
+	vector<NamedAcl> parameters;
 
 	bool operator==(const Permissions &rhs) const = default;
 
@@ -163,6 +174,7 @@ struct Permissions {
 	static vector<AclItem> AclDefault(CatalogType acl_class, idx_t owner);
 
 	std::span<const AclItem> ForeignDataWrapperAcl(idx_t wrapper) const;
+	std::span<const AclItem> ParameterAcl(std::string_view parameter) const;
 	void AssignOwner(idx_t new_owner, CatalogType objtype, optional_ptr<const Permissions> database,
 	                 optional_idx schema);
 

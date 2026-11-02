@@ -167,7 +167,8 @@ unique_ptr<AlterInfo> AlterPermissionsInfo::Copy() const {
 	result->include_functions = include_functions;
 	result->include_procedures = include_procedures;
 	result->foreign_data_wrapper_id = foreign_data_wrapper_id;
-	result->foreign_data_wrapper_owner_id = foreign_data_wrapper_owner_id;
+	result->object_owner_id = object_owner_id;
+	result->parameter = parameter;
 	result->drop_owned_role_id = drop_owned_role_id;
 	return std::move(result);
 }

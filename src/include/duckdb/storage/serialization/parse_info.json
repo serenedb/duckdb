@@ -566,7 +566,7 @@
       },
       {
         "id": 322,
-        "name": "foreign_data_wrapper_owner_id",
+        "name": "object_owner_id",
         "type": "idx_t"
       },
       {
@@ -585,6 +585,11 @@
         "name": "include_procedures",
         "type": "bool",
         "default": "true"
+      },
+      {
+        "id": 326,
+        "name": "parameter",
+        "type": "string"
       }
     ]
   },

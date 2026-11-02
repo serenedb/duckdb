@@ -324,9 +324,34 @@ static void ResolveGrant(Binder &binder, AlterPermissionsInfo &info) {
 			throw PermissionException("permission denied for foreign-data wrapper %s", name);
 		}
 		info.foreign_data_wrapper_id = wrapper.oid;
-		info.foreign_data_wrapper_owner_id = wrapper.owner;
+		info.object_owner_id = wrapper.owner;
 		info.entry_catalog_type = CatalogType::DATABASE_ENTRY;
 		info.SetQualifiedName(Identifier(), Identifier(), database_name);
+		return;
+	}
+	if (info.entry_catalog_type == CatalogType::PARAMETER_ENTRY) {
+		auto &qualified = info.GetQualifiedName();
+		auto name = qualified.Name().GetIdentifierName();
+		if (!qualified.Schema().empty()) {
+			name = qualified.Schema().GetIdentifierName() + "." + name;
+		}
+		if (!Settings::GetAccess(binder.context, Identifier(name))) {
+			throw InvalidInputException("unrecognized configuration parameter \"%s\"", name);
+		}
+		const auto owner = DBConfig::GetConfig(binder.context).bootstrap_role;
+		const Identifier holder(binder.RoleName(owner));
+		auto entry = binder.ClusterEntry(CatalogType::ROLE_ENTRY, holder);
+		if (!entry) {
+			throw NotImplementedException("parameter privileges are not supported by this catalog");
+		}
+		auto acl = entry->permissions.ParameterAcl(name);
+		if (!role.Owns(owner) && (role.HeldModes(acl) | role.GrantableModes(acl)) == AclMode::NoRights) {
+			throw PermissionException("permission denied for parameter %s", name);
+		}
+		info.parameter = StringUtil::Lower(name);
+		info.object_owner_id = owner;
+		info.entry_catalog_type = CatalogType::ROLE_ENTRY;
+		info.SetQualifiedName(Identifier(), Identifier(), holder);
 		return;
 	}
 	if (info.all_in_schema) {
@@ -504,7 +529,7 @@ BoundStatement Binder::Bind(AlterStatement &stmt) {
 		properties.return_type = StatementReturnType::NOTHING;
 		const auto catalog_type = stmt.info->GetCatalogType();
 		if (catalog_type != CatalogType::DATABASE_ENTRY && catalog_type != CatalogType::ROLE_ENTRY &&
-		    catalog_type != CatalogType::FOREIGN_DATA_WRAPPER_ENTRY) {
+		    catalog_type != CatalogType::FOREIGN_DATA_WRAPPER_ENTRY && catalog_type != CatalogType::PARAMETER_ENTRY) {
 			stmt.info->SetQualifiedName(BindTableName(stmt.info->GetQualifiedName()));
 			auto &catalog = Catalog::GetCatalog(context, stmt.info->GetQualifiedName().Catalog());
 			properties.RegisterDBModify(catalog, context, DatabaseModificationType::ALTER_TABLE);

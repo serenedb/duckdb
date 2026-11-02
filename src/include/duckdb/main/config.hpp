@@ -220,6 +220,7 @@ public:
 	identifier_set_t builtin_relations;
 	unordered_map<string, ForeignDataWrapper> foreign_data_wrappers;
 	Identifier cluster_catalog;
+	idx_t bootstrap_role = 0;
 
 public:
 	DUCKDB_API static DBConfig &GetConfig(ClientContext &context);

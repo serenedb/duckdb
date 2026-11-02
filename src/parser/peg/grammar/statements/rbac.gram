@@ -112,7 +112,7 @@ OptionBool <- 'TRUE' / 'FALSE'
 
 RoleOrUser <- 'ROLE' / 'USER'
 # Object class for GRANT/REVOKE ... ON <type> name. Absent defaults to TABLE.
-GrantObjType <- ForeignServerObjType / ForeignDataWrapperObjType / 'TABLE' / 'SEQUENCE' / 'FUNCTION' / 'DATABASE' / 'SCHEMA' / 'TYPE' / 'DOMAIN'
+GrantObjType <- ForeignServerObjType / ForeignDataWrapperObjType / 'TABLE' / 'SEQUENCE' / 'FUNCTION' / 'DATABASE' / 'SCHEMA' / 'TYPE' / 'DOMAIN' / 'PARAMETER'
 ForeignServerObjType <- 'FOREIGN' 'SERVER'
 ForeignDataWrapperObjType <- 'FOREIGN' 'DATA' 'WRAPPER'
 # PUBLIC is the pseudo-role; otherwise a normal role identifier.
@@ -155,5 +155,6 @@ AllPrivileges <- 'ALL' 'PRIVILEGES'? PrivilegeColumns?
 # privilege (GRANT SELECT (a, b) ON t). The keyword's validity for the target
 # object class (e.g. EXECUTE on a table) is still checked in the command layer.
 Privilege <- PrivilegeKeyword PrivilegeColumns?
-PrivilegeKeyword <- 'SELECT' / 'INSERT' / 'UPDATE' / 'DELETE' / 'TRUNCATE' / 'REFERENCES' / 'TRIGGER' / 'MAINTAIN' / 'USAGE' / 'EXECUTE' / 'CONNECT' / 'TEMPORARY' / 'TEMP' / 'CREATE'
+PrivilegeKeyword <- 'SELECT' / 'INSERT' / 'UPDATE' / 'DELETE' / 'TRUNCATE' / 'REFERENCES' / 'TRIGGER' / 'MAINTAIN' / 'USAGE' / 'EXECUTE' / 'CONNECT' / 'TEMPORARY' / 'TEMP' / 'CREATE' / 'SET' / AlterSystemPrivilege
+AlterSystemPrivilege <- 'ALTER' 'SYSTEM'
 PrivilegeColumns <- Parens(List(ColId))
