@@ -36,6 +36,7 @@ unique_ptr<ParsedExpression> ExpressionBinder::CreateStructPack(ColumnRefExpress
 void ExpressionBinder::QualifyColumnNames(Binder &binder, unique_ptr<ParsedExpression> &expr,
                                           optional_ptr<ColumnAliasBinder> alias_binder) {
 	ColumnQualifier qualifier(binder, nullptr, alias_binder);
+	qualifier.report_errors = false;
 	vector<identifier_set_t> lambda_params;
 	qualifier.QualifyColumnNames(expr, lambda_params);
 }
@@ -54,6 +55,7 @@ bool ExpressionBinder::ClaimsAlias(ColumnRefExpression &colref) {
 
 void ExpressionBinder::QualifyColumnNames(ExpressionBinder &expression_binder, unique_ptr<ParsedExpression> &expr) {
 	ColumnQualifier qualifier(expression_binder.binder, expression_binder.lambda_bindings);
+	qualifier.report_errors = false;
 	vector<identifier_set_t> lambda_params;
 	qualifier.QualifyColumnNames(expr, lambda_params);
 }

@@ -91,6 +91,7 @@ unique_ptr<ColumnQualifier> HavingBinder::CreateColumnQualifier() {
 
 void ExpressionBinder::QualifyColumnNames(HavingBinder &having_binder, unique_ptr<ParsedExpression> &expr) {
 	ColumnQualifier qualifier(having_binder.binder, having_binder.lambda_bindings, nullptr, having_binder);
+	qualifier.report_errors = false;
 	vector<identifier_set_t> lambda_params;
 	qualifier.QualifyColumnNames(expr, lambda_params);
 }
