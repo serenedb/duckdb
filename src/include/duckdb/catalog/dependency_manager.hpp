@@ -18,6 +18,7 @@
 #include "duckdb/common/mutex.hpp"
 #include "duckdb/common/stack.hpp"
 #include "duckdb/common/string_util.hpp"
+#include "duckdb/parser/parsed_data/alter_table_info.hpp"
 
 #include <functional>
 
@@ -122,6 +123,8 @@ public:
 	void VerifyRoleReferences(const vector<idx_t> &roles);
 	void VerifyDroppedRoles(const vector<reference<CatalogEntry>> &dropped,
 	                        const std::function<optional_ptr<DuckTransaction>(AttachedDatabase &)> &snapshot);
+	void ReassignOwned(CatalogTransaction transaction, const ReassignOwnedInfo &info);
+	void DropOwned(CatalogTransaction transaction, const DropOwnedInfo &info);
 
 private:
 	DuckCatalog &catalog;
@@ -160,8 +163,9 @@ public:
 	optional_ptr<SchemaCatalogEntry> NavigateSchemaPath(CatalogTransaction transaction,
 	                                                    const vector<Identifier> &schema_path);
 	//! Returns the objects that should be dropped alongside the object
-	catalog_entry_map_t<subdependency_set_t> CheckDropDependencies(CatalogTransaction transaction, CatalogEntry &object,
-	                                                               bool cascade);
+	catalog_entry_map_t<subdependency_set_t>
+	CheckDropDependencies(CatalogTransaction transaction, CatalogEntry &object, bool cascade,
+	                      optional_ptr<const catalog_entry_set_t> dropped = nullptr);
 
 private:
 	void ReorderEntry(CatalogTransaction transaction, CatalogEntry &entry, catalog_entry_set_t &visited,

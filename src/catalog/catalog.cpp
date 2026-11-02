@@ -7,6 +7,7 @@
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/duck_schema_entry.hpp"
 #include "duckdb/catalog/catalog_set.hpp"
+#include "duckdb/catalog/dependency_manager.hpp"
 #include "duckdb/catalog/default/default_schemas.hpp"
 #include "duckdb/catalog/catalog_entry/type_catalog_entry.hpp"
 #include "duckdb/common/exception.hpp"
@@ -425,6 +426,10 @@ void Catalog::DropForeignServer(CatalogTransaction transaction, DropInfo &info) 
 	throw NotImplementedException("DROP SERVER is not supported by a %s catalog", GetCatalogType());
 }
 
+void Catalog::DropSubscription(CatalogTransaction transaction, DropInfo &info) {
+	throw NotImplementedException("DROP SUBSCRIPTION is not supported by a %s catalog", GetCatalogType());
+}
+
 bool Catalog::SupportsPushdown(const ParsedExpression &expression) {
 	return true;
 }
@@ -555,6 +560,10 @@ void Catalog::DropEntry(ClientContext &context, DropInfo &info) {
 	}
 	if (info.type == CatalogType::FOREIGN_SERVER_ENTRY) {
 		DropForeignServer(GetCatalogTransaction(context), info);
+		return;
+	}
+	if (info.type == CatalogType::SUBSCRIPTION_ENTRY) {
+		DropSubscription(GetCatalogTransaction(context), info);
 		return;
 	}
 
@@ -1940,6 +1949,18 @@ void Catalog::AlterSchemaEntry(CatalogTransaction transaction, SchemaCatalogEntr
 }
 
 void Catalog::Alter(CatalogTransaction transaction, AlterInfo &info) {
+	if (info.type == AlterType::REASSIGN_OWNED || info.type == AlterType::DROP_OWNED) {
+		auto dependency_manager = GetDependencyManager();
+		if (!dependency_manager) {
+			throw NotImplementedException("%s is not supported by a %s catalog",
+			                              info.type == AlterType::REASSIGN_OWNED ? "REASSIGN OWNED" : "DROP OWNED",
+			                              GetCatalogType());
+		}
+		if (info.type == AlterType::REASSIGN_OWNED) {
+			return dependency_manager->ReassignOwned(transaction, info.Cast<ReassignOwnedInfo>());
+		}
+		return dependency_manager->DropOwned(transaction, info.Cast<DropOwnedInfo>());
+	}
 	if (info.type == AlterType::ALTER_SCHEMA) {
 		auto &schema_info = info.Cast<AlterSchemaInfo>();
 		auto schema = GetSchema(transaction, schema_info.SchemaPath(), info.if_not_found);

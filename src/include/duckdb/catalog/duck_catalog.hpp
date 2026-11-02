@@ -87,7 +87,7 @@ public:
 	DUCKDB_API void DropRole(CatalogTransaction transaction, DropInfo &info) override;
 	DUCKDB_API void DropDatabase(CatalogTransaction transaction, DropInfo &info) override;
 	DUCKDB_API void DropForeignServer(CatalogTransaction transaction, DropInfo &info) override;
-	DUCKDB_API void DropSubscription(CatalogTransaction transaction, DropInfo &info);
+	DUCKDB_API void DropSubscription(CatalogTransaction transaction, DropInfo &info) override;
 	DUCKDB_API void DropReplicationOrigin(CatalogTransaction transaction, DropInfo &info);
 
 	DUCKDB_API void ScanSchemas(ClientContext &context, std::function<void(SchemaCatalogEntry &)> callback) override;

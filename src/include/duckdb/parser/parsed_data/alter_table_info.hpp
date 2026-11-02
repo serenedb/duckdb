@@ -183,6 +183,39 @@ public:
 	explicit AlterRoleInfo();
 };
 
+struct ReassignOwnedInfo : public AlterInfo {
+	ReassignOwnedInfo();
+
+	vector<string> roles;
+	string new_owner;
+	vector<idx_t> role_ids;
+	idx_t new_owner_id = 0;
+
+public:
+	CatalogType GetCatalogType() const override;
+	unique_ptr<AlterInfo> Copy() const override;
+	string ToString() const override;
+
+	void Serialize(Serializer &serializer) const override;
+	static unique_ptr<AlterInfo> Deserialize(Deserializer &deserializer);
+};
+
+struct DropOwnedInfo : public AlterInfo {
+	DropOwnedInfo();
+
+	vector<string> roles;
+	bool cascade = false;
+	vector<idx_t> role_ids;
+
+public:
+	CatalogType GetCatalogType() const override;
+	unique_ptr<AlterInfo> Copy() const override;
+	string ToString() const override;
+
+	void Serialize(Serializer &serializer) const override;
+	static unique_ptr<AlterInfo> Deserialize(Deserializer &deserializer);
+};
+
 //===--------------------------------------------------------------------===//
 // Alter Table
 //===--------------------------------------------------------------------===//

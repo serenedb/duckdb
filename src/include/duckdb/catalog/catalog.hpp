@@ -240,6 +240,7 @@ public:
 	DUCKDB_API virtual void DropRole(CatalogTransaction transaction, DropInfo &info);
 	DUCKDB_API virtual void DropDatabase(CatalogTransaction transaction, DropInfo &info);
 	DUCKDB_API virtual void DropForeignServer(CatalogTransaction transaction, DropInfo &info);
+	DUCKDB_API virtual void DropSubscription(CatalogTransaction transaction, DropInfo &info);
 	//! Creates a Enum in the catalog.
 	DUCKDB_API optional_ptr<CatalogEntry> CreateType(CatalogTransaction transaction, CreateTypeInfo &info);
 	DUCKDB_API optional_ptr<CatalogEntry> CreateType(ClientContext &context, CreateTypeInfo &info);

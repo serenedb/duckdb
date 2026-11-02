@@ -577,6 +577,55 @@
     ]
   },
   {
+    "class": "ReassignOwnedInfo",
+    "base": "AlterInfo",
+    "enum": "REASSIGN_OWNED",
+    "members": [
+      {
+        "id": 300,
+        "name": "roles",
+        "type": "vector<string>"
+      },
+      {
+        "id": 301,
+        "name": "new_owner",
+        "type": "string"
+      },
+      {
+        "id": 302,
+        "name": "role_ids",
+        "type": "vector<idx_t>"
+      },
+      {
+        "id": 303,
+        "name": "new_owner_id",
+        "type": "idx_t"
+      }
+    ]
+  },
+  {
+    "class": "DropOwnedInfo",
+    "base": "AlterInfo",
+    "enum": "DROP_OWNED",
+    "members": [
+      {
+        "id": 300,
+        "name": "roles",
+        "type": "vector<string>"
+      },
+      {
+        "id": 301,
+        "name": "cascade",
+        "type": "bool"
+      },
+      {
+        "id": 302,
+        "name": "role_ids",
+        "type": "vector<idx_t>"
+      }
+    ]
+  },
+  {
     "class": "AlterRoleInfo",
     "base": "AlterInfo",
     "enum": "ALTER_ROLE",

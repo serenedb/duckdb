@@ -690,12 +690,13 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformReassignOwnedStatement(
                                                                                 ParseResult &parse_result) {
 	auto &list_pr = parse_result.Cast<ListParseResult>();
 	// 0:'REASSIGN' 1:'OWNED' 2:'BY' 3:List(OwnerRoleSpec) 4:'TO' 5:OwnerRoleSpec
-	auto result = make_uniq<PragmaStatement>();
-	result->info->name = "reassign_owned";
-	result->info->parameters.push_back(StrConst(OwnerRoleName(transformer, list_pr.GetChild(5))));
+	auto info = make_uniq<ReassignOwnedInfo>();
 	for (auto &role : ExtractParseResultsFromList(list_pr.GetChild(3))) {
-		result->info->parameters.push_back(StrConst(OwnerRoleName(transformer, role.get())));
+		info->roles.push_back(OwnerRoleName(transformer, role.get()));
 	}
+	info->new_owner = OwnerRoleName(transformer, list_pr.GetChild(5));
+	auto result = make_uniq<AlterStatement>();
+	result->info = std::move(info);
 	return std::move(result);
 }
 
@@ -703,14 +704,13 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformDropOwnedStatement(PEGT
                                                                             ParseResult &parse_result) {
 	auto &list_pr = parse_result.Cast<ListParseResult>();
 	// 0:'DROP' 1:'OWNED' 2:'BY' 3:List(OwnerRoleSpec) 4:DropBehavior?
-	bool cascade = false;
-	transformer.TransformOptional<bool>(list_pr, 4, cascade);
-	auto result = make_uniq<PragmaStatement>();
-	result->info->name = "drop_owned";
-	result->info->parameters.push_back(BoolConst(cascade));
+	auto info = make_uniq<DropOwnedInfo>();
 	for (auto &role : ExtractParseResultsFromList(list_pr.GetChild(3))) {
-		result->info->parameters.push_back(StrConst(OwnerRoleName(transformer, role.get())));
+		info->roles.push_back(OwnerRoleName(transformer, role.get()));
 	}
+	transformer.TransformOptional<bool>(list_pr, 4, info->cascade);
+	auto result = make_uniq<AlterStatement>();
+	result->info = std::move(info);
 	return std::move(result);
 }
 

@@ -22,6 +22,7 @@
 #include "duckdb/catalog/catalog_entry/trigger_catalog_entry.hpp"
 #include "duckdb/parser/parsed_data/alter_table_info.hpp"
 #include "duckdb/parser/parsed_data/alter_sequence_info.hpp"
+#include "duckdb/parser/parsed_data/drop_info.hpp"
 #include "duckdb/parser/constraints/foreign_key_constraint.hpp"
 #include "duckdb/parser/constraints/unique_constraint.hpp"
 #include "duckdb/catalog/dependency_catalog_set.hpp"
@@ -546,6 +547,160 @@ void DependencyManager::VerifyDroppedRoles(
 			    }
 		    }
 	    });
+}
+
+static bool TracksOwner(CatalogType type) {
+	switch (type) {
+	case CatalogType::TABLE_ENTRY:
+	case CatalogType::VIEW_ENTRY:
+	case CatalogType::SEQUENCE_ENTRY:
+	case CatalogType::SCHEMA_ENTRY:
+	case CatalogType::TYPE_ENTRY:
+	case CatalogType::MACRO_ENTRY:
+	case CatalogType::TABLE_MACRO_ENTRY:
+	case CatalogType::TOKENIZER_ENTRY:
+	case CatalogType::JOB_ENTRY:
+	case CatalogType::FOREIGN_SERVER_ENTRY:
+	case CatalogType::SUBSCRIPTION_ENTRY:
+		return true;
+	default:
+		return false;
+	}
+}
+
+static bool IsAnyOf(const vector<idx_t> &roles, idx_t role) {
+	return std::find(roles.begin(), roles.end(), role) != roles.end();
+}
+
+static QualifiedName OwnedEntryName(CatalogTransaction transaction, CatalogEntry &entry) {
+	auto &catalog_name = entry.ParentCatalog().GetName();
+	switch (entry.type) {
+	case CatalogType::SCHEMA_ENTRY:
+	case CatalogType::FOREIGN_SERVER_ENTRY:
+	case CatalogType::SUBSCRIPTION_ENTRY:
+	case CatalogType::DATABASE_ENTRY:
+		return QualifiedName(catalog_name, Identifier(), entry.name);
+	default:
+		return QualifiedName::FromCatalogSchema(catalog_name, entry.ParentSchemaPath(transaction), entry.name);
+	}
+}
+
+struct OwnedEntryAlter {
+	reference<DuckCatalog> holder;
+	CatalogTransaction transaction;
+	unique_ptr<AlterPermissionsInfo> info;
+};
+
+static AlterPermissionsInfo &AddOwnedEntryAlter(vector<OwnedEntryAlter> &alters, DuckCatalog &holder,
+                                                CatalogTransaction transaction, CatalogEntry &entry) {
+	auto type = entry.type == CatalogType::VIEW_ENTRY ? CatalogType::TABLE_ENTRY : entry.type;
+	alters.push_back({holder, transaction, make_uniq<AlterPermissionsInfo>(type, OwnedEntryName(transaction, entry))});
+	return *alters.back().info;
+}
+
+void DependencyManager::ReassignOwned(CatalogTransaction transaction, const ReassignOwnedInfo &info) {
+	const auto reassigned = [&](const CatalogEntry &entry) {
+		return entry.permissions.owner != info.new_owner_id && IsAnyOf(info.role_ids, entry.permissions.owner);
+	};
+	vector<OwnedEntryAlter> alters;
+	const auto reassign = [&](DuckCatalog &holder, CatalogTransaction holder_transaction, CatalogEntry &entry) {
+		auto &alter = AddOwnedEntryAlter(alters, holder, holder_transaction, entry);
+		alter.new_owner = info.new_owner;
+		alter.new_owner_id = info.new_owner_id;
+	};
+	catalog.GetOidIndex().ScanVisible(transaction.view, [&](CatalogEntry &entry) {
+		if (!IsSystemEntry(entry) && TracksOwner(entry.type) && reassigned(entry) &&
+		    !(entry.type == CatalogType::SEQUENCE_ENTRY && OwnerOf(transaction, entry))) {
+			reassign(catalog, transaction, entry);
+		}
+	});
+	ForEachHolder(
+	    transaction, CatalogType::DATABASE_ENTRY, [&](DuckCatalog &holder, CatalogTransaction holder_transaction) {
+		    auto &manager = *holder.GetDependencyManager();
+		    holder.GetCatalogSet(CatalogType::DATABASE_ENTRY).Scan(holder_transaction, [&](CatalogEntry &entry) {
+			    if (!manager.IsSystemEntry(entry) && reassigned(entry)) {
+				    reassign(holder, holder_transaction, entry);
+			    }
+		    });
+	    });
+	for (auto &alter : alters) {
+		alter.holder.get().Alter(alter.transaction, *alter.info);
+	}
+}
+
+void DependencyManager::DropOwned(CatalogTransaction transaction, const DropOwnedInfo &info) {
+	const auto owned = [&](const CatalogEntry &entry) {
+		return IsAnyOf(info.role_ids, entry.permissions.owner);
+	};
+	vector<OwnedEntryAlter> alters;
+	catalog.GetOidIndex().ScanVisible(transaction.view, [&](CatalogEntry &entry) {
+		if (IsSystemEntry(entry) || !TracksOwner(entry.type) || owned(entry)) {
+			return;
+		}
+		for (auto role : info.role_ids) {
+			if (ReferencesRole(entry, role)) {
+				AddOwnedEntryAlter(alters, catalog, transaction, entry).drop_owned_role_id = role;
+			}
+		}
+	});
+	ForEachHolder(
+	    transaction, CatalogType::DATABASE_ENTRY, [&](DuckCatalog &holder, CatalogTransaction holder_transaction) {
+		    auto &manager = *holder.GetDependencyManager();
+		    holder.GetCatalogSet(CatalogType::DATABASE_ENTRY).Scan(holder_transaction, [&](CatalogEntry &entry) {
+			    if (manager.IsSystemEntry(entry)) {
+				    return;
+			    }
+			    for (auto role : info.role_ids) {
+				    if (entry.name == catalog.GetName()) {
+					    if (ReferencesRole(entry, role)) {
+						    AddOwnedEntryAlter(alters, holder, holder_transaction, entry).drop_owned_role_id = role;
+					    }
+					    continue;
+				    }
+				    vector<idx_t> grantors;
+				    for (auto &item : entry.permissions.acl) {
+					    if (item.grantee == role && !IsAnyOf(grantors, item.grantor)) {
+						    grantors.push_back(item.grantor);
+					    }
+				    }
+				    for (auto grantor : grantors) {
+					    auto &revoke = AddOwnedEntryAlter(alters, holder, holder_transaction, entry);
+					    revoke.privileges = Permissions::AllPrivileges(CatalogType::DATABASE_ENTRY);
+					    revoke.revoke = true;
+					    revoke.cascade = true;
+					    revoke.grantee_id = role;
+					    revoke.grantors = {grantor};
+				    }
+			    }
+		    });
+	    });
+	for (auto &alter : alters) {
+		alter.holder.get().Alter(alter.transaction, *alter.info);
+	}
+
+	catalog_entry_vector_t dropped;
+	catalog.GetOidIndex().ScanVisible(transaction.view, [&](CatalogEntry &entry) {
+		if (!IsSystemEntry(entry) && TracksOwner(entry.type) && owned(entry) &&
+		    !(entry.type == CatalogType::SEQUENCE_ENTRY && OwnerOf(transaction, entry))) {
+			dropped.push_back(entry);
+		}
+	});
+	if (!info.cascade) {
+		catalog_entry_set_t dropped_set(dropped.begin(), dropped.end());
+		for (auto &entry : dropped) {
+			CheckDropDependencies(transaction, entry, false, dropped_set);
+		}
+	}
+	vector<DropInfo> drops(dropped.size());
+	for (idx_t i = 0; i < dropped.size(); i++) {
+		drops[i].type = dropped[i].get().type;
+		drops[i].SetQualifiedName(OwnedEntryName(transaction, dropped[i]));
+		drops[i].cascade = true;
+		drops[i].if_not_found = OnEntryNotFound::RETURN_NULL;
+	}
+	for (auto &drop : drops) {
+		catalog.DropEntry(transaction.GetContext(), drop);
+	}
 }
 
 void DependencyManager::AddObject(CatalogTransaction transaction, CatalogEntry &object,
@@ -1128,8 +1283,9 @@ void DependencyManager::VerifyForeignDependents(const vector<reference<CatalogEn
 	}
 }
 
-catalog_entry_map_t<subdependency_set_t> DependencyManager::CheckDropDependencies(CatalogTransaction transaction,
-                                                                                  CatalogEntry &object, bool cascade) {
+catalog_entry_map_t<subdependency_set_t>
+DependencyManager::CheckDropDependencies(CatalogTransaction transaction, CatalogEntry &object, bool cascade,
+                                         optional_ptr<const catalog_entry_set_t> dropped) {
 	catalog_entry_map_t<subdependency_set_t> to_drop;
 	if (IsSystemEntry(object)) {
 		// Don't do anything for this
@@ -1153,7 +1309,9 @@ catalog_entry_map_t<subdependency_set_t> DependencyManager::CheckDropDependencie
 
 		if (!CascadeDrop(cascade, flags)) {
 			// no cascade and there are objects that depend on this object: throw error
-			blocking_dependents.insert(*entry);
+			if (!dropped || !dropped->count(*entry)) {
+				blocking_dependents.insert(*entry);
+			}
 		} else {
 			to_drop[*entry] = dep.Dependent().subdependencies;
 		}
