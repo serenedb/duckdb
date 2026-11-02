@@ -1,3 +1,5 @@
-CreateDatabaseStatement <- 'CREATE' 'DATABASE' IfNotExists? CatalogName WithList?
+CreateDatabaseStatement <- 'CREATE' 'DATABASE' IfNotExists? CatalogName CreateDatabaseOwner? WithList?
+CreateDatabaseOwner <- 'WITH'? 'OWNER' DatabaseOwnerName
+DatabaseOwnerName <- '='? ColId
 DropDatabaseStatement <- 'DROP' 'DATABASE' IfExists? CatalogName DropDatabaseForce? DropBehavior?
 DropDatabaseForce <- '(' 'FORCE' ')'

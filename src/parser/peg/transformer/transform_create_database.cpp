@@ -9,12 +9,16 @@ namespace duckdb {
 // CREATE DATABASE foo [WITH (BLOCK_SIZE = n, ROW_GROUP_SIZE = n)] -> ATTACH '' AS foo (TYPE serenedb, ...)
 unique_ptr<SQLStatement> PEGTransformerFactory::TransformCreateDatabaseStatement(
     PEGTransformer &transformer, const optional<bool> &if_not_exists, const Identifier &catalog_name,
+    const optional<string> &create_database_owner,
     optional<case_insensitive_map_t<unique_ptr<ParsedExpression>>> with_list) {
 	auto result = make_uniq<AttachStatement>();
 	auto info = make_uniq<AttachInfo>();
 	info->name = catalog_name;
 	info->path = "";
 	info->options["type"] = Value("serenedb");
+	if (create_database_owner) {
+		info->options["owner"] = Value(*create_database_owner);
+	}
 	if (with_list) {
 		for (auto &option : *with_list) {
 			auto name = StringUtil::Lower(option.first);
@@ -51,6 +55,16 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformDropDatabaseStatement(
 
 bool PEGTransformerFactory::TransformDropDatabaseForce(PEGTransformer &transformer) {
 	return true;
+}
+
+string PEGTransformerFactory::TransformCreateDatabaseOwner(PEGTransformer &transformer, const bool &has_result,
+                                                           const string &database_owner_name) {
+	return database_owner_name;
+}
+
+string PEGTransformerFactory::TransformDatabaseOwnerName(PEGTransformer &transformer, const bool &has_result,
+                                                         const Identifier &col_id) {
+	return col_id.GetIdentifierName();
 }
 
 } // namespace duckdb
