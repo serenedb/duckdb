@@ -1108,6 +1108,20 @@ void ClientContext::InstallSecurity(shared_ptr<const SecuritySnapshot> snapshot)
 }
 
 void ClientContext::RefreshSecurity() {
+	if (transaction.HasActiveTransaction()) {
+		auto &meta = MetaTransaction::Get(*this);
+		auto &cluster = Catalog::GetSystemCatalog(*this);
+		auto cluster_transaction = meta.ModifiedDatabase() ? meta.TryGetTransaction(cluster.GetAttached()) : nullptr;
+		if (cluster_transaction && !cluster_transaction->IsReadOnly()) {
+			const auto version = cluster.GetCatalogVersion(*this).GetIndex();
+			if (!local_security || local_security_version != version) {
+				local_security_version = version;
+				local_security = SecuritySnapshot::Build(cluster, cluster.GetCatalogTransaction(*this));
+			}
+			InstallSecurity(local_security);
+			return;
+		}
+	}
 	if (db->CurrentSecurity() != security.get()) {
 		InstallSecurity(db->GetSecurity());
 	}

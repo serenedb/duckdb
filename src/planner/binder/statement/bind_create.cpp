@@ -1540,6 +1540,7 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 		break;
 	}
 	case CatalogType::ROLE_ENTRY:
+		CheckCreateRole(stmt.info->Cast<CreateRoleInfo>());
 		stmt.info->SetQualifiedName(ClusterName(stmt.info->GetQualifiedName()));
 		result.plan = make_uniq<LogicalCreate>(LogicalOperatorType::LOGICAL_CREATE_ROLE, std::move(stmt.info));
 		break;

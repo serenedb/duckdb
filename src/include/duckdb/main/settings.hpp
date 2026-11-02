@@ -94,6 +94,9 @@ struct Settings {
 	//! PG-compliant: booleans render as "on"/"off", not "true"/"false".
 	DUCKDB_API static Value FormatDisplayValue(ClientContext &context, const Value &value);
 	DUCKDB_API static void ResolveCurrentValues(ClientContext &context, vector<string> &config);
+	static std::string_view ConfigKey(std::string_view entry) {
+		return entry.substr(0, entry.find('='));
+	}
 	DUCKDB_API static optional<SettingAccess> GetAccess(ClientContext &context, const Identifier &name);
 	DUCKDB_API static void CheckChange(ClientContext &context, const Identifier &name, const SettingAccess &access,
 	                                   SetScope scope);

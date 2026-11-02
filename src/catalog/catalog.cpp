@@ -447,6 +447,10 @@ void Catalog::DropDatabase(CatalogTransaction transaction, DropInfo &info) {
 	throw NotImplementedException("DROP DATABASE is not supported by a %s catalog", GetCatalogType());
 }
 
+void Catalog::ScanTopLevelEntries(CatalogTransaction transaction, CatalogType type,
+                                  const std::function<void(CatalogEntry &)> &callback) {
+}
+
 void Catalog::DropForeignServer(CatalogTransaction transaction, DropInfo &info) {
 	throw NotImplementedException("DROP SERVER is not supported by a %s catalog", GetCatalogType());
 }
