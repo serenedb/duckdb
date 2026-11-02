@@ -1075,7 +1075,7 @@ CatalogException Catalog::UnrecognizedConfigurationError(ClientContext &context,
 	// the setting is not in an extension
 	// get a list of all options
 	const auto visible = [&](const Identifier &setting) {
-		return !context.setting_visibility || context.setting_visibility(context, setting.GetIdentifierName());
+		return Settings::IsVisible(context, setting);
 	};
 	vector<Identifier> potential_names;
 	for (auto &option : DBConfig::GetOptionNames()) {

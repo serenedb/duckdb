@@ -6,6 +6,7 @@
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/main/database.hpp"
+#include "duckdb/main/settings.hpp"
 
 namespace duckdb {
 
@@ -31,6 +32,9 @@ void PhysicalReset::ResetExtensionVariable(ExecutionContext &context, DBConfig &
 	if (effective_scope == SetScope::GLOBAL && !context.client.transaction.IsAutoCommit()) {
 		throw InvalidInputException("parameter \"%s\" is global and cannot be reset inside a transaction",
 		                            extension_option.description);
+	}
+	if (!reset_all) {
+		Settings::CheckChange(context.client, name, extension_option.access, effective_scope);
 	}
 
 	// RESET on an option the user never SET is a no-op — don't reapply the
@@ -64,6 +68,9 @@ void PhysicalReset::ResetExtensionVariable(ExecutionContext &context, DBConfig &
 void PhysicalReset::ResetOption(ExecutionContext &context, DBConfig &config, const ConfigurationOption &option,
                                 const char *name, SetScope variable_scope, bool reset_all) {
 	config.CheckLock(option.name);
+	if (!reset_all) {
+		Settings::CheckChange(context.client, Identifier(name), option.access, variable_scope);
+	}
 
 	if (option.default_value) {
 		// RESET on an untouched generic option is a no-op — don't fire

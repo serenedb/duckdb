@@ -54,6 +54,7 @@ void PhysicalSet::SetVariable(ClientContext &context, const Identifier &name, Se
 				throw InvalidInputException("Extension parameter %s was not found after autoloading", name);
 			}
 		}
+		Settings::CheckChange(context, name, extension_option.access, GetSettingScope(extension_option, scope));
 		// Invoke the pre-SET observer after resolution so the handler only sees
 		// valid option names and can safely snapshot the current value.
 		Value casted_value = value.CastAs(context, extension_option.type);
@@ -64,6 +65,7 @@ void PhysicalSet::SetVariable(ClientContext &context, const Identifier &name, Se
 		return;
 	}
 	SetScope variable_scope = GetSettingScope(*option, scope);
+	Settings::CheckChange(context, name, option->access, variable_scope);
 	Value input_val = value.CastAs(context, DBConfig::ParseLogicalType(option->parameter_type));
 	if (context.setting_change_handler) {
 		context.setting_change_handler(context, name.GetIdentifierName(), scope, false);

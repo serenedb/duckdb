@@ -130,12 +130,6 @@ public:
 	//! the wire layer at connect time; updated on SET ROLE if applicable.
 	string session_user;
 
-	//! Filter for settings listings (duckdb_settings(), SHOW ALL, pg_settings).
-	//! Return false to hide the setting from listings. SET / SHOW <name> are
-	//! unaffected. nullptr = show everything.
-	typedef bool (*setting_visibility_t)(ClientContext &context, const string &name);
-	setting_visibility_t setting_visibility = nullptr;
-
 	//! Invoked before a SET/RESET <name> is applied. Used by SereneDB to track
 	//! session-level changes for PG-style rollback inside a transaction.
 	//! nullptr handler = no tracking.
@@ -148,8 +142,6 @@ public:
 
 	typedef bool (*database_visibility_t)(ClientContext &context, AttachedDatabase &database);
 	database_visibility_t database_visibility = nullptr;
-
-	setting_visibility_t setting_readable = nullptr;
 
 	typedef void (*entry_reference_handler_t)(ClientContext &context, const RoleAccess &role, CatalogEntry &entry);
 	entry_reference_handler_t entry_reference_handler = nullptr;
