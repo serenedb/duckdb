@@ -241,8 +241,6 @@ struct BlockCacheReadAhead {
 enum class BlockCachePrefetch : uint8_t { HINT, NEED };
 
 struct BlockCacheStatistics {
-	//! Memory the blocks may use: the buffer pool's limit, which they share with everything else
-	idx_t capacity = 0;
 	//! Memory of the blocks the buffer pool holds for the cache
 	idx_t used = 0;
 	//! Blocks the cache knows, in memory, in temporary files or evicted
@@ -351,7 +349,6 @@ public:
 	void StopFetching();
 
 private:
-	friend class BlockCachePin;
 	friend class BlockCacheBlocks;
 	friend class BlockCacheFile;
 	friend class BlockCacheFetchTask;

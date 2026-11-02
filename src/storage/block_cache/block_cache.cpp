@@ -56,9 +56,7 @@ BlockCachePin BlockCachePin::Share(idx_t offset, idx_t size_p) {
 		return {};
 	}
 	D_ASSERT(offset <= size && size_p <= size - offset);
-	BlockCachePin result(handle.Share(), size_p);
-	result.data = data + offset;
-	return result;
+	return BlockCachePin(handle.Share(), data + offset, size_p);
 }
 
 //===--------------------------------------------------------------------===//
@@ -302,9 +300,8 @@ BlockCache &BlockCache::Get(DatabaseInstance &db) {
 BlockCachePin BlockCache::AllocateUncached(DatabaseInstance &db, idx_t size) {
 	auto buffer = BufferManager::GetBufferManager(db).Allocate(MemoryTag::EXTERNAL_FILE_CACHE, size);
 	buffer.GetBlockHandle()->GetMemory().SetDestroyBufferUpon(DestroyBufferUpon::UNPIN);
-	BlockCachePin result(std::move(buffer), size);
-	result.data = result.handle.GetFileBuffer().InternalBuffer();
-	return result;
+	const auto data = buffer.GetFileBuffer().InternalBuffer();
+	return BlockCachePin(std::move(buffer), data, size);
 }
 
 void BlockCache::DropBlocks(BlockCacheBlocks &blocks) {
@@ -523,10 +520,7 @@ bool BlockCache::PinPresent(Slot &slot, idx_t size, BlockCachePin &result, optio
 		return false;
 	}
 	missing = value;
-	if (!memory) {
-		return false;
-	}
-	if (IsDropped(*memory)) {
+	if (!memory || IsDropped(*memory)) {
 		return false;
 	}
 	auto owner = memory->GetOwner();
@@ -566,22 +560,19 @@ BufferHandle BlockCache::AllocateBlock(const BlockCacheFile &file, Slot &slot) {
 }
 
 void BlockCache::Publish(BlockCacheBlocks &blocks, Slot &slot, BufferHandle &buffer, bool shared) {
-	const auto value = slot.load(std::memory_order_relaxed);
-	D_ASSERT(value & SLOT_LOADING);
-	if (AsMemory(value)) {
-		slot.store(value & ~SLOT_LOADING, std::memory_order_release);
-	} else if (shared) {
-		auto handle = buffer.GetBlockHandle();
-		const auto memory = reinterpret_cast<uintptr_t>(&handle->GetMemory());
-		{
-			annotated_lock_guard<annotated_mutex> guard(blocks.lock);
-			blocks.handles.push_back(std::move(handle));
-		}
-		block_count.fetch_add(1, std::memory_order_relaxed);
-		slot.store(memory, std::memory_order_release);
-	} else {
-		slot.store(0, std::memory_order_release);
+	D_ASSERT(slot.load(std::memory_order_relaxed) & SLOT_LOADING);
+	if (!shared || AsMemory(slot.load(std::memory_order_relaxed))) {
+		Unclaim(slot);
+		return;
 	}
+	auto handle = buffer.GetBlockHandle();
+	const auto memory = reinterpret_cast<uintptr_t>(&handle->GetMemory());
+	{
+		annotated_lock_guard<annotated_mutex> guard(blocks.lock);
+		blocks.handles.push_back(std::move(handle));
+	}
+	block_count.fetch_add(1, std::memory_order_relaxed);
+	slot.store(memory, std::memory_order_release);
 	Wake(slot);
 }
 
@@ -659,12 +650,11 @@ void BlockCache::Fetch(BlockCacheFile &file, const Run &run, std::span<optional_
 		}
 		TaskScheduler::BlockingScope blocking;
 		for (idx_t i = first; i <= last; i++) {
-			if (slots[i]) {
-				buffers[i] = AllocateBlock(file, *slots[i]);
+			if (!slots[i]) {
+				continue;
 			}
-		}
-		for (idx_t i = first; i <= last; i++) {
-			if (slots[i] && !buffers[i].IsValid()) {
+			buffers[i] = AllocateBlock(file, *slots[i]);
+			if (!buffers[i].IsValid()) {
 				Unclaim(*slots[i]);
 				slots[i] = nullptr;
 			}
@@ -1116,7 +1106,6 @@ void BlockCache::SetEnabled(bool enabled_p) {
 
 BlockCacheStatistics BlockCache::GetStatistics() const {
 	BlockCacheStatistics result;
-	result.capacity = buffer_manager.GetMaxMemory();
 	for (auto &info : buffer_manager.GetMemoryUsageInfo()) {
 		if (info.tag == MemoryTag::EXTERNAL_FILE_CACHE) {
 			result.used = info.size;
