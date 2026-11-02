@@ -621,6 +621,8 @@ static vector<QualifiedName> TransformGrantTarget(PEGTransformer &transformer, P
 			info.entry_catalog_type = CatalogType::SEQUENCE_ENTRY;
 		} else {
 			info.entry_catalog_type = CatalogType::MACRO_ENTRY;
+			info.include_functions = kind != "PROCEDURES";
+			info.include_procedures = kind != "FUNCTIONS";
 		}
 		info.all_in_schema = true;
 		for (auto &schema_ref : PEGTransformerFactory::ExtractParseResultsFromList(target.GetChild(4))) {

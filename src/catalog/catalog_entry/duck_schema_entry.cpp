@@ -516,7 +516,14 @@ static void AlterAllInSchema(DuckSchemaEntry &schema, CatalogTransaction transac
 	for (auto kind : kinds) {
 		vector<Identifier> names;
 		schema.GetCatalogSet(kind).Scan(transaction, [&](CatalogEntry &entry) {
-			if (!entry.internal) {
+			if (entry.internal) {
+				return;
+			}
+			if (kind != CatalogType::MACRO_ENTRY && kind != CatalogType::TABLE_MACRO_ENTRY) {
+				names.push_back(entry.name);
+				return;
+			}
+			if (entry.Cast<MacroCatalogEntry>().is_procedure ? info.include_procedures : info.include_functions) {
 				names.push_back(entry.name);
 			}
 		});

@@ -573,6 +573,18 @@
         "id": 323,
         "name": "drop_owned_role_id",
         "type": "idx_t"
+      },
+      {
+        "id": 324,
+        "name": "include_functions",
+        "type": "bool",
+        "default": "true"
+      },
+      {
+        "id": 325,
+        "name": "include_procedures",
+        "type": "bool",
+        "default": "true"
       }
     ]
   },
