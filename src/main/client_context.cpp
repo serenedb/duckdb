@@ -9,6 +9,7 @@
 #include "duckdb/common/chrono.hpp"
 #include "duckdb/common/error_data.hpp"
 #include "duckdb/common/exception/transaction_exception.hpp"
+#include "duckdb/common/file_system.hpp"
 #include "duckdb/common/progress_bar/progress_bar.hpp"
 #include "duckdb/common/serializer/buffered_file_writer.hpp"
 #include "duckdb/common/time_point.hpp"
@@ -16,6 +17,7 @@
 #include "duckdb/common/types/uuid.hpp"
 #include "duckdb/execution/column_binding_resolver.hpp"
 #include "duckdb/execution/physical_plan_generator.hpp"
+#include "duckdb/function/scalar/string_common.hpp"
 #include "duckdb/main/appender.hpp"
 #include "duckdb/main/attached_database.hpp"
 #include "duckdb/main/client_context_file_opener.hpp"
@@ -1084,14 +1086,33 @@ void ClientContext::CheckFileAccess(const string &path, RoleCapability sufficien
 	const auto holds = [&](const RoleAccess &role) {
 		return role.is_superuser || (role.capabilities & sufficient) != RoleCapability::None;
 	};
+	const auto covers = [&](const FileGrant &grant) {
+		if ((grant.capability & sufficient) == RoleCapability::None) {
+			return false;
+		}
+		if (grant.path == path) {
+			return true;
+		}
+		if (!grant.path.empty() && StringUtil::StartsWith(path, grant.path) &&
+		    (StringUtil::EndsWith(grant.path, "/") || path[grant.path.size()] == '/')) {
+			return true;
+		}
+		return FileSystem::HasGlob(grant.path) &&
+		       Glob(path.c_str(), path.size(), grant.path.c_str(), grant.path.size());
+	};
 	bool allowed;
-	if (file_access_scope) {
-		allowed =
-		    file_access_scope->catalog || holds(file_access_scope->role ? *file_access_scope->role : CurrentRole());
-	} else if (auto properties = ActiveStatementProperties(); properties && properties->file_access_authorized) {
-		allowed = (*properties->file_access_authorized & sufficient) != RoleCapability::None;
+	if (access_scope) {
+		allowed = access_scope->catalog || holds(access_scope->role ? *access_scope->role : CurrentRole());
+		if (allowed && access_scope->grants &&
+		    std::none_of(access_scope->grants->begin(), access_scope->grants->end(), covers)) {
+			access_scope->grants.get_mutable()->push_back(FileGrant {path, sufficient});
+		}
+	} else if (holds(CurrentRole())) {
+		allowed = true;
 	} else {
-		allowed = holds(CurrentRole());
+		auto properties = ActiveStatementProperties();
+		allowed = properties && (properties->catalog_file_access ||
+		                         std::any_of(properties->file_grants.begin(), properties->file_grants.end(), covers));
 	}
 	if (!allowed) {
 		throw PermissionException(

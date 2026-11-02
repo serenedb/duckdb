@@ -13,6 +13,7 @@
 #include "duckdb/common/enums/role_capability.hpp"
 #include "duckdb/common/identifier.hpp"
 #include "duckdb/common/optional_idx.hpp"
+#include "duckdb/common/string.hpp"
 #include "duckdb/common/unordered_set.hpp"
 #include "duckdb/common/vector.hpp"
 #include "duckdb/common/enums/database_modification_type.hpp"
@@ -78,6 +79,11 @@ class CatalogEntry;
 class ClientContext;
 class ViewCatalogEntry;
 
+struct FileGrant {
+	string path;
+	RoleCapability capability = RoleCapability::None;
+};
+
 //! A struct containing various properties of a SQL statement
 struct StatementProperties {
 	StatementProperties()
@@ -132,7 +138,8 @@ struct StatementProperties {
 	//! Whether or not the statement ALWAYS requires a rebind
 	bool always_require_rebind;
 	optional<ReplicationRole> replication_role;
-	optional<RoleCapability> file_access_authorized;
+	vector<FileGrant> file_grants;
+	bool catalog_file_access = false;
 	bool hide_constraint_keys = false;
 
 	bool IsReadOnly() {

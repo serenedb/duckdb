@@ -259,9 +259,10 @@ BoundStatement Binder::BindTableFunctionInternal(BoundTableFunction &table_funct
 	// the function binder has placed them already, but not for a table in-out call or a direct bind
 	table_function.GetSignature().FillNamedDefaults(context, named_parameters);
 	table_function.SetCallArguments(parameters, named_parameters);
-	ClientContext::FileAccessScope file_access_scope;
-	file_access_scope.role = &CheckAs();
-	ClientContext::FileAccessScopeGuard file_access_guard(context, file_access_scope);
+	ClientContext::AccessScope access_scope;
+	access_scope.role = &CheckAs();
+	access_scope.grants = &GetStatementProperties().file_grants;
+	ClientContext::AccessScopeGuard access_guard(context, access_scope);
 	if (table_function.bind || table_function.bind_replace || table_function.bind_operator) {
 		TableFunctionBindInput bind_input(parameters, named_parameters, input_table_types, input_table_names,
 		                                  table_function.function_info.get(), this, table_function, ref, input_plan);
@@ -392,10 +393,6 @@ BoundStatement Binder::BindTableFunctionInternal(BoundTableFunction &table_funct
 			ThrowPermissionDenied(schema);
 		}
 		CheckTableRead(binding, *table);
-	} else if (!CheckAs().is_superuser &&
-	           !DBConfig::GetConfig(context).file_free_functions.count(get->function.GetName())) {
-		auto &file_access = GetStatementProperties().file_access_authorized;
-		file_access = file_access ? *file_access & CheckAs().capabilities : CheckAs().capabilities;
 	}
 	AddPostgresSetofColumnAlias(bind_context, bind_index, setof_column_name);
 

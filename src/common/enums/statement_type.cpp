@@ -102,6 +102,7 @@ void StatementProperties::RegisterDBRead(Catalog &catalog, ClientContext &contex
 	D_ASSERT(entry.first->second == catalog_identity);
 	if (entry.second) {
 		context.CheckDatabaseReference(context.CurrentRole(), catalog);
+		catalog_file_access |= !catalog.IsDuckCatalog();
 	}
 }
 
@@ -113,6 +114,7 @@ void StatementProperties::RegisterDBModify(Catalog &catalog, ClientContext &cont
 		// new entry - set the identity
 		entry.first->second.identity = catalog_identity;
 		context.CheckDatabaseReference(context.CurrentRole(), catalog);
+		catalog_file_access |= !catalog.IsDuckCatalog();
 	} else {
 		// existing entry - verify this has the same identity
 		D_ASSERT(entry.first->second.identity == catalog_identity);

@@ -146,40 +146,44 @@ public:
 	typedef void (*entry_reference_handler_t)(ClientContext &context, const RoleAccess &role, CatalogEntry &entry);
 	entry_reference_handler_t entry_reference_handler = nullptr;
 
-	struct FileAccessScope {
+	struct AccessScope {
 		optional_ptr<const RoleAccess> role;
 		bool catalog = false;
+		optional_ptr<vector<FileGrant>> grants;
 	};
-	optional_ptr<const FileAccessScope> file_access_scope;
+	optional_ptr<const AccessScope> access_scope;
 	optional_ptr<const StatementProperties> planned_properties;
 
 	shared_ptr<const SecuritySnapshot> security;
 	idx_t current_role_id = DConstants::INVALID_INDEX;
 	idx_t session_role = DConstants::INVALID_INDEX;
 	bool hide_constraint_keys = false;
-	bool hide_secrets = false;
 
-	class FileAccessScopeGuard {
+	class AccessScopeGuard {
 	public:
-		FileAccessScopeGuard(optional_ptr<ClientContext> context_p, const FileAccessScope &scope)
+		AccessScopeGuard(optional_ptr<ClientContext> context_p, const AccessScope &scope)
 		    : context(context_p && !context_p->ActiveStatementProperties() ? context_p : nullptr),
-		      previous(context ? context->file_access_scope : nullptr) {
+		      previous(context ? context->access_scope : nullptr) {
 			if (context) {
-				context->file_access_scope = &scope;
+				context->access_scope = &scope;
 			}
 		}
-		~FileAccessScopeGuard() {
+		~AccessScopeGuard() {
 			if (context) {
-				context->file_access_scope = previous;
+				context->access_scope = previous;
 			}
 		}
-		FileAccessScopeGuard(const FileAccessScopeGuard &) = delete;
-		FileAccessScopeGuard &operator=(const FileAccessScopeGuard &) = delete;
+		AccessScopeGuard(const AccessScopeGuard &) = delete;
+		AccessScopeGuard &operator=(const AccessScopeGuard &) = delete;
 
 	private:
 		optional_ptr<ClientContext> context;
-		optional_ptr<const FileAccessScope> previous;
+		optional_ptr<const AccessScope> previous;
 	};
+
+	bool SecretsVisible() const {
+		return !access_scope || !access_scope->role || access_scope->role->is_superuser;
+	}
 
 public:
 	//! Connect this client to a remote-style AttachedDatabase. Subsequent non-control SQL routes via
