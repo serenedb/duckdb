@@ -681,21 +681,25 @@ void BlockCache::Fetch(BlockCacheFile &file, const Run &run, std::span<optional_
 		const auto start = (run.first_block + first) * BLOCK_SIZE;
 		const auto end = MinValue(file.GetSize(), (run.first_block + last + 1) * BLOCK_SIZE);
 		auto source = file.Source();
-		if (first == last) {
-			auto data = buffers[first].GetDataMutable();
-			source->Read(data, end - start, start);
-			memset(data + (end - start), 0, BLOCK_SIZE - (end - start));
-		} else {
-			auto staging = Allocator::DefaultAllocator().Allocate(end - start);
-			source->Read(staging.get(), end - start, start);
-			for (idx_t i = first; i <= last; i++) {
-				if (!slots[i]) {
-					continue;
-				}
+		AllocatedData gap;
+		vector<FileReadTarget> targets;
+		targets.reserve(last - first + 1);
+		for (idx_t i = first; i <= last; i++) {
+			const auto block_bytes = file.BlockBytes(run.first_block + i);
+			if (slots[i]) {
+				targets.push_back({buffers[i].GetDataMutable(), block_bytes});
+				continue;
+			}
+			if (!gap.get()) {
+				gap = Allocator::DefaultAllocator().Allocate(BLOCK_SIZE);
+			}
+			targets.push_back({gap.get(), block_bytes});
+		}
+		source->file_system.ReadScattered(*source, targets, start);
+		for (idx_t i = first; i <= last; i++) {
+			if (slots[i]) {
 				const auto block_bytes = file.BlockBytes(run.first_block + i);
-				auto data = buffers[i].GetDataMutable();
-				memcpy(data, staging.get() + (i - first) * BLOCK_SIZE, block_bytes);
-				memset(data + block_bytes, 0, BLOCK_SIZE - block_bytes);
+				memset(buffers[i].GetDataMutable() + block_bytes, 0, BLOCK_SIZE - block_bytes);
 			}
 		}
 		const auto valid_until = source->file_system.GetCacheValidUntil(*source);

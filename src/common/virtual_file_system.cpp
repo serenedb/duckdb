@@ -250,6 +250,10 @@ void VirtualFileSystem::Read(FileHandle &handle, void *buffer, int64_t nr_bytes,
 	handle.file_system.Read(handle, buffer, nr_bytes, location);
 }
 
+void VirtualFileSystem::ReadScattered(FileHandle &handle, std::span<const FileReadTarget> targets, idx_t location) {
+	handle.file_system.ReadScattered(handle, targets, location);
+}
+
 void VirtualFileSystem::Write(FileHandle &handle, void *buffer, int64_t nr_bytes, idx_t location) {
 	handle.file_system.Write(handle, buffer, nr_bytes, location);
 }
