@@ -17,7 +17,8 @@ unique_ptr<MemoryMappedFile> OpenerFileSystem::MemoryMapFile(const OpenFileInfo 
                                                              const MMapOptions &options,
                                                              optional_ptr<FileOpener> opener) {
 	VerifyNoOpener(opener);
-	VerifyCanAccessFile(path.path);
+	VerifyCanAccessFile(path.path,
+	                    flags.OpenForWriting() ? RoleCapability::WriteServerFiles : RoleCapability::ReadServerFiles);
 	if (IsDuckDBExtensionName(path.path)) {
 		VerifyCanAccessExtension(path.path, flags);
 	}
@@ -25,13 +26,13 @@ unique_ptr<MemoryMappedFile> OpenerFileSystem::MemoryMapFile(const OpenFileInfo 
 }
 
 shared_ptr<InputFile> OpenerFileSystem::OpenBlockFile(const string &path) {
-	VerifyCanAccessFile(path);
+	VerifyCanAccessFile(path, RoleCapability::ReadServerFiles);
 	return GetFileSystem().OpenBlockFile(path);
 }
 
 unique_ptr<FileWriter> OpenerFileSystem::OpenFileWriter(const string &path, optional_ptr<FileOpener> opener) {
 	VerifyNoOpener(opener);
-	VerifyCanAccessFile(path);
+	VerifyCanAccessFile(path, RoleCapability::WriteServerFiles);
 	if (IsDuckDBExtensionName(path)) {
 		VerifyCanAccessExtension(path, FileFlags::FILE_FLAGS_WRITE);
 	}
@@ -40,7 +41,7 @@ unique_ptr<FileWriter> OpenerFileSystem::OpenFileWriter(const string &path, opti
 
 void OpenerFileSystem::Compact(const vector<string> &paths) {
 	for (auto &path : paths) {
-		VerifyCanAccessFile(path);
+		VerifyCanAccessFile(path, RoleCapability::WriteServerFiles);
 	}
 	GetFileSystem().Compact(paths);
 }
@@ -48,7 +49,7 @@ void OpenerFileSystem::Compact(const vector<string> &paths) {
 unique_ptr<MultiFileList> OpenerFileSystem::GlobFilesExtended(const string &path, const FileGlobInput &input,
                                                               optional_ptr<FileOpener> opener) {
 	VerifyNoOpener(opener);
-	VerifyCanAccessFile(path);
+	VerifyCanAccessFile(path, RoleCapability::ReadServerFiles);
 	return GetFileSystem().Glob(path, input, GetOpener());
 }
 
@@ -57,7 +58,7 @@ void OpenerFileSystem::VerifyNoOpener(optional_ptr<FileOpener> opener) {
 		throw InternalException("OpenerFileSystem cannot take an opener - the opener is pushed automatically");
 	}
 }
-void OpenerFileSystem::VerifyCanAccessFileInternal(const string &path, FileType type) {
+void OpenerFileSystem::VerifyCanAccessFileInternal(const string &path, FileType type, RoleCapability sufficient) {
 	if (!ChecksAccess()) {
 		return;
 	}
@@ -67,7 +68,7 @@ void OpenerFileSystem::VerifyCanAccessFileInternal(const string &path, FileType 
 	}
 	auto context = opener->TryGetClientContext();
 	if (context) {
-		context->CheckFileAccess(path);
+		context->CheckFileAccess(path, sufficient);
 	}
 	auto db = opener->TryGetDatabase();
 	if (!db) {
@@ -81,12 +82,12 @@ void OpenerFileSystem::VerifyCanAccessFileInternal(const string &path, FileType 
 	}
 }
 
-void OpenerFileSystem::VerifyCanAccessFile(const string &path) {
-	VerifyCanAccessFileInternal(path, FileType::FILE_TYPE_REGULAR);
+void OpenerFileSystem::VerifyCanAccessFile(const string &path, RoleCapability sufficient) {
+	VerifyCanAccessFileInternal(path, FileType::FILE_TYPE_REGULAR, sufficient);
 }
 
-void OpenerFileSystem::VerifyCanAccessDirectory(const string &path) {
-	VerifyCanAccessFileInternal(path, FileType::FILE_TYPE_DIR);
+void OpenerFileSystem::VerifyCanAccessDirectory(const string &path, RoleCapability sufficient) {
+	VerifyCanAccessFileInternal(path, FileType::FILE_TYPE_DIR, sufficient);
 }
 
 } // namespace duckdb

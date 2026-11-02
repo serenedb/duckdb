@@ -10,6 +10,7 @@
 
 #include "duckdb/common/constants.hpp"
 #include "duckdb/common/enums/result_eagerness.hpp"
+#include "duckdb/common/enums/role_capability.hpp"
 #include "duckdb/common/identifier.hpp"
 #include "duckdb/common/optional_idx.hpp"
 #include "duckdb/common/table_index.hpp"
@@ -144,7 +145,7 @@ struct StatementProperties {
 	bool executes_prepared_statement = false;
 	idx_t binding_generation = 0;
 	optional<ReplicationRole> replication_role;
-	optional<bool> file_access_authorized;
+	optional<RoleCapability> file_access_authorized;
 	bool check_database_references = false;
 	bool hide_constraint_keys = false;
 

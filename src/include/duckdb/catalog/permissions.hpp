@@ -10,6 +10,7 @@
 
 #include "duckdb/common/constants.hpp"
 #include "duckdb/common/enums/catalog_type.hpp"
+#include "duckdb/common/enums/role_capability.hpp"
 #include "duckdb/common/identifier.hpp"
 #include "duckdb/common/optional_idx.hpp"
 #include "duckdb/common/optional_ptr.hpp"
@@ -172,6 +173,7 @@ struct Permissions {
 struct RoleAccess {
 	idx_t role = 0;
 	RoleOption options = RoleOption::None;
+	RoleCapability capabilities = RoleCapability::None;
 	bool is_superuser = false;
 	std::span<const uint64_t> closure_filter;
 	std::span<const idx_t> closure;
@@ -179,6 +181,9 @@ struct RoleAccess {
 
 	bool Has(RoleOption option) const {
 		return HasOption(options, option);
+	}
+	bool Has(RoleCapability capability) const {
+		return is_superuser || (capabilities & capability) == capability;
 	}
 	bool Uses(idx_t other) const;
 	bool MemberOf(idx_t other) const {
@@ -201,6 +206,7 @@ public:
 	struct Role {
 		idx_t role = 0;
 		RoleOption options = RoleOption::None;
+		RoleCapability capabilities = RoleCapability::None;
 		vector<idx_t> closure;
 		vector<idx_t> settable;
 	};

@@ -9,6 +9,7 @@
 #pragma once
 
 #include "duckdb/storage/storage_info.hpp"
+#include "duckdb/common/enums/role_capability.hpp"
 #include "duckdb/common/allocator.hpp"
 #include "duckdb/common/case_insensitive_map.hpp"
 #include "duckdb/common/cgroups.hpp"
@@ -243,7 +244,7 @@ public:
 	create_secret_storage_t create_secret_storage = nullptr;
 	//! Database configuration variables as controlled by SET
 	GlobalUserSettings user_settings;
-	identifier_set_t superuser_functions;
+	identifier_map_t<RoleCapability> superuser_functions;
 	identifier_set_t file_free_functions;
 	identifier_set_t builtin_relations;
 	unordered_map<string, ForeignDataWrapper> foreign_data_wrappers;
