@@ -535,10 +535,42 @@ AclMode RoleAccess::GrantableModes(std::span<const AclItem> acl) const {
 	return Held(*this, acl, &AclItem::grant_option);
 }
 
-SecuritySnapshot::SecuritySnapshot(vector<Role> roles_p, unordered_map<idx_t, Node> nodes_p)
-    : nodes(std::move(nodes_p)) {
+static vector<idx_t> Reachable(const unordered_map<idx_t, SecuritySnapshot::Node> &nodes, idx_t role,
+                               bool Membership::*option) {
+	unordered_set<idx_t> seen {role};
+	vector<idx_t> work {role};
+	while (!work.empty()) {
+		auto it = nodes.find(work.back());
+		work.pop_back();
+		if (it == nodes.end()) {
+			continue;
+		}
+		for (auto &edge : it->second.member_of) {
+			if ((!option || edge.*option) && nodes.count(edge.role) && seen.insert(edge.role).second) {
+				work.push_back(edge.role);
+			}
+		}
+	}
+	vector<idx_t> result(seen.begin(), seen.end());
+	std::sort(result.begin(), result.end());
+	return result;
+}
+
+SecuritySnapshot::SecuritySnapshot(unordered_map<idx_t, Node> nodes_p, unordered_map<string, idx_t> database_owners_p,
+                                   idx_t database_owner_role_p)
+    : nodes(std::move(nodes_p)), database_owners(std::move(database_owners_p)),
+      database_owner_role(database_owner_role_p) {
+	vector<Role> roles_p;
+	roles_p.reserve(nodes.size());
 	for (auto &[oid, node] : nodes) {
 		by_name.emplace(node.name, oid);
+		auto closure = Reachable(nodes, oid, &Membership::inherit_option);
+		auto capabilities = RoleCapability::None;
+		for (auto member : closure) {
+			capabilities |= nodes.find(member)->second.capabilities;
+		}
+		roles_p.push_back(
+		    Role {oid, node.options, capabilities, std::move(closure), Reachable(nodes, oid, &Membership::set_option)});
 	}
 	std::sort(roles_p.begin(), roles_p.end(), [](const Role &lhs, const Role &rhs) { return lhs.role < rhs.role; });
 	idx_t total = 0;
@@ -588,47 +620,37 @@ SecuritySnapshot::SecuritySnapshot(vector<Role> roles_p, unordered_map<idx_t, No
 SecuritySnapshot::~SecuritySnapshot() {
 }
 
-static vector<idx_t> Reachable(const unordered_map<idx_t, SecuritySnapshot::Node> &nodes, idx_t role,
-                               bool Membership::*option) {
-	unordered_set<idx_t> seen {role};
-	vector<idx_t> work {role};
-	while (!work.empty()) {
-		auto it = nodes.find(work.back());
-		work.pop_back();
-		if (it == nodes.end()) {
-			continue;
-		}
-		for (auto &edge : it->second.member_of) {
-			if ((!option || edge.*option) && nodes.count(edge.role) && seen.insert(edge.role).second) {
-				work.push_back(edge.role);
-			}
-		}
-	}
-	vector<idx_t> result(seen.begin(), seen.end());
-	std::sort(result.begin(), result.end());
-	return result;
+shared_ptr<const SecuritySnapshot> SecuritySnapshot::Build(DuckCatalog &cluster, CatalogTransaction transaction) {
+	unordered_map<idx_t, Node> nodes;
+	cluster.GetCatalogSet(CatalogType::ROLE_ENTRY).Scan(transaction, [&](CatalogEntry &entry) {
+		auto &role = entry.Cast<RoleEntry>();
+		nodes[role.oid] = Node {role.name.GetIdentifierName(), role.Options(), role.Capabilities(), role.MemberOf()};
+	});
+	unordered_map<string, idx_t> database_owners;
+	cluster.GetCatalogSet(CatalogType::DATABASE_ENTRY).Scan(transaction, [&](CatalogEntry &entry) {
+		database_owners.emplace(entry.name.GetIdentifierName(), entry.permissions.owner);
+	});
+	return make_shared_ptr<const SecuritySnapshot>(std::move(nodes), std::move(database_owners),
+	                                               DBConfig::GetConfig(cluster.GetDatabase()).database_owner_role);
 }
 
-shared_ptr<const SecuritySnapshot> SecuritySnapshot::Build(CatalogSet &set, CatalogTransaction transaction) {
-	unordered_map<idx_t, Node> nodes;
-	unordered_map<idx_t, RoleCapability> declared;
-	set.Scan(transaction, [&](CatalogEntry &entry) {
-		auto &role = entry.Cast<RoleEntry>();
-		nodes[role.oid] = Node {role.name.GetIdentifierName(), role.Options(), role.MemberOf()};
-		declared[role.oid] = role.Capabilities();
-	});
-	vector<Role> roles;
-	roles.reserve(nodes.size());
-	for (auto &[oid, node] : nodes) {
-		auto closure = Reachable(nodes, oid, &Membership::inherit_option);
-		auto capabilities = RoleCapability::None;
-		for (auto member : closure) {
-			capabilities |= declared[member];
-		}
-		roles.push_back(
-		    Role {oid, node.options, capabilities, std::move(closure), Reachable(nodes, oid, &Membership::set_option)});
+shared_ptr<const SecuritySnapshot> SecuritySnapshot::ForDatabase(const Identifier &database) const {
+	if (!nodes.count(database_owner_role)) {
+		return nullptr;
 	}
-	return make_shared_ptr<const SecuritySnapshot>(std::move(roles), std::move(nodes));
+	auto owner = database_owners.find(database.GetIdentifierName());
+	if (owner == database_owners.end() || !nodes.count(owner->second)) {
+		return nullptr;
+	}
+	lock_guard<mutex> guard(derived_lock);
+	auto &result = derived[owner->second];
+	if (!result) {
+		auto implied = nodes;
+		implied[owner->second].member_of.push_back(
+		    Membership {database_owner_role, database_owner_role, false, true, true});
+		result = make_shared_ptr<const SecuritySnapshot>(std::move(implied), unordered_map<string, idx_t>(), 0);
+	}
+	return result;
 }
 
 optional_ptr<const RoleAccess> SecuritySnapshot::Access(idx_t role) const {

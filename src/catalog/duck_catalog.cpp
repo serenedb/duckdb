@@ -351,7 +351,7 @@ void DuckCatalog::PublishSecurity() {
 		return;
 	}
 	db.PublishSecurity(
-	    SecuritySnapshot::Build(*roles, CatalogTransaction(db, TRANSACTION_ID_START - 1, durable.visibility_bound)),
+	    SecuritySnapshot::Build(*this, CatalogTransaction(db, TRANSACTION_ID_START - 1, durable.visibility_bound)),
 	    durable.catalog_version);
 }
 

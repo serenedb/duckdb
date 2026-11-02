@@ -13,6 +13,7 @@
 #include "duckdb/common/enums/catalog_type.hpp"
 #include "duckdb/common/enums/role_capability.hpp"
 #include "duckdb/common/identifier.hpp"
+#include "duckdb/common/mutex.hpp"
 #include "duckdb/common/optional_idx.hpp"
 #include "duckdb/common/optional_ptr.hpp"
 #include "duckdb/common/serializer/deserializer.hpp"
@@ -32,6 +33,7 @@ class CatalogEntry;
 class CatalogSet;
 class ClientContext;
 class ColumnList;
+class DuckCatalog;
 
 constexpr idx_t ACL_ID_PUBLIC = 0;
 
@@ -248,16 +250,19 @@ public:
 	struct Node {
 		string name;
 		RoleOption options = RoleOption::None;
+		RoleCapability capabilities = RoleCapability::None;
 		vector<Membership> member_of;
 	};
 
-	SecuritySnapshot(vector<Role> roles, unordered_map<idx_t, Node> nodes);
+	SecuritySnapshot(unordered_map<idx_t, Node> nodes, unordered_map<string, idx_t> database_owners,
+	                 idx_t database_owner_role);
 	~SecuritySnapshot();
 
 	SecuritySnapshot(const SecuritySnapshot &) = delete;
 	SecuritySnapshot &operator=(const SecuritySnapshot &) = delete;
 
-	DUCKDB_API static shared_ptr<const SecuritySnapshot> Build(CatalogSet &roles, CatalogTransaction transaction);
+	DUCKDB_API static shared_ptr<const SecuritySnapshot> Build(DuckCatalog &cluster, CatalogTransaction transaction);
+	shared_ptr<const SecuritySnapshot> ForDatabase(const Identifier &database) const;
 
 	optional_ptr<const RoleAccess> Access(idx_t role) const;
 	optional_ptr<const Node> Find(idx_t role) const;
@@ -270,6 +275,10 @@ private:
 	vector<RoleAccess> roles;
 	unordered_map<idx_t, Node> nodes;
 	unordered_map<string, idx_t> by_name;
+	unordered_map<string, idx_t> database_owners;
+	idx_t database_owner_role;
+	mutable mutex derived_lock;
+	mutable unordered_map<idx_t, shared_ptr<const SecuritySnapshot>> derived;
 };
 
 DUCKDB_API bool IsUnowned(const CatalogEntry &entry);

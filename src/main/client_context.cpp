@@ -1086,7 +1086,10 @@ void ClientContext::SetCurrentRole(idx_t role) {
 }
 
 void ClientContext::InstallSecurity(shared_ptr<const SecuritySnapshot> snapshot) {
-	security = std::move(snapshot);
+	security_database = client_data->default_database;
+	auto database = snapshot ? snapshot->ForDatabase(security_database) : nullptr;
+	security_base = std::move(snapshot);
+	security = database ? std::move(database) : security_base;
 	ResolveCurrentRole();
 }
 
@@ -1100,14 +1103,15 @@ void ClientContext::RefreshSecurity() {
 			const auto version = cluster.GetCatalogVersion(*this).GetIndex();
 			if (!local_security || local_security_version != version) {
 				local_security_version = version;
-				local_security = SecuritySnapshot::Build(cluster.GetCatalogSet(CatalogType::ROLE_ENTRY),
-				                                         cluster.GetCatalogTransaction(*this));
+				local_security = SecuritySnapshot::Build(cluster, cluster.GetCatalogTransaction(*this));
 			}
-			InstallSecurity(local_security);
+			if (security_base != local_security || security_database != client_data->default_database) {
+				InstallSecurity(local_security);
+			}
 			return;
 		}
 	}
-	if (db->CurrentSecurity() != security.get()) {
+	if (db->CurrentSecurity() != security_base.get() || security_database != client_data->default_database) {
 		InstallSecurity(db->GetSecurity());
 	}
 }

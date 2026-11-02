@@ -509,6 +509,8 @@ private:
 	RoleAccess unknown_role;
 	shared_ptr<const SecuritySnapshot> local_security;
 	idx_t local_security_version = 0;
+	shared_ptr<const SecuritySnapshot> security_base;
+	Identifier security_database;
 };
 
 class ClientContextLock {
