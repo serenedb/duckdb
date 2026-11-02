@@ -577,7 +577,7 @@ BoundStatement Binder::Bind(TableFunctionRef &ref) {
 	auto &function = func_catalog.Cast<TableFunctionCatalogEntry>();
 	CheckCall(function);
 	if (!InViewBody()) {
-		context.CheckEntryReference(function);
+		context.CheckEntryReference(principal, function);
 	}
 
 	// bind the input parameters to the function - they are folded to constants after the overload is chosen

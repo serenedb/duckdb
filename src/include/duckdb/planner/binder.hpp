@@ -262,6 +262,7 @@ struct GlobalBinderState {
 	identifier_map_t<BoundMacroArgument> bound_macro_arguments;
 	vector<MacroParameterReference> macro_parameters;
 	idx_t macro_type_probing = 0;
+	unordered_map<idx_t, RoleAccess> role_access;
 	//! Statement properties
 	StatementProperties prop;
 	vector<shared_ptr<ColumnReadCheck>> column_reads;
@@ -420,6 +421,9 @@ public:
 	optional_ptr<const RoleAccess> caller;
 	void SetPrincipal(optional_ptr<const RoleAccess> principal_p);
 	optional_ptr<const RoleAccess> Caller() const;
+	const RoleAccess &AccessOf(idx_t role);
+	optional_ptr<const RoleAccess> FunctionBodyRole(optional_idx owner);
+	void BindAsFunctionBody(optional_ptr<const RoleAccess> role);
 	void BindAsFunctionBody(const SelectStatement &statement);
 	TableRefUse table_ref_use = TableRefUse::READ;
 	optional_ptr<const MergeQueryNode> on_conflict_merge;
@@ -551,7 +555,6 @@ private:
 	bool allow_procedure_call = false;
 	//! The set of bound views
 	reference_set_t<ViewCatalogEntry> bound_views;
-	RoleAccess owner_principal;
 	//! Used to retrieve CatalogEntry's
 	CatalogEntryRetriever entry_retriever;
 	//! Unnamed subquery index

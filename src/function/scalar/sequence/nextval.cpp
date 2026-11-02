@@ -87,8 +87,15 @@ unique_ptr<FunctionLocalState> NextValLocalFunction(ExpressionState &state, cons
 	auto &context = state.GetContext();
 	auto &info = bind_data->Cast<NextvalBindData>();
 	auto &sequence = info.sequence;
-	if (context.principal && !IsUnowned(sequence) &&
-	    !context.principal->CanAny(CatalogType::SEQUENCE_ENTRY, sequence.permissions, OP::MODES)) {
+	auto principal = context.principal;
+	if (principal && info.role.IsValid()) {
+		principal = context.security ? context.security->Access(info.role.GetIndex()) : nullptr;
+		if (!principal) {
+			ThrowPermissionDenied(sequence);
+		}
+	}
+	if (principal && !IsUnowned(sequence) &&
+	    !principal->CanAny(CatalogType::SEQUENCE_ENTRY, sequence.permissions, OP::MODES)) {
 		ThrowPermissionDenied(sequence);
 	}
 	auto &transaction = DuckTransaction::Get(context, sequence.catalog);
@@ -179,7 +186,9 @@ unique_ptr<FunctionData> NextValBind(BindScalarFunctionInput &input) {
 	}
 	auto &binder = input.GetBinder();
 	auto &seq = BindSequence(binder, Identifier(seqname.ToString()));
-	return make_uniq<NextvalBindData>(seq);
+	const auto caller = binder.Caller();
+	return make_uniq<NextvalBindData>(seq, caller && caller != binder.context.principal ? optional_idx(caller->role)
+	                                                                                    : optional_idx());
 }
 
 void Serialize(Serializer &serializer, const optional_ptr<FunctionData> bind_data, const BoundScalarFunction &) {
@@ -196,7 +205,7 @@ unique_ptr<FunctionData> Deserialize(Deserializer &deserializer, BoundScalarFunc
 	auto &seq_info = create_info->Cast<CreateSequenceInfo>();
 	auto &context = deserializer.Get<ClientContext &>();
 	auto &sequence = BindSequenceFromContext(context, seq_info.GetQualifiedName());
-	return make_uniq<NextvalBindData>(sequence);
+	return make_uniq<NextvalBindData>(sequence, optional_idx());
 }
 
 void NextValModifiedDatabases(ClientContext &context, FunctionModifiedDatabasesInput &input) {

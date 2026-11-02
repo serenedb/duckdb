@@ -151,7 +151,7 @@ public:
 
 	setting_visibility_t setting_readable = nullptr;
 
-	typedef void (*entry_reference_handler_t)(ClientContext &context, CatalogEntry &entry);
+	typedef void (*entry_reference_handler_t)(ClientContext &context, const RoleAccess &role, CatalogEntry &entry);
 	entry_reference_handler_t entry_reference_handler = nullptr;
 
 	struct FileAccessScope {
@@ -223,12 +223,12 @@ public:
 	bool CanSeeDatabase(AttachedDatabase &database) {
 		return !database_visibility || database_visibility(*this, database);
 	}
-	void CheckEntryReference(CatalogEntry &entry) {
-		if (entry_reference_handler) {
-			entry_reference_handler(*this, entry);
+	void CheckEntryReference(optional_ptr<const RoleAccess> role, CatalogEntry &entry) {
+		if (entry_reference_handler && role) {
+			entry_reference_handler(*this, *role, entry);
 		}
 	}
-	DUCKDB_API void CheckDatabaseReference(Catalog &catalog);
+	DUCKDB_API void CheckDatabaseReference(optional_ptr<const RoleAccess> role, Catalog &catalog);
 	DUCKDB_API optional_ptr<const StatementProperties> ActiveStatementProperties() const;
 	DUCKDB_API void WarnUser(const string &message);
 

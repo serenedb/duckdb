@@ -117,7 +117,7 @@ public:
 	                           unique_ptr<ParsedExpression> &expr, optional_ptr<const ExpressionBinder> caller);
 	BindResult BindMacroArgumentType(unique_ptr<ParsedExpression> &argument, idx_t depth);
 	unique_ptr<TableRef> BindTableMacroArguments(QueryNode &body, DummyBinding &binding,
-	                                             vector<unique_ptr<ParsedExpression>> &arguments, bool all);
+	                                             vector<unique_ptr<ParsedExpression>> &arguments, bool other_role);
 	static void MarkFunctionBody(ParsedExpression &body, optional_idx owner);
 	void ShareAliasReferences(unique_ptr<ParsedExpression> &expr, SelectBindState &bind_state);
 
@@ -330,7 +330,8 @@ protected:
 	void UnfoldWindowMacroExpression(unique_ptr<ParsedExpression> &expr, ScalarMacroFunction &macro_def);
 	ScalarMacroFunction &UnfoldMacroExpression(FunctionExpression &function, ScalarMacroCatalogEntry &macro_func,
 	                                           unique_ptr<ParsedExpression> &expr, idx_t depth,
-	                                           vector<unique_ptr<Expression>> &shared_arguments, bool &probed);
+	                                           vector<unique_ptr<Expression>> &shared_arguments, bool &probed,
+	                                           optional_ptr<const RoleAccess> &body_role);
 	MacroFunctionLookup LookupMacroFunction(const FunctionExpression &function);
 	const MacroBodyUse &GetMacroBodyUse(const ScalarMacroFunction &macro_def, const Identifier &name);
 	vector<bool> MacroArgumentsBindInPlace(FunctionExpression &function, ScalarMacroCatalogEntry &macro_func,

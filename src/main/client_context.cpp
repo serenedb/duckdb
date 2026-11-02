@@ -1033,10 +1033,10 @@ static absl::Duration TimeLeft(const optional_idx &deadline) {
 	return absl::Nanoseconds(TimePoint::ToNanos(left));
 }
 
-void ClientContext::CheckDatabaseReference(Catalog &catalog) {
-	if (entry_reference_handler && !catalog.IsSystemCatalog() && !catalog.IsTemporaryCatalog() &&
+void ClientContext::CheckDatabaseReference(optional_ptr<const RoleAccess> role, Catalog &catalog) {
+	if (entry_reference_handler && role && !catalog.IsSystemCatalog() && !catalog.IsTemporaryCatalog() &&
 	    catalog.GetName() != client_data->default_database) {
-		entry_reference_handler(*this, catalog.GetAttached());
+		entry_reference_handler(*this, *role, catalog.GetAttached());
 	}
 }
 

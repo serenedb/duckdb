@@ -1333,9 +1333,7 @@ CatalogEntryLookup Catalog::TryLookupEntryAcrossCatalogs(CatalogEntryRetriever &
 		if (!catalog_entry) {
 			return {nullptr, nullptr, ErrorData()};
 		}
-		if (retriever.GetPrincipal()) {
-			retriever.GetContext().CheckDatabaseReference(*catalog_entry);
-		}
+		retriever.GetContext().CheckDatabaseReference(retriever.GetPrincipal(), *catalog_entry);
 		lookups.emplace_back(*catalog_entry, lookup_info);
 		return TryLookupEntry(retriever, lookups, lookup_info, if_not_found, false);
 	}
@@ -1358,8 +1356,8 @@ CatalogEntryLookup Catalog::TryLookupEntryAcrossCatalogs(CatalogEntryRetriever &
 			return {nullptr, nullptr, ErrorData()};
 		}
 		D_ASSERT(catalog_entry);
-		if (retriever.GetPrincipal() && !IsInvalidCatalog(catalog)) {
-			retriever.GetContext().CheckDatabaseReference(*catalog_entry);
+		if (!IsInvalidCatalog(catalog)) {
+			retriever.GetContext().CheckDatabaseReference(retriever.GetPrincipal(), *catalog_entry);
 		}
 		auto lookup_behavior = catalog_entry->CatalogTypeLookupRule(lookup_info.GetCatalogType());
 		if (lookup_behavior == CatalogLookupBehavior::STANDARD) {
@@ -1772,8 +1770,8 @@ optional_ptr<SchemaCatalogEntry> Catalog::GetSchema(CatalogEntryRetriever &retri
 			// skip if it is not an attached database
 			continue;
 		}
-		if (retriever.GetPrincipal() && !IsInvalidCatalog(catalog_name)) {
-			retriever.GetContext().CheckDatabaseReference(*catalog);
+		if (!IsInvalidCatalog(catalog_name)) {
+			retriever.GetContext().CheckDatabaseReference(retriever.GetPrincipal(), *catalog);
 		}
 		const auto on_not_found = i + 1 == entries.size() ? if_not_found : OnEntryNotFound::RETURN_NULL;
 		auto result = catalog->GetSchema(retriever.GetContext(), schema_lookup, on_not_found);

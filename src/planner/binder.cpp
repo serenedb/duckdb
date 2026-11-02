@@ -303,19 +303,32 @@ optional_ptr<const RoleAccess> Binder::Caller() const {
 	return caller ? caller : context.principal;
 }
 
+const RoleAccess &Binder::AccessOf(idx_t role) {
+	auto entry = global_binder_state->role_access.try_emplace(role);
+	if (entry.second) {
+		const auto access = context.security ? context.security->Access(role) : nullptr;
+		if (access) {
+			entry.first->second = *access;
+		}
+		entry.first->second.role = role;
+	}
+	return entry.first->second;
+}
+
+optional_ptr<const RoleAccess> Binder::FunctionBodyRole(optional_idx owner) {
+	return owner.IsValid() ? &AccessOf(owner.GetIndex()) : Caller();
+}
+
+void Binder::BindAsFunctionBody(optional_ptr<const RoleAccess> role) {
+	principal = role;
+	caller = role;
+	entry_retriever.SetPrincipal(role);
+}
+
 void Binder::BindAsFunctionBody(const SelectStatement &statement) {
-	if (!statement.function_body || !principal) {
-		return;
+	if (statement.function_body && principal) {
+		BindAsFunctionBody(FunctionBodyRole(statement.function_owner));
 	}
-	if (statement.function_owner.IsValid()) {
-		const auto owner = statement.function_owner.GetIndex();
-		const auto access = context.security ? context.security->Access(owner) : nullptr;
-		owner_principal = access ? *access : RoleAccess();
-		owner_principal.role = owner;
-		caller = &owner_principal;
-	}
-	principal = Caller();
-	entry_retriever.SetPrincipal(principal);
 }
 
 BoundStatement Binder::BindTarget(TableRef &ref, TableRefUse use) {
