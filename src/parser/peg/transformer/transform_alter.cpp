@@ -171,6 +171,15 @@ unique_ptr<AlterInfo> PEGTransformerFactory::TransformAlterDatabaseStmt(PEGTrans
 	return std::move(result);
 }
 
+unique_ptr<AlterInfo> PEGTransformerFactory::TransformAlterDatabaseConfigStmt(PEGTransformer &transformer,
+                                                                              ParseResult &parse_result) {
+	auto &list_pr = parse_result.Cast<ListParseResult>();
+	auto result = make_uniq<AlterDatabaseSettingsInfo>(transformer.Transform<Identifier>(list_pr.GetChild(1)));
+	CollectConfigClause(transformer, list_pr.GetChild(2), result->set_config, result->reset_config,
+	                    result->reset_all_config);
+	return std::move(result);
+}
+
 unique_ptr<AlterInfo> PEGTransformerFactory::TransformAlterViewStmt(PEGTransformer &transformer,
                                                                     const optional<bool> &if_exists,
                                                                     unique_ptr<BaseTableRef> base_table_name,

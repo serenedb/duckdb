@@ -1,6 +1,6 @@
 AlterStatement <- 'ALTER' AlterOptions
 
-AlterOptions <- AlterSetSchemaStmt / AlterTableStmt / AlterViewStmt / AlterIndexStmt / AlterFunctionStmt / AlterFunctionAttributesStmt / AlterSequenceStmt / AlterDatabaseStmt / AlterSchemaStmt / AlterJobStmt
+AlterOptions <- AlterSetSchemaStmt / AlterTableStmt / AlterViewStmt / AlterIndexStmt / AlterFunctionStmt / AlterFunctionAttributesStmt / AlterSequenceStmt / AlterDatabaseStmt / AlterDatabaseConfigStmt / AlterSchemaStmt / AlterJobStmt
 
 AlterSetSchemaStmt <- SetSchemaEntryType IfExists? BaseTableName 'SET' 'SCHEMA' ColId
 SetSchemaEntryType <- CommentTable / CommentView / CommentSequence / CommentType / CommentFunction / SetSchemaProcedure /
@@ -83,3 +83,4 @@ SeqRestart <- 'RESTART' SeqRestartValue?
 SeqRestartValue <- 'WITH'? Expression
 
 AlterDatabaseStmt <- 'DATABASE' IfExists? Identifier 'SET' 'ALIAS' 'TO' Identifier
+AlterDatabaseConfigStmt <- 'DATABASE' ColId AlterRoleConfig

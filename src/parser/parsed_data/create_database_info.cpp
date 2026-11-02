@@ -14,6 +14,7 @@ unique_ptr<CreateInfo> CreateDatabaseInfo::Copy() const {
 	auto result = make_uniq<CreateDatabaseInfo>();
 	CopyProperties(*result);
 	result->options = options;
+	result->settings = settings;
 	return std::move(result);
 }
 

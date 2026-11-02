@@ -185,6 +185,26 @@ public:
 	explicit AlterRoleInfo();
 };
 
+struct AlterDatabaseSettingsInfo : public AlterInfo {
+	explicit AlterDatabaseSettingsInfo(Identifier database);
+
+	string role;
+	idx_t role_id = 0;
+	bool reset_all_config = false;
+	vector<string> reset_config;
+	vector<string> set_config;
+
+public:
+	CatalogType GetCatalogType() const override;
+	unique_ptr<AlterInfo> Copy() const override;
+	string ToString() const override;
+
+	void Serialize(Serializer &serializer) const override;
+	static unique_ptr<AlterInfo> Deserialize(Deserializer &deserializer);
+
+	explicit AlterDatabaseSettingsInfo();
+};
+
 struct ReassignOwnedInfo : public AlterInfo {
 	ReassignOwnedInfo();
 
