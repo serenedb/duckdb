@@ -18,6 +18,8 @@ Statement <-
 	AlterSubscriptionStatement /
 	CreateRoleStatement /
 	DropRoleStatement /
+	ReassignOwnedStatement /
+	DropOwnedStatement /
 	CreatePolicyStatement /
 	AlterPolicyStatement /
 	DropPolicyStatement /

@@ -574,6 +574,65 @@
         "id": 322,
         "name": "foreign_data_wrapper_owner_id",
         "type": "idx_t"
+      },
+      {
+        "id": 323,
+        "name": "drop_owned_role_id",
+        "type": "idx_t"
+      }
+    ]
+  },
+  {
+    "class": "ReassignOwnedInfo",
+    "base": "AlterInfo",
+    "enum": "REASSIGN_OWNED",
+    "members": [
+      {
+        "id": 300,
+        "name": "roles",
+        "type": "vector<string>"
+      },
+      {
+        "id": 301,
+        "name": "new_owner",
+        "type": "string"
+      },
+      {
+        "id": 302,
+        "name": "role_ids",
+        "type": "vector<idx_t>"
+      },
+      {
+        "id": 303,
+        "name": "new_owner_id",
+        "type": "idx_t"
+      }
+    ]
+  },
+  {
+    "class": "DropOwnedInfo",
+    "base": "AlterInfo",
+    "enum": "DROP_OWNED",
+    "members": [
+      {
+        "id": 300,
+        "name": "roles",
+        "type": "vector<string>"
+      },
+      {
+        "id": 301,
+        "name": "cascade",
+        "type": "bool"
+      },
+      {
+        "id": 302,
+        "name": "role_ids",
+        "type": "vector<idx_t>"
+      },
+      {
+        "id": 303,
+        "name": "grantors",
+        "type": "vector<idx_t>"
       }
     ]
   },

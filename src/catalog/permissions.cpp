@@ -245,6 +245,21 @@ void AlterPermissionsInfo::ApplyTo(Permissions &permissions, CatalogType entry_t
 	auto &owner = permissions.owner;
 	auto &acl = permissions.acl;
 	auto &defaults = permissions.defaults;
+	if (info.drop_owned_role_id) {
+		const auto role = info.drop_owned_role_id;
+		for (auto &row : defaults) {
+			Revoke(row.acl, role, row.role, ~AclMode::NoRights, false, true);
+		}
+		defaults.erase(std::remove_if(defaults.begin(), defaults.end(),
+		                              [&](const DefaultAcl &row) {
+			                              return row.role == role ||
+			                                     row.acl == (row.scope == 0
+			                                                     ? Permissions::AclDefault(row.objtype, row.role)
+			                                                     : vector<AclItem> {});
+		                              }),
+		               defaults.end());
+		return;
+	}
 	if (!info.new_owner.empty()) {
 		const auto old_owner = owner;
 		if (info.new_owner_id == old_owner) {

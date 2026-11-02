@@ -331,6 +331,16 @@ static void RefuseOwnedSequence(ClientContext &context, CatalogEntry &sequence) 
 	    StringUtil::Format("cannot change owner of sequence \"%s\"", name));
 }
 
+static vector<idx_t> CallerGrantors(Binder &binder) {
+	vector<idx_t> grantors;
+	auto principal = binder.principal;
+	if (principal && !principal->is_superuser) {
+		grantors.push_back(principal->role);
+		grantors.insert(grantors.end(), principal->closure.begin(), principal->closure.end());
+	}
+	return grantors;
+}
+
 static void ResolveGrant(Binder &binder, AlterPermissionsInfo &info) {
 	auto principal = binder.principal;
 	info.grantee_id = GranteeId(binder, info.grantee);
@@ -340,9 +350,8 @@ static void ResolveGrant(Binder &binder, AlterPermissionsInfo &info) {
 			throw PermissionException("must be member of role \"%s\"", info.granted_by);
 		}
 		info.grantors = {granted_by};
-	} else if (principal && !principal->is_superuser) {
-		info.grantors.push_back(principal->role);
-		info.grantors.insert(info.grantors.end(), principal->closure.begin(), principal->closure.end());
+	} else {
+		info.grantors = CallerGrantors(binder);
 	}
 	if (info.entry_catalog_type == CatalogType::FOREIGN_DATA_WRAPPER_ENTRY) {
 		auto &name = info.GetQualifiedName().Name().GetIdentifierName();
@@ -432,6 +441,39 @@ static void ResolveDefaultPrivileges(Binder &binder, AlterPermissionsInfo &info)
 	info.SetQualifiedName(Identifier(), Identifier(), database);
 }
 
+static idx_t ResolveOwnedRole(Binder &binder, const string &name, const string &action, const string &detail) {
+	auto role = RoleSpecId(binder, name);
+	if (binder.principal && !binder.principal->MemberOf(role)) {
+		throw PermissionException(
+		    unordered_map<string, string> {
+		        {"detail", StringUtil::Format(detail, RoleName(binder.context, role), action)}},
+		    StringUtil::Format("permission denied to %s objects", action));
+	}
+	return role;
+}
+
+static vector<idx_t> ResolveOwnedRoles(Binder &binder, const vector<string> &names, const string &action) {
+	vector<idx_t> result;
+	for (auto &name : names) {
+		result.push_back(ResolveOwnedRole(binder, name, action,
+		                                  "Only roles with privileges of role \"%s\" may %s objects owned by it."));
+	}
+	return result;
+}
+
+static void ResolveOwned(Binder &binder, AlterInfo &info) {
+	if (info.type == AlterType::DROP_OWNED) {
+		auto &drop = info.Cast<DropOwnedInfo>();
+		drop.role_ids = ResolveOwnedRoles(binder, drop.roles, "drop");
+		drop.grantors = CallerGrantors(binder);
+		return;
+	}
+	auto &reassign = info.Cast<ReassignOwnedInfo>();
+	reassign.role_ids = ResolveOwnedRoles(binder, reassign.roles, "reassign");
+	reassign.new_owner_id = ResolveOwnedRole(binder, reassign.new_owner, "reassign",
+	                                         "Only roles with privileges of role \"%s\" may %s objects to it.");
+}
+
 static void ResolvePermissions(Binder &binder, AlterPermissionsInfo &info) {
 	if (!info.new_owner.empty()) {
 		ResolveOwner(binder, info);
@@ -473,6 +515,18 @@ BoundStatement Binder::Bind(AlterStatement &stmt) {
 			RequireOwner(*schema);
 			RequireDatabasePrivilege(info.SchemaCatalog(), AclMode::Create);
 		}
+		result.plan = make_uniq<LogicalAlter>(std::move(stmt.info));
+		return result;
+	}
+
+	if (stmt.info->type == AlterType::REASSIGN_OWNED || stmt.info->type == AlterType::DROP_OWNED) {
+		ResolveOwned(*this, *stmt.info);
+		auto &catalog = Catalog::GetCatalog(context, DatabaseManager::GetDefaultDatabase(context));
+		stmt.info->SetQualifiedName(catalog.GetName(), Identifier(), Identifier());
+		auto &properties = GetStatementProperties();
+		properties.return_type = StatementReturnType::NOTHING;
+		properties.RegisterDBModify(
+		    catalog, context, DatabaseModificationType::ALTER_TABLE | DatabaseModificationType::DROP_CATALOG_ENTRY);
 		result.plan = make_uniq<LogicalAlter>(std::move(stmt.info));
 		return result;
 	}
