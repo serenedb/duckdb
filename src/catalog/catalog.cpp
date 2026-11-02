@@ -435,6 +435,10 @@ void Catalog::DropTablespace(CatalogTransaction transaction, DropInfo &info) {
 	throw NotImplementedException("DROP TABLESPACE is not supported by a %s catalog", GetCatalogType());
 }
 
+optional_ptr<CatalogEntry> Catalog::CreateSubscription(CatalogTransaction transaction, CreateSubscriptionInfo &info) {
+	throw NotImplementedException("CREATE SUBSCRIPTION is not supported by a %s catalog", GetCatalogType());
+}
+
 void Catalog::DropRole(CatalogTransaction transaction, DropInfo &info) {
 	throw NotImplementedException("DROP ROLE is not supported by a %s catalog", GetCatalogType());
 }

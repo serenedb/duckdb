@@ -186,6 +186,7 @@ PhysicalOperator &PhysicalPlanGenerator::CreatePlanInternal(LogicalOperator &op)
 	case LogicalOperatorType::LOGICAL_CREATE_TOKENIZER:
 	case LogicalOperatorType::LOGICAL_CREATE_TABLESPACE:
 	case LogicalOperatorType::LOGICAL_CREATE_DATABASE:
+	case LogicalOperatorType::LOGICAL_CREATE_SUBSCRIPTION:
 		return CreatePlan(op.Cast<LogicalCreate>());
 	case LogicalOperatorType::LOGICAL_PRAGMA:
 		return CreatePlan(op.Cast<LogicalPragma>());
