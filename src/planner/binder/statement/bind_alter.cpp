@@ -443,17 +443,27 @@ static vector<idx_t> ResolveOwnedRoles(Binder &binder, const vector<string> &nam
 	return result;
 }
 
+static void RefuseBootstrapRole(Binder &binder, const vector<idx_t> &roles, const string &action) {
+	const auto bootstrap = DBConfig::GetConfig(binder.context).bootstrap_role;
+	if (bootstrap != 0 && std::find(roles.begin(), roles.end(), bootstrap) != roles.end()) {
+		throw DependencyException("cannot %s owned by role %s because they are required by the database system", action,
+		                          binder.RoleName(bootstrap));
+	}
+}
+
 static void ResolveOwned(Binder &binder, AlterInfo &info) {
 	if (info.type == AlterType::DROP_OWNED) {
 		auto &drop = info.Cast<DropOwnedInfo>();
 		drop.role_ids = ResolveOwnedRoles(binder, drop.roles, "drop");
 		drop.grantors = CallerGrantors(binder);
+		RefuseBootstrapRole(binder, drop.role_ids, "drop objects");
 		return;
 	}
 	auto &reassign = info.Cast<ReassignOwnedInfo>();
 	reassign.role_ids = ResolveOwnedRoles(binder, reassign.roles, "reassign");
 	reassign.new_owner_id = ResolveOwnedRole(binder, reassign.new_owner, "reassign",
 	                                         "Only roles with privileges of role \"%s\" may %s objects to it.");
+	RefuseBootstrapRole(binder, reassign.role_ids, "reassign ownership of objects");
 }
 
 static void ResolvePermissions(Binder &binder, AlterPermissionsInfo &info) {
