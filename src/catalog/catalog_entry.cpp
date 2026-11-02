@@ -187,6 +187,9 @@ void CatalogEntry::BeforeDrop(CatalogTransaction transaction) {
 void CatalogEntry::OnDrop() {
 }
 
+void CatalogEntry::OnAlter(const AlterInfo &info) {
+}
+
 InCatalogEntry::InCatalogEntry(CatalogType type, Catalog &catalog, Identifier name, idx_t oid)
     : CatalogEntry(type, catalog, std::move(name), oid), catalog(catalog) {
 }
