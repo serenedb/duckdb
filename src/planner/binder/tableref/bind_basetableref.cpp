@@ -330,13 +330,13 @@ BoundStatement Binder::Bind(BaseTableRef &ref) {
 		auto view_binder = Binder::CreateBinder(context, this, BinderType::VIEW_BINDER);
 		view_binder->SetCanContainNulls(true);
 		if (principal && view_catalog_entry.security_invoker) {
-			view_binder->principal = context.principal;
+			view_binder->principal = Caller();
 		} else if (principal && !IsUnowned(view_catalog_entry)) {
 			const auto owner = view_catalog_entry.permissions.owner;
 			const auto access = context.security ? context.security->Access(owner) : nullptr;
-			view_binder->view_principal = access ? *access : RoleAccess();
-			view_binder->view_principal.role = owner;
-			view_binder->principal = &view_binder->view_principal;
+			view_binder->owner_principal = access ? *access : RoleAccess();
+			view_binder->owner_principal.role = owner;
+			view_binder->principal = &view_binder->owner_principal;
 		}
 
 		// The view may contain CTEs, but maybe only in the cte_map, so we need create CTE nodes for them

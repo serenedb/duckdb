@@ -117,7 +117,8 @@ public:
 	                           unique_ptr<ParsedExpression> &expr, optional_ptr<const ExpressionBinder> caller);
 	BindResult BindMacroArgumentType(unique_ptr<ParsedExpression> &argument, idx_t depth);
 	unique_ptr<TableRef> BindTableMacroArguments(QueryNode &body, DummyBinding &binding,
-	                                             vector<unique_ptr<ParsedExpression>> &arguments);
+	                                             vector<unique_ptr<ParsedExpression>> &arguments, bool all);
+	static void MarkFunctionBody(ParsedExpression &body, optional_idx owner);
 	void ShareAliasReferences(unique_ptr<ParsedExpression> &expr, SelectBindState &bind_state);
 
 	//! The target type that should result from the binder. If the result is not of this type, a cast to this type will

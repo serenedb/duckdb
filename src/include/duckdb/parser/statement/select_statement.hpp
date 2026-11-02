@@ -8,6 +8,7 @@
 
 #pragma once
 
+#include "duckdb/common/optional_idx.hpp"
 #include "duckdb/parser/query_node.hpp"
 #include "duckdb/parser/sql_statement.hpp"
 #include "duckdb/parser/tableref.hpp"
@@ -29,6 +30,8 @@ public:
 
 	//! The main query node
 	unique_ptr<QueryNode> node;
+	bool function_body = false;
+	optional_idx function_owner;
 
 protected:
 	SelectStatement(const SelectStatement &other);

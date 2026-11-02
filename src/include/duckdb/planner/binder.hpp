@@ -417,7 +417,10 @@ public:
 	bool InViewBody() const;
 
 	optional_ptr<const RoleAccess> principal;
+	optional_ptr<const RoleAccess> caller;
 	void SetPrincipal(optional_ptr<const RoleAccess> principal_p);
+	optional_ptr<const RoleAccess> Caller() const;
+	void BindAsFunctionBody(const SelectStatement &statement);
 	TableRefUse table_ref_use = TableRefUse::READ;
 	optional_ptr<const MergeQueryNode> on_conflict_merge;
 	BoundStatement BindTarget(TableRef &ref, TableRefUse use);
@@ -548,7 +551,7 @@ private:
 	bool allow_procedure_call = false;
 	//! The set of bound views
 	reference_set_t<ViewCatalogEntry> bound_views;
-	RoleAccess view_principal;
+	RoleAccess owner_principal;
 	//! Used to retrieve CatalogEntry's
 	CatalogEntryRetriever entry_retriever;
 	//! Unnamed subquery index

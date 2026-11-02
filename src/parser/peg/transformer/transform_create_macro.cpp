@@ -199,6 +199,10 @@ static void ApplyFunctionDecorators(PEGTransformer &transformer, RepeatParseResu
 		} else if (decorator_name == "StrictClause") {
 			auto &strict_choice = decorator_choice.Cast<ListParseResult>().Child<ChoiceParseResult>(0).GetResult();
 			macro_function.strict = strict_choice.type == ParseResultType::KEYWORD;
+		} else if (decorator_name == "SecurityClause") {
+			auto &security = decorator_choice.Cast<ListParseResult>().Child<ChoiceParseResult>(2).GetResult();
+			macro_function.security_definer =
+			    StringUtil::CIEquals(security.Cast<KeywordParseResult>().keyword, "DEFINER");
 		} else if (decorator_name == "VolatilityKeyword") {
 			auto keyword = decorator_choice.Cast<ListParseResult>()
 			                   .Child<ChoiceParseResult>(0)

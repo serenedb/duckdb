@@ -60,6 +60,7 @@ Binder::Binder(ClientContext &context, shared_ptr<Binder> parent_p, BinderType b
 		inside_subquery = parent->inside_subquery;
 		macro_binding = parent->macro_binding;
 		principal = parent->principal;
+		caller = parent->caller;
 		if (binder_type != BinderType::VIEW_BINDER) {
 			// inherit expression binders from parent
 			active_binders = parent->active_binders;
@@ -298,6 +299,25 @@ void Binder::SetPrincipal(optional_ptr<const RoleAccess> principal_p) {
 	GetStatementProperties().check_database_references = principal_p;
 }
 
+optional_ptr<const RoleAccess> Binder::Caller() const {
+	return caller ? caller : context.principal;
+}
+
+void Binder::BindAsFunctionBody(const SelectStatement &statement) {
+	if (!statement.function_body || !principal) {
+		return;
+	}
+	if (statement.function_owner.IsValid()) {
+		const auto owner = statement.function_owner.GetIndex();
+		const auto access = context.security ? context.security->Access(owner) : nullptr;
+		owner_principal = access ? *access : RoleAccess();
+		owner_principal.role = owner;
+		caller = &owner_principal;
+	}
+	principal = Caller();
+	entry_retriever.SetPrincipal(principal);
+}
+
 BoundStatement Binder::BindTarget(TableRef &ref, TableRefUse use) {
 	table_ref_use = use;
 	auto result = Bind(ref);
@@ -317,15 +337,15 @@ void Binder::CheckTableRead(TableBinding &binding, TableCatalogEntry &table) {
 }
 
 void Binder::CheckCall(FunctionEntry &function) {
-	auto caller = principal ? context.principal : nullptr;
-	if (!caller) {
+	auto calling = principal ? Caller() : nullptr;
+	if (!calling) {
 		return;
 	}
-	if (function.superuser_only && !caller->is_superuser) {
+	if (function.superuser_only && !calling->is_superuser) {
 		ThrowPermissionDenied(function);
 	}
 	if ((function.type == CatalogType::MACRO_ENTRY || function.type == CatalogType::TABLE_MACRO_ENTRY) &&
-	    !IsUnowned(function) && !caller->Can(function.type, function.permissions, AclMode::Execute)) {
+	    !IsUnowned(function) && !calling->Can(function.type, function.permissions, AclMode::Execute)) {
 		ThrowPermissionDenied(function);
 	}
 }

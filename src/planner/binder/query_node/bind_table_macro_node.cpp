@@ -38,6 +38,7 @@ unique_ptr<QueryNode> Binder::BindTableMacro(FunctionExpression &function, Macro
 	}
 	auto &macro_def = *macro_func.macros[bind_result.function_idx.GetIndex()];
 	definition = macro_def;
+	const auto owner = macro_def.security_definer ? optional_idx(macro_func.permissions.owner) : optional_idx();
 
 	auto new_macro_binding =
 	    MacroFunction::CreateDummyBinding(macro_def, macro_func.name, positional_arguments, named_arguments);
@@ -59,6 +60,7 @@ unique_ptr<QueryNode> Binder::BindTableMacro(FunctionExpression &function, Macro
 	if (macro_def.type == MacroType::SCALAR_MACRO) {
 		auto &scalar_macro = macro_def.Cast<ScalarMacroFunction>();
 		auto expr = scalar_macro.expression->Copy();
+		ExpressionBinder::MarkFunctionBody(*expr, owner);
 		if (macro_def.return_names.size() > 1 && scalar_macro.query_body) {
 			auto &record = expr->Cast<SubqueryExpression>().SubqueryMutable()->node->Cast<SelectNode>();
 			auto first_row = make_uniq<SelectNode>();
@@ -69,6 +71,8 @@ unique_ptr<QueryNode> Binder::BindTableMacro(FunctionExpression &function, Macro
 			first_row->modifiers.push_back(std::move(limit));
 			auto first_row_statement = make_uniq<SelectStatement>();
 			first_row_statement->node = std::move(first_row);
+			first_row_statement->function_body = true;
+			first_row_statement->function_owner = owner;
 			auto join = make_uniq<JoinRef>();
 			join->type = JoinType::LEFT;
 			join->left = make_uniq<EmptyTableRef>();
@@ -100,21 +104,31 @@ unique_ptr<QueryNode> Binder::BindTableMacro(FunctionExpression &function, Macro
 		}
 	} else {
 		node = macro_def.Cast<TableMacroFunction>().query_node->Copy();
-		parameters = eb.BindTableMacroArguments(*node, *new_macro_binding, positional_arguments);
+		parameters = eb.BindTableMacroArguments(*node, *new_macro_binding, positional_arguments, owner.IsValid());
+	}
+	if (owner.IsValid() && !parameters) {
+		parameters = eb.BindTableMacroArguments(*node, *new_macro_binding, positional_arguments, true);
 	}
 	ParsedExpressionIterator::EnumerateQueryNodeChildren(*node, [&](unique_ptr<ParsedExpression> &child) {
 		eb.ReplaceMacroParameters(child, lambda_params, call, true);
 	});
-	if (parameters) {
+	if (parameters || owner.IsValid() || principal != Caller()) {
 		const Identifier body_alias("0_macro_body");
 		auto body = make_uniq<SelectStatement>();
 		body->node = std::move(node);
-		auto join = make_uniq<JoinRef>(JoinRefType::CROSS);
-		join->left = std::move(parameters);
-		join->right = make_uniq<SubqueryRef>(std::move(body), body_alias);
+		body->function_body = true;
+		body->function_owner = owner;
+		auto body_ref = make_uniq<SubqueryRef>(std::move(body), body_alias);
 		auto select_node = make_uniq<SelectNode>();
 		select_node->select_list.push_back(make_uniq<StarExpression>(body_alias));
-		select_node->from_table = std::move(join);
+		if (parameters) {
+			auto join = make_uniq<JoinRef>(JoinRefType::CROSS);
+			join->left = std::move(parameters);
+			join->right = std::move(body_ref);
+			select_node->from_table = std::move(join);
+		} else {
+			select_node->from_table = std::move(body_ref);
+		}
 		node = std::move(select_node);
 	}
 
