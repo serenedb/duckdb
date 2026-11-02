@@ -38,7 +38,7 @@ PasswordNullOption  <- 'PASSWORD' 'NULL'
 AlterOwnerStatement <- 'ALTER' OwnerTarget 'OWNER' 'TO' OwnerRoleSpec
 OwnerTarget <- GrantFunctionTarget / OwnerNamedTarget
 OwnerNamedTarget <- OwnerObjectType QualifiedName
-OwnerObjectType <- TextSearchDictionaryObjType / 'TABLE' / 'VIEW' / 'SEQUENCE' / 'SCHEMA' / 'TYPE' / 'DOMAIN' / 'JOB' / 'SERVER' / 'DATABASE'
+OwnerObjectType <- TextSearchDictionaryObjType / 'TABLE' / 'VIEW' / 'SEQUENCE' / 'SCHEMA' / 'TYPE' / 'JOB' / 'SERVER' / 'DATABASE'
 TextSearchDictionaryObjType <- 'TEXT' 'SEARCH' 'DICTIONARY'
 OwnerRoleSpec <- 'CURRENT_USER' / 'SESSION_USER' / 'CURRENT_ROLE' / ColId
 
