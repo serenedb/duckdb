@@ -139,6 +139,7 @@ void DuckDBSecretsFun::RegisterFunction(BuiltinFunctions &set) {
 	auto fun = TableFunction({}, DuckDBSecretsFunction, DuckDBSecretsBind, DuckDBSecretsInit);
 	fun.GetSignature().WithTypedKwargs("options",
 	                                   [](TypedKwargs &options) { options.Add("redact", LogicalType::BOOLEAN); });
+	fun.SetRequiredCapability(RoleCapability::Superuser);
 	functions.AddFunction(fun);
 	set.AddFunction(functions);
 }

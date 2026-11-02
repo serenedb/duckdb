@@ -216,7 +216,6 @@ public:
 	shared_ptr<DatabaseFilePathManager> path_manager;
 	//! Database configuration variables as controlled by SET
 	GlobalUserSettings user_settings;
-	identifier_map_t<RoleCapability> superuser_functions;
 	identifier_set_t file_free_functions;
 	identifier_set_t builtin_relations;
 	unordered_map<string, ForeignDataWrapper> foreign_data_wrappers;

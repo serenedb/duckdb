@@ -96,7 +96,9 @@ void PragmaFunctions::RegisterFunction(BuiltinFunctions &set) {
 	set.AddFunction(PragmaFunction::PragmaStatement("enable_optimizer", PragmaEnableOptimizer));
 	set.AddFunction(PragmaFunction::PragmaStatement("disable_optimizer", PragmaDisableOptimizer));
 
-	set.AddFunction(PragmaFunction::PragmaStatement("force_checkpoint", PragmaForceCheckpoint));
+	auto force_checkpoint = PragmaFunction::PragmaStatement("force_checkpoint", PragmaForceCheckpoint);
+	force_checkpoint.SetRequiredCapability(RoleCapability::Checkpoint);
+	set.AddFunction(force_checkpoint);
 
 	set.AddFunction(PragmaFunction::PragmaStatement("enable_progress_bar", PragmaEnableProgressBar));
 	set.AddFunction(PragmaFunction::PragmaStatement("disable_progress_bar", PragmaDisableProgressBar));
@@ -104,9 +106,14 @@ void PragmaFunctions::RegisterFunction(BuiltinFunctions &set) {
 	set.AddFunction(PragmaFunction::PragmaStatement("enable_print_progress_bar", PragmaEnablePrintProgressBar));
 	set.AddFunction(PragmaFunction::PragmaStatement("disable_print_progress_bar", PragmaDisablePrintProgressBar));
 
-	set.AddFunction(PragmaFunction::PragmaStatement("enable_checkpoint_on_shutdown", PragmaEnableCheckpointOnShutdown));
-	set.AddFunction(
-	    PragmaFunction::PragmaStatement("disable_checkpoint_on_shutdown", PragmaDisableCheckpointOnShutdown));
+	auto enable_checkpoint_on_shutdown =
+	    PragmaFunction::PragmaStatement("enable_checkpoint_on_shutdown", PragmaEnableCheckpointOnShutdown);
+	enable_checkpoint_on_shutdown.SetRequiredCapability(RoleCapability::Superuser);
+	set.AddFunction(enable_checkpoint_on_shutdown);
+	auto disable_checkpoint_on_shutdown =
+	    PragmaFunction::PragmaStatement("disable_checkpoint_on_shutdown", PragmaDisableCheckpointOnShutdown);
+	disable_checkpoint_on_shutdown.SetRequiredCapability(RoleCapability::Superuser);
+	set.AddFunction(disable_checkpoint_on_shutdown);
 }
 
 } // namespace duckdb

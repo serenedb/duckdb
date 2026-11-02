@@ -89,6 +89,7 @@ void PragmaMetadataInfo::RegisterFunction(BuiltinFunctions &set) {
 	metadata_info.AddFunction(TableFunction(FunctionSignature().AddPositionalOnly("database", LogicalType::VARCHAR),
 	                                        PragmaMetadataInfoFunction, PragmaMetadataInfoBind,
 	                                        PragmaMetadataInfoInit));
+	metadata_info.ApplyToFunctions([](TableFunction &fun) { fun.SetRequiredCapability(RoleCapability::Superuser); });
 	set.AddFunction(metadata_info);
 }
 

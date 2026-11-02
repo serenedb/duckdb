@@ -206,6 +206,7 @@ ScalarFunctionSet JSONFunctions::GetSerializePlanFunction() {
 	    .AddParameter("skip_default", LogicalType::BOOLEAN, Value::BOOLEAN(false))
 	    .AddParameter("format", LogicalType::BOOLEAN, Value::BOOLEAN(false))
 	    .AddParameter("optimize", LogicalType::BOOLEAN, Value::BOOLEAN(false));
+	func.SetRequiredCapability(RoleCapability::Superuser);
 
 	set.AddFunction(std::move(func));
 

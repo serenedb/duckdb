@@ -121,6 +121,7 @@ void DuckDBLogFun::RegisterFunction(BuiltinFunctions &set) {
 	logs_fun.table_scan_progress = DuckDBLogProgress;
 	logs_fun.GetSignature().WithTypedKwargs(
 	    "options", [](TypedKwargs &options) { options.Add("denormalized_table", LogicalType::BOOLEAN); });
+	logs_fun.SetRequiredCapability(RoleCapability::Superuser);
 	set.AddFunction(logs_fun);
 }
 

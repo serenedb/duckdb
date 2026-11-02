@@ -1097,6 +1097,7 @@ static void LoadInternal(ExtensionLoader &loader) {
 	                                                  FunctionSignature()
 	                                                      .AddPositionalOnly("key_name", LogicalType::VARCHAR)
 	                                                      .AddPositionalOnly("key", LogicalType::VARCHAR));
+	parquet_key_fun.SetRequiredCapability(RoleCapability::Superuser);
 	loader.RegisterFunction(parquet_key_fun);
 
 	auto &config = DBConfig::GetConfig(db_instance);

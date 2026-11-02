@@ -67,11 +67,13 @@ void DuckDBWhichSecretFunction(ClientContext &context, TableFunctionInput &data_
 }
 
 void DuckDBWhichSecretFun::RegisterFunction(BuiltinFunctions &set) {
-	set.AddFunction(TableFunction("which_secret",
-	                              FunctionSignature()
-	                                  .AddPositionalOnly("path", LogicalType::VARCHAR)
-	                                  .AddPositionalOnly("type", LogicalType::VARCHAR),
-	                              DuckDBWhichSecretFunction, DuckDBWhichSecretBind, DuckDBWhichSecretInit));
+	TableFunction which_secret("which_secret",
+	                           FunctionSignature()
+	                               .AddPositionalOnly("path", LogicalType::VARCHAR)
+	                               .AddPositionalOnly("type", LogicalType::VARCHAR),
+	                           DuckDBWhichSecretFunction, DuckDBWhichSecretBind, DuckDBWhichSecretInit);
+	which_secret.SetRequiredCapability(RoleCapability::Superuser);
+	set.AddFunction(which_secret);
 }
 
 } // namespace duckdb

@@ -301,6 +301,7 @@ void PragmaStorageInfo::RegisterFunction(BuiltinFunctions &set) {
 	storage_info.GetSignature().WithTypedKwargs("options", [](TypedKwargs &options) {
 		options.Add("include_segment_info", LogicalType::BOOLEAN).Add("loaded_segments_only", LogicalType::BOOLEAN);
 	});
+	storage_info.SetRequiredCapability(RoleCapability::Superuser);
 	set.AddFunction(std::move(storage_info));
 }
 

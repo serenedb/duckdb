@@ -7,6 +7,7 @@ CreateScalarFunctionInfo::CreateScalarFunctionInfo(ScalarFunction function)
     : CreateFunctionInfo(CatalogType::SCALAR_FUNCTION_ENTRY), functions(function.name) {
 	SetFunctionName(function.name);
 	function.GetSignature().Verify();
+	required_capability = function.GetRequiredCapability();
 	functions.AddFunction(std::move(function));
 	internal = true;
 }
@@ -15,6 +16,7 @@ CreateScalarFunctionInfo::CreateScalarFunctionInfo(ScalarFunctionSet set)
 	SetFunctionName(functions.name);
 	for (auto &func : functions.functions) {
 		func->GetSignature().Verify();
+		required_capability |= func->GetRequiredCapability();
 	}
 	functions.ApplyToFunctions([&](ScalarFunction &func) { func.name = functions.name; });
 	internal = true;

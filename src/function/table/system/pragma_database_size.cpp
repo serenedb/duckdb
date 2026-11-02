@@ -121,8 +121,10 @@ void PragmaDatabaseSizeFunction(ClientContext &context, TableFunctionInput &data
 }
 
 void PragmaDatabaseSize::RegisterFunction(BuiltinFunctions &set) {
-	set.AddFunction(TableFunction("pragma_database_size", {}, PragmaDatabaseSizeFunction, PragmaDatabaseSizeBind,
-	                              PragmaDatabaseSizeInit));
+	TableFunction database_size("pragma_database_size", {}, PragmaDatabaseSizeFunction, PragmaDatabaseSizeBind,
+	                            PragmaDatabaseSizeInit);
+	database_size.SetRequiredCapability(RoleCapability::Superuser);
+	set.AddFunction(database_size);
 }
 
 } // namespace duckdb
