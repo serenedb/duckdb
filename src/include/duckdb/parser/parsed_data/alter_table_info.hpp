@@ -116,6 +116,8 @@ struct AlterPermissionsInfo : public AlterInfo {
 	idx_t target_role = 0;
 	idx_t default_scope = 0;
 	bool all_in_schema = false;
+	idx_t foreign_data_wrapper_id = 0;
+	idx_t foreign_data_wrapper_owner_id = 0;
 
 public:
 	CatalogType GetCatalogType() const override;
