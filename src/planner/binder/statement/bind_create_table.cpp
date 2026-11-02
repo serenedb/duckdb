@@ -46,19 +46,6 @@ static void VerifyCompressionType(ClientContext &context, optional_ptr<StorageMa
 	auto &catalog = info.schema.ParentCatalog();
 	for (auto &col : base.columns.Logical()) {
 		auto compression_type = col.CompressionType();
-		auto compression_availability_result = CompressionTypeIsAvailable(compression_type, storage_manager);
-		if (!compression_availability_result.IsAvailable()) {
-			if (compression_availability_result.IsDeprecated()) {
-				throw BinderException(
-				    "Can't compress using user-provided compression type '%s', that type is deprecated "
-				    "and only has decompress support",
-				    CompressionTypeToString(compression_type));
-			} else {
-				throw BinderException(
-				    "Can't compress using user-provided compression type '%s', that type is not available yet",
-				    CompressionTypeToString(compression_type));
-			}
-		}
 		auto logical_type = col.GetType();
 		if (logical_type.id() == LogicalTypeId::UNBOUND && logical_type.HasAlias()) {
 			// Resolve user type if possible
@@ -73,6 +60,19 @@ static void VerifyCompressionType(ClientContext &context, optional_ptr<StorageMa
 		}
 		if (catalog.VerifyColumnCompression(context, storage_manager, base, col, logical_type)) {
 			continue;
+		}
+		auto compression_availability_result = CompressionTypeIsAvailable(compression_type, storage_manager);
+		if (!compression_availability_result.IsAvailable()) {
+			if (compression_availability_result.IsDeprecated()) {
+				throw BinderException(
+				    "Can't compress using user-provided compression type '%s', that type is deprecated "
+				    "and only has decompress support",
+				    CompressionTypeToString(compression_type));
+			} else {
+				throw BinderException(
+				    "Can't compress using user-provided compression type '%s', that type is not available yet",
+				    CompressionTypeToString(compression_type));
+			}
 		}
 		auto physical_type = logical_type.InternalType();
 		if (compression_type == CompressionType::COMPRESSION_AUTO) {
