@@ -36,7 +36,7 @@ public:
 
 	idx_t EstimateCardinality(ClientContext &context) override;
 	bool RequireOptimizer() const override {
-		return false;
+		return !children.empty();
 	}
 
 protected:
