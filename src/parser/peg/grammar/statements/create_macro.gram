@@ -23,7 +23,7 @@ SimpleParameter <- TypeFuncName Type?
 ScalarMacroDefinition <- Expression
 TableMacroDefinition <- 'TABLE' SelectStatementInternal
 
-FunctionDecorator <- ReturnsClause / VolatilityKeyword / StrictClause / LanguageClause / SecurityClause / CostClause / RowsClause / ParallelClause / LeakproofClause
+FunctionDecorator <- ReturnsClause / VolatilityKeyword / StrictClause / LanguageClause / SecurityClause / CostClause / RowsClause / ParallelClause / LeakproofClause / AlterRoleConfig
 
 ReturnsClause <- 'RETURNS' (ReturnsTable / ReturnsNull / Type)
 ReturnsTable <- 'TABLE' Parens(List(ColIdType))

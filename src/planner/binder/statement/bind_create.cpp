@@ -595,6 +595,18 @@ SchemaCatalogEntry &Binder::BindCreateFunctionInfo(CreateInfo &info) {
 		principal = creator;
 	};
 	for (auto &function : base.macros) {
+		Settings::ResolveCurrentValues(context, function->config);
+		unique_ptr<CatalogEntryRetriever> creator_path;
+		if (!function->config.empty()) {
+			creator_path = make_uniq<CatalogEntryRetriever>(context);
+			entry_retriever.SwapSearchPath(*creator_path);
+			UseFunctionSearchPath(function->config);
+		}
+		absl::Cleanup restore_path = [&] {
+			if (creator_path) {
+				entry_retriever.SwapSearchPath(*creator_path);
+			}
+		};
 		if (!store_types) {
 			for (const auto &type : function->types) {
 				if (type.id() != LogicalTypeId::UNKNOWN) {

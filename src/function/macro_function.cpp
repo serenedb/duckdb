@@ -403,6 +403,7 @@ void MacroFunction::CopyProperties(MacroFunction &other) const {
 	other.strict = strict;
 	other.security_definer = security_definer;
 	other.stability = stability;
+	other.config = config;
 	other.source = source;
 }
 

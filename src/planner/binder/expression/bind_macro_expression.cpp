@@ -196,7 +196,8 @@ void ShiftCorrelation(Expression &expr, idx_t levels) {
 	ExpressionIterator::EnumerateChildren(expr, [&](Expression &child) { ShiftCorrelation(child, levels); });
 }
 
-unique_ptr<ParsedExpression> FunctionBodySubquery(unique_ptr<ParsedExpression> body, optional_idx owner) {
+unique_ptr<ParsedExpression> FunctionBodySubquery(unique_ptr<ParsedExpression> body, optional_idx owner,
+                                                  const MacroFunction &function) {
 	auto node = make_uniq<SelectNode>();
 	node->select_list.push_back(std::move(body));
 	node->from_table = make_uniq<EmptyTableRef>();
@@ -204,6 +205,9 @@ unique_ptr<ParsedExpression> FunctionBodySubquery(unique_ptr<ParsedExpression> b
 	statement->node = std::move(node);
 	statement->function_body = true;
 	statement->function_owner = owner;
+	if (!function.config.empty()) {
+		statement->function_config = &function.config;
+	}
 	auto subquery = make_uniq<SubqueryExpression>();
 	subquery->GetSubqueryTypeMutable() = SubqueryType::SCALAR;
 	subquery->SubqueryMutable() = std::move(statement);
@@ -314,12 +318,15 @@ bool AggregatesOnlyParameters(ParsedExpression &expr, DummyBinding &parameters,
 
 } // namespace
 
-void ExpressionBinder::MarkFunctionBody(ParsedExpression &body, optional_idx owner) {
+void ExpressionBinder::MarkFunctionBody(ParsedExpression &body, optional_idx owner, const MacroFunction &function) {
 	ParsedExpressionIterator::VisitExpressionClassMutable(
 	    body, ExpressionClass::SUBQUERY, [&](ParsedExpression &subquery) {
 		    auto &statement = *subquery.Cast<SubqueryExpression>().SubqueryMutable();
 		    statement.function_body = true;
 		    statement.function_owner = owner;
+		    if (!function.config.empty()) {
+			    statement.function_config = &function.config;
+		    }
 	    });
 }
 
@@ -1464,7 +1471,8 @@ ScalarMacroFunction &ExpressionBinder::UnfoldMacroExpression(FunctionExpression 
                                                              ScalarMacroCatalogEntry &macro_func,
                                                              unique_ptr<ParsedExpression> &expr, idx_t depth,
                                                              vector<unique_ptr<Expression>> &shared_arguments,
-                                                             bool &probed, optional_ptr<const RoleAccess> &body_role) {
+                                                             bool &probed, optional_ptr<const RoleAccess> &body_role,
+                                                             bool &body_search_path) {
 	for (auto &argument : function.GetArgumentsMutable()) {
 		ResolvePositionalReferences(argument.GetExpressionMutable(), binder.bind_context);
 	}
@@ -1524,6 +1532,10 @@ ScalarMacroFunction &ExpressionBinder::UnfoldMacroExpression(FunctionExpression 
 	if (is_window && owner.IsValid()) {
 		throw NotImplementedException("a SECURITY DEFINER function cannot be called as a window function");
 	}
+	const bool own_search_path = !macro_def.config.empty();
+	if (is_window && own_search_path) {
+		throw NotImplementedException("a function with SET search_path cannot be called as a window function");
+	}
 	const bool distinct = !is_window && function.Distinct();
 	optional_ptr<const MacroBodyUse> use;
 	if (!is_window && binds_values) {
@@ -1566,7 +1578,7 @@ ScalarMacroFunction &ExpressionBinder::UnfoldMacroExpression(FunctionExpression 
 	dummy_binder->macro_binding = new_macro_binding.get();
 	ExpressionBinder::QualifyColumnNames(*dummy_binder, expr);
 
-	if (owner.IsValid() && call_modifiers) {
+	if ((owner.IsValid() || own_search_path) && call_modifiers) {
 		throw modifiers_error();
 	}
 	optional_ptr<const RoleAccess> role;
@@ -1579,20 +1591,22 @@ ScalarMacroFunction &ExpressionBinder::UnfoldMacroExpression(FunctionExpression 
 
 	vector<string> shared_names;
 	vector<unique_ptr<ParsedExpression>> shared_parsed;
-	if (use && !call_modifiers && (role || macro_def.query_body || use->subquery || ContainsSubquery(*expr))) {
+	if (use && !call_modifiers &&
+	    (role || own_search_path || macro_def.query_body || use->subquery || ContainsSubquery(*expr))) {
 		auto values = BindSubqueryBodyArguments(*use, *new_macro_binding, positional_arguments, scans, prebound, depth);
-		if (role && !absl::c_all_of(positional_arguments, [](const unique_ptr<ParsedExpression> &argument) {
-			    return BindsAnywhere(*argument);
-		    })) {
-			MarkFunctionBody(*expr, owner);
+		if ((role || own_search_path) &&
+		    !absl::c_all_of(positional_arguments,
+		                    [](const unique_ptr<ParsedExpression> &argument) { return BindsAnywhere(*argument); })) {
+			MarkFunctionBody(*expr, owner, macro_def);
 			if (expr->GetExpressionClass() != ExpressionClass::SUBQUERY) {
-				expr = FunctionBodySubquery(std::move(expr), owner);
+				expr = FunctionBodySubquery(std::move(expr), owner, macro_def);
 			}
 			ExpandSubqueryArguments(*new_macro_binding, positional_arguments,
 			                        vector<bool>(positional_arguments.size(), true), expr, macro_def.query_body, this);
 			return macro_def;
 		}
 		body_role = role;
+		body_search_path = own_search_path;
 		if (macro_def.query_body || absl::c_linear_search(values, true)) {
 			ExpandSubqueryArguments(*new_macro_binding, positional_arguments, values, expr, macro_def.query_body, this);
 			return macro_def;
@@ -1768,10 +1782,23 @@ BindResult ExpressionBinder::BindMacro(FunctionExpression &function, ScalarMacro
 	vector<unique_ptr<Expression>> shared_arguments;
 	bool probed = false;
 	optional_ptr<const RoleAccess> body_role;
-	auto &macro_def = UnfoldMacroExpression(function, macro_func, expr, depth, shared_arguments, probed, body_role);
+	bool body_search_path = false;
+	auto &macro_def =
+	    UnfoldMacroExpression(function, macro_func, expr, depth, shared_arguments, probed, body_role, body_search_path);
 	if (probed) {
 		return BindResult(make_uniq<BoundReferenceExpression>(macro_def.ResultType(), 0));
 	}
+	unique_ptr<CatalogEntryRetriever> caller_path;
+	if (body_search_path) {
+		caller_path = make_uniq<CatalogEntryRetriever>(context);
+		binder.EntryRetriever().SwapSearchPath(*caller_path);
+		binder.UseFunctionSearchPath(macro_def.config);
+	}
+	absl::Cleanup restore_path = [&] {
+		if (caller_path) {
+			binder.EntryRetriever().SwapSearchPath(*caller_path);
+		}
+	};
 	absl::Cleanup restore_role = [&, principal = binder.principal, caller = binder.caller,
 	                              lookups = binder.EntryRetriever().GetPrincipal()] {
 		if (body_role) {
