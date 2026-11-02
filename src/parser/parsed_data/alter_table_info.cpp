@@ -2,6 +2,7 @@
 
 #include "duckdb/common/enum_util.hpp"
 #include "duckdb/common/sql_identifier.hpp"
+#include "duckdb/common/string_util.hpp"
 #include "duckdb/common/logical_type_info.hpp"
 #include "duckdb/parser/constraint.hpp"
 #include "duckdb/parser/keyword_helper.hpp"
@@ -169,13 +170,24 @@ unique_ptr<AlterInfo> AlterPermissionsInfo::Copy() const {
 }
 
 string AlterPermissionsInfo::ToString() const {
-	auto object = ParseInfo::TypeToString(entry_catalog_type) + " " +
+	auto object = StringUtil::Upper(PermissionKindName(entry_catalog_type)) + " " +
 	              GetQualifiedName().ToString(QualifiedNameToStringMode::HIDE_DEFAULT_SCHEMA);
 	if (!new_owner.empty()) {
 		return "ALTER " + object + " OWNER TO " + new_owner + ";";
 	}
-	return string(revoke ? "REVOKE " : "GRANT ") + EnumUtil::ToString(privileges) + " ON " + object +
-	       (revoke ? " FROM " : " TO ") + grantee + ";";
+	vector<string> names;
+	for (auto bit = static_cast<uint64_t>(AclMode::Insert); bit <= static_cast<uint64_t>(AclMode::Maintain);
+	     bit <<= 1) {
+		if ((privileges & static_cast<AclMode>(bit)) != AclMode::NoRights) {
+			names.push_back(StringUtil::Upper(EnumUtil::ToString(static_cast<AclMode>(bit))));
+		}
+	}
+	auto grant = string(revoke ? "REVOKE " : "GRANT ") + StringUtil::Join(names, ", ") + " ON ";
+	auto to = string(revoke ? " FROM " : " TO ") + grantee + ";";
+	if (default_objtype != CatalogType::INVALID) {
+		return "ALTER DEFAULT PRIVILEGES " + grant + StringUtil::Upper(PermissionKindName(default_objtype)) + "S" + to;
+	}
+	return grant + object + to;
 }
 
 ReplaceDefinitionInfo::ReplaceDefinitionInfo(unique_ptr<CreateInfo> definition_p)
