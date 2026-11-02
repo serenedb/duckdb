@@ -77,11 +77,12 @@ public:
 		stripe.blocks.store(stripe.blocks.load(std::memory_order_relaxed) - 1, std::memory_order_relaxed);
 	}
 
-	//! The next block to evict, or nothing once [budget] slots were passed without one. A budget of
-	//! INVALID_INDEX starts at two rounds of the clock: one clears the marks of used blocks, the next evicts them.
+	//! The next block to evict, or nothing once the budget is spent: each block and each stripe passed costs one. A
+	//! budget of INVALID_INDEX starts at two rounds of the clock: one clears the marks of used blocks, the next evicts
+	//! them.
 	shared_ptr<BlockMemory> NextVictim(idx_t &budget) {
 		if (budget == DConstants::INVALID_INDEX) {
-			budget = 2 * GetApproximateSize() + STRIPES;
+			budget = 2 * (GetApproximateSize() + STRIPES);
 		}
 		while (budget > 0) {
 			auto &stripe = stripes[next_stripe.load(std::memory_order_relaxed) % STRIPES];
@@ -89,10 +90,13 @@ public:
 				annotated_lock_guard<annotated_mutex> guard(stripe.lock);
 				// Go around this stripe once, then on to the next.
 				for (idx_t passed = 0; passed < stripe.slots.size() && budget > 0; passed++) {
-					budget--;
 					stripe.hand = stripe.hand + 1 < stripe.slots.size() ? stripe.hand + 1 : 0;
 					auto memory = stripe.slots[stripe.hand];
-					if (!memory || !memory->IsUnpinnedAndLoaded() || memory->TakeReferenced()) {
+					if (!memory) {
+						continue;
+					}
+					budget--;
+					if (!memory->IsUnpinnedAndLoaded() || memory->TakeReferenced()) {
 						continue;
 					}
 					// A block being destroyed waits for the lock to leave the queue, and cannot be locked anymore.
