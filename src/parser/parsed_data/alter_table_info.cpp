@@ -168,6 +168,7 @@ unique_ptr<AlterInfo> AlterPermissionsInfo::Copy() const {
 	result->all_in_schema = all_in_schema;
 	result->foreign_data_wrapper_id = foreign_data_wrapper_id;
 	result->foreign_data_wrapper_owner_id = foreign_data_wrapper_owner_id;
+	result->drop_owned_role_id = drop_owned_role_id;
 	return std::move(result);
 }
 
@@ -309,6 +310,48 @@ string AlterRoleInfo::ToString() const {
 		options.push_back(null_password ? "PASSWORD NULL" : "PASSWORD " + SQLString::ToString(password));
 	}
 	return result + " WITH " + StringUtil::Join(options, " ") + ";";
+}
+
+ReassignOwnedInfo::ReassignOwnedInfo() : AlterInfo(AlterType::REASSIGN_OWNED) {
+}
+
+CatalogType ReassignOwnedInfo::GetCatalogType() const {
+	return CatalogType::ROLE_ENTRY;
+}
+
+unique_ptr<AlterInfo> ReassignOwnedInfo::Copy() const {
+	auto result = make_uniq<ReassignOwnedInfo>();
+	result->SetQualifiedName(GetQualifiedName());
+	result->roles = roles;
+	result->new_owner = new_owner;
+	result->role_ids = role_ids;
+	result->new_owner_id = new_owner_id;
+	return std::move(result);
+}
+
+string ReassignOwnedInfo::ToString() const {
+	return "REASSIGN OWNED BY " + StringUtil::Join(roles, ", ") + " TO " + new_owner + ";";
+}
+
+DropOwnedInfo::DropOwnedInfo() : AlterInfo(AlterType::DROP_OWNED) {
+}
+
+CatalogType DropOwnedInfo::GetCatalogType() const {
+	return CatalogType::ROLE_ENTRY;
+}
+
+unique_ptr<AlterInfo> DropOwnedInfo::Copy() const {
+	auto result = make_uniq<DropOwnedInfo>();
+	result->SetQualifiedName(GetQualifiedName());
+	result->roles = roles;
+	result->cascade = cascade;
+	result->role_ids = role_ids;
+	result->grantors = grantors;
+	return std::move(result);
+}
+
+string DropOwnedInfo::ToString() const {
+	return "DROP OWNED BY " + StringUtil::Join(roles, ", ") + (cascade ? " CASCADE;" : ";");
 }
 
 //===--------------------------------------------------------------------===//

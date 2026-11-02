@@ -213,6 +213,14 @@ string ObjectTypeKeyword(ParseResult &objtype) {
 	return StringUtil::Join(words, " ");
 }
 
+string OwnerRoleName(PEGTransformer &transformer, ParseResult &spec) {
+	auto &chosen = spec.Cast<ListParseResult>().Child<ChoiceParseResult>(0).GetResult();
+	if (chosen.type == ParseResultType::KEYWORD) {
+		return StringUtil::Upper(chosen.Cast<KeywordParseResult>().keyword);
+	}
+	return transformer.Transform<string>(chosen);
+}
+
 void SetObjectTarget(AlterPermissionsInfo &info, CatalogType type, QualifiedName name) {
 	info.entry_catalog_type = type;
 	if (type == CatalogType::DATABASE_ENTRY) {
@@ -681,8 +689,37 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformAlterOwnerStatement(PEG
 		SetObjectTarget(*info, GrantObjectType(ObjectTypeKeyword(target.GetChild(0))),
 		                transformer.Transform<QualifiedName>(target.GetChild(1)));
 	}
-	info->new_owner = TransformOwnerRoleSpec(transformer, list_pr.GetChild(4)).GetIdentifierName();
 
+	info->new_owner = OwnerRoleName(transformer, list_pr.GetChild(4));
+
+	auto result = make_uniq<AlterStatement>();
+	result->info = std::move(info);
+	return std::move(result);
+}
+
+unique_ptr<SQLStatement> PEGTransformerFactory::TransformReassignOwnedStatement(PEGTransformer &transformer,
+                                                                                ParseResult &parse_result) {
+	auto &list_pr = parse_result.Cast<ListParseResult>();
+	// 0:'REASSIGN' 1:'OWNED' 2:'BY' 3:List(OwnerRoleSpec) 4:'TO' 5:OwnerRoleSpec
+	auto info = make_uniq<ReassignOwnedInfo>();
+	for (auto &role : ExtractParseResultsFromList(list_pr.GetChild(3))) {
+		info->roles.push_back(OwnerRoleName(transformer, role.get()));
+	}
+	info->new_owner = OwnerRoleName(transformer, list_pr.GetChild(5));
+	auto result = make_uniq<AlterStatement>();
+	result->info = std::move(info);
+	return std::move(result);
+}
+
+unique_ptr<SQLStatement> PEGTransformerFactory::TransformDropOwnedStatement(PEGTransformer &transformer,
+                                                                            ParseResult &parse_result) {
+	auto &list_pr = parse_result.Cast<ListParseResult>();
+	// 0:'DROP' 1:'OWNED' 2:'BY' 3:List(OwnerRoleSpec) 4:DropBehavior?
+	auto info = make_uniq<DropOwnedInfo>();
+	for (auto &role : ExtractParseResultsFromList(list_pr.GetChild(3))) {
+		info->roles.push_back(OwnerRoleName(transformer, role.get()));
+	}
+	transformer.TransformOptional<bool>(list_pr, 4, info->cascade);
 	auto result = make_uniq<AlterStatement>();
 	result->info = std::move(info);
 	return std::move(result);
