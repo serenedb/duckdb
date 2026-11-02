@@ -57,7 +57,8 @@ void PhysicalSet::SetExtensionVariable(ClientContext &context, ExtensionOption &
 	SetGenericVariable(context, extension_option.setting_index.GetIndex(), effective_scope, std::move(target_value));
 }
 
-void PhysicalSet::SetVariable(ClientContext &context, const Identifier &name, SetScope scope, const Value &value) {
+void PhysicalSet::SetVariable(ClientContext &context, const Identifier &name, SetScope scope, const Value &value,
+                              bool check_access) {
 	auto &config = DBConfig::GetConfig(context);
 	config.CheckLock(name);
 	// SET LOCAL is only meaningful inside an explicit transaction; PG rejects
@@ -74,11 +75,14 @@ void PhysicalSet::SetVariable(ClientContext &context, const Identifier &name, Se
 				throw InvalidInputException("Extension parameter %s was not found after autoloading", name);
 			}
 		}
+		if (check_access) {
+			Settings::CheckChange(context, name, extension_option.access, GetSettingScope(extension_option, scope));
+		}
 		// Invoke the pre-SET observer after resolution so the handler only sees
 		// valid option names and can safely snapshot the current value.
 		Value casted_value = value.CastAs(context, extension_option.type);
 		context.OnSettingChange(name.GetIdentifierName(), scope,
-		                        SessionValue(context, name, extension_option.setting_index), false);
+		                        SessionValue(context, name, extension_option.setting_index));
 		SetExtensionVariable(context, extension_option, name, scope, casted_value);
 		if (extension_option.rebind) {
 			Rebind(context, GetSettingScope(extension_option, scope));
@@ -86,12 +90,14 @@ void PhysicalSet::SetVariable(ClientContext &context, const Identifier &name, Se
 		return;
 	}
 	SetScope variable_scope = GetSettingScope(*option, scope);
+	if (check_access) {
+		Settings::CheckChange(context, name, option->access, variable_scope);
+	}
 	Value input_val = value.CastAs(context, DBConfig::ParseLogicalType(option->parameter_type));
 	context.OnSettingChange(
 	    name.GetIdentifierName(), scope,
 	    option->get_local ? option->get_local(context)
-	                      : SessionValue(context, name, option->default_value ? option->setting_idx : optional_idx()),
-	    false);
+	                      : SessionValue(context, name, option->default_value ? option->setting_idx : optional_idx()));
 	if (option->default_value) {
 		if (option->set_callback) {
 			SettingCallbackInfo info(context, variable_scope);

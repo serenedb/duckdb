@@ -10,6 +10,7 @@
 
 #include "duckdb/main/setting_info.hpp"
 #include "duckdb/common/enum_util.hpp"
+#include "duckdb/common/optional.hpp"
 
 namespace duckdb {
 
@@ -93,6 +94,12 @@ struct Settings {
 	//! PG-compliant: booleans render as "on"/"off", not "true"/"false".
 	DUCKDB_API static Value FormatDisplayValue(ClientContext &context, const Value &value);
 	DUCKDB_API static void ResolveCurrentValues(ClientContext &context, vector<string> &config);
+	DUCKDB_API static optional<SettingAccess> GetAccess(ClientContext &context, const Identifier &name);
+	DUCKDB_API static void CheckChange(ClientContext &context, const Identifier &name, const SettingAccess &access,
+	                                   SetScope scope);
+	DUCKDB_API static bool CanRead(ClientContext &context, const SettingAccess &access);
+	DUCKDB_API static void CheckRead(ClientContext &context, const Identifier &name);
+	DUCKDB_API static bool IsVisible(ClientContext &context, const Identifier &name);
 
 private:
 	static bool TryGetSettingInternal(const DatabaseInstance &db, idx_t setting_index, Value &result);

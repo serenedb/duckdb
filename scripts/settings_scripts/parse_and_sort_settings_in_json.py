@@ -31,6 +31,9 @@ def add_all_settings_to_global_list():
         'is_deprecated',
         'no_reset_all',
         'rebind',
+        'context',
+        'superuser_read',
+        'no_show_all',
     ]
 
     print(f"Parsing and sorting the settings data in {JSON_PATH}")
@@ -60,6 +63,9 @@ def add_all_settings_to_global_list():
             is_deprecated=entry.get('is_deprecated', False),
             no_reset_all=entry.get('no_reset_all', False),
             rebind=entry.get('rebind', False),
+            context=entry.get('context', 'superuser'),
+            superuser_read=entry.get('superuser_read', False),
+            no_show_all=entry.get('no_show_all', False),
         )
         SettingsList.append(setting)
 

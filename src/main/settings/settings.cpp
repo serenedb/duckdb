@@ -59,4 +59,55 @@ void Settings::ResolveCurrentValues(ClientContext &context, vector<string> &conf
 	}
 }
 
+optional<SettingAccess> Settings::GetAccess(ClientContext &context, const Identifier &name) {
+	if (auto option = DBConfig::GetOptionByName(name)) {
+		return option->access;
+	}
+	ExtensionOption extension_option;
+	if (DBConfig::GetConfig(context).TryGetExtensionOption(name, extension_option)) {
+		return extension_option.access;
+	}
+	return optional<SettingAccess>();
+}
+
+void Settings::CheckChange(ClientContext &context, const Identifier &name, const SettingAccess &access,
+                           SetScope scope) {
+	if (access.context == SettingContext::INTERNAL) {
+		throw Exception(unordered_map<string, string> {{"error_subtype", "CANT_CHANGE_RUNTIME_PARAM"}},
+		                ExceptionType::SETTINGS,
+		                StringUtil::Format("parameter \"%s\" cannot be changed", name.GetIdentifierName()));
+	}
+	if (context.CurrentRole().is_superuser) {
+		return;
+	}
+	if (scope == SetScope::GLOBAL) {
+		throw PermissionException(
+		    {{"detail", "Only roles with the SUPERUSER attribute may change the server-wide value of a parameter."}},
+		    StringUtil::Format("permission denied to set parameter \"%s\"", name.GetIdentifierName()));
+	}
+	if (access.context == SettingContext::SUPERUSER) {
+		throw PermissionException(
+		    {{"detail", "Only roles with the SUPERUSER attribute may change this parameter."}},
+		    StringUtil::Format("permission denied to set parameter \"%s\"", name.GetIdentifierName()));
+	}
+}
+
+bool Settings::CanRead(ClientContext &context, const SettingAccess &access) {
+	return !access.superuser_read || context.CurrentRole().Has(RoleCapability::ReadAllSettings);
+}
+
+void Settings::CheckRead(ClientContext &context, const Identifier &name) {
+	auto access = GetAccess(context, name);
+	if (access && !CanRead(context, *access)) {
+		throw PermissionException(
+		    {{"detail", "Only roles with privileges of the \"pg_read_all_settings\" role may examine this parameter."}},
+		    StringUtil::Format("permission denied to examine \"%s\"", name.GetIdentifierName()));
+	}
+}
+
+bool Settings::IsVisible(ClientContext &context, const Identifier &name) {
+	auto access = GetAccess(context, name);
+	return !access || (!access->no_show_all && CanRead(context, *access));
+}
+
 } // namespace duckdb
