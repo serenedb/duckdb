@@ -783,6 +783,8 @@ public:
 	                                                               unique_ptr<ParsedExpression> expression,
 	                                                               unique_ptr<SQLStatement> before_update);
 	static bool TransformSerialType(LogicalType &type);
+	static void CollectConfigClause(PEGTransformer &transformer, ParseResult &config, vector<string> &set_config,
+	                                vector<string> &reset_config, bool &reset_all_config);
 
 	static void InitializePivotStatementTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
 	static arena_ptr<TransformResultValue> FinalizePivotStatementTrampoline(PEGTransformer &transformer,

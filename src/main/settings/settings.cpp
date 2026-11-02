@@ -46,4 +46,17 @@ Value Settings::FormatDisplayValue(ClientContext &context, const Value &value) {
 	return value.CastAs(context, LogicalType::VARCHAR);
 }
 
+void Settings::ResolveCurrentValues(ClientContext &context, vector<string> &config) {
+	for (auto &entry : config) {
+		if (entry.find('=') != string::npos) {
+			continue;
+		}
+		Value value;
+		if (!context.TryGetCurrentSetting(Identifier(entry), value)) {
+			throw InvalidInputException("unrecognized configuration parameter \"%s\"", entry);
+		}
+		entry += "=" + FormatDisplayValue(context, value).ToString();
+	}
+}
+
 } // namespace duckdb

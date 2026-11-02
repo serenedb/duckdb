@@ -4,7 +4,9 @@
 #include <charconv>
 #include <string_view>
 
+#include "duckdb/catalog/catalog_search_path.hpp"
 #include "duckdb/catalog/permissions.hpp"
+#include "duckdb/common/exception/parser_exception.hpp"
 #include "duckdb/common/numeric_utils.hpp"
 #include "duckdb/parser/parsed_data/alter_table_info.hpp"
 #include "duckdb/parser/parsed_data/create_role_info.hpp"
@@ -14,6 +16,7 @@
 #include "duckdb/parser/statement/drop_statement.hpp"
 #include "duckdb/parser/statement/multi_statement.hpp"
 #include "duckdb/parser/statement/pragma_statement.hpp"
+#include "duckdb/parser/statement/set_statement.hpp"
 #include "duckdb/parser/expression/constant_expression.hpp"
 #include "duckdb/parser/expression/columnref_expression.hpp"
 #include "duckdb/common/types/value.hpp"
@@ -219,6 +222,54 @@ void SetObjectTarget(AlterPermissionsInfo &info, CatalogType type, QualifiedName
 
 } // namespace
 
+void PEGTransformerFactory::CollectConfigClause(PEGTransformer &transformer, ParseResult &config,
+                                                vector<string> &set_config, vector<string> &reset_config,
+                                                bool &reset_all_config) {
+	auto &clause = config.Cast<ListParseResult>().Child<ChoiceParseResult>(0).GetResult().Cast<ListParseResult>();
+	if (clause.Name() == "AlterRoleReset") {
+		auto &target = clause.Child<ListParseResult>(1).Child<ChoiceParseResult>(0).GetResult();
+		if (target.Name() == "AlterRoleResetAll") {
+			reset_all_config = true;
+		} else {
+			reset_config.push_back(target.Cast<IdentifierParseResult>().identifier.GetIdentifierName());
+		}
+		return;
+	}
+	SettingInfo setting;
+	setting.name = clause.Child<IdentifierParseResult>(1).identifier;
+	const auto name = setting.name.GetIdentifierName();
+	auto &value = clause.Child<ListParseResult>(2).Child<ChoiceParseResult>(0).GetResult();
+	if (value.Name() == "AlterRoleSetFromCurrent") {
+		set_config.push_back(name);
+		return;
+	}
+	vector<unique_ptr<ParsedExpression>> values;
+	for (auto &element : ExtractParseResultsFromList(value.Cast<ListParseResult>().GetChild(1))) {
+		values.push_back(transformer.Transform<unique_ptr<ParsedExpression>>(element.get()));
+	}
+	if (values.size() == 1 && values[0]->GetExpressionType() == ExpressionType::VALUE_DEFAULT) {
+		reset_config.push_back(name);
+		return;
+	}
+	string text;
+	if (setting.name == "search_path") {
+		auto statement = TransformStandardAssignment(transformer, setting, std::move(values));
+		auto &assigned = *statement->Cast<SetVariableStatement>().value;
+		if (assigned.GetExpressionType() != ExpressionType::VALUE_CONSTANT) {
+			throw ParserException("SET search_path: expected identifier or string literal");
+		}
+		text = CatalogSearchEntry::ListToString(CatalogSearchEntry::ParseList(ConfigValueText(assigned)));
+	} else {
+		for (auto &expr : values) {
+			if (!text.empty()) {
+				text += ", ";
+			}
+			text += ConfigValueText(*expr);
+		}
+	}
+	set_config.push_back(name + "=" + text);
+}
+
 unique_ptr<SQLStatement> PEGTransformerFactory::TransformCreateRoleStatement(PEGTransformer &transformer,
                                                                              ParseResult &parse_result) {
 	auto &list_pr = parse_result.Cast<ListParseResult>();
@@ -382,45 +433,7 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformAlterRoleStatement(PEGT
 	}
 
 	if (chosen.Name() == "AlterRoleConfig") {
-		// LIST(AlterRoleConfig) -> CHOICE(AlterRoleSet / AlterRoleReset).
-		auto &cfg = chosen.Cast<ListParseResult>().Child<ChoiceParseResult>(0).GetResult();
-		if (cfg.Name() == "AlterRoleSet") {
-			// LIST(AlterRoleSet): 0:'SET' 1:SettingName 2:GROUP-LIST -> CHOICE(
-			// AlterRoleSetTo / AlterRoleSetFromCurrent). SettingName is a
-			// matcher-handled IdentifierParseResult; an inline (A / B) group is
-			// wrapped in its own single-child LIST.
-			auto setting = cfg.Cast<ListParseResult>().Child<IdentifierParseResult>(1).identifier;
-			auto &val_choice =
-			    cfg.Cast<ListParseResult>().Child<ListParseResult>(2).Child<ChoiceParseResult>(0).GetResult();
-			string value;
-			if (val_choice.Name() == "AlterRoleSetTo") {
-				// LIST(AlterRoleSetTo): 0:GROUP-LIST('='|'TO') 1:List(Expression). Join
-				// the rendered expression values with ", " (PG's setconfig rendering).
-				for (auto &e : PEGTransformerFactory::ExtractParseResultsFromList(
-				         val_choice.Cast<ListParseResult>().GetChild(1))) {
-					auto expr = transformer.Transform<unique_ptr<ParsedExpression>>(e.get());
-					if (!value.empty()) {
-						value += ", ";
-					}
-					value += ConfigValueText(*expr);
-				}
-			}
-			// AlterRoleSetFromCurrent records the GUC's current value; SereneDB has
-			// no session GUC store, so it persists an empty value (the GUC name
-			// alone), matching PG's "setting=" shape closely enough for surfacing.
-			info->set_config.push_back(setting + "=" + value);
-		} else {
-			// LIST(AlterRoleReset): 0:'RESET' 1:GROUP-LIST -> CHOICE(AlterRoleResetAll
-			// / SettingName).
-			auto &reset_choice =
-			    cfg.Cast<ListParseResult>().Child<ListParseResult>(1).Child<ChoiceParseResult>(0).GetResult();
-			if (reset_choice.Name() == "AlterRoleResetAll") {
-				info->reset_all_config = true;
-			} else {
-				// SettingName is a matcher-handled IdentifierParseResult.
-				info->reset_config.push_back(reset_choice.Cast<IdentifierParseResult>().identifier.GetIdentifierName());
-			}
-		}
+		CollectConfigClause(transformer, chosen, info->set_config, info->reset_config, info->reset_all_config);
 		result->info = std::move(info);
 		return std::move(result);
 	}
