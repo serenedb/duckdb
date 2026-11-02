@@ -242,6 +242,8 @@ public:
 	                                                                 CreateSubscriptionInfo &info);
 	DUCKDB_API virtual void DropRole(CatalogTransaction transaction, DropInfo &info);
 	DUCKDB_API virtual void DropDatabase(CatalogTransaction transaction, DropInfo &info);
+	DUCKDB_API virtual void ScanTopLevelEntries(CatalogTransaction transaction, CatalogType type,
+	                                            const std::function<void(CatalogEntry &)> &callback);
 	DUCKDB_API virtual void DropForeignServer(CatalogTransaction transaction, DropInfo &info);
 	DUCKDB_API virtual void DropTablespace(CatalogTransaction transaction, DropInfo &info);
 	DUCKDB_API virtual void DropSubscription(CatalogTransaction transaction, DropInfo &info);
