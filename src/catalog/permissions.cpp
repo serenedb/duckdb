@@ -2,6 +2,7 @@
 
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/catalog/catalog_entry.hpp"
+#include "duckdb/catalog/catalog_entry/macro_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/view_catalog_entry.hpp"
 #include "duckdb/common/case_insensitive_map.hpp"
@@ -596,9 +597,16 @@ string PermissionKindName(CatalogType type) {
 	}
 }
 
+string PermissionKindName(const CatalogEntry &entry) {
+	if ((entry.type == CatalogType::MACRO_ENTRY || entry.type == CatalogType::TABLE_MACRO_ENTRY) &&
+	    entry.Cast<MacroCatalogEntry>().is_procedure) {
+		return "procedure";
+	}
+	return PermissionKindName(entry.type);
+}
+
 void ThrowPermissionDenied(const CatalogEntry &entry) {
-	throw PermissionException("permission denied for %s %s", PermissionKindName(entry.type),
-	                          entry.name.GetIdentifierName());
+	throw PermissionException("permission denied for %s %s", PermissionKindName(entry), entry.name.GetIdentifierName());
 }
 
 } // namespace duckdb

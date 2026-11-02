@@ -350,8 +350,7 @@ void Binder::RequireOwner(CatalogEntry &entry) {
 		owner = relation->permissions.owner;
 	}
 	if (!principal->Owns(owner)) {
-		throw PermissionException("must be owner of %s %s", PermissionKindName(entry.type),
-		                          entry.name.GetIdentifierName());
+		throw PermissionException("must be owner of %s %s", PermissionKindName(entry), entry.name.GetIdentifierName());
 	}
 }
 
