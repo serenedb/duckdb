@@ -3,6 +3,7 @@
 #include "duckdb/catalog/permissions.hpp"
 #include "duckdb/common/enum_util.hpp"
 #include "duckdb/common/sql_identifier.hpp"
+#include "duckdb/common/string_util.hpp"
 #include "duckdb/parser/parsed_data/create_role_info.hpp"
 #include "duckdb/common/logical_type_info.hpp"
 #include "duckdb/parser/constraint.hpp"
@@ -170,123 +171,25 @@ unique_ptr<AlterInfo> AlterPermissionsInfo::Copy() const {
 	return std::move(result);
 }
 
-static string GrantedObjectKeyword(CatalogType type) {
-	switch (type) {
-	case CatalogType::MACRO_ENTRY:
-		return "FUNCTION";
-	case CatalogType::FOREIGN_SERVER_ENTRY:
-		return "FOREIGN SERVER";
-	default:
-		return ParseInfo::TypeToString(type);
-	}
-}
-
-static string GrantedObjectsKeyword(CatalogType type) {
-	switch (type) {
-	case CatalogType::TABLE_ENTRY:
-		return "TABLES";
-	case CatalogType::SEQUENCE_ENTRY:
-		return "SEQUENCES";
-	case CatalogType::MACRO_ENTRY:
-		return "FUNCTIONS";
-	case CatalogType::TYPE_ENTRY:
-		return "TYPES";
-	case CatalogType::SCHEMA_ENTRY:
-		return "SCHEMAS";
-	default:
-		throw InternalException("privileges cannot be granted on all objects of type %s", EnumUtil::ToString(type));
-	}
-}
-
-static string PrivilegesToString(const AlterPermissionsInfo &info, CatalogType acl_class) {
-	static constexpr std::pair<AclMode, const char *> KEYWORDS[] = {
-	    {AclMode::Select, "SELECT"},   {AclMode::Insert, "INSERT"},     {AclMode::Update, "UPDATE"},
-	    {AclMode::Delete, "DELETE"},   {AclMode::Truncate, "TRUNCATE"}, {AclMode::References, "REFERENCES"},
-	    {AclMode::Trigger, "TRIGGER"}, {AclMode::Maintain, "MAINTAIN"}, {AclMode::Execute, "EXECUTE"},
-	    {AclMode::Usage, "USAGE"},     {AclMode::Create, "CREATE"},     {AclMode::CreateTemp, "TEMPORARY"},
-	    {AclMode::Connect, "CONNECT"},
-	};
-	const auto all = Permissions::AllPrivileges(acl_class);
-	auto columns_with = [&](AclMode mode) {
-		vector<string> columns;
-		for (auto &column : info.column_privileges) {
-			if ((column.privileges & mode) == mode) {
-				columns.push_back(SQLIdentifier::ToString(column.column));
-			}
-		}
-		return columns;
-	};
-	if (info.privileges == all && info.column_privileges.empty()) {
-		return "ALL PRIVILEGES";
-	}
-	if (info.privileges == AclMode::NoRights && !info.column_privileges.empty() &&
-	    columns_with(all).size() == info.column_privileges.size()) {
-		return "ALL PRIVILEGES (" + StringUtil::Join(columns_with(all), ", ") + ")";
-	}
-	vector<string> result;
-	for (auto &[mode, keyword] : KEYWORDS) {
-		if ((info.privileges & mode) == mode) {
-			result.emplace_back(keyword);
-		}
-		auto columns = columns_with(mode);
-		if (!columns.empty()) {
-			result.push_back(keyword + (" (" + StringUtil::Join(columns, ", ") + ")"));
-		}
-	}
-	return StringUtil::Join(result, ", ");
-}
-
-static string GranteeToString(const string &grantee) {
-	return grantee == "public" ? "PUBLIC" : SQLIdentifier::ToString(grantee);
-}
-
 string AlterPermissionsInfo::ToString() const {
-	auto &name = GetQualifiedName();
+	auto object = StringUtil::Upper(PermissionKindName(entry_catalog_type)) + " " +
+	              GetQualifiedName().ToString(QualifiedNameToStringMode::HIDE_DEFAULT_SCHEMA);
 	if (!new_owner.empty()) {
-		const bool keyword = new_owner == "CURRENT_USER" || new_owner == "SESSION_USER" || new_owner == "CURRENT_ROLE";
-		return "ALTER " + ParseInfo::TypeToString(entry_catalog_type) + " " +
-		       name.ToString(QualifiedNameToStringMode::HIDE_DEFAULT_SCHEMA) + " OWNER TO " +
-		       (keyword ? new_owner : SQLIdentifier::ToString(new_owner)) + ";";
+		return "ALTER " + object + " OWNER TO " + new_owner + ";";
 	}
-	const bool default_privileges = default_objtype != CatalogType::INVALID;
-	string result;
-	if (default_privileges) {
-		result += "ALTER DEFAULT PRIVILEGES ";
-		if (!for_role.empty()) {
-			result += "FOR ROLE " + SQLIdentifier::ToString(for_role) + " ";
-		}
-		if (!default_schema.empty()) {
-			result += "IN SCHEMA " + default_schema + " ";
+	vector<string> names;
+	for (auto bit = static_cast<uint64_t>(AclMode::Insert); bit <= static_cast<uint64_t>(AclMode::Maintain);
+	     bit <<= 1) {
+		if ((privileges & static_cast<AclMode>(bit)) != AclMode::NoRights) {
+			names.push_back(StringUtil::Upper(EnumUtil::ToString(static_cast<AclMode>(bit))));
 		}
 	}
-	result += revoke ? "REVOKE " : "GRANT ";
-	if (revoke && option_only) {
-		result += "GRANT OPTION FOR ";
+	auto grant = string(revoke ? "REVOKE " : "GRANT ") + StringUtil::Join(names, ", ") + " ON ";
+	auto to = string(revoke ? " FROM " : " TO ") + grantee + ";";
+	if (default_objtype != CatalogType::INVALID) {
+		return "ALTER DEFAULT PRIVILEGES " + grant + StringUtil::Upper(PermissionKindName(default_objtype)) + "S" + to;
 	}
-	result += PrivilegesToString(*this, default_privileges ? default_objtype : entry_catalog_type) + " ON ";
-	if (default_privileges) {
-		result += GrantedObjectsKeyword(default_objtype);
-	} else if (all_in_schema) {
-		result += "ALL " + GrantedObjectsKeyword(entry_catalog_type) + " IN SCHEMA ";
-		if (!name.Catalog().empty()) {
-			result += SQLIdentifier::ToString(name.Catalog()) + ".";
-		}
-		result += SQLIdentifier::ToString(name.Schema());
-	} else {
-		result += GrantedObjectKeyword(entry_catalog_type) + " " +
-		          name.ToString(QualifiedNameToStringMode::HIDE_DEFAULT_SCHEMA);
-	}
-	result += (revoke ? " FROM " : " TO ") + GranteeToString(grantee);
-	if (with_grant_option) {
-		result += " WITH GRANT OPTION";
-	}
-	if (!granted_by.empty()) {
-		result += " GRANTED BY " + SQLIdentifier::ToString(granted_by);
-	}
-	if (cascade) {
-		result += " CASCADE";
-	}
-	return result + ";";
+	return grant + object + to;
 }
 
 ReplaceDefinitionInfo::ReplaceDefinitionInfo(unique_ptr<CreateInfo> definition_p)
