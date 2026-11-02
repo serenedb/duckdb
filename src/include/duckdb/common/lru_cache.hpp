@@ -10,6 +10,7 @@
 
 #include <functional>
 
+#include "duckdb/common/atomic.hpp"
 #include "duckdb/common/common.hpp"
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/list.hpp"
@@ -74,7 +75,7 @@ public:
 		new_entry.payload_weight = payload_weight;
 
 		entry_map.emplace(std::cref(lru_list.front()), std::move(new_entry));
-		current_total_weight += payload_weight;
+		StoreRacy(current_total_weight, current_total_weight + payload_weight);
 	}
 
 	// Delete the entry with key `key`.
@@ -106,7 +107,7 @@ public:
 	void Clear() {
 		entry_map.clear();
 		lru_list.clear();
-		current_total_weight = 0;
+		StoreRacy(current_total_weight, idx_t(0));
 	}
 
 	// Evict entries based on their access, until we've freed at least the target number of bytes or there's no entries
@@ -124,7 +125,7 @@ public:
 	}
 
 	void SetCapacity(idx_t new_max_total_weight) {
-		max_total_weight = new_max_total_weight;
+		StoreRacy(max_total_weight, new_max_total_weight);
 		EvictIfNeeded(0);
 	}
 
@@ -133,6 +134,12 @@ public:
 	}
 	idx_t CurrentTotalWeight() const {
 		return current_total_weight;
+	}
+	idx_t CapacityRacy() const {
+		return LoadRacy(max_total_weight);
+	}
+	idx_t CurrentTotalWeightRacy() const {
+		return LoadRacy(current_total_weight);
 	}
 	size_t Size() const {
 		return entry_map.size();
@@ -185,7 +192,7 @@ private:
 
 	void DeleteImpl(typename EntryMap::iterator iter) {
 		auto lru_iterator = iter->second.lru_iterator;
-		current_total_weight -= iter->second.payload_weight;
+		StoreRacy(current_total_weight, current_total_weight - iter->second.payload_weight);
 		entry_map.erase(iter);
 		lru_list.erase(lru_iterator);
 	}
