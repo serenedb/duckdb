@@ -270,6 +270,41 @@ string AlterRoleInfo::ToString() const {
 	return "ALTER ROLE " + GetQualifiedName().Name().GetIdentifierName() + ";";
 }
 
+//===--------------------------------------------------------------------===//
+// AlterDatabaseSettingsInfo
+//===--------------------------------------------------------------------===//
+AlterDatabaseSettingsInfo::AlterDatabaseSettingsInfo(Identifier database)
+    : AlterInfo(AlterType::ALTER_DATABASE_SETTINGS, QualifiedName(Identifier(), Identifier(), std::move(database)),
+                OnEntryNotFound::THROW_EXCEPTION) {
+}
+
+AlterDatabaseSettingsInfo::AlterDatabaseSettingsInfo() : AlterInfo(AlterType::ALTER_DATABASE_SETTINGS) {
+}
+
+CatalogType AlterDatabaseSettingsInfo::GetCatalogType() const {
+	return CatalogType::DATABASE_ENTRY;
+}
+
+unique_ptr<AlterInfo> AlterDatabaseSettingsInfo::Copy() const {
+	auto result = make_uniq<AlterDatabaseSettingsInfo>();
+	result->SetQualifiedName(GetQualifiedName());
+	result->if_not_found = if_not_found;
+	result->role = role;
+	result->role_id = role_id;
+	result->reset_all_config = reset_all_config;
+	result->reset_config = reset_config;
+	result->set_config = set_config;
+	return std::move(result);
+}
+
+string AlterDatabaseSettingsInfo::ToString() const {
+	auto &database = GetQualifiedName().Name().GetIdentifierName();
+	if (role.empty()) {
+		return "ALTER DATABASE " + database + ";";
+	}
+	return "ALTER ROLE " + role + " IN DATABASE " + database + ";";
+}
+
 ReassignOwnedInfo::ReassignOwnedInfo() : AlterInfo(AlterType::REASSIGN_OWNED) {
 }
 

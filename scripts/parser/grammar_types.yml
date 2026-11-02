@@ -253,6 +253,7 @@ AlterInfo:
     - AlterSetSchemaStmt
     - AlterTableStmt
     - AlterDatabaseStmt
+    - AlterDatabaseConfigStmt
     - AlterViewStmt
     - AlterIndexStmt
     - AlterFunctionStmt
@@ -2144,6 +2145,9 @@ excluded_rules:
   - OwnerNamedTarget
   - OwnerRoleSpec
   - MemberOptionName
+  - AlterRoleTarget
+  - AlterRoleAll
+  - AlterRoleInDatabase
   - DefaultPrivForRole
   - DefaultPrivInSchema
   - DefaultPrivAction

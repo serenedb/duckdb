@@ -796,6 +796,25 @@
     "pointer_type": "none"
   },
   {
+    "class": "DatabaseSetting",
+    "includes": [
+      "duckdb/parser/parsed_data/create_database_info.hpp"
+    ],
+    "members": [
+      {
+        "id": 100,
+        "name": "role",
+        "type": "idx_t"
+      },
+      {
+        "id": 101,
+        "name": "config",
+        "type": "vector<string>"
+      }
+    ],
+    "pointer_type": "none"
+  },
+  {
     "class": "ColumnList",
     "includes": [
       "duckdb/parser/column_list.hpp"

@@ -407,23 +407,33 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformAlterTableRowSecuritySt
 	throw NotImplementedException("row-level security is not supported");
 }
 
-// ALTER ROLE/USER name ( RENAME TO new | <option>+ )
-//   RENAME TO new  -> PRAGMA serenedb_rename_role('name', 'new')
-//   <option>+      -> PRAGMA serenedb_alter_role('name', login, super, createdb,
-//                            createrole, inherit, has_password, has_conn_limit,
-//                            has_valid_until)
-// Attribute flags are tri-state ints (-1 unspecified / 0 false / 1 true).
-// PASSWORD / CONNECTION LIMIT / VALID UNTIL are parsed but unsupported; only a
-// "was given" flag is forwarded so the command can reject them.
 unique_ptr<SQLStatement> PEGTransformerFactory::TransformAlterRoleStatement(PEGTransformer &transformer,
                                                                             ParseResult &parse_result) {
 	auto &list_pr = parse_result.Cast<ListParseResult>();
-	// 0:'ALTER' 1:RoleOrUser 2:ColId 3:(AlterRoleRename / AlterRoleConfig / AlterRoleOptionList)
-	auto name = OwnerRoleName(transformer, list_pr.GetChild(2));
+	auto &target = list_pr.GetChild(2).Cast<ListParseResult>().Child<ChoiceParseResult>(0).GetResult();
+	const bool all_roles = target.Name() == "AlterRoleAll";
+	const auto name = all_roles ? string() : OwnerRoleName(transformer, target);
 	auto &chosen = list_pr.GetChild(3).Cast<ListParseResult>().Child<ChoiceParseResult>(0).GetResult();
+	auto result = make_uniq<AlterStatement>();
+
+	if (chosen.Name() == "AlterRoleInDatabase") {
+		auto &in_database = chosen.Cast<ListParseResult>();
+		auto settings =
+		    make_uniq<AlterDatabaseSettingsInfo>(Identifier(TransformColIdName(transformer, in_database.GetChild(2))));
+		settings->role = name;
+		CollectConfigClause(transformer, in_database.GetChild(3), settings->set_config, settings->reset_config,
+		                    settings->reset_all_config);
+		result->info = std::move(settings);
+		return std::move(result);
+	}
+	if (all_roles) {
+		if (chosen.Name() == "AlterRoleConfig") {
+			throw NotImplementedException("ALTER ROLE ALL without IN DATABASE is not supported");
+		}
+		throw ParserException("syntax error at or near \"ALL\"");
+	}
 
 	auto info = make_uniq<AlterRoleInfo>(Identifier(name));
-	auto result = make_uniq<AlterStatement>();
 
 	if (chosen.Name() == "AlterRoleRename") {
 		// LIST(AlterRoleRename): 0:'RENAME' 1:'TO' 2:ColId

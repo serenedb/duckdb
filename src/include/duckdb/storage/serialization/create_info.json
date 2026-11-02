@@ -653,6 +653,11 @@
         "id": 201,
         "name": "options",
         "type": "case_insensitive_map_t<Value>"
+      },
+      {
+        "id": 202,
+        "name": "settings",
+        "type": "vector<DatabaseSetting>"
       }
     ],
     "methods": {

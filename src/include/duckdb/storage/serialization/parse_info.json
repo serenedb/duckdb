@@ -589,6 +589,38 @@
     ]
   },
   {
+    "class": "AlterDatabaseSettingsInfo",
+    "base": "AlterInfo",
+    "enum": "ALTER_DATABASE_SETTINGS",
+    "members": [
+      {
+        "id": 300,
+        "name": "role",
+        "type": "string"
+      },
+      {
+        "id": 301,
+        "name": "role_id",
+        "type": "idx_t"
+      },
+      {
+        "id": 302,
+        "name": "reset_all_config",
+        "type": "bool"
+      },
+      {
+        "id": 303,
+        "name": "reset_config",
+        "type": "vector<string>"
+      },
+      {
+        "id": 304,
+        "name": "set_config",
+        "type": "vector<string>"
+      }
+    ]
+  },
+  {
     "class": "ReassignOwnedInfo",
     "base": "AlterInfo",
     "enum": "REASSIGN_OWNED",

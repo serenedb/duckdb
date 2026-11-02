@@ -511,7 +511,8 @@ BoundStatement Binder::Bind(AlterStatement &stmt) {
 		return result;
 	}
 
-	if (stmt.info->type == AlterType::ALTER_PERMISSIONS || stmt.info->type == AlterType::ALTER_ROLE) {
+	if (stmt.info->type == AlterType::ALTER_PERMISSIONS || stmt.info->type == AlterType::ALTER_ROLE ||
+	    stmt.info->type == AlterType::ALTER_DATABASE_SETTINGS) {
 		auto &properties = GetStatementProperties();
 		properties.return_type = StatementReturnType::NOTHING;
 		const auto catalog_type = stmt.info->GetCatalogType();
@@ -523,6 +524,11 @@ BoundStatement Binder::Bind(AlterStatement &stmt) {
 		}
 		if (stmt.info->type == AlterType::ALTER_PERMISSIONS) {
 			ResolvePermissions(*this, stmt.info->Cast<AlterPermissionsInfo>());
+		} else if (stmt.info->type == AlterType::ALTER_DATABASE_SETTINGS) {
+			auto &settings = stmt.info->Cast<AlterDatabaseSettingsInfo>();
+			if (!settings.role.empty()) {
+				settings.role_id = RoleSpecId(settings.role);
+			}
 		} else if (const auto role = RoleSpecKeyword(stmt.info->GetQualifiedName().Name().GetIdentifierName());
 		           role.IsValid()) {
 			stmt.info->SetQualifiedName(Identifier(), Identifier(), Identifier(RoleName(role.GetIndex())));

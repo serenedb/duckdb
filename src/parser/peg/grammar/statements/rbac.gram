@@ -11,7 +11,10 @@ AdminClause       <- 'ADMIN' List(ColId)
 DropRoleStatement   <- 'DROP' RoleOrUser IfExists? List(ColId)
 # RENAME TO is tried before the per-role GUC and attribute-option lists so
 # 'RENAME'/'SET'/'RESET' are not eaten by the wrong alternative.
-AlterRoleStatement  <- 'ALTER' RoleOrUser OwnerRoleSpec (AlterRoleRename / AlterRoleConfig / AlterRoleOptionList)
+AlterRoleStatement  <- 'ALTER' RoleOrUser AlterRoleTarget (AlterRoleRename / AlterRoleInDatabase / AlterRoleConfig / AlterRoleOptionList)
+AlterRoleTarget     <- AlterRoleAll / OwnerRoleSpec
+AlterRoleAll        <- 'ALL'
+AlterRoleInDatabase <- 'IN' 'DATABASE' ColId AlterRoleConfig
 AlterRoleRename     <- 'RENAME' 'TO' ColId
 # ALTER ROLE name SET guc (= | TO) value ... | SET guc FROM CURRENT | RESET guc
 # | RESET ALL  -> per-role GUC settings (pg_db_role_setting / rolconfig).
