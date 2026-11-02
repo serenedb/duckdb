@@ -441,6 +441,9 @@ public:
 	QualifiedName ClusterName(const QualifiedName &name);
 	Catalog &SubscriptionCatalog(const Identifier &catalog_name);
 	idx_t RoleId(const Identifier &name);
+	optional_idx RoleSpecKeyword(const string &name);
+	idx_t RoleSpecId(const string &name);
+	string RoleName(idx_t role);
 	void RequireDatabasePrivilege(const Identifier &database, AclMode need);
 	void RequireForeignDataWrapperUsage(const RoleAccess &role, const Identifier &database, const string &wrapper);
 	void RequireSchemaCreate(SchemaCatalogEntry &schema);

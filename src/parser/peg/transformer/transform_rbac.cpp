@@ -116,7 +116,7 @@ string TransformGrantee(PEGTransformer &transformer, ParseResult &grantee_list) 
 	if (chosen.type == ParseResultType::KEYWORD) {
 		return "public";
 	}
-	return transformer.Transform<string>(chosen);
+	return PEGTransformerFactory::OwnerRoleName(transformer, chosen);
 }
 
 // Optional DropBehavior? ('CASCADE' / 'RESTRICT') at `child`. True iff CASCADE.
@@ -151,7 +151,7 @@ string TransformGrantedBy(PEGTransformer &transformer, ParseResult &list, idx_t 
 		return string();
 	}
 	// LIST(GrantedBy): 0:'GRANTED' 1:'BY' 2:ColId
-	return TransformColIdName(transformer, opt.GetResult().Cast<ListParseResult>().GetChild(2));
+	return PEGTransformerFactory::OwnerRoleName(transformer, opt.GetResult().Cast<ListParseResult>().GetChild(2));
 }
 
 CatalogType GrantObjectType(const string &keyword) {
@@ -203,14 +203,6 @@ string ObjectTypeKeyword(ParseResult &objtype) {
 	return StringUtil::Join(words, " ");
 }
 
-string OwnerRoleName(PEGTransformer &transformer, ParseResult &spec) {
-	auto &chosen = spec.Cast<ListParseResult>().Child<ChoiceParseResult>(0).GetResult();
-	if (chosen.type == ParseResultType::KEYWORD) {
-		return StringUtil::Upper(chosen.Cast<KeywordParseResult>().keyword);
-	}
-	return transformer.Transform<string>(chosen);
-}
-
 void SetObjectTarget(AlterPermissionsInfo &info, CatalogType type, QualifiedName name) {
 	info.entry_catalog_type = type;
 	if (type == CatalogType::DATABASE_ENTRY) {
@@ -221,6 +213,14 @@ void SetObjectTarget(AlterPermissionsInfo &info, CatalogType type, QualifiedName
 }
 
 } // namespace
+
+string PEGTransformerFactory::OwnerRoleName(PEGTransformer &transformer, ParseResult &spec) {
+	auto &chosen = spec.Cast<ListParseResult>().Child<ChoiceParseResult>(0).GetResult();
+	if (chosen.type == ParseResultType::KEYWORD) {
+		return StringUtil::Upper(chosen.Cast<KeywordParseResult>().keyword);
+	}
+	return transformer.Transform<string>(chosen);
+}
 
 void PEGTransformerFactory::CollectConfigClause(PEGTransformer &transformer, ParseResult &config,
                                                 vector<string> &set_config, vector<string> &reset_config,
@@ -419,7 +419,7 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformAlterRoleStatement(PEGT
                                                                             ParseResult &parse_result) {
 	auto &list_pr = parse_result.Cast<ListParseResult>();
 	// 0:'ALTER' 1:RoleOrUser 2:ColId 3:(AlterRoleRename / AlterRoleConfig / AlterRoleOptionList)
-	auto name = TransformColIdName(transformer, list_pr.GetChild(2));
+	auto name = OwnerRoleName(transformer, list_pr.GetChild(2));
 	auto &chosen = list_pr.GetChild(3).Cast<ListParseResult>().Child<ChoiceParseResult>(0).GetResult();
 
 	auto info = make_uniq<AlterRoleInfo>(Identifier(name));
@@ -689,18 +689,17 @@ static unique_ptr<SQLStatement> BuildGrantTable(PEGTransformer &transformer, Lis
 	return SingleOrMulti(std::move(statements));
 }
 
-// Roles at `roles_child`, members two children later. `option_only` marks
-// REVOKE ADMIN OPTION FOR (keep the membership edge, drop only its admin option).
 static unique_ptr<SQLStatement> BuildGrantRole(PEGTransformer &transformer, ListParseResult &list_pr, idx_t roles_child,
-                                               bool revoke, bool option_only) {
+                                               bool revoke, const string &option) {
 	AlterRoleInfo info {Identifier()};
 	info.revoke = revoke;
-	info.option_only = option_only;
-
-	// Per-edge options, tri-state (-1 unspecified / 0 false / 1 true). REVOKE has
-	// no option list. ADMIN OPTION FOR forces admin := 0.
-	if (option_only) {
+	info.option_only = !option.empty();
+	if (option == "ADMIN") {
 		info.admin_option = 0;
+	} else if (option == "INHERIT") {
+		info.inherit_option = 0;
+	} else if (option == "SET") {
+		info.set_option = 0;
 	}
 	if (!revoke) {
 		auto &opts_opt = list_pr.Child<OptionalParseResult>(roles_child + 3);
@@ -731,7 +730,7 @@ static unique_ptr<SQLStatement> BuildGrantRole(PEGTransformer &transformer, List
 			auto alter = info.Copy();
 			auto &membership = alter->Cast<AlterRoleInfo>();
 			membership.SetQualifiedName(Identifier(), Identifier(),
-			                            Identifier(TransformColIdName(transformer, member.get())));
+			                            Identifier(PEGTransformerFactory::OwnerRoleName(transformer, member.get())));
 			membership.grant_role = TransformColIdName(transformer, role.get());
 			PEGTransformerFactory::AddToMultiStatement(statements, std::move(alter));
 		}
@@ -756,15 +755,14 @@ static unique_ptr<SQLStatement> BuildGrant(PEGTransformer &transformer, ChoicePa
 		return BuildGrantTable(transformer, form.Cast<ListParseResult>(), /*revoke=*/true, /*privs_child=*/3,
 		                       /*option_only=*/true);
 	}
-	// REVOKE ADMIN OPTION FOR <roles> FROM <members>: 0:'ADMIN' 1:'OPTION' 2:'FOR'
-	// 3:List(ColId) 4:'FROM' 5:List(ColId).
 	if (form.Name() == "RevokeAdminOptionFor") {
+		auto &option = form.Cast<ListParseResult>().Child<ListParseResult>(0).Child<ChoiceParseResult>(0).GetResult();
 		return BuildGrantRole(transformer, form.Cast<ListParseResult>(), /*roles_child=*/3, /*revoke=*/true,
-		                      /*option_only=*/true);
+		                      StringUtil::Upper(option.Cast<KeywordParseResult>().keyword));
 	}
 
 	// GrantRoleMembership / RevokeRoleMembership: 0:roles 2:members, options at 3.
-	return BuildGrantRole(transformer, form.Cast<ListParseResult>(), /*roles_child=*/0, revoke, /*option_only=*/false);
+	return BuildGrantRole(transformer, form.Cast<ListParseResult>(), /*roles_child=*/0, revoke, string());
 }
 
 unique_ptr<SQLStatement> PEGTransformerFactory::TransformGrantStatement(PEGTransformer &transformer,
@@ -795,7 +793,7 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformAlterDefaultPrivilegesS
 		for_roles.clear();
 		for (auto &role : PEGTransformerFactory::ExtractParseResultsFromList(
 		         for_opt.GetResult().Cast<ListParseResult>().GetChild(2))) {
-			for_roles.push_back(TransformColIdName(transformer, role.get()));
+			for_roles.push_back(OwnerRoleName(transformer, role.get()));
 		}
 	}
 	vector<string> schemas {string()};

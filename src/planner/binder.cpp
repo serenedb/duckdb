@@ -447,6 +447,37 @@ idx_t Binder::RoleId(const Identifier &name) {
 	return role->oid;
 }
 
+optional_idx Binder::RoleSpecKeyword(const string &name) {
+	if (name == "CURRENT_USER" || name == "CURRENT_ROLE") {
+		return context.principal_role;
+	}
+	if (name == "SESSION_USER") {
+		return context.session_role;
+	}
+	return optional_idx();
+}
+
+idx_t Binder::RoleSpecId(const string &name) {
+	const auto keyword = RoleSpecKeyword(name);
+	return keyword.IsValid() ? keyword.GetIndex() : RoleId(Identifier(name));
+}
+
+string Binder::RoleName(idx_t role) {
+	string result;
+	auto &cluster_catalog = DBConfig::GetConfig(context).cluster_catalog;
+	if (cluster_catalog.empty()) {
+		return result;
+	}
+	auto &cluster = Catalog::GetCatalog(context, cluster_catalog).Cast<DuckCatalog>();
+	cluster.GetCatalogSet(CatalogType::ROLE_ENTRY)
+	    .Scan(cluster.GetCatalogTransaction(context), [&](CatalogEntry &entry) {
+		    if (entry.oid == role) {
+			    result = entry.name.GetIdentifierName();
+		    }
+	    });
+	return result;
+}
+
 static bool StoresPermissions(Catalog &catalog) {
 	return !catalog.IsDuckCatalog() || catalog.GetAttached().IsTemporary() ||
 	       IsSereneDBStorageVersion(catalog.GetAttached().GetStorageManager().GetStorageVersion());

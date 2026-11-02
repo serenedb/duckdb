@@ -180,34 +180,8 @@ static RoleAccess AccessOf(ClientContext &context, idx_t role) {
 	return missing;
 }
 
-static string RoleName(ClientContext &context, idx_t role) {
-	string result;
-	auto &cluster_catalog = DBConfig::GetConfig(context).cluster_catalog;
-	if (cluster_catalog.empty()) {
-		return result;
-	}
-	auto &cluster = Catalog::GetCatalog(context, cluster_catalog).Cast<DuckCatalog>();
-	cluster.GetCatalogSet(CatalogType::ROLE_ENTRY)
-	    .Scan(cluster.GetCatalogTransaction(context), [&](CatalogEntry &entry) {
-		    if (entry.oid == role) {
-			    result = entry.name.GetIdentifierName();
-		    }
-	    });
-	return result;
-}
-
 static idx_t GranteeId(Binder &binder, const string &name) {
-	return name == "public" ? ACL_ID_PUBLIC : binder.RoleId(Identifier(name));
-}
-
-static idx_t RoleSpecId(Binder &binder, const string &name) {
-	if (StringUtil::CIEquals(name, "CURRENT_USER") || StringUtil::CIEquals(name, "CURRENT_ROLE")) {
-		return binder.context.principal_role;
-	}
-	if (StringUtil::CIEquals(name, "SESSION_USER")) {
-		return binder.context.session_role;
-	}
-	return binder.RoleId(Identifier(name));
+	return name == "public" ? ACL_ID_PUBLIC : binder.RoleSpecId(name);
 }
 
 static void RequireGrantable(Binder &binder, CatalogEntry &entry) {
@@ -338,9 +312,9 @@ static void ResolveGrant(Binder &binder, AlterPermissionsInfo &info) {
 	auto principal = binder.principal;
 	info.grantee_id = GranteeId(binder, info.grantee);
 	if (!info.granted_by.empty()) {
-		auto granted_by = binder.RoleId(Identifier(info.granted_by));
+		auto granted_by = binder.RoleSpecId(info.granted_by);
 		if (principal && !principal->MemberOf(granted_by)) {
-			throw PermissionException("must be member of role \"%s\"", info.granted_by);
+			throw PermissionException("must be member of role \"%s\"", binder.RoleName(granted_by));
 		}
 		info.grantors = {granted_by};
 	} else {
@@ -376,7 +350,7 @@ static void ResolveGrant(Binder &binder, AlterPermissionsInfo &info) {
 static void ResolveOwner(Binder &binder, AlterPermissionsInfo &info) {
 	auto &context = binder.context;
 	auto &entry = ResolvePermissionsTarget(binder, info);
-	info.new_owner_id = RoleSpecId(binder, info.new_owner);
+	info.new_owner_id = binder.RoleSpecId(info.new_owner);
 	auto principal = binder.principal;
 	const bool enforce = principal && !principal->is_superuser;
 	const bool relation = Catalog::InRelationNamespace(entry.type);
@@ -398,7 +372,7 @@ static void ResolveOwner(Binder &binder, AlterPermissionsInfo &info) {
 		binder.RequireOwner(entry);
 	}
 	if (!principal->CanSet(info.new_owner_id)) {
-		throw PermissionException("must be able to SET ROLE \"%s\"", RoleName(context, info.new_owner_id));
+		throw PermissionException("must be able to SET ROLE \"%s\"", binder.RoleName(info.new_owner_id));
 	}
 	if (entry.type == CatalogType::SCHEMA_ENTRY || entry.type == CatalogType::SUBSCRIPTION_ENTRY) {
 		binder.RequireDatabasePrivilege(entry.ParentCatalog().GetName(), AclMode::Create);
@@ -420,7 +394,7 @@ static void ResolveOwner(Binder &binder, AlterPermissionsInfo &info) {
 static void ResolveDefaultPrivileges(Binder &binder, AlterPermissionsInfo &info) {
 	auto &context = binder.context;
 	auto principal = binder.principal;
-	info.target_role = info.for_role.empty() ? context.principal_role : binder.RoleId(Identifier(info.for_role));
+	info.target_role = info.for_role.empty() ? context.principal_role : binder.RoleSpecId(info.for_role);
 	if (principal && !principal->MemberOf(info.target_role)) {
 		throw PermissionException("permission denied to change default privileges");
 	}
@@ -443,11 +417,10 @@ static void ResolveDefaultPrivileges(Binder &binder, AlterPermissionsInfo &info)
 }
 
 static idx_t ResolveOwnedRole(Binder &binder, const string &name, const string &action, const string &detail) {
-	auto role = RoleSpecId(binder, name);
+	auto role = binder.RoleSpecId(name);
 	if (binder.principal && !binder.principal->MemberOf(role)) {
 		throw PermissionException(
-		    unordered_map<string, string> {
-		        {"detail", StringUtil::Format(detail, RoleName(binder.context, role), action)}},
+		    unordered_map<string, string> {{"detail", StringUtil::Format(detail, binder.RoleName(role), action)}},
 		    StringUtil::Format("permission denied to %s objects", action));
 	}
 	return role;
@@ -554,6 +527,9 @@ BoundStatement Binder::Bind(AlterStatement &stmt) {
 		}
 		if (stmt.info->type == AlterType::ALTER_PERMISSIONS) {
 			ResolvePermissions(*this, stmt.info->Cast<AlterPermissionsInfo>());
+		} else if (const auto role = RoleSpecKeyword(stmt.info->GetQualifiedName().Name().GetIdentifierName());
+		           role.IsValid()) {
+			stmt.info->SetQualifiedName(Identifier(), Identifier(), Identifier(RoleName(role.GetIndex())));
 		}
 		const auto target_type = stmt.info->GetCatalogType();
 		if (target_type == CatalogType::DATABASE_ENTRY || target_type == CatalogType::ROLE_ENTRY) {

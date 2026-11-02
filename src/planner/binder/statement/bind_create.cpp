@@ -1190,6 +1190,16 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 	switch (catalog_type) {
 	case CatalogType::SCHEMA_ENTRY: {
 		auto &info = stmt.info->Cast<CreateSchemaInfo>();
+		if (const auto authorization = RoleSpecKeyword(info.authorization.GetIdentifierName());
+		    authorization.IsValid()) {
+			const Identifier role_name(RoleName(authorization.GetIndex()));
+			auto path = info.GetQualifiedName().Path();
+			if (path.size() == 2 && path[0].GetIdentifierName() == info.authorization.GetIdentifierName()) {
+				path[0] = role_name;
+				info.SetQualifiedName(QualifiedName::FromPath(std::move(path)));
+			}
+			info.authorization = role_name;
+		}
 		BindCreateSchema(info);
 		auto owner = principal ? principal->role : idx_t(0);
 		if (principal && !info.authorization.empty()) {

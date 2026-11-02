@@ -11,7 +11,7 @@ AdminClause       <- 'ADMIN' List(ColId)
 DropRoleStatement   <- 'DROP' RoleOrUser IfExists? List(ColId)
 # RENAME TO is tried before the per-role GUC and attribute-option lists so
 # 'RENAME'/'SET'/'RESET' are not eaten by the wrong alternative.
-AlterRoleStatement  <- 'ALTER' RoleOrUser ColId (AlterRoleRename / AlterRoleConfig / AlterRoleOptionList)
+AlterRoleStatement  <- 'ALTER' RoleOrUser OwnerRoleSpec (AlterRoleRename / AlterRoleConfig / AlterRoleOptionList)
 AlterRoleRename     <- 'RENAME' 'TO' ColId
 # ALTER ROLE name SET guc (= | TO) value ... | SET guc FROM CURRENT | RESET guc
 # | RESET ALL  -> per-role GUC settings (pg_db_role_setting / rolconfig).
@@ -48,7 +48,7 @@ DropOwnedStatement <- 'DROP' 'OWNED' 'BY' List(OwnerRoleSpec) DropBehavior?
 # ALTER DEFAULT PRIVILEGES [FOR ROLE r,...] [IN SCHEMA s,...] (GRANT|REVOKE) ...
 #   -> serenedb_alter_default_privileges pragma (pg_default_acl rows).
 AlterDefaultPrivilegesStatement <- 'ALTER' 'DEFAULT' 'PRIVILEGES' DefaultPrivForRole? DefaultPrivInSchema? DefaultPrivAction
-DefaultPrivForRole <- 'FOR' RoleOrUser List(ColId)
+DefaultPrivForRole <- 'FOR' RoleOrUser List(OwnerRoleSpec)
 DefaultPrivInSchema <- 'IN' 'SCHEMA' List(QualifiedName)
 DefaultPrivAction <- DefaultPrivGrant / DefaultPrivRevoke
 DefaultPrivGrant <- 'GRANT' PrivilegeList 'ON' DefaultPrivObjType 'TO' List(Grantee) WithGrantOption?
@@ -64,13 +64,14 @@ RevokeStatement <- 'REVOKE' (RevokeGrantOptionFor / RevokeAdminOptionFor / Revok
 
 GrantTablePrivilege   <- PrivilegeList 'ON' GrantTarget 'TO'   List(Grantee) WithGrantOption? GrantedBy?
 RevokeTablePrivilege  <- PrivilegeList 'ON' GrantTarget 'FROM' List(Grantee) GrantedBy? DropBehavior?
-GrantRoleMembership   <- List(ColId) 'TO'   List(ColId) MemberOptionList? GrantedBy?
-RevokeRoleMembership  <- List(ColId) 'FROM' List(ColId) GrantedBy? DropBehavior?
+GrantRoleMembership   <- List(ColId) 'TO'   List(OwnerRoleSpec) MemberOptionList? GrantedBy?
+RevokeRoleMembership  <- List(ColId) 'FROM' List(OwnerRoleSpec) GrantedBy? DropBehavior?
 
 # REVOKE [GRANT OPTION FOR <priv> ... | ADMIN OPTION FOR <role> ...]: strip only
 # the grant/admin option, keeping the underlying privilege / membership edge.
 RevokeGrantOptionFor  <- 'GRANT' 'OPTION' 'FOR' PrivilegeList 'ON' GrantTarget 'FROM' List(Grantee) GrantedBy? DropBehavior?
-RevokeAdminOptionFor  <- 'ADMIN' 'OPTION' 'FOR' List(ColId) 'FROM' List(ColId) GrantedBy? DropBehavior?
+RevokeAdminOptionFor  <- MemberOptionName 'OPTION' 'FOR' List(ColId) 'FROM' List(OwnerRoleSpec) GrantedBy? DropBehavior?
+MemberOptionName <- 'ADMIN' / 'INHERIT' / 'SET'
 
 # The object(s) a privilege is granted on. ALL ... IN SCHEMA (bulk) is tried
 # first so 'ALL' is not mistaken for a relation name. A FUNCTION/ROUTINE target
@@ -94,7 +95,7 @@ GrantNamedTarget <- GrantObjType? List(QualifiedName)
 # Optional WITH GRANT OPTION suffix on a table GRANT: the grantee may re-grant.
 WithGrantOption <- 'WITH' 'GRANT' 'OPTION'
 # Optional GRANTED BY <role>: names the grantor of the privilege/membership.
-GrantedBy <- 'GRANTED' 'BY' ColId
+GrantedBy <- 'GRANTED' 'BY' OwnerRoleSpec
 
 # Per-edge options on GRANT role TO member (PG16): admin/inherit/set. The bare
 # 'WITH ADMIN OPTION' form is the legacy spelling for admin=true. Uses the List
@@ -112,7 +113,7 @@ GrantObjType <- ForeignServerObjType / ForeignDataWrapperObjType / 'TABLE' / 'SE
 ForeignServerObjType <- 'FOREIGN' 'SERVER'
 ForeignDataWrapperObjType <- 'FOREIGN' 'DATA' 'WRAPPER'
 # PUBLIC is the pseudo-role; otherwise a normal role identifier.
-Grantee <- 'PUBLIC' / ColId
+Grantee <- 'PUBLIC' / OwnerRoleSpec
 
 RoleOptionList <- RoleOption+
 RoleOption <- LoginOption / SuperuserOption / CreateDbOption / CreateRoleOption / InheritOption / ReplicationOption / BypassRlsOption / ConnLimitOption / ValidUntilOption / SysIdOption / PasswordNullOption / PasswordOption
