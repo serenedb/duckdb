@@ -1769,7 +1769,8 @@ ScalarMacroFunction &ExpressionBinder::UnfoldMacroExpression(FunctionExpression 
 BindResult ExpressionBinder::BindMacro(FunctionExpression &function, ScalarMacroCatalogEntry &macro_func, idx_t depth,
                                        unique_ptr<ParsedExpression> &expr) {
 	const bool constant_candidate = function.GetArguments().empty() &&
-	                                expr->GetExpressionClass() == ExpressionClass::FUNCTION && !binder.current_role;
+	                                expr->GetExpressionClass() == ExpressionClass::FUNCTION &&
+	                                (!binder.current_role || binder.current_role->IsSystem());
 	auto &constant_macros = binder.global_binder_state->constant_macros;
 	if (constant_candidate) {
 		auto constant = constant_macros.find(&macro_func);
