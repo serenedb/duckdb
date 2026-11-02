@@ -748,18 +748,21 @@ void Binder::BindDefaultValue(const ColumnDefinition &column, vector<unique_ptr<
 	BindDefaultValues(col_list, bound_defaults, schema);
 }
 
-void Binder::BindDefaultValues(const TableCatalogEntry &table, vector<unique_ptr<Expression>> &bound_defaults) {
+void Binder::BindDefaultValues(const TableCatalogEntry &table, vector<unique_ptr<Expression>> &bound_defaults,
+                               const std::function<bool(const ColumnDefinition &)> &evaluated) {
 	const auto lookup_role = entry_retriever.GetCheckAs();
 	entry_retriever.SetCheckAs(&RoleAccess::System());
 	absl::Cleanup restore_role = [&] {
 		entry_retriever.SetCheckAs(lookup_role);
 	};
-	BindDefaultValues(table.GetColumns(), bound_defaults, table.ParentSchema(context));
+	BindDefaultValues(table.GetColumns(), bound_defaults, table.ParentSchema(context), evaluated);
 }
 
 void Binder::BindDefaultValues(const ColumnList &columns, vector<unique_ptr<Expression>> &bound_defaults,
-                               const SchemaCatalogEntry &schema) {
+                               const SchemaCatalogEntry &schema,
+                               const std::function<bool(const ColumnDefinition &)> &evaluated) {
 	auto default_binder = CreateTableBinder(context, schema, this);
+	shared_ptr<Binder> unused_binder;
 
 	for (auto &column : columns.Physical()) {
 		unique_ptr<Expression> bound_default;
@@ -770,7 +773,15 @@ void Binder::BindDefaultValues(const ColumnList &columns, vector<unique_ptr<Expr
 			if (default_copy->HasParameter()) {
 				throw BinderException("DEFAULT values cannot contain parameters");
 			}
-			ConstantBinder default_value_binder(*default_binder, context, "DEFAULT value");
+			auto binder = default_binder;
+			if (evaluated && !evaluated(column)) {
+				if (!unused_binder) {
+					unused_binder = CreateTableBinder(context, schema, this);
+					unused_binder->BindUnchecked();
+				}
+				binder = unused_binder;
+			}
+			ConstantBinder default_value_binder(*binder, context, "DEFAULT value");
 			default_value_binder.target_type = column.Type();
 			bound_default = default_value_binder.Bind(default_copy);
 		} else {
