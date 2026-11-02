@@ -375,9 +375,9 @@ BufferHandle StandardBufferManager::Pin(const QueryContext &context, shared_ptr<
 	if (block_memory.TryPinLoaded()) {
 		// Tiny buffers keep no reader count, so their pins own the block.
 		if (own || block_memory.GetBufferType() == FileBufferType::TINY_BUFFER) {
-			return BufferHandle(handle, block_memory.GetBuffer().get());
+			return BufferHandle(handle, block_memory.GetLoadedBuffer());
 		}
-		return BufferHandle(block_memory, block_memory.GetBuffer().get());
+		return BufferHandle(block_memory, block_memory.GetLoadedBuffer());
 	}
 	{
 		// lock the block
@@ -450,6 +450,7 @@ void StandardBufferManager::VerifyZeroReaders(BlockLock &lock, BlockMemory &memo
 	memcpy(replacement_buffer->GetDataMutable(), buffer->GetData(), buffer->Size());
 	WriteGarbageIntoBuffer(lock, memory);
 	buffer = std::move(replacement_buffer);
+	memory.SetState(BlockState::BLOCK_LOADED);
 #endif
 }
 
@@ -458,7 +459,7 @@ void StandardBufferManager::Unpin(shared_ptr<BlockHandle> &handle) {
 }
 
 void StandardBufferManager::Unpin(BlockMemory &memory) {
-	if (memory.GetBufferType() == FileBufferType::TINY_BUFFER) {
+	if (memory.TryUnpinFast()) {
 		return;
 	}
 	buffer_pool.MarkUsed(memory);
@@ -491,6 +492,47 @@ void StandardBufferManager::Unpin(BlockMemory &memory) {
 	}
 }
 
+BufferHandle StandardBufferManager::PinEmpty(shared_ptr<BlockHandle> &handle, idx_t block_size,
+                                             idx_t block_header_size) {
+	auto &memory = handle->GetMemory();
+	unique_ptr<FileBuffer> reusable_buffer;
+	auto reservation = EvictBlocksOrThrow(QueryContext(), memory.GetMemoryTag(), memory.GetMemoryUsage(),
+	                                      &reusable_buffer, "failed to pin block of size %s%s");
+	auto buffer =
+	    ConstructManagedBuffer(block_size, block_header_size, std::move(reusable_buffer), memory.GetBufferType());
+	D_ASSERT(buffer->AllocSize() == memory.GetMemoryUsage());
+	auto lock = memory.GetLock();
+	if (!memory.IsUnloaded() || memory.HasTemporaryFile()) {
+		reservation.Resize(0);
+		return BufferHandle();
+	}
+	memory.GetBuffer(lock) = std::move(buffer);
+	memory.GetMemoryCharge(lock) = std::move(reservation);
+	memory.SetState(BlockState::BLOCK_LOADED);
+	memory.IncrementReaders();
+	buffer_pool.AddBlock(memory);
+	return BufferHandle(memory, memory.GetBuffer(lock).get());
+}
+
+void StandardBufferManager::Discard(shared_ptr<BlockHandle> &handle) {
+	auto &memory = handle->GetMemory();
+	unique_ptr<FileBuffer> buffer;
+	auto lock = memory.GetLock();
+	if (memory.HasTemporaryFile()) {
+		DeleteTemporaryFile(memory);
+		memory.SetHasTemporaryFile(false);
+	}
+	if (memory.GetState() == BlockState::BLOCK_LOADED) {
+		if (memory.TryMarkUnloaded()) {
+			memory.GetMemoryCharge(lock).Resize(0);
+			buffer_pool.RemoveBlock(memory);
+			buffer = std::move(memory.GetBuffer(lock));
+		} else {
+			memory.SetDestroyBufferUpon(DestroyBufferUpon::UNPIN);
+		}
+	}
+}
+
 void StandardBufferManager::SetMemoryLimit(idx_t limit) {
 	buffer_pool.SetLimit(limit, InMemoryWarning());
 }
@@ -511,6 +553,9 @@ vector<MemoryInformation> StandardBufferManager::GetMemoryUsageInfo() const {
 		info.tag = MemoryTag(k);
 		info.size = buffer_pool.memory_usage.GetUsedMemory(MemoryTag(k), BufferPool::MemoryUsageCaches::FLUSH);
 		info.evicted_data = evicted_data_per_tag[k].load();
+		info.evictions = buffer_pool.GetEvictions(MemoryTag(k));
+		info.temporary_writes = temporary_writes_per_tag[k].load(std::memory_order_relaxed);
+		info.temporary_reads = temporary_reads_per_tag[k].load(std::memory_order_relaxed);
 		result.push_back(info);
 	}
 	return result;
@@ -546,9 +591,10 @@ void StandardBufferManager::WriteTemporaryBuffer(QueryContext context, MemoryTag
 	RequireTemporaryDirectory();
 
 	// Append to a few grouped files.
-	if (buffer.AllocSize() == GetBlockAllocSize()) {
+	if (TemporaryFileManager::FitsGroupedFiles(buffer)) {
 		idx_t eviction_size = temporary_directory.handle->GetTempFile().WriteTemporaryBuffer(context, block_id, buffer);
 		evicted_data_per_tag[uint8_t(tag)] += eviction_size;
+		temporary_writes_per_tag[uint8_t(tag)].fetch_add(1, std::memory_order_relaxed);
 		if (context.GetClientContext()) {
 			QueryProfiler::Get(*context.GetClientContext()).TrackBytesSpilled(eviction_size);
 		}
@@ -598,9 +644,32 @@ void StandardBufferManager::WriteTemporaryBuffer(QueryContext context, MemoryTag
 		throw;
 	}
 	evicted_data_per_tag[uint8_t(tag)] += buffer.AllocSize();
+	temporary_writes_per_tag[uint8_t(tag)].fetch_add(1, std::memory_order_relaxed);
 	if (context.GetClientContext()) {
 		QueryProfiler::Get(*context.GetClientContext()).TrackBytesSpilled(buffer.AllocSize() + header_size);
 	}
+}
+
+bool StandardBufferManager::TryWriteTemporaryCopy(QueryContext context, MemoryTag tag, block_id_t block_id,
+                                                  FileBuffer &buffer) {
+	if (!HasTemporaryDirectory() || !TemporaryFileManager::FitsGroupedFiles(buffer)) {
+		return false;
+	}
+	RequireTemporaryDirectory();
+	auto &temporary_files = temporary_directory.handle->GetTempFile();
+	const auto swap_limit = temporary_files.GetMaxSwapSpace();
+	auto copy_limit = DBConfig::GetConfig(db).options.external_file_cache_spill_size;
+	if (copy_limit == DConstants::INVALID_INDEX) {
+		copy_limit = swap_limit.IsValid() ? swap_limit.GetIndex() / 2 : NumericLimits<idx_t>::Maximum();
+	}
+	const auto size = buffer.AllocSize();
+	if (copy_bytes.load(std::memory_order_relaxed) + size > copy_limit ||
+	    (swap_limit.IsValid() && temporary_files.GetTotalUsedSpaceInBytes() + size > swap_limit.GetIndex())) {
+		return false;
+	}
+	WriteTemporaryBuffer(context, tag, block_id, buffer);
+	copy_bytes.fetch_add(size, std::memory_order_relaxed);
+	return true;
 }
 
 unique_ptr<FileBuffer> StandardBufferManager::ReadTemporaryBuffer(QueryContext context, MemoryTag tag,
@@ -614,13 +683,14 @@ unique_ptr<FileBuffer> StandardBufferManager::ReadTemporaryBuffer(QueryContext c
 	if (temporary_directory.handle->GetTempFile().HasTemporaryBuffer(id)) {
 		// This is a block that was offloaded to a regular .tmp file, the file contains blocks of a fixed size
 
+		const bool keep = block.GetMemory().KeepsCopy();
 		idx_t eviction_size = 0;
 		auto buffer = temporary_directory.handle->GetTempFile().ReadTemporaryBuffer(
-		    context, id, std::move(reusable_buffer), &eviction_size);
-
-		// Decrement evicted size.
-		evicted_data_per_tag[uint8_t(tag)] -= eviction_size;
-
+		    context, id, std::move(reusable_buffer), &eviction_size, keep);
+		temporary_reads_per_tag[uint8_t(tag)].fetch_add(1, std::memory_order_relaxed);
+		if (!keep) {
+			evicted_data_per_tag[uint8_t(tag)] -= eviction_size;
+		}
 		return buffer;
 	}
 
@@ -672,6 +742,7 @@ unique_ptr<FileBuffer> StandardBufferManager::ReadTemporaryBuffer(QueryContext c
 	}
 
 	handle.reset();
+	temporary_reads_per_tag[uint8_t(tag)].fetch_add(1, std::memory_order_relaxed);
 
 	// Delete the file and return the buffer.
 	// DeleteTemporaryFile already decrements evicted_data_per_tag for the .block path; do not
@@ -682,7 +753,7 @@ unique_ptr<FileBuffer> StandardBufferManager::ReadTemporaryBuffer(QueryContext c
 }
 
 void StandardBufferManager::DeleteTemporaryFile(BlockMemory &memory) {
-	if (!memory.IsUnloaded()) {
+	if (!memory.IsUnloaded() && !memory.KeepsCopy()) {
 		return;
 	}
 	auto id = memory.BlockId();
@@ -702,6 +773,9 @@ void StandardBufferManager::DeleteTemporaryFile(BlockMemory &memory) {
 	if (temporary_directory.handle->GetTempFile().HasTemporaryBuffer(id)) {
 		idx_t eviction_size = temporary_directory.handle->GetTempFile().DeleteTemporaryBuffer(id);
 		evicted_data_per_tag[uint8_t(memory.GetMemoryTag())] -= eviction_size;
+		if (memory.KeepsCopy()) {
+			copy_bytes.fetch_sub(memory.GetMemoryUsage(), std::memory_order_relaxed);
+		}
 		return;
 	}
 
@@ -718,11 +792,6 @@ void StandardBufferManager::DeleteTemporaryFile(BlockMemory &memory) {
 
 bool StandardBufferManager::HasTemporaryDirectory() const {
 	return !temporary_directory.path.empty();
-}
-
-TemporaryFileManager &StandardBufferManager::GetTemporaryFileManager() {
-	RequireTemporaryDirectory();
-	return temporary_directory.handle->GetTempFile();
 }
 
 bool StandardBufferManager::HasFilesInTemporaryDirectory() const {
@@ -799,19 +868,6 @@ void StandardBufferManager::ReserveMemory(MemoryTag tag, idx_t size) {
 	auto reservation =
 	    EvictBlocksOrThrow(QueryContext(), tag, size, nullptr, "failed to reserve memory data of size %s%s");
 	reservation.size = 0;
-}
-
-bool StandardBufferManager::TryReserveMemory(MemoryTag tag, idx_t size, bool evict_caches) {
-	if (size == 0) {
-		return true;
-	}
-	auto result = evict_caches ? buffer_pool.EvictBlocks(QueryContext(), tag, size, buffer_pool.maximum_memory)
-	                           : buffer_pool.EvictBuffers(QueryContext(), tag, size, buffer_pool.maximum_memory);
-	if (!result.success) {
-		return false;
-	}
-	result.reservation.size = 0;
-	return true;
 }
 
 void StandardBufferManager::FreeReservedMemory(MemoryTag tag, idx_t size) {

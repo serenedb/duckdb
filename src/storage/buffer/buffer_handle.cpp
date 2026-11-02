@@ -6,36 +6,8 @@
 
 namespace duckdb {
 
-BufferHandle::BufferHandle() : memory(nullptr), handle(nullptr), node(nullptr) {
-}
-
 BufferHandle::BufferHandle(shared_ptr<BlockHandle> handle_p, optional_ptr<FileBuffer> node_p)
     : memory(handle_p ? &handle_p->GetMemory() : nullptr), handle(std::move(handle_p)), node(node_p) {
-}
-
-BufferHandle::BufferHandle(BlockMemory &memory_p, optional_ptr<FileBuffer> node_p)
-    : memory(&memory_p), handle(nullptr), node(node_p) {
-}
-
-BufferHandle::BufferHandle(BufferHandle &&other) noexcept : memory(nullptr), node(nullptr) {
-	std::swap(memory, other.memory);
-	std::swap(node, other.node);
-	std::swap(handle, other.handle);
-}
-
-BufferHandle &BufferHandle::operator=(BufferHandle &&other) noexcept {
-	std::swap(memory, other.memory);
-	std::swap(node, other.node);
-	std::swap(handle, other.handle);
-	return *this;
-}
-
-BufferHandle::~BufferHandle() {
-	Destroy();
-}
-
-bool BufferHandle::IsValid() const {
-	return node != nullptr;
 }
 
 shared_ptr<BlockHandle> BufferHandle::GetBlockHandle() const {
@@ -53,6 +25,12 @@ void BufferHandle::Destroy() {
 	memory = nullptr;
 	handle.reset();
 	node = nullptr;
+}
+
+BufferHandle BufferHandle::Share() {
+	D_ASSERT(IsValid() && memory->GetBufferType() != FileBufferType::TINY_BUFFER);
+	memory->IncrementReaders();
+	return BufferHandle(*memory, node);
 }
 
 FileBuffer &BufferHandle::GetFileBuffer() {

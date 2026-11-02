@@ -267,11 +267,11 @@ TEST_CASE("Memory directories list, move and remove files", "[memory_file_system
 	REQUIRE(!fs.FileExists("memory://index/sub/c"));
 }
 
-TEST_CASE("Memory files larger than the block cache spill and read back", "[memory_file_system]") {
+TEST_CASE("Memory files larger than the memory limit spill and read back", "[memory_file_system]") {
 	DuckDB db(nullptr);
 	Connection con(db);
-	REQUIRE_NO_FAIL(con.Query("SET external_file_cache_size='1MB'"));
 	REQUIRE_NO_FAIL(con.Query("SET temp_directory='" + TestCreatePath("memory_file_spill") + "'"));
+	REQUIRE_NO_FAIL(con.Query("SET memory_limit='1MB'"));
 	auto &fs = FileSystem::GetFileSystem(*db.instance);
 	WriteFile(fs, "memory://spill/big.bin", 16 * MEMORY_BLOCK + 99, MEMORY_BLOCK / 2 + 1);
 	auto &cache = BlockCache::Get(*db.instance);
@@ -279,7 +279,8 @@ TEST_CASE("Memory files larger than the block cache spill and read back", "[memo
 	REQUIRE(ReadsBack(fs, "memory://spill/big.bin", 16 * MEMORY_BLOCK + 99));
 
 	fs.RemoveFile("memory://spill/big.bin");
-	REQUIRE(cache.GetStatistics().used <= cache.GetStatistics().capacity);
+	REQUIRE(cache.GetStatistics().used == 0);
+	REQUIRE(BufferManager::GetBufferManager(*db.instance).GetUsedSwap() == 0);
 }
 
 } // namespace duckdb

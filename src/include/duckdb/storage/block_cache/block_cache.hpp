@@ -19,14 +19,13 @@
 #include "duckdb/common/shared_ptr.hpp"
 #include "duckdb/common/unique_ptr.hpp"
 #include "duckdb/common/unordered_map.hpp"
-#include "duckdb/common/unordered_set.hpp"
 #include "duckdb/common/vector.hpp"
 #include "duckdb/parallel/task_scheduler.hpp"
-#include "duckdb/storage/block_cache/block_cache_spill.hpp"
 #include "duckdb/storage/buffer/buffer_handle.hpp"
 #include "duckdb/storage/buffer/temporary_file_information.hpp"
 #include "duckdb/storage/buffer_manager.hpp"
 #include "duckdb/storage/external_file_cache/cache_validation.hpp"
+#include "duckdb/storage/in_memory_block_manager.hpp"
 
 #include <span>
 
@@ -38,27 +37,8 @@ class BlockCache;
 struct BlockCacheFileInfo {
 	CacheValidationInfo validation;
 	bool can_seek = true;
-	//! A file on local disk, read again as cheaply as a spilled block, so its blocks never spill
+	//! A file on local disk, read again as cheaply as a temporary file, so its evicted blocks are dropped
 	bool on_disk = false;
-};
-
-//! One slot of the translation table: the key of a cached block and the header of the frame holding it
-struct BlockCacheEntry {
-	//! Version (high 32 bits), flags (10 bits) and pin count (low 22 bits). A lookup pins before it checks the version
-	//! and flags and unpins when they changed, so every change of the state keeps the pin count it finds.
-	atomic<uint64_t> state {0};
-	//! File number (high 32 bits) and block number (low 32 bits); zero when the slot is free
-	atomic<uint64_t> key {0};
-	//! The frame holding the block
-	atomic<uint32_t> frame {0};
-	//! The next entry of the bucket's chain: its overflow pool index plus one, zero at the end
-	atomic<uint32_t> next {0};
-};
-
-//! A bucket of the translation table: a version that is odd while the chain changes, and the chain's first entry
-struct alignas(64) BlockCacheBucket {
-	atomic<uint64_t> version {0};
-	BlockCacheEntry first;
 };
 
 //! A block held in the cache, or bytes read into a buffer the pin owns: they stay valid and unchanged while the pin
@@ -66,27 +46,23 @@ struct alignas(64) BlockCacheBucket {
 class BlockCachePin {
 public:
 	BlockCachePin() = default;
-	BlockCachePin(BlockCache &cache_p, BlockCacheEntry &entry_p, data_ptr_t data_p, idx_t size_p)
-	    : cache(&cache_p), entry(&entry_p), data(data_p), size(size_p) {
+	BlockCachePin(BufferHandle handle_p, idx_t size_p)
+	    : handle(std::move(handle_p)), data(handle.GetDataMutable()), size(size_p) {
 	}
-	[[gnu::always_inline]] ~BlockCachePin() {
-		Reset();
+	[[gnu::always_inline]] BlockCachePin(BufferHandle handle_p, data_ptr_t data_p, idx_t size_p)
+	    : handle(std::move(handle_p)), data(data_p), size(size_p) {
 	}
 	[[gnu::always_inline]] BlockCachePin(BlockCachePin &&other) noexcept
-	    : cache(other.cache), entry(other.entry), data(other.data), size(other.size), owned(std::move(other.owned)) {
-		other.entry = nullptr;
+	    : handle(std::move(other.handle)), data(other.data), size(other.size) {
 		other.data = nullptr;
 		other.size = 0;
 	}
 	[[gnu::always_inline]] BlockCachePin &operator=(BlockCachePin &&other) noexcept {
 		if (this != &other) {
-			Reset();
-			cache = other.cache;
-			entry = other.entry;
+			BufferHandle released = std::move(handle);
+			handle = std::move(other.handle);
 			data = other.data;
 			size = other.size;
-			owned = std::move(other.owned);
-			other.entry = nullptr;
 			other.data = nullptr;
 			other.size = 0;
 		}
@@ -96,7 +72,7 @@ public:
 	BlockCachePin &operator=(const BlockCachePin &) = delete;
 
 	bool IsValid() const {
-		return entry || owned;
+		return handle.IsValid();
 	}
 	const_data_ptr_t Ptr() const {
 		return data;
@@ -108,12 +84,10 @@ public:
 	idx_t Size() const {
 		return size;
 	}
+	//! Another pin of the [size] bytes at [offset] of the pinned bytes
 	BlockCachePin Share(idx_t offset, idx_t size);
-	[[gnu::always_inline]] void Reset() {
-		if (entry) {
-			Unpin();
-		}
-		owned.reset();
+	void Reset() {
+		handle.Destroy();
 		data = nullptr;
 		size = 0;
 	}
@@ -121,21 +95,67 @@ public:
 private:
 	friend class BlockCache;
 
-	void Unpin();
-
-	optional_ptr<BlockCache> cache;
-	optional_ptr<BlockCacheEntry> entry;
+	BufferHandle handle;
 	data_ptr_t data = nullptr;
 	idx_t size = 0;
-	unique_ptr<BufferHandle> owned;
 };
 
-//! An open file whose blocks the cache holds; opens of the same path and version share one file number
+//! The slot of a block of a file: the memory of its buffer-managed block, which the buffer pool may evict, or null
+//! before its first load, with SLOT_LOADING set while a load is in progress
+using BlockCacheSlot = atomic<uintptr_t>;
+
+//! The slots of the blocks of one version of a file, and the blocks, which live as long as the slots
+class BlockCacheBlocks {
+public:
+	explicit BlockCacheBlocks(BlockCache &cache, idx_t block_count);
+	~BlockCacheBlocks();
+	BlockCacheBlocks(const BlockCacheBlocks &) = delete;
+	BlockCacheBlocks &operator=(const BlockCacheBlocks &) = delete;
+
+private:
+	friend class BlockCache;
+
+	static constexpr idx_t CHUNK = 512;
+	struct Chunk {
+		BlockCacheSlot slots[CHUNK] {};
+	};
+	struct Directory {
+		explicit Directory(idx_t size_p) : size(size_p), chunks(new atomic<Chunk *>[size_p] {}) {
+		}
+		const idx_t size;
+		const unique_ptr<atomic<Chunk *>[]> chunks;
+	};
+
+	//! The slot of block [block], or null when it has none yet
+	BlockCacheSlot *Find(idx_t block) const {
+		const auto directory = current.load(std::memory_order_acquire);
+		if (block / CHUNK >= directory->size) {
+			return nullptr;
+		}
+		const auto chunk = directory->chunks[block / CHUNK].load(std::memory_order_acquire);
+		return chunk ? &chunk->slots[block % CHUNK] : nullptr;
+	}
+	//! The slot of block [block], created when missing
+	BlockCacheSlot &Get(idx_t block);
+	//! Calls [callback] with every slot and its block number
+	template <class FUNC>
+	void ForEach(FUNC &&callback);
+
+	BlockCache &cache;
+	atomic<Directory *> current;
+	annotated_mutex lock;
+	//! Every directory the slots had: readers may still look at an earlier one
+	vector<unique_ptr<Directory>> directories DUCKDB_GUARDED_BY(lock);
+	vector<unique_ptr<Chunk>> chunks DUCKDB_GUARDED_BY(lock);
+	//! The blocks slots named, including the ones a slot let go: a reader may still pin those
+	vector<shared_ptr<BlockHandle>> handles DUCKDB_GUARDED_BY(lock);
+};
+
+//! An open file whose blocks the cache holds; opens of the same path and version share one file number and its blocks
 class BlockCacheFile {
 public:
 	BlockCacheFile(BlockCache &cache, string path, uint32_t number, bool unbacked, BlockCacheFileInfo info,
-	               shared_ptr<FileHandle> source);
-	//! The blocks of an unbacked file go with its last reference
+	               shared_ptr<FileHandle> source, shared_ptr<BlockCacheBlocks> blocks);
 	~BlockCacheFile();
 
 	const string &GetPath() const {
@@ -173,6 +193,7 @@ private:
 	const BlockCacheFileInfo info;
 	mutable annotated_mutex source_lock;
 	shared_ptr<FileHandle> source DUCKDB_GUARDED_BY(source_lock);
+	const shared_ptr<BlockCacheBlocks> blocks;
 	//! Bytes this file is fetching right now
 	atomic<idx_t> in_flight {0};
 };
@@ -220,20 +241,28 @@ struct BlockCacheReadAhead {
 enum class BlockCachePrefetch : uint8_t { HINT, NEED };
 
 struct BlockCacheStatistics {
+	//! Memory the blocks may use: the buffer pool's limit, which they share with everything else
 	idx_t capacity = 0;
+	//! Memory of the blocks the buffer pool holds for the cache
 	idx_t used = 0;
+	//! Blocks the cache knows, in memory, in temporary files or evicted
+	idx_t blocks = 0;
+	//! Pins that found the block in memory
 	idx_t hits = 0;
 	idx_t misses = 0;
 	idx_t fetched_bytes = 0;
 	idx_t fetches = 0;
+	//! Blocks the buffer pool evicted
 	idx_t evictions = 0;
+	//! Evicted blocks written to temporary files, and blocks read back from them
 	idx_t spilled = 0;
 	idx_t spill_reads = 0;
 };
 
-//! Fixed-size blocks of remote and in-memory files, shared by every reader of a database instance. A lookup writes
-//! nothing and a pin is one compare-and-swap; frames come from a region on huge pages whose memory is reserved from
-//! the buffer pool, which can take it back; eviction samples frames and keeps blocks read twice over blocks read once.
+//! Fixed-size blocks of remote and in-memory files, shared by every reader of a database instance. Each block is a
+//! buffer-managed block, which the buffer pool evicts like any other: blocks of in-memory files go to temporary files,
+//! blocks of remote files keep a copy there while the copies have room, and the cache fetches a dropped block again
+//! into the same block. A lookup writes nothing shared and a pin is one atomic add on the block.
 class BlockCache {
 public:
 	static constexpr idx_t BLOCK_SIZE = 128ULL * 1024ULL;
@@ -252,24 +281,13 @@ public:
 	static constexpr idx_t BlockCountOf(idx_t size) {
 		return (size + BLOCK_SIZE - 1) / BLOCK_SIZE;
 	}
-	//! The key of block [block] of the file numbered [file]; the keys of a file are one range, in block order
-	static uint64_t MakeKey(uint32_t file, idx_t block);
-	static uint32_t FileOf(uint64_t key) {
-		return static_cast<uint32_t>(key >> 32);
-	}
-	static idx_t BlockOf(uint64_t key) {
-		return key & 0xFFFFFFFFULL;
-	}
 
 public:
-	BlockCache(DatabaseInstance &db, idx_t capacity);
+	explicit BlockCache(DatabaseInstance &db);
 	~BlockCache();
 
 	static BlockCache &Get(DatabaseInstance &db);
-	//! The capacity the settings ask for: external_file_cache_size, or a quarter of the memory limit
-	static idx_t ConfiguredCapacity(DatabaseInstance &db);
-	//! A pin owning a new buffer of [size] bytes for a read the cache does not keep, aligned for direct I/O such as a
-	//! read from the spill tier
+	//! A pin owning a new buffer of [size] bytes for a read the cache does not keep
 	static BlockCachePin AllocateUncached(DatabaseInstance &db, idx_t size);
 
 	//! Registers an open of [path] whose metadata is [current], reading missing blocks from [source], which may be
@@ -281,7 +299,7 @@ public:
 	bool TryGetFile(const string &path, BlockCacheFileInfo &result);
 	//! Stops sharing the blocks of [file] once a response forbids reusing them
 	void ForbidReuse(BlockCacheFile &file);
-	//! A file whose blocks exist only in the cache and its spill tier
+	//! A file whose blocks exist only in the cache and its temporary files
 	shared_ptr<BlockCacheFile> CreateUnbackedFile(const string &path);
 	//! A file the caller writes under [path], replacing earlier opens of [path]: its writer creates the blocks, and
 	//! once FinishWrittenFile publishes it, opens of [path] share them like fetched blocks
@@ -304,41 +322,41 @@ public:
 	//! Pins the [size] bytes at [offset] of [file] in one piece: in their block when they lie in one, otherwise in a
 	//! copy the pin owns; Ptr() and Size() are the bytes either way
 	BlockCachePin PinBytes(const shared_ptr<BlockCacheFile> &file, idx_t offset, idx_t size);
-	//! Pins the blocks of [offset, offset + size) of [file] when all of them are cached; empty otherwise
+	//! Pins the blocks of [offset, offset + size) of [file] when all of them are in memory; empty otherwise
 	vector<BlockCachePin> TryPinRange(BlockCacheFile &file, idx_t offset, idx_t size);
-	//! Whether every block of [offset, offset + size) is cached or loading
+	//! Whether every block of [offset, offset + size) is in memory, in a temporary file or loading
 	bool IsCached(BlockCacheFile &file, idx_t offset, idx_t size) const;
 	//! Starts fetching the missing blocks of [offset, offset + size) and returns; a HINT stops at the bytes a file and
-	//! the cache may have in flight, a NEED only when frames run out
+	//! the cache may have in flight
 	void Prefetch(const shared_ptr<BlockCacheFile> &file, idx_t offset, idx_t size, BlockCachePrefetch kind);
-	//! Pins a new block [block] of the unbacked or written [file] for its writer, holding whatever its frame held
+	//! Pins a new block [block] of the unbacked or written [file] for its writer, holding whatever its buffer held
 	//! before; BlockCacheAppender fills it and zeroes what lies past the end of the file
 	BlockCachePin CreateBlock(BlockCacheFile &file, idx_t block);
 	//! Extends the unbacked [file] to [size] bytes once its blocks are written
 	void SetUnbackedSize(BlockCacheFile &file, idx_t size);
 
-	//! Frees at least [target] bytes for the buffer pool when it can; returns the bytes freed
-	idx_t EvictToReduceMemory(idx_t target);
-	//! Sets the memory the cache may use
-	void SetCapacity(idx_t capacity);
-	//! Drops every block of a backed file and the spilled copies of such blocks; current pins keep their bytes
+	//! Drops every block of a backed file; current pins keep their bytes
 	void Clear();
 	//! Whether external file reads go through the cache; turning it off drops the blocks of backed files
 	void SetEnabled(bool enabled);
 	bool IsEnabled() const {
 		return enabled.load(std::memory_order_relaxed);
 	}
-	//! Configures the spill tier; an empty path or a zero size turns spilling of backed blocks off
-	void SetSpill(const string &path, idx_t size);
 
 	BlockCacheStatistics GetStatistics() const;
-	//! The cached blocks of files the cache can name, in memory or only in the spill tier
+	//! The cached blocks of files the cache can name, in memory or only in temporary files
 	vector<CachedFileInformation> GetBlockInformation() const;
+
+	//! Waits for the fetch tasks in flight and refuses new ones; the database calls it before its scheduler stops
+	void StopFetching();
 
 private:
 	friend class BlockCachePin;
+	friend class BlockCacheBlocks;
 	friend class BlockCacheFile;
 	friend class BlockCacheFetchTask;
+
+	using Slot = BlockCacheSlot;
 
 	struct Run {
 		idx_t first_block;
@@ -346,13 +364,13 @@ private:
 	};
 	struct RunPlan {
 		Run run;
-		//! A loading entry, pinned for the fetch, per block to fetch; null for the cached blocks between them
-		vector<optional_ptr<BlockCacheEntry>> entries;
+		//! The slot claimed for the fetch per block to fetch; null for the cached blocks between them
+		vector<optional_ptr<Slot>> slots;
 		//! The bytes of the blocks to fetch
 		idx_t bytes;
 		//! The first block the run did not take
 		idx_t next;
-		//! Whether the budget or the frames ran out
+		//! Whether the budget ran out
 		bool exhausted;
 	};
 	struct FileRecord {
@@ -360,134 +378,77 @@ private:
 		BlockCacheFileInfo info;
 		//! Opens of this version of the file that are still live
 		idx_t opens = 0;
+		shared_ptr<BlockCacheBlocks> blocks;
 	};
 
-	static uint32_t WaitStripe(const BlockCacheEntry &entry);
-	BlockCacheBucket &BucketFor(uint64_t key) const;
-	data_ptr_t FrameData(uint32_t frame) const;
-	//! Calls [callback] with the entry of every frame that holds one
-	template <class FUNC>
-	void ForEachEntry(FUNC &&callback) const;
+	//! Hits counted per CPU
+	struct alignas(64) HitCounter {
+		atomic<idx_t> value {0};
+	};
+	static constexpr idx_t HIT_COUNTERS = 64;
 
-	//! Finds block [block] of [file] and pins it, waiting while it loads when [wait_for_load]; false when it is not
-	//! cached
-	bool Lookup(const BlockCacheFile &file, idx_t block, BlockCachePin &result, bool wait_for_load);
-	//! Pins block [block] of [file] when it is cached or loading; [result] holds no bytes until the block has loaded
-	bool PinPresent(const BlockCacheFile &file, idx_t block, BlockCachePin &result);
-	//! Waits until the entry [pin] holds has loaded and gives [pin] its bytes; resets [pin] when the load failed
-	bool AwaitLoad(BlockCachePin &pin);
-	//! The entry of [key] that lookups can find, or null
-	BlockCacheEntry *FindEntry(uint64_t key) const;
-	BlockCacheEntry *FindEntry(uint64_t key, uint64_t &state) const;
-	//! Inserts a loading entry for [key], pinned once for the caller who fills it; null when [key] is already present
-	optional_ptr<BlockCacheEntry> InsertLoading(uint64_t key, uint32_t frame, uint64_t flags);
-	//! The entry flags of blocks of [file]
-	static uint64_t FileFlags(const BlockCacheFile &file);
-	void Repin(BlockCacheEntry &entry);
-	void Unpin(BlockCacheEntry &entry);
-	void Unlink(BlockCacheEntry &entry);
-	//! Removes [entry] of [key] from lookups: an unpinned block goes now, adding its frame to [released], a pinned or
-	//! loading one with its last pin; a block of an unbacked file only when [drop_unbacked]
-	void DropEntry(BlockCacheEntry &entry, uint64_t key, bool drop_unbacked, vector<uint32_t> &released);
+	//! Pins the block in [slot], which held [value], when it is in memory
+	bool PinLoaded(Slot &slot, uintptr_t value, idx_t size, BlockCachePin &result) const;
+	//! Pins the block in [slot] when it is in memory, or reads it back from its copy in a temporary file. Otherwise
+	//! [missing] is the slot's value to claim it from, or nothing while the block loads.
+	bool PinPresent(Slot &slot, idx_t size, BlockCachePin &result, optional<uintptr_t> &missing);
+	//! Takes [slot], which held [expected], for a load
+	static bool Claim(Slot &slot, uintptr_t expected);
+	//! The value of [slot] to claim it from when its block is missing or dropped, or nothing when it is in memory, in
+	//! a temporary file or loading
+	static optional<uintptr_t> MissingFrom(const Slot &slot);
+	//! A pinned buffer for the claimed [slot] of [file]: its block's own when it has one, otherwise a new block's
+	BufferHandle AllocateBlock(const BlockCacheFile &file, Slot &slot);
+	//! Ends the load of [slot] of [blocks], which [buffer] holds when [shared]
+	void Publish(BlockCacheBlocks &blocks, Slot &slot, BufferHandle &buffer, bool shared);
+	void Unclaim(Slot &slot);
+	//! Lets the slots of [blocks] go, destroying their blocks and the copies of them at once or with their last pin
+	void DropBlocks(BlockCacheBlocks &blocks);
 
-	//! A frame for a new block: a free one while the cache is below its capacity and the buffer pool has room for it
-	//! once it evicts unpinned buffers, else a victim's, whose frame is used as it is
-	bool AcquireFrame(uint32_t &frame);
-	//! A free frame whose memory the buffer pool grants, evicting the caches for it only when [evict_caches]
-	bool TakeFreeFrame(uint32_t &frame, bool evict_caches);
-	void ReleaseFrame(uint32_t frame);
-	//! Gives [frames] back to the system and the buffer pool, a run of adjacent frames at once, and frees them to be
-	//! handed out lowest first
-	void ReleaseFrames(std::span<uint32_t> frames);
-	//! Evicts one unpinned block chosen by sampling and returns its frame
-	bool EvictOne(uint32_t &frame);
-	//! Evicts [entry] when it is unpinned and still in [state]; [keep_copy] spills it first where the tier allows, and
-	//! a reader that misses the block then finds its copy or waits for it
-	bool TryEvict(BlockCacheEntry &entry, uint64_t state, uint32_t &frame, bool keep_copy);
-	//! Drops the blocks of [file], which no one reads anymore
-	void DropFile(BlockCacheFile &file);
-	void DropBlocks(uint32_t number, idx_t block_count);
-	void ReleaseUnbacked(uint32_t number, idx_t block_count);
-	bool IsLiveUnbacked(uint32_t number) const;
-	//! Gives [record] a new number for [info] with [opens] opens, returning the version it replaces; sets [sweep] when
-	//! the record is new and the records are due a sweep
+	//! Gives [record] a new number and blocks for [info] with [opens] opens, returning the version it replaces; sets
+	//! [sweep] when the record is new and the records are due a sweep
 	optional<FileRecord> Renumber(FileRecord &record, const BlockCacheFileInfo &info, idx_t opens, bool &sweep)
 	    DUCKDB_REQUIRES(file_lock);
 	//! Drops the blocks of [replaced], a version of a file no open shares anymore, and sweeps the records when [sweep]
-	void Retire(const optional<FileRecord> &replaced, bool sweep);
+	void RetireRecord(optional<FileRecord> replaced, bool sweep);
 	//! Counts the end of an open of a backed file
 	void CloseFile(const BlockCacheFile &file);
 	//! Forgets the files no one has open and the cache holds no block of
 	void SweepFiles();
 
-	//! Plans a run of [file] from [block] up to [end]: a loading entry flagged [flags] for each block [missing] reports
-	//! while [admit] accepts the run's bytes with it, bridging cached gaps of up to MERGE_GAP; the run takes at most
-	//! MAX_REQUEST and never ends in a gap
+	//! Plans a run of [file] from [block] up to [end]: a claimed slot for each block [missing] reports while [admit]
+	//! accepts the run's bytes with it, bridging cached gaps of up to MERGE_GAP; the run takes at most MAX_REQUEST and
+	//! never ends in a gap
 	template <class MISSING, class ADMIT>
-	RunPlan PlanRun(BlockCacheFile &file, idx_t block, idx_t end, uint64_t flags, MISSING &&missing, ADMIT &&admit);
-	//! Reads the blocks of [run] of [file] into the loading entries the caller inserted with one request; null entries
-	//! are cached gaps
-	void Fetch(BlockCacheFile &file, const Run &run, std::span<optional_ptr<BlockCacheEntry>> entries);
-	//! Fetches the runs of [plans] of [file] as concurrent pieces of at most PIECE_SIZE, throwing the first error; the
-	//! caller ends the loads an error leaves unfinished
-	void FetchConcurrently(BlockCacheFile &file, vector<RunPlan> &plans);
-	void FetchMissing(const shared_ptr<BlockCacheFile> &file, idx_t first, vector<BlockCachePin> &pins);
-	//! Reads block [block] of [file] into a buffer of its own, for a miss that found no frame
-	BlockCachePin ReadPrivate(BlockCacheFile &file, idx_t block);
-	//! Ends the load of [entry]: its bytes are shared when [shared]; otherwise the load failed or its bytes serve only
-	//! the loader, and every other reader fetches the block again
-	void FinishLoad(BlockCacheEntry &entry, bool shared);
-	//! Waits while [entry] loads; when the scheduler has no workers to run queued fetches, runs them until it loads
-	void WaitForLoad(BlockCacheEntry &entry);
-	//! Fills [entry] from the spill tier when it holds [key]
-	bool ReadSpilled(uint64_t key, BlockCacheEntry &entry);
-	//! Whether blocks of unbacked files can spill, configuring a file in the temporary directory when none is set
-	bool CanSpillUnbacked();
+	RunPlan PlanRun(BlockCacheFile &file, idx_t block, idx_t end, MISSING &&missing, ADMIT &&admit);
+	//! Reads the blocks of [run] of [file] into the claimed slots with one request, and when [pins] is not empty,
+	//! pins each block read there; null slots are cached gaps
+	void Fetch(BlockCacheFile &file, const Run &run, std::span<optional_ptr<Slot>> slots,
+	           std::span<BlockCachePin> pins);
+	//! Fetches the runs of [plans] of [file] as concurrent pieces of at most PIECE_SIZE, pinning each block read in
+	//! [pins], which start at block [first]; throws the first error
+	void FetchConcurrently(BlockCacheFile &file, vector<RunPlan> &plans, idx_t first, vector<BlockCachePin> &pins);
+	//! Waits while [slot] loads; when the scheduler has no workers to run queued fetches, runs them until it loads
+	void WaitForLoad(Slot &slot);
+	static uint32_t WaitStripe(const Slot &slot);
+	void Wake(const Slot &slot);
 
 	//! Fetches [run] of [file] in the background, a task per piece of at most PIECE_SIZE
-	void ScheduleFetch(const shared_ptr<BlockCacheFile> &file, const Run &run,
-	                   vector<optional_ptr<BlockCacheEntry>> entries);
+	void ScheduleFetch(const shared_ptr<BlockCacheFile> &file, const Run &run, vector<optional_ptr<Slot>> slots);
 	ProducerToken &Producer();
 	void FinishFetchTask(idx_t bytes);
 	//! Takes a queued fetch task, which a waiter runs itself and shutdown abandons
 	bool TakeFetchTask(shared_ptr<Task> &task);
 
-public:
-	//! Waits for the fetch tasks in flight and refuses new ones; the database calls it before its scheduler stops
-	void StopFetching();
-#ifdef DEBUG
-	//! Runs once, the next time an eviction is about to write the copy of a block of a live unbacked file
-	std::function<void()> debug_before_keep_copy;
-#endif
-
 private:
 	DatabaseInstance &db;
 	BufferManager &buffer_manager;
+	//! Sizes the buffers of blocks
+	InMemoryBlockManager block_manager;
 
-	//! Frames: one region of BLOCK_SIZE slots on huge pages
-	data_ptr_t region = nullptr;
-	idx_t region_size = 0;
-	uint32_t frame_count = 0;
-	//! The entry owning each frame, for the eviction sampler
-	unique_ptr<atomic<BlockCacheEntry *>[]> frame_owner;
-	//! One past the highest frame ever handed out, the range the sampler draws from
-	atomic<uint32_t> high_water {0};
-
-	//! The translation table: twice as many buckets as frames, plus a type-stable overflow pool whose entry [F] is the
-	//! overflow entry of the block in frame F, free once a frame is given up, since that unlinks its entry first
-	unique_ptr<BlockCacheBucket[]> buckets;
-	uint32_t bucket_mask = 0;
-	unique_ptr<BlockCacheEntry[]> pool;
-
-	mutable annotated_mutex frame_lock;
-	//! Frames holding no block
-	vector<uint32_t> free_frames DUCKDB_GUARDED_BY(frame_lock);
-	//! Frames holding a block or about to, all of them reserved from the buffer pool
-	atomic<idx_t> used_frames {0};
-	//! Frames the cache may use
-	atomic<idx_t> capacity_frames {0};
-	//! State of the eviction sampler
-	atomic<uint64_t> sampler_seed {0};
+	mutable HitCounter hits[HIT_COUNTERS];
+	//! Blocks the cache knows
+	atomic<idx_t> block_count {0};
 
 	//! Waiters on loading blocks
 	static constexpr idx_t WAIT_STRIPES = 64;
@@ -499,8 +460,6 @@ private:
 	static constexpr idx_t MIN_SWEEP_RECORDS = 1024;
 	//! The record count at which the next open sweeps the records
 	idx_t sweep_at DUCKDB_GUARDED_BY(file_lock) = MIN_SWEEP_RECORDS;
-	//! Unbacked files someone still references; blocks of the others are dropped, never spilled
-	unordered_set<uint32_t> live_unbacked DUCKDB_GUARDED_BY(file_lock);
 	atomic<bool> enabled {true};
 
 	//! Background fetches
@@ -510,22 +469,9 @@ private:
 	bool stopped DUCKDB_GUARDED_BY(fetch_lock) = false;
 	atomic<idx_t> in_flight {0};
 
-	BlockCacheSpill spill;
-	atomic<bool> unbacked_spill_ready {false};
-
-	//! Hits, counted per CPU so that threads pinning one block do not share a cache line
-	struct alignas(64) CounterShard {
-		atomic<idx_t> value {0};
-	};
-	static constexpr idx_t COUNTER_SHARDS = 32;
-	CounterShard hits[COUNTER_SHARDS];
-	void CountHit();
 	atomic<idx_t> misses {0};
 	atomic<idx_t> fetched_bytes {0};
 	atomic<idx_t> fetches {0};
-	atomic<idx_t> evictions {0};
-	atomic<idx_t> spilled {0};
-	atomic<idx_t> spill_reads {0};
 };
 
 } // namespace duckdb

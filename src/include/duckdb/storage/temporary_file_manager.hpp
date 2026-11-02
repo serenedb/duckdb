@@ -89,7 +89,7 @@ struct TemporaryFileIndex {
 public:
 	TemporaryFileIndex();
 	TemporaryFileIndex(TemporaryFileIdentifier identifier, idx_t block_index, idx_t block_header_size,
-	                   FileBufferType buffer_type);
+	                   FileBufferType buffer_type, idx_t alloc_size);
 
 public:
 	//! Whether this temporary file index is valid (fields have been set)
@@ -104,6 +104,8 @@ public:
 	optional_idx block_header_size;
 	//! The buffer type
 	FileBufferType buffer_type = FileBufferType::MANAGED_BUFFER;
+	//! The allocation size of the buffer; it is stored uncompressed when its size class is this size
+	idx_t alloc_size = DEFAULT_BLOCK_ALLOC_SIZE;
 };
 
 //===--------------------------------------------------------------------===//
@@ -165,7 +167,7 @@ public:
 
 public:
 	//! Try to get an index of where to write in this file. Returns an invalid index if full
-	TemporaryFileIndex TryGetBlockIndex(idx_t block_header_size, FileBufferType buffer_type);
+	TemporaryFileIndex TryGetBlockIndex(idx_t block_header_size, FileBufferType buffer_type, idx_t alloc_size);
 	//! Remove block index from this TemporaryFileHandle
 	void EraseBlockIndex(block_id_t block_index);
 
@@ -309,11 +311,15 @@ public:
 		lock_guard<mutex> lock;
 	};
 
+	//! Whether [buffer] is written to the grouped files: its size is one of their size classes
+	static bool FitsGroupedFiles(const FileBuffer &buffer);
 	//! Create/Read/Update/Delete operations for temporary buffers
 	idx_t WriteTemporaryBuffer(QueryContext context, block_id_t block_id, FileBuffer &buffer);
 	bool HasTemporaryBuffer(block_id_t block_id);
+	//! Reads the buffer [id], which stays in the file when [keep]
 	unique_ptr<FileBuffer> ReadTemporaryBuffer(QueryContext context, block_id_t id,
-	                                           unique_ptr<FileBuffer> reusable_buffer, idx_t *eviction_size = nullptr);
+	                                           unique_ptr<FileBuffer> reusable_buffer, idx_t *eviction_size = nullptr,
+	                                           bool keep = false);
 	idx_t DeleteTemporaryBuffer(block_id_t id);
 	bool IsEncrypted() const;
 
@@ -330,8 +336,6 @@ public:
 	void IncreaseSizeOnDisk(idx_t amount);
 	//! Register temporary file size decrease
 	void DecreaseSizeOnDisk(idx_t amount);
-	//! The path of this instance's temporary file called [name], which a later instance removes if this one crashes
-	string TemporaryFilePath(const string &name) const;
 
 private:
 	//! Compress buffer, write it in compressed_buffer and return the size/level

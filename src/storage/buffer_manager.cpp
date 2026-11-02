@@ -62,10 +62,6 @@ void BufferManager::ReserveMemory(MemoryTag tag, idx_t size) {
 	throw NotImplementedException("This type of BufferManager can not reserve memory");
 }
 
-bool BufferManager::TryReserveMemory(MemoryTag tag, idx_t size, bool evict_caches) {
-	throw NotImplementedException("This type of BufferManager can not reserve memory");
-}
-
 void BufferManager::FreeReservedMemory(MemoryTag tag, idx_t size) {
 	throw NotImplementedException("This type of BufferManager can not free reserved memory");
 }
@@ -92,10 +88,6 @@ void BufferManager::SetTemporaryDirectory(const string &new_dir) {
 
 bool BufferManager::HasTemporaryDirectory() const {
 	return false;
-}
-
-TemporaryFileManager &BufferManager::GetTemporaryFileManager() {
-	throw NotImplementedException("This type of BufferManager does not have temporary files");
 }
 
 bool BufferManager::HasFilesInTemporaryDirectory() const {
@@ -132,6 +124,19 @@ vector<unique_ptr<AsyncTask>> BufferManager::CreatePrefetchTasks(QueryContext co
 
 void BufferManager::WriteTemporaryBuffer(QueryContext context, MemoryTag tag, block_id_t block_id, FileBuffer &buffer) {
 	throw NotImplementedException("This type of BufferManager does not support 'WriteTemporaryBuffer");
+}
+
+bool BufferManager::TryWriteTemporaryCopy(QueryContext context, MemoryTag tag, block_id_t block_id,
+                                          FileBuffer &buffer) {
+	return false;
+}
+
+BufferHandle BufferManager::PinEmpty(shared_ptr<BlockHandle> &handle, idx_t block_size, idx_t block_header_size) {
+	throw NotImplementedException("This type of BufferManager does not support 'PinEmpty'");
+}
+
+void BufferManager::Discard(shared_ptr<BlockHandle> &handle) {
+	throw NotImplementedException("This type of BufferManager does not support 'Discard'");
 }
 
 unique_ptr<FileBuffer> BufferManager::ReadTemporaryBuffer(QueryContext context, MemoryTag tag, BlockHandle &block,

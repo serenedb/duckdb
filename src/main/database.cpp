@@ -111,7 +111,6 @@ DatabaseInstance::~DatabaseInstance() {
 		memory_file_system->Clear();
 	}
 	if (block_cache) {
-		GetBufferPool().SetBlockCache(nullptr);
 		block_cache_ptr.store(nullptr, std::memory_order_release);
 		block_cache.reset();
 	}
@@ -505,11 +504,8 @@ BlockCache &DatabaseInstance::GetBlockCache() {
 	}
 	lock_guard<mutex> guard(block_cache_lock);
 	if (!block_cache) {
-		block_cache = make_uniq<BlockCache>(*this, BlockCache::ConfiguredCapacity(*this));
+		block_cache = make_uniq<BlockCache>(*this);
 		block_cache->SetEnabled(Settings::Get<EnableExternalFileCacheSetting>(*this));
-		block_cache->SetSpill(Settings::Get<ExternalFileCacheSpillPathSetting>(*this),
-		                      config.options.external_file_cache_spill_size);
-		GetBufferPool().SetBlockCache(block_cache.get());
 		block_cache_ptr.store(block_cache.get(), std::memory_order_release);
 	}
 	return *block_cache;

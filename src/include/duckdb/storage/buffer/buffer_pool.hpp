@@ -22,7 +22,6 @@ namespace duckdb {
 
 class TemporaryMemoryManager;
 class ObjectCache;
-class BlockCache;
 struct EvictionQueue;
 
 //! The BufferPool is in charge of handling memory management for one or more databases. It defines memory limits
@@ -68,11 +67,6 @@ public:
 		object_cache = object_cache_p;
 	}
 
-	//! Lets the buffer pool take memory back from the block cache, whose frames it accounts for
-	void SetBlockCache(optional_ptr<BlockCache> block_cache_p) {
-		block_cache = block_cache_p;
-	}
-
 protected:
 	//! Evict blocks until the currently used memory + extra_memory fit, returns false if this was not possible
 	//! (i.e. not enough blocks could be evicted)
@@ -86,21 +80,12 @@ protected:
 	};
 	virtual EvictionResult EvictBlocks(QueryContext context, MemoryTag tag, idx_t extra_memory, idx_t memory_limit,
 	                                   unique_ptr<FileBuffer> *buffer = nullptr);
-	//! Like EvictBlocks, but evicts only unpinned buffers, neither the block cache nor the object cache
-	EvictionResult EvictBuffers(QueryContext context, MemoryTag tag, idx_t extra_memory, idx_t memory_limit,
-	                            unique_ptr<FileBuffer> *buffer = nullptr);
 	virtual EvictionResult EvictBlocksInternal(QueryContext context, EvictionQueue &queue, MemoryTag tag,
 	                                           idx_t extra_memory, idx_t memory_limit,
 	                                           unique_ptr<FileBuffer> *buffer = nullptr);
 
 	//! Evict object cache entries if needed.
 	EvictionResult EvictObjectCacheEntries(MemoryTag tag, idx_t extra_memory, idx_t memory_limit);
-	//! Evict unpinned block cache blocks if needed.
-	EvictionResult EvictBlockCacheFrames(MemoryTag tag, idx_t extra_memory, idx_t memory_limit);
-	//! Calls [evict] with the bytes the used memory exceeds [memory_limit] by, with [extra_memory] reserved, until it
-	//! fits or [evict] frees nothing; [evict] returns the bytes it freed
-	template <class EVICT>
-	EvictionResult EvictCacheEntries(MemoryTag tag, idx_t extra_memory, idx_t memory_limit, EVICT &&evict);
 
 	//! Return freed memory to the OS, optionally releasing up to extra_memory from the block allocator's pool
 	void FlushAllocator(optional_idx extra_memory = optional_idx());
@@ -117,7 +102,19 @@ protected:
 	void AddBlock(BlockMemory &memory);
 	void RemoveBlock(BlockMemory &memory);
 	//! Marks a block as used, which spares it one round of eviction. Takes no lock.
-	void MarkUsed(BlockMemory &memory);
+	bool TracksEvictionTimestamps() const {
+		return track_eviction_timestamps;
+	}
+	void MarkUsed(BlockMemory &memory) {
+		memory.SetReferenced();
+		if (track_eviction_timestamps) {
+			SetLRUTimestamp(memory);
+		}
+	}
+	//! The blocks of [tag] evicted since start
+	idx_t GetEvictions(MemoryTag tag) const;
+	void CountEviction(const BlockMemory &memory);
+	void SetLRUTimestamp(BlockMemory &memory);
 	//! Gets the eviction queue for the specified type
 	EvictionQueue &GetEvictionQueueForBlockMemory(const BlockMemory &memory);
 
@@ -196,8 +193,7 @@ protected:
 	BlockAllocator &block_allocator;
 	//! Per-database singleton object cache managed by buffer pool.
 	optional_ptr<ObjectCache> object_cache = nullptr;
-	//! The block cache, whose memory the buffer pool accounts for and can take back.
-	optional_ptr<BlockCache> block_cache = nullptr;
+	array<atomic<idx_t>, MEMORY_TAG_COUNT> evictions_per_tag {};
 };
 
 } // namespace duckdb

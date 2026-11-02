@@ -10,7 +10,7 @@ namespace duckdb {
 
 namespace {
 
-constexpr idx_t PIN_BLOCK_SIZE = 256 * 1024;
+constexpr idx_t PIN_BLOCK_SIZE = Storage::DEFAULT_BLOCK_SIZE;
 
 data_t PinTestByte(idx_t block) {
 	return data_t(block * 37 + 11);
@@ -92,6 +92,86 @@ TEST_CASE("A block destroyed upon unpin since it was pinned frees its memory at 
 	block->GetMemory().SetDestroyBufferUpon(DestroyBufferUpon::UNPIN);
 	pin.Destroy();
 	REQUIRE(block->GetMemory().GetState() == BlockState::BLOCK_UNLOADED);
+	REQUIRE(buffers.GetUsedMemory() < used);
+}
+
+TEST_CASE("A block that keeps a copy is written once while the copies have room, otherwise destroyed",
+          "[storage][buffer_manager]") {
+	DBConfig config;
+	config.options.temporary_directory = TestCreatePath("buffer_manager_room_tmp");
+	DuckDB db(nullptr, &config);
+	auto &buffers = BufferManager::GetBufferManager(*db.instance);
+	const auto writes = [&]() {
+		return buffers.GetMemoryUsageInfo()[uint8_t(MemoryTag::IN_MEMORY_TABLE)].temporary_writes;
+	};
+	const auto unload = [](BlockMemory &memory) {
+		auto lock = memory.GetLock();
+		REQUIRE(memory.CanUnload() == CanUnloadResult::CAN_UNLOAD);
+		memory.Unload(lock);
+	};
+	for (const bool room : {true, false}) {
+		if (!room) {
+			DBConfig::GetConfig(*db.instance).options.external_file_cache_spill_size = PIN_BLOCK_SIZE - 1;
+		}
+		const auto written = writes();
+		auto block = PinTestBlock(buffers, 3);
+		auto &memory = block->GetMemory();
+		memory.SetDestroyBufferUpon(DestroyBufferUpon::KEEP_COPY);
+		for (idx_t round = 0; round < 3; round++) {
+			unload(memory);
+			REQUIRE(memory.HasTemporaryFile() == room);
+			REQUIRE((buffers.GetUsedSwap() > 0) == room);
+			auto pin = buffers.Pin(block);
+			REQUIRE(pin.IsValid() == room);
+			if (!room) {
+				break;
+			}
+			REQUIRE(pin.Ptr()[0] == PinTestByte(3));
+			REQUIRE(pin.Ptr()[PIN_BLOCK_SIZE - 1] == PinTestByte(3));
+			REQUIRE(memory.HasTemporaryFile());
+		}
+		REQUIRE(writes() - written == (room ? 1 : 0));
+		block.reset();
+		REQUIRE(buffers.GetUsedSwap() == 0);
+	}
+}
+
+TEST_CASE("A destroyed buffer is pinned anew empty, and a discarded block loses its buffer and its copy",
+          "[storage][buffer_manager]") {
+	DBConfig config;
+	config.options.temporary_directory = TestCreatePath("buffer_manager_discard_tmp");
+	DuckDB db(nullptr, &config);
+	auto &buffers = BufferManager::GetBufferManager(*db.instance);
+	auto block = PinTestBlock(buffers, 5);
+	auto &memory = block->GetMemory();
+	memory.SetDestroyBufferUpon(DestroyBufferUpon::KEEP_COPY);
+	{
+		auto lock = memory.GetLock();
+		memory.Unload(lock);
+	}
+	REQUIRE(memory.HasTemporaryFile());
+	REQUIRE(!buffers.PinEmpty(block, PIN_BLOCK_SIZE, Storage::DEFAULT_BLOCK_HEADER_SIZE).IsValid());
+	REQUIRE(buffers.Pin(block).Ptr()[PIN_BLOCK_SIZE - 1] == PinTestByte(5));
+	const auto used = buffers.GetUsedMemory();
+	buffers.Discard(block);
+	REQUIRE(memory.GetState() == BlockState::BLOCK_UNLOADED);
+	REQUIRE(!memory.HasTemporaryFile());
+	REQUIRE(buffers.GetUsedSwap() == 0);
+	REQUIRE(buffers.GetUsedMemory() < used);
+	REQUIRE(!buffers.Pin(block).IsValid());
+
+	auto pin = buffers.PinEmpty(block, PIN_BLOCK_SIZE, Storage::DEFAULT_BLOCK_HEADER_SIZE);
+	REQUIRE(memory.GetState() == BlockState::BLOCK_LOADED);
+	REQUIRE(buffers.GetUsedMemory() == used);
+	memset(pin.GetDataMutable(), PinTestByte(6), PIN_BLOCK_SIZE);
+	pin.Destroy();
+	{
+		auto again = buffers.Pin(block);
+		REQUIRE(again.Ptr()[PIN_BLOCK_SIZE - 1] == PinTestByte(6));
+		buffers.Discard(block);
+		REQUIRE(memory.GetState() == BlockState::BLOCK_LOADED);
+	}
+	REQUIRE(memory.GetState() == BlockState::BLOCK_UNLOADED);
 	REQUIRE(buffers.GetUsedMemory() < used);
 }
 

@@ -1,11 +1,11 @@
 #include "duckdb/storage/buffer/buffer_pool.hpp"
 #include "duckdb/storage/buffer_manager.hpp"
+#include "duckdb/common/allocator.hpp"
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/typedefs.hpp"
 #include "duckdb/main/settings.hpp"
 #include "duckdb/parallel/task_scheduler.hpp"
 #include "duckdb/storage/block_allocator.hpp"
-#include "duckdb/storage/block_cache/block_cache.hpp"
 #include "duckdb/storage/object_cache.hpp"
 #include "duckdb/storage/temporary_memory_manager.hpp"
 
@@ -205,13 +205,18 @@ void BufferPool::RemoveBlock(BlockMemory &memory) {
 	}
 }
 
-void BufferPool::MarkUsed(BlockMemory &memory) {
-	memory.SetReferenced();
-	if (track_eviction_timestamps) {
-		memory.SetLRUTimestamp(std::chrono::time_point_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now())
-		                           .time_since_epoch()
-		                           .count());
-	}
+void BufferPool::CountEviction(const BlockMemory &memory) {
+	evictions_per_tag[uint8_t(memory.GetMemoryTag())].fetch_add(1, std::memory_order_relaxed);
+}
+
+idx_t BufferPool::GetEvictions(MemoryTag tag) const {
+	return evictions_per_tag[uint8_t(tag)].load(std::memory_order_relaxed);
+}
+
+void BufferPool::SetLRUTimestamp(BlockMemory &memory) {
+	memory.SetLRUTimestamp(std::chrono::time_point_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now())
+	                           .time_since_epoch()
+	                           .count());
 }
 
 EvictionQueue &BufferPool::GetEvictionQueueForBlockMemory(const BlockMemory &memory) {
@@ -255,9 +260,7 @@ TemporaryMemoryManager &BufferPool::GetTemporaryMemoryManager() {
 	return *temporary_memory_manager;
 }
 
-template <class EVICT>
-BufferPool::EvictionResult BufferPool::EvictCacheEntries(MemoryTag tag, idx_t extra_memory, idx_t memory_limit,
-                                                         EVICT &&evict) {
+BufferPool::EvictionResult BufferPool::EvictObjectCacheEntries(MemoryTag tag, idx_t extra_memory, idx_t memory_limit) {
 	TempBufferPoolReservation r(tag, *this, extra_memory);
 	bool success = false;
 	while (true) {
@@ -267,7 +270,8 @@ BufferPool::EvictionResult BufferPool::EvictCacheEntries(MemoryTag tag, idx_t ex
 			break;
 		}
 		// Break if all entries cannot be evicted.
-		if (evict(used - memory_limit) == 0) {
+		if (object_cache->IsEmpty() ||
+		    object_cache->EvictToReduceMemory(MaxValue(extra_memory, used - memory_limit)) == 0) {
 			break;
 		}
 	}
@@ -279,36 +283,8 @@ BufferPool::EvictionResult BufferPool::EvictCacheEntries(MemoryTag tag, idx_t ex
 	return {success, std::move(r)};
 }
 
-BufferPool::EvictionResult BufferPool::EvictObjectCacheEntries(MemoryTag tag, idx_t extra_memory, idx_t memory_limit) {
-	return EvictCacheEntries(tag, extra_memory, memory_limit, [&](idx_t overshoot) -> idx_t {
-		if (object_cache->IsEmpty()) {
-			return 0;
-		}
-		return object_cache->EvictToReduceMemory(MaxValue(extra_memory, overshoot));
-	});
-}
-
 BufferPool::EvictionResult BufferPool::EvictBlocks(QueryContext context, MemoryTag tag, idx_t extra_memory,
                                                    idx_t memory_limit, unique_ptr<FileBuffer> *buffer) {
-	auto block_result = EvictBuffers(context, tag, extra_memory, memory_limit, buffer);
-	if (block_result.success) {
-		return block_result;
-	}
-
-	if (block_cache) {
-		auto cache_result = EvictBlockCacheFrames(tag, extra_memory, memory_limit);
-		if (cache_result.success) {
-			return cache_result;
-		}
-	}
-
-	// Evict object cache, which is usually used to cache metadata and configs, when flushing buffer blocks alone is not
-	// enough to limit overall memory consumption.
-	return EvictObjectCacheEntries(tag, extra_memory, memory_limit);
-}
-
-BufferPool::EvictionResult BufferPool::EvictBuffers(QueryContext context, MemoryTag tag, idx_t extra_memory,
-                                                    idx_t memory_limit, unique_ptr<FileBuffer> *buffer) {
 	FlushOnBulkDeallocation();
 	for (auto &queue : queues) {
 		auto block_result = EvictBlocksInternal(context, *queue, tag, extra_memory, memory_limit, buffer);
@@ -316,12 +292,10 @@ BufferPool::EvictionResult BufferPool::EvictBuffers(QueryContext context, Memory
 			return block_result;
 		}
 	}
-	return {false, TempBufferPoolReservation(tag, *this, 0)};
-}
 
-BufferPool::EvictionResult BufferPool::EvictBlockCacheFrames(MemoryTag tag, idx_t extra_memory, idx_t memory_limit) {
-	return EvictCacheEntries(tag, extra_memory, memory_limit,
-	                         [&](idx_t overshoot) { return block_cache->EvictToReduceMemory(overshoot); });
+	// Evict object cache, which is usually used to cache metadata and configs, when flushing buffer blocks alone is not
+	// enough to limit overall memory consumption.
+	return EvictObjectCacheEntries(tag, extra_memory, memory_limit);
 }
 
 BufferPool::EvictionResult BufferPool::EvictBlocksInternal(QueryContext context, EvictionQueue &queue, MemoryTag tag,
@@ -347,12 +321,16 @@ BufferPool::EvictionResult BufferPool::EvictBlocksInternal(QueryContext context,
 			// we can re-use the memory directly
 			*buffer = victim->UnloadAndTakeBlock(lock, context);
 			if (*buffer) {
+				CountEviction(*victim);
 				found = true;
 				break;
 			}
 			continue;
 		}
 		victim->Unload(lock, context);
+		if (victim->IsUnloaded()) {
+			CountEviction(*victim);
+		}
 		if (memory_usage.GetUsedMemory(MemoryUsageCaches::NO_FLUSH) <= memory_limit) {
 			found = true;
 			break;
@@ -384,6 +362,7 @@ idx_t BufferPool::PurgeAgedBlocks(uint32_t max_age_sec) {
 			}
 			const auto bytes = block->GetMemoryUsage();
 			if (block->UnloadAndTakeBlock(lock)) {
+				CountEviction(*block);
 				purged_bytes += bytes;
 			}
 		}
