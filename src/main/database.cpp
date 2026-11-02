@@ -261,32 +261,30 @@ void DatabaseInstance::LoadExtensionSettings() {
 		}
 
 		Connection con(*this);
-		con.BeginTransaction();
+		con.context->RunFunctionInTransaction([&]() {
+			for (auto &option : unrecognized_options_copy) {
+				auto &name = option.first;
+				auto &value = option.second;
 
-		for (auto &option : unrecognized_options_copy) {
-			auto &name = option.first;
-			auto &value = option.second;
-
-			auto extension_name = ExtensionHelper::FindExtensionInEntries(name, EXTENSION_SETTINGS);
-			if (extension_name.empty()) {
-				continue;
+				auto extension_name = ExtensionHelper::FindExtensionInEntries(name, EXTENSION_SETTINGS);
+				if (extension_name.empty()) {
+					continue;
+				}
+				if (!ExtensionHelper::TryAutoLoadExtension(*this, extension_name)) {
+					throw InvalidInputException(
+					    "To set the %s setting, the %s extension needs to be loaded. But it could not be autoloaded.",
+					    name, extension_name);
+				}
+				ExtensionOption extension_option;
+				if (!config.TryGetExtensionOption(name, extension_option)) {
+					throw InternalException("Extension %s did not provide the %s config setting", extension_name, name);
+				}
+				// if the extension provided the option, it should no longer be unrecognized.
+				D_ASSERT(config.options.unrecognized_options.find(name) == config.options.unrecognized_options.end());
+				auto &context = *con.context;
+				PhysicalSet::SetExtensionVariable(context, extension_option, name, SetScope::GLOBAL, value);
 			}
-			if (!ExtensionHelper::TryAutoLoadExtension(*this, extension_name)) {
-				throw InvalidInputException(
-				    "To set the %s setting, the %s extension needs to be loaded. But it could not be autoloaded.", name,
-				    extension_name);
-			}
-			ExtensionOption extension_option;
-			if (!config.TryGetExtensionOption(name, extension_option)) {
-				throw InternalException("Extension %s did not provide the %s config setting", extension_name, name);
-			}
-			// if the extension provided the option, it should no longer be unrecognized.
-			D_ASSERT(config.options.unrecognized_options.find(name) == config.options.unrecognized_options.end());
-			auto &context = *con.context;
-			PhysicalSet::SetExtensionVariable(context, extension_option, name, SetScope::GLOBAL, value);
-		}
-
-		con.Commit();
+		});
 	}
 	if (!config.options.unrecognized_options.empty()) {
 		ThrowExtensionSetUnrecognizedOptions(config.options.unrecognized_options);
