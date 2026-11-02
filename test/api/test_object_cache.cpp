@@ -6,6 +6,9 @@
 #include "duckdb/storage/buffer/buffer_pool.hpp"
 #include "test_helpers.hpp"
 
+#include <atomic>
+#include <thread>
+
 using namespace duckdb; // NOLINT
 
 namespace {
@@ -142,4 +145,41 @@ TEST_CASE("Test ObjectCache Manual Eviction", "[api][object_cache]") {
 		REQUIRE(value != nullptr);
 	}
 	REQUIRE(!cache.IsEmpty());
+}
+
+TEST_CASE("Test ObjectCache memory reads without the lock", "[api][object_cache]") {
+	DuckDB db;
+	Connection con(db);
+	auto &context = *con.context;
+	auto &cache = ObjectCache::GetObjectCache(context);
+
+	constexpr idx_t obj_size = 1024 * 1024;
+	constexpr idx_t capacity = 4 * obj_size;
+	cache.SetMaxMemory(capacity);
+	REQUIRE(cache.GetMaxMemoryRacy() == capacity);
+	REQUIRE(cache.GetCurrentMemoryRacy() == cache.GetCurrentMemory());
+
+	for (idx_t idx = 0; idx < 6; ++idx) {
+		cache.Put(StringUtil::Format("evictable%llu", idx), make_shared_ptr<EvictableTestObject>(idx, obj_size));
+		REQUIRE(cache.GetCurrentMemoryRacy() == cache.GetCurrentMemory());
+	}
+	REQUIRE(cache.GetCurrentMemoryRacy() == capacity);
+
+	cache.Delete("evictable5");
+	REQUIRE(cache.GetCurrentMemoryRacy() == capacity - obj_size);
+
+	std::atomic<bool> done {false};
+	std::thread writer([&]() {
+		for (idx_t idx = 0; idx < 1000; ++idx) {
+			auto key = StringUtil::Format("churn%llu", idx % 8);
+			cache.Put(key, make_shared_ptr<EvictableTestObject>(idx, obj_size));
+			cache.Delete(key);
+		}
+		done = true;
+	});
+	while (!done) {
+		REQUIRE(cache.GetCurrentMemoryRacy() <= cache.GetMaxMemoryRacy());
+	}
+	writer.join();
+	REQUIRE(cache.GetCurrentMemoryRacy() == cache.GetCurrentMemory());
 }
