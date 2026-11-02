@@ -1,5 +1,6 @@
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/catalog/catalog_entry/duck_table_entry.hpp"
+#include "duckdb/catalog/catalog_entry/macro_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/view_catalog_entry.hpp"
 #include "duckdb/catalog/dependency_manager.hpp"
 #include "duckdb/catalog/duck_catalog.hpp"
@@ -19,12 +20,14 @@
 #include "duckdb/parser/parsed_data/alter_table_info.hpp"
 #include "duckdb/parser/parsed_data/comment_on_column_info.hpp"
 #include "duckdb/parser/parsed_data/create_foreign_server_info.hpp"
+#include "duckdb/parser/parsed_data/create_macro_info.hpp"
 #include "duckdb/parser/parsed_data/create_subscription_info.hpp"
 #include "duckdb/parser/statement/alter_statement.hpp"
 #include "duckdb/parser/tableref/basetableref.hpp"
 #include "duckdb/planner/binder.hpp"
 #include "duckdb/planner/constraints/bound_unique_constraint.hpp"
 #include "duckdb/planner/expression_binder/index_binder.hpp"
+#include "duckdb/planner/operator/logical_create.hpp"
 #include "duckdb/planner/operator/logical_create_index.hpp"
 #include "duckdb/planner/operator/logical_get.hpp"
 #include "duckdb/planner/operator/logical_alter.hpp"
@@ -561,6 +564,71 @@ BoundStatement Binder::Bind(AlterStatement &stmt) {
 
 	// resolve the (possibly nested) catalog/schema qualification of the altered entry
 	stmt.info->SetQualifiedName(BindTableName(stmt.info->GetQualifiedName()));
+
+	if (stmt.info->type == AlterType::ALTER_SCALAR_FUNCTION &&
+	    stmt.info->Cast<AlterScalarFunctionInfo>().alter_scalar_function_type ==
+	        AlterScalarFunctionType::SET_FUNCTION_ATTRIBUTES) {
+		auto &info = stmt.info->Cast<AlterFunctionAttributesInfo>();
+		for (auto &type : info.parameter_types) {
+			BindLogicalType(type);
+		}
+		const auto &name = info.GetQualifiedName().Name().GetIdentifierName();
+		optional_ptr<CatalogEntry> function;
+		for (auto type : {CatalogType::MACRO_ENTRY, CatalogType::TABLE_MACRO_ENTRY}) {
+			function =
+			    entry_retriever.GetEntry(EntryLookupInfo(type, info.GetQualifiedName()), OnEntryNotFound::RETURN_NULL);
+			if (function) {
+				break;
+			}
+		}
+		if (!function && info.has_parameter_types) {
+			throw CatalogException("function %s(%s) does not exist", name,
+			                       MacroFunction::ParameterTypesToString(info.parameter_types));
+		}
+		if (!function) {
+			throw CatalogException("could not find a function named \"%s\"", name);
+		}
+		if (function->internal) {
+			ThrowPermissionDenied(*function);
+		}
+		RequireOwner(*function);
+		auto create_info = function->Cast<MacroCatalogEntry>().GetInfo();
+		auto &macros = create_info->Cast<CreateMacroInfo>().macros;
+		vector<reference<MacroFunction>> targets;
+		for (auto &macro : macros) {
+			if (!info.has_parameter_types || macro->HasParameterTypes(info.parameter_types)) {
+				targets.push_back(*macro);
+			}
+		}
+		if (targets.empty()) {
+			throw CatalogException("function %s(%s) does not exist", name,
+			                       MacroFunction::ParameterTypesToString(info.parameter_types));
+		}
+		if (targets.size() > 1) {
+			throw CatalogException(
+			    unordered_map<string, string> {
+			        {"hint", "Specify the argument list to select the function unambiguously."}},
+			    StringUtil::Format("function name \"%s\" is not unique", name));
+		}
+		auto &macro = targets[0].get();
+		if (info.set_strict && macro.strict != info.strict) {
+			throw NotImplementedException("ALTER FUNCTION cannot change whether a function is strict");
+		}
+		if (info.set_security) {
+			macro.security_definer = info.security_definer;
+		}
+		if (info.set_stability) {
+			macro.stability = info.stability;
+		}
+		create_info->on_conflict = OnCreateConflict::ALTER_ON_CONFLICT;
+		auto &schema = function->ParentSchema(context);
+		auto &properties = GetStatementProperties();
+		properties.return_type = StatementReturnType::NOTHING;
+		properties.RegisterDBModify(schema.ParentCatalog(), context, DatabaseModificationType::ALTER_TABLE);
+		result.plan =
+		    make_uniq<LogicalCreate>(LogicalOperatorType::LOGICAL_CREATE_MACRO, std::move(create_info), &schema);
+		return result;
+	}
 
 	// ALTER FUNCTION ... RENAME TO ... skips entry lookup (scalar-vs-table
 	// macro is ambiguous at parse time).

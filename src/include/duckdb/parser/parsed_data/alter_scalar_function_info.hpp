@@ -8,6 +8,8 @@
 
 #pragma once
 
+#include "duckdb/common/types.hpp"
+#include "duckdb/function/function.hpp"
 #include "duckdb/parser/parsed_data/alter_info.hpp"
 
 namespace duckdb {
@@ -16,7 +18,12 @@ struct CreateScalarFunctionInfo;
 //===--------------------------------------------------------------------===//
 // Alter Scalar Function
 //===--------------------------------------------------------------------===//
-enum class AlterScalarFunctionType : uint8_t { INVALID = 0, ADD_FUNCTION_OVERLOADS = 1, RENAME_SCALAR_FUNCTION = 200 };
+enum class AlterScalarFunctionType : uint8_t {
+	INVALID = 0,
+	ADD_FUNCTION_OVERLOADS = 1,
+	RENAME_SCALAR_FUNCTION = 200,
+	SET_FUNCTION_ATTRIBUTES = 201
+};
 
 struct AlterScalarFunctionInfo : public AlterInfo {
 	AlterScalarFunctionInfo(AlterScalarFunctionType type, const AlterEntryData &data);
@@ -50,6 +57,32 @@ public:
 
 private:
 	RenameScalarFunctionInfo() = default;
+};
+
+//===--------------------------------------------------------------------===//
+// AlterFunctionAttributesInfo
+//===--------------------------------------------------------------------===//
+//! ALTER FUNCTION name[(argument types)] SECURITY ..., IMMUTABLE / STABLE / VOLATILE, STRICT
+struct AlterFunctionAttributesInfo : public AlterScalarFunctionInfo {
+	explicit AlterFunctionAttributesInfo(const AlterEntryData &data);
+
+	vector<LogicalType> parameter_types;
+	bool has_parameter_types = false;
+	bool set_security = false;
+	bool security_definer = false;
+	bool set_stability = false;
+	FunctionStability stability = FunctionStability::VOLATILE;
+	bool set_strict = false;
+	bool strict = false;
+
+public:
+	unique_ptr<AlterInfo> Copy() const override;
+	string ToString() const override;
+	void Serialize(Serializer &serializer) const override;
+	static unique_ptr<AlterScalarFunctionInfo> Deserialize(Deserializer &deserializer);
+
+private:
+	AlterFunctionAttributesInfo();
 };
 
 //===--------------------------------------------------------------------===//

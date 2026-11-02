@@ -256,6 +256,7 @@ AlterInfo:
     - AlterViewStmt
     - AlterIndexStmt
     - AlterFunctionStmt
+    - AlterFunctionAttributesStmt
     - AlterSchemaStmt
     - AlterSequenceStmt
     - AlterSequenceOptions

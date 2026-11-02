@@ -849,6 +849,53 @@
     ]
   },
   {
+    "class": "AlterFunctionAttributesInfo",
+    "base": "AlterScalarFunctionInfo",
+    "enum": "SET_FUNCTION_ATTRIBUTES",
+    "members": [
+      {
+        "id": 400,
+        "name": "parameter_types",
+        "type": "vector<LogicalType>"
+      },
+      {
+        "id": 401,
+        "name": "has_parameter_types",
+        "type": "bool"
+      },
+      {
+        "id": 402,
+        "name": "set_security",
+        "type": "bool"
+      },
+      {
+        "id": 403,
+        "name": "security_definer",
+        "type": "bool"
+      },
+      {
+        "id": 404,
+        "name": "set_stability",
+        "type": "bool"
+      },
+      {
+        "id": 405,
+        "name": "stability",
+        "type": "FunctionStability"
+      },
+      {
+        "id": 406,
+        "name": "set_strict",
+        "type": "bool"
+      },
+      {
+        "id": 407,
+        "name": "strict",
+        "type": "bool"
+      }
+    ]
+  },
+  {
     "class": "AlterIndexInfo",
     "base": "AlterInfo",
     "enum": "ALTER_INDEX",
