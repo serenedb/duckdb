@@ -1,5 +1,5 @@
 CreateSchemaStmt <- 'SCHEMA' IfNotExists? QualifiedName? SchemaAuthorization? WithOptionList?
 
-SchemaAuthorization <- 'AUTHORIZATION' ColId
+SchemaAuthorization <- 'AUTHORIZATION' OwnerRoleSpec
 
 WithOptionList <- 'WITH' RelOptionList

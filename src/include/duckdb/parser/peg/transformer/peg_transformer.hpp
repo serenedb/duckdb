@@ -787,6 +787,7 @@ public:
 	static Identifier TransformOwnerRoleSpec(PEGTransformer &transformer, ParseResult &owner_role_spec);
 	static void CollectConfigClause(PEGTransformer &transformer, ParseResult &config, vector<string> &set_config,
 	                                vector<string> &reset_config, bool &reset_all_config);
+	static string OwnerRoleName(PEGTransformer &transformer, ParseResult &spec);
 
 	static void InitializePivotStatementTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
 	static arena_ptr<TransformResultValue> FinalizePivotStatementTrampoline(PEGTransformer &transformer,

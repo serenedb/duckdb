@@ -2148,6 +2148,7 @@ excluded_rules:
   - OwnerRoutineTarget
   - OwnerNamedTarget
   - OwnerRoleSpec
+  - MemberOptionName
   - DefaultPrivForRole
   - DefaultPrivInSchema
   - DefaultPrivAction
