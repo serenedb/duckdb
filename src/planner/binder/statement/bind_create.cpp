@@ -1475,11 +1475,8 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 		break;
 	case CatalogType::FOREIGN_SERVER_ENTRY: {
 		auto catalog = BindCatalog(stmt.info->GetQualifiedName().Catalog());
-		if (principal && !principal->is_superuser) {
-			throw PermissionException("permission denied for foreign-data wrapper %s",
-			                          stmt.info->Cast<CreateForeignServerInfo>().fdw_name);
-		}
 		if (principal) {
+			RequireForeignDataWrapperUsage(*principal, catalog, stmt.info->Cast<CreateForeignServerInfo>().fdw_name);
 			AssignOwner(stmt.info->permissions, Catalog::GetCatalog(context, catalog),
 			            CatalogType::FOREIGN_SERVER_ENTRY, nullptr, principal->role);
 		}

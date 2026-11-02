@@ -406,6 +406,18 @@ void Binder::RequireDatabasePrivilege(const Identifier &database, AclMode need) 
 	}
 }
 
+void Binder::RequireForeignDataWrapperUsage(const RoleAccess &role, const Identifier &database, const string &wrapper) {
+	auto &found = DBConfig::GetConfig(context).GetForeignDataWrapper(wrapper);
+	if (role.Owns(found.owner)) {
+		return;
+	}
+	auto entry = ClusterEntry(CatalogType::DATABASE_ENTRY, database);
+	if (!entry ||
+	    (role.HeldModes(entry->permissions.ForeignDataWrapperAcl(found.oid)) & AclMode::Usage) == AclMode::NoRights) {
+		throw PermissionException("permission denied for foreign-data wrapper %s", wrapper);
+	}
+}
+
 void Binder::RequireSchemaCreate(SchemaCatalogEntry &schema) {
 	if (!principal) {
 		return;

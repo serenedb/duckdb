@@ -312,6 +312,27 @@ static void ResolveGrant(Binder &binder, AlterPermissionsInfo &info) {
 		RequireGrantable(binder, *server);
 		return;
 	}
+	if (info.entry_catalog_type == CatalogType::FOREIGN_DATA_WRAPPER_ENTRY) {
+		auto &name = info.GetQualifiedName().Name().GetIdentifierName();
+		auto &wrapper = DBConfig::GetConfig(binder.context).GetForeignDataWrapper(name);
+		auto database_name = DatabaseManager::GetDefaultDatabase(binder.context);
+		auto database = binder.ClusterEntry(CatalogType::DATABASE_ENTRY, database_name);
+		if (!database) {
+			throw CatalogException(
+			    unordered_map<string, string> {{"type", "Database"}},
+			    StringUtil::Format("database \"%s\" does not exist", database_name.GetIdentifierName()));
+		}
+		auto acl = database->permissions.ForeignDataWrapperAcl(wrapper.oid);
+		if (principal && !principal->Owns(wrapper.owner) &&
+		    (principal->HeldModes(acl) | principal->GrantableModes(acl)) == AclMode::NoRights) {
+			throw PermissionException("permission denied for foreign-data wrapper %s", name);
+		}
+		info.foreign_data_wrapper_id = wrapper.oid;
+		info.foreign_data_wrapper_owner_id = wrapper.owner;
+		info.entry_catalog_type = CatalogType::DATABASE_ENTRY;
+		info.SetQualifiedName(Identifier(), Identifier(), database_name);
+		return;
+	}
 	if (info.all_in_schema) {
 		return;
 	}
@@ -427,7 +448,8 @@ BoundStatement Binder::Bind(AlterStatement &stmt) {
 		auto &properties = GetStatementProperties();
 		properties.return_type = StatementReturnType::NOTHING;
 		const auto catalog_type = stmt.info->GetCatalogType();
-		if (catalog_type != CatalogType::DATABASE_ENTRY && catalog_type != CatalogType::ROLE_ENTRY) {
+		if (catalog_type != CatalogType::DATABASE_ENTRY && catalog_type != CatalogType::ROLE_ENTRY &&
+		    catalog_type != CatalogType::FOREIGN_DATA_WRAPPER_ENTRY) {
 			stmt.info->SetQualifiedName(BindTableName(stmt.info->GetQualifiedName()));
 			auto &catalog = Catalog::GetCatalog(context, stmt.info->GetQualifiedName().Catalog());
 			properties.RegisterDBModify(catalog, context, DatabaseModificationType::ALTER_TABLE);

@@ -44,6 +44,7 @@ AclMode Permissions::AllPrivileges(CatalogType acl_class) {
 		return AclMode::Execute;
 	case CatalogType::TYPE_ENTRY:
 	case CatalogType::FOREIGN_SERVER_ENTRY:
+	case CatalogType::FOREIGN_DATA_WRAPPER_ENTRY:
 		return AclMode::Usage;
 	default:
 		return AclMode::NoRights;
@@ -97,6 +98,15 @@ vector<AclItem> Permissions::AclDefault(CatalogType acl_class, idx_t owner) {
 		acl.push_back(AclItem {ACL_ID_PUBLIC, owner, public_privs, AclMode::NoRights});
 	}
 	return acl;
+}
+
+std::span<const AclItem> Permissions::ForeignDataWrapperAcl(idx_t wrapper) const {
+	for (auto &row : foreign_data_wrappers) {
+		if (row.oid == wrapper) {
+			return row.acl;
+		}
+	}
+	return {};
 }
 
 static AclMode HeldBy(const vector<AclItem> &acl, idx_t role, AclMode AclItem::*field) {
@@ -167,53 +177,8 @@ static void Apply(vector<AclItem> &acl, idx_t grantor, AclMode grantable, AclMod
 	}
 }
 
-void AlterPermissionsInfo::ApplyTo(Permissions &permissions, CatalogType entry_type,
-                                   optional_ptr<ColumnList> columns) const {
-	auto &info = *this;
-	auto &owner = permissions.owner;
-	auto &acl = permissions.acl;
-	auto &defaults = permissions.defaults;
-	if (!info.new_owner.empty()) {
-		const auto old_owner = owner;
-		if (info.new_owner_id == old_owner) {
-			return;
-		}
-		acl.erase(
-		    std::remove_if(acl.begin(), acl.end(),
-		                   [&](const AclItem &item) { return item.grantee == old_owner && item.grantor == old_owner; }),
-		    acl.end());
-		for (auto &item : acl) {
-			if (item.grantor == old_owner) {
-				item.grantor = info.new_owner_id;
-			}
-		}
-		owner = info.new_owner_id;
-		return;
-	}
-
-	if (info.default_objtype != CatalogType::INVALID) {
-		auto row = std::find_if(defaults.begin(), defaults.end(), [&](const DefaultAcl &entry) {
-			return entry.role == info.target_role && entry.scope == info.default_scope &&
-			       entry.objtype == info.default_objtype;
-		});
-		const auto baseline = info.default_scope == 0 ? Permissions::AclDefault(info.default_objtype, info.target_role)
-		                                              : vector<AclItem> {};
-		auto row_acl = row == defaults.end() ? baseline : row->acl;
-		Apply(row_acl, info.target_role, Permissions::AllPrivileges(info.default_objtype), info.privileges, info);
-		if (row_acl == baseline) {
-			if (row != defaults.end()) {
-				defaults.erase(row);
-			}
-		} else if (row == defaults.end()) {
-			defaults.push_back(
-			    DefaultAcl {info.target_role, info.default_scope, info.default_objtype, std::move(row_acl)});
-		} else {
-			row->acl = std::move(row_acl);
-		}
-		return;
-	}
-
-	const auto acl_class = Permissions::AclClass(entry_type);
+static void ApplyGrant(const AlterPermissionsInfo &info, idx_t owner, vector<AclItem> &acl, CatalogType acl_class,
+                       optional_ptr<ColumnList> columns) {
 	auto stored = acl.empty() ? Permissions::AclDefault(acl_class, owner) : acl;
 	idx_t grantor = owner;
 	bool is_owner = true;
@@ -269,6 +234,73 @@ void AlterPermissionsInfo::ApplyTo(Permissions &permissions, CatalogType entry_t
 		Apply(column_acl, grantor, column_grantable, column_privilege.privileges & ACL_COLUMN_PRIVILEGES, info);
 		column.SetAcl(std::move(column_acl));
 	}
+}
+
+void AlterPermissionsInfo::ApplyTo(Permissions &permissions, CatalogType entry_type,
+                                   optional_ptr<ColumnList> columns) const {
+	auto &info = *this;
+	auto &owner = permissions.owner;
+	auto &acl = permissions.acl;
+	auto &defaults = permissions.defaults;
+	if (!info.new_owner.empty()) {
+		const auto old_owner = owner;
+		if (info.new_owner_id == old_owner) {
+			return;
+		}
+		acl.erase(
+		    std::remove_if(acl.begin(), acl.end(),
+		                   [&](const AclItem &item) { return item.grantee == old_owner && item.grantor == old_owner; }),
+		    acl.end());
+		for (auto &item : acl) {
+			if (item.grantor == old_owner) {
+				item.grantor = info.new_owner_id;
+			}
+		}
+		owner = info.new_owner_id;
+		return;
+	}
+
+	if (info.default_objtype != CatalogType::INVALID) {
+		auto row = std::find_if(defaults.begin(), defaults.end(), [&](const DefaultAcl &entry) {
+			return entry.role == info.target_role && entry.scope == info.default_scope &&
+			       entry.objtype == info.default_objtype;
+		});
+		const auto baseline = info.default_scope == 0 ? Permissions::AclDefault(info.default_objtype, info.target_role)
+		                                              : vector<AclItem> {};
+		auto row_acl = row == defaults.end() ? baseline : row->acl;
+		Apply(row_acl, info.target_role, Permissions::AllPrivileges(info.default_objtype), info.privileges, info);
+		if (row_acl == baseline) {
+			if (row != defaults.end()) {
+				defaults.erase(row);
+			}
+		} else if (row == defaults.end()) {
+			defaults.push_back(
+			    DefaultAcl {info.target_role, info.default_scope, info.default_objtype, std::move(row_acl)});
+		} else {
+			row->acl = std::move(row_acl);
+		}
+		return;
+	}
+
+	if (info.foreign_data_wrapper_id) {
+		auto &wrappers = permissions.foreign_data_wrappers;
+		auto row = std::find_if(wrappers.begin(), wrappers.end(),
+		                        [&](const ObjectAcl &entry) { return entry.oid == info.foreign_data_wrapper_id; });
+		auto row_acl = row == wrappers.end() ? vector<AclItem> {} : row->acl;
+		ApplyGrant(info, info.foreign_data_wrapper_owner_id, row_acl, CatalogType::FOREIGN_DATA_WRAPPER_ENTRY, nullptr);
+		if (row_acl.empty()) {
+			if (row != wrappers.end()) {
+				wrappers.erase(row);
+			}
+		} else if (row == wrappers.end()) {
+			wrappers.push_back(ObjectAcl {info.foreign_data_wrapper_id, std::move(row_acl)});
+		} else {
+			row->acl = std::move(row_acl);
+		}
+		return;
+	}
+
+	ApplyGrant(info, owner, acl, Permissions::AclClass(entry_type), columns);
 }
 
 void Permissions::AssignOwner(idx_t new_owner, CatalogType objtype, optional_ptr<const Permissions> database,
@@ -486,6 +518,11 @@ static bool AnyRoleReference(const CatalogEntry &entry, F &&named) {
 			return true;
 		}
 	}
+	for (auto &row : permissions.foreign_data_wrappers) {
+		if (any_acl(row.acl)) {
+			return true;
+		}
+	}
 	if (entry.type == CatalogType::VIEW_ENTRY) {
 		auto &column_acls = entry.Cast<ViewCatalogEntry>().column_acls;
 		return std::any_of(column_acls.begin(), column_acls.end(),
@@ -548,6 +585,8 @@ string PermissionKindName(CatalogType type) {
 		return "text search dictionary";
 	case CatalogType::FOREIGN_SERVER_ENTRY:
 		return "foreign server";
+	case CatalogType::FOREIGN_DATA_WRAPPER_ENTRY:
+		return "foreign-data wrapper";
 	case CatalogType::SUBSCRIPTION_ENTRY:
 		return "subscription";
 	case CatalogType::JOB_ENTRY:

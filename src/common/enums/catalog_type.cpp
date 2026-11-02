@@ -57,6 +57,8 @@ string CatalogTypeToString(CatalogType type) {
 		return "Replication Origin";
 	case CatalogType::JOB_ENTRY:
 		return "Job";
+	case CatalogType::FOREIGN_DATA_WRAPPER_ENTRY:
+		return "Foreign Data Wrapper";
 	case CatalogType::SECRET_ENTRY:
 		return "Secret";
 	case CatalogType::SECRET_TYPE_ENTRY:
@@ -144,6 +146,9 @@ CatalogType CatalogTypeFromString(const string &type) {
 	}
 	if (type == "Job") {
 		return CatalogType::JOB_ENTRY;
+	}
+	if (type == "Foreign Data Wrapper") {
+		return CatalogType::FOREIGN_DATA_WRAPPER_ENTRY;
 	}
 	if (type == "INVALID") {
 		return CatalogType::INVALID;

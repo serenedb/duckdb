@@ -163,6 +163,8 @@ unique_ptr<AlterInfo> AlterPermissionsInfo::Copy() const {
 	result->target_role = target_role;
 	result->default_scope = default_scope;
 	result->all_in_schema = all_in_schema;
+	result->foreign_data_wrapper_id = foreign_data_wrapper_id;
+	result->foreign_data_wrapper_owner_id = foreign_data_wrapper_owner_id;
 	return std::move(result);
 }
 

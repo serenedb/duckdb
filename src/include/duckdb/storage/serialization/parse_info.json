@@ -558,6 +558,16 @@
         "id": 320,
         "name": "all_in_schema",
         "type": "bool"
+      },
+      {
+        "id": 321,
+        "name": "foreign_data_wrapper_id",
+        "type": "idx_t"
+      },
+      {
+        "id": 322,
+        "name": "foreign_data_wrapper_owner_id",
+        "type": "idx_t"
       }
     ]
   },

@@ -12,6 +12,7 @@
 #include "duckdb/main/extension_helper.hpp"
 #include "duckdb/storage/storage_extension.hpp"
 #include "duckdb/common/serializer/serializer.hpp"
+#include "duckdb/common/exception/catalog_exception.hpp"
 #include "duckdb/common/exception/parser_exception.hpp"
 #include "duckdb/common/path.hpp"
 
@@ -622,6 +623,15 @@ bool DBConfig::IsInMemoryDatabase(const char *database_path) {
 		return true;
 	}
 	return false;
+}
+
+const ForeignDataWrapper &DBConfig::GetForeignDataWrapper(const string &name) const {
+	auto wrapper = foreign_data_wrappers.find(name);
+	if (wrapper == foreign_data_wrappers.end()) {
+		throw CatalogException(unordered_map<string, string> {{"type", "Foreign Data Wrapper"}},
+		                       StringUtil::Format("foreign-data wrapper \"%s\" does not exist", name));
+	}
+	return wrapper->second;
 }
 
 CastFunctionSet &DBConfig::GetCastFunctions() {

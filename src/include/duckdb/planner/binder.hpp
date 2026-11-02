@@ -433,6 +433,7 @@ public:
 	QualifiedName ClusterName(const QualifiedName &name);
 	idx_t RoleId(const Identifier &name);
 	void RequireDatabasePrivilege(const Identifier &database, AclMode need);
+	void RequireForeignDataWrapperUsage(const RoleAccess &role, const Identifier &database, const string &wrapper);
 	void RequireSchemaCreate(SchemaCatalogEntry &schema);
 	void RequireTypeUsage(optional_ptr<const LogicalDependencyList> dependencies);
 	void AssignOwner(Permissions &permissions, Catalog &catalog, CatalogType objtype,

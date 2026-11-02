@@ -187,6 +187,9 @@ CatalogType GrantObjectType(const string &keyword) {
 	if (keyword == "FOREIGN SERVER") {
 		return CatalogType::FOREIGN_SERVER_ENTRY;
 	}
+	if (keyword == "FOREIGN DATA WRAPPER") {
+		return CatalogType::FOREIGN_DATA_WRAPPER_ENTRY;
+	}
 	throw ParserException("unrecognized privilege object type %s", keyword);
 }
 
