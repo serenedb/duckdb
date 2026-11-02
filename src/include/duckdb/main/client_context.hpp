@@ -159,15 +159,6 @@ public:
 		binding_generation.fetch_add(1, std::memory_order_relaxed);
 	}
 
-	typedef bool (*entry_visibility_t)(ClientContext &context, CatalogEntry &entry);
-	entry_visibility_t entry_visibility = nullptr;
-
-	typedef bool (*database_visibility_t)(ClientContext &context, AttachedDatabase &database);
-	database_visibility_t database_visibility = nullptr;
-
-	typedef void (*entry_reference_handler_t)(ClientContext &context, const RoleAccess &role, CatalogEntry &entry);
-	entry_reference_handler_t entry_reference_handler = nullptr;
-
 	struct AccessScope {
 		optional_ptr<const RoleAccess> role;
 		bool catalog = false;
@@ -229,17 +220,9 @@ public:
 		return transaction.ActiveTransaction();
 	}
 
-	bool CanSee(CatalogEntry &entry) {
-		return !entry_visibility || entry_visibility(*this, entry);
-	}
-	bool CanSeeDatabase(AttachedDatabase &database) {
-		return !database_visibility || database_visibility(*this, database);
-	}
-	void CheckEntryReference(const RoleAccess &role, CatalogEntry &entry) {
-		if (entry_reference_handler && !role.is_superuser) {
-			entry_reference_handler(*this, role, entry);
-		}
-	}
+	DUCKDB_API bool CanSee(CatalogEntry &entry);
+	DUCKDB_API bool CanSeeDatabase(AttachedDatabase &database);
+	DUCKDB_API void CheckEntryReference(const RoleAccess &role, CatalogEntry &entry);
 	DUCKDB_API void CheckDatabaseReference(const RoleAccess &role, Catalog &catalog);
 	DUCKDB_API optional_ptr<const StatementProperties> ActiveStatementProperties() const;
 	DUCKDB_API void WarnUser(const string &message);
