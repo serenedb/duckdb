@@ -83,6 +83,22 @@ static optional_ptr<RoleEntry> FindRole(Binder &binder, const string &name) {
 	return entry ? &entry->Cast<RoleEntry>() : nullptr;
 }
 
+static void CheckDatabaseOwnerMembership(Binder &binder, const string &member, const string &granted) {
+	const auto database_owner = DBConfig::GetConfig(binder.context).database_owner_role;
+	if (database_owner == 0) {
+		return;
+	}
+	if (auto role = FindRole(binder, granted); role && role->oid == database_owner) {
+		throw Exception({{"error_subtype", "INVALID_GRANT_OPERATION"}}, ExceptionType::INVALID_INPUT,
+		                StringUtil::Format("role \"%s\" cannot have explicit members", role->name.GetIdentifierName()));
+	}
+	if (auto role = FindRole(binder, member); role && role->oid == database_owner) {
+		throw Exception(
+		    {{"error_subtype", "INVALID_GRANT_OPERATION"}}, ExceptionType::INVALID_INPUT,
+		    StringUtil::Format("role \"%s\" cannot be a member of any role", role->name.GetIdentifierName()));
+	}
+}
+
 static void RequireGrantableRole(Binder &binder, const string &name, bool revoke) {
 	auto role = FindRole(binder, name);
 	if (!role) {
@@ -106,6 +122,16 @@ static void RequireGrantableRole(Binder &binder, const string &name, bool revoke
 }
 
 void Binder::CheckCreateRole(const CreateRoleInfo &info) {
+	auto &name = info.GetQualifiedName().Name().GetIdentifierName();
+	for (auto &granted : info.in_roles) {
+		CheckDatabaseOwnerMembership(*this, name, granted.GetIdentifierName());
+	}
+	for (auto &member : info.role_members) {
+		CheckDatabaseOwnerMembership(*this, member.GetIdentifierName(), name);
+	}
+	for (auto &member : info.admin_members) {
+		CheckDatabaseOwnerMembership(*this, member.GetIdentifierName(), name);
+	}
 	auto &caller = CheckAs();
 	if (caller.is_superuser) {
 		return;
@@ -136,6 +162,9 @@ void Binder::CheckAlterRole(AlterRoleInfo &info) {
 		throw Exception({{"error_subtype", "RESERVED_NAME"}, {"detail", "Cannot alter reserved roles."}},
 		                ExceptionType::INVALID_INPUT,
 		                StringUtil::Format("role name \"%s\" is reserved", role->name.GetIdentifierName()));
+	}
+	if (!info.grant_role.empty() && !info.revoke) {
+		CheckDatabaseOwnerMembership(*this, role->name.GetIdentifierName(), info.grant_role);
 	}
 	if (caller.is_superuser) {
 		return;
