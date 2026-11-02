@@ -760,13 +760,12 @@ BoundStatement Binder::BindNode(InsertQueryNode &node) {
 		return std::move(*expanded);
 	}
 
-	auto &role = CheckAs();
-	if (node.on_conflict_info && !role.is_superuser) {
-		vector<std::span<const AclItem>> acls;
+	if (node.on_conflict_info) {
+		vector<LogicalIndex> inserted;
 		if (!node.columns.empty()) {
 			for (auto &name : node.columns) {
 				if (table.ColumnExists(name)) {
-					acls.emplace_back(table.GetColumn(name).Acl());
+					inserted.push_back(table.GetColumn(name).Logical());
 				}
 			}
 		} else {
@@ -774,21 +773,13 @@ BoundStatement Binder::BindNode(InsertQueryNode &node) {
 			const auto count = values_list && !values_list->values.empty() ? values_list->values[0].size()
 			                                                               : table.GetColumns().LogicalColumnCount();
 			for (auto &column : table.GetColumns().Logical()) {
-				if (acls.size() == count) {
+				if (inserted.size() == count) {
 					break;
 				}
-				acls.emplace_back(column.Acl());
+				inserted.push_back(column.Logical());
 			}
 		}
-		const bool allowed = node.default_values
-		                         ? role.CanAnyColumn(table.permissions, AclMode::Insert, table.GetColumns())
-		                         : role.CanColumns(table.permissions, AclMode::Insert, acls);
-		if (!allowed) {
-			ThrowPermissionDenied(table);
-		}
-	}
-	if (!role.CanAnyColumn(table.permissions, AclMode::Insert, table.GetColumns())) {
-		ThrowPermissionDenied(table);
+		RequirePrivilege(table, AclMode::Insert, std::move(inserted), node.default_values);
 	}
 
 	auto values_list = node.GetValuesList();
@@ -846,15 +837,11 @@ BoundStatement Binder::BindNode(InsertQueryNode &node) {
 				    absl::c_all_of(node.returning_list, [&](const unique_ptr<ParsedExpression> &expr) {
 					    return ReadsOnly(*expr, table, stored);
 				    })) {
-					if (!role.is_superuser) {
-						vector<std::span<const AclItem>> acls;
-						for (auto &column : replaced.columns) {
-							acls.emplace_back(table.GetColumns().GetColumn(column).Acl());
-						}
-						if (!role.CanColumns(table.permissions, AclMode::Update, acls)) {
-							ThrowPermissionDenied(table);
-						}
+					vector<LogicalIndex> updated;
+					for (auto &column : replaced.columns) {
+						updated.push_back(table.GetColumns().GetColumn(column).Logical());
 					}
+					RequirePrivilege(table, AclMode::Update, std::move(updated), false);
 					merge = false;
 					action_type = OnConflictAction::REPLACE;
 					on_conflict_filter = std::move(key);
@@ -893,18 +880,12 @@ BoundStatement Binder::BindNode(InsertQueryNode &node) {
 	BindInsertColumnList(table, node.columns, node.default_values, named_column_map, insert->expected_types,
 	                     column_index_map);
 	const auto check_insert = [&](idx_t source_columns) {
-		if (role.is_superuser) {
-			return;
-		}
-		vector<std::span<const AclItem>> acls;
+		vector<LogicalIndex> inserted;
 		for (idx_t i = 0; i < source_columns && i < named_column_map.size(); i++) {
-			acls.emplace_back(table.GetColumn(named_column_map[i]).Acl());
+			inserted.push_back(named_column_map[i]);
 		}
-		const bool allowed = acls.empty() ? role.CanAnyColumn(table.permissions, AclMode::Insert, table.GetColumns())
-		                                  : role.CanColumns(table.permissions, AclMode::Insert, acls);
-		if (!allowed) {
-			ThrowPermissionDenied(table);
-		}
+		const bool any_column = inserted.empty();
+		RequirePrivilege(table, AclMode::Insert, std::move(inserted), any_column);
 	};
 
 	// An INSERT ... SELECT supplies a value for every targeted column, so naming a

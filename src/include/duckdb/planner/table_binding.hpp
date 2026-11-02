@@ -107,15 +107,19 @@ protected:
 };
 
 struct ColumnReadCheck {
-	ColumnReadCheck(StandardEntry &entry_p, RoleAccess role_p) : entry(entry_p), role(role_p) {
+	ColumnReadCheck(StandardEntry &entry_p, RoleAccess role_p, bool require_any_p)
+	    : entry(entry_p), role(role_p), require_any(require_any_p) {
 	}
 
+	void Read(idx_t column_index);
 	bool CanRead(idx_t column_index) const;
 	bool CanReadAny() const;
+	bool Allowed() const;
 
 	StandardEntry &entry;
 	RoleAccess role;
-	bool referenced = false;
+	bool require_any;
+	vector<idx_t> columns;
 };
 
 struct EntryBinding : public Binding {
@@ -126,7 +130,7 @@ public:
 	EntryBinding(BindingAlias alias, vector<LogicalType> types, vector<Identifier> names, TableIndex index,
 	             StandardEntry &entry);
 	StandardEntry &entry;
-	unique_ptr<ColumnReadCheck> column_read;
+	shared_ptr<ColumnReadCheck> column_read;
 
 public:
 	BindResult Bind(ColumnRefExpression &colref, idx_t depth) override;

@@ -256,6 +256,14 @@ struct MacroFunctionLookup {
 	optional_ptr<ScalarMacroCatalogEntry> macro;
 };
 
+struct RequiredPrivilege {
+	reference<TableCatalogEntry> table;
+	RoleAccess role;
+	AclMode mode;
+	vector<LogicalIndex> columns;
+	bool any_column;
+};
+
 struct GlobalBinderState {
 	//! The count of bound_tables
 	idx_t bound_tables = 0;
@@ -267,6 +275,7 @@ struct GlobalBinderState {
 	vector<MacroParameterReference> macro_parameters;
 	idx_t macro_type_probing = 0;
 	unordered_map<idx_t, RoleAccess> role_access;
+	vector<RequiredPrivilege> required_privileges;
 	//! Statement properties
 	StatementProperties prop;
 	vector<shared_ptr<ColumnReadCheck>> column_reads;
@@ -455,7 +464,9 @@ public:
 	optional_ptr<const MergeQueryNode> on_conflict_merge;
 	BoundStatement BindTarget(TableRef &ref, TableRefUse use);
 	void CheckTableRead(TableBinding &binding, TableCatalogEntry &table);
-	void CheckTableReads();
+	void RequirePrivilege(TableCatalogEntry &table, AclMode mode, vector<LogicalIndex> columns, bool any_column);
+	void AdoptPrivilegeChecks(Binder &other);
+	void CheckPrivileges();
 	void RecordConstraintKeyVisibility(TableCatalogEntry &table);
 	void CheckCall(FunctionEntry &function);
 	void CheckStatementKind(SQLStatement &statement);
