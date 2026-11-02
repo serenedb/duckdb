@@ -210,6 +210,14 @@ string ObjectTypeKeyword(ParseResult &objtype) {
 	return StringUtil::Join(words, " ");
 }
 
+string OwnerRoleName(PEGTransformer &transformer, ParseResult &spec) {
+	auto &chosen = spec.Cast<ListParseResult>().Child<ChoiceParseResult>(0).GetResult();
+	if (chosen.type == ParseResultType::KEYWORD) {
+		return StringUtil::Upper(chosen.Cast<KeywordParseResult>().keyword);
+	}
+	return transformer.Transform<string>(chosen);
+}
+
 void SetObjectTarget(AlterPermissionsInfo &info, CatalogType type, QualifiedName name) {
 	info.entry_catalog_type = type;
 	if (type == CatalogType::DATABASE_ENTRY) {
@@ -671,17 +679,38 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformAlterOwnerStatement(PEG
 		                transformer.Transform<QualifiedName>(target.GetChild(1)));
 	}
 
-	// OwnerRoleSpec: a rule wrapping CHOICE(CURRENT_USER / SESSION_USER /
-	// CURRENT_ROLE keyword / ColId).
-	auto &role_choice = list_pr.GetChild(4).Cast<ListParseResult>().Child<ChoiceParseResult>(0).GetResult();
-	if (role_choice.type == ParseResultType::KEYWORD) {
-		info->new_owner = StringUtil::Upper(role_choice.Cast<KeywordParseResult>().keyword);
-	} else {
-		info->new_owner = transformer.Transform<string>(role_choice);
-	}
+	info->new_owner = OwnerRoleName(transformer, list_pr.GetChild(4));
 
 	auto result = make_uniq<AlterStatement>();
 	result->info = std::move(info);
+	return std::move(result);
+}
+
+unique_ptr<SQLStatement> PEGTransformerFactory::TransformReassignOwnedStatement(PEGTransformer &transformer,
+                                                                                ParseResult &parse_result) {
+	auto &list_pr = parse_result.Cast<ListParseResult>();
+	// 0:'REASSIGN' 1:'OWNED' 2:'BY' 3:List(OwnerRoleSpec) 4:'TO' 5:OwnerRoleSpec
+	auto result = make_uniq<PragmaStatement>();
+	result->info->name = "reassign_owned";
+	result->info->parameters.push_back(StrConst(OwnerRoleName(transformer, list_pr.GetChild(5))));
+	for (auto &role : ExtractParseResultsFromList(list_pr.GetChild(3))) {
+		result->info->parameters.push_back(StrConst(OwnerRoleName(transformer, role.get())));
+	}
+	return std::move(result);
+}
+
+unique_ptr<SQLStatement> PEGTransformerFactory::TransformDropOwnedStatement(PEGTransformer &transformer,
+                                                                            ParseResult &parse_result) {
+	auto &list_pr = parse_result.Cast<ListParseResult>();
+	// 0:'DROP' 1:'OWNED' 2:'BY' 3:List(OwnerRoleSpec) 4:DropBehavior?
+	bool cascade = false;
+	transformer.TransformOptional<bool>(list_pr, 4, cascade);
+	auto result = make_uniq<PragmaStatement>();
+	result->info->name = "drop_owned";
+	result->info->parameters.push_back(BoolConst(cascade));
+	for (auto &role : ExtractParseResultsFromList(list_pr.GetChild(3))) {
+		result->info->parameters.push_back(StrConst(OwnerRoleName(transformer, role.get())));
+	}
 	return std::move(result);
 }
 

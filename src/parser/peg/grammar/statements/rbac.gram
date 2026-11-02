@@ -42,6 +42,8 @@ OwnerNamedTarget <- OwnerObjectType QualifiedName
 OwnerObjectType <- TextSearchDictionaryObjType / 'TABLE' / 'VIEW' / 'SEQUENCE' / 'SCHEMA' / 'TYPE' / 'JOB' / 'SERVER' / 'DATABASE'
 TextSearchDictionaryObjType <- 'TEXT' 'SEARCH' 'DICTIONARY'
 OwnerRoleSpec <- 'CURRENT_USER' / 'SESSION_USER' / 'CURRENT_ROLE' / ColId
+ReassignOwnedStatement <- 'REASSIGN' 'OWNED' 'BY' List(OwnerRoleSpec) 'TO' OwnerRoleSpec
+DropOwnedStatement <- 'DROP' 'OWNED' 'BY' List(OwnerRoleSpec) DropBehavior?
 
 # ALTER DEFAULT PRIVILEGES [FOR ROLE r,...] [IN SCHEMA s,...] (GRANT|REVOKE) ...
 #   -> serenedb_alter_default_privileges pragma (pg_default_acl rows).

@@ -568,6 +568,11 @@
         "id": 322,
         "name": "foreign_data_wrapper_owner_id",
         "type": "idx_t"
+      },
+      {
+        "id": 323,
+        "name": "drop_owned_role_id",
+        "type": "idx_t"
       }
     ]
   },
