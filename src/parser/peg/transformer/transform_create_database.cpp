@@ -9,11 +9,15 @@ namespace duckdb {
 
 unique_ptr<SQLStatement> PEGTransformerFactory::TransformCreateDatabaseStatement(
     PEGTransformer &transformer, const optional<bool> &if_not_exists, const Identifier &catalog_name,
+    const optional<string> &create_database_owner,
     optional<case_insensitive_map_t<unique_ptr<ParsedExpression>>> with_list,
     const optional<Identifier> &database_tablespace) {
 	auto result = make_uniq<CreateStatement>();
 	auto info = make_uniq<CreateDatabaseInfo>();
 	info->SetName(catalog_name);
+	if (create_database_owner) {
+		info->options["owner"] = Value(*create_database_owner);
+	}
 	if (with_list) {
 		for (auto &option : *with_list) {
 			auto name = StringUtil::Lower(option.first);
@@ -51,6 +55,16 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformDropDatabaseStatement(
 
 bool PEGTransformerFactory::TransformDropDatabaseForce(PEGTransformer &transformer) {
 	return true;
+}
+
+string PEGTransformerFactory::TransformCreateDatabaseOwner(PEGTransformer &transformer, const bool &has_result,
+                                                           const string &database_owner_name) {
+	return database_owner_name;
+}
+
+string PEGTransformerFactory::TransformDatabaseOwnerName(PEGTransformer &transformer, const bool &has_result,
+                                                         const Identifier &col_id) {
+	return col_id.GetIdentifierName();
 }
 
 } // namespace duckdb

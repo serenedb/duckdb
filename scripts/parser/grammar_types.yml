@@ -1175,6 +1175,8 @@ String:
   rules:
     - StringLiteral
     - DropOrSet
+    - CreateDatabaseOwner
+    - DatabaseOwnerName
     - TriggerFireMode
     - ReplicaFireMode
     - AlwaysFireMode
