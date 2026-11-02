@@ -187,56 +187,54 @@ shared_ptr<BlockHandle> StandardBufferManager::RegisterMemory(MemoryTag tag, idx
 	return result;
 }
 
+void StandardBufferManager::AddToEvictionQueue(BlockHandle &block) {
+	auto &memory = block.GetMemory();
+	auto lock = memory.GetLock();
+	buffer_pool.AddBlock(memory);
+}
+
+BufferHandle StandardBufferManager::PinNew(const QueryContext &context, shared_ptr<BlockHandle> &block) {
+#ifdef DUCKDB_DEBUG_DESTROY_BLOCKS
+	// Initialize the memory with garbage data
+	WriteGarbageIntoBuffer(*block);
+#endif
+	auto result = Pin(context, block, true);
+	AddToEvictionQueue(*block);
+	return result;
+}
+
 shared_ptr<BlockHandle> StandardBufferManager::AllocateTemporaryMemory(MemoryTag tag, idx_t block_size,
                                                                        bool can_destroy) {
-	return RegisterMemory(tag, block_size, Storage::DEFAULT_BLOCK_HEADER_SIZE, can_destroy);
+	auto block = RegisterMemory(tag, block_size, Storage::DEFAULT_BLOCK_HEADER_SIZE, can_destroy);
+	AddToEvictionQueue(*block);
+	return block;
 }
 
 shared_ptr<BlockHandle> StandardBufferManager::AllocateMemory(MemoryTag tag, BlockManager *block_manager,
                                                               bool can_destroy) {
-	return RegisterMemory(tag, block_manager->GetBlockSize(), block_manager->GetBlockHeaderSize(), can_destroy);
+	auto block = RegisterMemory(tag, block_manager->GetBlockSize(), block_manager->GetBlockHeaderSize(), can_destroy);
+	AddToEvictionQueue(*block);
+	return block;
 }
 
 BufferHandle StandardBufferManager::Allocate(MemoryTag tag, BlockManager *block_manager, bool can_destroy) {
-	auto block = AllocateMemory(tag, block_manager, can_destroy);
-
-#ifdef DUCKDB_DEBUG_DESTROY_BLOCKS
-	// Initialize the memory with garbage data
-	WriteGarbageIntoBuffer(*block);
-#endif
-	return Pin(QueryContext(), block, true);
+	return Allocate(QueryContext(), tag, block_manager, can_destroy);
 }
 
 BufferHandle StandardBufferManager::Allocate(MemoryTag tag, idx_t block_size, bool can_destroy) {
-	auto block = AllocateTemporaryMemory(tag, block_size, can_destroy);
-
-#ifdef DUCKDB_DEBUG_DESTROY_BLOCKS
-	// Initialize the memory with garbage data
-	WriteGarbageIntoBuffer(*block);
-#endif
-	return Pin(QueryContext(), block, true);
+	return Allocate(QueryContext(), tag, block_size, can_destroy);
 }
 
 BufferHandle StandardBufferManager::Allocate(QueryContext context, MemoryTag tag, idx_t block_size, bool can_destroy) {
 	auto block = RegisterMemory(tag, block_size, Storage::DEFAULT_BLOCK_HEADER_SIZE, can_destroy, context);
-
-#ifdef DUCKDB_DEBUG_DESTROY_BLOCKS
-	// Initialize the memory with garbage data
-	WriteGarbageIntoBuffer(*block);
-#endif
-	return Pin(context, block, true);
+	return PinNew(context, block);
 }
 
 BufferHandle StandardBufferManager::Allocate(QueryContext context, MemoryTag tag, BlockManager *block_manager,
                                              bool can_destroy) {
 	auto block =
 	    RegisterMemory(tag, block_manager->GetBlockSize(), block_manager->GetBlockHeaderSize(), can_destroy, context);
-
-#ifdef DUCKDB_DEBUG_DESTROY_BLOCKS
-	// Initialize the memory with garbage data
-	WriteGarbageIntoBuffer(*block);
-#endif
-	return Pin(context, block, true);
+	return PinNew(context, block);
 }
 
 void StandardBufferManager::BatchRead(QueryContext context, PrefetchRun &run) {

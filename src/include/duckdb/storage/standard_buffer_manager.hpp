@@ -136,6 +136,11 @@ protected:
 	shared_ptr<BlockHandle> RegisterMemory(MemoryTag tag, idx_t block_size, idx_t block_header_size, bool can_destroy,
 	                                       QueryContext context = QueryContext());
 
+	//! Lets the buffer pool evict [block], a block RegisterMemory created
+	void AddToEvictionQueue(BlockHandle &block);
+	//! Pins [block], a block RegisterMemory created, before the buffer pool may evict it
+	BufferHandle PinNew(const QueryContext &context, shared_ptr<BlockHandle> &block);
+
 	//! Get allocated size for a block
 	idx_t GetBlockAllocSize(idx_t block_size) const;
 
