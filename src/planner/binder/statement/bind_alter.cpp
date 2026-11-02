@@ -193,7 +193,7 @@ static string RoleName(ClientContext &context, idx_t role) {
 }
 
 static idx_t GranteeId(Binder &binder, const string &name) {
-	return name == "PUBLIC" ? ACL_ID_PUBLIC : binder.RoleId(Identifier(name));
+	return name == "public" ? ACL_ID_PUBLIC : binder.RoleId(Identifier(name));
 }
 
 static idx_t RoleSpecId(Binder &binder, const string &name) {
