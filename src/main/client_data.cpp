@@ -160,9 +160,6 @@ public:
 	void ReserveMemory(MemoryTag tag, idx_t size) override {
 		return buffer_manager.ReserveMemory(tag, size);
 	}
-	bool TryReserveMemory(MemoryTag tag, idx_t size, bool evict_caches) override {
-		return buffer_manager.TryReserveMemory(tag, size, evict_caches);
-	}
 	void FreeReservedMemory(MemoryTag tag, idx_t size) override {
 		return buffer_manager.FreeReservedMemory(tag, size);
 	}
@@ -194,9 +191,6 @@ public:
 	bool HasFilesInTemporaryDirectory() const override {
 		return buffer_manager.HasFilesInTemporaryDirectory();
 	}
-	TemporaryFileManager &GetTemporaryFileManager() override {
-		return buffer_manager.GetTemporaryFileManager();
-	}
 
 	unique_ptr<FileBuffer> ConstructManagedBuffer(idx_t size, idx_t block_header_size, unique_ptr<FileBuffer> &&source,
 	                                              FileBufferType type = FileBufferType::MANAGED_BUFFER) override {
@@ -215,8 +209,17 @@ public:
 		return buffer_manager.GetTemporaryMemoryManager();
 	}
 
+	BufferHandle PinEmpty(shared_ptr<BlockHandle> &handle, idx_t block_size, idx_t block_header_size) override {
+		return buffer_manager.PinEmpty(handle, block_size, block_header_size);
+	}
+	void Discard(shared_ptr<BlockHandle> &handle) override {
+		return buffer_manager.Discard(handle);
+	}
 	void WriteTemporaryBuffer(QueryContext context, MemoryTag tag, block_id_t block_id, FileBuffer &buffer) override {
 		return buffer_manager.WriteTemporaryBuffer(context, tag, block_id, buffer);
+	}
+	bool TryWriteTemporaryCopy(QueryContext context, MemoryTag tag, block_id_t block_id, FileBuffer &buffer) override {
+		return buffer_manager.TryWriteTemporaryCopy(context, tag, block_id, buffer);
 	}
 	unique_ptr<FileBuffer> ReadTemporaryBuffer(QueryContext context, MemoryTag tag, BlockHandle &block,
 	                                           unique_ptr<FileBuffer> buffer) override {

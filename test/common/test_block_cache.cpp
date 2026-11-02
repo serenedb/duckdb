@@ -152,13 +152,14 @@ public:
 		fs.TryRemoveFile(path);
 	}
 
-	shared_ptr<BlockCacheFile> Open(BlockCache &cache, CountingSourceFileSystem &fs,
-	                                const string &version = "v1") const {
+	shared_ptr<BlockCacheFile> Open(BlockCache &cache, CountingSourceFileSystem &fs, const string &version = "v1",
+	                                bool on_disk = false) const {
 		shared_ptr<FileHandle> handle =
 		    fs.OpenFile(path, FileFlags::FILE_FLAGS_READ | FileFlags::FILE_FLAGS_PARALLEL_ACCESS);
 		BlockCacheFileInfo info;
 		info.validation.file_size = handle->GetFileSize();
 		info.validation.version_tag = version;
+		info.on_disk = on_disk;
 		return cache.OpenFile(path, info, true, std::move(handle));
 	}
 
@@ -195,32 +196,34 @@ private:
 	bool set DUCKDB_GUARDED_BY(lock) = false;
 };
 
-//! The memory the buffer pool of [db] accounts to block cache frames
-idx_t CacheReservation(DatabaseInstance &db) {
-	for (auto &info : BufferManager::GetBufferManager(db).GetMemoryUsageInfo()) {
-		if (info.tag == MemoryTag::EXTERNAL_FILE_CACHE) {
-			return info.size;
-		}
-	}
-	return 0;
-}
-
-idx_t CountSpillFiles(const string &directory) {
+//! The files in [directory] whose names end in [suffix]
+idx_t CountFiles(const string &directory, const string &suffix) {
 	LocalFileSystem local;
+	if (!local.DirectoryExists(directory)) {
+		return 0;
+	}
 	idx_t count = 0;
 	local.ListFiles(directory, [&](const string &name, bool is_directory) {
-		if (!is_directory && StringUtil::EndsWith(name, "block_cache.spill")) {
+		if (!is_directory && StringUtil::EndsWith(name, suffix)) {
 			count++;
 		}
 	});
 	return count;
 }
 
+//! Gives the buffer pool of [config] room for [blocks] cache blocks, evicting to [temporary_directory], or nowhere
+//! when it is empty
+void LimitMemory(DBConfig &config, idx_t blocks, const string &temporary_directory) {
+	config.options.maximum_memory = blocks * BLOCK;
+	config.options.temporary_directory = temporary_directory;
+	config.options.use_temporary_directory = !temporary_directory.empty();
+}
+
 } // namespace
 
 TEST_CASE("Block cache pins hold the bytes of their block", "[block_cache]") {
 	DuckDB db(nullptr);
-	BlockCache cache(*db.instance, 64 * BLOCK);
+	BlockCache cache(*db.instance);
 	CountingSourceFileSystem fs;
 	TestFile file("block_cache_pins.bin", 5 * BLOCK + 1000);
 	auto cached = file.Open(cache, fs);
@@ -242,7 +245,7 @@ TEST_CASE("Block cache pins hold the bytes of their block", "[block_cache]") {
 
 TEST_CASE("Block cache pins a byte range in one piece", "[block_cache]") {
 	DuckDB db(nullptr);
-	BlockCache cache(*db.instance, 64 * BLOCK);
+	BlockCache cache(*db.instance);
 	CountingSourceFileSystem fs;
 	TestFile file("block_cache_pin_bytes.bin", 5 * BLOCK + 1000);
 	auto cached = file.Open(cache, fs);
@@ -270,9 +273,9 @@ TEST_CASE("Block cache pins a byte range in one piece", "[block_cache]") {
 	REQUIRE(holds(tail, 5 * BLOCK + 900));
 }
 
-TEST_CASE("Block cache pins share their block, and a pin of a buffer of its own shares nothing", "[block_cache]") {
+TEST_CASE("Block cache pins share their bytes and keep them after the cache drops their block", "[block_cache]") {
 	DuckDB db(nullptr);
-	BlockCache cache(*db.instance, 2 * BLOCK);
+	BlockCache cache(*db.instance);
 	CountingSourceFileSystem fs;
 	TestFile file("block_cache_shared_pins.bin", 8 * BLOCK);
 	auto cached = file.Open(cache, fs);
@@ -283,19 +286,24 @@ TEST_CASE("Block cache pins share their block, and a pin of a buffer of its own 
 	REQUIRE(shared.Ptr() == pin.Ptr() + 100);
 	REQUIRE(shared.Size() == 1000);
 	pin.Reset();
-	auto second = cache.Pin(cached, 1);
-	auto own = cache.Pin(cached, 5);
-	REQUIRE(own.IsValid());
-	REQUIRE_FALSE(own.Share(0, 10).IsValid());
 	REQUIRE(cache.IsCached(*cached, 0, BLOCK));
+	auto copy = cache.PinBytes(cached, BLOCK - 10, 20);
+	auto copy_shared = copy.Share(5, 10);
+	REQUIRE(copy_shared.Ptr() == copy.Ptr() + 5);
+	cache.ForgetFile(file.path);
+	REQUIRE_FALSE(cache.IsCached(*cached, 0, BLOCK));
 	for (idx_t i = 0; i < shared.Size(); i++) {
 		REQUIRE(shared.Ptr()[i] == ExpectedByte(100 + i));
+	}
+	copy.Reset();
+	for (idx_t i = 0; i < copy_shared.Size(); i++) {
+		REQUIRE(copy_shared.Ptr()[i] == ExpectedByte(BLOCK - 5 + i));
 	}
 }
 
 TEST_CASE("Block cache reopens of an unchanged file share its blocks", "[block_cache]") {
 	DuckDB db(nullptr);
-	BlockCache cache(*db.instance, 64 * BLOCK);
+	BlockCache cache(*db.instance);
 	CountingSourceFileSystem fs;
 	TestFile file("block_cache_reopen.bin", 3 * BLOCK);
 	{
@@ -314,7 +322,7 @@ TEST_CASE("Block cache reopens of an unchanged file share its blocks", "[block_c
 
 TEST_CASE("Block cache fetches a missing block once for concurrent readers", "[block_cache]") {
 	DuckDB db(nullptr);
-	BlockCache cache(*db.instance, 64 * BLOCK);
+	BlockCache cache(*db.instance);
 	CountingSourceFileSystem fs;
 	TestFile file("block_cache_once.bin", 4 * BLOCK);
 	auto cached = file.Open(cache, fs);
@@ -343,7 +351,7 @@ TEST_CASE("Block cache fetches a missing block once for concurrent readers", "[b
 TEST_CASE("Block cache prefetch merges runs across small gaps and caps each request", "[block_cache]") {
 	constexpr idx_t RANGE = REQUEST_BLOCKS + 2 * PIECE_BLOCKS + PIECE_BLOCKS / 4;
 	DuckDB db(nullptr);
-	BlockCache cache(*db.instance, 3 * RANGE * BLOCK);
+	BlockCache cache(*db.instance);
 	CountingSourceFileSystem fs;
 	TestFile file("block_cache_prefetch.bin", 2 * RANGE * BLOCK);
 	auto cached = file.Open(cache, fs);
@@ -373,7 +381,7 @@ TEST_CASE("Block cache drops a hinted prefetch past the bytes a file has in flig
           "[block_cache]") {
 	constexpr idx_t in_flight = BlockCache::BlockCountOf(BlockCache::MAX_FILE_IN_FLIGHT);
 	DuckDB db(nullptr);
-	BlockCache cache(*db.instance, 2 * in_flight * BLOCK);
+	BlockCache cache(*db.instance);
 	CountingSourceFileSystem fs;
 	TestFile file("block_cache_need.bin", (in_flight + 44) * BLOCK);
 	auto cached = file.Open(cache, fs);
@@ -394,7 +402,7 @@ TEST_CASE("Block cache drops a hinted prefetch past the bytes a file has in flig
 
 TEST_CASE("Block cache reads ahead of a reader that pins blocks in order", "[block_cache]") {
 	DuckDB db(nullptr);
-	BlockCache cache(*db.instance, 256 * BLOCK);
+	BlockCache cache(*db.instance);
 	CountingSourceFileSystem fs;
 	TestFile file("block_cache_read_ahead.bin", 200 * BLOCK);
 	auto cached = file.Open(cache, fs);
@@ -430,7 +438,7 @@ TEST_CASE("Block cache fetches a long run in concurrent pieces and hands out eac
 	config.options.maximum_threads = 4;
 	constexpr idx_t RUN = 4 * PIECE_BLOCKS;
 	DuckDB db(nullptr, &config);
-	BlockCache cache(*db.instance, 2 * RUN * BLOCK);
+	BlockCache cache(*db.instance);
 	CountingSourceFileSystem fs;
 	TestFile file("block_cache_pieces.bin", RUN * BLOCK);
 	auto cached = file.Open(cache, fs);
@@ -478,7 +486,7 @@ TEST_CASE("Block cache range pins fetch the runs and pieces of a range concurren
 	config.options.maximum_threads = 4;
 	constexpr idx_t FULL = 3 * PIECE_BLOCKS;
 	DuckDB db(nullptr, &config);
-	BlockCache cache(*db.instance, 8 * PIECE_BLOCKS * BLOCK);
+	BlockCache cache(*db.instance);
 	CountingSourceFileSystem fs;
 	TestFile file("block_cache_concurrent_runs.bin", FULL * BLOCK + 100);
 	auto cached = file.Open(cache, fs);
@@ -515,7 +523,7 @@ TEST_CASE("Block cache fetches the pieces of long runs when the scheduler has no
 	config.options.maximum_threads = 1;
 	constexpr idx_t RUN = 2 * PIECE_BLOCKS + PIECE_BLOCKS / 2;
 	DuckDB db(nullptr, &config);
-	BlockCache cache(*db.instance, 8 * PIECE_BLOCKS * BLOCK);
+	BlockCache cache(*db.instance);
 	CountingSourceFileSystem fs;
 	TestFile file("block_cache_no_workers_pieces.bin", RUN * BLOCK);
 	{
@@ -540,7 +548,7 @@ TEST_CASE("Block cache fetches the pieces of long runs when the scheduler has no
 
 TEST_CASE("Block cache range pins fetch the missing blocks of a range in one request", "[block_cache]") {
 	DuckDB db(nullptr);
-	BlockCache cache(*db.instance, 64 * BLOCK);
+	BlockCache cache(*db.instance);
 	CountingSourceFileSystem fs;
 	TestFile file("block_cache_range.bin", 20 * BLOCK + 10);
 	auto cached = file.Open(cache, fs);
@@ -565,7 +573,7 @@ TEST_CASE("Block cache range read uses a response that forbids reuse once, witho
 	DBConfig config;
 	config.options.maximum_threads = 1;
 	DuckDB db(nullptr, &config);
-	BlockCache cache(*db.instance, 64 * BLOCK);
+	BlockCache cache(*db.instance);
 	CountingSourceFileSystem fs;
 	TestFile file("block_cache_no_store.bin", 8 * BLOCK);
 	auto cached = file.Open(cache, fs);
@@ -590,7 +598,7 @@ TEST_CASE("Block cache readers of prefetched blocks run the fetches when the sch
 	DBConfig config;
 	config.options.maximum_threads = 1;
 	DuckDB db(nullptr, &config);
-	BlockCache cache(*db.instance, 64 * BLOCK);
+	BlockCache cache(*db.instance);
 	CountingSourceFileSystem fs;
 	TestFile file("block_cache_no_workers.bin", 16 * BLOCK);
 	auto cached = file.Open(cache, fs);
@@ -610,7 +618,7 @@ TEST_CASE("Block cache readers of prefetched blocks run the fetches when the sch
 
 TEST_CASE("Block cache drops pinned blocks of a forgotten file with their last pin", "[block_cache]") {
 	DuckDB db(nullptr);
-	BlockCache cache(*db.instance, 64 * BLOCK);
+	BlockCache cache(*db.instance);
 	CountingSourceFileSystem fs;
 	TestFile file("block_cache_forget.bin", 4 * BLOCK);
 	auto cached = file.Open(cache, fs);
@@ -653,7 +661,7 @@ shared_ptr<BlockCacheFile> OpenToRead(BlockCache &cache, CountingSourceFileSyste
 
 TEST_CASE("Block cache shares the blocks a writer created once the file is published", "[block_cache]") {
 	DuckDB db(nullptr);
-	BlockCache cache(*db.instance, 64 * BLOCK);
+	BlockCache cache(*db.instance);
 	CountingSourceFileSystem fs;
 	TestFile file("block_cache_written.bin", 2 * BLOCK + 100);
 	{
@@ -675,7 +683,7 @@ TEST_CASE("Block cache shares the blocks a writer created once the file is publi
 
 TEST_CASE("Block cache drops the blocks of a written file that is abandoned", "[block_cache]") {
 	DuckDB db(nullptr);
-	BlockCache cache(*db.instance, 64 * BLOCK);
+	BlockCache cache(*db.instance);
 	CountingSourceFileSystem fs;
 	TestFile file("block_cache_abandoned.bin", 2 * BLOCK);
 	{
@@ -695,7 +703,7 @@ TEST_CASE("Block cache drops the blocks of a written file that is abandoned", "[
 
 TEST_CASE("Block cache appender publishes a written file at the size appended, or drops it", "[block_cache]") {
 	DuckDB db(nullptr);
-	BlockCache cache(*db.instance, 64 * BLOCK);
+	BlockCache cache(*db.instance);
 	CountingSourceFileSystem fs;
 	TestFile file("block_cache_appended.bin", 2 * BLOCK + 100);
 	vector<uint8_t> data(2 * BLOCK + 100);
@@ -716,6 +724,8 @@ TEST_CASE("Block cache appender publishes a written file at the size appended, o
 		REQUIRE(HoldsExpectedBytes(pin, block));
 	}
 	REQUIRE(fs.ReadCount() == 0);
+	cached.reset();
+	cache.ForgetFile(file.path);
 
 	BlockCacheAppender abandoned(cache, cache.CreateWrittenFile(file.path));
 	abandoned.Append(data.data(), BLOCK + 1);
@@ -726,7 +736,7 @@ TEST_CASE("Block cache appender publishes a written file at the size appended, o
 
 TEST_CASE("Block cache knows a published written file as the version its writer names", "[block_cache]") {
 	DuckDB db(nullptr);
-	BlockCache cache(*db.instance, 64 * BLOCK);
+	BlockCache cache(*db.instance);
 	const string path = "block_cache_versioned.bin";
 	const auto modified = Timestamp::FromEpochSeconds(1700000000);
 	{
@@ -748,7 +758,7 @@ TEST_CASE("Block cache knows a published written file as the version its writer 
 
 TEST_CASE("Block cache forgets files no one opens and holds no block of", "[block_cache]") {
 	DuckDB db(nullptr);
-	BlockCache cache(*db.instance, 64 * BLOCK);
+	BlockCache cache(*db.instance);
 	CountingSourceFileSystem fs;
 	TestFile with_block("block_cache_sweep_cached.bin", 2 * BLOCK);
 	TestFile kept_open("block_cache_sweep_open.bin", 2 * BLOCK);
@@ -770,7 +780,7 @@ TEST_CASE("Block cache forgets files no one opens and holds no block of", "[bloc
 
 TEST_CASE("Disabling the block cache drops blocks of backed files and keeps in-memory ones", "[block_cache]") {
 	DuckDB db(nullptr);
-	BlockCache cache(*db.instance, 64 * BLOCK);
+	BlockCache cache(*db.instance);
 	CountingSourceFileSystem fs;
 	TestFile file("block_cache_disable.bin", 4 * BLOCK);
 	auto cached = file.Open(cache, fs);
@@ -792,32 +802,11 @@ TEST_CASE("Disabling the block cache drops blocks of backed files and keeps in-m
 	REQUIRE(cache.IsEnabled());
 }
 
-TEST_CASE("Block cache eviction keeps blocks read twice over blocks read once", "[block_cache]") {
-	DuckDB db(nullptr);
-	BlockCache cache(*db.instance, 16 * BLOCK);
-	CountingSourceFileSystem fs;
-	TestFile file("block_cache_probation.bin", 200 * BLOCK);
-	auto cached = file.Open(cache, fs);
-
-	for (idx_t round = 0; round < 2; round++) {
-		for (idx_t block = 0; block < 4; block++) {
-			cache.Pin(cached, block);
-		}
-	}
-	for (idx_t block = 4; block < 200; block++) {
-		cache.Pin(cached, block);
-	}
-	idx_t kept = 0;
-	for (idx_t block = 0; block < 4; block++) {
-		kept += cache.IsCached(*cached, block * BLOCK, BLOCK);
-	}
-	REQUIRE(kept == 4);
-	REQUIRE(cache.GetStatistics().used <= 16 * BLOCK);
-}
-
-TEST_CASE("Block cache never evicts a pinned block", "[block_cache]") {
-	DuckDB db(nullptr);
-	BlockCache cache(*db.instance, 8 * BLOCK);
+TEST_CASE("Block cache never lets the buffer pool evict a pinned block", "[block_cache]") {
+	DBConfig config;
+	LimitMemory(config, 16, "");
+	DuckDB db(nullptr, &config);
+	BlockCache cache(*db.instance);
 	CountingSourceFileSystem fs;
 	TestFile file("block_cache_pinned.bin", 64 * BLOCK);
 	auto cached = file.Open(cache, fs);
@@ -834,39 +823,14 @@ TEST_CASE("Block cache never evicts a pinned block", "[block_cache]") {
 		REQUIRE(HoldsExpectedBytes(pins[block], block));
 		REQUIRE(cache.IsCached(*cached, block * BLOCK, BLOCK));
 	}
-}
-
-TEST_CASE("Block cache reads a block into a buffer of its own when every frame is pinned", "[block_cache]") {
-	DuckDB db(nullptr);
-	BlockCache cache(*db.instance, 2 * BLOCK);
-	CountingSourceFileSystem fs;
-	TestFile file("block_cache_private.bin", 8 * BLOCK);
-	auto cached = file.Open(cache, fs);
-	auto first = cache.Pin(cached, 0);
-	auto second = cache.Pin(cached, 1);
-
-	auto third = cache.Pin(cached, 5);
-	REQUIRE(third.IsValid());
-	REQUIRE(HoldsExpectedBytes(third, 5));
-	REQUIRE(cache.GetStatistics().used == 2 * BLOCK);
-	third.Reset();
-	REQUIRE_FALSE(cache.IsCached(*cached, 5 * BLOCK, BLOCK));
-	REQUIRE(HoldsExpectedBytes(first, 0));
-	REQUIRE(HoldsExpectedBytes(second, 1));
+	REQUIRE(cache.GetStatistics().used <= 16 * BLOCK);
 }
 
 TEST_CASE("Block cache zeroes a fetched last block past the end of its file", "[block_cache]") {
 	DuckDB db(nullptr);
-	BlockCache cache(*db.instance, 2 * BLOCK);
+	BlockCache cache(*db.instance);
 	CountingSourceFileSystem fs;
-	TestFile full("block_cache_full.bin", 2 * BLOCK);
 	TestFile partial("block_cache_partial.bin", BLOCK + 1000);
-	auto full_cached = full.Open(cache, fs);
-	const auto fill_frames = [&] {
-		for (idx_t block = 0; block < 2; block++) {
-			REQUIRE(HoldsExpectedBytes(cache.Pin(full_cached, block), block));
-		}
-	};
 	const auto zeroed_past_end = [](const BlockCachePin &pin) {
 		for (idx_t i = pin.Size(); i < BLOCK; i++) {
 			if (pin.Ptr()[i] != 0) {
@@ -876,7 +840,6 @@ TEST_CASE("Block cache zeroes a fetched last block past the end of its file", "[
 		return true;
 	};
 
-	fill_frames();
 	auto cached = partial.Open(cache, fs);
 	auto single = cache.Pin(cached, 1);
 	REQUIRE(single.Size() == 1000);
@@ -886,7 +849,6 @@ TEST_CASE("Block cache zeroes a fetched last block past the end of its file", "[
 	cached.reset();
 	cache.ForgetFile(partial.path);
 
-	fill_frames();
 	cached = partial.Open(cache, fs);
 	auto pins = cache.PinRange(cached, 0, BLOCK + 1000);
 	REQUIRE(pins.size() == 2);
@@ -896,7 +858,7 @@ TEST_CASE("Block cache zeroes a fetched last block past the end of its file", "[
 
 TEST_CASE("Block cache pins fail with the read error and later pins fetch again", "[block_cache]") {
 	DuckDB db(nullptr);
-	BlockCache cache(*db.instance, 16 * BLOCK);
+	BlockCache cache(*db.instance);
 	CountingSourceFileSystem fs;
 	TestFile file("block_cache_failure.bin", 4 * BLOCK);
 	auto cached = file.Open(cache, fs);
@@ -912,135 +874,119 @@ TEST_CASE("Block cache pins fail with the read error and later pins fetch again"
 	REQUIRE(HoldsExpectedBytes(prefetched, 2));
 }
 
-TEST_CASE("Block cache spills evicted blocks and reads misses back from the spill tier", "[block_cache]") {
-	for (const bool tmpfs : {false, true}) {
-		string spill_path;
-		if (tmpfs) {
-			LocalFileSystem local;
-			if (!local.DirectoryExists("/dev/shm")) {
-				continue;
-			}
-			spill_path = "/dev/shm/duckdb_block_cache_spill_test_" + to_string(getpid());
-		} else {
-			spill_path = TestCreatePath("block_cache_spill");
-		}
-		DuckDB db(nullptr);
-		BlockCache cache(*db.instance, 8 * BLOCK);
-		cache.SetSpill(spill_path, 64 * BLOCK);
-		CountingSourceFileSystem fs;
-		TestFile file("block_cache_spill.bin", 32 * BLOCK);
-		auto cached = file.Open(cache, fs);
+TEST_CASE("Block cache keeps evicted blocks of remote files in temporary files and reads them back", "[block_cache]") {
+	const auto directory = TestCreatePath("block_cache_remote_copies");
+	DBConfig config;
+	LimitMemory(config, 8, directory);
+	DuckDB db(nullptr, &config);
+	BlockCache cache(*db.instance);
+	CountingSourceFileSystem fs;
+	TestFile file("block_cache_remote_copies.bin", 32 * BLOCK);
+	auto cached = file.Open(cache, fs);
 
-		for (idx_t block = 0; block < 32; block++) {
-			cache.Pin(cached, block);
-		}
-		REQUIRE(fs.ReadCount() == 32);
-		REQUIRE(cache.GetStatistics().spilled > 0);
+	for (idx_t block = 0; block < 32; block++) {
+		cache.Pin(cached, block);
+	}
+	REQUIRE(fs.ReadCount() == 32);
+	REQUIRE(cache.GetStatistics().spilled > 0);
+	REQUIRE(cache.GetStatistics().evictions > 0);
+	REQUIRE(CountFiles(directory, ".block") == 0);
+	for (idx_t round = 0; round < 3; round++) {
 		for (idx_t block = 0; block < 32; block++) {
 			auto pin = cache.Pin(cached, block);
 			REQUIRE(HoldsExpectedBytes(pin, block));
 		}
-		REQUIRE(fs.ReadCount() == 32);
-		REQUIRE(cache.GetStatistics().spill_reads > 0);
-		cache.SetSpill("", 0);
+	}
+	REQUIRE(fs.ReadCount() == 32);
+	REQUIRE(cache.GetStatistics().spill_reads > 0);
+	REQUIRE(cache.GetStatistics().spilled <= 32);
+
+	cached.reset();
+	cache.ForgetFile(file.path);
+	auto &buffer_manager = BufferManager::GetBufferManager(*db.instance);
+	REQUIRE(cache.GetStatistics().used == 0);
+	REQUIRE(buffer_manager.GetUsedSwap() == 0);
+}
+
+TEST_CASE("Block cache drops evicted blocks of remote files when external_file_cache_spill_size is 0",
+          "[block_cache]") {
+	const auto directory = TestCreatePath("block_cache_no_copies");
+	DBConfig config;
+	LimitMemory(config, 8, directory);
+	config.options.external_file_cache_spill_size = 0;
+	DuckDB db(nullptr, &config);
+	BlockCache cache(*db.instance);
+	CountingSourceFileSystem fs;
+	TestFile file("block_cache_no_copies.bin", 32 * BLOCK);
+	auto cached = file.Open(cache, fs);
+	for (idx_t round = 0; round < 2; round++) {
+		for (idx_t block = 0; block < 32; block++) {
+			REQUIRE(HoldsExpectedBytes(cache.Pin(cached, block), block));
+		}
+	}
+	REQUIRE(fs.ReadCount() > 32);
+	REQUIRE(cache.GetStatistics().spilled == 0);
+	REQUIRE(BufferManager::GetBufferManager(*db.instance).GetUsedSwap() == 0);
+}
+
+TEST_CASE("Block cache fetches evicted blocks again when the temporary files have no room or the file is local",
+          "[block_cache]") {
+	for (const bool local : {false, true}) {
+		const auto directory = TestCreatePath("block_cache_dropped");
+		DBConfig config;
+		LimitMemory(config, 8, directory);
+		DuckDB db(nullptr, &config);
+		if (!local) {
+			BufferManager::GetBufferManager(*db.instance).SetSwapLimit(2 * BLOCK);
+		}
+		BlockCache cache(*db.instance);
+		CountingSourceFileSystem fs;
+		TestFile file("block_cache_dropped.bin", 32 * BLOCK);
+		auto cached = file.Open(cache, fs, "v1", local);
+
+		for (idx_t round = 0; round < 2; round++) {
+			for (idx_t block = 0; block < 32; block++) {
+				auto pin = cache.Pin(cached, block);
+				REQUIRE(HoldsExpectedBytes(pin, block));
+			}
+		}
+		REQUIRE(fs.ReadCount() > 32);
+		REQUIRE(BufferManager::GetBufferManager(*db.instance).GetUsedSwap() <= BLOCK);
+		REQUIRE(cache.GetStatistics().used <= 8 * BLOCK);
 	}
 }
 
-TEST_CASE("Block cache unbacked blocks spill and are never dropped", "[block_cache]") {
-	DuckDB db(nullptr);
-	BlockCache cache(*db.instance, 4 * BLOCK);
-	cache.SetSpill(TestCreatePath("block_cache_unbacked_spill"), 0);
+TEST_CASE("Block cache blocks of in-memory files spill to temporary files and are never dropped", "[block_cache]") {
+	const auto directory = TestCreatePath("block_cache_unbacked_spill");
+	DBConfig config;
+	LimitMemory(config, 8, directory);
+	DuckDB db(nullptr, &config);
+	BlockCache cache(*db.instance);
 	auto file = cache.CreateUnbackedFile("memory://unbacked.bin");
-	for (idx_t block = 0; block < 16; block++) {
+	for (idx_t block = 0; block < 32; block++) {
 		auto pin = cache.CreateBlock(*file, block);
 		memset(pin.GetDataMutable(), int(block + 1), BLOCK);
 	}
-	cache.SetUnbackedSize(*file, 16 * BLOCK);
-	for (idx_t block = 0; block < 16; block++) {
-		auto pin = cache.Pin(file, block);
-		REQUIRE(pin.Ptr()[0] == block + 1);
-		REQUIRE(pin.Ptr()[BLOCK - 1] == block + 1);
+	cache.SetUnbackedSize(*file, 32 * BLOCK);
+	REQUIRE(cache.GetStatistics().spilled > 0);
+	REQUIRE(CountFiles(directory, ".block") == 0);
+	for (idx_t round = 0; round < 2; round++) {
+		for (idx_t block = 0; block < 32; block++) {
+			auto pin = cache.Pin(file, block);
+			REQUIRE(pin.Ptr()[0] == block + 1);
+			REQUIRE(pin.Ptr()[BLOCK - 1] == block + 1);
+		}
 	}
+	file.reset();
+	REQUIRE(cache.GetStatistics().used == 0);
+	REQUIRE(BufferManager::GetBufferManager(*db.instance).GetUsedSwap() == 0);
 }
-
-TEST_CASE("Block cache reads a spilled block into a buffer of its own when every frame is pinned", "[block_cache]") {
-	DuckDB db(nullptr);
-	BlockCache cache(*db.instance, 2 * BLOCK);
-	cache.SetSpill(TestCreatePath("block_cache_private_spill"), 0);
-	auto file = cache.CreateUnbackedFile("memory://private_spill.bin");
-	memset(cache.CreateBlock(*file, 0).GetDataMutable(), 1, BLOCK);
-	auto first = cache.CreateBlock(*file, 1);
-	memset(first.GetDataMutable(), 2, BLOCK);
-	auto second = cache.CreateBlock(*file, 2);
-	memset(second.GetDataMutable(), 3, BLOCK);
-	cache.SetUnbackedSize(*file, 3 * BLOCK);
-
-	auto spilled = cache.Pin(file, 0);
-	REQUIRE(spilled.Ptr()[0] == 1);
-	REQUIRE(spilled.Ptr()[BLOCK - 1] == 1);
-	REQUIRE(cache.GetStatistics().used == 2 * BLOCK);
-}
-
-#ifdef DEBUG
-TEST_CASE("Block cache keeps no copy of a block whose in-memory file goes while the block is evicted",
-          "[block_cache]") {
-	DuckDB db(nullptr);
-	BlockCache cache(*db.instance, 4 * BLOCK);
-	cache.SetSpill(TestCreatePath("block_cache_released_spill"), 0);
-	auto file = cache.CreateUnbackedFile("memory://released.bin");
-	for (idx_t block = 0; block < 4; block++) {
-		memset(cache.CreateBlock(*file, block).GetDataMutable(), int(block + 1), BLOCK);
-	}
-	cache.SetUnbackedSize(*file, 4 * BLOCK);
-	cache.debug_before_keep_copy = [&]() {
-		file.reset();
-	};
-	auto other = cache.CreateUnbackedFile("memory://other.bin");
-	auto pin = cache.CreateBlock(*other, 0);
-	REQUIRE_FALSE(file);
-	REQUIRE_NOTHROW(cache.SetSpill(TestCreatePath("block_cache_released_spill_moved"), 0));
-}
-
-TEST_CASE("Block cache readers of an in-memory block an eviction is copying get the copy", "[block_cache]") {
-	DuckDB db(nullptr);
-	BlockCache cache(*db.instance, 2 * BLOCK);
-	cache.SetSpill(TestCreatePath("block_cache_copying_spill"), 0);
-	auto file = cache.CreateUnbackedFile("memory://copying.bin");
-	for (idx_t block = 0; block < 2; block++) {
-		memset(cache.CreateBlock(*file, block).GetDataMutable(), int(block + 1), BLOCK);
-	}
-	cache.SetUnbackedSize(*file, 2 * BLOCK);
-	auto held = cache.Pin(file, 1);
-
-	TaskExecutor executor(TaskScheduler::GetScheduler(*db.instance));
-	atomic<bool> right {false};
-	Signal finished;
-	cache.debug_before_keep_copy = [&]() {
-		executor.ScheduleTask(make_uniq<FunctionExecutorTask>(
-		    executor,
-		    [&]() {
-			    absl::Cleanup finish = [&]() {
-				    finished.Set();
-			    };
-			    auto pin = cache.Pin(file, 0);
-			    right = pin.Ptr()[0] == 1 && pin.Ptr()[BLOCK - 1] == 1;
-		    },
-		    "BlockCacheTestTask"));
-		finished.AwaitFor(absl::Milliseconds(500));
-	};
-	auto other = cache.CreateUnbackedFile("memory://copying_other.bin");
-	auto pin = cache.CreateBlock(*other, 0);
-	executor.WorkOnTasks();
-	REQUIRE(right);
-}
-#endif
 
 TEST_CASE("Block cache gives memory back to the buffer pool", "[block_cache]") {
 	DuckDB db(nullptr);
 	Connection con(db);
 	REQUIRE_NO_FAIL(con.Query("SET memory_limit='64MiB'"));
 	auto &cache = BlockCache::Get(*db.instance);
-	REQUIRE(cache.GetStatistics().capacity == 16 * 1024 * 1024);
 	constexpr idx_t FULL = BlockCache::BlockCountOf(16 * 1024 * 1024);
 	CountingSourceFileSystem fs;
 	TestFile file("block_cache_shrink.bin", FULL * BLOCK);
@@ -1057,112 +1003,94 @@ TEST_CASE("Block cache gives memory back to the buffer pool", "[block_cache]") {
 		buffers.push_back(buffer_manager.Allocate(MemoryTag::IN_MEMORY_TABLE, 4ULL * 1024ULL * 1024ULL));
 	}
 	REQUIRE(cache.GetStatistics().used < filled);
+	buffers.clear();
 	for (idx_t block = 0; block < FULL; block++) {
 		auto pin = cache.Pin(cached, block);
 		REQUIRE(HoldsExpectedBytes(pin, block));
 	}
 }
 
-TEST_CASE("Block cache returns the frames of a dropped file and hands them out again in address order",
-          "[block_cache]") {
+TEST_CASE("Block cache gives the memory of a dropped in-memory file back at once", "[block_cache]") {
 	DuckDB db(nullptr);
-	BlockCache cache(*db.instance, 64 * BLOCK);
-	const auto before = CacheReservation(*db.instance);
+	BlockCache cache(*db.instance);
 	for (idx_t round = 0; round < 2; round++) {
 		auto file = cache.CreateUnbackedFile("memory://dropped.bin");
-		vector<const_data_ptr_t> frames;
 		for (idx_t block = 0; block < 32; block++) {
 			auto pin = cache.CreateBlock(*file, block);
 			memset(pin.GetDataMutable(), int(block + 1), BLOCK);
-			frames.push_back(pin.Ptr());
 		}
 		cache.SetUnbackedSize(*file, 32 * BLOCK);
-		REQUIRE(CacheReservation(*db.instance) == before + 32 * BLOCK);
-		for (idx_t block = 1; block < 32; block++) {
-			REQUIRE(frames[block] == frames[0] + block * BLOCK);
-		}
+		REQUIRE(cache.GetStatistics().used == 32 * BLOCK);
+		REQUIRE(cache.GetStatistics().blocks == 32);
 		file.reset();
 		REQUIRE(cache.GetStatistics().used == 0);
-		REQUIRE(CacheReservation(*db.instance) == before);
+		REQUIRE(cache.GetStatistics().blocks == 0);
 	}
-}
-
-TEST_CASE("Block cache reuses the frame it evicts when the buffer pool has no room for another", "[block_cache]") {
-	DBConfig config;
-	config.options.maximum_memory = 64ULL * 1024ULL * 1024ULL;
-	DuckDB db(nullptr, &config);
-	auto &cache = BlockCache::Get(*db.instance);
-	auto &buffer_manager = BufferManager::GetBufferManager(*db.instance);
-	CountingSourceFileSystem fs;
-	TestFile file("block_cache_reuse.bin", 3 * BLOCK);
-	auto cached = file.Open(cache, fs);
-	const auto evicted = cache.Pin(cached, 0).Ptr();
-	auto held = cache.Pin(cached, 1);
-	idx_t reserved = 0;
-	while (buffer_manager.TryReserveMemory(MemoryTag::IN_MEMORY_TABLE, BLOCK, false)) {
-		reserved += BLOCK;
-	}
-
-	auto pin = cache.Pin(cached, 2);
-	buffer_manager.FreeReservedMemory(MemoryTag::IN_MEMORY_TABLE, reserved);
-	REQUIRE(pin.Ptr() == evicted);
-	REQUIRE(HoldsExpectedBytes(pin, 2));
-	REQUIRE(HoldsExpectedBytes(held, 1));
-	REQUIRE_FALSE(cache.IsCached(*cached, 0, BLOCK));
-	REQUIRE(cache.GetStatistics().used == 2 * BLOCK);
-	REQUIRE(CacheReservation(*db.instance) == 2 * BLOCK);
 }
 
 TEST_CASE("Block cache concurrent pins and evictions return the right bytes", "[block_cache]") {
-	DuckDB db(nullptr);
-	BlockCache cache(*db.instance, 16 * BLOCK);
-	CountingSourceFileSystem fs;
-	TestFile file("block_cache_stress.bin", 128 * BLOCK);
-	auto cached = file.Open(cache, fs);
+	constexpr idx_t BLOCKS = 1024;
+	for (const bool copies : {false, true}) {
+		DBConfig config;
+		LimitMemory(config, 256, copies ? TestCreatePath("block_cache_stress") : "");
+		DuckDB db(nullptr, &config);
+		BlockCache cache(*db.instance);
+		CountingSourceFileSystem fs;
+		TestFile file("block_cache_stress.bin", BLOCKS * BLOCK);
+		auto cached = file.Open(cache, fs);
 
-	atomic<idx_t> wrong {0};
-	TaskExecutor executor(TaskScheduler::GetScheduler(*db.instance));
-	for (idx_t t = 0; t < 16; t++) {
-		executor.ScheduleTask(make_uniq<FunctionExecutorTask>(
-		    executor,
-		    [&, t]() {
-			    uint64_t seed = t * 7919 + 1;
-			    try {
-				    for (idx_t i = 0; i < 400; i++) {
-					    seed = seed * 6364136223846793005ULL + 1442695040888963407ULL;
-					    const auto block = (seed >> 33) % 128;
-					    if (i % 3 == 0) {
-						    auto pins = cache.TryPinRange(*cached, block * BLOCK, BLOCK);
-						    if (!pins.empty() && !HoldsExpectedBytes(pins[0], block)) {
+		atomic<idx_t> wrong {0};
+		TaskExecutor executor(TaskScheduler::GetScheduler(*db.instance));
+		for (idx_t t = 0; t < 16; t++) {
+			executor.ScheduleTask(make_uniq<FunctionExecutorTask>(
+			    executor,
+			    [&, t]() {
+				    uint64_t seed = t * 7919 + 1;
+				    try {
+					    for (idx_t i = 0; i < 400; i++) {
+						    seed = seed * 6364136223846793005ULL + 1442695040888963407ULL;
+						    const auto block = (seed >> 33) % BLOCKS;
+						    if (i % 3 == 0) {
+							    auto pins = cache.TryPinRange(*cached, block * BLOCK, BLOCK);
+							    if (!pins.empty() && !HoldsExpectedBytes(pins[0], block)) {
+								    wrong++;
+							    }
+							    continue;
+						    }
+						    if (i % 7 == 0) {
+							    cache.Prefetch(cached, block * BLOCK, 4 * BLOCK, BlockCachePrefetch::HINT);
+						    }
+						    if (i % 11 == 0) {
+							    auto pins = cache.PinRange(cached, block * BLOCK, 3 * BLOCK);
+							    for (idx_t j = 0; j < pins.size(); j++) {
+								    wrong += !HoldsExpectedBytes(pins[j], block + j);
+							    }
+							    continue;
+						    }
+						    auto pin = cache.Pin(cached, block);
+						    if (!HoldsExpectedBytes(pin, block)) {
 							    wrong++;
 						    }
-						    continue;
 					    }
-					    if (i % 7 == 0) {
-						    cache.Prefetch(cached, block * BLOCK, 4 * BLOCK, BlockCachePrefetch::HINT);
-					    }
-					    auto pin = cache.Pin(cached, block);
-					    if (!HoldsExpectedBytes(pin, block)) {
-						    wrong++;
-					    }
+				    } catch (std::exception &) {
+					    wrong++;
 				    }
-			    } catch (std::exception &) {
-				    wrong++;
-			    }
-		    },
-		    "BlockCacheTestTask"));
+			    },
+			    "BlockCacheTestTask"));
+		}
+		executor.WorkOnTasks();
+		REQUIRE(wrong == 0);
 	}
-	executor.WorkOnTasks();
-	REQUIRE(wrong == 0);
 }
 
 TEST_CASE("Block cache counts every hit of concurrent pins of one block and lets the block go after them",
           "[block_cache]") {
 	DuckDB db(nullptr);
-	BlockCache cache(*db.instance, 4 * BLOCK);
-	auto file = cache.CreateUnbackedFile("memory://hot.bin");
-	memset(cache.CreateBlock(*file, 0).GetDataMutable(), 9, BLOCK);
-	cache.SetUnbackedSize(*file, BLOCK);
+	BlockCache cache(*db.instance);
+	CountingSourceFileSystem fs;
+	TestFile hot("block_cache_hot.bin", BLOCK);
+	auto file = hot.Open(cache, fs);
+	cache.Pin(file, 0);
 	const auto before = cache.GetStatistics();
 	constexpr idx_t TASKS = 8;
 	constexpr idx_t PINS = 10000;
@@ -1174,7 +1102,7 @@ TEST_CASE("Block cache counts every hit of concurrent pins of one block and lets
 		    [&]() {
 			    for (idx_t i = 0; i < PINS; i++) {
 				    auto pin = cache.Pin(file, 0);
-				    if (pin.Ptr()[0] != 9 || pin.Ptr()[BLOCK - 1] != 9) {
+				    if (pin.Ptr()[0] != ExpectedByte(0) || pin.Ptr()[BLOCK - 1] != ExpectedByte(BLOCK - 1)) {
 					    wrong++;
 				    }
 			    }
@@ -1187,238 +1115,15 @@ TEST_CASE("Block cache counts every hit of concurrent pins of one block and lets
 	REQUIRE(after.hits - before.hits == TASKS * PINS);
 	REQUIRE(after.misses == before.misses);
 	file.reset();
+	cache.ForgetFile(hot.path);
 	REQUIRE(cache.GetStatistics().used == 0);
 }
 
-TEST_CASE("Block cache spill drops the oldest copy first after the copies of a forgotten file go", "[block_cache]") {
-	DuckDB db(nullptr);
-	BlockCache cache(*db.instance, BLOCK);
-	cache.SetSpill(TestCreatePath("block_cache_spill_order"), 2 * BLOCK);
-	CountingSourceFileSystem fs;
-	TestFile file("block_cache_spill_order.bin", 4 * BLOCK);
-	TestFile other("block_cache_spill_order_other.bin", BLOCK);
-	auto cached = file.Open(cache, fs);
-	cache.Pin(cached, 0);
-	cache.Pin(cached, 1);
-	cache.ForgetFile(file.path);
-	cache.Pin(cached, 2);
-	cache.Pin(cached, 0);
-	cache.Pin(cached, 3);
-	cache.Pin(other.Open(cache, fs), 0);
-	cache.ForgetFile(other.path);
-
-	const auto reads = fs.ReadCount();
-	auto pin = cache.Pin(cached, 0);
-	REQUIRE(HoldsExpectedBytes(pin, 0));
-	REQUIRE(fs.ReadCount() == reads);
-}
-
-namespace {
-
-uint8_t FillOf(uint64_t key) {
-	return static_cast<uint8_t>(key % 251 + 1);
-}
-
-//! Spills a copy of [key] filled with FillOf([key]) from [buffer]
-bool WriteCopy(BlockCacheSpill &spill, uint64_t key, BlockCachePin &buffer) {
-	memset(buffer.GetDataMutable(), FillOf(key), BLOCK);
-	BlockCacheSpill::Reservation copy;
-	return spill.Reserve(key, true, copy) && spill.Write(copy, buffer.GetDataMutable());
-}
-
-//! Whether the copy of [key] reads back into [buffer] as WriteCopy wrote it
-bool ReadsCopy(BlockCacheSpill &spill, uint64_t key, BlockCachePin &buffer) {
-	return spill.Read(key, buffer.GetDataMutable()) && buffer.Ptr()[0] == FillOf(key) &&
-	       buffer.Ptr()[BLOCK - 1] == FillOf(key);
-}
-
-} // namespace
-
-TEST_CASE("Block cache spill reads and writes of concurrent tasks return the right bytes", "[block_cache]") {
-	DuckDB db(nullptr);
-	LocalFileSystem fs;
-	BlockCacheSpill spill;
-	spill.Configure(fs, TestCreatePath("block_cache_spill_concurrent"), 0);
-	constexpr idx_t TASKS = 8;
-	constexpr idx_t BLOCKS = 32;
-	atomic<idx_t> wrong {0};
-	TaskExecutor executor(TaskScheduler::GetScheduler(*db.instance));
-	for (idx_t task = 0; task < TASKS; task++) {
-		executor.ScheduleTask(make_uniq<FunctionExecutorTask>(
-		    executor,
-		    [&, task]() {
-			    auto buffer = BlockCache::AllocateUncached(*db.instance, BLOCK);
-			    uint64_t seed = task * 7919 + 1;
-			    for (idx_t block = 0; block < BLOCKS; block++) {
-				    if (!WriteCopy(spill, BlockCache::MakeKey(NumericCast<uint32_t>(task + 1), block), buffer)) {
-					    wrong++;
-				    }
-				    seed = seed * 6364136223846793005ULL + 1442695040888963407ULL;
-				    const auto file = NumericCast<uint32_t>((seed >> 33) % TASKS + 1);
-				    const auto key = BlockCache::MakeKey(file, (seed >> 13) % BLOCKS);
-				    if (spill.Contains(key) && !ReadsCopy(spill, key, buffer)) {
-					    wrong++;
-				    }
-			    }
-		    },
-		    "BlockCacheTestTask"));
-	}
-	executor.WorkOnTasks();
-	REQUIRE(wrong == 0);
-	auto buffer = BlockCache::AllocateUncached(*db.instance, BLOCK);
-	for (idx_t task = 0; task < TASKS; task++) {
-		for (idx_t block = 0; block < BLOCKS; block++) {
-			REQUIRE(ReadsCopy(spill, BlockCache::MakeKey(NumericCast<uint32_t>(task + 1), block), buffer));
-		}
-	}
-}
-
-TEST_CASE("Block cache spill reuses the slot of a copy dropped while it is read only after the read", "[block_cache]") {
-	DuckDB db(nullptr);
-	CountingSourceFileSystem fs;
-	BlockCacheSpill spill;
-	spill.Configure(fs, TestCreatePath("block_cache_spill_slot_reuse"), 0);
-	auto buffer = BlockCache::AllocateUncached(*db.instance, BLOCK);
-	const auto dropped = BlockCache::MakeKey(1, 0);
-	REQUIRE(WriteCopy(spill, dropped, buffer));
-	const auto dropped_slot = fs.TakeWrites();
-	REQUIRE(dropped_slot.size() == 1);
-
-	fs.Hold(true);
-	atomic<bool> right {false};
-	TaskExecutor executor(TaskScheduler::GetScheduler(*db.instance));
-	executor.ScheduleTask(make_uniq<FunctionExecutorTask>(
-	    executor,
-	    [&]() {
-		    auto target = BlockCache::AllocateUncached(*db.instance, BLOCK);
-		    right = ReadsCopy(spill, dropped, target);
-	    },
-	    "BlockCacheTestTask"));
-	fs.AwaitReads(1);
-	spill.Erase(dropped);
-	REQUIRE_FALSE(spill.Contains(dropped));
-	REQUIRE(WriteCopy(spill, BlockCache::MakeKey(2, 0), buffer));
-	REQUIRE(fs.TakeWrites() != dropped_slot);
-	fs.Hold(false);
-	executor.WorkOnTasks();
-	REQUIRE(right);
-
-	REQUIRE(WriteCopy(spill, BlockCache::MakeKey(3, 0), buffer));
-	REQUIRE(fs.TakeWrites() == dropped_slot);
-	REQUIRE(ReadsCopy(spill, BlockCache::MakeKey(2, 0), buffer));
-	REQUIRE(ReadsCopy(spill, BlockCache::MakeKey(3, 0), buffer));
-}
-
-TEST_CASE("Block cache spill drops the copies of one file and keeps the copies of the others", "[block_cache]") {
-	DuckDB db(nullptr);
-	LocalFileSystem fs;
-	BlockCacheSpill spill;
-	spill.Configure(fs, TestCreatePath("block_cache_spill_erase_file"), 0);
-	auto buffer = BlockCache::AllocateUncached(*db.instance, BLOCK);
-	const vector<uint32_t> files {1, 2, 3, NumericLimits<uint32_t>::Maximum()};
-	for (auto file : files) {
-		for (idx_t block = 0; block < 4; block++) {
-			REQUIRE(WriteCopy(spill, BlockCache::MakeKey(file, block), buffer));
-		}
-	}
-	spill.EraseFile(2);
-	spill.EraseFile(NumericLimits<uint32_t>::Maximum());
-	REQUIRE(spill.Keys().size() == 8);
-	for (auto file : files) {
-		const bool kept = file == 1 || file == 3;
-		for (idx_t block = 0; block < 4; block++) {
-			const auto key = BlockCache::MakeKey(file, block);
-			REQUIRE(spill.Contains(key) == kept);
-			REQUIRE(ReadsCopy(spill, key, buffer) == kept);
-		}
-	}
-}
-
-TEST_CASE("Block cache spill readers of a reserved copy wait until it is written or cancelled", "[block_cache]") {
-	DuckDB db(nullptr);
-	LocalFileSystem fs;
-	BlockCacheSpill spill;
-	spill.Configure(fs, TestCreatePath("block_cache_spill_reserved"), 0);
-	const auto written = BlockCache::MakeKey(1, 0);
-	const auto cancelled = BlockCache::MakeKey(1, 1);
-	BlockCacheSpill::Reservation written_copy;
-	BlockCacheSpill::Reservation cancelled_copy;
-	REQUIRE(spill.Reserve(written, true, written_copy));
-	REQUIRE(spill.Reserve(cancelled, true, cancelled_copy));
-
-	atomic<bool> read_written {false};
-	atomic<bool> read_cancelled {true};
-	Signal finished;
-	TaskExecutor executor(TaskScheduler::GetScheduler(*db.instance));
-	executor.ScheduleTask(make_uniq<FunctionExecutorTask>(
-	    executor,
-	    [&]() {
-		    absl::Cleanup finish = [&]() {
-			    finished.Set();
-		    };
-		    auto target = BlockCache::AllocateUncached(*db.instance, BLOCK);
-		    read_written = ReadsCopy(spill, written, target);
-		    read_cancelled = spill.Read(cancelled, target.GetDataMutable());
-	    },
-	    "BlockCacheTestTask"));
-	REQUIRE_FALSE(finished.AwaitFor(absl::Milliseconds(100)));
-	auto buffer = BlockCache::AllocateUncached(*db.instance, BLOCK);
-	memset(buffer.GetDataMutable(), FillOf(written), BLOCK);
-	REQUIRE(spill.Write(written_copy, buffer.GetDataMutable()));
-	REQUIRE_FALSE(finished.AwaitFor(absl::Milliseconds(100)));
-	spill.Cancel(cancelled_copy);
-	executor.WorkOnTasks();
-	REQUIRE(read_written);
-	REQUIRE_FALSE(read_cancelled);
-	REQUIRE_FALSE(spill.Contains(cancelled));
-}
-
-TEST_CASE("Block cache spill moves its file only after the reads in flight end", "[block_cache]") {
-	DuckDB db(nullptr);
-	CountingSourceFileSystem fs;
-	BlockCacheSpill spill;
-	spill.Configure(fs, TestCreatePath("block_cache_spill_move"), 16 * BLOCK);
-	const auto moved_path = TestCreatePath("block_cache_spill_moved");
-	auto buffer = BlockCache::AllocateUncached(*db.instance, BLOCK);
-	const auto key = BlockCache::MakeKey(1, 0);
-	memset(buffer.GetDataMutable(), FillOf(key), BLOCK);
-	BlockCacheSpill::Reservation copy;
-	REQUIRE(spill.Reserve(key, false, copy));
-	REQUIRE(spill.Write(copy, buffer.GetDataMutable()));
-
-	fs.Hold(true);
-	atomic<bool> right {false};
-	Signal moved;
-	TaskExecutor executor(TaskScheduler::GetScheduler(*db.instance));
-	executor.ScheduleTask(make_uniq<FunctionExecutorTask>(
-	    executor,
-	    [&]() {
-		    auto target = BlockCache::AllocateUncached(*db.instance, BLOCK);
-		    right = ReadsCopy(spill, key, target);
-	    },
-	    "BlockCacheTestTask"));
-	fs.AwaitReads(1);
-	executor.ScheduleTask(make_uniq<FunctionExecutorTask>(
-	    executor,
-	    [&]() {
-		    absl::Cleanup finish = [&]() {
-			    moved.Set();
-		    };
-		    spill.Configure(fs, moved_path, 16 * BLOCK);
-	    },
-	    "BlockCacheTestTask"));
-	REQUIRE_FALSE(moved.AwaitFor(absl::Milliseconds(100)));
-	fs.Hold(false);
-	executor.WorkOnTasks();
-	REQUIRE(right);
-	REQUIRE(spill.IsConfigured());
-	REQUIRE_FALSE(spill.Contains(key));
-}
-
 TEST_CASE("Block cache pins of an in-memory file return the right bytes while it grows and spills", "[block_cache]") {
-	DuckDB db(nullptr);
-	BlockCache cache(*db.instance, 4 * BLOCK);
-	cache.SetSpill(TestCreatePath("block_cache_growing_spill"), 0);
+	DBConfig config;
+	LimitMemory(config, 16, TestCreatePath("block_cache_growing_spill"));
+	DuckDB db(nullptr, &config);
+	BlockCache cache(*db.instance);
 	auto file = cache.CreateUnbackedFile("memory://growing.bin");
 	constexpr idx_t BLOCKS = 256;
 	constexpr idx_t RECENT = 6;
@@ -1466,45 +1171,18 @@ TEST_CASE("Block cache pins of an in-memory file return the right bytes while it
 	}
 }
 
-TEST_CASE("Changing the spill size keeps the spill file of in-memory blocks", "[block_cache]") {
-	DuckDB db(nullptr);
-	Connection con(db);
-	const auto directory = TestCreatePath("block_cache_default_spill");
-	REQUIRE_NO_FAIL(con.Query("SET temp_directory='" + directory + "'"));
-	REQUIRE_NO_FAIL(con.Query("SET external_file_cache_size='1MiB'"));
-	auto &cache = BlockCache::Get(*db.instance);
-	constexpr idx_t COUNT = BlockCache::BlockCountOf(4 * 1024 * 1024);
-	auto file = cache.CreateUnbackedFile("memory://default_spill.bin");
-	for (idx_t block = 0; block < COUNT; block++) {
-		memset(cache.CreateBlock(*file, block).GetDataMutable(), int(block + 1), BLOCK);
-	}
-	cache.SetUnbackedSize(*file, COUNT * BLOCK);
-	REQUIRE(cache.GetStatistics().spilled > 0);
-
-	REQUIRE_NO_FAIL(con.Query("SET external_file_cache_spill_size='64MiB'"));
-	REQUIRE_NO_FAIL(con.Query("RESET external_file_cache_spill_size"));
-	for (idx_t block = 0; block < COUNT; block++) {
-		auto pin = cache.Pin(file, block);
-		REQUIRE(pin.Ptr()[0] == block + 1);
-		REQUIRE(pin.Ptr()[BLOCK - 1] == block + 1);
-	}
-
-	file.reset();
-	REQUIRE_NO_FAIL(con.Query("SET external_file_cache_spill_size='64MiB'"));
-	REQUIRE(CountSpillFiles(directory) == 1);
-}
-
 TEST_CASE("Instances sharing a temporary directory spill in-memory blocks to files of their own", "[block_cache]") {
 	const auto directory = TestCreatePath("block_cache_shared_spill");
-	constexpr idx_t FIT = BlockCache::BlockCountOf(1024 * 1024);
+	constexpr idx_t FIT = 8;
 	{
-		DuckDB first(nullptr);
-		DuckDB second(nullptr);
+		DBConfig first_config;
+		LimitMemory(first_config, FIT, directory);
+		DBConfig second_config;
+		LimitMemory(second_config, FIT, directory);
+		DuckDB first(nullptr, &first_config);
+		DuckDB second(nullptr, &second_config);
 		vector<shared_ptr<BlockCacheFile>> files;
 		for (auto db : {&first, &second}) {
-			Connection con(*db);
-			REQUIRE_NO_FAIL(con.Query("SET temp_directory='" + directory + "'"));
-			REQUIRE_NO_FAIL(con.Query("SET external_file_cache_size='1MiB'"));
 			auto &cache = BlockCache::Get(*db->instance);
 			auto file = cache.CreateUnbackedFile("memory://shared_spill.bin");
 			const auto fill = files.size() * 100 + 1;
@@ -1512,10 +1190,10 @@ TEST_CASE("Instances sharing a temporary directory spill in-memory blocks to fil
 				memset(cache.CreateBlock(*file, block).GetDataMutable(), int(fill + block), BLOCK);
 			}
 			cache.SetUnbackedSize(*file, 4 * FIT * BLOCK);
-			REQUIRE(BufferManager::GetBufferManager(*db->instance).GetUsedSwap() == 3 * FIT * BLOCK);
+			REQUIRE(BufferManager::GetBufferManager(*db->instance).GetUsedSwap() > 0);
 			files.push_back(std::move(file));
 		}
-		REQUIRE(CountSpillFiles(directory) == 2);
+		REQUIRE(CountFiles(directory, ".tmp") >= 2);
 		for (idx_t i = 0; i < files.size(); i++) {
 			auto &cache = BlockCache::Get(*(i == 0 ? first : second).instance);
 			for (idx_t block = 0; block < 4 * FIT; block++) {
@@ -1525,7 +1203,7 @@ TEST_CASE("Instances sharing a temporary directory spill in-memory blocks to fil
 			}
 		}
 	}
-	REQUIRE(CountSpillFiles(directory) == 0);
+	REQUIRE(CountFiles(directory, ".tmp") == 0);
 }
 
 namespace {
@@ -1540,20 +1218,20 @@ uint8_t BenchByte(idx_t block) {
 
 } // namespace
 
-TEST_CASE("Block cache benchmark: concurrent reads of spilled blocks", "[.][block_cache_bench]") {
-	constexpr idx_t FRAMES = 64;
+TEST_CASE("Block cache benchmark: concurrent reads of blocks evicted to temporary files", "[.][block_cache_bench]") {
+	constexpr idx_t MEMORY_BLOCKS = 64;
 	constexpr idx_t BLOCKS = 1024;
 	constexpr idx_t READS = 256;
-	vector<pair<string, string>> spills {
-	    {"direct I/O in the test directory", TestCreatePath("block_cache_bench_spill")}};
+	vector<pair<string, string>> directories {{"the test directory", TestCreatePath("block_cache_bench_spill")}};
 	LocalFileSystem local;
 	if (local.DirectoryExists("/dev/shm")) {
-		spills.emplace_back("tmpfs", "/dev/shm/duckdb_block_cache_bench_spill_" + to_string(getpid()));
+		directories.emplace_back("tmpfs", "/dev/shm/duckdb_block_cache_bench_spill_" + to_string(getpid()));
 	}
-	for (auto &spill : spills) {
-		DuckDB db(nullptr);
-		BlockCache cache(*db.instance, FRAMES * BLOCK);
-		cache.SetSpill(spill.second, 0);
+	for (auto &directory : directories) {
+		DBConfig config;
+		LimitMemory(config, MEMORY_BLOCKS, directory.second);
+		DuckDB db(nullptr, &config);
+		BlockCache cache(*db.instance);
 		auto file = cache.CreateUnbackedFile("memory://bench_spill.bin");
 		for (idx_t block = 0; block < BLOCKS; block++) {
 			memset(cache.CreateBlock(*file, block).GetDataMutable(), BenchByte(block), BLOCK);
@@ -1587,19 +1265,19 @@ TEST_CASE("Block cache benchmark: concurrent reads of spilled blocks", "[.][bloc
 				const auto elapsed = MillisecondsSince(start);
 				REQUIRE(wrong == 0);
 				const idx_t read = cache.GetStatistics().spill_reads - spill_reads;
-				Printer::PrintF(
-				    "spill reads (%s), %llu concurrent readers, round %llu: %llu blocks in %.1f ms, %.0f MiB/s",
-				    spill.first, readers, round, read, elapsed,
-				    double(read * BLOCK) / (1024.0 * 1024.0) / (elapsed / 1000.0));
+				Printer::PrintF("temporary file reads (%s), %llu concurrent readers, round %llu: %llu blocks in %.1f "
+				                "ms, %.0f MiB/s",
+				                directory.first, readers, round, read, elapsed,
+				                double(read * BLOCK) / (1024.0 * 1024.0) / (elapsed / 1000.0));
 			}
 		}
 	}
 }
 
-TEST_CASE("Block cache benchmark: releasing the frames of a 1 GiB in-memory file", "[.][block_cache_bench]") {
+TEST_CASE("Block cache benchmark: releasing the blocks of a 512 MiB in-memory file", "[.][block_cache_bench]") {
 	constexpr idx_t BLOCKS = 4096;
 	DuckDB db(nullptr);
-	BlockCache cache(*db.instance, BLOCKS * BLOCK);
+	BlockCache cache(*db.instance);
 	for (idx_t round = 0; round < 5; round++) {
 		auto file = cache.CreateUnbackedFile("memory://bench_release.bin");
 		for (idx_t block = 0; block < BLOCKS; block++) {
@@ -1611,7 +1289,7 @@ TEST_CASE("Block cache benchmark: releasing the frames of a 1 GiB in-memory file
 		file.reset();
 		const auto elapsed = MillisecondsSince(start);
 		REQUIRE(cache.GetStatistics().used == 0);
-		Printer::PrintF("releasing the frames of a 1 GiB in-memory file, round %llu: %.2f ms", round, elapsed);
+		Printer::PrintF("releasing the blocks of a 512 MiB in-memory file, round %llu: %.2f ms", round, elapsed);
 	}
 }
 
@@ -1635,7 +1313,7 @@ TEST_CASE("Block cache benchmark: pins that evict while the buffer pool is full"
 		const auto limit = buffer_manager.GetMaxMemory();
 		const idx_t reserved = limit > used + HEADROOM ? limit - used - HEADROOM : 0;
 		buffer_manager.ReserveMemory(MemoryTag::IN_MEMORY_TABLE, reserved);
-		const auto evictions = cache.GetStatistics().evictions;
+		const auto misses = cache.GetStatistics().misses;
 		idx_t wrong = 0;
 		const auto start = std::chrono::steady_clock::now();
 		for (idx_t block = RESIDENT; block < BLOCKS; block++) {
@@ -1644,50 +1322,59 @@ TEST_CASE("Block cache benchmark: pins that evict while the buffer pool is full"
 			}
 		}
 		const auto elapsed = MillisecondsSince(start);
-		const idx_t evicted = cache.GetStatistics().evictions - evictions;
+		const idx_t missed = cache.GetStatistics().misses - misses;
 		buffer_manager.FreeReservedMemory(MemoryTag::IN_MEMORY_TABLE, reserved);
 		REQUIRE(wrong == 0);
-		Printer::PrintF("pins that evict with the buffer pool full, round %llu: %.1f us per block, %llu evictions",
-		                round, elapsed * 1000.0 / double(BLOCKS - RESIDENT), evicted);
+		Printer::PrintF("pins that evict with the buffer pool full, round %llu: %.1f us per block, %llu misses", round,
+		                elapsed * 1000.0 / double(BLOCKS - RESIDENT), missed);
 	}
 }
 
 TEST_CASE("Block cache benchmark: concurrent pins of one block and of distinct blocks", "[.][block_cache_bench]") {
 	constexpr idx_t PINS = 500000;
 	constexpr idx_t BLOCKS = 64;
+	TestFile remote_file("block_cache_bench_pins.bin", BLOCKS * BLOCK);
+	CountingSourceFileSystem fs;
 	for (const idx_t threads : {idx_t(1), idx_t(8), idx_t(16), idx_t(32), idx_t(64)}) {
 		DBConfig config;
 		config.options.maximum_threads = threads;
 		DuckDB db(nullptr, &config);
-		BlockCache cache(*db.instance, 2 * BLOCKS * BLOCK);
-		auto file = cache.CreateUnbackedFile("memory://bench_pins.bin");
+		BlockCache cache(*db.instance);
+		auto memory_file = cache.CreateUnbackedFile("memory://bench_pins.bin");
 		for (idx_t block = 0; block < BLOCKS; block++) {
-			memset(cache.CreateBlock(*file, block).GetDataMutable(), BenchByte(block), BLOCK);
+			memset(cache.CreateBlock(*memory_file, block).GetDataMutable(), BenchByte(block), BLOCK);
 		}
-		cache.SetUnbackedSize(*file, BLOCKS * BLOCK);
+		cache.SetUnbackedSize(*memory_file, BLOCKS * BLOCK);
+		auto remote = remote_file.Open(cache, fs);
+		cache.PinRange(remote, 0, BLOCKS * BLOCK);
 		for (const bool one_block : {true, false}) {
-			atomic<idx_t> wrong {0};
-			const auto start = std::chrono::steady_clock::now();
-			TaskExecutor executor(TaskScheduler::GetScheduler(*db.instance));
-			for (idx_t thread = 0; thread < threads; thread++) {
-				executor.ScheduleTask(make_uniq<FunctionExecutorTask>(
-				    executor,
-				    [&, thread]() {
-					    const auto block = one_block ? 0 : thread % BLOCKS;
-					    idx_t mismatches = 0;
-					    for (idx_t i = 0; i < PINS; i++) {
-						    mismatches += cache.Pin(file, block).Ptr()[0] != BenchByte(block);
-					    }
-					    wrong += mismatches;
-				    },
-				    "BlockCacheBenchTask"));
+			for (const bool in_memory : {true, false}) {
+				const auto &file = in_memory ? memory_file : remote;
+				atomic<idx_t> wrong {0};
+				const auto start = std::chrono::steady_clock::now();
+				TaskExecutor executor(TaskScheduler::GetScheduler(*db.instance));
+				for (idx_t thread = 0; thread < threads; thread++) {
+					executor.ScheduleTask(make_uniq<FunctionExecutorTask>(
+					    executor,
+					    [&, thread]() {
+						    const auto block = one_block ? 0 : thread % BLOCKS;
+						    const auto expected = in_memory ? BenchByte(block) : ExpectedByte(block * BLOCK);
+						    idx_t mismatches = 0;
+						    for (idx_t i = 0; i < PINS; i++) {
+							    mismatches += cache.Pin(file, block).Ptr()[0] != expected;
+						    }
+						    wrong += mismatches;
+					    },
+					    "BlockCacheBenchTask"));
+				}
+				executor.WorkOnTasks();
+				const auto elapsed = MillisecondsSince(start);
+				REQUIRE(wrong == 0);
+				Printer::PrintF("pins of %s of %s file, %llu threads: %.1f M pins/s, %.1f ns per pin and unpin in a "
+				                "thread",
+				                one_block ? "one block" : "distinct blocks", in_memory ? "an in-memory" : "a remote",
+				                threads, double(threads * PINS) / elapsed / 1000.0, elapsed * 1000000.0 / double(PINS));
 			}
-			executor.WorkOnTasks();
-			const auto elapsed = MillisecondsSince(start);
-			REQUIRE(wrong == 0);
-			Printer::PrintF("pins of %s, %llu threads: %.1f M pins/s, %.1f ns per pin and unpin in a thread",
-			                one_block ? "one block" : "distinct blocks", threads,
-			                double(threads * PINS) / elapsed / 1000.0, elapsed * 1000000.0 / double(PINS));
 		}
 	}
 }
@@ -1768,7 +1455,7 @@ TEST_CASE("Block cache benchmark: concurrent buffer manager allocations and free
 TEST_CASE("Block cache benchmark: cold reads of a 16 MiB range from a slow source", "[.][block_cache_bench]") {
 	constexpr idx_t BLOCKS = 64;
 	DuckDB db(nullptr);
-	BlockCache cache(*db.instance, 4 * BLOCKS * BLOCK);
+	BlockCache cache(*db.instance);
 	CountingSourceFileSystem fs;
 	TestFile file("block_cache_bench_slow.bin", BLOCKS * BLOCK);
 	fs.Throttle(absl::Milliseconds(20), 50.0 * 1024.0 * 1024.0);

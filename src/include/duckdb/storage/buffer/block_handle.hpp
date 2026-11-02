@@ -74,6 +74,8 @@ public:
 	void SetState(BlockState state_p) {
 		state = state_p;
 		if (state_p == BlockState::BLOCK_LOADED) {
+			loaded_buffer = buffer.get();
+			loaded_data = buffer ? buffer->GetDataMutable() : nullptr;
 			readers.fetch_or(LOADED, std::memory_order_seq_cst);
 		} else {
 			readers.fetch_and(~LOADED, std::memory_order_seq_cst);
@@ -101,6 +103,27 @@ public:
 	int32_t ReleaseReader() {
 		return readers.fetch_sub(1, std::memory_order_seq_cst);
 	}
+	//! Releases a pin without the block lock unless the block needs the buffer manager to release it, returning
+	//! whether it did.
+	bool TryUnpinFast() {
+		if (buffer_type == FileBufferType::TINY_BUFFER) {
+			return true;
+		}
+#ifdef DUCKDB_DEBUG_DESTROY_BLOCKS
+		return false;
+#else
+		if (track_lru || DestroyedUponUnpin()) {
+			return false;
+		}
+		SetReferenced();
+		if ((ReleaseReader() & ~LOADED) == ORPHANED + 1) {
+			ReleaseOrphan();
+		}
+		return true;
+#endif
+	}
+	//! Frees an orphaned block whose last reader is gone.
+	void ReleaseOrphan();
 	//! Adds a reader without the block lock, if the block is loaded.
 	bool TryPinLoaded() {
 		if (readers.fetch_add(1, std::memory_order_seq_cst) & LOADED) {
@@ -158,6 +181,13 @@ public:
 	unique_ptr<FileBuffer> &GetBuffer() {
 		return buffer;
 	}
+	//! The buffer and its data, read on the reader word's cache line by a reader that pinned the loaded block.
+	FileBuffer *GetLoadedBuffer() const {
+		return loaded_buffer;
+	}
+	data_ptr_t GetLoadedData() const {
+		return loaded_data;
+	}
 	//! Sets the file buffer.
 	void SetBuffer(unique_ptr<FileBuffer> buffer_p) {
 		buffer = std::move(buffer_p);
@@ -196,8 +226,16 @@ public:
 	bool MustWriteToTemporaryFile() const {
 		return destroy_buffer_upon == DestroyBufferUpon::BLOCK;
 	}
+	//! Returns true, if eviction keeps a copy of the buffer in a temporary file when the copies have room for it.
+	bool KeepsCopy() const {
+		return destroy_buffer_upon == DestroyBufferUpon::KEEP_COPY;
+	}
 	void SetHasTemporaryFile(bool has_temporary_file_p) {
 		has_temporary_file = has_temporary_file_p;
+	}
+	//! Returns true, if the buffer is kept in a temporary file, which a block that keeps its copy has while loaded too.
+	bool HasTemporaryFile() const {
+		return has_temporary_file;
 	}
 	//! Returns the memory usage.
 	idx_t GetMemoryUsage() const {
@@ -264,10 +302,19 @@ private:
 	//! The reader word, on a cache line of its own: concurrent readers of a block write it, and the fields they
 	//! read stay shared.
 	alignas(64) atomic<int32_t> readers;
-	//! The memory tag.
-	alignas(64) const MemoryTag tag;
+	//! Whether the block was unpinned again since eviction last passed it.
+	atomic<bool> referenced {false};
 	//! The file buffer type.
 	const FileBufferType buffer_type;
+	//! When to destroy the data buffer.
+	atomic<DestroyBufferUpon> destroy_buffer_upon;
+	//! Whether an unpin records the time, as the buffer pool tracks eviction timestamps.
+	const bool track_lru;
+	//! The buffer and its data while the block is loaded, set before the reader word says so.
+	FileBuffer *loaded_buffer = nullptr;
+	data_ptr_t loaded_data = nullptr;
+	//! The memory tag.
+	alignas(64) const MemoryTag tag;
 	//! A pointer to the loaded data, if any.
 	unique_ptr<FileBuffer> buffer;
 	//! The eviction queue the loaded block is in, and its stripe and slot there; guarded by that stripe's lock.
@@ -278,13 +325,9 @@ private:
 	weak_ptr<BlockHandle> owner;
 	//! Set when the block handle went away while readers remained; the last reader releases it.
 	shared_ptr<BlockMemory> orphan_owner;
-	//! Whether the block was unpinned again since its queue entry was added.
-	atomic<bool> referenced {false};
-	bool has_temporary_file = false;
+	atomic<bool> has_temporary_file {false};
 	//! The LRU timestamp for age-based eviction.
 	atomic<int64_t> lru_timestamp_msec;
-	//! When to destroy the data buffer.
-	atomic<DestroyBufferUpon> destroy_buffer_upon;
 	//! The memory usage of the block when loaded.
 	//! Determines the memory to reserve when pinning/loading an unloaded block.
 	atomic<idx_t> memory_usage;

@@ -1,16 +1,10 @@
 # name: test/sql/storage/external_file_cache/external_file_cache_spill.test_slow
-# description: Cache blocks of remote files spill to the spill file, local files are dropped
+# description: Evicted cache blocks of remote files spill to temporary files, those of local files are dropped
 # group: [external_file_cache]
 
 require parquet
 
 require skip_reload
-
-statement ok
-SET external_file_cache_spill_path='{TEST_DIR}/efc_block_cache.spill';
-
-statement ok
-SET external_file_cache_spill_size='1GB';
 
 statement ok
 SET cache_local_files=true;
@@ -33,8 +27,8 @@ statement ok
 COPY (SELECT hash(i) a, hash(i * 2) b, hash(i * 3) c FROM range_st(12000000) t(i))
 TO '{TEST_DIR}/efc_spill.parquet' (FORMAT parquet);
 
-# local files can be re-read at the same cost as a spilled block, so even with spilling
-# enabled, evicted local blocks are dropped, never spilled
+# local files can be re-read at the same cost as a spilled block, so evicted local blocks are
+# dropped, never spilled
 query III
 SELECT sum(a) - (SELECT sum(hash(i)) FROM range(12000000) t(i)),
        sum(b) - (SELECT sum(hash(i * 2)) FROM range(12000000) t(i)),
@@ -43,9 +37,9 @@ FROM read_parquet('{TEST_DIR}/efc_spill.parquet');
 ----
 0	0	0
 
-# the cache stays within a quarter of the memory limit
+# the cache blocks are buffer-managed and stay within the memory limit
 query I
-SELECT sum(nr_bytes) <= 50 * 1024 * 1024 FROM duckdb_external_file_cache();
+SELECT sum(nr_bytes) <= 200 * 1024 * 1024 FROM duckdb_external_file_cache();
 ----
 true
 

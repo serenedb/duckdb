@@ -20,7 +20,6 @@ class Allocator;
 class AsyncTask;
 class BufferPool;
 class TemporaryMemoryManager;
-class TemporaryFileManager;
 class AttachedDatabase;
 class BlockManager;
 class DatabaseInstance;
@@ -75,6 +74,13 @@ public:
 	virtual void Unpin(shared_ptr<BlockHandle> &handle) = 0;
 	//! Unpin a pin of block memory.
 	virtual void Unpin(BlockMemory &memory) = 0;
+	//! Pins [handle], whose buffer was destroyed, with a new buffer of [block_size] bytes after a header of
+	//! [block_header_size] bytes, for the caller to fill; an invalid handle when the block is loaded or kept in a
+	//! temporary file
+	virtual BufferHandle PinEmpty(shared_ptr<BlockHandle> &handle, idx_t block_size, idx_t block_header_size);
+	//! Destroys the buffer of [handle], or once its last pin is gone when it is pinned, and the copy of it a temporary
+	//! file keeps
+	virtual void Discard(shared_ptr<BlockHandle> &handle);
 
 	//! Returns the currently allocated memory.
 	virtual idx_t GetUsedMemory() const = 0;
@@ -102,9 +108,6 @@ public:
 	virtual DUCKDB_API Allocator &GetBufferAllocator();
 	//! Reserve memory.
 	virtual DUCKDB_API void ReserveMemory(MemoryTag tag, idx_t size);
-	//! Reserves memory, evicting unpinned buffers and, when [evict_caches], the block and object caches; false when the
-	//! memory limit leaves no room
-	virtual DUCKDB_API bool TryReserveMemory(MemoryTag tag, idx_t size, bool evict_caches);
 	//! Free reserved memory.
 	virtual DUCKDB_API void FreeReservedMemory(MemoryTag tag, idx_t size);
 	//! GetMemoryUsageInfo returns MemoryInformation for each memory tag.
@@ -125,8 +128,6 @@ public:
 	virtual void SetTemporaryDirectory(const string &new_dir);
 	//! Returns true, if the path to the temporary file directory is not empty.
 	virtual bool HasTemporaryDirectory() const;
-	//! The manager of this instance's temporary files, which creates the temporary directory
-	virtual TemporaryFileManager &GetTemporaryFileManager();
 	//! Returns true if there are files found in the temporary directory
 	virtual bool HasFilesInTemporaryDirectory() const;
 
@@ -145,6 +146,9 @@ public:
 
 	//! Write a temporary file buffer.
 	virtual void WriteTemporaryBuffer(QueryContext context, MemoryTag tag, block_id_t block_id, FileBuffer &buffer);
+	//! Write the copy of a temporary file buffer that a block keeps, while the copies have room for it; returns
+	//! whether it was written.
+	virtual bool TryWriteTemporaryCopy(QueryContext context, MemoryTag tag, block_id_t block_id, FileBuffer &buffer);
 	//! Read a temporary buffer.
 	virtual unique_ptr<FileBuffer> ReadTemporaryBuffer(QueryContext context, MemoryTag tag, BlockHandle &block,
 	                                                   unique_ptr<FileBuffer> buffer);
