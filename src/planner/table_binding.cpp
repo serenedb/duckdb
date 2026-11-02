@@ -183,15 +183,26 @@ EntryBinding::EntryBinding(BindingAlias alias, vector<LogicalType> types_p, vect
 BindResult EntryBinding::Bind(ColumnRefExpression &colref, idx_t depth) {
 	column_t column_index;
 	if (column_read && TryGetBindingIndex(colref.GetColumnName(), column_index)) {
-		if (!column_read->CanRead(column_index)) {
-			ThrowPermissionDenied(column_read->entry);
-		}
+		column_read->Read(column_index);
 	}
 	return Binding::Bind(colref, depth);
 }
 
 optional_ptr<StandardEntry> EntryBinding::GetStandardEntry() {
 	return &entry;
+}
+
+void ColumnReadCheck::Read(idx_t column_index) {
+	if (std::find(columns.begin(), columns.end(), column_index) == columns.end()) {
+		columns.push_back(column_index);
+	}
+}
+
+bool ColumnReadCheck::Allowed() const {
+	if (columns.empty()) {
+		return !require_any || CanReadAny();
+	}
+	return std::all_of(columns.begin(), columns.end(), [&](idx_t column) { return CanRead(column); });
 }
 
 bool ColumnReadCheck::CanRead(idx_t column_index) const {
@@ -389,10 +400,7 @@ BindResult TableBinding::Bind(ColumnRefExpression &colref, idx_t depth) {
 		col_type = types[column_index];
 		SetBoundColumnAlias(colref);
 		if (column_read) {
-			if (!column_read->CanRead(column_index)) {
-				ThrowPermissionDenied(column_read->entry);
-			}
-			column_read->referenced = true;
+			column_read->Read(column_index);
 		}
 	}
 	ColumnBinding binding = GetColumnBinding(column_index);

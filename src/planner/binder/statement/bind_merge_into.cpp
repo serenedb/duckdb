@@ -255,60 +255,55 @@ BoundStatement Binder::BindNode(MergeQueryNode &node) {
 	}
 	auto &table = *table_ptr;
 	RecordConstraintKeyVisibility(table);
-	if (auto &role = CheckAs(); !role.is_superuser) {
-		const auto named_acls = [&](const vector<Identifier> &names) {
-			vector<std::span<const AclItem>> acls;
-			for (auto &name : names) {
-				if (table.ColumnExists(name)) {
-					acls.emplace_back(table.GetColumn(name).Acl());
-				}
+	const auto named_columns = [&](const vector<Identifier> &names) {
+		vector<LogicalIndex> columns;
+		for (auto &name : names) {
+			if (table.ColumnExists(name)) {
+				columns.push_back(table.GetColumn(name).Logical());
 			}
-			return acls;
-		};
-		const auto leading_acls = [&](idx_t count) {
-			vector<std::span<const AclItem>> acls;
-			for (auto &column : table.GetColumns().Logical()) {
-				if (acls.size() == count) {
-					break;
-				}
-				acls.emplace_back(column.Acl());
+		}
+		return columns;
+	};
+	const auto leading_columns = [&](idx_t count) {
+		vector<LogicalIndex> columns;
+		for (auto &column : table.GetColumns().Logical()) {
+			if (columns.size() == count) {
+				break;
 			}
-			return acls;
-		};
-		for (auto &entry : node.actions) {
-			for (auto &action : entry.second) {
-				bool allowed;
-				switch (action->action_type) {
-				case MergeActionType::MERGE_UPDATE:
-					allowed = role.CanColumns(table.permissions, AclMode::Update,
-					                          action->update_info && !action->update_info->columns.empty()
-					                              ? named_acls(action->update_info->columns)
-					                              : leading_acls(table.GetColumns().LogicalColumnCount()));
+			columns.push_back(column.Logical());
+		}
+		return columns;
+	};
+	for (auto &entry : node.actions) {
+		for (auto &action : entry.second) {
+			switch (action->action_type) {
+			case MergeActionType::MERGE_UPDATE:
+				RequirePrivilege(table, AclMode::Update,
+				                 action->update_info && !action->update_info->columns.empty()
+				                     ? named_columns(action->update_info->columns)
+				                     : leading_columns(table.GetColumns().LogicalColumnCount()),
+				                 false);
+				break;
+			case MergeActionType::MERGE_DELETE:
+				RequirePrivilege(table, AclMode::Delete, {}, false);
+				break;
+			case MergeActionType::MERGE_INSERT:
+				if (on_conflict_merge.get() == &node) {
 					break;
-				case MergeActionType::MERGE_DELETE:
-					allowed = role.Can(CatalogType::TABLE_ENTRY, table.permissions, AclMode::Delete);
-					break;
-				case MergeActionType::MERGE_INSERT:
-					if (on_conflict_merge.get() == &node) {
-						allowed = true;
-					} else if (action->default_values) {
-						allowed = role.CanAnyColumn(table.permissions, AclMode::Insert, table.GetColumns());
-					} else if (!action->insert_columns.empty()) {
-						allowed =
-						    role.CanColumns(table.permissions, AclMode::Insert, named_acls(action->insert_columns));
-					} else {
-						const auto count = action->column_order == InsertColumnOrder::INSERT_BY_POSITION
-						                       ? action->expressions.size()
-						                       : table.GetColumns().LogicalColumnCount();
-						allowed = role.CanColumns(table.permissions, AclMode::Insert, leading_acls(count));
-					}
-					break;
-				default:
-					continue;
 				}
-				if (!allowed) {
-					ThrowPermissionDenied(table);
+				if (action->default_values) {
+					RequirePrivilege(table, AclMode::Insert, {}, true);
+				} else if (!action->insert_columns.empty()) {
+					RequirePrivilege(table, AclMode::Insert, named_columns(action->insert_columns), false);
+				} else {
+					const auto count = action->column_order == InsertColumnOrder::INSERT_BY_POSITION
+					                       ? action->expressions.size()
+					                       : table.GetColumns().LogicalColumnCount();
+					RequirePrivilege(table, AclMode::Insert, leading_columns(count), false);
 				}
+				break;
+			default:
+				break;
 			}
 		}
 	}

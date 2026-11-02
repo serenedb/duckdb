@@ -313,15 +313,16 @@ BoundStatement Binder::Bind(BaseTableRef &ref) {
 	case CatalogType::VIEW_ENTRY: {
 		// the node is a view: get the query that the view represents
 		auto &view_catalog_entry = table_or_view->Cast<ViewCatalogEntry>();
-		unique_ptr<ColumnReadCheck> column_read;
+		shared_ptr<ColumnReadCheck> column_read;
 		auto &role = CheckAs();
 		if (table_ref_use != TableRefUse::UTILITY_TARGET &&
 		    (!IsUnowned(view_catalog_entry) || view_catalog_entry.ParentCatalog().IsSystemCatalog()) &&
 		    !role.Can(CatalogType::TABLE_ENTRY, view_catalog_entry.permissions, AclMode::Select)) {
-			column_read = make_uniq<ColumnReadCheck>(view_catalog_entry, role);
+			column_read = make_shared_ptr<ColumnReadCheck>(view_catalog_entry, role, true);
 			if (!column_read->CanReadAny()) {
 				ThrowPermissionDenied(view_catalog_entry);
 			}
+			global_binder_state->column_reads.push_back(column_read);
 		}
 		const auto scope_begin = global_binder_state->bound_tables;
 		const auto resolved_begin = GetStatementProperties().resolved_entries.size();

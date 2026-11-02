@@ -376,10 +376,29 @@ void Binder::CheckTableRead(TableBinding &binding, TableCatalogEntry &table) {
 	    role.Can(CatalogType::TABLE_ENTRY, table.permissions, AclMode::Select)) {
 		return;
 	}
-	binding.column_read = make_shared_ptr<ColumnReadCheck>(table, role);
-	if (table_ref_use != TableRefUse::DML_TARGET) {
-		global_binder_state->column_reads.push_back(binding.column_read);
+	binding.column_read = make_shared_ptr<ColumnReadCheck>(table, role, table_ref_use != TableRefUse::DML_TARGET);
+	global_binder_state->column_reads.push_back(binding.column_read);
+}
+
+void Binder::AdoptPrivilegeChecks(Binder &other) {
+	auto &state = *global_binder_state;
+	auto &source = *other.global_binder_state;
+	if (&state == &source) {
+		return;
 	}
+	state.column_reads.insert(state.column_reads.end(), source.column_reads.begin(), source.column_reads.end());
+	state.required_privileges.insert(state.required_privileges.end(), source.required_privileges.begin(),
+	                                 source.required_privileges.end());
+	source.column_reads.clear();
+	source.required_privileges.clear();
+}
+
+void Binder::RequirePrivilege(TableCatalogEntry &table, AclMode mode, vector<LogicalIndex> columns, bool any_column) {
+	auto &role = CheckAs();
+	if (role.is_superuser) {
+		return;
+	}
+	global_binder_state->required_privileges.push_back({table, role, mode, std::move(columns), any_column});
 }
 
 void Binder::CheckCall(FunctionEntry &function) {
@@ -639,9 +658,28 @@ void Binder::CheckStatementKind(SQLStatement &statement) {
 	}
 }
 
-void Binder::CheckTableReads() {
+void Binder::CheckPrivileges() {
+	for (auto &required : global_binder_state->required_privileges) {
+		auto &table = required.table.get();
+		auto &role = required.role;
+		bool allowed;
+		if (required.any_column) {
+			allowed = role.CanAnyColumn(table.permissions, required.mode, table.GetColumns());
+		} else if (required.columns.empty()) {
+			allowed = role.Can(CatalogType::TABLE_ENTRY, table.permissions, required.mode);
+		} else {
+			vector<std::span<const AclItem>> acls;
+			for (auto column : required.columns) {
+				acls.emplace_back(table.GetColumn(column).Acl());
+			}
+			allowed = role.CanColumns(table.permissions, required.mode, acls);
+		}
+		if (!allowed) {
+			ThrowPermissionDenied(table);
+		}
+	}
 	for (auto &read : global_binder_state->column_reads) {
-		if (!read->referenced && !read->CanReadAny()) {
+		if (!read->Allowed()) {
 			ThrowPermissionDenied(read->entry);
 		}
 	}
@@ -1057,6 +1095,7 @@ BoundStatement Binder::BindReturning(QueryNode &node, vector<unique_ptr<ParsedEx
 	auto &properties = GetStatementProperties();
 	properties.result_eagerness = ResultEagerness::FORCED;
 	properties.return_type = StatementReturnType::QUERY_RESULT;
+	AdoptPrivilegeChecks(*binder);
 	return result;
 }
 

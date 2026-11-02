@@ -282,11 +282,6 @@ BoundStatement Binder::BindNode(UpdateQueryNode &node) {
 			return std::move(*expanded);
 		}
 	}
-	auto &role = CheckAs();
-	if (!role.CanAnyColumn(table.permissions, AclMode::Update, table.GetColumns())) {
-		ThrowPermissionDenied(table);
-	}
-
 	optional_ptr<LogicalGet> get;
 	if (node.from_table) {
 		auto from_binder = Binder::CreateBinder(context, this);
@@ -342,15 +337,11 @@ BoundStatement Binder::BindNode(UpdateQueryNode &node) {
 	                              update->columns, node.prioritize_table_when_binding);
 	D_ASSERT(proj_tmp->type == LogicalOperatorType::LOGICAL_PROJECTION);
 	auto proj = unique_ptr_cast<LogicalOperator, LogicalProjection>(std::move(proj_tmp));
-	if (!role.is_superuser) {
-		vector<std::span<const AclItem>> acls;
-		for (auto index : update->columns) {
-			acls.emplace_back(table.GetColumns().GetColumn(index).Acl());
-		}
-		if (!role.CanColumns(table.permissions, AclMode::Update, acls)) {
-			ThrowPermissionDenied(table);
-		}
+	vector<LogicalIndex> updated;
+	for (auto index : update->columns) {
+		updated.push_back(table.GetColumns().GetColumn(index).Logical());
 	}
+	RequirePrivilege(table, AclMode::Update, std::move(updated), false);
 
 	// bind any extra columns necessary for CHECK constraints or indexes;
 	// storage-derived decisions (index updates force delete+insert) come

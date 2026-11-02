@@ -192,7 +192,7 @@ void Planner::CreatePlan(SQLStatement &statement) {
 		auto binding_timer = profiler.StartTimer<MetricPlannerBindingTime>();
 		binder->SetParameters(bound_parameters);
 		auto bound_statement = binder->Bind(statement);
-		binder->CheckTableReads();
+		binder->CheckPrivileges();
 		binding_timer.EndTimer();
 
 		RunPostBindExtensions(context, *binder, bound_statement);

@@ -559,6 +559,7 @@ BoundStatement Binder::ExpandTriggers(QueryNode &node, TableCatalogEntry &table,
 	auto &properties = GetStatementProperties();
 	properties.result_eagerness = ResultEagerness::FORCED;
 	properties.return_type = StatementReturnType::QUERY_RESULT;
+	AdoptPrivilegeChecks(*returning_binder_owner);
 	return result;
 }
 
