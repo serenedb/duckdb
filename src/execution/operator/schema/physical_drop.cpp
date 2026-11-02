@@ -72,7 +72,7 @@ static void Discard(ExecutionContext &context, DiscardTarget target) {
 	case DiscardTarget::ALL:
 		DeallocateAll(context.client);
 		ResetSessionAuthorization(context);
-		PhysicalReset::ResetAll(context, SetScope::AUTOMATIC);
+		PhysicalReset::ResetAll(context, SetScope::AUTOMATIC, true);
 		DropTemporaryObjects(context.client);
 		ResetSequences(context.client);
 		break;
