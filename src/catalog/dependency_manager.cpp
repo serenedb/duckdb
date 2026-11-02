@@ -6,6 +6,7 @@
 #include "duckdb/common/enums/database_modification_type.hpp"
 #include "duckdb/main/attached_database.hpp"
 #include "duckdb/main/client_context.hpp"
+#include "duckdb/main/config.hpp"
 #include "duckdb/main/database.hpp"
 #include "duckdb/main/database_manager.hpp"
 #include "duckdb/transaction/duck_transaction.hpp"
@@ -572,6 +573,10 @@ static bool IsAnyOf(const vector<idx_t> &roles, idx_t role) {
 	return std::find(roles.begin(), roles.end(), role) != roles.end();
 }
 
+static bool GrantsTo(const vector<AclItem> &acl, idx_t role) {
+	return std::any_of(acl.begin(), acl.end(), [&](const AclItem &item) { return item.grantee == role; });
+}
+
 static QualifiedName OwnedEntryName(CatalogTransaction transaction, CatalogEntry &entry) {
 	auto &catalog_name = entry.ParentCatalog().GetName();
 	switch (entry.type) {
@@ -633,16 +638,27 @@ void DependencyManager::DropOwned(CatalogTransaction transaction, const DropOwne
 		return IsAnyOf(info.role_ids, entry.permissions.owner);
 	};
 	vector<OwnedEntryAlter> alters;
+	const auto revoke = [&](DuckCatalog &holder, CatalogTransaction holder_transaction, CatalogEntry &entry, idx_t role,
+	                        CatalogType acl_class) -> AlterPermissionsInfo & {
+		auto &alter = AddOwnedEntryAlter(alters, holder, holder_transaction, entry);
+		alter.privileges = Permissions::AllPrivileges(acl_class);
+		alter.revoke = true;
+		alter.cascade = true;
+		alter.grantee_id = role;
+		alter.grantors = info.grantors;
+		return alter;
+	};
 	catalog.GetOidIndex().ScanVisible(transaction.view, [&](CatalogEntry &entry) {
 		if (IsSystemEntry(entry) || !TracksOwner(entry.type) || owned(entry)) {
 			return;
 		}
 		for (auto role : info.role_ids) {
 			if (ReferencesRole(entry, role)) {
-				AddOwnedEntryAlter(alters, catalog, transaction, entry).drop_owned_role_id = role;
+				revoke(catalog, transaction, entry, role, Permissions::AclClass(entry.type));
 			}
 		}
 	});
+	auto &wrappers = DBConfig::GetConfig(catalog.GetDatabase()).foreign_data_wrappers;
 	ForEachHolder(
 	    transaction, CatalogType::DATABASE_ENTRY, [&](DuckCatalog &holder, CatalogTransaction holder_transaction) {
 		    auto &manager = *holder.GetDependencyManager();
@@ -650,26 +666,30 @@ void DependencyManager::DropOwned(CatalogTransaction transaction, const DropOwne
 			    if (manager.IsSystemEntry(entry)) {
 				    return;
 			    }
+			    auto &permissions = entry.permissions;
 			    for (auto role : info.role_ids) {
-				    if (entry.name == catalog.GetName()) {
-					    if (ReferencesRole(entry, role)) {
-						    AddOwnedEntryAlter(alters, holder, holder_transaction, entry).drop_owned_role_id = role;
-					    }
+				    if (permissions.owner != role && GrantsTo(permissions.acl, role)) {
+					    revoke(holder, holder_transaction, entry, role, CatalogType::DATABASE_ENTRY);
+				    }
+				    if (entry.name != catalog.GetName()) {
 					    continue;
 				    }
-				    vector<idx_t> grantors;
-				    for (auto &item : entry.permissions.acl) {
-					    if (item.grantee == role && !IsAnyOf(grantors, item.grantor)) {
-						    grantors.push_back(item.grantor);
+				    for (auto &row : permissions.foreign_data_wrappers) {
+					    if (!GrantsTo(row.acl, role)) {
+						    continue;
 					    }
+					    auto wrapper = std::find_if(wrappers.begin(), wrappers.end(), [&](const auto &registered) {
+						    return registered.second.oid == row.oid;
+					    });
+					    auto &alter =
+					        revoke(holder, holder_transaction, entry, role, CatalogType::FOREIGN_DATA_WRAPPER_ENTRY);
+					    alter.foreign_data_wrapper_id = row.oid;
+					    alter.foreign_data_wrapper_owner_id = wrapper == wrappers.end() ? 0 : wrapper->second.owner;
 				    }
-				    for (auto grantor : grantors) {
-					    auto &revoke = AddOwnedEntryAlter(alters, holder, holder_transaction, entry);
-					    revoke.privileges = Permissions::AllPrivileges(CatalogType::DATABASE_ENTRY);
-					    revoke.revoke = true;
-					    revoke.cascade = true;
-					    revoke.grantee_id = role;
-					    revoke.grantors = {grantor};
+				    if (std::any_of(
+				            permissions.defaults.begin(), permissions.defaults.end(),
+				            [&](const DefaultAcl &row) { return row.role == role || GrantsTo(row.acl, role); })) {
+					    AddOwnedEntryAlter(alters, holder, holder_transaction, entry).drop_owned_role_id = role;
 				    }
 			    }
 		    });

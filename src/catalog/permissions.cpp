@@ -245,33 +245,8 @@ void AlterPermissionsInfo::ApplyTo(Permissions &permissions, CatalogType entry_t
 	auto &defaults = permissions.defaults;
 	if (info.drop_owned_role_id) {
 		const auto role = info.drop_owned_role_id;
-		const auto drop = [&](vector<AclItem> &items) {
-			vector<idx_t> grantors;
-			for (auto &item : items) {
-				if (item.grantee == role &&
-				    std::find(grantors.begin(), grantors.end(), item.grantor) == grantors.end()) {
-					grantors.push_back(item.grantor);
-				}
-			}
-			for (auto grantor : grantors) {
-				Revoke(items, role, grantor, ~AclMode::NoRights, false, true);
-			}
-		};
-		if (owner != role) {
-			drop(acl);
-			if (columns) {
-				for (auto &column : columns->Logical()) {
-					if (column.Acl().empty()) {
-						continue;
-					}
-					auto column_acl = column.Acl();
-					drop(column_acl);
-					columns->GetColumnMutable(column.Logical()).SetAcl(std::move(column_acl));
-				}
-			}
-		}
 		for (auto &row : defaults) {
-			drop(row.acl);
+			Revoke(row.acl, role, row.role, ~AclMode::NoRights, false, true);
 		}
 		defaults.erase(std::remove_if(defaults.begin(), defaults.end(),
 		                              [&](const DefaultAcl &row) {
@@ -281,13 +256,6 @@ void AlterPermissionsInfo::ApplyTo(Permissions &permissions, CatalogType entry_t
 			                                                     : vector<AclItem> {});
 		                              }),
 		               defaults.end());
-		auto &wrappers = permissions.foreign_data_wrappers;
-		for (auto &row : wrappers) {
-			drop(row.acl);
-		}
-		wrappers.erase(
-		    std::remove_if(wrappers.begin(), wrappers.end(), [](const ObjectAcl &row) { return row.acl.empty(); }),
-		    wrappers.end());
 		return;
 	}
 	if (!info.new_owner.empty()) {

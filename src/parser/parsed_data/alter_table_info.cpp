@@ -302,6 +302,7 @@ unique_ptr<AlterInfo> DropOwnedInfo::Copy() const {
 	result->roles = roles;
 	result->cascade = cascade;
 	result->role_ids = role_ids;
+	result->grantors = grantors;
 	return std::move(result);
 }
 

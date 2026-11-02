@@ -622,6 +622,11 @@
         "id": 302,
         "name": "role_ids",
         "type": "vector<idx_t>"
+      },
+      {
+        "id": 303,
+        "name": "grantors",
+        "type": "vector<idx_t>"
       }
     ]
   },

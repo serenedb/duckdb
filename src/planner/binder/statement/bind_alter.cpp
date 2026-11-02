@@ -296,6 +296,16 @@ static void RefuseOwnedSequence(ClientContext &context, CatalogEntry &sequence) 
 	    StringUtil::Format("cannot change owner of sequence \"%s\"", name));
 }
 
+static vector<idx_t> CallerGrantors(Binder &binder) {
+	vector<idx_t> grantors;
+	auto principal = binder.principal;
+	if (principal && !principal->is_superuser) {
+		grantors.push_back(principal->role);
+		grantors.insert(grantors.end(), principal->closure.begin(), principal->closure.end());
+	}
+	return grantors;
+}
+
 static void ResolveGrant(Binder &binder, AlterPermissionsInfo &info) {
 	auto principal = binder.principal;
 	info.grantee_id = GranteeId(binder, info.grantee);
@@ -305,9 +315,8 @@ static void ResolveGrant(Binder &binder, AlterPermissionsInfo &info) {
 			throw PermissionException("must be member of role \"%s\"", info.granted_by);
 		}
 		info.grantors = {granted_by};
-	} else if (principal && !principal->is_superuser) {
-		info.grantors.push_back(principal->role);
-		info.grantors.insert(info.grantors.end(), principal->closure.begin(), principal->closure.end());
+	} else {
+		info.grantors = CallerGrantors(binder);
 	}
 	if (info.entry_catalog_type == CatalogType::FOREIGN_DATA_WRAPPER_ENTRY) {
 		auto &name = info.GetQualifiedName().Name().GetIdentifierName();
@@ -427,6 +436,7 @@ static void ResolveOwned(Binder &binder, AlterInfo &info) {
 	if (info.type == AlterType::DROP_OWNED) {
 		auto &drop = info.Cast<DropOwnedInfo>();
 		drop.role_ids = ResolveOwnedRoles(binder, drop.roles, "drop");
+		drop.grantors = CallerGrantors(binder);
 		return;
 	}
 	auto &reassign = info.Cast<ReassignOwnedInfo>();

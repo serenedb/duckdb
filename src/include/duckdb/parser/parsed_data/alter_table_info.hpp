@@ -206,6 +206,7 @@ struct DropOwnedInfo : public AlterInfo {
 	vector<string> roles;
 	bool cascade = false;
 	vector<idx_t> role_ids;
+	vector<idx_t> grantors;
 
 public:
 	CatalogType GetCatalogType() const override;
