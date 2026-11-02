@@ -27,7 +27,8 @@ class BlockAllocator {
 	friend class BlockAllocatorThreadLocalState;
 
 public:
-	BlockAllocator(Allocator &allocator, idx_t block_size, idx_t virtual_memory_size, idx_t physical_memory_size);
+	BlockAllocator(Allocator &allocator, idx_t block_size, idx_t virtual_memory_size, idx_t physical_memory_size,
+	               bool huge_pages = false);
 	~BlockAllocator();
 
 public:
@@ -36,6 +37,9 @@ public:
 
 	//! Resize physical memory (can only be increased)
 	void Resize(idx_t new_physical_memory_size);
+	//! Serves allocations of [block_size], other than this allocator's, from a pool of their own on huge pages, of up
+	//! to [memory_size] bytes
+	void AddHugePagePool(idx_t block_size, idx_t memory_size);
 
 	//! Allocation functions (same API as Allocator)
 	data_ptr_t AllocateData(idx_t size) const;
@@ -97,6 +101,11 @@ private:
 
 	//! Token used to indicate whether current BlockAllocator is alive.
 	shared_ptr<atomic<bool>> alive_token;
+
+	//! Whether the virtual memory is on huge pages, which is the case for the pool of smaller blocks
+	const bool huge_pages;
+	//! The pool of smaller blocks
+	unique_ptr<BlockAllocator> huge_page_pool;
 };
 
 } // namespace duckdb

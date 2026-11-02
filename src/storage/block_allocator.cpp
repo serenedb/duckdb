@@ -21,7 +21,7 @@ namespace duckdb {
 //===--------------------------------------------------------------------===//
 // Memory Helpers
 //===--------------------------------------------------------------------===//
-static data_ptr_t AllocateVirtualMemory(const idx_t size) {
+static data_ptr_t AllocateVirtualMemory(const idx_t size, const bool huge_pages) {
 #if INTPTR_MAX == INT32_MAX
 	// Disable on 32-bit
 	return nullptr;
@@ -32,7 +32,15 @@ static data_ptr_t AllocateVirtualMemory(const idx_t size) {
 	return data_ptr_t(VirtualAlloc(nullptr, size, MEM_RESERVE, PAGE_NOACCESS));
 #else
 	const auto ptr = mmap(nullptr, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-	return ptr == MAP_FAILED ? nullptr : data_ptr_cast(ptr);
+	if (ptr == MAP_FAILED) {
+		return nullptr;
+	}
+#if defined(MADV_HUGEPAGE)
+	if (huge_pages) {
+		madvise(ptr, size, MADV_HUGEPAGE);
+	}
+#endif
+	return data_ptr_cast(ptr);
 #endif
 }
 
@@ -198,14 +206,21 @@ private:
 	vector<uint32_t> touched;
 };
 
-BlockAllocatorThreadLocalState &GetBlockAllocatorThreadLocalState(const BlockAllocator &block_allocator) {
+BlockAllocatorThreadLocalState &GetBlockAllocatorThreadLocalState(const BlockAllocator &block_allocator,
+                                                                  bool huge_pages) {
 #ifdef __MVS__
 	auto allocator_state = BlockAllocatorThreadLocalState(block_allocator);
 	static __tlssim<BlockAllocatorThreadLocalState> local_state_impl(allocator_state);
-	auto *local_state = local_state_impl.access();
+	static __tlssim<BlockAllocatorThreadLocalState> huge_page_state_impl(allocator_state);
+	auto *local_state = huge_pages ? huge_page_state_impl.access() : local_state_impl.access();
 	(*local_state).TryInitialize(block_allocator);
 	return *local_state;
 #else
+	if (huge_pages) {
+		thread_local BlockAllocatorThreadLocalState huge_page_state(block_allocator);
+		huge_page_state.TryInitialize(block_allocator);
+		return huge_page_state;
+	}
 	thread_local BlockAllocatorThreadLocalState local_state(block_allocator);
 	local_state.TryInitialize(block_allocator);
 	return local_state;
@@ -216,14 +231,19 @@ BlockAllocatorThreadLocalState &GetBlockAllocatorThreadLocalState(const BlockAll
 // BlockAllocator
 //===--------------------------------------------------------------------===//
 BlockAllocator::BlockAllocator(Allocator &allocator_p, const idx_t block_size_p, const idx_t virtual_memory_size_p,
-                               const idx_t physical_memory_size_p)
+                               const idx_t physical_memory_size_p, const bool huge_pages_p)
     : uuid(UUID::GenerateRandomUUID()), allocator(allocator_p), block_size(block_size_p),
       block_size_div_shift(CountZeros<idx_t>::Trailing(block_size)),
       virtual_memory_size(AlignValue(virtual_memory_size_p, block_size)), virtual_memory_space(nullptr),
       physical_memory_size(0), untouched(make_unsafe_uniq<BlockQueue>()), touched(make_unsafe_uniq<BlockQueue>()),
-      alive_token(make_shared_ptr<atomic<bool>>(true)) {
+      alive_token(make_shared_ptr<atomic<bool>>(true)), huge_pages(huge_pages_p) {
 	D_ASSERT(IsPowerOfTwo(block_size));
 	Resize(physical_memory_size_p);
+}
+
+void BlockAllocator::AddHugePagePool(const idx_t block_size_p, const idx_t memory_size) {
+	D_ASSERT(!huge_page_pool && block_size_p != block_size);
+	huge_page_pool = make_uniq<BlockAllocator>(allocator, block_size_p, memory_size, memory_size, true);
 }
 
 BlockAllocator::~BlockAllocator() {
@@ -253,7 +273,7 @@ void BlockAllocator::Resize(const idx_t new_physical_memory_size) {
 	lock_guard<mutex> guard(physical_memory_lock);
 
 	if (new_physical_memory_size != 0 && !IsActive()) {
-		virtual_memory_space = AllocateVirtualMemory(virtual_memory_size);
+		virtual_memory_space = AllocateVirtualMemory(virtual_memory_size, huge_pages);
 		if (!IsActive()) {
 			return; // Failed to initialize
 		}
@@ -325,19 +345,28 @@ data_ptr_t BlockAllocator::GetPointer(const uint32_t block_id) const {
 }
 
 data_ptr_t BlockAllocator::AllocateData(const idx_t size) const {
+	if (huge_page_pool && size == huge_page_pool->block_size) {
+		return huge_page_pool->AllocateData(size);
+	}
 	if (!IsActive() || !IsEnabled() || size != block_size) {
 		return allocator.AllocateData(size);
 	}
-	return GetBlockAllocatorThreadLocalState(*this).Allocate();
+	return GetBlockAllocatorThreadLocalState(*this, huge_pages).Allocate();
 }
 
 void BlockAllocator::FreeData(const data_ptr_t pointer, const idx_t size) const {
+	if (huge_page_pool && huge_page_pool->IsActive() && huge_page_pool->IsInPool(pointer)) {
+		deallocated_since_flush.fetch_add(size, std::memory_order_relaxed);
+		D_ASSERT(size == huge_page_pool->block_size);
+		GetBlockAllocatorThreadLocalState(*huge_page_pool, true).Free(pointer);
+		return;
+	}
 	deallocated_since_flush.fetch_add(size, std::memory_order_relaxed);
 	if (!IsActive() || !IsInPool(pointer)) {
 		return allocator.FreeData(pointer, size);
 	}
 	D_ASSERT(size == block_size);
-	GetBlockAllocatorThreadLocalState(*this).Free(pointer);
+	GetBlockAllocatorThreadLocalState(*this, huge_pages).Free(pointer);
 }
 
 data_ptr_t BlockAllocator::ReallocateData(const data_ptr_t pointer, const idx_t old_size, const idx_t new_size) const {
@@ -346,7 +375,10 @@ data_ptr_t BlockAllocator::ReallocateData(const data_ptr_t pointer, const idx_t 
 	}
 
 	// If both the old and new allocation are not (or cannot be) in the pool, immediately use the fallback allocator
-	if (!IsActive() || (!IsInPool(pointer) && new_size != block_size)) {
+	const bool huge_page_pool_involved =
+	    huge_page_pool &&
+	    ((huge_page_pool->IsActive() && huge_page_pool->IsInPool(pointer)) || new_size == huge_page_pool->block_size);
+	if (!huge_page_pool_involved && (!IsActive() || (!IsInPool(pointer) && new_size != block_size))) {
 		return allocator.ReallocateData(pointer, old_size, new_size);
 	}
 
@@ -358,12 +390,16 @@ data_ptr_t BlockAllocator::ReallocateData(const data_ptr_t pointer, const idx_t 
 }
 
 bool BlockAllocator::SupportsFlush() const {
-	return (IsActive() && IsEnabled()) || Allocator::SupportsFlush();
+	return (IsActive() && IsEnabled()) || (huge_page_pool && huge_page_pool->SupportsFlush()) ||
+	       Allocator::SupportsFlush();
 }
 
 void BlockAllocator::ThreadFlush(bool allocator_background_threads, idx_t threshold, idx_t thread_count) const {
 	if (IsActive() && IsEnabled()) {
-		GetBlockAllocatorThreadLocalState(*this).Clear();
+		GetBlockAllocatorThreadLocalState(*this, huge_pages).Clear();
+	}
+	if (huge_page_pool && huge_page_pool->IsActive() && huge_page_pool->IsEnabled()) {
+		GetBlockAllocatorThreadLocalState(*huge_page_pool, true).Clear();
 	}
 	if (Allocator::SupportsFlush()) {
 		Allocator::ThreadFlush(allocator_background_threads, threshold, thread_count);
@@ -374,6 +410,9 @@ void BlockAllocator::FlushAll(const optional_idx extra_memory) const {
 	deallocated_since_flush.store(0, std::memory_order_relaxed);
 	if (IsActive() && IsEnabled() && extra_memory.IsValid()) {
 		FreeInternal(extra_memory.GetIndex());
+	}
+	if (huge_page_pool && huge_page_pool->IsActive() && huge_page_pool->IsEnabled() && extra_memory.IsValid()) {
+		huge_page_pool->FreeInternal(extra_memory.GetIndex());
 	}
 	if (Allocator::SupportsFlush()) {
 		Allocator::FlushAll();
