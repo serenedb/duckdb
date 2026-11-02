@@ -1489,6 +1489,7 @@ ScalarMacroFunction &ExpressionBinder::UnfoldMacroExpression(FunctionExpression 
 	}
 	auto new_macro_binding =
 	    MacroFunction::CreateDummyBinding(macro_def, macro_func.name, positional_arguments, named_arguments);
+	scans.resize(positional_arguments.size());
 
 	const auto query_location = function.GetQueryLocation();
 	// replace current expression with stored macro expression
