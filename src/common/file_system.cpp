@@ -473,10 +473,7 @@ void FileSystem::ReadScattered(FileHandle &handle, std::span<const FileReadTarge
 		Read(handle, targets[0].data, NumericCast<int64_t>(targets[0].size), location);
 		return;
 	}
-	idx_t size = 0;
-	for (auto &target : targets) {
-		size += target.size;
-	}
+	const auto size = FileReadTarget::TotalSize(targets);
 	auto staging = Allocator::DefaultAllocator().Allocate(size);
 	Read(handle, staging.get(), NumericCast<int64_t>(size), location);
 	idx_t offset = 0;

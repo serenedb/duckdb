@@ -120,6 +120,15 @@ struct FileWriteWindow {
 struct FileReadTarget {
 	data_ptr_t data = nullptr;
 	idx_t size = 0;
+
+	//! The bytes a scattered read into [targets] reads
+	static idx_t TotalSize(std::span<const FileReadTarget> targets) {
+		idx_t size = 0;
+		for (auto &target : targets) {
+			size += target.size;
+		}
+		return size;
+	}
 };
 
 //! Measured network throughput for a (remote) file handle. Used to size prefetch coalescing gaps.

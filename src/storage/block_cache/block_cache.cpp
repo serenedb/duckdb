@@ -677,7 +677,9 @@ void BlockCache::Fetch(BlockCacheFile &file, const Run &run, std::span<optional_
 		for (idx_t i = first; i <= last; i++) {
 			const auto block_bytes = file.BlockBytes(run.first_block + i);
 			if (slots[i]) {
-				targets.push_back({buffers[i].GetDataMutable(), block_bytes});
+				auto data = buffers[i].GetDataMutable();
+				memset(data + block_bytes, 0, BLOCK_SIZE - block_bytes);
+				targets.push_back({data, block_bytes});
 				continue;
 			}
 			if (!gap.get()) {
@@ -686,12 +688,6 @@ void BlockCache::Fetch(BlockCacheFile &file, const Run &run, std::span<optional_
 			targets.push_back({gap.get(), block_bytes});
 		}
 		source->file_system.ReadScattered(*source, targets, start);
-		for (idx_t i = first; i <= last; i++) {
-			if (slots[i]) {
-				const auto block_bytes = file.BlockBytes(run.first_block + i);
-				memset(buffers[i].GetDataMutable() + block_bytes, 0, BLOCK_SIZE - block_bytes);
-			}
-		}
 		const auto valid_until = source->file_system.GetCacheValidUntil(*source);
 		shareable = !valid_until || *valid_until != timestamp_t::ninfinity();
 		fetches.fetch_add(1, std::memory_order_relaxed);
