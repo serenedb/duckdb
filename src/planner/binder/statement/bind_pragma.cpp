@@ -40,7 +40,7 @@ unique_ptr<BoundPragmaInfo> Binder::BindPragma(PragmaInfo &info, QueryErrorConte
 		entry =
 		    Catalog::GetBuiltinEntry<PragmaFunctionCatalogEntry>(context, info.name, OnEntryNotFound::THROW_EXCEPTION);
 	}
-	if (entry->superuser_only) {
+	if (principal && !entry->MayCall(*principal)) {
 		RequireSuperuser();
 	}
 

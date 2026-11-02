@@ -46,7 +46,10 @@ void CurrentSettingDynamic(DataChunk &args, ExpressionState &state, Vector &resu
 		}
 		Identifier key(entry.GetValue().GetString());
 		if (context.setting_readable && !context.setting_readable(context, key.GetIdentifierName())) {
-			throw PermissionException("must be superuser to examine \"%s\"", key.GetIdentifierName());
+			throw PermissionException(
+			    {{"detail",
+			      "Only roles with privileges of the \"pg_read_all_settings\" role may examine this parameter."}},
+			    StringUtil::Format("permission denied to examine \"%s\"", key.GetIdentifierName()));
 		}
 		Value val;
 		if (!context.TryGetCurrentSetting(key, val)) {
@@ -81,7 +84,9 @@ unique_ptr<FunctionData> CurrentSettingBind(BindScalarFunctionInput &input) {
 		throw ParserException("Key name for current_setting must not be empty");
 	}
 	if (context.setting_readable && !context.setting_readable(context, key.GetIdentifierName())) {
-		throw PermissionException("must be superuser to examine \"%s\"", key.GetIdentifierName());
+		throw PermissionException(
+		    {{"detail", "Only roles with privileges of the \"pg_read_all_settings\" role may examine this parameter."}},
+		    StringUtil::Format("permission denied to examine \"%s\"", key.GetIdentifierName()));
 	}
 
 	Value val;
