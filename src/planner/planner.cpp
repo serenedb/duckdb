@@ -7,6 +7,7 @@
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/main/client_data.hpp"
 #include "duckdb/main/database.hpp"
+#include "duckdb/main/engine_host.hpp"
 #include "duckdb/main/prepared_statement_data.hpp"
 #include "duckdb/main/query_profiler.hpp"
 #include "duckdb/main/settings.hpp"
@@ -179,15 +180,6 @@ static bool VerifyPlannedExpressions(const LogicalOperator &plan) {
 }
 #endif
 
-static void RunPostBindExtensions(ClientContext &context, Binder &binder, BoundStatement &statement) {
-	for (auto &planner_extension : PlannerExtension::Iterate(context)) {
-		if (planner_extension.post_bind_function) {
-			PlannerExtensionInput input {context, binder, planner_extension.planner_info.get()};
-			planner_extension.post_bind_function(input, statement);
-		}
-	}
-}
-
 void Planner::CreatePlan(SQLStatement &statement) {
 	auto &profiler = QueryProfiler::Get(context);
 	auto parameter_count = statement.named_param_map.size();
@@ -202,7 +194,7 @@ void Planner::CreatePlan(SQLStatement &statement) {
 		auto bound_statement = binder->Bind(statement);
 		binding_timer.EndTimer();
 
-		RunPostBindExtensions(context, *binder, bound_statement);
+		EngineHost::Get().PostBind(context, *binder, bound_statement);
 
 		this->names = bound_statement.names;
 		this->types = bound_statement.types;
@@ -216,22 +208,16 @@ void Planner::CreatePlan(SQLStatement &statement) {
 			this->types = {LogicalTypeId::UNKNOWN};
 			parameters_resolved = false;
 		} else if (error.Type() != ExceptionType::INVALID) {
-			// different exception type - try operator_extensions
-			for (auto &extension_op : OperatorExtension::Iterate(context)) {
-				auto bound_statement =
-				    extension_op->Bind(context, *this->binder, extension_op->operator_info.get(), statement);
-				if (bound_statement.plan != nullptr) {
-					RunPostBindExtensions(context, *this->binder, bound_statement);
-
-					this->names = bound_statement.names;
-					this->types = bound_statement.types;
-					this->plan = std::move(bound_statement.plan);
-					break;
-				}
-			}
-			if (!this->plan) {
+			auto &host = EngineHost::Get();
+			auto bound_statement = host.BindStatement(context, *this->binder, statement);
+			if (!bound_statement.plan) {
 				throw;
 			}
+			host.PostBind(context, *this->binder, bound_statement);
+
+			this->names = bound_statement.names;
+			this->types = bound_statement.types;
+			this->plan = std::move(bound_statement.plan);
 		} else {
 			throw;
 		}

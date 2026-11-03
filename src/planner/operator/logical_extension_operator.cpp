@@ -2,6 +2,7 @@
 #include "duckdb/execution/column_binding_resolver.hpp"
 #include "duckdb/common/serializer/serializer.hpp"
 #include "duckdb/common/serializer/deserializer.hpp"
+#include "duckdb/main/engine_host.hpp"
 #include "duckdb/planner/operator_extension.hpp"
 
 namespace duckdb {
@@ -28,12 +29,11 @@ void LogicalExtensionOperator::Serialize(Serializer &serializer) const {
 unique_ptr<LogicalOperator> LogicalExtensionOperator::Deserialize(Deserializer &deserializer) {
 	auto &context = deserializer.Get<ClientContext &>();
 	auto extension_name = deserializer.ReadProperty<string>(200, "extension_name");
-	for (auto &extension : OperatorExtension::Iterate(context)) {
-		if (extension->GetName() == extension_name) {
-			return extension->Deserialize(deserializer);
-		}
+	auto result = EngineHost::Get().DeserializeOperator(context, extension_name, deserializer);
+	if (!result) {
+		throw SerializationException("No deserialization method exists for extension: " + extension_name);
 	}
-	throw SerializationException("No deserialization method exists for extension: " + extension_name);
+	return std::move(result);
 }
 
 string LogicalExtensionOperator::GetExtensionName() const {

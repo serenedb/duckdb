@@ -2,7 +2,7 @@
 #include "duckdb/common/exception/transaction_exception.hpp"
 #include "duckdb/main/connection.hpp"
 #include "duckdb/main/config.hpp"
-#include "duckdb/planner/extension_callback.hpp"
+#include "duckdb/main/engine_host.hpp"
 
 namespace duckdb {
 
@@ -11,18 +11,14 @@ ConnectionManager::ConnectionManager() : connection_count(0), current_connection
 
 void ConnectionManager::AddConnection(ClientContext &context) {
 	lock_guard<mutex> lock(connections_lock);
-	for (auto &callback : ExtensionCallback::Iterate(context)) {
-		callback->OnConnectionOpened(context);
-	}
+	EngineHost::Get().OnConnectionOpened(context);
 	connections[context] = weak_ptr<ClientContext>(context.shared_from_this());
 	connection_count = connections.size();
 }
 
 void ConnectionManager::RemoveConnection(ClientContext &context) {
 	lock_guard<mutex> lock(connections_lock);
-	for (auto &callback : ExtensionCallback::Iterate(context)) {
-		callback->OnConnectionClosed(context);
-	}
+	EngineHost::Get().OnConnectionClosed(context);
 	connections.erase(context);
 	connection_count = connections.size();
 }

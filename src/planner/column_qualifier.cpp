@@ -1,4 +1,5 @@
 #include "duckdb/planner/column_qualifier.hpp"
+#include "duckdb/main/engine_host.hpp"
 
 #include "duckdb/parser/parsed_expression_iterator.hpp"
 #include "duckdb/parser/expression/columnref_expression.hpp"
@@ -42,15 +43,10 @@ static std::string_view GetSQLValueFunctionName(const Identifier &column_name) {
 }
 
 unique_ptr<ParsedExpression> Binder::GetSQLValueFunction(const Identifier &column_name) {
-	for (auto &ext : PlannerExtension::Iterate(context)) {
-		if (ext.get_sql_value_function) {
-			PlannerExtensionInput input {context, *this, ext.planner_info.get()};
-			unique_ptr<ParsedExpression> result;
-			auto result_type = ext.get_sql_value_function(input, column_name.GetIdentifierName(), result);
-			if (result_type == GetSQLValueFunctionReturnType::FINISH_BINDING || result) {
-				return result;
-			}
-		}
+	unique_ptr<ParsedExpression> result;
+	auto result_type = EngineHost::Get().BindSQLValueFunction(context, *this, column_name.GetIdentifierName(), result);
+	if (result_type == GetSQLValueFunctionReturnType::FINISH_BINDING || result) {
+		return result;
 	}
 
 	auto value_function = GetSQLValueFunctionName(column_name);
