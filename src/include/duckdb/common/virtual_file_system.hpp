@@ -33,8 +33,6 @@ public:
 	unique_ptr<MemoryMappedFile> MemoryMapFile(const OpenFileInfo &path, FileOpenFlags flags,
 	                                           const MMapOptions &options,
 	                                           optional_ptr<FileOpener> opener = nullptr) override;
-	shared_ptr<BlockCacheFile> GetBlockFile(const string &path) override;
-	void Compact(const string &path) override;
 
 	int64_t GetFileSize(FileHandle &handle) override;
 	timestamp_t GetLastModifiedTime(FileHandle &handle) override;
@@ -48,8 +46,6 @@ public:
 
 	void FileSync(FileHandle &handle) override;
 	void HintWriteback(FileHandle &handle, idx_t location, idx_t nr_bytes) override;
-	FileWriteWindow GetWriteWindow(FileHandle &handle) override;
-	void CommitWriteWindow(FileHandle &handle, idx_t nr_bytes) override;
 	void SyncDirectory(const string &directory, optional_ptr<FileOpener> opener = nullptr) override;
 
 	// need to look up correct fs for this

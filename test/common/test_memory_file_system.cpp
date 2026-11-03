@@ -1,7 +1,6 @@
 #include "catch.hpp"
 #include "test_helpers.hpp"
 #include "duckdb/common/error_data.hpp"
-#include "duckdb/common/local_file_system.hpp"
 #include "duckdb/common/memory_file_system.hpp"
 #include "duckdb/common/memory_mapped_file.hpp"
 #include "duckdb/main/connection.hpp"
@@ -106,13 +105,13 @@ TEST_CASE("Memory files are filled in place through write windows", "[memory_fil
 		auto handle =
 		    fs->OpenFile("memory://window.bin", FileFlags::FILE_FLAGS_WRITE | FileFlags::FILE_FLAGS_FILE_CREATE_NEW);
 		for (idx_t written = 0; written < size;) {
-			const auto window = handle->GetWriteWindow();
+			const auto window = fs->GetWriteWindow(*handle);
 			REQUIRE(window.size != 0);
 			const auto count = MinValue(window.size, MinValue(size - written, 1000 + written % 7000));
 			for (idx_t i = 0; i < count; i++) {
 				window.data[i] = ByteAt(written + i);
 			}
-			handle->CommitWriteWindow(count);
+			fs->CommitWriteWindow(*handle, count);
 			written += count;
 			if (written < size) {
 				auto byte = ByteAt(written);
@@ -123,10 +122,6 @@ TEST_CASE("Memory files are filled in place through write windows", "[memory_fil
 		handle->Close();
 		REQUIRE(ReadsBack(*fs, "memory://window.bin", size));
 	}
-	LocalFileSystem local;
-	auto path = TestCreatePath("write_window.bin");
-	auto file = local.OpenFile(path, FileFlags::FILE_FLAGS_WRITE | FileFlags::FILE_FLAGS_FILE_CREATE_NEW);
-	REQUIRE(file->GetWriteWindow().size == 0);
 }
 
 TEST_CASE("Heap memory files map in place, block files do not", "[memory_file_system]") {
@@ -198,21 +193,17 @@ TEST_CASE("Compacted memory files map in place", "[memory_file_system]") {
 	REQUIRE(ReadsBack(heap, "memory://heap.bin", MEMORY_BLOCK + 1));
 }
 
-TEST_CASE("The virtual filesystem finds and compacts the block files of memory files", "[memory_file_system]") {
+TEST_CASE("Memory files written through the virtual filesystem live in the database's memory filesystem",
+          "[memory_file_system]") {
 	DuckDB db(nullptr);
 	auto &vfs = FileSystem::GetFileSystem(*db.instance);
+	auto &memory = db.instance->GetMemoryFileSystem();
 	const string path = "memory://forwarded/file";
 	WriteFile(vfs, path, MEMORY_BLOCK + 1);
-	REQUIRE(vfs.GetBlockFile(path));
-	vfs.Compact(path);
-	REQUIRE(!vfs.GetBlockFile(path));
+	REQUIRE(memory.GetBlockFile(path));
+	memory.Compact(path);
+	REQUIRE(!memory.GetBlockFile(path));
 	REQUIRE(ReadsBack(vfs, path, MEMORY_BLOCK + 1));
-
-	auto local = TestCreatePath("not_in_blocks.bin");
-	WriteFile(vfs, local, 1);
-	REQUIRE(!vfs.GetBlockFile(local));
-	vfs.Compact(local);
-	REQUIRE(ReadsBack(vfs, local, 1));
 }
 
 TEST_CASE("Compacted memory files spill while nothing maps them", "[memory_file_system]") {

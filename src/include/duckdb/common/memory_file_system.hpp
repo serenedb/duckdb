@@ -46,9 +46,6 @@ public:
 	int64_t Read(FileHandle &handle, void *buffer, int64_t nr_bytes) override;
 	void Write(FileHandle &handle, void *buffer, int64_t nr_bytes, idx_t location) override;
 	int64_t Write(FileHandle &handle, void *buffer, int64_t nr_bytes) override;
-	//! The rest of the block the write has reached, or the heap past the end of the file
-	FileWriteWindow GetWriteWindow(FileHandle &handle) override;
-	void CommitWriteWindow(FileHandle &handle, idx_t nr_bytes) override;
 	int64_t GetFileSize(FileHandle &handle) override;
 	timestamp_t GetLastModifiedTime(FileHandle &handle) override;
 	FileType GetFileType(FileHandle &handle) override;
@@ -75,9 +72,16 @@ public:
 	string GetName() const override;
 	string PathSeparator(const string &path) override;
 
-	//! Null for a heap or compacted file
-	shared_ptr<BlockCacheFile> GetBlockFile(const string &path) override;
-	void Compact(const string &path) override;
+	//! The bytes after the end of a file being written, the rest of the block the write has reached or the heap past
+	//! the end of the file, which its writer may fill in place and append with CommitWriteWindow
+	FileWriteWindow GetWriteWindow(FileHandle &handle);
+	//! Appends the first [nr_bytes] bytes of the window GetWriteWindow returned last
+	void CommitWriteWindow(FileHandle &handle, idx_t nr_bytes);
+	//! The block cache's view of [path], whose blocks a reader pins; null for a heap or compacted file
+	shared_ptr<BlockCacheFile> GetBlockFile(const string &path);
+	//! Copies a closed file kept in cache blocks into one buffer-managed allocation, which spills only while nothing
+	//! maps it; readers that pinned its blocks keep them until they close. A heap file stays as it is
+	void Compact(const string &path);
 	//! Removes every file; the database calls it before its block cache goes
 	void Clear();
 

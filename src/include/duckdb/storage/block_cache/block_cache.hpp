@@ -198,6 +198,12 @@ private:
 	atomic<idx_t> in_flight {0};
 };
 
+//! Bytes after the end of a file written from start to end, which its writer fills in place
+struct FileWriteWindow {
+	data_ptr_t data = nullptr;
+	idx_t size = 0;
+};
+
 //! Writes an unbacked or written file from start to end: it creates each block as the write reaches it and pins the
 //! block it fills until the block is full or the write ends
 class BlockCacheAppender {

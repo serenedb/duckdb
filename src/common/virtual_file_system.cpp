@@ -138,14 +138,6 @@ unique_ptr<MemoryMappedFile> VirtualFileSystem::MemoryMapFile(const OpenFileInfo
 	return internal_filesystem.MemoryMapFile(path, flags, options, opener);
 }
 
-shared_ptr<BlockCacheFile> VirtualFileSystem::GetBlockFile(const string &path) {
-	return FindFileSystem(path, nullptr).GetBlockFile(path);
-}
-
-void VirtualFileSystem::Compact(const string &path) {
-	FindFileSystem(path, nullptr).Compact(path);
-}
-
 FileSystem &VirtualFileSystem::GetDefaultFileSystem() {
 	auto &fs = *CurrentRegistry().default_fs->file_system;
 	if (SubSystemIsDisabled(fs.GetName())) {
@@ -296,14 +288,6 @@ void VirtualFileSystem::FileSync(FileHandle &handle) {
 
 void VirtualFileSystem::HintWriteback(FileHandle &handle, idx_t location, idx_t nr_bytes) {
 	handle.file_system.HintWriteback(handle, location, nr_bytes);
-}
-
-FileWriteWindow VirtualFileSystem::GetWriteWindow(FileHandle &handle) {
-	return handle.file_system.GetWriteWindow(handle);
-}
-
-void VirtualFileSystem::CommitWriteWindow(FileHandle &handle, idx_t nr_bytes) {
-	handle.file_system.CommitWriteWindow(handle, nr_bytes);
 }
 
 void VirtualFileSystem::SyncDirectory(const string &directory, optional_ptr<FileOpener> opener) {

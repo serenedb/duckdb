@@ -45,7 +45,6 @@ class CompressedFileSystem;
 class QueryContext;
 class MemoryMappedFile;
 struct MMapOptions;
-class BlockCacheFile;
 class MultiFileList;
 
 enum class CreateDirectoryMode : uint8_t {
@@ -110,12 +109,6 @@ struct FileMetadata {
 	unordered_map<string, Value> extended_file_info;
 };
 
-//! Bytes after the end of a file written from start to end, which its writer fills in place
-struct FileWriteWindow {
-	data_ptr_t data = nullptr;
-	idx_t size = 0;
-};
-
 //! A buffer one piece of a scattered read fills, or the bytes it skips when it has no data
 struct FileReadTarget {
 	data_ptr_t data = nullptr;
@@ -162,10 +155,6 @@ public:
 	DUCKDB_API void Sync();
 	//! Starts writing back [location, location + nr_bytes), already written, so a later Sync waits less
 	DUCKDB_API void HintWriteback(idx_t location, idx_t nr_bytes);
-	//! The bytes after the end of the file to fill in place; empty when its file system offers none
-	DUCKDB_API FileWriteWindow GetWriteWindow();
-	//! Appends the first [nr_bytes] bytes of the last write window to the file
-	DUCKDB_API void CommitWriteWindow(idx_t nr_bytes);
 	DUCKDB_API void Truncate(int64_t new_size);
 	//! Abandon an incomplete write without publishing any buffered or staged data.
 	DUCKDB_API void AbortWrite();
@@ -240,13 +229,6 @@ public:
 	DUCKDB_API virtual unique_ptr<MemoryMappedFile> MemoryMapFile(const OpenFileInfo &path, FileOpenFlags flags,
 	                                                              const MMapOptions &options,
 	                                                              optional_ptr<FileOpener> opener = nullptr);
-	//! The block cache's view of [path] when this filesystem keeps the file in cache blocks, whose blocks a reader
-	//! pins; null for any other file
-	DUCKDB_API virtual shared_ptr<BlockCacheFile> GetBlockFile(const string &path);
-	//! Copies a closed file this filesystem keeps in cache blocks into one buffer-managed allocation, which spills
-	//! only while nothing maps it; readers that pinned its blocks keep them until they close. Any other file stays
-	//! as it is
-	DUCKDB_API virtual void Compact(const string &path);
 
 	//! Read exactly nr_bytes from the specified location in the file. Fails if nr_bytes could not be read. This is
 	//! equivalent to calling SetFilePointer(location) followed by calling Read().
@@ -336,11 +318,6 @@ public:
 	DUCKDB_API virtual FileSyncParallelism SyncParallelism(FileHandle &handle);
 	//! Starts writing back [location, location + nr_bytes) of a file being written; does nothing by default
 	DUCKDB_API virtual void HintWriteback(FileHandle &handle, idx_t location, idx_t nr_bytes);
-	//! The bytes after the end of a file written from start to end that its writer may fill in place, and append with
-	//! CommitWriteWindow; none by default
-	DUCKDB_API virtual FileWriteWindow GetWriteWindow(FileHandle &handle);
-	//! Appends the first [nr_bytes] bytes of the window GetWriteWindow returned last
-	DUCKDB_API virtual void CommitWriteWindow(FileHandle &handle, idx_t nr_bytes);
 	//! Makes the names of the files created, moved or removed in [directory] durable; a filesystem without
 	//! directory entries has nothing to sync
 	DUCKDB_API virtual void SyncDirectory(const string &directory, optional_ptr<FileOpener> opener = nullptr);

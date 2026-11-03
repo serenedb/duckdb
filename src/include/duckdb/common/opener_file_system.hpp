@@ -89,14 +89,6 @@ public:
 		GetFileSystem().HintWriteback(handle, location, nr_bytes);
 	}
 
-	FileWriteWindow GetWriteWindow(FileHandle &handle) override {
-		return GetFileSystem().GetWriteWindow(handle);
-	}
-
-	void CommitWriteWindow(FileHandle &handle, idx_t nr_bytes) override {
-		GetFileSystem().CommitWriteWindow(handle, nr_bytes);
-	}
-
 	void SyncDirectory(const string &directory, optional_ptr<FileOpener> opener) override {
 		VerifyNoOpener(opener);
 		VerifyCanAccessDirectory(directory);
@@ -308,8 +300,6 @@ public:
 	unique_ptr<MemoryMappedFile> MemoryMapFile(const OpenFileInfo &path, FileOpenFlags flags,
 	                                           const MMapOptions &options,
 	                                           optional_ptr<FileOpener> opener = nullptr) override;
-	shared_ptr<BlockCacheFile> GetBlockFile(const string &path) override;
-	void Compact(const string &path) override;
 
 protected:
 	bool ListFilesExtended(const string &directory, const std::function<void(OpenFileInfo &info)> &callback,
