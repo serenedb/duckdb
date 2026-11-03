@@ -144,6 +144,9 @@ public:
 	//! FUNCTION ONLY!
 	DUCKDB_API void Verify() const;
 	DUCKDB_API void Verify(const SelectionVector &sel, idx_t count) const;
+	//! Throw unless every value is one its type allows, so code that trusts its values can read a vector that came
+	//! from an untrusted peer. Flattens the vector.
+	DUCKDB_API void Validate() const;
 
 	//! Returns the [index] element of the Vector as a Value.
 	DUCKDB_API Value GetValue(idx_t index) const;

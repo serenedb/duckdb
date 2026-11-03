@@ -7,6 +7,8 @@
 #include "duckdb/common/vector/shredded_vector.hpp"
 #include "duckdb/common/vector/string_vector.hpp"
 #include "duckdb/common/vector/struct_vector.hpp"
+#include "duckdb/common/vector/union_vector.hpp"
+#include "utf8proc_wrapper.hpp"
 #include "duckdb/common/types/vector.hpp"
 #include "duckdb/common/assert.hpp"
 #include "duckdb/common/exception.hpp"
@@ -867,6 +869,120 @@ void Vector::FlattenAndSetConstant() {
 		BufferMutable().Cast<VectorStructBuffer>().PrepareChildrenForSetConstant();
 	}
 	SetVectorType(VectorType::CONSTANT_VECTOR);
+}
+
+template <class T>
+static void ValidateIndexes(const Vector &vector, idx_t limit, const char *name) {
+	auto &validity = FlatVector::Validity(vector);
+	auto data = FlatVector::GetData<T>(vector);
+	for (idx_t i = 0; i < vector.size(); i++) {
+		if (validity.RowIsValid(i) && data[i] >= limit) {
+			throw InvalidInputException("%s %llu is outside its %llu values", name, static_cast<idx_t>(data[i]), limit);
+		}
+	}
+}
+
+void Vector::Validate() const {
+	auto &type = GetType();
+	switch (type.id()) {
+	case LogicalTypeId::SQLNULL:
+	case LogicalTypeId::TINYINT:
+	case LogicalTypeId::SMALLINT:
+	case LogicalTypeId::INTEGER:
+	case LogicalTypeId::BIGINT:
+	case LogicalTypeId::HUGEINT:
+	case LogicalTypeId::UTINYINT:
+	case LogicalTypeId::USMALLINT:
+	case LogicalTypeId::UINTEGER:
+	case LogicalTypeId::UBIGINT:
+	case LogicalTypeId::UHUGEINT:
+	case LogicalTypeId::FLOAT:
+	case LogicalTypeId::DOUBLE:
+	case LogicalTypeId::DECIMAL:
+	case LogicalTypeId::DATE:
+	case LogicalTypeId::TIME:
+	case LogicalTypeId::TIME_NS:
+	case LogicalTypeId::TIME_TZ:
+	case LogicalTypeId::TIMESTAMP_SEC:
+	case LogicalTypeId::TIMESTAMP_MS:
+	case LogicalTypeId::TIMESTAMP:
+	case LogicalTypeId::TIMESTAMP_NS:
+	case LogicalTypeId::TIMESTAMP_TZ:
+	case LogicalTypeId::TIMESTAMP_TZ_NS:
+	case LogicalTypeId::INTERVAL:
+	case LogicalTypeId::UUID:
+	case LogicalTypeId::BLOB:
+		// every bit pattern is a value
+		return;
+	case LogicalTypeId::BOOLEAN:
+	case LogicalTypeId::VARCHAR:
+	case LogicalTypeId::ENUM:
+	case LogicalTypeId::STRUCT:
+	case LogicalTypeId::UNION:
+	case LogicalTypeId::LIST:
+	case LogicalTypeId::MAP:
+	case LogicalTypeId::ARRAY:
+		break;
+	default:
+		throw NotImplementedException("Values of type %s from an untrusted peer are not supported", type.ToString());
+	}
+	Flatten();
+	auto &validity = FlatVector::Validity(*this);
+	switch (type.id()) {
+	case LogicalTypeId::BOOLEAN: {
+		auto data = FlatVector::GetData(*this);
+		for (idx_t i = 0; i < size(); i++) {
+			if (validity.RowIsValid(i) && data[i] > 1) {
+				throw InvalidInputException("Invalid BOOLEAN value %d", data[i]);
+			}
+		}
+		break;
+	}
+	case LogicalTypeId::VARCHAR: {
+		auto data = FlatVector::GetData<string_t>(*this);
+		for (idx_t i = 0; i < size(); i++) {
+			if (validity.RowIsValid(i) &&
+			    Utf8Proc::Analyze(data[i].GetData(), data[i].GetSize()) == UnicodeType::INVALID) {
+				throw InvalidInputException("Invalid UTF-8 in a VARCHAR value");
+			}
+		}
+		break;
+	}
+	case LogicalTypeId::ENUM: {
+		auto values = EnumType::GetSize(type);
+		switch (type.InternalType()) {
+		case PhysicalType::UINT8:
+			ValidateIndexes<uint8_t>(*this, values, "ENUM index");
+			break;
+		case PhysicalType::UINT16:
+			ValidateIndexes<uint16_t>(*this, values, "ENUM index");
+			break;
+		case PhysicalType::UINT32:
+			ValidateIndexes<uint32_t>(*this, values, "ENUM index");
+			break;
+		default:
+			throw InternalException("ENUM of physical type %s", EnumUtil::ToString(type.InternalType()));
+		}
+		break;
+	}
+	case LogicalTypeId::UNION:
+		ValidateIndexes<union_tag_t>(UnionVector::GetTags(*this), UnionType::GetMemberCount(type), "UNION tag");
+		DUCKDB_EXPLICIT_FALLTHROUGH;
+	case LogicalTypeId::STRUCT:
+		for (auto &entry : StructVector::GetEntries(*this)) {
+			entry.Validate();
+		}
+		break;
+	case LogicalTypeId::LIST:
+	case LogicalTypeId::MAP:
+		ListVector::GetChild(*this).Validate();
+		break;
+	case LogicalTypeId::ARRAY:
+		ArrayVector::GetChild(*this).Validate();
+		break;
+	default:
+		throw InternalException("Vector::Validate of type %s", type.ToString());
+	}
 }
 
 void Vector::Verify(idx_t) const {
