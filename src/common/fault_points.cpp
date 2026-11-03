@@ -4,6 +4,7 @@
 
 #include "absl/container/flat_hash_set.h"
 #include "absl/synchronization/mutex.h"
+#include "duckdb/parallel/task_scheduler.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -79,6 +80,7 @@ void FaultPoints::WaitWhileArmed(std::string_view name) {
 		return;
 	}
 	auto &registry = GetRegistry();
+	TaskScheduler::BlockingScope blocking;
 	const absl::MutexLock guard(&registry.lock);
 	const auto disarmed = [&]() ABSL_EXCLUSIVE_LOCKS_REQUIRED(registry.lock) {
 		return !registry.armed.contains(name);
@@ -91,6 +93,7 @@ void FaultPoints::ParkOnce(std::string_view name) {
 		return;
 	}
 	auto &registry = GetRegistry();
+	TaskScheduler::BlockingScope blocking;
 	const absl::MutexLock guard(&registry.lock);
 	if (registry.armed.erase(name) == 0) {
 		return;
