@@ -70,6 +70,10 @@ struct RemoveDirectoryOptions {
 	RemoveDirectoryMode mode = RemoveDirectoryMode::SINGLE;
 };
 
+struct ListFilesOptions {
+	bool recursive = false;
+};
+
 enum class FileType {
 	//! Regular file
 	FILE_TYPE_REGULAR,
@@ -309,10 +313,8 @@ public:
 	                                  const std::function<void(const string &, bool)> &callback,
 	                                  FileOpener *opener = nullptr);
 	DUCKDB_API bool ListFiles(const string &directory, const std::function<void(OpenFileInfo &info)> &callback,
-	                          optional_ptr<FileOpener> opener = nullptr);
-	DUCKDB_API virtual void ListFilesRecursive(const string &directory,
-	                                           const std::function<void(OpenFileInfo &info)> &callback,
-	                                           optional_ptr<FileOpener> opener = nullptr);
+	                          optional_ptr<FileOpener> opener = nullptr,
+	                          const ListFilesOptions &options = ListFilesOptions());
 
 	//! Move a file from source path to the target, StorageManager relies on this being an atomic action for ACID
 	//! properties
@@ -466,8 +468,10 @@ protected:
 
 	DUCKDB_API virtual bool ListFilesExtended(const string &directory,
 	                                          const std::function<void(OpenFileInfo &info)> &callback,
-	                                          optional_ptr<FileOpener> opener);
+	                                          optional_ptr<FileOpener> opener, const ListFilesOptions &options);
 	DUCKDB_API virtual bool SupportsListFilesExtended() const;
+	DUCKDB_API bool WalkFiles(const string &directory, const std::function<void(OpenFileInfo &info)> &callback,
+	                          optional_ptr<FileOpener> opener);
 
 	DUCKDB_API virtual unique_ptr<MultiFileList> GlobFilesExtended(const string &path, const FileGlobInput &input,
 	                                                               optional_ptr<FileOpener> opener = nullptr);

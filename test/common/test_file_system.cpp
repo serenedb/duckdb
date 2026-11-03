@@ -243,7 +243,7 @@ TEST_CASE("Make sure file system operators work as advertised", "[file_system]")
 	REQUIRE(!fs->FileExists(fname_in_dir2));
 }
 
-TEST_CASE("ListFilesRecursive lists every file below a directory and no directory", "[file_system]") {
+TEST_CASE("A recursive ListFiles lists every file below a directory and no directory", "[file_system]") {
 	DuckDB db(nullptr);
 	Connection con(db);
 	auto &fs = FileSystem::GetFileSystem(*con.context);
@@ -258,18 +258,24 @@ TEST_CASE("ListFilesRecursive lists every file below a directory and no director
 	CreateDummyFile(fs.JoinPath(fs.JoinPath(root, "sub"), "b"));
 	CreateDummyFile(fs.JoinPath(deeper, "c"));
 
+	ListFilesOptions recursive;
+	recursive.recursive = true;
 	vector<string> listed;
-	fs.ListFilesRecursive(root, [&](OpenFileInfo &info) {
-		REQUIRE(!FileSystem::IsDirectory(info));
-		listed.push_back(info.path);
-	});
+	fs.ListFiles(
+	    root,
+	    [&](OpenFileInfo &info) {
+		    REQUIRE(!FileSystem::IsDirectory(info));
+		    listed.push_back(info.path);
+	    },
+	    nullptr, recursive);
 	std::sort(listed.begin(), listed.end());
 	auto sub = fs.JoinPath("sub", "b");
 	auto sub_deeper = fs.JoinPath(fs.JoinPath("sub", "deeper"), "c");
 	REQUIRE(listed == vector<string> {"a", sub, sub_deeper});
 
 	listed.clear();
-	fs.ListFilesRecursive(fs.JoinPath(root, "empty"), [&](OpenFileInfo &info) { listed.push_back(info.path); });
+	fs.ListFiles(
+	    fs.JoinPath(root, "empty"), [&](OpenFileInfo &info) { listed.push_back(info.path); }, nullptr, recursive);
 	REQUIRE(listed.empty());
 	fs.RemoveDirectory(root);
 }

@@ -266,17 +266,11 @@ bool CachingFileSystemWrapper::ListFiles(const string &directory,
 	return underlying_file_system.ListFiles(directory, callback, opener);
 }
 
-void CachingFileSystemWrapper::ListFilesRecursive(const string &directory,
-                                                  const std::function<void(OpenFileInfo &info)> &callback,
-                                                  optional_ptr<FileOpener> opener) {
-	underlying_file_system.ListFilesRecursive(directory, callback, opener);
-}
-
 bool CachingFileSystemWrapper::ListFilesExtended(const string &directory,
                                                  const std::function<void(OpenFileInfo &info)> &callback,
-                                                 optional_ptr<FileOpener> opener) {
+                                                 optional_ptr<FileOpener> opener, const ListFilesOptions &options) {
 	// Use the public ListFiles API which will internally call `ListFilesExtended` if supported.
-	return underlying_file_system.ListFiles(directory, callback, opener);
+	return underlying_file_system.ListFiles(directory, callback, opener, options);
 }
 
 bool CachingFileSystemWrapper::SupportsListFilesExtended() const {
