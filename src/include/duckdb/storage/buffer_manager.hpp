@@ -97,10 +97,10 @@ public:
 
 	//! Get the buffer allocator.
 	virtual DUCKDB_API Allocator &GetBufferAllocator();
-	//! Reserve memory.
-	virtual DUCKDB_API void ReserveMemory(idx_t size);
+	//! Reserve memory allocated outside the buffer pool, evicting blocks to make room; throws when it can't.
+	virtual DUCKDB_API void ReserveMemory(MemoryTag tag, idx_t size);
 	//! Free reserved memory.
-	virtual DUCKDB_API void FreeReservedMemory(idx_t size);
+	virtual DUCKDB_API void FreeReservedMemory(MemoryTag tag, idx_t size);
 	//! GetMemoryUsageInfo returns MemoryInformation for each memory tag.
 	virtual vector<MemoryInformation> GetMemoryUsageInfo() const = 0;
 	//! Set a new memory limit.
