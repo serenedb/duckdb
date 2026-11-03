@@ -10,15 +10,14 @@ require httpfs
 statement ok
 LOAD quack;
 
-# the Quack log records every request before it is parsed; server-side entries have no 'server' URL
+# the Quack log records every request the client sends, with the server's URL and the server's answer
 statement ok
 CALL enable_logging('Quack');
 
-statement ok
-CALL quack_serve(token='test_token');
+test-env QUACK_SERVER quack:localhost
 
 statement ok
-ATTACH 'quack:localhost' AS qk (TOKEN 'test_token');
+ATTACH '{QUACK_SERVER}' AS qk (TOKEN 'asdf');
 
 statement ok
 CONNECT qk;
@@ -44,16 +43,16 @@ CONNECT no_such_db;
 statement ok
 DISCONNECT;
 
-# the forwarded CONNECT reached the server
+# the client sent the CONNECT to the server
 query I
-SELECT count(*) > 0 FROM duckdb_logs WHERE type = 'Quack' AND message LIKE '%''server'': NULL%'
+SELECT count(*) > 0 FROM duckdb_logs WHERE type = 'Quack' AND message LIKE '%''server'': ''http%'
 	AND message LIKE '%''query'': CONNECT no_such_db;%';
 ----
 true
 
-# the server received CREATE GRANT and its own parser rejected it
+# the client sent CREATE GRANT unparsed, and the server's parser rejected it
 query I
-SELECT count(*) FROM duckdb_logs WHERE type = 'Quack' AND message LIKE '%''server'': NULL%'
+SELECT count(*) FROM duckdb_logs WHERE type = 'Quack' AND message LIKE '%''server'': ''http%'
 	AND message LIKE '%''query'': CREATE GRANT;%' AND message LIKE '%''error'': ''Parser Error: syntax error at or near "GRANT"%';
 ----
 1
@@ -65,7 +64,7 @@ CREATE GRANT;
 <REGEX>:Parser Error:.*syntax error at or near "GRANT".*
 
 query I
-SELECT count(*) FROM duckdb_logs WHERE type = 'Quack' AND message LIKE '%''server'': NULL%'
+SELECT count(*) FROM duckdb_logs WHERE type = 'Quack' AND message LIKE '%''server'': ''http%'
 	AND message LIKE '%''query'': CREATE GRANT;%';
 ----
 1
