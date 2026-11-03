@@ -478,7 +478,7 @@ void FileSystem::ReadScattered(FileHandle &handle, std::span<const FileReadTarge
 	Read(handle, staging.get(), NumericCast<int64_t>(size), location);
 	idx_t offset = 0;
 	for (auto &target : targets) {
-		if (target.size != 0) {
+		if (target.data) {
 			memcpy(target.data, staging.get() + offset, target.size);
 		}
 		offset += target.size;

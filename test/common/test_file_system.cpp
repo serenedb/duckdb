@@ -1733,16 +1733,18 @@ TEST_CASE("Scattered reads fill their buffers in order", "[file_system]") {
 			auto &file_system = through_vfs ? static_cast<FileSystem &>(vfs) : *fs;
 			auto handle = file_system.OpenFile(path, FileFlags::FILE_FLAGS_READ);
 			vector<data_t> a(3), b(1000), c(97);
+			constexpr idx_t SKIPPED = 50;
 			const FileReadTarget targets[] = {
-			    {a.data(), a.size()}, {nullptr, 0}, {b.data(), b.size()}, {c.data(), c.size()}};
+			    {a.data(), a.size()}, {nullptr, SKIPPED}, {b.data(), b.size()}, {c.data(), c.size()}};
 			constexpr idx_t LOCATION = 7;
 			if (staged) {
 				file_system.FileSystem::ReadScattered(*handle, targets, LOCATION);
 			} else {
 				file_system.ReadScattered(*handle, targets, LOCATION);
 			}
-			idx_t offset = LOCATION;
-			for (auto *part : {&a, &b, &c}) {
+			REQUIRE(memcmp(a.data(), bytes.data() + LOCATION, a.size()) == 0);
+			idx_t offset = LOCATION + a.size() + SKIPPED;
+			for (auto *part : {&b, &c}) {
 				REQUIRE(memcmp(part->data(), bytes.data() + offset, part->size()) == 0);
 				offset += part->size();
 			}

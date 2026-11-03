@@ -116,7 +116,7 @@ struct FileWriteWindow {
 	idx_t size = 0;
 };
 
-//! A buffer one piece of a scattered read fills
+//! A buffer one piece of a scattered read fills, or the bytes it skips when it has no data
 struct FileReadTarget {
 	data_ptr_t data = nullptr;
 	idx_t size = 0;
@@ -251,8 +251,8 @@ public:
 	//! Read exactly nr_bytes from the specified location in the file. Fails if nr_bytes could not be read. This is
 	//! equivalent to calling SetFilePointer(location) followed by calling Read().
 	DUCKDB_API virtual void Read(FileHandle &handle, void *buffer, int64_t nr_bytes, idx_t location);
-	//! Reads the consecutive bytes at [location] into [targets] in order, as one read. Fails if they could not all be
-	//! read.
+	//! Reads the consecutive bytes at [location] into [targets] in order, as one read, skipping the bytes of a target
+	//! without data. Fails if they could not all be read.
 	DUCKDB_API virtual void ReadScattered(FileHandle &handle, std::span<const FileReadTarget> targets, idx_t location);
 	//! Write exactly nr_bytes to the specified location in the file. Fails if nr_bytes could not be written. This is
 	//! equivalent to calling SetFilePointer(location) followed by calling Write().
