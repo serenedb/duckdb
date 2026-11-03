@@ -116,7 +116,7 @@ bool UnionVector::TryGetTag(const Vector &vector, idx_t index, union_tag_t &resu
 }
 
 //! Raw selection vector passed in (not merged with any other selection vectors)
-UnionInvalidReason UnionVector::CheckUnionValidity(Vector &vector, idx_t count, const SelectionVector &sel) {
+UnionInvalidReason UnionVector::CheckUnionValidity(const Vector &vector, idx_t count, const SelectionVector &sel) {
 	D_ASSERT(vector.GetType().id() == LogicalTypeId::UNION);
 
 	auto member_count = UnionType::GetMemberCount(vector.GetType());

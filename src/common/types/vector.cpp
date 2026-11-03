@@ -7,6 +7,7 @@
 #include "duckdb/common/vector/shredded_vector.hpp"
 #include "duckdb/common/vector/string_vector.hpp"
 #include "duckdb/common/vector/struct_vector.hpp"
+#include "duckdb/common/vector/union_vector.hpp"
 #include "duckdb/common/types/vector.hpp"
 #include "duckdb/common/assert.hpp"
 #include "duckdb/common/exception.hpp"
@@ -23,6 +24,8 @@
 #include "duckdb/common/enums/debug_verification_mode.hpp"
 #include "duckdb/common/types/geometry.hpp"
 #include "duckdb/main/config.hpp"
+
+#include "utf8proc_wrapper.hpp"
 
 namespace duckdb {
 
@@ -861,6 +864,115 @@ void Vector::FlattenAndSetConstant() {
 		BufferMutable().Cast<VectorStructBuffer>().PrepareChildrenForSetConstant();
 	}
 	SetVectorType(VectorType::CONSTANT_VECTOR);
+}
+
+template <class T>
+static void ValidateIndexes(const Vector &vector, idx_t limit, const char *name) {
+	for (auto entry : vector.ValidValues<T>()) {
+		if (entry.GetValue() >= limit) {
+			throw InvalidInputException("%s %llu is outside its %llu values", name,
+			                            static_cast<idx_t>(entry.GetValue()), limit);
+		}
+	}
+}
+
+static void ValidateEnum(const Vector &vector) {
+	auto value_count = EnumType::GetSize(vector.GetType());
+	switch (vector.GetType().InternalType()) {
+	case PhysicalType::UINT8:
+		return ValidateIndexes<uint8_t>(vector, value_count, "ENUM index");
+	case PhysicalType::UINT16:
+		return ValidateIndexes<uint16_t>(vector, value_count, "ENUM index");
+	default:
+		return ValidateIndexes<uint32_t>(vector, value_count, "ENUM index");
+	}
+}
+
+static void ValidateUnion(const Vector &vector) {
+	switch (UnionVector::CheckUnionValidity(vector, vector.size())) {
+	case UnionInvalidReason::VALID:
+	case UnionInvalidReason::NO_MEMBERS:
+		return;
+	case UnionInvalidReason::TAG_OUT_OF_RANGE:
+		throw InvalidInputException("A UNION tag is outside its %llu members",
+		                            UnionType::GetMemberCount(vector.GetType()));
+	case UnionInvalidReason::NULL_TAG:
+		throw InvalidInputException("A UNION value has a NULL tag");
+	case UnionInvalidReason::VALIDITY_OVERLAP:
+		throw InvalidInputException("A UNION value has more than one member set");
+	case UnionInvalidReason::TAG_MISMATCH:
+		throw InvalidInputException("A UNION tag names a member other than the one set");
+	}
+}
+
+void Vector::Validate() const {
+	if (GetVectorType() == VectorType::DICTIONARY_VECTOR) {
+		DictionaryVector::Child(*this).Validate();
+		return;
+	}
+	auto &type = GetType();
+	switch (type.id()) {
+	case LogicalTypeId::SQLNULL:
+	case LogicalTypeId::TINYINT:
+	case LogicalTypeId::SMALLINT:
+	case LogicalTypeId::INTEGER:
+	case LogicalTypeId::BIGINT:
+	case LogicalTypeId::HUGEINT:
+	case LogicalTypeId::UTINYINT:
+	case LogicalTypeId::USMALLINT:
+	case LogicalTypeId::UINTEGER:
+	case LogicalTypeId::UBIGINT:
+	case LogicalTypeId::UHUGEINT:
+	case LogicalTypeId::FLOAT:
+	case LogicalTypeId::DOUBLE:
+	case LogicalTypeId::DECIMAL:
+	case LogicalTypeId::DATE:
+	case LogicalTypeId::TIME:
+	case LogicalTypeId::TIME_NS:
+	case LogicalTypeId::TIME_TZ:
+	case LogicalTypeId::TIMESTAMP_SEC:
+	case LogicalTypeId::TIMESTAMP_MS:
+	case LogicalTypeId::TIMESTAMP:
+	case LogicalTypeId::TIMESTAMP_NS:
+	case LogicalTypeId::TIMESTAMP_TZ:
+	case LogicalTypeId::TIMESTAMP_TZ_NS:
+	case LogicalTypeId::INTERVAL:
+	case LogicalTypeId::UUID:
+	case LogicalTypeId::BLOB:
+		// every bit pattern is a value
+		return;
+	case LogicalTypeId::BOOLEAN:
+		for (auto entry : ValidValues<uint8_t>()) {
+			if (entry.GetValue() > 1) {
+				throw InvalidInputException("Invalid BOOLEAN value %d", entry.GetValue());
+			}
+		}
+		return;
+	case LogicalTypeId::VARCHAR:
+		for (auto entry : ValidValues<string_t>()) {
+			if (!Utf8Proc::IsValid(entry.GetValue().GetData(), entry.GetValue().GetSize())) {
+				throw InvalidInputException("Invalid UTF-8 in a VARCHAR value");
+			}
+		}
+		return;
+	case LogicalTypeId::ENUM:
+		return ValidateEnum(*this);
+	case LogicalTypeId::UNION:
+		ValidateUnion(*this);
+		DUCKDB_EXPLICIT_FALLTHROUGH;
+	case LogicalTypeId::STRUCT:
+		for (auto &entry : StructVector::GetEntries(*this)) {
+			entry.Validate();
+		}
+		return;
+	case LogicalTypeId::LIST:
+	case LogicalTypeId::MAP:
+		return ListVector::GetChild(*this).Validate();
+	case LogicalTypeId::ARRAY:
+		return ArrayVector::GetChild(*this).Validate();
+	default:
+		throw NotImplementedException("Values of type %s from an untrusted peer are not supported", type.ToString());
+	}
 }
 
 void Vector::Verify(idx_t) const {

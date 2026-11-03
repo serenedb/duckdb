@@ -63,7 +63,7 @@ struct UnionVector {
 	                                   bool keep_tags_for_null);
 
 	DUCKDB_API static UnionInvalidReason
-	CheckUnionValidity(Vector &vector, idx_t count,
+	CheckUnionValidity(const Vector &vector, idx_t count,
 	                   const SelectionVector &sel = *FlatVector::IncrementalSelectionVector());
 };
 
