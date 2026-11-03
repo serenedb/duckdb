@@ -1,17 +1,15 @@
 # name: test/sql/connect/connect_quack.test
-# description: End-to-end CONNECT pass-through against an in-process quack backend.
+# description: End-to-end CONNECT pass-through against a quack backend.
 # group: [connect]
 
 require quack
 
 require httpfs
 
-# Spin up an in-process quack server we can connect to.
-statement ok
-CALL quack_serve(token='test_token');
+test-env QUACK_SERVER quack:localhost
 
 statement ok
-ATTACH 'quack:localhost' AS qk (TOKEN 'test_token');
+ATTACH '{QUACK_SERVER}' AS qk (TOKEN 'asdf');
 
 # CONNECT to the quack-attached database.
 statement ok
@@ -84,12 +82,6 @@ DISCONNECT;
 # lives on the AttachedDatabase from ATTACH until DETACH. So any state the
 # backend was holding (open transactions, session variables, prepared
 # statements, temp tables) persists across DISCONNECT / re-CONNECT cycles.
-#
-# In-process quack note: because quack_serve runs the server in-process and
-# shares this DuckDB's catalog, table state created via pass-through is also
-# visible from LOCAL — that's a quack-in-process artifact rather than CONNECT
-# semantics. The assertions below avoid relying on shared-catalog behavior
-# and focus on the round-trip itself.
 #
 # Open design question: should DISCONNECT close the backend session, leaving
 # re-CONNECT to open a fresh one? See memory/project_connect_roadmap.md.
@@ -173,7 +165,7 @@ mode unskip
 # ============================================================================
 
 statement ok
-CONNECT 'quack:localhost' (TOKEN 'test_token');
+CONNECT '{QUACK_SERVER}' (TOKEN 'asdf');
 
 # Query routes through the ephemeral binding to the quack backend.
 query I
@@ -192,7 +184,7 @@ SELECT count(*) FROM pragma_database_list WHERE name LIKE '__connect%';
 
 # Wrong option value is surfaced from the backend at attach time (and rolled back).
 statement error
-CONNECT 'quack:localhost' (TOKEN 'wrong_token');
+CONNECT '{QUACK_SERVER}' (TOKEN 'wrong_token');
 ----
 <REGEX>:.*(token|auth|Authentication|Unauthorized).*
 
