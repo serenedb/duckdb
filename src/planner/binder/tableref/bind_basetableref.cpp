@@ -323,8 +323,6 @@ BoundStatement Binder::Bind(BaseTableRef &ref) {
 			}
 			global_binder_state->column_reads.push_back(column_read);
 		}
-		const auto scope_begin = global_binder_state->bound_tables;
-		const auto resolved_begin = GetStatementProperties().resolved_entries.size();
 		// We need to use a new binder for the view that doesn't reference any CTEs
 		// defined for this binder so there are no collisions between the CTEs defined
 		// for the view and for the current query
@@ -381,9 +379,6 @@ BoundStatement Binder::Bind(BaseTableRef &ref) {
 		}
 		bind_context.AddView(root_index, subquery.alias, subquery, bound_child, view_catalog_entry).column_read =
 		    std::move(column_read);
-		GetStatementProperties().view_scopes.push_back({&view_catalog_entry, scope_begin,
-		                                                global_binder_state->bound_tables, resolved_begin,
-		                                                GetStatementProperties().resolved_entries.size()});
 		return bound_child;
 	}
 	default:
