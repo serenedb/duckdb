@@ -358,12 +358,13 @@ void DataChunk::Deserialize(Deserializer &deserializer) {
 		types.push_back(type);
 	});
 
-	// initialize the data chunk
-	D_ASSERT(!types.empty());
+	if (types.empty()) {
+		throw SerializationException("A data chunk has at least one column");
+	}
 	Initialize(Allocator::DefaultAllocator(), types, MaxValue<idx_t>(row_count, STANDARD_VECTOR_SIZE));
 
 	// read the data
-	deserializer.ReadList(102, "columns", [&](Deserializer::List &list, idx_t i) {
+	deserializer.ReadList(102, "columns", types.size(), [&](Deserializer::List &list, idx_t i) {
 		list.ReadObject([&](Deserializer &object) { data[i].Deserialize(object, row_count); });
 	});
 	SetChildCardinality(row_count);

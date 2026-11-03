@@ -241,6 +241,22 @@ public:
 		self.OnPropertyEnd();
 	}
 
+	//! A list its reader indexes by position, so it holds exactly `size` elements
+	template <class FUNC>
+	void ReadList(this auto &self, const field_id_t field_id, const char *tag, idx_t size, FUNC func) {
+		self.OnPropertyBegin(field_id, tag);
+		auto list_size = self.OnListBegin();
+		if (list_size != size) {
+			throw SerializationException("Field \"%s\" holds %llu elements instead of %llu", tag, list_size, size);
+		}
+		TypedList<std::remove_reference_t<decltype(self)>> list {self};
+		for (idx_t i = 0; i < size; i++) {
+			func(list, i);
+		}
+		self.OnListEnd();
+		self.OnPropertyEnd();
+	}
+
 	template <class FUNC>
 	bool ReadOptionalList(this auto &self, const field_id_t field_id, const char *tag, FUNC func) {
 		if (!self.OnOptionalPropertyBegin(field_id, tag)) {

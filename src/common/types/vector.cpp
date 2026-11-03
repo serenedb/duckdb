@@ -734,7 +734,7 @@ void Vector::Deserialize(Deserializer &deserializer, idx_t count) {
 		auto blobs = FlatVector::GetDataMutable<string_t>(*this);
 
 		if (geometry_format == GeometryStorageType::WKB) {
-			deserializer.ReadList(102, "data", [&](Deserializer::List &list, idx_t i) {
+			deserializer.ReadList(102, "data", count, [&](Deserializer::List &list, idx_t i) {
 				auto geom = list.ReadElement<string>();
 				if (validity.RowIsValid(i)) {
 					blobs[i] = StringVector::AddStringOrBlob(*this, geom);
@@ -742,7 +742,7 @@ void Vector::Deserialize(Deserializer &deserializer, idx_t count) {
 			});
 		} else if (geometry_format == GeometryStorageType::SPATIAL) {
 			// Try to read old SPATIAL format and convert to new GEOMETRY format
-			deserializer.ReadList(102, "data", [&](Deserializer::List &list, idx_t i) {
+			deserializer.ReadList(102, "data", count, [&](Deserializer::List &list, idx_t i) {
 				auto blob = list.ReadElement<string>();
 				if (validity.RowIsValid(i)) {
 					Geometry::FromSpatialGeometry(blob, blobs[i], *this);
@@ -770,15 +770,21 @@ void Vector::Deserialize(Deserializer &deserializer, idx_t count) {
 				auto byte_read_ptr = reinterpret_cast<const char *>(byte_data_buffer->data.get());
 				StringVector::AddAuxiliaryData(*this, std::move(byte_data_buffer));
 
+				auto bytes_left = byte_data_length.GetIndex();
 				for (idx_t i = 0; i < count; ++i) {
 					if (!validity.RowIsValid(i)) {
 						continue;
 					}
+					if (lengths_read_ptr[i] > bytes_left) {
+						throw SerializationException("String vector lengths exceed its %llu bytes of data",
+						                             byte_data_length.GetIndex());
+					}
+					bytes_left -= lengths_read_ptr[i];
 					strings[i] = string_t(byte_read_ptr, lengths_read_ptr[i]);
 					byte_read_ptr += lengths_read_ptr[i];
 				}
 			} else { // this is ye olde way of string serialization
-				deserializer.ReadList(102, "data", [&](Deserializer::List &list, idx_t i) {
+				deserializer.ReadList(102, "data", count, [&](Deserializer::List &list, idx_t i) {
 					auto str = list.ReadElement<string>();
 					if (validity.RowIsValid(i)) {
 						strings[i] = StringVector::AddStringOrBlob(*this, str);
@@ -790,7 +796,7 @@ void Vector::Deserialize(Deserializer &deserializer, idx_t count) {
 		case PhysicalType::STRUCT: {
 			auto &entries = StructVector::GetEntries(*this);
 			// Deserialize entries as a list
-			deserializer.ReadList(103, "children", [&](Deserializer::List &list, idx_t i) {
+			deserializer.ReadList(103, "children", entries.size(), [&](Deserializer::List &list, idx_t i) {
 				list.ReadObject([&](Deserializer &obj) { entries[i].Deserialize(obj, count); });
 			});
 			break;
@@ -803,10 +809,16 @@ void Vector::Deserialize(Deserializer &deserializer, idx_t count) {
 
 			// Read the entries
 			auto list_entries = FlatVector::GetDataMutable<list_entry_t>(*this);
-			deserializer.ReadList(105, "entries", [&](Deserializer::List &list, idx_t i) {
+			deserializer.ReadList(105, "entries", count, [&](Deserializer::List &list, idx_t i) {
 				list.ReadObject([&](Deserializer &obj) {
-					list_entries[i].offset = obj.ReadProperty<uint64_t>(100, "offset");
-					list_entries[i].length = obj.ReadProperty<uint64_t>(101, "length");
+					auto offset = obj.ReadProperty<uint64_t>(100, "offset");
+					auto length = obj.ReadProperty<uint64_t>(101, "length");
+					if (offset > list_size || length > list_size - offset) {
+						throw SerializationException("List entry (%llu, %llu) is outside its %llu child rows", offset,
+						                             length, list_size);
+					}
+					list_entries[i].offset = offset;
+					list_entries[i].length = length;
 				});
 			});
 
@@ -819,6 +831,10 @@ void Vector::Deserialize(Deserializer &deserializer, idx_t count) {
 		}
 		case PhysicalType::ARRAY: {
 			auto array_size = deserializer.ReadProperty<uint64_t>(103, "array_size");
+			if (array_size != ArrayType::GetSize(logical_type)) {
+				throw SerializationException("Array vector of size %llu for type %s", array_size,
+				                             logical_type.ToString());
+			}
 			deserializer.ReadObject(104, "child", [&](Deserializer &obj) {
 				auto &child = ArrayVector::GetChildMutable(*this);
 				child.Deserialize(obj, array_size * count);
