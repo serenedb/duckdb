@@ -1,6 +1,6 @@
 #include "duckdb/main/extension_manager.hpp"
 #include "duckdb/main/database.hpp"
-#include "duckdb/planner/extension_callback.hpp"
+#include "duckdb/main/engine_host.hpp"
 #include "duckdb/main/extension_helper.hpp"
 #include "duckdb/logging/log_manager.hpp"
 
@@ -18,9 +18,7 @@ void ExtensionActiveLoad::FinishLoad(ExtensionInstallInfo &install_info) {
 		final_extension_name = alias.GetIdentifierName();
 	}
 
-	for (auto &callback : ExtensionCallback::Iterate(db)) {
-		callback->OnExtensionLoaded(db, final_extension_name);
-	}
+	EngineHost::Get().OnExtensionLoaded(db, final_extension_name);
 
 	if (!alias.empty()) {
 		DUCKDB_LOG_DEBUG(db, alias.GetIdentifierName());
@@ -30,9 +28,7 @@ void ExtensionActiveLoad::FinishLoad(ExtensionInstallInfo &install_info) {
 }
 
 void ExtensionActiveLoad::LoadFail(const ErrorData &error) {
-	for (auto &callback : ExtensionCallback::Iterate(db)) {
-		callback->OnExtensionLoadFail(db, extension_name.GetIdentifierName(), error);
-	}
+	EngineHost::Get().OnExtensionLoadFail(db, extension_name.GetIdentifierName(), error);
 	if (!alias.empty()) {
 		load_lock.unlock();
 		ExtensionManager::Get(db).RemoveExtensionInfo(alias.GetIdentifierName());
@@ -154,9 +150,7 @@ unique_ptr<ExtensionActiveLoad> ExtensionManager::BeginLoad(const ExtensionLoadO
 	if (info->is_loaded) {
 		return nullptr;
 	}
-	for (auto &callback : ExtensionCallback::Iterate(db)) {
-		callback->OnBeginExtensionLoad(db, extension_name);
-	}
+	EngineHost::Get().OnBeginExtensionLoad(db, extension_name);
 	// extension is not loaded yet and we are in charge of loading it - return
 	return result;
 }

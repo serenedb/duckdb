@@ -22,6 +22,7 @@
 #include "duckdb/main/database_file_opener.hpp"
 #include "duckdb/main/database_file_path_manager.hpp"
 #include "duckdb/main/database_manager.hpp"
+#include "duckdb/main/engine_host.hpp"
 #include "duckdb/main/external_resource_type_registry.hpp"
 #include "duckdb/main/external_resources_manager.hpp"
 #include "duckdb/main/database_path_and_type.hpp"
@@ -400,7 +401,7 @@ void DatabaseInstance::InitializeInstance(const char *database_path, DBConfig *u
 DuckDB::DuckDB(const char *path, DBConfig *new_config) : instance(make_shared_ptr<DatabaseInstance>()) {
 	instance->Initialize(path, new_config);
 	if (instance->config.options.load_extensions) {
-		ExtensionHelper::LoadAllExtensions(*this);
+		EngineHost::Get().LoadExtensions(*this);
 	}
 	instance->db_manager->FinalizeStartup();
 }
@@ -413,7 +414,7 @@ shared_ptr<DuckDB> DuckDB::CreateEmpty(DBConfig *config) {
 	instance->InitializeEmpty(config);
 	auto db = make_shared_ptr<DuckDB>(*instance);
 	if (instance->config.options.load_extensions) {
-		ExtensionHelper::LoadAllExtensions(*db);
+		EngineHost::Get().LoadExtensions(*db);
 	}
 	return db;
 }

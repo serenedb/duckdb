@@ -3,6 +3,7 @@
 #include "duckdb/common/exception.hpp"
 #include "duckdb/function/builtin_function_lookup.hpp"
 #include "duckdb/function/lambda_functions.hpp"
+#include "duckdb/main/engine_host.hpp"
 #include "duckdb/planner/expression_iterator.hpp"
 #include "duckdb/planner/operator/logical_filter.hpp"
 #include "duckdb/function/scalar/generic_functions.hpp"
@@ -64,15 +65,6 @@ static void CollectChildren(Expression &expr, vector<reference<unique_ptr<Expres
 	ExpressionIterator::EnumerateChildren(expr, [&](unique_ptr<Expression> &child) { children.push_back(child); });
 }
 
-static bool FreezesChildren(const vector<rewrite_barrier_t> &barriers, const Expression &parent, bool parent_frozen) {
-	for (auto barrier : barriers) {
-		if (barrier(parent, parent_frozen)) {
-			return true;
-		}
-	}
-	return false;
-}
-
 vector<reference<Rule>> ExpressionRewriter::SelectRules(ExpressionClass expression_class,
                                                         ExpressionType expression_type,
                                                         optional_ptr<const Identifier> function_name) const {
@@ -104,8 +96,8 @@ const vector<reference<Rule>> &ExpressionRewriter::RulesFor(const Expression &ex
 	return function_rules->second;
 }
 
-unique_ptr<Expression> ExpressionRewriter::ApplyRules(LogicalOperator &op, const vector<rewrite_barrier_t> &barriers,
-                                                      unique_ptr<Expression> expr, bool &changes_made, bool is_root) {
+unique_ptr<Expression> ExpressionRewriter::ApplyRules(LogicalOperator &op, unique_ptr<Expression> expr,
+                                                      bool &changes_made, bool is_root) {
 	vector<RewriteFrame> stack;
 	vector<reference<unique_ptr<Expression>>> children;
 	stack.push_back({expr, is_root, false});
@@ -120,7 +112,7 @@ unique_ptr<Expression> ExpressionRewriter::ApplyRules(LogicalOperator &op, const
 			frame.child_not_foldable = false;
 			// Rewrite the subtree bottom-up so parent rules see already-simplified children.
 			CollectChildren(*current_expr, children);
-			const bool children_frozen = FreezesChildren(barriers, *current_expr, frame.frozen);
+			const bool children_frozen = EngineHost::Get().IsRewriteBarrier(context, *current_expr, frame.frozen);
 			const auto parent = frame.frozen ? nullptr : current_expr.get();
 			const optional_idx parent_frame(stack.size() - 1);
 			for (idx_t i = children.size(); i > 0; i--) {
@@ -132,7 +124,7 @@ unique_ptr<Expression> ExpressionRewriter::ApplyRules(LogicalOperator &op, const
 			stack.pop_back();
 			continue;
 		}
-		if (RewriteLambdaBody(op, barriers, *current_expr)) {
+		if (RewriteLambdaBody(op, *current_expr)) {
 			changes_made = true;
 		}
 		current_parent = frame.parent;
@@ -155,13 +147,12 @@ unique_ptr<Expression> ExpressionRewriter::ApplyRules(LogicalOperator &op, const
 	return expr;
 }
 
-bool ExpressionRewriter::RewriteLambdaBody(LogicalOperator &op, const vector<rewrite_barrier_t> &barriers,
-                                           Expression &expr) {
+bool ExpressionRewriter::RewriteLambdaBody(LogicalOperator &op, Expression &expr) {
 	if (expr.GetExpressionClass() != ExpressionClass::BOUND_FUNCTION) {
 		return false;
 	}
 	auto &function = expr.Cast<BoundFunctionExpression>();
-	if (!function.Function().HasBindLambdaCallback() || FreezesChildren(barriers, function, false)) {
+	if (!function.Function().HasBindLambdaCallback() || EngineHost::Get().IsRewriteBarrier(context, function, false)) {
 		return false;
 	}
 	auto &children = function.GetChildrenMutable();
@@ -171,7 +162,7 @@ bool ExpressionRewriter::RewriteLambdaBody(LogicalOperator &op, const vector<rew
 	D_ASSERT(child != children.end());
 	auto &lambda = (*child)->Cast<BoundLambdaExpression>();
 	bool changed = false;
-	shared_ptr<Expression> body = ApplyRules(op, barriers, lambda.LambdaExpr()->Copy(), changed);
+	shared_ptr<Expression> body = ApplyRules(op, lambda.LambdaExpr()->Copy(), changed);
 	if (!changed) {
 		return false;
 	}
@@ -202,12 +193,6 @@ void ExpressionRewriter::VisitOperator(LogicalOperator &op) {
 		rule_sets.clear();
 		rule_sets_rule_count = rules.size();
 	}
-	to_apply_barriers.clear();
-	for (auto &extension : OptimizerExtension::Iterate(context)) {
-		if (extension.rewrite_barrier) {
-			to_apply_barriers.push_back(extension.rewrite_barrier);
-		}
-	}
 
 	if (op.type == LogicalOperatorType::LOGICAL_FILTER) {
 		// For FILTER we want to ensure we always visit the split predicates
@@ -230,7 +215,7 @@ void ExpressionRewriter::VisitOperator(LogicalOperator &op) {
 
 void ExpressionRewriter::VisitExpression(unique_ptr<Expression> *expression) {
 	bool changes_made = false;
-	*expression = ApplyRules(*op, to_apply_barriers, std::move(*expression), changes_made, true);
+	*expression = ApplyRules(*op, std::move(*expression), changes_made, true);
 	current_parent = nullptr;
 }
 

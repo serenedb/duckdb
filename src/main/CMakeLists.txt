@@ -29,6 +29,7 @@ add_library_unity(
   config.cpp
   connection.cpp
   database.cpp
+  engine_host.cpp
   parse_iterator.cpp
   parser_context.cpp
   statement_iterator.cpp

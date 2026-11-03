@@ -8,6 +8,7 @@
 #include "duckdb/main/profiler_extension.hpp"
 #include "duckdb/main/config.hpp"
 #include "duckdb/main/database.hpp"
+#include "duckdb/main/engine_host.hpp"
 
 namespace duckdb {
 
@@ -43,6 +44,12 @@ ExtensionCallbackManager::ExtensionCallbackManager() {
 	callback_registry.store(registry_versions.back().get(), std::memory_order_release);
 }
 
+static void CheckNoEngineHost() {
+	if (EngineHost::IsInstalled()) {
+		throw InternalException("The engine host calls the hooks of every module: none registers its own");
+	}
+}
+
 ExtensionCallbackRegistry &ExtensionCallbackManager::NextVersion() {
 	registry_versions.push_back(make_uniq<ExtensionCallbackRegistry>(Current()));
 	return *registry_versions.back();
@@ -67,6 +74,7 @@ vector<string> ExtensionCallbackManager::GetExtensionSchemas() const {
 }
 
 void ExtensionCallbackManager::Register(PlannerExtension extension) {
+	CheckNoEngineHost();
 	lock_guard<mutex> guard(registry_lock);
 	auto &new_registry = NextVersion();
 	new_registry.planner_extensions.push_back(std::move(extension));
@@ -74,6 +82,7 @@ void ExtensionCallbackManager::Register(PlannerExtension extension) {
 }
 
 void ExtensionCallbackManager::Register(OptimizerExtension extension) {
+	CheckNoEngineHost();
 	lock_guard<mutex> guard(registry_lock);
 	auto &new_registry = NextVersion();
 	new_registry.optimizer_extensions.push_back(std::move(extension));
@@ -81,6 +90,7 @@ void ExtensionCallbackManager::Register(OptimizerExtension extension) {
 }
 
 void ExtensionCallbackManager::Register(shared_ptr<OperatorExtension> extension) {
+	CheckNoEngineHost();
 	lock_guard<mutex> guard(registry_lock);
 	auto &new_registry = NextVersion();
 	new_registry.operator_extensions.push_back(std::move(extension));
@@ -95,6 +105,7 @@ void ExtensionCallbackManager::Register(const string &name, shared_ptr<StorageEx
 }
 
 void ExtensionCallbackManager::Register(shared_ptr<ExtensionCallback> extension) {
+	CheckNoEngineHost();
 	lock_guard<mutex> guard(registry_lock);
 	auto &new_registry = NextVersion();
 	new_registry.extension_callbacks.push_back(std::move(extension));
