@@ -358,14 +358,23 @@ void DataChunk::Deserialize(Deserializer &deserializer) {
 		types.push_back(type);
 	});
 
-	// initialize the data chunk
-	D_ASSERT(!types.empty());
+	if (types.empty()) {
+		throw SerializationException("A data chunk has no columns");
+	}
 	Initialize(Allocator::DefaultAllocator(), types, MaxValue<idx_t>(row_count, STANDARD_VECTOR_SIZE));
 
-	// read the data
+	// read the data: a column for each type
+	idx_t column_count = 0;
 	deserializer.ReadList(102, "columns", [&](Deserializer::List &list, idx_t i) {
+		if (i >= types.size()) {
+			throw SerializationException("A data chunk has more columns than its %llu types", types.size());
+		}
 		list.ReadObject([&](Deserializer &object) { data[i].Deserialize(object, row_count); });
+		column_count++;
 	});
+	if (column_count != types.size()) {
+		throw SerializationException("A data chunk has %llu columns for its %llu types", column_count, types.size());
+	}
 	SetChildCardinality(row_count);
 }
 
