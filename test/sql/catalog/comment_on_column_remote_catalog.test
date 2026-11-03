@@ -6,11 +6,10 @@ require quack
 
 require httpfs
 
-statement ok
-CALL quack_serve(token='test_token');
+test-env QUACK_SERVER quack:localhost
 
 statement ok
-ATTACH 'quack:localhost' AS qk (TOKEN 'test_token');
+ATTACH '{QUACK_SERVER}' AS qk (TOKEN 'asdf');
 
 statement ok
 CREATE TABLE tbl(i INTEGER, j INTEGER);

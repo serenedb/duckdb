@@ -8,15 +8,14 @@ require quack
 statement ok
 CALL enable_logging('ExternalResource', storage='memory');
 
-statement ok
-CALL quack_serve(token='test_token');
+test-env QUACK_SERVER quack:localhost
 
 statement ok
 CREATE MACRO qk_create(p) AS TABLE SELECT MAP {'id': 'q1'} AS handle;
 
 statement ok
 CREATE MACRO qk_status(h) AS TABLE
-  SELECT 'ready' AS state, MAP {'uri': 'localhost', 'attached_db_type': 'quack', 'token': 'test_token'} AS result;
+  SELECT 'ready' AS state, MAP {'uri': '{QUACK_SERVER}', 'attached_db_type': 'quack', 'token': 'asdf'} AS result;
 
 statement ok
 CREATE MACRO qk_destroy(h) AS TABLE SELECT 'gone' AS status;
@@ -76,8 +75,8 @@ CREATE EXTERNAL RESOURCE 'quack@local' AS r2;
 query IIII
 SELECT name, type, uri, attached_db_type FROM duckdb_external_resources() ORDER BY name;
 ----
-r1	quack@local	localhost	quack
-r2	quack@local	localhost	quack
+r1	quack@local	{QUACK_SERVER}	quack
+r2	quack@local	{QUACK_SERVER}	quack
 
 # DESTROY deregisters, so it drops out of the listing.
 statement ok
