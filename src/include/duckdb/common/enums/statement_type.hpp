@@ -78,7 +78,6 @@ std::string_view StatementReturnTypeToString(StatementReturnType type);
 class Catalog;
 class CatalogEntry;
 class ClientContext;
-class ViewCatalogEntry;
 
 struct FileGrant {
 	string path;
@@ -110,14 +109,6 @@ struct StatementProperties {
 		DatabaseModificationType modifications;
 	};
 
-	struct ViewScope {
-		const ViewCatalogEntry *view = nullptr;
-		idx_t begin = 0;
-		idx_t end = 0;
-		idx_t resolved_begin = 0;
-		idx_t resolved_end = 0;
-	};
-
 	struct DataRead {
 		const CatalogEntry *entry = nullptr;
 		idx_t version = 0;
@@ -129,7 +120,6 @@ struct StatementProperties {
 	identifier_map_t<CatalogIdentity> read_databases;
 	//! The set of databases this statement will modify
 	identifier_map_t<ModificationInfo> modified_databases;
-	vector<ViewScope> view_scopes;
 	vector<const CatalogEntry *> resolved_entries;
 	vector<DataRead> data_reads;
 	bool point_reads_only = false;
