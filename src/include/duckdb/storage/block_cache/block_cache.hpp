@@ -306,11 +306,8 @@ public:
 	//! A file whose blocks exist only in the cache and its temporary files
 	shared_ptr<BlockCacheFile> CreateUnbackedFile(const string &path);
 	//! A file the caller writes under [path], replacing earlier opens of [path]: its writer creates the blocks, and
-	//! once FinishWrittenFile publishes it, opens of [path] share them like fetched blocks
+	//! once its BlockCacheAppender finishes, opens of [path] share them like fetched blocks
 	shared_ptr<BlockCacheFile> CreateWrittenFile(const string &path);
-	//! Ends the write of [file], which wrote the version [written] describes; a published file keeps its blocks, and
-	//! TryGetFile reports [written] for it, an abandoned one drops them
-	void FinishWrittenFile(BlockCacheFile &file, const CacheValidationInfo &written, bool published);
 	//! Drops the blocks of every open of [path]; current pins keep their bytes
 	void ForgetFile(const string &path);
 
@@ -333,11 +330,6 @@ public:
 	//! Starts fetching the missing blocks of [offset, offset + size) and returns; a HINT stops at the bytes a file and
 	//! the cache may have in flight
 	void Prefetch(const shared_ptr<BlockCacheFile> &file, idx_t offset, idx_t size, BlockCachePrefetch kind);
-	//! Pins a new block [block] of the unbacked or written [file] for its writer, holding whatever its buffer held
-	//! before; BlockCacheAppender fills it and zeroes what lies past the end of the file
-	BlockCachePin CreateBlock(BlockCacheFile &file, idx_t block);
-	//! Extends the unbacked [file] to [size] bytes once its blocks are written
-	void SetUnbackedSize(BlockCacheFile &file, idx_t size);
 
 	//! Drops every block of a backed file; current pins keep their bytes
 	void Clear();
@@ -355,9 +347,19 @@ public:
 	void StopFetching();
 
 private:
+	friend class BlockCacheAppender;
 	friend class BlockCacheBlocks;
 	friend class BlockCacheFile;
 	friend class BlockCacheFetchTask;
+
+	//! Ends the write of [file], which wrote the version [written] describes; a published file keeps its blocks, and
+	//! TryGetFile reports [written] for it, an abandoned one drops them
+	void FinishWrittenFile(BlockCacheFile &file, const CacheValidationInfo &written, bool published);
+	//! Pins a new block [block] of the unbacked or written [file] for its writer, holding whatever its buffer held
+	//! before; BlockCacheAppender fills it and zeroes what lies past the end of the file
+	BlockCachePin CreateBlock(BlockCacheFile &file, idx_t block);
+	//! Extends the unbacked [file] to [size] bytes once its blocks are written
+	void SetUnbackedSize(BlockCacheFile &file, idx_t size);
 
 	using Slot = BlockCacheSlot;
 
