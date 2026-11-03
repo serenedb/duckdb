@@ -129,7 +129,7 @@ public:
 
 protected:
 	bool ListFilesExtended(const string &directory, const std::function<void(OpenFileInfo &info)> &callback,
-	                       optional_ptr<FileOpener> opener) override;
+	                       optional_ptr<FileOpener> opener, const ListFilesOptions &options) override;
 
 	bool SupportsListFilesExtended() const override {
 		return true;

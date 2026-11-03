@@ -1568,8 +1568,11 @@ void CheckDirectory(FileSystem &fs, const string &file_path, CopyOverwriteMode o
 		return;
 	}
 	vector<string> file_list;
-	fs.ListFilesRecursive(file_path,
-	                      [&](OpenFileInfo &info) { file_list.push_back(fs.JoinPath(file_path, info.path)); });
+	ListFilesOptions recursive;
+	recursive.recursive = true;
+	fs.ListFiles(
+	    file_path, [&](OpenFileInfo &info) { file_list.push_back(fs.JoinPath(file_path, info.path)); }, nullptr,
+	    recursive);
 	if (file_list.empty()) {
 		return;
 	}

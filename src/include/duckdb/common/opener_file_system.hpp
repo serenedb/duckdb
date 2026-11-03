@@ -130,12 +130,6 @@ public:
 		VerifyCanAccessDirectory(directory);
 		return GetFileSystem().RemoveDirectoryExtended(directory, options, GetOpener());
 	}
-	void ListFilesRecursive(const string &directory, const std::function<void(OpenFileInfo &info)> &callback,
-	                        optional_ptr<FileOpener> opener = nullptr) override {
-		VerifyNoOpener(opener);
-		VerifyCanAccessDirectory(directory);
-		GetFileSystem().ListFilesRecursive(directory, callback, GetOpener());
-	}
 
 	void MoveFile(const string &source, const string &target, optional_ptr<FileOpener> opener) override {
 		VerifyNoOpener(opener);
@@ -303,10 +297,10 @@ public:
 
 protected:
 	bool ListFilesExtended(const string &directory, const std::function<void(OpenFileInfo &info)> &callback,
-	                       optional_ptr<FileOpener> opener) override {
+	                       optional_ptr<FileOpener> opener, const ListFilesOptions &options) override {
 		VerifyNoOpener(opener);
 		VerifyCanAccessDirectory(directory);
-		return GetFileSystem().ListFiles(directory, callback, GetOpener().get());
+		return GetFileSystem().ListFiles(directory, callback, GetOpener().get(), options);
 	}
 
 	bool SupportsListFilesExtended() const override {
