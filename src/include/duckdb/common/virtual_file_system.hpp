@@ -63,8 +63,6 @@ public:
 	void RemoveDirectory(const string &directory, optional_ptr<FileOpener> opener) override;
 	bool RemoveDirectoryExtended(const string &directory, const RemoveDirectoryOptions &options,
 	                             optional_ptr<FileOpener> opener = nullptr) override;
-	void ListFilesRecursive(const string &directory, const std::function<void(OpenFileInfo &info)> &callback,
-	                        optional_ptr<FileOpener> opener = nullptr) override;
 
 	void MoveFile(const string &source, const string &target, optional_ptr<FileOpener> opener) override;
 
@@ -103,7 +101,7 @@ protected:
 	}
 
 	bool ListFilesExtended(const string &directory, const std::function<void(OpenFileInfo &info)> &callback,
-	                       optional_ptr<FileOpener> opener) override;
+	                       optional_ptr<FileOpener> opener, const ListFilesOptions &options) override;
 
 	bool SupportsListFilesExtended() const override {
 		return true;

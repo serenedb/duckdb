@@ -821,7 +821,10 @@ bool LocalFileSystem::TryRemoveFile(const string &filename, optional_ptr<FileOpe
 
 bool LocalFileSystem::ListFilesExtended(const string &directory,
                                         const std::function<void(OpenFileInfo &info)> &callback,
-                                        optional_ptr<FileOpener> opener) {
+                                        optional_ptr<FileOpener> opener, const ListFilesOptions &options) {
+	if (options.recursive) {
+		return WalkFiles(directory, callback, opener);
+	}
 	auto normalized_dir = ExpandPath(directory, opener);
 	auto dir = opendir(normalized_dir.c_str());
 	if (!dir) {
@@ -1767,7 +1770,10 @@ bool LocalFileSystem::TryRemoveFile(const string &filename, optional_ptr<FileOpe
 
 bool LocalFileSystem::ListFilesExtended(const string &directory,
                                         const std::function<void(OpenFileInfo &info)> &callback,
-                                        optional_ptr<FileOpener> opener) {
+                                        optional_ptr<FileOpener> opener, const ListFilesOptions &options) {
+	if (options.recursive) {
+		return WalkFiles(directory, callback, opener);
+	}
 	auto unicode_path = NormalizePathAndConvertToUnicode(*this, directory, opener);
 
 	// Open a handle to the directory itself so we can use GetFileInformationByHandleEx,
