@@ -151,7 +151,8 @@ static idx_t GetHugePageSize() {
 }
 #endif
 
-idx_t Allocator::HugePageSize() {
+//! The size of a transparent huge page, or zero where there are none
+static idx_t HugePageSize() {
 #if defined(__linux__) && INTPTR_MAX == INT64_MAX && defined(MADV_HUGEPAGE)
 	static const idx_t huge_page_size = GetHugePageSize();
 	return huge_page_size;

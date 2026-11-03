@@ -110,10 +110,7 @@ DatabaseInstance::~DatabaseInstance() {
 	if (memory_file_system) {
 		memory_file_system->Clear();
 	}
-	if (block_cache) {
-		block_cache_ptr.store(nullptr, std::memory_order_release);
-		block_cache.reset();
-	}
+	block_cache.reset();
 	result_set_manager.reset();
 
 	buffer_manager.reset();
@@ -372,6 +369,8 @@ void DatabaseInstance::InitializeInstance(const char *database_path, DBConfig *u
 
 	metrics_manager = make_uniq<MetricsManager>();
 
+	block_cache = make_uniq<BlockCache>(*this);
+	block_cache->SetEnabled(Settings::Get<EnableExternalFileCacheSetting>(config));
 	result_set_manager = make_uniq<ResultSetManager>(*this);
 
 	scheduler = make_uniq<TaskScheduler>(*this);
@@ -498,21 +497,7 @@ FileSystem &LocalDatabaseFileSystem::GetFileSystem() const {
 }
 
 BlockCache &DatabaseInstance::GetBlockCache() {
-	auto cache = block_cache_ptr.load(std::memory_order_acquire);
-	if (cache) {
-		return *cache;
-	}
-	lock_guard<mutex> guard(block_cache_lock);
-	if (!block_cache) {
-		block_cache = make_uniq<BlockCache>(*this);
-		block_cache->SetEnabled(Settings::Get<EnableExternalFileCacheSetting>(*this));
-		block_cache_ptr.store(block_cache.get(), std::memory_order_release);
-	}
 	return *block_cache;
-}
-
-optional_ptr<BlockCache> DatabaseInstance::TryGetBlockCache() {
-	return block_cache_ptr.load(std::memory_order_acquire);
 }
 
 MemoryFileSystem &DatabaseInstance::GetMemoryFileSystem() {
