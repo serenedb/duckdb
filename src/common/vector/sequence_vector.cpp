@@ -63,6 +63,9 @@ bool SequenceBuffer::TrySerialize(Serializer &serializer, const LogicalType &typ
 }
 
 buffer_ptr<VectorBuffer> SequenceBuffer::Deserialize(Deserializer &deserializer, const LogicalType &type, idx_t count) {
+	if (!type.IsNumeric()) {
+		throw SerializationException("A sequence vector of type %s", type.ToString());
+	}
 	const auto seq_start = deserializer.ReadProperty<int64_t>(91, "seq_start");
 	const auto seq_increment = deserializer.ReadProperty<int64_t>(92, "seq_increment");
 	return make_buffer<SequenceBuffer>(seq_start, seq_increment, count_t(count));

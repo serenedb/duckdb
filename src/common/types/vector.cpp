@@ -14,6 +14,7 @@
 #include "duckdb/common/printer.hpp"
 #include "duckdb/common/serializer/deserializer.hpp"
 #include "duckdb/common/serializer/serializer.hpp"
+#include "duckdb/common/stack_depth.hpp"
 #include "duckdb/common/types/null_value.hpp"
 #include "duckdb/common/types/sel_cache.hpp"
 #include "duckdb/common/types/value.hpp"
@@ -802,7 +803,26 @@ public:
 	unique_ptr<data_t[]> data;
 };
 
+//! Read a list whose elements go to positions 0..count-1: a list of another length, which only a corrupt or forged
+//! input holds, fails before it writes past them or leaves some of them unset
+template <class FUNC>
+static void ReadListOfSize(Deserializer &deserializer, const field_id_t field_id, const char *tag, idx_t count,
+                           FUNC func) {
+	idx_t size = 0;
+	deserializer.ReadList(field_id, tag, [&](Deserializer::List &list, idx_t i) {
+		if (i >= count) {
+			throw SerializationException("Field \"%s\" holds more than %llu elements", tag, count);
+		}
+		func(list, i);
+		size++;
+	});
+	if (size != count) {
+		throw SerializationException("Field \"%s\" holds %llu elements instead of %llu", tag, size, count);
+	}
+}
+
 void Vector::Deserialize(Deserializer &deserializer, idx_t count) {
+	StackDepth::Check();
 	auto &logical_type = GetType();
 
 	const auto vtype = // older versions that only supported flat vectors did not serialize vector_type,
@@ -844,7 +864,7 @@ void Vector::Deserialize(Deserializer &deserializer, idx_t count) {
 		auto blobs = FlatVector::GetDataMutable<string_t>(*this);
 
 		if (geometry_format == GeometryStorageType::WKB) {
-			deserializer.ReadList(102, "data", [&](Deserializer::List &list, idx_t i) {
+			ReadListOfSize(deserializer, 102, "data", count, [&](Deserializer::List &list, idx_t i) {
 				auto geom = list.ReadElement<string>();
 				if (validity.RowIsValid(i)) {
 					blobs[i] = StringVector::AddStringOrBlob(*this, geom);
@@ -852,7 +872,7 @@ void Vector::Deserialize(Deserializer &deserializer, idx_t count) {
 			});
 		} else if (geometry_format == GeometryStorageType::SPATIAL) {
 			// Try to read old SPATIAL format and convert to new GEOMETRY format
-			deserializer.ReadList(102, "data", [&](Deserializer::List &list, idx_t i) {
+			ReadListOfSize(deserializer, 102, "data", count, [&](Deserializer::List &list, idx_t i) {
 				auto blob = list.ReadElement<string>();
 				if (validity.RowIsValid(i)) {
 					Geometry::FromSpatialGeometry(blob, blobs[i], *this);
@@ -880,15 +900,20 @@ void Vector::Deserialize(Deserializer &deserializer, idx_t count) {
 				auto byte_read_ptr = reinterpret_cast<const char *>(byte_data_buffer->data.get());
 				StringVector::AddAuxiliaryData(*this, std::move(byte_data_buffer));
 
+				const auto byte_end = byte_read_ptr + byte_data_length.GetIndex();
 				for (idx_t i = 0; i < count; ++i) {
 					if (!validity.RowIsValid(i)) {
 						continue;
+					}
+					if (lengths_read_ptr[i] > static_cast<idx_t>(byte_end - byte_read_ptr)) {
+						throw SerializationException("String vector lengths exceed its %llu bytes of data",
+						                             byte_data_length.GetIndex());
 					}
 					strings[i] = string_t(byte_read_ptr, lengths_read_ptr[i]);
 					byte_read_ptr += lengths_read_ptr[i];
 				}
 			} else { // this is ye olde way of string serialization
-				deserializer.ReadList(102, "data", [&](Deserializer::List &list, idx_t i) {
+				ReadListOfSize(deserializer, 102, "data", count, [&](Deserializer::List &list, idx_t i) {
 					auto str = list.ReadElement<string>();
 					if (validity.RowIsValid(i)) {
 						strings[i] = StringVector::AddStringOrBlob(*this, str);
@@ -900,7 +925,7 @@ void Vector::Deserialize(Deserializer &deserializer, idx_t count) {
 		case PhysicalType::STRUCT: {
 			auto &entries = StructVector::GetEntries(*this);
 			// Deserialize entries as a list
-			deserializer.ReadList(103, "children", [&](Deserializer::List &list, idx_t i) {
+			ReadListOfSize(deserializer, 103, "children", entries.size(), [&](Deserializer::List &list, idx_t i) {
 				list.ReadObject([&](Deserializer &obj) { entries[i].Deserialize(obj, count); });
 			});
 			break;
@@ -913,12 +938,20 @@ void Vector::Deserialize(Deserializer &deserializer, idx_t count) {
 
 			// Read the entries
 			auto list_entries = FlatVector::GetDataMutable<list_entry_t>(*this);
-			deserializer.ReadList(105, "entries", [&](Deserializer::List &list, idx_t i) {
+			ReadListOfSize(deserializer, 105, "entries", count, [&](Deserializer::List &list, idx_t i) {
 				list.ReadObject([&](Deserializer &obj) {
 					list_entries[i].offset = obj.ReadProperty<uint64_t>(100, "offset");
 					list_entries[i].length = obj.ReadProperty<uint64_t>(101, "length");
 				});
 			});
+			bool outside = false;
+			for (idx_t i = 0; i < count; i++) {
+				outside |=
+				    list_entries[i].offset > list_size || list_entries[i].length > list_size - list_entries[i].offset;
+			}
+			if (outside) {
+				throw SerializationException("A list entry is outside its %llu child rows", list_size);
+			}
 
 			// Read the child vector
 			deserializer.ReadObject(106, "child", [&](Deserializer &obj) {
@@ -929,6 +962,10 @@ void Vector::Deserialize(Deserializer &deserializer, idx_t count) {
 		}
 		case PhysicalType::ARRAY: {
 			auto array_size = deserializer.ReadProperty<uint64_t>(103, "array_size");
+			if (array_size != ArrayType::GetSize(logical_type)) {
+				throw SerializationException("Array size %llu does not match type %s", array_size,
+				                             logical_type.ToString());
+			}
 			deserializer.ReadObject(104, "child", [&](Deserializer &obj) {
 				auto &child = ArrayVector::GetChildMutable(*this);
 				child.Deserialize(obj, array_size * count);
