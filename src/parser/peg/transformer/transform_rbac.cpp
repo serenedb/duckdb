@@ -436,6 +436,7 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformAlterRoleStatement(PEGT
 		auto settings =
 		    make_uniq<AlterDatabaseSettingsInfo>(Identifier(TransformColIdName(transformer, in_database.GetChild(2))));
 		settings->role = name;
+		settings->all_roles = all_roles;
 		CollectConfigClause(transformer, in_database.GetChild(3), settings->set_config, settings->reset_config,
 		                    settings->reset_all_config);
 		result->info = std::move(settings);

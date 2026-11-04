@@ -191,6 +191,7 @@ struct AlterDatabaseSettingsInfo : public AlterInfo {
 
 	string role;
 	idx_t role_id = 0;
+	bool all_roles = false;
 	bool reset_all_config = false;
 	vector<string> reset_config;
 	vector<string> set_config;

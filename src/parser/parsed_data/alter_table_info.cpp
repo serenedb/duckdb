@@ -296,6 +296,7 @@ unique_ptr<AlterInfo> AlterDatabaseSettingsInfo::Copy() const {
 	result->if_not_found = if_not_found;
 	result->role = role;
 	result->role_id = role_id;
+	result->all_roles = all_roles;
 	result->reset_all_config = reset_all_config;
 	result->reset_config = reset_config;
 	result->set_config = set_config;
@@ -308,6 +309,9 @@ unique_ptr<AlterInfo> AlterDatabaseSettingsInfo::Copy() const {
 
 string AlterDatabaseSettingsInfo::ToString() const {
 	auto &database = GetQualifiedName().Name().GetIdentifierName();
+	if (all_roles) {
+		return "ALTER ROLE ALL IN DATABASE " + database + ";";
+	}
 	if (role.empty()) {
 		string options;
 		if (set_allow_connections) {

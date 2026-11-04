@@ -644,6 +644,11 @@
         "name": "allow_connections",
         "type": "bool",
         "default": "true"
+      },
+      {
+        "id": 309,
+        "name": "all_roles",
+        "type": "bool"
       }
     ]
   },
