@@ -882,6 +882,24 @@ TEST_CASE("Block cache pins fail with the read error and later pins fetch again"
 	REQUIRE(HoldsExpectedBytes(prefetched, 2));
 }
 
+TEST_CASE("Block cache gives back the blocks of a fetch piece that never ran after another piece failed",
+          "[block_cache]") {
+	DBConfig config;
+	config.options.maximum_threads = 1;
+	DuckDB db(nullptr, &config);
+	BlockCache cache(*db.instance);
+	CountingSourceFileSystem fs;
+	constexpr idx_t PIECE_BLOCKS = BlockCache::PIECE_SIZE / BLOCK;
+	TestFile file("block_cache_cancelled_piece.bin", 2 * PIECE_BLOCKS * BLOCK);
+	auto cached = file.Open(cache, fs);
+
+	fs.Fail(1);
+	REQUIRE_THROWS_WITH(cache.PinRange(cached, 0, 2 * PIECE_BLOCKS * BLOCK), Catch::Contains("injected read failure"));
+	REQUIRE(!cache.IsCached(*cached, PIECE_BLOCKS * BLOCK, BLOCK));
+	auto pin = cache.Pin(cached, PIECE_BLOCKS);
+	REQUIRE(HoldsExpectedBytes(pin, PIECE_BLOCKS));
+}
+
 TEST_CASE("Block cache keeps evicted blocks of remote files in temporary files and reads them back", "[block_cache]") {
 	const auto directory = TestCreatePath("block_cache_remote_copies");
 	DBConfig config;
