@@ -1,4 +1,5 @@
 #include "duckdb/parser/parsed_data/alter_scalar_function_info.hpp"
+#include "duckdb/common/sql_identifier.hpp"
 #include "duckdb/parser/parsed_data/create_scalar_function_info.hpp"
 
 namespace duckdb {
@@ -21,6 +22,29 @@ CatalogType AlterScalarFunctionInfo::GetCatalogType() const {
 	return CatalogType::SCALAR_FUNCTION_ENTRY;
 }
 
+string AlterScalarFunctionInfo::RoutineKeyword() const {
+	return !include_procedures ? "FUNCTION" : !include_functions ? "PROCEDURE" : "ROUTINE";
+}
+
+//===--------------------------------------------------------------------===//
+// RenameScalarFunctionInfo
+//===--------------------------------------------------------------------===//
+unique_ptr<AlterInfo> RenameScalarFunctionInfo::Copy() const {
+	auto result = make_uniq<RenameScalarFunctionInfo>(GetAlterEntryData(), new_name);
+	result->include_functions = include_functions;
+	result->include_procedures = include_procedures;
+	return std::move(result);
+}
+
+string RenameScalarFunctionInfo::ToString() const {
+	string result = "ALTER " + RoutineKeyword() + " ";
+	if (if_not_found == OnEntryNotFound::RETURN_NULL) {
+		result += "IF EXISTS ";
+	}
+	return result + GetQualifiedName().ToString(QualifiedNameToStringMode::HIDE_DEFAULT_SCHEMA) + " RENAME TO " +
+	       SQLIdentifier(new_name) + ";";
+}
+
 //===--------------------------------------------------------------------===//
 // AlterFunctionAttributesInfo
 //===--------------------------------------------------------------------===//
@@ -34,6 +58,8 @@ AlterFunctionAttributesInfo::AlterFunctionAttributesInfo(const AlterEntryData &d
 
 unique_ptr<AlterInfo> AlterFunctionAttributesInfo::Copy() const {
 	auto result = make_uniq<AlterFunctionAttributesInfo>(GetAlterEntryData());
+	result->include_functions = include_functions;
+	result->include_procedures = include_procedures;
 	result->parameter_types = parameter_types;
 	result->has_parameter_types = has_parameter_types;
 	result->set_security = set_security;
@@ -48,7 +74,8 @@ unique_ptr<AlterInfo> AlterFunctionAttributesInfo::Copy() const {
 }
 
 string AlterFunctionAttributesInfo::ToString() const {
-	string result = "ALTER FUNCTION " + GetQualifiedName().ToString(QualifiedNameToStringMode::HIDE_DEFAULT_SCHEMA);
+	string result =
+	    "ALTER " + RoutineKeyword() + " " + GetQualifiedName().ToString(QualifiedNameToStringMode::HIDE_DEFAULT_SCHEMA);
 	if (has_parameter_types) {
 		result += "(";
 		for (idx_t i = 0; i < parameter_types.size(); i++) {
