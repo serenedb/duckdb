@@ -176,6 +176,7 @@ struct AlterRoleInfo : public AlterInfo {
 	idx_t grant_role_id = 0;
 	idx_t grantor_id = 0;
 	bool all_roles = false;
+	bool alter_group = false;
 
 public:
 	CatalogType GetCatalogType() const override;

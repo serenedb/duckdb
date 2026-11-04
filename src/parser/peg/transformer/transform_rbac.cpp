@@ -784,6 +784,7 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformAlterGroupStatement(PEG
 		auto alter = make_uniq<AlterRoleInfo>(Identifier(TransformColIdName(transformer, member.get())));
 		alter->grant_role = group;
 		alter->revoke = drop;
+		alter->alter_group = true;
 		AddToMultiStatement(statements, std::move(alter));
 	}
 	return SingleOrMulti(std::move(statements));
