@@ -55,6 +55,7 @@ AclMode Permissions::AllPrivileges(CatalogType acl_class) {
 	case CatalogType::TYPE_ENTRY:
 	case CatalogType::FOREIGN_SERVER_ENTRY:
 	case CatalogType::FOREIGN_DATA_WRAPPER_ENTRY:
+	case CatalogType::LANGUAGE_ENTRY:
 		return AclMode::Usage;
 	case CatalogType::TABLESPACE_ENTRY:
 		return AclMode::Create;
@@ -73,6 +74,7 @@ AclMode Permissions::PublicPrivileges(CatalogType acl_class) {
 	case CatalogType::TABLE_MACRO_ENTRY:
 		return AclMode::Execute;
 	case CatalogType::TYPE_ENTRY:
+	case CatalogType::LANGUAGE_ENTRY:
 		return AclMode::Usage;
 	default:
 		return AclMode::NoRights;
@@ -120,6 +122,15 @@ vector<AclItem> Permissions::AclDefault(CatalogType acl_class, idx_t owner) {
 std::span<const AclItem> Permissions::ForeignDataWrapperAcl(idx_t wrapper) const {
 	for (auto &row : foreign_data_wrappers) {
 		if (row.oid == wrapper) {
+			return row.acl;
+		}
+	}
+	return {};
+}
+
+std::span<const AclItem> Permissions::LanguageAcl(idx_t language) const {
+	for (auto &row : languages) {
+		if (row.oid == language) {
 			return row.acl;
 		}
 	}
@@ -335,6 +346,24 @@ void AlterPermissionsInfo::ApplyTo(Permissions &permissions, CatalogType entry_t
 			}
 		} else if (row == wrappers.end()) {
 			wrappers.push_back(ObjectAcl {info.foreign_data_wrapper_id, std::move(row_acl)});
+		} else {
+			row->acl = std::move(row_acl);
+		}
+		return;
+	}
+
+	if (info.language_id) {
+		auto &languages = permissions.languages;
+		auto row = std::find_if(languages.begin(), languages.end(),
+		                        [&](const ObjectAcl &entry) { return entry.oid == info.language_id; });
+		auto row_acl = row == languages.end() ? vector<AclItem> {} : row->acl;
+		ApplyGrant(info, info.object_owner_id, row_acl, CatalogType::LANGUAGE_ENTRY, nullptr);
+		if (row_acl.empty()) {
+			if (row != languages.end()) {
+				languages.erase(row);
+			}
+		} else if (row == languages.end()) {
+			languages.push_back(ObjectAcl {info.language_id, std::move(row_acl)});
 		} else {
 			row->acl = std::move(row_acl);
 		}
@@ -855,6 +884,11 @@ static bool AnyRoleReference(const CatalogEntry &entry, F &&named) {
 			return true;
 		}
 	}
+	for (auto &row : permissions.languages) {
+		if (any_acl(row.acl)) {
+			return true;
+		}
+	}
 	if (entry.type == CatalogType::VIEW_ENTRY) {
 		auto &column_acls = entry.Cast<ViewCatalogEntry>().column_acls;
 		return std::any_of(column_acls.begin(), column_acls.end(),
@@ -921,6 +955,8 @@ string PermissionKindName(CatalogType type) {
 		return "foreign-data wrapper";
 	case CatalogType::PARAMETER_ENTRY:
 		return "parameter";
+	case CatalogType::LANGUAGE_ENTRY:
+		return "language";
 	case CatalogType::SUBSCRIPTION_ENTRY:
 		return "subscription";
 	case CatalogType::JOB_ENTRY:
