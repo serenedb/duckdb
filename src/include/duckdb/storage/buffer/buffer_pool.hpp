@@ -35,7 +35,7 @@ class BufferPool {
 
 public:
 	BufferPool(BlockAllocator &block_allocator, idx_t maximum_memory, bool track_eviction_timestamps,
-	           idx_t allocator_bulk_deallocation_flush_threshold);
+	           idx_t allocator_bulk_deallocation_flush_threshold, idx_t external_file_cache_min_memory);
 	virtual ~BufferPool();
 
 	//! Set a new memory limit to the buffer pool, throws an exception if the new limit is too low and not enough
@@ -45,6 +45,9 @@ public:
 	//! If bulk deallocation larger than this occurs, flush outstanding allocations
 	void SetAllocatorBulkDeallocationFlushThreshold(idx_t threshold);
 	idx_t GetAllocatorBulkDeallocationFlushThreshold();
+
+	void SetExternalFileCacheMinMemory(idx_t size);
+	idx_t GetExternalFileCacheMinMemory() const;
 
 	void UpdateUsedMemory(MemoryTag tag, int64_t size);
 
@@ -81,8 +84,8 @@ protected:
 	virtual EvictionResult EvictBlocks(QueryContext context, MemoryTag tag, idx_t extra_memory, idx_t memory_limit,
 	                                   unique_ptr<FileBuffer> *buffer = nullptr);
 	virtual EvictionResult EvictBlocksInternal(QueryContext context, EvictionQueue &queue, MemoryTag tag,
-	                                           idx_t extra_memory, idx_t memory_limit,
-	                                           unique_ptr<FileBuffer> *buffer = nullptr);
+	                                           idx_t extra_memory, idx_t memory_limit, idx_t keep,
+	                                           unique_ptr<FileBuffer> *buffer);
 
 	//! Evict object cache entries if needed.
 	EvictionResult EvictObjectCacheEntries(MemoryTag tag, idx_t extra_memory, idx_t memory_limit);
@@ -118,10 +121,12 @@ protected:
 	//! Gets the eviction queue for the specified type
 	EvictionQueue &GetEvictionQueueForBlockMemory(const BlockMemory &memory);
 
-	//! How many eviction queue types we have (BLOCK and EXTERNAL_FILE go into same queue)
-	static constexpr idx_t EVICTION_QUEUE_TYPES = FILE_BUFFER_TYPE_COUNT - 1;
+	//! How many eviction queue types we have (BLOCK and EXTERNAL_FILE go into same queue, except EXTERNAL_FILE blocks
+	//! that keep a copy, the blocks of remote files)
+	static constexpr idx_t EVICTION_QUEUE_TYPES = 4;
 	//! How many eviction queues we have for the different FileBufferTypes
 	static constexpr idx_t BLOCK_AND_EXTERNAL_FILE_QUEUE_SIZE = 1;
+	static constexpr idx_t REMOTE_FILE_QUEUE_SIZE = 1;
 	static constexpr idx_t MANAGED_BUFFER_QUEUE_SIZE = 6;
 	static constexpr idx_t TINY_BUFFER_QUEUE_SIZE = 1;
 	//! Mapping and priority order for the eviction queues
@@ -179,6 +184,8 @@ protected:
 	atomic<idx_t> allocator_bulk_deallocation_flush_threshold;
 	//! Freed memory is flushed once it exceeds this fraction of the memory limit
 	static constexpr idx_t BULK_DEALLOCATION_FLUSH_DIVISOR = 16;
+	atomic<idx_t> external_file_cache_min_memory;
+	static constexpr idx_t EXTERNAL_FILE_CACHE_MIN_MEMORY_DIVISOR = 20;
 	//! Record timestamps of buffer manager unpin() events. Usable by custom eviction policies.
 	bool track_eviction_timestamps;
 	//! Eviction queues

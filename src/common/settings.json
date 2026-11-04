@@ -905,6 +905,13 @@
         ]
     },
     {
+        "name": "external_file_cache_min_memory",
+        "description": "The memory that external file cache blocks of remote files keep when queries need memory (e.g. 1GB), by default 5% of memory_limit; below it, queries spill to the temporary directory first.",
+        "type": "VARCHAR",
+        "scope": "global",
+        "custom_implementation": true
+    },
+    {
         "name": "external_file_cache_spill_size",
         "description": "The disk space in the temporary directory that copies of evicted external file cache blocks of remote files may take (e.g. 50GB), by default half of max_temp_directory_size; 0 drops evicted blocks instead.",
         "type": "VARCHAR",

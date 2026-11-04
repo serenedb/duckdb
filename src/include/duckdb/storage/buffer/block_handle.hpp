@@ -216,8 +216,10 @@ public:
 	}
 	//! Set the buffer destruction policy.
 	void SetDestroyBufferUpon(DestroyBufferUpon destroy_buffer_upon_p) {
+		D_ASSERT(destroy_buffer_upon_p != DestroyBufferUpon::KEEP_COPY);
 		destroy_buffer_upon = destroy_buffer_upon_p;
 	}
+	void SetDestroyBufferUpon(BlockLock &l, DestroyBufferUpon destroy_buffer_upon_p);
 	//! Returns true, if the buffer is destroyed once its last reader unpins it.
 	bool DestroyedUponUnpin() const {
 		return destroy_buffer_upon == DestroyBufferUpon::UNPIN;
@@ -291,6 +293,9 @@ public:
 	void Unload(BlockLock &l, QueryContext context = QueryContext());
 
 private:
+	void Requeue(BlockLock &l);
+
+private:
 	//! A reference to the buffer manager.
 	BufferManager &buffer_manager;
 	//! The block id of the block.
@@ -317,10 +322,12 @@ private:
 	alignas(64) const MemoryTag tag;
 	//! A pointer to the loaded data, if any.
 	unique_ptr<FileBuffer> buffer;
-	//! The eviction queue the loaded block is in, and its stripe and slot there; guarded by that stripe's lock.
+	//! The eviction queue the loaded block is in, its stripe and slot there, and the memory it counts there; guarded
+	//! by that stripe's lock.
 	optional_ptr<EvictionQueue> queue;
 	idx_t queue_stripe = 0;
 	idx_t queue_slot = 0;
+	idx_t queue_bytes = 0;
 	//! The block handle of this memory.
 	weak_ptr<BlockHandle> owner;
 	//! Set when the block handle went away while readers remained; the last reader releases it.

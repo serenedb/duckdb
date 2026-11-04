@@ -9,6 +9,7 @@
 #include "duckdb/main/database.hpp"
 #include "duckdb/parallel/task_executor.hpp"
 #include "duckdb/storage/block_cache/block_cache.hpp"
+#include "duckdb/storage/buffer/buffer_pool.hpp"
 #include "duckdb/storage/buffer_manager.hpp"
 
 #include <absl/cleanup/cleanup.h>
@@ -984,6 +985,64 @@ TEST_CASE("Block cache blocks of in-memory files spill to temporary files and ar
 	file.reset();
 	REQUIRE(cache.GetStatistics().used == 0);
 	REQUIRE(BufferManager::GetBufferManager(*db.instance).GetUsedSwap() == 0);
+}
+
+TEST_CASE("Block cache keeps external_file_cache_min_memory of remote blocks while operator blocks can spill",
+          "[block_cache]") {
+	DBConfig config;
+	LimitMemory(config, 64, TestCreatePath("block_cache_min_memory"));
+	DuckDB db(nullptr, &config);
+	Connection con(db);
+	REQUIRE_NO_FAIL(con.Query("SET external_file_cache_min_memory = '256KiB'"));
+	auto setting = con.Query("SELECT current_setting('external_file_cache_min_memory')");
+	REQUIRE(CHECK_COLUMN(setting, 0, {"256.0 KiB"}));
+	BlockCache cache(*db.instance);
+	CountingSourceFileSystem fs;
+	TestFile remote_file("block_cache_min_memory_remote.bin", 6 * BLOCK);
+	TestFile local_file("block_cache_min_memory_local.bin", BLOCK);
+	auto remote = remote_file.Open(cache, fs);
+	auto local = local_file.Open(cache, fs, "v1", true);
+	auto &buffer_manager = BufferManager::GetBufferManager(*db.instance);
+	auto &pool = db.instance->GetBufferPool();
+	buffer_manager.SetMemoryLimit(pool.GetUsedMemory() + 8 * BLOCK);
+	const auto loaded = [&](const shared_ptr<BlockCacheFile> &file, idx_t blocks) {
+		idx_t result = 0;
+		for (idx_t block = 0; block < blocks; block++) {
+			result += !cache.TryPinRange(*file, block * BLOCK, BLOCK).empty();
+		}
+		return result;
+	};
+	const auto allocate = [&] {
+		return buffer_manager.Allocate(MemoryTag::HASH_TABLE, BLOCK - Storage::DEFAULT_BLOCK_HEADER_SIZE, false);
+	};
+
+	for (idx_t block = 0; block < 6; block++) {
+		cache.Pin(remote, block);
+	}
+	cache.Pin(local, 0);
+	const auto spillable = allocate().GetBlockHandle();
+	vector<BufferHandle> pinned;
+	pinned.push_back(allocate());
+	REQUIRE(loaded(local, 1) == 0);
+	REQUIRE(loaded(remote, 6) == 6);
+
+	for (idx_t i = 0; i < 4; i++) {
+		pinned.push_back(allocate());
+	}
+	REQUIRE(loaded(remote, 6) == 2);
+	REQUIRE(!spillable->GetMemory().IsUnloaded());
+
+	pinned.push_back(allocate());
+	REQUIRE(spillable->GetMemory().IsUnloaded());
+	REQUIRE(loaded(remote, 6) == 2);
+
+	pinned.push_back(allocate());
+	REQUIRE(loaded(remote, 6) == 1);
+
+	REQUIRE_NO_FAIL(con.Query("SET external_file_cache_min_memory = 0"));
+	REQUIRE(pool.GetExternalFileCacheMinMemory() == 0);
+	REQUIRE_NO_FAIL(con.Query("RESET external_file_cache_min_memory"));
+	REQUIRE(pool.GetExternalFileCacheMinMemory() == pool.GetMaxMemory() / 20);
 }
 
 #ifdef SDB_FAULT_INJECTION
