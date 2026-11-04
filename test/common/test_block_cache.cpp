@@ -49,6 +49,9 @@ public:
 		absl::SleepFor(delay);
 		LocalFileSystem::Read(handle, buffer, nr_bytes, location);
 	}
+	void ReadScattered(FileHandle &handle, std::span<const FileReadTarget> targets, idx_t location) override {
+		FileSystem::ReadScattered(handle, targets, location);
+	}
 
 	//! Makes every read take [latency_p] plus the time its bytes take at [bandwidth_p] bytes per second, as one request
 	//! to an object store does

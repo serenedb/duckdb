@@ -27,11 +27,13 @@
 #include <type_traits>
 
 #ifndef _WIN32
+#include <climits>
 #include <dirent.h>
 #include <fcntl.h>
 #include <string.h>
 #include <sys/mman.h>
 #include <sys/types.h>
+#include <sys/uio.h>
 #include <unistd.h>
 #if defined(__linux__)
 #include <sys/vfs.h>
@@ -545,6 +547,47 @@ void LocalFileSystem::Read(FileHandle &handle, void *buffer, int64_t nr_bytes, i
 	}
 
 	DUCKDB_LOG_FILE_SYSTEM_READ(handle, bytes_to_read, location - UnsafeNumericCast<idx_t>(bytes_to_read));
+}
+
+void LocalFileSystem::ReadScattered(FileHandle &handle, std::span<const FileReadTarget> targets, idx_t location) {
+	auto &unix_handle = handle.Cast<UnixFileHandle>();
+	ApplyLocalFileSystemDelay(unix_handle.db);
+	iovec vectors[IOV_MAX];
+	for (idx_t next = 0; next < targets.size();) {
+		if (!targets[next].data || targets[next].size == 0) {
+			location += targets[next].size;
+			next++;
+			continue;
+		}
+		int count = 0;
+		idx_t run_bytes = 0;
+		for (; next < targets.size() && targets[next].data && targets[next].size > 0 && count < IOV_MAX; next++) {
+			vectors[count++] = {targets[next].data, targets[next].size};
+			run_bytes += targets[next].size;
+		}
+		const auto run_start = location;
+		for (auto *vector = vectors; location < run_start + run_bytes;) {
+			auto bytes_read = preadv(unix_handle.fd, vector, count, UnsafeNumericCast<off_t>(location));
+			if (bytes_read == -1) {
+				throw IOException({{"errno", std::to_string(errno)}}, "Could not read from file \"%s\": %s",
+				                  handle.path, strerror(errno));
+			}
+			if (bytes_read == 0) {
+				throw IOException(
+				    "Could not read enough bytes from file \"%s\": attempted to read %llu bytes from location %llu",
+				    handle.path, run_start + run_bytes - location, location);
+			}
+			location += UnsafeNumericCast<idx_t>(bytes_read);
+			for (; count > 0 && UnsafeNumericCast<size_t>(bytes_read) >= vector->iov_len; vector++, count--) {
+				bytes_read -= UnsafeNumericCast<ssize_t>(vector->iov_len);
+			}
+			if (bytes_read > 0) {
+				vector->iov_base = static_cast<data_ptr_t>(vector->iov_base) + bytes_read;
+				vector->iov_len -= UnsafeNumericCast<size_t>(bytes_read);
+			}
+		}
+		DUCKDB_LOG_FILE_SYSTEM_READ(handle, run_bytes, run_start);
+	}
 }
 
 int64_t LocalFileSystem::Read(FileHandle &handle, void *buffer, int64_t nr_bytes) {
@@ -1545,6 +1588,10 @@ void LocalFileSystem::Read(FileHandle &handle, void *buffer, int64_t nr_bytes, i
 		                  bytes_read);
 	}
 	DUCKDB_LOG_FILE_SYSTEM_READ(handle, bytes_read, location);
+}
+
+void LocalFileSystem::ReadScattered(FileHandle &handle, std::span<const FileReadTarget> targets, idx_t location) {
+	FileSystem::ReadScattered(handle, targets, location);
 }
 
 int64_t LocalFileSystem::Read(FileHandle &handle, void *buffer, int64_t nr_bytes) {
