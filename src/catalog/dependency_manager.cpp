@@ -19,6 +19,7 @@
 #include "duckdb/catalog/catalog_entry/dependency/dependency_dependent_entry.hpp"
 #include "duckdb/catalog/catalog_entry/duck_schema_entry.hpp"
 #include "duckdb/common/queue.hpp"
+#include "duckdb/catalog/catalog_entry/macro_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/role_entry.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/trigger_catalog_entry.hpp"
@@ -604,20 +605,41 @@ static AlterPermissionsInfo &AddOwnedEntryAlter(vector<OwnedEntryAlter> &alters,
 	return alters.back().info->Cast<AlterPermissionsInfo>();
 }
 
+static bool IsMacro(const CatalogEntry &entry) {
+	return entry.type == CatalogType::MACRO_ENTRY || entry.type == CatalogType::TABLE_MACRO_ENTRY;
+}
+
 void DependencyManager::ReassignOwned(CatalogTransaction transaction, const ReassignOwnedInfo &info) {
+	const auto reassigned_owner = [&](idx_t owner) {
+		return owner != info.new_owner_id && IsAnyOf(info.role_ids, owner);
+	};
 	const auto reassigned = [&](const CatalogEntry &entry) {
-		return entry.permissions.owner != info.new_owner_id && IsAnyOf(info.role_ids, entry.permissions.owner);
+		return reassigned_owner(entry.permissions.owner);
 	};
 	vector<OwnedEntryAlter> alters;
-	const auto reassign = [&](DuckCatalog &holder, CatalogTransaction holder_transaction, CatalogEntry &entry) {
+	const auto reassign = [&](DuckCatalog &holder, CatalogTransaction holder_transaction,
+	                          CatalogEntry &entry) -> AlterPermissionsInfo & {
 		auto &alter = AddOwnedEntryAlter(alters, holder, holder_transaction, entry);
 		alter.new_owner = info.new_owner;
 		alter.new_owner_id = info.new_owner_id;
+		return alter;
 	};
 	catalog.GetOidIndex().ScanVisible(transaction.view, [&](CatalogEntry &entry) {
-		if (!IsSystemEntry(entry) && TracksOwner(entry.type) && reassigned(entry) &&
-		    !(entry.type == CatalogType::SEQUENCE_ENTRY && OwnerOf(transaction, entry))) {
-			reassign(catalog, transaction, entry);
+		if (IsSystemEntry(entry) || !TracksOwner(entry.type) ||
+		    (entry.type == CatalogType::SEQUENCE_ENTRY && OwnerOf(transaction, entry))) {
+			return;
+		}
+		if (!IsMacro(entry)) {
+			if (reassigned(entry)) {
+				reassign(catalog, transaction, entry);
+			}
+			return;
+		}
+		auto &macro = entry.Cast<MacroCatalogEntry>();
+		for (auto &overload : macro.macros) {
+			if (reassigned_owner(macro.OverloadPermissions(*overload).owner)) {
+				reassign(catalog, transaction, entry).overload_oid = macro.OverloadOid(*overload);
+			}
 		}
 	});
 	ForEachHolder(
@@ -644,8 +666,16 @@ void DependencyManager::ReassignOwned(CatalogTransaction transaction, const Reas
 }
 
 void DependencyManager::DropOwned(CatalogTransaction transaction, const DropOwnedInfo &info) {
+	const auto owns = [&](const CatalogEntry &entry, const MacroFunction &overload) {
+		return IsAnyOf(info.role_ids, entry.Cast<MacroCatalogEntry>().OverloadPermissions(overload).owner);
+	};
 	const auto owned = [&](const CatalogEntry &entry) {
-		return IsAnyOf(info.role_ids, entry.permissions.owner);
+		if (!IsMacro(entry)) {
+			return IsAnyOf(info.role_ids, entry.permissions.owner);
+		}
+		auto &macros = entry.Cast<MacroCatalogEntry>().macros;
+		return std::all_of(macros.begin(), macros.end(),
+		                   [&](const unique_ptr<MacroFunction> &overload) { return owns(entry, *overload); });
 	};
 	vector<OwnedEntryAlter> alters;
 	const auto revoke = [&](DuckCatalog &holder, CatalogTransaction holder_transaction, CatalogEntry &entry, idx_t role,
@@ -662,9 +692,24 @@ void DependencyManager::DropOwned(CatalogTransaction transaction, const DropOwne
 		if (IsSystemEntry(entry) || !TracksOwner(entry.type) || owned(entry)) {
 			return;
 		}
-		for (auto role : info.role_ids) {
-			if (ReferencesRole(entry, role)) {
-				revoke(catalog, transaction, entry, role, Permissions::AclClass(entry.type));
+		if (!IsMacro(entry)) {
+			for (auto role : info.role_ids) {
+				if (ReferencesRole(entry, role)) {
+					revoke(catalog, transaction, entry, role, Permissions::AclClass(entry.type));
+				}
+			}
+			return;
+		}
+		auto &macro = entry.Cast<MacroCatalogEntry>();
+		for (auto &overload : macro.macros) {
+			if (owns(entry, *overload)) {
+				continue;
+			}
+			for (auto role : info.role_ids) {
+				if (GrantsTo(macro.OverloadPermissions(*overload).acl, role)) {
+					revoke(catalog, transaction, entry, role, Permissions::AclClass(entry.type)).overload_oid =
+					    macro.OverloadOid(*overload);
+				}
 			}
 		}
 	});
@@ -760,10 +805,31 @@ void DependencyManager::DropOwned(CatalogTransaction transaction, const DropOwne
 	}
 
 	catalog_entry_vector_t dropped;
+	vector<DropInfo> overload_drops;
 	catalog.GetOidIndex().ScanVisible(transaction.view, [&](CatalogEntry &entry) {
-		if (!IsSystemEntry(entry) && TracksOwner(entry.type) && owned(entry) &&
-		    !(entry.type == CatalogType::SEQUENCE_ENTRY && OwnerOf(transaction, entry))) {
+		if (IsSystemEntry(entry) || !TracksOwner(entry.type) ||
+		    (entry.type == CatalogType::SEQUENCE_ENTRY && OwnerOf(transaction, entry))) {
+			return;
+		}
+		if (owned(entry)) {
 			dropped.push_back(entry);
+			return;
+		}
+		if (!IsMacro(entry)) {
+			return;
+		}
+		auto &macro = entry.Cast<MacroCatalogEntry>();
+		for (auto &overload : macro.macros) {
+			if (!owns(entry, *overload)) {
+				continue;
+			}
+			DropInfo drop;
+			drop.type = entry.type;
+			drop.SetQualifiedName(OwnedEntryName(transaction, entry));
+			drop.func_parameters = overload->ParameterTypes();
+			drop.has_func_args = true;
+			drop.if_not_found = OnEntryNotFound::RETURN_NULL;
+			overload_drops.push_back(std::move(drop));
 		}
 	});
 	if (!info.cascade) {
@@ -781,6 +847,9 @@ void DependencyManager::DropOwned(CatalogTransaction transaction, const DropOwne
 		drops[i].if_not_found = OnEntryNotFound::RETURN_NULL;
 	}
 	for (auto &drop : drops) {
+		catalog.DropEntry(transaction.GetContext(), drop);
+	}
+	for (auto &drop : overload_drops) {
 		catalog.DropEntry(transaction.GetContext(), drop);
 	}
 }

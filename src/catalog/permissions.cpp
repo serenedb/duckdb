@@ -950,8 +950,12 @@ bool EntryVisible(ClientContext &context, const RoleAccess &role, CatalogEntry &
 	case CatalogType::SEQUENCE_ENTRY:
 		return role.CanAny(entry.type, permissions, AclMode::Usage | AclMode::Select | AclMode::Update);
 	case CatalogType::MACRO_ENTRY:
-	case CatalogType::TABLE_MACRO_ENTRY:
-		return role.Can(entry.type, permissions, AclMode::Execute);
+	case CatalogType::TABLE_MACRO_ENTRY: {
+		auto &macro = entry.Cast<MacroCatalogEntry>();
+		return std::any_of(macro.macros.begin(), macro.macros.end(), [&](const unique_ptr<MacroFunction> &overload) {
+			return role.Can(entry.type, macro.OverloadPermissions(*overload), AclMode::Execute);
+		});
+	}
 	case CatalogType::TYPE_ENTRY:
 		return role.Can(entry.type, permissions, AclMode::Usage);
 	case CatalogType::JOB_ENTRY:
@@ -995,6 +999,13 @@ static bool AnyRoleReference(const CatalogEntry &entry, F &&named) {
 		return std::any_of(acl.begin(), acl.end(),
 		                   [&](const AclItem &item) { return named(item.grantee) || named(item.grantor); });
 	};
+	if (entry.type == CatalogType::MACRO_ENTRY || entry.type == CatalogType::TABLE_MACRO_ENTRY) {
+		auto &macro = entry.Cast<MacroCatalogEntry>();
+		return std::any_of(macro.macros.begin(), macro.macros.end(), [&](const unique_ptr<MacroFunction> &overload) {
+			auto &overload_permissions = macro.OverloadPermissions(*overload);
+			return named(overload_permissions.owner) || any_acl(overload_permissions.acl);
+		});
+	}
 	if (named(permissions.owner) || any_acl(permissions.acl)) {
 		return true;
 	}

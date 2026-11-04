@@ -83,6 +83,7 @@ public:
 	virtual void OnDrop();
 
 	virtual unique_ptr<CatalogEntry> Copy(ClientContext &context) const;
+	virtual vector<idx_t> GetSubObjectOids() const;
 
 	virtual unique_ptr<CreateInfo> GetInfo() const;
 	virtual unique_ptr<CreateInfo> GetInfo(CatalogTransaction transaction) const;

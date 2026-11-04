@@ -605,6 +605,11 @@
         "id": 329,
         "name": "relation_acl",
         "type": "vector<AclItem>"
+      },
+      {
+        "id": 330,
+        "name": "overload_oid",
+        "type": "idx_t"
       }
     ]
   },

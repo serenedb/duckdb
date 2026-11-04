@@ -88,6 +88,19 @@
         "name": "config",
         "type": "vector<string>",
         "version": "serenedb_v1"
+      },
+      {
+        "id": 16494,
+        "name": "oid",
+        "type": "idx_t",
+        "version": "serenedb_v1"
+      },
+      {
+        "id": 16495,
+        "name": "permissions",
+        "type": "Permissions",
+        "default": "Permissions()",
+        "version": "serenedb_v1"
       }
     ],
     "finalize_deserialization": [

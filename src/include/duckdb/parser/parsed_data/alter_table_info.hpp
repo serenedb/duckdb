@@ -125,6 +125,9 @@ struct AlterPermissionsInfo : public AlterInfo {
 	idx_t language_id = 0;
 	idx_t relation_id = 0;
 	vector<AclItem> relation_acl;
+	idx_t overload_oid = 0;
+	vector<LogicalType> func_parameters;
+	bool has_func_args = false;
 	vector<unique_ptr<AlterPermissionsInfo>> additional_grants;
 
 public:

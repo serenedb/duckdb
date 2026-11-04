@@ -257,6 +257,9 @@ unique_ptr<AlterInfo> AlterPermissionsInfo::Copy() const {
 	result->language_id = language_id;
 	result->relation_id = relation_id;
 	result->relation_acl = relation_acl;
+	result->overload_oid = overload_oid;
+	result->func_parameters = func_parameters;
+	result->has_func_args = has_func_args;
 	for (auto &other : additional_grants) {
 		result->additional_grants.push_back(unique_ptr_cast<AlterInfo, AlterPermissionsInfo>(other->Copy()));
 	}
@@ -338,7 +341,14 @@ static string GrantObjectsToSQL(CatalogType type, bool include_functions, bool i
 
 string AlterPermissionsInfo::ToString() const {
 	auto target_name = [](const AlterPermissionsInfo &info) {
-		return info.GetQualifiedName().ToString(QualifiedNameToStringMode::HIDE_DEFAULT_SCHEMA);
+		auto name = info.GetQualifiedName().ToString(QualifiedNameToStringMode::HIDE_DEFAULT_SCHEMA);
+		if (info.has_func_args) {
+			name += "(" +
+			        StringUtil::Join(info.func_parameters, ", ",
+			                         [](const LogicalType &parameter) { return parameter.ToString(); }) +
+			        ")";
+		}
+		return name;
 	};
 	if (!new_owner.empty()) {
 		return "ALTER " + OwnerTargetToSQL(*this) + " " + target_name(*this) + " OWNER TO " + RoleSpecToSQL(new_owner) +

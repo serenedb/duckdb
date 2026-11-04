@@ -513,8 +513,12 @@ static void AlterAllInSchema(DuckSchemaEntry &schema, CatalogTransaction transac
 		kinds.push_back(CatalogType::TABLE_MACRO_ENTRY);
 	}
 	info.all_in_schema = false;
+	struct Target {
+		Identifier name;
+		idx_t overload_oid;
+	};
 	for (auto kind : kinds) {
-		vector<Identifier> names;
+		vector<Target> targets;
 		vector<reference<CatalogEntry>> system_relations;
 		schema.GetCatalogSet(kind).Scan(transaction, [&](CatalogEntry &entry) {
 			if (entry.internal) {
@@ -524,18 +528,23 @@ static void AlterAllInSchema(DuckSchemaEntry &schema, CatalogTransaction transac
 				return;
 			}
 			if (kind != CatalogType::MACRO_ENTRY && kind != CatalogType::TABLE_MACRO_ENTRY) {
-				names.push_back(entry.name);
+				targets.push_back({entry.name, 0});
 				return;
 			}
-			if (entry.Cast<MacroCatalogEntry>().is_procedure ? info.include_procedures : info.include_functions) {
-				names.push_back(entry.name);
+			auto &macro = entry.Cast<MacroCatalogEntry>();
+			for (auto &overload : macro.macros) {
+				if (overload->is_procedure ? info.include_procedures : info.include_functions) {
+					targets.push_back({entry.name, macro.OverloadOid(*overload)});
+				}
 			}
 		});
 		info.entry_catalog_type = kind;
-		for (auto &name : names) {
-			info.SetQualifiedName(schema.GetQualifiedName(name));
+		for (auto &target : targets) {
+			info.SetQualifiedName(schema.GetQualifiedName(target.name));
+			info.overload_oid = target.overload_oid;
 			schema.Alter(transaction, info);
 		}
+		info.overload_oid = 0;
 		for (auto &relation : system_relations) {
 			auto &context = transaction.GetContext();
 			auto redirected = info.Copy();
@@ -786,7 +795,7 @@ void DuckSchemaEntry::DropEntry(ClientContext &context, DropInfo &info) {
 		                       CatalogTypeToString(info.type));
 	}
 	if (info.has_func_args) {
-		auto create_info = existing_entry->Cast<MacroCatalogEntry>().GetInfo();
+		auto create_info = existing_entry->GetSerializedInfo();
 		auto &macros = create_info->Cast<CreateMacroInfo>().macros;
 		auto overload = std::find_if(macros.begin(), macros.end(), [&](const unique_ptr<MacroFunction> &function) {
 			return function->HasParameterTypes(info.func_parameters);

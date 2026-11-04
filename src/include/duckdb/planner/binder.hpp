@@ -453,6 +453,7 @@ public:
 	void CheckStatementKind(SQLStatement &statement);
 	void RequireSuperuser();
 	void RequireOwner(CatalogEntry &entry);
+	void RequireOwner(CatalogEntry &entry, idx_t owner);
 	void RequireReplaceOwner(SchemaCatalogEntry &schema, const CreateInfo &info, const Identifier &name);
 	optional_ptr<CatalogEntry> ClusterEntry(CatalogType type, const Identifier &name);
 	QualifiedName ClusterName(const QualifiedName &name);
@@ -824,7 +825,7 @@ private:
 	static void BindSchemaOrCatalog(CatalogEntryRetriever &retriever, QualifiedName &qualified_name);
 	Identifier BindCatalog(const Identifier &catalog_name);
 	SchemaCatalogEntry &BindCreateSchema(CreateInfo &info);
-	void MergeMacroOverloads(CreateInfo &info);
+	idx_t MergeMacroOverloads(CreateInfo &info);
 
 	vector<CatalogSearchEntry> GetSearchPath(Catalog &catalog, const Identifier &schema_name,
 	                                         bool default_schema_precedence = false);

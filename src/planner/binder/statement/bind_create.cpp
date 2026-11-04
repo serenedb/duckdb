@@ -393,6 +393,12 @@ void Binder::RequireReplaceOwner(SchemaCatalogEntry &schema, const CreateInfo &i
 	                               info.on_conflict != OnCreateConflict::ALTER_ON_CONFLICT)) {
 		return;
 	}
+	const bool merged_overloads =
+	    info.on_conflict == OnCreateConflict::ALTER_ON_CONFLICT &&
+	    (info.type == CatalogType::MACRO_ENTRY || info.type == CatalogType::TABLE_MACRO_ENTRY);
+	if (merged_overloads) {
+		return;
+	}
 	if (auto existing = schema.GetEntry(schema.catalog.GetCatalogTransaction(context), info.type, name)) {
 		RequireOwner(*existing);
 	}
@@ -509,17 +515,24 @@ void Binder::BindCreateViewInfo(CreateViewInfo &base) {
 	         name_bindings, base.aliases, base.types, base.names);
 }
 
-void Binder::MergeMacroOverloads(CreateInfo &info) {
+static void OwnDefinedOverloads(CreateInfo &info, idx_t defined) {
+	auto &macros = info.Cast<CreateMacroInfo>().macros;
+	for (idx_t i = 0; i < defined; i++) {
+		macros[i]->permissions = info.permissions;
+	}
+}
+
+idx_t Binder::MergeMacroOverloads(CreateInfo &info) {
 	SearchSchema(info);
 	auto &catalog = Catalog::GetCatalog(context, info.GetQualifiedName().Catalog());
 	const bool merge_overloads = catalog.Compatibility() == SqlCompatibility::POSTGRES;
 	if (!merge_overloads || info.on_conflict == OnCreateConflict::IGNORE_ON_CONFLICT) {
-		return;
+		return 0;
 	}
 	EntryLookupInfo lookup(info.type, info.GetQualifiedName());
 	auto existing = Catalog::GetEntry(context, lookup, OnEntryNotFound::RETURN_NULL);
 	if (!existing) {
-		return;
+		return 0;
 	}
 	auto &macro_info = info.Cast<CreateMacroInfo>();
 	for (auto &function : macro_info.macros) {
@@ -529,8 +542,10 @@ void Binder::MergeMacroOverloads(CreateInfo &info) {
 			}
 		}
 	}
+	const auto defined = macro_info.macros.size();
 	const bool replace = info.on_conflict == OnCreateConflict::REPLACE_ON_CONFLICT;
-	for (auto &overload : existing->Cast<MacroCatalogEntry>().macros) {
+	auto &existing_macro = existing->Cast<MacroCatalogEntry>();
+	for (auto &overload : existing_macro.macros) {
 		const bool redefined = std::any_of(macro_info.macros.begin(), macro_info.macros.end(),
 		                                   [&](const unique_ptr<MacroFunction> &function) {
 			                                   return function->HasParameterTypes(overload->ParameterTypes());
@@ -540,9 +555,12 @@ void Binder::MergeMacroOverloads(CreateInfo &info) {
 		} else if (!replace) {
 			throw CatalogException("function \"%s\" already exists with same argument types",
 			                       macro_info.GetFunctionName().GetIdentifierName());
+		} else if (!CheckAs().is_superuser) {
+			RequireOwner(*existing, existing_macro.OverloadPermissions(*overload).owner);
 		}
 	}
 	info.on_conflict = OnCreateConflict::ALTER_ON_CONFLICT;
+	return defined;
 }
 
 SchemaCatalogEntry &Binder::BindCreateFunctionInfo(CreateInfo &info) {
@@ -1266,15 +1284,17 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 		break;
 	}
 	case CatalogType::TABLE_MACRO_ENTRY: {
-		MergeMacroOverloads(*stmt.info);
+		const auto defined = MergeMacroOverloads(*stmt.info);
 		auto &schema = BindCreateFunctionInfo(*stmt.info);
+		OwnDefinedOverloads(*stmt.info, defined);
 		result.plan =
 		    make_uniq<LogicalCreate>(LogicalOperatorType::LOGICAL_CREATE_MACRO, std::move(stmt.info), &schema);
 		break;
 	}
 	case CatalogType::MACRO_ENTRY: {
-		MergeMacroOverloads(*stmt.info);
+		const auto defined = MergeMacroOverloads(*stmt.info);
 		auto &schema = BindCreateFunctionInfo(*stmt.info);
+		OwnDefinedOverloads(*stmt.info, defined);
 		auto logical_create =
 		    make_uniq<LogicalCreate>(LogicalOperatorType::LOGICAL_CREATE_MACRO, std::move(stmt.info), &schema);
 		result.plan = std::move(logical_create);

@@ -550,8 +550,10 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformAlterOwnerStatement(PEG
 	auto info = make_uniq<AlterPermissionsInfo>(CatalogType::INVALID, QualifiedName());
 	if (target.Name() == "OwnerRoutineTarget") {
 		const auto kind = ObjectTypeKeyword(target.GetChild(0));
-		SetObjectTarget(*info, CatalogType::MACRO_ENTRY,
-		                transformer.Transform<QualifiedName>(target.Child<ListParseResult>(1).GetChild(0)));
+		auto &signature = target.Child<ListParseResult>(1);
+		SetObjectTarget(*info, CatalogType::MACRO_ENTRY, transformer.Transform<QualifiedName>(signature.GetChild(0)));
+		info->has_func_args =
+		    TransformFunctionArgumentTypes(transformer, signature.Child<OptionalParseResult>(1), info->func_parameters);
 		info->include_functions = kind != "PROCEDURE";
 		info->include_procedures = kind != "FUNCTION";
 	} else {
@@ -639,11 +641,17 @@ static void TransformPrivilegeList(PEGTransformer &transformer, ParseResult &pri
 	}
 }
 
-static vector<QualifiedName> TransformGrantTarget(PEGTransformer &transformer, ParseResult &target_choice_holder,
-                                                  AlterPermissionsInfo &info) {
+struct GrantTargetName {
+	QualifiedName name;
+	bool has_func_args = false;
+	vector<LogicalType> func_parameters;
+};
+
+static vector<GrantTargetName> TransformGrantTarget(PEGTransformer &transformer, ParseResult &target_choice_holder,
+                                                    AlterPermissionsInfo &info) {
 	auto &chosen = target_choice_holder.Cast<ListParseResult>().Child<ChoiceParseResult>(0).GetResult();
 	auto &target = chosen.Cast<ListParseResult>();
-	vector<QualifiedName> names;
+	vector<GrantTargetName> names;
 	if (chosen.Name() == "GrantAllInSchema") {
 		auto kind = StringUtil::Upper(target.GetChild(1)
 		                                  .Cast<ListParseResult>()
@@ -663,15 +671,22 @@ static vector<QualifiedName> TransformGrantTarget(PEGTransformer &transformer, P
 		info.all_in_schema = true;
 		for (auto &schema_ref : PEGTransformerFactory::ExtractParseResultsFromList(target.GetChild(4))) {
 			auto schema = transformer.Transform<QualifiedName>(schema_ref.get());
-			names.emplace_back(schema.Schema(), schema.Name(), Identifier());
+			names.push_back(GrantTargetName {QualifiedName(schema.Schema(), schema.Name(), Identifier())});
 		}
 		return names;
 	}
 	if (chosen.Name() == "GrantFunctionTarget") {
 		// 0:GrantRoutineKind 1:List(RoutineSignature)
 		info.entry_catalog_type = CatalogType::MACRO_ENTRY;
+		const auto kind = ObjectTypeKeyword(target.GetChild(0));
+		info.include_functions = kind != "PROCEDURE";
+		info.include_procedures = kind != "FUNCTION";
 		for (auto &routine : PEGTransformerFactory::ExtractParseResultsFromList(target.GetChild(1))) {
-			names.push_back(transformer.Transform<QualifiedName>(routine.get().Cast<ListParseResult>().GetChild(0)));
+			auto &signature = routine.get().Cast<ListParseResult>();
+			GrantTargetName name {transformer.Transform<QualifiedName>(signature.GetChild(0))};
+			name.has_func_args = PEGTransformerFactory::TransformFunctionArgumentTypes(
+			    transformer, signature.Child<OptionalParseResult>(1), name.func_parameters);
+			names.push_back(std::move(name));
 		}
 		return names;
 	}
@@ -680,7 +695,7 @@ static vector<QualifiedName> TransformGrantTarget(PEGTransformer &transformer, P
 	info.entry_catalog_type =
 	    GrantObjectType(objtype_opt.HasResult() ? ObjectTypeKeyword(objtype_opt.GetResult()) : "TABLE");
 	for (auto &name : PEGTransformerFactory::ExtractParseResultsFromList(target.GetChild(1))) {
-		names.push_back(transformer.Transform<QualifiedName>(name.get()));
+		names.push_back(GrantTargetName {transformer.Transform<QualifiedName>(name.get())});
 	}
 	return names;
 }
@@ -720,7 +735,9 @@ static unique_ptr<SQLStatement> BuildGrantTable(PEGTransformer &transformer, Lis
 	for (auto &target : targets) {
 		for (auto &grantee : PEGTransformerFactory::ExtractParseResultsFromList(list_pr.GetChild(privs_child + 4))) {
 			auto permissions = unique_ptr_cast<AlterInfo, AlterPermissionsInfo>(info.Copy());
-			SetObjectTarget(*permissions, info.entry_catalog_type, target);
+			SetObjectTarget(*permissions, info.entry_catalog_type, target.name);
+			permissions->has_func_args = target.has_func_args;
+			permissions->func_parameters = target.func_parameters;
 			permissions->grantee = TransformGrantee(transformer, grantee.get());
 			grants.push_back(std::move(permissions));
 		}

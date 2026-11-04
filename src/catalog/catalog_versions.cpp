@@ -198,10 +198,7 @@ shared_ptr<CatalogVersions> CatalogOidIndex::GetOrCreate(const CatalogEntry &obj
 }
 
 void CatalogOidIndex::AddAliases(const CatalogEntry &version, const shared_ptr<CatalogVersions> &object_versions) {
-	if (version.type != CatalogType::TABLE_ENTRY) {
-		return;
-	}
-	auto oids = version.Cast<TableCatalogEntry>().GetSubObjectOids();
+	auto oids = version.GetSubObjectOids();
 	if (oids.empty()) {
 		return;
 	}

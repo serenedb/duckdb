@@ -65,6 +65,7 @@ PEGTransformerFactory::TransformDropTableFunction(PEGTransformer &transformer, c
                                                   const vector<QualifiedName> &qualified_name) {
 	auto info = make_uniq<DropInfo>();
 	info->type = comment_macro_table;
+	info->is_macro = true;
 	info->if_not_found = if_exists ? OnEntryNotFound::RETURN_NULL : OnEntryNotFound::THROW_EXCEPTION;
 	return MakeDropStatement(std::move(info), qualified_name);
 }
@@ -77,13 +78,16 @@ unique_ptr<DropStatement> PEGTransformerFactory::TransformDropFunction(PEGTransf
 	auto &list_pr = parse_result.Cast<ListParseResult>();
 	auto result = make_uniq<DropStatement>();
 	// FunctionTypeMacro forwards a bool meaning is_procedure (PROCEDURE vs FUNCTION/MACRO).
-	const bool is_procedure = transformer.Transform<bool>(list_pr.Child<ListParseResult>(0));
+	auto &kind = list_pr.Child<ListParseResult>(0);
+	const bool is_procedure = transformer.Transform<bool>(kind);
+	const bool is_macro = kind.Child<ChoiceParseResult>(0).GetResult().Name() == "FunctionTypeMacroKeyword";
 	bool if_exists = list_pr.Child<OptionalParseResult>(1).HasResult();
 	auto function_list = ExtractParseResultsFromList(list_pr.Child<ListParseResult>(2));
 	for (idx_t i = 0; i < function_list.size(); i++) {
 		auto info = make_uniq<DropInfo>();
 		info->type = CatalogType::MACRO_ENTRY;
 		info->is_procedure = is_procedure;
+		info->is_macro = is_macro;
 		auto &item_pr = function_list[i].get().Cast<ListParseResult>();
 		auto function = transformer.Transform<QualifiedName>(item_pr.Child<ListParseResult>(0));
 		info->SetQualifiedName(function);

@@ -175,9 +175,41 @@ static idx_t GranteeId(Binder &binder, const string &name) {
 	return name == "public" ? ACL_ID_PUBLIC : binder.RoleSpecId(name);
 }
 
-static void RequireGrantable(Binder &binder, CatalogEntry &entry) {
+static MacroFunction &ResolveOverload(Binder &binder, MacroCatalogEntry &macro, AlterPermissionsInfo &info) {
+	auto &name = macro.name.GetIdentifierName();
+	if (info.has_func_args) {
+		for (auto &type : info.func_parameters) {
+			binder.BindLogicalType(type);
+		}
+		for (auto &overload : macro.macros) {
+			if (overload->HasParameterTypes(info.func_parameters)) {
+				return *overload;
+			}
+		}
+		auto extra_info = Exception::InitializeExtraInfo("MISSING_ENTRY", optional_idx());
+		extra_info["type"] = CatalogTypeToString(macro.type);
+		throw CatalogException(extra_info,
+		                       StringUtil::Format("function %s(%s) does not exist", name,
+		                                          MacroFunction::ParameterTypesToString(info.func_parameters)));
+	}
+	if (macro.macros.size() > 1) {
+		auto extra_info = Exception::InitializeExtraInfo("AMBIGUOUS_FUNCTION", optional_idx());
+		extra_info["hint"] = "Specify the argument list to select the function unambiguously.";
+		throw CatalogException(extra_info, StringUtil::Format("function name \"%s\" is not unique", name));
+	}
+	return *macro.macros[0];
+}
+
+static const Permissions &TargetPermissions(Binder &binder, const AlterPermissionsInfo &info, CatalogEntry &target) {
+	if (info.overload_oid) {
+		auto &macro = target.Cast<MacroCatalogEntry>();
+		return macro.OverloadPermissions(*macro.FindOverload(info.overload_oid));
+	}
+	return EffectivePermissions(binder.context, target);
+}
+
+static void RequireGrantable(Binder &binder, CatalogEntry &entry, const Permissions &permissions) {
 	auto &role = binder.CheckAs();
-	auto &permissions = EffectivePermissions(binder.context, entry);
 	if (role.Owns(permissions.owner)) {
 		return;
 	}
@@ -272,6 +304,11 @@ static CatalogEntry &ResolvePermissionsTarget(Binder &binder, AlterPermissionsIn
 	info.SetQualifiedName(QualifiedName::FromCatalogSchema(
 	    entry->ParentCatalog().GetName(),
 	    entry->ParentSchemaPath(entry->ParentCatalog().GetCatalogTransaction(context)), entry->name));
+	if ((entry->type == CatalogType::MACRO_ENTRY || entry->type == CatalogType::TABLE_MACRO_ENTRY) &&
+	    !IsUnowned(*entry)) {
+		auto &macro = entry->Cast<MacroCatalogEntry>();
+		info.overload_oid = macro.OverloadOid(ResolveOverload(binder, macro, info));
+	}
 	return *entry;
 }
 
@@ -391,7 +428,7 @@ static void ResolveGrant(Binder &binder, AlterPermissionsInfo &info) {
 		return;
 	}
 	auto &target = ResolvePermissionsTarget(binder, info);
-	RequireGrantable(binder, target);
+	RequireGrantable(binder, target, TargetPermissions(binder, info, target));
 	if (!target.internal || IsUnowned(target) ||
 	    (target.type != CatalogType::TABLE_ENTRY && target.type != CatalogType::VIEW_ENTRY)) {
 		return;
@@ -425,6 +462,7 @@ static void ResolveGrant(Binder &binder, AlterPermissionsInfo &info) {
 static void ResolveOwner(Binder &binder, AlterPermissionsInfo &info) {
 	auto &context = binder.context;
 	auto &entry = ResolvePermissionsTarget(binder, info);
+	auto &permissions = TargetPermissions(binder, info, entry);
 	info.new_owner_id = binder.RoleSpecId(info.new_owner);
 	auto &role = binder.CheckAs();
 	const bool enforce = !role.is_superuser;
@@ -432,7 +470,7 @@ static void ResolveOwner(Binder &binder, AlterPermissionsInfo &info) {
 	if (enforce && relation) {
 		binder.RequireOwner(entry);
 	}
-	if (info.new_owner_id == entry.permissions.owner) {
+	if (info.new_owner_id == permissions.owner) {
 		return;
 	}
 	if (entry.type == CatalogType::SEQUENCE_ENTRY) {
@@ -444,7 +482,7 @@ static void ResolveOwner(Binder &binder, AlterPermissionsInfo &info) {
 	if (entry.type == CatalogType::SUBSCRIPTION_ENTRY) {
 		RequireSubscriptionOwner(binder, entry);
 	} else if (!relation) {
-		binder.RequireOwner(entry);
+		binder.RequireOwner(entry, permissions.owner);
 	}
 	if (!role.CanSet(info.new_owner_id)) {
 		throw PermissionException("must be able to SET ROLE \"%s\"", binder.RoleName(info.new_owner_id));
@@ -686,7 +724,6 @@ BoundStatement Binder::Bind(AlterStatement &stmt) {
 		if (function->internal) {
 			ThrowPermissionDenied(*function);
 		}
-		RequireOwner(*function);
 		auto create_info = function->Cast<MacroCatalogEntry>().GetInfo();
 		auto &macros = create_info->Cast<CreateMacroInfo>().macros;
 		vector<reference<MacroFunction>> targets;
@@ -706,6 +743,7 @@ BoundStatement Binder::Bind(AlterStatement &stmt) {
 			    StringUtil::Format("function name \"%s\" is not unique", name));
 		}
 		auto &macro = targets[0].get();
+		RequireOwner(*function, function->Cast<MacroCatalogEntry>().OverloadPermissions(macro).owner);
 		if (info.set_strict && macro.strict != info.strict) {
 			throw NotImplementedException("ALTER FUNCTION cannot change whether a function is strict");
 		}

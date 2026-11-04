@@ -42,6 +42,7 @@ public:
 	bool has_func_args = false;
 	//! Whether this is DROP PROCEDURE (vs DROP FUNCTION)
 	bool is_procedure = false;
+	bool is_macro = false;
 	vector<unique_ptr<DropInfo>> additional_drops;
 
 	//! Extra info related to this drop

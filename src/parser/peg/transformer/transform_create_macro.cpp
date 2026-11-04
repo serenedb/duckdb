@@ -633,6 +633,27 @@ MacroParameter PEGTransformerFactory::TransformSimpleParameter(PEGTransformer &t
 	return result;
 }
 
+bool PEGTransformerFactory::TransformFunctionArgumentTypes(PEGTransformer &transformer, OptionalParseResult &signature,
+                                                           vector<LogicalType> &types) {
+	if (!signature.HasResult()) {
+		return false;
+	}
+	auto &arguments =
+	    ExtractResultFromParens(signature.GetResult().Cast<ListParseResult>().GetChild(0)).Cast<OptionalParseResult>();
+	if (arguments.HasResult()) {
+		for (auto &argument : ExtractParseResultsFromList(arguments.GetResult())) {
+			auto &parts =
+			    argument.get().Cast<ListParseResult>().Child<ChoiceParseResult>(0).GetResult().Cast<ListParseResult>();
+			auto &mode = parts.Child<OptionalParseResult>(0);
+			if (mode.HasResult() && transformer.Transform<char>(mode.GetResult()) == 'o') {
+				continue;
+			}
+			types.push_back(transformer.Transform<LogicalType>(parts.GetChild(parts.GetChildren().size() - 1)));
+		}
+	}
+	return true;
+}
+
 unique_ptr<AlterInfo> PEGTransformerFactory::TransformAlterFunctionAttributesStmt(PEGTransformer &transformer,
                                                                                   ParseResult &parse_result) {
 	auto &list_pr = parse_result.Cast<ListParseResult>();
@@ -642,27 +663,8 @@ unique_ptr<AlterInfo> PEGTransformerFactory::TransformAlterFunctionAttributesStm
 	    list_pr.Child<ListParseResult>(0).Child<ChoiceParseResult>(0).GetResult().Cast<KeywordParseResult>().keyword);
 	result->include_functions = kind != "PROCEDURE";
 	result->include_procedures = kind != "FUNCTION";
-	auto &signature = list_pr.Child<OptionalParseResult>(2);
-	if (signature.HasResult()) {
-		result->has_parameter_types = true;
-		auto &arguments = ExtractResultFromParens(signature.GetResult().Cast<ListParseResult>().GetChild(0))
-		                      .Cast<OptionalParseResult>();
-		if (arguments.HasResult()) {
-			for (auto &argument : ExtractParseResultsFromList(arguments.GetResult())) {
-				auto &parts = argument.get()
-				                  .Cast<ListParseResult>()
-				                  .Child<ChoiceParseResult>(0)
-				                  .GetResult()
-				                  .Cast<ListParseResult>();
-				auto &mode = parts.Child<OptionalParseResult>(0);
-				if (mode.HasResult() && transformer.Transform<char>(mode.GetResult()) == 'o') {
-					continue;
-				}
-				result->parameter_types.push_back(
-				    transformer.Transform<LogicalType>(parts.GetChild(parts.GetChildren().size() - 1)));
-			}
-		}
-	}
+	result->has_parameter_types =
+	    TransformFunctionArgumentTypes(transformer, list_pr.Child<OptionalParseResult>(2), result->parameter_types);
 	ScalarMacroFunction attributes;
 	FunctionDecoratorInfo info;
 	ApplyFunctionDecorators(transformer, list_pr.Child<RepeatParseResult>(3), attributes, info);
