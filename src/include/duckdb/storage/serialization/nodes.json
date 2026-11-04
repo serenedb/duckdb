@@ -797,6 +797,11 @@
         "id": 108,
         "name": "functions",
         "type": "vector<NamedAcl>"
+      },
+      {
+        "id": 109,
+        "name": "types",
+        "type": "vector<ObjectAcl>"
       }
     ],
     "pointer_type": "none"

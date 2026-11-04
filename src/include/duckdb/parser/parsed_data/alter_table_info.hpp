@@ -128,6 +128,7 @@ struct AlterPermissionsInfo : public AlterInfo {
 	idx_t overload_oid = 0;
 	idx_t schema_id = 0;
 	vector<NamedAcl> functions;
+	idx_t type_id = 0;
 	vector<LogicalType> func_parameters;
 	bool has_func_args = false;
 	vector<unique_ptr<AlterPermissionsInfo>> additional_grants;
