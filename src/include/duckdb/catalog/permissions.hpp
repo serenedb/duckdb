@@ -298,6 +298,8 @@ DUCKDB_API void ForEachRoleReference(const CatalogEntry &entry, const std::funct
 DUCKDB_API vector<idx_t> RoleReferences(const CatalogEntry &entry);
 DUCKDB_API string PermissionKindName(CatalogType type);
 DUCKDB_API string PermissionKindName(const CatalogEntry &entry);
+DUCKDB_API string RoleOptionsToSQL(RoleOption set_options, RoleOption clear_options);
+DUCKDB_API string ValidUntilToSQL(int64_t valid_until);
 [[noreturn]] DUCKDB_API void ThrowPermissionDenied(const CatalogEntry &entry);
 
 } // namespace duckdb

@@ -522,6 +522,35 @@ static void ResolvePermissions(Binder &binder, AlterPermissionsInfo &info) {
 	}
 }
 
+void Binder::BindPrivilegeAlter(AlterInfo &info, StatementProperties &properties) {
+	const auto catalog_type = info.GetCatalogType();
+	if (catalog_type != CatalogType::DATABASE_ENTRY && catalog_type != CatalogType::ROLE_ENTRY &&
+	    catalog_type != CatalogType::FOREIGN_DATA_WRAPPER_ENTRY && catalog_type != CatalogType::PARAMETER_ENTRY &&
+	    catalog_type != CatalogType::LANGUAGE_ENTRY) {
+		info.SetQualifiedName(BindTableName(info.GetQualifiedName()));
+		auto &catalog = Catalog::GetCatalog(context, info.GetQualifiedName().Catalog());
+		properties.RegisterDBModify(catalog, context, DatabaseModificationType::ALTER_TABLE);
+	}
+	if (info.type == AlterType::ALTER_PERMISSIONS) {
+		ResolvePermissions(*this, info.Cast<AlterPermissionsInfo>());
+	} else if (info.type == AlterType::ALTER_DATABASE_SETTINGS) {
+		auto &settings = info.Cast<AlterDatabaseSettingsInfo>();
+		if (!settings.role.empty()) {
+			settings.role_id = RoleSpecId(settings.role);
+		}
+		CheckAlterDatabaseSettings(settings);
+	} else {
+		if (const auto role = RoleSpecKeyword(info.GetQualifiedName().Name().GetIdentifierName()); role.IsValid()) {
+			info.SetQualifiedName(Identifier(), Identifier(), Identifier(RoleName(role.GetIndex())));
+		}
+		CheckAlterRole(info.Cast<AlterRoleInfo>());
+	}
+	const auto target_type = info.GetCatalogType();
+	if (target_type == CatalogType::DATABASE_ENTRY || target_type == CatalogType::ROLE_ENTRY) {
+		info.SetQualifiedName(ClusterName(info.GetQualifiedName()));
+	}
+}
+
 BoundStatement Binder::Bind(AlterStatement &stmt) {
 	BoundStatement result;
 	result.names = {"Success"};
@@ -598,32 +627,15 @@ BoundStatement Binder::Bind(AlterStatement &stmt) {
 	    stmt.info->type == AlterType::ALTER_DATABASE_SETTINGS) {
 		auto &properties = GetStatementProperties();
 		properties.return_type = StatementReturnType::NOTHING;
-		const auto catalog_type = stmt.info->GetCatalogType();
-		if (catalog_type != CatalogType::DATABASE_ENTRY && catalog_type != CatalogType::ROLE_ENTRY &&
-		    catalog_type != CatalogType::FOREIGN_DATA_WRAPPER_ENTRY && catalog_type != CatalogType::PARAMETER_ENTRY &&
-		    catalog_type != CatalogType::LANGUAGE_ENTRY) {
-			stmt.info->SetQualifiedName(BindTableName(stmt.info->GetQualifiedName()));
-			auto &catalog = Catalog::GetCatalog(context, stmt.info->GetQualifiedName().Catalog());
-			properties.RegisterDBModify(catalog, context, DatabaseModificationType::ALTER_TABLE);
-		}
+		BindPrivilegeAlter(*stmt.info, properties);
 		if (stmt.info->type == AlterType::ALTER_PERMISSIONS) {
-			ResolvePermissions(*this, stmt.info->Cast<AlterPermissionsInfo>());
-		} else if (stmt.info->type == AlterType::ALTER_DATABASE_SETTINGS) {
-			auto &settings = stmt.info->Cast<AlterDatabaseSettingsInfo>();
-			if (!settings.role.empty()) {
-				settings.role_id = RoleSpecId(settings.role);
+			for (auto &grant : stmt.info->Cast<AlterPermissionsInfo>().additional_grants) {
+				BindPrivilegeAlter(*grant, properties);
 			}
-			CheckAlterDatabaseSettings(settings);
-		} else {
-			if (const auto role = RoleSpecKeyword(stmt.info->GetQualifiedName().Name().GetIdentifierName());
-			    role.IsValid()) {
-				stmt.info->SetQualifiedName(Identifier(), Identifier(), Identifier(RoleName(role.GetIndex())));
+		} else if (stmt.info->type == AlterType::ALTER_ROLE) {
+			for (auto &grant : stmt.info->Cast<AlterRoleInfo>().additional_grants) {
+				BindPrivilegeAlter(*grant, properties);
 			}
-			CheckAlterRole(stmt.info->Cast<AlterRoleInfo>());
-		}
-		const auto target_type = stmt.info->GetCatalogType();
-		if (target_type == CatalogType::DATABASE_ENTRY || target_type == CatalogType::ROLE_ENTRY) {
-			stmt.info->SetQualifiedName(ClusterName(stmt.info->GetQualifiedName()));
 		}
 		result.plan = make_uniq<LogicalAlter>(std::move(stmt.info));
 		return result;

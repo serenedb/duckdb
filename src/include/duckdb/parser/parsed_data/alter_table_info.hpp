@@ -125,6 +125,7 @@ struct AlterPermissionsInfo : public AlterInfo {
 	idx_t language_id = 0;
 	idx_t relation_id = 0;
 	vector<AclItem> relation_acl;
+	vector<unique_ptr<AlterPermissionsInfo>> additional_grants;
 
 public:
 	CatalogType GetCatalogType() const override;
@@ -181,6 +182,7 @@ struct AlterRoleInfo : public AlterInfo {
 	bool cascade = false;
 	bool all_roles = false;
 	bool alter_group = false;
+	vector<unique_ptr<AlterRoleInfo>> additional_grants;
 
 public:
 	CatalogType GetCatalogType() const override;

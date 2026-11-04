@@ -19,6 +19,9 @@
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/common/types/hash.hpp"
+#include "duckdb/common/types/timestamp.hpp"
+#include "duckdb/common/types/value.hpp"
+#include "duckdb/parser/keyword_helper.hpp"
 #include "duckdb/parser/column_list.hpp"
 #include "duckdb/parser/parsed_data/alter_table_info.hpp"
 
@@ -1059,6 +1062,36 @@ string PermissionKindName(const CatalogEntry &entry) {
 		return "procedure";
 	}
 	return PermissionKindName(entry.type);
+}
+
+string RoleOptionsToSQL(RoleOption set_options, RoleOption clear_options) {
+	struct NamedOption {
+		RoleOption option;
+		const char *keyword;
+	};
+	static constexpr NamedOption OPTIONS[] = {
+	    {RoleOption::Superuser, "SUPERUSER"},   {RoleOption::CreateDb, "CREATEDB"},
+	    {RoleOption::CreateRole, "CREATEROLE"}, {RoleOption::Inherit, "INHERIT"},
+	    {RoleOption::Login, "LOGIN"},           {RoleOption::Replication, "REPLICATION"},
+	    {RoleOption::BypassRls, "BYPASSRLS"}};
+	string result;
+	for (auto &named : OPTIONS) {
+		if (HasOption(set_options, named.option)) {
+			result += string(" ") + named.keyword;
+		} else if (HasOption(clear_options, named.option)) {
+			result += string(" NO") + named.keyword;
+		}
+	}
+	return result;
+}
+
+string ValidUntilToSQL(int64_t valid_until) {
+	const timestamp_t value(valid_until);
+	auto text = Timestamp::ToString(value);
+	if (Value::IsFinite(value)) {
+		text += "+00";
+	}
+	return KeywordHelper::WriteQuoted(text, '\'');
 }
 
 void ThrowPermissionDenied(const CatalogEntry &entry) {

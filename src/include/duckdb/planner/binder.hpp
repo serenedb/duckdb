@@ -658,6 +658,7 @@ private:
 	//! and registers the catalog modification. IF EXISTS only guards the trigger, not the table.
 	void BindDropTrigger(DropInfo &info, StatementProperties &properties);
 	void BindDrop(DropInfo &info, StatementProperties &properties);
+	void BindPrivilegeAlter(AlterInfo &info, StatementProperties &properties);
 	void BindRowIdColumns(TableCatalogEntry &table, LogicalGet &get, vector<unique_ptr<Expression>> &expressions);
 	//! Append references to the scanned pre-update (OLD) value of every physical column, in table order, to the
 	//! UPDATE child projection (before rowid). Records the input-chunk offset of the OLD block on the update.
