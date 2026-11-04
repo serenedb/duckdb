@@ -54,6 +54,10 @@ struct RenameScalarFunctionInfo : public RenameEntryInfo<RenameScalarFunctionInf
                                                          AlterScalarFunctionType::RENAME_SCALAR_FUNCTION> {
 	using RenameEntryInfo::RenameEntryInfo;
 
+	vector<LogicalType> func_parameters;
+	bool has_func_args = false;
+	idx_t overload_oid = 0;
+
 public:
 	unique_ptr<AlterInfo> Copy() const override;
 	string ToString() const override;

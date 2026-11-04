@@ -696,6 +696,71 @@ static void MoveAlong(DuckSchemaEntry &schema, CatalogTransaction transaction, c
 	}
 }
 
+static bool MoveOverload(DuckSchemaEntry &schema, CatalogTransaction transaction, CatalogSet &set, CatalogEntry &entry,
+                         const RenameScalarFunctionInfo &info) {
+	if (!info.overload_oid ||
+	    (entry.type != CatalogType::MACRO_ENTRY && entry.type != CatalogType::TABLE_MACRO_ENTRY)) {
+		return false;
+	}
+	auto &function = entry.Cast<MacroCatalogEntry>();
+	auto target = set.GetEntry(transaction, info.new_name);
+	if (function.macros.size() == 1 && !target) {
+		return false;
+	}
+	if (target && target->type != entry.type) {
+		throw CatalogException::EntryAlreadyExists(entry.type, info.new_name);
+	}
+	auto source = function.GetSerializedInfo();
+	auto &source_macros = source->Cast<CreateMacroInfo>().macros;
+	auto source_it =
+	    std::find_if(source_macros.begin(), source_macros.end(), [&](const unique_ptr<MacroFunction> &macro) {
+		    return function.OverloadOid(*macro) == info.overload_oid;
+	    });
+	if (source_it == source_macros.end()) {
+		throw CatalogException("function with OID %llu does not exist", info.overload_oid);
+	}
+	auto moved = std::move(*source_it);
+	source_macros.erase(source_it);
+	moved->permissions = function.OverloadPermissions(*moved);
+	moved->comment = function.OverloadComment(*moved);
+	moved->oid = 0;
+	unique_ptr<CreateInfo> destination;
+	if (target) {
+		destination = target->GetSerializedInfo();
+		auto &macros = destination->Cast<CreateMacroInfo>().macros;
+		const auto types = moved->ParameterTypes();
+		if (std::any_of(macros.begin(), macros.end(),
+		                [&](const unique_ptr<MacroFunction> &macro) { return macro->HasParameterTypes(types); })) {
+			auto extra_info = Exception::InitializeExtraInfo("ENTRY_ALREADY_EXISTS", optional_idx());
+			extra_info["type"] = CatalogTypeToString(CatalogType::MACRO_ENTRY);
+			throw CatalogException(extra_info, StringUtil::Format("function %s(%s) already exists in schema \"%s\"",
+			                                                      info.new_name.GetIdentifierName(),
+			                                                      MacroFunction::ParameterTypesToString(types),
+			                                                      schema.name.GetIdentifierName()));
+		}
+		macros.push_back(std::move(moved));
+		destination->on_conflict = OnCreateConflict::ALTER_ON_CONFLICT;
+	} else {
+		destination = function.GetInfo();
+		auto &macro_info = destination->Cast<CreateMacroInfo>();
+		macro_info.SetFunctionName(info.new_name);
+		macro_info.permissions = moved->permissions;
+		macro_info.comment = moved->comment;
+		moved->permissions = Permissions();
+		moved->comment = Value();
+		macro_info.macros.clear();
+		macro_info.macros.push_back(std::move(moved));
+	}
+	if (source_macros.empty()) {
+		set.DropEntry(transaction, function.name, false);
+	} else {
+		source->on_conflict = OnCreateConflict::ALTER_ON_CONFLICT;
+		schema.CreateFunction(transaction, source->Cast<CreateFunctionInfo>());
+	}
+	schema.CreateFunction(transaction, destination->Cast<CreateFunctionInfo>());
+	return true;
+}
+
 void DuckSchemaEntry::Alter(CatalogTransaction transaction, AlterInfo &info) {
 	if (info.type == AlterType::ALTER_PERMISSIONS && info.Cast<AlterPermissionsInfo>().all_in_schema) {
 		AlterAllInSchema(*this, transaction, info.Cast<AlterPermissionsInfo>());
@@ -709,7 +774,10 @@ void DuckSchemaEntry::Alter(CatalogTransaction transaction, AlterInfo &info) {
 		auto &name = info.GetQualifiedName().Name();
 		for (auto kind : {CatalogType::SCALAR_FUNCTION_ENTRY, CatalogType::TABLE_MACRO_ENTRY}) {
 			auto &kind_set = GetCatalogSet(kind);
-			if (kind_set.GetEntry(transaction, name)) {
+			if (auto function = kind_set.GetEntry(transaction, name)) {
+				if (MoveOverload(*this, transaction, kind_set, *function, info.Cast<RenameScalarFunctionInfo>())) {
+					return;
+				}
 				if (!kind_set.AlterEntry(transaction, name, info) &&
 				    info.if_not_found == OnEntryNotFound::THROW_EXCEPTION) {
 					throw CatalogException::MissingEntry(CatalogType::MACRO_ENTRY, name, string());

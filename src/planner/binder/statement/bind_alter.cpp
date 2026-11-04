@@ -920,7 +920,8 @@ BoundStatement Binder::Bind(AlterStatement &stmt) {
 			}
 		}
 		if (function) {
-			RequireOwner(*function);
+			auto &rename = stmt.info->Cast<RenameScalarFunctionInfo>();
+			rename.overload_oid = RequireRoutineOwner(*this, *function, rename.has_func_args, rename.func_parameters);
 			RequireSchemaCreate(function->ParentSchema(context));
 		}
 		auto &catalog = Catalog::GetCatalog(context, stmt.info->GetQualifiedName().Catalog());
