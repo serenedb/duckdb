@@ -1482,6 +1482,20 @@ void DependencyManager::DropObject(CatalogTransaction transaction, CatalogEntry 
 	}
 }
 
+catalog_entry_vector_t DependencyManager::DropOrder(CatalogTransaction transaction,
+                                                    const catalog_entry_vector_t &entries) {
+	catalog_entry_map_t<subdependency_set_t> to_drop;
+	for (auto &entry : entries) {
+		to_drop[entry];
+	}
+	catalog_entry_set_t visited;
+	catalog_entry_vector_t order;
+	for (auto &entry : entries) {
+		OrderDrop(transaction, entry, to_drop, visited, order);
+	}
+	return order;
+}
+
 void DependencyManager::OrderDrop(CatalogTransaction transaction, CatalogEntry &entry,
                                   const catalog_entry_map_t<subdependency_set_t> &to_drop, catalog_entry_set_t &visited,
                                   catalog_entry_vector_t &order) {

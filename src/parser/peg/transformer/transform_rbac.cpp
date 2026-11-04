@@ -396,24 +396,15 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformDropRoleStatement(PEGTr
                                                                            ParseResult &parse_result) {
 	auto &list_pr = parse_result.Cast<ListParseResult>();
 	// 0:'DROP' 1:RoleOrUser 2:IfExists? 3:List(ColId)
-	const auto if_not_found = list_pr.Child<OptionalParseResult>(2).HasResult() ? OnEntryNotFound::RETURN_NULL
-	                                                                            : OnEntryNotFound::THROW_EXCEPTION;
-	const auto drop = [&](ParseResult &name) {
-		auto result = make_uniq<DropStatement>();
-		result->info->type = CatalogType::ROLE_ENTRY;
-		result->info->SetQualifiedName(Identifier(), Identifier(), Identifier(TransformColIdName(transformer, name)));
-		result->info->if_not_found = if_not_found;
-		return result;
-	};
-	auto names = PEGTransformerFactory::ExtractParseResultsFromList(list_pr.GetChild(3));
-	if (names.size() == 1) {
-		return drop(names[0].get());
+	auto info = make_uniq<DropInfo>();
+	info->type = CatalogType::ROLE_ENTRY;
+	info->if_not_found = list_pr.Child<OptionalParseResult>(2).HasResult() ? OnEntryNotFound::RETURN_NULL
+	                                                                       : OnEntryNotFound::THROW_EXCEPTION;
+	vector<QualifiedName> names;
+	for (auto &name : PEGTransformerFactory::ExtractParseResultsFromList(list_pr.GetChild(3))) {
+		names.emplace_back(Identifier(), Identifier(), Identifier(TransformColIdName(transformer, name.get())));
 	}
-	auto result = make_uniq<MultiStatement>();
-	for (auto &name : names) {
-		result->statements.push_back(drop(name.get()));
-	}
-	return std::move(result);
+	return MakeDropStatement(std::move(info), std::move(names));
 }
 
 unique_ptr<SQLStatement> PEGTransformerFactory::TransformCreatePolicyStatement(PEGTransformer &transformer,

@@ -293,11 +293,27 @@ optional_ptr<CatalogEntry> DuckCatalog::CreateReplicationOrigin(CatalogTransacti
 }
 
 void DuckCatalog::DropRole(CatalogTransaction transaction, DropInfo &info) {
-	D_ASSERT(!info.GetQualifiedName().Name().empty());
-	if (!roles->DropEntry(transaction, info.GetQualifiedName().Name(), info.cascade)) {
-		if (info.if_not_found == OnEntryNotFound::THROW_EXCEPTION) {
-			throw CatalogException::MissingEntry(CatalogType::ROLE_ENTRY, info.GetQualifiedName().Name(), string());
+	catalog_entry_vector_t listed;
+	auto resolve = [&](const DropInfo &target) {
+		auto &name = target.GetQualifiedName().Name();
+		D_ASSERT(!name.empty());
+		auto role = roles->GetEntry(transaction, name);
+		if (!role) {
+			if (target.if_not_found == OnEntryNotFound::THROW_EXCEPTION) {
+				throw CatalogException::MissingEntry(CatalogType::ROLE_ENTRY, name, string());
+			}
+			return;
 		}
+		if (std::none_of(listed.begin(), listed.end(), [&](CatalogEntry &other) { return &other == role.get(); })) {
+			listed.push_back(*role);
+		}
+	};
+	resolve(info);
+	for (auto &target : info.additional_drops) {
+		resolve(*target);
+	}
+	for (auto &role : listed) {
+		roles->DropEntry(transaction, role.get().name, info.cascade);
 	}
 }
 

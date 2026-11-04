@@ -1,4 +1,5 @@
 #include "duckdb/execution/operator/schema/physical_drop.hpp"
+#include "duckdb/catalog/dependency_manager.hpp"
 #include "duckdb/catalog/catalog_entry/schema_catalog_entry.hpp"
 #include "duckdb/execution/operator/helper/physical_reset.hpp"
 #include "duckdb/main/client_data.hpp"
@@ -73,6 +74,72 @@ static void Discard(ExecutionContext &context, DiscardTarget target) {
 	}
 }
 
+static Catalog &DropCatalog(ClientContext &context, const DropInfo &target) {
+	if (target.type == CatalogType::SCHEMA_ENTRY) {
+		// the catalog is the leading component of the resolved path ([catalog, parent schemas..., schema])
+		return Catalog::GetCatalog(context, target.GetQualifiedName().Path().front());
+	}
+	// the catalog may be empty -> the default catalog (e.g. for an unresolved DROP ... IF EXISTS of a missing
+	// entry)
+	return Catalog::GetCatalog(context, target.GetQualifiedName().Catalog());
+}
+
+static optional_ptr<CatalogEntry> DropTarget(ClientContext &context, const DropInfo &target) {
+	switch (target.type) {
+	case CatalogType::SCHEMA_ENTRY: {
+		auto &path = target.GetQualifiedName().Path();
+		return Catalog::GetSchema(context, path.front(), vector<Identifier>(path.begin() + 1, path.end()),
+		                          OnEntryNotFound::RETURN_NULL)
+		    .get();
+	}
+	case CatalogType::FOREIGN_SERVER_ENTRY:
+		return nullptr;
+	default:
+		return Catalog::GetEntry(context, EntryLookupInfo(target.type, target.GetQualifiedName()),
+		                         OnEntryNotFound::RETURN_NULL);
+	}
+}
+
+static void DropTogether(ClientContext &context, DropInfo &info) {
+	if (info.additional_drops.empty()) {
+		DropCatalog(context, info).DropEntry(context, info);
+		return;
+	}
+	vector<reference<DropInfo>> unresolved;
+	catalog_entry_vector_t entries;
+	catalog_entry_map_t<vector<reference<DropInfo>>> targets;
+	auto resolve = [&](DropInfo &target) {
+		auto entry = DropTarget(context, target);
+		if (!entry || !entry->ParentCatalog().IsDuckCatalog()) {
+			unresolved.push_back(target);
+			return;
+		}
+		auto &listed = targets[*entry];
+		if (listed.empty()) {
+			entries.push_back(*entry);
+		}
+		listed.push_back(target);
+	};
+	resolve(info);
+	for (auto &target : info.additional_drops) {
+		resolve(*target);
+	}
+	for (auto &target : unresolved) {
+		DropCatalog(context, target).DropEntry(context, target);
+	}
+	if (entries.empty()) {
+		return;
+	}
+	auto &catalog = entries[0].get().ParentCatalog();
+	for (auto &entry : catalog.GetDependencyManager()->DropOrder(catalog.GetCatalogTransaction(context), entries)) {
+		for (auto &target : targets[entry]) {
+			auto drop = target.get().Copy();
+			drop->if_not_found = OnEntryNotFound::RETURN_NULL;
+			DropCatalog(context, *drop).DropEntry(context, *drop);
+		}
+	}
+}
+
 //===--------------------------------------------------------------------===//
 // Source
 //===--------------------------------------------------------------------===//
@@ -89,15 +156,6 @@ SourceResultType PhysicalDrop::GetDataInternal(ExecutionContext &context, DataCh
 		           info->if_not_found == OnEntryNotFound::THROW_EXCEPTION) {
 			throw CatalogException::MissingPreparedStatement(name);
 		}
-		break;
-	}
-	case CatalogType::SCHEMA_ENTRY: {
-		// the catalog is the leading component of the resolved path ([catalog, parent schemas..., schema])
-		auto &catalog_name = info->GetQualifiedName().Path().front();
-		auto &catalog = Catalog::GetCatalog(context.client, catalog_name);
-		catalog.DropEntry(context.client, *info);
-		// PG-compatible: leave search_path alone. The dropped schema becomes an
-		// invalid entry that lookups will simply skip (see GetResolvedDefault).
 		break;
 	}
 	case CatalogType::SECRET_ENTRY: {
@@ -129,13 +187,14 @@ SourceResultType PhysicalDrop::GetDataInternal(ExecutionContext &context, DataCh
 		}
 		break;
 	}
-	default: {
-		// the catalog may be empty -> the default catalog (e.g. for an unresolved DROP ... IF EXISTS of a missing
-		// entry)
+	case CatalogType::ROLE_ENTRY: {
 		auto &catalog = Catalog::GetCatalog(context.client, info->GetQualifiedName().Catalog());
 		catalog.DropEntry(context.client, *info);
 		break;
 	}
+	default:
+		DropTogether(context.client, *info);
+		break;
 	}
 
 	return SourceResultType::FINISHED;

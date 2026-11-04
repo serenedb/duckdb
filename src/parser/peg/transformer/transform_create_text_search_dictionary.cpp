@@ -50,17 +50,16 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformCreateTSDictionaryState
 unique_ptr<SQLStatement> PEGTransformerFactory::TransformDropTSDictionaryStatement(PEGTransformer &transformer,
                                                                                    ParseResult &parse_result) {
 	auto &list_pr = parse_result.Cast<ListParseResult>();
-	bool if_exists = list_pr.Child<OptionalParseResult>(4).HasResult();
-	auto qname = transformer.Transform<QualifiedName>(list_pr.Child<ListParseResult>(5));
-	bool cascade = false;
-	transformer.TransformOptional<bool>(list_pr, 6, cascade);
-
-	auto result = make_uniq<DropStatement>();
-	result->info->type = CatalogType::TOKENIZER_ENTRY;
-	result->info->SetQualifiedName(qname);
-	result->info->if_not_found = if_exists ? OnEntryNotFound::RETURN_NULL : OnEntryNotFound::THROW_EXCEPTION;
-	result->info->cascade = cascade;
-	return std::move(result);
+	auto info = make_uniq<DropInfo>();
+	info->type = CatalogType::TOKENIZER_ENTRY;
+	info->if_not_found = list_pr.Child<OptionalParseResult>(4).HasResult() ? OnEntryNotFound::RETURN_NULL
+	                                                                       : OnEntryNotFound::THROW_EXCEPTION;
+	transformer.TransformOptional<bool>(list_pr, 6, info->cascade);
+	vector<QualifiedName> names;
+	for (auto &name : ExtractParseResultsFromList(list_pr.GetChild(5))) {
+		names.push_back(transformer.Transform<QualifiedName>(name.get()));
+	}
+	return MakeDropStatement(std::move(info), std::move(names));
 }
 
 } // namespace duckdb

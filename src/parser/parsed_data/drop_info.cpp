@@ -14,6 +14,9 @@ DropInfo::DropInfo(const DropInfo &info)
       has_func_args(info.has_func_args), is_procedure(info.is_procedure),
       extra_drop_info(info.extra_drop_info ? info.extra_drop_info->Copy() : nullptr),
       qualified_name(info.qualified_name) {
+	for (auto &target : info.additional_drops) {
+		additional_drops.push_back(target->Copy());
+	}
 }
 
 unique_ptr<DropInfo> DropInfo::Copy() const {
@@ -38,17 +41,24 @@ string DropInfo::ToString() const {
 		if (if_not_found == OnEntryNotFound::RETURN_NULL) {
 			result += " IF EXISTS";
 		}
-		result += " ";
-		result += qualified_name.ToString(QualifiedNameToStringMode::HIDE_DEFAULT_SCHEMA);
-		if (has_func_args) {
-			result += "(";
-			for (idx_t i = 0; i < func_parameters.size(); i++) {
-				if (i > 0) {
-					result += ", ";
+		auto target = [&](const DropInfo &info) {
+			result += info.qualified_name.ToString(QualifiedNameToStringMode::HIDE_DEFAULT_SCHEMA);
+			if (info.has_func_args) {
+				result += "(";
+				for (idx_t i = 0; i < info.func_parameters.size(); i++) {
+					if (i > 0) {
+						result += ", ";
+					}
+					result += info.func_parameters[i].ToString();
 				}
-				result += func_parameters[i].ToString();
+				result += ")";
 			}
-			result += ")";
+		};
+		result += " ";
+		target(*this);
+		for (auto &other : additional_drops) {
+			result += ", ";
+			target(*other);
 		}
 		if (type == CatalogType::TRIGGER_ENTRY && extra_drop_info) {
 			auto &trigger_info = extra_drop_info->Cast<ExtraDropTriggerInfo>();
