@@ -206,6 +206,10 @@ static void Apply(vector<AclItem> &acl, idx_t grantor, AclMode grantable, AclMod
 		Revoke(acl, info.grantee_id, grantor, privileges, info.option_only, info.cascade);
 		return;
 	}
+	if (info.with_grant_option && info.grantee_id == ACL_ID_PUBLIC) {
+		throw Exception({{"error_subtype", "INVALID_GRANT_OPERATION"}}, ExceptionType::INVALID_INPUT,
+		                "grant options can only be granted to roles");
+	}
 	const auto granted = privileges & grantable;
 	if (granted != AclMode::NoRights) {
 		Grant(acl, info.grantee_id, grantor, granted, info.with_grant_option ? granted : AclMode::NoRights);
