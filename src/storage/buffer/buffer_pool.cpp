@@ -355,7 +355,8 @@ BufferPool::EvictionResult BufferPool::EvictBlocksInternal(QueryContext context,
 		if (victim->CanUnload() != CanUnloadResult::CAN_UNLOAD) {
 			continue;
 		}
-		if (buffer && victim->GetBuffer(lock)->AllocSize() == extra_memory) {
+		const auto &victim_buffer = *victim->GetBuffer(lock);
+		if (buffer && victim_buffer.OwnsInternalBuffer() && victim_buffer.AllocSize() == extra_memory) {
 			// we can re-use the memory directly
 			*buffer = victim->UnloadAndTakeBlock(lock, context);
 			if (*buffer) {
