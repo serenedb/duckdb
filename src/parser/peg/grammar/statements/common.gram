@@ -52,6 +52,7 @@ Statement <-
 	ResetStatement /
 	ExportStatement /
 	ImportStatement /
+	CommentRoutineStatement /
 	CommentStatement /
 	DeallocateStatement /
 	DiscardStatement /

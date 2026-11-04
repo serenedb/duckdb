@@ -407,6 +407,7 @@ void MacroFunction::CopyProperties(MacroFunction &other) const {
 	other.source = source;
 	other.oid = oid;
 	other.permissions = permissions;
+	other.comment = comment;
 }
 
 vector<unique_ptr<ParsedExpression>>

@@ -5104,6 +5104,8 @@ public:
 	                                                          const CatalogType &comment_on_type,
 	                                                          const vector<string> &comment_target,
 	                                                          const Value &comment_value);
+	static unique_ptr<SQLStatement> TransformCommentRoutineStatement(PEGTransformer &transformer,
+	                                                                 ParseResult &parse_result);
 	static vector<string> TransformCommentStringLiteralIdentifier(PEGTransformer &transformer,
 	                                                              const Identifier &string_literal_identifier);
 	static CatalogType TransformCommentTable(PEGTransformer &transformer);

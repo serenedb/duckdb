@@ -47,6 +47,10 @@ const Permissions &MacroCatalogEntry::OverloadPermissions(const MacroFunction &o
 	return overload.permissions.owner ? overload.permissions : permissions;
 }
 
+const Value &MacroCatalogEntry::OverloadComment(const MacroFunction &overload) const {
+	return overload.oid ? overload.comment : comment;
+}
+
 optional_ptr<MacroFunction> MacroCatalogEntry::FindOverload(idx_t overload_oid) const {
 	for (auto &macro : macros) {
 		if (OverloadOid(*macro) == overload_oid) {
@@ -112,23 +116,32 @@ unique_ptr<CreateInfo> MacroCatalogEntry::GetInfo() const {
 }
 
 unique_ptr<CatalogEntry> MacroCatalogEntry::AlterEntry(CatalogTransaction transaction, AlterInfo &info) {
-	if (info.type == AlterType::ALTER_PERMISSIONS && info.Cast<AlterPermissionsInfo>().overload_oid) {
-		auto &grant = info.Cast<AlterPermissionsInfo>();
+	auto alter_overload = [&](idx_t overload_oid, auto &&alter) {
 		auto altered = GetInfo();
 		auto &altered_macros = altered->Cast<CreateMacroInfo>().macros;
 		auto target =
-		    std::find_if(altered_macros.begin(), altered_macros.end(), [&](const unique_ptr<MacroFunction> &macro) {
-			    return OverloadOid(*macro) == grant.overload_oid;
-		    });
+		    std::find_if(altered_macros.begin(), altered_macros.end(),
+		                 [&](const unique_ptr<MacroFunction> &macro) { return OverloadOid(*macro) == overload_oid; });
 		if (target == altered_macros.end()) {
-			throw CatalogException("function with OID %llu does not exist", grant.overload_oid);
+			throw CatalogException("function with OID %llu does not exist", overload_oid);
 		}
-		auto &target_permissions = (*target)->permissions;
-		if (!target_permissions.owner) {
-			target_permissions = permissions;
-		}
-		grant.ApplyTo(target_permissions, type, nullptr);
+		alter(**target);
 		return Create(catalog, ParentSchema(transaction), altered->Cast<CreateMacroInfo>());
+	};
+	if (info.type == AlterType::ALTER_PERMISSIONS && info.Cast<AlterPermissionsInfo>().overload_oid) {
+		auto &grant = info.Cast<AlterPermissionsInfo>();
+		return alter_overload(grant.overload_oid, [&](MacroFunction &overload) {
+			if (!overload.permissions.owner) {
+				overload.permissions = permissions;
+			}
+			grant.ApplyTo(overload.permissions, type, nullptr);
+		});
+	}
+	if (info.type == AlterType::SET_COMMENT && info.Cast<SetCommentInfo>().overload_oid &&
+	    info.Cast<SetCommentInfo>().overload_oid != oid) {
+		auto &comment_info = info.Cast<SetCommentInfo>();
+		return alter_overload(comment_info.overload_oid,
+		                      [&](MacroFunction &overload) { overload.comment = comment_info.comment_value; });
 	}
 	if (info.type != AlterType::REPLACE_DEFINITION) {
 		return CatalogEntry::AlterEntry(transaction, info);
@@ -142,6 +155,7 @@ unique_ptr<CatalogEntry> MacroCatalogEntry::AlterEntry(CatalogTransaction transa
 		if (existing != macros.end()) {
 			function->oid = (*existing)->oid;
 			function->permissions = (*existing)->permissions;
+			function->comment = (*existing)->comment;
 		} else if (!function->oid && !catalog.IsSystemCatalog()) {
 			function->oid = catalog.GetDatabase().GetDatabaseManager().NextOid();
 		}

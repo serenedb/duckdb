@@ -184,22 +184,22 @@ static idx_t GranteeId(Binder &binder, const string &name) {
 	return name == "public" ? ACL_ID_PUBLIC : binder.RoleSpecId(name);
 }
 
-static MacroFunction &ResolveOverload(Binder &binder, MacroCatalogEntry &macro, AlterPermissionsInfo &info) {
+static MacroFunction &ResolveOverload(Binder &binder, MacroCatalogEntry &macro, bool has_func_args,
+                                      vector<LogicalType> &func_parameters) {
 	auto &name = macro.name.GetIdentifierName();
-	if (info.has_func_args) {
-		for (auto &type : info.func_parameters) {
+	if (has_func_args) {
+		for (auto &type : func_parameters) {
 			binder.BindLogicalType(type);
 		}
 		for (auto &overload : macro.macros) {
-			if (overload->HasParameterTypes(info.func_parameters)) {
+			if (overload->HasParameterTypes(func_parameters)) {
 				return *overload;
 			}
 		}
 		auto extra_info = Exception::InitializeExtraInfo("MISSING_ENTRY", optional_idx());
 		extra_info["type"] = CatalogTypeToString(macro.type);
-		throw CatalogException(extra_info,
-		                       StringUtil::Format("function %s(%s) does not exist", name,
-		                                          MacroFunction::ParameterTypesToString(info.func_parameters)));
+		throw CatalogException(extra_info, StringUtil::Format("function %s(%s) does not exist", name,
+		                                                      MacroFunction::ParameterTypesToString(func_parameters)));
 	}
 	if (macro.macros.size() > 1) {
 		auto extra_info = Exception::InitializeExtraInfo("AMBIGUOUS_FUNCTION", optional_idx());
@@ -207,6 +207,21 @@ static MacroFunction &ResolveOverload(Binder &binder, MacroCatalogEntry &macro, 
 		throw CatalogException(extra_info, StringUtil::Format("function name \"%s\" is not unique", name));
 	}
 	return *macro.macros[0];
+}
+
+static idx_t RequireRoutineOwner(Binder &binder, CatalogEntry &entry, bool has_func_args,
+                                 vector<LogicalType> &func_parameters) {
+	const bool names_overload =
+	    !entry.internal && (entry.type == CatalogType::MACRO_ENTRY || entry.type == CatalogType::TABLE_MACRO_ENTRY) &&
+	    (has_func_args || entry.ParentCatalog().Compatibility() == SqlCompatibility::POSTGRES);
+	if (!names_overload) {
+		binder.RequireOwner(entry);
+		return 0;
+	}
+	auto &macro = entry.Cast<MacroCatalogEntry>();
+	auto &overload = ResolveOverload(binder, macro, has_func_args, func_parameters);
+	binder.RequireOwner(entry, macro.OverloadPermissions(overload).owner);
+	return macro.OverloadOid(overload);
 }
 
 static void ResolveBuiltinFunctionGrant(Binder &binder, CatalogEntry &function, AlterPermissionsInfo &info) {
@@ -396,7 +411,7 @@ static CatalogEntry &ResolvePermissionsTarget(Binder &binder, AlterPermissionsIn
 	if ((entry->type == CatalogType::MACRO_ENTRY || entry->type == CatalogType::TABLE_MACRO_ENTRY) &&
 	    !entry->internal && !IsUnowned(*entry)) {
 		auto &macro = entry->Cast<MacroCatalogEntry>();
-		info.overload_oid = macro.OverloadOid(ResolveOverload(binder, macro, info));
+		info.overload_oid = macro.OverloadOid(ResolveOverload(binder, macro, info.has_func_args, info.func_parameters));
 	}
 	return *entry;
 }
@@ -956,6 +971,17 @@ BoundStatement Binder::Bind(AlterStatement &stmt) {
 		}
 	} else if (stmt.info->type == AlterType::SET_SCHEMA) {
 		entry = BindSetSchemaEntry(stmt.info->Cast<SetSchemaInfo>(), lookup);
+	} else if (stmt.info->type == AlterType::SET_COMMENT && stmt.info->GetCatalogType() == CatalogType::MACRO_ENTRY) {
+		entry = lookup(CatalogType::MACRO_ENTRY, OnEntryNotFound::RETURN_NULL);
+		if (!entry) {
+			entry = lookup(CatalogType::TABLE_MACRO_ENTRY, OnEntryNotFound::RETURN_NULL);
+		}
+		if (!entry) {
+			entry = lookup(CatalogType::MACRO_ENTRY, stmt.info->if_not_found);
+		}
+		if (entry && entry->type == CatalogType::TABLE_MACRO_ENTRY) {
+			stmt.info->Cast<SetCommentInfo>().entry_catalog_type = CatalogType::TABLE_MACRO_ENTRY;
+		}
 	} else {
 		// For any other ALTER, we retrieve the catalog entry directly.
 		entry = lookup(stmt.info->GetCatalogType(), stmt.info->if_not_found);
@@ -973,7 +999,12 @@ BoundStatement Binder::Bind(AlterStatement &stmt) {
 	}
 
 	D_ASSERT(!entry->deleted);
-	RequireOwner(*entry);
+	if (stmt.info->type == AlterType::SET_COMMENT) {
+		auto &comment = stmt.info->Cast<SetCommentInfo>();
+		comment.overload_oid = RequireRoutineOwner(*this, *entry, comment.has_func_args, comment.func_parameters);
+	} else {
+		RequireOwner(*entry);
+	}
 	if (stmt.info->GetNewName()) {
 		RequireSchemaCreate(entry->ParentSchema(context));
 	}

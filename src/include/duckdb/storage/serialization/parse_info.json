@@ -426,6 +426,12 @@
         "id": 301,
         "name": "comment_value",
         "type": "Value"
+      },
+      {
+        "id": 16686,
+        "name": "overload_oid",
+        "type": "idx_t",
+        "version": "serenedb_v1"
       }
     ]
   },

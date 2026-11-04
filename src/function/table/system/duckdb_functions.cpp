@@ -727,7 +727,11 @@ bool ExtractFunctionData(ClientContext &context, CatalogEntry &entry, idx_t func
 	                                                                   : Value(function_description.description));
 
 	// comment, LogicalType::VARCHAR
-	output.data[col++].Append(Value(function.comment));
+	if constexpr (std::is_base_of_v<MacroCatalogEntry, T>) {
+		output.data[col++].Append(function.OverloadComment(*function.macros[function_idx]));
+	} else {
+		output.data[col++].Append(Value(function.comment));
+	}
 
 	// tags, LogicalType::MAP(LogicalType::VARCHAR, LogicalType::VARCHAR)
 	output.data[col++].Append(Value::MAP(function.tags));

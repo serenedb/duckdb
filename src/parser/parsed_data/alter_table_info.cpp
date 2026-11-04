@@ -24,6 +24,17 @@ static string DottedNameToSQL(const string &name) {
 	                        [](const string &part) { return SQLIdentifier::ToString(part); });
 }
 
+static string RoutineToSQL(const QualifiedName &name, bool has_func_args, const vector<LogicalType> &func_parameters) {
+	auto result = name.ToString(QualifiedNameToStringMode::HIDE_DEFAULT_SCHEMA);
+	if (has_func_args) {
+		result +=
+		    "(" +
+		    StringUtil::Join(func_parameters, ", ", [](const LogicalType &parameter) { return parameter.ToString(); }) +
+		    ")";
+	}
+	return result;
+}
+
 template <class INFO, class RENDER>
 static string DistinctToSQL(const INFO &head, const vector<unique_ptr<INFO>> &others, RENDER &&render) {
 	vector<string> items;
@@ -160,18 +171,22 @@ CatalogType SetCommentInfo::GetCatalogType() const {
 }
 
 unique_ptr<AlterInfo> SetCommentInfo::Copy() const {
-	return make_uniq_base<AlterInfo, SetCommentInfo>(entry_catalog_type, GetQualifiedName().Catalog(),
-	                                                 GetQualifiedName().Schema(), GetQualifiedName().Name(),
-	                                                 comment_value, if_not_found);
+	auto result =
+	    make_uniq<SetCommentInfo>(entry_catalog_type, GetQualifiedName().Catalog(), GetQualifiedName().Schema(),
+	                              GetQualifiedName().Name(), comment_value, if_not_found);
+	result->overload_oid = overload_oid;
+	result->func_parameters = func_parameters;
+	result->has_func_args = has_func_args;
+	return std::move(result);
 }
 
 string SetCommentInfo::ToString() const {
 	string result = "";
 
 	result += "COMMENT ON ";
-	result += ParseInfo::TypeToString(entry_catalog_type);
+	result += has_func_args ? "FUNCTION" : ParseInfo::TypeToString(entry_catalog_type);
 	result += " ";
-	result += GetQualifiedName().ToString(QualifiedNameToStringMode::HIDE_DEFAULT_SCHEMA);
+	result += RoutineToSQL(GetQualifiedName(), has_func_args, func_parameters);
 	result += " IS ";
 	result += comment_value.ToSQLString();
 
@@ -344,14 +359,7 @@ static string GrantObjectsToSQL(CatalogType type, bool include_functions, bool i
 
 string AlterPermissionsInfo::ToString() const {
 	auto target_name = [](const AlterPermissionsInfo &info) {
-		auto name = info.GetQualifiedName().ToString(QualifiedNameToStringMode::HIDE_DEFAULT_SCHEMA);
-		if (info.has_func_args) {
-			name += "(" +
-			        StringUtil::Join(info.func_parameters, ", ",
-			                         [](const LogicalType &parameter) { return parameter.ToString(); }) +
-			        ")";
-		}
-		return name;
+		return RoutineToSQL(info.GetQualifiedName(), info.has_func_args, info.func_parameters);
 	};
 	if (!new_owner.empty()) {
 		return "ALTER " + OwnerTargetToSQL(*this) + " " + target_name(*this) + " OWNER TO " + RoleSpecToSQL(new_owner) +

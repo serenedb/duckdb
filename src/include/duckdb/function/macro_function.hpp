@@ -63,6 +63,7 @@ public:
 	string source;
 	idx_t oid = 0;
 	Permissions permissions;
+	Value comment;
 
 public:
 	virtual ~MacroFunction() {
