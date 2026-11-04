@@ -431,6 +431,7 @@ public:
 
 	optional_ptr<const RoleAccess> check_as;
 	optional_ptr<const RoleAccess> current_role;
+	bool security_definer_body = false;
 	const RoleAccess &CheckAs() const;
 	const RoleAccess &CurrentRole() const;
 	const RoleAccess &AccessOf(idx_t role);

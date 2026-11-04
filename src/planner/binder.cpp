@@ -65,6 +65,7 @@ Binder::Binder(ClientContext &context, shared_ptr<Binder> parent_p, BinderType b
 		macro_binding = parent->macro_binding;
 		check_as = parent->check_as;
 		current_role = parent->current_role;
+		security_definer_body = parent->security_definer_body;
 		if (binder_type != BinderType::VIEW_BINDER) {
 			// inherit expression binders from parent
 			active_binders = parent->active_binders;
@@ -326,6 +327,7 @@ void Binder::BindAsFunctionBody(const RoleAccess &role) {
 void Binder::InheritRoles(Binder &other) {
 	check_as = other.check_as;
 	current_role = other.current_role;
+	security_definer_body = other.security_definer_body;
 	entry_retriever.SetCheckAs(other.entry_retriever.GetCheckAs());
 }
 
@@ -341,6 +343,7 @@ void Binder::BindAsFunctionBody(const SelectStatement &statement) {
 	if (!CheckAs().IsSystem()) {
 		BindAsFunctionBody(FunctionBodyRole(statement.function_owner));
 	}
+	security_definer_body |= statement.function_owner.IsValid();
 	if (statement.function_config) {
 		UseFunctionSearchPath(*statement.function_config);
 	}

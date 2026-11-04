@@ -1801,15 +1801,18 @@ BindResult ExpressionBinder::BindMacro(FunctionExpression &function, ScalarMacro
 		}
 	};
 	absl::Cleanup restore_role = [&, check_as = binder.check_as, current_role = binder.current_role,
-	                              lookups = binder.EntryRetriever().GetCheckAs()] {
+	                              lookups = binder.EntryRetriever().GetCheckAs(),
+	                              security_definer_body = binder.security_definer_body] {
 		if (body_role) {
 			binder.check_as = check_as;
 			binder.current_role = current_role;
 			binder.EntryRetriever().SetCheckAs(lookups);
+			binder.security_definer_body = security_definer_body;
 		}
 	};
 	if (body_role) {
 		binder.BindAsFunctionBody(*body_role);
+		binder.security_definer_body |= macro_def.security_definer;
 	}
 	BindResult result;
 	if (shared_arguments.empty()) {
