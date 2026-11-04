@@ -519,6 +519,13 @@ bool BlockCache::PinPresent(Slot &slot, idx_t size, BlockCachePin &result, optio
 		missing.reset();
 		return false;
 	}
+	if (memory && IsDropped(*memory)) {
+		const auto lock = memory->GetLock();
+		if (!IsDropped(*memory)) {
+			missing.reset();
+			return false;
+		}
+	}
 	missing = value;
 	if (!memory || IsDropped(*memory)) {
 		return false;

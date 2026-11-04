@@ -1,6 +1,7 @@
 #include "catch.hpp"
 #include "test_helpers.hpp"
 #include "duckdb/common/atomic.hpp"
+#include "duckdb/common/fault_points.hpp"
 #include "duckdb/common/local_file_system.hpp"
 #include "duckdb/common/mutex.hpp"
 #include "duckdb/common/unordered_set.hpp"
@@ -13,6 +14,7 @@
 #include <absl/cleanup/cleanup.h>
 #include <absl/time/clock.h>
 #include <chrono>
+#include <future>
 
 namespace duckdb {
 
@@ -982,6 +984,91 @@ TEST_CASE("Block cache blocks of in-memory files spill to temporary files and ar
 	REQUIRE(cache.GetStatistics().used == 0);
 	REQUIRE(BufferManager::GetBufferManager(*db.instance).GetUsedSwap() == 0);
 }
+
+#ifdef SDB_FAULT_INJECTION
+namespace {
+
+void AwaitParked(const string &fault_point) {
+	while (!FaultPoints::Armed(fault_point + ":parked")) {
+		absl::SleepFor(absl::Milliseconds(1));
+	}
+}
+
+struct ReadWhileParked {
+	//! Whether the read waited for the parked thread instead of returning while it was parked
+	bool waited;
+	uint8_t first_byte;
+};
+
+//! Reads block [block] of [file] in a thread of its own while another thread is parked at [fault_point], then releases
+//! the parked thread
+ReadWhileParked ReadWhileParkedAt(BlockCache &cache, const shared_ptr<BlockCacheFile> &file, idx_t block,
+                                  const string &fault_point) {
+	auto reader =
+	    std::async(std::launch::async, [&] { return cache.PinRange(file, block * BLOCK, BLOCK)[0].Ptr()[0]; });
+	ReadWhileParked result;
+	result.waited = reader.wait_for(std::chrono::milliseconds(200)) == std::future_status::timeout;
+	REQUIRE(FaultPoints::Arm(fault_point + ":release"));
+	result.first_byte = 0;
+	REQUIRE_NOTHROW(result.first_byte = reader.get());
+	return result;
+}
+
+} // namespace
+
+TEST_CASE("Block cache reads an in-memory block while an eviction writes it to a temporary file", "[block_cache]") {
+	const auto directory = TestCreatePath("block_cache_unload_window");
+	DBConfig config;
+	LimitMemory(config, 4, directory);
+	DuckDB db(nullptr, &config);
+	BlockCache cache(*db.instance);
+	auto &buffer_manager = BufferManager::GetBufferManager(*db.instance);
+	auto file = cache.CreateUnbackedFile("memory://unload_window.bin");
+	AppendBlocks(cache, file, 2, [](idx_t block) { return block + 1; });
+	absl::Cleanup clear = [] {
+		FaultPoints::Clear();
+	};
+	REQUIRE(FaultPoints::Arm("block_unload_before_temporary_write"));
+	auto evictor =
+	    std::async(std::launch::async, [&] { return buffer_manager.Allocate(MemoryTag::IN_MEMORY_TABLE, 2 * BLOCK); });
+	AwaitParked("block_unload_before_temporary_write");
+	const idx_t victim = cache.TryPinRange(*file, 0, BLOCK).empty() ? 0 : 1;
+	REQUIRE(cache.TryPinRange(*file, victim * BLOCK, BLOCK).empty());
+	const auto read = ReadWhileParkedAt(cache, file, victim, "block_unload_before_temporary_write");
+	BufferHandle allocated;
+	REQUIRE_NOTHROW(allocated = evictor.get());
+	REQUIRE(allocated.IsValid());
+	REQUIRE(read.waited);
+	REQUIRE(read.first_byte == victim + 1);
+}
+
+TEST_CASE("Block cache reads an in-memory block while another reader loads it back from its temporary file",
+          "[block_cache]") {
+	const auto directory = TestCreatePath("block_cache_load_window");
+	DBConfig config;
+	LimitMemory(config, 16, directory);
+	DuckDB db(nullptr, &config);
+	BlockCache cache(*db.instance);
+	auto &buffer_manager = BufferManager::GetBufferManager(*db.instance);
+	auto file = cache.CreateUnbackedFile("memory://load_window.bin");
+	AppendBlocks(cache, file, 2, [](idx_t block) { return block + 1; });
+	buffer_manager.SetMemoryLimit(BLOCK);
+	cache.Pin(file, 1);
+	REQUIRE(cache.TryPinRange(*file, 0, BLOCK).empty());
+	absl::Cleanup clear = [] {
+		FaultPoints::Clear();
+	};
+	REQUIRE(FaultPoints::Arm("block_load_before_loaded"));
+	auto loader = std::async(std::launch::async, [&] { return cache.Pin(file, 0).Ptr()[0]; });
+	AwaitParked("block_load_before_loaded");
+	const auto read = ReadWhileParkedAt(cache, file, 0, "block_load_before_loaded");
+	uint8_t loaded = 0;
+	REQUIRE_NOTHROW(loaded = loader.get());
+	REQUIRE(loaded == 1);
+	REQUIRE(read.waited);
+	REQUIRE(read.first_byte == 1);
+}
+#endif
 
 TEST_CASE("Block cache gives memory back to the buffer pool", "[block_cache]") {
 	DuckDB db(nullptr);
