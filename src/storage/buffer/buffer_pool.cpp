@@ -125,28 +125,6 @@ public:
 		return nullptr;
 	}
 
-	//! The blocks that have not been used since [limit]
-	vector<shared_ptr<BlockMemory>> UnusedSince(int64_t limit, int64_t now) {
-		vector<shared_ptr<BlockMemory>> result;
-		for (auto &stripe : stripes) {
-			annotated_lock_guard<annotated_mutex> guard(stripe.lock);
-			for (auto memory : stripe.slots) {
-				if (!memory || !memory->IsUnpinnedAndLoaded()) {
-					continue;
-				}
-				const auto used = memory->GetLRUTimestamp();
-				if (used >= limit && used <= now) {
-					continue;
-				}
-				auto block = memory->weak_from_this().lock();
-				if (block) {
-					result.push_back(std::move(block));
-				}
-			}
-		}
-		return result;
-	}
-
 	bool HasFileBufferType(const FileBufferType &type) const {
 		return std::find(file_buffer_types.begin(), file_buffer_types.end(), type) != file_buffer_types.end();
 	}
@@ -193,14 +171,13 @@ private:
 	atomic<idx_t> bytes {0};
 };
 
-BufferPool::BufferPool(BlockAllocator &block_allocator, idx_t maximum_memory, bool track_eviction_timestamps,
+BufferPool::BufferPool(BlockAllocator &block_allocator, idx_t maximum_memory,
                        idx_t allocator_bulk_deallocation_flush_threshold, idx_t external_file_cache_min_memory)
     : eviction_queue_sizes({BLOCK_AND_EXTERNAL_FILE_QUEUE_SIZE, REMOTE_FILE_QUEUE_SIZE, MANAGED_BUFFER_QUEUE_SIZE,
                             TINY_BUFFER_QUEUE_SIZE}),
       maximum_memory(maximum_memory),
       allocator_bulk_deallocation_flush_threshold(allocator_bulk_deallocation_flush_threshold),
       external_file_cache_min_memory(external_file_cache_min_memory),
-      track_eviction_timestamps(track_eviction_timestamps),
       temporary_memory_manager(make_uniq<TemporaryMemoryManager>()), block_allocator(block_allocator) {
 	for (idx_t queue_type_idx = 0; queue_type_idx < EVICTION_QUEUE_TYPES; queue_type_idx++) {
 		const auto types = EvictionQueueTypeIdxToFileBufferTypes(queue_type_idx);
@@ -232,12 +209,6 @@ void BufferPool::CountEviction(const BlockMemory &memory) {
 
 idx_t BufferPool::GetEvictions(MemoryTag tag) const {
 	return evictions_per_tag[uint8_t(tag)].load(std::memory_order_relaxed);
-}
-
-void BufferPool::SetLRUTimestamp(BlockMemory &memory) {
-	memory.SetLRUTimestamp(std::chrono::time_point_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now())
-	                           .time_since_epoch()
-	                           .count());
 }
 
 EvictionQueue &BufferPool::GetEvictionQueueForBlockMemory(const BlockMemory &memory) {
@@ -383,30 +354,6 @@ BufferPool::EvictionResult BufferPool::EvictBlocksInternal(QueryContext context,
 	}
 
 	return {found, std::move(r)};
-}
-
-//! Do not remove this method.
-//! There are extensions that rely on time-based purging of blocks, that uses the method.
-idx_t BufferPool::PurgeAgedBlocks(uint32_t max_age_sec) {
-	int64_t now = std::chrono::time_point_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now())
-	                  .time_since_epoch()
-	                  .count();
-	int64_t limit = now - (static_cast<int64_t>(max_age_sec) * 1000);
-	idx_t purged_bytes = 0;
-	for (auto &queue : queues) {
-		for (auto &block : queue->UnusedSince(limit, now)) {
-			auto lock = block->GetLock();
-			if (block->CanUnload() != CanUnloadResult::CAN_UNLOAD) {
-				continue;
-			}
-			const auto bytes = block->GetMemoryUsage();
-			if (block->UnloadAndTakeBlock(lock)) {
-				CountEviction(*block);
-				purged_bytes += bytes;
-			}
-		}
-	}
-	return purged_bytes;
 }
 
 void BufferPool::SetLimit(idx_t limit, const char *exception_postscript) {

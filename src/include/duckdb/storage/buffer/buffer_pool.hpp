@@ -34,8 +34,8 @@ class BufferPool {
 	friend class StandardBufferManager;
 
 public:
-	BufferPool(BlockAllocator &block_allocator, idx_t maximum_memory, bool track_eviction_timestamps,
-	           idx_t allocator_bulk_deallocation_flush_threshold, idx_t external_file_cache_min_memory);
+	BufferPool(BlockAllocator &block_allocator, idx_t maximum_memory, idx_t allocator_bulk_deallocation_flush_threshold,
+	           idx_t external_file_cache_min_memory);
 	virtual ~BufferPool();
 
 	//! Set a new memory limit to the buffer pool, throws an exception if the new limit is too low and not enough
@@ -97,27 +97,17 @@ protected:
 	//! Freed memory that has to accumulate before the allocator is flushed
 	idx_t GetBulkDeallocationFlushThreshold() const;
 
-	//! Purge all blocks that haven't been pinned within the last N seconds
-	idx_t PurgeAgedBlocks(uint32_t max_age_sec);
-
 	//! A loaded block joins the eviction queue of its type and priority, and leaves it once it is unloaded or
 	//! destroyed. Requires the block lock, or exclusive ownership of the block.
 	void AddBlock(BlockMemory &memory);
 	void RemoveBlock(BlockMemory &memory);
 	//! Marks a block as used, which spares it one round of eviction. Takes no lock.
-	bool TracksEvictionTimestamps() const {
-		return track_eviction_timestamps;
-	}
 	void MarkUsed(BlockMemory &memory) {
 		memory.SetReferenced();
-		if (track_eviction_timestamps) {
-			SetLRUTimestamp(memory);
-		}
 	}
 	//! The blocks of [tag] evicted since start
 	idx_t GetEvictions(MemoryTag tag) const;
 	void CountEviction(const BlockMemory &memory);
-	void SetLRUTimestamp(BlockMemory &memory);
 	//! Gets the eviction queue for the specified type
 	EvictionQueue &GetEvictionQueueForBlockMemory(const BlockMemory &memory);
 
@@ -186,8 +176,6 @@ protected:
 	static constexpr idx_t BULK_DEALLOCATION_FLUSH_DIVISOR = 16;
 	atomic<idx_t> external_file_cache_min_memory;
 	static constexpr idx_t EXTERNAL_FILE_CACHE_MIN_MEMORY_DIVISOR = 20;
-	//! Record timestamps of buffer manager unpin() events. Usable by custom eviction policies.
-	bool track_eviction_timestamps;
 	//! Eviction queues
 	vector<unique_ptr<EvictionQueue>> queues;
 	//! Memory manager for concurrently used temporary memory, e.g., for physical operators
