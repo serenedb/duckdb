@@ -361,7 +361,7 @@ static CatalogEntry &ResolvePermissionsTarget(Binder &binder, AlterPermissionsIn
 	    entry->ParentCatalog().GetName(),
 	    entry->ParentSchemaPath(entry->ParentCatalog().GetCatalogTransaction(context)), entry->name));
 	if ((entry->type == CatalogType::MACRO_ENTRY || entry->type == CatalogType::TABLE_MACRO_ENTRY) &&
-	    !IsUnowned(*entry)) {
+	    !entry->internal && !IsUnowned(*entry)) {
 		auto &macro = entry->Cast<MacroCatalogEntry>();
 		info.overload_oid = macro.OverloadOid(ResolveOverload(binder, macro, info));
 	}
