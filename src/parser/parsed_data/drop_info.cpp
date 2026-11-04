@@ -37,7 +37,7 @@ string DropInfo::ToString() const {
 		}
 	} else {
 		result += "DROP";
-		result += " " + ParseInfo::TypeToString(type);
+		result += " " + (is_procedure ? string("PROCEDURE") : ParseInfo::TypeToString(type));
 		if (if_not_found == OnEntryNotFound::RETURN_NULL) {
 			result += " IF EXISTS";
 		}
