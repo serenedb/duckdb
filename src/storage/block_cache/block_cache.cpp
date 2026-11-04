@@ -13,6 +13,7 @@
 #include "duckdb/storage/metadata/metadata_manager.hpp"
 
 #include <absl/cleanup/cleanup.h>
+#include <algorithm>
 #include <cstring>
 
 namespace duckdb {
@@ -952,6 +953,24 @@ void BlockCache::Prefetch(const shared_ptr<BlockCacheFile> &file_p, idx_t offset
 			return;
 		}
 		block = plan.next;
+	}
+}
+
+void BlockCache::Prefetch(const shared_ptr<BlockCacheFile> &file, std::span<BlockCacheRange> ranges,
+                          BlockCachePrefetch kind) {
+	std::sort(ranges.begin(), ranges.end(),
+	          [](const BlockCacheRange &l, const BlockCacheRange &r) { return l.offset < r.offset; });
+	idx_t merged = 0;
+	for (auto &range : ranges) {
+		if (merged != 0 && range.offset <= ranges[merged - 1].offset + ranges[merged - 1].size + MERGE_GAP) {
+			auto &last = ranges[merged - 1];
+			last.size = MaxValue(last.size, range.offset + range.size - last.offset);
+		} else {
+			ranges[merged++] = range;
+		}
+	}
+	for (auto &range : ranges.first(merged)) {
+		Prefetch(file, range.offset, range.size, kind);
 	}
 }
 
