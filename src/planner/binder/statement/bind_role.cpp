@@ -57,6 +57,15 @@ static SettingAccess AccessOf(ClientContext &context, std::string_view key) {
 	return access ? *access : SettingAccess();
 }
 
+static void CheckConfigNames(const vector<string> &set_config, const vector<string> &reset_config) {
+	for (auto &entry : set_config) {
+		Settings::CheckCustomName(Identifier(string(Settings::ConfigKey(entry))));
+	}
+	for (auto &key : reset_config) {
+		Settings::CheckCustomName(Identifier(key));
+	}
+}
+
 static void CheckConfigChange(ClientContext &context, const vector<string> &set_config, vector<string> &reset_config,
                               bool &reset_all_config, const vector<string> &current) {
 	for (auto &entry : set_config) {
@@ -154,6 +163,7 @@ void Binder::CheckAlterRole(AlterRoleInfo &info) {
 	if (caller.IsSystem()) {
 		return;
 	}
+	CheckConfigNames(info.set_config, info.reset_config);
 	auto role = FindRole(*this, info.GetQualifiedName().Name().GetIdentifierName());
 	if (!role) {
 		return;
@@ -227,6 +237,7 @@ void Binder::CheckAlterDatabaseSettings(AlterDatabaseSettingsInfo &info) {
 	if (caller.IsSystem()) {
 		return;
 	}
+	CheckConfigNames(info.set_config, info.reset_config);
 	auto &name = info.GetQualifiedName().Name();
 	auto database = ClusterEntry(CatalogType::DATABASE_ENTRY, name);
 	if (!database) {

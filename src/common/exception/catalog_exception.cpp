@@ -54,13 +54,13 @@ CatalogException CatalogException::MissingEntry(const string &type, const Identi
 	extra_info["error_subtype"] = "MISSING_ENTRY";
 	extra_info["name"] = name.GetIdentifierName();
 	extra_info["type"] = type;
+	auto message = StringUtil::Format("unrecognized %s %s", type, name);
 	if (!suggestions.empty()) {
 		extra_info["candidates"] = StringUtil::Join(suggestions, ", ");
+		message += "\n" + StringUtil::CandidatesErrorMessage(IdentifiersToStrings(suggestions),
+		                                                     name.GetIdentifierName(), "Did you mean");
 	}
-	return CatalogException(
-	    extra_info, StringUtil::Format("unrecognized %s %s\n%s", type, name,
-	                                   StringUtil::CandidatesErrorMessage(IdentifiersToStrings(suggestions),
-	                                                                      name.GetIdentifierName(), "Did you mean")));
+	return CatalogException(extra_info, message);
 }
 
 CatalogException CatalogException::EntryAlreadyExists(CatalogType type, const Identifier &name,

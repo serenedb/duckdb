@@ -1986,6 +1986,7 @@ IdentifierType:
     - TableAliasColon
     - SecretStorageSpecifier
     - SchemaAuthorization
+    - SettingPath
     - SecretName
     - TriggerName
     - DropSecretStorage

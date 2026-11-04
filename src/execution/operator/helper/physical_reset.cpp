@@ -203,6 +203,10 @@ void PhysicalReset::ResetVariable(ExecutionContext &context, const Identifier &n
 	}
 	ExtensionOption extension_option;
 	if (!config.TryGetExtensionOption(name, extension_option)) {
+		if (Settings::IsCustomName(name)) {
+			PhysicalSet::SetCustomVariable(context.client, name, scope, Value(string()));
+			return;
+		}
 		Catalog::AutoloadExtensionByConfigName(context.client, name);
 		if (!config.TryGetExtensionOption(name, extension_option)) {
 			throw InvalidInputException("Extension parameter %s was not found after autoloading", name);
@@ -236,6 +240,12 @@ void PhysicalReset::ResetAll(ExecutionContext &context, SetScope scope, bool dis
 			continue;
 		}
 		ResetExtensionVariable(context, config, ext.first, ext.second, variable_scope, true);
+	}
+	if (scope == SetScope::GLOBAL) {
+		return;
+	}
+	for (auto &entry : ClientConfig::GetConfig(context.client).custom_settings) {
+		PhysicalSet::SetCustomVariable(context.client, Identifier(entry.first), scope, Value(string()));
 	}
 }
 
