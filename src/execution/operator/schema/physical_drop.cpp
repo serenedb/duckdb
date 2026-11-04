@@ -20,23 +20,26 @@ static void DropTemporaryObjects(ClientContext &context) {
 	if (!catalog.IsDuckCatalog()) {
 		types.push_back(CatalogType::JOB_ENTRY);
 	}
-	vector<unique_ptr<DropInfo>> drops;
+	catalog_entry_vector_t entries;
 	catalog.ScanSchemas(context, [&](SchemaCatalogEntry &schema) {
 		for (auto type : types) {
 			schema.Scan(context, type, [&](CatalogEntry &entry) {
-				if (entry.internal) {
-					return;
+				if (!entry.internal) {
+					entries.push_back(entry);
 				}
-				auto drop = make_uniq<DropInfo>();
-				drop->type = entry.type;
-				drop->SetQualifiedName(
-				    QualifiedName::FromCatalogSchema(catalog.GetName(), entry.ParentSchemaPath(), entry.name));
-				drop->cascade = true;
-				drop->if_not_found = OnEntryNotFound::RETURN_NULL;
-				drops.push_back(std::move(drop));
 			});
 		}
 	});
+	vector<unique_ptr<DropInfo>> drops;
+	for (auto &entry : catalog.DropOrder(catalog.GetCatalogTransaction(context), entries)) {
+		auto drop = make_uniq<DropInfo>();
+		drop->type = entry.get().type;
+		drop->SetQualifiedName(
+		    QualifiedName::FromCatalogSchema(catalog.GetName(), entry.get().ParentSchemaPath(), entry.get().name));
+		drop->cascade = true;
+		drop->if_not_found = OnEntryNotFound::RETURN_NULL;
+		drops.push_back(std::move(drop));
+	}
 	for (auto &drop : drops) {
 		catalog.DropEntry(context, *drop);
 	}
