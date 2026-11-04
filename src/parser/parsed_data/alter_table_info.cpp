@@ -267,6 +267,7 @@ unique_ptr<AlterInfo> AlterRoleInfo::Copy() const {
 	result->set_option = set_option;
 	result->grant_role_id = grant_role_id;
 	result->grantor_id = grantor_id;
+	result->all_roles = all_roles;
 	result->alter_group = alter_group;
 	return std::move(result);
 }
@@ -289,7 +290,7 @@ string AlterRoleInfo::ToString() const {
 		return "GRANT " + granted + " TO " + role +
 		       (options.empty() ? "" : " WITH " + StringUtil::Join(options, ", ")) + ";";
 	}
-	auto result = "ALTER ROLE " + role;
+	auto result = "ALTER ROLE " + (all_roles ? string("ALL") : role);
 	if (!new_name.empty()) {
 		return result + " RENAME TO " + SQLIdentifier::ToString(new_name) + ";";
 	}

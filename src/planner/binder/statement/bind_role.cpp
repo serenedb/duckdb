@@ -164,6 +164,16 @@ void Binder::CheckAlterRole(AlterRoleInfo &info) {
 		return;
 	}
 	CheckConfigNames(info.set_config, info.reset_config);
+	if (info.all_roles) {
+		if (!caller.is_superuser) {
+			throw PermissionException(
+			    {{"detail", "Only roles with the SUPERUSER attribute may alter settings globally."}},
+			    "permission denied to alter setting");
+		}
+		info.SetQualifiedName(Identifier(), Identifier(),
+		                      Identifier(RoleName(DBConfig::GetConfig(context).bootstrap_role)));
+		return;
+	}
 	auto role = FindRole(*this, info.GetQualifiedName().Name().GetIdentifierName());
 	if (!role) {
 		return;
