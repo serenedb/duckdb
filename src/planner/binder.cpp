@@ -382,8 +382,8 @@ void Binder::CheckTableRead(TableBinding &binding, TableCatalogEntry &table) {
 	if (role.Can(CatalogType::TABLE_ENTRY, permissions, AclMode::Select)) {
 		return;
 	}
-	binding.column_read =
-	    make_shared_ptr<ColumnReadCheck>(table, permissions, role, table_ref_use != TableRefUse::DML_TARGET);
+	binding.column_read = make_shared_ptr<ColumnReadCheck>(
+	    table, permissions, role, table_ref_use != TableRefUse::DML_TARGET, EffectiveColumnAcls(context, table));
 	global_binder_state->column_reads.push_back(binding.column_read);
 }
 

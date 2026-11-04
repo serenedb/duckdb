@@ -206,14 +206,31 @@ bool ColumnReadCheck::Allowed() const {
 }
 
 bool ColumnReadCheck::CanRead(idx_t column_index) const {
-	const auto acl =
-	    entry.type == CatalogType::VIEW_ENTRY
-	        ? entry.Cast<ViewCatalogEntry>().ColumnAcl(column_index)
-	        : std::span<const AclItem>(entry.Cast<TableCatalogEntry>().GetColumn(LogicalIndex(column_index)).Acl());
+	std::span<const AclItem> acl;
+	if (column_acls) {
+		if (entry.type == CatalogType::VIEW_ENTRY) {
+			auto &view = entry.Cast<ViewCatalogEntry>();
+			acl = FindColumnAcl(*column_acls, column_index < view.aliases.size()
+			                                      ? view.aliases[column_index]
+			                                      : view.GetColumnInfo()->names[column_index]);
+		} else {
+			acl = FindColumnAcl(*column_acls,
+			                    entry.Cast<TableCatalogEntry>().GetColumn(LogicalIndex(column_index)).Name());
+		}
+	} else if (entry.type == CatalogType::VIEW_ENTRY) {
+		acl = entry.Cast<ViewCatalogEntry>().ColumnAcl(column_index);
+	} else {
+		acl = entry.Cast<TableCatalogEntry>().GetColumn(LogicalIndex(column_index)).Acl();
+	}
 	return role.CanColumns(permissions, AclMode::Select, std::span<const std::span<const AclItem>>(&acl, 1));
 }
 
 bool ColumnReadCheck::CanReadAny() const {
+	if (column_acls) {
+		return std::any_of(column_acls->begin(), column_acls->end(), [&](const ColumnAcl &column) {
+			return (role.HeldModes(column.acl) & AclMode::Select) != AclMode::NoRights;
+		});
+	}
 	if (entry.type != CatalogType::VIEW_ENTRY) {
 		auto &table = entry.Cast<TableCatalogEntry>();
 		return role.CanAnyColumn(permissions, AclMode::Select, table.GetColumns());

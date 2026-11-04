@@ -167,6 +167,27 @@ struct ColumnPrivilege {
 	static ColumnPrivilege Deserialize(Deserializer &deserializer);
 };
 
+struct ColumnAcl {
+	Identifier column;
+	vector<AclItem> acl;
+
+	bool operator==(const ColumnAcl &rhs) const = default;
+
+	void Serialize(Serializer &serializer) const;
+	static ColumnAcl Deserialize(Deserializer &deserializer);
+};
+
+struct RelationAcl {
+	idx_t oid = 0;
+	vector<AclItem> acl;
+	vector<ColumnAcl> columns;
+
+	bool operator==(const RelationAcl &rhs) const = default;
+
+	void Serialize(Serializer &serializer) const;
+	static RelationAcl Deserialize(Deserializer &deserializer);
+};
+
 struct Permissions {
 	idx_t owner = 0;
 	vector<AclItem> acl;
@@ -174,7 +195,7 @@ struct Permissions {
 	vector<ObjectAcl> foreign_data_wrappers;
 	vector<NamedAcl> parameters;
 	vector<ObjectAcl> languages;
-	vector<ObjectAcl> relations;
+	vector<RelationAcl> relations;
 
 	bool operator==(const Permissions &rhs) const = default;
 
@@ -256,9 +277,13 @@ public:
 		RoleCapability capabilities = RoleCapability::None;
 		vector<Membership> member_of;
 	};
+	struct Relation {
+		Permissions permissions;
+		vector<ColumnAcl> columns;
+	};
 
 	SecuritySnapshot(unordered_map<idx_t, Node> nodes, unordered_map<string, idx_t> database_owners,
-	                 idx_t database_owner_role, unordered_map<string, unordered_map<idx_t, Permissions>> relations);
+	                 idx_t database_owner_role, unordered_map<string, unordered_map<idx_t, Relation>> relations);
 	~SecuritySnapshot();
 
 	SecuritySnapshot(const SecuritySnapshot &) = delete;
@@ -274,6 +299,10 @@ public:
 	RoleMemberships MembershipsOf(idx_t role) const;
 	optional_idx BestAdmin(idx_t member, idx_t role) const;
 	optional_ptr<const Permissions> RelationPermissions(std::string_view database, idx_t relation) const;
+	optional_ptr<const vector<ColumnAcl>> RelationColumns(std::string_view database, idx_t relation) const;
+
+private:
+	optional_ptr<const Relation> FindRelation(std::string_view database, idx_t relation) const;
 
 private:
 	vector<idx_t> arena;
@@ -282,13 +311,15 @@ private:
 	unordered_map<string, idx_t> by_name;
 	unordered_map<string, idx_t> database_owners;
 	idx_t database_owner_role;
-	unordered_map<string, unordered_map<idx_t, Permissions>> relations;
+	unordered_map<string, unordered_map<idx_t, Relation>> relations;
 	mutable mutex derived_lock;
 	mutable unordered_map<idx_t, shared_ptr<const SecuritySnapshot>> derived;
 };
 
 DUCKDB_API bool IsUnowned(const CatalogEntry &entry);
 DUCKDB_API const Permissions &EffectivePermissions(ClientContext &context, const CatalogEntry &entry);
+DUCKDB_API optional_ptr<const vector<ColumnAcl>> EffectiveColumnAcls(ClientContext &context, const CatalogEntry &entry);
+DUCKDB_API std::span<const AclItem> FindColumnAcl(const vector<ColumnAcl> &columns, const Identifier &column);
 DUCKDB_API bool CanUseSchema(const RoleAccess &role, const CatalogEntry &schema);
 DUCKDB_API bool EntryVisible(ClientContext &context, const RoleAccess &role, CatalogEntry &entry);
 DUCKDB_API bool DatabaseVisible(ClientContext &context, const RoleAccess &role, AttachedDatabase &database);

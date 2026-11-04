@@ -786,7 +786,50 @@
       {
         "id": 106,
         "name": "relations",
-        "type": "vector<ObjectAcl>"
+        "type": "vector<RelationAcl>"
+      }
+    ],
+    "pointer_type": "none"
+  },
+  {
+    "class": "ColumnAcl",
+    "includes": [
+      "duckdb/catalog/permissions.hpp"
+    ],
+    "members": [
+      {
+        "id": 100,
+        "name": "column",
+        "type": "Identifier"
+      },
+      {
+        "id": 101,
+        "name": "acl",
+        "type": "vector<AclItem>"
+      }
+    ],
+    "pointer_type": "none"
+  },
+  {
+    "class": "RelationAcl",
+    "includes": [
+      "duckdb/catalog/permissions.hpp"
+    ],
+    "members": [
+      {
+        "id": 100,
+        "name": "oid",
+        "type": "idx_t"
+      },
+      {
+        "id": 101,
+        "name": "acl",
+        "type": "vector<AclItem>"
+      },
+      {
+        "id": 102,
+        "name": "columns",
+        "type": "vector<ColumnAcl>"
       }
     ],
     "pointer_type": "none"

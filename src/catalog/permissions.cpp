@@ -378,17 +378,37 @@ void AlterPermissionsInfo::ApplyTo(Permissions &permissions, CatalogType entry_t
 	if (info.relation_id) {
 		auto &relations = permissions.relations;
 		auto row = std::find_if(relations.begin(), relations.end(),
-		                        [&](const ObjectAcl &entry) { return entry.oid == info.relation_id; });
+		                        [&](const RelationAcl &entry) { return entry.oid == info.relation_id; });
 		auto row_acl = row == relations.end() ? info.relation_acl : row->acl;
-		ApplyGrant(info, info.object_owner_id, row_acl, CatalogType::TABLE_ENTRY, nullptr);
-		if (row_acl == info.relation_acl) {
+		ColumnList column_list;
+		if (row != relations.end()) {
+			for (auto &column : row->columns) {
+				ColumnDefinition definition(column.column, LogicalType::VARCHAR);
+				definition.SetAcl(column.acl);
+				column_list.AddColumn(std::move(definition));
+			}
+		}
+		for (auto &privilege : info.column_privileges) {
+			if (!column_list.ColumnExists(privilege.column)) {
+				column_list.AddColumn(ColumnDefinition(privilege.column, LogicalType::VARCHAR));
+			}
+		}
+		ApplyGrant(info, info.object_owner_id, row_acl, CatalogType::TABLE_ENTRY, &column_list);
+		vector<ColumnAcl> columns;
+		for (auto &column : column_list.Logical()) {
+			if (!column.Acl().empty()) {
+				columns.push_back(ColumnAcl {column.Name(), column.Acl()});
+			}
+		}
+		if (row_acl == info.relation_acl && columns.empty()) {
 			if (row != relations.end()) {
 				relations.erase(row);
 			}
 		} else if (row == relations.end()) {
-			relations.push_back(ObjectAcl {info.relation_id, std::move(row_acl)});
+			relations.push_back(RelationAcl {info.relation_id, std::move(row_acl), std::move(columns)});
 		} else {
 			row->acl = std::move(row_acl);
+			row->columns = std::move(columns);
 		}
 		return;
 	}
@@ -612,7 +632,7 @@ static vector<idx_t> Reachable(const unordered_map<idx_t, SecuritySnapshot::Node
 
 SecuritySnapshot::SecuritySnapshot(unordered_map<idx_t, Node> nodes_p, unordered_map<string, idx_t> database_owners_p,
                                    idx_t database_owner_role_p,
-                                   unordered_map<string, unordered_map<idx_t, Permissions>> relations_p)
+                                   unordered_map<string, unordered_map<idx_t, Relation>> relations_p)
     : nodes(std::move(nodes_p)), database_owners(std::move(database_owners_p)),
       database_owner_role(database_owner_role_p), relations(std::move(relations_p)) {
 	vector<Role> roles_p;
@@ -682,12 +702,13 @@ shared_ptr<const SecuritySnapshot> SecuritySnapshot::Build(DuckCatalog &cluster,
 		nodes[role.oid] = Node {role.name.GetIdentifierName(), role.Options(), role.Capabilities(), role.MemberOf()};
 	});
 	unordered_map<string, idx_t> database_owners;
-	unordered_map<string, unordered_map<idx_t, Permissions>> relations;
+	unordered_map<string, unordered_map<idx_t, Relation>> relations;
 	auto &config = DBConfig::GetConfig(cluster.GetDatabase());
 	cluster.GetCatalogSet(CatalogType::DATABASE_ENTRY).Scan(transaction, [&](CatalogEntry &entry) {
 		database_owners.emplace(entry.name.GetIdentifierName(), entry.permissions.owner);
 		for (auto &row : entry.permissions.relations) {
-			relations[entry.name.GetIdentifierName()][row.oid] = Permissions {config.bootstrap_role, row.acl};
+			relations[entry.name.GetIdentifierName()][row.oid] =
+			    Relation {Permissions {config.bootstrap_role, row.acl}, row.columns};
 		}
 	});
 	return make_shared_ptr<const SecuritySnapshot>(std::move(nodes), std::move(database_owners),
@@ -759,7 +780,8 @@ RoleMemberships SecuritySnapshot::MembershipsOf(idx_t role) const {
 	return result;
 }
 
-optional_ptr<const Permissions> SecuritySnapshot::RelationPermissions(std::string_view database, idx_t relation) const {
+optional_ptr<const SecuritySnapshot::Relation> SecuritySnapshot::FindRelation(std::string_view database,
+                                                                              idx_t relation) const {
 	if (relations.empty()) {
 		return nullptr;
 	}
@@ -767,8 +789,19 @@ optional_ptr<const Permissions> SecuritySnapshot::RelationPermissions(std::strin
 	if (rows == relations.end()) {
 		return nullptr;
 	}
-	auto permissions = rows->second.find(relation);
-	return permissions == rows->second.end() ? nullptr : &permissions->second;
+	auto row = rows->second.find(relation);
+	return row == rows->second.end() ? nullptr : &row->second;
+}
+
+optional_ptr<const Permissions> SecuritySnapshot::RelationPermissions(std::string_view database, idx_t relation) const {
+	auto row = FindRelation(database, relation);
+	return row ? &row->permissions : nullptr;
+}
+
+optional_ptr<const vector<ColumnAcl>> SecuritySnapshot::RelationColumns(std::string_view database,
+                                                                        idx_t relation) const {
+	auto row = FindRelation(database, relation);
+	return row && !row->columns.empty() ? &row->columns : nullptr;
 }
 
 const Permissions &EffectivePermissions(ClientContext &context, const CatalogEntry &entry) {
@@ -778,6 +811,22 @@ const Permissions &EffectivePermissions(ClientContext &context, const CatalogEnt
 	auto permissions =
 	    context.security->RelationPermissions(entry.ParentCatalog().GetName().GetIdentifierName(), entry.oid);
 	return permissions ? *permissions : entry.permissions;
+}
+
+optional_ptr<const vector<ColumnAcl>> EffectiveColumnAcls(ClientContext &context, const CatalogEntry &entry) {
+	if (!entry.internal || !context.security) {
+		return nullptr;
+	}
+	return context.security->RelationColumns(entry.ParentCatalog().GetName().GetIdentifierName(), entry.oid);
+}
+
+std::span<const AclItem> FindColumnAcl(const vector<ColumnAcl> &columns, const Identifier &column) {
+	for (auto &row : columns) {
+		if (row.column == column) {
+			return row.acl;
+		}
+	}
+	return {};
 }
 
 optional_idx SecuritySnapshot::BestAdmin(idx_t member, idx_t role) const {
@@ -970,7 +1019,8 @@ static bool AnyRoleReference(const CatalogEntry &entry, F &&named) {
 		}
 	}
 	for (auto &row : permissions.relations) {
-		if (any_acl(row.acl)) {
+		if (any_acl(row.acl) || std::any_of(row.columns.begin(), row.columns.end(),
+		                                    [&](const ColumnAcl &column) { return any_acl(column.acl); })) {
 			return true;
 		}
 	}

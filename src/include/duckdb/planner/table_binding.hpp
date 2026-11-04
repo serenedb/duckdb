@@ -107,8 +107,10 @@ protected:
 };
 
 struct ColumnReadCheck {
-	ColumnReadCheck(StandardEntry &entry_p, const Permissions &permissions_p, RoleAccess role_p, bool require_any_p)
-	    : entry(entry_p), permissions(permissions_p), role(role_p), require_any(require_any_p) {
+	ColumnReadCheck(StandardEntry &entry_p, const Permissions &permissions_p, RoleAccess role_p, bool require_any_p,
+	                optional_ptr<const vector<ColumnAcl>> column_acls_p)
+	    : entry(entry_p), permissions(permissions_p), role(role_p), require_any(require_any_p),
+	      column_acls(column_acls_p) {
 	}
 
 	void Read(idx_t column_index);
@@ -120,6 +122,7 @@ struct ColumnReadCheck {
 	const Permissions &permissions;
 	RoleAccess role;
 	bool require_any;
+	optional_ptr<const vector<ColumnAcl>> column_acls;
 	vector<idx_t> columns;
 };
 

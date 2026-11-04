@@ -396,8 +396,24 @@ static void ResolveGrant(Binder &binder, AlterPermissionsInfo &info) {
 	    (target.type != CatalogType::TABLE_ENTRY && target.type != CatalogType::VIEW_ENTRY)) {
 		return;
 	}
-	if (!info.column_privileges.empty()) {
-		throw NotImplementedException("column privileges on system catalogs are not supported");
+	vector<Identifier> columns;
+	if (target.type == CatalogType::TABLE_ENTRY) {
+		for (auto &column : target.Cast<TableCatalogEntry>().GetColumns().Logical()) {
+			columns.push_back(column.Name());
+		}
+	} else {
+		auto &view = target.Cast<ViewCatalogEntry>();
+		view.BindView(binder.context);
+		auto names = view.GetColumnInfo()->names;
+		for (idx_t i = 0; i < names.size(); i++) {
+			columns.push_back(i < view.aliases.size() ? view.aliases[i] : names[i]);
+		}
+	}
+	for (auto &privilege : info.column_privileges) {
+		if (std::find(columns.begin(), columns.end(), privilege.column) == columns.end()) {
+			throw CatalogException("column \"%s\" of relation \"%s\" does not exist",
+			                       privilege.column.GetIdentifierName(), target.name.GetIdentifierName());
+		}
 	}
 	info.relation_id = target.oid;
 	info.relation_acl = target.permissions.acl;

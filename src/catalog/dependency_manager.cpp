@@ -709,7 +709,9 @@ void DependencyManager::DropOwned(CatalogTransaction transaction, const DropOwne
 					    alter.object_owner_id = language == languages.end() ? 0 : language->second.owner;
 				    }
 				    for (auto &row : permissions.relations) {
-					    if (!GrantsTo(row.acl, role)) {
+					    if (!GrantsTo(row.acl, role) &&
+					        std::none_of(row.columns.begin(), row.columns.end(),
+					                     [&](const ColumnAcl &column) { return GrantsTo(column.acl, role); })) {
 						    continue;
 					    }
 					    auto &alter = revoke(holder, holder_transaction, entry, role, CatalogType::TABLE_ENTRY);
