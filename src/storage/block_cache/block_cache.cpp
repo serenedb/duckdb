@@ -913,21 +913,38 @@ void BlockCache::FetchConcurrently(BlockCacheFile &file, vector<RunPlan> &plans,
 			}
 		}
 	};
-	idx_t pieces = 0;
-	for_each_piece([&](const Run &, std::span<optional_ptr<Slot>>, std::span<BlockCachePin>) { pieces++; });
-	if (pieces == 0) {
+	vector<std::span<optional_ptr<Slot>>> unfetched;
+	for_each_piece([&](const Run &, std::span<optional_ptr<Slot>> slots, std::span<BlockCachePin>) {
+		unfetched.push_back(slots);
+	});
+	if (unfetched.empty()) {
 		return;
 	}
-	if (pieces == 1) {
+	if (unfetched.size() == 1) {
 		for_each_piece([&](const Run &piece, std::span<optional_ptr<Slot>> slots, std::span<BlockCachePin> out) {
 			Fetch(file, piece, slots, out);
 		});
 		return;
 	}
+	absl::Cleanup abandon = [&] {
+		for (auto &slots : unfetched) {
+			for (auto &slot : slots) {
+				if (slot) {
+					Unclaim(*slot);
+				}
+			}
+		}
+	};
 	TaskExecutor executor(TaskScheduler::GetScheduler(db), TaskSchedulerType::ASYNC);
+	idx_t index = 0;
 	for_each_piece([&](const Run &piece, std::span<optional_ptr<Slot>> slots, std::span<BlockCachePin> out) {
 		executor.ScheduleTask(make_uniq<FunctionExecutorTask>(
-		    executor, [this, &file, piece, slots, out]() { Fetch(file, piece, slots, out); }, "BlockCacheFetchTask"));
+		    executor,
+		    [this, &file, &unfetched, index = index++, piece, slots, out]() {
+			    unfetched[index] = {};
+			    Fetch(file, piece, slots, out);
+		    },
+		    "BlockCacheFetchTask"));
 	});
 	executor.WorkOnTasks();
 }
