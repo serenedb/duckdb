@@ -99,6 +99,16 @@ KeywordParseResult &FirstKeyword(ParseResult &node) {
 	}
 }
 
+std::string_view TransformPassword(ParseResult &opt) {
+	auto &list = opt.Cast<ListParseResult>();
+	auto &encryption = list.Child<OptionalParseResult>(0);
+	if (encryption.HasResult() && StringUtil::Upper(FirstKeyword(encryption.GetResult()).keyword) == "UNENCRYPTED") {
+		throw NotImplementedException({{"hint", "Remove UNENCRYPTED to store the password in encrypted form instead."}},
+		                              "UNENCRYPTED PASSWORD is no longer supported");
+	}
+	return list.GetChild(2).Cast<StringLiteralParseResult>().result;
+}
+
 // An optional OptionBool ('TRUE'/'FALSE') child of a member option. Returns a
 // tri-state: -1 unspecified, 0 FALSE, 1 TRUE. `bool_child` is the index of the
 // OptionBool? optional within the option's LIST.
@@ -360,9 +370,8 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformCreateRoleStatement(PEG
 			once("validuntil");
 			info->valid_until = TransformValidUntil(opt);
 		} else if (opt.Name() == "PasswordOption") {
-			// PasswordOption <- 'ENCRYPTED'? 'PASSWORD' StringLiteral
+			info->password = TransformPassword(opt);
 			once("password");
-			info->password = opt.Cast<ListParseResult>().GetChild(2).Cast<StringLiteralParseResult>().result;
 		} else if (opt.Name() == "PasswordNullOption") {
 			once("password");
 		} else if (opt.Name() == "SysIdOption") {
@@ -484,10 +493,9 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformAlterRoleStatement(PEGT
 	for (auto &opt_ref : repeat.GetChildren()) {
 		auto &opt = opt_ref.get().Cast<ListParseResult>().Child<ChoiceParseResult>(0).GetResult();
 		if (opt.Name() == "PasswordOption") {
-			// PasswordOption <- 'ENCRYPTED'? 'PASSWORD' StringLiteral
+			info->password = TransformPassword(opt);
 			once("password");
 			info->set_password = true;
-			info->password = opt.Cast<ListParseResult>().GetChild(2).Cast<StringLiteralParseResult>().result;
 			continue;
 		}
 		if (opt.Name() == "PasswordNullOption") {

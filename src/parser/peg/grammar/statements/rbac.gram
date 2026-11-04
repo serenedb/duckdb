@@ -127,7 +127,7 @@ LoginOption     <- 'LOGIN' / 'NOLOGIN'
 SuperuserOption <- 'SUPERUSER' / 'NOSUPERUSER'
 InheritOption   <- 'INHERIT' / 'NOINHERIT'
 SysIdOption     <- 'SYSID' NumberLiteral
-PasswordOption  <- 'ENCRYPTED'? 'PASSWORD' StringLiteral
+PasswordOption  <- ('ENCRYPTED' / 'UNENCRYPTED')? 'PASSWORD' StringLiteral
 
 # Row-Level Security. CREATE/ALTER/DROP POLICY -> serenedb_*_policy pragmas;
 # ALTER TABLE ... ROW LEVEL SECURITY -> serenedb_alter_table_row_security. The
