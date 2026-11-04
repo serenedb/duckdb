@@ -3,6 +3,7 @@
 #include "duckdb/common/vector_operations/vector_operations.hpp"
 #include "duckdb/common/vector/constant_vector.hpp"
 #include "duckdb/common/vector/flat_vector.hpp"
+#include "duckdb/planner/expression/bound_between_expression.hpp"
 #include "duckdb/planner/expression/bound_conjunction_expression.hpp"
 #include "duckdb/planner/expression/bound_constant_expression.hpp"
 #include "duckdb/planner/expression/bound_function_expression.hpp"
@@ -645,8 +646,39 @@ static unique_ptr<ExpressionFilterExecutor> TryCreateComparisonExecutor(const Bo
 	return make_uniq<ComparisonFilterExecutor>(comparison_type, constant->GetValue());
 }
 
+static unique_ptr<ExpressionFilterExecutor> TryCreateBetweenExecutor(const BoundFunctionExpression &func) {
+	if (!BoundBetweenExpression::HasValidBindData(func) ||
+	    !IsColumnReferenceExpression(BoundBetweenExpression::Input(func))) {
+		return nullptr;
+	}
+	const auto column_type = BoundBetweenExpression::Input(func).GetReturnType().InternalType();
+	if (!IsSupportedComparisonType(column_type)) {
+		return nullptr;
+	}
+	vector<unique_ptr<ExpressionFilterExecutor>> children;
+	const auto add = [&](const Expression &bound, ExpressionType comparison_type) {
+		if (bound.GetExpressionClass() != ExpressionClass::BOUND_CONSTANT) {
+			return false;
+		}
+		const auto &constant = bound.Cast<BoundConstantExpression>().GetValue();
+		if (constant.type().InternalType() != column_type) {
+			return false;
+		}
+		children.push_back(make_uniq<ComparisonFilterExecutor>(comparison_type, constant));
+		return true;
+	};
+	if (!add(BoundBetweenExpression::LowerBound(func), BoundBetweenExpression::LowerComparisonType(func)) ||
+	    !add(BoundBetweenExpression::UpperBound(func), BoundBetweenExpression::UpperComparisonType(func))) {
+		return nullptr;
+	}
+	return make_uniq<ConjunctionAndFilterExecutor>(std::move(children));
+}
+
 static unique_ptr<ExpressionFilterExecutor> TryCreateFunctionExecutor(const BoundFunctionExpression &func,
                                                                       bool inside_selectivity_optional) {
+	if (!inside_selectivity_optional && func.GetExpressionType() == ExpressionType::COMPARE_BETWEEN) {
+		return TryCreateBetweenExecutor(func);
+	}
 	if (!inside_selectivity_optional && func.GetChildren().size() == 2 &&
 	    BoundComparisonExpression::IsComparison(func.GetExpressionType())) {
 		return TryCreateComparisonExecutor(func);
