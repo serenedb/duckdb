@@ -683,6 +683,54 @@ TEST_CASE("Mapped files read evicted ranges back from the file", "[file_system]"
 	fs.RemoveFile(path);
 }
 
+TEST_CASE("Scattered reads of a local file take more targets than one system call reads", "[file_system]") {
+	LocalFileSystem fs;
+	auto path = TestCreatePath("scattered_read_many.bin");
+	constexpr idx_t size = 2 * 1024 * 1024 + 77;
+	vector<data_t> data(size);
+	for (idx_t i = 0; i < size; i++) {
+		data[i] = static_cast<data_t>(i * 31 % 251 + 1);
+	}
+	{
+		auto handle = fs.OpenFile(path, FileFlags::FILE_FLAGS_WRITE | FileFlags::FILE_FLAGS_FILE_CREATE_NEW);
+		handle->Write(QueryContext(), data.data(), size, 0);
+	}
+	auto handle = fs.OpenFile(path, FileFlags::FILE_FLAGS_READ);
+	vector<data_t> read(size, 0);
+	vector<FileReadTarget> targets;
+	idx_t offset = 100;
+	auto add = [&](idx_t bytes, bool skipped) {
+		targets.push_back({skipped ? nullptr : read.data() + offset, bytes});
+		offset += bytes;
+	};
+	add(1000, false);
+	add(50, true);
+	add(1024 * 1024, false);
+	add(0, false);
+	for (idx_t i = 0; i < 3000; i++) {
+		add(7, i % 1500 == 1499);
+	}
+	add(size - offset - 300, true);
+	add(200, false);
+	fs.ReadScattered(*handle, targets, 100);
+
+	vector<bool> taken(size, false);
+	offset = 100;
+	for (auto &target : targets) {
+		for (idx_t i = 0; target.data && i < target.size; i++) {
+			taken[offset + i] = true;
+		}
+		offset += target.size;
+	}
+	idx_t wrong = 0;
+	for (idx_t i = 0; i < size; i++) {
+		wrong += read[i] != (taken[i] ? data[i] : 0);
+	}
+	REQUIRE(wrong == 0);
+	handle.reset();
+	fs.RemoveFile(path);
+}
+
 TEST_CASE("Directory syncs and writeback hints reach the local filesystem", "[file_system]") {
 	LocalFileSystem fs;
 	auto directory = TestCreatePath("sync_directory");
