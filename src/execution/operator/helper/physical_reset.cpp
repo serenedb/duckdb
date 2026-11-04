@@ -138,9 +138,11 @@ void PhysicalReset::ResetOption(ExecutionContext &context, DBConfig &config, con
 
 SourceResultType PhysicalReset::GetDataInternal(ExecutionContext &context, DataChunk &chunk,
                                                 OperatorSourceInput &input) const {
-	// RESET LOCAL is only meaningful inside a transaction; reject outside.
 	if (scope == SetScope::LOCAL && context.client.transaction.IsAutoCommit()) {
-		throw InvalidInputException("RESET LOCAL can only be used in transaction blocks");
+		const char *msg = "RESET LOCAL can only be used in transaction blocks";
+		if (!context.client.EmitWarning(msg)) {
+			throw InvalidInputException(msg);
+		}
 	}
 	if (scope == SetScope::VARIABLE) {
 		// SQL user variables live in a separate namespace from configuration

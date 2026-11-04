@@ -52,11 +52,6 @@ void PhysicalSet::SetCustomVariable(ClientContext &context, const Identifier &na
 void PhysicalSet::SetVariable(ClientContext &context, const Identifier &name, SetScope scope, const Value &value) {
 	auto &config = DBConfig::GetConfig(context);
 	config.CheckLock(name);
-	// SET LOCAL is only meaningful inside an explicit transaction; PG rejects
-	// it outside with an error.
-	if (scope == SetScope::LOCAL && context.transaction.IsAutoCommit()) {
-		throw InvalidInputException("SET LOCAL can only be used in transaction blocks");
-	}
 	auto option = DBConfig::GetOptionByName(name);
 	if (!option) {
 		ExtensionOption extension_option;
@@ -154,6 +149,12 @@ SetScope PhysicalSet::GetSettingScope(const ConfigurationOption &option, SetScop
 
 SourceResultType PhysicalSet::GetDataInternal(ExecutionContext &context, DataChunk &chunk,
                                               OperatorSourceInput &input) const {
+	if (scope == SetScope::LOCAL && context.client.transaction.IsAutoCommit()) {
+		const char *msg = "SET LOCAL can only be used in transaction blocks";
+		if (!context.client.EmitWarning(msg)) {
+			throw InvalidInputException(msg);
+		}
+	}
 	SetVariable(context.client, Identifier(std::string_view(name.data(), name.size())), scope, value);
 	return SourceResultType::FINISHED;
 }
