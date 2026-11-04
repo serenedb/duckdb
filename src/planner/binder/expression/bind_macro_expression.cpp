@@ -1584,7 +1584,8 @@ ScalarMacroFunction &ExpressionBinder::UnfoldMacroExpression(FunctionExpression 
 	optional_ptr<const RoleAccess> role;
 	if (owned && use && !call_modifiers && !binder.CheckAs().IsSystem()) {
 		role = &binder.FunctionBodyRole(owner);
-		if (role.get() == &binder.CheckAs() && role.get() == &binder.CurrentRole()) {
+		if (role.get() == &binder.CheckAs() && role.get() == &binder.CurrentRole() &&
+		    !(owner.IsValid() && use->is_volatile)) {
 			role = nullptr;
 		}
 	}
