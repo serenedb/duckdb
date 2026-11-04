@@ -289,7 +289,7 @@ void MemoryFileSystem::Compact(const string &path) {
 	}
 	const auto size = file->size.load(std::memory_order_acquire);
 	auto span =
-	    BufferManager::GetBufferManager(*db).Allocate(MemoryTag::IN_MEMORY_TABLE, MaxValue<idx_t>(size, 1), false);
+	    BufferManager::GetBufferManager(*db).Allocate(MemoryTag::EXTERNAL_FILE_CACHE, MaxValue<idx_t>(size, 1), false);
 	Allocator::AdviseHugePages(span.GetDataMutable(), size);
 	CopyRange(BlockCache::Get(*db), blocks, 0, size, span.GetDataMutable());
 	annotated_lock_guard<annotated_mutex> guard(file->lock);
