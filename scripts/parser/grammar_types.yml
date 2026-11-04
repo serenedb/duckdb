@@ -94,6 +94,7 @@ SQLStatement:
     - CallStatement
     - CheckpointStatement
     - CommentStatement
+    - CommentRoutineStatement
     - ConnectStatement
     - CopyStatement
     - CopyVariations

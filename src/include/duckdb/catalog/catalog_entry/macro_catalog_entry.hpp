@@ -35,6 +35,7 @@ public:
 
 	idx_t OverloadOid(const MacroFunction &overload) const;
 	const Permissions &OverloadPermissions(const MacroFunction &overload) const;
+	const Value &OverloadComment(const MacroFunction &overload) const;
 	optional_ptr<MacroFunction> FindOverload(idx_t overload_oid) const;
 
 	string ToSQL() const override;
