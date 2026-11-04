@@ -150,7 +150,7 @@ void TaskScheduler::ScheduleTask(ProducerToken &token, shared_ptr<Task> task) {
 	ScheduleTask(token, std::move(task), TaskSchedulerType::REGULAR);
 }
 
-void TaskScheduler::ScheduleTasks(ProducerToken &producer, vector<shared_ptr<Task>> &tasks) {
+void TaskScheduler::ScheduleTasks(ProducerToken &producer, std::span<shared_ptr<Task>> tasks) {
 	ScheduleTasks(producer, tasks, TaskSchedulerType::REGULAR);
 }
 
@@ -158,14 +158,17 @@ void TaskScheduler::ScheduleTask(ProducerToken &token, shared_ptr<Task> task, Ta
 	Enqueue(token, &task, 1, pool_type, true);
 }
 
-void TaskScheduler::ScheduleTasks(ProducerToken &producer, vector<shared_ptr<Task>> &tasks,
+void TaskScheduler::ScheduleTasks(ProducerToken &producer, std::span<shared_ptr<Task>> tasks,
                                   TaskSchedulerType pool_type) {
 	Enqueue(producer, tasks.data(), tasks.size(), pool_type, true);
 }
 
-void TaskScheduler::ScheduleConcurrentTask(ProducerToken &producer, shared_ptr<Task> task,
-                                           TaskSchedulerType pool_type) {
-	Enqueue(producer, &task, 1, pool_type, false);
+void TaskScheduler::ScheduleConcurrentTask(ProducerToken &producer, shared_ptr<Task> task) {
+	Enqueue(producer, &task, 1, TaskSchedulerType::REGULAR, false);
+}
+
+void TaskScheduler::ScheduleConcurrentTasks(ProducerToken &producer, std::span<shared_ptr<Task>> tasks) {
+	Enqueue(producer, tasks.data(), tasks.size(), TaskSchedulerType::REGULAR, false);
 }
 
 void TaskScheduler::Enqueue(ProducerToken &producer, shared_ptr<Task> *tasks, idx_t count, TaskSchedulerType pool_type,
@@ -491,11 +494,6 @@ bool TaskScheduler::ClearIdle(idx_t index) {
 }
 
 bool TaskScheduler::ClaimIdle(idx_t &index) {
-	const auto hint = last_idle.load(std::memory_order_relaxed);
-	if (ClearIdle(hint)) {
-		index = hint;
-		return true;
-	}
 	for (idx_t word = 0; word < WORKER_WORDS; word++) {
 		auto bits = idle_bits[word].load(std::memory_order_relaxed);
 		while (bits) {
@@ -520,7 +518,6 @@ bool TaskScheduler::Park(SchedulerWorker &worker) {
 	}
 	idle_bits[worker.index / 64].fetch_or(uint64_t(1) << (worker.index % 64), std::memory_order_seq_cst);
 	idle_count.fetch_add(1, std::memory_order_seq_cst);
-	last_idle.store(worker.index, std::memory_order_relaxed);
 	const auto busy = running.load(std::memory_order_relaxed) + waking.load(std::memory_order_relaxed);
 	if (queue.HasQueuedTasks() && busy < target.load(std::memory_order_relaxed)) {
 		if (ClearIdle(worker.index)) {

@@ -18,6 +18,8 @@
 #include "duckdb/parallel/task_scheduler_queue.hpp"
 #include "duckdb/parallel/task_scheduler_token.hpp"
 
+#include <span>
+
 namespace duckdb {
 
 class ClientContext;
@@ -79,11 +81,12 @@ public:
 
 	//! Schedule a task to be executed by the task scheduler in the given pool
 	void ScheduleTask(ProducerToken &producer, shared_ptr<Task> task, TaskSchedulerType pool_type);
-	void ScheduleTasks(ProducerToken &producer, vector<shared_ptr<Task>> &tasks, TaskSchedulerType pool_type);
-	void ScheduleConcurrentTask(ProducerToken &producer, shared_ptr<Task> task, TaskSchedulerType pool_type);
+	void ScheduleTasks(ProducerToken &producer, std::span<shared_ptr<Task>> tasks, TaskSchedulerType pool_type);
 	//! Helpers for regular tasks
 	void ScheduleTask(ProducerToken &producer, shared_ptr<Task> task);
-	void ScheduleTasks(ProducerToken &producer, vector<shared_ptr<Task>> &tasks);
+	void ScheduleTasks(ProducerToken &producer, std::span<shared_ptr<Task>> tasks);
+	void ScheduleConcurrentTask(ProducerToken &producer, shared_ptr<Task> task);
+	void ScheduleConcurrentTasks(ProducerToken &producer, std::span<shared_ptr<Task>> tasks);
 	//! Fetches a task from a specific producer, returns true if successful or false if no tasks were available
 	bool GetTaskFromProducer(ProducerToken &token, shared_ptr<Task> &task);
 	//! Fetches a task from a specific producer, returns whether a task was found and assigned to `task`.
@@ -124,6 +127,7 @@ public:
 private:
 	friend struct ProducerToken;
 	friend class TaskSchedulerPool;
+	friend class TaskExecutor;
 
 	void Enqueue(ProducerToken &producer, shared_ptr<Task> *tasks, idx_t count, TaskSchedulerType pool_type,
 	             bool keep_in_task);
@@ -161,7 +165,6 @@ private:
 	array<atomic<SchedulerWorker *>, MAX_WORKERS> workers {};
 	array<atomic<uint64_t>, WORKER_WORDS> registered {};
 	array<atomic<uint64_t>, WORKER_WORDS> idle_bits {};
-	atomic<idx_t> last_idle {0};
 	atomic<idx_t> idle_count {0};
 	atomic<idx_t> waking {0};
 	atomic<idx_t> blocked {0};

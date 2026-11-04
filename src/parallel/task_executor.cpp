@@ -154,7 +154,8 @@ void TaskExecutor::ScheduleTask(unique_ptr<BaseExecutorTask> task) {
 	}
 	try {
 		// hold on to our own reference, so that a task that fails to queue can still be retired
-		scheduler.ScheduleConcurrentTask(*token, scheduled_task, type);
+		shared_ptr<Task> queued = scheduled_task;
+		scheduler.Enqueue(*token, &queued, 1, type, false);
 	} catch (...) {
 		{
 			const annotated_lock_guard<annotated_mutex> lock(token->producer_lock);
