@@ -2,10 +2,14 @@
 #include "test_helpers.hpp"
 #include "duckdb/common/atomic.hpp"
 #include "duckdb/common/fault_points.hpp"
+#include "duckdb/common/memory_mapped_file.hpp"
 #include "duckdb/main/database.hpp"
 #include "duckdb/parallel/task_executor.hpp"
+#include "duckdb/storage/block.hpp"
+#include "duckdb/storage/block_allocator.hpp"
 #include "duckdb/storage/buffer/block_handle.hpp"
 #include "duckdb/storage/buffer_manager.hpp"
+#include "duckdb/storage/in_memory_block_manager.hpp"
 
 #include <absl/cleanup/cleanup.h>
 #include <absl/time/clock.h>
@@ -52,6 +56,41 @@ void RunPinTestTasks(DatabaseInstance &db, idx_t tasks, const std::function<void
 	}
 	executor.WorkOnTasks();
 }
+
+class PinTestMapping final : public MemoryMappedFile {
+public:
+	PinTestMapping(data_ptr_t data, idx_t size) : MemoryMappedFile(string(), FileFlags::FILE_FLAGS_READ, data, size) {
+	}
+
+	void Sync() override {
+	}
+	bool Trim(idx_t offset, idx_t length) override {
+		return false;
+	}
+	void Close() override {
+	}
+};
+
+class PinTestMappedBlocks final : public InMemoryBlockManager {
+public:
+	PinTestMappedBlocks(DatabaseInstance &db, BufferManager &buffers)
+	    : InMemoryBlockManager(buffers, DEFAULT_BLOCK_ALLOC_SIZE, Storage::DEFAULT_BLOCK_HEADER_SIZE),
+	      allocator(BlockAllocator::Get(db)), bytes(make_unsafe_uniq_array<data_t>(DEFAULT_BLOCK_ALLOC_SIZE)),
+	      mapping(bytes.get(), DEFAULT_BLOCK_ALLOC_SIZE) {
+	}
+
+	unique_ptr<Block> CreateBlock(block_id_t block_id, FileBuffer *source_buffer) override {
+		return make_uniq<Block>(allocator, block_id, mapping, 0, GetBlockSize(), GetBlockHeaderSize());
+	}
+	void Read(QueryContext context, Block &block) override {
+		block.Read(context, mapping, 0);
+	}
+
+private:
+	BlockAllocator &allocator;
+	unsafe_unique_array<data_t> bytes;
+	PinTestMapping mapping;
+};
 
 } // namespace
 
@@ -215,6 +254,24 @@ TEST_CASE("Owners dropped while other threads unpin leave no memory behind", "[s
 	}
 	REQUIRE(wrong == 0);
 	REQUIRE(buffers.GetUsedMemory() == used);
+}
+
+TEST_CASE("An allocation at the memory limit evicts memory, not a block that does not own its buffer",
+          "[storage][buffer_manager]") {
+	DuckDB db(nullptr);
+	auto &buffers = BufferManager::GetBufferManager(*db.instance);
+	PinTestMappedBlocks blocks(*db.instance, buffers);
+	auto mapped = blocks.RegisterBlock(0);
+	mapped->GetMemory().SetMemoryUsage(0);
+	{
+		auto pin = buffers.Pin(mapped);
+		REQUIRE(pin.IsValid());
+	}
+	auto evictable = buffers.Allocate(MemoryTag::IN_MEMORY_TABLE, PIN_BLOCK_SIZE, true).GetBlockHandle();
+	buffers.SetMemoryLimit(buffers.GetUsedMemory());
+	auto pin = buffers.Allocate(MemoryTag::IN_MEMORY_TABLE, PIN_BLOCK_SIZE, false);
+	REQUIRE(buffers.GetUsedMemory() <= buffers.GetMaxMemory());
+	REQUIRE(evictable->GetMemory().IsUnloaded());
 }
 
 TEST_CASE("Many pins of blocks that keep being unloaded wait for each other's loads", "[storage][buffer_manager]") {
