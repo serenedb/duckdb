@@ -787,6 +787,11 @@
         "id": 106,
         "name": "relations",
         "type": "vector<RelationAcl>"
+      },
+      {
+        "id": 107,
+        "name": "schemas",
+        "type": "vector<ObjectAcl>"
       }
     ],
     "pointer_type": "none"

@@ -196,6 +196,7 @@ struct Permissions {
 	vector<NamedAcl> parameters;
 	vector<ObjectAcl> languages;
 	vector<RelationAcl> relations;
+	vector<ObjectAcl> schemas;
 
 	bool operator==(const Permissions &rhs) const = default;
 
@@ -323,6 +324,7 @@ DUCKDB_API std::span<const AclItem> FindColumnAcl(const vector<ColumnAcl> &colum
 DUCKDB_API std::span<const AclItem> ColumnAclAt(const CatalogEntry &entry,
                                                 optional_ptr<const vector<ColumnAcl>> column_acls, idx_t column_index);
 DUCKDB_API bool CanUseSchema(const RoleAccess &role, const CatalogEntry &schema);
+DUCKDB_API bool CanUseNamedSchema(ClientContext &context, const RoleAccess &role, const CatalogEntry &schema);
 DUCKDB_API bool EntryVisible(ClientContext &context, const RoleAccess &role, CatalogEntry &entry);
 DUCKDB_API bool DatabaseVisible(ClientContext &context, const RoleAccess &role, AttachedDatabase &database);
 DUCKDB_API void CheckReference(ClientContext &context, const RoleAccess &role, CatalogEntry &entry);
