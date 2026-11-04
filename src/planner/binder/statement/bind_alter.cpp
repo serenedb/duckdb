@@ -177,7 +177,7 @@ static idx_t GranteeId(Binder &binder, const string &name) {
 
 static void RequireGrantable(Binder &binder, CatalogEntry &entry) {
 	auto &role = binder.CheckAs();
-	auto &permissions = entry.permissions;
+	auto &permissions = EffectivePermissions(binder.context, entry);
 	if (role.Owns(permissions.owner)) {
 		return;
 	}
@@ -390,7 +390,20 @@ static void ResolveGrant(Binder &binder, AlterPermissionsInfo &info) {
 	if (info.all_in_schema) {
 		return;
 	}
-	RequireGrantable(binder, ResolvePermissionsTarget(binder, info));
+	auto &target = ResolvePermissionsTarget(binder, info);
+	RequireGrantable(binder, target);
+	if (!target.internal || IsUnowned(target) ||
+	    (target.type != CatalogType::TABLE_ENTRY && target.type != CatalogType::VIEW_ENTRY)) {
+		return;
+	}
+	if (!info.column_privileges.empty()) {
+		throw NotImplementedException("column privileges on system catalogs are not supported");
+	}
+	info.relation_id = target.oid;
+	info.relation_acl = target.permissions.acl;
+	info.object_owner_id = target.permissions.owner;
+	info.entry_catalog_type = CatalogType::DATABASE_ENTRY;
+	info.SetQualifiedName(Identifier(), Identifier(), target.ParentCatalog().GetName());
 }
 
 static void ResolveOwner(Binder &binder, AlterPermissionsInfo &info) {

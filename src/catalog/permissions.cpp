@@ -372,6 +372,24 @@ void AlterPermissionsInfo::ApplyTo(Permissions &permissions, CatalogType entry_t
 		return;
 	}
 
+	if (info.relation_id) {
+		auto &relations = permissions.relations;
+		auto row = std::find_if(relations.begin(), relations.end(),
+		                        [&](const ObjectAcl &entry) { return entry.oid == info.relation_id; });
+		auto row_acl = row == relations.end() ? info.relation_acl : row->acl;
+		ApplyGrant(info, info.object_owner_id, row_acl, CatalogType::TABLE_ENTRY, nullptr);
+		if (row_acl == info.relation_acl) {
+			if (row != relations.end()) {
+				relations.erase(row);
+			}
+		} else if (row == relations.end()) {
+			relations.push_back(ObjectAcl {info.relation_id, std::move(row_acl)});
+		} else {
+			row->acl = std::move(row_acl);
+		}
+		return;
+	}
+
 	if (!info.parameter.empty()) {
 		auto &rows = permissions.parameters;
 		auto row = std::find_if(rows.begin(), rows.end(), [&](const NamedAcl &entry) {
@@ -590,9 +608,10 @@ static vector<idx_t> Reachable(const unordered_map<idx_t, SecuritySnapshot::Node
 }
 
 SecuritySnapshot::SecuritySnapshot(unordered_map<idx_t, Node> nodes_p, unordered_map<string, idx_t> database_owners_p,
-                                   idx_t database_owner_role_p)
+                                   idx_t database_owner_role_p,
+                                   unordered_map<string, unordered_map<idx_t, Permissions>> relations_p)
     : nodes(std::move(nodes_p)), database_owners(std::move(database_owners_p)),
-      database_owner_role(database_owner_role_p) {
+      database_owner_role(database_owner_role_p), relations(std::move(relations_p)) {
 	vector<Role> roles_p;
 	roles_p.reserve(nodes.size());
 	for (auto &[oid, node] : nodes) {
@@ -660,11 +679,16 @@ shared_ptr<const SecuritySnapshot> SecuritySnapshot::Build(DuckCatalog &cluster,
 		nodes[role.oid] = Node {role.name.GetIdentifierName(), role.Options(), role.Capabilities(), role.MemberOf()};
 	});
 	unordered_map<string, idx_t> database_owners;
+	unordered_map<string, unordered_map<idx_t, Permissions>> relations;
+	auto &config = DBConfig::GetConfig(cluster.GetDatabase());
 	cluster.GetCatalogSet(CatalogType::DATABASE_ENTRY).Scan(transaction, [&](CatalogEntry &entry) {
 		database_owners.emplace(entry.name.GetIdentifierName(), entry.permissions.owner);
+		for (auto &row : entry.permissions.relations) {
+			relations[entry.name.GetIdentifierName()][row.oid] = Permissions {config.bootstrap_role, row.acl};
+		}
 	});
 	return make_shared_ptr<const SecuritySnapshot>(std::move(nodes), std::move(database_owners),
-	                                               DBConfig::GetConfig(cluster.GetDatabase()).database_owner_role);
+	                                               config.database_owner_role, std::move(relations));
 }
 
 shared_ptr<const SecuritySnapshot> SecuritySnapshot::ForDatabase(const Identifier &database) const {
@@ -681,7 +705,8 @@ shared_ptr<const SecuritySnapshot> SecuritySnapshot::ForDatabase(const Identifie
 		auto implied = nodes;
 		implied[owner->second].member_of.push_back(
 		    Membership {database_owner_role, database_owner_role, false, true, true});
-		result = make_shared_ptr<const SecuritySnapshot>(std::move(implied), unordered_map<string, idx_t>(), 0);
+		result =
+		    make_shared_ptr<const SecuritySnapshot>(std::move(implied), unordered_map<string, idx_t>(), 0, relations);
 	}
 	return result;
 }
@@ -729,6 +754,27 @@ RoleMemberships SecuritySnapshot::MembershipsOf(idx_t role) const {
 	}
 	std::sort(result.admin.begin(), result.admin.end());
 	return result;
+}
+
+optional_ptr<const Permissions> SecuritySnapshot::RelationPermissions(std::string_view database, idx_t relation) const {
+	if (relations.empty()) {
+		return nullptr;
+	}
+	auto rows = relations.find(database);
+	if (rows == relations.end()) {
+		return nullptr;
+	}
+	auto permissions = rows->second.find(relation);
+	return permissions == rows->second.end() ? nullptr : &permissions->second;
+}
+
+const Permissions &EffectivePermissions(ClientContext &context, const CatalogEntry &entry) {
+	if (!entry.internal || !context.security) {
+		return entry.permissions;
+	}
+	auto permissions =
+	    context.security->RelationPermissions(entry.ParentCatalog().GetName().GetIdentifierName(), entry.oid);
+	return permissions ? *permissions : entry.permissions;
 }
 
 optional_idx SecuritySnapshot::BestAdmin(idx_t member, idx_t role) const {
@@ -916,6 +962,11 @@ static bool AnyRoleReference(const CatalogEntry &entry, F &&named) {
 		}
 	}
 	for (auto &row : permissions.languages) {
+		if (any_acl(row.acl)) {
+			return true;
+		}
+	}
+	for (auto &row : permissions.relations) {
 		if (any_acl(row.acl)) {
 			return true;
 		}

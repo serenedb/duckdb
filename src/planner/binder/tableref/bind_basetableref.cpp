@@ -315,10 +315,11 @@ BoundStatement Binder::Bind(BaseTableRef &ref) {
 		auto &view_catalog_entry = table_or_view->Cast<ViewCatalogEntry>();
 		shared_ptr<ColumnReadCheck> column_read;
 		auto &role = CheckAs();
+		auto &view_permissions = EffectivePermissions(context, view_catalog_entry);
 		if (table_ref_use != TableRefUse::UTILITY_TARGET &&
 		    (!IsUnowned(view_catalog_entry) || view_catalog_entry.ParentCatalog().IsSystemCatalog()) &&
-		    !role.Can(CatalogType::TABLE_ENTRY, view_catalog_entry.permissions, AclMode::Select)) {
-			column_read = make_shared_ptr<ColumnReadCheck>(view_catalog_entry, role, true);
+		    !role.Can(CatalogType::TABLE_ENTRY, view_permissions, AclMode::Select)) {
+			column_read = make_shared_ptr<ColumnReadCheck>(view_catalog_entry, view_permissions, role, true);
 			if (!column_read->CanReadAny()) {
 				ThrowPermissionDenied(view_catalog_entry);
 			}

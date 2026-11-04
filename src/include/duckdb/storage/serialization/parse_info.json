@@ -595,6 +595,16 @@
         "id": 327,
         "name": "language_id",
         "type": "idx_t"
+      },
+      {
+        "id": 328,
+        "name": "relation_id",
+        "type": "idx_t"
+      },
+      {
+        "id": 329,
+        "name": "relation_acl",
+        "type": "vector<AclItem>"
       }
     ]
   },

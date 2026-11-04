@@ -171,6 +171,8 @@ unique_ptr<AlterInfo> AlterPermissionsInfo::Copy() const {
 	result->parameter = parameter;
 	result->drop_owned_role_id = drop_owned_role_id;
 	result->language_id = language_id;
+	result->relation_id = relation_id;
+	result->relation_acl = relation_acl;
 	return std::move(result);
 }
 

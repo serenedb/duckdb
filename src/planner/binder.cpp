@@ -375,11 +375,15 @@ BoundStatement Binder::BindTarget(TableRef &ref, TableRefUse use) {
 
 void Binder::CheckTableRead(TableBinding &binding, TableCatalogEntry &table) {
 	auto &role = CheckAs();
-	if (table_ref_use == TableRefUse::UTILITY_TARGET || IsUnowned(table) ||
-	    role.Can(CatalogType::TABLE_ENTRY, table.permissions, AclMode::Select)) {
+	if (table_ref_use == TableRefUse::UTILITY_TARGET || IsUnowned(table)) {
 		return;
 	}
-	binding.column_read = make_shared_ptr<ColumnReadCheck>(table, role, table_ref_use != TableRefUse::DML_TARGET);
+	auto &permissions = EffectivePermissions(context, table);
+	if (role.Can(CatalogType::TABLE_ENTRY, permissions, AclMode::Select)) {
+		return;
+	}
+	binding.column_read =
+	    make_shared_ptr<ColumnReadCheck>(table, permissions, role, table_ref_use != TableRefUse::DML_TARGET);
 	global_binder_state->column_reads.push_back(binding.column_read);
 }
 

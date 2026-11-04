@@ -782,6 +782,11 @@
         "id": 105,
         "name": "languages",
         "type": "vector<ObjectAcl>"
+      },
+      {
+        "id": 106,
+        "name": "relations",
+        "type": "vector<ObjectAcl>"
       }
     ],
     "pointer_type": "none"

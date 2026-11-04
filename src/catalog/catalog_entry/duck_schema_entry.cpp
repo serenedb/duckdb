@@ -515,8 +515,12 @@ static void AlterAllInSchema(DuckSchemaEntry &schema, CatalogTransaction transac
 	info.all_in_schema = false;
 	for (auto kind : kinds) {
 		vector<Identifier> names;
+		vector<reference<CatalogEntry>> system_relations;
 		schema.GetCatalogSet(kind).Scan(transaction, [&](CatalogEntry &entry) {
 			if (entry.internal) {
+				if (kind == CatalogType::TABLE_ENTRY && !IsUnowned(entry) && transaction.HasContext()) {
+					system_relations.push_back(entry);
+				}
 				return;
 			}
 			if (kind != CatalogType::MACRO_ENTRY && kind != CatalogType::TABLE_MACRO_ENTRY) {
@@ -531,6 +535,17 @@ static void AlterAllInSchema(DuckSchemaEntry &schema, CatalogTransaction transac
 		for (auto &name : names) {
 			info.SetQualifiedName(schema.GetQualifiedName(name));
 			schema.Alter(transaction, info);
+		}
+		for (auto &relation : system_relations) {
+			auto &context = transaction.GetContext();
+			auto redirected = info.Copy();
+			auto &grant = redirected->Cast<AlterPermissionsInfo>();
+			grant.relation_id = relation.get().oid;
+			grant.relation_acl = relation.get().permissions.acl;
+			grant.object_owner_id = relation.get().permissions.owner;
+			grant.entry_catalog_type = CatalogType::DATABASE_ENTRY;
+			grant.SetQualifiedName(Identifier(), Identifier(), schema.ParentCatalog().GetName());
+			Catalog::GetCatalog(context, DBConfig::GetConfig(context).cluster_catalog).Alter(context, grant);
 		}
 	}
 }
