@@ -417,6 +417,23 @@ TEST_CASE("Block cache prefetch of several ranges reads the ones within the merg
 	REQUIRE(reads == vector<pair<idx_t, idx_t>> {{BLOCK, (1 + GAP_BLOCKS) * BLOCK}, {40 * BLOCK, BLOCK}});
 }
 
+TEST_CASE("Block cache evicts the blocks a reader marked unused before the blocks in use", "[block_cache]") {
+	DuckDB db(nullptr);
+	BlockCache cache(*db.instance);
+	CountingSourceFileSystem fs;
+	TestFile file("block_cache_unused.bin", 8 * BLOCK);
+	auto cached = file.Open(cache, fs, "v1", true);
+	for (idx_t block = 0; block < 8; block++) {
+		cache.Pin(cached, block);
+	}
+	cache.MarkUnused(*cached, 4 * BLOCK + BLOCK / 2, 4 * BLOCK);
+	auto &buffers = BufferManager::GetBufferManager(*db.instance);
+	buffers.SetMemoryLimit(buffers.GetUsedMemory() - 3 * BLOCK);
+	for (idx_t block = 0; block < 8; block++) {
+		REQUIRE(cache.IsCached(*cached, block * BLOCK, BLOCK) == (block < 5));
+	}
+}
+
 TEST_CASE("Block cache drops a hinted prefetch past the bytes a file has in flight but never a needed one",
           "[block_cache]") {
 	constexpr idx_t in_flight = BlockCache::BlockCountOf(BlockCache::MAX_FILE_IN_FLIGHT);
