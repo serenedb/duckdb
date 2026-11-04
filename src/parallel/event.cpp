@@ -85,8 +85,10 @@ void Event::SetTasks(vector<shared_ptr<Task>> tasks) {
 		ts.ScheduleTasks(executor.GetToken(), tasks);
 		return;
 	}
-	if (tasks.size() > 1) {
-		tasks.erase(tasks.begin());
+	tasks.erase(tasks.begin());
+	if (tasks.size() == 1) {
+		ts.ScheduleConcurrentTask(executor.GetToken(), std::move(tasks[0]), TaskSchedulerType::REGULAR);
+	} else if (!tasks.empty()) {
 		ts.ScheduleTasks(executor.GetToken(), tasks);
 	}
 }
