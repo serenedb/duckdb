@@ -101,8 +101,8 @@ private:
 };
 
 //! The slot of a block of a file: the memory of its buffer-managed block, which the buffer pool may evict, or null
-//! before its first load, with SLOT_LOADING set while a load is in progress
-using BlockCacheSlot = atomic<uintptr_t>;
+//! before the block is first asked for
+using BlockCacheSlot = atomic<BlockMemory *>;
 
 //! The slots of the blocks of one version of a file, and the blocks, which live as long as the slots
 class BlockCacheBlocks {
@@ -363,8 +363,8 @@ private:
 	};
 	struct RunPlan {
 		Run run;
-		//! The slot claimed for the fetch per block to fetch; null for the cached blocks between them
-		vector<optional_ptr<Slot>> slots;
+		//! The block claimed for the fetch per block to fetch; null for the cached blocks between them
+		vector<optional_ptr<BlockMemory>> claimed;
 		//! The bytes of the blocks to fetch
 		idx_t bytes;
 		//! The first block the run did not take
@@ -386,21 +386,10 @@ private:
 	};
 	static constexpr idx_t HIT_COUNTERS = 64;
 
-	//! Pins the block in [slot], which held [value], when it is in memory
-	bool PinLoaded(Slot &slot, uintptr_t value, idx_t size, BlockCachePin &result) const;
-	//! Pins the block in [slot] when it is in memory, or reads it back from its copy in a temporary file. Otherwise
-	//! [missing] is the slot's value to claim it from, or nothing while the block loads.
-	bool PinPresent(Slot &slot, idx_t size, BlockCachePin &result, optional<uintptr_t> &missing);
-	//! Takes [slot], which held [expected], for a load
-	static bool Claim(Slot &slot, uintptr_t expected);
-	//! The value of [slot] to claim it from when its block is missing or dropped, or nothing when it is in memory, in
-	//! a temporary file or loading
-	static optional<uintptr_t> MissingFrom(const Slot &slot);
-	//! A pinned buffer for the claimed [slot] of [file]: its block's own when it has one, otherwise a new block's
-	BufferHandle AllocateBlock(const BlockCacheFile &file, Slot &slot);
-	//! Ends the load of [slot] of [blocks], which [buffer] holds when [shared]
-	void Publish(BlockCacheBlocks &blocks, Slot &slot, BufferHandle &buffer, bool shared);
-	void Unclaim(Slot &slot);
+	//! Pins the block in [slot] when it is in memory
+	bool PinLoaded(Slot &slot, idx_t size, BlockCachePin &result) const;
+	BlockMemory &MemoryOf(const BlockCacheFile &file, Slot &slot);
+	optional_ptr<BlockMemory> ClaimMissing(BlockCacheFile &file, idx_t block);
 	//! Lets the slots of [blocks] go, destroying their blocks and the copies of them at once or with their last pin
 	void DropBlocks(BlockCacheBlocks &blocks);
 
@@ -415,25 +404,24 @@ private:
 	//! Forgets the files no one has open and the cache holds no block of
 	void SweepFiles();
 
-	//! Plans a run of [file] from [block] up to [end]: a claimed slot for each block [missing] reports while [admit]
+	//! Plans a run of [file] from [block] up to [end]: a claimed block for each block [missing] reports while [admit]
 	//! accepts the run's bytes with it, bridging cached gaps of up to MERGE_GAP; the run takes at most MAX_REQUEST and
 	//! never ends in a gap
 	template <class MISSING, class ADMIT>
 	RunPlan PlanRun(BlockCacheFile &file, idx_t block, idx_t end, MISSING &&missing, ADMIT &&admit);
-	//! Reads the blocks of [run] of [file] into the claimed slots with one request, and when [pins] is not empty,
-	//! pins each block read there; null slots are cached gaps
-	void Fetch(BlockCacheFile &file, const Run &run, std::span<optional_ptr<Slot>> slots,
+	//! Reads the [claimed] blocks of [run] of [file] with one request and gives back their claims, clearing each
+	//! entry, also when it throws; when [pins] is not empty, pins each block read there. Null entries are cached gaps
+	void Fetch(BlockCacheFile &file, const Run &run, std::span<optional_ptr<BlockMemory>> claimed,
 	           std::span<BlockCachePin> pins);
 	//! Fetches the runs of [plans] of [file] as concurrent pieces of at most PIECE_SIZE, pinning each block read in
-	//! [pins], which start at block [first]; throws the first error
+	//! [pins], which start at block [first], and gives back every claim of [plans]; throws the first error
 	void FetchConcurrently(BlockCacheFile &file, vector<RunPlan> &plans, idx_t first, vector<BlockCachePin> &pins);
-	//! Waits while [slot] loads; when the scheduler has no workers to run queued fetches, runs them until it loads
-	void WaitForLoad(Slot &slot);
-	static uint32_t WaitStripe(const Slot &slot);
-	void Wake(const Slot &slot);
+	//! Waits while [memory] loads; when the scheduler has no workers to run queued fetches, runs them until it loads
+	void WaitForLoad(BlockMemory &memory);
 
-	//! Fetches [run] of [file] in the background, a task per piece of at most PIECE_SIZE
-	void ScheduleFetch(const shared_ptr<BlockCacheFile> &file, const Run &run, vector<optional_ptr<Slot>> slots);
+	//! Fetches the [claimed] blocks of [run] of [file] in the background, a task per piece of at most PIECE_SIZE
+	void ScheduleFetch(const shared_ptr<BlockCacheFile> &file, const Run &run,
+	                   vector<optional_ptr<BlockMemory>> claimed);
 	ProducerToken &Producer();
 	void FinishFetchTask(idx_t bytes);
 	//! Takes a queued fetch task, which a waiter runs itself and shutdown abandons
@@ -448,10 +436,6 @@ private:
 	mutable HitCounter hits[HIT_COUNTERS];
 	//! Blocks the cache knows
 	atomic<idx_t> block_count {0};
-
-	//! Waiters on loading blocks
-	static constexpr idx_t WAIT_STRIPES = 64;
-	mutable mutex wait_locks[WAIT_STRIPES];
 
 	mutable annotated_mutex file_lock;
 	unordered_map<string, FileRecord> files DUCKDB_GUARDED_BY(file_lock);

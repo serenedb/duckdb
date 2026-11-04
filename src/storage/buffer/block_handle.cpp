@@ -1,6 +1,8 @@
 #include "duckdb/storage/buffer/block_handle.hpp"
 
+#include "duckdb/common/array.hpp"
 #include "duckdb/common/fault_points.hpp"
+#include "duckdb/common/mutex.hpp"
 #include "duckdb/common/file_buffer.hpp"
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/storage/block.hpp"
@@ -8,18 +10,64 @@
 #include "duckdb/storage/buffer/buffer_handle.hpp"
 #include "duckdb/storage/buffer/buffer_pool.hpp"
 #include "duckdb/storage/buffer_manager.hpp"
+#include "duckdb/parallel/task_scheduler.hpp"
 
 #include <absl/cleanup/cleanup.h>
 
 namespace duckdb {
 
+namespace {
+
+mutex &LoadWait(const BlockMemory &memory) {
+	static array<mutex, 64> waits;
+	return waits[reinterpret_cast<uintptr_t>(&memory) / sizeof(BlockMemory) % waits.size()];
+}
+
+} // namespace
+
 BlockMemory::BlockMemory(BufferManager &buffer_manager, block_id_t block_id_p, MemoryTag tag_p,
                          idx_t block_alloc_size_p)
+    : BlockMemory(buffer_manager, block_id_p, tag_p, block_alloc_size_p, FileBufferType::BLOCK,
+                  DestroyBufferUpon::BLOCK) {
+}
+
+BlockMemory::BlockMemory(BufferManager &buffer_manager, block_id_t block_id_p, MemoryTag tag_p,
+                         idx_t block_alloc_size_p, FileBufferType buffer_type_p,
+                         DestroyBufferUpon destroy_buffer_upon_p)
     : buffer_manager(buffer_manager), block_id(block_id_p), state(BlockState::BLOCK_UNLOADED), readers(0),
-      buffer_type(FileBufferType::BLOCK), destroy_buffer_upon(DestroyBufferUpon::BLOCK),
+      buffer_type(buffer_type_p), destroy_buffer_upon(destroy_buffer_upon_p),
       track_lru(buffer_manager.GetBufferPool().TracksEvictionTimestamps()), tag(tag_p), buffer(nullptr),
       lru_timestamp_msec(), memory_usage(block_alloc_size_p), memory_charge(tag, buffer_manager.GetBufferPool()),
       unswizzled(nullptr), eviction_queue_idx(DConstants::INVALID_INDEX) {
+}
+
+void BlockMemory::WaitForLoad() {
+	if (loading.load(std::memory_order_acquire) == 0) {
+		return;
+	}
+	auto &wait = LoadWait(*this);
+	TaskScheduler::BlockingScope blocking;
+	wait.Lock();
+	auto current = loading.load(std::memory_order_acquire);
+	while (current == CLAIMED && !loading.compare_exchange_weak(current, AWAITED, std::memory_order_seq_cst)) {
+	}
+	if (current != 0) {
+		wait.Await(absl::Condition(
+		    +[](atomic<uint8_t> *flag) { return flag->load(std::memory_order_acquire) != AWAITED; }, &loading));
+	}
+	wait.Unlock();
+}
+
+void BlockMemory::FinishLoad() {
+	uint8_t claimed = CLAIMED;
+	if (loading.compare_exchange_strong(claimed, 0, std::memory_order_seq_cst)) {
+		return;
+	}
+	D_ASSERT(claimed == AWAITED);
+	auto &wait = LoadWait(*this);
+	wait.Lock();
+	loading.store(0, std::memory_order_seq_cst);
+	wait.Unlock();
 }
 
 BlockMemory::BlockMemory(BufferManager &buffer_manager, block_id_t block_id_p, MemoryTag tag_p,
@@ -108,24 +156,13 @@ void BlockMemory::SetEvictionQueueIndex(const idx_t index) {
 	// It can only be set for managed buffers (for now).
 	D_ASSERT(GetBufferType() == FileBufferType::MANAGED_BUFFER);
 	auto l = GetLock();
-	eviction_queue_idx = index;
-	Requeue(l);
-}
-
-void BlockMemory::SetDestroyBufferUpon(BlockLock &l, DestroyBufferUpon destroy_buffer_upon_p) {
-	VerifyMutex(l);
-	destroy_buffer_upon = destroy_buffer_upon_p;
-	Requeue(l);
-}
-
-void BlockMemory::Requeue(BlockLock &l) {
-	VerifyMutex(l);
-	if (!queue) {
-		return;
-	}
 	auto &pool = buffer_manager.GetBufferPool();
+	const bool queued = queue != nullptr;
 	pool.RemoveBlock(*this);
-	pool.AddBlock(*this);
+	eviction_queue_idx = index;
+	if (queued) {
+		pool.AddBlock(*this);
+	}
 }
 
 void BlockMemory::ResizeBuffer(BlockLock &l, idx_t block_size, idx_t block_header_size, int64_t memory_delta) {
@@ -199,6 +236,15 @@ BlockHandle::BlockHandle(BlockManager &block_manager, block_id_t block_id_p, Mem
     : block_manager(block_manager), block_alloc_size(block_manager.GetBlockAllocSize()),
       block_header_size(block_manager.GetBlockHeaderSize()), block_id(block_id_p),
       memory_p(make_shared_ptr<BlockMemory>(block_manager.GetBufferManager(), block_id_p, tag_p, block_alloc_size)),
+      memory(*memory_p) {
+}
+
+BlockHandle::BlockHandle(BlockManager &block_manager, block_id_t block_id_p, MemoryTag tag_p,
+                         FileBufferType buffer_type_p, DestroyBufferUpon destroy_buffer_upon_p, idx_t size_p)
+    : block_manager(block_manager), block_alloc_size(block_manager.GetBlockAllocSize()),
+      block_header_size(block_manager.GetBlockHeaderSize()), block_id(block_id_p),
+      memory_p(make_shared_ptr<BlockMemory>(block_manager.GetBufferManager(), block_id_p, tag_p, size_p, buffer_type_p,
+                                            destroy_buffer_upon_p)),
       memory(*memory_p) {
 }
 
