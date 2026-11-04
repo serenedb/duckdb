@@ -1443,6 +1443,8 @@ static unique_ptr<FunctionData> IndexScanBind(ClientContext &context, TableFunct
 	auto &table = relation && relation->type == CatalogType::TABLE_ENTRY
 	                  ? relation->Cast<TableCatalogEntry>()
 	                  : Catalog::GetEntry<TableCatalogEntry>(context, index.GetQualifiedName(index.GetTableName()));
+	Binder::RegisterEntryRead(input.binder, context, index);
+	Binder::RegisterEntryRead(input.binder, context, table);
 	auto result = make_uniq<TableScanBindData>(table);
 	result->display_name = index.name.GetIdentifierName();
 	for (auto &column : table.GetColumns().Logical()) {
