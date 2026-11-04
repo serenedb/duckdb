@@ -111,11 +111,13 @@ int32_t TransformOptionBool(ParseResult &option_list, idx_t bool_child) {
 	return StringUtil::Upper(kw.keyword) == "TRUE" ? 1 : 0;
 }
 
-// LIST(Grantee) -> CHOICE -> 'PUBLIC' keyword / LIST(ColId).
 string TransformGrantee(PEGTransformer &transformer, ParseResult &grantee_list) {
 	auto &chosen = grantee_list.Cast<ListParseResult>().Child<ChoiceParseResult>(0).GetResult();
 	if (chosen.type == ParseResultType::KEYWORD) {
 		return "public";
+	}
+	if (chosen.Name() == "GroupGrantee") {
+		return PEGTransformerFactory::OwnerRoleName(transformer, chosen.Cast<ListParseResult>().GetChild(1));
 	}
 	return PEGTransformerFactory::OwnerRoleName(transformer, chosen);
 }
