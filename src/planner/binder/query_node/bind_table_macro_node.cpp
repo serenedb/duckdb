@@ -44,6 +44,9 @@ unique_ptr<QueryNode> Binder::BindTableMacro(FunctionExpression &function, Macro
 	if (owned && !CurrentRole().Can(macro_func.type, permissions, AclMode::Execute)) {
 		ThrowPermissionDenied(macro_func);
 	}
+	if (!owned) {
+		CheckBuiltinCall(context, CurrentRole(), macro_func, bind_result.function_idx.GetIndex());
+	}
 	const auto owner = owned && macro_def.security_definer ? optional_idx(permissions.owner) : optional_idx();
 	bool other_role = false;
 	if (owned && !CheckAs().IsSystem()) {

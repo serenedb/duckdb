@@ -259,6 +259,7 @@ unique_ptr<AlterInfo> AlterPermissionsInfo::Copy() const {
 	result->builtin_acl = builtin_acl;
 	result->overload_oid = overload_oid;
 	result->schema_id = schema_id;
+	result->functions = functions;
 	result->func_parameters = func_parameters;
 	result->has_func_args = has_func_args;
 	for (auto &other : additional_grants) {

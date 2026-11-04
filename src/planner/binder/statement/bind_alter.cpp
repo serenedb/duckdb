@@ -200,6 +200,62 @@ static MacroFunction &ResolveOverload(Binder &binder, MacroCatalogEntry &macro, 
 	return *macro.macros[0];
 }
 
+static void ResolveBuiltinFunctionGrant(Binder &binder, CatalogEntry &function, AlterPermissionsInfo &info) {
+	auto &context = binder.context;
+	auto &config = DBConfig::GetConfig(context);
+	auto &name = function.name.GetIdentifierName();
+	const auto overloads = FunctionOverloadCount(function);
+	string key;
+	if (info.has_func_args) {
+		for (auto &type : info.func_parameters) {
+			binder.BindLogicalType(type);
+		}
+		const auto wanted = config.builtin_signature_key(function, info.func_parameters);
+		for (idx_t overload = 0; overload < overloads && key.empty(); overload++) {
+			if (config.builtin_function_key(function, overload) == wanted) {
+				key = wanted;
+			}
+		}
+		if (key.empty()) {
+			auto extra_info = Exception::InitializeExtraInfo("MISSING_ENTRY", optional_idx());
+			extra_info["type"] = CatalogTypeToString(CatalogType::MACRO_ENTRY);
+			throw CatalogException(extra_info,
+			                       StringUtil::Format("function %s(%s) does not exist", name,
+			                                          MacroFunction::ParameterTypesToString(info.func_parameters)));
+		}
+	} else {
+		for (idx_t overload = 0; overload < overloads; overload++) {
+			auto candidate = config.builtin_function_key(function, overload);
+			if (key.empty()) {
+				key = std::move(candidate);
+			} else if (candidate != key) {
+				auto extra_info = Exception::InitializeExtraInfo("AMBIGUOUS_FUNCTION", optional_idx());
+				extra_info["hint"] = "Specify the argument list to select the function unambiguously.";
+				throw CatalogException(extra_info, StringUtil::Format("function name \"%s\" is not unique", name));
+			}
+		}
+	}
+	const auto database_name = DatabaseManager::GetDefaultDatabase(context);
+	auto database = binder.ClusterEntry(CatalogType::DATABASE_ENTRY, database_name);
+	if (!database) {
+		throw CatalogException(unordered_map<string, string> {{"type", "Database"}},
+		                       StringUtil::Format("database \"%s\" does not exist", database_name.GetIdentifierName()));
+	}
+	const auto owner = config.bootstrap_role;
+	auto builtin = BuiltinFunctionAcl(function, owner);
+	auto &rows = database->permissions.functions;
+	auto row = std::find_if(rows.begin(), rows.end(), [&](const NamedAcl &entry) { return entry.name == key; });
+	auto &acl = row == rows.end() ? builtin : row->acl;
+	auto &role = binder.CheckAs();
+	if (!role.Owns(owner) && (role.HeldModes(acl) | role.GrantableModes(acl)) == AclMode::NoRights) {
+		throw PermissionException("permission denied for function %s", name);
+	}
+	info.functions = {NamedAcl {std::move(key), std::move(builtin)}};
+	info.object_owner_id = owner;
+	info.entry_catalog_type = CatalogType::DATABASE_ENTRY;
+	info.SetQualifiedName(Identifier(), Identifier(), database_name);
+}
+
 static const Permissions &TargetPermissions(Binder &binder, const AlterPermissionsInfo &info, CatalogEntry &target) {
 	if (info.overload_oid) {
 		auto &macro = target.Cast<MacroCatalogEntry>();
@@ -428,6 +484,12 @@ static void ResolveGrant(Binder &binder, AlterPermissionsInfo &info) {
 		return;
 	}
 	auto &target = ResolvePermissionsTarget(binder, info);
+	auto &config = DBConfig::GetConfig(binder.context);
+	if (target.internal && FunctionOverloadCount(target) && config.builtin_function_key &&
+	    !config.builtin_function_key(target, 0).empty()) {
+		ResolveBuiltinFunctionGrant(binder, target, info);
+		return;
+	}
 	RequireGrantable(binder, target, TargetPermissions(binder, info, target));
 	if (!target.internal || IsUnowned(target)) {
 		return;

@@ -50,6 +50,7 @@ class BlockAllocator;
 class BufferManager;
 class BufferPool;
 class CastFunctionSet;
+class CatalogEntry;
 class CollationBinding;
 class ClientContext;
 class DuckDB;
@@ -228,6 +229,10 @@ public:
 	Identifier cluster_catalog;
 	idx_t bootstrap_role = 0;
 	idx_t database_owner_role = 0;
+	typedef string (*builtin_function_key_t)(const CatalogEntry &function, idx_t overload);
+	typedef string (*builtin_signature_key_t)(const CatalogEntry &function, const vector<LogicalType> &arguments);
+	builtin_function_key_t builtin_function_key = nullptr;
+	builtin_signature_key_t builtin_signature_key = nullptr;
 
 public:
 	DUCKDB_API static DBConfig &GetConfig(ClientContext &context);

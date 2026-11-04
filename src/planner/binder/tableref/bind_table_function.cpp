@@ -608,6 +608,7 @@ BoundStatement Binder::Bind(TableFunctionRef &ref) {
 		error.AddQueryLocation(ref);
 		error.Throw();
 	}
+	CheckBuiltinCall(context, CurrentRole(), function, best_function_idx.GetIndex());
 	// copied out of the set: BindTableFunctionInternal fills in the bound return types
 	BoundTableFunction table_function(function.functions.GetFunctionByOffset(best_function_idx.GetIndex()));
 

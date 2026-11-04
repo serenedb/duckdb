@@ -25,7 +25,9 @@
 #include "duckdb/catalog/default/default_views.hpp"
 #include "duckdb/catalog/dependency_list.hpp"
 #include "duckdb/execution/index/index_type_set.hpp"
+#include "duckdb/catalog/permissions.hpp"
 #include "duckdb/main/attached_database.hpp"
+#include "duckdb/main/config.hpp"
 #include "duckdb/main/database.hpp"
 #include "duckdb/parser/constraints/foreign_key_constraint.hpp"
 #include "duckdb/parser/expression/constant_expression.hpp"
@@ -507,7 +509,42 @@ optional_ptr<CatalogEntry> DuckSchemaEntry::CreatePragmaFunction(CatalogTransact
 	return AddEntry(transaction, std::move(pragma_function), info.on_conflict);
 }
 
+static vector<NamedAcl> BuiltinFunctionRows(ClientContext &context, DuckSchemaEntry &schema,
+                                            CatalogTransaction transaction) {
+	auto &config = DBConfig::GetConfig(context);
+	vector<NamedAcl> rows;
+	unordered_set<string> keys;
+	const auto add = [&](CatalogEntry &entry) {
+		if (!entry.internal) {
+			return;
+		}
+		const auto overloads = FunctionOverloadCount(entry);
+		for (idx_t overload = 0; overload < overloads; overload++) {
+			auto key = config.builtin_function_key(entry, overload);
+			if (!key.empty() && keys.insert(key).second) {
+				rows.push_back(NamedAcl {std::move(key), BuiltinFunctionAcl(entry, config.bootstrap_role)});
+			}
+		}
+	};
+	for (auto kind : {CatalogType::MACRO_ENTRY, CatalogType::TABLE_MACRO_ENTRY}) {
+		schema.GetCatalogSet(kind).Scan(transaction, add);
+	}
+	const Identifier information_schema("information_schema");
+	const bool information = schema.name == information_schema;
+	Catalog::GetSystemCatalog(context).ScanSchemas(context, [&](SchemaCatalogEntry &system_schema) {
+		if ((system_schema.name == information_schema) != information) {
+			return;
+		}
+		for (auto kind : {CatalogType::SCALAR_FUNCTION_ENTRY, CatalogType::TABLE_FUNCTION_ENTRY,
+		                  CatalogType::PRAGMA_FUNCTION_ENTRY}) {
+			system_schema.Scan(context, kind, add);
+		}
+	});
+	return rows;
+}
+
 static void AlterAllInSchema(DuckSchemaEntry &schema, CatalogTransaction transaction, AlterPermissionsInfo &info) {
+	const bool functions = info.entry_catalog_type == CatalogType::MACRO_ENTRY && info.include_functions;
 	vector<CatalogType> kinds {info.entry_catalog_type};
 	if (info.entry_catalog_type == CatalogType::MACRO_ENTRY) {
 		kinds.push_back(CatalogType::TABLE_MACRO_ENTRY);
@@ -557,6 +594,23 @@ static void AlterAllInSchema(DuckSchemaEntry &schema, CatalogTransaction transac
 			Catalog::GetCatalog(context, DBConfig::GetConfig(context).cluster_catalog).Alter(context, grant);
 		}
 	}
+	if (!functions || !schema.internal || IsUnowned(schema) || !transaction.HasContext() ||
+	    !DBConfig::GetConfig(transaction.GetContext()).builtin_function_key) {
+		return;
+	}
+	auto &context = transaction.GetContext();
+	auto rows = BuiltinFunctionRows(context, schema, transaction);
+	if (rows.empty()) {
+		return;
+	}
+	auto &config = DBConfig::GetConfig(context);
+	auto redirected = info.Copy();
+	auto &grant = redirected->Cast<AlterPermissionsInfo>();
+	grant.functions = std::move(rows);
+	grant.object_owner_id = config.bootstrap_role;
+	grant.entry_catalog_type = CatalogType::DATABASE_ENTRY;
+	grant.SetQualifiedName(Identifier(), Identifier(), schema.ParentCatalog().GetName());
+	Catalog::GetCatalog(context, config.cluster_catalog).Alter(context, grant);
 }
 
 static void DropIndexesOnRemovedColumn(DuckSchemaEntry &schema, CatalogTransaction transaction, CatalogSet &tables,
