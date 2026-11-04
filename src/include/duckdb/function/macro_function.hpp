@@ -8,6 +8,7 @@
 
 #pragma once
 
+#include "duckdb/catalog/permissions.hpp"
 #include "duckdb/common/enums/sql_compatibility.hpp"
 #include "duckdb/function/function.hpp"
 #include "duckdb/parser/expression/constant_expression.hpp"
@@ -60,6 +61,8 @@ public:
 	FunctionStability stability = FunctionStability::VOLATILE;
 	vector<string> config;
 	string source;
+	idx_t oid = 0;
+	Permissions permissions;
 
 public:
 	virtual ~MacroFunction() {

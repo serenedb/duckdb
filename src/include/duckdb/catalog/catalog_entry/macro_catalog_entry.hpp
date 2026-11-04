@@ -31,6 +31,11 @@ public:
 public:
 	unique_ptr<CreateInfo> GetInfo() const override;
 	unique_ptr<CatalogEntry> AlterEntry(CatalogTransaction transaction, AlterInfo &info) override;
+	vector<idx_t> GetSubObjectOids() const override;
+
+	idx_t OverloadOid(const MacroFunction &overload) const;
+	const Permissions &OverloadPermissions(const MacroFunction &overload) const;
+	optional_ptr<MacroFunction> FindOverload(idx_t overload_oid) const;
 
 	string ToSQL() const override;
 };

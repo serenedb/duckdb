@@ -2,6 +2,7 @@
 
 #include "duckdb/catalog/catalog_entry/aggregate_function_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/index_catalog_entry.hpp"
+#include "duckdb/catalog/catalog_entry/macro_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/view_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_search_path.hpp"
@@ -405,10 +406,6 @@ void Binder::CheckCall(FunctionEntry &function) {
 	if (!function.MayCall(calling)) {
 		ThrowPermissionDenied(function);
 	}
-	if ((function.type == CatalogType::MACRO_ENTRY || function.type == CatalogType::TABLE_MACRO_ENTRY) &&
-	    !IsUnowned(function) && !calling.Can(function.type, function.permissions, AclMode::Execute)) {
-		ThrowPermissionDenied(function);
-	}
 }
 
 void Binder::RequireSuperuser() {
@@ -418,6 +415,13 @@ void Binder::RequireSuperuser() {
 }
 
 void Binder::RequireOwner(CatalogEntry &entry) {
+	if (entry.type == CatalogType::MACRO_ENTRY || entry.type == CatalogType::TABLE_MACRO_ENTRY) {
+		auto &macro = entry.Cast<MacroCatalogEntry>();
+		for (auto &overload : macro.macros) {
+			RequireOwner(entry, macro.OverloadPermissions(*overload).owner);
+		}
+		return;
+	}
 	auto owner = entry.permissions.owner;
 	if (entry.type == CatalogType::INDEX_ENTRY) {
 		auto relation =
@@ -427,6 +431,10 @@ void Binder::RequireOwner(CatalogEntry &entry) {
 		}
 		owner = relation->permissions.owner;
 	}
+	RequireOwner(entry, owner);
+}
+
+void Binder::RequireOwner(CatalogEntry &entry, idx_t owner) {
 	if (!CheckAs().Owns(owner)) {
 		throw PermissionException("must be owner of %s %s", PermissionKindName(entry), entry.name.GetIdentifierName());
 	}

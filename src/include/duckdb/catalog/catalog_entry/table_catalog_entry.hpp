@@ -94,7 +94,7 @@ public:
 	//! Returns a list of the columns of the table
 	DUCKDB_API virtual const ColumnList &GetColumns() const = 0;
 
-	vector<idx_t> GetSubObjectOids() const;
+	vector<idx_t> GetSubObjectOids() const override;
 
 	idx_t row_type_oid = 0;
 

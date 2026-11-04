@@ -89,6 +89,7 @@ public:
 	virtual optional_idx GetLayoutVersion(ClientContext &context) const;
 
 	virtual unique_ptr<CatalogEntry> Copy(ClientContext &context) const;
+	virtual vector<idx_t> GetSubObjectOids() const;
 
 	virtual unique_ptr<CreateInfo> GetInfo() const;
 	virtual unique_ptr<CreateInfo> GetInfo(CatalogTransaction transaction) const;
