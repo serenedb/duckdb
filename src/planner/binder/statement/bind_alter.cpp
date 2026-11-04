@@ -559,6 +559,11 @@ BoundStatement Binder::Bind(AlterStatement &stmt) {
 
 	if (stmt.info->type == AlterType::SET_COMMENT && (stmt.info->GetCatalogType() == CatalogType::DATABASE_ENTRY ||
 	                                                  stmt.info->GetCatalogType() == CatalogType::ROLE_ENTRY)) {
+		if (DBConfig::GetConfig(context).cluster_catalog.empty()) {
+			throw NotImplementedException("Adding comments to %ss is not implemented",
+			                              stmt.info->GetCatalogType() == CatalogType::DATABASE_ENTRY ? "database"
+			                                                                                         : "role");
+		}
 		CheckSharedObjectComment(*stmt.info);
 		auto &properties = GetStatementProperties();
 		properties.return_type = StatementReturnType::NOTHING;
