@@ -1,5 +1,10 @@
-CreateDatabaseStatement <- 'CREATE' 'DATABASE' IfNotExists? CatalogName CreateDatabaseOwner? WithList?
-CreateDatabaseOwner <- 'WITH'? 'OWNER' DatabaseOwnerName
+CreateDatabaseStatement <- 'CREATE' 'DATABASE' IfNotExists? CatalogName CreateDatabaseOptions? WithList?
+CreateDatabaseOptions <- 'WITH'? CreateDatabaseOption+
+CreateDatabaseOption <- CreateDatabaseOwner / DatabaseOption
+CreateDatabaseOwner <- 'OWNER' DatabaseOwnerName
 DatabaseOwnerName <- '='? ColId
+DatabaseOption <- DatabaseConnectionLimit / DatabaseAllowConnections
+DatabaseConnectionLimit <- 'CONNECTION' 'LIMIT' '='? '-'? NumberLiteral
+DatabaseAllowConnections <- 'ALLOW_CONNECTIONS' '='? OptionBool
 DropDatabaseStatement <- 'DROP' 'DATABASE' IfExists? CatalogName DropDatabaseForce? DropBehavior?
 DropDatabaseForce <- '(' 'FORCE' ')'

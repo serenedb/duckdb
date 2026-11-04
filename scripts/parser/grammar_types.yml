@@ -254,6 +254,7 @@ AlterInfo:
     - AlterTableStmt
     - AlterDatabaseStmt
     - AlterDatabaseConfigStmt
+    - AlterDatabaseOptionsStmt
     - AlterViewStmt
     - AlterIndexStmt
     - AlterFunctionStmt
@@ -1173,7 +1174,6 @@ String:
   rules:
     - StringLiteral
     - DropOrSet
-    - CreateDatabaseOwner
     - DatabaseOwnerName
     - TriggerFireMode
     - ReplicaFireMode
@@ -1809,6 +1809,15 @@ overrides:
   # common.gram
   ColIdType: "pair<Identifier, LogicalType>"
   ColIdTypeList: "child_list_t<LogicalType>"
+  # create_database.gram
+  CreateDatabaseOptions:
+    type: "case_insensitive_map_t<Value>"
+    by_value: true
+  CreateDatabaseOption: "pair<string, Value>"
+  CreateDatabaseOwner: "pair<string, Value>"
+  DatabaseOption: "pair<string, Value>"
+  DatabaseConnectionLimit: "pair<string, Value>"
+  DatabaseAllowConnections: "pair<string, Value>"
   # create_index.gram
   RelOption:
     type: "pair<Identifier, unique_ptr<ParsedExpression>>"

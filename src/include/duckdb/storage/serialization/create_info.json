@@ -658,6 +658,18 @@
         "id": 202,
         "name": "settings",
         "type": "vector<DatabaseSetting>"
+      },
+      {
+        "id": 203,
+        "name": "connection_limit",
+        "type": "int32_t",
+        "default": "-1"
+      },
+      {
+        "id": 204,
+        "name": "allow_connections",
+        "type": "bool",
+        "default": "true"
       }
     ],
     "methods": {

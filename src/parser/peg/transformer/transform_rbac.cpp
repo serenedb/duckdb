@@ -61,12 +61,13 @@ int64_t TransformValidUntil(ParseResult &opt) {
 	return parsed.value;
 }
 
-// 'CONNECTION' 'LIMIT' '-'? NumberLiteral -> the signed integer.
+// 'CONNECTION' 'LIMIT' ... '-'? NumberLiteral -> the signed integer.
 int32_t TransformConnLimit(ParseResult &opt) {
 	auto &cl = opt.Cast<ListParseResult>();
-	const bool negative = cl.Child<OptionalParseResult>(2).HasResult();
+	const auto count = cl.GetChildren().size();
+	const bool negative = cl.Child<OptionalParseResult>(count - 2).HasResult();
 	int32_t value = 0;
-	auto digits = cl.GetChild(3).Cast<NumberParseResult>().number;
+	auto digits = cl.GetChild(count - 1).Cast<NumberParseResult>().number;
 	auto [ptr, ec] = std::from_chars(digits.data(), digits.data() + digits.size(), value);
 	if (ec != std::errc() || ptr != digits.data() + digits.size() || (negative && value > 1)) {
 		throw ParserException("invalid connection limit: %s%s", negative ? "-" : "", digits);
@@ -223,6 +224,17 @@ string PEGTransformerFactory::OwnerRoleName(PEGTransformer &transformer, ParseRe
 		return StringUtil::Upper(chosen.Cast<KeywordParseResult>().keyword);
 	}
 	return transformer.Transform<string>(chosen);
+}
+
+pair<string, Value> PEGTransformerFactory::TransformDatabaseConnectionLimit(PEGTransformer &transformer,
+                                                                            ParseResult &parse_result) {
+	return {"connection_limit", Value::INTEGER(TransformConnLimit(parse_result))};
+}
+
+pair<string, Value> PEGTransformerFactory::TransformDatabaseAllowConnections(PEGTransformer &transformer,
+                                                                             ParseResult &parse_result) {
+	auto &value = FirstKeyword(parse_result.Cast<ListParseResult>().GetChild(2));
+	return {"allow_connections", Value::BOOLEAN(StringUtil::Upper(value.keyword) == "TRUE")};
 }
 
 void PEGTransformerFactory::CollectConfigClause(PEGTransformer &transformer, ParseResult &config,

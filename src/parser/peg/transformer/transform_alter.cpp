@@ -180,6 +180,27 @@ unique_ptr<AlterInfo> PEGTransformerFactory::TransformAlterDatabaseConfigStmt(PE
 	return std::move(result);
 }
 
+unique_ptr<AlterInfo>
+PEGTransformerFactory::TransformAlterDatabaseOptionsStmt(PEGTransformer &transformer, const Identifier &col_id,
+                                                         const bool &has_result,
+                                                         const vector<pair<string, Value>> &database_option) {
+	auto result = make_uniq<AlterDatabaseSettingsInfo>(col_id);
+	for (auto &option : database_option) {
+		const bool limit = option.first == "connection_limit";
+		auto &set = limit ? result->set_connection_limit : result->set_allow_connections;
+		if (set) {
+			throw ParserException("conflicting or redundant options");
+		}
+		set = true;
+		if (limit) {
+			result->connection_limit = IntegerValue::Get(option.second);
+		} else {
+			result->allow_connections = BooleanValue::Get(option.second);
+		}
+	}
+	return std::move(result);
+}
+
 unique_ptr<AlterInfo> PEGTransformerFactory::TransformAlterViewStmt(PEGTransformer &transformer,
                                                                     const optional<bool> &if_exists,
                                                                     unique_ptr<BaseTableRef> base_table_name,

@@ -299,13 +299,24 @@ unique_ptr<AlterInfo> AlterDatabaseSettingsInfo::Copy() const {
 	result->reset_all_config = reset_all_config;
 	result->reset_config = reset_config;
 	result->set_config = set_config;
+	result->set_connection_limit = set_connection_limit;
+	result->connection_limit = connection_limit;
+	result->set_allow_connections = set_allow_connections;
+	result->allow_connections = allow_connections;
 	return std::move(result);
 }
 
 string AlterDatabaseSettingsInfo::ToString() const {
 	auto &database = GetQualifiedName().Name().GetIdentifierName();
 	if (role.empty()) {
-		return "ALTER DATABASE " + database + ";";
+		string options;
+		if (set_allow_connections) {
+			options += allow_connections ? " ALLOW_CONNECTIONS TRUE" : " ALLOW_CONNECTIONS FALSE";
+		}
+		if (set_connection_limit) {
+			options += " CONNECTION LIMIT " + std::to_string(connection_limit);
+		}
+		return "ALTER DATABASE " + database + options + ";";
 	}
 	return "ALTER ROLE " + role + " IN DATABASE " + database + ";";
 }

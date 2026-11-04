@@ -622,6 +622,28 @@
         "id": 304,
         "name": "set_config",
         "type": "vector<string>"
+      },
+      {
+        "id": 305,
+        "name": "set_connection_limit",
+        "type": "bool"
+      },
+      {
+        "id": 306,
+        "name": "connection_limit",
+        "type": "int32_t",
+        "default": "-1"
+      },
+      {
+        "id": 307,
+        "name": "set_allow_connections",
+        "type": "bool"
+      },
+      {
+        "id": 308,
+        "name": "allow_connections",
+        "type": "bool",
+        "default": "true"
       }
     ]
   },
