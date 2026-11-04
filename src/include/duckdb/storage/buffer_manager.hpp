@@ -8,10 +8,12 @@
 
 #pragma once
 
+#include "duckdb/common/enums/destroy_buffer_upon.hpp"
 #include "duckdb/common/enums/memory_tag.hpp"
 #include "duckdb/common/optional_idx.hpp"
 #include "duckdb/storage/storage_info.hpp"
 #include "duckdb/storage/buffer/buffer_handle.hpp"
+#include "duckdb/storage/buffer/buffer_pool_reservation.hpp"
 #include "duckdb/storage/buffer/temporary_file_information.hpp"
 
 namespace duckdb {
@@ -23,6 +25,11 @@ class TemporaryMemoryManager;
 class AttachedDatabase;
 class BlockManager;
 class DatabaseInstance;
+
+struct BlockLoad {
+	unique_ptr<FileBuffer> buffer;
+	TempBufferPoolReservation reservation;
+};
 
 class BufferManager {
 	friend class BufferHandle;
@@ -74,10 +81,11 @@ public:
 	virtual void Unpin(shared_ptr<BlockHandle> &handle) = 0;
 	//! Unpin a pin of block memory.
 	virtual void Unpin(BlockMemory &memory) = 0;
-	//! Pins [handle], whose buffer was destroyed, with a new buffer of [block_size] bytes after a header of
-	//! [block_header_size] bytes, for the caller to fill; an invalid handle when the block is loaded or kept in a
-	//! temporary file
-	virtual BufferHandle PinEmpty(shared_ptr<BlockHandle> &handle, idx_t block_size, idx_t block_header_size);
+	virtual shared_ptr<BlockHandle> RegisterUnloadedMemory(MemoryTag tag, idx_t block_size, idx_t block_header_size,
+	                                                       DestroyBufferUpon destroy_buffer_upon);
+	virtual BufferHandle LoadClaimed(const QueryContext &context, shared_ptr<BlockHandle> &handle);
+	virtual BlockLoad PrepareLoad(BlockMemory &memory, idx_t block_size, idx_t block_header_size);
+	virtual BufferHandle CompleteLoad(shared_ptr<BlockHandle> &handle, BlockLoad load);
 	//! Destroys the buffer of [handle], or once its last pin is gone when it is pinned, and the copy of it a temporary
 	//! file keeps
 	virtual void Discard(shared_ptr<BlockHandle> &handle);

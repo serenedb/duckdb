@@ -40,6 +40,8 @@ class alignas(64) BlockMemory : public enable_shared_from_this<BlockMemory> {
 
 public:
 	BlockMemory(BufferManager &buffer_manager, block_id_t block_id_p, MemoryTag tag_p, idx_t block_alloc_size);
+	BlockMemory(BufferManager &buffer_manager, block_id_t block_id_p, MemoryTag tag_p, idx_t block_alloc_size,
+	            FileBufferType buffer_type_p, DestroyBufferUpon destroy_buffer_upon_p);
 	BlockMemory(BufferManager &buffer_manager, block_id_t block_id_p, MemoryTag tag_p, unique_ptr<FileBuffer> buffer_p,
 	            DestroyBufferUpon destroy_buffer_upon_p, idx_t size_p, BufferPoolReservation &&reservation);
 	~BlockMemory();
@@ -124,6 +126,15 @@ public:
 	}
 	//! Frees an orphaned block whose last reader is gone.
 	void ReleaseOrphan();
+	bool TryClaim() {
+		uint8_t free = 0;
+		return loading.compare_exchange_strong(free, CLAIMED, std::memory_order_seq_cst);
+	}
+	bool IsLoading() const {
+		return loading.load(std::memory_order_acquire) != 0;
+	}
+	void WaitForLoad();
+	void FinishLoad();
 	//! Adds a reader without the block lock, if the block is loaded.
 	bool TryPinLoaded() {
 		if (readers.fetch_add(1, std::memory_order_seq_cst) & LOADED) {
@@ -219,7 +230,6 @@ public:
 		D_ASSERT(destroy_buffer_upon_p != DestroyBufferUpon::KEEP_COPY);
 		destroy_buffer_upon = destroy_buffer_upon_p;
 	}
-	void SetDestroyBufferUpon(BlockLock &l, DestroyBufferUpon destroy_buffer_upon_p);
 	//! Returns true, if the buffer is destroyed once its last reader unpins it.
 	bool DestroyedUponUnpin() const {
 		return destroy_buffer_upon == DestroyBufferUpon::UNPIN;
@@ -293,9 +303,6 @@ public:
 	void Unload(BlockLock &l, QueryContext context = QueryContext());
 
 private:
-	void Requeue(BlockLock &l);
-
-private:
 	//! A reference to the buffer manager.
 	BufferManager &buffer_manager;
 	//! The block id of the block.
@@ -309,6 +316,9 @@ private:
 	alignas(64) atomic<int32_t> readers;
 	//! Whether the block was unpinned again since eviction last passed it.
 	atomic<bool> referenced {false};
+	static constexpr uint8_t CLAIMED = 1;
+	static constexpr uint8_t AWAITED = 2;
+	atomic<uint8_t> loading {0};
 	//! The file buffer type.
 	const FileBufferType buffer_type;
 	//! When to destroy the data buffer.
@@ -349,6 +359,8 @@ private:
 class alignas(64) BlockHandle : public enable_shared_from_this<BlockHandle> {
 public:
 	BlockHandle(BlockManager &block_manager, block_id_t block_id, MemoryTag tag);
+	BlockHandle(BlockManager &block_manager, block_id_t block_id, MemoryTag tag, FileBufferType buffer_type,
+	            DestroyBufferUpon destroy_buffer_upon, idx_t size);
 	BlockHandle(BlockManager &block_manager, block_id_t block_id, MemoryTag tag, unique_ptr<FileBuffer> buffer,
 	            DestroyBufferUpon destroy_buffer_upon, idx_t size, BufferPoolReservation &&reservation);
 	~BlockHandle();
