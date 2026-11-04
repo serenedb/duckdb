@@ -537,6 +537,26 @@ void Binder::RequireForeignDataWrapperUsage(const RoleAccess &role, const Identi
 	}
 }
 
+void Binder::RequireLanguageUsage(const RoleAccess &role, const Identifier &database, const string &language) {
+	auto &languages = DBConfig::GetConfig(context).languages;
+	auto found = languages.find(language);
+	if (role.is_superuser || found == languages.end()) {
+		return;
+	}
+	if (found->second.trusted) {
+		Permissions permissions;
+		permissions.owner = found->second.owner;
+		if (auto entry = ClusterEntry(CatalogType::DATABASE_ENTRY, database)) {
+			auto acl = entry->permissions.LanguageAcl(found->second.oid);
+			permissions.acl.assign(acl.begin(), acl.end());
+		}
+		if (role.Can(CatalogType::LANGUAGE_ENTRY, permissions, AclMode::Usage)) {
+			return;
+		}
+	}
+	throw PermissionException("permission denied for language %s", language);
+}
+
 void Binder::RequireSchemaCreate(SchemaCatalogEntry &schema) {
 	auto &role = CheckAs();
 	if (role.is_superuser) {

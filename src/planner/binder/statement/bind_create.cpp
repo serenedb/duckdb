@@ -943,7 +943,13 @@ SchemaCatalogEntry &Binder::BindCreateFunctionInfo(CreateInfo &info) {
 	}
 	std::move(restore_roles).Invoke();
 
-	return BindCreateSchema(info);
+	auto &schema = BindCreateSchema(info);
+	if (auto &role = CheckAs(); !role.IsSystem()) {
+		auto &database = schema.ParentCatalog().GetAttached().IsTemporary() ? ClientData::Get(context).default_database
+		                                                                    : schema.ParentCatalog().GetName();
+		RequireLanguageUsage(role, database, "sql");
+	}
+	return schema;
 }
 
 LogicalType Binder::BindLogicalType(const ParsedExpression &type_expr) {

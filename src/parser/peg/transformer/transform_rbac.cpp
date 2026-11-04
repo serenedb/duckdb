@@ -187,6 +187,9 @@ CatalogType GrantObjectType(const string &keyword) {
 	if (keyword == "PARAMETER") {
 		return CatalogType::PARAMETER_ENTRY;
 	}
+	if (keyword == "LANGUAGE") {
+		return CatalogType::LANGUAGE_ENTRY;
+	}
 	if (keyword == "TEXT SEARCH DICTIONARY") {
 		return CatalogType::TOKENIZER_ENTRY;
 	}

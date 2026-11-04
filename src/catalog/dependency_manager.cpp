@@ -668,6 +668,7 @@ void DependencyManager::DropOwned(CatalogTransaction transaction, const DropOwne
 		}
 	});
 	auto &wrappers = DBConfig::GetConfig(catalog.GetDatabase()).foreign_data_wrappers;
+	auto &languages = DBConfig::GetConfig(catalog.GetDatabase()).languages;
 	ForEachHolder(
 	    transaction, CatalogType::DATABASE_ENTRY, [&](DuckCatalog &holder, CatalogTransaction holder_transaction) {
 		    auto &manager = *holder.GetDependencyManager();
@@ -694,6 +695,17 @@ void DependencyManager::DropOwned(CatalogTransaction transaction, const DropOwne
 					        revoke(holder, holder_transaction, entry, role, CatalogType::FOREIGN_DATA_WRAPPER_ENTRY);
 					    alter.foreign_data_wrapper_id = row.oid;
 					    alter.object_owner_id = wrapper == wrappers.end() ? 0 : wrapper->second.owner;
+				    }
+				    for (auto &row : permissions.languages) {
+					    if (!GrantsTo(row.acl, role)) {
+						    continue;
+					    }
+					    auto language = std::find_if(languages.begin(), languages.end(), [&](const auto &registered) {
+						    return registered.second.oid == row.oid;
+					    });
+					    auto &alter = revoke(holder, holder_transaction, entry, role, CatalogType::LANGUAGE_ENTRY);
+					    alter.language_id = row.oid;
+					    alter.object_owner_id = language == languages.end() ? 0 : language->second.owner;
 				    }
 				    if (std::any_of(
 				            permissions.defaults.begin(), permissions.defaults.end(),

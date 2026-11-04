@@ -462,6 +462,7 @@ public:
 	string RoleName(idx_t role);
 	void RequireDatabasePrivilege(const Identifier &database, AclMode need);
 	void RequireForeignDataWrapperUsage(const RoleAccess &role, const Identifier &database, const string &wrapper);
+	void RequireLanguageUsage(const RoleAccess &role, const Identifier &database, const string &language);
 	void RequireSchemaCreate(SchemaCatalogEntry &schema);
 	void RequireTypeUsage(optional_ptr<const LogicalDependencyList> dependencies);
 	void AssignOwner(Permissions &permissions, Catalog &catalog, CatalogType objtype,

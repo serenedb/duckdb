@@ -80,6 +80,12 @@ struct ForeignDataWrapper {
 	idx_t owner = 0;
 };
 
+struct Language {
+	idx_t oid = 0;
+	idx_t owner = 0;
+	bool trusted = false;
+};
+
 //! NOTE: DBConfigOptions is mostly deprecated.
 //! If you want to add a setting that can be set by the user, add it as a generic setting to `settings.json`.
 //! See e.g. "http_proxy" (HTTPProxySetting) as an example
@@ -218,6 +224,7 @@ public:
 	GlobalUserSettings user_settings;
 	identifier_set_t builtin_relations;
 	unordered_map<string, ForeignDataWrapper> foreign_data_wrappers;
+	case_insensitive_map_t<Language> languages;
 	Identifier cluster_catalog;
 	idx_t bootstrap_role = 0;
 	idx_t database_owner_role = 0;
@@ -235,6 +242,7 @@ public:
 	DUCKDB_API static vector<Identifier> GetOptionNames();
 	DUCKDB_API static bool IsInMemoryDatabase(const char *database_path);
 	DUCKDB_API const ForeignDataWrapper &GetForeignDataWrapper(const string &name) const;
+	DUCKDB_API const Language &GetLanguage(const string &name) const;
 
 	DUCKDB_API void AddExtensionOption(const Identifier &name, string description, LogicalType parameter,
 	                                   const Value &default_value = Value(), set_option_callback_t function = nullptr,

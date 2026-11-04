@@ -637,6 +637,15 @@ const ForeignDataWrapper &DBConfig::GetForeignDataWrapper(const string &name) co
 	return wrapper->second;
 }
 
+const Language &DBConfig::GetLanguage(const string &name) const {
+	auto language = languages.find(name);
+	if (language == languages.end()) {
+		throw CatalogException(unordered_map<string, string> {{"type", "Language"}},
+		                       StringUtil::Format("language \"%s\" does not exist", name));
+	}
+	return language->second;
+}
+
 CastFunctionSet &DBConfig::GetCastFunctions() {
 	return type_manager->GetCastFunctions();
 }

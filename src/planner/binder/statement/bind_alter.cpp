@@ -334,6 +334,34 @@ static void ResolveGrant(Binder &binder, AlterPermissionsInfo &info) {
 		info.SetQualifiedName(Identifier(), Identifier(), database_name);
 		return;
 	}
+	if (info.entry_catalog_type == CatalogType::LANGUAGE_ENTRY) {
+		auto &name = info.GetQualifiedName().Name().GetIdentifierName();
+		auto &language = DBConfig::GetConfig(binder.context).GetLanguage(name);
+		if (!language.trusted) {
+			auto extra_info = Exception::InitializeExtraInfo("WRONG_OBJECT_TYPE", optional_idx());
+			extra_info["detail"] = "GRANT and REVOKE are not allowed on untrusted languages, because only superusers "
+			                       "can use untrusted languages.";
+			throw CatalogException(extra_info, StringUtil::Format("language \"%s\" is not trusted", name));
+		}
+		auto database_name = DatabaseManager::GetDefaultDatabase(binder.context);
+		auto database = binder.ClusterEntry(CatalogType::DATABASE_ENTRY, database_name);
+		if (!database) {
+			throw CatalogException(
+			    unordered_map<string, string> {{"type", "Database"}},
+			    StringUtil::Format("database \"%s\" does not exist", database_name.GetIdentifierName()));
+		}
+		auto stored = database->permissions.LanguageAcl(language.oid);
+		auto acl = stored.empty() ? Permissions::AclDefault(CatalogType::LANGUAGE_ENTRY, language.owner)
+		                          : vector<AclItem>(stored.begin(), stored.end());
+		if (!role.Owns(language.owner) && (role.HeldModes(acl) | role.GrantableModes(acl)) == AclMode::NoRights) {
+			throw PermissionException("permission denied for language %s", name);
+		}
+		info.language_id = language.oid;
+		info.object_owner_id = language.owner;
+		info.entry_catalog_type = CatalogType::DATABASE_ENTRY;
+		info.SetQualifiedName(Identifier(), Identifier(), database_name);
+		return;
+	}
 	if (info.entry_catalog_type == CatalogType::PARAMETER_ENTRY) {
 		auto &qualified = info.GetQualifiedName();
 		auto name = qualified.Name().GetIdentifierName();
@@ -544,7 +572,8 @@ BoundStatement Binder::Bind(AlterStatement &stmt) {
 		properties.return_type = StatementReturnType::NOTHING;
 		const auto catalog_type = stmt.info->GetCatalogType();
 		if (catalog_type != CatalogType::DATABASE_ENTRY && catalog_type != CatalogType::ROLE_ENTRY &&
-		    catalog_type != CatalogType::FOREIGN_DATA_WRAPPER_ENTRY && catalog_type != CatalogType::PARAMETER_ENTRY) {
+		    catalog_type != CatalogType::FOREIGN_DATA_WRAPPER_ENTRY && catalog_type != CatalogType::PARAMETER_ENTRY &&
+		    catalog_type != CatalogType::LANGUAGE_ENTRY) {
 			stmt.info->SetQualifiedName(BindTableName(stmt.info->GetQualifiedName()));
 			auto &catalog = Catalog::GetCatalog(context, stmt.info->GetQualifiedName().Catalog());
 			properties.RegisterDBModify(catalog, context, DatabaseModificationType::ALTER_TABLE);

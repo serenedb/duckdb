@@ -122,6 +122,7 @@ struct AlterPermissionsInfo : public AlterInfo {
 	idx_t object_owner_id = 0;
 	string parameter;
 	idx_t drop_owned_role_id = 0;
+	idx_t language_id = 0;
 
 public:
 	CatalogType GetCatalogType() const override;
