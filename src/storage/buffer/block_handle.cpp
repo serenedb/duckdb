@@ -163,17 +163,6 @@ void BlockMemory::SetEvictionQueueIndex(const idx_t index) {
 	}
 }
 
-void BlockMemory::ResizeBuffer(BlockLock &l, idx_t block_size, idx_t block_header_size, int64_t memory_delta) {
-	// Resize and adjust the current memory.
-	VerifyMutex(l);
-	D_ASSERT(buffer);
-	buffer->Resize(block_size, block_header_size);
-	loaded_data = buffer->GetDataMutable();
-	const auto new_memory_usage = NumericCast<idx_t>(NumericCast<int64_t>(memory_usage.load()) + memory_delta);
-	memory_usage = new_memory_usage;
-	D_ASSERT(memory_usage == buffer->AllocSize());
-}
-
 CanUnloadResult BlockMemory::CanUnload() const {
 	if (GetState() == BlockState::BLOCK_UNLOADED) {
 		// The block has already been unloaded.
