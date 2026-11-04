@@ -114,7 +114,7 @@ public:
 #ifdef DUCKDB_DEBUG_DESTROY_BLOCKS
 		return false;
 #else
-		if (track_lru || DestroyedUponUnpin()) {
+		if (DestroyedUponUnpin()) {
 			return false;
 		}
 		SetReferenced();
@@ -217,14 +217,6 @@ public:
 	bool IsUnpinnedAndLoaded() const {
 		return (readers.load(std::memory_order_relaxed) & (READERS | LOADED)) == LOADED;
 	}
-	//! Get the LRU timestamp.
-	int64_t GetLRUTimestamp() const {
-		return lru_timestamp_msec;
-	}
-	//! Set the LRU timestamp.
-	void SetLRUTimestamp(int64_t timestamp_msec) {
-		lru_timestamp_msec = timestamp_msec;
-	}
 	//! Set the buffer destruction policy.
 	void SetDestroyBufferUpon(DestroyBufferUpon destroy_buffer_upon_p) {
 		D_ASSERT(destroy_buffer_upon_p != DestroyBufferUpon::KEEP_COPY);
@@ -323,8 +315,6 @@ private:
 	const FileBufferType buffer_type;
 	//! When to destroy the data buffer.
 	atomic<DestroyBufferUpon> destroy_buffer_upon;
-	//! Whether an unpin records the time, as the buffer pool tracks eviction timestamps.
-	const bool track_lru;
 	//! The buffer and its data while the block is loaded, set before the reader word says so.
 	FileBuffer *loaded_buffer = nullptr;
 	data_ptr_t loaded_data = nullptr;
@@ -343,8 +333,6 @@ private:
 	//! Set when the block handle went away while readers remained; the last reader releases it.
 	shared_ptr<BlockMemory> orphan_owner;
 	atomic<bool> has_temporary_file {false};
-	//! The LRU timestamp for age-based eviction.
-	atomic<int64_t> lru_timestamp_msec;
 	//! The memory usage of the block when loaded.
 	//! Determines the memory to reserve when pinning/loading an unloaded block.
 	atomic<idx_t> memory_usage;

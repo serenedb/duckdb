@@ -35,10 +35,9 @@ BlockMemory::BlockMemory(BufferManager &buffer_manager, block_id_t block_id_p, M
                          idx_t block_alloc_size_p, FileBufferType buffer_type_p,
                          DestroyBufferUpon destroy_buffer_upon_p)
     : buffer_manager(buffer_manager), block_id(block_id_p), state(BlockState::BLOCK_UNLOADED), readers(0),
-      buffer_type(buffer_type_p), destroy_buffer_upon(destroy_buffer_upon_p),
-      track_lru(buffer_manager.GetBufferPool().TracksEvictionTimestamps()), tag(tag_p), buffer(nullptr),
-      lru_timestamp_msec(), memory_usage(block_alloc_size_p), memory_charge(tag, buffer_manager.GetBufferPool()),
-      unswizzled(nullptr), eviction_queue_idx(DConstants::INVALID_INDEX) {
+      buffer_type(buffer_type_p), destroy_buffer_upon(destroy_buffer_upon_p), tag(tag_p), buffer(nullptr),
+      memory_usage(block_alloc_size_p), memory_charge(tag, buffer_manager.GetBufferPool()), unswizzled(nullptr),
+      eviction_queue_idx(DConstants::INVALID_INDEX) {
 }
 
 void BlockMemory::WaitForLoad() {
@@ -74,9 +73,8 @@ BlockMemory::BlockMemory(BufferManager &buffer_manager, block_id_t block_id_p, M
                          unique_ptr<FileBuffer> buffer_p, DestroyBufferUpon destroy_buffer_upon_p, idx_t size_p,
                          BufferPoolReservation &&reservation)
     : buffer_manager(buffer_manager), block_id(block_id_p), state(BlockState::BLOCK_LOADED), readers(LOADED),
-      buffer_type(buffer_p->GetBufferType()), destroy_buffer_upon(destroy_buffer_upon_p),
-      track_lru(buffer_manager.GetBufferPool().TracksEvictionTimestamps()), tag(tag_p), buffer(std::move(buffer_p)),
-      lru_timestamp_msec(), memory_usage(size_p), memory_charge(tag, buffer_manager.GetBufferPool()),
+      buffer_type(buffer_p->GetBufferType()), destroy_buffer_upon(destroy_buffer_upon_p), tag(tag_p),
+      buffer(std::move(buffer_p)), memory_usage(size_p), memory_charge(tag, buffer_manager.GetBufferPool()),
       unswizzled(nullptr), eviction_queue_idx(DConstants::INVALID_INDEX) {
 	memory_charge = std::move(reservation); // Moved to constructor body due to tidy check.
 	loaded_buffer = buffer.get();
