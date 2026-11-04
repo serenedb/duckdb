@@ -770,6 +770,7 @@ void DependencyManager::DropOwned(CatalogTransaction transaction, const DropOwne
 			CheckDropDependencies(transaction, entry, false, dropped_set);
 		}
 	}
+	dropped = DropOrder(transaction, dropped);
 	vector<DropInfo> drops(dropped.size());
 	for (idx_t i = 0; i < dropped.size(); i++) {
 		drops[i].type = dropped[i].get().type;
