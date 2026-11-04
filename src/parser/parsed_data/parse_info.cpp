@@ -44,6 +44,8 @@ string ParseInfo::TypeToString(CatalogType type) {
 		return "SERVER";
 	case CatalogType::TABLESPACE_ENTRY:
 		return "TABLESPACE";
+	case CatalogType::SUBSCRIPTION_ENTRY:
+		return "SUBSCRIPTION";
 	default:
 		throw InternalException("ParseInfo::TypeToString for CatalogType with type: %s not implemented",
 		                        EnumUtil::ToString(type));
