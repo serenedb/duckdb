@@ -24,6 +24,7 @@ Statement <-
 	AlterOwnerStatement /
 	AlterDefaultPrivilegesStatement /
 	AlterRoleStatement /
+	AlterGroupStatement /
 	GrantStatement /
 	RevokeStatement /
 	CreateStatement /

@@ -770,6 +770,21 @@ static unique_ptr<SQLStatement> BuildGrantRole(PEGTransformer &transformer, List
 	return SingleOrMulti(std::move(statements));
 }
 
+unique_ptr<SQLStatement> PEGTransformerFactory::TransformAlterGroupStatement(PEGTransformer &transformer,
+                                                                             ParseResult &parse_result) {
+	auto &list_pr = parse_result.Cast<ListParseResult>();
+	const auto group = TransformColIdName(transformer, list_pr.GetChild(2));
+	const bool drop = StringUtil::Upper(FirstKeyword(list_pr.GetChild(3)).keyword) == "DROP";
+	auto statements = make_uniq<MultiStatement>();
+	for (auto &member : ExtractParseResultsFromList(list_pr.GetChild(5))) {
+		auto alter = make_uniq<AlterRoleInfo>(Identifier(TransformColIdName(transformer, member.get())));
+		alter->grant_role = group;
+		alter->revoke = drop;
+		AddToMultiStatement(statements, std::move(alter));
+	}
+	return SingleOrMulti(std::move(statements));
+}
+
 // Shared body for GRANT/REVOKE. `revoke` selects the direction; `inner` is the
 // choice between the table-privilege, role-membership, and (REVOKE-only)
 // OPTION-FOR downgrade forms.

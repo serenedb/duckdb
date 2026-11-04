@@ -6,12 +6,14 @@ CreateRoleStatement <- 'CREATE' RoleOrUser ColId 'WITH'? CreateRoleClause*
 CreateRoleClause <- RoleOption / RoleMembershipClause
 RoleMembershipClause <- InRoleClause / RoleMembersClause / AdminClause
 InRoleClause      <- 'IN' ('ROLE' / 'GROUP') List(ColId)
-RoleMembersClause <- 'ROLE' List(ColId)
+RoleMembersClause <- ('ROLE' / 'USER') List(ColId)
 AdminClause       <- 'ADMIN' List(ColId)
 DropRoleStatement   <- 'DROP' RoleOrUser IfExists? List(ColId)
 # RENAME TO is tried before the per-role GUC and attribute-option lists so
 # 'RENAME'/'SET'/'RESET' are not eaten by the wrong alternative.
 AlterRoleStatement  <- 'ALTER' RoleOrUser AlterRoleTarget (AlterRoleRename / AlterRoleInDatabase / AlterRoleConfig / AlterRoleOptionList)
+AlterGroupStatement <- 'ALTER' 'GROUP' ColId AlterGroupAction 'USER' List(ColId)
+AlterGroupAction    <- 'ADD' / 'DROP'
 AlterRoleTarget     <- AlterRoleAll / OwnerRoleSpec
 AlterRoleAll        <- 'ALL'
 AlterRoleInDatabase <- 'IN' 'DATABASE' ColId AlterRoleConfig
@@ -110,7 +112,7 @@ InheritMemberOption <- 'INHERIT' OptionBool?
 SetMemberOption     <- 'SET'     OptionBool?
 OptionBool <- 'TRUE' / 'FALSE'
 
-RoleOrUser <- 'ROLE' / 'USER'
+RoleOrUser <- 'ROLE' / 'USER' / 'GROUP'
 # Object class for GRANT/REVOKE ... ON <type> name. Absent defaults to TABLE.
 GrantObjType <- ForeignServerObjType / ForeignDataWrapperObjType / 'TABLE' / 'SEQUENCE' / 'FUNCTION' / 'DATABASE' / 'SCHEMA' / 'TYPE' / 'DOMAIN' / 'PARAMETER' / 'LANGUAGE'
 ForeignServerObjType <- 'FOREIGN' 'SERVER'
