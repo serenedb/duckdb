@@ -30,9 +30,12 @@ struct AlterScalarFunctionInfo : public AlterInfo {
 	~AlterScalarFunctionInfo() override;
 
 	AlterScalarFunctionType alter_scalar_function_type;
+	bool include_functions = true;
+	bool include_procedures = true;
 
 public:
 	CatalogType GetCatalogType() const override;
+	string RoutineKeyword() const;
 	void Serialize(Serializer &serializer) const override;
 	static unique_ptr<AlterInfo> Deserialize(Deserializer &deserializer);
 
@@ -52,6 +55,8 @@ struct RenameScalarFunctionInfo : public RenameEntryInfo<RenameScalarFunctionInf
 	using RenameEntryInfo::RenameEntryInfo;
 
 public:
+	unique_ptr<AlterInfo> Copy() const override;
+	string ToString() const override;
 	void Serialize(Serializer &serializer) const override;
 	static unique_ptr<AlterScalarFunctionInfo> Deserialize(Deserializer &deserializer);
 
