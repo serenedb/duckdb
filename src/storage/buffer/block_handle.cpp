@@ -108,13 +108,24 @@ void BlockMemory::SetEvictionQueueIndex(const idx_t index) {
 	// It can only be set for managed buffers (for now).
 	D_ASSERT(GetBufferType() == FileBufferType::MANAGED_BUFFER);
 	auto l = GetLock();
-	auto &pool = buffer_manager.GetBufferPool();
-	const bool queued = queue != nullptr;
-	pool.RemoveBlock(*this);
 	eviction_queue_idx = index;
-	if (queued) {
-		pool.AddBlock(*this);
+	Requeue(l);
+}
+
+void BlockMemory::SetDestroyBufferUpon(BlockLock &l, DestroyBufferUpon destroy_buffer_upon_p) {
+	VerifyMutex(l);
+	destroy_buffer_upon = destroy_buffer_upon_p;
+	Requeue(l);
+}
+
+void BlockMemory::Requeue(BlockLock &l) {
+	VerifyMutex(l);
+	if (!queue) {
+		return;
 	}
+	auto &pool = buffer_manager.GetBufferPool();
+	pool.RemoveBlock(*this);
+	pool.AddBlock(*this);
 }
 
 void BlockMemory::ResizeBuffer(BlockLock &l, idx_t block_size, idx_t block_header_size, int64_t memory_delta) {

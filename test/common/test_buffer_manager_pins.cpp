@@ -116,7 +116,10 @@ TEST_CASE("A block that keeps a copy is written once while the copies have room,
 		const auto written = writes();
 		auto block = PinTestBlock(buffers, 3);
 		auto &memory = block->GetMemory();
-		memory.SetDestroyBufferUpon(DestroyBufferUpon::KEEP_COPY);
+		{
+			auto lock = memory.GetLock();
+			memory.SetDestroyBufferUpon(lock, DestroyBufferUpon::KEEP_COPY);
+		}
 		for (idx_t round = 0; round < 3; round++) {
 			unload(memory);
 			REQUIRE(memory.HasTemporaryFile() == room);
@@ -144,9 +147,9 @@ TEST_CASE("A destroyed buffer is pinned anew empty, and a discarded block loses 
 	auto &buffers = BufferManager::GetBufferManager(*db.instance);
 	auto block = PinTestBlock(buffers, 5);
 	auto &memory = block->GetMemory();
-	memory.SetDestroyBufferUpon(DestroyBufferUpon::KEEP_COPY);
 	{
 		auto lock = memory.GetLock();
+		memory.SetDestroyBufferUpon(lock, DestroyBufferUpon::KEEP_COPY);
 		memory.Unload(lock);
 	}
 	REQUIRE(memory.HasTemporaryFile());

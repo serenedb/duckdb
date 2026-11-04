@@ -561,7 +561,9 @@ BufferHandle BlockCache::AllocateBlock(const BlockCacheFile &file, Slot &slot) {
 	}
 	auto buffer = buffer_manager.Allocate(MemoryTag::EXTERNAL_FILE_CACHE, &block_manager, !file.IsUnbacked());
 	if (!file.IsUnbacked() && !file.Info().on_disk) {
-		buffer.GetBlockHandle()->GetMemory().SetDestroyBufferUpon(DestroyBufferUpon::KEEP_COPY);
+		auto &allocated = buffer.GetBlockHandle()->GetMemory();
+		auto lock = allocated.GetLock();
+		allocated.SetDestroyBufferUpon(lock, DestroyBufferUpon::KEEP_COPY);
 	}
 	return buffer;
 }

@@ -684,6 +684,30 @@ void EnableExternalFileCacheSetting::OnSet(SettingCallbackInfo &info, Value &inp
 }
 
 //===----------------------------------------------------------------------===//
+// External File Cache Min Memory
+//===----------------------------------------------------------------------===//
+void ExternalFileCacheMinMemorySetting::SetGlobal(DatabaseInstance *db, DBConfig &config, const Value &input) {
+	config.options.external_file_cache_min_memory = ParseSizeOrZero(input);
+	if (db) {
+		BufferManager::GetBufferManager(*db).GetBufferPool().SetExternalFileCacheMinMemory(
+		    config.options.external_file_cache_min_memory);
+	}
+}
+
+void ExternalFileCacheMinMemorySetting::ResetGlobal(DatabaseInstance *db, DBConfig &config) {
+	config.options.external_file_cache_min_memory = DConstants::INVALID_INDEX;
+	if (db) {
+		BufferManager::GetBufferManager(*db).GetBufferPool().SetExternalFileCacheMinMemory(
+		    config.options.external_file_cache_min_memory);
+	}
+}
+
+Value ExternalFileCacheMinMemorySetting::GetSetting(const ClientContext &context) {
+	return Value(StringUtil::BytesToHumanReadableString(
+	    BufferManager::GetBufferManager(context).GetBufferPool().GetExternalFileCacheMinMemory()));
+}
+
+//===----------------------------------------------------------------------===//
 // External File Cache Spill Size
 //===----------------------------------------------------------------------===//
 void ExternalFileCacheSpillSizeSetting::SetGlobal(DatabaseInstance *db, DBConfig &config, const Value &input) {
