@@ -395,6 +395,28 @@ TEST_CASE("Block cache prefetch merges runs across small gaps and caps each requ
 	REQUIRE(covered == RANGE * BLOCK);
 }
 
+TEST_CASE("Block cache prefetch of several ranges reads the ones within the merge gap of each other at once",
+          "[block_cache]") {
+	constexpr idx_t GAP_BLOCKS = BlockCache::MERGE_GAP / BLOCK;
+	DuckDB db(nullptr);
+	BlockCache cache(*db.instance);
+	CountingSourceFileSystem fs;
+	TestFile file("block_cache_prefetch_ranges.bin", 64 * BLOCK);
+	auto cached = file.Open(cache, fs);
+
+	BlockCacheRange ranges[] = {{40 * BLOCK, BLOCK}, {(1 + GAP_BLOCKS) * BLOCK, BLOCK}, {BLOCK + 5, 10}};
+	cache.Prefetch(cached, ranges, BlockCachePrefetch::NEED);
+	for (idx_t block = 1; block <= 1 + GAP_BLOCKS; block++) {
+		auto pin = cache.Pin(cached, block);
+		REQUIRE(HoldsExpectedBytes(pin, block));
+	}
+	auto pin = cache.Pin(cached, 40);
+	REQUIRE(HoldsExpectedBytes(pin, 40));
+	auto reads = fs.TakeReads();
+	std::sort(reads.begin(), reads.end());
+	REQUIRE(reads == vector<pair<idx_t, idx_t>> {{BLOCK, (1 + GAP_BLOCKS) * BLOCK}, {40 * BLOCK, BLOCK}});
+}
+
 TEST_CASE("Block cache drops a hinted prefetch past the bytes a file has in flight but never a needed one",
           "[block_cache]") {
 	constexpr idx_t in_flight = BlockCache::BlockCountOf(BlockCache::MAX_FILE_IN_FLIGHT);

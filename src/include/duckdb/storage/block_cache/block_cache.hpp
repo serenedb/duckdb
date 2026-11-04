@@ -246,6 +246,11 @@ struct BlockCacheReadAhead {
 //! Whether a prefetch is a guess at what a reader may read next or the blocks it will read
 enum class BlockCachePrefetch : uint8_t { HINT, NEED };
 
+struct BlockCacheRange {
+	idx_t offset = 0;
+	idx_t size = 0;
+};
+
 struct BlockCacheStatistics {
 	//! Memory of the blocks the buffer pool holds for the cache
 	idx_t used = 0;
@@ -330,6 +335,7 @@ public:
 	//! Starts fetching the missing blocks of [offset, offset + size) and returns; a HINT stops at the bytes a file and
 	//! the cache may have in flight
 	void Prefetch(const shared_ptr<BlockCacheFile> &file, idx_t offset, idx_t size, BlockCachePrefetch kind);
+	void Prefetch(const shared_ptr<BlockCacheFile> &file, std::span<BlockCacheRange> ranges, BlockCachePrefetch kind);
 
 	//! Drops every block of a backed file; current pins keep their bytes
 	void Clear();
