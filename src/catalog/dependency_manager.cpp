@@ -19,6 +19,7 @@
 #include "duckdb/catalog/catalog_entry/dependency/dependency_dependent_entry.hpp"
 #include "duckdb/catalog/catalog_entry/duck_schema_entry.hpp"
 #include "duckdb/common/queue.hpp"
+#include "duckdb/catalog/catalog_entry/role_entry.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/trigger_catalog_entry.hpp"
 #include "duckdb/parser/parsed_data/alter_table_info.hpp"
@@ -593,14 +594,14 @@ static QualifiedName OwnedEntryName(CatalogTransaction transaction, CatalogEntry
 struct OwnedEntryAlter {
 	reference<DuckCatalog> holder;
 	CatalogTransaction transaction;
-	unique_ptr<AlterPermissionsInfo> info;
+	unique_ptr<AlterInfo> info;
 };
 
 static AlterPermissionsInfo &AddOwnedEntryAlter(vector<OwnedEntryAlter> &alters, DuckCatalog &holder,
                                                 CatalogTransaction transaction, CatalogEntry &entry) {
 	auto type = entry.type == CatalogType::VIEW_ENTRY ? CatalogType::TABLE_ENTRY : entry.type;
 	alters.push_back({holder, transaction, make_uniq<AlterPermissionsInfo>(type, OwnedEntryName(transaction, entry))});
-	return *alters.back().info;
+	return alters.back().info->Cast<AlterPermissionsInfo>();
 }
 
 void DependencyManager::ReassignOwned(CatalogTransaction transaction, const ReassignOwnedInfo &info) {
@@ -718,6 +719,18 @@ void DependencyManager::DropOwned(CatalogTransaction transaction, const DropOwne
 	ForEachHolder(
 	    transaction, CatalogType::ROLE_ENTRY, [&](DuckCatalog &holder, CatalogTransaction holder_transaction) {
 		    const auto owner = DBConfig::GetConfig(holder.GetDatabase()).bootstrap_role;
+		    holder.GetCatalogSet(CatalogType::ROLE_ENTRY).Scan(holder_transaction, [&](CatalogEntry &member) {
+			    for (auto &edge : member.Cast<RoleEntry>().MemberOf()) {
+				    if (edge.grantor == owner || !IsAnyOf(info.role_ids, edge.grantor)) {
+					    continue;
+				    }
+				    auto alter = make_uniq<AlterRoleInfo>(member.name);
+				    alter->grant_role_id = edge.role;
+				    alter->grantor_id = edge.grantor;
+				    alter->revoke = true;
+				    alters.push_back({holder, holder_transaction, std::move(alter)});
+			    }
+		    });
 		    auto entry = holder.GetOidIndex().GetVisible(owner, holder_transaction.view);
 		    if (!entry) {
 			    return;
@@ -1376,7 +1389,7 @@ DependencyManager::CheckDropDependencies(CatalogTransaction transaction, Catalog
 	});
 	if (object.type == CatalogType::ROLE_ENTRY) {
 		ScanAllEntries(transaction, [&](CatalogEntry &entry) {
-			if (entry.oid != object.oid && ReferencesRole(entry, object.oid)) {
+			if (entry.oid != object.oid && (!dropped || !dropped->count(entry)) && ReferencesRole(entry, object.oid)) {
 				blocking_dependents.insert(entry);
 			}
 		});

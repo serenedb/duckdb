@@ -920,6 +920,11 @@ static bool AnyRoleReference(const CatalogEntry &entry, F &&named) {
 			return true;
 		}
 	}
+	if (entry.type == CatalogType::ROLE_ENTRY) {
+		auto &member_of = entry.Cast<RoleEntry>().MemberOf();
+		return std::any_of(member_of.begin(), member_of.end(),
+		                   [&](const Membership &edge) { return named(edge.grantor); });
+	}
 	if (entry.type == CatalogType::VIEW_ENTRY) {
 		auto &column_acls = entry.Cast<ViewCatalogEntry>().column_acls;
 		return std::any_of(column_acls.begin(), column_acls.end(),
