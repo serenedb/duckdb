@@ -638,6 +638,10 @@ unique_ptr<AlterInfo> PEGTransformerFactory::TransformAlterFunctionAttributesStm
 	auto &list_pr = parse_result.Cast<ListParseResult>();
 	auto result = make_uniq<AlterFunctionAttributesInfo>(
 	    AlterEntryData(transformer.Transform<QualifiedName>(list_pr.GetChild(1)), OnEntryNotFound::THROW_EXCEPTION));
+	const auto kind = StringUtil::Upper(
+	    list_pr.Child<ListParseResult>(0).Child<ChoiceParseResult>(0).GetResult().Cast<KeywordParseResult>().keyword);
+	result->include_functions = kind != "PROCEDURE";
+	result->include_procedures = kind != "FUNCTION";
 	auto &signature = list_pr.Child<OptionalParseResult>(2);
 	if (signature.HasResult()) {
 		result->has_parameter_types = true;
