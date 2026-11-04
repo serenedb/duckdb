@@ -14,6 +14,7 @@
 #include "duckdb/function/function_binder.hpp"
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/parser/expression_map.hpp"
+#include "duckdb/planner/expression/bound_aggregate_expression.hpp"
 #include "duckdb/planner/expression/bound_reference_expression.hpp"
 #include "duckdb/planner/operator/logical_aggregate.hpp"
 
@@ -270,6 +271,10 @@ PhysicalOperator &PhysicalPlanGenerator::CreatePlan(LogicalAggregate &op) {
 		// no groups: use the dedicated ungrouped aggregate path
 		auto &group_by = Make<PhysicalUngroupedAggregate>(op.types, std::move(op.expressions), op.estimated_cardinality,
 		                                                  op.distinct_validity);
+		if (plan.get().type == PhysicalOperatorType::TABLE_SCAN &&
+		    group_by.Cast<PhysicalUngroupedAggregate>().ReadsRowCountOnly()) {
+			plan.get().Cast<PhysicalTableScan>().row_count_only = true;
+		}
 		group_by.children.push_back(plan);
 		return group_by;
 	}

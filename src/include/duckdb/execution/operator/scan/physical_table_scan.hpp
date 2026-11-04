@@ -57,6 +57,7 @@ public:
 	shared_ptr<DynamicTableFilterSet> dynamic_filters;
 	//! Virtual columns
 	virtual_column_map_t virtual_columns;
+	bool row_count_only = false;
 
 public:
 	string GetName() const override;

@@ -101,6 +101,7 @@ private:
 		TableFunctionInitInput input(op.bind_data.get(), op.column_ids, op.projection_ids, GetTableFilters(),
 		                             op.extra_info.sample_options, &op);
 		input.partition_info = &partition_info;
+		input.row_count_only = op.row_count_only;
 		global_state = op.function.init_global(context, input);
 		max_threads = global_state ? global_state->MaxThreads() : 0;
 	}
@@ -138,6 +139,7 @@ private:
 		if (op.function.init_local) {
 			TableFunctionInitInput input(op.bind_data.get(), op.column_ids, op.projection_ids, gstate.GetTableFilters(),
 			                             op.extra_info.sample_options, &op);
+			input.row_count_only = op.row_count_only;
 			local_state = op.function.init_local(context, input, gstate.global_state.get());
 		}
 	}
@@ -496,7 +498,7 @@ bool PhysicalTableScan::Equals(const PhysicalOperator &other_p) const {
 	if (function != other.function) {
 		return false;
 	}
-	if (column_ids != other.column_ids) {
+	if (column_ids != other.column_ids || row_count_only != other.row_count_only) {
 		return false;
 	}
 	if (!FunctionData::Equals(bind_data.get(), other.bind_data.get())) {

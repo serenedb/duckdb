@@ -499,6 +499,10 @@ void DataChunk::VerifyInternal(DebugVerificationMode mode, optional_ptr<Database
 			// payload so the payload will be such an empty data chunk
 			return;
 		}
+		if (size() > STANDARD_VECTOR_SIZE) {
+			D_ASSERT(AllConstant());
+			return;
+		}
 
 		// verify that we can round-trip chunk serialization
 		Allocator allocator;

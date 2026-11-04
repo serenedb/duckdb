@@ -34,6 +34,8 @@ public:
 	unique_ptr<DistinctAggregateCollectionInfo> distinct_collection_info;
 
 public:
+	bool ReadsRowCountOnly() const;
+
 	// Source interface
 	unique_ptr<GlobalSourceState> GetGlobalSourceState(ClientContext &context) const override;
 	ProgressData GetProgress(ClientContext &context, GlobalSourceState &gstate) const override;
