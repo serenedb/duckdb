@@ -1,5 +1,6 @@
 #include "duckdb/storage/buffer/block_handle.hpp"
 
+#include "duckdb/common/fault_points.hpp"
 #include "duckdb/common/file_buffer.hpp"
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/storage/block.hpp"
@@ -164,6 +165,7 @@ unique_ptr<FileBuffer> BlockMemory::UnloadAndTakeBlock(BlockLock &l, QueryContex
 		absl::Cleanup restore = [&] {
 			SetState(BlockState::BLOCK_LOADED);
 		};
+		SDB_PARK_ONCE_ON_FAILURE("block_unload_before_temporary_write");
 		if (MustWriteToTemporaryFile()) {
 			buffer_manager.WriteTemporaryBuffer(context, GetMemoryTag(), BlockId(), *GetBuffer());
 			has_temporary_file = true;
@@ -274,6 +276,7 @@ BufferHandle BlockHandle::Load(QueryContext context, unique_ptr<FileBuffer> reus
 		auto &buffer = memory.GetBuffer();
 		buffer = buffer_manager.ReadTemporaryBuffer(context, memory.GetMemoryTag(), *this, std::move(reusable_buffer));
 		memory.SetHasTemporaryFile(memory.KeepsCopy());
+		SDB_PARK_ONCE_ON_FAILURE("block_load_before_loaded");
 	}
 	memory.SetState(BlockState::BLOCK_LOADED);
 	memory.IncrementReaders();
