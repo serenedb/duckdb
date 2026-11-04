@@ -19,10 +19,10 @@ AlterRoleRename     <- 'RENAME' 'TO' ColId
 # ALTER ROLE name SET guc (= | TO) value ... | SET guc FROM CURRENT | RESET guc
 # | RESET ALL  -> per-role GUC settings (pg_db_role_setting / rolconfig).
 AlterRoleConfig     <- AlterRoleSet / AlterRoleReset
-AlterRoleSet        <- 'SET' SettingName (AlterRoleSetTo / AlterRoleSetFromCurrent)
+AlterRoleSet        <- 'SET' SettingPath (AlterRoleSetTo / AlterRoleSetFromCurrent)
 AlterRoleSetTo      <- ('=' / 'TO') List(Expression)
 AlterRoleSetFromCurrent <- 'FROM' 'CURRENT'
-AlterRoleReset      <- 'RESET' (AlterRoleResetAll / SettingName)
+AlterRoleReset      <- 'RESET' (AlterRoleResetAll / SettingPath)
 AlterRoleResetAll   <- 'ALL'
 AlterRoleOptionList <- 'WITH'? AlterRoleOption+
 # PasswordNullOption before PasswordOption so 'PASSWORD NULL' is matched first.

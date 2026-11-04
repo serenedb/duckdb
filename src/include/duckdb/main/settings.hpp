@@ -97,6 +97,9 @@ struct Settings {
 	static std::string_view ConfigKey(std::string_view entry) {
 		return entry.substr(0, entry.find('='));
 	}
+	DUCKDB_API static bool IsValidCustomName(std::string_view name);
+	DUCKDB_API static void CheckCustomName(const Identifier &name);
+	DUCKDB_API static bool IsCustomName(const Identifier &name);
 	DUCKDB_API static optional<SettingAccess> GetAccess(ClientContext &context, const Identifier &name);
 	DUCKDB_API static void CheckChange(ClientContext &context, const Identifier &name, const SettingAccess &access,
 	                                   SetScope scope);

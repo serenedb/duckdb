@@ -37,6 +37,18 @@ void PhysicalSet::SetExtensionVariable(ClientContext &context, ExtensionOption &
 	SetGenericVariable(context, extension_option.setting_index.GetIndex(), effective_scope, std::move(target_value));
 }
 
+void PhysicalSet::SetCustomVariable(ClientContext &context, const Identifier &name, SetScope scope,
+                                    const Value &value) {
+	if (scope == SetScope::GLOBAL) {
+		throw CatalogException("option %s cannot be set globally", name);
+	}
+	Value text(value.IsNull() ? string() : value.ToString());
+	if (context.setting_change_handler) {
+		context.setting_change_handler(context, name.GetIdentifierName(), scope, &text, false);
+	}
+	ClientConfig::GetConfig(context).custom_settings[name.GetIdentifierName()] = std::move(text);
+}
+
 void PhysicalSet::SetVariable(ClientContext &context, const Identifier &name, SetScope scope, const Value &value) {
 	auto &config = DBConfig::GetConfig(context);
 	config.CheckLock(name);
@@ -49,6 +61,10 @@ void PhysicalSet::SetVariable(ClientContext &context, const Identifier &name, Se
 	if (!option) {
 		ExtensionOption extension_option;
 		if (!config.TryGetExtensionOption(name, extension_option)) {
+			if (Settings::IsCustomName(name)) {
+				SetCustomVariable(context, name, scope, value);
+				return;
+			}
 			Catalog::AutoloadExtensionByConfigName(context, name);
 			if (!config.TryGetExtensionOption(name, extension_option)) {
 				throw InvalidInputException("Extension parameter %s was not found after autoloading", name);

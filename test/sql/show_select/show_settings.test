@@ -101,11 +101,10 @@ SHOW this_does_not_exist
 ----
 <REGEX>:.*unrecognized configuration parameter "this_does_not_exist".*
 
-# A qualified name cannot be a setting
 statement error
 SHOW main.my_table
 ----
-<REGEX>:.*Setting with name "main.my_table" does not exist.*
+<REGEX>:.*unrecognized configuration parameter "main.my_table".*
 
 # ==============================================================================
 # show_behavior = 'table': "SHOW name" only ever describes a table

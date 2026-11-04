@@ -1561,6 +1561,13 @@ SettingLookupResult ClientContext::TryGetCurrentSetting(const Identifier &key, V
 		result = option->get_setting(*this);
 		return SettingLookupResult(SettingScope::LOCAL);
 	}
+	if (!option) {
+		auto entry = config.custom_settings.find(key.GetIdentifierName());
+		if (entry != config.custom_settings.end()) {
+			result = entry->second;
+			return SettingLookupResult(SettingScope::LOCAL);
+		}
+	}
 	// setting is not set - get the default value
 	return DBConfig::TryGetDefaultValue(option, result);
 }

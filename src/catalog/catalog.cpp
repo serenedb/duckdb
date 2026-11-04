@@ -1072,6 +1072,9 @@ CatalogException Catalog::UnrecognizedConfigurationError(ClientContext &context,
 		error_message = ExtensionHelper::AddExtensionInstallHintToErrorMsg(context, error_message, extension_name);
 		return CatalogException(error_message);
 	}
+	if (Settings::IsValidCustomName(name.GetIdentifierName())) {
+		return CatalogException::MissingEntry("configuration parameter", name, vector<Identifier>());
+	}
 	// the setting is not in an extension
 	// get a list of all options
 	const auto visible = [&](const Identifier &setting) {

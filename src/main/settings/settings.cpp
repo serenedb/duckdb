@@ -60,6 +60,40 @@ void Settings::ResolveCurrentValues(ClientContext &context, vector<string> &conf
 	}
 }
 
+bool Settings::IsValidCustomName(std::string_view name) {
+	bool separated = false;
+	bool part_start = true;
+	for (const auto c : name) {
+		if (c == '.') {
+			if (part_start) {
+				return false;
+			}
+			separated = true;
+			part_start = true;
+		} else if (StringUtil::CharacterIsAlpha(c) || c == '_' || static_cast<unsigned char>(c) >= 0x80) {
+			part_start = false;
+		} else if (part_start || (!StringUtil::CharacterIsDigit(c) && c != '$')) {
+			return false;
+		}
+	}
+	return separated && !part_start;
+}
+
+void Settings::CheckCustomName(const Identifier &name) {
+	const auto &text = name.GetIdentifierName();
+	if (text.find('.') != string::npos && !IsValidCustomName(text)) {
+		throw Exception(
+		    {{"error_subtype", "INVALID_NAME"},
+		     {"detail", "Custom parameter names must be two or more simple identifiers separated by dots."}},
+		    ExceptionType::INVALID_INPUT, StringUtil::Format("invalid configuration parameter name \"%s\"", text));
+	}
+}
+
+bool Settings::IsCustomName(const Identifier &name) {
+	CheckCustomName(name);
+	return name.GetIdentifierName().find('.') != string::npos;
+}
+
 optional<SettingAccess> Settings::GetAccess(ClientContext &context, const Identifier &name) {
 	if (auto option = DBConfig::GetOptionByName(name)) {
 		return option->access;
@@ -67,6 +101,9 @@ optional<SettingAccess> Settings::GetAccess(ClientContext &context, const Identi
 	ExtensionOption extension_option;
 	if (DBConfig::GetConfig(context).TryGetExtensionOption(name, extension_option)) {
 		return extension_option.access;
+	}
+	if (IsValidCustomName(name.GetIdentifierName())) {
+		return SettingAccess();
 	}
 	return optional<SettingAccess>();
 }

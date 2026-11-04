@@ -246,12 +246,12 @@ void PEGTransformerFactory::CollectConfigClause(PEGTransformer &transformer, Par
 		if (target.Name() == "AlterRoleResetAll") {
 			reset_all_config = true;
 		} else {
-			reset_config.push_back(target.Cast<IdentifierParseResult>().identifier.GetIdentifierName());
+			reset_config.push_back(transformer.Transform<Identifier>(target).GetIdentifierName());
 		}
 		return;
 	}
 	SettingInfo setting;
-	setting.name = clause.Child<IdentifierParseResult>(1).identifier;
+	setting.name = transformer.Transform<Identifier>(clause.GetChild(1));
 	const auto name = setting.name.GetIdentifierName();
 	auto &value = clause.Child<ListParseResult>(2).Child<ChoiceParseResult>(0).GetResult();
 	if (value.Name() == "AlterRoleSetFromCurrent") {
