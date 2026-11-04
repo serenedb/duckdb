@@ -620,7 +620,6 @@ void DatabaseInstance::Configure(DBConfig &new_config, const char *database_path
 		config.buffer_pool = std::move(new_config.buffer_pool);
 	} else {
 		config.buffer_pool = make_shared_ptr<BufferPool>(*config.block_allocator, config.options.maximum_memory,
-		                                                 config.options.buffer_manager_track_eviction_timestamps,
 		                                                 config.options.allocator_bulk_deallocation_flush_threshold,
 		                                                 config.options.external_file_cache_min_memory);
 	}
