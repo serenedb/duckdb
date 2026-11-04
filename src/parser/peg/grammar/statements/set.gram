@@ -33,7 +33,7 @@ ZoneIntervalWithInterval <- 'INTERVAL' StringLiteral ZoneIntervalField?
 ZoneIntervalField <- IntervalToIntervalAsType / Interval
 ZoneIntervalWithPrecision <- 'INTERVAL' Parens(NumberLiteral) StringLiteral
 
-SetSetting <- SettingScope? SettingName
+SetSetting <- SettingScope? SettingPath
 SetVariable <- VariableScope Identifier
 VariableScope <- 'VARIABLE'
 
