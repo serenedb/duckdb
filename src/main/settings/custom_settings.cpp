@@ -97,6 +97,11 @@ static idx_t GetAvailableSystemMemory(DBConfig &config) {
 	return DBConfig::GetSystemAvailableMemory(*local_fs);
 }
 
+static idx_t ParseSizeOrZero(const Value &input) {
+	const auto size = input.ToString();
+	return size == "0" ? 0 : DBConfig::ParseMemoryLimit(size);
+}
+
 } // namespace
 
 //===----------------------------------------------------------------------===//
@@ -682,7 +687,7 @@ void EnableExternalFileCacheSetting::OnSet(SettingCallbackInfo &info, Value &inp
 // External File Cache Spill Size
 //===----------------------------------------------------------------------===//
 void ExternalFileCacheSpillSizeSetting::SetGlobal(DatabaseInstance *db, DBConfig &config, const Value &input) {
-	config.options.external_file_cache_spill_size = DBConfig::ParseMemoryLimit(input.ToString());
+	config.options.external_file_cache_spill_size = ParseSizeOrZero(input);
 }
 
 void ExternalFileCacheSpillSizeSetting::ResetGlobal(DatabaseInstance *db, DBConfig &config) {
