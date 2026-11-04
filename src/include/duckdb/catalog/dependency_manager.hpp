@@ -162,8 +162,10 @@ private:
 	void ReorderEntries(catalog_entry_vector_t &entries, CatalogTransaction transaction, bool allow_internal,
 	                    const created_by_owner_t &created_by_owner);
 	void AddObject(CatalogTransaction transaction, CatalogEntry &object, const LogicalDependencyList &dependencies);
-	void VerifyExistence(CatalogTransaction transaction, DependencyEntry &object);
+	void VerifyExistence(CatalogTransaction transaction, VisibilityBound visibility_bound, DependencyEntry &object);
 	void VerifyCommitDrop(CatalogTransaction transaction, VisibilityBound visibility_bound, CatalogEntry &object);
+	void VerifyCommitAlter(transaction_t commit_id, VisibilityBound visibility_bound, CatalogEntry &previous,
+	                       CatalogEntry &altered);
 	void DropSubDependencies(CatalogTransaction transaction, CatalogEntry &table,
 	                         const subdependency_set_t &subdependencies);
 	void OrderDrop(CatalogTransaction transaction, CatalogEntry &entry,

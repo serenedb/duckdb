@@ -608,7 +608,8 @@ bool CatalogSet::DropEntry(ClientContext &context, const Identifier &name, bool 
 }
 
 //! Verify that the object referenced by the dependency still exists when we commit the dependency
-void CatalogSet::VerifyExistenceOfDependency(transaction_t commit_id, CatalogEntry &entry) {
+void CatalogSet::VerifyExistenceOfDependency(transaction_t commit_id, VisibilityBound visibility_bound,
+                                             CatalogEntry &entry) {
 	auto &duck_catalog = GetCatalog();
 
 	// Resolve the dependency target against this transaction's own entries (already stamped with commit_id
@@ -623,7 +624,7 @@ void CatalogSet::VerifyExistenceOfDependency(transaction_t commit_id, CatalogEnt
 
 	D_ASSERT(entry.type == CatalogType::DEPENDENCY_ENTRY);
 	auto &dep = entry.Cast<DependencyEntry>();
-	duck_catalog.GetDependencyManager()->VerifyExistence(commit_transaction, dep);
+	duck_catalog.GetDependencyManager()->VerifyExistence(commit_transaction, visibility_bound, dep);
 }
 
 //! Verify that no dependencies creations were committed since our transaction started, that reference the entry we're
@@ -639,6 +640,11 @@ void CatalogSet::CommitDrop(transaction_t commit_id, VisibilityBound visibility_
 	                                      VisibilityBound::Before(commit_id));
 
 	duck_catalog.GetDependencyManager()->VerifyCommitDrop(commit_transaction, visibility_bound, entry);
+}
+
+void CatalogSet::CommitAlter(transaction_t commit_id, VisibilityBound visibility_bound, CatalogEntry &previous,
+                             CatalogEntry &altered) {
+	GetCatalog().GetDependencyManager()->VerifyCommitAlter(commit_id, visibility_bound, previous, altered);
 }
 
 DuckCatalog &CatalogSet::GetCatalog() {

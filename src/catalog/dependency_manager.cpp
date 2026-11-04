@@ -4,6 +4,7 @@
 #include "duckdb/catalog/duck_catalog.hpp"
 #include "duckdb/catalog/catalog_entry.hpp"
 #include "duckdb/common/enums/database_modification_type.hpp"
+#include "duckdb/common/exception/transaction_exception.hpp"
 #include "duckdb/main/attached_database.hpp"
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/main/database.hpp"
@@ -920,7 +921,41 @@ void DependencyManager::RenameSchema(CatalogTransaction transaction, CatalogEntr
 	}
 }
 
-void DependencyManager::VerifyExistence(CatalogTransaction transaction, DependencyEntry &object) {
+static bool SameColumns(const TableCatalogEntry &left, const TableCatalogEntry &right) {
+	auto &left_columns = left.GetColumns();
+	auto &right_columns = right.GetColumns();
+	if (left_columns.LogicalColumnCount() != right_columns.LogicalColumnCount()) {
+		return false;
+	}
+	for (idx_t i = 0; i < left_columns.LogicalColumnCount(); i++) {
+		auto &l = left_columns.GetColumn(LogicalIndex(i));
+		auto &r = right_columns.GetColumn(LogicalIndex(i));
+		if (l.Name() != r.Name() || l.Type() != r.Type() || l.CatalogOid() != r.CatalogOid()) {
+			return false;
+		}
+	}
+	return true;
+}
+
+void DependencyManager::VerifyCommitAlter(transaction_t commit_id, VisibilityBound visibility_bound,
+                                          CatalogEntry &previous, CatalogEntry &altered) {
+	if (SameColumns(previous.Cast<TableCatalogEntry>(), altered.Cast<TableCatalogEntry>())) {
+		return;
+	}
+	CatalogTransaction transaction(catalog.GetDatabase(), MAX_TRANSACTION_ID, VisibilityBound::Before(commit_id));
+	auto info = GetLookupProperties(transaction, altered);
+	ScanDependents(transaction, info, [&](DependencyEntry &dep) {
+		auto &dependent = dep.Dependent().entry;
+		if (dependent.type == CatalogType::INDEX_ENTRY && dep.timestamp.load() >= visibility_bound) {
+			throw TransactionException("Catalog write-write conflict on alter of %s: index %s was created by a "
+			                           "concurrent transaction",
+			                           altered.name, dependent.name);
+		}
+	});
+}
+
+void DependencyManager::VerifyExistence(CatalogTransaction transaction, VisibilityBound visibility_bound,
+                                        DependencyEntry &object) {
 	auto &subject = object.Subject();
 
 	CatalogEntryInfo info;
@@ -960,6 +995,18 @@ void DependencyManager::VerifyExistence(CatalogTransaction transaction, Dependen
 		throw DependencyException(
 		    "Could not commit creation of dependency, subject %s was dropped and re-created by another transaction",
 		    object.EntryInfo().name);
+	}
+	if (type == CatalogType::TABLE_ENTRY && object.Dependent().entry.type == CatalogType::INDEX_ENTRY && schema &&
+	    lookup_result.result && lookup_result.result->type == CatalogType::TABLE_ENTRY) {
+		CatalogTransaction bind_transaction(catalog.GetDatabase(), transaction.GetTransactionId(), visibility_bound);
+		EntryLookupInfo lookup_info(type, QualifiedName(name));
+		auto bound = schema->LookupEntryDetailed(bind_transaction, lookup_info).result;
+		if (bound && bound->type == CatalogType::TABLE_ENTRY &&
+		    !SameColumns(bound->Cast<TableCatalogEntry>(), lookup_result.result->Cast<TableCatalogEntry>())) {
+			throw TransactionException("Catalog write-write conflict on create with %s: table %s was altered by a "
+			                           "concurrent transaction",
+			                           object.Dependent().entry.name, name);
+		}
 	}
 }
 
@@ -1011,7 +1058,7 @@ void DependencyManager::VerifyForeignSubjects(const vector<reference<DependencyE
 		auto &subjects = db->GetCatalog().Cast<DuckCatalog>();
 		subjects.GetDependencyManager()->VerifyExistence(
 		    CatalogTransaction(subjects.GetDatabase(), MAX_TRANSACTION_ID, VisibilityBound::AllCommitted()),
-		    dependency);
+		    VisibilityBound::AllCommitted(), dependency);
 	}
 }
 
