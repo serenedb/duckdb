@@ -381,7 +381,7 @@ void AlterPermissionsInfo::ApplyTo(Permissions &permissions, CatalogType entry_t
 		auto &relations = permissions.relations;
 		auto row = std::find_if(relations.begin(), relations.end(),
 		                        [&](const RelationAcl &entry) { return entry.oid == info.relation_id; });
-		auto row_acl = row == relations.end() ? info.relation_acl : row->acl;
+		auto row_acl = row == relations.end() ? info.builtin_acl : row->acl;
 		ColumnList column_list;
 		if (row != relations.end()) {
 			for (auto &column : row->columns) {
@@ -402,7 +402,7 @@ void AlterPermissionsInfo::ApplyTo(Permissions &permissions, CatalogType entry_t
 				columns.push_back(ColumnAcl {column.Name(), column.Acl()});
 			}
 		}
-		if (row_acl == info.relation_acl && columns.empty()) {
+		if (!info.builtin_acl.empty() && row_acl == info.builtin_acl && columns.empty()) {
 			if (row != relations.end()) {
 				relations.erase(row);
 			}
@@ -411,6 +411,25 @@ void AlterPermissionsInfo::ApplyTo(Permissions &permissions, CatalogType entry_t
 		} else {
 			row->acl = std::move(row_acl);
 			row->columns = std::move(columns);
+		}
+		return;
+	}
+
+	if (info.schema_id) {
+		auto &schemas = permissions.schemas;
+		auto row = std::find_if(schemas.begin(), schemas.end(),
+		                        [&](const ObjectAcl &entry) { return entry.oid == info.schema_id; });
+		auto row_acl = row == schemas.end() ? info.builtin_acl : row->acl;
+		ApplyGrant(info, info.object_owner_id, row_acl, CatalogType::SCHEMA_ENTRY, nullptr);
+		if (!info.builtin_acl.empty() &&
+		    std::is_permutation(row_acl.begin(), row_acl.end(), info.builtin_acl.begin(), info.builtin_acl.end())) {
+			if (row != schemas.end()) {
+				schemas.erase(row);
+			}
+		} else if (row == schemas.end()) {
+			schemas.push_back(ObjectAcl {info.schema_id, std::move(row_acl)});
+		} else {
+			row->acl = std::move(row_acl);
 		}
 		return;
 	}
@@ -712,6 +731,10 @@ shared_ptr<const SecuritySnapshot> SecuritySnapshot::Build(DuckCatalog &cluster,
 			relations[entry.name.GetIdentifierName()][row.oid] =
 			    Relation {Permissions {config.bootstrap_role, row.acl}, row.columns};
 		}
+		for (auto &row : entry.permissions.schemas) {
+			relations[entry.name.GetIdentifierName()][row.oid] =
+			    Relation {Permissions {config.bootstrap_role, row.acl}, {}};
+		}
 	});
 	return make_shared_ptr<const SecuritySnapshot>(std::move(nodes), std::move(database_owners),
 	                                               config.database_owner_role, std::move(relations));
@@ -875,6 +898,14 @@ bool CanUseSchema(const RoleAccess &role, const CatalogEntry &schema) {
 	       role.Can(CatalogType::SCHEMA_ENTRY, schema.permissions, AclMode::Usage);
 }
 
+bool CanUseNamedSchema(ClientContext &context, const RoleAccess &role, const CatalogEntry &schema) {
+	if (!schema.internal || role.is_superuser) {
+		return CanUseSchema(role, schema);
+	}
+	auto &permissions = EffectivePermissions(context, schema);
+	return &permissions == &schema.permissions || role.Can(CatalogType::SCHEMA_ENTRY, permissions, AclMode::Usage);
+}
+
 static bool IsClusterDatabase(AttachedDatabase &database) {
 	return database.GetCatalog().UsesCatalogLog() && !database.IsReadOnly();
 }
@@ -1034,6 +1065,11 @@ static bool AnyRoleReference(const CatalogEntry &entry, F &&named) {
 	for (auto &row : permissions.relations) {
 		if (any_acl(row.acl) || std::any_of(row.columns.begin(), row.columns.end(),
 		                                    [&](const ColumnAcl &column) { return any_acl(column.acl); })) {
+			return true;
+		}
+	}
+	for (auto &row : permissions.schemas) {
+		if (any_acl(row.acl)) {
 			return true;
 		}
 	}

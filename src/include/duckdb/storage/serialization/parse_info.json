@@ -603,12 +603,17 @@
       },
       {
         "id": 329,
-        "name": "relation_acl",
+        "name": "builtin_acl",
         "type": "vector<AclItem>"
       },
       {
         "id": 330,
         "name": "overload_oid",
+        "type": "idx_t"
+      },
+      {
+        "id": 331,
+        "name": "schema_id",
         "type": "idx_t"
       }
     ]

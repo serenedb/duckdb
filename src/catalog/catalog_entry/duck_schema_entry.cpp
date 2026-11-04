@@ -550,7 +550,7 @@ static void AlterAllInSchema(DuckSchemaEntry &schema, CatalogTransaction transac
 			auto redirected = info.Copy();
 			auto &grant = redirected->Cast<AlterPermissionsInfo>();
 			grant.relation_id = relation.get().oid;
-			grant.relation_acl = relation.get().permissions.acl;
+			grant.builtin_acl = relation.get().permissions.acl;
 			grant.object_owner_id = relation.get().permissions.owner;
 			grant.entry_catalog_type = CatalogType::DATABASE_ENTRY;
 			grant.SetQualifiedName(Identifier(), Identifier(), schema.ParentCatalog().GetName());

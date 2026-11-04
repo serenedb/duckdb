@@ -1291,7 +1291,7 @@ CatalogEntryLookup Catalog::TryLookupEntry(CatalogEntryRetriever &retriever, con
 	} else {
 		auto transaction = GetCatalogTransaction(context);
 		auto result = TryLookupEntryInternal(transaction, lookup_info);
-		if (result.schema && !CanUseSchema(retriever.CheckAs(), *result.schema)) {
+		if (result.schema && !CanUseNamedSchema(context, retriever.CheckAs(), *result.schema)) {
 			ThrowPermissionDenied(*result.schema);
 		}
 		if (result.Found()) {
@@ -1466,8 +1466,10 @@ CatalogEntryLookup Catalog::TryLookupEntry(CatalogEntryRetriever &retriever, con
 	for (auto &lookup : lookups) {
 		auto transaction = lookup.catalog.GetCatalogTransaction(context);
 		result = lookup.catalog.TryLookupEntryInternal(transaction, lookup.lookup_info);
-		if (result.schema && !CanUseSchema(retriever.CheckAs(), *result.schema)) {
-			if (!IsInvalidSchema(lookup_info.GetSchema())) {
+		const bool named = !IsInvalidSchema(lookup_info.GetSchema());
+		if (result.schema && !(named ? CanUseNamedSchema(context, retriever.CheckAs(), *result.schema)
+		                             : CanUseSchema(retriever.CheckAs(), *result.schema))) {
+			if (named) {
 				ThrowPermissionDenied(*result.schema);
 			}
 			result = {nullptr, nullptr, ErrorData()};

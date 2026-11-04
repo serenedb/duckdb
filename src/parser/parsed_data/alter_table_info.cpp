@@ -256,8 +256,9 @@ unique_ptr<AlterInfo> AlterPermissionsInfo::Copy() const {
 	result->drop_owned_role_id = drop_owned_role_id;
 	result->language_id = language_id;
 	result->relation_id = relation_id;
-	result->relation_acl = relation_acl;
+	result->builtin_acl = builtin_acl;
 	result->overload_oid = overload_oid;
+	result->schema_id = schema_id;
 	result->func_parameters = func_parameters;
 	result->has_func_args = has_func_args;
 	for (auto &other : additional_grants) {

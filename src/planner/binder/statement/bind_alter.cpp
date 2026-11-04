@@ -429,8 +429,18 @@ static void ResolveGrant(Binder &binder, AlterPermissionsInfo &info) {
 	}
 	auto &target = ResolvePermissionsTarget(binder, info);
 	RequireGrantable(binder, target, TargetPermissions(binder, info, target));
-	if (!target.internal || IsUnowned(target) ||
-	    (target.type != CatalogType::TABLE_ENTRY && target.type != CatalogType::VIEW_ENTRY)) {
+	if (!target.internal || IsUnowned(target)) {
+		return;
+	}
+	if (target.type == CatalogType::SCHEMA_ENTRY) {
+		info.schema_id = target.oid;
+		info.builtin_acl = target.permissions.acl;
+		info.object_owner_id = target.permissions.owner;
+		info.entry_catalog_type = CatalogType::DATABASE_ENTRY;
+		info.SetQualifiedName(Identifier(), Identifier(), target.ParentCatalog().GetName());
+		return;
+	}
+	if (target.type != CatalogType::TABLE_ENTRY && target.type != CatalogType::VIEW_ENTRY) {
 		return;
 	}
 	vector<Identifier> columns;
@@ -453,7 +463,7 @@ static void ResolveGrant(Binder &binder, AlterPermissionsInfo &info) {
 		}
 	}
 	info.relation_id = target.oid;
-	info.relation_acl = target.permissions.acl;
+	info.builtin_acl = target.permissions.acl;
 	info.object_owner_id = target.permissions.owner;
 	info.entry_catalog_type = CatalogType::DATABASE_ENTRY;
 	info.SetQualifiedName(Identifier(), Identifier(), target.ParentCatalog().GetName());
