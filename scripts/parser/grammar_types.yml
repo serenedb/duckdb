@@ -2157,6 +2157,7 @@ excluded_rules:
   - OwnerRoutineTarget
   - OwnerNamedTarget
   - OwnerRoleSpec
+  - GroupGrantee
   - MemberOptionName
   - AlterRoleTarget
   - AlterRoleAll
@@ -2189,6 +2190,7 @@ excluded_rules:
   - PolicyRename
   - PolicyAlterClauses
   - PolicyToRoles
+  - PolicyRole
   - PolicyUsing
   - PolicyCheck
   - PrivilegeList

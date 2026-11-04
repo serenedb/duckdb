@@ -118,7 +118,8 @@ GrantObjType <- ForeignServerObjType / ForeignDataWrapperObjType / 'TABLE' / 'SE
 ForeignServerObjType <- 'FOREIGN' 'SERVER'
 ForeignDataWrapperObjType <- 'FOREIGN' 'DATA' 'WRAPPER'
 # PUBLIC is the pseudo-role; otherwise a normal role identifier.
-Grantee <- 'PUBLIC' / OwnerRoleSpec
+Grantee <- 'PUBLIC' / GroupGrantee / OwnerRoleSpec
+GroupGrantee <- 'GROUP' OwnerRoleSpec
 
 RoleOptionList <- RoleOption+
 RoleOption <- LoginOption / SuperuserOption / CreateDbOption / CreateRoleOption / InheritOption / ReplicationOption / BypassRlsOption / ConnLimitOption / ValidUntilOption / SysIdOption / PasswordNullOption / PasswordOption
@@ -142,7 +143,8 @@ PolicyRename       <- 'RENAME' 'TO' ColId
 PolicyAlterClauses <- PolicyToRoles? PolicyUsing? PolicyCheck?
 PolicyPermissive   <- 'AS' ('PERMISSIVE' / 'RESTRICTIVE')
 PolicyForCmd       <- 'FOR' ('ALL' / 'SELECT' / 'INSERT' / 'UPDATE' / 'DELETE')
-PolicyToRoles      <- 'TO' List(Grantee)
+PolicyToRoles      <- 'TO' List(PolicyRole)
+PolicyRole         <- 'PUBLIC' / OwnerRoleSpec
 PolicyUsing        <- 'USING' Parens(Expression)
 PolicyCheck        <- 'WITH' 'CHECK' Parens(Expression)
 RowSecurityAction  <- RowSecurityVerb 'ROW' 'LEVEL' 'SECURITY'
