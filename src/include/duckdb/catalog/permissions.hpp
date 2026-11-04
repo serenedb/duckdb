@@ -173,6 +173,7 @@ struct Permissions {
 	vector<DefaultAcl> defaults;
 	vector<ObjectAcl> foreign_data_wrappers;
 	vector<NamedAcl> parameters;
+	vector<ObjectAcl> languages;
 
 	bool operator==(const Permissions &rhs) const = default;
 
@@ -184,6 +185,7 @@ struct Permissions {
 
 	std::span<const AclItem> ForeignDataWrapperAcl(idx_t wrapper) const;
 	std::span<const AclItem> ParameterAcl(std::string_view parameter) const;
+	std::span<const AclItem> LanguageAcl(idx_t language) const;
 	void AssignOwner(idx_t new_owner, CatalogType objtype, optional_ptr<const Permissions> database,
 	                 optional_idx schema);
 

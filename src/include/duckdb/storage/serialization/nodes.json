@@ -777,6 +777,11 @@
         "id": 104,
         "name": "parameters",
         "type": "vector<NamedAcl>"
+      },
+      {
+        "id": 105,
+        "name": "languages",
+        "type": "vector<ObjectAcl>"
       }
     ],
     "pointer_type": "none"
