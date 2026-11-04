@@ -747,7 +747,11 @@ static unique_ptr<SQLStatement> BuildGrantRole(PEGTransformer &transformer, List
 	} else if (option == "SET") {
 		info.set_option = 0;
 	}
-	if (!revoke) {
+	if (revoke) {
+		info.granted_by = TransformGrantedBy(transformer, list_pr, roles_child + 3);
+		info.cascade = TransformCascade(list_pr, roles_child + 4);
+	} else {
+		info.granted_by = TransformGrantedBy(transformer, list_pr, roles_child + 4);
 		auto &opts_opt = list_pr.Child<OptionalParseResult>(roles_child + 3);
 		if (opts_opt.HasResult()) {
 			// LIST(MemberOptionList): 0:'WITH' 1:List(MemberOption). Flatten the

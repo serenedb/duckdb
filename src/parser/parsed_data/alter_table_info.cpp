@@ -265,6 +265,8 @@ unique_ptr<AlterInfo> AlterRoleInfo::Copy() const {
 	result->set_option = set_option;
 	result->grant_role_id = grant_role_id;
 	result->grantor_id = grantor_id;
+	result->granted_by = granted_by;
+	result->cascade = cascade;
 	result->all_roles = all_roles;
 	result->alter_group = alter_group;
 	return std::move(result);
