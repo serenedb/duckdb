@@ -34,6 +34,7 @@ class CatalogEntry;
 class ClientContext;
 class ColumnList;
 class DuckCatalog;
+class SchemaCatalogEntry;
 
 constexpr idx_t ACL_ID_PUBLIC = 0;
 
@@ -197,6 +198,7 @@ struct Permissions {
 	vector<ObjectAcl> languages;
 	vector<RelationAcl> relations;
 	vector<ObjectAcl> schemas;
+	vector<NamedAcl> functions;
 
 	bool operator==(const Permissions &rhs) const = default;
 
@@ -284,7 +286,8 @@ public:
 	};
 
 	SecuritySnapshot(unordered_map<idx_t, Node> nodes, unordered_map<string, idx_t> database_owners,
-	                 idx_t database_owner_role, unordered_map<string, unordered_map<idx_t, Relation>> relations);
+	                 idx_t database_owner_role, unordered_map<string, unordered_map<idx_t, Relation>> relations,
+	                 unordered_map<string, unordered_map<string, Permissions>> functions);
 	~SecuritySnapshot();
 
 	SecuritySnapshot(const SecuritySnapshot &) = delete;
@@ -301,6 +304,11 @@ public:
 	optional_idx BestAdmin(idx_t member, idx_t role) const;
 	optional_ptr<const Permissions> RelationPermissions(std::string_view database, idx_t relation) const;
 	optional_ptr<const vector<ColumnAcl>> RelationColumns(std::string_view database, idx_t relation) const;
+	bool HasFunctionGrants() const {
+		return !functions.empty();
+	}
+	bool HasFunctionGrants(std::string_view database) const;
+	optional_ptr<const Permissions> FunctionPermissions(std::string_view database, std::string_view function) const;
 
 private:
 	optional_ptr<const Relation> FindRelation(std::string_view database, idx_t relation) const;
@@ -313,6 +321,7 @@ private:
 	unordered_map<string, idx_t> database_owners;
 	idx_t database_owner_role;
 	unordered_map<string, unordered_map<idx_t, Relation>> relations;
+	unordered_map<string, unordered_map<string, Permissions>> functions;
 	mutable mutex derived_lock;
 	mutable unordered_map<idx_t, shared_ptr<const SecuritySnapshot>> derived;
 };
@@ -325,6 +334,12 @@ DUCKDB_API std::span<const AclItem> ColumnAclAt(const CatalogEntry &entry,
                                                 optional_ptr<const vector<ColumnAcl>> column_acls, idx_t column_index);
 DUCKDB_API bool CanUseSchema(const RoleAccess &role, const CatalogEntry &schema);
 DUCKDB_API bool CanUseNamedSchema(ClientContext &context, const RoleAccess &role, const CatalogEntry &schema);
+DUCKDB_API idx_t FunctionOverloadCount(const CatalogEntry &function);
+DUCKDB_API vector<AclItem> BuiltinFunctionAcl(const CatalogEntry &function, idx_t owner);
+DUCKDB_API vector<NamedAcl> BuiltinFunctionRows(ClientContext &context, SchemaCatalogEntry &schema);
+DUCKDB_API void CheckBuiltinCall(ClientContext &context, const RoleAccess &role, const CatalogEntry &function,
+                                 idx_t overload);
+DUCKDB_API bool BuiltinCallGranted(ClientContext &context, const RoleAccess &role, const CatalogEntry &function);
 DUCKDB_API bool EntryVisible(ClientContext &context, const RoleAccess &role, CatalogEntry &entry);
 DUCKDB_API bool DatabaseVisible(ClientContext &context, const RoleAccess &role, AttachedDatabase &database);
 DUCKDB_API void CheckReference(ClientContext &context, const RoleAccess &role, CatalogEntry &entry);

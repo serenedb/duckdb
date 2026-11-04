@@ -792,6 +792,11 @@
         "id": 107,
         "name": "schemas",
         "type": "vector<ObjectAcl>"
+      },
+      {
+        "id": 108,
+        "name": "functions",
+        "type": "vector<NamedAcl>"
       }
     ],
     "pointer_type": "none"

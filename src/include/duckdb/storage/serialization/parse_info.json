@@ -621,6 +621,11 @@
         "id": 331,
         "name": "schema_id",
         "type": "idx_t"
+      },
+      {
+        "id": 332,
+        "name": "functions",
+        "type": "vector<NamedAcl>"
       }
     ]
   },
