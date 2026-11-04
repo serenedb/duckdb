@@ -48,6 +48,22 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformCommentStatement(PEGTra
 	return std::move(result);
 }
 
+// CommentRoutineStatement <- 'COMMENT' 'ON' GrantRoutineKind RoutineSignature 'IS' CommentValue
+unique_ptr<SQLStatement> PEGTransformerFactory::TransformCommentRoutineStatement(PEGTransformer &transformer,
+                                                                                 ParseResult &parse_result) {
+	auto &list_pr = parse_result.Cast<ListParseResult>();
+	auto &signature = list_pr.Child<ListParseResult>(3);
+	auto name = transformer.Transform<QualifiedName>(signature.GetChild(0));
+	auto info =
+	    make_uniq<SetCommentInfo>(CatalogType::MACRO_ENTRY, name.Catalog(), name.Schema(), name.Name(),
+	                              transformer.Transform<Value>(list_pr.GetChild(5)), OnEntryNotFound::THROW_EXCEPTION);
+	info->has_func_args =
+	    TransformFunctionArgumentTypes(transformer, signature.Child<OptionalParseResult>(1), info->func_parameters);
+	auto result = make_uniq<AlterStatement>();
+	result->info = std::move(info);
+	return std::move(result);
+}
+
 CatalogType PEGTransformerFactory::TransformCommentTable(PEGTransformer &transformer) {
 	return CatalogType::TABLE_ENTRY;
 }
