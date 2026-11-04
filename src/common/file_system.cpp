@@ -1,5 +1,6 @@
 #include "duckdb/common/file_system.hpp"
 
+#include "duckdb/common/allocator.hpp"
 #include "duckdb/common/checksum.hpp"
 #include "duckdb/common/time_point.hpp"
 #include "duckdb/common/compressed_file_system.hpp"
@@ -431,7 +432,7 @@ unique_ptr<FileHandle> FileSystem::OpenFileExtended(const OpenFileInfo &path,
 }
 
 bool FileSystem::ListFilesExtended(const string &directory, const std::function<void(OpenFileInfo &info)> &callback,
-                                   optional_ptr<FileOpener> opener) {
+                                   optional_ptr<FileOpener> opener, const ListFilesOptions &options) {
 	throw NotImplementedException("%s: ListFilesExtended is not implemented!", GetName());
 }
 
@@ -465,6 +466,23 @@ bool FileSystem::SupportsGlobExtended() const {
 
 void FileSystem::Read(FileHandle &handle, void *buffer, int64_t nr_bytes, idx_t location) {
 	throw NotImplementedException("%s: Read (with location) is not implemented!", GetName());
+}
+
+void FileSystem::ReadScattered(FileHandle &handle, std::span<const FileReadTarget> targets, idx_t location) {
+	if (targets.size() == 1) {
+		Read(handle, targets[0].data, NumericCast<int64_t>(targets[0].size), location);
+		return;
+	}
+	const auto size = FileReadTarget::TotalSize(targets);
+	auto staging = Allocator::DefaultAllocator().Allocate(size);
+	Read(handle, staging.get(), NumericCast<int64_t>(size), location);
+	idx_t offset = 0;
+	for (auto &target : targets) {
+		if (target.data) {
+			memcpy(target.data, staging.get() + offset, target.size);
+		}
+		offset += target.size;
+	}
 }
 
 void FileSystem::Write(FileHandle &handle, void *buffer, int64_t nr_bytes, idx_t location) {
@@ -640,15 +658,17 @@ bool FileSystem::ListFiles(const string &directory, const std::function<void(con
 			    bool is_dir = IsDirectory(info);
 			    callback(info.path, is_dir);
 		    },
-		    opener);
+		    opener, ListFilesOptions());
 	}
 	throw NotImplementedException("%s: ListFiles is not implemented!", GetName());
 }
 
 bool FileSystem::ListFiles(const string &directory, const std::function<void(OpenFileInfo &info)> &callback,
-                           optional_ptr<FileOpener> opener) {
+                           optional_ptr<FileOpener> opener, const ListFilesOptions &options) {
 	if (SupportsListFilesExtended()) {
-		return ListFilesExtended(directory, callback, opener);
+		return ListFilesExtended(directory, callback, opener, options);
+	} else if (options.recursive) {
+		return WalkFiles(directory, callback, opener);
 	} else {
 		return ListFiles(
 		    directory,
@@ -662,6 +682,30 @@ bool FileSystem::ListFiles(const string &directory, const std::function<void(Ope
 		    },
 		    opener.get());
 	}
+}
+
+bool FileSystem::WalkFiles(const string &directory, const std::function<void(OpenFileInfo &info)> &callback,
+                           optional_ptr<FileOpener> opener) {
+	bool listed = false;
+	vector<string> directories {string()};
+	for (idx_t i = 0; i < directories.size(); i++) {
+		const auto relative = directories[i];
+		const bool found = ListFiles(
+		    relative.empty() ? directory : JoinPath(directory, relative),
+		    [&](OpenFileInfo &info) {
+			    if (!relative.empty()) {
+				    info.path = JoinPath(relative, info.path);
+			    }
+			    if (IsDirectory(info)) {
+				    directories.push_back(std::move(info.path));
+			    } else {
+				    callback(info);
+			    }
+		    },
+		    opener);
+		listed = listed || found;
+	}
+	return listed;
 }
 
 void FileSystem::MoveFile(const string &source, const string &target, optional_ptr<FileOpener> opener) {
@@ -709,6 +753,12 @@ void FileSystem::FileSync(FileHandle &handle) {
 
 FileSyncParallelism FileSystem::SyncParallelism(FileHandle &handle) {
 	return FileSyncParallelism::SERIAL;
+}
+
+void FileSystem::HintWriteback(FileHandle &handle, idx_t location, idx_t nr_bytes) {
+}
+
+void FileSystem::SyncDirectory(const string &directory, optional_ptr<FileOpener> opener) {
 }
 
 void FileSystem::AbortFileWrite(FileHandle &handle) {
@@ -998,6 +1048,10 @@ idx_t FileHandle::GetFileSize() {
 
 void FileHandle::Sync() {
 	file_system.FileSync(*this);
+}
+
+void FileHandle::HintWriteback(idx_t location, idx_t nr_bytes) {
+	file_system.HintWriteback(*this, location, nr_bytes);
 }
 
 void FileHandle::Truncate(int64_t new_size) {

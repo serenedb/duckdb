@@ -69,10 +69,15 @@ class DatabaseFilePathManager;
 class ExtensionCallbackManager;
 class TypeManager;
 
+class AttachedDatabase;
+class Catalog;
+
 struct CompressionFunctionSet;
 struct DatabaseCacheEntry;
 struct DBConfig;
 struct SettingLookupResult;
+
+typedef unique_ptr<Catalog> (*create_temporary_catalog_t)(AttachedDatabase &db);
 
 //! NOTE: DBConfigOptions is mostly deprecated.
 //! If you want to add a setting that can be set by the user, add it as a generic setting to `settings.json`.
@@ -98,6 +103,10 @@ struct DBConfigOptions {
 	idx_t maximum_memory = DConstants::INVALID_INDEX;
 	//! The maximum size of the 'temp_directory' folder when set (in bytes). Default: 90% of available disk space.
 	idx_t maximum_swap_space = DConstants::INVALID_INDEX;
+	//! The disk space copies of evicted external file cache blocks may take (in bytes). Default: half of the swap
+	//! space.
+	idx_t external_file_cache_spill_size = DConstants::INVALID_INDEX;
+	idx_t external_file_cache_min_memory = DConstants::INVALID_INDEX;
 	//! The maximum amount of CPU threads used by the database system. Default: all available.
 	idx_t maximum_threads = DConstants::INVALID_INDEX;
 	//! HTTP client limit derived from thread counts unless configured
@@ -109,8 +118,6 @@ struct DBConfigOptions {
 	//! Whether or not to invoke filesystem trim on free blocks after checkpoint. This will reclaim
 	//! space for sparse files, on platforms that support it.
 	bool trim_free_blocks = false;
-	//! Record timestamps of buffer manager unpin() events. Usable by custom eviction policies.
-	bool buffer_manager_track_eviction_timestamps = false;
 	//! Force checkpoint when CHECKPOINT is called or on shutdown, even if no changes have been made
 	bool force_checkpoint = false;
 	//! Run a checkpoint on successful shutdown and delete the WAL, to leave only a single database file behind
@@ -208,6 +215,8 @@ public:
 	shared_ptr<DatabaseCacheEntry> db_cache_entry;
 	//! Reference to the database file path manager
 	shared_ptr<DatabaseFilePathManager> path_manager;
+	//! Creates the catalog of each connection's temporary objects instead of a DuckCatalog
+	create_temporary_catalog_t create_temporary_catalog = nullptr;
 	//! Database configuration variables as controlled by SET
 	GlobalUserSettings user_settings;
 

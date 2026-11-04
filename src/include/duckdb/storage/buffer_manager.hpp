@@ -8,10 +8,12 @@
 
 #pragma once
 
+#include "duckdb/common/enums/destroy_buffer_upon.hpp"
 #include "duckdb/common/enums/memory_tag.hpp"
 #include "duckdb/common/optional_idx.hpp"
 #include "duckdb/storage/storage_info.hpp"
 #include "duckdb/storage/buffer/buffer_handle.hpp"
+#include "duckdb/storage/buffer/buffer_pool_reservation.hpp"
 #include "duckdb/storage/buffer/temporary_file_information.hpp"
 
 namespace duckdb {
@@ -23,6 +25,11 @@ class TemporaryMemoryManager;
 class AttachedDatabase;
 class BlockManager;
 class DatabaseInstance;
+
+struct BlockLoad {
+	unique_ptr<FileBuffer> buffer;
+	TempBufferPoolReservation reservation;
+};
 
 class BufferManager {
 	friend class BufferHandle;
@@ -72,6 +79,16 @@ public:
 	                                                          vector<shared_ptr<BlockHandle>> &handles);
 	//! Unpin a block handle.
 	virtual void Unpin(shared_ptr<BlockHandle> &handle) = 0;
+	//! Unpin a pin of block memory.
+	virtual void Unpin(BlockMemory &memory) = 0;
+	virtual shared_ptr<BlockHandle> RegisterUnloadedMemory(MemoryTag tag, idx_t block_size, idx_t block_header_size,
+	                                                       DestroyBufferUpon destroy_buffer_upon);
+	virtual BufferHandle LoadClaimed(const QueryContext &context, shared_ptr<BlockHandle> &handle);
+	virtual BlockLoad PrepareLoad(BlockMemory &memory, idx_t block_size, idx_t block_header_size);
+	virtual BufferHandle CompleteLoad(shared_ptr<BlockHandle> &handle, BlockLoad load);
+	//! Destroys the buffer of [handle], or once its last pin is gone when it is pinned, and the copy of it a temporary
+	//! file keeps
+	virtual void Discard(shared_ptr<BlockHandle> &handle);
 
 	//! Returns the currently allocated memory.
 	virtual idx_t GetUsedMemory() const = 0;
@@ -98,9 +115,9 @@ public:
 	//! Get the buffer allocator.
 	virtual DUCKDB_API Allocator &GetBufferAllocator();
 	//! Reserve memory.
-	virtual DUCKDB_API void ReserveMemory(idx_t size);
+	virtual DUCKDB_API void ReserveMemory(MemoryTag tag, idx_t size);
 	//! Free reserved memory.
-	virtual DUCKDB_API void FreeReservedMemory(idx_t size);
+	virtual DUCKDB_API void FreeReservedMemory(MemoryTag tag, idx_t size);
 	//! GetMemoryUsageInfo returns MemoryInformation for each memory tag.
 	virtual vector<MemoryInformation> GetMemoryUsageInfo() const = 0;
 	//! Set a new memory limit.
@@ -135,12 +152,11 @@ public:
 	//! Get the manager assigning reservations for temporary memory, e.g., for query intermediates.
 	virtual TemporaryMemoryManager &GetTemporaryMemoryManager();
 
-	//! Purge the eviction queue of the block handle.
-	virtual void PurgeQueue(const BlockHandle &handle) = 0;
-	//! Add the block handle to the eviction queue.
-	virtual void AddToEvictionQueue(shared_ptr<BlockHandle> &handle);
 	//! Write a temporary file buffer.
 	virtual void WriteTemporaryBuffer(QueryContext context, MemoryTag tag, block_id_t block_id, FileBuffer &buffer);
+	//! Write the copy of a temporary file buffer that a block keeps, while the copies have room for it; returns
+	//! whether it was written.
+	virtual bool TryWriteTemporaryCopy(QueryContext context, MemoryTag tag, block_id_t block_id, FileBuffer &buffer);
 	//! Read a temporary buffer.
 	virtual unique_ptr<FileBuffer> ReadTemporaryBuffer(QueryContext context, MemoryTag tag, BlockHandle &block,
 	                                                   unique_ptr<FileBuffer> buffer);

@@ -57,6 +57,8 @@ string CatalogTypeToString(CatalogType type) {
 		return "Replication Origin";
 	case CatalogType::JOB_ENTRY:
 		return "Job";
+	case CatalogType::TABLESPACE_ENTRY:
+		return "Tablespace";
 	case CatalogType::SECRET_ENTRY:
 		return "Secret";
 	case CatalogType::SECRET_TYPE_ENTRY:
@@ -145,6 +147,9 @@ CatalogType CatalogTypeFromString(const string &type) {
 	if (type == "Job") {
 		return CatalogType::JOB_ENTRY;
 	}
+	if (type == "Tablespace") {
+		return CatalogType::TABLESPACE_ENTRY;
+	}
 	if (type == "INVALID") {
 		return CatalogType::INVALID;
 	}
@@ -152,5 +157,14 @@ CatalogType CatalogTypeFromString(const string &type) {
 }
 
 // LCOV_EXCL_STOP
+
+bool IsCatalogLevelType(CatalogType type) {
+	for (auto catalog_level : CATALOG_LEVEL_TYPES) {
+		if (catalog_level == type) {
+			return true;
+		}
+	}
+	return false;
+}
 
 } // namespace duckdb

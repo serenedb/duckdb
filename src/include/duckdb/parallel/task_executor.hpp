@@ -15,6 +15,8 @@
 #include "duckdb/execution/task_error_manager.hpp"
 #include "duckdb/common/enums/task_scheduler_type.hpp"
 
+#include <absl/functional/any_invocable.h>
+
 namespace duckdb {
 
 class TaskExecutor;
@@ -58,6 +60,25 @@ public:
 
 protected:
 	TaskExecutor &executor;
+};
+
+//! A task that runs a function once
+class FunctionExecutorTask : public BaseExecutorTask {
+public:
+	FunctionExecutorTask(TaskExecutor &executor, absl::AnyInvocable<void()> function_p, const char *task_type_p)
+	    : BaseExecutorTask(executor), function(std::move(function_p)), task_type(task_type_p) {
+	}
+
+	void ExecuteTask() override {
+		function();
+	}
+	string TaskType() const override {
+		return task_type;
+	}
+
+private:
+	absl::AnyInvocable<void()> function;
+	const char *task_type;
 };
 
 //! The TaskExecutor is a helper class that enables parallel scheduling and execution of tasks

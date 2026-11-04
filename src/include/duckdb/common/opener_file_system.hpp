@@ -45,6 +45,9 @@ public:
 	void Read(FileHandle &handle, void *buffer, int64_t nr_bytes, idx_t location) override {
 		GetFileSystem().Read(handle, buffer, nr_bytes, location);
 	}
+	void ReadScattered(FileHandle &handle, std::span<const FileReadTarget> targets, idx_t location) override {
+		GetFileSystem().ReadScattered(handle, targets, location);
+	}
 
 	void Write(FileHandle &handle, void *buffer, int64_t nr_bytes, idx_t location) override {
 		throw InternalException("writing on the OpenerFileSystem is undefined");
@@ -80,6 +83,16 @@ public:
 
 	void FileSync(FileHandle &handle) override {
 		GetFileSystem().FileSync(handle);
+	}
+
+	void HintWriteback(FileHandle &handle, idx_t location, idx_t nr_bytes) override {
+		GetFileSystem().HintWriteback(handle, location, nr_bytes);
+	}
+
+	void SyncDirectory(const string &directory, optional_ptr<FileOpener> opener) override {
+		VerifyNoOpener(opener);
+		VerifyCanAccessDirectory(directory);
+		GetFileSystem().SyncDirectory(directory, GetOpener());
 	}
 
 	FileExistence TryDirectoryExists(const string &directory, optional_ptr<FileOpener> opener,
@@ -284,10 +297,10 @@ public:
 
 protected:
 	bool ListFilesExtended(const string &directory, const std::function<void(OpenFileInfo &info)> &callback,
-	                       optional_ptr<FileOpener> opener) override {
+	                       optional_ptr<FileOpener> opener, const ListFilesOptions &options) override {
 		VerifyNoOpener(opener);
 		VerifyCanAccessDirectory(directory);
-		return GetFileSystem().ListFiles(directory, callback, GetOpener().get());
+		return GetFileSystem().ListFiles(directory, callback, GetOpener().get(), options);
 	}
 
 	bool SupportsListFilesExtended() const override {

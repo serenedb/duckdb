@@ -37,7 +37,8 @@
 #include "duckdb/storage/block_allocator.hpp"
 #include "duckdb/storage/buffer/buffer_pool.hpp"
 #include "duckdb/storage/compression/empty_validity.hpp"
-#include "duckdb/storage/external_file_cache/external_file_cache.hpp"
+#include "duckdb/common/memory_file_system.hpp"
+#include "duckdb/storage/block_cache/block_cache.hpp"
 #include "duckdb/storage/object_cache.hpp"
 #include "duckdb/storage/shared_object_cache.hpp"
 #include "duckdb/storage/standard_buffer_manager.hpp"
@@ -97,13 +98,19 @@ DatabaseInstance::~DatabaseInstance() {
 	connection_manager.reset();
 	object_cache.reset();
 	shared_object_cache.reset();
+	if (block_cache) {
+		block_cache->StopFetching();
+	}
 	scheduler.reset();
 	db_manager.reset();
 
 	// stop the log manager, after this point Logger calls are unsafe.
 	log_manager.reset();
 
-	external_file_cache.reset();
+	if (memory_file_system) {
+		memory_file_system->Clear();
+	}
+	block_cache.reset();
 	result_set_manager.reset();
 
 	buffer_manager.reset();
@@ -362,8 +369,8 @@ void DatabaseInstance::InitializeInstance(const char *database_path, DBConfig *u
 
 	metrics_manager = make_uniq<MetricsManager>();
 
-	bool enable_external_file_cache = Settings::Get<EnableExternalFileCacheSetting>(config);
-	external_file_cache = make_uniq<ExternalFileCache>(*this, enable_external_file_cache);
+	block_cache = make_uniq<BlockCache>(*this);
+	block_cache->SetEnabled(Settings::Get<EnableExternalFileCacheSetting>(config));
 	result_set_manager = make_uniq<ResultSetManager>(*this);
 
 	scheduler = make_uniq<TaskScheduler>(*this);
@@ -489,8 +496,15 @@ FileSystem &LocalDatabaseFileSystem::GetFileSystem() const {
 	return local_fs;
 }
 
-ExternalFileCache &DatabaseInstance::GetExternalFileCache() {
-	return *external_file_cache;
+BlockCache &DatabaseInstance::GetBlockCache() {
+	return *block_cache;
+}
+
+MemoryFileSystem &DatabaseInstance::GetMemoryFileSystem() {
+	if (!memory_file_system) {
+		throw InternalException("The database has no memory:// filesystem");
+	}
+	return *memory_file_system;
 }
 
 ResultSetManager &DatabaseInstance::GetResultSetManager() {
@@ -553,6 +567,9 @@ void DatabaseInstance::Configure(DBConfig &new_config, const char *database_path
 		config.file_system = std::move(new_config.file_system);
 	} else {
 		config.file_system = make_uniq<VirtualFileSystem>(FileSystem::CreateLocal());
+		auto memory_fs = make_uniq<MemoryFileSystem>(*this);
+		memory_file_system = memory_fs.get();
+		config.file_system->RegisterSubSystem(std::move(memory_fs));
 	}
 	config.http_transport_manager->Initialize(config);
 	if (database_path && !Settings::Get<EnableExternalAccessSetting>(*this)) {
@@ -577,9 +594,12 @@ void DatabaseInstance::Configure(DBConfig &new_config, const char *database_path
 	config.block_allocator = std::move(new_config.block_allocator);
 	if (!config.block_allocator) {
 		auto default_block_size = Settings::Get<DefaultBlockSizeSetting>(config);
-		config.block_allocator = make_uniq<BlockAllocator>(
-		    *config.allocator, default_block_size, DBConfig::GetSystemAvailableMemory(*config.file_system) * 8 / 10,
-		    config.options.block_allocator_size);
+		const auto virtual_memory_size = DBConfig::GetSystemAvailableMemory(*config.file_system) * 8 / 10;
+		config.block_allocator = make_uniq<BlockAllocator>(*config.allocator, default_block_size, virtual_memory_size,
+		                                                   config.options.block_allocator_size);
+		if (BlockCache::BLOCK_SIZE != default_block_size) {
+			config.block_allocator->AddHugePagePool(BlockCache::BLOCK_SIZE, virtual_memory_size);
+		}
 	}
 	config.replacement_scans = std::move(new_config.replacement_scans);
 	if (new_config.callback_manager) {
@@ -600,11 +620,12 @@ void DatabaseInstance::Configure(DBConfig &new_config, const char *database_path
 		config.buffer_pool = std::move(new_config.buffer_pool);
 	} else {
 		config.buffer_pool = make_shared_ptr<BufferPool>(*config.block_allocator, config.options.maximum_memory,
-		                                                 config.options.buffer_manager_track_eviction_timestamps,
-		                                                 config.options.allocator_bulk_deallocation_flush_threshold);
+		                                                 config.options.allocator_bulk_deallocation_flush_threshold,
+		                                                 config.options.external_file_cache_min_memory);
 	}
 	config.db_cache_entry = std::move(new_config.db_cache_entry);
 	config.path_manager = std::move(new_config.path_manager);
+	config.create_temporary_catalog = new_config.create_temporary_catalog;
 }
 
 DBConfig &DBConfig::GetConfig(ClientContext &context) {

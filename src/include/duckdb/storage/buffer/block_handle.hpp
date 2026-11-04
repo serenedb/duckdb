@@ -15,6 +15,7 @@
 #include "duckdb/common/mutex.hpp"
 #include "duckdb/common/numeric_utils.hpp"
 #include "duckdb/common/optional_idx.hpp"
+#include "duckdb/common/optional_ptr.hpp"
 #include "duckdb/storage/buffer/buffer_pool_reservation.hpp"
 #include "duckdb/storage/storage_info.hpp"
 
@@ -26,14 +27,21 @@ class BufferHandle;
 class BufferManager;
 class DatabaseInstance;
 class BlockHandle;
+class BufferPool;
+struct EvictionQueue;
 
 using BlockLock = unique_lock<mutex>;
 
 enum class CanUnloadResult : uint8_t { CAN_UNLOAD, ALREADY_UNLOADED, PINNED, NO_TEMP_DIRECTORY };
 
-class BlockMemory : public enable_shared_from_this<BlockMemory> {
+class alignas(64) BlockMemory : public enable_shared_from_this<BlockMemory> {
+	friend class BufferPool;
+	friend struct EvictionQueue;
+
 public:
 	BlockMemory(BufferManager &buffer_manager, block_id_t block_id_p, MemoryTag tag_p, idx_t block_alloc_size);
+	BlockMemory(BufferManager &buffer_manager, block_id_t block_id_p, MemoryTag tag_p, idx_t block_alloc_size,
+	            FileBufferType buffer_type_p, DestroyBufferUpon destroy_buffer_upon_p);
 	BlockMemory(BufferManager &buffer_manager, block_id_t block_id_p, MemoryTag tag_p, unique_ptr<FileBuffer> buffer_p,
 	            DestroyBufferUpon destroy_buffer_upon_p, idx_t size_p, BufferPoolReservation &&reservation);
 	~BlockMemory();
@@ -67,26 +75,105 @@ public:
 	//! Sets the block state.
 	void SetState(BlockState state_p) {
 		state = state_p;
+		if (state_p == BlockState::BLOCK_LOADED) {
+			loaded_buffer = buffer.get();
+			loaded_data = buffer ? buffer->GetDataMutable() : nullptr;
+			readers.fetch_or(LOADED, std::memory_order_seq_cst);
+		} else {
+			readers.fetch_and(~LOADED, std::memory_order_seq_cst);
+		}
 	}
 	//! Returns true, if the block state is BLOCK_UNLOADED.
 	bool IsUnloaded() const {
 		return state == BlockState::BLOCK_UNLOADED;
 	}
+	//! The reader word: the number of readers, whether the block is loaded, and whether it is orphaned. Readers pin
+	//! a loaded block without the block lock, so it is unloaded only together with checking that it has no readers.
+	static constexpr int32_t READERS = (int32_t(1) << 29) - 1;
+	static constexpr int32_t LOADED = int32_t(1) << 29;
+	//! Set once the block handle is gone while readers remain, which then own the memory.
+	static constexpr int32_t ORPHANED = int32_t(1) << 30;
 	//! Returns the number of readers.
 	int32_t GetReaders() const {
-		return readers;
+		return readers.load(std::memory_order_seq_cst) & READERS;
 	}
 	//! Increments the number of readers prior to returning it.
 	int32_t IncrementReaders() {
-		return ++readers;
+		return (readers.fetch_add(1, std::memory_order_seq_cst) + 1) & READERS;
 	}
-	//! Decrements the number of readers prior to returning it.
-	int32_t DecrementReaders() {
-		return --readers;
+	//! Removes a reader, returning the reader word before.
+	int32_t ReleaseReader() {
+		return readers.fetch_sub(1, std::memory_order_seq_cst);
 	}
-	//! Sets the number of readers.
-	void SetReaders(int32_t n) {
-		readers = n;
+	//! Releases a pin without the block lock unless the block needs the buffer manager to release it, returning
+	//! whether it did.
+	bool TryUnpinFast() {
+		if (buffer_type == FileBufferType::TINY_BUFFER) {
+			return true;
+		}
+#ifdef DUCKDB_DEBUG_DESTROY_BLOCKS
+		return false;
+#else
+		if (DestroyedUponUnpin()) {
+			return false;
+		}
+		SetReferenced();
+		if ((ReleaseReader() & ~LOADED) == ORPHANED + 1) {
+			ReleaseOrphan();
+		}
+		return true;
+#endif
+	}
+	//! Frees an orphaned block whose last reader is gone.
+	void ReleaseOrphan();
+	bool TryClaim() {
+		uint8_t free = 0;
+		return loading.compare_exchange_strong(free, CLAIMED, std::memory_order_seq_cst);
+	}
+	bool IsLoading() const {
+		return loading.load(std::memory_order_acquire) != 0;
+	}
+	void WaitForLoad();
+	void FinishLoad();
+	//! Adds a reader without the block lock, if the block is loaded.
+	bool TryPinLoaded() {
+		if (readers.fetch_add(1, std::memory_order_seq_cst) & LOADED) {
+			return true;
+		}
+		readers.fetch_sub(1, std::memory_order_seq_cst);
+		return false;
+	}
+	//! Marks the block unloaded if it has no readers besides [own_readers], returning whether it did.
+	bool TryMarkUnloaded(int32_t own_readers = 0) {
+		if ((readers.fetch_and(~LOADED, std::memory_order_seq_cst) & READERS) > own_readers) {
+			readers.fetch_or(LOADED, std::memory_order_seq_cst);
+			return false;
+		}
+		state = BlockState::BLOCK_UNLOADED;
+		return true;
+	}
+	//! Called once the block handle is gone: readers that remain keep the memory alive, the last one frees it.
+	void Orphan(BlockLock &l, const shared_ptr<BlockMemory> &self) {
+		VerifyMutex(l);
+		// Tiny buffers count no readers, and their pins own the block.
+		if (buffer_type == FileBufferType::TINY_BUFFER) {
+			return;
+		}
+		if (readers.fetch_or(ORPHANED, std::memory_order_seq_cst) & READERS) {
+			orphan_owner = self;
+		}
+	}
+	//! Hands over the memory's ownership of itself, taken by the last reader of an orphaned block.
+	shared_ptr<BlockMemory> TakeOrphanOwner(BlockLock &l) {
+		VerifyMutex(l);
+		return std::move(orphan_owner);
+	}
+	//! The block handle, while it exists.
+	shared_ptr<BlockHandle> GetOwner() const {
+		return owner.lock();
+	}
+	void SetOwner(const shared_ptr<BlockHandle> &owner_p) {
+		owner = owner_p;
 	}
 	//! Returns the memory tag.
 	MemoryTag GetMemoryTag() const {
@@ -105,55 +192,54 @@ public:
 	unique_ptr<FileBuffer> &GetBuffer() {
 		return buffer;
 	}
+	//! The buffer and its data, read on the reader word's cache line by a reader that pinned the loaded block.
+	FileBuffer *GetLoadedBuffer() const {
+		return loaded_buffer;
+	}
+	data_ptr_t GetLoadedData() const {
+		return loaded_data;
+	}
 	//! Sets the file buffer.
 	void SetBuffer(unique_ptr<FileBuffer> buffer_p) {
 		buffer = std::move(buffer_p);
 	}
-	//! Returns the eviction sequence number.
-	idx_t GetEvictionSequenceNumber() const {
-		return eviction_seq_num;
+	//! Marks the block as used since eviction last passed it.
+	void SetReferenced() {
+		if (!referenced.load(std::memory_order_relaxed)) {
+			referenced.store(true, std::memory_order_relaxed);
+		}
 	}
-	//! Increments the eviction sequence number prior to returning it.
-	idx_t NextEvictionSequenceNumber() {
-		return ++eviction_seq_num;
+	//! Clears the mark, returning whether it was set.
+	bool TakeReferenced() {
+		return referenced.load(std::memory_order_relaxed) && referenced.exchange(false, std::memory_order_relaxed);
 	}
-	//! Returns true, if the block has a live (not yet dead-counted) entry in the eviction queue.
-	bool HasLiveQueueEntry(BlockLock &l) const {
-		VerifyMutex(l);
-		return has_queue_entry;
-	}
-	//! Lock-free overload of HasLiveQueueEntry. Only safe for callers with exclusive ownership of the
-	//! block memory (i.e., the destructor).
-	bool HasLiveQueueEntry() const {
-		return has_queue_entry;
-	}
-	//! Marks whether the block has a live entry in the eviction queue. Requires the block lock.
-	void SetHasLiveQueueEntry(BlockLock &l, bool has_queue_entry_p) {
-		VerifyMutex(l);
-		has_queue_entry = has_queue_entry_p;
-	}
-	//! Get the LRU timestamp.
-	int64_t GetLRUTimestamp() const {
-		return lru_timestamp_msec;
-	}
-	//! Set the LRU timestamp.
-	void SetLRUTimestamp(int64_t timestamp_msec) {
-		lru_timestamp_msec = timestamp_msec;
+	//! Whether the block is loaded and nobody pins it, read without the block lock.
+	bool IsUnpinnedAndLoaded() const {
+		return (readers.load(std::memory_order_relaxed) & (READERS | LOADED)) == LOADED;
 	}
 	//! Set the buffer destruction policy.
 	void SetDestroyBufferUpon(DestroyBufferUpon destroy_buffer_upon_p) {
+		D_ASSERT(destroy_buffer_upon_p != DestroyBufferUpon::KEEP_COPY);
 		destroy_buffer_upon = destroy_buffer_upon_p;
 	}
-	//! Returns true, if the buffer must be added to the eviction queue.
-	bool MustAddToEvictionQueue() const {
-		return destroy_buffer_upon != DestroyBufferUpon::UNPIN;
+	//! Returns true, if the buffer is destroyed once its last reader unpins it.
+	bool DestroyedUponUnpin() const {
+		return destroy_buffer_upon == DestroyBufferUpon::UNPIN;
 	}
 	//! Returns true, if the buffer cannot be destroyed, but must be kept alive in a temporary file.
 	bool MustWriteToTemporaryFile() const {
 		return destroy_buffer_upon == DestroyBufferUpon::BLOCK;
 	}
+	//! Returns true, if eviction keeps a copy of the buffer in a temporary file when the copies have room for it.
+	bool KeepsCopy() const {
+		return destroy_buffer_upon == DestroyBufferUpon::KEEP_COPY;
+	}
 	void SetHasTemporaryFile(bool has_temporary_file_p) {
 		has_temporary_file = has_temporary_file_p;
+	}
+	//! Returns true, if the buffer is kept in a temporary file, which a block that keeps its copy has while loaded too.
+	bool HasTemporaryFile() const {
+		return has_temporary_file;
 	}
 	//! Returns the memory usage.
 	idx_t GetMemoryUsage() const {
@@ -177,11 +263,6 @@ public:
 		VerifyMutex(l);
 		memory_charge.Resize(alloc_size);
 	}
-	//! Merge two memory charges.
-	void MergeMemoryReservation(BlockLock &l, BufferPoolReservation reservation) {
-		VerifyMutex(l);
-		memory_charge.Merge(std::move(reservation));
-	}
 	//! Returns true, if there is a swizzled memory pointer, else false.
 	bool IsSwizzled() const {
 		return !unswizzled;
@@ -190,14 +271,8 @@ public:
 	void SetSwizzling(const char *unswizzler) {
 		unswizzled = unswizzler;
 	}
-	//! Sets the eviction queue index.
-	void SetEvictionQueueIndex(const idx_t index) {
-		// The index can only be set once.
-		D_ASSERT(eviction_queue_idx == DConstants::INVALID_INDEX);
-		// It can only be set for managed buffers (for now).
-		D_ASSERT(GetBufferType() == FileBufferType::MANAGED_BUFFER);
-		eviction_queue_idx = index;
-	}
+	//! Sets the eviction queue index, moving a loaded block to that queue.
+	void SetEvictionQueueIndex(const idx_t index);
 	//! Returns the eviction queue index.
 	idx_t GetEvictionQueueIndex() const {
 		return eviction_queue_idx;
@@ -206,7 +281,6 @@ public:
 public:
 	void ChangeMemoryUsage(BlockLock &l, int64_t delta);
 	void ConvertToPersistent(BlockLock &l, BlockHandle &new_block, unique_ptr<FileBuffer> new_buffer);
-	void ResizeBuffer(BlockLock &l, idx_t block_size, idx_t block_header_size, int64_t memory_delta);
 	//! Returns whether the block can be unloaded or the reason why it cannot be unloaded.
 	//! The state here can change if the block lock is held.
 	//! However, this method does not hold the block lock.
@@ -223,26 +297,36 @@ private:
 	mutex lock;
 	//! Whether the block is loaded or unloaded.
 	atomic<BlockState> state;
-	//! The number of concurrent readers.
-	atomic<int32_t> readers;
-	//! The memory tag.
-	const MemoryTag tag;
+	//! The reader word, on a cache line of its own: concurrent readers of a block write it, and the fields they
+	//! read stay shared.
+	alignas(64) atomic<int32_t> readers;
+	//! Whether the block was unpinned again since eviction last passed it.
+	atomic<bool> referenced {false};
+	static constexpr uint8_t CLAIMED = 1;
+	static constexpr uint8_t AWAITED = 2;
+	atomic<uint8_t> loading {0};
 	//! The file buffer type.
 	const FileBufferType buffer_type;
-	//! A pointer to the loaded data, if any.
-	unique_ptr<FileBuffer> buffer;
-	//! The internal eviction sequence number. Monotonic: it is never reset, so an eviction queue
-	//! entry is stale if and only if its sequence number differs from this one.
-	atomic<idx_t> eviction_seq_num;
-	//! Whether the block has a live entry in the eviction queue, i.e., an entry whose sequence
-	//! number matches eviction_seq_num and which has not been counted as a dead node.
-	//! Guarded by the block lock (read without it only by the destructor, which has exclusive ownership).
-	bool has_queue_entry;
-	bool has_temporary_file = false;
-	//! The LRU timestamp for age-based eviction.
-	atomic<int64_t> lru_timestamp_msec;
 	//! When to destroy the data buffer.
 	atomic<DestroyBufferUpon> destroy_buffer_upon;
+	//! The buffer and its data while the block is loaded, set before the reader word says so.
+	FileBuffer *loaded_buffer = nullptr;
+	data_ptr_t loaded_data = nullptr;
+	//! The memory tag.
+	alignas(64) const MemoryTag tag;
+	//! A pointer to the loaded data, if any.
+	unique_ptr<FileBuffer> buffer;
+	//! The eviction queue the loaded block is in, its stripe and slot there, and the memory it counts there; guarded
+	//! by that stripe's lock.
+	optional_ptr<EvictionQueue> queue;
+	idx_t queue_stripe = 0;
+	idx_t queue_slot = 0;
+	idx_t queue_bytes = 0;
+	//! The block handle of this memory.
+	weak_ptr<BlockHandle> owner;
+	//! Set when the block handle went away while readers remained; the last reader releases it.
+	shared_ptr<BlockMemory> orphan_owner;
+	atomic<bool> has_temporary_file {false};
 	//! The memory usage of the block when loaded.
 	//! Determines the memory to reserve when pinning/loading an unloaded block.
 	atomic<idx_t> memory_usage;
@@ -254,9 +338,11 @@ private:
 	atomic<idx_t> eviction_queue_idx;
 };
 
-class BlockHandle : public enable_shared_from_this<BlockHandle> {
+class alignas(64) BlockHandle : public enable_shared_from_this<BlockHandle> {
 public:
 	BlockHandle(BlockManager &block_manager, block_id_t block_id, MemoryTag tag);
+	BlockHandle(BlockManager &block_manager, block_id_t block_id, MemoryTag tag, FileBufferType buffer_type,
+	            DestroyBufferUpon destroy_buffer_upon, idx_t size);
 	BlockHandle(BlockManager &block_manager, block_id_t block_id, MemoryTag tag, unique_ptr<FileBuffer> buffer,
 	            DestroyBufferUpon destroy_buffer_upon, idx_t size, BufferPoolReservation &&reservation);
 	~BlockHandle();
@@ -291,10 +377,6 @@ public:
 	//! Returns a reference to the memory of a block.
 	BlockMemory &GetMemory() {
 		return memory;
-	}
-	//! Returns a weak pointer to the memory of a block.
-	weak_ptr<BlockMemory> GetMemoryWeak() const {
-		return weak_ptr<BlockMemory>(memory_p);
 	}
 
 public:

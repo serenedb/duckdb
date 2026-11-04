@@ -147,7 +147,7 @@ void KeyValueSecretReader::Initialize(const char **secret_types, idx_t secret_ty
 
 	auto &secret_manager = db->GetSecretManager();
 	auto transaction = context ? CatalogTransaction::GetSystemCatalogTransaction(*context)
-	                           : CatalogTransaction::GetSystemTransaction(*db);
+	                           : CatalogTransaction::GetCommittedTransaction(*db);
 
 	SecretMatch secret_match;
 	for (idx_t i = 0; i < secret_types_len; i++) {

@@ -68,9 +68,14 @@ public:
 	unique_ptr<ProducerToken> CreateProducer(shared_ptr<SchedulerAccount> account);
 	//! Returns the number of threads
 	DUCKDB_API idx_t NumberOfThreads();
+	//! Whether background workers run scheduled tasks, of either pool; without them a scheduled task runs only when
+	//! a thread takes it from its producer
+	DUCKDB_API bool HasWorkers() const;
 	DUCKDB_API static idx_t QueryThreads(ClientContext &context);
 	//! Returns the number of async threads
 	DUCKDB_API idx_t NumberOfAsyncThreads();
+	//! The pool for blocking work outside a client context: the async pool when it has threads, else the regular one
+	DUCKDB_API TaskSchedulerType AsyncPool();
 	DUCKDB_API static idx_t QueryAsyncThreads(ClientContext &context);
 	DUCKDB_API static TaskSchedulerType QueryAsyncPool(ClientContext &context);
 

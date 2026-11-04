@@ -17,6 +17,10 @@ struct MemoryInformation {
 	MemoryTag tag;
 	idx_t size;
 	idx_t evicted_data;
+	//! Blocks evicted, buffers written to temporary files and buffers read back from them since start
+	idx_t evictions = 0;
+	idx_t temporary_writes = 0;
+	idx_t temporary_reads = 0;
 };
 
 struct TemporaryFileInformation {

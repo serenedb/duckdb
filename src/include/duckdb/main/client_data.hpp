@@ -27,7 +27,7 @@ class BufferManager;
 
 struct ClientData {
 public:
-	explicit ClientData(ClientContext &context);
+	explicit ClientData(ClientContext &context, shared_ptr<AttachedDatabase> shared_temporary_objects = nullptr);
 	~ClientData();
 
 public:
@@ -36,6 +36,7 @@ public:
 
 	//! The set of temporary objects belonging to this client.
 	shared_ptr<AttachedDatabase> temporary_objects;
+	bool shares_temporary_objects = false;
 	//! The set of bound prepared statements belonging to this client.
 	identifier_map_t<shared_ptr<PreparedStatementData>> prepared_statements;
 	unique_ptr<SequenceSession> sequence_session;

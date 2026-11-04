@@ -78,6 +78,13 @@ public:
 	vector<unique_ptr<AsyncTask>> CreatePrefetchTasks(QueryContext context,
 	                                                  vector<shared_ptr<BlockHandle>> &handles) final;
 	void Unpin(shared_ptr<BlockHandle> &handle) final;
+	void Unpin(BlockMemory &memory) final;
+	shared_ptr<BlockHandle> RegisterUnloadedMemory(MemoryTag tag, idx_t block_size, idx_t block_header_size,
+	                                               DestroyBufferUpon destroy_buffer_upon) final;
+	BufferHandle LoadClaimed(const QueryContext &context, shared_ptr<BlockHandle> &handle) final;
+	BlockLoad PrepareLoad(BlockMemory &memory, idx_t block_size, idx_t block_header_size) final;
+	BufferHandle CompleteLoad(shared_ptr<BlockHandle> &handle, BlockLoad load) final;
+	void Discard(shared_ptr<BlockHandle> &handle) final;
 
 	//! Set a new memory limit to the buffer manager, throws an exception if the new limit is too low and not enough
 	//! blocks can be evicted
@@ -111,8 +118,8 @@ public:
 	unique_ptr<FileBuffer> ConstructManagedBuffer(idx_t size, idx_t block_header_size, unique_ptr<FileBuffer> &&source,
 	                                              FileBufferType type = FileBufferType::MANAGED_BUFFER) override;
 
-	DUCKDB_API void ReserveMemory(idx_t size) final;
-	DUCKDB_API void FreeReservedMemory(idx_t size) final;
+	DUCKDB_API void ReserveMemory(MemoryTag tag, idx_t size) final;
+	DUCKDB_API void FreeReservedMemory(MemoryTag tag, idx_t size) final;
 	bool HasTemporaryDirectory() const final;
 	bool HasFilesInTemporaryDirectory() const final;
 
@@ -133,17 +140,20 @@ protected:
 	shared_ptr<BlockHandle> RegisterMemory(MemoryTag tag, idx_t block_size, idx_t block_header_size, bool can_destroy,
 	                                       QueryContext context = QueryContext());
 
+	//! Lets the buffer pool evict [block], a block RegisterMemory created
+	void AddToEvictionQueue(BlockHandle &block);
+	//! Pins [block], a block RegisterMemory created, before the buffer pool may evict it
+	BufferHandle PinNew(const QueryContext &context, shared_ptr<BlockHandle> &block);
+
 	//! Get allocated size for a block
 	idx_t GetBlockAllocSize(idx_t block_size) const;
-
-	//! Garbage collect eviction queue
-	void PurgeQueue(const BlockHandle &handle) final;
 
 	BufferPool &GetBufferPool() const final;
 	TemporaryMemoryManager &GetTemporaryMemoryManager() final;
 
 	//! Write a temporary buffer to disk
 	void WriteTemporaryBuffer(QueryContext context, MemoryTag tag, block_id_t block_id, FileBuffer &buffer) final;
+	bool TryWriteTemporaryCopy(QueryContext context, MemoryTag tag, block_id_t block_id, FileBuffer &buffer) final;
 	//! Read a temporary buffer from disk
 	unique_ptr<FileBuffer> ReadTemporaryBuffer(QueryContext context, MemoryTag tag, BlockHandle &block,
 	                                           unique_ptr<FileBuffer> buffer = nullptr) final;
@@ -154,8 +164,6 @@ protected:
 
 	void RequireTemporaryDirectory();
 
-	void AddToEvictionQueue(shared_ptr<BlockHandle> &handle) final;
-
 	const char *InMemoryWarning();
 
 	static data_ptr_t BufferAllocatorAllocate(PrivateAllocatorData *private_data, idx_t size);
@@ -165,7 +173,9 @@ protected:
 
 	//! When the BlockHandle reaches 0 readers, this creates a new FileBuffer for this BlockHandle and
 	//! overwrites the data within with garbage. Any readers that do not hold the pin will notice
-	void VerifyZeroReaders(BlockLock &l, shared_ptr<BlockHandle> &handle);
+	void VerifyZeroReaders(BlockLock &l, BlockMemory &memory);
+	//! Pins [handle]; the pin owns a reference to it when [own] is set
+	BufferHandle Pin(const QueryContext &context, shared_ptr<BlockHandle> &handle, bool own);
 
 	//! A run of handles with adjacent block ids starting at first_block
 	struct PrefetchRun {
@@ -211,6 +221,11 @@ protected:
 	unique_ptr<BlockManager> temp_block_manager;
 	//! Temporary evicted memory data per tag
 	atomic<CheckedInteger<idx_t, InternalException>> evicted_data_per_tag[MEMORY_TAG_COUNT];
+	//! Buffers written to and read back from temporary files per tag, since start
+	array<atomic<idx_t>, MEMORY_TAG_COUNT> temporary_writes_per_tag {};
+	array<atomic<idx_t>, MEMORY_TAG_COUNT> temporary_reads_per_tag {};
+	//! The bytes of the copies blocks that keep one have in temporary files
+	atomic<idx_t> copy_bytes {0};
 };
 
 } // namespace duckdb

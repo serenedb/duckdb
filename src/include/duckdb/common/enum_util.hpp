@@ -108,6 +108,8 @@ enum class BindingMode : uint8_t;
 
 enum class BitpackingMode : uint8_t;
 
+enum class BlockCachePrefetch : uint8_t;
+
 enum class BlockIteratorStateType : int8_t;
 
 enum class BlockState : uint8_t;
@@ -121,8 +123,6 @@ enum class CSVState : uint8_t;
 enum class CTEExecutionMode : uint8_t;
 
 enum class CTEMaterialize : uint8_t;
-
-enum class CacheBlockState : uint8_t;
 
 enum class CacheValidationMode : uint8_t;
 
@@ -378,6 +378,8 @@ enum class MacroType : uint8_t;
 
 enum class MapInvalidReason : uint8_t;
 
+enum class MappedFileAccess : uint8_t;
+
 enum class MatchMode : uint8_t;
 
 enum class MatchRecognizeAfterMatch : uint8_t;
@@ -523,8 +525,6 @@ enum class RemoveUnusedColumnsMode : uint8_t;
 enum class RenderMode : uint8_t;
 
 enum class ReplicationRole : uint8_t;
-
-enum class RequestSizing : uint8_t;
 
 enum class RequestType : uint8_t;
 
@@ -827,6 +827,9 @@ template<>
 const char* EnumUtil::ToChars<BitpackingMode>(BitpackingMode value);
 
 template<>
+const char* EnumUtil::ToChars<BlockCachePrefetch>(BlockCachePrefetch value);
+
+template<>
 const char* EnumUtil::ToChars<BlockIteratorStateType>(BlockIteratorStateType value);
 
 template<>
@@ -846,9 +849,6 @@ const char* EnumUtil::ToChars<CTEExecutionMode>(CTEExecutionMode value);
 
 template<>
 const char* EnumUtil::ToChars<CTEMaterialize>(CTEMaterialize value);
-
-template<>
-const char* EnumUtil::ToChars<CacheBlockState>(CacheBlockState value);
 
 template<>
 const char* EnumUtil::ToChars<CacheValidationMode>(CacheValidationMode value);
@@ -1232,6 +1232,9 @@ template<>
 const char* EnumUtil::ToChars<MapInvalidReason>(MapInvalidReason value);
 
 template<>
+const char* EnumUtil::ToChars<MappedFileAccess>(MappedFileAccess value);
+
+template<>
 const char* EnumUtil::ToChars<MatchMode>(MatchMode value);
 
 template<>
@@ -1449,9 +1452,6 @@ const char* EnumUtil::ToChars<RenderMode>(RenderMode value);
 
 template<>
 const char* EnumUtil::ToChars<ReplicationRole>(ReplicationRole value);
-
-template<>
-const char* EnumUtil::ToChars<RequestSizing>(RequestSizing value);
 
 template<>
 const char* EnumUtil::ToChars<RequestType>(RequestType value);
@@ -1845,6 +1845,9 @@ template<>
 BitpackingMode EnumUtil::FromString<BitpackingMode>(std::string_view value);
 
 template<>
+BlockCachePrefetch EnumUtil::FromString<BlockCachePrefetch>(std::string_view value);
+
+template<>
 BlockIteratorStateType EnumUtil::FromString<BlockIteratorStateType>(std::string_view value);
 
 template<>
@@ -1864,9 +1867,6 @@ CTEExecutionMode EnumUtil::FromString<CTEExecutionMode>(std::string_view value);
 
 template<>
 CTEMaterialize EnumUtil::FromString<CTEMaterialize>(std::string_view value);
-
-template<>
-CacheBlockState EnumUtil::FromString<CacheBlockState>(std::string_view value);
 
 template<>
 CacheValidationMode EnumUtil::FromString<CacheValidationMode>(std::string_view value);
@@ -2250,6 +2250,9 @@ template<>
 MapInvalidReason EnumUtil::FromString<MapInvalidReason>(std::string_view value);
 
 template<>
+MappedFileAccess EnumUtil::FromString<MappedFileAccess>(std::string_view value);
+
+template<>
 MatchMode EnumUtil::FromString<MatchMode>(std::string_view value);
 
 template<>
@@ -2467,9 +2470,6 @@ RenderMode EnumUtil::FromString<RenderMode>(std::string_view value);
 
 template<>
 ReplicationRole EnumUtil::FromString<ReplicationRole>(std::string_view value);
-
-template<>
-RequestSizing EnumUtil::FromString<RequestSizing>(std::string_view value);
 
 template<>
 RequestType EnumUtil::FromString<RequestType>(std::string_view value);

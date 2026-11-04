@@ -642,6 +642,9 @@ void SingleFileStorageManager::LoadStorage(QueryContext context) {
 		timer = make_uniq<MetricsTimer>(profiler->StartTimer<MetricStorageAttachLoadStorageLatency>());
 	}
 
+	if (auto storage_extension = db.GetStorageExtension()) {
+		storage_extension->OnLoadStorage(db);
+	}
 	auto &catalog = db.GetCatalog();
 	if (catalog.UsesCatalogLog()) {
 		if (!client_context) {

@@ -36,7 +36,7 @@
 #include "duckdb/parallel/task_scheduler.hpp"
 #include "duckdb/parser/parser.hpp"
 #include "duckdb/planner/expression_binder.hpp"
-#include "duckdb/storage/external_file_cache/external_file_cache.hpp"
+#include "duckdb/storage/block_cache/block_cache.hpp"
 #include "duckdb/storage/buffer/buffer_pool.hpp"
 #include "duckdb/storage/buffer_manager.hpp"
 #include "duckdb/storage/storage_manager.hpp"
@@ -95,6 +95,11 @@ static idx_t GetAvailableSystemMemory(DBConfig &config) {
 	}
 	auto local_fs = FileSystem::CreateLocal();
 	return DBConfig::GetSystemAvailableMemory(*local_fs);
+}
+
+static idx_t ParseSizeOrZero(const Value &input) {
+	const auto size = input.ToString();
+	return size == "0" ? 0 : DBConfig::ParseMemoryLimit(size);
 }
 
 } // namespace
@@ -674,34 +679,55 @@ void EnableExternalAccessSetting::OnSet(SettingCallbackInfo &info, Value &input)
 //===----------------------------------------------------------------------===//
 void EnableExternalFileCacheSetting::OnSet(SettingCallbackInfo &info, Value &input) {
 	if (info.db) {
-		ExternalFileCache::Get(*info.db).SetEnabled(input.GetValue<bool>());
+		info.db->GetBlockCache().SetEnabled(input.GetValue<bool>());
 	}
 }
 
 //===----------------------------------------------------------------------===//
-// External File Cache Block Sizes
+// External File Cache Min Memory
 //===----------------------------------------------------------------------===//
-static void ValidateExternalFileCacheBlockSize(const char *name, const Value &input) {
-	const auto bytes = input.GetValue<uint64_t>();
-	if (bytes == 0) {
-		throw InvalidInputException("Invalid option for %s: value must be positive", string(name));
-	}
-	if (!IsPowerOfTwo(bytes)) {
-		throw InvalidInputException("Invalid option for %s: block size must be a power of two, got %llu", string(name),
-		                            bytes);
+void ExternalFileCacheMinMemorySetting::SetGlobal(DatabaseInstance *db, DBConfig &config, const Value &input) {
+	config.options.external_file_cache_min_memory = ParseSizeOrZero(input);
+	if (db) {
+		BufferManager::GetBufferManager(*db).GetBufferPool().SetExternalFileCacheMinMemory(
+		    config.options.external_file_cache_min_memory);
 	}
 }
 
-void ExternalFileCacheLocalMaxBlockSizeSetting::OnSet(SettingCallbackInfo &info, Value &input) {
-	ValidateExternalFileCacheBlockSize(Name, input);
+void ExternalFileCacheMinMemorySetting::ResetGlobal(DatabaseInstance *db, DBConfig &config) {
+	config.options.external_file_cache_min_memory = DConstants::INVALID_INDEX;
+	if (db) {
+		BufferManager::GetBufferManager(*db).GetBufferPool().SetExternalFileCacheMinMemory(
+		    config.options.external_file_cache_min_memory);
+	}
 }
 
-void ExternalFileCacheRemoteMaxBlockSizeSetting::OnSet(SettingCallbackInfo &info, Value &input) {
-	ValidateExternalFileCacheBlockSize(Name, input);
+Value ExternalFileCacheMinMemorySetting::GetSetting(const ClientContext &context) {
+	return Value(StringUtil::BytesToHumanReadableString(
+	    BufferManager::GetBufferManager(context).GetBufferPool().GetExternalFileCacheMinMemory()));
 }
 
-void ExternalFileCacheRemoteMinBlockSizeSetting::OnSet(SettingCallbackInfo &info, Value &input) {
-	ValidateExternalFileCacheBlockSize(Name, input);
+//===----------------------------------------------------------------------===//
+// External File Cache Spill Size
+//===----------------------------------------------------------------------===//
+void ExternalFileCacheSpillSizeSetting::SetGlobal(DatabaseInstance *db, DBConfig &config, const Value &input) {
+	config.options.external_file_cache_spill_size = ParseSizeOrZero(input);
+}
+
+void ExternalFileCacheSpillSizeSetting::ResetGlobal(DatabaseInstance *db, DBConfig &config) {
+	config.options.external_file_cache_spill_size = DConstants::INVALID_INDEX;
+}
+
+Value ExternalFileCacheSpillSizeSetting::GetSetting(const ClientContext &context) {
+	auto size = DBConfig::GetConfig(context).options.external_file_cache_spill_size;
+	if (size == DConstants::INVALID_INDEX) {
+		const auto swap = BufferManager::GetBufferManager(context).GetMaxSwap();
+		if (!swap.IsValid()) {
+			return Value("unlimited");
+		}
+		size = swap.GetIndex() / 2;
+	}
+	return Value(StringUtil::BytesToHumanReadableString(size));
 }
 
 //===----------------------------------------------------------------------===//

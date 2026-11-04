@@ -77,6 +77,7 @@ public:
 	                                                   optional_ptr<FileOpener> opener = nullptr) override;
 	DUCKDB_API void Truncate(FileHandle &handle, int64_t new_size) override;
 	DUCKDB_API void FileSync(FileHandle &handle) override;
+	DUCKDB_API void SyncDirectory(const string &directory, optional_ptr<FileOpener> opener = nullptr) override;
 
 	DUCKDB_API FileExistence TryDirectoryExists(const string &directory, optional_ptr<FileOpener> opener = nullptr,
 	                                            optional_ptr<ErrorData> error = nullptr) override;
@@ -132,7 +133,7 @@ protected:
 	                                                   optional_ptr<FileOpener> opener) override;
 	DUCKDB_API bool SupportsOpenFileExtended() const override;
 	DUCKDB_API bool ListFilesExtended(const string &directory, const std::function<void(OpenFileInfo &info)> &callback,
-	                                  optional_ptr<FileOpener> opener) override;
+	                                  optional_ptr<FileOpener> opener, const ListFilesOptions &options) override;
 	DUCKDB_API bool SupportsListFilesExtended() const override;
 
 private:

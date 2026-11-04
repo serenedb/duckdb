@@ -410,7 +410,7 @@ HTTPUtil::RunRequestWithRetry(const std::function<unique_ptr<HTTPResponse>(void)
 			                        response->status == HTTPStatusCode::NotModified_304;
 			    return HTTPRetryDecision::Finish();
 		    }
-		    if (!HTTPUtil::IsIdempotent(request.type)) {
+		    if (!HTTPUtil::IsIdempotent(request.type) && !(response && response->unsent)) {
 			    return HTTPRetryDecision::Finish();
 		    }
 		    const bool throttled = (response && (response->status == HTTPStatusCode::TooManyRequests_429 ||
@@ -467,6 +467,8 @@ void HTTPParams::Initialize(optional_ptr<FileOpener> opener) {
 	auto client_context = FileOpener::TryGetClientContext(opener);
 	if (client_context) {
 		logger = client_context->logger;
+	} else if (db) {
+		logger = db->GetLogManager().GlobalLoggerReference();
 	}
 }
 
