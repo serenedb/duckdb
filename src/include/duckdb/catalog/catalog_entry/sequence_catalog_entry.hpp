@@ -19,7 +19,6 @@
 namespace duckdb {
 class DuckTransaction;
 class SequenceCatalogEntry;
-class WriteAheadLog;
 
 struct SequenceValue {
 	SequenceCatalogEntry *entry;
@@ -85,10 +84,6 @@ struct SequenceState {
 	uint64_t reserved_usage_count;
 	int64_t reserved_counter;
 	optional<int64_t> reserved_last_value;
-	shared_ptr<WriteAheadLog> reserved_log;
-	idx_t reserved_offset = 0;
-	uint64_t durable_usage_count;
-	int64_t durable_counter;
 	idx_t generation = 0;
 };
 
@@ -110,19 +105,15 @@ public:
 	void SetAsRoot(optional_ptr<CatalogTransaction> transaction, optional_ptr<CatalogEntry> previous) override;
 
 	SequenceData GetData() const;
-	SequenceValue GetReservedValue();
 	int64_t CurrentValue(SequenceSession &session);
-	int64_t NextValue(DuckTransaction &transaction, SequenceSession &session);
-	void NextValues(DuckTransaction &transaction, SequenceSession &session, idx_t count, SequenceRuns &runs);
-	int64_t NextValues(DuckTransaction &transaction, idx_t count);
-	int64_t SetValue(DuckTransaction &transaction, SequenceSession &session, int64_t value, bool is_called);
-	int64_t SetValue(DuckTransaction &transaction, int64_t value, bool is_called);
+	int64_t NextValue(optional_ptr<DuckTransaction> transaction, SequenceSession &session);
+	void NextValues(optional_ptr<DuckTransaction> transaction, SequenceSession &session, idx_t count,
+	                SequenceRuns &runs);
+	int64_t NextValues(optional_ptr<DuckTransaction> transaction, idx_t count);
+	int64_t SetValue(optional_ptr<DuckTransaction> transaction, SequenceSession &session, int64_t value,
+	                 bool is_called);
+	int64_t SetValue(optional_ptr<DuckTransaction> transaction, int64_t value, bool is_called);
 	void ReplayValue(uint64_t usage_count, int64_t counter, optional<int64_t> last_value);
-	void Cover(uint64_t usage_count);
-	void ReserveInCommit(WriteAheadLog &catalog_log, uint64_t usage_count, vector<SequenceValue> &durable_after);
-	void MarkReserved(const SequenceValue &value);
-	void MarkDurable(const SequenceValue &value);
-	bool LogsValues() const;
 
 	string ToSQL() const override;
 
@@ -130,16 +121,15 @@ public:
 
 private:
 	bool Committed() const;
+	bool LogsValues() const;
 	idx_t Block() const;
 	void ThrowIfSuperseded() const;
 	SequenceData Restarted(RestartSequenceInfo &info) const;
-	SequenceData Reserved() const;
 	void Fetch(SequenceSessionValue &cached, idx_t needed);
 	void FetchLocked(SequenceSessionValue &cached, idx_t needed);
-	void RaiseReserved(uint64_t usage_count, int64_t counter, optional<int64_t> last_value,
-	                   shared_ptr<WriteAheadLog> log, idx_t offset);
-	void RaiseDurable(uint64_t usage_count, int64_t counter, optional<int64_t> last_value);
-	pair<shared_ptr<WriteAheadLog>, idx_t> AppendReservation(const SequenceData &target);
+	void Cover(uint64_t usage_count);
+	void RaiseReserved(uint64_t usage_count, int64_t counter, optional<int64_t> last_value);
+	void AppendReservation(const SequenceData &target);
 
 private:
 	shared_ptr<SequenceState> state;

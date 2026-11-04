@@ -10,8 +10,6 @@
 
 #include "duckdb/catalog/catalog_entry/schema_catalog_entry.hpp"
 #include "duckdb/parser/parsed_data/create_coordinate_system_info.hpp"
-#include "duckdb/parser/parsed_data/create_job_info.hpp"
-#include "duckdb/parser/parsed_data/create_tokenizer_info.hpp"
 
 namespace duckdb {
 
@@ -26,7 +24,7 @@ public:
 	template <class F>
 	void ForEachSet(F &&callback) {
 		for (auto set : {&schemas, &tables, &indexes, &table_functions, &copy_functions, &pragma_functions, &functions,
-		                 &sequences, &collations, &types, &coordinate_systems, &tokenizers, &jobs}) {
+		                 &sequences, &collations, &types, &coordinate_systems}) {
 			callback(*set);
 		}
 	}
@@ -54,9 +52,6 @@ private:
 	CatalogSet types;
 	//! The catalog set holding the coordinate systems
 	CatalogSet coordinate_systems;
-	//! The catalog set holding the tokenizers
-	CatalogSet tokenizers;
-	CatalogSet jobs;
 };
 
 //! A schema in the catalog
@@ -79,8 +74,6 @@ public:
 	optional_ptr<CatalogEntry> CreateFunction(CatalogTransaction transaction, CreateFunctionInfo &info) override;
 	optional_ptr<CatalogEntry> CreateIndex(CatalogTransaction transaction, CreateIndexInfo &info,
 	                                       TableCatalogEntry &table) override;
-	optional_ptr<CatalogEntry> CreateIndex(CatalogTransaction transaction, CreateIndexInfo &info,
-	                                       CatalogEntry &relation) override;
 	optional_ptr<CatalogEntry> CreateView(CatalogTransaction transaction, CreateViewInfo &info) override;
 	optional_ptr<CatalogEntry> CreateSequence(CatalogTransaction transaction, CreateSequenceInfo &info) override;
 	optional_ptr<CatalogEntry> CreateTableFunction(CatalogTransaction transaction,
@@ -95,8 +88,6 @@ public:
 	optional_ptr<CatalogEntry> CreateType(CatalogTransaction transaction, CreateTypeInfo &info) override;
 	//! Create a nested schema inside this schema
 	optional_ptr<CatalogEntry> CreateSchema(CatalogTransaction transaction, CreateSchemaInfo &info);
-	optional_ptr<CatalogEntry> CreateTokenizer(CatalogTransaction transaction, CreateTokenizerInfo &info) override;
-	optional_ptr<CatalogEntry> CreateJob(CatalogTransaction transaction, CreateJobInfo &info) override;
 	void Alter(CatalogTransaction transaction, AlterInfo &info) override;
 	void Scan(ClientContext &context, CatalogType type, const std::function<void(CatalogEntry &)> &callback) override;
 	void Scan(CatalogTransaction transaction, CatalogType type,

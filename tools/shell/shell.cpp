@@ -1305,16 +1305,14 @@ void ShellState::OpenDB(ShellOpenFlags flags) {
 
 	if (!db) {
 		try {
-			db = make_uniq<duckdb::DuckDB>(zDbFilename.c_str(), &config);
+			db = make_uniq<duckdb::DuckDB>(*engine.open(zDbFilename));
 			RegisterShellLogger(*db, storage_ptr);
-			engine.load(*db->instance);
 			conn = make_uniq<duckdb::Connection>(*db);
 		} catch (std::exception &ex) {
 			PrintDatabaseError(duckdb::ErrorData(ex));
 			if (flags == ShellOpenFlags::KEEP_ALIVE_ON_FAILURE) {
-				db = make_uniq<duckdb::DuckDB>(":memory:", &config);
+				db = make_uniq<duckdb::DuckDB>(*engine.open(IN_MEMORY_PATH));
 				RegisterShellLogger(*db, storage_ptr);
-				engine.load(*db->instance);
 				conn = make_uniq<duckdb::Connection>(*db);
 			} else {
 				ShellState::Exit(1);
@@ -3863,7 +3861,6 @@ int RunShell(int argc, char **argv, ShellSubcommand subcommand, ShellEngine engi
 	}
 	data.subcommand = subcommand;
 	data.engine = engine;
-	engine.configure(data.config);
 	if (subcommand == duckdb_shell::ShellSubcommand::PSQL) {
 		// Seed psql connection params from PG* env vars. Explicit flags
 		// (-h/-p/-d/-U or positionals) parsed later overwrite these.

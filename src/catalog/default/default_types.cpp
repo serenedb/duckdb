@@ -553,7 +553,7 @@ DefaultTypeGenerator::DefaultTypeGenerator(Catalog &catalog, SchemaCatalogEntry 
 
 unique_ptr<CatalogEntry> DefaultTypeGenerator::CreateDefaultEntry(ClientContext &context,
                                                                   const Identifier &entry_name) {
-	if (schema.name != DEFAULT_SCHEMA) {
+	if (!ServesDefaults(schema.name, DEFAULT_SCHEMA)) {
 		return nullptr;
 	}
 	auto entry = TryGetDefaultTypeEntry(entry_name);
@@ -571,7 +571,7 @@ unique_ptr<CatalogEntry> DefaultTypeGenerator::CreateDefaultEntry(ClientContext 
 
 vector<Identifier> DefaultTypeGenerator::GetDefaultEntries() {
 	vector<Identifier> result;
-	if (schema.name != DEFAULT_SCHEMA) {
+	if (!ServesDefaults(schema.name, DEFAULT_SCHEMA)) {
 		return result;
 	}
 	auto &internal_types = GetBuiltinTypes();

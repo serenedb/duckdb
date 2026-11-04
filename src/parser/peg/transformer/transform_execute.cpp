@@ -11,8 +11,7 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformExecuteJobStatement(PEG
 	vector<unique_ptr<ParsedExpression>> children;
 	children.emplace_back(ConstantExpression::String(qualified_name.ToString()));
 	auto function = make_uniq<FunctionExpression>("execute_job", std::move(children));
-	function->SetQualifiedName(
-	    QualifiedName(Identifier(SYSTEM_CATALOG), Identifier(DEFAULT_SCHEMA), function->GetQualifiedName().Name()));
+	function->BuiltinMutable() = true;
 	auto result = make_uniq<CallStatement>();
 	result->function = std::move(function);
 	return std::move(result);

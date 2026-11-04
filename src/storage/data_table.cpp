@@ -137,19 +137,15 @@ DataTable::DataTable(ClientContext &context, DataTable &parent, idx_t removed_co
 	struct IndexColumns {
 		Identifier name;
 		bool entry_backed;
-		bool remaps_columns;
 		unordered_set<column_t> column_ids;
 	};
 	auto &index_catalog = db.GetCatalog();
-	const bool stable_column_ids = index_catalog.Compatibility() == SqlCompatibility::POSTGRES;
-	auto &index_types = db.GetDatabase().config.GetIndexTypes();
 	vector<IndexColumns> index_columns;
 	for (auto index_entry : info->indexes.IndexEntries()) {
 		auto index_info = index_entry->GetStorageInfo();
-		auto index_type = index_types.FindByName(index_entry->GetIndexType());
-		index_columns.push_back(
-		    {index_entry->GetName(), !index_info.is_unique && !index_info.is_primary && !index_info.is_foreign,
-		     stable_column_ids && index_type && index_type->remaps_columns, std::move(index_info.column_set)});
+		index_columns.push_back({index_entry->GetName(),
+		                         !index_info.is_unique && !index_info.is_primary && !index_info.is_foreign,
+		                         std::move(index_info.column_set)});
 	}
 
 	// first check if there are any indexes that exist that point to the removed column
@@ -167,7 +163,7 @@ DataTable::DataTable(ClientContext &context, DataTable &parent, idx_t removed_co
 		for (auto column_id : index.column_ids) {
 			if (column_id == removed_column) {
 				throw CatalogException("Cannot drop this column: an index depends on it!");
-			} else if (column_id > removed_column && !index.remaps_columns) {
+			} else if (column_id > removed_column) {
 				throw CatalogException(Exception::InitializeExtraInfo("UNSUPPORTED", optional_idx()),
 				                       "Cannot drop this column: an index depends on a column after it!");
 			}
@@ -643,39 +639,15 @@ bool DataTable::IndexNameIsUnique(const string &name, optional_ptr<const unorder
 	return info->indexes.NameIsUnique(name, dropped, replaced);
 }
 
-optional_ptr<CatalogEntry> DataTableInfo::CommittedEntry() const {
-	auto &catalog = db.GetCatalog();
-	if (!catalog.UsesCatalogLog()) {
-		return nullptr;
-	}
-	return catalog.Cast<DuckCatalog>().GetOidIndex().GetCommitted(GetTableOid());
-}
-
-shared_ptr<SchemaInfo> DataTableInfo::CurrentSchemaInfo() const {
-	if (auto entry = CommittedEntry()) {
-		return entry->Cast<StandardEntry>().schema_info;
-	}
-	lock_guard<mutex> l(name_lock);
-	return schema_info;
-}
-
 Identifier DataTableInfo::GetSchemaName() {
-	return CurrentSchemaInfo()->Name();
+	return schema_info->Name();
 }
 
 vector<Identifier> DataTableInfo::GetSchemaPath() const {
-	return CurrentSchemaInfo()->Path();
-}
-
-void DataTableInfo::SetSchemaInfo(shared_ptr<SchemaInfo> info) {
-	lock_guard<mutex> l(name_lock);
-	schema_info = std::move(info);
+	return schema_info->Path();
 }
 
 Identifier DataTableInfo::GetTableName() {
-	if (auto entry = CommittedEntry()) {
-		return entry->name;
-	}
 	lock_guard<mutex> l(name_lock);
 	return table;
 }
@@ -683,27 +655,6 @@ Identifier DataTableInfo::GetTableName() {
 void DataTableInfo::SetTableName(Identifier name) {
 	lock_guard<mutex> l(name_lock);
 	table = std::move(name);
-}
-
-static bool HasStableColumnOids(const vector<idx_t> &column_oids) {
-	return !column_oids.empty() &&
-	       std::all_of(column_oids.begin(), column_oids.end(), [](idx_t column_oid) { return column_oid != 0; });
-}
-
-vector<idx_t> DataTableInfo::SetIndexColumnLayout(vector<idx_t> logical_column_oids,
-                                                  vector<idx_t> physical_column_oids) {
-	auto previous_logical = std::move(index_logical_column_oids);
-	auto previous_physical = std::move(index_physical_column_oids);
-	index_logical_column_oids = std::move(logical_column_oids);
-	index_physical_column_oids = std::move(physical_column_oids);
-	if (!HasStableColumnOids(previous_physical) || !HasStableColumnOids(index_physical_column_oids)) {
-		return {};
-	}
-	if (previous_physical != index_physical_column_oids) {
-		indexes.SyncColumnLayout(db.GetDatabase().config.GetIndexTypes(), previous_physical,
-		                         index_physical_column_oids);
-	}
-	return previous_logical;
 }
 
 Identifier DataTable::GetTableName() const {
@@ -824,7 +775,7 @@ static void VerifyNotNullConstraint(const TableCatalogEntry &table, const Vector
 }
 
 // To avoid throwing an error at SELECT, instead this moves the error detection to INSERT
-static void VerifyGeneratedExpressionSuccess(ClientContext &context, TableCatalogEntry &table, DataChunk &chunk,
+static void VerifyGeneratedExpressionSuccess(ClientContext &context, const TableCatalogEntry &table, DataChunk &chunk,
                                              Expression &expr, column_t index) {
 	auto &col = table.GetColumn(LogicalIndex(index));
 	D_ASSERT(col.Generated());
@@ -867,6 +818,36 @@ static void VerifyCheckConstraintExpression(ClientContext &context, const TableC
 static void VerifyCheckConstraint(ClientContext &context, const TableCatalogEntry &table, Expression &expr,
                                   DataChunk &chunk, const CheckConstraint &check) {
 	VerifyCheckConstraintExpression(context, table, expr, chunk, check.ToString());
+}
+
+static void VerifyGeneratedColumns(ClientContext &context, const TableCatalogEntry &table, DataChunk &chunk) {
+	if (!table.HasGeneratedColumns()) {
+		return;
+	}
+	// Verify the generated columns against the inserted values.
+	auto binder = Binder::CreateBinder(context);
+	physical_index_set_t bound_columns;
+	CheckBinder generated_check_binder(*binder, context, table.name, table.GetColumns(), bound_columns);
+	for (auto &col : table.GetColumns().Logical()) {
+		if (!col.Generated()) {
+			continue;
+		}
+		D_ASSERT(col.Type().id() != LogicalTypeId::ANY);
+		generated_check_binder.target_type = col.Type();
+		auto to_be_bound_expression = table.GetColumns().SharedGeneratedExpression(col);
+		auto bound_expression = generated_check_binder.Bind(to_be_bound_expression);
+		VerifyGeneratedExpressionSuccess(context, table, chunk, *bound_expression, col.Oid());
+	}
+}
+
+void DataTable::VerifyRowConstraints(ClientContext &context, const TableCatalogEntry &table,
+                                     const vector<unique_ptr<BoundConstraint>> &bound_constraints, DataChunk &chunk) {
+	VerifyGeneratedColumns(context, table, chunk);
+	for (auto &constraint : bound_constraints) {
+		if (constraint->type == ConstraintType::NOT_NULL || constraint->type == ConstraintType::CHECK) {
+			VerifyRowConstraint(context, table, *constraint, chunk);
+		}
+	}
 }
 
 void DataTable::VerifyRowConstraint(ClientContext &context, const TableCatalogEntry &table,
@@ -1084,22 +1065,7 @@ void DataTable::VerifyNewConstraint(LocalStorage &local_storage, DataTable &pare
 void DataTable::VerifyAppendConstraints(ConstraintState &constraint_state, ClientContext &context, DataChunk &chunk,
                                         optional_ptr<LocalTableStorage> storage) {
 	auto &table = constraint_state.table;
-	if (table.HasGeneratedColumns()) {
-		// Verify the generated columns against the inserted values.
-		auto binder = Binder::CreateBinder(context);
-		physical_index_set_t bound_columns;
-		CheckBinder generated_check_binder(*binder, context, table.name, table.GetColumns(), bound_columns);
-		for (auto &col : table.GetColumns().Logical()) {
-			if (!col.Generated()) {
-				continue;
-			}
-			D_ASSERT(col.Type().id() != LogicalTypeId::ANY);
-			generated_check_binder.target_type = col.Type();
-			auto to_be_bound_expression = table.GetColumns().SharedGeneratedExpression(col);
-			auto bound_expression = generated_check_binder.Bind(to_be_bound_expression);
-			VerifyGeneratedExpressionSuccess(context, table, chunk, *bound_expression, col.Oid());
-		}
-	}
+	VerifyGeneratedColumns(context, table, chunk);
 
 	if (HasUniqueIndexes()) {
 		info->indexes.VerifyUniqueIndexes(storage ? &storage->delete_indexes : nullptr, chunk,
@@ -1108,17 +1074,8 @@ void DataTable::VerifyAppendConstraints(ConstraintState &constraint_state, Clien
 
 	auto &constraints = table.GetConstraints();
 	for (idx_t i = 0; i < constraint_state.bound_constraints.size(); i++) {
-		auto &constraint = constraint_state.bound_constraints[i];
-		if (i >= constraints.size()) {
-			// Engine-supplied extra constraints carry no parsed counterpart in
-			// this entry (e.g. a facade catalog enforcing its own checks
-			// through a delegated table); they are always CHECK constraints.
-			auto &bound_check = constraint->Cast<BoundCheckConstraint>();
-			VerifyCheckConstraintExpression(context, table, *bound_check.expression, chunk,
-			                                "CHECK(" + bound_check.expression->ToString() + ")");
-			continue;
-		}
 		auto &base_constraint = constraints[i];
+		auto &constraint = constraint_state.bound_constraints[i];
 		switch (base_constraint->type) {
 		case ConstraintType::NOT_NULL:
 		case ConstraintType::CHECK:
@@ -1703,20 +1660,8 @@ void DataTable::VerifyUpdateConstraints(ConstraintState &state, ClientContext &c
 	auto &constraints = table.GetConstraints();
 	auto &bound_constraints = state.bound_constraints;
 	for (idx_t constr_idx = 0; constr_idx < bound_constraints.size(); constr_idx++) {
-		auto &constraint = bound_constraints[constr_idx];
-		if (constr_idx >= constraints.size()) {
-			// Engine-supplied extra constraints carry no parsed counterpart in
-			// this entry (e.g. a facade catalog enforcing its own checks
-			// through a delegated table); they are always CHECK constraints.
-			auto &bound_check = constraint->Cast<BoundCheckConstraint>();
-			DataChunk mock_chunk;
-			if (CreateMockChunk(table, column_ids, bound_check.bound_columns, chunk, mock_chunk)) {
-				VerifyCheckConstraintExpression(context, table, *bound_check.expression, mock_chunk,
-				                                "CHECK(" + bound_check.expression->ToString() + ")");
-			}
-			continue;
-		}
 		auto &base_constraint = constraints[constr_idx];
+		auto &constraint = bound_constraints[constr_idx];
 		switch (constraint->type) {
 		case ConstraintType::NOT_NULL: {
 			auto &bound_not_null = constraint->Cast<BoundNotNullConstraint>();

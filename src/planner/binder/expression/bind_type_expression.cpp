@@ -44,8 +44,10 @@ LogicalType ExpressionBinder::BindTypeExpression(TypeExpression &type_expr) {
 
 	if (type_catalog.empty() && !DatabaseManager::Get(context).HasAttachedDatabase()) {
 		// Look in the system catalog if no catalog was specified
-		entry = binder.entry_retriever.GetEntry(
-		    EntryLookupInfo(type_lookup, bound_name.WithCatalog(Identifier::SystemCatalog())));
+		entry = Catalog::GetSystemCatalog(context)
+		            .LookupEntry(binder.entry_retriever, EntryLookupInfo(type_lookup, bound_name),
+		                         OnEntryNotFound::THROW_EXCEPTION)
+		            .entry;
 	} else {
 		// Try to search from most specific to least specific
 		// The search path should already have been set to the correct catalog/schema,
@@ -71,10 +73,14 @@ LogicalType ExpressionBinder::BindTypeExpression(TypeExpression &type_expr) {
 			    OnEntryNotFound::RETURN_NULL);
 		}
 		if (!IsValidTypeLookup(entry)) {
-			entry = binder.entry_retriever.GetEntry(
-			    EntryLookupInfo(type_lookup, QualifiedName(Identifier::SystemCatalog(), Identifier::DefaultSchema(),
-			                                               type_lookup.GetEntryIdentifier())),
-			    OnEntryNotFound::THROW_EXCEPTION);
+			auto &system = Catalog::GetSystemCatalog(context);
+			entry = system
+			            .LookupEntry(
+			                binder.entry_retriever,
+			                EntryLookupInfo(type_lookup, QualifiedName(system.GetName(), Identifier::DefaultSchema(),
+			                                                           type_lookup.GetEntryIdentifier())),
+			                OnEntryNotFound::THROW_EXCEPTION)
+			            .entry;
 		}
 	}
 

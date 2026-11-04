@@ -220,9 +220,8 @@ static void WriteOwnedBy(stringstream &ss, CatalogTransaction transaction, const
 	ss << ownership.ToString() << '\n';
 }
 
-static void WriteOwnedEntries(stringstream &ss, DependencyManager &dependencies, CatalogTransaction transaction,
-                              CatalogEntry &owner) {
-	for (auto &owned : dependencies.OwnedEntries(transaction, owner)) {
+static void WriteOwnedEntries(stringstream &ss, Catalog &catalog, CatalogTransaction transaction, CatalogEntry &owner) {
+	for (auto &owned : catalog.OwnedEntries(transaction, owner)) {
 		if (owned.get().type == CatalogType::JOB_ENTRY) {
 			WriteJobState(ss, owner, owned);
 		} else if (owner.type == CatalogType::TABLE_ENTRY) {
@@ -231,8 +230,8 @@ static void WriteOwnedEntries(stringstream &ss, DependencyManager &dependencies,
 	}
 }
 
-static void WriteCatalogEntries(stringstream &ss, CatalogTransaction transaction, catalog_entry_vector_t &entries,
-                                optional_ptr<DependencyManager> dependencies) {
+static void WriteCatalogEntries(stringstream &ss, Catalog &catalog, CatalogTransaction transaction,
+                                catalog_entry_vector_t &entries) {
 	unordered_map<idx_t, QualifiedName> user_types;
 	for (auto &entry : entries) {
 		if (entry.get().type == CatalogType::TYPE_ENTRY && !entry.get().internal) {
@@ -244,10 +243,8 @@ static void WriteCatalogEntries(stringstream &ss, CatalogTransaction transaction
 		                             entry.get().name == entry.get().ParentCatalog().GetDefaultSchema())) {
 			continue;
 		}
-		if (dependencies) {
-			if (CreatedByOwner(entry) && dependencies->OwnerOf(transaction, entry)) {
-				continue;
-			}
+		if (CreatedByOwner(entry) && catalog.OwnerOf(transaction, entry)) {
+			continue;
 		}
 		auto create_info = entry.get().GetInfo(transaction);
 		if (create_info->type == CatalogType::TABLE_ENTRY) {
@@ -291,11 +288,35 @@ static void WriteCatalogEntries(stringstream &ss, CatalogTransaction transaction
 		ss << '\n';
 		ss << setval;
 		WriteComments(ss, entry.get());
-		if (dependencies) {
-			WriteOwnedEntries(ss, *dependencies, transaction, entry);
-		}
+		WriteOwnedEntries(ss, catalog, transaction, entry);
 	}
 	ss << '\n';
+}
+
+static void OrderEntry(Catalog &catalog, CatalogTransaction transaction, const catalog_entry_set_t &exported,
+                       CatalogEntry &entry, catalog_entry_set_t &visited, catalog_entry_vector_t &order) {
+	if (!exported.count(entry) || !visited.insert(entry).second) {
+		return;
+	}
+	if (CreatedByOwner(entry)) {
+		if (auto owner = catalog.OwnerOf(transaction, entry)) {
+			OrderEntry(catalog, transaction, exported, *owner, visited, order);
+		}
+	}
+	catalog.ScanSubjects(transaction, entry, [&](CatalogEntry &subject) {
+		OrderEntry(catalog, transaction, exported, subject, visited, order);
+	});
+	order.push_back(entry);
+}
+
+static void OrderEntries(Catalog &catalog, CatalogTransaction transaction, catalog_entry_vector_t &entries) {
+	catalog_entry_set_t exported(entries.begin(), entries.end());
+	catalog_entry_set_t visited;
+	catalog_entry_vector_t order;
+	for (auto &entry : entries) {
+		OrderEntry(catalog, transaction, exported, entry, visited, order);
+	}
+	entries = std::move(order);
 }
 
 static void WriteStringStreamToFile(FileSystem &fs, stringstream &ss, const string &path) {
@@ -424,6 +445,9 @@ void PhysicalExport::ExtractEntries(ClientContext &context, vector<reference<Sch
 				result.macros.push_back(entry);
 			}
 		});
+		if (catalog.IsDuckCatalog()) {
+			continue;
+		}
 		schema.Scan(context, CatalogType::TOKENIZER_ENTRY, [&](CatalogEntry &entry) {
 			if (!entry.internal) {
 				result.tokenizers.push_back(entry);
@@ -494,16 +518,14 @@ SourceResultType PhysicalExport::GetDataInternal(ExecutionContext &context, Data
 
 	auto &catalog = Catalog::GetCatalog(ccontext, info->GetQualifiedName().Catalog());
 
+	auto transaction = catalog.GetCatalogTransaction(ccontext);
 	catalog_entry_vector_t catalog_entries;
 	catalog_entries = GetNaiveExportOrder(context.client, catalog);
-	auto dependency_manager = catalog.GetDependencyManager();
-	if (dependency_manager) {
-		dependency_manager->ReorderEntries(catalog_entries, ccontext, CreatedByOwner);
-	}
+	OrderEntries(catalog, transaction, catalog_entries);
 
 	// write the schema.sql file
 	stringstream ss;
-	WriteCatalogEntries(ss, catalog.GetCatalogTransaction(ccontext), catalog_entries, dependency_manager);
+	WriteCatalogEntries(ss, catalog, transaction, catalog_entries);
 	WriteStringStreamToFile(fs, ss, fs.JoinPath(info->file_path, "schema.sql"));
 
 	// write the load.sql file

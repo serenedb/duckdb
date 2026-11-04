@@ -1,6 +1,4 @@
 #include "duckdb/storage/table/row_group_collection.hpp"
-#include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
-#include "duckdb/catalog/duck_catalog.hpp"
 #include "duckdb/main/attached_database.hpp"
 #include "duckdb/transaction/commit_state.hpp"
 
@@ -37,15 +35,6 @@
 #include "duckdb/storage/buffer_manager.hpp"
 
 namespace duckdb {
-
-static optional_ptr<TableCatalogEntry> VisibleTable(ClientContext &context, DataTableInfo &info) {
-	auto &catalog = info.GetDB().GetCatalog().Cast<DuckCatalog>();
-	auto entry = catalog.GetOidIndex().GetVisible(info.GetTableOid(), catalog.GetCatalogTransaction(context).view);
-	if (!entry || entry->type != CatalogType::TABLE_ENTRY) {
-		return nullptr;
-	}
-	return &entry->Cast<TableCatalogEntry>();
-}
 
 static bool CanRebuildExistingIndexesAfterVacuum(DataTableInfo &info, AttachedDatabase &attached, idx_t total_rows) {
 	auto vacuum_rebuild_threshold = attached.GetVacuumRebuildIndexThreshold();
@@ -2469,9 +2458,8 @@ void RowGroupCollection::VerifyNewConstraint(const QueryContext &context, DuckTr
 			executor.ExecuteExpression(scan_chunk, result);
 			for (auto entry : result.Values<int32_t>()) {
 				if (entry.IsValid() && entry.GetValue() == 0) {
-					auto table = VisibleTable(client, *info);
 					throw ConstraintException("CHECK constraint failed on table %s with expression %s",
-					                          table ? table->name : info->GetTableName(), check.source.ToString());
+					                          info->GetTableName(), check.source.ToString());
 				}
 			}
 		}
@@ -2512,12 +2500,9 @@ void RowGroupCollection::VerifyNewConstraint(const QueryContext &context, DuckTr
 
 		// Verify the NOT NULL constraint.
 		if (VectorOperations::HasNull(scan_chunk.data[0])) {
-			auto table = VisibleTable(*context.GetClientContext(), *info);
-			auto table_name = table ? table->name : info->GetTableName();
-			auto column_name = table ? table->GetColumns().GetColumn(PhysicalIndex(physical_index)).GetName()
-			                         : parent.Columns()[physical_index].GetName();
-			throw ConstraintException("NOT NULL constraint failed: %s.%s", SQLIdentifier(table_name),
-			                          SQLIdentifier(column_name));
+			auto name = parent.Columns()[physical_index].GetName();
+			throw ConstraintException("NOT NULL constraint failed: %s.%s", SQLIdentifier(info->GetTableName()),
+			                          SQLIdentifier(name));
 		}
 	}
 }

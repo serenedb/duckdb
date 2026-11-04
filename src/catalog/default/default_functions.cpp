@@ -280,6 +280,9 @@ DefaultFunctionGenerator::DefaultFunctionGenerator(Catalog &catalog, SchemaCatal
 unique_ptr<CatalogEntry> DefaultFunctionGenerator::CreateDefaultEntry(ClientContext &context,
                                                                       const Identifier &entry_name) {
 	auto info = GetDefaultFunction(schema.name, entry_name);
+	if (!info && ServesDefaults(schema.name, DEFAULT_SCHEMA)) {
+		info = GetDefaultFunction(DEFAULT_SCHEMA, entry_name);
+	}
 	if (info) {
 		return make_uniq_base<CatalogEntry, ScalarMacroCatalogEntry>(catalog, schema, info->Cast<CreateMacroInfo>());
 	}
@@ -292,7 +295,7 @@ vector<Identifier> DefaultFunctionGenerator::GetDefaultEntries() {
 		if (StringUtil::Lower(internal_macros[index].name) != internal_macros[index].name) {
 			throw InternalException("Default macro name %s should be lowercase", internal_macros[index].name);
 		}
-		if (internal_macros[index].schema == schema.name) {
+		if (ServesDefaults(schema.name, internal_macros[index].schema)) {
 			result.emplace_back(internal_macros[index].name);
 		}
 	}

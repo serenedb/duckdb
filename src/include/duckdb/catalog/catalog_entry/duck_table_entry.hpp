@@ -70,9 +70,6 @@ public:
 
 	void SetAsRoot(optional_ptr<CatalogTransaction> transaction, optional_ptr<CatalogEntry> previous) override;
 	void ReplaceStorage(DuckTableEntry &source);
-	static vector<idx_t> SyncIndexColumnLayout(DataTableInfo &info, const ColumnList &columns,
-	                                           vector<idx_t> &logical_oids);
-	vector<column_t> StorageColumnIds(const IndexCatalogEntry &index) const;
 
 	void CommitAlter(const string &column_name, const AlterInfo &info, CommitDropState &drop_state);
 	void CommitDropConstraint(const AlterInfo &info, CommitDropState &drop_state);

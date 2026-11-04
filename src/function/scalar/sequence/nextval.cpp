@@ -19,22 +19,22 @@ namespace duckdb {
 namespace {
 
 struct CurrentSequenceValueOperator {
-	static int64_t Operation(DuckTransaction &, SequenceSession &session, SequenceCatalogEntry &seq, const int64_t,
-	                         const bool) {
+	static int64_t Operation(optional_ptr<DuckTransaction>, SequenceSession &session, SequenceCatalogEntry &seq,
+	                         const int64_t, const bool) {
 		return seq.CurrentValue(session);
 	}
 };
 
 struct NextSequenceValueOperator {
-	static int64_t Operation(DuckTransaction &transaction, SequenceSession &session, SequenceCatalogEntry &seq,
-	                         const int64_t, const bool) {
+	static int64_t Operation(optional_ptr<DuckTransaction> transaction, SequenceSession &session,
+	                         SequenceCatalogEntry &seq, const int64_t, const bool) {
 		return seq.NextValue(transaction, session);
 	}
 };
 
 struct SetValValueOperator {
-	static int64_t Operation(DuckTransaction &transaction, SequenceSession &session, SequenceCatalogEntry &seq,
-	                         const int64_t value, const bool is_called) {
+	static int64_t Operation(optional_ptr<DuckTransaction> transaction, SequenceSession &session,
+	                         SequenceCatalogEntry &seq, const int64_t value, const bool is_called) {
 		return seq.SetValue(transaction, session, value, is_called);
 	}
 };
@@ -56,11 +56,12 @@ SequenceCatalogEntry &BindSequence(Binder &binder, const Identifier &name) {
 }
 
 struct NextValLocalState : public FunctionLocalState {
-	NextValLocalState(DuckTransaction &transaction, SequenceSession &session, SequenceCatalogEntry &sequence)
+	NextValLocalState(optional_ptr<DuckTransaction> transaction, SequenceSession &session,
+	                  SequenceCatalogEntry &sequence)
 	    : transaction(transaction), session(session), sequence(sequence) {
 	}
 
-	DuckTransaction &transaction;
+	optional_ptr<DuckTransaction> transaction;
 	SequenceSession &session;
 	SequenceCatalogEntry &sequence;
 };
@@ -78,7 +79,10 @@ unique_ptr<FunctionLocalState> NextValLocalFunction(ExpressionState &state, cons
 	auto &context = state.GetContext();
 	auto &info = bind_data->Cast<NextvalBindData>();
 	auto &sequence = info.sequence;
-	auto &transaction = DuckTransaction::Get(context, sequence.catalog);
+	optional_ptr<DuckTransaction> transaction;
+	if (sequence.catalog.IsDuckCatalog()) {
+		transaction = DuckTransaction::Get(context, sequence.catalog);
+	}
 	return make_uniq<NextValLocalState>(transaction, SequenceSession::Get(context), sequence);
 }
 

@@ -59,7 +59,7 @@ unique_ptr<MergeIntoOperator> PlanMergeIntoAction(ClientContext &context, Logica
 	}
 
 	auto cardinality = op.estimated_cardinality;
-	auto &storage_table = op.table.GetStorageTableEntry(context);
+	auto &storage_table = op.table.Cast<DuckTableEntry>();
 	switch (action.action_type) {
 	case MergeActionType::MERGE_UPDATE: {
 		vector<unique_ptr<Expression>> defaults;

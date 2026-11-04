@@ -10,7 +10,6 @@
 
 #include "duckdb/transaction/undo_buffer.hpp"
 #include "duckdb/common/vector_size.hpp"
-#include "duckdb/parser/parsed_data/alter_info.hpp"
 
 namespace duckdb {
 class CatalogEntry;
@@ -25,28 +24,23 @@ struct UpdateInfo;
 
 class WALWriteState {
 public:
-	WALWriteState(DuckTransaction &transaction, optional_ptr<WriteAheadLog> log,
-	              optional_ptr<StorageCommitState> commit_state, optional_ptr<vector<CatalogRunEntry>> catalog_run);
+	explicit WALWriteState(DuckTransaction &transaction, WriteAheadLog &log,
+	                       optional_ptr<StorageCommitState> commit_state);
 
 public:
 	void CommitEntry(UndoFlags type, data_ptr_t data);
-	static void WriteCatalogRuns(WriteAheadLog &catalog_log, const vector<CatalogRun> &runs);
 
 private:
 	void SwitchTable(DuckTableEntry &table_entry, UndoFlags new_op);
 
-	void WriteCatalogEntry(CatalogEntry &entry, idx_t change, data_ptr_t extra_data);
-	static void WriteCatalogEntry(WriteAheadLog &target, CatalogEntry &entry, const AlterInfo *alter_info,
-	                              bool with_index_storage);
+	void WriteCatalogEntry(CatalogEntry &entry, data_ptr_t extra_data);
 	void WriteDelete(DeleteInfo &info);
 	void WriteUpdate(UpdateInfo &info);
-	WriteAheadLog &Log();
 
 private:
 	DuckTransaction &transaction;
-	optional_ptr<WriteAheadLog> log;
+	WriteAheadLog &log;
 	optional_ptr<StorageCommitState> commit_state;
-	optional_ptr<vector<CatalogRunEntry>> catalog_run;
 
 	optional_ptr<DuckTableEntry> current_table_entry;
 

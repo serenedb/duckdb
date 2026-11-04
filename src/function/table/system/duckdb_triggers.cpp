@@ -73,7 +73,9 @@ unique_ptr<GlobalTableFunctionState> DuckDBTriggersInit(ClientContext &context, 
 
 	auto database_filter = input.bind_data->Cast<DuckDBSystemIncludeHiddenBindData>().DatabaseFilter(context);
 	auto schemas = Catalog::GetAllSchemas(context, false, [&](AttachedDatabase &database) {
-		return database.GetCatalog().IsDuckCatalog() && (!database_filter || database_filter(database));
+		auto &catalog = database.GetCatalog();
+		return (catalog.IsDuckCatalog() || catalog.Compatibility() == SqlCompatibility::POSTGRES) &&
+		       (!database_filter || database_filter(database));
 	});
 	for (auto &schema : schemas) {
 		Catalog::ScanListedEntries(context, schema.get(), CatalogType::TABLE_ENTRY, [&](CatalogEntry &entry) {

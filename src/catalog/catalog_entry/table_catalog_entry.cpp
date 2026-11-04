@@ -9,7 +9,6 @@
 #include "duckdb/common/enum_util.hpp"
 #include "duckdb/common/logical_type_info.hpp"
 #include "duckdb/main/database.hpp"
-#include "duckdb/main/database_manager.hpp"
 #include "duckdb/main/settings.hpp"
 #include "duckdb/parser/constraints/list.hpp"
 #include "duckdb/parser/expression/cast_expression.hpp"
@@ -33,50 +32,12 @@ namespace duckdb {
 
 constexpr const char *TableCatalogEntry::Name;
 
-static void AssignConstraintOids(Catalog &catalog, vector<unique_ptr<Constraint>> &constraints) {
-	auto &manager = catalog.GetDatabase().GetDatabaseManager();
-	const bool assign = catalog.Compatibility() == SqlCompatibility::POSTGRES;
-	auto assign_oid = [&](idx_t &oid) {
-		if (oid) {
-			manager.ClaimOid(oid);
-		} else if (assign) {
-			oid = manager.NextOid();
-		}
-	};
-	for (auto &constraint : constraints) {
-		assign_oid(constraint->oid);
-		if (constraint->type == ConstraintType::UNIQUE) {
-			assign_oid(constraint->Cast<UniqueConstraint>().index_oid);
-		}
-	}
-}
-
-bool TableCatalogEntry::OwnsIndex(const IndexCatalogEntry &index) const {
-	return index.table_oid == oid;
-}
-
-void TableCatalogEntry::AssignColumnOids(Catalog &catalog, ColumnList &columns) {
-	auto &manager = catalog.GetDatabase().GetDatabaseManager();
-	const bool assign = catalog.Compatibility() == SqlCompatibility::POSTGRES;
-	for (idx_t i = 0; i < columns.LogicalColumnCount(); i++) {
-		auto &column = columns.GetColumnMutable(LogicalIndex(i));
-		if (column.CatalogOid()) {
-			manager.ClaimOid(column.CatalogOid());
-		} else if (assign) {
-			column.SetCatalogOid(manager.NextOid());
-		}
-	}
-}
-
 TableCatalogEntry::TableCatalogEntry(Catalog &catalog, SchemaCatalogEntry &schema, CreateTableInfo &info,
                                      shared_ptr<CatalogSet> inherited_triggers)
     : StandardEntry(CatalogType::TABLE_ENTRY, schema, catalog, info.GetTableName(), info.oid),
       constraints(std::move(info.constraints)), triggers(std::move(inherited_triggers)) {
-	if (catalog.IsDuckCatalog()) {
-		if (!triggers) {
-			triggers = make_shared_ptr<CatalogSet>(catalog);
-		}
-		AssignConstraintOids(catalog, constraints);
+	if (catalog.IsDuckCatalog() && !triggers) {
+		triggers = make_shared_ptr<CatalogSet>(catalog);
 	}
 	this->temporary = info.temporary;
 	this->dependencies = info.dependencies;
@@ -290,10 +251,6 @@ DataTable &TableCatalogEntry::GetStorage() {
 	throw InternalException("Calling GetStorage on a TableCatalogEntry that is not a DuckTableEntry");
 }
 // LCOV_EXCL_STOP
-
-DuckTableEntry &TableCatalogEntry::GetStorageTableEntry(ClientContext &context) {
-	return Cast<DuckTableEntry>();
-}
 
 void LogicalUpdate::BindExtraColumns(TableCatalogEntry &table, LogicalGet &get, LogicalProjection &proj,
                                      LogicalUpdate &update, physical_index_set_t &bound_columns,

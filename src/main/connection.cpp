@@ -20,9 +20,18 @@
 
 namespace duckdb {
 
-Connection::Connection(DatabaseInstance &database)
-    : context(make_shared_ptr<ClientContext>(database.shared_from_this())) {
-	auto &connection_manager = ConnectionManager::Get(database);
+static shared_ptr<ClientContext> CreateClientContext(DatabaseInstance &database) {
+	if (auto create_client_context = DBConfig::GetConfig(database).create_client_context) {
+		return create_client_context(database);
+	}
+	return make_shared_ptr<ClientContext>(database.shared_from_this());
+}
+
+Connection::Connection(DatabaseInstance &database) : Connection(CreateClientContext(database)) {
+}
+
+Connection::Connection(shared_ptr<ClientContext> context_p) : context(std::move(context_p)) {
+	auto &connection_manager = ConnectionManager::Get(*context->db);
 	connection_manager.AssignConnectionId(*this);
 	connection_manager.AddConnection(*context);
 }

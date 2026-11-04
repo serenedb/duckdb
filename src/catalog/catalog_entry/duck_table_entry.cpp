@@ -141,36 +141,7 @@ virtual_column_map_t DuckTableEntry::GetVirtualColumns() const {
 	virtual_column_map_t virtual_columns;
 	virtual_columns.insert(make_pair(COLUMN_IDENTIFIER_ROW_ID, TableColumn("rowid", LogicalType::ROW_TYPE)));
 	virtual_columns.insert(make_pair(COLUMN_IDENTIFIER_ROW_NUMBER, TableColumn("row_number", LogicalType::BIGINT)));
-	if (catalog.Compatibility() == SqlCompatibility::POSTGRES) {
-		virtual_columns.emplace(COLUMN_IDENTIFIER_TABLE_OID, TableColumn("tableoid", LogicalType::BIGINT));
-		AddPostgresSystemColumns(virtual_columns);
-	}
 	return virtual_columns;
-}
-
-vector<column_t> DuckTableEntry::StorageColumnIds(const IndexCatalogEntry &index) const {
-	auto index_type = catalog.GetDatabase().config.GetIndexTypes().FindByName(index.index_type);
-	if (!index_type || !index_type->remaps_columns) {
-		return index.column_ids;
-	}
-	vector<column_t> storage_ids;
-	storage_ids.reserve(index.column_ids.size());
-	for (auto column_id : index.column_ids) {
-		storage_ids.push_back(columns.LogicalToPhysical(LogicalIndex(column_id)).index);
-	}
-	return storage_ids;
-}
-
-vector<idx_t> DuckTableEntry::SyncIndexColumnLayout(DataTableInfo &info, const ColumnList &columns,
-                                                    vector<idx_t> &logical_oids) {
-	vector<idx_t> physical_oids;
-	for (auto &column : columns.Logical()) {
-		logical_oids.push_back(column.CatalogOid());
-	}
-	for (auto &column : columns.Physical()) {
-		physical_oids.push_back(column.CatalogOid());
-	}
-	return info.SetIndexColumnLayout(logical_oids, std::move(physical_oids));
 }
 
 DuckTableEntry::DuckTableEntry(Catalog &catalog, SchemaCatalogEntry &schema, BoundCreateTableInfo &info,
@@ -178,7 +149,6 @@ DuckTableEntry::DuckTableEntry(Catalog &catalog, SchemaCatalogEntry &schema, Bou
     : TableCatalogEntry(catalog, schema, info.Base(), std::move(inherited_triggers)),
       columns(std::move(info.Base().columns)), storage(std::move(inherited_storage)),
       column_dependency_manager(std::move(info.column_dependency_manager)) {
-	AssignColumnOids(catalog, columns);
 	if (storage) {
 		if (!info.indexes.empty()) {
 			storage->SetIndexStorageInfo(std::move(info.indexes));
@@ -196,8 +166,6 @@ DuckTableEntry::DuckTableEntry(Catalog &catalog, SchemaCatalogEntry &schema, Bou
 	storage = make_shared_ptr<DataTable>(catalog.GetAttached(), StorageManager::Get(catalog).GetTableIOManager(&info),
 	                                     schema.GetSchemaInfo(), name, std::move(column_defs), std::move(info.data));
 	storage->GetDataTableInfo()->SetTableOid(oid);
-	vector<idx_t> logical_oids;
-	SyncIndexColumnLayout(*storage->GetDataTableInfo(), columns, logical_oids);
 
 	// Create the unique indexes for the UNIQUE, PRIMARY KEY, and FOREIGN KEY constraints.
 	idx_t indexes_idx = 0;
@@ -541,9 +509,6 @@ unique_ptr<CatalogEntry> DuckTableEntry::AddColumn(ClientContext &context, AddCo
 
 	info.new_column.SetOid(columns.LogicalColumnCount());
 	info.new_column.SetStorageOid(columns.PhysicalColumnCount());
-	if (!info.new_column.CatalogOid() && catalog.Compatibility() == SqlCompatibility::POSTGRES) {
-		info.new_column.SetCatalogOid(catalog.GetDatabase().GetDatabaseManager().NextOid());
-	}
 	auto col = info.new_column.Copy();
 
 	create_info->columns.AddColumn(std::move(col));
@@ -745,8 +710,7 @@ void DuckTableEntry::UpdateConstraintsOnColumnDrop(const LogicalIndex &removed_i
 			}
 			auto physical_index = columns.LogicalToPhysical(removed_index);
 			if (bound_check.bound_columns.find(physical_index) != bound_check.bound_columns.end()) {
-				const bool drop_shared_checks = catalog.Compatibility() == SqlCompatibility::POSTGRES;
-				if (bound_check.bound_columns.size() > 1 && !drop_shared_checks) {
+				if (bound_check.bound_columns.size() > 1) {
 					throw CatalogException(
 					    "Cannot drop column %s because there is a CHECK constraint that depends on it",
 					    info.removed_column);
@@ -845,8 +809,7 @@ unique_ptr<CatalogEntry> DuckTableEntry::RemoveColumn(ClientContext &context, Re
 		}
 		create_info->columns.AddColumn(col.Copy());
 	}
-	const bool allow_zero_columns = catalog.Compatibility() == SqlCompatibility::POSTGRES;
-	if (create_info->columns.empty() && !allow_zero_columns) {
+	if (create_info->columns.empty()) {
 		throw CatalogException("Cannot drop column: table only has one column remaining!");
 	}
 
@@ -866,20 +829,6 @@ unique_ptr<CatalogEntry> DuckTableEntry::RemoveColumn(ClientContext &context, Re
 	}
 	if (removed_physical.empty()) {
 		return make_uniq<DuckTableEntry>(catalog, schema, *bound_create_info, storage, triggers);
-	}
-	const bool cascade_drops_column_dependents = info.cascade && catalog.Compatibility() == SqlCompatibility::POSTGRES;
-	if (cascade_drops_column_dependents) {
-		auto transaction = catalog.GetCatalogTransaction(context);
-		SubDependency removed {AlterTableType::REMOVE_COLUMN, info.removed_column};
-		for (auto &entry : catalog.GetDependencyManager()->CheckDropDependencies(transaction, *this, true)) {
-			auto &dependent = entry.first.get();
-			const bool plain_index =
-			    dependent.type != CatalogType::INDEX_ENTRY ||
-			    dependent.Cast<IndexCatalogEntry>().index_constraint_type == IndexConstraintType::NONE;
-			if (plain_index && entry.second.contains(removed)) {
-				dependent.set->DropEntry(transaction, dependent.name, true);
-			}
-		}
 	}
 	std::sort(removed_physical.rbegin(), removed_physical.rend());
 	auto new_storage = storage;
@@ -1590,25 +1539,14 @@ void DuckTableEntry::ReplaceStorage(DuckTableEntry &source) {
 
 static vector<pair<Identifier, Identifier>> RenamedColumns(const ColumnList &previous, const ColumnList &current) {
 	IdentifierEquality same(current.IsCaseSensitive());
-	unordered_map<idx_t, reference<const ColumnDefinition>> previous_by_oid;
-	for (auto &column : previous.Logical()) {
-		if (column.CatalogOid()) {
-			previous_by_oid.emplace(column.CatalogOid(), column);
-		}
-	}
 	vector<pair<Identifier, Identifier>> renamed;
 	for (auto &column : current.Logical()) {
-		optional_ptr<const ColumnDefinition> previous_column;
-		if (column.CatalogOid()) {
-			auto entry = previous_by_oid.find(column.CatalogOid());
-			if (entry != previous_by_oid.end()) {
-				previous_column = &entry->second.get();
-			}
-		} else if (column.Physical().index < previous.PhysicalColumnCount()) {
-			previous_column = &previous.GetColumn(column.Physical());
+		if (column.Physical().index >= previous.PhysicalColumnCount()) {
+			continue;
 		}
-		if (previous_column && !same(previous_column->Name(), column.Name())) {
-			renamed.emplace_back(previous_column->Name(), column.Name());
+		auto &previous_column = previous.GetColumn(column.Physical());
+		if (!same(previous_column.Name(), column.Name())) {
+			renamed.emplace_back(previous_column.Name(), column.Name());
 		}
 	}
 	return renamed;
@@ -1617,15 +1555,10 @@ static vector<pair<Identifier, Identifier>> RenamedColumns(const ColumnList &pre
 void DuckTableEntry::SetAsRoot(optional_ptr<CatalogTransaction> transaction, optional_ptr<CatalogEntry> previous) {
 	storage->SetAsMainTable();
 	storage->GetDataTableInfo()->SetTableOid(oid);
-	if (!catalog.UsesCatalogLog()) {
-		storage->GetDataTableInfo()->SetSchemaInfo(schema_info);
-		storage->SetTableName(name);
-		for (auto &column : columns.Physical()) {
-			storage->SetColumnName(column.Physical(), column.Name());
-		}
+	storage->SetTableName(name);
+	for (auto &column : columns.Physical()) {
+		storage->SetColumnName(column.Physical(), column.Name());
 	}
-	vector<idx_t> logical_oids;
-	SyncIndexColumnLayout(*storage->GetDataTableInfo(), columns, logical_oids);
 	if (!transaction) {
 		return;
 	}
@@ -1646,22 +1579,9 @@ void TableCatalogEntry::AlterDependentIndexes(CatalogTransaction transaction, Ta
 	auto &columns = GetColumns();
 	IdentifierEquality same(columns.IsCaseSensitive());
 	const bool renamed_table = !same(previous.name, name);
-	auto renamed_columns = RenamedColumns(previous.GetColumns(), columns);
-	vector<idx_t> previous_oids;
-	for (auto &column : previous.GetColumns().Logical()) {
-		previous_oids.push_back(column.CatalogOid());
-	}
-	vector<idx_t> oids;
-	for (auto &column : columns.Logical()) {
-		oids.push_back(column.CatalogOid());
-	}
-	const bool moved = previous_oids != oids;
-	if (!renamed_table && renamed_columns.empty() && !moved) {
+	auto renamed_columns = RenamedColumns(previous.columns, columns);
+	if (!renamed_table && renamed_columns.empty()) {
 		return;
-	}
-	unordered_map<idx_t, column_t> positions;
-	for (idx_t i = 0; i < oids.size(); i++) {
-		positions.emplace(oids[i], i);
 	}
 	auto rename = [&](ParsedExpression &expr) {
 		bool changed = false;
@@ -1683,7 +1603,6 @@ void TableCatalogEntry::AlterDependentIndexes(CatalogTransaction transaction, Ta
 		});
 		return changed;
 	};
-	auto &index_types = catalog.GetDatabase().config.GetIndexTypes();
 	auto &indexes = ParentSchema(transaction).Cast<DuckSchemaEntry>().GetCatalogSet(CatalogType::INDEX_ENTRY);
 	vector<pair<Identifier, unique_ptr<CreateInfo>>> definitions;
 	indexes.Scan(transaction, [&](CatalogEntry &entry) {
@@ -1694,19 +1613,6 @@ void TableCatalogEntry::AlterDependentIndexes(CatalogTransaction transaction, Ta
 		auto definition = index.GetInfo();
 		auto &index_info = definition->Cast<CreateIndexInfo>();
 		bool changed = false;
-		auto index_type = index_types.FindByName(index.index_type);
-		if (moved && index_type && index_type->remaps_columns) {
-			for (auto &column_id : index_info.column_ids) {
-				if (column_id >= previous_oids.size()) {
-					continue;
-				}
-				auto position = positions.find(previous_oids[column_id]);
-				if (position != positions.end() && position->second != column_id) {
-					column_id = position->second;
-					changed = true;
-				}
-			}
-		}
 		for (auto &expr : index_info.expressions) {
 			changed |= rename(*expr);
 		}

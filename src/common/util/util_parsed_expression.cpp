@@ -653,7 +653,7 @@ bool FunctionExpression::Equals(const ParsedExpression &other) const {
 		return false;
 	}
 	auto &other_p = other.Cast<FunctionExpression>();
-	if (qualified_name != other_p.qualified_name) {
+	if (qualified_name != other_p.qualified_name || builtin != other_p.builtin) {
 		return false;
 	}
 	if (!ParsedExpression::Equals(filter, other_p.filter)) {
@@ -697,6 +697,7 @@ unique_ptr<ParsedExpression> FunctionExpression::Copy() const {
 	copy->distinct = distinct;
 	copy->is_operator = is_operator;
 	copy->from_operator = from_operator;
+	copy->builtin = builtin;
 	copy->export_state = export_state;
 	for (auto &arg : arguments) {
 		copy->arguments.emplace_back(arg.Copy());

@@ -1,3 +1,4 @@
+#include "duckdb/execution/operator/schema/physical_create_database.hpp"
 #include "duckdb/execution/operator/schema/physical_create_foreign_server.hpp"
 #include "duckdb/execution/operator/schema/physical_create_function.hpp"
 #include "duckdb/execution/operator/schema/physical_create_job.hpp"
@@ -30,6 +31,9 @@ PhysicalOperator &PhysicalPlanGenerator::CreatePlan(LogicalCreate &op) {
 	case LogicalOperatorType::LOGICAL_CREATE_ROLE:
 		return Make<PhysicalCreateRole>(unique_ptr_cast<CreateInfo, CreateRoleInfo>(std::move(op.info)),
 		                                op.estimated_cardinality);
+	case LogicalOperatorType::LOGICAL_CREATE_DATABASE:
+		return Make<PhysicalCreateDatabase>(unique_ptr_cast<CreateInfo, CreateDatabaseInfo>(std::move(op.info)),
+		                                    op.estimated_cardinality);
 	case LogicalOperatorType::LOGICAL_CREATE_FOREIGN_SERVER:
 		return Make<PhysicalCreateForeignServer>(
 		    unique_ptr_cast<CreateInfo, CreateForeignServerInfo>(std::move(op.info)), op.estimated_cardinality);

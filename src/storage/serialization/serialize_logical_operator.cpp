@@ -53,6 +53,9 @@ unique_ptr<LogicalOperator> LogicalOperator::Deserialize(Deserializer &deseriali
 	case LogicalOperatorType::LOGICAL_COPY_TO_FILE:
 		result = LogicalCopyToFile::Deserialize(deserializer);
 		break;
+	case LogicalOperatorType::LOGICAL_CREATE_DATABASE:
+		result = LogicalCreate::Deserialize(deserializer);
+		break;
 	case LogicalOperatorType::LOGICAL_CREATE_FOREIGN_SERVER:
 		result = LogicalCreate::Deserialize(deserializer);
 		break;

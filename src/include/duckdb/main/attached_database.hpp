@@ -81,6 +81,7 @@ struct AttachOptions {
 	RecoveryMode recovery_mode = RecoveryMode::DEFAULT;
 	//! The file format type. The default type is a duckdb database file, but other file formats are possible.
 	string db_type;
+	std::function<InternalCatalog(AttachedDatabase &)> create_catalog;
 	//! The verbatim path before extension-prefix stripping. Unset if not from an ATTACH statement.
 	optional<string> original_path;
 	//! Set of remaining (key, value) options
@@ -98,7 +99,6 @@ struct AttachOptions {
 	unique_ptr<StoredDatabasePath> stored_database_path;
 	shared_ptr<AttachedDatabase> reused_database;
 	bool borrow_open_database = false;
-	bool defer_storage_load = false;
 	//! Per-database override of vacuum_rebuild_indexes. If not set, the global setting value is used.
 	optional_idx vacuum_rebuild_indexes_threshold;
 	//! Deleter binding (from ATTACH/CONNECT TO EXTERNAL RESOURCE): on detach, `<deleter_function>(<deleter_payload>)`
@@ -123,6 +123,7 @@ public:
 	explicit AttachedDatabase(DatabaseInstance &db, AttachedDatabaseType type = AttachedDatabaseType::SYSTEM_DATABASE);
 	//! Create an attached database instance with the specified name and storage.
 	AttachedDatabase(DatabaseInstance &db, Catalog &catalog, Identifier name, string file_path, AttachOptions &options);
+	AttachedDatabase(DatabaseInstance &db, Catalog &catalog, Identifier name, AttachOptions &options);
 	//! Create an attached database instance with the specified storage extension.
 	AttachedDatabase(DatabaseInstance &db, Catalog &catalog, StorageExtension &ext, ClientContext &context,
 	                 Identifier name, AttachInfo &info, AttachOptions &options);
@@ -151,9 +152,6 @@ public:
 
 	optional_ptr<StorageExtension> GetStorageExtension() {
 		return storage_extension;
-	}
-	void HoldUntilClosed(shared_ptr<StorageExtensionInfo> state) {
-		held_until_closed = std::move(state);
 	}
 
 	const Identifier &GetName() const {
@@ -215,7 +213,6 @@ public:
 private:
 	DatabaseInstance &db;
 	ValidChecker validity;
-	shared_ptr<StorageExtensionInfo> held_until_closed;
 	unique_ptr<StoredDatabasePath> stored_database_path;
 	unique_ptr<StorageManager> storage;
 	unique_ptr<Catalog> catalog;

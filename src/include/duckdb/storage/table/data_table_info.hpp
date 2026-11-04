@@ -53,7 +53,6 @@ public:
 	Identifier GetSchemaName();
 	//! The full (possibly nested) schema path of the table
 	vector<Identifier> GetSchemaPath() const;
-	void SetSchemaInfo(shared_ptr<SchemaInfo> info);
 	Identifier GetTableName();
 	void SetTableName(Identifier name);
 	idx_t GetTableOid() const {
@@ -62,14 +61,9 @@ public:
 	void SetTableOid(idx_t oid) {
 		table_oid = oid;
 	}
-	vector<idx_t> SetIndexColumnLayout(vector<idx_t> logical_column_oids, vector<idx_t> physical_column_oids);
 
 	atomic<transaction_t> last_append_commit {0};
 	StorageLock alter_lock;
-
-private:
-	optional_ptr<CatalogEntry> CommittedEntry() const;
-	shared_ptr<SchemaInfo> CurrentSchemaInfo() const;
 
 private:
 	//! The database instance of the table
@@ -77,7 +71,7 @@ private:
 	//! The table IO manager
 	shared_ptr<TableIOManager> table_io_manager;
 	//! Lock for modifying the name
-	mutable mutex name_lock;
+	mutex name_lock;
 	//! The schema of the table
 	shared_ptr<SchemaInfo> schema_info;
 	//! The name of the table
@@ -85,8 +79,6 @@ private:
 	atomic<idx_t> table_oid {0};
 	//! The physical list of indexes of this table
 	TableIndexList indexes;
-	vector<idx_t> index_logical_column_oids;
-	vector<idx_t> index_physical_column_oids;
 	//! Index storage information of the indexes created by this table
 	vector<IndexStorageInfo> index_storage_infos;
 	//! The last seen checkpoint while doing a concurrent operation, if any

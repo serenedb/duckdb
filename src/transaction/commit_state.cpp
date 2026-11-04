@@ -195,7 +195,7 @@ void CommitState::CommitEntryDrop(CatalogEntry &entry, data_ptr_t dataptr, Commi
 
 			switch (parent.type) {
 			case CatalogType::TABLE_ENTRY:
-				if (entry.type == CatalogType::TABLE_ENTRY && entry.Cast<TableCatalogEntry>().IsDuckTable()) {
+				if (entry.type == CatalogType::TABLE_ENTRY) {
 					entry.Cast<DuckTableEntry>().CommitAlter(column_name, parse_info->Cast<AlterInfo>(), drop_state);
 				}
 				break;
@@ -228,7 +228,6 @@ void CommitState::CommitEntryDrop(CatalogEntry &entry, data_ptr_t dataptr, Commi
 		}
 		break;
 	case CatalogType::SCHEMA_ENTRY:
-	case CatalogType::JOB_ENTRY:
 		break;
 	case CatalogType::RENAMED_ENTRY:
 		// This is a rename, nothing needs to be done for this
@@ -236,10 +235,8 @@ void CommitState::CommitEntryDrop(CatalogEntry &entry, data_ptr_t dataptr, Commi
 	case CatalogType::DELETED_ENTRY:
 		switch (entry.type) {
 		case CatalogType::TABLE_ENTRY: {
-			if (!entry.Cast<TableCatalogEntry>().IsDuckTable()) {
-				break;
-			}
 			auto &table_entry = entry.Cast<DuckTableEntry>();
+			D_ASSERT(table_entry.IsDuckTable());
 
 			// If the table was renamed, we do not need to drop the DataTable.
 			table_entry.CommitDrop(drop_state);
@@ -256,11 +253,6 @@ void CommitState::CommitEntryDrop(CatalogEntry &entry, data_ptr_t dataptr, Commi
 		}
 		break;
 	case CatalogType::DATABASE_ENTRY:
-	case CatalogType::TOKENIZER_ENTRY:
-	case CatalogType::ROLE_ENTRY:
-	case CatalogType::FOREIGN_SERVER_ENTRY:
-	case CatalogType::SUBSCRIPTION_ENTRY:
-	case CatalogType::REPLICATION_ORIGIN_ENTRY:
 	case CatalogType::PREPARED_STATEMENT:
 	case CatalogType::AGGREGATE_FUNCTION_ENTRY:
 	case CatalogType::SCALAR_FUNCTION_ENTRY:
@@ -290,8 +282,7 @@ void CommitState::CommitEntry(UndoFlags type, data_ptr_t data, CommitInfo &info)
 		D_ASSERT(catalog.IsDuckCatalog());
 
 		auto &new_entry = old_entry.Parent();
-		if (old_entry.type == CatalogType::TABLE_ENTRY && new_entry.type == CatalogType::TABLE_ENTRY &&
-		    old_entry.Cast<TableCatalogEntry>().IsDuckTable()) {
+		if (old_entry.type == CatalogType::TABLE_ENTRY && new_entry.type == CatalogType::TABLE_ENTRY) {
 			auto &old_storage = old_entry.Cast<DuckTableEntry>().GetStorage();
 			auto &new_storage = new_entry.Cast<DuckTableEntry>().GetStorage();
 			if (!RefersToSameObject(old_storage, new_storage) && old_storage.IsMainTable()) {
@@ -306,10 +297,7 @@ void CommitState::CommitEntry(UndoFlags type, data_ptr_t data, CommitInfo &info)
 		if (new_entry.type == CatalogType::DEPENDENCY_ENTRY) {
 			auto &dep = new_entry.Cast<DependencyEntry>();
 			if (dep.Side() == DependencyEntryType::SUBJECT) {
-				new_entry.set->VerifyExistenceOfDependency(commit_id, transaction.view.visibility_bound, new_entry);
-				if (transaction.prepared && !dep.EntryInfo().catalog.empty()) {
-					transaction.prepared->foreign_dependencies.push_back(dep);
-				}
+				new_entry.set->VerifyExistenceOfDependency(commit_id, new_entry);
 			}
 		} else if (new_entry.type == CatalogType::DELETED_ENTRY && old_entry.set) {
 			old_entry.set->CommitDrop(commit_id, transaction.view.visibility_bound, old_entry);
@@ -366,11 +354,9 @@ void CommitState::CommitEntry(UndoFlags type, data_ptr_t data, CommitInfo &info)
 
 		// Set the timestamp of the catalog entry to the given commit_id, marking it as committed
 		CatalogSet::UpdateTimestamp(old_entry.Parent(), commit_id);
-		catalog.Cast<DuckCatalog>().GetOidIndex().Commit(
-		    new_entry, new_entry.type == CatalogType::DELETED_ENTRY ? old_entry : new_entry);
 
 		// drop any blocks associated with the catalog entry if possible (e.g. in case of a DROP or ALTER)
-		CommitEntryDrop(old_entry, data + DuckTransaction::CATALOG_UNDO_HEADER, info);
+		CommitEntryDrop(old_entry, data + sizeof(CatalogEntry *), info);
 		break;
 	}
 	case UndoFlags::INSERT_TUPLE: {
@@ -438,13 +424,10 @@ void CommitState::RevertCommit(UndoFlags type, data_ptr_t data) {
 		// set the commit timestamp of the catalog entry to the given id
 		auto catalog_entry = Load<CatalogEntry *>(data);
 		D_ASSERT(catalog_entry->HasParent());
-		auto &reverted = catalog_entry->Parent();
-		CatalogSet::UpdateTimestamp(reverted, transaction_id);
-		if (catalog_entry->name != reverted.name) {
+		CatalogSet::UpdateTimestamp(catalog_entry->Parent(), transaction_id);
+		if (catalog_entry->name != catalog_entry->Parent().name) {
 			CatalogSet::UpdateTimestamp(*catalog_entry, transaction_id);
 		}
-		catalog_entry->ParentCatalog().Cast<DuckCatalog>().GetOidIndex().RevertCommit(
-		    reverted, reverted.type == CatalogType::DELETED_ENTRY ? *catalog_entry : reverted);
 		break;
 	}
 	case UndoFlags::INSERT_TUPLE: {

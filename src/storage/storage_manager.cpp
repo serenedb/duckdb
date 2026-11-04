@@ -19,7 +19,6 @@
 #include "duckdb/storage/storage_extension.hpp"
 #include "duckdb/storage/table/column_data.hpp"
 #include "duckdb/storage/table/in_memory_checkpoint.hpp"
-#include "duckdb/storage/table_storage_load.hpp"
 #include "duckdb/catalog/duck_catalog.hpp"
 #include "duckdb/catalog/catalog_entry/schema_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/duck_table_entry.hpp"
@@ -157,8 +156,7 @@ void StorageOptions::Initialize(unordered_map<string, Value> &options) {
 }
 
 StorageManager::StorageManager(AttachedDatabase &db, string path_p, AttachOptions &options)
-    : defer_load(options.defer_storage_load), db(db), path(std::move(path_p)),
-      read_only(options.access_mode == AccessMode::READ_ONLY), wal_size(0),
+    : db(db), path(std::move(path_p)), read_only(options.access_mode == AccessMode::READ_ONLY), wal_size(0),
       prefetched_file(std::move(options.prefetched)) {
 	if (path.empty()) {
 		path = IN_MEMORY_PATH;
@@ -279,7 +277,7 @@ bool StorageManager::WALStartCheckpoint(MetaBlockPointer meta_block, CheckpointO
 		return false;
 	}
 	// start the checkpoint process around the WAL
-	if (GetWALSize() == 0 && !retained_wal_start.IsValid()) {
+	if (GetWALSize() == 0) {
 		// no WAL - we don't need to do anything here
 		return false;
 	}
@@ -316,15 +314,6 @@ void StorageManager::WALFinishCheckpoint(unique_lock<mutex> &) {
 	// "wal" points to the checkpoint WAL
 	// first check if the checkpoint WAL has been written to
 	auto &fs = FileSystem::Get(db);
-	auto retired_generation = wal->GetCheckpointIteration() - 1;
-	auto needed = NeededWALGeneration();
-	RemoveRetainedWAL(needed.IsValid() ? needed.GetIndex() : retired_generation, retired_generation);
-	if (needed.IsValid() && needed.GetIndex() <= retired_generation) {
-		fs.MoveFile(wal_path, GetRetainedWALPath(retired_generation));
-		if (!retained_wal_start.IsValid()) {
-			retained_wal_start = retired_generation;
-		}
-	}
 	if (!wal->Initialized()) {
 		// the checkpoint WAL has not been written to
 		// this is the common scenario if there are no concurrent writes happening while checkpointing
@@ -332,7 +321,6 @@ void StorageManager::WALFinishCheckpoint(unique_lock<mutex> &) {
 		fs.TryRemoveFile(wal_path);
 		ResetWALEntriesCount();
 		wal = make_uniq<WriteAheadLog>(*this, wal_path);
-		oldest_wal_generation = retained_wal_start.IsValid() ? retained_wal_start.GetIndex() : retired_generation + 1;
 		return;
 	}
 
@@ -343,50 +331,14 @@ void StorageManager::WALFinishCheckpoint(unique_lock<mutex> &) {
 	auto checkpoint_wal_path = wal->GetPath();
 	wal.reset();
 
-	if (Settings::Get<DebugCheckpointAbortSetting>(db.GetDatabase()) ==
-	    CheckpointAbort::DEBUG_ABORT_BEFORE_MOVING_CHECKPOINT_WAL) {
-		throw FatalException(
-		    "Checkpoint aborted before moving the checkpoint WAL because of PRAGMA checkpoint_abort flag");
-	}
-
 	// move the secondary WAL over the main WAL
 	fs.MoveFile(checkpoint_wal_path, wal_path);
 
 	// open what is now the main WAL again
 	wal = make_uniq<WriteAheadLog>(*this, wal_path);
 	wal->Initialize();
-	oldest_wal_generation = retained_wal_start.IsValid() ? retained_wal_start.GetIndex() : retired_generation + 1;
 
 	DUCKDB_LOG(db.GetDatabase(), TransactionLogType, db, "Finish Checkpoint");
-}
-
-optional_idx StorageManager::NeededWALGeneration() {
-	auto extension = db.GetStorageExtension();
-	return extension ? extension->NeededWALGeneration(db) : optional_idx();
-}
-
-void StorageManager::RemoveRetainedWAL(idx_t end, idx_t chain_end) {
-	if (!retained_wal_start.IsValid()) {
-		return;
-	}
-	auto &fs = FileSystem::Get(db);
-	auto generation = retained_wal_start.GetIndex();
-	for (; generation < MinValue(end, chain_end); generation++) {
-		fs.TryRemoveFile(GetRetainedWALPath(generation));
-	}
-	retained_wal_start = generation < chain_end ? optional_idx(generation) : optional_idx();
-}
-
-void StorageManager::ReleaseRetainedWAL(unique_lock<mutex> &) {
-	auto main_generation = GetBlockManager().GetCheckpointIteration();
-	auto needed = NeededWALGeneration();
-	RemoveRetainedWAL(needed.IsValid() ? needed.GetIndex() : main_generation, main_generation);
-	oldest_wal_generation = retained_wal_start.IsValid() ? retained_wal_start.GetIndex() : main_generation;
-}
-
-void StorageManager::SetRetainedWALStart(optional_idx generation) {
-	retained_wal_start = generation;
-	oldest_wal_generation = generation.IsValid() ? generation.GetIndex() : GetBlockManager().GetCheckpointIteration();
 }
 
 unique_lock<mutex> StorageManager::GetCommitLock() {
@@ -403,26 +355,6 @@ string StorageManager::GetCheckpointWALPath() {
 
 string StorageManager::GetRecoveryWALPath() {
 	return GetWALPath(".wal.recovery");
-}
-
-string StorageManager::GetRetainedWALPath(idx_t generation) {
-	return GetWALPath(".wal.retained." + to_string(generation));
-}
-
-string StorageManager::GetWALGenerationPath(idx_t generation) {
-	if (!wal) {
-		return GetRetainedWALPath(generation);
-	}
-	auto live = wal->GetCheckpointIteration();
-	if (generation == live) {
-		return wal->GetPath();
-	}
-	// a checkpoint writes into a WAL of the next generation and only renames the one it closed when it finishes, so
-	// until then the generation it retired is still at the main path and has no retained name
-	if (generation + 1 == live && wal->GetPath() != wal_path) {
-		return wal_path;
-	}
-	return GetRetainedWALPath(generation);
 }
 
 bool StorageManager::InMemory() const {
@@ -630,42 +562,15 @@ void SingleFileStorageManager::LoadDatabase(QueryContext context) {
 			}
 		}
 
-		if (defer_load) {
-			deferred_storage = true;
-		} else {
-			LoadStorage(context);
+		unique_ptr<MetricsTimer> timer = nullptr;
+
+		// Start timing the storage load step.
+		auto client_context = context.GetClientContext();
+		if (client_context) {
+			auto profiler = client_context->client_data->profiler;
+			timer = make_uniq<MetricsTimer>(profiler->StartTimer<MetricStorageAttachLoadStorageLatency>());
 		}
-	}
 
-	//
-	if (row_group_size > 122880ULL && IsPriorToVersion(StorageVersion::V1_2_0, GetStorageVersion())) {
-		throw InvalidInputException("Unsupported row group size %llu - row group sizes >= 122_880 are only supported "
-		                            "with STORAGE_VERSION '1.2.0' or above.\nExplicitly specify a newer storage "
-		                            "version when creating the database to enable larger row groups",
-		                            row_group_size);
-	}
-
-	load_complete = !defer_load;
-}
-
-void SingleFileStorageManager::LoadStorage(QueryContext context) {
-	unique_ptr<MetricsTimer> timer = nullptr;
-
-	// Start timing the storage load step.
-	auto client_context = context.GetClientContext();
-	if (client_context) {
-		auto profiler = client_context->client_data->profiler;
-		timer = make_uniq<MetricsTimer>(profiler->StartTimer<MetricStorageAttachLoadStorageLatency>());
-	}
-
-	auto &catalog = db.GetCatalog();
-	if (catalog.UsesCatalogLog()) {
-		if (!client_context) {
-			throw InternalException("Loading the storage of a catalog-log database needs a client context");
-		}
-		table_storage_load = make_uniq<TableStorageLoad>(catalog.Cast<DuckCatalog>(), *client_context);
-	}
-	try {
 		// Load the checkpoint from storage.
 		auto checkpoint_reader = SingleFileCheckpointReader(*this);
 		checkpoint_reader.LoadFromStorage();
@@ -685,29 +590,17 @@ void SingleFileStorageManager::LoadStorage(QueryContext context) {
 		wal_path = GetWALPath();
 		wal = WriteAheadLog::Replay(context, *this, wal_path);
 
-		if (table_storage_load) {
-			if (client_context->transaction.HasActiveTransaction()) {
-				table_storage_load->Install();
-			} else {
-				client_context->RunFunctionInTransaction([&]() { table_storage_load->Install(); });
-			}
-		}
-	} catch (...) {
-		table_storage_load.reset();
-		throw;
+		// Timer will go out of scope here, if set.
 	}
-	table_storage_load.reset();
-}
 
-void StorageManager::FinishLoad(QueryContext context) {
-	if (!defer_load) {
-		return;
+	//
+	if (row_group_size > 122880ULL && IsPriorToVersion(StorageVersion::V1_2_0, GetStorageVersion())) {
+		throw InvalidInputException("Unsupported row group size %llu - row group sizes >= 122_880 are only supported "
+		                            "with STORAGE_VERSION '1.2.0' or above.\nExplicitly specify a newer storage "
+		                            "version when creating the database to enable larger row groups",
+		                            row_group_size);
 	}
-	defer_load = false;
-	if (deferred_storage) {
-		deferred_storage = false;
-		LoadStorage(context);
-	}
+
 	load_complete = true;
 }
 
@@ -734,7 +627,6 @@ public:
 	void RevertCommit() override;
 	// Make the commit persistent
 	idx_t FlushCommit(bool sync_now) override;
-	idx_t PrepareCommit(const hugeint_t &txid) override;
 
 	void AddRowGroupData(DataTable &table, idx_t start_index, idx_t count,
 	                     unique_ptr<PersistentCollectionData> row_group_data) override;
@@ -823,15 +715,6 @@ idx_t SingleFileStorageCommitState::FlushCommit(bool sync_now) {
 	}
 	state = WALCommitState::FLUSHED;
 	return wal_sync_offset;
-}
-
-idx_t SingleFileStorageCommitState::PrepareCommit(const hugeint_t &txid) {
-	D_ASSERT(state == WALCommitState::IN_PROGRESS);
-	state = WALCommitState::FLUSHED;
-	if (wal.GetTotalWritten() == initial_written) {
-		return 0;
-	}
-	return wal.FlushMarker(&txid);
 }
 
 void SingleFileStorageCommitState::AddRowGroupData(DataTable &table, idx_t start_index, idx_t count,
@@ -937,13 +820,6 @@ void SingleFileStorageManager::CreateCheckpoint(QueryContext context, Checkpoint
 			                  "error: %s",
 			                  db.GetName(), error.RawMessage());
 		}
-	} else if (retained_wal_start.IsValid()) {
-		if (options.commit_lock) {
-			ReleaseRetainedWAL(*options.commit_lock);
-		} else {
-			auto commit_lock = GetCommitLock();
-			ReleaseRetainedWAL(commit_lock);
-		}
 	}
 
 	if (db.GetStorageExtension()) {
@@ -966,7 +842,7 @@ void SingleFileStorageManager::Destroy() {
 			if (entry.internal) {
 				return;
 			}
-			if (entry.type == CatalogType::TABLE_ENTRY && entry.Cast<TableCatalogEntry>().IsDuckTable()) {
+			if (entry.type == CatalogType::TABLE_ENTRY) {
 				tables.push_back(entry.Cast<DuckTableEntry>());
 			}
 		});

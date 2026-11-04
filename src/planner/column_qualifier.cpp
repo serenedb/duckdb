@@ -242,6 +242,11 @@ optional_ptr<CatalogEntry> ColumnQualifier::QualifyFunction(FunctionExpression &
 	D_ASSERT(!ExpressionBinder::IsUnnestFunction(function.FunctionName()));
 	// lookup the function in the catalog
 	QueryErrorContext error_context(function.GetQueryLocation());
+	if (function.IsBuiltin()) {
+		return binder.GetBuiltinEntry(
+		    EntryLookupInfo(CatalogType::SCALAR_FUNCTION_ENTRY, QualifiedName(function.FunctionName()), error_context),
+		    OnEntryNotFound::RETURN_NULL);
+	}
 	// promote a lone qualifier that names an attached database to a catalog, so that "db.f()" is not mistaken for a
 	// dot-call on a column named "db" by the rewrite below
 	binder.BindSchemaOrCatalog(function.GetQualifiedNameMutable());

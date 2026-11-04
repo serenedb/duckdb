@@ -1,7 +1,6 @@
 #include "duckdb/catalog/catalog_entry/duck_index_entry.hpp"
 
 #include "duckdb/catalog/catalog_entry/duck_table_entry.hpp"
-#include "duckdb/catalog/duck_catalog.hpp"
 #include "duckdb/parser/parsed_data/alter_table_info.hpp"
 #include "duckdb/parser/parsed_data/create_index_info.hpp"
 #include "duckdb/storage/data_table.hpp"
@@ -14,7 +13,7 @@ IndexDataTableInfo::IndexDataTableInfo(shared_ptr<DataTableInfo> info_p) : info(
 }
 
 void DuckIndexEntry::SetAsRoot(optional_ptr<CatalogTransaction> transaction, optional_ptr<CatalogEntry> previous) {
-	if (catalog.UsesCatalogLog() || !info || !info->info) {
+	if (!info || !info->info) {
 		return;
 	}
 	info->info->GetIndexes().RenameIndex(oid, name);
@@ -82,18 +81,12 @@ Identifier DuckIndexEntry::GetTableName() const {
 	return GetDataTableInfo().GetTableName();
 }
 
-optional_ptr<CatalogEntry> DuckIndexEntry::GetRelation(CatalogTransaction transaction) const {
-	return catalog.Cast<DuckCatalog>().GetOidIndex().GetVisible(table_oid, transaction.view);
-}
-
 DataTableInfo &DuckIndexEntry::GetDataTableInfo() const {
 	return *info->info;
 }
 
 void DuckIndexEntry::CommitDrop(CommitDropState &drop_state) {
-	if (!info || !info->info) {
-		return;
-	}
+	D_ASSERT(info);
 	drop_state.RemoveIndex(GetDataTableInfo().GetIndexes(), oid);
 }
 

@@ -40,11 +40,7 @@ vector<reference<TableCatalogEntry>> Binder::TruncateReferencingTables(ClientCon
 vector<QualifiedName> Binder::TruncateIdentitySequences(ClientContext &context, TableCatalogEntry &table) {
 	vector<QualifiedName> result;
 	auto &catalog = table.ParentCatalog();
-	auto dependencies = catalog.GetDependencyManager();
-	if (!dependencies) {
-		return result;
-	}
-	for (auto &owned : dependencies->OwnedEntries(catalog.GetCatalogTransaction(context), table)) {
+	for (auto &owned : catalog.OwnedEntries(catalog.GetCatalogTransaction(context), table)) {
 		auto &entry = owned.get();
 		result.emplace_back(catalog.GetName(), entry.ParentSchema(context).name, entry.name);
 	}

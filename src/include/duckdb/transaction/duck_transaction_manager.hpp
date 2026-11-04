@@ -44,14 +44,6 @@ public:
 	Transaction &StartTransaction(ClientContext &context) override;
 	//! Commit the given transaction
 	ErrorData CommitTransaction(ClientContext &context, Transaction &transaction) override;
-	ErrorData PrepareTransaction(ClientContext &context, Transaction &transaction, AttachedDatabase &catalog_owner,
-	                             const hugeint_t &txid, vector<pair<idx_t, idx_t>> &participants);
-	ErrorData SyncPreparedTransaction(Transaction &transaction);
-	ErrorData ApplyPreparedTransaction(ClientContext &context, Transaction &transaction);
-	void RevertPreparedTransaction(Transaction &transaction);
-	void DecidePreparedTransaction(Transaction &transaction, shared_ptr<WriteAheadLog> decision_log,
-	                               idx_t decision_offset);
-	ErrorData FinishPreparedTransaction(ClientContext &context, Transaction &transaction);
 	//! Rollback the given transaction
 	void RollbackTransaction(Transaction &transaction) override;
 
@@ -65,16 +57,12 @@ public:
 	transaction_t GetLastCommit() const {
 		return last_commit;
 	}
-	idx_t GetLastCommittedCatalogVersion() const {
-		return last_committed_version;
-	}
 	struct DurableSnapshot {
 		//! Every commit before this bound is durable
 		VisibilityBound visibility_bound = VisibilityBound::IncludingUncommitted();
 		//! The catalog version that snapshot observes
 		idx_t catalog_version = DConstants::INVALID_INDEX;
 	};
-	DurableSnapshot GetDurableSnapshot();
 	//! Wait until every published commit is durable. Called under the commit lock, so no new commit can
 	//! enter its sync window and the wait is bounded by the syncs in flight
 	void WaitForDurability();
@@ -87,22 +75,6 @@ public:
 	}
 	void SetActiveCheckpoint(idx_t checkpoint_id);
 	void ResetActiveCheckpoint();
-
-	//! Byte offset of the WAL entry currently being replayed (0 when not replaying).
-	idx_t GetReplayCommitOffset() const {
-		return replay_commit_offset;
-	}
-	idx_t GetReplayGeneration() const {
-		return replay_generation;
-	}
-	void SetReplayPosition(idx_t generation, idx_t offset) {
-		replay_generation = generation;
-		replay_commit_offset = offset;
-	}
-	void ResetReplayPosition() {
-		replay_generation = 0;
-		replay_commit_offset = 0;
-	}
 
 	bool IsDuckTransactionManager() override {
 		return true;
@@ -123,7 +95,7 @@ public:
 
 	void PushCatalogEntry(Transaction &transaction_p, CatalogEntry &entry, data_ptr_t extra_data = nullptr,
 	                      idx_t extra_data_size = 0);
-	void PushAttach(Transaction &transaction_p, AttachedDatabase &db);
+	void PushAttach(Transaction &transaction_p, AttachedDatabase &db) override;
 
 protected:
 	struct CheckpointDecision {
@@ -198,9 +170,6 @@ private:
 	atomic<idx_t> active_checkpoint;
 	//! Source of checkpoint identities
 	atomic<idx_t> next_checkpoint_id = {0};
-	//! Byte offset of the WAL entry currently being replayed (0 when not replaying)
-	atomic<idx_t> replay_commit_offset {0};
-	atomic<idx_t> replay_generation {0};
 	//! Set of currently running transactions
 	vector<unique_ptr<DuckTransaction>> active_transactions;
 	//! Set of recently committed transactions

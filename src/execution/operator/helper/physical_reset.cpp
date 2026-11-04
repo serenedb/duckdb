@@ -44,9 +44,7 @@ void PhysicalReset::ResetExtensionVariable(ExecutionContext &context, DBConfig &
 
 	// The rollback observer only needs to see real changes; gate it with
 	// is_user_set so RESET ALL no-ops don't reach the sdb tracker.
-	if (context.client.setting_change_handler) {
-		context.client.setting_change_handler(context.client, name.GetIdentifierName(), effective_scope);
-	}
+	context.client.OnSettingChange(name.GetIdentifierName(), effective_scope, nullptr);
 
 	if (extension_option.reset_function) {
 		extension_option.reset_function(context.client, effective_scope);
@@ -75,9 +73,7 @@ void PhysicalReset::ResetOption(ExecutionContext &context, DBConfig &config, con
 		}
 		// Gate the rollback observer on is_user_set so RESET ALL no-ops don't
 		// reach the sdb tracker.
-		if (context.client.setting_change_handler) {
-			context.client.setting_change_handler(context.client, name, variable_scope);
-		}
+		context.client.OnSettingChange(name, variable_scope, nullptr);
 		if (option.set_callback) {
 			SettingCallbackInfo info(context.client, variable_scope);
 			info.is_reset = true;
@@ -97,9 +93,7 @@ void PhysicalReset::ResetOption(ExecutionContext &context, DBConfig &config, con
 		if (!option.set_global) {
 			throw CatalogException("option \"%s\" cannot be reset globally", option.name);
 		}
-		if (context.client.setting_change_handler) {
-			context.client.setting_change_handler(context.client, name, variable_scope);
-		}
+		context.client.OnSettingChange(name, variable_scope, nullptr);
 		auto &db = DatabaseInstance::GetDatabase(context.client);
 		config.ResetOption(&db, option);
 		break;
@@ -118,8 +112,8 @@ void PhysicalReset::ResetOption(ExecutionContext &context, DBConfig &config, con
 		Value post_value;
 		const bool had_post = context.client.TryGetCurrentSetting(option.name, post_value);
 		const bool changed = had_pre != had_post || !Value::NotDistinctFrom(pre_value, post_value);
-		if (changed && context.client.setting_change_handler) {
-			context.client.setting_change_handler(context.client, name, variable_scope);
+		if (changed) {
+			context.client.OnSettingChange(name, variable_scope, nullptr);
 		}
 		break;
 	}
@@ -136,8 +130,8 @@ SourceResultType PhysicalReset::GetDataInternal(ExecutionContext &context, DataC
 	}
 	if (scope == SetScope::VARIABLE) {
 		// SQL user variables live in a separate namespace from configuration
-		// options. PhysicalSetVariable does not notify setting_change_handler
-		// either, so skip it here for symmetry — the handler is config-option
+		// options. PhysicalSetVariable does not notify OnSettingChange
+		// either, so skip it here for symmetry — the hook is config-option
 		// rollback infrastructure, not variable tracking.
 		auto &client_config = ClientConfig::GetConfig(context.client);
 		client_config.ResetUserVariable(name);

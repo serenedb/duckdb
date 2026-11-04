@@ -6,7 +6,7 @@ namespace duckdb {
 
 SourceResultType PhysicalCreateRole::GetDataInternal(ExecutionContext &context, DataChunk &chunk,
                                                      OperatorSourceInput &input) const {
-	auto &catalog = Catalog::GetCatalog(context.client, info->GetQualifiedName().Catalog());
+	auto &catalog = Catalog::GetSystemCatalog(context.client);
 	catalog.CreateRole(catalog.GetCatalogTransaction(context.client), *info);
 	return SourceResultType::FINISHED;
 }

@@ -170,9 +170,9 @@ PhysicalPlanGenerator::PlanAsOfLoopJoin(LogicalComparisonJoin &op, PhysicalOpera
 		return nullptr;
 	}
 
-	EntryLookupInfo function_lookup(CatalogType::SCALAR_FUNCTION_ENTRY, QualifiedName(Identifier(arg_min_max)));
-	auto arg_min_max_func = binder->GetCatalogEntry(Identifier::SystemCatalog(), Identifier::DefaultSchema(),
-	                                                function_lookup, OnEntryNotFound::RETURN_NULL);
+	auto arg_min_max_func = Catalog::GetSystemCatalog(context).GetEntry(
+	    context, CatalogType::SCALAR_FUNCTION_ENTRY, Identifier::DefaultSchema(), Identifier(arg_min_max),
+	    OnEntryNotFound::RETURN_NULL);
 	//	Can't find the arg_min/max aggregate we need, so give up before we break anything.
 	if (!arg_min_max_func || arg_min_max_func->type != CatalogType::AGGREGATE_FUNCTION_ENTRY) {
 		return nullptr;

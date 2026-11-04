@@ -15,7 +15,6 @@
 #include "duckdb/storage/database_size.hpp"
 #include "duckdb/storage/checkpoint/checkpoint_options.hpp"
 #include "duckdb/storage/storage_options.hpp"
-#include "duckdb/storage/table_storage_load.hpp"
 
 namespace duckdb {
 struct AttachOptions;
@@ -42,7 +41,6 @@ public:
 	//! otherwise the marker is only pushed to the OS and the WAL offset to sync up to is returned (0 if
 	//! nothing was written, or it was synced here)
 	virtual idx_t FlushCommit(bool sync_now) = 0;
-	virtual idx_t PrepareCommit(const hugeint_t &txid) = 0;
 
 	virtual void AddRowGroupData(DataTable &table, idx_t start_index, idx_t count,
 	                             unique_ptr<PersistentCollectionData> row_group_data) = 0;
@@ -103,25 +101,12 @@ public:
 	bool IsLoaded() const {
 		return load_complete;
 	}
-	void FinishLoad(QueryContext context);
-	optional_ptr<TableStorageLoad> GetTableStorageLoad() {
-		return table_storage_load.get();
-	}
 	//! The path to the WAL, derived from the database file path
 	string GetWALPath(const string &suffix = ".wal");
 	//! The path to the WAL that is used while a checkpoint is running
 	string GetCheckpointWALPath();
 	//! The path to the WAL that is used while recovering from a crash involving the checkpoint WAL
 	string GetRecoveryWALPath();
-	string GetRetainedWALPath(idx_t generation);
-	//! The file a WAL generation is in right now: the live WAL for the current generation, the main WAL for the one a
-	//! running checkpoint has closed but not yet renamed, and a retained file for anything older
-	string GetWALGenerationPath(idx_t generation);
-	void SetRetainedWALStart(optional_idx generation);
-	idx_t GetOldestWALGeneration() const {
-		return oldest_wal_generation;
-	}
-	void ReleaseRetainedWAL(unique_lock<mutex> &commit_lock);
 	bool InMemory() const;
 
 	virtual bool AutomaticCheckpoint(idx_t estimated_wal_bytes) = 0;
@@ -176,16 +161,8 @@ public:
 
 protected:
 	virtual void LoadDatabase(QueryContext context) = 0;
-	virtual void LoadStorage(QueryContext context) = 0;
-
-private:
-	optional_idx NeededWALGeneration();
-	void RemoveRetainedWAL(idx_t end, idx_t chain_end);
 
 protected:
-	bool defer_load = false;
-	bool deferred_storage = false;
-	unique_ptr<TableStorageLoad> table_storage_load;
 	//! The attached database managed by this storage manager.
 	AttachedDatabase &db;
 	//! The path of the database
@@ -194,8 +171,6 @@ protected:
 	string wal_path;
 	//! The WriteAheadLog of the storage manager
 	unique_ptr<WriteAheadLog> wal;
-	optional_idx retained_wal_start;
-	atomic<idx_t> oldest_wal_generation {0};
 	//! Held by every commit with changes from its append to its commit or revert, and by a checkpoint at start and end
 	mutex commit_lock;
 	//! Whether or not the database is opened in read-only mode
@@ -251,7 +226,6 @@ public:
 
 protected:
 	void LoadDatabase(QueryContext context) override;
-	void LoadStorage(QueryContext context) override;
 
 	unique_ptr<CheckpointWriter> CreateCheckpointWriter(QueryContext context, CheckpointOptions options);
 };

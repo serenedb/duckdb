@@ -35,7 +35,7 @@ class SequenceCatalogEntry;
 
 class CatalogEntryMap {
 public:
-	explicit CatalogEntryMap(bool case_sensitive = false) : entries(IdentifierCompare(case_sensitive)) {
+	CatalogEntryMap() {
 	}
 
 public:
@@ -44,9 +44,6 @@ public:
 	void DropEntry(CatalogEntry &entry);
 	identifier_tree_t<unique_ptr<CatalogEntry>> &Entries();
 	optional_ptr<CatalogEntry> GetEntry(const Identifier &name);
-	bool IsCaseSensitive() const {
-		return entries.key_comp().case_sensitive;
-	}
 
 private:
 	//! Mapping of identifier to catalog entry
@@ -64,7 +61,6 @@ public:
 
 public:
 	DUCKDB_API explicit CatalogSet(Catalog &catalog, unique_ptr<DefaultGenerator> defaults = nullptr);
-	DUCKDB_API CatalogSet(Catalog &catalog, unique_ptr<DefaultGenerator> defaults, bool case_sensitive);
 	~CatalogSet();
 
 	//! Create an entry in the catalog set. Returns whether or not it was
@@ -73,8 +69,6 @@ public:
 	                            const LogicalDependencyList &dependencies);
 	DUCKDB_API bool CreateEntry(ClientContext &context, const Identifier &name, unique_ptr<CatalogEntry> value,
 	                            const LogicalDependencyList &dependencies);
-	void ShareNamespace(CatalogSet &other);
-	DUCKDB_API optional_ptr<CatalogEntry> GetNamespaceEntry(CatalogTransaction transaction, const Identifier &name);
 
 	DUCKDB_API bool AlterEntry(CatalogTransaction transaction, const Identifier &name, AlterInfo &alter_info);
 
@@ -100,8 +94,6 @@ public:
 	DUCKDB_API EntryLookup GetEntryDetailed(CatalogTransaction transaction, const Identifier &name);
 	DUCKDB_API optional_ptr<CatalogEntry> GetEntry(CatalogTransaction transaction, const Identifier &name);
 	DUCKDB_API optional_ptr<CatalogEntry> GetEntry(ClientContext &context, const Identifier &name);
-	DUCKDB_API bool ReadEntry(CatalogTransaction transaction, const Identifier &name,
-	                          const std::function<void(CatalogEntry &)> &read);
 
 	//! Gets the entry that is most similar to the given name (i.e. smallest levenshtein distance), or empty string if
 	//! none is found. The returned pair consists of the entry name and the distance (smaller means closer).
@@ -128,7 +120,6 @@ public:
 	DUCKDB_API optional_ptr<CatalogEntry> GetHeadEntry(const Identifier &name);
 	DUCKDB_API void Scan(ClientContext &context, const std::function<void(CatalogEntry &)> &callback);
 	DUCKDB_API void ScanWithReturn(ClientContext &context, const std::function<bool(CatalogEntry &)> &callback);
-	DUCKDB_API bool IsEmpty();
 
 	template <class T>
 	vector<reference<T>> GetEntries(CatalogTransaction transaction) {
@@ -180,17 +171,14 @@ private:
 	bool VerifyVacancy(CatalogTransaction transaction, CatalogEntry &entry);
 	//! Start the catalog entry chain with a dummy node
 	bool StartChain(CatalogTransaction transaction, const Identifier &name, unique_lock<mutex> &read_lock);
-	bool RenameEntryInternal(CatalogTransaction transaction, CatalogEntry &old, CatalogSet &target,
-	                         const Identifier &new_name, AlterInfo &alter_info, unique_lock<mutex> &read_lock,
-	                         unique_lock<mutex> &target_lock, bool namespace_vacant);
-	bool NamespaceVacant(CatalogTransaction transaction, const Identifier &name);
+	bool RenameEntryInternal(CatalogTransaction transaction, CatalogEntry &old, const Identifier &new_name,
+	                         AlterInfo &alter_info, unique_lock<mutex> &read_lock);
 
 private:
 	DuckCatalog &catalog;
 	//! The catalog lock is used to make changes to the data
 	mutex catalog_lock;
 	CatalogEntryMap map;
-	vector<reference<CatalogSet>> shared_namespace;
 	//! The generator used to generate default internal entries
 	unique_ptr<DefaultGenerator> defaults;
 };

@@ -132,7 +132,7 @@ SourceResultType PhysicalDrop::GetDataInternal(ExecutionContext &context, DataCh
 	default: {
 		// the catalog may be empty -> the default catalog (e.g. for an unresolved DROP ... IF EXISTS of a missing
 		// entry)
-		auto &catalog = Catalog::GetCatalog(context.client, info->GetQualifiedName().Catalog());
+		auto &catalog = Catalog::GetDDLCatalog(context.client, info->type, info->GetQualifiedName().Catalog());
 		catalog.DropEntry(context.client, *info);
 		break;
 	}

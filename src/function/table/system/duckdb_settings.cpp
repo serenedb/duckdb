@@ -85,7 +85,7 @@ unique_ptr<GlobalTableFunctionState> DuckDBSettingsInit(ClientContext &context, 
 
 	auto &config = DBConfig::GetConfig(context);
 	auto visible = [&](const string &name) {
-		return !context.setting_visibility || context.setting_visibility(context, name);
+		return context.IsSettingVisible(name);
 	};
 	auto options_count = DBConfig::GetOptionCount();
 	for (idx_t i = 0; i < options_count; i++) {

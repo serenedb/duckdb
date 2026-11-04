@@ -22,11 +22,16 @@
 namespace duckdb {
 constexpr const char *AggregateFunctionCatalogEntry::Name;
 
+struct ListedFunction {
+	reference<SchemaCatalogEntry> schema;
+	reference<CatalogEntry> entry;
+};
+
 struct DuckDBFunctionsData : public GlobalTableFunctionState {
 	DuckDBFunctionsData() : offset(0), offset_in_entry(0) {
 	}
 
-	vector<reference<CatalogEntry>> entries;
+	vector<ListedFunction> entries;
 	idx_t offset;
 	idx_t offset_in_entry;
 	//! The offset, published once per chunk (for progress)
@@ -105,12 +110,12 @@ static unique_ptr<FunctionData> DuckDBFunctionsBind(ClientContext &context, Tabl
 
 static void ExtractFunctionsFromSchema(ClientContext &context, SchemaCatalogEntry &schema,
                                        DuckDBFunctionsData &result) {
-	Catalog::ScanListedEntries(context, schema, CatalogType::SCALAR_FUNCTION_ENTRY,
-	                           [&](CatalogEntry &entry) { result.entries.push_back(entry); });
-	Catalog::ScanListedEntries(context, schema, CatalogType::TABLE_FUNCTION_ENTRY,
-	                           [&](CatalogEntry &entry) { result.entries.push_back(entry); });
-	Catalog::ScanListedEntries(context, schema, CatalogType::PRAGMA_FUNCTION_ENTRY,
-	                           [&](CatalogEntry &entry) { result.entries.push_back(entry); });
+	auto add = [&](CatalogEntry &entry) {
+		result.entries.push_back(ListedFunction {schema, entry});
+	};
+	Catalog::ScanListedEntries(context, schema, CatalogType::SCALAR_FUNCTION_ENTRY, add);
+	Catalog::ScanListedEntries(context, schema, CatalogType::TABLE_FUNCTION_ENTRY, add);
+	Catalog::ScanListedEntries(context, schema, CatalogType::PRAGMA_FUNCTION_ENTRY, add);
 }
 
 unique_ptr<GlobalTableFunctionState> DuckDBFunctionsInit(ClientContext &context, TableFunctionInitInput &input) {
@@ -123,10 +128,9 @@ unique_ptr<GlobalTableFunctionState> DuckDBFunctionsInit(ClientContext &context,
 		ExtractFunctionsFromSchema(context, schema.get(), *result);
 	};
 
-	std::sort(result->entries.begin(), result->entries.end(),
-	          [&](reference<CatalogEntry> a, reference<CatalogEntry> b) {
-		          return (int32_t)a.get().type < (int32_t)b.get().type;
-	          });
+	std::sort(result->entries.begin(), result->entries.end(), [&](const ListedFunction &a, const ListedFunction &b) {
+		return (int32_t)a.entry.get().type < (int32_t)b.entry.get().type;
+	});
 	return std::move(result);
 }
 
@@ -693,7 +697,8 @@ static optional_idx GetFunctionDescriptionIndex(vector<FunctionDescription> &fun
 }
 
 template <class T, class OP>
-bool ExtractFunctionData(ClientContext &context, CatalogEntry &entry, idx_t function_idx, DataChunk &output) {
+bool ExtractFunctionData(ClientContext &context, SchemaCatalogEntry &schema, CatalogEntry &entry, idx_t function_idx,
+                         DataChunk &output) {
 	auto &function = entry.Cast<T>();
 	vector<LogicalType> parameter_types_vector = OP::GetParameterLogicalTypes(function, function_idx);
 	Value parameter_types_value = OP::GetParameterTypes(function, function_idx);
@@ -704,13 +709,13 @@ bool ExtractFunctionData(ClientContext &context, CatalogEntry &entry, idx_t func
 	idx_t col = 0;
 
 	// database_name, LogicalType::VARCHAR
-	output.data[col++].Append(Value(function.ParentCatalog().GetName()));
+	output.data[col++].Append(Value(schema.ParentCatalog().GetName()));
 
 	// database_oid, BIGINT
-	output.data[col++].Append(Value::BIGINT(NumericCast<int64_t>(function.ParentCatalog().GetOid())));
+	output.data[col++].Append(Value::BIGINT(NumericCast<int64_t>(schema.ParentCatalog().GetOid())));
 
 	// schema_name, LogicalType::VARCHAR
-	output.data[col++].Append(Value(function.ParentSchemaName(CatalogTransaction(function.ParentCatalog(), context))));
+	output.data[col++].Append(Value(schema.name));
 
 	// function_name, LogicalType::VARCHAR
 	output.data[col++].Append(Value(function.name));
@@ -789,37 +794,38 @@ void DuckDBFunctionsFunction(ClientContext &context, TableFunctionInput &data_p,
 	// either fill up the chunk or return all the remaining columns
 	idx_t count = 0;
 	while (data.offset < data.entries.size() && count < STANDARD_VECTOR_SIZE) {
-		auto &entry = data.entries[data.offset].get().Cast<FunctionEntry>();
+		auto &schema = data.entries[data.offset].schema.get();
+		auto &entry = data.entries[data.offset].entry.get().Cast<FunctionEntry>();
 		bool finished;
 
 		switch (entry.type) {
 		case CatalogType::SCALAR_FUNCTION_ENTRY:
 			finished = ExtractFunctionData<ScalarFunctionCatalogEntry, ScalarFunctionExtractor>(
-			    context, entry, data.offset_in_entry, output);
+			    context, schema, entry, data.offset_in_entry, output);
 			break;
 		case CatalogType::AGGREGATE_FUNCTION_ENTRY:
 			finished = ExtractFunctionData<AggregateFunctionCatalogEntry, AggregateFunctionExtractor>(
-			    context, entry, data.offset_in_entry, output);
+			    context, schema, entry, data.offset_in_entry, output);
 			break;
 		case CatalogType::TABLE_MACRO_ENTRY:
-			finished = ExtractFunctionData<TableMacroCatalogEntry, TableMacroExtractor>(context, entry,
+			finished = ExtractFunctionData<TableMacroCatalogEntry, TableMacroExtractor>(context, schema, entry,
 			                                                                            data.offset_in_entry, output);
 			break;
 		case CatalogType::MACRO_ENTRY:
-			finished = ExtractFunctionData<ScalarMacroCatalogEntry, MacroExtractor>(context, entry,
+			finished = ExtractFunctionData<ScalarMacroCatalogEntry, MacroExtractor>(context, schema, entry,
 			                                                                        data.offset_in_entry, output);
 			break;
 		case CatalogType::TABLE_FUNCTION_ENTRY:
 			finished = ExtractFunctionData<TableFunctionCatalogEntry, TableFunctionExtractor>(
-			    context, entry, data.offset_in_entry, output);
+			    context, schema, entry, data.offset_in_entry, output);
 			break;
 		case CatalogType::PRAGMA_FUNCTION_ENTRY:
 			finished = ExtractFunctionData<PragmaFunctionCatalogEntry, PragmaFunctionExtractor>(
-			    context, entry, data.offset_in_entry, output);
+			    context, schema, entry, data.offset_in_entry, output);
 			break;
 		case CatalogType::WINDOW_FUNCTION_ENTRY:
 			finished = ExtractFunctionData<WindowFunctionCatalogEntry, WindowFunctionExtractor>(
-			    context, entry, data.offset_in_entry, output);
+			    context, schema, entry, data.offset_in_entry, output);
 			break;
 		default:
 			throw InternalException("FIXME: unrecognized function type in duckdb_functions");

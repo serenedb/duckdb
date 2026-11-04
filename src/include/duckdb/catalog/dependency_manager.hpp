@@ -89,7 +89,7 @@ class DependencyManager {
 	friend class CatalogSet;
 
 public:
-	DependencyManager(DuckCatalog &catalog, bool case_sensitive);
+	explicit DependencyManager(DuckCatalog &catalog);
 
 	//! Scans all dependencies, returning pairs of (object, dependent)
 	void Scan(ClientContext &context,
@@ -105,24 +105,17 @@ public:
 	catalog_entry_vector_t FollowingDependents(CatalogTransaction transaction, const CatalogEntry &object);
 	optional_ptr<CatalogEntry> OwnerOf(CatalogTransaction transaction, CatalogEntry &entry);
 
-	using created_by_owner_t = std::function<bool(const CatalogEntry &owned)>;
 	//! Get the order of entries needed by EXPORT, the objects with no dependencies are exported first
 	void ReorderEntries(catalog_entry_vector_t &entries);
-	void ReorderEntries(catalog_entry_vector_t &entries, ClientContext &context,
-	                    const created_by_owner_t &created_by_owner);
 
 	static bool CanDepend(Catalog &dependent, Catalog &subject);
 	void ScanDependentEntries(CatalogTransaction transaction, CatalogEntry &object,
 	                          const std::function<void(CatalogEntry &)> &callback);
-	void VerifyForeignSubjects(const vector<reference<DependencyEntry>> &dependencies);
-	void VerifyForeignDependents(const vector<reference<CatalogEntry>> &dropped);
 
 private:
 	DuckCatalog &catalog;
 	CatalogSet subjects;
 	CatalogSet dependents;
-	mutex foreign_lock;
-	case_insensitive_set_t foreign_catalogs;
 
 private:
 	bool IsSystemEntry(const CatalogEntry &entry) const;
@@ -158,9 +151,8 @@ public:
 
 private:
 	void ReorderEntry(CatalogTransaction transaction, CatalogEntry &entry, catalog_entry_set_t &visited,
-	                  catalog_entry_vector_t &order, bool allow_internal, const created_by_owner_t &created_by_owner);
-	void ReorderEntries(catalog_entry_vector_t &entries, CatalogTransaction transaction, bool allow_internal,
-	                    const created_by_owner_t &created_by_owner);
+	                  catalog_entry_vector_t &order, bool allow_internal);
+	void ReorderEntries(catalog_entry_vector_t &entries, CatalogTransaction transaction, bool allow_internal);
 	void AddObject(CatalogTransaction transaction, CatalogEntry &object, const LogicalDependencyList &dependencies);
 	void VerifyExistence(CatalogTransaction transaction, VisibilityBound visibility_bound, DependencyEntry &object);
 	void VerifyCommitDrop(CatalogTransaction transaction, VisibilityBound visibility_bound, CatalogEntry &object);
@@ -173,7 +165,6 @@ private:
 	               catalog_entry_vector_t &order);
 	void DropObject(CatalogTransaction transaction, CatalogEntry &object, bool cascade);
 	void AlterObject(CatalogTransaction transaction, CatalogEntry &old_obj, CatalogEntry &new_obj, AlterInfo &info);
-	void RenameSchema(CatalogTransaction transaction, CatalogEntry &old_schema, CatalogEntry &new_schema);
 
 private:
 	void RemoveDependency(CatalogTransaction transaction, const DependencyInfo &info);
@@ -191,10 +182,6 @@ private:
 	void ScanSubjects(CatalogTransaction transaction, const CatalogEntryInfo &info, dependency_callback_t &callback);
 	void ScanAllDependents(CatalogTransaction transaction, const CatalogEntryInfo &info,
 	                       dependency_callback_t &callback);
-	void ForEachCatalog(CatalogTransaction transaction, const std::function<bool(DuckCatalog &)> &visit,
-	                    const std::function<void(DuckCatalog &, CatalogTransaction)> &callback);
-	bool MayDependOn(const Identifier &catalog_name);
-	LogicalDependencyList EntryDependencies(CatalogTransaction transaction, CatalogEntry &object);
 	void RemoveDependencies(CatalogTransaction transaction, const CatalogEntry &object,
 	                        const LogicalDependencyList &dependencies);
 	void ScanSetInternal(CatalogTransaction transaction, const CatalogEntryInfo &info, bool subjects,

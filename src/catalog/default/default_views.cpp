@@ -258,6 +258,9 @@ DefaultViewGenerator::DefaultViewGenerator(Catalog &catalog, SchemaCatalogEntry 
 unique_ptr<CatalogEntry> DefaultViewGenerator::CreateDefaultEntry(ClientContext &context,
                                                                   const Identifier &entry_name) {
 	auto info = GetDefaultView(context, schema.name, entry_name);
+	if (!info && ServesDefaults(schema.name, DEFAULT_SCHEMA)) {
+		info = GetDefaultView(context, DEFAULT_SCHEMA, entry_name);
+	}
 	if (info) {
 		return make_uniq_base<CatalogEntry, ViewCatalogEntry>(catalog, schema, *info);
 	}
@@ -267,7 +270,7 @@ unique_ptr<CatalogEntry> DefaultViewGenerator::CreateDefaultEntry(ClientContext 
 vector<Identifier> DefaultViewGenerator::GetDefaultEntries() {
 	vector<Identifier> result;
 	for (idx_t index = 0; internal_views[index].name != nullptr; index++) {
-		if (internal_views[index].schema == schema.name) {
+		if (ServesDefaults(schema.name, internal_views[index].schema)) {
 			result.emplace_back(internal_views[index].name);
 		}
 	}

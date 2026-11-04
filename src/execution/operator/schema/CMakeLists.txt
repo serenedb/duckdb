@@ -15,6 +15,7 @@ add_library_unity(
   physical_create_role.cpp
   physical_create_foreign_server.cpp
   physical_create_tokenizer.cpp
+  physical_create_database.cpp
   physical_detach.cpp
   physical_drop.cpp)
 set(ALL_OBJECT_FILES

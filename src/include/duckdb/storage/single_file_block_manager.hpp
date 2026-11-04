@@ -134,7 +134,7 @@ public:
 	bool Prefetch() override;
 
 	//! Return the checkpoint iteration of the file.
-	uint64_t GetCheckpointIteration() const override {
+	uint64_t GetCheckpointIteration() const {
 		return iteration_count;
 	}
 	//! Return the version number of the file.
@@ -223,7 +223,7 @@ private:
 	//! The block id where the free list can be found
 	idx_t free_list_id;
 	//! The current header iteration count.
-	atomic<uint64_t> iteration_count;
+	uint64_t iteration_count;
 	//! The storage manager options
 	StorageManagerOptions options;
 	//! Lock for performing various operations in the single file block manager

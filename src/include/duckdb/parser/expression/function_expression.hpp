@@ -133,6 +133,12 @@ public:
 	bool &FromOperatorMutable() {
 		return from_operator;
 	}
+	bool IsBuiltin() const {
+		return builtin;
+	}
+	bool &BuiltinMutable() {
+		return builtin;
+	}
 	bool Distinct() const {
 		return distinct;
 	}
@@ -191,6 +197,7 @@ private:
 	bool is_operator;
 	//! Whether this call originated from operator syntax; only used for "?column?" target-list naming
 	bool from_operator = false;
+	bool builtin = false;
 	//! List of arguments to the function
 	vector<FunctionArgument> arguments;
 	//! Whether or not the aggregate function is distinct, only used for aggregates

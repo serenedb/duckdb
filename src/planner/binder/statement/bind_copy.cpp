@@ -921,20 +921,24 @@ BoundStatement Binder::Bind(CopyStatement &stmt, CopyToType copy_to_type) {
 	    stmt.info->is_format_auto_detected ? OnEntryNotFound::RETURN_NULL : OnEntryNotFound::THROW_EXCEPTION;
 	CatalogEntryRetriever entry_retriever {context};
 	auto &catalog = Catalog::GetSystemCatalog(context);
-	auto entry = catalog.GetEntry(
-	    entry_retriever,
-	    EntryLookupInfo(CatalogType::COPY_FUNCTION_ENTRY,
-	                    QualifiedName(catalog.GetName(), Identifier::DefaultSchema(), Identifier(stmt.info->format))),
-	    on_entry_do);
+	auto entry = catalog
+	                 .LookupEntry(entry_retriever,
+	                              EntryLookupInfo(CatalogType::COPY_FUNCTION_ENTRY,
+	                                              QualifiedName(catalog.GetName(), Identifier::DefaultSchema(),
+	                                                            Identifier(stmt.info->format))),
+	                              on_entry_do)
+	                 .entry;
 
 	if (!entry) {
 		IsFormatExtensionKnown(context, stmt.info->format);
 		// If we did not find an entry, we default to a CSV
-		entry = catalog.GetEntry(
-		    entry_retriever,
-		    EntryLookupInfo(CatalogType::COPY_FUNCTION_ENTRY,
-		                    QualifiedName(catalog.GetName(), Identifier::DefaultSchema(), Identifier("csv"))),
-		    OnEntryNotFound::THROW_EXCEPTION);
+		entry = catalog
+		            .LookupEntry(entry_retriever,
+		                         EntryLookupInfo(
+		                             CatalogType::COPY_FUNCTION_ENTRY,
+		                             QualifiedName(catalog.GetName(), Identifier::DefaultSchema(), Identifier("csv"))),
+		                         OnEntryNotFound::THROW_EXCEPTION)
+		            .entry;
 	}
 	auto &copy_function = entry->Cast<CopyFunctionCatalogEntry>();
 	auto &function = copy_function.function;

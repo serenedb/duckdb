@@ -96,7 +96,7 @@ optional_ptr<Catalog> Catalog::GetCatalogEntry(CatalogEntryRetriever &retriever,
 	if (catalog_name == TEMP_CATALOG) {
 		return &ClientData::Get(context).temporary_objects->GetCatalog();
 	}
-	if (catalog_name == SYSTEM_CATALOG) {
+	if (catalog_name == SYSTEM_CATALOG && GetSystemCatalog(context).IsDuckCatalog()) {
 		return &GetSystemCatalog(context);
 	}
 	auto entry =
@@ -128,6 +128,14 @@ Catalog &Catalog::GetCatalog(CatalogEntryRetriever &retriever, const Identifier 
 Catalog &Catalog::GetCatalog(ClientContext &context, const Identifier &catalog_name) {
 	CatalogEntryRetriever entry_retriever(context);
 	return GetCatalog(entry_retriever, catalog_name);
+}
+
+Catalog &Catalog::GetDDLCatalog(ClientContext &context, CatalogType type, const Identifier &catalog_name) {
+	auto &system = GetSystemCatalog(context);
+	if (type == CatalogType::ROLE_ENTRY || type == CatalogType::DATABASE_ENTRY || catalog_name == system.GetName()) {
+		return system;
+	}
+	return GetCatalog(context, catalog_name);
 }
 
 //===--------------------------------------------------------------------===//
@@ -408,6 +416,10 @@ optional_ptr<CatalogEntry> Catalog::CreateRole(CatalogTransaction transaction, C
 	throw NotImplementedException("CREATE ROLE is not supported by a %s catalog", GetCatalogType());
 }
 
+optional_ptr<CatalogEntry> Catalog::CreateDatabase(CatalogTransaction transaction, CreateDatabaseInfo &info) {
+	throw NotImplementedException("CREATE DATABASE is not supported by a %s catalog", GetCatalogType());
+}
+
 optional_ptr<CatalogEntry> Catalog::CreateForeignServer(CatalogTransaction transaction, CreateForeignServerInfo &info) {
 	throw NotImplementedException("CREATE SERVER is not supported by a %s catalog", GetCatalogType());
 }
@@ -477,29 +489,6 @@ struct CatalogLookup {
 //===--------------------------------------------------------------------===//
 // Generic
 //===--------------------------------------------------------------------===//
-Catalog &Catalog::ReplayUseCatalog(ClientContext &context, idx_t catalog_oid) {
-	throw InternalException("Catalog %s has no catalog log to replay catalog %llu from", GetName(), catalog_oid);
-}
-
-void Catalog::SyncCatalogLog() {
-	auto log = CatalogLog();
-	if (!log) {
-		throw InternalException("Catalog %s has no catalog log to sync", GetName());
-	}
-	idx_t offset;
-	{
-		auto commit_lock = log->GetStorageManager().GetCommitLock();
-		log = CatalogLog();
-		if (!log) {
-			throw InternalException("Catalog %s has no catalog log to sync", GetName());
-		}
-		offset = log->GetFlushedOffset();
-	}
-	if (offset > 0) {
-		log->SyncUpTo(offset);
-	}
-}
-
 bool Catalog::InRelationNamespace(CatalogType type) {
 	switch (type) {
 	case CatalogType::TABLE_ENTRY:
@@ -797,10 +786,10 @@ bool Catalog::CheckAmbiguousCatalogOrSchema(ClientContext &context, const Identi
 }
 
 static idx_t ListingRank(Catalog &catalog) {
-	if (!catalog.IsDuckCatalog()) {
-		return 2;
+	if (catalog.Compatibility() == SqlCompatibility::POSTGRES) {
+		return 0;
 	}
-	return catalog.Compatibility() == SqlCompatibility::POSTGRES ? 0 : 1;
+	return catalog.IsDuckCatalog() ? 1 : 2;
 }
 
 static void LogSkippedListing(ClientContext &context, const string &what, const std::exception &ex) {
@@ -862,15 +851,8 @@ vector<CatalogSearchEntry> GetCatalogEntries(CatalogEntryRetriever &retriever, c
 			entries = search_path.GetWithPrecedenceSchemas(context);
 		}
 	} else if (IsInvalidCatalog(catalog)) {
-		const bool builtins_in_system_main =
-		    (schema == "pg_catalog" || (schema == "information_schema" && lookup_type == CatalogType::TYPE_ENTRY)) &&
-		    Catalog::GetCatalog(context, DatabaseManager::GetDefaultDatabase(context)).Compatibility() ==
-		        SqlCompatibility::POSTGRES;
 		auto catalogs = search_path.GetCatalogsForSchema(schema);
 		for (auto &catalog_name : catalogs) {
-			if (builtins_in_system_main && catalog_name == SYSTEM_CATALOG) {
-				entries.emplace_back(catalog_name, DEFAULT_SCHEMA);
-			}
 			entries.emplace_back(catalog_name, schema);
 		}
 		if (entries.empty()) {
@@ -1089,7 +1071,7 @@ CatalogException Catalog::CreateMissingEntryException(CatalogEntryRetriever &ret
 			break;
 		}
 		if (database->GetVisibility() == AttachVisibility::HIDDEN ||
-		    (!database->GetCatalog().IsDuckCatalog() && !search_path_catalogs.count(database->GetName()))) {
+		    (ListingRank(database->GetCatalog()) == 2 && !search_path_catalogs.count(database->GetName()))) {
 			continue;
 		}
 		vector<reference<SchemaCatalogEntry>> current_schemas;
@@ -1561,7 +1543,19 @@ optional_ptr<CatalogEntry> Catalog::GetEntry(CatalogEntryRetriever &retriever, c
 optional_ptr<CatalogEntry> Catalog::GetEntry(ClientContext &context, const EntryLookupInfo &lookup_info,
                                              OnEntryNotFound if_not_found) {
 	CatalogEntryRetriever retriever(context);
-	return GetEntry(retriever, lookup_info, if_not_found);
+	auto &system = GetSystemCatalog(context);
+	if (system.IsDuckCatalog()) {
+		return GetEntry(retriever, lookup_info, if_not_found);
+	}
+	if (lookup_info.GetCatalog() != SYSTEM_CATALOG) {
+		if (!IsInvalidCatalog(lookup_info.GetCatalog()) || lookup_info.GetSchema() != DEFAULT_SCHEMA) {
+			return GetEntry(retriever, lookup_info, if_not_found);
+		}
+		if (auto entry = GetEntry(retriever, lookup_info, OnEntryNotFound::RETURN_NULL)) {
+			return entry;
+		}
+	}
+	return system.GetEntryInCatalog(retriever, lookup_info, if_not_found);
 }
 
 CatalogEntry &Catalog::GetEntry(ClientContext &context, const EntryLookupInfo &lookup_info) {
@@ -1890,6 +1884,18 @@ vector<MetadataBlockInfo> Catalog::GetMetadataInfo(ClientContext &context) {
 }
 
 optional_ptr<DependencyManager> Catalog::GetDependencyManager() {
+	return nullptr;
+}
+
+void Catalog::ScanSubjects(CatalogTransaction transaction, CatalogEntry &entry,
+                           const std::function<void(CatalogEntry &)> &callback) {
+}
+
+catalog_entry_vector_t Catalog::OwnedEntries(CatalogTransaction transaction, const CatalogEntry &owner) {
+	return catalog_entry_vector_t();
+}
+
+optional_ptr<CatalogEntry> Catalog::OwnerOf(CatalogTransaction transaction, CatalogEntry &owned) {
 	return nullptr;
 }
 
