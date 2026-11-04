@@ -2,10 +2,16 @@
 
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/catalog/catalog_entry.hpp"
+#include "duckdb/catalog/catalog_entry/aggregate_function_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/function_entry.hpp"
 #include "duckdb/catalog/catalog_entry/index_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/macro_catalog_entry.hpp"
+#include "duckdb/catalog/catalog_entry/pragma_function_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/role_entry.hpp"
+#include "duckdb/catalog/catalog_entry/scalar_function_catalog_entry.hpp"
+#include "duckdb/catalog/catalog_entry/schema_catalog_entry.hpp"
+#include "duckdb/catalog/catalog_entry/table_function_catalog_entry.hpp"
+#include "duckdb/catalog/catalog_entry/window_function_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_set.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/view_catalog_entry.hpp"
@@ -417,6 +423,26 @@ void AlterPermissionsInfo::ApplyTo(Permissions &permissions, CatalogType entry_t
 		return;
 	}
 
+	if (!info.functions.empty()) {
+		auto &rows = permissions.functions;
+		unordered_map<string, idx_t> positions;
+		for (idx_t i = 0; i < rows.size(); i++) {
+			positions.emplace(rows[i].name, i);
+		}
+		for (auto &function : info.functions) {
+			auto position = positions.find(function.name);
+			auto row_acl = position == positions.end() ? function.acl : rows[position->second].acl;
+			ApplyGrant(info, info.object_owner_id, row_acl, CatalogType::MACRO_ENTRY, nullptr);
+			if (position == positions.end()) {
+				positions.emplace(function.name, rows.size());
+				rows.push_back(NamedAcl {function.name, std::move(row_acl)});
+			} else {
+				rows[position->second].acl = std::move(row_acl);
+			}
+		}
+		return;
+	}
+
 	if (info.schema_id) {
 		auto &schemas = permissions.schemas;
 		auto row = std::find_if(schemas.begin(), schemas.end(),
@@ -655,9 +681,10 @@ static vector<idx_t> Reachable(const unordered_map<idx_t, SecuritySnapshot::Node
 
 SecuritySnapshot::SecuritySnapshot(unordered_map<idx_t, Node> nodes_p, unordered_map<string, idx_t> database_owners_p,
                                    idx_t database_owner_role_p,
-                                   unordered_map<string, unordered_map<idx_t, Relation>> relations_p)
+                                   unordered_map<string, unordered_map<idx_t, Relation>> relations_p,
+                                   unordered_map<string, unordered_map<string, Permissions>> functions_p)
     : nodes(std::move(nodes_p)), database_owners(std::move(database_owners_p)),
-      database_owner_role(database_owner_role_p), relations(std::move(relations_p)) {
+      database_owner_role(database_owner_role_p), relations(std::move(relations_p)), functions(std::move(functions_p)) {
 	vector<Role> roles_p;
 	roles_p.reserve(nodes.size());
 	for (auto &[oid, node] : nodes) {
@@ -726,6 +753,7 @@ shared_ptr<const SecuritySnapshot> SecuritySnapshot::Build(Catalog &cluster, Cat
 	});
 	unordered_map<string, idx_t> database_owners;
 	unordered_map<string, unordered_map<idx_t, Relation>> relations;
+	unordered_map<string, unordered_map<string, Permissions>> functions;
 	auto &config = DBConfig::GetConfig(cluster.GetDatabase());
 	cluster.ScanTopLevelEntries(transaction, CatalogType::DATABASE_ENTRY, [&](CatalogEntry &entry) {
 		database_owners.emplace(entry.name.GetIdentifierName(), entry.permissions.owner);
@@ -737,9 +765,13 @@ shared_ptr<const SecuritySnapshot> SecuritySnapshot::Build(Catalog &cluster, Cat
 			relations[entry.name.GetIdentifierName()][row.oid] =
 			    Relation {Permissions {config.bootstrap_role, row.acl}, {}};
 		}
+		for (auto &row : entry.permissions.functions) {
+			functions[entry.name.GetIdentifierName()][row.name] = Permissions {config.bootstrap_role, row.acl};
+		}
 	});
 	return make_shared_ptr<const SecuritySnapshot>(std::move(nodes), std::move(database_owners),
-	                                               config.database_owner_role, std::move(relations));
+	                                               config.database_owner_role, std::move(relations),
+	                                               std::move(functions));
 }
 
 shared_ptr<const SecuritySnapshot> SecuritySnapshot::ForDatabase(const Identifier &database) const {
@@ -756,8 +788,8 @@ shared_ptr<const SecuritySnapshot> SecuritySnapshot::ForDatabase(const Identifie
 		auto implied = nodes;
 		implied[owner->second].member_of.push_back(
 		    Membership {database_owner_role, database_owner_role, false, true, true});
-		result =
-		    make_shared_ptr<const SecuritySnapshot>(std::move(implied), unordered_map<string, idx_t>(), 0, relations);
+		result = make_shared_ptr<const SecuritySnapshot>(std::move(implied), unordered_map<string, idx_t>(), 0,
+		                                                 relations, functions);
 	}
 	return result;
 }
@@ -829,6 +861,20 @@ optional_ptr<const vector<ColumnAcl>> SecuritySnapshot::RelationColumns(std::str
                                                                         idx_t relation) const {
 	auto row = FindRelation(database, relation);
 	return row && !row->columns.empty() ? &row->columns : nullptr;
+}
+
+bool SecuritySnapshot::HasFunctionGrants(std::string_view database) const {
+	return !functions.empty() && functions.find(database) != functions.end();
+}
+
+optional_ptr<const Permissions> SecuritySnapshot::FunctionPermissions(std::string_view database,
+                                                                      std::string_view function) const {
+	auto rows = functions.find(database);
+	if (rows == functions.end()) {
+		return nullptr;
+	}
+	auto row = rows->second.find(function);
+	return row == rows->second.end() ? nullptr : &row->second;
 }
 
 const Permissions &EffectivePermissions(ClientContext &context, const CatalogEntry &entry) {
@@ -923,6 +969,107 @@ bool CanUseNamedSchema(ClientContext &context, const RoleAccess &role, const Cat
 	return &permissions == &schema.permissions || role.Can(CatalogType::SCHEMA_ENTRY, permissions, AclMode::Usage);
 }
 
+idx_t FunctionOverloadCount(const CatalogEntry &function) {
+	switch (function.type) {
+	case CatalogType::SCALAR_FUNCTION_ENTRY:
+		return function.Cast<ScalarFunctionCatalogEntry>().functions.functions.size();
+	case CatalogType::AGGREGATE_FUNCTION_ENTRY:
+		return function.Cast<AggregateFunctionCatalogEntry>().functions.functions.size();
+	case CatalogType::TABLE_FUNCTION_ENTRY:
+		return function.Cast<TableFunctionCatalogEntry>().functions.functions.size();
+	case CatalogType::PRAGMA_FUNCTION_ENTRY:
+		return function.Cast<PragmaFunctionCatalogEntry>().functions.functions.size();
+	case CatalogType::WINDOW_FUNCTION_ENTRY:
+		return function.Cast<WindowFunctionCatalogEntry>().functions.functions.size();
+	case CatalogType::MACRO_ENTRY:
+	case CatalogType::TABLE_MACRO_ENTRY:
+		return function.Cast<MacroCatalogEntry>().macros.size();
+	default:
+		return 0;
+	}
+}
+
+vector<AclItem> BuiltinFunctionAcl(const CatalogEntry &function, idx_t owner) {
+	if (function.Cast<FunctionEntry>().required_capability == RoleCapability::None) {
+		return Permissions::AclDefault(CatalogType::MACRO_ENTRY, owner);
+	}
+	return {AclItem {owner, owner, AclMode::Execute, AclMode::NoRights}};
+}
+
+vector<NamedAcl> BuiltinFunctionRows(ClientContext &context, SchemaCatalogEntry &schema) {
+	auto &config = DBConfig::GetConfig(context);
+	vector<NamedAcl> rows;
+	unordered_set<string> keys;
+	const auto add = [&](CatalogEntry &entry) {
+		if (!entry.internal) {
+			return;
+		}
+		const auto overloads = FunctionOverloadCount(entry);
+		for (idx_t overload = 0; overload < overloads; overload++) {
+			auto key = config.builtin_function_key(entry, overload);
+			if (!key.empty() && keys.insert(key).second) {
+				rows.push_back(NamedAcl {std::move(key), BuiltinFunctionAcl(entry, config.bootstrap_role)});
+			}
+		}
+	};
+	for (auto kind : {CatalogType::MACRO_ENTRY, CatalogType::TABLE_MACRO_ENTRY}) {
+		schema.Scan(context, kind, add);
+	}
+	const Identifier information_schema("information_schema");
+	const bool information = schema.name == information_schema;
+	Catalog::GetSystemCatalog(context).ScanSchemas(context, [&](SchemaCatalogEntry &system_schema) {
+		if ((system_schema.name == information_schema) != information) {
+			return;
+		}
+		for (auto kind : {CatalogType::SCALAR_FUNCTION_ENTRY, CatalogType::TABLE_FUNCTION_ENTRY,
+		                  CatalogType::PRAGMA_FUNCTION_ENTRY}) {
+			system_schema.Scan(context, kind, add);
+		}
+	});
+	return rows;
+}
+
+static optional_ptr<const Permissions> BuiltinGrant(ClientContext &context, const CatalogEntry &function,
+                                                    idx_t overload) {
+	auto &config = DBConfig::GetConfig(context);
+	if (!context.security || !context.security->HasFunctionGrants() || !config.builtin_function_key ||
+	    !function.internal) {
+		return nullptr;
+	}
+	const auto database = DatabaseManager::TryGetDefaultDatabase(context);
+	if (!context.security->HasFunctionGrants(database.GetIdentifierName())) {
+		return nullptr;
+	}
+	return context.security->FunctionPermissions(database.GetIdentifierName(),
+	                                             config.builtin_function_key(function, overload));
+}
+
+void CheckBuiltinCall(ClientContext &context, const RoleAccess &role, const CatalogEntry &function, idx_t overload) {
+	if (role.is_superuser) {
+		return;
+	}
+	if (auto granted = BuiltinGrant(context, function, overload)) {
+		if (!role.Can(CatalogType::MACRO_ENTRY, *granted, AclMode::Execute)) {
+			ThrowPermissionDenied(function);
+		}
+		return;
+	}
+	if (!function.Cast<FunctionEntry>().MayCall(role)) {
+		ThrowPermissionDenied(function);
+	}
+}
+
+bool BuiltinCallGranted(ClientContext &context, const RoleAccess &role, const CatalogEntry &function) {
+	const auto overloads = FunctionOverloadCount(function);
+	for (idx_t overload = 0; overload < overloads; overload++) {
+		auto granted = BuiltinGrant(context, function, overload);
+		if (granted && role.Can(CatalogType::MACRO_ENTRY, *granted, AclMode::Execute)) {
+			return true;
+		}
+	}
+	return false;
+}
+
 static bool IsClusterDatabase(AttachedDatabase &database) {
 	return database.GetCatalog().UsesCatalogLog() && !database.IsReadOnly();
 }
@@ -971,7 +1118,7 @@ bool EntryVisible(ClientContext &context, const RoleAccess &role, CatalogEntry &
 		return CanUseDatabase(context, role, entry.name);
 	}
 	if ((entry.type == CatalogType::TABLE_FUNCTION_ENTRY || entry.type == CatalogType::SCALAR_FUNCTION_ENTRY) &&
-	    !entry.Cast<FunctionEntry>().MayCall(role)) {
+	    !entry.Cast<FunctionEntry>().MayCall(role) && !BuiltinCallGranted(context, role, entry)) {
 		return false;
 	}
 	if (entry.internal || IsUnowned(entry)) {
@@ -1086,6 +1233,11 @@ static bool AnyRoleReference(const CatalogEntry &entry, F &&named) {
 		}
 	}
 	for (auto &row : permissions.schemas) {
+		if (any_acl(row.acl)) {
+			return true;
+		}
+	}
+	for (auto &row : permissions.functions) {
 		if (any_acl(row.acl)) {
 			return true;
 		}

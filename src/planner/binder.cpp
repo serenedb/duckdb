@@ -403,7 +403,7 @@ void Binder::RequirePrivilege(TableCatalogEntry &table, AclMode mode, vector<Log
 
 void Binder::CheckCall(FunctionEntry &function) {
 	auto &calling = CurrentRole();
-	if (!function.MayCall(calling)) {
+	if (!function.MayCall(calling) && !BuiltinCallGranted(context, calling, function)) {
 		ThrowPermissionDenied(function);
 	}
 }
