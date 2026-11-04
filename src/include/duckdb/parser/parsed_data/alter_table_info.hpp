@@ -175,6 +175,8 @@ struct AlterRoleInfo : public AlterInfo {
 	int8_t set_option = -1;
 	idx_t grant_role_id = 0;
 	idx_t grantor_id = 0;
+	string granted_by;
+	bool cascade = false;
 	bool all_roles = false;
 	bool alter_group = false;
 
