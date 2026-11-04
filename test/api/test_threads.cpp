@@ -93,27 +93,10 @@ TEST_CASE("Test external threads", "[api]") {
 	con.Query("SET GLOBAL threads=13");
 	REQUIRE(config.options.maximum_threads == 13);
 	REQUIRE(db.NumberOfThreads() == 13);
-	con.Query("SET external_threads=13");
-	REQUIRE(Settings::Get<ExternalThreadsSetting>(config) == 13);
-	REQUIRE(db.NumberOfThreads() == 13);
 
-	con.Query("SET external_threads=0");
-	REQUIRE(Settings::Get<ExternalThreadsSetting>(config) == 0);
-	REQUIRE(db.NumberOfThreads() == 13);
-
-	auto res = con.Query("SET external_threads=-1");
+	auto res = con.Query("SET external_threads=5");
 	REQUIRE(res->HasError());
-	REQUIRE(StringUtil::Contains(res->GetError(), "out of range"));
-
-	res = con.Query("SET external_threads=14");
-	REQUIRE(res->HasError());
-	REQUIRE(StringUtil::Contains(res->GetError(), "smaller"));
-
-	con.Query("SET external_threads=5");
-	REQUIRE(Settings::Get<ExternalThreadsSetting>(config) == 5);
-	REQUIRE(db.NumberOfThreads() == 13);
-
-	con.Query("RESET external_threads");
+	REQUIRE(StringUtil::Contains(res->GetError(), "cannot be changed"));
 	REQUIRE(Settings::Get<ExternalThreadsSetting>(config) == 1);
 	REQUIRE(db.NumberOfThreads() == 13);
 
