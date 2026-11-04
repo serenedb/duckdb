@@ -813,6 +813,11 @@
         "id": 400,
         "name": "options",
         "type": "identifier_set_t"
+      },
+      {
+        "id": 401,
+        "name": "values",
+        "type": "case_insensitive_map_t<Value>"
       }
     ]
   },
@@ -1546,6 +1551,12 @@
         "name": "table_options",
         "type": "identifier_set_t",
         "required_until": "v2.0.0"
+      },
+      {
+        "id": 16785,
+        "name": "values",
+        "type": "case_insensitive_map_t<Value>",
+        "version": "serenedb_v1"
       }
     ]
   },

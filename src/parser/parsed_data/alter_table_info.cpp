@@ -843,7 +843,9 @@ unique_ptr<AlterInfo> ResetIndexOptionsInfo::Copy() const {
 	for (auto &option : options) {
 		options_copy.emplace(option);
 	}
-	return make_uniq_base<AlterInfo, ResetIndexOptionsInfo>(GetAlterEntryData(), options_copy);
+	auto result = make_uniq<ResetIndexOptionsInfo>(GetAlterEntryData(), options_copy);
+	result->values = values;
+	return std::move(result);
 }
 
 string ResetIndexOptionsInfo::ToString() const {
@@ -1137,7 +1139,9 @@ unique_ptr<AlterInfo> ResetTableOptionsInfo::Copy() const {
 	for (auto &option : table_options) {
 		table_options_copy.emplace(option);
 	}
-	return make_uniq<ResetTableOptionsInfo>(GetAlterEntryData(), table_options_copy);
+	auto result = make_uniq<ResetTableOptionsInfo>(GetAlterEntryData(), table_options_copy);
+	result->values = values;
+	return std::move(result);
 }
 
 string ResetTableOptionsInfo::ToString() const {

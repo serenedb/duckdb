@@ -622,6 +622,7 @@ struct ResetIndexOptionsInfo : public AlterIndexInfo {
 	~ResetIndexOptionsInfo() override;
 
 	identifier_set_t options;
+	case_insensitive_map_t<Value> values;
 
 public:
 	unique_ptr<AlterInfo> Copy() const override;
@@ -801,6 +802,7 @@ struct ResetTableOptionsInfo : public AlterTableInfo {
 	~ResetTableOptionsInfo() override;
 
 	identifier_set_t table_options;
+	case_insensitive_map_t<Value> values;
 
 public:
 	unique_ptr<AlterInfo> Copy() const override;
