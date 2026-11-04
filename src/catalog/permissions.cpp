@@ -112,11 +112,11 @@ vector<AclItem> Permissions::AclDefault(CatalogType acl_class, idx_t owner) {
 	if (owner_privs == AclMode::NoRights) {
 		return acl;
 	}
-	acl.push_back(AclItem {owner, owner, owner_privs, AclMode::NoRights});
 	const auto public_privs = PublicPrivileges(acl_class);
 	if (public_privs != AclMode::NoRights) {
 		acl.push_back(AclItem {ACL_ID_PUBLIC, owner, public_privs, AclMode::NoRights});
 	}
+	acl.push_back(AclItem {owner, owner, owner_privs, AclMode::NoRights});
 	return acl;
 }
 
@@ -291,10 +291,12 @@ void AlterPermissionsInfo::ApplyTo(Permissions &permissions, CatalogType entry_t
 		}
 		defaults.erase(std::remove_if(defaults.begin(), defaults.end(),
 		                              [&](const DefaultAcl &row) {
+			                              const auto baseline = row.scope == 0
+			                                                        ? Permissions::AclDefault(row.objtype, row.role)
+			                                                        : vector<AclItem> {};
 			                              return row.role == role ||
-			                                     row.acl == (row.scope == 0
-			                                                     ? Permissions::AclDefault(row.objtype, row.role)
-			                                                     : vector<AclItem> {});
+			                                     std::is_permutation(row.acl.begin(), row.acl.end(), baseline.begin(),
+			                                                         baseline.end());
 		                              }),
 		               defaults.end());
 		return;
@@ -326,7 +328,7 @@ void AlterPermissionsInfo::ApplyTo(Permissions &permissions, CatalogType entry_t
 		                                              : vector<AclItem> {};
 		auto row_acl = row == defaults.end() ? baseline : row->acl;
 		Apply(row_acl, info.target_role, Permissions::AllPrivileges(info.default_objtype), info.privileges, info);
-		if (row_acl == baseline) {
+		if (std::is_permutation(row_acl.begin(), row_acl.end(), baseline.begin(), baseline.end())) {
 			if (row != defaults.end()) {
 				defaults.erase(row);
 			}
