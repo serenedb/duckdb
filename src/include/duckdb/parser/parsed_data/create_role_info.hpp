@@ -13,9 +13,6 @@
 
 namespace duckdb {
 
-void AppendRoleOptions(vector<string> &result, RoleOption set, RoleOption clear);
-string RoleValidUntilToString(int64_t valid_until);
-
 struct CreateRoleInfo : public CreateInfo {
 	CreateRoleInfo();
 
