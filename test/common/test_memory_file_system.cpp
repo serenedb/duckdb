@@ -215,6 +215,21 @@ TEST_CASE("The virtual filesystem finds and compacts the block files of memory f
 	REQUIRE(ReadsBack(vfs, local, 1));
 }
 
+TEST_CASE("A memory file counts as the block cache's memory before and after its compaction", "[memory_file_system]") {
+	DuckDB db(nullptr);
+	auto &memory = db.instance->GetMemoryFileSystem();
+	auto &cache = BlockCache::Get(*db.instance);
+	const string path = "memory://tagged/file";
+	constexpr idx_t size = 4 * MEMORY_BLOCK;
+	const auto before = cache.GetStatistics().used;
+	WriteFile(memory, path, size);
+	REQUIRE(cache.GetStatistics().used - before >= size);
+	memory.Compact(path);
+	REQUIRE(cache.GetStatistics().used - before >= size);
+	memory.RemoveFile(path);
+	REQUIRE(cache.GetStatistics().used == before);
+}
+
 TEST_CASE("Compacted memory files spill while nothing maps them", "[memory_file_system]") {
 	DuckDB db(nullptr);
 	Connection con(db);
