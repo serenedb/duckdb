@@ -731,6 +731,35 @@ RoleMemberships SecuritySnapshot::MembershipsOf(idx_t role) const {
 	return result;
 }
 
+optional_idx SecuritySnapshot::BestAdmin(idx_t member, idx_t role) const {
+	if (member == role) {
+		return optional_idx();
+	}
+	unordered_set<idx_t> seen {member};
+	vector<idx_t> level {member};
+	while (!level.empty()) {
+		vector<idx_t> next;
+		for (auto current : level) {
+			auto node = Find(current);
+			if (!node) {
+				continue;
+			}
+			for (auto &edge : node->member_of) {
+				if (edge.role == role && edge.admin_option) {
+					return current;
+				}
+			}
+			for (auto &edge : node->member_of) {
+				if (edge.inherit_option && seen.insert(edge.role).second) {
+					next.push_back(edge.role);
+				}
+			}
+		}
+		level = std::move(next);
+	}
+	return optional_idx();
+}
+
 bool IsUnowned(const CatalogEntry &entry) {
 	auto &catalog = entry.ParentCatalog();
 	if (!entry.internal && catalog.GetAttached().IsReadOnly()) {

@@ -130,6 +130,57 @@ static void RequireGrantableRole(Binder &binder, const string &name, bool revoke
 	}
 }
 
+static void ResolveMembershipGrantor(Binder &binder, AlterRoleInfo &info) {
+	auto granted = FindRole(binder, info.grant_role);
+	if (!granted) {
+		return;
+	}
+	auto &caller = binder.CheckAs();
+	auto &security = binder.context.security;
+	const auto bootstrap = DBConfig::GetConfig(binder.context).bootstrap_role;
+	const auto best_admin = [&](idx_t member) {
+		return security ? security->BestAdmin(member, granted->oid) : optional_idx();
+	};
+	if (info.granted_by.empty()) {
+		if (caller.is_superuser) {
+			info.grantor_id = bootstrap;
+			return;
+		}
+		auto grantor = best_admin(caller.role);
+		if (!grantor.IsValid()) {
+			throw InvalidInputException("no possible grantors");
+		}
+		info.grantor_id = grantor.GetIndex();
+		return;
+	}
+	const auto grantor = binder.RoleSpecId(info.granted_by);
+	const auto grantor_name = binder.RoleName(grantor);
+	if (!caller.is_superuser && caller.role != grantor && !caller.Uses(grantor)) {
+		if (info.revoke) {
+			throw PermissionException(
+			    {{"detail", StringUtil::Format("Only roles with privileges of role \"%s\" may revoke privileges "
+			                                   "granted by this role.",
+			                                   grantor_name)}},
+			    StringUtil::Format("permission denied to revoke privileges granted by role \"%s\"", grantor_name));
+		}
+		throw PermissionException(
+		    {{"detail",
+		      StringUtil::Format("Only roles with privileges of role \"%s\" may grant privileges as this role.",
+		                         grantor_name)}},
+		    StringUtil::Format("permission denied to grant privileges as role \"%s\"", grantor_name));
+	}
+	if (!info.revoke && grantor != bootstrap) {
+		auto admin = best_admin(grantor);
+		if (!admin.IsValid() || admin.GetIndex() != grantor) {
+			throw PermissionException(
+			    {{"detail", StringUtil::Format("The grantor must have the ADMIN option on role \"%s\".",
+			                                   granted->name.GetIdentifierName())}},
+			    StringUtil::Format("permission denied to grant privileges as role \"%s\"", grantor_name));
+		}
+	}
+	info.grantor_id = grantor;
+}
+
 void Binder::CheckCreateRole(const CreateRoleInfo &info) {
 	auto &name = info.GetQualifiedName().Name().GetIdentifierName();
 	for (auto &granted : info.in_roles) {
@@ -186,11 +237,14 @@ void Binder::CheckAlterRole(AlterRoleInfo &info) {
 	if (!info.grant_role.empty() && !info.revoke) {
 		CheckDatabaseOwnerMembership(*this, role->name.GetIdentifierName(), info.grant_role);
 	}
-	if (caller.is_superuser) {
+	if (!info.grant_role.empty()) {
+		if (!caller.is_superuser) {
+			RequireGrantableRole(*this, info.grant_role, info.revoke);
+		}
+		ResolveMembershipGrantor(*this, info);
 		return;
 	}
-	if (!info.grant_role.empty()) {
-		RequireGrantableRole(*this, info.grant_role, info.revoke);
+	if (caller.is_superuser) {
 		return;
 	}
 	if (!info.new_name.empty()) {
