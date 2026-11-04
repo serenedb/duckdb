@@ -72,6 +72,10 @@ unique_ptr<CatalogEntry> CatalogEntry::Copy(ClientContext &context) const {
 	throw InternalException("Unsupported copy type for catalog entry!");
 }
 
+vector<idx_t> CatalogEntry::GetSubObjectOids() const {
+	return {};
+}
+
 unique_ptr<CreateInfo> CatalogEntry::GetInfo() const {
 	throw InternalException("Unsupported type for CatalogEntry::GetInfo!");
 }

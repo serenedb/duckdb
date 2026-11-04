@@ -113,14 +113,27 @@ void Binder::BindDrop(DropInfo &info, StatementProperties &properties) {
 		if (entry->internal) {
 			throw CatalogException("Cannot drop internal catalog entry %s!", entry->name);
 		}
-		RequireOwner(*entry);
 		if (entry->type == CatalogType::MACRO_ENTRY || entry->type == CatalogType::TABLE_MACRO_ENTRY) {
 			auto &macro = entry->Cast<MacroCatalogEntry>();
+			if (!info.has_func_args && !info.is_macro && macro.macros.size() > 1 &&
+			    entry->ParentCatalog().Compatibility() == SqlCompatibility::POSTGRES) {
+				auto extra_info = Exception::InitializeExtraInfo("AMBIGUOUS_FUNCTION", optional_idx());
+				extra_info["hint"] = "Specify the argument list to select the function unambiguously.";
+				throw CatalogException(extra_info, StringUtil::Format("function name \"%s\" is not unique",
+				                                                      entry->name.GetIdentifierName()));
+			}
 			if (macro.is_procedure != info.is_procedure) {
 				throw BinderException("%s(%s) is not a %s", entry->name.GetIdentifierName(),
 				                      MacroFunction::ParameterTypesToString(info.func_parameters),
 				                      info.is_procedure ? "procedure" : "function");
 			}
+			for (auto &overload : macro.macros) {
+				if (!info.has_func_args || overload->HasParameterTypes(info.func_parameters)) {
+					RequireOwner(*entry, macro.OverloadPermissions(*overload).owner);
+				}
+			}
+		} else {
+			RequireOwner(*entry);
 		}
 		// keep the entry's full (possibly nested) schema path so execution navigates the same schema
 		info.SetQualifiedName(QualifiedName::FromCatalogSchema(
