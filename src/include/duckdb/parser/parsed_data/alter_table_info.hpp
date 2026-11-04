@@ -194,6 +194,10 @@ struct AlterDatabaseSettingsInfo : public AlterInfo {
 	bool reset_all_config = false;
 	vector<string> reset_config;
 	vector<string> set_config;
+	bool set_connection_limit = false;
+	int32_t connection_limit = -1;
+	bool set_allow_connections = false;
+	bool allow_connections = true;
 
 public:
 	CatalogType GetCatalogType() const override;
