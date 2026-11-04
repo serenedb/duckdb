@@ -174,6 +174,7 @@ struct Permissions {
 	vector<ObjectAcl> foreign_data_wrappers;
 	vector<NamedAcl> parameters;
 	vector<ObjectAcl> languages;
+	vector<ObjectAcl> relations;
 
 	bool operator==(const Permissions &rhs) const = default;
 
@@ -257,7 +258,7 @@ public:
 	};
 
 	SecuritySnapshot(unordered_map<idx_t, Node> nodes, unordered_map<string, idx_t> database_owners,
-	                 idx_t database_owner_role);
+	                 idx_t database_owner_role, unordered_map<string, unordered_map<idx_t, Permissions>> relations);
 	~SecuritySnapshot();
 
 	SecuritySnapshot(const SecuritySnapshot &) = delete;
@@ -272,6 +273,7 @@ public:
 	std::string_view NameOf(idx_t role) const;
 	RoleMemberships MembershipsOf(idx_t role) const;
 	optional_idx BestAdmin(idx_t member, idx_t role) const;
+	optional_ptr<const Permissions> RelationPermissions(std::string_view database, idx_t relation) const;
 
 private:
 	vector<idx_t> arena;
@@ -280,11 +282,13 @@ private:
 	unordered_map<string, idx_t> by_name;
 	unordered_map<string, idx_t> database_owners;
 	idx_t database_owner_role;
+	unordered_map<string, unordered_map<idx_t, Permissions>> relations;
 	mutable mutex derived_lock;
 	mutable unordered_map<idx_t, shared_ptr<const SecuritySnapshot>> derived;
 };
 
 DUCKDB_API bool IsUnowned(const CatalogEntry &entry);
+DUCKDB_API const Permissions &EffectivePermissions(ClientContext &context, const CatalogEntry &entry);
 DUCKDB_API bool CanUseSchema(const RoleAccess &role, const CatalogEntry &schema);
 DUCKDB_API bool EntryVisible(ClientContext &context, const RoleAccess &role, CatalogEntry &entry);
 DUCKDB_API bool DatabaseVisible(ClientContext &context, const RoleAccess &role, AttachedDatabase &database);

@@ -123,6 +123,8 @@ struct AlterPermissionsInfo : public AlterInfo {
 	string parameter;
 	idx_t drop_owned_role_id = 0;
 	idx_t language_id = 0;
+	idx_t relation_id = 0;
+	vector<AclItem> relation_acl;
 
 public:
 	CatalogType GetCatalogType() const override;
