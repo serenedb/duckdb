@@ -76,6 +76,22 @@ struct CountStarFunction : public BaseCountFunction {
 	}
 };
 
+struct CountStarOfCountsOperation : public BaseCountFunction {
+	template <class INPUT_TYPE, class STATE, class OP>
+	static void Operation(STATE &state, const INPUT_TYPE &input, AggregateUnaryInput &) {
+		state += input;
+	}
+
+	template <class INPUT_TYPE, class STATE, class OP>
+	static void ConstantOperation(STATE &state, const INPUT_TYPE &input, AggregateUnaryInput &, idx_t count) {
+		state += input * static_cast<STATE>(count);
+	}
+
+	static bool IgnoreNull() {
+		return true;
+	}
+};
+
 struct CountFunction : public BaseCountFunction {
 	using STATE = int64_t;
 
@@ -307,6 +323,14 @@ AggregateFunction CountStarFun::GetFunction() {
 	fun.SetNullHandling(FunctionNullHandling::SPECIAL_HANDLING);
 	fun.SetOrderDependent(AggregateOrderDependent::NOT_ORDER_DEPENDENT);
 	fun.SetWindowBatchCallback(CountStarFunction::Window<int64_t>);
+	return fun;
+}
+
+AggregateFunction CountStarOfCountsFunction::GetFunction() {
+	auto fun = AggregateFunction::UnaryAggregate<int64_t, int64_t, int64_t, CountStarOfCountsOperation>(
+	    LogicalType::BIGINT, LogicalType::BIGINT);
+	fun.SetName(CountStarFun::Name);
+	fun.SetOrderDependent(AggregateOrderDependent::NOT_ORDER_DEPENDENT);
 	return fun;
 }
 

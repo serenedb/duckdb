@@ -97,6 +97,11 @@ struct CountFunctionBase {
 	static AggregateFunction GetFunction();
 };
 
+//! count_star() over rows a source counted itself: sums its BIGINT input, 0 when there is none
+struct CountStarOfCountsFunction {
+	static AggregateFunction GetFunction();
+};
+
 struct FirstFunctionGetter {
 	static AggregateFunction GetFunction(const LogicalType &type);
 };

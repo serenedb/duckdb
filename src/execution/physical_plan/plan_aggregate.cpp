@@ -11,9 +11,12 @@
 #include "duckdb/execution/operator/projection/physical_projection.hpp"
 #include "duckdb/execution/operator/scan/physical_table_scan.hpp"
 #include "duckdb/execution/physical_plan_generator.hpp"
+#include "duckdb/function/aggregate/distributive_function_utils.hpp"
+#include "duckdb/function/aggregate/distributive_functions.hpp"
 #include "duckdb/function/function_binder.hpp"
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/parser/expression_map.hpp"
+#include "duckdb/planner/expression/bound_aggregate_expression.hpp"
 #include "duckdb/planner/expression/bound_reference_expression.hpp"
 #include "duckdb/planner/operator/logical_aggregate.hpp"
 
@@ -242,6 +245,36 @@ static bool CanUsePerfectHashAggregate(ClientContext &context, LogicalAggregate 
 	return true;
 }
 
+static bool ScanCountsRows(ClientContext &context, const vector<unique_ptr<Expression>> &expressions,
+                           PhysicalOperator &plan) {
+	if (expressions.empty() || plan.type != PhysicalOperatorType::TABLE_SCAN || plan.types.size() != 1) {
+		return false;
+	}
+	for (auto &expression : expressions) {
+		auto &aggregate = expression->Cast<BoundAggregateExpression>();
+		if (aggregate.Function().GetName() != CountStarFun::Name || !aggregate.GetChildren().empty() ||
+		    aggregate.IsDistinct() || aggregate.GetFilter() || aggregate.GetOrderBys() ||
+		    aggregate.StateExportMode() != AggregateStateExportMode::NONE) {
+			return false;
+		}
+	}
+	auto &scan = plan.Cast<PhysicalTableScan>();
+	return scan.function.consume_count && scan.bind_data && scan.function.consume_count(context, *scan.bind_data);
+}
+
+static void SumScannedCounts(vector<unique_ptr<Expression>> &expressions, PhysicalOperator &scan) {
+	scan.types[0] = LogicalType::BIGINT;
+	for (auto &expression : expressions) {
+		vector<unique_ptr<Expression>> children;
+		children.push_back(make_uniq<BoundReferenceExpression>(LogicalType::BIGINT, 0U));
+		auto counts =
+		    make_uniq<BoundAggregateExpression>(BoundAggregateFunction(CountStarOfCountsFunction::GetFunction()),
+		                                        std::move(children), nullptr, nullptr, AggregateType::NON_DISTINCT);
+		counts->SetAlias(expression->GetName());
+		expression = std::move(counts);
+	}
+}
+
 PhysicalOperator &PhysicalPlanGenerator::CreatePlan(LogicalAggregate &op) {
 	D_ASSERT(op.children.size() == 1);
 
@@ -273,6 +306,9 @@ PhysicalOperator &PhysicalPlanGenerator::CreatePlan(LogicalAggregate &op) {
 
 	if (op.groups.empty() && op.grouping_sets.size() <= 1) {
 		// no groups: use the dedicated ungrouped aggregate path
+		if (ScanCountsRows(context, op.expressions, plan)) {
+			SumScannedCounts(op.expressions, plan);
+		}
 		auto &group_by = Make<PhysicalUngroupedAggregate>(op.types, std::move(op.expressions), op.estimated_cardinality,
 		                                                  op.distinct_validity);
 		group_by.children.push_back(plan);
