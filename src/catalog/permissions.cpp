@@ -440,6 +440,20 @@ void AlterPermissionsInfo::ApplyTo(Permissions &permissions, CatalogType entry_t
 		return;
 	}
 
+	if (info.type_id) {
+		auto &rows = permissions.types;
+		auto row =
+		    std::find_if(rows.begin(), rows.end(), [&](const ObjectAcl &entry) { return entry.oid == info.type_id; });
+		auto row_acl = row == rows.end() ? info.builtin_acl : row->acl;
+		ApplyGrant(info, info.object_owner_id, row_acl, CatalogType::TYPE_ENTRY, nullptr);
+		if (row == rows.end()) {
+			rows.push_back(ObjectAcl {info.type_id, std::move(row_acl)});
+		} else {
+			row->acl = std::move(row_acl);
+		}
+		return;
+	}
+
 	if (info.schema_id) {
 		auto &schemas = permissions.schemas;
 		auto row = std::find_if(schemas.begin(), schemas.end(),
@@ -679,9 +693,11 @@ static vector<idx_t> Reachable(const unordered_map<idx_t, SecuritySnapshot::Node
 SecuritySnapshot::SecuritySnapshot(unordered_map<idx_t, Node> nodes_p, unordered_map<string, idx_t> database_owners_p,
                                    idx_t database_owner_role_p,
                                    unordered_map<string, unordered_map<idx_t, Relation>> relations_p,
-                                   unordered_map<string, unordered_map<string, Permissions>> functions_p)
+                                   unordered_map<string, unordered_map<string, Permissions>> functions_p,
+                                   unordered_map<string, unordered_map<idx_t, Permissions>> types_p)
     : nodes(std::move(nodes_p)), database_owners(std::move(database_owners_p)),
-      database_owner_role(database_owner_role_p), relations(std::move(relations_p)), functions(std::move(functions_p)) {
+      database_owner_role(database_owner_role_p), relations(std::move(relations_p)), functions(std::move(functions_p)),
+      types(std::move(types_p)) {
 	vector<Role> roles_p;
 	roles_p.reserve(nodes.size());
 	for (auto &[oid, node] : nodes) {
@@ -751,6 +767,7 @@ shared_ptr<const SecuritySnapshot> SecuritySnapshot::Build(DuckCatalog &cluster,
 	unordered_map<string, idx_t> database_owners;
 	unordered_map<string, unordered_map<idx_t, Relation>> relations;
 	unordered_map<string, unordered_map<string, Permissions>> functions;
+	unordered_map<string, unordered_map<idx_t, Permissions>> types;
 	auto &config = DBConfig::GetConfig(cluster.GetDatabase());
 	cluster.GetCatalogSet(CatalogType::DATABASE_ENTRY).Scan(transaction, [&](CatalogEntry &entry) {
 		database_owners.emplace(entry.name.GetIdentifierName(), entry.permissions.owner);
@@ -765,10 +782,13 @@ shared_ptr<const SecuritySnapshot> SecuritySnapshot::Build(DuckCatalog &cluster,
 		for (auto &row : entry.permissions.functions) {
 			functions[entry.name.GetIdentifierName()][row.name] = Permissions {config.bootstrap_role, row.acl};
 		}
+		for (auto &row : entry.permissions.types) {
+			types[entry.name.GetIdentifierName()][row.oid] = Permissions {config.bootstrap_role, row.acl};
+		}
 	});
 	return make_shared_ptr<const SecuritySnapshot>(std::move(nodes), std::move(database_owners),
 	                                               config.database_owner_role, std::move(relations),
-	                                               std::move(functions));
+	                                               std::move(functions), std::move(types));
 }
 
 shared_ptr<const SecuritySnapshot> SecuritySnapshot::ForDatabase(const Identifier &database) const {
@@ -786,7 +806,7 @@ shared_ptr<const SecuritySnapshot> SecuritySnapshot::ForDatabase(const Identifie
 		implied[owner->second].member_of.push_back(
 		    Membership {database_owner_role, database_owner_role, false, true, true});
 		result = make_shared_ptr<const SecuritySnapshot>(std::move(implied), unordered_map<string, idx_t>(), 0,
-		                                                 relations, functions);
+		                                                 relations, functions, types);
 	}
 	return result;
 }
@@ -871,6 +891,15 @@ optional_ptr<const Permissions> SecuritySnapshot::FunctionPermissions(std::strin
 		return nullptr;
 	}
 	auto row = rows->second.find(function);
+	return row == rows->second.end() ? nullptr : &row->second;
+}
+
+optional_ptr<const Permissions> SecuritySnapshot::TypePermissions(std::string_view database, idx_t type) const {
+	auto rows = types.find(database);
+	if (rows == types.end()) {
+		return nullptr;
+	}
+	auto row = rows->second.find(type);
 	return row == rows->second.end() ? nullptr : &row->second;
 }
 
@@ -1187,6 +1216,11 @@ static bool AnyRoleReference(const CatalogEntry &entry, F &&named) {
 		}
 	}
 	for (auto &row : permissions.functions) {
+		if (any_acl(row.acl)) {
+			return true;
+		}
+	}
+	for (auto &row : permissions.types) {
 		if (any_acl(row.acl)) {
 			return true;
 		}

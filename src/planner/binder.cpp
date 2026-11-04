@@ -4,11 +4,13 @@
 #include "duckdb/catalog/catalog_entry/index_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/macro_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
+#include "duckdb/catalog/catalog_entry/type_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/view_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_search_path.hpp"
 #include "duckdb/catalog/dependency_manager.hpp"
 #include "duckdb/catalog/duck_catalog.hpp"
 #include "duckdb/common/enums/cte_materialize.hpp"
+#include "duckdb/common/extension_type_info.hpp"
 #include "duckdb/parser/common_table_expression_info.hpp"
 #include "duckdb/parser/expression/star_expression.hpp"
 #include "duckdb/parser/tableref/basetableref.hpp"
@@ -627,6 +629,45 @@ void Binder::RequireTypeUsage(optional_ptr<const LogicalDependencyList> dependen
 	}
 	for (auto entry : GetStatementProperties().resolved_entries) {
 		check(*entry);
+	}
+}
+
+void Binder::RequireTypeUsage(const LogicalType &type, Catalog &catalog) {
+	auto &role = CheckAs();
+	if (role.is_superuser) {
+		return;
+	}
+	reference<const LogicalType> element = type;
+	while (element.get().id() == LogicalTypeId::LIST || element.get().id() == LogicalTypeId::ARRAY) {
+		element = element.get().id() == LogicalTypeId::LIST ? ListType::GetChildType(element)
+		                                                    : ArrayType::GetChildType(element);
+	}
+	if (auto extension = element.get().GetExtensionInfo()) {
+		auto oid = extension->properties.find(ExtensionTypeInfo::CATALOG_OID_PROPERTY);
+		if (oid != extension->properties.end()) {
+			auto entry =
+			    catalog.IsDuckCatalog()
+			        ? catalog.Cast<DuckCatalog>().FindIn<TypeCatalogEntry>(context, oid->second.GetValue<idx_t>())
+			        : nullptr;
+			if (entry && !IsUnowned(*entry) && !role.Can(CatalogType::TYPE_ENTRY, entry->permissions, AclMode::Usage)) {
+				ThrowPermissionDenied(*entry);
+			}
+			return;
+		}
+	}
+	auto &config = DBConfig::GetConfig(context);
+	if (!context.security || !context.security->HasTypeGrants() || !config.builtin_type_oid) {
+		return;
+	}
+	string name;
+	const auto oid = config.builtin_type_oid(element, name);
+	if (!oid) {
+		return;
+	}
+	const auto database = DatabaseManager::TryGetDefaultDatabase(context);
+	auto granted = context.security->TypePermissions(database.GetIdentifierName(), oid);
+	if (granted && !role.Can(CatalogType::TYPE_ENTRY, *granted, AclMode::Usage)) {
+		throw PermissionException("permission denied for type %s", name);
 	}
 }
 

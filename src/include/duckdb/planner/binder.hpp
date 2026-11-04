@@ -467,6 +467,7 @@ public:
 	void RequireLanguageUsage(const RoleAccess &role, const Identifier &database, const string &language);
 	void RequireSchemaCreate(SchemaCatalogEntry &schema);
 	void RequireTypeUsage(optional_ptr<const LogicalDependencyList> dependencies);
+	void RequireTypeUsage(const LogicalType &type, Catalog &catalog);
 	void AssignOwner(Permissions &permissions, Catalog &catalog, CatalogType objtype,
 	                 optional_ptr<SchemaCatalogEntry> schema, idx_t owner);
 	void CheckCreateRole(const CreateRoleInfo &info);

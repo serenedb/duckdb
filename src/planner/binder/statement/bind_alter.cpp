@@ -1,6 +1,7 @@
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/catalog/catalog_entry/duck_table_entry.hpp"
 #include "duckdb/catalog/catalog_entry/macro_catalog_entry.hpp"
+#include "duckdb/catalog/catalog_entry/type_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/view_catalog_entry.hpp"
 #include "duckdb/catalog/dependency_manager.hpp"
 #include "duckdb/catalog/duck_catalog.hpp"
@@ -100,21 +101,29 @@ BoundStatement Binder::BindAlterAddIndex(BoundStatement &result, CatalogEntry &e
 	return std::move(result);
 }
 
-static void BindAlterTypes(Binder &binder, AlterStatement &stmt) {
+static void BindAlterTypes(Binder &binder, AlterStatement &stmt, optional_ptr<Catalog> catalog) {
+	auto require_usage = [&](const LogicalType &type) {
+		if (catalog) {
+			binder.RequireTypeUsage(type, *catalog);
+		}
+	};
 	if (stmt.info->type == AlterType::ALTER_TABLE) {
 		auto &table_info = stmt.info->Cast<AlterTableInfo>();
 		switch (table_info.alter_table_type) {
 		case AlterTableType::ADD_COLUMN: {
 			auto &add_info = table_info.Cast<AddColumnInfo>();
 			binder.BindLogicalType(add_info.new_column.TypeMutable());
+			require_usage(add_info.new_column.Type());
 		} break;
 		case AlterTableType::ADD_FIELD: {
 			auto &add_info = table_info.Cast<AddFieldInfo>();
 			binder.BindLogicalType(add_info.new_field.TypeMutable());
+			require_usage(add_info.new_field.Type());
 		} break;
 		case AlterTableType::ALTER_COLUMN_TYPE: {
 			auto &alter_column_info = table_info.Cast<ChangeColumnTypeInfo>();
 			binder.BindLogicalType(alter_column_info.target_type);
+			require_usage(alter_column_info.target_type);
 			if (!alter_column_info.expression) {
 				// without USING, the column is cast to the target type
 				alter_column_info.expression = make_uniq<CastExpression>(
@@ -251,6 +260,30 @@ static void ResolveBuiltinFunctionGrant(Binder &binder, CatalogEntry &function, 
 		throw PermissionException("permission denied for function %s", name);
 	}
 	info.functions = {NamedAcl {std::move(key), std::move(builtin)}};
+	info.object_owner_id = owner;
+	info.entry_catalog_type = CatalogType::DATABASE_ENTRY;
+	info.SetQualifiedName(Identifier(), Identifier(), database_name);
+}
+
+static void ResolveBuiltinTypeGrant(Binder &binder, idx_t type, const string &name, AlterPermissionsInfo &info) {
+	auto &context = binder.context;
+	const auto database_name = DatabaseManager::GetDefaultDatabase(context);
+	auto database = binder.ClusterEntry(CatalogType::DATABASE_ENTRY, database_name);
+	if (!database) {
+		throw CatalogException(unordered_map<string, string> {{"type", "Database"}},
+		                       StringUtil::Format("database \"%s\" does not exist", database_name.GetIdentifierName()));
+	}
+	const auto owner = DBConfig::GetConfig(context).bootstrap_role;
+	auto builtin = Permissions::AclDefault(CatalogType::TYPE_ENTRY, owner);
+	auto &rows = database->permissions.types;
+	auto row = std::find_if(rows.begin(), rows.end(), [&](const ObjectAcl &entry) { return entry.oid == type; });
+	auto &acl = row == rows.end() ? builtin : row->acl;
+	auto &role = binder.CheckAs();
+	if (!role.Owns(owner) && (role.HeldModes(acl) | role.GrantableModes(acl)) == AclMode::NoRights) {
+		throw PermissionException("permission denied for type %s", name);
+	}
+	info.type_id = type;
+	info.builtin_acl = std::move(builtin);
 	info.object_owner_id = owner;
 	info.entry_catalog_type = CatalogType::DATABASE_ENTRY;
 	info.SetQualifiedName(Identifier(), Identifier(), database_name);
@@ -489,6 +522,13 @@ static void ResolveGrant(Binder &binder, AlterPermissionsInfo &info) {
 	    !config.builtin_function_key(target, 0).empty()) {
 		ResolveBuiltinFunctionGrant(binder, target, info);
 		return;
+	}
+	if (target.internal && target.type == CatalogType::TYPE_ENTRY && config.builtin_type_oid) {
+		string name;
+		if (auto type = config.builtin_type_oid(target.Cast<TypeCatalogEntry>().user_type, name)) {
+			ResolveBuiltinTypeGrant(binder, type, name, info);
+			return;
+		}
 	}
 	RequireGrantable(binder, target, TargetPermissions(binder, info, target));
 	if (!target.internal || IsUnowned(target)) {
@@ -925,7 +965,7 @@ BoundStatement Binder::Bind(AlterStatement &stmt) {
 	properties.return_type = StatementReturnType::NOTHING;
 	if (!entry) {
 		// Bind types in this binder
-		BindAlterTypes(*this, stmt);
+		BindAlterTypes(*this, stmt, nullptr);
 		RequireTypeUsage(nullptr);
 
 		result.plan = make_uniq<LogicalAlter>(std::move(stmt.info));
@@ -943,7 +983,7 @@ BoundStatement Binder::Bind(AlterStatement &stmt) {
 	auto type_binder = Binder::CreateBinder(context, *this);
 	type_binder->SetSearchPath(catalog, stmt.info->GetQualifiedName().Schema());
 
-	BindAlterTypes(*type_binder, stmt);
+	BindAlterTypes(*type_binder, stmt, &catalog);
 	RequireTypeUsage(nullptr);
 
 	if (catalog.IsSystemCatalog()) {

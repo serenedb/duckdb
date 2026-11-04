@@ -779,6 +779,14 @@ void DependencyManager::DropOwned(CatalogTransaction transaction, const DropOwne
 					    alter.functions = {NamedAcl {row.name, {}}};
 					    alter.object_owner_id = DBConfig::GetConfig(holder.GetDatabase()).bootstrap_role;
 				    }
+				    for (auto &row : permissions.types) {
+					    if (!GrantsTo(row.acl, role)) {
+						    continue;
+					    }
+					    auto &alter = revoke(holder, holder_transaction, entry, role, CatalogType::TYPE_ENTRY);
+					    alter.type_id = row.oid;
+					    alter.object_owner_id = DBConfig::GetConfig(holder.GetDatabase()).bootstrap_role;
+				    }
 				    if (std::any_of(
 				            permissions.defaults.begin(), permissions.defaults.end(),
 				            [&](const DefaultAcl &row) { return row.role == role || GrantsTo(row.acl, role); })) {
