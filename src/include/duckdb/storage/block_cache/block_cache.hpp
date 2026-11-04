@@ -336,6 +336,7 @@ public:
 	//! the cache may have in flight
 	void Prefetch(const shared_ptr<BlockCacheFile> &file, idx_t offset, idx_t size, BlockCachePrefetch kind);
 	void Prefetch(const shared_ptr<BlockCacheFile> &file, std::span<BlockCacheRange> ranges, BlockCachePrefetch kind);
+	void MarkUnused(const BlockCacheFile &file, idx_t offset, idx_t size) const;
 
 	//! Drops every block of a backed file; current pins keep their bytes
 	void Clear();

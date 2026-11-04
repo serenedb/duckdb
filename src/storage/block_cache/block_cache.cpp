@@ -974,6 +974,21 @@ void BlockCache::Prefetch(const shared_ptr<BlockCacheFile> &file, std::span<Bloc
 	}
 }
 
+void BlockCache::MarkUnused(const BlockCacheFile &file, idx_t offset, idx_t size) const {
+	const auto file_size = file.GetSize();
+	if (size == 0 || offset >= file_size) {
+		return;
+	}
+	const auto end = MinValue(offset + size, file_size);
+	const auto last = end == file_size ? (end - 1) / BLOCK_SIZE + 1 : end / BLOCK_SIZE;
+	for (auto block = (offset + BLOCK_SIZE - 1) / BLOCK_SIZE; block < last; block++) {
+		const auto slot = file.blocks->Find(block);
+		if (const auto memory = slot ? slot->load(std::memory_order_acquire) : nullptr) {
+			memory->TakeReferenced();
+		}
+	}
+}
+
 void BlockCache::ScheduleFetch(const shared_ptr<BlockCacheFile> &file, const Run &run,
                                vector<optional_ptr<BlockMemory>> claimed) {
 	idx_t handed = 0;
