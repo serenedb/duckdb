@@ -681,12 +681,12 @@ void DuckSchemaEntry::Alter(CatalogTransaction transaction, AlterInfo &info) {
 			throw CatalogException::MissingEntry(type, name, string());
 		}
 		MoveAlong(*this, transaction, following, info);
-		if (previous && previous->type == CatalogType::TABLE_ENTRY &&
-		    previous->Cast<TableCatalogEntry>().IsDuckTable()) {
+		if (previous && previous->type == CatalogType::TABLE_ENTRY) {
 			auto new_name = info.GetNewName();
 			auto current = set.GetEntry(transaction, new_name ? *new_name : name);
 			if (current && current.get() != previous.get()) {
-				current->Cast<DuckTableEntry>().AlterDependentIndexes(transaction, previous->Cast<DuckTableEntry>());
+				current->Cast<TableCatalogEntry>().AlterDependentIndexes(transaction,
+				                                                         previous->Cast<TableCatalogEntry>());
 			}
 		}
 		if (info.type == AlterType::ALTER_PERMISSIONS && !info.Cast<AlterPermissionsInfo>().new_owner.empty() &&

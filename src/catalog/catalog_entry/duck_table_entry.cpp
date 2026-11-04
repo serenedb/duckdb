@@ -1652,12 +1652,18 @@ void DuckTableEntry::SetAsRoot(optional_ptr<CatalogTransaction> transaction, opt
 	}
 }
 
-void DuckTableEntry::AlterDependentIndexes(CatalogTransaction transaction, DuckTableEntry &previous) {
+bool DuckTableEntry::OwnsIndex(const IndexCatalogEntry &entry) const {
+	auto &index = entry.Cast<DuckIndexEntry>();
+	return index.info && index.info->info && RefersToSameObject(index.GetDataTableInfo(), *storage->GetDataTableInfo());
+}
+
+void TableCatalogEntry::AlterDependentIndexes(CatalogTransaction transaction, TableCatalogEntry &previous) {
+	auto &columns = GetColumns();
 	IdentifierEquality same(columns.IsCaseSensitive());
 	const bool renamed_table = !same(previous.name, name);
-	auto renamed_columns = RenamedColumns(previous.columns, columns);
+	auto renamed_columns = RenamedColumns(previous.GetColumns(), columns);
 	vector<idx_t> previous_oids;
-	for (auto &column : previous.columns.Logical()) {
+	for (auto &column : previous.GetColumns().Logical()) {
 		previous_oids.push_back(column.CatalogOid());
 	}
 	vector<idx_t> oids;
@@ -1693,12 +1699,11 @@ void DuckTableEntry::AlterDependentIndexes(CatalogTransaction transaction, DuckT
 		return changed;
 	};
 	auto &index_types = catalog.GetDatabase().config.GetIndexTypes();
-	auto &data_table_info = storage->GetDataTableInfo();
 	auto &indexes = ParentSchema(transaction).Cast<DuckSchemaEntry>().GetCatalogSet(CatalogType::INDEX_ENTRY);
 	vector<pair<Identifier, unique_ptr<CreateInfo>>> definitions;
 	indexes.Scan(transaction, [&](CatalogEntry &entry) {
-		auto &index = entry.Cast<DuckIndexEntry>();
-		if (!index.info || !index.info->info || !RefersToSameObject(index.GetDataTableInfo(), *data_table_info)) {
+		auto &index = entry.Cast<IndexCatalogEntry>();
+		if (!OwnsIndex(index)) {
 			return;
 		}
 		auto definition = index.GetInfo();

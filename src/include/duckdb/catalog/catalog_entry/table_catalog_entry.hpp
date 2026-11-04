@@ -8,6 +8,7 @@
 
 #pragma once
 
+#include "duckdb/catalog/catalog_entry/index_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/trigger_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_set.hpp"
 #include "duckdb/catalog/catalog_transaction.hpp"
@@ -198,7 +199,10 @@ public:
 	                                                                 TriggerTiming timing, TriggerEventType event_type,
 	                                                                 TriggerForEach for_each) const;
 
+	void AlterDependentIndexes(CatalogTransaction transaction, TableCatalogEntry &previous);
+
 protected:
+	virtual bool OwnsIndex(const IndexCatalogEntry &index) const;
 	void RenameTriggerColumns(ClientContext &context, const RenameColumnInfo &info);
 	void SetTriggerFiring(ClientContext &context, const SetTriggerFiringInfo &info);
 

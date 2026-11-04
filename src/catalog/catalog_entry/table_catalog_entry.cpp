@@ -2,6 +2,7 @@
 
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/catalog/catalog_entry/duck_table_entry.hpp"
+#include "duckdb/catalog/catalog_entry/index_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/schema_catalog_entry.hpp"
 #include "duckdb/common/algorithm.hpp"
 #include "duckdb/common/exception.hpp"
@@ -48,6 +49,10 @@ static void AssignConstraintOids(Catalog &catalog, vector<unique_ptr<Constraint>
 			assign_oid(constraint->Cast<UniqueConstraint>().index_oid);
 		}
 	}
+}
+
+bool TableCatalogEntry::OwnsIndex(const IndexCatalogEntry &index) const {
+	return index.table_oid == oid;
 }
 
 TableCatalogEntry::TableCatalogEntry(Catalog &catalog, SchemaCatalogEntry &schema, CreateTableInfo &info,
