@@ -1472,6 +1472,7 @@ CatalogType:
     - CommentSchema
     - CommentType
     - CommentColumn
+    - CommentRole
     - TableOrView
     - SetSchemaEntryType
     - SetSchemaProcedure

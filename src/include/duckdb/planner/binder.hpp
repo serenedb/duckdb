@@ -471,6 +471,7 @@ public:
 	void CheckAlterRole(AlterRoleInfo &info);
 	void CheckDropRole(const DropInfo &info);
 	void CheckAlterDatabaseSettings(AlterDatabaseSettingsInfo &info);
+	void CheckSharedObjectComment(AlterInfo &info);
 
 	void BeginSubqueryBind(Binder &parent, ExpressionBinder &binder);
 	//! The innermost enclosing scope

@@ -544,6 +544,16 @@ BoundStatement Binder::Bind(AlterStatement &stmt) {
 		return result;
 	}
 
+	if (stmt.info->type == AlterType::SET_COMMENT && (stmt.info->GetCatalogType() == CatalogType::DATABASE_ENTRY ||
+	                                                  stmt.info->GetCatalogType() == CatalogType::ROLE_ENTRY)) {
+		CheckSharedObjectComment(*stmt.info);
+		auto &properties = GetStatementProperties();
+		properties.return_type = StatementReturnType::NOTHING;
+		stmt.info->SetQualifiedName(ClusterName(stmt.info->GetQualifiedName()));
+		result.plan = make_uniq<LogicalAlter>(std::move(stmt.info));
+		return result;
+	}
+
 	if (stmt.info->type == AlterType::ALTER_SUBSCRIPTION) {
 		auto &subscription = ResolveDatabaseEntry(*this, CatalogType::SUBSCRIPTION_ENTRY, *stmt.info);
 		RequireSubscriptionOwner(*this, subscription);
