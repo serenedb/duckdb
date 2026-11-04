@@ -240,6 +240,7 @@ private:
 	void GetAllColumnIDs(vector<column_t> &column_ids);
 	//! Adds a segment to this TupleDataCollection
 	void AddSegment(unsafe_arena_ptr<TupleDataSegment> segment);
+	void KeepSegmentArena(const shared_ptr<ArenaAllocator> &arena);
 
 	//! Computes the heap sizes for the specific Vector that will be appended
 	static void ComputeHeapSizes(Vector &heap_sizes_v, const Vector &source_v, TupleDataVectorFormat &source,
@@ -284,6 +285,7 @@ private:
 	TaskScheduler &scheduler;
 	//! Shared allocator for STL allocations
 	shared_ptr<ArenaAllocator> stl_allocator;
+	vector<shared_ptr<ArenaAllocator>> segment_arenas;
 	//! The layout of the TupleDataCollection
 	shared_ptr<TupleDataLayout> layout_ptr;
 	const TupleDataLayout &layout;
