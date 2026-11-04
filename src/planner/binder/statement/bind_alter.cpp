@@ -714,12 +714,15 @@ BoundStatement Binder::Bind(AlterStatement &stmt) {
 				break;
 			}
 		}
+		auto missing = Exception::InitializeExtraInfo("MISSING_ENTRY", optional_idx());
+		missing["type"] = CatalogTypeToString(CatalogType::MACRO_ENTRY);
 		if (!function && info.has_parameter_types) {
-			throw CatalogException("function %s(%s) does not exist", name,
-			                       MacroFunction::ParameterTypesToString(info.parameter_types));
+			throw CatalogException(missing,
+			                       StringUtil::Format("function %s(%s) does not exist", name,
+			                                          MacroFunction::ParameterTypesToString(info.parameter_types)));
 		}
 		if (!function) {
-			throw CatalogException("could not find a function named \"%s\"", name);
+			throw CatalogException(missing, StringUtil::Format("could not find a function named \"%s\"", name));
 		}
 		if (function->internal) {
 			ThrowPermissionDenied(*function);
@@ -733,14 +736,14 @@ BoundStatement Binder::Bind(AlterStatement &stmt) {
 			}
 		}
 		if (targets.empty()) {
-			throw CatalogException("function %s(%s) does not exist", name,
-			                       MacroFunction::ParameterTypesToString(info.parameter_types));
+			throw CatalogException(missing,
+			                       StringUtil::Format("function %s(%s) does not exist", name,
+			                                          MacroFunction::ParameterTypesToString(info.parameter_types)));
 		}
 		if (targets.size() > 1) {
-			throw CatalogException(
-			    unordered_map<string, string> {
-			        {"hint", "Specify the argument list to select the function unambiguously."}},
-			    StringUtil::Format("function name \"%s\" is not unique", name));
+			auto extra_info = Exception::InitializeExtraInfo("AMBIGUOUS_FUNCTION", optional_idx());
+			extra_info["hint"] = "Specify the argument list to select the function unambiguously.";
+			throw CatalogException(extra_info, StringUtil::Format("function name \"%s\" is not unique", name));
 		}
 		auto &macro = targets[0].get();
 		RequireOwner(*function, function->Cast<MacroCatalogEntry>().OverloadPermissions(macro).owner);

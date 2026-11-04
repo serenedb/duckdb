@@ -804,8 +804,12 @@ void DuckSchemaEntry::DropEntry(ClientContext &context, DropInfo &info) {
 			if (info.if_not_found == OnEntryNotFound::RETURN_NULL) {
 				return;
 			}
-			throw CatalogException("function %s(%s) does not exist", info.GetQualifiedName().Name().GetIdentifierName(),
-			                       MacroFunction::ParameterTypesToString(info.func_parameters));
+			auto extra_info = Exception::InitializeExtraInfo("MISSING_ENTRY", optional_idx());
+			extra_info["type"] = CatalogTypeToString(info.type);
+			throw CatalogException(extra_info,
+			                       StringUtil::Format("function %s(%s) does not exist",
+			                                          info.GetQualifiedName().Name().GetIdentifierName(),
+			                                          MacroFunction::ParameterTypesToString(info.func_parameters)));
 		}
 		if (macros.size() > 1) {
 			macros.erase(overload);
