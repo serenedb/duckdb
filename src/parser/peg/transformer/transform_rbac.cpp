@@ -529,10 +529,14 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformAlterOwnerStatement(PEG
 	    list_pr.GetChild(1).Cast<ListParseResult>().Child<ChoiceParseResult>(0).GetResult().Cast<ListParseResult>();
 	auto info = make_uniq<AlterPermissionsInfo>(CatalogType::INVALID, QualifiedName());
 	if (target.Name() == "OwnerRoutineTarget") {
+		const auto kind = ObjectTypeKeyword(target.GetChild(0));
 		SetObjectTarget(*info, CatalogType::MACRO_ENTRY,
 		                transformer.Transform<QualifiedName>(target.Child<ListParseResult>(1).GetChild(0)));
+		info->include_functions = kind != "PROCEDURE";
+		info->include_procedures = kind != "FUNCTION";
 	} else {
-		SetObjectTarget(*info, GrantObjectType(ObjectTypeKeyword(target.GetChild(0))),
+		const auto keyword = ObjectTypeKeyword(target.GetChild(0));
+		SetObjectTarget(*info, keyword == "VIEW" ? CatalogType::VIEW_ENTRY : GrantObjectType(keyword),
 		                transformer.Transform<QualifiedName>(target.GetChild(1)));
 	}
 

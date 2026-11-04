@@ -177,6 +177,10 @@ string AlterPermissionsInfo::ToString() const {
 	auto object = StringUtil::Upper(PermissionKindName(entry_catalog_type)) + " " +
 	              GetQualifiedName().ToString(QualifiedNameToStringMode::HIDE_DEFAULT_SCHEMA);
 	if (!new_owner.empty()) {
+		if (entry_catalog_type == CatalogType::MACRO_ENTRY) {
+			const auto kind = !include_procedures ? "FUNCTION " : !include_functions ? "PROCEDURE " : "ROUTINE ";
+			object = kind + GetQualifiedName().ToString(QualifiedNameToStringMode::HIDE_DEFAULT_SCHEMA);
+		}
 		return "ALTER " + object + " OWNER TO " + new_owner + ";";
 	}
 	vector<string> names;

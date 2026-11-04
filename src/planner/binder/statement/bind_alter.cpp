@@ -257,11 +257,16 @@ static CatalogEntry &ResolvePermissionsTarget(Binder &binder, AlterPermissionsIn
 		    binder.GetCatalogEntry(EntryLookupInfo(CatalogType::TABLE_MACRO_ENTRY, name), OnEntryNotFound::RETURN_NULL);
 	}
 	if (!entry) {
-		const bool relation = info.entry_catalog_type == CatalogType::TABLE_ENTRY;
+		const bool relation =
+		    info.entry_catalog_type == CatalogType::TABLE_ENTRY || info.entry_catalog_type == CatalogType::VIEW_ENTRY;
 		throw CatalogException(unordered_map<string, string> {{"type", CatalogTypeToString(info.entry_catalog_type)}},
 		                       StringUtil::Format("%s \"%s\" does not exist",
 		                                          relation ? "relation" : PermissionKindName(info.entry_catalog_type),
 		                                          name.ToString()));
+	}
+	if (info.entry_catalog_type == CatalogType::VIEW_ENTRY && entry->type != CatalogType::VIEW_ENTRY) {
+		throw CatalogException(Exception::InitializeExtraInfo("WRONG_OBJECT_TYPE", optional_idx()),
+		                       StringUtil::Format("\"%s\" is not a view", name.Name().GetIdentifierName()));
 	}
 	info.entry_catalog_type = entry->type == CatalogType::VIEW_ENTRY ? CatalogType::TABLE_ENTRY : entry->type;
 	info.SetQualifiedName(QualifiedName::FromCatalogSchema(
