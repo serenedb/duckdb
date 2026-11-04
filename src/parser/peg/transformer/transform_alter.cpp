@@ -310,6 +310,8 @@ unique_ptr<AlterInfo> PEGTransformerFactory::TransformAlterFunctionStmt(PEGTrans
 	auto result = make_uniq<RenameScalarFunctionInfo>(data, rename_info->new_table_name);
 	result->include_functions = kind != "PROCEDURE";
 	result->include_procedures = kind != "FUNCTION";
+	result->has_func_args =
+	    TransformFunctionArgumentTypes(transformer, list_pr.Child<OptionalParseResult>(3), result->func_parameters);
 	return std::move(result);
 }
 
