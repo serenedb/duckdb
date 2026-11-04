@@ -7,6 +7,7 @@
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/duck_schema_entry.hpp"
 #include "duckdb/catalog/catalog_set.hpp"
+#include "duckdb/catalog/dependency_manager.hpp"
 #include "duckdb/catalog/default/default_schemas.hpp"
 #include "duckdb/catalog/catalog_entry/type_catalog_entry.hpp"
 #include "duckdb/common/exception.hpp"
@@ -2055,6 +2056,11 @@ catalog_entry_vector_t Catalog::OwnedEntries(CatalogTransaction transaction, con
 
 optional_ptr<CatalogEntry> Catalog::OwnerOf(CatalogTransaction transaction, CatalogEntry &owned) {
 	return nullptr;
+}
+
+catalog_entry_vector_t Catalog::DropOrder(CatalogTransaction transaction, const catalog_entry_vector_t &entries) {
+	auto dependency_manager = GetDependencyManager();
+	return dependency_manager ? dependency_manager->DropOrder(transaction, entries) : entries;
 }
 
 ErrorData Catalog::SupportsCreateTable(BoundCreateTableInfo &info) {

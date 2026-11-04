@@ -774,6 +774,7 @@ public:
 	                                  const char *statement_name);
 	static void AddToMultiStatement(const unique_ptr<MultiStatement> &multi_statement,
 	                                unique_ptr<AlterInfo> alter_info);
+	static unique_ptr<DropStatement> MakeDropStatement(unique_ptr<DropInfo> info, vector<QualifiedName> names);
 	static void AddUpdateToMultiStatement(const unique_ptr<MultiStatement> &multi_statement, const string &column_name,
 	                                      const AlterEntryData &table_data,
 	                                      const unique_ptr<ParsedExpression> &original_expression);
