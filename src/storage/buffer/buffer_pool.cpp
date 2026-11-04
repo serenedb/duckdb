@@ -11,17 +11,20 @@
 
 namespace duckdb {
 
-static idx_t FileBufferTypeToEvictionQueueTypeIdx(const FileBufferType &type) {
-	switch (type) {
+static constexpr idx_t REMOTE_FILE_QUEUE_TYPE = 1;
+
+static idx_t EvictionQueueTypeIdx(const BlockMemory &memory) {
+	switch (memory.GetBufferType()) {
 	case FileBufferType::BLOCK:
-	case FileBufferType::EXTERNAL_FILE:
 		return 0; // Evict these first (cheap, just free)
+	case FileBufferType::EXTERNAL_FILE:
+		return memory.KeepsCopy() ? REMOTE_FILE_QUEUE_TYPE : 0;
 	case FileBufferType::MANAGED_BUFFER:
-		return 1; // Then these (have to write to storage)
+		return 2; // Then these (have to write to storage)
 	case FileBufferType::TINY_BUFFER:
-		return 2; // Evict tiny buffers last (last resort)
+		return 3; // Evict tiny buffers last (last resort)
 	default:
-		throw InternalException("Unknown FileBufferType in FileBufferTypeToEvictionQueueTypeIdx");
+		throw InternalException("Unknown FileBufferType in EvictionQueueTypeIdx");
 	}
 }
 
@@ -29,9 +32,11 @@ static vector<FileBufferType> EvictionQueueTypeIdxToFileBufferTypes(const idx_t 
 	switch (queue_type_idx) {
 	case 0:
 		return {FileBufferType::BLOCK, FileBufferType::EXTERNAL_FILE};
-	case 1:
-		return {FileBufferType::MANAGED_BUFFER};
+	case REMOTE_FILE_QUEUE_TYPE:
+		return {FileBufferType::EXTERNAL_FILE};
 	case 2:
+		return {FileBufferType::MANAGED_BUFFER};
+	case 3:
 		return {FileBufferType::TINY_BUFFER};
 	default:
 		throw InternalException("Unknown queue type index in EvictionQueueTypeIdxToFileBufferTypes");
@@ -44,7 +49,8 @@ static vector<FileBufferType> EvictionQueueTypeIdxToFileBufferTypes(const idx_t 
 //! free blocks at once take different locks; eviction goes around the stripes in turn.
 struct EvictionQueue {
 public:
-	explicit EvictionQueue(const vector<FileBufferType> &file_buffer_types_p) : file_buffer_types(file_buffer_types_p) {
+	EvictionQueue(const vector<FileBufferType> &file_buffer_types_p, bool counts_bytes_p)
+	    : file_buffer_types(file_buffer_types_p), counts_bytes(counts_bytes_p) {
 	}
 
 	void Add(BlockMemory &memory) {
@@ -65,6 +71,10 @@ public:
 		memory.queue_slot = slot;
 		stripe.blocks.store(stripe.blocks.load(std::memory_order_relaxed) + 1, std::memory_order_relaxed);
 		stripe.insertions.store(stripe.insertions.load(std::memory_order_relaxed) + 1, std::memory_order_relaxed);
+		if (counts_bytes) {
+			memory.queue_bytes = memory.GetMemoryUsage();
+			bytes.fetch_add(memory.queue_bytes, std::memory_order_relaxed);
+		}
 	}
 
 	void Remove(BlockMemory &memory) {
@@ -75,6 +85,9 @@ public:
 		stripe.free_slots.push_back(memory.queue_slot);
 		memory.queue = nullptr;
 		stripe.blocks.store(stripe.blocks.load(std::memory_order_relaxed) - 1, std::memory_order_relaxed);
+		if (counts_bytes) {
+			bytes.fetch_sub(memory.queue_bytes, std::memory_order_relaxed);
+		}
 	}
 
 	//! The next block to evict, or nothing once the budget is spent: each block and each stripe passed costs one. A
@@ -144,6 +157,10 @@ public:
 		}
 		return result;
 	}
+	idx_t GetBytes() const {
+		D_ASSERT(counts_bytes);
+		return bytes.load(std::memory_order_relaxed);
+	}
 	idx_t GetTotalInsertions() const {
 		idx_t result = 0;
 		for (auto &stripe : stripes) {
@@ -172,20 +189,24 @@ private:
 	array<Stripe, STRIPES> stripes;
 	//! The stripe eviction looks at
 	atomic<idx_t> next_stripe {0};
+	const bool counts_bytes;
+	atomic<idx_t> bytes {0};
 };
 
 BufferPool::BufferPool(BlockAllocator &block_allocator, idx_t maximum_memory, bool track_eviction_timestamps,
-                       idx_t allocator_bulk_deallocation_flush_threshold)
-    : eviction_queue_sizes({BLOCK_AND_EXTERNAL_FILE_QUEUE_SIZE, MANAGED_BUFFER_QUEUE_SIZE, TINY_BUFFER_QUEUE_SIZE}),
+                       idx_t allocator_bulk_deallocation_flush_threshold, idx_t external_file_cache_min_memory)
+    : eviction_queue_sizes({BLOCK_AND_EXTERNAL_FILE_QUEUE_SIZE, REMOTE_FILE_QUEUE_SIZE, MANAGED_BUFFER_QUEUE_SIZE,
+                            TINY_BUFFER_QUEUE_SIZE}),
       maximum_memory(maximum_memory),
       allocator_bulk_deallocation_flush_threshold(allocator_bulk_deallocation_flush_threshold),
+      external_file_cache_min_memory(external_file_cache_min_memory),
       track_eviction_timestamps(track_eviction_timestamps),
       temporary_memory_manager(make_uniq<TemporaryMemoryManager>()), block_allocator(block_allocator) {
 	for (idx_t queue_type_idx = 0; queue_type_idx < EVICTION_QUEUE_TYPES; queue_type_idx++) {
 		const auto types = EvictionQueueTypeIdxToFileBufferTypes(queue_type_idx);
 		const auto &type_queue_size = eviction_queue_sizes[queue_type_idx];
 		for (idx_t queue_idx = 0; queue_idx < type_queue_size; queue_idx++) {
-			queues.push_back(make_uniq<EvictionQueue>(types));
+			queues.push_back(make_uniq<EvictionQueue>(types, queue_type_idx == REMOTE_FILE_QUEUE_TYPE));
 		}
 	}
 }
@@ -224,7 +245,7 @@ EvictionQueue &BufferPool::GetEvictionQueueForBlockMemory(const BlockMemory &mem
 
 	// Get offset into eviction queues for this FileBufferType
 	idx_t queue_index = 0;
-	const auto handle_queue_type_idx = FileBufferTypeToEvictionQueueTypeIdx(handle_buffer_type);
+	const auto handle_queue_type_idx = EvictionQueueTypeIdx(memory);
 	for (idx_t type_idx = 0; type_idx < handle_queue_type_idx; type_idx++) {
 		queue_index += eviction_queue_sizes[type_idx];
 	}
@@ -286,8 +307,21 @@ BufferPool::EvictionResult BufferPool::EvictObjectCacheEntries(MemoryTag tag, id
 BufferPool::EvictionResult BufferPool::EvictBlocks(QueryContext context, MemoryTag tag, idx_t extra_memory,
                                                    idx_t memory_limit, unique_ptr<FileBuffer> *buffer) {
 	FlushOnBulkDeallocation();
+	auto &remote_files = *queues[BLOCK_AND_EXTERNAL_FILE_QUEUE_SIZE];
+	const auto remote_floor = GetExternalFileCacheMinMemory();
 	for (auto &queue : queues) {
-		auto block_result = EvictBlocksInternal(context, *queue, tag, extra_memory, memory_limit, buffer);
+		const bool remote = queue.get() == &remote_files;
+		if (remote && remote_files.GetBytes() <= remote_floor) {
+			continue;
+		}
+		auto block_result =
+		    EvictBlocksInternal(context, *queue, tag, extra_memory, memory_limit, remote ? remote_floor : 0, buffer);
+		if (block_result.success) {
+			return block_result;
+		}
+	}
+	if (remote_floor > 0 && remote_files.GetBytes() > 0) {
+		auto block_result = EvictBlocksInternal(context, remote_files, tag, extra_memory, memory_limit, 0, buffer);
 		if (block_result.success) {
 			return block_result;
 		}
@@ -299,7 +333,7 @@ BufferPool::EvictionResult BufferPool::EvictBlocks(QueryContext context, MemoryT
 }
 
 BufferPool::EvictionResult BufferPool::EvictBlocksInternal(QueryContext context, EvictionQueue &queue, MemoryTag tag,
-                                                           idx_t extra_memory, idx_t memory_limit,
+                                                           idx_t extra_memory, idx_t memory_limit, idx_t keep,
                                                            unique_ptr<FileBuffer> *buffer) {
 	TempBufferPoolReservation r(tag, *this, extra_memory);
 	bool found = false;
@@ -312,7 +346,11 @@ BufferPool::EvictionResult BufferPool::EvictBlocksInternal(QueryContext context,
 	}
 
 	idx_t budget = DConstants::INVALID_INDEX;
-	while (auto victim = queue.NextVictim(budget)) {
+	while (keep == 0 || queue.GetBytes() > keep) {
+		auto victim = queue.NextVictim(budget);
+		if (!victim) {
+			break;
+		}
 		auto lock = victim->GetLock();
 		if (victim->CanUnload() != CanUnloadResult::CAN_UNLOAD) {
 			continue;
@@ -396,6 +434,18 @@ void BufferPool::SetAllocatorBulkDeallocationFlushThreshold(idx_t threshold) {
 	allocator_bulk_deallocation_flush_threshold = threshold;
 }
 
+void BufferPool::SetExternalFileCacheMinMemory(idx_t size) {
+	external_file_cache_min_memory = size;
+}
+
+idx_t BufferPool::GetExternalFileCacheMinMemory() const {
+	const auto size = external_file_cache_min_memory.load(std::memory_order_relaxed);
+	if (size == DConstants::INVALID_INDEX) {
+		return maximum_memory.load(std::memory_order_relaxed) / EXTERNAL_FILE_CACHE_MIN_MEMORY_DIVISOR;
+	}
+	return size;
+}
+
 idx_t BufferPool::GetAllocatorBulkDeallocationFlushThreshold() {
 	return allocator_bulk_deallocation_flush_threshold;
 }
@@ -434,7 +484,7 @@ void BufferPool::FlushOnBulkDeallocation() {
 }
 
 vector<EvictionQueueInformation> BufferPool::GetEvictionQueueInfo() const {
-	static const char *QUEUE_TYPE_NAMES[] = {"BLOCK_AND_EXTERNAL_FILE", "MANAGED_BUFFER", "TINY_BUFFER"};
+	static const char *QUEUE_TYPE_NAMES[] = {"BLOCK_AND_EXTERNAL_FILE", "REMOTE_FILE", "MANAGED_BUFFER", "TINY_BUFFER"};
 	vector<EvictionQueueInformation> result;
 	idx_t global_queue_index = 0;
 	for (idx_t type_idx = 0; type_idx < EVICTION_QUEUE_TYPES; type_idx++) {
