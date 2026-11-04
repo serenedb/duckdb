@@ -28,7 +28,7 @@ mutex &LoadWait(const BlockMemory &memory) {
 BlockMemory::BlockMemory(BufferManager &buffer_manager, block_id_t block_id_p, MemoryTag tag_p,
                          idx_t block_alloc_size_p)
     : BlockMemory(buffer_manager, block_id_p, tag_p, block_alloc_size_p, FileBufferType::BLOCK,
-                  DestroyBufferUpon::BLOCK) {
+                  DestroyBufferUpon::EVICTION) {
 }
 
 BlockMemory::BlockMemory(BufferManager &buffer_manager, block_id_t block_id_p, MemoryTag tag_p,
@@ -98,7 +98,7 @@ BlockMemory::~BlockMemory() { // NOLINT: allow internal exceptions
 	}
 
 	try {
-		if (BlockId() >= MAXIMUM_BLOCK && has_temporary_file) {
+		if (has_temporary_file) {
 			// The memory buffer lives in memory.
 			// Thus, it could've been offloaded to disk, and we should remove the file.
 			GetBufferManager().DeleteTemporaryFile(*this);
@@ -172,7 +172,7 @@ CanUnloadResult BlockMemory::CanUnload() const {
 		// There are active readers.
 		return CanUnloadResult::PINNED;
 	}
-	if (BlockId() >= MAXIMUM_BLOCK && MustWriteToTemporaryFile() && !GetBufferManager().HasTemporaryDirectory()) {
+	if (MustWriteToTemporaryFile() && !GetBufferManager().HasTemporaryDirectory()) {
 		// The block memory cannot be destroyed upon eviction/unpinning.
 		// In order to unload this block we need to write it to a temporary buffer.
 		// However, no temporary directory is specified, hence, we cannot unload.
@@ -194,9 +194,9 @@ unique_ptr<FileBuffer> BlockMemory::UnloadAndTakeBlock(BlockLock &l, QueryContex
 		return nullptr;
 	}
 
-	if (BlockId() >= MAXIMUM_BLOCK && (MustWriteToTemporaryFile() || (KeepsCopy() && !has_temporary_file))) {
-		// A temporary block that cannot be destroyed upon evict/unpin is written to a temporary file, and one that
-		// keeps a copy gets one while the copies have room.
+	if (MustWriteToTemporaryFile() || (KeepsCopy() && !has_temporary_file)) {
+		// A block that cannot be destroyed upon evict/unpin is written to a temporary file, and one that keeps a copy
+		// gets one while the copies have room.
 		absl::Cleanup restore = [&] {
 			SetState(BlockState::BLOCK_LOADED);
 		};
