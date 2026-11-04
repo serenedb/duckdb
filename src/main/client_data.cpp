@@ -209,8 +209,18 @@ public:
 		return buffer_manager.GetTemporaryMemoryManager();
 	}
 
-	BufferHandle PinEmpty(shared_ptr<BlockHandle> &handle, idx_t block_size, idx_t block_header_size) override {
-		return buffer_manager.PinEmpty(handle, block_size, block_header_size);
+	shared_ptr<BlockHandle> RegisterUnloadedMemory(MemoryTag tag, idx_t block_size, idx_t block_header_size,
+	                                               DestroyBufferUpon destroy_buffer_upon) override {
+		return buffer_manager.RegisterUnloadedMemory(tag, block_size, block_header_size, destroy_buffer_upon);
+	}
+	BufferHandle LoadClaimed(const QueryContext &context, shared_ptr<BlockHandle> &handle) override {
+		return buffer_manager.LoadClaimed(context, handle);
+	}
+	BlockLoad PrepareLoad(BlockMemory &memory, idx_t block_size, idx_t block_header_size) override {
+		return buffer_manager.PrepareLoad(memory, block_size, block_header_size);
+	}
+	BufferHandle CompleteLoad(shared_ptr<BlockHandle> &handle, BlockLoad load) override {
+		return buffer_manager.CompleteLoad(handle, std::move(load));
 	}
 	void Discard(shared_ptr<BlockHandle> &handle) override {
 		return buffer_manager.Discard(handle);
