@@ -920,8 +920,9 @@ TEST_CASE("Block cache drops evicted blocks of remote files when external_file_c
 	const auto directory = TestCreatePath("block_cache_no_copies");
 	DBConfig config;
 	LimitMemory(config, 8, directory);
-	config.options.external_file_cache_spill_size = 0;
 	DuckDB db(nullptr, &config);
+	Connection con(db);
+	REQUIRE_NO_FAIL(con.Query("SET external_file_cache_spill_size = 0"));
 	BlockCache cache(*db.instance);
 	CountingSourceFileSystem fs;
 	TestFile file("block_cache_no_copies.bin", 32 * BLOCK);
