@@ -77,6 +77,7 @@ SQLStatement:
     - ReassignOwnedStatement
     - DropOwnedStatement
     - AlterRoleStatement
+    - AlterGroupStatement
     - AlterOwnerStatement
     - AlterDefaultPrivilegesStatement
     - GrantStatement
@@ -2156,6 +2157,7 @@ excluded_rules:
   - AlterRoleReset
   - AlterRoleOptionList
   - AlterRoleOption
+  - AlterGroupAction
   - ConnLimitOption
   - ValidUntilOption
   - OwnerTarget
