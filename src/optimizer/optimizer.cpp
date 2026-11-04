@@ -271,6 +271,19 @@ static bool CollectDataVersions(const LogicalOperator &op, vector<shared_ptr<Pla
 	return true;
 }
 
+template <class VISIT>
+static void VisitPreparedStatements(LogicalOperator &plan, VISIT &&visit) {
+	for (optional_ptr<LogicalOperator> op = &plan; op; op = op->children.empty() ? nullptr : op->children[0].get()) {
+		if (op->type == LogicalOperatorType::LOGICAL_PREPARE) {
+			visit(plan, *op->Cast<LogicalPrepare>().prepared);
+		} else if (op->type == LogicalOperatorType::LOGICAL_EXECUTE && op->Cast<LogicalExecute>().replaces) {
+			visit(*op->children[0], *op->Cast<LogicalExecute>().prepared);
+		} else {
+			break;
+		}
+	}
+}
+
 static void TrackDataVersions(const LogicalOperator &plan, PreparedStatementData &prepared) {
 	if (prepared.properties.read_databases.empty()) {
 		return;
@@ -660,16 +673,9 @@ unique_ptr<LogicalOperator> Optimizer::Optimize(unique_ptr<LogicalOperator> plan
 	Verify(*plan_p);
 
 	this->plan = std::move(plan_p);
-	for (optional_ptr<LogicalOperator> op = plan.get(); op;
-	     op = op->children.empty() ? nullptr : op->children[0].get()) {
-		if (op->type == LogicalOperatorType::LOGICAL_PREPARE) {
-			TrackDataVersions(*plan, *op->Cast<LogicalPrepare>().prepared);
-		} else if (op->type == LogicalOperatorType::LOGICAL_EXECUTE && op->Cast<LogicalExecute>().replaces) {
-			TrackDataVersions(*op->children[0], *op->Cast<LogicalExecute>().prepared);
-		} else {
-			break;
-		}
-	}
+	VisitPreparedStatements(*plan, [](const LogicalOperator &planned, PreparedStatementData &prepared) {
+		TrackDataVersions(planned, prepared);
+	});
 
 	for (auto &pre_optimizer_extension : optimizer_extensions) {
 		if (pre_optimizer_extension.anchor != OptimizerType::INVALID) {
@@ -695,6 +701,12 @@ unique_ptr<LogicalOperator> Optimizer::Optimize(unique_ptr<LogicalOperator> plan
 			if (optimizer_extension.optimize_function) {
 				optimizer_extension.optimize_function(input, plan);
 			}
+		});
+	}
+
+	if (binder.GetStatementProperties().always_require_rebind) {
+		VisitPreparedStatements(*plan, [](const LogicalOperator &, PreparedStatementData &prepared) {
+			prepared.properties.always_require_rebind = true;
 		});
 	}
 
