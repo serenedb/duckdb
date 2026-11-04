@@ -199,6 +199,7 @@ struct Permissions {
 	vector<RelationAcl> relations;
 	vector<ObjectAcl> schemas;
 	vector<NamedAcl> functions;
+	vector<ObjectAcl> types;
 
 	bool operator==(const Permissions &rhs) const = default;
 
@@ -287,7 +288,8 @@ public:
 
 	SecuritySnapshot(unordered_map<idx_t, Node> nodes, unordered_map<string, idx_t> database_owners,
 	                 idx_t database_owner_role, unordered_map<string, unordered_map<idx_t, Relation>> relations,
-	                 unordered_map<string, unordered_map<string, Permissions>> functions);
+	                 unordered_map<string, unordered_map<string, Permissions>> functions,
+	                 unordered_map<string, unordered_map<idx_t, Permissions>> types);
 	~SecuritySnapshot();
 
 	SecuritySnapshot(const SecuritySnapshot &) = delete;
@@ -309,6 +311,10 @@ public:
 	}
 	bool HasFunctionGrants(std::string_view database) const;
 	optional_ptr<const Permissions> FunctionPermissions(std::string_view database, std::string_view function) const;
+	bool HasTypeGrants() const {
+		return !types.empty();
+	}
+	optional_ptr<const Permissions> TypePermissions(std::string_view database, idx_t type) const;
 
 private:
 	optional_ptr<const Relation> FindRelation(std::string_view database, idx_t relation) const;
@@ -322,6 +328,7 @@ private:
 	idx_t database_owner_role;
 	unordered_map<string, unordered_map<idx_t, Relation>> relations;
 	unordered_map<string, unordered_map<string, Permissions>> functions;
+	unordered_map<string, unordered_map<idx_t, Permissions>> types;
 	mutable mutex derived_lock;
 	mutable unordered_map<idx_t, shared_ptr<const SecuritySnapshot>> derived;
 };

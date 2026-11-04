@@ -528,6 +528,18 @@ static void OwnDefinedOverloads(CreateInfo &info, idx_t defined) {
 	}
 }
 
+static void RequireDefinedTypeUsage(Binder &binder, CreateInfo &info, idx_t defined, Catalog &catalog) {
+	auto &macros = info.Cast<CreateMacroInfo>().macros;
+	for (idx_t i = 0; i < (defined ? defined : macros.size()); i++) {
+		for (auto &type : macros[i]->types) {
+			binder.RequireTypeUsage(type, catalog);
+		}
+		for (auto &type : macros[i]->return_types) {
+			binder.RequireTypeUsage(type, catalog);
+		}
+	}
+}
+
 idx_t Binder::MergeMacroOverloads(CreateInfo &info) {
 	SearchSchema(info);
 	auto &catalog = Catalog::GetCatalog(context, info.GetQualifiedName().Catalog());
@@ -1305,6 +1317,9 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 			}
 		}
 		BindCreateViewInfo(base);
+		for (auto &type : base.types) {
+			RequireTypeUsage(type, schema.ParentCatalog());
+		}
 		result.plan = make_uniq<LogicalCreate>(LogicalOperatorType::LOGICAL_CREATE_VIEW, std::move(stmt.info), &schema);
 		break;
 	}
@@ -1317,6 +1332,7 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 	case CatalogType::TABLE_MACRO_ENTRY: {
 		const auto defined = MergeMacroOverloads(*stmt.info);
 		auto &schema = BindCreateFunctionInfo(*stmt.info);
+		RequireDefinedTypeUsage(*this, *stmt.info, defined, schema.ParentCatalog());
 		OwnDefinedOverloads(*stmt.info, defined);
 		result.plan =
 		    make_uniq<LogicalCreate>(LogicalOperatorType::LOGICAL_CREATE_MACRO, std::move(stmt.info), &schema);
@@ -1325,6 +1341,7 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 	case CatalogType::MACRO_ENTRY: {
 		const auto defined = MergeMacroOverloads(*stmt.info);
 		auto &schema = BindCreateFunctionInfo(*stmt.info);
+		RequireDefinedTypeUsage(*this, *stmt.info, defined, schema.ParentCatalog());
 		OwnDefinedOverloads(*stmt.info, defined);
 		auto logical_create =
 		    make_uniq<LogicalCreate>(LogicalOperatorType::LOGICAL_CREATE_MACRO, std::move(stmt.info), &schema);
@@ -1412,6 +1429,9 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 		}
 		auto bound_info = BindCreateTableInfo(std::move(stmt.info), table_schema);
 		RequireTypeUsage(bound_info->Base().dependencies);
+		for (auto &column : bound_info->Base().columns.Logical()) {
+			RequireTypeUsage(column.Type(), bound_info->schema.ParentCatalog());
+		}
 		if (!CheckAs().IsSystem()) {
 			for (auto &serial : bound_info->serial_sequences) {
 				AssignOwner(serial.permissions, bound_info->schema.ParentCatalog(), CatalogType::SEQUENCE_ENTRY,
@@ -1471,6 +1491,11 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 			SetCatalogLookupCallback(dependency_callback);
 			// Bind the underlying type
 			BindLogicalType(create_type_info.type);
+			if (create_type_info.type.id() == LogicalTypeId::STRUCT) {
+				for (auto &attribute : StructType::GetChildTypes(create_type_info.type)) {
+					RequireTypeUsage(attribute.second, catalog);
+				}
+			}
 		}
 		break;
 	}

@@ -648,6 +648,11 @@
         "id": 332,
         "name": "functions",
         "type": "vector<NamedAcl>"
+      },
+      {
+        "id": 333,
+        "name": "type_id",
+        "type": "idx_t"
       }
     ]
   },
