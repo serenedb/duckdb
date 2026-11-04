@@ -446,10 +446,14 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformAlterRoleStatement(PEGT
 		return std::move(result);
 	}
 	if (all_roles) {
-		if (chosen.Name() == "AlterRoleConfig") {
-			throw NotImplementedException("ALTER ROLE ALL without IN DATABASE is not supported");
+		if (chosen.Name() != "AlterRoleConfig") {
+			throw ParserException("syntax error at or near \"ALL\"");
 		}
-		throw ParserException("syntax error at or near \"ALL\"");
+		auto info = make_uniq<AlterRoleInfo>(Identifier());
+		info->all_roles = true;
+		CollectConfigClause(transformer, chosen, info->set_config, info->reset_config, info->reset_all_config);
+		result->info = std::move(info);
+		return std::move(result);
 	}
 
 	auto info = make_uniq<AlterRoleInfo>(Identifier(name));

@@ -16,6 +16,7 @@ unique_ptr<CreateInfo> CreateRoleInfo::Copy() const {
 	result->password = password;
 	result->member_of = member_of;
 	result->config = config;
+	result->all_roles_config = all_roles_config;
 	result->in_roles = in_roles;
 	result->role_members = role_members;
 	result->admin_members = admin_members;

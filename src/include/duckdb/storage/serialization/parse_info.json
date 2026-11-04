@@ -820,6 +820,11 @@
         "id": 320,
         "name": "grantor_id",
         "type": "idx_t"
+      },
+      {
+        "id": 321,
+        "name": "all_roles",
+        "type": "bool"
       }
     ]
   },

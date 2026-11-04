@@ -627,6 +627,11 @@
         "id": 206,
         "name": "config",
         "type": "vector<string>"
+      },
+      {
+        "id": 207,
+        "name": "all_roles_config",
+        "type": "vector<string>"
       }
     ],
     "methods": {
