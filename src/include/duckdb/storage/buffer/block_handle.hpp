@@ -263,11 +263,6 @@ public:
 		VerifyMutex(l);
 		memory_charge.Resize(alloc_size);
 	}
-	//! Merge two memory charges.
-	void MergeMemoryReservation(BlockLock &l, BufferPoolReservation reservation) {
-		VerifyMutex(l);
-		memory_charge.Merge(std::move(reservation));
-	}
 	//! Returns true, if there is a swizzled memory pointer, else false.
 	bool IsSwizzled() const {
 		return !unswizzled;
@@ -286,7 +281,6 @@ public:
 public:
 	void ChangeMemoryUsage(BlockLock &l, int64_t delta);
 	void ConvertToPersistent(BlockLock &l, BlockHandle &new_block, unique_ptr<FileBuffer> new_buffer);
-	void ResizeBuffer(BlockLock &l, idx_t block_size, idx_t block_header_size, int64_t memory_delta);
 	//! Returns whether the block can be unloaded or the reason why it cannot be unloaded.
 	//! The state here can change if the block lock is held.
 	//! However, this method does not hold the block lock.
