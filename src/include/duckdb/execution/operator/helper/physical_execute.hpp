@@ -18,11 +18,14 @@ public:
 	static constexpr const PhysicalOperatorType TYPE = PhysicalOperatorType::EXECUTE;
 
 public:
-	PhysicalExecute(PhysicalPlan &physical_plan, PhysicalOperator &plan, shared_ptr<PreparedStatementData> prepared);
+	PhysicalExecute(PhysicalPlan &physical_plan, PhysicalOperator &plan, shared_ptr<PreparedStatementData> prepared,
+	                shared_ptr<PreparedStatementData> stored, bool custom_plan);
 
 	PhysicalOperator &plan;
 	//! The prepared statement we are executing - kept alive here because it can own the plan we refer to
 	shared_ptr<PreparedStatementData> prepared;
+	shared_ptr<PreparedStatementData> stored;
+	bool custom_plan;
 
 public:
 	vector<const_reference<PhysicalOperator>> GetChildren() const override;

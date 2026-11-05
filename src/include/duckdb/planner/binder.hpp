@@ -18,6 +18,9 @@
 #include "duckdb/common/unordered_map.hpp"
 #include "duckdb/common/unordered_set.hpp"
 #include "duckdb/parser/column_definition.hpp"
+#include "duckdb/parser/parsed_data/alter_table_info.hpp"
+#include "duckdb/parser/parsed_data/create_role_info.hpp"
+#include "duckdb/parser/parsed_data/drop_info.hpp"
 #include "duckdb/parser/tableref/match_recognize_ref.hpp"
 #include "duckdb/parser/qualified_name.hpp"
 #include "duckdb/parser/qualified_name_set.hpp"
@@ -34,6 +37,7 @@
 #include "duckdb/planner/joinside.hpp"
 #include "duckdb/planner/bound_constraint.hpp"
 #include "duckdb/planner/logical_operator.hpp"
+#include "duckdb/catalog/catalog_entry/function_entry.hpp"
 #include "duckdb/catalog/catalog_entry/trigger_catalog_entry.hpp"
 #include "duckdb/common/enums/copy_option_mode.hpp"
 #include "duckdb/common/enums/trigger_type.hpp"
@@ -109,6 +113,7 @@ enum class BindingMode : uint8_t {
 	EXTRACT_QUALIFIED_NAMES
 };
 enum class BinderType : uint8_t { REGULAR_BINDER, VIEW_BINDER };
+enum class TableRefUse : uint8_t { READ, DML_TARGET, UTILITY_TARGET };
 
 struct CorrelatedColumnInfo {
 	ColumnBinding binding;
@@ -250,6 +255,14 @@ struct MacroFunctionLookup {
 	optional_ptr<ScalarMacroCatalogEntry> macro;
 };
 
+struct RequiredPrivilege {
+	reference<TableCatalogEntry> table;
+	RoleAccess role;
+	AclMode mode;
+	vector<LogicalIndex> columns;
+	bool any_column;
+};
+
 struct GlobalBinderState {
 	//! The count of bound_tables
 	idx_t bound_tables = 0;
@@ -260,8 +273,11 @@ struct GlobalBinderState {
 	identifier_map_t<BoundMacroArgument> bound_macro_arguments;
 	vector<MacroParameterReference> macro_parameters;
 	idx_t macro_type_probing = 0;
+	unordered_map<idx_t, RoleAccess> role_access;
+	vector<RequiredPrivilege> required_privileges;
 	//! Statement properties
 	StatementProperties prop;
+	vector<shared_ptr<ColumnReadCheck>> column_reads;
 	//! Binding mode
 	BindingMode mode = BindingMode::STANDARD_BINDING;
 	//! Table names extracted for BindingMode::EXTRACT_NAMES or BindingMode::EXTRACT_QUALIFIED_NAMES.
@@ -281,6 +297,7 @@ struct GlobalBinderState {
 	//! table order, under which the captured OLD image is exposed via SQL aliases. Only populated for capture
 	//! requests presented through a CTE; a consumer that reads the OLD image directly leaves it absent.
 	reference_map_t<QueryNode, vector<Identifier>> trigger_old_capture_cte_names;
+	reference_set_t<QueryNode> trigger_base_nodes;
 	//! Set during CREATE TRIGGER body validation to detect self-recursive writes
 	optional_ptr<TableCatalogEntry> trigger_creation_table;
 	//! Name of the trigger being created (for error messages)
@@ -365,8 +382,8 @@ public:
 	void BindCreateViewInfo(CreateViewInfo &base);
 	static void BindView(ClientContext &context, const SelectStatement &stmt, const Identifier &catalog_name,
 	                     const Identifier &schema_name, optional_ptr<LogicalDependencyList> dependencies,
-	                     const vector<Identifier> &aliases, vector<LogicalType> &result_types,
-	                     vector<Identifier> &result_names);
+	                     optional_ptr<vector<NameBinding>> name_bindings, const vector<Identifier> &aliases,
+	                     vector<LogicalType> &result_types, vector<Identifier> &result_names);
 
 	void SearchSchema(CreateInfo &info);
 	//! Resolve the leading component of a (possibly qualified) name into a catalog: if it names an attached database it
@@ -410,6 +427,54 @@ public:
 
 	//! Add the view to the set of currently bound views - used for detecting recursive view definitions
 	void AddBoundView(ViewCatalogEntry &view);
+	bool InViewBody() const;
+
+	optional_ptr<const RoleAccess> check_as;
+	optional_ptr<const RoleAccess> current_role;
+	bool security_definer_body = false;
+	const RoleAccess &CheckAs() const;
+	const RoleAccess &CurrentRole() const;
+	const RoleAccess &AccessOf(idx_t role);
+	const RoleAccess &FunctionBodyRole(optional_idx owner);
+	void BindAsFunctionBody(const RoleAccess &role);
+	void InheritRoles(Binder &other);
+	void BindUnchecked();
+	void BindAsFunctionBody(const SelectStatement &statement);
+	void UseFunctionSearchPath(const vector<string> &config);
+	TableRefUse table_ref_use = TableRefUse::READ;
+	optional_ptr<const MergeQueryNode> on_conflict_merge;
+	BoundStatement BindTarget(TableRef &ref, TableRefUse use);
+	void CheckTableRead(TableBinding &binding, TableCatalogEntry &table);
+	void RequirePrivilege(TableCatalogEntry &table, AclMode mode, vector<LogicalIndex> columns, bool any_column);
+	void AdoptPrivilegeChecks(Binder &other);
+	void CheckPrivileges();
+	void RecordConstraintKeyVisibility(TableCatalogEntry &table);
+	void CheckCall(FunctionEntry &function);
+	void CheckStatementKind(SQLStatement &statement);
+	void RequireSuperuser();
+	void RequireOwner(CatalogEntry &entry);
+	void RequireOwner(CatalogEntry &entry, idx_t owner);
+	void RequireReplaceOwner(SchemaCatalogEntry &schema, const CreateInfo &info, const Identifier &name);
+	optional_ptr<CatalogEntry> ClusterEntry(CatalogType type, const Identifier &name);
+	QualifiedName ClusterName(const QualifiedName &name);
+	Catalog &SubscriptionCatalog(const Identifier &catalog_name);
+	idx_t RoleId(const Identifier &name);
+	optional_idx RoleSpecKeyword(const string &name);
+	idx_t RoleSpecId(const string &name);
+	string RoleName(idx_t role);
+	void RequireDatabasePrivilege(const Identifier &database, AclMode need);
+	void RequireForeignDataWrapperUsage(const RoleAccess &role, const Identifier &database, const string &wrapper);
+	void RequireLanguageUsage(const RoleAccess &role, const Identifier &database, const string &language);
+	void RequireSchemaCreate(SchemaCatalogEntry &schema);
+	void RequireTypeUsage(optional_ptr<const LogicalDependencyList> dependencies);
+	void RequireTypeUsage(const LogicalType &type, Catalog &catalog);
+	void AssignOwner(Permissions &permissions, Catalog &catalog, CatalogType objtype,
+	                 optional_ptr<SchemaCatalogEntry> schema, idx_t owner);
+	void CheckCreateRole(const CreateRoleInfo &info);
+	void CheckAlterRole(AlterRoleInfo &info);
+	void CheckDropRole(const DropInfo &info);
+	void CheckAlterDatabaseSettings(AlterDatabaseSettingsInfo &info);
+	void CheckSharedObjectComment(AlterInfo &info);
 
 	void BeginSubqueryBind(Binder &parent, ExpressionBinder &binder);
 	//! The innermost enclosing scope
@@ -493,6 +558,7 @@ public:
 	                                           TableIndex table_index = TableIndex());
 
 	void SetSearchPath(Catalog &catalog, const Identifier &schema);
+	void SetSearchPath(Catalog &catalog, const Identifier &schema, const vector<NameBinding> &bindings);
 
 	void BindDefaultValue(const ColumnDefinition &column, vector<unique_ptr<Expression>> &bound_defaults,
 	                      const string &catalog = "", const string &schema = "");
@@ -538,7 +604,10 @@ private:
 	void BindGeneratedColumns(BoundCreateTableInfo &info);
 	//! Bind the default values of the columns of a table
 	void BindDefaultValues(const ColumnList &columns, vector<unique_ptr<Expression>> &bound_defaults,
-	                       const string &catalog = "", const string &schema = "");
+	                       const string &catalog = "", const string &schema = "",
+	                       const std::function<bool(const ColumnDefinition &)> &evaluated = nullptr);
+	void BindDefaultValues(const TableCatalogEntry &table, vector<unique_ptr<Expression>> &bound_defaults,
+	                       const std::function<bool(const ColumnDefinition &)> &evaluated = nullptr);
 	//! Bind a limit value (LIMIT or OFFSET)
 	BoundLimitNode BindLimitValue(OrderBinder &order_binder, unique_ptr<ParsedExpression> limit_val,
 	                              LimitValueType value_type, bool is_offset);
@@ -589,7 +658,9 @@ private:
 
 	//! Resolves the base table for DROP TRIGGER, stamps catalog/schema onto stmt.info,
 	//! and registers the catalog modification. IF EXISTS only guards the trigger, not the table.
-	void BindDropTrigger(DropStatement &stmt, StatementProperties &properties);
+	void BindDropTrigger(DropInfo &info, StatementProperties &properties);
+	void BindDrop(DropInfo &info, StatementProperties &properties);
+	void BindPrivilegeAlter(AlterInfo &info, StatementProperties &properties);
 	void BindRowIdColumns(TableCatalogEntry &table, LogicalGet &get, vector<unique_ptr<Expression>> &expressions);
 	//! Append references to the scanned pre-update (OLD) value of every physical column, in table order, to the
 	//! UPDATE child projection (before rowid). Records the input-chunk offset of the OLD block on the update.
@@ -610,8 +681,8 @@ private:
 	void BindDeleteIndexColumns(TableCatalogEntry &table, LogicalGet &get, vector<idx_t> &return_columns,
 	                            vector<unique_ptr<Expression>> &projection_expressions,
 	                            LogicalOperator &target_binding);
-	BoundStatement BindReturning(vector<unique_ptr<ParsedExpression>> returning_list, TableCatalogEntry &table,
-	                             const Identifier &alias, TableIndex update_table_index,
+	BoundStatement BindReturning(QueryNode &node, vector<unique_ptr<ParsedExpression>> returning_list,
+	                             TableCatalogEntry &table, const Identifier &alias, TableIndex update_table_index,
 	                             unique_ptr<LogicalOperator> child_operator,
 	                             virtual_column_map_t virtual_columns = virtual_column_map_t(),
 	                             optional_ptr<vector<column_t>> bound_virtual_columns = nullptr);
@@ -755,7 +826,7 @@ private:
 	static void BindSchemaOrCatalog(CatalogEntryRetriever &retriever, QualifiedName &qualified_name);
 	Identifier BindCatalog(const Identifier &catalog_name);
 	SchemaCatalogEntry &BindCreateSchema(CreateInfo &info);
-	void MergeMacroOverloads(CreateInfo &info);
+	idx_t MergeMacroOverloads(CreateInfo &info);
 
 	vector<CatalogSearchEntry> GetSearchPath(Catalog &catalog, const Identifier &schema_name,
 	                                         bool default_schema_precedence = false);
@@ -773,7 +844,7 @@ private:
 	BoundStatement BindShow(ShowRef &ref);
 	//! Binds "SHOW name" to the value of the setting "name", returns false if no such setting exists
 	bool TryBindShowSetting(ShowRef &ref, BoundStatement &result);
-	BoundStatement BindShowSetting(ShowRef &ref);
+	BoundStatement BindShowSetting(const Identifier &setting_name);
 	BoundStatement BindSummarize(ShowRef &ref);
 
 	void BindInsertColumnList(TableCatalogEntry &table, vector<Identifier> &columns, bool default_values,

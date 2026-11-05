@@ -2,7 +2,10 @@
 #include "duckdb/optimizer/in_clause_rewriter.hpp"
 #include "duckdb/optimizer/optimizer.hpp"
 #include "duckdb/planner/expression/bound_columnref_expression.hpp"
+#include "duckdb/planner/expression/bound_comparison_expression.hpp"
 #include "duckdb/planner/expression/bound_conjunction_expression.hpp"
+#include "duckdb/planner/expression/bound_function_expression.hpp"
+#include "duckdb/planner/expression/bound_operator_expression.hpp"
 #include "duckdb/planner/expression/bound_parameter_expression.hpp"
 #include "duckdb/planner/expression_iterator.hpp"
 #include "duckdb/planner/operator/logical_get.hpp"
@@ -93,6 +96,41 @@ static void CollectParameters(Expression &expr, vector<shared_ptr<BoundParameter
 	ExpressionIterator::EnumerateChildren(expr, [&](Expression &child) { CollectParameters(child, parameters); });
 }
 
+static bool IsColumnValueComparison(const Expression &column, const Expression &value) {
+	return column.GetExpressionClass() == ExpressionClass::BOUND_COLUMN_REF && value.IsScalar() && !value.IsVolatile();
+}
+
+static bool ComparesColumnWithValues(const Expression &expr) {
+	if (BoundComparisonExpression::IsComparison(expr)) {
+		auto &comparison = expr.Cast<BoundFunctionExpression>();
+		auto &left = BoundComparisonExpression::Left(comparison);
+		auto &right = BoundComparisonExpression::Right(comparison);
+		return IsColumnValueComparison(left, right) || IsColumnValueComparison(right, left);
+	}
+	if (expr.GetExpressionType() != ExpressionType::COMPARE_IN) {
+		return false;
+	}
+	auto &children = expr.Cast<BoundOperatorExpression>().GetChildren();
+	if (children.size() >= InClauseRewriter::IN_CLAUSE_REWRITE_THRESHOLD) {
+		return false;
+	}
+	for (idx_t i = 1; i < children.size(); i++) {
+		if (!IsColumnValueComparison(*children[0], *children[i])) {
+			return false;
+		}
+	}
+	return true;
+}
+
+static bool FiltersCompareColumnsWithValues(const vector<unique_ptr<FilterPushdown::Filter>> &filters) {
+	for (auto &filter : filters) {
+		if (filter->filter->HasParameter() && !ComparesColumnWithValues(*filter->filter)) {
+			return false;
+		}
+	}
+	return true;
+}
+
 unique_ptr<LogicalOperator> FilterPushdown::PushdownGet(unique_ptr<LogicalOperator> op) {
 	D_ASSERT(op->type == LogicalOperatorType::LOGICAL_GET);
 	auto &get = op->Cast<LogicalGet>();
@@ -161,7 +199,8 @@ unique_ptr<LogicalOperator> FilterPushdown::PushdownGet(unique_ptr<LogicalOperat
 			f->ExtractBindings();
 			filters.push_back(std::move(f));
 		}
-	} else {
+	} else if (!get.bind_data || !get.bind_data->ReadsParametersAtExecution() ||
+	           !FiltersCompareColumnsWithValues(filters)) {
 		invalidate_parameters();
 	}
 	// Partial type-based filter pushdown is not implemented for table in-out functions.

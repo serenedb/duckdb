@@ -1,4 +1,5 @@
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
+#include "duckdb/main/client_context.hpp"
 #include "duckdb/parser/expression/columnref_expression.hpp"
 #include "duckdb/parser/expression/constant_expression.hpp"
 #include "duckdb/parser/parsed_expression_iterator.hpp"
@@ -20,6 +21,7 @@
 #include "duckdb/storage/data_table.hpp"
 
 #include <absl/algorithm/container.h>
+#include <absl/cleanup/cleanup.h>
 
 namespace duckdb {
 
@@ -110,6 +112,7 @@ void Binder::BindUpdateSet(TableIndex proj_index, unique_ptr<LogicalOperator> &r
 		auto &colname = set_info.columns[i];
 		auto &expr = set_info.expressions[i];
 		if (!table.ColumnExists(colname)) {
+			context.CheckEntryReference(CheckAs(), table);
 			vector<string> column_names;
 			for (auto &col : all_columns.Physical()) {
 				column_names.emplace_back(col.Name().GetIdentifierName());
@@ -132,6 +135,12 @@ void Binder::BindUpdateSet(TableIndex proj_index, unique_ptr<LogicalOperator> &r
 	if (!has_stored_generated) {
 		return;
 	}
+	auto &retriever = expr_binder_ptr->entry_retriever;
+	const auto lookup_role = retriever.GetCheckAs();
+	retriever.SetCheckAs(&RoleAccess::System());
+	absl::Cleanup restore_role = [&] {
+		retriever.SetCheckAs(lookup_role);
+	};
 	// Recompute each stored generated column whose value depends on an assigned
 	// column. Generated-column references are expanded inline -- the same
 	// recursion the binder uses for INSERT defaults and SELECT -- and assigned
@@ -246,7 +255,7 @@ BoundStatement Binder::BindNode(UpdateQueryNode &node) {
 	unique_ptr<LogicalOperator> root;
 
 	// visit the table reference
-	auto bound_table = Bind(*node.table);
+	auto bound_table = BindTarget(*node.table, TableRefUse::DML_TARGET);
 	if (bound_table.plan->type != LogicalOperatorType::LOGICAL_GET) {
 		throw BinderException("Can only update base table");
 	}
@@ -266,13 +275,13 @@ BoundStatement Binder::BindNode(UpdateQueryNode &node) {
 		}
 	}
 	auto &table = *table_ptr;
+	RecordConstraintKeyVisibility(table);
 
 	if (!node.prioritize_table_when_binding) {
 		if (auto expanded = TryExpandTriggers(node, table, TriggerEventType::UPDATE_EVENT)) {
 			return std::move(*expanded);
 		}
 	}
-
 	optional_ptr<LogicalGet> get;
 	if (node.from_table) {
 		auto from_binder = Binder::CreateBinder(context, this);
@@ -307,10 +316,7 @@ BoundStatement Binder::BindNode(UpdateQueryNode &node) {
 	// a plain UPDATE cannot produce duplicate row-ids, so it keeps the lock-free path.
 	update->row_id_handling = node.from_table ? RowIdHandling::KEEP_FIRST : RowIdHandling::ASSUME_UNIQUE;
 	// bind the default values
-	auto &catalog_name = table.ParentCatalog().GetName();
-	auto schema_name = table.ParentSchema(context).name;
-	BindDefaultValues(table.GetColumns(), update->bound_defaults, catalog_name.GetIdentifierName(),
-	                  schema_name.GetIdentifierName());
+	BindDefaultValues(table, update->bound_defaults);
 	update->bound_constraints = BindConstraints(table);
 
 	// project any additional columns required for the condition/expressions
@@ -331,6 +337,11 @@ BoundStatement Binder::BindNode(UpdateQueryNode &node) {
 	                              update->columns, node.prioritize_table_when_binding);
 	D_ASSERT(proj_tmp->type == LogicalOperatorType::LOGICAL_PROJECTION);
 	auto proj = unique_ptr_cast<LogicalOperator, LogicalProjection>(std::move(proj_tmp));
+	vector<LogicalIndex> updated;
+	for (auto index : update->columns) {
+		updated.push_back(table.GetColumns().GetColumn(index).Logical());
+	}
+	RequirePrivilege(table, AclMode::Update, std::move(updated), false);
 
 	// bind any extra columns necessary for CHECK constraints or indexes;
 	// storage-derived decisions (index updates force delete+insert) come
@@ -359,7 +370,7 @@ BoundStatement Binder::BindNode(UpdateQueryNode &node) {
 		bool capture_old = update->capture_old_rows;
 		unique_ptr<LogicalOperator> update_as_logicaloperator = std::move(update);
 
-		auto returning_result = BindReturning(std::move(node.returning_list), table, node.table->alias,
+		auto returning_result = BindReturning(node, std::move(node.returning_list), table, node.table->alias,
 		                                      update_table_index, std::move(update_as_logicaloperator));
 		if (capture_old) {
 			// Expose the captured OLD physical columns as extra output columns of the base CTE, under the reserved

@@ -28,8 +28,12 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformCommentStatement(PEGTra
 		    StringToQualifiedName(std::span<const string>(comment_target).first(comment_target.size() - 1));
 		info = make_uniq<SetColumnCommentInfo>(qualified_name.Catalog(), qualified_name.Schema(), qualified_name.Name(),
 		                                       column_name, comment_value, OnEntryNotFound::THROW_EXCEPTION);
-	} else if (comment_on_type == CatalogType::DATABASE_ENTRY) {
-		throw NotImplementedException("Adding comments to databases is not implemented");
+	} else if (comment_on_type == CatalogType::DATABASE_ENTRY || comment_on_type == CatalogType::ROLE_ENTRY) {
+		if (comment_target.size() != 1) {
+			throw ParserException("syntax error at or near \".\"");
+		}
+		info = make_uniq<SetCommentInfo>(comment_on_type, Identifier(), Identifier(), Identifier(comment_target[0]),
+		                                 comment_value, OnEntryNotFound::THROW_EXCEPTION);
 	} else if (comment_on_type == CatalogType::SCHEMA_ENTRY) {
 		throw NotImplementedException("Adding comments to schemas is not implemented");
 	} else {
@@ -40,6 +44,22 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformCommentStatement(PEGTra
 	if (!info) {
 		throw NotImplementedException("Cannot comment on this type");
 	}
+	result->info = std::move(info);
+	return std::move(result);
+}
+
+// CommentRoutineStatement <- 'COMMENT' 'ON' GrantRoutineKind RoutineSignature 'IS' CommentValue
+unique_ptr<SQLStatement> PEGTransformerFactory::TransformCommentRoutineStatement(PEGTransformer &transformer,
+                                                                                 ParseResult &parse_result) {
+	auto &list_pr = parse_result.Cast<ListParseResult>();
+	auto &signature = list_pr.Child<ListParseResult>(3);
+	auto name = transformer.Transform<QualifiedName>(signature.GetChild(0));
+	auto info =
+	    make_uniq<SetCommentInfo>(CatalogType::MACRO_ENTRY, name.Catalog(), name.Schema(), name.Name(),
+	                              transformer.Transform<Value>(list_pr.GetChild(5)), OnEntryNotFound::THROW_EXCEPTION);
+	info->has_func_args =
+	    TransformFunctionArgumentTypes(transformer, signature.Child<OptionalParseResult>(1), info->func_parameters);
+	auto result = make_uniq<AlterStatement>();
 	result->info = std::move(info);
 	return std::move(result);
 }
@@ -86,6 +106,10 @@ CatalogType PEGTransformerFactory::TransformCommentType(PEGTransformer &transfor
 
 CatalogType PEGTransformerFactory::TransformCommentColumn(PEGTransformer &transformer) {
 	return CatalogType::INVALID;
+}
+
+CatalogType PEGTransformerFactory::TransformCommentRole(PEGTransformer &transformer) {
+	return CatalogType::ROLE_ENTRY;
 }
 
 Value PEGTransformerFactory::TransformStringLiteralValue(PEGTransformer &transformer, const string &string_literal) {

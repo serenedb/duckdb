@@ -10,6 +10,7 @@
 
 #include "duckdb/catalog/catalog_entry/schema_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_set.hpp"
+#include "duckdb/catalog/permissions.hpp"
 #include "duckdb/common/atomic.hpp"
 #include "duckdb/common/deque.hpp"
 #include "duckdb/common/optional_idx.hpp"
@@ -129,17 +130,50 @@ public:
 	//! the wire layer at connect time; updated on SET ROLE if applicable.
 	string session_user;
 
-	//! Filter for settings listings (duckdb_settings(), SHOW ALL, pg_settings).
-	//! Return false to hide the setting from listings. SET / SHOW <name> are
-	//! unaffected. nullptr = show everything.
-	typedef bool (*setting_visibility_t)(ClientContext &context, const string &name);
-	setting_visibility_t setting_visibility = nullptr;
-
 	//! Invoked before a SET/RESET <name> is applied. Used by SereneDB to track
 	//! session-level changes for PG-style rollback inside a transaction.
 	//! nullptr handler = no tracking.
 	typedef void (*setting_change_handler_t)(ClientContext &context, const string &name, SetScope scope);
 	setting_change_handler_t setting_change_handler = nullptr;
+
+	struct AccessScope {
+		optional_ptr<const RoleAccess> role;
+		bool catalog = false;
+		optional_ptr<vector<FileGrant>> grants;
+	};
+	optional_ptr<const AccessScope> access_scope;
+	optional_ptr<const StatementProperties> planned_properties;
+
+	shared_ptr<const SecuritySnapshot> security;
+	idx_t current_role_id = DConstants::INVALID_INDEX;
+	idx_t session_role = DConstants::INVALID_INDEX;
+	bool hide_constraint_keys = false;
+
+	class AccessScopeGuard {
+	public:
+		AccessScopeGuard(optional_ptr<ClientContext> context_p, const AccessScope &scope)
+		    : context(context_p && !context_p->ActiveStatementProperties() ? context_p : nullptr),
+		      previous(context ? context->access_scope : nullptr) {
+			if (context) {
+				context->access_scope = &scope;
+			}
+		}
+		~AccessScopeGuard() {
+			if (context) {
+				context->access_scope = previous;
+			}
+		}
+		AccessScopeGuard(const AccessScopeGuard &) = delete;
+		AccessScopeGuard &operator=(const AccessScopeGuard &) = delete;
+
+	private:
+		optional_ptr<ClientContext> context;
+		optional_ptr<const AccessScope> previous;
+	};
+
+	bool SecretsVisible() const {
+		return !access_scope || !access_scope->role || access_scope->role->is_superuser;
+	}
 
 public:
 	//! Connect this client to a remote-style AttachedDatabase. Subsequent non-control SQL routes via
@@ -168,7 +202,21 @@ public:
 	bool EmitWarning(const char *message) {
 		return warning_handler && warning_handler(*this, message);
 	}
+	DUCKDB_API bool CanSee(CatalogEntry &entry);
+	DUCKDB_API bool CanSeeDatabase(AttachedDatabase &database);
+	DUCKDB_API void CheckEntryReference(const RoleAccess &role, CatalogEntry &entry);
+	DUCKDB_API void CheckDatabaseReference(const RoleAccess &role, Catalog &catalog);
+	DUCKDB_API optional_ptr<const StatementProperties> ActiveStatementProperties() const;
 	DUCKDB_API void WarnUser(const string &message);
+
+	const RoleAccess &CurrentRole() const {
+		return *current_role;
+	}
+	DUCKDB_API RoleAccess AccessOf(idx_t role) const;
+	DUCKDB_API void SetCurrentRole(idx_t role);
+	DUCKDB_API void InstallSecurity(shared_ptr<const SecuritySnapshot> snapshot);
+	DUCKDB_API void RefreshSecurity();
+	DUCKDB_API void CheckFileAccess(const string &path, RoleCapability sufficient);
 
 	//! Interrupts the running query. Async-signal-safe: sets a flag and nothing else
 	DUCKDB_API void InterruptFromSignal();
@@ -438,6 +486,8 @@ private:
 
 	bool ErrorInvalidatesTransaction(ExceptionType type);
 
+	void ResolveCurrentRole();
+
 private:
 	//! Lock on using the ClientContext in parallel
 	mutex context_lock;
@@ -454,6 +504,12 @@ private:
 	weak_ptr<AttachedDatabase> connected_to_database;
 	bool is_connected = false;
 	shared_ptr<SchedulerAccount> scheduler_account;
+	optional_ptr<const RoleAccess> current_role = &RoleAccess::System();
+	RoleAccess unknown_role;
+	shared_ptr<const SecuritySnapshot> local_security;
+	idx_t local_security_version = 0;
+	shared_ptr<const SecuritySnapshot> security_base;
+	Identifier security_database;
 };
 
 class ClientContextLock {

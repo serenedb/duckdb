@@ -1,11 +1,16 @@
 #include "duckdb/main/client_context.hpp"
 
+#include <absl/cleanup/cleanup.h>
+
+#include "duckdb/catalog/catalog.hpp"
 #include "duckdb/catalog/catalog_entry/scalar_function_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_search_path.hpp"
+#include "duckdb/catalog/duck_catalog.hpp"
 #include "duckdb/common/chrono.hpp"
 #include "duckdb/common/error_data.hpp"
 #include "duckdb/common/exception/transaction_exception.hpp"
+#include "duckdb/common/file_system.hpp"
 #include "duckdb/common/progress_bar/progress_bar.hpp"
 #include "duckdb/common/serializer/buffered_file_writer.hpp"
 #include "duckdb/common/time_point.hpp"
@@ -13,6 +18,7 @@
 #include "duckdb/common/types/uuid.hpp"
 #include "duckdb/execution/column_binding_resolver.hpp"
 #include "duckdb/execution/physical_plan_generator.hpp"
+#include "duckdb/function/scalar/string_common.hpp"
 #include "duckdb/main/appender.hpp"
 #include "duckdb/main/attached_database.hpp"
 #include "duckdb/main/client_context_file_opener.hpp"
@@ -227,6 +233,12 @@ void ClientContext::Destroy() {
 }
 
 void ClientContext::ProcessError(ErrorData &error, std::string_view query) const {
+	if (hide_constraint_keys && error.Type() == ExceptionType::CONSTRAINT) {
+		auto message_without_key = error.ExtraInfo().find("message_without_key");
+		if (message_without_key != error.ExtraInfo().end()) {
+			error = ErrorData(ExceptionType::CONSTRAINT, message_without_key->second);
+		}
+	}
 	error.FinalizeError();
 	if (Settings::Get<ErrorsAsJSONSetting>(*this)) {
 		error.ConvertErrorToJSON();
@@ -298,6 +310,11 @@ shared_ptr<PreparedStatementData> ClientContext::CreatePreparedStatementInternal
 		D_ASSERT(logical_planner.plan || !logical_planner.properties.bound_all_parameters);
 	}
 
+	const auto previous_properties = planned_properties;
+	planned_properties = &logical_planner.properties;
+	absl::Cleanup restore_properties = [&]() noexcept {
+		planned_properties = previous_properties;
+	};
 	if (logical_planner.properties.bound_all_parameters) {
 		for (auto &state : registered_state->States()) {
 			state->OnBoundPlan(*this, *logical_planner.binder, *logical_planner.plan);
@@ -1018,6 +1035,135 @@ static absl::Duration TimeLeft(const optional_idx &deadline) {
 	return absl::Nanoseconds(TimePoint::ToNanos(left));
 }
 
+bool ClientContext::CanSee(CatalogEntry &entry) {
+	auto &role = CurrentRole();
+	return role.is_superuser || EntryVisible(*this, role, entry);
+}
+
+bool ClientContext::CanSeeDatabase(AttachedDatabase &database) {
+	auto &role = CurrentRole();
+	return role.is_superuser || DatabaseVisible(*this, role, database);
+}
+
+void ClientContext::CheckEntryReference(const RoleAccess &role, CatalogEntry &entry) {
+	if (!role.is_superuser) {
+		CheckReference(*this, role, entry);
+	}
+}
+
+void ClientContext::CheckDatabaseReference(const RoleAccess &role, Catalog &catalog) {
+	if (!role.is_superuser && !catalog.IsSystemCatalog() && !catalog.IsTemporaryCatalog() &&
+	    catalog.GetName() != client_data->default_database) {
+		CheckReference(*this, role, catalog.GetAttached());
+	}
+}
+
+void ClientContext::ResolveCurrentRole() {
+	if (current_role_id == DConstants::INVALID_INDEX) {
+		current_role = &RoleAccess::System();
+		return;
+	}
+	current_role = security ? security->Access(current_role_id) : nullptr;
+	if (!current_role) {
+		unknown_role = RoleAccess();
+		unknown_role.role = current_role_id;
+		current_role = &unknown_role;
+	}
+}
+
+RoleAccess ClientContext::AccessOf(idx_t role) const {
+	if (auto access = security ? security->Access(role) : nullptr) {
+		return *access;
+	}
+	RoleAccess missing;
+	missing.role = role;
+	return missing;
+}
+
+void ClientContext::SetCurrentRole(idx_t role) {
+	current_role_id = role;
+	InstallSecurity(db->GetSecurity());
+}
+
+void ClientContext::InstallSecurity(shared_ptr<const SecuritySnapshot> snapshot) {
+	security_database = client_data->default_database;
+	auto database = snapshot ? snapshot->ForDatabase(security_database) : nullptr;
+	security_base = std::move(snapshot);
+	security = database ? std::move(database) : security_base;
+	ResolveCurrentRole();
+}
+
+void ClientContext::RefreshSecurity() {
+	auto &cluster_name = DBConfig::GetConfig(*this).cluster_catalog;
+	if (!cluster_name.empty() && transaction.HasActiveTransaction()) {
+		auto &meta = MetaTransaction::Get(*this);
+		auto cluster_db = meta.ModifiedDatabase() ? meta.GetReferencedDatabase(cluster_name) : nullptr;
+		if (cluster_db && !meta.GetTransaction(*cluster_db).IsReadOnly()) {
+			auto &cluster = cluster_db->GetCatalog().Cast<DuckCatalog>();
+			const auto version = cluster.GetCatalogVersion(*this).GetIndex();
+			if (!local_security || local_security_version != version) {
+				local_security_version = version;
+				local_security = SecuritySnapshot::Build(cluster, cluster.GetCatalogTransaction(*this));
+			}
+			if (security_base != local_security || security_database != client_data->default_database) {
+				InstallSecurity(local_security);
+			}
+			return;
+		}
+	}
+	if (db->CurrentSecurity() != security_base.get() || security_database != client_data->default_database) {
+		InstallSecurity(db->GetSecurity());
+	}
+}
+
+void ClientContext::CheckFileAccess(const string &requested, RoleCapability sufficient) {
+	if (requested == "/dev/stdin" || requested == "/dev/stdout") {
+		return;
+	}
+	const auto holds = [&](const RoleAccess &role) {
+		return role.is_superuser || (role.capabilities & sufficient) != RoleCapability::None;
+	};
+	if (!access_scope && holds(CurrentRole())) {
+		return;
+	}
+	const auto path = DBConfig::GetConfig(*this).SanitizeAllowedPath(requested);
+	const auto covers = [&](const FileGrant &grant) {
+		if ((grant.capability & sufficient) == RoleCapability::None) {
+			return false;
+		}
+		if (grant.path == path) {
+			return true;
+		}
+		if (!grant.path.empty() && StringUtil::StartsWith(path, grant.path) &&
+		    (StringUtil::EndsWith(grant.path, "/") || path[grant.path.size()] == '/')) {
+			return true;
+		}
+		return FileSystem::HasGlob(grant.path) &&
+		       Glob(path.c_str(), path.size(), grant.path.c_str(), grant.path.size());
+	};
+	bool allowed;
+	if (access_scope) {
+		allowed = access_scope->catalog || holds(access_scope->role ? *access_scope->role : CurrentRole());
+		if (allowed && access_scope->grants &&
+		    std::none_of(access_scope->grants->begin(), access_scope->grants->end(), covers)) {
+			access_scope->grants.get_mutable()->push_back(FileGrant {path, sufficient});
+		}
+	} else {
+		auto properties = ActiveStatementProperties();
+		allowed = properties && (properties->catalog_file_access ||
+		                         std::any_of(properties->file_grants.begin(), properties->file_grants.end(), covers));
+	}
+	if (!allowed) {
+		throw PermissionException(
+		    {{"detail", sufficient == RoleCapability::WriteServerFiles
+		                    ? "Only roles with privileges of the \"pg_write_server_files\" role may write to server "
+		                      "files and URLs."
+		                    : "Only roles with privileges of the \"pg_read_server_files\" role may read server files "
+		                      "and URLs."}},
+		    StringUtil::Format("permission denied to access \"%s\"", requested));
+	}
+}
+
 void ClientContext::InterruptFromSignal() {
 	ClientInterruptState expected = ClientInterruptState::NOT_INTERRUPTED;
 	interrupt_state.compare_exchange_strong(expected, ClientInterruptState::INTERRUPTED);
@@ -1416,6 +1562,13 @@ SettingLookupResult ClientContext::TryGetCurrentSetting(const Identifier &key, V
 		// legacy callback
 		result = option->get_setting(*this);
 		return SettingLookupResult(SettingScope::LOCAL);
+	}
+	if (!option) {
+		auto entry = config.custom_settings.find(key.GetIdentifierName());
+		if (entry != config.custom_settings.end()) {
+			result = entry->second;
+			return SettingLookupResult(SettingScope::LOCAL);
+		}
 	}
 	// setting is not set - get the default value
 	return DBConfig::TryGetDefaultValue(option, result);

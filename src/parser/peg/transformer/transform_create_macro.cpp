@@ -4,6 +4,7 @@
 #include "duckdb/parser/tableref/expressionlistref.hpp"
 #include "duckdb/parser/query_node/select_node.hpp"
 #include "duckdb/parser/query_node/update_query_node.hpp"
+#include "duckdb/parser/parsed_data/alter_scalar_function_info.hpp"
 #include "duckdb/parser/parsed_data/create_macro_info.hpp"
 #include "duckdb/parser/peg/transformer/peg_transformer.hpp"
 #include "duckdb/function/scalar_macro_function.hpp"
@@ -134,6 +135,11 @@ bool PEGTransformerFactory::TransformProcedureKeyword(PEGTransformer &transforme
 struct FunctionDecoratorInfo {
 	bool has_language = false;
 	bool returns_set = false;
+	bool has_returns = false;
+	bool has_strict = false;
+	bool has_security = false;
+	bool has_stability = false;
+	bool has_config = false;
 };
 
 static bool IsSetofType(ParseResult &type_pr) {
@@ -158,9 +164,6 @@ static bool IsSetofType(ParseResult &type_pr) {
 	}
 }
 
-// Process the FunctionDecorator* repeat block of a MacroDefinition and apply it to the macro function. The decorators
-// are PG-compat extras (RETURNS, ...). Most semantics are dropped, but RETURNS TABLE/Type populates
-// return_types/return_names which the catalog uses to expose schema.
 static void ApplyFunctionDecorators(PEGTransformer &transformer, RepeatParseResult &decorators_pr,
                                     MacroFunction &macro_function, FunctionDecoratorInfo &info) {
 	auto children = decorators_pr.GetChildren();
@@ -184,10 +187,13 @@ static void ApplyFunctionDecorators(PEGTransformer &transformer, RepeatParseResu
 					macro_function.return_types.push_back(std::move(entry.second));
 				}
 				info.returns_set = true;
+				info.has_returns = true;
 			} else if (returns_name == "ReturnsNull") {
 				macro_function.strict = true;
+				info.has_strict = true;
 			} else {
 				info.returns_set = IsSetofType(returns_choice);
+				info.has_returns = true;
 				macro_function.return_types.push_back(transformer.Transform<LogicalType>(returns_choice));
 			}
 		} else if (decorator_name == "LanguageClause") {
@@ -199,7 +205,17 @@ static void ApplyFunctionDecorators(PEGTransformer &transformer, RepeatParseResu
 		} else if (decorator_name == "StrictClause") {
 			auto &strict_choice = decorator_choice.Cast<ListParseResult>().Child<ChoiceParseResult>(0).GetResult();
 			macro_function.strict = strict_choice.type == ParseResultType::KEYWORD;
+			info.has_strict = true;
+		} else if (decorator_name == "SecurityClause") {
+			auto &security = decorator_choice.Cast<ListParseResult>()
+			                     .Child<ListParseResult>(2)
+			                     .Child<ChoiceParseResult>(0)
+			                     .GetResult();
+			macro_function.security_definer =
+			    StringUtil::CIEquals(security.Cast<KeywordParseResult>().keyword, "DEFINER");
+			info.has_security = true;
 		} else if (decorator_name == "VolatilityKeyword") {
+			info.has_stability = true;
 			auto keyword = decorator_choice.Cast<ListParseResult>()
 			                   .Child<ChoiceParseResult>(0)
 			                   .GetResult()
@@ -212,9 +228,29 @@ static void ApplyFunctionDecorators(PEGTransformer &transformer, RepeatParseResu
 			} else {
 				macro_function.stability = FunctionStability::VOLATILE;
 			}
+		} else if (decorator_name == "AlterRoleConfig") {
+			vector<string> set_config;
+			vector<string> reset_config;
+			bool reset_all_config = false;
+			PEGTransformerFactory::CollectConfigClause(transformer, decorator_choice, set_config, reset_config,
+			                                           reset_all_config);
+			for (auto &entry : set_config) {
+				const auto key = entry.substr(0, entry.find('='));
+				if (!StringUtil::CIEquals(key, "search_path")) {
+					throw NotImplementedException({{"detail", "A function can set only search_path."}},
+					                              "SET of parameter \"%s\" on a function is not supported",
+					                              StringUtil::Lower(key));
+				}
+				macro_function.config = {"search_path" + entry.substr(key.size())};
+				info.has_config = true;
+			}
+			if (reset_all_config || std::any_of(reset_config.begin(), reset_config.end(), [](const string &key) {
+				    return StringUtil::CIEquals(key, "search_path");
+			    })) {
+				macro_function.config.clear();
+				info.has_config = true;
+			}
 		}
-		// Other decorators (security, cost, rows, parallel, leakproof) are accepted for PG-syntax compat but their
-		// semantics are dropped.
 	}
 }
 
@@ -595,6 +631,59 @@ MacroParameter PEGTransformerFactory::TransformSimpleParameter(PEGTransformer &t
 	}
 	result.is_default = false;
 	return result;
+}
+
+void PEGTransformerFactory::TransformRoutineKind(ParseResult &kind, bool &include_functions, bool &include_procedures) {
+	const auto keyword = StringUtil::Upper(
+	    kind.Cast<ListParseResult>().Child<ChoiceParseResult>(0).GetResult().Cast<KeywordParseResult>().keyword);
+	include_functions = keyword != "PROCEDURE";
+	include_procedures = keyword != "FUNCTION";
+}
+
+bool PEGTransformerFactory::TransformFunctionArgumentTypes(PEGTransformer &transformer, OptionalParseResult &signature,
+                                                           vector<LogicalType> &types) {
+	if (!signature.HasResult()) {
+		return false;
+	}
+	auto &arguments =
+	    ExtractResultFromParens(signature.GetResult().Cast<ListParseResult>().GetChild(0)).Cast<OptionalParseResult>();
+	if (arguments.HasResult()) {
+		for (auto &argument : ExtractParseResultsFromList(arguments.GetResult())) {
+			auto &parts =
+			    argument.get().Cast<ListParseResult>().Child<ChoiceParseResult>(0).GetResult().Cast<ListParseResult>();
+			auto &mode = parts.Child<OptionalParseResult>(0);
+			if (mode.HasResult() && transformer.Transform<char>(mode.GetResult()) == 'o') {
+				continue;
+			}
+			types.push_back(transformer.Transform<LogicalType>(parts.GetChild(parts.GetChildren().size() - 1)));
+		}
+	}
+	return true;
+}
+
+unique_ptr<AlterInfo> PEGTransformerFactory::TransformAlterFunctionAttributesStmt(PEGTransformer &transformer,
+                                                                                  ParseResult &parse_result) {
+	auto &list_pr = parse_result.Cast<ListParseResult>();
+	auto result = make_uniq<AlterFunctionAttributesInfo>(
+	    AlterEntryData(transformer.Transform<QualifiedName>(list_pr.GetChild(1)), OnEntryNotFound::THROW_EXCEPTION));
+	TransformRoutineKind(list_pr.GetChild(0), result->include_functions, result->include_procedures);
+	result->has_parameter_types =
+	    TransformFunctionArgumentTypes(transformer, list_pr.Child<OptionalParseResult>(2), result->parameter_types);
+	ScalarMacroFunction attributes;
+	FunctionDecoratorInfo info;
+	ApplyFunctionDecorators(transformer, list_pr.Child<RepeatParseResult>(3), attributes, info);
+	if (info.has_language || info.has_returns) {
+		throw ParserException("syntax error at or near \"%s\"", info.has_language ? "LANGUAGE" : "RETURNS");
+	}
+	result->set_security = info.has_security;
+	result->security_definer = attributes.security_definer;
+	result->set_stability = info.has_stability;
+	result->stability = attributes.stability;
+	result->set_strict = info.has_strict;
+	result->strict = attributes.strict;
+	result->replace_config = info.has_config;
+	result->config = std::move(attributes.config);
+	return std::move(result);
 }
 
 } // namespace duckdb

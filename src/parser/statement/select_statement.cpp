@@ -2,7 +2,9 @@
 
 namespace duckdb {
 
-SelectStatement::SelectStatement(const SelectStatement &other) : SQLStatement(other), node(other.node->Copy()) {
+SelectStatement::SelectStatement(const SelectStatement &other)
+    : SQLStatement(other), node(other.node->Copy()), function_body(other.function_body),
+      function_owner(other.function_owner), function_config(other.function_config) {
 }
 
 unique_ptr<SQLStatement> SelectStatement::Copy() const {
@@ -14,7 +16,8 @@ bool SelectStatement::Equals(const SQLStatement &other_p) const {
 		return false;
 	}
 	auto &other = other_p.Cast<SelectStatement>();
-	return node->Equals(other.node.get());
+	return function_body == other.function_body && function_owner == other.function_owner &&
+	       function_config == other.function_config && node->Equals(other.node.get());
 }
 
 string SelectStatement::ToString() const {

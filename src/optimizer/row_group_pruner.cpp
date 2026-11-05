@@ -13,7 +13,7 @@
 
 namespace duckdb {
 
-RowGroupPruner::RowGroupPruner(ClientContext &context_p) : context(context_p) {
+RowGroupPruner::RowGroupPruner(Optimizer &optimizer_p) : optimizer(optimizer_p), context(optimizer_p.context) {
 }
 
 static std::shared_ptr<const Expression> LimitNodeExpression(const BoundLimitNode &node) {
@@ -235,6 +235,7 @@ RowGroupPruner::CreateRowGroupReordererOptions(const optional_idx row_limit, con
 				if (combined_limit.IsValid()) {
 					combined_limit = row_limit.GetIndex() + offset_puning_result.offset_remainder;
 				}
+				optimizer.SetSnapshotDependent();
 
 				return make_uniq<RowGroupOrderOptions>(storage_index, order_by, order_type, null_order, column_type,
 				                                       combined_limit, offset_puning_result.pruned_row_group_count,

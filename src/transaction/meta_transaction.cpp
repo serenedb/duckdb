@@ -311,12 +311,21 @@ ErrorData MetaTransaction::CommitThroughCatalogLog(Catalog &catalog) {
 	idx_t decision_offset = 0;
 	if (!error.HasError()) {
 		try {
+			const auto snapshot = [&](AttachedDatabase &db) -> optional_ptr<DuckTransaction> {
+				auto entry = transactions.find(db);
+				if (entry == transactions.end()) {
+					return nullptr;
+				}
+				return entry->second.transaction.Cast<DuckTransaction>();
+			};
 			for (auto &participant : applied) {
 				auto &transaction = participant.get().transaction;
 				auto &prepared = *transaction.Cast<DuckTransaction>().prepared;
 				auto &dependencies = *transaction.manager.GetDB().GetCatalog().GetDependencyManager();
 				dependencies.VerifyForeignSubjects(prepared.foreign_dependencies);
 				dependencies.VerifyForeignDependents(prepared.drop_state.DroppedEntries());
+				dependencies.VerifyRoleReferences(prepared.role_references);
+				dependencies.VerifyDroppedRoles(prepared.drop_state.DroppedEntries(), snapshot);
 			}
 			vector<CatalogRun> runs;
 			for (auto &participant : participants) {

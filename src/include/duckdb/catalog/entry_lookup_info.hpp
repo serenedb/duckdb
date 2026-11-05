@@ -32,6 +32,7 @@ public:
 	    QueryErrorContext error_context);
 	//! Re-use a parent lookup's type/at-clause/error-context with a different (re-qualified) name
 	EntryLookupInfo(const EntryLookupInfo &parent, QualifiedName name);
+	EntryLookupInfo(const EntryLookupInfo &parent, QualifiedName name, idx_t argument_count);
 	EntryLookupInfo(const EntryLookupInfo &parent, optional_ptr<BoundAtClause> at_clause);
 
 public:
@@ -48,6 +49,7 @@ public:
 	const Identifier &GetSchema() const;
 	const QueryErrorContext &GetErrorContext() const;
 	const optional_ptr<BoundAtClause> GetAtClause() const;
+	idx_t GetArgumentCount() const;
 
 	//! Build a schema lookup from a (possibly nested) schema path ([outermost..innermost]); the innermost component is
 	//! the schema name and the preceding components are its parent schemas
@@ -58,6 +60,7 @@ private:
 	QualifiedName name;
 	optional_ptr<BoundAtClause> at_clause;
 	QueryErrorContext error_context;
+	idx_t argument_count = DConstants::INVALID_INDEX;
 };
 
 //! Return value of Catalog::LookupEntry

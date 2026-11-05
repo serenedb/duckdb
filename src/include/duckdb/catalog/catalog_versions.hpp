@@ -16,12 +16,16 @@
 #include "duckdb/common/vector.hpp"
 #include "duckdb/transaction/transaction_data.hpp"
 
+#include <functional>
+#include <span>
+
 namespace duckdb {
 
 class CatalogVersions {
 public:
 	optional_ptr<CatalogEntry> GetVisible(const SnapshotView &view) const;
 	optional_ptr<CatalogEntry> GetCommitted() const;
+	optional_ptr<CatalogEntry> GetLatestCommitted() const;
 	bool HasPending() const;
 	bool IsEmpty() const;
 
@@ -43,8 +47,12 @@ public:
 
 	shared_ptr<CatalogVersions> Find(idx_t oid) const;
 	optional_ptr<CatalogEntry> GetVisible(idx_t oid, const SnapshotView &view) const;
+	void GetVisible(std::span<const idx_t> oids, const SnapshotView &view,
+	                std::span<optional_ptr<CatalogEntry>> entries) const;
 	optional_ptr<CatalogEntry> GetVisibleOwner(idx_t oid, const SnapshotView &view) const;
 	optional_ptr<CatalogEntry> GetCommitted(idx_t oid) const;
+	optional_ptr<CatalogEntry> GetCommittedDrop(idx_t oid) const;
+	void ScanVisible(const SnapshotView &view, const std::function<void(CatalogEntry &)> &callback) const;
 
 	void Install(CatalogEntry &version, const CatalogEntry &object);
 	void Commit(CatalogEntry &version, const CatalogEntry &object);

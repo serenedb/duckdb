@@ -37,23 +37,35 @@ void PhysicalSet::SetExtensionVariable(ClientContext &context, ExtensionOption &
 	SetGenericVariable(context, extension_option.setting_index.GetIndex(), effective_scope, std::move(target_value));
 }
 
+void PhysicalSet::SetCustomVariable(ClientContext &context, const Identifier &name, SetScope scope,
+                                    const Value &value) {
+	if (scope == SetScope::GLOBAL) {
+		throw CatalogException("option %s cannot be set globally", name);
+	}
+	Value text(value.IsNull() ? string() : value.ToString());
+	if (context.setting_change_handler) {
+		context.setting_change_handler(context, name.GetIdentifierName(), scope);
+	}
+	ClientConfig::GetConfig(context).custom_settings[name.GetIdentifierName()] = std::move(text);
+}
+
 void PhysicalSet::SetVariable(ClientContext &context, const Identifier &name, SetScope scope, const Value &value) {
 	auto &config = DBConfig::GetConfig(context);
 	config.CheckLock(name);
-	// SET LOCAL is only meaningful inside an explicit transaction; PG rejects
-	// it outside with an error.
-	if (scope == SetScope::LOCAL && context.transaction.IsAutoCommit()) {
-		throw InvalidInputException("SET LOCAL can only be used in transaction blocks");
-	}
 	auto option = DBConfig::GetOptionByName(name);
 	if (!option) {
 		ExtensionOption extension_option;
 		if (!config.TryGetExtensionOption(name, extension_option)) {
+			if (Settings::IsCustomName(name)) {
+				SetCustomVariable(context, name, scope, value);
+				return;
+			}
 			Catalog::AutoloadExtensionByConfigName(context, name);
 			if (!config.TryGetExtensionOption(name, extension_option)) {
 				throw InvalidInputException("Extension parameter %s was not found after autoloading", name);
 			}
 		}
+		Settings::CheckChange(context, name, extension_option.access, GetSettingScope(extension_option, scope));
 		// Invoke the pre-SET observer after resolution so the handler only sees
 		// valid option names and can safely snapshot the current value.
 		Value casted_value = value.CastAs(context, extension_option.type);
@@ -64,6 +76,7 @@ void PhysicalSet::SetVariable(ClientContext &context, const Identifier &name, Se
 		return;
 	}
 	SetScope variable_scope = GetSettingScope(*option, scope);
+	Settings::CheckChange(context, name, option->access, variable_scope);
 	Value input_val = value.CastAs(context, DBConfig::ParseLogicalType(option->parameter_type));
 	if (context.setting_change_handler) {
 		context.setting_change_handler(context, name.GetIdentifierName(), scope);
@@ -136,6 +149,12 @@ SetScope PhysicalSet::GetSettingScope(const ConfigurationOption &option, SetScop
 
 SourceResultType PhysicalSet::GetDataInternal(ExecutionContext &context, DataChunk &chunk,
                                               OperatorSourceInput &input) const {
+	if (scope == SetScope::LOCAL && context.client.transaction.IsAutoCommit()) {
+		const char *msg = "SET LOCAL can only be used in transaction blocks";
+		if (!context.client.EmitWarning(msg)) {
+			throw InvalidInputException(msg);
+		}
+	}
 	SetVariable(context.client, Identifier(std::string_view(name.data(), name.size())), scope, value);
 	return SourceResultType::FINISHED;
 }

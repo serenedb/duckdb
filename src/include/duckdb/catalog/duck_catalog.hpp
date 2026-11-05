@@ -76,22 +76,18 @@ public:
 	                                                                DuckSchemaEntry &schema, CreateTokenizerInfo &info);
 	DUCKDB_API virtual unique_ptr<StandardEntry> MakeJobEntry(CatalogTransaction transaction, DuckSchemaEntry &schema,
 	                                                          CreateJobInfo &info);
-	DUCKDB_API virtual bool IsPinnedEntry(const CatalogEntry &entry) const {
-		return false;
-	}
-
 	DUCKDB_API optional_ptr<CatalogEntry> CreateRole(CatalogTransaction transaction, CreateRoleInfo &info) override;
 	DUCKDB_API optional_ptr<CatalogEntry> CreateDatabase(CatalogTransaction transaction, CreateDatabaseInfo &info);
 	DUCKDB_API optional_ptr<CatalogEntry> CreateForeignServer(CatalogTransaction transaction,
 	                                                          CreateForeignServerInfo &info) override;
 	DUCKDB_API optional_ptr<CatalogEntry> CreateSubscription(CatalogTransaction transaction,
-	                                                         CreateSubscriptionInfo &info);
+	                                                         CreateSubscriptionInfo &info) override;
 	DUCKDB_API optional_ptr<CatalogEntry> CreateReplicationOrigin(CatalogTransaction transaction,
 	                                                              CreateReplicationOriginInfo &info);
 	DUCKDB_API void DropRole(CatalogTransaction transaction, DropInfo &info) override;
 	DUCKDB_API void DropDatabase(CatalogTransaction transaction, DropInfo &info) override;
 	DUCKDB_API void DropForeignServer(CatalogTransaction transaction, DropInfo &info) override;
-	DUCKDB_API void DropSubscription(CatalogTransaction transaction, DropInfo &info);
+	DUCKDB_API void DropSubscription(CatalogTransaction transaction, DropInfo &info) override;
 	DUCKDB_API void DropReplicationOrigin(CatalogTransaction transaction, DropInfo &info);
 
 	DUCKDB_API void ScanSchemas(ClientContext &context, std::function<void(SchemaCatalogEntry &)> callback) override;
@@ -121,6 +117,7 @@ public:
 
 	CatalogSet &GetSchemaCatalogSet();
 	CatalogSet &GetCatalogSet(CatalogType type);
+	DUCKDB_API void PublishSecurity();
 
 	DatabaseSize GetDatabaseSize(ClientContext &context) override;
 	vector<MetadataBlockInfo> GetMetadataInfo(ClientContext &context) override;

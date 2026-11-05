@@ -18,11 +18,14 @@
 #include "duckdb/common/mutex.hpp"
 #include "duckdb/common/stack.hpp"
 #include "duckdb/common/string_util.hpp"
+#include "duckdb/parser/parsed_data/alter_table_info.hpp"
 
 #include <functional>
 
 namespace duckdb {
+class AttachedDatabase;
 class DuckCatalog;
+class DuckTransaction;
 class ClientContext;
 class DependencyEntry;
 class LogicalDependencyList;
@@ -112,10 +115,16 @@ public:
 	                    const created_by_owner_t &created_by_owner);
 
 	static bool CanDepend(Catalog &dependent, Catalog &subject);
-	void ScanDependentEntries(CatalogTransaction transaction, CatalogEntry &object,
-	                          const std::function<void(CatalogEntry &)> &callback);
+	void ScanAllEntries(CatalogTransaction transaction, const std::function<void(CatalogEntry &)> &callback);
 	void VerifyForeignSubjects(const vector<reference<DependencyEntry>> &dependencies);
 	void VerifyForeignDependents(const vector<reference<CatalogEntry>> &dropped);
+	void CommitRoleReferences(DuckTransaction &transaction, transaction_t commit_id, const CatalogEntry &old_entry,
+	                          const CatalogEntry &new_entry);
+	void VerifyRoleReferences(const vector<idx_t> &roles);
+	void VerifyDroppedRoles(const vector<reference<CatalogEntry>> &dropped,
+	                        const std::function<optional_ptr<DuckTransaction>(AttachedDatabase &)> &snapshot);
+	void ReassignOwned(CatalogTransaction transaction, const ReassignOwnedInfo &info);
+	void DropOwned(CatalogTransaction transaction, const DropOwnedInfo &info);
 
 private:
 	DuckCatalog &catalog;
@@ -123,6 +132,7 @@ private:
 	CatalogSet dependents;
 	mutex foreign_lock;
 	case_insensitive_set_t foreign_catalogs;
+	unordered_map<idx_t, transaction_t> role_stamps;
 
 private:
 	bool IsSystemEntry(const CatalogEntry &entry) const;
@@ -153,8 +163,10 @@ public:
 	optional_ptr<SchemaCatalogEntry> NavigateSchemaPath(CatalogTransaction transaction,
 	                                                    const vector<Identifier> &schema_path);
 	//! Returns the objects that should be dropped alongside the object
-	catalog_entry_map_t<subdependency_set_t> CheckDropDependencies(CatalogTransaction transaction, CatalogEntry &object,
-	                                                               bool cascade);
+	catalog_entry_map_t<subdependency_set_t>
+	CheckDropDependencies(CatalogTransaction transaction, CatalogEntry &object, bool cascade,
+	                      optional_ptr<const catalog_entry_set_t> dropped = nullptr);
+	catalog_entry_vector_t DropOrder(CatalogTransaction transaction, const catalog_entry_vector_t &entries);
 
 private:
 	void ReorderEntry(CatalogTransaction transaction, CatalogEntry &entry, catalog_entry_set_t &visited,
@@ -191,10 +203,10 @@ private:
 	                       dependency_callback_t &callback);
 	void ForEachCatalog(CatalogTransaction transaction, const std::function<bool(DuckCatalog &)> &visit,
 	                    const std::function<void(DuckCatalog &, CatalogTransaction)> &callback);
+	void ForEachHolder(CatalogTransaction transaction, CatalogType type,
+	                   const std::function<void(DuckCatalog &, CatalogTransaction)> &callback);
 	bool MayDependOn(const Identifier &catalog_name);
-	LogicalDependencyList EntryDependencies(CatalogTransaction transaction, CatalogEntry &object);
-	void RemoveDependencies(CatalogTransaction transaction, const CatalogEntry &object,
-	                        const LogicalDependencyList &dependencies);
+	static void VerifyRolesExist(DuckCatalog &holder, const vector<idx_t> &roles);
 	void ScanSetInternal(CatalogTransaction transaction, const CatalogEntryInfo &info, bool subjects,
 	                     dependency_callback_t &callback);
 	void PrintSubjects(CatalogTransaction transaction, const CatalogEntryInfo &info);

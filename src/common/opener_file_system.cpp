@@ -3,6 +3,7 @@
 #include "duckdb/common/multi_file/multi_file_list.hpp"
 #include "duckdb/common/file_opener.hpp"
 #include "duckdb/common/memory_mapped_file.hpp"
+#include "duckdb/main/client_context.hpp"
 #include "duckdb/main/database.hpp"
 #include "duckdb/main/config.hpp"
 
@@ -16,7 +17,8 @@ unique_ptr<MemoryMappedFile> OpenerFileSystem::MemoryMapFile(const OpenFileInfo 
                                                              const MMapOptions &options,
                                                              optional_ptr<FileOpener> opener) {
 	VerifyNoOpener(opener);
-	VerifyCanAccessFile(path.path);
+	VerifyCanAccessFile(path.path,
+	                    flags.OpenForWriting() ? RoleCapability::WriteServerFiles : RoleCapability::ReadServerFiles);
 	if (IsDuckDBExtensionName(path.path)) {
 		VerifyCanAccessExtension(path.path, flags);
 	}
@@ -26,7 +28,7 @@ unique_ptr<MemoryMappedFile> OpenerFileSystem::MemoryMapFile(const OpenFileInfo 
 unique_ptr<MultiFileList> OpenerFileSystem::GlobFilesExtended(const string &path, const FileGlobInput &input,
                                                               optional_ptr<FileOpener> opener) {
 	VerifyNoOpener(opener);
-	VerifyCanAccessFile(path);
+	VerifyCanAccessFile(path, RoleCapability::ReadServerFiles);
 	return GetFileSystem().Glob(path, input, GetOpener());
 }
 
@@ -35,10 +37,14 @@ void OpenerFileSystem::VerifyNoOpener(optional_ptr<FileOpener> opener) {
 		throw InternalException("OpenerFileSystem cannot take an opener - the opener is pushed automatically");
 	}
 }
-void OpenerFileSystem::VerifyCanAccessFileInternal(const string &path, FileType type) {
+void OpenerFileSystem::VerifyCanAccessFileInternal(const string &path, FileType type, RoleCapability sufficient) {
 	auto opener = GetOpener();
 	if (!opener) {
 		return;
+	}
+	auto context = opener->TryGetClientContext();
+	if (context) {
+		context->CheckFileAccess(path, sufficient);
 	}
 	auto db = opener->TryGetDatabase();
 	if (!db) {
@@ -52,12 +58,12 @@ void OpenerFileSystem::VerifyCanAccessFileInternal(const string &path, FileType 
 	}
 }
 
-void OpenerFileSystem::VerifyCanAccessFile(const string &path) {
-	VerifyCanAccessFileInternal(path, FileType::FILE_TYPE_REGULAR);
+void OpenerFileSystem::VerifyCanAccessFile(const string &path, RoleCapability sufficient) {
+	VerifyCanAccessFileInternal(path, FileType::FILE_TYPE_REGULAR, sufficient);
 }
 
-void OpenerFileSystem::VerifyCanAccessDirectory(const string &path) {
-	VerifyCanAccessFileInternal(path, FileType::FILE_TYPE_DIR);
+void OpenerFileSystem::VerifyCanAccessDirectory(const string &path, RoleCapability sufficient) {
+	VerifyCanAccessFileInternal(path, FileType::FILE_TYPE_DIR, sufficient);
 }
 
 } // namespace duckdb

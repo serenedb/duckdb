@@ -65,7 +65,7 @@ PREPARE cached_scan AS SELECT i FROM filter_t;
 query I
 SELECT result_types IS NULL FROM duckdb_prepared_statements() WHERE name = 'cached_scan';
 ----
-true
+false
 
 # Statistics can still eliminate a prepared query while the statistics are current.
 statement ok
@@ -79,7 +79,7 @@ physical_plan	<REGEX>:.*EMPTY_RESULT.*
 query I
 SELECT result_types IS NULL FROM duckdb_prepared_statements() WHERE name = 'stale_filter';
 ----
-true
+false
 
 statement ok
 INSERT INTO filter_t VALUES (200);
@@ -142,12 +142,25 @@ statement ok
 CHECKPOINT;
 
 statement ok
-PREPARE stale_aggregate AS SELECT min(i), max(i), count(*) FROM aggregate_t;
+PREPARE stale_aggregate AS SELECT count(*) FROM aggregate_t;
+
+query II
+EXPLAIN EXECUTE stale_aggregate;
+----
+physical_plan	<REGEX>:.*COLUMN_DATA_SCAN.*
 
 query I
 SELECT result_types IS NULL FROM duckdb_prepared_statements() WHERE name = 'stale_aggregate';
 ----
 true
+
+statement ok
+DELETE FROM aggregate_t WHERE i < 10;
+
+query I
+EXECUTE stale_aggregate;
+----
+90
 
 # Statistics callbacks that populate aggregate bind data must also be refreshed.
 statement ok

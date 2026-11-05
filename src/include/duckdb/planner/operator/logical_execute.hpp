@@ -28,6 +28,8 @@ public:
 
 	shared_ptr<PreparedStatementData> prepared;
 	optional<Identifier> replaces;
+	shared_ptr<PreparedStatementData> stored;
+	bool custom_plan = false;
 
 public:
 	//! Skips the serialization check in VerifyPlan

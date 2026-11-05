@@ -1,17 +1,29 @@
 #include "duckdb/planner/binder.hpp"
 
 #include "duckdb/catalog/catalog_entry/aggregate_function_catalog_entry.hpp"
+#include "duckdb/catalog/catalog_entry/index_catalog_entry.hpp"
+#include "duckdb/catalog/catalog_entry/macro_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
+#include "duckdb/catalog/catalog_entry/type_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/view_catalog_entry.hpp"
+#include "duckdb/catalog/catalog_search_path.hpp"
+#include "duckdb/catalog/dependency_manager.hpp"
+#include "duckdb/catalog/duck_catalog.hpp"
 #include "duckdb/common/enums/cte_materialize.hpp"
+#include "duckdb/common/extension_type_info.hpp"
 #include "duckdb/parser/common_table_expression_info.hpp"
 #include "duckdb/parser/expression/star_expression.hpp"
 #include "duckdb/parser/tableref/basetableref.hpp"
 #include "duckdb/common/enum_util.hpp"
 #include "duckdb/common/helper.hpp"
 #include "duckdb/common/stack_depth.hpp"
+#include "duckdb/common/string_util.hpp"
+#include "duckdb/main/attached_database.hpp"
+#include "duckdb/main/client_data.hpp"
 #include "duckdb/main/config.hpp"
 #include "duckdb/main/database.hpp"
+#include "duckdb/main/database_manager.hpp"
+#include "duckdb/main/extension_helper.hpp"
 #include "duckdb/main/settings.hpp"
 #include "duckdb/optimizer/optimizer.hpp"
 #include "duckdb/parser/expression/function_expression.hpp"
@@ -33,6 +45,9 @@
 #include "duckdb/planner/query_node/list.hpp"
 #include "duckdb/planner/tableref/list.hpp"
 #include "duckdb/storage/data_table.hpp"
+#include "duckdb/storage/storage_extension.hpp"
+#include "duckdb/storage/storage_info.hpp"
+#include "duckdb/storage/storage_manager.hpp"
 #include "duckdb/common/types/uuid.hpp"
 
 #include <algorithm>
@@ -51,17 +66,32 @@ Binder::Binder(ClientContext &context, shared_ptr<Binder> parent_p, BinderType b
 		entry_retriever.Inherit(parent->entry_retriever);
 		inside_subquery = parent->inside_subquery;
 		macro_binding = parent->macro_binding;
+		check_as = parent->check_as;
+		current_role = parent->current_role;
+		security_definer_body = parent->security_definer_body;
 		if (binder_type != BinderType::VIEW_BINDER) {
 			// inherit expression binders from parent
 			active_binders = parent->active_binders;
+		} else {
+			entry_retriever.SetCheckAs(&RoleAccess::System());
 		}
 	} else {
-		entry_retriever.SetCallback(
-		    [this](CatalogEntry &entry) { GetStatementProperties().resolved_entries.push_back(&entry); });
+		entry_retriever.SetCallback([this](CatalogEntry &entry) {
+			auto &catalog = entry.ParentCatalog();
+			if (catalog.IsSystemCatalog()) {
+				return;
+			}
+			auto &properties = GetStatementProperties();
+			if (!properties.read_databases.count(catalog.GetName())) {
+				properties.RegisterDBRead(catalog, this->context);
+			}
+			properties.resolved_entries.push_back(&entry);
+		});
 	}
 }
 
 BoundStatement Binder::Bind(SQLStatement &statement) {
+	CheckStatementKind(statement);
 	switch (statement.type) {
 	case StatementType::SELECT_STATEMENT:
 		return Bind(statement.Cast<SelectStatement>());
@@ -260,6 +290,487 @@ void Binder::AddBoundView(ViewCatalogEntry &view) {
 		current = current->parent.get();
 	}
 	bound_views.insert(view);
+}
+
+bool Binder::InViewBody() const {
+	for (auto binder = this; binder; binder = binder->parent.get()) {
+		if (!binder->bound_views.empty()) {
+			return true;
+		}
+	}
+	return false;
+}
+
+const RoleAccess &Binder::CheckAs() const {
+	return check_as ? *check_as : context.CurrentRole();
+}
+
+const RoleAccess &Binder::CurrentRole() const {
+	return current_role ? *current_role : context.CurrentRole();
+}
+
+const RoleAccess &Binder::AccessOf(idx_t role) {
+	auto entry = global_binder_state->role_access.try_emplace(role);
+	if (entry.second) {
+		entry.first->second = context.AccessOf(role);
+	}
+	return entry.first->second;
+}
+
+const RoleAccess &Binder::FunctionBodyRole(optional_idx owner) {
+	return owner.IsValid() ? AccessOf(owner.GetIndex()) : CurrentRole();
+}
+
+void Binder::BindAsFunctionBody(const RoleAccess &role) {
+	check_as = &role;
+	current_role = &role;
+	entry_retriever.SetCheckAs(&role);
+}
+
+void Binder::InheritRoles(Binder &other) {
+	check_as = other.check_as;
+	current_role = other.current_role;
+	security_definer_body = other.security_definer_body;
+	entry_retriever.SetCheckAs(other.entry_retriever.GetCheckAs());
+}
+
+void Binder::BindUnchecked() {
+	check_as = &RoleAccess::System();
+	current_role = &RoleAccess::System();
+}
+
+void Binder::BindAsFunctionBody(const SelectStatement &statement) {
+	if (!statement.function_body) {
+		return;
+	}
+	if (!CheckAs().IsSystem()) {
+		BindAsFunctionBody(FunctionBodyRole(statement.function_owner));
+	}
+	security_definer_body |= statement.function_owner.IsValid();
+	if (statement.function_config) {
+		UseFunctionSearchPath(*statement.function_config);
+	}
+}
+
+void Binder::UseFunctionSearchPath(const vector<string> &config) {
+	for (auto &entry : config) {
+		auto paths = CatalogSearchEntry::ParseList(entry.substr(entry.find('=') + 1));
+		const auto database = DatabaseManager::TryGetDefaultDatabase(context);
+		for (auto &path : paths) {
+			if (path.GetCatalog().empty()) {
+				path.SetCatalog(database);
+			}
+		}
+		entry_retriever.ReplaceSearchPath(std::move(paths));
+	}
+}
+
+BoundStatement Binder::BindTarget(TableRef &ref, TableRefUse use) {
+	table_ref_use = use;
+	auto result = Bind(ref);
+	table_ref_use = TableRefUse::READ;
+	return result;
+}
+
+void Binder::CheckTableRead(TableBinding &binding, TableCatalogEntry &table) {
+	auto &role = CheckAs();
+	if (table_ref_use == TableRefUse::UTILITY_TARGET || IsUnowned(table)) {
+		return;
+	}
+	auto &permissions = EffectivePermissions(context, table);
+	if (role.Can(CatalogType::TABLE_ENTRY, permissions, AclMode::Select)) {
+		return;
+	}
+	binding.column_read = make_shared_ptr<ColumnReadCheck>(
+	    table, permissions, role, table_ref_use != TableRefUse::DML_TARGET, EffectiveColumnAcls(context, table));
+	global_binder_state->column_reads.push_back(binding.column_read);
+}
+
+void Binder::AdoptPrivilegeChecks(Binder &other) {
+	auto &state = *global_binder_state;
+	auto &source = *other.global_binder_state;
+	D_ASSERT(&state != &source);
+	state.column_reads.insert(state.column_reads.end(), source.column_reads.begin(), source.column_reads.end());
+	state.required_privileges.insert(state.required_privileges.end(), source.required_privileges.begin(),
+	                                 source.required_privileges.end());
+	source.column_reads.clear();
+	source.required_privileges.clear();
+}
+
+void Binder::RequirePrivilege(TableCatalogEntry &table, AclMode mode, vector<LogicalIndex> columns, bool any_column) {
+	auto &role = CheckAs();
+	if (role.is_superuser) {
+		return;
+	}
+	global_binder_state->required_privileges.push_back({table, role, mode, std::move(columns), any_column});
+}
+
+void Binder::CheckCall(FunctionEntry &function) {
+	auto &calling = CurrentRole();
+	if (!function.MayCall(calling) && !BuiltinCallGranted(context, calling, function)) {
+		ThrowPermissionDenied(function);
+	}
+}
+
+void Binder::RequireSuperuser() {
+	if (!CheckAs().is_superuser) {
+		throw PermissionException("permission denied: superuser required");
+	}
+}
+
+void Binder::RequireOwner(CatalogEntry &entry) {
+	if (entry.type == CatalogType::MACRO_ENTRY || entry.type == CatalogType::TABLE_MACRO_ENTRY) {
+		auto &macro = entry.Cast<MacroCatalogEntry>();
+		for (auto &overload : macro.macros) {
+			RequireOwner(entry, macro.OverloadPermissions(*overload).owner);
+		}
+		return;
+	}
+	auto owner = entry.permissions.owner;
+	if (entry.type == CatalogType::INDEX_ENTRY) {
+		auto relation =
+		    entry.Cast<IndexCatalogEntry>().GetRelation(entry.ParentCatalog().GetCatalogTransaction(context));
+		if (!relation) {
+			return;
+		}
+		owner = relation->permissions.owner;
+	}
+	RequireOwner(entry, owner);
+}
+
+void Binder::RequireOwner(CatalogEntry &entry, idx_t owner) {
+	if (!CheckAs().Owns(owner)) {
+		throw PermissionException("must be owner of %s %s", PermissionKindName(entry), entry.name.GetIdentifierName());
+	}
+}
+
+optional_ptr<CatalogEntry> Binder::ClusterEntry(CatalogType type, const Identifier &name) {
+	auto &cluster_catalog = DBConfig::GetConfig(context).cluster_catalog;
+	if (cluster_catalog.empty()) {
+		return nullptr;
+	}
+	auto &cluster = Catalog::GetCatalog(context, cluster_catalog).Cast<DuckCatalog>();
+	return cluster.GetCatalogSet(type).GetEntry(cluster.GetCatalogTransaction(context), name);
+}
+
+Catalog &Binder::SubscriptionCatalog(const Identifier &catalog_name) {
+	auto &catalog = Catalog::GetCatalog(context, BindCatalog(catalog_name));
+	if (!catalog.SupportsSubscriptions()) {
+		throw NotImplementedException("subscriptions are not supported by database \"%s\"",
+		                              catalog.GetName().GetIdentifierName());
+	}
+	return catalog;
+}
+
+QualifiedName Binder::ClusterName(const QualifiedName &name) {
+	auto &cluster_catalog = DBConfig::GetConfig(context).cluster_catalog;
+	if (cluster_catalog.empty()) {
+		return name;
+	}
+	return QualifiedName(cluster_catalog, Identifier(), name.Name());
+}
+
+idx_t Binder::RoleId(const Identifier &name) {
+	auto role = ClusterEntry(CatalogType::ROLE_ENTRY, name);
+	if (!role) {
+		throw CatalogException(unordered_map<string, string> {{"type", "Role"}},
+		                       StringUtil::Format("role \"%s\" does not exist", name.GetIdentifierName()));
+	}
+	return role->oid;
+}
+
+optional_idx Binder::RoleSpecKeyword(const string &name) {
+	if (name == "CURRENT_USER" || name == "CURRENT_ROLE") {
+		return context.current_role_id;
+	}
+	if (name == "SESSION_USER") {
+		return context.session_role;
+	}
+	return optional_idx();
+}
+
+idx_t Binder::RoleSpecId(const string &name) {
+	const auto keyword = RoleSpecKeyword(name);
+	return keyword.IsValid() ? keyword.GetIndex() : RoleId(Identifier(name));
+}
+
+string Binder::RoleName(idx_t role) {
+	string result;
+	auto &cluster_catalog = DBConfig::GetConfig(context).cluster_catalog;
+	if (cluster_catalog.empty()) {
+		return result;
+	}
+	auto &cluster = Catalog::GetCatalog(context, cluster_catalog).Cast<DuckCatalog>();
+	cluster.GetCatalogSet(CatalogType::ROLE_ENTRY)
+	    .Scan(cluster.GetCatalogTransaction(context), [&](CatalogEntry &entry) {
+		    if (entry.oid == role) {
+			    result = entry.name.GetIdentifierName();
+		    }
+	    });
+	return result;
+}
+
+static bool StoresPermissions(Catalog &catalog) {
+	return !catalog.IsDuckCatalog() || catalog.GetAttached().IsTemporary() ||
+	       IsSereneDBStorageVersion(catalog.GetAttached().GetStorageManager().GetStorageVersion());
+}
+
+void Binder::AssignOwner(Permissions &permissions, Catalog &catalog, CatalogType objtype,
+                         optional_ptr<SchemaCatalogEntry> schema, idx_t owner) {
+	if (!StoresPermissions(catalog)) {
+		return;
+	}
+	auto database = ClusterEntry(CatalogType::DATABASE_ENTRY, catalog.GetName());
+	permissions.AssignOwner(owner, objtype, database ? &database->permissions : nullptr,
+	                        schema ? optional_idx(schema->oid) : optional_idx());
+}
+
+void Binder::RequireDatabasePrivilege(const Identifier &database, AclMode need) {
+	auto &role = CheckAs();
+	if (role.is_superuser) {
+		return;
+	}
+	auto entry = ClusterEntry(CatalogType::DATABASE_ENTRY, database);
+	if (entry && !role.Can(CatalogType::DATABASE_ENTRY, entry->permissions, need)) {
+		ThrowPermissionDenied(*entry);
+	}
+}
+
+void Binder::RequireForeignDataWrapperUsage(const RoleAccess &role, const Identifier &database, const string &wrapper) {
+	auto &found = DBConfig::GetConfig(context).GetForeignDataWrapper(wrapper);
+	if (role.Owns(found.owner)) {
+		return;
+	}
+	auto entry = ClusterEntry(CatalogType::DATABASE_ENTRY, database);
+	if (!entry ||
+	    (role.HeldModes(entry->permissions.ForeignDataWrapperAcl(found.oid)) & AclMode::Usage) == AclMode::NoRights) {
+		throw PermissionException("permission denied for foreign-data wrapper %s", wrapper);
+	}
+}
+
+void Binder::RequireLanguageUsage(const RoleAccess &role, const Identifier &database, const string &language) {
+	auto &languages = DBConfig::GetConfig(context).languages;
+	auto found = languages.find(language);
+	if (role.is_superuser || found == languages.end()) {
+		return;
+	}
+	if (found->second.trusted) {
+		Permissions permissions;
+		permissions.owner = found->second.owner;
+		if (auto entry = ClusterEntry(CatalogType::DATABASE_ENTRY, database)) {
+			auto acl = entry->permissions.LanguageAcl(found->second.oid);
+			permissions.acl.assign(acl.begin(), acl.end());
+		}
+		if (role.Can(CatalogType::LANGUAGE_ENTRY, permissions, AclMode::Usage)) {
+			return;
+		}
+	}
+	throw PermissionException("permission denied for language %s", language);
+}
+
+void Binder::RequireSchemaCreate(SchemaCatalogEntry &schema) {
+	auto &role = CheckAs();
+	if (role.is_superuser) {
+		return;
+	}
+	if (schema.ParentCatalog().GetAttached().IsTemporary()) {
+		auto &database = ClientData::Get(context).default_database;
+		auto entry = ClusterEntry(CatalogType::DATABASE_ENTRY, database);
+		if (entry && !role.Can(CatalogType::DATABASE_ENTRY, entry->permissions, AclMode::CreateTemp)) {
+			throw PermissionException("permission denied to create temporary tables in database \"%s\"",
+			                          database.GetIdentifierName());
+		}
+		return;
+	}
+	if (!role.Can(CatalogType::SCHEMA_ENTRY, schema.permissions, AclMode::Create)) {
+		ThrowPermissionDenied(schema);
+	}
+}
+
+void Binder::RequireTypeUsage(optional_ptr<const LogicalDependencyList> dependencies) {
+	auto &role = CheckAs();
+	if (role.is_superuser) {
+		return;
+	}
+	reference_set_t<const CatalogEntry> checked;
+	auto check = [&](const CatalogEntry &entry) {
+		if (entry.type != CatalogType::TYPE_ENTRY || IsUnowned(entry) || !checked.insert(entry).second) {
+			return;
+		}
+		if (!role.Can(entry.type, entry.permissions, AclMode::Usage)) {
+			ThrowPermissionDenied(entry);
+		}
+	};
+	if (dependencies) {
+		for (auto &dependency : dependencies->Set()) {
+			if (dependency.entry.type != CatalogType::TYPE_ENTRY) {
+				continue;
+			}
+			auto &catalog = Catalog::GetCatalog(context, dependency.catalog);
+			auto dependency_manager = catalog.GetDependencyManager();
+			auto entry = dependency_manager
+			                 ? dependency_manager->LookupEntry(catalog.GetCatalogTransaction(context), dependency)
+			                 : Catalog::GetEntry(context,
+			                                     EntryLookupInfo(CatalogType::TYPE_ENTRY,
+			                                                     QualifiedName::FromCatalogSchema(
+			                                                         dependency.catalog, dependency.entry.schema_path,
+			                                                         dependency.entry.name)),
+			                                     OnEntryNotFound::RETURN_NULL);
+			if (entry) {
+				check(*entry);
+			}
+		}
+	}
+	for (auto entry : GetStatementProperties().resolved_entries) {
+		check(*entry);
+	}
+}
+
+void Binder::RequireTypeUsage(const LogicalType &type, Catalog &catalog) {
+	auto &role = CheckAs();
+	if (role.is_superuser) {
+		return;
+	}
+	reference<const LogicalType> element = type;
+	while (element.get().id() == LogicalTypeId::LIST || element.get().id() == LogicalTypeId::ARRAY) {
+		element = element.get().id() == LogicalTypeId::LIST ? ListType::GetChildType(element)
+		                                                    : ArrayType::GetChildType(element);
+	}
+	if (auto extension = element.get().GetExtensionInfo()) {
+		auto oid = extension->properties.find(ExtensionTypeInfo::CATALOG_OID_PROPERTY);
+		if (oid != extension->properties.end()) {
+			auto entry =
+			    catalog.IsDuckCatalog()
+			        ? catalog.Cast<DuckCatalog>().FindIn<TypeCatalogEntry>(context, oid->second.GetValue<idx_t>())
+			        : nullptr;
+			if (entry && !IsUnowned(*entry) && !role.Can(CatalogType::TYPE_ENTRY, entry->permissions, AclMode::Usage)) {
+				ThrowPermissionDenied(*entry);
+			}
+			return;
+		}
+	}
+	auto &config = DBConfig::GetConfig(context);
+	if (!context.security || !context.security->HasTypeGrants() || !config.builtin_type_oid) {
+		return;
+	}
+	string name;
+	const auto oid = config.builtin_type_oid(element, name);
+	if (!oid) {
+		return;
+	}
+	const auto database = DatabaseManager::TryGetDefaultDatabase(context);
+	auto granted = context.security->TypePermissions(database.GetIdentifierName(), oid);
+	if (granted && !role.Can(CatalogType::TYPE_ENTRY, *granted, AclMode::Usage)) {
+		throw PermissionException("permission denied for type %s", name);
+	}
+}
+
+void Binder::CheckStatementKind(SQLStatement &statement) {
+	auto &role = CheckAs();
+	if (role.is_superuser) {
+		return;
+	}
+	switch (statement.type) {
+	case StatementType::EXPORT_STATEMENT:
+	case StatementType::LOAD_STATEMENT:
+	case StatementType::UPDATE_EXTENSIONS_STATEMENT:
+	case StatementType::COPY_DATABASE_STATEMENT:
+	case StatementType::CONNECT_STATEMENT:
+	case StatementType::EXTERNAL_RESOURCE_STATEMENT:
+	case StatementType::DETACH_STATEMENT:
+		RequireSuperuser();
+		break;
+	case StatementType::ATTACH_STATEMENT: {
+		auto &info = *statement.Cast<AttachStatement>().info;
+		auto type = info.options.find("type");
+		optional_ptr<StorageExtension> storage;
+		if (info.path.empty() && !info.external_resource && type != info.options.end()) {
+			storage = StorageExtension::Find(DBConfig::GetConfig(context),
+			                                 ExtensionHelper::ApplyExtensionAlias(type->second.ToString()));
+		}
+		if (!storage || !storage->creates_database) {
+			RequireSuperuser();
+		}
+		if (!role.Has(RoleOption::CreateDb)) {
+			throw PermissionException("permission denied to create database");
+		}
+		break;
+	}
+	case StatementType::INVALID_STATEMENT:
+	case StatementType::SELECT_STATEMENT:
+	case StatementType::INSERT_STATEMENT:
+	case StatementType::UPDATE_STATEMENT:
+	case StatementType::CREATE_STATEMENT:
+	case StatementType::DELETE_STATEMENT:
+	case StatementType::PREPARE_STATEMENT:
+	case StatementType::EXECUTE_STATEMENT:
+	case StatementType::ALTER_STATEMENT:
+	case StatementType::TRANSACTION_STATEMENT:
+	case StatementType::COPY_STATEMENT:
+	case StatementType::ANALYZE_STATEMENT:
+	case StatementType::VARIABLE_SET_STATEMENT:
+	case StatementType::CREATE_FUNC_STATEMENT:
+	case StatementType::EXPLAIN_STATEMENT:
+	case StatementType::DROP_STATEMENT:
+	case StatementType::PRAGMA_STATEMENT:
+	case StatementType::VACUUM_STATEMENT:
+	case StatementType::CALL_STATEMENT:
+	case StatementType::SET_STATEMENT:
+	case StatementType::RELATION_STATEMENT:
+	case StatementType::EXTENSION_STATEMENT:
+	case StatementType::LOGICAL_PLAN_STATEMENT:
+	case StatementType::MULTI_STATEMENT:
+	case StatementType::MERGE_INTO_STATEMENT:
+	case StatementType::DISCONNECT_STATEMENT:
+	case StatementType::PASSTHROUGH_STATEMENT:
+	case StatementType::ENUM_SIZE:
+		break;
+	}
+}
+
+void Binder::CheckPrivileges() {
+	for (auto &required : global_binder_state->required_privileges) {
+		auto &table = required.table.get();
+		auto &role = required.role;
+		bool allowed;
+		if (required.any_column) {
+			allowed = role.CanAnyColumn(table.permissions, required.mode, table.GetColumns());
+		} else if (required.columns.empty()) {
+			allowed = role.Can(CatalogType::TABLE_ENTRY, table.permissions, required.mode);
+		} else {
+			vector<std::span<const AclItem>> acls;
+			for (auto column : required.columns) {
+				acls.emplace_back(table.GetColumn(column).Acl());
+			}
+			allowed = role.CanColumns(table.permissions, required.mode, acls);
+		}
+		if (!allowed) {
+			ThrowPermissionDenied(table);
+		}
+	}
+	for (auto &read : global_binder_state->column_reads) {
+		if (!read->Allowed()) {
+			ThrowPermissionDenied(read->entry);
+		}
+	}
+}
+
+void Binder::RecordConstraintKeyVisibility(TableCatalogEntry &table) {
+	auto &properties = GetStatementProperties();
+	auto &role = CheckAs();
+	if (properties.hide_constraint_keys || role.Can(CatalogType::TABLE_ENTRY, table.permissions, AclMode::Select)) {
+		return;
+	}
+	if (!table.IsDuckTable()) {
+		properties.hide_constraint_keys = true;
+		return;
+	}
+	auto &columns = table.GetColumns();
+	vector<std::span<const AclItem>> acls;
+	for (auto column_id : table.GetStorage().GetDataTableInfo()->GetIndexes().GetIndexedColumns()) {
+		acls.emplace_back(columns.GetColumn(PhysicalIndex(column_id)).Acl());
+	}
+	properties.hide_constraint_keys = !acls.empty() && !role.CanColumns(table.permissions, AclMode::Select, acls);
 }
 
 TableIndex Binder::GenerateTableIndex() {
@@ -593,8 +1104,8 @@ void Binder::BindDeleteIndexColumns(TableCatalogEntry &table, LogicalGet &get, v
 	}
 }
 
-BoundStatement Binder::BindReturning(vector<unique_ptr<ParsedExpression>> returning_list, TableCatalogEntry &table,
-                                     const Identifier &alias, TableIndex update_table_index,
+BoundStatement Binder::BindReturning(QueryNode &node, vector<unique_ptr<ParsedExpression>> returning_list,
+                                     TableCatalogEntry &table, const Identifier &alias, TableIndex update_table_index,
                                      unique_ptr<LogicalOperator> child_operator, virtual_column_map_t virtual_columns,
                                      optional_ptr<vector<column_t>> bound_virtual_columns) {
 	vector<LogicalType> types;
@@ -614,8 +1125,13 @@ BoundStatement Binder::BindReturning(vector<unique_ptr<ParsedExpression>> return
 	}
 	const auto table_column_count = bound_columns.size();
 
-	binder->bind_context.AddBaseTable(update_table_index, alias, names, types, bound_columns, table,
-	                                  std::move(virtual_columns));
+	auto &binding = binder->bind_context.AddBaseTable(update_table_index, alias, names, types, bound_columns, table,
+	                                                  std::move(virtual_columns));
+	binder->InheritRoles(*this);
+	binder->table_ref_use = TableRefUse::DML_TARGET;
+	if (!global_binder_state->trigger_base_nodes.count(node)) {
+		binder->CheckTableRead(binding, table);
+	}
 	ReturningBinder returning_binder(*binder, context);
 
 	vector<unique_ptr<Expression>> projection_expressions;
@@ -649,6 +1165,7 @@ BoundStatement Binder::BindReturning(vector<unique_ptr<ParsedExpression>> return
 	auto &properties = GetStatementProperties();
 	properties.result_eagerness = ResultEagerness::FORCED;
 	properties.return_type = StatementReturnType::QUERY_RESULT;
+	AdoptPrivilegeChecks(*binder);
 	return result;
 }
 

@@ -98,6 +98,9 @@ public:
 
 public:
 	idx_t GetTotalRows() const;
+	idx_t GetStatisticsVersion() const {
+		return stats.Version();
+	}
 	idx_t GetNextRowId() const;
 	idx_t GetRowGroupCount() const;
 	Allocator &GetAllocator() const;

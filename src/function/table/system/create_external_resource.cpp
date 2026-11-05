@@ -378,6 +378,7 @@ void CreateExternalResourceFun::RegisterFunction(BuiltinFunctions &set) {
 		    .Add("timeout_seconds", LogicalType::BIGINT)
 		    .Add("poll_interval_seconds", LogicalType::BIGINT);
 	});
+	fn.required_capability = RoleCapability::Superuser;
 	set.AddFunction(fn);
 }
 
@@ -445,12 +446,13 @@ static void DestroyExternalResourceFunction(ClientContext &context, TableFunctio
 }
 
 void DestroyExternalResourceFun::RegisterFunction(BuiltinFunctions &set) {
-	set.AddFunction(TableFunction("destroy_external_resource",
-	                              FunctionSignature()
-	                                  .AddPositionalOnly("deleter_function", LogicalType::VARCHAR)
-	                                  .AddPositionalOnly("payload", LogicalType::ANY),
-	                              DestroyExternalResourceFunction, DestroyExternalResourceBind,
-	                              DestroyExternalResourceInit));
+	TableFunction fn("destroy_external_resource",
+	                 FunctionSignature()
+	                     .AddPositionalOnly("deleter_function", LogicalType::VARCHAR)
+	                     .AddPositionalOnly("payload", LogicalType::ANY),
+	                 DestroyExternalResourceFunction, DestroyExternalResourceBind, DestroyExternalResourceInit);
+	fn.required_capability = RoleCapability::Superuser;
+	set.AddFunction(fn);
 }
 
 } // namespace duckdb

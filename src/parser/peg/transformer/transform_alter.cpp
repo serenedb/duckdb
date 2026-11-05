@@ -171,6 +171,36 @@ unique_ptr<AlterInfo> PEGTransformerFactory::TransformAlterDatabaseStmt(PEGTrans
 	return std::move(result);
 }
 
+unique_ptr<AlterInfo> PEGTransformerFactory::TransformAlterDatabaseConfigStmt(PEGTransformer &transformer,
+                                                                              ParseResult &parse_result) {
+	auto &list_pr = parse_result.Cast<ListParseResult>();
+	auto result = make_uniq<AlterDatabaseSettingsInfo>(transformer.Transform<Identifier>(list_pr.GetChild(1)));
+	CollectConfigClause(transformer, list_pr.GetChild(2), result->set_config, result->reset_config,
+	                    result->reset_all_config);
+	return std::move(result);
+}
+
+unique_ptr<AlterInfo>
+PEGTransformerFactory::TransformAlterDatabaseOptionsStmt(PEGTransformer &transformer, const Identifier &col_id,
+                                                         const bool &has_result,
+                                                         const vector<pair<string, Value>> &database_option) {
+	auto result = make_uniq<AlterDatabaseSettingsInfo>(col_id);
+	for (auto &option : database_option) {
+		const bool limit = option.first == "connection_limit";
+		auto &set = limit ? result->set_connection_limit : result->set_allow_connections;
+		if (set) {
+			throw ParserException("conflicting or redundant options");
+		}
+		set = true;
+		if (limit) {
+			result->connection_limit = IntegerValue::Get(option.second);
+		} else {
+			result->allow_connections = BooleanValue::Get(option.second);
+		}
+	}
+	return std::move(result);
+}
+
 unique_ptr<AlterInfo> PEGTransformerFactory::TransformAlterViewStmt(PEGTransformer &transformer,
                                                                     const optional<bool> &if_exists,
                                                                     unique_ptr<BaseTableRef> base_table_name,
@@ -266,15 +296,20 @@ unique_ptr<AlterInfo> PEGTransformerFactory::TransformAlterIndexStmt(PEGTransfor
 	}
 }
 
-// AlterFunctionStmt <- 'FUNCTION' IfExists? QualifiedName RenameAlter
+// AlterFunctionStmt <- GrantRoutineKind IfExists? QualifiedName FuncArgSignature? RenameAlter
 unique_ptr<AlterInfo> PEGTransformerFactory::TransformAlterFunctionStmt(PEGTransformer &transformer,
-                                                                        const optional<bool> &if_exists,
-                                                                        const QualifiedName &qualified_name,
-                                                                        unique_ptr<AlterTableInfo> rename_alter) {
-	auto rename_info = unique_ptr_cast<AlterTableInfo, RenameTableInfo>(std::move(rename_alter));
-	auto not_found = if_exists ? OnEntryNotFound::RETURN_NULL : OnEntryNotFound::THROW_EXCEPTION;
-	AlterEntryData data(qualified_name, not_found);
-	return make_uniq<RenameScalarFunctionInfo>(data, rename_info->new_table_name);
+                                                                        ParseResult &parse_result) {
+	auto &list_pr = parse_result.Cast<ListParseResult>();
+	auto rename_info = unique_ptr_cast<AlterTableInfo, RenameTableInfo>(
+	    transformer.Transform<unique_ptr<AlterTableInfo>>(list_pr.GetChild(4)));
+	auto not_found = list_pr.Child<OptionalParseResult>(1).HasResult() ? OnEntryNotFound::RETURN_NULL
+	                                                                   : OnEntryNotFound::THROW_EXCEPTION;
+	AlterEntryData data(transformer.Transform<QualifiedName>(list_pr.GetChild(2)), not_found);
+	auto result = make_uniq<RenameScalarFunctionInfo>(data, rename_info->new_table_name);
+	TransformRoutineKind(list_pr.GetChild(0), result->include_functions, result->include_procedures);
+	result->has_func_args =
+	    TransformFunctionArgumentTypes(transformer, list_pr.Child<OptionalParseResult>(3), result->func_parameters);
+	return std::move(result);
 }
 
 unique_ptr<AlterInfo> PEGTransformerFactory::TransformAlterSequenceStmt(PEGTransformer &transformer,

@@ -1,12 +1,37 @@
 #include "duckdb/catalog/permissions.hpp"
 
+#include "duckdb/catalog/catalog.hpp"
+#include "duckdb/catalog/catalog_entry.hpp"
+#include "duckdb/catalog/catalog_entry/aggregate_function_catalog_entry.hpp"
+#include "duckdb/catalog/catalog_entry/function_entry.hpp"
+#include "duckdb/catalog/catalog_entry/index_catalog_entry.hpp"
+#include "duckdb/catalog/catalog_entry/macro_catalog_entry.hpp"
+#include "duckdb/catalog/catalog_entry/pragma_function_catalog_entry.hpp"
+#include "duckdb/catalog/catalog_entry/role_entry.hpp"
+#include "duckdb/catalog/catalog_entry/scalar_function_catalog_entry.hpp"
+#include "duckdb/catalog/catalog_entry/table_function_catalog_entry.hpp"
+#include "duckdb/catalog/catalog_entry/window_function_catalog_entry.hpp"
+#include "duckdb/catalog/catalog_set.hpp"
+#include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
+#include "duckdb/catalog/catalog_entry/view_catalog_entry.hpp"
+#include "duckdb/catalog/duck_catalog.hpp"
 #include "duckdb/common/case_insensitive_map.hpp"
+#include "duckdb/main/attached_database.hpp"
+#include "duckdb/main/client_context.hpp"
+#include "duckdb/main/client_data.hpp"
+#include "duckdb/main/config.hpp"
+#include "duckdb/main/database_manager.hpp"
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/string_util.hpp"
+#include "duckdb/common/types/hash.hpp"
+#include "duckdb/common/types/timestamp.hpp"
+#include "duckdb/common/types/value.hpp"
+#include "duckdb/parser/keyword_helper.hpp"
 #include "duckdb/parser/column_list.hpp"
 #include "duckdb/parser/parsed_data/alter_table_info.hpp"
 
 #include <algorithm>
+#include <bit>
 
 namespace duckdb {
 
@@ -37,7 +62,11 @@ AclMode Permissions::AllPrivileges(CatalogType acl_class) {
 		return AclMode::Execute;
 	case CatalogType::TYPE_ENTRY:
 	case CatalogType::FOREIGN_SERVER_ENTRY:
+	case CatalogType::FOREIGN_DATA_WRAPPER_ENTRY:
+	case CatalogType::LANGUAGE_ENTRY:
 		return AclMode::Usage;
+	case CatalogType::PARAMETER_ENTRY:
+		return AclMode::Set | AclMode::AlterSystem;
 	default:
 		return AclMode::NoRights;
 	}
@@ -51,6 +80,7 @@ AclMode Permissions::PublicPrivileges(CatalogType acl_class) {
 	case CatalogType::TABLE_MACRO_ENTRY:
 		return AclMode::Execute;
 	case CatalogType::TYPE_ENTRY:
+	case CatalogType::LANGUAGE_ENTRY:
 		return AclMode::Usage;
 	default:
 		return AclMode::NoRights;
@@ -59,11 +89,14 @@ AclMode Permissions::PublicPrivileges(CatalogType acl_class) {
 
 bool Permissions::TryParsePrivilege(std::string_view keyword, CatalogType acl_class, AclMode &result) {
 	static const case_insensitive_map_view_t<AclMode> names {
-	    {"select", AclMode::Select},   {"insert", AclMode::Insert},     {"update", AclMode::Update},
-	    {"delete", AclMode::Delete},   {"truncate", AclMode::Truncate}, {"references", AclMode::References},
-	    {"trigger", AclMode::Trigger}, {"maintain", AclMode::Maintain}, {"execute", AclMode::Execute},
-	    {"usage", AclMode::Usage},     {"create", AclMode::Create},     {"temporary", AclMode::CreateTemp},
-	    {"temp", AclMode::CreateTemp}, {"connect", AclMode::Connect},
+	    {"select", AclMode::Select},     {"insert", AclMode::Insert},
+	    {"update", AclMode::Update},     {"delete", AclMode::Delete},
+	    {"truncate", AclMode::Truncate}, {"references", AclMode::References},
+	    {"trigger", AclMode::Trigger},   {"maintain", AclMode::Maintain},
+	    {"execute", AclMode::Execute},   {"usage", AclMode::Usage},
+	    {"create", AclMode::Create},     {"temporary", AclMode::CreateTemp},
+	    {"temp", AclMode::CreateTemp},   {"connect", AclMode::Connect},
+	    {"set", AclMode::Set},           {"alter system", AclMode::AlterSystem},
 	};
 	const auto allowed = AllPrivileges(acl_class);
 	if (StringUtil::CIEquals(keyword, "ALL")) {
@@ -84,12 +117,39 @@ vector<AclItem> Permissions::AclDefault(CatalogType acl_class, idx_t owner) {
 	if (owner_privs == AclMode::NoRights) {
 		return acl;
 	}
-	acl.push_back(AclItem {owner, owner, owner_privs, AclMode::NoRights});
 	const auto public_privs = PublicPrivileges(acl_class);
 	if (public_privs != AclMode::NoRights) {
 		acl.push_back(AclItem {ACL_ID_PUBLIC, owner, public_privs, AclMode::NoRights});
 	}
+	acl.push_back(AclItem {owner, owner, owner_privs, AclMode::NoRights});
 	return acl;
+}
+
+std::span<const AclItem> Permissions::ForeignDataWrapperAcl(idx_t wrapper) const {
+	for (auto &row : foreign_data_wrappers) {
+		if (row.oid == wrapper) {
+			return row.acl;
+		}
+	}
+	return {};
+}
+
+std::span<const AclItem> Permissions::LanguageAcl(idx_t language) const {
+	for (auto &row : languages) {
+		if (row.oid == language) {
+			return row.acl;
+		}
+	}
+	return {};
+}
+
+std::span<const AclItem> Permissions::ParameterAcl(std::string_view parameter) const {
+	for (auto &row : parameters) {
+		if (StringUtil::CIEquals(row.name, parameter)) {
+			return row.acl;
+		}
+	}
+	return {};
 }
 
 static AclMode HeldBy(const vector<AclItem> &acl, idx_t role, AclMode AclItem::*field) {
@@ -135,7 +195,8 @@ static void Revoke(vector<AclItem> &acl, idx_t grantee, idx_t grantor, AclMode p
 			}
 		}
 		if (!dependents.empty() && !cascade) {
-			throw DependencyException("dependent privileges exist");
+			throw Exception(unordered_map<string, string> {{"hint", "Use CASCADE to revoke them too."}},
+			                ExceptionType::DEPENDENCY, "dependent privileges exist");
 		}
 		for (auto dependent : dependents) {
 			Revoke(acl, dependent, grantee, lost, false, true);
@@ -148,11 +209,29 @@ static void Revoke(vector<AclItem> &acl, idx_t grantee, idx_t grantor, AclMode p
 	          acl.end());
 }
 
+static void ReplaceOwner(vector<AclItem> &acl, idx_t old_owner, idx_t new_owner) {
+	vector<AclItem> replaced;
+	for (auto item : acl) {
+		if (item.grantee == old_owner) {
+			item.grantee = new_owner;
+		}
+		if (item.grantor == old_owner) {
+			item.grantor = new_owner;
+		}
+		Grant(replaced, item.grantee, item.grantor, item.privs, item.grant_option);
+	}
+	acl = std::move(replaced);
+}
+
 static void Apply(vector<AclItem> &acl, idx_t grantor, AclMode grantable, AclMode privileges,
                   const AlterPermissionsInfo &info) {
 	if (info.revoke) {
 		Revoke(acl, info.grantee_id, grantor, privileges, info.option_only, info.cascade);
 		return;
+	}
+	if (info.with_grant_option && info.grantee_id == ACL_ID_PUBLIC) {
+		throw Exception({{"error_subtype", "INVALID_GRANT_OPERATION"}}, ExceptionType::INVALID_INPUT,
+		                "grant options can only be granted to roles");
 	}
 	const auto granted = privileges & grantable;
 	if (granted != AclMode::NoRights) {
@@ -160,24 +239,103 @@ static void Apply(vector<AclItem> &acl, idx_t grantor, AclMode grantable, AclMod
 	}
 }
 
+static vector<AclItem> &ColumnRow(vector<ColumnAcl> &columns, const Identifier &column) {
+	for (auto &row : columns) {
+		if (row.column == column) {
+			return row.acl;
+		}
+	}
+	columns.push_back(ColumnAcl {column, {}});
+	return columns.back().acl;
+}
+
+static void ApplyGrant(const AlterPermissionsInfo &info, idx_t owner, vector<AclItem> &acl, CatalogType acl_class,
+                       optional_ptr<vector<ColumnAcl>> columns) {
+	auto stored = acl.empty() ? Permissions::AclDefault(acl_class, owner) : acl;
+	idx_t grantor = owner;
+	bool is_owner = true;
+	AclMode grantable = Permissions::AllPrivileges(acl_class);
+	if (!info.grantors.empty() && std::find(info.grantors.begin(), info.grantors.end(), owner) == info.grantors.end()) {
+		grantor = info.grantors[0];
+		is_owner = false;
+		grantable = AclMode::NoRights;
+		for (auto role : info.grantors) {
+			auto held = HeldBy(stored, role, &AclItem::grant_option);
+			if (columns) {
+				for (auto &column : *columns) {
+					held |= HeldBy(column.acl, role, &AclItem::grant_option);
+				}
+			}
+			if (held != AclMode::NoRights) {
+				grantor = role;
+				grantable = HeldBy(stored, role, &AclItem::grant_option);
+				break;
+			}
+		}
+	}
+
+	if (info.privileges != AclMode::NoRights) {
+		Apply(stored, grantor, grantable, info.privileges, info);
+		acl = std::move(stored);
+		if (acl.empty() && !Permissions::AclDefault(acl_class, owner).empty()) {
+			acl.push_back(AclItem {owner, owner, AclMode::NoRights, AclMode::NoRights});
+		}
+		if (info.revoke && columns && (info.privileges & ACL_COLUMN_PRIVILEGES) != AclMode::NoRights) {
+			for (auto &column : *columns) {
+				Revoke(column.acl, info.grantee_id, grantor, info.privileges & ACL_COLUMN_PRIVILEGES, info.option_only,
+				       info.cascade);
+			}
+		}
+	}
+
+	if (!info.column_privileges.empty() && !columns) {
+		throw InvalidInputException("column privileges are only valid for relations");
+	}
+	for (auto &column_privilege : info.column_privileges) {
+		auto &column_acl = ColumnRow(*columns, column_privilege.column);
+		const auto column_grantable =
+		    is_owner ? ACL_COLUMN_PRIVILEGES
+		             : (grantable | HeldBy(column_acl, grantor, &AclItem::grant_option)) & ACL_COLUMN_PRIVILEGES;
+		Apply(column_acl, grantor, column_grantable, column_privilege.privileges & ACL_COLUMN_PRIVILEGES, info);
+	}
+	if (columns) {
+		columns->erase(std::remove_if(columns->begin(), columns->end(),
+		                              [](const ColumnAcl &column) { return column.acl.empty(); }),
+		               columns->end());
+	}
+}
+
 void AlterPermissionsInfo::ApplyTo(Permissions &permissions, CatalogType entry_type,
-                                   optional_ptr<ColumnList> columns) const {
+                                   optional_ptr<vector<ColumnAcl>> columns) const {
 	auto &info = *this;
 	auto &owner = permissions.owner;
 	auto &acl = permissions.acl;
 	auto &defaults = permissions.defaults;
+	if (info.drop_owned_role_id) {
+		const auto role = info.drop_owned_role_id;
+		for (auto &row : defaults) {
+			Revoke(row.acl, role, row.role, ~AclMode::NoRights, false, true);
+		}
+		defaults.erase(std::remove_if(defaults.begin(), defaults.end(),
+		                              [&](const DefaultAcl &row) {
+			                              const auto baseline = row.scope == 0
+			                                                        ? Permissions::AclDefault(row.objtype, row.role)
+			                                                        : vector<AclItem> {};
+			                              return row.role == role ||
+			                                     std::is_permutation(row.acl.begin(), row.acl.end(), baseline.begin(),
+			                                                         baseline.end());
+		                              }),
+		               defaults.end());
+		return;
+	}
 	if (!info.new_owner.empty()) {
-		const auto old_owner = owner;
-		if (info.new_owner_id == old_owner) {
+		if (info.new_owner_id == owner) {
 			return;
 		}
-		acl.erase(
-		    std::remove_if(acl.begin(), acl.end(),
-		                   [&](const AclItem &item) { return item.grantee == old_owner && item.grantor == old_owner; }),
-		    acl.end());
-		for (auto &item : acl) {
-			if (item.grantor == old_owner) {
-				item.grantor = info.new_owner_id;
+		ReplaceOwner(acl, owner, info.new_owner_id);
+		if (columns) {
+			for (auto &column : *columns) {
+				ReplaceOwner(column.acl, owner, info.new_owner_id);
 			}
 		}
 		owner = info.new_owner_id;
@@ -193,7 +351,7 @@ void AlterPermissionsInfo::ApplyTo(Permissions &permissions, CatalogType entry_t
 		                                              : vector<AclItem> {};
 		auto row_acl = row == defaults.end() ? baseline : row->acl;
 		Apply(row_acl, info.target_role, Permissions::AllPrivileges(info.default_objtype), info.privileges, info);
-		if (row_acl == baseline) {
+		if (std::is_permutation(row_acl.begin(), row_acl.end(), baseline.begin(), baseline.end())) {
 			if (row != defaults.end()) {
 				defaults.erase(row);
 			}
@@ -206,62 +364,998 @@ void AlterPermissionsInfo::ApplyTo(Permissions &permissions, CatalogType entry_t
 		return;
 	}
 
-	const auto acl_class = Permissions::AclClass(entry_type);
-	auto stored = acl.empty() ? Permissions::AclDefault(acl_class, owner) : acl;
-	idx_t grantor = owner;
-	bool is_owner = true;
-	AclMode grantable = Permissions::AllPrivileges(acl_class);
-	if (!info.grantors.empty() && std::find(info.grantors.begin(), info.grantors.end(), owner) == info.grantors.end()) {
-		grantor = info.grantors[0];
-		is_owner = false;
-		grantable = AclMode::NoRights;
-		for (auto role : info.grantors) {
-			auto held = HeldBy(stored, role, &AclItem::grant_option);
-			if (columns) {
-				for (auto &column : columns->Logical()) {
-					held |= HeldBy(column.Acl(), role, &AclItem::grant_option);
-				}
-			}
-			if (held != AclMode::NoRights) {
-				grantor = role;
-				grantable = HeldBy(stored, role, &AclItem::grant_option);
-				break;
-			}
+	if (info.foreign_data_wrapper_id) {
+		auto &wrappers = permissions.foreign_data_wrappers;
+		auto row = std::find_if(wrappers.begin(), wrappers.end(),
+		                        [&](const ObjectAcl &entry) { return entry.oid == info.foreign_data_wrapper_id; });
+		auto row_acl = row == wrappers.end() ? vector<AclItem> {} : row->acl;
+		ApplyGrant(info, info.object_owner_id, row_acl, CatalogType::FOREIGN_DATA_WRAPPER_ENTRY, nullptr);
+		if (row == wrappers.end()) {
+			wrappers.push_back(ObjectAcl {info.foreign_data_wrapper_id, std::move(row_acl)});
+		} else {
+			row->acl = std::move(row_acl);
 		}
-	}
-
-	if (info.privileges != AclMode::NoRights) {
-		Apply(stored, grantor, grantable, info.privileges, info);
-		acl = std::move(stored);
-		if (info.revoke && columns && (info.privileges & ACL_COLUMN_PRIVILEGES) != AclMode::NoRights) {
-			for (auto &column : columns->Logical()) {
-				if (column.Acl().empty()) {
-					continue;
-				}
-				auto column_acl = column.Acl();
-				Revoke(column_acl, info.grantee_id, grantor, info.privileges & ACL_COLUMN_PRIVILEGES, info.option_only,
-				       info.cascade);
-				columns->GetColumnMutable(column.Logical()).SetAcl(std::move(column_acl));
-			}
-		}
-	}
-
-	if (info.column_privileges.empty()) {
 		return;
 	}
-	if (!columns) {
-		throw InvalidInputException("column privileges are only valid for relations");
+
+	if (info.language_id) {
+		auto &languages = permissions.languages;
+		auto row = std::find_if(languages.begin(), languages.end(),
+		                        [&](const ObjectAcl &entry) { return entry.oid == info.language_id; });
+		auto row_acl = row == languages.end() ? vector<AclItem> {} : row->acl;
+		ApplyGrant(info, info.object_owner_id, row_acl, CatalogType::LANGUAGE_ENTRY, nullptr);
+		if (row == languages.end()) {
+			languages.push_back(ObjectAcl {info.language_id, std::move(row_acl)});
+		} else {
+			row->acl = std::move(row_acl);
+		}
+		return;
 	}
-	for (auto &column_privilege : info.column_privileges) {
-		auto column_name = column_privilege.column;
-		auto &column = columns->GetColumnMutable(columns->GetColumnIndex(column_name));
-		auto column_acl = column.Acl();
-		const auto column_grantable =
-		    is_owner ? ACL_COLUMN_PRIVILEGES
-		             : (grantable | HeldBy(column_acl, grantor, &AclItem::grant_option)) & ACL_COLUMN_PRIVILEGES;
-		Apply(column_acl, grantor, column_grantable, column_privilege.privileges & ACL_COLUMN_PRIVILEGES, info);
-		column.SetAcl(std::move(column_acl));
+
+	if (info.relation_id) {
+		auto &relations = permissions.relations;
+		auto row = std::find_if(relations.begin(), relations.end(),
+		                        [&](const RelationAcl &entry) { return entry.oid == info.relation_id; });
+		auto row_acl = row == relations.end() ? info.builtin_acl : row->acl;
+		auto columns = row == relations.end() ? vector<ColumnAcl> {} : row->columns;
+		ApplyGrant(info, info.object_owner_id, row_acl, CatalogType::TABLE_ENTRY, &columns);
+		if (!info.builtin_acl.empty() && row_acl == info.builtin_acl && columns.empty()) {
+			if (row != relations.end()) {
+				relations.erase(row);
+			}
+		} else if (row == relations.end()) {
+			relations.push_back(RelationAcl {info.relation_id, std::move(row_acl), std::move(columns)});
+		} else {
+			row->acl = std::move(row_acl);
+			row->columns = std::move(columns);
+		}
+		return;
 	}
+
+	if (!info.functions.empty()) {
+		auto &rows = permissions.functions;
+		unordered_map<string, idx_t> positions;
+		for (idx_t i = 0; i < rows.size(); i++) {
+			positions.emplace(rows[i].name, i);
+		}
+		for (auto &function : info.functions) {
+			auto position = positions.find(function.name);
+			auto row_acl = position == positions.end() ? function.acl : rows[position->second].acl;
+			ApplyGrant(info, info.object_owner_id, row_acl, CatalogType::MACRO_ENTRY, nullptr);
+			if (position == positions.end()) {
+				positions.emplace(function.name, rows.size());
+				rows.push_back(NamedAcl {function.name, std::move(row_acl)});
+			} else {
+				rows[position->second].acl = std::move(row_acl);
+			}
+		}
+		return;
+	}
+
+	if (info.type_id) {
+		auto &rows = permissions.types;
+		auto row =
+		    std::find_if(rows.begin(), rows.end(), [&](const ObjectAcl &entry) { return entry.oid == info.type_id; });
+		auto row_acl = row == rows.end() ? info.builtin_acl : row->acl;
+		ApplyGrant(info, info.object_owner_id, row_acl, CatalogType::TYPE_ENTRY, nullptr);
+		if (row == rows.end()) {
+			rows.push_back(ObjectAcl {info.type_id, std::move(row_acl)});
+		} else {
+			row->acl = std::move(row_acl);
+		}
+		return;
+	}
+
+	if (info.schema_id) {
+		auto &schemas = permissions.schemas;
+		auto row = std::find_if(schemas.begin(), schemas.end(),
+		                        [&](const ObjectAcl &entry) { return entry.oid == info.schema_id; });
+		auto row_acl = row == schemas.end() ? info.builtin_acl : row->acl;
+		ApplyGrant(info, info.object_owner_id, row_acl, CatalogType::SCHEMA_ENTRY, nullptr);
+		if (!info.builtin_acl.empty() &&
+		    std::is_permutation(row_acl.begin(), row_acl.end(), info.builtin_acl.begin(), info.builtin_acl.end())) {
+			if (row != schemas.end()) {
+				schemas.erase(row);
+			}
+		} else if (row == schemas.end()) {
+			schemas.push_back(ObjectAcl {info.schema_id, std::move(row_acl)});
+		} else {
+			row->acl = std::move(row_acl);
+		}
+		return;
+	}
+
+	if (!info.parameter.empty()) {
+		auto &rows = permissions.parameters;
+		auto row = std::find_if(rows.begin(), rows.end(), [&](const NamedAcl &entry) {
+			return StringUtil::CIEquals(entry.name, info.parameter);
+		});
+		auto row_acl = row == rows.end() ? vector<AclItem> {} : row->acl;
+		ApplyGrant(info, info.object_owner_id, row_acl, CatalogType::PARAMETER_ENTRY, nullptr);
+		if (row_acl.empty() || row_acl == Permissions::AclDefault(CatalogType::PARAMETER_ENTRY, info.object_owner_id)) {
+			if (row != rows.end()) {
+				rows.erase(row);
+			}
+		} else if (row == rows.end()) {
+			rows.push_back(NamedAcl {info.parameter, std::move(row_acl)});
+		} else {
+			row->acl = std::move(row_acl);
+		}
+		return;
+	}
+
+	ApplyGrant(info, owner, acl, Permissions::AclClass(entry_type), columns);
+}
+
+void Permissions::AssignOwner(idx_t new_owner, CatalogType objtype, optional_ptr<const Permissions> database,
+                              optional_idx schema) {
+	owner = new_owner;
+	if (!database) {
+		return;
+	}
+	auto row = [&](idx_t scope) -> optional_ptr<const DefaultAcl> {
+		for (auto &defaults_entry : database->defaults) {
+			if (defaults_entry.role == new_owner && defaults_entry.objtype == objtype &&
+			    defaults_entry.scope == scope) {
+				return &defaults_entry;
+			}
+		}
+		return nullptr;
+	};
+	auto global = row(0);
+	optional_ptr<const DefaultAcl> in_schema;
+	if (schema.IsValid()) {
+		in_schema = row(schema.GetIndex());
+	}
+	if (!global && !in_schema) {
+		return;
+	}
+	auto granted = global ? global->acl : AclDefault(objtype, new_owner);
+	if (in_schema) {
+		for (auto &item : in_schema->acl) {
+			Grant(granted, item.grantee, item.grantor, item.privs, item.grant_option);
+		}
+	}
+	acl = std::move(granted);
+}
+
+static bool FilterMayContain(std::span<const uint64_t> filter, idx_t member) {
+	const auto hash = Hash(uint64_t(member));
+	const auto mask = filter.size() * 64 - 1;
+	const auto first = hash & mask;
+	const auto second = (hash >> 32) & mask;
+	return ((filter[first >> 6] >> (first & 63)) & (filter[second >> 6] >> (second & 63)) & 1) != 0;
+}
+
+static idx_t FilterWords(idx_t members) {
+	return std::bit_ceil(std::max<idx_t>(1, (members + 3) / 4));
+}
+
+const RoleAccess &RoleAccess::System() {
+	static const RoleAccess system = [] {
+		RoleAccess access;
+		access.options = ~RoleOption::None;
+		access.is_superuser = true;
+		return access;
+	}();
+	return system;
+}
+
+bool RoleAccess::Uses(idx_t other) const {
+	return other == role || (!closure_filter.empty() && FilterMayContain(closure_filter, other) &&
+	                         std::binary_search(closure.begin(), closure.end(), other));
+}
+
+bool RoleAccess::CanSet(idx_t other) const {
+	return is_superuser || other == role || std::binary_search(settable.begin(), settable.end(), other);
+}
+
+static bool Reaches(const RoleAccess &access, const AclItem &item) {
+	return item.grantee == ACL_ID_PUBLIC || access.Uses(item.grantee);
+}
+
+static AclMode Held(const RoleAccess &access, std::span<const AclItem> acl, AclMode AclItem::*field) {
+	AclMode held = AclMode::NoRights;
+	for (auto &item : acl) {
+		if (Reaches(access, item)) {
+			held |= item.*field;
+		}
+	}
+	return held;
+}
+
+static AclMode CapabilityModes(const RoleAccess &access, CatalogType type) {
+	AclMode modes = AclMode::NoRights;
+	if (access.capabilities == RoleCapability::None) {
+		return modes;
+	}
+	const auto has = [&](RoleCapability capability) {
+		return (access.capabilities & capability) == capability;
+	};
+	switch (type) {
+	case CatalogType::TABLE_ENTRY:
+	case CatalogType::VIEW_ENTRY:
+	case CatalogType::SEQUENCE_ENTRY:
+		if (has(RoleCapability::ReadAllData)) {
+			modes |= AclMode::Select;
+		}
+		if (has(RoleCapability::WriteAllData)) {
+			modes |= AclMode::Insert | AclMode::Update | AclMode::Delete;
+		}
+		if (has(RoleCapability::Maintain) && type != CatalogType::SEQUENCE_ENTRY) {
+			modes |= AclMode::Maintain;
+		}
+		break;
+	case CatalogType::SCHEMA_ENTRY:
+		if (has(RoleCapability::ReadAllData) || has(RoleCapability::WriteAllData)) {
+			modes |= AclMode::Usage;
+		}
+		break;
+	default:
+		break;
+	}
+	return modes;
+}
+
+static bool Allows(const RoleAccess &access, std::span<const AclItem> stored, CatalogType type, AclMode need,
+                   bool any) {
+	if (need == AclMode::NoRights) {
+		return false;
+	}
+	const auto done = [&](AclMode have) {
+		return any ? (have & need) != AclMode::NoRights : (have & need) == need;
+	};
+	AclMode have = CapabilityModes(access, type);
+	if (stored.empty()) {
+		return done(have | Permissions::PublicPrivileges(type));
+	}
+	if (done(have)) {
+		return true;
+	}
+	for (auto &item : stored) {
+		if (Reaches(access, item)) {
+			have |= item.privs;
+			if (done(have)) {
+				return true;
+			}
+		}
+	}
+	return false;
+}
+
+bool RoleAccess::Can(CatalogType type, const Permissions &permissions, AclMode need) const {
+	return Owns(permissions.owner) || Allows(*this, permissions.acl, type, need, false);
+}
+
+bool RoleAccess::CanAny(CatalogType type, const Permissions &permissions, AclMode need) const {
+	return Owns(permissions.owner) || Allows(*this, permissions.acl, type, need, true);
+}
+
+bool RoleAccess::CanColumns(const Permissions &permissions, AclMode need,
+                            std::span<const std::span<const AclItem>> acls) const {
+	if (Can(CatalogType::TABLE_ENTRY, permissions, need)) {
+		return true;
+	}
+	return !acls.empty() && std::all_of(acls.begin(), acls.end(), [&](std::span<const AclItem> acl) {
+		return Allows(*this, acl, CatalogType::TABLE_ENTRY, need, false);
+	});
+}
+
+bool RoleAccess::CanAnyColumn(const Permissions &permissions, AclMode need, const ColumnList &columns) const {
+	if (Can(CatalogType::TABLE_ENTRY, permissions, need)) {
+		return true;
+	}
+	for (auto &column : columns.Logical()) {
+		if (Allows(*this, column.Acl(), CatalogType::TABLE_ENTRY, need, false)) {
+			return true;
+		}
+	}
+	return false;
+}
+
+AclMode RoleAccess::HeldModes(std::span<const AclItem> acl) const {
+	return Held(*this, acl, &AclItem::privs);
+}
+
+AclMode RoleAccess::GrantableModes(std::span<const AclItem> acl) const {
+	return Held(*this, acl, &AclItem::grant_option);
+}
+
+static vector<idx_t> Reachable(const unordered_map<idx_t, SecuritySnapshot::Node> &nodes, idx_t role,
+                               bool Membership::*option) {
+	unordered_set<idx_t> seen {role};
+	vector<idx_t> work {role};
+	while (!work.empty()) {
+		auto it = nodes.find(work.back());
+		work.pop_back();
+		if (it == nodes.end()) {
+			continue;
+		}
+		for (auto &edge : it->second.member_of) {
+			if ((!option || edge.*option) && nodes.count(edge.role) && seen.insert(edge.role).second) {
+				work.push_back(edge.role);
+			}
+		}
+	}
+	vector<idx_t> result(seen.begin(), seen.end());
+	std::sort(result.begin(), result.end());
+	return result;
+}
+
+SecuritySnapshot::SecuritySnapshot(unordered_map<idx_t, Node> nodes_p, unordered_map<string, idx_t> database_owners_p,
+                                   idx_t database_owner_role_p,
+                                   unordered_map<string, unordered_map<idx_t, Relation>> relations_p,
+                                   unordered_map<string, unordered_map<string, Permissions>> functions_p,
+                                   unordered_map<string, unordered_map<idx_t, Permissions>> types_p)
+    : nodes(std::move(nodes_p)), database_owners(std::move(database_owners_p)),
+      database_owner_role(database_owner_role_p), relations(std::move(relations_p)), functions(std::move(functions_p)),
+      types(std::move(types_p)) {
+	vector<Role> roles_p;
+	roles_p.reserve(nodes.size());
+	for (auto &[oid, node] : nodes) {
+		by_name.emplace(node.name, oid);
+		auto closure = Reachable(nodes, oid, &Membership::inherit_option);
+		auto capabilities = RoleCapability::None;
+		for (auto member : closure) {
+			capabilities |= nodes.find(member)->second.capabilities;
+		}
+		roles_p.push_back(
+		    Role {oid, node.options, capabilities, std::move(closure), Reachable(nodes, oid, &Membership::set_option)});
+	}
+	std::sort(roles_p.begin(), roles_p.end(), [](const Role &lhs, const Role &rhs) { return lhs.role < rhs.role; });
+	idx_t total = 0;
+	for (auto &role : roles_p) {
+		role.closure.erase(std::remove(role.closure.begin(), role.closure.end(), role.role), role.closure.end());
+		for (auto list : {&role.closure, &role.settable}) {
+			std::sort(list->begin(), list->end());
+			list->erase(std::unique(list->begin(), list->end()), list->end());
+			total += list->size();
+		}
+		if (!role.closure.empty()) {
+			total += FilterWords(role.closure.size());
+		}
+	}
+	arena.reserve(total);
+	roles.reserve(roles_p.size());
+	for (auto &role : roles_p) {
+		RoleAccess access;
+		access.role = role.role;
+		access.options = role.options;
+		access.capabilities = role.capabilities;
+		access.is_superuser = HasOption(role.options, RoleOption::Superuser);
+		if (!role.closure.empty()) {
+			const auto words = FilterWords(role.closure.size());
+			const auto filter_begin = arena.size();
+			arena.resize(filter_begin + words, 0);
+			const auto mask = words * 64 - 1;
+			for (auto member : role.closure) {
+				const auto hash = Hash(uint64_t(member));
+				const auto first = hash & mask;
+				const auto second = (hash >> 32) & mask;
+				arena[filter_begin + (first >> 6)] |= uint64_t(1) << (first & 63);
+				arena[filter_begin + (second >> 6)] |= uint64_t(1) << (second & 63);
+			}
+			access.closure_filter = std::span<const uint64_t>(arena.data() + filter_begin, words);
+		}
+		const auto begin = arena.size();
+		arena.insert(arena.end(), role.closure.begin(), role.closure.end());
+		access.closure = std::span<const idx_t>(arena.data() + begin, role.closure.size());
+		const auto settable_begin = arena.size();
+		arena.insert(arena.end(), role.settable.begin(), role.settable.end());
+		access.settable = std::span<const idx_t>(arena.data() + settable_begin, role.settable.size());
+		roles.push_back(access);
+	}
+}
+
+SecuritySnapshot::~SecuritySnapshot() {
+}
+
+shared_ptr<const SecuritySnapshot> SecuritySnapshot::Build(DuckCatalog &cluster, CatalogTransaction transaction) {
+	unordered_map<idx_t, Node> nodes;
+	cluster.GetCatalogSet(CatalogType::ROLE_ENTRY).Scan(transaction, [&](CatalogEntry &entry) {
+		auto &role = entry.Cast<RoleEntry>();
+		nodes[role.oid] = Node {role.name.GetIdentifierName(), role.Options(), role.Capabilities(), role.MemberOf()};
+	});
+	unordered_map<string, idx_t> database_owners;
+	unordered_map<string, unordered_map<idx_t, Relation>> relations;
+	unordered_map<string, unordered_map<string, Permissions>> functions;
+	unordered_map<string, unordered_map<idx_t, Permissions>> types;
+	auto &config = DBConfig::GetConfig(cluster.GetDatabase());
+	cluster.GetCatalogSet(CatalogType::DATABASE_ENTRY).Scan(transaction, [&](CatalogEntry &entry) {
+		database_owners.emplace(entry.name.GetIdentifierName(), entry.permissions.owner);
+		for (auto &row : entry.permissions.relations) {
+			relations[entry.name.GetIdentifierName()][row.oid] =
+			    Relation {Permissions {config.bootstrap_role, row.acl}, row.columns};
+		}
+		for (auto &row : entry.permissions.schemas) {
+			relations[entry.name.GetIdentifierName()][row.oid] =
+			    Relation {Permissions {config.bootstrap_role, row.acl}, {}};
+		}
+		for (auto &row : entry.permissions.functions) {
+			functions[entry.name.GetIdentifierName()][row.name] = Permissions {config.bootstrap_role, row.acl};
+		}
+		for (auto &row : entry.permissions.types) {
+			types[entry.name.GetIdentifierName()][row.oid] = Permissions {config.bootstrap_role, row.acl};
+		}
+	});
+	return make_shared_ptr<const SecuritySnapshot>(std::move(nodes), std::move(database_owners),
+	                                               config.database_owner_role, std::move(relations),
+	                                               std::move(functions), std::move(types));
+}
+
+shared_ptr<const SecuritySnapshot> SecuritySnapshot::ForDatabase(const Identifier &database) const {
+	if (!nodes.count(database_owner_role)) {
+		return nullptr;
+	}
+	auto owner = database_owners.find(database.GetIdentifierName());
+	if (owner == database_owners.end() || !nodes.count(owner->second)) {
+		return nullptr;
+	}
+	lock_guard<mutex> guard(derived_lock);
+	auto &result = derived[owner->second];
+	if (!result) {
+		auto implied = nodes;
+		implied[owner->second].member_of.push_back(
+		    Membership {database_owner_role, database_owner_role, false, true, true});
+		result = make_shared_ptr<const SecuritySnapshot>(std::move(implied), unordered_map<string, idx_t>(), 0,
+		                                                 relations, functions, types);
+	}
+	return result;
+}
+
+optional_ptr<const RoleAccess> SecuritySnapshot::Access(idx_t role) const {
+	auto it = std::lower_bound(roles.begin(), roles.end(), role,
+	                           [](const RoleAccess &access, idx_t value) { return access.role < value; });
+	if (it == roles.end() || it->role != role) {
+		return nullptr;
+	}
+	return &*it;
+}
+
+optional_ptr<const SecuritySnapshot::Node> SecuritySnapshot::Find(idx_t role) const {
+	auto it = nodes.find(role);
+	return it == nodes.end() ? nullptr : &it->second;
+}
+
+optional_idx SecuritySnapshot::FindByName(std::string_view name) const {
+	auto it = by_name.find(name);
+	return it == by_name.end() ? optional_idx() : optional_idx(it->second);
+}
+
+std::string_view SecuritySnapshot::NameOf(idx_t role) const {
+	auto node = Find(role);
+	return node ? std::string_view(node->name) : std::string_view();
+}
+
+RoleMemberships SecuritySnapshot::MembershipsOf(idx_t role) const {
+	RoleMemberships result;
+	if (role == 0) {
+		return result;
+	}
+	result.members = Reachable(nodes, role, nullptr);
+	for (auto member : result.members) {
+		auto node = Find(member);
+		if (!node) {
+			continue;
+		}
+		for (auto &edge : node->member_of) {
+			if (edge.admin_option) {
+				result.admin.push_back(edge.role);
+			}
+		}
+	}
+	std::sort(result.admin.begin(), result.admin.end());
+	return result;
+}
+
+optional_ptr<const SecuritySnapshot::Relation> SecuritySnapshot::FindRelation(std::string_view database,
+                                                                              idx_t relation) const {
+	if (relations.empty()) {
+		return nullptr;
+	}
+	auto rows = relations.find(database);
+	if (rows == relations.end()) {
+		return nullptr;
+	}
+	auto row = rows->second.find(relation);
+	return row == rows->second.end() ? nullptr : &row->second;
+}
+
+optional_ptr<const Permissions> SecuritySnapshot::RelationPermissions(std::string_view database, idx_t relation) const {
+	auto row = FindRelation(database, relation);
+	return row ? &row->permissions : nullptr;
+}
+
+optional_ptr<const vector<ColumnAcl>> SecuritySnapshot::RelationColumns(std::string_view database,
+                                                                        idx_t relation) const {
+	auto row = FindRelation(database, relation);
+	return row && !row->columns.empty() ? &row->columns : nullptr;
+}
+
+bool SecuritySnapshot::HasFunctionGrants(std::string_view database) const {
+	return !functions.empty() && functions.find(database) != functions.end();
+}
+
+optional_ptr<const Permissions> SecuritySnapshot::FunctionPermissions(std::string_view database,
+                                                                      std::string_view function) const {
+	auto rows = functions.find(database);
+	if (rows == functions.end()) {
+		return nullptr;
+	}
+	auto row = rows->second.find(function);
+	return row == rows->second.end() ? nullptr : &row->second;
+}
+
+optional_ptr<const Permissions> SecuritySnapshot::TypePermissions(std::string_view database, idx_t type) const {
+	auto rows = types.find(database);
+	if (rows == types.end()) {
+		return nullptr;
+	}
+	auto row = rows->second.find(type);
+	return row == rows->second.end() ? nullptr : &row->second;
+}
+
+const Permissions &EffectivePermissions(ClientContext &context, const CatalogEntry &entry) {
+	if (!entry.internal || !context.security) {
+		return entry.permissions;
+	}
+	auto permissions =
+	    context.security->RelationPermissions(entry.ParentCatalog().GetName().GetIdentifierName(), entry.oid);
+	return permissions ? *permissions : entry.permissions;
+}
+
+optional_ptr<const vector<ColumnAcl>> EffectiveColumnAcls(ClientContext &context, const CatalogEntry &entry) {
+	if (!entry.internal || !context.security) {
+		return nullptr;
+	}
+	return context.security->RelationColumns(entry.ParentCatalog().GetName().GetIdentifierName(), entry.oid);
+}
+
+std::span<const AclItem> FindColumnAcl(const vector<ColumnAcl> &columns, const Identifier &column) {
+	for (auto &row : columns) {
+		if (row.column == column) {
+			return row.acl;
+		}
+	}
+	return {};
+}
+
+std::span<const AclItem> ColumnAclAt(const CatalogEntry &entry, optional_ptr<const vector<ColumnAcl>> column_acls,
+                                     idx_t column_index) {
+	if (entry.type == CatalogType::VIEW_ENTRY) {
+		auto &view = entry.Cast<ViewCatalogEntry>();
+		auto &rows = column_acls ? *column_acls : view.column_acls;
+		if (rows.empty()) {
+			return {};
+		}
+		return FindColumnAcl(rows, column_index < view.aliases.size() ? view.aliases[column_index]
+		                                                              : view.GetColumnInfo()->names[column_index]);
+	}
+	auto &column = entry.Cast<TableCatalogEntry>().GetColumn(LogicalIndex(column_index));
+	return column_acls ? FindColumnAcl(*column_acls, column.Name()) : std::span<const AclItem>(column.Acl());
+}
+
+optional_idx SecuritySnapshot::BestAdmin(idx_t member, idx_t role) const {
+	if (member == role) {
+		return optional_idx();
+	}
+	unordered_set<idx_t> seen {member};
+	vector<idx_t> level {member};
+	while (!level.empty()) {
+		vector<idx_t> next;
+		for (auto current : level) {
+			auto node = Find(current);
+			if (!node) {
+				continue;
+			}
+			for (auto &edge : node->member_of) {
+				if (edge.role == role && edge.admin_option) {
+					return current;
+				}
+			}
+			for (auto &edge : node->member_of) {
+				if (edge.inherit_option && seen.insert(edge.role).second) {
+					next.push_back(edge.role);
+				}
+			}
+		}
+		level = std::move(next);
+	}
+	return optional_idx();
+}
+
+bool IsUnowned(const CatalogEntry &entry) {
+	auto &catalog = entry.ParentCatalog();
+	if (!entry.internal && catalog.GetAttached().IsReadOnly()) {
+		return true;
+	}
+	const bool stores_owners = catalog.Compatibility() == SqlCompatibility::POSTGRES;
+	return entry.permissions.owner == 0 && (entry.internal || !stores_owners);
+}
+
+bool CanUseSchema(const RoleAccess &role, const CatalogEntry &schema) {
+	return role.is_superuser || schema.internal || IsUnowned(schema) ||
+	       schema.ParentCatalog().Compatibility() != SqlCompatibility::POSTGRES ||
+	       role.Can(CatalogType::SCHEMA_ENTRY, schema.permissions, AclMode::Usage);
+}
+
+bool CanUseNamedSchema(ClientContext &context, const RoleAccess &role, const CatalogEntry &schema) {
+	if (!schema.internal || role.is_superuser) {
+		return CanUseSchema(role, schema);
+	}
+	auto &permissions = EffectivePermissions(context, schema);
+	return &permissions == &schema.permissions || role.Can(CatalogType::SCHEMA_ENTRY, permissions, AclMode::Usage);
+}
+
+idx_t FunctionOverloadCount(const CatalogEntry &function) {
+	switch (function.type) {
+	case CatalogType::SCALAR_FUNCTION_ENTRY:
+		return function.Cast<ScalarFunctionCatalogEntry>().functions.functions.size();
+	case CatalogType::AGGREGATE_FUNCTION_ENTRY:
+		return function.Cast<AggregateFunctionCatalogEntry>().functions.functions.size();
+	case CatalogType::TABLE_FUNCTION_ENTRY:
+		return function.Cast<TableFunctionCatalogEntry>().functions.functions.size();
+	case CatalogType::PRAGMA_FUNCTION_ENTRY:
+		return function.Cast<PragmaFunctionCatalogEntry>().functions.functions.size();
+	case CatalogType::WINDOW_FUNCTION_ENTRY:
+		return function.Cast<WindowFunctionCatalogEntry>().functions.functions.size();
+	case CatalogType::MACRO_ENTRY:
+	case CatalogType::TABLE_MACRO_ENTRY:
+		return function.Cast<MacroCatalogEntry>().macros.size();
+	default:
+		return 0;
+	}
+}
+
+vector<AclItem> BuiltinFunctionAcl(const CatalogEntry &function, idx_t owner) {
+	if (function.Cast<FunctionEntry>().required_capability == RoleCapability::None) {
+		return Permissions::AclDefault(CatalogType::MACRO_ENTRY, owner);
+	}
+	return {AclItem {owner, owner, AclMode::Execute, AclMode::NoRights}};
+}
+
+static optional_ptr<const Permissions> BuiltinGrant(ClientContext &context, const CatalogEntry &function,
+                                                    idx_t overload) {
+	auto &config = DBConfig::GetConfig(context);
+	if (!context.security || !context.security->HasFunctionGrants() || !config.builtin_function_key ||
+	    !function.internal) {
+		return nullptr;
+	}
+	const auto database = DatabaseManager::TryGetDefaultDatabase(context);
+	if (!context.security->HasFunctionGrants(database.GetIdentifierName())) {
+		return nullptr;
+	}
+	return context.security->FunctionPermissions(database.GetIdentifierName(),
+	                                             config.builtin_function_key(function, overload));
+}
+
+void CheckBuiltinCall(ClientContext &context, const RoleAccess &role, const CatalogEntry &function, idx_t overload) {
+	if (role.is_superuser) {
+		return;
+	}
+	if (auto granted = BuiltinGrant(context, function, overload)) {
+		if (!role.Can(CatalogType::MACRO_ENTRY, *granted, AclMode::Execute)) {
+			ThrowPermissionDenied(function);
+		}
+		return;
+	}
+	if (!function.Cast<FunctionEntry>().MayCall(role)) {
+		ThrowPermissionDenied(function);
+	}
+}
+
+bool BuiltinCallGranted(ClientContext &context, const RoleAccess &role, const CatalogEntry &function) {
+	const auto overloads = FunctionOverloadCount(function);
+	for (idx_t overload = 0; overload < overloads; overload++) {
+		auto granted = BuiltinGrant(context, function, overload);
+		if (granted && role.Can(CatalogType::MACRO_ENTRY, *granted, AclMode::Execute)) {
+			return true;
+		}
+	}
+	return false;
+}
+
+static bool IsClusterDatabase(AttachedDatabase &database) {
+	return database.GetCatalog().UsesCatalogLog() && !database.IsReadOnly();
+}
+
+static optional_ptr<CatalogEntry> FindForeignServer(ClientContext &context, const Identifier &name) {
+	for (auto &db : DatabaseManager::Get(*context.db).GetDatabases()) {
+		if (!IsClusterDatabase(*db)) {
+			continue;
+		}
+		auto &duck_catalog = db->GetCatalog().Cast<DuckCatalog>();
+		auto server = duck_catalog.GetCatalogSet(CatalogType::FOREIGN_SERVER_ENTRY)
+		                  .GetEntry(duck_catalog.GetCatalogTransaction(context), name);
+		if (server) {
+			return server;
+		}
+	}
+	return nullptr;
+}
+
+static bool CanUseDatabase(ClientContext &context, const RoleAccess &role, const Identifier &name) {
+	auto &cluster_catalog = DBConfig::GetConfig(context).cluster_catalog;
+	if (cluster_catalog.empty() ||
+	    name.GetIdentifierName() == ClientData::Get(context).default_database.GetIdentifierName()) {
+		return true;
+	}
+	auto &cluster = Catalog::GetCatalog(context, cluster_catalog).Cast<DuckCatalog>();
+	auto database =
+	    cluster.GetCatalogSet(CatalogType::DATABASE_ENTRY).GetEntry(cluster.GetCatalogTransaction(context), name);
+	return !database || role.Can(CatalogType::DATABASE_ENTRY, database->permissions, AclMode::Connect);
+}
+
+bool DatabaseVisible(ClientContext &context, const RoleAccess &role, AttachedDatabase &database) {
+	if (database.IsSystem() || database.IsTemporary() ||
+	    database.GetName() == DBConfig::GetConfig(context).cluster_catalog) {
+		return true;
+	}
+	if (IsClusterDatabase(database)) {
+		return CanUseDatabase(context, role, database.GetName());
+	}
+	auto server = FindForeignServer(context, database.GetName());
+	return server && role.Can(CatalogType::FOREIGN_SERVER_ENTRY, server->permissions, AclMode::Usage);
+}
+
+bool EntryVisible(ClientContext &context, const RoleAccess &role, CatalogEntry &entry) {
+	if (entry.type == CatalogType::DATABASE_ENTRY) {
+		return CanUseDatabase(context, role, entry.name);
+	}
+	if ((entry.type == CatalogType::TABLE_FUNCTION_ENTRY || entry.type == CatalogType::SCALAR_FUNCTION_ENTRY) &&
+	    !entry.Cast<FunctionEntry>().MayCall(role) && !BuiltinCallGranted(context, role, entry)) {
+		return false;
+	}
+	if (entry.internal || IsUnowned(entry)) {
+		return true;
+	}
+	auto &permissions = entry.permissions;
+	switch (entry.type) {
+	case CatalogType::SCHEMA_ENTRY:
+		return role.CanAny(entry.type, permissions, AclMode::Usage | AclMode::Create);
+	case CatalogType::TABLE_ENTRY:
+	case CatalogType::VIEW_ENTRY: {
+		if (role.CanAny(CatalogType::TABLE_ENTRY, permissions, Permissions::AllPrivileges(CatalogType::TABLE_ENTRY))) {
+			return true;
+		}
+		const auto grants = [&](std::span<const AclItem> acl) {
+			return (role.HeldModes(acl) & ACL_COLUMN_PRIVILEGES) != AclMode::NoRights;
+		};
+		if (entry.type == CatalogType::VIEW_ENTRY) {
+			auto &column_acls = entry.Cast<ViewCatalogEntry>().column_acls;
+			return std::any_of(column_acls.begin(), column_acls.end(),
+			                   [&](const ColumnAcl &column) { return grants(column.acl); });
+		}
+		auto columns = entry.Cast<TableCatalogEntry>().GetColumns().Logical();
+		return std::any_of(columns.begin(), columns.end(),
+		                   [&](const ColumnDefinition &column) { return grants(column.Acl()); });
+	}
+	case CatalogType::SEQUENCE_ENTRY:
+		return role.CanAny(entry.type, permissions, AclMode::Usage | AclMode::Select | AclMode::Update);
+	case CatalogType::MACRO_ENTRY:
+	case CatalogType::TABLE_MACRO_ENTRY: {
+		auto &macro = entry.Cast<MacroCatalogEntry>();
+		return std::any_of(macro.macros.begin(), macro.macros.end(), [&](const unique_ptr<MacroFunction> &overload) {
+			return role.Can(entry.type, macro.OverloadPermissions(*overload), AclMode::Execute);
+		});
+	}
+	case CatalogType::TYPE_ENTRY:
+		return role.Can(entry.type, permissions, AclMode::Usage);
+	case CatalogType::JOB_ENTRY:
+		return role.Owns(permissions.owner);
+	case CatalogType::INDEX_ENTRY: {
+		auto &index = entry.Cast<IndexCatalogEntry>();
+		auto relation = index.GetRelation(index.ParentCatalog().GetCatalogTransaction(context));
+		return !relation || EntryVisible(context, role, *relation);
+	}
+	default:
+		return true;
+	}
+}
+
+void CheckReference(ClientContext &context, const RoleAccess &role, CatalogEntry &entry) {
+	auto &database = entry.type == CatalogType::DATABASE_ENTRY ? entry.Cast<AttachedDatabase>()
+	                                                           : entry.ParentCatalog().GetAttached();
+	if (!DatabaseVisible(context, role, database)) {
+		auto &name = database.GetName().GetIdentifierName();
+		if (IsClusterDatabase(database)) {
+			throw PermissionException({{"detail", "User does not have CONNECT privilege."}},
+			                          StringUtil::Format("permission denied for database \"%s\"", name));
+		}
+		if (auto server = FindForeignServer(context, database.GetName())) {
+			ThrowPermissionDenied(*server);
+		}
+		throw PermissionException(
+		    {{"detail",
+		      "Only roles with the SUPERUSER attribute may use a database attached without a foreign server."}},
+		    StringUtil::Format("permission denied for database \"%s\"", name));
+	}
+	if (entry.type != CatalogType::DATABASE_ENTRY && !EntryVisible(context, role, entry)) {
+		ThrowPermissionDenied(entry);
+	}
+}
+
+template <class F>
+static bool AnyRoleReference(const CatalogEntry &entry, F &&named) {
+	auto &permissions = entry.permissions;
+	const auto any_acl = [&](const vector<AclItem> &acl) {
+		return std::any_of(acl.begin(), acl.end(),
+		                   [&](const AclItem &item) { return named(item.grantee) || named(item.grantor); });
+	};
+	if (entry.type == CatalogType::MACRO_ENTRY || entry.type == CatalogType::TABLE_MACRO_ENTRY) {
+		auto &macro = entry.Cast<MacroCatalogEntry>();
+		return std::any_of(macro.macros.begin(), macro.macros.end(), [&](const unique_ptr<MacroFunction> &overload) {
+			auto &overload_permissions = macro.OverloadPermissions(*overload);
+			return named(overload_permissions.owner) || any_acl(overload_permissions.acl);
+		});
+	}
+	if (named(permissions.owner) || any_acl(permissions.acl)) {
+		return true;
+	}
+	for (auto &row : permissions.defaults) {
+		if (named(row.role) || any_acl(row.acl)) {
+			return true;
+		}
+	}
+	for (auto &row : permissions.foreign_data_wrappers) {
+		if (any_acl(row.acl)) {
+			return true;
+		}
+	}
+	for (auto &row : permissions.parameters) {
+		if (any_acl(row.acl)) {
+			return true;
+		}
+	}
+	for (auto &row : permissions.languages) {
+		if (any_acl(row.acl)) {
+			return true;
+		}
+	}
+	for (auto &row : permissions.relations) {
+		if (any_acl(row.acl) || std::any_of(row.columns.begin(), row.columns.end(),
+		                                    [&](const ColumnAcl &column) { return any_acl(column.acl); })) {
+			return true;
+		}
+	}
+	for (auto &row : permissions.schemas) {
+		if (any_acl(row.acl)) {
+			return true;
+		}
+	}
+	for (auto &row : permissions.functions) {
+		if (any_acl(row.acl)) {
+			return true;
+		}
+	}
+	for (auto &row : permissions.types) {
+		if (any_acl(row.acl)) {
+			return true;
+		}
+	}
+	if (entry.type == CatalogType::ROLE_ENTRY) {
+		auto &member_of = entry.Cast<RoleEntry>().MemberOf();
+		return std::any_of(member_of.begin(), member_of.end(),
+		                   [&](const Membership &edge) { return named(edge.grantor); });
+	}
+	if (entry.type == CatalogType::VIEW_ENTRY) {
+		auto &column_acls = entry.Cast<ViewCatalogEntry>().column_acls;
+		return std::any_of(column_acls.begin(), column_acls.end(),
+		                   [&](const ColumnAcl &column) { return any_acl(column.acl); });
+	}
+	if (entry.type != CatalogType::TABLE_ENTRY) {
+		return false;
+	}
+	for (auto &column : entry.Cast<TableCatalogEntry>().GetColumns().Logical()) {
+		if (any_acl(column.Acl())) {
+			return true;
+		}
+	}
+	return false;
+}
+
+bool ReferencesRole(const CatalogEntry &entry, idx_t role) {
+	return AnyRoleReference(entry, [&](idx_t oid) { return oid == role; });
+}
+
+void ForEachRoleReference(const CatalogEntry &entry, const std::function<void(idx_t role)> &callback) {
+	AnyRoleReference(entry, [&](idx_t oid) {
+		if (oid != ACL_ID_PUBLIC) {
+			callback(oid);
+		}
+		return false;
+	});
+}
+
+vector<idx_t> RoleReferences(const CatalogEntry &entry) {
+	vector<idx_t> roles;
+	ForEachRoleReference(entry, [&](idx_t role) { roles.push_back(role); });
+	std::sort(roles.begin(), roles.end());
+	roles.erase(std::unique(roles.begin(), roles.end()), roles.end());
+	return roles;
+}
+
+string PermissionKindName(CatalogType type) {
+	switch (type) {
+	case CatalogType::TABLE_ENTRY:
+		return "table";
+	case CatalogType::VIEW_ENTRY:
+		return "view";
+	case CatalogType::SEQUENCE_ENTRY:
+		return "sequence";
+	case CatalogType::MACRO_ENTRY:
+	case CatalogType::TABLE_MACRO_ENTRY:
+	case CatalogType::TABLE_FUNCTION_ENTRY:
+	case CatalogType::SCALAR_FUNCTION_ENTRY:
+	case CatalogType::PRAGMA_FUNCTION_ENTRY:
+		return "function";
+	case CatalogType::TYPE_ENTRY:
+		return "type";
+	case CatalogType::SCHEMA_ENTRY:
+		return "schema";
+	case CatalogType::DATABASE_ENTRY:
+		return "database";
+	case CatalogType::INDEX_ENTRY:
+		return "index";
+	case CatalogType::TOKENIZER_ENTRY:
+		return "text search dictionary";
+	case CatalogType::FOREIGN_SERVER_ENTRY:
+		return "foreign server";
+	case CatalogType::FOREIGN_DATA_WRAPPER_ENTRY:
+		return "foreign-data wrapper";
+	case CatalogType::PARAMETER_ENTRY:
+		return "parameter";
+	case CatalogType::LANGUAGE_ENTRY:
+		return "language";
+	case CatalogType::SUBSCRIPTION_ENTRY:
+		return "subscription";
+	case CatalogType::JOB_ENTRY:
+		return "job";
+	default:
+		return "object";
+	}
+}
+
+string PermissionKindName(const CatalogEntry &entry) {
+	if ((entry.type == CatalogType::MACRO_ENTRY || entry.type == CatalogType::TABLE_MACRO_ENTRY) &&
+	    entry.Cast<MacroCatalogEntry>().is_procedure) {
+		return "procedure";
+	}
+	return PermissionKindName(entry.type);
+}
+
+string RoleOptionsToSQL(RoleOption set_options, RoleOption clear_options) {
+	struct NamedOption {
+		RoleOption option;
+		const char *keyword;
+	};
+	static constexpr NamedOption OPTIONS[] = {
+	    {RoleOption::Superuser, "SUPERUSER"},   {RoleOption::CreateDb, "CREATEDB"},
+	    {RoleOption::CreateRole, "CREATEROLE"}, {RoleOption::Inherit, "INHERIT"},
+	    {RoleOption::Login, "LOGIN"},           {RoleOption::Replication, "REPLICATION"},
+	    {RoleOption::BypassRls, "BYPASSRLS"}};
+	string result;
+	for (auto &named : OPTIONS) {
+		if (HasOption(set_options, named.option)) {
+			result += string(" ") + named.keyword;
+		} else if (HasOption(clear_options, named.option)) {
+			result += string(" NO") + named.keyword;
+		}
+	}
+	return result;
+}
+
+string ValidUntilToSQL(int64_t valid_until) {
+	const timestamp_t value(valid_until);
+	auto text = Timestamp::ToString(value);
+	if (Value::IsFinite(value)) {
+		text += "+00";
+	}
+	return KeywordHelper::WriteQuoted(text, '\'');
+}
+
+void ThrowPermissionDenied(const CatalogEntry &entry) {
+	throw PermissionException("permission denied for %s %s", PermissionKindName(entry), entry.name.GetIdentifierName());
 }
 
 } // namespace duckdb

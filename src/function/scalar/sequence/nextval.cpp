@@ -3,7 +3,9 @@
 
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/catalog/catalog_entry/sequence_catalog_entry.hpp"
+#include "duckdb/catalog/permissions.hpp"
 #include "duckdb/common/exception.hpp"
+#include "duckdb/main/client_context.hpp"
 #include "duckdb/execution/expression_executor.hpp"
 #include "duckdb/planner/expression/bound_cast_expression.hpp"
 #include "duckdb/planner/expression/bound_function_expression.hpp"
@@ -19,6 +21,8 @@ namespace duckdb {
 namespace {
 
 struct CurrentSequenceValueOperator {
+	static constexpr AclMode MODES = AclMode::Usage | AclMode::Select;
+
 	static int64_t Operation(DuckTransaction &, SequenceSession &session, SequenceCatalogEntry &seq, const int64_t,
 	                         const bool) {
 		return seq.CurrentValue(session);
@@ -26,6 +30,8 @@ struct CurrentSequenceValueOperator {
 };
 
 struct NextSequenceValueOperator {
+	static constexpr AclMode MODES = AclMode::Usage | AclMode::Update;
+
 	static int64_t Operation(DuckTransaction &transaction, SequenceSession &session, SequenceCatalogEntry &seq,
 	                         const int64_t, const bool) {
 		return seq.NextValue(transaction, session);
@@ -33,6 +39,8 @@ struct NextSequenceValueOperator {
 };
 
 struct SetValValueOperator {
+	static constexpr AclMode MODES = AclMode::Update;
+
 	static int64_t Operation(DuckTransaction &transaction, SequenceSession &session, SequenceCatalogEntry &seq,
 	                         const int64_t value, const bool is_called) {
 		return seq.SetValue(transaction, session, value, is_called);
@@ -70,6 +78,7 @@ bool RowIsValid(const unique_ptr<VectorIterator<T>> &entries, idx_t i) {
 	return !entries || (*entries)[i].IsValid();
 }
 
+template <class OP>
 unique_ptr<FunctionLocalState> NextValLocalFunction(ExpressionState &state, const BoundFunctionExpression &expr,
                                                     FunctionData *bind_data) {
 	if (!bind_data) {
@@ -78,6 +87,10 @@ unique_ptr<FunctionLocalState> NextValLocalFunction(ExpressionState &state, cons
 	auto &context = state.GetContext();
 	auto &info = bind_data->Cast<NextvalBindData>();
 	auto &sequence = info.sequence;
+	const auto role = info.role.IsValid() ? context.AccessOf(info.role.GetIndex()) : context.CurrentRole();
+	if (!IsUnowned(sequence) && !role.CanAny(CatalogType::SEQUENCE_ENTRY, sequence.permissions, OP::MODES)) {
+		ThrowPermissionDenied(sequence);
+	}
 	auto &transaction = DuckTransaction::Get(context, sequence.catalog);
 	return make_uniq<NextValLocalState>(transaction, SequenceSession::Get(context), sequence);
 }
@@ -166,7 +179,9 @@ unique_ptr<FunctionData> NextValBind(BindScalarFunctionInput &input) {
 	}
 	auto &binder = input.GetBinder();
 	auto &seq = BindSequence(binder, Identifier(seqname.ToString()));
-	return make_uniq<NextvalBindData>(seq);
+	auto &caller = binder.CurrentRole();
+	return make_uniq<NextvalBindData>(seq, &caller != &binder.context.CurrentRole() ? optional_idx(caller.role)
+	                                                                                : optional_idx());
 }
 
 void Serialize(Serializer &serializer, const optional_ptr<FunctionData> bind_data, const BoundScalarFunction &) {
@@ -183,7 +198,7 @@ unique_ptr<FunctionData> Deserialize(Deserializer &deserializer, BoundScalarFunc
 	auto &seq_info = create_info->Cast<CreateSequenceInfo>();
 	auto &context = deserializer.Get<ClientContext &>();
 	auto &sequence = BindSequenceFromContext(context, seq_info.GetQualifiedName());
-	return make_uniq<NextvalBindData>(sequence);
+	return make_uniq<NextvalBindData>(sequence, optional_idx());
 }
 
 void NextValModifiedDatabases(ClientContext &context, FunctionModifiedDatabasesInput &input) {
@@ -204,7 +219,7 @@ ScalarFunction NextvalFun::GetFunction() {
 	next_val.SetSerializeCallback(Serialize);
 	next_val.SetDeserializeCallback(Deserialize);
 	next_val.SetModifiedDatabasesCallback(NextValModifiedDatabases);
-	next_val.SetInitStateCallback(NextValLocalFunction);
+	next_val.SetInitStateCallback(NextValLocalFunction<NextSequenceValueOperator>);
 	next_val.SetVolatile();
 	next_val.SetFallible();
 	next_val.SetRequiresOrderedExecution(true);
@@ -218,7 +233,7 @@ ScalarFunction CurrvalFun::GetFunction() {
 	curr_val.SetBindCallback(NextValBind);
 	curr_val.SetSerializeCallback(Serialize);
 	curr_val.SetDeserializeCallback(Deserialize);
-	curr_val.SetInitStateCallback(NextValLocalFunction);
+	curr_val.SetInitStateCallback(NextValLocalFunction<CurrentSequenceValueOperator>);
 	curr_val.SetVolatile();
 	curr_val.SetFallible();
 	return curr_val;
@@ -233,7 +248,7 @@ ScalarFunctionSet SetvalFun::GetFunctions() {
 	set_val.SetSerializeCallback(Serialize);
 	set_val.SetDeserializeCallback(Deserialize);
 	set_val.SetModifiedDatabasesCallback(NextValModifiedDatabases);
-	set_val.SetInitStateCallback(NextValLocalFunction);
+	set_val.SetInitStateCallback(NextValLocalFunction<SetValValueOperator>);
 	set_val.SetVolatile();
 	set_val.SetFallible();
 	set_val.SetRequiresOrderedExecution(true);

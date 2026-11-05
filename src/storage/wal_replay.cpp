@@ -1720,8 +1720,8 @@ void WriteAheadLogDeserializer::ReplayCreateSubscription() {
 	if (DeserializeOnly()) {
 		return;
 	}
-	catalog.Cast<DuckCatalog>().CreateSubscription(catalog.GetCatalogTransaction(context),
-	                                               info->Cast<CreateSubscriptionInfo>());
+	catalog.Cast<DuckCatalog>().DuckCatalog::CreateSubscription(catalog.GetCatalogTransaction(context),
+	                                                            info->Cast<CreateSubscriptionInfo>());
 }
 
 void WriteAheadLogDeserializer::ReplayDropSubscription() {
@@ -1732,7 +1732,7 @@ void WriteAheadLogDeserializer::ReplayDropSubscription() {
 	if (DeserializeOnly()) {
 		return;
 	}
-	catalog.Cast<DuckCatalog>().DropSubscription(catalog.GetCatalogTransaction(context), info);
+	catalog.Cast<DuckCatalog>().DuckCatalog::DropSubscription(catalog.GetCatalogTransaction(context), info);
 }
 
 void WriteAheadLogDeserializer::ReplayCreateReplicationOrigin() {

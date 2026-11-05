@@ -271,16 +271,63 @@ static bool CollectDataVersions(const LogicalOperator &op, vector<shared_ptr<Pla
 	return true;
 }
 
-static void TrackDataVersions(const LogicalOperator &plan, PreparedStatementData &prepared) {
-	if (prepared.properties.read_databases.empty()) {
-		return;
+class SecurityVersion final : public PlanDataVersion {
+public:
+	SecurityVersion(shared_ptr<const SecuritySnapshot> snapshot_p, idx_t role_p)
+	    : snapshot(std::move(snapshot_p)), role(role_p) {
 	}
-	vector<shared_ptr<PlanDataVersion>> versions;
-	if (CollectDataVersions(plan, versions)) {
+
+	bool IsCurrent(ClientContext &context) const override {
+		return context.security == snapshot && context.current_role_id == role;
+	}
+
+private:
+	shared_ptr<const SecuritySnapshot> snapshot;
+	idx_t role;
+};
+
+static void TrackDataVersions(ClientContext &context, const LogicalOperator &plan, PreparedStatementData &prepared) {
+	if (!prepared.properties.read_databases.empty()) {
+		vector<shared_ptr<PlanDataVersion>> versions;
+		if (!CollectDataVersions(plan, versions)) {
+			prepared.properties.always_require_rebind = true;
+			return;
+		}
 		prepared.data_versions = std::move(versions);
-	} else {
-		prepared.properties.always_require_rebind = true;
 	}
+	if (context.security) {
+		prepared.data_versions.push_back(make_shared_ptr<SecurityVersion>(context.security, context.current_role_id));
+	}
+}
+
+template <class CALLBACK>
+static void ForEachPreparedStatement(LogicalOperator &plan, CALLBACK &&callback) {
+	for (optional_ptr<LogicalOperator> op = &plan; op; op = op->children.empty() ? nullptr : op->children[0].get()) {
+		if (op->type == LogicalOperatorType::LOGICAL_PREPARE) {
+			callback(*op->Cast<LogicalPrepare>().prepared, plan);
+		} else if (op->type == LogicalOperatorType::LOGICAL_EXECUTE) {
+			if (op->Cast<LogicalExecute>().replaces) {
+				callback(*op->Cast<LogicalExecute>().prepared, *op->children[0]);
+			}
+		} else if (op->type != LogicalOperatorType::LOGICAL_EXPLAIN) {
+			break;
+		}
+	}
+}
+
+static bool HasInvalidatedParameter(const PreparedStatementData &prepared) {
+	for (auto &entry : prepared.value_map) {
+		if (!entry.second->return_type.IsValid()) {
+			return true;
+		}
+	}
+	return false;
+}
+
+void Optimizer::TrackDataVersions(ClientContext &context, LogicalOperator &plan) {
+	ForEachPreparedStatement(plan, [&](PreparedStatementData &prepared, const LogicalOperator &statement) {
+		duckdb::TrackDataVersions(context, statement, prepared);
+	});
 }
 
 // Returns true if the plan contains a DML statement inside a CTE body. A top-level
@@ -525,7 +572,7 @@ void Optimizer::RunBuiltInOptimizers() {
 	});
 
 	RunOptimizer(OptimizerType::ROW_GROUP_PRUNER, [&]() {
-		RowGroupPruner row_group_pruner(context);
+		RowGroupPruner row_group_pruner(*this);
 		plan = row_group_pruner.Optimize(std::move(plan));
 	});
 
@@ -660,16 +707,6 @@ unique_ptr<LogicalOperator> Optimizer::Optimize(unique_ptr<LogicalOperator> plan
 	Verify(*plan_p);
 
 	this->plan = std::move(plan_p);
-	for (optional_ptr<LogicalOperator> op = plan.get(); op;
-	     op = op->children.empty() ? nullptr : op->children[0].get()) {
-		if (op->type == LogicalOperatorType::LOGICAL_PREPARE) {
-			TrackDataVersions(*plan, *op->Cast<LogicalPrepare>().prepared);
-		} else if (op->type == LogicalOperatorType::LOGICAL_EXECUTE && op->Cast<LogicalExecute>().replaces) {
-			TrackDataVersions(*op->children[0], *op->Cast<LogicalExecute>().prepared);
-		} else {
-			break;
-		}
-	}
 
 	for (auto &pre_optimizer_extension : optimizer_extensions) {
 		if (pre_optimizer_extension.anchor != OptimizerType::INVALID) {
@@ -700,7 +737,16 @@ unique_ptr<LogicalOperator> Optimizer::Optimize(unique_ptr<LogicalOperator> plan
 
 	Planner::VerifyPlan(context, plan);
 
+	ForEachPreparedStatement(*plan, [&](PreparedStatementData &prepared, const LogicalOperator &) {
+		if (snapshot_dependent || HasInvalidatedParameter(prepared)) {
+			prepared.properties.always_require_rebind = true;
+		}
+	});
 	return std::move(plan);
+}
+
+void Optimizer::SetSnapshotDependent() {
+	snapshot_dependent = true;
 }
 
 unique_ptr<Expression> Optimizer::BindScalarFunction(const Identifier &name, unique_ptr<Expression> c1) {

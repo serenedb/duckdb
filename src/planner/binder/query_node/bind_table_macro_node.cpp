@@ -1,5 +1,6 @@
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/catalog/catalog_entry/scalar_macro_catalog_entry.hpp"
+#include "duckdb/catalog/permissions.hpp"
 #include "duckdb/parser/expression/function_expression.hpp"
 #include "duckdb/parser/expression/subquery_expression.hpp"
 #include "duckdb/parser/parsed_expression_iterator.hpp"
@@ -38,6 +39,21 @@ unique_ptr<QueryNode> Binder::BindTableMacro(FunctionExpression &function, Macro
 	}
 	auto &macro_def = *macro_func.macros[bind_result.function_idx.GetIndex()];
 	definition = macro_def;
+	const bool owned = !IsUnowned(macro_func);
+	auto &permissions = macro_func.OverloadPermissions(macro_def);
+	if (owned && !CurrentRole().Can(macro_func.type, permissions, AclMode::Execute)) {
+		ThrowPermissionDenied(macro_func);
+	}
+	if (!owned) {
+		CheckBuiltinCall(context, CurrentRole(), macro_func, bind_result.function_idx.GetIndex());
+	}
+	const auto owner = owned && macro_def.security_definer ? optional_idx(permissions.owner) : optional_idx();
+	bool other_role = false;
+	if (owned && !CheckAs().IsSystem()) {
+		auto &role = FunctionBodyRole(owner);
+		other_role = &role != &CheckAs() || &role != &CurrentRole();
+	}
+	const bool own_body = other_role || !macro_def.config.empty();
 
 	auto new_macro_binding =
 	    MacroFunction::CreateDummyBinding(macro_def, macro_func.name, positional_arguments, named_arguments);
@@ -59,6 +75,9 @@ unique_ptr<QueryNode> Binder::BindTableMacro(FunctionExpression &function, Macro
 	if (macro_def.type == MacroType::SCALAR_MACRO) {
 		auto &scalar_macro = macro_def.Cast<ScalarMacroFunction>();
 		auto expr = scalar_macro.expression->Copy();
+		if (own_body) {
+			ExpressionBinder::MarkFunctionBody(*expr, owner, macro_def);
+		}
 		if (macro_def.return_names.size() > 1 && scalar_macro.query_body) {
 			auto &record = expr->Cast<SubqueryExpression>().SubqueryMutable()->node->Cast<SelectNode>();
 			auto first_row = make_uniq<SelectNode>();
@@ -100,21 +119,33 @@ unique_ptr<QueryNode> Binder::BindTableMacro(FunctionExpression &function, Macro
 		}
 	} else {
 		node = macro_def.Cast<TableMacroFunction>().query_node->Copy();
-		parameters = eb.BindTableMacroArguments(*node, *new_macro_binding, positional_arguments);
+	}
+	if (macro_def.type == MacroType::TABLE_MACRO || own_body) {
+		parameters = eb.BindTableMacroArguments(*node, *new_macro_binding, positional_arguments, own_body);
 	}
 	ParsedExpressionIterator::EnumerateQueryNodeChildren(*node, [&](unique_ptr<ParsedExpression> &child) {
 		eb.ReplaceMacroParameters(child, lambda_params, call, true);
 	});
-	if (parameters) {
+	if (parameters || own_body) {
 		const Identifier body_alias("0_macro_body");
 		auto body = make_uniq<SelectStatement>();
 		body->node = std::move(node);
-		auto join = make_uniq<JoinRef>(JoinRefType::CROSS);
-		join->left = std::move(parameters);
-		join->right = make_uniq<SubqueryRef>(std::move(body), body_alias);
+		body->function_body = own_body;
+		body->function_owner = owner;
+		if (!macro_def.config.empty()) {
+			body->function_config = &macro_def.config;
+		}
+		auto body_ref = make_uniq<SubqueryRef>(std::move(body), body_alias);
 		auto select_node = make_uniq<SelectNode>();
 		select_node->select_list.push_back(make_uniq<StarExpression>(body_alias));
-		select_node->from_table = std::move(join);
+		if (parameters) {
+			auto join = make_uniq<JoinRef>(JoinRefType::CROSS);
+			join->left = std::move(parameters);
+			join->right = std::move(body_ref);
+			select_node->from_table = std::move(join);
+		} else {
+			select_node->from_table = std::move(body_ref);
+		}
 		node = std::move(select_node);
 	}
 

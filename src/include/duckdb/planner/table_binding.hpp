@@ -8,6 +8,7 @@
 
 #pragma once
 
+#include "duckdb/catalog/permissions.hpp"
 #include "duckdb/common/common.hpp"
 #include "duckdb/common/case_insensitive_map.hpp"
 #include "duckdb/parser/column_definition.hpp"
@@ -105,6 +106,26 @@ protected:
 	bool null_extended = false;
 };
 
+struct ColumnReadCheck {
+	ColumnReadCheck(StandardEntry &entry_p, const Permissions &permissions_p, RoleAccess role_p, bool require_any_p,
+	                optional_ptr<const vector<ColumnAcl>> column_acls_p)
+	    : entry(entry_p), permissions(permissions_p), role(role_p), require_any(require_any_p),
+	      column_acls(column_acls_p) {
+	}
+
+	void Read(idx_t column_index);
+	bool CanRead(idx_t column_index) const;
+	bool CanReadAny() const;
+	bool Allowed() const;
+
+	StandardEntry &entry;
+	const Permissions &permissions;
+	RoleAccess role;
+	bool require_any;
+	optional_ptr<const vector<ColumnAcl>> column_acls;
+	vector<idx_t> columns;
+};
+
 struct EntryBinding : public Binding {
 public:
 	static constexpr const BindingType TYPE = BindingType::CATALOG_ENTRY;
@@ -113,8 +134,10 @@ public:
 	EntryBinding(BindingAlias alias, vector<LogicalType> types, vector<Identifier> names, TableIndex index,
 	             StandardEntry &entry);
 	StandardEntry &entry;
+	shared_ptr<ColumnReadCheck> column_read;
 
 public:
+	BindResult Bind(ColumnRefExpression &colref, idx_t depth) override;
 	optional_ptr<StandardEntry> GetStandardEntry() override;
 };
 
@@ -136,6 +159,7 @@ public:
 	//! Virtual columns
 	virtual_column_map_t virtual_columns;
 	vector<column_t> row_id_columns;
+	shared_ptr<ColumnReadCheck> column_read;
 
 public:
 	unique_ptr<ParsedExpression> ExpandGeneratedColumn(const Identifier &column_name);

@@ -130,7 +130,8 @@ BoundStatement Binder::Bind(ExecuteStatement &stmt) {
 		}
 	}
 	optional<Identifier> replaces;
-	if (rebind != RebindQueryInfo::ATTEMPT_TO_REBIND && !prepared->DataIsCurrent(context)) {
+	if (rebind != RebindQueryInfo::ATTEMPT_TO_REBIND &&
+	    (!prepared->CatalogIsCurrent(context) || !prepared->DataIsCurrent(context))) {
 		Planner generic_planner(context);
 		generic_planner.parameter_type_hints = prepared->parameter_type_hints;
 		auto replanned = generic_planner.PrepareSQLStatement(prepared->unbound_statement->Copy());
@@ -138,6 +139,8 @@ BoundStatement Binder::Bind(ExecuteStatement &stmt) {
 			VerifyResultTypes(stmt, *entry->second, *replanned, bind_values);
 			replanned->parameter_type_hints = prepared->parameter_type_hints;
 			replanned->prepare_time = prepared->prepare_time;
+			replanned->generic_plans = prepared->generic_plans;
+			replanned->custom_plans = prepared->custom_plans;
 			prepared = std::move(replanned);
 			rebound_plan = std::move(generic_planner.plan);
 			replaces = stmt.name;
@@ -147,7 +150,6 @@ BoundStatement Binder::Bind(ExecuteStatement &stmt) {
 		}
 	}
 	if (rebind == RebindQueryInfo::ATTEMPT_TO_REBIND) {
-		// catalog was modified or statement does not have clear types: rebind the statement before running the execute
 		Planner prepared_planner(context);
 		prepared_planner.parameter_data = bind_values;
 		prepared_planner.parameter_type_hints = entry->second->parameter_type_hints;
@@ -158,6 +160,8 @@ BoundStatement Binder::Bind(ExecuteStatement &stmt) {
 		D_ASSERT(prepared->properties.bound_all_parameters);
 		global_binder_state->bound_tables = prepared_planner.binder->global_binder_state->bound_tables;
 	}
+	const bool custom_plan = rebind == RebindQueryInfo::ATTEMPT_TO_REBIND;
+	auto stored = custom_plan ? entry->second : prepared;
 	// copy the properties of the prepared statement into the planner
 	auto &properties = GetStatementProperties();
 	properties = prepared->properties;
@@ -168,14 +172,14 @@ BoundStatement Binder::Bind(ExecuteStatement &stmt) {
 	result.types = prepared->types;
 
 	prepared->Bind(context, bind_values);
+	auto execute_plan = make_uniq<LogicalExecute>(std::move(prepared));
+	execute_plan->stored = std::move(stored);
+	execute_plan->custom_plan = custom_plan;
 	if (rebound_plan) {
-		auto execute_plan = make_uniq<LogicalExecute>(std::move(prepared));
 		execute_plan->replaces = std::move(replaces);
 		execute_plan->children.push_back(std::move(rebound_plan));
-		result.plan = std::move(execute_plan);
-	} else {
-		result.plan = make_uniq<LogicalExecute>(std::move(prepared));
 	}
+	result.plan = std::move(execute_plan);
 	return result;
 }
 

@@ -45,6 +45,7 @@ void CurrentSettingDynamic(DataChunk &args, ExpressionState &state, Vector &resu
 			continue;
 		}
 		Identifier key(entry.GetValue().GetString());
+		Settings::CheckRead(context, key);
 		Value val;
 		if (!context.TryGetCurrentSetting(key, val)) {
 			Catalog::AutoloadExtensionByConfigName(context, key);
@@ -77,6 +78,7 @@ unique_ptr<FunctionData> CurrentSettingBind(BindScalarFunctionInput &input) {
 	if (key.empty()) {
 		throw ParserException("Key name for current_setting must not be empty");
 	}
+	Settings::CheckRead(context, key);
 
 	Value val;
 	if (!context.TryGetCurrentSetting(key, val)) {

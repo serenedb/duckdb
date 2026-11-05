@@ -10,6 +10,7 @@
 
 #include "duckdb/parser/parsed_data/create_info.hpp"
 
+#include "duckdb/common/enums/role_capability.hpp"
 #include "duckdb/common/identifier.hpp"
 namespace duckdb {
 
@@ -33,6 +34,7 @@ struct CreateFunctionInfo : public CreateInfo {
 	Identifier alias_of;
 	//! Function description
 	vector<FunctionDescription> descriptions;
+	RoleCapability required_capability = RoleCapability::None;
 
 	const Identifier &GetFunctionName() const {
 		return qualified_name.Name();

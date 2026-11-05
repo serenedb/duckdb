@@ -166,8 +166,8 @@ TEST_CASE("V2: prepared_statement_reuses_plan reports reuse honestly", "[capi_v2
 	REQUIRE(PsReusesPlan(fx.conn, "SELECT 42"));
 	// A parameter whose type the cast anchors at prepare time: still reused.
 	REQUIRE(PsReusesPlan(fx.conn, "SELECT $1::INTEGER + 1"));
-	// A table scan re-binds every execution so a catalog change is picked up.
-	REQUIRE_FALSE(PsReusesPlan(fx.conn, "SELECT x FROM t WHERE x = $1"));
+	REQUIRE(PsReusesPlan(fx.conn, "SELECT x FROM t WHERE x = $1"));
+	REQUIRE_FALSE(PsReusesPlan(fx.conn, "SELECT x FROM t WHERE x::VARCHAR LIKE $1"));
 	// Unanchored parameters: the types are unknown until values arrive.
 	REQUIRE_FALSE(PsReusesPlan(fx.conn, "SELECT $1 + $2"));
 }
@@ -192,12 +192,12 @@ TEST_CASE("V2: require_cacheable rejects a re-bound plan", "[capi_v2][prepared_s
 	PsSeedTable(fx.conn);
 
 	auto rc = DUCKDB_V2_ERROR_NONE;
-	auto prepared = PsPrepare(fx.conn, "SELECT x FROM t WHERE x = $1", true, &rc);
+	auto prepared = PsPrepare(fx.conn, "SELECT x FROM t WHERE x::VARCHAR LIKE $1", true, &rc);
 	REQUIRE(rc == DUCKDB_V2_ERROR_INPUT_INVALID);
 	REQUIRE(prepared == nullptr);
 
 	// The same statement prepares fine without the flag; the caller then knows what it got.
-	REQUIRE_FALSE(PsReusesPlan(fx.conn, "SELECT x FROM t WHERE x = $1"));
+	REQUIRE_FALSE(PsReusesPlan(fx.conn, "SELECT x FROM t WHERE x::VARCHAR LIKE $1"));
 }
 
 // ===========================================================================

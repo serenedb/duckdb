@@ -3,6 +3,7 @@
 #include "duckdb/main/database.hpp"
 #include "duckdb/parser/parsed_data/create_pragma_function_info.hpp"
 #include "duckdb/parser/parser.hpp"
+#include "duckdb/parser/tableref/subqueryref.hpp"
 #include "json_deserializer.hpp"
 #include "json_functions.hpp"
 #include "json_serializer.hpp"
@@ -277,55 +278,23 @@ PragmaFunctionSet JSONFunctions::GetExecuteJsonSerializedSqlPragmaFunction() {
 //----------------------------------------------------------------------
 // JSON EXECUTE SERIALIZED SQL (TABLE FUNCTION)
 //----------------------------------------------------------------------
-struct ExecuteSqlTableFunction {
-	struct BindData : public TableFunctionData {
-		shared_ptr<Relation> plan;
-		unique_ptr<QueryResult> result;
-		unique_ptr<Connection> con;
-	};
-
-	static unique_ptr<FunctionData> Bind(ClientContext &context, TableFunctionBindInput &input,
-	                                     vector<LogicalType> &return_types, vector<Identifier> &names) {
-		JSONFunctionLocalState local_state(context);
-		auto alc = local_state.json_allocator->GetYYAlc();
-
-		auto result = make_uniq<BindData>();
-
-		result->con = make_uniq<Connection>(*context.db);
-		if (input.inputs[0].IsNull()) {
-			throw BinderException("json_execute_serialized_sql cannot execute NULL plan");
-		}
-		auto serialized = input.inputs[0].GetValueUnsafe<string>();
-		auto stmts = DeserializeSelectStatement(serialized, alc);
-		if (stmts.size() != 1) {
-			throw BinderException("json_execute_serialized_sql expects exactly one statement");
-		}
-		result->plan = result->con->RelationFromQuery(std::move(stmts[0]));
-
-		for (auto &col : result->plan->Columns()) {
-			return_types.emplace_back(col.Type());
-			names.emplace_back(col.Name());
-		}
-		return std::move(result);
+static unique_ptr<TableRef> ExecuteJsonSerializedSqlBindReplace(ClientContext &context, TableFunctionBindInput &input) {
+	if (input.inputs[0].IsNull()) {
+		throw BinderException("json_execute_serialized_sql cannot execute NULL plan");
 	}
-
-	static void Function(ClientContext &context, TableFunctionInput &data_p, DataChunk &output) {
-		auto &data = data_p.bind_data->CastNoConst<BindData>();
-		if (!data.result) {
-			data.result = data.plan->Execute();
-		}
-		auto result_chunk = data.result->Fetch();
-		if (!result_chunk) {
-			return;
-		}
-		output.Move(*result_chunk);
+	JSONFunctionLocalState local_state(context);
+	auto alc = local_state.json_allocator->GetYYAlc();
+	auto stmts = DeserializeSelectStatement(input.inputs[0].GetValueUnsafe<string>(), alc);
+	if (stmts.size() != 1) {
+		throw BinderException("json_execute_serialized_sql expects exactly one statement");
 	}
-};
+	return make_uniq<SubqueryRef>(std::move(stmts[0]));
+}
 
 TableFunctionSet JSONFunctions::GetExecuteJsonSerializedSqlFunction() {
 	TableFunction func("json_execute_serialized_sql",
-	                   FunctionSignature().AddPositionalOnly("serialized_sql", LogicalType::VARCHAR),
-	                   ExecuteSqlTableFunction::Function, ExecuteSqlTableFunction::Bind);
+	                   FunctionSignature().AddPositionalOnly("serialized_sql", LogicalType::VARCHAR), nullptr, nullptr);
+	func.bind_replace = ExecuteJsonSerializedSqlBindReplace;
 	return TableFunctionSet(func);
 }
 

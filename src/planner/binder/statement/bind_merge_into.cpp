@@ -235,7 +235,7 @@ BoundStatement Binder::BindNode(MergeQueryNode &node) {
 	// bind the target table
 	auto target_binder = Binder::CreateBinder(context, this);
 	auto table_alias = node.target->alias;
-	auto bound_table = target_binder->Bind(*node.target);
+	auto bound_table = target_binder->BindTarget(*node.target, TableRefUse::DML_TARGET);
 	if (bound_table.plan->type != LogicalOperatorType::LOGICAL_GET) {
 		throw BinderException("Can only merge into base tables!");
 	}
@@ -254,6 +254,59 @@ BoundStatement Binder::BindNode(MergeQueryNode &node) {
 		}
 	}
 	auto &table = *table_ptr;
+	RecordConstraintKeyVisibility(table);
+	const auto named_columns = [&](const vector<Identifier> &names) {
+		vector<LogicalIndex> columns;
+		for (auto &name : names) {
+			if (table.ColumnExists(name)) {
+				columns.push_back(table.GetColumn(name).Logical());
+			}
+		}
+		return columns;
+	};
+	const auto leading_columns = [&](idx_t count) {
+		vector<LogicalIndex> columns;
+		for (auto &column : table.GetColumns().Logical()) {
+			if (columns.size() == count) {
+				break;
+			}
+			columns.push_back(column.Logical());
+		}
+		return columns;
+	};
+	for (auto &entry : node.actions) {
+		for (auto &action : entry.second) {
+			switch (action->action_type) {
+			case MergeActionType::MERGE_UPDATE:
+				RequirePrivilege(table, AclMode::Update,
+				                 action->update_info && !action->update_info->columns.empty()
+				                     ? named_columns(action->update_info->columns)
+				                     : leading_columns(table.GetColumns().LogicalColumnCount()),
+				                 false);
+				break;
+			case MergeActionType::MERGE_DELETE:
+				RequirePrivilege(table, AclMode::Delete, {}, false);
+				break;
+			case MergeActionType::MERGE_INSERT:
+				if (on_conflict_merge.get() == &node) {
+					break;
+				}
+				if (action->default_values) {
+					RequirePrivilege(table, AclMode::Insert, {}, true);
+				} else if (!action->insert_columns.empty()) {
+					RequirePrivilege(table, AclMode::Insert, named_columns(action->insert_columns), false);
+				} else {
+					const auto count = action->column_order == InsertColumnOrder::INSERT_BY_POSITION
+					                       ? action->expressions.size()
+					                       : table.GetColumns().LogicalColumnCount();
+					RequirePrivilege(table, AclMode::Insert, leading_columns(count), false);
+				}
+				break;
+			default:
+				break;
+			}
+		}
+	}
 
 	bool has_triggers = false;
 	auto transaction = table.ParentCatalog().GetCatalogTransaction(context);
@@ -312,10 +365,7 @@ BoundStatement Binder::BindNode(MergeQueryNode &node) {
 	vector<unique_ptr<Expression>> projection_expressions;
 
 	// bind table constraints/default values in case these are referenced
-	auto &catalog_name = table.ParentCatalog().GetName();
-	auto schema_name = table.ParentSchema(context).name;
-	BindDefaultValues(table.GetColumns(), merge_into->bound_defaults, catalog_name.GetIdentifierName(),
-	                  schema_name.GetIdentifierName());
+	BindDefaultValues(table, merge_into->bound_defaults);
 
 	merge_into->bound_constraints = BindConstraints(table);
 
@@ -481,7 +531,7 @@ BoundStatement Binder::BindNode(MergeQueryNode &node) {
 		// add the merge_action virtual column
 		virtual_column_map_t virtual_columns;
 		virtual_columns.insert(make_pair(VIRTUAL_COLUMN_START, TableColumn("merge_action", LogicalType::VARCHAR)));
-		return BindReturning(std::move(node.returning_list), table, table_alias, merge_table_index,
+		return BindReturning(node, std::move(node.returning_list), table, table_alias, merge_table_index,
 		                     std::move(index_as_logicaloperator), std::move(virtual_columns));
 	}
 

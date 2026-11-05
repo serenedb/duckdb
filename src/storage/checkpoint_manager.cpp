@@ -890,7 +890,7 @@ void CheckpointWriter::WriteSubscription(InCatalogEntry &subscription, Serialize
 void CheckpointReader::ReadSubscription(CatalogTransaction transaction, Deserializer &deserializer) {
 	auto info = deserializer.ReadProperty<unique_ptr<CreateInfo>>(100, "subscription");
 	info->on_conflict = OnCreateConflict::IGNORE_ON_CONFLICT;
-	catalog.Cast<DuckCatalog>().CreateSubscription(transaction, info->Cast<CreateSubscriptionInfo>());
+	catalog.Cast<DuckCatalog>().DuckCatalog::CreateSubscription(transaction, info->Cast<CreateSubscriptionInfo>());
 }
 
 void CheckpointWriter::WriteReplicationOrigin(InCatalogEntry &origin, Serializer &serializer) {

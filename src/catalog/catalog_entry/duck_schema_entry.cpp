@@ -25,7 +25,9 @@
 #include "duckdb/catalog/default/default_views.hpp"
 #include "duckdb/catalog/dependency_list.hpp"
 #include "duckdb/execution/index/index_type_set.hpp"
+#include "duckdb/catalog/permissions.hpp"
 #include "duckdb/main/attached_database.hpp"
+#include "duckdb/main/config.hpp"
 #include "duckdb/main/database.hpp"
 #include "duckdb/parser/constraints/foreign_key_constraint.hpp"
 #include "duckdb/parser/expression/constant_expression.hpp"
@@ -507,25 +509,108 @@ optional_ptr<CatalogEntry> DuckSchemaEntry::CreatePragmaFunction(CatalogTransact
 	return AddEntry(transaction, std::move(pragma_function), info.on_conflict);
 }
 
+static vector<NamedAcl> BuiltinFunctionRows(ClientContext &context, DuckSchemaEntry &schema,
+                                            CatalogTransaction transaction) {
+	auto &config = DBConfig::GetConfig(context);
+	vector<NamedAcl> rows;
+	unordered_set<string> keys;
+	const auto add = [&](CatalogEntry &entry) {
+		if (!entry.internal) {
+			return;
+		}
+		const auto overloads = FunctionOverloadCount(entry);
+		for (idx_t overload = 0; overload < overloads; overload++) {
+			auto key = config.builtin_function_key(entry, overload);
+			if (!key.empty() && keys.insert(key).second) {
+				rows.push_back(NamedAcl {std::move(key), BuiltinFunctionAcl(entry, config.bootstrap_role)});
+			}
+		}
+	};
+	for (auto kind : {CatalogType::MACRO_ENTRY, CatalogType::TABLE_MACRO_ENTRY}) {
+		schema.GetCatalogSet(kind).Scan(transaction, add);
+	}
+	const Identifier information_schema("information_schema");
+	const bool information = schema.name == information_schema;
+	Catalog::GetSystemCatalog(context).ScanSchemas(context, [&](SchemaCatalogEntry &system_schema) {
+		if ((system_schema.name == information_schema) != information) {
+			return;
+		}
+		for (auto kind : {CatalogType::SCALAR_FUNCTION_ENTRY, CatalogType::TABLE_FUNCTION_ENTRY,
+		                  CatalogType::PRAGMA_FUNCTION_ENTRY}) {
+			system_schema.Scan(context, kind, add);
+		}
+	});
+	return rows;
+}
+
 static void AlterAllInSchema(DuckSchemaEntry &schema, CatalogTransaction transaction, AlterPermissionsInfo &info) {
+	const bool functions = info.entry_catalog_type == CatalogType::MACRO_ENTRY && info.include_functions;
 	vector<CatalogType> kinds {info.entry_catalog_type};
 	if (info.entry_catalog_type == CatalogType::MACRO_ENTRY) {
 		kinds.push_back(CatalogType::TABLE_MACRO_ENTRY);
 	}
 	info.all_in_schema = false;
+	struct Target {
+		Identifier name;
+		idx_t overload_oid;
+	};
 	for (auto kind : kinds) {
-		vector<Identifier> names;
+		vector<Target> targets;
+		vector<reference<CatalogEntry>> system_relations;
 		schema.GetCatalogSet(kind).Scan(transaction, [&](CatalogEntry &entry) {
-			if (!entry.internal) {
-				names.push_back(entry.name);
+			if (entry.internal) {
+				if (kind == CatalogType::TABLE_ENTRY && !IsUnowned(entry) && transaction.HasContext()) {
+					system_relations.push_back(entry);
+				}
+				return;
+			}
+			if (kind != CatalogType::MACRO_ENTRY && kind != CatalogType::TABLE_MACRO_ENTRY) {
+				targets.push_back({entry.name, 0});
+				return;
+			}
+			auto &macro = entry.Cast<MacroCatalogEntry>();
+			for (auto &overload : macro.macros) {
+				if (overload->is_procedure ? info.include_procedures : info.include_functions) {
+					targets.push_back({entry.name, macro.OverloadOid(*overload)});
+				}
 			}
 		});
 		info.entry_catalog_type = kind;
-		for (auto &name : names) {
-			info.SetQualifiedName(schema.GetQualifiedName(name));
+		for (auto &target : targets) {
+			info.SetQualifiedName(schema.GetQualifiedName(target.name));
+			info.overload_oid = target.overload_oid;
 			schema.Alter(transaction, info);
 		}
+		info.overload_oid = 0;
+		for (auto &relation : system_relations) {
+			auto &context = transaction.GetContext();
+			auto redirected = info.Copy();
+			auto &grant = redirected->Cast<AlterPermissionsInfo>();
+			grant.relation_id = relation.get().oid;
+			grant.builtin_acl = relation.get().permissions.acl;
+			grant.object_owner_id = relation.get().permissions.owner;
+			grant.entry_catalog_type = CatalogType::DATABASE_ENTRY;
+			grant.SetQualifiedName(Identifier(), Identifier(), schema.ParentCatalog().GetName());
+			Catalog::GetCatalog(context, DBConfig::GetConfig(context).cluster_catalog).Alter(context, grant);
+		}
 	}
+	if (!functions || !schema.internal || IsUnowned(schema) || !transaction.HasContext() ||
+	    !DBConfig::GetConfig(transaction.GetContext()).builtin_function_key) {
+		return;
+	}
+	auto &context = transaction.GetContext();
+	auto rows = BuiltinFunctionRows(context, schema, transaction);
+	if (rows.empty()) {
+		return;
+	}
+	auto &config = DBConfig::GetConfig(context);
+	auto redirected = info.Copy();
+	auto &grant = redirected->Cast<AlterPermissionsInfo>();
+	grant.functions = std::move(rows);
+	grant.object_owner_id = config.bootstrap_role;
+	grant.entry_catalog_type = CatalogType::DATABASE_ENTRY;
+	grant.SetQualifiedName(Identifier(), Identifier(), schema.ParentCatalog().GetName());
+	Catalog::GetCatalog(context, config.cluster_catalog).Alter(context, grant);
 }
 
 static void DropIndexesOnRemovedColumn(DuckSchemaEntry &schema, CatalogTransaction transaction, CatalogSet &tables,
@@ -611,6 +696,71 @@ static void MoveAlong(DuckSchemaEntry &schema, CatalogTransaction transaction, c
 	}
 }
 
+static bool MoveOverload(DuckSchemaEntry &schema, CatalogTransaction transaction, CatalogSet &set, CatalogEntry &entry,
+                         const RenameScalarFunctionInfo &info) {
+	if (!info.overload_oid ||
+	    (entry.type != CatalogType::MACRO_ENTRY && entry.type != CatalogType::TABLE_MACRO_ENTRY)) {
+		return false;
+	}
+	auto &function = entry.Cast<MacroCatalogEntry>();
+	auto target = set.GetEntry(transaction, info.new_name);
+	if (function.macros.size() == 1 && !target) {
+		return false;
+	}
+	if (target && target->type != entry.type) {
+		throw CatalogException::EntryAlreadyExists(entry.type, info.new_name);
+	}
+	auto source = function.GetSerializedInfo();
+	auto &source_macros = source->Cast<CreateMacroInfo>().macros;
+	auto source_it =
+	    std::find_if(source_macros.begin(), source_macros.end(), [&](const unique_ptr<MacroFunction> &macro) {
+		    return function.OverloadOid(*macro) == info.overload_oid;
+	    });
+	if (source_it == source_macros.end()) {
+		throw CatalogException("function with OID %llu does not exist", info.overload_oid);
+	}
+	auto moved = std::move(*source_it);
+	source_macros.erase(source_it);
+	moved->permissions = function.OverloadPermissions(*moved);
+	moved->comment = function.OverloadComment(*moved);
+	moved->oid = 0;
+	unique_ptr<CreateInfo> destination;
+	if (target) {
+		destination = target->GetSerializedInfo();
+		auto &macros = destination->Cast<CreateMacroInfo>().macros;
+		const auto types = moved->ParameterTypes();
+		if (std::any_of(macros.begin(), macros.end(),
+		                [&](const unique_ptr<MacroFunction> &macro) { return macro->HasParameterTypes(types); })) {
+			auto extra_info = Exception::InitializeExtraInfo("ENTRY_ALREADY_EXISTS", optional_idx());
+			extra_info["type"] = CatalogTypeToString(CatalogType::MACRO_ENTRY);
+			throw CatalogException(extra_info, StringUtil::Format("function %s(%s) already exists in schema \"%s\"",
+			                                                      info.new_name.GetIdentifierName(),
+			                                                      MacroFunction::ParameterTypesToString(types),
+			                                                      schema.name.GetIdentifierName()));
+		}
+		macros.push_back(std::move(moved));
+		destination->on_conflict = OnCreateConflict::ALTER_ON_CONFLICT;
+	} else {
+		destination = function.GetInfo();
+		auto &macro_info = destination->Cast<CreateMacroInfo>();
+		macro_info.SetFunctionName(info.new_name);
+		macro_info.permissions = moved->permissions;
+		macro_info.comment = moved->comment;
+		moved->permissions = Permissions();
+		moved->comment = Value();
+		macro_info.macros.clear();
+		macro_info.macros.push_back(std::move(moved));
+	}
+	if (source_macros.empty()) {
+		set.DropEntry(transaction, function.name, false);
+	} else {
+		source->on_conflict = OnCreateConflict::ALTER_ON_CONFLICT;
+		schema.CreateFunction(transaction, source->Cast<CreateFunctionInfo>());
+	}
+	schema.CreateFunction(transaction, destination->Cast<CreateFunctionInfo>());
+	return true;
+}
+
 void DuckSchemaEntry::Alter(CatalogTransaction transaction, AlterInfo &info) {
 	if (info.type == AlterType::ALTER_PERMISSIONS && info.Cast<AlterPermissionsInfo>().all_in_schema) {
 		AlterAllInSchema(*this, transaction, info.Cast<AlterPermissionsInfo>());
@@ -624,7 +774,10 @@ void DuckSchemaEntry::Alter(CatalogTransaction transaction, AlterInfo &info) {
 		auto &name = info.GetQualifiedName().Name();
 		for (auto kind : {CatalogType::SCALAR_FUNCTION_ENTRY, CatalogType::TABLE_MACRO_ENTRY}) {
 			auto &kind_set = GetCatalogSet(kind);
-			if (kind_set.GetEntry(transaction, name)) {
+			if (auto function = kind_set.GetEntry(transaction, name)) {
+				if (MoveOverload(*this, transaction, kind_set, *function, info.Cast<RenameScalarFunctionInfo>())) {
+					return;
+				}
 				if (!kind_set.AlterEntry(transaction, name, info) &&
 				    info.if_not_found == OnEntryNotFound::THROW_EXCEPTION) {
 					throw CatalogException::MissingEntry(CatalogType::MACRO_ENTRY, name, string());
@@ -764,7 +917,7 @@ void DuckSchemaEntry::DropEntry(ClientContext &context, DropInfo &info) {
 		                       CatalogTypeToString(info.type));
 	}
 	if (info.has_func_args) {
-		auto create_info = existing_entry->Cast<MacroCatalogEntry>().GetInfo();
+		auto create_info = existing_entry->GetSerializedInfo();
 		auto &macros = create_info->Cast<CreateMacroInfo>().macros;
 		auto overload = std::find_if(macros.begin(), macros.end(), [&](const unique_ptr<MacroFunction> &function) {
 			return function->HasParameterTypes(info.func_parameters);
@@ -773,8 +926,12 @@ void DuckSchemaEntry::DropEntry(ClientContext &context, DropInfo &info) {
 			if (info.if_not_found == OnEntryNotFound::RETURN_NULL) {
 				return;
 			}
-			throw CatalogException("function %s(%s) does not exist", info.GetQualifiedName().Name().GetIdentifierName(),
-			                       MacroFunction::ParameterTypesToString(info.func_parameters));
+			auto extra_info = Exception::InitializeExtraInfo("MISSING_ENTRY", optional_idx());
+			extra_info["type"] = CatalogTypeToString(info.type);
+			throw CatalogException(extra_info,
+			                       StringUtil::Format("function %s(%s) does not exist",
+			                                          info.GetQualifiedName().Name().GetIdentifierName(),
+			                                          MacroFunction::ParameterTypesToString(info.func_parameters)));
 		}
 		if (macros.size() > 1) {
 			macros.erase(overload);

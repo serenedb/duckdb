@@ -34,10 +34,11 @@ static unique_ptr<FunctionData> DuckDBTableSampleBind(ClientContext &context, Ta
                                                       vector<LogicalType> &return_types, vector<Identifier> &names) {
 	// look up the table name in the catalog
 	auto qname = QualifiedName::Parse(input.inputs[0].GetValue<string>());
-	CatalogEntryRetriever retriever(context);
+	CatalogEntryRetriever own_retriever(context);
+	auto &retriever = input.binder ? input.binder->EntryRetriever() : own_retriever;
 	qname = Binder::BindTableName(retriever, qname);
 
-	auto &entry = Catalog::GetEntry<TableCatalogEntry>(context, qname);
+	auto &entry = retriever.GetEntry<TableCatalogEntry>(qname);
 	if (entry.type != CatalogType::TABLE_ENTRY) {
 		throw NotImplementedException("Invalid Catalog type passed to table_sample()");
 	}
@@ -89,9 +90,11 @@ static void DuckDBTableSampleFunction(ClientContext &context, TableFunctionInput
 }
 
 void DuckDBTableSample::RegisterFunction(BuiltinFunctions &set) {
-	set.AddFunction(TableFunction("duckdb_table_sample",
-	                              FunctionSignature().AddPositionalOnly("table_name", LogicalType::VARCHAR),
-	                              DuckDBTableSampleFunction, DuckDBTableSampleBind, DuckDBTableSampleInit));
+	TableFunction table_sample("duckdb_table_sample",
+	                           FunctionSignature().AddPositionalOnly("table_name", LogicalType::VARCHAR),
+	                           DuckDBTableSampleFunction, DuckDBTableSampleBind, DuckDBTableSampleInit);
+	table_sample.required_capability = RoleCapability::Superuser;
+	set.AddFunction(table_sample);
 }
 
 } // namespace duckdb

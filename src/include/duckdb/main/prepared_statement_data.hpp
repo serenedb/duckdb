@@ -50,11 +50,14 @@ public:
 	case_insensitive_map_t<LogicalType> parameter_type_hints;
 	vector<shared_ptr<PlanDataVersion>> data_versions;
 	timestamp_tz_t prepare_time = timestamp_tz_t::epoch();
+	idx_t generic_plans = 0;
+	idx_t custom_plans = 0;
 
 public:
 	void CheckParameterCount(idx_t parameter_count);
 	//! Whether or not the prepared statement data requires the query to rebound for the given parameters
 	bool RequireRebind(ClientContext &context, optional_ptr<identifier_map_t<BoundParameterData>> values);
+	bool CatalogIsCurrent(ClientContext &context) const;
 	bool DataIsCurrent(ClientContext &context) const;
 	//! Fill in missing parameter values from user variables
 	void PopulateMissingParameterValues(ClientContext &context, identifier_map_t<BoundParameterData> &values) const;

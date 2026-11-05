@@ -34,10 +34,35 @@ string ParseInfo::TypeToString(CatalogType type) {
 		return "TRIGGER";
 	case CatalogType::JOB_ENTRY:
 		return "JOB";
+	case CatalogType::ROLE_ENTRY:
+		return "ROLE";
+	case CatalogType::DATABASE_ENTRY:
+		return "DATABASE";
+	case CatalogType::FOREIGN_SERVER_ENTRY:
+		return "SERVER";
+	case CatalogType::TOKENIZER_ENTRY:
+		return "TEXT SEARCH DICTIONARY";
+	case CatalogType::SUBSCRIPTION_ENTRY:
+		return "SUBSCRIPTION";
 	default:
 		throw InternalException("ParseInfo::TypeToString for CatalogType with type: %s not implemented",
 		                        EnumUtil::ToString(type));
 	}
+}
+
+string ParseInfo::RoutineKeyword(bool include_functions, bool include_procedures) {
+	return !include_procedures ? "FUNCTION" : !include_functions ? "PROCEDURE" : "ROUTINE";
+}
+
+string ParseInfo::RoutineToString(const QualifiedName &name, bool has_func_args,
+                                  const vector<LogicalType> &parameters) {
+	auto result = name.ToString(QualifiedNameToStringMode::HIDE_DEFAULT_SCHEMA);
+	if (has_func_args) {
+		result +=
+		    "(" +
+		    StringUtil::Join(parameters, ", ", [](const LogicalType &parameter) { return parameter.ToString(); }) + ")";
+	}
+	return result;
 }
 
 string RenderOptionList(const case_insensitive_map_t<unique_ptr<ParsedExpression>> &parsed_options,

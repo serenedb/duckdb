@@ -9,6 +9,7 @@
 #pragma once
 
 #include "duckdb/storage/storage_info.hpp"
+#include "duckdb/common/enums/role_capability.hpp"
 #include "duckdb/common/allocator.hpp"
 #include "duckdb/common/case_insensitive_map.hpp"
 #include "duckdb/common/cgroups.hpp"
@@ -49,6 +50,7 @@ class BlockAllocator;
 class BufferManager;
 class BufferPool;
 class CastFunctionSet;
+class CatalogEntry;
 class CollationBinding;
 class ClientContext;
 class DuckDB;
@@ -73,6 +75,17 @@ struct CompressionFunctionSet;
 struct DatabaseCacheEntry;
 struct DBConfig;
 struct SettingLookupResult;
+
+struct ForeignDataWrapper {
+	idx_t oid = 0;
+	idx_t owner = 0;
+};
+
+struct Language {
+	idx_t oid = 0;
+	idx_t owner = 0;
+	bool trusted = false;
+};
 
 //! NOTE: DBConfigOptions is mostly deprecated.
 //! If you want to add a setting that can be set by the user, add it as a generic setting to `settings.json`.
@@ -210,6 +223,18 @@ public:
 	shared_ptr<DatabaseFilePathManager> path_manager;
 	//! Database configuration variables as controlled by SET
 	GlobalUserSettings user_settings;
+	identifier_set_t builtin_relations;
+	unordered_map<string, ForeignDataWrapper> foreign_data_wrappers;
+	case_insensitive_map_t<Language> languages;
+	Identifier cluster_catalog;
+	idx_t bootstrap_role = 0;
+	idx_t database_owner_role = 0;
+	typedef string (*builtin_function_key_t)(const CatalogEntry &function, idx_t overload);
+	typedef string (*builtin_signature_key_t)(const CatalogEntry &function, const vector<LogicalType> &arguments);
+	builtin_function_key_t builtin_function_key = nullptr;
+	builtin_signature_key_t builtin_signature_key = nullptr;
+	typedef idx_t (*builtin_type_oid_t)(const LogicalType &type, string &name);
+	builtin_type_oid_t builtin_type_oid = nullptr;
 
 public:
 	DUCKDB_API static DBConfig &GetConfig(ClientContext &context);
@@ -223,15 +248,19 @@ public:
 	DUCKDB_API static idx_t GetAliasCount();
 	DUCKDB_API static vector<Identifier> GetOptionNames();
 	DUCKDB_API static bool IsInMemoryDatabase(const char *database_path);
+	DUCKDB_API const ForeignDataWrapper &GetForeignDataWrapper(const string &name) const;
+	DUCKDB_API const Language &GetLanguage(const string &name) const;
 
 	DUCKDB_API void AddExtensionOption(const Identifier &name, string description, LogicalType parameter,
 	                                   const Value &default_value = Value(), set_option_callback_t function = nullptr,
 	                                   SetScope default_scope = SetScope::SESSION, bool is_debug = false,
-	                                   bool is_deprecated = false);
+	                                   bool is_deprecated = false,
+	                                   SettingAccess access = {SettingContext::SUPERUSER, true, false});
 	DUCKDB_API void AddExtensionOption(const Identifier &name, string description, LogicalType parameter,
 	                                   const Value &default_value, set_option_callback_t function,
 	                                   reset_option_callback_t reset_function,
-	                                   SetScope default_scope = SetScope::SESSION, bool no_reset_all = false);
+	                                   SetScope default_scope = SetScope::SESSION, bool no_reset_all = false,
+	                                   SettingAccess access = {SettingContext::SUPERUSER, true, false});
 	DUCKDB_API bool HasExtensionOption(const Identifier &name) const;
 	DUCKDB_API identifier_map_t<ExtensionOption> GetExtensionSettings() const;
 	DUCKDB_API bool TryGetExtensionOption(const Identifier &name, ExtensionOption &result) const;

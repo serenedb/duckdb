@@ -89,6 +89,7 @@ void DuckDBExternalFileCacheFun::RegisterFunction(BuiltinFunctions &set) {
 	TableFunction function("duckdb_external_file_cache", {}, DuckDBExternalFileCacheFunction,
 	                       DuckDBExternalFileCacheBind, DuckDBExternalFileCacheInit);
 	function.table_scan_progress = DuckDBExternalFileCacheProgress;
+	function.required_capability = RoleCapability::Superuser;
 	set.AddFunction(function);
 }
 

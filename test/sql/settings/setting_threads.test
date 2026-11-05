@@ -27,7 +27,7 @@ Invalid Input Error: threads must be a positive integer
 statement error
 SET external_threads = NULL;
 ----
-Invalid Input Error: external_threads must be a positive integer
+Settings Error: parameter "external_threads" cannot be changed
 
 statement error
 SET async_threads = NULL;

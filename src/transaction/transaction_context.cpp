@@ -40,6 +40,7 @@ void TransactionContext::BeginTransaction() {
 	auto start_timestamp = Timestamp::GetCurrentTimestamp();
 	auto global_transaction_id = context.db->GetDatabaseManager().GetNewTransactionNumber();
 	current_transaction = make_uniq<MetaTransaction>(context, start_timestamp, global_transaction_id);
+	context.hide_constraint_keys = false;
 
 	// Notify any registered state of transaction begin
 	for (auto &state : context.registered_state->States()) {
@@ -116,6 +117,10 @@ void TransactionContext::Commit() {
 		}
 		if (error.Type() == ExceptionType::INVALID) {
 			error.Throw();
+		}
+		auto message_without_key = error.ExtraInfo().find("message_without_key");
+		if (context.hide_constraint_keys && message_without_key != error.ExtraInfo().end()) {
+			throw TransactionException("Failed to commit: %s", message_without_key->second);
 		}
 		throw TransactionException("Failed to commit: %s", error.RawMessage());
 	}

@@ -74,7 +74,7 @@ vector<idx_t> Binder::BindTruncateGroup(DeleteQueryNode &node, TableCatalogEntry
 
 BoundStatement Binder::BindNode(DeleteQueryNode &node) {
 	// visit the table reference
-	auto bound_table = Bind(*node.table);
+	auto bound_table = BindTarget(*node.table, TableRefUse::DML_TARGET);
 	auto root = std::move(bound_table.plan);
 	if (root->type != LogicalOperatorType::LOGICAL_GET) {
 		throw BinderException("Can only delete from base table");
@@ -85,6 +85,8 @@ BoundStatement Binder::BindNode(DeleteQueryNode &node) {
 		throw BinderException("Can only delete from base table");
 	}
 	auto &table = *table_ptr;
+	RequirePrivilege(table, node.is_truncate ? AclMode::Truncate : AclMode::Delete, {}, false);
+	RecordConstraintKeyVisibility(table);
 
 	if (auto expanded = TryExpandTriggers(node, table, TriggerEventType::DELETE_EVENT)) {
 		return std::move(*expanded);
@@ -181,7 +183,7 @@ BoundStatement Binder::BindNode(DeleteQueryNode &node) {
 		unique_ptr<LogicalOperator> del_as_logicaloperator = std::move(del);
 		// Include virtual columns (like rowid) so they can be referenced in RETURNING
 		auto virtual_columns = table.GetVirtualColumns();
-		return BindReturning(std::move(node.returning_list), table, node.table->alias, update_table_index,
+		return BindReturning(node, std::move(node.returning_list), table, node.table->alias, update_table_index,
 		                     std::move(del_as_logicaloperator), std::move(virtual_columns), &returned_virtual_columns);
 	}
 	BoundStatement result;

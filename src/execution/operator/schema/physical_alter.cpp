@@ -15,9 +15,20 @@ SourceResultType PhysicalAlter::GetDataInternal(ExecutionContext &context, DataC
 		auto &db_info = info->Cast<AlterDatabaseInfo>();
 		auto &db_manager = DatabaseManager::Get(context.client);
 		db_manager.Alter(context.client, db_info);
-	} else {
-		auto &catalog = Catalog::GetCatalog(context.client, info->GetQualifiedName().Catalog());
-		catalog.Alter(context.client, *info);
+		return SourceResultType::FINISHED;
+	}
+	auto alter = [&](AlterInfo &target) {
+		Catalog::GetCatalog(context.client, target.GetQualifiedName().Catalog()).Alter(context.client, target);
+	};
+	alter(*info);
+	if (info->type == AlterType::ALTER_PERMISSIONS) {
+		for (auto &grant : info->Cast<AlterPermissionsInfo>().additional_grants) {
+			alter(*grant);
+		}
+	} else if (info->type == AlterType::ALTER_ROLE) {
+		for (auto &grant : info->Cast<AlterRoleInfo>().additional_grants) {
+			alter(*grant);
+		}
 	}
 	return SourceResultType::FINISHED;
 }

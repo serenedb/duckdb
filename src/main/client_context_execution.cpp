@@ -58,6 +58,7 @@ void ClientContext::BeginQueryInternal(ClientContextLock &lock, const SQLStateme
 	} else {
 		query_deadline.SetInvalid();
 	}
+	RefreshSecurity();
 	// Notify any registered state of query begin
 	for (auto &state : registered_state->States()) {
 		state->QueryBegin(*this);
@@ -189,6 +190,13 @@ const string &ClientContext::GetCurrentQuery() {
 	return active_query->query;
 }
 
+optional_ptr<const StatementProperties> ClientContext::ActiveStatementProperties() const {
+	if (!active_query || !active_query->prepared) {
+		return planned_properties;
+	}
+	return &active_query->prepared->properties;
+}
+
 void BindPreparedStatementParameters(ClientContext &context, PreparedStatementData &statement,
                                      const QueryParameters &parameters) {
 	identifier_map_t<BoundParameterData> owned_values;
@@ -206,6 +214,7 @@ unique_ptr<QueryResult> ClientContext::SubmitPreparedStatementInternal(
 	D_ASSERT(active_query);
 	auto &statement_data = *statement_data_p;
 	BindPreparedStatementParameters(*this, statement_data, parameters);
+	hide_constraint_keys |= statement_data.properties.hide_constraint_keys;
 	// The plan must outlive the executor, also when Initialize throws
 	active_query->prepared = std::move(statement_data_p);
 

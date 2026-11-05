@@ -125,18 +125,31 @@ bool PreparedStatementData::RequireRebind(ClientContext &context,
 			return true;
 		}
 	}
-	// Check the catalog versions to ensure all catalog entries we rely on are current
 	for (auto &it : properties.read_databases) {
-		if (!CheckCatalogIdentity(context, it.first, it.second)) {
+		if (!it.second.catalog_version.IsValid()) {
 			return true;
 		}
 	}
 	for (auto &it : properties.modified_databases) {
-		if (!CheckCatalogIdentity(context, it.first, it.second.identity)) {
+		if (!it.second.identity.catalog_version.IsValid()) {
 			return true;
 		}
 	}
 	return false;
+}
+
+bool PreparedStatementData::CatalogIsCurrent(ClientContext &context) const {
+	for (auto &it : properties.read_databases) {
+		if (!CheckCatalogIdentity(context, it.first, it.second)) {
+			return false;
+		}
+	}
+	for (auto &it : properties.modified_databases) {
+		if (!CheckCatalogIdentity(context, it.first, it.second.identity)) {
+			return false;
+		}
+	}
+	return true;
 }
 
 bool PreparedStatementData::DataIsCurrent(ClientContext &context) const {

@@ -144,6 +144,20 @@ PEGTransformerFactory::TransformSetAssignment(PEGTransformer &transformer,
 	return variable_list;
 }
 
+Identifier PEGTransformerFactory::TransformSettingPath(PEGTransformer &transformer, ParseResult &parse_result) {
+	auto &list_pr = parse_result.Cast<ListParseResult>();
+	string name = list_pr.Child<IdentifierParseResult>(0).identifier.GetIdentifierName();
+	auto &parts = list_pr.Child<OptionalParseResult>(1);
+	if (parts.HasResult()) {
+		for (auto &part : parts.GetResult().Cast<RepeatParseResult>().GetChildren()) {
+			name += ".";
+			name +=
+			    transformer.Transform<Identifier>(part.get().Cast<ListParseResult>().GetChild(1)).GetIdentifierName();
+		}
+	}
+	return Identifier(std::move(name));
+}
+
 // SetSetting <- SettingScope? SettingName
 SettingInfo PEGTransformerFactory::TransformSetSetting(PEGTransformer &transformer,
                                                        const optional<SetScope> &setting_scope,
@@ -201,16 +215,15 @@ unique_ptr<SetStatement> PEGTransformerFactory::TransformSetTimeZone(PEGTransfor
 	return make_uniq<SetVariableStatement>("timezone", std::move(zone_value), SetScope::AUTOMATIC);
 }
 
-// SetRole <- 'ROLE' RoleSpec
-// Routes to the `role` extension setting (registered in serenedb's
-// server/query/config_variables.cpp with a NoOverwrite callback so the
-// value flows into session state but doesn't perform real role-switch).
+// SetRole <- RoleScope? 'ROLE' RoleSpec
 unique_ptr<SetStatement> PEGTransformerFactory::TransformSetRole(PEGTransformer &transformer,
+                                                                 const optional<SetScope> &role_scope,
                                                                  unique_ptr<ParsedExpression> role_spec) {
+	const auto scope = role_scope ? *role_scope : SetScope::AUTOMATIC;
 	if (role_spec->GetExpressionClass() == ExpressionClass::DEFAULT) {
-		return make_uniq<ResetVariableStatement>("role", SetScope::AUTOMATIC);
+		return make_uniq<ResetVariableStatement>("role", scope);
 	}
-	return make_uniq<SetVariableStatement>("role", std::move(role_spec), SetScope::AUTOMATIC);
+	return make_uniq<SetVariableStatement>("role", std::move(role_spec), scope);
 }
 
 // SetSessionAuthorization <- 'SESSION' 'AUTHORIZATION' RoleSpec
@@ -251,7 +264,7 @@ PEGTransformerFactory::TransformStandardAssignment(PEGTransformer &transformer,
 		                              std::move(set_assignment));
 	}
 	if (set_assignment.size() > 1) {
-		throw ParserException("SET can only contain a single value");
+		throw ParserException("SET %s takes only one argument", set_variable_or_setting.name.GetIdentifierName());
 	}
 	auto value = std::move(set_assignment[0]);
 	if (value->GetExpressionClass() == ExpressionClass::COLUMN_REF) {

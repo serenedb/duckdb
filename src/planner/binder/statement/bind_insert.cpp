@@ -1,4 +1,5 @@
 #include "duckdb/catalog/catalog.hpp"
+#include "duckdb/main/client_context.hpp"
 #include "duckdb/parser/expression/comparison_expression.hpp"
 #include "duckdb/parser/expression/conjunction_expression.hpp"
 #include "duckdb/parser/expression/constant_expression.hpp"
@@ -127,6 +128,7 @@ void Binder::ComputeStoredGeneratedColumns(TableCatalogEntry &table, vector<uniq
 	}
 	auto column_index = GenerateTableIndex();
 	auto generated_binder = Binder::CreateBinder(context, this);
+	generated_binder->entry_retriever.SetCheckAs(&RoleAccess::System());
 	generated_binder->bind_context.AddGenericBinding(column_index, table.name, names, types, columns.IsCaseSensitive());
 	ExpressionBinder generated_expr_binder(*generated_binder, context);
 	idx_t pos = 0;
@@ -356,6 +358,9 @@ void Binder::BindInsertColumnList(TableCatalogEntry &table, vector<Identifier> &
 			auto entry = column_name_map.insert(make_pair(columns[i], i));
 			if (!entry.second) {
 				throw BinderException("Duplicate column name %s in INSERT", columns[i]);
+			}
+			if (!table.ColumnExists(columns[i])) {
+				context.CheckEntryReference(CheckAs(), table);
 			}
 			auto column_index = table.GetColumnIndex(columns[i]);
 			if (column_index.index == COLUMN_IDENTIFIER_ROW_ID) {
@@ -683,6 +688,7 @@ BoundStatement Binder::BindNode(InsertQueryNode &node) {
 		                       TableCatalogEntry::Name);
 	}
 	auto &table = table_entry.Cast<TableCatalogEntry>();
+	RecordConstraintKeyVisibility(table);
 
 	// SereneDB fork: a zero-physical-column table (CREATE TABLE t();) has no columns to
 	// materialize a row into, so INSERT ... DEFAULT VALUES is rejected here (PostgreSQL allows it).
@@ -698,8 +704,28 @@ BoundStatement Binder::BindNode(InsertQueryNode &node) {
 	}
 
 	if (node.on_conflict_info) {
+		vector<LogicalIndex> inserted;
+		if (!node.columns.empty()) {
+			for (auto &name : node.columns) {
+				if (table.ColumnExists(name)) {
+					inserted.push_back(table.GetColumn(name).Logical());
+				}
+			}
+		} else {
+			auto values_list = node.GetValuesList();
+			const auto count = values_list && !values_list->values.empty() ? values_list->values[0].size()
+			                                                               : table.GetColumns().LogicalColumnCount();
+			for (auto &column : table.GetColumns().Logical()) {
+				if (inserted.size() == count) {
+					break;
+				}
+				inserted.push_back(column.Logical());
+			}
+		}
+		RequirePrivilege(table, AclMode::Insert, std::move(inserted), node.default_values);
 		// generate a MERGE INTO statement and bind it instead
 		auto merge_into = GenerateMergeInto(node, table);
+		on_conflict_merge = merge_into->node.get();
 		return Bind(*merge_into);
 	}
 	if (table.temporary) {
@@ -740,6 +766,14 @@ BoundStatement Binder::BindNode(InsertQueryNode &node) {
 	vector<LogicalIndex> named_column_map;
 	BindInsertColumnList(table, node.columns, node.default_values, named_column_map, insert->expected_types,
 	                     column_index_map);
+	const auto check_insert = [&](idx_t source_columns) {
+		vector<LogicalIndex> inserted;
+		for (idx_t i = 0; i < source_columns && i < named_column_map.size(); i++) {
+			inserted.push_back(named_column_map[i]);
+		}
+		const bool any_column = inserted.empty();
+		RequirePrivilege(table, AclMode::Insert, std::move(inserted), any_column);
+	};
 
 	// An INSERT ... SELECT supplies a value for every targeted column, so naming a
 	// generated column there is not allowed -- a generated column only accepts
@@ -755,12 +789,12 @@ BoundStatement Binder::BindNode(InsertQueryNode &node) {
 	}
 
 	// bind the default values
-	auto &catalog_name = table.ParentCatalog().GetName();
-	auto schema_name = table.ParentSchema(context).name;
-	BindDefaultValues(table.GetColumns(), insert->bound_defaults, catalog_name.GetIdentifierName(),
-	                  schema_name.GetIdentifierName());
+	BindDefaultValues(table, insert->bound_defaults, [&](const ColumnDefinition &column) {
+		return column_index_map.empty() || column_index_map[column.Physical()] == DConstants::INVALID_INDEX;
+	});
 	insert->bound_constraints = BindConstraints(table);
 	if (!node.select_statement && !node.default_values) {
+		check_insert(named_column_map.size());
 		result.plan = std::move(insert);
 		return result;
 	}
@@ -778,6 +812,7 @@ BoundStatement Binder::BindNode(InsertQueryNode &node) {
 		}
 		// inserting from a select - check if the column count matches
 		CheckInsertColumnCountMismatch(expected_columns, root_select.types.size(), !node.columns.empty(), table.name);
+		check_insert(root_select.types.size());
 
 		auto source_types = root_select.types;
 		auto target_types = insert->expected_types;
@@ -792,6 +827,7 @@ BoundStatement Binder::BindNode(InsertQueryNode &node) {
 		}
 		root = CastLogicalOperatorToTypes(source_types, target_types, std::move(root_select.plan));
 	} else {
+		check_insert(0);
 		root = make_uniq<LogicalDummyScan>(GenerateTableIndex());
 		if (node.default_values) {
 			root = ResolveInputProjection(*insert, column_index_map, std::move(root), {});
@@ -805,7 +841,7 @@ BoundStatement Binder::BindNode(InsertQueryNode &node) {
 		insert->table_index = insert_table_index;
 		unique_ptr<LogicalOperator> index_as_logicaloperator = std::move(insert);
 
-		return BindReturning(std::move(node.returning_list), table,
+		return BindReturning(node, std::move(node.returning_list), table,
 		                     node.table_ref ? node.table_ref->alias : Identifier(), insert_table_index,
 		                     std::move(index_as_logicaloperator));
 	}

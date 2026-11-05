@@ -93,6 +93,7 @@ struct ClientConfig {
 
 	//! Variables set by the user
 	identifier_map_t<Value> user_variables;
+	case_insensitive_map_t<Value> custom_settings;
 
 	//! Function that is used to create the result collector for a materialized result.
 	get_result_collector_t get_result_collector = nullptr;

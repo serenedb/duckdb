@@ -622,7 +622,9 @@ ErrorData ART::InsertKeys(ArenaAllocator &arena, unsafe_vector<ARTKey> &keys, un
 	if (conflict_type == ARTConflictType::CONSTRAINT) {
 		// chunk is only null when called from MergeCheckpointDeltas.
 		auto msg = chunk ? AppendRowError(*chunk, conflict_idx.GetIndex()) : string("???");
-		return ErrorData(ConstraintException("PRIMARY KEY or UNIQUE constraint violation: duplicate key \"%s\"", msg));
+		return ErrorData(ConstraintException(
+		    {{"message_without_key", "PRIMARY KEY or UNIQUE constraint violation: duplicate key"}},
+		    StringUtil::Format("PRIMARY KEY or UNIQUE constraint violation: duplicate key \"%s\"", msg)));
 	}
 
 #ifdef DEBUG
@@ -926,31 +928,6 @@ string ART::GenerateErrorKeyName(DataChunk &input, idx_t row_idx) const {
 	return key_name;
 }
 
-string ART::GenerateConstraintErrorMessage(VerifyExistenceType verify_type, const string &key_name) const {
-	switch (verify_type) {
-	case VerifyExistenceType::APPEND: {
-		// APPEND to PK/UNIQUE table, but node/key already exists in PK/UNIQUE table.
-		string type = IsPrimary() ? "primary key" : "unique";
-		return StringUtil::Format("Duplicate key \"%s\" violates %s constraint.", key_name, type);
-	}
-	case VerifyExistenceType::APPEND_FK: {
-		// APPEND_FK to FK table, node/key does not exist in PK/UNIQUE table.
-		return StringUtil::Format(
-		    "Violates foreign key constraint because key \"%s\" does not exist in the referenced table", key_name);
-	}
-	case VerifyExistenceType::DELETE_FK: {
-		// DELETE_FK that still exists in a FK table, i.e., not a valid delete.
-		return StringUtil::Format(
-		    "Violates foreign key constraint because key \"%s\" is still referenced by a foreign "
-		    "key in a different table. If this is an unexpected constraint violation, please refer to our "
-		    "foreign key limitations in the documentation",
-		    key_name);
-	}
-	default:
-		throw NotImplementedException("Type not implemented for VerifyExistenceType");
-	}
-}
-
 namespace {
 
 struct RowIdAppender {
@@ -1085,16 +1062,15 @@ void ART::VerifyConstraint(DataChunk &chunk, IndexAppendInfo &info, ConflictMana
 		return;
 	}
 
+	auto verify_type = manager.GetVerifyExistenceType();
 	auto key_name = GenerateErrorKeyName(chunk, conflict_idx.GetIndex());
-	auto exception_msg = GenerateConstraintErrorMessage(manager.GetVerifyExistenceType(), key_name);
-	throw ConstraintException(exception_msg);
+	throw ConstraintException({{"message_without_key", ConstraintViolationMessage(verify_type, IsPrimary(), string())}},
+	                          ConstraintViolationMessage(verify_type, IsPrimary(), key_name));
 }
 
 string ART::GetConstraintViolationMessage(VerifyExistenceType verify_type, idx_t failed_index, DataChunk &input) const {
 	IndexLock l(*this);
-	auto key_name = GenerateErrorKeyName(input, failed_index);
-	auto exception_msg = GenerateConstraintErrorMessage(verify_type, key_name);
-	return exception_msg;
+	return ConstraintViolationMessage(verify_type, IsPrimary(), GenerateErrorKeyName(input, failed_index));
 }
 
 //===--------------------------------------------------------------------===//

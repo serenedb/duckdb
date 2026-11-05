@@ -2,6 +2,8 @@
 #include "duckdb/catalog/default/default_schemas.hpp"
 
 #include "duckdb/catalog/catalog.hpp"
+#include "duckdb/catalog/catalog_entry/schema_catalog_entry.hpp"
+#include "duckdb/catalog/permissions.hpp"
 #include "duckdb/common/constants.hpp"
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/sql_identifier.hpp"
@@ -149,8 +151,9 @@ vector<CatalogSearchEntry> CatalogSearchEntry::ParseList(const string &input) {
 	return result;
 }
 
-CatalogSearchPath::CatalogSearchPath(ClientContext &context_p, vector<CatalogSearchEntry> entries)
-    : context(context_p) {
+CatalogSearchPath::CatalogSearchPath(ClientContext &context_p, vector<CatalogSearchEntry> entries,
+                                     bool session_objects_p)
+    : context(context_p), session_objects(session_objects_p) {
 	SetPathsInternal(std::move(entries));
 }
 
@@ -260,6 +263,13 @@ void CatalogSearchPath::Set(vector<CatalogSearchEntry> new_paths, CatalogSetPath
 			                       new_paths[0].GetCatalog());
 		}
 	}
+	if (set_type != CatalogSetPathType::SET_DIRECTLY) {
+		for (auto &path : new_paths) {
+			if (auto catalog = Catalog::GetCatalogEntry(context, path.GetCatalog())) {
+				context.CheckDatabaseReference(context.CurrentRole(), *catalog);
+			}
+		}
+	}
 	SetPathsInternal(std::move(new_paths));
 }
 
@@ -281,16 +291,39 @@ static string ResolveSchema(ClientContext &context, const CatalogSearchEntry &en
 	return entry.GetSchema().GetIdentifierName();
 }
 
-vector<CatalogSearchEntry> CatalogSearchPath::Get() const {
+static bool IsBuiltinPath(const CatalogSearchEntry &path) {
+	return path.GetCatalog() == TEMP_CATALOG || path.GetCatalog() == SYSTEM_CATALOG || path.GetSchema() == "pg_catalog";
+}
+
+template <class F>
+static void ForEachInLookupOrder(const vector<CatalogSearchEntry> &paths, bool builtins_first, F &&visit) {
+	if (!builtins_first) {
+		for (auto &path : paths) {
+			visit(path);
+		}
+		return;
+	}
+	for (auto &path : paths) {
+		if (IsBuiltinPath(path)) {
+			visit(path);
+		}
+	}
+	for (auto &path : paths) {
+		if (!IsBuiltinPath(path)) {
+			visit(path);
+		}
+	}
+}
+
+vector<CatalogSearchEntry> CatalogSearchPath::Get(bool builtins_first) const {
 	vector<CatalogSearchEntry> res;
 	res.reserve(paths.size());
-	for (auto &path : paths) {
+	ForEachInLookupOrder(paths, builtins_first && builtins_first_order, [&](const CatalogSearchEntry &path) {
 		auto resolved = ResolveSchema(context, path);
-		if (resolved.empty()) {
-			continue;
+		if (!resolved.empty()) {
+			res.emplace_back(path.GetCatalog(), Identifier(std::move(resolved)));
 		}
-		res.emplace_back(path.GetCatalog(), Identifier(std::move(resolved)));
-	}
+	});
 	return res;
 }
 
@@ -440,37 +473,42 @@ vector<CatalogSearchEntry> CatalogSearchPath::GetImplicitSearchCatalogs() const 
 	return catalogs;
 }
 
-vector<CatalogSearchEntry> CatalogSearchPath::GetWithPrecedenceSchemas(ClientContext &context) const {
+vector<CatalogSearchEntry> CatalogSearchPath::GetWithPrecedenceSchemas(ClientContext &context,
+                                                                       bool builtins_first) const {
 	vector<CatalogSearchEntry> res;
-	for (auto &path : paths) {
+	ForEachInLookupOrder(paths, builtins_first && builtins_first_order, [&](const CatalogSearchEntry &path) {
 		// Resolve implicit entries with default_schema_precedence to the catalog's default schema.
-		if (path.GetSchema().empty()) {
-			if (path.GetCatalog().empty() || !path.DefaultSchemaPrecedence()) {
-				continue;
+		if (!path.GetSchema().empty()) {
+			auto resolved = ResolveSchema(context, path);
+			if (!resolved.empty()) {
+				res.emplace_back(path.GetCatalog(), Identifier(std::move(resolved)));
 			}
-			auto catalog_entry = Catalog::GetCatalogEntry(context, path.GetCatalog());
-			if (!catalog_entry) {
-				continue;
-			}
-			auto default_schema = catalog_entry->GetDefaultSchema();
-			if (!default_schema) {
-				continue;
-			}
-			res.emplace_back(path.GetCatalog(), *default_schema);
-		} else {
-			res.emplace_back(path);
+			return;
 		}
-	}
+		if (path.GetCatalog().empty() || !path.DefaultSchemaPrecedence()) {
+			return;
+		}
+		auto catalog_entry = Catalog::GetCatalogEntry(context, path.GetCatalog());
+		if (!catalog_entry) {
+			return;
+		}
+		auto default_schema = catalog_entry->GetDefaultSchema();
+		if (default_schema) {
+			res.emplace_back(path.GetCatalog(), *default_schema);
+		}
+	});
 	return res;
 }
 
 const CatalogSearchEntry &CatalogSearchPath::GetDefault() const {
-	D_ASSERT(paths.size() >= 2);
-	return paths[1];
+	const idx_t first = session_objects ? 1 : 0;
+	D_ASSERT(paths.size() >= first + 1);
+	return paths[first];
 }
 
 CatalogSearchEntry CatalogSearchPath::GetResolvedDefault() const {
-	D_ASSERT(paths.size() >= set_paths.size() + 2);
+	const idx_t first = session_objects ? 1 : 0;
+	D_ASSERT(paths.size() >= set_paths.size() + first + 1);
 	// No user-set entries -> no default schema (PG: current_schema is NULL,
 	// CREATE without schema prefix errors with "no schema has been selected").
 	if (set_paths.empty()) {
@@ -479,17 +517,29 @@ CatalogSearchEntry CatalogSearchPath::GetResolvedDefault() const {
 	// Walk the user-set range and return the first entry whose schema resolves
 	// AND actually exists in the target catalog. PG falls through to the next
 	// search_path entry when "$user" doesn't match a real schema.
-	auto user_end = 1 + set_paths.size();
+	auto user_end = first + set_paths.size();
 	const bool can_check_existence = context.transaction.HasActiveTransaction();
-	for (idx_t i = 1; i < user_end; i++) {
+	bool skipped_unusable = false;
+	for (idx_t i = first; i < user_end; i++) {
 		auto resolved = ResolveSchema(context, paths[i]);
 		if (resolved.empty()) {
 			continue;
 		}
-		if (!can_check_existence ||
-		    Catalog::GetSchema(context, paths[i].GetCatalog(), Identifier(resolved), OnEntryNotFound::RETURN_NULL)) {
+		if (!can_check_existence) {
 			return CatalogSearchEntry(paths[i].GetCatalog(), Identifier(std::move(resolved)));
 		}
+		auto schema =
+		    Catalog::GetSchema(context, paths[i].GetCatalog(), Identifier(resolved), OnEntryNotFound::RETURN_NULL);
+		if (!schema) {
+			continue;
+		}
+		if (CanUseSchema(context.CurrentRole(), *schema)) {
+			return CatalogSearchEntry(paths[i].GetCatalog(), Identifier(std::move(resolved)));
+		}
+		skipped_unusable = true;
+	}
+	if (skipped_unusable) {
+		return CatalogSearchEntry(Identifier(), Identifier());
 	}
 	return GetDefault();
 }
@@ -498,8 +548,10 @@ void CatalogSearchPath::SetPathsInternal(vector<CatalogSearchEntry> new_paths) {
 	this->set_paths = std::move(new_paths);
 
 	paths.clear();
-	paths.reserve(set_paths.size() + 4);
-	paths.emplace_back(TEMP_CATALOG, DEFAULT_SCHEMA);
+	paths.reserve(set_paths.size() + 5);
+	if (session_objects) {
+		paths.emplace_back(TEMP_CATALOG, DEFAULT_SCHEMA);
+	}
 	for (auto &path : set_paths) {
 		paths.push_back(path);
 	}
@@ -511,6 +563,18 @@ void CatalogSearchPath::SetPathsInternal(vector<CatalogSearchEntry> new_paths) {
 	for (auto &schema : ExtensionCallbackManager::Get(context).GetExtensionSchemas()) {
 		paths.emplace_back(Identifier(SYSTEM_CATALOG), Identifier(schema));
 	}
+	if (!context.client_data) {
+		return;
+	}
+	auto &session_path = *context.client_data->catalog_search_path;
+	if (&session_path == this) {
+		auto database = DatabaseManager::Get(context).GetDatabase(DatabaseManager::TryGetDefaultDatabase(context));
+		postgres_mode = database && database->GetCatalog().Compatibility() == SqlCompatibility::POSTGRES;
+	}
+	const bool pg_catalog_named = std::any_of(set_paths.begin(), set_paths.end(), [](const CatalogSearchEntry &path) {
+		return path.GetSchema() == "pg_catalog";
+	});
+	builtins_first_order = session_path.postgres_mode && !pg_catalog_named;
 }
 
 bool CatalogSearchPath::SchemaInSearchPath(ClientContext &context, const Identifier &catalog_name,

@@ -256,7 +256,9 @@ void DuckDBExtensionsFunction(ClientContext &context, TableFunctionInput &data_p
 
 void DuckDBExtensionsFun::RegisterFunction(BuiltinFunctions &set) {
 	TableFunctionSet functions("duckdb_extensions");
-	functions.AddFunction(TableFunction({}, DuckDBExtensionsFunction, DuckDBExtensionsBind, DuckDBExtensionsInit));
+	TableFunction extensions({}, DuckDBExtensionsFunction, DuckDBExtensionsBind, DuckDBExtensionsInit);
+	extensions.required_capability = RoleCapability::Superuser;
+	functions.AddFunction(extensions);
 	set.AddFunction(functions);
 }
 

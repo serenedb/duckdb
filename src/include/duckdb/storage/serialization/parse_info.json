@@ -426,6 +426,12 @@
         "id": 301,
         "name": "comment_value",
         "type": "Value"
+      },
+      {
+        "id": 16686,
+        "name": "overload_oid",
+        "type": "idx_t",
+        "version": "serenedb_v1"
       }
     ]
   },
@@ -558,6 +564,186 @@
         "id": 320,
         "name": "all_in_schema",
         "type": "bool"
+      },
+      {
+        "id": 321,
+        "name": "foreign_data_wrapper_id",
+        "type": "idx_t"
+      },
+      {
+        "id": 322,
+        "name": "object_owner_id",
+        "type": "idx_t"
+      },
+      {
+        "id": 323,
+        "name": "drop_owned_role_id",
+        "type": "idx_t"
+      },
+      {
+        "id": 324,
+        "name": "include_functions",
+        "type": "bool",
+        "default": "true"
+      },
+      {
+        "id": 325,
+        "name": "include_procedures",
+        "type": "bool",
+        "default": "true"
+      },
+      {
+        "id": 326,
+        "name": "parameter",
+        "type": "string"
+      },
+      {
+        "id": 327,
+        "name": "language_id",
+        "type": "idx_t"
+      },
+      {
+        "id": 328,
+        "name": "relation_id",
+        "type": "idx_t"
+      },
+      {
+        "id": 329,
+        "name": "builtin_acl",
+        "type": "vector<AclItem>"
+      },
+      {
+        "id": 330,
+        "name": "overload_oid",
+        "type": "idx_t"
+      },
+      {
+        "id": 331,
+        "name": "schema_id",
+        "type": "idx_t"
+      },
+      {
+        "id": 332,
+        "name": "functions",
+        "type": "vector<NamedAcl>"
+      },
+      {
+        "id": 333,
+        "name": "type_id",
+        "type": "idx_t"
+      }
+    ]
+  },
+  {
+    "class": "AlterDatabaseSettingsInfo",
+    "base": "AlterInfo",
+    "enum": "ALTER_DATABASE_SETTINGS",
+    "members": [
+      {
+        "id": 300,
+        "name": "role",
+        "type": "string"
+      },
+      {
+        "id": 301,
+        "name": "role_id",
+        "type": "idx_t"
+      },
+      {
+        "id": 302,
+        "name": "reset_all_config",
+        "type": "bool"
+      },
+      {
+        "id": 303,
+        "name": "reset_config",
+        "type": "vector<string>"
+      },
+      {
+        "id": 304,
+        "name": "set_config",
+        "type": "vector<string>"
+      },
+      {
+        "id": 305,
+        "name": "set_connection_limit",
+        "type": "bool"
+      },
+      {
+        "id": 306,
+        "name": "connection_limit",
+        "type": "int32_t",
+        "default": "-1"
+      },
+      {
+        "id": 307,
+        "name": "set_allow_connections",
+        "type": "bool"
+      },
+      {
+        "id": 308,
+        "name": "allow_connections",
+        "type": "bool",
+        "default": "true"
+      },
+      {
+        "id": 309,
+        "name": "all_roles",
+        "type": "bool"
+      }
+    ]
+  },
+  {
+    "class": "ReassignOwnedInfo",
+    "base": "AlterInfo",
+    "enum": "REASSIGN_OWNED",
+    "members": [
+      {
+        "id": 300,
+        "name": "roles",
+        "type": "vector<string>"
+      },
+      {
+        "id": 301,
+        "name": "new_owner",
+        "type": "string"
+      },
+      {
+        "id": 302,
+        "name": "role_ids",
+        "type": "vector<idx_t>"
+      },
+      {
+        "id": 303,
+        "name": "new_owner_id",
+        "type": "idx_t"
+      }
+    ]
+  },
+  {
+    "class": "DropOwnedInfo",
+    "base": "AlterInfo",
+    "enum": "DROP_OWNED",
+    "members": [
+      {
+        "id": 300,
+        "name": "roles",
+        "type": "vector<string>"
+      },
+      {
+        "id": 301,
+        "name": "cascade",
+        "type": "bool"
+      },
+      {
+        "id": 302,
+        "name": "role_ids",
+        "type": "vector<idx_t>"
+      },
+      {
+        "id": 303,
+        "name": "grantors",
+        "type": "vector<idx_t>"
       }
     ]
   },
@@ -670,6 +856,11 @@
         "id": 320,
         "name": "grantor_id",
         "type": "idx_t"
+      },
+      {
+        "id": 321,
+        "name": "all_roles",
+        "type": "bool"
       }
     ]
   },
@@ -764,6 +955,20 @@
         "id": 300,
         "name": "alter_scalar_function_type",
         "type": "AlterScalarFunctionType"
+      },
+      {
+        "id": 16685,
+        "name": "include_functions",
+        "type": "bool",
+        "default": "true",
+        "version": "serenedb_v1"
+      },
+      {
+        "id": 16686,
+        "name": "include_procedures",
+        "type": "bool",
+        "default": "true",
+        "version": "serenedb_v1"
       }
     ]
   },
@@ -776,6 +981,63 @@
         "id": 400,
         "name": "new_name",
         "type": "Identifier"
+      }
+    ]
+  },
+  {
+    "class": "AlterFunctionAttributesInfo",
+    "base": "AlterScalarFunctionInfo",
+    "enum": "SET_FUNCTION_ATTRIBUTES",
+    "members": [
+      {
+        "id": 400,
+        "name": "parameter_types",
+        "type": "vector<LogicalType>"
+      },
+      {
+        "id": 401,
+        "name": "has_parameter_types",
+        "type": "bool"
+      },
+      {
+        "id": 402,
+        "name": "set_security",
+        "type": "bool"
+      },
+      {
+        "id": 403,
+        "name": "security_definer",
+        "type": "bool"
+      },
+      {
+        "id": 404,
+        "name": "set_stability",
+        "type": "bool"
+      },
+      {
+        "id": 405,
+        "name": "stability",
+        "type": "FunctionStability"
+      },
+      {
+        "id": 406,
+        "name": "set_strict",
+        "type": "bool"
+      },
+      {
+        "id": 407,
+        "name": "strict",
+        "type": "bool"
+      },
+      {
+        "id": 408,
+        "name": "replace_config",
+        "type": "bool"
+      },
+      {
+        "id": 409,
+        "name": "config",
+        "type": "vector<string>"
       }
     ]
   },
@@ -1569,6 +1831,42 @@
       },
       {
         "id": 302,
+        "name": "new_name",
+        "type": "Identifier",
+        "default": "Identifier()"
+      }
+    ]
+  },
+  {
+    "class": "AlterSubscriptionInfo",
+    "base": "AlterInfo",
+    "enum": "ALTER_SUBSCRIPTION",
+    "includes": [
+      "duckdb/parser/parsed_data/alter_subscription_info.hpp"
+    ],
+    "members": [
+      {
+        "id": 300,
+        "name": "alter_subscription_type",
+        "type": "AlterSubscriptionType"
+      },
+      {
+        "id": 301,
+        "name": "connection",
+        "type": "string"
+      },
+      {
+        "id": 302,
+        "name": "publications",
+        "type": "vector<string>"
+      },
+      {
+        "id": 303,
+        "name": "options",
+        "type": "case_insensitive_map_t<Value>"
+      },
+      {
+        "id": 304,
         "name": "new_name",
         "type": "Identifier",
         "default": "Identifier()"

@@ -31,6 +31,10 @@ optional_ptr<CatalogEntry> CatalogVersions::GetCommitted() const {
 	return entry;
 }
 
+optional_ptr<CatalogEntry> CatalogVersions::GetLatestCommitted() const {
+	return committed.load(std::memory_order_acquire);
+}
+
 bool CatalogVersions::HasPending() const {
 	return pending_transaction.load(std::memory_order_acquire) != MAX_TRANSACTION_ID;
 }
@@ -132,15 +136,52 @@ optional_ptr<CatalogEntry> CatalogOidIndex::GetVisible(idx_t oid, const Snapshot
 	return entry && entry->oid == oid ? entry : nullptr;
 }
 
+void CatalogOidIndex::GetVisible(std::span<const idx_t> oids, const SnapshotView &view,
+                                 std::span<optional_ptr<CatalogEntry>> entries) const {
+	D_ASSERT(oids.size() == entries.size());
+	absl::ReaderMutexLock guard(lock);
+	for (idx_t i = 0; i < oids.size(); i++) {
+		auto it = versions.find(oids[i]);
+		auto entry = it == versions.end() ? nullptr : it->second->GetVisible(view);
+		entries[i] = entry && entry->oid == oids[i] ? entry : nullptr;
+	}
+}
+
 optional_ptr<CatalogEntry> CatalogOidIndex::GetVisibleOwner(idx_t oid, const SnapshotView &view) const {
-	auto object = Find(oid);
-	return object ? object->GetVisible(view) : nullptr;
+	absl::ReaderMutexLock guard(lock);
+	auto it = versions.find(oid);
+	return it == versions.end() ? nullptr : it->second->GetVisible(view);
 }
 
 optional_ptr<CatalogEntry> CatalogOidIndex::GetCommitted(idx_t oid) const {
-	auto object = Find(oid);
-	auto entry = object ? object->GetCommitted() : nullptr;
+	absl::ReaderMutexLock guard(lock);
+	auto it = versions.find(oid);
+	auto entry = it == versions.end() ? nullptr : it->second->GetCommitted();
 	return entry && entry->oid == oid ? entry : nullptr;
+}
+
+optional_ptr<CatalogEntry> CatalogOidIndex::GetCommittedDrop(idx_t oid) const {
+	absl::ReaderMutexLock guard(lock);
+	auto it = versions.find(oid);
+	auto entry = it == versions.end() ? nullptr : it->second->GetLatestCommitted();
+	return entry && entry->deleted && entry->oid == oid ? entry : nullptr;
+}
+
+void CatalogOidIndex::ScanVisible(const SnapshotView &view, const std::function<void(CatalogEntry &)> &callback) const {
+	vector<reference<CatalogEntry>> entries;
+	{
+		absl::ReaderMutexLock guard(lock);
+		entries.reserve(versions.size());
+		for (auto &[oid, object] : versions) {
+			auto entry = object->GetVisible(view);
+			if (entry && entry->oid == oid) {
+				entries.push_back(*entry);
+			}
+		}
+	}
+	for (auto &entry : entries) {
+		callback(entry);
+	}
 }
 
 shared_ptr<CatalogVersions> CatalogOidIndex::GetOrCreate(const CatalogEntry &object) {
@@ -157,10 +198,7 @@ shared_ptr<CatalogVersions> CatalogOidIndex::GetOrCreate(const CatalogEntry &obj
 }
 
 void CatalogOidIndex::AddAliases(const CatalogEntry &version, const shared_ptr<CatalogVersions> &object_versions) {
-	if (version.type != CatalogType::TABLE_ENTRY) {
-		return;
-	}
-	auto oids = version.Cast<TableCatalogEntry>().GetSubObjectOids();
+	auto oids = version.GetSubObjectOids();
 	if (oids.empty()) {
 		return;
 	}

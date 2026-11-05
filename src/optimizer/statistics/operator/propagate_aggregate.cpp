@@ -472,6 +472,7 @@ void StatisticsPropagator::TryExecuteAggregates(LogicalAggregate &aggr, unique_p
 	expression_get->children.push_back(make_uniq<LogicalDummyScan>(aggr.group_index));
 	node_ptr = std::move(expression_get);
 	types_resolved = false;
+	optimizer.SetSnapshotDependent();
 }
 
 unique_ptr<NodeStatistics> StatisticsPropagator::PropagateStatistics(LogicalAggregate &aggr,

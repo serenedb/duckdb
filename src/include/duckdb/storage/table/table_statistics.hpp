@@ -59,6 +59,7 @@ public:
 	void AppendToTableSample(TableStatisticsLock &lock, unique_ptr<BlockingSample> sample);
 
 	bool Empty() const;
+	idx_t Version() const;
 
 	unique_ptr<TableStatisticsLock> GetLock();
 
@@ -72,6 +73,9 @@ private:
 	vector<shared_ptr<ColumnStatistics>> column_stats;
 	//! The table sample
 	unique_ptr<BlockingSample> table_sample;
+	mutable idx_t version = NextVersion();
+
+	static idx_t NextVersion();
 };
 
 } // namespace duckdb

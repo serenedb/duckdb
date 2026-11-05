@@ -14,6 +14,7 @@ void CreateFunctionInfo::CopyFunctionProperties(CreateFunctionInfo &other) const
 	other.SetFunctionName(GetFunctionName());
 	other.alias_of = alias_of;
 	other.descriptions = descriptions;
+	other.required_capability = required_capability;
 }
 
 } // namespace duckdb

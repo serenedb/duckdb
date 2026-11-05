@@ -11,9 +11,12 @@ DropInfo::DropInfo() : ParseInfo(TYPE), cascade(false) {
 DropInfo::DropInfo(const DropInfo &info)
     : ParseInfo(info.info_type), type(info.type), if_not_found(info.if_not_found), cascade(info.cascade),
       allow_drop_internal(info.allow_drop_internal), func_parameters(info.func_parameters),
-      has_func_args(info.has_func_args), is_procedure(info.is_procedure),
+      has_func_args(info.has_func_args), is_procedure(info.is_procedure), is_macro(info.is_macro),
       extra_drop_info(info.extra_drop_info ? info.extra_drop_info->Copy() : nullptr),
       qualified_name(info.qualified_name) {
+	for (auto &target : info.additional_drops) {
+		additional_drops.push_back(target->Copy());
+	}
 }
 
 unique_ptr<DropInfo> DropInfo::Copy() const {
@@ -34,21 +37,24 @@ string DropInfo::ToString() const {
 		}
 	} else {
 		result += "DROP";
-		result += " " + ParseInfo::TypeToString(type);
+		if (is_procedure) {
+			result += " PROCEDURE";
+		} else if (type == CatalogType::MACRO_ENTRY && !is_macro) {
+			result += " FUNCTION";
+		} else {
+			result += " " + ParseInfo::TypeToString(type);
+		}
 		if (if_not_found == OnEntryNotFound::RETURN_NULL) {
 			result += " IF EXISTS";
 		}
+		auto target = [&](const DropInfo &info) {
+			result += ParseInfo::RoutineToString(info.qualified_name, info.has_func_args, info.func_parameters);
+		};
 		result += " ";
-		result += qualified_name.ToString(QualifiedNameToStringMode::HIDE_DEFAULT_SCHEMA);
-		if (has_func_args) {
-			result += "(";
-			for (idx_t i = 0; i < func_parameters.size(); i++) {
-				if (i > 0) {
-					result += ", ";
-				}
-				result += func_parameters[i].ToString();
-			}
-			result += ")";
+		target(*this);
+		for (auto &other : additional_drops) {
+			result += ", ";
+			target(*other);
 		}
 		if (type == CatalogType::TRIGGER_ENTRY && extra_drop_info) {
 			auto &trigger_info = extra_drop_info->Cast<ExtraDropTriggerInfo>();
