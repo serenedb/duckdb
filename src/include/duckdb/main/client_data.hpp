@@ -27,14 +27,13 @@ class BufferManager;
 
 struct ClientData {
 public:
-	explicit ClientData(ClientContext &context, shared_ptr<AttachedDatabase> shared_temporary_objects = nullptr);
+	explicit ClientData(ClientContext &context, shared_ptr<AttachedDatabase> shared_temporary_objects);
 	~ClientData();
 
 public:
 	//! The query profiler of this client.
 	shared_ptr<QueryProfiler> profiler;
 
-	//! The set of temporary objects belonging to this client.
 	shared_ptr<AttachedDatabase> temporary_objects;
 	bool shares_temporary_objects = false;
 	//! The set of bound prepared statements belonging to this client.
