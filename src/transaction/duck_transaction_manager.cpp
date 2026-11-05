@@ -203,6 +203,11 @@ DuckTransactionManager::CanCheckpoint(DuckTransaction &transaction, unique_ptr<S
 		return CheckpointDecision("Failed to obtain checkpoint lock - another thread is writing/checkpointing or "
 		                          "another read transaction relies on data that is not yet committed");
 	}
+	auto wal = storage_manager.GetWAL();
+	if (wal && wal->GetPath() != storage_manager.GetWALPath()) {
+		lock.reset();
+		return CheckpointDecision("a failed checkpoint left the checkpoint WAL active");
+	}
 	return CheckpointDecision(CheckpointType::FULL_CHECKPOINT);
 }
 
@@ -985,10 +990,13 @@ ErrorData DuckTransactionManager::CommitTransaction(ClientContext &context, Tran
 		try {
 			storage_manager.CreateCheckpoint(context, options);
 		} catch (std::exception &ex) {
-			if (wal_written) {
-				context.transaction.SetAutocheckpointError(BuildAutocheckpointError(db, ex));
-			} else {
+			if (!wal_written) {
 				error.Merge(ErrorData(ex));
+			} else if (Settings::Get<DisableDatabaseInvalidationSetting>(db.GetDatabase())) {
+				DUCKDB_LOG_WARNING(db.GetDatabase(), "automatic checkpoint of database %s failed: %s", db.GetName(),
+				                   ErrorData(ex).RawMessage());
+			} else {
+				context.transaction.SetAutocheckpointError(BuildAutocheckpointError(db, ex));
 			}
 		}
 	}
