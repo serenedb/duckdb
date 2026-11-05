@@ -19,8 +19,6 @@
 #include "duckdb/storage/block.hpp"
 #include "duckdb/storage/table/table_log_storage.hpp"
 
-#include <absl/functional/function_ref.h>
-
 namespace duckdb {
 
 struct AlterInfo;
@@ -67,7 +65,6 @@ public:
 	}
 	//! Gets the total bytes written to the WAL since startup
 	idx_t GetTotalWritten() const;
-	idx_t GetDurableOffset() const;
 
 	//! A WAL is initialized, if a writer to a file exists.
 	bool Initialized() const;
@@ -133,7 +130,6 @@ public:
 	idx_t FlushMarker();
 	//! Block until the WAL is durable up to the given offset
 	void SyncUpTo(idx_t offset);
-	void SyncUpTo(idx_t offset, absl::FunctionRef<void(idx_t)> on_synced);
 	//! Increment the WAL entry count, which is used for the auto-checkpoint threshold.
 	void IncrementWALEntriesCount();
 	void WriteCheckpoint(MetaBlockPointer meta_block);
@@ -146,20 +142,18 @@ protected:
 	atomic<WALInitState> init_state;
 	optional_idx checkpoint_iteration;
 
+	//! Shared-sync state (guarded by sync_lock, which is independent of the WAL lock)
+	mutex sync_lock;
 	//! Sync offsets are logical (BufferedFileWriter::GetTotalWritten), not file positions: a
 	//! truncation rewinds the file, so a file position can be reused but a logical one cannot
 	//! The WAL is durable up to this logical offset
-	atomic<idx_t> durable_offset {0};
+	idx_t durable_offset = 0;
 	//! The highest logical offset for which a sync has been requested
-	atomic<idx_t> requested_sync_offset {0};
-	atomic<idx_t> syncs_in_flight {0};
-	atomic<idx_t> sync_lanes {1};
-	atomic<idx_t> syncing_offset {0};
-	atomic<int32_t> lane_epoch {0};
-	atomic<int32_t> durable_epoch {0};
+	idx_t requested_sync_offset = 0;
+	//! Whether a sync is in flight; only one runs at a time
+	bool sync_in_flight = false;
 	//! Set when a sync has failed; every further sync of this WAL fails
-	atomic<bool> sync_failed {false};
-	mutex sync_failure_lock;
+	bool sync_failed = false;
 	string sync_failure;
 };
 

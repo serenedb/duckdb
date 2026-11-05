@@ -57,12 +57,6 @@ public:
 	transaction_t GetLastCommit() const {
 		return last_commit;
 	}
-	struct DurableSnapshot {
-		//! Every commit before this bound is durable
-		VisibilityBound visibility_bound = VisibilityBound::IncludingUncommitted();
-		//! The catalog version that snapshot observes
-		idx_t catalog_version = DConstants::INVALID_INDEX;
-	};
 	//! Wait until every published commit is durable. Called under the commit lock, so no new commit can
 	//! enter its sync window and the wait is bounded by the syncs in flight
 	void WaitForDurability();
@@ -142,18 +136,16 @@ private:
 	bool HasOtherTransactions(DuckTransaction &transaction);
 	void CleanupTransactions();
 
-	struct UnsyncedCommit {
-		reference<DuckTransaction> transaction;
-		optional_ptr<WriteAheadLog> wal;
-		bool store_transaction;
-		optional_ptr<atomic<bool>> retired;
+	//! Whether a commit that needed a WAL sync is still in its commit path, possibly inside SyncUpTo
+	bool HasUnsyncedCommits();
+	struct DurableSnapshot {
+		//! Every commit before this bound is durable
+		VisibilityBound visibility_bound = VisibilityBound::IncludingUncommitted();
+		//! The catalog version that snapshot observes
+		idx_t catalog_version = DConstants::INVALID_INDEX;
 	};
-	void RetireSyncedCommits(WriteAheadLog &wal, idx_t synced_offset) noexcept;
-	void RetireSyncedCommitsInternal(WriteAheadLog &wal, idx_t synced_offset);
-	bool EraseUnsyncedCommit(DuckTransaction &transaction);
-	void LeaveSyncWindow();
 	//! The most recent snapshot that contains only durable commits; unbounded when none is pending
-	DurableSnapshot GetDurableSnapshotInternal();
+	DurableSnapshot GetDurableSnapshot();
 
 private:
 	//! The current start timestamp used by transactions
@@ -183,9 +175,10 @@ private:
 	//! Lock necessary to start transactions only - used by FORCE CHECKPOINT to prevent new transactions from starting
 	mutex start_transaction_lock;
 
-	vector<UnsyncedCommit> unsynced_commits;
-	vector<pair<const DuckTransaction *, bool>> retiring;
-	atomic<int32_t> sync_window {0};
+	//! Every commit before this bound is durable; it only ever advances. A transaction stays in
+	//! active_transactions until its commit is durable, so new snapshots are bounded below commits
+	//! that are not yet durable
+	VisibilityBound durable_bound;
 
 	atomic<idx_t> last_uncommitted_catalog_version = {TRANSACTION_ID_START};
 	atomic<idx_t> last_committed_version = {0};

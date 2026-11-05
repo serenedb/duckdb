@@ -69,7 +69,7 @@ DuckTransactionManager::DuckTransactionManager(AttachedDatabase &db) : Transacti
 }
 
 DuckTransactionManager::~DuckTransactionManager() {
-	D_ASSERT(sync_window.load() == 0);
+	D_ASSERT(!HasUnsyncedCommits());
 }
 
 DuckTransactionManager &DuckTransactionManager::Get(AttachedDatabase &db) {
@@ -98,7 +98,7 @@ Transaction &DuckTransactionManager::StartTransaction(ClientContext &context) {
 	transaction_t start_time = current_start_timestamp;
 	transaction_t transaction_id = current_transaction_id++;
 	// snapshots must not observe commits that are not yet durable, nor a newer catalog version
-	auto durable = GetDurableSnapshotInternal();
+	auto durable = GetDurableSnapshot();
 	// the transaction sees its own writes, and every durable commit before its start time
 	SnapshotView view(transaction_id,
 	                  VisibilityBound::Min(VisibilityBound::Before(start_time), durable.visibility_bound));
@@ -323,113 +323,42 @@ transaction_t DuckTransactionManager::GetCommitTimestamp() {
 	return current_start_timestamp++;
 }
 
-DuckTransactionManager::DurableSnapshot DuckTransactionManager::GetDurableSnapshotInternal() {
-	DurableSnapshot durable;
-	for (auto &commit : unsynced_commits) {
-		auto &transaction = commit.transaction.get();
-		// a snapshot stops below the first commit that is not durable and sees the catalog version
-		// recorded just before that commit
-		durable.visibility_bound = VisibilityBound::Before(transaction.commit_id);
-		durable.catalog_version = transaction.catalog_version_before_commit;
-		break;
-	}
-	return durable;
-}
-
-void DuckTransactionManager::WaitForDurability() {
-	for (auto pending = sync_window.load(std::memory_order_acquire); pending != 0;
-	     pending = sync_window.load(std::memory_order_acquire)) {
-		sync_window.wait(pending, std::memory_order_acquire);
-	}
-}
-
-void DuckTransactionManager::LeaveSyncWindow() {
-	if (sync_window.fetch_sub(1, std::memory_order_acq_rel) == 1) {
-		sync_window.notify_all();
-	}
-}
-
-bool DuckTransactionManager::EraseUnsyncedCommit(DuckTransaction &transaction) {
-	for (auto it = unsynced_commits.begin(); it != unsynced_commits.end(); ++it) {
-		if (RefersToSameObject(it->transaction.get(), transaction)) {
-			unsynced_commits.erase(it);
+bool DuckTransactionManager::HasUnsyncedCommits() {
+	for (auto &active_transaction : active_transactions) {
+		if (active_transaction->wal_sync_offset != 0) {
 			return true;
 		}
 	}
 	return false;
 }
 
-void DuckTransactionManager::RetireSyncedCommits(WriteAheadLog &wal, idx_t synced_offset) noexcept {
-	lock_guard<mutex> guard(transaction_lock);
-	try {
-		RetireSyncedCommitsInternal(wal, synced_offset);
-	} catch (std::bad_alloc &) {
+DuckTransactionManager::DurableSnapshot DuckTransactionManager::GetDurableSnapshot() {
+	DurableSnapshot durable;
+	optional_ptr<DuckTransaction> first_unsynced;
+	for (auto &active_transaction : active_transactions) {
+		if (active_transaction->wal_sync_offset == 0 || active_transaction->commit_id < durable_bound) {
+			// not committed, or durable already - its own thread has not removed it yet
+			continue;
+		}
+		if (!first_unsynced || active_transaction->commit_id < first_unsynced->commit_id) {
+			first_unsynced = active_transaction.get();
+		}
 	}
+	if (first_unsynced) {
+		// a snapshot stops below the first commit that is not durable and sees the catalog version
+		// recorded just before that commit
+		durable.visibility_bound = VisibilityBound::Before(first_unsynced->commit_id);
+		durable.catalog_version = first_unsynced->catalog_version_before_commit;
+	}
+	return durable;
 }
 
-void DuckTransactionManager::RetireSyncedCommitsInternal(WriteAheadLog &wal, idx_t synced_offset) {
-	auto synced = [&](const UnsyncedCommit &commit) {
-		return commit.wal.get() == &wal && commit.transaction.get().wal_sync_offset <= synced_offset;
+void DuckTransactionManager::WaitForDurability() {
+	lock_guard<mutex> guard(transaction_lock);
+	auto durable = [this]() DUCKDB_NO_THREAD_SAFETY_ANALYSIS {
+		return !HasUnsyncedCommits();
 	};
-	retiring.clear();
-	for (auto &commit : unsynced_commits) {
-		if (synced(commit)) {
-			retiring.emplace_back(&commit.transaction.get(), commit.store_transaction);
-		}
-	}
-	if (retiring.empty()) {
-		return;
-	}
-	auto cleanup_info = make_uniq<DuckCleanupInfo>();
-	cleanup_info->transactions.reserve(recently_committed_transactions.size() + retiring.size());
-	recently_committed_transactions.reserve(recently_committed_transactions.size() + retiring.size());
-	std::sort(retiring.begin(), retiring.end());
-
-	idx_t kept = 0;
-	for (idx_t i = 0; i < active_transactions.size(); i++) {
-		auto &active = active_transactions[i];
-		auto entry = std::lower_bound(
-		    retiring.begin(), retiring.end(), active.get(),
-		    [](const pair<const DuckTransaction *, bool> &lhs, const DuckTransaction *rhs) { return lhs.first < rhs; });
-		if (entry == retiring.end() || entry->first != active.get()) {
-			if (kept != i) {
-				active_transactions[kept] = std::move(active);
-				active_transactions[kept]->active_index = kept;
-			}
-			kept++;
-			continue;
-		}
-		if (entry->second) {
-			auto position = std::upper_bound(recently_committed_transactions.begin(),
-			                                 recently_committed_transactions.end(), active->commit_id,
-			                                 [](transaction_t commit_id, const unique_ptr<DuckTransaction> &other) {
-				                                 return commit_id < other->commit_id;
-			                                 });
-			recently_committed_transactions.insert(position, std::move(active));
-		} else if (active->ChangesMade()) {
-			active->awaiting_cleanup = true;
-			cleanup_info->transactions.push_back(std::move(active));
-		}
-	}
-	active_transactions.erase(active_transactions.begin() + NumericCast<int64_t>(kept), active_transactions.end());
-	RecomputeLowest();
-	cleanup_info->lowest_visibility_bound = LowestVisibilityBound();
-	SweepCommittedTransactions(*cleanup_info);
-
-	idx_t remaining = 0;
-	for (idx_t i = 0; i < unsynced_commits.size(); i++) {
-		auto &commit = unsynced_commits[i];
-		if (synced(commit)) {
-			commit.retired->store(true, std::memory_order_release);
-			continue;
-		}
-		if (remaining != i) {
-			unsynced_commits[remaining] = commit;
-		}
-		remaining++;
-	}
-	unsynced_commits.erase(unsynced_commits.begin() + NumericCast<int64_t>(remaining), unsynced_commits.end());
-	QueueCleanup(std::move(cleanup_info));
+	transaction_lock.Await(absl::Condition(&durable));
 }
 
 void DuckTransactionManager::RefreshStartTime(Transaction &transaction_p) {
@@ -449,7 +378,7 @@ void DuckTransactionManager::AdvanceStartTime(DuckTransaction &transaction) {
 	// the refreshed snapshot is a snapshot acquisition like StartTransaction: bound it at the durable horizon so a
 	// per-statement refresh never observes a commit that is not yet durable
 	auto start_time = current_start_timestamp;
-	auto durable = GetDurableSnapshotInternal();
+	auto durable = GetDurableSnapshot();
 	const auto previous = transaction.view.visibility_bound;
 	transaction.start_time = start_time;
 	transaction.view.visibility_bound =
@@ -536,7 +465,6 @@ ErrorData DuckTransactionManager::CommitTransaction(ClientContext &context, Tran
 	unique_lock<mutex> held_commit_lock;
 	unique_ptr<StorageCommitState> commit_state;
 	optional_ptr<WriteAheadLog> commit_wal;
-	atomic<bool> retired {false};
 	bool skip_wal_write_due_to_checkpoint = false;
 	bool wal_written = false;
 	if (checkpoint_decision.can_checkpoint) {
@@ -617,13 +545,6 @@ ErrorData DuckTransactionManager::CommitTransaction(ClientContext &context, Tran
 	CommitInfo info;
 	info.commit_id = GetCommitTimestamp();
 
-	if (!error.HasError() && wal_written) {
-		try {
-			unsynced_commits.reserve(unsynced_commits.size() + 1);
-		} catch (std::exception &ex) {
-			error = ErrorData(ex);
-		}
-	}
 	// commit the UndoBuffer of the transaction
 	if (!error.HasError()) {
 		if (HasOtherTransactions(transaction)) {
@@ -633,8 +554,6 @@ ErrorData DuckTransactionManager::CommitTransaction(ClientContext &context, Tran
 		}
 		error = transaction.Commit(db, info, std::move(commit_state));
 	}
-	bool store_transaction = undo_properties.has_updates || undo_properties.has_index_deletes ||
-	                         undo_properties.has_catalog_changes || error.HasError();
 
 	if (error.HasError()) {
 		DUCKDB_LOG(context, TransactionLogType, db, "Rollback (after failed commit)", info.commit_id);
@@ -658,10 +577,9 @@ ErrorData DuckTransactionManager::CommitTransaction(ClientContext &context, Tran
 			commit_wal = db.GetStorageManager().GetWAL();
 			if (commit_wal) {
 				// the catalog version is recorded before this commit's own bump below
+				D_ASSERT(info.commit_id >= durable_bound);
 				transaction.wal_sync_offset = info.wal_sync_offset;
 				transaction.catalog_version_before_commit = last_committed_version;
-				unsynced_commits.push_back(UnsyncedCommit {transaction, commit_wal, store_transaction, retired});
-				sync_window.fetch_add(1, std::memory_order_relaxed);
 			}
 		}
 
@@ -680,6 +598,9 @@ ErrorData DuckTransactionManager::CommitTransaction(ClientContext &context, Tran
 
 	// commit successful: remove the transaction id from the list of active transactions
 	// potentially resulting in garbage collection
+	bool store_transaction = undo_properties.has_updates || undo_properties.has_index_deletes ||
+	                         undo_properties.has_catalog_changes || error.HasError();
+
 	if (!commit_wal) {
 		// Remove the transaction from the list of active transactions and gather cleanup information.
 		// A commit that needs a WAL sync stays active until the sync below has completed.
@@ -701,8 +622,7 @@ ErrorData DuckTransactionManager::CommitTransaction(ClientContext &context, Tran
 		D_ASSERT(!error.HasError());
 		bool synced = false;
 		try {
-			commit_wal->SyncUpTo(info.wal_sync_offset,
-			                     [&](idx_t synced_offset) { RetireSyncedCommits(*commit_wal, synced_offset); });
+			commit_wal->SyncUpTo(info.wal_sync_offset);
 			synced = true;
 		} catch (std::exception &ex) {
 			// published and no longer revertable, but not durable: invalidate. The WAL keeps the
@@ -713,17 +633,20 @@ ErrorData DuckTransactionManager::CommitTransaction(ClientContext &context, Tran
 			checkpoint_decision = CheckpointDecision(error.Message());
 			lock.reset();
 		}
-		if (!retired.load(std::memory_order_acquire)) {
-			t_lock.lock();
-			if (synced) {
-				RetireSyncedCommitsInternal(*commit_wal, commit_wal->GetDurableOffset());
-			} else if (!retired.load(std::memory_order_relaxed)) {
-				EraseUnsyncedCommit(transaction);
-				QueueCleanup(RemoveTransaction(transaction, store_transaction, CreateCleanupInfo()));
+		// durable, or durability has failed: now leave the list of active transactions
+		t_lock.lock();
+		if (synced) {
+			// advance the durable bound over every commit the sync covered
+			for (auto &active_transaction : active_transactions) {
+				if (active_transaction->wal_sync_offset != 0 &&
+				    active_transaction->wal_sync_offset <= info.wal_sync_offset &&
+				    active_transaction->commit_id >= durable_bound) {
+					durable_bound = VisibilityBound::Through(active_transaction->commit_id);
+				}
 			}
-			t_lock.unlock();
 		}
-		LeaveSyncWindow();
+		QueueCleanup(RemoveTransaction(transaction, store_transaction, CreateCleanupInfo()));
+		t_lock.unlock();
 	}
 
 	CleanupTransactions();
