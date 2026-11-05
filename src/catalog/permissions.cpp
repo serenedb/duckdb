@@ -209,6 +209,20 @@ static void Revoke(vector<AclItem> &acl, idx_t grantee, idx_t grantor, AclMode p
 	          acl.end());
 }
 
+static void ReplaceOwner(vector<AclItem> &acl, idx_t old_owner, idx_t new_owner) {
+	vector<AclItem> replaced;
+	for (auto item : acl) {
+		if (item.grantee == old_owner) {
+			item.grantee = new_owner;
+		}
+		if (item.grantor == old_owner) {
+			item.grantor = new_owner;
+		}
+		Grant(replaced, item.grantee, item.grantor, item.privs, item.grant_option);
+	}
+	acl = std::move(replaced);
+}
+
 static void Apply(vector<AclItem> &acl, idx_t grantor, AclMode grantable, AclMode privileges,
                   const AlterPermissionsInfo &info) {
 	if (info.revoke) {
@@ -253,6 +267,9 @@ static void ApplyGrant(const AlterPermissionsInfo &info, idx_t owner, vector<Acl
 	if (info.privileges != AclMode::NoRights) {
 		Apply(stored, grantor, grantable, info.privileges, info);
 		acl = std::move(stored);
+		if (acl.empty() && !Permissions::AclDefault(acl_class, owner).empty()) {
+			acl.push_back(AclItem {owner, owner, AclMode::NoRights, AclMode::NoRights});
+		}
 		if (info.revoke && columns && (info.privileges & ACL_COLUMN_PRIVILEGES) != AclMode::NoRights) {
 			for (auto &column : columns->Logical()) {
 				if (column.Acl().empty()) {
@@ -308,17 +325,15 @@ void AlterPermissionsInfo::ApplyTo(Permissions &permissions, CatalogType entry_t
 		return;
 	}
 	if (!info.new_owner.empty()) {
-		const auto old_owner = owner;
-		if (info.new_owner_id == old_owner) {
+		if (info.new_owner_id == owner) {
 			return;
 		}
-		acl.erase(
-		    std::remove_if(acl.begin(), acl.end(),
-		                   [&](const AclItem &item) { return item.grantee == old_owner && item.grantor == old_owner; }),
-		    acl.end());
-		for (auto &item : acl) {
-			if (item.grantor == old_owner) {
-				item.grantor = info.new_owner_id;
+		ReplaceOwner(acl, owner, info.new_owner_id);
+		if (columns) {
+			for (auto &column : columns->Logical()) {
+				auto column_acl = column.Acl();
+				ReplaceOwner(column_acl, owner, info.new_owner_id);
+				columns->GetColumnMutable(column.Logical()).SetAcl(std::move(column_acl));
 			}
 		}
 		owner = info.new_owner_id;
@@ -353,11 +368,7 @@ void AlterPermissionsInfo::ApplyTo(Permissions &permissions, CatalogType entry_t
 		                        [&](const ObjectAcl &entry) { return entry.oid == info.foreign_data_wrapper_id; });
 		auto row_acl = row == wrappers.end() ? vector<AclItem> {} : row->acl;
 		ApplyGrant(info, info.object_owner_id, row_acl, CatalogType::FOREIGN_DATA_WRAPPER_ENTRY, nullptr);
-		if (row_acl.empty()) {
-			if (row != wrappers.end()) {
-				wrappers.erase(row);
-			}
-		} else if (row == wrappers.end()) {
+		if (row == wrappers.end()) {
 			wrappers.push_back(ObjectAcl {info.foreign_data_wrapper_id, std::move(row_acl)});
 		} else {
 			row->acl = std::move(row_acl);
@@ -371,11 +382,7 @@ void AlterPermissionsInfo::ApplyTo(Permissions &permissions, CatalogType entry_t
 		                        [&](const ObjectAcl &entry) { return entry.oid == info.language_id; });
 		auto row_acl = row == languages.end() ? vector<AclItem> {} : row->acl;
 		ApplyGrant(info, info.object_owner_id, row_acl, CatalogType::LANGUAGE_ENTRY, nullptr);
-		if (row_acl.empty()) {
-			if (row != languages.end()) {
-				languages.erase(row);
-			}
-		} else if (row == languages.end()) {
+		if (row == languages.end()) {
 			languages.push_back(ObjectAcl {info.language_id, std::move(row_acl)});
 		} else {
 			row->acl = std::move(row_acl);
