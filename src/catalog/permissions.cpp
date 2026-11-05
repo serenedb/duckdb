@@ -195,7 +195,8 @@ static void Revoke(vector<AclItem> &acl, idx_t grantee, idx_t grantor, AclMode p
 			}
 		}
 		if (!dependents.empty() && !cascade) {
-			throw DependencyException("dependent privileges exist");
+			throw Exception(unordered_map<string, string> {{"hint", "Use CASCADE to revoke them too."}},
+			                ExceptionType::DEPENDENCY, "dependent privileges exist");
 		}
 		for (auto dependent : dependents) {
 			Revoke(acl, dependent, grantee, lost, false, true);
