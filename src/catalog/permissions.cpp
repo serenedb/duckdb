@@ -936,6 +936,21 @@ std::span<const AclItem> FindColumnAcl(const vector<ColumnAcl> &columns, const I
 	return {};
 }
 
+std::span<const AclItem> ColumnAclAt(const CatalogEntry &entry, optional_ptr<const vector<ColumnAcl>> column_acls,
+                                     idx_t column_index) {
+	if (entry.type == CatalogType::VIEW_ENTRY) {
+		auto &view = entry.Cast<ViewCatalogEntry>();
+		if (!column_acls) {
+			return view.ColumnAcl(column_index);
+		}
+		return FindColumnAcl(*column_acls, column_index < view.aliases.size()
+		                                       ? view.aliases[column_index]
+		                                       : view.GetColumnInfo()->names[column_index]);
+	}
+	auto &column = entry.Cast<TableCatalogEntry>().GetColumn(LogicalIndex(column_index));
+	return column_acls ? FindColumnAcl(*column_acls, column.Name()) : std::span<const AclItem>(column.Acl());
+}
+
 optional_idx SecuritySnapshot::BestAdmin(idx_t member, idx_t role) const {
 	if (member == role) {
 		return optional_idx();

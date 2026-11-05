@@ -339,6 +339,8 @@ DUCKDB_API bool IsUnowned(const CatalogEntry &entry);
 DUCKDB_API const Permissions &EffectivePermissions(ClientContext &context, const CatalogEntry &entry);
 DUCKDB_API optional_ptr<const vector<ColumnAcl>> EffectiveColumnAcls(ClientContext &context, const CatalogEntry &entry);
 DUCKDB_API std::span<const AclItem> FindColumnAcl(const vector<ColumnAcl> &columns, const Identifier &column);
+DUCKDB_API std::span<const AclItem> ColumnAclAt(const CatalogEntry &entry,
+                                                optional_ptr<const vector<ColumnAcl>> column_acls, idx_t column_index);
 DUCKDB_API bool CanUseSchema(const RoleAccess &role, const CatalogEntry &schema);
 DUCKDB_API bool CanUseNamedSchema(ClientContext &context, const RoleAccess &role, const CatalogEntry &schema);
 DUCKDB_API idx_t FunctionOverloadCount(const CatalogEntry &function);
