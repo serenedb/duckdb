@@ -1280,6 +1280,7 @@ string PermissionKindName(CatalogType type) {
 	case CatalogType::TABLE_MACRO_ENTRY:
 	case CatalogType::TABLE_FUNCTION_ENTRY:
 	case CatalogType::SCALAR_FUNCTION_ENTRY:
+	case CatalogType::PRAGMA_FUNCTION_ENTRY:
 		return "function";
 	case CatalogType::TYPE_ENTRY:
 		return "type";
