@@ -887,6 +887,7 @@ void WriteAheadLogDeserializer::ReplayCreateTable() {
 void WriteAheadLogDeserializer::ReplayDropTable() {
 	auto entry = WALDropTable::Deserialize(deserializer);
 	DropInfo info;
+
 	info.type = CatalogType::TABLE_ENTRY;
 	info.SetQualifiedName(ReplayEntryName(catalog, entry.qualified_name));
 	if (DeserializeOnly()) {
@@ -1079,6 +1080,7 @@ void WriteAheadLogDeserializer::ReplayDropSchema() {
 	if (DeserializeOnly()) {
 		return;
 	}
+
 	catalog.DropEntry(context, info);
 }
 
@@ -1098,11 +1100,13 @@ void WriteAheadLogDeserializer::ReplayCreateType() {
 void WriteAheadLogDeserializer::ReplayDropType() {
 	auto entry = WALDropType::Deserialize(deserializer);
 	DropInfo info;
+
 	info.type = CatalogType::TYPE_ENTRY;
 	info.SetQualifiedName(ReplayEntryName(catalog, entry.qualified_name));
 	if (DeserializeOnly()) {
 		return;
 	}
+
 	catalog.DropEntry(context, info);
 }
 
@@ -1155,6 +1159,7 @@ void WriteAheadLogDeserializer::ReplayCreateSequence() {
 	if (DeserializeOnly()) {
 		return;
 	}
+
 	catalog.CreateSequence(context, entry->Cast<CreateSequenceInfo>());
 }
 
@@ -1166,6 +1171,7 @@ void WriteAheadLogDeserializer::ReplayDropSequence() {
 	if (DeserializeOnly()) {
 		return;
 	}
+
 	catalog.DropEntry(context, info);
 }
 
@@ -1190,6 +1196,7 @@ void WriteAheadLogDeserializer::ReplayCreateMacro() {
 	if (DeserializeOnly()) {
 		return;
 	}
+
 	catalog.CreateFunction(context, entry->Cast<CreateMacroInfo>());
 }
 
@@ -1201,6 +1208,7 @@ void WriteAheadLogDeserializer::ReplayDropMacro() {
 	if (DeserializeOnly()) {
 		return;
 	}
+
 	catalog.DropEntry(context, info);
 }
 
@@ -1224,6 +1232,7 @@ void WriteAheadLogDeserializer::ReplayDropTableMacro() {
 	if (DeserializeOnly()) {
 		return;
 	}
+
 	catalog.DropEntry(context, info);
 }
 
@@ -1247,9 +1256,8 @@ void WriteAheadLogDeserializer::ReplayCreateIndex() {
 
 	// the table lives in the same (possibly nested) schema as the index
 	auto table_name = ReplayQualifiedName(catalog, create_info->GetQualifiedName(), info.table);
-	auto &table = Catalog::GetEntry(context, EntryLookupInfo(CatalogType::TABLE_ENTRY, table_name),
-	                                OnEntryNotFound::THROW_EXCEPTION)
-	                  ->Cast<DuckTableEntry>();
+	auto &entry = catalog.GetEntry<TableCatalogEntry>(context, table_name);
+	auto &table = entry.Cast<DuckTableEntry>();
 	auto &storage = table.GetStorage();
 	auto &io_manager = TableIOManager::Get(storage);
 
