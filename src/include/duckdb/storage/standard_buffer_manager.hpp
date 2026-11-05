@@ -43,6 +43,8 @@ public:
 
 	//! Registers a transient memory buffer.
 	shared_ptr<BlockHandle> RegisterTransientMemory(const idx_t size, BlockManager &block_manager) final;
+	BufferHandle AllocateTransientMemory(const idx_t size, BlockManager &block_manager,
+	                                     BufferPoolReservation &source) final;
 	//! Registers an in-memory buffer that cannot be unloaded until it is destroyed.
 	//! This buffer can be small (smaller than the block size of the temporary block manager).
 	//! Unpin and Pin are NOPs on this block of memory.
@@ -120,6 +122,11 @@ protected:
 	//! Helper
 	TempBufferPoolReservation EvictBlocksOrThrow(QueryContext context, MemoryTag tag, idx_t memory_delta,
 	                                             unique_ptr<FileBuffer> *buffer, const char *error_message);
+	TempBufferPoolReservation EvictBlocksOrThrow(QueryContext context, MemoryTag tag, idx_t memory_delta,
+	                                             unique_ptr<FileBuffer> *buffer, const char *error_message,
+	                                             optional_ptr<BufferPoolReservation> source);
+	shared_ptr<BlockHandle> RegisterSmallMemoryFrom(MemoryTag tag, const idx_t size,
+	                                                optional_ptr<BufferPoolReservation> source);
 
 	//! Register an in-memory buffer of arbitrary size, as long as it is >= BLOCK_SIZE. can_destroy signifies whether or
 	//! not the buffer can be destroyed instead of evicted,
@@ -131,7 +138,8 @@ protected:
 	//! This needs to be private to prevent creating blocks without ever pinning them:
 	//! blocks that are never pinned are never added to the eviction queue
 	shared_ptr<BlockHandle> RegisterMemory(MemoryTag tag, idx_t block_size, idx_t block_header_size, bool can_destroy,
-	                                       QueryContext context = QueryContext());
+	                                       QueryContext context = QueryContext(),
+	                                       optional_ptr<BufferPoolReservation> source = nullptr);
 
 	//! Get allocated size for a block
 	idx_t GetBlockAllocSize(idx_t block_size) const;

@@ -12,6 +12,7 @@
 #include "duckdb/common/optional_idx.hpp"
 #include "duckdb/storage/storage_info.hpp"
 #include "duckdb/storage/buffer/buffer_handle.hpp"
+#include "duckdb/storage/buffer/buffer_pool_reservation.hpp"
 #include "duckdb/storage/buffer/temporary_file_information.hpp"
 
 namespace duckdb {
@@ -90,6 +91,8 @@ public:
 
 	//! Returns a newly registered block of transient memory.
 	virtual shared_ptr<BlockHandle> RegisterTransientMemory(const idx_t size, BlockManager &block_manager);
+	virtual BufferHandle AllocateTransientMemory(const idx_t size, BlockManager &block_manager,
+	                                             BufferPoolReservation &source);
 	//! Returns a newly registered block of memory that is smaller than the block size setting.
 	virtual shared_ptr<BlockHandle> RegisterSmallMemory(const idx_t size);
 	//! Returns a newly registered block of memory that is smaller than the block size setting and has a memory tag.
