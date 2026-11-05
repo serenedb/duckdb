@@ -38,7 +38,7 @@ public:
 
 	unique_ptr<FileHandle> OpenFile(const string &path, FileOpenFlags flags,
 	                                optional_ptr<FileOpener> opener = nullptr) override;
-	//! Maps a heap or compacted file, which stays pinned while mapped; a file in blocks is read with GetBlockFile
+	//! Maps a heap or compacted file, which stays pinned while mapped; a file in blocks is read with OpenBlockFile
 	unique_ptr<MemoryMappedFile> MemoryMapFile(const OpenFileInfo &path, FileOpenFlags flags,
 	                                           const MMapOptions &options,
 	                                           optional_ptr<FileOpener> opener = nullptr) override;

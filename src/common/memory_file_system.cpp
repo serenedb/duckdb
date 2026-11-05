@@ -245,7 +245,7 @@ unique_ptr<MemoryMappedFile> MemoryFileSystem::MemoryMapFile(const OpenFileInfo 
 	{
 		annotated_lock_guard<annotated_mutex> guard(file->lock);
 		if (file->blocks) {
-			throw NotImplementedException("\"%s\" is held in block cache blocks, which are read with GetBlockFile",
+			throw NotImplementedException("\"%s\" is held in block cache blocks, which are read with OpenBlockFile",
 			                              path.path);
 		}
 		if (file->writers != 0) {
