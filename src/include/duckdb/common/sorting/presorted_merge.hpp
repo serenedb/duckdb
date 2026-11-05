@@ -29,6 +29,7 @@
 #include "duckdb/common/unique_ptr.hpp"
 #include "duckdb/common/vector.hpp"
 #include "duckdb/function/create_sort_key.hpp"
+#include "duckdb/parallel/task_scheduler_token.hpp"
 
 #include <functional>
 
@@ -87,7 +88,7 @@ public:
 
 	//! With a scheduler, the reads of the inputs spread over at most `threads` of its tasks
 	void Partition(idx_t max_partitions, bool keep_equal_keys = false, optional_ptr<TaskScheduler> scheduler = nullptr,
-	               idx_t threads = 1);
+	               idx_t threads = 1, shared_ptr<SchedulerAccount> account = nullptr);
 	idx_t PartitionCount() const;
 	idx_t PartitionBegin(idx_t partition, idx_t input) const;
 	unique_ptr<PresortedMergeState> BeginMerge(idx_t partition) const;
