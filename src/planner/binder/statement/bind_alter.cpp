@@ -643,11 +643,9 @@ static void ResolveDefaultPrivileges(Binder &binder, AlterPermissionsInfo &info)
 		throw PermissionException("permission denied to change default privileges");
 	}
 	info.grantee_id = GranteeId(binder, info.grantee);
-	auto database = DatabaseManager::GetDefaultDatabase(context);
+	const auto database = DatabaseManager::GetDefaultDatabase(context);
 	if (!info.default_schema.empty()) {
-		auto &schema = Catalog::GetSchema(context, Identifier(), Identifier(info.default_schema));
-		info.default_scope = schema.oid;
-		database = schema.ParentCatalog().GetName();
+		info.default_scope = Catalog::GetSchema(context, database, Identifier(info.default_schema)).oid;
 	}
 	if (!binder.ClusterEntry(CatalogType::DATABASE_ENTRY, database)) {
 		throw CatalogException(unordered_map<string, string> {{"type", "Database"}},
