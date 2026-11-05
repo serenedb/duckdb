@@ -13,6 +13,7 @@
 #include "duckdb/main/database.hpp"
 #include "duckdb/parallel/parallel_destroy_task.hpp"
 
+#include <absl/algorithm/container.h>
 #include <algorithm>
 #include "duckdb/storage/buffer_manager.hpp"
 
@@ -509,11 +510,21 @@ void TupleDataCollection::Combine(TupleDataCollection &other) {
 	if (this->layout.GetTypes() != other.GetLayout().GetTypes()) {
 		throw InternalException("Attempting to combine TupleDataCollection with mismatching types");
 	}
+	KeepSegmentArena(other.stl_allocator);
+	for (auto &arena : other.segment_arenas) {
+		KeepSegmentArena(arena);
+	}
 	this->segments.reserve(this->segments.size() + other.segments.size());
 	for (auto &other_seg : other.segments) {
 		AddSegment(std::move(other_seg));
 	}
 	other.Reset();
+}
+
+void TupleDataCollection::KeepSegmentArena(const shared_ptr<ArenaAllocator> &arena) {
+	if (arena != stl_allocator && !absl::c_linear_search(segment_arenas, arena)) {
+		segment_arenas.push_back(arena);
+	}
 }
 
 void TupleDataCollection::AddSegment(unsafe_arena_ptr<TupleDataSegment> segment) {
@@ -558,6 +569,7 @@ void TupleDataCollection::Reset() {
 		// All segments were null (moved out by Combine).  The old allocator is still shared by
 		// those moved-out segments and must keep its row_blocks intact.  Create a fresh allocator.
 		segments.clear();
+		segment_arenas.clear();
 
 		// Refreshes the TupleDataAllocator to prevent holding on to allocated data unnecessarily
 		allocator = make_shared_ptr<TupleDataAllocator>(*allocator);
