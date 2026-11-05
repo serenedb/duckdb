@@ -399,8 +399,9 @@ public:
 
 	void SetCatalogLookupCallback(catalog_entry_callback_t callback);
 	void BindCreateViewInfo(CreateViewInfo &base);
-	static void BindView(ClientContext &context, const SelectStatement &stmt, const Identifier &catalog_name,
-	                     const Identifier &schema_name, optional_ptr<LogicalDependencyList> dependencies,
+	static void BindView(ClientContext &context, const RoleAccess &lookups, const SelectStatement &stmt,
+	                     const Identifier &catalog_name, const Identifier &schema_name,
+	                     optional_ptr<LogicalDependencyList> dependencies,
 	                     optional_ptr<vector<NameBinding>> name_bindings, const vector<Identifier> &aliases,
 	                     vector<LogicalType> &result_types, vector<Identifier> &result_names);
 
