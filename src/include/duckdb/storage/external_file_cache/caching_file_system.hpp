@@ -79,13 +79,9 @@ private:
 	bool StripForceFullDownloadIfPresent();
 	//! Whether the settings let this file's reads go through the block cache
 	bool CacheAllowed() const;
-	//! The metadata of the file: from the cache when it knew the file at the open, otherwise from the open handle
-	BlockCacheFileInfo GetInfo();
 	//! The block cache's view of the file, registered on first use; null when reads must not use the cache
 	shared_ptr<BlockCacheFile> GetCachedFile();
 	FileBufferHandleGroup ReadUncached(idx_t nr_bytes, idx_t location);
-	//! Whether responses observed by this handle prohibit sharing cached data (e.g., HTTP no-store/Vary)
-	bool IsCacheReuseProhibited();
 	//! Record a timed read of a local file into the throughput estimate
 	void RecordReadThroughput(double total_seconds, idx_t bytes);
 
@@ -102,13 +98,13 @@ private:
 	//! Cache validation mode for this file
 	CacheValidationMode validate;
 
+	//! The metadata of the file: from the cache when it knew the file at the open, otherwise from opening it
+	BlockCacheFileInfo info;
 	annotated_mutex file_handle_mutex;
 	//! File handle for the internal filesystem.
 	shared_ptr<FileHandle> file_handle DUCKDB_GUARDED_BY(file_handle_mutex);
-	//! Metadata snapshot taken with a single Stats call when the file handle is opened.
-	CacheValidationInfo validation_info DUCKDB_GUARDED_BY(file_handle_mutex);
-	//! Metadata of a file the cache knew, so that it was not opened
-	optional<BlockCacheFileInfo> cached_info DUCKDB_GUARDED_BY(file_handle_mutex);
+	//! The freshness deadline of the metadata, which the responses to this handle's reads tighten
+	optional<timestamp_t> cache_valid_until DUCKDB_GUARDED_BY(file_handle_mutex);
 	shared_ptr<BlockCacheFile> cached_file DUCKDB_GUARDED_BY(file_handle_mutex);
 
 	//! Current position (if non-seeking reads)

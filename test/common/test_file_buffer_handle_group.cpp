@@ -29,10 +29,9 @@ TEST_CASE("FileBufferHandleGroup copy with single handle", "[file_buffer_handle_
 		handle.GetDataMutable()[i] = static_cast<uint8_t>(i & 0xFF);
 	}
 
-	vector<FileBufferHandleGroup::MemoryHandle> mem_handles;
-	const auto data = handle.Ptr();
-	mem_handles.emplace_back(std::move(handle), data, BUF_SIZE);
-	FileBufferHandleGroup group(std::move(mem_handles));
+	vector<BlockCachePin> pins;
+	pins.push_back(std::move(handle));
+	FileBufferHandleGroup group(std::move(pins));
 
 	array<uint8_t, 64> dest {};
 	group.CopyTo(dest.data(), dest.size());
@@ -53,10 +52,10 @@ TEST_CASE("FileBufferHandleGroup copy with single handle with offset", "[file_bu
 	}
 
 	constexpr idx_t OFFSET = 50;
-	vector<FileBufferHandleGroup::MemoryHandle> mem_handles;
-	const auto data = handle.Ptr() + OFFSET;
-	mem_handles.emplace_back(std::move(handle), data, BUF_SIZE - OFFSET);
-	FileBufferHandleGroup group(std::move(mem_handles));
+	vector<BlockCachePin> pins;
+	handle.Narrow(OFFSET, BUF_SIZE - OFFSET);
+	pins.push_back(std::move(handle));
+	FileBufferHandleGroup group(std::move(pins));
 
 	array<uint8_t, 32> dest {};
 	group.CopyTo(dest.data(), dest.size());
@@ -79,12 +78,12 @@ TEST_CASE("FileBufferHandleGroup copy partial across handles", "[file_buffer_han
 	auto h1 = AllocateAndFill(bm, BUF_SIZE, 0x11);
 	auto h2 = AllocateAndFill(bm, BUF_SIZE, 0x22);
 
-	vector<FileBufferHandleGroup::MemoryHandle> mem_handles;
-	const auto h1_data = h1.Ptr() + H1_OFFSET;
-	const auto h2_data = h2.Ptr();
-	mem_handles.emplace_back(std::move(h1), h1_data, H1_LENGTH);
-	mem_handles.emplace_back(std::move(h2), h2_data, H2_LENGTH);
-	FileBufferHandleGroup group(std::move(mem_handles));
+	vector<BlockCachePin> pins;
+	h1.Narrow(H1_OFFSET, H1_LENGTH);
+	h2.Narrow(0, H2_LENGTH);
+	pins.push_back(std::move(h1));
+	pins.push_back(std::move(h2));
+	FileBufferHandleGroup group(std::move(pins));
 
 	array<uint8_t, COPY_SIZE> dest {};
 	group.CopyTo(dest.data(), dest.size());

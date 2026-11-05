@@ -85,6 +85,12 @@ public:
 	}
 	//! Another pin of the [size] bytes at [offset] of the pinned bytes
 	BlockCachePin Share(idx_t offset, idx_t size);
+	//! Narrows this pin to the [size] bytes at [offset] of its bytes
+	void Narrow(idx_t offset, idx_t size_p) {
+		D_ASSERT(offset <= size && size_p <= size - offset);
+		data += offset;
+		size = size_p;
+	}
 	void Reset() {
 		handle.Destroy();
 		data = nullptr;
@@ -178,6 +184,10 @@ public:
 	bool HasSource() const;
 	//! Sets where missing blocks are read from, unless the file has a source already
 	void SetSource(shared_ptr<FileHandle> handle);
+	//! Whether a response to a fetch of the file forbade reusing the bytes it returned
+	bool ReuseForbidden() const {
+		return reuse_forbidden.load(std::memory_order_relaxed);
+	}
 
 private:
 	friend class BlockCache;
@@ -194,6 +204,7 @@ private:
 	const shared_ptr<BlockCacheBlocks> blocks;
 	//! Bytes the background fetches of this file are fetching right now
 	atomic<idx_t> in_flight {0};
+	atomic<bool> reuse_forbidden {false};
 };
 
 //! Writes an unbacked or written file from start to end: it creates each block as the write reaches it and pins the
@@ -308,18 +319,20 @@ public:
 	void ForgetFile(const string &path);
 
 	//! Pins block [block] of [file], fetching it when missing; throws when the fetch fails
-	BlockCachePin Pin(const shared_ptr<BlockCacheFile> &file, idx_t block);
+	BlockCachePin Pin(BlockCacheFile &file, idx_t block);
 	//! Pins block [block] of [file] for a reader that may read it in order: when the reader's last pin was of the
 	//! block before and [ahead] holds, the blocks from [block] on are fetched ahead, twice as many as the time before
 	//! (2 to READ_AHEAD_BLOCKS)
 	BlockCachePin PinInOrder(const shared_ptr<BlockCacheFile> &file, idx_t block, BlockCacheReadAhead &read_ahead,
 	                         bool ahead);
-	//! Pins the blocks of [offset, offset + size) of [file], fetching the missing ones together
-	vector<BlockCachePin> PinRange(const shared_ptr<BlockCacheFile> &file, idx_t offset, idx_t size);
+	//! Pins the bytes of [offset, offset + size) of [file] that lie inside it, a pin per block they span, fetching the
+	//! missing blocks together
+	vector<BlockCachePin> PinRange(BlockCacheFile &file, idx_t offset, idx_t size);
 	//! Pins the [size] bytes at [offset] of [file] in one piece: in their block when they lie in one, otherwise in a
 	//! copy the pin owns; Ptr() and Size() are the bytes either way
-	BlockCachePin PinBytes(const shared_ptr<BlockCacheFile> &file, idx_t offset, idx_t size);
-	//! Pins the blocks of [offset, offset + size) of [file] when all of them are in memory; empty otherwise
+	BlockCachePin PinBytes(BlockCacheFile &file, idx_t offset, idx_t size);
+	//! Pins the bytes of [offset, offset + size) of [file] like PinRange when all of their blocks are in memory; empty
+	//! otherwise
 	vector<BlockCachePin> TryPinRange(BlockCacheFile &file, idx_t offset, idx_t size);
 	//! Whether every block of [offset, offset + size) is in memory, in a temporary file or loading
 	bool IsCached(BlockCacheFile &file, idx_t offset, idx_t size) const;
