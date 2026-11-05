@@ -97,7 +97,7 @@ void PragmaFunctions::RegisterFunction(BuiltinFunctions &set) {
 	set.AddFunction(PragmaFunction::PragmaStatement("disable_optimizer", PragmaDisableOptimizer));
 
 	auto force_checkpoint = PragmaFunction::PragmaStatement("force_checkpoint", PragmaForceCheckpoint);
-	force_checkpoint.SetRequiredCapability(RoleCapability::Checkpoint);
+	force_checkpoint.required_capability = RoleCapability::Checkpoint;
 	set.AddFunction(force_checkpoint);
 
 	set.AddFunction(PragmaFunction::PragmaStatement("enable_progress_bar", PragmaEnableProgressBar));
@@ -108,11 +108,11 @@ void PragmaFunctions::RegisterFunction(BuiltinFunctions &set) {
 
 	auto enable_checkpoint_on_shutdown =
 	    PragmaFunction::PragmaStatement("enable_checkpoint_on_shutdown", PragmaEnableCheckpointOnShutdown);
-	enable_checkpoint_on_shutdown.SetRequiredCapability(RoleCapability::Superuser);
+	enable_checkpoint_on_shutdown.required_capability = RoleCapability::Superuser;
 	set.AddFunction(enable_checkpoint_on_shutdown);
 	auto disable_checkpoint_on_shutdown =
 	    PragmaFunction::PragmaStatement("disable_checkpoint_on_shutdown", PragmaDisableCheckpointOnShutdown);
-	disable_checkpoint_on_shutdown.SetRequiredCapability(RoleCapability::Superuser);
+	disable_checkpoint_on_shutdown.required_capability = RoleCapability::Superuser;
 	set.AddFunction(disable_checkpoint_on_shutdown);
 }
 

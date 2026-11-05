@@ -188,15 +188,15 @@ void EnableLoggingFun::RegisterFunction(BuiltinFunctions &set) {
 		        .Add("storage_buffer_size", LogicalType::UBIGINT);
 	    });
 
-	enable_fun.SetRequiredCapability(RoleCapability::Superuser);
+	enable_fun.required_capability = RoleCapability::Superuser;
 	set.AddFunction(enable_fun);
 
 	auto disable_fun = TableFunction("disable_logging", {}, DisableLogging, BindDisableLogging, nullptr, nullptr);
-	disable_fun.SetRequiredCapability(RoleCapability::Superuser);
+	disable_fun.required_capability = RoleCapability::Superuser;
 	set.AddFunction(disable_fun);
 
 	auto truncate_fun = TableFunction("truncate_duckdb_logs", {}, TruncateLogs, BindTruncateLogs, nullptr, nullptr);
-	truncate_fun.SetRequiredCapability(RoleCapability::Superuser);
+	truncate_fun.required_capability = RoleCapability::Superuser;
 	set.AddFunction(truncate_fun);
 }
 

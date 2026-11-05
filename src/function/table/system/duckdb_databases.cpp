@@ -147,7 +147,7 @@ void DuckDBDatabasesFun::RegisterFunction(BuiltinFunctions &set) {
 	TableFunction fn("duckdb_databases", {}, DuckDBDatabasesFunction, DuckDBDatabasesBind, DuckDBDatabasesInit);
 	fn.GetSignature().AddKeywordOnly("include_hidden", LogicalType::BOOLEAN, Value::BOOLEAN(false));
 	fn.pushdown_complex_filter = DuckDBSystemIncludeHiddenBindData::PushdownDatabaseFilters;
-	fn.SetRequiredCapability(RoleCapability::Superuser);
+	fn.required_capability = RoleCapability::Superuser;
 	set.AddFunction(fn);
 }
 

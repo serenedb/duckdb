@@ -506,18 +506,12 @@ public:
 
 protected:
 	FunctionSignature signature;
-	RoleCapability required_capability = RoleCapability::None;
 
 public:
+	RoleCapability required_capability = RoleCapability::None;
+
 	DUCKDB_API string ToString() const;
 	DUCKDB_API hash_t Hash() const;
-
-	RoleCapability GetRequiredCapability() const {
-		return required_capability;
-	}
-	void SetRequiredCapability(RoleCapability capability) {
-		required_capability = capability;
-	}
 
 	FunctionSignature &GetSignature() {
 		return signature;

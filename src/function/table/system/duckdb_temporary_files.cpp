@@ -55,7 +55,7 @@ void DuckDBTemporaryFilesFunction(ClientContext &context, TableFunctionInput &da
 void DuckDBTemporaryFilesFun::RegisterFunction(BuiltinFunctions &set) {
 	TableFunction temporary_files("duckdb_temporary_files", {}, DuckDBTemporaryFilesFunction, DuckDBTemporaryFilesBind,
 	                              DuckDBTemporaryFilesInit);
-	temporary_files.SetRequiredCapability(RoleCapability::Superuser);
+	temporary_files.required_capability = RoleCapability::Superuser;
 	set.AddFunction(temporary_files);
 }
 

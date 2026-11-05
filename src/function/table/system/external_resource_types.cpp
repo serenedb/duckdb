@@ -166,14 +166,14 @@ void RegisterExternalResourceTypeFun::RegisterFunction(BuiltinFunctions &set) {
 		        .Add("list_function", LogicalType::VARCHAR);
 	    });
 
-	fn.SetRequiredCapability(RoleCapability::Superuser);
+	fn.required_capability = RoleCapability::Superuser;
 	set.AddFunction(fn);
 }
 
 void DuckDBExternalResourceTypesFun::RegisterFunction(BuiltinFunctions &set) {
 	TableFunction fn("duckdb_external_resource_types", {}, ExternalResourceTypesFunction, ExternalResourceTypesBind,
 	                 ExternalResourceTypesInit);
-	fn.SetRequiredCapability(RoleCapability::Superuser);
+	fn.required_capability = RoleCapability::Superuser;
 	set.AddFunction(fn);
 }
 

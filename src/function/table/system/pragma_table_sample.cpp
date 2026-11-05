@@ -93,7 +93,7 @@ void DuckDBTableSample::RegisterFunction(BuiltinFunctions &set) {
 	TableFunction table_sample("duckdb_table_sample",
 	                           FunctionSignature().AddPositionalOnly("table_name", LogicalType::VARCHAR),
 	                           DuckDBTableSampleFunction, DuckDBTableSampleBind, DuckDBTableSampleInit);
-	table_sample.SetRequiredCapability(RoleCapability::Superuser);
+	table_sample.required_capability = RoleCapability::Superuser;
 	set.AddFunction(table_sample);
 }
 

@@ -305,7 +305,7 @@ static void LoadInternal(ExtensionLoader &loader) {
 	});
 	dbgen_func.call_return_type = StatementReturnType::NOTHING;
 	dbgen_func.table_scan_progress = DbgenProgress;
-	dbgen_func.SetRequiredCapability(RoleCapability::Superuser);
+	dbgen_func.required_capability = RoleCapability::Superuser;
 	loader.RegisterFunction(dbgen_func);
 
 	// create the TPCH pragma that allows us to run the query

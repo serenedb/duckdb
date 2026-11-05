@@ -378,7 +378,7 @@ void CreateExternalResourceFun::RegisterFunction(BuiltinFunctions &set) {
 		    .Add("timeout_seconds", LogicalType::BIGINT)
 		    .Add("poll_interval_seconds", LogicalType::BIGINT);
 	});
-	fn.SetRequiredCapability(RoleCapability::Superuser);
+	fn.required_capability = RoleCapability::Superuser;
 	set.AddFunction(fn);
 }
 
@@ -451,7 +451,7 @@ void DestroyExternalResourceFun::RegisterFunction(BuiltinFunctions &set) {
 	                     .AddPositionalOnly("deleter_function", LogicalType::VARCHAR)
 	                     .AddPositionalOnly("payload", LogicalType::ANY),
 	                 DestroyExternalResourceFunction, DestroyExternalResourceBind, DestroyExternalResourceInit);
-	fn.SetRequiredCapability(RoleCapability::Superuser);
+	fn.required_capability = RoleCapability::Superuser;
 	set.AddFunction(fn);
 }
 

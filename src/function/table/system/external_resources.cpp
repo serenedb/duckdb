@@ -214,7 +214,7 @@ void DuckDBExternalResourcesFun::RegisterFunction(BuiltinFunctions &set) {
 	                 ExternalResourcesInit);
 	fn.GetSignature().WithTypedKwargs("options",
 	                                  [](TypedKwargs &options) { options.Add("discover", LogicalType::BOOLEAN); });
-	fn.SetRequiredCapability(RoleCapability::Superuser);
+	fn.required_capability = RoleCapability::Superuser;
 	set.AddFunction(fn);
 }
 
@@ -299,7 +299,7 @@ void RegisterExternalResourceFun::RegisterFunction(BuiltinFunctions &set) {
 		    .Add("attached_db_type", LogicalType::VARCHAR)
 		    .Add("deleter_function", LogicalType::VARCHAR);
 	});
-	fn.SetRequiredCapability(RoleCapability::Superuser);
+	fn.required_capability = RoleCapability::Superuser;
 	set.AddFunction(fn);
 }
 
@@ -354,7 +354,7 @@ void DeregisterExternalResourceFun::RegisterFunction(BuiltinFunctions &set) {
 	TableFunction fn(
 	    "deregister_external_resource", FunctionSignature().AddPositionalOnly("name", LogicalType::VARCHAR),
 	    DeregisterExternalResourceFunction, DeregisterExternalResourceBind, DeregisterExternalResourceInit);
-	fn.SetRequiredCapability(RoleCapability::Superuser);
+	fn.required_capability = RoleCapability::Superuser;
 	set.AddFunction(fn);
 }
 

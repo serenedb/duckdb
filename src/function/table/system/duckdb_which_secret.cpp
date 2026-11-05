@@ -72,7 +72,7 @@ void DuckDBWhichSecretFun::RegisterFunction(BuiltinFunctions &set) {
 	                               .AddPositionalOnly("path", LogicalType::VARCHAR)
 	                               .AddPositionalOnly("type", LogicalType::VARCHAR),
 	                           DuckDBWhichSecretFunction, DuckDBWhichSecretBind, DuckDBWhichSecretInit);
-	which_secret.SetRequiredCapability(RoleCapability::Superuser);
+	which_secret.required_capability = RoleCapability::Superuser;
 	set.AddFunction(which_secret);
 }
 

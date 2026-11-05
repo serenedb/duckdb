@@ -6,7 +6,7 @@ CreateAggregateFunctionInfo::CreateAggregateFunctionInfo(AggregateFunction funct
     : CreateFunctionInfo(CatalogType::AGGREGATE_FUNCTION_ENTRY), functions(function.name) {
 	SetFunctionName(function.name);
 	function.GetSignature().Verify();
-	required_capability = function.GetRequiredCapability();
+	required_capability = function.required_capability;
 	functions.AddFunction(std::move(function));
 	internal = true;
 }
@@ -16,7 +16,7 @@ CreateAggregateFunctionInfo::CreateAggregateFunctionInfo(AggregateFunctionSet se
 	SetFunctionName(functions.name);
 	for (auto &func : functions.functions) {
 		func->GetSignature().Verify();
-		required_capability |= func->GetRequiredCapability();
+		required_capability |= func->required_capability;
 	}
 	functions.ApplyToFunctions([&](AggregateFunction &func) { func.name = functions.name; });
 	internal = true;
