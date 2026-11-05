@@ -281,12 +281,8 @@ BufferPool::EvictionResult BufferPool::EvictBlocks(QueryContext context, MemoryT
 	auto &remote_files = *queues[BLOCK_AND_EXTERNAL_FILE_QUEUE_SIZE];
 	const auto remote_floor = GetExternalFileCacheMinMemory();
 	for (auto &queue : queues) {
-		const bool remote = queue.get() == &remote_files;
-		if (remote && remote_files.GetBytes() <= remote_floor) {
-			continue;
-		}
-		auto block_result =
-		    EvictBlocksInternal(context, *queue, tag, extra_memory, memory_limit, remote ? remote_floor : 0, buffer);
+		const auto keep = queue.get() == &remote_files ? remote_floor : 0;
+		auto block_result = EvictBlocksInternal(context, *queue, tag, extra_memory, memory_limit, keep, buffer);
 		if (block_result.success) {
 			return block_result;
 		}
