@@ -96,7 +96,7 @@ optional_ptr<Catalog> Catalog::GetCatalogEntry(CatalogEntryRetriever &retriever,
 	if (catalog_name == TEMP_CATALOG) {
 		return &ClientData::Get(context).temporary_objects->GetCatalog();
 	}
-	if (catalog_name == SYSTEM_CATALOG && GetSystemCatalog(context).IsDuckCatalog()) {
+	if (catalog_name == SYSTEM_CATALOG) {
 		return &GetSystemCatalog(context);
 	}
 	auto entry =
@@ -863,6 +863,9 @@ vector<CatalogSearchEntry> GetCatalogEntries(CatalogEntryRetriever &retriever, c
 			           !IsInvalidCatalog(default_database)) {
 				entries.emplace_back(std::move(default_database), schema);
 			}
+		}
+		if (schema == DEFAULT_SCHEMA && !Catalog::GetSystemCatalog(context).IsDuckCatalog()) {
+			entries.emplace_back(SYSTEM_CATALOG, schema);
 		}
 	} else if (IsInvalidSchema(schema)) {
 		auto schemas = search_path.GetSchemasForCatalog(catalog);

@@ -85,7 +85,7 @@ shared_ptr<AttachedDatabase> DatabaseManager::GetDatabase(const Identifier &name
 }
 
 shared_ptr<AttachedDatabase> DatabaseManager::GetDatabaseInternal(const lock_guard<mutex> &, const Identifier &name) {
-	if (name == SYSTEM_CATALOG && system->GetCatalog().IsDuckCatalog()) {
+	if (name == SYSTEM_CATALOG) {
 		return system;
 	}
 	auto entry = databases.find(name);
