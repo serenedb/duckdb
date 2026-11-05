@@ -156,8 +156,6 @@ protected:
 
 	void AddToEvictionQueue(shared_ptr<BlockHandle> &handle) final;
 
-	const char *InMemoryWarning();
-
 	static data_ptr_t BufferAllocatorAllocate(PrivateAllocatorData *private_data, idx_t size);
 	static void BufferAllocatorFree(PrivateAllocatorData *private_data, data_ptr_t pointer, idx_t size);
 	static data_ptr_t BufferAllocatorRealloc(PrivateAllocatorData *private_data, data_ptr_t pointer, idx_t old_size,

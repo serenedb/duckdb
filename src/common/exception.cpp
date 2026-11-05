@@ -416,19 +416,7 @@ InvalidConfigurationException::InvalidConfigurationException(const unordered_map
     : Exception(extra_info, ExceptionType::INVALID_CONFIGURATION, msg) {
 }
 
-OutOfMemoryException::OutOfMemoryException(std::string_view msg)
-    : Exception(ExceptionType::OUT_OF_MEMORY, ExtendOutOfMemoryError(msg)) {
-}
-
-string OutOfMemoryException::ExtendOutOfMemoryError(std::string_view msg) {
-	if (StringUtil::Contains(msg, "Possible solutions:")) {
-		// already extended
-		return string(msg);
-	}
-	return absl::StrCat(msg, "\n\nPossible solutions:\n"
-	                         "* Reducing the number of threads (SET threads=X)\n"
-	                         "* Disabling insertion-order preservation (SET preserve_insertion_order=false)\n"
-	                         "* Increasing the memory limit (SET memory_limit='...GB')");
+OutOfMemoryException::OutOfMemoryException(std::string_view msg) : Exception(ExceptionType::OUT_OF_MEMORY, msg) {
 }
 
 ParameterNotAllowedException::ParameterNotAllowedException(std::string_view msg)
