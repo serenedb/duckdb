@@ -565,6 +565,13 @@ void BufferPool::SetLimit(idx_t limit) {
 	block_allocator.FlushAll();
 }
 
+void BufferPool::ForceLimit(idx_t limit) {
+	lock_guard<mutex> l_lock(limit_lock);
+	EvictBlocks(QueryContext(), MemoryTag::EXTENSION, 0, limit);
+	maximum_memory = limit;
+	block_allocator.FlushAll();
+}
+
 void BufferPool::SetAllocatorBulkDeallocationFlushThreshold(idx_t threshold) {
 	allocator_bulk_deallocation_flush_threshold = threshold;
 }
