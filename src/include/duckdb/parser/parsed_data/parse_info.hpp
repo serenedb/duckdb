@@ -14,6 +14,7 @@
 #include "duckdb/common/identifier.hpp"
 #include "duckdb/common/types/value.hpp"
 #include "duckdb/common/unordered_map.hpp"
+#include "duckdb/parser/qualified_name.hpp"
 
 namespace duckdb {
 class ParsedExpression;
@@ -72,6 +73,8 @@ public:
 	virtual void Serialize(Serializer &serializer) const;
 	static unique_ptr<ParseInfo> Deserialize(Deserializer &deserializer);
 	static string TypeToString(CatalogType type);
+	static string RoutineKeyword(bool include_functions, bool include_procedures);
+	static string RoutineToString(const QualifiedName &name, bool has_func_args, const vector<LogicalType> &parameters);
 };
 
 } // namespace duckdb

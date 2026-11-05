@@ -777,6 +777,7 @@ public:
 	static unique_ptr<DropStatement> MakeDropStatement(unique_ptr<DropInfo> info, vector<QualifiedName> names);
 	static bool TransformFunctionArgumentTypes(PEGTransformer &transformer, OptionalParseResult &signature,
 	                                           vector<LogicalType> &types);
+	static void TransformRoutineKind(ParseResult &kind, bool &include_functions, bool &include_procedures);
 	static void AddUpdateToMultiStatement(const unique_ptr<MultiStatement> &multi_statement, const string &column_name,
 	                                      const AlterEntryData &table_data,
 	                                      const unique_ptr<ParsedExpression> &original_expression);

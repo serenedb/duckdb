@@ -300,16 +300,13 @@ unique_ptr<AlterInfo> PEGTransformerFactory::TransformAlterIndexStmt(PEGTransfor
 unique_ptr<AlterInfo> PEGTransformerFactory::TransformAlterFunctionStmt(PEGTransformer &transformer,
                                                                         ParseResult &parse_result) {
 	auto &list_pr = parse_result.Cast<ListParseResult>();
-	const auto kind = StringUtil::Upper(
-	    list_pr.Child<ListParseResult>(0).Child<ChoiceParseResult>(0).GetResult().Cast<KeywordParseResult>().keyword);
 	auto rename_info = unique_ptr_cast<AlterTableInfo, RenameTableInfo>(
 	    transformer.Transform<unique_ptr<AlterTableInfo>>(list_pr.GetChild(4)));
 	auto not_found = list_pr.Child<OptionalParseResult>(1).HasResult() ? OnEntryNotFound::RETURN_NULL
 	                                                                   : OnEntryNotFound::THROW_EXCEPTION;
 	AlterEntryData data(transformer.Transform<QualifiedName>(list_pr.GetChild(2)), not_found);
 	auto result = make_uniq<RenameScalarFunctionInfo>(data, rename_info->new_table_name);
-	result->include_functions = kind != "PROCEDURE";
-	result->include_procedures = kind != "FUNCTION";
+	TransformRoutineKind(list_pr.GetChild(0), result->include_functions, result->include_procedures);
 	result->has_func_args =
 	    TransformFunctionArgumentTypes(transformer, list_pr.Child<OptionalParseResult>(3), result->func_parameters);
 	return std::move(result);
