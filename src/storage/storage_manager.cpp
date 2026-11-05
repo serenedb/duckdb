@@ -905,6 +905,10 @@ void SingleFileStorageManager::CreateCheckpoint(QueryContext context, Checkpoint
 	}
 
 	if (db.GetStorageExtension()) {
+		auto refusal = db.GetStorageExtension()->CheckpointRefusal(db);
+		if (!refusal.empty()) {
+			throw IOException("cannot checkpoint database %s: %s", db.GetName(), refusal);
+		}
 		db.GetStorageExtension()->OnCheckpointStart(db, options);
 	}
 

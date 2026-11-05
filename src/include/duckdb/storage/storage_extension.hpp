@@ -53,6 +53,10 @@ public:
 		return nullptr;
 	}
 
+	virtual string CheckpointRefusal(AttachedDatabase &db) {
+		return string();
+	}
+
 	virtual void OnCheckpointStart(AttachedDatabase &db, CheckpointOptions checkpoint_options) {
 	}
 

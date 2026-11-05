@@ -208,6 +208,13 @@ DuckTransactionManager::CanCheckpoint(DuckTransaction &transaction, unique_ptr<S
 		lock.reset();
 		return CheckpointDecision("a failed checkpoint left the checkpoint WAL active");
 	}
+	if (db.GetStorageExtension()) {
+		auto refusal = db.GetStorageExtension()->CheckpointRefusal(db);
+		if (!refusal.empty()) {
+			lock.reset();
+			return CheckpointDecision(std::move(refusal));
+		}
+	}
 	return CheckpointDecision(CheckpointType::FULL_CHECKPOINT);
 }
 
