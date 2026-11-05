@@ -108,6 +108,9 @@ struct AclItem {
 	AclMode grant_option = AclMode::NoRights;
 
 	bool operator==(const AclItem &rhs) const = default;
+	bool GrantsNothing() const {
+		return privs == AclMode::NoRights && grant_option == AclMode::NoRights;
+	}
 
 	void Serialize(Serializer &serializer) const;
 	static AclItem Deserialize(Deserializer &deserializer);
