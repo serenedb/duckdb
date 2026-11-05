@@ -135,15 +135,11 @@ protected:
 	//! If we want to change this, e.g., to immediately destroy the buffer upon unpinning,
 	//! we can call BlockHandle::SetDestroyBufferUpon
 	//! The resulting buffer will already be allocated, but needs to be pinned in order to be used.
-	//! This needs to be private to prevent creating blocks without ever pinning them:
-	//! blocks that are never pinned are never added to the eviction queue
 	shared_ptr<BlockHandle> RegisterMemory(MemoryTag tag, idx_t block_size, idx_t block_header_size, bool can_destroy,
 	                                       QueryContext context = QueryContext());
 
-	//! Lets the buffer pool evict [block], a block RegisterMemory created
-	void AddToEvictionQueue(BlockHandle &block);
 	//! Pins [block], a block RegisterMemory created, before the buffer pool may evict it
-	BufferHandle PinNew(const QueryContext &context, shared_ptr<BlockHandle> &block);
+	BufferHandle PinNew(shared_ptr<BlockHandle> &block);
 
 	//! Get allocated size for a block
 	idx_t GetBlockAllocSize(idx_t block_size) const;
@@ -174,8 +170,6 @@ protected:
 	//! When the BlockHandle reaches 0 readers, this creates a new FileBuffer for this BlockHandle and
 	//! overwrites the data within with garbage. Any readers that do not hold the pin will notice
 	void VerifyZeroReaders(BlockLock &l, BlockMemory &memory);
-	//! Pins [handle]; the pin owns a reference to it when [own] is set
-	BufferHandle Pin(const QueryContext &context, shared_ptr<BlockHandle> &handle, bool own);
 
 	//! A run of handles with adjacent block ids starting at first_block
 	struct PrefetchRun {

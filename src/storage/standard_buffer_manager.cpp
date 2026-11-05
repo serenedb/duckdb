@@ -201,33 +201,28 @@ shared_ptr<BlockHandle> StandardBufferManager::RegisterUnloadedMemory(MemoryTag 
 	return result;
 }
 
-void StandardBufferManager::AddToEvictionQueue(BlockHandle &block) {
-	auto &memory = block.GetMemory();
-	auto lock = memory.GetLock();
-	buffer_pool.AddBlock(memory);
-}
-
-BufferHandle StandardBufferManager::PinNew(const QueryContext &context, shared_ptr<BlockHandle> &block) {
+BufferHandle StandardBufferManager::PinNew(shared_ptr<BlockHandle> &block) {
 #ifdef DUCKDB_DEBUG_DESTROY_BLOCKS
 	// Initialize the memory with garbage data
 	WriteGarbageIntoBuffer(*block);
 #endif
-	auto result = Pin(context, block, true);
-	AddToEvictionQueue(*block);
-	return result;
+	auto &memory = block->GetMemory();
+	memory.IncrementReaders();
+	buffer_pool.AddBlock(memory);
+	return BufferHandle(block, memory.GetLoadedBuffer());
 }
 
 shared_ptr<BlockHandle> StandardBufferManager::AllocateTemporaryMemory(MemoryTag tag, idx_t block_size,
                                                                        bool can_destroy) {
 	auto block = RegisterMemory(tag, block_size, Storage::DEFAULT_BLOCK_HEADER_SIZE, can_destroy);
-	AddToEvictionQueue(*block);
+	buffer_pool.AddBlock(block->GetMemory());
 	return block;
 }
 
 shared_ptr<BlockHandle> StandardBufferManager::AllocateMemory(MemoryTag tag, BlockManager *block_manager,
                                                               bool can_destroy) {
 	auto block = RegisterMemory(tag, block_manager->GetBlockSize(), block_manager->GetBlockHeaderSize(), can_destroy);
-	AddToEvictionQueue(*block);
+	buffer_pool.AddBlock(block->GetMemory());
 	return block;
 }
 
@@ -241,14 +236,14 @@ BufferHandle StandardBufferManager::Allocate(MemoryTag tag, idx_t block_size, bo
 
 BufferHandle StandardBufferManager::Allocate(QueryContext context, MemoryTag tag, idx_t block_size, bool can_destroy) {
 	auto block = RegisterMemory(tag, block_size, Storage::DEFAULT_BLOCK_HEADER_SIZE, can_destroy, context);
-	return PinNew(context, block);
+	return PinNew(block);
 }
 
 BufferHandle StandardBufferManager::Allocate(QueryContext context, MemoryTag tag, BlockManager *block_manager,
                                              bool can_destroy) {
 	auto block =
 	    RegisterMemory(tag, block_manager->GetBlockSize(), block_manager->GetBlockHeaderSize(), can_destroy, context);
-	return PinNew(context, block);
+	return PinNew(block);
 }
 
 void StandardBufferManager::BatchRead(QueryContext context, PrefetchRun &run) {
@@ -375,25 +370,18 @@ BufferHandle StandardBufferManager::Pin(shared_ptr<BlockHandle> &handle) {
 }
 
 BufferHandle StandardBufferManager::Pin(const QueryContext &context, shared_ptr<BlockHandle> &handle) {
-	return Pin(context, handle, false);
-}
-
-BufferHandle StandardBufferManager::Pin(const QueryContext &context, shared_ptr<BlockHandle> &handle, bool own) {
 	auto &block_memory = handle->GetMemory();
-	const auto pin_loaded = [&] {
-		// Tiny buffers keep no reader count, so their pins own the block.
-		if (own || block_memory.GetBufferType() == FileBufferType::TINY_BUFFER) {
-			return BufferHandle(handle, block_memory.GetLoadedBuffer());
-		}
-		return BufferHandle(block_memory, block_memory.GetLoadedBuffer());
-	};
+	// Tiny buffers stay loaded and count no readers, so their pins own the block.
+	if (block_memory.GetBufferType() == FileBufferType::TINY_BUFFER) {
+		return BufferHandle(handle, block_memory.GetLoadedBuffer());
+	}
 	if (block_memory.TryPinLoaded()) {
-		return pin_loaded();
+		return BufferHandle(block_memory, block_memory.GetLoadedBuffer());
 	}
 	while (!block_memory.TryClaim()) {
 		block_memory.WaitForLoad();
 		if (block_memory.TryPinLoaded()) {
-			return pin_loaded();
+			return BufferHandle(block_memory, block_memory.GetLoadedBuffer());
 		}
 	}
 	absl::Cleanup finish = [&] {
@@ -492,19 +480,9 @@ void StandardBufferManager::Unpin(BlockMemory &memory) {
 	if (memory.TryUnpinFast()) {
 		return;
 	}
-	buffer_pool.MarkUsed(memory);
+	memory.SetReferenced();
 	// The memory may be gone once the reader is released, unless the block is orphaned: whatever the last reader
 	// does after that happens under the block lock, which the block handle's destructor takes too.
-#ifndef DUCKDB_DEBUG_DESTROY_BLOCKS
-	if (!memory.DestroyedUponUnpin()) {
-		if ((memory.ReleaseReader() & ~BlockMemory::LOADED) == BlockMemory::ORPHANED + 1) {
-			shared_ptr<BlockMemory> owner;
-			auto lock = memory.GetLock();
-			owner = memory.TakeOrphanOwner(lock);
-		}
-		return;
-	}
-#endif
 	shared_ptr<BlockMemory> owner;
 	auto lock = memory.GetLock();
 	const auto before = memory.ReleaseReader();
