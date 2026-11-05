@@ -813,6 +813,7 @@ void WriteAheadLogDeserializer::ThrowVersionError(idx_t checkpoint_iteration, id
 void WriteAheadLogDeserializer::ReplayVersion() {
 	state.wal_version = deserializer.ReadProperty<idx_t>(101, "version");
 
+	auto &single_file_block_manager = db.GetStorageManager().GetBlockManager().Cast<SingleFileBlockManager>();
 	data_t db_identifier[MainHeader::DB_IDENTIFIER_LEN];
 	bool is_set = false;
 	deserializer.ReadOptionalList(102, "db_identifier", [&](Deserializer::List &list, idx_t i) {
@@ -826,7 +827,6 @@ void WriteAheadLogDeserializer::ReplayVersion() {
 	if (!is_set || !checkpoint_iteration.IsValid()) {
 		return;
 	}
-	auto &single_file_block_manager = db.GetStorageManager().GetBlockManager().Cast<SingleFileBlockManager>();
 	auto expected_db_identifier = single_file_block_manager.GetDBIdentifier();
 	if (!MainHeader::CompareDBIdentifiers(db_identifier, expected_db_identifier)) {
 		throw IOException("WAL does not match database file.");
