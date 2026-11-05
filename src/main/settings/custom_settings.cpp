@@ -710,7 +710,13 @@ Value ExternalFileCacheMinMemorySetting::GetSetting(const ClientContext &context
 //===----------------------------------------------------------------------===//
 // External File Cache Spill Size
 //===----------------------------------------------------------------------===//
+static constexpr const char *HALF_OF_MAX_TEMP_DIRECTORY_SIZE = "half of max_temp_directory_size";
+
 void ExternalFileCacheSpillSizeSetting::SetGlobal(DatabaseInstance *db, DBConfig &config, const Value &input) {
+	if (input == HALF_OF_MAX_TEMP_DIRECTORY_SIZE) {
+		ResetGlobal(db, config);
+		return;
+	}
 	config.options.external_file_cache_spill_size = ParseSizeOrZero(input);
 }
 
@@ -723,7 +729,7 @@ Value ExternalFileCacheSpillSizeSetting::GetSetting(const ClientContext &context
 	if (size == DConstants::INVALID_INDEX) {
 		const auto swap = BufferManager::GetBufferManager(context).GetMaxSwap();
 		if (!swap.IsValid()) {
-			return Value("unlimited");
+			return Value(HALF_OF_MAX_TEMP_DIRECTORY_SIZE);
 		}
 		size = swap.GetIndex() / 2;
 	}
