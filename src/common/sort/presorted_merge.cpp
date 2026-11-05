@@ -146,7 +146,8 @@ private:
 	const bool byte_keys;
 };
 
-void ForEachInput(idx_t count, optional_ptr<TaskScheduler> scheduler, idx_t threads, const vector<LogicalType> &types,
+void ForEachInput(idx_t count, optional_ptr<TaskScheduler> scheduler, idx_t threads,
+                  const shared_ptr<SchedulerAccount> &account, const vector<LogicalType> &types,
                   const vector<OrderModifiers> &modifiers, bool byte_keys, const InputWork &work) {
 	const auto tasks = MinValue(threads, count);
 	if (!scheduler || tasks < 2) {
@@ -157,7 +158,7 @@ void ForEachInput(idx_t count, optional_ptr<TaskScheduler> scheduler, idx_t thre
 		return;
 	}
 	atomic<idx_t> next {0};
-	TaskExecutor executor(*scheduler);
+	TaskExecutor executor(*scheduler, account);
 	for (idx_t task = 0; task < tasks; task++) {
 		executor.ScheduleTask(make_uniq<InputTask>(executor, next, count, work, types, modifiers, byte_keys));
 	}
@@ -410,7 +411,7 @@ PresortedMerge::~PresortedMerge() {
 }
 
 void PresortedMerge::Partition(idx_t max_partitions, bool keep_equal_keys, optional_ptr<TaskScheduler> scheduler,
-                               idx_t threads) {
+                               idx_t threads, shared_ptr<SchedulerAccount> account) {
 	bounds.clear();
 	bounds.emplace_back(inputs.size(), 0);
 	idx_t total = 0;
@@ -421,7 +422,7 @@ void PresortedMerge::Partition(idx_t max_partitions, bool keep_equal_keys, optio
 		const auto per_input = max_partitions * SAMPLES_PER_PARTITION;
 		vector<unique_ptr<PresortedMergeReader>> readers(inputs.size());
 		vector<vector<KeyRow>> sampled(inputs.size());
-		ForEachInput(inputs.size(), scheduler, threads, key_types, modifiers, byte_keys,
+		ForEachInput(inputs.size(), scheduler, threads, account, key_types, modifiers, byte_keys,
 		             [&](idx_t i, KeyEncoder &encoder) {
 			             const auto count = inputs[i]->Count();
 			             if (count == 0) {
@@ -453,34 +454,35 @@ void PresortedMerge::Partition(idx_t max_partitions, bool keep_equal_keys, optio
 			splits.push_back(sample);
 		}
 		vector<vector<idx_t>> located(splits.size(), vector<idx_t>(inputs.size(), 0));
-		ForEachInput(
-		    inputs.size(), scheduler, threads, key_types, modifiers, byte_keys, [&](idx_t i, KeyEncoder &encoder) {
-			    if (!readers[i]) {
-				    return;
-			    }
-			    const auto &own = sampled[i];
-			    idx_t lo = 0;
-			    for (idx_t s = 0; s < splits.size(); s++) {
-				    const KeyRow &split = splits[s];
-				    const auto before = [&](const KeyRow &row) {
-					    return keep_equal_keys ? CompareKeys(View(row.key), View(split.key)) < 0 : Before(row, split);
-				    };
-				    const auto first = std::partition_point(own.begin(), own.end(), before);
-				    if (first != own.begin()) {
-					    lo = MaxValue(lo, std::prev(first)->row + 1);
-				    }
-				    auto hi = first != own.end() ? first->row : inputs[i]->Count();
-				    while (lo < hi) {
-					    const auto mid = lo + (hi - lo) / 2;
-					    if (before(KeyRow {encoder.Encode(*readers[i], mid), i, mid})) {
-						    lo = mid + 1;
-					    } else {
-						    hi = mid;
-					    }
-				    }
-				    located[s][i] = lo;
-			    }
-		    });
+		ForEachInput(inputs.size(), scheduler, threads, account, key_types, modifiers, byte_keys,
+		             [&](idx_t i, KeyEncoder &encoder) {
+			             if (!readers[i]) {
+				             return;
+			             }
+			             const auto &own = sampled[i];
+			             idx_t lo = 0;
+			             for (idx_t s = 0; s < splits.size(); s++) {
+				             const KeyRow &split = splits[s];
+				             const auto before = [&](const KeyRow &row) {
+					             return keep_equal_keys ? CompareKeys(View(row.key), View(split.key)) < 0
+					                                    : Before(row, split);
+				             };
+				             const auto first = std::partition_point(own.begin(), own.end(), before);
+				             if (first != own.begin()) {
+					             lo = MaxValue(lo, std::prev(first)->row + 1);
+				             }
+				             auto hi = first != own.end() ? first->row : inputs[i]->Count();
+				             while (lo < hi) {
+					             const auto mid = lo + (hi - lo) / 2;
+					             if (before(KeyRow {encoder.Encode(*readers[i], mid), i, mid})) {
+						             lo = mid + 1;
+					             } else {
+						             hi = mid;
+					             }
+				             }
+				             located[s][i] = lo;
+			             }
+		             });
 		for (auto &positions : located) {
 			bounds.push_back(std::move(positions));
 		}
