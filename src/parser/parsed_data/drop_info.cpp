@@ -48,17 +48,7 @@ string DropInfo::ToString() const {
 			result += " IF EXISTS";
 		}
 		auto target = [&](const DropInfo &info) {
-			result += info.qualified_name.ToString(QualifiedNameToStringMode::HIDE_DEFAULT_SCHEMA);
-			if (info.has_func_args) {
-				result += "(";
-				for (idx_t i = 0; i < info.func_parameters.size(); i++) {
-					if (i > 0) {
-						result += ", ";
-					}
-					result += info.func_parameters[i].ToString();
-				}
-				result += ")";
-			}
+			result += ParseInfo::RoutineToString(info.qualified_name, info.has_func_args, info.func_parameters);
 		};
 		result += " ";
 		target(*this);

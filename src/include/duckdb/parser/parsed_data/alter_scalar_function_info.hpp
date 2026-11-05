@@ -35,7 +35,6 @@ struct AlterScalarFunctionInfo : public AlterInfo {
 
 public:
 	CatalogType GetCatalogType() const override;
-	string RoutineKeyword() const;
 	void Serialize(Serializer &serializer) const override;
 	static unique_ptr<AlterInfo> Deserialize(Deserializer &deserializer);
 
