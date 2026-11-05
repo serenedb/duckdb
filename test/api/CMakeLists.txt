@@ -19,6 +19,7 @@ set(TEST_API_OBJECTS
     test_caller_driven_query.cpp
     test_task_reschedule.cpp
     test_task_executor_concurrency.cpp
+    test_dedicated_pool.cpp
     test_function_signature_variadic.cpp
     test_scalar_function_decimal_return.cpp
     test_alias_type_overload.cpp
