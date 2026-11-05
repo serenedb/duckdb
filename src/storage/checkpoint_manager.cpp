@@ -31,7 +31,6 @@
 #include "duckdb/main/settings.hpp"
 #include "duckdb/parser/parsed_data/create_database_info.hpp"
 #include "duckdb/parser/parsed_data/create_foreign_server_info.hpp"
-#include "duckdb/parser/parsed_data/create_tablespace_info.hpp"
 #include "duckdb/parser/parsed_data/create_subscription_info.hpp"
 #include "duckdb/parser/parsed_data/create_replication_origin_info.hpp"
 #include "duckdb/parser/parsed_data/create_role_info.hpp"
@@ -687,11 +686,6 @@ void CheckpointWriter::WriteEntry(CatalogEntry &entry, Serializer &serializer) {
 		WriteReplicationOrigin(origin, serializer);
 		break;
 	}
-	case CatalogType::TABLESPACE_ENTRY: {
-		auto &tablespace = entry.Cast<InCatalogEntry>();
-		WriteTablespace(tablespace, serializer);
-		break;
-	}
 	default:
 		throw InternalException("Unrecognized catalog type in CheckpointWriter::WriteEntry");
 	}
@@ -787,10 +781,6 @@ void CheckpointReader::ReadEntry(CatalogTransaction transaction, Deserializer &d
 	}
 	case CatalogType::REPLICATION_ORIGIN_ENTRY: {
 		ReadReplicationOrigin(transaction, deserializer);
-		break;
-	}
-	case CatalogType::TABLESPACE_ENTRY: {
-		ReadTablespace(transaction, deserializer);
 		break;
 	}
 	default:
@@ -893,16 +883,6 @@ void CheckpointReader::ReadForeignServer(CatalogTransaction transaction, Deseria
 	auto info = deserializer.ReadProperty<unique_ptr<CreateInfo>>(100, "server");
 	info->on_conflict = OnCreateConflict::IGNORE_ON_CONFLICT;
 	catalog.Cast<DuckCatalog>().CreateForeignServer(transaction, info->Cast<CreateForeignServerInfo>());
-}
-
-void CheckpointWriter::WriteTablespace(InCatalogEntry &tablespace, Serializer &serializer) {
-	serializer.WriteProperty(100, "tablespace", &tablespace);
-}
-
-void CheckpointReader::ReadTablespace(CatalogTransaction transaction, Deserializer &deserializer) {
-	auto info = deserializer.ReadProperty<unique_ptr<CreateInfo>>(100, "tablespace");
-	info->on_conflict = OnCreateConflict::IGNORE_ON_CONFLICT;
-	catalog.Cast<DuckCatalog>().DuckCatalog::CreateTablespace(transaction, info->Cast<CreateTablespaceInfo>());
 }
 
 void CheckpointWriter::WriteSubscription(InCatalogEntry &subscription, Serializer &serializer) {
