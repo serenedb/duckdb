@@ -4,6 +4,7 @@
 #include "duckdb/catalog/catalog_entry/pragma_function_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/table_function_catalog_entry.hpp"
 #include "duckdb/catalog/catalog.hpp"
+#include "duckdb/catalog/permissions.hpp"
 #include "duckdb/function/function_binder.hpp"
 #include "duckdb/planner/expression_binder/constant_binder.hpp"
 #include "duckdb/execution/expression_executor.hpp"
@@ -44,7 +45,7 @@ unique_ptr<BoundPragmaInfo> Binder::BindPragma(PragmaInfo &info, QueryErrorConte
 		    context, QualifiedName(Identifier::InvalidCatalog(), Identifier::DefaultSchema(), info.name),
 		    OnEntryNotFound::THROW_EXCEPTION);
 	}
-	if (!entry->MayCall(CurrentRole())) {
+	if (!entry->MayCall(CurrentRole()) && !BuiltinCallGranted(context, CurrentRole(), *entry)) {
 		RequireSuperuser();
 	}
 
@@ -60,6 +61,7 @@ unique_ptr<BoundPragmaInfo> Binder::BindPragma(PragmaInfo &info, QueryErrorConte
 		error.AddQueryLocation(error_context);
 		error.Throw();
 	}
+	CheckBuiltinCall(context, CurrentRole(), *entry, bound_idx.GetIndex());
 	auto bound_function = *entry->functions.GetFunctionByOffset(bound_idx.GetIndex());
 	return make_uniq<BoundPragmaInfo>(std::move(bound_function), std::move(params), std::move(named_parameters));
 }

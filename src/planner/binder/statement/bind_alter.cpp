@@ -388,9 +388,10 @@ static CatalogEntry &ResolvePermissionsTarget(Binder &binder, AlterPermissionsIn
 		return *database;
 	}
 	auto entry = binder.GetCatalogEntry(EntryLookupInfo(info.entry_catalog_type, name), OnEntryNotFound::RETURN_NULL);
-	if (!entry && info.entry_catalog_type == CatalogType::MACRO_ENTRY) {
-		entry =
-		    binder.GetCatalogEntry(EntryLookupInfo(CatalogType::TABLE_MACRO_ENTRY, name), OnEntryNotFound::RETURN_NULL);
+	for (auto other : {CatalogType::TABLE_MACRO_ENTRY, CatalogType::PRAGMA_FUNCTION_ENTRY}) {
+		if (!entry && info.entry_catalog_type == CatalogType::MACRO_ENTRY) {
+			entry = binder.GetCatalogEntry(EntryLookupInfo(other, name), OnEntryNotFound::RETURN_NULL);
+		}
 	}
 	if (!entry) {
 		const bool relation =
