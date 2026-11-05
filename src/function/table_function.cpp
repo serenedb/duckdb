@@ -110,6 +110,7 @@ BoundTableFunction::BoundTableFunction(shared_ptr<const TableFunction> function_
 	get_partition_stats = function.get_partition_stats;
 	get_virtual_columns = function.get_virtual_columns;
 	get_row_id_columns = function.get_row_id_columns;
+	verify_dml_target = function.verify_dml_target;
 	set_scan_order = function.set_scan_order;
 	consume_top_n = function.consume_top_n;
 	set_partitions_to_scan = function.set_partitions_to_scan;

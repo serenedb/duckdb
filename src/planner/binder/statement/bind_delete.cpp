@@ -80,6 +80,9 @@ BoundStatement Binder::BindNode(DeleteQueryNode &node) {
 	if (!table_ptr) {
 		throw BinderException("Can only delete from base table");
 	}
+	if (get.function.verify_dml_target) {
+		get.function.verify_dml_target(context, get.bind_data.get());
+	}
 	auto &table = *table_ptr;
 
 	if (auto expanded = TryExpandTriggers(node, table, TriggerEventType::DELETE_EVENT)) {
