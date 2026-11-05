@@ -137,7 +137,6 @@ TempBufferPoolReservation StandardBufferManager::EvictBlocksOrThrow(QueryContext
 	if (!r.success) {
 		string extra_text = StringUtil::Format(" (%s/%s used)", StringUtil::BytesToHumanReadableString(GetUsedMemory()),
 		                                       StringUtil::BytesToHumanReadableString(GetMaxMemory()));
-		extra_text += InMemoryWarning();
 		throw OutOfMemoryException(error_message, StringUtil::BytesToHumanReadableString(memory_delta), extra_text);
 	}
 	return std::move(r.reservation);
@@ -535,7 +534,7 @@ void StandardBufferManager::Discard(BlockMemory &memory) {
 }
 
 void StandardBufferManager::SetMemoryLimit(idx_t limit) {
-	buffer_pool.SetLimit(limit, InMemoryWarning());
+	buffer_pool.SetLimit(limit);
 }
 
 void StandardBufferManager::SetSwapLimit(optional_idx limit) {
@@ -851,16 +850,6 @@ vector<TemporaryFileInformation> StandardBufferManager::GetTemporaryFiles() {
 		result.push_back(info);
 	});
 	return result;
-}
-
-const char *StandardBufferManager::InMemoryWarning() {
-	if (!temporary_directory.path.empty()) {
-		return "";
-	}
-	return "\nDatabase is launched in in-memory mode and no temporary directory is specified."
-	       "\nUnused blocks cannot be offloaded to disk."
-	       "\n\nLaunch the database with a persistent storage back-end"
-	       "\nOr set SET temp_directory='/path/to/tmp.tmp'";
 }
 
 void StandardBufferManager::ReserveMemory(MemoryTag tag, idx_t size) {
