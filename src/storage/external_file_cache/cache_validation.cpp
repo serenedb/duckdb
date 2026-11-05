@@ -54,15 +54,12 @@ bool CacheValidation::HasValidationMetadata(const CacheValidationInfo &info) {
 	return !info.version_tag.empty() || HasUsableLastModified(info.last_modified);
 }
 
-bool CacheValidation::IsValid(bool validate, const CacheValidationInfo &cached, const CacheValidationInfo &current) {
+bool CacheValidation::IsValid(const CacheValidationInfo &cached, const CacheValidationInfo &current) {
 	if (cached.IsCacheReuseProhibited() || current.IsCacheReuseProhibited()) {
 		return false;
 	}
-	if (!validate) {
-		return true; // Assume valid
-	}
 	if (HasValidationMetadata(cached) || HasValidationMetadata(current)) {
-		return IsValid(validate, cached.version_tag, cached.last_modified, current.version_tag, current.last_modified);
+		return IsValid(true, cached.version_tag, cached.last_modified, current.version_tag, current.last_modified);
 	}
 	// No validators at all: cached data may be served within the freshness deadline the storage backend granted
 	// when the cache entry was created (e.g., HTTP Cache-Control), as long as the file size is unchanged.

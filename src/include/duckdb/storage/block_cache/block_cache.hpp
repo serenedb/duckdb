@@ -25,7 +25,6 @@
 #include "duckdb/storage/buffer/temporary_file_information.hpp"
 #include "duckdb/storage/buffer_manager.hpp"
 #include "duckdb/storage/external_file_cache/cache_validation.hpp"
-#include "duckdb/storage/in_memory_block_manager.hpp"
 
 #include <span>
 
@@ -77,7 +76,7 @@ public:
 	const_data_ptr_t Ptr() const {
 		return data;
 	}
-	//! Writable bytes of a block its writer created, which only that writer pins
+	//! Writable bytes of a block its writer created, which only that writer pins, or of a buffer the pin owns
 	data_ptr_t GetDataMutable() const {
 		return data;
 	}
@@ -101,14 +100,13 @@ private:
 };
 
 //! The slot of a block of a file: the memory of its buffer-managed block, which the buffer pool may evict, or null
-//! before the block is first asked for
+//! while the block has none
 using BlockCacheSlot = atomic<BlockMemory *>;
 
 //! The slots of the blocks of one version of a file, and the blocks, which live as long as the slots
 class BlockCacheBlocks {
 public:
-	explicit BlockCacheBlocks(BlockCache &cache, idx_t block_count);
-	~BlockCacheBlocks();
+	explicit BlockCacheBlocks(idx_t block_count);
 	BlockCacheBlocks(const BlockCacheBlocks &) = delete;
 	BlockCacheBlocks &operator=(const BlockCacheBlocks &) = delete;
 
@@ -135,13 +133,17 @@ private:
 		const auto chunk = directory->chunks[block / CHUNK].load(std::memory_order_acquire);
 		return chunk ? &chunk->slots[block % CHUNK] : nullptr;
 	}
+	//! The memory in the slot of block [block], or null
+	BlockMemory *Load(idx_t block) const {
+		const auto slot = Find(block);
+		return slot ? slot->load(std::memory_order_acquire) : nullptr;
+	}
 	//! The slot of block [block], created when missing
 	BlockCacheSlot &Get(idx_t block);
 	//! Calls [callback] with every slot and its block number
 	template <class FUNC>
 	void ForEach(FUNC &&callback);
 
-	BlockCache &cache;
 	atomic<Directory *> current;
 	annotated_mutex lock;
 	//! Every directory the slots had: readers may still look at an earlier one
@@ -154,9 +156,8 @@ private:
 //! An open file whose blocks the cache holds; opens of the same path and version share one file number and its blocks
 class BlockCacheFile {
 public:
-	BlockCacheFile(BlockCache &cache, string path, uint32_t number, bool unbacked, BlockCacheFileInfo info,
-	               shared_ptr<FileHandle> source, shared_ptr<BlockCacheBlocks> blocks);
-	~BlockCacheFile();
+	BlockCacheFile(string path, bool unbacked, BlockCacheFileInfo info, shared_ptr<FileHandle> source,
+	               shared_ptr<BlockCacheBlocks> blocks);
 
 	const string &GetPath() const {
 		return path;
@@ -171,7 +172,6 @@ public:
 	const BlockCacheFileInfo &Info() const {
 		return info;
 	}
-	idx_t BlockCount() const;
 	//! Bytes of block [block] that lie inside the file
 	idx_t BlockBytes(idx_t block) const;
 	//! Whether missing blocks can be fetched; a file opened without a source gets one before its first miss
@@ -185,16 +185,14 @@ private:
 
 	shared_ptr<FileHandle> Source() const;
 
-	BlockCache &cache;
 	const string path;
-	const uint32_t number;
 	atomic<idx_t> size;
 	const bool unbacked;
 	const BlockCacheFileInfo info;
 	mutable annotated_mutex source_lock;
 	shared_ptr<FileHandle> source DUCKDB_GUARDED_BY(source_lock);
 	const shared_ptr<BlockCacheBlocks> blocks;
-	//! Bytes this file is fetching right now
+	//! Bytes the background fetches of this file are fetching right now
 	atomic<idx_t> in_flight {0};
 };
 
@@ -246,10 +244,8 @@ struct BlockCacheRange {
 };
 
 struct BlockCacheStatistics {
-	//! Memory of the blocks the buffer pool holds for the cache
+	//! Memory the buffer pool holds for the cache's blocks and for the buffers of reads it does not keep
 	idx_t used = 0;
-	//! Blocks the cache knows, in memory, in temporary files or evicted
-	idx_t blocks = 0;
 	//! Pins that found the block in memory
 	idx_t hits = 0;
 	idx_t misses = 0;
@@ -300,7 +296,8 @@ public:
 	                                    shared_ptr<FileHandle> source);
 	//! The metadata of the fresh blocks of an earlier open of [path], when there are any
 	bool TryGetFile(const string &path, BlockCacheFileInfo &result);
-	//! Stops sharing the blocks of [file] once a response forbids reusing them
+	//! Stops sharing the blocks of [file] and drops them, once a response forbids reusing them or their writer abandons
+	//! them
 	void ForbidReuse(BlockCacheFile &file);
 	//! A file whose blocks exist only in the cache and its temporary files
 	shared_ptr<BlockCacheFile> CreateUnbackedFile(const string &path);
@@ -349,41 +346,29 @@ public:
 
 private:
 	friend class BlockCacheAppender;
-	friend class BlockCacheBlocks;
-	friend class BlockCacheFile;
 	friend class BlockCacheFetchTask;
 
-	//! Ends the write of [file], which wrote the version [written] describes; a published file keeps its blocks, and
-	//! TryGetFile reports [written] for it, an abandoned one drops them
-	void FinishWrittenFile(BlockCacheFile &file, const CacheValidationInfo &written, bool published);
+	//! Ends the write of [file], which wrote the version [written] describes: its blocks stay, and TryGetFile reports
+	//! [written] for it
+	void PublishWrittenFile(BlockCacheFile &file, const CacheValidationInfo &written);
 	//! Pins a new block [block] of the unbacked or written [file] for its writer, holding whatever its buffer held
 	//! before; BlockCacheAppender fills it and zeroes what lies past the end of the file
 	BlockCachePin CreateBlock(BlockCacheFile &file, idx_t block);
 	//! Extends the unbacked [file] to [size] bytes once its blocks are written
 	void SetUnbackedSize(BlockCacheFile &file, idx_t size);
 
-	using Slot = BlockCacheSlot;
-
-	struct Run {
-		idx_t first_block;
-		idx_t block_count;
-	};
 	struct RunPlan {
-		Run run;
-		//! The block claimed for the fetch per block to fetch; null for the cached blocks between them
+		idx_t first_block;
+		//! The block claimed for the fetch per block of the run; null for the blocks between them it does not fetch
 		vector<optional_ptr<BlockMemory>> claimed;
-		//! The bytes of the blocks to fetch
-		idx_t bytes;
 		//! The first block the run did not take
 		idx_t next;
 		//! Whether the budget ran out
 		bool exhausted;
 	};
 	struct FileRecord {
-		uint32_t number = 0;
 		BlockCacheFileInfo info;
-		//! Opens of this version of the file that are still live
-		idx_t opens = 0;
+		//! The blocks of this version of the file, which its open files share
 		shared_ptr<BlockCacheBlocks> blocks;
 	};
 
@@ -394,40 +379,41 @@ private:
 	static constexpr idx_t HIT_COUNTERS = 64;
 
 	//! Pins the block in [slot] when it is in memory
-	bool PinLoaded(Slot &slot, idx_t size, BlockCachePin &result) const;
-	BlockMemory &MemoryOf(const BlockCacheFile &file, Slot &slot);
+	bool PinLoaded(BlockCacheSlot &slot, idx_t size, BlockCachePin &result) const;
+	BlockMemory &MemoryOf(const BlockCacheFile &file, BlockCacheSlot &slot);
 	optional_ptr<BlockMemory> ClaimMissing(BlockCacheFile &file, idx_t block);
 	//! Lets the slots of [blocks] go, destroying their blocks and the copies of them at once or with their last pin
 	void DropBlocks(BlockCacheBlocks &blocks);
 
-	//! Gives [record] a new number and blocks for [info] with [opens] opens, returning the version it replaces; sets
-	//! [sweep] when the record is new and the records are due a sweep
-	optional<FileRecord> Renumber(FileRecord &record, const BlockCacheFileInfo &info, idx_t opens, bool &sweep)
+	//! Gives [record] new blocks for [info], returning the version it replaces; sets [sweep] when the record is new and
+	//! the records are due a sweep
+	optional<FileRecord> NewVersion(FileRecord &record, const BlockCacheFileInfo &info, bool &sweep)
 	    DUCKDB_REQUIRES(file_lock);
-	//! Drops the blocks of [replaced], a version of a file no open shares anymore, and sweeps the records when [sweep]
+	//! Drops the blocks of [replaced], a version of a file the records no longer name, and sweeps the records when
+	//! [sweep]
 	void RetireRecord(optional<FileRecord> replaced, bool sweep);
-	//! Counts the end of an open of a backed file
-	void CloseFile(const BlockCacheFile &file);
 	//! Forgets the files no one has open and the cache holds no block of
 	void SweepFiles();
 
-	//! Plans a run of [file] from [block] up to [end]: a claimed block for each block [missing] reports while [admit]
-	//! accepts the run's bytes with it, bridging cached gaps of up to MERGE_GAP; the run takes at most MAX_REQUEST and
-	//! never ends in a gap
-	template <class MISSING, class ADMIT>
-	RunPlan PlanRun(BlockCacheFile &file, idx_t block, idx_t end, MISSING &&missing, ADMIT &&admit);
-	//! Reads the [claimed] blocks of [run] of [file] with one request and gives back their claims, clearing each
-	//! entry, also when it throws; when [pins] is not empty, pins each block read there. Null entries are cached gaps
-	void Fetch(BlockCacheFile &file, const Run &run, std::span<optional_ptr<BlockMemory>> claimed,
+	//! Plans a run of [file] from [block] up to [end]: a claimed block for each missing block while [admit] accepts
+	//! the run's bytes with it, bridging gaps of up to MERGE_GAP of blocks it does not fetch; the run takes at most
+	//! MAX_REQUEST and never ends in a gap
+	template <class ADMIT>
+	RunPlan PlanRun(BlockCacheFile &file, idx_t block, idx_t end, ADMIT &&admit);
+	//! Reads the [claimed] blocks of the run of [file] from [first_block] with one request and gives back their
+	//! claims, clearing each entry, also when it throws; when [pins] is not empty, pins each block read there. Null
+	//! entries are blocks the run does not fetch
+	void Fetch(BlockCacheFile &file, idx_t first_block, std::span<optional_ptr<BlockMemory>> claimed,
 	           std::span<BlockCachePin> pins);
 	//! Fetches the runs of [plans] of [file] as concurrent pieces of at most PIECE_SIZE, pinning each block read in
-	//! [pins], which start at block [first], and gives back every claim of [plans]; throws the first error
+	//! [pins], which start at block [first]; throws the first error, and leaves the claims of pieces it did not fetch
 	void FetchConcurrently(BlockCacheFile &file, vector<RunPlan> &plans, idx_t first, vector<BlockCachePin> &pins);
 	//! Waits while [memory] loads; when the scheduler has no workers to run queued fetches, runs them until it loads
 	void WaitForLoad(BlockMemory &memory);
 
-	//! Fetches the [claimed] blocks of [run] of [file] in the background, a task per piece of at most PIECE_SIZE
-	void ScheduleFetch(const shared_ptr<BlockCacheFile> &file, const Run &run,
+	//! Fetches the [claimed] blocks of the run of [file] from [first_block] in the background, a task per piece of at
+	//! most PIECE_SIZE
+	void ScheduleFetch(const shared_ptr<BlockCacheFile> &file, idx_t first_block,
 	                   vector<optional_ptr<BlockMemory>> claimed);
 	ProducerToken &Producer();
 	void FinishFetchTask(idx_t bytes);
@@ -437,16 +423,11 @@ private:
 private:
 	DatabaseInstance &db;
 	BufferManager &buffer_manager;
-	//! Sizes the buffers of blocks
-	InMemoryBlockManager block_manager;
 
 	mutable HitCounter hits[HIT_COUNTERS];
-	//! Blocks the cache knows
-	atomic<idx_t> block_count {0};
 
 	mutable annotated_mutex file_lock;
 	unordered_map<string, FileRecord> files DUCKDB_GUARDED_BY(file_lock);
-	uint32_t next_file_number DUCKDB_GUARDED_BY(file_lock) = 1;
 	static constexpr idx_t MIN_SWEEP_RECORDS = 1024;
 	//! The record count at which the next open sweeps the records
 	idx_t sweep_at DUCKDB_GUARDED_BY(file_lock) = MIN_SWEEP_RECORDS;
