@@ -261,10 +261,6 @@ ClientData::ClientData(ClientContext &context, shared_ptr<AttachedDatabase> shar
 		                                                                          IdentifierEquality(true));
 	}
 	profiler = make_shared_ptr<QueryProfiler>(context);
-	if (!shares_temporary_objects) {
-		temporary_objects = make_shared_ptr<AttachedDatabase>(db, AttachedDatabaseType::TEMP_DATABASE);
-		temporary_objects->oid = DatabaseManager::Get(db).NextOid();
-	}
 	random_engine = make_uniq<RandomEngine>();
 	sequence_session = make_uniq<SequenceSession>();
 	file_opener = make_uniq<ClientContextFileOpener>(context);
@@ -272,6 +268,8 @@ ClientData::ClientData(ClientContext &context, shared_ptr<AttachedDatabase> shar
 	client_buffer_manager = make_uniq<ClientBufferManager>(context, db.GetBufferManager());
 
 	if (!shares_temporary_objects) {
+		temporary_objects = make_shared_ptr<AttachedDatabase>(db, AttachedDatabaseType::TEMP_DATABASE);
+		temporary_objects->oid = DatabaseManager::Get(db).NextOid();
 		temporary_objects->Initialize();
 	}
 }
