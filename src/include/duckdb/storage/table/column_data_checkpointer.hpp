@@ -33,14 +33,18 @@ public:
 public:
 	using FlushSegmentFn = std::function<void(unique_ptr<ColumnSegment>, BufferHandle, idx_t)>;
 	using FlushSegmentInternalFn = std::function<void(unique_ptr<ColumnSegment>, idx_t)>;
+	using CreateSegmentFn =
+	    std::function<unique_ptr<ColumnSegment>(const CompressionFunction &, idx_t, BlockManager &)>;
 
 	ColumnDataCheckpointData(LogicalType type, DatabaseInstance &db, StorageVersion storage_version,
 	                         optional_ptr<OverflowStringWriter> overflow_writer,
 	                         optional_ptr<ColumnStreamWriter> stream_writer, FlushSegmentFn flush_segment_fn,
-	                         FlushSegmentInternalFn flush_segment_internal_fn, BlockManager &block_manager)
+	                         FlushSegmentInternalFn flush_segment_internal_fn, BlockManager &block_manager,
+	                         CreateSegmentFn create_segment_fn, optional_ptr<Allocator> allocator)
 	    : type(std::move(type)), db(db), storage_version(storage_version), overflow_writer(overflow_writer),
 	      stream_writer(stream_writer), flush_segment_fn(std::move(flush_segment_fn)),
-	      flush_segment_internal_fn(std::move(flush_segment_internal_fn)), block_manager(block_manager) {
+	      flush_segment_internal_fn(std::move(flush_segment_internal_fn)), block_manager(block_manager),
+	      create_segment_fn(std::move(create_segment_fn)), allocator(allocator) {
 	}
 
 	const CompressionFunction &GetCompressionFunction(CompressionType type);
@@ -62,6 +66,9 @@ public:
 	}
 	void FlushSegment(unique_ptr<ColumnSegment> segment, BufferHandle handle, idx_t segment_size);
 	void FlushSegmentInternal(unique_ptr<ColumnSegment> segment, idx_t segment_size);
+	unique_ptr<ColumnSegment> CreateTransientSegment(const CompressionFunction &function, idx_t segment_size,
+	                                                 BlockManager &segment_block_manager);
+	Allocator &GetAllocator();
 	BlockManager &GetBlockManager();
 	block_id_t GetFreeBlockId();
 
@@ -76,6 +83,8 @@ private:
 	FlushSegmentFn flush_segment_fn;
 	FlushSegmentInternalFn flush_segment_internal_fn;
 	optional_ptr<BlockManager> block_manager;
+	CreateSegmentFn create_segment_fn;
+	optional_ptr<Allocator> allocator;
 };
 
 struct CheckpointAnalyzeResult {
