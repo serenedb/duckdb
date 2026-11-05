@@ -15,6 +15,7 @@
 namespace duckdb {
 
 // Forward declarations.
+class DedicatedPool;
 class Task;
 class TaskScheduler;
 class TaskSchedulerQueue;
@@ -27,15 +28,19 @@ enum class SchedulerClass : uint8_t { FOREGROUND, BACKGROUND };
 class SchedulerAccount : public enable_shared_from_this<SchedulerAccount> {
 public:
 	SchedulerAccount(TaskSchedulerQueue &queue, SchedulerClass scheduler_class);
+	SchedulerAccount(TaskSchedulerQueue &queue, shared_ptr<DedicatedPool> pool);
 	~SchedulerAccount();
 
 private:
+	friend class DedicatedPool;
 	friend class TaskSchedulerQueue;
 	friend class TaskScheduler;
 	friend struct ProducerToken;
 
 	TaskSchedulerQueue &queue;
 	const SchedulerClass scheduler_class;
+	const shared_ptr<DedicatedPool> pool;
+	bool pool_listed = false;
 	unique_ptr<SchedulerAccountTasks> tasks;
 	atomic<int64_t> queued_tasks {0};
 	atomic<int64_t> queued_blocking {0};

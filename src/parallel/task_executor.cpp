@@ -214,6 +214,19 @@ void TaskExecutor::WorkOnTasks() {
 	}
 }
 
+void TaskExecutor::AwaitTasks() {
+	{
+		annotated_unique_lock<annotated_mutex> lk(token->producer_lock);
+		while (completed_tasks != total_tasks) {
+			TaskScheduler::BlockingScope blocking;
+			token->producer_cv.Wait(lk.mutex());
+		}
+	}
+	if (HasError()) {
+		ThrowError();
+	}
+}
+
 void TaskExecutor::CancelAndDrain() {
 	// make tasks that have not started yet bail out instead of executing their work
 	cancelled = true;
