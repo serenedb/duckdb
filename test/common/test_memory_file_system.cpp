@@ -182,7 +182,7 @@ TEST_CASE("Compacted memory files map in place", "[memory_file_system]") {
 			continue;
 		}
 		REQUIRE(HoldsBytes(mapped->GetData(0, size), 0, size));
-		auto pin = cache.Pin(blocks, 0);
+		auto pin = cache.Pin(*blocks, 0);
 		REQUIRE(HoldsBytes(pin.Ptr(), 0, MinValue(size, MEMORY_BLOCK)));
 		fs.Compact(path);
 		fs.RemoveFile(path);

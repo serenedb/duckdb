@@ -184,13 +184,18 @@ void AppendBlocks(BlockCache &cache, const shared_ptr<BlockCacheFile> &file, idx
 	appender.Finish();
 }
 
-bool HoldsExpectedBytes(const BlockCachePin &pin, idx_t block) {
+//! Whether [pin] holds the bytes of the file from [offset] on
+bool HoldsExpectedBytesAt(const BlockCachePin &pin, idx_t offset) {
 	for (idx_t i = 0; i < pin.Size(); i++) {
-		if (pin.Ptr()[i] != ExpectedByte(block * BLOCK + i)) {
+		if (pin.Ptr()[i] != ExpectedByte(offset + i)) {
 			return false;
 		}
 	}
 	return true;
+}
+
+bool HoldsExpectedBytes(const BlockCachePin &pin, idx_t block) {
+	return HoldsExpectedBytesAt(pin, block * BLOCK);
 }
 
 //! A flag one task sets and another awaits
@@ -248,14 +253,14 @@ TEST_CASE("Block cache pins hold the bytes of their block", "[block_cache]") {
 
 	REQUIRE(BlockCache::BlockCountOf(cached->GetSize()) == 6);
 	for (idx_t block = 0; block < 6; block++) {
-		auto pin = cache.Pin(cached, block);
+		auto pin = cache.Pin(*cached, block);
 		REQUIRE(pin.Size() == (block == 5 ? 1000 : BLOCK));
 		REQUIRE(HoldsExpectedBytes(pin, block));
 	}
 	REQUIRE(fs.ReadCount() == 6);
 
 	for (idx_t block = 0; block < 6; block++) {
-		auto pin = cache.Pin(cached, block);
+		auto pin = cache.Pin(*cached, block);
 		REQUIRE(HoldsExpectedBytes(pin, block));
 	}
 	REQUIRE(fs.ReadCount() == 6);
@@ -276,17 +281,17 @@ TEST_CASE("Block cache pins a byte range in one piece", "[block_cache]") {
 		}
 		return true;
 	};
-	auto inside = cache.PinBytes(cached, BLOCK + 100, 1000);
+	auto inside = cache.PinBytes(*cached, BLOCK + 100, 1000);
 	REQUIRE(inside.Size() == 1000);
 	REQUIRE(holds(inside, BLOCK + 100));
-	auto block = cache.Pin(cached, 1);
+	auto block = cache.Pin(*cached, 1);
 	REQUIRE(inside.Ptr() == block.Ptr() + 100);
 
-	auto across = cache.PinBytes(cached, 2 * BLOCK - 16, 2 * BLOCK + 32);
+	auto across = cache.PinBytes(*cached, 2 * BLOCK - 16, 2 * BLOCK + 32);
 	REQUIRE(across.Size() == 2 * BLOCK + 32);
 	REQUIRE(holds(across, 2 * BLOCK - 16));
 
-	auto tail = cache.PinBytes(cached, 5 * BLOCK + 900, 100);
+	auto tail = cache.PinBytes(*cached, 5 * BLOCK + 900, 100);
 	REQUIRE(tail.Size() == 100);
 	REQUIRE(holds(tail, 5 * BLOCK + 900));
 }
@@ -298,14 +303,14 @@ TEST_CASE("Block cache pins share their bytes and keep them after the cache drop
 	TestFile file("block_cache_shared_pins.bin", 8 * BLOCK);
 	auto cached = file.Open(cache, fs);
 
-	auto pin = cache.Pin(cached, 0);
+	auto pin = cache.Pin(*cached, 0);
 	auto shared = pin.Share(100, 1000);
 	REQUIRE(shared.IsValid());
 	REQUIRE(shared.Ptr() == pin.Ptr() + 100);
 	REQUIRE(shared.Size() == 1000);
 	pin.Reset();
 	REQUIRE(cache.IsCached(*cached, 0, BLOCK));
-	auto copy = cache.PinBytes(cached, BLOCK - 10, 20);
+	auto copy = cache.PinBytes(*cached, BLOCK - 10, 20);
 	auto copy_shared = copy.Share(5, 10);
 	REQUIRE(copy_shared.Ptr() == copy.Ptr() + 5);
 	cache.ForgetFile(file.path);
@@ -326,15 +331,15 @@ TEST_CASE("Block cache reopens of an unchanged file share its blocks", "[block_c
 	TestFile file("block_cache_reopen.bin", 3 * BLOCK);
 	{
 		auto cached = file.Open(cache, fs);
-		auto pin = cache.Pin(cached, 1);
+		auto pin = cache.Pin(*cached, 1);
 	}
 	auto again = file.Open(cache, fs);
-	auto pin = cache.Pin(again, 1);
+	auto pin = cache.Pin(*again, 1);
 	REQUIRE(HoldsExpectedBytes(pin, 1));
 	REQUIRE(fs.ReadCount() == 1);
 
 	auto changed = file.Open(cache, fs, "v2");
-	auto changed_pin = cache.Pin(changed, 1);
+	auto changed_pin = cache.Pin(*changed, 1);
 	REQUIRE(fs.ReadCount() == 2);
 }
 
@@ -352,7 +357,7 @@ TEST_CASE("Block cache fetches a missing block once for concurrent readers", "[b
 		executor.ScheduleTask(make_uniq<FunctionExecutorTask>(
 		    executor,
 		    [&]() {
-			    auto pin = cache.Pin(cached, 2);
+			    auto pin = cache.Pin(*cached, 2);
 			    if (HoldsExpectedBytes(pin, 2)) {
 				    correct++;
 			    }
@@ -375,13 +380,13 @@ TEST_CASE("Block cache prefetch merges runs across small gaps and caps each requ
 	auto cached = file.Open(cache, fs);
 
 	for (idx_t block : {10, 11, 30}) {
-		cache.Pin(cached, block);
+		cache.Pin(*cached, block);
 	}
 	fs.TakeReads();
 
 	cache.Prefetch(cached, 0, RANGE * BLOCK, BlockCachePrefetch::HINT);
 	for (idx_t block = 0; block < RANGE; block++) {
-		auto pin = cache.Pin(cached, block);
+		auto pin = cache.Pin(*cached, block);
 		REQUIRE(HoldsExpectedBytes(pin, block));
 	}
 	auto reads = fs.TakeReads();
@@ -407,10 +412,10 @@ TEST_CASE("Block cache prefetch of several ranges reads the ones within the merg
 	BlockCacheRange ranges[] = {{40 * BLOCK, BLOCK}, {(1 + GAP_BLOCKS) * BLOCK, BLOCK}, {BLOCK + 5, 10}};
 	cache.Prefetch(cached, ranges, BlockCachePrefetch::NEED);
 	for (idx_t block = 1; block <= 1 + GAP_BLOCKS; block++) {
-		auto pin = cache.Pin(cached, block);
+		auto pin = cache.Pin(*cached, block);
 		REQUIRE(HoldsExpectedBytes(pin, block));
 	}
-	auto pin = cache.Pin(cached, 40);
+	auto pin = cache.Pin(*cached, 40);
 	REQUIRE(HoldsExpectedBytes(pin, 40));
 	auto reads = fs.TakeReads();
 	std::sort(reads.begin(), reads.end());
@@ -424,7 +429,7 @@ TEST_CASE("Block cache evicts the blocks a reader marked unused before the block
 	TestFile file("block_cache_unused.bin", 8 * BLOCK);
 	auto cached = file.Open(cache, fs, "v1", true);
 	for (idx_t block = 0; block < 8; block++) {
-		cache.Pin(cached, block);
+		cache.Pin(*cached, block);
 	}
 	cache.MarkUnused(*cached, 4 * BLOCK + BLOCK / 2, 4 * BLOCK);
 	auto &buffers = BufferManager::GetBufferManager(*db.instance);
@@ -453,7 +458,7 @@ TEST_CASE("Block cache drops a hinted prefetch past the bytes a file has in flig
 	REQUIRE(hint_dropped);
 	REQUIRE(need_started);
 	for (idx_t block = 0; block < in_flight + 4; block++) {
-		REQUIRE(HoldsExpectedBytes(cache.Pin(cached, block), block));
+		REQUIRE(HoldsExpectedBytes(cache.Pin(*cached, block), block));
 	}
 }
 
@@ -513,7 +518,7 @@ TEST_CASE("Block cache fetches a long run in concurrent pieces and hands out eac
 		    absl::Cleanup done = [&]() {
 			    pinned.Set();
 		    };
-		    right = HoldsExpectedBytes(cache.Pin(cached, 0), 0);
+		    right = HoldsExpectedBytes(cache.Pin(*cached, 0), 0);
 	    },
 	    "BlockCacheTestTask"));
 	const bool first_landed = pinned.AwaitFor(absl::Seconds(10));
@@ -523,7 +528,7 @@ TEST_CASE("Block cache fetches a long run in concurrent pieces and hands out eac
 	REQUIRE(first_landed);
 	REQUIRE(right);
 
-	auto pins = cache.PinRange(cached, 0, RUN * BLOCK);
+	auto pins = cache.PinRange(*cached, 0, RUN * BLOCK);
 	REQUIRE(pins.size() == RUN);
 	for (idx_t block = 0; block < RUN; block++) {
 		REQUIRE(HoldsExpectedBytes(pins[block], block));
@@ -548,7 +553,7 @@ TEST_CASE("Block cache range pins fetch the runs and pieces of a range concurren
 	TestFile file("block_cache_concurrent_runs.bin", FULL * BLOCK + 100);
 	auto cached = file.Open(cache, fs);
 	for (idx_t block = PIECE_BLOCKS / 2; block < PIECE_BLOCKS; block++) {
-		cache.Pin(cached, block);
+		cache.Pin(*cached, block);
 	}
 	fs.TakeReads();
 
@@ -556,7 +561,7 @@ TEST_CASE("Block cache range pins fetch the runs and pieces of a range concurren
 	vector<BlockCachePin> pins;
 	TaskExecutor executor(TaskScheduler::GetScheduler(*db.instance));
 	executor.ScheduleTask(make_uniq<FunctionExecutorTask>(
-	    executor, [&]() { pins = cache.PinRange(cached, 0, FULL * BLOCK + 100); }, "BlockCacheTestTask"));
+	    executor, [&]() { pins = cache.PinRange(*cached, 0, FULL * BLOCK + 100); }, "BlockCacheTestTask"));
 	const bool concurrent = fs.AwaitReadsFor(4, absl::Seconds(10));
 	fs.Hold(false);
 	executor.WorkOnTasks();
@@ -586,8 +591,8 @@ TEST_CASE("Block cache fetches the pieces of long runs when the scheduler has no
 	{
 		auto cached = file.Open(cache, fs);
 		cache.Prefetch(cached, 0, RUN * BLOCK, BlockCachePrefetch::HINT);
-		REQUIRE(HoldsExpectedBytes(cache.Pin(cached, RUN - 1), RUN - 1));
-		auto pins = cache.PinRange(cached, 0, RUN * BLOCK);
+		REQUIRE(HoldsExpectedBytes(cache.Pin(*cached, RUN - 1), RUN - 1));
+		auto pins = cache.PinRange(*cached, 0, RUN * BLOCK);
 		REQUIRE(pins.size() == RUN);
 		for (idx_t block = 0; block < RUN; block++) {
 			REQUIRE(HoldsExpectedBytes(pins[block], block));
@@ -595,7 +600,7 @@ TEST_CASE("Block cache fetches the pieces of long runs when the scheduler has no
 		REQUIRE(fs.TakeReads().size() == 3);
 	}
 	auto changed = file.Open(cache, fs, "v2");
-	auto pins = cache.PinRange(changed, 0, RUN * BLOCK);
+	auto pins = cache.PinRange(*changed, 0, RUN * BLOCK);
 	REQUIRE(pins.size() == RUN);
 	for (idx_t block = 0; block < RUN; block++) {
 		REQUIRE(HoldsExpectedBytes(pins[block], block));
@@ -609,14 +614,17 @@ TEST_CASE("Block cache range pins fetch the missing blocks of a range in one req
 	CountingSourceFileSystem fs;
 	TestFile file("block_cache_range.bin", 20 * BLOCK + 10);
 	auto cached = file.Open(cache, fs);
-	cache.Pin(cached, 5);
+	cache.Pin(*cached, 5);
 	fs.TakeReads();
 
-	auto pins = cache.PinRange(cached, 2 * BLOCK + 100, 10 * BLOCK);
+	auto pins = cache.PinRange(*cached, 2 * BLOCK + 100, 10 * BLOCK);
 	REQUIRE(pins.size() == 11);
-	for (idx_t i = 0; i < pins.size(); i++) {
-		REQUIRE(HoldsExpectedBytes(pins[i], 2 + i));
+	idx_t at = 2 * BLOCK + 100;
+	for (auto &pin : pins) {
+		REQUIRE(HoldsExpectedBytesAt(pin, at));
+		at += pin.Size();
 	}
+	REQUIRE(at == 12 * BLOCK + 100);
 	auto reads = fs.TakeReads();
 	REQUIRE(reads.size() == 1);
 	REQUIRE(reads[0] == make_pair(2 * BLOCK, 11 * BLOCK));
@@ -636,7 +644,7 @@ TEST_CASE("Block cache range read uses a response that forbids reuse once, witho
 	auto cached = file.Open(cache, fs);
 	fs.NoStore(true);
 	{
-		auto pins = cache.PinRange(cached, 0, 8 * BLOCK);
+		auto pins = cache.PinRange(*cached, 0, 8 * BLOCK);
 		REQUIRE(pins.size() == 8);
 		for (idx_t i = 0; i < pins.size(); i++) {
 			REQUIRE(HoldsExpectedBytes(pins[i], i));
@@ -645,7 +653,7 @@ TEST_CASE("Block cache range read uses a response that forbids reuse once, witho
 		REQUIRE_FALSE(cache.IsCached(*cached, 3 * BLOCK, BLOCK));
 	}
 	REQUIRE(cache.GetStatistics().used == 0);
-	auto pin = cache.Pin(cached, 3);
+	auto pin = cache.Pin(*cached, 3);
 	REQUIRE(HoldsExpectedBytes(pin, 3));
 	REQUIRE(fs.ReadCount() == 2);
 }
@@ -661,11 +669,11 @@ TEST_CASE("Block cache readers of prefetched blocks run the fetches when the sch
 	auto cached = file.Open(cache, fs);
 
 	cache.Prefetch(cached, 0, 8 * BLOCK, BlockCachePrefetch::HINT);
-	REQUIRE(HoldsExpectedBytes(cache.Pin(cached, 3), 3));
+	REQUIRE(HoldsExpectedBytes(cache.Pin(*cached, 3), 3));
 	cache.Prefetch(cached, 8 * BLOCK, 4 * BLOCK, BlockCachePrefetch::HINT);
 	cache.Prefetch(cached, 12 * BLOCK, 4 * BLOCK, BlockCachePrefetch::HINT);
-	REQUIRE(HoldsExpectedBytes(cache.Pin(cached, 14), 14));
-	auto pins = cache.PinRange(cached, 0, 16 * BLOCK);
+	REQUIRE(HoldsExpectedBytes(cache.Pin(*cached, 14), 14));
+	auto pins = cache.PinRange(*cached, 0, 16 * BLOCK);
 	REQUIRE(pins.size() == 16);
 	for (idx_t block = 0; block < 16; block++) {
 		REQUIRE(HoldsExpectedBytes(pins[block], block));
@@ -679,8 +687,8 @@ TEST_CASE("Block cache drops pinned blocks of a forgotten file with their last p
 	CountingSourceFileSystem fs;
 	TestFile file("block_cache_forget.bin", 4 * BLOCK);
 	auto cached = file.Open(cache, fs);
-	auto held = cache.Pin(cached, 1);
-	cache.Pin(cached, 2);
+	auto held = cache.Pin(*cached, 1);
+	cache.Pin(*cached, 2);
 	REQUIRE(cache.GetStatistics().used == 2 * BLOCK);
 
 	cache.ForgetFile(file.path);
@@ -727,7 +735,7 @@ TEST_CASE("Block cache shares the blocks a writer created once the file is publi
 	auto cached = OpenToRead(cache, fs, file);
 	REQUIRE(cached->GetSize() == 2 * BLOCK + 100);
 	for (idx_t block = 0; block < 3; block++) {
-		auto pin = cache.Pin(cached, block);
+		auto pin = cache.Pin(*cached, block);
 		REQUIRE(pin.Size() == (block == 2 ? 100 : BLOCK));
 		REQUIRE(HoldsExpectedBytes(pin, block));
 	}
@@ -747,7 +755,7 @@ TEST_CASE("Block cache drops the blocks of a written file that is abandoned", "[
 	}
 	REQUIRE(cache.GetStatistics().used == 0);
 	auto cached = OpenToRead(cache, fs, file);
-	auto pin = cache.Pin(cached, 1);
+	auto pin = cache.Pin(*cached, 1);
 	REQUIRE(HoldsExpectedBytes(pin, 1));
 	REQUIRE(fs.ReadCount() == 1);
 }
@@ -771,7 +779,7 @@ TEST_CASE("Block cache appender publishes a written file at the size appended, o
 	auto cached = OpenToRead(cache, fs, file);
 	REQUIRE(cached->GetSize() == data.size());
 	for (idx_t block = 0; block < 3; block++) {
-		auto pin = cache.Pin(cached, block);
+		auto pin = cache.Pin(*cached, block);
 		REQUIRE(HoldsExpectedBytes(pin, block));
 	}
 	REQUIRE(fs.ReadCount() == 0);
@@ -813,7 +821,7 @@ TEST_CASE("Block cache forgets files no one opens and holds no block of", "[bloc
 	CountingSourceFileSystem fs;
 	TestFile with_block("block_cache_sweep_cached.bin", 2 * BLOCK);
 	TestFile kept_open("block_cache_sweep_open.bin", 2 * BLOCK);
-	cache.Pin(with_block.Open(cache, fs), 0);
+	cache.Pin(*with_block.Open(cache, fs), 0);
 	auto open = kept_open.Open(cache, fs);
 
 	BlockCacheFileInfo info;
@@ -835,8 +843,8 @@ TEST_CASE("Disabling the block cache drops blocks of backed files and keeps in-m
 	CountingSourceFileSystem fs;
 	TestFile file("block_cache_disable.bin", 4 * BLOCK);
 	auto cached = file.Open(cache, fs);
-	auto held = cache.Pin(cached, 0);
-	cache.Pin(cached, 1);
+	auto held = cache.Pin(*cached, 0);
+	cache.Pin(*cached, 1);
 	auto memory = cache.CreateUnbackedFile("memory://disable.bin");
 	AppendBlocks(cache, memory, 1, [](idx_t) { return 7; });
 
@@ -863,10 +871,10 @@ TEST_CASE("Block cache never lets the buffer pool evict a pinned block", "[block
 
 	vector<BlockCachePin> pins;
 	for (idx_t block = 0; block < 4; block++) {
-		pins.push_back(cache.Pin(cached, block));
+		pins.push_back(cache.Pin(*cached, block));
 	}
 	for (idx_t block = 4; block < 64; block++) {
-		auto pin = cache.Pin(cached, block);
+		auto pin = cache.Pin(*cached, block);
 		REQUIRE(HoldsExpectedBytes(pin, block));
 	}
 	for (idx_t block = 0; block < 4; block++) {
@@ -891,7 +899,7 @@ TEST_CASE("Block cache zeroes a fetched last block past the end of its file", "[
 	};
 
 	auto cached = partial.Open(cache, fs);
-	auto single = cache.Pin(cached, 1);
+	auto single = cache.Pin(*cached, 1);
 	REQUIRE(single.Size() == 1000);
 	REQUIRE(HoldsExpectedBytes(single, 1));
 	REQUIRE(zeroed_past_end(single));
@@ -900,7 +908,7 @@ TEST_CASE("Block cache zeroes a fetched last block past the end of its file", "[
 	cache.ForgetFile(partial.path);
 
 	cached = partial.Open(cache, fs);
-	auto pins = cache.PinRange(cached, 0, BLOCK + 1000);
+	auto pins = cache.PinRange(*cached, 0, BLOCK + 1000);
 	REQUIRE(pins.size() == 2);
 	REQUIRE(HoldsExpectedBytes(pins[1], 1));
 	REQUIRE(zeroed_past_end(pins[1]));
@@ -914,13 +922,13 @@ TEST_CASE("Block cache pins fail with the read error and later pins fetch again"
 	auto cached = file.Open(cache, fs);
 
 	fs.Fail(1);
-	REQUIRE_THROWS_WITH(cache.Pin(cached, 1), Catch::Contains("injected read failure"));
-	auto pin = cache.Pin(cached, 1);
+	REQUIRE_THROWS_WITH(cache.Pin(*cached, 1), Catch::Contains("injected read failure"));
+	auto pin = cache.Pin(*cached, 1);
 	REQUIRE(HoldsExpectedBytes(pin, 1));
 
 	fs.Fail(1);
 	cache.Prefetch(cached, 2 * BLOCK, BLOCK, BlockCachePrefetch::HINT);
-	auto prefetched = cache.Pin(cached, 2);
+	auto prefetched = cache.Pin(*cached, 2);
 	REQUIRE(HoldsExpectedBytes(prefetched, 2));
 }
 
@@ -936,9 +944,9 @@ TEST_CASE("Block cache gives back the blocks of a fetch piece that never ran aft
 	auto cached = file.Open(cache, fs);
 
 	fs.Fail(1);
-	REQUIRE_THROWS_WITH(cache.PinRange(cached, 0, 2 * PIECE_BLOCKS * BLOCK), Catch::Contains("injected read failure"));
+	REQUIRE_THROWS_WITH(cache.PinRange(*cached, 0, 2 * PIECE_BLOCKS * BLOCK), Catch::Contains("injected read failure"));
 	REQUIRE(!cache.IsCached(*cached, PIECE_BLOCKS * BLOCK, BLOCK));
-	auto pin = cache.Pin(cached, PIECE_BLOCKS);
+	auto pin = cache.Pin(*cached, PIECE_BLOCKS);
 	REQUIRE(HoldsExpectedBytes(pin, PIECE_BLOCKS));
 }
 
@@ -953,7 +961,7 @@ TEST_CASE("Block cache keeps evicted blocks of remote files in temporary files a
 	auto cached = file.Open(cache, fs);
 
 	for (idx_t block = 0; block < 32; block++) {
-		cache.Pin(cached, block);
+		cache.Pin(*cached, block);
 	}
 	REQUIRE(fs.ReadCount() == 32);
 	REQUIRE(cache.GetStatistics().spilled > 0);
@@ -961,7 +969,7 @@ TEST_CASE("Block cache keeps evicted blocks of remote files in temporary files a
 	REQUIRE(CountFiles(directory, ".block") == 0);
 	for (idx_t round = 0; round < 3; round++) {
 		for (idx_t block = 0; block < 32; block++) {
-			auto pin = cache.Pin(cached, block);
+			auto pin = cache.Pin(*cached, block);
 			REQUIRE(HoldsExpectedBytes(pin, block));
 		}
 	}
@@ -990,7 +998,7 @@ TEST_CASE("Block cache drops evicted blocks of remote files when external_file_c
 	auto cached = file.Open(cache, fs);
 	for (idx_t round = 0; round < 2; round++) {
 		for (idx_t block = 0; block < 32; block++) {
-			REQUIRE(HoldsExpectedBytes(cache.Pin(cached, block), block));
+			REQUIRE(HoldsExpectedBytes(cache.Pin(*cached, block), block));
 		}
 	}
 	REQUIRE(fs.ReadCount() > 32);
@@ -1015,7 +1023,7 @@ TEST_CASE("Block cache fetches evicted blocks again when the temporary files hav
 
 		for (idx_t round = 0; round < 2; round++) {
 			for (idx_t block = 0; block < 32; block++) {
-				auto pin = cache.Pin(cached, block);
+				auto pin = cache.Pin(*cached, block);
 				REQUIRE(HoldsExpectedBytes(pin, block));
 			}
 		}
@@ -1037,7 +1045,7 @@ TEST_CASE("Block cache blocks of in-memory files spill to temporary files and ar
 	REQUIRE(CountFiles(directory, ".block") == 0);
 	for (idx_t round = 0; round < 2; round++) {
 		for (idx_t block = 0; block < 32; block++) {
-			auto pin = cache.Pin(file, block);
+			auto pin = cache.Pin(*file, block);
 			REQUIRE(pin.Ptr()[0] == block + 1);
 			REQUIRE(pin.Ptr()[BLOCK - 1] == block + 1);
 		}
@@ -1077,9 +1085,9 @@ TEST_CASE("Block cache keeps external_file_cache_min_memory of remote blocks whi
 	};
 
 	for (idx_t block = 0; block < 6; block++) {
-		cache.Pin(remote, block);
+		cache.Pin(*remote, block);
 	}
-	cache.Pin(local, 0);
+	cache.Pin(*local, 0);
 	const auto spillable = allocate().GetBlockHandle();
 	vector<BufferHandle> pinned;
 	pinned.push_back(allocate());
@@ -1125,7 +1133,7 @@ struct ReadWhileParked {
 ReadWhileParked ReadWhileParkedAt(BlockCache &cache, const shared_ptr<BlockCacheFile> &file, idx_t block,
                                   const string &fault_point) {
 	auto reader =
-	    std::async(std::launch::async, [&] { return cache.PinRange(file, block * BLOCK, BLOCK)[0].Ptr()[0]; });
+	    std::async(std::launch::async, [&] { return cache.PinRange(*file, block * BLOCK, BLOCK)[0].Ptr()[0]; });
 	ReadWhileParked result;
 	result.waited = reader.wait_for(std::chrono::milliseconds(200)) == std::future_status::timeout;
 	REQUIRE(FaultPoints::Arm(fault_point + ":release"));
@@ -1173,13 +1181,13 @@ TEST_CASE("Block cache reads an in-memory block while another reader loads it ba
 	auto file = cache.CreateUnbackedFile("memory://load_window.bin");
 	AppendBlocks(cache, file, 2, [](idx_t block) { return block + 1; });
 	buffer_manager.SetMemoryLimit(BLOCK);
-	cache.Pin(file, 1);
+	cache.Pin(*file, 1);
 	REQUIRE(cache.TryPinRange(*file, 0, BLOCK).empty());
 	absl::Cleanup clear = [] {
 		FaultPoints::Clear();
 	};
 	REQUIRE(FaultPoints::Arm("block_load_before_loaded"));
-	auto loader = std::async(std::launch::async, [&] { return cache.Pin(file, 0).Ptr()[0]; });
+	auto loader = std::async(std::launch::async, [&] { return cache.Pin(*file, 0).Ptr()[0]; });
 	AwaitParked("block_load_before_loaded");
 	const auto read = ReadWhileParkedAt(cache, file, 0, "block_load_before_loaded");
 	uint8_t loaded = 0;
@@ -1200,7 +1208,7 @@ TEST_CASE("Block cache gives memory back to the buffer pool", "[block_cache]") {
 	TestFile file("block_cache_shrink.bin", FULL * BLOCK);
 	auto cached = file.Open(cache, fs);
 	for (idx_t block = 0; block < FULL; block++) {
-		cache.Pin(cached, block);
+		cache.Pin(*cached, block);
 	}
 	const auto filled = cache.GetStatistics().used;
 	REQUIRE(filled == FULL * BLOCK);
@@ -1213,7 +1221,7 @@ TEST_CASE("Block cache gives memory back to the buffer pool", "[block_cache]") {
 	REQUIRE(cache.GetStatistics().used < filled);
 	buffers.clear();
 	for (idx_t block = 0; block < FULL; block++) {
-		auto pin = cache.Pin(cached, block);
+		auto pin = cache.Pin(*cached, block);
 		REQUIRE(HoldsExpectedBytes(pin, block));
 	}
 }
@@ -1263,13 +1271,13 @@ TEST_CASE("Block cache concurrent pins and evictions return the right bytes", "[
 							    cache.Prefetch(cached, block * BLOCK, 4 * BLOCK, BlockCachePrefetch::HINT);
 						    }
 						    if (i % 11 == 0) {
-							    auto pins = cache.PinRange(cached, block * BLOCK, 3 * BLOCK);
+							    auto pins = cache.PinRange(*cached, block * BLOCK, 3 * BLOCK);
 							    for (idx_t j = 0; j < pins.size(); j++) {
 								    wrong += !HoldsExpectedBytes(pins[j], block + j);
 							    }
 							    continue;
 						    }
-						    auto pin = cache.Pin(cached, block);
+						    auto pin = cache.Pin(*cached, block);
 						    if (!HoldsExpectedBytes(pin, block)) {
 							    wrong++;
 						    }
@@ -1292,7 +1300,7 @@ TEST_CASE("Block cache counts every hit of concurrent pins of one block and lets
 	CountingSourceFileSystem fs;
 	TestFile hot("block_cache_hot.bin", BLOCK);
 	auto file = hot.Open(cache, fs);
-	cache.Pin(file, 0);
+	cache.Pin(*file, 0);
 	const auto before = cache.GetStatistics();
 	constexpr idx_t TASKS = 8;
 	constexpr idx_t PINS = 10000;
@@ -1303,7 +1311,7 @@ TEST_CASE("Block cache counts every hit of concurrent pins of one block and lets
 		    executor,
 		    [&]() {
 			    for (idx_t i = 0; i < PINS; i++) {
-				    auto pin = cache.Pin(file, 0);
+				    auto pin = cache.Pin(*file, 0);
 				    if (pin.Ptr()[0] != ExpectedByte(0) || pin.Ptr()[BLOCK - 1] != ExpectedByte(BLOCK - 1)) {
 					    wrong++;
 				    }
@@ -1354,7 +1362,7 @@ TEST_CASE("Block cache pins of an in-memory file return the right bytes while it
 			    while (!done.load(std::memory_order_acquire)) {
 				    seed = seed * 6364136223846793005ULL + 1442695040888963407ULL;
 				    const auto block = created.load(std::memory_order_acquire) - 1 - (seed >> 33) % RECENT;
-				    auto pin = cache.Pin(file, block);
+				    auto pin = cache.Pin(*file, block);
 				    if (pin.Ptr()[0] != fill(block) || pin.Ptr()[BLOCK - 1] != fill(block)) {
 					    wrong++;
 				    }
@@ -1369,7 +1377,7 @@ TEST_CASE("Block cache pins of an in-memory file return the right bytes while it
 	executor.WorkOnTasks();
 	REQUIRE(wrong == 0);
 	for (idx_t block = 0; block < BLOCKS; block++) {
-		auto pin = cache.Pin(file, block);
+		auto pin = cache.Pin(*file, block);
 		REQUIRE(pin.Ptr()[0] == fill(block));
 		REQUIRE(pin.Ptr()[BLOCK - 1] == fill(block));
 	}
@@ -1398,7 +1406,7 @@ TEST_CASE("Instances sharing a temporary directory spill in-memory blocks to fil
 		for (idx_t i = 0; i < files.size(); i++) {
 			auto &cache = BlockCache::Get(*(i == 0 ? first : second).instance);
 			for (idx_t block = 0; block < 4 * FIT; block++) {
-				auto pin = cache.Pin(files[i], block);
+				auto pin = cache.Pin(*files[i], block);
 				REQUIRE(pin.Ptr()[0] == uint8_t(i * 100 + 1 + block));
 				REQUIRE(pin.Ptr()[BLOCK - 1] == uint8_t(i * 100 + 1 + block));
 			}
@@ -1436,7 +1444,7 @@ TEST_CASE("Block cache benchmark: concurrent reads of blocks evicted to temporar
 		auto file = cache.CreateUnbackedFile("memory://bench_spill.bin");
 		AppendBlocks(cache, file, BLOCKS, BenchByte);
 		for (idx_t block = 0; block < BLOCKS; block++) {
-			cache.Pin(file, block);
+			cache.Pin(*file, block);
 		}
 		for (const idx_t readers : {idx_t(1), idx_t(8)}) {
 			for (idx_t round = 0; round < 3; round++) {
@@ -1452,7 +1460,7 @@ TEST_CASE("Block cache benchmark: concurrent reads of blocks evicted to temporar
 						    for (idx_t i = 0; i < READS; i++) {
 							    seed = seed * 6364136223846793005ULL + 1442695040888963407ULL;
 							    const auto block = (seed >> 33) % BLOCKS;
-							    if (cache.Pin(file, block).Ptr()[BLOCK - 1] != BenchByte(block)) {
+							    if (cache.Pin(*file, block).Ptr()[BLOCK - 1] != BenchByte(block)) {
 								    wrong++;
 							    }
 						    }
@@ -1502,7 +1510,7 @@ TEST_CASE("Block cache benchmark: pins that evict while the buffer pool is full"
 	for (idx_t round = 0; round < 3; round++) {
 		auto cached = file.Open(cache, fs, "v" + to_string(round));
 		for (idx_t block = 0; block < RESIDENT; block++) {
-			cache.Pin(cached, block);
+			cache.Pin(*cached, block);
 		}
 		const auto used = buffer_manager.GetUsedMemory();
 		const auto limit = buffer_manager.GetMaxMemory();
@@ -1512,7 +1520,7 @@ TEST_CASE("Block cache benchmark: pins that evict while the buffer pool is full"
 		idx_t wrong = 0;
 		const auto start = std::chrono::steady_clock::now();
 		for (idx_t block = RESIDENT; block < BLOCKS; block++) {
-			if (cache.Pin(cached, block).Ptr()[0] != ExpectedByte(block * BLOCK)) {
+			if (cache.Pin(*cached, block).Ptr()[0] != ExpectedByte(block * BLOCK)) {
 				wrong++;
 			}
 		}
@@ -1538,7 +1546,7 @@ TEST_CASE("Block cache benchmark: concurrent pins of one block and of distinct b
 		auto memory_file = cache.CreateUnbackedFile("memory://bench_pins.bin");
 		AppendBlocks(cache, memory_file, BLOCKS, BenchByte);
 		auto remote = remote_file.Open(cache, fs);
-		cache.PinRange(remote, 0, BLOCKS * BLOCK);
+		cache.PinRange(*remote, 0, BLOCKS * BLOCK);
 		for (const bool one_block : {true, false}) {
 			for (const bool in_memory : {true, false}) {
 				const auto &file = in_memory ? memory_file : remote;
@@ -1553,7 +1561,7 @@ TEST_CASE("Block cache benchmark: concurrent pins of one block and of distinct b
 						    const auto expected = in_memory ? BenchByte(block) : ExpectedByte(block * BLOCK);
 						    idx_t mismatches = 0;
 						    for (idx_t i = 0; i < PINS; i++) {
-							    mismatches += cache.Pin(file, block).Ptr()[0] != expected;
+							    mismatches += cache.Pin(*file, block).Ptr()[0] != expected;
 						    }
 						    wrong += mismatches;
 					    },
@@ -1664,9 +1672,9 @@ TEST_CASE("Block cache benchmark: cold reads of a 16 MiB range from a slow sourc
 			auto cached = file.Open(cache, fs, "prefetched" + to_string(round));
 			const auto start = std::chrono::steady_clock::now();
 			cache.Prefetch(cached, 0, BLOCKS * BLOCK, BlockCachePrefetch::HINT);
-			auto first = cache.Pin(cached, 0);
+			auto first = cache.Pin(*cached, 0);
 			const auto first_ms = MillisecondsSince(start);
-			auto pins = cache.PinRange(cached, 0, BLOCKS * BLOCK);
+			auto pins = cache.PinRange(*cached, 0, BLOCKS * BLOCK);
 			const auto all_ms = MillisecondsSince(start);
 			REQUIRE(HoldsExpectedBytes(first, 0));
 			REQUIRE(holds_range(pins));
@@ -1678,7 +1686,7 @@ TEST_CASE("Block cache benchmark: cold reads of a 16 MiB range from a slow sourc
 		{
 			auto cached = file.Open(cache, fs, "pinned" + to_string(round));
 			const auto start = std::chrono::steady_clock::now();
-			auto pins = cache.PinRange(cached, 0, BLOCKS * BLOCK);
+			auto pins = cache.PinRange(*cached, 0, BLOCKS * BLOCK);
 			const auto all_ms = MillisecondsSince(start);
 			REQUIRE(holds_range(pins));
 			Printer::PrintF("16 MiB range pinned from a source of 20 ms and 50 MiB/s per request, round %llu: every "

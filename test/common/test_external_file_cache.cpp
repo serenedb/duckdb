@@ -253,7 +253,7 @@ TEST_CASE("Reads past the end of the file fetch only the bytes in it", "[externa
 
 	auto group = handle->Read(100, FILE_SIZE - 10);
 	REQUIRE(group.GetHandles().size() == 1);
-	REQUIRE(group.GetHandles()[0].length == 10);
+	REQUIRE(group.GetHandles()[0].Size() == 10);
 	string tail(10, '\0');
 	group.CopyTo(reinterpret_cast<data_ptr_t>(&tail[0]), 10);
 	REQUIRE(tail == content.substr(FILE_SIZE - 10));

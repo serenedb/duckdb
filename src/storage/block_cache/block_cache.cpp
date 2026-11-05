@@ -44,11 +44,44 @@ idx_t BlockBytesOf(idx_t file_size, idx_t block) {
 	return start >= file_size ? 0 : MinValue(BlockCache::BLOCK_SIZE, file_size - start);
 }
 
-//! The blocks of each piece of a run of [block_count] blocks: equal pieces of at most PIECE_SIZE
-idx_t PieceBlocks(idx_t block_count) {
+struct BlockRange {
+	idx_t first;
+	idx_t end;
+};
+
+//! The blocks [first, end) that hold the bytes [offset, offset + size) of a file of [file_size] bytes, as far as they
+//! lie inside it
+BlockRange BlocksOf(idx_t file_size, idx_t offset, idx_t size) {
+	if (size == 0 || offset >= file_size) {
+		return {0, 0};
+	}
+	return {offset / BlockCache::BLOCK_SIZE, (MinValue(offset + size, file_size) - 1) / BlockCache::BLOCK_SIZE + 1};
+}
+
+//! Narrows [pins] of the blocks that hold [offset, end) of a file to those bytes
+void NarrowPins(vector<BlockCachePin> &pins, idx_t offset, idx_t end) {
+	if (pins.empty()) {
+		return;
+	}
+	auto &last = pins.back();
+	last.Narrow(0, end - (offset / BlockCache::BLOCK_SIZE + pins.size() - 1) * BlockCache::BLOCK_SIZE);
+	auto &head = pins.front();
+	head.Narrow(offset % BlockCache::BLOCK_SIZE, head.Size() - offset % BlockCache::BLOCK_SIZE);
+}
+
+//! Calls [callback] with the offset and the block count of each piece of a run of [count] blocks: equal pieces of at
+//! most PIECE_SIZE
+template <class FUNC>
+void ForEachPiece(idx_t count, FUNC &&callback) {
+	if (count == 0) {
+		return;
+	}
 	constexpr idx_t MAX_BLOCKS = BlockCache::PIECE_SIZE / BlockCache::BLOCK_SIZE;
-	const auto pieces = (block_count + MAX_BLOCKS - 1) / MAX_BLOCKS;
-	return (block_count + pieces - 1) / pieces;
+	const auto pieces = (count + MAX_BLOCKS - 1) / MAX_BLOCKS;
+	const auto piece_blocks = (count + pieces - 1) / pieces;
+	for (idx_t offset = 0; offset < count; offset += piece_blocks) {
+		callback(offset, MinValue(piece_blocks, count - offset));
+	}
 }
 
 } // namespace
@@ -229,10 +262,10 @@ public:
 	}
 
 	~BlockCacheFetchTask() override {
-		if (!done) {
-			ReleaseClaims(claimed);
-			Finish();
-		}
+		ReleaseClaims(claimed);
+		file->in_flight.fetch_sub(bytes, std::memory_order_relaxed);
+		file.reset();
+		cache.FinishFetchTask(bytes);
 	}
 
 	TaskExecutionResult Execute(TaskExecutionMode mode) override {
@@ -240,7 +273,6 @@ public:
 			cache.Fetch(*file, first_block, claimed, {});
 		} catch (std::exception &) { // NOLINT
 		}
-		Finish();
 		return TaskExecutionResult::TASK_FINISHED;
 	}
 
@@ -249,18 +281,11 @@ public:
 	}
 
 private:
-	void Finish() {
-		done = true;
-		file->in_flight.fetch_sub(bytes, std::memory_order_relaxed);
-		cache.FinishFetchTask(bytes);
-	}
-
 	BlockCache &cache;
 	shared_ptr<BlockCacheFile> file;
 	idx_t first_block;
 	vector<optional_ptr<BlockMemory>> claimed;
 	idx_t bytes;
-	bool done = false;
 };
 
 //===--------------------------------------------------------------------===//
@@ -495,12 +520,8 @@ void BlockCache::WaitForLoad(BlockMemory &memory) {
 }
 
 bool BlockCache::IsCached(BlockCacheFile &file, idx_t offset, idx_t size) const {
-	const auto file_size = file.GetSize();
-	if (size == 0 || offset >= file_size) {
-		return true;
-	}
-	const auto last = (MinValue(offset + size, file_size) - 1) / BLOCK_SIZE;
-	for (auto block = offset / BLOCK_SIZE; block <= last; block++) {
+	const auto range = BlocksOf(file.GetSize(), offset, size);
+	for (auto block = range.first; block < range.end; block++) {
 		if (IsMissing(file.blocks->Load(block))) {
 			return false;
 		}
@@ -551,6 +572,9 @@ void BlockCache::Fetch(BlockCacheFile &file, idx_t first_block, std::span<option
 	source->file_system.ReadScattered(*source, targets, start);
 	const auto valid_until = source->file_system.GetCacheValidUntil(*source);
 	const bool shareable = !valid_until || *valid_until != timestamp_t::ninfinity();
+	if (!shareable) {
+		file.reuse_forbidden.store(true, std::memory_order_relaxed);
+	}
 	fetches.fetch_add(1, std::memory_order_relaxed);
 	fetched_bytes.fetch_add(end - start, std::memory_order_relaxed);
 	for (idx_t i = first; i <= last; i++) {
@@ -569,8 +593,7 @@ void BlockCache::Fetch(BlockCacheFile &file, idx_t first_block, std::span<option
 	}
 }
 
-BlockCachePin BlockCache::Pin(const shared_ptr<BlockCacheFile> &file_p, idx_t block) {
-	auto &file = *file_p;
+BlockCachePin BlockCache::Pin(BlockCacheFile &file, idx_t block) {
 	const auto size = file.BlockBytes(block);
 	if (size == 0) {
 		throw InternalException("Block %llu of \"%s\" lies past its end", block, file.path);
@@ -613,7 +636,7 @@ BlockCachePin BlockCache::Pin(const shared_ptr<BlockCacheFile> &file_p, idx_t bl
 BlockCachePin BlockCache::PinInOrder(const shared_ptr<BlockCacheFile> &file, idx_t block,
                                      BlockCacheReadAhead &read_ahead, bool ahead) {
 	if (file->IsUnbacked()) {
-		return Pin(file, block);
+		return Pin(*file, block);
 	}
 	if (block != std::exchange(read_ahead.next_block, block + 1)) {
 		read_ahead.blocks = 0;
@@ -626,7 +649,7 @@ BlockCachePin BlockCache::PinInOrder(const shared_ptr<BlockCacheFile> &file, idx
 		} catch (...) {
 		}
 	}
-	return Pin(file, block);
+	return Pin(*file, block);
 }
 
 template <class ADMIT>
@@ -666,20 +689,17 @@ BlockCache::RunPlan BlockCache::PlanRun(BlockCacheFile &file, idx_t block, idx_t
 	return plan;
 }
 
-vector<BlockCachePin> BlockCache::PinRange(const shared_ptr<BlockCacheFile> &file_p, idx_t offset, idx_t size) {
-	auto &file = *file_p;
+vector<BlockCachePin> BlockCache::PinRange(BlockCacheFile &file, idx_t offset, idx_t size) {
 	vector<BlockCachePin> result;
-	const auto file_size = file.GetSize();
-	if (size == 0 || offset >= file_size) {
+	const auto range = BlocksOf(file.GetSize(), offset, size);
+	if (range.first == range.end) {
 		return result;
 	}
-	const auto first = offset / BLOCK_SIZE;
-	const auto end = (MinValue(offset + size, file_size) - 1) / BLOCK_SIZE + 1;
-	result.resize(end - first);
+	result.resize(range.end - range.first);
 	bool complete = true;
-	for (auto block = first; block < end; block++) {
+	for (auto block = range.first; block < range.end; block++) {
 		auto &slot = file.blocks->Get(block);
-		complete = PinLoaded(slot, file.BlockBytes(block), result[block - first]) && complete;
+		complete = PinLoaded(slot, file.BlockBytes(block), result[block - range.first]) && complete;
 	}
 	if (!complete && !file.IsUnbacked()) {
 		vector<RunPlan> plans;
@@ -688,44 +708,40 @@ vector<BlockCachePin> BlockCache::PinRange(const shared_ptr<BlockCacheFile> &fil
 				ReleaseClaims(plan.claimed);
 			}
 		};
-		for (auto block = first; block < end;) {
+		for (auto block = range.first; block < range.end;) {
 			if (!IsMissing(file.blocks->Load(block))) {
 				block++;
 				continue;
 			}
-			auto plan = PlanRun(file, block, end, [](idx_t) { return true; });
+			auto plan = PlanRun(file, block, range.end, [](idx_t) { return true; });
 			block = plan.next;
 			if (!plan.claimed.empty()) {
 				plans.push_back(std::move(plan));
 			}
 		}
-		FetchConcurrently(file, plans, first, result);
+		FetchConcurrently(file, plans, range.first, result);
 	}
-	for (auto block = first; block < end; block++) {
-		if (!result[block - first].IsValid()) {
-			result[block - first] = Pin(file_p, block);
+	for (auto block = range.first; block < range.end; block++) {
+		if (!result[block - range.first].IsValid()) {
+			result[block - range.first] = Pin(file, block);
 		}
 	}
+	NarrowPins(result, offset, MinValue(offset + size, file.GetSize()));
 	return result;
 }
 
-BlockCachePin BlockCache::PinBytes(const shared_ptr<BlockCacheFile> &file, idx_t offset, idx_t size) {
-	D_ASSERT(size != 0 && offset + size <= file->GetSize());
-	const auto first = offset / BLOCK_SIZE;
-	if ((offset + size - 1) / BLOCK_SIZE == first) {
-		auto pin = Pin(file, first);
-		pin.data += offset % BLOCK_SIZE;
-		pin.size = size;
+BlockCachePin BlockCache::PinBytes(BlockCacheFile &file, idx_t offset, idx_t size) {
+	D_ASSERT(size != 0 && offset + size <= file.GetSize());
+	if ((offset + size - 1) / BLOCK_SIZE == offset / BLOCK_SIZE) {
+		auto pin = Pin(file, offset / BLOCK_SIZE);
+		pin.Narrow(offset % BLOCK_SIZE, size);
 		return pin;
 	}
-	const auto pins = PinRange(file, offset, size);
 	auto result = AllocateUncached(db, size);
-	for (idx_t done = 0; done < size;) {
-		const auto at = offset + done;
-		const auto in_block = at % BLOCK_SIZE;
-		const auto chunk = MinValue(size - done, BLOCK_SIZE - in_block);
-		memcpy(result.data + done, pins[at / BLOCK_SIZE - first].Ptr() + in_block, chunk);
-		done += chunk;
+	idx_t done = 0;
+	for (auto &pin : PinRange(file, offset, size)) {
+		memcpy(result.data + done, pin.Ptr(), pin.Size());
+		done += pin.Size();
 	}
 	return result;
 }
@@ -734,14 +750,11 @@ void BlockCache::FetchConcurrently(BlockCacheFile &file, vector<RunPlan> &plans,
                                    vector<BlockCachePin> &pins) {
 	const auto for_each_piece = [&](auto &&callback) {
 		for (auto &plan : plans) {
-			const auto count = plan.claimed.size();
-			const auto piece_blocks = PieceBlocks(count);
-			for (idx_t offset = 0; offset < count; offset += piece_blocks) {
+			ForEachPiece(plan.claimed.size(), [&](idx_t offset, idx_t count) {
 				const auto piece_first = plan.first_block + offset;
-				const auto piece_count = MinValue(piece_blocks, count - offset);
-				callback(piece_first, std::span(plan.claimed).subspan(offset, piece_count),
-				         std::span(pins).subspan(piece_first - first, piece_count));
-			}
+				callback(piece_first, std::span(plan.claimed).subspan(offset, count),
+				         std::span(pins).subspan(piece_first - first, count));
+			});
 		}
 	};
 	idx_t pieces = 0;
@@ -765,22 +778,18 @@ void BlockCache::FetchConcurrently(BlockCacheFile &file, vector<RunPlan> &plans,
 
 vector<BlockCachePin> BlockCache::TryPinRange(BlockCacheFile &file, idx_t offset, idx_t size) {
 	vector<BlockCachePin> result;
-	const auto file_size = file.GetSize();
-	if (size == 0 || offset >= file_size) {
-		return result;
-	}
-	const auto first = offset / BLOCK_SIZE;
-	const auto last = (MinValue(offset + size, file_size) - 1) / BLOCK_SIZE;
-	result.reserve(last - first + 1);
-	for (auto block = first; block <= last; block++) {
+	const auto range = BlocksOf(file.GetSize(), offset, size);
+	result.reserve(range.end - range.first);
+	for (auto block = range.first; block < range.end; block++) {
 		const auto slot = file.blocks->Find(block);
 		BlockCachePin pin;
 		if (!slot || !PinLoaded(*slot, file.BlockBytes(block), pin)) {
 			result.clear();
-			break;
+			return result;
 		}
 		result.push_back(std::move(pin));
 	}
+	NarrowPins(result, offset, MinValue(offset + size, file.GetSize()));
 	return result;
 }
 
@@ -824,23 +833,21 @@ void BlockCache::StopFetching() {
 
 void BlockCache::Prefetch(const shared_ptr<BlockCacheFile> &file_p, idx_t offset, idx_t size, BlockCachePrefetch kind) {
 	auto &file = *file_p;
-	const auto file_size = file.GetSize();
-	if (file.IsUnbacked() || size == 0 || offset >= file_size) {
+	if (file.IsUnbacked()) {
 		return;
 	}
-	size = MinValue(size, file_size - offset);
-	const auto end = (offset + size - 1) / BLOCK_SIZE + 1;
+	const auto range = BlocksOf(file.GetSize(), offset, size);
 	const auto admit = [&](idx_t bytes) {
 		return kind == BlockCachePrefetch::NEED ||
 		       (file.in_flight.load(std::memory_order_relaxed) + bytes <= MAX_FILE_IN_FLIGHT &&
 		        in_flight.load(std::memory_order_relaxed) + bytes <= MAX_IN_FLIGHT);
 	};
-	for (auto block = offset / BLOCK_SIZE; block < end;) {
+	for (auto block = range.first; block < range.end;) {
 		if (!IsMissing(file.blocks->Load(block))) {
 			block++;
 			continue;
 		}
-		auto plan = PlanRun(file, block, end, admit);
+		auto plan = PlanRun(file, block, range.end, admit);
 		if (!plan.claimed.empty()) {
 			ScheduleFetch(file_p, plan.first_block, std::move(plan.claimed));
 		}
@@ -890,31 +897,30 @@ void BlockCache::ScheduleFetch(const shared_ptr<BlockCacheFile> &file, idx_t fir
 		ReleaseClaims(std::span(claimed).subspan(handed));
 	};
 	auto &scheduler = TaskScheduler::GetScheduler(db);
-	const auto piece_blocks = PieceBlocks(claimed.size());
-	for (idx_t first = 0; first < claimed.size(); first += piece_blocks) {
-		const auto piece_first = first_block + first;
-		const auto range = std::span(claimed).subspan(first, MinValue(piece_blocks, claimed.size() - first));
+	ForEachPiece(claimed.size(), [&](idx_t offset, idx_t count) {
+		const auto piece_first = first_block + offset;
+		const auto range = std::span(claimed).subspan(offset, count);
 		vector<optional_ptr<BlockMemory>> piece_claimed(range.begin(), range.end());
 		idx_t bytes = 0;
-		for (idx_t i = 0; i < piece_claimed.size(); i++) {
+		for (idx_t i = 0; i < count; i++) {
 			if (piece_claimed[i]) {
 				bytes += file->BlockBytes(piece_first + i);
 			}
 		}
 		shared_ptr<Task> task =
 		    make_shared_ptr<BlockCacheFetchTask>(*this, file, piece_first, std::move(piece_claimed), bytes);
-		handed = first + range.size();
+		handed = offset + count;
 		file->in_flight.fetch_add(bytes, std::memory_order_relaxed);
 		in_flight.fetch_add(bytes, std::memory_order_relaxed);
 		{
 			annotated_lock_guard<annotated_mutex> guard(fetch_lock);
 			pending_tasks++;
 			if (stopped) {
-				continue;
+				return;
 			}
 		}
 		scheduler.ScheduleTask(Producer(), std::move(task), scheduler.AsyncPool());
-	}
+	});
 }
 
 BlockCachePin BlockCache::CreateBlock(BlockCacheFile &file, idx_t block) {
