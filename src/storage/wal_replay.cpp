@@ -245,7 +245,7 @@ public:
 		}
 		ErrorData error(ex);
 		throw IOException("The WAL entry at byte position %llu matches its checksum but could not be replayed, it "
-		                  "may have been written by a newer version of SereneDB: %s",
+		                  "may have been written by a newer version of DuckDB: %s",
 		                  entry_offset.GetIndex(), error.RawMessage());
 	}
 
