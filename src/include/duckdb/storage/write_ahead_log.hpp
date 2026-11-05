@@ -8,9 +8,7 @@
 
 #pragma once
 
-#include "duckdb/catalog/catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/index_catalog_entry.hpp"
-#include "duckdb/catalog/standard_entry.hpp"
 #include "duckdb/catalog/catalog_entry/sequence_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/table_macro_catalog_entry.hpp"
 #include "duckdb/common/enums/wal_type.hpp"
