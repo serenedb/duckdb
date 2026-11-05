@@ -324,7 +324,11 @@ static void RequireGrantable(Binder &binder, CatalogEntry &entry, const Permissi
 		stored = defaults;
 	}
 	auto held = role.HeldModes(stored) | role.GrantableModes(stored);
-	if (entry.type == CatalogType::TABLE_ENTRY) {
+	if (auto columns = EffectiveColumnAcls(binder.context, entry)) {
+		for (auto &column : *columns) {
+			held |= role.HeldModes(column.acl) | role.GrantableModes(column.acl);
+		}
+	} else if (entry.type == CatalogType::TABLE_ENTRY) {
 		for (auto &column : entry.Cast<TableCatalogEntry>().GetColumns().Logical()) {
 			held |= role.HeldModes(column.Acl()) | role.GrantableModes(column.Acl());
 		}
