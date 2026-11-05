@@ -170,10 +170,10 @@ TEST_CASE("Compacted memory files map in place", "[memory_file_system]") {
 	for (const idx_t size : {idx_t(0), idx_t(1), MEMORY_BLOCK, 5 * MEMORY_BLOCK + 123}) {
 		const auto path = "memory://compact/f" + to_string(size);
 		WriteFile(fs, path, size);
-		auto blocks = fs.GetBlockFile(path);
+		auto blocks = fs.OpenBlockFile(path);
 		REQUIRE(blocks);
 		fs.Compact(path);
-		REQUIRE(!fs.GetBlockFile(path));
+		REQUIRE(!fs.OpenBlockFile(path));
 		REQUIRE(ReadsBack(fs, path, size));
 		auto mapped = fs.MemoryMapFile(OpenFileInfo(path), FileFlags::FILE_FLAGS_READ, MMapOptions());
 		REQUIRE(mapped);
@@ -203,14 +203,14 @@ TEST_CASE("The virtual filesystem finds and compacts the block files of memory f
 	auto &vfs = FileSystem::GetFileSystem(*db.instance);
 	const string path = "memory://forwarded/file";
 	WriteFile(vfs, path, MEMORY_BLOCK + 1);
-	REQUIRE(vfs.GetBlockFile(path));
+	REQUIRE(vfs.OpenBlockFile(path));
 	vfs.Compact(path);
-	REQUIRE(!vfs.GetBlockFile(path));
+	REQUIRE(!vfs.OpenBlockFile(path));
 	REQUIRE(ReadsBack(vfs, path, MEMORY_BLOCK + 1));
 
 	auto local = TestCreatePath("not_in_blocks.bin");
 	WriteFile(vfs, local, 1);
-	REQUIRE(!vfs.GetBlockFile(local));
+	REQUIRE(!vfs.OpenBlockFile(local));
 	vfs.Compact(local);
 	REQUIRE(ReadsBack(vfs, local, 1));
 }
