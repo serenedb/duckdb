@@ -301,8 +301,7 @@ BoundStatement Binder::Bind(BaseTableRef &ref) {
 		// column validation). A facade catalog delegates the scan to a storage
 		// table in another catalog, so bind the alias to the catalog-resolved
 		// entry the user named -- not the storage table inside the LogicalGet.
-		CheckTableRead(bind_context.AddBaseTable(table_index, ref.alias, table_names, table_types, col_ids, table),
-		               table);
+		bind_context.AddBaseTable(table_index, ref.alias, table_names, table_types, col_ids, table);
 		BoundStatement result;
 		result.types = table_types;
 		result.names = table_names;

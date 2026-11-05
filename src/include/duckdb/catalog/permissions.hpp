@@ -20,8 +20,10 @@
 #include "duckdb/common/serializer/serializer.hpp"
 #include "duckdb/common/shared_ptr.hpp"
 #include "duckdb/common/string.hpp"
+#include "duckdb/common/types.hpp"
 #include "duckdb/common/unordered_map.hpp"
 #include "duckdb/common/vector.hpp"
+#include "duckdb/parser/qualified_name.hpp"
 
 #include <algorithm>
 #include <functional>
@@ -33,7 +35,11 @@ class Catalog;
 class CatalogEntry;
 class ClientContext;
 class ColumnList;
+struct CreateInfo;
 class DuckCatalog;
+class FunctionEntry;
+class MacroCatalogEntry;
+class MacroFunction;
 class SchemaCatalogEntry;
 class TableCatalogEntry;
 
@@ -369,5 +375,31 @@ DUCKDB_API string PermissionKindName(const CatalogEntry &entry);
 DUCKDB_API string RoleOptionsToSQL(RoleOption set_options, RoleOption clear_options);
 DUCKDB_API string ValidUntilToSQL(int64_t valid_until);
 [[noreturn]] DUCKDB_API void ThrowPermissionDenied(const CatalogEntry &entry);
+DUCKDB_API void RequireSuperuser(const RoleAccess &role);
+DUCKDB_API void RequireOwner(const RoleAccess &role, const CatalogEntry &entry, idx_t owner);
+DUCKDB_API void RequireOwner(ClientContext &context, const RoleAccess &role, CatalogEntry &entry);
+DUCKDB_API void RequireCreate(ClientContext &context, const RoleAccess &role, SchemaCatalogEntry &schema,
+                              const CreateInfo &info, const Identifier &name);
+DUCKDB_API void RequireDatabasePrivilege(ClientContext &context, const RoleAccess &role, const Identifier &database,
+                                         AclMode need);
+DUCKDB_API void RequireForeignDataWrapperUsage(ClientContext &context, const RoleAccess &role,
+                                               const Identifier &database, const string &wrapper);
+DUCKDB_API void RequireLanguageUsage(ClientContext &context, const RoleAccess &role, const Identifier &database,
+                                     const string &language);
+DUCKDB_API void RequireSchemaCreate(ClientContext &context, const RoleAccess &role, SchemaCatalogEntry &schema);
+DUCKDB_API void RequireTypeUsage(ClientContext &context, const RoleAccess &role, const LogicalType &type,
+                                 Catalog &catalog);
+DUCKDB_API void CheckCall(ClientContext &context, const RoleAccess &role, FunctionEntry &function);
+DUCKDB_API void CheckMacroCall(ClientContext &context, const RoleAccess &role, MacroCatalogEntry &macro,
+                               const MacroFunction &overload, idx_t overload_index);
+DUCKDB_API void AssignOwner(ClientContext &context, Permissions &permissions, Catalog &catalog, CatalogType objtype,
+                            optional_ptr<SchemaCatalogEntry> schema, idx_t owner);
+DUCKDB_API optional_ptr<CatalogEntry> ClusterEntry(ClientContext &context, CatalogType type, const Identifier &name);
+DUCKDB_API CatalogEntry &ClusterDatabase(ClientContext &context, const Identifier &name);
+DUCKDB_API QualifiedName ClusterName(ClientContext &context, const QualifiedName &name);
+DUCKDB_API idx_t RoleId(ClientContext &context, const Identifier &name);
+DUCKDB_API optional_idx RoleSpecKeyword(ClientContext &context, const string &name);
+DUCKDB_API idx_t RoleSpecId(ClientContext &context, const string &name);
+DUCKDB_API string RoleName(ClientContext &context, idx_t role);
 
 } // namespace duckdb

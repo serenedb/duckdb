@@ -466,29 +466,15 @@ public:
 	BoundStatement BindTarget(TableRef &ref, TableRefUse use);
 	void CheckTableRead(TableBinding &binding, TableCatalogEntry &table);
 	void RequirePrivilege(TableCatalogEntry &table, AclMode mode, vector<LogicalIndex> columns, bool any_column);
+	void RequireColumnPrivilege(TableCatalogEntry &table, AclMode mode, const vector<Identifier> &names, idx_t leading);
 	void AdoptPrivilegeChecks(Binder &other);
 	void CheckPrivileges();
-	void CheckCall(FunctionEntry &function);
-	void CheckStatementKind(SQLStatement &statement);
-	void RequireSuperuser();
-	void RequireOwner(CatalogEntry &entry);
-	void RequireOwner(CatalogEntry &entry, idx_t owner);
-	void RequireReplaceOwner(SchemaCatalogEntry &schema, const CreateInfo &info, const Identifier &name);
-	optional_ptr<CatalogEntry> ClusterEntry(CatalogType type, const Identifier &name);
-	QualifiedName ClusterName(const QualifiedName &name);
 	Catalog &SubscriptionCatalog(const Identifier &catalog_name);
-	idx_t RoleId(const Identifier &name);
-	optional_idx RoleSpecKeyword(const string &name);
-	idx_t RoleSpecId(const string &name);
-	string RoleName(idx_t role);
-	void RequireDatabasePrivilege(const Identifier &database, AclMode need);
-	void RequireForeignDataWrapperUsage(const RoleAccess &role, const Identifier &database, const string &wrapper);
-	void RequireLanguageUsage(const RoleAccess &role, const Identifier &database, const string &language);
-	void RequireSchemaCreate(SchemaCatalogEntry &schema);
-	void RequireTypeUsage(optional_ptr<const LogicalDependencyList> dependencies);
-	void RequireTypeUsage(const LogicalType &type, Catalog &catalog);
-	void AssignOwner(Permissions &permissions, Catalog &catalog, CatalogType objtype,
-	                 optional_ptr<SchemaCatalogEntry> schema, idx_t owner);
+	optional_ptr<CatalogEntry> LookupRoutine(const QualifiedName &name, OnEntryNotFound if_not_found);
+	MacroFunction &ResolveOverload(MacroCatalogEntry &macro, bool has_func_args, vector<LogicalType> &func_parameters);
+	CatalogEntry &ResolveDatabaseEntry(CatalogType type, AlterInfo &info);
+	void RequireSubscriptionOwner(CatalogEntry &subscription);
+	void RequireResolvedTypeUsage(optional_ptr<const LogicalDependencyList> dependencies);
 	void CheckCreateRole(const CreateRoleInfo &info);
 	void CheckAlterRole(AlterRoleInfo &info);
 	void CheckDropRole(const DropInfo &info);
@@ -681,6 +667,7 @@ private:
 	void BindDropTrigger(DropInfo &info, StatementProperties &properties);
 	void BindDrop(DropInfo &info, StatementProperties &properties);
 	void BindPrivilegeAlter(AlterInfo &info, StatementProperties &properties);
+	void ResolveOwned(AlterInfo &info);
 	void BindRowIdColumns(TableCatalogEntry &table, LogicalGet &get, vector<unique_ptr<Expression>> &expressions);
 	//! Append references to the scanned pre-update (OLD) value of every physical column, in table order, to the
 	//! UPDATE child projection (before rowid). Records the input-chunk offset of the OLD block on the update.

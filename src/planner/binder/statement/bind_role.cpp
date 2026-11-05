@@ -88,7 +88,7 @@ static void CheckConfigChange(ClientContext &context, const vector<string> &set_
 }
 
 static optional_ptr<RoleEntry> FindRole(Binder &binder, const string &name) {
-	auto entry = binder.ClusterEntry(CatalogType::ROLE_ENTRY, Identifier(name));
+	auto entry = ClusterEntry(binder.context, CatalogType::ROLE_ENTRY, Identifier(name));
 	return entry ? &entry->Cast<RoleEntry>() : nullptr;
 }
 
@@ -153,8 +153,8 @@ static void ResolveMembershipGrantor(Binder &binder, AlterRoleInfo &info) {
 		info.grantor_id = grantor.GetIndex();
 		return;
 	}
-	const auto grantor = binder.RoleSpecId(info.granted_by);
-	const auto grantor_name = binder.RoleName(grantor);
+	const auto grantor = RoleSpecId(binder.context, info.granted_by);
+	const auto grantor_name = RoleName(binder.context, grantor);
 	if (!caller.is_superuser && caller.role != grantor && !caller.Uses(grantor)) {
 		if (info.revoke) {
 			throw PermissionException(
@@ -222,7 +222,7 @@ void Binder::CheckAlterRole(AlterRoleInfo &info) {
 			    "permission denied to alter setting");
 		}
 		info.SetQualifiedName(Identifier(), Identifier(),
-		                      Identifier(RoleName(DBConfig::GetConfig(context).bootstrap_role)));
+		                      Identifier(RoleName(context, DBConfig::GetConfig(context).bootstrap_role)));
 		return;
 	}
 	auto role = FindRole(*this, info.GetQualifiedName().Name().GetIdentifierName());
@@ -303,7 +303,7 @@ void Binder::CheckSharedObjectComment(AlterInfo &info) {
 	}
 	auto &name = info.GetQualifiedName().Name();
 	if (info.GetCatalogType() == CatalogType::DATABASE_ENTRY) {
-		auto database = ClusterEntry(CatalogType::DATABASE_ENTRY, name);
+		auto database = ClusterEntry(context, CatalogType::DATABASE_ENTRY, name);
 		if (!database) {
 			context.WarnUser(StringUtil::Format("database \"%s\" does not exist", name.GetIdentifierName()));
 			info.if_not_found = OnEntryNotFound::RETURN_NULL;
@@ -343,25 +343,21 @@ void Binder::CheckAlterDatabaseSettings(AlterDatabaseSettingsInfo &info) {
 	}
 	CheckConfigNames(info.set_config, info.reset_config);
 	auto &name = info.GetQualifiedName().Name();
-	auto database = ClusterEntry(CatalogType::DATABASE_ENTRY, name);
-	if (!database) {
-		throw CatalogException(unordered_map<string, string> {{"type", "Database"}},
-		                       StringUtil::Format("database \"%s\" does not exist", name.GetIdentifierName()));
-	}
+	auto &database = ClusterDatabase(context, name);
 	if (caller.is_superuser) {
 		return;
 	}
 	if (info.role_id == 0) {
-		if (!caller.MemberOf(database->permissions.owner)) {
+		if (!caller.MemberOf(database.permissions.owner)) {
 			throw PermissionException("must be owner of database %s", name.GetIdentifierName());
 		}
 	} else if (info.role_id != caller.role) {
-		if (auto role = FindRole(*this, RoleName(info.role_id))) {
+		if (auto role = FindRole(*this, RoleName(context, info.role_id))) {
 			RequireRoleAdmin(context, caller, *role, "alter");
 		}
 	}
 	vector<string> current;
-	for (auto &setting : database->GetInfo()->Cast<CreateDatabaseInfo>().settings) {
+	for (auto &setting : database.GetInfo()->Cast<CreateDatabaseInfo>().settings) {
 		if (setting.role == info.role_id) {
 			current = setting.config;
 		}

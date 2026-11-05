@@ -760,25 +760,15 @@ BoundStatement Binder::BindNode(InsertQueryNode &node) {
 	}
 
 	if (node.on_conflict_info) {
-		vector<LogicalIndex> inserted;
-		if (!node.columns.empty()) {
-			for (auto &name : node.columns) {
-				if (table.ColumnExists(name)) {
-					inserted.push_back(table.GetColumn(name).Logical());
-				}
-			}
+		if (node.default_values) {
+			RequirePrivilege(table, AclMode::Insert, {}, true);
 		} else {
 			auto values_list = node.GetValuesList();
-			const auto count = values_list && !values_list->values.empty() ? values_list->values[0].size()
-			                                                               : table.GetColumns().LogicalColumnCount();
-			for (auto &column : table.GetColumns().Logical()) {
-				if (inserted.size() == count) {
-					break;
-				}
-				inserted.push_back(column.Logical());
-			}
+			RequireColumnPrivilege(table, AclMode::Insert, node.columns,
+			                       values_list && !values_list->values.empty()
+			                           ? values_list->values[0].size()
+			                           : table.GetColumns().LogicalColumnCount());
 		}
-		RequirePrivilege(table, AclMode::Insert, std::move(inserted), node.default_values);
 	}
 
 	auto values_list = node.GetValuesList();
