@@ -687,14 +687,14 @@ bool StandardBufferManager::TryWriteTemporaryCopy(QueryContext context, MemoryTa
 	}
 	RequireTemporaryDirectory();
 	auto &temporary_files = temporary_directory.handle->GetTempFile();
-	const auto swap_limit = temporary_files.GetMaxSwapSpace();
+	const auto swap_limit = temporary_files.GetMaxSwapSpace().GetIndex();
 	auto copy_limit = DBConfig::GetConfig(db).options.external_file_cache_spill_size;
 	if (copy_limit == DConstants::INVALID_INDEX) {
-		copy_limit = swap_limit.IsValid() ? swap_limit.GetIndex() / 2 : NumericLimits<idx_t>::Maximum();
+		copy_limit = swap_limit / 2;
 	}
 	const auto size = buffer.AllocSize();
 	if (copy_bytes.load(std::memory_order_relaxed) + size > copy_limit ||
-	    (swap_limit.IsValid() && temporary_files.GetTotalUsedSpaceInBytes() + size > swap_limit.GetIndex())) {
+	    temporary_files.GetTotalUsedSpaceInBytes() + size > swap_limit) {
 		return false;
 	}
 	WriteTemporaryBuffer(context, tag, block_id, buffer);

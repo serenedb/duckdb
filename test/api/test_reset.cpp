@@ -132,6 +132,7 @@ OptionValueSet GetValueForOption(const string &name, const LogicalType &type) {
 	    {"allocator_bulk_deallocation_flush_threshold", {"4.0 GiB"}},
 	    {"arrow_output_version", {"1.5"}},
 	    {"enable_external_file_cache", {false}},
+	    {"external_file_cache_spill_size", {"4.0 GiB"}},
 	    {"validate_external_file_cache", {"NO_VALIDATION"}},
 	    {"experimental_metadata_reuse", {false}},
 	    {"storage_block_prefetch", {"always_prefetch"}},
