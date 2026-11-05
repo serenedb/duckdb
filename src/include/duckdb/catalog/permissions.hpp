@@ -35,6 +35,7 @@ class ClientContext;
 class ColumnList;
 class DuckCatalog;
 class SchemaCatalogEntry;
+class TableCatalogEntry;
 
 constexpr idx_t ACL_ID_PUBLIC = 0;
 
@@ -255,6 +256,13 @@ struct RoleAccess {
 	bool CanAnyColumn(const Permissions &permissions, AclMode need, const ColumnList &columns) const;
 	AclMode HeldModes(std::span<const AclItem> acl) const;
 	AclMode GrantableModes(std::span<const AclItem> acl) const;
+};
+
+struct ConstraintKeyReader {
+	const RoleAccess &role;
+	const TableCatalogEntry &table;
+
+	DUCKDB_API bool CanRead(std::span<const LogicalIndex> columns) const;
 };
 
 struct RoleMemberships {

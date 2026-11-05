@@ -753,24 +753,6 @@ void Binder::CheckPrivileges() {
 	}
 }
 
-void Binder::RecordConstraintKeyVisibility(TableCatalogEntry &table) {
-	auto &properties = GetStatementProperties();
-	auto &role = CheckAs();
-	if (properties.hide_constraint_keys || role.Can(CatalogType::TABLE_ENTRY, table.permissions, AclMode::Select)) {
-		return;
-	}
-	if (!table.IsDuckTable()) {
-		properties.hide_constraint_keys = true;
-		return;
-	}
-	auto &columns = table.GetColumns();
-	vector<std::span<const AclItem>> acls;
-	for (auto column_id : table.GetStorage().GetDataTableInfo()->GetIndexes().GetIndexedColumns()) {
-		acls.emplace_back(columns.GetColumn(PhysicalIndex(column_id)).Acl());
-	}
-	properties.hide_constraint_keys = !acls.empty() && !role.CanColumns(table.permissions, AclMode::Select, acls);
-}
-
 TableIndex Binder::GenerateTableIndex() {
 	return TableIndex(global_binder_state->bound_tables++);
 }

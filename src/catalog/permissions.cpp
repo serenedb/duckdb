@@ -656,6 +656,14 @@ bool RoleAccess::CanAnyColumn(const Permissions &permissions, AclMode need, cons
 	return false;
 }
 
+bool ConstraintKeyReader::CanRead(std::span<const LogicalIndex> columns) const {
+	vector<std::span<const AclItem>> acls;
+	for (auto column : columns) {
+		acls.emplace_back(table.GetColumns().GetColumn(column).Acl());
+	}
+	return role.CanColumns(table.permissions, AclMode::Select, acls);
+}
+
 AclMode RoleAccess::HeldModes(std::span<const AclItem> acl) const {
 	return Held(*this, acl, &AclItem::privs);
 }

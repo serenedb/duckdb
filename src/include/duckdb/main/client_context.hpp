@@ -170,7 +170,6 @@ public:
 	shared_ptr<const SecuritySnapshot> security;
 	idx_t current_role_id = DConstants::INVALID_INDEX;
 	idx_t session_role = DConstants::INVALID_INDEX;
-	bool hide_constraint_keys = false;
 
 	class AccessScopeGuard {
 	public:

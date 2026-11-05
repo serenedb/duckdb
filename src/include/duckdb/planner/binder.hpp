@@ -468,7 +468,6 @@ public:
 	void RequirePrivilege(TableCatalogEntry &table, AclMode mode, vector<LogicalIndex> columns, bool any_column);
 	void AdoptPrivilegeChecks(Binder &other);
 	void CheckPrivileges();
-	void RecordConstraintKeyVisibility(TableCatalogEntry &table);
 	void CheckCall(FunctionEntry &function);
 	void CheckStatementKind(SQLStatement &statement);
 	void RequireSuperuser();

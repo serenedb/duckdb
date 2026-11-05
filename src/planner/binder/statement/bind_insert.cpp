@@ -745,7 +745,6 @@ BoundStatement Binder::BindNode(InsertQueryNode &node) {
 		                       TableCatalogEntry::Name);
 	}
 	auto &table = table_entry.Cast<TableCatalogEntry>();
-	RecordConstraintKeyVisibility(table);
 
 	// SereneDB fork: a zero-physical-column table (CREATE TABLE t();) has no columns to
 	// materialize a row into, so INSERT ... DEFAULT VALUES is rejected here (PostgreSQL allows it).
