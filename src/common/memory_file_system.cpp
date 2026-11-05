@@ -267,7 +267,7 @@ unique_ptr<MemoryMappedFile> MemoryFileSystem::MemoryMapFile(const OpenFileInfo 
 	return std::move(result);
 }
 
-shared_ptr<BlockCacheFile> MemoryFileSystem::GetBlockFile(const string &path) {
+shared_ptr<BlockCacheFile> MemoryFileSystem::OpenBlockFile(const string &path) {
 	auto file = FindExisting(path, "open", false);
 	annotated_lock_guard<annotated_mutex> guard(file->lock);
 	return file->blocks;

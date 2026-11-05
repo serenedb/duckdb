@@ -135,7 +135,7 @@ TEST_CASE("Heap memory files map in place, block files do not", "[memory_file_sy
 	MemoryFileSystem heap;
 
 	WriteFile(blocks, "memory://small.bin", MEMORY_BLOCK - 10);
-	REQUIRE(blocks.GetBlockFile("memory://small.bin"));
+	REQUIRE(blocks.OpenBlockFile("memory://small.bin"));
 	REQUIRE_THROWS(blocks.MemoryMapFile(OpenFileInfo("memory://small.bin"), FileFlags::FILE_FLAGS_READ, MMapOptions()));
 
 	WriteFile(heap, "memory://heap.bin", 3 * MEMORY_BLOCK);
@@ -143,7 +143,7 @@ TEST_CASE("Heap memory files map in place, block files do not", "[memory_file_sy
 	REQUIRE(mapped);
 	REQUIRE(mapped->Size() == 3 * MEMORY_BLOCK);
 	REQUIRE(HoldsBytes(mapped->GetData(0, mapped->Size()), 0, 3 * MEMORY_BLOCK));
-	REQUIRE(!heap.GetBlockFile("memory://heap.bin"));
+	REQUIRE(!heap.OpenBlockFile("memory://heap.bin"));
 
 	heap.RemoveFile("memory://heap.bin");
 	REQUIRE(HoldsBytes(mapped->GetData(0, mapped->Size()), 0, 3 * MEMORY_BLOCK));
