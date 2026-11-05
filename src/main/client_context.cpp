@@ -1116,13 +1116,17 @@ void ClientContext::RefreshSecurity() {
 	}
 }
 
-void ClientContext::CheckFileAccess(const string &path, RoleCapability sufficient) {
-	if (path == "/dev/stdin" || path == "/dev/stdout") {
+void ClientContext::CheckFileAccess(const string &requested, RoleCapability sufficient) {
+	if (requested == "/dev/stdin" || requested == "/dev/stdout") {
 		return;
 	}
 	const auto holds = [&](const RoleAccess &role) {
 		return role.is_superuser || (role.capabilities & sufficient) != RoleCapability::None;
 	};
+	if (!access_scope && holds(CurrentRole())) {
+		return;
+	}
+	const auto path = DBConfig::GetConfig(*this).SanitizeAllowedPath(requested);
 	const auto covers = [&](const FileGrant &grant) {
 		if ((grant.capability & sufficient) == RoleCapability::None) {
 			return false;
@@ -1144,8 +1148,6 @@ void ClientContext::CheckFileAccess(const string &path, RoleCapability sufficien
 		    std::none_of(access_scope->grants->begin(), access_scope->grants->end(), covers)) {
 			access_scope->grants.get_mutable()->push_back(FileGrant {path, sufficient});
 		}
-	} else if (holds(CurrentRole())) {
-		allowed = true;
 	} else {
 		auto properties = ActiveStatementProperties();
 		allowed = properties && (properties->catalog_file_access ||
@@ -1158,7 +1160,7 @@ void ClientContext::CheckFileAccess(const string &path, RoleCapability sufficien
 		                      "files and URLs."
 		                    : "Only roles with privileges of the \"pg_read_server_files\" role may read server files "
 		                      "and URLs."}},
-		    StringUtil::Format("permission denied to access \"%s\"", path));
+		    StringUtil::Format("permission denied to access \"%s\"", requested));
 	}
 }
 
