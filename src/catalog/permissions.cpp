@@ -239,8 +239,18 @@ static void Apply(vector<AclItem> &acl, idx_t grantor, AclMode grantable, AclMod
 	}
 }
 
+static vector<AclItem> &ColumnRow(vector<ColumnAcl> &columns, const Identifier &column) {
+	for (auto &row : columns) {
+		if (row.column == column) {
+			return row.acl;
+		}
+	}
+	columns.push_back(ColumnAcl {column, {}});
+	return columns.back().acl;
+}
+
 static void ApplyGrant(const AlterPermissionsInfo &info, idx_t owner, vector<AclItem> &acl, CatalogType acl_class,
-                       optional_ptr<ColumnList> columns) {
+                       optional_ptr<vector<ColumnAcl>> columns) {
 	auto stored = acl.empty() ? Permissions::AclDefault(acl_class, owner) : acl;
 	idx_t grantor = owner;
 	bool is_owner = true;
@@ -252,8 +262,8 @@ static void ApplyGrant(const AlterPermissionsInfo &info, idx_t owner, vector<Acl
 		for (auto role : info.grantors) {
 			auto held = HeldBy(stored, role, &AclItem::grant_option);
 			if (columns) {
-				for (auto &column : columns->Logical()) {
-					held |= HeldBy(column.Acl(), role, &AclItem::grant_option);
+				for (auto &column : *columns) {
+					held |= HeldBy(column.acl, role, &AclItem::grant_option);
 				}
 			}
 			if (held != AclMode::NoRights) {
@@ -271,38 +281,32 @@ static void ApplyGrant(const AlterPermissionsInfo &info, idx_t owner, vector<Acl
 			acl.push_back(AclItem {owner, owner, AclMode::NoRights, AclMode::NoRights});
 		}
 		if (info.revoke && columns && (info.privileges & ACL_COLUMN_PRIVILEGES) != AclMode::NoRights) {
-			for (auto &column : columns->Logical()) {
-				if (column.Acl().empty()) {
-					continue;
-				}
-				auto column_acl = column.Acl();
-				Revoke(column_acl, info.grantee_id, grantor, info.privileges & ACL_COLUMN_PRIVILEGES, info.option_only,
+			for (auto &column : *columns) {
+				Revoke(column.acl, info.grantee_id, grantor, info.privileges & ACL_COLUMN_PRIVILEGES, info.option_only,
 				       info.cascade);
-				columns->GetColumnMutable(column.Logical()).SetAcl(std::move(column_acl));
 			}
 		}
 	}
 
-	if (info.column_privileges.empty()) {
-		return;
-	}
-	if (!columns) {
+	if (!info.column_privileges.empty() && !columns) {
 		throw InvalidInputException("column privileges are only valid for relations");
 	}
 	for (auto &column_privilege : info.column_privileges) {
-		auto column_name = column_privilege.column;
-		auto &column = columns->GetColumnMutable(columns->GetColumnIndex(column_name));
-		auto column_acl = column.Acl();
+		auto &column_acl = ColumnRow(*columns, column_privilege.column);
 		const auto column_grantable =
 		    is_owner ? ACL_COLUMN_PRIVILEGES
 		             : (grantable | HeldBy(column_acl, grantor, &AclItem::grant_option)) & ACL_COLUMN_PRIVILEGES;
 		Apply(column_acl, grantor, column_grantable, column_privilege.privileges & ACL_COLUMN_PRIVILEGES, info);
-		column.SetAcl(std::move(column_acl));
+	}
+	if (columns) {
+		columns->erase(std::remove_if(columns->begin(), columns->end(),
+		                              [](const ColumnAcl &column) { return column.acl.empty(); }),
+		               columns->end());
 	}
 }
 
 void AlterPermissionsInfo::ApplyTo(Permissions &permissions, CatalogType entry_type,
-                                   optional_ptr<ColumnList> columns) const {
+                                   optional_ptr<vector<ColumnAcl>> columns) const {
 	auto &info = *this;
 	auto &owner = permissions.owner;
 	auto &acl = permissions.acl;
@@ -330,10 +334,8 @@ void AlterPermissionsInfo::ApplyTo(Permissions &permissions, CatalogType entry_t
 		}
 		ReplaceOwner(acl, owner, info.new_owner_id);
 		if (columns) {
-			for (auto &column : columns->Logical()) {
-				auto column_acl = column.Acl();
-				ReplaceOwner(column_acl, owner, info.new_owner_id);
-				columns->GetColumnMutable(column.Logical()).SetAcl(std::move(column_acl));
+			for (auto &column : *columns) {
+				ReplaceOwner(column.acl, owner, info.new_owner_id);
 			}
 		}
 		owner = info.new_owner_id;
@@ -395,26 +397,8 @@ void AlterPermissionsInfo::ApplyTo(Permissions &permissions, CatalogType entry_t
 		auto row = std::find_if(relations.begin(), relations.end(),
 		                        [&](const RelationAcl &entry) { return entry.oid == info.relation_id; });
 		auto row_acl = row == relations.end() ? info.builtin_acl : row->acl;
-		ColumnList column_list;
-		if (row != relations.end()) {
-			for (auto &column : row->columns) {
-				ColumnDefinition definition(column.column, LogicalType::VARCHAR);
-				definition.SetAcl(column.acl);
-				column_list.AddColumn(std::move(definition));
-			}
-		}
-		for (auto &privilege : info.column_privileges) {
-			if (!column_list.ColumnExists(privilege.column)) {
-				column_list.AddColumn(ColumnDefinition(privilege.column, LogicalType::VARCHAR));
-			}
-		}
-		ApplyGrant(info, info.object_owner_id, row_acl, CatalogType::TABLE_ENTRY, &column_list);
-		vector<ColumnAcl> columns;
-		for (auto &column : column_list.Logical()) {
-			if (!column.Acl().empty()) {
-				columns.push_back(ColumnAcl {column.Name(), column.Acl()});
-			}
-		}
+		auto columns = row == relations.end() ? vector<ColumnAcl> {} : row->columns;
+		ApplyGrant(info, info.object_owner_id, row_acl, CatalogType::TABLE_ENTRY, &columns);
 		if (!info.builtin_acl.empty() && row_acl == info.builtin_acl && columns.empty()) {
 			if (row != relations.end()) {
 				relations.erase(row);
@@ -940,12 +924,12 @@ std::span<const AclItem> ColumnAclAt(const CatalogEntry &entry, optional_ptr<con
                                      idx_t column_index) {
 	if (entry.type == CatalogType::VIEW_ENTRY) {
 		auto &view = entry.Cast<ViewCatalogEntry>();
-		if (!column_acls) {
-			return view.ColumnAcl(column_index);
+		auto &rows = column_acls ? *column_acls : view.column_acls;
+		if (rows.empty()) {
+			return {};
 		}
-		return FindColumnAcl(*column_acls, column_index < view.aliases.size()
-		                                       ? view.aliases[column_index]
-		                                       : view.GetColumnInfo()->names[column_index]);
+		return FindColumnAcl(rows, column_index < view.aliases.size() ? view.aliases[column_index]
+		                                                              : view.GetColumnInfo()->names[column_index]);
 	}
 	auto &column = entry.Cast<TableCatalogEntry>().GetColumn(LogicalIndex(column_index));
 	return column_acls ? FindColumnAcl(*column_acls, column.Name()) : std::span<const AclItem>(column.Acl());
@@ -1139,7 +1123,8 @@ bool EntryVisible(ClientContext &context, const RoleAccess &role, CatalogEntry &
 		};
 		if (entry.type == CatalogType::VIEW_ENTRY) {
 			auto &column_acls = entry.Cast<ViewCatalogEntry>().column_acls;
-			return std::any_of(column_acls.begin(), column_acls.end(), grants);
+			return std::any_of(column_acls.begin(), column_acls.end(),
+			                   [&](const ColumnAcl &column) { return grants(column.acl); });
 		}
 		auto columns = entry.Cast<TableCatalogEntry>().GetColumns().Logical();
 		return std::any_of(columns.begin(), columns.end(),
@@ -1256,7 +1241,7 @@ static bool AnyRoleReference(const CatalogEntry &entry, F &&named) {
 	if (entry.type == CatalogType::VIEW_ENTRY) {
 		auto &column_acls = entry.Cast<ViewCatalogEntry>().column_acls;
 		return std::any_of(column_acls.begin(), column_acls.end(),
-		                   [&](const vector<AclItem> &acl) { return any_acl(acl); });
+		                   [&](const ColumnAcl &column) { return any_acl(column.acl); });
 	}
 	if (entry.type != CatalogType::TABLE_ENTRY) {
 		return false;

@@ -337,8 +337,8 @@
       {
         "id": 16585,
         "name": "column_acls",
-        "type": "vector<vector<AclItem>>",
-        "default": "vector<vector<AclItem>>()"
+        "type": "vector<ColumnAcl>",
+        "default": "vector<ColumnAcl>()"
       },
       {
         "id": 16586,

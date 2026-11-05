@@ -324,17 +324,17 @@ static void RequireGrantable(Binder &binder, CatalogEntry &entry, const Permissi
 		stored = defaults;
 	}
 	auto held = role.HeldModes(stored) | role.GrantableModes(stored);
-	if (auto columns = EffectiveColumnAcls(binder.context, entry)) {
+	auto columns = EffectiveColumnAcls(binder.context, entry);
+	if (!columns && entry.type == CatalogType::VIEW_ENTRY) {
+		columns = &entry.Cast<ViewCatalogEntry>().column_acls;
+	}
+	if (columns) {
 		for (auto &column : *columns) {
 			held |= role.HeldModes(column.acl) | role.GrantableModes(column.acl);
 		}
 	} else if (entry.type == CatalogType::TABLE_ENTRY) {
 		for (auto &column : entry.Cast<TableCatalogEntry>().GetColumns().Logical()) {
 			held |= role.HeldModes(column.Acl()) | role.GrantableModes(column.Acl());
-		}
-	} else if (entry.type == CatalogType::VIEW_ENTRY) {
-		for (auto &acl : entry.Cast<ViewCatalogEntry>().column_acls) {
-			held |= role.HeldModes(acl) | role.GrantableModes(acl);
 		}
 	}
 	if (held == AclMode::NoRights) {
@@ -551,6 +551,28 @@ static void ResolveGrant(Binder &binder, AlterPermissionsInfo &info) {
 		}
 	}
 	RequireGrantable(binder, target, TargetPermissions(binder, info, target));
+	const bool relation = target.type == CatalogType::TABLE_ENTRY || target.type == CatalogType::VIEW_ENTRY;
+	if (relation && !info.column_privileges.empty()) {
+		vector<Identifier> view_columns;
+		if (target.type == CatalogType::VIEW_ENTRY) {
+			auto &view = target.Cast<ViewCatalogEntry>();
+			view.BindView(binder.context);
+			auto names = view.GetColumnInfo()->names;
+			for (idx_t i = 0; i < names.size(); i++) {
+				view_columns.push_back(i < view.aliases.size() ? view.aliases[i] : names[i]);
+			}
+		}
+		for (auto &privilege : info.column_privileges) {
+			const bool exists =
+			    target.type == CatalogType::TABLE_ENTRY
+			        ? target.Cast<TableCatalogEntry>().ColumnExists(privilege.column)
+			        : std::find(view_columns.begin(), view_columns.end(), privilege.column) != view_columns.end();
+			if (!exists) {
+				throw CatalogException("column \"%s\" of relation \"%s\" does not exist",
+				                       privilege.column.GetIdentifierName(), target.name.GetIdentifierName());
+			}
+		}
+	}
 	if (!target.internal || IsUnowned(target)) {
 		return;
 	}
@@ -562,27 +584,8 @@ static void ResolveGrant(Binder &binder, AlterPermissionsInfo &info) {
 		info.SetQualifiedName(Identifier(), Identifier(), target.ParentCatalog().GetName());
 		return;
 	}
-	if (target.type != CatalogType::TABLE_ENTRY && target.type != CatalogType::VIEW_ENTRY) {
+	if (!relation) {
 		return;
-	}
-	vector<Identifier> columns;
-	if (target.type == CatalogType::TABLE_ENTRY) {
-		for (auto &column : target.Cast<TableCatalogEntry>().GetColumns().Logical()) {
-			columns.push_back(column.Name());
-		}
-	} else {
-		auto &view = target.Cast<ViewCatalogEntry>();
-		view.BindView(binder.context);
-		auto names = view.GetColumnInfo()->names;
-		for (idx_t i = 0; i < names.size(); i++) {
-			columns.push_back(i < view.aliases.size() ? view.aliases[i] : names[i]);
-		}
-	}
-	for (auto &privilege : info.column_privileges) {
-		if (std::find(columns.begin(), columns.end(), privilege.column) == columns.end()) {
-			throw CatalogException("column \"%s\" of relation \"%s\" does not exist",
-			                       privilege.column.GetIdentifierName(), target.name.GetIdentifierName());
-		}
 	}
 	info.relation_id = target.oid;
 	info.builtin_acl = target.permissions.acl;

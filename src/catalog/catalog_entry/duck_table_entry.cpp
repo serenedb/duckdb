@@ -1436,7 +1436,17 @@ unique_ptr<CatalogEntry> DuckTableEntry::AlterPermissions(ClientContext &context
 	auto create_info = GetInfo();
 	auto &table_info = create_info->Cast<CreateTableInfo>();
 	table_info.permissions = permissions;
-	info.ApplyTo(table_info.permissions, type, &table_info.columns);
+	vector<ColumnAcl> column_acls;
+	for (auto &column : table_info.columns.Logical()) {
+		if (!column.Acl().empty()) {
+			column_acls.push_back(ColumnAcl {column.Name(), column.Acl()});
+		}
+	}
+	info.ApplyTo(table_info.permissions, type, &column_acls);
+	for (auto &column : table_info.columns.Logical()) {
+		const auto acl = FindColumnAcl(column_acls, column.Name());
+		table_info.columns.GetColumnMutable(column.Logical()).SetAcl(vector<AclItem>(acl.begin(), acl.end()));
+	}
 
 	auto binder = Binder::CreateBinder(context);
 	auto bound_create_info = binder->BindCreateTableInfo(std::move(create_info), schema, info.bind_mode);
