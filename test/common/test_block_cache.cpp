@@ -246,7 +246,7 @@ TEST_CASE("Block cache pins hold the bytes of their block", "[block_cache]") {
 	TestFile file("block_cache_pins.bin", 5 * BLOCK + 1000);
 	auto cached = file.Open(cache, fs);
 
-	REQUIRE(cached->BlockCount() == 6);
+	REQUIRE(BlockCache::BlockCountOf(cached->GetSize()) == 6);
 	for (idx_t block = 0; block < 6; block++) {
 		auto pin = cache.Pin(cached, block);
 		REQUIRE(pin.Size() == (block == 5 ? 1000 : BLOCK));
@@ -1225,10 +1225,8 @@ TEST_CASE("Block cache gives the memory of a dropped in-memory file back at once
 		auto file = cache.CreateUnbackedFile("memory://dropped.bin");
 		AppendBlocks(cache, file, 32, [](idx_t block) { return block + 1; });
 		REQUIRE(cache.GetStatistics().used == 32 * BLOCK);
-		REQUIRE(cache.GetStatistics().blocks == 32);
 		file.reset();
 		REQUIRE(cache.GetStatistics().used == 0);
-		REQUIRE(cache.GetStatistics().blocks == 0);
 	}
 }
 

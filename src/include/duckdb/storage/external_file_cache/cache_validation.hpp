@@ -39,8 +39,7 @@ struct CacheValidation {
 	DUCKDB_API static bool IsValid(bool validate, const string &cached_version_tag, timestamp_t cached_last_modified,
 	                               const string &current_version_tag, timestamp_t current_last_modified);
 	//! Variant that can also validate files without validators using the freshness deadline and file size
-	DUCKDB_API static bool IsValid(bool validate, const CacheValidationInfo &cached,
-	                               const CacheValidationInfo &current);
+	DUCKDB_API static bool IsValid(const CacheValidationInfo &cached, const CacheValidationInfo &current);
 	//! Whether the version tag/last modified time provide any cache validation metadata
 	DUCKDB_API static bool HasValidationMetadata(const CacheValidationInfo &info);
 };
