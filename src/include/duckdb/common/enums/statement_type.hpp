@@ -142,7 +142,6 @@ struct StatementProperties {
 	optional<ReplicationRole> replication_role;
 	vector<FileGrant> file_grants;
 	bool catalog_file_access = false;
-	bool hide_constraint_keys = false;
 
 	bool IsReadOnly() {
 		return modified_databases.empty();

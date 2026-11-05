@@ -68,7 +68,6 @@ BoundStatement Binder::BindNode(DeleteQueryNode &node) {
 	}
 	auto &table = *table_ptr;
 	RequirePrivilege(table, node.is_truncate ? AclMode::Truncate : AclMode::Delete, {}, false);
-	RecordConstraintKeyVisibility(table);
 
 	if (auto expanded = TryExpandTriggers(node, table, TriggerEventType::DELETE_EVENT)) {
 		return std::move(*expanded);

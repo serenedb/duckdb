@@ -259,7 +259,6 @@ BoundStatement Binder::BindNode(MergeQueryNode &node) {
 		}
 	}
 	auto &table = *table_ptr;
-	RecordConstraintKeyVisibility(table);
 	const auto named_columns = [&](const vector<Identifier> &names) {
 		vector<LogicalIndex> columns;
 		for (auto &name : names) {
