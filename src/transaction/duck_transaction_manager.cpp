@@ -761,7 +761,7 @@ ErrorData DuckTransactionManager::CommitTransaction(ClientContext &context, Tran
 		// while later concurrent commits will not be
 		// this can cause undefined state, as those commits were made assuming this one was already committed
 		if (undo_properties.estimated_size >= Settings::Get<AutoCheckpointSkipWalThresholdSetting>(context) &&
-		    transaction.log_writers.empty()) {
+		    transaction.log_writers.empty() && !Settings::Get<DisableDatabaseInvalidationSetting>(db.GetDatabase())) {
 			skip_wal_write_due_to_checkpoint = true;
 		}
 	}
