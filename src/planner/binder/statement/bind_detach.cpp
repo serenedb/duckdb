@@ -7,7 +7,7 @@ namespace duckdb {
 
 BoundStatement Binder::Bind(DetachStatement &stmt) {
 	BoundStatement result;
-	if (ClusterEntry(CatalogType::DATABASE_ENTRY, stmt.info->name)) {
+	if (ClusterEntry(context, CatalogType::DATABASE_ENTRY, stmt.info->name)) {
 		throw NotImplementedException("cannot detach database \"%s\", use DROP DATABASE",
 		                              stmt.info->name.GetIdentifierName());
 	}

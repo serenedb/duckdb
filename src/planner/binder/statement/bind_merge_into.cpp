@@ -259,34 +259,16 @@ BoundStatement Binder::BindNode(MergeQueryNode &node) {
 		}
 	}
 	auto &table = *table_ptr;
-	const auto named_columns = [&](const vector<Identifier> &names) {
-		vector<LogicalIndex> columns;
-		for (auto &name : names) {
-			if (table.ColumnExists(name)) {
-				columns.push_back(table.GetColumn(name).Logical());
-			}
-		}
-		return columns;
-	};
-	const auto leading_columns = [&](idx_t count) {
-		vector<LogicalIndex> columns;
-		for (auto &column : table.GetColumns().Logical()) {
-			if (columns.size() == count) {
-				break;
-			}
-			columns.push_back(column.Logical());
-		}
-		return columns;
-	};
+	const auto all_columns = table.GetColumns().LogicalColumnCount();
 	for (auto &entry : node.actions) {
 		for (auto &action : entry.second) {
 			switch (action->action_type) {
 			case MergeActionType::MERGE_UPDATE:
-				RequirePrivilege(table, AclMode::Update,
-				                 action->update_info && !action->update_info->columns.empty()
-				                     ? named_columns(action->update_info->columns)
-				                     : leading_columns(table.GetColumns().LogicalColumnCount()),
-				                 false);
+				if (action->update_info) {
+					RequireColumnPrivilege(table, AclMode::Update, action->update_info->columns, all_columns);
+				} else {
+					RequireColumnPrivilege(table, AclMode::Update, {}, all_columns);
+				}
 				break;
 			case MergeActionType::MERGE_DELETE:
 				RequirePrivilege(table, AclMode::Delete, {}, false);
@@ -297,13 +279,11 @@ BoundStatement Binder::BindNode(MergeQueryNode &node) {
 				}
 				if (action->default_values) {
 					RequirePrivilege(table, AclMode::Insert, {}, true);
-				} else if (!action->insert_columns.empty()) {
-					RequirePrivilege(table, AclMode::Insert, named_columns(action->insert_columns), false);
 				} else {
-					const auto count = action->column_order == InsertColumnOrder::INSERT_BY_POSITION
-					                       ? action->expressions.size()
-					                       : table.GetColumns().LogicalColumnCount();
-					RequirePrivilege(table, AclMode::Insert, leading_columns(count), false);
+					RequireColumnPrivilege(table, AclMode::Insert, action->insert_columns,
+					                       action->column_order == InsertColumnOrder::INSERT_BY_POSITION
+					                           ? action->expressions.size()
+					                           : all_columns);
 				}
 				break;
 			default:

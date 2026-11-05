@@ -372,8 +372,7 @@ SchemaCatalogEntry &Binder::BindCreateSchema(CreateInfo &info) {
 		throw BinderException("Cannot create entry in system catalog");
 	}
 	if (info.type != CatalogType::TRIGGER_ENTRY) {
-		RequireSchemaCreate(schema);
-		RequireReplaceOwner(schema, info, info.GetQualifiedName().Name());
+		RequireCreate(context, CheckAs(), schema, info, info.GetQualifiedName().Name());
 	}
 	if (schema.internal && DefaultSchemaGenerator::IsDefaultSchema(schema.name)) {
 		throw PermissionException(
@@ -382,26 +381,10 @@ SchemaCatalogEntry &Binder::BindCreateSchema(CreateInfo &info) {
 		                       info.GetQualifiedName().Name().GetIdentifierName()));
 	}
 	if (!CheckAs().IsSystem()) {
-		AssignOwner(info.permissions, schema.ParentCatalog(), Permissions::AclClass(info.type), &schema,
+		AssignOwner(context, info.permissions, schema.ParentCatalog(), Permissions::AclClass(info.type), &schema,
 		            CreationOwner(context, info, CheckAs()));
 	}
 	return schema;
-}
-
-void Binder::RequireReplaceOwner(SchemaCatalogEntry &schema, const CreateInfo &info, const Identifier &name) {
-	if (CheckAs().is_superuser || (info.on_conflict != OnCreateConflict::REPLACE_ON_CONFLICT &&
-	                               info.on_conflict != OnCreateConflict::ALTER_ON_CONFLICT)) {
-		return;
-	}
-	const bool merged_overloads =
-	    info.on_conflict == OnCreateConflict::ALTER_ON_CONFLICT &&
-	    (info.type == CatalogType::MACRO_ENTRY || info.type == CatalogType::TABLE_MACRO_ENTRY);
-	if (merged_overloads) {
-		return;
-	}
-	if (auto existing = schema.GetEntry(schema.catalog.GetCatalogTransaction(context), info.type, name)) {
-		RequireOwner(*existing);
-	}
 }
 
 void Binder::SetCatalogLookupCallback(catalog_entry_callback_t callback) {
@@ -526,10 +509,10 @@ static void RequireDefinedTypeUsage(Binder &binder, CreateInfo &info, idx_t defi
 	auto &macros = info.Cast<CreateMacroInfo>().macros;
 	for (idx_t i = 0; i < (defined ? defined : macros.size()); i++) {
 		for (auto &type : macros[i]->types) {
-			binder.RequireTypeUsage(type, catalog);
+			RequireTypeUsage(binder.context, binder.CheckAs(), type, catalog);
 		}
 		for (auto &type : macros[i]->return_types) {
-			binder.RequireTypeUsage(type, catalog);
+			RequireTypeUsage(binder.context, binder.CheckAs(), type, catalog);
 		}
 	}
 }
@@ -568,7 +551,7 @@ idx_t Binder::MergeMacroOverloads(CreateInfo &info) {
 			throw CatalogException("function \"%s\" already exists with same argument types",
 			                       macro_info.GetFunctionName().GetIdentifierName());
 		} else if (!CheckAs().is_superuser) {
-			RequireOwner(*existing, existing_macro.OverloadPermissions(*overload).owner);
+			RequireOwner(CheckAs(), *existing, existing_macro.OverloadPermissions(*overload).owner);
 		}
 	}
 	info.on_conflict = OnCreateConflict::ALTER_ON_CONFLICT;
@@ -977,7 +960,7 @@ SchemaCatalogEntry &Binder::BindCreateFunctionInfo(CreateInfo &info) {
 	if (auto &role = CheckAs(); !role.IsSystem()) {
 		auto &database = schema.ParentCatalog().GetAttached().IsTemporary() ? ClientData::Get(context).default_database
 		                                                                    : schema.ParentCatalog().GetName();
-		RequireLanguageUsage(role, database, "sql");
+		RequireLanguageUsage(context, role, database, "sql");
 	}
 	return schema;
 }
@@ -1228,9 +1211,9 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 	switch (catalog_type) {
 	case CatalogType::SCHEMA_ENTRY: {
 		auto &info = stmt.info->Cast<CreateSchemaInfo>();
-		if (const auto authorization = RoleSpecKeyword(info.authorization.GetIdentifierName());
+		if (const auto authorization = RoleSpecKeyword(context, info.authorization.GetIdentifierName());
 		    authorization.IsValid()) {
-			const Identifier role_name(RoleName(authorization.GetIndex()));
+			const Identifier role_name(RoleName(context, authorization.GetIndex()));
 			auto path = info.GetQualifiedName().Path();
 			if (path.size() == 2 && path[0].GetIdentifierName() == info.authorization.GetIdentifierName()) {
 				path[0] = role_name;
@@ -1242,15 +1225,15 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 		auto &role = CheckAs();
 		auto owner = role.role;
 		if (!role.IsSystem() && !info.authorization.empty()) {
-			owner = RoleId(info.authorization);
+			owner = RoleId(context, info.authorization);
 		}
-		RequireDatabasePrivilege(info.SchemaCatalog(), AclMode::Create);
+		RequireDatabasePrivilege(context, role, info.SchemaCatalog(), AclMode::Create);
 		if (!role.IsSystem()) {
 			if (!role.CanSet(owner)) {
 				throw PermissionException("must be able to SET ROLE \"%s\"", info.authorization.GetIdentifierName());
 			}
-			AssignOwner(info.permissions, Catalog::GetCatalog(context, info.SchemaCatalog()), CatalogType::SCHEMA_ENTRY,
-			            nullptr, owner);
+			AssignOwner(context, info.permissions, Catalog::GetCatalog(context, info.SchemaCatalog()),
+			            CatalogType::SCHEMA_ENTRY, nullptr, owner);
 		}
 		properties.RegisterDBModify(Catalog::GetCatalog(context, info.SchemaCatalog()), context,
 		                            DatabaseModificationType::CREATE_CATALOG_ENTRY);
@@ -1287,7 +1270,7 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 		}
 		BindCreateViewInfo(base);
 		for (auto &type : base.types) {
-			RequireTypeUsage(type, schema.ParentCatalog());
+			RequireTypeUsage(context, CheckAs(), type, schema.ParentCatalog());
 		}
 		result.plan = make_uniq<LogicalCreate>(LogicalOperatorType::LOGICAL_CREATE_VIEW, std::move(stmt.info), &schema);
 		break;
@@ -1353,9 +1336,9 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 		}
 		if (table_ptr) {
 			auto &table = *table_ptr;
-			RequireOwner(table);
-			RequireSchemaCreate(table.ParentSchema(context));
-			RequireReplaceOwner(table.ParentSchema(context), create_index_info, create_index_info.GetIndexName());
+			RequireOwner(context, CheckAs(), table);
+			RequireCreate(context, CheckAs(), table.ParentSchema(context), create_index_info,
+			              create_index_info.GetIndexName());
 			if (table.temporary) {
 				stmt.info->temporary = true;
 			}
@@ -1366,9 +1349,9 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 			    CatalogType::VIEW_ENTRY,
 			    BindTableName(create_index_info.GetQualifiedName().WithName(create_index_info.table)));
 			auto &view = EntryRetriever().GetEntry(view_lookup)->Cast<ViewCatalogEntry>();
-			RequireOwner(view);
-			RequireSchemaCreate(view.ParentSchema(context));
-			RequireReplaceOwner(view.ParentSchema(context), create_index_info, create_index_info.GetIndexName());
+			RequireOwner(context, CheckAs(), view);
+			RequireCreate(context, CheckAs(), view.ParentSchema(context), create_index_info,
+			              create_index_info.GetIndexName());
 			properties.RegisterDBModify(view.catalog, context, DatabaseModificationType::CREATE_INDEX);
 			result.plan = view.catalog.BindCreateViewIndex(*this, stmt, view, std::move(plan));
 		}
@@ -1397,14 +1380,14 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 			QualifyUserFunctions(table_schema, create_info);
 		}
 		auto bound_info = BindCreateTableInfo(std::move(stmt.info), table_schema);
-		RequireTypeUsage(bound_info->Base().dependencies);
+		RequireResolvedTypeUsage(bound_info->Base().dependencies);
 		for (auto &column : bound_info->Base().columns.Logical()) {
-			RequireTypeUsage(column.Type(), bound_info->schema.ParentCatalog());
+			RequireTypeUsage(context, CheckAs(), column.Type(), bound_info->schema.ParentCatalog());
 		}
 		if (!CheckAs().IsSystem()) {
 			for (auto &serial : bound_info->serial_sequences) {
-				AssignOwner(serial.permissions, bound_info->schema.ParentCatalog(), CatalogType::SEQUENCE_ENTRY,
-				            &bound_info->schema, CheckAs().role);
+				AssignOwner(context, serial.permissions, bound_info->schema.ParentCatalog(),
+				            CatalogType::SEQUENCE_ENTRY, &bound_info->schema, CheckAs().role);
 			}
 		}
 		auto root = std::move(bound_info->query);
@@ -1462,14 +1445,14 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 			BindLogicalType(create_type_info.type);
 			if (create_type_info.type.id() == LogicalTypeId::STRUCT) {
 				for (auto &attribute : StructType::GetChildTypes(create_type_info.type)) {
-					RequireTypeUsage(attribute.second, catalog);
+					RequireTypeUsage(context, CheckAs(), attribute.second, catalog);
 				}
 			}
 		}
 		break;
 	}
 	case CatalogType::SECRET_ENTRY: {
-		RequireSuperuser();
+		RequireSuperuser(CheckAs());
 		CatalogTransaction transaction = CatalogTransaction(Catalog::GetSystemCatalog(context), context);
 		return_type = StatementReturnType::QUERY_RESULT;
 
@@ -1561,7 +1544,7 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 	}
 	case CatalogType::ROLE_ENTRY:
 		CheckCreateRole(stmt.info->Cast<CreateRoleInfo>());
-		stmt.info->SetQualifiedName(ClusterName(stmt.info->GetQualifiedName()));
+		stmt.info->SetQualifiedName(ClusterName(context, stmt.info->GetQualifiedName()));
 		result.plan = make_uniq<LogicalCreate>(LogicalOperatorType::LOGICAL_CREATE_ROLE, std::move(stmt.info));
 		break;
 	case CatalogType::TABLESPACE_ENTRY:
@@ -1573,8 +1556,8 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 	case CatalogType::FOREIGN_SERVER_ENTRY: {
 		auto catalog = BindCatalog(stmt.info->GetQualifiedName().Catalog());
 		if (auto &role = CheckAs(); !role.IsSystem()) {
-			RequireForeignDataWrapperUsage(role, catalog, stmt.info->Cast<CreateForeignServerInfo>().fdw_name);
-			AssignOwner(stmt.info->permissions, Catalog::GetCatalog(context, catalog),
+			RequireForeignDataWrapperUsage(context, role, catalog, stmt.info->Cast<CreateForeignServerInfo>().fdw_name);
+			AssignOwner(context, stmt.info->permissions, Catalog::GetCatalog(context, catalog),
 			            CatalogType::FOREIGN_SERVER_ENTRY, nullptr, role.role);
 		}
 		properties.RegisterDBModify(Catalog::GetCatalog(context, catalog), context,
@@ -1595,8 +1578,8 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 				                                    "\"pg_create_subscription\" role may create subscriptions."}},
 				    "permission denied to create subscription");
 			}
-			RequireDatabasePrivilege(catalog, AclMode::Create);
-			AssignOwner(stmt.info->permissions, subscription_catalog, CatalogType::SUBSCRIPTION_ENTRY, nullptr,
+			RequireDatabasePrivilege(context, role, catalog, AclMode::Create);
+			AssignOwner(context, stmt.info->permissions, subscription_catalog, CatalogType::SUBSCRIPTION_ENTRY, nullptr,
 			            role.role);
 		}
 		properties.RegisterDBModify(subscription_catalog, context, DatabaseModificationType::CREATE_CATALOG_ENTRY);

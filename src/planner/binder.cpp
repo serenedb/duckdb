@@ -1,25 +1,17 @@
 #include "duckdb/planner/binder.hpp"
 
 #include "duckdb/catalog/catalog_entry/aggregate_function_catalog_entry.hpp"
-#include "duckdb/catalog/catalog_entry/index_catalog_entry.hpp"
-#include "duckdb/catalog/catalog_entry/macro_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
-#include "duckdb/catalog/catalog_entry/type_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/view_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_search_path.hpp"
 #include "duckdb/catalog/dependency_manager.hpp"
-#include "duckdb/catalog/duck_catalog.hpp"
 #include "duckdb/common/enums/cte_materialize.hpp"
-#include "duckdb/common/extension_type_info.hpp"
 #include "duckdb/parser/common_table_expression_info.hpp"
 #include "duckdb/parser/expression/star_expression.hpp"
 #include "duckdb/parser/tableref/basetableref.hpp"
 #include "duckdb/common/enum_util.hpp"
 #include "duckdb/common/helper.hpp"
 #include "duckdb/common/stack_depth.hpp"
-#include "duckdb/common/string_util.hpp"
-#include "duckdb/main/attached_database.hpp"
-#include "duckdb/main/client_data.hpp"
 #include "duckdb/main/config.hpp"
 #include "duckdb/main/database.hpp"
 #include "duckdb/main/database_manager.hpp"
@@ -46,8 +38,6 @@
 #include "duckdb/planner/tableref/list.hpp"
 #include "duckdb/storage/data_table.hpp"
 #include "duckdb/storage/storage_extension.hpp"
-#include "duckdb/storage/storage_info.hpp"
-#include "duckdb/storage/storage_manager.hpp"
 #include "duckdb/common/types/uuid.hpp"
 
 #include <algorithm>
@@ -88,8 +78,70 @@ Binder::Binder(ClientContext &context, shared_ptr<Binder> parent_p, BinderType b
 	}
 }
 
+static void CheckStatementKind(ClientContext &context, const RoleAccess &role, SQLStatement &statement) {
+	if (role.is_superuser) {
+		return;
+	}
+	switch (statement.type) {
+	case StatementType::EXPORT_STATEMENT:
+	case StatementType::LOAD_STATEMENT:
+	case StatementType::UPDATE_EXTENSIONS_STATEMENT:
+	case StatementType::COPY_DATABASE_STATEMENT:
+	case StatementType::CONNECT_STATEMENT:
+	case StatementType::EXTERNAL_RESOURCE_STATEMENT:
+	case StatementType::DETACH_STATEMENT:
+		RequireSuperuser(role);
+		break;
+	case StatementType::ATTACH_STATEMENT: {
+		auto &info = *statement.Cast<AttachStatement>().info;
+		auto type = info.options.find("type");
+		optional_ptr<StorageExtension> storage;
+		if (info.path.empty() && !info.external_resource && type != info.options.end()) {
+			storage = StorageExtension::Find(DBConfig::GetConfig(context),
+			                                 ExtensionHelper::ApplyExtensionAlias(type->second.ToString()));
+		}
+		if (!storage || !storage->creates_database) {
+			RequireSuperuser(role);
+		}
+		if (!role.Has(RoleOption::CreateDb)) {
+			throw PermissionException("permission denied to create database");
+		}
+		break;
+	}
+	case StatementType::INVALID_STATEMENT:
+	case StatementType::SELECT_STATEMENT:
+	case StatementType::INSERT_STATEMENT:
+	case StatementType::UPDATE_STATEMENT:
+	case StatementType::CREATE_STATEMENT:
+	case StatementType::DELETE_STATEMENT:
+	case StatementType::PREPARE_STATEMENT:
+	case StatementType::EXECUTE_STATEMENT:
+	case StatementType::ALTER_STATEMENT:
+	case StatementType::TRANSACTION_STATEMENT:
+	case StatementType::COPY_STATEMENT:
+	case StatementType::ANALYZE_STATEMENT:
+	case StatementType::VARIABLE_SET_STATEMENT:
+	case StatementType::CREATE_FUNC_STATEMENT:
+	case StatementType::EXPLAIN_STATEMENT:
+	case StatementType::DROP_STATEMENT:
+	case StatementType::PRAGMA_STATEMENT:
+	case StatementType::VACUUM_STATEMENT:
+	case StatementType::CALL_STATEMENT:
+	case StatementType::SET_STATEMENT:
+	case StatementType::RELATION_STATEMENT:
+	case StatementType::EXTENSION_STATEMENT:
+	case StatementType::LOGICAL_PLAN_STATEMENT:
+	case StatementType::MULTI_STATEMENT:
+	case StatementType::MERGE_INTO_STATEMENT:
+	case StatementType::DISCONNECT_STATEMENT:
+	case StatementType::PASSTHROUGH_STATEMENT:
+	case StatementType::ENUM_SIZE:
+		break;
+	}
+}
+
 BoundStatement Binder::Bind(SQLStatement &statement) {
-	CheckStatementKind(statement);
+	CheckStatementKind(context, CheckAs(), statement);
 	switch (statement.type) {
 	case StatementType::SELECT_STATEMENT:
 		return Bind(statement.Cast<SelectStatement>());
@@ -403,52 +455,23 @@ void Binder::RequirePrivilege(TableCatalogEntry &table, AclMode mode, vector<Log
 	global_binder_state->required_privileges.push_back({table, role, mode, std::move(columns), any_column});
 }
 
-void Binder::CheckCall(FunctionEntry &function) {
-	auto &calling = CurrentRole();
-	if (!function.MayCall(calling) && !BuiltinCallGranted(context, calling, function)) {
-		ThrowPermissionDenied(function);
-	}
-}
-
-void Binder::RequireSuperuser() {
-	if (!CheckAs().is_superuser) {
-		throw PermissionException("permission denied: superuser required");
-	}
-}
-
-void Binder::RequireOwner(CatalogEntry &entry) {
-	if (entry.type == CatalogType::MACRO_ENTRY || entry.type == CatalogType::TABLE_MACRO_ENTRY) {
-		auto &macro = entry.Cast<MacroCatalogEntry>();
-		for (auto &overload : macro.macros) {
-			RequireOwner(entry, macro.OverloadPermissions(*overload).owner);
+void Binder::RequireColumnPrivilege(TableCatalogEntry &table, AclMode mode, const vector<Identifier> &names,
+                                    idx_t leading) {
+	vector<LogicalIndex> columns;
+	if (names.empty()) {
+		for (auto &column : table.GetColumns().Logical()) {
+			if (columns.size() == leading) {
+				break;
+			}
+			columns.push_back(column.Logical());
 		}
-		return;
 	}
-	auto owner = entry.permissions.owner;
-	if (entry.type == CatalogType::INDEX_ENTRY) {
-		auto relation =
-		    entry.Cast<IndexCatalogEntry>().GetRelation(entry.ParentCatalog().GetCatalogTransaction(context));
-		if (!relation) {
-			return;
+	for (auto &name : names) {
+		if (table.ColumnExists(name)) {
+			columns.push_back(table.GetColumn(name).Logical());
 		}
-		owner = relation->permissions.owner;
 	}
-	RequireOwner(entry, owner);
-}
-
-void Binder::RequireOwner(CatalogEntry &entry, idx_t owner) {
-	if (!CheckAs().Owns(owner)) {
-		throw PermissionException("must be owner of %s %s", PermissionKindName(entry), entry.name.GetIdentifierName());
-	}
-}
-
-optional_ptr<CatalogEntry> Binder::ClusterEntry(CatalogType type, const Identifier &name) {
-	auto &cluster_catalog = DBConfig::GetConfig(context).cluster_catalog;
-	if (cluster_catalog.empty()) {
-		return nullptr;
-	}
-	auto &cluster = Catalog::GetCatalog(context, cluster_catalog).Cast<DuckCatalog>();
-	return cluster.GetCatalogSet(type).GetEntry(cluster.GetCatalogTransaction(context), name);
+	RequirePrivilege(table, mode, std::move(columns), false);
 }
 
 Catalog &Binder::SubscriptionCatalog(const Identifier &catalog_name) {
@@ -460,132 +483,7 @@ Catalog &Binder::SubscriptionCatalog(const Identifier &catalog_name) {
 	return catalog;
 }
 
-QualifiedName Binder::ClusterName(const QualifiedName &name) {
-	auto &cluster_catalog = DBConfig::GetConfig(context).cluster_catalog;
-	if (cluster_catalog.empty()) {
-		return name;
-	}
-	return QualifiedName(cluster_catalog, Identifier(), name.Name());
-}
-
-idx_t Binder::RoleId(const Identifier &name) {
-	auto role = ClusterEntry(CatalogType::ROLE_ENTRY, name);
-	if (!role) {
-		throw CatalogException(unordered_map<string, string> {{"type", "Role"}},
-		                       StringUtil::Format("role \"%s\" does not exist", name.GetIdentifierName()));
-	}
-	return role->oid;
-}
-
-optional_idx Binder::RoleSpecKeyword(const string &name) {
-	if (name == "CURRENT_USER" || name == "CURRENT_ROLE") {
-		return context.current_role_id;
-	}
-	if (name == "SESSION_USER") {
-		return context.session_role;
-	}
-	return optional_idx();
-}
-
-idx_t Binder::RoleSpecId(const string &name) {
-	const auto keyword = RoleSpecKeyword(name);
-	return keyword.IsValid() ? keyword.GetIndex() : RoleId(Identifier(name));
-}
-
-string Binder::RoleName(idx_t role) {
-	string result;
-	auto &cluster_catalog = DBConfig::GetConfig(context).cluster_catalog;
-	if (cluster_catalog.empty()) {
-		return result;
-	}
-	auto &cluster = Catalog::GetCatalog(context, cluster_catalog).Cast<DuckCatalog>();
-	cluster.GetCatalogSet(CatalogType::ROLE_ENTRY)
-	    .Scan(cluster.GetCatalogTransaction(context), [&](CatalogEntry &entry) {
-		    if (entry.oid == role) {
-			    result = entry.name.GetIdentifierName();
-		    }
-	    });
-	return result;
-}
-
-static bool StoresPermissions(Catalog &catalog) {
-	return !catalog.IsDuckCatalog() || catalog.GetAttached().IsTemporary() ||
-	       IsSereneDBStorageVersion(catalog.GetAttached().GetStorageManager().GetStorageVersion());
-}
-
-void Binder::AssignOwner(Permissions &permissions, Catalog &catalog, CatalogType objtype,
-                         optional_ptr<SchemaCatalogEntry> schema, idx_t owner) {
-	if (!StoresPermissions(catalog)) {
-		return;
-	}
-	auto database = ClusterEntry(CatalogType::DATABASE_ENTRY, catalog.GetName());
-	permissions.AssignOwner(owner, objtype, database ? &database->permissions : nullptr,
-	                        schema ? optional_idx(schema->oid) : optional_idx());
-}
-
-void Binder::RequireDatabasePrivilege(const Identifier &database, AclMode need) {
-	auto &role = CheckAs();
-	if (role.is_superuser) {
-		return;
-	}
-	auto entry = ClusterEntry(CatalogType::DATABASE_ENTRY, database);
-	if (entry && !role.Can(CatalogType::DATABASE_ENTRY, entry->permissions, need)) {
-		ThrowPermissionDenied(*entry);
-	}
-}
-
-void Binder::RequireForeignDataWrapperUsage(const RoleAccess &role, const Identifier &database, const string &wrapper) {
-	auto &found = DBConfig::GetConfig(context).GetForeignDataWrapper(wrapper);
-	if (role.Owns(found.owner)) {
-		return;
-	}
-	auto entry = ClusterEntry(CatalogType::DATABASE_ENTRY, database);
-	if (!entry ||
-	    (role.HeldModes(entry->permissions.ForeignDataWrapperAcl(found.oid)) & AclMode::Usage) == AclMode::NoRights) {
-		throw PermissionException("permission denied for foreign-data wrapper %s", wrapper);
-	}
-}
-
-void Binder::RequireLanguageUsage(const RoleAccess &role, const Identifier &database, const string &language) {
-	auto &languages = DBConfig::GetConfig(context).languages;
-	auto found = languages.find(language);
-	if (role.is_superuser || found == languages.end()) {
-		return;
-	}
-	if (found->second.trusted) {
-		Permissions permissions;
-		permissions.owner = found->second.owner;
-		if (auto entry = ClusterEntry(CatalogType::DATABASE_ENTRY, database)) {
-			auto acl = entry->permissions.LanguageAcl(found->second.oid);
-			permissions.acl.assign(acl.begin(), acl.end());
-		}
-		if (role.Can(CatalogType::LANGUAGE_ENTRY, permissions, AclMode::Usage)) {
-			return;
-		}
-	}
-	throw PermissionException("permission denied for language %s", language);
-}
-
-void Binder::RequireSchemaCreate(SchemaCatalogEntry &schema) {
-	auto &role = CheckAs();
-	if (role.is_superuser) {
-		return;
-	}
-	if (schema.ParentCatalog().GetAttached().IsTemporary()) {
-		auto &database = ClientData::Get(context).default_database;
-		auto entry = ClusterEntry(CatalogType::DATABASE_ENTRY, database);
-		if (entry && !role.Can(CatalogType::DATABASE_ENTRY, entry->permissions, AclMode::CreateTemp)) {
-			throw PermissionException("permission denied to create temporary tables in database \"%s\"",
-			                          database.GetIdentifierName());
-		}
-		return;
-	}
-	if (!role.Can(CatalogType::SCHEMA_ENTRY, schema.permissions, AclMode::Create)) {
-		ThrowPermissionDenied(schema);
-	}
-}
-
-void Binder::RequireTypeUsage(optional_ptr<const LogicalDependencyList> dependencies) {
+void Binder::RequireResolvedTypeUsage(optional_ptr<const LogicalDependencyList> dependencies) {
 	auto &role = CheckAs();
 	if (role.is_superuser) {
 		return;
@@ -621,108 +519,6 @@ void Binder::RequireTypeUsage(optional_ptr<const LogicalDependencyList> dependen
 	}
 	for (auto entry : GetStatementProperties().resolved_entries) {
 		check(*entry);
-	}
-}
-
-void Binder::RequireTypeUsage(const LogicalType &type, Catalog &catalog) {
-	auto &role = CheckAs();
-	if (role.is_superuser) {
-		return;
-	}
-	reference<const LogicalType> element = type;
-	while (element.get().id() == LogicalTypeId::LIST || element.get().id() == LogicalTypeId::ARRAY) {
-		element = element.get().id() == LogicalTypeId::LIST ? ListType::GetChildType(element)
-		                                                    : ArrayType::GetChildType(element);
-	}
-	if (auto extension = element.get().GetExtensionInfo()) {
-		auto oid = extension->properties.find(ExtensionTypeInfo::CATALOG_OID_PROPERTY);
-		if (oid != extension->properties.end()) {
-			auto entry =
-			    catalog.IsDuckCatalog()
-			        ? catalog.Cast<DuckCatalog>().FindIn<TypeCatalogEntry>(context, oid->second.GetValue<idx_t>())
-			        : nullptr;
-			if (entry && !IsUnowned(*entry) && !role.Can(CatalogType::TYPE_ENTRY, entry->permissions, AclMode::Usage)) {
-				ThrowPermissionDenied(*entry);
-			}
-			return;
-		}
-	}
-	auto &config = DBConfig::GetConfig(context);
-	if (!context.security || !context.security->HasTypeGrants() || !config.builtin_type_oid) {
-		return;
-	}
-	string name;
-	const auto oid = config.builtin_type_oid(element, name);
-	if (!oid) {
-		return;
-	}
-	const auto database = DatabaseManager::TryGetDefaultDatabase(context);
-	auto granted = context.security->TypePermissions(database.GetIdentifierName(), oid);
-	if (granted && !role.Can(CatalogType::TYPE_ENTRY, *granted, AclMode::Usage)) {
-		throw PermissionException("permission denied for type %s", name);
-	}
-}
-
-void Binder::CheckStatementKind(SQLStatement &statement) {
-	auto &role = CheckAs();
-	if (role.is_superuser) {
-		return;
-	}
-	switch (statement.type) {
-	case StatementType::EXPORT_STATEMENT:
-	case StatementType::LOAD_STATEMENT:
-	case StatementType::UPDATE_EXTENSIONS_STATEMENT:
-	case StatementType::COPY_DATABASE_STATEMENT:
-	case StatementType::CONNECT_STATEMENT:
-	case StatementType::EXTERNAL_RESOURCE_STATEMENT:
-	case StatementType::DETACH_STATEMENT:
-		RequireSuperuser();
-		break;
-	case StatementType::ATTACH_STATEMENT: {
-		auto &info = *statement.Cast<AttachStatement>().info;
-		auto type = info.options.find("type");
-		optional_ptr<StorageExtension> storage;
-		if (info.path.empty() && !info.external_resource && type != info.options.end()) {
-			storage = StorageExtension::Find(DBConfig::GetConfig(context),
-			                                 ExtensionHelper::ApplyExtensionAlias(type->second.ToString()));
-		}
-		if (!storage || !storage->creates_database) {
-			RequireSuperuser();
-		}
-		if (!role.Has(RoleOption::CreateDb)) {
-			throw PermissionException("permission denied to create database");
-		}
-		break;
-	}
-	case StatementType::INVALID_STATEMENT:
-	case StatementType::SELECT_STATEMENT:
-	case StatementType::INSERT_STATEMENT:
-	case StatementType::UPDATE_STATEMENT:
-	case StatementType::CREATE_STATEMENT:
-	case StatementType::DELETE_STATEMENT:
-	case StatementType::PREPARE_STATEMENT:
-	case StatementType::EXECUTE_STATEMENT:
-	case StatementType::ALTER_STATEMENT:
-	case StatementType::TRANSACTION_STATEMENT:
-	case StatementType::COPY_STATEMENT:
-	case StatementType::ANALYZE_STATEMENT:
-	case StatementType::VARIABLE_SET_STATEMENT:
-	case StatementType::CREATE_FUNC_STATEMENT:
-	case StatementType::EXPLAIN_STATEMENT:
-	case StatementType::DROP_STATEMENT:
-	case StatementType::PRAGMA_STATEMENT:
-	case StatementType::VACUUM_STATEMENT:
-	case StatementType::CALL_STATEMENT:
-	case StatementType::SET_STATEMENT:
-	case StatementType::RELATION_STATEMENT:
-	case StatementType::EXTENSION_STATEMENT:
-	case StatementType::LOGICAL_PLAN_STATEMENT:
-	case StatementType::MULTI_STATEMENT:
-	case StatementType::MERGE_INTO_STATEMENT:
-	case StatementType::DISCONNECT_STATEMENT:
-	case StatementType::PASSTHROUGH_STATEMENT:
-	case StatementType::ENUM_SIZE:
-		break;
 	}
 }
 
@@ -1105,13 +901,11 @@ BoundStatement Binder::BindReturning(QueryNode &node, vector<unique_ptr<ParsedEx
 	}
 	const auto table_column_count = bound_columns.size();
 
-	auto &binding = binder->bind_context.AddBaseTable(update_table_index, alias, names, types, bound_columns, table,
-	                                                  std::move(virtual_columns));
 	binder->InheritRoles(*this);
-	binder->table_ref_use = TableRefUse::DML_TARGET;
-	if (!global_binder_state->trigger_base_nodes.count(node)) {
-		binder->CheckTableRead(binding, table);
-	}
+	binder->table_ref_use =
+	    global_binder_state->trigger_base_nodes.count(node) ? TableRefUse::UTILITY_TARGET : TableRefUse::DML_TARGET;
+	binder->bind_context.AddBaseTable(update_table_index, alias, names, types, bound_columns, table,
+	                                  std::move(virtual_columns));
 	ReturningBinder returning_binder(*binder, context);
 
 	vector<unique_ptr<Expression>> projection_expressions;

@@ -1507,14 +1507,10 @@ ScalarMacroFunction &ExpressionBinder::UnfoldMacroExpression(FunctionExpression 
 	}
 	auto &macro_def = macro_func.macros[bind_result.function_idx.GetIndex()]->Cast<ScalarMacroFunction>();
 	const bool owned = !IsUnowned(macro_func);
-	auto &permissions = macro_func.OverloadPermissions(macro_def);
-	if (owned && !binder.CurrentRole().Can(macro_func.type, permissions, AclMode::Execute)) {
-		ThrowPermissionDenied(macro_func);
-	}
-	if (!owned) {
-		CheckBuiltinCall(context, binder.CurrentRole(), macro_func, bind_result.function_idx.GetIndex());
-	}
-	const auto owner = owned && macro_def.security_definer ? optional_idx(permissions.owner) : optional_idx();
+	CheckMacroCall(context, binder.CurrentRole(), macro_func, macro_def, bind_result.function_idx.GetIndex());
+	const auto owner = owned && macro_def.security_definer
+	                       ? optional_idx(macro_func.OverloadPermissions(macro_def).owner)
+	                       : optional_idx();
 	if (binder.global_binder_state->macro_type_probing && expr->GetExpressionClass() != ExpressionClass::WINDOW &&
 	    HasExactResultType(macro_def)) {
 		probed = true;

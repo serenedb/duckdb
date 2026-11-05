@@ -40,14 +40,10 @@ unique_ptr<QueryNode> Binder::BindTableMacro(FunctionExpression &function, Macro
 	auto &macro_def = *macro_func.macros[bind_result.function_idx.GetIndex()];
 	definition = macro_def;
 	const bool owned = !IsUnowned(macro_func);
-	auto &permissions = macro_func.OverloadPermissions(macro_def);
-	if (owned && !CurrentRole().Can(macro_func.type, permissions, AclMode::Execute)) {
-		ThrowPermissionDenied(macro_func);
-	}
-	if (!owned) {
-		CheckBuiltinCall(context, CurrentRole(), macro_func, bind_result.function_idx.GetIndex());
-	}
-	const auto owner = owned && macro_def.security_definer ? optional_idx(permissions.owner) : optional_idx();
+	CheckMacroCall(context, CurrentRole(), macro_func, macro_def, bind_result.function_idx.GetIndex());
+	const auto owner = owned && macro_def.security_definer
+	                       ? optional_idx(macro_func.OverloadPermissions(macro_def).owner)
+	                       : optional_idx();
 	bool other_role = false;
 	if (owned && !CheckAs().IsSystem()) {
 		auto &role = FunctionBodyRole(owner);

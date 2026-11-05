@@ -28,7 +28,7 @@ void Binder::BindDropTrigger(DropInfo &info, StatementProperties &properties) {
 	base_table_ref.SetQualifiedName(BindTableName(base_table_ref.GetQualifiedName()));
 	// IF EXISTS only guards the trigger, not the table (PostgreSQL-compatible behavior).
 	auto &table_entry = entry_retriever.GetEntry<TableCatalogEntry>(base_table_ref.GetQualifiedName());
-	RequireOwner(table_entry);
+	RequireOwner(context, CheckAs(), table_entry);
 	// the trigger lives in the same (possibly nested) schema as its base table
 	info.SetQualifiedName(table_entry.GetQualifiedName(info.GetQualifiedName().Name()));
 	properties.RegisterDBModify(table_entry.ParentCatalog(), context, DatabaseModificationType::DROP_CATALOG_ENTRY);
@@ -53,7 +53,7 @@ void Binder::BindDrop(DropInfo &info, StatementProperties &properties) {
 		auto schema = Catalog::GetSchema(context, path.front(), vector<Identifier>(path.begin() + 1, path.end()),
 		                                 OnEntryNotFound::RETURN_NULL);
 		if (schema) {
-			RequireOwner(*schema);
+			RequireOwner(context, CheckAs(), *schema);
 		}
 		break;
 	}
@@ -81,22 +81,10 @@ void Binder::BindDrop(DropInfo &info, StatementProperties &properties) {
 				BindLogicalType(type);
 			}
 			// We also support "DROP MACRO" (instead of "DROP MACRO TABLE") for table macros
-			// First try to drop a scalar macro
-			EntryLookupInfo macro_entry_lookup(info.type, info.GetQualifiedName());
-			entry = entry_retriever.GetEntry(macro_entry_lookup, OnEntryNotFound::RETURN_NULL);
-			if (!entry) {
-				// Unable to find a scalar macro, try to drop a table macro
-				EntryLookupInfo table_macro_entry_lookup(CatalogType::TABLE_MACRO_ENTRY, info.GetQualifiedName());
-				entry = entry_retriever.GetEntry(table_macro_entry_lookup, OnEntryNotFound::RETURN_NULL);
-				if (entry) {
-					// Change type to table macro so future lookups get the correct one
-					info.type = CatalogType::TABLE_MACRO_ENTRY;
-				}
-			}
-
-			if (!entry) {
-				// Unable to find table macro, try again with original OnEntryNotFound to ensure we throw if necessary
-				entry = entry_retriever.GetEntry(macro_entry_lookup, info.if_not_found);
+			entry = LookupRoutine(info.GetQualifiedName(), info.if_not_found);
+			if (entry && entry->type == CatalogType::TABLE_MACRO_ENTRY) {
+				// Change type to table macro so future lookups get the correct one
+				info.type = CatalogType::TABLE_MACRO_ENTRY;
 			}
 		} else {
 			EntryLookupInfo entry_lookup(info.type, info.GetQualifiedName());
@@ -129,11 +117,11 @@ void Binder::BindDrop(DropInfo &info, StatementProperties &properties) {
 			}
 			for (auto &overload : macro.macros) {
 				if (!info.has_func_args || overload->HasParameterTypes(info.func_parameters)) {
-					RequireOwner(*entry, macro.OverloadPermissions(*overload).owner);
+					RequireOwner(CheckAs(), *entry, macro.OverloadPermissions(*overload).owner);
 				}
 			}
 		} else {
-			RequireOwner(*entry);
+			RequireOwner(context, CheckAs(), *entry);
 		}
 		// keep the entry's full (possibly nested) schema path so execution navigates the same schema
 		info.SetQualifiedName(QualifiedName::FromCatalogSchema(
@@ -147,7 +135,7 @@ void Binder::BindDrop(DropInfo &info, StatementProperties &properties) {
 		break;
 	}
 	case CatalogType::SECRET_ENTRY: {
-		RequireSuperuser();
+		RequireSuperuser(CheckAs());
 		//! Secrets are stored in the secret manager; they can always be dropped
 		properties.requires_valid_transaction = false;
 		break;
@@ -157,15 +145,15 @@ void Binder::BindDrop(DropInfo &info, StatementProperties &properties) {
 		break;
 	case CatalogType::ROLE_ENTRY:
 		CheckDropRole(info);
-		info.SetQualifiedName(ClusterName(info.GetQualifiedName()));
+		info.SetQualifiedName(ClusterName(context, info.GetQualifiedName()));
 		break;
 	case CatalogType::TABLESPACE_ENTRY:
 		break;
 	case CatalogType::DATABASE_ENTRY:
-		if (auto database = ClusterEntry(CatalogType::DATABASE_ENTRY, info.GetQualifiedName().Name())) {
-			RequireOwner(*database);
+		if (auto database = ClusterEntry(context, CatalogType::DATABASE_ENTRY, info.GetQualifiedName().Name())) {
+			RequireOwner(context, CheckAs(), *database);
 		}
-		info.SetQualifiedName(ClusterName(info.GetQualifiedName()));
+		info.SetQualifiedName(ClusterName(context, info.GetQualifiedName()));
 		break;
 	case CatalogType::FOREIGN_SERVER_ENTRY: {
 		auto catalog = BindCatalog(info.GetQualifiedName().Catalog());
@@ -177,7 +165,7 @@ void Binder::BindDrop(DropInfo &info, StatementProperties &properties) {
 			auto server = duck_catalog.GetCatalogSet(CatalogType::FOREIGN_SERVER_ENTRY)
 			                  .GetEntry(duck_catalog.GetCatalogTransaction(context), info.GetQualifiedName().Name());
 			if (server) {
-				RequireOwner(*server);
+				RequireOwner(context, CheckAs(), *server);
 			}
 		}
 		break;
@@ -191,7 +179,7 @@ void Binder::BindDrop(DropInfo &info, StatementProperties &properties) {
 		                        .GetCatalogSet(CatalogType::SUBSCRIPTION_ENTRY)
 		                        .GetEntry(subscription_catalog.GetCatalogTransaction(context), name);
 		if (subscription) {
-			RequireOwner(*subscription);
+			RequireOwner(context, CheckAs(), *subscription);
 		} else if (info.if_not_found == OnEntryNotFound::THROW_EXCEPTION) {
 			throw CatalogException(unordered_map<string, string> {{"type", "Subscription"}},
 			                       StringUtil::Format("subscription \"%s\" does not exist", name.GetIdentifierName()));

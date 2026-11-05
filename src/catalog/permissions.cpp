@@ -11,12 +11,14 @@
 #include "duckdb/catalog/catalog_entry/scalar_function_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/schema_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/table_function_catalog_entry.hpp"
+#include "duckdb/catalog/catalog_entry/type_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/window_function_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_set.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/view_catalog_entry.hpp"
 #include "duckdb/catalog/duck_catalog.hpp"
 #include "duckdb/common/case_insensitive_map.hpp"
+#include "duckdb/common/extension_type_info.hpp"
 #include "duckdb/main/attached_database.hpp"
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/main/client_data.hpp"
@@ -30,6 +32,9 @@
 #include "duckdb/parser/keyword_helper.hpp"
 #include "duckdb/parser/column_list.hpp"
 #include "duckdb/parser/parsed_data/alter_table_info.hpp"
+#include "duckdb/parser/parsed_data/create_info.hpp"
+#include "duckdb/storage/storage_info.hpp"
+#include "duckdb/storage/storage_manager.hpp"
 
 #include <algorithm>
 #include <bit>
@@ -1400,6 +1405,253 @@ string ValidUntilToSQL(int64_t valid_until) {
 
 void ThrowPermissionDenied(const CatalogEntry &entry) {
 	throw PermissionException("permission denied for %s %s", PermissionKindName(entry), entry.name.GetIdentifierName());
+}
+
+void RequireSuperuser(const RoleAccess &role) {
+	if (!role.is_superuser) {
+		throw PermissionException("permission denied: superuser required");
+	}
+}
+
+void RequireOwner(const RoleAccess &role, const CatalogEntry &entry, idx_t owner) {
+	if (!role.Owns(owner)) {
+		throw PermissionException("must be owner of %s %s", PermissionKindName(entry), entry.name.GetIdentifierName());
+	}
+}
+
+void RequireOwner(ClientContext &context, const RoleAccess &role, CatalogEntry &entry) {
+	if (entry.type == CatalogType::MACRO_ENTRY || entry.type == CatalogType::TABLE_MACRO_ENTRY) {
+		auto &macro = entry.Cast<MacroCatalogEntry>();
+		for (auto &overload : macro.macros) {
+			RequireOwner(role, entry, macro.OverloadPermissions(*overload).owner);
+		}
+		return;
+	}
+	auto owner = entry.permissions.owner;
+	if (entry.type == CatalogType::INDEX_ENTRY) {
+		auto relation =
+		    entry.Cast<IndexCatalogEntry>().GetRelation(entry.ParentCatalog().GetCatalogTransaction(context));
+		if (!relation) {
+			return;
+		}
+		owner = relation->permissions.owner;
+	}
+	RequireOwner(role, entry, owner);
+}
+
+void RequireCreate(ClientContext &context, const RoleAccess &role, SchemaCatalogEntry &schema, const CreateInfo &info,
+                   const Identifier &name) {
+	RequireSchemaCreate(context, role, schema);
+	if (role.is_superuser || (info.on_conflict != OnCreateConflict::REPLACE_ON_CONFLICT &&
+	                          info.on_conflict != OnCreateConflict::ALTER_ON_CONFLICT)) {
+		return;
+	}
+	const bool merged_overloads =
+	    info.on_conflict == OnCreateConflict::ALTER_ON_CONFLICT &&
+	    (info.type == CatalogType::MACRO_ENTRY || info.type == CatalogType::TABLE_MACRO_ENTRY);
+	if (merged_overloads) {
+		return;
+	}
+	if (auto existing = schema.GetEntry(schema.catalog.GetCatalogTransaction(context), info.type, name)) {
+		RequireOwner(context, role, *existing);
+	}
+}
+
+optional_ptr<CatalogEntry> ClusterEntry(ClientContext &context, CatalogType type, const Identifier &name) {
+	auto &cluster_catalog = DBConfig::GetConfig(context).cluster_catalog;
+	if (cluster_catalog.empty()) {
+		return nullptr;
+	}
+	auto &cluster = Catalog::GetCatalog(context, cluster_catalog).Cast<DuckCatalog>();
+	return cluster.GetCatalogSet(type).GetEntry(cluster.GetCatalogTransaction(context), name);
+}
+
+CatalogEntry &ClusterDatabase(ClientContext &context, const Identifier &name) {
+	auto database = ClusterEntry(context, CatalogType::DATABASE_ENTRY, name);
+	if (!database) {
+		throw CatalogException(unordered_map<string, string> {{"type", "Database"}},
+		                       StringUtil::Format("database \"%s\" does not exist", name.GetIdentifierName()));
+	}
+	return *database;
+}
+
+QualifiedName ClusterName(ClientContext &context, const QualifiedName &name) {
+	auto &cluster_catalog = DBConfig::GetConfig(context).cluster_catalog;
+	if (cluster_catalog.empty()) {
+		return name;
+	}
+	return QualifiedName(cluster_catalog, Identifier(), name.Name());
+}
+
+idx_t RoleId(ClientContext &context, const Identifier &name) {
+	auto role = ClusterEntry(context, CatalogType::ROLE_ENTRY, name);
+	if (!role) {
+		throw CatalogException(unordered_map<string, string> {{"type", "Role"}},
+		                       StringUtil::Format("role \"%s\" does not exist", name.GetIdentifierName()));
+	}
+	return role->oid;
+}
+
+optional_idx RoleSpecKeyword(ClientContext &context, const string &name) {
+	if (name == "CURRENT_USER" || name == "CURRENT_ROLE") {
+		return context.current_role_id;
+	}
+	if (name == "SESSION_USER") {
+		return context.session_role;
+	}
+	return optional_idx();
+}
+
+idx_t RoleSpecId(ClientContext &context, const string &name) {
+	const auto keyword = RoleSpecKeyword(context, name);
+	return keyword.IsValid() ? keyword.GetIndex() : RoleId(context, Identifier(name));
+}
+
+string RoleName(ClientContext &context, idx_t role) {
+	string result;
+	auto &cluster_catalog = DBConfig::GetConfig(context).cluster_catalog;
+	if (cluster_catalog.empty()) {
+		return result;
+	}
+	auto &cluster = Catalog::GetCatalog(context, cluster_catalog).Cast<DuckCatalog>();
+	cluster.GetCatalogSet(CatalogType::ROLE_ENTRY)
+	    .Scan(cluster.GetCatalogTransaction(context), [&](CatalogEntry &entry) {
+		    if (entry.oid == role) {
+			    result = entry.name.GetIdentifierName();
+		    }
+	    });
+	return result;
+}
+
+static bool StoresPermissions(Catalog &catalog) {
+	return !catalog.IsDuckCatalog() || catalog.GetAttached().IsTemporary() ||
+	       IsSereneDBStorageVersion(catalog.GetAttached().GetStorageManager().GetStorageVersion());
+}
+
+void AssignOwner(ClientContext &context, Permissions &permissions, Catalog &catalog, CatalogType objtype,
+                 optional_ptr<SchemaCatalogEntry> schema, idx_t owner) {
+	if (!StoresPermissions(catalog)) {
+		return;
+	}
+	auto database = ClusterEntry(context, CatalogType::DATABASE_ENTRY, catalog.GetName());
+	permissions.AssignOwner(owner, objtype, database ? &database->permissions : nullptr,
+	                        schema ? optional_idx(schema->oid) : optional_idx());
+}
+
+void RequireDatabasePrivilege(ClientContext &context, const RoleAccess &role, const Identifier &database,
+                              AclMode need) {
+	if (role.is_superuser) {
+		return;
+	}
+	auto entry = ClusterEntry(context, CatalogType::DATABASE_ENTRY, database);
+	if (entry && !role.Can(CatalogType::DATABASE_ENTRY, entry->permissions, need)) {
+		ThrowPermissionDenied(*entry);
+	}
+}
+
+void RequireForeignDataWrapperUsage(ClientContext &context, const RoleAccess &role, const Identifier &database,
+                                    const string &wrapper) {
+	auto &found = DBConfig::GetConfig(context).GetForeignDataWrapper(wrapper);
+	if (role.Owns(found.owner)) {
+		return;
+	}
+	auto entry = ClusterEntry(context, CatalogType::DATABASE_ENTRY, database);
+	if (!entry ||
+	    (role.HeldModes(entry->permissions.ForeignDataWrapperAcl(found.oid)) & AclMode::Usage) == AclMode::NoRights) {
+		throw PermissionException("permission denied for foreign-data wrapper %s", wrapper);
+	}
+}
+
+void RequireLanguageUsage(ClientContext &context, const RoleAccess &role, const Identifier &database,
+                          const string &language) {
+	auto &languages = DBConfig::GetConfig(context).languages;
+	auto found = languages.find(language);
+	if (role.is_superuser || found == languages.end()) {
+		return;
+	}
+	if (found->second.trusted) {
+		Permissions permissions;
+		permissions.owner = found->second.owner;
+		if (auto entry = ClusterEntry(context, CatalogType::DATABASE_ENTRY, database)) {
+			auto acl = entry->permissions.LanguageAcl(found->second.oid);
+			permissions.acl.assign(acl.begin(), acl.end());
+		}
+		if (role.Can(CatalogType::LANGUAGE_ENTRY, permissions, AclMode::Usage)) {
+			return;
+		}
+	}
+	throw PermissionException("permission denied for language %s", language);
+}
+
+void RequireSchemaCreate(ClientContext &context, const RoleAccess &role, SchemaCatalogEntry &schema) {
+	if (role.is_superuser) {
+		return;
+	}
+	if (schema.ParentCatalog().GetAttached().IsTemporary()) {
+		auto &database = ClientData::Get(context).default_database;
+		auto entry = ClusterEntry(context, CatalogType::DATABASE_ENTRY, database);
+		if (entry && !role.Can(CatalogType::DATABASE_ENTRY, entry->permissions, AclMode::CreateTemp)) {
+			throw PermissionException("permission denied to create temporary tables in database \"%s\"",
+			                          database.GetIdentifierName());
+		}
+		return;
+	}
+	if (!role.Can(CatalogType::SCHEMA_ENTRY, schema.permissions, AclMode::Create)) {
+		ThrowPermissionDenied(schema);
+	}
+}
+
+void RequireTypeUsage(ClientContext &context, const RoleAccess &role, const LogicalType &type, Catalog &catalog) {
+	if (role.is_superuser) {
+		return;
+	}
+	reference<const LogicalType> element = type;
+	while (element.get().id() == LogicalTypeId::LIST || element.get().id() == LogicalTypeId::ARRAY) {
+		element = element.get().id() == LogicalTypeId::LIST ? ListType::GetChildType(element)
+		                                                    : ArrayType::GetChildType(element);
+	}
+	if (auto extension = element.get().GetExtensionInfo()) {
+		auto oid = extension->properties.find(ExtensionTypeInfo::CATALOG_OID_PROPERTY);
+		if (oid != extension->properties.end()) {
+			auto entry =
+			    catalog.IsDuckCatalog()
+			        ? catalog.Cast<DuckCatalog>().FindIn<TypeCatalogEntry>(context, oid->second.GetValue<idx_t>())
+			        : nullptr;
+			if (entry && !IsUnowned(*entry) && !role.Can(CatalogType::TYPE_ENTRY, entry->permissions, AclMode::Usage)) {
+				ThrowPermissionDenied(*entry);
+			}
+			return;
+		}
+	}
+	auto &config = DBConfig::GetConfig(context);
+	if (!context.security || !context.security->HasTypeGrants() || !config.builtin_type_oid) {
+		return;
+	}
+	string name;
+	const auto oid = config.builtin_type_oid(element, name);
+	if (!oid) {
+		return;
+	}
+	const auto database = DatabaseManager::TryGetDefaultDatabase(context);
+	auto granted = context.security->TypePermissions(database.GetIdentifierName(), oid);
+	if (granted && !role.Can(CatalogType::TYPE_ENTRY, *granted, AclMode::Usage)) {
+		throw PermissionException("permission denied for type %s", name);
+	}
+}
+
+void CheckCall(ClientContext &context, const RoleAccess &role, FunctionEntry &function) {
+	if (!function.MayCall(role) && !BuiltinCallGranted(context, role, function)) {
+		ThrowPermissionDenied(function);
+	}
+}
+
+void CheckMacroCall(ClientContext &context, const RoleAccess &role, MacroCatalogEntry &macro,
+                    const MacroFunction &overload, idx_t overload_index) {
+	if (IsUnowned(macro)) {
+		CheckBuiltinCall(context, role, macro, overload_index);
+	} else if (!role.Can(macro.type, macro.OverloadPermissions(overload), AclMode::Execute)) {
+		ThrowPermissionDenied(macro);
+	}
 }
 
 } // namespace duckdb

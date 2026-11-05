@@ -384,16 +384,15 @@ BoundStatement Binder::BindTableFunctionInternal(BoundTableFunction &table_funct
 
 	// now add the table function to the bind context so its columns can be bound
 	auto table = get->GetTable();
-	auto &binding = bind_context.AddTableFunction(bind_index, Identifier(function_name), return_names, return_types,
-	                                              get->GetMutableColumnIds(), table.get(), std::move(virtual_columns),
-	                                              std::move(row_id_columns));
+	bind_context.AddTableFunction(bind_index, Identifier(function_name), return_names, return_types,
+	                              get->GetMutableColumnIds(), table.get(), std::move(virtual_columns),
+	                              std::move(row_id_columns));
 	if (table) {
 		GetStatementProperties().RegisterDBRead(table->ParentCatalog(), context);
 		auto &schema = table->ParentSchema(context);
 		if (!CanUseSchema(CheckAs(), schema)) {
 			ThrowPermissionDenied(schema);
 		}
-		CheckTableRead(binding, *table);
 	}
 	AddPostgresSetofColumnAlias(bind_context, bind_index, setof_column_name);
 
@@ -538,7 +537,7 @@ BoundStatement Binder::Bind(TableFunctionRef &ref) {
 	auto &func_catalog = *func_catalog_ptr;
 	if (func_catalog.type == CatalogType::MACRO_ENTRY || func_catalog.type == CatalogType::TABLE_MACRO_ENTRY) {
 		auto &macro_func = func_catalog.Cast<MacroCatalogEntry>();
-		CheckCall(macro_func);
+		CheckCall(context, CurrentRole(), macro_func);
 		if (macro_func.is_procedure && !allow_procedure_call) {
 			throw BinderException("%s() is a procedure\nHINT: To call a procedure, use CALL.",
 			                      fexpr.FunctionName().GetIdentifierName());
@@ -576,7 +575,7 @@ BoundStatement Binder::Bind(TableFunctionRef &ref) {
 	}
 	D_ASSERT(func_catalog.type == CatalogType::TABLE_FUNCTION_ENTRY);
 	auto &function = func_catalog.Cast<TableFunctionCatalogEntry>();
-	CheckCall(function);
+	CheckCall(context, CurrentRole(), function);
 	if (!InViewBody()) {
 		context.CheckEntryReference(CheckAs(), function);
 	}
