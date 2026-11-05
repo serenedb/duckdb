@@ -106,6 +106,10 @@ DatabaseInstance::~DatabaseInstance() {
 	external_file_cache.reset();
 	result_set_manager.reset();
 
+	auto callbacks = ExtensionCallback::Iterate(*this);
+	for (auto it = callbacks.end(); it != callbacks.begin();) {
+		(*--it)->OnDatabaseShutdown(*this);
+	}
 	buffer_manager.reset();
 
 	// flush allocations and disable the background thread
