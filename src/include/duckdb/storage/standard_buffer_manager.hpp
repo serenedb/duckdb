@@ -39,8 +39,6 @@ public:
 	~StandardBufferManager() override;
 
 public:
-	static unique_ptr<StandardBufferManager> CreateBufferManager(DatabaseInstance &db, string temp_directory);
-
 	//! Registers a transient memory buffer.
 	shared_ptr<BlockHandle> RegisterTransientMemory(const idx_t size, BlockManager &block_manager) final;
 	//! Registers an in-memory buffer that cannot be unloaded until it is destroyed.
