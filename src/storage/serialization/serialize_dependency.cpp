@@ -86,6 +86,24 @@ LogicalDependencyList LogicalDependencyList::Deserialize(Deserializer &deseriali
 	return result;
 }
 
+void NameBinding::Serialize(Serializer &serializer) const {
+	serializer.WriteProperty<CatalogType>(100, "type", type);
+	serializer.WritePropertyWithDefault<Identifier>(101, "name", name);
+	serializer.WritePropertyWithDefault<idx_t>(102, "argument_count", argument_count);
+	serializer.WritePropertyWithDefault<Identifier>(103, "catalog", catalog);
+	serializer.WritePropertyWithDefault<vector<Identifier>>(104, "schema_path", schema_path);
+}
+
+NameBinding NameBinding::Deserialize(Deserializer &deserializer) {
+	NameBinding result;
+	deserializer.ReadProperty<CatalogType>(100, "type", result.type);
+	deserializer.ReadPropertyWithDefault<Identifier>(101, "name", result.name);
+	deserializer.ReadPropertyWithDefault<idx_t>(102, "argument_count", result.argument_count);
+	deserializer.ReadPropertyWithDefault<Identifier>(103, "catalog", result.catalog);
+	deserializer.ReadPropertyWithDefault<vector<Identifier>>(104, "schema_path", result.schema_path);
+	return result;
+}
+
 void SubDependency::Serialize(Serializer &serializer) const {
 	serializer.WriteProperty<AlterTableType>(100, "alter", alter);
 	serializer.WritePropertyWithDefault<Identifier>(101, "name", name);

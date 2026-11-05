@@ -39,6 +39,21 @@ void MacroFunction::Serialize(Serializer &serializer) const {
 	if (serializer.ShouldSerialize(StorageVersion::SERENEDB_V1)) {
 		serializer.WritePropertyWithDefault<FunctionStability>(16491, "stability", stability, FunctionStability::VOLATILE);
 	}
+	if (serializer.ShouldSerialize(StorageVersion::SERENEDB_V1)) {
+		serializer.WritePropertyWithDefault<bool>(16492, "security_definer", security_definer, false);
+	}
+	if (serializer.ShouldSerialize(StorageVersion::SERENEDB_V1)) {
+		serializer.WritePropertyWithDefault<vector<string>>(16493, "config", config);
+	}
+	if (serializer.ShouldSerialize(StorageVersion::SERENEDB_V1)) {
+		serializer.WritePropertyWithDefault<idx_t>(16494, "oid", oid);
+	}
+	if (serializer.ShouldSerialize(StorageVersion::SERENEDB_V1)) {
+		serializer.WritePropertyWithDefault<Permissions>(16495, "permissions", permissions, Permissions());
+	}
+	if (serializer.ShouldSerialize(StorageVersion::SERENEDB_V1)) {
+		serializer.WritePropertyWithDefault<Value>(16496, "comment", comment, Value());
+	}
 }
 
 unique_ptr<MacroFunction> MacroFunction::Deserialize(Deserializer &deserializer) {
@@ -53,6 +68,11 @@ unique_ptr<MacroFunction> MacroFunction::Deserialize(Deserializer &deserializer)
 	auto parameter_modes = deserializer.ReadPropertyWithExplicitDefault<string>(16489, "parameter_modes", "");
 	auto strict = deserializer.ReadPropertyWithExplicitDefault<bool>(16490, "strict", false);
 	auto stability = deserializer.ReadPropertyWithExplicitDefault<FunctionStability>(16491, "stability", FunctionStability::VOLATILE);
+	auto security_definer = deserializer.ReadPropertyWithExplicitDefault<bool>(16492, "security_definer", false);
+	auto config = deserializer.ReadPropertyWithDefault<vector<string>>(16493, "config");
+	auto oid = deserializer.ReadPropertyWithDefault<idx_t>(16494, "oid");
+	auto permissions = deserializer.ReadPropertyWithExplicitDefault<Permissions>(16495, "permissions", Permissions());
+	auto comment = deserializer.ReadPropertyWithExplicitDefault<Value>(16496, "comment", Value());
 	unique_ptr<MacroFunction> result;
 	switch (type) {
 	case MacroType::SCALAR_MACRO:
@@ -74,6 +94,11 @@ unique_ptr<MacroFunction> MacroFunction::Deserialize(Deserializer &deserializer)
 	result->parameter_modes = std::move(parameter_modes);
 	result->strict = strict;
 	result->stability = stability;
+	result->security_definer = security_definer;
+	result->config = std::move(config);
+	result->oid = oid;
+	result->permissions = permissions;
+	result->comment = comment;
 	result->FinalizeDeserialization();
 	return result;
 }

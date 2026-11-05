@@ -147,12 +147,18 @@ void CreateDatabaseInfo::Serialize(Serializer &serializer) const {
 	CreateInfo::Serialize(serializer);
 	serializer.WritePropertyWithDefault<Identifier>(200, "name", qualified_name.Name());
 	serializer.WritePropertyWithDefault<case_insensitive_map_t<Value>>(201, "options", options);
+	serializer.WritePropertyWithDefault<vector<DatabaseSetting>>(202, "settings", settings);
+	serializer.WritePropertyWithDefault<int32_t>(203, "connection_limit", connection_limit, -1);
+	serializer.WritePropertyWithDefault<bool>(204, "allow_connections", allow_connections, true);
 }
 
 unique_ptr<CreateInfo> CreateDatabaseInfo::Deserialize(Deserializer &deserializer) {
 	auto result = duckdb::unique_ptr<CreateDatabaseInfo>(new CreateDatabaseInfo());
 	auto name = deserializer.ReadPropertyWithDefault<Identifier>(200, "name");
 	deserializer.ReadPropertyWithDefault<case_insensitive_map_t<Value>>(201, "options", result->options);
+	deserializer.ReadPropertyWithDefault<vector<DatabaseSetting>>(202, "settings", result->settings);
+	deserializer.ReadPropertyWithExplicitDefault<int32_t>(203, "connection_limit", result->connection_limit, -1);
+	deserializer.ReadPropertyWithExplicitDefault<bool>(204, "allow_connections", result->allow_connections, true);
 	result->SetName(std::move(name));
 	return std::move(result);
 }
@@ -280,6 +286,7 @@ void CreateRoleInfo::Serialize(Serializer &serializer) const {
 	serializer.WritePropertyWithDefault<string>(204, "password", password);
 	serializer.WritePropertyWithDefault<vector<Membership>>(205, "member_of", member_of);
 	serializer.WritePropertyWithDefault<vector<string>>(206, "config", config);
+	serializer.WritePropertyWithDefault<vector<string>>(207, "all_roles_config", all_roles_config);
 }
 
 unique_ptr<CreateInfo> CreateRoleInfo::Deserialize(Deserializer &deserializer) {
@@ -291,6 +298,7 @@ unique_ptr<CreateInfo> CreateRoleInfo::Deserialize(Deserializer &deserializer) {
 	deserializer.ReadPropertyWithDefault<string>(204, "password", result->password);
 	deserializer.ReadPropertyWithDefault<vector<Membership>>(205, "member_of", result->member_of);
 	deserializer.ReadPropertyWithDefault<vector<string>>(206, "config", result->config);
+	deserializer.ReadPropertyWithDefault<vector<string>>(207, "all_roles_config", result->all_roles_config);
 	result->SetName(std::move(name));
 	return std::move(result);
 }
@@ -502,6 +510,8 @@ void CreateViewInfo::Serialize(Serializer &serializer) const {
 		serializer.WritePropertyWithDefault<ViewSecurityType>(207, "security_type", security_type, ViewSecurityType::REGULAR_VIEW);
 	}
 	serializer.WritePropertyWithDefault<bool>(16584, "security_invoker", security_invoker);
+	serializer.WritePropertyWithDefault<vector<ColumnAcl>>(16585, "column_acls", column_acls, vector<ColumnAcl>());
+	serializer.WritePropertyWithDefault<vector<NameBinding>>(16586, "name_bindings", name_bindings, vector<NameBinding>());
 }
 
 unique_ptr<CreateInfo> CreateViewInfo::Deserialize(Deserializer &deserializer) {
@@ -518,6 +528,8 @@ unique_ptr<CreateInfo> CreateViewInfo::Deserialize(Deserializer &deserializer) {
 	result->query = std::move(query);
 	deserializer.ReadPropertyWithExplicitDefault<ViewSecurityType>(207, "security_type", result->security_type, ViewSecurityType::REGULAR_VIEW);
 	deserializer.ReadPropertyWithDefault<bool>(16584, "security_invoker", result->security_invoker);
+	deserializer.ReadPropertyWithExplicitDefault<vector<ColumnAcl>>(16585, "column_acls", result->column_acls, vector<ColumnAcl>());
+	deserializer.ReadPropertyWithExplicitDefault<vector<NameBinding>>(16586, "name_bindings", result->name_bindings, vector<NameBinding>());
 	result->SetName(std::move(view_name));
 	return std::move(result);
 }

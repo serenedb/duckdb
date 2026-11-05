@@ -136,6 +136,7 @@ struct AccessModeSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::SUPERUSER, false, false};
 	static void SetGlobal(DatabaseInstance *db, DBConfig &config, const Value &parameter);
 	static void ResetGlobal(DatabaseInstance *db, DBConfig &config);
 	static bool OnGlobalSet(DatabaseInstance *db, DBConfig &config, const Value &input);
@@ -150,6 +151,7 @@ struct AllocatorBackgroundThreadsSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::SUPERUSER, false, false};
 	static constexpr const char *DefaultValue = "false";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::GLOBAL_DEFAULT;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -165,6 +167,7 @@ struct AllocatorBulkDeallocationFlushThresholdSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::SUPERUSER, false, false};
 	static void SetGlobal(DatabaseInstance *db, DBConfig &config, const Value &parameter);
 	static void ResetGlobal(DatabaseInstance *db, DBConfig &config);
 	static Value GetSetting(const ClientContext &context);
@@ -179,6 +182,7 @@ struct AllocatorFlushThresholdSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::SUPERUSER, false, false};
 	static constexpr const char *DefaultValue = "134217728B";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::GLOBAL_DEFAULT;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -193,6 +197,7 @@ struct AllowCommunityExtensionsSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::SUPERUSER, false, false};
 	static constexpr const char *DefaultValue = "true";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::GLOBAL_ONLY;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -211,6 +216,7 @@ struct AllowExtensionRepositoriesSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::SUPERUSER, false, false};
 	static constexpr const char *DefaultValue = "undecided";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::GLOBAL_ONLY;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -225,6 +231,7 @@ struct AllowExtensionsMetadataMismatchSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::SUPERUSER, false, false};
 	static constexpr const char *DefaultValue = "false";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::GLOBAL_ONLY;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -239,6 +246,7 @@ struct AllowPersistentSecretsSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::SUPERUSER, false, false};
 	static void SetGlobal(DatabaseInstance *db, DBConfig &config, const Value &parameter);
 	static void ResetGlobal(DatabaseInstance *db, DBConfig &config);
 	static Value GetSetting(const ClientContext &context);
@@ -252,6 +260,7 @@ struct AllowUnredactedSecretsSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::SUPERUSER, false, false};
 	static constexpr const char *DefaultValue = "false";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::GLOBAL_ONLY;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -266,6 +275,7 @@ struct AllowUnsignedExtensionsSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::SUPERUSER, false, false};
 	static constexpr const char *DefaultValue = "false";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::GLOBAL_ONLY;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -281,6 +291,7 @@ struct AllowedConfigsSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::SUPERUSER, false, false};
 	static void SetGlobal(DatabaseInstance *db, DBConfig &config, const Value &parameter);
 	static void ResetGlobal(DatabaseInstance *db, DBConfig &config);
 	static Value GetSetting(const ClientContext &context);
@@ -295,6 +306,7 @@ struct AllowedDirectoriesSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::SUPERUSER, true, false};
 	static void SetGlobal(DatabaseInstance *db, DBConfig &config, const Value &parameter);
 	static void ResetGlobal(DatabaseInstance *db, DBConfig &config);
 	static Value GetSetting(const ClientContext &context);
@@ -309,6 +321,7 @@ struct AllowedPathsSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::SUPERUSER, true, false};
 	static void SetGlobal(DatabaseInstance *db, DBConfig &config, const Value &parameter);
 	static void ResetGlobal(DatabaseInstance *db, DBConfig &config);
 	static Value GetSetting(const ClientContext &context);
@@ -323,6 +336,7 @@ struct ApproximateJoinOrderThresholdSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::USER, false, false};
 	static constexpr const char *DefaultValue = "12";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::LOCAL_DEFAULT;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -337,6 +351,7 @@ struct ArrowLargeBufferSizeSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::USER, false, false};
 	static constexpr const char *DefaultValue = "false";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::GLOBAL_DEFAULT;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -352,6 +367,7 @@ struct ArrowLosslessConversionSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::USER, false, false};
 	static constexpr const char *DefaultValue = "false";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::GLOBAL_DEFAULT;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -366,6 +382,7 @@ struct ArrowOutputListViewSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::USER, false, false};
 	static constexpr const char *DefaultValue = "false";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::GLOBAL_DEFAULT;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -380,6 +397,7 @@ struct ArrowOutputVersionSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::USER, false, false};
 	static constexpr const char *DefaultValue = "1.0";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::GLOBAL_DEFAULT;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -395,6 +413,7 @@ struct AsofLoopJoinThresholdSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::USER, false, false};
 	static constexpr const char *DefaultValue = "64";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::LOCAL_DEFAULT;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -410,6 +429,7 @@ struct AsyncThreadsSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::SUPERUSER, false, false};
 	static constexpr const char *DefaultValue = "-1";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::LOCAL_DEFAULT;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -426,6 +446,7 @@ struct AutoCheckpointSkipWalThresholdSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::SUPERUSER, false, false};
 	static constexpr const char *DefaultValue = "100000";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::GLOBAL_DEFAULT;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -441,6 +462,7 @@ struct AutoinstallExtensionRepositorySetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::SUPERUSER, false, false};
 	static constexpr const char *DefaultValue = "";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::GLOBAL_ONLY;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -455,6 +477,7 @@ struct AutoinstallKnownExtensionsSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::SUPERUSER, false, false};
 	static constexpr const char *DefaultValue = "true";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::GLOBAL_ONLY;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -469,6 +492,7 @@ struct AutoloadKnownExtensionsSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::SUPERUSER, false, false};
 	static constexpr const char *DefaultValue = "true";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::GLOBAL_ONLY;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -483,6 +507,7 @@ struct BlockAllocatorMemorySetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::SUPERUSER, false, false};
 	static void SetGlobal(DatabaseInstance *db, DBConfig &config, const Value &parameter);
 	static void ResetGlobal(DatabaseInstance *db, DBConfig &config);
 	static Value GetSetting(const ClientContext &context);
@@ -497,6 +522,7 @@ struct CacheLocalFilesSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::SUPERUSER, false, false};
 	static constexpr const char *DefaultValue = "false";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::GLOBAL_ONLY;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -511,6 +537,7 @@ struct CatalogErrorMaxSchemasSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::USER, false, false};
 	static constexpr const char *DefaultValue = "100";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::GLOBAL_DEFAULT;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -527,6 +554,7 @@ struct CheckpointOnDetachSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::SUPERUSER, false, false};
 	static constexpr const char *DefaultValue = "DEFAULT";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::LOCAL_DEFAULT;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -542,6 +570,7 @@ struct CheckpointThresholdSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::SUPERUSER, false, false};
 	static void SetGlobal(DatabaseInstance *db, DBConfig &config, const Value &parameter);
 	static void ResetGlobal(DatabaseInstance *db, DBConfig &config);
 	static Value GetSetting(const ClientContext &context);
@@ -556,6 +585,7 @@ struct CopyCsvHeaderDefaultSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::USER, false, false};
 	static constexpr const char *DefaultValue = "true";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::LOCAL_DEFAULT;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -570,6 +600,7 @@ struct CurrentTransactionInvalidationPolicySetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::SUPERUSER, false, false};
 	static constexpr const char *DefaultValue = "STANDARD_POLICY";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::GLOBAL_ONLY;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -584,6 +615,7 @@ struct CustomExtensionRepositorySetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::SUPERUSER, false, false};
 	static constexpr const char *DefaultValue = "";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::GLOBAL_ONLY;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -598,6 +630,7 @@ struct CustomUserAgentSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::SUPERUSER, false, false};
 	static void SetGlobal(DatabaseInstance *db, DBConfig &config, const Value &parameter);
 	static void ResetGlobal(DatabaseInstance *db, DBConfig &config);
 	static Value GetSetting(const ClientContext &context);
@@ -612,6 +645,7 @@ struct DebugAbortOnWalFailureSetting {
 	static constexpr bool IsDebug = true;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::SUPERUSER, false, false};
 	static void SetGlobal(DatabaseInstance *db, DBConfig &config, const Value &parameter);
 	static void ResetGlobal(DatabaseInstance *db, DBConfig &config);
 	static Value GetSetting(const ClientContext &context);
@@ -625,6 +659,7 @@ struct DebugAsofIejoinSetting {
 	static constexpr bool IsDebug = true;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::SUPERUSER, false, false};
 	static constexpr const char *DefaultValue = "false";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::LOCAL_DEFAULT;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -638,6 +673,7 @@ struct DebugCheckpointAbortSetting {
 	static constexpr bool IsDebug = true;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::SUPERUSER, false, false};
 	static constexpr const char *DefaultValue = "NONE";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::GLOBAL_DEFAULT;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -653,6 +689,7 @@ struct DebugCheckpointScanSleepMsSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::SUPERUSER, false, false};
 	static constexpr const char *DefaultValue = "0";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::GLOBAL_DEFAULT;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -666,6 +703,7 @@ struct DebugCheckpointSleepMsSetting {
 	static constexpr bool IsDebug = true;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::SUPERUSER, false, false};
 	static constexpr const char *DefaultValue = "0";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::GLOBAL_DEFAULT;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -679,6 +717,7 @@ struct DebugDeltaOnlyVariantEncodingEnabledSetting {
 	static constexpr bool IsDebug = true;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::SUPERUSER, false, false};
 	static void SetGlobal(DatabaseInstance *db, DBConfig &config, const Value &parameter);
 	static void ResetGlobal(DatabaseInstance *db, DBConfig &config);
 	static Value GetSetting(const ClientContext &context);
@@ -692,6 +731,7 @@ struct DebugDisableOptimizerSetting {
 	static constexpr bool IsDebug = true;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::SUPERUSER, false, false};
 	static constexpr const char *DefaultValue = "false";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::LOCAL_DEFAULT;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -705,6 +745,7 @@ struct EnableCachingOperatorsSetting {
 	static constexpr bool IsDebug = true;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::SUPERUSER, false, false};
 	static constexpr const char *DefaultValue = "true";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::LOCAL_DEFAULT;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -719,6 +760,7 @@ struct DebugEvictionQueueSleepMicroSecondsSetting {
 	static constexpr bool IsDebug = true;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::SUPERUSER, false, false};
 	static constexpr const char *DefaultValue = "0";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::GLOBAL_ONLY;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -732,6 +774,7 @@ struct ForceBitpackingModeSetting {
 	static constexpr bool IsDebug = true;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::SUPERUSER, false, false};
 	static constexpr const char *DefaultValue = "AUTO";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::GLOBAL_ONLY;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -747,6 +790,7 @@ struct DebugForceCommitFailureSetting {
 	static constexpr bool IsDebug = true;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::SUPERUSER, false, false};
 	static constexpr const char *DefaultValue = "false";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::GLOBAL_DEFAULT;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -760,6 +804,7 @@ struct DebugForceCommitRevertFailureSetting {
 	static constexpr bool IsDebug = true;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::SUPERUSER, false, false};
 	static constexpr const char *DefaultValue = "false";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::GLOBAL_DEFAULT;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -773,6 +818,7 @@ struct DebugForceExternalSetting {
 	static constexpr bool IsDebug = true;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::SUPERUSER, false, false};
 	static constexpr const char *DefaultValue = "false";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::LOCAL_DEFAULT;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -786,6 +832,7 @@ struct DebugForceFetchRowSetting {
 	static constexpr bool IsDebug = true;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::SUPERUSER, false, false};
 	static constexpr const char *DefaultValue = "false";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::LOCAL_DEFAULT;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -799,6 +846,7 @@ struct ForceMbedtlsUnsafeSetting {
 	static constexpr bool IsDebug = true;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::SUPERUSER, false, false};
 	static void SetGlobal(DatabaseInstance *db, DBConfig &config, const Value &parameter);
 	static void ResetGlobal(DatabaseInstance *db, DBConfig &config);
 	static Value GetSetting(const ClientContext &context);
@@ -813,6 +861,7 @@ struct DebugForceNoCrossProductSetting {
 	static constexpr bool IsDebug = true;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::SUPERUSER, false, false};
 	static constexpr const char *DefaultValue = "false";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::LOCAL_DEFAULT;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -827,6 +876,7 @@ struct ForceUpdateToDelAndInsertSetting {
 	static constexpr bool IsDebug = true;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::SUPERUSER, false, false};
 	static constexpr const char *DefaultValue = "false";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::LOCAL_DEFAULT;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -841,6 +891,7 @@ struct ForceVariantShredding {
 	static constexpr bool IsDebug = true;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::SUPERUSER, false, false};
 	static void SetGlobal(DatabaseInstance *db, DBConfig &config, const Value &parameter);
 	static void ResetGlobal(DatabaseInstance *db, DBConfig &config);
 	static Value GetSetting(const ClientContext &context);
@@ -855,6 +906,7 @@ struct DebugForceWalFsyncFailureSetting {
 	static constexpr bool IsDebug = true;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::SUPERUSER, false, false};
 	static constexpr const char *DefaultValue = "false";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::GLOBAL_DEFAULT;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -868,6 +920,7 @@ struct DebugLocalFileSystemDelayMsSetting {
 	static constexpr bool IsDebug = true;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::SUPERUSER, false, false};
 	static constexpr const char *DefaultValue = "0";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::GLOBAL_ONLY;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -882,6 +935,7 @@ struct DebugOrderVerificationSetting {
 	static constexpr bool IsDebug = true;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::SUPERUSER, false, false};
 	static void SetGlobal(DatabaseInstance *db, DBConfig &config, const Value &parameter);
 	static void ResetGlobal(DatabaseInstance *db, DBConfig &config);
 	static Value GetSetting(const ClientContext &context);
@@ -895,6 +949,7 @@ struct DebugPhysicalTableScanExecutionStrategySetting {
 	static constexpr bool IsDebug = true;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::SUPERUSER, false, false};
 	static constexpr const char *DefaultValue = "DEFAULT";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::GLOBAL_DEFAULT;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -909,6 +964,7 @@ struct DebugSkipCheckpointOnCommitSetting {
 	static constexpr bool IsDebug = true;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::SUPERUSER, false, false};
 	static constexpr const char *DefaultValue = "false";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::GLOBAL_DEFAULT;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -922,6 +978,7 @@ struct DebugVerificationModeSetting {
 	static constexpr bool IsDebug = true;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::SUPERUSER, false, false};
 	static void SetGlobal(DatabaseInstance *db, DBConfig &config, const Value &parameter);
 	static void ResetGlobal(DatabaseInstance *db, DBConfig &config);
 	static Value GetSetting(const ClientContext &context);
@@ -935,6 +992,7 @@ struct DebugVerificationProjectionSetting {
 	static constexpr bool IsDebug = true;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::SUPERUSER, false, false};
 	static constexpr const char *DefaultValue = "false";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::GLOBAL_DEFAULT;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -948,6 +1006,7 @@ struct DebugVerifyAggregateStateExportSetting {
 	static constexpr bool IsDebug = true;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::SUPERUSER, false, false};
 	static constexpr const char *DefaultValue = "false";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::GLOBAL_DEFAULT;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -961,6 +1020,7 @@ struct DebugVerifyBlocksSetting {
 	static constexpr bool IsDebug = true;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::SUPERUSER, false, false};
 	static constexpr const char *DefaultValue = "false";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::GLOBAL_DEFAULT;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -974,6 +1034,7 @@ struct DebugVerifyColumnBindingsSetting {
 	static constexpr bool IsDebug = true;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::SUPERUSER, false, false};
 	static constexpr const char *DefaultValue = "false";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::GLOBAL_DEFAULT;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -988,6 +1049,7 @@ struct DebugVerifyProgressSetting {
 	static constexpr bool IsDebug = true;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::SUPERUSER, false, false};
 	static constexpr const char *DefaultValue = "NONE";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::LOCAL_DEFAULT;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -1003,6 +1065,7 @@ struct DebugVerifyProgressIgnoreSetting {
 	static constexpr bool IsDebug = true;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::SUPERUSER, false, false};
 	static constexpr const char *DefaultValue = "";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::LOCAL_DEFAULT;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -1016,6 +1079,7 @@ struct DebugVerifySerializerSetting {
 	static constexpr bool IsDebug = true;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::SUPERUSER, false, false};
 	static constexpr const char *DefaultValue = "false";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::GLOBAL_DEFAULT;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -1029,6 +1093,7 @@ struct DebugVerifyStatementSetting {
 	static constexpr bool IsDebug = true;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::SUPERUSER, false, false};
 	static constexpr const char *DefaultValue = "NONE";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::GLOBAL_DEFAULT;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -1043,6 +1108,7 @@ struct DebugVerifyStatsSetting {
 	static constexpr bool IsDebug = true;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::SUPERUSER, false, false};
 	static constexpr const char *DefaultValue = "false";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::GLOBAL_DEFAULT;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -1056,6 +1122,7 @@ struct DebugVerifyVectorSetting {
 	static constexpr bool IsDebug = true;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::SUPERUSER, false, false};
 	static constexpr const char *DefaultValue = "NONE";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::GLOBAL_DEFAULT;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -1071,6 +1138,7 @@ struct DebugWalFsyncSleepMsSetting {
 	static constexpr bool IsDebug = true;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::SUPERUSER, false, false};
 	static constexpr const char *DefaultValue = "0";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::GLOBAL_DEFAULT;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -1084,6 +1152,7 @@ struct DebugWindowModeSetting {
 	static constexpr bool IsDebug = true;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::SUPERUSER, false, false};
 	static constexpr const char *DefaultValue = "WINDOW";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::GLOBAL_DEFAULT;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -1099,6 +1168,7 @@ struct DefaultBlockSizeSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::SUPERUSER, false, false};
 	static constexpr const char *DefaultValue = "262144";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::GLOBAL_ONLY;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -1113,6 +1183,7 @@ struct DefaultCollationSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::USER, false, false};
 	static constexpr const char *DefaultValue = "";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::GLOBAL_DEFAULT;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -1128,6 +1199,7 @@ struct DefaultNullOrderSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::USER, false, false};
 	static constexpr const char *DefaultValue = "NULLS_LAST";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::GLOBAL_DEFAULT;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -1142,6 +1214,7 @@ struct DefaultOrderSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::USER, false, false};
 	static constexpr const char *DefaultValue = "ASCENDING";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::GLOBAL_DEFAULT;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -1156,6 +1229,7 @@ struct DefaultSecretStorageSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::SUPERUSER, false, false};
 	static void SetGlobal(DatabaseInstance *db, DBConfig &config, const Value &parameter);
 	static void ResetGlobal(DatabaseInstance *db, DBConfig &config);
 	static Value GetSetting(const ClientContext &context);
@@ -1172,6 +1246,7 @@ struct DefaultTransactionInvalidationPolicySetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::USER, false, false};
 	static constexpr const char *DefaultValue = "ALL_ERRORS_INVALIDATE_TRANSACTION";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::GLOBAL_DEFAULT;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -1186,6 +1261,7 @@ struct DefaultTransactionIsolationSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::USER, false, false};
 	static constexpr const char *DefaultValue = "repeatable read";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::LOCAL_DEFAULT;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -1200,6 +1276,7 @@ struct DefaultTransactionReadOnlySetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::USER, false, false};
 	static constexpr const char *DefaultValue = "false";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::LOCAL_DEFAULT;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -1214,6 +1291,7 @@ struct DelimJoinAsCteSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::USER, false, false};
 	static constexpr const char *DefaultValue = "true";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::LOCAL_DEFAULT;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -1229,6 +1307,7 @@ struct DialectCompatibilityModeSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::USER, false, false};
 	static constexpr const char *DefaultValue = "NONE";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::LOCAL_DEFAULT;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -1245,6 +1324,7 @@ struct DisableDatabaseInvalidationSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::SUPERUSER, false, false};
 	static constexpr const char *DefaultValue = "false";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::GLOBAL_ONLY;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -1259,6 +1339,7 @@ struct DisableTimestamptzCastsSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::USER, false, false};
 	static constexpr const char *DefaultValue = "false";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::LOCAL_DEFAULT;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -1272,6 +1353,7 @@ struct DisabledCompressionMethodsSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::SUPERUSER, false, false};
 	static void SetGlobal(DatabaseInstance *db, DBConfig &config, const Value &parameter);
 	static void ResetGlobal(DatabaseInstance *db, DBConfig &config);
 	static Value GetSetting(const ClientContext &context);
@@ -1286,6 +1368,7 @@ struct DisabledFilesystemsSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::SUPERUSER, false, false};
 	static void SetGlobal(DatabaseInstance *db, DBConfig &config, const Value &parameter);
 	static void ResetGlobal(DatabaseInstance *db, DBConfig &config);
 	static Value GetSetting(const ClientContext &context);
@@ -1299,6 +1382,7 @@ struct DisabledLogTypes {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::SUPERUSER, false, false};
 	static void SetGlobal(DatabaseInstance *db, DBConfig &config, const Value &parameter);
 	static void ResetGlobal(DatabaseInstance *db, DBConfig &config);
 	static Value GetSetting(const ClientContext &context);
@@ -1312,6 +1396,7 @@ struct DisabledOptimizersSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::USER, false, false};
 	static void SetGlobal(DatabaseInstance *db, DBConfig &config, const Value &parameter);
 	static void ResetGlobal(DatabaseInstance *db, DBConfig &config);
 	static void SetLocal(ClientContext &context, const Value &parameter);
@@ -1329,6 +1414,7 @@ struct DuckDBAPISetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::SUPERUSER, false, false};
 	static constexpr const char *DefaultValue = "";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::GLOBAL_ONLY;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -1344,6 +1430,7 @@ struct DynamicOrFilterThresholdSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::USER, false, false};
 	static constexpr const char *DefaultValue = "50";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::LOCAL_DEFAULT;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -1359,6 +1446,7 @@ struct EnableExternalAccessSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::SUPERUSER, false, false};
 	static constexpr const char *DefaultValue = "true";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::GLOBAL_ONLY;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -1373,6 +1461,7 @@ struct EnableExternalFileCacheSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::SUPERUSER, false, false};
 	static constexpr const char *DefaultValue = "true";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::GLOBAL_ONLY;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -1388,6 +1477,7 @@ struct EnableFSSTVectorsSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::SUPERUSER, false, false};
 	static constexpr const char *DefaultValue = "false";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::GLOBAL_ONLY;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -1402,6 +1492,7 @@ struct EnableHTTPMetadataCacheSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::SUPERUSER, false, false};
 	static constexpr const char *DefaultValue = "false";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::GLOBAL_DEFAULT;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -1415,6 +1506,7 @@ struct EnableLogging {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::SUPERUSER, false, false};
 	static void SetGlobal(DatabaseInstance *db, DBConfig &config, const Value &parameter);
 	static void ResetGlobal(DatabaseInstance *db, DBConfig &config);
 	static Value GetSetting(const ClientContext &context);
@@ -1429,6 +1521,7 @@ struct EnableMacroDependenciesSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::SUPERUSER, false, false};
 	static constexpr const char *DefaultValue = "false";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::GLOBAL_DEFAULT;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -1444,6 +1537,7 @@ struct EnableOptimisticWriteSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::SUPERUSER, false, false};
 	static constexpr const char *DefaultValue = "true";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::GLOBAL_DEFAULT;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -1457,6 +1551,7 @@ struct EnableOptimizerSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::USER, false, false};
 	static constexpr const char *DefaultValue = "true";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::GLOBAL_DEFAULT;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -1471,6 +1566,7 @@ struct EnableProfilingSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::USER, false, false};
 	static void SetLocal(ClientContext &context, const Value &parameter);
 	static void ResetLocal(ClientContext &context);
 	static Value GetSetting(const ClientContext &context);
@@ -1485,6 +1581,7 @@ struct EnableProgressBarSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::USER, false, false};
 	static void SetLocal(ClientContext &context, const Value &parameter);
 	static void ResetLocal(ClientContext &context);
 	static bool OnLocalSet(ClientContext &context, const Value &input);
@@ -1501,6 +1598,7 @@ struct EnableProgressBarPrintSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::SUPERUSER, false, false};
 	static void SetLocal(ClientContext &context, const Value &parameter);
 	static void ResetLocal(ClientContext &context);
 	static Value GetSetting(const ClientContext &context);
@@ -1515,6 +1613,7 @@ struct EnableViewDependenciesSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::SUPERUSER, false, false};
 	static constexpr const char *DefaultValue = "false";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::GLOBAL_DEFAULT;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -1528,6 +1627,7 @@ struct EnabledLogTypes {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::SUPERUSER, false, false};
 	static void SetGlobal(DatabaseInstance *db, DBConfig &config, const Value &parameter);
 	static void ResetGlobal(DatabaseInstance *db, DBConfig &config);
 	static Value GetSetting(const ClientContext &context);
@@ -1541,6 +1641,7 @@ struct ErrorOnDivisionByZeroSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::USER, false, false};
 	static constexpr const char *DefaultValue = "true";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::LOCAL_DEFAULT;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -1555,6 +1656,7 @@ struct ErrorsAsJSONSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::USER, false, false};
 	static constexpr const char *DefaultValue = "false";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::LOCAL_DEFAULT;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -1568,6 +1670,7 @@ struct ExperimentalMetadataReuseSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::SUPERUSER, false, false};
 	static constexpr const char *DefaultValue = "true";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::GLOBAL_ONLY;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -1583,6 +1686,7 @@ struct ExplainOutputSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::USER, false, false};
 	static constexpr const char *DefaultValue = "PHYSICAL_ONLY";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::LOCAL_DEFAULT;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -1599,6 +1703,7 @@ struct ExplainOutputFormatSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::USER, false, false};
 	static constexpr const char *DefaultValue = "DUCKDB_NATIVE";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::LOCAL_DEFAULT;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -1613,6 +1718,7 @@ struct ExtensionDirectoriesSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::SUPERUSER, true, false};
 	static void SetGlobal(DatabaseInstance *db, DBConfig &config, const Value &parameter);
 	static void ResetGlobal(DatabaseInstance *db, DBConfig &config);
 	static Value GetSetting(const ClientContext &context);
@@ -1626,6 +1732,7 @@ struct ExtensionDirectorySetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = true;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::SUPERUSER, true, false};
 	static constexpr const char *DefaultValue = "";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::GLOBAL_ONLY;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -1643,6 +1750,7 @@ struct ExtensionRepositoryDirectorySetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::SUPERUSER, true, false};
 	static constexpr const char *DefaultValue = "";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::GLOBAL_ONLY;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -1659,6 +1767,7 @@ struct ExternalFileCacheLocalMaxBlockSizeSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::SUPERUSER, false, false};
 	static constexpr const char *DefaultValue = "16384";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::GLOBAL_DEFAULT;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -1675,6 +1784,7 @@ struct ExternalFileCacheRemoteMaxBlockSizeSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::SUPERUSER, false, false};
 	static constexpr const char *DefaultValue = "2097152";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::GLOBAL_DEFAULT;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -1690,6 +1800,7 @@ struct ExternalFileCacheRemoteMinBlockSizeSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::SUPERUSER, false, false};
 	static constexpr const char *DefaultValue = "4096";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::GLOBAL_DEFAULT;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -1706,6 +1817,7 @@ struct ExternalFileCacheSpillSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::SUPERUSER, false, false};
 	static constexpr const char *DefaultValue = "false";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::GLOBAL_ONLY;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -1719,6 +1831,7 @@ struct ExternalThreadsSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::INTERNAL, false, false};
 	static constexpr const char *DefaultValue = "1";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::GLOBAL_ONLY;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -1733,6 +1846,7 @@ struct FileSearchPathSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::SUPERUSER, true, false};
 	static constexpr const char *DefaultValue = "";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::LOCAL_DEFAULT;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -1749,6 +1863,7 @@ struct FilterReorderSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::USER, false, false};
 	static constexpr const char *DefaultValue = "fast";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::LOCAL_DEFAULT;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -1765,6 +1880,7 @@ struct ForceColumnMetadataReuseSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::SUPERUSER, false, false};
 	static constexpr const char *DefaultValue = "false";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::GLOBAL_ONLY;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -1779,6 +1895,7 @@ struct ForceCompressionSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::SUPERUSER, false, false};
 	static constexpr const char *DefaultValue = "auto";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::GLOBAL_ONLY;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -1797,6 +1914,7 @@ struct ForceDictFsstModeSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::SUPERUSER, false, false};
 	static constexpr const char *DefaultValue = "DEFAULT";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::GLOBAL_ONLY;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -1813,6 +1931,7 @@ struct FsyncModeSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::SUPERUSER, false, false};
 	static constexpr const char *DefaultValue = "STANDARD";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::GLOBAL_ONLY;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -1828,6 +1947,7 @@ struct GeometryMinimumShreddingSize {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::SUPERUSER, false, false};
 	static constexpr const char *DefaultValue = "30000";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::GLOBAL_ONLY;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -1841,6 +1961,7 @@ struct HomeDirectorySetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::SUPERUSER, true, false};
 	static constexpr const char *DefaultValue = "";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::LOCAL_DEFAULT;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -1856,6 +1977,7 @@ struct HTTPClientPoolCapacitySetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::SUPERUSER, false, false};
 	static void SetGlobal(DatabaseInstance *db, DBConfig &config, const Value &parameter);
 	static void ResetGlobal(DatabaseInstance *db, DBConfig &config);
 	static Value GetSetting(const ClientContext &context);
@@ -1869,6 +1991,7 @@ struct HTTPProxySetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::SUPERUSER, false, false};
 	static void SetGlobal(DatabaseInstance *db, DBConfig &config, const Value &parameter);
 	static void ResetGlobal(DatabaseInstance *db, DBConfig &config);
 	static Value GetSetting(const ClientContext &context);
@@ -1882,6 +2005,7 @@ struct HTTPProxyPasswordSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::SUPERUSER, true, false};
 	static constexpr const char *DefaultValue = "";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::GLOBAL_ONLY;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -1895,6 +2019,7 @@ struct HTTPProxyUsernameSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::SUPERUSER, true, false};
 	static constexpr const char *DefaultValue = "";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::GLOBAL_ONLY;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -1909,6 +2034,7 @@ struct IeeeFloatingPointOpsSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::USER, false, false};
 	static constexpr const char *DefaultValue = "true";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::LOCAL_DEFAULT;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -1923,6 +2049,7 @@ struct IgnoreUnknownCrsSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::USER, false, false};
 	static constexpr const char *DefaultValue = "false";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::LOCAL_DEFAULT;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -1937,6 +2064,7 @@ struct ImmediateTransactionModeSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::USER, false, false};
 	static constexpr const char *DefaultValue = "false";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::GLOBAL_DEFAULT;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -1952,6 +2080,7 @@ struct IndexScanMaxCountSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::USER, false, false};
 	static constexpr const char *DefaultValue = "2048";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::GLOBAL_DEFAULT;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -1967,6 +2096,7 @@ struct IndexScanPercentageSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::USER, false, false};
 	static constexpr const char *DefaultValue = "0.001";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::GLOBAL_DEFAULT;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -1984,6 +2114,7 @@ struct InitialColumnSegmentSizeSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::SUPERUSER, false, false};
 	static constexpr const char *DefaultValue = "2048";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::GLOBAL_DEFAULT;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -1999,6 +2130,7 @@ struct IntegerDivisionSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::USER, false, false};
 	static constexpr const char *DefaultValue = "false";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::LOCAL_DEFAULT;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -2014,6 +2146,7 @@ struct IntegerOverflowSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::USER, false, false};
 	static constexpr const char *DefaultValue = "ERROR";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::LOCAL_DEFAULT;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -2029,6 +2162,7 @@ struct LambdaSyntaxSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = true;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::USER, false, false};
 	static constexpr const char *DefaultValue = "DEFAULT";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::LOCAL_DEFAULT;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -2046,6 +2180,7 @@ struct LateMaterializationLookupMaxRowsSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::USER, false, false};
 	static constexpr const char *DefaultValue = "2048";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::LOCAL_DEFAULT;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -2060,6 +2195,7 @@ struct LateMaterializationMaxRowsSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::USER, false, false};
 	static constexpr const char *DefaultValue = "50";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::LOCAL_DEFAULT;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -2074,6 +2210,7 @@ struct LegacyDisableNullTypeSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::USER, false, false};
 	static constexpr const char *DefaultValue = "false";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::LOCAL_DEFAULT;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -2088,6 +2225,7 @@ struct LockConfigurationSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::SUPERUSER, false, false};
 	static constexpr const char *DefaultValue = "false";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::GLOBAL_ONLY;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -2102,6 +2240,7 @@ struct LogQueryPathSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::SUPERUSER, true, false};
 	static constexpr const char *DefaultValue = "";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::LOCAL_DEFAULT;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -2116,6 +2255,7 @@ struct LoggingLevel {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::SUPERUSER, false, false};
 	static void SetGlobal(DatabaseInstance *db, DBConfig &config, const Value &parameter);
 	static void ResetGlobal(DatabaseInstance *db, DBConfig &config);
 	static Value GetSetting(const ClientContext &context);
@@ -2129,6 +2269,7 @@ struct LoggingMode {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::SUPERUSER, false, false};
 	static void SetGlobal(DatabaseInstance *db, DBConfig &config, const Value &parameter);
 	static void ResetGlobal(DatabaseInstance *db, DBConfig &config);
 	static Value GetSetting(const ClientContext &context);
@@ -2143,6 +2284,7 @@ struct LoggingStorage {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::SUPERUSER, false, false};
 	static void SetGlobal(DatabaseInstance *db, DBConfig &config, const Value &parameter);
 	static void ResetGlobal(DatabaseInstance *db, DBConfig &config);
 	static Value GetSetting(const ClientContext &context);
@@ -2159,6 +2301,7 @@ struct MatchRecognizeMaxStatesSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::USER, false, false};
 	static constexpr const char *DefaultValue = "1000000";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::LOCAL_DEFAULT;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -2172,6 +2315,7 @@ struct MaxExecutionTimeSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::USER, false, false};
 	static constexpr const char *DefaultValue = "0";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::LOCAL_DEFAULT;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -2185,6 +2329,7 @@ struct MaxMemorySetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::SUPERUSER, false, false};
 	static void SetGlobal(DatabaseInstance *db, DBConfig &config, const Value &parameter);
 	static void ResetGlobal(DatabaseInstance *db, DBConfig &config);
 	static Value GetSetting(const ClientContext &context);
@@ -2201,6 +2346,7 @@ struct MaxStreamingBufferSizeSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::USER, false, false};
 	static void SetLocal(ClientContext &context, const Value &parameter);
 	static void ResetLocal(ClientContext &context);
 	static Value GetSetting(const ClientContext &context);
@@ -2215,6 +2361,7 @@ struct MaxTempDirectorySizeSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::SUPERUSER, false, false};
 	static void SetGlobal(DatabaseInstance *db, DBConfig &config, const Value &parameter);
 	static void ResetGlobal(DatabaseInstance *db, DBConfig &config);
 	static Value GetSetting(const ClientContext &context);
@@ -2228,6 +2375,7 @@ struct MaxVacuumTasksSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::SUPERUSER, false, false};
 	static constexpr const char *DefaultValue = "100";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::GLOBAL_ONLY;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -2241,6 +2389,7 @@ struct MergeJoinThresholdSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::USER, false, false};
 	static constexpr const char *DefaultValue = "1000";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::LOCAL_DEFAULT;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -2255,6 +2404,7 @@ struct NestedLoopJoinThresholdSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::USER, false, false};
 	static constexpr const char *DefaultValue = "5";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::LOCAL_DEFAULT;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -2269,6 +2419,7 @@ struct OldImplicitCastingSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = true;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::USER, false, false};
 	static constexpr const char *DefaultValue = "false";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::GLOBAL_DEFAULT;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -2284,6 +2435,7 @@ struct OperatorMemoryLimitSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::USER, false, false};
 	static void SetLocal(ClientContext &context, const Value &parameter);
 	static void ResetLocal(ClientContext &context);
 	static Value GetSetting(const ClientContext &context);
@@ -2299,6 +2451,7 @@ struct OrderByNonIntegerLiteralSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::USER, false, false};
 	static constexpr const char *DefaultValue = "false";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::LOCAL_DEFAULT;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -2312,6 +2465,7 @@ struct OrderedAggregateThresholdSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::USER, false, false};
 	static constexpr const char *DefaultValue = "262144";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::LOCAL_DEFAULT;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -2327,6 +2481,7 @@ struct PartitionedWriteFlushThresholdSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::USER, false, false};
 	static constexpr const char *DefaultValue = "524288";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::LOCAL_DEFAULT;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -2341,6 +2496,7 @@ struct PartitionedWriteMaxOpenFilesSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::USER, false, false};
 	static constexpr const char *DefaultValue = "100";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::LOCAL_DEFAULT;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -2354,6 +2510,7 @@ struct PerfectHtThresholdSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::USER, false, false};
 	static constexpr const char *DefaultValue = "12";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::LOCAL_DEFAULT;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -2369,6 +2526,7 @@ struct PinThreadsSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::SUPERUSER, false, false};
 	static constexpr const char *DefaultValue = "auto";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::GLOBAL_ONLY;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -2384,6 +2542,7 @@ struct PivotFilterThresholdSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::USER, false, false};
 	static constexpr const char *DefaultValue = "20";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::LOCAL_DEFAULT;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -2397,6 +2556,7 @@ struct PivotLimitSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::USER, false, false};
 	static constexpr const char *DefaultValue = "100000";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::LOCAL_DEFAULT;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -2410,6 +2570,7 @@ struct PreferRangeJoinsSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::USER, false, false};
 	static constexpr const char *DefaultValue = "false";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::LOCAL_DEFAULT;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -2424,6 +2585,7 @@ struct PreserveIdentifierCaseSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::USER, false, false};
 	static constexpr const char *DefaultValue = "preserve_case";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::LOCAL_DEFAULT;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -2440,6 +2602,7 @@ struct PreserveInsertionOrderSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::USER, false, false};
 	static constexpr const char *DefaultValue = "true";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::GLOBAL_DEFAULT;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -2453,6 +2616,7 @@ struct ProduceArrowStringViewSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = true;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::USER, false, false};
 	static constexpr const char *DefaultValue = "false";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::GLOBAL_DEFAULT;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -2468,6 +2632,7 @@ struct ProfilingCoverageSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::USER, false, false};
 	static void SetLocal(ClientContext &context, const Value &parameter);
 	static void ResetLocal(ClientContext &context);
 	static Value GetSetting(const ClientContext &context);
@@ -2482,6 +2647,7 @@ struct ProfilingModeSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = true;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::USER, false, false};
 	static void SetLocal(ClientContext &context, const Value &parameter);
 	static void ResetLocal(ClientContext &context);
 	static Value GetSetting(const ClientContext &context);
@@ -2496,6 +2662,7 @@ struct ProfilingOutputSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::SUPERUSER, true, false};
 	static void SetLocal(ClientContext &context, const Value &parameter);
 	static void ResetLocal(ClientContext &context);
 	static Value GetSetting(const ClientContext &context);
@@ -2511,6 +2678,7 @@ struct ProfilingRendererSettingsSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::USER, false, false};
 	static void SetLocal(ClientContext &context, const Value &parameter);
 	static void ResetLocal(ClientContext &context);
 	static Value GetSetting(const ClientContext &context);
@@ -2525,6 +2693,7 @@ struct ProgressBarTimeSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::USER, false, false};
 	static void SetLocal(ClientContext &context, const Value &parameter);
 	static void ResetLocal(ClientContext &context);
 	static Value GetSetting(const ClientContext &context);
@@ -2539,6 +2708,7 @@ struct ReadAheadDepthSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::SUPERUSER, false, false};
 	static constexpr const char *DefaultValue = "-1";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::GLOBAL_DEFAULT;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -2554,6 +2724,7 @@ struct RegexMatchOperatorSemanticsSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::USER, false, false};
 	static constexpr const char *DefaultValue = "partial";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::LOCAL_DEFAULT;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -2570,6 +2741,7 @@ struct ScalarSubqueryErrorOnMultipleRowsSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::USER, false, false};
 	static constexpr const char *DefaultValue = "true";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::LOCAL_DEFAULT;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -2584,6 +2756,7 @@ struct SchemaSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::USER, false, false};
 	static void SetLocal(ClientContext &context, const Value &parameter);
 	static void ResetLocal(ClientContext &context);
 	static Value GetSetting(const ClientContext &context);
@@ -2598,6 +2771,7 @@ struct SearchPathSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::USER, false, false};
 	static void SetLocal(ClientContext &context, const Value &parameter);
 	static void ResetLocal(ClientContext &context);
 	static Value GetSetting(const ClientContext &context);
@@ -2611,6 +2785,7 @@ struct SecretDirectorySetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::SUPERUSER, true, false};
 	static void SetGlobal(DatabaseInstance *db, DBConfig &config, const Value &parameter);
 	static void ResetGlobal(DatabaseInstance *db, DBConfig &config);
 	static Value GetSetting(const ClientContext &context);
@@ -2626,6 +2801,7 @@ struct ShowBehaviorSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::USER, false, false};
 	static constexpr const char *DefaultValue = "AUTO";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::LOCAL_DEFAULT;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -2640,6 +2816,7 @@ struct StandardVectorSizeSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::SUPERUSER, false, false};
 	static void SetGlobal(DatabaseInstance *db, DBConfig &config, const Value &parameter);
 	static void ResetGlobal(DatabaseInstance *db, DBConfig &config);
 	static Value GetSetting(const ClientContext &context);
@@ -2653,6 +2830,7 @@ struct StorageBlockPrefetchSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::SUPERUSER, false, false};
 	static constexpr const char *DefaultValue = "REMOTE_ONLY";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::GLOBAL_ONLY;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -2669,6 +2847,7 @@ struct StorageCompatibilityVersionSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::SUPERUSER, false, false};
 	static void SetGlobal(DatabaseInstance *db, DBConfig &config, const Value &parameter);
 	static void ResetGlobal(DatabaseInstance *db, DBConfig &config);
 	static Value GetSetting(const ClientContext &context);
@@ -2683,6 +2862,7 @@ struct TableFunctionIdentifierConversionSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::USER, false, false};
 	static constexpr const char *DefaultValue = "DEFAULT";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::LOCAL_DEFAULT;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -2697,6 +2877,7 @@ struct TempDirectorySetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::SUPERUSER, true, false};
 	static void SetGlobal(DatabaseInstance *db, DBConfig &config, const Value &parameter);
 	static void ResetGlobal(DatabaseInstance *db, DBConfig &config);
 	static Value GetSetting(const ClientContext &context);
@@ -2710,6 +2891,7 @@ struct TempFileEncryptionSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::SUPERUSER, false, false};
 	static constexpr const char *DefaultValue = "false";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::GLOBAL_ONLY;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -2725,6 +2907,7 @@ struct ThreadsSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::USER, false, false};
 	static void SetGlobal(DatabaseInstance *db, DBConfig &config, const Value &parameter);
 	static void ResetGlobal(DatabaseInstance *db, DBConfig &config);
 	static void SetLocal(ClientContext &context, const Value &parameter);
@@ -2741,6 +2924,7 @@ struct TrackedMetricsSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::USER, false, false};
 	static void SetLocal(ClientContext &context, const Value &parameter);
 	static void ResetLocal(ClientContext &context);
 	static Value GetSetting(const ClientContext &context);
@@ -2754,6 +2938,7 @@ struct TransactionIsolationSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = true;
+	static constexpr SettingAccess Access = {SettingContext::USER, false, false};
 	static void SetLocal(ClientContext &context, const Value &parameter);
 	static void ResetLocal(ClientContext &context);
 	static Value GetSetting(const ClientContext &context);
@@ -2770,6 +2955,7 @@ struct VacuumRebuildIndexesSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = true;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::SUPERUSER, false, false};
 	static constexpr const char *DefaultValue = "0";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::GLOBAL_DEFAULT;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -2786,6 +2972,7 @@ struct ValidateExternalFileCacheSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::SUPERUSER, false, false};
 	static constexpr const char *DefaultValue = "VALIDATE_ALL";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::GLOBAL_DEFAULT;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -2802,6 +2989,7 @@ struct VariantMinimumShreddingSizeSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::SUPERUSER, false, false};
 	static constexpr const char *DefaultValue = "30000";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::GLOBAL_ONLY;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -2816,6 +3004,7 @@ struct WalAutocheckpointEntriesSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::SUPERUSER, false, false};
 	static constexpr const char *DefaultValue = "0";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::GLOBAL_DEFAULT;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -2829,6 +3018,7 @@ struct WarningsAsErrorsSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::SUPERUSER, false, false};
 	static constexpr const char *DefaultValue = "false";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::GLOBAL_ONLY;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -2844,6 +3034,7 @@ struct WriteBufferRowGroupCountSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::SUPERUSER, false, false};
 	static constexpr const char *DefaultValue = "5";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::GLOBAL_DEFAULT;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -2860,6 +3051,7 @@ struct WriteBufferRowGroupMemoryLimitSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::SUPERUSER, false, false};
 	static void SetGlobal(DatabaseInstance *db, DBConfig &config, const Value &parameter);
 	static void ResetGlobal(DatabaseInstance *db, DBConfig &config);
 	static Value GetSetting(const ClientContext &context);
@@ -2874,6 +3066,7 @@ struct ZstdMinStringLengthSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
+	static constexpr SettingAccess Access = {SettingContext::SUPERUSER, false, false};
 	static constexpr const char *DefaultValue = "4096";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::GLOBAL_ONLY;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
