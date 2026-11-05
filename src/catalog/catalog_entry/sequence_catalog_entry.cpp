@@ -119,6 +119,15 @@ void SequenceCatalogEntry::SetAsRoot(optional_ptr<CatalogTransaction> transactio
 	state->generation = generation;
 }
 
+void SequenceCatalogEntry::Rollback(CatalogEntry &prev_entry) {
+	if (prev_entry.type != CatalogType::SEQUENCE_ENTRY) {
+		return;
+	}
+	auto &previous = prev_entry.Cast<SequenceCatalogEntry>();
+	lock_guard<mutex> seqlock(previous.state->lock);
+	previous.state->generation = previous.generation;
+}
+
 SequenceData SequenceCatalogEntry::Restarted(RestartSequenceInfo &info) const {
 	auto result = state->data;
 	const auto counter = info.restart_with.value_or(result.start_value);

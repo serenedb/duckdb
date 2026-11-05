@@ -103,6 +103,7 @@ public:
 	unique_ptr<CreateInfo> GetInfo() const override;
 	unique_ptr<CatalogEntry> AlterEntry(ClientContext &context, AlterInfo &info) override;
 	void SetAsRoot(optional_ptr<CatalogTransaction> transaction, optional_ptr<CatalogEntry> previous) override;
+	void Rollback(CatalogEntry &prev_entry) override;
 
 	SequenceData GetData() const;
 	int64_t CurrentValue(SequenceSession &session);
