@@ -1010,6 +1010,13 @@ BoundStatement Binder::Bind(AlterStatement &stmt) {
 	if (stmt.info->GetNewName()) {
 		RequireSchemaCreate(entry->ParentSchema(context));
 	}
+	if (auto new_schema = stmt.info->GetNewSchema()) {
+		EntryLookupInfo schema_lookup(CatalogType::SCHEMA_ENTRY,
+		                              QualifiedName(entry->ParentCatalog().GetName(), Identifier(), *new_schema));
+		if (auto target = Catalog::GetSchema(entry_retriever, schema_lookup, OnEntryNotFound::RETURN_NULL)) {
+			RequireSchemaCreate(*target);
+		}
+	}
 	auto &catalog = entry->ParentCatalog();
 
 	// Bind types in the same catalog as the entry
