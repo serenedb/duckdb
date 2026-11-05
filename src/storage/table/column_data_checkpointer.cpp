@@ -53,6 +53,22 @@ void ColumnDataCheckpointData::FlushSegmentInternal(unique_ptr<ColumnSegment> se
 	checkpoint_state->FlushSegmentInternal(std::move(segment), segment_size);
 }
 
+unique_ptr<ColumnSegment> ColumnDataCheckpointData::CreateTransientSegment(const CompressionFunction &function,
+                                                                           idx_t segment_size,
+                                                                           BlockManager &segment_block_manager) {
+	if (create_segment_fn) {
+		return create_segment_fn(function, segment_size, segment_block_manager);
+	}
+	return ColumnSegment::CreateTransientSegment(*db, function, type, segment_size, segment_block_manager);
+}
+
+Allocator &ColumnDataCheckpointData::GetAllocator() {
+	if (allocator) {
+		return *allocator;
+	}
+	return BufferManager::GetBufferManager(*db).GetBufferAllocator();
+}
+
 BlockManager &ColumnDataCheckpointData::GetBlockManager() {
 	if (block_manager) {
 		return *block_manager;

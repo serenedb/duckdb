@@ -46,6 +46,11 @@ shared_ptr<BlockHandle> BufferManager::RegisterTransientMemory(const idx_t size,
 	throw NotImplementedException("This type of BufferManager can not create 'transient-memory' blocks");
 }
 
+BufferHandle BufferManager::AllocateTransientMemory(const idx_t size, BlockManager &block_manager,
+                                                    BufferPoolReservation &source) {
+	throw NotImplementedException("This type of BufferManager can not create 'transient-memory' blocks");
+}
+
 shared_ptr<BlockHandle> BufferManager::RegisterSmallMemory(const idx_t size) {
 	return RegisterSmallMemory(MemoryTag::BASE_TABLE, size);
 }
