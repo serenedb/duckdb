@@ -491,6 +491,8 @@ void TableIndexList::Bind(ClientContext &context, TableCatalogEntry &table, cons
 
 		// Create a binder to bind this index.
 		auto binder = Binder::CreateBinder(context);
+		binder->BindUnchecked();
+		binder->EntryRetriever().SetCheckAs(&RoleAccess::System());
 
 		// Add the table to the binder.
 		vector<ColumnIndex> dummy_column_ids;

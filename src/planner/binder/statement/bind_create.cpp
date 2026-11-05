@@ -421,12 +421,14 @@ private:
 	LogicalDependencyList &dependencies;
 };
 
-void Binder::BindView(ClientContext &context, const SelectStatement &stmt, const Identifier &catalog_name,
-                      const Identifier &schema_name, optional_ptr<LogicalDependencyList> dependencies,
-                      optional_ptr<vector<NameBinding>> name_bindings, const vector<Identifier> &aliases,
-                      vector<LogicalType> &result_types, vector<Identifier> &result_names) {
+void Binder::BindView(ClientContext &context, const RoleAccess &lookups, const SelectStatement &stmt,
+                      const Identifier &catalog_name, const Identifier &schema_name,
+                      optional_ptr<LogicalDependencyList> dependencies, optional_ptr<vector<NameBinding>> name_bindings,
+                      const vector<Identifier> &aliases, vector<LogicalType> &result_types,
+                      vector<Identifier> &result_names) {
 	auto view_binder = Binder::CreateBinder(context);
 	view_binder->BindUnchecked();
+	view_binder->entry_retriever.SetCheckAs(&lookups);
 	auto &catalog = Catalog::GetCatalog(context, catalog_name);
 
 	if (dependencies) {
@@ -494,8 +496,8 @@ void Binder::BindCreateViewInfo(CreateViewInfo &base) {
 	if (catalog.Compatibility() == SqlCompatibility::POSTGRES && !catalog.IsTemporaryCatalog()) {
 		name_bindings = base.name_bindings;
 	}
-	BindView(context, *base.query, base.GetQualifiedName().Catalog(), base.GetQualifiedName().Schema(), dependencies,
-	         name_bindings, base.aliases, base.types, base.names);
+	BindView(context, CheckAs(), *base.query, base.GetQualifiedName().Catalog(), base.GetQualifiedName().Schema(),
+	         dependencies, name_bindings, base.aliases, base.types, base.names);
 }
 
 static void OwnDefinedOverloads(CreateInfo &info, idx_t defined) {
