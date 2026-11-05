@@ -41,6 +41,17 @@ bool CanInferConstantFromNumericBounds(const Value &value) {
 	}
 }
 
+bool IsFiniteBound(const Value &value) {
+	switch (value.type().id()) {
+	case LogicalTypeId::FLOAT:
+		return Value::IsFinite(value.GetValue<float>());
+	case LogicalTypeId::DOUBLE:
+		return Value::IsFinite(value.GetValue<double>());
+	default:
+		return true;
+	}
+}
+
 bool TryInferConstantBounds(const BaseStatistics &stats, Value &constant) {
 	if (stats.CanHaveNull() && !stats.CanHaveNoNull()) {
 		constant = Value(stats.GetType());
@@ -145,6 +156,9 @@ unique_ptr<BaseStatistics> StatisticsPropagator::PropagateMonotoneBounds(ClientC
 		}
 		Value lo = NumericStats::Min(cs);
 		Value hi = NumericStats::Max(cs);
+		if (!IsFiniteBound(lo) || !IsFiniteBound(hi)) {
+			return nullptr;
+		}
 
 		if (!IsKnownMonotonic(m)) {
 			return nullptr;
