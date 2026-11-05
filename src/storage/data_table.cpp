@@ -815,7 +815,7 @@ bool DataTable::CanFetch(DuckTransaction &transaction, const row_t row_id) {
 //===--------------------------------------------------------------------===//
 // Append
 //===--------------------------------------------------------------------===//
-static void VerifyNotNullConstraint(TableCatalogEntry &table, const Vector &vector, const Identifier &col_name) {
+static void VerifyNotNullConstraint(const TableCatalogEntry &table, const Vector &vector, const Identifier &col_name) {
 	if (!VectorOperations::HasNull(vector)) {
 		return;
 	}
@@ -842,7 +842,7 @@ static void VerifyGeneratedExpressionSuccess(ClientContext &context, TableCatalo
 	}
 }
 
-static void VerifyCheckConstraintExpression(ClientContext &context, TableCatalogEntry &table, Expression &expr,
+static void VerifyCheckConstraintExpression(ClientContext &context, const TableCatalogEntry &table, Expression &expr,
                                             DataChunk &chunk, const string &check_text) {
 	ExpressionExecutor executor(context, expr);
 	Vector result(LogicalType::INTEGER);
@@ -864,9 +864,28 @@ static void VerifyCheckConstraintExpression(ClientContext &context, TableCatalog
 	}
 }
 
-static void VerifyCheckConstraint(ClientContext &context, TableCatalogEntry &table, Expression &expr, DataChunk &chunk,
-                                  CheckConstraint &check) {
+static void VerifyCheckConstraint(ClientContext &context, const TableCatalogEntry &table, Expression &expr,
+                                  DataChunk &chunk, const CheckConstraint &check) {
 	VerifyCheckConstraintExpression(context, table, expr, chunk, check.ToString());
+}
+
+void DataTable::VerifyRowConstraint(ClientContext &context, const TableCatalogEntry &table,
+                                    const BoundConstraint &constraint, DataChunk &chunk) {
+	switch (constraint.type) {
+	case ConstraintType::NOT_NULL: {
+		auto &not_null = constraint.Cast<BoundNotNullConstraint>();
+		VerifyNotNullConstraint(table, chunk.data[not_null.index.index],
+		                        table.GetColumns().GetColumn(not_null.index).Name());
+		break;
+	}
+	case ConstraintType::CHECK: {
+		auto &check = constraint.Cast<BoundCheckConstraint>();
+		VerifyCheckConstraint(context, table, *check.expression, chunk, check.source);
+		break;
+	}
+	default:
+		throw InternalException("VerifyRowConstraint: not a NOT NULL or CHECK constraint");
+	}
 }
 
 static idx_t FirstMissingMatch(ConflictManager &manager, const idx_t count) {
@@ -1101,19 +1120,10 @@ void DataTable::VerifyAppendConstraints(ConstraintState &constraint_state, Clien
 		}
 		auto &base_constraint = constraints[i];
 		switch (base_constraint->type) {
-		case ConstraintType::NOT_NULL: {
-			auto &bound_not_null = constraint->Cast<BoundNotNullConstraint>();
-			auto &not_null = base_constraint->Cast<NotNullConstraint>();
-			auto &col = table.GetColumns().GetColumn(LogicalIndex(not_null.index));
-			VerifyNotNullConstraint(table, chunk.data[bound_not_null.index.index], col.Name());
+		case ConstraintType::NOT_NULL:
+		case ConstraintType::CHECK:
+			VerifyRowConstraint(context, table, *constraint, chunk);
 			break;
-		}
-		case ConstraintType::CHECK: {
-			auto &check = base_constraint->Cast<CheckConstraint>();
-			auto &bound_check = constraint->Cast<BoundCheckConstraint>();
-			VerifyCheckConstraint(context, table, *bound_check.expression, chunk, check);
-			break;
-		}
 		case ConstraintType::UNIQUE: {
 			// These were handled earlier.
 			break;

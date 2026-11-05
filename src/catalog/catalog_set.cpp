@@ -359,7 +359,9 @@ bool CatalogSet::AlterOwnership(CatalogTransaction transaction, ChangeOwnershipI
 		write_lock.unlock();
 		dependencies.RemoveOwnership(transaction, *entry);
 		dependencies.AddOwnership(transaction, owner, *entry);
-		SetOwnerColumn(*entry, owner.Cast<TableCatalogEntry>().GetColumn(info.owner_path.back()).CatalogOid());
+		const auto column = owner.Cast<TableCatalogEntry>().GetColumn(info.owner_path.back()).CatalogOid();
+		D_ASSERT(column != 0);
+		SetOwnerColumn(*entry, column);
 		return true;
 	}
 	optional_ptr<CatalogEntry> owner_entry;

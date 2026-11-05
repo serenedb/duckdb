@@ -420,7 +420,7 @@ private:
 //===--------------------------------------------------------------------===//
 struct ChangeColumnTypeInfo : public AlterTableInfo {
 	ChangeColumnTypeInfo(const AlterEntryData &data, vector<Identifier> column_path, LogicalType target_type,
-	                     unique_ptr<ParsedExpression> expression);
+	                     unique_ptr<ParsedExpression> expression, idx_t catalog_oid_p = 0);
 	~ChangeColumnTypeInfo() override;
 
 	//! Path to the column to alter, e.g. ["s", "a"] for "s.a"
@@ -429,6 +429,7 @@ struct ChangeColumnTypeInfo : public AlterTableInfo {
 	LogicalType target_type;
 	//! The expression used for data conversion
 	unique_ptr<ParsedExpression> expression;
+	idx_t catalog_oid = 0;
 
 public:
 	unique_ptr<AlterInfo> Copy() const override;

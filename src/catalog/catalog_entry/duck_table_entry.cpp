@@ -177,19 +177,6 @@ vector<idx_t> DuckTableEntry::SyncIndexColumnLayout(DataTableInfo &info, const C
 	return info.SetIndexColumnLayout(logical_oids, std::move(physical_oids));
 }
 
-static void AssignColumnOids(Catalog &catalog, ColumnList &columns) {
-	auto &manager = catalog.GetDatabase().GetDatabaseManager();
-	const bool assign = catalog.Compatibility() == SqlCompatibility::POSTGRES;
-	for (idx_t i = 0; i < columns.LogicalColumnCount(); i++) {
-		auto &column = columns.GetColumnMutable(LogicalIndex(i));
-		if (column.CatalogOid()) {
-			manager.ClaimOid(column.CatalogOid());
-		} else if (assign) {
-			column.SetCatalogOid(manager.NextOid());
-		}
-	}
-}
-
 DuckTableEntry::DuckTableEntry(Catalog &catalog, SchemaCatalogEntry &schema, BoundCreateTableInfo &info,
                                shared_ptr<DataTable> inherited_storage, shared_ptr<CatalogSet> inherited_triggers)
     : TableCatalogEntry(catalog, schema, info.Base(), std::move(inherited_triggers)),

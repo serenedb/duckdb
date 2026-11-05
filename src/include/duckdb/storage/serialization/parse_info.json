@@ -288,6 +288,12 @@
         "type": "vector<Identifier>",
         "serialize_property": "column_path.size() > 1 ? column_path : vector<Identifier>()",
         "default": "vector<Identifier>()"
+      },
+      {
+        "id": 16788,
+        "name": "catalog_oid",
+        "type": "idx_t",
+        "version": "serenedb_v1"
       }
     ]
   },

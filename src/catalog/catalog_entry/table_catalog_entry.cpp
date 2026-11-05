@@ -55,6 +55,19 @@ bool TableCatalogEntry::OwnsIndex(const IndexCatalogEntry &index) const {
 	return index.table_oid == oid;
 }
 
+void TableCatalogEntry::AssignColumnOids(Catalog &catalog, ColumnList &columns) {
+	auto &manager = catalog.GetDatabase().GetDatabaseManager();
+	const bool assign = catalog.Compatibility() == SqlCompatibility::POSTGRES;
+	for (idx_t i = 0; i < columns.LogicalColumnCount(); i++) {
+		auto &column = columns.GetColumnMutable(LogicalIndex(i));
+		if (column.CatalogOid()) {
+			manager.ClaimOid(column.CatalogOid());
+		} else if (assign) {
+			column.SetCatalogOid(manager.NextOid());
+		}
+	}
+}
+
 TableCatalogEntry::TableCatalogEntry(Catalog &catalog, SchemaCatalogEntry &schema, CreateTableInfo &info,
                                      shared_ptr<CatalogSet> inherited_triggers)
     : StandardEntry(CatalogType::TABLE_ENTRY, schema, catalog, info.GetTableName(), info.oid),

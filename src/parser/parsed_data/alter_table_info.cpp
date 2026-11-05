@@ -549,16 +549,17 @@ ChangeColumnTypeInfo::ChangeColumnTypeInfo() : AlterTableInfo(AlterTableType::AL
 }
 
 ChangeColumnTypeInfo::ChangeColumnTypeInfo(const AlterEntryData &data, vector<Identifier> column_path,
-                                           LogicalType target_type, unique_ptr<ParsedExpression> expression)
+                                           LogicalType target_type, unique_ptr<ParsedExpression> expression,
+                                           idx_t catalog_oid_p)
     : AlterTableInfo(AlterTableType::ALTER_COLUMN_TYPE, data), column_path(std::move(column_path)),
-      target_type(std::move(target_type)), expression(std::move(expression)) {
+      target_type(std::move(target_type)), expression(std::move(expression)), catalog_oid(catalog_oid_p) {
 }
 ChangeColumnTypeInfo::~ChangeColumnTypeInfo() {
 }
 
 unique_ptr<AlterInfo> ChangeColumnTypeInfo::Copy() const {
 	return make_uniq_base<AlterInfo, ChangeColumnTypeInfo>(GetAlterEntryData(), column_path, target_type,
-	                                                       expression ? expression->Copy() : nullptr);
+	                                                       expression ? expression->Copy() : nullptr, catalog_oid);
 }
 
 string ChangeColumnTypeInfo::ToString() const {

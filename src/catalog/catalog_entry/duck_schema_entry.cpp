@@ -602,6 +602,42 @@ static void ReownOwnedSequences(Catalog &catalog, CatalogTransaction transaction
 	}
 }
 
+static void MoveOwnedSequences(Catalog &catalog, CatalogTransaction transaction, const TableCatalogEntry &previous,
+                               const TableCatalogEntry &current) {
+	unordered_map<idx_t, vector<reference<CatalogEntry>>> by_owner;
+	for (auto &owned : catalog.GetDependencyManager()->OwnedEntries(transaction, current)) {
+		auto &sequence = owned.get();
+		if (sequence.type != CatalogType::SEQUENCE_ENTRY) {
+			continue;
+		}
+		const auto owner = sequence.Cast<SequenceCatalogEntry>().owner_column;
+		if (owner.IsValid()) {
+			by_owner[owner.GetIndex()].push_back(sequence);
+		}
+	}
+	if (by_owner.empty()) {
+		return;
+	}
+	for (auto &column : current.GetColumns().Logical()) {
+		by_owner.erase(column.CatalogOid());
+	}
+	for (auto &column : previous.GetColumns().Logical()) {
+		const auto owned = by_owner.find(column.CatalogOid());
+		if (owned == by_owner.end() || !current.ColumnExists(column.Name())) {
+			continue;
+		}
+		for (auto &sequence : owned->second) {
+			auto &sequence_schema = sequence.get().ParentSchema(transaction);
+			ChangeOwnershipInfo ownership(
+			    CatalogType::SEQUENCE_ENTRY,
+			    AlterEntryData(sequence_schema.GetQualifiedName(sequence.get().name), OnEntryNotFound::THROW_EXCEPTION),
+			    Identifier(), Identifier());
+			ownership.owner_path = {current.name, column.Name()};
+			sequence_schema.Alter(transaction, ownership);
+		}
+	}
+}
+
 static void MoveAlong(DuckSchemaEntry &schema, CatalogTransaction transaction, const catalog_entry_vector_t &entries,
                       AlterInfo &info) {
 	for (auto &part : entries) {
@@ -687,6 +723,10 @@ void DuckSchemaEntry::Alter(CatalogTransaction transaction, AlterInfo &info) {
 			if (current && current.get() != previous.get()) {
 				current->Cast<TableCatalogEntry>().AlterDependentIndexes(transaction,
 				                                                         previous->Cast<TableCatalogEntry>());
+				if (catalog.Compatibility() == SqlCompatibility::POSTGRES) {
+					MoveOwnedSequences(catalog, transaction, previous->Cast<TableCatalogEntry>(),
+					                   current->Cast<TableCatalogEntry>());
+				}
 			}
 		}
 		if (info.type == AlterType::ALTER_PERMISSIONS && !info.Cast<AlterPermissionsInfo>().new_owner.empty() &&
