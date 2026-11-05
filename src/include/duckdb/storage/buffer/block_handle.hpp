@@ -258,11 +258,6 @@ public:
 	BufferPoolReservation &GetMemoryCharge() {
 		return memory_charge;
 	}
-	//! Resize the memory charge.
-	void ResizeMemory(BlockLock &l, idx_t alloc_size) {
-		VerifyMutex(l);
-		memory_charge.Resize(alloc_size);
-	}
 	//! Returns true, if there is a swizzled memory pointer, else false.
 	bool IsSwizzled() const {
 		return !unswizzled;

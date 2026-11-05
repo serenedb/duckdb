@@ -30,9 +30,4 @@ void BufferPoolReservation::Resize(idx_t new_size) {
 	size = new_size;
 }
 
-void BufferPoolReservation::Merge(BufferPoolReservation src) {
-	size += src.size;
-	src.size = 0;
-}
-
 } // namespace duckdb

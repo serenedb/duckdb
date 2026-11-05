@@ -32,7 +32,6 @@ struct BufferPoolReservation {
 	virtual ~BufferPoolReservation();
 
 	void Resize(idx_t new_size);
-	void Merge(BufferPoolReservation src);
 };
 
 struct TempBufferPoolReservation : BufferPoolReservation {
