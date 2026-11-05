@@ -50,7 +50,7 @@ void PhysicalReset::ResetExtensionVariable(ExecutionContext &context, DBConfig &
 	// The rollback observer only needs to see real changes; gate it with
 	// is_user_set so RESET ALL no-ops don't reach the sdb tracker.
 	if (context.client.setting_change_handler) {
-		context.client.setting_change_handler(context.client, name.GetIdentifierName(), effective_scope, reset_all);
+		context.client.setting_change_handler(context.client, name.GetIdentifierName(), effective_scope);
 	}
 
 	if (extension_option.reset_function) {
@@ -84,7 +84,7 @@ void PhysicalReset::ResetOption(ExecutionContext &context, DBConfig &config, con
 		// Gate the rollback observer on is_user_set so RESET ALL no-ops don't
 		// reach the sdb tracker.
 		if (context.client.setting_change_handler) {
-			context.client.setting_change_handler(context.client, name, variable_scope, reset_all);
+			context.client.setting_change_handler(context.client, name, variable_scope);
 		}
 		if (option.set_callback) {
 			SettingCallbackInfo info(context.client, variable_scope);
@@ -106,7 +106,7 @@ void PhysicalReset::ResetOption(ExecutionContext &context, DBConfig &config, con
 			throw CatalogException("option \"%s\" cannot be reset globally", option.name);
 		}
 		if (context.client.setting_change_handler) {
-			context.client.setting_change_handler(context.client, name, variable_scope, reset_all);
+			context.client.setting_change_handler(context.client, name, variable_scope);
 		}
 		auto &db = DatabaseInstance::GetDatabase(context.client);
 		config.ResetOption(&db, option);
@@ -127,7 +127,7 @@ void PhysicalReset::ResetOption(ExecutionContext &context, DBConfig &config, con
 		const bool had_post = context.client.TryGetCurrentSetting(option.name, post_value);
 		const bool changed = had_pre != had_post || !Value::NotDistinctFrom(pre_value, post_value);
 		if (changed && context.client.setting_change_handler) {
-			context.client.setting_change_handler(context.client, name, variable_scope, reset_all);
+			context.client.setting_change_handler(context.client, name, variable_scope);
 		}
 		break;
 	}
