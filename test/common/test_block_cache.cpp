@@ -3,7 +3,9 @@
 #include "duckdb/common/atomic.hpp"
 #include "duckdb/common/fault_points.hpp"
 #include "duckdb/common/local_file_system.hpp"
+#include "duckdb/common/memory_file_system.hpp"
 #include "duckdb/common/mutex.hpp"
+#include "duckdb/common/open_file_info.hpp"
 #include "duckdb/common/unordered_set.hpp"
 #include "duckdb/main/connection.hpp"
 #include "duckdb/main/database.hpp"
@@ -813,6 +815,123 @@ TEST_CASE("Block cache knows a published written file as the version its writer 
 	auto reopened = cache.OpenFile(path, found, false, nullptr);
 	REQUIRE(reopened->Info().validation.version_tag == "\"etag-1\"");
 	REQUIRE(cache.IsCached(*reopened, 0, BLOCK + 10));
+}
+
+namespace {
+
+//! Serves remote://<path> from the local file at <path>, counting the opens that were handed a version to expect
+class RemoteTestFileSystem : public LocalFileSystem {
+public:
+	static constexpr const char *PREFIX = "remote://";
+
+	string GetName() const override {
+		return "RemoteTestFileSystem";
+	}
+	bool CanHandleFile(const string &path) override {
+		return StringUtil::StartsWith(path, PREFIX);
+	}
+	unique_ptr<FileHandle> OpenFile(const string &path, FileOpenFlags flags,
+	                                optional_ptr<FileOpener> opener = nullptr) override {
+		return LocalFileSystem::OpenFile(Local(path), flags, opener);
+	}
+	void MoveFile(const string &source, const string &target, optional_ptr<FileOpener> opener = nullptr) override {
+		LocalFileSystem::MoveFile(Local(source), Local(target), opener);
+	}
+	void RemoveFile(const string &filename, optional_ptr<FileOpener> opener = nullptr) override {
+		LocalFileSystem::RemoveFile(Local(filename), opener);
+	}
+	bool TryRemoveFile(const string &filename, optional_ptr<FileOpener> opener = nullptr) override {
+		return LocalFileSystem::TryRemoveFile(Local(filename), opener);
+	}
+
+	atomic<idx_t> versioned_opens {0};
+
+protected:
+	bool SupportsOpenFileExtended() const override {
+		return true;
+	}
+	unique_ptr<FileHandle> OpenFileExtended(const OpenFileInfo &file, FileOpenFlags flags,
+	                                        optional_ptr<FileOpener> opener) override {
+		if (file.extended_info && file.extended_info->options.count("etag")) {
+			versioned_opens++;
+		}
+		return OpenFile(file.path, flags, opener);
+	}
+
+private:
+	static string Local(const string &path) {
+		return path.substr(strlen(PREFIX));
+	}
+};
+
+//! Publishes [path] as a file the block cache knows at version "v1"
+void PublishVersion(BlockCache &cache, const string &path, idx_t size) {
+	BlockCacheAppender appender(cache, cache.CreateWrittenFile(path));
+	WriteBlocks(appender, size);
+	appender.Finish("v1", Timestamp::FromEpochSeconds(1700000000));
+}
+
+} // namespace
+
+TEST_CASE("The database filesystem reads remote files through the block cache and forgets the ones it changes",
+          "[block_cache]") {
+	DuckDB db(nullptr);
+	auto &fs = FileSystem::GetFileSystem(*db.instance);
+	auto owned = make_uniq<RemoteTestFileSystem>();
+	auto &remote = *owned;
+	fs.RegisterSubSystem(std::move(owned));
+	auto &cache = BlockCache::Get(*db.instance);
+	TestFile file("database_fs_remote.bin", 2 * BLOCK + 10);
+	const string path = RemoteTestFileSystem::PREFIX + file.path;
+	BlockCacheFileInfo info;
+
+	auto fetched = fs.OpenBlockFile(path);
+	REQUIRE(fetched->GetSize() == 2 * BLOCK + 10);
+	REQUIRE(HoldsExpectedBytes(cache.Pin(*fetched, 1), 1));
+	REQUIRE(remote.versioned_opens == 0);
+
+	PublishVersion(cache, path, 2 * BLOCK + 10);
+	auto known = fs.OpenBlockFile(path);
+	REQUIRE(remote.versioned_opens == 1);
+	REQUIRE(cache.IsCached(*known, 0, 2 * BLOCK + 10));
+
+	fs.OpenFile(path, FileFlags::FILE_FLAGS_READ)->Close();
+	REQUIRE(cache.TryGetFile(path, info));
+	fs.OpenFile(path, FileFlags::FILE_FLAGS_WRITE)->Close();
+	REQUIRE_FALSE(cache.TryGetFile(path, info));
+
+	const string moved = path + ".moved";
+	PublishVersion(cache, path, BLOCK);
+	PublishVersion(cache, moved, BLOCK);
+	fs.MoveFile(path, moved);
+	REQUIRE_FALSE(cache.TryGetFile(path, info));
+	REQUIRE_FALSE(cache.TryGetFile(moved, info));
+
+	PublishVersion(cache, moved, BLOCK);
+	REQUIRE(fs.TryRemoveFile(moved));
+	REQUIRE_FALSE(cache.TryGetFile(moved, info));
+	PublishVersion(cache, moved, BLOCK);
+	REQUIRE_FALSE(fs.TryRemoveFile(moved));
+	REQUIRE(cache.TryGetFile(moved, info));
+
+	TestFile removed("database_fs_removed.bin", BLOCK);
+	TestFile batch("database_fs_batch.bin", BLOCK);
+	const string removed_path = RemoteTestFileSystem::PREFIX + removed.path;
+	const string batch_path = RemoteTestFileSystem::PREFIX + batch.path;
+	PublishVersion(cache, removed_path, BLOCK);
+	PublishVersion(cache, batch_path, BLOCK);
+	fs.RemoveFile(removed_path);
+	fs.RemoveFiles({batch_path});
+	REQUIRE_FALSE(cache.TryGetFile(removed_path, info));
+	REQUIRE_FALSE(cache.TryGetFile(batch_path, info));
+
+	REQUIRE_FALSE(fs.OpenBlockFile(file.path));
+	const string memory = string(MemoryFileSystem::PREFIX) + "database_fs.bin";
+	auto writer = fs.OpenFile(memory, FileFlags::FILE_FLAGS_WRITE | FileFlags::FILE_FLAGS_FILE_CREATE_NEW);
+	uint8_t byte = 1;
+	writer->Write(QueryContext(), &byte, 1, 0);
+	writer->Close();
+	REQUIRE(fs.OpenBlockFile(memory));
 }
 
 TEST_CASE("Block cache forgets files no one opens and holds no block of", "[block_cache]") {

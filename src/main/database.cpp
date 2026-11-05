@@ -38,6 +38,8 @@
 #include "duckdb/storage/buffer/buffer_pool.hpp"
 #include "duckdb/storage/compression/empty_validity.hpp"
 #include "duckdb/common/memory_file_system.hpp"
+#include "duckdb/common/open_file_info.hpp"
+#include "duckdb/common/path.hpp"
 #include "duckdb/storage/block_cache/block_cache.hpp"
 #include "duckdb/storage/object_cache.hpp"
 #include "duckdb/storage/shared_object_cache.hpp"
@@ -473,6 +475,75 @@ FileSystem &DatabaseInstance::GetFileSystem() {
 
 FileSystem &DatabaseInstance::GetLocalFileSystem() {
 	return *local_db_file_system;
+}
+
+bool DatabaseFileSystem::IsRemote(const string &path) {
+	return StringUtil::Contains(path, "://") && !StringUtil::StartsWith(path, MemoryFileSystem::PREFIX) &&
+	       Path::FromString(path).IsRemote();
+}
+
+void DatabaseFileSystem::ForgetRemoteFile(const string &path) {
+	if (IsRemote(path)) {
+		BlockCache::Get(db).ForgetFile(path);
+	}
+}
+
+shared_ptr<BlockCacheFile> DatabaseFileSystem::OpenBlockFile(const string &path) {
+	if (!IsRemote(path)) {
+		return OpenerFileSystem::OpenBlockFile(path);
+	}
+	auto &cache = BlockCache::Get(db);
+	const auto flags = FileFlags::FILE_FLAGS_READ | FileFlags::FILE_FLAGS_PARALLEL_ACCESS;
+	BlockCacheFileInfo known;
+	if (cache.TryGetFile(path, known) && !known.validation.version_tag.empty()) {
+		OpenFileInfo file(path);
+		file.extended_info = make_shared_ptr<ExtendedOpenFileInfo>();
+		auto &options = file.extended_info->options;
+		options.emplace("file_size", Value::UBIGINT(known.validation.file_size));
+		options.emplace("etag", Value(known.validation.version_tag));
+		options.emplace("last_modified", Value::TIMESTAMP(known.validation.last_modified));
+		return cache.OpenFile(path, known, false, OpenFile(file, flags));
+	}
+	shared_ptr<FileHandle> handle = OpenFile(path, flags);
+	BlockCacheFileInfo info;
+	info.validation.file_size = NumericCast<idx_t>(handle->GetFileSize());
+	info.can_seek = handle->CanSeek();
+	info.on_disk = handle->OnDiskFile();
+	return cache.OpenFile(path, info, false, std::move(handle));
+}
+
+unique_ptr<FileHandle> DatabaseFileSystem::OpenFileExtended(const OpenFileInfo &file, FileOpenFlags flags,
+                                                            optional_ptr<FileOpener> opener) {
+	if (flags.OpenForWriting()) {
+		ForgetRemoteFile(file.path);
+	}
+	return OpenerFileSystem::OpenFileExtended(file, flags, opener);
+}
+
+void DatabaseFileSystem::MoveFile(const string &source, const string &target, optional_ptr<FileOpener> opener) {
+	OpenerFileSystem::MoveFile(source, target, opener);
+	ForgetRemoteFile(source);
+	ForgetRemoteFile(target);
+}
+
+void DatabaseFileSystem::RemoveFile(const string &filename, optional_ptr<FileOpener> opener) {
+	OpenerFileSystem::RemoveFile(filename, opener);
+	ForgetRemoteFile(filename);
+}
+
+bool DatabaseFileSystem::TryRemoveFile(const string &filename, optional_ptr<FileOpener> opener) {
+	if (!OpenerFileSystem::TryRemoveFile(filename, opener)) {
+		return false;
+	}
+	ForgetRemoteFile(filename);
+	return true;
+}
+
+void DatabaseFileSystem::RemoveFiles(const vector<string> &filenames, optional_ptr<FileOpener> opener) {
+	OpenerFileSystem::RemoveFiles(filenames, opener);
+	for (const auto &filename : filenames) {
+		ForgetRemoteFile(filename);
+	}
 }
 
 static FileSystem &ResolveLocalFileSystem(DatabaseInstance &db, unique_ptr<FileSystem> &owned) {

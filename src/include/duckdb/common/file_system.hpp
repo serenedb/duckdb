@@ -244,8 +244,8 @@ public:
 	DUCKDB_API virtual unique_ptr<MemoryMappedFile> MemoryMapFile(const OpenFileInfo &path, FileOpenFlags flags,
 	                                                              const MMapOptions &options,
 	                                                              optional_ptr<FileOpener> opener = nullptr);
-	//! The block cache's view of [path] when this filesystem keeps the file in cache blocks, whose blocks a reader
-	//! pins; null for any other file
+	//! [path] as a file of block cache blocks, which a reader pins, when this filesystem reads the file through the
+	//! block cache; null for a file it reads any other way, such as by mapping it
 	DUCKDB_API virtual shared_ptr<BlockCacheFile> OpenBlockFile(const string &path);
 	//! Copies a closed file this filesystem keeps in cache blocks into one buffer-managed allocation, which spills
 	//! only while nothing maps it; readers that pinned its blocks keep them until they close. Any other file stays

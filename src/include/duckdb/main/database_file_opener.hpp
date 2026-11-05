@@ -64,7 +64,24 @@ public:
 		return &database_opener;
 	}
 
+	//! A remote file opens in the block cache, without asking the store for its metadata when the cache knows a fresh
+	//! version of it
+	shared_ptr<BlockCacheFile> OpenBlockFile(const string &path) override;
+	//! Writing, moving or removing a remote file drops its blocks from the block cache
+	void MoveFile(const string &source, const string &target, optional_ptr<FileOpener> opener) override;
+	void RemoveFile(const string &filename, optional_ptr<FileOpener> opener) override;
+	bool TryRemoveFile(const string &filename, optional_ptr<FileOpener> opener) override;
+	void RemoveFiles(const vector<string> &filenames, optional_ptr<FileOpener> opener) override;
+
+protected:
+	unique_ptr<FileHandle> OpenFileExtended(const OpenFileInfo &file, FileOpenFlags flags,
+	                                        optional_ptr<FileOpener> opener = nullptr) override;
+
 private:
+	//! A file on an object store or a web server, which is read through the block cache
+	static bool IsRemote(const string &path);
+	void ForgetRemoteFile(const string &path);
+
 	DatabaseInstance &db;
 	mutable DatabaseFileOpener database_opener;
 };
