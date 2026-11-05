@@ -195,6 +195,7 @@ void CreateIndexInfo::Serialize(Serializer &serializer) const {
 	if (serializer.ShouldSerialize(StorageVersion::SERENEDB_V1)) {
 		serializer.WritePropertyWithDefault<idx_t>(16587, "table_oid", table_oid);
 	}
+	serializer.WritePropertyWithDefault<vector<OrderByNode>>(16588, "sort_orders", sort_orders);
 }
 
 unique_ptr<CreateInfo> CreateIndexInfo::Deserialize(Deserializer &deserializer) {
@@ -213,6 +214,7 @@ unique_ptr<CreateInfo> CreateIndexInfo::Deserialize(Deserializer &deserializer) 
 	deserializer.ReadPropertyWithDefault<vector<string>>(16585, "column_opclasses", result->column_opclasses);
 	deserializer.ReadPropertyWithDefault<vector<optional<case_insensitive_map_t<Value>>>>(16586, "column_opclass_options", result->column_opclass_options);
 	deserializer.ReadPropertyWithDefault<idx_t>(16587, "table_oid", result->table_oid);
+	deserializer.ReadPropertyWithDefault<vector<OrderByNode>>(16588, "sort_orders", result->sort_orders);
 	result->SetName(std::move(name));
 	result->FinalizeDeserialization();
 	return std::move(result);
@@ -405,6 +407,7 @@ void CreateTableInfo::Serialize(Serializer &serializer) const {
 	serializer.WritePropertyWithDefault<vector<unique_ptr<ParsedExpression>>>(204, "partition_keys", partition_keys);
 	serializer.WritePropertyWithDefault<vector<unique_ptr<ParsedExpression>>>(205, "sort_keys", sort_keys);
 	serializer.WritePropertyWithDefault<case_insensitive_map_t<unique_ptr<ParsedExpression>>>(206, "options", options);
+	serializer.WritePropertyWithDefault<vector<OrderByNode>>(16584, "sort_orders", sort_orders);
 }
 
 unique_ptr<CreateInfo> CreateTableInfo::Deserialize(Deserializer &deserializer) {
@@ -416,6 +419,7 @@ unique_ptr<CreateInfo> CreateTableInfo::Deserialize(Deserializer &deserializer) 
 	deserializer.ReadPropertyWithDefault<vector<unique_ptr<ParsedExpression>>>(204, "partition_keys", result->partition_keys);
 	deserializer.ReadPropertyWithDefault<vector<unique_ptr<ParsedExpression>>>(205, "sort_keys", result->sort_keys);
 	deserializer.ReadPropertyWithDefault<case_insensitive_map_t<unique_ptr<ParsedExpression>>>(206, "options", result->options);
+	deserializer.ReadPropertyWithDefault<vector<OrderByNode>>(16584, "sort_orders", result->sort_orders);
 	result->SetName(std::move(table));
 	return std::move(result);
 }
