@@ -514,7 +514,7 @@ optional_ptr<CatalogEntry> DependencyManager::LookupEntry(CatalogTransaction tra
 }
 
 bool DependencyManager::CanDepend(Catalog &dependent, Catalog &subject) {
-	return &dependent == &subject;
+	return &dependent == &subject || (dependent.CrossCatalogDependencies() && subject.CrossCatalogDependencies());
 }
 
 void DependencyManager::ScanAllDependents(CatalogTransaction transaction, const CatalogEntryInfo &info,
