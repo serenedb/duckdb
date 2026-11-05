@@ -54,6 +54,9 @@ public:
 		}
 		CachePolicyFileSystem::Read(handle, buffer, nr_bytes, location);
 	}
+	void ReadScattered(FileHandle &handle, std::span<const FileReadTarget> targets, idx_t location) override {
+		FileSystem::ReadScattered(handle, targets, location);
+	}
 
 	void BlockReads() {
 		annotated_lock_guard<annotated_mutex> guard(lock);
@@ -93,6 +96,9 @@ public:
 			reads.emplace_back(location, NumericCast<idx_t>(nr_bytes));
 		}
 		SimpleTrackingFileSystem::Read(handle, buffer, nr_bytes, location);
+	}
+	void ReadScattered(FileHandle &handle, std::span<const FileReadTarget> targets, idx_t location) override {
+		FileSystem::ReadScattered(handle, targets, location);
 	}
 
 	//! Recorded reads sorted by location, clears them
