@@ -50,7 +50,7 @@ public:
 	//! WITH (security_invoker=true) -> the view runs with the caller's privileges;
 	//! false (default) is definer rights (the view owner's), matching PostgreSQL.
 	bool security_invoker = false;
-	vector<vector<AclItem>> column_acls;
+	vector<ColumnAcl> column_acls;
 	vector<NameBinding> name_bindings;
 
 public:
