@@ -519,11 +519,11 @@ void CatalogSearchPath::SetPathsInternal(vector<CatalogSearchEntry> new_paths) {
 	for (auto &path : set_paths) {
 		paths.push_back(path);
 	}
-	paths.emplace_back(INVALID_CATALOG, DEFAULT_SCHEMA);
 	if (!Catalog::GetSystemCatalog(context).IsDuckCatalog()) {
 		paths.emplace_back(INVALID_CATALOG, "pg_catalog");
 		return;
 	}
+	paths.emplace_back(INVALID_CATALOG, DEFAULT_SCHEMA);
 	paths.emplace_back(SYSTEM_CATALOG, DEFAULT_SCHEMA);
 	paths.emplace_back(INVALID_CATALOG, "pg_catalog");
 	paths.emplace_back(SYSTEM_CATALOG, "pg_catalog");

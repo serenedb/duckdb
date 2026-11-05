@@ -670,7 +670,7 @@ optional_ptr<CatalogEntry> Binder::GetBuiltinEntry(const EntryLookupInfo &lookup
 	auto &system = Catalog::GetSystemCatalog(context);
 	return system
 	    .LookupEntry(entry_retriever,
-	                 EntryLookupInfo(lookup_info, QualifiedName(system.GetName(), Identifier::DefaultSchema(),
+	                 EntryLookupInfo(lookup_info, QualifiedName(system.GetName(), *system.GetDefaultSchema(),
 	                                                            lookup_info.GetEntryIdentifier())),
 	                 on_entry_not_found)
 	    .entry;
@@ -683,8 +683,9 @@ shared_ptr<Binder> Binder::CreateBinderWithSearchPath(const Identifier &catalog_
 	vector<CatalogSearchEntry> search_path;
 
 	search_path.emplace_back(catalog_name, schema_name);
-	if (schema_name != DEFAULT_SCHEMA) {
-		search_path.emplace_back(catalog_name, DEFAULT_SCHEMA);
+	auto default_schema = Catalog::GetCatalog(context, catalog_name).GetDefaultSchema();
+	if (default_schema && schema_name != *default_schema) {
+		search_path.emplace_back(catalog_name, *default_schema);
 	}
 	new_binder->entry_retriever.SetSearchPath(std::move(search_path));
 	return new_binder;

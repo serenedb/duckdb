@@ -96,7 +96,7 @@ optional_ptr<Catalog> Catalog::GetCatalogEntry(CatalogEntryRetriever &retriever,
 	if (catalog_name == TEMP_CATALOG) {
 		return &ClientData::Get(context).temporary_objects->GetCatalog();
 	}
-	if (catalog_name == SYSTEM_CATALOG) {
+	if (catalog_name == SYSTEM_CATALOG && GetSystemCatalog(context).IsDuckCatalog()) {
 		return &GetSystemCatalog(context);
 	}
 	auto entry =
@@ -864,9 +864,6 @@ vector<CatalogSearchEntry> GetCatalogEntries(CatalogEntryRetriever &retriever, c
 				entries.emplace_back(std::move(default_database), schema);
 			}
 		}
-		if (schema == DEFAULT_SCHEMA && !Catalog::GetSystemCatalog(context).IsDuckCatalog()) {
-			entries.emplace_back(SYSTEM_CATALOG, schema);
-		}
 	} else if (IsInvalidSchema(schema)) {
 		auto schemas = search_path.GetSchemasForCatalog(catalog);
 		for (auto &schema_name : schemas) {
@@ -1546,19 +1543,7 @@ optional_ptr<CatalogEntry> Catalog::GetEntry(CatalogEntryRetriever &retriever, c
 optional_ptr<CatalogEntry> Catalog::GetEntry(ClientContext &context, const EntryLookupInfo &lookup_info,
                                              OnEntryNotFound if_not_found) {
 	CatalogEntryRetriever retriever(context);
-	auto &system = GetSystemCatalog(context);
-	if (system.IsDuckCatalog()) {
-		return GetEntry(retriever, lookup_info, if_not_found);
-	}
-	if (lookup_info.GetCatalog() != SYSTEM_CATALOG) {
-		if (!IsInvalidCatalog(lookup_info.GetCatalog()) || lookup_info.GetSchema() != DEFAULT_SCHEMA) {
-			return GetEntry(retriever, lookup_info, if_not_found);
-		}
-		if (auto entry = GetEntry(retriever, lookup_info, OnEntryNotFound::RETURN_NULL)) {
-			return entry;
-		}
-	}
-	return system.GetEntryInCatalog(retriever, lookup_info, if_not_found);
+	return GetEntry(retriever, lookup_info, if_not_found);
 }
 
 CatalogEntry &Catalog::GetEntry(ClientContext &context, const EntryLookupInfo &lookup_info) {
@@ -1578,13 +1563,23 @@ CatalogEntry &Catalog::GetEntry(ClientContext &context, CatalogType catalog_type
 optional_ptr<CatalogEntry> Catalog::GetEntry(ClientContext &context, CatalogType catalog_type, const Identifier &schema,
                                              const Identifier &name, OnEntryNotFound if_not_found) {
 	EntryLookupInfo lookup_info(catalog_type, QualifiedName(GetName(), schema, name));
-	return GetEntry(context, lookup_info, if_not_found);
+	return GetEntry(context, schema, lookup_info, if_not_found);
 }
 
 CatalogEntry &Catalog::GetEntry(ClientContext &context, CatalogType catalog_type, const Identifier &schema_name,
                                 const Identifier &name) {
 	EntryLookupInfo lookup_info(catalog_type, QualifiedName(GetName(), schema_name, name));
-	return GetEntry(context, lookup_info);
+	return *GetEntry(context, schema_name, lookup_info, OnEntryNotFound::THROW_EXCEPTION);
+}
+
+optional_ptr<CatalogEntry> Catalog::GetBuiltinEntry(ClientContext &context, CatalogType type, const Identifier &name,
+                                                    OnEntryNotFound if_not_found, QueryErrorContext error_context) {
+	auto &system = GetSystemCatalog(context);
+	CatalogEntryRetriever retriever(context);
+	return system.GetEntryInCatalog(
+	    retriever,
+	    EntryLookupInfo(type, QualifiedName(system.GetName(), *system.GetDefaultSchema(), name), error_context),
+	    if_not_found);
 }
 
 optional_ptr<CatalogEntry> Catalog::GetEntry(CatalogEntryRetriever &retriever, const Identifier &schema_name,

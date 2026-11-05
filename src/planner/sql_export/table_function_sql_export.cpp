@@ -130,7 +130,7 @@ static unique_ptr<ParsedExpression> TableFunctionColumn(const LogicalGet &get, c
                                                         const ColumnIndex &index) {
 	if (get.GetTable()) {
 		if (index.IsRowNumberColumn()) {
-			auto row_number = make_uniq<WindowExpression>("system", "main", "row_number");
+			auto row_number = make_uniq<WindowExpression>("", "", "row_number");
 			row_number->WindowStartMutable() = WindowBoundary::UNBOUNDED_PRECEDING;
 			row_number->WindowEndMutable() = WindowBoundary::CURRENT_ROW_RANGE;
 			return std::move(row_number);

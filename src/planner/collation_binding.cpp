@@ -46,7 +46,6 @@ static vector<string> GetVarcharCollationFunctions(ClientContext &context, const
 		// no collation or binary collation: skip
 		return result;
 	}
-	auto &catalog = Catalog::GetSystemCatalog(context);
 	auto splits = StringUtil::Split(StringUtil::Lower(collation), ".");
 	vector<reference<CollateCatalogEntry>> entries;
 	unordered_set<string> collations;
@@ -55,8 +54,7 @@ static vector<string> GetVarcharCollationFunctions(ClientContext &context, const
 			// we already applied this collation
 			continue;
 		}
-		auto &collation_entry = catalog.GetEntry<CollateCatalogEntry>(
-		    context, QualifiedName(catalog.GetName(), Identifier::DefaultSchema(), Identifier(collation_argument)));
+		auto &collation_entry = Catalog::GetBuiltinEntry<CollateCatalogEntry>(context, Identifier(collation_argument));
 		if (collation_entry.combinable) {
 			entries.insert(entries.begin(), collation_entry);
 		} else {
@@ -195,10 +193,8 @@ static bool PushNestedCollation(ClientContext &context, unique_ptr<Expression> &
 		return false;
 	}
 
-	auto &catalog = Catalog::GetSystemCatalog(context);
-	auto list_transform = catalog.GetEntry<ScalarFunctionCatalogEntry>(
-	    context, QualifiedName(catalog.GetName(), Identifier::DefaultSchema(), "list_transform"),
-	    OnEntryNotFound::RETURN_NULL);
+	auto list_transform = Catalog::GetBuiltinEntry<ScalarFunctionCatalogEntry>(context, Identifier("list_transform"),
+	                                                                           OnEntryNotFound::RETURN_NULL);
 	if (!list_transform) {
 		// list_transform is not available - cannot push the collation into the list
 		return false;

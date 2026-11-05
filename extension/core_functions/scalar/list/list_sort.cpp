@@ -447,8 +447,7 @@ static unique_ptr<ParsedExpression> ListSortUnbind(FunctionUnbindInput &input) {
 	cast_children.push_back(std::move(input.children[0]));
 	cast_children.push_back(std::move(witness.GetValue()));
 	vector<unique_ptr<ParsedExpression>> children;
-	children.push_back(
-	    make_uniq<FunctionExpression>(QualifiedName("system", "main", "cast_to_type"), std::move(cast_children)));
+	children.push_back(FunctionExpression::Builtin("cast_to_type", std::move(cast_children)));
 	children.push_back(ConstantExpression::String(data.order_type == OrderType::ASCENDING ? "ASC" : "DESC"));
 	children.push_back(
 	    ConstantExpression::String(data.null_order == OrderByNullType::NULLS_FIRST ? "NULLS FIRST" : "NULLS LAST"));
@@ -457,10 +456,10 @@ static unique_ptr<ParsedExpression> ListSortUnbind(FunctionUnbindInput &input) {
 		return nullptr;
 	}
 	vector<unique_ptr<ParsedExpression>> result;
-	result.push_back(make_uniq<FunctionExpression>(
-	    QualifiedName("system", "main", data.is_grade_up ? "list_grade_up" : "list_sort"), std::move(children)));
+	result.push_back(
+	    FunctionExpression::Builtin(data.is_grade_up ? "list_grade_up" : "list_sort", std::move(children)));
 	result.push_back(std::move(result_type.GetValue()));
-	return make_uniq<FunctionExpression>(QualifiedName("system", "main", "cast_to_type"), std::move(result));
+	return FunctionExpression::Builtin("cast_to_type", std::move(result));
 }
 
 static void SetListSortCallbacks(ScalarFunction &function) {

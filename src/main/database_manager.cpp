@@ -85,7 +85,7 @@ shared_ptr<AttachedDatabase> DatabaseManager::GetDatabase(const Identifier &name
 }
 
 shared_ptr<AttachedDatabase> DatabaseManager::GetDatabaseInternal(const lock_guard<mutex> &, const Identifier &name) {
-	if (name == SYSTEM_CATALOG) {
+	if (name == SYSTEM_CATALOG && system->GetCatalog().IsDuckCatalog()) {
 		return system;
 	}
 	auto entry = databases.find(name);
@@ -110,10 +110,17 @@ bool RequiresTrackingAttaches(const string &path, const string &db_type) {
 	return true;
 }
 
+bool DatabaseManager::IsReservedName(const Identifier &name) const {
+	if (system->GetCatalog().IsDuckCatalog()) {
+		return AttachedDatabase::NameIsReserved(name);
+	}
+	return name == TEMP_CATALOG;
+}
+
 // a re-attach hands back the database that already has the file open, so it has to keep the options it
 // was opened with
 static void VerifyReattachOptions(AttachedDatabase &database, const AttachInfo &info, const AttachOptions &options) {
-	if (AttachedDatabase::NameIsReserved(info.name)) {
+	if (DatabaseManager::Get(database).IsReservedName(info.name)) {
 		throw BinderException("Attached database name \"%s\" cannot be used because it is a reserved name",
 		                      info.name.GetIdentifierName());
 	}
@@ -273,7 +280,7 @@ shared_ptr<AttachedDatabase> DatabaseManager::AttachDatabase(ClientContext &cont
 			                            info.path, entry->second.ToString());
 		}
 	}
-	if (AttachedDatabase::NameIsReserved(info.name)) {
+	if (IsReservedName(info.name)) {
 		throw BinderException("Attached database name %s cannot be used because it is a reserved name", info.name);
 	}
 	if (!extension.empty()) {
@@ -471,7 +478,7 @@ void DatabaseManager::Alter(ClientContext &context, AlterInfo &info) {
 
 void DatabaseManager::RenameDatabase(ClientContext &context, const Identifier &old_name, const Identifier &new_name,
                                      OnEntryNotFound if_not_found) {
-	if (AttachedDatabase::NameIsReserved(new_name)) {
+	if (IsReservedName(new_name)) {
 		throw BinderException("Database name %s cannot be used because it is a reserved name", new_name);
 	}
 	if (GetDefaultDatabase(context) == old_name) {

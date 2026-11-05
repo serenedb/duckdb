@@ -924,7 +924,7 @@ BoundStatement Binder::Bind(CopyStatement &stmt, CopyToType copy_to_type) {
 	auto entry = catalog
 	                 .LookupEntry(entry_retriever,
 	                              EntryLookupInfo(CatalogType::COPY_FUNCTION_ENTRY,
-	                                              QualifiedName(catalog.GetName(), Identifier::DefaultSchema(),
+	                                              QualifiedName(catalog.GetName(), *catalog.GetDefaultSchema(),
 	                                                            Identifier(stmt.info->format))),
 	                              on_entry_do)
 	                 .entry;
@@ -936,7 +936,7 @@ BoundStatement Binder::Bind(CopyStatement &stmt, CopyToType copy_to_type) {
 		            .LookupEntry(entry_retriever,
 		                         EntryLookupInfo(
 		                             CatalogType::COPY_FUNCTION_ENTRY,
-		                             QualifiedName(catalog.GetName(), Identifier::DefaultSchema(), Identifier("csv"))),
+		                             QualifiedName(catalog.GetName(), *catalog.GetDefaultSchema(), Identifier("csv"))),
 		                         OnEntryNotFound::THROW_EXCEPTION)
 		            .entry;
 	}

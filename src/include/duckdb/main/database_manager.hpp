@@ -59,6 +59,7 @@ public:
 	//! Get an attached database by its name
 	optional_ptr<AttachedDatabase> GetDatabase(ClientContext &context, const Identifier &name);
 	shared_ptr<AttachedDatabase> GetDatabase(const Identifier &name);
+	bool IsReservedName(const Identifier &name) const;
 	//! Attach a new database
 	shared_ptr<AttachedDatabase> AttachDatabase(ClientContext &context, AttachInfo &info, AttachOptions &options);
 

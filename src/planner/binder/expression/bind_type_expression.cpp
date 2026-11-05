@@ -77,7 +77,7 @@ LogicalType ExpressionBinder::BindTypeExpression(TypeExpression &type_expr) {
 			entry = system
 			            .LookupEntry(
 			                binder.entry_retriever,
-			                EntryLookupInfo(type_lookup, QualifiedName(system.GetName(), Identifier::DefaultSchema(),
+			                EntryLookupInfo(type_lookup, QualifiedName(system.GetName(), *system.GetDefaultSchema(),
 			                                                           type_lookup.GetEntryIdentifier())),
 			                OnEntryNotFound::THROW_EXCEPTION)
 			            .entry;

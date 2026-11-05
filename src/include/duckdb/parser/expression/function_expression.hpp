@@ -98,6 +98,12 @@ public:
 	                              unique_ptr<OrderModifier> order_bys = nullptr, bool distinct = false,
 	                              bool is_operator = false, bool export_state = false);
 
+	DUCKDB_API static unique_ptr<FunctionExpression> Builtin(const Identifier &function_name,
+	                                                         vector<unique_ptr<ParsedExpression>> children);
+	DUCKDB_API static unique_ptr<FunctionExpression> Builtin(const Identifier &function_name,
+	                                                         vector<FunctionArgument> arguments);
+	DUCKDB_API static void SetBuiltinPrefix(string prefix);
+
 public:
 	const QualifiedName &GetQualifiedName() const {
 		return qualified_name;

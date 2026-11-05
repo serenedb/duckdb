@@ -21,12 +21,19 @@ class ClientContext;
 class FunctionSerializer {
 private:
 	static QualifiedName DeserializeQualifiedName(Deserializer &deserializer) {
-		auto qname = deserializer.ReadProperty<QualifiedName>(507, "qname");
-		if (qname.Schema().empty()) {
-			return QualifiedName(qname.Catalog().empty() ? Identifier::SystemCatalog() : qname.Catalog(),
-			                     Identifier::DefaultSchema(), qname.Name());
+		return deserializer.ReadProperty<QualifiedName>(507, "qname");
+	}
+
+	static CatalogEntry &LookupFunction(ClientContext &context, CatalogType type, const QualifiedName &name) {
+		auto &system = Catalog::GetSystemCatalog(context);
+		auto &catalog = name.Catalog();
+		if (!catalog.empty() && catalog != Identifier::SystemCatalog() && catalog != system.GetName()) {
+			return Catalog::GetEntry(context, type, name);
 		}
-		return qname.Catalog().empty() ? qname.WithCatalog(Identifier::SystemCatalog()) : qname;
+		auto &schema = name.Schema();
+		return system.GetEntry(
+		    context, type,
+		    schema.empty() || schema == Identifier::DefaultSchema() ? *system.GetDefaultSchema() : schema, name.Name());
 	}
 
 	class DeserializeContext {
@@ -130,7 +137,7 @@ public:
 			positional_count = arguments.size();
 		}
 
-		auto &func_catalog = Catalog::GetEntry(context, CatalogType::TABLE_FUNCTION_ENTRY, qualified_name);
+		auto &func_catalog = LookupFunction(context, CatalogType::TABLE_FUNCTION_ENTRY, qualified_name);
 		if (func_catalog.type != CatalogType::TABLE_FUNCTION_ENTRY) {
 			throw InternalException("DeserializeTableFunction - cant find catalog entry for function %s",
 			                        qualified_name.Name().GetIdentifierName());
@@ -229,7 +236,7 @@ public:
 		}
 
 		// Now lookup the function in the catalog.
-		auto &func_catalog = Catalog::GetEntry(context, catalog_type, qualified_name);
+		auto &func_catalog = LookupFunction(context, catalog_type, qualified_name);
 
 		if (func_catalog.type != catalog_type) {
 			throw InternalException("DeserializeFunction - cant find catalog entry for function %s",
