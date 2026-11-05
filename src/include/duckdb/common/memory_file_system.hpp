@@ -76,7 +76,7 @@ public:
 	string PathSeparator(const string &path) override;
 
 	//! Null for a heap or compacted file
-	shared_ptr<BlockCacheFile> GetBlockFile(const string &path) override;
+	shared_ptr<BlockCacheFile> OpenBlockFile(const string &path) override;
 	void Compact(const string &path) override;
 	//! Removes every file; the database calls it before its block cache goes
 	void Clear();

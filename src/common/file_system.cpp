@@ -769,7 +769,7 @@ void FileSystem::CommitWriteWindow(FileHandle &handle, idx_t nr_bytes) {
 void FileSystem::SyncDirectory(const string &directory, optional_ptr<FileOpener> opener) {
 }
 
-shared_ptr<BlockCacheFile> FileSystem::GetBlockFile(const string &path) {
+shared_ptr<BlockCacheFile> FileSystem::OpenBlockFile(const string &path) {
 	return nullptr;
 }
 

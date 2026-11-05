@@ -33,7 +33,7 @@ public:
 	unique_ptr<MemoryMappedFile> MemoryMapFile(const OpenFileInfo &path, FileOpenFlags flags,
 	                                           const MMapOptions &options,
 	                                           optional_ptr<FileOpener> opener = nullptr) override;
-	shared_ptr<BlockCacheFile> GetBlockFile(const string &path) override;
+	shared_ptr<BlockCacheFile> OpenBlockFile(const string &path) override;
 	void Compact(const string &path) override;
 
 	int64_t GetFileSize(FileHandle &handle) override;
