@@ -1861,6 +1861,12 @@ void DependencyManager::AlterObject(CatalogTransaction transaction, CatalogEntry
 			dep_info.dependent.flags = DependencyDependentFlags().SetOwnedBy();
 			dep_info.dependent.subdependencies.clear();
 		}
+		if (alter_info.GetNewSchema() && dep_info.subject.entry.type == CatalogType::SCHEMA_ENTRY &&
+		    dep_info.subject.entry == GetLookupProperties(transaction, old_obj.ParentSchema(transaction))) {
+			auto &new_schema = new_obj.ParentSchema(transaction);
+			dep_info.subject.entry = GetLookupProperties(transaction, new_schema);
+			dep_info.subject.oid = new_schema.oid;
+		}
 		dependencies.emplace_back(dep_info);
 	});
 
