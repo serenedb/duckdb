@@ -109,8 +109,11 @@ unique_ptr<FunctionData> CurrentSchemasBind(BindScalarFunctionInput &input) {
 				bool has_temp_objects = false;
 				try {
 					for (auto &schema_ref : temp_db->GetCatalog().GetSchemas(context)) {
-						schema_ref.get().Scan(context, CatalogType::TABLE_ENTRY,
-						                      [](CatalogEntry &) { throw FoundTempObject {}; });
+						schema_ref.get().Scan(context, CatalogType::TABLE_ENTRY, [](CatalogEntry &entry) {
+							if (!entry.internal) {
+								throw FoundTempObject {};
+							}
+						});
 					}
 				} catch (FoundTempObject &) {
 					has_temp_objects = true;
