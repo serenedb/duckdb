@@ -6,6 +6,7 @@
 #include "duckdb/common/chrono.hpp"
 #include "duckdb/common/error_data.hpp"
 #include "duckdb/common/exception/transaction_exception.hpp"
+#include "duckdb/common/fault_points.hpp"
 #include "duckdb/common/progress_bar/progress_bar.hpp"
 #include "duckdb/common/serializer/buffered_file_writer.hpp"
 #include "duckdb/common/time_point.hpp"
@@ -1061,8 +1062,12 @@ void ClientContext::InterruptCheck() const {
 		throw InterruptException();
 	}
 	if (query_deadline.IsValid() && static_cast<idx_t>(TimePoint::Now()) >= query_deadline.GetIndex()) {
-		throw InterruptException("Query exceeded maximum execution time");
+		ThrowDeadlineExceeded();
 	}
+}
+
+void ClientContext::ThrowDeadlineExceeded() {
+	throw InterruptException("Query exceeded maximum execution time");
 }
 
 void ClientContext::CancelTransaction() {
@@ -1103,6 +1108,12 @@ void ClientContext::RegisterFunction(CreateFunctionInfo &info) {
 
 void ClientContext::RunTransactionStatementInternal(const TransactionInfo &info) {
 	auto type = info.type;
+	SDB_IF_FAILURE("transaction_end_fails") {
+		if (type != TransactionType::BEGIN_TRANSACTION) {
+			throw TransactionException("cannot %s - transaction_end_fails is armed",
+			                           type == TransactionType::COMMIT ? "commit" : "rollback");
+		}
+	}
 	if (type == TransactionType::COMMIT && transaction.HasActiveTransaction() &&
 	    ValidChecker::IsInvalidated(ActiveTransaction())) {
 		// transaction is invalidated - turn COMMIT into ROLLBACK

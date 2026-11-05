@@ -194,6 +194,8 @@ public:
 	}
 	DUCKDB_API static mutex &AwaitMutex();
 	DUCKDB_API static void Notify();
+	//! The error of a query that ran past its deadline
+	[[noreturn]] DUCKDB_API static void ThrowDeadlineExceeded();
 
 	//! Enable query profiling
 	DUCKDB_API void EnableProfiling();

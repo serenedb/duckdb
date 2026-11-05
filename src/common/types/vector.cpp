@@ -7,6 +7,8 @@
 #include "duckdb/common/vector/shredded_vector.hpp"
 #include "duckdb/common/vector/string_vector.hpp"
 #include "duckdb/common/vector/struct_vector.hpp"
+#include "duckdb/common/vector/union_vector.hpp"
+#include "utf8proc_wrapper.hpp"
 #include "duckdb/common/types/vector.hpp"
 #include "duckdb/common/assert.hpp"
 #include "duckdb/common/exception.hpp"
@@ -734,7 +736,7 @@ void Vector::Deserialize(Deserializer &deserializer, idx_t count) {
 		auto blobs = FlatVector::GetDataMutable<string_t>(*this);
 
 		if (geometry_format == GeometryStorageType::WKB) {
-			deserializer.ReadList(102, "data", [&](Deserializer::List &list, idx_t i) {
+			deserializer.ReadList(102, "data", count, [&](Deserializer::List &list, idx_t i) {
 				auto geom = list.ReadElement<string>();
 				if (validity.RowIsValid(i)) {
 					blobs[i] = StringVector::AddStringOrBlob(*this, geom);
@@ -742,7 +744,7 @@ void Vector::Deserialize(Deserializer &deserializer, idx_t count) {
 			});
 		} else if (geometry_format == GeometryStorageType::SPATIAL) {
 			// Try to read old SPATIAL format and convert to new GEOMETRY format
-			deserializer.ReadList(102, "data", [&](Deserializer::List &list, idx_t i) {
+			deserializer.ReadList(102, "data", count, [&](Deserializer::List &list, idx_t i) {
 				auto blob = list.ReadElement<string>();
 				if (validity.RowIsValid(i)) {
 					Geometry::FromSpatialGeometry(blob, blobs[i], *this);
@@ -770,15 +772,21 @@ void Vector::Deserialize(Deserializer &deserializer, idx_t count) {
 				auto byte_read_ptr = reinterpret_cast<const char *>(byte_data_buffer->data.get());
 				StringVector::AddAuxiliaryData(*this, std::move(byte_data_buffer));
 
+				auto bytes_left = byte_data_length.GetIndex();
 				for (idx_t i = 0; i < count; ++i) {
 					if (!validity.RowIsValid(i)) {
 						continue;
 					}
+					if (lengths_read_ptr[i] > bytes_left) {
+						throw SerializationException("String vector lengths exceed its %llu bytes of data",
+						                             byte_data_length.GetIndex());
+					}
+					bytes_left -= lengths_read_ptr[i];
 					strings[i] = string_t(byte_read_ptr, lengths_read_ptr[i]);
 					byte_read_ptr += lengths_read_ptr[i];
 				}
 			} else { // this is ye olde way of string serialization
-				deserializer.ReadList(102, "data", [&](Deserializer::List &list, idx_t i) {
+				deserializer.ReadList(102, "data", count, [&](Deserializer::List &list, idx_t i) {
 					auto str = list.ReadElement<string>();
 					if (validity.RowIsValid(i)) {
 						strings[i] = StringVector::AddStringOrBlob(*this, str);
@@ -790,7 +798,7 @@ void Vector::Deserialize(Deserializer &deserializer, idx_t count) {
 		case PhysicalType::STRUCT: {
 			auto &entries = StructVector::GetEntries(*this);
 			// Deserialize entries as a list
-			deserializer.ReadList(103, "children", [&](Deserializer::List &list, idx_t i) {
+			deserializer.ReadList(103, "children", entries.size(), [&](Deserializer::List &list, idx_t i) {
 				list.ReadObject([&](Deserializer &obj) { entries[i].Deserialize(obj, count); });
 			});
 			break;
@@ -803,10 +811,16 @@ void Vector::Deserialize(Deserializer &deserializer, idx_t count) {
 
 			// Read the entries
 			auto list_entries = FlatVector::GetDataMutable<list_entry_t>(*this);
-			deserializer.ReadList(105, "entries", [&](Deserializer::List &list, idx_t i) {
+			deserializer.ReadList(105, "entries", count, [&](Deserializer::List &list, idx_t i) {
 				list.ReadObject([&](Deserializer &obj) {
-					list_entries[i].offset = obj.ReadProperty<uint64_t>(100, "offset");
-					list_entries[i].length = obj.ReadProperty<uint64_t>(101, "length");
+					auto offset = obj.ReadProperty<uint64_t>(100, "offset");
+					auto length = obj.ReadProperty<uint64_t>(101, "length");
+					if (offset > list_size || length > list_size - offset) {
+						throw SerializationException("List entry (%llu, %llu) is outside its %llu child rows", offset,
+						                             length, list_size);
+					}
+					list_entries[i].offset = offset;
+					list_entries[i].length = length;
 				});
 			});
 
@@ -819,6 +833,10 @@ void Vector::Deserialize(Deserializer &deserializer, idx_t count) {
 		}
 		case PhysicalType::ARRAY: {
 			auto array_size = deserializer.ReadProperty<uint64_t>(103, "array_size");
+			if (array_size != ArrayType::GetSize(logical_type)) {
+				throw SerializationException("Array vector of size %llu for type %s", array_size,
+				                             logical_type.ToString());
+			}
 			deserializer.ReadObject(104, "child", [&](Deserializer &obj) {
 				auto &child = ArrayVector::GetChildMutable(*this);
 				child.Deserialize(obj, array_size * count);
@@ -851,6 +869,120 @@ void Vector::FlattenAndSetConstant() {
 		BufferMutable().Cast<VectorStructBuffer>().PrepareChildrenForSetConstant();
 	}
 	SetVectorType(VectorType::CONSTANT_VECTOR);
+}
+
+template <class T>
+static void ValidateIndexes(const Vector &vector, idx_t limit, const char *name) {
+	auto &validity = FlatVector::Validity(vector);
+	auto data = FlatVector::GetData<T>(vector);
+	for (idx_t i = 0; i < vector.size(); i++) {
+		if (validity.RowIsValid(i) && data[i] >= limit) {
+			throw InvalidInputException("%s %llu is outside its %llu values", name, static_cast<idx_t>(data[i]), limit);
+		}
+	}
+}
+
+void Vector::Validate() const {
+	auto &type = GetType();
+	switch (type.id()) {
+	case LogicalTypeId::SQLNULL:
+	case LogicalTypeId::TINYINT:
+	case LogicalTypeId::SMALLINT:
+	case LogicalTypeId::INTEGER:
+	case LogicalTypeId::BIGINT:
+	case LogicalTypeId::HUGEINT:
+	case LogicalTypeId::UTINYINT:
+	case LogicalTypeId::USMALLINT:
+	case LogicalTypeId::UINTEGER:
+	case LogicalTypeId::UBIGINT:
+	case LogicalTypeId::UHUGEINT:
+	case LogicalTypeId::FLOAT:
+	case LogicalTypeId::DOUBLE:
+	case LogicalTypeId::DECIMAL:
+	case LogicalTypeId::DATE:
+	case LogicalTypeId::TIME:
+	case LogicalTypeId::TIME_NS:
+	case LogicalTypeId::TIME_TZ:
+	case LogicalTypeId::TIMESTAMP_SEC:
+	case LogicalTypeId::TIMESTAMP_MS:
+	case LogicalTypeId::TIMESTAMP:
+	case LogicalTypeId::TIMESTAMP_NS:
+	case LogicalTypeId::TIMESTAMP_TZ:
+	case LogicalTypeId::TIMESTAMP_TZ_NS:
+	case LogicalTypeId::INTERVAL:
+	case LogicalTypeId::UUID:
+	case LogicalTypeId::BLOB:
+		// every bit pattern is a value
+		return;
+	case LogicalTypeId::BOOLEAN:
+	case LogicalTypeId::VARCHAR:
+	case LogicalTypeId::ENUM:
+	case LogicalTypeId::STRUCT:
+	case LogicalTypeId::UNION:
+	case LogicalTypeId::LIST:
+	case LogicalTypeId::MAP:
+	case LogicalTypeId::ARRAY:
+		break;
+	default:
+		throw NotImplementedException("Values of type %s from an untrusted peer are not supported", type.ToString());
+	}
+	Flatten();
+	auto &validity = FlatVector::Validity(*this);
+	switch (type.id()) {
+	case LogicalTypeId::BOOLEAN: {
+		auto data = FlatVector::GetData(*this);
+		for (idx_t i = 0; i < size(); i++) {
+			if (validity.RowIsValid(i) && data[i] > 1) {
+				throw InvalidInputException("Invalid BOOLEAN value %d", data[i]);
+			}
+		}
+		break;
+	}
+	case LogicalTypeId::VARCHAR: {
+		auto data = FlatVector::GetData<string_t>(*this);
+		for (idx_t i = 0; i < size(); i++) {
+			if (validity.RowIsValid(i) &&
+			    Utf8Proc::Analyze(data[i].GetData(), data[i].GetSize()) == UnicodeType::INVALID) {
+				throw InvalidInputException("Invalid UTF-8 in a VARCHAR value");
+			}
+		}
+		break;
+	}
+	case LogicalTypeId::ENUM: {
+		auto values = EnumType::GetSize(type);
+		switch (type.InternalType()) {
+		case PhysicalType::UINT8:
+			ValidateIndexes<uint8_t>(*this, values, "ENUM index");
+			break;
+		case PhysicalType::UINT16:
+			ValidateIndexes<uint16_t>(*this, values, "ENUM index");
+			break;
+		case PhysicalType::UINT32:
+			ValidateIndexes<uint32_t>(*this, values, "ENUM index");
+			break;
+		default:
+			throw InternalException("ENUM of physical type %s", EnumUtil::ToString(type.InternalType()));
+		}
+		break;
+	}
+	case LogicalTypeId::UNION:
+		ValidateIndexes<union_tag_t>(UnionVector::GetTags(*this), UnionType::GetMemberCount(type), "UNION tag");
+		DUCKDB_EXPLICIT_FALLTHROUGH;
+	case LogicalTypeId::STRUCT:
+		for (auto &entry : StructVector::GetEntries(*this)) {
+			entry.Validate();
+		}
+		break;
+	case LogicalTypeId::LIST:
+	case LogicalTypeId::MAP:
+		ListVector::GetChild(*this).Validate();
+		break;
+	case LogicalTypeId::ARRAY:
+		ArrayVector::GetChild(*this).Validate();
+		break;
+	default:
+		throw InternalException("Vector::Validate of type %s", type.ToString());
+	}
 }
 
 void Vector::Verify(idx_t) const {
