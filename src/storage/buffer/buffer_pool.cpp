@@ -390,10 +390,6 @@ idx_t BufferPool::GetExternalFileCacheMinMemory() const {
 	return size;
 }
 
-idx_t BufferPool::GetAllocatorBulkDeallocationFlushThreshold() {
-	return allocator_bulk_deallocation_flush_threshold;
-}
-
 idx_t BufferPool::GetBulkDeallocationFlushThreshold() const {
 	// freed memory that the allocator still holds must stay a small fraction of the memory limit
 	return maximum_memory.load(std::memory_order_relaxed) / BULK_DEALLOCATION_FLUSH_DIVISOR;

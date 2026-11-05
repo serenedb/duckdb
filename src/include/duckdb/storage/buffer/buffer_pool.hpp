@@ -44,7 +44,6 @@ public:
 
 	//! If bulk deallocation larger than this occurs, flush outstanding allocations
 	void SetAllocatorBulkDeallocationFlushThreshold(idx_t threshold);
-	idx_t GetAllocatorBulkDeallocationFlushThreshold();
 
 	void SetExternalFileCacheMinMemory(idx_t size);
 	idx_t GetExternalFileCacheMinMemory() const;

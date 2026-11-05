@@ -158,20 +158,10 @@ public:
 		return Get<T>(MakeCacheKey<T>(key));
 	}
 
-	template <class T, class... ARGS>
-	shared_ptr<T> GetOrCreateWithTypePrefix(std::string_view key, ARGS &&... args) {
-		return GetOrCreate<T>(MakeCacheKey<T>(key), std::forward<ARGS>(args)...);
-	}
-
 	template <class T>
 	void PutWithTypePrefix(std::string_view key,
 	                       shared_ptr<ObjectCacheEntry> value) { // NOLINT(performance-unnecessary-value-param)
 		Put(MakeCacheKey<T>(key), std::move(value));
-	}
-
-	template <class T>
-	void DeleteWithTypePrefix(std::string_view key) {
-		Delete(MakeCacheKey<T>(key));
 	}
 
 	DUCKDB_API static ObjectCache &GetObjectCache(ClientContext &context);
