@@ -172,7 +172,11 @@ static catalog_entry_vector_t GetCatalogEntries(vector<reference<SchemaCatalogEn
 		// Scan triggers from each table directly (triggers are nested under their table)
 		for (auto &table_entry : tables) {
 			auto &table = table_entry.get().Cast<TableCatalogEntry>();
-			table.ScanTriggersNonTransactional([&](CatalogEntry &entry) {
+			if (!table.IsDuckTable()) {
+				continue;
+			}
+			auto &duck_table = table.Cast<DuckTableEntry>();
+			duck_table.ScanTriggersNonTransactional([&](CatalogEntry &entry) {
 				if (!entry.internal) {
 					entries.push_back(entry);
 				}
@@ -605,7 +609,8 @@ void CheckpointReader::ReadTrigger(CatalogTransaction transaction, Deserializer 
 	if (!table_entry) {
 		throw DataCorruptionException("corrupt database file - trigger entry without table entry");
 	}
-	table_entry->Cast<TableCatalogEntry>().CreateTrigger(transaction, trigger_info);
+	auto &duck_table = table_entry->Cast<DuckTableEntry>();
+	duck_table.CreateTrigger(transaction, trigger_info);
 }
 
 //===--------------------------------------------------------------------===//
@@ -652,6 +657,7 @@ void CheckpointReader::ReadIndex(CatalogTransaction transaction, Deserializer &d
 		// See internal issue 3663.
 		throw DataCorruptionException("corrupt database file - index entry without table entry");
 	}
+	auto &table = catalog_table->Cast<DuckTableEntry>();
 
 	// we also need to make sure the index type is loaded
 	// backwards compatibility:
@@ -659,7 +665,6 @@ void CheckpointReader::ReadIndex(CatalogTransaction transaction, Deserializer &d
 	if (info.index_type.empty()) {
 		info.index_type = ART::TYPE_NAME;
 	}
-	auto &table = catalog_table->Cast<DuckTableEntry>();
 
 	// now we can look for the index in the catalog and assign the table info
 	auto &index = schema.CreateIndex(transaction, info, table)->Cast<DuckIndexEntry>();
@@ -676,6 +681,7 @@ void CheckpointReader::ReadIndex(CatalogTransaction transaction, Deserializer &d
 		index_storage_info = table_info->ExtractIndexStorageInfo(index.name);
 	}
 
+	D_ASSERT(index_storage_info.IsValid());
 	D_ASSERT(!index_storage_info.name.empty());
 
 	// Create an unbound index and add it to the table.
