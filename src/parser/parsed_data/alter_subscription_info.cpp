@@ -1,6 +1,9 @@
 #include "duckdb/parser/parsed_data/alter_subscription_info.hpp"
 
+#include <algorithm>
+
 #include "duckdb/common/sql_identifier.hpp"
+#include "duckdb/common/string_util.hpp"
 #include "duckdb/parser/keyword_helper.hpp"
 
 namespace duckdb {
@@ -25,14 +28,12 @@ unique_ptr<AlterInfo> AlterSubscriptionInfo::Copy() const {
 }
 
 static string SubscriptionOptions(const case_insensitive_map_t<Value> &options) {
-	string result;
+	vector<string> items;
 	for (auto &option : options) {
-		if (!result.empty()) {
-			result += ", ";
-		}
-		result += option.first + " = " + option.second.ToSQLString();
+		items.push_back(option.first + " = " + option.second.ToSQLString());
 	}
-	return "(" + result + ")";
+	std::sort(items.begin(), items.end());
+	return "(" + StringUtil::Join(items, ", ") + ")";
 }
 
 string AlterSubscriptionInfo::ToString() const {
