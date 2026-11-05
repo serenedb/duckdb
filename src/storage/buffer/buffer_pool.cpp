@@ -355,13 +355,12 @@ BufferPool::EvictionResult BufferPool::EvictBlocksInternal(QueryContext context,
 	return {found, std::move(r)};
 }
 
-void BufferPool::SetLimit(idx_t limit, const char *exception_postscript) {
+void BufferPool::SetLimit(idx_t limit) {
 	lock_guard<mutex> l_lock(limit_lock);
 	// try to evict until the limit is reached
 	if (!EvictBlocks(QueryContext(), MemoryTag::EXTENSION, 0, limit).success) {
 		throw OutOfMemoryException(
-		    "Failed to change memory limit to %lld: could not free up enough memory for the new limit%s", limit,
-		    exception_postscript);
+		    "Failed to change memory limit to %lld: could not free up enough memory for the new limit", limit);
 	}
 	idx_t old_limit = maximum_memory;
 	// set the global maximum memory to the new limit if successful
@@ -371,8 +370,7 @@ void BufferPool::SetLimit(idx_t limit, const char *exception_postscript) {
 		// failed: go back to old limit
 		maximum_memory = old_limit;
 		throw OutOfMemoryException(
-		    "Failed to change memory limit to %lld: could not free up enough memory for the new limit%s", limit,
-		    exception_postscript);
+		    "Failed to change memory limit to %lld: could not free up enough memory for the new limit", limit);
 	}
 	block_allocator.FlushAll();
 }
