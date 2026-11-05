@@ -584,6 +584,9 @@ void ChangeColumnTypeInfo::Serialize(Serializer &serializer) const {
 	serializer.WriteProperty<LogicalType>(401, "target_type", target_type);
 	serializer.WritePropertyWithDefault<unique_ptr<ParsedExpression>>(402, "expression", expression);
 	serializer.WritePropertyWithDefault<vector<Identifier>>(403, "column_path", column_path.size() > 1 ? column_path : vector<Identifier>(), vector<Identifier>());
+	if (serializer.ShouldSerialize(StorageVersion::SERENEDB_V1)) {
+		serializer.WritePropertyWithDefault<idx_t>(16788, "catalog_oid", catalog_oid);
+	}
 }
 
 unique_ptr<AlterTableInfo> ChangeColumnTypeInfo::Deserialize(Deserializer &deserializer) {
@@ -592,6 +595,7 @@ unique_ptr<AlterTableInfo> ChangeColumnTypeInfo::Deserialize(Deserializer &deser
 	deserializer.ReadProperty<LogicalType>(401, "target_type", result->target_type);
 	deserializer.ReadPropertyWithDefault<unique_ptr<ParsedExpression>>(402, "expression", result->expression);
 	deserializer.ReadPropertyWithExplicitDefault<vector<Identifier>>(403, "column_path", result->column_path, vector<Identifier>());
+	deserializer.ReadPropertyWithDefault<idx_t>(16788, "catalog_oid", result->catalog_oid);
 	if (result->column_path.empty()) {
 		result->column_path.push_back(std::move(column_name));
 	}
@@ -982,11 +986,13 @@ unique_ptr<AlterInfo> ReplaceDefinitionInfo::Deserialize(Deserializer &deseriali
 void ResetIndexOptionsInfo::Serialize(Serializer &serializer) const {
 	AlterIndexInfo::Serialize(serializer);
 	serializer.WritePropertyWithDefault<identifier_set_t>(400, "options", options);
+	serializer.WritePropertyWithDefault<case_insensitive_map_t<Value>>(401, "values", values);
 }
 
 unique_ptr<AlterIndexInfo> ResetIndexOptionsInfo::Deserialize(Deserializer &deserializer) {
 	auto result = duckdb::unique_ptr<ResetIndexOptionsInfo>(new ResetIndexOptionsInfo());
 	deserializer.ReadPropertyWithDefault<identifier_set_t>(400, "options", result->options);
+	deserializer.ReadPropertyWithDefault<case_insensitive_map_t<Value>>(401, "values", result->values);
 	return std::move(result);
 }
 
@@ -1008,11 +1014,15 @@ void ResetTableOptionsInfo::Serialize(Serializer &serializer) const {
 	} else {
 		serializer.WriteProperty<identifier_set_t>(400, "table_options", table_options);
 	}
+	if (serializer.ShouldSerialize(StorageVersion::SERENEDB_V1)) {
+		serializer.WritePropertyWithDefault<case_insensitive_map_t<Value>>(16785, "values", values);
+	}
 }
 
 unique_ptr<AlterTableInfo> ResetTableOptionsInfo::Deserialize(Deserializer &deserializer) {
 	auto result = duckdb::unique_ptr<ResetTableOptionsInfo>(new ResetTableOptionsInfo());
 	deserializer.ReadPropertyWithDefault<identifier_set_t>(400, "table_options", result->table_options);
+	deserializer.ReadPropertyWithDefault<case_insensitive_map_t<Value>>(16785, "values", result->values);
 	return std::move(result);
 }
 
