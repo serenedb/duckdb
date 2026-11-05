@@ -61,10 +61,6 @@ public:
 	DUCKDB_API FileBufferHandleGroup Read(idx_t nr_bytes, idx_t location);
 	//! Read [nr_bytes] bytes and sets [nr_bytes] to the actually read bytes.
 	DUCKDB_API FileBufferHandleGroup Read(idx_t &nr_bytes);
-	//! Read and record time
-	DUCKDB_API void ReadAndRecord(QueryContext context, data_ptr_t buffer, idx_t nr_bytes, idx_t location);
-	//! Whether responses observed by this handle prohibit sharing cached data (e.g., HTTP no-store/Vary)
-	DUCKDB_API bool IsCacheReuseProhibited();
 	//! Get some properties of the file
 	DUCKDB_API string GetPath() const;
 	DUCKDB_API idx_t GetFileSize();
@@ -83,11 +79,13 @@ private:
 	bool StripForceFullDownloadIfPresent();
 	//! Whether the settings let this file's reads go through the block cache
 	bool CacheAllowed() const;
-	//! The metadata of the file: from the open handle, or from the cache when the file was not opened
+	//! The metadata of the file: from the cache when it knew the file at the open, otherwise from the open handle
 	BlockCacheFileInfo GetInfo();
 	//! The block cache's view of the file, registered on first use; null when reads must not use the cache
 	shared_ptr<BlockCacheFile> GetCachedFile();
 	FileBufferHandleGroup ReadUncached(idx_t nr_bytes, idx_t location);
+	//! Whether responses observed by this handle prohibit sharing cached data (e.g., HTTP no-store/Vary)
+	bool IsCacheReuseProhibited();
 	//! Record a timed read of a local file into the throughput estimate
 	void RecordReadThroughput(double total_seconds, idx_t bytes);
 
@@ -116,7 +114,8 @@ private:
 	//! Current position (if non-seeking reads)
 	idx_t position;
 
-	//! Throughput fitted from this handle's own reads, used for local files (remote files measure their own).
+	//! Throughput fitted from this handle's own uncached reads, used for local files (remote files measure their
+	//! own).
 	ReadThroughputEstimator throughput_estimator;
 };
 
@@ -137,10 +136,11 @@ public:
 	DUCKDB_API unique_ptr<CachingFileHandle> OpenFile(QueryContext context, const OpenFileInfo &path,
 	                                                  const FileOpenFlags &flags,
 	                                                  optional_ptr<FileOpener> opener = nullptr);
-	//! Whether reads of [path] go through the block cache: remote files, and local ones when cache_local_files is set
-	DUCKDB_API bool ShouldCacheFile(const string &path) const;
 
 private:
+	//! Whether reads of [path] go through the block cache: remote files, and local ones when cache_local_files is set
+	bool ShouldCacheFile(const string &path) const;
+
 	//! The Client FileSystem (needs to be client-specific so we can do, e.g., HTTPFS profiling)
 	FileSystem &file_system;
 	//! The DatabaseInstance.

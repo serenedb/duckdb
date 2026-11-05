@@ -43,8 +43,8 @@ private:
 };
 
 //! [CachingFileSystemWrapper] is an adapter class, which wraps [CachingFileSystem] to conform to FileSystem API.
-//! Different from [CachingFileSystem], which owns cache content and returns a [BufferHandle] to achieve zero-copy on
-//! read, the wrapper class always copies requested bytes into the provided address.
+//! Different from [CachingFileSystem], which returns pins of the block cache's blocks to achieve zero-copy on read,
+//! the wrapper class always copies requested bytes into the provided address.
 //!
 //! NOTICE: Currently only read and seek operations are supported, write operations are disabled.
 class CachingFileSystemWrapper : public FileSystem, public enable_shared_from_this<CachingFileSystemWrapper> {

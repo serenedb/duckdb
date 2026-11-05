@@ -197,7 +197,14 @@ Allocator &CachingFileHandle::GetBufferAllocator() const {
 
 FileBufferHandleGroup CachingFileHandle::ReadUncached(idx_t nr_bytes, idx_t location) {
 	auto buf = BlockCache::AllocateUncached(caching_file_system.db, nr_bytes);
-	ReadAndRecord(context, buf.GetDataMutable(), nr_bytes, location);
+	auto handle = GetFileHandle();
+	const auto read_start = steady_clock::now();
+	handle->Read(context, buf.GetDataMutable(), nr_bytes, location);
+	if (auto cache_valid_until = handle->file_system.GetCacheValidUntil(*handle)) {
+		const annotated_lock_guard<annotated_mutex> guard(file_handle_mutex);
+		TightenCacheDeadline(validation_info.cache_valid_until, cache_valid_until);
+	}
+	RecordReadThroughput(duration<double>(steady_clock::now() - read_start).count(), nr_bytes);
 	const auto data = buf.Ptr();
 	vector<FileBufferHandleGroup::MemoryHandle> mem_handles;
 	mem_handles.emplace_back(std::move(buf), data, nr_bytes);
@@ -365,26 +372,12 @@ bool CachingFileHandle::TryGetNetworkThroughput(NetworkThroughputEstimate &resul
 	return throughput_estimator.TryEstimate(result);
 }
 
-void CachingFileHandle::ReadAndRecord(QueryContext context, data_ptr_t buffer, idx_t nr_bytes, idx_t location) {
-	auto handle = GetFileHandle();
-	const auto read_start = steady_clock::now();
-	handle->Read(context, buffer, nr_bytes, location);
-	auto cache_valid_until = handle->file_system.GetCacheValidUntil(*handle);
-	if (cache_valid_until) {
-		const annotated_lock_guard<annotated_mutex> guard(file_handle_mutex);
-		if (file_handle == handle) {
-			TightenCacheDeadline(validation_info.cache_valid_until, cache_valid_until);
-		}
-	}
-	RecordReadThroughput(duration<double>(steady_clock::now() - read_start).count(), nr_bytes);
-}
-
 bool CachingFileHandle::IsCacheReuseProhibited() {
 	shared_ptr<FileHandle> handle;
 	{
 		const annotated_lock_guard<annotated_mutex> guard(file_handle_mutex);
 		if (!file_handle) {
-			return cached_info && cached_info->validation.IsCacheReuseProhibited();
+			return false;
 		}
 		handle = file_handle;
 	}
