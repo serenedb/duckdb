@@ -52,6 +52,7 @@ public:
 	//! Set a new memory limit to the buffer pool, throws an exception if the new limit is too low and not enough
 	//! blocks can be evicted
 	void SetLimit(idx_t limit);
+	void ForceLimit(idx_t limit);
 
 	//! If bulk deallocation larger than this occurs, flush outstanding allocations
 	void SetAllocatorBulkDeallocationFlushThreshold(idx_t threshold);
