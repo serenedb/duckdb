@@ -24,17 +24,6 @@ static string DottedNameToSQL(const string &name) {
 	                        [](const string &part) { return SQLIdentifier::ToString(part); });
 }
 
-static string RoutineToSQL(const QualifiedName &name, bool has_func_args, const vector<LogicalType> &func_parameters) {
-	auto result = name.ToString(QualifiedNameToStringMode::HIDE_DEFAULT_SCHEMA);
-	if (has_func_args) {
-		result +=
-		    "(" +
-		    StringUtil::Join(func_parameters, ", ", [](const LogicalType &parameter) { return parameter.ToString(); }) +
-		    ")";
-	}
-	return result;
-}
-
 template <class INFO, class RENDER>
 static string DistinctToSQL(const INFO &head, const vector<unique_ptr<INFO>> &others, RENDER &&render) {
 	vector<string> items;
@@ -78,10 +67,6 @@ static string PrivilegesToSQL(AclMode privileges, const vector<ColumnPrivilege> 
 		}
 	}
 	return StringUtil::Join(items, ", ");
-}
-
-static string RoutineKindToSQL(bool include_functions, bool include_procedures) {
-	return !include_procedures ? "FUNCTION" : !include_functions ? "PROCEDURE" : "ROUTINE";
 }
 
 static string ConfigClauseToSQL(const vector<string> &set_config, const vector<string> &reset_config,
@@ -186,7 +171,7 @@ string SetCommentInfo::ToString() const {
 	result += "COMMENT ON ";
 	result += has_func_args ? "FUNCTION" : ParseInfo::TypeToString(entry_catalog_type);
 	result += " ";
-	result += RoutineToSQL(GetQualifiedName(), has_func_args, func_parameters);
+	result += ParseInfo::RoutineToString(GetQualifiedName(), has_func_args, func_parameters);
 	result += " IS ";
 	result += comment_value.ToSQLString();
 
@@ -285,31 +270,10 @@ unique_ptr<AlterInfo> AlterPermissionsInfo::Copy() const {
 }
 
 static string OwnerTargetToSQL(const AlterPermissionsInfo &info) {
-	switch (info.entry_catalog_type) {
-	case CatalogType::TABLE_ENTRY:
-		return "TABLE";
-	case CatalogType::VIEW_ENTRY:
-		return "VIEW";
-	case CatalogType::SEQUENCE_ENTRY:
-		return "SEQUENCE";
-	case CatalogType::SCHEMA_ENTRY:
-		return "SCHEMA";
-	case CatalogType::TYPE_ENTRY:
-		return "TYPE";
-	case CatalogType::JOB_ENTRY:
-		return "JOB";
-	case CatalogType::FOREIGN_SERVER_ENTRY:
-		return "SERVER";
-	case CatalogType::DATABASE_ENTRY:
-		return "DATABASE";
-	case CatalogType::TOKENIZER_ENTRY:
-		return "TEXT SEARCH DICTIONARY";
-	case CatalogType::MACRO_ENTRY:
-		return RoutineKindToSQL(info.include_functions, info.include_procedures);
-	default:
-		throw InternalException("ALTER ... OWNER TO of a %s has no SQL form",
-		                        CatalogTypeToString(info.entry_catalog_type));
+	if (info.entry_catalog_type == CatalogType::MACRO_ENTRY) {
+		return ParseInfo::RoutineKeyword(info.include_functions, info.include_procedures);
 	}
+	return ParseInfo::TypeToString(info.entry_catalog_type);
 }
 
 static string GrantTargetToSQL(const AlterPermissionsInfo &info) {
@@ -320,7 +284,7 @@ static string GrantTargetToSQL(const AlterPermissionsInfo &info) {
 	case CatalogType::SEQUENCE_ENTRY:
 		return "SEQUENCE";
 	case CatalogType::MACRO_ENTRY:
-		return RoutineKindToSQL(info.include_functions, info.include_procedures);
+		return ParseInfo::RoutineKeyword(info.include_functions, info.include_procedures);
 	case CatalogType::DATABASE_ENTRY:
 		return "DATABASE";
 	case CatalogType::SCHEMA_ENTRY:
@@ -347,7 +311,7 @@ static string GrantObjectsToSQL(CatalogType type, bool include_functions, bool i
 	case CatalogType::SEQUENCE_ENTRY:
 		return "SEQUENCES";
 	case CatalogType::MACRO_ENTRY:
-		return !include_procedures ? "FUNCTIONS" : !include_functions ? "PROCEDURES" : "ROUTINES";
+		return ParseInfo::RoutineKeyword(include_functions, include_procedures) + "S";
 	case CatalogType::TYPE_ENTRY:
 		return "TYPES";
 	case CatalogType::SCHEMA_ENTRY:
@@ -359,7 +323,7 @@ static string GrantObjectsToSQL(CatalogType type, bool include_functions, bool i
 
 string AlterPermissionsInfo::ToString() const {
 	auto target_name = [](const AlterPermissionsInfo &info) {
-		return RoutineToSQL(info.GetQualifiedName(), info.has_func_args, info.func_parameters);
+		return ParseInfo::RoutineToString(info.GetQualifiedName(), info.has_func_args, info.func_parameters);
 	};
 	if (!new_owner.empty()) {
 		return "ALTER " + OwnerTargetToSQL(*this) + " " + target_name(*this) + " OWNER TO " + RoleSpecToSQL(new_owner) +

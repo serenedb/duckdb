@@ -50,6 +50,21 @@ string ParseInfo::TypeToString(CatalogType type) {
 	}
 }
 
+string ParseInfo::RoutineKeyword(bool include_functions, bool include_procedures) {
+	return !include_procedures ? "FUNCTION" : !include_functions ? "PROCEDURE" : "ROUTINE";
+}
+
+string ParseInfo::RoutineToString(const QualifiedName &name, bool has_func_args,
+                                  const vector<LogicalType> &parameters) {
+	auto result = name.ToString(QualifiedNameToStringMode::HIDE_DEFAULT_SCHEMA);
+	if (has_func_args) {
+		result +=
+		    "(" +
+		    StringUtil::Join(parameters, ", ", [](const LogicalType &parameter) { return parameter.ToString(); }) + ")";
+	}
+	return result;
+}
+
 string RenderOptionList(const case_insensitive_map_t<unique_ptr<ParsedExpression>> &parsed_options,
                         const unordered_map<string, Value> &options) {
 	if (parsed_options.empty() && options.empty()) {

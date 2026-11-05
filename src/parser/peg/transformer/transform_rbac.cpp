@@ -549,13 +549,11 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformAlterOwnerStatement(PEG
 	    list_pr.GetChild(1).Cast<ListParseResult>().Child<ChoiceParseResult>(0).GetResult().Cast<ListParseResult>();
 	auto info = make_uniq<AlterPermissionsInfo>(CatalogType::INVALID, QualifiedName());
 	if (target.Name() == "OwnerRoutineTarget") {
-		const auto kind = ObjectTypeKeyword(target.GetChild(0));
 		auto &signature = target.Child<ListParseResult>(1);
 		SetObjectTarget(*info, CatalogType::MACRO_ENTRY, transformer.Transform<QualifiedName>(signature.GetChild(0)));
 		info->has_func_args =
 		    TransformFunctionArgumentTypes(transformer, signature.Child<OptionalParseResult>(1), info->func_parameters);
-		info->include_functions = kind != "PROCEDURE";
-		info->include_procedures = kind != "FUNCTION";
+		TransformRoutineKind(target.GetChild(0), info->include_functions, info->include_procedures);
 	} else {
 		const auto keyword = ObjectTypeKeyword(target.GetChild(0));
 		SetObjectTarget(*info, keyword == "VIEW" ? CatalogType::VIEW_ENTRY : GrantObjectType(keyword),
@@ -678,9 +676,8 @@ static vector<GrantTargetName> TransformGrantTarget(PEGTransformer &transformer,
 	if (chosen.Name() == "GrantFunctionTarget") {
 		// 0:GrantRoutineKind 1:List(RoutineSignature)
 		info.entry_catalog_type = CatalogType::MACRO_ENTRY;
-		const auto kind = ObjectTypeKeyword(target.GetChild(0));
-		info.include_functions = kind != "PROCEDURE";
-		info.include_procedures = kind != "FUNCTION";
+		PEGTransformerFactory::TransformRoutineKind(target.GetChild(0), info.include_functions,
+		                                            info.include_procedures);
 		for (auto &routine : PEGTransformerFactory::ExtractParseResultsFromList(target.GetChild(1))) {
 			auto &signature = routine.get().Cast<ListParseResult>();
 			GrantTargetName name {transformer.Transform<QualifiedName>(signature.GetChild(0))};

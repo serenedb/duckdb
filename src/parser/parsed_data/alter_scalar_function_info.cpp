@@ -5,10 +5,6 @@
 
 namespace duckdb {
 
-static string ParameterTypesToSQL(const vector<LogicalType> &types) {
-	return "(" + StringUtil::Join(types, ", ", [](const LogicalType &type) { return type.ToString(); }) + ")";
-}
-
 //===--------------------------------------------------------------------===//
 // AlterScalarFunctionInfo
 //===--------------------------------------------------------------------===//
@@ -27,10 +23,6 @@ CatalogType AlterScalarFunctionInfo::GetCatalogType() const {
 	return CatalogType::SCALAR_FUNCTION_ENTRY;
 }
 
-string AlterScalarFunctionInfo::RoutineKeyword() const {
-	return !include_procedures ? "FUNCTION" : !include_functions ? "PROCEDURE" : "ROUTINE";
-}
-
 //===--------------------------------------------------------------------===//
 // RenameScalarFunctionInfo
 //===--------------------------------------------------------------------===//
@@ -45,14 +37,11 @@ unique_ptr<AlterInfo> RenameScalarFunctionInfo::Copy() const {
 }
 
 string RenameScalarFunctionInfo::ToString() const {
-	string result = "ALTER " + RoutineKeyword() + " ";
+	string result = "ALTER " + ParseInfo::RoutineKeyword(include_functions, include_procedures) + " ";
 	if (if_not_found == OnEntryNotFound::RETURN_NULL) {
 		result += "IF EXISTS ";
 	}
-	result += GetQualifiedName().ToString(QualifiedNameToStringMode::HIDE_DEFAULT_SCHEMA);
-	if (has_func_args) {
-		result += ParameterTypesToSQL(func_parameters);
-	}
+	result += ParseInfo::RoutineToString(GetQualifiedName(), has_func_args, func_parameters);
 	return result + " RENAME TO " + SQLIdentifier(new_name) + ";";
 }
 
@@ -85,11 +74,8 @@ unique_ptr<AlterInfo> AlterFunctionAttributesInfo::Copy() const {
 }
 
 string AlterFunctionAttributesInfo::ToString() const {
-	string result =
-	    "ALTER " + RoutineKeyword() + " " + GetQualifiedName().ToString(QualifiedNameToStringMode::HIDE_DEFAULT_SCHEMA);
-	if (has_parameter_types) {
-		result += ParameterTypesToSQL(parameter_types);
-	}
+	string result = "ALTER " + ParseInfo::RoutineKeyword(include_functions, include_procedures) + " " +
+	                ParseInfo::RoutineToString(GetQualifiedName(), has_parameter_types, parameter_types);
 	if (set_security) {
 		result += security_definer ? " SECURITY DEFINER" : " SECURITY INVOKER";
 	}
