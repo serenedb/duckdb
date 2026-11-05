@@ -37,6 +37,8 @@ public:
 	//! Called after an extension fails to load loading
 	virtual void OnExtensionLoadFail(DatabaseInstance &db, const string &name, const ErrorData &error) {
 	}
+	virtual void OnDatabaseShutdown(DatabaseInstance &db) {
+	}
 
 	static void Register(DBConfig &config, shared_ptr<ExtensionCallback> extension);
 	static ExtensionCallbackIteratorHelper<shared_ptr<ExtensionCallback>> Iterate(ClientContext &context) {
