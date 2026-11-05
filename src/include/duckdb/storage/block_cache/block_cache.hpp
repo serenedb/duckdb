@@ -339,12 +339,13 @@ public:
 	//! Starts fetching the missing blocks of [offset, offset + size) and returns; a HINT stops at the bytes a file and
 	//! the cache may have in flight
 	void Prefetch(const shared_ptr<BlockCacheFile> &file, idx_t offset, idx_t size, BlockCachePrefetch kind);
+	//! Prefetches [ranges] like one Prefetch per range, where ranges closer than MERGE_GAP make one; sorts and merges
+	//! [ranges] in place
 	void Prefetch(const shared_ptr<BlockCacheFile> &file, std::span<BlockCacheRange> ranges, BlockCachePrefetch kind);
 	void MarkUnused(const BlockCacheFile &file, idx_t offset, idx_t size) const;
 
-	//! Drops every block of a backed file; current pins keep their bytes
-	void Clear();
-	//! Whether external file reads go through the cache; turning it off drops the blocks of backed files
+	//! Whether external file reads go through the cache; turning it off drops the blocks of backed files, while current
+	//! pins keep their bytes
 	void SetEnabled(bool enabled);
 	bool IsEnabled() const {
 		return enabled.load(std::memory_order_relaxed);

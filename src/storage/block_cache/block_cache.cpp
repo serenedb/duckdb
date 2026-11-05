@@ -946,7 +946,10 @@ void BlockCache::SetUnbackedSize(BlockCacheFile &file, idx_t size) {
 	file.size.store(size, std::memory_order_release);
 }
 
-void BlockCache::Clear() {
+void BlockCache::SetEnabled(bool enabled_p) {
+	if (!enabled.exchange(enabled_p) || enabled_p) {
+		return;
+	}
 	vector<shared_ptr<BlockCacheBlocks>> versions;
 	{
 		annotated_lock_guard<annotated_mutex> guard(file_lock);
@@ -956,12 +959,6 @@ void BlockCache::Clear() {
 	}
 	for (auto &blocks : versions) {
 		DropBlocks(*blocks);
-	}
-}
-
-void BlockCache::SetEnabled(bool enabled_p) {
-	if (enabled.exchange(enabled_p) && !enabled_p) {
-		Clear();
 	}
 }
 
