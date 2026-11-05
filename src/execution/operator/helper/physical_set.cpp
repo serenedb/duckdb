@@ -44,7 +44,7 @@ void PhysicalSet::SetCustomVariable(ClientContext &context, const Identifier &na
 	}
 	Value text(value.IsNull() ? string() : value.ToString());
 	if (context.setting_change_handler) {
-		context.setting_change_handler(context, name.GetIdentifierName(), scope, &text, false);
+		context.setting_change_handler(context, name.GetIdentifierName(), scope);
 	}
 	ClientConfig::GetConfig(context).custom_settings[name.GetIdentifierName()] = std::move(text);
 }
