@@ -389,9 +389,7 @@ void Binder::CheckTableRead(TableBinding &binding, TableCatalogEntry &table) {
 void Binder::AdoptPrivilegeChecks(Binder &other) {
 	auto &state = *global_binder_state;
 	auto &source = *other.global_binder_state;
-	if (&state == &source) {
-		return;
-	}
+	D_ASSERT(&state != &source);
 	state.column_reads.insert(state.column_reads.end(), source.column_reads.begin(), source.column_reads.end());
 	state.required_privileges.insert(state.required_privileges.end(), source.required_privileges.begin(),
 	                                 source.required_privileges.end());
