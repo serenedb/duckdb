@@ -1008,6 +1008,9 @@ BoundStatement Binder::Bind(AlterStatement &stmt) {
 	if (stmt.info->type == AlterType::SET_COMMENT) {
 		auto &comment = stmt.info->Cast<SetCommentInfo>();
 		comment.overload_oid = RequireRoutineOwner(*this, *entry, comment.has_func_args, comment.func_parameters);
+	} else if (stmt.info->type == AlterType::SET_SCHEMA) {
+		vector<LogicalType> no_arguments;
+		RequireRoutineOwner(*this, *entry, false, no_arguments);
 	} else {
 		RequireOwner(*entry);
 	}
