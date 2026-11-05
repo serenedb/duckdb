@@ -51,12 +51,11 @@ public:
 	bool security_invoker = false;
 	idx_t rule_oid = 0;
 	idx_t row_type_oid = 0;
-	vector<vector<AclItem>> column_acls;
+	vector<ColumnAcl> column_acls;
 	vector<NameBinding> name_bindings;
 
 	vector<idx_t> GetSubObjectOids() const;
 
-	std::span<const AclItem> ColumnAcl(idx_t column_index) const;
 	//! Returns the view column info, if the view is bound. Otherwise returns `nullptr`
 	virtual shared_ptr<ViewColumnInfo> GetColumnInfo() const;
 	//! Bind a view so we know the types / names returned by it
