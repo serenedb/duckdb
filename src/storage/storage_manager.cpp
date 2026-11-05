@@ -927,6 +927,9 @@ void SingleFileStorageManager::CreateCheckpoint(QueryContext context, Checkpoint
 
 		} catch (std::exception &ex) {
 			ErrorData error(ex);
+			if (Settings::Get<DisableDatabaseInvalidationSetting>(db.GetDatabase())) {
+				throw IOException("Checkpoint failed for database %s: %s", db.GetName(), error.RawMessage());
+			}
 			if (db.IsInitialDatabase()) {
 				ValidChecker::Invalidate(db.GetDatabase(), error.RawMessage());
 				throw FatalException("Failed to create checkpoint because of error: %s", error.RawMessage());
