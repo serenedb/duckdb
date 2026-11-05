@@ -1424,38 +1424,32 @@ void DependencyManager::VerifyForeignDependents(const vector<reference<CatalogEn
 		return;
 	}
 	CatalogTransaction committed(catalog.GetDatabase(), MAX_TRANSACTION_ID, VisibilityBound::AllCommitted());
-	vector<pair<reference<DependencyManager>, CatalogTransaction>> holders;
 	ForEachCatalog(
 	    committed, [&](DuckCatalog &other) { return other.GetDependencyManager()->MayDependOn(catalog.GetName()); },
 	    [&](DuckCatalog &holder, CatalogTransaction holder_transaction) {
-		    if (&holder != &catalog) {
-			    holders.emplace_back(*holder.GetDependencyManager(), holder_transaction);
+		    if (&holder == &catalog) {
+			    return;
+		    }
+		    auto &manager = *holder.GetDependencyManager();
+		    for (auto &object : objects) {
+			    auto info = GetLookupProperties(committed, object);
+			    auto foreign = info;
+			    foreign.catalog = catalog.GetName();
+			    manager.ScanDependents(holder_transaction, foreign, [&](DependencyEntry &dep) {
+				    if (!manager.LookupEntry(holder_transaction, dep)) {
+					    return;
+				    }
+				    auto current = LookupEntry(committed, info);
+				    auto &oid = dep.Subject().oid;
+				    if (current && (!oid.IsValid() || oid.GetIndex() == current->oid)) {
+					    return;
+				    }
+				    throw DependencyException(
+				        "Could not commit DROP of %s because a dependency was created after the transaction started",
+				        object.get().name);
+			    });
 		    }
 	    });
-	if (holders.empty()) {
-		return;
-	}
-	for (auto &object : objects) {
-		auto info = GetLookupProperties(committed, object);
-		auto foreign = info;
-		foreign.catalog = catalog.GetName();
-		for (auto &holder : holders) {
-			auto &manager = holder.first.get();
-			manager.ScanDependents(holder.second, foreign, [&](DependencyEntry &dep) {
-				if (!manager.LookupEntry(holder.second, dep)) {
-					return;
-				}
-				auto current = LookupEntry(committed, info);
-				auto &oid = dep.Subject().oid;
-				if (current && (!oid.IsValid() || oid.GetIndex() == current->oid)) {
-					return;
-				}
-				throw DependencyException(
-				    "Could not commit DROP of %s because a dependency was created after the transaction started",
-				    object.get().name);
-			});
-		}
-	}
 }
 
 catalog_entry_map_t<subdependency_set_t>
