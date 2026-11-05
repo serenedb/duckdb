@@ -101,10 +101,6 @@ protected:
 	//! destroyed. Requires the block lock, or exclusive ownership of the block.
 	void AddBlock(BlockMemory &memory);
 	void RemoveBlock(BlockMemory &memory);
-	//! Marks a block as used, which spares it one round of eviction. Takes no lock.
-	void MarkUsed(BlockMemory &memory) {
-		memory.SetReferenced();
-	}
 	//! The blocks of [tag] evicted since start
 	idx_t GetEvictions(MemoryTag tag) const;
 	void CountEviction(const BlockMemory &memory);

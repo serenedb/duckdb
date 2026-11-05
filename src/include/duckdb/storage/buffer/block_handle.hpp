@@ -155,10 +155,6 @@ public:
 	//! Called once the block handle is gone: readers that remain keep the memory alive, the last one frees it.
 	void Orphan(BlockLock &l, const shared_ptr<BlockMemory> &self) {
 		VerifyMutex(l);
-		// Tiny buffers count no readers, and their pins own the block.
-		if (buffer_type == FileBufferType::TINY_BUFFER) {
-			return;
-		}
 		if (readers.fetch_or(ORPHANED, std::memory_order_seq_cst) & READERS) {
 			orphan_owner = self;
 		}
