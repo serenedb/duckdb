@@ -235,14 +235,14 @@ FileBufferHandleGroup CachingFileHandle::Read(idx_t &nr_bytes) {
 	// because we won't be able to seek over any parts we skipped by reading from the cache
 	if (!CanSeek() || !GetCachedFile()) {
 		auto buf = BlockCache::AllocateUncached(caching_file_system.db, nr_bytes);
-		auto handle = GetFileHandle();
+		auto file_handle = GetFileHandle();
 		// Do positional read if handle can seek, otherwise have to fallback to sequential read.
-		if (handle->CanSeek()) {
-			const auto file_size = handle->GetFileSize();
+		if (file_handle->CanSeek()) {
+			const auto file_size = file_handle->GetFileSize();
 			nr_bytes = position >= file_size ? 0 : MinValue(nr_bytes, file_size - position);
-			handle->Read(context, buf.GetDataMutable(), nr_bytes, position);
+			file_handle->Read(context, buf.GetDataMutable(), nr_bytes, position);
 		} else {
-			nr_bytes = NumericCast<idx_t>(handle->Read(context, buf.GetDataMutable(), nr_bytes));
+			nr_bytes = NumericCast<idx_t>(file_handle->Read(context, buf.GetDataMutable(), nr_bytes));
 		}
 		buf.Narrow(0, nr_bytes);
 		position += nr_bytes;
