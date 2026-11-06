@@ -653,7 +653,7 @@ bool FunctionExpression::Equals(const ParsedExpression &other) const {
 		return false;
 	}
 	auto &other_p = other.Cast<FunctionExpression>();
-	if (qualified_name != other_p.qualified_name || builtin != other_p.builtin) {
+	if (qualified_name != other_p.qualified_name) {
 		return false;
 	}
 	if (!ParsedExpression::Equals(filter, other_p.filter)) {
@@ -663,6 +663,9 @@ bool FunctionExpression::Equals(const ParsedExpression &other) const {
 		return false;
 	}
 	if (distinct != other_p.distinct) {
+		return false;
+	}
+	if (builtin != other_p.builtin) {
 		return false;
 	}
 	if (export_state != other_p.export_state) {
@@ -683,6 +686,7 @@ hash_t FunctionExpression::NodeHash() const {
 	hash_t hash = ParsedExpression::NodeHash();
 	hash = CombineHash(hash, qualified_name.Hash());
 	hash = CombineHash(hash, duckdb::Hash<bool>(distinct));
+	hash = CombineHash(hash, duckdb::Hash<bool>(builtin));
 	hash = CombineHash(hash, duckdb::Hash<bool>(export_state));
 	return hash;
 }
