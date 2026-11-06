@@ -1656,12 +1656,6 @@ void RequireTypeUsage(ClientContext &context, const RoleAccess &role, const Logi
 	}
 }
 
-void CheckCall(ClientContext &context, const RoleAccess &role, FunctionEntry &function) {
-	if (!function.MayCall(role) && !BuiltinCallGranted(context, role, function)) {
-		ThrowPermissionDenied(function);
-	}
-}
-
 void CheckMacroCall(ClientContext &context, const RoleAccess &role, MacroCatalogEntry &macro,
                     const MacroFunction &overload, idx_t overload_index) {
 	if (IsUnowned(macro)) {
