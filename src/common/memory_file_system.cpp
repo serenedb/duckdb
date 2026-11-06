@@ -33,7 +33,7 @@ struct MemoryFile {
 	//! A heap file, grown without zeroing; the bytes past its size are its writer's window
 	unsafe_unique_array<data_t> heap DUCKDB_GUARDED_BY(lock);
 	idx_t heap_capacity DUCKDB_GUARDED_BY(lock) = 0;
-	//! Open write handles; a heap file moves while it grows, so it maps only once they are closed
+	//! Open writers; a heap file moves while it grows, so it maps only once they are closed
 	idx_t writers DUCKDB_GUARDED_BY(lock) = 0;
 };
 
@@ -79,16 +79,109 @@ void CopyRange(BlockCacheFile &file, idx_t offset, idx_t count, data_ptr_t targe
 	}
 }
 
+} // namespace
+
+//! Fills a memory file: in its block cache blocks for the instance a database registers, on the heap otherwise
+class MemoryFileWriter final : public FileWriter {
+public:
+	MemoryFileWriter(MemoryFileSystem &fs_p, shared_ptr<MemoryFile> file_p) : fs(fs_p), file(std::move(file_p)) {
+		auto &memory = *file;
+		annotated_lock_guard<annotated_mutex> guard(memory.lock);
+		memory.writers++;
+		if (memory.blocks) {
+			appender.emplace(memory.blocks);
+		}
+	}
+	~MemoryFileWriter() override {
+		MemoryFileWriter::Abort();
+	}
+
+	FileWriteWindow Window() override {
+		if (appender) {
+			return appender->Window();
+		}
+		auto &memory = *file;
+		annotated_lock_guard<annotated_mutex> guard(memory.lock);
+		const auto size = memory.size.load(std::memory_order_relaxed);
+		GrowHeap(memory, size, size + 1);
+		return {memory.heap.get() + size, memory.heap_capacity - size};
+	}
+
+	void Commit(idx_t nr_bytes) override {
+		if (appender) {
+			appender->Commit(nr_bytes);
+			file->size.store(appender->Size(), std::memory_order_release);
+			return;
+		}
+		auto &memory = *file;
+		annotated_lock_guard<annotated_mutex> guard(memory.lock);
+		const auto size = memory.size.load(std::memory_order_relaxed);
+		D_ASSERT(size + nr_bytes <= memory.heap_capacity);
+		memory.size.store(size + nr_bytes, std::memory_order_release);
+	}
+
+	//! Appends [count] bytes of [data]
+	void Append(const_data_ptr_t data, idx_t count) {
+		if (appender) {
+			absl::Cleanup publish = [&] {
+				file->size.store(appender->Size(), std::memory_order_release);
+			};
+			appender->Append(data, count);
+			return;
+		}
+		auto &memory = *file;
+		annotated_lock_guard<annotated_mutex> guard(memory.lock);
+		const auto size = memory.size.load(std::memory_order_relaxed);
+		GrowHeap(memory, size, size + count);
+		if (count != 0) {
+			memcpy(memory.heap.get() + size, data, count);
+		}
+		memory.size.store(size + count, std::memory_order_release);
+	}
+
+	void Close() override {
+		if (!open) {
+			return;
+		}
+		if (appender) {
+			appender->Finish();
+			appender.reset();
+		}
+		Release();
+	}
+
+	void Abort() noexcept override {
+		if (!open) {
+			return;
+		}
+		appender.reset();
+		fs.Unlink(*file);
+		Release();
+	}
+
+private:
+	void Release() {
+		auto &memory = *file;
+		annotated_lock_guard<annotated_mutex> guard(memory.lock);
+		memory.writers--;
+		open = false;
+	}
+
+	MemoryFileSystem &fs;
+	shared_ptr<MemoryFile> file;
+	//! Writes a file in block cache blocks
+	optional<BlockCacheAppender> appender;
+	bool open = true;
+};
+
+namespace {
+
 class MemoryFileHandle : public FileHandle {
 public:
 	MemoryFileHandle(MemoryFileSystem &fs, shared_ptr<MemoryFile> file_p, FileOpenFlags flags)
-	    : FileHandle(fs, file_p->path, flags), file(std::move(file_p)), writing(flags.OpenForWriting()) {
-		if (writing) {
-			annotated_lock_guard<annotated_mutex> guard(file->lock);
-			file->writers++;
-			if (file->blocks) {
-				appender.emplace(file->blocks);
-			}
+	    : FileHandle(fs, file_p->path, flags), file(std::move(file_p)) {
+		if (flags.OpenForWriting()) {
+			writer.emplace(fs, file);
 		}
 	}
 	~MemoryFileHandle() override {
@@ -96,22 +189,16 @@ public:
 	}
 
 	void Close() override {
-		if (appender) {
-			appender->Finish();
-			appender.reset();
-		}
-		if (writing) {
-			annotated_lock_guard<annotated_mutex> guard(file->lock);
-			file->writers--;
-			writing = false;
+		if (writer) {
+			writer->Close();
+			writer.reset();
 		}
 	}
 
 	shared_ptr<MemoryFile> file;
-	//! Writes a file in block cache blocks
-	optional<BlockCacheAppender> appender;
+	//! Writes the file of a handle opened for writing
+	optional<MemoryFileWriter> writer;
 	idx_t position = 0;
-	bool writing;
 };
 
 class MemoryFileMapping : public MemoryMappedFile {
@@ -272,6 +359,20 @@ shared_ptr<BlockCacheFile> MemoryFileSystem::OpenBlockFile(const string &path) {
 	return file->blocks;
 }
 
+unique_ptr<FileWriter> MemoryFileSystem::OpenFileWriter(const string &path, bool keep_cached) {
+	return make_uniq<MemoryFileWriter>(*this, Create(Normalize(path)));
+}
+
+void MemoryFileSystem::Unlink(const MemoryFile &file) {
+	shared_ptr<MemoryFile> removed;
+	annotated_lock_guard<annotated_mutex> guard(lock);
+	auto entry = files.find(file.path);
+	if (entry != files.end() && entry->second.get() == &file) {
+		removed = std::move(entry->second);
+		files.erase(entry);
+	}
+}
+
 void MemoryFileSystem::Compact(const string &path) {
 	auto file = FindExisting(path, "compact", false);
 	shared_ptr<BlockCacheFile> blocks;
@@ -309,26 +410,10 @@ void MemoryFileSystem::Clear() {
 
 int64_t MemoryFileSystem::Write(FileHandle &handle_p, void *buffer, int64_t nr_bytes) {
 	auto &handle = handle_p.Cast<MemoryFileHandle>();
-	auto &file = *handle.file;
-	auto source = const_data_ptr_cast(buffer);
-	idx_t remaining = NumericCast<idx_t>(nr_bytes);
-	if (handle.appender) {
-		absl::Cleanup publish = [&] {
-			file.size.store(handle.appender->Size(), std::memory_order_release);
-		};
-		handle.appender->Append(source, remaining);
-	} else {
-		if (db) {
-			throw IOException("Cannot write to \"%s\": it is not open for writing", handle.path);
-		}
-		annotated_lock_guard<annotated_mutex> guard(file.lock);
-		const auto size = file.size.load(std::memory_order_relaxed);
-		GrowHeap(file, size, size + remaining);
-		if (remaining != 0) {
-			memcpy(file.heap.get() + size, source, remaining);
-		}
-		file.size.store(size + remaining, std::memory_order_release);
+	if (!handle.writer) {
+		throw IOException("Cannot write to \"%s\": it is not open for writing", handle.path);
 	}
+	handle.writer->Append(const_data_ptr_cast(buffer), NumericCast<idx_t>(nr_bytes));
 	handle.position += NumericCast<idx_t>(nr_bytes);
 	return nr_bytes;
 }
@@ -402,6 +487,14 @@ void MemoryFileSystem::Truncate(FileHandle &handle, int64_t new_size) {
 }
 
 void MemoryFileSystem::FileSync(FileHandle &handle) {
+}
+
+void MemoryFileSystem::AbortFileWrite(FileHandle &handle_p) {
+	auto &handle = handle_p.Cast<MemoryFileHandle>();
+	if (handle.writer) {
+		handle.writer->Abort();
+		handle.writer.reset();
+	}
 }
 
 FileExistence MemoryFileSystem::TryDirectoryExists(const string &directory, optional_ptr<FileOpener> opener,

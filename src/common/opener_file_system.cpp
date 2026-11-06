@@ -28,6 +28,14 @@ shared_ptr<BlockCacheFile> OpenerFileSystem::OpenBlockFile(const string &path) {
 	return GetFileSystem().OpenBlockFile(path);
 }
 
+unique_ptr<FileWriter> OpenerFileSystem::OpenFileWriter(const string &path, bool keep_cached) {
+	VerifyCanAccessFile(path);
+	if (IsDuckDBExtensionName(path)) {
+		VerifyCanAccessExtension(path, FileFlags::FILE_FLAGS_WRITE);
+	}
+	return GetFileSystem().OpenFileWriter(path, keep_cached);
+}
+
 void OpenerFileSystem::Compact(const string &path) {
 	VerifyCanAccessFile(path);
 	GetFileSystem().Compact(path);

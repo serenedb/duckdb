@@ -1,6 +1,7 @@
 #include "catch.hpp"
 #include "test_helpers.hpp"
 #include "duckdb/common/error_data.hpp"
+#include "duckdb/common/local_file_system.hpp"
 #include "duckdb/common/memory_file_system.hpp"
 #include "duckdb/common/memory_mapped_file.hpp"
 #include "duckdb/main/connection.hpp"
@@ -38,6 +39,20 @@ bool HoldsBytes(const_data_ptr_t data, idx_t offset, idx_t size) {
 		}
 	}
 	return true;
+}
+
+//! Fills [writer] with the bytes up to [size] through its windows, committing a varying share of each
+void FillWriter(FileWriter &writer, idx_t size) {
+	for (idx_t written = 0; written < size;) {
+		const auto window = writer.Window();
+		REQUIRE(window.size != 0);
+		const auto count = MinValue(window.size, MinValue(size - written, 1000 + written % 7000));
+		for (idx_t i = 0; i < count; i++) {
+			window.data[i] = ByteAt(written + i);
+		}
+		writer.Commit(count);
+		written += count;
+	}
 }
 
 bool ReadsBack(FileSystem &fs, const string &path, idx_t size) {
@@ -94,6 +109,62 @@ TEST_CASE("Memory files are written once, from start to end", "[memory_file_syst
 	REQUIRE(missing.ExtraInfo().at("errno") == std::to_string(ENOENT));
 	REQUIRE(
 	    !fs.OpenFile("memory://missing.bin", FileFlags::FILE_FLAGS_READ | FileFlags::FILE_FLAGS_NULL_IF_NOT_EXISTS));
+}
+
+TEST_CASE("Memory files are filled in place through a writer", "[memory_file_system]") {
+	DuckDB db(nullptr);
+	MemoryFileSystem blocks(*db.instance);
+	MemoryFileSystem heap;
+	const idx_t size = 3 * MEMORY_BLOCK + 123;
+	for (auto fs : {&blocks, &heap}) {
+		auto writer = fs->OpenFileWriter("memory://writer.bin", false);
+		REQUIRE(writer);
+		FillWriter(*writer, size);
+		REQUIRE_THROWS(fs->Compact("memory://writer.bin"));
+		writer->Close();
+		REQUIRE(ReadsBack(*fs, "memory://writer.bin", size));
+	}
+	auto &vfs = FileSystem::GetFileSystem(*db.instance);
+	auto forwarded = vfs.OpenFileWriter("memory://forwarded.bin", true);
+	REQUIRE(forwarded);
+	FillWriter(*forwarded, MEMORY_BLOCK + 1);
+	forwarded->Close();
+	REQUIRE(ReadsBack(vfs, "memory://forwarded.bin", MEMORY_BLOCK + 1));
+	LocalFileSystem local;
+	REQUIRE(!local.OpenFileWriter(TestCreatePath("no_writer.bin"), true));
+}
+
+TEST_CASE("An aborted write of a memory file leaves no file behind", "[memory_file_system]") {
+	DuckDB db(nullptr);
+	MemoryFileSystem blocks(*db.instance);
+	MemoryFileSystem heap;
+	uint8_t byte = 1;
+	for (auto fs : {&blocks, &heap}) {
+		auto aborted = fs->OpenFileWriter("memory://aborted.bin", false);
+		FillWriter(*aborted, MEMORY_BLOCK + 1);
+		aborted->Abort();
+		REQUIRE(!fs->FileExists("memory://aborted.bin"));
+
+		{
+			auto dropped = fs->OpenFileWriter("memory://dropped.bin", false);
+			FillWriter(*dropped, 10);
+		}
+		REQUIRE(!fs->FileExists("memory://dropped.bin"));
+
+		auto handle =
+		    fs->OpenFile("memory://handle.bin", FileFlags::FILE_FLAGS_WRITE | FileFlags::FILE_FLAGS_FILE_CREATE_NEW);
+		handle->Write(&byte, 1);
+		handle->AbortWrite();
+		REQUIRE(!fs->FileExists("memory://handle.bin"));
+
+		auto replaced = fs->OpenFileWriter("memory://replaced.bin", false);
+		WriteFile(*fs, "memory://replaced.bin", 10);
+		replaced->Abort();
+		REQUIRE(ReadsBack(*fs, "memory://replaced.bin", 10));
+
+		auto reader = fs->OpenFile("memory://replaced.bin", FileFlags::FILE_FLAGS_READ);
+		REQUIRE_THROWS(reader->Write(&byte, 1));
+	}
 }
 
 TEST_CASE("Heap memory files map in place, block files do not", "[memory_file_system]") {

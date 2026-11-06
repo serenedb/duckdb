@@ -51,6 +51,8 @@ public:
 	FileType GetFileType(FileHandle &handle) override;
 	void Truncate(FileHandle &handle, int64_t new_size) override;
 	void FileSync(FileHandle &handle) override;
+	//! Removes the file a handle was writing
+	void AbortFileWrite(FileHandle &handle) override;
 
 	FileExistence TryDirectoryExists(const string &directory, optional_ptr<FileOpener> opener = nullptr,
 	                                 optional_ptr<ErrorData> error = nullptr) override;
@@ -74,12 +76,18 @@ public:
 
 	//! Null for a heap or compacted file
 	shared_ptr<BlockCacheFile> OpenBlockFile(const string &path) override;
+	//! Writes the file in its blocks or on the heap, whatever [keep_cached] says
+	unique_ptr<FileWriter> OpenFileWriter(const string &path, bool keep_cached) override;
 	void Compact(const string &path) override;
 	//! Removes every file; the database calls it before its block cache goes
 	void Clear();
 
 private:
+	friend class MemoryFileWriter;
+
 	shared_ptr<MemoryFile> Find(std::string_view path);
+	//! Removes [file] from its path unless another file replaced it there
+	void Unlink(const MemoryFile &file);
 	//! The file at [path]; when there is none, null if [null_if_missing], else an error that [verb] found none
 	shared_ptr<MemoryFile> FindExisting(const string &path, const char *verb, bool null_if_missing);
 	shared_ptr<MemoryFile> Create(std::string_view path);
