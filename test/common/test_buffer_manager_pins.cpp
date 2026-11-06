@@ -37,7 +37,7 @@ void LoadTestBlock(BufferManager &buffers, shared_ptr<BlockHandle> &handle, data
 	REQUIRE(memory.TryClaim());
 	auto load = buffers.PrepareLoad(memory, PIN_BLOCK_SIZE, Storage::DEFAULT_BLOCK_HEADER_SIZE);
 	memset(load.buffer->GetDataMutable(), byte, PIN_BLOCK_SIZE);
-	buffers.CompleteLoad(handle, std::move(load));
+	buffers.CompleteLoad(memory, std::move(load));
 	memory.FinishLoad();
 }
 

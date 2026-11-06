@@ -216,8 +216,8 @@ public:
 	BlockLoad PrepareLoad(BlockMemory &memory, idx_t block_size, idx_t block_header_size) override {
 		return buffer_manager.PrepareLoad(memory, block_size, block_header_size);
 	}
-	BufferHandle CompleteLoad(shared_ptr<BlockHandle> &handle, BlockLoad load) override {
-		return buffer_manager.CompleteLoad(handle, std::move(load));
+	BufferHandle CompleteLoad(BlockMemory &memory, BlockLoad load) override {
+		return buffer_manager.CompleteLoad(memory, std::move(load));
 	}
 	void Discard(BlockMemory &memory) override {
 		return buffer_manager.Discard(memory);

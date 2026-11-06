@@ -325,8 +325,7 @@ void BlockCache::DropBlocks(BlockCacheBlocks &blocks) {
 		absl::Cleanup finish = [&] {
 			memory.FinishLoad();
 		};
-		auto owner = memory.GetOwner();
-		buffer_manager.Discard(owner);
+		buffer_manager.Discard(memory);
 	}
 }
 
