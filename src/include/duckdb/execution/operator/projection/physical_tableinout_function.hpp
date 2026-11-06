@@ -46,6 +46,7 @@ public:
 	}
 
 	InsertionOrderPreservingMap<string> ParamsToString() const override;
+	InsertionOrderPreservingMap<ExplainValue> ParamsToValue() const override;
 
 	//! Information for WITH ORDINALITY
 	optional_idx ordinality_idx;
