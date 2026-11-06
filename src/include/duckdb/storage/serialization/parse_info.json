@@ -24,9 +24,6 @@
     "finalize_deserialization": [
       "if (!qualified_name.Path().empty()) {",
       "\tresult->SetQualifiedName(std::move(qualified_name));",
-      "}",
-      "if (new_dependencies) {",
-      "\tresult->new_dependencies = std::move(new_dependencies);",
       "}"
     ],
     "members": [
@@ -79,13 +76,6 @@
         "name": "oid",
         "type": "idx_t",
         "version": "serenedb_v1"
-      },
-      {
-        "id": 16591,
-        "name": "new_dependencies",
-        "type": "unique_ptr<LogicalDependencyList>",
-        "version": "serenedb_v1",
-        "deserialize_skip_assign": true
       }
     ],
     "methods": {

@@ -69,6 +69,7 @@ public:
 	unique_ptr<CatalogEntry> Copy(ClientContext &context) const override;
 
 	void SetAsRoot(optional_ptr<CatalogTransaction> transaction, optional_ptr<CatalogEntry> previous) override;
+	void AlterDependentIndexes(CatalogTransaction transaction, DuckTableEntry &previous);
 	void ReplaceStorage(DuckTableEntry &source);
 
 	void CommitAlter(const string &column_name, const AlterInfo &info, CommitDropState &drop_state);
@@ -124,8 +125,6 @@ private:
 	                                   const vector<unique_ptr<BoundConstraint>> &bound_constraints, bool is_generated);
 
 protected:
-	bool OwnsIndex(const IndexCatalogEntry &index) const override;
-
 	//! A list of columns that are part of this table
 	ColumnList columns;
 

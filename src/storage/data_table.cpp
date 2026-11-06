@@ -640,11 +640,18 @@ bool DataTable::IndexNameIsUnique(const string &name, optional_ptr<const unorder
 }
 
 Identifier DataTableInfo::GetSchemaName() {
+	lock_guard<mutex> l(name_lock);
 	return schema_info->Name();
 }
 
 vector<Identifier> DataTableInfo::GetSchemaPath() const {
+	lock_guard<mutex> l(name_lock);
 	return schema_info->Path();
+}
+
+void DataTableInfo::SetSchemaInfo(shared_ptr<SchemaInfo> info) {
+	lock_guard<mutex> l(name_lock);
+	schema_info = std::move(info);
 }
 
 Identifier DataTableInfo::GetTableName() {

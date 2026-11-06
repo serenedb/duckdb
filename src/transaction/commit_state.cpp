@@ -302,9 +302,6 @@ void CommitState::CommitEntry(UndoFlags type, data_ptr_t data, CommitInfo &info)
 		} else if (new_entry.type == CatalogType::DELETED_ENTRY && old_entry.set) {
 			old_entry.set->CommitDrop(commit_id, transaction.view.visibility_bound, old_entry);
 			info.drop_state->DropEntry(old_entry);
-		} else if (old_entry.type == CatalogType::TABLE_ENTRY && new_entry.type == CatalogType::TABLE_ENTRY &&
-		           old_entry.set) {
-			old_entry.set->CommitAlter(commit_id, transaction.view.visibility_bound, old_entry, new_entry);
 		}
 		lock_guard<mutex> read_lock(old_entry.set->GetCatalogLock());
 

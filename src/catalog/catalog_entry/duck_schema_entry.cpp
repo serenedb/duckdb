@@ -482,6 +482,15 @@ static void AlterAllInSchema(DuckSchemaEntry &schema, CatalogTransaction transac
 	}
 }
 
+static void MoveAlong(DuckSchemaEntry &schema, CatalogTransaction transaction, const catalog_entry_vector_t &entries,
+                      AlterInfo &info) {
+	for (auto &part : entries) {
+		auto &entry = part.get();
+		D_ASSERT(entry.ParentSchema(transaction).GetSchemaInfo() == schema.GetSchemaInfo());
+		schema.GetCatalogSet(entry.type).AlterEntry(transaction, entry.name, info);
+	}
+}
+
 void DuckSchemaEntry::Alter(CatalogTransaction transaction, AlterInfo &info) {
 	if (info.type == AlterType::ALTER_PERMISSIONS && info.Cast<AlterPermissionsInfo>().all_in_schema) {
 		AlterAllInSchema(*this, transaction, info.Cast<AlterPermissionsInfo>());
@@ -532,21 +541,23 @@ void DuckSchemaEntry::Alter(CatalogTransaction transaction, AlterInfo &info) {
 				                          info.Cast<DropConstraintInfo>().constraint_name);
 			}
 		}
-		auto previous =
-		    type == CatalogType::TABLE_ENTRY && transaction.transaction ? set.GetEntry(transaction, name) : nullptr;
+		auto previous = (type == CatalogType::TABLE_ENTRY || new_schema) && transaction.transaction
+		                    ? set.GetEntry(transaction, name)
+		                    : nullptr;
+		catalog_entry_vector_t following;
+		if (previous && new_schema) {
+			MoveAlong(*this, transaction, catalog.GetDependencyManager()->OwnedEntries(transaction, *previous), info);
+			following = catalog.GetDependencyManager()->FollowingDependents(transaction, *previous);
+		}
 		if (!set.AlterEntry(transaction, name, info)) {
 			throw CatalogException::MissingEntry(type, name, string());
 		}
+		MoveAlong(*this, transaction, following, info);
 		if (previous && previous->type == CatalogType::TABLE_ENTRY) {
 			auto new_name = info.GetNewName();
 			auto current = set.GetEntry(transaction, new_name ? *new_name : name);
 			if (current && current.get() != previous.get()) {
-				current->Cast<TableCatalogEntry>().AlterDependentIndexes(transaction,
-				                                                         previous->Cast<TableCatalogEntry>());
-				if (catalog.Compatibility() == SqlCompatibility::POSTGRES) {
-					MoveOwnedSequences(catalog, transaction, previous->Cast<TableCatalogEntry>(),
-					                   current->Cast<TableCatalogEntry>());
-				}
+				current->Cast<DuckTableEntry>().AlterDependentIndexes(transaction, previous->Cast<DuckTableEntry>());
 			}
 		}
 		// Detaching a foreign-key pair must also remove the dependency edge

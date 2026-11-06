@@ -284,20 +284,22 @@ bool CatalogSet::AlterOwnership(CatalogTransaction transaction, ChangeOwnershipI
 	return true;
 }
 
-bool CatalogSet::RenameEntryInternal(CatalogTransaction transaction, CatalogEntry &old, const Identifier &new_name,
-                                     AlterInfo &alter_info, unique_lock<mutex> &read_lock) {
+bool CatalogSet::RenameEntryInternal(CatalogTransaction transaction, CatalogEntry &old, CatalogSet &target,
+                                     const Identifier &new_name, AlterInfo &alter_info, unique_lock<mutex> &read_lock,
+                                     unique_lock<mutex> &target_lock) {
 	auto &original_name = old.name;
 
 	auto &context = *transaction.context;
-	auto entry_value = map.GetEntry(new_name);
-	if (entry_value) {
-		auto &existing_entry = GetEntryForTransaction(transaction, *entry_value);
-		if (!existing_entry.deleted) {
-			// There exists an entry by this name that is not deleted
-			old.UndoAlter(context, alter_info);
-			throw CatalogException("Could not rename %s to %s: another entry with this name already exists!",
-			                       original_name, new_name);
+	auto entry_value = target.map.GetEntry(new_name);
+	const bool taken = entry_value ? !GetEntryForTransaction(transaction, *entry_value).deleted
+	                               : target.CreateDefaultEntry(transaction, new_name, target_lock);
+	if (taken) {
+		old.UndoAlter(context, alter_info);
+		if (&target != this) {
+			throw CatalogException::EntryAlreadyExists(old.type, new_name);
 		}
+		throw CatalogException("Could not rename %s to %s: another entry with this name already exists!", original_name,
+		                       new_name);
 	}
 
 	// Add a RENAMED_ENTRY before adding a DELETED_ENTRY, this makes it so that when this is committed
@@ -348,9 +350,13 @@ bool CatalogSet::AlterEntry(CatalogTransaction transaction, const Identifier &na
 		return true;
 	}
 
+	auto &target = alter_info.GetNewSchema()
+	                   ? value->ParentSchema(transaction).Cast<DuckSchemaEntry>().GetCatalogSet(value->type)
+	                   : *this;
+
 	// lock the catalog for writing
 	unique_lock<mutex> write_lock(catalog.GetWriteLock());
-	const bool renamed = value->name != name;
+	const bool renamed = &target != this || value->name != name;
 	// lock this catalog set to disallow reading
 	unique_lock<mutex> read_lock(catalog_lock, std::defer_lock);
 	unique_lock<mutex> target_lock(target.catalog_lock, std::defer_lock);
@@ -371,12 +377,13 @@ bool CatalogSet::AlterEntry(CatalogTransaction transaction, const Identifier &na
 	value->oid = entry->oid;
 
 	if (renamed) {
-		if (!RenameEntryInternal(transaction, *entry, value->name, alter_info, read_lock)) {
+		if (!RenameEntryInternal(transaction, *entry, target, value->name, alter_info, read_lock,
+		                         &target != this ? target_lock : read_lock)) {
 			return false;
 		}
 	}
 	auto new_entry = value.get();
-	map.UpdateEntry(std::move(value));
+	target.map.UpdateEntry(std::move(value));
 
 	// push the old entry in the undo buffer for this transaction
 	unique_ptr<CatalogEntry> entry_to_destroy;
@@ -476,8 +483,7 @@ bool CatalogSet::DropEntry(ClientContext &context, const Identifier &name, bool 
 }
 
 //! Verify that the object referenced by the dependency still exists when we commit the dependency
-void CatalogSet::VerifyExistenceOfDependency(transaction_t commit_id, VisibilityBound visibility_bound,
-                                             CatalogEntry &entry) {
+void CatalogSet::VerifyExistenceOfDependency(transaction_t commit_id, CatalogEntry &entry) {
 	auto &duck_catalog = GetCatalog();
 
 	// Resolve the dependency target against this transaction's own entries (already stamped with commit_id
@@ -492,7 +498,7 @@ void CatalogSet::VerifyExistenceOfDependency(transaction_t commit_id, Visibility
 
 	D_ASSERT(entry.type == CatalogType::DEPENDENCY_ENTRY);
 	auto &dep = entry.Cast<DependencyEntry>();
-	duck_catalog.GetDependencyManager()->VerifyExistence(commit_transaction, visibility_bound, dep);
+	duck_catalog.GetDependencyManager()->VerifyExistence(commit_transaction, dep);
 }
 
 //! Verify that no dependencies creations were committed since our transaction started, that reference the entry we're
@@ -508,11 +514,6 @@ void CatalogSet::CommitDrop(transaction_t commit_id, VisibilityBound visibility_
 	                                      VisibilityBound::Before(commit_id));
 
 	duck_catalog.GetDependencyManager()->VerifyCommitDrop(commit_transaction, visibility_bound, entry);
-}
-
-void CatalogSet::CommitAlter(transaction_t commit_id, VisibilityBound visibility_bound, CatalogEntry &previous,
-                             CatalogEntry &altered) {
-	GetCatalog().GetDependencyManager()->VerifyCommitAlter(commit_id, visibility_bound, previous, altered);
 }
 
 DuckCatalog &CatalogSet::GetCatalog() {

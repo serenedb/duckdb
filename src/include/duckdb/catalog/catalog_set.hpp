@@ -77,12 +77,9 @@ public:
 	DUCKDB_API bool DropEntry(ClientContext &context, const Identifier &name, bool cascade,
 	                          bool allow_drop_internal = false);
 	//! Verify that the entry referenced by the dependency is still alive
-	DUCKDB_API void VerifyExistenceOfDependency(transaction_t commit_id, VisibilityBound visibility_bound,
-	                                            CatalogEntry &entry);
+	DUCKDB_API void VerifyExistenceOfDependency(transaction_t commit_id, CatalogEntry &entry);
 	//! Verify we can still drop the entry while committing
 	DUCKDB_API void CommitDrop(transaction_t commit_id, VisibilityBound visibility_bound, CatalogEntry &entry);
-	void CommitAlter(transaction_t commit_id, VisibilityBound visibility_bound, CatalogEntry &previous,
-	                 CatalogEntry &altered);
 
 	DUCKDB_API DuckCatalog &GetCatalog();
 
@@ -171,8 +168,9 @@ private:
 	bool VerifyVacancy(CatalogTransaction transaction, CatalogEntry &entry);
 	//! Start the catalog entry chain with a dummy node
 	bool StartChain(CatalogTransaction transaction, const Identifier &name, unique_lock<mutex> &read_lock);
-	bool RenameEntryInternal(CatalogTransaction transaction, CatalogEntry &old, const Identifier &new_name,
-	                         AlterInfo &alter_info, unique_lock<mutex> &read_lock);
+	bool RenameEntryInternal(CatalogTransaction transaction, CatalogEntry &old, CatalogSet &target,
+	                         const Identifier &new_name, AlterInfo &alter_info, unique_lock<mutex> &read_lock,
+	                         unique_lock<mutex> &target_lock);
 
 private:
 	DuckCatalog &catalog;
