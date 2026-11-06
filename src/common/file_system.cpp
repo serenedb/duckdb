@@ -473,16 +473,11 @@ void FileSystem::ReadScattered(FileHandle &handle, std::span<const FileReadTarge
 		Read(handle, targets[0].data, NumericCast<int64_t>(targets[0].size), location);
 		return;
 	}
-	const auto size = FileReadTarget::TotalSize(targets);
+	FileReadTargetWriter writer(targets);
+	const auto size = writer.Capacity();
 	auto staging = Allocator::DefaultAllocator().Allocate(size);
 	Read(handle, staging.get(), NumericCast<int64_t>(size), location);
-	idx_t offset = 0;
-	for (auto &target : targets) {
-		if (target.data) {
-			memcpy(target.data, staging.get() + offset, target.size);
-		}
-		offset += target.size;
-	}
+	writer.Write(staging.get(), size);
 }
 
 void FileSystem::Write(FileHandle &handle, void *buffer, int64_t nr_bytes, idx_t location) {
