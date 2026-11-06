@@ -32,8 +32,10 @@ public:
 
 public:
 	bool Enqueue(ProducerToken &token, shared_ptr<Task> *tasks, idx_t count, bool keep_claim);
+	void EnqueueDedicated(ProducerToken &token, shared_ptr<Task> *tasks, idx_t count);
 	void Publish(SchedulerAccount &account);
 	bool Dequeue(SchedulerAccount &account, shared_ptr<Task> &task);
+	bool DequeueDedicated(SchedulerAccount &account, shared_ptr<Task> &task);
 	bool DequeueFromProducer(ProducerToken &token, shared_ptr<Task> &task);
 	void Charge(SchedulerAccount &account, int64_t used_nanos);
 	bool HasListed() const;

@@ -1,5 +1,7 @@
 #include "catch.hpp"
 #include "test_helpers.hpp"
+#include "duckdb/common/tree_renderer/text_tree_renderer.hpp"
+#include "duckdb/main/profiler/profiling_node.hpp"
 #include "duckdb/main/query_profiler.hpp"
 #include "duckdb/main/statement_iterator.hpp"
 
@@ -73,6 +75,19 @@ TEST_CASE("Disabling profiling resets the active query profiler", "[api]") {
 	REQUIRE_NO_FAIL(con.Query("SELECT 42"));
 	auto output = con.GetProfilingInformation(ProfilerPrintFormat::JSON());
 	REQUIRE(output.find("SELECT 42") != string::npos);
+}
+
+TEST_CASE("Text profiler output keeps operator times below ten milliseconds", "[api]") {
+	ProfilingNode node;
+	auto &metrics = node.GetOperatorMetrics();
+	metrics.name = "SLOW_OPERATOR";
+	metrics.time = 0.0035;
+	auto output = TextTreeRenderer().ToString(node);
+	REQUIRE(output.find("3.5ms") != string::npos);
+
+	metrics.time = 0.000042;
+	output = TextTreeRenderer().ToString(node);
+	REQUIRE(output.find("42µs") != string::npos);
 }
 
 TEST_CASE("Test parser timing is reported per statement", "[api]") {

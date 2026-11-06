@@ -9,10 +9,10 @@ namespace duckdb {
 
 //! The available compression modes. Modes 0-2 are the original duckdb-compatible on-disk formats and the ONLY modes
 //! written to native duckdb storage. The FSST+ family (strings stored in cleaved shared-prefix/suffix form) is
-//! serenedb-only: written exclusively to serenedb-owned storage (the __sdb_store facade + the iresearch .col
-//! columnstore), never to a file that must round-trip with vanilla duckdb. It is numbered high (14-15) so that
-//! values 3-13 stay free for a future vanilla-duckdb mode -- a duckdb file with such a mode is then rejected by the
-//! reader's mode whitelist instead of being misread as an FSST+ segment.
+//! serenedb-only: written exclusively to files with a SereneDB storage version, never to a file that must round-trip
+//! with vanilla duckdb. It is numbered high (14-15) so that values 3-13 stay free for a future vanilla-duckdb mode --
+//! a duckdb file with such a mode is then rejected by the reader's mode whitelist instead of being misread as an
+//! FSST+ segment.
 //!
 //! Deliberately in the top-level duckdb namespace (not dict_fsst) so generate_enum_util.py can emit its
 //! ToChars/FromString -- that generated pair IS the DictFSSTMode <-> string mapping used by the force_dict_fsst_mode

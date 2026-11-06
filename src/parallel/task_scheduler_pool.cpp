@@ -223,6 +223,10 @@ void TaskSchedulerPool::StopSpares(TaskScheduler &scheduler) {
 }
 
 bool TaskSchedulerPool::SpawnSpare(TaskScheduler &scheduler) {
+	return SpawnThread([&scheduler](atomic<bool> &marker) { scheduler.ExecuteSpare(&marker); });
+}
+
+bool TaskSchedulerPool::SpawnThread(std::function<void(atomic<bool> &)> loop) {
 #ifndef DUCKDB_NO_THREADS
 	lock_guard<mutex> guard(spare_lock);
 	if (spares_stopped) {
@@ -231,8 +235,8 @@ bool TaskSchedulerPool::SpawnSpare(TaskScheduler &scheduler) {
 	ReapSpares();
 	auto spare = make_uniq<TaskSchedulerSpare>();
 	try {
-		spare->thread = make_uniq<TaskSchedulerThread>([&scheduler, spare_ptr = spare.get()] {
-			scheduler.ExecuteSpare(&spare_ptr->marker);
+		spare->thread = make_uniq<TaskSchedulerThread>([loop = std::move(loop), spare_ptr = spare.get()] {
+			loop(spare_ptr->marker);
 			spare_ptr->done = true;
 		});
 	} catch (std::exception &ex) {

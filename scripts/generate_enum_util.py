@@ -155,6 +155,14 @@ overrides = {
         "COMPRESSION_ROARING": "ROARING",
         "COMPRESSION_EMPTY": "EMPTY",
         "COMPRESSION_DICT_FSST": "DICT_FSST",
+        "COMPRESSION_DICT_LZ4": "DICT_LZ4",
+        "COMPRESSION_DICT_ZSTD": "DICT_ZSTD",
+        "COMPRESSION_LZ4": "LZ4",
+        "COMPRESSION_COL_DICT_FSST": "DICT_FSST",
+        "COMPRESSION_COL_FSST": "FSST",
+        "COMPRESSION_DICT_ZXC": "DICT_ZXC",
+        "COMPRESSION_ZXC": "ZXC",
+        "COMPRESSION_COL_ZSTD": "ZSTD",
     },
     "ArrowFormatVersion": {"V1_0": "1.0", "V1_1": "1.1", "V1_2": "1.2", "V1_3": "1.3", "V1_4": "1.4", "V1_5": "1.5"},
     "TriggerTiming": {"BEFORE": "BEFORE", "AFTER": "AFTER", "INSTEAD_OF": "INSTEAD OF"},
@@ -178,6 +186,16 @@ for root, dirs, files in os.walk(os.path.join("..", "src")):
 
         if file.endswith(".hpp"):
             hpp_files.append(os.path.join(root, file))
+
+
+excluded_members = {
+    "CompressionType": [
+        "ENUM_SIZE",
+        "COMPRESSION_SERENEDB_COUNT",
+        "COMPRESSION_COL_SEQUENCE",
+        "COMPRESSION_COL_NUMERIC",
+    ],
+}
 
 
 def remove_prefix(str, prefix):
@@ -216,6 +234,8 @@ for hpp_file in hpp_files:
             enum_values = {}
             for member in re.finditer(r"(\w+)(\s*\=\s*-?\w*)?", s):
                 key = member.group(1)
+                if key in excluded_members.get(enum_name, ()):
+                    continue
                 strings = [key]
                 if enum_name in overrides and key in overrides[enum_name]:
                     override = overrides[enum_name][key]

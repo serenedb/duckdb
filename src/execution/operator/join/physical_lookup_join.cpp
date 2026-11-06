@@ -1,6 +1,6 @@
 #include "duckdb/execution/operator/join/physical_lookup_join.hpp"
 
-#include "duckdb/common/operator/comparison_operators.hpp"
+#include "duckdb/common/sorting/row_sort.hpp"
 #include "duckdb/function/create_sort_key.hpp"
 #include "duckdb/main/profiler/profiling_node.hpp"
 #include "duckdb/parallel/base_pipeline_event.hpp"
@@ -140,13 +140,10 @@ SinkFinalizeType PhysicalLookupJoin::Finalize(Pipeline &pipeline, Event &event, 
 		offset += chunk->size();
 	}
 	sink.ids.SetCardinality(sink.count);
-	Vector keys(LogicalType::BLOB, sink.count);
-	CreateSortKeyHelpers::CreateSortKey(sink.ids, modifiers, keys);
-	auto key_data = FlatVector::GetData<string_t>(keys);
+	RowSort sort(id_types, std::move(modifiers), sink.count);
+	sort.Append(sink.ids);
 	sink.order.resize(sink.count);
-	std::iota(sink.order.begin(), sink.order.end(), 0);
-	std::sort(sink.order.begin(), sink.order.end(),
-	          [&](sel_t a, sel_t b) { return LessThan::Operation(key_data[a], key_data[b]); });
+	sort.Sort(sink.order);
 
 	sink.batch_count = (sink.count + STANDARD_VECTOR_SIZE - 1) / STANDARD_VECTOR_SIZE;
 	sink.batch_size = (sink.count + sink.batch_count - 1) / sink.batch_count;
