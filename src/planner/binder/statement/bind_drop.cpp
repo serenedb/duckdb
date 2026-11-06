@@ -115,14 +115,8 @@ void Binder::BindDrop(DropInfo &info, StatementProperties &properties) {
 				                      MacroFunction::ParameterTypesToString(info.func_parameters),
 				                      info.is_procedure ? "procedure" : "function");
 			}
-			for (auto &overload : macro.macros) {
-				if (!info.has_func_args || overload->HasParameterTypes(info.func_parameters)) {
-					RequireOwner(CheckAs(), *entry, macro.OverloadPermissions(*overload).owner);
-				}
-			}
-		} else {
-			RequireOwner(context, CheckAs(), *entry);
 		}
+		RequireDropOwner(context, CheckAs(), *entry, info.has_func_args ? &info.func_parameters : nullptr);
 		// keep the entry's full (possibly nested) schema path so execution navigates the same schema
 		info.SetQualifiedName(QualifiedName::FromCatalogSchema(
 		    entry->ParentCatalog().GetName(),
