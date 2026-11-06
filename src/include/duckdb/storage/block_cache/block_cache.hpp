@@ -98,8 +98,6 @@ public:
 	}
 
 private:
-	friend class BlockCache;
-
 	BufferHandle handle;
 	data_ptr_t data = nullptr;
 	idx_t size = 0;
