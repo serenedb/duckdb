@@ -952,7 +952,7 @@ void Binder::PlanSubqueries(unique_ptr<Expression> &expr_ptr, unique_ptr<Logical
 
 unique_ptr<LogicalOperator> Binder::PlanLateralJoin(unique_ptr<LogicalOperator> left, unique_ptr<LogicalOperator> right,
                                                     CorrelatedColumns &correlated, JoinType join_type,
-                                                    unique_ptr<Expression> condition) {
+                                                    unique_ptr<Expression> condition, bool exact_nearest) {
 	// scan the right operator for correlated columns
 	// correlated LATERAL JOIN
 	if (condition) {
@@ -963,7 +963,6 @@ unique_ptr<LogicalOperator> Binder::PlanLateralJoin(unique_ptr<LogicalOperator> 
 	if (ModifiesData(*right)) {
 		throw BinderException("A function whose body modifies data cannot be called for each row of a query");
 	}
-
 	auto perform_delim = PerformDuplicateElimination(*this, correlated, right->HasVolatileExpressions());
 	auto delim_join = CreateDuplicateEliminatedJoin(correlated, join_type, std::move(left), perform_delim);
 
@@ -971,6 +970,7 @@ unique_ptr<LogicalOperator> Binder::PlanLateralJoin(unique_ptr<LogicalOperator> 
 	delim_join->perform_delim = perform_delim;
 	delim_join->any_join = false;
 	delim_join->propagate_null_values = join_type != JoinType::INNER;
+	delim_join->exact_nearest = exact_nearest;
 	delim_join->condition = std::move(condition);
 	delim_join->AddChild(std::move(right));
 	return std::move(delim_join);
