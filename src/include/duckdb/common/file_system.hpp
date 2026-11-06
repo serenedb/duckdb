@@ -151,6 +151,55 @@ struct FileReadTarget {
 	}
 };
 
+class FileReadTargetWriter {
+public:
+	explicit FileReadTargetWriter(std::span<const FileReadTarget> targets_p)
+	    : targets(targets_p), capacity(FileReadTarget::TotalSize(targets_p)) {
+	}
+
+	idx_t Capacity() const {
+		return capacity;
+	}
+	idx_t Written() const {
+		return written;
+	}
+
+	bool Write(const_data_ptr_t data, idx_t size) {
+		if (size > capacity - written) {
+			return false;
+		}
+		written += size;
+		while (size > 0) {
+			auto &target = targets[index];
+			const auto chunk = MinValue(size, target.size - offset);
+			if (target.data) {
+				memcpy(target.data + offset, data, chunk);
+			}
+			data += chunk;
+			size -= chunk;
+			offset += chunk;
+			if (offset == target.size) {
+				index++;
+				offset = 0;
+			}
+		}
+		return true;
+	}
+
+	void Reset() {
+		index = 0;
+		offset = 0;
+		written = 0;
+	}
+
+private:
+	std::span<const FileReadTarget> targets;
+	idx_t capacity;
+	idx_t index = 0;
+	idx_t offset = 0;
+	idx_t written = 0;
+};
+
 //! Measured network throughput for a (remote) file handle. Used to size prefetch coalescing gaps.
 struct NetworkThroughputEstimate {
 	//! Round-trip latency + request setup, in seconds
