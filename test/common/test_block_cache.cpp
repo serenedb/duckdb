@@ -162,8 +162,8 @@ public:
 
 //! Appends [blocks] blocks to the unbacked [file], block b filled with the byte fill(b)
 template <class FILL>
-void AppendBlocks(BlockCache &cache, const shared_ptr<BlockCacheFile> &file, idx_t blocks, FILL &&fill) {
-	BlockCacheAppender appender(cache, file);
+void AppendBlocks(const shared_ptr<BlockCacheFile> &file, idx_t blocks, FILL &&fill) {
+	BlockCacheAppender appender(file);
 	vector<data_t> bytes(BLOCK);
 	for (idx_t block = 0; block < blocks; block++) {
 		memset(bytes.data(), int(fill(block)), BLOCK);
@@ -716,7 +716,7 @@ TEST_CASE("Block cache shares the blocks a writer created once the file is publi
 	CountingSourceFileSystem fs;
 	TestFile file("block_cache_written.bin", 2 * BLOCK + 100);
 	{
-		BlockCacheAppender appender(cache, cache.CreateWrittenFile(file.path));
+		BlockCacheAppender appender(cache.CreateWrittenFile(file.path));
 		WriteBlocks(appender, 2 * BLOCK + 100);
 		appender.Finish();
 	}
@@ -736,7 +736,7 @@ TEST_CASE("Block cache drops the blocks of a written file that is abandoned", "[
 	CountingSourceFileSystem fs;
 	TestFile file("block_cache_abandoned.bin", 2 * BLOCK);
 	{
-		BlockCacheAppender appender(cache, cache.CreateWrittenFile(file.path));
+		BlockCacheAppender appender(cache.CreateWrittenFile(file.path));
 		WriteBlocks(appender, 2 * BLOCK);
 		REQUIRE(cache.GetStatistics().used == 2 * BLOCK);
 		appender.Abandon();
@@ -951,7 +951,7 @@ TEST_CASE("Disabling the block cache drops blocks of backed files and keeps in-m
 	auto held = cache.Pin(*cached, 0);
 	cache.Pin(*cached, 1);
 	auto memory = cache.CreateUnbackedFile("memory://disable.bin");
-	AppendBlocks(cache, memory, 1, [](idx_t) { return 7; });
+	AppendBlocks(memory, 1, [](idx_t) { return 7; });
 
 	cache.SetEnabled(false);
 	REQUIRE_FALSE(cache.IsEnabled());
@@ -1145,7 +1145,7 @@ TEST_CASE("Block cache blocks of in-memory files spill to temporary files and ar
 	DuckDB db(nullptr, &config);
 	BlockCache cache(*db.instance);
 	auto file = cache.CreateUnbackedFile("memory://unbacked.bin");
-	AppendBlocks(cache, file, 32, [](idx_t block) { return block + 1; });
+	AppendBlocks(file, 32, [](idx_t block) { return block + 1; });
 	REQUIRE(cache.GetStatistics().spilled > 0);
 	REQUIRE(CountFiles(directory, ".block") == 0);
 	for (idx_t round = 0; round < 2; round++) {
@@ -1336,7 +1336,7 @@ TEST_CASE("Block cache gives the memory of a dropped in-memory file back at once
 	BlockCache cache(*db.instance);
 	for (idx_t round = 0; round < 2; round++) {
 		auto file = cache.CreateUnbackedFile("memory://dropped.bin");
-		AppendBlocks(cache, file, 32, [](idx_t block) { return block + 1; });
+		AppendBlocks(file, 32, [](idx_t block) { return block + 1; });
 		REQUIRE(cache.GetStatistics().used == 32 * BLOCK);
 		file.reset();
 		REQUIRE(cache.GetStatistics().used == 0);
@@ -1446,7 +1446,7 @@ TEST_CASE("Block cache pins of an in-memory file return the right bytes while it
 		return static_cast<uint8_t>(block % 251 + 1);
 	};
 	atomic<idx_t> created {0};
-	BlockCacheAppender appender(cache, file);
+	BlockCacheAppender appender(file);
 	vector<data_t> bytes(BLOCK);
 	const auto create = [&](idx_t block) {
 		memset(bytes.data(), fill(block), BLOCK);
@@ -1503,7 +1503,7 @@ TEST_CASE("Instances sharing a temporary directory spill in-memory blocks to fil
 			auto &cache = BlockCache::Get(*db->instance);
 			auto file = cache.CreateUnbackedFile("memory://shared_spill.bin");
 			const auto fill = files.size() * 100 + 1;
-			AppendBlocks(cache, file, 4 * FIT, [&](idx_t block) { return fill + block; });
+			AppendBlocks(file, 4 * FIT, [&](idx_t block) { return fill + block; });
 			REQUIRE(BufferManager::GetBufferManager(*db->instance).GetUsedSwap() > 0);
 			files.push_back(std::move(file));
 		}
@@ -1547,7 +1547,7 @@ TEST_CASE("Block cache benchmark: concurrent reads of blocks evicted to temporar
 		DuckDB db(nullptr, &config);
 		BlockCache cache(*db.instance);
 		auto file = cache.CreateUnbackedFile("memory://bench_spill.bin");
-		AppendBlocks(cache, file, BLOCKS, BenchByte);
+		AppendBlocks(file, BLOCKS, BenchByte);
 		for (idx_t block = 0; block < BLOCKS; block++) {
 			cache.Pin(*file, block);
 		}
@@ -1591,7 +1591,7 @@ TEST_CASE("Block cache benchmark: releasing the blocks of a 512 MiB in-memory fi
 	BlockCache cache(*db.instance);
 	for (idx_t round = 0; round < 5; round++) {
 		auto file = cache.CreateUnbackedFile("memory://bench_release.bin");
-		AppendBlocks(cache, file, BLOCKS, BenchByte);
+		AppendBlocks(file, BLOCKS, BenchByte);
 		REQUIRE(cache.GetStatistics().used == BLOCKS * BLOCK);
 		const auto start = std::chrono::steady_clock::now();
 		file.reset();
@@ -1649,7 +1649,7 @@ TEST_CASE("Block cache benchmark: concurrent pins of one block and of distinct b
 		DuckDB db(nullptr, &config);
 		BlockCache cache(*db.instance);
 		auto memory_file = cache.CreateUnbackedFile("memory://bench_pins.bin");
-		AppendBlocks(cache, memory_file, BLOCKS, BenchByte);
+		AppendBlocks(memory_file, BLOCKS, BenchByte);
 		auto remote = remote_file.Open(cache, fs);
 		cache.PinRange(*remote, 0, BLOCKS * BLOCK);
 		for (const bool one_block : {true, false}) {
