@@ -204,6 +204,16 @@ InsertionOrderPreservingMap<string> PhysicalTableInOutFunction::ParamsToString()
 	return result;
 }
 
+InsertionOrderPreservingMap<ExplainValue> PhysicalTableInOutFunction::ParamsToValue() const {
+	if (!function.to_string_value) {
+		return PhysicalOperator::ParamsToValue();
+	}
+	TableFunctionToStringInput input(function, bind_data.get());
+	auto result = function.to_string_value(input);
+	SetEstimatedCardinality(result, estimated_cardinality);
+	return result;
+}
+
 OperatorFinalizeResultType PhysicalTableInOutFunction::FinalExecute(ExecutionContext &context, DataChunk &chunk,
                                                                     GlobalOperatorState &gstate_p,
                                                                     OperatorState &state_p) const {
