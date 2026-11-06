@@ -316,8 +316,7 @@ public:
 	bool HasTemporaryBuffer(block_id_t block_id);
 	//! Reads the buffer [id], which stays in the file when [keep]
 	unique_ptr<FileBuffer> ReadTemporaryBuffer(QueryContext context, block_id_t id,
-	                                           unique_ptr<FileBuffer> reusable_buffer, idx_t *eviction_size = nullptr,
-	                                           bool keep = false);
+	                                           unique_ptr<FileBuffer> reusable_buffer, idx_t *eviction_size, bool keep);
 	idx_t DeleteTemporaryBuffer(block_id_t id);
 	bool IsEncrypted() const;
 
