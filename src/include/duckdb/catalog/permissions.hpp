@@ -391,7 +391,6 @@ DUCKDB_API void RequireLanguageUsage(ClientContext &context, const RoleAccess &r
 DUCKDB_API void RequireSchemaCreate(ClientContext &context, const RoleAccess &role, SchemaCatalogEntry &schema);
 DUCKDB_API void RequireTypeUsage(ClientContext &context, const RoleAccess &role, const LogicalType &type,
                                  Catalog &catalog);
-DUCKDB_API void CheckCall(ClientContext &context, const RoleAccess &role, FunctionEntry &function);
 DUCKDB_API void CheckMacroCall(ClientContext &context, const RoleAccess &role, MacroCatalogEntry &macro,
                                const MacroFunction &overload, idx_t overload_index);
 DUCKDB_API void AssignOwner(ClientContext &context, Permissions &permissions, Catalog &catalog, CatalogType objtype,
