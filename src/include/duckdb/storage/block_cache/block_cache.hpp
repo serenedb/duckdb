@@ -159,7 +159,7 @@ private:
 	vector<shared_ptr<BlockHandle>> handles DUCKDB_GUARDED_BY(lock);
 };
 
-//! An open file whose blocks the cache holds; opens of the same path and version share one file number and its blocks
+//! An open file whose blocks the cache holds; opens of the same path and version share its blocks
 class BlockCacheFile {
 public:
 	BlockCacheFile(string path, bool unbacked, BlockCacheFileInfo info, shared_ptr<FileHandle> source,
