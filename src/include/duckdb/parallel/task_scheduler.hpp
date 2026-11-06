@@ -66,6 +66,9 @@ public:
 	shared_ptr<SchedulerAccount> CreateAccount(SchedulerClass scheduler_class);
 	unique_ptr<ProducerToken> CreateProducer();
 	unique_ptr<ProducerToken> CreateProducer(shared_ptr<SchedulerAccount> account);
+	//! The producer of tasks that outlive the call scheduling them: an object of the database, which goes before
+	//! its scheduler
+	DUCKDB_API ProducerToken &GetDatabaseProducer();
 	//! Returns the number of threads
 	DUCKDB_API idx_t NumberOfThreads();
 	//! Whether background workers run scheduled tasks, of either pool; without them a scheduled task runs only when
