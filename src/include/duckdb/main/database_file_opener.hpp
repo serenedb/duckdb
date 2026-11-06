@@ -67,11 +67,14 @@ public:
 	//! A remote file opens in the block cache, without asking the store for its metadata when the cache knows a fresh
 	//! version of it
 	shared_ptr<BlockCacheFile> OpenBlockFile(const string &path) override;
-	//! Writing, moving or removing a remote file drops its blocks from the block cache
+	//! Writing, moving or removing a remote file, or removing a directory it is in, drops its blocks from the block
+	//! cache
 	void MoveFile(const string &source, const string &target, optional_ptr<FileOpener> opener) override;
 	void RemoveFile(const string &filename, optional_ptr<FileOpener> opener) override;
 	bool TryRemoveFile(const string &filename, optional_ptr<FileOpener> opener) override;
 	void RemoveFiles(const vector<string> &filenames, optional_ptr<FileOpener> opener) override;
+	bool RemoveDirectoryExtended(const string &directory, const RemoveDirectoryOptions &options,
+	                             optional_ptr<FileOpener> opener) override;
 
 protected:
 	unique_ptr<FileHandle> OpenFileExtended(const OpenFileInfo &file, FileOpenFlags flags,

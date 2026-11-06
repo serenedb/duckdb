@@ -829,6 +829,10 @@ public:
 	bool TryRemoveFile(const string &filename, optional_ptr<FileOpener> opener = nullptr) override {
 		return LocalFileSystem::TryRemoveFile(Local(filename), opener);
 	}
+	bool RemoveDirectoryExtended(const string &directory, const RemoveDirectoryOptions &options,
+	                             optional_ptr<FileOpener> opener = nullptr) override {
+		return LocalFileSystem::RemoveDirectoryExtended(Local(directory), options, opener);
+	}
 
 	atomic<idx_t> versioned_opens {0};
 
@@ -918,6 +922,29 @@ TEST_CASE("The database filesystem reads remote files through the block cache an
 	writer->Write(QueryContext(), &byte, 1, 0);
 	writer->Close();
 	REQUIRE(fs.OpenBlockFile(memory));
+}
+
+TEST_CASE("The database filesystem forgets the cached files below a remote directory it removes", "[block_cache]") {
+	DuckDB db(nullptr);
+	auto &fs = FileSystem::GetFileSystem(*db.instance);
+	fs.RegisterSubSystem(make_uniq<RemoteTestFileSystem>());
+	auto &cache = BlockCache::Get(*db.instance);
+	LocalFileSystem local;
+	const auto directory = TestCreatePath("database_fs_directory");
+	local.CreateDirectory(directory);
+	const auto inside = local.JoinPath(directory, "inside.bin");
+	local.OpenFile(inside, FileFlags::FILE_FLAGS_WRITE | FileFlags::FILE_FLAGS_FILE_CREATE_NEW)->Close();
+	const string remote_directory = RemoteTestFileSystem::PREFIX + directory;
+	const string remote_inside = RemoteTestFileSystem::PREFIX + inside;
+	const string remote_beside = remote_directory + "_beside.bin";
+	PublishVersion(cache, remote_inside, BLOCK);
+	PublishVersion(cache, remote_beside, BLOCK);
+
+	fs.RemoveDirectory(remote_directory);
+	REQUIRE_FALSE(local.DirectoryExists(directory));
+	BlockCacheFileInfo info;
+	REQUIRE_FALSE(cache.TryGetFile(remote_inside, info));
+	REQUIRE(cache.TryGetFile(remote_beside, info));
 }
 
 TEST_CASE("Block cache forgets files no one opens and holds no block of", "[block_cache]") {

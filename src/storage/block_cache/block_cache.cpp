@@ -458,6 +458,25 @@ void BlockCache::ForgetFile(const string &path) {
 	RetireRecord(std::move(forgotten), false);
 }
 
+void BlockCache::ForgetDirectory(const string &directory) {
+	const auto prefix = directory.ends_with('/') ? directory : directory + '/';
+	vector<FileRecord> forgotten;
+	{
+		annotated_lock_guard<annotated_mutex> guard(file_lock);
+		for (auto entry = files.begin(); entry != files.end();) {
+			if (entry->first.starts_with(prefix)) {
+				forgotten.push_back(std::move(entry->second));
+				files.erase(entry++);
+			} else {
+				++entry;
+			}
+		}
+	}
+	for (auto &record : forgotten) {
+		DropBlocks(*record.blocks);
+	}
+}
+
 [[gnu::always_inline]] bool BlockCache::PinLoaded(BlockCacheSlot &slot, idx_t size, BlockCachePin &result) const {
 	const auto memory = slot.load(std::memory_order_acquire);
 	if (!memory || !memory->TryPinLoaded()) {

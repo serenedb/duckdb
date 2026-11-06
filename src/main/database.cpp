@@ -546,6 +546,15 @@ void DatabaseFileSystem::RemoveFiles(const vector<string> &filenames, optional_p
 	}
 }
 
+bool DatabaseFileSystem::RemoveDirectoryExtended(const string &directory, const RemoveDirectoryOptions &options,
+                                                 optional_ptr<FileOpener> opener) {
+	const auto removed = OpenerFileSystem::RemoveDirectoryExtended(directory, options, opener);
+	if (IsRemote(directory)) {
+		BlockCache::Get(db).ForgetDirectory(directory);
+	}
+	return removed;
+}
+
 static FileSystem &ResolveLocalFileSystem(DatabaseInstance &db, unique_ptr<FileSystem> &owned) {
 	auto &vfs = static_cast<VirtualFileSystem &>(*db.config.file_system);
 	auto &default_fs = vfs.GetDefaultFileSystem();
