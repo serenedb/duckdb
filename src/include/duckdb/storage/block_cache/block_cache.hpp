@@ -319,6 +319,8 @@ public:
 	shared_ptr<BlockCacheFile> CreateWrittenFile(const string &path);
 	//! Drops the blocks of every open of [path]; current pins keep their bytes
 	void ForgetFile(const string &path);
+	//! Drops the blocks of every open of a file below [directory]; current pins keep their bytes
+	void ForgetDirectory(const string &directory);
 
 	//! Pins block [block] of [file], fetching it when missing; throws when the fetch fails
 	BlockCachePin Pin(BlockCacheFile &file, idx_t block);
