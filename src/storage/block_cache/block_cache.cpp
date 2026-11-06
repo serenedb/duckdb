@@ -740,7 +740,7 @@ BlockCachePin BlockCache::PinBytes(BlockCacheFile &file, idx_t offset, idx_t siz
 	auto result = AllocateUncached(db, size);
 	idx_t done = 0;
 	for (auto &pin : PinRange(file, offset, size)) {
-		memcpy(result.data + done, pin.Ptr(), pin.Size());
+		memcpy(result.GetDataMutable() + done, pin.Ptr(), pin.Size());
 		done += pin.Size();
 	}
 	return result;
