@@ -22,10 +22,11 @@ public:
 
 	const vector<BlockCachePin> &GetHandles() const;
 
-	//! Copies the first [nr_bytes] bytes of the group to [dest]
+	// Util function to copy from the start of the group to the destination address for the requested number of bytes
 	void CopyTo(data_ptr_t dest, idx_t nr_bytes) const;
 
-	//! The bytes of a group of exactly one handle; throws otherwise
+	// Return a pointer to the start of the first handle in the group.
+	// Warning: this function requires exactly one handle for zero-copy access, otherwise it will throw an exception.
 	const_data_ptr_t Ptr() const;
 
 private:
