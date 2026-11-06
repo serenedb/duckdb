@@ -128,7 +128,7 @@ public:
 	virtual bool IsSettingVisible(const string &name) {
 		return true;
 	}
-	virtual void OnSettingChange(const string &name, SetScope scope, const Value *new_value) {
+	virtual void OnSettingChange(const string &name, SetScope scope) {
 	}
 	virtual void OnQueryBegin() {
 	}
