@@ -58,11 +58,11 @@ Allocator &BufferManager::GetBufferAllocator() {
 	throw NotImplementedException("This type of BufferManager does not have an Allocator");
 }
 
-void BufferManager::ReserveMemory(MemoryTag tag, idx_t size) {
+void BufferManager::ReserveMemory(idx_t size) {
 	throw NotImplementedException("This type of BufferManager can not reserve memory");
 }
 
-void BufferManager::FreeReservedMemory(MemoryTag tag, idx_t size) {
+void BufferManager::FreeReservedMemory(idx_t size) {
 	throw NotImplementedException("This type of BufferManager can not free reserved memory");
 }
 
