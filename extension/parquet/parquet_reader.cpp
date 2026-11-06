@@ -1263,7 +1263,8 @@ ParquetReader::ParquetReader(ClientContext &context_p, OpenFileInfo file_p, Parq
     : BaseFileReader(std::move(file_p)), fs(CachingFileSystem::Get(context_p)),
       allocator(BufferAllocator::Get(context_p)), parquet_options(std::move(parquet_options_p)),
       projection_expressions(std::move(projection_expressions_p)) {
-	file_handle = fs.OpenFile(context_p, file, FileFlags::FILE_FLAGS_READ);
+	auto flags = FileFlags::FILE_FLAGS_READ;
+	file_handle = fs.OpenFile(context_p, file, flags);
 	if (!file_handle->CanSeek()) {
 		throw NotImplementedException(
 		    "Reading parquet files from a FIFO stream is not supported and cannot be efficiently supported since "
