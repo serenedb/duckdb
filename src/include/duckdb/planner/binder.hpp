@@ -275,6 +275,7 @@ struct GlobalBinderState {
 	vector<MacroParameterReference> macro_parameters;
 	idx_t macro_type_probing = 0;
 	unordered_map<idx_t, RoleAccess> role_access;
+	optional_ptr<vector<FunctionCall>> recorded_calls;
 	vector<RequiredPrivilege> required_privileges;
 	//! Statement properties
 	StatementProperties prop;
@@ -462,6 +463,10 @@ public:
 	void BindUnchecked();
 	void BindStoredDefinition();
 	void BindSharedDefinition();
+	void RecordCalls(optional_ptr<vector<FunctionCall>> calls);
+	void RecordCall(const CatalogEntry &function, idx_t overload);
+	void RecordCall(MacroCatalogEntry &macro, const MacroFunction &overload, idx_t overload_index);
+	void CheckIndexCalls(TableCatalogEntry &table);
 	void BindAsFunctionBody(const SelectStatement &statement);
 	void UseFunctionSearchPath(const vector<string> &config);
 	TableRefUse table_ref_use = TableRefUse::READ;

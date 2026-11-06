@@ -1009,6 +1009,9 @@ unique_ptr<Expression> FunctionBinder::BindScalarFunction(const ScalarFunctionCa
 
 	// found a matching function!
 	CheckBuiltinCall(context, binder ? binder->CurrentRole() : context.CurrentRole(), func, best_function.GetIndex());
+	if (binder) {
+		binder->RecordCall(func, best_function.GetIndex());
+	}
 	auto selected_function = func.functions.GetFunctionByOffset(best_function.GetIndex());
 	auto &bound_function = *selected_function;
 

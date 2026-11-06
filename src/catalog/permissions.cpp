@@ -1063,19 +1063,25 @@ vector<NamedAcl> BuiltinFunctionRows(ClientContext &context, SchemaCatalogEntry 
 	return rows;
 }
 
-static optional_ptr<const Permissions> BuiltinGrant(ClientContext &context, const CatalogEntry &function,
-                                                    idx_t overload) {
-	auto &config = DBConfig::GetConfig(context);
-	if (!context.security || !context.security->HasFunctionGrants() || !config.builtin_function_key ||
-	    !function.internal) {
+template <class KEY>
+static optional_ptr<const Permissions> BuiltinGrant(ClientContext &context, const KEY &key) {
+	if (!context.security || !context.security->HasFunctionGrants()) {
 		return nullptr;
 	}
 	const auto database = DatabaseManager::TryGetDefaultDatabase(context);
 	if (!context.security->HasFunctionGrants(database.GetIdentifierName())) {
 		return nullptr;
 	}
-	return context.security->FunctionPermissions(database.GetIdentifierName(),
-	                                             config.builtin_function_key(function, overload));
+	return context.security->FunctionPermissions(database.GetIdentifierName(), key());
+}
+
+static optional_ptr<const Permissions> BuiltinGrant(ClientContext &context, const CatalogEntry &function,
+                                                    idx_t overload) {
+	auto &config = DBConfig::GetConfig(context);
+	if (!config.builtin_function_key || !function.internal) {
+		return nullptr;
+	}
+	return BuiltinGrant(context, [&] { return config.builtin_function_key(function, overload); });
 }
 
 void CheckBuiltinCall(ClientContext &context, const RoleAccess &role, const CatalogEntry &function, idx_t overload) {
@@ -1662,6 +1668,63 @@ void CheckMacroCall(ClientContext &context, const RoleAccess &role, MacroCatalog
 		CheckBuiltinCall(context, role, macro, overload_index);
 	} else if (!role.Can(macro.type, macro.OverloadPermissions(overload), AclMode::Execute)) {
 		ThrowPermissionDenied(macro);
+	}
+}
+
+FunctionCall FunctionCallOf(ClientContext &context, const CatalogEntry &function, idx_t overload) {
+	FunctionCall call;
+	call.kind = PermissionKindName(function);
+	call.name = function.name.GetIdentifierName();
+	auto &config = DBConfig::GetConfig(context);
+	if (config.builtin_function_key && function.internal) {
+		call.builtin_key = config.builtin_function_key(function, overload);
+	}
+	call.capability = function.Cast<FunctionEntry>().required_capability;
+	return call;
+}
+
+FunctionCall MacroCallOf(ClientContext &context, MacroCatalogEntry &macro, const MacroFunction &overload,
+                         idx_t overload_index) {
+	if (IsUnowned(macro)) {
+		return FunctionCallOf(context, macro, overload_index);
+	}
+	FunctionCall call;
+	call.kind = PermissionKindName(macro);
+	call.name = macro.name.GetIdentifierName();
+	call.catalog = macro.ParentCatalog().GetName();
+	call.macro_overload = macro.OverloadOid(overload);
+	return call;
+}
+
+void CheckFunctionCalls(ClientContext &context, const RoleAccess &role, std::span<const FunctionCall> calls) {
+	if (role.is_superuser) {
+		return;
+	}
+	for (auto &call : calls) {
+		if (!call.macro_overload.IsValid()) {
+			optional_ptr<const Permissions> granted;
+			if (!call.builtin_key.empty()) {
+				granted = BuiltinGrant(context, [&]() -> const string & { return call.builtin_key; });
+			}
+			if (granted ? !role.Can(CatalogType::MACRO_ENTRY, *granted, AclMode::Execute)
+			            : !role.Has(call.capability)) {
+				throw PermissionException("permission denied for %s %s", call.kind, call.name);
+			}
+			continue;
+		}
+		auto catalog = Catalog::GetCatalogEntry(context, call.catalog);
+		if (!catalog) {
+			continue;
+		}
+		auto entry = catalog->LookupOwner(catalog->GetCatalogTransaction(context), call.macro_overload.GetIndex());
+		if (!entry || (entry->type != CatalogType::MACRO_ENTRY && entry->type != CatalogType::TABLE_MACRO_ENTRY)) {
+			continue;
+		}
+		auto &macro = entry->Cast<MacroCatalogEntry>();
+		auto overload = macro.FindOverload(call.macro_overload.GetIndex());
+		if (overload && !role.Can(macro.type, macro.OverloadPermissions(*overload), AclMode::Execute)) {
+			ThrowPermissionDenied(macro);
+		}
 	}
 }
 

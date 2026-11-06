@@ -352,6 +352,9 @@ BoundStatement Binder::BindNode(UpdateQueryNode &node) {
 	} else {
 		table.BindUpdateConstraints(*this, *get, *proj, *update, context);
 	}
+	if (update->update_is_del_and_insert) {
+		CheckIndexCalls(table);
+	}
 
 	// capture the pre-update (OLD) row image before rowid so rowid stays the final input column
 	if (update->capture_old_rows) {
