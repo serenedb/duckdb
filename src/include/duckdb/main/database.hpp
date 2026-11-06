@@ -62,6 +62,8 @@ public:
 	DUCKDB_API ExternalResourceTypeRegistry &GetExternalResourceTypeRegistry();
 	DUCKDB_API ExternalResourcesManager &GetExternalResourcesManager();
 	DUCKDB_API FileSystem &GetFileSystem();
+	//! The filesystem of the files the database keeps itself, which enable_external_access does not restrict
+	DUCKDB_API FileSystem &GetInternalFileSystem();
 	DUCKDB_API FileSystem &GetLocalFileSystem();
 	DUCKDB_API BlockCache &GetBlockCache();
 	//! The filesystem of memory:// paths that the default virtual filesystem routes to
@@ -124,6 +126,7 @@ private:
 	unique_ptr<ExtensionManager> extension_manager;
 	ValidChecker db_validity;
 	unique_ptr<DatabaseFileSystem> db_file_system;
+	unique_ptr<DatabaseFileSystem> internal_file_system;
 	unique_ptr<LocalDatabaseFileSystem> local_db_file_system;
 	unique_ptr<LogManager> log_manager;
 	unique_ptr<MetricsManager> metrics_manager;

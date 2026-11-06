@@ -411,6 +411,22 @@ TEST_CASE("Recursive directory creation checks access for every ancestor", "[fil
 	REQUIRE(!fs->DirectoryExists(base));
 }
 
+TEST_CASE("The internal filesystem reaches what enable_external_access refuses", "[file_system]") {
+	DuckDB db(nullptr);
+	Connection con(db);
+	auto &internal = db.instance->GetInternalFileSystem();
+	auto directory = TestCreatePath("internal_file_system");
+	if (internal.DirectoryExists(directory)) {
+		internal.RemoveDirectory(directory);
+	}
+	REQUIRE_NO_FAIL(con.Query("SET enable_external_access = false"));
+	REQUIRE_THROWS(FileSystem::GetFileSystem(*db.instance).CreateDirectory(directory));
+	internal.CreateDirectory(directory);
+	REQUIRE(internal.DirectoryExists(directory));
+	internal.RemoveDirectory(directory);
+	REQUIRE(!internal.DirectoryExists(directory));
+}
+
 // note: the integer count is chosen as 512 so that we write 512*8=4096 bytes to the file
 // this is required for the Direct-IO as on Windows Direct-IO can only write multiples of sector sizes
 // sector sizes are typically one of [512/1024/2048/4096] bytes, hence a 4096 bytes write succeeds.
