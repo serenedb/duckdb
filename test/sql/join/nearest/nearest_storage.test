@@ -36,16 +36,39 @@ SELECT count(*) FROM latest_db.nearest_view;
 ----
 4
 
-# Omitting APPROX/EXACT means EXACT
+# Omitting APPROX/EXACT round-trips as omitted
 statement ok
 CREATE VIEW latest_db.default_view AS
   SELECT q.user_id, t.product_id FROM latest_db.users q
     INNER JOIN latest_db.products t NEAREST 2 BY DISTANCE array_distance(q.embedding, t.embedding);
 
+query II
+SELECT sql LIKE '%t NEAREST 2 BY DISTANCE%', sql LIKE '%EXACT%' FROM duckdb_views() WHERE view_name = 'default_view';
+----
+true	false
+
+statement ok
+CREATE VIEW latest_db.exact_view AS
+  SELECT q.user_id, t.product_id FROM latest_db.users q
+    INNER JOIN latest_db.products t EXACT NEAREST 2 BY DISTANCE array_distance(q.embedding, t.embedding);
+
 query I
-SELECT sql LIKE '%EXACT NEAREST 2 BY DISTANCE%' FROM duckdb_views() WHERE view_name = 'default_view';
+SELECT sql LIKE '%EXACT NEAREST 2 BY DISTANCE%' FROM duckdb_views() WHERE view_name = 'exact_view';
 ----
 true
+
+statement ok
+DETACH latest_db
+
+statement ok
+ATTACH '{TEST_DIR}/nearest_latest.db' AS latest_db
+
+# A DuckDB storage version keeps DuckDB's meaning of an omitted keyword: EXACT
+query II
+SELECT view_name, sql LIKE '%EXACT NEAREST 2 BY DISTANCE%' FROM duckdb_views() WHERE view_name IN ('default_view', 'exact_view') ORDER BY 1;
+----
+default_view	true
+exact_view	true
 
 # Writing to a storage version that predates NEAREST BY errors out rather than silently dropping the clause
 statement ok

@@ -177,6 +177,13 @@
         "type": "bool",
         "default": "false",
         "version": "v2.0.0"
+      },
+      {
+        "id": 16597,
+        "name": "nearest_default",
+        "type": "bool",
+        "default": "false",
+        "version": "serenedb_v1"
       }
     ]
   },
