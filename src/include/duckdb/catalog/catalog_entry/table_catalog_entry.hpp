@@ -100,6 +100,7 @@ public:
 	virtual DataTable &GetStorage();
 	//! Appends rows within the current transaction, checking the table's constraints
 	virtual void InternalAppend(ClientContext &context, ColumnDataCollection &collection);
+	virtual vector<FunctionCall> IndexFunctionCalls(ClientContext &context);
 
 	//! Returns a list of the constraints of the table
 	DUCKDB_API const vector<unique_ptr<Constraint>> &GetConstraints() const;

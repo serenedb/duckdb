@@ -398,6 +398,30 @@ void Binder::BindSharedDefinition() {
 	BindStoredDefinition();
 }
 
+void Binder::RecordCalls(optional_ptr<vector<FunctionCall>> calls) {
+	global_binder_state->recorded_calls = calls;
+}
+
+void Binder::RecordCall(const CatalogEntry &function, idx_t overload) {
+	if (global_binder_state->recorded_calls) {
+		global_binder_state->recorded_calls->push_back(FunctionCallOf(context, function, overload));
+	}
+}
+
+void Binder::RecordCall(MacroCatalogEntry &macro, const MacroFunction &overload, idx_t overload_index) {
+	if (global_binder_state->recorded_calls) {
+		global_binder_state->recorded_calls->push_back(MacroCallOf(context, macro, overload, overload_index));
+	}
+}
+
+void Binder::CheckIndexCalls(TableCatalogEntry &table) {
+	auto &role = CurrentRole();
+	if (role.is_superuser) {
+		return;
+	}
+	CheckFunctionCalls(context, role, table.IndexFunctionCalls(context));
+}
+
 void Binder::BindAsFunctionBody(const SelectStatement &statement) {
 	if (!statement.function_body) {
 		return;

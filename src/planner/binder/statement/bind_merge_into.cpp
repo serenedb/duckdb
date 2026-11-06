@@ -499,6 +499,17 @@ BoundStatement Binder::BindNode(MergeQueryNode &node) {
 		}
 	}
 
+	auto writes_index_entries = false;
+	for (auto &entry : merge_into->actions) {
+		for (auto &action : entry.second) {
+			writes_index_entries |=
+			    action->action_type == MergeActionType::MERGE_INSERT || action->update_is_del_and_insert;
+		}
+	}
+	if (writes_index_entries) {
+		CheckIndexCalls(table);
+	}
+
 	merge_into->row_id_start = projection_expressions.size();
 	// Row ID columns must remain last: PhysicalMergeInto treats the trailing columns as one composite key.
 	BindRowIdColumns(table, get, projection_expressions);

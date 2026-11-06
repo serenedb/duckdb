@@ -350,6 +350,15 @@ private:
 	mutable unordered_map<idx_t, shared_ptr<const SecuritySnapshot>> derived;
 };
 
+struct FunctionCall {
+	string kind;
+	string name;
+	string builtin_key;
+	RoleCapability capability = RoleCapability::None;
+	Identifier catalog;
+	optional_idx macro_overload;
+};
+
 DUCKDB_API bool IsUnowned(const CatalogEntry &entry);
 DUCKDB_API const Permissions &EffectivePermissions(ClientContext &context, const CatalogEntry &entry);
 DUCKDB_API optional_ptr<const vector<ColumnAcl>> EffectiveColumnAcls(ClientContext &context, const CatalogEntry &entry);
@@ -393,6 +402,10 @@ DUCKDB_API void RequireTypeUsage(ClientContext &context, const RoleAccess &role,
                                  Catalog &catalog);
 DUCKDB_API void CheckMacroCall(ClientContext &context, const RoleAccess &role, MacroCatalogEntry &macro,
                                const MacroFunction &overload, idx_t overload_index);
+DUCKDB_API FunctionCall FunctionCallOf(ClientContext &context, const CatalogEntry &function, idx_t overload);
+DUCKDB_API FunctionCall MacroCallOf(ClientContext &context, MacroCatalogEntry &macro, const MacroFunction &overload,
+                                    idx_t overload_index);
+DUCKDB_API void CheckFunctionCalls(ClientContext &context, const RoleAccess &role, std::span<const FunctionCall> calls);
 DUCKDB_API void AssignOwner(ClientContext &context, Permissions &permissions, Catalog &catalog, CatalogType objtype,
                             optional_ptr<SchemaCatalogEntry> schema, idx_t owner);
 DUCKDB_API optional_ptr<CatalogEntry> ClusterEntry(ClientContext &context, CatalogType type, const Identifier &name);

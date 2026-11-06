@@ -244,6 +244,7 @@ public:
 	DUCKDB_API virtual void DropDatabase(CatalogTransaction transaction, DropInfo &info);
 	DUCKDB_API virtual void ScanTopLevelEntries(CatalogTransaction transaction, CatalogType type,
 	                                            const std::function<void(CatalogEntry &)> &callback);
+	DUCKDB_API virtual optional_ptr<CatalogEntry> LookupOwner(CatalogTransaction transaction, idx_t oid);
 	DUCKDB_API virtual void DropForeignServer(CatalogTransaction transaction, DropInfo &info);
 	DUCKDB_API virtual void DropTablespace(CatalogTransaction transaction, DropInfo &info);
 	DUCKDB_API virtual void DropSubscription(CatalogTransaction transaction, DropInfo &info);

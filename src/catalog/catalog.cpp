@@ -452,6 +452,10 @@ void Catalog::ScanTopLevelEntries(CatalogTransaction transaction, CatalogType ty
                                   const std::function<void(CatalogEntry &)> &callback) {
 }
 
+optional_ptr<CatalogEntry> Catalog::LookupOwner(CatalogTransaction transaction, idx_t oid) {
+	return nullptr;
+}
+
 void Catalog::DropForeignServer(CatalogTransaction transaction, DropInfo &info) {
 	throw NotImplementedException("DROP SERVER is not supported by a %s catalog", GetCatalogType());
 }
