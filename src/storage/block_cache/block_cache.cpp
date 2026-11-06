@@ -206,7 +206,7 @@ void BlockCacheAppender::Append(const_data_ptr_t data, idx_t count) {
 FileWriteWindow BlockCacheAppender::Window() {
 	const auto offset = size % BlockCache::BLOCK_SIZE;
 	if (!current.IsValid()) {
-		current = cache.CreateBlock(*file, size / BlockCache::BLOCK_SIZE);
+		current = file->GetCache().CreateBlock(*file, size / BlockCache::BLOCK_SIZE);
 	}
 	return {current.GetDataMutable() + offset, BlockCache::BLOCK_SIZE - offset};
 }
@@ -220,7 +220,7 @@ void BlockCacheAppender::Commit(idx_t count) {
 	}
 	size += count;
 	if (file->IsUnbacked()) {
-		cache.SetUnbackedSize(*file, size);
+		file->GetCache().SetUnbackedSize(*file, size);
 	}
 	if (offset + count == BlockCache::BLOCK_SIZE) {
 		current.Reset();
