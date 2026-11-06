@@ -53,7 +53,10 @@ private:
 
 class DatabaseFileSystem : public OpenerFileSystem {
 public:
-	explicit DatabaseFileSystem(DatabaseInstance &db_p) : db(db_p), database_opener(db_p) {
+	//! Without [checks_access_p], for the files the database keeps itself, which enable_external_access does not
+	//! restrict
+	DatabaseFileSystem(DatabaseInstance &db_p, bool checks_access_p)
+	    : db(db_p), database_opener(db_p), checks_access(checks_access_p) {
 	}
 
 	FileSystem &GetFileSystem() const override {
@@ -62,6 +65,9 @@ public:
 	}
 	optional_ptr<FileOpener> GetOpener() const override {
 		return &database_opener;
+	}
+	bool ChecksAccess() const override {
+		return checks_access;
 	}
 
 	//! A remote file opens in the block cache, without asking the store for its metadata when the cache knows a fresh
@@ -90,6 +96,7 @@ private:
 
 	DatabaseInstance &db;
 	mutable DatabaseFileOpener database_opener;
+	const bool checks_access;
 };
 
 class LocalDatabaseFileSystem : public OpenerFileSystem {

@@ -356,7 +356,8 @@ void DatabaseInstance::InitializeInstance(const char *database_path, DBConfig *u
 	create_api_v1 = CreateAPIv1Wrapper;
 	invoke_capi_v2 = InvokeCAPIV2Entrypoint;
 
-	db_file_system = make_uniq<DatabaseFileSystem>(*this);
+	db_file_system = make_uniq<DatabaseFileSystem>(*this, true);
+	internal_file_system = make_uniq<DatabaseFileSystem>(*this, false);
 	local_db_file_system = make_uniq<LocalDatabaseFileSystem>(*this);
 	db_manager = make_uniq<DatabaseManager>(*this);
 	external_resource_type_registry = make_uniq<ExternalResourceTypeRegistry>();
@@ -472,6 +473,10 @@ ObjectCache &DatabaseInstance::GetObjectCache() {
 
 FileSystem &DatabaseInstance::GetFileSystem() {
 	return *db_file_system;
+}
+
+FileSystem &DatabaseInstance::GetInternalFileSystem() {
+	return *internal_file_system;
 }
 
 FileSystem &DatabaseInstance::GetLocalFileSystem() {

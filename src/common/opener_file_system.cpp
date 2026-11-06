@@ -54,6 +54,9 @@ void OpenerFileSystem::VerifyNoOpener(optional_ptr<FileOpener> opener) {
 	}
 }
 void OpenerFileSystem::VerifyCanAccessFileInternal(const string &path, FileType type) {
+	if (!ChecksAccess()) {
+		return;
+	}
 	auto opener = GetOpener();
 	if (!opener) {
 		return;
