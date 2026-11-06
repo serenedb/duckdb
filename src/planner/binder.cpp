@@ -63,7 +63,7 @@ Binder::Binder(ClientContext &context, shared_ptr<Binder> parent_p, BinderType b
 			// inherit expression binders from parent
 			active_binders = parent->active_binders;
 		} else {
-			entry_retriever.SetCheckAs(&RoleAccess::System());
+			BindStoredDefinition();
 		}
 	} else {
 		entry_retriever.SetCallback([this](CatalogEntry &entry) {
@@ -387,6 +387,15 @@ void Binder::InheritRoles(Binder &other) {
 void Binder::BindUnchecked() {
 	check_as = &RoleAccess::System();
 	current_role = &RoleAccess::System();
+}
+
+void Binder::BindStoredDefinition() {
+	entry_retriever.SetCheckAs(&RoleAccess::System());
+}
+
+void Binder::BindSharedDefinition() {
+	BindUnchecked();
+	BindStoredDefinition();
 }
 
 void Binder::BindAsFunctionBody(const SelectStatement &statement) {

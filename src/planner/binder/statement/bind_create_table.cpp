@@ -103,7 +103,7 @@ vector<unique_ptr<BoundConstraint>> Binder::BindConstraints(ClientContext &conte
 
 vector<unique_ptr<BoundConstraint>> Binder::BindConstraints(const TableCatalogEntry &table) {
 	auto binder = CreateTableBinder(context, table.ParentSchema(context), this);
-	binder->entry_retriever.SetCheckAs(&RoleAccess::System());
+	binder->BindStoredDefinition();
 	return binder->BindConstraints(table.GetConstraints(), table.name, table.GetColumns());
 }
 
@@ -751,7 +751,7 @@ void Binder::BindDefaultValue(const ColumnDefinition &column, vector<unique_ptr<
 void Binder::BindDefaultValues(const TableCatalogEntry &table, vector<unique_ptr<Expression>> &bound_defaults,
                                const std::function<bool(const ColumnDefinition &)> &evaluated) {
 	const auto lookup_role = entry_retriever.GetCheckAs();
-	entry_retriever.SetCheckAs(&RoleAccess::System());
+	BindStoredDefinition();
 	absl::Cleanup restore_role = [&] {
 		entry_retriever.SetCheckAs(lookup_role);
 	};
