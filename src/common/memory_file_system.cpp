@@ -71,7 +71,7 @@ void GrowHeap(MemoryFile &file, idx_t size, idx_t needed) DUCKDB_REQUIRES(file.l
 void CopyRange(BlockCache &cache, BlockCacheFile &file, idx_t offset, idx_t count, data_ptr_t target) {
 	for (idx_t done = 0; done < count;) {
 		const auto at = offset + done;
-		auto pin = cache.Pin(file, at / BlockCache::BLOCK_SIZE);
+		auto pin = file.GetCache().Pin(file, at / BlockCache::BLOCK_SIZE);
 		const auto in_block = at % BlockCache::BLOCK_SIZE;
 		const auto chunk = MinValue(count - done, BlockCache::BLOCK_SIZE - in_block);
 		memcpy(target + done, pin.Ptr() + in_block, chunk);
