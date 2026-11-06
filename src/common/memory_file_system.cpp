@@ -68,7 +68,7 @@ void GrowHeap(MemoryFile &file, idx_t size, idx_t needed) DUCKDB_REQUIRES(file.l
 	file.heap_capacity = capacity;
 }
 
-void CopyRange(BlockCache &cache, BlockCacheFile &file, idx_t offset, idx_t count, data_ptr_t target) {
+void CopyRange(BlockCacheFile &file, idx_t offset, idx_t count, data_ptr_t target) {
 	for (idx_t done = 0; done < count;) {
 		const auto at = offset + done;
 		auto pin = file.GetCache().Pin(file, at / BlockCache::BLOCK_SIZE);
@@ -289,7 +289,7 @@ void MemoryFileSystem::Compact(const string &path) {
 	auto span =
 	    BufferManager::GetBufferManager(*db).Allocate(MemoryTag::EXTERNAL_FILE_CACHE, MaxValue<idx_t>(size, 1), false);
 	Allocator::AdviseHugePages(span.GetDataMutable(), size);
-	CopyRange(BlockCache::Get(*db), *blocks, 0, size, span.GetDataMutable());
+	CopyRange(*blocks, 0, size, span.GetDataMutable());
 	annotated_lock_guard<annotated_mutex> guard(file->lock);
 	if (file->blocks == blocks) {
 		file->span = span.GetBlockHandle();
@@ -401,7 +401,7 @@ void MemoryFileSystem::Read(FileHandle &handle_p, void *buffer, int64_t nr_bytes
 		memcpy(target, pin.Ptr() + location, bytes);
 		return;
 	}
-	CopyRange(BlockCache::Get(*db), *blocks, location, bytes, target);
+	CopyRange(*blocks, location, bytes, target);
 }
 
 int64_t MemoryFileSystem::Read(FileHandle &handle_p, void *buffer, int64_t nr_bytes) {
