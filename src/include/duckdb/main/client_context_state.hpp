@@ -10,7 +10,6 @@
 
 #include "duckdb/common/enums/prepared_statement_mode.hpp"
 #include "duckdb/common/exception/transaction_exception.hpp"
-#include "duckdb/common/mutex.hpp"
 #include "duckdb/common/optional_ptr.hpp"
 #include "duckdb/main/valid_checker.hpp"
 #include "duckdb/planner/expression/bound_parameter_data.hpp"

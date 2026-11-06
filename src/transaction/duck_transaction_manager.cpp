@@ -491,19 +491,7 @@ ErrorData DuckTransactionManager::CommitTransaction(ClientContext &context, Tran
 		// grab the commit lock and hold it until the entire commit is finished
 		held_commit_lock = db.GetStorageManager().GetCommitLock();
 
-		// the position PrepareTransaction fires it from: under the commit lock, before the rows are appended,
-		// while a throw can still roll the commit back
-		if (context.registered_state) {
-			try {
-				for (auto &state : context.registered_state->States()) {
-					state->TransactionPreWalWrite(db, context, &held_commit_lock);
-				}
-			} catch (std::exception &ex) {
-				error = ErrorData(ex);
-			}
-		}
-
-		if (!error.HasError() && !skip_wal_write_due_to_checkpoint) {
+		if (!skip_wal_write_due_to_checkpoint) {
 			error = transaction.AppendLocalStorage(context, db, commit_state);
 			if (!error.HasError() && should_write_to_wal) {
 				// Commit the changes to the WAL.
