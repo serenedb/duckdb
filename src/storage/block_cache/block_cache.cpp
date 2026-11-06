@@ -189,8 +189,7 @@ idx_t BlockCacheFile::BlockBytes(idx_t block) const {
 // BlockCacheAppender
 //===--------------------------------------------------------------------===//
 
-BlockCacheAppender::BlockCacheAppender(BlockCache &cache_p, shared_ptr<BlockCacheFile> file_p)
-    : cache(cache_p), file(std::move(file_p)) {
+BlockCacheAppender::BlockCacheAppender(shared_ptr<BlockCacheFile> file_p) : file(std::move(file_p)) {
 }
 
 void BlockCacheAppender::Append(const_data_ptr_t data, idx_t count) {
@@ -281,7 +280,6 @@ public:
 	}
 
 private:
-	BlockCache &cache;
 	shared_ptr<BlockCacheFile> file;
 	idx_t first_block;
 	vector<optional_ptr<BlockMemory>> claimed;
