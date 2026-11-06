@@ -155,10 +155,10 @@ BlockCacheSlot &BlockCacheBlocks::Get(idx_t block) {
 // BlockCacheFile
 //===--------------------------------------------------------------------===//
 
-BlockCacheFile::BlockCacheFile(string path_p, bool unbacked_p, BlockCacheFileInfo info_p,
+BlockCacheFile::BlockCacheFile(BlockCache &cache_p, string path_p, bool unbacked_p, BlockCacheFileInfo info_p,
                                shared_ptr<FileHandle> source_p, shared_ptr<BlockCacheBlocks> blocks_p)
-    : path(std::move(path_p)), size(info_p.validation.file_size), unbacked(unbacked_p), info(std::move(info_p)),
-      source(std::move(source_p)), blocks(std::move(blocks_p)) {
+    : cache(cache_p), path(std::move(path_p)), size(info_p.validation.file_size), unbacked(unbacked_p),
+      info(std::move(info_p)), source(std::move(source_p)), blocks(std::move(blocks_p)) {
 }
 
 bool BlockCacheFile::HasSource() const {
@@ -238,14 +238,14 @@ void BlockCacheAppender::Finish(const string &version_tag, timestamp_t last_modi
 		written.file_size = size;
 		written.version_tag = version_tag;
 		written.last_modified = last_modified;
-		cache.PublishWrittenFile(*file, written);
+		file->GetCache().PublishWrittenFile(*file, written);
 	}
 }
 
 void BlockCacheAppender::Abandon() {
 	D_ASSERT(!file->IsUnbacked());
 	current.Reset();
-	cache.ForbidReuse(*file);
+	file->GetCache().ForbidReuse(*file);
 }
 
 //===--------------------------------------------------------------------===//
@@ -254,10 +254,9 @@ void BlockCacheAppender::Abandon() {
 
 class BlockCacheFetchTask : public Task {
 public:
-	BlockCacheFetchTask(BlockCache &cache_p, shared_ptr<BlockCacheFile> file_p, idx_t first_block_p,
+	BlockCacheFetchTask(shared_ptr<BlockCacheFile> file_p, idx_t first_block_p,
 	                    vector<optional_ptr<BlockMemory>> claimed_p, idx_t bytes_p)
-	    : cache(cache_p), file(std::move(file_p)), first_block(first_block_p), claimed(std::move(claimed_p)),
-	      bytes(bytes_p) {
+	    : file(std::move(file_p)), first_block(first_block_p), claimed(std::move(claimed_p)), bytes(bytes_p) {
 	}
 
 	~BlockCacheFetchTask() override {
@@ -269,7 +268,7 @@ public:
 
 	TaskExecutionResult Execute(TaskExecutionMode mode) override {
 		try {
-			cache.Fetch(*file, first_block, claimed, {});
+			file->cache.Fetch(*file, first_block, claimed, {});
 		} catch (std::exception &) { // NOLINT
 		}
 		return TaskExecutionResult::TASK_FINISHED;
@@ -370,7 +369,7 @@ shared_ptr<BlockCacheFile> BlockCache::OpenFile(const string &path, const BlockC
 		opened = record;
 	}
 	RetireRecord(std::move(replaced), sweep);
-	return make_shared_ptr<BlockCacheFile>(path, false, std::move(opened.info), std::move(source),
+	return make_shared_ptr<BlockCacheFile>(*this, path, false, std::move(opened.info), std::move(source),
 	                                       std::move(opened.blocks));
 }
 
@@ -416,7 +415,7 @@ void BlockCache::ForbidReuse(BlockCacheFile &file) {
 }
 
 shared_ptr<BlockCacheFile> BlockCache::CreateUnbackedFile(const string &path) {
-	return make_shared_ptr<BlockCacheFile>(path, true, BlockCacheFileInfo(), nullptr,
+	return make_shared_ptr<BlockCacheFile>(*this, path, true, BlockCacheFileInfo(), nullptr,
 	                                       make_shared_ptr<BlockCacheBlocks>(0));
 }
 
@@ -432,7 +431,7 @@ shared_ptr<BlockCacheFile> BlockCache::CreateWrittenFile(const string &path) {
 		created = record;
 	}
 	RetireRecord(std::move(replaced), sweep);
-	return make_shared_ptr<BlockCacheFile>(path, false, info, nullptr, std::move(created.blocks));
+	return make_shared_ptr<BlockCacheFile>(*this, path, false, info, nullptr, std::move(created.blocks));
 }
 
 void BlockCache::PublishWrittenFile(BlockCacheFile &file, const CacheValidationInfo &written) {
@@ -907,7 +906,7 @@ void BlockCache::ScheduleFetch(const shared_ptr<BlockCacheFile> &file, idx_t fir
 			}
 		}
 		shared_ptr<Task> task =
-		    make_shared_ptr<BlockCacheFetchTask>(*this, file, piece_first, std::move(piece_claimed), bytes);
+		    make_shared_ptr<BlockCacheFetchTask>(file, piece_first, std::move(piece_claimed), bytes);
 		handed = offset + count;
 		file->in_flight.fetch_add(bytes, std::memory_order_relaxed);
 		in_flight.fetch_add(bytes, std::memory_order_relaxed);
