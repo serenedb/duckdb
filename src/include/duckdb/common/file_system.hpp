@@ -120,6 +120,22 @@ struct FileWriteWindow {
 	idx_t size = 0;
 };
 
+//! Writes a new file from start to end in place: the bytes of the file are written straight into the windows it
+//! gives. A writer destroyed before it closes aborts
+class FileWriter {
+public:
+	DUCKDB_API virtual ~FileWriter();
+
+	//! The memory the next bytes of the file go to, at least one byte
+	DUCKDB_API virtual FileWriteWindow Window() = 0;
+	//! Appends the first [nr_bytes] bytes of the last window to the file
+	DUCKDB_API virtual void Commit(idx_t nr_bytes) = 0;
+	//! Finishes the file at the bytes committed
+	DUCKDB_API virtual void Close() = 0;
+	//! Drops the file and the bytes committed
+	DUCKDB_API virtual void Abort() noexcept = 0;
+};
+
 //! A buffer one piece of a scattered read fills, or the bytes it skips when it has no data
 struct FileReadTarget {
 	data_ptr_t data = nullptr;
@@ -243,6 +259,10 @@ public:
 	//! [path] as a file of block cache blocks, which a reader pins, when this filesystem reads the file through the
 	//! block cache; null for a file it reads any other way, such as by mapping it
 	DUCKDB_API virtual shared_ptr<BlockCacheFile> OpenBlockFile(const string &path);
+	//! A writer of a new file at [path], replacing any file there, that fills the file in place; null when this
+	//! filesystem writes [path] through a handle only. With [keep_cached], a filesystem that reads [path] through the
+	//! block cache keeps the blocks written there for the file's readers
+	DUCKDB_API virtual unique_ptr<FileWriter> OpenFileWriter(const string &path, bool keep_cached);
 	//! Copies a closed file this filesystem keeps in cache blocks into one buffer-managed allocation, which spills
 	//! only while nothing maps it; readers that pinned its blocks keep them until they close. Any other file stays
 	//! as it is

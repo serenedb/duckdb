@@ -765,6 +765,13 @@ shared_ptr<BlockCacheFile> FileSystem::OpenBlockFile(const string &path) {
 	return nullptr;
 }
 
+FileWriter::~FileWriter() {
+}
+
+unique_ptr<FileWriter> FileSystem::OpenFileWriter(const string &path, bool keep_cached) {
+	return nullptr;
+}
+
 void FileSystem::Compact(const string &path) {
 }
 

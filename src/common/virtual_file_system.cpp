@@ -142,6 +142,10 @@ shared_ptr<BlockCacheFile> VirtualFileSystem::OpenBlockFile(const string &path) 
 	return FindFileSystem(path, nullptr).OpenBlockFile(path);
 }
 
+unique_ptr<FileWriter> VirtualFileSystem::OpenFileWriter(const string &path, bool keep_cached) {
+	return FindFileSystem(path, nullptr).OpenFileWriter(path, keep_cached);
+}
+
 void VirtualFileSystem::Compact(const string &path) {
 	FindFileSystem(path, nullptr).Compact(path);
 }
