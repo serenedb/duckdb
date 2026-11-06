@@ -27,7 +27,6 @@ class BufferHandle;
 class BufferManager;
 class DatabaseInstance;
 class BlockHandle;
-class BufferPool;
 struct EvictionQueue;
 
 using BlockLock = unique_lock<mutex>;
