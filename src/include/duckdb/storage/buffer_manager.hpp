@@ -86,7 +86,7 @@ public:
 	virtual BufferHandle CompleteLoad(shared_ptr<BlockHandle> &handle, BlockLoad load);
 	//! Destroys the buffer of [handle], or once its last pin is gone when it is pinned, and the copy of it a temporary
 	//! file keeps
-	virtual void Discard(shared_ptr<BlockHandle> &handle);
+	virtual void Discard(BlockMemory &memory);
 
 	//! Returns the currently allocated memory.
 	virtual idx_t GetUsedMemory() const = 0;
