@@ -15,7 +15,6 @@
 #include "duckdb/common/serializer/buffered_file_writer.hpp"
 #include "duckdb/common/types/data_chunk.hpp"
 #include "duckdb/storage/block.hpp"
-#include "duckdb/storage/table/table_log_storage.hpp"
 
 namespace duckdb {
 
@@ -154,28 +153,5 @@ protected:
 	bool sync_failed = false;
 	string sync_failure;
 };
-
-struct WALTailRead {
-	//! Where the next read must resume: the start of the first batch this one could not confirm
-	//! committed, which is also where a torn or still-deciding tail begins.
-	idx_t boundary = 0;
-	idx_t wal_version = 0;
-	idx_t entries = 0;
-	//! Batches whose entries were kept.
-	idx_t committed_batches = 0;
-	//! True when the read stopped on a batch whose transaction had not decided yet.
-	bool stopped_undecided = false;
-	string error;
-};
-
-//! Reads the committed part of [start_offset, end_offset) out of a WAL that is still being written,
-//! handing each entry to the consumer `resolver` names for its table. Entries of a batch are
-//! reported before the batch's fate is known, so the resolver is told at every terminator whether
-//! to keep them.
-//! Takes the file already open, because which file a WAL path names is only fixed while the commit
-//! lock is held: a caller resolves and opens its files under that lock and reads them after
-//! releasing it, the handle keeping the file it was opened on through any later rename or unlink.
-WALTailRead ReadWALTail(AttachedDatabase &db, ClientContext &context, unique_ptr<FileHandle> handle, idx_t start_offset,
-                        idx_t end_offset, TableLogStorageResolver &resolver);
 
 } // namespace duckdb
