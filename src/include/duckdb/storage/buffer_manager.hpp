@@ -77,8 +77,6 @@ public:
 	//! Creates one async task per contiguous run of blocks needing load
 	virtual vector<unique_ptr<AsyncTask>> CreatePrefetchTasks(QueryContext context,
 	                                                          vector<shared_ptr<BlockHandle>> &handles);
-	//! Unpin a block handle.
-	virtual void Unpin(shared_ptr<BlockHandle> &handle) = 0;
 	//! Unpin a pin of block memory.
 	virtual void Unpin(BlockMemory &memory) = 0;
 	virtual shared_ptr<BlockHandle> RegisterUnloadedMemory(MemoryTag tag, idx_t block_size, idx_t block_header_size,

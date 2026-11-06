@@ -472,10 +472,6 @@ void StandardBufferManager::VerifyZeroReaders(BlockLock &lock, BlockMemory &memo
 #endif
 }
 
-void StandardBufferManager::Unpin(shared_ptr<BlockHandle> &handle) {
-	Unpin(handle->GetMemory());
-}
-
 void StandardBufferManager::Unpin(BlockMemory &memory) {
 	if (memory.TryUnpinFast()) {
 		return;

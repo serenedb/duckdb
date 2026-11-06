@@ -104,9 +104,6 @@ public:
 	void Prefetch(QueryContext context, vector<shared_ptr<BlockHandle>> &handles) override {
 		return buffer_manager.Prefetch(context, handles);
 	}
-	void Unpin(shared_ptr<BlockHandle> &handle) override {
-		return buffer_manager.Unpin(handle);
-	}
 	void Unpin(BlockMemory &memory) override {
 		return buffer_manager.Unpin(memory);
 	}
