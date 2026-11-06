@@ -1634,7 +1634,7 @@ TEST_CASE("Block cache benchmark: pins that evict while the buffer pool is full"
 		const auto used = buffer_manager.GetUsedMemory();
 		const auto limit = buffer_manager.GetMaxMemory();
 		const idx_t reserved = limit > used + HEADROOM ? limit - used - HEADROOM : 0;
-		buffer_manager.ReserveMemory(MemoryTag::IN_MEMORY_TABLE, reserved);
+		buffer_manager.ReserveMemory(reserved);
 		const auto misses = cache.GetStatistics().misses;
 		idx_t wrong = 0;
 		const auto start = std::chrono::steady_clock::now();
@@ -1645,7 +1645,7 @@ TEST_CASE("Block cache benchmark: pins that evict while the buffer pool is full"
 		}
 		const auto elapsed = MillisecondsSince(start);
 		const idx_t missed = cache.GetStatistics().misses - misses;
-		buffer_manager.FreeReservedMemory(MemoryTag::IN_MEMORY_TABLE, reserved);
+		buffer_manager.FreeReservedMemory(reserved);
 		REQUIRE(wrong == 0);
 		Printer::PrintF("pins that evict with the buffer pool full, round %llu: %.1f us per block, %llu misses", round,
 		                elapsed * 1000.0 / double(BLOCKS - RESIDENT), missed);
