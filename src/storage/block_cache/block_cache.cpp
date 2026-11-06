@@ -580,10 +580,12 @@ void BlockCache::Fetch(BlockCacheFile &file, idx_t first_block, std::span<option
 		if (!loads[i]) {
 			continue;
 		}
-		auto owner = shareable ? claimed[i]->GetOwner()
-		                       : buffer_manager.RegisterUnloadedMemory(MemoryTag::EXTERNAL_FILE_CACHE, BLOCK_SIZE, 0,
-		                                                               DestroyBufferUpon::UNPIN);
-		auto buffer = buffer_manager.CompleteLoad(owner, std::move(*loads[i]));
+		shared_ptr<BlockHandle> unshared;
+		if (!shareable) {
+			unshared = buffer_manager.RegisterUnloadedMemory(MemoryTag::EXTERNAL_FILE_CACHE, BLOCK_SIZE, 0,
+			                                                 DestroyBufferUpon::UNPIN);
+		}
+		auto buffer = buffer_manager.CompleteLoad(unshared ? unshared->GetMemory() : *claimed[i], std::move(*loads[i]));
 		claimed[i]->FinishLoad();
 		claimed[i] = nullptr;
 		if (!pins.empty()) {
@@ -935,8 +937,7 @@ BlockCachePin BlockCache::CreateBlock(BlockCacheFile &file, idx_t block) {
 	absl::Cleanup finish = [&] {
 		memory.FinishLoad();
 	};
-	auto owner = memory.GetOwner();
-	auto buffer = buffer_manager.CompleteLoad(owner, buffer_manager.PrepareLoad(memory, BLOCK_SIZE, 0));
+	auto buffer = buffer_manager.CompleteLoad(memory, buffer_manager.PrepareLoad(memory, BLOCK_SIZE, 0));
 	return BlockCachePin(std::move(buffer), BLOCK_SIZE);
 }
 
