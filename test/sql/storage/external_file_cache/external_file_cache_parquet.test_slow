@@ -65,13 +65,13 @@ select round(sum(nr_bytes) / 1048576) from duckdb_external_file_cache();
 ----
 47.0
 
-# shows up in duckdb_memory under its own tag: one frame per cached block, with no header
+# shows up in duckdb_memory under its own tag
 query I
 select round(memory_usage_bytes / 1048576) from duckdb_memory() where tag = 'EXTERNAL_FILE_CACHE';
 ----
 47.0
 
-# set the memory so low that the cache gives its frames back
+# set the memory so low that blocks should be unloaded
 statement ok
 set memory_limit='512KiB';
 
