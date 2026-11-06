@@ -758,7 +758,7 @@ TEST_CASE("Block cache appender publishes a written file at the size appended, o
 		data[i] = ExpectedByte(i);
 	}
 	{
-		BlockCacheAppender appender(cache, cache.CreateWrittenFile(file.path));
+		BlockCacheAppender appender(cache.CreateWrittenFile(file.path));
 		appender.Append(data.data(), 1000);
 		appender.Append(data.data() + 1000, data.size() - 1000);
 		REQUIRE(appender.Size() == data.size());
@@ -774,7 +774,7 @@ TEST_CASE("Block cache appender publishes a written file at the size appended, o
 	cached.reset();
 	cache.ForgetFile(file.path);
 
-	BlockCacheAppender abandoned(cache, cache.CreateWrittenFile(file.path));
+	BlockCacheAppender abandoned(cache.CreateWrittenFile(file.path));
 	abandoned.Append(data.data(), BLOCK + 1);
 	REQUIRE(cache.GetStatistics().used == 2 * BLOCK);
 	abandoned.Abandon();
