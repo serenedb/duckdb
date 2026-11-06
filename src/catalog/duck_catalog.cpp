@@ -365,6 +365,15 @@ CatalogSet &DuckCatalog::GetCatalogSet(CatalogType type) {
 	}
 }
 
+optional_ptr<CatalogEntry> DuckCatalog::GetEntry(ClientContext &context, CatalogType type, const Identifier &name,
+                                                 OnEntryNotFound if_not_found) {
+	auto entry = GetCatalogSet(type).GetEntry(GetCatalogTransaction(context), name);
+	if (!entry && if_not_found == OnEntryNotFound::THROW_EXCEPTION) {
+		throw CatalogException::MissingEntry(type, name, string());
+	}
+	return entry;
+}
+
 void DuckCatalog::ScanSchemas(ClientContext &context, std::function<void(SchemaCatalogEntry &)> callback) {
 	// obtain the transaction once (up front) so the nested scan does not re-acquire the meta-transaction lock while
 	// holding a catalog set lock

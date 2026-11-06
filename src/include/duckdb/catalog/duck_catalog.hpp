@@ -127,6 +127,9 @@ public:
 
 	CatalogSet &GetSchemaCatalogSet();
 	CatalogSet &GetCatalogSet(CatalogType type);
+	using Catalog::GetEntry;
+	DUCKDB_API optional_ptr<CatalogEntry> GetEntry(ClientContext &context, CatalogType type, const Identifier &name,
+	                                               OnEntryNotFound if_not_found);
 
 	DatabaseSize GetDatabaseSize(ClientContext &context) override;
 	vector<MetadataBlockInfo> GetMetadataInfo(ClientContext &context) override;
