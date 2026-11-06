@@ -37,6 +37,7 @@
 #include "duckdb/storage/block_allocator.hpp"
 #include "duckdb/storage/buffer/buffer_pool.hpp"
 #include "duckdb/storage/compression/empty_validity.hpp"
+#include "duckdb/common/fault_points.hpp"
 #include "duckdb/common/memory_file_system.hpp"
 #include "duckdb/common/open_file_info.hpp"
 #include "duckdb/common/path.hpp"
@@ -510,6 +511,108 @@ shared_ptr<BlockCacheFile> DatabaseFileSystem::OpenBlockFile(const string &path)
 	info.can_seek = handle->CanSeek();
 	info.on_disk = handle->OnDiskFile();
 	return cache.OpenFile(path, info, false, std::move(handle));
+}
+
+namespace {
+
+//! Uploads a remote file and keeps its bytes in the block cache blocks they are written into, which its readers read
+//! once it closes; a window that gets no block uploads its bytes without the cache, as does the rest of the file
+class CachedRemoteFileWriter final : public FileWriter {
+public:
+	CachedRemoteFileWriter(unique_ptr<FileHandle> handle_p, shared_ptr<BlockCacheFile> file)
+	    : handle(std::move(handle_p)) {
+		appender.emplace(std::move(file));
+	}
+	~CachedRemoteFileWriter() override {
+		CachedRemoteFileWriter::Abort();
+	}
+
+	FileWriteWindow Window() override {
+		if (appender) {
+			try {
+				SDB_IF_FAILURE("remote_write_cache_block") {
+					throw OutOfMemoryException("Injected failure to get a block cache block");
+				}
+				window = appender->Window();
+				return window;
+			} catch (const OutOfMemoryException &) {
+				appender->Abandon();
+				appender.reset();
+			}
+		}
+		if (!buffer) {
+			buffer = make_unsafe_uniq_array_uninitialized<data_t>(BlockCache::BLOCK_SIZE);
+		}
+		window = {buffer.get(), BlockCache::BLOCK_SIZE};
+		return window;
+	}
+
+	void Commit(idx_t nr_bytes) override {
+		D_ASSERT(nr_bytes <= window.size);
+		if (nr_bytes == 0) {
+			return;
+		}
+		handle->Write(QueryContext(), window.data, nr_bytes, size);
+		size += nr_bytes;
+		window = {window.data + nr_bytes, window.size - nr_bytes};
+		if (appender) {
+			appender->Commit(nr_bytes);
+		}
+	}
+
+	void Close() override {
+		if (!handle) {
+			return;
+		}
+		handle->Close();
+		if (appender) {
+			auto &fs = handle->file_system;
+			try {
+				appender->Finish(fs.GetVersionTag(*handle), fs.GetLastModifiedTime(*handle));
+			} catch (std::exception &) {
+				appender->Abandon();
+			}
+			appender.reset();
+		}
+		handle.reset();
+	}
+
+	void Abort() noexcept override {
+		if (!handle) {
+			return;
+		}
+		try {
+			if (appender) {
+				appender->Abandon();
+			}
+		} catch (std::exception &) { // NOLINT
+		}
+		appender.reset();
+		try {
+			handle->AbortWrite();
+		} catch (std::exception &) { // NOLINT
+		}
+		handle.reset();
+	}
+
+private:
+	unique_ptr<FileHandle> handle;
+	optional<BlockCacheAppender> appender;
+	//! The window of a write that got no block
+	unsafe_unique_array<data_t> buffer;
+	FileWriteWindow window;
+	idx_t size = 0;
+};
+
+} // namespace
+
+unique_ptr<FileWriter> DatabaseFileSystem::OpenFileWriter(const string &path, bool keep_cached) {
+	auto &cache = BlockCache::Get(db);
+	if (!keep_cached || !IsRemote(path) || !cache.IsEnabled()) {
+		return OpenerFileSystem::OpenFileWriter(path, keep_cached);
+	}
+	auto handle = OpenFile(path, FileFlags::FILE_FLAGS_WRITE | FileFlags::FILE_FLAGS_FILE_CREATE_NEW);
+	return make_uniq<CachedRemoteFileWriter>(std::move(handle), cache.CreateWrittenFile(path));
 }
 
 unique_ptr<FileHandle> DatabaseFileSystem::OpenFileExtended(const OpenFileInfo &file, FileOpenFlags flags,

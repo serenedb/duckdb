@@ -67,6 +67,9 @@ public:
 	//! A remote file opens in the block cache, without asking the store for its metadata when the cache knows a fresh
 	//! version of it
 	shared_ptr<BlockCacheFile> OpenBlockFile(const string &path) override;
+	//! With [keep_cached] and the block cache enabled, a remote file is uploaded through a writer that keeps the
+	//! blocks it fills in the block cache for the file's readers
+	unique_ptr<FileWriter> OpenFileWriter(const string &path, bool keep_cached) override;
 	//! Writing, moving or removing a remote file, or removing a directory it is in, drops its blocks from the block
 	//! cache
 	void MoveFile(const string &source, const string &target, optional_ptr<FileOpener> opener) override;
