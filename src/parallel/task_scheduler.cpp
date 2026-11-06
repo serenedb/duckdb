@@ -488,6 +488,7 @@ bool TaskScheduler::TakeTask(SchedulerWorker &worker, shared_ptr<Task> &task) {
 	if (worker.spare && RetireSpare(worker, false)) {
 		Arrive(worker);
 		Unbind(worker);
+		Wake(1, nullptr);
 		return false;
 	}
 	if (worker.handoff) {
