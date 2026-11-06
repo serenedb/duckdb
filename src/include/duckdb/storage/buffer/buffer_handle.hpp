@@ -15,7 +15,6 @@
 
 namespace duckdb {
 class BlockHandle;
-class BlockMemory;
 class FileBuffer;
 
 //! A pin of a block. A pin keeps the block's memory alive; it keeps the block handle alive only when it owns it.
