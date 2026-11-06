@@ -262,6 +262,7 @@ public:
 	~BlockCacheFetchTask() override {
 		ReleaseClaims(claimed);
 		file->in_flight.fetch_sub(bytes, std::memory_order_relaxed);
+		auto &cache = file->cache;
 		file.reset();
 		cache.FinishFetchTask(bytes);
 	}
