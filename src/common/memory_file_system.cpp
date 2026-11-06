@@ -81,14 +81,13 @@ void CopyRange(BlockCache &cache, BlockCacheFile &file, idx_t offset, idx_t coun
 
 class MemoryFileHandle : public FileHandle {
 public:
-	MemoryFileHandle(MemoryFileSystem &fs, shared_ptr<MemoryFile> file_p, FileOpenFlags flags,
-	                 optional_ptr<BlockCache> cache)
+	MemoryFileHandle(MemoryFileSystem &fs, shared_ptr<MemoryFile> file_p, FileOpenFlags flags)
 	    : FileHandle(fs, file_p->path, flags), file(std::move(file_p)), writing(flags.OpenForWriting()) {
 		if (writing) {
 			annotated_lock_guard<annotated_mutex> guard(file->lock);
 			file->writers++;
 			if (file->blocks) {
-				appender.emplace(*cache, file->blocks);
+				appender.emplace(file->blocks);
 			}
 		}
 	}
@@ -222,13 +221,13 @@ unique_ptr<FileHandle> MemoryFileSystem::OpenFile(const string &path, FileOpenFl
 			}
 			ThrowMissing("open", path);
 		}
-		return make_uniq<MemoryFileHandle>(*this, Create(name), flags, db ? &BlockCache::Get(*db) : nullptr);
+		return make_uniq<MemoryFileHandle>(*this, Create(name), flags);
 	}
 	auto file = FindExisting(path, "open", flags.ReturnNullIfNotExists());
 	if (!file) {
 		return nullptr;
 	}
-	return make_uniq<MemoryFileHandle>(*this, std::move(file), flags, nullptr);
+	return make_uniq<MemoryFileHandle>(*this, std::move(file), flags);
 }
 
 unique_ptr<MemoryMappedFile> MemoryFileSystem::MemoryMapFile(const OpenFileInfo &path, FileOpenFlags flags,
