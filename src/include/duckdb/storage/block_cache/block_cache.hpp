@@ -160,8 +160,8 @@ private:
 //! An open file whose blocks the cache holds; opens of the same path and version share its blocks
 class BlockCacheFile {
 public:
-	BlockCacheFile(string path, bool unbacked, BlockCacheFileInfo info, shared_ptr<FileHandle> source,
-	               shared_ptr<BlockCacheBlocks> blocks);
+	BlockCacheFile(BlockCache &cache, string path, bool unbacked, BlockCacheFileInfo info,
+	               shared_ptr<FileHandle> source, shared_ptr<BlockCacheBlocks> blocks);
 
 	//! The cache that holds the blocks
 	BlockCache &GetCache() const {
