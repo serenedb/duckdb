@@ -333,36 +333,6 @@ int64_t MemoryFileSystem::Write(FileHandle &handle_p, void *buffer, int64_t nr_b
 	return nr_bytes;
 }
 
-FileWriteWindow MemoryFileSystem::GetWriteWindow(FileHandle &handle_p) {
-	auto &handle = handle_p.Cast<MemoryFileHandle>();
-	if (handle.appender) {
-		return handle.appender->Window();
-	}
-	if (db) {
-		throw IOException("Cannot write to \"%s\": it is not open for writing", handle.path);
-	}
-	auto &file = *handle.file;
-	annotated_lock_guard<annotated_mutex> guard(file.lock);
-	const auto size = file.size.load(std::memory_order_relaxed);
-	GrowHeap(file, size, size + 1);
-	return {file.heap.get() + size, file.heap_capacity - size};
-}
-
-void MemoryFileSystem::CommitWriteWindow(FileHandle &handle_p, idx_t nr_bytes) {
-	auto &handle = handle_p.Cast<MemoryFileHandle>();
-	auto &file = *handle.file;
-	if (handle.appender) {
-		handle.appender->Commit(nr_bytes);
-		file.size.store(handle.appender->Size(), std::memory_order_release);
-	} else {
-		annotated_lock_guard<annotated_mutex> guard(file.lock);
-		const auto size = file.size.load(std::memory_order_relaxed);
-		D_ASSERT(size + nr_bytes <= file.heap_capacity);
-		file.size.store(size + nr_bytes, std::memory_order_release);
-	}
-	handle.position += nr_bytes;
-}
-
 void MemoryFileSystem::Write(FileHandle &handle_p, void *buffer, int64_t nr_bytes, idx_t location) {
 	auto &handle = handle_p.Cast<MemoryFileHandle>();
 	if (location != handle.file->size.load(std::memory_order_acquire)) {
