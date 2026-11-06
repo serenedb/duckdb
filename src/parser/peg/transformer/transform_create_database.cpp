@@ -6,7 +6,6 @@
 
 namespace duckdb {
 
-// CREATE DATABASE foo [WITH (BLOCK_SIZE = n, ROW_GROUP_SIZE = n)] -> ATTACH '' AS foo (TYPE serenedb, ...)
 unique_ptr<SQLStatement> PEGTransformerFactory::TransformCreateDatabaseStatement(
     PEGTransformer &transformer, const optional<bool> &if_not_exists, const Identifier &catalog_name,
     optional<case_insensitive_map_t<unique_ptr<ParsedExpression>>> with_list,
