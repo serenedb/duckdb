@@ -163,6 +163,10 @@ public:
 	BlockCacheFile(string path, bool unbacked, BlockCacheFileInfo info, shared_ptr<FileHandle> source,
 	               shared_ptr<BlockCacheBlocks> blocks);
 
+	//! The cache that holds the blocks
+	BlockCache &GetCache() const {
+		return cache;
+	}
 	const string &GetPath() const {
 		return path;
 	}
@@ -193,6 +197,7 @@ private:
 
 	shared_ptr<FileHandle> Source() const;
 
+	BlockCache &cache;
 	const string path;
 	atomic<idx_t> size;
 	const bool unbacked;
@@ -209,7 +214,7 @@ private:
 //! block it fills until the block is full or the write ends
 class BlockCacheAppender {
 public:
-	BlockCacheAppender(BlockCache &cache, shared_ptr<BlockCacheFile> file);
+	explicit BlockCacheAppender(shared_ptr<BlockCacheFile> file);
 
 	//! Appends [count] bytes of [data]; readers of an unbacked file see them once they are appended
 	void Append(const_data_ptr_t data, idx_t count);
@@ -228,7 +233,6 @@ public:
 	void Abandon();
 
 private:
-	BlockCache &cache;
 	shared_ptr<BlockCacheFile> file;
 	BlockCachePin current;
 	idx_t size = 0;
