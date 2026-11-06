@@ -1,5 +1,6 @@
 #include "duckdb/common/vector/constant_vector.hpp"
 #include "duckdb/common/vector/flat_vector.hpp"
+#include "duckdb/execution/expression_executor.hpp"
 #include "duckdb/execution/operator/projection/physical_tableinout_function.hpp"
 
 namespace duckdb {
@@ -14,6 +15,8 @@ public:
 	bool new_row;
 	DataChunk input_chunk;
 	idx_t current_ordinality_idx = 1;
+	unsafe_unique_array<idx_t> input_rows;
+	unique_ptr<ExpressionExecutor> arguments;
 };
 
 class TableInOutGlobalState : public GlobalOperatorState {
@@ -51,7 +54,15 @@ unique_ptr<OperatorState> PhysicalTableInOutFunction::GetOperatorState(Execution
 		TableFunctionInitInput input(bind_data.get(), column_ids, projection_ids, table_filters.get());
 		result->local_state = function.init_local(context, input, gstate.global_state.get());
 	}
-	if (!projected_input.empty()) {
+	if (function.batch_projected_input) {
+		vector<LogicalType> argument_types;
+		for (auto &argument : arguments) {
+			argument_types.push_back(argument->GetReturnType());
+		}
+		result->arguments = make_uniq<ExpressionExecutor>(context.client, arguments);
+		result->input_chunk.Initialize(context.client, argument_types);
+		result->input_rows = make_unsafe_uniq_array_uninitialized<idx_t>(STANDARD_VECTOR_SIZE);
+	} else if (!projected_input.empty()) {
 		vector<LogicalType> input_types;
 		auto &child_types = children[0].get().GetTypes();
 		idx_t input_length = child_types.size() - projected_input.size();
@@ -100,6 +111,9 @@ OperatorResultType PhysicalTableInOutFunction::Execute(ExecutionContext &context
 		chunk.SetChildCardinality(chunk.size());
 		return result;
 	}
+	if (function.batch_projected_input) {
+		return ExecuteBatched(context, data, input, chunk, state);
+	}
 	// when project_input is set we execute the input function row-by-row
 	if (state.new_row) {
 		if (state.row_index >= input.size()) {
@@ -144,6 +158,35 @@ OperatorResultType PhysicalTableInOutFunction::Execute(ExecutionContext &context
 		state.new_row = true;
 	}
 	return OperatorResultType::HAVE_MORE_OUTPUT;
+}
+
+OperatorResultType PhysicalTableInOutFunction::ExecuteBatched(ExecutionContext &context, TableFunctionInput &data,
+                                                              DataChunk &input, DataChunk &chunk,
+                                                              OperatorState &state_p) const {
+	if (ordinality_idx.IsValid()) {
+		throw InternalException("WITH ORDINALITY is not supported for a batched in-out function");
+	}
+	auto &state = state_p.Cast<TableInOutLocalState>();
+	if (state.new_row) {
+		state.input_chunk.Reset();
+		state.arguments->Execute(input, state.input_chunk);
+		state.new_row = false;
+	}
+	data.pk_survivors = std::span<idx_t>(state.input_rows.get(), STANDARD_VECTOR_SIZE);
+	auto result = function.in_out_function(context, data, state.input_chunk, chunk);
+	const auto count = chunk.size();
+	SelectionVector sel(count);
+	for (idx_t row = 0; row < count; row++) {
+		D_ASSERT(state.input_rows[row] < input.size());
+		sel.set_index(row, state.input_rows[row]);
+	}
+	const auto base_idx = chunk.ColumnCount() - projected_input.size();
+	for (idx_t project_idx = 0; project_idx < projected_input.size(); project_idx++) {
+		chunk.data[base_idx + project_idx].Slice(input.data[projected_input[project_idx]], sel, count);
+	}
+	chunk.SetChildCardinality(count);
+	state.new_row = result == OperatorResultType::NEED_MORE_INPUT;
+	return result;
 }
 
 InsertionOrderPreservingMap<string> PhysicalTableInOutFunction::ParamsToString() const {
