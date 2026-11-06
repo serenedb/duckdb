@@ -63,19 +63,6 @@ public:
 		bandwidth = bandwidth_p;
 	}
 
-	void Write(FileHandle &handle, void *buffer, int64_t nr_bytes, idx_t location) override {
-		{
-			annotated_lock_guard<annotated_mutex> guard(lock);
-			writes.push_back(location);
-		}
-		LocalFileSystem::Write(handle, buffer, nr_bytes, location);
-	}
-
-	vector<idx_t> TakeWrites() {
-		annotated_lock_guard<annotated_mutex> guard(lock);
-		return std::move(writes);
-	}
-
 	idx_t ReadCount() {
 		annotated_lock_guard<annotated_mutex> guard(lock);
 		return reads.size();
@@ -134,7 +121,6 @@ public:
 
 	annotated_mutex lock;
 	vector<pair<idx_t, idx_t>> reads DUCKDB_GUARDED_BY(lock);
-	vector<idx_t> writes DUCKDB_GUARDED_BY(lock);
 	idx_t failures DUCKDB_GUARDED_BY(lock) = 0;
 	bool hold DUCKDB_GUARDED_BY(lock) = false;
 	unordered_set<idx_t> released_reads DUCKDB_GUARDED_BY(lock);
