@@ -75,7 +75,6 @@ public:
 	void Prefetch(QueryContext context, vector<shared_ptr<BlockHandle>> &handles) final;
 	vector<unique_ptr<AsyncTask>> CreatePrefetchTasks(QueryContext context,
 	                                                  vector<shared_ptr<BlockHandle>> &handles) final;
-	void Unpin(shared_ptr<BlockHandle> &handle) final;
 	void Unpin(BlockMemory &memory) final;
 	shared_ptr<BlockHandle> RegisterUnloadedMemory(MemoryTag tag, idx_t block_size, idx_t block_header_size,
 	                                               DestroyBufferUpon destroy_buffer_upon) final;
