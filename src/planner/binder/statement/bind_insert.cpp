@@ -129,7 +129,7 @@ void Binder::ComputeStoredGeneratedColumns(TableCatalogEntry &table, vector<uniq
 	}
 	auto column_index = GenerateTableIndex();
 	auto generated_binder = Binder::CreateBinder(context, this);
-	generated_binder->entry_retriever.SetCheckAs(&RoleAccess::System());
+	generated_binder->BindStoredDefinition();
 	generated_binder->bind_context.AddGenericBinding(column_index, table.name, names, types, columns.IsCaseSensitive());
 	ExpressionBinder generated_expr_binder(*generated_binder, context);
 	idx_t pos = 0;

@@ -459,6 +459,8 @@ public:
 	void BindAsFunctionBody(const RoleAccess &role);
 	void InheritRoles(Binder &other);
 	void BindUnchecked();
+	void BindStoredDefinition();
+	void BindSharedDefinition();
 	void BindAsFunctionBody(const SelectStatement &statement);
 	void UseFunctionSearchPath(const vector<string> &config);
 	TableRefUse table_ref_use = TableRefUse::READ;

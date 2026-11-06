@@ -137,7 +137,7 @@ void Binder::BindUpdateSet(TableIndex proj_index, unique_ptr<LogicalOperator> &r
 	}
 	auto &retriever = expr_binder_ptr->entry_retriever;
 	const auto lookup_role = retriever.GetCheckAs();
-	retriever.SetCheckAs(&RoleAccess::System());
+	expr_binder_ptr->BindStoredDefinition();
 	absl::Cleanup restore_role = [&] {
 		retriever.SetCheckAs(lookup_role);
 	};
