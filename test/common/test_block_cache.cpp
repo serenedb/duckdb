@@ -834,7 +834,24 @@ public:
 		return LocalFileSystem::RemoveDirectoryExtended(Local(directory), options, opener);
 	}
 
+	//! The version an upload gets, as an object store's ETag
+	static constexpr const char *UPLOAD_TAG = "\"upload\"";
+	string GetVersionTag(FileHandle &handle) override {
+		return UPLOAD_TAG;
+	}
+	timestamp_t GetLastModifiedTime(FileHandle &handle) override {
+		return Timestamp::FromEpochSeconds(1700000100);
+	}
+	//! An aborted upload leaves no file, as an aborted multipart upload does
+	void AbortFileWrite(FileHandle &handle) override {
+		const auto path = handle.GetPath();
+		handle.Close();
+		LocalFileSystem::TryRemoveFile(path);
+		aborted_writes++;
+	}
+
 	atomic<idx_t> versioned_opens {0};
+	atomic<idx_t> aborted_writes {0};
 
 protected:
 	bool SupportsOpenFileExtended() const override {
@@ -859,6 +876,36 @@ void PublishVersion(BlockCache &cache, const string &path, idx_t size) {
 	BlockCacheAppender appender(cache.CreateWrittenFile(path));
 	WriteBlocks(appender, size);
 	appender.Finish("v1", Timestamp::FromEpochSeconds(1700000000));
+}
+
+//! Writes the bytes [from, to) of the test pattern through the windows of [writer], committing a varying share of each
+void WriteThrough(FileWriter &writer, idx_t from, idx_t to) {
+	for (idx_t written = from; written < to;) {
+		const auto window = writer.Window();
+		const auto count = MinValue(window.size, MinValue(to - written, 1000 + written % 7000));
+		for (idx_t i = 0; i < count; i++) {
+			window.data[i] = ExpectedByte(written + i);
+		}
+		writer.Commit(count);
+		written += count;
+	}
+}
+
+//! Whether the local file at [path] holds the first [size] bytes of the test pattern, and nothing else
+bool HoldsUploadedBytes(const string &path, idx_t size) {
+	LocalFileSystem local;
+	auto handle = local.OpenFile(path, FileFlags::FILE_FLAGS_READ);
+	if (NumericCast<idx_t>(handle->GetFileSize()) != size) {
+		return false;
+	}
+	vector<uint8_t> data(size);
+	handle->Read(data.data(), size, 0);
+	for (idx_t i = 0; i < size; i++) {
+		if (data[i] != ExpectedByte(i)) {
+			return false;
+		}
+	}
+	return true;
 }
 
 } // namespace
@@ -946,6 +993,78 @@ TEST_CASE("The database filesystem forgets the cached files below a remote direc
 	REQUIRE_FALSE(cache.TryGetFile(remote_inside, info));
 	REQUIRE(cache.TryGetFile(remote_beside, info));
 }
+
+TEST_CASE("The database filesystem uploads a remote file from the block cache blocks its writer fills",
+          "[block_cache]") {
+	DuckDB db(nullptr);
+	auto &fs = FileSystem::GetFileSystem(*db.instance);
+	auto owned = make_uniq<RemoteTestFileSystem>();
+	auto &remote = *owned;
+	fs.RegisterSubSystem(std::move(owned));
+	auto &cache = BlockCache::Get(*db.instance);
+	LocalFileSystem local;
+	const auto local_path = TestCreatePath("database_fs_upload.bin");
+	const string path = RemoteTestFileSystem::PREFIX + local_path;
+	constexpr idx_t SIZE = 2 * BLOCK + 10;
+	BlockCacheFileInfo info;
+
+	REQUIRE_FALSE(fs.OpenFileWriter(path, false));
+	auto writer = fs.OpenFileWriter(path, true);
+	REQUIRE(writer);
+	WriteThrough(*writer, 0, SIZE);
+	writer->Close();
+	REQUIRE(HoldsUploadedBytes(local_path, SIZE));
+	REQUIRE(cache.TryGetFile(path, info));
+	REQUIRE(info.validation.file_size == SIZE);
+	REQUIRE(info.validation.version_tag == RemoteTestFileSystem::UPLOAD_TAG);
+	auto written = fs.OpenBlockFile(path);
+	REQUIRE(remote.versioned_opens == 1);
+	REQUIRE(cache.IsCached(*written, 0, SIZE));
+	REQUIRE(HoldsExpectedBytes(cache.Pin(*written, 2), 2));
+
+	const string aborted = path + ".aborted";
+	auto aborting = fs.OpenFileWriter(aborted, true);
+	WriteThrough(*aborting, 0, BLOCK + 1);
+	aborting->Abort();
+	REQUIRE(remote.aborted_writes == 1);
+	REQUIRE_FALSE(cache.TryGetFile(aborted, info));
+	REQUIRE_FALSE(local.FileExists(local_path + ".aborted"));
+
+	const string dropped = path + ".dropped";
+	{
+		auto dropping = fs.OpenFileWriter(dropped, true);
+		WriteThrough(*dropping, 0, 10);
+	}
+	REQUIRE(remote.aborted_writes == 2);
+	REQUIRE_FALSE(cache.TryGetFile(dropped, info));
+
+	cache.SetEnabled(false);
+	REQUIRE_FALSE(fs.OpenFileWriter(path, true));
+}
+
+#ifdef SDB_FAULT_INJECTION
+TEST_CASE("A remote file whose writer gets no block cache block uploads every byte", "[block_cache]") {
+	DuckDB db(nullptr);
+	auto &fs = FileSystem::GetFileSystem(*db.instance);
+	fs.RegisterSubSystem(make_uniq<RemoteTestFileSystem>());
+	auto &cache = BlockCache::Get(*db.instance);
+	const auto local_path = TestCreatePath("database_fs_upload_uncached.bin");
+	const string path = RemoteTestFileSystem::PREFIX + local_path;
+	constexpr idx_t SIZE = 3 * BLOCK + 10;
+	absl::Cleanup clear = [] {
+		FaultPoints::Clear();
+	};
+
+	auto writer = fs.OpenFileWriter(path, true);
+	WriteThrough(*writer, 0, BLOCK + 5);
+	REQUIRE(FaultPoints::Arm("remote_write_cache_block"));
+	WriteThrough(*writer, BLOCK + 5, SIZE);
+	writer->Close();
+	REQUIRE(HoldsUploadedBytes(local_path, SIZE));
+	BlockCacheFileInfo info;
+	REQUIRE_FALSE(cache.TryGetFile(path, info));
+}
+#endif
 
 TEST_CASE("Block cache forgets files no one opens and holds no block of", "[block_cache]") {
 	DuckDB db(nullptr);
