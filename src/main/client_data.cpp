@@ -219,8 +219,8 @@ public:
 	BufferHandle CompleteLoad(shared_ptr<BlockHandle> &handle, BlockLoad load) override {
 		return buffer_manager.CompleteLoad(handle, std::move(load));
 	}
-	void Discard(shared_ptr<BlockHandle> &handle) override {
-		return buffer_manager.Discard(handle);
+	void Discard(BlockMemory &memory) override {
+		return buffer_manager.Discard(memory);
 	}
 	void WriteTemporaryBuffer(QueryContext context, MemoryTag tag, block_id_t block_id, FileBuffer &buffer) override {
 		return buffer_manager.WriteTemporaryBuffer(context, tag, block_id, buffer);

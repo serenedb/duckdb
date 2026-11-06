@@ -148,7 +148,7 @@ BufferHandle BufferManager::CompleteLoad(shared_ptr<BlockHandle> &handle, BlockL
 	throw NotImplementedException("This type of BufferManager does not support 'CompleteLoad'");
 }
 
-void BufferManager::Discard(shared_ptr<BlockHandle> &handle) {
+void BufferManager::Discard(BlockMemory &memory) {
 	throw NotImplementedException("This type of BufferManager does not support 'Discard'");
 }
 

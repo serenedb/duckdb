@@ -518,8 +518,7 @@ BufferHandle StandardBufferManager::CompleteLoad(shared_ptr<BlockHandle> &handle
 	return BufferHandle(memory, memory.GetBuffer(lock).get());
 }
 
-void StandardBufferManager::Discard(shared_ptr<BlockHandle> &handle) {
-	auto &memory = handle->GetMemory();
+void StandardBufferManager::Discard(BlockMemory &memory) {
 	unique_ptr<FileBuffer> buffer;
 	auto lock = memory.GetLock();
 	if (memory.HasTemporaryFile()) {

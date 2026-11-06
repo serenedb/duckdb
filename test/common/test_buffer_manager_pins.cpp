@@ -211,7 +211,7 @@ TEST_CASE("A destroyed buffer is loaded anew from outside, and a discarded block
 	REQUIRE(memory.HasTemporaryFile());
 	REQUIRE(buffers.Pin(block).Ptr()[PIN_BLOCK_SIZE - 1] == PinTestByte(5));
 	const auto used = buffers.GetUsedMemory();
-	buffers.Discard(block);
+	buffers.Discard(memory);
 	REQUIRE(memory.GetState() == BlockState::BLOCK_UNLOADED);
 	REQUIRE(!memory.HasTemporaryFile());
 	REQUIRE(buffers.GetUsedSwap() == 0);
@@ -225,7 +225,7 @@ TEST_CASE("A destroyed buffer is loaded anew from outside, and a discarded block
 	{
 		auto again = buffers.Pin(block);
 		REQUIRE(again.Ptr()[PIN_BLOCK_SIZE - 1] == PinTestByte(6));
-		buffers.Discard(block);
+		buffers.Discard(memory);
 		REQUIRE(memory.GetState() == BlockState::BLOCK_LOADED);
 	}
 	REQUIRE(memory.GetState() == BlockState::BLOCK_UNLOADED);
