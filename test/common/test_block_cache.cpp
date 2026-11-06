@@ -852,7 +852,7 @@ private:
 
 //! Publishes [path] as a file the block cache knows at version "v1"
 void PublishVersion(BlockCache &cache, const string &path, idx_t size) {
-	BlockCacheAppender appender(cache, cache.CreateWrittenFile(path));
+	BlockCacheAppender appender(cache.CreateWrittenFile(path));
 	WriteBlocks(appender, size);
 	appender.Finish("v1", Timestamp::FromEpochSeconds(1700000000));
 }
