@@ -378,6 +378,8 @@ DUCKDB_API string ValidUntilToSQL(int64_t valid_until);
 DUCKDB_API void RequireSuperuser(const RoleAccess &role);
 DUCKDB_API void RequireOwner(const RoleAccess &role, const CatalogEntry &entry, idx_t owner);
 DUCKDB_API void RequireOwner(ClientContext &context, const RoleAccess &role, CatalogEntry &entry);
+DUCKDB_API void RequireDropOwner(ClientContext &context, const RoleAccess &role, CatalogEntry &entry,
+                                 optional_ptr<const vector<LogicalType>> parameters);
 DUCKDB_API void RequireCreate(ClientContext &context, const RoleAccess &role, SchemaCatalogEntry &schema,
                               const CreateInfo &info, const Identifier &name);
 DUCKDB_API void RequireDatabasePrivilege(ClientContext &context, const RoleAccess &role, const Identifier &database,
