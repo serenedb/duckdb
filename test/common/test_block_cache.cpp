@@ -1257,7 +1257,7 @@ TEST_CASE("Block cache reads an in-memory block while an eviction writes it to a
 	BlockCache cache(*db.instance);
 	auto &buffer_manager = BufferManager::GetBufferManager(*db.instance);
 	auto file = cache.CreateUnbackedFile("memory://unload_window.bin");
-	AppendBlocks(cache, file, 2, [](idx_t block) { return block + 1; });
+	AppendBlocks(file, 2, [](idx_t block) { return block + 1; });
 	absl::Cleanup clear = [] {
 		FaultPoints::Clear();
 	};
@@ -1284,7 +1284,7 @@ TEST_CASE("Block cache reads an in-memory block while another reader loads it ba
 	BlockCache cache(*db.instance);
 	auto &buffer_manager = BufferManager::GetBufferManager(*db.instance);
 	auto file = cache.CreateUnbackedFile("memory://load_window.bin");
-	AppendBlocks(cache, file, 2, [](idx_t block) { return block + 1; });
+	AppendBlocks(file, 2, [](idx_t block) { return block + 1; });
 	buffer_manager.SetMemoryLimit(BLOCK);
 	cache.Pin(*file, 1);
 	REQUIRE(cache.TryPinRange(*file, 0, BLOCK).empty());
