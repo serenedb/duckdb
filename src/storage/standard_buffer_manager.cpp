@@ -506,8 +506,7 @@ BlockLoad StandardBufferManager::PrepareLoad(BlockMemory &memory, idx_t block_si
 	return {std::move(buffer), std::move(reservation)};
 }
 
-BufferHandle StandardBufferManager::CompleteLoad(shared_ptr<BlockHandle> &handle, BlockLoad load) {
-	auto &memory = handle->GetMemory();
+BufferHandle StandardBufferManager::CompleteLoad(BlockMemory &memory, BlockLoad load) {
 	auto lock = memory.GetLock();
 	D_ASSERT(memory.IsUnloaded());
 	memory.GetBuffer(lock) = std::move(load.buffer);

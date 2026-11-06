@@ -80,8 +80,8 @@ public:
 	                                               DestroyBufferUpon destroy_buffer_upon) final;
 	BufferHandle LoadClaimed(const QueryContext &context, shared_ptr<BlockHandle> &handle) final;
 	BlockLoad PrepareLoad(BlockMemory &memory, idx_t block_size, idx_t block_header_size) final;
-	BufferHandle CompleteLoad(shared_ptr<BlockHandle> &handle, BlockLoad load) final;
-	void Discard(shared_ptr<BlockHandle> &handle) final;
+	BufferHandle CompleteLoad(BlockMemory &memory, BlockLoad load) final;
+	void Discard(BlockMemory &memory) final;
 
 	//! Set a new memory limit to the buffer manager, throws an exception if the new limit is too low and not enough
 	//! blocks can be evicted

@@ -83,8 +83,8 @@ public:
 	                                                       DestroyBufferUpon destroy_buffer_upon);
 	virtual BufferHandle LoadClaimed(const QueryContext &context, shared_ptr<BlockHandle> &handle);
 	virtual BlockLoad PrepareLoad(BlockMemory &memory, idx_t block_size, idx_t block_header_size);
-	virtual BufferHandle CompleteLoad(shared_ptr<BlockHandle> &handle, BlockLoad load);
-	//! Destroys the buffer of [handle], or once its last pin is gone when it is pinned, and the copy of it a temporary
+	virtual BufferHandle CompleteLoad(BlockMemory &memory, BlockLoad load);
+	//! Destroys the buffer of [memory], or once its last pin is gone when it is pinned, and the copy of it a temporary
 	//! file keeps
 	virtual void Discard(BlockMemory &memory);
 

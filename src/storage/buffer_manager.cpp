@@ -144,7 +144,7 @@ BlockLoad BufferManager::PrepareLoad(BlockMemory &memory, idx_t block_size, idx_
 	throw NotImplementedException("This type of BufferManager does not support 'PrepareLoad'");
 }
 
-BufferHandle BufferManager::CompleteLoad(shared_ptr<BlockHandle> &handle, BlockLoad load) {
+BufferHandle BufferManager::CompleteLoad(BlockMemory &memory, BlockLoad load) {
 	throw NotImplementedException("This type of BufferManager does not support 'CompleteLoad'");
 }
 
