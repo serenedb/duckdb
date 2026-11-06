@@ -30,6 +30,8 @@ public:
 	unique_ptr<GlobalOperatorState> GetGlobalOperatorState(ClientContext &context) const override;
 	static void SetOrdinality(DataChunk &chunk, const optional_idx &ordinality_column_idx, const idx_t &ordinality_idx,
 	                          const idx_t &ordinality);
+	OperatorResultType ExecuteBatched(ExecutionContext &context, TableFunctionInput &data, DataChunk &input,
+	                                  DataChunk &chunk, OperatorState &state) const;
 	OperatorResultType Execute(ExecutionContext &context, DataChunk &input, DataChunk &chunk,
 	                           GlobalOperatorState &gstate, OperatorState &state) const override;
 	OperatorFinalizeResultType FinalExecute(ExecutionContext &context, DataChunk &chunk, GlobalOperatorState &gstate,
@@ -47,6 +49,8 @@ public:
 
 	//! Information for WITH ORDINALITY
 	optional_idx ordinality_idx;
+	//! The arguments of a function with batch_projected_input, evaluated over each input chunk
+	vector<unique_ptr<Expression>> arguments;
 
 	OrderPreservationType OperatorOrder() const override {
 		return function.order_preservation_type;
