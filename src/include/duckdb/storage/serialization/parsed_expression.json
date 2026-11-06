@@ -320,6 +320,14 @@
         "accessor": "IsFromOperator()"
       },
       {
+        "id": 16585,
+        "name": "builtin",
+        "type": "bool",
+        "version": "serenedb_v1",
+        "accessor_mut": "BuiltinMutable()",
+        "accessor": "IsBuiltin()"
+      },
+      {
         "id": 207,
         "name": "export_state",
         "type": "bool",
