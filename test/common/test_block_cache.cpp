@@ -787,7 +787,7 @@ TEST_CASE("Block cache knows a published written file as the version its writer 
 	const string path = "block_cache_versioned.bin";
 	const auto modified = Timestamp::FromEpochSeconds(1700000000);
 	{
-		BlockCacheAppender appender(cache, cache.CreateWrittenFile(path));
+		BlockCacheAppender appender(cache.CreateWrittenFile(path));
 		vector<uint8_t> data(BLOCK + 10, 7);
 		appender.Append(data.data(), data.size());
 		appender.Finish("\"etag-1\"", modified);
