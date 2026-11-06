@@ -105,7 +105,8 @@ bool JoinRef::Equals(const TableRef &other_p) const {
 		}
 	}
 	if (nearest_count != other.nearest_count || nearest_order_type != other.nearest_order_type ||
-	    nearest_approx != other.nearest_approx || nearest_default != other.nearest_default) {
+	    nearest_approx != other.nearest_approx || nearest_default != other.nearest_default ||
+	    exact_nearest != other.exact_nearest) {
 		return false;
 	}
 	return left->Equals(*other.left) && right->Equals(*other.right) &&
@@ -137,6 +138,7 @@ unique_ptr<TableRef> JoinRef::Copy() {
 	copy->nearest_order_type = nearest_order_type;
 	copy->nearest_approx = nearest_approx;
 	copy->nearest_default = nearest_default;
+	copy->exact_nearest = exact_nearest;
 	return std::move(copy);
 }
 

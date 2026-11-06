@@ -56,6 +56,8 @@ public:
 	bool nearest_approx = false;
 	//! Neither APPROX nor EXACT was specified (NEAREST only)
 	bool nearest_default = false;
+	//! Set on the LATERAL join an EXACT NEAREST BY is bound as (not serialized)
+	bool exact_nearest = false;
 
 public:
 	string ToString() const override;
