@@ -1316,7 +1316,10 @@ CatalogEntryLookup Catalog::TryLookupEntryAcrossCatalogs(CatalogEntryRetriever &
 
 	auto &system = GetSystemCatalog(retriever.GetContext());
 	auto builtin_schema = system.GetDefaultSchema();
-	if (!system.IsDuckCatalog() && builtin_schema && catalog.empty() && (schema.empty() || schema == *builtin_schema)) {
+	auto type = lookup_info.GetCatalogType();
+	if (!system.IsDuckCatalog() && builtin_schema && catalog.empty() && (schema.empty() || schema == *builtin_schema) &&
+	    (IsScalarFunction(type) || IsTableFunction(type) || type == CatalogType::COPY_FUNCTION_ENTRY ||
+	     type == CatalogType::TYPE_ENTRY || type == CatalogType::COLLATION_ENTRY)) {
 		lookups.emplace_back(system, *builtin_schema, lookup_info);
 	}
 
