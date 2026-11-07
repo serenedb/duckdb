@@ -131,6 +131,10 @@ string CompressionTypeToString(CompressionType type) {
 		return "DICT_ZXC";
 	case CompressionType::COMPRESSION_ZXC:
 		return "ZXC";
+	case CompressionType::COMPRESSION_COL_DICT_FSST_PLUS:
+		return "DICT_FSST_PLUS";
+	case CompressionType::COMPRESSION_COL_FSST_PLUS:
+		return "FSST_PLUS";
 	default:
 		throw InternalException("Unrecognized compression type!");
 	}
