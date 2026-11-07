@@ -138,6 +138,14 @@ shared_ptr<SchedulerAccount> TaskScheduler::CreateAccount(SchedulerClass schedul
 	return make_shared_ptr<SchedulerAccount>(queue, scheduler_class);
 }
 
+shared_ptr<DedicatedPool> TaskScheduler::CreateDedicatedPool(idx_t threads) {
+	return make_shared_ptr<DedicatedPool>(*this, threads);
+}
+
+shared_ptr<SchedulerAccount> TaskScheduler::CreateAccount(shared_ptr<DedicatedPool> pool) {
+	return make_shared_ptr<SchedulerAccount>(queue, std::move(pool));
+}
+
 unique_ptr<ProducerToken> TaskScheduler::CreateProducer() {
 	return CreateProducer(background_account);
 }
@@ -174,6 +182,19 @@ void TaskScheduler::Enqueue(ProducerToken &producer, shared_ptr<Task> *tasks, id
 		return;
 	}
 	const auto account = producer.account;
+	if (account->pool) {
+		{
+			const annotated_lock_guard<annotated_mutex> producer_guard(producer.producer_lock);
+			for (idx_t i = 0; i < count; i++) {
+				tasks[i]->token = producer;
+				tasks[i]->blocking = false;
+			}
+			queue.EnqueueDedicated(producer, tasks, count);
+			producer.producer_cv.Signal();
+		}
+		account->pool->Ready(*account);
+		return;
+	}
 	const bool blocking =
 	    pool_type != TaskSchedulerType::REGULAR || account->scheduler_class == SchedulerClass::BACKGROUND;
 	bool activated;
@@ -827,6 +848,124 @@ void TaskScheduler::RelaunchThreads() {
 		return;
 	}
 	pool->RelaunchThreads(*this, false);
+}
+
+DedicatedPool::DedicatedPool(TaskScheduler &scheduler_p, idx_t threads)
+    : scheduler(scheduler_p), limit(MaxValue<idx_t>(threads, 1)) {
+}
+
+void DedicatedPool::SetThreads(idx_t threads) {
+	const absl::MutexLock guard(lock);
+	limit = MaxValue<idx_t>(threads, 1);
+}
+
+idx_t DedicatedPool::Threads() {
+	const absl::MutexLock guard(lock);
+	return limit;
+}
+
+bool DedicatedPool::HasWork() const {
+	return !ready.empty();
+}
+
+void DedicatedPool::Ready(SchedulerAccount &account) {
+	bool spawn = false;
+	{
+		const absl::MutexLock guard(lock);
+		if (!account.pool_listed) {
+			account.pool_listed = true;
+			ready.push_back(account.shared_from_this());
+		}
+		int64_t queued = 0;
+		for (const auto &listed : ready) {
+			queued += listed->queued_tasks.load(std::memory_order_relaxed);
+		}
+		if (started < limit && NumericCast<int64_t>(idle) < queued) {
+			started++;
+			spawn = true;
+		}
+	}
+	if (!spawn) {
+		return;
+	}
+	if (!scheduler.pool->SpawnThread([self = shared_from_this()](atomic<bool> &marker) { self->Work(marker); })) {
+		const absl::MutexLock guard(lock);
+		started--;
+	}
+}
+
+void DedicatedPool::Work(atomic<bool> &marker) {
+	static constexpr auto TICK = absl::Milliseconds(100);
+	static constexpr idx_t IDLE_TICKS = 50;
+	idx_t idle_ticks = 0;
+	bool counted = true;
+	while (marker) {
+		shared_ptr<SchedulerAccount> account;
+		{
+			const absl::MutexLock guard(lock);
+			if (started > limit) {
+				started--;
+				counted = false;
+				break;
+			}
+			idle++;
+			const bool woke = lock.AwaitWithTimeout(absl::Condition(this, &DedicatedPool::HasWork), TICK);
+			idle--;
+			if (!woke) {
+				if (++idle_ticks == IDLE_TICKS) {
+					started--;
+					counted = false;
+					break;
+				}
+				continue;
+			}
+			idle_ticks = 0;
+			account = std::move(ready.front());
+			ready.pop_front();
+		}
+		shared_ptr<Task> task;
+		const bool found = scheduler.queue.DequeueDedicated(*account, task);
+		{
+			const absl::MutexLock guard(lock);
+			if (account->queued_tasks.load(std::memory_order_seq_cst) > 0) {
+				ready.push_back(std::move(account));
+			} else {
+				account->pool_listed = false;
+			}
+		}
+		if (found) {
+			Run(task);
+		}
+	}
+	if (counted) {
+		const absl::MutexLock guard(lock);
+		started--;
+	}
+	const auto &block_allocator = BlockAllocator::Get(scheduler.db);
+	if (block_allocator.SupportsFlush()) {
+		block_allocator.ThreadFlush(Settings::Get<AllocatorBackgroundThreadsSetting>(scheduler.db), 0,
+		                            scheduler.pool->NumberOfThreads());
+		Allocator::ThreadIdle();
+	}
+}
+
+void DedicatedPool::Run(shared_ptr<Task> &task) {
+	switch (task->Execute(TaskExecutionMode::PROCESS_PARTIAL)) {
+	case TaskExecutionResult::TASK_FINISHED:
+	case TaskExecutionResult::TASK_ERROR:
+		task.reset();
+		break;
+	case TaskExecutionResult::TASK_BLOCKED:
+		task->Deschedule();
+		task.reset();
+		break;
+	case TaskExecutionResult::TASK_NOT_FINISHED: {
+		auto &producer = *task->token;
+		scheduler.ScheduleTask(producer, task);
+		task.reset();
+		break;
+	}
+	}
 }
 
 } // namespace duckdb

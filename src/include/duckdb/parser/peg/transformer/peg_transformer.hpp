@@ -5345,7 +5345,7 @@ public:
 	TransformCreateIndexStmt(PEGTransformer &transformer, const optional<bool> &unique_index,
 	                         const optional<bool> &if_not_exists, const optional<Identifier> &index_name,
 	                         unique_ptr<BaseTableRef> base_table_name, const optional<Identifier> &index_type,
-	                         IndexColumnsDefinition index_columns,
+	                         IndexColumnsDefinition index_columns, optional<vector<OrderByNode>> sorted_options,
 	                         optional<case_insensitive_map_t<unique_ptr<ParsedExpression>>> with_list,
 	                         optional<unique_ptr<ParsedExpression>> where_clause);
 	static IndexColumnsDefinition TransformIndexKeyColumns(PEGTransformer &transformer,
@@ -5512,14 +5512,14 @@ public:
 	static PartitionSortedOptions
 	TransformPartitionOptSortedOptions(PEGTransformer &transformer,
 	                                   vector<unique_ptr<ParsedExpression>> partition_options,
-	                                   optional<vector<unique_ptr<ParsedExpression>>> sorted_options);
+	                                   optional<vector<OrderByNode>> sorted_options);
 	static PartitionSortedOptions
-	TransformSortedOptPartitionOptions(PEGTransformer &transformer, vector<unique_ptr<ParsedExpression>> sorted_options,
+	TransformSortedOptPartitionOptions(PEGTransformer &transformer, vector<OrderByNode> sorted_options,
 	                                   optional<vector<unique_ptr<ParsedExpression>>> partition_options);
 	static vector<unique_ptr<ParsedExpression>>
 	TransformPartitionOptions(PEGTransformer &transformer, vector<unique_ptr<ParsedExpression>> expression);
-	static vector<unique_ptr<ParsedExpression>> TransformSortedOptions(PEGTransformer &transformer,
-	                                                                   vector<unique_ptr<ParsedExpression>> expression);
+	static vector<OrderByNode> TransformSortedOptions(PEGTransformer &transformer,
+	                                                  vector<OrderByNode> order_by_expression);
 	static bool TransformWithDataOnly(PEGTransformer &transformer);
 	static bool TransformWithNoData(PEGTransformer &transformer);
 	static ColumnList TransformIdentifierList(PEGTransformer &transformer, const vector<Identifier> &identifier);

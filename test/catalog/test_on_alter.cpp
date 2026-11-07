@@ -120,6 +120,7 @@ TEST_CASE("OnAlter runs on the version an ALTER created once its commit is final
 
 	REQUIRE_NO_FAIL(con.Query("USE memory"));
 	REQUIRE_NO_FAIL(con.Query("DETACH logged"));
-	REQUIRE_NO_FAIL(con.Query("ATTACH '" + path + "' AS logged (TYPE alter_logging)"));
+	REQUIRE_NO_FAIL(
+	    con.Query("ATTACH '" + path + "' AS logged (TYPE alter_logging, STORAGE_VERSION 'serenedb_latest')"));
 	REQUIRE(log->Take() == "SET_COMMENT t_idx kept; ALTER_INDEX t_renamed kept");
 }

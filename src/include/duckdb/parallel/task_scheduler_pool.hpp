@@ -13,6 +13,8 @@
 #include "duckdb/common/atomic.hpp"
 #include "duckdb/common/vector.hpp"
 
+#include <functional>
+
 namespace duckdb {
 
 class TaskScheduler;
@@ -30,6 +32,7 @@ public:
 	idx_t NumberOfThreads();
 	void RelaunchThreads(TaskScheduler &scheduler, bool destroy);
 	bool SpawnSpare(TaskScheduler &scheduler);
+	bool SpawnThread(std::function<void(atomic<bool> &)> loop);
 
 private:
 	void ReapSpares();

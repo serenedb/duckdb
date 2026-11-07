@@ -85,6 +85,7 @@ public:
 
 	//! Work on tasks until all tasks are finished. Throws an exception if any error occurred while executing the tasks.
 	void WorkOnTasks();
+	void AwaitTasks();
 	//! Cancel tasks that have not started yet and work on tasks until all tasks are finished. Does not throw.
 	void CancelAndDrain();
 

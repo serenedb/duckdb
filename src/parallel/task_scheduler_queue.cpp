@@ -23,6 +23,11 @@ SchedulerAccount::SchedulerAccount(TaskSchedulerQueue &queue_p, SchedulerClass s
     : queue(queue_p), scheduler_class(scheduler_class_p), tasks(make_uniq<SchedulerAccountTasks>()) {
 }
 
+SchedulerAccount::SchedulerAccount(TaskSchedulerQueue &queue_p, shared_ptr<DedicatedPool> pool_p)
+    : queue(queue_p), scheduler_class(SchedulerClass::BACKGROUND), pool(std::move(pool_p)),
+      tasks(make_uniq<SchedulerAccountTasks>()) {
+}
+
 SchedulerAccount::~SchedulerAccount() {
 	queue.Forget(*this);
 }
@@ -374,6 +379,17 @@ bool TaskSchedulerQueue::Enqueue(ProducerToken &token, shared_ptr<Task> *tasks, 
 	return false;
 }
 
+void TaskSchedulerQueue::EnqueueDedicated(ProducerToken &token, shared_ptr<Task> *tasks, idx_t count) {
+	auto &account = *token.account;
+	auto &queue = account.tasks->queue;
+	if (count == 1) {
+		queue.enqueue(token.tasks->token, std::move(tasks[0]));
+	} else {
+		queue.enqueue_bulk(token.tasks->token, std::make_move_iterator(tasks), count);
+	}
+	account.queued_tasks.fetch_add(NumericCast<int64_t>(count), std::memory_order_seq_cst);
+}
+
 bool TaskSchedulerQueue::Dequeue(SchedulerAccount &account, shared_ptr<Task> &task) {
 	if (!account.tasks->queue.try_dequeue(task)) {
 		return false;
@@ -386,6 +402,14 @@ bool TaskSchedulerQueue::Dequeue(SchedulerAccount &account, shared_ptr<Task> &ta
 	return true;
 }
 
+bool TaskSchedulerQueue::DequeueDedicated(SchedulerAccount &account, shared_ptr<Task> &task) {
+	if (!account.tasks->queue.try_dequeue(task)) {
+		return false;
+	}
+	account.queued_tasks.fetch_sub(1, std::memory_order_seq_cst);
+	return true;
+}
+
 bool TaskSchedulerQueue::DequeueFromProducer(ProducerToken &token, shared_ptr<Task> &task) {
 	if (!token.account->tasks->queue.try_dequeue_from_producer(token.tasks->token, task)) {
 		return false;
@@ -393,8 +417,10 @@ bool TaskSchedulerQueue::DequeueFromProducer(ProducerToken &token, shared_ptr<Ta
 	if (task->blocking) {
 		token.account->queued_blocking.fetch_sub(1, std::memory_order_relaxed);
 	}
-	token.account->queued_tasks.fetch_sub(1, std::memory_order_relaxed);
-	queued.fetch_sub(1, std::memory_order_relaxed);
+	token.account->queued_tasks.fetch_sub(1, std::memory_order_seq_cst);
+	if (!token.account->pool) {
+		queued.fetch_sub(1, std::memory_order_relaxed);
+	}
 	return true;
 }
 
@@ -469,6 +495,9 @@ idx_t TaskSchedulerQueue::GetTaskCountForProducer(ProducerToken &token) const {
 }
 
 void TaskSchedulerQueue::Forget(SchedulerAccount &account) {
+	if (account.pool) {
+		return;
+	}
 	Serve(account);
 	const auto remaining = account.queued_tasks.load(std::memory_order_relaxed);
 	if (remaining > 0) {

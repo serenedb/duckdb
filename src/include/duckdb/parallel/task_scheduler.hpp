@@ -11,6 +11,7 @@
 #include "duckdb/common/array.hpp"
 #include "duckdb/common/atomic.hpp"
 #include "duckdb/common/common.hpp"
+#include "duckdb/common/deque.hpp"
 #include "duckdb/common/mutex.hpp"
 #include "duckdb/common/vector.hpp"
 #include "duckdb/parallel/task.hpp"
@@ -26,6 +27,29 @@ class DatabaseInstance;
 class TaskScheduler;
 class TaskSchedulerPool;
 struct SchedulerWorker;
+
+class DedicatedPool : public enable_shared_from_this<DedicatedPool> {
+public:
+	DedicatedPool(TaskScheduler &scheduler, idx_t threads);
+
+	void SetThreads(idx_t threads);
+	idx_t Threads();
+
+private:
+	friend class TaskScheduler;
+
+	void Ready(SchedulerAccount &account);
+	void Work(atomic<bool> &marker);
+	void Run(shared_ptr<Task> &task);
+	bool HasWork() const DUCKDB_REQUIRES(lock);
+
+	TaskScheduler &scheduler;
+	mutex lock;
+	deque<shared_ptr<SchedulerAccount>> ready DUCKDB_GUARDED_BY(lock);
+	idx_t limit DUCKDB_GUARDED_BY(lock);
+	idx_t started DUCKDB_GUARDED_BY(lock) = 0;
+	idx_t idle DUCKDB_GUARDED_BY(lock) = 0;
+};
 
 //! The TaskScheduler is responsible for managing tasks and threads
 class TaskScheduler {
@@ -64,6 +88,8 @@ public:
 	DUCKDB_API static TaskScheduler &GetScheduler(DatabaseInstance &db);
 
 	shared_ptr<SchedulerAccount> CreateAccount(SchedulerClass scheduler_class);
+	shared_ptr<DedicatedPool> CreateDedicatedPool(idx_t threads);
+	shared_ptr<SchedulerAccount> CreateAccount(shared_ptr<DedicatedPool> pool);
 	unique_ptr<ProducerToken> CreateProducer();
 	unique_ptr<ProducerToken> CreateProducer(shared_ptr<SchedulerAccount> account);
 	//! Returns the number of threads
@@ -122,6 +148,7 @@ public:
 	static idx_t GetEstimatedCPUId();
 
 private:
+	friend class DedicatedPool;
 	friend struct ProducerToken;
 	friend class TaskSchedulerPool;
 

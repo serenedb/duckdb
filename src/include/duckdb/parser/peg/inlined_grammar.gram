@@ -974,7 +974,7 @@ CreateDatabaseStatement <- 'CREATE' 'DATABASE' IfNotExists? CatalogName WithList
 DropDatabaseStatement <- 'DROP' 'DATABASE' IfExists? CatalogName DropDatabaseForce? DropBehavior?
 DropDatabaseForce <- '(' 'FORCE' ')'
 
-CreateIndexStmt <- UniqueIndex? 'INDEX' IfNotExists? IndexName? 'ON' BaseTableName IndexType? IndexColumns WithList? WhereClause?
+CreateIndexStmt <- UniqueIndex? 'INDEX' IfNotExists? IndexName? 'ON' BaseTableName IndexType? IndexColumns SortedOptions? WithList? WhereClause?
 
 IndexColumns <- IndexKeyColumns / IncludeClause
 IndexKeyColumns <- Parens(List(IndexElement)) IncludeClause?
@@ -1146,7 +1146,7 @@ PartitionSortedOptions <- PartitionOptSortedOptions / SortedOptPartitionOptions
 PartitionOptSortedOptions <- PartitionOptions SortedOptions?
 SortedOptPartitionOptions <- SortedOptions PartitionOptions?
 PartitionOptions <- 'PARTITIONED' 'BY' Parens(List(Expression))
-SortedOptions <- 'SORTED' 'BY' Parens(List(Expression))
+SortedOptions <- 'SORTED' 'BY' Parens(List(OrderByExpression))
 
 WithData <- WithDataOnly / WithNoData
 WithDataOnly <- 'WITH' 'DATA'

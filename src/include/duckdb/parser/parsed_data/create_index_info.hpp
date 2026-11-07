@@ -10,10 +10,12 @@
 
 #include "duckdb/common/case_insensitive_map.hpp"
 #include "duckdb/common/enums/index_constraint_type.hpp"
+#include "duckdb/common/enums/order_type.hpp"
 #include "duckdb/common/types/value.hpp"
 #include "duckdb/common/vector.hpp"
 #include "duckdb/parser/parsed_data/create_info.hpp"
 #include "duckdb/parser/parsed_expression.hpp"
+#include "duckdb/parser/result_modifier.hpp"
 
 #include "duckdb/common/identifier.hpp"
 
@@ -56,6 +58,9 @@ struct CreateIndexInfo : public CreateInfo {
 	//! Parallel to column_opclasses; entry is nullopt when no parens were given,
 	//! and an (empty or non-empty) map when parens were present in the source SQL.
 	vector<std::optional<case_insensitive_map_t<Value>>> column_opclass_options;
+	vector<OrderType> column_orders;
+	vector<OrderByNullType> column_null_orders;
+	vector<OrderByNode> sort_orders;
 	idx_t table_oid = 0;
 
 	//! The types of the logical columns (necessary for scanning the table during CREATE INDEX)
