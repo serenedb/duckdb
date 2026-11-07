@@ -135,6 +135,10 @@ string CompressionTypeToString(CompressionType type) {
 		return "DICT_FSST_PLUS";
 	case CompressionType::COMPRESSION_COL_FSST_PLUS:
 		return "FSST_PLUS";
+	case CompressionType::COMPRESSION_COL_DICT_ONPAIR:
+		return "DICT_ONPAIR";
+	case CompressionType::COMPRESSION_COL_ONPAIR:
+		return "ONPAIR";
 	default:
 		throw InternalException("Unrecognized compression type!");
 	}
