@@ -59,7 +59,9 @@
 #include "duckdb/parser/statement/explain_statement.hpp"
 #include "duckdb/planner/operator/logical_get.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
+#include "duckdb/parser/statement/alter_statement.hpp"
 #include "duckdb/parser/statement/attach_statement.hpp"
+#include "duckdb/parser/statement/create_statement.hpp"
 #include "duckdb/parser/statement/drop_statement.hpp"
 #include "duckdb/common/local_file_system.hpp"
 #include "shell_progress_bar.hpp"
@@ -1029,19 +1031,34 @@ SuccessState ShellState::ExecuteStatement(unique_ptr<duckdb::SQLStatement> state
 	return render_state;
 }
 
-bool ShellState::TryForwardDatabaseDdl(const duckdb::SQLStatement &statement, const string &original_sql,
-                                       SuccessState &result) {
+bool ShellState::TryForwardClusterDdl(const duckdb::SQLStatement &statement, const string &original_sql,
+                                      SuccessState &result) {
 	if (subcommand != ShellSubcommand::PSQL || psql_dbname.empty()) {
 		return false;
 	}
+	auto cluster_wide = [](duckdb::CatalogType type) {
+		return type == duckdb::CatalogType::DATABASE_ENTRY || type == duckdb::CatalogType::ROLE_ENTRY;
+	};
 	bool forward = false;
-	if (statement.type == duckdb::StatementType::ATTACH_STATEMENT) {
+	switch (statement.type) {
+	case duckdb::StatementType::ATTACH_STATEMENT: {
 		auto &info = *statement.Cast<duckdb::AttachStatement>().info;
 		auto entry = info.options.find("type");
 		forward = entry != info.options.end() && !entry->second.IsNull() &&
 		          duckdb::StringUtil::CIEquals(entry->second.ToString(), "serenedb");
-	} else if (statement.type == duckdb::StatementType::DROP_STATEMENT) {
-		forward = statement.Cast<duckdb::DropStatement>().info->type == duckdb::CatalogType::DATABASE_ENTRY;
+		break;
+	}
+	case duckdb::StatementType::CREATE_STATEMENT:
+		forward = cluster_wide(statement.Cast<duckdb::CreateStatement>().info->type);
+		break;
+	case duckdb::StatementType::ALTER_STATEMENT:
+		forward = cluster_wide(statement.Cast<duckdb::AlterStatement>().info->GetCatalogType());
+		break;
+	case duckdb::StatementType::DROP_STATEMENT:
+		forward = cluster_wide(statement.Cast<duckdb::DropStatement>().info->type);
+		break;
+	default:
+		break;
 	}
 	if (!forward) {
 		return false;
@@ -1129,7 +1146,7 @@ SuccessState ShellState::ExecuteSQL(const string &zSql) {
 			// Reset before bind; the `_` replacement scan sets it to true if it fires.
 			last_result_referenced = false;
 			SuccessState forwarded_rc;
-			if (TryForwardDatabaseDdl(*statement, zStmtSql, forwarded_rc)) {
+			if (TryForwardClusterDdl(*statement, zStmtSql, forwarded_rc)) {
 				if (forwarded_rc != SuccessState::SUCCESS) {
 					return forwarded_rc;
 				}
