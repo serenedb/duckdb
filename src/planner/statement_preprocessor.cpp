@@ -157,7 +157,7 @@ void StatementPreprocessor::ExpandTruncate(MultiStatement &multi_statement) cons
 	}
 	const auto named = group.size();
 	for (idx_t i = 0; cascade && i < group.size(); i++) {
-		for (auto &referencing : Binder::TruncateReferencingTables(context, group[i].get())) {
+		for (auto &referencing : group[i].get().ReferencingTables(context)) {
 			add(referencing.get());
 		}
 	}

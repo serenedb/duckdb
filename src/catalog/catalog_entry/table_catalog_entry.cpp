@@ -583,6 +583,22 @@ bool TableCatalogEntry::DropTrigger(CatalogTransaction transaction, const Identi
 	return triggers->DropEntry(transaction, name, cascade);
 }
 
+vector<reference<TableCatalogEntry>> TableCatalogEntry::ReferencingTables(ClientContext &context) {
+	vector<reference<TableCatalogEntry>> result;
+	for (auto &constraint : GetConstraints()) {
+		if (constraint->type != ConstraintType::FOREIGN_KEY) {
+			continue;
+		}
+		auto &foreign_key = constraint->Cast<ForeignKeyConstraint>();
+		if (foreign_key.info.type != ForeignKeyType::FK_TYPE_PRIMARY_KEY_TABLE) {
+			continue;
+		}
+		result.push_back(Catalog::GetEntry<TableCatalogEntry>(
+		    context, QualifiedName(ParentCatalog().GetName(), foreign_key.info.schema, foreign_key.info.table)));
+	}
+	return result;
+}
+
 void TableCatalogEntry::RenameTriggerColumns(ClientContext &context, const RenameColumnInfo &info) {
 	if (!triggers) {
 		return;
