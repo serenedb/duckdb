@@ -2,7 +2,7 @@ find_package(Threads REQUIRED)
 
 set(CMAKE_CXX_VISIBILITY_PRESET hidden)
 
-add_library(duckdb_fsst STATIC libfsst.cpp fsst_simd.cpp fsst_avx512.cpp)
+add_library(duckdb_fsst STATIC libfsst.cpp libfsst12.cpp fsst_simd.cpp fsst_avx512.cpp)
 
 if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64|amd64" AND NOT MSVC)
   set_source_files_properties(fsst_avx512.cpp PROPERTIES COMPILE_OPTIONS "-mavx512f;-mavx512bw;-mavx512dq")
