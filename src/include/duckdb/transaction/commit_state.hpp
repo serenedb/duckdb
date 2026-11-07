@@ -13,6 +13,7 @@
 #include "duckdb/common/enums/index_removal_type.hpp"
 #include "duckdb/common/optional_ptr.hpp"
 #include "duckdb/common/reference_map.hpp"
+#include "duckdb/parser/parsed_data/alter_info.hpp"
 #include "duckdb/storage/block.hpp"
 #include "duckdb/common/types/data_chunk.hpp"
 
@@ -38,6 +39,12 @@ struct PendingIndexRemoval {
 	idx_t index_oid;
 };
 
+//! A catalog entry version an ALTER created, told of the ALTER once the commit chain has succeeded.
+struct PendingAlter {
+	reference<CatalogEntry> entry;
+	unique_ptr<AlterInfo> info;
+};
+
 //! Accumulates block marks and index removals during commit so they can be applied together once the
 //! commit chain has succeeded and FlushCommit() has been called, since these are side effects that can't be reverted
 //! if we need to rollback a transaction.
@@ -53,6 +60,7 @@ public:
 	//! indexes is handled implicitly along destruction paths for index memory.
 	void RemoveIndex(TableIndexList &indexes, idx_t index_oid);
 	void DropEntry(CatalogEntry &entry);
+	void AlterEntry(CatalogEntry &entry, unique_ptr<AlterInfo> info);
 	const vector<reference<CatalogEntry>> &DroppedEntries() const {
 		return dropped_entries;
 	}
@@ -65,6 +73,7 @@ private:
 	optional_ptr<BlockManager> block_manager;
 	vector<block_id_t> dropped_block_ids;
 	vector<PendingIndexRemoval> pending_index_removals;
+	vector<PendingAlter> altered_entries;
 	vector<reference<CatalogEntry>> dropped_entries;
 };
 
