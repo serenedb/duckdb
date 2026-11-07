@@ -1071,7 +1071,7 @@ CatalogException Catalog::CreateMissingEntryException(CatalogEntryRetriever &ret
 			break;
 		}
 		if (database->GetVisibility() == AttachVisibility::HIDDEN ||
-		    (ListingRank(database->GetCatalog()) == 2 && !search_path_catalogs.count(database->GetName()))) {
+		    (ListingRank(database->GetCatalog()) != 1 && !search_path_catalogs.count(database->GetName()))) {
 			continue;
 		}
 		vector<reference<SchemaCatalogEntry>> current_schemas;
