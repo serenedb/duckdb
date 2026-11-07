@@ -141,6 +141,10 @@ string CompressionTypeToString(CompressionType type) {
 		return "Sequence";
 	case CompressionType::COMPRESSION_COL_NUMERIC:
 		return "Numeric";
+	case CompressionType::COMPRESSION_COL_DICT_FSST_PLUS:
+		return "DICT_FSST_PLUS";
+	case CompressionType::COMPRESSION_COL_FSST_PLUS:
+		return "FSST_PLUS";
 	default:
 		throw InternalException("Unrecognized compression type!");
 	}
