@@ -405,9 +405,9 @@ void CreateTableInfo::Serialize(Serializer &serializer) const {
 	serializer.WritePropertyWithDefault<vector<unique_ptr<Constraint>>>(202, "constraints", constraints);
 	serializer.WritePropertyWithDefault<unique_ptr<SelectStatement>>(203, "query", query);
 	serializer.WritePropertyWithDefault<vector<unique_ptr<ParsedExpression>>>(204, "partition_keys", partition_keys);
-	serializer.WritePropertyWithDefault<vector<unique_ptr<ParsedExpression>>>(205, "sort_keys", sort_keys);
+	/* [Deleted] (vector<unique_ptr<ParsedExpression>>) "sort_key_expressions" */
 	serializer.WritePropertyWithDefault<case_insensitive_map_t<unique_ptr<ParsedExpression>>>(206, "options", options);
-	serializer.WritePropertyWithDefault<vector<OrderByNode>>(16584, "sort_orders", sort_orders);
+	serializer.WritePropertyWithDefault<vector<OrderByNode>>(16584, "sort_keys", sort_keys);
 }
 
 unique_ptr<CreateInfo> CreateTableInfo::Deserialize(Deserializer &deserializer) {
@@ -417,9 +417,9 @@ unique_ptr<CreateInfo> CreateTableInfo::Deserialize(Deserializer &deserializer) 
 	deserializer.ReadPropertyWithDefault<vector<unique_ptr<Constraint>>>(202, "constraints", result->constraints);
 	deserializer.ReadPropertyWithDefault<unique_ptr<SelectStatement>>(203, "query", result->query);
 	deserializer.ReadPropertyWithDefault<vector<unique_ptr<ParsedExpression>>>(204, "partition_keys", result->partition_keys);
-	deserializer.ReadPropertyWithDefault<vector<unique_ptr<ParsedExpression>>>(205, "sort_keys", result->sort_keys);
+	deserializer.ReadDeletedProperty<vector<unique_ptr<ParsedExpression>>>(205, "sort_key_expressions");
 	deserializer.ReadPropertyWithDefault<case_insensitive_map_t<unique_ptr<ParsedExpression>>>(206, "options", result->options);
-	deserializer.ReadPropertyWithDefault<vector<OrderByNode>>(16584, "sort_orders", result->sort_orders);
+	deserializer.ReadPropertyWithDefault<vector<OrderByNode>>(16584, "sort_keys", result->sort_keys);
 	result->SetName(std::move(table));
 	return std::move(result);
 }
