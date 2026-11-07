@@ -13,7 +13,11 @@ struct DuckDBViewsData : public GlobalTableFunctionState {
 	DuckDBViewsData() : offset(0) {
 	}
 
-	vector<reference<CatalogEntry>> entries;
+	struct ListedView {
+		reference<SchemaCatalogEntry> schema;
+		reference<ViewCatalogEntry> entry;
+	};
+	vector<ListedView> entries;
 	vector<ColumnIndex> column_ids;
 	idx_t offset;
 };
@@ -71,8 +75,11 @@ unique_ptr<GlobalTableFunctionState> DuckDBViewsInit(ClientContext &context, Tab
 	auto &bind_data = input.bind_data->Cast<DuckDBSystemIncludeHiddenBindData>();
 	auto schemas = Catalog::GetAllSchemas(context, bind_data.include_hidden, bind_data.DatabaseFilter(context));
 	for (auto &schema : schemas) {
-		Catalog::ScanListedEntries(context, schema.get(), CatalogType::VIEW_ENTRY,
-		                           [&](CatalogEntry &entry) { result->entries.push_back(entry); });
+		Catalog::ScanListedEntries(context, schema.get(), CatalogType::VIEW_ENTRY, [&](CatalogEntry &entry) {
+			if (entry.type == CatalogType::VIEW_ENTRY) {
+				result->entries.push_back(DuckDBViewsData::ListedView {schema, entry.Cast<ViewCatalogEntry>()});
+			}
+		});
 	};
 	result->column_ids = input.column_indexes;
 	return std::move(result);
@@ -88,12 +95,8 @@ void DuckDBViewsFunction(ClientContext &context, TableFunctionInput &data_p, Dat
 	// either fill up the chunk or return all the remaining columns
 	idx_t count = 0;
 	while (data.offset < data.entries.size() && count < STANDARD_VECTOR_SIZE) {
-		auto &entry = data.entries[data.offset++].get();
-
-		if (entry.type != CatalogType::VIEW_ENTRY) {
-			continue;
-		}
-		auto &view = entry.Cast<ViewCatalogEntry>();
+		auto &listed_schema = data.entries[data.offset].schema.get();
+		auto &view = data.entries[data.offset++].entry.get();
 
 		for (idx_t c = 0; c < data.column_ids.size(); c++) {
 			auto column_id = data.column_ids[c].GetPrimaryIndex();
@@ -101,19 +104,19 @@ void DuckDBViewsFunction(ClientContext &context, TableFunctionInput &data_p, Dat
 			switch (column_id) {
 			case 0:
 				// database_name, VARCHAR
-				col_vector.Append(Value(view.catalog.GetName()));
+				col_vector.Append(Value(listed_schema.ParentCatalog().GetName()));
 				break;
 			case 1:
 				// database_oid, BIGINT
-				col_vector.Append(Value::BIGINT(NumericCast<int64_t>(view.catalog.GetOid())));
+				col_vector.Append(Value::BIGINT(NumericCast<int64_t>(listed_schema.ParentCatalog().GetOid())));
 				break;
 			case 2:
 				// schema_name, LogicalType::VARCHAR
-				col_vector.Append(Value(view.ParentSchemaName(CatalogTransaction(view.ParentCatalog(), context))));
+				col_vector.Append(Value(listed_schema.name));
 				break;
 			case 3:
 				// schema_oid, LogicalType::BIGINT
-				col_vector.Append(Value::BIGINT(NumericCast<int64_t>(view.ParentSchemaOid())));
+				col_vector.Append(Value::BIGINT(NumericCast<int64_t>(listed_schema.oid)));
 				break;
 			case 4:
 				// view_name, LogicalType::VARCHAR

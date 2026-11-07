@@ -255,10 +255,17 @@ DefaultViewGenerator::DefaultViewGenerator(Catalog &catalog, SchemaCatalogEntry 
     : DefaultGenerator(catalog), schema(schema) {
 }
 
+bool DefaultViewGenerator::ServesViewsOf(const Identifier &view_schema) const {
+	return (view_schema == DEFAULT_SCHEMA || catalog.IsDuckCatalog()) && ServesDefaults(schema.name, view_schema);
+}
+
 unique_ptr<CatalogEntry> DefaultViewGenerator::CreateDefaultEntry(ClientContext &context,
                                                                   const Identifier &entry_name) {
-	auto info = GetDefaultView(context, schema.name, entry_name);
-	if (!info && ServesDefaults(schema.name, DEFAULT_SCHEMA)) {
+	unique_ptr<CreateViewInfo> info;
+	if (ServesViewsOf(schema.name)) {
+		info = GetDefaultView(context, schema.name, entry_name);
+	}
+	if (!info && ServesViewsOf(DEFAULT_SCHEMA)) {
 		info = GetDefaultView(context, DEFAULT_SCHEMA, entry_name);
 	}
 	if (info) {
@@ -270,7 +277,7 @@ unique_ptr<CatalogEntry> DefaultViewGenerator::CreateDefaultEntry(ClientContext 
 vector<Identifier> DefaultViewGenerator::GetDefaultEntries() {
 	vector<Identifier> result;
 	for (idx_t index = 0; internal_views[index].name != nullptr; index++) {
-		if (ServesDefaults(schema.name, internal_views[index].schema)) {
+		if (ServesViewsOf(internal_views[index].schema)) {
 			result.emplace_back(internal_views[index].name);
 		}
 	}

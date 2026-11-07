@@ -19,7 +19,11 @@ struct DuckDBColumnsData : public GlobalTableFunctionState {
 	DuckDBColumnsData() : offset(0), column_offset(0) {
 	}
 
-	vector<reference<CatalogEntry>> entries;
+	struct ListedRelation {
+		reference<SchemaCatalogEntry> schema;
+		reference<CatalogEntry> entry;
+	};
+	vector<ListedRelation> entries;
 	atomic<idx_t> offset;
 	idx_t column_offset;
 };
@@ -101,15 +105,16 @@ static unique_ptr<GlobalTableFunctionState> DuckDBColumnsInit(ClientContext &con
 	auto &bind_data = input.bind_data->Cast<DuckDBSystemIncludeHiddenBindData>();
 	auto schemas = Catalog::GetAllSchemas(context, bind_data.include_hidden, bind_data.DatabaseFilter(context));
 	for (auto &schema : schemas) {
-		Catalog::ScanListedEntries(context, schema.get(), CatalogType::TABLE_ENTRY,
-		                           [&](CatalogEntry &entry) { result->entries.push_back(entry); });
+		Catalog::ScanListedEntries(context, schema.get(), CatalogType::TABLE_ENTRY, [&](CatalogEntry &entry) {
+			result->entries.push_back(DuckDBColumnsData::ListedRelation {schema, entry});
+		});
 	}
 	return std::move(result);
 }
 
 class ColumnHelper {
 public:
-	static unique_ptr<ColumnHelper> Create(ClientContext &context, CatalogEntry &entry);
+	static unique_ptr<ColumnHelper> Create(ClientContext &context, SchemaCatalogEntry &schema, CatalogEntry &entry);
 
 	virtual ~ColumnHelper() {
 	}
@@ -127,7 +132,7 @@ public:
 
 	void WriteColumns(idx_t start_col, idx_t end_col, DataChunk &output);
 
-	Identifier parent_schema_name;
+	optional_ptr<SchemaCatalogEntry> listed_schema;
 };
 
 class TableColumnHelper : public ColumnHelper {
@@ -253,7 +258,7 @@ private:
 	bool bound_view = false;
 };
 
-unique_ptr<ColumnHelper> ColumnHelper::Create(ClientContext &context, CatalogEntry &entry) {
+unique_ptr<ColumnHelper> ColumnHelper::Create(ClientContext &context, SchemaCatalogEntry &schema, CatalogEntry &entry) {
 	unique_ptr<ColumnHelper> result;
 	switch (entry.type) {
 	case CatalogType::TABLE_ENTRY:
@@ -266,7 +271,7 @@ unique_ptr<ColumnHelper> ColumnHelper::Create(ClientContext &context, CatalogEnt
 		throw NotImplementedException({{"catalog_type", CatalogTypeToString(entry.type)}},
 		                              "Unsupported catalog type for duckdb_columns");
 	}
-	result->parent_schema_name = entry.ParentSchemaName(CatalogTransaction(entry.ParentCatalog(), context));
+	result->listed_schema = schema;
 	return result;
 }
 
@@ -317,10 +322,10 @@ void ColumnHelper::WriteColumns(idx_t start_col, idx_t end_col, DataChunk &outpu
 	for (idx_t i = start_col; i < end_col; i++) {
 		auto &entry = Entry();
 
-		database_name.Append(Value(entry.catalog.GetName()));
-		database_oid.Append(Value::BIGINT(NumericCast<int64_t>(entry.catalog.GetOid())));
-		schema_name.Append(Value(parent_schema_name));
-		schema_oid.Append(Value::BIGINT(NumericCast<int64_t>(entry.ParentSchemaOid())));
+		database_name.Append(Value(listed_schema->ParentCatalog().GetName()));
+		database_oid.Append(Value::BIGINT(NumericCast<int64_t>(listed_schema->ParentCatalog().GetOid())));
+		schema_name.Append(Value(listed_schema->name));
+		schema_oid.Append(Value::BIGINT(NumericCast<int64_t>(listed_schema->oid)));
 		table_name.Append(Value(entry.name));
 		table_oid.Append(Value::BIGINT(NumericCast<int64_t>(entry.oid)));
 		column_name.Append(ColumnName(i));
@@ -408,7 +413,7 @@ static void DuckDBColumnsFunction(ClientContext &context, TableFunctionInput &da
 	idx_t column_offset = data.column_offset;
 	idx_t index = 0;
 	while (next < data.entries.size() && index < STANDARD_VECTOR_SIZE) {
-		auto column_helper = ColumnHelper::Create(context, data.entries[next].get());
+		auto column_helper = ColumnHelper::Create(context, data.entries[next].schema, data.entries[next].entry);
 		idx_t columns = column_helper->NumColumns();
 
 		// Check to see if we are going to exceed the maximum index for a DataChunk
