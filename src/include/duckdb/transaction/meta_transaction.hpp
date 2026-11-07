@@ -11,13 +11,11 @@
 #include "duckdb/common/common.hpp"
 #include "duckdb/main/valid_checker.hpp"
 #include "duckdb/common/types/timestamp.hpp"
-#include "duckdb/common/optional.hpp"
 #include "duckdb/common/optional_ptr.hpp"
 #include "duckdb/common/reference_map.hpp"
 #include "duckdb/common/error_data.hpp"
 #include "duckdb/common/case_insensitive_map.hpp"
 #include "duckdb/main/attached_database.hpp"
-#include "duckdb/catalog/catalog.hpp"
 
 namespace duckdb {
 class AttachedDatabase;
@@ -64,10 +62,6 @@ public:
 	Transaction &GetTransaction(AttachedDatabase &db);
 	optional_ptr<Transaction> TryGetTransaction(AttachedDatabase &db);
 	void RemoveTransaction(AttachedDatabase &db);
-	//! Route storage access for `db` to `transaction` for the lifetime of a scoped operation. The override
-	//! transaction is NOT added to this meta transaction's commit/rollback set; the caller owns its lifecycle.
-	void PushTransactionOverride(AttachedDatabase &db, Transaction &transaction);
-	void PopTransactionOverride(AttachedDatabase &db);
 
 	ErrorData Commit();
 	void Rollback();
@@ -99,16 +93,10 @@ public:
 private:
 	friend class SecretManager;
 
-	optional_ptr<Catalog> CatalogLogForCommit();
-	ErrorData CommitThroughCatalogLog(Catalog &catalog);
-
 	//! Lock to prevent all_transactions and transactions from getting out of sync.
 	mutex lock;
 	//! The set of active transactions for each database.
 	reference_map_t<AttachedDatabase, TransactionReference> transactions;
-	//! Scoped per-database transaction override (single slot; see PushTransactionOverride).
-	optional_ptr<AttachedDatabase> scoped_override_db;
-	optional_ptr<Transaction> scoped_override_txn;
 	//! The set of referenced databases in invocation order.
 	vector<reference<AttachedDatabase>> all_transactions;
 	//! The database we are modifying. We can only modify one database per meta transaction.

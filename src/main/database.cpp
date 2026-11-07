@@ -201,6 +201,9 @@ shared_ptr<AttachedDatabase> DatabaseInstance::CreateAttachedDatabase(ClientCont
 	shared_ptr<AttachedDatabase> attached_database;
 	auto &catalog = Catalog::GetSystemCatalog(*this);
 
+	if (options.create_catalog) {
+		return make_shared_ptr<AttachedDatabase>(*this, catalog, info.name, options);
+	}
 	if (!options.db_type.empty()) {
 		// Find the storage extension for this database file.
 		auto extension_name = ExtensionHelper::ApplyExtensionAlias(options.db_type);
@@ -605,6 +608,9 @@ void DatabaseInstance::Configure(DBConfig &new_config, const char *database_path
 	}
 	config.db_cache_entry = std::move(new_config.db_cache_entry);
 	config.path_manager = std::move(new_config.path_manager);
+	config.create_internal_catalog = new_config.create_internal_catalog;
+	config.create_client_context = new_config.create_client_context;
+	config.create_secret_storage = new_config.create_secret_storage;
 }
 
 DBConfig &DBConfig::GetConfig(ClientContext &context) {

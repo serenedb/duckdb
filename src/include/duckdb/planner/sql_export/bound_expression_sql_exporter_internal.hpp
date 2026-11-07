@@ -69,8 +69,8 @@ public:
 	template <class FUNCTION>
 	static optional<QualifiedName> RebindableFunctionName(const FUNCTION &definition) {
 		auto name = definition.GetQualifiedName();
-		if (name.Catalog().empty()) {
-			name = name.WithCatalog(Identifier::SystemCatalog());
+		if (name.Catalog().empty() || name.Catalog() == Identifier::SystemCatalog()) {
+			return QualifiedName(name.Name());
 		}
 		if (name.Schema().empty()) {
 			name = QualifiedName(name.Catalog(), Identifier::DefaultSchema(), name.Name());

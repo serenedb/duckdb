@@ -9,7 +9,7 @@ namespace duckdb {
 
 PhysicalOperator &DuckCatalog::PlanUpdate(ClientContext &context, PhysicalPlanGenerator &planner, LogicalUpdate &op,
                                           PhysicalOperator &plan) {
-	auto &storage_table = op.table.GetStorageTableEntry(context);
+	auto &storage_table = op.table.Cast<DuckTableEntry>();
 	auto &update = planner.Make<PhysicalUpdate>(
 	    op.types, storage_table, storage_table.GetStorage(), op.columns, std::move(op.expressions),
 	    std::move(op.bound_defaults), std::move(op.bound_constraints), op.estimated_cardinality, op.return_chunk,

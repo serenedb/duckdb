@@ -64,17 +64,10 @@ void TransactionContext::Commit() {
 		throw TransactionException("failed to commit: no transaction active");
 	}
 	autocheckpoint_error = ErrorData();
-	// Pre-commit hooks run while the transaction is still active so they can
-	// issue operations that need ActiveTransaction (e.g. reverting SET LOCAL
-	// values for custom-impl settings). A hook that refuses the commit by
-	// throwing ends the transaction the same way a failed commit does -- leaving
-	// it active would wedge the connection on the next statement.
 	ErrorData precommit_error;
 	std::exception_ptr precommit_exception;
 	try {
-		for (auto &state : context.registered_state->States()) {
-			state->TransactionPreCommit(*current_transaction, context);
-		}
+		context.OnTransactionPreCommit(*current_transaction);
 	} catch (std::exception &ex) {
 		precommit_error = ErrorData(ex);
 		precommit_exception = std::current_exception();
@@ -94,6 +87,7 @@ void TransactionContext::Commit() {
 		for (auto const &s : context.registered_state->States()) {
 			s->TransactionRollback(*transaction, context, precommit_error);
 		}
+		context.OnTransactionRollback(*transaction);
 
 		// match Rollback behaviour - Finalize only successful rollback.
 		if (rolled_back) {
@@ -110,6 +104,7 @@ void TransactionContext::Commit() {
 		for (auto const &s : context.registered_state->States()) {
 			s->TransactionRollback(*transaction, context, error);
 		}
+		context.OnTransactionRollback(*transaction);
 		if (Exception::InvalidatesDatabase(error.Type()) || error.Type() == ExceptionType::INTERNAL) {
 			// throw fatal / internal exceptions directly
 			error.Throw();
@@ -122,6 +117,7 @@ void TransactionContext::Commit() {
 	for (auto &state : context.registered_state->States()) {
 		state->TransactionCommit(*transaction, context);
 	}
+	context.OnTransactionCommit(*transaction);
 	transaction->Finalize();
 	if (autocheckpoint_error.HasError()) {
 		auto err = std::move(autocheckpoint_error);
@@ -138,9 +134,7 @@ void TransactionContext::SetAutoCommit(bool value) {
 }
 
 void TransactionContext::SetIsolationLevel(TransactionIsolationLevel new_isolation_level) {
-	if (context.isolation_level_validator) {
-		context.isolation_level_validator(context, new_isolation_level);
-	}
+	context.ValidateIsolationLevel(new_isolation_level);
 	isolation_level = new_isolation_level;
 }
 
@@ -152,12 +146,7 @@ void TransactionContext::Rollback(optional_ptr<ErrorData> error) {
 	if (!current_transaction) {
 		throw TransactionException("failed to rollback: no transaction active");
 	}
-	// Pre-rollback hooks run while the transaction is still active so they can
-	// issue operations that need ActiveTransaction (e.g. restoring SET values
-	// for custom-impl settings like search_path).
-	for (auto const &s : context.registered_state->States()) {
-		s->TransactionPreRollback(*current_transaction, context, error);
-	}
+	context.OnTransactionPreRollback(*current_transaction);
 	auto transaction = std::move(current_transaction);
 	ClearTransaction();
 	context.client_data->profiler->Reset();
@@ -172,6 +161,7 @@ void TransactionContext::Rollback(optional_ptr<ErrorData> error) {
 	for (auto const &s : context.registered_state->States()) {
 		s->TransactionRollback(*transaction, context, error);
 	}
+	context.OnTransactionRollback(*transaction);
 	if (rollback_error.HasError()) {
 		rollback_error.Throw();
 	}

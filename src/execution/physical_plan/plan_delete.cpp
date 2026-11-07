@@ -46,7 +46,7 @@ PhysicalOperator &DuckCatalog::PlanDelete(ClientContext &context, PhysicalPlanGe
 		D_ASSERT(expression_idx < op.expressions.size());
 		return_column_idx = op.expressions[expression_idx]->Cast<BoundReferenceExpression>().Index();
 	}
-	auto &storage_table = op.table.GetStorageTableEntry(context);
+	auto &storage_table = op.table.Cast<DuckTableEntry>();
 	auto &del = planner.Make<PhysicalDelete>(op.types, storage_table, storage_table.GetStorage(),
 	                                         std::move(op.bound_constraints), bound_ref.Index(),
 	                                         op.estimated_cardinality, op.return_chunk, std::move(return_columns));

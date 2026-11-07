@@ -9,6 +9,7 @@
 #pragma once
 
 #include "duckdb/catalog/catalog_entry.hpp"
+#include "duckdb/catalog/catalog_entry_map.hpp"
 #include "duckdb/catalog/catalog_transaction.hpp"
 #include "duckdb/common/atomic.hpp"
 #include "duckdb/common/enums/catalog_lookup_behavior.hpp"
@@ -49,6 +50,7 @@ struct CreateSequenceInfo;
 struct CreateJobInfo;
 struct CreateTokenizerInfo;
 struct CreateRoleInfo;
+struct CreateDatabaseInfo;
 struct CreateForeignServerInfo;
 struct CreateCollationInfo;
 struct CreateCoordinateSystemInfo;
@@ -77,6 +79,7 @@ class DatabaseInstance;
 class DependencyManager;
 
 struct CatalogLookup;
+struct SequenceValue;
 struct CatalogEntryLookup;
 struct SimilarCatalogEntry;
 
@@ -137,6 +140,7 @@ public:
 	                                                        const Identifier &catalog_name);
 	//! Get the specific Catalog from the AttachedDatabase
 	DUCKDB_API static Catalog &GetCatalog(AttachedDatabase &db);
+	DUCKDB_API static Catalog &GetDDLCatalog(ClientContext &context, CatalogType type, const Identifier &catalog_name);
 
 	DUCKDB_API AttachedDatabase &GetAttached();
 	DUCKDB_API const AttachedDatabase &GetAttached() const;
@@ -154,26 +158,12 @@ public:
 		return Compatibility() == SqlCompatibility::POSTGRES;
 	}
 
-	virtual bool UsesCatalogLog() const {
+	virtual bool LogsSequences() const {
 		return false;
 	}
-	virtual bool IsDropped() const {
-		return false;
+	virtual void LogSequenceValue(const SequenceValue &value) {
 	}
-	virtual shared_ptr<WriteAheadLog> CatalogLog() {
-		return nullptr;
-	}
-	virtual Catalog &ReplayUseCatalog(ClientContext &context, idx_t catalog_oid);
-	virtual void OnCatalogLogPrepared() {
-	}
-	virtual void OnCatalogLogDecided() {
-	}
-	virtual void EndCatalogLogCommit() {
-	}
-	void SyncCatalogLog();
-	virtual bool AppendLocalIndexes(DuckTransaction &transaction, TableIndexList &index_list,
-	                                RowGroupCollection &source, const vector<StorageIndex> &mapped_column_ids,
-	                                row_t row_start, ErrorData &error) {
+	virtual bool CrossCatalogDependencies() const {
 		return false;
 	}
 
@@ -235,6 +225,8 @@ public:
 	DUCKDB_API optional_ptr<CatalogEntry> CreateJob(ClientContext &context, CreateJobInfo &info);
 	DUCKDB_API optional_ptr<CatalogEntry> CreateTokenizer(ClientContext &context, CreateTokenizerInfo &info);
 	DUCKDB_API virtual optional_ptr<CatalogEntry> CreateRole(CatalogTransaction transaction, CreateRoleInfo &info);
+	DUCKDB_API virtual optional_ptr<CatalogEntry> CreateDatabase(CatalogTransaction transaction,
+	                                                             CreateDatabaseInfo &info);
 	DUCKDB_API virtual optional_ptr<CatalogEntry> CreateForeignServer(CatalogTransaction transaction,
 	                                                                  CreateForeignServerInfo &info);
 	DUCKDB_API virtual void DropRole(CatalogTransaction transaction, DropInfo &info);
@@ -390,19 +382,44 @@ public:
 	         const EntryLookupInfo &lookup_info);
 
 	template <class T>
-	[[deprecated("Fold the catalog/schema into a QualifiedName and use GetEntry<T>(context, QualifiedName, ...) "
-	             "instead")]] optional_ptr<T>
-	GetEntry(ClientContext &context, const Identifier &schema_name, const Identifier &name,
-	         OnEntryNotFound if_not_found, QueryErrorContext error_context = QueryErrorContext()) {
-		return GetEntry<T>(context, QualifiedName(GetName(), schema_name, name), if_not_found, error_context);
+	optional_ptr<T> GetEntry(ClientContext &context, const Identifier &schema_name, const Identifier &name,
+	                         OnEntryNotFound if_not_found, QueryErrorContext error_context = QueryErrorContext()) {
+		EntryLookupInfo lookup_info(T::Type, QualifiedName(GetName(), schema_name, name), error_context);
+		auto entry = GetEntry(context, schema_name, lookup_info, if_not_found);
+		if (!entry) {
+			return nullptr;
+		}
+		if (entry->type != T::Type) {
+			throw CatalogException(error_context, "%s is not an %s", name.GetIdentifierName(), T::Name);
+		}
+		return &entry->template Cast<T>();
 	}
 
 	template <class T>
-	[[deprecated("Fold the catalog/schema into a QualifiedName and use GetEntry<T>(context, QualifiedName, ...) "
-	             "instead")]] T &
-	GetEntry(ClientContext &context, const Identifier &schema_name, const Identifier &name,
-	         QueryErrorContext error_context = QueryErrorContext()) {
-		return GetEntry<T>(context, QualifiedName(GetName(), schema_name, name), error_context);
+	T &GetEntry(ClientContext &context, const Identifier &schema_name, const Identifier &name,
+	            QueryErrorContext error_context = QueryErrorContext()) {
+		return *GetEntry<T>(context, schema_name, name, OnEntryNotFound::THROW_EXCEPTION, error_context);
+	}
+
+	DUCKDB_API static optional_ptr<CatalogEntry> GetBuiltinEntry(ClientContext &context, CatalogType type,
+	                                                             const Identifier &name, OnEntryNotFound if_not_found,
+	                                                             QueryErrorContext error_context = QueryErrorContext());
+	template <class T>
+	static optional_ptr<T> GetBuiltinEntry(ClientContext &context, const Identifier &name, OnEntryNotFound if_not_found,
+	                                       QueryErrorContext error_context = QueryErrorContext()) {
+		auto entry = GetBuiltinEntry(context, T::Type, name, if_not_found, error_context);
+		if (!entry) {
+			return nullptr;
+		}
+		if (entry->type != T::Type) {
+			throw CatalogException(error_context, "%s is not an %s", name.GetIdentifierName(), T::Name);
+		}
+		return &entry->template Cast<T>();
+	}
+	template <class T>
+	static T &GetBuiltinEntry(ClientContext &context, const Identifier &name,
+	                          QueryErrorContext error_context = QueryErrorContext()) {
+		return *GetBuiltinEntry<T>(context, name, OnEntryNotFound::THROW_EXCEPTION, error_context);
 	}
 
 	//! Gets the "catalog.schema.name" entry of the specified type from a QualifiedName
@@ -498,6 +515,10 @@ public:
 
 	//! Returns the dependency manager of this catalog - if the catalog has any
 	virtual optional_ptr<DependencyManager> GetDependencyManager();
+	virtual void ScanSubjects(CatalogTransaction transaction, CatalogEntry &entry,
+	                          const std::function<void(CatalogEntry &)> &callback);
+	virtual catalog_entry_vector_t OwnedEntries(CatalogTransaction transaction, const CatalogEntry &owner);
+	virtual optional_ptr<CatalogEntry> OwnerOf(CatalogTransaction transaction, CatalogEntry &owned);
 
 	//! Whether attaching a catalog with the given path and attach options would be considered a conflict
 	virtual bool HasConflictingAttachOptions(const string &path, const AttachOptions &options);

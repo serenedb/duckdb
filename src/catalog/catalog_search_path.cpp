@@ -6,7 +6,9 @@
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/sql_identifier.hpp"
 #include "duckdb/common/string_util.hpp"
+#include "duckdb/main/attached_database.hpp"
 #include "duckdb/main/client_context.hpp"
+#include "duckdb/main/client_data.hpp"
 #include "duckdb/main/database_manager.hpp"
 #include "duckdb/main/extension_callback_manager.hpp"
 
@@ -353,6 +355,9 @@ Identifier CatalogSearchPath::GetDefaultCatalog(const Identifier &schema) const 
 			}
 			return path.GetCatalog();
 		}
+		if (!Catalog::GetSystemCatalog(context).IsDuckCatalog()) {
+			return Identifier::InvalidCatalog();
+		}
 		return Identifier::SystemCatalog();
 	}
 	for (auto &path : paths) {
@@ -393,7 +398,9 @@ vector<Identifier> CatalogSearchPath::GetCatalogsForSchema(const Identifier &sch
 			}
 			catalogs.emplace_back(path.GetCatalog());
 		}
-		catalogs.push_back(Identifier::SystemCatalog());
+		if (Catalog::GetSystemCatalog(context).IsDuckCatalog()) {
+			catalogs.push_back(Identifier::SystemCatalog());
+		}
 	} else {
 		catalogs.reserve(paths.size());
 		for (auto &path : paths) {
@@ -494,14 +501,27 @@ CatalogSearchEntry CatalogSearchPath::GetResolvedDefault() const {
 	return GetDefault();
 }
 
+static Identifier TemporarySchema(ClientContext &context) {
+	if (context.client_data && context.client_data->temporary_objects) {
+		if (auto schema = context.client_data->temporary_objects->GetCatalog().GetDefaultSchema()) {
+			return *schema;
+		}
+	}
+	return Identifier::DefaultSchema();
+}
+
 void CatalogSearchPath::SetPathsInternal(vector<CatalogSearchEntry> new_paths) {
 	this->set_paths = std::move(new_paths);
 
 	paths.clear();
 	paths.reserve(set_paths.size() + 4);
-	paths.emplace_back(TEMP_CATALOG, DEFAULT_SCHEMA);
+	paths.emplace_back(TEMP_CATALOG, TemporarySchema(context));
 	for (auto &path : set_paths) {
 		paths.push_back(path);
+	}
+	if (!Catalog::GetSystemCatalog(context).IsDuckCatalog()) {
+		paths.emplace_back(INVALID_CATALOG, "pg_catalog");
+		return;
 	}
 	paths.emplace_back(INVALID_CATALOG, DEFAULT_SCHEMA);
 	paths.emplace_back(SYSTEM_CATALOG, DEFAULT_SCHEMA);

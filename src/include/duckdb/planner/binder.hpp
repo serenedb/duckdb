@@ -302,8 +302,6 @@ class Binder : public enable_shared_from_this<Binder> {
 public:
 	DUCKDB_API static shared_ptr<Binder> CreateBinder(ClientContext &context, optional_ptr<Binder> parent = nullptr,
 	                                                  BinderType binder_type = BinderType::REGULAR_BINDER);
-	static vector<reference<TableCatalogEntry>> TruncateReferencingTables(ClientContext &context,
-	                                                                      TableCatalogEntry &table);
 	static vector<QualifiedName> TruncateIdentitySequences(ClientContext &context, TableCatalogEntry &table);
 	static bool DefaultNamesSequence(const ColumnDefinition &column, const QualifiedName &sequence,
 	                                 const IdentifierEquality &equals);
@@ -409,6 +407,7 @@ public:
 	                                           const EntryLookupInfo &lookup_info, OnEntryNotFound on_entry_not_found);
 	//! Look up an entry using the qualification carried in the lookup info (which can be a nested schema path)
 	optional_ptr<CatalogEntry> GetCatalogEntry(const EntryLookupInfo &lookup_info, OnEntryNotFound on_entry_not_found);
+	optional_ptr<CatalogEntry> GetBuiltinEntry(const EntryLookupInfo &lookup_info, OnEntryNotFound on_entry_not_found);
 
 	//! Find all candidate common table expression by name; returns empty vector if none exists
 	optional_ptr<CTEBinding> GetCTEBinding(const BindingAlias &name);

@@ -43,11 +43,9 @@ struct WALCreateTable {
 struct WALDropTable {
 	// the table as a QualifiedName (the containing schema path + the table name)
 	QualifiedName qualified_name;
-	idx_t oid = 0;
 
 	WALDropTable() = default;
-	WALDropTable(QualifiedName qualified_name_p, idx_t oid_p)
-	    : qualified_name(std::move(qualified_name_p)), oid(oid_p) {
+	explicit WALDropTable(QualifiedName qualified_name_p) : qualified_name(std::move(qualified_name_p)) {
 	}
 
 	// legacy fields serialized for storage versions older than v2.0.0 (derived from the qualified name)
@@ -67,7 +65,6 @@ struct WALCreateSchema {
 	Identifier schema;
 	// the schema as a QualifiedName (parent schemas form the path, the schema name is the name); v2.0.0 onwards
 	QualifiedName qualified_name;
-	unique_ptr<CreateInfo> info;
 
 	void Serialize(Serializer &serializer) const;
 	static WALCreateSchema Deserialize(Deserializer &deserializer);
@@ -78,7 +75,6 @@ struct WALDropSchema {
 	Identifier schema;
 	// the schema as a QualifiedName (parent schemas form the path, the schema name is the name); v2.0.0 onwards
 	QualifiedName qualified_name;
-	idx_t oid = 0;
 
 	void Serialize(Serializer &serializer) const;
 	static WALDropSchema Deserialize(Deserializer &deserializer);
@@ -94,10 +90,9 @@ struct WALCreateView {
 struct WALDropView {
 	// the entry as a QualifiedName (the containing schema path + the entry name)
 	QualifiedName qualified_name;
-	idx_t oid = 0;
 
 	WALDropView() = default;
-	WALDropView(QualifiedName qualified_name_p, idx_t oid_p) : qualified_name(std::move(qualified_name_p)), oid(oid_p) {
+	explicit WALDropView(QualifiedName qualified_name_p) : qualified_name(std::move(qualified_name_p)) {
 	}
 
 	// legacy fields serialized for storage versions older than v2.0.0 (derived from the qualified name)
@@ -122,11 +117,9 @@ struct WALCreateSequence {
 struct WALDropSequence {
 	// the entry as a QualifiedName (the containing schema path + the entry name)
 	QualifiedName qualified_name;
-	idx_t oid = 0;
 
 	WALDropSequence() = default;
-	WALDropSequence(QualifiedName qualified_name_p, idx_t oid_p)
-	    : qualified_name(std::move(qualified_name_p)), oid(oid_p) {
+	explicit WALDropSequence(QualifiedName qualified_name_p) : qualified_name(std::move(qualified_name_p)) {
 	}
 
 	// legacy fields serialized for storage versions older than v2.0.0 (derived from the qualified name)
@@ -149,13 +142,12 @@ struct WALSequenceValue {
 	// the last value produced by the sequence; only serialized from storage version v2.0.0 onwards, and omitted when
 	// unset (so older readers can still replay sequence values that do not carry a last_value)
 	optional<int64_t> last_value;
-	idx_t oid = 0;
 
 	WALSequenceValue() = default;
 	WALSequenceValue(QualifiedName qualified_name_p, uint64_t usage_count, int64_t counter,
-	                 optional<int64_t> last_value, idx_t oid_p)
+	                 optional<int64_t> last_value)
 	    : qualified_name(std::move(qualified_name_p)), usage_count(usage_count), counter(counter),
-	      last_value(last_value), oid(oid_p) {
+	      last_value(last_value) {
 	}
 
 	// legacy fields serialized for storage versions older than v2.0.0 (derived from the qualified name)
@@ -180,11 +172,9 @@ struct WALCreateMacro {
 struct WALDropMacro {
 	// the entry as a QualifiedName (the containing schema path + the entry name)
 	QualifiedName qualified_name;
-	idx_t oid = 0;
 
 	WALDropMacro() = default;
-	WALDropMacro(QualifiedName qualified_name_p, idx_t oid_p)
-	    : qualified_name(std::move(qualified_name_p)), oid(oid_p) {
+	explicit WALDropMacro(QualifiedName qualified_name_p) : qualified_name(std::move(qualified_name_p)) {
 	}
 
 	// legacy fields serialized for storage versions older than v2.0.0 (derived from the qualified name)
@@ -209,11 +199,9 @@ struct WALCreateTableMacro {
 struct WALDropTableMacro {
 	// the entry as a QualifiedName (the containing schema path + the entry name)
 	QualifiedName qualified_name;
-	idx_t oid = 0;
 
 	WALDropTableMacro() = default;
-	WALDropTableMacro(QualifiedName qualified_name_p, idx_t oid_p)
-	    : qualified_name(std::move(qualified_name_p)), oid(oid_p) {
+	explicit WALDropTableMacro(QualifiedName qualified_name_p) : qualified_name(std::move(qualified_name_p)) {
 	}
 
 	// legacy fields serialized for storage versions older than v2.0.0 (derived from the qualified name)
@@ -238,10 +226,9 @@ struct WALCreateType {
 struct WALDropType {
 	// the entry as a QualifiedName (the containing schema path + the entry name)
 	QualifiedName qualified_name;
-	idx_t oid = 0;
 
 	WALDropType() = default;
-	WALDropType(QualifiedName qualified_name_p, idx_t oid_p) : qualified_name(std::move(qualified_name_p)), oid(oid_p) {
+	explicit WALDropType(QualifiedName qualified_name_p) : qualified_name(std::move(qualified_name_p)) {
 	}
 
 	// legacy fields serialized for storage versions older than v2.0.0 (derived from the qualified name)
@@ -267,11 +254,10 @@ struct WALDropTrigger {
 	// the entry as a QualifiedName (the containing schema path + the entry name)
 	QualifiedName qualified_name;
 	Identifier table;
-	idx_t oid = 0;
 
 	WALDropTrigger() = default;
-	WALDropTrigger(QualifiedName qualified_name_p, Identifier table_p, idx_t oid_p)
-	    : qualified_name(std::move(qualified_name_p)), table(std::move(table_p)), oid(oid_p) {
+	WALDropTrigger(QualifiedName qualified_name_p, Identifier table_p)
+	    : qualified_name(std::move(qualified_name_p)), table(std::move(table_p)) {
 	}
 
 	// legacy fields serialized for storage versions older than v2.0.0 (derived from the qualified name)
@@ -289,11 +275,9 @@ struct WALDropTrigger {
 struct WALDropIndex {
 	// the entry as a QualifiedName (the containing schema path + the entry name)
 	QualifiedName qualified_name;
-	idx_t oid = 0;
 
 	WALDropIndex() = default;
-	WALDropIndex(QualifiedName qualified_name_p, idx_t oid_p)
-	    : qualified_name(std::move(qualified_name_p)), oid(oid_p) {
+	explicit WALDropIndex(QualifiedName qualified_name_p) : qualified_name(std::move(qualified_name_p)) {
 	}
 
 	// legacy fields serialized for storage versions older than v2.0.0 (derived from the qualified name)
@@ -311,11 +295,9 @@ struct WALDropIndex {
 struct WALUseTable {
 	// the table as a QualifiedName (the containing schema path + the table name)
 	QualifiedName qualified_name;
-	idx_t table_oid = 0;
 
 	WALUseTable() = default;
-	WALUseTable(QualifiedName qualified_name_p, idx_t table_oid_p)
-	    : qualified_name(std::move(qualified_name_p)), table_oid(table_oid_p) {
+	explicit WALUseTable(QualifiedName qualified_name_p) : qualified_name(std::move(qualified_name_p)) {
 	}
 
 	// legacy fields serialized for storage versions older than v2.0.0 (derived from the qualified name)
@@ -328,149 +310,6 @@ struct WALUseTable {
 
 	void Serialize(Serializer &serializer) const;
 	static WALUseTable Deserialize(Deserializer &deserializer);
-};
-
-struct WALCreateTokenizer {
-	unique_ptr<CreateInfo> tokenizer;
-
-	void Serialize(Serializer &serializer) const;
-	static WALCreateTokenizer Deserialize(Deserializer &deserializer);
-};
-
-struct WALDropTokenizer {
-	QualifiedName qualified_name;
-	idx_t oid = 0;
-
-	void Serialize(Serializer &serializer) const;
-	static WALDropTokenizer Deserialize(Deserializer &deserializer);
-};
-
-struct WALCreateJob {
-	unique_ptr<CreateInfo> job;
-
-	void Serialize(Serializer &serializer) const;
-	static WALCreateJob Deserialize(Deserializer &deserializer);
-};
-
-struct WALDropJob {
-	QualifiedName qualified_name;
-	idx_t oid = 0;
-
-	void Serialize(Serializer &serializer) const;
-	static WALDropJob Deserialize(Deserializer &deserializer);
-};
-
-struct WALCreateRole {
-	unique_ptr<CreateInfo> role;
-
-	void Serialize(Serializer &serializer) const;
-	static WALCreateRole Deserialize(Deserializer &deserializer);
-};
-
-struct WALDropRole {
-	Identifier name;
-
-	void Serialize(Serializer &serializer) const;
-	static WALDropRole Deserialize(Deserializer &deserializer);
-};
-
-struct WALCreateDatabase {
-	unique_ptr<CreateInfo> database;
-
-	void Serialize(Serializer &serializer) const;
-	static WALCreateDatabase Deserialize(Deserializer &deserializer);
-};
-
-struct WALDropDatabase {
-	Identifier name;
-
-	void Serialize(Serializer &serializer) const;
-	static WALDropDatabase Deserialize(Deserializer &deserializer);
-};
-
-struct WALCreateForeignServer {
-	unique_ptr<CreateInfo> server;
-
-	void Serialize(Serializer &serializer) const;
-	static WALCreateForeignServer Deserialize(Deserializer &deserializer);
-};
-
-struct WALDropForeignServer {
-	Identifier name;
-
-	void Serialize(Serializer &serializer) const;
-	static WALDropForeignServer Deserialize(Deserializer &deserializer);
-};
-
-struct WALCreateSubscription {
-	unique_ptr<CreateInfo> subscription;
-
-	void Serialize(Serializer &serializer) const;
-	static WALCreateSubscription Deserialize(Deserializer &deserializer);
-};
-
-struct WALDropSubscription {
-	Identifier name;
-
-	void Serialize(Serializer &serializer) const;
-	static WALDropSubscription Deserialize(Deserializer &deserializer);
-};
-
-struct WALCreateReplicationOrigin {
-	unique_ptr<CreateInfo> origin;
-
-	void Serialize(Serializer &serializer) const;
-	static WALCreateReplicationOrigin Deserialize(Deserializer &deserializer);
-};
-
-struct WALDropReplicationOrigin {
-	Identifier name;
-
-	void Serialize(Serializer &serializer) const;
-	static WALDropReplicationOrigin Deserialize(Deserializer &deserializer);
-};
-
-struct WALReplicationLsn {
-	Identifier name;
-	uint64_t remote_lsn = 0;
-	idx_t oid = 0;
-	CatalogType type = CatalogType::SUBSCRIPTION_ENTRY;
-	bool assign = false;
-	//! The sync id of a relation whose initial synchronization the LSN finishes, or 0 for the entry's own LSN
-	idx_t relation = 0;
-
-	void Serialize(Serializer &serializer) const;
-	static WALReplicationLsn Deserialize(Deserializer &deserializer);
-};
-
-struct WALUseCatalog {
-	idx_t catalog_oid = 0;
-
-	void Serialize(Serializer &serializer) const;
-	static WALUseCatalog Deserialize(Deserializer &deserializer);
-};
-
-struct WALPrepared {
-	hugeint_t txid;
-
-	void Serialize(Serializer &serializer) const;
-	static WALPrepared Deserialize(Deserializer &deserializer);
-};
-
-struct WALCommitPrepared {
-	hugeint_t txid;
-	vector<idx_t> participant_oids;
-	vector<idx_t> participant_generations;
-
-	void Serialize(Serializer &serializer) const;
-	static WALCommitPrepared Deserialize(Deserializer &deserializer);
-};
-
-struct WALAdoptSegments {
-	vector<string> segments;
-
-	void Serialize(Serializer &serializer) const;
-	static WALAdoptSegments Deserialize(Deserializer &deserializer);
 };
 
 } // namespace duckdb

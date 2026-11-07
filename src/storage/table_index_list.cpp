@@ -4,7 +4,6 @@
 
 #include "duckdb/planner/binder.hpp"
 #include "duckdb/catalog/catalog.hpp"
-#include "duckdb/catalog/duck_catalog.hpp"
 
 #include "duckdb/catalog/catalog_entry/duck_table_entry.hpp"
 #include "duckdb/common/algorithm.hpp"
@@ -79,10 +78,6 @@ TableIndexList::~TableIndexList() {
 	{
 		annotated_lock_guard lock(index_entries_lock);
 		entries = std::move(index_entries);
-		for (auto &entry : detached_entries) {
-			entries.push_back(std::move(entry));
-		}
-		detached_entries.clear();
 		unbound_count = 0;
 	}
 	for (auto &entry : entries) {
@@ -204,14 +199,7 @@ void TableIndexList::RemoveIndex(idx_t index_oid) {
 	shared_ptr<IndexEntry> removed_entry;
 	{
 		annotated_lock_guard lock(index_entries_lock);
-		for (idx_t i = 0; i < detached_entries.size(); i++) {
-			if (detached_entries[i]->GetIndexOid() == index_oid) {
-				removed_entry = std::move(detached_entries[i]);
-				detached_entries.erase_at(i);
-				break;
-			}
-		}
-		for (idx_t i = 0; !removed_entry && i < index_entries.size(); i++) {
+		for (idx_t i = 0; i < index_entries.size(); i++) {
 			auto &entry = index_entries[i];
 			if (entry->GetIndexOid() != index_oid) {
 				continue;
@@ -221,6 +209,7 @@ void TableIndexList::RemoveIndex(idx_t index_oid) {
 			}
 			removed_entry = std::move(entry);
 			index_entries.erase_at(i);
+			break;
 		}
 	}
 	if (removed_entry) {
@@ -247,63 +236,6 @@ void TableIndexList::RemoveIndexesOnColumn(column_t column_id) {
 	for (auto &entry : removed_entries) {
 		entry->Retire();
 	}
-}
-
-void TableIndexList::SyncColumnLayout(IndexTypeSet &index_types, const vector<idx_t> &old_column_oids,
-                                      const vector<idx_t> &new_column_oids) {
-	unordered_map<idx_t, column_t> new_positions;
-	for (idx_t i = 0; i < new_column_oids.size(); i++) {
-		new_positions.emplace(new_column_oids[i], i);
-	}
-	annotated_lock_guard lock(index_entries_lock);
-	vector<shared_ptr<IndexEntry>> attached;
-	vector<shared_ptr<IndexEntry>> detached;
-	auto place = [&](shared_ptr<IndexEntry> entry) {
-		vector<column_t> positions;
-		for (auto oid : entry->column_oids) {
-			auto position = new_positions.find(oid);
-			if (position == new_positions.end()) {
-				detached.push_back(std::move(entry));
-				return;
-			}
-			positions.push_back(position->second);
-		}
-		if (positions != entry->GetColumnIds()) {
-			auto index_type = index_types.FindByName(entry->GetIndexType());
-			if (!index_type || !index_type->remaps_columns) {
-				detached.push_back(std::move(entry));
-				return;
-			}
-			entry->RemapColumnIds(positions);
-		}
-		attached.push_back(std::move(entry));
-	};
-	for (auto &entry : index_entries) {
-		if (entry->column_oids.empty()) {
-			auto column_ids = entry->GetColumnIds();
-			const bool in_layout = std::all_of(column_ids.begin(), column_ids.end(),
-			                                   [&](column_t column_id) { return column_id < old_column_oids.size(); });
-			if (!in_layout) {
-				attached.push_back(std::move(entry));
-				continue;
-			}
-			for (auto column_id : column_ids) {
-				entry->column_oids.push_back(old_column_oids[column_id]);
-			}
-		}
-		place(std::move(entry));
-	}
-	for (auto &entry : detached_entries) {
-		place(std::move(entry));
-	}
-	unbound_count = 0;
-	for (auto &entry : attached) {
-		if (entry->GetBindState() != IndexBindState::BOUND) {
-			unbound_count++;
-		}
-	}
-	index_entries = std::move(attached);
-	detached_entries = std::move(detached);
 }
 
 void TableIndexList::RenameIndex(idx_t index_oid, const Identifier &new_name) {
@@ -508,12 +440,6 @@ void TableIndexList::Bind(ClientContext &context, DataTableInfo &table_info, con
 
 	// Get the table from the catalog, so we can add it to the binder.
 	auto &catalog = table_info.GetDB().GetCatalog();
-	auto transaction = catalog.GetCatalogTransaction(context);
-	auto visible = catalog.Cast<DuckCatalog>().GetOidIndex().GetVisible(table_info.GetTableOid(), transaction.view);
-	if (visible) {
-		Bind(context, visible->Cast<TableCatalogEntry>(), index_type);
-		return;
-	}
 	auto &table_entry = catalog.GetEntry<TableCatalogEntry>(
 	    context,
 	    QualifiedName::FromCatalogSchema(catalog.GetName(), table_info.GetSchemaPath(), table_info.GetTableName()));
@@ -533,21 +459,8 @@ void TableIndexList::Bind(ClientContext &context, TableCatalogEntry &table, cons
 	while (true) {
 		shared_ptr<IndexEntry> index_entry;
 		for (auto &entry : index_entries) {
-			if (entry->GetBindState() == IndexBindState::BOUND) {
-				continue;
-			}
-			bool should_bind;
-			if (index_type) {
-				should_bind = entry->GetIndexType() == *index_type;
-			} else {
-				// Implicit "bind all" pass: skip index types that opt out of it
-				// (bound explicitly by name once their dependencies are ready).
-				// Keeps external indexes (e.g. serenedb's inverted index) from
-				// being bound during an ALTER-driven rebuild / WAL replay.
-				auto idx_type = context.db->config.GetIndexTypes().FindByName(entry->GetIndexType());
-				should_bind = !(idx_type && idx_type->defer_implicit_bind);
-			}
-			if (should_bind) {
+			if (entry->GetBindState() != IndexBindState::BOUND &&
+			    (!index_type || entry->GetIndexType() == *index_type)) {
 				index_entry = entry;
 				break;
 			}

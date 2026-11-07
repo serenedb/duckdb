@@ -321,10 +321,9 @@ unique_ptr<Expression> BoundWindowExpression::Deserialize(Deserializer &deserial
 
 		auto &context = deserializer.Get<ClientContext &>();
 		auto binder = Binder::CreateBinder(context);
-		EntryLookupInfo lookup(CatalogType::SCALAR_FUNCTION_ENTRY, QualifiedName(Identifier(name)));
-		auto entry = binder->GetCatalogEntry(Identifier::SystemCatalog(), Identifier::DefaultSchema(), lookup,
-		                                     OnEntryNotFound::THROW_EXCEPTION);
-		auto &func = entry->Cast<WindowFunctionCatalogEntry>();
+		auto &func = Catalog::GetBuiltinEntry(context, CatalogType::SCALAR_FUNCTION_ENTRY, Identifier(name),
+		                                      OnEntryNotFound::THROW_EXCEPTION)
+		                 ->Cast<WindowFunctionCatalogEntry>();
 
 		FunctionBinder function_binder(*binder);
 		ErrorData error_win;

@@ -20,9 +20,15 @@ namespace duckdb {
 struct SQLExportHelpers {
 	template <class ARGUMENT>
 	static unique_ptr<FunctionExpression> SystemFunction(Identifier name, vector<ARGUMENT> arguments) {
-		return make_uniq<FunctionExpression>(
-		    QualifiedName(Identifier::SystemCatalog(), Identifier::DefaultSchema(), std::move(name)),
-		    std::move(arguments));
+		return FunctionExpression::Builtin(name, std::move(arguments));
+	}
+
+	template <class ARGUMENT>
+	static unique_ptr<FunctionExpression> Function(const QualifiedName &name, vector<ARGUMENT> arguments) {
+		if (name.Path().size() == 1) {
+			return FunctionExpression::Builtin(name.Name(), std::move(arguments));
+		}
+		return make_uniq<FunctionExpression>(name, std::move(arguments));
 	}
 
 	static unique_ptr<ParsedExpression> Conjoin(unique_ptr<ParsedExpression> left, unique_ptr<ParsedExpression> right) {

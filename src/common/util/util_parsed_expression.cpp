@@ -665,6 +665,9 @@ bool FunctionExpression::Equals(const ParsedExpression &other) const {
 	if (distinct != other_p.distinct) {
 		return false;
 	}
+	if (builtin != other_p.builtin) {
+		return false;
+	}
 	if (export_state != other_p.export_state) {
 		return false;
 	}
@@ -683,6 +686,7 @@ hash_t FunctionExpression::NodeHash() const {
 	hash_t hash = ParsedExpression::NodeHash();
 	hash = CombineHash(hash, qualified_name.Hash());
 	hash = CombineHash(hash, duckdb::Hash<bool>(distinct));
+	hash = CombineHash(hash, duckdb::Hash<bool>(builtin));
 	hash = CombineHash(hash, duckdb::Hash<bool>(export_state));
 	return hash;
 }
@@ -697,6 +701,7 @@ unique_ptr<ParsedExpression> FunctionExpression::Copy() const {
 	copy->distinct = distinct;
 	copy->is_operator = is_operator;
 	copy->from_operator = from_operator;
+	copy->builtin = builtin;
 	copy->export_state = export_state;
 	for (auto &arg : arguments) {
 		copy->arguments.emplace_back(arg.Copy());

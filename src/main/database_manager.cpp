@@ -85,7 +85,7 @@ shared_ptr<AttachedDatabase> DatabaseManager::GetDatabase(const Identifier &name
 }
 
 shared_ptr<AttachedDatabase> DatabaseManager::GetDatabaseInternal(const lock_guard<mutex> &, const Identifier &name) {
-	if (name == SYSTEM_CATALOG) {
+	if (name == SYSTEM_CATALOG && system->GetCatalog().IsDuckCatalog()) {
 		return system;
 	}
 	auto entry = databases.find(name);
@@ -110,10 +110,17 @@ bool RequiresTrackingAttaches(const string &path, const string &db_type) {
 	return true;
 }
 
+bool DatabaseManager::IsReservedName(const Identifier &name) const {
+	if (system->GetCatalog().IsDuckCatalog()) {
+		return AttachedDatabase::NameIsReserved(name);
+	}
+	return name == TEMP_CATALOG;
+}
+
 // a re-attach hands back the database that already has the file open, so it has to keep the options it
 // was opened with
 static void VerifyReattachOptions(AttachedDatabase &database, const AttachInfo &info, const AttachOptions &options) {
-	if (AttachedDatabase::NameIsReserved(info.name)) {
+	if (DatabaseManager::Get(database).IsReservedName(info.name)) {
 		throw BinderException("Attached database name \"%s\" cannot be used because it is a reserved name",
 		                      info.name.GetIdentifierName());
 	}
@@ -258,7 +265,9 @@ shared_ptr<AttachedDatabase> DatabaseManager::AttachDatabase(ClientContext &cont
 		timer.EndTimer();
 	}
 	auto &config = DBConfig::GetConfig(context);
-	GetDatabaseType(context, info, config, options);
+	if (!options.create_catalog) {
+		GetDatabaseType(context, info, config, options);
+	}
 	if (!options.db_type.empty()) {
 		// we only need to prevent duplicate opening of DuckDB files
 		// if this is not a DuckDB file but e.g. a CSV or Parquet file, we don't need to do this duplicate protection
@@ -271,7 +280,7 @@ shared_ptr<AttachedDatabase> DatabaseManager::AttachDatabase(ClientContext &cont
 			                            info.path, entry->second.ToString());
 		}
 	}
-	if (AttachedDatabase::NameIsReserved(info.name)) {
+	if (IsReservedName(info.name)) {
 		throw BinderException("Attached database name %s cannot be used because it is a reserved name", info.name);
 	}
 	if (!extension.empty()) {
@@ -378,9 +387,7 @@ shared_ptr<AttachedDatabase> DatabaseManager::FinalizeAttach(ClientContext &cont
 		++remote_catalog_count;
 	}
 	auto &db_ref = meta_transaction.UseDatabase(attached_db);
-	auto &transaction = DuckTransaction::Get(context, *system);
-	auto &transaction_manager = DuckTransactionManager::Get(*system);
-	transaction_manager.PushAttach(transaction, db_ref);
+	system->GetTransactionManager().PushAttach(Transaction::Get(context, *system), db_ref);
 	return db_ref.shared_from_this();
 }
 
@@ -471,7 +478,7 @@ void DatabaseManager::Alter(ClientContext &context, AlterInfo &info) {
 
 void DatabaseManager::RenameDatabase(ClientContext &context, const Identifier &old_name, const Identifier &new_name,
                                      OnEntryNotFound if_not_found) {
-	if (AttachedDatabase::NameIsReserved(new_name)) {
+	if (IsReservedName(new_name)) {
 		throw BinderException("Database name %s cannot be used because it is a reserved name", new_name);
 	}
 	if (GetDefaultDatabase(context) == old_name) {
@@ -545,28 +552,6 @@ idx_t DatabaseManager::ApproxDatabaseCount() {
 
 InsertDatabasePathResult DatabaseManager::InsertDatabasePath(const AttachInfo &info, AttachOptions &options) {
 	return path_manager->InsertDatabasePath(*this, info.path, info.name, info.on_conflict, options);
-}
-
-void DatabaseManager::CommitPrepared(const hugeint_t &txid, vector<pair<idx_t, idx_t>> participants) {
-	lock_guard<mutex> guard(committed_prepared_lock);
-	committed_prepared[txid] = std::move(participants);
-}
-
-bool DatabaseManager::IsPreparedCommitted(const hugeint_t &txid) {
-	lock_guard<mutex> guard(committed_prepared_lock);
-	return committed_prepared.contains(txid);
-}
-
-void DatabaseManager::RetainPrepared(
-    const std::function<bool(const hugeint_t &, const vector<pair<idx_t, idx_t>> &)> &keep) {
-	lock_guard<mutex> guard(committed_prepared_lock);
-	for (auto entry = committed_prepared.begin(); entry != committed_prepared.end();) {
-		if (keep(entry->first, entry->second)) {
-			++entry;
-		} else {
-			entry = committed_prepared.erase(entry);
-		}
-	}
 }
 
 vector<string> DatabaseManager::GetAttachedDatabasePaths() {

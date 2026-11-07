@@ -1193,7 +1193,6 @@ link_libraries(
   zstd::zstd
   ZLIB::ZLIB
   ada::ada
-  roaring::roaring
   absl::strings
   absl::node_hash_set
   absl::node_hash_map

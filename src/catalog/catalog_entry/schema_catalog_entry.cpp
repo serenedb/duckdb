@@ -24,6 +24,10 @@ SchemaCatalogEntry::SchemaCatalogEntry(Catalog &catalog, CreateSchemaInfo &info,
 	}
 }
 
+SchemaCatalogEntry::~SchemaCatalogEntry() {
+	schema_info->versions->Forget(*this);
+}
+
 CatalogTransaction SchemaCatalogEntry::GetCatalogTransaction(ClientContext &context) {
 	return CatalogTransaction(catalog, context);
 }

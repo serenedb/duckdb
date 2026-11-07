@@ -20,31 +20,10 @@ BoundStatement Binder::Bind(DeleteStatement &stmt) {
 	return Bind(*stmt.node);
 }
 
-vector<reference<TableCatalogEntry>> Binder::TruncateReferencingTables(ClientContext &context,
-                                                                       TableCatalogEntry &table) {
-	vector<reference<TableCatalogEntry>> result;
-	for (auto &constraint : table.GetConstraints()) {
-		if (constraint->type != ConstraintType::FOREIGN_KEY) {
-			continue;
-		}
-		auto &foreign_key = constraint->Cast<ForeignKeyConstraint>();
-		if (foreign_key.info.type != ForeignKeyType::FK_TYPE_PRIMARY_KEY_TABLE) {
-			continue;
-		}
-		result.push_back(Catalog::GetEntry<TableCatalogEntry>(
-		    context, QualifiedName(table.ParentCatalog().GetName(), foreign_key.info.schema, foreign_key.info.table)));
-	}
-	return result;
-}
-
 vector<QualifiedName> Binder::TruncateIdentitySequences(ClientContext &context, TableCatalogEntry &table) {
 	vector<QualifiedName> result;
 	auto &catalog = table.ParentCatalog();
-	auto dependencies = catalog.GetDependencyManager();
-	if (!dependencies) {
-		return result;
-	}
-	for (auto &owned : dependencies->OwnedEntries(catalog.GetCatalogTransaction(context), table)) {
+	for (auto &owned : catalog.OwnedEntries(catalog.GetCatalogTransaction(context), table)) {
 		auto &entry = owned.get();
 		result.emplace_back(catalog.GetName(), entry.ParentSchema(context).name, entry.name);
 	}
@@ -57,7 +36,7 @@ vector<idx_t> Binder::BindTruncateGroup(DeleteQueryNode &node, TableCatalogEntry
 		group.push_back(
 		    Catalog::GetEntry<TableCatalogEntry>(context, target->Cast<BaseTableRef>().GetQualifiedName()).oid);
 	}
-	for (auto &entry : TruncateReferencingTables(context, table)) {
+	for (auto &entry : table.ReferencingTables(context)) {
 		auto &referencing = entry.get();
 		if (std::find(group.begin(), group.end(), referencing.oid) != group.end()) {
 			continue;
@@ -83,6 +62,9 @@ BoundStatement Binder::BindNode(DeleteQueryNode &node) {
 	auto table_ptr = get.GetTable();
 	if (!table_ptr) {
 		throw BinderException("Can only delete from base table");
+	}
+	if (get.function.verify_dml_target) {
+		get.function.verify_dml_target(context, get.bind_data.get());
 	}
 	auto &table = *table_ptr;
 

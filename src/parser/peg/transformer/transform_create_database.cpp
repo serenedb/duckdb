@@ -1,20 +1,18 @@
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/parser/expression/constant_expression.hpp"
-#include "duckdb/parser/statement/attach_statement.hpp"
+#include "duckdb/parser/parsed_data/create_database_info.hpp"
+#include "duckdb/parser/statement/create_statement.hpp"
 #include "duckdb/parser/statement/drop_statement.hpp"
 #include "duckdb/parser/peg/transformer/peg_transformer.hpp"
 
 namespace duckdb {
 
-// CREATE DATABASE foo [WITH (BLOCK_SIZE = n, ROW_GROUP_SIZE = n)] -> ATTACH '' AS foo (TYPE serenedb, ...)
 unique_ptr<SQLStatement> PEGTransformerFactory::TransformCreateDatabaseStatement(
     PEGTransformer &transformer, const optional<bool> &if_not_exists, const Identifier &catalog_name,
     optional<case_insensitive_map_t<unique_ptr<ParsedExpression>>> with_list) {
-	auto result = make_uniq<AttachStatement>();
-	auto info = make_uniq<AttachInfo>();
-	info->name = catalog_name;
-	info->path = "";
-	info->options["type"] = Value("serenedb");
+	auto result = make_uniq<CreateStatement>();
+	auto info = make_uniq<CreateDatabaseInfo>();
+	info->SetName(catalog_name);
 	if (with_list) {
 		for (auto &option : *with_list) {
 			auto name = StringUtil::Lower(option.first);

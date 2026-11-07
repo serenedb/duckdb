@@ -68,11 +68,27 @@ class HTTPUtil;
 class DatabaseFilePathManager;
 class ExtensionCallbackManager;
 class TypeManager;
+class AttachedDatabase;
+class Catalog;
+class DatabaseInstance;
+class SecretStorage;
+class TransactionManager;
 
 struct CompressionFunctionSet;
 struct DatabaseCacheEntry;
 struct DBConfig;
 struct SettingLookupResult;
+
+struct InternalCatalog {
+	unique_ptr<Catalog> catalog;
+	unique_ptr<TransactionManager> transaction_manager;
+};
+
+typedef std::function<InternalCatalog(AttachedDatabase &db)> create_internal_catalog_t;
+
+typedef shared_ptr<ClientContext> (*create_client_context_t)(DatabaseInstance &db);
+
+typedef unique_ptr<SecretStorage> (*create_secret_storage_t)(DatabaseInstance &db, const string &name, bool persistent);
 
 //! NOTE: DBConfigOptions is mostly deprecated.
 //! If you want to add a setting that can be set by the user, add it as a generic setting to `settings.json`.
@@ -208,6 +224,9 @@ public:
 	shared_ptr<DatabaseCacheEntry> db_cache_entry;
 	//! Reference to the database file path manager
 	shared_ptr<DatabaseFilePathManager> path_manager;
+	create_internal_catalog_t create_internal_catalog;
+	create_client_context_t create_client_context = nullptr;
+	create_secret_storage_t create_secret_storage = nullptr;
 	//! Database configuration variables as controlled by SET
 	GlobalUserSettings user_settings;
 

@@ -82,7 +82,6 @@ set(TEST_API_OBJECTS
     test_block_allocator_tls.cpp
     test_allocator_unpurged.cpp
     test_group_commit_bound.cpp
-    test_wal_sync_parallelism.cpp
     test_data_table_scan_without_row_groups.cpp)
 
 if(NOT WIN32)

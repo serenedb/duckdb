@@ -46,7 +46,6 @@ public:
 public:
 	Identifier GetSchemaName() const override;
 	Identifier GetTableName() const override;
-	optional_ptr<CatalogEntry> GetRelation(CatalogTransaction transaction) const override;
 
 	DataTableInfo &GetDataTableInfo() const;
 

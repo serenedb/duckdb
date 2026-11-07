@@ -570,9 +570,9 @@ void ExpressionBinder::ShareAliasReferences(unique_ptr<ParsedExpression> &expr, 
 	for (auto &name : shared) {
 		invoke_arguments.push_back(make_uniq<ColumnRefExpression>(name));
 	}
-	expr = make_uniq<FunctionExpression>(
-	    QualifiedName(Identifier(SYSTEM_CATALOG), Identifier(DEFAULT_SCHEMA), Identifier("invoke")),
-	    std::move(invoke_arguments));
+	auto invoke = make_uniq<FunctionExpression>("invoke", std::move(invoke_arguments));
+	invoke->BuiltinMutable() = true;
+	expr = std::move(invoke);
 	expr->SetAlias(std::move(alias));
 }
 
@@ -1652,9 +1652,9 @@ ScalarMacroFunction &ExpressionBinder::UnfoldMacroExpression(FunctionExpression 
 	for (auto &argument : shared_parsed) {
 		invoke_arguments.push_back(std::move(argument));
 	}
-	expr = make_uniq<FunctionExpression>(
-	    QualifiedName(Identifier(SYSTEM_CATALOG), Identifier(DEFAULT_SCHEMA), Identifier("invoke")),
-	    std::move(invoke_arguments));
+	auto invoke = make_uniq<FunctionExpression>("invoke", std::move(invoke_arguments));
+	invoke->BuiltinMutable() = true;
+	expr = std::move(invoke);
 	expr->SetAlias(std::move(alias));
 	expr->SetQueryLocation(query_location);
 	return macro_def;
@@ -1693,8 +1693,9 @@ BindResult ExpressionBinder::BindMacro(FunctionExpression &function, ScalarMacro
 	} else {
 		auto &invoke = expr->Cast<FunctionExpression>();
 		auto &invoke_entry =
-		    GetCatalogEntry(EntryLookupInfo(CatalogType::SCALAR_FUNCTION_ENTRY, invoke.GetQualifiedName()),
-		                    OnEntryNotFound::THROW_EXCEPTION)
+		    binder
+		        .GetBuiltinEntry(EntryLookupInfo(CatalogType::SCALAR_FUNCTION_ENTRY, invoke.GetQualifiedName()),
+		                         OnEntryNotFound::THROW_EXCEPTION)
 		        ->Cast<ScalarFunctionCatalogEntry>();
 		vector<unique_ptr<Expression>> children;
 		vector<LogicalType> child_types;

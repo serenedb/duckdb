@@ -46,7 +46,6 @@ public:
 	ErrorData MergeCheckpointDeltas(BoundIndex &index);
 	void MarkWritten(optional_idx checkpoint_id);
 	void Reset();
-	void RemapColumnIds(const vector<column_t> &column_ids);
 
 private:
 	const unique_ptr<BoundIndex> &GetPointer(IndexDeltaType type) const;
@@ -172,7 +171,6 @@ public:
 	//! Returns a copy of the physical index's table storage metadata.
 	IndexInfo GetStorageInfo() const;
 	vector<column_t> GetColumnIds() const;
-	void RemapColumnIds(const vector<column_t> &column_ids);
 	//! Returns the in-memory size of the physical index, or zero if it is unbound.
 	idx_t GetInMemorySize() const;
 	//! Serializes the physical index for a checkpoint.
@@ -219,7 +217,6 @@ private:
 	atomic<IndexBindState> bind_state;
 	//! The OID of this index.
 	const idx_t index_oid;
-	vector<idx_t> column_oids;
 	//! Phase-fair lock protecting the physical index and all delta indexes owned by this entry.
 	mutable StorageLock lock;
 	//! The physical index owned by this stable logical entry.

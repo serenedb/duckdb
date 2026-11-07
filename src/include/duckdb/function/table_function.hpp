@@ -460,6 +460,8 @@ typedef virtual_column_map_t (*table_function_get_virtual_columns_t)(ClientConte
 typedef vector<column_t> (*table_function_get_row_id_columns)(ClientContext &context,
                                                               optional_ptr<FunctionData> bind_data);
 
+typedef void (*table_function_verify_dml_target_t)(ClientContext &context, optional_ptr<FunctionData> bind_data);
+
 typedef void (*table_function_set_scan_order)(ClientContext &context, unique_ptr<RowGroupOrderOptions> order_options,
                                               optional_ptr<FunctionData> bind_data);
 
@@ -608,6 +610,7 @@ public:
 	table_function_get_virtual_columns_t get_virtual_columns;
 	//! (Optional) returns a list of row id columns
 	table_function_get_row_id_columns get_row_id_columns;
+	table_function_verify_dml_target_t verify_dml_target = nullptr;
 	//! (Optional) sets the order to scan the row groups in
 	table_function_set_scan_order set_scan_order;
 	table_function_consume_top_n_t consume_top_n = nullptr;

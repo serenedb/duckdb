@@ -865,8 +865,9 @@ unique_ptr<Expression> FunctionBinder::BindScalarFunction(const Identifier &sche
                                                           vector<unique_ptr<Expression>> children, ErrorData &error,
                                                           bool is_operator, optional_ptr<Binder> binder) {
 	// bind the function
-	auto &function = Catalog::GetSystemCatalog(context).GetEntry<ScalarFunctionCatalogEntry>(
-	    context, QualifiedName(Catalog::GetSystemCatalog(context).GetName(), schema, name));
+	auto &system = Catalog::GetSystemCatalog(context);
+	auto &function = system.GetEntry<ScalarFunctionCatalogEntry>(
+	    context, schema == DEFAULT_SCHEMA ? *system.GetDefaultSchema() : schema, name);
 	D_ASSERT(function.type == CatalogType::SCALAR_FUNCTION_ENTRY);
 	return BindScalarFunction(function, std::move(children), error, is_operator, binder);
 }

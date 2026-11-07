@@ -26,6 +26,8 @@ struct MainRegister {
 
 	template <class T>
 	static void RegisterFunction(MainRegisterContext &context, T &info) {
+		auto &name = info.GetQualifiedName();
+		info.SetQualifiedName(QualifiedName(name.Catalog(), *context.catalog.GetDefaultSchema(), name.Name()));
 		context.catalog.CreateFunction(context.transaction, info);
 	}
 };

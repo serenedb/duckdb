@@ -97,12 +97,6 @@ protected:
 	virtual void WriteIndex(IndexCatalogEntry &index_catalog_entry, Serializer &serializer);
 	virtual void WriteType(TypeCatalogEntry &type, Serializer &serializer);
 	virtual void WriteTrigger(TriggerCatalogEntry &trigger, Serializer &serializer);
-	virtual void WriteTokenizer(StandardEntry &tokenizer, Serializer &serializer);
-	virtual void WriteRole(InCatalogEntry &role, Serializer &serializer);
-	virtual void WriteDatabase(InCatalogEntry &database, Serializer &serializer);
-	virtual void WriteForeignServer(InCatalogEntry &server, Serializer &serializer);
-	virtual void WriteSubscription(InCatalogEntry &subscription, Serializer &serializer);
-	virtual void WriteReplicationOrigin(InCatalogEntry &origin, Serializer &serializer);
 };
 
 class CheckpointReader {
@@ -127,15 +121,9 @@ protected:
 	virtual void ReadIndex(CatalogTransaction transaction, Deserializer &deserializer);
 	virtual void ReadType(CatalogTransaction transaction, Deserializer &deserializer);
 	virtual void ReadTrigger(CatalogTransaction transaction, Deserializer &deserializer);
-	virtual void ReadTokenizer(CatalogTransaction transaction, Deserializer &deserializer);
-	virtual void ReadRole(CatalogTransaction transaction, Deserializer &deserializer);
-	virtual void ReadDatabase(CatalogTransaction transaction, Deserializer &deserializer);
-	virtual void ReadForeignServer(CatalogTransaction transaction, Deserializer &deserializer);
-	virtual void ReadSubscription(CatalogTransaction transaction, Deserializer &deserializer);
-	virtual void ReadReplicationOrigin(CatalogTransaction transaction, Deserializer &deserializer);
 
 	virtual void ReadTableData(CatalogTransaction transaction, Deserializer &deserializer,
-	                           BoundCreateTableInfo &bound_info, MetaBlockPointer table_pointer);
+	                           BoundCreateTableInfo &bound_info);
 };
 
 class SingleFileCheckpointReader final : public CheckpointReader {
@@ -193,7 +181,5 @@ private:
 	//! Block usage count for verification purposes
 	unordered_map<block_id_t, idx_t> verify_block_usage_count;
 };
-
-void WriteCatalogEntries(WriteAheadLog &log, DuckCatalog &catalog);
 
 } // namespace duckdb

@@ -123,6 +123,16 @@ AttachedDatabase::AttachedDatabase(DatabaseInstance &db, AttachedDatabaseType ty
       close_lock(make_shared_ptr<mutex>()) {
 	// This database does not have storage, or uses temporary_objects for in-memory storage.
 	D_ASSERT(type == AttachedDatabaseType::TEMP_DATABASE || type == AttachedDatabaseType::SYSTEM_DATABASE);
+	internal = true;
+	if (auto &create_internal_catalog = DBConfig::GetConfig(db).create_internal_catalog) {
+		if (type == AttachedDatabaseType::SYSTEM_DATABASE) {
+			visibility = AttachVisibility::HIDDEN;
+		}
+		auto internal_catalog = create_internal_catalog(*this);
+		catalog = std::move(internal_catalog.catalog);
+		transaction_manager = std::move(internal_catalog.transaction_manager);
+		return;
+	}
 	if (type == AttachedDatabaseType::TEMP_DATABASE) {
 		unordered_map<string, Value> options;
 		AttachOptions attach_options(options, AccessMode::READ_WRITE);
@@ -131,7 +141,6 @@ AttachedDatabase::AttachedDatabase(DatabaseInstance &db, AttachedDatabaseType ty
 
 	catalog = make_uniq<DuckCatalog>(*this);
 	transaction_manager = make_uniq<DuckTransactionManager>(*this);
-	internal = true;
 }
 
 AttachedDatabase::AttachedDatabase(DatabaseInstance &db, Catalog &catalog_p, Identifier name_p, string file_path_p,
@@ -156,6 +165,20 @@ AttachedDatabase::AttachedDatabase(DatabaseInstance &db, Catalog &catalog_p, Ide
 	stored_database_path = std::move(options.stored_database_path);
 	storage = make_uniq<SingleFileStorageManager>(*this, std::move(file_path_p), options);
 	transaction_manager = make_uniq<DuckTransactionManager>(*this);
+	attach_options = options.options;
+	internal = true;
+}
+
+AttachedDatabase::AttachedDatabase(DatabaseInstance &db, Catalog &catalog_p, Identifier name_p, AttachOptions &options)
+    : CatalogEntry(CatalogType::DATABASE_ENTRY, std::move(name_p), DatabaseManager::Get(db).NextOid()), db(db),
+      validity(db, ValidChecker::Scope::DATABASE), opened_read_only(options.access_mode == AccessMode::READ_ONLY),
+      parent_catalog(&catalog_p), close_lock(make_shared_ptr<mutex>()) {
+	SetAccessMode(options.access_mode);
+	recovery_mode = options.recovery_mode;
+	visibility = options.visibility;
+	auto internal_catalog = options.create_catalog(*this);
+	catalog = std::move(internal_catalog.catalog);
+	transaction_manager = std::move(internal_catalog.transaction_manager);
 	attach_options = options.options;
 	internal = true;
 }
@@ -402,7 +425,7 @@ void AttachedDatabase::Close(const DatabaseCloseAction action) {
 		auto create_checkpoint = true;
 		if (action == DatabaseCloseAction::TRY_CHECKPOINT && Exception::UncaughtException()) {
 			create_checkpoint = false;
-		} else if (!storage || storage->InMemory() || catalog->IsDropped() || ValidChecker::IsInvalidated(db) ||
+		} else if (!storage || storage->InMemory() || ValidChecker::IsInvalidated(db) ||
 		           ValidChecker::IsInvalidated(*this)) {
 			create_checkpoint = false;
 		}
@@ -443,7 +466,6 @@ void AttachedDatabase::Cleanup() {
 	catalog.reset();
 	storage.reset();
 	stored_database_path.reset();
-	held_until_closed.reset();
 }
 
 } // namespace duckdb

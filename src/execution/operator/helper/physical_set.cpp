@@ -57,17 +57,13 @@ void PhysicalSet::SetVariable(ClientContext &context, const Identifier &name, Se
 		// Invoke the pre-SET observer after resolution so the handler only sees
 		// valid option names and can safely snapshot the current value.
 		Value casted_value = value.CastAs(context, extension_option.type);
-		if (context.setting_change_handler) {
-			context.setting_change_handler(context, name.GetIdentifierName(), scope);
-		}
+		context.OnSettingChange(name.GetIdentifierName(), scope);
 		SetExtensionVariable(context, extension_option, name, scope, casted_value);
 		return;
 	}
 	SetScope variable_scope = GetSettingScope(*option, scope);
 	Value input_val = value.CastAs(context, DBConfig::ParseLogicalType(option->parameter_type));
-	if (context.setting_change_handler) {
-		context.setting_change_handler(context, name.GetIdentifierName(), scope);
-	}
+	context.OnSettingChange(name.GetIdentifierName(), scope);
 	if (option->default_value) {
 		if (option->set_callback) {
 			SettingCallbackInfo info(context, variable_scope);
@@ -87,7 +83,7 @@ void PhysicalSet::SetVariable(ClientContext &context, const Identifier &name, Se
 	}
 	case SetScope::LOCAL:
 	case SetScope::SESSION:
-		// SET LOCAL is tracked for rollback by the setting_change_handler; at
+		// SET LOCAL is tracked for rollback by OnSettingChange; at
 		// this layer it applies via the same set_local path as SESSION.
 		if (!option->set_local) {
 			throw CatalogException("option %s cannot be set locally", name);

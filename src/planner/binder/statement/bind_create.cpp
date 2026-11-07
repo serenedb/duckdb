@@ -1400,6 +1400,9 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 	case CatalogType::ROLE_ENTRY:
 		result.plan = make_uniq<LogicalCreate>(LogicalOperatorType::LOGICAL_CREATE_ROLE, std::move(stmt.info));
 		break;
+	case CatalogType::DATABASE_ENTRY:
+		result.plan = make_uniq<LogicalCreate>(LogicalOperatorType::LOGICAL_CREATE_DATABASE, std::move(stmt.info));
+		break;
 	case CatalogType::FOREIGN_SERVER_ENTRY: {
 		auto catalog = BindCatalog(stmt.info->GetQualifiedName().Catalog());
 		properties.RegisterDBModify(Catalog::GetCatalog(context, catalog), context,

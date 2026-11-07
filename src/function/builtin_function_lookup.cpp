@@ -9,34 +9,21 @@
 
 namespace duckdb {
 
-namespace {
-
-//! Built-ins are always looked up fully qualified in the system catalog, so a macro or user-defined function of the
-//! same name in the search path can never be selected instead.
-QualifiedName BuiltinName(Catalog &catalog, const Identifier &name) {
-	return QualifiedName(catalog.GetName(), Identifier::DefaultSchema(), name);
-}
-
-} // namespace
-
 shared_ptr<const ScalarFunction> GetBuiltinScalarFunction(ClientContext &context, const Identifier &name,
                                                           const vector<LogicalType> &arguments) {
-	auto &catalog = Catalog::GetSystemCatalog(context);
-	auto &entry = catalog.GetEntry<ScalarFunctionCatalogEntry>(context, BuiltinName(catalog, name));
+	auto &entry = Catalog::GetBuiltinEntry<ScalarFunctionCatalogEntry>(context, name);
 	return entry.functions.GetFunctionByArguments(context, arguments);
 }
 
 shared_ptr<const AggregateFunction> GetBuiltinAggregateFunction(ClientContext &context, const Identifier &name,
                                                                 const vector<LogicalType> &arguments) {
-	auto &catalog = Catalog::GetSystemCatalog(context);
-	auto &entry = catalog.GetEntry<AggregateFunctionCatalogEntry>(context, BuiltinName(catalog, name));
+	auto &entry = Catalog::GetBuiltinEntry<AggregateFunctionCatalogEntry>(context, name);
 	return entry.functions.GetFunctionByArguments(context, arguments);
 }
 
 shared_ptr<const AggregateFunction> TryGetBuiltinAggregateFunction(ClientContext &context, const Identifier &name,
                                                                    const vector<LogicalType> &arguments) {
-	auto &catalog = Catalog::GetSystemCatalog(context);
-	auto &entry = catalog.GetEntry<AggregateFunctionCatalogEntry>(context, BuiltinName(catalog, name));
+	auto &entry = Catalog::GetBuiltinEntry<AggregateFunctionCatalogEntry>(context, name);
 
 	ErrorData error;
 	FunctionBinder function_binder(context);
@@ -49,15 +36,13 @@ shared_ptr<const AggregateFunction> TryGetBuiltinAggregateFunction(ClientContext
 
 shared_ptr<const WindowFunction> GetBuiltinWindowFunction(ClientContext &context, const Identifier &name,
                                                           const vector<LogicalType> &arguments) {
-	auto &catalog = Catalog::GetSystemCatalog(context);
-	auto &entry = catalog.GetEntry<WindowFunctionCatalogEntry>(context, BuiltinName(catalog, name));
+	auto &entry = Catalog::GetBuiltinEntry<WindowFunctionCatalogEntry>(context, name);
 	return entry.functions.GetFunctionByArguments(context, arguments);
 }
 
 unique_ptr<Expression> BindBuiltinScalarExpression(ClientContext &context, const Identifier &name,
                                                    vector<unique_ptr<Expression>> children) {
-	auto &catalog = Catalog::GetSystemCatalog(context);
-	auto &entry = catalog.GetEntry<ScalarFunctionCatalogEntry>(context, BuiltinName(catalog, name));
+	auto &entry = Catalog::GetBuiltinEntry<ScalarFunctionCatalogEntry>(context, name);
 
 	// Bind the children as the arguments of a call, so that functions that capture the aliases of their arguments
 	// (e.g. struct_pack) receive them as named arguments

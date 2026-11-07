@@ -135,8 +135,8 @@ ALTER SCHEMA IF EXISTS s1.missing SET (foo='baz');
 statement ok
 ALTER SCHEMA IF EXISTS s1.missing_parent.child RESET (foo);
 
-statement ok
+# renaming schemas is still not supported
+statement error
 ALTER SCHEMA s1 RENAME TO s4;
-
-statement ok
-ALTER SCHEMA s4 RENAME TO s1;
+----
+<REGEX>:.*Not implemented Error: Altering schemas is not yet supported.*

@@ -1,9 +1,5 @@
 #include "duckdb/catalog/catalog_versions.hpp"
 
-#include "duckdb/catalog/catalog_entry/schema_catalog_entry.hpp"
-#include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
-#include "duckdb/catalog/schema_info.hpp"
-
 namespace duckdb {
 
 optional_ptr<CatalogEntry> CatalogVersions::GetVisible(const SnapshotView &view) const {
@@ -35,10 +31,6 @@ bool CatalogVersions::HasPending() const {
 	return pending_transaction.load(std::memory_order_acquire) != MAX_TRANSACTION_ID;
 }
 
-bool CatalogVersions::IsEmpty() const {
-	return !committed.load(std::memory_order_acquire) && !pending.load(std::memory_order_acquire);
-}
-
 void CatalogVersions::Install(CatalogEntry &version) {
 	auto timestamp = version.timestamp.load(std::memory_order_acquire);
 	if (IsCommitted(timestamp)) {
@@ -61,16 +53,6 @@ void CatalogVersions::Commit(CatalogEntry &version) {
 	}
 }
 
-void CatalogVersions::RevertCommit(CatalogEntry &version) {
-	if (committed.load(std::memory_order_relaxed) == &version) {
-		committed.store(version.previous_version.load(std::memory_order_relaxed), std::memory_order_release);
-	}
-	if (!pending.load(std::memory_order_relaxed)) {
-		pending.store(&version, std::memory_order_release);
-		pending_transaction.store(version.timestamp.load(std::memory_order_relaxed), std::memory_order_release);
-	}
-}
-
 void CatalogVersions::Rollback(CatalogEntry &version) {
 	if (pending.load(std::memory_order_relaxed) != &version) {
 		return;
@@ -85,164 +67,9 @@ void CatalogVersions::Rollback(CatalogEntry &version) {
 	pending.store(nullptr, std::memory_order_release);
 }
 
-void CatalogVersions::Unlink(CatalogEntry &version) {
-	if (committed.load(std::memory_order_relaxed) == &version) {
-		committed.store(version.previous_version.load(std::memory_order_relaxed), std::memory_order_release);
-	}
-	auto entry = pending.load(std::memory_order_relaxed);
-	if (!entry) {
-		entry = committed.load(std::memory_order_relaxed);
-	}
-	while (entry) {
-		auto previous = entry->previous_version.load(std::memory_order_relaxed);
-		if (previous == &version) {
-			entry->previous_version.store(version.previous_version.load(std::memory_order_relaxed),
-			                              std::memory_order_release);
-			return;
-		}
-		entry = previous;
-	}
-}
-
-bool CatalogOidIndex::IsIndexed(const CatalogEntry &entry) {
-	switch (entry.type) {
-	case CatalogType::INVALID:
-	case CatalogType::DELETED_ENTRY:
-	case CatalogType::RENAMED_ENTRY:
-	case CatalogType::DEPENDENCY_ENTRY:
-		return false;
-	case CatalogType::SCHEMA_ENTRY:
-		return true;
-	default:
-		return !entry.internal;
-	}
-}
-
-shared_ptr<CatalogVersions> CatalogOidIndex::Find(idx_t oid) const {
-	absl::ReaderMutexLock guard(lock);
-	auto it = versions.find(oid);
-	if (it == versions.end()) {
-		return nullptr;
-	}
-	return it->second;
-}
-
-optional_ptr<CatalogEntry> CatalogOidIndex::GetVisible(idx_t oid, const SnapshotView &view) const {
-	auto entry = GetVisibleOwner(oid, view);
-	return entry && entry->oid == oid ? entry : nullptr;
-}
-
-optional_ptr<CatalogEntry> CatalogOidIndex::GetVisibleOwner(idx_t oid, const SnapshotView &view) const {
-	auto object = Find(oid);
-	return object ? object->GetVisible(view) : nullptr;
-}
-
-optional_ptr<CatalogEntry> CatalogOidIndex::GetCommitted(idx_t oid) const {
-	auto object = Find(oid);
-	auto entry = object ? object->GetCommitted() : nullptr;
-	return entry && entry->oid == oid ? entry : nullptr;
-}
-
-shared_ptr<CatalogVersions> CatalogOidIndex::GetOrCreate(const CatalogEntry &object) {
-	absl::MutexLock guard(lock);
-	auto &slot = versions[object.oid];
-	if (!slot) {
-		if (object.type == CatalogType::SCHEMA_ENTRY) {
-			slot = object.Cast<SchemaCatalogEntry>().GetSchemaInfo()->versions;
-		} else {
-			slot = make_shared_ptr<CatalogVersions>();
-		}
-	}
-	return slot;
-}
-
-void CatalogOidIndex::AddAliases(const CatalogEntry &version, const shared_ptr<CatalogVersions> &object_versions) {
-	if (version.type != CatalogType::TABLE_ENTRY) {
-		return;
-	}
-	auto oids = version.Cast<TableCatalogEntry>().GetSubObjectOids();
-	if (oids.empty()) {
-		return;
-	}
-	absl::MutexLock guard(lock);
-	for (auto oid : oids) {
-		if (versions.try_emplace(oid, object_versions).second) {
-			aliases[version.oid].push_back(oid);
-		}
-	}
-}
-
-void CatalogOidIndex::Erase(unordered_map<idx_t, shared_ptr<CatalogVersions>>::iterator it) {
-	auto owned = aliases.find(it->first);
-	if (owned != aliases.end()) {
-		for (auto alias : owned->second) {
-			auto alias_it = versions.find(alias);
-			if (alias_it != versions.end() && alias_it->second == it->second) {
-				versions.erase(alias_it);
-			}
-		}
-		aliases.erase(owned);
-	}
-	versions.erase(it);
-}
-
-void CatalogOidIndex::Install(CatalogEntry &version, const CatalogEntry &object) {
-	if (!IsIndexed(object)) {
-		return;
-	}
-	auto object_versions = GetOrCreate(object);
-	object_versions->Install(version);
-	AddAliases(version, object_versions);
-}
-
-void CatalogOidIndex::Commit(CatalogEntry &version, const CatalogEntry &object) {
-	if (!IsIndexed(object)) {
-		return;
-	}
-	auto object_versions = Find(object.oid);
-	if (object_versions) {
-		object_versions->Commit(version);
-	}
-}
-
-void CatalogOidIndex::RevertCommit(CatalogEntry &version, const CatalogEntry &object) {
-	if (!IsIndexed(object)) {
-		return;
-	}
-	auto object_versions = Find(object.oid);
-	if (object_versions) {
-		object_versions->RevertCommit(version);
-	}
-}
-
-void CatalogOidIndex::Rollback(CatalogEntry &version, const CatalogEntry &object) {
-	if (!IsIndexed(object)) {
-		return;
-	}
-	absl::MutexLock guard(lock);
-	auto it = versions.find(object.oid);
-	if (it == versions.end()) {
-		return;
-	}
-	it->second->Rollback(version);
-	if (it->second->IsEmpty()) {
-		Erase(it);
-	}
-}
-
-void CatalogOidIndex::Unlink(CatalogEntry &version) {
-	if (!IsIndexed(version) && version.type != CatalogType::DELETED_ENTRY) {
-		return;
-	}
-	absl::MutexLock guard(lock);
-	auto it = versions.find(version.oid);
-	if (it == versions.end()) {
-		return;
-	}
-	it->second->Unlink(version);
-	if (it->second->IsEmpty()) {
-		Erase(it);
-	}
+void CatalogVersions::Forget(CatalogEntry &version) {
+	auto expected = &version;
+	committed.compare_exchange_strong(expected, nullptr, std::memory_order_acq_rel);
 }
 
 } // namespace duckdb

@@ -56,12 +56,4 @@ bool AlterInfo::IsAddPrimaryKey() const {
 	return constraint_info.constraint->Cast<UniqueConstraint>().IsPrimaryKey();
 }
 
-void AlterInfo::ResolveNewDependencies(LogicalDependencyList &dependencies) {
-	if (bind_mode == AlterBindMode::SKIP_BINDING && new_dependencies) {
-		dependencies = *new_dependencies;
-		return;
-	}
-	new_dependencies = make_uniq<LogicalDependencyList>(dependencies);
-}
-
 } // namespace duckdb

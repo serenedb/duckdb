@@ -15,8 +15,7 @@ TableDataReader::TableDataReader(MetadataReader &reader, BoundCreateTableInfo &i
 
 void TableDataReader::ReadTableData() {
 	auto &columns = info.Base().columns;
-	// SereneDB fork: zero-physical-column tables (CREATE TABLE t();) are allowed, so an empty
-	// column list is a valid checkpoint to read back (mirrors the relaxed binder check).
+	D_ASSERT(!columns.empty());
 
 	// We stored the table statistics as a unit in FinalizeTable.
 	BinaryDeserializer stats_deserializer(reader);

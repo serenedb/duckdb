@@ -1,5 +1,8 @@
 #include "duckdb/catalog/default/default_functions.hpp"
 #include "duckdb/parser/parser.hpp"
+#include "duckdb/parser/expression/function_expression.hpp"
+#include "duckdb/parser/parsed_expression_iterator.hpp"
+#include "duckdb/function/scalar_macro_function.hpp"
 #include "duckdb/parser/parsed_data/create_macro_info.hpp"
 #include "duckdb/parser/statement/create_statement.hpp"
 #include "duckdb/catalog/catalog_entry/scalar_macro_catalog_entry.hpp"
@@ -226,6 +229,19 @@ static const DefaultMacro internal_macros[] = {
 
     {nullptr, nullptr, nullptr}};
 
+static void MarkBuiltinCalls(ParsedExpression &expr) {
+	if (expr.GetExpressionClass() == ExpressionClass::FUNCTION) {
+		auto &function = expr.Cast<FunctionExpression>();
+		auto &name = function.GetQualifiedName();
+		if (name.Path().size() > 1 && name.Schema() == DEFAULT_SCHEMA &&
+		    (name.Catalog().empty() || name.Catalog() == SYSTEM_CATALOG)) {
+			function.SetQualifiedName(QualifiedName(name.Name()));
+			function.BuiltinMutable() = true;
+		}
+	}
+	ParsedExpressionIterator::EnumerateChildren(expr, [](ParsedExpression &child) { MarkBuiltinCalls(child); });
+}
+
 unique_ptr<CreateMacroInfo> DefaultFunctionGenerator::CreateInternalMacroInfo(const DefaultMacro &default_macro) {
 	auto parser = Parser::GetBuiltinParser();
 	auto bind_info = make_uniq<CreateMacroInfo>(CatalogType::MACRO_ENTRY);
@@ -245,6 +261,9 @@ unique_ptr<CreateMacroInfo> DefaultFunctionGenerator::CreateInternalMacroInfo(co
 			if (type.IsUnbound()) {
 				type = UnboundType::TryDefaultBind(type);
 			}
+		}
+		if (macro->type == MacroType::SCALAR_MACRO) {
+			MarkBuiltinCalls(*macro->Cast<ScalarMacroFunction>().expression);
 		}
 	}
 	bind_info->macros = std::move(macro_info.macros);
@@ -280,6 +299,9 @@ DefaultFunctionGenerator::DefaultFunctionGenerator(Catalog &catalog, SchemaCatal
 unique_ptr<CatalogEntry> DefaultFunctionGenerator::CreateDefaultEntry(ClientContext &context,
                                                                       const Identifier &entry_name) {
 	auto info = GetDefaultFunction(schema.name, entry_name);
+	if (!info && ServesDefaults(schema.name, DEFAULT_SCHEMA)) {
+		info = GetDefaultFunction(DEFAULT_SCHEMA, entry_name);
+	}
 	if (info) {
 		return make_uniq_base<CatalogEntry, ScalarMacroCatalogEntry>(catalog, schema, info->Cast<CreateMacroInfo>());
 	}
@@ -292,7 +314,7 @@ vector<Identifier> DefaultFunctionGenerator::GetDefaultEntries() {
 		if (StringUtil::Lower(internal_macros[index].name) != internal_macros[index].name) {
 			throw InternalException("Default macro name %s should be lowercase", internal_macros[index].name);
 		}
-		if (internal_macros[index].schema == schema.name) {
+		if (ServesDefaults(schema.name, internal_macros[index].schema)) {
 			result.emplace_back(internal_macros[index].name);
 		}
 	}

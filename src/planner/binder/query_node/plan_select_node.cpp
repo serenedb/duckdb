@@ -68,7 +68,6 @@ bool Binder::DebugAggregateStateExportVerify(BoundSelectNode &statement, unique_
 		finalize_expressions.push_back(std::move(group_ref));
 		final_group_expressions.push_back(std::move(final_group_ref));
 	}
-	auto &system_catalog = Catalog::GetSystemCatalog(context);
 	ErrorData error;
 	FunctionBinder function_binder(context);
 	for (idx_t aggr_idx = 0; aggr_idx < statement.aggregates.size(); aggr_idx++) {
@@ -83,8 +82,7 @@ bool Binder::DebugAggregateStateExportVerify(BoundSelectNode &statement, unique_
 		// create the "finalize" expression
 		vector<unique_ptr<Expression>> finalize_children;
 		finalize_children.push_back(std::move(aggr_state_ref));
-		auto &finalize_function = system_catalog.GetEntry<ScalarFunctionCatalogEntry>(
-		    context, QualifiedName(system_catalog.GetName(), DEFAULT_SCHEMA, "finalize"));
+		auto &finalize_function = Catalog::GetBuiltinEntry<ScalarFunctionCatalogEntry>(context, Identifier("finalize"));
 		auto result =
 		    function_binder.BindScalarFunction(finalize_function, std::move(finalize_children), error, false, *this);
 		if (!result) {
@@ -92,8 +90,7 @@ bool Binder::DebugAggregateStateExportVerify(BoundSelectNode &statement, unique_
 		}
 
 		// create the "first" expression
-		auto &first_function = system_catalog.GetEntry<AggregateFunctionCatalogEntry>(
-		    context, QualifiedName(system_catalog.GetName(), DEFAULT_SCHEMA, "first"));
+		auto &first_function = Catalog::GetBuiltinEntry<AggregateFunctionCatalogEntry>(context, Identifier("first"));
 		auto finalize_ref = make_uniq<BoundColumnRefExpression>(
 		    result->GetReturnType(),
 		    ColumnBinding(intermediate_proj_index, ProjectionIndex(finalize_expressions.size())));

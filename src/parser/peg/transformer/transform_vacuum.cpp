@@ -13,7 +13,7 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformVacuumStatement(PEGTran
 	if (vacuum_options) {
 		options = *vacuum_options;
 	}
-	// SereneDB extension: VACUUM (REFRESH_*) / VACUUM (COMPACT_*) /
+	// SereneDB extension: VACUUM (COMPACT_*) /
 	// VACUUM (RECOMPUTE_STATS_*) lower to a PRAGMA call instead of the standard
 	// VacuumStatement. Parameters are positional: option, name, schema, catalog.
 	if (!options.serenedb_pragma_option.empty()) {
@@ -62,21 +62,9 @@ VacuumOptions PEGTransformerFactory::TransformVacuumLegacyOptions(PEGTransformer
 VacuumOptions PEGTransformerFactory::TransformVacuumParensOptions(PEGTransformer &transformer,
                                                                   const vector<string> &vacuum_option) {
 	static constexpr const char *kSerenedbOptions[] = {
-	    "refresh_database",
-	    "refresh_schema",
-	    "refresh_table",
-	    "refresh_index",
-	    "refresh_all",
-	    "compact_database",
-	    "compact_schema",
-	    "compact_table",
-	    "compact_index",
-	    "compact_all",
-	    "recompute_stats_table",
-	    "recompute_stats_schema",
-	    "recompute_stats_database",
-	    "recompute_stats_all",
-	    "recompute_stats_column",
+	    "compact_database",    "compact_schema",         "compact_table",          "compact_index",
+	    "compact_all",         "recompute_stats_table",  "recompute_stats_schema", "recompute_stats_database",
+	    "recompute_stats_all", "recompute_stats_column",
 	};
 	VacuumOptions options;
 	options.vacuum = true;

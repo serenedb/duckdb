@@ -8,7 +8,6 @@
 
 #pragma once
 
-#include "duckdb/common/enums/on_entry_not_found.hpp"
 #include "duckdb/storage/storage_manager.hpp"
 
 namespace duckdb {
@@ -30,13 +29,6 @@ typedef unique_ptr<Catalog> (*attach_function_t)(optional_ptr<StorageExtensionIn
 typedef unique_ptr<TransactionManager> (*create_transaction_manager_t)(optional_ptr<StorageExtensionInfo> storage_info,
                                                                        AttachedDatabase &db, Catalog &catalog);
 
-//! Held by a CHECKPOINT statement until its checkpoint ends
-class CheckpointRequest {
-public:
-	virtual ~CheckpointRequest() {
-	}
-};
-
 class StorageExtension {
 public:
 	attach_function_t attach;
@@ -48,22 +40,10 @@ public:
 	virtual ~StorageExtension() {
 	}
 
-	//! Called by a CHECKPOINT statement before it takes any lock; throws to refuse the checkpoint
-	virtual unique_ptr<CheckpointRequest> OnCheckpointRequest(AttachedDatabase &db) {
-		return nullptr;
-	}
-
 	virtual void OnCheckpointStart(AttachedDatabase &db, CheckpointOptions checkpoint_options) {
 	}
 
-	virtual void OnCheckpointBeforeHeader(AttachedDatabase &db, CheckpointOptions checkpoint_options) {
-	}
-
 	virtual void OnCheckpointEnd(AttachedDatabase &db, CheckpointOptions checkpoint_options) {
-	}
-
-	virtual optional_idx NeededWALGeneration(AttachedDatabase &db) {
-		return optional_idx();
 	}
 
 	static optional_ptr<StorageExtension> Find(const DBConfig &config, const string &extension_name);

@@ -18,8 +18,7 @@ enum class ShellSubcommand : uint8_t {
 };
 
 struct ShellEngine {
-	void (*configure)(duckdb::DBConfig &config);
-	void (*load)(duckdb::DatabaseInstance &db);
+	duckdb::shared_ptr<duckdb::DatabaseInstance> (*open)(const std::string &path);
 };
 
 // Public entry point. Parses argv, opens the database, runs init / -cmd /

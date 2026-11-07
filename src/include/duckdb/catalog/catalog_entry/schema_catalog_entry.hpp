@@ -51,6 +51,7 @@ public:
 	SchemaCatalogEntry(Catalog &catalog, CreateSchemaInfo &info,
 	                   optional_ptr<SchemaCatalogEntry> parent_schema = nullptr,
 	                   shared_ptr<SchemaInfo> schema_info = nullptr);
+	~SchemaCatalogEntry() override;
 
 public:
 	unique_ptr<CreateInfo> GetInfo() const override;

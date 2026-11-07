@@ -112,7 +112,6 @@ public:
 	AlterEntryData GetAlterEntryData() const;
 	bool IsAddPrimaryKey() const;
 	bool IsAddUniqueConstraint() const;
-	void ResolveNewDependencies(LogicalDependencyList &dependencies);
 
 protected:
 	explicit AlterInfo(AlterType type);

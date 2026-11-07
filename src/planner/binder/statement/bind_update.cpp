@@ -255,6 +255,9 @@ BoundStatement Binder::BindNode(UpdateQueryNode &node) {
 	if (!table_ptr) {
 		throw BinderException("Can only update base table");
 	}
+	if (bound_table_get.function.verify_dml_target) {
+		bound_table_get.function.verify_dml_target(context, bound_table_get.bind_data.get());
+	}
 	if (node.table->type == TableReferenceType::BASE_TABLE) {
 		// A catalog may delegate the scan of its table to a storage table in
 		// another catalog; the update targets the entry the name resolves to.

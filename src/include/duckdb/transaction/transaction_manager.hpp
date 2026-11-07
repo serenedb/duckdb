@@ -40,9 +40,14 @@ public:
 
 	virtual void Checkpoint(ClientContext &context, bool force = false) = 0;
 
+	virtual void PushAttach(Transaction &transaction, AttachedDatabase &attached_db);
+
 	static TransactionManager &Get(AttachedDatabase &db);
 
 	virtual bool IsDuckTransactionManager() {
+		return false;
+	}
+	virtual bool CommitsAcrossDatabases() {
 		return false;
 	}
 	//! Move a writeless transaction's read visibility forward to the present

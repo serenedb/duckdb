@@ -25,189 +25,29 @@
 #include "duckdb/storage/write_ahead_log.hpp"
 #include "duckdb/transaction/append_info.hpp"
 #include "duckdb/transaction/delete_info.hpp"
-#include "duckdb/transaction/duck_transaction.hpp"
-#include "duckdb/transaction/transaction_manager.hpp"
 #include "duckdb/transaction/update_info.hpp"
-
-#include <absl/algorithm/container.h>
 
 namespace duckdb {
 
-WALWriteState::WALWriteState(DuckTransaction &transaction_p, optional_ptr<WriteAheadLog> log,
-                             optional_ptr<StorageCommitState> commit_state,
-                             optional_ptr<vector<CatalogRunEntry>> catalog_run)
-    : transaction(transaction_p), log(log), commit_state(commit_state), catalog_run(catalog_run),
-      current_table_entry(nullptr) {
-}
-
-WriteAheadLog &WALWriteState::Log() {
-	if (!log) {
-		throw InternalException("WALWriteState - database %s has no WAL to write data to",
-		                        transaction.manager.GetDB().GetName());
-	}
-	return *log;
+WALWriteState::WALWriteState(DuckTransaction &transaction_p, WriteAheadLog &log,
+                             optional_ptr<StorageCommitState> commit_state)
+    : transaction(transaction_p), log(log), commit_state(commit_state), current_table_entry(nullptr) {
 }
 
 void WALWriteState::SwitchTable(DuckTableEntry &table_entry, UndoFlags new_op) {
 	if (current_table_entry.get() != &table_entry) {
 		// write the current table to the log
-		Log().WriteSetTable(table_entry);
+		log.WriteSetTable(QualifiedName(table_entry.ParentSchemaPath(), table_entry.name));
 		current_table_entry = table_entry;
 	}
 }
 
-static bool IsAlterableLoggedEntry(CatalogType type) {
-	switch (type) {
-	case CatalogType::TABLE_ENTRY:
-	case CatalogType::VIEW_ENTRY:
-	case CatalogType::INDEX_ENTRY:
-	case CatalogType::SEQUENCE_ENTRY:
-	case CatalogType::TYPE_ENTRY:
-	case CatalogType::MACRO_ENTRY:
-	case CatalogType::TABLE_MACRO_ENTRY:
-	case CatalogType::TOKENIZER_ENTRY:
-	case CatalogType::JOB_ENTRY:
-	case CatalogType::ROLE_ENTRY:
-	case CatalogType::DATABASE_ENTRY:
-	case CatalogType::FOREIGN_SERVER_ENTRY:
-	case CatalogType::SUBSCRIPTION_ENTRY:
-	case CatalogType::REPLICATION_ORIGIN_ENTRY:
-	case CatalogType::SCHEMA_ENTRY:
-		return true;
-	default:
-		return false;
-	}
-}
-
-static optional_ptr<DataTableInfo> IndexTableInfo(CatalogEntry &entry, const AlterInfo *alter_info) {
-	if (alter_info) {
-		return nullptr;
-	}
-	optional_ptr<CatalogEntry> index;
-	if (entry.Parent().type == CatalogType::INDEX_ENTRY) {
-		index = entry.Parent();
-	} else if (entry.Parent().type == CatalogType::DELETED_ENTRY && entry.type == CatalogType::INDEX_ENTRY) {
-		index = entry;
-	}
-	if (!index) {
-		return nullptr;
-	}
-	auto &duck_index = index->Cast<DuckIndexEntry>();
-	if (!duck_index.info || !duck_index.info->info) {
-		return nullptr;
-	}
-	return duck_index.info->info.get();
-}
-
-static bool ChangesTableStorage(CatalogEntry &entry, const AlterInfo *alter_info) {
-	auto &parent = entry.Parent();
-	if (parent.type == CatalogType::DELETED_ENTRY) {
-		return entry.type == CatalogType::TABLE_ENTRY && entry.Cast<TableCatalogEntry>().IsDuckTable();
-	}
-	if (parent.type != CatalogType::TABLE_ENTRY || !parent.Cast<TableCatalogEntry>().IsDuckTable()) {
-		return false;
-	}
-	if (!alter_info) {
-		return true;
-	}
-	if (entry.type != CatalogType::TABLE_ENTRY || alter_info->type != AlterType::ALTER_TABLE) {
-		return false;
-	}
-	switch (alter_info->Cast<AlterTableInfo>().alter_table_type) {
-	case AlterTableType::RENAME_COLUMN:
-	case AlterTableType::ADD_COLUMN:
-	case AlterTableType::REMOVE_COLUMN:
-	case AlterTableType::ALTER_COLUMN_TYPE:
-	case AlterTableType::ADD_FIELD:
-	case AlterTableType::REMOVE_FIELD:
-	case AlterTableType::RENAME_FIELD:
-		return true;
-	default:
-		return false;
-	}
-}
-
-void WALWriteState::WriteCatalogEntry(CatalogEntry &entry, idx_t change, data_ptr_t dataptr) {
+void WALWriteState::WriteCatalogEntry(CatalogEntry &entry, data_ptr_t dataptr) {
 	if (entry.temporary || entry.Parent().temporary) {
 		return;
 	}
-	auto &parent = entry.Parent();
-	unique_ptr<ParseInfo> parse_info;
-	if (IsAlterableLoggedEntry(parent.type) &&
-	    (entry.type == CatalogType::RENAMED_ENTRY || entry.type == parent.type)) {
-		// ALTER statement, read the extra data after the entry
-		auto extra_data_size = Load<idx_t>(dataptr);
-		auto extra_data = data_ptr_cast(dataptr + sizeof(idx_t));
 
-		MemoryStream source(extra_data, extra_data_size);
-		BinaryDeserializer deserializer(source);
-		deserializer.Begin();
-		auto column_name = deserializer.ReadProperty<string>(100, "column_name");
-		parse_info = deserializer.ReadProperty<unique_ptr<ParseInfo>>(101, "alter_info");
-		deserializer.End();
-		parse_info->Cast<AlterInfo>().oid = parent.oid;
-		SDB_IF_FAILURE("alter_log_without_dependencies") {
-			parse_info->Cast<AlterInfo>().new_dependencies.reset();
-		}
-	}
-	auto alter_info = parse_info ? &parse_info->Cast<AlterInfo>() : nullptr;
-	const bool moved_with_owner =
-	    alter_info && alter_info->GetNewSchema() && alter_info->GetCatalogType() != parent.type;
-	if (parent.type == CatalogType::INDEX_ENTRY && alter_info && alter_info->type == AlterType::REPLACE_DEFINITION) {
-		return;
-	}
-	if (moved_with_owner) {
-		return;
-	}
-	if (!catalog_run) {
-		WriteCatalogEntry(Log(), entry, alter_info, true);
-		return;
-	}
-	if (log) {
-		if (ChangesTableStorage(entry, alter_info)) {
-			if (entry.type == CatalogType::TABLE_ENTRY) {
-				SwitchTable(entry.Cast<DuckTableEntry>(), UndoFlags::CATALOG_ENTRY);
-			}
-			WriteCatalogEntry(*log, entry, alter_info, true);
-		} else {
-			auto index_table = IndexTableInfo(entry, alter_info);
-			if (index_table) {
-				log->WriteSetTable(QualifiedName(index_table->GetSchemaPath(), index_table->GetTableName()),
-				                   index_table->GetTableOid());
-				current_table_entry = nullptr;
-				WriteCatalogEntry(*log, entry, alter_info, true);
-			}
-		}
-	}
-	catalog_run->emplace_back(entry, change, std::move(parse_info));
-}
-
-void WALWriteState::WriteCatalogRuns(WriteAheadLog &catalog_log, const vector<CatalogRun> &runs) {
-	struct Change {
-		idx_t catalog_oid;
-		reference<const CatalogRunEntry> entry;
-	};
-	vector<Change> changes;
-	for (auto &run : runs) {
-		for (auto &run_entry : run.entries.get()) {
-			changes.push_back(Change {run.catalog_oid, run_entry});
-		}
-	}
-	absl::c_sort(changes, [](const Change &a, const Change &b) { return a.entry.get().change < b.entry.get().change; });
-	optional_idx catalog_oid;
-	for (auto &change : changes) {
-		if (!catalog_oid.IsValid() || catalog_oid.GetIndex() != change.catalog_oid) {
-			catalog_oid = change.catalog_oid;
-			catalog_log.WriteUseCatalog(change.catalog_oid);
-		}
-		auto &run_entry = change.entry.get();
-		auto alter_info = run_entry.alter_info ? &run_entry.alter_info->Cast<AlterInfo>() : nullptr;
-		WriteCatalogEntry(catalog_log, run_entry.entry, alter_info, false);
-	}
-}
-
-void WALWriteState::WriteCatalogEntry(WriteAheadLog &target, CatalogEntry &entry, const AlterInfo *alter_info,
-                                      bool with_index_storage) {
+	// look at the type of the parent entry
 	auto &parent = entry.Parent();
 
 	switch (parent.type) {
@@ -218,7 +58,7 @@ void WALWriteState::WriteCatalogEntry(WriteAheadLog &target, CatalogEntry &entry
 			// already covers this on replay; writing a second CREATE_TRIGGER would be redundant.
 			return;
 		}
-		target.WriteCreateTrigger(parent.Cast<TriggerCatalogEntry>());
+		log.WriteCreateTrigger(parent.Cast<TriggerCatalogEntry>());
 		break;
 	case CatalogType::TABLE_ENTRY:
 	case CatalogType::VIEW_ENTRY:
@@ -227,126 +67,98 @@ void WALWriteState::WriteCatalogEntry(WriteAheadLog &target, CatalogEntry &entry
 	case CatalogType::TYPE_ENTRY:
 	case CatalogType::MACRO_ENTRY:
 	case CatalogType::TABLE_MACRO_ENTRY:
-	case CatalogType::TOKENIZER_ENTRY:
-	case CatalogType::JOB_ENTRY:
-	case CatalogType::ROLE_ENTRY:
-	case CatalogType::DATABASE_ENTRY:
-	case CatalogType::FOREIGN_SERVER_ENTRY:
-	case CatalogType::SUBSCRIPTION_ENTRY:
-	case CatalogType::REPLICATION_ORIGIN_ENTRY:
-	case CatalogType::SCHEMA_ENTRY:
-		if (alter_info) {
-			target.WriteAlter(entry, *alter_info, with_index_storage);
+		if (entry.type == CatalogType::RENAMED_ENTRY || entry.type == parent.type) {
+			// ALTER statement, read the extra data after the entry
+			auto extra_data_size = Load<idx_t>(dataptr);
+			auto extra_data = data_ptr_cast(dataptr + sizeof(idx_t));
+
+			MemoryStream source(extra_data, extra_data_size);
+			BinaryDeserializer deserializer(source);
+			deserializer.Begin();
+			auto column_name = deserializer.ReadProperty<string>(100, "column_name");
+			auto parse_info = deserializer.ReadProperty<unique_ptr<ParseInfo>>(101, "alter_info");
+			deserializer.End();
+
+			auto &alter_info = parse_info->Cast<AlterInfo>();
+			if (parent.type == CatalogType::INDEX_ENTRY && alter_info.type == AlterType::REPLACE_DEFINITION) {
+				return;
+			}
+			log.WriteAlter(entry, alter_info);
 		} else {
 			switch (parent.type) {
 			case CatalogType::TABLE_ENTRY:
 				// CREATE TABLE statement
-				target.WriteCreateTable(parent.Cast<TableCatalogEntry>());
+				log.WriteCreateTable(parent.Cast<TableCatalogEntry>());
 				break;
 			case CatalogType::VIEW_ENTRY:
 				// CREATE VIEW statement
-				target.WriteCreateView(parent.Cast<ViewCatalogEntry>());
+				log.WriteCreateView(parent.Cast<ViewCatalogEntry>());
 				break;
 			case CatalogType::INDEX_ENTRY:
 				// CREATE INDEX statement
-				target.WriteCreateIndex(parent.Cast<IndexCatalogEntry>(), with_index_storage);
+				log.WriteCreateIndex(parent.Cast<IndexCatalogEntry>());
 				break;
 			case CatalogType::SEQUENCE_ENTRY:
 				// CREATE SEQUENCE statement
-				target.WriteCreateSequence(parent.Cast<SequenceCatalogEntry>());
+				log.WriteCreateSequence(parent.Cast<SequenceCatalogEntry>());
 				break;
 			case CatalogType::TYPE_ENTRY:
 				// CREATE TYPE statement
-				target.WriteCreateType(parent.Cast<TypeCatalogEntry>());
+				log.WriteCreateType(parent.Cast<TypeCatalogEntry>());
 				break;
 			case CatalogType::MACRO_ENTRY:
-				target.WriteCreateMacro(parent.Cast<ScalarMacroCatalogEntry>());
+				log.WriteCreateMacro(parent.Cast<ScalarMacroCatalogEntry>());
 				break;
 			case CatalogType::TABLE_MACRO_ENTRY:
-				target.WriteCreateTableMacro(parent.Cast<TableMacroCatalogEntry>());
-				break;
-			case CatalogType::TOKENIZER_ENTRY:
-				target.WriteCreateTokenizer(parent.Cast<StandardEntry>());
-				break;
-			case CatalogType::JOB_ENTRY:
-				target.WriteCreateJob(parent.Cast<StandardEntry>());
-				break;
-			case CatalogType::ROLE_ENTRY:
-				target.WriteCreateRole(parent.Cast<InCatalogEntry>());
-				break;
-			case CatalogType::DATABASE_ENTRY:
-				target.WriteCreateDatabase(parent.Cast<InCatalogEntry>());
-				break;
-			case CatalogType::FOREIGN_SERVER_ENTRY:
-				target.WriteCreateForeignServer(parent.Cast<InCatalogEntry>());
-				break;
-			case CatalogType::SUBSCRIPTION_ENTRY:
-				target.WriteCreateSubscription(parent.Cast<InCatalogEntry>());
-				break;
-			case CatalogType::REPLICATION_ORIGIN_ENTRY:
-				target.WriteCreateReplicationOrigin(parent.Cast<InCatalogEntry>());
-				break;
-			case CatalogType::SCHEMA_ENTRY:
-				target.WriteCreateSchema(parent.Cast<SchemaCatalogEntry>());
+				log.WriteCreateTableMacro(parent.Cast<TableMacroCatalogEntry>());
 				break;
 			default:
 				throw InternalException("Don't know how to create this type!");
 			}
 		}
 		break;
+	case CatalogType::SCHEMA_ENTRY:
+		if (entry.type == CatalogType::RENAMED_ENTRY || entry.type == CatalogType::SCHEMA_ENTRY) {
+			// ALTER TABLE statement, skip it
+			return;
+		}
+		log.WriteCreateSchema(parent.Cast<SchemaCatalogEntry>());
+		break;
 	case CatalogType::RENAMED_ENTRY:
 		// This is a rename, nothing needs to be done for this
 		break;
 	case CatalogType::DELETED_ENTRY:
 		switch (entry.type) {
-		case CatalogType::TABLE_ENTRY:
-			target.WriteDropTable(entry.Cast<TableCatalogEntry>());
+		case CatalogType::TABLE_ENTRY: {
+			auto &table_entry = entry.Cast<DuckTableEntry>();
+			D_ASSERT(table_entry.IsDuckTable());
+			log.WriteDropTable(table_entry);
 			break;
+		}
 		case CatalogType::SCHEMA_ENTRY:
-			target.WriteDropSchema(entry.Cast<SchemaCatalogEntry>());
+			log.WriteDropSchema(entry.Cast<SchemaCatalogEntry>());
 			break;
 		case CatalogType::VIEW_ENTRY:
-			target.WriteDropView(entry.Cast<ViewCatalogEntry>());
+			log.WriteDropView(entry.Cast<ViewCatalogEntry>());
 			break;
 		case CatalogType::SEQUENCE_ENTRY:
-			target.WriteDropSequence(entry.Cast<SequenceCatalogEntry>());
+			log.WriteDropSequence(entry.Cast<SequenceCatalogEntry>());
 			break;
 		case CatalogType::MACRO_ENTRY:
-			target.WriteDropMacro(entry.Cast<ScalarMacroCatalogEntry>());
+			log.WriteDropMacro(entry.Cast<ScalarMacroCatalogEntry>());
 			break;
 		case CatalogType::TABLE_MACRO_ENTRY:
-			target.WriteDropTableMacro(entry.Cast<TableMacroCatalogEntry>());
+			log.WriteDropTableMacro(entry.Cast<TableMacroCatalogEntry>());
 			break;
 		case CatalogType::TYPE_ENTRY:
-			target.WriteDropType(entry.Cast<TypeCatalogEntry>());
+			log.WriteDropType(entry.Cast<TypeCatalogEntry>());
 			break;
 		case CatalogType::INDEX_ENTRY: {
-			target.WriteDropIndex(entry.Cast<IndexCatalogEntry>());
+			log.WriteDropIndex(entry.Cast<IndexCatalogEntry>());
 			break;
 		}
 		case CatalogType::TRIGGER_ENTRY:
-			target.WriteDropTrigger(entry.Cast<TriggerCatalogEntry>());
-			break;
-		case CatalogType::TOKENIZER_ENTRY:
-			target.WriteDropTokenizer(entry.Cast<StandardEntry>());
-			break;
-		case CatalogType::JOB_ENTRY:
-			target.WriteDropJob(entry.Cast<StandardEntry>());
-			break;
-		case CatalogType::ROLE_ENTRY:
-			target.WriteDropRole(entry.Cast<InCatalogEntry>());
-			break;
-		case CatalogType::DATABASE_ENTRY:
-			target.WriteDropDatabase(entry.Cast<InCatalogEntry>());
-			break;
-		case CatalogType::FOREIGN_SERVER_ENTRY:
-			target.WriteDropForeignServer(entry.Cast<InCatalogEntry>());
-			break;
-		case CatalogType::SUBSCRIPTION_ENTRY:
-			target.WriteDropSubscription(entry.Cast<InCatalogEntry>());
-			break;
-		case CatalogType::REPLICATION_ORIGIN_ENTRY:
-			target.WriteDropReplicationOrigin(entry.Cast<InCatalogEntry>());
+			log.WriteDropTrigger(entry.Cast<TriggerCatalogEntry>());
 			break;
 		case CatalogType::RENAMED_ENTRY:
 		case CatalogType::PREPARED_STATEMENT:
@@ -401,7 +213,7 @@ void WALWriteState::WriteDelete(DeleteInfo &info) {
 		}
 	}
 	delete_chunk->SetChildCardinality(info.count);
-	Log().WriteDelete(*delete_chunk);
+	log.WriteDelete(*delete_chunk);
 }
 
 void WALWriteState::WriteUpdate(UpdateInfo &info) {
@@ -454,7 +266,7 @@ void WALWriteState::WriteUpdate(UpdateInfo &info) {
 	column_indexes.push_back(info.column_index);
 	std::reverse(column_indexes.begin(), column_indexes.end());
 
-	Log().WriteUpdate(*update_chunk, column_indexes);
+	log.WriteUpdate(*update_chunk, column_indexes);
 }
 
 void WALWriteState::CommitEntry(UndoFlags type, data_ptr_t data) {
@@ -464,8 +276,7 @@ void WALWriteState::CommitEntry(UndoFlags type, data_ptr_t data) {
 		auto catalog_entry = Load<CatalogEntry *>(data);
 		D_ASSERT(catalog_entry->HasParent());
 		// push the catalog update to the WAL
-		WriteCatalogEntry(*catalog_entry, Load<idx_t>(data + sizeof(CatalogEntry *)),
-		                  data + DuckTransaction::CATALOG_UNDO_HEADER);
+		WriteCatalogEntry(*catalog_entry, data + sizeof(CatalogEntry *));
 		break;
 	}
 	case UndoFlags::INSERT_TUPLE: {
@@ -473,7 +284,7 @@ void WALWriteState::CommitEntry(UndoFlags type, data_ptr_t data) {
 		auto info = reinterpret_cast<AppendInfo *>(data);
 		if (!info->table->GetStorage().IsTemporary()) {
 			SwitchTable(*info->table, UndoFlags::INSERT_TUPLE);
-			info->table->GetStorage().WriteToLog(transaction, Log(), info->start_row, info->count, commit_state.get());
+			info->table->GetStorage().WriteToLog(transaction, log, info->start_row, info->count, commit_state.get());
 		}
 		break;
 	}
@@ -496,10 +307,8 @@ void WALWriteState::CommitEntry(UndoFlags type, data_ptr_t data) {
 	case UndoFlags::ATTACHED_DATABASE:
 		break;
 	case UndoFlags::SEQUENCE_VALUE: {
-		if (!catalog_run) {
-			auto info = reinterpret_cast<SequenceValue *>(data);
-			Log().WriteSequenceValue(*info);
-		}
+		auto info = reinterpret_cast<SequenceValue *>(data);
+		log.WriteSequenceValue(*info);
 		break;
 	}
 	default:

@@ -98,6 +98,12 @@ public:
 	                              unique_ptr<OrderModifier> order_bys = nullptr, bool distinct = false,
 	                              bool is_operator = false, bool export_state = false);
 
+	DUCKDB_API static unique_ptr<FunctionExpression> Builtin(const Identifier &function_name,
+	                                                         vector<unique_ptr<ParsedExpression>> children);
+	DUCKDB_API static unique_ptr<FunctionExpression> Builtin(const Identifier &function_name,
+	                                                         vector<FunctionArgument> arguments);
+	DUCKDB_API static void SetBuiltinPrefix(string prefix);
+
 public:
 	const QualifiedName &GetQualifiedName() const {
 		return qualified_name;
@@ -132,6 +138,12 @@ public:
 	}
 	bool &FromOperatorMutable() {
 		return from_operator;
+	}
+	bool IsBuiltin() const {
+		return builtin;
+	}
+	bool &BuiltinMutable() {
+		return builtin;
 	}
 	bool Distinct() const {
 		return distinct;
@@ -191,6 +203,7 @@ private:
 	bool is_operator;
 	//! Whether this call originated from operator syntax; only used for "?column?" target-list naming
 	bool from_operator = false;
+	bool builtin = false;
 	//! List of arguments to the function
 	vector<FunctionArgument> arguments;
 	//! Whether or not the aggregate function is distinct, only used for aggregates

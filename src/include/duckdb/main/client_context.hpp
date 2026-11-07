@@ -35,6 +35,7 @@ class Logger;
 
 class Appender;
 class AttachedDatabase;
+class Binder;
 class Catalog;
 class CatalogSearchPath;
 class ColumnDataCollection;
@@ -94,7 +95,7 @@ class ClientContext : public enable_shared_from_this<ClientContext> {
 
 public:
 	DUCKDB_API explicit ClientContext(shared_ptr<DatabaseInstance> db);
-	DUCKDB_API ~ClientContext();
+	DUCKDB_API virtual ~ClientContext();
 
 	//! The database that this client is connected to
 	shared_ptr<DatabaseInstance> db;
@@ -113,33 +114,36 @@ public:
 	//! Data for the currently running transaction
 	TransactionContext transaction;
 
-	//! Validator called before accepting a new transaction isolation level.
-	//! When set, throws to reject unsupported values. Registered per-connection.
-	typedef void (*isolation_level_validator_t)(ClientContext &context, TransactionIsolationLevel level);
-	isolation_level_validator_t isolation_level_validator = nullptr;
-
-	//! Hook called when a warning needs to be emitted to the client (e.g. when a transaction state is invalid for a
-	//! given statement, such as COMMIT/ROLLBACK without an active transaction, or BEGIN inside a transaction). If set
-	//! and returns true, the statement is treated as a no-op; otherwise DuckDB throws as usual.
-	typedef bool (*warning_handler_t)(ClientContext &context, const char *message);
-	warning_handler_t warning_handler = nullptr;
-
 	//! PG session_user — the role the connection authenticated as. Used to
 	//! resolve the literal "$user" placeholder in catalog_search_path. Set by
 	//! the wire layer at connect time; updated on SET ROLE if applicable.
 	string session_user;
 
-	//! Filter for settings listings (duckdb_settings(), SHOW ALL, pg_settings).
-	//! Return false to hide the setting from listings. SET / SHOW <name> are
-	//! unaffected. nullptr = show everything.
-	typedef bool (*setting_visibility_t)(ClientContext &context, const string &name);
-	setting_visibility_t setting_visibility = nullptr;
-
-	//! Invoked before a SET/RESET <name> is applied. Used by SereneDB to track
-	//! session-level changes for PG-style rollback inside a transaction.
-	//! nullptr handler = no tracking.
-	typedef void (*setting_change_handler_t)(ClientContext &context, const string &name, SetScope scope);
-	setting_change_handler_t setting_change_handler = nullptr;
+public:
+	virtual void ValidateIsolationLevel(TransactionIsolationLevel level) {
+	}
+	virtual bool EmitWarning(const char *message) {
+		return false;
+	}
+	virtual bool IsSettingVisible(const string &name) {
+		return true;
+	}
+	virtual void OnSettingChange(const string &name, SetScope scope) {
+	}
+	virtual void OnQueryBegin() {
+	}
+	virtual void OnQueryEnd() {
+	}
+	virtual void OnTransactionPreCommit(MetaTransaction &transaction) {
+	}
+	virtual void OnTransactionPreRollback(MetaTransaction &transaction) {
+	}
+	virtual void OnTransactionCommit(MetaTransaction &transaction) {
+	}
+	virtual void OnTransactionRollback(MetaTransaction &transaction) {
+	}
+	virtual void OnBoundPlan(Binder &binder, LogicalOperator &plan) {
+	}
 
 public:
 	//! Connect this client to a remote-style AttachedDatabase. Subsequent non-control SQL routes via
@@ -163,11 +167,6 @@ public:
 		return transaction.ActiveTransaction();
 	}
 
-	//! Invokes warning_handler if set. Returns true if the caller should
-	//! treat the warned condition as a no-op.
-	bool EmitWarning(const char *message) {
-		return warning_handler && warning_handler(*this, message);
-	}
 	DUCKDB_API void WarnUser(const string &message);
 
 	//! Interrupts the running query. Async-signal-safe: sets a flag and nothing else

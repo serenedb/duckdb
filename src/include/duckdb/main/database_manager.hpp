@@ -16,9 +16,6 @@
 #include "duckdb/main/database_file_path_manager.hpp"
 #include "duckdb/common/checked_integer.hpp"
 #include "duckdb/common/enums/on_entry_not_found.hpp"
-#include "duckdb/common/map.hpp"
-
-#include <functional>
 
 namespace duckdb {
 class AttachedDatabase;
@@ -62,6 +59,7 @@ public:
 	//! Get an attached database by its name
 	optional_ptr<AttachedDatabase> GetDatabase(ClientContext &context, const Identifier &name);
 	shared_ptr<AttachedDatabase> GetDatabase(const Identifier &name);
+	bool IsReservedName(const Identifier &name) const;
 	//! Attach a new database
 	shared_ptr<AttachedDatabase> AttachDatabase(ClientContext &context, AttachInfo &info, AttachOptions &options);
 
@@ -144,12 +142,6 @@ public:
 		}
 		return oid;
 	}
-	idx_t NextCatalogChange() {
-		return next_catalog_change.fetch_add(1, std::memory_order_relaxed);
-	}
-	void CommitPrepared(const hugeint_t &txid, vector<pair<idx_t, idx_t>> participants);
-	bool IsPreparedCommitted(const hugeint_t &txid);
-	void RetainPrepared(const std::function<bool(const hugeint_t &, const vector<pair<idx_t, idx_t>> &)> &keep);
 	bool HasAttachedDatabase() {
 		lock_guard<mutex> guard(databases_lock);
 		return !databases.empty();
@@ -178,10 +170,7 @@ private:
 	Identifier default_database;
 	//! The next object id handed out by the NextOid method
 	atomic<idx_t> next_oid;
-	atomic<idx_t> next_catalog_change {0};
 	atomic<idx_t> next_system_oid;
-	mutex committed_prepared_lock;
-	map<hugeint_t, vector<pair<idx_t, idx_t>>> committed_prepared;
 	//! The current query number
 	atomic<transaction_t> current_query_number;
 	//! The current transaction number

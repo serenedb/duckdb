@@ -142,6 +142,10 @@ unique_ptr<CatalogEntry> DefaultTableFunctionGenerator::CreateTableMacroEntry(Ca
 unique_ptr<CatalogEntry> DefaultTableFunctionGenerator::CreateDefaultEntry(ClientContext &,
                                                                            const Identifier &entry_name) {
 	auto macro = FindTableMacro(internal_table_macros, entry_name, schema.name);
+	if (!macro && ServesDefaults(schema.name, DEFAULT_SCHEMA)) {
+		const Identifier defaults(DEFAULT_SCHEMA);
+		macro = FindTableMacro(internal_table_macros, entry_name, defaults);
+	}
 	if (macro) {
 		return CreateTableMacroEntry(catalog, schema, *macro);
 	}
@@ -154,7 +158,7 @@ vector<Identifier> DefaultTableFunctionGenerator::GetDefaultEntries() {
 		if (StringUtil::Lower(internal_table_macros[index].name) != internal_table_macros[index].name) {
 			throw InternalException("Default macro name %s should be lowercase", internal_table_macros[index].name);
 		}
-		if (internal_table_macros[index].schema == schema.name) {
+		if (ServesDefaults(schema.name, internal_table_macros[index].schema)) {
 			result.emplace_back(internal_table_macros[index].name);
 		}
 	}

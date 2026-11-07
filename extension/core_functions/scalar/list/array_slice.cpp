@@ -431,8 +431,7 @@ unique_ptr<ParsedExpression> ArraySliceUnbind(FunctionUnbindInput &input) {
 		} else if (child.GetExpressionClass() == ExpressionClass::BOUND_FUNCTION) {
 			auto &function = child.Cast<BoundFunctionExpression>();
 			auto &definition = function.Function().GetDefinition();
-			if (definition && definition->GetQualifiedName() == QualifiedName("system", "main", "list_value") &&
-			    function.GetChildren().empty()) {
+			if (definition && definition->GetName() == "list_value" && function.GetChildren().empty()) {
 				continue;
 			}
 		}

@@ -1,38 +1,22 @@
 #include "duckdb/catalog/duck_catalog.hpp"
 #include "duckdb/catalog/dependency_manager.hpp"
 #include "duckdb/catalog/catalog_entry/duck_schema_entry.hpp"
-#include "duckdb/catalog/catalog_entry/duck_index_entry.hpp"
-#include "duckdb/catalog/catalog_entry/duck_table_entry.hpp"
-#include "duckdb/catalog/standard_entry.hpp"
 #include "duckdb/storage/storage_manager.hpp"
 #include "duckdb/parser/parsed_data/drop_info.hpp"
 #include "duckdb/parser/parsed_data/alter_schema_info.hpp"
-#include "duckdb/parser/parsed_data/create_database_info.hpp"
-#include "duckdb/parser/parsed_data/create_foreign_server_info.hpp"
-#include "duckdb/parser/parsed_data/create_role_info.hpp"
 #include "duckdb/parser/parsed_data/create_schema_info.hpp"
-#include "duckdb/parser/parsed_data/create_subscription_info.hpp"
-#include "duckdb/catalog/catalog_entry/replication_origin_catalog_entry.hpp"
-#include "duckdb/parser/parsed_data/create_tokenizer_info.hpp"
 #include "duckdb/catalog/default/default_schemas.hpp"
 #include "duckdb/function/built_in_functions.hpp"
 #include "duckdb/main/attached_database.hpp"
-#include "duckdb/main/database_manager.hpp"
 #include "duckdb/transaction/duck_transaction_manager.hpp"
 #include "duckdb/function/function_list.hpp"
 #include "duckdb/common/encryption_state.hpp"
 
 namespace duckdb {
 
-DuckCatalog::DuckCatalog(AttachedDatabase &db, bool case_sensitive_names)
-    : Catalog(db), dependency_manager(make_uniq<DependencyManager>(*this, case_sensitive_names)),
-      schemas(make_uniq<CatalogSet>(*this, IsSystemCatalog() ? make_uniq<DefaultSchemaGenerator>(*this) : nullptr,
-                                    case_sensitive_names)),
-      roles(make_uniq<CatalogSet>(*this, nullptr, case_sensitive_names)),
-      databases(make_uniq<CatalogSet>(*this, nullptr, case_sensitive_names)),
-      foreign_servers(make_uniq<CatalogSet>(*this, nullptr, case_sensitive_names)),
-      subscriptions(make_uniq<CatalogSet>(*this, nullptr, case_sensitive_names)),
-      replication_origins(make_uniq<CatalogSet>(*this, nullptr, case_sensitive_names)) {
+DuckCatalog::DuckCatalog(AttachedDatabase &db)
+    : Catalog(db), dependency_manager(make_uniq<DependencyManager>(*this)),
+      schemas(make_uniq<CatalogSet>(*this, IsSystemCatalog() ? make_uniq<DefaultSchemaGenerator>(*this) : nullptr)) {
 }
 
 DuckCatalog::~DuckCatalog() {
@@ -49,7 +33,6 @@ void DuckCatalog::Initialize(bool load_builtin) {
 	info.SetQualifiedName(QualifiedName({Identifier::DefaultSchema()}, Identifier()));
 	info.internal = true;
 	info.on_conflict = OnCreateConflict::IGNORE_ON_CONFLICT;
-	info.oid = DefaultSchemaOid();
 	CreateSchema(data, info);
 
 	if (load_builtin) {
@@ -67,43 +50,6 @@ bool DuckCatalog::IsDuckCatalog() {
 	return true;
 }
 
-namespace {
-
-CatalogType SchemaSetOf(CatalogType type) {
-	switch (type) {
-	case CatalogType::VIEW_ENTRY:
-		return CatalogType::TABLE_ENTRY;
-	case CatalogType::TABLE_MACRO_ENTRY:
-		return CatalogType::TABLE_FUNCTION_ENTRY;
-	case CatalogType::AGGREGATE_FUNCTION_ENTRY:
-	case CatalogType::SCALAR_FUNCTION_ENTRY:
-	case CatalogType::WINDOW_FUNCTION_ENTRY:
-		return CatalogType::MACRO_ENTRY;
-	default:
-		return type;
-	}
-}
-
-} // namespace
-
-optional_ptr<SchemaCatalogEntry> DuckCatalog::FindSchemaById(ClientContext &context, idx_t id) {
-	auto entry = GetOidIndex().GetVisible(id, GetCatalogTransaction(context).view);
-	if (!entry || entry->type != CatalogType::SCHEMA_ENTRY) {
-		return nullptr;
-	}
-	return &entry->Cast<SchemaCatalogEntry>();
-}
-
-optional_ptr<CatalogEntry> DuckCatalog::FindEntryById(optional_ptr<ClientContext> context, CatalogType type, idx_t id) {
-	auto entry =
-	    context ? GetOidIndex().GetVisible(id, GetCatalogTransaction(*context).view) : GetOidIndex().GetCommitted(id);
-	if (!entry || entry->internal || entry->type == CatalogType::SCHEMA_ENTRY ||
-	    SchemaSetOf(entry->type) != SchemaSetOf(type)) {
-		return nullptr;
-	}
-	return entry;
-}
-
 bool DuckCatalog::SupportsMultipleDMLCTEs() const {
 	return true;
 }
@@ -112,19 +58,23 @@ optional_ptr<DependencyManager> DuckCatalog::GetDependencyManager() {
 	return dependency_manager.get();
 }
 
+void DuckCatalog::ScanSubjects(CatalogTransaction transaction, CatalogEntry &entry,
+                               const std::function<void(CatalogEntry &)> &callback) {
+	dependency_manager->ScanEdges(transaction, entry, true,
+	                              [&](CatalogEntry &subject, const DependencyDependentFlags &) { callback(subject); });
+}
+
+catalog_entry_vector_t DuckCatalog::OwnedEntries(CatalogTransaction transaction, const CatalogEntry &owner) {
+	return dependency_manager->OwnedEntries(transaction, owner);
+}
+
+optional_ptr<CatalogEntry> DuckCatalog::OwnerOf(CatalogTransaction transaction, CatalogEntry &owned) {
+	return dependency_manager->OwnerOf(transaction, owned);
+}
+
 //===--------------------------------------------------------------------===//
 // Schema
 //===--------------------------------------------------------------------===//
-unique_ptr<IndexCatalogEntry> DuckCatalog::MakeIndexEntry(DuckSchemaEntry &schema, CreateIndexInfo &info,
-                                                          CatalogEntry &relation) {
-	return make_uniq<DuckIndexEntry>(*this, schema, info, relation.Cast<TableCatalogEntry>());
-}
-
-unique_ptr<TableCatalogEntry> DuckCatalog::MakeTableEntry(CatalogTransaction transaction, DuckSchemaEntry &schema,
-                                                          BoundCreateTableInfo &info) {
-	return make_uniq<DuckTableEntry>(*this, schema, info);
-}
-
 optional_ptr<CatalogEntry> DuckCatalog::CreateSchemaInternal(CatalogTransaction transaction, CreateSchemaInfo &info) {
 	LogicalDependencyList dependencies;
 
@@ -160,7 +110,7 @@ void DuckCatalog::AlterSchema(CatalogTransaction transaction, SchemaCatalogEntry
 	case AlterSchemaType::RESET_SCHEMA_OPTIONS:
 		throw NotImplementedException("RESET (<options>) is not supported for DuckDB schemas");
 	case AlterSchemaType::RENAME_SCHEMA:
-		return AlterSchemaEntry(transaction, schema, info);
+		throw NotImplementedException("Altering schemas is not yet supported");
 	default:
 		throw InternalException("Unrecognized alter schema type!");
 	}
@@ -201,164 +151,6 @@ void DuckCatalog::DropSchema(CatalogTransaction transaction, DropInfo &info) {
 
 void DuckCatalog::DropSchema(ClientContext &context, DropInfo &info) {
 	DropSchema(GetCatalogTransaction(context), info);
-}
-
-void DuckCatalog::AlterSchemaEntry(CatalogTransaction transaction, SchemaCatalogEntry &schema, AlterInfo &info) {
-	auto parent_path = schema.GetParentSchemaPath(transaction);
-	auto &set = parent_path.empty() ? *schemas
-	                                : GetSchema(transaction, parent_path, OnEntryNotFound::THROW_EXCEPTION)
-	                                      ->Cast<DuckSchemaEntry>()
-	                                      .GetCatalogSet(CatalogType::SCHEMA_ENTRY);
-	if (!set.AlterEntry(transaction, schema.name, info)) {
-		if (info.if_not_found == OnEntryNotFound::THROW_EXCEPTION) {
-			throw CatalogException::MissingEntry(CatalogType::SCHEMA_ENTRY, schema.name, string());
-		}
-	}
-}
-
-unique_ptr<InCatalogEntry> DuckCatalog::MakeRoleEntry(CreateRoleInfo &info) {
-	throw NotImplementedException("Roles are not supported by this catalog");
-}
-
-unique_ptr<InCatalogEntry> DuckCatalog::MakeDatabaseEntry(CreateDatabaseInfo &info) {
-	throw NotImplementedException("Database entries are not supported by this catalog");
-}
-
-unique_ptr<InCatalogEntry> DuckCatalog::MakeForeignServerEntry(CreateForeignServerInfo &info) {
-	throw NotImplementedException("Foreign servers are not supported by this catalog");
-}
-
-unique_ptr<InCatalogEntry> DuckCatalog::MakeSubscriptionEntry(CreateSubscriptionInfo &info) {
-	throw NotImplementedException("Subscriptions are not supported by this catalog");
-}
-
-unique_ptr<StandardEntry> DuckCatalog::MakeTokenizerEntry(CatalogTransaction transaction, DuckSchemaEntry &schema,
-                                                          CreateTokenizerInfo &info) {
-	throw NotImplementedException("Text search dictionaries are not supported by this catalog");
-}
-
-unique_ptr<StandardEntry> DuckCatalog::MakeJobEntry(CatalogTransaction transaction, DuckSchemaEntry &schema,
-                                                    CreateJobInfo &info) {
-	throw NotImplementedException("Jobs are not supported by this catalog");
-}
-
-optional_ptr<CatalogEntry> DuckCatalog::AddEntry(CatalogTransaction transaction, unique_ptr<InCatalogEntry> entry,
-                                                 OnCreateConflict on_conflict) {
-	auto entry_name = entry->name;
-	auto entry_type = entry->type;
-	auto result = entry.get();
-	auto &set = GetCatalogSet(entry_type);
-	if (on_conflict == OnCreateConflict::IGNORE_ON_CONFLICT && set.GetEntry(transaction, entry_name)) {
-		return nullptr;
-	}
-	if (on_conflict == OnCreateConflict::REPLACE_ON_CONFLICT) {
-		auto old_entry = set.GetEntry(transaction, entry_name);
-		if (old_entry) {
-			entry->permissions = old_entry->permissions;
-			(void)set.DropEntry(transaction, entry_name, false, entry->internal);
-		}
-	}
-	if (!set.CreateEntry(transaction, entry_name, std::move(entry), LogicalDependencyList())) {
-		if (on_conflict == OnCreateConflict::ERROR_ON_CONFLICT) {
-			throw CatalogException::EntryAlreadyExists(entry_type, entry_name);
-		}
-		return nullptr;
-	}
-	return result;
-}
-
-optional_ptr<CatalogEntry> DuckCatalog::CreateRole(CatalogTransaction transaction, CreateRoleInfo &info) {
-	return AddEntry(transaction, MakeRoleEntry(info), info.on_conflict);
-}
-
-optional_ptr<CatalogEntry> DuckCatalog::CreateDatabase(CatalogTransaction transaction, CreateDatabaseInfo &info) {
-	return AddEntry(transaction, MakeDatabaseEntry(info), info.on_conflict);
-}
-
-optional_ptr<CatalogEntry> DuckCatalog::CreateForeignServer(CatalogTransaction transaction,
-                                                            CreateForeignServerInfo &info) {
-	return AddEntry(transaction, MakeForeignServerEntry(info), info.on_conflict);
-}
-
-optional_ptr<CatalogEntry> DuckCatalog::CreateSubscription(CatalogTransaction transaction,
-                                                           CreateSubscriptionInfo &info) {
-	return AddEntry(transaction, MakeSubscriptionEntry(info), info.on_conflict);
-}
-
-optional_ptr<CatalogEntry> DuckCatalog::CreateReplicationOrigin(CatalogTransaction transaction,
-                                                                CreateReplicationOriginInfo &info) {
-	return AddEntry(transaction, make_uniq<ReplicationOriginCatalogEntry>(*this, info), info.on_conflict);
-}
-
-void DuckCatalog::DropRole(CatalogTransaction transaction, DropInfo &info) {
-	D_ASSERT(!info.GetQualifiedName().Name().empty());
-	if (!roles->DropEntry(transaction, info.GetQualifiedName().Name(), info.cascade)) {
-		if (info.if_not_found == OnEntryNotFound::THROW_EXCEPTION) {
-			throw CatalogException::MissingEntry(CatalogType::ROLE_ENTRY, info.GetQualifiedName().Name(), string());
-		}
-	}
-}
-
-void DuckCatalog::DropDatabase(CatalogTransaction transaction, DropInfo &info) {
-	auto &name = info.GetQualifiedName().Name();
-	D_ASSERT(!name.empty());
-	if (!databases->DropEntry(transaction, name, info.cascade)) {
-		if (info.if_not_found == OnEntryNotFound::THROW_EXCEPTION) {
-			throw CatalogException::MissingEntry(CatalogType::DATABASE_ENTRY, name, string());
-		}
-		return;
-	}
-	auto &context = transaction.GetContext();
-	DatabaseManager::Get(context).DetachDatabase(context, name, OnEntryNotFound::RETURN_NULL);
-}
-
-void DuckCatalog::DropForeignServer(CatalogTransaction transaction, DropInfo &info) {
-	D_ASSERT(!info.GetQualifiedName().Name().empty());
-	if (!foreign_servers->DropEntry(transaction, info.GetQualifiedName().Name(), info.cascade)) {
-		if (info.if_not_found == OnEntryNotFound::THROW_EXCEPTION) {
-			throw CatalogException::MissingEntry(CatalogType::FOREIGN_SERVER_ENTRY, info.GetQualifiedName().Name(),
-			                                     string());
-		}
-	}
-}
-
-void DuckCatalog::DropReplicationOrigin(CatalogTransaction transaction, DropInfo &info) {
-	D_ASSERT(!info.GetQualifiedName().Name().empty());
-	if (!replication_origins->DropEntry(transaction, info.GetQualifiedName().Name(), info.cascade)) {
-		if (info.if_not_found == OnEntryNotFound::THROW_EXCEPTION) {
-			throw CatalogException::MissingEntry(CatalogType::REPLICATION_ORIGIN_ENTRY, info.GetQualifiedName().Name(),
-			                                     string());
-		}
-	}
-}
-
-void DuckCatalog::DropSubscription(CatalogTransaction transaction, DropInfo &info) {
-	D_ASSERT(!info.GetQualifiedName().Name().empty());
-	if (!subscriptions->DropEntry(transaction, info.GetQualifiedName().Name(), info.cascade)) {
-		if (info.if_not_found == OnEntryNotFound::THROW_EXCEPTION) {
-			throw CatalogException::MissingEntry(CatalogType::SUBSCRIPTION_ENTRY, info.GetQualifiedName().Name(),
-			                                     string());
-		}
-	}
-}
-
-CatalogSet &DuckCatalog::GetCatalogSet(CatalogType type) {
-	switch (type) {
-	case CatalogType::SCHEMA_ENTRY:
-		return *schemas;
-	case CatalogType::ROLE_ENTRY:
-		return *roles;
-	case CatalogType::DATABASE_ENTRY:
-		return *databases;
-	case CatalogType::FOREIGN_SERVER_ENTRY:
-		return *foreign_servers;
-	case CatalogType::SUBSCRIPTION_ENTRY:
-		return *subscriptions;
-	case CatalogType::REPLICATION_ORIGIN_ENTRY:
-		return *replication_origins;
-	default:
-		throw InternalException("Unsupported catalog type in catalog: %s", CatalogTypeToString(type));
-	}
 }
 
 void DuckCatalog::ScanSchemas(ClientContext &context, std::function<void(SchemaCatalogEntry &)> callback) {
@@ -423,11 +215,6 @@ void DuckCatalog::Verify() {
 	DUCKDB_DEBUG_VERIFY_GUARD();
 	Catalog::Verify();
 	schemas->Verify(*this);
-	roles->Verify(*this);
-	databases->Verify(*this);
-	foreign_servers->Verify(*this);
-	subscriptions->Verify(*this);
-	replication_origins->Verify(*this);
 #endif
 }
 

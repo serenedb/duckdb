@@ -2,14 +2,12 @@
 
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/catalog/catalog_entry/duck_table_entry.hpp"
-#include "duckdb/catalog/catalog_entry/index_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/schema_catalog_entry.hpp"
 #include "duckdb/common/algorithm.hpp"
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/enum_util.hpp"
 #include "duckdb/common/logical_type_info.hpp"
 #include "duckdb/main/database.hpp"
-#include "duckdb/main/database_manager.hpp"
 #include "duckdb/main/settings.hpp"
 #include "duckdb/parser/constraints/list.hpp"
 #include "duckdb/parser/expression/cast_expression.hpp"
@@ -33,50 +31,12 @@ namespace duckdb {
 
 constexpr const char *TableCatalogEntry::Name;
 
-static void AssignConstraintOids(Catalog &catalog, vector<unique_ptr<Constraint>> &constraints) {
-	auto &manager = catalog.GetDatabase().GetDatabaseManager();
-	const bool assign = catalog.Compatibility() == SqlCompatibility::POSTGRES;
-	auto assign_oid = [&](idx_t &oid) {
-		if (oid) {
-			manager.ClaimOid(oid);
-		} else if (assign) {
-			oid = manager.NextOid();
-		}
-	};
-	for (auto &constraint : constraints) {
-		assign_oid(constraint->oid);
-		if (constraint->type == ConstraintType::UNIQUE) {
-			assign_oid(constraint->Cast<UniqueConstraint>().index_oid);
-		}
-	}
-}
-
-bool TableCatalogEntry::OwnsIndex(const IndexCatalogEntry &index) const {
-	return index.table_oid == oid;
-}
-
-void TableCatalogEntry::AssignColumnOids(Catalog &catalog, ColumnList &columns) {
-	auto &manager = catalog.GetDatabase().GetDatabaseManager();
-	const bool assign = catalog.Compatibility() == SqlCompatibility::POSTGRES;
-	for (idx_t i = 0; i < columns.LogicalColumnCount(); i++) {
-		auto &column = columns.GetColumnMutable(LogicalIndex(i));
-		if (column.CatalogOid()) {
-			manager.ClaimOid(column.CatalogOid());
-		} else if (assign) {
-			column.SetCatalogOid(manager.NextOid());
-		}
-	}
-}
-
 TableCatalogEntry::TableCatalogEntry(Catalog &catalog, SchemaCatalogEntry &schema, CreateTableInfo &info,
                                      shared_ptr<CatalogSet> inherited_triggers)
     : StandardEntry(CatalogType::TABLE_ENTRY, schema, catalog, info.GetTableName(), info.oid),
       constraints(std::move(info.constraints)), triggers(std::move(inherited_triggers)) {
-	if (catalog.IsDuckCatalog()) {
-		if (!triggers) {
-			triggers = make_shared_ptr<CatalogSet>(catalog);
-		}
-		AssignConstraintOids(catalog, constraints);
+	if (catalog.IsDuckCatalog() && !triggers) {
+		triggers = make_shared_ptr<CatalogSet>(catalog);
 	}
 	this->temporary = info.temporary;
 	this->dependencies = info.dependencies;
@@ -289,18 +249,15 @@ const vector<unique_ptr<Constraint>> &TableCatalogEntry::GetConstraints() const 
 DataTable &TableCatalogEntry::GetStorage() {
 	throw InternalException("Calling GetStorage on a TableCatalogEntry that is not a DuckTableEntry");
 }
+
+void TableCatalogEntry::InternalAppend(ClientContext &context, ColumnDataCollection &collection) {
+	throw InternalException("Calling InternalAppend on a TableCatalogEntry that does not support it");
+}
 // LCOV_EXCL_STOP
 
-DuckTableEntry &TableCatalogEntry::GetStorageTableEntry(ClientContext &context) {
-	return Cast<DuckTableEntry>();
-}
-
-void LogicalUpdate::BindExtraColumns(TableCatalogEntry &table, LogicalGet &get, LogicalProjection &proj,
-                                     LogicalUpdate &update, physical_index_set_t &bound_columns,
-                                     bool reuse_projected_columns) {
-	if (bound_columns.size() <= 1) {
-		return;
-	}
+static void BindMissingColumns(TableCatalogEntry &table, LogicalGet &get, LogicalProjection &proj,
+                               LogicalUpdate &update, const physical_index_set_t &bound_columns,
+                               bool reuse_projected_columns) {
 	idx_t found_column_count = 0;
 	physical_index_set_t found_columns;
 	for (idx_t i = 0; i < update.columns.size(); i++) {
@@ -313,11 +270,15 @@ void LogicalUpdate::BindExtraColumns(TableCatalogEntry &table, LogicalGet &get, 
 	if (found_column_count != bound_columns.size()) {
 		// columns that were required are not all part of the UPDATE
 		// add them to the scan and update set
+		vector<PhysicalIndex> missing;
 		for (auto &physical_id : bound_columns) {
-			if (found_columns.find(physical_id) != found_columns.end()) {
-				// column is already projected
-				continue;
+			if (found_columns.find(physical_id) == found_columns.end()) {
+				missing.push_back(physical_id);
 			}
+		}
+		std::sort(missing.begin(), missing.end(),
+		          [](PhysicalIndex left, PhysicalIndex right) { return left.index < right.index; });
+		for (auto physical_id : missing) {
 			// column is not projected yet: project it by adding the clause "i=i" to the set of updated columns
 			auto &column = table.GetColumns().GetColumn(physical_id);
 			auto column_id = column.Logical().index;
@@ -335,13 +296,22 @@ void LogicalUpdate::BindExtraColumns(TableCatalogEntry &table, LogicalGet &get, 
 	}
 }
 
+void LogicalUpdate::BindExtraColumns(TableCatalogEntry &table, LogicalGet &get, LogicalProjection &proj,
+                                     LogicalUpdate &update, physical_index_set_t &bound_columns,
+                                     bool reuse_projected_columns) {
+	if (bound_columns.size() <= 1) {
+		return;
+	}
+	BindMissingColumns(table, get, proj, update, bound_columns, reuse_projected_columns);
+}
+
 void LogicalUpdate::BindAllColumns(TableCatalogEntry &table, LogicalGet &get, LogicalProjection &proj,
                                    LogicalUpdate &update, bool reuse_projected_columns) {
 	physical_index_set_t all_columns;
 	for (auto &column : table.GetColumns().Physical()) {
 		all_columns.insert(column.Physical());
 	}
-	BindExtraColumns(table, get, proj, update, all_columns, reuse_projected_columns);
+	BindMissingColumns(table, get, proj, update, all_columns, reuse_projected_columns);
 }
 
 vector<ColumnSegmentInfo> TableCatalogEntry::GetColumnSegmentInfo(const QueryContext &context,
@@ -625,6 +595,22 @@ bool TableCatalogEntry::DropTrigger(CatalogTransaction transaction, const Identi
 		throw NotImplementedException("Triggers are not supported for this table type");
 	}
 	return triggers->DropEntry(transaction, name, cascade);
+}
+
+vector<reference<TableCatalogEntry>> TableCatalogEntry::ReferencingTables(ClientContext &context) {
+	vector<reference<TableCatalogEntry>> result;
+	for (auto &constraint : GetConstraints()) {
+		if (constraint->type != ConstraintType::FOREIGN_KEY) {
+			continue;
+		}
+		auto &foreign_key = constraint->Cast<ForeignKeyConstraint>();
+		if (foreign_key.info.type != ForeignKeyType::FK_TYPE_PRIMARY_KEY_TABLE) {
+			continue;
+		}
+		result.push_back(Catalog::GetEntry<TableCatalogEntry>(
+		    context, QualifiedName(ParentCatalog().GetName(), foreign_key.info.schema, foreign_key.info.table)));
+	}
+	return result;
 }
 
 void TableCatalogEntry::RenameTriggerColumns(ClientContext &context, const RenameColumnInfo &info) {

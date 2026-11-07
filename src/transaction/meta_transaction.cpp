@@ -6,15 +6,7 @@
 #include "duckdb/main/database.hpp"
 #include "duckdb/main/database_manager.hpp"
 #include "duckdb/transaction/transaction_manager.hpp"
-#include "duckdb/common/types/uuid.hpp"
-#include "duckdb/storage/storage_manager.hpp"
-#include "duckdb/storage/write_ahead_log.hpp"
-#include "duckdb/transaction/duck_transaction.hpp"
-#include "duckdb/transaction/duck_transaction_manager.hpp"
-#include "duckdb/transaction/wal_write_state.hpp"
-#include "duckdb/common/algorithm.hpp"
 #include "duckdb/catalog/catalog.hpp"
-#include "duckdb/catalog/dependency_manager.hpp"
 #include "duckdb/main/secret/secret_storage.hpp"
 
 namespace duckdb {
@@ -75,9 +67,6 @@ static void VerifyAllTransactionsUnique(AttachedDatabase &db, vector<reference<A
 
 optional_ptr<Transaction> MetaTransaction::TryGetTransaction(AttachedDatabase &db) {
 	lock_guard<mutex> guard(lock);
-	if (scoped_override_txn && scoped_override_db && RefersToSameObject(*scoped_override_db, db)) {
-		return scoped_override_txn;
-	}
 	auto entry = transactions.find(db);
 	if (entry == transactions.end()) {
 		return nullptr;
@@ -92,9 +81,6 @@ Transaction &MetaTransaction::GetTransaction(AttachedDatabase &db) {
 	}
 	{
 		lock_guard<mutex> guard(lock);
-		if (scoped_override_txn && scoped_override_db && RefersToSameObject(*scoped_override_db, db)) {
-			return *scoped_override_txn;
-		}
 		auto entry = transactions.find(db);
 		if (entry != transactions.end()) {
 			D_ASSERT(entry->second.transaction.active_query == active_query);
@@ -142,24 +128,6 @@ void MetaTransaction::RemoveTransaction(AttachedDatabase &db) {
 	}
 }
 
-void MetaTransaction::PushTransactionOverride(AttachedDatabase &db, Transaction &transaction) {
-	lock_guard<mutex> guard(lock);
-	if (scoped_override_txn) {
-		throw InternalException("MetaTransaction::PushTransactionOverride called while an override is already active");
-	}
-	scoped_override_db = &db;
-	scoped_override_txn = &transaction;
-}
-
-void MetaTransaction::PopTransactionOverride(AttachedDatabase &db) {
-	lock_guard<mutex> guard(lock);
-	if (!scoped_override_db || !RefersToSameObject(*scoped_override_db, db)) {
-		throw InternalException("MetaTransaction::PopTransactionOverride called without a matching active override");
-	}
-	scoped_override_db = nullptr;
-	scoped_override_txn = nullptr;
-}
-
 void MetaTransaction::SetReadOnly() {
 	if (modified_database) {
 		throw InternalException("Cannot set MetaTransaction to read only - modifications have already been made");
@@ -175,250 +143,7 @@ Transaction &Transaction::Get(ClientContext &context, Catalog &catalog) {
 	return Transaction::Get(context, catalog.GetAttached());
 }
 
-optional_ptr<Catalog> MetaTransaction::CatalogLogForCommit() {
-	optional_ptr<AttachedDatabase> writer;
-	idx_t writers = 0;
-	bool catalog_changes = false;
-	for (auto &db_ref : all_transactions) {
-		auto &db = db_ref.get();
-		if (db.IsSystem() || db.IsTemporary()) {
-			continue;
-		}
-		auto entry = transactions.find(db);
-		if (entry == transactions.end() || entry->second.state != TransactionState::UNCOMMITTED ||
-		    !entry->second.transaction.IsDuckTransaction()) {
-			continue;
-		}
-		auto &transaction = entry->second.transaction.Cast<DuckTransaction>();
-		if (!transaction.ChangesMade() && !transaction.HasReplicationLsns()) {
-			continue;
-		}
-		if (!db.GetCatalog().UsesCatalogLog()) {
-			return nullptr;
-		}
-		writer = db;
-		writers++;
-		catalog_changes =
-		    catalog_changes || transaction.catalog_version >= TRANSACTION_ID_START || transaction.HasReplicationLsns();
-	}
-	if ((!catalog_changes && writers < 2) || !writer->GetCatalog().CatalogLog()) {
-		return nullptr;
-	}
-	return writer->GetCatalog();
-}
-
-static optional_ptr<DuckTransaction> PreparedParticipant(Transaction &transaction) {
-	if (!transaction.IsDuckTransaction()) {
-		return nullptr;
-	}
-	auto &duck_transaction = transaction.Cast<DuckTransaction>();
-	if (!duck_transaction.prepared) {
-		return nullptr;
-	}
-	return duck_transaction;
-}
-
-ErrorData MetaTransaction::CommitThroughCatalogLog(Catalog &catalog) {
-	auto catalog_log_ref = catalog.CatalogLog();
-	auto &catalog_storage = catalog_log_ref->GetStorageManager();
-	auto &catalog_owner = catalog_storage.GetAttached();
-	auto &log_owner = catalog_owner.GetCatalog();
-	const auto txid = UUID::GenerateRandomUUID();
-	vector<pair<idx_t, idx_t>> prepared;
-	ErrorData error;
-	vector<reference<TransactionReference>> participants;
-	for (idx_t i = all_transactions.size(); i > 0; i--) {
-		auto &db = all_transactions[i - 1].get();
-		auto &transaction_ref = transactions.find(db)->second;
-		if (transaction_ref.state != TransactionState::UNCOMMITTED) {
-			continue;
-		}
-		if (ValidChecker::IsInvalidated(db)) {
-			error.Merge(ErrorData(IOException("%s", ValidChecker::InvalidatedMessage(db))));
-			break;
-		}
-		participants.push_back(transaction_ref);
-	}
-	std::sort(participants.begin(), participants.end(),
-	          [](const reference<TransactionReference> &a, const reference<TransactionReference> &b) {
-		          return a.get().transaction.manager.GetDB().oid < b.get().transaction.manager.GetDB().oid;
-	          });
-	auto rollback = [&]() {
-		for (auto &participant : participants) {
-			auto &transaction_ref = participant.get();
-			try {
-				transaction_ref.transaction.manager.RollbackTransaction(transaction_ref.transaction);
-			} catch (std::exception &ex) {
-				error.Merge(ErrorData(ex));
-			}
-			transaction_ref.state = TransactionState::ROLLED_BACK;
-		}
-	};
-	if (!error.HasError()) {
-		for (auto &participant : participants) {
-			auto &transaction = participant.get().transaction;
-			auto &transaction_manager = transaction.manager;
-			if (!transaction_manager.IsDuckTransactionManager()) {
-				continue;
-			}
-			error = transaction_manager.Cast<DuckTransactionManager>().PrepareTransaction(
-			    context, transaction, catalog_owner, txid, prepared);
-			if (error.HasError()) {
-				break;
-			}
-		}
-	}
-	if (!error.HasError()) {
-		for (auto &participant : participants) {
-			auto &transaction = participant.get().transaction;
-			if (!PreparedParticipant(transaction)) {
-				continue;
-			}
-			error = transaction.manager.Cast<DuckTransactionManager>().SyncPreparedTransaction(transaction);
-			if (error.HasError()) {
-				break;
-			}
-		}
-	}
-	if (error.HasError()) {
-		rollback();
-		return error;
-	}
-
-	auto catalog_lock = catalog_storage.GetCommitLock();
-	catalog_log_ref = catalog.CatalogLog();
-	auto &catalog_log = *catalog_log_ref;
-	auto commit_state = catalog_storage.GenStorageCommitState(catalog_log);
-	vector<reference<TransactionReference>> applied;
-	try {
-		log_owner.OnCatalogLogPrepared();
-	} catch (std::exception &ex) {
-		error = ErrorData(ex);
-	}
-	if (!error.HasError()) {
-		for (auto &participant : participants) {
-			auto &transaction = participant.get().transaction;
-			if (!PreparedParticipant(transaction)) {
-				continue;
-			}
-			error = transaction.manager.Cast<DuckTransactionManager>().ApplyPreparedTransaction(context, transaction);
-			if (error.HasError()) {
-				break;
-			}
-			applied.push_back(participant);
-		}
-	}
-	idx_t decision_offset = 0;
-	if (!error.HasError()) {
-		try {
-			for (auto &participant : applied) {
-				auto &transaction = participant.get().transaction;
-				auto &prepared = *transaction.Cast<DuckTransaction>().prepared;
-				auto &dependencies = *transaction.manager.GetDB().GetCatalog().GetDependencyManager();
-				dependencies.VerifyForeignSubjects(prepared.foreign_dependencies);
-				dependencies.VerifyForeignDependents(prepared.drop_state.DroppedEntries());
-			}
-			vector<CatalogRun> runs;
-			for (auto &participant : participants) {
-				auto &transaction = participant.get().transaction;
-				auto duck_transaction = PreparedParticipant(transaction);
-				if (duck_transaction) {
-					runs.push_back(
-					    CatalogRun {transaction.manager.GetDB().oid, duck_transaction->prepared->catalog_run});
-				}
-			}
-			WALWriteState::WriteCatalogRuns(catalog_log, runs);
-			for (auto &participant : participants) {
-				auto &transaction = participant.get().transaction;
-				auto duck_transaction = PreparedParticipant(transaction);
-				if (!duck_transaction) {
-					continue;
-				}
-				auto &db = transaction.manager.GetDB();
-				if (db.GetCatalog().UsesCatalogLog()) {
-					duck_transaction->prepared->sequences = duck_transaction->ReserveSequenceUsage(catalog_log);
-					duck_transaction->WriteReplicationLsns(catalog_log);
-				}
-			}
-			if (!prepared.empty()) {
-				catalog_log.WriteCommitPrepared(txid, prepared);
-			}
-			decision_offset = commit_state->FlushCommit(false);
-			if (!prepared.empty()) {
-				DatabaseManager::Get(context).CommitPrepared(txid, std::move(prepared));
-			}
-		} catch (std::exception &ex) {
-			error = ErrorData(ex);
-		}
-	}
-	if (error.HasError()) {
-		for (idx_t i = applied.size(); i > 0; i--) {
-			auto &transaction = applied[i - 1].get().transaction;
-			transaction.manager.Cast<DuckTransactionManager>().RevertPreparedTransaction(transaction);
-		}
-		commit_state->RevertCommit();
-		rollback();
-		return error;
-	}
-	for (auto &participant : participants) {
-		auto duck_transaction = PreparedParticipant(participant.get().transaction);
-		if (!duck_transaction) {
-			continue;
-		}
-		for (auto &value : duck_transaction->prepared->sequences) {
-			value.entry->MarkReserved(value);
-		}
-		duck_transaction->ApplyReplicationLsns();
-		duck_transaction->manager.Cast<DuckTransactionManager>().DecidePreparedTransaction(
-		    *duck_transaction, catalog_log_ref, decision_offset);
-	}
-	catalog_lock.unlock();
-	if (decision_offset > 0) {
-		try {
-			catalog_log.SyncUpTo(decision_offset);
-		} catch (std::exception &ex) {
-			error = ErrorData(ex);
-			for (auto &participant : participants) {
-				ValidChecker::Invalidate(participant.get().transaction.manager.GetDB(),
-				                         "Failed to sync the catalog log after committing: " + error.RawMessage());
-			}
-		}
-	}
-	if (!error.HasError()) {
-		for (auto &participant : participants) {
-			if (auto duck_transaction = PreparedParticipant(participant.get().transaction)) {
-				duck_transaction->ApplyRelationSyncs();
-			}
-		}
-	}
-	log_owner.OnCatalogLogDecided();
-	for (auto &participant : participants) {
-		auto &transaction_ref = participant.get();
-		auto &transaction = transaction_ref.transaction;
-		auto &db = transaction.manager.GetDB();
-		ErrorData commit_error;
-		if (PreparedParticipant(transaction)) {
-			commit_error =
-			    transaction.manager.Cast<DuckTransactionManager>().FinishPreparedTransaction(context, transaction);
-		} else {
-			commit_error = transaction.manager.CommitTransaction(context, transaction);
-		}
-		transaction_ref.state = TransactionState::COMMITTED;
-		if (commit_error.HasError()) {
-			ValidChecker::Invalidate(db, "Failed to apply a transaction whose commit is durable: " +
-			                                 commit_error.RawMessage());
-			error.Merge(commit_error);
-		}
-	}
-	log_owner.EndCatalogLogCommit();
-	return error;
-}
-
 ErrorData MetaTransaction::Commit() {
-	auto catalog = CatalogLogForCommit();
-	if (catalog) {
-		return CommitThroughCatalogLog(*catalog);
-	}
 	ErrorData error;
 #ifdef DEBUG
 	reference_set_t<AttachedDatabase> committed_tx;
@@ -584,8 +309,8 @@ void MetaTransaction::ModifyDatabase(AttachedDatabase &db, DatabaseModificationT
 		modified_database = &db;
 		return;
 	}
-	if (&db != modified_database.get() &&
-	    !(db.GetCatalog().UsesCatalogLog() && modified_database->GetCatalog().UsesCatalogLog())) {
+	if (&db != modified_database.get() && !(db.GetTransactionManager().CommitsAcrossDatabases() &&
+	                                        modified_database->GetTransactionManager().CommitsAcrossDatabases())) {
 		throw TransactionException(
 		    Exception::InitializeExtraInfo("CROSS_DATABASE_WRITE", optional_idx()),
 		    "Attempting to write to database %s in a transaction that has already modified database %s - a "

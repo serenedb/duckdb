@@ -1351,21 +1351,19 @@ const StringUtil::EnumStringLiteral *GetCheckpointAbortValues() {
 		{ static_cast<uint32_t>(CheckpointAbort::DEBUG_ABORT_BEFORE_DELETING_CHECKPOINT_WAL), "BEFORE_DELETING_CHECKPOINT_WAL" },
 		{ static_cast<uint32_t>(CheckpointAbort::DEBUG_ABORT_BEFORE_HEADER_NON_FATAL), "BEFORE_HEADER_NON_FATAL" },
 		{ static_cast<uint32_t>(CheckpointAbort::DEBUG_ABORT_IN_MEMORY_CHECKPOINT), "IN_MEMORY_CHECKPOINT" },
-		{ static_cast<uint32_t>(CheckpointAbort::DEBUG_ABORT_BEFORE_WAL_FLUSH), "BEFORE_WAL_FLUSH" },
-		{ static_cast<uint32_t>(CheckpointAbort::DEBUG_ABORT_BEFORE_MOVING_CHECKPOINT_WAL), "BEFORE_MOVING_CHECKPOINT_WAL" },
-		{ static_cast<uint32_t>(CheckpointAbort::DEBUG_ABORT_BEFORE_WAL_FINISH_NON_FATAL), "BEFORE_WAL_FINISH_NON_FATAL" }
+		{ static_cast<uint32_t>(CheckpointAbort::DEBUG_ABORT_BEFORE_WAL_FLUSH), "BEFORE_WAL_FLUSH" }
 	};
 	return values;
 }
 
 template<>
 const char* EnumUtil::ToChars<CheckpointAbort>(CheckpointAbort value) {
-	return StringUtil::EnumToString(GetCheckpointAbortValues(), 12, "CheckpointAbort", static_cast<uint32_t>(value));
+	return StringUtil::EnumToString(GetCheckpointAbortValues(), 10, "CheckpointAbort", static_cast<uint32_t>(value));
 }
 
 template<>
 CheckpointAbort EnumUtil::FromString<CheckpointAbort>(std::string_view value) {
-	return static_cast<CheckpointAbort>(StringUtil::StringToEnum(GetCheckpointAbortValues(), 12, "CheckpointAbort", value));
+	return static_cast<CheckpointAbort>(StringUtil::StringToEnum(GetCheckpointAbortValues(), 10, "CheckpointAbort", value));
 }
 
 const StringUtil::EnumStringLiteral *GetCheckpointOnDetachValues() {
@@ -3902,6 +3900,7 @@ const StringUtil::EnumStringLiteral *GetLogicalOperatorTypeValues() {
 		{ static_cast<uint32_t>(LogicalOperatorType::LOGICAL_CREATE_ROLE), "LOGICAL_CREATE_ROLE" },
 		{ static_cast<uint32_t>(LogicalOperatorType::LOGICAL_CREATE_FOREIGN_SERVER), "LOGICAL_CREATE_FOREIGN_SERVER" },
 		{ static_cast<uint32_t>(LogicalOperatorType::LOGICAL_CREATE_TOKENIZER), "LOGICAL_CREATE_TOKENIZER" },
+		{ static_cast<uint32_t>(LogicalOperatorType::LOGICAL_CREATE_DATABASE), "LOGICAL_CREATE_DATABASE" },
 		{ static_cast<uint32_t>(LogicalOperatorType::LOGICAL_EXPLAIN), "LOGICAL_EXPLAIN" },
 		{ static_cast<uint32_t>(LogicalOperatorType::LOGICAL_PREPARE), "LOGICAL_PREPARE" },
 		{ static_cast<uint32_t>(LogicalOperatorType::LOGICAL_EXECUTE), "LOGICAL_EXECUTE" },
@@ -3922,12 +3921,12 @@ const StringUtil::EnumStringLiteral *GetLogicalOperatorTypeValues() {
 
 template<>
 const char* EnumUtil::ToChars<LogicalOperatorType>(LogicalOperatorType value) {
-	return StringUtil::EnumToString(GetLogicalOperatorTypeValues(), 73, "LogicalOperatorType", static_cast<uint32_t>(value));
+	return StringUtil::EnumToString(GetLogicalOperatorTypeValues(), 74, "LogicalOperatorType", static_cast<uint32_t>(value));
 }
 
 template<>
 LogicalOperatorType EnumUtil::FromString<LogicalOperatorType>(std::string_view value) {
-	return static_cast<LogicalOperatorType>(StringUtil::StringToEnum(GetLogicalOperatorTypeValues(), 73, "LogicalOperatorType", value));
+	return static_cast<LogicalOperatorType>(StringUtil::StringToEnum(GetLogicalOperatorTypeValues(), 74, "LogicalOperatorType", value));
 }
 
 const StringUtil::EnumStringLiteral *GetLogicalPlanVerificationIssueCodeValues() {
@@ -5116,6 +5115,7 @@ const StringUtil::EnumStringLiteral *GetPhysicalOperatorTypeValues() {
 		{ static_cast<uint32_t>(PhysicalOperatorType::CREATE_ROLE), "CREATE_ROLE" },
 		{ static_cast<uint32_t>(PhysicalOperatorType::CREATE_FOREIGN_SERVER), "CREATE_FOREIGN_SERVER" },
 		{ static_cast<uint32_t>(PhysicalOperatorType::CREATE_TOKENIZER), "CREATE_TOKENIZER" },
+		{ static_cast<uint32_t>(PhysicalOperatorType::CREATE_DATABASE), "CREATE_DATABASE" },
 		{ static_cast<uint32_t>(PhysicalOperatorType::ATTACH), "ATTACH" },
 		{ static_cast<uint32_t>(PhysicalOperatorType::DETACH), "DETACH" },
 		{ static_cast<uint32_t>(PhysicalOperatorType::EXPLAIN), "EXPLAIN" },
@@ -5148,12 +5148,12 @@ const StringUtil::EnumStringLiteral *GetPhysicalOperatorTypeValues() {
 
 template<>
 const char* EnumUtil::ToChars<PhysicalOperatorType>(PhysicalOperatorType value) {
-	return StringUtil::EnumToString(GetPhysicalOperatorTypeValues(), 95, "PhysicalOperatorType", static_cast<uint32_t>(value));
+	return StringUtil::EnumToString(GetPhysicalOperatorTypeValues(), 96, "PhysicalOperatorType", static_cast<uint32_t>(value));
 }
 
 template<>
 PhysicalOperatorType EnumUtil::FromString<PhysicalOperatorType>(std::string_view value) {
-	return static_cast<PhysicalOperatorType>(StringUtil::StringToEnum(GetPhysicalOperatorTypeValues(), 95, "PhysicalOperatorType", value));
+	return static_cast<PhysicalOperatorType>(StringUtil::StringToEnum(GetPhysicalOperatorTypeValues(), 96, "PhysicalOperatorType", value));
 }
 
 const StringUtil::EnumStringLiteral *GetPhysicalTableScanExecutionStrategyValues() {
@@ -7703,43 +7703,21 @@ const StringUtil::EnumStringLiteral *GetWALTypeValues() {
 		{ static_cast<uint32_t>(WALType::ROW_GROUP_DATA), "ROW_GROUP_DATA" },
 		{ static_cast<uint32_t>(WALType::CREATE_TRIGGER), "CREATE_TRIGGER" },
 		{ static_cast<uint32_t>(WALType::DROP_TRIGGER), "DROP_TRIGGER" },
-		{ static_cast<uint32_t>(WALType::CREATE_TOKENIZER), "CREATE_TOKENIZER" },
-		{ static_cast<uint32_t>(WALType::DROP_TOKENIZER), "DROP_TOKENIZER" },
-		{ static_cast<uint32_t>(WALType::CREATE_ROLE), "CREATE_ROLE" },
-		{ static_cast<uint32_t>(WALType::DROP_ROLE), "DROP_ROLE" },
-		{ static_cast<uint32_t>(WALType::CREATE_DATABASE), "CREATE_DATABASE" },
-		{ static_cast<uint32_t>(WALType::DROP_DATABASE), "DROP_DATABASE" },
-		{ static_cast<uint32_t>(WALType::CREATE_FOREIGN_SERVER), "CREATE_FOREIGN_SERVER" },
-		{ static_cast<uint32_t>(WALType::DROP_FOREIGN_SERVER), "DROP_FOREIGN_SERVER" },
-		{ static_cast<uint32_t>(WALType::USE_CATALOG), "USE_CATALOG" },
-		{ static_cast<uint32_t>(WALType::CREATE_SUBSCRIPTION), "CREATE_SUBSCRIPTION" },
-		{ static_cast<uint32_t>(WALType::DROP_SUBSCRIPTION), "DROP_SUBSCRIPTION" },
-		{ static_cast<uint32_t>(WALType::REPLICATION_LSN), "REPLICATION_LSN" },
-		{ static_cast<uint32_t>(WALType::CREATE_REPLICATION_ORIGIN), "CREATE_REPLICATION_ORIGIN" },
-		{ static_cast<uint32_t>(WALType::DROP_REPLICATION_ORIGIN), "DROP_REPLICATION_ORIGIN" },
-		{ static_cast<uint32_t>(WALType::CREATE_JOB), "CREATE_JOB" },
-		{ static_cast<uint32_t>(WALType::DROP_JOB), "DROP_JOB" },
-		{ static_cast<uint32_t>(WALType::TRUNCATE_TABLE), "TRUNCATE_TABLE" },
-		{ static_cast<uint32_t>(WALType::ADOPT_SEGMENTS), "ADOPT_SEGMENTS" },
-		{ static_cast<uint32_t>(WALType::DELETE_ROW_POSITIONS), "DELETE_ROW_POSITIONS" },
-		{ static_cast<uint32_t>(WALType::ROW_POSITION_MAPS), "ROW_POSITION_MAPS" },
 		{ static_cast<uint32_t>(WALType::WAL_VERSION), "WAL_VERSION" },
 		{ static_cast<uint32_t>(WALType::CHECKPOINT), "CHECKPOINT" },
-		{ static_cast<uint32_t>(WALType::WAL_FLUSH), "WAL_FLUSH" },
-		{ static_cast<uint32_t>(WALType::WAL_PREPARED), "WAL_PREPARED" },
-		{ static_cast<uint32_t>(WALType::COMMIT_PREPARED), "COMMIT_PREPARED" }
+		{ static_cast<uint32_t>(WALType::WAL_FLUSH), "WAL_FLUSH" }
 	};
 	return values;
 }
 
 template<>
 const char* EnumUtil::ToChars<WALType>(WALType value) {
-	return StringUtil::EnumToString(GetWALTypeValues(), 51, "WALType", static_cast<uint32_t>(value));
+	return StringUtil::EnumToString(GetWALTypeValues(), 29, "WALType", static_cast<uint32_t>(value));
 }
 
 template<>
 WALType EnumUtil::FromString<WALType>(std::string_view value) {
-	return static_cast<WALType>(StringUtil::StringToEnum(GetWALTypeValues(), 51, "WALType", value));
+	return static_cast<WALType>(StringUtil::StringToEnum(GetWALTypeValues(), 29, "WALType", value));
 }
 
 const StringUtil::EnumStringLiteral *GetWindowAggregationModeValues() {

@@ -62,6 +62,7 @@ void ClientContext::BeginQueryInternal(ClientContextLock &lock, const SQLStateme
 	for (auto &state : registered_state->States()) {
 		state->QueryBegin(*this);
 	}
+	OnQueryBegin();
 
 	// Flush the old logger.
 	logger->Flush();
@@ -140,6 +141,7 @@ ErrorData ClientContext::EndQueryInternal(ClientContextLock &lock, bool success,
 			s->QueryEnd(*this, previous_error);
 		}
 	}
+	OnQueryEnd();
 	return error;
 }
 

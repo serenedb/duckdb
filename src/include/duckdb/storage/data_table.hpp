@@ -282,6 +282,8 @@ public:
 	                             optional_ptr<LocalTableStorage> local_storage);
 	static void VerifyRowConstraint(ClientContext &context, const TableCatalogEntry &table,
 	                                const BoundConstraint &constraint, DataChunk &chunk);
+	static void VerifyRowConstraints(ClientContext &context, const TableCatalogEntry &table,
+	                                 const vector<unique_ptr<BoundConstraint>> &bound_constraints, DataChunk &chunk);
 
 	shared_ptr<DataTableInfo> &GetDataTableInfo();
 

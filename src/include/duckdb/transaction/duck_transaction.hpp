@@ -13,20 +13,16 @@
 #include "duckdb/common/error_data.hpp"
 #include "duckdb/common/optional_ptr.hpp"
 #include "duckdb/transaction/undo_buffer.hpp"
-#include "duckdb/transaction/commit_state.hpp"
 #include "duckdb/common/enums/active_transaction_state.hpp"
 
 namespace duckdb {
 class CommitDropState;
-class DependencyEntry;
 class DuckTableEntry;
 class RowGroupCollection;
 class RowVersionManager;
 class DuckTransactionManager;
 class StorageLockKey;
 class StorageCommitState;
-class ReplicationLsnEntry;
-class TransactionLogWriter;
 struct UndoBufferProperties;
 
 struct CommitInfo {
@@ -54,8 +50,6 @@ public:
 	idx_t wal_sync_offset = 0;
 	//! The committed catalog version just before this commit published
 	idx_t catalog_version_before_commit = 0;
-	shared_ptr<WriteAheadLog> decision_log;
-	vector<shared_ptr<TransactionLogWriter>> log_writers;
 
 	atomic<idx_t> catalog_version;
 
@@ -70,8 +64,7 @@ public:
 	static DuckTransaction &Get(ClientContext &context, Catalog &catalog);
 	LocalStorage &GetLocalStorage();
 
-	static constexpr idx_t CATALOG_UNDO_HEADER = sizeof(CatalogEntry *) + sizeof(idx_t);
-	void PushCatalogEntry(CatalogEntry &entry, idx_t change, data_ptr_t extra_data, idx_t extra_data_size);
+	void PushCatalogEntry(CatalogEntry &entry, data_ptr_t extra_data, idx_t extra_data_size);
 	void PushAttach(AttachedDatabase &db);
 
 	void SetModifications(DatabaseModificationType type) override;
@@ -82,15 +75,12 @@ public:
 	ErrorData AppendLocalStorage(ClientContext &context, AttachedDatabase &db,
 	                             unique_ptr<StorageCommitState> &commit_state) noexcept;
 	//! Writes the undo buffer to the WAL, with the commit state of AppendLocalStorage
-	ErrorData WriteToWAL(ClientContext &context, AttachedDatabase &db, unique_ptr<StorageCommitState> &commit_state,
-	                     optional_ptr<vector<CatalogRunEntry>> catalog_run = nullptr) noexcept;
+	ErrorData WriteToWAL(ClientContext &context, AttachedDatabase &db,
+	                     unique_ptr<StorageCommitState> &commit_state) noexcept;
 	//! Commit the current transaction with the given commit identifier. Returns an error message if the transaction
 	//! commit failed, or an empty string if the commit was successful
 	ErrorData Commit(AttachedDatabase &db, CommitInfo &commit_info,
 	                 unique_ptr<StorageCommitState> commit_state) noexcept;
-	ErrorData ApplyPrepared(AttachedDatabase &db, CommitInfo &commit_info) noexcept;
-	void RevertPrepared();
-	void FinishPrepared();
 	//! Returns whether or not a commit of this transaction should trigger an automatic checkpoint
 	bool AutomaticCheckpoint(AttachedDatabase &db, const UndoBufferProperties &properties);
 
@@ -106,21 +96,6 @@ public:
 	void PushDelete(DuckTableEntry &table_entry, RowVersionManager &info, idx_t vector_idx, row_t rows[], idx_t count,
 	                idx_t base_row);
 	void PushSequenceUsage(const SequenceValue &value);
-	bool HasLoggedSequenceUsage();
-	void CoverSequenceUsage();
-	vector<SequenceValue> ReserveSequenceUsage(WriteAheadLog &catalog_log);
-	//! Raises the entry's remote LSN to at least remote_lsn when the transaction commits
-	void PushReplicationLsn(ReplicationLsnEntry &entry, uint64_t remote_lsn);
-	//! Sets the entry's remote LSN to remote_lsn when the transaction commits, even if that moves it back
-	void AssignReplicationLsn(ReplicationLsnEntry &entry, uint64_t remote_lsn);
-	void ForgetReplicationLsn(ReplicationLsnEntry &entry);
-	//! Records at commit that the relation with this sync id was copied at remote_lsn
-	void PushRelationSync(ReplicationLsnEntry &entry, idx_t relation, uint64_t remote_lsn);
-	bool HasReplicationLsns();
-	void WriteReplicationLsns(WriteAheadLog &catalog_log);
-	void ApplyReplicationLsns();
-	//! Marks the relations synchronized; only once the commit is durable, as snapshots see it only from then on
-	void ApplyRelationSyncs();
 	void PushAppend(DuckTableEntry &table_entry, idx_t row_start, idx_t row_count);
 	UndoBufferReference CreateUpdateInfo(DuckTableEntry &table_entry, idx_t type_size, idx_t entries,
 	                                     idx_t row_group_start);
@@ -140,23 +115,6 @@ public:
 		is_checkpoint_transaction = true;
 	}
 
-	struct PreparedCommit {
-		explicit PreparedCommit(optional_ptr<BlockManager> block_manager);
-		~PreparedCommit();
-
-		vector<unique_ptr<StorageLockKey>> table_locks;
-		unique_lock<mutex> commit_lock;
-		unique_ptr<StorageCommitState> commit_state;
-		idx_t prepared_offset = 0;
-		vector<CatalogRunEntry> catalog_run;
-		vector<SequenceValue> sequences;
-		UndoBuffer::IteratorState iterator_state;
-		CommitDropState drop_state;
-		vector<reference<DependencyEntry>> foreign_dependencies;
-		bool applied = false;
-	};
-	unique_ptr<PreparedCommit> prepared;
-
 private:
 	//! The undo buffer is used to store old versions of rows that are updated
 	//! or deleted
@@ -170,19 +128,6 @@ private:
 	//! Lock for accessing sequence_usage
 	mutex sequence_lock;
 	reference_map_t<SequenceCatalogEntry, reference<SequenceValue>> sequence_usage;
-	reference_map_t<SequenceCatalogEntry, uint64_t> logged_sequence_usage;
-	struct ReplicationLsnUpdate {
-		uint64_t remote_lsn;
-		bool assign;
-	};
-	mutex replication_lock;
-	reference_map_t<ReplicationLsnEntry, ReplicationLsnUpdate> replication_lsns;
-	struct RelationSync {
-		reference<ReplicationLsnEntry> entry;
-		idx_t relation;
-		uint64_t remote_lsn;
-	};
-	vector<RelationSync> relation_syncs;
 	//! Flag to prevent auto-checkpointing inside a checkpoint transaction.
 	bool is_checkpoint_transaction = false;
 };

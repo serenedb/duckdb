@@ -239,9 +239,13 @@ BoundStatement Binder::BindNode(MergeQueryNode &node) {
 	if (bound_table.plan->type != LogicalOperatorType::LOGICAL_GET) {
 		throw BinderException("Can only merge into base tables!");
 	}
-	auto table_ptr = bound_table.plan->Cast<LogicalGet>().GetTable();
+	auto &target_get = bound_table.plan->Cast<LogicalGet>();
+	auto table_ptr = target_get.GetTable();
 	if (!table_ptr) {
 		throw BinderException("Can only merge into base tables!");
+	}
+	if (target_get.function.verify_dml_target) {
+		target_get.function.verify_dml_target(context, target_get.bind_data.get());
 	}
 	if (node.target->type == TableReferenceType::BASE_TABLE) {
 		// A catalog may delegate the scan of its table to a storage table in

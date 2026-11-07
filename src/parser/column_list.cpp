@@ -179,9 +179,9 @@ unique_ptr<ParsedExpression> ColumnList::SharedGeneratedExpression(const ColumnD
 		    }
 	    });
 	arguments[0] = make_uniq<LambdaExpression>(std::move(parameters), std::move(expression));
-	return make_uniq<FunctionExpression>(
-	    QualifiedName(Identifier(SYSTEM_CATALOG), Identifier(DEFAULT_SCHEMA), Identifier("invoke")),
-	    std::move(arguments));
+	auto invoke = make_uniq<FunctionExpression>("invoke", std::move(arguments));
+	invoke->BuiltinMutable() = true;
+	return std::move(invoke);
 }
 
 PhysicalIndex ColumnList::LogicalToPhysical(LogicalIndex logical) const {

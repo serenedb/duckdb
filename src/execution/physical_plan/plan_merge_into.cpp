@@ -59,7 +59,7 @@ unique_ptr<MergeIntoOperator> PlanMergeIntoAction(ClientContext &context, Logica
 	}
 
 	auto cardinality = op.estimated_cardinality;
-	auto &storage_table = op.table.GetStorageTableEntry(context);
+	auto &storage_table = op.table.Cast<DuckTableEntry>();
 	switch (action.action_type) {
 	case MergeActionType::MERGE_UPDATE: {
 		vector<unique_ptr<Expression>> defaults;
@@ -212,6 +212,7 @@ static unique_ptr<MergeIntoOperator> PlanGenericMergeIntoAction(ClientContext &c
 		LogicalUpdate update(op.table);
 		update.columns = std::move(action.columns);
 		update.expressions = std::move(update_expressions);
+		update.return_chunk = op.return_chunk;
 		update.update_is_del_and_insert = action.update_is_del_and_insert;
 		update.update_column_count = action.update_column_count;
 		update.bound_constraints = CopyBoundConstraints(op);
@@ -224,6 +225,11 @@ static unique_ptr<MergeIntoOperator> PlanGenericMergeIntoAction(ClientContext &c
 		break;
 	}
 	case MergeActionType::MERGE_DELETE: {
+		if (op.return_chunk) {
+			throw NotImplementedException("RETURNING clause not yet supported for MERGE INTO with DELETE for database "
+			                              "type \"%s\"",
+			                              catalog.GetCatalogType());
+		}
 		// a regular DELETE reads the row ids out of its child plan - reference them within the rows of the action
 		auto &action_input = PlanMergeActionSource(planner, plan, condition, *result);
 
@@ -243,6 +249,7 @@ static unique_ptr<MergeIntoOperator> PlanGenericMergeIntoAction(ClientContext &c
 		auto &action_input = PlanMergeActionSource(planner, plan, condition, *result);
 
 		LogicalInsert insert(op.table, TableIndex(0));
+		insert.return_chunk = op.return_chunk;
 		insert.bound_constraints = CopyBoundConstraints(op);
 		for (auto &def : op.bound_defaults) {
 			insert.bound_defaults.push_back(def->Copy());
@@ -265,10 +272,6 @@ static unique_ptr<MergeIntoOperator> PlanGenericMergeIntoAction(ClientContext &c
 
 PhysicalOperator &Catalog::PlanMergeInto(ClientContext &context, PhysicalPlanGenerator &planner, LogicalMergeInto &op,
                                          PhysicalOperator &plan) {
-	if (op.return_chunk) {
-		throw NotImplementedException("RETURNING clause not yet supported for MERGE INTO for database type \"%s\"",
-		                              GetCatalogType());
-	}
 	map<MergeActionCondition, vector<unique_ptr<MergeIntoOperator>>> actions;
 	idx_t append_count = 0;
 	for (auto &entry : op.actions) {
@@ -286,8 +289,9 @@ PhysicalOperator &Catalog::PlanMergeInto(ClientContext &context, PhysicalPlanGen
 	}
 	// multiple operators appending to the same table cannot run concurrently - run their actions one after the other
 	bool serialize_actions = append_count > 1;
+	bool parallel = !serialize_actions && !op.return_chunk;
 	return planner.Make<PhysicalMergeInto>(op.types, plan, std::move(actions), op.row_id_start, op.source_marker,
-	                                       !serialize_actions, op.return_chunk, serialize_actions);
+	                                       parallel, op.return_chunk, serialize_actions);
 }
 
 PhysicalOperator &PhysicalPlanGenerator::CreatePlan(LogicalMergeInto &op) {

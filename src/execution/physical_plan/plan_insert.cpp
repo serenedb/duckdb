@@ -84,7 +84,7 @@ PhysicalOperator &DuckCatalog::PlanInsert(ClientContext &context, PhysicalPlanGe
 		parallel_streaming_insert = false;
 		use_batch_index = false;
 	}
-	auto &storage_table = op.table.GetStorageTableEntry(context);
+	auto &storage_table = op.table.Cast<DuckTableEntry>();
 	if (use_batch_index && !parallel_streaming_insert) {
 		auto &insert = planner.Make<PhysicalBatchInsert>(op.types, storage_table, std::move(op.bound_constraints),
 		                                                 op.estimated_cardinality);
