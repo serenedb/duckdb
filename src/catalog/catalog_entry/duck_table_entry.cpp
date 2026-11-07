@@ -1692,6 +1692,12 @@ DataTable &DuckTableEntry::GetStorage() {
 	return *storage;
 }
 
+void DuckTableEntry::InternalAppend(ClientContext &context, ColumnDataCollection &collection) {
+	auto binder = Binder::CreateBinder(context);
+	auto bound_constraints = binder->BindConstraints(*this);
+	storage->LocalAppend(*this, context, collection, bound_constraints, nullptr);
+}
+
 TableFunction DuckTableEntry::GetScanFunction(ClientContext &context, unique_ptr<FunctionData> &bind_data) {
 	bind_data = make_uniq<TableScanBindData>(*this);
 	return TableScanFunction::GetFunction();

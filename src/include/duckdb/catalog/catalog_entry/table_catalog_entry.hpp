@@ -27,6 +27,7 @@
 
 namespace duckdb {
 
+class ColumnDataCollection;
 class DataTable;
 class DuckTableEntry;
 struct CreateTriggerInfo;
@@ -96,6 +97,8 @@ public:
 
 	//! Returns the underlying storage of the table
 	virtual DataTable &GetStorage();
+	//! Appends rows within the current transaction, checking the table's constraints
+	virtual void InternalAppend(ClientContext &context, ColumnDataCollection &collection);
 
 	//! Returns a list of the constraints of the table
 	DUCKDB_API const vector<unique_ptr<Constraint>> &GetConstraints() const;

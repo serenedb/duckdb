@@ -249,6 +249,10 @@ const vector<unique_ptr<Constraint>> &TableCatalogEntry::GetConstraints() const 
 DataTable &TableCatalogEntry::GetStorage() {
 	throw InternalException("Calling GetStorage on a TableCatalogEntry that is not a DuckTableEntry");
 }
+
+void TableCatalogEntry::InternalAppend(ClientContext &context, ColumnDataCollection &collection) {
+	throw InternalException("Calling InternalAppend on a TableCatalogEntry that does not support it");
+}
 // LCOV_EXCL_STOP
 
 static void BindMissingColumns(TableCatalogEntry &table, LogicalGet &get, LogicalProjection &proj,

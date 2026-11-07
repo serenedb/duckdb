@@ -59,6 +59,7 @@ public:
 
 	//! Returns the underlying storage of the table
 	DataTable &GetStorage() override;
+	void InternalAppend(ClientContext &context, ColumnDataCollection &collection) override;
 
 	//! Get statistics of a column (physical or virtual) within the table
 	unique_ptr<BaseStatistics> GetStatistics(ClientContext &context, const StorageIndex &storage_index);
