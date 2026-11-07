@@ -1,0 +1,83 @@
+# name: test/sql/peg_parser/nesting_bounds.test
+# description: Input nested deeper than the stack fails with the stack error while it is parsed
+# group: [peg_parser]
+
+statement error
+FROM query('SELECT ' || repeat('abs(', 300000) || '1' || repeat(')', 300000))
+----
+<REGEX>:.*stack depth limit exceeded.*
+
+statement error
+FROM query('SELECT ' || repeat('(', 300000) || '1' || repeat(')', 300000))
+----
+<REGEX>:.*stack depth limit exceeded.*
+
+statement error
+FROM query('SELECT ' || repeat('NOT ', 300000) || 'true')
+----
+<REGEX>:.*stack depth limit exceeded.*
+
+statement error
+FROM query('SELECT 1' || repeat('::INTEGER', 300000))
+----
+<REGEX>:.*stack depth limit exceeded.*
+
+statement error
+FROM query('SELECT ' || repeat(repeat('NOT ', 900) || 'abs(', 400) || 'true' || repeat(')', 400))
+----
+<REGEX>:.*stack depth limit exceeded.*
+
+statement error
+FROM query('SELECT 1 FROM range(1) t0' || repeat(' JOIN range(1) ON true', 300000))
+----
+<REGEX>:.*stack depth limit exceeded.*
+
+statement error
+FROM query('SELECT 1 FROM range(1)' || repeat(', range(1)', 300000))
+----
+<REGEX>:.*stack depth limit exceeded.*
+
+statement error
+FROM query('SELECT ' || repeat('NOT ', 300000) || 'true, $1, $a')
+----
+<REGEX>:.*Mixing named and positional parameters.*
+
+query I
+FROM query('SELECT ' || repeat('- ', 2000) || '1')
+----
+1
+
+query I
+FROM query('SELECT count(*) FROM range(10) t(i) WHERE ' || repeat('i = 11 OR ', 2000) || 'i < 3')
+----
+3
+
+query I
+FROM query('SELECT count(*) FROM range(10) t(i) WHERE ' || repeat('i < 11 AND ', 2000) || 'i < 3')
+----
+3
+
+statement error
+FROM query('SELECT NULL::' || repeat('STRUCT(a ', 300000) || 'INTEGER' || repeat(')', 300000))
+----
+<REGEX>:.*stack depth limit exceeded.*
+
+statement error
+FROM query('SELECT NULL::' || repeat('MAP(INTEGER, ', 300000) || 'INTEGER' || repeat(')', 300000))
+----
+<REGEX>:.*stack depth limit exceeded.*
+
+statement error
+FROM query('CREATE TABLE deep_type(c ' || repeat('STRUCT(a ', 300000) || 'INTEGER' || repeat(')', 300000) || ')')
+----
+<REGEX>:.*stack depth limit exceeded.*
+
+statement error
+FROM query('SELECT (NULL::INT' || repeat('[]', 300000) || ') IS NULL')
+----
+<REGEX>:.*stack depth limit exceeded.*
+
+query I
+FROM query('SELECT (NULL::' || repeat('STRUCT(a ', 100) || 'INTEGER' || repeat(')', 100) || ') IS NULL')
+----
+true

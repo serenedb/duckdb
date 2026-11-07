@@ -27,8 +27,15 @@ StorageCompatibility StorageCompatibility::FromString(const string &input) {
 	auto storage_version = GetStorageVersion(input.c_str());
 	if (storage_version == StorageVersion::INVALID) {
 		auto candidates = GetStorageCandidates();
-		throw InvalidInputException("The version string '%s' is not a known DuckDB version, valid options are: %s",
+		throw InvalidInputException("The version string '%s' is not a known storage version, valid options are: %s",
 		                            input, StringUtil::Join(candidates, ", "));
+	}
+	if (IsSereneDBStorageVersion(storage_version) && !IsReadableStorageVersion(storage_version)) {
+		throw InvalidInputException(
+		    "The storage version '%s' can no longer be read by this version of SereneDB, which reads serenedb "
+		    "versions %s through %s",
+		    input, StorageVersionInfo::GetStorageVersionString(SERENEDB_VERSION_LOWER),
+		    StorageVersionInfo::GetStorageVersionString(SERENEDB_VERSION_UPPER));
 	}
 	StorageCompatibility result;
 	result.duckdb_version = input;
@@ -37,33 +44,46 @@ StorageCompatibility StorageCompatibility::FromString(const string &input) {
 	return result;
 }
 
-StorageCompatibility StorageCompatibility::Default() {
+const StorageCompatibility &StorageCompatibility::DuckDBDefault() {
 #ifdef DUCKDB_ALTERNATIVE_VERIFY
-	auto res = FromString("latest");
-	res.duckdb_version = "latest";
-	res.manually_set = false;
-	return res;
+	return DuckDBLatest();
 #else
 #ifdef DUCKDB_LATEST_STORAGE
-	auto res = FromString("latest");
-	res.manually_set = false;
-	return res;
+	return DuckDBLatest();
 #else
-	auto res = FromIndex(StorageVersionInfo::GetStorageVersionDefault());
-	res.duckdb_version = "latest";
-	res.manually_set = false;
-	return res;
+	static const StorageCompatibility default_compatibility = [] {
+		auto res = FromIndex(StorageVersionInfo::GetStorageVersionDefault());
+		res.duckdb_version = "latest";
+		res.manually_set = false;
+		return res;
+	}();
+	return default_compatibility;
 #endif
 #endif
 }
 
-StorageCompatibility StorageCompatibility::Latest() {
-	auto res = FromString("latest");
-	res.manually_set = false;
-	return res;
+const StorageCompatibility &StorageCompatibility::DuckDBLatest() {
+	static const StorageCompatibility latest_compatibility = [] {
+		auto res = FromString("latest");
+		res.manually_set = false;
+		return res;
+	}();
+	return latest_compatibility;
+}
+
+const StorageCompatibility &StorageCompatibility::SereneDBLatest() {
+	static const StorageCompatibility latest_compatibility = [] {
+		auto res = FromString("serenedb_latest");
+		res.manually_set = false;
+		return res;
+	}();
+	return latest_compatibility;
 }
 
 bool StorageCompatibility::Compare(StorageVersion property_version) const {
+	if (IsSereneDBStorageVersion(property_version) && !IsSereneDBStorageVersion(storage_version)) {
+		return false;
+	}
 	return property_version <= storage_version;
 }
 

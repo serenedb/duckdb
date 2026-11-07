@@ -95,6 +95,8 @@ public:
 	vector<ColumnIndex> column_indices;
 	//! For JSONRecordType::FEATURES: parallel to names, where each of them reads its value from
 	vector<JSONFeatureColumn> feature_columns;
+	//! The output slot of file_row_number, the byte offset of a record, if it is projected
+	idx_t file_row_number_idx = DConstants::INVALID_INDEX;
 
 	//! Buffer manager allocator
 	Allocator &allocator;

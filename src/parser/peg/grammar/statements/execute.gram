@@ -1,1 +1,2 @@
 ExecuteStatement <- 'EXECUTE' ColIdOrString TableFunctionArguments?
+ExecuteJobStatement <- 'EXECUTE' 'JOB' QualifiedName

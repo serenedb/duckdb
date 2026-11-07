@@ -590,7 +590,8 @@ public:
 			auto &target = row_chunk.data[field];
 			switch (plan.source) {
 			case FieldSource::MATCH_NUMBER:
-				target.SetValue(0, Value::UBIGINT(match_number));
+				FlatVector::GetDataMutable<uint64_t>(target)[0] = match_number;
+				FlatVector::SetNull(target, 0, false);
 				break;
 			case FieldSource::NAVIGATION: {
 				auto &navigation = config.navigations[plan.index];

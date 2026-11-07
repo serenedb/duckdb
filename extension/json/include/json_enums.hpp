@@ -45,18 +45,18 @@ template<>
 const char* EnumUtil::ToChars<JSONScanType>(JSONScanType value);
 
 template<>
-JSONScanType EnumUtil::FromString<JSONScanType>(const char *value);
+JSONScanType EnumUtil::FromString<JSONScanType>(std::string_view value);
 
 template<>
 const char* EnumUtil::ToChars<JSONRecordType>(JSONRecordType value);
 
 template<>
-JSONRecordType EnumUtil::FromString<JSONRecordType>(const char *value);
+JSONRecordType EnumUtil::FromString<JSONRecordType>(std::string_view value);
 
 template<>
 const char* EnumUtil::ToChars<JSONFormat>(JSONFormat value);
 
 template<>
-JSONFormat EnumUtil::FromString<JSONFormat>(const char *value);
+JSONFormat EnumUtil::FromString<JSONFormat>(std::string_view value);
 
 } // namespace duckdb

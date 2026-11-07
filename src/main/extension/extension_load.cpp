@@ -472,8 +472,8 @@ bool ExtensionHelper::TryInitialLoad(DatabaseInstance &db, FileSystem &fs, const
                                      string &error) {
 	auto &provider = db.config.GetExternalExtensionProvider();
 	if (!provider.SupportsExternalExtensions()) {
-		throw PermissionException("Loading external extensions is not supported: this build does not link the "
-		                          "loadable_extensions library");
+		ExtensionHelper::ThrowExtensionRuntimeUnsupported(
+		    ExtensionHelper::ApplyExtensionAlias(ExtensionHelper::GetExtensionName(extension)), false);
 	}
 	if (!Settings::Get<EnableExternalAccessSetting>(db)) {
 		throw PermissionException("Loading external extensions is disabled through configuration");

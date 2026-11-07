@@ -38,7 +38,7 @@ struct FSSTStorage {
 	static constexpr double MINIMUM_COMPRESSION_RATIO = 1.2;
 	static constexpr double ANALYSIS_SAMPLE_SIZE = 0.25;
 
-	static unique_ptr<AnalyzeState> StringInitAnalyze(ColumnData &col_data, PhysicalType type);
+	static unique_ptr<AnalyzeState> StringInitAnalyze(CompressionAnalyzeContext &ctx, PhysicalType type);
 	static bool StringAnalyze(AnalyzeState &state_p, const Vector &input);
 	static idx_t StringFinalAnalyze(AnalyzeState &state_p);
 
@@ -52,8 +52,6 @@ struct FSSTStorage {
 	static void StringScanPartial(ColumnSegment &segment, ColumnScanState &state, idx_t scan_count, Vector &result,
 	                              idx_t result_offset);
 	static void StringScan(ColumnSegment &segment, ColumnScanState &state, idx_t scan_count, Vector &result);
-	static void StringFetchRow(ColumnSegment &segment, ColumnFetchState &state, row_t row_id, Vector &result,
-	                           idx_t result_idx);
 	static void Select(ColumnSegment &segment, ColumnScanState &state, idx_t vector_count, Vector &result,
 	                   const SelectionVector &sel, idx_t sel_count);
 
@@ -90,14 +88,13 @@ struct FSSTAnalyzeState : public AnalyzeState {
 	idx_t empty_strings;
 };
 
-unique_ptr<AnalyzeState> FSSTStorage::StringInitAnalyze(ColumnData &col_data, PhysicalType type) {
-	auto &storage_manager = col_data.GetStorageManager();
-	if (StorageManager::TargetAtLeastVersion(StorageVersion::V1_3_0, storage_manager.GetStorageVersion())) {
+unique_ptr<AnalyzeState> FSSTStorage::StringInitAnalyze(CompressionAnalyzeContext &ctx, PhysicalType type) {
+	if (StorageManager::TargetAtLeastVersion(StorageVersion::V1_3_0, ctx.storage_version)) {
 		// dict_fsst introduced - disable fsst
 		return nullptr;
 	}
 
-	return make_uniq<FSSTAnalyzeState>(col_data.GetBlockManager());
+	return make_uniq<FSSTAnalyzeState>(ctx.block_manager);
 }
 
 bool FSSTStorage::StringAnalyze(AnalyzeState &state_p, const Vector &input) {
@@ -362,6 +359,8 @@ public:
 			// the block is full enough, don't bother moving around the dictionary
 			// NOTE: We forgot to call SetDictionary here, so dict_size on disk is stale.
 			// not worth fixing as it's a legacy encoder, the reader can be bounded by dict_end
+			auto gap_offset = symbol_table_offset + fsst_serialized_symbol_table_size;
+			memset(base_ptr + gap_offset, 0, current_dictionary.end - current_dictionary.size - gap_offset);
 			return info.GetBlockSize();
 		}
 
@@ -780,46 +779,6 @@ void FSSTStorage::Select(ColumnSegment &segment, ColumnScanState &state, idx_t v
 }
 
 //===--------------------------------------------------------------------===//
-// Fetch
-//===--------------------------------------------------------------------===//
-void FSSTStorage::StringFetchRow(ColumnSegment &segment, ColumnFetchState &state, row_t row_id, Vector &result,
-                                 idx_t result_idx) {
-	D_ASSERT(row_id >= 0);
-	auto row_index = NumericCast<idx_t>(row_id);
-	D_ASSERT(row_index < segment.count.load());
-
-	auto &buffer_manager = BufferManager::GetBufferManager(segment.GetDatabase());
-	auto handle = buffer_manager.Pin(state.context, segment.GetBlockHandle());
-	auto reader = CompressionSegmentReader::FromSegment(handle, segment, "FSST");
-	duckdb_fsst_decoder_t decoder;
-	auto layout = FSSTScanState::ParseFSSTSegmentHeader(reader, segment.count.load());
-	auto have_symbol_table = FSSTScanState::TryImportSymbolTable(layout, &decoder);
-
-	auto result_data = FlatVector::GetDataMutable<string_t>(result);
-
-	// We basically just do a scan of 1 which is kinda expensive as we need to repeatedly delta decode until we
-	// reach the row we want, we could consider a more clever caching trick if this is slow
-	auto offsets = CalculateBpDeltaOffsets(-1, row_index, 1);
-
-	auto bitunpack_buffer = unique_ptr<uint32_t[]>(new uint32_t[offsets.total_bitunpack_count]);
-	BitUnpackRange(layout.lengths, data_ptr_cast(bitunpack_buffer.get()), offsets.total_bitunpack_count,
-	               offsets.bitunpack_start_row, layout.width);
-	auto delta_decode_buffer = unique_ptr<uint32_t[]>(new uint32_t[offsets.total_delta_decode_count]);
-	auto strings = FSSTScanState::DecodeAndValidateOffsets(
-	    layout, bitunpack_buffer.get() + offsets.bitunpack_alignment_offset, delta_decode_buffer.get(),
-	    offsets.total_delta_decode_count, 0, have_symbol_table);
-	auto compressed_string = strings.GetCompressedString(offsets.unused_delta_decoded_values);
-	if (compressed_string.empty()) {
-		result_data[result_idx] = string_t(nullptr, 0);
-		return;
-	}
-
-	auto &str_allocator = StringVector::GetStringAllocator(result);
-	result_data[result_idx] = FSSTPrimitives::DecompressValue(
-	    (void *)&decoder, str_allocator, const_char_ptr_cast(compressed_string.data()), compressed_string.size());
-}
-
-//===--------------------------------------------------------------------===//
 // Get Function
 //===--------------------------------------------------------------------===//
 CompressionFunction FSSTFun::GetFunction(PhysicalType data_type) {
@@ -828,9 +787,9 @@ CompressionFunction FSSTFun::GetFunction(PhysicalType data_type) {
 	                           FSSTStorage::StringAnalyze, FSSTStorage::StringFinalAnalyze,
 	                           FSSTStorage::InitCompression, FSSTStorage::Compress, FSSTStorage::FinalizeCompress,
 	                           FSSTStorage::StringInitScan, FSSTStorage::StringScan,
-	                           FSSTStorage::StringScanPartial<false>, FSSTStorage::StringFetchRow,
-	                           UncompressedFunctions::EmptySkip, UncompressedStringStorage::StringInitSegment, nullptr,
-	                           nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, FSSTStorage::Select);
+	                           FSSTStorage::StringScanPartial<false>, nullptr, UncompressedFunctions::EmptySkip,
+	                           UncompressedStringStorage::StringInitSegment, nullptr, nullptr, nullptr, nullptr,
+	                           nullptr, nullptr, nullptr, nullptr, FSSTStorage::Select);
 }
 
 bool FSSTFun::TypeIsSupported(const PhysicalType physical_type) {

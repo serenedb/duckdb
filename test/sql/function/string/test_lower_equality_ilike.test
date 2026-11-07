@@ -1,0 +1,55 @@
+# name: test/sql/function/string/test_lower_equality_ilike.test
+# description: lower(x) = constant evaluated as ILIKE in scan filters and filter operators agrees with lower()
+# group: [string]
+
+statement ok
+CREATE TABLE strs AS SELECT i AS id, CASE WHEN i % 11 = 0 THEN NULL ELSE ['k', 'K', chr(8490), 'kk', 'ki', chr(304), 'i', 'I', 'i' || chr(775), '', '%', 'k%', 'Google', 'GOOGLE', 'goog1e', 'go_gle', 'ä', 'Ä'][1 + (i % 18)] END AS s, i % 3 AS g FROM range(400) t(i)
+
+foreach constant 'k' 'i' '' 'google' 'K' 'k%' '_' 'ä' 'go\gle'
+
+query I
+SELECT (SELECT count(*) FROM strs WHERE lower(s) = {constant}) = (SELECT sum((lower(s) = {constant})::INTEGER) FROM strs)
+----
+true
+
+query I
+SELECT (SELECT count(*) FROM strs WHERE lower(s) <> {constant}) = (SELECT sum((lower(s) <> {constant})::INTEGER) FROM strs)
+----
+true
+
+query I
+SELECT (SELECT count(*) FROM strs WHERE {constant} = lower(s) OR g = 1) = (SELECT sum(({constant} = lower(s) OR g = 1)::INTEGER) FROM strs)
+----
+true
+
+query I
+SELECT (SELECT count(*) FROM strs a JOIN strs b USING (id) WHERE lower(a.s) = {constant} OR lower(b.s) = 'i') = (SELECT sum((lower(s) = {constant} OR lower(s) = 'i')::INTEGER) FROM strs)
+----
+true
+
+endloop
+
+query I
+SELECT list(id ORDER BY id) FROM strs WHERE lower(s) = 'k' AND id < 40
+----
+[1, 2, 18, 19, 20, 36, 37, 38]
+
+query I
+SELECT count(*) FROM strs WHERE lower(s) = 'K'
+----
+0
+
+query II
+EXPLAIN SELECT count(*) FROM strs WHERE lower(s) = 'google'
+----
+physical_plan	<REGEX>:.*s ~~\* .google.*
+
+query II
+EXPLAIN SELECT count(*) FROM strs a JOIN strs b USING (id) WHERE lower(a.s) = 'google' OR lower(b.s) <> 'i'
+----
+physical_plan	<REGEX>:.*s !~~\* .i.*
+
+query II
+EXPLAIN SELECT count(*) FROM strs WHERE lower(s) = 'Google'
+----
+physical_plan	<REGEX>:.*lower\(s\).*

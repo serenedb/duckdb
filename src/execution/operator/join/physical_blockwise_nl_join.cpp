@@ -30,12 +30,26 @@ class BlockwiseNLJoinLocalState : public LocalSinkState {
 public:
 	BlockwiseNLJoinLocalState() {
 	}
+
+	bool SupportsReuse() const override {
+		return true;
+	}
 };
 
 class BlockwiseNLJoinGlobalState : public GlobalSinkState {
 public:
 	explicit BlockwiseNLJoinGlobalState(ClientContext &context, const PhysicalBlockwiseNLJoin &op)
 	    : right_chunks(context, op.children[1].get().GetTypes()), right_outer(PropagatesBuildSide(op.join_type)) {
+	}
+
+	bool SupportsReuse() const override {
+		return true;
+	}
+
+	void Reset(ClientContext &context) override {
+		right_chunks.ResetForReuse();
+		right_outer.Reset();
+		GlobalSinkState::Reset(context);
 	}
 
 	mutex lock;
@@ -101,6 +115,18 @@ public:
 		for (idx_t i = 0; i < STANDARD_VECTOR_SIZE; i++) {
 			found_match[i] = false;
 		}
+	}
+
+	bool SupportsReuse() const override {
+		return true;
+	}
+
+	void Reset() override {
+		ResetCachingState();
+		cross_product.Reset();
+		left_outer.Reset();
+		intermediate_chunk.Reset();
+		ResetMatches();
 	}
 };
 

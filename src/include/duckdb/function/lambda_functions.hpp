@@ -14,43 +14,82 @@
 #include "duckdb/execution/expression_executor.hpp"
 
 #include "duckdb/planner/expression/bound_function_expression.hpp"
-#include "duckdb/planner/expression/bound_lambda_expression.hpp"
+
+#include <span>
 
 namespace duckdb {
 
+class LambdaCaptures final : public LazyColumns {
+public:
+	LambdaCaptures(ExpressionState &state, const BoundFunctionExpression &expr, idx_t first_column, idx_t first_child);
+
+	void Reset(idx_t rows);
+	void SetRows(const SelectionVector &rows, idx_t count, bool consecutive, idx_t first_row);
+	bool Load(DataChunk &chunk, idx_t column, const SelectionVector *sel, idx_t count, Vector &result) override;
+	bool AllConstant(const Vector &list) const;
+
+private:
+	struct Capture {
+		vector<bool> loaded;
+		SelectionVector positions;
+		SelectionVector slice;
+		idx_t stored = 0;
+		bool constant = false;
+		bool owned = false;
+		bool sliced = false;
+	};
+
+	void LoadRows(idx_t capture, const SelectionVector &missing, idx_t count);
+
+	ExpressionState &state;
+	idx_t first_column;
+	idx_t first_child;
+	vector<Capture> captures;
+	DataChunk stores;
+	DataChunk views;
+	optional_ptr<const SelectionVector> rows;
+	idx_t row_count = 0;
+	bool consecutive_rows = false;
+	idx_t first_row = 0;
+	idx_t chunk_rows = 0;
+	bool all_constant = true;
+};
+
 struct LambdaFunctionData : public FunctionData {
+	static bool LambdaExpressionEquals(const shared_ptr<Expression> &left, const shared_ptr<Expression> &right) {
+		return left == right || (left && right && left->Equals(*right));
+	}
+
 	DUCKDB_API virtual optional_ptr<const Expression> GetLambdaExpression() const = 0;
-	//! Rebuilds the BoundLambdaExpression child from the bind data. Plans serialized before the lambda was
-	//! kept in the children do not contain it, so it has to be recovered when they are deserialized.
-	//! Returns nullptr if this bind data carries no lambda (e.g. a NULL list argument).
-	DUCKDB_API virtual unique_ptr<Expression> RecoverLambdaChild() const = 0;
+	DUCKDB_API virtual void SetLambdaExpression(shared_ptr<Expression> lambda_expr) = 0;
 };
 
 struct ListLambdaBindData final : public LambdaFunctionData {
 public:
-	ListLambdaBindData(const LogicalType &return_type, unique_ptr<Expression> lambda_expr, const bool has_index = false,
-	                   const bool has_initial = false)
-	    : return_type(return_type), lambda_expr(std::move(lambda_expr)), has_index(has_index),
-	      has_initial(has_initial) {};
+	ListLambdaBindData(const LogicalType &return_type, shared_ptr<Expression> lambda_expr, const bool has_index = false,
+	                   const bool has_initial = false, const idx_t index_offset = 1)
+	    : return_type(return_type), lambda_expr(std::move(lambda_expr)), has_index(has_index), has_initial(has_initial),
+	      index_offset(index_offset), is_volatile(this->lambda_expr && this->lambda_expr->IsVolatile()) {};
 
 	//! Return type of the scalar function
 	LogicalType return_type;
 	//! Lambda expression that the expression executor executes
-	unique_ptr<Expression> lambda_expr;
+	shared_ptr<Expression> lambda_expr;
 	//! True, if the last parameter in a lambda parameter list represents the index of the current list element
 	bool has_index;
 	bool has_initial;
+	idx_t index_offset;
+	bool is_volatile;
 
 public:
 	unique_ptr<FunctionData> Copy() const override {
-		auto lambda_expr_copy = lambda_expr ? lambda_expr->Copy() : nullptr;
-		return make_uniq<ListLambdaBindData>(return_type, std::move(lambda_expr_copy), has_index, has_initial);
+		return make_uniq<ListLambdaBindData>(*this);
 	}
 
 	bool Equals(const FunctionData &other_p) const override {
 		auto &other = other_p.Cast<ListLambdaBindData>();
-		return Expression::Equals(lambda_expr, other.lambda_expr) && return_type == other.return_type &&
-		       has_index == other.has_index && has_initial == other.has_initial;
+		return LambdaExpressionEquals(lambda_expr, other.lambda_expr) && return_type == other.return_type &&
+		       has_index == other.has_index && has_initial == other.has_initial && index_offset == other.index_offset;
 	}
 
 	//! Serializes a lambda function's bind data
@@ -63,16 +102,9 @@ public:
 		return lambda_expr.get();
 	}
 
-	//! Defined inline so that this class keeps emitting its vtable in every translation unit that uses it -
-	//! it is constructed both in core and in the core_functions extension
-	unique_ptr<Expression> RecoverLambdaChild() const override {
-		if (!lambda_expr) {
-			return nullptr;
-		}
-		// the parameter count is only read while binding, so recovering it approximately is good enough here
-		const idx_t parameter_count = has_index ? 2 : 1;
-		return make_uniq<BoundLambdaExpression>(ExpressionType::LAMBDA, LogicalType::LAMBDA, lambda_expr->Copy(),
-		                                        parameter_count);
+	void SetLambdaExpression(shared_ptr<Expression> lambda_expr_p) override {
+		lambda_expr = std::move(lambda_expr_p);
+		is_volatile = lambda_expr->IsVolatile();
 	}
 };
 
@@ -99,22 +131,9 @@ public:
 	static void ListFilterFunction(DataChunk &args, ExpressionState &state, Vector &result);
 	//! Internally executes list_reduce
 	static void ListReduceFunction(DataChunk &args, ExpressionState &state, Vector &result);
+	static void ExecuteArguments(DataChunk &args, ExpressionState &state, idx_t eager_count);
 
 public:
-	//! Lambda expressions can only be executed on one STANDARD_VECTOR_SIZE list child elements at a time, so for
-	//! list_transform and list_filter we need to prepare the input vectors for the lambda expression.  In list_reduce
-	//! the input size can never exceed row_count so it doesn't need ColumnInfo.
-	struct ColumnInfo {
-		explicit ColumnInfo(Vector &vector) : vector(vector), sel(SelectionVector(STANDARD_VECTOR_SIZE)) {};
-
-		//! The original vector taken from args
-		reference<Vector> vector;
-		//! The selection vector to slice the original vector
-		SelectionVector sel;
-		//! The unified vector format of the original vector
-		UnifiedVectorFormat format;
-	};
-
 	//! LambdaInfo sets up and stores the information needed by all lambda functions
 	struct LambdaInfo {
 		explicit LambdaInfo(DataChunk &args, ExpressionState &state, Vector &result, bool &result_is_null)
@@ -133,8 +152,8 @@ public:
 			// get the lambda expression
 			auto &func_expr = state.expr.Cast<BoundFunctionExpression>();
 			auto &bind_info = func_expr.BindInfo()->Cast<ListLambdaBindData>();
-			lambda_expr = bind_info.lambda_expr;
-			is_volatile = lambda_expr->IsVolatile();
+			lambda_expr = bind_info.lambda_expr.get();
+			is_volatile = bind_info.is_volatile;
 			has_index = bind_info.has_index;
 			has_initial = bind_info.has_initial;
 
@@ -144,7 +163,8 @@ public:
 			child_vector = &ListVector::GetChildMutable(list_column);
 
 			// get the lambda column data for all other input vectors
-			column_infos = LambdaFunctions::GetColumnInfo(args, row_count);
+			D_ASSERT(args.data[1].GetType().id() == LogicalTypeId::LAMBDA);
+			columns = std::span<Vector>(args.data).subspan(2);
 		};
 
 		const list_entry_t *list_entries;
@@ -152,8 +172,8 @@ public:
 		optional_ptr<Vector> child_vector;
 		Vector &result;
 		optional_ptr<ValidityMask> result_validity;
-		vector<ColumnInfo> column_infos;
-		optional_ptr<Expression> lambda_expr;
+		std::span<Vector> columns;
+		optional_ptr<const Expression> lambda_expr;
 
 		const idx_t row_count;
 		bool has_index;
@@ -162,8 +182,8 @@ public:
 		const bool is_all_constant;
 	};
 
-	static vector<ColumnInfo> GetColumnInfo(DataChunk &args, const idx_t row_count);
-	static vector<reference<ColumnInfo>> GetMutableColumnInfo(vector<ColumnInfo> &data);
+	static unique_ptr<FunctionLocalState>
+	ListLambdaInitLocalState(ExpressionState &state, const BoundFunctionExpression &expr, FunctionData *bind_data);
 };
 
 } // namespace duckdb

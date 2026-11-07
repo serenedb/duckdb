@@ -1,0 +1,43 @@
+# name: test/sql/function/operator/test_in_constant_set.test
+# description: IN against a long list of constants evaluated as an expression
+# group: [operator]
+
+query I
+SELECT list_transform([1, 2, 17, 21, NULL], lambda x: x IN (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20))
+----
+[true, true, true, false, NULL]
+
+query I
+SELECT list_transform([1, 21, NULL], lambda x: x IN (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, NULL))
+----
+[true, NULL, NULL]
+
+query I
+SELECT list_transform([1, 21, NULL], lambda x: x NOT IN (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20))
+----
+[false, true, NULL]
+
+query I
+SELECT list_transform([1, 21], lambda x: x NOT IN (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, NULL))
+----
+[false, NULL]
+
+query I
+SELECT list_transform(['b', 'q'], lambda x: x IN ('a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o', 'p'))
+----
+[true, false]
+
+query I
+SELECT list_transform([INTERVAL '1 month', INTERVAL '2 days'], lambda x: x IN (INTERVAL '30 days', INTERVAL '1 hour', INTERVAL '2 hours', INTERVAL '3 hours', INTERVAL '4 hours', INTERVAL '5 hours', INTERVAL '6 hours', INTERVAL '7 hours', INTERVAL '8 hours', INTERVAL '9 hours', INTERVAL '10 hours', INTERVAL '11 hours', INTERVAL '12 hours', INTERVAL '13 hours', INTERVAL '14 hours', INTERVAL '15 hours'))
+----
+[true, false]
+
+query I
+SELECT list_transform([-0.0::DOUBLE, 'nan'::DOUBLE, 3.5], lambda x: x IN (0.0::DOUBLE, 'nan'::DOUBLE, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14))
+----
+[true, true, false]
+
+query I
+SELECT count(*) FILTER (WHERE (i % 50) IN (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20)) FROM range(1000) t(i)
+----
+400

@@ -249,8 +249,7 @@ unique_ptr<FunctionData> SumNoOverflowDeserialize(Deserializer &deserializer, Bo
 		arguments.push_back(child.get().Copy());
 		argument_types.push_back(child.get().GetReturnType());
 	}
-	auto &entry = Catalog::GetEntry<AggregateFunctionCatalogEntry>(
-	    context, QualifiedName(Identifier::SystemCatalog(), Identifier::DefaultSchema(), Identifier("sum")));
+	auto &entry = Catalog::GetBuiltinEntry<AggregateFunctionCatalogEntry>(context, Identifier("sum"));
 	FunctionBinder binder(context);
 	auto logical = binder.ResolveFunction(entry.functions.GetFunctionByArguments(context, argument_types), arguments);
 	if (logical.second || (!return_type.IsAggregateState() && logical.first.GetReturnType() != return_type)) {

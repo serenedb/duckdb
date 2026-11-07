@@ -27,7 +27,7 @@ copy (
            range c5,
            range c6,
            range c7,
-    from range(50000)
+    from range_st(50000)
 ) to '{TEST_DIR}/tbl.parquet' (ROW_GROUP_SIZE_BYTES '1mb')
 
 query T
@@ -53,7 +53,7 @@ copy (
            range c5,
            range c6,
            range c7,
-    from range(50000)
+    from range_st(50000)
 ) to '{TEST_DIR}/tbl.parquet' (ROW_GROUP_SIZE_BYTES 500000)
 
 query T
@@ -72,7 +72,7 @@ copy (
            range c5,
            range c6,
            range c7,
-    from range(50000)
+    from range_st(50000)
 ) to '{TEST_DIR}/tbl.parquet' (ROW_GROUP_SIZE 10000, ROW_GROUP_SIZE_BYTES '1GB')
 
 query T
@@ -85,7 +85,7 @@ select max(row_group_num_rows) from parquet_metadata('{TEST_DIR}/tbl.parquet')
 statement ok
 copy (
     select range || repeat('0', 50) c0
-    from range(50000)
+    from range_st(50000)
 ) to '{TEST_DIR}/tbl.parquet' (ROW_GROUP_SIZE_BYTES 200000)
 
 query T
@@ -97,7 +97,7 @@ true
 statement ok
 copy (
     select range || repeat('0', 50) c0
-    from range(50000)
+    from range_st(50000)
 ) to '{TEST_DIR}/tbl.parquet' (ROW_GROUP_SIZE_BYTES 650000)
 
 query T

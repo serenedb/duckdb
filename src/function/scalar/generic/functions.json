@@ -22,6 +22,14 @@
         "type": "scalar_function"
     },
     {
+        "name": "nullif",
+        "struct": "NullIfFun",
+        "parameters": "a,b",
+        "description": "Returns NULL if a equals b, otherwise a, in the type the two are compared in",
+        "example": "nullif(53, 1.5)",
+        "type": "scalar_function"
+    },
+    {
         "name": "__internal_barrier",
         "struct": "BarrierFun",
         "parameters": "arg",

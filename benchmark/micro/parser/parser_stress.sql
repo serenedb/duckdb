@@ -1,7 +1,7 @@
 -- A parser benchmark in one statement, covering the expression shapes the grammar treats
 -- differently: a cast per column over a wide VALUES list of literals, a long additive
 -- chain, a boolean chain, IN lists, a CASE with many branches, chained indirections and
--- deep parenthesis nesting. Sizes are capped by the default max_expression_depth of 1000.
+-- deep parenthesis nesting.
 
 CREATE OR REPLACE VIEW parser_stress AS SELECT
     CAST(c1 AS VARCHAR) AS o1, CAST(c2 AS BOOLEAN) AS o2, CAST(c3 AS DOUBLE) AS o3, CAST(c4 AS INTEGER) AS o4, CAST(c5 AS VARCHAR) AS o5, CAST(c6 AS BOOLEAN) AS o6, CAST(c7 AS DOUBLE) AS o7, CAST(c8 AS INTEGER) AS o8, CAST(c9 AS VARCHAR) AS o9, CAST(c10 AS BOOLEAN) AS o10, CAST(c11 AS DOUBLE) AS o11, CAST(c12 AS INTEGER) AS o12, CAST(c13 AS VARCHAR) AS o13, CAST(c14 AS BOOLEAN) AS o14, CAST(c15 AS DOUBLE) AS o15, CAST(c16 AS INTEGER) AS o16, CAST(c17 AS VARCHAR) AS o17, CAST(c18 AS BOOLEAN) AS o18, CAST(c19 AS DOUBLE) AS o19, CAST(c20 AS INTEGER) AS o20, CAST(c21 AS VARCHAR) AS o21, CAST(c22 AS BOOLEAN) AS o22, CAST(c23 AS DOUBLE) AS o23, CAST(c24 AS INTEGER) AS o24, CAST(c25 AS VARCHAR) AS o25, CAST(c26 AS BOOLEAN) AS o26, CAST(c27 AS DOUBLE) AS o27, CAST(c28 AS INTEGER) AS o28, CAST(c29 AS VARCHAR) AS o29, CAST(c30 AS BOOLEAN) AS o30, CAST(c31 AS DOUBLE) AS o31, CAST(c32 AS INTEGER) AS o32,

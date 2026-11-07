@@ -1,0 +1,60 @@
+# name: test/sql/prepared/prepare_name_errors.test
+# description: PREPARE, EXECUTE and DEALLOCATE errors on prepared statement names
+# group: [prepared]
+
+statement ok
+PREPARE s1 AS SELECT 1
+
+statement error
+PREPARE s1 AS SELECT 2
+----
+prepared statement "s1" already exists
+
+query I
+EXECUTE s1
+----
+1
+
+statement error
+EXECUTE nope
+----
+prepared statement "nope" does not exist
+
+statement error
+DEALLOCATE nope
+----
+prepared statement "nope" does not exist
+
+statement ok
+PREPARE s2(INTEGER, INTEGER) AS SELECT $1 + $2
+
+statement error
+EXECUTE s2(1)
+----
+wrong number of parameters for prepared statement "s2"
+
+statement error
+EXECUTE s2(1, 2, 3)
+----
+wrong number of parameters for prepared statement "s2"
+
+query I
+EXECUTE s2(1, 2)
+----
+3
+
+statement ok
+DEALLOCATE ALL
+
+statement error
+EXECUTE s1
+----
+prepared statement "s1" does not exist
+
+statement ok
+PREPARE s1 AS SELECT 3
+
+query I
+EXECUTE s1
+----
+3

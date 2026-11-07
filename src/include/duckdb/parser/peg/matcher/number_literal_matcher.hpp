@@ -22,16 +22,12 @@ public:
 		}
 		auto &token_text = token->text;
 		auto start_offset = optional_idx(token->offset);
-		auto token_length = optional_idx(token->length);
+		auto token_length = optional_idx(token->text.size());
 		if (!MatchNumberLiteral(state)) {
 			return MatcherResult::Failure();
 		}
-		state.token_iterator.SetPreviousTokenType(TokenType::NUMBER_LITERAL);
-		auto result = state.AllocateParseResult<NumberParseResult>(token_text, start_offset, token_length);
-		if (result.HasParseResult()) {
-			result.GetParseResult()->name = name;
-		}
-		return result;
+		state.AnnotatePreviousToken(TokenType::NUMBER_LITERAL);
+		return state.AllocateParseResult<NumberParseResult>(token_text, start_offset, token_length);
 	}
 
 	SuggestionType AddSuggestionInternal(MatchState &state) const override {
@@ -40,6 +36,10 @@ public:
 
 	string ToString() const override {
 		return "NUMBER_LITERAL";
+	}
+
+	uint8_t FirstTokenClasses() const override {
+		return MatcherTokenClass::NUMBER;
 	}
 
 private:
@@ -55,6 +55,25 @@ private:
 		// A lone '.' is a dot operator, not a number literal (e.g., '?.method()' should not consume '.')
 		if (token_text.size() == 1 && token_text[0] == '.') {
 			return false;
+		}
+		if (token_text.size() >= 2 && token_text[0] == '0' &&
+		    (token_text[1] == 'x' || token_text[1] == 'X' || token_text[1] == 'b' || token_text[1] == 'B')) {
+			bool is_hex = token_text[1] == 'x' || token_text[1] == 'X';
+			for (idx_t i = 2; i < token_text.size(); i++) {
+				char ch = token_text[i];
+				if (is_hex) {
+					if (!StringUtil::CharacterIsHex(ch)) {
+						return false;
+					}
+				} else {
+					if (ch != '0' && ch != '1') {
+						return false;
+					}
+				}
+			}
+			state.token_iterator.Advance();
+			state.UpdateMaxTokenIndex();
+			return true;
 		}
 		bool scientific_notation = false;
 		for (idx_t i = 1; i < token_text.size(); i++) {

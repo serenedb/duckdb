@@ -24,40 +24,46 @@ BuiltinFunctions::BuiltinFunctions(CatalogTransaction transaction, Catalog &cata
 BuiltinFunctions::~BuiltinFunctions() {
 }
 
+static void AsBuiltin(Catalog &catalog, CreateInfo &info) {
+	info.internal = true;
+	auto &name = info.GetQualifiedName();
+	info.SetQualifiedName(QualifiedName(name.Catalog(), *catalog.GetDefaultSchema(), name.Name()));
+}
+
 void BuiltinFunctions::AddCollation(string name, ScalarFunction function, bool combinable,
                                     bool not_required_for_equality) {
 	CreateCollationInfo info(Identifier(std::move(name)), std::move(function), combinable, not_required_for_equality);
-	info.internal = true;
+	AsBuiltin(catalog, info);
 	catalog.CreateCollation(transaction, info);
 }
 
 void BuiltinFunctions::AddFunction(AggregateFunctionSet set) {
 	CreateAggregateFunctionInfo info(std::move(set));
-	info.internal = true;
+	AsBuiltin(catalog, info);
 	catalog.CreateFunction(transaction, info);
 }
 
 void BuiltinFunctions::AddFunction(AggregateFunction function) {
 	CreateAggregateFunctionInfo info(std::move(function));
-	info.internal = true;
+	AsBuiltin(catalog, info);
 	catalog.CreateFunction(transaction, info);
 }
 
 void BuiltinFunctions::AddFunction(PragmaFunction function) {
 	CreatePragmaFunctionInfo info(std::move(function));
-	info.internal = true;
+	AsBuiltin(catalog, info);
 	catalog.CreatePragmaFunction(transaction, info);
 }
 
 void BuiltinFunctions::AddFunction(const string &name, PragmaFunctionSet functions) {
 	CreatePragmaFunctionInfo info(Identifier(name), std::move(functions));
-	info.internal = true;
+	AsBuiltin(catalog, info);
 	catalog.CreatePragmaFunction(transaction, info);
 }
 
 void BuiltinFunctions::AddFunction(ScalarFunction function) {
 	CreateScalarFunctionInfo info(std::move(function));
-	info.internal = true;
+	AsBuiltin(catalog, info);
 	catalog.CreateFunction(transaction, info);
 }
 
@@ -70,25 +76,25 @@ void BuiltinFunctions::AddFunction(const vector<string> &names, ScalarFunction f
 
 void BuiltinFunctions::AddFunction(ScalarFunctionSet set) {
 	CreateScalarFunctionInfo info(std::move(set));
-	info.internal = true;
+	AsBuiltin(catalog, info);
 	catalog.CreateFunction(transaction, info);
 }
 
 void BuiltinFunctions::AddFunction(TableFunction function) {
 	CreateTableFunctionInfo info(std::move(function));
-	info.internal = true;
+	AsBuiltin(catalog, info);
 	catalog.CreateTableFunction(transaction, info);
 }
 
 void BuiltinFunctions::AddFunction(TableFunctionSet set) {
 	CreateTableFunctionInfo info(std::move(set));
-	info.internal = true;
+	AsBuiltin(catalog, info);
 	catalog.CreateTableFunction(transaction, info);
 }
 
 void BuiltinFunctions::AddFunction(CopyFunction function) {
 	CreateCopyFunctionInfo info(std::move(function));
-	info.internal = true;
+	AsBuiltin(catalog, info);
 	catalog.CreateCopyFunction(transaction, info);
 }
 
@@ -121,9 +127,7 @@ static unique_ptr<Expression> BindExtensionFunction(FunctionBindExpressionInput 
 	ExtensionHelper::AutoLoadExtension(db, extension_name);
 
 	// now find the function in the catalog
-	auto &catalog = Catalog::GetSystemCatalog(db);
-	auto &function_entry = catalog.GetEntry<ScalarFunctionCatalogEntry>(
-	    context, QualifiedName(catalog.GetName(), Identifier::DefaultSchema(), bound_function.GetName()));
+	auto &function_entry = Catalog::GetBuiltinEntry<ScalarFunctionCatalogEntry>(context, bound_function.GetName());
 
 	// override the function with the extension function
 	auto func = function_entry.functions.GetFunctionByArguments(context, bound_function.GetArguments());
@@ -133,7 +137,7 @@ static unique_ptr<Expression> BindExtensionFunction(FunctionBindExpressionInput 
 
 void BuiltinFunctions::AddExtensionFunction(ScalarFunctionSet set) {
 	CreateScalarFunctionInfo info(std::move(set));
-	info.internal = true;
+	AsBuiltin(catalog, info);
 	catalog.CreateFunction(transaction, info);
 }
 

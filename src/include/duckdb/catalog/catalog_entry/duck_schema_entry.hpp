@@ -13,10 +13,21 @@
 
 namespace duckdb {
 
-//! A schema in the catalog
-class DuckSchemaEntry : public SchemaCatalogEntry {
+class DuckSchemaEntry;
+
+class DuckSchemaSets {
 public:
-	DuckSchemaEntry(Catalog &catalog, CreateSchemaInfo &info, optional_ptr<SchemaCatalogEntry> parent_schema = nullptr);
+	DuckSchemaSets(Catalog &catalog, DuckSchemaEntry &schema);
+
+	CatalogSet &GetCatalogSet(CatalogType type);
+	void Verify(Catalog &catalog);
+	template <class F>
+	void ForEachSet(F &&callback) {
+		for (auto set : {&schemas, &tables, &indexes, &table_functions, &copy_functions, &pragma_functions, &functions,
+		                 &sequences, &collations, &types, &coordinate_systems}) {
+			callback(*set);
+		}
+	}
 
 private:
 	//! The catalog set holding the nested schemas
@@ -41,6 +52,17 @@ private:
 	CatalogSet types;
 	//! The catalog set holding the coordinate systems
 	CatalogSet coordinate_systems;
+};
+
+//! A schema in the catalog
+class DuckSchemaEntry : public SchemaCatalogEntry {
+public:
+	DuckSchemaEntry(Catalog &catalog, CreateSchemaInfo &info, optional_ptr<SchemaCatalogEntry> parent_schema = nullptr,
+	                shared_ptr<SchemaInfo> inherited_info = nullptr,
+	                shared_ptr<DuckSchemaSets> inherited_sets = nullptr);
+
+private:
+	shared_ptr<DuckSchemaSets> sets;
 
 public:
 	optional_ptr<CatalogEntry> AddEntry(CatalogTransaction transaction, unique_ptr<StandardEntry> entry,

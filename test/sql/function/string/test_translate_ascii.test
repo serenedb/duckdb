@@ -1,0 +1,60 @@
+# name: test/sql/function/string/test_translate_ascii.test
+# description: translate with constant ASCII arguments agrees with the per-row path, including deletions, duplicates and non-ASCII text
+# group: [string]
+
+statement ok
+CREATE TABLE t AS SELECT i, CASE i % 6
+    WHEN 0 THEN 'http://abc.example.com/a/b/c?x=' || i::VARCHAR
+    WHEN 1 THEN 'Привет abc мир cba'
+    WHEN 2 THEN ''
+    WHEN 3 THEN 'AaBbCc' || repeat('xyz', (i % 9)::INTEGER)
+    WHEN 4 THEN '漢字abc漢字'
+    ELSE NULL END AS s FROM range(3000) r(i);
+
+statement ok
+CREATE TABLE p AS SELECT * FROM (VALUES ('abc', 'xyz'), ('abc', 'x'), ('aab', 'xyz'), ('a', ''), ('', 'abc'), ('xyz', 'XYZ123'), ('/.?', '__')) v(f, r);
+
+query I
+SELECT count(*) FROM t, p WHERE p.f = 'abc' AND p.r = 'xyz' AND translate(s, 'abc', 'xyz') IS DISTINCT FROM translate(s, p.f, p.r);
+----
+0
+
+query I
+SELECT count(*) FROM t, p WHERE p.f = 'abc' AND p.r = 'x' AND translate(s, 'abc', 'x') IS DISTINCT FROM translate(s, p.f, p.r);
+----
+0
+
+query I
+SELECT count(*) FROM t, p WHERE p.f = 'aab' AND p.r = 'xyz' AND translate(s, 'aab', 'xyz') IS DISTINCT FROM translate(s, p.f, p.r);
+----
+0
+
+query I
+SELECT count(*) FROM t, p WHERE p.f = 'a' AND p.r = '' AND translate(s, 'a', '') IS DISTINCT FROM translate(s, p.f, p.r);
+----
+0
+
+query I
+SELECT count(*) FROM t, p WHERE p.f = '' AND p.r = 'abc' AND translate(s, '', 'abc') IS DISTINCT FROM translate(s, p.f, p.r);
+----
+0
+
+query I
+SELECT count(*) FROM t, p WHERE p.f = 'xyz' AND p.r = 'XYZ123' AND translate(s, 'xyz', 'XYZ123') IS DISTINCT FROM translate(s, p.f, p.r);
+----
+0
+
+query I
+SELECT count(*) FROM t, p WHERE p.f = '/.?' AND p.r = '__' AND translate(s, '/.?', '__') IS DISTINCT FROM translate(s, p.f, p.r);
+----
+0
+
+query IIII
+SELECT translate('abcabc', 'abc', 'xyz'), translate('abcabc', 'abc', 'x'), translate('aab', 'aab', 'xyz'), translate('Привет abc', 'ab', 'AB');
+----
+xyzxyz	xx	xxz	Привет ABc
+
+query I
+SELECT translate('Привет', 'П', 'P');
+----
+Pривет

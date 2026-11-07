@@ -1,0 +1,35 @@
+# name: test/optimizer/remove_redundant_order_keys_statistics.test
+# description: A window's partition statistics follow its partitions after a repeated partition key is removed
+# group: [optimizer]
+
+statement ok
+CREATE TABLE e(kind VARCHAR, n INTEGER, t TIME);
+
+statement ok
+INSERT INTO e VALUES ('a', 1, '10:00'), ('a', 1, '11:00'), ('b', 2, '12:00'), ('b', 3, NULL);
+
+statement ok
+CREATE TABLE x(v INTEGER);
+
+statement ok
+INSERT INTO x VALUES (1);
+
+query TII
+SELECT kind, n, count(*) OVER (PARTITION BY kind, n, kind) FROM e
+WHERE EXISTS (SELECT 1 FROM x WHERE e.n IS NOT NULL) OR kind IS NOT NULL
+ORDER BY ALL
+----
+a	1	2
+a	1	2
+b	2	1
+b	3	1
+
+query TTI
+SELECT kind, t, count(*) OVER (PARTITION BY t, kind, t) FROM e
+WHERE EXISTS (SELECT 1 FROM x WHERE e.t IS NOT NULL) OR kind IS NOT NULL
+ORDER BY ALL
+----
+a	10:00:00	1
+a	11:00:00	1
+b	12:00:00	1
+b	NULL	1

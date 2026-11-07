@@ -1,0 +1,71 @@
+# name: test/sql/optimizer/late_materialization_lookup_join_json.test
+# description: Local read_json scans keep their rows: no LOOKUP_JOIN for local row storage
+# group: [optimizer]
+
+require json
+
+statement ok
+SET profiling_renderer_settings = MAP {'operator_casing': 'upper'};
+
+statement ok
+CREATE TABLE src AS SELECT
+    i AS id,
+    i % 7 AS grp,
+    CASE WHEN i % 11 = 0 THEN NULL ELSE md5(i::VARCHAR) || md5((i + 1)::VARCHAR) END AS payload,
+    {'a': i, 'b': 'v' || i::VARCHAR} AS s,
+    [i, i + 1] AS l
+FROM range(6000) t(i);
+
+statement ok
+COPY (FROM src WHERE id < 4000) TO '{TEST_DIR}/lj_json_1.json' (FORMAT json);
+
+statement ok
+COPY (FROM src WHERE id >= 4000) TO '{TEST_DIR}/lj_json_2.json' (FORMAT json);
+
+statement ok
+COPY (FROM src) TO '{TEST_DIR}/lj_json_array.json' (FORMAT json, ARRAY true);
+
+statement ok
+COPY (FROM src) TO '{TEST_DIR}/lj_json.json.gz' (FORMAT json);
+
+query II
+EXPLAIN SELECT * FROM read_json('{TEST_DIR}/lj_json_1.json') ORDER BY id DESC LIMIT 3;
+----
+physical_plan	<!REGEX>:.*LOOKUP_JOIN.*
+
+query IIIII
+SELECT id, grp, payload IS NOT DISTINCT FROM (CASE WHEN id % 11 = 0 THEN NULL ELSE md5(id::VARCHAR) || md5((id + 1)::VARCHAR) END), s, l FROM read_json('{TEST_DIR}/lj_json_1.json') ORDER BY id DESC LIMIT 3;
+----
+3999	2	true	{'a': 3999, 'b': v3999}	[3999, 4000]
+3998	1	true	{'a': 3998, 'b': v3998}	[3998, 3999]
+3997	0	true	{'a': 3997, 'b': v3997}	[3997, 3998]
+
+query I
+SELECT count(*) FROM (SELECT * FROM read_json('{TEST_DIR}/lj_json_*.json') ORDER BY grp, id DESC LIMIT 900)
+WHERE payload IS DISTINCT FROM (CASE WHEN id % 11 = 0 THEN NULL ELSE md5(id::VARCHAR) || md5((id + 1)::VARCHAR) END)
+   OR s.a <> id OR l[2] <> id + 1
+----
+0
+
+query II
+EXPLAIN SELECT * FROM read_json('{TEST_DIR}/lj_json_array.json') ORDER BY id DESC LIMIT 3;
+----
+physical_plan	<!REGEX>:.*LOOKUP_JOIN.*
+
+query I
+SELECT count(*) FROM (SELECT * FROM read_json('{TEST_DIR}/lj_json_array.json') ORDER BY grp, id DESC LIMIT 900)
+WHERE payload IS DISTINCT FROM (CASE WHEN id % 11 = 0 THEN NULL ELSE md5(id::VARCHAR) || md5((id + 1)::VARCHAR) END)
+   OR s.a <> id OR l[2] <> id + 1
+----
+0
+
+query II
+EXPLAIN SELECT * FROM read_json('{TEST_DIR}/lj_json.json.gz') ORDER BY id DESC LIMIT 3;
+----
+physical_plan	<!REGEX>:.*LOOKUP_JOIN.*
+
+query II
+SELECT id, s.b FROM read_json('{TEST_DIR}/lj_json.json.gz') ORDER BY id DESC LIMIT 2;
+----
+5999	v5999
+5998	v5998

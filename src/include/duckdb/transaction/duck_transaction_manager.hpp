@@ -13,8 +13,6 @@
 #include "duckdb/common/enums/checkpoint_type.hpp"
 #include "duckdb/common/queue.hpp"
 
-#include <condition_variable>
-
 namespace duckdb {
 class DuckTransactionManager;
 class DuckTransaction;
@@ -26,6 +24,7 @@ struct DuckCleanupInfo {
 	//! All transactions in a cleanup info share the same lowest_visibility_bound.
 	VisibilityBound lowest_visibility_bound;
 	vector<unique_ptr<DuckTransaction>> transactions;
+	unique_ptr<DuckTransaction> discarded;
 
 	void Cleanup();
 	bool ScheduleCleanup() noexcept;
@@ -50,6 +49,8 @@ public:
 
 	void Checkpoint(ClientContext &context, bool force = false) override;
 
+	void CheckTruncate(DuckTransaction &transaction, DataTable &table);
+
 	VisibilityBound LowestVisibilityBound() const {
 		return lowest_visibility_bound;
 	}
@@ -72,6 +73,8 @@ public:
 	bool IsDuckTransactionManager() override {
 		return true;
 	}
+	void RefreshStartTime(Transaction &transaction) override;
+	void AdvanceStartTime(DuckTransaction &transaction);
 
 	//! Obtains a shared lock to the checkpoint lock
 	unique_ptr<StorageLockKey> SharedCheckpointLock();
@@ -86,7 +89,7 @@ public:
 
 	void PushCatalogEntry(Transaction &transaction_p, CatalogEntry &entry, data_ptr_t extra_data = nullptr,
 	                      idx_t extra_data_size = 0);
-	void PushAttach(Transaction &transaction_p, AttachedDatabase &db);
+	void PushAttach(Transaction &transaction_p, AttachedDatabase &db) override;
 
 protected:
 	struct CheckpointDecision {
@@ -107,20 +110,22 @@ private:
 	//! transaction_lock held, immediately before RemoveTransaction, so that a failure to allocate is reported
 	//! while the transaction lists are still untouched.
 	unique_ptr<DuckCleanupInfo> CreateCleanupInfo();
+	void ReserveCleanup(DuckCleanupInfo &cleanup_info);
 	//! Remove the given transaction from the list of active transactions
 	unique_ptr<DuckCleanupInfo> RemoveTransaction(DuckTransaction &transaction,
 	                                              unique_ptr<DuckCleanupInfo> cleanup_info) noexcept;
 	//! Remove the given transaction from the list of active transactions
 	unique_ptr<DuckCleanupInfo> RemoveTransaction(DuckTransaction &transaction, bool store_transaction,
 	                                              unique_ptr<DuckCleanupInfo> cleanup_info) noexcept;
-	//! Recompute lowest_visibility_bound over the active transactions, leaving out `exclude`, and
-	//! return its index among them (their count when absent). Caller holds the transaction lock
-	idx_t UpdateLowestVisibilityBound(optional_ptr<DuckTransaction> exclude) noexcept;
+	void AcquireLowest(VisibilityBound bound) noexcept;
+	void ReleaseLowest(VisibilityBound bound) noexcept;
+	void RecomputeLowest() noexcept;
+	ErrorData CommitReadOnly(ClientContext &context, DuckTransaction &transaction);
 	//! Move the committed transactions below the cleanup info's lowest visibility bound into it.
 	//! Caller holds the transaction lock; must not allocate (see CreateCleanupInfo)
 	void SweepCommittedTransactions(DuckCleanupInfo &cleanup_info) noexcept;
 	//! Hand a cleanup to the background cleanup thread, if it has anything to do
-	void QueueCleanup(unique_ptr<DuckCleanupInfo> cleanup_info);
+	unique_ptr<DuckCleanupInfo> QueueCleanup(unique_ptr<DuckCleanupInfo> cleanup_info);
 
 	//! Whether or not we can checkpoint
 	CheckpointDecision CanCheckpoint(DuckTransaction &transaction, unique_ptr<StorageLockKey> &checkpoint_lock,
@@ -150,6 +155,7 @@ private:
 	//! The lowest bound any active transaction reads at. A version preceding it is visible to
 	//! every active transaction, so whatever it supersedes can be cleaned up or compacted
 	atomic<VisibilityBound> lowest_visibility_bound;
+	idx_t lowest_holders = 0;
 	//! The last commit timestamp
 	atomic<transaction_t> last_commit;
 	//! The currently active checkpoint, zero when none is running
@@ -173,11 +179,9 @@ private:
 	//! active_transactions until its commit is durable, so new snapshots are bounded below commits
 	//! that are not yet durable
 	VisibilityBound durable_bound;
-	//! Signalled (under transaction_lock) when no active transaction awaits its WAL sync
-	std::condition_variable durability_cv;
 
 	atomic<idx_t> last_uncommitted_catalog_version = {TRANSACTION_ID_START};
-	idx_t last_committed_version = 0;
+	atomic<idx_t> last_committed_version = {0};
 
 	//! Only one cleanup can be active at any time.
 	mutex cleanup_lock;

@@ -9,6 +9,7 @@
 #pragma once
 
 #include "duckdb/catalog/catalog_entry/trigger_catalog_entry.hpp"
+#include "duckdb/catalog/catalog_set.hpp"
 #include "duckdb/catalog/catalog_transaction.hpp"
 #include "duckdb/catalog/standard_entry.hpp"
 #include "duckdb/common/enums/column_segment_info_scan_type.hpp"
@@ -26,11 +27,13 @@
 
 namespace duckdb {
 
+class ColumnDataCollection;
 class DataTable;
 class DuckTableEntry;
 struct CreateTriggerInfo;
 
 struct RenameColumnInfo;
+struct SetTriggerFiringInfo;
 struct RenameFieldInfo;
 struct AddColumnInfo;
 struct AddFieldInfo;
@@ -67,10 +70,13 @@ public:
 
 public:
 	//! Create a TableCatalogEntry and initialize storage for it
-	DUCKDB_API TableCatalogEntry(Catalog &catalog, SchemaCatalogEntry &schema, CreateTableInfo &info);
+	DUCKDB_API TableCatalogEntry(Catalog &catalog, SchemaCatalogEntry &schema, CreateTableInfo &info,
+	                             shared_ptr<CatalogSet> inherited_triggers = nullptr);
 
 public:
 	DUCKDB_API unique_ptr<CreateInfo> GetInfo() const override;
+	DUCKDB_API static void RenameColumn(ColumnList &columns, vector<unique_ptr<Constraint>> &constraints,
+	                                    const RenameColumnInfo &info);
 
 	DUCKDB_API virtual bool HasGeneratedColumns() const;
 
@@ -86,8 +92,13 @@ public:
 	DUCKDB_API virtual vector<LogicalType> GetTypes() const;
 	//! Returns a list of the columns of the table
 	DUCKDB_API virtual const ColumnList &GetColumns() const = 0;
+
+	vector<idx_t> GetSubObjectOids() const;
+
 	//! Returns the underlying storage of the table
 	virtual DataTable &GetStorage();
+	//! Appends rows within the current transaction, checking the table's constraints
+	virtual void InternalAppend(ClientContext &context, ColumnDataCollection &collection);
 
 	//! Returns a list of the constraints of the table
 	DUCKDB_API const vector<unique_ptr<Constraint>> &GetConstraints() const;
@@ -107,6 +118,12 @@ public:
 
 	//! Returns the scan function that can be used to scan the given table
 	virtual TableFunction GetScanFunction(ClientContext &context, unique_ptr<FunctionData> &bind_data) = 0;
+	//! The catalog whose database is modified when writing this table; a
+	//! catalog that delegates storage to another catalog overrides this so
+	//! binders register the correct database for the transaction.
+	virtual Catalog &GetStorageCatalog(ClientContext &context) {
+		return catalog;
+	}
 	virtual TableFunction GetScanFunction(ClientContext &context, unique_ptr<FunctionData> &bind_data,
 	                                      const EntryLookupInfo &lookup_info);
 
@@ -154,18 +171,22 @@ public:
 
 	//! Returns the virtual columns for this table
 	virtual virtual_column_map_t GetVirtualColumns() const;
+	DUCKDB_API static void AddPostgresSystemColumns(virtual_column_map_t &virtual_columns);
 
 	virtual vector<column_t> GetRowIdColumns() const;
 
 	//! Create a trigger on this table (throws for table types that don't support triggers)
 	virtual optional_ptr<CatalogEntry> CreateTrigger(CatalogTransaction transaction, CreateTriggerInfo &info);
-	//! Scan all triggers on this table (default: no-op - non-DuckDB tables have no triggers)
+	//! Scan all triggers on this table
 	virtual void ScanTriggers(CatalogTransaction transaction,
 	                          const std::function<void(CatalogEntry &)> &callback) const;
+	void ScanTriggersNonTransactional(const std::function<void(CatalogEntry &)> &callback);
 	//! Get the trigger with the given name on this table
 	virtual optional_ptr<CatalogEntry> GetTrigger(CatalogTransaction transaction, const Identifier &name) const;
 	//! Drop a trigger from this table (throws for table types that don't support triggers)
 	virtual bool DropTrigger(CatalogTransaction transaction, const Identifier &name, bool cascade);
+	//! The other tables whose foreign keys reference this table
+	virtual vector<reference<TableCatalogEntry>> ReferencingTables(ClientContext &context);
 	//! Collect triggers matching the given event type and for_each granularity, regardless of timing
 	vector<const_reference<TriggerCatalogEntry>>
 	GetTriggersForEvent(CatalogTransaction transaction, TriggerEventType event_type, TriggerForEach for_each) const;
@@ -175,7 +196,11 @@ public:
 	                                                                 TriggerForEach for_each) const;
 
 protected:
+	void RenameTriggerColumns(ClientContext &context, const RenameColumnInfo &info);
+	void SetTriggerFiring(ClientContext &context, const SetTriggerFiringInfo &info);
+
 	//! A list of constraints that are part of this table
 	vector<unique_ptr<Constraint>> constraints;
+	shared_ptr<CatalogSet> triggers;
 };
 } // namespace duckdb

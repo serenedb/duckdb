@@ -253,14 +253,14 @@ void KeyValueSecretReader::ThrowNotFoundError(const Identifier &secret_key, cons
 }
 
 bool CreateSecretFunctionSet::ProviderExists(const Identifier &provider_name) {
-	return functions.find(Identifier(provider_name)) != functions.end();
+	return functions.find(provider_name) != functions.end();
 }
 
 void CreateSecretFunctionSet::AddFunction(CreateSecretFunction &function, OnCreateConflict on_conflict) {
 	if (ProviderExists(function.provider)) {
 		if (on_conflict == OnCreateConflict::ERROR_ON_CONFLICT) {
 			throw InternalException(
-			    "Attempted to override a Create Secret Function with OnCreateConflict::ERROR_ON_CONFLICT for: '%s'",
+			    "Attempted to override a Create Secret Function with OnCreateConflict::ERROR_ON_CONFLICT for: %s",
 			    function.provider);
 		} else if (on_conflict == OnCreateConflict::REPLACE_ON_CONFLICT) {
 			functions[function.provider] = function;
@@ -273,7 +273,7 @@ void CreateSecretFunctionSet::AddFunction(CreateSecretFunction &function, OnCrea
 }
 
 CreateSecretFunction &CreateSecretFunctionSet::GetFunction(const string &provider) {
-	const auto &lookup = functions.find(Identifier(provider));
+	const auto &lookup = functions.find(provider);
 
 	if (lookup == functions.end()) {
 		throw InternalException("Could not find Create Secret Function with provider %s");

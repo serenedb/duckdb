@@ -1,0 +1,14 @@
+# name: test/sql/aggregate/aggregates/test_skew_kurtosis_moments.test
+# description: skewness and kurtosis match formulas over explicit power sums
+# group: [aggregates]
+
+statement ok
+CREATE TABLE t AS SELECT (((i * 7919) % 1000) ^ 2) / 1000.0 - 20 AS x FROM range(50000) r(i);
+
+query I
+WITH m AS (SELECT count(*) AS n, avg(x) AS mu FROM t),
+c AS (SELECT sum((x - mu) ^ 2) / n AS m2, sum((x - mu) ^ 3) / n AS m3, sum((x - mu) ^ 4) / n AS m4, n FROM t, m GROUP BY n)
+SELECT abs((SELECT skewness(x) FROM t) / (sqrt(n * (n - 1)) / (n - 2) * m3 / m2 ^ 1.5) - 1) < 1e-9
+   AND abs((SELECT kurtosis_pop(x) FROM t) / (m4 / (m2 * m2) - 3) - 1) < 1e-9 FROM c;
+----
+true

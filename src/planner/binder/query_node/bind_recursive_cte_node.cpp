@@ -44,6 +44,8 @@ BoundStatement Binder::BindNode(RecursiveCTENode &statement) {
 	for (idx_t i = 0; i < statement.aliases.size() && i < result.names.size(); i++) {
 		result.names[i] = statement.aliases[i];
 	}
+	// the names become a binding, which requires them to be unique
+	QueryResult::DeduplicateColumns(result.names);
 
 	// This allows the right side to reference the CTE recursively
 	bind_context.AddGenericBinding(setop_index, statement.ctename, result.names, result.types);
@@ -133,7 +135,7 @@ BoundStatement Binder::BindNode(RecursiveCTENode &statement) {
 				auto names_iter = find(result.names.begin(), result.names.end(), func_expr.GetAlias());
 				if (names_iter == result.names.end()) {
 					throw BinderException(expr->GetQueryLocation(),
-					                      "Could not find column with name '%s' to bind aggregate to.",
+					                      "Could not find column with name %s to bind aggregate to.",
 					                      func_expr.GetAlias());
 				}
 				aggregate_idx = ProjectionIndex(NumericCast<idx_t>(std::distance(result.names.begin(), names_iter)));
@@ -281,7 +283,8 @@ BoundStatement Binder::BindNode(RecursiveCTENode &statement) {
 			const auto column_index = group.Binding().column_index;
 			const auto group_type = group.GetReturnType();
 			auto uncollated_group = key_targets[group_idx]->Copy();
-			if (ExpressionBinder::PushCollation(context, key_targets[group_idx], group_type)) {
+			if (ExpressionBinder::PushCollation(context, key_targets[group_idx], group_type,
+			                                    CollationType::EQUALITY_COLLATIONS)) {
 				vector<unique_ptr<Expression>> first_children;
 				first_children.push_back(std::move(uncollated_group));
 				FunctionBinder function_binder(*this);

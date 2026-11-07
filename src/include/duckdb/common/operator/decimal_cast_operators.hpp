@@ -681,10 +681,8 @@ bool TryDecimalStringCast(const char *string_ptr, idx_t string_size, T &result, 
 	state.limit = UnsafeNumericCast<T>(DecimalCastTraits<T>::POWERS_OF_TEN_CLASS::POWERS_OF_TEN[width]);
 	if (!TryIntegerCast<DecimalCastData<T>, true, true, DecimalCastOperation, false, decimal_separator>(
 	        string_ptr, string_size, state, false)) {
-		string_t value(string_ptr, (uint32_t)string_size);
-		string error = StringUtil::Format("Could not convert string \"%s\" to DECIMAL(%d,%d)", value.GetString(),
-		                                  (int)width, (int)scale);
-		HandleCastError::AssignError(error, parameters);
+		HandleCastError::AssignStringToDecimalError(string_t(string_ptr, (uint32_t)string_size), width, scale,
+		                                            decimal_separator, parameters);
 		return false;
 	}
 	result = state.result;

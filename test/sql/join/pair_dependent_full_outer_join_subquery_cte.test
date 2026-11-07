@@ -155,7 +155,7 @@ FULL OUTER JOIN pair_unique_domain_r r ON EXISTS (
 	  AND s.b = r.b
 );
 ----
-physical_plan	<REGEX>:.*Cross Product.*Hash Group By.*Hash Group By.*
+physical_plan	<REGEX>:.*CROSS_PRODUCT.*HASH_GROUP_BY.*HASH_GROUP_BY.*
 
 query II
 EXPLAIN SELECT l.a, l.x, r.b, r.y
@@ -167,7 +167,7 @@ FULL OUTER JOIN pair_unique_domain_r r ON EXISTS (
 	  AND s.b = r.b
 );
 ----
-physical_plan	<!REGEX>:.*Cross Product.*Groups: #0, #1.*
+physical_plan	<!REGEX>:.*CROSS_PRODUCT.*Groups: #0, #1.*
 
 query II
 EXPLAIN SELECT l.a, l.x, r.b, r.y
@@ -193,4 +193,4 @@ FULL OUTER JOIN (SELECT b, max(y)::INTEGER AS y FROM pair_unique_domain_r GROUP 
 	  AND s.b = r.b
 );
 ----
-physical_plan	<REGEX>:.*Cross Product.*Hash Group By.*Hash Group By.*
+physical_plan	<REGEX>:.*CROSS_PRODUCT.*HASH_GROUP_BY.*HASH_GROUP_BY.*

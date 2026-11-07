@@ -21,7 +21,7 @@ static inline LogicalType RemoveDuplicateStructKeys(const LogicalType &type, con
 					continue;
 				}
 				throw NotImplementedException(
-				    "Duplicate name \"%s\" in struct auto-detected in JSON, try ignore_errors=true", child_type.first);
+				    "Duplicate name %s in struct auto-detected in JSON, try ignore_errors=true", child_type.first);
 			} else {
 				child_types.emplace_back(child_type.first, RemoveDuplicateStructKeys(child_type.second, ignore_errors));
 			}
@@ -246,7 +246,7 @@ unique_ptr<JSONStructureNode> JSONScan::DetectStructure(ClientContext &context, 
 	sampled_readers.resize(files.empty() ? 0 : files.size());
 
 	AutoDetectState auto_detect_state(context, json_data, files, sampled_readers, date_format_map);
-	const auto num_threads = TaskScheduler::GetScheduler(context).NumberOfThreads();
+	const auto num_threads = TaskScheduler::QueryThreads(context);
 	const auto files_per_task = (file_count + num_threads - 1) / num_threads;
 	const auto num_tasks = (file_count + files_per_task - 1) / files_per_task;
 	vector<JSONStructureNode> task_nodes(num_tasks);

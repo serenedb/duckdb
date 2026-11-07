@@ -151,7 +151,11 @@ CachedGlobalSettings &GlobalUserSettings::GetSettings() const {
 	    current_cache.uuid != uuid || current_cache.version != current_version) {
 		// out-of-date, refresh the cache
 		lock_guard<mutex> guard(lock);
-		current_cache = CachedGlobalSettings(*this, settings_version, settings_map);
+		identifier_map_t<idx_t> extension_indexes;
+		for (auto &entry : extension_parameters) {
+			extension_indexes.emplace(entry.first, entry.second.setting_index.GetIndex());
+		}
+		current_cache = CachedGlobalSettings(*this, settings_version, settings_map, std::move(extension_indexes));
 	}
 	return current_cache;
 #ifdef __MVS__
@@ -167,11 +171,29 @@ CachedGlobalSettings::CachedGlobalSettings() : version(0), uuid(0) {
 }
 
 CachedGlobalSettings::CachedGlobalSettings(const GlobalUserSettings &global_user_settings_p, idx_t version,
-                                           UserSettingsMap settings_p)
+                                           UserSettingsMap settings_p, identifier_map_t<idx_t> extension_indexes_p)
     : global_user_settings(global_user_settings_p), version(version), settings(std::move(settings_p)),
-      uuid(global_user_settings_p.GetUUID()) {
+      extension_indexes(std::move(extension_indexes_p)), uuid(global_user_settings_p.GetUUID()) {
 }
 #endif
+
+optional_idx GlobalUserSettings::TryGetExtensionSettingIndex(const Identifier &name) const {
+#ifndef __MINGW32__
+	const auto &indexes = GetSettings().extension_indexes;
+	auto entry = indexes.find(name);
+	if (entry == indexes.end()) {
+		return optional_idx();
+	}
+	return entry->second;
+#else
+	lock_guard<mutex> l(lock);
+	auto entry = extension_parameters.find(name);
+	if (entry == extension_parameters.end()) {
+		return optional_idx();
+	}
+	return entry->second.setting_index;
+#endif
+}
 
 //===--------------------------------------------------------------------===//
 // LocalUserSettings

@@ -22,7 +22,7 @@ public:
 	                             bool is_root) override;
 
 private:
-	void AddExpressionSet(Expression &expr, expression_set_t &set);
+	void AddExpressionSet(Expression &expr, hashed_expression_set_t<Expression> &set);
 	unique_ptr<Expression> ExtractExpression(BoundConjunctionExpression &conj, idx_t idx, const Expression &expr);
 };
 

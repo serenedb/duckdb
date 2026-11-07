@@ -1,0 +1,25 @@
+# name: test/sql/catalog/function/test_typed_table_macro_lateral_view.test
+# description: A typed table macro called LATERAL with a correlated argument inside a view
+# group: [function]
+
+statement ok
+CREATE TABLE t(n INTEGER);
+
+statement ok
+INSERT INTO t VALUES (2), (3);
+
+statement ok
+CREATE MACRO tm(x INTEGER) AS TABLE SELECT 1 AS y;
+
+statement ok
+CREATE VIEW v AS SELECT s.y FROM t AS r, LATERAL tm(r.n) AS s;
+
+query I
+SELECT count(*) FROM v;
+----
+2
+
+query I
+SELECT (SELECT count(*) FROM t AS r, LATERAL tm(r.n) AS s);
+----
+2

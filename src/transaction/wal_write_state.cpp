@@ -9,9 +9,12 @@
 #include "duckdb/catalog/catalog_entry/view_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_set.hpp"
 #include "duckdb/catalog/duck_catalog.hpp"
+#include "duckdb/common/fault_points.hpp"
 #include "duckdb/common/serializer/binary_deserializer.hpp"
 #include "duckdb/common/serializer/memory_stream.hpp"
 #include "duckdb/common/vector/flat_vector.hpp"
+#include "duckdb/main/attached_database.hpp"
+#include "duckdb/parser/parsed_data/alter_table_info.hpp"
 #include "duckdb/storage/data_table.hpp"
 #include "duckdb/storage/table/chunk_info.hpp"
 #include "duckdb/storage/table/column_data.hpp"
@@ -34,7 +37,7 @@ WALWriteState::WALWriteState(DuckTransaction &transaction_p, WriteAheadLog &log,
 void WALWriteState::SwitchTable(DuckTableEntry &table_entry, UndoFlags new_op) {
 	if (current_table_entry.get() != &table_entry) {
 		// write the current table to the log
-		log.WriteSetTable(QualifiedName(table_entry.schema.GetSchemaPath(), table_entry.name));
+		log.WriteSetTable(QualifiedName(table_entry.ParentSchemaPath(), table_entry.name));
 		current_table_entry = table_entry;
 	}
 }
@@ -77,6 +80,9 @@ void WALWriteState::WriteCatalogEntry(CatalogEntry &entry, data_ptr_t dataptr) {
 			deserializer.End();
 
 			auto &alter_info = parse_info->Cast<AlterInfo>();
+			if (parent.type == CatalogType::INDEX_ENTRY && alter_info.type == AlterType::REPLACE_DEFINITION) {
+				return;
+			}
 			log.WriteAlter(entry, alter_info);
 		} else {
 			switch (parent.type) {
@@ -277,6 +283,7 @@ void WALWriteState::CommitEntry(UndoFlags type, data_ptr_t data) {
 		// append:
 		auto info = reinterpret_cast<AppendInfo *>(data);
 		if (!info->table->GetStorage().IsTemporary()) {
+			SwitchTable(*info->table, UndoFlags::INSERT_TUPLE);
 			info->table->GetStorage().WriteToLog(transaction, log, info->start_row, info->count, commit_state.get());
 		}
 		break;

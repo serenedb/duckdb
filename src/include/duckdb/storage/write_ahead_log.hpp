@@ -16,8 +16,6 @@
 #include "duckdb/common/types/data_chunk.hpp"
 #include "duckdb/storage/block.hpp"
 
-#include <condition_variable>
-
 namespace duckdb {
 
 struct AlterInfo;
@@ -143,7 +141,6 @@ protected:
 
 	//! Shared-sync state (guarded by sync_lock, which is independent of the WAL lock)
 	mutex sync_lock;
-	std::condition_variable sync_cv;
 	//! Sync offsets are logical (BufferedFileWriter::GetTotalWritten), not file positions: a
 	//! truncation rewinds the file, so a file position can be reused but a logical one cannot
 	//! The WAL is durable up to this logical offset
@@ -154,6 +151,7 @@ protected:
 	bool sync_in_flight = false;
 	//! Set when a sync has failed; every further sync of this WAL fails
 	bool sync_failed = false;
+	string sync_failure;
 };
 
 } // namespace duckdb

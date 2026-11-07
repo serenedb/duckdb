@@ -7,7 +7,7 @@ CREATE MACRO my_values(m,s) as TABLE select * from (values  (1.0*m+s,'adam'), (2
 (3.0*m+s,'cris'), (4.0*m+s,'desmond'),(5.0*m+s, 'eric'));
 
 query I
-SELECT sum(col0) from my_values(10.0,5.0);
+SELECT sum(column1) from my_values(10.0,5.0);
 ----
 175.00
 
@@ -16,7 +16,7 @@ statement ok
 CREATE MACRO my_values_union(m1,s1,m2,s2) as TABLE select * from my_values(m1,s1) UNION select * from my_values(m2,s2);
 
 query I
-select max(col0)  from my_values_union(1.0,2.0,3.0,20.0);
+select max(column1)  from my_values_union(1.0,2.0,3.0,20.0);
 ----
 35.00
 

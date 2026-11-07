@@ -6,6 +6,7 @@
 #include "duckdb/planner/expression_iterator.hpp"
 #include "duckdb/planner/logical_operator_visitor.hpp"
 #include "duckdb/planner/operator/logical_get.hpp"
+#include "duckdb/planner/operator/logical_lookup_join.hpp"
 #include "duckdb/planner/operator/logical_sample.hpp"
 
 namespace duckdb {
@@ -70,6 +71,8 @@ static LogicalOperatorRepeatability ClassifyOperatorType(LogicalOperator &op) {
 		}
 		return LogicalOperatorRepeatability::REPEATABLE;
 	}
+	case LogicalOperatorType::LOGICAL_LOOKUP_JOIN:
+		return ClassifyOperatorType(op.Cast<LogicalLookupJoin>().GetSource());
 	case LogicalOperatorType::LOGICAL_SAMPLE: {
 		auto &sample = op.Cast<LogicalSample>();
 		return SampleIsRepeatable(sample.sample_options.get()) ? LogicalOperatorRepeatability::REPEATABLE
@@ -105,6 +108,11 @@ static LogicalOperatorRepeatability ClassifyOperatorType(LogicalOperator &op) {
 	case LogicalOperatorType::LOGICAL_ATTACH:
 	case LogicalOperatorType::LOGICAL_DETACH:
 	case LogicalOperatorType::LOGICAL_CREATE_TRIGGER:
+	case LogicalOperatorType::LOGICAL_CREATE_JOB:
+	case LogicalOperatorType::LOGICAL_CREATE_ROLE:
+	case LogicalOperatorType::LOGICAL_CREATE_FOREIGN_SERVER:
+	case LogicalOperatorType::LOGICAL_CREATE_TOKENIZER:
+	case LogicalOperatorType::LOGICAL_CREATE_DATABASE:
 	case LogicalOperatorType::LOGICAL_EXPLAIN:
 	case LogicalOperatorType::LOGICAL_PREPARE:
 	case LogicalOperatorType::LOGICAL_EXECUTE:
@@ -125,9 +133,6 @@ static LogicalOperatorRepeatability ClassifyOperatorType(LogicalOperator &op) {
 }
 
 LogicalOperatorRepeatability ClassifyLogicalOperatorRepeatability(LogicalOperator &op) {
-	if (op.HasSideEffects()) {
-		return LogicalOperatorRepeatability::NON_REPEATABLE;
-	}
 	auto classification = ClassifyOperatorType(op);
 	if (classification != LogicalOperatorRepeatability::REPEATABLE) {
 		return classification;

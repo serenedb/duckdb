@@ -20,13 +20,12 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformCommentStatement(PEGTra
 	Identifier column_name;
 	if (comment_on_type == CatalogType::INVALID) {
 		// Column type returned
-		auto identifier = comment_target;
-		column_name = Identifier(identifier.back());
-		identifier.pop_back();
-		if (identifier.empty()) {
+		column_name = Identifier(comment_target.back());
+		if (comment_target.size() == 1) {
 			throw ParserException("Invalid column reference: %s", SQLIdentifier(column_name));
 		}
-		auto qualified_name = StringToQualifiedName(identifier);
+		auto qualified_name =
+		    StringToQualifiedName(std::span<const string>(comment_target).first(comment_target.size() - 1));
 		info = make_uniq<SetColumnCommentInfo>(qualified_name.Catalog(), qualified_name.Schema(), qualified_name.Name(),
 		                                       column_name, comment_value, OnEntryNotFound::THROW_EXCEPTION);
 	} else if (comment_on_type == CatalogType::DATABASE_ENTRY) {

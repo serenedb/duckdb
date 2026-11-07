@@ -1,10 +1,8 @@
 #include "catch.hpp"
 #include "duckdb/common/enums/lambda_syntax.hpp"
-#include "duckdb/common/enums/allow_parser_override.hpp"
 #include "duckdb/common/enums/dialect_compatibility_mode.hpp"
 #include "duckdb/common/enums/table_function_identifier_conversion.hpp"
 #include "duckdb/common/enums/show_behavior.hpp"
-#include "duckdb/parser/peg/dialect_extension.hpp"
 #include "test_helpers.hpp"
 
 #include <iostream>
@@ -73,22 +71,25 @@ OptionValueSet GetValueForOption(const string &name, const LogicalType &type) {
 	    {"table_function_identifier_conversion",
 	     {EnumUtil::ToString(TableFunctionIdentifierConversion::DISABLE_IMPLICIT_STRING)}},
 	    {"dialect_compatibility_mode", {EnumUtil::ToString(DialectCompatibilityMode::SPARK)}},
-	    {"allow_parser_override_extension", {EnumUtil::ToString(AllowParserOverride::FALLBACK_OVERRIDE)}},
 	    {"profiling_coverage", {EnumUtil::ToString(ProfilingCoverage::ALL)}},
 	    {"show_behavior", {EnumUtil::ToString(ShowBehaviorType::TABLE)}},
 	    {"autoload_known_extensions", {false}},
 	    {"autoinstall_known_extensions", {false}},
 	    {"enable_profiling", {"json"}},
 	    {"explain_output", {{"all", "optimized_only", "physical_only"}}},
+	    {"explain_output_format", {"pg"}},
+	    {"default_transaction_isolation", {"serializable"}},
+	    {"force_dict_fsst_mode", {"AUTO"}},
 	    {"file_search_path", {"test"}},
+	    {"filter_reorder", {"safe"}},
 	    {"force_compression", {"uncompressed", "uncompressed"}},
 	    {"fsync_mode", {"NONE"}},
+	    {"integer_overflow", {"WRAP"}},
 	    {"home_directory", {"test"}},
 	    {"allow_extensions_metadata_mismatch", {"true"}},
 	    {"extension_directory", {"test"}},
 	    {"extension_repository_directory", {"test"}},
 	    {"extension_directories", {"[test]"}},
-	    {"max_expression_depth", {50}},
 	    {"write_buffer_row_group_memory_limit", {"4.0 GiB"}},
 	    {"max_memory", {"4.0 GiB"}},
 	    {"max_temp_directory_size", {"10.0 GiB"}},
@@ -142,6 +143,7 @@ OptionValueSet GetValueForOption(const string &name, const LogicalType &type) {
 	    {"current_transaction_invalidation_policy", {"SYNTACTIC_ERRORS_DO_NOT_INVALIDATE"}},
 	    {"default_transaction_invalidation_policy", {"SYNTACTIC_ERRORS_DO_NOT_INVALIDATE"}},
 	    {"checkpoint_on_detach", {"ENABLED"}},
+	    {"copy_csv_header_default", {false}},
 	    {"debug_verify_statement", {"copy_statement"}},
 	    {"enable_caching_operators", {false}},
 	    {"enable_optimistic_write", {false}},
@@ -173,7 +175,6 @@ OptionValueSet GetValueForOption(const string &name, const LogicalType &type) {
 bool OptionIsExcludedFromTest(const string &name) {
 	static unordered_set<string> excluded_options = {
 	    "access_mode",
-	    "active_grammar_extensions",
 	    "allow_community_extensions",   // cant change this while db is running
 	    "allow_extension_repositories", // can only be tightened at runtime, cannot be freely reset
 	    "allow_unredacted_secrets",     // cant change this while db is running
@@ -182,7 +183,6 @@ bool OptionIsExcludedFromTest(const string &name) {
 	    "allowed_directories",
 	    "allowed_paths",
 	    "block_allocator_memory", // cant reduce
-	    "current_dialect",
 	    "custom_user_agent",
 	    "debug_delta_only_variant_encoding_enabled",
 	    "debug_verification_mode",
@@ -192,7 +192,6 @@ bool OptionIsExcludedFromTest(const string &name) {
 	    "disabled_filesystems",          // cant change this while db is running
 	    "duckdb_api",
 	    "enable_external_access", // cant change this while db is running
-	    "enable_object_cache",
 	    "enable_profiling",
 	    "enable_progress_bar",
 	    "enable_progress_bar_print",
@@ -207,20 +206,17 @@ bool OptionIsExcludedFromTest(const string &name) {
 	    "log_query_path",
 	    "max_execution_time",
 	    "max_streaming_buffer_size",
-	    "password",
 	    "profiling_mode",
 	    "profiling_output", // just an alias
 	    "profiling_renderer_settings",
 	    "progress_bar_time",
-	    "scheduler_process_partial",
 	    "schema",
 	    "search_path",
 	    "standard_vector_size",
 	    "streaming_buffer_size", // alias of max_streaming_buffer_size
 	    "temp_file_encryption",
 	    "tracked_metrics",
-	    "user",
-	    "username",
+	    "transaction_isolation",
 	    "vacuum_rebuild_indexes", // cant change this while db is running
 	    "warnings_as_errors",     // requires logging to be enabled
 	    "worker_threads",

@@ -9,6 +9,7 @@
 #include "duckdb/common/types/row/block_iterator.hpp"
 #include "duckdb/common/types/row/tuple_data_collection.hpp"
 #include "duckdb/parallel/parallel_destroy_task.hpp"
+#include "duckdb/storage/buffer_manager.hpp"
 
 #include "vergesort.h"
 #include "pdqsort.h"
@@ -165,9 +166,10 @@ private:
 class SortedRunMergerGlobalState : public GlobalSourceState {
 public:
 	explicit SortedRunMergerGlobalState(ClientContext &context_p, const SortedRunMerger &merger_p)
-	    : context(context_p), num_threads(TaskScheduler::GetScheduler(context).NumberOfThreads()), merger(merger_p),
+	    : context(context_p), num_threads(TaskScheduler::QueryThreads(context)), merger(merger_p),
 	      num_runs(merger.sorted_runs.size()),
 	      num_partitions((merger.total_count + (merger.partition_size - 1)) / merger.partition_size),
+	      max_threads(std::clamp<idx_t>(MergeThreads(context, merger), 1, num_partitions)),
 	      iterator_state_type(GetBlockIteratorStateType(merger.external)),
 	      sort_key_type(merger.sort.key_layout->GetSortKeyType()), next_partition_idx(0), total_scanned(0),
 	      progress_scanned(0), destroy_partition_idx(0) {
@@ -192,7 +194,7 @@ public:
 	}
 
 	idx_t MaxThreads() override {
-		return MaxValue<idx_t>(num_partitions, 1);
+		return max_threads;
 	}
 
 	void DestroyScannedData() {
@@ -265,6 +267,21 @@ private:
 		return external ? BlockIteratorStateType::EXTERNAL : BlockIteratorStateType::IN_MEMORY;
 	}
 
+	static idx_t MergeThreads(ClientContext &context, const SortedRunMerger &merger) {
+		if (!merger.external) {
+			return NumericLimits<idx_t>::Maximum();
+		}
+		idx_t run_bytes = 0;
+		for (const auto &run : merger.sorted_runs) {
+			run_bytes += run->SizeInBytes();
+		}
+		static constexpr idx_t BLOCKS_PER_RUN = 3;
+		const auto block_size = BufferManager::GetBufferManager(context).GetBlockAllocSize();
+		const auto partition_bytes = merger.partition_size * (run_bytes / MaxValue<idx_t>(merger.total_count, 1)) +
+		                             merger.sorted_runs.size() * BLOCKS_PER_RUN * block_size;
+		return merger.memory_budget / MaxValue<idx_t>(partition_bytes, 1);
+	}
+
 public:
 	ClientContext &context;
 	const idx_t num_threads;
@@ -272,6 +289,7 @@ public:
 	const SortedRunMerger &merger;
 	const idx_t num_runs;
 	const idx_t num_partitions;
+	const idx_t max_threads;
 
 	const BlockIteratorStateType iterator_state_type;
 	const SortKeyType sort_key_type;
@@ -781,14 +799,18 @@ unique_ptr<SortedRun> SortedRunMergerLocalState::TemplatedMaterializePartition(S
 // Sorted Run Merger
 //===--------------------------------------------------------------------===//
 SortedRunMerger::SortedRunMerger(const Sort &sort_p, vector<unique_ptr<SortedRun>> &&sorted_runs_p,
-                                 idx_t partition_size_p, bool external_p, bool is_index_sort_p)
+                                 idx_t partition_size_p, bool external_p, bool is_index_sort_p, idx_t memory_budget_p)
     : scheduler(TaskScheduler::GetScheduler(*sort_p.client_context.db)), sort(sort_p),
       sorted_runs(std::move(sorted_runs_p)), total_count(SortedRunsTotalCount(sorted_runs)),
-      partition_size(partition_size_p), external(external_p), is_index_sort(is_index_sort_p) {
+      partition_size(partition_size_p), external(external_p), is_index_sort(is_index_sort_p),
+      memory_budget(memory_budget_p) {
 }
 
 SortedRunMerger::~SortedRunMerger() {
-	ParallelDestroyTask<decltype(sorted_runs)>::Schedule(scheduler, sorted_runs);
+	static constexpr idx_t PARALLEL_DESTROY_THRESHOLD = 1048576;
+	if (total_count > PARALLEL_DESTROY_THRESHOLD) {
+		ParallelDestroyTask<decltype(sorted_runs)>::Schedule(scheduler, sorted_runs);
+	}
 }
 
 unique_ptr<LocalSourceState> SortedRunMerger::GetLocalSourceState(ExecutionContext &,

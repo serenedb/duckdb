@@ -9,9 +9,11 @@
 #pragma once
 
 #include "duckdb/common/multi_file/multi_file_reader.hpp"
+#include "duckdb/common/file_system.hpp"
 #include "duckdb/function/partition_stats.hpp"
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/main/profiler/profiling_node.hpp"
+#include "duckdb/parallel/lookup_tasks.hpp"
 #include "duckdb/parallel/task_scheduler.hpp"
 #include "duckdb/common/vector/flat_vector.hpp"
 #include "duckdb/function/table_function.hpp"
@@ -60,6 +62,9 @@ struct MultiFileReaderInterface {
 	virtual bool SupportsReadAhead(const MultiFileBindData &bind_data) const {
 		return false;
 	}
+	virtual bool SupportsLookup(const MultiFileBindData &bind_data, TableFunctionLookupInfo &info) const {
+		return false;
+	}
 	virtual shared_ptr<BaseFileReader> CreateReader(ClientContext &context, GlobalTableFunctionState &gstate,
 	                                                BaseUnionData &union_data,
 	                                                const MultiFileBindData &bind_data_p) = 0;
@@ -104,6 +109,8 @@ public:
 		get_partition_info = MultiFileGetPartitionInfo;
 		get_virtual_columns = MultiFileGetVirtualColumns;
 		get_metrics = MultiFileGetMetrics;
+		supports_lookup = MultiFileSupportsLookup;
+		get_lookup_function = MultiFileGetLookupFunction;
 		MultiFileReader::AddParameters(*this, parameters);
 	}
 
@@ -451,7 +458,7 @@ public:
 			}
 			PushAsyncOpenError(gstate, ErrorData("Unknown exception while opening a file"));
 		} // LCOV_EXCL_STOP
-		gstate.async_open_settled.notify_all();
+		gstate.async_open_settled.SignalAll();
 	}
 
 	//! Schedule async opens for upcoming unopened files on the async pool, ahead of decoding. Lock held on entry.
@@ -460,8 +467,9 @@ public:
 	                              MultiFileGlobalState &gstate, unique_lock<mutex> &parallel_lock) {
 		auto &read_ahead = *gstate.read_ahead;
 		idx_t file_index = gstate.file_index;
+		idx_t files_open_ahead = 0;
 		bool progress_guaranteed = false;
-		while (!progress_guaranteed || read_ahead.CanScheduleOpen()) {
+		while (!progress_guaranteed || read_ahead.CanScheduleOpen(files_open_ahead)) {
 			const bool has_file_to_read = file_index < gstate.readers.size();
 			if (!has_file_to_read && !TryGetNextFile(gstate, parallel_lock)) {
 				return;
@@ -483,14 +491,16 @@ public:
 					    [&gstate]() {
 						    // the reader stays in OPENING, so tell every waiter to stop instead of polling forever
 						    gstate.error_opening_file = true;
-						    gstate.async_open_settled.notify_all();
+						    gstate.async_open_settled.SignalAll();
 					    });
 				}
+				files_open_ahead++;
 				progress_guaranteed = true;
 				break;
 			case MultiFileFileState::OPENING:
 			case MultiFileFileState::OPEN:
 				// the front file is already being/been opened - forward progress is guaranteed
+				files_open_ahead++;
 				progress_guaranteed = true;
 				break;
 			default:
@@ -506,7 +516,7 @@ public:
 			throw InternalException("parallel_lock is not held in TryOpenNextFile, this should not happen");
 		}
 
-		const auto file_lookahead_limit = TaskScheduler::GetScheduler(context).NumberOfThreads();
+		const auto file_lookahead_limit = TaskScheduler::QueryThreads(context);
 
 		idx_t file_index = global_state.file_index;
 		idx_t i = 0;
@@ -581,7 +591,7 @@ public:
 			}
 			// the open is in flight: sleep until it settles; the timeout bounds interrupt latency and
 			// covers a cancellation that signals without the lock
-			gstate.async_open_settled.wait_for(parallel_lock, std::chrono::milliseconds(10));
+			gstate.async_open_settled.WaitWithTimeout(parallel_lock.mutex(), absl::Milliseconds(10));
 			parallel_lock.unlock();
 			context.InterruptCheck();
 			parallel_lock.lock();
@@ -591,8 +601,13 @@ public:
 	static void InitializeDecodeChunk(ClientContext &context, MultiFileLocalState &lstate,
 	                                  MultiFileGlobalState &gstate) {
 		auto &job = *lstate.job;
-		auto &reader = *job.reader;
-		auto &reader_data = *job.reader_data;
+		InitializeDecodeChunk(context, *job.reader, *job.reader_data, gstate, lstate.scan_chunk, lstate.executor);
+		lstate.scan_chunk_file_index = job.file_index;
+	}
+
+	static void InitializeDecodeChunk(ClientContext &context, BaseFileReader &reader, MultiFileReaderData &reader_data,
+	                                  MultiFileGlobalState &gstate, DataChunk &scan_chunk,
+	                                  ExpressionExecutor &executor) {
 		auto &projection_ids = gstate.projection_ids;
 
 		if (!reader_data.extra_columns.empty()) {
@@ -656,10 +671,9 @@ public:
 				}
 			}
 		}
-		lstate.scan_chunk.Destroy();
-		lstate.scan_chunk.Initialize(BufferAllocator::Get(context), intermediate_chunk_types);
+		scan_chunk.Destroy();
+		scan_chunk.Initialize(BufferAllocator::Get(context), intermediate_chunk_types);
 
-		auto &executor = lstate.executor;
 		executor.ClearExpressions();
 		if (!projection_ids.empty()) {
 			for (auto &id : projection_ids) {
@@ -670,7 +684,6 @@ public:
 				executor.AddExpression(*expr);
 			}
 		}
-		lstate.scan_chunk_file_index = job.file_index;
 	}
 
 	static MultiFileClaimResult ClaimNextJobInternal(ClientContext &context, const MultiFileBindData &bind_data,
@@ -837,7 +850,7 @@ public:
 		result->filters = input.filters.get();
 		result->op = input.op;
 		result->global_state = bind_data.interface->InitializeGlobalState(context, bind_data, *result);
-		result->max_threads = TaskScheduler::GetScheduler(context).NumberOfThreads();
+		result->max_threads = TaskScheduler::QueryThreads(context);
 
 		// Ensure all readers are initialized and FileListScan is sync with readers list
 		for (auto &reader_data : result->readers) {
@@ -870,6 +883,13 @@ public:
 		if (max_threads.IsValid()) {
 			result->max_threads = MinValue<idx_t>(result->max_threads, max_threads.GetIndex());
 		}
+		InitializeProjection(bind_data, input, result);
+		InitializeReadAhead(context, bind_data, *result);
+		return std::move(result);
+	}
+
+	static void InitializeProjection(const MultiFileBindData &bind_data, TableFunctionInitInput &input,
+	                                 unique_ptr<MultiFileGlobalState> &result) {
 		bool require_extra_columns =
 		    result->multi_file_reader_state && result->multi_file_reader_state->RequiresExtraColumns();
 		if (input.CanRemoveFilterColumns() || require_extra_columns) {
@@ -896,8 +916,168 @@ public:
 				}
 			}
 		}
-		InitializeReadAhead(context, bind_data, *result);
+	}
+
+	static bool MultiFileSupportsLookup(ClientContext &context, const LogicalGet &get, TableFunctionLookupInfo &info) {
+		auto &bind_data = get.bind_data->Cast<MultiFileBindData>();
+		if (IsEmptyResult(bind_data)) {
+			return false;
+		}
+		info.remote = FileSystem::IsRemoteFile(bind_data.file_list->GetFirstFile().path);
+		if (!bind_data.interface->SupportsLookup(bind_data, info) || get.function.get_multi_file_reader ||
+		    bind_data.file_options.hive_partitioning || bind_data.file_options.filename) {
+			return false;
+		}
+		auto &column_ids = get.GetColumnIds();
+		for (idx_t i = 0; i < column_ids.size(); i++) {
+			info.fetchable[i] = info.fetchable[i] && !column_ids[i].IsVirtualColumn();
+		}
+		return true;
+	}
+
+	static TableFunction MultiFileGetLookupFunction(ClientContext &context, const LogicalGet &source) {
+		TableFunction lookup;
+		lookup.init_global = MultiFileLookupInitGlobal;
+		lookup.init_local = MultiFileLookupInitLocal;
+		lookup.in_out_function = MultiFileLookup;
+		return lookup;
+	}
+
+	static unique_ptr<GlobalTableFunctionState> MultiFileLookupInitGlobal(ClientContext &context,
+	                                                                      TableFunctionInitInput &input) {
+		auto &bind_data = input.bind_data->CastNoConst<MultiFileBindData>();
+		auto result = make_uniq<MultiFileGlobalState>(*bind_data.file_list);
+		auto &global_columns = bind_data.reader_bind.schema.empty() ? bind_data.columns : bind_data.reader_bind.schema;
+		result->multi_file_reader_state = bind_data.multi_file_reader->InitializeGlobalState(
+		    context, bind_data.file_options, bind_data.reader_bind, *bind_data.file_list, global_columns,
+		    input.column_indexes);
+		for (auto &file : bind_data.file_list->GetAllFiles()) {
+			result->readers.push_back(make_uniq<MultiFileReaderData>(file));
+		}
+		result->column_indexes = input.column_indexes;
+		result->filters = input.filters.get();
+		result->op = input.op;
+		result->global_state = bind_data.interface->InitializeGlobalState(context, bind_data, *result);
+		result->max_threads = TaskScheduler::QueryThreads(context);
+		InitializeProjection(bind_data, input, result);
 		return std::move(result);
+	}
+
+	static unique_ptr<LocalTableFunctionState>
+	MultiFileLookupInitLocal(ExecutionContext &context, TableFunctionInitInput &, GlobalTableFunctionState *) {
+		return make_uniq<MultiFileLookupLocalState>();
+	}
+
+	static MultiFileReaderData &GetLookupReader(ClientContext &context, const MultiFileBindData &bind_data,
+	                                            MultiFileGlobalState &gstate, idx_t file_index) {
+		lock_guard<mutex> guard(gstate.lock);
+		auto &reader_data = *gstate.readers[file_index];
+		if (reader_data.file_state == MultiFileFileState::UNOPENED) {
+			reader_data.reader = bind_data.multi_file_reader->CreateReader(
+			    context, *gstate.global_state, reader_data.file_to_be_opened, file_index, bind_data);
+			gstate.files_opened++;
+			if (InitializeReader(reader_data, bind_data, gstate.column_indexes, gstate.filters, context, file_index,
+			                     gstate) == ReaderInitializeType::SKIP_READING_FILE) {
+				reader_data.file_state = MultiFileFileState::SKIPPED;
+				reader_data.reader = nullptr;
+				return reader_data;
+			}
+			reader_data.reader->PrepareReader(context, *gstate.global_state);
+			reader_data.file_state = MultiFileFileState::OPEN;
+		}
+		return reader_data;
+	}
+
+	struct LookupOutput {
+		DataChunk &output;
+		std::span<idx_t> survivors;
+		idx_t found = 0;
+		mutex lock;
+	};
+
+	static void LookupFileGroup(ClientContext &context, MultiFileBindData &bind_data, MultiFileGlobalState &gstate,
+	                            MultiFileLookupLocalState &lstate, MultiFileLookupWorkspace &workspace,
+	                            const MultiFileLookupGroup &group, LookupOutput &result) {
+		auto &reader_data = GetLookupReader(context, bind_data, gstate, group.file_index);
+		if (!reader_data.reader) {
+			return;
+		}
+		auto &reader = *reader_data.reader;
+		if (workspace.scan_chunk_file_index != group.file_index) {
+			InitializeDecodeChunk(context, reader, reader_data, gstate, workspace.scan_chunk, workspace.executor);
+			workspace.scan_chunk_file_index = group.file_index;
+		}
+		const auto count = group.end - group.begin;
+		workspace.survivors.resize(count);
+		workspace.scan_chunk.Reset();
+		reader.Lookup(context, *gstate.global_state, *lstate.scan_states.at(group.file_index),
+		              std::span<const int64_t>(lstate.rows.data() + group.begin, count), workspace.survivors,
+		              workspace.scan_chunk);
+		const auto read = workspace.scan_chunk.size();
+		if (read == 0) {
+			return;
+		}
+		workspace.file_output.Reset();
+		workspace.file_output.SetChildCardinality(read);
+		bind_data.multi_file_reader->FinalizeChunk(context, bind_data, reader, reader_data, workspace.scan_chunk,
+		                                           workspace.file_output, workspace.executor,
+		                                           gstate.multi_file_reader_state);
+		lock_guard<mutex> guard(result.lock);
+		for (idx_t c = 0; c < result.output.ColumnCount(); c++) {
+			VectorOperations::Copy(workspace.file_output.data[c], result.output.data[c], read, 0, result.found);
+		}
+		for (idx_t r = 0; r < read; r++) {
+			result.survivors[result.found + r] = lstate.order[group.begin + workspace.survivors[r]];
+		}
+		result.found += read;
+	}
+
+	static OperatorResultType MultiFileLookup(ExecutionContext &context, TableFunctionInput &data, DataChunk &input,
+	                                          DataChunk &output) {
+		auto &bind_data = data.bind_data->CastNoConst<MultiFileBindData>();
+		auto &gstate = data.global_state->Cast<MultiFileGlobalState>();
+		auto &lstate = data.local_state->Cast<MultiFileLookupLocalState>();
+		const auto count = input.size();
+		const auto files = input.data[0].Values<idx_t>();
+		const auto rows = input.data[1].Values<int64_t>();
+		lstate.order.resize(count);
+		std::iota(lstate.order.begin(), lstate.order.end(), 0);
+		std::sort(lstate.order.begin(), lstate.order.end(), [&](idx_t a, idx_t b) {
+			const auto file_a = files[a].GetValue();
+			const auto file_b = files[b].GetValue();
+			return file_a != file_b ? file_a < file_b : rows[a].GetValue() < rows[b].GetValue();
+		});
+		lstate.rows.resize(count);
+		lstate.groups.clear();
+		for (idx_t i = 0; i < count; i++) {
+			const auto file_index = files[lstate.order[i]].GetValue();
+			lstate.rows[i] = rows[lstate.order[i]].GetValue();
+			if (lstate.groups.empty() || lstate.groups.back().file_index != file_index) {
+				lstate.groups.push_back({file_index, i, i});
+				auto &scan_state = lstate.scan_states[file_index];
+				if (!scan_state) {
+					scan_state = bind_data.interface->InitializeLocalState(context.client, *gstate.global_state);
+				}
+			}
+			lstate.groups.back().end = i + 1;
+		}
+		const auto tasks = MinValue<idx_t>(lstate.groups.size(), TaskScheduler::QueryThreads(context.client));
+		while (lstate.workspaces.size() < tasks) {
+			lstate.workspaces.push_back(make_uniq<MultiFileLookupWorkspace>(context.client, output.GetTypes()));
+		}
+		LookupOutput result {output, data.pk_survivors};
+		if (tasks <= 1) {
+			for (auto &group : lstate.groups) {
+				LookupFileGroup(context.client, bind_data, gstate, lstate, *lstate.workspaces[0], group, result);
+			}
+		} else {
+			RunLookupTasks(context.client, tasks, lstate.groups.size(), [&](idx_t task, idx_t group) {
+				LookupFileGroup(context.client, bind_data, gstate, lstate, *lstate.workspaces[task],
+				                lstate.groups[group], result);
+			});
+		}
+		output.SetCardinality(result.found);
+		return OperatorResultType::NEED_MORE_INPUT;
 	}
 
 	static OperatorPartitionData MultiFileGetPartitionData(ClientContext &context,
@@ -1118,7 +1298,8 @@ public:
 		auto &bind_data = input.bind_data->Cast<MultiFileBindData>();
 		auto &column_index = input.column_index;
 
-		if (!bind_data.initial_reader) {
+		auto reader = bind_data.initial_reader ? bind_data.initial_reader : bind_data.statistics_reader.lock();
+		if (!reader) {
 			// no reader
 			return nullptr;
 		}
@@ -1135,8 +1316,7 @@ public:
 			if (bind_data.file_list->GetExpandResult() == FileExpandResult::MULTIPLE_FILES) {
 				return nullptr;
 			}
-			return bind_data.initial_reader->GetVirtualColumnStatistics(
-			    context, MultiFileReader::COLUMN_IDENTIFIER_FILE_ROW_NUMBER);
+			return reader->GetVirtualColumnStatistics(context, MultiFileReader::COLUMN_IDENTIFIER_FILE_ROW_NUMBER);
 		}
 
 		// a hive partitioning column overrides any file column of the same name - the statistics stored in the
@@ -1149,14 +1329,22 @@ public:
 
 		// NOTE: we do not want to parse the file metadata for the sole purpose of getting column statistics
 		const bool multiple_files = bind_data.file_list->GetExpandResult() == FileExpandResult::MULTIPLE_FILES;
-		if (multiple_files && !bind_data.file_options.union_by_name) {
+		vector<shared_ptr<BaseUnionData>> locked_union_readers;
+		for (auto &union_reader : bind_data.statistics_union_readers) {
+			locked_union_readers.push_back(union_reader.lock());
+			if (!locked_union_readers.back()) {
+				return nullptr;
+			}
+		}
+		auto &union_readers = bind_data.union_readers.empty() ? locked_union_readers : bind_data.union_readers;
+		if (multiple_files && (!bind_data.file_options.union_by_name || union_readers.empty())) {
 			// multiple files, but no union_by_name: no luck!
 			return nullptr;
 		}
-		auto result = bind_data.initial_reader->GetStatistics(context, col_name);
+		auto result = reader->GetStatistics(context, col_name);
 		if (result && multiple_files) {
-			for (idx_t i = 1; i < bind_data.union_readers.size(); i++) {
-				auto &union_reader = *bind_data.union_readers[i];
+			for (idx_t i = 1; i < union_readers.size(); i++) {
+				auto &union_reader = *union_readers[i];
 				auto stats = union_reader.GetStatistics(context, col_name);
 				if (!stats || result->GetType() != stats->GetType()) {
 					return nullptr;

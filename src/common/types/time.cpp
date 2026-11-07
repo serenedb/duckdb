@@ -22,6 +22,9 @@ bool Time::TryConvertInternal(const char *buf, idx_t len, idx_t &pos, dtime_t &r
                               optional_ptr<int32_t> nanos) {
 	int32_t hour = -1, min = -1, sec = -1, micros = -1;
 	pos = 0;
+	if (nanos) {
+		*nanos = 0;
+	}
 
 	if (len == 0) {
 		return false;

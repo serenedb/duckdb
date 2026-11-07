@@ -10,7 +10,7 @@
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/common/vector_operations/unary_executor.hpp"
 #include "fast_float/fast_float.h"
-#include "fmt/format.h"
+#include "fmt/compile.h"
 
 //----------------------------------------------------------------------------------------------------------------------
 // Internals
@@ -212,24 +212,9 @@ public:
 		buffer.push_back(c);
 	}
 	void Write(double value) {
-		auto start = buffer.size();
-		duckdb_fmt::format_to(std::back_inserter(buffer), "{}", value);
-		// Remove trailing ".0" (e.g. "10.0" -> "10"), but only when the number
-		// is in fixed notation. Scientific notation like "1e+20" must not be
-		// touched — stripping the trailing '0' would corrupt the exponent.
-		bool has_exponent = false;
-		for (auto i = start; i < buffer.size(); i++) {
-			if (buffer[i] == 'e' || buffer[i] == 'E') {
-				has_exponent = true;
-				break;
-			}
-		}
-		if (!has_exponent && buffer.back() == '0') {
-			buffer.pop_back();
-			if (buffer.back() == '.') {
-				buffer.pop_back();
-			}
-		}
+		char digits[32];
+		const auto result = duckdb_fmt::format_to_n(digits, sizeof(digits), FMT_COMPILE("{}"), value);
+		buffer.insert(buffer.end(), digits, digits + result.size);
 	}
 	const vector<char> &GetBuffer() const {
 		return buffer;

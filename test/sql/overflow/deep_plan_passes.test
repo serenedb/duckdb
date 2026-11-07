@@ -1,0 +1,18 @@
+# name: test/sql/overflow/deep_plan_passes.test
+# description: Passes that recurse over a bound plan stop at the stack limit instead of overflowing it
+# group: [overflow]
+
+require nothreadsan
+
+statement maybe
+FROM query('SELECT count(*) FROM range(1) t0' || repeat(' CROSS JOIN range(1)', 4700))
+----
+stack depth limit exceeded
+
+statement ok
+EXPLAIN (SQL) FROM query('SELECT x + x AS y FROM (SELECT 1 AS x) t')
+
+statement maybe
+EXPLAIN (SQL) FROM query('SELECT ' || repeat('x + ', 2999) || 'x AS y FROM (SELECT 1 AS x) t')
+----
+stack depth limit exceeded

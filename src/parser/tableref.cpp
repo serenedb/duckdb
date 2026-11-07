@@ -1,6 +1,7 @@
 #include "duckdb/parser/tableref.hpp"
 
 #include "duckdb/common/printer.hpp"
+#include "duckdb/common/stack_depth.hpp"
 #include "duckdb/parser/keyword_helper.hpp"
 #include "duckdb/common/enum_util.hpp"
 #include "duckdb/common/to_string.hpp"
@@ -50,6 +51,7 @@ string TableRef::BaseToString(string result, const vector<Identifier> &column_na
 }
 
 bool TableRef::Equals(const TableRef &other) const {
+	StackDepth::Check();
 	return type == other.type && alias == other.alias && SampleOptions::Equals(sample.get(), other.sample.get());
 }
 

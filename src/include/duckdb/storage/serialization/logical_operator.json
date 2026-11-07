@@ -607,6 +607,18 @@
     "members": []
   },
   {
+    "class": "LogicalLookupJoin",
+    "base": "LogicalOperator",
+    "enum": "LOGICAL_LOOKUP_JOIN",
+    "members": [
+      {
+        "id": 200,
+        "name": "expressions",
+        "type": "vector<Expression*>"
+      }
+    ]
+  },
+  {
     "class": "LogicalSetOperation",
     "base": "LogicalOperator",
     "enum": [
@@ -742,13 +754,6 @@
         "type": "vector<vector<Expression*>>"
       },
       {
-        "id": 202,
-        "name": "column_index_map",
-        "type": "IndexVector<idx_t, PhysicalIndex>",
-        "default": "IndexVector<idx_t, PhysicalIndex>()",
-        "required_until": "v2.0.0"
-      },
-      {
         "id": 203,
         "name": "expected_types",
         "type": "vector<LogicalType>"
@@ -767,79 +772,6 @@
         "id": 206,
         "name": "bound_defaults",
         "type": "vector<Expression*>"
-      },
-      {
-        "id": 207,
-        "name": "action_type",
-        "type": "OnConflictAction",
-        "property": "on_conflict_info.action_type"
-      },
-      {
-        "id": 208,
-        "name": "expected_set_types",
-        "type": "vector<LogicalType>",
-        "property": "on_conflict_info.expected_set_types"
-      },
-      {
-        "id": 209,
-        "name": "on_conflict_filter",
-        "type": "unordered_set<idx_t>",
-        "property": "on_conflict_info.on_conflict_filter"
-      },
-      {
-        "id": 210,
-        "name": "on_conflict_condition",
-        "type": "Expression*",
-        "property": "on_conflict_info.on_conflict_condition"
-      },
-      {
-        "id": 211,
-        "name": "do_update_condition",
-        "type": "Expression*",
-        "property": "on_conflict_info.do_update_condition"
-      },
-      {
-        "id": 212,
-        "name": "set_columns",
-        "type": "vector<PhysicalIndex>",
-        "property": "on_conflict_info.set_columns"
-      },
-      {
-        "id": 213,
-        "name": "set_types",
-        "type": "vector<LogicalType>",
-        "property": "on_conflict_info.set_types"
-      },
-      {
-        "id": 214,
-        "name": "excluded_table_index",
-        "type": "TableIndex",
-        "property": "on_conflict_info.excluded_table_index"
-      },
-      {
-        "id": 215,
-        "name": "columns_to_fetch",
-        "type": "vector<column_t>",
-        "property": "on_conflict_info.columns_to_fetch"
-      },
-      {
-        "id": 216,
-        "name": "source_columns",
-        "type": "vector<column_t>",
-        "property": "on_conflict_info.source_columns"
-      },
-      {
-        "id": 217,
-        "name": "expressions",
-        "type": "vector<Expression*>",
-        "property": "expressions"
-      },
-      {
-        "id": 218,
-        "name": "update_is_del_and_insert",
-        "type": "bool",
-        "default": "false",
-        "property": "on_conflict_info.update_is_del_and_insert"
       }
     ],
     "constructor": [
@@ -877,6 +809,27 @@
         "id": 204,
         "name": "return_columns",
         "type": "vector<idx_t>"
+      },
+      {
+        "id": 16584,
+        "name": "is_truncate",
+        "type": "bool"
+      },
+      {
+        "id": 16585,
+        "name": "truncate_group",
+        "type": "vector<idx_t>"
+      },
+      {
+        "id": 16586,
+        "name": "row_id_handling",
+        "type": "RowIdHandling",
+        "default": "RowIdHandling::ASSUME_UNIQUE"
+      },
+      {
+        "id": 16587,
+        "name": "returning_virtual_columns",
+        "type": "vector<column_t>"
       }
     ],
     "constructor": [
@@ -941,6 +894,26 @@
         "name": "row_id_handling",
         "type": "RowIdHandling",
         "default": "RowIdHandling::ASSUME_UNIQUE"
+      },
+      {
+        "id": 16584,
+        "name": "update_column_count",
+        "type": "idx_t"
+      },
+      {
+        "id": 16585,
+        "name": "old_value_positions",
+        "type": "vector<idx_t>"
+      },
+      {
+        "id": 16586,
+        "name": "old_value_inputs",
+        "type": "vector<idx_t>"
+      },
+      {
+        "id": 16587,
+        "name": "in_place_unchanged_rows",
+        "type": "bool"
       }
     ],
     "constructor": [
@@ -1024,15 +997,28 @@
         "type": "vector<Expression*>"
       },
       {
-        "id": 204,
-        "name": "column_index_map",
-        "type": "IndexVector<idx_t, PhysicalIndex>",
-        "default": "IndexVector<idx_t, PhysicalIndex>()",
-        "required_until": "v2.0.0"
-      },
-      {
         "id": 205,
         "name": "update_is_del_and_insert",
+        "type": "bool"
+      },
+      {
+        "id": 16584,
+        "name": "update_column_count",
+        "type": "idx_t"
+      },
+      {
+        "id": 16585,
+        "name": "old_value_positions",
+        "type": "vector<idx_t>"
+      },
+      {
+        "id": 16586,
+        "name": "old_value_inputs",
+        "type": "vector<idx_t>"
+      },
+      {
+        "id": 16587,
+        "name": "in_place_unchanged_rows",
         "type": "bool"
       }
     ]
@@ -1063,7 +1049,12 @@
       "LOGICAL_CREATE_SCHEMA",
       "LOGICAL_CREATE_MACRO",
       "LOGICAL_CREATE_TYPE",
-      "LOGICAL_CREATE_TRIGGER"
+      "LOGICAL_CREATE_TRIGGER",
+      "LOGICAL_CREATE_JOB",
+      "LOGICAL_CREATE_ROLE",
+      "LOGICAL_CREATE_FOREIGN_SERVER",
+      "LOGICAL_CREATE_TOKENIZER",
+      "LOGICAL_CREATE_DATABASE"
     ],
     "members": [
       {

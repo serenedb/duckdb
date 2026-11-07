@@ -57,6 +57,12 @@ void TableScanState::Initialize(vector<StorageIndex> column_ids_p, optional_ptr<
 	}
 }
 
+void TableScanState::ResetForReuse() {
+	table_state.ResetForReuse();
+	local_state.ResetForReuse();
+	filters.CheckAllFilters();
+}
+
 const vector<StorageIndex> &TableScanState::GetColumnIds() {
 	D_ASSERT(!column_ids.empty());
 	return column_ids;
@@ -239,6 +245,24 @@ CollectionScanState::CollectionScanState(TableScanState &parent_p)
       valid_sel(STANDARD_VECTOR_SIZE), random(-1), row_group(nullptr), parent(parent_p) {
 }
 
+void CollectionScanState::ResetForReuse() {
+	vector_index = 0;
+	max_row_group_row = 0;
+	row_groups.reset();
+	max_row = 0;
+	batch_index = 0;
+	row_number_base = optional_idx();
+	prepared_vector.Reset();
+	assignment_io_registered = false;
+	column_scans_pending = false;
+	rows_scanned = 0;
+	pk_lookups_it = nullptr;
+	pk_lookups_end = nullptr;
+	lookup_count = 0;
+	lookup_base = 0;
+	SetRowGroup(nullptr);
+}
+
 optional_ptr<SegmentNode<RowGroup>> CollectionScanState::GetRowGroup() const {
 	return row_group;
 }
@@ -246,6 +270,10 @@ optional_ptr<SegmentNode<RowGroup>> CollectionScanState::GetRowGroup() const {
 void CollectionScanState::SetRowGroup(optional_ptr<SegmentNode<RowGroup>> row_group_p) {
 	row_group = row_group_p;
 	pinned_row_group = row_group ? row_group->ReferenceNode() : nullptr;
+}
+
+bool CollectionScanState::IsPinned(const RowGroup &row_group_p) const {
+	return pinned_row_group.get() == &row_group_p;
 }
 
 optional_ptr<SegmentNode<RowGroup>> CollectionScanState::GetNextRowGroup(SegmentNode<RowGroup> &row_group) const {
@@ -268,6 +296,34 @@ optional_ptr<SegmentNode<RowGroup>> CollectionScanState::GetRootSegment() const 
 	return row_groups->GetRootSegment();
 }
 
+bool CollectionScanState::InitializeLookupRowGroup() {
+	// Id-driven analogue of the GetNextRowGroup skip loop in InitializeScan: jump to the row group
+	// holding the next requested id and skip any the filter zonemap prunes (their ids are dropped).
+	while (pk_lookups_it != pk_lookups_end) {
+		optional_ptr<SegmentNode<RowGroup>> next;
+		{
+			auto l = row_groups->Lock();
+			idx_t index;
+			if (row_groups->TryGetSegmentIndex(l, static_cast<idx_t>(*pk_lookups_it), index)) {
+				next = row_groups->GetSegmentByIndex(l, NumericCast<int64_t>(index));
+			}
+		}
+		if (!next) {
+			++pk_lookups_it;
+			continue;
+		}
+		if (next->GetNode().InitializeScan(*this, *next)) {
+			return true;
+		}
+		const idx_t pruned_end = next->GetRowStart() + next->GetNode().count;
+		while (pk_lookups_it != pk_lookups_end && static_cast<idx_t>(*pk_lookups_it) < pruned_end) {
+			++pk_lookups_it;
+		}
+	}
+	SetRowGroup(nullptr);
+	return false;
+}
+
 bool CollectionScanState::Scan(DuckTransaction &transaction, DataChunk &result) {
 	return Scan(ScanOptions(TransactionData(transaction)), result);
 }
@@ -277,6 +333,25 @@ bool CollectionScanState::Scan(ScanOptions options, DataChunk &result, optional_
 		pinned_row_group->Scan(options, *this, result);
 		if (result.size() > 0) {
 			return true;
+		}
+		if (pk_lookups_it) {
+			// rowid lookup. If this call's requested ids are exhausted, stop but KEEP row_group set: the
+			// next batch still re-positions via InitializeLookupRowGroup (so ids are always scanned
+			// correctly), but a preserved row_group lets that re-init detect "same row group as last
+			// time" and keep the column decode state warm. (Nulling it here would force a cold reinit.)
+			if (pk_lookups_it == pk_lookups_end) {
+				return false;
+			}
+			// Ids remain but none matched here -> this row group is exhausted; drop any still pending
+			// within it (deleted/filtered) and advance to the next row group holding a requested id.
+			const idx_t rg_end = row_group->GetRowStart() + pinned_row_group->count;
+			while (pk_lookups_it != pk_lookups_end && static_cast<idx_t>(*pk_lookups_it) < rg_end) {
+				++pk_lookups_it;
+			}
+			if (pk_lookups_it == pk_lookups_end || !InitializeLookupRowGroup()) {
+				return false;
+			}
+			continue;
 		}
 		if (max_row <= row_group->GetRowStart() + pinned_row_group->count) {
 			SetRowGroup(nullptr);

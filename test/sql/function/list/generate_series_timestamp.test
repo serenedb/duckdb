@@ -4,7 +4,7 @@
 
 # standard generate_series (inclusive bound)
 query I
-SELECT generate_series(timestamp '2020-01-01', timestamp '2020-07-01', interval '3' month);
+SELECT list_transform(generate_series(timestamp '2020-01-01', timestamp '2020-07-01', interval '3' month), lambda x: x);
 ----
 ['2020-01-01 00:00:00', '2020-04-01 00:00:00', '2020-07-01 00:00:00']
 
@@ -16,13 +16,13 @@ SELECT range(timestamp '2020-01-01', timestamp '2020-07-01', interval '3' month)
 
 # negative interval
 query I
-SELECT generate_series(timestamp '2020-06-01', timestamp '2020-01-01', -interval '3' month);
+SELECT list_transform(generate_series(timestamp '2020-06-01', timestamp '2020-01-01', -interval '3' month), lambda x: x);
 ----
 ['2020-06-01 00:00:00', '2020-03-01 00:00:00']
 
 # start = end
 query I
-SELECT generate_series(timestamp '2020-01-01', timestamp '2020-01-01', interval '1' day);
+SELECT list_transform(generate_series(timestamp '2020-01-01', timestamp '2020-01-01', interval '1' day), lambda x: x);
 ----
 ['2020-01-01 00:00:00']
 
@@ -33,29 +33,29 @@ SELECT range(timestamp '2020-01-01', timestamp '2020-01-01', interval '1' day);
 
 # positive interval but start > end
 query I
-SELECT generate_series(timestamp '2020-06-01', timestamp '2020-01-01', interval '3' month);
+SELECT list_transform(generate_series(timestamp '2020-06-01', timestamp '2020-01-01', interval '3' month), lambda x: x);
 ----
 []
 
 # negative interval but start < end
 query I
-SELECT generate_series(timestamp '2020-01-01', timestamp '2020-06-01', -interval '3' month);
+SELECT list_transform(generate_series(timestamp '2020-01-01', timestamp '2020-06-01', -interval '3' month), lambda x: x);
 ----
 []
 
 # null values
 query I
-SELECT generate_series(NULL, timestamp '2020-06-01', -interval '3' month);
+SELECT list_transform(generate_series(NULL, timestamp '2020-06-01', -interval '3' month), lambda x: x);
 ----
 NULL
 
 query I
-SELECT generate_series(timestamp '2020-01-01', NULL, -interval '3' month);
+SELECT list_transform(generate_series(timestamp '2020-01-01', NULL, -interval '3' month), lambda x: x);
 ----
 NULL
 
 query I
-SELECT generate_series(timestamp '2020-01-01', timestamp '2020-06-01', NULL);
+SELECT list_transform(generate_series(timestamp '2020-01-01', timestamp '2020-06-01', NULL), lambda x: x);
 ----
 NULL
 
@@ -80,9 +80,6 @@ SELECT generate_series('-infinity'::TIMESTAMP, '290309-12-22 (BC) 00:00:00'::TIM
 statement error
 SELECT range('-infinity'::TIMESTAMP, '290309-12-22 (BC) 00:00:00'::TIMESTAMP, INTERVAL '1 DAY');
 ----
-
-statement ok
-PRAGMA disable_verification
 
 # > vector size
 query I

@@ -46,12 +46,14 @@ public:
 	string ToString() const override;
 
 	bool Equals(const BaseExpression &other) const override;
-	hash_t Hash() const override;
-
+	using Expression::Hash;
 	unique_ptr<Expression> Copy() const override;
 
 	void Serialize(Serializer &serializer) const override;
 	static unique_ptr<Expression> Deserialize(Deserializer &deserializer);
+
+protected:
+	hash_t NodeHash() const override;
 
 private:
 	BoundParameterExpression(bound_parameter_map_t &global_parameter_set, duckdb::Identifier identifier,

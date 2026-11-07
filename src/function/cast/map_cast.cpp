@@ -165,7 +165,6 @@ static bool MapToMapCast(Vector &source, Vector &result, idx_t count, CastParame
 	}
 
 	// TRY_CAST: error message, so we need to nullify the invalid map entries.
-	SelectionVector row_sel(1);
 	// Return true if the map is invalid and we need to nullify the entry.
 	auto nullify_invalid_map = [&](MapInvalidReason reason) {
 		if (reason == MapInvalidReason::VALID) {
@@ -187,13 +186,13 @@ static bool MapToMapCast(Vector &source, Vector &result, idx_t count, CastParame
 		return all_valid;
 	}
 
+	MapValidityChecker checker(result, MapVector::GetKeys(result));
 	auto &result_validity = FlatVector::ValidityMutable(result);
 	for (idx_t idx = 0; idx < count; ++idx) {
 		if (!result_validity.RowIsValid(idx)) {
 			continue;
 		}
-		row_sel.set_index(0, idx);
-		if (nullify_invalid_map(MapVector::CheckMapValidity(result, /*count=*/1, row_sel))) {
+		if (nullify_invalid_map(checker.CheckRow(idx))) {
 			result_validity.SetInvalid(idx);
 		}
 	}

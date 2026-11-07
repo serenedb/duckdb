@@ -13,7 +13,7 @@ select [1] || [2];
 query I
 select [1] || NULL;
 ----
-NULL
+[1]
 
 query I
 select list_concat([1], NULL);
@@ -43,7 +43,7 @@ select list_concat(array[1], array[NULL]);
 query I
 select array[1] || cast(NULL as int array);
 ----
-NULL
+[1]
 
 statement error
 select concat([1], 'hello');

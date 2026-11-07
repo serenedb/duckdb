@@ -45,6 +45,16 @@ struct ErrorFun {
 	static ScalarFunction GetFunction();
 };
 
+struct NullIfFun {
+	static constexpr const char *Name = "nullif";
+	static constexpr const char *Parameters = "a,b";
+	static constexpr const char *Description = "Returns NULL if a equals b, otherwise a, in the type the two are compared in";
+	static constexpr const char *Example = "nullif(53, 1.5)";
+	static constexpr const char *Categories = "";
+
+	static ScalarFunction GetFunction();
+};
+
 struct BarrierFun {
 	static constexpr const char *Name = "__internal_barrier";
 	static constexpr const char *Parameters = "arg";

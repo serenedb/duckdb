@@ -43,15 +43,17 @@ TaskExecutionResult ExecutorTask::Execute(TaskExecutionMode mode) {
 			do {
 				TaskNotifier task_notifier {context};
 				thread_context->profiler.StartOperator(op);
-				// to allow continuous profiling, always execute in small steps
-				result = ExecuteTask(TaskExecutionMode::PROCESS_PARTIAL);
+				result = ExecuteTask(mode);
 				thread_context->profiler.EndOperator(nullptr);
 				executor.Flush(*thread_context);
-			} while (mode == TaskExecutionMode::PROCESS_ALL && result == TaskExecutionResult::TASK_NOT_FINISHED);
+			} while (result == TaskExecutionResult::TASK_NOT_FINISHED && !TaskScheduler::ShouldYield(mode));
 			return result;
 		} else {
 			TaskNotifier task_notifier {context};
-			auto result = ExecuteTask(mode);
+			TaskExecutionResult result;
+			do {
+				result = ExecuteTask(mode);
+			} while (result == TaskExecutionResult::TASK_NOT_FINISHED && !TaskScheduler::ShouldYield(mode));
 			return result;
 		}
 	} catch (std::exception &ex) {

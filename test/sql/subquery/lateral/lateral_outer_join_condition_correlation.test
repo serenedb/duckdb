@@ -1,0 +1,99 @@
+# name: test/sql/subquery/lateral/lateral_outer_join_condition_correlation.test
+# description: A LATERAL column referenced from a nested join condition under an outer join whose condition correlates both sides
+# group: [lateral]
+
+statement ok
+CREATE TABLE ra(attisdropped BOOLEAN, atthasdef BOOLEAN);
+
+statement ok
+INSERT INTO ra VALUES (false, true), (false, false), (true, NULL);
+
+statement ok
+CREATE TABLE rd(datallowconn BOOLEAN, datconnlimit INTEGER);
+
+statement ok
+INSERT INTO rd VALUES (true, 1), (false, 2), (NULL, 3);
+
+statement ok
+CREATE TABLE rs(x INTEGER);
+
+statement ok
+INSERT INTO rs VALUES (1), (2);
+
+statement ok
+CREATE TABLE rn(nspacl VARCHAR, nspowner INTEGER);
+
+statement ok
+INSERT INTO rn VALUES ('acl', 1), (NULL, 2), (NULL, NULL);
+
+statement ok
+CREATE TABLE rm(x INTEGER);
+
+statement ok
+INSERT INTO rm VALUES (1);
+
+statement ok
+CREATE TABLE rtg(x INTEGER);
+
+statement ok
+INSERT INTO rtg VALUES (1);
+
+statement ok
+CREATE TABLE rcv(x INTEGER);
+
+statement ok
+INSERT INTO rcv VALUES (1);
+
+statement ok
+CREATE TABLE rpa(paracl VARCHAR);
+
+statement ok
+INSERT INTO rpa VALUES ('p');
+
+query IIIIIII
+SELECT a.attisdropped, a.atthasdef, s.d_conn, s.d_limit, s.r_x, s.n_acl, s.n_owner
+FROM ra a, LATERAL (
+  SELECT d.datallowconn AS d_conn, d.datconnlimit AS d_limit, r0.x AS r_x, n.nspacl AS n_acl, n.nspowner AS n_owner
+  FROM rd d
+    LEFT JOIN rs r0
+      INNER JOIN rn n
+      ON (EXISTS (SELECT 1 FROM rm m WHERE a.atthasdef)
+          OR (EXISTS (SELECT 1 FROM rtg WHERE n.nspacl IS NULL) AND EXISTS (SELECT 1 FROM rcv WHERE n.nspowner IS NOT NULL)))
+    ON EXISTS (SELECT 1 FROM rpa pa WHERE d.datallowconn AND n.nspacl IS NOT NULL)
+) s
+ORDER BY ALL
+----
+false	false	false	2	NULL	NULL	NULL
+false	false	true	1	NULL	NULL	NULL
+false	false	NULL	3	NULL	NULL	NULL
+false	true	false	2	NULL	NULL	NULL
+false	true	true	1	1	acl	1
+false	true	true	1	2	acl	1
+false	true	NULL	3	NULL	NULL	NULL
+true	NULL	false	2	NULL	NULL	NULL
+true	NULL	true	1	NULL	NULL	NULL
+true	NULL	NULL	3	NULL	NULL	NULL
+
+query IIIIIII
+SELECT a.attisdropped, a.atthasdef, s.d_conn, s.d_limit, s.r_x, s.n_acl, s.n_owner
+FROM ra a, LATERAL (
+  SELECT d.datallowconn AS d_conn, d.datconnlimit AS d_limit, r0.x AS r_x, n.nspacl AS n_acl, n.nspowner AS n_owner
+  FROM rs r0
+      INNER JOIN rn n
+      ON (EXISTS (SELECT 1 FROM rm m WHERE a.atthasdef)
+          OR (EXISTS (SELECT 1 FROM rtg WHERE n.nspacl IS NULL) AND EXISTS (SELECT 1 FROM rcv WHERE n.nspowner IS NOT NULL)))
+    RIGHT JOIN rd d
+    ON EXISTS (SELECT 1 FROM rpa pa WHERE d.datallowconn AND n.nspacl IS NOT NULL)
+) s
+ORDER BY ALL
+----
+false	false	false	2	NULL	NULL	NULL
+false	false	true	1	NULL	NULL	NULL
+false	false	NULL	3	NULL	NULL	NULL
+false	true	false	2	NULL	NULL	NULL
+false	true	true	1	1	acl	1
+false	true	true	1	2	acl	1
+false	true	NULL	3	NULL	NULL	NULL
+true	NULL	false	2	NULL	NULL	NULL
+true	NULL	true	1	NULL	NULL	NULL
+true	NULL	NULL	3	NULL	NULL	NULL

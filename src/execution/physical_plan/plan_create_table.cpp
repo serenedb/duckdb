@@ -20,7 +20,7 @@ PhysicalOperator &DuckCatalog::PlanCreateTableAs(ClientContext &context, Physica
                                                  LogicalCreateTable &op, PhysicalOperator &plan) {
 	bool parallel_streaming_insert = !PhysicalPlanGenerator::PreserveInsertionOrder(context, plan);
 	bool use_batch_index = PhysicalPlanGenerator::UseBatchIndex(context, plan);
-	auto num_threads = TaskScheduler::GetScheduler(context).NumberOfThreads();
+	auto num_threads = TaskScheduler::QueryThreads(context);
 	if (!parallel_streaming_insert && use_batch_index) {
 		auto &insert = planner.Make<PhysicalBatchInsert>(op, op.schema, std::move(op.info), 0U);
 		D_ASSERT(op.children.size() == 1);
@@ -37,9 +37,9 @@ PhysicalOperator &DuckCatalog::PlanCreateTableAs(ClientContext &context, Physica
 
 PhysicalOperator &PhysicalPlanGenerator::CreatePlan(LogicalCreateTable &op) {
 	const auto &create_info = op.info->base->Cast<CreateTableInfo>();
-	auto &catalog = op.info->schema.catalog;
-	auto existing_entry = catalog.GetEntry(context, CatalogType::TABLE_ENTRY, create_info.GetQualifiedName().Schema(),
-	                                       create_info.GetTableName(), OnEntryNotFound::RETURN_NULL);
+	auto &schema = op.info->schema;
+	auto existing_entry = schema.GetNameHolder(schema.GetCatalogTransaction(context), CatalogType::TABLE_ENTRY,
+	                                           create_info.GetTableName());
 	bool replace = op.info->Base().on_conflict == OnCreateConflict::REPLACE_ON_CONFLICT;
 	if ((!existing_entry || replace) && !op.children.empty()) {
 		auto &plan = CreatePlan(*op.children[0]);

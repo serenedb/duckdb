@@ -84,7 +84,7 @@ void SecretManager::LoadSecretStorageInternal(unique_ptr<SecretStorage> storage)
 	if (StringUtil::CIEquals(storage->GetName(), TRANSACTION_STORAGE_NAME)) {
 		throw InvalidConfigurationException("Secret Storage name '%s' is reserved!", storage->GetName());
 	}
-	if (secret_storages.find(Identifier(storage->GetName())) != secret_storages.end()) {
+	if (secret_storages.find(storage->GetName()) != secret_storages.end()) {
 		throw InvalidConfigurationException("Secret Storage with name '%s' already registered!", storage->GetName());
 	}
 
@@ -195,8 +195,9 @@ unique_ptr<SecretEntry> SecretManager::RegisterSecretInternal(CatalogTransaction
 	if (!backend) {
 		if (!config.allow_persistent_secrets &&
 		    (persist_type == SecretPersistType::PERSISTENT || storage == LOCAL_FILE_STORAGE_NAME)) {
-			throw InvalidInputException("Persistent secrets are disabled. Restart DuckDB and enable persistent secrets "
-			                            "through 'SET allow_persistent_secrets=true'");
+			throw InvalidInputException(
+			    "Persistent secrets are disabled. Restart SereneDB and enable persistent secrets "
+			    "through 'SET allow_persistent_secrets=true'");
 		}
 		throw InvalidInputException("Secret storage '%s' not found!", resolved_storage);
 	}
@@ -206,7 +207,7 @@ unique_ptr<SecretEntry> SecretManager::RegisterSecretInternal(CatalogTransaction
 		if (backend->persistent) {
 			if (!config.allow_persistent_secrets) {
 				throw InvalidInputException(
-				    "Persistent secrets are currently disabled. To enable them, restart duckdb and "
+				    "Persistent secrets are currently disabled. To enable them, restart SereneDB and "
 				    "run 'SET allow_persistent_secrets=true'");
 			}
 		} else { // backend is temp
@@ -307,7 +308,7 @@ BoundStatement SecretManager::BindCreateSecret(CatalogTransaction transaction, C
 
 	// We cast the passed parameters
 	for (const auto &param : info.options) {
-		auto matched_param = function->named_parameters.find(Identifier(param.first));
+		auto matched_param = function->named_parameters.find(param.first);
 		if (matched_param == function->named_parameters.end()) {
 			throw BinderException("Unknown parameter %s for secret type %s with %sprovider %s", Identifier(param.first),
 			                      type, default_string, provider);
@@ -520,7 +521,7 @@ SecretType SecretManager::LookupTypeInternal(const Identifier &type) {
 }
 
 void SecretManager::RegisterSecretFunctionInternal(CreateSecretFunction function, OnCreateConflict on_conflict) {
-	auto lookup = secret_functions.find(Identifier(function.secret_type));
+	auto lookup = secret_functions.find(function.secret_type);
 	if (lookup != secret_functions.end()) {
 		lookup->second.AddFunction(function, on_conflict);
 		return;
@@ -632,8 +633,12 @@ void SecretManager::InitializeSecrets(CatalogTransaction transaction) {
 			return;
 		}
 
+		auto create_storage = DBConfig::GetConfig(*transaction.db).create_secret_storage;
+
 		// load the tmp storage
-		LoadSecretStorageInternal(make_uniq<TemporarySecretStorage>(TEMPORARY_STORAGE_NAME, *transaction.db));
+		LoadSecretStorageInternal(create_storage
+		                              ? create_storage(*transaction.db, TEMPORARY_STORAGE_NAME, false)
+		                              : make_uniq<TemporarySecretStorage>(TEMPORARY_STORAGE_NAME, *transaction.db));
 
 		// load the connection-scoped storage: secrets created `IN connection_storage` are visible only to the
 		// connection that created them, and are dropped automatically when that connection closes.
@@ -641,8 +646,10 @@ void SecretManager::InitializeSecrets(CatalogTransaction transaction) {
 
 		if (config.allow_persistent_secrets) {
 			// load the persistent storage if enabled
-			LoadSecretStorageInternal(
-			    make_uniq<LocalFileSecretStorage>(*this, *transaction.db, LOCAL_FILE_STORAGE_NAME, config.secret_path));
+			LoadSecretStorageInternal(create_storage ? create_storage(*transaction.db, LOCAL_FILE_STORAGE_NAME, true)
+			                                         : make_uniq<LocalFileSecretStorage>(*this, *transaction.db,
+			                                                                             LOCAL_FILE_STORAGE_NAME,
+			                                                                             config.secret_path));
 		}
 
 		initialized = true;
@@ -663,7 +670,8 @@ void SecretManager::ThrowTypeNotFoundError(const Identifier &type, const string 
 	string error_message;
 
 	if (!entry.empty() && db) {
-		error_message = "Secret type '" + type + "' does not exist, but it exists in the " + entry + " extension.";
+		error_message = "Secret type '" + type + "' does not exist in SereneDB (DuckDB provides it in its " + entry +
+		                " extension).";
 		error_message = ExtensionHelper::AddExtensionInstallHintToErrorMsg(*db, error_message, entry);
 
 		if (!secret_path.empty()) {
@@ -692,8 +700,9 @@ void SecretManager::ThrowProviderNotFoundError(const Identifier &type, const Ide
 	auto entry = ExtensionHelper::FindExtensionInEntries(SecretProviderKey(type, provider), EXTENSION_SECRET_PROVIDERS);
 	if (!entry.empty() && db) {
 		string error_message = was_default ? "Default secret provider" : "Secret provider";
-		error_message += StringUtil::Format(" %s for type %s does not exist, but it exists in the %s extension.",
-		                                    provider, type, entry);
+		error_message +=
+		    StringUtil::Format(" %s for type %s does not exist in SereneDB (DuckDB provides it in its %s extension).",
+		                       provider, type, entry);
 		error_message = ExtensionHelper::AddExtensionInstallHintToErrorMsg(*db, error_message, entry);
 
 		throw InvalidInputException(error_message);
@@ -752,7 +761,7 @@ DefaultSecretGenerator::DefaultSecretGenerator(Catalog &catalog, SecretManager &
 
 unique_ptr<CatalogEntry> DefaultSecretGenerator::CreateDefaultEntryInternal(const Identifier &entry_name) {
 	lock_guard<mutex> guard(lock);
-	auto secret_lu = persistent_secrets.find(Identifier(entry_name));
+	auto secret_lu = persistent_secrets.find(entry_name);
 	if (secret_lu == persistent_secrets.end()) {
 		return nullptr;
 	}
@@ -807,7 +816,7 @@ unique_ptr<CatalogEntry> DefaultSecretGenerator::CreateDefaultEntryInternal(cons
 		}
 	}
 
-	throw SerializationException("Failed to deserialize secret '%s' from '%s': file appears empty! Please remove the "
+	throw SerializationException("Failed to deserialize secret %s from '%s': file appears empty! Please remove the "
 	                             "file, restart and try again",
 	                             entry_name, secret_path);
 }

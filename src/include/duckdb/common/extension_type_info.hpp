@@ -25,6 +25,8 @@ public:
 };
 
 struct ExtensionTypeInfo {
+	static constexpr const char *CATALOG_OID_PROPERTY = "catalog_oid";
+
 	vector<LogicalTypeModifier> modifiers;
 	unordered_map<string, Value> properties;
 

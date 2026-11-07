@@ -162,7 +162,7 @@ ParquetEncryptionConfig::ParquetEncryptionConfig(ClientContext &context, const V
 		} else if (struct_key == "column_keys") {
 			throw NotImplementedException("Parquet encryption_config column_keys not yet implemented");
 		} else {
-			throw BinderException("Unknown key in encryption_config \"%s\"", struct_key);
+			throw BinderException("Unknown key in encryption_config %s", struct_key);
 		}
 	}
 }
@@ -545,11 +545,7 @@ bool ParquetCrypto::ValidKey(const std::string &key) {
 }
 
 static string Base64Decode(const string &key) {
-	auto result_size = Blob::FromBase64Size(key);
-	auto output = duckdb::unique_ptr<unsigned char[]>(new unsigned char[result_size]);
-	Blob::FromBase64(key, output.get(), result_size);
-	string decoded_key(reinterpret_cast<const char *>(output.get()), result_size);
-	return decoded_key;
+	return Blob::FromBase64(key);
 }
 
 void ParquetCrypto::AddKey(ClientContext &context, const FunctionParameters &parameters) {

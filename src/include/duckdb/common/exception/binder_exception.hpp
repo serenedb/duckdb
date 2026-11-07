@@ -60,6 +60,7 @@ public:
 	                                          const vector<pair<Identifier, LogicalType>> &named_arguments,
 	                                          const vector<string> &candidates);
 	static BinderException Unsupported(ParsedExpression &expr, const string &message);
+	static BinderException MissingPreparedStatement(const Identifier &name);
 };
 
 } // namespace duckdb

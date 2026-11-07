@@ -48,14 +48,19 @@ namespace {
 
 //! The type an argument is matched against. A modifier is always a constant, so an integer one matches as an
 //! integer literal exactly as it would in a function call - that is what lets DECIMAL(10) bind to a UTINYINT
-//! parameter, as the literal is known to fit. Unlike ExpressionBinder::GetExpressionReturnType this does not treat
-//! strings as literals: a string literal is implicitly castable to anything, which would let DECIMAL('32') through.
+//! parameter, as the literal is known to fit.
 //! Only overload matching uses this; errors report the value's own type.
 LogicalType MatchType(const TypeArgument &arg) {
+	if (arg.IsTypeArgument()) {
+		return arg.GetType();
+	}
 	auto &value = arg.GetValue();
 	auto &type = value.type();
 	if (type.IsIntegral() && !value.IsNull()) {
 		return LogicalType::INTEGER_LITERAL(value);
+	}
+	if (type.id() == LogicalTypeId::VARCHAR && !value.IsNull()) {
+		return LogicalType(LogicalTypeId::STRING_LITERAL);
 	}
 	return type;
 }
@@ -115,13 +120,20 @@ string ArgumentName(const Identifier &name, idx_t position) {
 	return StringUtil::Format("%s", name);
 }
 
+bool KeepsTypeArgument(const TypeArgument &arg, const LogicalType &target) {
+	return arg.IsTypeArgument() && (target.id() == LogicalTypeId::TYPE || target.id() == LogicalTypeId::ANY);
+}
+
 //! Cast a modifier to the type its parameter declares. Overload selection already established the cast is possible.
 Value CastArgument(const Identifier &type_name, const string &arg_name, const Value &value, const LogicalType &target,
                    QueryLocation location) {
+	if (target.id() == LogicalTypeId::ANY) {
+		return value;
+	}
 	if (value.IsNull()) {
 		throw BinderException(location, "Type parameter %s for type %s cannot be NULL", arg_name, type_name);
 	}
-	if (target.id() == LogicalTypeId::ANY || value.type() == target) {
+	if (value.type() == target) {
 		return value;
 	}
 	string error;
@@ -194,6 +206,10 @@ vector<TypeArgument> NormalizeArguments(const Identifier &type_name, const TypeC
 		auto supplied = slots[i];
 		// a parameter filled in from its default has no source text - point at the type instead
 		auto location = supplied ? supplied->GetQueryLocation() : type_location;
+		if (supplied && KeepsTypeArgument(*supplied, param.GetType())) {
+			result.emplace_back(param.GetName().GetIdentifierName(), supplied->GetTypeArgument(), location);
+			continue;
+		}
 		optional_ptr<const Value> value = supplied ? &supplied->GetValue() : param.GetDefaultValue().get();
 		if (!value) {
 			throw BinderException(type_location, "Missing type parameter %s for type %s", param.GetName(), type_name);
@@ -210,6 +226,10 @@ vector<TypeArgument> NormalizeArguments(const Identifier &type_name, const TypeC
 		// a named modifier is received by "**kwargs", an unnamed one by "*args"
 		auto param = arg.HasName() ? sig.GetKwargs() : sig.GetArgs();
 		auto &target = param ? param->GetType() : LogicalType::ANY;
+		if (KeepsTypeArgument(arg, target)) {
+			result.emplace_back(arg.GetName(), arg.GetTypeArgument(), location);
+			continue;
+		}
 		result.emplace_back(arg.GetName(), CastArgument(type_name, arg_name, arg.GetValue(), target, location),
 		                    location);
 	}

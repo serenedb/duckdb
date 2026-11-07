@@ -217,13 +217,13 @@ public:
 
 	template <class VALUE_TYPE, class CONVERSION>
 	void PlainSelectTemplated(ByteBuffer &plain_data, const uint8_t *defines, uint64_t num_values, Vector &result,
-	                          const SelectionVector &sel, idx_t approved_tuple_count) {
+	                          const SelectionVector &sel, idx_t approved_tuple_count, idx_t result_offset) {
 		if (HasDefines() && defines) {
 			PlainSelectTemplatedInternal<VALUE_TYPE, CONVERSION, true, true>(plain_data, defines, num_values, result,
-			                                                                 sel, approved_tuple_count);
+			                                                                 sel, approved_tuple_count, result_offset);
 		} else {
 			PlainSelectTemplatedInternal<VALUE_TYPE, CONVERSION, false, true>(plain_data, defines, num_values, result,
-			                                                                  sel, approved_tuple_count);
+			                                                                  sel, approved_tuple_count, result_offset);
 		}
 	}
 
@@ -257,7 +257,8 @@ private:
 	//! this function tries to skip a page in the below conditions:
 	//! 1. a previous table filter has filtered out this page
 	//! 2. page statistics can be used to skip page
-	bool PageIsFilteredOut(PageHeader &page_hdr, optional_ptr<const TableFilter> filter);
+	bool PageIsFilteredOut(PageHeader &page_hdr, optional_ptr<const TableFilter> filter,
+	                       optional_ptr<TableFilterState> filter_state);
 	void BeginRead(data_ptr_t define_out, data_ptr_t repeat_out);
 	void FinishRead(idx_t read_count);
 	idx_t ReadPageHeaders(idx_t max_read, optional_ptr<const TableFilter> filter = nullptr,
@@ -318,8 +319,8 @@ private:
 	template <class VALUE_TYPE, class CONVERSION, bool HAS_DEFINES, bool CHECKED>
 	void PlainSelectTemplatedInternal(ByteBuffer &plain_data, const uint8_t *__restrict defines,
 	                                  const uint64_t num_values, Vector &result, const SelectionVector &sel,
-	                                  idx_t approved_tuple_count) {
-		auto result_ptr = FlatVector::GetDataMutable<VALUE_TYPE>(result);
+	                                  idx_t approved_tuple_count, idx_t result_offset) {
+		auto result_ptr = FlatVector::GetDataMutable<VALUE_TYPE>(result) + result_offset;
 		auto &result_mask = FlatVector::ValidityMutable(result);
 		idx_t current_entry = 0;
 		for (idx_t i = 0; i < approved_tuple_count; i++) {
@@ -331,7 +332,7 @@ private:
 			ZeroSkippedRows<VALUE_TYPE>(result_ptr, current_entry, next_entry - current_entry);
 			// read this row
 			if (HAS_DEFINES && defines[next_entry] != MaxDefine()) {
-				result_mask.SetInvalid(next_entry);
+				result_mask.SetInvalid(result_offset + next_entry);
 			} else {
 				result_ptr[next_entry] = CONVERSION::template PlainRead<CHECKED>(plain_data, *this);
 			}
@@ -353,7 +354,7 @@ protected:
 	virtual void Plain(shared_ptr<ResizeableBuffer> &plain_data, uint8_t *defines, idx_t num_values,
 	                   idx_t result_offset, Vector &result);
 	virtual void PlainSelect(shared_ptr<ResizeableBuffer> &plain_data, uint8_t *defines, idx_t num_values,
-	                         Vector &result, const SelectionVector &sel, idx_t count);
+	                         Vector &result, const SelectionVector &sel, idx_t count, idx_t result_offset);
 
 	// applies any skips that were registered using Skip()
 	virtual void ApplyPendingSkips(data_ptr_t define_out, data_ptr_t repeat_out);

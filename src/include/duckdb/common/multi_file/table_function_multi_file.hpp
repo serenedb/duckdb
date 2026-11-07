@@ -204,6 +204,10 @@ struct TableFunctionMultiFileSettings {
 	table_function_prepare_read_ahead_t prepare_read_ahead = nullptr;
 	table_function_combine_schema_t combine_schema = nullptr;
 	table_function_get_file_columns_t get_file_columns = nullptr;
+	table_function_t lookup = nullptr;
+	table_function_supports_read_ahead_t supports_lookup = nullptr;
+	bool row_storage = false;
+	vector<string> row_id_names;
 	//! Whether one local state may be used to scan several files in turn - the scan then keeps the state it created
 	//! rather than making a new one per file, so that what the function learns while reading a file (like the order
 	//! its filters are best applied in) carries over to the next
@@ -266,6 +270,8 @@ public:
 	                       LocalTableFunctionState &lstate) override;
 	AsyncResult Scan(ClientContext &context, GlobalTableFunctionState &gstate, LocalTableFunctionState &lstate,
 	                 DataChunk &chunk) override;
+	void Lookup(ClientContext &context, GlobalTableFunctionState &gstate, LocalTableFunctionState &lstate,
+	            std::span<const int64_t> rows, std::span<idx_t> survivors, DataChunk &chunk) override;
 	double GetProgressInFile(ClientContext &context) override;
 	InsertionOrderPreservingMap<Value> GetMetadata() const override;
 
@@ -420,6 +426,7 @@ public:
 	void FinishReading(ClientContext &context, GlobalTableFunctionState &global_state,
 	                   LocalTableFunctionState &local_state) override;
 	bool SupportsReadAhead(const MultiFileBindData &bind_data) const override;
+	bool SupportsLookup(const MultiFileBindData &bind_data, TableFunctionLookupInfo &info) const override;
 	shared_ptr<BaseFileReader> CreateReader(ClientContext &context, GlobalTableFunctionState &gstate,
 	                                        BaseUnionData &union_data, const MultiFileBindData &bind_data) override;
 	shared_ptr<BaseFileReader> CreateReader(ClientContext &context, GlobalTableFunctionState &gstate,

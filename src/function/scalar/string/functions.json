@@ -147,6 +147,12 @@
                 "description": "Returns the length of the `list`.",
                 "example": "length([1,2,3])",
                 "categories": ["list"]
+            },
+            {
+                "parameters": [{"name": "blob", "type": "BLOB"}],
+                "description": "Number of bytes in `blob`.",
+                "example": "length('\\xAA\\xBB'::BLOB)",
+                "categories": ["blob"]
             }
         ],
         "type": "scalar_function_set",
@@ -245,14 +251,25 @@
     {
         "name": "substring",
         "parameters": "string,start,length",
-        "description": "Extracts substring starting from character `start` up to the end of the string. If optional argument `length` is set, extracts a substring of `length` characters instead. Note that a `start` value of `1` refers to the first character of the `string`.",
+        "description": "Extracts substring starting from character `start` up to the end of the string. If optional argument `length` is set, extracts a substring of `length` characters instead. Note that a `start` value of `1` refers to the first character of the `string`. Given a text `pattern` instead of `start`, returns the part of `string` that the first capturing group of the regular expression matches, or the whole match when it has no capturing group; `NULL` when nothing matches.",
         "examples": [
             "substring('Hello', 2)",
-            "substring('Hello', 2, 2)"
+            "substring('Hello', 2, 2)",
+            "substring('Hello', 'l+')"
         ],
         "categories": ["string"],
-        "type": "scalar_function_set",
-        "aliases": ["substr"]
+        "type": "scalar_function_set"
+    },
+    {
+        "name": "substr",
+        "parameters": "string,start,length",
+        "description": "Extracts substring starting from character `start` up to the end of the string. If optional argument `length` is set, extracts a substring of `length` characters instead. Note that a `start` value of `1` refers to the first character of the `string`.",
+        "examples": [
+            "substr('Hello', 2)",
+            "substr('Hello', 2, 2)"
+        ],
+        "categories": ["string"],
+        "type": "scalar_function_set"
     },
     {
         "name": "substring_grapheme",
@@ -264,6 +281,14 @@
         ],
         "categories": ["string"],
         "type": "scalar_function_set"
+    },
+    {
+        "name": "split_part",
+        "parameters": "string,delimiter,position",
+        "description": "Splits the `string` along the `delimiter` and returns the part at `position`, counted from 1, or from the end when `position` is negative. Returns an empty string when there is no such part.",
+        "example": "split_part('a;b;c', ';', 2)",
+        "categories": ["string"],
+        "type": "scalar_function"
     },
     {
         "name": "string_split",
@@ -298,7 +323,8 @@
         "description": "Returns `true` if `string` contains the `regex`, `false` otherwise. A set of optional regex `options` can be set.",
         "example": "regexp_matches('anabanana', '(an)*')",
         "categories": ["regex"],
-        "type": "scalar_function_set"
+        "type": "scalar_function_set",
+        "aliases": ["regexp_like"]
     },
     {
         "name": "regexp_replace",
@@ -415,7 +441,7 @@
         "parameters": "string,pattern",
         "description": "",
         "example": "",
-        "type": "scalar_function",
+        "type": "scalar_function_set",
         "struct": "LikeFun"
     },
     {
@@ -423,7 +449,7 @@
         "parameters": "string,pattern",
         "description": "",
         "example": "",
-        "type": "scalar_function",
+        "type": "scalar_function_set",
         "struct": "NotLikeFun"
     },
     {
@@ -456,7 +482,15 @@
         "description": "Returns `true` if the `string` matches the `like_specifier` (see Pattern Matching) using case-sensitive matching. `escape_character` is used to search for wildcard characters in the `string`.",
         "example": "like_escape('a%c', 'a$%c', '$')",
         "categories": ["string"],
-        "type": "scalar_function"
+        "type": "scalar_function_set"
+    },
+    {
+        "name": "similar_to_escape",
+        "parameters": "pattern,escape_character",
+        "description": "Translates a SQL `SIMILAR TO` pattern into the equivalent regular expression, so that `string SIMILAR TO pattern` can be evaluated as `regexp_full_match(string, similar_to_escape(pattern))`. `escape_character` defaults to a backslash.",
+        "example": "similar_to_escape('a%c')",
+        "categories": ["string"],
+        "type": "scalar_function_set"
     },
     {
         "name": "not_like_escape",
@@ -464,7 +498,7 @@
         "description": "Returns `false` if the `string` matches the `like_specifier` (see Pattern Matching) using case-sensitive matching. `escape_character` is used to search for wildcard characters in the `string`.",
         "example": "not_like_escape('a%c', 'a$%c', '$')",
         "categories": ["string"],
-        "type": "scalar_function"
+        "type": "scalar_function_set"
     },
     {
         "name": "ilike_escape",

@@ -9,17 +9,6 @@ namespace duckdb {
 
 using Filter = FilterPushdown::Filter;
 
-static bool IsVolatile(LogicalAggregate &aggr, const Expression &expr) {
-	bool is_volatile = false;
-	ExpressionIterator::VisitExpression<BoundColumnRefExpression>(expr, [&](const BoundColumnRefExpression &colref) {
-		D_ASSERT(colref.Depth() == 0);
-		if (aggr.GetExpression(colref.Binding()).IsVolatile()) {
-			is_volatile = true;
-		}
-	});
-	return is_volatile;
-}
-
 static unique_ptr<Expression> ReplaceGroupBindings(LogicalAggregate &aggr, unique_ptr<Expression> root_expr) {
 	ExpressionIterator::VisitExpressionMutable<BoundColumnRefExpression>(
 	    root_expr, [&](BoundColumnRefExpression &colref, unique_ptr<Expression> &expr) {
@@ -82,14 +71,18 @@ unique_ptr<LogicalOperator> FilterPushdown::PushdownAggregate(unique_ptr<Logical
 		if (!can_pushdown_filter) {
 			continue;
 		}
-		if (IsVolatile(aggr, *f.filter)) {
+		if (ReferencesVolatileExpression(aggr, *f.filter)) {
 			continue;
 		}
 		// no aggregate! we can push this down
 		// rewrite any group bindings within the filter
+		bool composes_group = projection_mode != ProjectionMode::ALLOW_COMPUTED_EXPRESSIONS &&
+		                      ReferencesComputedExpression(aggr, *f.filter);
 		f.filter = ReplaceGroupBindings(aggr, std::move(f.filter));
 		// add the filter to the child node
-		if (child_pushdown.AddFilter(std::move(f.filter)) == FilterResult::UNSATISFIABLE) {
+		auto result = composes_group ? child_pushdown.RewriteAndAddFilter(std::move(f.filter))
+		                             : child_pushdown.AddFilter(std::move(f.filter));
+		if (result == FilterResult::UNSATISFIABLE) {
 			// filter statically evaluates to false, strip tree
 			return make_uniq<LogicalEmptyResult>(std::move(op));
 		}

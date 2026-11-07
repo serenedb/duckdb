@@ -1,5 +1,6 @@
 #include "duckdb/execution/mark_join_row_comparison.hpp"
 
+#include "duckdb/common/stack_depth.hpp"
 #include "duckdb/common/vector/constant_vector.hpp"
 #include "duckdb/common/vector/struct_vector.hpp"
 #include "duckdb/common/vector/flat_vector.hpp"
@@ -10,6 +11,7 @@ namespace duckdb {
 static void CompareRowEqualityInternal(const Vector &left, idx_t left_row, idx_t left_count, const Vector &right,
                                        idx_t right_count, const bool active[], bool row_is_false[],
                                        bool row_is_unknown[]) {
+	StackDepth::Check();
 	if (left.GetType().id() != LogicalTypeId::TUPLE) {
 		Vector left_reference(left.GetType());
 		ConstantVector::Reference(left_reference, count_t(right_count), left, left_row, left_count);

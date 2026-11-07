@@ -38,6 +38,7 @@ public:
 	Allocator &GetAllocator();
 	bool HasContext();
 	DUCKDB_API ClientContext &GetContext();
+	void InterruptCheck();
 
 	void Verify(ExpressionExecutorState &root);
 
@@ -69,13 +70,19 @@ public:
 
 	bool TryExecuteDictionaryExpression(const BoundFunctionExpression &expr, DataChunk &args, ExpressionState &state,
 	                                    Vector &result);
+	bool MayExecuteDictionaryExpression(const DataChunk &args);
 
 	void ResetDictionaryStates() override;
 
 public:
 	unique_ptr<FunctionLocalState> local_state;
+	const SelectionVector *input_sel = nullptr;
 
 private:
+	void ResolveDictionaryInput();
+
+private:
+	bool dictionary_input_resolved = false;
 	//! The column index of the "unary" input column that may be a dictionary vector
 	//! Only valid when the expression is eligible for the dictionary expression optimization
 	//! This is the case when the input is "practically unary", i.e., only one non-const input column

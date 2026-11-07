@@ -1,0 +1,118 @@
+# name: test/sql/function/string/regex_class_run.test
+# description: regexp_extract_all and global regexp_replace over a single repeated ASCII class agree with the same pattern inside a capture group
+# group: [string]
+
+statement ok
+CREATE TABLE t AS SELECT i, CASE i % 7
+    WHEN 0 THEN 'http://site' || i::VARCHAR || '.ru/a/' || (i * 7)::VARCHAR || '?x=' || (i % 13)::VARCHAR
+    WHEN 1 THEN 'no digits here at all'
+    WHEN 2 THEN ''
+    WHEN 3 THEN 'Привет 123 мир 45 ёж KkSsſ' || chr(8490)
+    WHEN 4 THEN 'aaaAAA' || i::VARCHAR || 'bab  ' || chr(9) || 'ccc'
+    WHEN 5 THEN '123'
+    ELSE NULL END AS s FROM range(2100) r(i);
+
+query I
+SELECT count(*) FROM t WHERE regexp_extract_all(s, '[0-9]+') IS DISTINCT FROM regexp_extract_all(s, '([0-9]+)')
+   OR regexp_replace(s, '[0-9]+', '<>', 'g') IS DISTINCT FROM regexp_replace(s, '([0-9]+)', '<>', 'g');
+----
+0
+
+query I
+SELECT count(*) FROM t WHERE regexp_extract_all(s, '\d+') IS DISTINCT FROM regexp_extract_all(s, '(\d+)')
+   OR regexp_replace(s, '\d+', '<>', 'g') IS DISTINCT FROM regexp_replace(s, '(\d+)', '<>', 'g');
+----
+0
+
+query I
+SELECT count(*) FROM t WHERE regexp_extract_all(s, '[a-z]+') IS DISTINCT FROM regexp_extract_all(s, '([a-z]+)')
+   OR regexp_replace(s, '[a-z]+', '<>', 'g') IS DISTINCT FROM regexp_replace(s, '([a-z]+)', '<>', 'g');
+----
+0
+
+query I
+SELECT count(*) FROM t WHERE regexp_extract_all(s, '\w+') IS DISTINCT FROM regexp_extract_all(s, '(\w+)')
+   OR regexp_replace(s, '\w+', '<>', 'g') IS DISTINCT FROM regexp_replace(s, '(\w+)', '<>', 'g');
+----
+0
+
+query I
+SELECT count(*) FROM t WHERE regexp_extract_all(s, '\s+') IS DISTINCT FROM regexp_extract_all(s, '(\s+)')
+   OR regexp_replace(s, '\s+', '<>', 'g') IS DISTINCT FROM regexp_replace(s, '(\s+)', '<>', 'g');
+----
+0
+
+query I
+SELECT count(*) FROM t WHERE regexp_extract_all(s, 'a+') IS DISTINCT FROM regexp_extract_all(s, '(a+)')
+   OR regexp_replace(s, 'a+', '<>', 'g') IS DISTINCT FROM regexp_replace(s, '(a+)', '<>', 'g');
+----
+0
+
+query I
+SELECT count(*) FROM t WHERE regexp_extract_all(s, '(?i)a+') IS DISTINCT FROM regexp_extract_all(s, '((?i)a+)')
+   OR regexp_replace(s, '(?i)a+', '<>', 'g') IS DISTINCT FROM regexp_replace(s, '((?i)a+)', '<>', 'g');
+----
+0
+
+query I
+SELECT count(*) FROM t WHERE regexp_extract_all(s, '(?i)[a-c]+') IS DISTINCT FROM regexp_extract_all(s, '((?i)[a-c]+)')
+   OR regexp_replace(s, '(?i)[a-c]+', '<>', 'g') IS DISTINCT FROM regexp_replace(s, '((?i)[a-c]+)', '<>', 'g');
+----
+0
+
+query I
+SELECT count(*) FROM t WHERE regexp_extract_all(s, 'k+') IS DISTINCT FROM regexp_extract_all(s, '(k+)')
+   OR regexp_replace(s, 'k+', '<>', 'g') IS DISTINCT FROM regexp_replace(s, '(k+)', '<>', 'g');
+----
+0
+
+query I
+SELECT count(*) FROM t WHERE regexp_extract_all(s, '(?i)k+') IS DISTINCT FROM regexp_extract_all(s, '((?i)k+)')
+   OR regexp_replace(s, '(?i)k+', '<>', 'g') IS DISTINCT FROM regexp_replace(s, '((?i)k+)', '<>', 'g');
+----
+0
+
+query I
+SELECT count(*) FROM t WHERE regexp_extract_all(s, '(?i)s+') IS DISTINCT FROM regexp_extract_all(s, '((?i)s+)')
+   OR regexp_replace(s, '(?i)s+', '<>', 'g') IS DISTINCT FROM regexp_replace(s, '((?i)s+)', '<>', 'g');
+----
+0
+
+query I
+SELECT count(*) FROM t WHERE regexp_extract_all(s, '[0-9]+?') IS DISTINCT FROM regexp_extract_all(s, '([0-9]+?)')
+   OR regexp_replace(s, '[0-9]+?', '<>', 'g') IS DISTINCT FROM regexp_replace(s, '([0-9]+?)', '<>', 'g');
+----
+0
+
+query I
+SELECT count(*) FROM t WHERE regexp_extract_all(s, '[^0-9]+') IS DISTINCT FROM regexp_extract_all(s, '([^0-9]+)')
+   OR regexp_replace(s, '[^0-9]+', '<>', 'g') IS DISTINCT FROM regexp_replace(s, '([^0-9]+)', '<>', 'g');
+----
+0
+
+query I
+SELECT count(*) FROM t WHERE regexp_extract_all(s, '[а-я]+') IS DISTINCT FROM regexp_extract_all(s, '([а-я]+)')
+   OR regexp_replace(s, '[а-я]+', '<>', 'g') IS DISTINCT FROM regexp_replace(s, '([а-я]+)', '<>', 'g');
+----
+0
+
+query I
+SELECT count(*) FROM t WHERE regexp_extract_all(s, 'x+') IS DISTINCT FROM regexp_extract_all(s, '(x+)')
+   OR regexp_replace(s, 'x+', '<>', 'g') IS DISTINCT FROM regexp_replace(s, '(x+)', '<>', 'g');
+----
+0
+
+query II
+SELECT regexp_extract_all('a1b22c333', '[0-9]+'), regexp_replace('a1b22c333', '[0-9]+', 'N', 'g');
+----
+[1, 22, 333]	aNbNcN
+
+query II
+SELECT regexp_extract_all('abc', '[0-9]+'), regexp_replace('abc', '[0-9]+', 'N', 'g');
+----
+[]	abc
+
+statement error
+SELECT regexp_extract_all('a1b22', '[0-9]+', 1);
+----
+Cannot access group 1

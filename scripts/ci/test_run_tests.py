@@ -1775,6 +1775,9 @@ Mismatch on row 1, column 1
 
     def test_generic_failure_merges_query_diagnostics_with_assertion_failure(self):
         remote_optimizer_path = REPO_ROOT / "test" / "extension" / "test_remote_optimizer.cpp"
+        query = "SELECT first_name FROM PARQUET_SCAN('data/parquet-testing/userdata1.parquet') GROUP BY first_name"
+        source_lines = remote_optimizer_path.read_text().splitlines()
+        line = next(number for number, text in enumerate(source_lines, 1) if query in text)
         batch = ["Test using a remote optimizer pass in case thats important to someone"]
         stdout = """
 Filters: Test using a remote optimizer pass in case thats important to someone
@@ -1789,7 +1792,7 @@ Test using a remote optimizer pass in case thats important to someone
 {remote_optimizer_path}:29
 ...............................................................................
 
-{remote_optimizer_path}:148: FAILED:
+{remote_optimizer_path}:{line}: FAILED:
   REQUIRE( NO_FAIL((con1.Query( "SELECT first_name FROM PARQUET_SCAN('data/parquet-testing/userdata1.parquet') GROUP BY first_name"))) )
 with expansion:
   false
@@ -1799,7 +1802,7 @@ with expansion:
 test cases: 1 | 1 failed
 assertions: 4 | 3 passed | 1 failed
 """.format(
-            remote_optimizer_path=remote_optimizer_path
+            remote_optimizer_path=remote_optimizer_path, line=line
         )
         stderr = """
 Query failed with message: INTERNAL Error: Failed to read "8" bytes from socket - read 0 instead
@@ -1820,13 +1823,13 @@ For more information, see https://duckdb.org/docs/current/dev/internal_errors
             [
                 "error: FAIL Test using a remote optimizer pass in case thats important to someone",
                 "",
-                "    145  }",
-                "    146  ",
-                "    147  REQUIRE_NO_FAIL(con1.Query(",
-                "  > 148      \"SELECT first_name FROM PARQUET_SCAN('data/parquet-testing/userdata1.parquet') GROUP BY first_name\"));",
-                "    149  ",
-                "    150  if (kill(pid, SIGKILL) != 0) {",
-                "    151      FAIL();",
+                f"    {line - 3}  }}",
+                f"    {line - 2}  ",
+                f"    {line - 1}  REQUIRE_NO_FAIL(con1.Query(",
+                f"  > {line}      \"{query}\"));",
+                f"    {line + 1}  ",
+                f"    {line + 2}  if (kill(pid, SIGKILL) != 0) {{",
+                f"    {line + 3}      FAIL();",
                 "",
                 'Query failed with message: INTERNAL Error: Failed to read "8" bytes from socket - read 0 instead',
                 "Stack Trace:",

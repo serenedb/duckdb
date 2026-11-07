@@ -1,0 +1,78 @@
+# name: test/sql/update/test_sparse_update_compressed.test
+# description: Sparse updates of compressed columns keep the values of the rows they do not touch
+# group: [update]
+
+load {TEST_DIR}/sparse_update_compressed.db
+
+statement ok
+CREATE TABLE t AS SELECT i AS id, 'value_' || (i % 100) AS s, CASE WHEN i % 7 = 0 THEN NULL ELSE i END AS n FROM range(10000) t(i);
+
+statement ok
+CHECKPOINT;
+
+statement ok
+BEGIN;
+
+statement ok
+UPDATE t SET s = 'changed', n = NULL WHERE id IN (3, 2047, 2048, 9999);
+
+query III
+SELECT id, s, n FROM t WHERE id IN (2, 3, 7, 2047, 2048, 2049, 9999) ORDER BY id;
+----
+2	value_2	2
+3	changed	NULL
+7	value_7	NULL
+2047	changed	NULL
+2048	changed	NULL
+2049	value_49	2049
+9999	changed	NULL
+
+statement ok
+ROLLBACK;
+
+query III
+SELECT id, s, n FROM t WHERE id IN (2, 3, 7, 2047, 2048, 2049, 9999) ORDER BY id;
+----
+2	value_2	2
+3	value_3	3
+7	value_7	NULL
+2047	value_47	2047
+2048	value_48	2048
+2049	value_49	2049
+9999	value_99	9999
+
+statement ok
+UPDATE t SET n = id, s = 'was_null' WHERE id IN (7, 14, 9996);
+
+statement ok
+UPDATE t SET s = 'twice' WHERE id = 14;
+
+query III
+SELECT id, s, n FROM t WHERE id IN (6, 7, 14, 15, 9996) ORDER BY id;
+----
+6	value_6	6
+7	was_null	7
+14	twice	14
+15	value_15	15
+9996	was_null	9996
+
+query II
+SELECT count(*), count(n) FROM t WHERE s = 'value_' || (id % 100);
+----
+9997	8571
+
+restart
+
+query III
+SELECT id, s, n FROM t WHERE id IN (6, 7, 14, 15, 9996) ORDER BY id;
+----
+6	value_6	6
+7	was_null	7
+14	twice	14
+15	value_15	15
+9996	was_null	9996
+
+query II
+SELECT count(*), count(n) FROM t WHERE s = 'value_' || (id % 100);
+----
+9997	8571

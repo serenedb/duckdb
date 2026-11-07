@@ -227,8 +227,11 @@ BlockAllocator::BlockAllocator(Allocator &allocator_p, const idx_t block_size_p,
 }
 
 BlockAllocator::~BlockAllocator() {
+	// Do NOT touch the thread-local state here: when the destructor runs from an exit handler (e.g. a static
+	// DuckDB), the calling thread's thread_local has already been destroyed, and resurrecting it is UB. Thread-local
+	// states clean up after themselves: their destructor returns cached blocks while the allocator is alive, and
+	// alive_token/uuid make them no-ops or re-initialize once it is gone.
 	alive_token->store(false);
-	GetBlockAllocatorThreadLocalState(*this).Clear();
 	if (IsActive()) {
 		try {
 			FreeVirtualMemory(virtual_memory_space, virtual_memory_size);
@@ -381,20 +384,20 @@ idx_t BlockAllocator::GetDeallocatedSinceFlush() const {
 	return deallocated_since_flush.load(std::memory_order_relaxed);
 }
 
-bool BlockAllocator::TryFlushDeallocated(const idx_t threshold) const {
+idx_t BlockAllocator::ClaimDeallocated(const idx_t threshold) const {
 	if (!SupportsFlush()) {
-		return false;
+		return 0;
 	}
-	auto deallocated = deallocated_since_flush.load(std::memory_order_relaxed);
-	if (deallocated < threshold) {
-		return false;
+	const auto claimed = deallocated_since_flush.exchange(0, std::memory_order_relaxed);
+	if (claimed < threshold) {
+		AddDeallocated(claimed);
+		return 0;
 	}
-	// the thread that claims the accumulated amount performs the flush
-	if (!deallocated_since_flush.compare_exchange_strong(deallocated, 0, std::memory_order_relaxed)) {
-		return false;
-	}
-	FlushAll(deallocated);
-	return true;
+	return claimed;
+}
+
+void BlockAllocator::AddDeallocated(const idx_t size) const {
+	deallocated_since_flush.fetch_add(size, std::memory_order_relaxed);
 }
 
 void BlockAllocator::FreeInternal(const idx_t extra_memory) const {

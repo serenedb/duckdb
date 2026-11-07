@@ -6,6 +6,10 @@
 #include "duckdb/parser/parsed_data/create_sequence_info.hpp"
 #include "duckdb/catalog/dependency_manager.hpp"
 #include "duckdb/common/operator/add.hpp"
+#include "duckdb/common/operator/multiply.hpp"
+#include "duckdb/common/types/hugeint.hpp"
+#include "duckdb/main/attached_database.hpp"
+#include "duckdb/main/client_data.hpp"
 #include "duckdb/transaction/duck_transaction.hpp"
 
 #include <algorithm>
@@ -15,101 +19,467 @@ namespace duckdb {
 
 constexpr const char *SequenceCatalogEntry::Name;
 
-SequenceData::SequenceData(CreateSequenceInfo &info)
+SequenceSession &SequenceSession::Get(ClientContext &context) {
+	return *ClientData::Get(context).sequence_session;
+}
+
+SequenceData::SequenceData(const CreateSequenceInfo &info)
     : usage_count(info.usage_count), counter(info.start_value), last_value(info.last_value), increment(info.increment),
-      start_value(info.start_value), min_value(info.min_value), max_value(info.max_value), cycle(info.cycle) {
+      start_value(info.recorded_start.value_or(info.start_value)), min_value(info.min_value), max_value(info.max_value),
+      cycle(info.cycle), cache(info.cache) {
+}
+
+int64_t SequenceData::Successor(int64_t value) const {
+	int64_t next;
+	if (!TryAddOperator::Operation(value, increment, next)) {
+		return (increment > 0) == cycle ? min_value : max_value;
+	}
+	if (cycle && next > max_value) {
+		return min_value;
+	}
+	if (cycle && next < min_value) {
+		return max_value;
+	}
+	return next;
+}
+
+SequenceState::SequenceState(const SequenceData &data_p)
+    : data(data_p), reserved_usage_count(data.usage_count), reserved_counter(data.counter),
+      reserved_last_value(data.last_value) {
 }
 
 SequenceCatalogEntry::SequenceCatalogEntry(Catalog &catalog, SchemaCatalogEntry &schema, CreateSequenceInfo &info)
-    : StandardEntry(CatalogType::SEQUENCE_ENTRY, schema, catalog, info.GetSequenceName()), data(info) {
+    : StandardEntry(CatalogType::SEQUENCE_ENTRY, schema, catalog, info.GetSequenceName(), info.oid),
+      state(make_shared_ptr<SequenceState>(SequenceData(info))) {
 	this->temporary = info.temporary;
+	this->dependencies = info.dependencies;
 	this->comment = info.comment;
 	this->tags = info.tags;
+	this->permissions = info.permissions;
+	this->owner_column = info.owner_column;
+}
+
+SequenceCatalogEntry::~SequenceCatalogEntry() {
+	if (replaced) {
+		lock_guard<mutex> seqlock(replaced->lock);
+		replaced->generation = replaced_generation;
+	}
 }
 
 unique_ptr<CatalogEntry> SequenceCatalogEntry::Copy(ClientContext &context) const {
 	auto info_copy = GetInfo();
 	auto &cast_info = info_copy->Cast<CreateSequenceInfo>();
 
-	auto result = make_uniq<SequenceCatalogEntry>(catalog, schema, cast_info);
-	result->data = GetData();
-
+	auto result = make_uniq<SequenceCatalogEntry>(catalog, ParentSchema(context), cast_info);
+	result->state = state;
+	result->generation = generation;
 	return std::move(result);
 }
 
+unique_ptr<CatalogEntry> SequenceCatalogEntry::AlterEntry(ClientContext &context, AlterInfo &info) {
+	if (info.type == AlterType::CHANGE_OWNERSHIP) {
+		return Copy(context);
+	}
+	const bool restart = info.type == AlterType::ALTER_SEQUENCE &&
+	                     info.Cast<AlterSequenceInfo>().alter_sequence_type == AlterSequenceType::RESTART_SEQUENCE;
+	if (!restart && !info.GetNewName() && !info.GetNewSchema()) {
+		return CatalogEntry::AlterEntry(context, info);
+	}
+	auto result = unique_ptr_cast<CatalogEntry, SequenceCatalogEntry>(
+	    restart ? Copy(context) : CatalogEntry::AlterEntry(context, info));
+	{
+		lock_guard<mutex> writer(state->log_lock);
+		lock_guard<mutex> seqlock(state->lock);
+		ThrowIfSuperseded();
+		if (restart) {
+			result->state = make_shared_ptr<SequenceState>(Restarted(info.Cast<RestartSequenceInfo>()));
+			result->generation = 0;
+		} else {
+			result->generation = state->generation + 1;
+		}
+		result->replaced = state;
+		result->replaced_generation = state->generation;
+		state->generation++;
+	}
+	if (restart) {
+		auto &session = SequenceSession::Get(context);
+		lock_guard<mutex> guard(session.lock);
+		auto cached = session.values.find(oid);
+		if (cached != session.values.end()) {
+			cached->second.remaining = 0;
+		}
+	}
+	return std::move(result);
+}
+
+void SequenceCatalogEntry::SetAsRoot(optional_ptr<CatalogTransaction> transaction,
+                                     optional_ptr<CatalogEntry> previous) {
+	replaced.reset();
+	lock_guard<mutex> seqlock(state->lock);
+	state->generation = generation;
+}
+
+void SequenceCatalogEntry::Rollback(CatalogEntry &prev_entry) {
+	if (prev_entry.type != CatalogType::SEQUENCE_ENTRY) {
+		return;
+	}
+	auto &previous = prev_entry.Cast<SequenceCatalogEntry>();
+	lock_guard<mutex> seqlock(previous.state->lock);
+	previous.state->generation = previous.generation;
+}
+
+SequenceData SequenceCatalogEntry::Restarted(RestartSequenceInfo &info) const {
+	auto result = state->data;
+	const auto counter = info.restart_with.value_or(result.start_value);
+	if (counter < result.min_value) {
+		throw InvalidInputException("RESTART value (%lld) cannot be less than MINVALUE (%lld)", counter,
+		                            result.min_value);
+	}
+	if (counter > result.max_value) {
+		throw InvalidInputException("RESTART value (%lld) cannot be greater than MAXVALUE (%lld)", counter,
+		                            result.max_value);
+	}
+	if (info.bind_mode != AlterBindMode::SKIP_BINDING) {
+		info.usage_count = MaxValue<uint64_t>(result.usage_count + Block(), state->reserved_usage_count) + 1;
+	}
+	result.usage_count = info.usage_count;
+	result.counter = counter;
+	result.last_value.reset();
+	return result;
+}
+
+void SequenceCatalogEntry::ThrowIfSuperseded() const {
+	if (generation != state->generation) {
+		throw TransactionException("Transaction conflict: sequence %s was altered by another transaction", name);
+	}
+}
+
 SequenceData SequenceCatalogEntry::GetData() const {
-	lock_guard<mutex> seqlock(lock);
+	lock_guard<mutex> seqlock(state->lock);
+	return state->data;
+}
+
+bool SequenceCatalogEntry::Committed() const {
+	return timestamp < TRANSACTION_ID_START;
+}
+
+bool SequenceCatalogEntry::LogsValues() const {
+	return !temporary && Committed() && catalog.LogsSequences();
+}
+
+static SequenceData LogAhead(SequenceData data, idx_t steps) {
+	if (!data.cycle) {
+		int64_t span;
+		int64_t last;
+		int64_t next;
+		if (steps > 0 && steps <= idx_t(NumericLimits<int64_t>::Maximum()) && data.counter >= data.min_value &&
+		    data.counter <= data.max_value &&
+		    TryMultiplyOperator::Operation(data.increment, int64_t(steps - 1), span) &&
+		    TryAddOperator::Operation(data.counter, span, last) && last >= data.min_value && last <= data.max_value &&
+		    TryAddOperator::Operation(last, data.increment, next)) {
+			data.counter = next;
+			data.usage_count += steps;
+			data.last_value = last;
+			return data;
+		}
+		const auto bound = data.increment > 0 ? data.max_value : data.min_value;
+		const bool exhausted = data.counter == bound && data.last_value &&
+		                       !TryAddOperator::Operation(*data.last_value, data.increment, next);
+		auto increment = hugeint_t(data.increment);
+		auto counter = hugeint_t(data.counter);
+		hugeint_t available = 0;
+		if (!exhausted && data.counter >= data.min_value && data.counter <= data.max_value) {
+			available = (data.increment > 0 ? hugeint_t(bound) - counter : counter - hugeint_t(bound)) /
+			                (data.increment > 0 ? increment : -increment) +
+			            1;
+		}
+		auto taken = MinValue<hugeint_t>(available, Hugeint::Convert(steps));
+		if (!Hugeint::TryCast<int64_t>(counter + taken * increment, data.counter)) {
+			data.counter = bound;
+		}
+		data.usage_count += Hugeint::Cast<uint64_t>(taken);
+		if (taken > 0) {
+			data.last_value = Hugeint::Cast<int64_t>(counter + (taken - 1) * increment);
+		}
+		return data;
+	}
+	for (idx_t i = 0; i < steps; i++) {
+		data.last_value = data.counter;
+		data.counter = data.Successor(data.counter);
+		data.usage_count++;
+	}
 	return data;
 }
 
-int64_t SequenceCatalogEntry::CurrentValue() {
-	lock_guard<mutex> seqlock(lock);
-	int64_t result;
-	if (!data.last_value) {
-		throw SequenceException("currval: sequence is not yet defined in this session");
-	}
-	result = data.last_value.value();
-	return result;
+idx_t SequenceCatalogEntry::Block() const {
+	static constexpr idx_t LOG_AHEAD_VALUES = 32;
+	static constexpr idx_t MAX_LOG_AHEAD_VALUES = 4096;
+	const auto grown = NextPowerOfTwo(state->data.usage_count / 16);
+	const auto block = MinValue<idx_t>(MaxValue<idx_t>(LOG_AHEAD_VALUES, grown), MAX_LOG_AHEAD_VALUES);
+	return MaxValue<idx_t>(block, state->data.cache);
 }
 
-int64_t SequenceCatalogEntry::NextValue(DuckTransaction &transaction) {
-	lock_guard<mutex> seqlock(lock);
-	int64_t result;
-	result = data.counter;
-	int64_t next_counter;
-	bool overflow = !TryAddOperator::Operation(data.counter, data.increment, next_counter);
-	if (data.cycle) {
-		if (overflow) {
-			next_counter = data.increment < 0 ? data.max_value : data.min_value;
-		} else if (next_counter < data.min_value) {
-			next_counter = data.max_value;
-		} else if (next_counter > data.max_value) {
-			next_counter = data.min_value;
-		}
-	} else {
-		if (result < data.min_value || (overflow && data.increment < 0)) {
-			throw SequenceException("nextval: reached minimum value of sequence %s (%lld)", name, data.min_value);
-		}
-		if (result > data.max_value || overflow) {
-			throw SequenceException("nextval: reached maximum value of sequence \"%s\" (%lld)", name, data.max_value);
-		}
+void SequenceCatalogEntry::RaiseReserved(uint64_t usage_count, int64_t counter, optional<int64_t> last_value) {
+	if (usage_count > state->reserved_usage_count) {
+		state->reserved_usage_count = usage_count;
+		state->reserved_counter = counter;
+		state->reserved_last_value = last_value;
 	}
-	data.counter = next_counter;
-	data.last_value = result;
-	data.usage_count++;
-	if (!temporary) {
-		transaction.PushSequenceUsage(*this, data);
-	}
-	return result;
 }
 
-int64_t SequenceCatalogEntry::SetValue(DuckTransaction &transaction, int64_t value, bool is_called) {
+void SequenceCatalogEntry::AppendReservation(const SequenceData &target) {
+	catalog.LogSequenceValue(SequenceValue {this, target.usage_count, target.counter, target.last_value});
+	lock_guard<mutex> seqlock(state->lock);
+	RaiseReserved(target.usage_count, target.counter, target.last_value);
+}
+
+void SequenceCatalogEntry::Cover(uint64_t usage_count) {
+	unique_lock<mutex> seqlock(state->lock);
+	while (usage_count > state->reserved_usage_count) {
+		seqlock.unlock();
+		lock_guard<mutex> writer(state->log_lock);
+		seqlock.lock();
+		if (usage_count > state->reserved_usage_count) {
+			const auto target = LogAhead(state->data, Block());
+			seqlock.unlock();
+			AppendReservation(target);
+			seqlock.lock();
+		}
+	}
+}
+
+void SequenceCatalogEntry::Fetch(SequenceSessionValue &cached, idx_t needed) {
+	if (!LogsValues()) {
+		lock_guard<mutex> seqlock(state->lock);
+		FetchLocked(cached, needed);
+		return;
+	}
+	unique_lock<mutex> writer(state->log_lock, std::defer_lock);
+	optional<SequenceData> target;
+	uint64_t used;
 	{
-		lock_guard<mutex> seqlock(lock);
-		if (value < data.min_value || value > data.max_value) {
-			throw SequenceException("setval: value %lld is out of bounds for sequence %s (%lld..%lld)", value, name,
-			                        data.min_value, data.max_value);
-		}
-
-		data.counter = value;
-		if (!is_called) {
-			data.usage_count++;
-			if (!temporary) {
-				transaction.PushSequenceUsage(*this, data);
-			}
-			return value;
+		lock_guard<mutex> seqlock(state->lock);
+		FetchLocked(cached, needed);
+		used = state->data.usage_count;
+		const auto block = Block();
+		if (used + block / 2 > state->reserved_usage_count && writer.try_lock()) {
+			target = LogAhead(state->data, block);
 		}
 	}
+	if (target) {
+		AppendReservation(*target);
+		writer.unlock();
+	}
+	Cover(used);
+}
 
-	// is_called: behave as if nextval() was just invoked and returned `value`.
-	return NextValue(transaction);
+void SequenceCatalogEntry::FetchLocked(SequenceSessionValue &cached, idx_t needed) {
+	ThrowIfSuperseded();
+	auto &data = state->data;
+	const auto cache = Committed() ? MaxValue<idx_t>(data.cache, 1) : 1;
+	const auto count = (needed + cache - 1) / cache * cache;
+	const auto first = data.counter;
+	idx_t taken = 0;
+	if (!data.cycle) {
+		auto reserved = LogAhead(data, count);
+		taken = reserved.usage_count - data.usage_count;
+		if (taken == 0) {
+			if (data.increment < 0) {
+				throw SequenceException::LimitReached(name, false, data.min_value);
+			}
+			throw SequenceException::LimitReached(name, true, data.max_value);
+		}
+		data.counter = reserved.counter;
+		data.usage_count = reserved.usage_count;
+	} else {
+		int64_t expected = first;
+		while (taken < count && data.counter == expected) {
+			const int64_t result = data.counter;
+			data.counter = data.Successor(result);
+			data.usage_count++;
+			taken++;
+			if (!TryAddOperator::Operation(result, data.increment, expected)) {
+				break;
+			}
+		}
+	}
+	data.last_value = Hugeint::Cast<int64_t>(hugeint_t(first) + hugeint_t(taken - 1) * hugeint_t(data.increment));
+	cached.next = first;
+	cached.remaining = taken;
+	cached.increment = data.increment;
+	cached.usage_count = data.usage_count;
+	cached.counter = data.counter;
+	cached.block_last = data.last_value;
+}
+
+int64_t SequenceCatalogEntry::CurrentValue(SequenceSession &session) {
+	if (catalog.Compatibility() != SqlCompatibility::POSTGRES) {
+		lock_guard<mutex> seqlock(state->lock);
+		if (!state->data.last_value) {
+			throw SequenceException::NotYetDefined();
+		}
+		return state->data.last_value.value();
+	}
+	lock_guard<mutex> guard(session.lock);
+	auto entry = session.values.find(oid);
+	if (entry == session.values.end() || !entry->second.last) {
+		throw SequenceException::NotYetDefined();
+	}
+	return entry->second.last.value();
+}
+
+int64_t SequenceCatalogEntry::NextValue(optional_ptr<DuckTransaction> transaction, SequenceSession &session) {
+	lock_guard<mutex> guard(session.lock);
+	auto &session_value = session.values[oid];
+	SequenceSessionValue uncommitted;
+	auto &cached = Committed() ? session_value : uncommitted;
+	if (cached.remaining == 0) {
+		Fetch(cached, 1);
+	}
+	const auto result = cached.next;
+	if (--cached.remaining) {
+		cached.next += cached.increment;
+	}
+	session_value.last = result;
+	session.last_used = oid;
+	if (transaction && !temporary) {
+		transaction->PushSequenceUsage(SequenceValue {this, cached.usage_count, cached.counter, cached.block_last});
+	}
+	return result;
+}
+
+void SequenceCatalogEntry::NextValues(optional_ptr<DuckTransaction> transaction, SequenceSession &session, idx_t count,
+                                      SequenceRuns &runs) {
+	lock_guard<mutex> guard(session.lock);
+	auto &session_value = session.values[oid];
+	SequenceSessionValue uncommitted;
+	auto &cached = Committed() ? session_value : uncommitted;
+	runs.size = 0;
+	for (idx_t produced = 0; produced < count;) {
+		if (cached.remaining == 0) {
+			Fetch(cached, count - produced);
+		}
+		const auto take = MinValue<idx_t>(cached.remaining, count - produced);
+		if (runs.size == 2) {
+			throw InternalException("Sequence %s handed out a batch in more than two runs", name);
+		}
+		runs.first[runs.size] = cached.next;
+		runs.count[runs.size] = take;
+		runs.size++;
+		produced += take;
+		cached.remaining -= take;
+		session_value.last =
+		    Hugeint::Cast<int64_t>(hugeint_t(cached.next) + hugeint_t(take - 1) * hugeint_t(cached.increment));
+		if (cached.remaining) {
+			cached.next =
+			    Hugeint::Cast<int64_t>(hugeint_t(cached.next) + hugeint_t(take) * hugeint_t(cached.increment));
+		}
+	}
+	session.last_used = oid;
+	if (transaction && !temporary) {
+		transaction->PushSequenceUsage(SequenceValue {this, cached.usage_count, cached.counter, cached.block_last});
+	}
+}
+
+int64_t SequenceCatalogEntry::SetValue(optional_ptr<DuckTransaction> transaction, SequenceSession &session,
+                                       int64_t value, bool is_called) {
+	auto result = SetValue(transaction, value, is_called);
+	lock_guard<mutex> guard(session.lock);
+	auto &cached = session.values[oid];
+	cached.remaining = 0;
+	if (is_called) {
+		cached.last = value;
+	}
+	return result;
+}
+
+int64_t SequenceCatalogEntry::SetValue(optional_ptr<DuckTransaction> transaction, int64_t value, bool is_called) {
+	const bool logs_values = LogsValues();
+	unique_lock<mutex> writer(state->log_lock, std::defer_lock);
+	if (logs_values) {
+		writer.lock();
+	}
+	unique_lock<mutex> seqlock(state->lock);
+	ThrowIfSuperseded();
+	auto &data = state->data;
+	if (value < data.min_value || value > data.max_value) {
+		throw SequenceException::OutOfBounds(name, value, data.min_value, data.max_value);
+	}
+	if (is_called) {
+		data.counter = data.Successor(value);
+		data.last_value = value;
+	} else {
+		data.counter = value;
+		if (catalog.Compatibility() == SqlCompatibility::POSTGRES) {
+			data.last_value.reset();
+		}
+	}
+	data.usage_count = MaxValue(data.usage_count, state->reserved_usage_count) + 1;
+	if (logs_values) {
+		const auto target = data;
+		seqlock.unlock();
+		AppendReservation(target);
+		return value;
+	}
+	if (transaction && !temporary) {
+		transaction->PushSequenceUsage(SequenceValue {this, data.usage_count, data.counter, data.last_value});
+	}
+	return value;
+}
+
+int64_t SequenceCatalogEntry::NextValues(optional_ptr<DuckTransaction> transaction, idx_t count) {
+	if (count == 0) {
+		throw InternalException("SequenceCatalogEntry::NextValues requires a positive count");
+	}
+	lock_guard<mutex> seqlock(state->lock);
+	ThrowIfSuperseded();
+	auto &data = state->data;
+	if (!data.cycle) {
+		auto reserved = LogAhead(data, count);
+		if (reserved.usage_count - data.usage_count == count) {
+			const auto base = data.counter;
+			data.counter = reserved.counter;
+			data.usage_count = reserved.usage_count;
+			data.last_value = reserved.last_value;
+			if (transaction && !temporary) {
+				transaction->PushSequenceUsage(SequenceValue {this, data.usage_count, data.counter, data.last_value});
+			}
+			return base;
+		}
+	}
+	auto counter = data.counter;
+	int64_t result = counter;
+	for (idx_t i = 0; i < count; i++) {
+		result = counter;
+		if (!data.cycle) {
+			int64_t next;
+			const bool overflow = !TryAddOperator::Operation(result, data.increment, next);
+			if (result < data.min_value || (overflow && data.increment < 0)) {
+				throw SequenceException::LimitReached(name, false, data.min_value);
+			}
+			if (result > data.max_value || overflow) {
+				throw SequenceException::LimitReached(name, true, data.max_value);
+			}
+		}
+		counter = data.Successor(result);
+	}
+	auto base = data.counter;
+	data.counter = counter;
+	data.last_value = result;
+	data.usage_count += count;
+	if (transaction && !temporary) {
+		transaction->PushSequenceUsage(SequenceValue {this, data.usage_count, data.counter, data.last_value});
+	}
+	return base;
 }
 
 void SequenceCatalogEntry::ReplayValue(uint64_t v_usage_count, int64_t v_counter, optional<int64_t> last_value) {
+	auto &data = state->data;
 	if (v_usage_count > data.usage_count) {
 		data.usage_count = v_usage_count;
 		data.counter = v_counter;
 		data.last_value = last_value;
+		RaiseReserved(v_usage_count, v_counter, last_value);
 	}
 }
 
@@ -117,17 +487,21 @@ unique_ptr<CreateInfo> SequenceCatalogEntry::GetInfo() const {
 	auto seq_data = GetData();
 
 	auto result = make_uniq<CreateSequenceInfo>();
-	result->SetQualifiedName(schema.GetQualifiedName(name));
+	result->SetQualifiedName(GetQualifiedName(name));
 	result->usage_count = seq_data.usage_count;
 	result->increment = seq_data.increment;
 	result->min_value = seq_data.min_value;
 	result->max_value = seq_data.max_value;
 	result->start_value = seq_data.counter;
+	result->recorded_start = seq_data.start_value;
 	result->cycle = seq_data.cycle;
+	result->cache = seq_data.cache;
 	result->last_value = seq_data.last_value;
 	result->dependencies = dependencies;
 	result->comment = comment;
 	result->tags = tags;
+	result->permissions = permissions;
+	result->owner_column = owner_column;
 	return std::move(result);
 }
 
@@ -141,6 +515,9 @@ string SequenceCatalogEntry::ToSQL() const {
 	ss << " MINVALUE " << seq_data.min_value;
 	ss << " MAXVALUE " << seq_data.max_value;
 	ss << " START " << seq_data.counter;
+	if (seq_data.cache != 1) {
+		ss << " CACHE " << seq_data.cache;
+	}
 	ss << " " << (seq_data.cycle ? "CYCLE" : "NO CYCLE") << ";";
 	return ss.str();
 }

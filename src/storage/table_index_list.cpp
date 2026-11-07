@@ -1,9 +1,12 @@
 #include "duckdb/storage/table/table_index_list.hpp"
+
+#include <absl/cleanup/cleanup.h>
+
 #include "duckdb/planner/binder.hpp"
 #include "duckdb/catalog/catalog.hpp"
 
 #include "duckdb/catalog/catalog_entry/duck_table_entry.hpp"
-#include "duckdb/common/types/constraint_conflict_info.hpp"
+#include "duckdb/common/algorithm.hpp"
 #include "duckdb/common/types/conflict_manager.hpp"
 #include "duckdb/common/vector_operations/vector_operations.hpp"
 #include "duckdb/storage/table/append_state.hpp"
@@ -83,11 +86,11 @@ TableIndexList::~TableIndexList() {
 }
 
 shared_ptr<IndexEntry> TableIndexList::AddIndex(unique_ptr<Index> index, idx_t index_oid,
-                                                const ConstraintCheckMode check_mode) {
+                                                const ConstraintCheckMode check_mode, transaction_t built_through) {
 	D_ASSERT(index);
 	D_ASSERT(index_oid != DConstants::INVALID_INDEX);
 	annotated_lock_guard lock(index_entries_lock);
-	auto index_entry = make_shared_ptr<IndexEntry>(std::move(index), index_oid, check_mode);
+	auto index_entry = make_shared_ptr<IndexEntry>(std::move(index), index_oid, check_mode, built_through);
 	if (index_entry->GetBindState() != IndexBindState::BOUND) {
 		unbound_count++;
 	}
@@ -95,7 +98,8 @@ shared_ptr<IndexEntry> TableIndexList::AddIndex(unique_ptr<Index> index, idx_t i
 	return index_entry;
 }
 
-void TableIndexList::InitializeLocalIndexes(TableIndexList &delete_indexes, TableIndexList &append_indexes) const {
+void TableIndexList::InitializeLocalIndexes(TableIndexList &delete_indexes, TableIndexList &append_indexes,
+                                            const unordered_set<idx_t> &dropped_indexes) const {
 	D_ASSERT(this != &delete_indexes);
 	D_ASSERT(this != &append_indexes);
 	D_ASSERT(&delete_indexes != &append_indexes);
@@ -104,6 +108,9 @@ void TableIndexList::InitializeLocalIndexes(TableIndexList &delete_indexes, Tabl
 
 	annotated_lock_guard lock(index_entries_lock);
 	for (const auto &entry : index_entries) {
+		if (dropped_indexes.contains(entry->GetIndexOid())) {
+			continue;
+		}
 		entry->InitializeLocalIndexes(delete_indexes, append_indexes);
 	}
 }
@@ -116,7 +123,8 @@ void TableIndexList::Append(DataChunk &chunk, Vector &row_ids) {
 }
 
 ErrorData TableIndexList::Append(optional_ptr<TableIndexList> delete_indexes, DataChunk &chunk, row_t row_start,
-                                 IndexAppendMode append_mode, optional_idx active_checkpoint) {
+                                 IndexAppendMode append_mode, optional_idx active_checkpoint,
+                                 optional_ptr<const unordered_set<idx_t>> dropped_indexes) {
 	Vector row_ids(LogicalType::ROW_TYPE);
 	VectorOperations::GenerateSequence(row_ids, chunk.size(), row_start, 1);
 
@@ -125,6 +133,9 @@ ErrorData TableIndexList::Append(optional_ptr<TableIndexList> delete_indexes, Da
 
 	ErrorData error;
 	for (const auto &entry : index_entries) {
+		if (dropped_indexes && dropped_indexes->contains(entry->GetIndexOid())) {
+			continue;
+		}
 		shared_ptr<IndexEntry> delete_entry;
 		if (delete_indexes && entry->IsUnique()) {
 			delete_entry = delete_indexes->FindEntry(*entry);
@@ -142,6 +153,18 @@ ErrorData TableIndexList::Append(optional_ptr<TableIndexList> delete_indexes, Da
 		}
 	}
 	return error;
+}
+
+ErrorData TableIndexList::FinishAppend() {
+	annotated_lock_guard lock(index_entries_lock);
+	ErrorData result;
+	for (const auto &entry : index_entries) {
+		auto finished = entry->FinishAppend();
+		if (!result.HasError()) {
+			result = std::move(finished);
+		}
+	}
+	return result;
 }
 
 void TableIndexList::RevertAppend(DataChunk &chunk, Vector &row_ids) {
@@ -194,6 +217,44 @@ void TableIndexList::RemoveIndex(idx_t index_oid) {
 	}
 }
 
+void TableIndexList::RemoveIndexesOnColumn(column_t column_id) {
+	vector<shared_ptr<IndexEntry>> removed_entries;
+	{
+		annotated_lock_guard lock(index_entries_lock);
+		for (idx_t i = index_entries.size(); i > 0; i--) {
+			auto &entry = index_entries[i - 1];
+			if (!entry->GetStorageInfo().column_set.contains(column_id)) {
+				continue;
+			}
+			if (entry->GetBindState() != IndexBindState::BOUND) {
+				unbound_count--;
+			}
+			removed_entries.push_back(std::move(entry));
+			index_entries.erase_at(i - 1);
+		}
+	}
+	for (auto &entry : removed_entries) {
+		entry->Retire();
+	}
+}
+
+void TableIndexList::RenameIndex(idx_t index_oid, const Identifier &new_name) {
+	shared_ptr<IndexEntry> renamed_entry;
+	{
+		annotated_lock_guard lock(index_entries_lock);
+		for (const auto &entry : index_entries) {
+			if (entry->GetIndexOid() == index_oid) {
+				renamed_entry = entry;
+				break;
+			}
+		}
+	}
+	if (renamed_entry && renamed_entry->GetName() != new_name) {
+		auto index = renamed_entry->GetWriteHandle<Index>();
+		index->SetIndexName(new_name);
+	}
+}
+
 bool TableIndexList::HasUniqueIndexes() const {
 	annotated_lock_guard lock(index_entries_lock);
 	for (const auto &entry : index_entries) {
@@ -204,50 +265,26 @@ bool TableIndexList::HasUniqueIndexes() const {
 	return false;
 }
 
-void TableIndexList::VerifyUniqueIndexes(optional_ptr<const TableIndexList> delete_indexes, DataChunk &chunk,
-                                         optional_ptr<ConflictManager> manager) const {
+bool TableIndexList::HasDeleteIndexes() const {
 	annotated_lock_guard lock(index_entries_lock);
-	if (!manager) {
-		for (const auto &entry : index_entries) {
-			if (!entry->IsUnique() || entry->IsDeferred() || entry->GetIndexType() != ART::TYPE_NAME) {
-				continue;
-			}
-			auto delete_entry = delete_indexes ? delete_indexes->FindEntry(*entry) : nullptr;
-			entry->VerifyAppend(delete_entry, chunk, nullptr);
-		}
-		return;
-	}
-
-	// Find all indexes matching the conflict target.
-	const auto &conflict_info = manager->GetConflictInfo();
 	for (const auto &entry : index_entries) {
-		auto index_info = entry->GetStorageInfo();
-		if (!index_info.is_unique || index_info.check_mode == ConstraintCheckMode::DEFERRED ||
-		    entry->GetIndexType() != ART::TYPE_NAME ||
-		    !conflict_info.ConflictTargetMatches(index_info.is_unique, index_info.column_set)) {
-			continue;
+		if (entry->IsUnique() || entry->IsForeign()) {
+			return true;
 		}
-		auto delete_entry = delete_indexes ? delete_indexes->FindEntry(*entry) : nullptr;
-		manager->AddIndex(entry, std::move(delete_entry));
 	}
+	return false;
+}
 
-	// Verify indexes matching the conflict target.
-	manager->SetMode(ConflictManagerMode::SCAN);
-	const auto &matching_indexes = manager->MatchingIndexes();
-	const auto &matching_delete_indexes = manager->MatchingDeleteIndexes();
-	for (idx_t i = 0; i < matching_indexes.size(); i++) {
-		matching_indexes[i]->VerifyAppend(matching_delete_indexes[i], chunk, manager);
-	}
-
-	// Scan the other indexes and throw if there are any conflicts.
-	manager->SetMode(ConflictManagerMode::THROW);
+void TableIndexList::VerifyUniqueIndexes(optional_ptr<const TableIndexList> delete_indexes, DataChunk &chunk,
+                                         optional_ptr<const unordered_set<idx_t>> dropped_indexes) const {
+	annotated_lock_guard lock(index_entries_lock);
 	for (const auto &entry : index_entries) {
 		if (!entry->IsUnique() || entry->IsDeferred() || entry->GetIndexType() != ART::TYPE_NAME ||
-		    manager->IndexMatches(entry)) {
+		    (dropped_indexes && dropped_indexes->contains(entry->GetIndexOid()))) {
 			continue;
 		}
 		auto delete_entry = delete_indexes ? delete_indexes->FindEntry(*entry) : nullptr;
-		entry->VerifyAppend(delete_entry, chunk, manager);
+		entry->VerifyAppend(delete_entry, chunk);
 	}
 }
 
@@ -266,13 +303,16 @@ void TableIndexList::Rebuild(const IndexRebuildScan &scan) {
 }
 
 void TableIndexList::VerifyBuffers() const {
+#ifdef D_ASSERT_IS_ENABLED
+	DUCKDB_DEBUG_VERIFY_GUARD();
 	annotated_lock_guard lock(index_entries_lock);
 	for (const auto &entry : index_entries) {
 		entry->VerifyBuffers();
 	}
+#endif
 }
 
-void TableIndexList::VerifyUpdate(const vector<PhysicalIndex> &column_ids) const {
+void TableIndexList::VerifyUpdate(std::span<const PhysicalIndex> column_ids) const {
 #ifdef DEBUG
 	annotated_lock_guard lock(index_entries_lock);
 	for (const auto &entry : index_entries) {
@@ -331,15 +371,21 @@ bool TableIndexList::HasBufferedReplays() const {
 	return false;
 }
 
-bool TableIndexList::NameIsUnique(const string &name) const {
+bool TableIndexList::NameIsUnique(const string &name, optional_ptr<const unordered_set<idx_t>> dropped,
+                                  optional_idx replaced) const {
 	annotated_lock_guard lock(index_entries_lock);
 	// Only covers PK, FK, and UNIQUE indexes.
 	// is_unique also covers primary-key indexes.
 	for (const auto &entry : index_entries) {
 		auto index_info = entry->GetStorageInfo();
-		if ((index_info.is_unique || index_info.is_foreign) && entry->GetName() == name) {
-			return false;
+		if (!(index_info.is_unique || index_info.is_foreign) || entry->GetName() != name) {
+			continue;
 		}
+		const auto oid = entry->GetIndexOid();
+		if ((replaced.IsValid() && replaced.GetIndex() == oid) || (dropped && dropped->contains(oid))) {
+			continue;
+		}
+		return false;
 	}
 	return true;
 }
@@ -397,8 +443,10 @@ void TableIndexList::Bind(ClientContext &context, DataTableInfo &table_info, con
 	auto &table_entry = catalog.GetEntry<TableCatalogEntry>(
 	    context,
 	    QualifiedName::FromCatalogSchema(catalog.GetName(), table_info.GetSchemaPath(), table_info.GetTableName()));
-	auto &table = table_entry.Cast<DuckTableEntry>();
+	Bind(context, table_entry, index_type);
+}
 
+void TableIndexList::Bind(ClientContext &context, TableCatalogEntry &table, const optional<string> &index_type) {
 	vector<LogicalType> column_types;
 	vector<string> column_names;
 	for (auto &col : table.GetColumns().Logical()) {
@@ -436,6 +484,10 @@ void TableIndexList::Bind(ClientContext &context, DataTableInfo &table_info, con
 		} else {
 			throw InternalException("index entry bind state cannot be BOUND here");
 		}
+		absl::Cleanup unbind = [&]() noexcept {
+			lock.lock();
+			index_entry->SetBindState(IndexBindState::UNBOUND);
+		};
 
 		// Create a binder to bind this index.
 		auto binder = Binder::CreateBinder(context);
@@ -460,6 +512,7 @@ void TableIndexList::Bind(ClientContext &context, DataTableInfo &table_info, con
 
 		// Commit the bound index to the index entry.
 		lock.lock();
+		std::move(unbind).Cancel();
 		auto current_entry = std::find(index_entries.begin(), index_entries.end(), index_entry);
 		if (current_entry == index_entries.end()) {
 			continue;
@@ -469,7 +522,7 @@ void TableIndexList::Bind(ClientContext &context, DataTableInfo &table_info, con
 	}
 }
 
-shared_ptr<IndexEntry> TableIndexList::FindForeignKeyIndex(const vector<PhysicalIndex> &fk_keys,
+shared_ptr<IndexEntry> TableIndexList::FindForeignKeyIndex(std::span<const PhysicalIndex> fk_keys,
                                                            const ForeignKeyType fk_type) {
 	annotated_lock_guard<annotated_mutex> lock(index_entries_lock);
 	for (auto &entry : index_entries) {
@@ -481,7 +534,7 @@ shared_ptr<IndexEntry> TableIndexList::FindForeignKeyIndex(const vector<Physical
 }
 
 void TableIndexList::VerifyForeignKey(optional_ptr<const TableIndexList> delete_indexes,
-                                      const vector<PhysicalIndex> &fk_keys, DataChunk &chunk,
+                                      std::span<const PhysicalIndex> fk_keys, DataChunk &chunk,
                                       ConflictManager &conflict_manager) {
 	const auto fk_type = conflict_manager.GetVerifyExistenceType() == VerifyExistenceType::APPEND_FK
 	                         ? ForeignKeyType::FK_TYPE_PRIMARY_KEY_TABLE
@@ -514,27 +567,25 @@ unordered_set<column_t> TableIndexList::GetIndexedColumns() const {
 	return column_ids;
 }
 
-vector<unordered_set<column_t>> TableIndexList::GetConflictTargetColumns(const ConflictInfo &conflict_info) const {
+unordered_set<column_t> TableIndexList::GetRemovalColumns() const {
 	annotated_lock_guard lock(index_entries_lock);
-	vector<unordered_set<column_t>> result;
+	unordered_set<column_t> column_ids;
 	for (const auto &entry : index_entries) {
 		auto index_info = entry->GetStorageInfo();
-		if (!index_info.is_unique || index_info.check_mode == ConstraintCheckMode::DEFERRED ||
-		    !conflict_info.ConflictTargetMatches(index_info.is_unique, index_info.column_set)) {
+		if (unbound_count == 0 && !index_info.removal_needs_column_values) {
 			continue;
 		}
-		D_ASSERT(entry->GetBindState() == IndexBindState::BOUND);
-		result.push_back(std::move(index_info.column_set));
+		column_ids.insert(index_info.column_set.begin(), index_info.column_set.end());
 	}
-	return result;
+	return column_ids;
 }
 
-unordered_set<column_t> TableIndexList::GetUniqueIndexColumns() const {
+unordered_set<column_t> TableIndexList::GetDeleteIndexColumns() const {
 	annotated_lock_guard lock(index_entries_lock);
 	unordered_set<column_t> result;
 	for (const auto &entry : index_entries) {
 		auto index_info = entry->GetStorageInfo();
-		if (!index_info.is_unique) {
+		if (!index_info.is_unique && !index_info.is_foreign) {
 			continue;
 		}
 		result.insert(index_info.column_set.begin(), index_info.column_set.end());
@@ -548,11 +599,17 @@ IndexSerializationResult TableIndexList::SerializeToDisk(QueryContext context, c
 	IndexSerializationResult result;
 
 	result.owned_infos.reserve(index_entries.size());
-	for (const auto &entry : index_entries) {
-		auto storage_info = entry->SerializeToDisk(context, info.options);
-		D_ASSERT(!storage_info.name.empty());
-		result.owned_infos.push_back(std::move(storage_info));
-		result.ordered_infos.push_back(result.owned_infos.back());
+	for (const bool constraint_indexes : {true, false}) {
+		for (const auto &entry : index_entries) {
+			if (info.constraint_index_oids.contains(entry->GetIndexOid()) != constraint_indexes) {
+				continue;
+			}
+			result.ordered_entries.push_back(entry);
+			auto storage_info = entry->SerializeToDisk(context, info.options);
+			D_ASSERT(!storage_info.name.empty());
+			result.owned_infos.push_back(std::move(storage_info));
+			result.ordered_infos.push_back(result.owned_infos.back());
+		}
 	}
 
 	return result;

@@ -20,7 +20,8 @@ static void ListSearchFunction(DataChunk &input, ExpressionState &state, Vector 
 	const auto &list_child = ListVector::GetChild(input_list);
 	const auto &target = input.data[1];
 
-	ListSearchOp<RETURN_TYPE, FIND_NULLS>(input_list, list_child, target, result, target_count);
+	ListSearchOp<RETURN_TYPE, FIND_NULLS>(input_list, list_child, target, result, target_count,
+	                                      ListSearchState::Get(state));
 }
 
 //! Whether the statistics prove that no list element can ever match the needle.
@@ -98,6 +99,7 @@ ScalarFunction ListContainsFun::GetFunction() {
 	    .AddParameter("element", LogicalType::TEMPLATE("T"));
 	fun.SetCollationHandling(FunctionCollationHandling::PUSH_COMBINABLE_COLLATIONS);
 	fun.SetFilterPruneCallback(ListContainsFilterPrune);
+	fun.SetInitStateCallback(ListSearchState::Init);
 	return fun;
 }
 
@@ -109,6 +111,7 @@ ScalarFunction ListPositionFun::GetFunction() {
 	fun.SetNullHandling(FunctionNullHandling::SPECIAL_HANDLING);
 	fun.SetCollationHandling(FunctionCollationHandling::PUSH_COMBINABLE_COLLATIONS);
 	fun.SetStatisticsCallback(ListPositionPropagateStats);
+	fun.SetInitStateCallback(ListSearchState::Init);
 	return fun;
 }
 

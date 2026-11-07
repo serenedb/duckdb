@@ -311,13 +311,13 @@ struct RemapEntry {
 		}
 
 		// find the source index
-		auto entry = source_map.find(Identifier(remap_source));
+		auto entry = source_map.find(remap_source);
 		if (entry == source_map.end() && parent_type.id() == LogicalTypeId::LIST) {
 			// A LIST has exactly one child, which GetMap canonically keys as "list". Some producers
 			// carry the physical child name instead (e.g. the multi-file reader for Parquet files whose
 			// repeated group is named "array" for parquet-avro/Hive or "bag" for Spark legacy). The
 			// mapping is unambiguous for a LIST, so fall back to the canonical "list" child.
-			entry = source_map.find(Identifier("list"));
+			entry = source_map.find("list");
 		}
 		if (entry == source_map.end()) {
 			throw BinderException("Source value %s not found", remap_source);
@@ -367,7 +367,7 @@ struct RemapEntry {
 
 	static void HandleDefault(idx_t default_idx, const string &default_target, const LogicalType &default_type,
 	                          identifier_map_t<RemapIndex> &target_map, identifier_map_t<RemapEntry> &result) {
-		auto entry = target_map.find(Identifier(default_target));
+		auto entry = target_map.find(default_target);
 		if (entry == target_map.end()) {
 			throw BinderException("Default value %s not found for remap", default_target);
 		}
@@ -382,10 +382,10 @@ struct RemapEntry {
 				                      target_type.ToString());
 			}
 			// add to the map at this level only if it does not yet exist
-			auto result_entry = result.find(Identifier(default_target));
+			auto result_entry = result.find(default_target);
 			if (result_entry == result.end()) {
 				result.emplace(default_target, std::move(remap));
-				result_entry = result.find(Identifier(default_target));
+				result_entry = result.find(default_target);
 				result_entry->second.child_remaps = make_uniq<identifier_map_t<RemapEntry>>();
 			} else {
 				// the entry exists - add the default index
@@ -471,7 +471,7 @@ struct RemapEntry {
 			auto &child_type = source_children[source_idx].second;
 			auto entry = source_name_map.find(source_idx);
 			if (entry != source_name_map.end()) {
-				auto remap_entry = remap_map.find(Identifier(entry->second));
+				auto remap_entry = remap_map.find(entry->second);
 				D_ASSERT(remap_entry != remap_map.end());
 				// this entry is remapped - fetch the target type
 				if (IsRemappable(child_type) && remap_entry->second.child_remaps) {

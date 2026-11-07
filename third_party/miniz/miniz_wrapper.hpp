@@ -8,7 +8,10 @@
 
 #pragma once
 
-#include "miniz.hpp"
+#define ZLIB_CONST
+#include <zlib.h>
+#include <cstdint>
+#include <cstring>
 #include <string>
 #include <stdexcept>
 
@@ -30,10 +33,10 @@ public:
 	~MiniZStream() {
 		switch (type) {
 		case MiniZStreamType::MINIZ_TYPE_INFLATE:
-			duckdb_miniz::mz_inflateEnd(&stream);
+			inflateEnd(&stream);
 			break;
 		case MiniZStreamType::MINIZ_TYPE_DEFLATE:
-			duckdb_miniz::mz_deflateEnd(&stream);
+			deflateEnd(&stream);
 			break;
 		default:
 			break;
@@ -45,7 +48,7 @@ public:
 	}
 
 	void FormatException(const char *error_msg, int mz_ret) {
-		auto err = duckdb_miniz::mz_error(mz_ret);
+		auto err = zError(mz_ret);
 		FormatException(error_msg + std::string(": ") + (err ? err : "Unknown error code"));
 	}
 
@@ -67,9 +70,9 @@ public:
 			compressed_size -= GZIP_HEADER_MINSIZE;
 
 			// Initialize stream
-			auto mz_ret = mz_inflateInit2(&stream, -MZ_DEFAULT_WINDOW_BITS);
-			if (mz_ret != duckdb_miniz::MZ_OK) {
-				FormatException("Failed to initialize miniz", mz_ret);
+			auto mz_ret = inflateInit2(&stream, -MAX_WBITS);
+			if (mz_ret != Z_OK) {
+				FormatException("Failed to initialize zlib", mz_ret);
 			}
 
 			// Set up in/out
@@ -79,11 +82,11 @@ public:
 			stream.avail_out = static_cast<unsigned int>(out_size);
 
 			// Decompress and uninitialize stream
-			mz_ret = mz_inflate(&stream, duckdb_miniz::MZ_FINISH);
-			if (mz_ret != duckdb_miniz::MZ_OK && mz_ret != duckdb_miniz::MZ_STREAM_END) {
+			mz_ret = inflate(&stream, Z_FINISH);
+			if (mz_ret != Z_OK && mz_ret != Z_STREAM_END) {
 				FormatException("Failed to decompress GZIP block", mz_ret);
 			}
-			mz_inflateEnd(&stream);
+			inflateEnd(&stream);
 
 			// Update indices
 			compressed_data += GZIP_FOOTER_SIZE + stream.total_in;
@@ -96,7 +99,7 @@ public:
 	}
 
 	static size_t MaxCompressedLength(size_t input_size) {
-		return duckdb_miniz::mz_compressBound(input_size) + GZIP_HEADER_MINSIZE + GZIP_FOOTER_SIZE;
+		return compressBound(input_size) + GZIP_HEADER_MINSIZE + GZIP_FOOTER_SIZE;
 	}
 
 	static void InitializeGZIPHeader(unsigned char *gzip_header) {
@@ -113,7 +116,7 @@ public:
 		gzip_header[9] = 0xFF;
 	}
 
-	static void InitializeGZIPFooter(unsigned char *gzip_footer, duckdb_miniz::mz_ulong crc, idx_t uncompressed_size) {
+	static void InitializeGZIPFooter(unsigned char *gzip_footer, uLong crc, idx_t uncompressed_size) {
 		gzip_footer[0] = crc & 0xFF;
 		gzip_footer[1] = (crc >> 8) & 0xFF;
 		gzip_footer[2] = (crc >> 16) & 0xFF;
@@ -125,10 +128,9 @@ public:
 	}
 
 	void Compress(const char *uncompressed_data, size_t uncompressed_size, char *out_data, size_t *out_size) {
-		auto mz_ret =
-		    mz_deflateInit2(&stream, duckdb_miniz::MZ_DEFAULT_LEVEL, MZ_DEFLATED, -MZ_DEFAULT_WINDOW_BITS, 1, 0);
-		if (mz_ret != duckdb_miniz::MZ_OK) {
-			FormatException("Failed to initialize miniz", mz_ret);
+		auto mz_ret = deflateInit2(&stream, Z_DEFAULT_COMPRESSION, Z_DEFLATED, -MAX_WBITS, 1, Z_DEFAULT_STRATEGY);
+		if (mz_ret != Z_OK) {
+			FormatException("Failed to initialize zlib", mz_ret);
 		}
 		type = MiniZStreamType::MINIZ_TYPE_DEFLATE;
 
@@ -142,13 +144,12 @@ public:
 		stream.next_out = gzip_body;
 		stream.avail_out = static_cast<unsigned int>(*out_size - GZIP_HEADER_MINSIZE);
 
-		mz_ret = mz_deflate(&stream, duckdb_miniz::MZ_FINISH);
-		if (mz_ret != duckdb_miniz::MZ_OK && mz_ret != duckdb_miniz::MZ_STREAM_END) {
+		mz_ret = deflate(&stream, Z_FINISH);
+		if (mz_ret != Z_OK && mz_ret != Z_STREAM_END) {
 			FormatException("Failed to compress GZIP block", mz_ret);
 		}
 		auto gzip_footer = gzip_body + stream.total_out;
-		auto crc = duckdb_miniz::mz_crc32(MZ_CRC32_INIT, reinterpret_cast<const unsigned char *>(uncompressed_data),
-		                                  uncompressed_size);
+		auto crc = crc32(0, reinterpret_cast<const unsigned char *>(uncompressed_data), uncompressed_size);
 		InitializeGZIPFooter(gzip_footer, crc, uncompressed_size);
 
 		*out_size = stream.total_out + GZIP_HEADER_MINSIZE + GZIP_FOOTER_SIZE;
@@ -156,11 +157,11 @@ public:
 
 private:
 	void ResetStreamInternal() {
-		memset(&stream, 0, sizeof(duckdb_miniz::mz_stream));
+		memset(&stream, 0, sizeof(z_stream));
 	}
 
 private:
-	duckdb_miniz::mz_stream stream;
+	z_stream stream;
 	MiniZStreamType type;
 };
 

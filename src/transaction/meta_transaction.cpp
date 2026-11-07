@@ -4,6 +4,7 @@
 #include "duckdb/main/attached_database.hpp"
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/main/database.hpp"
+#include "duckdb/main/database_manager.hpp"
 #include "duckdb/transaction/transaction_manager.hpp"
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/main/secret/secret_storage.hpp"
@@ -13,8 +14,8 @@ namespace duckdb {
 MetaTransaction::MetaTransaction(ClientContext &context_p, timestamp_t start_timestamp_p,
                                  transaction_t transaction_id_p)
     : context(context_p), start_timestamp(start_timestamp_p), global_transaction_id(transaction_id_p),
-      transaction_validity(*context_p.db), active_query(MAXIMUM_QUERY_ID), modified_database(nullptr),
-      is_read_only(false) {
+      transaction_validity(*context_p.db, ValidChecker::Scope::TRANSACTION), active_query(MAXIMUM_QUERY_ID),
+      modified_database(nullptr), is_read_only(false) {
 }
 
 MetaTransaction::~MetaTransaction() = default;
@@ -25,6 +26,23 @@ MetaTransaction &MetaTransaction::Get(ClientContext &context) {
 
 ValidChecker &ValidChecker::Get(MetaTransaction &transaction) {
 	return transaction.transaction_validity;
+}
+
+void MetaTransaction::RefreshStartTime() {
+	vector<std::pair<reference<AttachedDatabase>, reference<Transaction>>> to_refresh;
+	{
+		lock_guard<mutex> guard(lock);
+		for (auto &db : all_transactions) {
+			auto entry = transactions.find(db.get());
+			if (entry == transactions.end()) {
+				continue;
+			}
+			to_refresh.emplace_back(db, entry->second.transaction);
+		}
+	}
+	for (auto &entry : to_refresh) {
+		entry.first.get().GetTransactionManager().RefreshStartTime(entry.second.get());
+	}
 }
 
 Transaction &Transaction::Get(ClientContext &context, AttachedDatabase &db) {
@@ -61,28 +79,37 @@ Transaction &MetaTransaction::GetTransaction(AttachedDatabase &db) {
 	if (ValidChecker::IsInvalidated(db)) {
 		throw IOException("%s", ValidChecker::InvalidatedMessage(db));
 	}
-	lock_guard<mutex> guard(lock);
-	auto entry = transactions.find(db);
-	if (entry == transactions.end()) {
-		auto &new_transaction = db.GetTransactionManager().StartTransaction(context);
-		new_transaction.active_query = active_query.load();
-#ifdef DEBUG
-		VerifyAllTransactionsUnique(db, all_transactions);
-#endif
-		// Rollback looks every entry of all_transactions up in transactions, so the two must not get out of sync:
-		// reserve first, then insert, so that a failing allocation happens before either is modified and the
-		// push_back that follows cannot allocate.
-		all_transactions.reserve(all_transactions.size() + 1);
-		transactions.insert(make_pair(reference<AttachedDatabase>(db), TransactionReference(new_transaction)));
-		all_transactions.push_back(db);
-		auto shared_db = db.shared_from_this();
-		UseDatabase(shared_db);
-
-		return new_transaction;
-	} else {
-		D_ASSERT(entry->second.transaction.active_query == active_query);
-		return entry->second.transaction;
+	{
+		lock_guard<mutex> guard(lock);
+		auto entry = transactions.find(db);
+		if (entry != transactions.end()) {
+			D_ASSERT(entry->second.transaction.active_query == active_query);
+			return entry->second.transaction;
+		}
 	}
+	auto &new_transaction = db.GetTransactionManager().StartTransaction(context);
+	new_transaction.active_query = active_query.load();
+	unique_lock<mutex> guard(lock);
+	auto existing = transactions.find(db);
+	if (existing != transactions.end()) {
+		auto &transaction = existing->second.transaction;
+		guard.unlock();
+		db.GetTransactionManager().RollbackTransaction(new_transaction);
+		return transaction;
+	}
+#ifdef DEBUG
+	VerifyAllTransactionsUnique(db, all_transactions);
+#endif
+	// Rollback looks every entry of all_transactions up in transactions, so the two must not get out of sync:
+	// reserve first, then insert, so that a failing allocation happens before either is modified and the
+	// push_back that follows cannot allocate.
+	all_transactions.reserve(all_transactions.size() + 1);
+	transactions.emplace(db, TransactionReference(new_transaction));
+	all_transactions.push_back(db);
+	auto shared_db = db.shared_from_this();
+	UseDatabase(shared_db);
+
+	return new_transaction;
 }
 
 void MetaTransaction::RemoveTransaction(AttachedDatabase &db) {
@@ -209,6 +236,7 @@ idx_t MetaTransaction::GetActiveQuery() {
 void MetaTransaction::SetActiveQuery(transaction_t query_number) {
 	lock_guard<mutex> guard(lock);
 	active_query = query_number;
+	statement_databases.clear();
 	for (auto &entry : transactions) {
 		entry.second.transaction.active_query = query_number;
 	}
@@ -233,6 +261,11 @@ shared_ptr<AttachedDatabase> MetaTransaction::GetReferencedDatabaseOwning(const 
 	return nullptr;
 }
 
+bool MetaTransaction::ReferencesDatabase(AttachedDatabase &database) {
+	lock_guard<mutex> guard(referenced_database_lock);
+	return referenced_databases.contains(database);
+}
+
 void MetaTransaction::DetachDatabase(AttachedDatabase &database) {
 	lock_guard<mutex> guard(referenced_database_lock);
 	used_databases.erase(database.GetName());
@@ -243,21 +276,24 @@ AttachedDatabase &MetaTransaction::UseDatabase(shared_ptr<AttachedDatabase> &dat
 	lock_guard<mutex> guard(referenced_database_lock);
 	auto entry = referenced_databases.find(db_ref);
 	if (entry == referenced_databases.end()) {
-		auto used_entry = used_databases.emplace(db_ref.GetName(), db_ref);
-		if (!used_entry.second) {
-			// return used_entry.first->second.get();
-			throw InternalException(
-			    "Database name %s was already used by a different database for this meta transaction",
-			    db_ref.GetName());
-		}
+		used_databases.emplace(db_ref.GetName(), db_ref);
 		referenced_databases.emplace(reference<AttachedDatabase>(db_ref), database);
 	}
 	return db_ref;
 }
 
+vector<shared_ptr<AttachedDatabase>> &MetaTransaction::GetStatementDatabases(ClientContext &context) {
+	lock_guard<mutex> guard(lock);
+	if (statement_databases.empty()) {
+		statement_databases = DatabaseManager::Get(context).GetDatabases(context);
+	}
+	return statement_databases;
+}
+
 void MetaTransaction::ModifyDatabase(AttachedDatabase &db, DatabaseModificationType modification) {
 	if (IsReadOnly()) {
-		throw TransactionException("Cannot write to database \"%s\" - transaction is launched in read-only mode",
+		throw TransactionException(Exception::InitializeExtraInfo("READ_ONLY", optional_idx()),
+		                           "Cannot write to database %s - transaction is launched in read-only mode",
 		                           db.GetName());
 	}
 	auto &transaction = GetTransaction(db);
@@ -273,8 +309,10 @@ void MetaTransaction::ModifyDatabase(AttachedDatabase &db, DatabaseModificationT
 		modified_database = &db;
 		return;
 	}
-	if (&db != modified_database.get()) {
+	if (&db != modified_database.get() && !(db.GetTransactionManager().CommitsAcrossDatabases() &&
+	                                        modified_database->GetTransactionManager().CommitsAcrossDatabases())) {
 		throw TransactionException(
+		    Exception::InitializeExtraInfo("CROSS_DATABASE_WRITE", optional_idx()),
 		    "Attempting to write to database %s in a transaction that has already modified database %s - a "
 		    "single transaction can only write to a single attached database.",
 		    db.GetName(), modified_database->GetName());

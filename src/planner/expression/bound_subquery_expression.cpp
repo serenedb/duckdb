@@ -15,7 +15,7 @@ string BoundSubqueryExpression::ToString() const {
 
 bool BoundSubqueryExpression::Equals(const BaseExpression &other_p) const {
 	// equality between bound subqueries not implemented currently
-	return false;
+	return this == &other_p;
 }
 
 unique_ptr<Expression> BoundSubqueryExpression::Copy() const {
@@ -27,10 +27,7 @@ bool BoundSubqueryExpression::PropagatesNullValues() const {
 	return false;
 }
 
-bool BoundSubqueryExpression::IsVolatile() const {
-	if (Expression::IsVolatile()) {
-		return true;
-	}
+bool BoundSubqueryExpression::IsNodeVolatile() const {
 	return subquery.plan && subquery.plan->HasVolatileExpressions();
 }
 

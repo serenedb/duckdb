@@ -1,31 +1,60 @@
 #include "duckdb/catalog/catalog_entry.hpp"
 
 #include "duckdb/catalog/catalog.hpp"
+#include "duckdb/catalog/standard_entry.hpp"
 #include "duckdb/common/serializer/binary_deserializer.hpp"
 #include "duckdb/common/serializer/binary_serializer.hpp"
 #include "duckdb/main/database.hpp"
 #include "duckdb/main/database_manager.hpp"
+#include "duckdb/parser/parsed_data/alter_table_info.hpp"
 #include "duckdb/parser/parsed_data/create_info.hpp"
 
 namespace duckdb {
 
 CatalogEntry::CatalogEntry(CatalogType type, Identifier name_p, idx_t oid)
     : oid(oid), type(type), set(nullptr), name(std::move(name_p)), deleted(false), temporary(false), internal(false),
-      parent(nullptr) {
+      previous_version(nullptr), parent(nullptr) {
 }
 
-CatalogEntry::CatalogEntry(CatalogType type, Catalog &catalog, Identifier name_p)
-    : CatalogEntry(type, std::move(name_p), catalog.GetDatabase().GetDatabaseManager().NextOid()) {
+static idx_t AssignOid(Catalog &catalog, idx_t oid) {
+	auto &manager = catalog.GetDatabase().GetDatabaseManager();
+	if (oid) {
+		return manager.ClaimOid(oid);
+	}
+	return catalog.IsSystemCatalog() ? manager.NextSystemOid() : manager.NextOid();
+}
+
+CatalogEntry::CatalogEntry(CatalogType type, Catalog &catalog, Identifier name_p, idx_t oid)
+    : CatalogEntry(type, std::move(name_p), AssignOid(catalog, oid)) {
 }
 
 CatalogEntry::~CatalogEntry() {
 }
 
-void CatalogEntry::SetAsRoot() {
+void CatalogEntry::SetAsRoot(optional_ptr<CatalogTransaction> transaction, optional_ptr<CatalogEntry> previous) {
 }
 
 // LCOV_EXCL_START
 unique_ptr<CatalogEntry> CatalogEntry::AlterEntry(ClientContext &context, AlterInfo &info) {
+	if (info.type == AlterType::ALTER_PERMISSIONS) {
+		auto result = Copy(context);
+		result->permissions = permissions;
+		info.Cast<AlterPermissionsInfo>().ApplyTo(result->permissions, type, nullptr);
+		return result;
+	}
+	if (auto new_name = info.GetNewName()) {
+		auto result = Copy(context);
+		result->name = *new_name;
+		return result;
+	}
+	if (auto new_schema = info.GetNewSchema()) {
+		return Cast<StandardEntry>().CopyToSchema(context, *new_schema);
+	}
+	if (info.type == AlterType::SET_COMMENT) {
+		auto result = Copy(context);
+		result->comment = info.Cast<SetCommentInfo>().comment_value;
+		return result;
+	}
 	throw InternalException("Unsupported alter type for catalog entry!");
 }
 
@@ -45,6 +74,10 @@ unique_ptr<CatalogEntry> CatalogEntry::Copy(ClientContext &context) const {
 
 unique_ptr<CreateInfo> CatalogEntry::GetInfo() const {
 	throw InternalException("Unsupported type for CatalogEntry::GetInfo!");
+}
+
+unique_ptr<CreateInfo> CatalogEntry::GetInfo(CatalogTransaction transaction) const {
+	return GetInfo();
 }
 
 string CatalogEntry::ToSQL() const {
@@ -92,18 +125,46 @@ const Catalog &CatalogEntry::ParentCatalog() const {
 	throw InternalException("CatalogEntry::ParentCatalog called on catalog entry without catalog");
 }
 
-SchemaCatalogEntry &CatalogEntry::ParentSchema() {
-	throw InternalException("CatalogEntry::ParentSchema called on catalog entry without schema");
+Identifier CatalogEntry::ParentSchemaName() const {
+	throw InternalException("CatalogEntry::ParentSchemaName called on catalog entry without schema");
 }
 
-const SchemaCatalogEntry &CatalogEntry::ParentSchema() const {
+Identifier CatalogEntry::ParentSchemaName(CatalogTransaction transaction) const {
+	return ParentSchemaName();
+}
+
+vector<Identifier> CatalogEntry::ParentSchemaPath() const {
+	throw InternalException("CatalogEntry::ParentSchemaPath called on catalog entry without schema");
+}
+
+vector<Identifier> CatalogEntry::ParentSchemaPath(CatalogTransaction transaction) const {
+	return ParentSchemaPath();
+}
+
+SchemaCatalogEntry &CatalogEntry::ParentSchema(CatalogTransaction transaction) const {
 	throw InternalException("CatalogEntry::ParentSchema called on catalog entry without schema");
 }
 // LCOV_EXCL_STOP
 
+SchemaCatalogEntry &CatalogEntry::ParentSchema(ClientContext &context) const {
+	auto &catalog = const_cast<CatalogEntry &>(*this).ParentCatalog();
+	return ParentSchema(catalog.GetCatalogTransaction(context));
+}
+
+idx_t CatalogEntry::ParentSchemaOid() const {
+	return 0;
+}
+
+unique_ptr<CreateInfo> CatalogEntry::GetSerializedInfo() const {
+	auto info = GetInfo();
+	info->permissions = permissions;
+	info->oid = oid;
+	info->schema_oid = ParentSchemaOid();
+	return info;
+}
+
 void CatalogEntry::Serialize(Serializer &serializer) const {
-	const auto info = GetInfo();
-	info->Serialize(serializer);
+	GetSerializedInfo()->Serialize(serializer);
 }
 
 unique_ptr<CreateInfo> CatalogEntry::Deserialize(Deserializer &deserializer) {
@@ -116,11 +177,18 @@ void CatalogEntry::Verify(Catalog &catalog_p) {
 void CatalogEntry::Rollback(CatalogEntry &prev_entry) {
 }
 
+bool CatalogEntry::CreatedObject(const CatalogEntry &prev_entry) {
+	return prev_entry.type == CatalogType::INVALID || prev_entry.type == CatalogType::DELETED_ENTRY;
+}
+
+void CatalogEntry::BeforeDrop(CatalogTransaction transaction) {
+}
+
 void CatalogEntry::OnDrop() {
 }
 
-InCatalogEntry::InCatalogEntry(CatalogType type, Catalog &catalog, Identifier name)
-    : CatalogEntry(type, catalog, std::move(name)), catalog(catalog) {
+InCatalogEntry::InCatalogEntry(CatalogType type, Catalog &catalog, Identifier name, idx_t oid)
+    : CatalogEntry(type, catalog, std::move(name), oid), catalog(catalog) {
 }
 
 InCatalogEntry::~InCatalogEntry() {

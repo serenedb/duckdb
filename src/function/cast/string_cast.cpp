@@ -27,8 +27,11 @@ static bool StringEnumCastLoop(const VectorIterator<string_t> &source_data, Vect
 		auto &source_val = source_entry.GetValue();
 		auto pos = EnumType::GetPos(result_type, source_val);
 		if (pos == -1) {
-			result_data[i] = HandleVectorCastError::Operation<T>(CastExceptionText<string_t>(source_val, result_type),
-			                                                     result_data, i, vector_cast_data);
+			result_data[i] =
+			    HandleVectorCastError::Operation<T>(HandleVectorCastError::NeedsMessage(vector_cast_data)
+			                                            ? CastExceptionText<string_t>(source_val, result_type)
+			                                            : string(),
+			                                        result_data, i, vector_cast_data);
 		} else {
 			result_data[i] = UnsafeNumericCast<T>(pos);
 		}
@@ -104,9 +107,43 @@ static BoundCastInfo VectorStringCastNumericSwitch(BindCastInput &input, const L
 //===--------------------------------------------------------------------===//
 // string -> list casting
 //===--------------------------------------------------------------------===//
-bool VectorStringToList::StringToNestedTypeCastLoop(const string_t *source_data, ValidityMask &source_mask,
-                                                    Vector &result, ValidityMask &result_mask, idx_t count,
-                                                    CastParameters &parameters, const SelectionVector *sel) {
+struct StringToListBoundCastData : public ListBoundCastData {
+	StringToListBoundCastData(BoundCastInfo child_cast, char array_delimiter)
+	    : ListBoundCastData(std::move(child_cast)), array_delimiter(array_delimiter) {
+	}
+
+	char array_delimiter;
+
+public:
+	unique_ptr<BoundCastData> Copy() const override {
+		return make_uniq<StringToListBoundCastData>(child_cast_info.Copy(), array_delimiter);
+	}
+};
+
+template <bool CUSTOM_DELIMITER>
+static idx_t CountListParts(const string_t &input, const CastParameters &parameters) {
+	if (CUSTOM_DELIMITER) {
+		return VectorStringToList::CountPartsList(
+		    input, parameters.cast_data->Cast<StringToListBoundCastData>().array_delimiter, parameters);
+	}
+	return VectorStringToList::CountPartsList(input, parameters);
+}
+
+template <bool CUSTOM_DELIMITER>
+static bool SplitListParts(const string_t &input, string_t *child_data, idx_t &child_start, Vector &child,
+                           const CastParameters &parameters) {
+	if (CUSTOM_DELIMITER) {
+		return VectorStringToList::SplitStringList(
+		    input, parameters.cast_data->Cast<StringToListBoundCastData>().array_delimiter, child_data, child_start,
+		    child, parameters);
+	}
+	return VectorStringToList::SplitStringList(input, child_data, child_start, child, parameters);
+}
+
+template <bool CUSTOM_DELIMITER>
+static bool StringToListCastLoop(const string_t *source_data, ValidityMask &source_mask, Vector &result,
+                                 ValidityMask &result_mask, idx_t count, CastParameters &parameters,
+                                 const SelectionVector *sel) {
 	idx_t total_list_size = 0;
 	for (idx_t i = 0; i < count; i++) {
 		idx_t idx = i;
@@ -116,7 +153,7 @@ bool VectorStringToList::StringToNestedTypeCastLoop(const string_t *source_data,
 		if (!source_mask.RowIsValid(idx)) {
 			continue;
 		}
-		total_list_size += VectorStringToList::CountPartsList(source_data[idx]);
+		total_list_size += CountListParts<CUSTOM_DELIMITER>(source_data[idx], parameters);
 	}
 
 	Vector varchar_vector(LogicalType::VARCHAR, total_list_size);
@@ -139,9 +176,12 @@ bool VectorStringToList::StringToNestedTypeCastLoop(const string_t *source_data,
 		}
 
 		list_data[i].offset = total;
-		if (!VectorStringToList::SplitStringList(source_data[idx], child_data, total, varchar_vector)) {
-			auto error = StringUtil::Format("Type VARCHAR with value '%s' can't be cast to the destination type %s",
-			                                source_data[idx].GetString(), result.GetType().ToString());
+		if (!SplitListParts<CUSTOM_DELIMITER>(source_data[idx], child_data, total, varchar_vector, parameters)) {
+			auto error =
+			    HandleVectorCastError::NeedsMessage(vector_cast_data)
+			        ? StringUtil::Format("Type VARCHAR with value '%s' can't be cast to the destination type %s",
+			                             source_data[idx].GetString(), result.GetType().ToString())
+			        : string();
 			HandleVectorCastError::Operation<string_t>(error, result_mask, i, vector_cast_data);
 		}
 		list_data[i].length = total - list_data[i].offset; // length is the amount of parts coming from this string
@@ -174,6 +214,20 @@ bool VectorStringToList::StringToNestedTypeCastLoop(const string_t *source_data,
 	}
 	return all_converted;
 }
+
+bool VectorStringToList::StringToNestedTypeCastLoop(const string_t *source_data, ValidityMask &source_mask,
+                                                    Vector &result, ValidityMask &result_mask, idx_t count,
+                                                    CastParameters &parameters, const SelectionVector *sel) {
+	return StringToListCastLoop<false>(source_data, source_mask, result, result_mask, count, parameters, sel);
+}
+
+struct VectorStringToDelimitedList {
+	static bool StringToNestedTypeCastLoop(const string_t *source_data, ValidityMask &source_mask, Vector &result,
+	                                       ValidityMask &result_mask, idx_t count, CastParameters &parameters,
+	                                       const SelectionVector *sel) {
+		return StringToListCastLoop<true>(source_data, source_mask, result, result_mask, count, parameters, sel);
+	}
+};
 
 static LogicalType InitVarcharStructType(const LogicalType &target) {
 	child_list_t<LogicalType> child_types;
@@ -217,8 +271,11 @@ bool VectorStringToStruct::StringToNestedTypeCastLoop(const string_t *source_dat
 			continue;
 		}
 		if (!VectorStringToStruct::SplitStruct(source_data[idx], child_vectors, i, child_names, child_masks)) {
-			auto error = StringUtil::Format("Type VARCHAR with value '%s' can't be cast to the destination type %s",
-			                                source_data[idx].GetString(), result.GetType().ToString());
+			auto error =
+			    HandleVectorCastError::NeedsMessage(vector_cast_data)
+			        ? StringUtil::Format("Type VARCHAR with value '%s' can't be cast to the destination type %s",
+			                             source_data[idx].GetString(), result.GetType().ToString())
+			        : string();
 			for (auto &child_mask : child_masks) {
 				child_mask.get().SetInvalid(i); // some values may have already been found and set valid
 			}
@@ -272,7 +329,7 @@ bool VectorStringToMap::StringToNestedTypeCastLoop(const string_t *source_data, 
 		if (!source_mask.RowIsValid(idx)) {
 			continue;
 		}
-		total_elements += (VectorStringToMap::CountPartsMap(source_data[idx]) + 1) / 2;
+		total_elements += (VectorStringToMap::CountPartsMap(source_data[idx], parameters) + 1) / 2;
 	}
 
 	Vector varchar_key_vector(LogicalType::VARCHAR, total_elements);
@@ -297,9 +354,12 @@ bool VectorStringToMap::StringToNestedTypeCastLoop(const string_t *source_data, 
 
 		list_data[i].offset = total;
 		if (!VectorStringToMap::SplitStringMap(source_data[idx], child_key_data, child_val_data, total,
-		                                       varchar_key_vector, varchar_val_vector)) {
-			auto error = StringUtil::Format("Type VARCHAR with value '%s' can't be cast to the destination type %s",
-			                                source_data[idx].GetString(), result.GetType().ToString());
+		                                       varchar_key_vector, varchar_val_vector, parameters)) {
+			auto error =
+			    HandleVectorCastError::NeedsMessage(vector_cast_data)
+			        ? StringUtil::Format("Type VARCHAR with value '%s' can't be cast to the destination type %s",
+			                             source_data[idx].GetString(), result.GetType().ToString())
+			        : string();
 			FlatVector::SetNull(result, i, true);
 			HandleVectorCastError::Operation<string_t>(error, result_mask, i, vector_cast_data);
 		}
@@ -359,7 +419,7 @@ bool VectorStringToArray::StringToNestedTypeCastLoop(const string_t *source_data
 		if (!source_mask.RowIsValid(idx)) {
 			continue;
 		}
-		auto str_array_size = VectorStringToList::CountPartsList(source_data[idx]);
+		auto str_array_size = VectorStringToList::CountPartsList(source_data[idx], parameters);
 		if (array_size != str_array_size) {
 			if (all_lengths_match) {
 				all_lengths_match = false;
@@ -400,9 +460,12 @@ bool VectorStringToArray::StringToNestedTypeCastLoop(const string_t *source_data
 			continue;
 		}
 
-		if (!VectorStringToList::SplitStringList(source_data[idx], child_data, total, varchar_vector)) {
-			auto error = StringUtil::Format("Type VARCHAR with value '%s' can't be cast to the destination type %s",
-			                                source_data[idx].GetString(), result.GetType().ToString());
+		if (!VectorStringToList::SplitStringList(source_data[idx], child_data, total, varchar_vector, parameters)) {
+			auto error =
+			    HandleVectorCastError::NeedsMessage(vector_cast_data)
+			        ? StringUtil::Format("Type VARCHAR with value '%s' can't be cast to the destination type %s",
+			                             source_data[idx].GetString(), result.GetType().ToString())
+			        : string();
 			HandleVectorCastError::Operation<string_t>(error, result_mask, i, vector_cast_data);
 		}
 	}
@@ -446,6 +509,21 @@ static bool StringToNestedTypeCast(Vector &source, Vector &result, idx_t count, 
 	}
 }
 
+BoundCastInfo DefaultCasts::StringToListCast(BindCastInput &input, const LogicalType &target, char array_delimiter) {
+	auto child_cast = input.GetCastFunction(LogicalType::VARCHAR, ListType::GetChildType(target));
+	if (child_cast.UsesFunction(&StringToNestedTypeCast<VectorStringToDelimitedList>)) {
+		array_delimiter = child_cast.GetCastData()->Cast<StringToListBoundCastData>().array_delimiter;
+	}
+	if (array_delimiter == ',') {
+		return BoundCastInfo(&StringToNestedTypeCast<VectorStringToList>,
+		                     make_uniq<ListBoundCastData>(std::move(child_cast)),
+		                     ListBoundCastData::InitListLocalState);
+	}
+	return BoundCastInfo(&StringToNestedTypeCast<VectorStringToDelimitedList>,
+	                     make_uniq<StringToListBoundCastData>(std::move(child_cast), array_delimiter),
+	                     ListBoundCastData::InitListLocalState);
+}
+
 BoundCastInfo DefaultCasts::StringCastSwitch(BindCastInput &input, const LogicalType &source,
                                              const LogicalType &target) {
 	switch (target.id()) {
@@ -484,11 +562,7 @@ BoundCastInfo DefaultCasts::StringCastSwitch(BindCastInput &input, const Logical
 	case LogicalTypeId::VARCHAR:
 		return &DefaultCasts::ReinterpretCast;
 	case LogicalTypeId::LIST:
-		// the second argument allows for a secondary casting function to be passed in the CastParameters
-		return BoundCastInfo(
-		    &StringToNestedTypeCast<VectorStringToList>,
-		    ListBoundCastData::BindListToListCast(input, LogicalType::LIST(LogicalType::VARCHAR), target),
-		    ListBoundCastData::InitListLocalState);
+		return StringToListCast(input, target, ',');
 	case LogicalTypeId::ARRAY:
 		// the second argument allows for a secondary casting function to be passed in the CastParameters
 		return BoundCastInfo(&StringToNestedTypeCast<VectorStringToArray>,

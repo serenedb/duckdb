@@ -19,32 +19,67 @@
 
 namespace duckdb {
 
-bool BaseSelectBinder::IsFunctionallyDependent(const unique_ptr<Expression> &expr,
-                                               const vector<reference<Expression>> &deps) {
-	//	Volatile expressions can't depend on anything else
-	if (expr->IsVolatile()) {
-		return false;
-	}
-	//	Constant expressions are always FD
-	if (expr->IsFoldable()) {
-		return true;
-	}
-	// If the expression matches ANY of the dependencies, then it is FD on them
-	for (const auto &dep : deps) {
-		// We don't need to check volatility of the dependencies because we checked it for the expression.
-		if (expr->Equals(dep.get())) {
-			return true;
+void FunctionalDependencies::Add(const Expression &expression) {
+	dependencies[expression.Hash()].emplace_back(expression);
+}
+
+void FunctionalDependencies::Remove(const Expression &expression) {
+	auto entry = dependencies.find(expression.Hash());
+	D_ASSERT(entry != dependencies.end());
+	auto &candidates = entry->second;
+	for (idx_t i = 0; i < candidates.size(); i++) {
+		if (RefersToSameObject(candidates[i].get(), expression)) {
+			candidates.erase_at(i);
+			break;
 		}
 	}
+	if (candidates.empty()) {
+		dependencies.erase(entry);
+	}
+}
 
-	// The expression doesn't match any dependency, so check ALL children.
+bool FunctionalDependencies::IsDependent(const Expression &expression) const {
+	if (expression.IsVolatile()) {
+		return false;
+	}
+	bool dependent;
+	Visit(expression, dependent);
+	return dependent;
+}
+
+hash_t FunctionalDependencies::Visit(const Expression &expression, bool &dependent) const {
 	bool has_children = false;
-	bool are_dependent = true;
-	ExpressionIterator::EnumerateChildren(*expr, [&](unique_ptr<Expression> &child) {
+	bool children_dependent = true;
+	auto hash = expression.Hash([&](const Expression &child) {
 		has_children = true;
-		are_dependent &= IsFunctionallyDependent(child, deps);
+		bool child_dependent;
+		auto child_hash = Visit(child, child_dependent);
+		children_dependent = children_dependent && child_dependent;
+		return child_hash;
 	});
-	return has_children && are_dependent;
+	dependent = has_children ? children_dependent : expression.IsFoldable();
+	if (dependent) {
+		return hash;
+	}
+	auto entry = dependencies.find(hash);
+	if (entry != dependencies.end()) {
+		for (auto &candidate : entry->second) {
+			if (expression.Equals(candidate.get())) {
+				dependent = true;
+				break;
+			}
+		}
+	}
+	return hash;
+}
+
+bool BaseSelectBinder::IsFunctionallyDependent(const unique_ptr<Expression> &expr,
+                                               const vector<reference<Expression>> &deps) {
+	FunctionalDependencies dependencies;
+	for (auto &dep : deps) {
+		dependencies.Add(dep.get());
+	}
+	return dependencies.IsDependent(*expr);
 }
 
 static Value NegatePercentileValue(const Value &v, const bool desc) {
@@ -99,7 +134,7 @@ static void NegatePercentileFractions(ClientContext &context, unique_ptr<Express
 	}
 
 	Value value = ExpressionExecutor::EvaluateScalar(context, *bound);
-	if (value.type().id() == LogicalTypeId::LIST) {
+	if (value.type().id() == LogicalTypeId::LIST && !value.IsNull()) {
 		vector<Value> values;
 		for (const auto &element_val : ListValue::GetChildren(value)) {
 			values.push_back(NegatePercentileValue(element_val, desc));
@@ -121,11 +156,15 @@ BindResult BaseSelectBinder::BindAggregate(FunctionExpression &aggr, AggregateFu
 	if (inside_try) {
 		throw BinderException("aggregates are not allowed inside the TRY expression");
 	}
-	if (inside_aggregate_filter) {
-		throw BinderException(aggr, "aggregate functions are not allowed in FILTER");
-	}
+	// PG-compat: report "nested" before the FILTER-specific message. The
+	// canonical PG error for `COUNT(x) FILTER (WHERE SUM(y) > 5)` is
+	// "aggregate function calls cannot be nested", not the FILTER-specific
+	// variant DuckDB introduced.
 	if (inside_aggregate) {
 		throw BinderException(aggr, "aggregate function calls cannot be nested");
+	}
+	if (inside_aggregate_filter) {
+		throw BinderException(aggr, "aggregate functions are not allowed in FILTER");
 	}
 	// first bind the child of the aggregate expression (if any)
 	this->bound_aggregate = true;
@@ -286,7 +325,7 @@ BindResult BaseSelectBinder::BindAggregate(FunctionExpression &aggr, AggregateFu
 	// If the function cannot be used as an aggregate, but can be used as a window function, throw a specific error
 	// message
 	if (!aggregate->Function().CanAggregate() && aggregate->Function().CanWindow()) {
-		auto msg = StringUtil::Format("Function '%s' can only be used as a window function", func.name);
+		auto msg = StringUtil::Format("Function %s can only be used as a window function", func.name);
 		error = BinderException(msg);
 		error.AddQueryLocation(aggr);
 		error.Throw();

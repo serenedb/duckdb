@@ -12,6 +12,9 @@
 #include "duckdb/storage/data_table.hpp"
 #include "duckdb/main/database_manager.hpp"
 #include "duckdb/parser/parsed_data/attach_info.hpp"
+#include "duckdb/catalog/catalog_entry/duck_table_entry.hpp"
+#include "duckdb/storage/table/scan_state.hpp"
+#include "duckdb/transaction/duck_transaction.hpp"
 
 namespace duckdb {
 
@@ -36,6 +39,9 @@ struct DuckDBMultiFileInfo : MultiFileReaderInterface {
 	unique_ptr<GlobalTableFunctionState> InitializeGlobalState(ClientContext &context, MultiFileBindData &bind_data,
 	                                                           MultiFileGlobalState &global_state) override;
 	unique_ptr<LocalTableFunctionState> InitializeLocalState(ClientContext &, GlobalTableFunctionState &) override;
+	bool SupportsLookup(const MultiFileBindData &, TableFunctionLookupInfo &) const override {
+		return true;
+	}
 	shared_ptr<BaseFileReader> CreateReader(ClientContext &context, GlobalTableFunctionState &gstate,
 	                                        BaseUnionData &union_data, const MultiFileBindData &bind_data_p) override;
 	shared_ptr<BaseFileReader> CreateReader(ClientContext &context, GlobalTableFunctionState &gstate,
@@ -76,10 +82,11 @@ struct DuckDBReadBindData : TableFunctionData {
 };
 
 struct AttachedDatabaseWrapper {
-	AttachedDatabaseWrapper(ClientContext &context, shared_ptr<AttachedDatabase> attached_database_p);
+	AttachedDatabaseWrapper(ClientContext &context, Identifier name, shared_ptr<AttachedDatabase> attached_database_p);
 	~AttachedDatabaseWrapper();
 
 	ClientContext &context;
+	Identifier name;
 	shared_ptr<AttachedDatabase> attached_database;
 	optional_ptr<TableCatalogEntry> table_entry;
 };
@@ -94,6 +101,8 @@ public:
 	                       LocalTableFunctionState &lstate) override;
 	AsyncResult Scan(ClientContext &context, GlobalTableFunctionState &global_state,
 	                 LocalTableFunctionState &local_state, DataChunk &chunk) override;
+	void Lookup(ClientContext &context, GlobalTableFunctionState &global_state, LocalTableFunctionState &local_state,
+	            std::span<const int64_t> rows, std::span<idx_t> survivors, DataChunk &chunk) override;
 	shared_ptr<BaseUnionData> GetUnionData(idx_t file_idx) override;
 	void FinishFile(ClientContext &context, GlobalTableFunctionState &gstate) override;
 	double GetProgressInFile(ClientContext &context) override;
@@ -120,9 +129,23 @@ private:
 
 struct DuckDBReadGlobalState : GlobalTableFunctionState {};
 
+struct DuckDBLookupCursor {
+	DuckDBLookupCursor(ClientContext &context, TableCatalogEntry &table_entry,
+	                   const vector<ColumnIndex> &column_indexes);
+
+	idx_t Lookup(ClientContext &context, TableCatalogEntry &table_entry, optional_ptr<TableFilterSet> filters,
+	             std::span<const int64_t> rows, std::span<idx_t> survivors, DataChunk &output);
+
+	vector<StorageIndex> fetch_columns;
+	vector<LogicalType> fetch_types;
+	vector<idx_t> output_to_fetch_col;
+	TableLookupState lookup_state;
+};
+
 struct DuckDBReadLocalState : LocalTableFunctionState {
 	unique_ptr<LocalTableFunctionState> local_state;
 	shared_ptr<AttachedDatabaseWrapper> attached_database;
+	unique_ptr<DuckDBLookupCursor> lookup;
 };
 
 string DuckDBFileReaderOptions::GetCandidates(const vector<reference<TableCatalogEntry>> &tables) const {
@@ -138,8 +161,7 @@ string DuckDBFileReaderOptions::GetCandidates(const vector<reference<TableCatalo
 		auto &table = table_ref.get();
 		if (table_names[table.name] > 1) {
 			// name conflicts across schemas - add the schema name
-			auto &schema = table.ParentSchema();
-			candidate_list.push_back(schema.name + "." + table.name);
+			candidate_list.push_back(table.ParentSchemaName() + "." + table.name);
 		} else {
 			candidate_list.push_back(table.name.GetIdentifierName());
 		}
@@ -177,7 +199,7 @@ string DuckDBFileReaderOptions::PrintOptions() const {
 }
 
 bool DuckDBFileReaderOptions::Matches(TableCatalogEntry &table) const {
-	if (!schema_name.empty() && table.ParentSchema().name != schema_name) {
+	if (!schema_name.empty() && table.ParentSchemaName() != schema_name) {
 		return false;
 	}
 	if (!table_name.empty() && table.name != table_name) {
@@ -186,15 +208,14 @@ bool DuckDBFileReaderOptions::Matches(TableCatalogEntry &table) const {
 	return true;
 }
 
-AttachedDatabaseWrapper::AttachedDatabaseWrapper(ClientContext &context,
+AttachedDatabaseWrapper::AttachedDatabaseWrapper(ClientContext &context, Identifier name_p,
                                                  shared_ptr<AttachedDatabase> attached_database_p)
-    : context(context), attached_database(std::move(attached_database_p)) {
+    : context(context), name(std::move(name_p)), attached_database(std::move(attached_database_p)) {
 }
 
 AttachedDatabaseWrapper::~AttachedDatabaseWrapper() {
 	if (attached_database) {
 		auto &db_manager = DatabaseManager::Get(context);
-		auto name = attached_database->GetName();
 		attached_database.reset();
 		db_manager.DetachDatabase(context, name, OnEntryNotFound::RETURN_NULL);
 	}
@@ -234,10 +255,11 @@ DuckDBReader::DuckDBReader(ClientContext &context_p, OpenFileInfo file_p, const 
 	}
 	auto &table = tables[0].get();
 	for (auto &col : table.GetColumns().Logical()) {
-		columns.emplace_back(col.Name().GetIdentifierName(), col.Type());
+		// create the child column definitions as well, so that STRUCT children are mapped by name
+		columns.push_back(MultiFileColumnDefinition::CreateFromNameAndType(col.Name(), col.Type()));
 	}
 	column_count = columns.size();
-	schema_name = table.ParentSchema().name;
+	schema_name = table.ParentSchemaName();
 	table_name = table.name;
 	db_wrapper->table_entry = table;
 }
@@ -256,9 +278,10 @@ AttachedDatabase &DuckDBReader::GetAttachedDatabase() {
 		unordered_map<string, Value> attach_kv;
 		AttachOptions attach_options(attach_kv, AccessMode::READ_ONLY);
 		attach_options.visibility = AttachVisibility::HIDDEN;
+		attach_options.borrow_open_database = true;
 
 		auto attached = db_manager.AttachDatabase(context, info, attach_options);
-		db_wrapper = make_shared_ptr<AttachedDatabaseWrapper>(context, std::move(attached));
+		db_wrapper = make_shared_ptr<AttachedDatabaseWrapper>(context, info.name, std::move(attached));
 	}
 	return *db_wrapper->attached_database;
 }
@@ -332,6 +355,17 @@ AsyncResult DuckDBReader::Scan(ClientContext &context, GlobalTableFunctionState 
 	}
 }
 
+void DuckDBReader::Lookup(ClientContext &context, GlobalTableFunctionState &, LocalTableFunctionState &lstate_p,
+                          std::span<const int64_t> rows, std::span<idx_t> survivors, DataChunk &chunk) {
+	auto &lstate = lstate_p.Cast<DuckDBReadLocalState>();
+	auto &table_entry = GetTableEntry();
+	if (!lstate.lookup) {
+		AssignSharedPointer(lstate.attached_database, db_wrapper);
+		lstate.lookup = make_uniq<DuckDBLookupCursor>(context, table_entry, column_indexes);
+	}
+	chunk.SetCardinality(lstate.lookup->Lookup(context, table_entry, filters.get(), rows, survivors, chunk));
+}
+
 void DuckDBReader::FinishFile(ClientContext &context, GlobalTableFunctionState &gstate) {
 	db_wrapper.reset();
 }
@@ -383,6 +417,9 @@ bool DuckDBMultiFileInfo::ParseCopyOption(ClientContext &context, const Identifi
 bool DuckDBMultiFileInfo::ParseOption(ClientContext &context, const Identifier &key, const Value &val,
                                       MultiFileOptions &file_options, BaseFileReaderOptions &options_p) {
 	auto &options = options_p.Cast<DuckDBFileReaderOptions>();
+	if ((key == "schema_name" || key == "table_name") && val.IsNull()) {
+		throw BinderException("read_duckdb parameter %s cannot be NULL", key);
+	}
 	if (key == "schema_name") {
 		options.schema_name = Identifier(StringValue::Get(val));
 		return true;
@@ -494,6 +531,7 @@ FileGlobInput DuckDBMultiFileInfo::GetGlobInput() {
 }
 
 void DuckDBMultiFileInfo::GetVirtualColumns(ClientContext &, MultiFileBindData &, virtual_column_map_t &result) {
+	result.erase(COLUMN_IDENTIFIER_EMPTY);
 	result.insert(make_pair(COLUMN_IDENTIFIER_ROW_ID, TableColumn("rowid", LogicalType::BIGINT)));
 	result.insert(make_pair(COLUMN_IDENTIFIER_ROW_NUMBER, TableColumn("row_number", LogicalType::BIGINT)));
 }
@@ -526,6 +564,45 @@ TableFunction ReadDuckDBTableFunction::GetFunction() {
 	read_duckdb.late_materialization = true;
 	ReadDuckDBAddNamedParameters(read_duckdb);
 	return static_cast<TableFunction>(read_duckdb);
+}
+
+DuckDBLookupCursor::DuckDBLookupCursor(ClientContext &context, TableCatalogEntry &table_entry,
+                                       const vector<ColumnIndex> &column_indexes) {
+	output_to_fetch_col.reserve(column_indexes.size());
+	for (auto &col : column_indexes) {
+		if (col.IsVirtualColumn()) {
+			output_to_fetch_col.push_back(DConstants::INVALID_INDEX);
+			continue;
+		}
+		auto storage_index = table_entry.GetStorageIndex(col);
+		idx_t fetch_idx = DConstants::INVALID_INDEX;
+		if (!col.HasChildren()) {
+			for (idx_t i = 0; i < fetch_columns.size(); ++i) {
+				if (!fetch_columns[i].HasChildren() && fetch_columns[i] == storage_index) {
+					fetch_idx = i;
+					break;
+				}
+			}
+		}
+		if (fetch_idx == DConstants::INVALID_INDEX) {
+			fetch_idx = fetch_columns.size();
+			fetch_columns.push_back(std::move(storage_index));
+			fetch_types.push_back(col.HasType() ? col.GetScanType() : table_entry.GetColumn(col.ToLogical()).Type());
+		}
+		output_to_fetch_col.push_back(fetch_idx);
+	}
+	lookup_state.scratch.Initialize(context, fetch_types);
+}
+
+idx_t DuckDBLookupCursor::Lookup(ClientContext &context, TableCatalogEntry &table_entry,
+                                 optional_ptr<TableFilterSet> filters, std::span<const int64_t> rows,
+                                 std::span<idx_t> survivors, DataChunk &output) {
+	auto &storage = table_entry.Cast<DuckTableEntry>().GetStorage();
+	auto &transaction = DuckTransaction::Get(context, table_entry.ParentCatalog());
+	// LookupRows writes each output row's requested-pk index into survivors and compacts output: a
+	// requested id missing from the source or dropped by a pushed filter gets no slot.
+	return storage.LookupRows(transaction, context, fetch_columns, filters, rows.data(), rows.data() + rows.size(),
+	                          survivors.data(), output_to_fetch_col.data(), output, lookup_state);
 }
 
 unique_ptr<TableRef> ReadDuckDBTableFunction::ReplacementScan(ClientContext &context, ReplacementScanInput &input,

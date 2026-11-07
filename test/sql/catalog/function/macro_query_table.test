@@ -13,6 +13,14 @@ SELECT min_from_tbl(integers, i)
 ----
 0
 
+statement ok
+create macro range_from_tbl(tbl, col) as (select max(col) - min(col) from query_table(tbl::VARCHAR));
+
+query I
+SELECT range_from_tbl(integers, i * 2)
+----
+198
+
 # column does not exist
 statement error
 SELECT min_from_tbl(integers, k)

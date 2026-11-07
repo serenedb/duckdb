@@ -114,6 +114,20 @@ public:
 		}
 	}
 
+	void Update(const Vector &hash_vec, const SelectionVector &sel, idx_t count) {
+		const auto hashes = FlatVector::GetData<const hash_t>(hash_vec);
+		if (hash_vec.GetVectorType() == VectorType::CONSTANT_VECTOR) {
+			if (count != 0) {
+				InsertElement(hashes[0]);
+			}
+			return;
+		}
+		const auto indices = sel.data();
+		for (idx_t i = 0; i < count; ++i) {
+			InsertElement(hashes[indices[i]]);
+		}
+	}
+
 	void Update(const Vector &hash_vec) {
 		const auto hashes = FlatVector::GetData<const hash_t>(hash_vec);
 		if (hash_vec.GetVectorType() == VectorType::CONSTANT_VECTOR) {

@@ -170,7 +170,7 @@ statement ok
 CREATE MACRO shadow.prefix(a,b) AS false;
 
 statement ok
-SET search_path='shadow,main';
+SET search_path = shadow, main;
 
 foreach serializer false true
 
@@ -298,7 +298,7 @@ exported runtime failure
 statement error
 SELECT 42;
 ----
-Current transaction is aborted
+current transaction is aborted
 
 statement ok
 ROLLBACK;
@@ -337,7 +337,7 @@ SELECT 42
 42
 
 statement ok
-CALL enable_logging();
+CALL enable_logging(level='debug');
 
 statement ok
 CALL truncate_duckdb_logs();

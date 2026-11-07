@@ -1,0 +1,3 @@
+ReindexStatement <- 'REINDEX' ReindexKind ReindexConcurrently? BaseTableName
+ReindexKind <- 'INDEX'
+ReindexConcurrently <- 'CONCURRENTLY'

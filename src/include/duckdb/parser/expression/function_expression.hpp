@@ -98,6 +98,12 @@ public:
 	                              unique_ptr<OrderModifier> order_bys = nullptr, bool distinct = false,
 	                              bool is_operator = false, bool export_state = false);
 
+	DUCKDB_API static unique_ptr<FunctionExpression> Builtin(const Identifier &function_name,
+	                                                         vector<unique_ptr<ParsedExpression>> children);
+	DUCKDB_API static unique_ptr<FunctionExpression> Builtin(const Identifier &function_name,
+	                                                         vector<FunctionArgument> arguments);
+	DUCKDB_API static void SetBuiltinPrefix(string prefix);
+
 public:
 	const QualifiedName &GetQualifiedName() const {
 		return qualified_name;
@@ -122,6 +128,22 @@ public:
 	}
 	bool &IsOperatorMutable() {
 		return is_operator;
+	}
+	//! Whether this call was produced from operator syntax (LIKE / SIMILAR TO / ~ / ~* / GLOB).
+	//! Unlike is_operator (which drives operator rendering and must stay false for functions whose
+	//! name is not a real infix symbol, e.g. regexp_full_match), this only marks the origin so
+	//! PG-compatible target-list naming yields "?column?".
+	bool IsFromOperator() const {
+		return from_operator;
+	}
+	bool &FromOperatorMutable() {
+		return from_operator;
+	}
+	bool IsBuiltin() const {
+		return builtin;
+	}
+	bool &BuiltinMutable() {
+		return builtin;
 	}
 	bool Distinct() const {
 		return distinct;
@@ -153,7 +175,7 @@ public:
 	unique_ptr<ParsedExpression> Copy() const override;
 
 	bool Equals(const ParsedExpression &other) const override;
-	hash_t Hash() const override;
+	hash_t NodeHash() const override;
 
 	void Serialize(Serializer &serializer) const override;
 	static unique_ptr<ParsedExpression> Deserialize(Deserializer &deserializer);
@@ -179,6 +201,9 @@ private:
 	QualifiedName qualified_name;
 	//! Whether or not the function is an operator, only used for rendering
 	bool is_operator;
+	//! Whether this call originated from operator syntax; only used for "?column?" target-list naming
+	bool from_operator = false;
+	bool builtin = false;
 	//! List of arguments to the function
 	vector<FunctionArgument> arguments;
 	//! Whether or not the aggregate function is distinct, only used for aggregates

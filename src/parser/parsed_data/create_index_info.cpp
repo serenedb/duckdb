@@ -10,8 +10,8 @@ CreateIndexInfo::CreateIndexInfo() : CreateInfo(CatalogType::INDEX_ENTRY, Identi
 
 CreateIndexInfo::CreateIndexInfo(const duckdb::CreateIndexInfo &info)
     : CreateInfo(CatalogType::INDEX_ENTRY), table(info.table), options(info.options), index_type(info.index_type),
-      constraint_type(info.constraint_type), column_ids(info.column_ids), scan_types(info.scan_types),
-      names(info.names) {
+      constraint_type(info.constraint_type), column_ids(info.column_ids), column_opclasses(info.column_opclasses),
+      column_opclass_options(info.column_opclass_options), scan_types(info.scan_types), names(info.names) {
 	SetQualifiedName(info.GetQualifiedName());
 }
 
@@ -26,16 +26,23 @@ static void RemoveTableQualificationRecursive(unique_ptr<ParsedExpression> &root
 	    });
 }
 
+static unique_ptr<ParsedExpression> UnqualifiedExpression(const ParsedExpression &expr, const Identifier &table_name) {
+	auto copy = expr.Copy();
+	// Column reference expressions are qualified with the table name.
+	// We need to remove them to reproduce the original query.
+	RemoveTableQualificationRecursive(copy, table_name);
+	return copy;
+}
+
+Identifier CreateIndexInfo::ExpressionName(idx_t index) const {
+	return Identifier(UnqualifiedExpression(*parsed_expressions[index], table)->ToString());
+}
+
 vector<string> CreateIndexInfo::ExpressionsToList() const {
 	vector<string> list;
 
 	for (idx_t i = 0; i < parsed_expressions.size(); i++) {
-		auto &expr = parsed_expressions[i];
-		auto copy = expr->Copy();
-
-		// Column reference expressions are qualified with the table name.
-		// We need to remove them to reproduce the original query.
-		RemoveTableQualificationRecursive(copy, table);
+		auto copy = UnqualifiedExpression(*parsed_expressions[i], table);
 		bool add_parenthesis = true;
 		if (copy->GetExpressionType() == ExpressionType::COLUMN_REF) {
 			auto &column_ref = copy->Cast<ColumnRefExpression>();
@@ -45,11 +52,24 @@ vector<string> CreateIndexInfo::ExpressionsToList() const {
 			}
 		}
 
+		string entry;
 		if (add_parenthesis) {
-			list.push_back(StringUtil::Format("(%s)", copy->ToString()));
+			entry = StringUtil::Format("(%s)", copy->ToString());
 		} else {
-			list.push_back(StringUtil::Format("%s", copy->ToString()));
+			entry = copy->ToString();
 		}
+		if (i < column_opclasses.size() && !column_opclasses[i].empty()) {
+			entry += " " + column_opclasses[i];
+			if (i < column_opclass_options.size() && column_opclass_options[i] && !column_opclass_options[i]->empty()) {
+				vector<string> opclass_options;
+				for (auto &option : *column_opclass_options[i]) {
+					opclass_options.push_back(StringUtil::Format("%s = %s", option.first, option.second.ToSQLString()));
+				}
+				sort(opclass_options.begin(), opclass_options.end());
+				entry += " (" + StringUtil::Join(opclass_options, ", ") + ")";
+			}
+		}
+		list.push_back(std::move(entry));
 	}
 	return list;
 }
@@ -57,6 +77,33 @@ vector<string> CreateIndexInfo::ExpressionsToList() const {
 string CreateIndexInfo::ExpressionsToString() const {
 	auto list = ExpressionsToList();
 	return StringUtil::Join(list, ", ");
+}
+
+vector<string> CreateIndexInfo::GetOpclassesForSerialization() const {
+	for (auto &opclass : column_opclasses) {
+		if (!opclass.empty()) {
+			return column_opclasses;
+		}
+	}
+	return {};
+}
+
+vector<std::optional<case_insensitive_map_t<Value>>> CreateIndexInfo::GetOpclassOptionsForSerialization() const {
+	for (auto &opclass_options : column_opclass_options) {
+		if (opclass_options) {
+			return column_opclass_options;
+		}
+	}
+	return {};
+}
+
+void CreateIndexInfo::FinalizeDeserialization() {
+	if (column_opclasses.empty()) {
+		column_opclasses.resize(parsed_expressions.size());
+	}
+	if (column_opclass_options.empty()) {
+		column_opclass_options.resize(parsed_expressions.size());
+	}
 }
 
 string CreateIndexInfo::ToString() const {
@@ -87,20 +134,25 @@ string CreateIndexInfo::ToString() const {
 	result += "(";
 	result += ExpressionsToString();
 	result += ")";
-	if (!options.empty()) {
-		result += " WITH (";
-		idx_t i = 0;
-		for (auto &opt : options) {
-			if (i > 0) {
-				result += ", ";
-			}
-			result += SQLIdentifier(opt.first);
-			if (!opt.second.IsNull()) {
-				result += " = " + opt.second.ToSQLString();
-			}
-			i++;
+	vector<string> rendered_options;
+	for (auto &opt : options) {
+		if (opt.second.type().id() == LogicalTypeId::BLOB) {
+			continue;
 		}
-		result += " )";
+		if (opt.second.IsNull()) {
+			rendered_options.push_back(StringUtil::Format("%s", SQLIdentifier(opt.first)));
+		} else {
+			rendered_options.push_back(
+			    StringUtil::Format("%s = %s", SQLIdentifier(opt.first), opt.second.ToSQLString()));
+		}
+	}
+	if (!rendered_options.empty()) {
+		sort(rendered_options.begin(), rendered_options.end());
+		result += " WITH (" + StringUtil::Join(rendered_options, ", ") + " )";
+	}
+	if (where_clause) {
+		result += " WHERE ";
+		result += where_clause->ToString();
 	}
 	result += ";";
 	return result;
@@ -115,6 +167,9 @@ unique_ptr<CreateInfo> CreateIndexInfo::Copy() const {
 	}
 	for (auto &expr : parsed_expressions) {
 		result->parsed_expressions.push_back(expr->Copy());
+	}
+	if (where_clause) {
+		result->where_clause = where_clause->Copy();
 	}
 	return std::move(result);
 }

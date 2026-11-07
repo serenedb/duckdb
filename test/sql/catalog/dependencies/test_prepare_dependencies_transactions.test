@@ -52,6 +52,9 @@ CREATE TABLE integers(i INTEGER)
 statement ok con1
 INSERT INTO integers VALUES (1), (2), (3), (4), (5)
 
+statement ok con2
+DEALLOCATE v
+
 # begin a transaction and create a prepared statement
 statement ok con2
 BEGIN TRANSACTION

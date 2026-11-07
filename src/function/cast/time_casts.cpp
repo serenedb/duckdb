@@ -68,6 +68,8 @@ BoundCastInfo DefaultCasts::TimeCastSwitch(BindCastInput &input, const LogicalTy
 	case LogicalTypeId::TIME_TZ:
 		// time to time with time zone
 		return BoundCastInfo(&VectorCastHelpers::TryCastLoop<dtime_t, dtime_tz_t, duckdb::TryCast>);
+	case LogicalTypeId::INTERVAL:
+		return BoundCastInfo(&VectorCastHelpers::TryCastLoop<dtime_t, interval_t, duckdb::TryCast>);
 	default:
 		return TryVectorNullCast;
 	}
@@ -82,6 +84,8 @@ BoundCastInfo DefaultCasts::TimeNsCastSwitch(BindCastInput &input, const Logical
 	case LogicalTypeId::TIME:
 		// time (ns) to time (µs)
 		return BoundCastInfo(&VectorCastHelpers::TryCastLoop<dtime_ns_t, dtime_t, duckdb::TryCast>);
+	case LogicalTypeId::TIME_TZ:
+		return BoundCastInfo(&VectorCastHelpers::TryCastLoop<dtime_ns_t, dtime_tz_t, duckdb::TryCast>);
 	default:
 		return TryVectorNullCast;
 	}
@@ -97,6 +101,8 @@ BoundCastInfo DefaultCasts::TimeTzCastSwitch(BindCastInput &input, const Logical
 	case LogicalTypeId::TIME:
 		// time with time zone to time
 		return BoundCastInfo(&VectorCastHelpers::TryCastLoop<dtime_tz_t, dtime_t, duckdb::TryCast>);
+	case LogicalTypeId::TIME_NS:
+		return BoundCastInfo(&VectorCastHelpers::TryCastLoop<dtime_tz_t, dtime_ns_t, duckdb::TryCast>);
 	default:
 		return TryVectorNullCast;
 	}
@@ -115,6 +121,8 @@ BoundCastInfo DefaultCasts::TimestampCastSwitch(BindCastInput &input, const Logi
 	case LogicalTypeId::TIME:
 		// timestamp to time
 		return BoundCastInfo(&VectorCastHelpers::TryCastErrorLoop<timestamp_t, dtime_t, TryCastTimestampErrorMessage>);
+	case LogicalTypeId::TIME_NS:
+		return BoundCastInfo(&VectorCastHelpers::TryCastLoop<timestamp_t, dtime_ns_t, duckdb::TryCast>);
 	case LogicalTypeId::TIME_TZ:
 		// timestamp to time_tz
 		return BoundCastInfo(
@@ -220,6 +228,12 @@ BoundCastInfo DefaultCasts::TimestampNsCastSwitch(BindCastInput &input, const Lo
 		return BoundCastInfo(&VectorCastHelpers::TryCastLoop<timestamp_ns_t, timestamp_t, duckdb::TryCast>);
 	case LogicalTypeId::TIMESTAMP_MS:
 		return BoundCastInfo(&VectorCastHelpers::TryCastLoop<timestamp_ns_t, timestamp_ms_t, duckdb::TryCast>);
+	case LogicalTypeId::TIMESTAMP_SEC:
+		return BoundCastInfo(&VectorCastHelpers::TryCastLoop<timestamp_ns_t, timestamp_sec_t, duckdb::TryCast>);
+	case LogicalTypeId::TIMESTAMP_TZ_NS:
+		return ReinterpretCast;
+	case LogicalTypeId::TIME_TZ:
+		return BoundCastInfo(&VectorCastHelpers::TryCastLoop<timestamp_ns_t, dtime_tz_t, duckdb::TryCast>);
 	default:
 		return TryVectorNullCast;
 	}
@@ -253,6 +267,10 @@ BoundCastInfo DefaultCasts::TimestampMsCastSwitch(BindCastInput &input, const Lo
 	case LogicalTypeId::TIMESTAMP_SEC:
 		// timestamp (ms) to timestamp (s)
 		return BoundCastInfo(&VectorCastHelpers::TryCastLoop<timestamp_ms_t, timestamp_sec_t, duckdb::TryCast>);
+	case LogicalTypeId::TIME_NS:
+		return BoundCastInfo(&VectorCastHelpers::TryCastLoop<timestamp_ms_t, dtime_ns_t, duckdb::TryCast>);
+	case LogicalTypeId::TIME_TZ:
+		return BoundCastInfo(&VectorCastHelpers::TryCastLoop<timestamp_ms_t, dtime_tz_t, duckdb::TryCast>);
 	default:
 		return TryVectorNullCast;
 	}
@@ -287,6 +305,10 @@ BoundCastInfo DefaultCasts::TimestampSecCastSwitch(BindCastInput &input, const L
 		// timestamp (s) to timestamp [with time zone] (ns)
 		return BoundCastInfo(
 		    &VectorCastHelpers::TryCastErrorLoop<timestamp_sec_t, timestamp_ns_t, TryCastTimestampErrorMessage>);
+	case LogicalTypeId::TIME_NS:
+		return BoundCastInfo(&VectorCastHelpers::TryCastLoop<timestamp_sec_t, dtime_ns_t, duckdb::TryCast>);
+	case LogicalTypeId::TIME_TZ:
+		return BoundCastInfo(&VectorCastHelpers::TryCastLoop<timestamp_sec_t, dtime_tz_t, duckdb::TryCast>);
 	default:
 		return TryVectorNullCast;
 	}
@@ -298,6 +320,8 @@ BoundCastInfo DefaultCasts::IntervalCastSwitch(BindCastInput &input, const Logic
 	case LogicalTypeId::VARCHAR:
 		// time to varchar
 		return BoundCastInfo(&VectorCastHelpers::StringCast<interval_t, duckdb::StringCast>);
+	case LogicalTypeId::TIME:
+		return BoundCastInfo(&VectorCastHelpers::TryCastLoop<interval_t, dtime_t, duckdb::TryCast>);
 	default:
 		return TryVectorNullCast;
 	}

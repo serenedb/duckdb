@@ -12,7 +12,6 @@
 
 #include "duckdb/execution/index/unbound_index.hpp"
 #include "duckdb/common/enums/index_constraint_type.hpp"
-#include "duckdb/common/types/constraint_conflict_info.hpp"
 #include "duckdb/common/types/data_chunk.hpp"
 #include "duckdb/common/unordered_set.hpp"
 #include "duckdb/execution/expression_executor.hpp"
@@ -102,6 +101,9 @@ public:
 	const Identifier &GetIndexName() const override {
 		return name;
 	}
+	void SetIndexName(Identifier name_p) override {
+		name = std::move(name_p);
+	}
 	IndexConstraintType GetConstraintType() const override {
 		return index_constraint_type;
 	}
@@ -120,10 +122,12 @@ public:
 	virtual ErrorData Append(IndexLock &l, DataChunk &chunk, Vector &row_ids, IndexAppendInfo &info) DUCKDB_REQUIRES(l);
 	//! Obtains a lock and calls Append while holding that lock.
 	ErrorData Append(DataChunk &chunk, Vector &row_ids, IndexAppendInfo &info) DUCKDB_EXCLUDES(lock);
+	virtual ErrorData FinishAppend() {
+		return ErrorData();
+	}
 
 	//! Verify that data can be appended to the index without a constraint violation.
-	virtual void VerifyAppend(DataChunk &chunk, IndexAppendInfo &info, optional_ptr<ConflictManager> manager)
-	    DUCKDB_EXCLUDES(lock);
+	virtual void VerifyAppend(DataChunk &chunk, IndexAppendInfo &info) DUCKDB_EXCLUDES(lock);
 	//! Verifies the constraint for a chunk of data.
 	virtual void VerifyConstraint(DataChunk &chunk, IndexAppendInfo &info, ConflictManager &manager)
 	    DUCKDB_EXCLUDES(lock);
@@ -167,11 +171,20 @@ public:
 
 	//! Whether or not the index supports the creation of delta indexes
 	virtual bool SupportsDeltaIndexes() const;
-
+	virtual bool RemovalNeedsColumnValues() const {
+		return true;
+	}
 	//! Returns the in-memory usage of the index. The index lock must be held
 	virtual idx_t GetInMemorySize(IndexLock &state) const DUCKDB_REQUIRES(state) = 0;
 	//! Returns the in-memory usage of the index
 	idx_t GetInMemorySize() const DUCKDB_EXCLUDES(lock);
+	//! Returns the total allocated size of the index in bytes, including data serialized to disk.
+	//! The index lock must be held
+	virtual idx_t GetAllocationSize(IndexLock &state) const DUCKDB_REQUIRES(state) {
+		return GetInMemorySize(state);
+	}
+	//! Returns the total allocated size of the index in bytes, including data serialized to disk
+	idx_t GetAllocationSize() const DUCKDB_EXCLUDES(lock);
 
 	//! Returns the string representation of an index, or only traverses and verifies the index.
 	virtual void Verify(IndexLock &l) DUCKDB_REQUIRES(l) = 0;
@@ -194,7 +207,7 @@ public:
 	void VerifyBuffers() DUCKDB_EXCLUDES(lock);
 
 	//! Returns true if the index is affected by updates on the specified column IDs, and false otherwise
-	bool IndexIsUpdated(const vector<PhysicalIndex> &column_ids) const;
+	bool IndexIsUpdated(std::span<const PhysicalIndex> column_ids) const;
 
 	//! Serializes index memory to disk and returns the index storage information.
 	virtual IndexStorageInfo SerializeToDisk(QueryContext context, const case_insensitive_map_t<Value> &options)
@@ -205,6 +218,7 @@ public:
 
 	//! Execute the index expressions on an input chunk
 	void ExecuteExpressions(DataChunk &input, DataChunk &result) const;
+	void ExecuteExpressions(ClientContext &context, DataChunk &input, DataChunk &result) const;
 	static string AppendRowError(DataChunk &input, idx_t index);
 
 	//! Throw a constraint violation exception

@@ -10,6 +10,7 @@
 
 #include "duckdb/parser/parsed_data/create_info.hpp"
 #include "duckdb/common/optional.hpp"
+#include "duckdb/common/optional_idx.hpp"
 
 #include "duckdb/common/identifier.hpp"
 namespace duckdb {
@@ -26,7 +27,8 @@ enum class SequenceInfo : uint8_t {
 	// Sequence cycle option
 	SEQ_CYCLE,
 	// Sequence owner table
-	SEQ_OWN
+	SEQ_OWN,
+	SEQ_CACHE
 };
 
 struct CreateSequenceInfo : public CreateInfo {
@@ -51,8 +53,13 @@ struct CreateSequenceInfo : public CreateInfo {
 	int64_t start_value;
 	//! Whether or not the sequence cycles
 	bool cycle;
+	uint64_t cache;
 	//! The most recently returned value
 	optional<int64_t> last_value;
+	optional<int64_t> recorded_start;
+	vector<Identifier> owned_by;
+	optional_idx owner_column;
+	bool serial = false;
 
 public:
 	unique_ptr<CreateInfo> Copy() const override;

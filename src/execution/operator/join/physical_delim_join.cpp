@@ -23,6 +23,10 @@ vector<const_reference<PhysicalOperator>> PhysicalDelimJoin::GetChildren() const
 	return result;
 }
 
+vector<const_reference<PhysicalOperator>> PhysicalDelimJoin::GetSources() const {
+	return join.GetSources();
+}
+
 InsertionOrderPreservingMap<string> PhysicalDelimJoin::ParamsToString() const {
 	auto result = join.ParamsToString();
 	result["Delim Index"] = StringUtil::Format("%llu", delim_idx.GetIndex());

@@ -1,0 +1,26 @@
+# name: test/sql/cast/test_bigint_to_varchar_digits.test
+# description: BIGINT/UBIGINT to VARCHAR around every power of ten, the extremes and chunk boundaries, against printf
+# group: [cast]
+
+statement ok
+CREATE TABLE v AS
+SELECT (10::HUGEINT ** p + d)::BIGINT AS x FROM range(0, 19) r(p), range(-2, 3) s(d)
+UNION ALL SELECT -(10::HUGEINT ** p + d)::BIGINT FROM range(0, 19) r(p), range(-2, 3) s(d)
+UNION ALL SELECT x FROM (VALUES (0::BIGINT), (9223372036854775807), (-9223372036854775808), (100000000), (99999999), (100000001), (1234567890123456789), (-1000000000000000000), (10000000000000001)) t(x)
+UNION ALL SELECT (i * 7919 * 1000003 + i)::BIGINT FROM range(5000) r(i);
+
+query I
+SELECT count(*) FROM v WHERE x::VARCHAR <> printf('%d', x) OR (x::VARCHAR)::BIGINT <> x;
+----
+0
+
+query I
+SELECT count(*) FROM (SELECT ('1' || repeat('0', p::INTEGER))::UBIGINT + d AS x FROM range(0, 20) r(p), range(0, 3) s(d) WHERE p < 19 OR d < 2) t
+WHERE x::VARCHAR <> printf('%d', x) OR x::VARCHAR::UBIGINT <> x;
+----
+0
+
+query III
+SELECT 18446744073709551615::UBIGINT::VARCHAR, (-9223372036854775808)::BIGINT::VARCHAR, 100000000::BIGINT::VARCHAR;
+----
+18446744073709551615	-9223372036854775808	100000000

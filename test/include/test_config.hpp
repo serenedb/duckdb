@@ -170,6 +170,7 @@ public:
 	FailureSummary();
 
 	static void Log(string message);
+	static void Reset();
 	static string GetFailureSummary();
 	static idx_t GetSummaryCounter();
 	static bool SkipLoggingSameError(const string &file_name);

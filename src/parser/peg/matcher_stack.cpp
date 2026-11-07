@@ -1,28 +1,28 @@
 #include "duckdb/parser/peg/matcher_stack.hpp"
+#include "duckdb/common/exception.hpp"
+
+#include <absl/cleanup/cleanup.h>
 #include "duckdb/common/optional.hpp"
+#include "duckdb/common/stack_depth.hpp"
+#include "duckdb/parser/peg/matcher/literal_choice_matcher.hpp"
 
 namespace duckdb {
 
 MatchStack::MatchStack() {
-	frames.reserve(INITIAL_FRAME_CAPACITY);
-}
-
-MatchStack::~MatchStack() {
-	// Child processes can reference state owned by their parents.
-	while (!frames.empty()) {
-		DestroyTopFrame();
-	}
 }
 
 void MatchStack::DestroyTopFrame() {
 	D_ASSERT(!frames.empty());
+	auto &processes = frames.back().match_state.context.processes;
+	auto process_mark = frames.back().process_mark;
 	frames.pop_back();
+	processes.Rewind(process_mark);
 }
 
 optional<MatcherResult> PackratMatchState::TryLoadCachedResult(const Matcher &matcher, MatchState &state) {
 	D_ASSERT(IsEnabled(matcher, state));
 	auto token_index = state.token_iterator.Position();
-	auto cached_result = state.context.packrat_cache->Lookup(matcher, token_index);
+	auto cached_result = state.context.packrat_cache->Lookup(matcher.GetPackratSlot().GetIndex(), token_index);
 	if (!cached_result) {
 		token_index_before = token_index;
 		max_token_index_before = state.GetMaxTokenIndex();
@@ -46,14 +46,37 @@ void PackratMatchState::StoreResult(const Matcher &matcher, MatchState &state, c
 	cache_entry.token_index_after = state.token_iterator.Position();
 	cache_entry.max_token_index_seen = MaxValue(max_token_index_before, state.GetMaxTokenIndex());
 	cache_entry.result = result.GetParseResult();
-	state.context.packrat_cache->Store(matcher, token_index_before.GetIndex(), cache_entry);
+	state.context.packrat_cache->Store(matcher.GetPackratSlot().GetIndex(), token_index_before.GetIndex(), cache_entry);
 }
 
-MatchStackFrame::MatchStackFrame(MatchInput input) : matcher(input.matcher), match_state(input.state) {
+MatchStackFrame::MatchStackFrame(MatchInput input)
+    : matcher(input.matcher), match_state(input.state), process_mark(input.state.context.processes.Mark()) {
 }
 
 bool MatchStackFrame::IsInitialized() const {
 	return process || result;
+}
+
+[[gnu::always_inline]] static inline bool IsEmptyOptional(const Matcher &matcher, MatchState &state) {
+	return matcher.Type() == MatcherType::OPTIONAL && matcher.HasBuiltInMatch() &&
+	       !static_cast<const OptionalMatcher &>(matcher).GetChildMatcher().CanStartAt(state);
+}
+
+[[gnu::always_inline]] static inline MatcherResult EmptyOptional(const Matcher &matcher, MatchState &state) {
+	state.rule = matcher.GetRule();
+	return static_cast<const OptionalMatcher &>(matcher).EmptyResult(state);
+}
+
+MatcherResult MatchStack::MatchMemoized(const Matcher &matcher, MatchState &state) {
+	PackratMatchState packrat_state;
+	auto cached_result = packrat_state.TryLoadCachedResult(matcher, state);
+	if (cached_result) {
+		return *cached_result;
+	}
+	auto result = matcher.IsAtomic() ? static_cast<const AtomicMatcher &>(matcher).MatchAtomic(state)
+	                                 : MatchComposite(matcher, state);
+	packrat_state.StoreResult(matcher, state, result);
+	return result;
 }
 
 MatcherResult MatchStack::ExecuteAtomicMatcher(MatchInput input) {
@@ -61,18 +84,266 @@ MatcherResult MatchStack::ExecuteAtomicMatcher(MatchInput input) {
 	auto &state = input.state;
 	D_ASSERT(matcher.IsAtomic());
 	state.rule = matcher.GetRule();
-
-	PackratMatchState packrat_state;
 	if (PackratMatchState::IsEnabled(matcher, state)) {
-		auto cached_result = packrat_state.TryLoadCachedResult(matcher, state);
-		if (cached_result) {
-			return *cached_result;
+		return MatchMemoized(matcher, state);
+	}
+	return static_cast<const AtomicMatcher &>(matcher).MatchAtomic(state);
+}
+
+MatcherResult MatchStack::MatchChild(const Matcher &matcher, MatchState &state) {
+	if (!matcher.IsAtomic() && !matcher.CanStartAt(state)) {
+		return MatcherResult::Failure();
+	}
+	return MatchStartedChild(matcher, state);
+}
+
+MatcherResult MatchStack::MatchStartedChild(const Matcher &matcher, MatchState &state) {
+	if (matcher.IsAtomic()) {
+		return ExecuteAtomicMatcher({matcher, state});
+	}
+	if (IsEmptyOptional(matcher, state)) {
+		return EmptyOptional(matcher, state);
+	}
+	return Match(matcher, state);
+}
+
+MatcherResult MatchStack::Match(const Matcher &matcher, MatchState &state) {
+	StackDepth::Check();
+	if (!matcher.HasBuiltInMatch()) {
+		return ExecuteFrames({matcher, state});
+	}
+	state.rule = matcher.GetRule();
+	if (PackratMatchState::IsEnabled(matcher, state)) {
+		return MatchMemoized(matcher, state);
+	}
+	return MatchComposite(matcher, state);
+}
+
+MatcherResult MatchStack::MatchComposite(const Matcher &matcher, MatchState &state) {
+	switch (matcher.Type()) {
+	case MatcherType::LIST:
+		return MatchList(static_cast<const ListMatcher &>(matcher), state);
+	case MatcherType::OPTIONAL:
+		return MatchOptional(static_cast<const OptionalMatcher &>(matcher), state);
+	case MatcherType::CHOICE:
+		return MatchChoice(static_cast<const ChoiceMatcher &>(matcher), state);
+	default:
+		D_ASSERT(matcher.Type() == MatcherType::REPEAT);
+		return MatchRepeat(static_cast<const RepeatMatcher &>(matcher), state);
+	}
+}
+
+static optional_idx StartOffset(const MatchState &state) {
+	auto current = state.token_iterator.Current();
+	return current ? optional_idx(current->offset) : optional_idx();
+}
+
+MatcherResult MatchStack::MatchList(const ListMatcher &matcher, MatchState &state) {
+	if (matcher.chain_core.IsValid() && state.BuildParseResult() && !matcher.suppress_suggestions) {
+		return MatchChainLevel(matcher, state);
+	}
+	MatchState list_state(state);
+	return ContinueList(matcher, state, list_state, state.context.allocator.ChildCount(), 0);
+}
+
+[[gnu::always_inline]] static inline bool PrefixesEmpty(const ListMatcher &matcher, MatchState &state) {
+	auto &children = matcher.matchers;
+	auto core_index = matcher.chain_core.GetIndex();
+	for (idx_t i = 0; i < core_index; i++) {
+		if (!IsEmptyOptional(children[i], state)) {
+			return false;
 		}
 	}
+	return true;
+}
 
-	auto result = static_cast<const AtomicMatcher &>(matcher).MatchAtomic(state);
-	packrat_state.StoreResult(matcher, state, result);
+MatcherResult MatchStack::CloseChainLevel(const ListMatcher &matcher, MatchState &state, MatchState &list_state,
+                                          MatcherResult core_result, bool nested, bool suffixes_empty) {
+	auto &children = matcher.matchers;
+	auto core_index = matcher.chain_core.GetIndex();
+	auto end = suffixes_empty ? children.size() : core_index + 1;
+	while (end < children.size() && IsEmptyOptional(children[end], list_state)) {
+		end++;
+	}
+	if (end == children.size() && core_result.HasParseResult() && core_result.GetParseResult()->GetRule()) {
+		core_result.GetParseResult()->collapsed = true;
+		return core_result;
+	}
+	auto &allocator = state.context.allocator;
+	auto children_begin = allocator.ChildCount();
+	for (idx_t i = 0; i < end; i++) {
+		auto child_result = i == core_index ? core_result : EmptyOptional(children[i], list_state);
+		if (child_result.HasParseResult()) {
+			allocator.PushChild(*child_result.GetParseResult());
+		}
+	}
+	if (!nested) {
+		return ContinueList(matcher, state, list_state, children_begin, end);
+	}
+	MatchState level_state(state);
+	level_state.rule = matcher.GetRule();
+	return ContinueList(matcher, level_state, list_state, children_begin, end);
+}
+
+MatcherResult MatchStack::MatchChainLevel(const ListMatcher &matcher, MatchState &state) {
+	auto edges = matcher.chain_edges;
+	auto prefixes_empty = edges && edges->prefixes.NoneCanStartAt(state);
+	if (!prefixes_empty && !PrefixesEmpty(matcher, state)) {
+		MatchState list_state(state);
+		return ContinueList(matcher, state, list_state, state.context.allocator.ChildCount(), 0);
+	}
+	MatchState list_state(state);
+	const ListMatcher *outer_levels[MAX_CHAIN_LEVELS];
+	idx_t nesting = 0;
+	auto level = &matcher;
+	while (nesting < MAX_CHAIN_LEVELS) {
+		auto nested_level = level->nested_chain_level;
+		if (!nested_level) {
+			break;
+		}
+		if (!nested_level->CanStartAt(list_state)) {
+			return MatcherResult::Failure();
+		}
+		list_state.rule = nested_level->GetRule();
+		if (!prefixes_empty && !PrefixesEmpty(*nested_level, list_state)) {
+			break;
+		}
+		outer_levels[nesting++] = level;
+		level = nested_level.get();
+	}
+	auto result = MatchChild(level->matchers[level->chain_core.GetIndex()], list_state);
+	auto suffixes_empty = edges && result.IsSuccess() && edges->suffixes.NoneCanStartAt(list_state);
+	while (true) {
+		if (!result.IsSuccess()) {
+			return MatcherResult::Failure();
+		}
+		result = CloseChainLevel(*level, state, list_state, result, nesting > 0, suffixes_empty);
+		if (nesting == 0) {
+			break;
+		}
+		level = outer_levels[--nesting];
+	}
+	if (result.IsSuccess()) {
+		state.token_iterator.SetPosition(list_state.token_iterator);
+	}
 	return result;
+}
+
+MatcherResult MatchStack::ContinueList(const ListMatcher &matcher, MatchState &state, MatchState &list_state,
+                                       idx_t children_begin, idx_t next_child) {
+	auto &allocator = state.context.allocator;
+	auto &suggestions = state.context.suggestions;
+	auto saved_suggestion_size = matcher.suppress_suggestions ? suggestions.size() : 0;
+	auto start_offset = StartOffset(state);
+	for (idx_t i = next_child; i < matcher.matchers.size(); i++) {
+		auto &child = matcher.matchers[i].get();
+		auto current = list_state.token_iterator.Current();
+		if (current && current->type == TokenType::END_OF_INPUT_AUTOCOMPLETE) {
+			if (matcher.suppress_suggestions) {
+				matcher.DiscardSuggestions(suggestions, saved_suggestion_size);
+				allocator.DiscardChildren(children_begin);
+				return MatcherResult::Failure();
+			}
+			if (child.AddSuggestion(list_state) == SuggestionType::OPTIONAL) {
+				continue;
+			}
+			state.token_iterator.SetPosition(list_state.token_iterator);
+			allocator.DiscardChildren(children_begin);
+			return MatcherResult::Failure();
+		}
+		auto child_result = MatchChild(child, list_state);
+		if (!child_result.IsSuccess()) {
+			matcher.DiscardSuggestions(suggestions, saved_suggestion_size);
+			allocator.DiscardChildren(children_begin);
+			return MatcherResult::Failure();
+		}
+		if (child_result.HasParseResult()) {
+			allocator.PushChild(*child_result.GetParseResult());
+		}
+	}
+	state.token_iterator.SetPosition(list_state.token_iterator);
+	matcher.DiscardSuggestions(suggestions, saved_suggestion_size);
+	if (matcher.IsCollapsible()) {
+		auto collapsible = ListMatcher::FindCollapsibleResult(allocator.PendingChildren(children_begin));
+		if (collapsible) {
+			allocator.DiscardChildren(children_begin);
+			collapsible->collapsed = true;
+			return MatcherResult::Success(collapsible);
+		}
+	}
+	auto children = allocator.TakeChildren(children_begin);
+	return state.AllocateParseResult<ListParseResult>(children, start_offset);
+}
+
+MatcherResult MatchStack::MatchChoice(const ChoiceMatcher &matcher, MatchState &state) {
+	idx_t child_index = 0;
+	idx_t child_end = matcher.matchers.size();
+	if (matcher.dispatch_on_literal) {
+		child_index = static_cast<const LiteralChoiceMatcher &>(matcher).SelectChild(state.token_iterator);
+		child_end = MinValue(child_index + 1, child_end);
+	}
+	for (; child_index < child_end; child_index++) {
+		auto &child = matcher.matchers[child_index].get();
+		if (!child.IsAtomic() && !child.CanStartAt(state)) {
+			continue;
+		}
+		MatchState child_state(state);
+		auto child_result = MatchStartedChild(child, child_state);
+		if (!child_result.IsSuccess()) {
+			continue;
+		}
+		if (!child_result.HasParseResult() || (matcher.IsCollapsible() && child_result.GetParseResult()->GetRule())) {
+			state.token_iterator.SetPosition(child_state.token_iterator);
+			return child_result;
+		}
+		auto start_offset = StartOffset(state);
+		state.token_iterator.SetPosition(child_state.token_iterator);
+		return state.AllocateParseResult<ChoiceParseResult>(*child_result.GetParseResult(), child_index, start_offset);
+	}
+	return MatcherResult::Failure();
+}
+
+MatcherResult MatchStack::MatchOptional(const OptionalMatcher &matcher, MatchState &state) {
+	MatchState child_state(state);
+	auto start_offset = StartOffset(child_state);
+	auto child_result = MatchChild(matcher.GetChildMatcher(), child_state);
+	if (!child_result.IsSuccess()) {
+		return matcher.EmptyResult(state);
+	}
+	state.token_iterator.SetPosition(child_state.token_iterator);
+	if (!child_result.HasParseResult()) {
+		return MatcherResult::Success();
+	}
+	return state.AllocateParseResult<OptionalParseResult>(child_result.GetParseResult(), start_offset);
+}
+
+MatcherResult MatchStack::MatchRepeat(const RepeatMatcher &matcher, MatchState &state) {
+	auto &allocator = state.context.allocator;
+	auto &child = matcher.GetChildMatcher();
+	MatchState repeat_state(state);
+	auto children_begin = allocator.ChildCount();
+	auto start_offset = StartOffset(repeat_state);
+	auto child_result = MatchChild(child, repeat_state);
+	if (!child_result.IsSuccess()) {
+		return MatcherResult::Failure();
+	}
+	while (true) {
+		if (child_result.HasParseResult()) {
+			allocator.PushChild(*child_result.GetParseResult());
+		}
+		state.token_iterator.SetPosition(repeat_state.token_iterator);
+		auto current = repeat_state.token_iterator.Current();
+		if (current && current->type == TokenType::END_OF_INPUT_AUTOCOMPLETE) {
+			child.AddSuggestion(state);
+			break;
+		}
+		child_result = MatchChild(child, repeat_state);
+		if (!child_result.IsSuccess()) {
+			break;
+		}
+	}
+	auto children = allocator.TakeChildren(children_begin);
+	return state.AllocateParseResult<RepeatParseResult>(children, start_offset);
 }
 
 void MatchStack::PushFrame(MatchInput input) {
@@ -104,16 +375,24 @@ bool MatchStack::ExecuteFrame(MatchStackFrame &frame) {
 	D_ASSERT(frame.process);
 	auto step = frame.process->Resume(frame.child_result);
 	frame.child_result.reset();
-	auto child = step.GetChild();
-	if (!child) {
+	if (!step.HasChild()) {
 		frame.result = step.GetResult();
 		return true;
 	}
-	if (child->matcher.IsAtomic()) {
-		frame.child_result = ExecuteAtomicMatcher(*child);
+	auto child = step.GetChild();
+	if (child.matcher.IsAtomic()) {
+		frame.child_result = ExecuteAtomicMatcher(child);
 		return false;
 	}
-	PushFrame(*child);
+	if (!child.matcher.CanStartAt(child.state)) {
+		frame.child_result = MatcherResult::Failure();
+		return false;
+	}
+	if (IsEmptyOptional(child.matcher, child.state)) {
+		frame.child_result = EmptyOptional(child.matcher, child.state);
+		return false;
+	}
+	PushFrame(child);
 	return false;
 }
 
@@ -133,6 +412,19 @@ MatcherResult MatchStack::Execute(MatchInput input) {
 	if (input.matcher.IsAtomic()) {
 		return ExecuteAtomicMatcher(input);
 	}
+	return Match(input.matcher, input.state);
+}
+
+MatcherResult MatchStack::ExecuteFrames(MatchInput input) {
+	D_ASSERT(frames.empty());
+	if (frames.capacity() == 0) {
+		frames.reserve(INITIAL_FRAME_CAPACITY);
+	}
+	absl::Cleanup unwind = [&] noexcept {
+		while (!frames.empty()) {
+			DestroyTopFrame();
+		}
+	};
 	PushFrame(input);
 	while (!frames.empty()) {
 		if (!ExecuteFrame(frames.back())) {

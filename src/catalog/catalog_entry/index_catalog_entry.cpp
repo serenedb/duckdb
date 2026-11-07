@@ -5,16 +5,23 @@
 namespace duckdb {
 
 IndexCatalogEntry::IndexCatalogEntry(Catalog &catalog, SchemaCatalogEntry &schema, CreateIndexInfo &info)
-    : StandardEntry(CatalogType::INDEX_ENTRY, schema, catalog, info.GetIndexName()), sql(info.sql),
+    : StandardEntry(CatalogType::INDEX_ENTRY, schema, catalog, info.GetIndexName(), info.oid), sql(info.sql),
       options(info.options), index_type(info.index_type), index_constraint_type(info.constraint_type),
-      column_ids(info.column_ids) {
+      column_ids(info.column_ids), column_opclasses(info.column_opclasses), table_oid(info.table_oid) {
 	this->temporary = info.temporary;
 	this->dependencies = info.dependencies;
 	this->comment = info.comment;
 	this->tags = info.tags;
+	this->permissions = info.permissions;
 	for (auto &expr : expressions) {
 		D_ASSERT(expr);
 		expressions.push_back(expr->Copy());
+	}
+	if (info.where_clause) {
+		where_clause = info.where_clause->Copy();
+	}
+	for (auto &opclass_options : info.column_opclass_options) {
+		column_opclass_options.push_back(opclass_options);
 	}
 	for (auto &parsed_expr : info.parsed_expressions) {
 		D_ASSERT(parsed_expr);
@@ -24,8 +31,9 @@ IndexCatalogEntry::IndexCatalogEntry(Catalog &catalog, SchemaCatalogEntry &schem
 
 unique_ptr<CreateInfo> IndexCatalogEntry::GetInfo() const {
 	auto result = make_uniq<CreateIndexInfo>();
-	result->SetQualifiedName(schema.GetQualifiedName(name));
+	result->SetQualifiedName(GetQualifiedName(name));
 	result->table = GetTableName();
+	result->table_oid = table_oid;
 
 	result->temporary = temporary;
 	result->sql = sql;
@@ -40,12 +48,22 @@ unique_ptr<CreateInfo> IndexCatalogEntry::GetInfo() const {
 	for (auto &expr : parsed_expressions) {
 		result->parsed_expressions.push_back(expr->Copy());
 	}
+	if (where_clause) {
+		result->where_clause = where_clause->Copy();
+	}
+	result->column_opclasses = column_opclasses;
+	result->column_opclass_options = column_opclass_options;
 
 	result->comment = comment;
 	result->tags = tags;
+	result->permissions = permissions;
 	result->options = options;
 
 	return std::move(result);
+}
+
+optional_ptr<CatalogEntry> IndexCatalogEntry::GetRelation(CatalogTransaction transaction) const {
+	return ParentSchema(transaction).GetEntry(transaction, CatalogType::TABLE_ENTRY, GetTableName());
 }
 
 string IndexCatalogEntry::ToSQL() const {

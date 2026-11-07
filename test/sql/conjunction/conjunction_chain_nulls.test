@@ -1,0 +1,69 @@
+# name: test/sql/conjunction/conjunction_chain_nulls.test
+# description: OR and AND chains and IN lists of three or more terms with a NULL term
+# group: [conjunction]
+
+statement ok
+CREATE TABLE t(a INTEGER, b INTEGER, c INTEGER)
+
+statement ok
+INSERT INTO t VALUES (97, 1, 99), (15, 81, 47), (87, 21, 10), (1, 2, NULL)
+
+query II
+SELECT c, (c = NULL) OR (c = 99) OR (c = 47) OR (c = 10) FROM t ORDER BY c NULLS LAST
+----
+10	true
+47	true
+99	true
+NULL	NULL
+
+query II
+SELECT c, (c = NULL) AND (c > 0) AND (c > 20) AND (c > 50) FROM t ORDER BY c NULLS LAST
+----
+10	false
+47	false
+99	NULL
+NULL	NULL
+
+query II
+SELECT c, c IN (NULL, 99, 47, 10) FROM t ORDER BY c NULLS LAST
+----
+10	true
+47	true
+99	true
+NULL	NULL
+
+query II
+SELECT c, c IN (NULL, c, 92) FROM t ORDER BY c NULLS LAST
+----
+10	true
+47	true
+99	true
+NULL	NULL
+
+query II
+SELECT c, c NOT IN (NULL, c, 92, 93) FROM t ORDER BY c NULLS LAST
+----
+10	false
+47	false
+99	false
+NULL	NULL
+
+query I
+SELECT count(*) FROM t WHERE NOT (c) NOT IN (CAST(NULL AS INTEGER), c, 92)
+----
+3
+
+query I
+SELECT count(*) FROM t WHERE NOT (c NOT IN (CAST(NULL AS INTEGER), 99, 47, 10))
+----
+3
+
+query I
+SELECT count(*) FROM t WHERE c IN (CAST(NULL AS INTEGER) + 86, 15, -72, c)
+----
+3
+
+query I
+SELECT count(*) FROM t WHERE a > 0 AND NOT (c NOT IN (CAST(NULL AS INTEGER), 99, 47, 10))
+----
+3

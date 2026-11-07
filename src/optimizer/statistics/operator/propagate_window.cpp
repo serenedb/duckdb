@@ -15,6 +15,7 @@ unique_ptr<NodeStatistics> StatisticsPropagator::PropagateStatistics(LogicalWind
 	// then propagate to each of the order expressions
 	for (auto &window_expr : window.expressions) {
 		auto &over_expr = window_expr->Cast<BoundWindowExpression>();
+		over_expr.PartitionsStatsMutable().clear();
 		for (auto &expr : over_expr.PartitionsMutable()) {
 			over_expr.PartitionsStatsMutable().push_back(PropagateExpression(expr));
 		}
@@ -22,6 +23,7 @@ unique_ptr<NodeStatistics> StatisticsPropagator::PropagateStatistics(LogicalWind
 			bound_order.stats = PropagateExpression(bound_order.expression);
 		}
 
+		over_expr.ExprStatsMutable().clear();
 		if (over_expr.StartExpr()) {
 			over_expr.ExprStatsMutable().push_back(PropagateExpression(over_expr.StartExprMutable()));
 		} else {

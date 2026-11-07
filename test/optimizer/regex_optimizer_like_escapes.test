@@ -1,0 +1,67 @@
+# name: test/optimizer/regex_optimizer_like_escapes.test
+# description: A regex rewritten to LIKE escapes the characters LIKE reads as special, a backslash included
+# group: [optimizer]
+
+statement ok
+CREATE TABLE t AS SELECT * FROM (VALUES ('C:\Windows\System32'), ('C:Windows'), ('a\xyz'), ('a%'), ('a%b'), ('axb'), ('a_c'), ('abc')) t(s);
+
+query II
+EXPLAIN ANALYZE SELECT regexp_matches(s, '^C:\\Windows'), regexp_matches(s, '^a\\'), regexp_matches(s, '^a%'), regexp_matches(s, '^a_c$'), regexp_matches(s, '\\.*System', 's'), s FROM t
+----
+analyzed_plan	<REGEX>:.*"~~"\(s, 'C:\\\\Windows%'\).*"~~"\(s, 'a\\\\%'\).*"~~"\(s, 'a\\%%'\).*"~~"\(s, 'a\\_c'\).*"~~"\(s, '%\\\\%System%'\).*
+
+query III
+SELECT s, regexp_matches(s, '^C:\\Windows'), regexp_matches(s, '^a\\') FROM t ORDER BY s
+----
+C:Windows	false	false
+C:\Windows\System32	true	false
+a%	false	false
+a%b	false	false
+a\xyz	false	true
+a_c	false	false
+abc	false	false
+axb	false	false
+
+query IIII
+SELECT s, regexp_matches(s, '^a%'), regexp_matches(s, '^a_c$'), regexp_matches(s, '\\.*System', 's') FROM t ORDER BY s
+----
+C:Windows	false	false	false
+C:\Windows\System32	false	false	true
+a%	true	false	false
+a%b	true	false	false
+a\xyz	false	false	false
+a_c	false	true	false
+abc	false	false	false
+axb	false	false	false
+
+# a filter pushes the LIKE's literal prefix into the scan, read with the same escapes
+query II
+EXPLAIN SELECT s FROM t WHERE regexp_matches(s, '^C:\\Windows')
+----
+physical_plan	<REGEX>:.*s >= 'C:\\Windows'.*s < 'C:\\Windowt'.*
+
+query I
+SELECT s FROM t WHERE regexp_matches(s, '^C:\\Windows')
+----
+C:\Windows\System32
+
+query II
+EXPLAIN SELECT s FROM t WHERE regexp_matches(s, '^a%')
+----
+physical_plan	<REGEX>:.*s >= 'a%'.*
+
+query I
+SELECT s FROM t WHERE regexp_matches(s, '^a%') ORDER BY s
+----
+a%
+a%b
+
+query II
+EXPLAIN SELECT s FROM t WHERE regexp_matches(s, '^a_c$')
+----
+physical_plan	<REGEX>:.*s = 'a_c'.*
+
+query I
+SELECT s FROM t WHERE regexp_matches(s, '^a_c$')
+----
+a_c

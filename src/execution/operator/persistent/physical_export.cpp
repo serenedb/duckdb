@@ -2,12 +2,23 @@
 
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/catalog/catalog_entry/schema_catalog_entry.hpp"
+#include "duckdb/catalog/catalog_entry/sequence_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
+#include "duckdb/common/extension_type_info.hpp"
 #include "duckdb/common/file_system.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/parallel/meta_pipeline.hpp"
 #include "duckdb/parallel/pipeline.hpp"
+#include "duckdb/parser/expression/type_expression.hpp"
 #include "duckdb/parser/keyword_helper.hpp"
+#include "duckdb/parser/parsed_data/alter_job_info.hpp"
+#include "duckdb/parser/parsed_data/alter_table_info.hpp"
+#include "duckdb/parser/parsed_data/create_job_info.hpp"
+#include "duckdb/parser/parsed_data/create_macro_info.hpp"
+#include "duckdb/parser/parsed_data/create_sequence_info.hpp"
+#include "duckdb/parser/parsed_data/create_table_info.hpp"
+#include "duckdb/parser/parsed_data/create_type_info.hpp"
+#include "duckdb/planner/binder.hpp"
 #include "duckdb/transaction/transaction.hpp"
 #include "duckdb/catalog/duck_catalog.hpp"
 #include "duckdb/catalog/dependency_manager.hpp"
@@ -28,12 +39,244 @@ PhysicalExport::PhysicalExport(PhysicalPlan &physical_plan, vector<LogicalType> 
       function(std::move(function)), info(std::move(info)), exported_tables(std::move(exported_tables)) {
 }
 
-static void WriteCatalogEntries(stringstream &ss, catalog_entry_vector_t &entries) {
+static string CommentTarget(CatalogEntry &entry) {
+	switch (entry.type) {
+	case CatalogType::TABLE_ENTRY:
+		return "TABLE";
+	case CatalogType::VIEW_ENTRY:
+		return "VIEW";
+	case CatalogType::SEQUENCE_ENTRY:
+		return "SEQUENCE";
+	case CatalogType::INDEX_ENTRY:
+		return "INDEX";
+	case CatalogType::TYPE_ENTRY:
+		return "TYPE";
+	case CatalogType::MACRO_ENTRY:
+		return "MACRO";
+	case CatalogType::TABLE_MACRO_ENTRY:
+		return "MACRO TABLE";
+	default:
+		return string();
+	}
+}
+
+static void WriteComments(stringstream &ss, CatalogEntry &entry) {
+	auto target = CommentTarget(entry);
+	if (target.empty()) {
+		return;
+	}
+	auto name = QualifiedName(entry.ParentSchemaPath(), entry.name).ToString();
+	if (!entry.comment.IsNull()) {
+		ss << "COMMENT ON " << target << " " << name << " IS " << entry.comment.ToSQLString() << ";\n";
+	}
+	if (entry.type != CatalogType::TABLE_ENTRY) {
+		return;
+	}
+	for (auto &column : entry.Cast<TableCatalogEntry>().GetColumns().Logical()) {
+		if (!column.Comment().IsNull()) {
+			ss << "COMMENT ON COLUMN " << name << "." << SQLIdentifier(column.Name()) << " IS "
+			   << column.Comment().ToSQLString() << ";\n";
+		}
+	}
+}
+
+static bool QualifyUserTypes(LogicalType &type, const unordered_map<idx_t, QualifiedName> &user_types,
+                             bool nested_only = false) {
+	if (!nested_only && type.HasExtensionInfo()) {
+		auto &properties = type.GetExtensionInfo()->properties;
+		auto oid = properties.find(ExtensionTypeInfo::CATALOG_OID_PROPERTY);
+		if (oid != properties.end()) {
+			auto user_type = user_types.find(oid->second.GetValue<idx_t>());
+			if (user_type != user_types.end()) {
+				type = LogicalType::UNBOUND(
+				    make_uniq<TypeExpression>(user_type->second, vector<unique_ptr<ParsedExpression>>()));
+				return true;
+			}
+		}
+	}
+	switch (type.id()) {
+	case LogicalTypeId::LIST: {
+		auto child = ListType::GetChildType(type);
+		if (!QualifyUserTypes(child, user_types)) {
+			return false;
+		}
+		type = LogicalType::LIST(child);
+		return true;
+	}
+	case LogicalTypeId::ARRAY: {
+		auto child = ArrayType::GetChildType(type);
+		if (!QualifyUserTypes(child, user_types)) {
+			return false;
+		}
+		type = LogicalType::ARRAY(child, ArrayType::GetSize(type));
+		return true;
+	}
+	case LogicalTypeId::MAP: {
+		auto key = MapType::KeyType(type);
+		auto value = MapType::ValueType(type);
+		auto changed = QualifyUserTypes(key, user_types);
+		changed = QualifyUserTypes(value, user_types) || changed;
+		if (!changed) {
+			return false;
+		}
+		type = LogicalType::MAP(std::move(key), std::move(value));
+		return true;
+	}
+	case LogicalTypeId::STRUCT: {
+		if (type.HasAlias()) {
+			return false;
+		}
+		auto children = StructType::GetChildTypes(type);
+		bool changed = false;
+		for (auto &child : children) {
+			changed = QualifyUserTypes(child.second, user_types) || changed;
+		}
+		if (!changed) {
+			return false;
+		}
+		type = LogicalType::STRUCT(std::move(children));
+		return true;
+	}
+	default:
+		return false;
+	}
+}
+
+static string SequenceSetval(const CreateSequenceInfo &info, const QualifiedName &name) {
+	if (info.usage_count == 0) {
+		return string();
+	}
+	const SequenceData data(info);
+	int64_t value;
+	bool is_called = true;
+	if (data.last_value && data.Successor(*data.last_value) == data.counter) {
+		value = *data.last_value;
+	} else if (data.counter >= data.min_value && data.counter <= data.max_value) {
+		value = data.counter;
+		is_called = false;
+	} else {
+		value = data.increment > 0 ? data.max_value : data.min_value;
+	}
+	return "SELECT setval(" + KeywordHelper::WriteQuoted(name.ToString()) + ", " + to_string(value) + ", " +
+	       (is_called ? "true" : "false") + ");\n";
+}
+
+static bool CreatedByOwner(const CatalogEntry &owned) {
+	return owned.type == CatalogType::JOB_ENTRY;
+}
+
+static AlterJobInfo AlterJob(AlterJobType type, const CatalogEntry &job, const Identifier &name) {
+	return AlterJobInfo(type,
+	                    AlterEntryData(QualifiedName(job.ParentSchemaPath(), name), OnEntryNotFound::THROW_EXCEPTION));
+}
+
+static void WriteJobState(stringstream &ss, const CatalogEntry &owner, const CatalogEntry &job) {
+	if (job.name != owner.name) {
+		auto rename = AlterJob(AlterJobType::RENAME, job, owner.name);
+		rename.new_name = job.name;
+		ss << rename.ToString() << '\n';
+	}
+	auto info = job.GetInfo();
+	auto &job_info = info->Cast<CreateJobInfo>();
+	auto reschedule = AlterJob(AlterJobType::SET_SCHEDULE, job, job.name);
+	reschedule.schedule = job_info.schedule;
+	ss << reschedule.ToString() << '\n';
+	if (job_info.suspended) {
+		ss << AlterJob(AlterJobType::SUSPEND, job, job.name).ToString() << '\n';
+	}
+}
+
+static optional_ptr<const ColumnDefinition> OwningColumn(CatalogTransaction transaction, const TableCatalogEntry &table,
+                                                         const CatalogEntry &owned) {
+	if (owned.type != CatalogType::SEQUENCE_ENTRY) {
+		return nullptr;
+	}
+	auto &owner = owned.Cast<SequenceCatalogEntry>().owner_column;
+	auto sequence = owned.ParentSchema(transaction).GetQualifiedName(owned.name);
+	IdentifierEquality equals(table.ParentCatalog().IsCaseSensitive());
+	for (auto &column : table.GetColumns().Logical()) {
+		if (owner.IsValid() ? owner.GetIndex() == column.CatalogOid()
+		                    : Binder::DefaultNamesSequence(column, sequence, equals)) {
+			return column;
+		}
+	}
+	return nullptr;
+}
+
+static void WriteOwnedBy(stringstream &ss, CatalogTransaction transaction, const TableCatalogEntry &table,
+                         const CatalogEntry &owned) {
+	if (table.ParentCatalog().Compatibility() != SqlCompatibility::POSTGRES || owned.internal) {
+		return;
+	}
+	auto column = OwningColumn(transaction, table, owned);
+	if (!column) {
+		return;
+	}
+	ChangeOwnershipInfo ownership(
+	    owned.type,
+	    AlterEntryData(QualifiedName(owned.ParentSchemaPath(), owned.name), OnEntryNotFound::THROW_EXCEPTION),
+	    Identifier(), Identifier());
+	ownership.owner_path = {table.name, column->Name()};
+	ss << ownership.ToString() << '\n';
+}
+
+static void WriteOwnedEntries(stringstream &ss, Catalog &catalog, CatalogTransaction transaction, CatalogEntry &owner) {
+	for (auto &owned : catalog.OwnedEntries(transaction, owner)) {
+		if (owned.get().type == CatalogType::JOB_ENTRY) {
+			WriteJobState(ss, owner, owned);
+		} else if (owner.type == CatalogType::TABLE_ENTRY) {
+			WriteOwnedBy(ss, transaction, owner.Cast<TableCatalogEntry>(), owned);
+		}
+	}
+}
+
+static void WriteCatalogEntries(stringstream &ss, Catalog &catalog, CatalogTransaction transaction,
+                                catalog_entry_vector_t &entries) {
+	unordered_map<idx_t, QualifiedName> user_types;
 	for (auto &entry : entries) {
-		if (entry.get().internal) {
+		if (entry.get().type == CatalogType::TYPE_ENTRY && !entry.get().internal) {
+			user_types.emplace(entry.get().oid, QualifiedName(entry.get().ParentSchemaPath(), entry.get().name));
+		}
+	}
+	for (auto &entry : entries) {
+		if (entry.get().internal || (entry.get().type == CatalogType::SCHEMA_ENTRY &&
+		                             entry.get().name == entry.get().ParentCatalog().GetDefaultSchema())) {
 			continue;
 		}
-		auto create_info = entry.get().GetInfo();
+		if (CreatedByOwner(entry) && catalog.OwnerOf(transaction, entry)) {
+			continue;
+		}
+		auto create_info = entry.get().GetInfo(transaction);
+		if (create_info->type == CatalogType::TABLE_ENTRY) {
+			auto &columns = create_info->Cast<CreateTableInfo>().columns;
+			for (idx_t i = 0; i < columns.LogicalColumnCount(); i++) {
+				auto &column = columns.GetColumnMutable(LogicalIndex(i));
+				auto type = column.Type();
+				if (QualifyUserTypes(type, user_types)) {
+					column.SetType(type);
+				}
+			}
+		} else if (create_info->type == CatalogType::TYPE_ENTRY) {
+			QualifyUserTypes(create_info->Cast<CreateTypeInfo>().type, user_types, true);
+		} else if (create_info->type == CatalogType::MACRO_ENTRY ||
+		           create_info->type == CatalogType::TABLE_MACRO_ENTRY) {
+			for (auto &macro : create_info->Cast<CreateMacroInfo>().macros) {
+				for (auto &type : macro->types) {
+					QualifyUserTypes(type, user_types);
+				}
+				for (auto &type : macro->return_types) {
+					QualifyUserTypes(type, user_types);
+				}
+			}
+		}
+		string setval;
+		if (create_info->type == CatalogType::SEQUENCE_ENTRY) {
+			auto &sequence = create_info->Cast<CreateSequenceInfo>();
+			setval = SequenceSetval(sequence, QualifiedName(entry.get().ParentSchemaPath(), entry.get().name));
+			if (sequence.recorded_start) {
+				sequence.start_value = *sequence.recorded_start;
+			}
+		}
 		try {
 			// the catalog is implied by the database the export is imported into - keep only the schema path
 			create_info->StripCatalogQualification();
@@ -43,8 +286,37 @@ static void WriteCatalogEntries(stringstream &ss, catalog_entry_vector_t &entrie
 			ss << entry.get().ToSQL();
 		}
 		ss << '\n';
+		ss << setval;
+		WriteComments(ss, entry.get());
+		WriteOwnedEntries(ss, catalog, transaction, entry);
 	}
 	ss << '\n';
+}
+
+static void OrderEntry(Catalog &catalog, CatalogTransaction transaction, const catalog_entry_set_t &exported,
+                       CatalogEntry &entry, catalog_entry_set_t &visited, catalog_entry_vector_t &order) {
+	if (!exported.count(entry) || !visited.insert(entry).second) {
+		return;
+	}
+	if (CreatedByOwner(entry)) {
+		if (auto owner = catalog.OwnerOf(transaction, entry)) {
+			OrderEntry(catalog, transaction, exported, *owner, visited, order);
+		}
+	}
+	catalog.ScanSubjects(transaction, entry, [&](CatalogEntry &subject) {
+		OrderEntry(catalog, transaction, exported, subject, visited, order);
+	});
+	order.push_back(entry);
+}
+
+static void OrderEntries(Catalog &catalog, CatalogTransaction transaction, catalog_entry_vector_t &entries) {
+	catalog_entry_set_t exported(entries.begin(), entries.end());
+	catalog_entry_set_t visited;
+	catalog_entry_vector_t order;
+	for (auto &entry : entries) {
+		OrderEntry(catalog, transaction, exported, entry, visited, order);
+	}
+	entries = std::move(order);
 }
 
 static void WriteStringStreamToFile(FileSystem &fs, stringstream &ss, const string &path) {
@@ -55,15 +327,28 @@ static void WriteStringStreamToFile(FileSystem &fs, stringstream &ss, const stri
 	handle.reset();
 }
 
-static void WriteCopyStatement(FileSystem &fs, stringstream &ss, CopyInfo &info, ExportedTableData &exported_table) {
+static void WriteCopyStatement(FileSystem &fs, stringstream &ss, CopyInfo &info, ExportedTableData &exported_table,
+                               TableCatalogEntry &table) {
 	ss << "COPY ";
 
 	//! NOTE: The catalog is explicitly not set here
 	auto table_name = exported_table.qualified_name;
 	table_name.StripCatalog();
+	ss << table_name.ToString(QualifiedNameToStringMode::HIDE_DEFAULT_SCHEMA);
+	vector<string> columns;
+	bool has_generated = false;
+	for (auto &column : table.GetColumns().Physical()) {
+		if (column.Generated()) {
+			has_generated = true;
+		} else {
+			columns.push_back(KeywordHelper::WriteOptionallyQuoted(column.Name().GetIdentifierName()));
+		}
+	}
+	if (has_generated) {
+		ss << " (" << StringUtil::Join(columns, ", ") << ")";
+	}
 	auto file_path = StringUtil::Replace(exported_table.file_path, "\\", "/");
-	ss << StringUtil::Format("%s FROM %s (", table_name.ToString(QualifiedNameToStringMode::HIDE_DEFAULT_SCHEMA),
-	                         SQLString(file_path));
+	ss << StringUtil::Format(" FROM %s (", SQLString(file_path));
 	// write the copy options
 	ss << "FORMAT '" << info.format << "'";
 	if (info.format == "csv") {
@@ -160,6 +445,19 @@ void PhysicalExport::ExtractEntries(ClientContext &context, vector<reference<Sch
 				result.macros.push_back(entry);
 			}
 		});
+		if (catalog.IsDuckCatalog()) {
+			continue;
+		}
+		schema.Scan(context, CatalogType::TOKENIZER_ENTRY, [&](CatalogEntry &entry) {
+			if (!entry.internal) {
+				result.tokenizers.push_back(entry);
+			}
+		});
+		schema.Scan(context, CatalogType::JOB_ENTRY, [&](CatalogEntry &entry) {
+			if (!entry.internal) {
+				result.jobs.push_back(entry);
+			}
+		});
 	}
 }
 
@@ -193,14 +491,18 @@ catalog_entry_vector_t PhysicalExport::GetNaiveExportOrder(ClientContext &contex
 	size += entries.views.size();
 	size += entries.indexes.size();
 	size += entries.macros.size();
+	size += entries.tokenizers.size();
+	size += entries.jobs.size();
 	catalog_entries.reserve(size);
 	AddEntries(catalog_entries, entries.schemas);
 	AddEntries(catalog_entries, entries.sequences);
 	AddEntries(catalog_entries, entries.custom_types);
+	AddEntries(catalog_entries, entries.tokenizers);
 	AddEntries(catalog_entries, entries.tables);
 	AddEntries(catalog_entries, entries.macros);
 	AddEntries(catalog_entries, entries.views);
 	AddEntries(catalog_entries, entries.indexes);
+	AddEntries(catalog_entries, entries.jobs);
 	return catalog_entries;
 }
 
@@ -216,16 +518,14 @@ SourceResultType PhysicalExport::GetDataInternal(ExecutionContext &context, Data
 
 	auto &catalog = Catalog::GetCatalog(ccontext, info->GetQualifiedName().Catalog());
 
+	auto transaction = catalog.GetCatalogTransaction(ccontext);
 	catalog_entry_vector_t catalog_entries;
 	catalog_entries = GetNaiveExportOrder(context.client, catalog);
-	auto dependency_manager = catalog.GetDependencyManager();
-	if (dependency_manager) {
-		dependency_manager->ReorderEntries(catalog_entries, ccontext);
-	}
+	OrderEntries(catalog, transaction, catalog_entries);
 
 	// write the schema.sql file
 	stringstream ss;
-	WriteCatalogEntries(ss, catalog_entries);
+	WriteCatalogEntries(ss, catalog, transaction, catalog_entries);
 	WriteStringStreamToFile(fs, ss, fs.JoinPath(info->file_path, "schema.sql"));
 
 	// write the load.sql file
@@ -233,7 +533,7 @@ SourceResultType PhysicalExport::GetDataInternal(ExecutionContext &context, Data
 	stringstream load_ss;
 	for (idx_t i = 0; i < exported_tables->data.size(); i++) {
 		auto exported_table_info = exported_tables->data[i].table_data;
-		WriteCopyStatement(fs, load_ss, *info, exported_table_info);
+		WriteCopyStatement(fs, load_ss, *info, exported_table_info, exported_tables->data[i].entry);
 	}
 	WriteStringStreamToFile(fs, load_ss, fs.JoinPath(info->file_path, "load.sql"));
 	state.finished = true;

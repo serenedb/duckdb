@@ -18,4 +18,4 @@ Catalog Error: Scalar Function with name "json_execute_serialized_sql" is not in
 statement error
 CALL json_execute_serialized_sql('test');
 ----
-Catalog Error: Table Function with name "json_execute_serialized_sql" is not in the catalog, but it exists in the json extension.
+Catalog Error: Table Function with name "json_execute_serialized_sql" does not exist in SereneDB (DuckDB provides it in its json extension).

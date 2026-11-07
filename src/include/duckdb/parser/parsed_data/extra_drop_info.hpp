@@ -19,8 +19,11 @@ enum class ExtraDropInfoType : uint8_t {
 	INVALID = 0,
 
 	SECRET_INFO = 1,
-	TRIGGER_INFO = 2
+	TRIGGER_INFO = 2,
+	DISCARD_INFO = 3
 };
+
+enum class DiscardTarget : uint8_t { ALL = 0, PLANS = 1, SEQUENCES = 2, TEMP = 3 };
 
 struct ExtraDropInfo {
 	explicit ExtraDropInfo(ExtraDropInfoType info_type) : info_type(info_type) {
@@ -67,9 +70,22 @@ struct ExtraDropSecretInfo : public ExtraDropInfo {
 	ExtraDropSecretInfo(const ExtraDropSecretInfo &info);
 
 	//! Secret Persistence
-	SecretPersistType persist_mode;
+	SecretPersistType persist_mode = SecretPersistType::DEFAULT;
 	//! (optional) the name of the storage to drop from
 	string secret_storage;
+
+public:
+	unique_ptr<ExtraDropInfo> Copy() const override;
+
+	void Serialize(Serializer &serializer) const override;
+	static unique_ptr<ExtraDropInfo> Deserialize(Deserializer &deserializer);
+};
+
+struct ExtraDropDiscardInfo : public ExtraDropInfo {
+	ExtraDropDiscardInfo();
+	explicit ExtraDropDiscardInfo(DiscardTarget target);
+
+	DiscardTarget target = DiscardTarget::ALL;
 
 public:
 	unique_ptr<ExtraDropInfo> Copy() const override;

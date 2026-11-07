@@ -2,16 +2,139 @@
 #include "duckdb/parser/expression/columnref_expression.hpp"
 #include "duckdb/parser/expression/cast_expression.hpp"
 #include "duckdb/parser/expression/default_expression.hpp"
+#include "duckdb/parser/expression/columnref_expression.hpp"
+#include "duckdb/parser/expression/constant_expression.hpp"
+#include "duckdb/common/enum_util.hpp"
+#include "duckdb/common/string_util.hpp"
 
 namespace duckdb {
 
-// ResetStatement <- 'RESET' SetVariableOrSetting
-unique_ptr<SQLStatement> PEGTransformerFactory::TransformResetStatement(PEGTransformer &transformer,
-                                                                        const SettingInfo &set_variable_or_setting) {
-	if (set_variable_or_setting.scope == SetScope::LOCAL) {
-		throw NotImplementedException("RESET LOCAL is not implemented.");
+namespace {
+
+// PG-compat for serenedb: SET search_path = a, "b,c", cat.s  -> normalize to
+// one comma-joined PG-quoted string so ParseList(...) treats each entry as one
+// atomic name. Mirrors the original libpg_query path.
+unique_ptr<SetStatement> TransformSetSearchPath(const Identifier &name, SetScope scope,
+                                                vector<unique_ptr<ParsedExpression>> values) {
+	auto make_set = [&](string value) {
+		return make_uniq<SetVariableStatement>(name, ConstantExpression::String(std::move(value)), scope);
+	};
+	auto serialize = [&](ParsedExpression &expr) -> string {
+		if (expr.GetExpressionType() == ExpressionType::COLUMN_REF) {
+			// ColumnRefExpression::ToString applies PG quoting so names with
+			// commas/dots survive ParseList as one atomic entry.
+			return expr.ToString();
+		}
+		if (expr.GetExpressionType() == ExpressionType::VALUE_CONSTANT) {
+			return expr.Cast<ConstantExpression>().GetLiteral().ToValue().ToString();
+		}
+		throw ParserException("SET search_path: expected identifier or string literal");
+	};
+	if (values.empty()) {
+		return make_set("");
 	}
-	return make_uniq<ResetVariableStatement>(set_variable_or_setting.name, set_variable_or_setting.scope);
+	if (values.size() == 1) {
+		auto &expr = *values[0];
+		if (expr.GetExpressionType() == ExpressionType::VALUE_DEFAULT) {
+			return make_uniq<ResetVariableStatement>(name, scope);
+		}
+		// Single string literal: wrap in double quotes so commas in the literal
+		// are not treated as separators by ParseList. Empty literal stays empty.
+		if (expr.GetExpressionType() == ExpressionType::VALUE_CONSTANT) {
+			auto &literal = expr.Cast<ConstantExpression>().GetLiteral();
+			if (literal.kind == LiteralKind::STRING) {
+				const auto &raw = literal.text;
+				if (raw.empty()) {
+					return make_set(raw);
+				}
+				string wrapped = "\"" + StringUtil::Replace(raw, "\"", "\"\"") + "\"";
+				return make_set(std::move(wrapped));
+			}
+		}
+		if (expr.GetExpressionType() != ExpressionType::COLUMN_REF) {
+			// on top of PG's grammar, DuckDB allows any expression here and evaluates it: pass it on,
+			// it produces the same comma-joined form current_setting('search_path') renders
+			return make_uniq<SetVariableStatement>(name, std::move(values[0]), scope);
+		}
+		return make_set(serialize(expr));
+	}
+	// Multi-arg: comma-join each PG-quoted element.
+	string joined;
+	for (auto &value : values) {
+		if (!joined.empty()) {
+			joined += ",";
+		}
+		joined += serialize(*value);
+	}
+	return make_set(std::move(joined));
+}
+
+} // namespace
+
+unique_ptr<SQLStatement> PEGTransformerFactory::TransformResetStatement(PEGTransformer &transformer,
+                                                                        const SettingInfo &reset_target) {
+	// PG-compat: RESET LOCAL is handled by PhysicalReset at execution time
+	// (rejected outside a transaction with the canonical PG error). The
+	// upstream PEG transformer's NotImplemented throw is removed to keep
+	// parity with the v2026.05.18 libpg_query path.
+	return make_uniq<ResetVariableStatement>(reset_target.name, reset_target.scope);
+}
+
+// ResetAliasedSetting <- ('TRANSACTION' 'ISOLATION' 'LEVEL') / ('SESSION' 'AUTHORIZATION') / ('TIME' 'ZONE')
+// PG-compat: RESET takes the same multi-word aliases as SHOW. Map each to
+// its underlying GUC name; the case-insensitive setting lookup picks up the
+// canonical-cased registration (TimeZone) on its own.
+SettingInfo PEGTransformerFactory::TransformResetAliasedSetting(PEGTransformer &transformer,
+                                                                ParseResult &choice_result) {
+	auto &first_kw = choice_result.Cast<ListParseResult>().Child<KeywordParseResult>(0).keyword;
+
+	SettingInfo info;
+	if (StringUtil::CIEquals(first_kw, "TRANSACTION")) {
+		info.name = "transaction_isolation";
+	} else if (StringUtil::CIEquals(first_kw, "SESSION")) {
+		info.name = "session_authorization";
+	} else {
+		info.name = "timezone";
+	}
+	return info;
+}
+
+// ResetAll <- ('LOCAL' 'ALL') / 'ALL'
+// PhysicalReset::GetDataInternal dispatches to ResetAll(...) when the
+// target name is empty, so emit a SettingInfo with an empty name. The
+// LOCAL variant flags scope=LOCAL so PhysicalReset can transaction-bound it.
+SettingInfo PEGTransformerFactory::TransformResetAll(PEGTransformer &transformer, ParseResult &parse_result) {
+	SettingInfo result;
+	result.name = "";
+	if (parse_result.type == ParseResultType::LIST) {
+		// First alternative: 'LOCAL' 'ALL' keywords.
+		result.scope = SetScope::LOCAL;
+	}
+	return result;
+}
+
+// SetTransactionIsolation <- 'TRANSACTION' 'ISOLATION' 'LEVEL' IsolationLevel
+// Maps to PG's SET TRANSACTION ISOLATION LEVEL ...; we forward the parsed level
+// into serenedb's existing "transaction_isolation" client setting, whose
+// SetLocal callback enforces "must be inside a transaction".
+unique_ptr<SetStatement>
+PEGTransformerFactory::TransformSetTransactionIsolation(PEGTransformer &transformer,
+                                                        const TransactionIsolationLevel &isolation_level) {
+	auto level = EnumUtil::ToChars(isolation_level);
+	return make_uniq<SetVariableStatement>("transaction_isolation", ConstantExpression::String(level),
+	                                       SetScope::AUTOMATIC);
+}
+
+// SetSessionCharacteristics <- 'SESSION' 'CHARACTERISTICS' 'AS' 'TRANSACTION' 'ISOLATION' 'LEVEL' IsolationLevel
+// Maps to PG's SET SESSION CHARACTERISTICS AS TRANSACTION ISOLATION LEVEL ...;
+// forwarded into serenedb's "default_transaction_isolation" setting, which is
+// what BEGIN reads as the default for new transactions.
+unique_ptr<SetStatement>
+PEGTransformerFactory::TransformSetSessionCharacteristics(PEGTransformer &transformer,
+                                                          const TransactionIsolationLevel &isolation_level) {
+	auto level = EnumUtil::ToChars(isolation_level);
+	return make_uniq<SetVariableStatement>("default_transaction_isolation", ConstantExpression::String(level),
+	                                       SetScope::AUTOMATIC);
 }
 
 // SetAssignment <- VariableAssign VariableList
@@ -78,6 +201,30 @@ unique_ptr<SetStatement> PEGTransformerFactory::TransformSetTimeZone(PEGTransfor
 	return make_uniq<SetVariableStatement>("timezone", std::move(zone_value), SetScope::AUTOMATIC);
 }
 
+// SetRole <- 'ROLE' RoleSpec
+// Routes to the `role` extension setting (registered in serenedb's
+// server/query/config_variables.cpp with a NoOverwrite callback so the
+// value flows into session state but doesn't perform real role-switch).
+unique_ptr<SetStatement> PEGTransformerFactory::TransformSetRole(PEGTransformer &transformer,
+                                                                 unique_ptr<ParsedExpression> role_spec) {
+	if (role_spec->GetExpressionClass() == ExpressionClass::DEFAULT) {
+		return make_uniq<ResetVariableStatement>("role", SetScope::AUTOMATIC);
+	}
+	return make_uniq<SetVariableStatement>("role", std::move(role_spec), SetScope::AUTOMATIC);
+}
+
+// SetSessionAuthorization <- 'SESSION' 'AUTHORIZATION' RoleSpec
+// Routes to the `session_authorization` setting. Same NoOverwrite shape as
+// SET ROLE.
+unique_ptr<SetStatement>
+PEGTransformerFactory::TransformSetSessionAuthorization(PEGTransformer &transformer,
+                                                        unique_ptr<ParsedExpression> role_spec) {
+	if (role_spec->GetExpressionClass() == ExpressionClass::DEFAULT) {
+		return make_uniq<ResetVariableStatement>("session_authorization", SetScope::AUTOMATIC);
+	}
+	return make_uniq<SetVariableStatement>("session_authorization", std::move(role_spec), SetScope::AUTOMATIC);
+}
+
 // SetVariable <- VariableScope Identifier
 SettingInfo PEGTransformerFactory::TransformSetVariable(PEGTransformer &transformer, const SetScope &variable_scope,
                                                         const Identifier &identifier) {
@@ -92,8 +239,16 @@ unique_ptr<SetStatement>
 PEGTransformerFactory::TransformStandardAssignment(PEGTransformer &transformer,
                                                    const SettingInfo &set_variable_or_setting,
                                                    vector<unique_ptr<ParsedExpression>> set_assignment) {
-	if (set_variable_or_setting.scope == SetScope::LOCAL) {
-		throw NotImplementedException("SET LOCAL is not implemented.");
+	// PG-compat: SET LOCAL is enforced at PhysicalSet::SetVariable
+	// (transaction-bound). Don't reject at parse time -- that's a regression
+	// from the upstream PEG transformer; v2026.05.18's libpg_query path
+	// passed the scope through.
+	// PG-compat for serenedb: SET search_path accepts comma-separated lists
+	// and unquoted/string-literal/DEFAULT shapes. Normalize into a single
+	// already-PG-quoted string before producing the SetVariableStatement.
+	if (set_variable_or_setting.name == "search_path") {
+		return TransformSetSearchPath(set_variable_or_setting.name, set_variable_or_setting.scope,
+		                              std::move(set_assignment));
 	}
 	if (set_assignment.size() > 1) {
 		throw ParserException("SET can only contain a single value");
@@ -110,11 +265,21 @@ PEGTransformerFactory::TransformStandardAssignment(PEGTransformer &transformer,
 	                                       set_variable_or_setting.scope);
 }
 
-// VariableList <- List(Expression)
+// SetValueOn <- 'ON'
+unique_ptr<ParsedExpression> PEGTransformerFactory::TransformSetValueOn(PEGTransformer &transformer) {
+	return ConstantExpression::String("on");
+}
+
+// SetValueOff <- 'OFF'
+unique_ptr<ParsedExpression> PEGTransformerFactory::TransformSetValueOff(PEGTransformer &transformer) {
+	return ConstantExpression::String("off");
+}
+
+// VariableList <- List(SetValue)
 vector<unique_ptr<ParsedExpression>>
 PEGTransformerFactory::TransformVariableList(PEGTransformer &transformer,
-                                             vector<unique_ptr<ParsedExpression>> expression) {
-	return expression;
+                                             vector<unique_ptr<ParsedExpression>> set_value) {
+	return set_value;
 }
 
 // VariableScope <- 'VARIABLE'
@@ -142,6 +307,7 @@ unique_ptr<ParsedExpression>
 PEGTransformerFactory::TransformZoneIntervalWithInterval(PEGTransformer &transformer, const string &string_literal,
                                                          const optional<DatePartSpecifier> &interval) {
 	auto expr = ConstantExpression::String(string_literal);
+	transformer.AddDepth(1);
 	return make_uniq<CastExpression>(LogicalType::INTERVAL, std::move(expr));
 }
 
@@ -149,6 +315,7 @@ PEGTransformerFactory::TransformZoneIntervalWithInterval(PEGTransformer &transfo
 unique_ptr<ParsedExpression> PEGTransformerFactory::TransformZoneIntervalWithPrecision(
     PEGTransformer &transformer, unique_ptr<ParsedExpression> number_literal, const string &string_literal) {
 	auto expr = ConstantExpression::String(string_literal);
+	transformer.AddDepth(1);
 	return make_uniq<CastExpression>(LogicalType::INTERVAL, std::move(expr));
 }
 

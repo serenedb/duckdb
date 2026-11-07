@@ -12,10 +12,16 @@ LogicalUnconditionalJoin::LogicalUnconditionalJoin(LogicalOperatorType logical_t
 }
 
 vector<ColumnBinding> LogicalUnconditionalJoin::GetColumnBindings() {
-	auto left_bindings = children[0]->GetColumnBindings();
+	return GetDerivedColumnBindings();
+}
+
+optional_ptr<LogicalOperator> LogicalUnconditionalJoin::GetBindingChild() {
+	return children[0].get();
+}
+
+void LogicalUnconditionalJoin::DeriveColumnBindings(vector<ColumnBinding> &bindings) {
 	auto right_bindings = children[1]->GetColumnBindings();
-	left_bindings.insert(left_bindings.end(), right_bindings.begin(), right_bindings.end());
-	return left_bindings;
+	bindings.insert(bindings.end(), right_bindings.begin(), right_bindings.end());
 }
 
 void LogicalUnconditionalJoin::ResolveTypes() {

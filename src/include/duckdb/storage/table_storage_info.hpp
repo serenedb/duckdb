@@ -24,6 +24,7 @@ struct ColumnSegmentInfo {
 	string segment_type;
 	idx_t segment_start;
 	idx_t segment_count;
+	idx_t segment_size = 0;
 	string compression_type;
 	Value segment_stats;
 	bool has_updates;

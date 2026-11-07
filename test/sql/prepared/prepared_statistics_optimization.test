@@ -74,7 +74,7 @@ PREPARE stale_filter AS SELECT count(*) FROM filter_t WHERE i = 200;
 query II
 EXPLAIN EXECUTE stale_filter;
 ----
-physical_plan	<REGEX>:.*Empty Result.*
+physical_plan	<REGEX>:.*EMPTY_RESULT.*
 
 query I
 SELECT result_types IS NULL FROM duckdb_prepared_statements() WHERE name = 'stale_filter';
@@ -87,7 +87,7 @@ INSERT INTO filter_t VALUES (200);
 query II
 EXPLAIN EXECUTE stale_filter;
 ----
-physical_plan	<!REGEX>:.*Empty Result.*
+physical_plan	<!REGEX>:.*EMPTY_RESULT.*
 
 # Join-derived range filters are regenerated from the current build-side statistics.
 statement ok
@@ -111,12 +111,12 @@ JOIN build USING (k);
 query II
 EXPLAIN EXECUTE stale_join;
 ----
-physical_plan	<REGEX>:.*Filters: \(k >= 3000\) AND \(k <= 5000\).*
+physical_plan	<REGEX>:.*Column Filter:[\s\S]*\(k >= 3000\) AND \(k <= 5000\).*
 
 query II
 EXPLAIN ANALYZE EXECUTE stale_join;
 ----
-analyzed_plan	<REGEX>:.*Dynamic Filters:.*
+analyzed_plan	<REGEX>:.*Dynamic Column Filter:.*
 
 statement ok
 DELETE FROM build;
@@ -127,12 +127,12 @@ INSERT INTO build VALUES (1), (2);
 query II
 EXPLAIN EXECUTE stale_join;
 ----
-physical_plan	<REGEX>:.*Filters: \(k >= 1\).*
+physical_plan	<REGEX>:.*Column Filter: \(k >= 1\).*
 
 query II
 EXPLAIN EXECUTE stale_join;
 ----
-physical_plan	<!REGEX>:.*Filters: \(k >= 3000\).*
+physical_plan	<!REGEX>:.*Column Filter: \(k >= 3000\).*
 
 # Metadata aggregate execution remains available and also triggers rebinding.
 statement ok

@@ -4,6 +4,7 @@ add_library_unity(
   caching_test_utils.cpp
   test_async_file_writer.cpp
   test_managed_async_task_queue.cpp
+  test_bit_utils.cpp
   test_cast.cpp
   test_checked_integer.cpp
   test_checksum.cpp
@@ -37,6 +38,7 @@ add_library_unity(
   test_substring_oob.cpp
   test_swar.cpp
   test_utf8_codepoint_oob.cpp
+  test_validity_mask_slice.cpp
   test_temporary_memory_manager.cpp
   test_versioning_utils.cpp
   test_value_to_sql_string.cpp

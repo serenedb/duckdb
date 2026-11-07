@@ -11,4 +11,4 @@ unzip data/storage/corrupt/corrupt_wal_encoding.db.wal.gz {TEST_DIR}/corrupt_wal
 statement error
 ATTACH '{TEST_DIR}/corrupt_wal_encoding.db'
 ----
-corrupt
+could not be replayed

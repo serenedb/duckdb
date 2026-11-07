@@ -274,7 +274,8 @@ BoundStatement Binder::Bind(BaseTableRef &ref) {
 			return_types.push_back(col.Type());
 			return_names.emplace_back(col.Name());
 		}
-		table_names = BindContext::AliasColumnNames(ref.Table(), table_names, ref.column_name_alias);
+		table_names = BindContext::AliasColumnNames(ref.Table(), table_names, ref.column_name_alias,
+		                                            table.GetColumns().IsCaseSensitive());
 
 		virtual_column_map_t virtual_columns;
 		if (scan_function.get_virtual_columns) {
@@ -288,13 +289,13 @@ BoundStatement Binder::Bind(BaseTableRef &ref) {
 		if (entry_at_clause) {
 			logical_get->at_clause = make_uniq<BoundAtClause>(entry_at_clause->Unit(), entry_at_clause->GetValue());
 		}
-		auto table_entry = logical_get->GetTable();
 		auto &col_ids = logical_get->GetMutableColumnIds();
-		if (!table_entry) {
-			bind_context.AddBaseTable(table_index, ref.alias, table_names, table_types, col_ids, ref.Table());
-		} else {
-			bind_context.AddBaseTable(table_index, ref.alias, table_names, table_types, col_ids, *table_entry);
-		}
+		// The binding carries this entry, and column binding reads the table's
+		// column model from it (star-expansion, generated-column expansion,
+		// column validation). A facade catalog delegates the scan to a storage
+		// table in another catalog, so bind the alias to the catalog-resolved
+		// entry the user named -- not the storage table inside the LogicalGet.
+		bind_context.AddBaseTable(table_index, ref.alias, table_names, table_types, col_ids, table);
 		BoundStatement result;
 		result.types = table_types;
 		result.names = table_names;
@@ -304,6 +305,8 @@ BoundStatement Binder::Bind(BaseTableRef &ref) {
 	case CatalogType::VIEW_ENTRY: {
 		// the node is a view: get the query that the view represents
 		auto &view_catalog_entry = table_or_view->Cast<ViewCatalogEntry>();
+		const auto scope_begin = global_binder_state->bound_tables;
+		const auto resolved_begin = GetStatementProperties().resolved_entries.size();
 		// We need to use a new binder for the view that doesn't reference any CTEs
 		// defined for this binder so there are no collisions between the CTEs defined
 		// for the view and for the current query
@@ -329,7 +332,7 @@ BoundStatement Binder::Bind(BaseTableRef &ref) {
 
 		// when binding a view, we always look into the catalog/schema where the view is stored first
 		auto view_search_path =
-		    GetSearchPath(view_catalog_entry.ParentCatalog(), view_catalog_entry.ParentSchema().name, true);
+		    GetSearchPath(view_catalog_entry.ParentCatalog(), view_catalog_entry.ParentSchema(context).name, true);
 		view_binder->entry_retriever.SetSearchPath(std::move(view_search_path));
 		// propagate the AT clause through the view
 		view_binder->entry_retriever.SetAtClause(entry_at_clause);
@@ -347,10 +350,13 @@ BoundStatement Binder::Bind(BaseTableRef &ref) {
 			// wrap the plan of a secure view - this prevents the optimizer from pushing into the view
 			bound_child.plan = make_uniq<LogicalSecureView>(
 			    view_catalog_entry.name.GetIdentifierName(),
-			    view_catalog_entry.ParentSchema().GetQualifiedName(view_catalog_entry.name), bound_child.types,
+			    view_catalog_entry.ParentSchema(context).GetQualifiedName(view_catalog_entry.name), bound_child.types,
 			    entry_at_clause, std::move(bound_child.plan));
 		}
 		bind_context.AddView(root_index, subquery.alias, subquery, bound_child, view_catalog_entry);
+		GetStatementProperties().view_scopes.push_back({&view_catalog_entry, scope_begin,
+		                                                global_binder_state->bound_tables, resolved_begin,
+		                                                GetStatementProperties().resolved_entries.size()});
 		return bound_child;
 	}
 	default:

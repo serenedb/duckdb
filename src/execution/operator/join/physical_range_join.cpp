@@ -215,8 +215,7 @@ public:
 		auto &client = pipeline->GetClientContext();
 
 		// Schedule as many tasks as the sort will allow
-		auto &ts = TaskScheduler::GetScheduler(client);
-		auto num_threads = ts.NumberOfThreads();
+		auto num_threads = TaskScheduler::QueryThreads(client);
 		vector<shared_ptr<Task>> tasks;
 
 		const auto tasks_scheduled = MinValue<idx_t>(num_threads, table.global_source->MaxThreads());

@@ -1,3 +1,4 @@
+#define DUCKDB_JEMALLOC_DECAY 1
 #include "duckdb/common/allocator.hpp"
 #include "duckdb/common/numeric_utils.hpp"
 #include "duckdb/common/string_util.hpp"
@@ -9,7 +10,6 @@
 #if !defined(WIN32) && INTPTR_MAX == INT64_MAX
 
 #include "jemalloc/jemalloc.h"
-#include "duckdb/malloc_ncpus.h"
 
 #else
 #error "jemalloc support is only available on 64-bit Linux with DUCKDB_ENABLE_JEMALLOC enabled"
@@ -34,9 +34,9 @@ static string PurgeArenaString(idx_t arena_idx) {
 }
 
 static void JemallocCTL(const char *name, void *old_ptr, size_t *old_len, void *new_ptr, size_t new_len) {
-	if (duckdb_je_mallctl(name, old_ptr, old_len, new_ptr, new_len) != 0) {
+	if (mallctl(name, old_ptr, old_len, new_ptr, new_len) != 0) {
 #ifdef DEBUG
-		throw InternalException("je_mallctl failed for setting \"%s\"", name);
+		throw InternalException("mallctl failed for setting \"%s\"", name);
 #endif
 	}
 }
@@ -59,16 +59,16 @@ static T GetJemallocCTL(const char *name) {
 }
 
 data_ptr_t Allocator::DefaultAllocate(PrivateAllocatorData *private_data, idx_t size) {
-	return data_ptr_cast(duckdb_je_malloc(size));
+	return data_ptr_cast(malloc(size));
 }
 
 void Allocator::DefaultFree(PrivateAllocatorData *private_data, data_ptr_t pointer, idx_t size) {
-	duckdb_je_free(pointer);
+	free(pointer);
 }
 
 data_ptr_t Allocator::DefaultReallocate(PrivateAllocatorData *private_data, data_ptr_t pointer, idx_t old_size,
                                         idx_t size) {
-	return data_ptr_cast(duckdb_je_realloc(pointer, size));
+	return data_ptr_cast(realloc(pointer, size));
 }
 
 optional_idx Allocator::DecayDelay() {
@@ -120,6 +120,29 @@ void Allocator::FlushAll() {
 
 	// Also return the system heap (see ThreadFlush) to the OS
 	MallocTrim(0);
+}
+
+optional_idx Allocator::UnpurgedBytes() {
+	uint64_t epoch = 1;
+	if (mallctl("epoch", nullptr, nullptr, &epoch, sizeof(epoch)) != 0) {
+		return optional_idx();
+	}
+	size_t page = 0;
+	size_t page_len = sizeof(page);
+	if (mallctl("arenas.page", &page, &page_len, nullptr, 0) != 0) {
+		return optional_idx();
+	}
+	idx_t pages = 0;
+	for (const auto stat : {"pdirty", "pmuzzy"}) {
+		const auto name = StringUtil::Format("stats.arenas.%llu.%s", static_cast<idx_t>(MALLCTL_ARENAS_ALL), stat);
+		size_t value = 0;
+		size_t len = sizeof(value);
+		if (mallctl(name.c_str(), &value, &len, nullptr, 0) != 0) {
+			return optional_idx();
+		}
+		pages += value;
+	}
+	return pages * page;
 }
 
 void Allocator::SetBackgroundThreads(bool enable) {

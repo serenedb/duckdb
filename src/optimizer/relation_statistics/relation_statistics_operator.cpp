@@ -11,10 +11,15 @@ ProjectChildStats(LogicalOperator &op, const vector<reference<const RelationStat
 	result.cardinality = cardinality;
 	result.stats_initialized = true;
 	result.table_name = Identifier(op.GetName());
+	vector<RelationColumnLookup> lookups;
+	lookups.reserve(children.size());
+	for (auto &child : children) {
+		lookups.emplace_back(child.get());
+	}
 	for (auto &binding : op.GetColumnBindings()) {
 		optional_ptr<const RelationColumnStats> source;
-		for (auto &child : children) {
-			source = child.get().GetColumnStats(binding);
+		for (auto &lookup : lookups) {
+			source = lookup.GetColumnStats(binding);
 			if (source) {
 				break;
 			}
@@ -47,11 +52,12 @@ static optional<RelationStats> ExtractGetWithChildStats(LogicalGet &get, ClientC
                                                         const RelationStats &child_stats) {
 	auto result = RelationStatisticsHelper::ExtractGetStats(get, context);
 	result.cardinality = child_stats.cardinality;
+	RelationColumnLookup child_columns(child_stats);
 	for (auto &binding : get.GetColumnBindings()) {
 		if (binding.table_index == get.table_index) {
 			continue;
 		}
-		auto child_column = child_stats.GetColumnStats(binding);
+		auto child_column = child_columns.GetColumnStats(binding);
 		if (!child_column) {
 			return {};
 		}
@@ -67,8 +73,9 @@ static optional<RelationStats> ExtractUnnestStats(LogicalOperator &op, const Rel
 	result.cardinality = child_stats.cardinality;
 	result.stats_initialized = true;
 	result.table_name = Identifier(op.GetName());
+	RelationColumnLookup child_columns(child_stats);
 	for (auto &binding : op.GetColumnBindings()) {
-		auto child_column = child_stats.GetColumnStats(binding);
+		auto child_column = child_columns.GetColumnStats(binding);
 		if (child_column) {
 			result.columns.emplace_back(binding, child_column->distinct_count, child_column->name);
 		} else if (binding.table_index == unnest.unnest_index) {
@@ -97,8 +104,9 @@ static optional<RelationStats> ExtractComparisonJoinStats(LogicalComparisonJoin 
 	mark_result.cardinality = cardinality;
 	mark_result.stats_initialized = true;
 	mark_result.table_name = Identifier(join.GetName());
+	RelationColumnLookup left_columns(child_stats[0].get());
 	for (auto &binding : join.GetColumnBindings()) {
-		auto column = child_stats[0].get().GetColumnStats(binding);
+		auto column = left_columns.GetColumnStats(binding);
 		if (column) {
 			mark_result.columns.emplace_back(binding, column->distinct_count, column->name);
 		} else if (binding.table_index == join.mark_index) {

@@ -139,7 +139,7 @@ void CSVSniffer::GenerateStateMachineSearchSpace(vector<unique_ptr<ColumnCountSc
 	if (options.dialect_options.state_machine_options.new_line.IsSetByUser()) {
 		new_line_id = options.dialect_options.state_machine_options.new_line.GetValue();
 	} else {
-		new_line_id = DetectNewLineDelimiter(*buffer_manager);
+		new_line_id = DetectNewLineDelimiter(*buffer_manager, options, state_machine_cache);
 	}
 	CSVIterator first_iterator;
 	bool iterator_set = false;
@@ -572,29 +572,30 @@ void CSVSniffer::RefineCandidates() {
 	}
 }
 
-NewLineIdentifier CSVSniffer::DetectNewLineDelimiter(CSVBufferManager &buffer_manager) {
+NewLineIdentifier CSVSniffer::DetectNewLineDelimiter(CSVBufferManager &buffer_manager, CSVReaderOptions &options,
+                                                     CSVStateMachineCache &state_machine_cache) {
+	auto &dialect = options.dialect_options.state_machine_options;
+	const CSVStateMachine state_machine(options,
+	                                    CSVStateMachineOptions(dialect.delimiter.GetValue(), dialect.quote.GetValue(),
+	                                                           dialect.escape.GetValue(), dialect.comment.GetValue(),
+	                                                           NewLineIdentifier::CARRY_ON, false),
+	                                    state_machine_cache);
 	// Get first buffer
 	auto buffer = buffer_manager.GetBuffer(0);
 	auto buffer_ptr = buffer->Ptr();
-	bool carriage_return = false;
-	bool n = false;
+	CSVStates states;
+	states.Initialize();
 	for (idx_t i = 0; i < buffer->actual_size; i++) {
-		if (buffer_ptr[i] == '\r') {
-			carriage_return = true;
-		} else if (buffer_ptr[i] == '\n') {
-			n = true;
-			break;
-		} else if (carriage_return) {
-			break;
+		state_machine.Transition(states, buffer_ptr[i]);
+		if (states.states[0] == CSVState::CARRIAGE_RETURN && states.states[1] != CSVState::CARRIAGE_RETURN) {
+			return states.states[1] == CSVState::RECORD_SEPARATOR ? NewLineIdentifier::CARRY_ON
+			                                                      : NewLineIdentifier::SINGLE_R;
+		}
+		if (states.states[1] == CSVState::RECORD_SEPARATOR) {
+			return NewLineIdentifier::SINGLE_N;
 		}
 	}
-	if (carriage_return && n) {
-		return NewLineIdentifier::CARRY_ON;
-	}
-	if (carriage_return) {
-		return NewLineIdentifier::SINGLE_R;
-	}
-	return NewLineIdentifier::SINGLE_N;
+	return states.IsCarriageReturn() ? NewLineIdentifier::SINGLE_R : NewLineIdentifier::SINGLE_N;
 }
 
 // Dialect Detection consists of five steps:

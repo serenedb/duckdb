@@ -73,7 +73,7 @@ public:
 	//! True, if the ART owns its data.
 	bool owns_data;
 	//! Storage version that the ART was created in, used for backwards compatible key generation
-	StorageVersion storage_version;
+	StorageVersion storage_version = StorageVersion::INVALID;
 
 public:
 	//! Try to initialize a scan on the ART with the given expression and filter.
@@ -116,8 +116,7 @@ public:
 	                     optional_ptr<DataChunk> chunk = nullptr);
 
 	//! Verify that data can be appended to the index without a constraint violation.
-	void VerifyAppend(DataChunk &chunk, IndexAppendInfo &info, optional_ptr<ConflictManager> manager) override
-	    DUCKDB_EXCLUDES(lock);
+	void VerifyAppend(DataChunk &chunk, IndexAppendInfo &info) override DUCKDB_EXCLUDES(lock);
 
 	//! Delete a chunk from the ART.
 	idx_t TryDelete(IndexLock &state, DataChunk &entries, Vector &row_identifiers,
@@ -149,6 +148,7 @@ public:
 
 	//! Returns the in-memory usage of the ART.
 	idx_t GetInMemorySize(IndexLock &index_lock) const override DUCKDB_REQUIRES(index_lock);
+	idx_t GetAllocationSize(IndexLock &index_lock) const override DUCKDB_REQUIRES(index_lock);
 
 	bool SupportsDeltaIndexes() const override;
 

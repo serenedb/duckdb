@@ -8,6 +8,7 @@
 
 #pragma once
 
+#include "duckdb/catalog/schema_info.hpp"
 #include "duckdb/storage/storage_lock.hpp"
 #include "duckdb/storage/table/table_index_list.hpp"
 
@@ -22,8 +23,8 @@ struct DataTableInfo {
 	friend class DataTable;
 
 public:
-	DataTableInfo(AttachedDatabase &db, shared_ptr<TableIOManager> table_io_manager_p, vector<Identifier> schema_path,
-	              Identifier table);
+	DataTableInfo(AttachedDatabase &db, shared_ptr<TableIOManager> table_io_manager_p,
+	              shared_ptr<SchemaInfo> schema_info, Identifier table);
 
 	//! Bind unknown indexes throwing an exception if binding fails.
 	//! Only binds the specified index type, or all if no type is specified.
@@ -51,9 +52,19 @@ public:
 
 	Identifier GetSchemaName();
 	//! The full (possibly nested) schema path of the table
-	const vector<Identifier> &GetSchemaPath() const;
+	vector<Identifier> GetSchemaPath() const;
+	void SetSchemaInfo(shared_ptr<SchemaInfo> info);
 	Identifier GetTableName();
 	void SetTableName(Identifier name);
+	idx_t GetTableOid() const {
+		return table_oid;
+	}
+	void SetTableOid(idx_t oid) {
+		table_oid = oid;
+	}
+
+	atomic<transaction_t> last_append_commit {0};
+	StorageLock alter_lock;
 
 private:
 	//! The database instance of the table
@@ -61,11 +72,12 @@ private:
 	//! The table IO manager
 	shared_ptr<TableIOManager> table_io_manager;
 	//! Lock for modifying the name
-	mutex name_lock;
-	//! The (possibly nested) schema path of the table, outermost schema first
-	vector<Identifier> schema_path;
+	mutable mutex name_lock;
+	//! The schema of the table
+	shared_ptr<SchemaInfo> schema_info;
 	//! The name of the table
 	Identifier table;
+	atomic<idx_t> table_oid {0};
 	//! The physical list of indexes of this table
 	TableIndexList indexes;
 	//! Index storage information of the indexes created by this table

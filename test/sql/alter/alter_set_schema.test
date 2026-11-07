@@ -1,0 +1,83 @@
+# name: test/sql/alter/alter_set_schema.test
+# description: ALTER ... SET SCHEMA for every entry kind, each statement re-parsed from its ToString
+# group: [alter]
+
+statement ok
+SET debug_verify_statement = 'reparse_statement'
+
+statement ok
+CREATE SCHEMA s1
+
+statement ok
+CREATE SCHEMA s2
+
+statement ok
+CREATE TABLE s1.t (id INTEGER)
+
+statement ok
+CREATE VIEW s1.v AS SELECT 42 AS x
+
+statement ok
+CREATE SEQUENCE s1.q
+
+statement ok
+CREATE TYPE s1.mood AS ENUM ('ok')
+
+statement ok
+CREATE MACRO s1.m(x) AS x + 1
+
+statement ok
+CREATE MACRO s1.tm(x) AS TABLE SELECT x AS y
+
+statement ok
+CREATE FUNCTION s1.f(x) AS x * 2
+
+statement ok
+CREATE MACRO s1.p(x) AS x - 1
+
+statement ok
+ALTER TABLE s1.t SET SCHEMA s2
+
+statement ok
+ALTER TABLE IF EXISTS s1.missing SET SCHEMA s2
+
+statement ok
+ALTER VIEW s1.v SET SCHEMA s2
+
+statement ok
+ALTER SEQUENCE s1.q SET SCHEMA s2
+
+statement ok
+ALTER TYPE s1.mood SET SCHEMA s2
+
+statement ok
+ALTER MACRO s1.m SET SCHEMA s2
+
+statement ok
+ALTER MACRO TABLE s1.tm SET SCHEMA s2
+
+statement ok
+ALTER FUNCTION s1.f SET SCHEMA s2
+
+statement ok
+ALTER PROCEDURE s1.p SET SCHEMA s2
+
+query IIIIII
+SELECT (SELECT count(*) FROM s2.t), (SELECT x FROM s2.v), nextval('s2.q'), s2.m(1), s2.f(2), s2.p(5)
+----
+0	42	1	2	4	4
+
+query I
+SELECT y FROM s2.tm(7)
+----
+7
+
+query I
+SELECT 'ok'::s2.mood
+----
+ok
+
+statement error
+SELECT * FROM s1.v
+----
+does not exist

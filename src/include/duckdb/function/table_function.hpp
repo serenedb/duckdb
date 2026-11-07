@@ -9,6 +9,7 @@
 #pragma once
 
 #include "duckdb/common/enums/operator_result_type.hpp"
+#include "duckdb/common/explain_value.hpp"
 #include "duckdb/common/optional_ptr.hpp"
 #include "duckdb/execution/execution_context.hpp"
 #include "duckdb/execution/physical_operator_states.hpp"
@@ -22,12 +23,15 @@
 #include "duckdb/common/enums/order_preservation_type.hpp"
 #include "duckdb/common/enums/statement_type.hpp"
 
+#include <span>
+
 namespace duckdb {
 enum class TablePartitionInfo : uint8_t;
 struct PartitionStatistics;
 struct TableFunctionFileBindInput;
 struct TableFunctionFileBindInfo;
 struct TableFunctionFileInitInput;
+struct LocalTableFunctionState;
 
 //! Controls how a table function manages parallelism.
 enum class TableFunctionParallelism : uint8_t {
@@ -37,6 +41,7 @@ enum class TableFunctionParallelism : uint8_t {
 };
 
 class BaseStatistics;
+struct BoundLimitNode;
 class LogicalDependencyList;
 class LogicalGet;
 class TableFunction;
@@ -82,6 +87,14 @@ public:
 
 	virtual idx_t MaxThreads() const {
 		return 1;
+	}
+
+	virtual bool ResetForReuse(ClientContext &context) {
+		return false;
+	}
+
+	virtual bool ResetLocalStateForReuse(ExecutionContext &context, LocalTableFunctionState &local_state) {
+		return false;
 	}
 
 	template <class TARGET>
@@ -171,6 +184,7 @@ struct TableFunctionInitInput {
 	optional_ptr<const PhysicalOperator> op;
 	//! (Optional) Set when a multi-file scan initializes this function to read one of its files
 	optional_ptr<const TableFunctionFileInitInput> multi_file_input;
+	optional_ptr<const OperatorPartitionInfo> partition_info;
 
 	bool CanRemoveFilterColumns() const {
 		if (projection_ids.empty()) {
@@ -178,6 +192,11 @@ struct TableFunctionInitInput {
 			return false;
 		}
 		if (projection_ids.size() == column_ids.size()) {
+			for (idx_t i = 0; i < projection_ids.size(); i++) {
+				if (projection_ids[i] != i) {
+					return true;
+				}
+			}
 			// Filter column is used in remainder of plan, so we cannot remove it.
 			return false;
 		}
@@ -206,6 +225,18 @@ public:
 	AsyncResultsExecutionMode results_execution_mode {AsyncResultsExecutionMode::SYNCHRONOUS};
 	//! Interrupt state of the calling task, so the function might park and wake-up by returning a taskless Blocked res
 	optional_ptr<const InterruptState> interrupt_state;
+	optional_ptr<StateWithBlockableTasks> blockable;
+
+	//! SereneDB inverted-index row-addressed lookup. `pk_lookups` are ascending
+	//! per-call file-row-numbers / byte-offsets to fetch (parquet: row-group skip
+	//! keys; csv/json: exact byte offsets). The lookup TF appends surviving rows
+	//! DENSELY to `output` from its current size (so glob calls accumulate across
+	//! files), and for each output row w writes `pk_survivors[w]` = the index
+	//! into `pk_lookups` it came from, then sets `output`'s cardinality to the
+	//! survivor count. A row missing from the source or dropped by a pushed
+	//! filter gets no slot -- `output` is always compact.
+	std::span<const int64_t> pk_lookups;
+	std::span<idx_t> pk_survivors;
 };
 
 struct TableFunctionPartitionInput {
@@ -230,6 +261,13 @@ struct TableFunctionToStringInput {
 	}
 	const BoundTableFunction &table_function;
 	optional_ptr<const FunctionData> bind_data;
+
+	optional_ptr<const vector<ColumnIndex>> projected_column_ids;
+	optional_ptr<const vector<idx_t>> projection_ids;
+	optional_ptr<const vector<string>> projected_names;
+	optional_ptr<const vector<LogicalType>> projected_types;
+	optional_ptr<const TableFilterSet> filters;
+	bool projected_filter_prune = false;
 };
 
 struct TableFunctionGetPartitionInput {
@@ -358,6 +396,21 @@ typedef unique_ptr<MultiFileReader> (*table_function_get_multi_file_reader_t)(co
 
 typedef bool (*table_function_supports_pushdown_type_t)(const FunctionData &bind_data, idx_t col_idx);
 
+class TableFilter;
+//! Per-filter pushdown decision -- finer than supports_pushdown_type (which is per column).
+//! BeforeLimit: push into the scan, applied before any pushed row-limit (a pushed top-k stays valid).
+//! AfterLimit:  push into the scan, but only applied after the limit -> the scan must run unlimited.
+//! Reject:      do not push; the filter stays a Filter node above the scan.
+//! Drop:        the filter is redundant with what the scan itself enforces (e.g. the dynamic score
+//!              boundary TOP_N pushes back at a top-k collector) -- remove it from the plan entirely.
+enum class TableFilterPushdown : uint8_t { BeforeLimit, AfterLimit, Reject, Drop };
+
+//! (Optional) Decides pushdown per filter. When set, it takes precedence over supports_pushdown_type.
+//! The filter is mutable: the scan may rewrite it to consume the parts it enforces itself (e.g. strip a
+//! conjunct a top-k collector's threshold already guarantees) and return the verdict for the residue.
+typedef TableFilterPushdown (*table_function_supports_pushdown_filter_t)(FunctionData &bind_data, idx_t col_idx,
+                                                                         TableFilter &filter);
+
 typedef bool (*table_function_supports_pushdown_extract_t)(const FunctionData &bind_data, const LogicalIndex &col_idx);
 
 //! Whether repeated executions with the same bound data are stable within one query.
@@ -374,6 +427,10 @@ typedef void (*table_function_pushdown_complex_filter_t)(ClientContext &context,
                                                          vector<unique_ptr<Expression>> &filters);
 typedef bool (*table_function_pushdown_expression_t)(ClientContext &context, const LogicalGet &get, Expression &expr);
 typedef InsertionOrderPreservingMap<string> (*table_function_to_string_t)(TableFunctionToStringInput &input);
+//! Structured variant of to_string: when set, EXPLAIN/profiling use it instead of to_string,
+//! so the callback can attach ExplainNode trees (rendered as nested boxes / JSON objects)
+typedef InsertionOrderPreservingMap<ExplainValue> (*table_function_to_string_value_t)(
+    TableFunctionToStringInput &input);
 
 struct TableFunctionToSQLResult {
 	unique_ptr<TableRef> source;
@@ -403,11 +460,38 @@ typedef virtual_column_map_t (*table_function_get_virtual_columns_t)(ClientConte
 typedef vector<column_t> (*table_function_get_row_id_columns)(ClientContext &context,
                                                               optional_ptr<FunctionData> bind_data);
 
-typedef void (*table_function_set_scan_order)(unique_ptr<RowGroupOrderOptions> order_options,
+typedef void (*table_function_verify_dml_target_t)(ClientContext &context, optional_ptr<FunctionData> bind_data);
+
+typedef void (*table_function_set_scan_order)(ClientContext &context, unique_ptr<RowGroupOrderOptions> order_options,
                                               optional_ptr<FunctionData> bind_data);
+
+typedef bool (*table_function_consume_top_n_t)(ClientContext &context, FunctionData &bind_data,
+                                               const BoundLimitNode &limit, const BoundLimitNode &offset);
 
 typedef void (*table_function_set_partitions_to_scan_t)(vector<idx_t> partition_indices,
                                                         optional_ptr<FunctionData> bind_data);
+
+struct TableFunctionLookupInfo {
+	vector<bool> fetchable;
+	vector<bool> from_source;
+	vector<column_t> source_row_id_columns;
+	vector<string> row_id_names;
+	vector<string> source_row_id_names;
+	bool filters_rows = false;
+	bool applies_limit = false;
+	bool row_storage = false;
+	bool remote = false;
+	bool prefer_source_lookup = false;
+};
+
+typedef bool (*table_function_supports_lookup_t)(ClientContext &context, const LogicalGet &get,
+                                                 TableFunctionLookupInfo &info);
+
+typedef TableFunction (*table_function_get_lookup_function_t)(ClientContext &context, const LogicalGet &source);
+
+typedef unique_ptr<LogicalGet> (*table_function_get_lookup_source_t)(ClientContext &context, const LogicalGet &get,
+                                                                     const vector<ProjectionIndex> &columns,
+                                                                     TableIndex table_index);
 
 //! When to call init_global to initialize the table function
 enum class TableFunctionInitialization { INITIALIZE_ON_EXECUTE, INITIALIZE_ON_SCHEDULE };
@@ -493,6 +577,7 @@ public:
 	table_function_pushdown_expression_t pushdown_expression;
 	//! (Optional) function for rendering the operator to a string in explain/profiling output (invoked pre-execution)
 	table_function_to_string_t to_string;
+	table_function_to_string_value_t to_string_value = nullptr;
 	//! (Optional) reconstruct the source's SQL-visible state without retaining native objects.
 	//! Must not execute the source or perform effects during export.
 	table_function_to_sql_t to_sql = nullptr;
@@ -510,6 +595,9 @@ public:
 	table_function_get_multi_file_reader_t get_multi_file_reader;
 	//! (Optional) If this scanner supports filter pushdown, but not to all data types
 	table_function_supports_pushdown_type_t supports_pushdown_type;
+	//! (Optional) Per-filter pushdown decision (see TableFilterPushdown); when set it takes precedence
+	//! over supports_pushdown_type (per column).
+	table_function_supports_pushdown_filter_t supports_pushdown_filter = nullptr;
 	//! (Optional) If this scanner supports projection pushdown of struct extracts
 	table_function_supports_pushdown_extract_t supports_pushdown_extract;
 	//! Optional repeatability capability. An absent callback is treated conservatively as unknown.
@@ -522,10 +610,15 @@ public:
 	table_function_get_virtual_columns_t get_virtual_columns;
 	//! (Optional) returns a list of row id columns
 	table_function_get_row_id_columns get_row_id_columns;
+	table_function_verify_dml_target_t verify_dml_target = nullptr;
 	//! (Optional) sets the order to scan the row groups in
 	table_function_set_scan_order set_scan_order;
+	table_function_consume_top_n_t consume_top_n = nullptr;
 	//! (Optional) restricts the scan to a specific subset of partitions (by index in get_partition_stats order)
 	table_function_set_partitions_to_scan_t set_partitions_to_scan = nullptr;
+	table_function_supports_lookup_t supports_lookup = nullptr;
+	table_function_get_lookup_function_t get_lookup_function = nullptr;
+	table_function_get_lookup_source_t get_lookup_source = nullptr;
 
 	table_function_serialize_t serialize;
 	table_function_deserialize_t deserialize;

@@ -55,7 +55,7 @@ new_database	main	false
 new_database	new_s1	false
 new_database	new_s2	true
 
-# drop active schema
+# drop active schema - the search_path keeps naming it, so no schema is current (as in PostgreSQL)
 statement ok
 DROP SCHEMA new_database.new_s2;
 
@@ -64,7 +64,7 @@ SHOW SCHEMAS
 ----
 memory	main	false
 memory	mem_s1	false
-new_database	main	true
+new_database	main	false
 new_database	new_s1	false
 
 # detach default db
@@ -74,12 +74,12 @@ DETACH memory;
 query III
 SHOW SCHEMAS
 ----
-new_database	main	true
+new_database	main	false
 new_database	new_s1	false
 
 # DESCRIBE is alias for SHOW
 query III
 DESCRIBE SCHEMAS
 ----
-new_database	main	true
+new_database	main	false
 new_database	new_s1	false

@@ -19,8 +19,9 @@ public:
 	class ColumnListIterator;
 
 public:
-	DUCKDB_API explicit ColumnList(bool allow_duplicate_names = false);
-	DUCKDB_API explicit ColumnList(vector<ColumnDefinition> columns, bool allow_duplicate_names = false);
+	DUCKDB_API explicit ColumnList(bool allow_duplicate_names = false, bool case_sensitive = false);
+	DUCKDB_API explicit ColumnList(vector<ColumnDefinition> columns, bool allow_duplicate_names = false,
+	                               bool case_sensitive = false);
 
 	DUCKDB_API void AddColumn(ColumnDefinition column);
 	void Finalize();
@@ -35,6 +36,9 @@ public:
 	DUCKDB_API vector<LogicalType> GetColumnTypes() const;
 
 	DUCKDB_API bool ColumnExists(const Identifier &name) const;
+
+	static constexpr const char *SHARED_GENERATED_PREFIX = "0_generated_";
+	unique_ptr<ParsedExpression> SharedGeneratedExpression(const ColumnDefinition &column) const;
 
 	DUCKDB_API LogicalIndex GetColumnIndex(Identifier &column_name) const;
 	DUCKDB_API PhysicalIndex LogicalToPhysical(LogicalIndex index) const;
@@ -61,6 +65,11 @@ public:
 		allow_duplicate_names = allow_duplicates;
 	}
 
+	bool IsCaseSensitive() const {
+		return case_sensitive;
+	}
+	DUCKDB_API void SetCaseSensitive(bool case_sensitive);
+
 private:
 	vector<ColumnDefinition> columns;
 	//! A map of column name to column index
@@ -69,6 +78,7 @@ private:
 	vector<idx_t> physical_columns;
 	//! Allow duplicate names or not
 	bool allow_duplicate_names;
+	bool case_sensitive;
 
 private:
 	void AddToNameMap(ColumnDefinition &column);
@@ -114,14 +124,14 @@ public:
 		};
 
 	public:
-		idx_t Size() {
+		idx_t Size() const {
 			return physical ? list.PhysicalColumnCount() : list.LogicalColumnCount();
 		}
 
-		ColumnLogicalIteratorInternal begin() { // NOLINT: match stl API
+		ColumnLogicalIteratorInternal begin() const { // NOLINT: match stl API
 			return ColumnLogicalIteratorInternal(list, physical, 0, Size());
 		}
-		ColumnLogicalIteratorInternal end() { // NOLINT: match stl API
+		ColumnLogicalIteratorInternal end() const { // NOLINT: match stl API
 			return ColumnLogicalIteratorInternal(list, physical, Size(), Size());
 		}
 	};

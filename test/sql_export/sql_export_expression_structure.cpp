@@ -29,9 +29,6 @@
 #include "duckdb/planner/expression/bound_subquery_expression.hpp"
 #include "duckdb/planner/expression/bound_unnest_expression.hpp"
 #include "duckdb/planner/expression/bound_window_expression.hpp"
-#include "duckdb/planner/expression/legacy_bound_between_expression.hpp"
-#include "duckdb/planner/expression/legacy_bound_cast_expression.hpp"
-#include "duckdb/planner/expression/legacy_bound_comparison_expression.hpp"
 #include <cmath>
 #include <cstring>
 #include "bound_expression_sql_export_test_helpers.hpp"
@@ -356,11 +353,6 @@ TEST_CASE("Bound expression SQL export rejects deferred expression kinds",
 	    make_uniq<BoundLambdaExpression>(ExpressionType::LAMBDA, LogicalType::INTEGER, Constant(Value::INTEGER(1)), 1));
 	deferred.push_back(
 	    make_uniq<BoundLambdaRefExpression>(LogicalType::INTEGER, ColumnBinding(TableIndex(1), ProjectionIndex(0)), 0));
-	deferred.push_back(make_uniq<LegacyBoundCastExpression>(Constant(Value::INTEGER(1)), LogicalType::BIGINT, false));
-	deferred.push_back(make_uniq<LegacyBoundComparisonExpression>(
-	    ExpressionType::COMPARE_EQUAL, Constant(Value::INTEGER(1)), Constant(Value::INTEGER(1))));
-	deferred.push_back(make_uniq<LegacyBoundBetweenExpression>(Constant(Value::INTEGER(1)), Constant(Value::INTEGER(0)),
-	                                                           Constant(Value::INTEGER(2)), true, true));
 	for (auto &expression : deferred) {
 		RequireIssue(BoundExpressionSQLExporter::Export(*expression, context),
 		             LogicalPlanVerificationIssueCode::UNSUPPORTED_EXPRESSION, path);

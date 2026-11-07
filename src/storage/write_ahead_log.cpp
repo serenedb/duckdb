@@ -308,7 +308,7 @@ void WriteAheadLog::WriteDropTable(const TableCatalogEntry &entry) {
 	WriteAheadLogSerializer serializer(*this, WALType::DROP_TABLE);
 	// the qualified name carries the (possibly nested) containing schema path + the table name; the legacy immediate
 	// schema name is derived from it when serializing for storage versions older than v2.0.0
-	serializer.WriteEntry(WALDropTable(QualifiedName(entry.schema.GetSchemaPath(), entry.name)));
+	serializer.WriteEntry(WALDropTable(QualifiedName(entry.ParentSchemaPath(), entry.name)));
 	serializer.End();
 }
 
@@ -334,7 +334,7 @@ void WriteAheadLog::WriteCreateSequence(const SequenceCatalogEntry &entry) {
 
 void WriteAheadLog::WriteDropSequence(const SequenceCatalogEntry &entry) {
 	WriteAheadLogSerializer serializer(*this, WALType::DROP_SEQUENCE);
-	serializer.WriteEntry(WALDropSequence(QualifiedName(entry.schema.GetSchemaPath(), entry.name)));
+	serializer.WriteEntry(WALDropSequence(QualifiedName(entry.ParentSchemaPath(), entry.name)));
 	serializer.End();
 }
 
@@ -342,8 +342,8 @@ void WriteAheadLog::WriteSequenceValue(SequenceValue val) {
 	auto &sequence = *val.entry;
 	WriteAheadLogSerializer serializer(*this, WALType::SEQUENCE_VALUE);
 	// last_value (id 105) is only serialized from storage version v2.0.0 onwards, and is omitted when unset
-	serializer.WriteEntry(WALSequenceValue(QualifiedName(sequence.schema.GetSchemaPath(), sequence.name),
-	                                       val.usage_count, val.counter, val.entry->GetData().last_value));
+	serializer.WriteEntry(WALSequenceValue(QualifiedName(sequence.ParentSchemaPath(), sequence.name), val.usage_count,
+	                                       val.counter, val.last_value));
 	serializer.End();
 }
 
@@ -358,7 +358,7 @@ void WriteAheadLog::WriteCreateMacro(const ScalarMacroCatalogEntry &entry) {
 
 void WriteAheadLog::WriteDropMacro(const ScalarMacroCatalogEntry &entry) {
 	WriteAheadLogSerializer serializer(*this, WALType::DROP_MACRO);
-	serializer.WriteEntry(WALDropMacro(QualifiedName(entry.schema.GetSchemaPath(), entry.name)));
+	serializer.WriteEntry(WALDropMacro(QualifiedName(entry.ParentSchemaPath(), entry.name)));
 	serializer.End();
 }
 
@@ -370,7 +370,7 @@ void WriteAheadLog::WriteCreateTableMacro(const TableMacroCatalogEntry &entry) {
 
 void WriteAheadLog::WriteDropTableMacro(const TableMacroCatalogEntry &entry) {
 	WriteAheadLogSerializer serializer(*this, WALType::DROP_TABLE_MACRO);
-	serializer.WriteEntry(WALDropTableMacro(QualifiedName(entry.schema.GetSchemaPath(), entry.name)));
+	serializer.WriteEntry(WALDropTableMacro(QualifiedName(entry.ParentSchemaPath(), entry.name)));
 	serializer.End();
 }
 
@@ -421,7 +421,7 @@ void WriteAheadLog::WriteCreateIndex(const IndexCatalogEntry &entry) {
 
 void WriteAheadLog::WriteDropIndex(const IndexCatalogEntry &entry) {
 	WriteAheadLogSerializer serializer(*this, WALType::DROP_INDEX);
-	serializer.WriteEntry(WALDropIndex(QualifiedName(entry.schema.GetSchemaPath(), entry.name)));
+	serializer.WriteEntry(WALDropIndex(QualifiedName(entry.ParentSchemaPath(), entry.name)));
 	serializer.End();
 }
 
@@ -436,7 +436,7 @@ void WriteAheadLog::WriteCreateType(const TypeCatalogEntry &entry) {
 
 void WriteAheadLog::WriteDropType(const TypeCatalogEntry &entry) {
 	WriteAheadLogSerializer serializer(*this, WALType::DROP_TYPE);
-	serializer.WriteEntry(WALDropType(QualifiedName(entry.schema.GetSchemaPath(), entry.name)));
+	serializer.WriteEntry(WALDropType(QualifiedName(entry.ParentSchemaPath(), entry.name)));
 	serializer.End();
 }
 
@@ -452,7 +452,7 @@ void WriteAheadLog::WriteCreateTrigger(const TriggerCatalogEntry &entry) {
 void WriteAheadLog::WriteDropTrigger(const TriggerCatalogEntry &entry) {
 	WriteAheadLogSerializer serializer(*this, WALType::DROP_TRIGGER);
 	serializer.WriteEntry(
-	    WALDropTrigger(QualifiedName(entry.schema.GetSchemaPath(), entry.name), entry.base_table->Table()));
+	    WALDropTrigger(QualifiedName(entry.ParentSchemaPath(), entry.name), entry.base_table->Table()));
 	serializer.End();
 }
 
@@ -467,7 +467,7 @@ void WriteAheadLog::WriteCreateView(const ViewCatalogEntry &entry) {
 
 void WriteAheadLog::WriteDropView(const ViewCatalogEntry &entry) {
 	WriteAheadLogSerializer serializer(*this, WALType::DROP_VIEW);
-	serializer.WriteEntry(WALDropView(QualifiedName(entry.schema.GetSchemaPath(), entry.name)));
+	serializer.WriteEntry(WALDropView(QualifiedName(entry.ParentSchemaPath(), entry.name)));
 	serializer.End();
 }
 
@@ -551,8 +551,8 @@ void WriteAheadLog::WriteAlter(CatalogEntry &entry, const AlterInfo &info) {
 	auto &parent = entry.Parent().Cast<DuckTableEntry>();
 	auto added_oids = parent.GetAddedUniqueIndexOids(table);
 	if (added_oids.size() != 1) {
-		throw InternalException("WriteAlter: expected one added UNIQUE constraint on table \"%s\", found %llu",
-		                        parent.name, added_oids.size());
+		throw InternalException("WriteAlter: expected one added UNIQUE constraint on table %s, found %llu", parent.name,
+		                        added_oids.size());
 	}
 	auto &list = parent.GetStorage().GetDataTableInfo()->GetIndexes();
 	SerializeIndex(GetDatabase(), serializer, list, added_oids[0]);
@@ -601,11 +601,15 @@ void WriteAheadLog::SyncUpTo(idx_t offset) {
 	// durable_offset only advances on successful syncs, so an offset it covers stays durable
 	while (durable_offset < offset) {
 		if (sync_failed) {
-			throw IOException("Cannot sync WAL \"%s\": a previous sync of this WAL has failed", wal_path);
+			throw IOException("Cannot sync WAL \"%s\": a previous sync of this WAL has failed: %s", wal_path,
+			                  sync_failure);
 		}
 		if (sync_in_flight) {
 			// one sync at a time: the next syncer covers every marker flushed meanwhile
-			sync_cv.wait(guard);
+			auto sync_settled = [this]() DUCKDB_NO_THREAD_SAFETY_ANALYSIS {
+				return !sync_in_flight;
+			};
+			sync_lock.Await(absl::Condition(&sync_settled));
 			continue;
 		}
 		// sync everything flushed so far, on behalf of every waiter
@@ -629,10 +633,10 @@ void WriteAheadLog::SyncUpTo(idx_t offset) {
 		if (error.HasError()) {
 			// the OS may have dropped the dirty pages: this WAL must never be synced again
 			sync_failed = true;
+			sync_failure = error.RawMessage();
 		} else {
 			durable_offset = target;
 		}
-		sync_cv.notify_all();
 		if (error.HasError()) {
 			error.Throw();
 		}

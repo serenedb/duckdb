@@ -10,7 +10,6 @@
 
 #include "duckdb/common/hugeint.hpp"
 #include "duckdb/common/uhugeint.hpp"
-#include "duckdb/common/types.hpp"
 
 #include <type_traits>
 

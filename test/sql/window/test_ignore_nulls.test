@@ -298,7 +298,7 @@ SELECT *,
 FROM lvl
 ORDER BY id
 ----
-40000 values hashing to c302c8b0f3c10c1e5cc7211c4af7a8d6
+40000 values hashing to 6569dbb890173c1970f51f56d87d1d0b
 
 # Independent INGORE/RESPECT NULLS with shared input.
 query III

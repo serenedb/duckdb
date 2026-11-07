@@ -180,8 +180,54 @@ typedef unique_ptr<ParsedExpression> (*scalar_function_unbind_t)(FunctionUnbindI
 //! Get the expression type of a function
 typedef ExpressionType (*function_get_expression_type_t)(FunctionToStringInput &input);
 
-//! Legacy serialize function for expressions that were converted into functions
-typedef unique_ptr<Expression> (*function_legacy_serialize_t)(FunctionToStringInput &input);
+struct BucketGrid {
+	enum class Family : uint8_t { NONE, NAIVE, ZONED };
+
+	Family family = Family::NONE;
+	uint8_t variant = 0;
+	int64_t width = 0;
+	int64_t anchor = 0;
+	bool origin_days = false;
+	bool fixed_offset = false;
+	LogicalType input_type;
+	string identity;
+
+	bool Nests(const BucketGrid &finer) const {
+		return finer.width > 0 && width % finer.width == 0 && (anchor - finer.anchor) % finer.width == 0;
+	}
+};
+
+class BucketRewrite {
+public:
+	virtual ~BucketRewrite() = default;
+
+	virtual idx_t InputIndex() const = 0;
+	virtual optional_ptr<Expression> CustomInput() const {
+		return nullptr;
+	}
+	virtual bool TryConstantRange(int64_t &min_bucket, int64_t &max_bucket) const {
+		return false;
+	}
+	virtual bool TryBucketRange(const BaseStatistics &input_stats, int64_t &min_bucket, int64_t &max_bucket) const = 0;
+	virtual unique_ptr<Expression> Bucket(unique_ptr<Expression> input) const = 0;
+	virtual unique_ptr<Expression> Unbucket(unique_ptr<Expression> bucket) const = 0;
+
+	virtual int64_t GranularityMicros() const {
+		return 0;
+	}
+	virtual unique_ptr<Expression> UnbucketCore(unique_ptr<Expression> bucket) const;
+	virtual BucketGrid Grid() const {
+		return BucketGrid();
+	}
+	virtual bool Contains(const BucketGrid &finer) const {
+		return false;
+	}
+	virtual unique_ptr<BucketRewrite> TryTimeOfDay(ClientContext &context, Expression &input) const {
+		return nullptr;
+	}
+};
+
+typedef unique_ptr<BucketRewrite> (*bucket_rewrite_t)(ClientContext &context, const BoundFunctionExpression &expr);
 
 class ScalarFunctionCallbacks {
 public:
@@ -211,10 +257,10 @@ public:
 	function_serialize_t serialize = nullptr;
 	function_deserialize_t deserialize = nullptr;
 
-	function_legacy_serialize_t legacy_serialize = nullptr;
-
 	//! The filter prune function (if any)
 	propagate_filter_t filter_prune = nullptr;
+
+	bucket_rewrite_t bucket_rewrite = nullptr;
 
 	bool operator==(const ScalarFunctionCallbacks &rhs) const;
 	bool operator!=(const ScalarFunctionCallbacks &rhs) const;
@@ -259,6 +305,9 @@ public: // Properties
 
 	auto RequiresOrderedExecution() const -> bool { return properties.requires_ordered_execution; }
 	auto SetRequiresOrderedExecution(bool value) -> void { properties.requires_ordered_execution = value; }
+
+	auto GetLazyArguments() const -> bool { return properties.lazy_arguments; }
+	auto SetLazyArguments(bool value) -> void { properties.lazy_arguments = value; }
 
 	//! Set this functions error-mode as fallible (can throw runtime errors)
 	void SetFallible() { properties.errors = FunctionErrors::CAN_THROW_RUNTIME_ERROR; }
@@ -309,6 +358,10 @@ public: // Callbacks
 	auto SetFilterPruneCallback(propagate_filter_t callback) -> void { callbacks.filter_prune = callback; }
 	auto GetFilterPruneCallback() const -> propagate_filter_t { return callbacks.filter_prune; }
 
+	auto HasBucketRewriteCallback() const -> bool { return callbacks.bucket_rewrite != nullptr; }
+	auto SetBucketRewriteCallback(bucket_rewrite_t callback) -> void { callbacks.bucket_rewrite = callback; }
+	auto GetBucketRewriteCallback() const -> bucket_rewrite_t { return callbacks.bucket_rewrite; }
+
 	auto HasToStringCallback() const -> bool { return callbacks.to_string != nullptr; }
 	auto SetToStringCallback(function_to_string_t callback) -> void { callbacks.to_string = callback; }
 	auto FunctionToString(FunctionToStringInput &input) const -> string { return callbacks.to_string(input); }
@@ -316,10 +369,6 @@ public: // Callbacks
 	auto HasUnbindCallback() const -> bool { return callbacks.unbind != nullptr; }
 	auto SetUnbindCallback(scalar_function_unbind_t callback) -> void { callbacks.unbind = callback; }
 	auto GetUnbindCallback() const -> scalar_function_unbind_t { return callbacks.unbind; }
-
-	auto HasLegacySerializeCallback() const -> bool { return callbacks.legacy_serialize != nullptr; }
-	auto SetLegacySerializeCallback(function_legacy_serialize_t callback) -> void { callbacks.legacy_serialize = callback; }
-	auto GetLegacySerializeCallback() const -> function_legacy_serialize_t { return callbacks.legacy_serialize; }
 
 	auto SetGetExpressionTypeCallback(function_get_expression_type_t callback) -> void { callbacks.get_expression_type = callback; }
 	auto GetExpressionType(FunctionToStringInput &input) const -> ExpressionType {
@@ -670,7 +719,7 @@ public:
 	}
 	Binder &GetBinder() {
 		if (binder == nullptr) {
-			throw InternalException("Function '%s' has cannot be bound without a Binder!", bound_function.GetName());
+			throw InternalException("Function %s has cannot be bound without a Binder!", bound_function.GetName());
 		}
 		return *binder;
 	}

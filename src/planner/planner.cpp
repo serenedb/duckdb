@@ -106,15 +106,6 @@ static void RewriteTriggersToDependent(Binder &binder, LogicalOperator &op) {
 	}
 }
 
-static void CheckTreeDepth(const LogicalOperator &op, idx_t max_depth, idx_t depth = 0) {
-	if (depth >= max_depth) {
-		throw ParserException("Maximum tree depth of %lld exceeded in logical planner", max_depth);
-	}
-	for (auto &child : op.children) {
-		CheckTreeDepth(*child, max_depth, depth + 1);
-	}
-}
-
 #ifdef D_ASSERT_IS_ENABLED
 static bool ContainsDependentJoin(const LogicalOperator &op) {
 	if (op.type == LogicalOperatorType::LOGICAL_DEPENDENT_JOIN) {
@@ -192,7 +183,7 @@ void Planner::CreatePlan(SQLStatement &statement) {
 	auto &profiler = QueryProfiler::Get(context);
 	auto parameter_count = statement.named_param_map.size();
 
-	BoundParameterMap bound_parameters(parameter_data);
+	BoundParameterMap bound_parameters(parameter_data, &parameter_type_hints);
 
 	// first bind the tables and columns to the catalog
 	bool parameters_resolved = true;
@@ -237,15 +228,12 @@ void Planner::CreatePlan(SQLStatement &statement) {
 		}
 	}
 	if (this->plan) {
-		auto max_tree_depth = Settings::Get<MaxExpressionDepthSetting>(context);
-		CheckTreeDepth(*plan, max_tree_depth);
-
 		RewriteTriggersToDependent(*this->binder, *this->plan);
 		RecursiveDependentJoinPlanner::Plan(*this->binder, this->plan);
 		this->plan = FlattenDependentJoins::DecorrelateIndependent(*this->binder, std::move(this->plan));
-		D_ASSERT(!ContainsDependentJoin(*this->plan));
-		D_ASSERT(VerifyPlannedExpressions(*this->plan));
-		D_ASSERT(VerifyCanonicalComparisonJoins(*this->plan));
+		D_ASSERT_V(!ContainsDependentJoin(*this->plan));
+		D_ASSERT_V(VerifyPlannedExpressions(*this->plan));
+		D_ASSERT_V(VerifyCanonicalComparisonJoins(*this->plan));
 	}
 	this->properties = binder->GetStatementProperties();
 	this->properties.parameter_count = parameter_count;
@@ -286,8 +274,7 @@ shared_ptr<PreparedStatementData> Planner::PrepareSQLStatement(unique_ptr<SQLSta
 
 void Planner::CreatePlan(unique_ptr<SQLStatement> statement) {
 	D_ASSERT(statement);
-	Optimizer optimizer(*binder, context);
-	optimizer.OptimizeStatement(statement);
+	Optimizer::OptimizeStatement(*binder, context, statement);
 
 	switch (statement->type) {
 	case StatementType::SELECT_STATEMENT:
@@ -350,18 +337,12 @@ void Planner::VerifyPlan(ClientContext &context, unique_ptr<LogicalOperator> &op
 		return;
 	}
 
-	auto &config = DBConfig::GetConfig(context);
 	// format (de)serialization of this operator
 	try {
 		MemoryStream stream(Allocator::Get(context));
 
 		SerializationOptions options;
-		if (config.options.storage_compatibility.manually_set) {
-			// Override the default of 'latest' if this was manually set (for testing, mostly)
-			options.storage_compatibility = config.options.storage_compatibility;
-		} else {
-			options.storage_compatibility = StorageCompatibility::Latest();
-		}
+		options.storage_compatibility = StorageCompatibility::SereneDBLatest();
 
 		BinarySerializer::Serialize(*op, stream, options);
 		stream.Rewind();

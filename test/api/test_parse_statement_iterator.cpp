@@ -136,6 +136,21 @@ TEST_CASE("ParseIterator: movable", "[api][parse_iterator]") {
 	REQUIRE_FALSE(moved.Peek());
 }
 
+TEST_CASE("ParseIterator: movable after stripping Unicode spaces", "[api][parse_iterator]") {
+	DuckDB db(nullptr);
+	Connection con(db);
+	auto &ctx = *con.context;
+
+	ParseIterator it(ctx, "SELECT\xC2\xA0"
+	                      "1;");
+	ParseIterator moved(std::move(it));
+	REQUIRE(moved.Peek());
+	auto statement = moved.GetStatement();
+	REQUIRE(statement);
+	REQUIRE(statement->query == "SELECT 1;");
+	REQUIRE_FALSE(moved.Peek());
+}
+
 TEST_CASE("ParseIterator: separators are skipped, no trailing separator needed", "[api][parse_iterator]") {
 	DuckDB db(nullptr);
 	Connection con(db);
@@ -324,4 +339,16 @@ TEST_CASE("StatementIterator: movable", "[api][statement_iterator]") {
 	REQUIRE(moved.Peek());
 	REQUIRE(moved.GetStatement());
 	REQUIRE_FALSE(moved.Peek());
+}
+
+TEST_CASE("Parser: a moved parser keeps its statements and parses on", "[api][parser]") {
+	auto parser = Parser::GetBuiltinParser();
+	parser.ParseQuery("SELECT 6; SELECT 7");
+
+	Parser moved(std::move(parser));
+	REQUIRE(moved.statements.size() == 2);
+	REQUIRE(moved.statements[1]->ToString() == "SELECT 7");
+
+	moved.ParseQuery("SELECT 67");
+	REQUIRE(moved.statements.size() == 3);
 }

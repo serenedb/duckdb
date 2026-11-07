@@ -64,3 +64,38 @@ statement error
 select cast(-9.9999999999999999999999999999999 as decimal(1,0));
 ----
 Casting value "-9.9999999999999999999999999999999" to type DECIMAL(1,0) failed: value is out of range!
+
+statement error
+select cast(' NaN ' as decimal(10,2));
+----
+Could not convert string " NaN " to DECIMAL(10,2)
+
+statement error
+select cast('-Infinity' as decimal(10,2));
+----
+Could not convert string "-Infinity" to DECIMAL(10,2)
+
+statement error
+select cast('abc' as decimal(10,2));
+----
+Could not convert string "abc" to DECIMAL(10,2)
+
+statement error
+select cast('1e40' as decimal(10,2));
+----
+Could not convert string "1e40" to DECIMAL(10,2)
+
+statement error
+select cast('nan'::double as decimal(10,2));
+----
+Could not cast value
+
+statement error
+select cast('-inf'::double as decimal(10,2));
+----
+Could not cast value
+
+query I
+select try_cast('NaN' as decimal(10,2));
+----
+NULL

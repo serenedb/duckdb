@@ -19,6 +19,12 @@ class Allocator;
 class ClientContext;
 class ExecutionContext;
 
+class LazyColumns {
+public:
+	virtual ~LazyColumns() = default;
+	virtual bool Load(DataChunk &chunk, idx_t column, const SelectionVector *sel, idx_t count, Vector &result) = 0;
+};
+
 //! ExpressionExecutor is responsible for executing a set of expressions and storing the result in a data chunk
 class ExpressionExecutor {
 	friend class BoundIndex;
@@ -28,7 +34,11 @@ public:
 	DUCKDB_API ExpressionExecutor(ClientContext &context, const Expression *expression);
 	DUCKDB_API ExpressionExecutor(ClientContext &context, const Expression &expression);
 	DUCKDB_API ExpressionExecutor(ClientContext &context, const vector<unique_ptr<Expression>> &expressions);
+	DUCKDB_API explicit ExpressionExecutor(ExpressionState &parent);
+	DUCKDB_API ExpressionExecutor(ExpressionState &parent, const Expression &expression);
 	ExpressionExecutor(ExpressionExecutor &&) = delete;
+
+	static constexpr idx_t MAX_FOLDED_VALUE_SIZE = 1 << 22;
 
 	//! The expressions of the executor
 	vector<const Expression *> expressions;
@@ -48,6 +58,7 @@ public:
 
 	//! Execute the set of expressions with the given input chunk and store the result in the output chunk
 	DUCKDB_API void Execute(DataChunk *input, DataChunk &result);
+	DUCKDB_API void Execute(ClientContext &context, DataChunk &input, DataChunk &result);
 	inline void Execute(DataChunk &input, DataChunk &result) {
 		Execute(&input, result);
 	}
@@ -81,6 +92,13 @@ public:
 	                                       bool allow_unfoldable = false);
 	//! Try to evaluate a scalar expression and fold it into a single value, returns false if an exception is thrown
 	DUCKDB_API static bool TryEvaluateScalar(ClientContext &context, const Expression &expr, Value &result);
+	enum class FoldResult : uint8_t { FOLDED, TOO_LARGE, THROWS };
+	DUCKDB_API static FoldResult EvaluateFoldable(ClientContext &context, const Expression &expr, Value &result,
+	                                              idx_t max_size = MAX_FOLDED_VALUE_SIZE);
+	static bool TryEvaluateFoldable(ClientContext &context, const Expression &expr, Value &result,
+	                                idx_t max_size = MAX_FOLDED_VALUE_SIZE) {
+		return EvaluateFoldable(context, expr, result, max_size) == FoldResult::FOLDED;
+	}
 
 	//! Initialize the state of a given expression
 	static unique_ptr<ExpressionState> InitializeState(const Expression &expr, ExpressionExecutorState &state);
@@ -93,6 +111,11 @@ public:
 	}
 
 	DUCKDB_API vector<unique_ptr<ExpressionExecutorState>> &GetStates();
+
+	DUCKDB_API void ExecuteArgument(ExpressionState &state, idx_t child, const SelectionVector *sel, idx_t count,
+	                                Vector &result);
+
+	optional_ptr<LazyColumns> lazy_columns;
 
 protected:
 	void Initialize(const Expression &expr, ExpressionExecutorState &state);
@@ -153,6 +176,7 @@ protected:
 private:
 	//! Client context
 	optional_ptr<ClientContext> context;
+	optional_ptr<ExpressionExecutor> parent;
 	//! The states of the expression executor; this holds any intermediates and temporary states of expressions
 	vector<unique_ptr<ExpressionExecutorState>> states;
 	//! The vector verification (debug setting)
@@ -162,5 +186,7 @@ private:
 	// it is possible to create an expression executor without a ClientContext - but it should be avoided
 	DUCKDB_API ExpressionExecutor();
 	DUCKDB_API explicit ExpressionExecutor(const vector<unique_ptr<Expression>> &exprs);
+
+	ExpressionState *RootState(idx_t expr_idx);
 };
 } // namespace duckdb

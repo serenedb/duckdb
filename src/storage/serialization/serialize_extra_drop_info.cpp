@@ -18,6 +18,9 @@ unique_ptr<ExtraDropInfo> ExtraDropInfo::Deserialize(Deserializer &deserializer)
 	auto info_type = deserializer.ReadProperty<ExtraDropInfoType>(100, "info_type");
 	unique_ptr<ExtraDropInfo> result;
 	switch (info_type) {
+	case ExtraDropInfoType::DISCARD_INFO:
+		result = ExtraDropDiscardInfo::Deserialize(deserializer);
+		break;
 	case ExtraDropInfoType::SECRET_INFO:
 		result = ExtraDropSecretInfo::Deserialize(deserializer);
 		break;
@@ -28,6 +31,17 @@ unique_ptr<ExtraDropInfo> ExtraDropInfo::Deserialize(Deserializer &deserializer)
 		throw SerializationException("Unsupported type for deserialization of ExtraDropInfo!");
 	}
 	return result;
+}
+
+void ExtraDropDiscardInfo::Serialize(Serializer &serializer) const {
+	ExtraDropInfo::Serialize(serializer);
+	serializer.WriteProperty<DiscardTarget>(203, "target", target);
+}
+
+unique_ptr<ExtraDropInfo> ExtraDropDiscardInfo::Deserialize(Deserializer &deserializer) {
+	auto result = duckdb::unique_ptr<ExtraDropDiscardInfo>(new ExtraDropDiscardInfo());
+	deserializer.ReadProperty<DiscardTarget>(203, "target", result->target);
+	return std::move(result);
 }
 
 void ExtraDropSecretInfo::Serialize(Serializer &serializer) const {

@@ -1,21 +1,28 @@
 #include "duckdb/function/scalar/string_functions.hpp"
 
 #include "duckdb/common/hive_partitioning.hpp"
+#include "duckdb/common/vector/vector_iterator.hpp"
 #include "duckdb/common/vector/vector_writer.hpp"
+#include "duckdb/common/vector_operations/vector_operations.hpp"
 
 namespace duckdb {
 
 namespace {
 
 void HivePartitionComponentFunction(DataChunk &args, ExpressionState &state, Vector &result) {
-	// type-erased, as the partition value can have any type
-	auto writer = FlatVector::Writer<string_t>(result, args.size());
-	for (idx_t row = 0; row < args.size(); row++) {
-		auto value = args.data[1].GetValue(row);
+	const auto count = args.size();
+	Vector value_text(LogicalType::VARCHAR, count);
+	VectorOperations::DefaultCast(args.data[1], value_text, count);
+	auto names = args.data[0].Values<string_t>();
+	auto values = value_text.Values<string_t>();
+	auto writer = FlatVector::Writer<string_t>(result, count);
+	for (idx_t row = 0; row < count; row++) {
+		auto name = names[row];
+		auto value = values[row];
 		// the name and the value are escaped the same way url_encode does
-		auto component = HivePartitioning::Escape(args.data[0].GetValue(row).ToString()) + "=";
-		component +=
-		    value.IsNull() ? HivePartitioning::DEFAULT_PARTITION_NAME : HivePartitioning::EscapeValue(value.ToString());
+		auto component = HivePartitioning::Escape(name.IsValid() ? name.GetValue().GetString() : "NULL") + "=";
+		component += value.IsValid() ? HivePartitioning::EscapeValue(value.GetValue().GetString())
+		                             : HivePartitioning::DEFAULT_PARTITION_NAME;
 		writer.WriteValue(string_t(component.c_str(), UnsafeNumericCast<uint32_t>(component.size())));
 	}
 }

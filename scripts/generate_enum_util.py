@@ -9,13 +9,15 @@ os.chdir(os.path.dirname(__file__))
 # Dont generate serialization for these enums
 blacklist = [
     "CMExpressionType",
+    "MacroFunctionKind",
     "RegexOptions",
     "Flags",
+    "Family",
+    "Level",
+    "Unit",
     "ContainerType",
     "Type",
-    "DictionaryAppendState",
-    "DictFSSTMode",
-    "DictFSSTCompressResult",
+    "CutCommit",
     "ComplexJSONType",
     "UnavailableReason",
     "VirtualColumnBindingType",
@@ -31,6 +33,7 @@ blacklist = [
     "CreateDirectoryMode",
     "MatchRecognizeScope",
     "RemoveDirectoryMode",
+    "FileExistence",
     "CopyOutputOwnership",
     "CopyOutputPublicationState",
     "PendingTaskCountMode",
@@ -75,6 +78,9 @@ blacklist = [
     "ParquetGroupKind",
     "VariantBasicType",
     "VariantPrimitiveType",
+    "SyncState",
+    "FoldResult",
+    "SchedulerClass",
 ]
 
 enum_util_header_file = os.path.join("..", "src", "include", "duckdb", "common", "enum_util.hpp")
@@ -94,11 +100,6 @@ overrides = {
         "ORDER_DEFAULT": ["ORDER_DEFAULT", "DEFAULT"],
         "DESCENDING": ["DESCENDING", "DESC"],
         "ASCENDING": ["ASCENDING", "ASC"],
-    },
-    "AllowParserOverride": {
-        "DEFAULT_OVERRIDE": "DEFAULT",
-        "FALLBACK_OVERRIDE": "FALLBACK",
-        "STRICT_OVERRIDE": "STRICT",
     },
     "OrderByNullType": {
         "ORDER_DEFAULT": ["ORDER_DEFAULT", "DEFAULT"],
@@ -157,6 +158,12 @@ overrides = {
     "TriggerTiming": {"BEFORE": "BEFORE", "AFTER": "AFTER", "INSTEAD_OF": "INSTEAD OF"},
     "TriggerEventType": {"INSERT_EVENT": "INSERT", "DELETE_EVENT": "DELETE", "UPDATE_EVENT": "UPDATE"},
     "TriggerForEach": {"STATEMENT": "STATEMENT", "ROW": "ROW"},
+    "TransactionIsolationLevel": {
+        "READ_UNCOMMITTED": "read uncommitted",
+        "READ_COMMITTED": "read committed",
+        "REPEATABLE_READ": "repeatable read",
+        "SERIALIZABLE": "serializable",
+    },
 }
 
 # get all the headers
@@ -254,6 +261,7 @@ with open(enum_util_header_file, "w") as f:
 
     f.write('#pragma once\n\n')
     f.write('#include <stdint.h>\n')
+    f.write('#include <string_view>\n')
     f.write('#include "duckdb/common/string.hpp"\n\n')
 
     f.write("namespace duckdb {\n\n")
@@ -262,10 +270,7 @@ with open(enum_util_header_file, "w") as f:
         """struct EnumUtil {
     // String -> Enum
     template <class T>
-    static T FromString(const char *value) = delete;
-
-    template <class T>
-    static T FromString(const string &value) { return FromString<T>(value.c_str()); }
+    static T FromString(std::string_view value) = delete;
 
     // Enum -> String
     template <class T>
@@ -288,7 +293,7 @@ with open(enum_util_header_file, "w") as f:
 
     # Forward declare all enum dserialization functions
     for enum_name, enum_type, _ in enums:
-        f.write(f"template<>\n{enum_name} EnumUtil::FromString<{enum_name}>(const char *value);\n\n")
+        f.write(f"template<>\n{enum_name} EnumUtil::FromString<{enum_name}>(std::string_view value);\n\n")
     f.write("\n")
 
     f.write("}\n")
@@ -333,7 +338,7 @@ with open(enum_util_source_file, "w") as f:
         f.write("}\n\n")
 
         # Write the string to enum
-        f.write(f"template<>\n{enum_name} EnumUtil::FromString<{enum_name}>(const char *value) {{\n")
+        f.write(f"template<>\n{enum_name} EnumUtil::FromString<{enum_name}>(std::string_view value) {{\n")
         f.write(
             f"\treturn static_cast<{enum_name}>(StringUtil::StringToEnum({enum_string_array}, {member_count}, \"{enum_name}\", value));"
         )

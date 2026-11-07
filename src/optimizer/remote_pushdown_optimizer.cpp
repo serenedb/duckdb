@@ -6,10 +6,12 @@
 #include "duckdb/catalog/entry_lookup_info.hpp"
 #include "duckdb/common/enums/catalog_type.hpp"
 #include "duckdb/common/enums/on_entry_not_found.hpp"
+#include "duckdb/common/stack_depth.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/main/client_data.hpp"
 #include "duckdb/catalog/catalog_search_path.hpp"
 #include "duckdb/planner/binder.hpp"
+#include "duckdb/planner/expression_binder.hpp"
 #include "duckdb/parser/parsed_expression_iterator.hpp"
 #include "duckdb/parser/expression/function_expression.hpp"
 #include "duckdb/parser/expression/star_expression.hpp"
@@ -257,6 +259,7 @@ void RemotePushdownOptimizer::Rewrite(unique_ptr<SQLStatement> &statement) {
 }
 
 CatalogPushdownResult RemotePushdownOptimizer::Rewrite(QueryNode &node) {
+	StackDepth::Check();
 	if (!cte_results.empty()) {
 		throw InternalException(
 		    "RemotePushdownOptimizer already has CTEs defined - this means no child was created correctly");
@@ -384,7 +387,18 @@ CatalogPushdownResult RemotePushdownOptimizer::RewriteNode(SelectNode &node) {
 	// Merge from_table result with all expressions to determine if the whole node can be pushed
 	CatalogPushdownResult result = from_result;
 	for (auto &expr : node.select_list) {
-		result = Merge(result, Rewrite(expr));
+		// UNNEST and set-returning functions at the top level of a SELECT list
+		// expand to rows through the select binder; folding them here would bind
+		// them as scalars and collapse the rows into a single LIST value.
+		auto mode = ExpressionFoldingMode::FOLD_EXPRESSION;
+		if (expr->GetExpressionClass() == ExpressionClass::FUNCTION) {
+			auto &function_name = expr->Cast<FunctionExpression>().FunctionName();
+			if (ExpressionBinder::IsUnnestFunction(function_name) ||
+			    ExpressionBinder::IsSelectListSetReturningFunction(function_name)) {
+				mode = ExpressionFoldingMode::FOLD_CHILDREN_ONLY;
+			}
+		}
+		result = Merge(result, Rewrite(expr, mode));
 	}
 	if (node.where_clause) {
 		result = Merge(result, Rewrite(node.where_clause));
@@ -798,6 +812,7 @@ void RemotePushdownOptimizer::TrackLocalTable(const TableRef &ref) {
 }
 
 CatalogPushdownResult RemotePushdownOptimizer::Rewrite(unique_ptr<TableRef> &ref) {
+	StackDepth::Check();
 	CatalogPushdownResult result;
 	switch (ref->type) {
 	case TableReferenceType::BASE_TABLE:
@@ -901,13 +916,9 @@ CatalogPushdownResult RemotePushdownOptimizer::RewriteTableFunctionOnly(TableFun
 				TrackLocalTable(ref);
 				return CatalogPushdownResult::Unknown();
 			}
-			// SET_RETURNING_FUNCTION: neutral, recurse into args
+			// SET_RETURNING_FUNCTION: neutral
 			// the generic TableRef dispatch records the function so a remote catalog can veto it
-			auto result = CatalogPushdownResult::NoCatalogReference();
-			for (auto &arg : func_expr.GetArgumentsMutable()) {
-				result = Merge(result, RewriteTableFunctionArgument(arg.GetExpressionMutable()));
-			}
-			return result;
+			return CatalogPushdownResult::NoCatalogReference();
 		}
 	}
 	// we did not find the table function in a local catalog
@@ -1188,11 +1199,56 @@ RemotePushdownOptimizer::TryConstantFold(unique_ptr<ParsedExpression> &expr) {
 		return ConstantFoldResult::FOLD_ERROR;
 	}
 	auto folded = ConstantExpression::FromValue(fold_result);
-	// preserve the name DuckDB would generate for the original expression
-	folded->SetAlias(expr->GetAlias().empty() ? Identifier(expr->ToString()) : expr->GetAlias());
+	// preserve the result column name of the original expression (GetColumnName,
+	// the PG-style target-list name -- not ToString, which would rename e.g.
+	// "SELECT f(x)" from "f" to the full expression text)
+	folded->SetAlias(expr->GetAlias().empty() ? Identifier(expr->GetColumnName()) : expr->GetAlias());
 	folded->SetQueryLocation(expr->GetQueryLocation());
-	expr = std::move(folded);
+	auto original = std::exchange(expr, std::move(folded));
+	[[maybe_unused]] const bool emplaced = pushdown_state.fold_undos.emplace(&expr, std::move(original)).second;
+	D_ASSERT(emplaced);
 	return ConstantFoldResult::FOLDED;
+}
+
+void RemotePushdownOptimizer::KeepFoldsIn(QueryNode &node) {
+	if (pushdown_state.fold_undos.empty()) {
+		return;
+	}
+	ParsedExpressionIterator::EnumerateQueryNodeChildren(
+	    node, [&](unique_ptr<ParsedExpression> &child) { KeepFoldsInExpression(child); });
+}
+
+void RemotePushdownOptimizer::KeepFoldsInExpression(unique_ptr<ParsedExpression> &expr_slot) {
+	auto &undos = pushdown_state.fold_undos;
+	auto it = undos.find(&expr_slot);
+	if (it != undos.end()) {
+		auto original = std::move(it->second);
+		undos.erase(it);
+		// the replaced original may contain earlier-folded slots - retire those too,
+		// they are shipped as part of this fold's constant
+		KeepFoldsInExpression(original);
+		return;
+	}
+	ParsedExpressionIterator::EnumerateChildren(
+	    *expr_slot, [&](unique_ptr<ParsedExpression> &child) { KeepFoldsInExpression(child); });
+	if (expr_slot->GetExpressionClass() == ExpressionClass::SUBQUERY) {
+		auto &subquery = expr_slot->Cast<SubqueryExpression>();
+		if (subquery.Subquery() && subquery.Subquery()->node) {
+			ParsedExpressionIterator::EnumerateQueryNodeChildren(
+			    *subquery.SubqueryMutable()->node,
+			    [&](unique_ptr<ParsedExpression> &child) { KeepFoldsInExpression(child); });
+		}
+	}
+}
+
+void RemotePushdownOptimizer::RevertUnshippedFolds() {
+	auto &undos = pushdown_state.fold_undos;
+	// restore order does not matter: every record writes a distinct slot, and slot
+	// addresses stay valid because moving an expression does not move its children
+	for (auto &[slot, original] : undos) {
+		*slot = std::move(original);
+	}
+	undos.clear();
 }
 
 ExpressionPushdownResult RemotePushdownOptimizer::AnalyzeExpression(const ParsedExpression &expr) {
@@ -1226,6 +1282,7 @@ ExpressionPushdownResult RemotePushdownOptimizer::AnalyzeExpression(const Parsed
 
 ExpressionPushdownResult RemotePushdownOptimizer::RewriteExpression(unique_ptr<ParsedExpression> &expr,
                                                                     ExpressionFoldingMode mode) {
+	StackDepth::Check();
 	// rewrite the children - foldable subtrees are folded at the last possible moment, so that
 	// every maximal foldable subtree is bound and evaluated exactly once
 	auto result = CatalogPushdownResult::NoCatalogReference();
@@ -1314,6 +1371,7 @@ static void StripCatalogFromName(QualifiedName &name, const Identifier &catalog_
 }
 
 void RemotePushdownOptimizer::StripCatalogName(TableRef &ref, const Identifier &catalog_name) {
+	StackDepth::Check();
 	switch (ref.type) {
 	case TableReferenceType::BASE_TABLE: {
 		auto &base = ref.Cast<BaseTableRef>();
@@ -1358,6 +1416,7 @@ void RemotePushdownOptimizer::StripCatalogName(TableRef &ref, const Identifier &
 }
 
 void RemotePushdownOptimizer::StripCatalogName(ParsedExpression &expr, const Identifier &catalog_name) {
+	StackDepth::Check();
 	if (expr.GetExpressionClass() == ExpressionClass::COLUMN_REF) {
 		auto &col_ref = expr.Cast<ColumnRefExpression>();
 		// Strip the catalog prefix from qualified column references, keeping everything after it.
@@ -1425,6 +1484,7 @@ void RemotePushdownOptimizer::StripCatalogName(ParsedExpression &expr, const Ide
 }
 
 void RemotePushdownOptimizer::StripCatalogName(QueryNode &node, const Identifier &catalog_name) {
+	StackDepth::Check();
 	switch (node.type) {
 	case QueryNodeType::SELECT_NODE: {
 		auto &select = node.Cast<SelectNode>();
@@ -1856,6 +1916,7 @@ void RemotePushdownOptimizer::FinishPushdown(unique_ptr<SQLStatement> &statement
 	StripCatalogName(*statement, result.catalog->GetName());
 	auto node = GetNodeFromStatement(*statement);
 	if (node) {
+		KeepFoldsIn(*node);
 		statement = WrapRemoteRef(CreateRemoteFunctionRef(result, std::move(node)));
 		return;
 	}
@@ -1890,6 +1951,7 @@ void RemotePushdownOptimizer::FinishPushdown(unique_ptr<QueryNode> &node, Catalo
 		}
 	}
 	StripCatalogName(*node, result.catalog->GetName());
+	KeepFoldsIn(*node);
 	auto select_node = make_uniq<SelectNode>();
 	select_node->select_list.push_back(make_uniq<StarExpression>());
 	select_node->from_table = CreateRemoteFunctionRef(result, std::move(node));

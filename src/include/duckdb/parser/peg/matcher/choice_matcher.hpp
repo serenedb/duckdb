@@ -37,6 +37,7 @@ public:
 
 public:
 	vector<reference<Matcher>> matchers;
+	bool dispatch_on_literal = false;
 };
 
 } // namespace duckdb

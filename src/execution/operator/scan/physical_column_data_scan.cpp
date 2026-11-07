@@ -32,7 +32,7 @@ static idx_t GetColumnDataScanBatchSize(ClientContext &context, idx_t collection
 	if (partition_info.preferred_batch_size.IsValid() && partition_info.preferred_batch_size.GetIndex() > 0) {
 		preferred_batch_size = partition_info.preferred_batch_size.GetIndex();
 	}
-	auto thread_count = MaxValue<idx_t>(TaskScheduler::GetScheduler(context).NumberOfThreads(), 1);
+	auto thread_count = MaxValue<idx_t>(TaskScheduler::QueryThreads(context), 1);
 	auto rows_per_thread = collection_count / thread_count + (collection_count % thread_count != 0);
 	auto parallelism_cap = MaxValue<idx_t>(STANDARD_VECTOR_SIZE, rows_per_thread);
 	return MinValue(preferred_batch_size, parallelism_cap);

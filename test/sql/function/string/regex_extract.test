@@ -162,7 +162,7 @@ must not be NULL
 statement error
 SELECT regexp_extract('abcdefg', 'A..', 'i', 'c');
 ----
-Binder Error: Could not choose a best candidate function 
+Conversion Error: Could not convert string 'i' to INT32
 
 # 'k' option: keep (return) the input on no match instead of an empty string
 query T

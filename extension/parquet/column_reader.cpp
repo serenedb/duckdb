@@ -15,7 +15,7 @@
 #include "brotli/decode.h"
 #include "reader/callback_column_reader.hpp"
 #include "reader/interval_column_reader.hpp"
-#include "lz4.hpp"
+#include "lz4.h"
 #include "miniz_wrapper.hpp"
 #include "reader/null_column_reader.hpp"
 #include "parquet_reader.hpp"
@@ -241,7 +241,7 @@ void ColumnReader::Plain(shared_ptr<ResizeableBuffer> &plain_data, uint8_t *defi
 }
 
 void ColumnReader::PlainSelect(shared_ptr<ResizeableBuffer> &plain_data, uint8_t *defines, idx_t num_values,
-                               Vector &result, const SelectionVector &sel, idx_t count) {
+                               Vector &result, const SelectionVector &sel, idx_t count, idx_t result_offset) {
 	throw NotImplementedException("PlainSelect not implemented");
 }
 
@@ -273,7 +273,8 @@ void ColumnReader::InitializeRead(idx_t row_group_idx_p, idx_t row_group_num_row
 	group_rows_available = NumericCast<idx_t>(chunk->meta_data.num_values);
 }
 
-bool ColumnReader::PageIsFilteredOut(PageHeader &page_hdr, optional_ptr<const TableFilter> filter) {
+bool ColumnReader::PageIsFilteredOut(PageHeader &page_hdr, optional_ptr<const TableFilter> filter,
+                                     optional_ptr<TableFilterState> filter_state) {
 	if (page_hdr.type != PageType::DATA_PAGE && page_hdr.type != PageType::DATA_PAGE_V2) {
 		// we can only filter out data pages
 		return false;
@@ -305,8 +306,8 @@ bool ColumnReader::PageIsFilteredOut(PageHeader &page_hdr, optional_ptr<const Ta
 		auto stats =
 		    ParquetStatisticsUtils::TransformParquetStatistics(Type(), Schema(), *page_stats, /*can_have_nan=*/true);
 		auto &expr_filter = filter->Cast<ExpressionFilter>();
-		if (stats) {
-			auto prune_result = expr_filter.CheckStatistics(*stats);
+		if (stats && filter_state) {
+			auto prune_result = expr_filter.CheckStatistics(*stats, *filter_state);
 			if (prune_result == FilterPropagateResult::FILTER_ALWAYS_FALSE ||
 			    prune_result == FilterPropagateResult::FILTER_FALSE_OR_NULL) {
 				page_is_filtered_out = true;
@@ -380,7 +381,7 @@ void ColumnReader::PrepareRead(optional_ptr<const TableFilter> filter, optional_
 		throw InvalidInputException("Failed to read file \"%s\": Page sizes must be >= 0", Reader().GetFileName());
 	}
 
-	if (PageIsFilteredOut(page_hdr, filter)) {
+	if (PageIsFilteredOut(page_hdr, filter, filter_state)) {
 		return;
 	}
 
@@ -427,7 +428,7 @@ void ColumnReader::ResetPage() {
 void ColumnReader::PreparePageV2(PageHeader &page_hdr) {
 	D_ASSERT(page_hdr.type == PageType::DATA_PAGE_V2);
 
-	AllocateBlock(page_hdr.uncompressed_page_size + 1);
+	AllocateBlock(page_hdr.uncompressed_page_size);
 	bool uncompressed = false;
 	if (page_hdr.data_page_header_v2.__isset.is_compressed && !page_hdr.data_page_header_v2.is_compressed) {
 		uncompressed = true;
@@ -505,15 +506,17 @@ void ColumnReader::PreparePageV2(PageHeader &page_hdr) {
 }
 
 void ColumnReader::AllocateBlock(idx_t size) {
-	if (!block) {
-		block = make_shared_ptr<ResizeableBuffer>(GetAllocator(), size);
+	if (!block || block.use_count() > 1) {
+		block = make_shared_ptr<ResizeableBuffer>(GetAllocator(), size + 1);
 	} else {
-		block->resize(GetAllocator(), size);
+		block->resize(GetAllocator(), size + 1);
 	}
+	block->ptr[size] = 0;
+	block->len = size;
 }
 
 void ColumnReader::PreparePage(PageHeader &page_hdr) {
-	AllocateBlock(page_hdr.uncompressed_page_size + 1);
+	AllocateBlock(page_hdr.uncompressed_page_size);
 	uint32_t compressed_page_size = page_hdr.compressed_page_size;
 
 	if (chunk->__isset.crypto_metadata) {
@@ -879,20 +882,33 @@ void ColumnReader::DirectSelect(ColumnReaderInput &input, Vector &result, const 
 
 	// prepare the first read if we haven't yet
 	BeginRead(define_out, repeat_out);
-	auto read_now = ReadPageHeaders(to_read);
-
-	// we can only push the filter into the decoder if we are reading the ENTIRE vector in one go
-	if (read_now == to_read && encoding == ColumnEncoding::PLAIN) {
-		const auto all_valid = PrepareRead(read_now, define_out, repeat_out, 0);
-		const auto define_ptr = all_valid ? nullptr : static_cast<uint8_t *>(define_out);
-		PlainSelect(block, define_ptr, read_now, result, sel, approved_tuple_count);
-
-		page_rows_available -= read_now;
-		FinishRead(to_read);
-		return;
+	SelectionVector page_sel(STANDARD_VECTOR_SIZE);
+	idx_t result_offset = 0;
+	idx_t selected = 0;
+	while (result_offset < to_read) {
+		const auto read_now = ReadPageHeaders(to_read - result_offset);
+		const auto first = selected;
+		for (; selected < approved_tuple_count && sel.get_index(selected) < result_offset + read_now; selected++) {
+			page_sel.set_index(selected - first, sel.get_index(selected) - result_offset);
+		}
+		if (encoding != ColumnEncoding::PLAIN || page_is_filtered_out || (!IsRoot() && AllValuesAreNull())) {
+			ReadData(read_now, define_out, repeat_out, result, result_offset);
+		} else {
+			if (result_offset != 0 && result.GetVectorType() != VectorType::FLAT_VECTOR) {
+				result.Flatten();
+				result.Reserve(STANDARD_VECTOR_SIZE);
+			}
+			const auto all_valid = PrepareRead(read_now, define_out, repeat_out, result_offset);
+			const auto define_ptr = all_valid ? nullptr : static_cast<uint8_t *>(define_out) + result_offset;
+			PlainSelect(block, define_ptr, read_now, result, page_sel, selected - first, result_offset);
+			page_rows_available -= read_now;
+		}
+		result_offset += read_now;
 	}
-	// fallback to regular read + filter
-	ReadInternal(input, result);
+	FinishRead(to_read);
+	if (result.GetVectorType() == VectorType::FLAT_VECTOR) {
+		FlatVector::SetSize(result, to_read);
+	}
 }
 
 void ColumnReader::Filter(ColumnReaderInput &input, Vector &result, const TableFilter &filter,

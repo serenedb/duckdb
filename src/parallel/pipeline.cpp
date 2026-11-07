@@ -45,7 +45,7 @@ TaskExecutionResult PipelineTask::ExecuteTask(TaskExecutionMode mode) {
 	pipeline_executor->SetTaskForInterrupts(shared_from_this());
 
 	if (mode == TaskExecutionMode::PROCESS_PARTIAL) {
-		auto res = pipeline_executor->Execute(PARTIAL_CHUNK_COUNT);
+		auto res = pipeline_executor->Execute(TaskExecutionMode::PROCESS_PARTIAL);
 
 		switch (res) {
 		case PipelineExecuteResult::NOT_FINISHED:
@@ -56,7 +56,7 @@ TaskExecutionResult PipelineTask::ExecuteTask(TaskExecutionMode mode) {
 			break;
 		}
 	} else {
-		auto res = pipeline_executor->Execute();
+		auto res = pipeline_executor->Execute(TaskExecutionMode::PROCESS_ALL);
 		switch (res) {
 		case PipelineExecuteResult::NOT_FINISHED:
 			throw InternalException("Execute without limit should not return NOT_FINISHED");
@@ -67,8 +67,8 @@ TaskExecutionResult PipelineTask::ExecuteTask(TaskExecutionMode mode) {
 		}
 	}
 
-	event->FinishTask();
 	pipeline_executor.reset();
+	event->FinishTask();
 	return TaskExecutionResult::TASK_FINISHED;
 }
 
@@ -147,8 +147,7 @@ bool Pipeline::TryGetMaxThreads(idx_t &max_threads) {
 		}
 	}
 
-	auto &scheduler = TaskScheduler::GetScheduler(executor.context);
-	auto active_threads = scheduler.NumberOfThreads();
+	auto active_threads = TaskScheduler::QueryThreads(executor.context);
 	if (max_threads > active_threads) {
 		max_threads = active_threads;
 	}
@@ -355,7 +354,7 @@ void Pipeline::ResetSink() {
 	}
 }
 
-void Pipeline::ResetSinkForReschedule() {
+void Pipeline::ResetSinkForReschedule(idx_t thread_count) {
 	if (!sink) {
 		return;
 	}
@@ -367,7 +366,7 @@ void Pipeline::ResetSinkForReschedule() {
 	auto &client = GetClientContext();
 	auto allow_reuse = Settings::Get<EnableCachingOperatorsSetting>(client);
 	if (allow_reuse && sink->sink_state && sink->sink_state->SupportsReuse()) {
-		sink->sink_state->Reset(client);
+		sink->sink_state->ResetForThreads(client, thread_count);
 		return;
 	}
 	sink->sink_state = sink->GetGlobalSinkState(client);
@@ -403,21 +402,26 @@ void Pipeline::Reset() {
 	initialized = true;
 }
 
-void Pipeline::ResetForReschedule(bool reset_sink) {
-	NotifyProgressReset();
-	if (reset_sink) {
-		ResetSinkForReschedule();
-	}
+void Pipeline::ResetOperatorsForReschedule(reference_set_t<PhysicalOperator> &reset_operators) {
 	auto &client = GetClientContext();
 	auto allow_reuse = Settings::Get<EnableCachingOperatorsSetting>(client);
 	for (auto &op_ref : operators) {
 		auto &op = op_ref.get();
+		if (!reset_operators.insert(op).second) {
+			continue;
+		}
 		lock_guard<mutex> guard(op.lock);
 		if (allow_reuse && op.op_state && op.ResetGlobalOperatorState(client, *op.op_state)) {
 			continue;
 		}
 		op.op_state = op.GetGlobalOperatorState(client);
 	}
+}
+
+void Pipeline::ResetSourceForReschedule() {
+	NotifyProgressReset();
+	auto &client = GetClientContext();
+	auto allow_reuse = Settings::Get<EnableCachingOperatorsSetting>(client);
 	if (source && !source->IsSource()) {
 		throw InternalException("Source of pipeline does not have IsSource set");
 	}
@@ -474,8 +478,10 @@ shared_ptr<GlobalSourceState> Pipeline::GetSourceState() {
 }
 
 void Pipeline::SetSourceState(shared_ptr<GlobalSourceState> state) {
-	annotated_lock_guard<annotated_mutex> guard(source_state_lock);
-	source_state = std::move(state);
+	{
+		annotated_lock_guard<annotated_mutex> guard(source_state_lock);
+		std::swap(source_state, state);
+	}
 }
 
 void Pipeline::FinishSourceAndPreventBlocking(ClientContext &context) {
@@ -739,10 +745,12 @@ const vector<reference<PhysicalOperator>> &Pipeline::GetIntermediateOperators() 
 }
 
 void Pipeline::ClearSource() {
+	shared_ptr<GlobalSourceState> state;
 	{
 		annotated_lock_guard<annotated_mutex> source_guard(source_state_lock);
-		source_state.reset();
+		std::swap(source_state, state);
 	}
+	state.reset();
 	ResetBatchIndexes();
 }
 

@@ -12,15 +12,16 @@
 #include "duckdb/common/prefetched_file_data.hpp"
 #include "duckdb/main/config.hpp"
 #include "duckdb/catalog/catalog_entry.hpp"
+#include "duckdb/common/atomic.hpp"
 #include "duckdb/main/valid_checker.hpp"
 
 namespace duckdb {
-struct CompiledGrammar;
 class Catalog;
 class DatabaseInstance;
 class StorageManager;
 class TransactionManager;
 class StorageExtension;
+struct StorageExtensionInfo;
 class DatabaseManager;
 class ResourceDeleter;
 
@@ -72,7 +73,7 @@ struct AttachOptions {
 	//! The setting an attach option controls, lower-cased. All four spellings of the access mode
 	//! (readonly, read_only, readwrite, read_write) share one setting, so two of them in the same
 	//! statement are a collision rather than two independent options.
-	static string OptionSetting(const string &name);
+	static string OptionSetting(std::string_view name);
 
 	//! Defaults to the access mode configured in the DBConfig, unless specified otherwise.
 	AccessMode access_mode;
@@ -80,6 +81,7 @@ struct AttachOptions {
 	RecoveryMode recovery_mode = RecoveryMode::DEFAULT;
 	//! The file format type. The default type is a duckdb database file, but other file formats are possible.
 	string db_type;
+	std::function<InternalCatalog(AttachedDatabase &)> create_catalog;
 	//! The verbatim path before extension-prefix stripping. Unset if not from an ATTACH statement.
 	optional<string> original_path;
 	//! Set of remaining (key, value) options
@@ -95,6 +97,8 @@ struct AttachOptions {
 	bool ephemeral = false;
 	//! The stored database path (in the path manager)
 	unique_ptr<StoredDatabasePath> stored_database_path;
+	shared_ptr<AttachedDatabase> reused_database;
+	bool borrow_open_database = false;
 	//! Per-database override of vacuum_rebuild_indexes. If not set, the global setting value is used.
 	optional_idx vacuum_rebuild_indexes_threshold;
 	//! Deleter binding (from ATTACH/CONNECT TO EXTERNAL RESOURCE): on detach, `<deleter_function>(<deleter_payload>)`
@@ -119,6 +123,7 @@ public:
 	explicit AttachedDatabase(DatabaseInstance &db, AttachedDatabaseType type = AttachedDatabaseType::SYSTEM_DATABASE);
 	//! Create an attached database instance with the specified name and storage.
 	AttachedDatabase(DatabaseInstance &db, Catalog &catalog, Identifier name, string file_path, AttachOptions &options);
+	AttachedDatabase(DatabaseInstance &db, Catalog &catalog, Identifier name, AttachOptions &options);
 	//! Create an attached database instance with the specified storage extension.
 	AttachedDatabase(DatabaseInstance &db, Catalog &catalog, StorageExtension &ext, ClientContext &context,
 	                 Identifier name, AttachInfo &info, AttachOptions &options);
@@ -161,9 +166,12 @@ public:
 	bool IsSystem() const;
 	bool IsTemporary() const;
 	bool IsReadOnly() const;
+	bool OpenedReadOnly() const {
+		return opened_read_only;
+	}
 	bool IsInitialDatabase() const;
 	void SetInitialDatabase();
-	void SetReadOnlyDatabase();
+	void SetAccessMode(AccessMode access_mode);
 	void OnDetach(ClientContext &context);
 	RecoveryMode GetRecoveryMode() const {
 		return recovery_mode;
@@ -185,13 +193,6 @@ public:
 	const unordered_map<string, Value> &GetAttachOptions() const {
 		return attach_options;
 	}
-	//! The grammar used for statements issued while a client is CONNECT-ed to this database. Defaults to the
-	//! passthrough grammar, which interprets only DISCONNECT and forwards everything else verbatim; a backend that
-	//! speaks DuckDB SQL can override it with the grammar it wants those statements parsed by.
-	DUCKDB_API shared_ptr<CompiledGrammar> GetConnectedGrammar(const ClientContext &context);
-	void SetConnectedGrammar(shared_ptr<CompiledGrammar> grammar) {
-		connected_grammar = std::move(grammar);
-	}
 	string StoredPath() const;
 	//! The verbatim ATTACH path before extension-prefix stripping. Unset if not from an ATTACH statement.
 	const optional<string> &GetOriginalPath() const {
@@ -204,6 +205,10 @@ public:
 	static void InvokeCloseIfLastReference(shared_ptr<AttachedDatabase> &attached_database, ClientContext &context);
 	//! Obtain a reference unless closing the database has already started.
 	static shared_ptr<AttachedDatabase> TryGetReference(const weak_ptr<AttachedDatabase> &attached_database);
+	// Whether a detached database can be handed back out instead of opening its file again. The caller must
+	// hold a reference: a close only happens under the same lock, and only when it holds the last one, so a
+	// database that is usable here cannot start closing afterwards.
+	bool TryReuse();
 
 private:
 	DatabaseInstance &db;
@@ -212,7 +217,8 @@ private:
 	unique_ptr<StorageManager> storage;
 	unique_ptr<Catalog> catalog;
 	unique_ptr<TransactionManager> transaction_manager;
-	AttachedDatabaseType type;
+	atomic<AttachedDatabaseType> type;
+	const bool opened_read_only;
 	optional_ptr<Catalog> parent_catalog;
 	optional_ptr<StorageExtension> storage_extension;
 	RecoveryMode recovery_mode = RecoveryMode::DEFAULT;
@@ -232,8 +238,6 @@ private:
 	string deleter_resource_name;
 	//! Registered resource this attachment borrows without owning; see AttachOptions.
 	string borrowed_resource_name;
-	//! Overrides the default passthrough grammar used while CONNECT-ed; see GetConnectedGrammar.
-	shared_ptr<CompiledGrammar> connected_grammar;
 
 private:
 	//! Clean any (shared) resources held by the database.

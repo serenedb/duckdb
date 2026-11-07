@@ -1,0 +1,94 @@
+# name: test/sql/prepared/prepare_declared_types.test
+# description: PREPARE with declared parameter types
+# group: [prepared]
+
+statement ok
+PREPARE p1(INTEGER) AS SELECT $1 + 1 AS r
+
+query I
+EXECUTE p1(41)
+----
+42
+
+query I
+EXECUTE p1('41')
+----
+42
+
+query I
+EXECUTE p1(41.6)
+----
+43
+
+query I
+EXECUTE p1(40 + 1)
+----
+42
+
+statement error
+EXECUTE p1('abc')
+----
+Could not convert string 'abc' to INT32
+
+statement ok
+PREPARE p2(BIGINT) AS SELECT typeof($1)
+
+query I
+EXECUTE p2(1)
+----
+BIGINT
+
+statement ok
+PREPARE p3(INTEGER, VARCHAR) AS SELECT $1 AS r
+
+query I
+EXECUTE p3(1, 'x')
+----
+1
+
+statement error
+EXECUTE p3(1)
+----
+
+statement ok
+PREPARE p4(INTEGER) AS SELECT $1 AS a, $2::VARCHAR AS b
+
+query II
+EXECUTE p4(1, 'x')
+----
+1	x
+
+statement ok
+PREPARE p5(INTEGER[]) AS SELECT len($1)
+
+query I
+EXECUTE p5([1, 2, 3])
+----
+3
+
+statement ok
+PREPARE p6(VARCHAR) AS SELECT $1 || '!'
+
+query I
+EXECUTE p6(42)
+----
+42!
+
+statement error
+PREPARE p7(nosuchtype) AS SELECT 1
+----
+nosuchtype
+
+statement ok
+CREATE TABLE t (a INTEGER, b VARCHAR)
+
+statement ok
+PREPARE ins(INTEGER, VARCHAR) AS INSERT INTO t VALUES ($1, $2)
+
+statement ok
+EXECUTE ins('2', 3)
+
+query IT
+SELECT a, b FROM t
+----
+2	3

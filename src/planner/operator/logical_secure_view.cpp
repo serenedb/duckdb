@@ -82,7 +82,7 @@ void LogicalSecureView::AnalyzeStatistics(LogicalOperator &plan) {
 }
 
 vector<ColumnBinding> LogicalSecureView::GetColumnBindings() {
-	return children[0]->GetColumnBindings();
+	return GetDerivedColumnBindings();
 }
 
 idx_t LogicalSecureView::EstimateCardinality(ClientContext &context) {

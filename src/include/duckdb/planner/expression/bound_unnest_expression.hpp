@@ -30,13 +30,16 @@ public:
 	bool IsFoldable() const override;
 	string ToString() const override;
 
-	hash_t Hash() const override;
+	using Expression::Hash;
 	bool Equals(const BaseExpression &other) const override;
 
 	unique_ptr<Expression> Copy() const override;
 
 	void Serialize(Serializer &serializer) const override;
 	static unique_ptr<Expression> Deserialize(Deserializer &deserializer);
+
+protected:
+	hash_t NodeHash() const override;
 
 private:
 	unique_ptr<Expression> child;

@@ -43,6 +43,8 @@ public:
 	                                     QueryErrorContext context = QueryErrorContext());
 	static CatalogException EntryAlreadyExists(CatalogType type, const Identifier &name,
 	                                           QueryErrorContext context = QueryErrorContext());
+	static CatalogException MissingPreparedStatement(const Identifier &name);
+	static CatalogException DuplicatePreparedStatement(const Identifier &name);
 };
 
 } // namespace duckdb

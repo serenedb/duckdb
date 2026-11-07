@@ -82,7 +82,7 @@ FROM t
 JOIN (VALUES (50::BIGINT), (3000::BIGINT), (5000::BIGINT), (8050::BIGINT)) keys(x) USING (x)
 WHERE t.x < 100 OR t.s > '00008000';
 ----
-analyzed_plan	<REGEX>:.*Dynamic Filters:.*x IN.*Row Groups Scanned: 2 / 4.*
+analyzed_plan	<REGEX>:.*Dynamic Column Filter:.*x IN.*Row Groups Scanned: 2 / 4.*
 
 query II
 SELECT count(*), sum(t.x)

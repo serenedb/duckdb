@@ -167,8 +167,7 @@ public:
 	bool IsFoldable() const override {
 		return false;
 	}
-	bool IsVolatile() const override;
-
+	using Expression::IsVolatile;
 	string ToString() const override;
 
 	//! The number of ordering clauses the functions share
@@ -184,11 +183,8 @@ public:
 	void Serialize(Serializer &serializer) const override;
 	static unique_ptr<Expression> Deserialize(Deserializer &deserializer);
 
-private:
-	//! Remove LEAD/LAG offset/default
-	vector<unique_ptr<Expression>> SerializedChildren(Serializer &serializer) const;
-	unique_ptr<Expression> SerializedOffset(Serializer &serializer) const;
-	unique_ptr<Expression> SerializedDefault(Serializer &serializer) const;
+protected:
+	bool IsNodeVolatile() const override;
 
 private:
 	//! The bound aggregate function

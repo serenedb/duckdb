@@ -1,0 +1,57 @@
+# name: test/optimizer/pushdown/left_join_never_matching_rhs_columns.test
+# description: A left join that never matches pads the columns its right side outputs, whichever columns of a table those are
+# group: [pushdown]
+
+statement ok
+CREATE TABLE i_sat(x INTEGER);
+
+statement ok
+INSERT INTO i_sat VALUES (1), (2);
+
+statement ok
+CREATE TABLE i_ip(objoid BIGINT);
+
+statement ok
+INSERT INTO i_ip VALUES (10);
+
+statement ok
+CREATE TABLE i_coll(x INTEGER);
+
+statement ok
+INSERT INTO i_coll VALUES (1);
+
+statement ok
+CREATE TABLE i_ad(adnum SMALLINT, adbin VARCHAR);
+
+statement ok
+INSERT INTO i_ad VALUES (1, 'a'), (NULL, 'b');
+
+statement ok
+CREATE TABLE i_am(x INTEGER);
+
+statement ok
+INSERT INTO i_am VALUES (1);
+
+statement ok
+CREATE TABLE i_sut(x INTEGER);
+
+statement ok
+INSERT INTO i_sut VALUES (7);
+
+statement ok
+CREATE TABLE i_ext(x INTEGER);
+
+statement ok
+INSERT INTO i_ext VALUES (100), (200);
+
+query IIIII
+SELECT s7.x, r18.x, s2.adbin, s2.adnum, s0.objoid
+FROM i_sat r0
+  LEFT JOIN i_ip s0 ON EXISTS (SELECT true FROM i_coll)
+  LEFT JOIN i_ad s2 ON EXISTS (SELECT s0.objoid FROM i_am WHERE s2.adnum IS NOT NULL)
+  RIGHT JOIN i_sut r18 ON false
+  RIGHT JOIN i_ext s7 ON NULL
+ORDER BY 1
+----
+100	NULL	NULL	NULL	NULL
+200	NULL	NULL	NULL	NULL

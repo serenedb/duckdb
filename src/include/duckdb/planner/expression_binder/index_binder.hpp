@@ -26,6 +26,7 @@ public:
 	            optional_ptr<CreateIndexInfo> info = nullptr);
 
 	unique_ptr<BoundIndex> BindIndex(const UnboundIndex &index);
+	unique_ptr<Expression> BindKey(unique_ptr<ParsedExpression> &key);
 	unique_ptr<LogicalOperator> BindCreateIndex(ClientContext &context, unique_ptr<CreateIndexInfo> create_index_info,
 	                                            TableCatalogEntry &table_entry, unique_ptr<LogicalOperator> plan,
 	                                            unique_ptr<AlterTableInfo> alter_table_info);

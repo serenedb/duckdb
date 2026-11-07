@@ -17,6 +17,7 @@
 #include "duckdb/planner/expression/bound_function_expression.hpp"
 #include "duckdb/planner/expression/bound_window_expression.hpp"
 #include "duckdb/planner/expression_binder.hpp"
+#include "duckdb/planner/expression_iterator.hpp"
 #include "duckdb/planner/binder.hpp"
 
 namespace duckdb {
@@ -204,6 +205,54 @@ optional_idx FunctionOverloads::Cost(optional_ptr<ClientContext> context, const 
 	return cost;
 }
 
+static bool IsParameterType(const FunctionSignature &signature, const LogicalType &argument) {
+	if (argument.GetTypeInfo().alias.empty()) {
+		return false;
+	}
+	for (auto &parameter : signature.GetParameters()) {
+		if (parameter.GetType() == argument) {
+			return true;
+		}
+	}
+	return false;
+}
+
+static bool HasAliasedArgument(const vector<LogicalType> &arguments,
+                               const vector<pair<Identifier, LogicalType>> &named_arguments) {
+	for (auto &argument : arguments) {
+		if (!argument.GetTypeInfo().alias.empty()) {
+			return true;
+		}
+	}
+	for (auto &named_argument : named_arguments) {
+		if (!named_argument.second.GetTypeInfo().alias.empty()) {
+			return true;
+		}
+	}
+	return false;
+}
+
+static bool IsPriced(const FunctionSignature &signature, bool aliased_argument, const vector<LogicalType> &arguments,
+                     const vector<pair<Identifier, LogicalType>> &named_arguments) {
+	if (!signature.IsTypeScoped()) {
+		return true;
+	}
+	if (!aliased_argument) {
+		return false;
+	}
+	for (auto &argument : arguments) {
+		if (IsParameterType(signature, argument)) {
+			return true;
+		}
+	}
+	for (auto &named_argument : named_arguments) {
+		if (IsParameterType(signature, named_argument.second)) {
+			return true;
+		}
+	}
+	return false;
+}
+
 template <class T>
 vector<idx_t> FunctionOverloads::Candidates(optional_ptr<ClientContext> context, const Identifier &name,
                                             const FunctionSet<T> &functions, const vector<LogicalType> &arguments,
@@ -212,8 +261,15 @@ vector<idx_t> FunctionOverloads::Candidates(optional_ptr<ClientContext> context,
 	optional_idx best_function;
 	idx_t lowest_cost = NumericLimits<idx_t>::Maximum();
 	vector<idx_t> candidate_functions;
+	const bool aliased_argument = HasAliasedArgument(arguments, named_arguments);
 	for (idx_t f_idx = 0; f_idx < functions.functions.size(); f_idx++) {
 		auto &func = *functions.functions[f_idx];
+		if (!IsPriced(func.GetSignature(), aliased_argument, arguments, named_arguments)) {
+			if (!aliased_argument) {
+				break;
+			}
+			continue;
+		}
 		// check the arguments of the function
 		auto bind_cost = Cost(context, func, arguments, named_arguments);
 		if (!bind_cost.IsValid()) {
@@ -244,7 +300,9 @@ vector<idx_t> FunctionOverloads::Candidates(optional_ptr<ClientContext> context,
 			if (schema_name.empty() && !f->GetSchemaName().empty()) {
 				schema_name = f->GetSchemaName();
 			}
-			candidates.push_back(f->ToString());
+			if (IsPriced(f->GetSignature(), aliased_argument, arguments, named_arguments)) {
+				candidates.push_back(f->ToString());
+			}
 		}
 		error = ErrorData(BinderException::NoMatchingFunction(catalog_name, schema_name, name, arguments,
 		                                                      named_arguments, candidates));
@@ -589,7 +647,7 @@ static void PlaceArguments(ClientContext &context, const T &function,
 		}
 		if (param_idx.GetIndex() < passed_count) {
 			throw BinderException(named_argument.second->GetQueryLocation(),
-			                      "Named argument '%s' cannot be used for parameter '%s' because it has already "
+			                      "Named argument '%s' cannot be used for parameter %s because it has already "
 			                      "been provided as a positional argument in function call to '%s'",
 			                      named_argument.second->ToString(), argument_name,
 			                      function.GetName().GetIdentifierName());
@@ -758,12 +816,58 @@ void FunctionBinder::CastToFunctionArguments(BoundSimpleFunction &function, vect
 	}
 }
 
+static bool FoldConstantInputs(ClientContext &context, Expression &expr, bool foldable) {
+	bool folded = true;
+	ExpressionIterator::EnumerateChildren(expr, [&](unique_ptr<Expression> &input) {
+		if (input->GetExpressionClass() == ExpressionClass::BOUND_CONSTANT ||
+		    input->GetReturnType().id() == LogicalTypeId::LAMBDA ||
+		    (BoundCastExpression::IsCast(*input) &&
+		     BoundCastExpression::Child(input->Cast<BoundFunctionExpression>()).GetExpressionClass() ==
+		         ExpressionClass::BOUND_CONSTANT)) {
+			return;
+		}
+		Value value;
+		if (!(foldable || input->IsFoldable()) || !FoldConstantInputs(context, *input, true) ||
+		    !ExpressionExecutor::TryEvaluateFoldable(context, *input, value)) {
+			folded = false;
+			return;
+		}
+		auto constant = make_uniq<BoundConstantExpression>(std::move(value));
+		constant->SetAlias(input->GetAlias());
+		constant->SetQueryLocation(input->GetQueryLocation());
+		input = std::move(constant);
+	});
+	return folded;
+}
+
+static bool FoldsToNull(ClientContext &context, Expression &child, bool keep_arguments) {
+	auto &type = child.GetReturnType();
+	if (type.id() == LogicalTypeId::SQLNULL) {
+		return true;
+	}
+	if (child.GetExpressionClass() == ExpressionClass::BOUND_CONSTANT) {
+		return child.Cast<BoundConstantExpression>().GetValue().IsNull();
+	}
+	if (type.id() == LogicalTypeId::LAMBDA || !child.IsFoldable()) {
+		return false;
+	}
+	unique_ptr<Expression> copy;
+	if (keep_arguments) {
+		copy = child.Copy();
+	}
+	auto &probe = copy ? *copy : child;
+	Value result;
+	return FoldConstantInputs(context, probe, true) &&
+	       ExpressionExecutor::TryEvaluateFoldable(context, probe, result) && result.IsNull();
+}
+
 unique_ptr<Expression> FunctionBinder::BindScalarFunction(const Identifier &schema, const Identifier &name,
                                                           vector<unique_ptr<Expression>> children, ErrorData &error,
                                                           bool is_operator, optional_ptr<Binder> binder) {
 	// bind the function
-	auto &function = Catalog::GetSystemCatalog(context).GetEntry<ScalarFunctionCatalogEntry>(
-	    context, QualifiedName(Catalog::GetSystemCatalog(context).GetName(), schema, name));
+	auto &system = Catalog::GetSystemCatalog(context);
+	auto &function = system.GetEntry<ScalarFunctionCatalogEntry>(
+	    context, schema == DEFAULT_SCHEMA ? *system.GetDefaultSchema() : schema, name);
 	D_ASSERT(function.type == CatalogType::SCALAR_FUNCTION_ENTRY);
 	return BindScalarFunction(function, std::move(children), error, is_operator, binder);
 }
@@ -815,40 +919,26 @@ unique_ptr<Expression> FunctionBinder::BindScalarFunction(const ScalarFunctionCa
 	// In those cases, we default to SQLNULL.
 	const auto return_type_if_null =
 	    bound_function.GetReturnType().IsComplete() ? bound_function.GetReturnType() : LogicalType::SQLNULL;
-	if (bound_function.GetNullHandling() == FunctionNullHandling::DEFAULT_NULL_HANDLING) {
+	const bool probe_nulls = bound_function.GetNullHandling() == FunctionNullHandling::DEFAULT_NULL_HANDLING;
+	const bool keep_arguments = bound_function.HasBindExpressionCallback();
+	if (probe_nulls) {
 		for (auto &child : regular_args) {
-			if (child->GetReturnType() == LogicalTypeId::SQLNULL) {
-				return make_uniq<BoundConstantExpression>(Value(return_type_if_null));
-			}
-			if (!child->IsFoldable()) {
-				continue;
-			}
-			Value result;
-			if (!ExpressionExecutor::TryEvaluateScalar(context, *child, result)) {
-				continue;
-			}
-			if (result.IsNull()) {
+			if (FoldsToNull(context, *child, keep_arguments)) {
 				return make_uniq<BoundConstantExpression>(Value(return_type_if_null));
 			}
 		}
 		for (auto &child : keyword_args) {
-			if (child.second->GetReturnType() == LogicalTypeId::SQLNULL) {
-				return make_uniq<BoundConstantExpression>(Value(return_type_if_null));
-			}
-			if (!child.second->IsFoldable()) {
-				continue;
-			}
-			Value result;
-			if (!ExpressionExecutor::TryEvaluateScalar(context, *child.second, result)) {
-				continue;
-			}
-			if (result.IsNull()) {
+			if (FoldsToNull(context, *child.second, keep_arguments)) {
 				return make_uniq<BoundConstantExpression>(Value(return_type_if_null));
 			}
 		}
 	}
-	return BindScalarFunction(std::move(selected_function), std::move(regular_args), std::move(keyword_args),
-	                          is_operator, binder);
+	auto result = BindScalarFunction(std::move(selected_function), std::move(regular_args), std::move(keyword_args),
+	                                 is_operator, binder);
+	if (probe_nulls && keep_arguments) {
+		FoldConstantInputs(context, *result, false);
+	}
+	return result;
 }
 
 static bool RequiresCollationPropagation(const LogicalType &type) {
@@ -1283,13 +1373,13 @@ static vector<Identifier> ResolveArguments(const SimpleFunction &function, Bound
 		if (name.empty()) {
 			// Somehow this was not a named argument, throw an error.
 			throw BinderException(location,
-			                      "Positional arguments cannot follow named arguments in a function call to '%s'",
+			                      "Positional arguments cannot follow named arguments in a function call to %s",
 			                      function.GetName());
 		}
 
 		if (seen_names.count(name)) {
 			// This should also not really happen when invoked through SQL
-			throw BinderException(location, "Duplicate named argument %s in function call to '%s'", name,
+			throw BinderException(location, "Duplicate named argument %s in function call to %s", name,
 			                      function.GetName());
 		}
 		seen_names.insert(name);
@@ -1297,8 +1387,8 @@ static vector<Identifier> ResolveArguments(const SimpleFunction &function, Bound
 		const auto opt_param_idx = sig.GetParameterIndexByName(name);
 		if (!opt_param_idx.IsValid()) {
 			if (!kwargs_param) {
-				throw BinderException(location, "Function '%s' does not have a parameter named '%s'",
-				                      function.GetName(), name);
+				throw BinderException(location, "Function %s does not have a parameter named %s", function.GetName(),
+				                      name);
 			}
 			kwargs.emplace_back(name, std::move(arg));
 			continue;
@@ -1307,8 +1397,8 @@ static vector<Identifier> ResolveArguments(const SimpleFunction &function, Bound
 		const auto param_idx = opt_param_idx.GetIndex();
 		if (sig.GetParameter(param_idx).AcceptsPosition() && param_idx < passed_count) {
 			throw BinderException(location,
-			                      "Named argument '%s' cannot be used for parameter '%s' because it has already "
-			                      "been provided as a positional argument in function call to '%s'",
+			                      "Named argument '%s' cannot be used for parameter %s because it has already "
+			                      "been provided as a positional argument in function call to %s",
 			                      arg->ToString(), name, function.GetName());
 		}
 		keyword_arguments[param_idx] = std::move(arg);
@@ -1380,7 +1470,7 @@ static vector<Identifier> ResolveArguments(const SimpleFunction &function, Bound
 // The names of the named arguments have to stay parallel to the last arguments
 static void VerifyArgumentCount(const BoundSimpleFunction &bound_function, idx_t resolved_count, idx_t argument_count) {
 	if (resolved_count != argument_count && !bound_function.GetNamedArguments().empty()) {
-		throw InternalException("Function '%s' cannot add or remove arguments in its bind callback when it is "
+		throw InternalException("Function %s cannot add or remove arguments in its bind callback when it is "
 		                        "called with keyword-only or '**kwargs' arguments",
 		                        bound_function.GetName());
 	}
@@ -1470,6 +1560,10 @@ unique_ptr<Expression> FunctionBinder::BindScalarFunction(shared_ptr<const Scala
 	auto result_func = make_uniq<BoundFunctionExpression>(std::move(bound_function), std::move(children),
 	                                                      std::move(bind_info), is_operator);
 
+	if (binder && result_func->Function().GetStability() == FunctionStability::CONSISTENT_WITHIN_QUERY) {
+		// the result depends on the query it is bound in, also when the bind_expression callback folds it
+		binder->SetAlwaysRequireRebind();
+	}
 	if (result_func->Function().HasBindExpressionCallback()) {
 		// if a bind_expression callback is registered - call it and emit the resulting expression
 		FunctionBindExpressionInput input(context, result_func->FunctionMutable(), result_func->BindInfoMutable().get(),

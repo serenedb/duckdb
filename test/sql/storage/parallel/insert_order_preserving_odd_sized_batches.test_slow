@@ -12,6 +12,10 @@ require parquet
 
 load {TEST_DIR}/insert_odd_sized_batches.db
 
+# without insertion order every thread writes its own row groups, so the block count grows with threads
+statement ok
+SET threads=16
+
 query I
 CREATE TABLE integers AS SELECT * FROM range(10_000_000) tbl(i);
 ----

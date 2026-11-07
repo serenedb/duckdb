@@ -1,0 +1,123 @@
+# name: test/optimizer/expression_rewriter/constant_folding_children.test
+# description: Constant folding folds every foldable subtree, including the siblings of a child that cannot fold, and nothing above that child
+# group: [expression_rewriter]
+
+statement ok
+CREATE TABLE t AS SELECT i::INTEGER AS i, i::VARCHAR AS s, [i::INTEGER, (i + 1)::INTEGER] AS l FROM range(100) tbl(i);
+
+statement ok
+PRAGMA explain_output = OPTIMIZED_ONLY
+
+# a chain of calls over a column stays, the same chain over a constant folds
+query II
+EXPLAIN SELECT lower(lower(lower(lower(lower(lower(lower(lower(lower(lower(lower(lower(lower(lower(lower(lower(s)))))))))))))))) FROM t
+----
+logical_opt	<REGEX>:(?s).*lower\(lower\(lower\(lower\(lower\(lower\(lower\(lower\(lower\(lower\(lower\(lower\(lower\(lower\(lower\(lower\(s\)\)\)\)\)\)\)\)\)\)\)\)\)\)\)\).*
+
+query I
+SELECT lower(lower(lower(lower(lower(lower(lower(lower(lower(lower(lower(lower(lower(lower(lower(lower(s || 'X')))))))))))))))) FROM t WHERE i = 7
+----
+7x
+
+query II
+EXPLAIN SELECT lower(lower(lower(lower(lower(lower(lower(lower(lower(lower(lower(lower(lower(lower(lower(lower('ABC'))))))))))))))))
+----
+logical_opt	<REGEX>:(?s).*Expressions: 'abc'.*
+
+# the foldable siblings of a child that cannot fold fold, the nodes above it don't
+query II
+EXPLAIN SELECT lower(s) || lower('ABC') FROM t
+----
+logical_opt	<REGEX>:(?s).*lower\(s\) \|\| 'abc'.*
+
+query II
+EXPLAIN SELECT (i + (1 + 1)) * (2 + 3) FROM t
+----
+logical_opt	<REGEX>:(?s).*\(i \+ 2\) \* 5.*
+
+query I
+SELECT (i + (1 + 1)) * (2 + 3) FROM t WHERE i = 3
+----
+25
+
+# a child that throws when folded stays in a branch that never runs, and folds away with a branch that is never taken
+query II
+EXPLAIN SELECT CASE WHEN s = '5x' THEN CAST('abc' AS INTEGER) ELSE i END FROM t
+----
+logical_opt	<REGEX>:(?s).*CAST\('abc' AS INTEGER\).*
+
+query I
+SELECT sum(CASE WHEN s = '5x' THEN CAST('abc' AS INTEGER) ELSE i END) FROM t
+----
+4950
+
+query II
+EXPLAIN SELECT CASE WHEN true THEN 1 ELSE CAST('abc' AS INTEGER) END
+----
+logical_opt	<REGEX>:(?s).*Expressions: 1 .*
+
+query I
+SELECT sum(coalesce(i, CAST('abc' AS INTEGER) + 1)) FROM t
+----
+4950
+
+statement error
+SELECT CAST('abc' AS INTEGER) + i FROM t
+----
+Could not convert string 'abc' to INT32
+
+# a lambda folds unless it captures a column
+query II
+EXPLAIN SELECT list_transform([1, 2, 3], lambda x: x + 1)
+----
+logical_opt	<REGEX>:(?s).*Expressions: \[2, 3, 4\].*
+
+query II
+EXPLAIN SELECT list_transform([1, 2, 3], lambda x: x + i) FROM t
+----
+logical_opt	<REGEX>:(?s).*list_transform\(\[1, 2, 3\], lambda x: \(x \+ i\), i\).*
+
+query I
+SELECT list_transform([1, 2, 3], lambda x: x + i) FROM t WHERE i = 10
+----
+[11, 12, 13]
+
+query I
+SELECT list_transform(l, lambda x: x * 2) FROM t WHERE i = 10
+----
+[20, 22]
+
+# a volatile function, a subquery, an aggregate and a window function don't fold, their foldable siblings do
+query II
+EXPLAIN SELECT random() + (1 + 1)
+----
+logical_opt	<REGEX>:(?s).*random\(\) \+ 2.*
+
+query II
+EXPLAIN SELECT sum(i) + (1 + 1), (SELECT 1) + (2 + 3) FROM t
+----
+logical_opt	<REGEX>:(?s).*sum\(i\) \+ 2,.*SUBQUERY \+ 5.*
+
+query II
+SELECT sum(i) + (1 + 1), (SELECT 1) + (2 + 3) FROM t
+----
+4952	6
+
+query II
+EXPLAIN SELECT row_number() OVER () + (1 + 1) FROM t
+----
+logical_opt	<REGEX>:(?s).*Expressions: #1 \+ 2.*
+
+query I
+SELECT max(r) FROM (SELECT row_number() OVER () + (1 + 1) AS r FROM t)
+----
+102
+
+# a parameter doesn't fold, its foldable sibling does
+statement ok
+PREPARE p AS SELECT $1::INTEGER + (2 * 3)
+
+query I
+EXECUTE p(1)
+----
+7

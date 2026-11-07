@@ -48,6 +48,13 @@
         "version": "v2.0.0",
         "equals_skip": true,
         "hash_skip": true
+      },
+      {
+        "name": "is_named_parameter",
+        "type": "bool",
+        "serialize_skip": true,
+        "equals_skip": true,
+        "hash_skip": true
       }
     ]
   },
@@ -153,6 +160,12 @@
         "id": 200,
         "name": "column_names",
         "type": "vector<Identifier>"
+      },
+      {
+        "name": "macro_parameter",
+        "type": "optional_idx",
+        "serialize_skip": true,
+        "hash_skip": true
       }
     ]
   },
@@ -296,6 +309,23 @@
         "equals_skip": true,
         "accessor_mut": "IsOperatorMutable()",
         "accessor": "IsOperator()"
+      },
+      {
+        "id": 16584,
+        "name": "from_operator",
+        "type": "bool",
+        "version": "serenedb_v1",
+        "equals_skip": true,
+        "accessor_mut": "FromOperatorMutable()",
+        "accessor": "IsFromOperator()"
+      },
+      {
+        "id": 16585,
+        "name": "builtin",
+        "type": "bool",
+        "version": "serenedb_v1",
+        "accessor_mut": "BuiltinMutable()",
+        "accessor": "IsBuiltin()"
       },
       {
         "id": 207,
@@ -482,6 +512,12 @@
         "id": 203,
         "name": "comparison_type",
         "type": "ExpressionType"
+      },
+      {
+        "name": "per_call",
+        "type": "bool",
+        "serialize_skip": true,
+        "hash_skip": true
       }
     ]
   },
@@ -648,6 +684,14 @@
         "serialize_condition": "qualified_name.Path().size() > 3",
         "deserialize_default": "QualifiedName()",
         "deserialize_skip_assign": true
+      },
+      {
+        "id": 205,
+        "name": "bound_type",
+        "type": "LogicalType",
+        "version": "v2.0.0",
+        "default": "LogicalType::INVALID",
+        "hash_skip": true
       }
     ],
     "finalize_deserialization": [

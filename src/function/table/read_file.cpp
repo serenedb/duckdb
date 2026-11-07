@@ -1,7 +1,9 @@
 #include "duckdb/function/table/read_file.hpp"
 #include "duckdb/function/table/direct_file_reader.hpp"
+#include "duckdb/common/file_system.hpp"
 #include "duckdb/common/multi_file/multi_file_reader.hpp"
 #include "duckdb/common/string_util.hpp"
+#include "duckdb/common/table_column.hpp"
 #include "duckdb/function/function_set.hpp"
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/function/table/range.hpp"
@@ -45,6 +47,7 @@ struct DirectMultiFileInfo : MultiFileReaderInterface {
 	                                        const MultiFileOptions &file_options) override;
 	unique_ptr<NodeStatistics> GetCardinality(const MultiFileBindData &bind_data, idx_t file_count) override;
 	FileGlobInput GetGlobInput() override;
+	void GetVirtualColumns(ClientContext &, MultiFileBindData &, virtual_column_map_t &result) override;
 };
 
 template <class OP>
@@ -98,17 +101,18 @@ template <class OP>
 unique_ptr<GlobalTableFunctionState>
 DirectMultiFileInfo<OP>::InitializeGlobalState(ClientContext &context, MultiFileBindData &bind_data,
                                                MultiFileGlobalState &global_state) {
-	auto result = make_uniq<ReadFileGlobalState>();
-
-	result->file_list = bind_data.file_list;
 	vector<idx_t> column_ids;
+	column_ids.reserve(global_state.column_indexes.size());
 	for (idx_t i = 0; i < global_state.column_indexes.size(); i++) {
-		// We only look at file-related columns
-		if (global_state.column_indexes[i].GetPrimaryIndex() <= ReadFileBindData::FILE_LAST_MODIFIED_COLUMN) {
-			column_ids.push_back(global_state.column_indexes[i].GetPrimaryIndex());
+		const auto col_id = global_state.column_indexes[i].GetPrimaryIndex();
+		if (IsVirtualColumn(col_id) && col_id != MultiFileReader::COLUMN_IDENTIFIER_FILE_ROW_NUMBER) {
+			continue;
 		}
+		column_ids.push_back(col_id);
 	}
 
+	auto result = make_uniq<ReadFileGlobalState>();
+	result->file_list = bind_data.file_list;
 	for (const auto &column_id : column_ids) {
 		if (column_id == ReadFileBindData::FILE_CONTENT_COLUMN) {
 			result->requires_file_open = true;
@@ -117,7 +121,6 @@ DirectMultiFileInfo<OP>::InitializeGlobalState(ClientContext &context, MultiFile
 			result->requires_file_metadata = true;
 		}
 	}
-
 	result->column_ids = std::move(column_ids);
 	return std::move(result);
 }
@@ -125,7 +128,7 @@ DirectMultiFileInfo<OP>::InitializeGlobalState(ClientContext &context, MultiFile
 template <class OP>
 unique_ptr<LocalTableFunctionState> DirectMultiFileInfo<OP>::InitializeLocalState(ClientContext &,
                                                                                   GlobalTableFunctionState &) {
-	return make_uniq<LocalTableFunctionState>();
+	return make_uniq<ReadFileLocalState>();
 }
 
 template <class OP>
@@ -163,6 +166,12 @@ unique_ptr<NodeStatistics> DirectMultiFileInfo<OP>::GetCardinality(const MultiFi
 template <class OP>
 FileGlobInput DirectMultiFileInfo<OP>::GetGlobInput() {
 	return FileGlobOptions::ALLOW_EMPTY;
+}
+
+template <class OP>
+void DirectMultiFileInfo<OP>::GetVirtualColumns(ClientContext &, MultiFileBindData &, virtual_column_map_t &result) {
+	result.emplace(MultiFileReader::COLUMN_IDENTIFIER_FILE_ROW_NUMBER,
+	               TableColumn("file_row_number", LogicalType::BIGINT));
 }
 
 //------------------------------------------------------------------------------

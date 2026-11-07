@@ -60,7 +60,23 @@ void PhysicalOperator::SetEstimatedCardinality(InsertionOrderPreservingMap<strin
 	result[RenderTreeNode::ESTIMATED_CARDINALITY] = StringUtil::Format("%llu", estimated_cardinality);
 }
 
+void PhysicalOperator::SetEstimatedCardinality(InsertionOrderPreservingMap<ExplainValue> &result,
+                                               idx_t estimated_cardinality) {
+	result[RenderTreeNode::ESTIMATED_CARDINALITY] = StringUtil::Format("%llu", estimated_cardinality);
+}
+
+InsertionOrderPreservingMap<ExplainValue> PhysicalOperator::ParamsToValue() const {
+	InsertionOrderPreservingMap<ExplainValue> result;
+	for (auto &entry : ParamsToString()) {
+		result[entry.first] = std::move(entry.second);
+	}
+	return result;
+}
+
 idx_t PhysicalOperator::EstimatedThreadCount() const {
+	if (estimated_thread_count.IsValid()) {
+		return estimated_thread_count.GetIndex();
+	}
 	idx_t result = 0;
 	if (children.empty()) {
 		// Terminal operator, e.g., base table, these decide the degree of parallelism of pipelines
@@ -76,6 +92,7 @@ idx_t PhysicalOperator::EstimatedThreadCount() const {
 			result = MaxValue(child.get().EstimatedThreadCount(), result);
 		}
 	}
+	estimated_thread_count = result;
 	return result;
 }
 
@@ -84,7 +101,7 @@ bool PhysicalOperator::CanSaturateThreads(ClientContext &context) const {
 	// In debug mode we always return true here so that the code that depends on it is well-tested
 	return true;
 #else
-	const auto num_threads = TaskScheduler::GetScheduler(context).NumberOfThreads();
+	const auto num_threads = TaskScheduler::QueryThreads(context);
 	return EstimatedThreadCount() >= num_threads;
 #endif
 }
@@ -168,6 +185,11 @@ ProgressData PhysicalOperator::GetProgress(ClientContext &context, GlobalSourceS
 
 void PhysicalOperator::SourceFinished(ClientContext &context, GlobalSourceState &gstate) const {
 }
+
+void PhysicalOperator::LocalSourceFinished(ExecutionContext &context, GlobalSourceState &gstate,
+                                           LocalSourceState &) const {
+	SourceFinished(context.client, gstate);
+}
 // LCOV_EXCL_STOP
 
 //===--------------------------------------------------------------------===//
@@ -213,7 +235,7 @@ idx_t PhysicalOperator::GetMaxThreadMemory(ClientContext &context) {
 	// Memory usage per thread should scale with max mem / num threads
 	// We take 1/4th of this, to be conservative
 	auto max_memory = BufferManager::GetBufferManager(context).GetOperatorMemoryLimit();
-	auto num_threads = TaskScheduler::GetScheduler(context).NumberOfThreads();
+	auto num_threads = TaskScheduler::QueryThreads(context);
 	return (max_memory / num_threads) / 4;
 }
 
@@ -306,7 +328,8 @@ bool PhysicalOperator::AllSourcesSupportBatchIndex() const {
 }
 
 void PhysicalOperator::Verify() {
-#ifdef DEBUG
+#ifdef D_ASSERT_IS_ENABLED
+	DUCKDB_DEBUG_VERIFY_GUARD();
 	auto sources = GetSources();
 	D_ASSERT(!sources.empty());
 	for (auto &child : children) {

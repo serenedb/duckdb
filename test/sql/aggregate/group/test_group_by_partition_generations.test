@@ -1,0 +1,40 @@
+# name: test/sql/aggregate/group/test_group_by_partition_generations.test
+# description: Hash aggregates whose threads grow their partitions several times while sinking: fixed-width and string keys, aggregates with destructors, and partitions scanned twice
+# group: [group]
+
+statement ok
+SET threads=8
+
+statement ok
+CREATE TABLE g AS SELECT i, i % 1000000 AS k, (i % 1000000)::VARCHAR || '_a_string_longer_than_twelve_bytes' AS s FROM range(4000000) t(i)
+
+query IIII
+SELECT count(*), sum(len(l)), sum(length(m)), sum(x) FROM (SELECT k, list(i) AS l, mode(s) AS m, max(i) AS x FROM g GROUP BY k)
+----
+1000000	4000000	39888890	3499999500000
+
+query IIII
+SELECT count(*), sum(len(l)), sum(length(m)), sum(x) FROM (SELECT s, list(i) AS l, mode(s) AS m, max(i) AS x FROM g GROUP BY s)
+----
+1000000	4000000	39888890	3499999500000
+
+query I
+SELECT count(*) FROM (SELECT DISTINCT k FROM g) d WHERE (SELECT count(*) FROM g WHERE g.k = d.k) = 4
+----
+1000000
+
+query I
+SELECT count(*) FROM (SELECT DISTINCT s FROM g) d WHERE (SELECT count(*) FROM g WHERE g.s = d.s) = 4
+----
+1000000
+
+statement ok
+DROP TABLE g
+
+statement ok
+SET memory_limit='64MB'
+
+query III
+SELECT count(*), sum(c), sum(x) FROM (SELECT i % 1000000 AS k, count(*) AS c, max(i) AS x FROM range(4000000) t(i) GROUP BY k)
+----
+1000000	4000000	3499999500000

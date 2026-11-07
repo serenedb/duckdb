@@ -26,7 +26,7 @@ class SortedRunMerger {
 
 public:
 	SortedRunMerger(const Sort &sort, vector<unique_ptr<SortedRun>> &&sorted_runs, idx_t partition_size, bool external,
-	                bool is_index_sort);
+	                bool is_index_sort, idx_t memory_budget);
 	~SortedRunMerger();
 
 public:
@@ -60,6 +60,7 @@ public:
 	const idx_t partition_size;
 	const bool external;
 	const bool is_index_sort;
+	const idx_t memory_budget;
 };
 
 } // namespace duckdb

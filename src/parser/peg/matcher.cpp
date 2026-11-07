@@ -2,6 +2,11 @@
 #include "duckdb/parser/peg/matcher_stack.hpp"
 #include "duckdb/parser/peg/compiled_grammar.hpp"
 #include "duckdb/parser/peg/matcher_factory.hpp"
+#include "duckdb/parser/peg/matcher/choice_matcher.hpp"
+#include "duckdb/parser/peg/matcher/keyword_matcher.hpp"
+#include "duckdb/parser/peg/matcher/list_matcher.hpp"
+#include "duckdb/parser/peg/matcher/optional_matcher.hpp"
+#include "duckdb/parser/peg/matcher/repeat_matcher.hpp"
 #include "duckdb/main/database.hpp"
 #include "duckdb/parser/peg/transformer/peg_transformer.hpp"
 
@@ -16,6 +21,8 @@
 #include "duckdb/parser/peg/peg_parser.hpp"
 #include "duckdb/parser/peg/transformer/parse_result.hpp"
 
+#include <absl/strings/ascii.h>
+
 namespace duckdb {
 
 MatcherResult Matcher::MatchParseResult(MatchState &state) const {
@@ -26,7 +33,9 @@ MatcherResult Matcher::MatchParseResult(MatchState &state) const {
 
 SuggestionType Matcher::AddSuggestion(MatchState &state) const {
 	if (!state.added_suggestions) {
-		state.added_suggestions = make_uniq<reference_set_t<const Matcher>>();
+		auto &scopes = state.context.suggestion_scopes;
+		scopes.push_back(make_uniq<reference_set_t<const Matcher>>());
+		state.added_suggestions = *scopes.back();
 	}
 	auto &added_suggestions = *state.added_suggestions;
 	auto entry = added_suggestions.find(*this);
@@ -54,15 +63,431 @@ void MatchState::AddSuggestion(MatcherSuggestion suggestion) {
 
 Matcher &MatcherAllocator::Allocate(unique_ptr<Matcher> matcher) {
 	auto &result = *matcher;
-	result.packrat_id = optional_idx(matchers.size());
+	result.allocation_index = NumericCast<uint32_t>(matchers.size());
 	matchers.push_back(std::move(matcher));
 	return result;
 }
 
-optional_ptr<ParseResult> ParseResultAllocator::Allocate(unique_ptr<ParseResult> parse_result) {
-	auto result_ptr = parse_result.get();
-	parse_results.push_back(std::move(parse_result));
-	return optional_ptr<ParseResult>(result_ptr);
+void MatcherAllocator::SetPackratMemoized(Matcher &matcher) {
+	if (!matcher.packrat_slot.IsValid()) {
+		matcher.packrat_slot = optional_idx(packrat_slots++);
+	}
+}
+
+void MatcherAllocator::ComputeFirstSets(const GrammarLiteralTable &table) {
+	vector<reference<Matcher>> composites;
+	for (auto &entry : matchers) {
+		auto &matcher = *entry;
+		auto &first_set = matcher.first_set;
+		first_set = MatcherFirstSet {false, false, {}};
+		switch (matcher.Type()) {
+		case MatcherType::KEYWORD: {
+			auto literal_id = matcher.Cast<KeywordMatcher>().GetLiteralId();
+			if (literal_id.IsValid()) {
+				first_set.AddLiteral(literal_id.GetIndex());
+			} else {
+				first_set.any_token = true;
+			}
+			break;
+		}
+		case MatcherType::LIST:
+		case MatcherType::CHOICE:
+		case MatcherType::OPTIONAL:
+		case MatcherType::REPEAT:
+			composites.push_back(matcher);
+			break;
+		default: {
+			auto token_classes =
+			    matcher.IsAtomic() ? static_cast<const AtomicMatcher &>(matcher).FirstTokenClasses() : uint8_t(0);
+			if (token_classes) {
+				first_set.token_classes = token_classes;
+				first_set.word_categories = static_cast<const AtomicMatcher &>(matcher).FirstWordCategories();
+				break;
+			}
+			first_set.nullable = true;
+			first_set.any_token = true;
+			break;
+		}
+		}
+	}
+	auto for_each_child = [](const Matcher &matcher, auto &&func) {
+		switch (matcher.Type()) {
+		case MatcherType::LIST:
+			for (auto &child : matcher.Cast<ListMatcher>().matchers) {
+				func(child.get());
+			}
+			break;
+		case MatcherType::CHOICE:
+			for (auto &child : matcher.Cast<ChoiceMatcher>().matchers) {
+				func(child.get());
+			}
+			break;
+		case MatcherType::OPTIONAL:
+			func(matcher.Cast<OptionalMatcher>().GetChildMatcher());
+			break;
+		default:
+			func(matcher.Cast<RepeatMatcher>().GetChildMatcher());
+			break;
+		}
+	};
+	vector<idx_t> parent_begin(matchers.size() + 1, 0);
+	for (auto &composite : composites) {
+		for_each_child(composite.get(), [&](const Matcher &child) { parent_begin[child.allocation_index + 1]++; });
+	}
+	for (idx_t i = 0; i < matchers.size(); i++) {
+		parent_begin[i + 1] += parent_begin[i];
+	}
+	vector<idx_t> parents(parent_begin.back());
+	vector<idx_t> parent_end(parent_begin.begin(), parent_begin.end() - 1);
+	for (auto &composite : composites) {
+		auto parent = composite.get().allocation_index;
+		for_each_child(composite.get(),
+		               [&](const Matcher &child) { parents[parent_end[child.allocation_index]++] = parent; });
+	}
+	auto update = [](Matcher &matcher) {
+		auto &first_set = matcher.first_set;
+		bool changed = false;
+		bool nullable;
+		switch (matcher.Type()) {
+		case MatcherType::LIST:
+			nullable = true;
+			for (auto &child : matcher.Cast<ListMatcher>().matchers) {
+				auto &child_set = child.get().first_set;
+				changed |= first_set.MergeChanged(child_set);
+				if (!child_set.nullable) {
+					nullable = false;
+					break;
+				}
+			}
+			break;
+		case MatcherType::CHOICE:
+			nullable = false;
+			for (auto &child : matcher.Cast<ChoiceMatcher>().matchers) {
+				auto &child_set = child.get().first_set;
+				changed |= first_set.MergeChanged(child_set);
+				nullable = nullable || child_set.nullable;
+			}
+			break;
+		case MatcherType::OPTIONAL:
+			changed |= first_set.MergeChanged(matcher.Cast<OptionalMatcher>().GetChildMatcher().first_set);
+			nullable = true;
+			break;
+		default: {
+			auto &child_set = matcher.Cast<RepeatMatcher>().GetChildMatcher().first_set;
+			changed |= first_set.MergeChanged(child_set);
+			nullable = child_set.nullable;
+			break;
+		}
+		}
+		if (nullable && !first_set.nullable) {
+			first_set.nullable = true;
+			changed = true;
+		}
+		return changed;
+	};
+	vector<idx_t> worklist;
+	worklist.reserve(composites.size());
+	vector<bool> queued(matchers.size(), false);
+	for (auto &composite : composites) {
+		worklist.push_back(composite.get().allocation_index);
+		queued[composite.get().allocation_index] = true;
+	}
+	while (!worklist.empty()) {
+		auto index = worklist.back();
+		worklist.pop_back();
+		queued[index] = false;
+		if (!update(*matchers[index])) {
+			continue;
+		}
+		for (idx_t i = parent_begin[index]; i < parent_begin[index + 1]; i++) {
+			auto parent = parents[i];
+			if (!queued[parent]) {
+				queued[parent] = true;
+				worklist.push_back(parent);
+			}
+		}
+	}
+	ComputeAfterWordSets(parent_begin, parents);
+	for (auto &entry : matchers) {
+		auto &matcher = *entry;
+		if (matcher.first_set.nullable || matcher.first_set.any_token) {
+			matcher.first_set.literals.clear();
+			matcher.after_word_set.literals.clear();
+			continue;
+		}
+		matcher.first_set_table = table;
+		matcher.checks_after_word = (matcher.first_set.token_classes & MatcherTokenClass::WORD) &&
+		                            !matcher.can_end_after_word && !matcher.after_word_set.any_token;
+		if (!matcher.checks_after_word) {
+			matcher.after_word_set.literals.clear();
+		}
+	}
+	for (auto &entry : matchers) {
+		auto &matcher = *entry;
+		if (matcher.Type() != MatcherType::LIST || !matcher.Cast<ListMatcher>().chain_core.IsValid()) {
+			continue;
+		}
+		auto &list = matcher.Cast<ListMatcher>();
+		auto &core = list.matchers[list.chain_core.GetIndex()].get();
+		if (core.Type() == MatcherType::LIST && core.HasBuiltInMatch() && !core.IsPackratMemoized()) {
+			auto &nested = core.Cast<ListMatcher>();
+			if (nested.chain_core.IsValid() && !nested.suppress_suggestions) {
+				list.nested_chain_level = nested;
+			}
+		}
+		ComputeChainEdges(matcher, table);
+	}
+}
+
+optional_ptr<const ChainEdges> MatcherAllocator::ComputeChainEdges(Matcher &matcher, const GrammarLiteralTable &table) {
+	auto &list = matcher.Cast<ListMatcher>();
+	if (list.chain_edges) {
+		return list.chain_edges;
+	}
+	auto &core = list.matchers[list.chain_core.GetIndex()].get();
+	if (core.Type() != MatcherType::LIST || !core.HasBuiltInMatch()) {
+		return nullptr;
+	}
+	auto &nested = core.Cast<ListMatcher>();
+	if (!nested.chain_core.IsValid() || nested.suppress_suggestions) {
+		return nullptr;
+	}
+	auto add_edges = [](ChainEdges &edges, const ListMatcher &level) {
+		auto core_index = level.chain_core.GetIndex();
+		for (idx_t i = 0; i < level.matchers.size(); i++) {
+			if (i == core_index) {
+				continue;
+			}
+			auto &edge = level.matchers[i].get().Cast<OptionalMatcher>().GetChildMatcher();
+			auto &edge_set = i < core_index ? edges.prefixes : edges.suffixes;
+			edge_set.empty = false;
+			if (!edge.first_set_table) {
+				edge_set.first.any_token = true;
+				continue;
+			}
+			edge_set.first.MergeChanged(edge.first_set);
+			if (edge.first_set.token_classes & MatcherTokenClass::WORD) {
+				edge_set.words_check_follow = edge_set.words_check_follow && edge.checks_after_word;
+			}
+		}
+	};
+	auto merge_edges = [](ChainEdgeSet &edge_set, const ChainEdgeSet &nested_set) {
+		edge_set.empty = edge_set.empty && nested_set.empty;
+		edge_set.first.MergeChanged(nested_set.first);
+		edge_set.words_check_follow = edge_set.words_check_follow && nested_set.words_check_follow;
+	};
+	auto edges = make_uniq<ChainEdges>();
+	add_edges(*edges, list);
+	auto nested_edges = ComputeChainEdges(nested, table);
+	if (nested_edges) {
+		merge_edges(edges->prefixes, nested_edges->prefixes);
+		merge_edges(edges->suffixes, nested_edges->suffixes);
+	} else {
+		add_edges(*edges, nested);
+	}
+	edges->prefixes.table = table;
+	edges->suffixes.table = table;
+	list.chain_edges = *edges;
+	chain_edges.push_back(std::move(edges));
+	return list.chain_edges;
+}
+
+bool Matcher::CanFollowWord(MatchState &state) const {
+	auto &tokens = state.token_iterator;
+	auto info = tokens.CurrentLiteralInfo(*first_set_table);
+	if (first_set.HasLiteral(info.LiteralId())) {
+		return true;
+	}
+	if (info.IsKeyword() && !info.HasAnyFlags(first_set.word_categories)) {
+		return false;
+	}
+	auto next = tokens.Position() + 1;
+	if (next >= tokens.Size()) {
+		return true;
+	}
+	auto &next_token = tokens.GetToken(next);
+	if (next_token.type == TokenType::END_OF_INPUT_AUTOCOMPLETE ||
+	    (next_token.token_classes & after_word_set.token_classes) ||
+	    after_word_set.HasLiteral(tokens.LiteralInfoAt(next, *first_set_table).LiteralId())) {
+		return true;
+	}
+	state.context.max_token_index = MaxValue(state.context.max_token_index, next);
+	return false;
+}
+
+void MatcherAllocator::ComputeAfterWordSets(const vector<idx_t> &parent_begin, const vector<idx_t> &parents) {
+	vector<idx_t> worklist;
+	vector<bool> tracked(matchers.size(), false);
+	vector<bool> queued(matchers.size(), false);
+	for (auto &entry : matchers) {
+		auto &matcher = *entry;
+		matcher.after_word_set = MatcherFirstSet {false, false, {}};
+		matcher.can_end_after_word = false;
+		if (!matcher.first_set.any_token && !(matcher.first_set.token_classes & MatcherTokenClass::WORD)) {
+			continue;
+		}
+		switch (matcher.Type()) {
+		case MatcherType::LIST:
+		case MatcherType::CHOICE:
+		case MatcherType::OPTIONAL:
+		case MatcherType::REPEAT:
+			worklist.push_back(matcher.allocation_index);
+			tracked[matcher.allocation_index] = true;
+			queued[matcher.allocation_index] = true;
+			break;
+		default: {
+			auto token_classes =
+			    matcher.IsAtomic() ? static_cast<const AtomicMatcher &>(matcher).FirstTokenClasses() : uint8_t(0);
+			if (!token_classes) {
+				matcher.after_word_set.any_token = true;
+				matcher.can_end_after_word = true;
+			} else {
+				matcher.can_end_after_word = token_classes & MatcherTokenClass::WORD;
+			}
+			break;
+		}
+		}
+	}
+	auto update = [](Matcher &matcher) {
+		auto &after_word_set = matcher.after_word_set;
+		bool changed = false;
+		bool can_end = false;
+		switch (matcher.Type()) {
+		case MatcherType::LIST: {
+			bool prefix_nullable = true;
+			bool prefix_one_word = false;
+			for (auto &child_entry : matcher.Cast<ListMatcher>().matchers) {
+				auto &child = child_entry.get();
+				if (prefix_nullable) {
+					changed |= after_word_set.MergeChanged(child.after_word_set);
+				}
+				if (prefix_one_word) {
+					changed |= after_word_set.MergeChanged(child.first_set);
+				}
+				auto one_word =
+				    (prefix_nullable && child.can_end_after_word) || (prefix_one_word && child.first_set.nullable);
+				prefix_nullable = prefix_nullable && child.first_set.nullable;
+				prefix_one_word = one_word;
+				if (!prefix_nullable && !prefix_one_word) {
+					break;
+				}
+			}
+			can_end = prefix_one_word;
+			break;
+		}
+		case MatcherType::CHOICE:
+			for (auto &child : matcher.Cast<ChoiceMatcher>().matchers) {
+				changed |= after_word_set.MergeChanged(child.get().after_word_set);
+				can_end = can_end || child.get().can_end_after_word;
+			}
+			break;
+		case MatcherType::OPTIONAL: {
+			auto &child = matcher.Cast<OptionalMatcher>().GetChildMatcher();
+			changed |= after_word_set.MergeChanged(child.after_word_set);
+			can_end = child.can_end_after_word;
+			break;
+		}
+		default: {
+			auto &child = matcher.Cast<RepeatMatcher>().GetChildMatcher();
+			changed |= after_word_set.MergeChanged(child.after_word_set);
+			if (child.can_end_after_word) {
+				changed |= after_word_set.MergeChanged(child.first_set);
+			}
+			can_end = child.can_end_after_word;
+			break;
+		}
+		}
+		if (can_end && !matcher.can_end_after_word) {
+			matcher.can_end_after_word = true;
+			changed = true;
+		}
+		return changed;
+	};
+	while (!worklist.empty()) {
+		auto index = worklist.back();
+		worklist.pop_back();
+		queued[index] = false;
+		if (!update(*matchers[index])) {
+			continue;
+		}
+		for (idx_t i = parent_begin[index]; i < parent_begin[index + 1]; i++) {
+			auto parent = parents[i];
+			if (tracked[parent] && !queued[parent]) {
+				queued[parent] = true;
+				worklist.push_back(parent);
+			}
+		}
+	}
+}
+
+data_ptr_t MatchProcessArena::AllocateInNewChunk(idx_t size) {
+	if (size > CHUNK_SIZE) {
+		throw InternalException("A match process of %llu bytes does not fit a process arena chunk", size);
+	}
+	if (position + size > CHUNK_SIZE) {
+		chunk_index++;
+		position = 0;
+	}
+	if (chunk_index >= chunks.size()) {
+		chunks.push_back(Allocator::DefaultAllocator().Allocate(CHUNK_SIZE));
+	}
+	auto result = chunks[chunk_index].get() + position;
+	position += size;
+	return result;
+}
+
+ParseResultAllocator::ParseResultAllocator() : arena(Allocator::DefaultAllocator(), INITIAL_ARENA_CAPACITY) {
+}
+
+std::string_view ParseResultAllocator::Lower(std::string_view text) {
+	auto first = std::find_if(text.begin(), text.end(), [](char c) { return c >= 'A' && c <= 'Z'; });
+	if (first == text.end()) {
+		return text;
+	}
+	auto data = AllocateText(text.size());
+	absl::ascii_internal::AsciiStrToLower(data, text.data(), text.size());
+	return std::string_view(data, text.size());
+}
+
+std::string_view ParseResultAllocator::Upper(std::string_view text) {
+	auto first = std::find_if(text.begin(), text.end(), [](char c) { return c >= 'a' && c <= 'z'; });
+	if (first == text.end()) {
+		return text;
+	}
+	auto data = AllocateText(text.size());
+	absl::ascii_internal::AsciiStrToUpper(data, text.data(), text.size());
+	return std::string_view(data, text.size());
+}
+
+idx_t ParseResultAllocator::CopyUnquoted(std::string_view body, char quote, char *target) {
+	idx_t size = 0;
+	for (idx_t i = 0; i < body.size(); i++) {
+		target[size++] = body[i];
+		if (body[i] == quote && i + 1 < body.size() && body[i + 1] == quote) {
+			i++;
+		}
+	}
+	return size;
+}
+
+std::string_view ParseResultAllocator::Unquote(std::string_view body, char quote) {
+	if (body.find(quote) == std::string_view::npos) {
+		return body;
+	}
+	auto data = AllocateText(body.size());
+	return FinishText(data, body.size(), CopyUnquoted(body, quote, data));
+}
+
+std::span<reference<ParseResult>> ParseResultAllocator::TakeChildren(idx_t begin) {
+	auto count = children.size() - begin;
+	if (count == 0) {
+		return {};
+	}
+	auto data =
+	    reinterpret_cast<reference<ParseResult> *>(arena.AllocateAligned(count * sizeof(reference<ParseResult>)));
+	std::uninitialized_copy(children.begin() + NumericCast<int64_t>(begin), children.end(), data);
+	DiscardChildren(begin);
+	return {data, count};
 }
 
 } // namespace duckdb

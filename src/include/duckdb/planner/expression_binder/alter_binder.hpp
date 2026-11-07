@@ -21,8 +21,7 @@ public:
 	            LogicalType target_type);
 
 protected:
-	BindResult BindLambdaReference(LambdaRefExpression &expr, idx_t depth);
-	BindResult BindColumnReference(ColumnRefExpression &expr, idx_t depth);
+	BindResult BindColumnReference(ColumnRefExpression &expr);
 	BindResult BindExpression(unique_ptr<ParsedExpression> &expr_ptr, idx_t depth,
 	                          bool root_expression = false) override;
 

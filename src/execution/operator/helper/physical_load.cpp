@@ -1,9 +1,9 @@
 #include "duckdb/execution/operator/helper/physical_load.hpp"
+#include "duckdb/main/database.hpp"
 #include "duckdb/main/extension_helper.hpp"
 #include "duckdb/main/extension_repository_manager.hpp"
 #include "duckdb/main/client_data.hpp"
 #include "duckdb/catalog/catalog_search_path.hpp"
-#include "duckdb/main/database.hpp"
 #include "duckdb/main/settings.hpp"
 
 namespace duckdb {
@@ -60,7 +60,27 @@ SourceResultType PhysicalLoad::GetDataInternal(ExecutionContext &context, DataCh
                                                OperatorSourceInput &input) const {
 	if (info->load_type == LoadType::CREATE_REPOSITORY || info->load_type == LoadType::DROP_REPOSITORY) {
 		ExecuteRepositoryStatement(context.client, *info, chunk);
-	} else if (info->load_type == LoadType::INSTALL || info->load_type == LoadType::FORCE_INSTALL) {
+		return SourceResultType::FINISHED;
+	}
+
+	// The binder only lets a statement reach here when the extension is compiled
+	// into the binary. INSTALL then has nothing to do; LOAD still has to register
+	// it with this database, which LoadStaticExtension does from the linked-in
+	// registry -- no download, and a no-op when it is already loaded. The upstream
+	// paths below stay for builds that allow runtime loading; here they would only
+	// turn an accepted statement back into an error.
+	const auto extension_name = ExtensionHelper::GetExtensionName(info->filename);
+	if (ExtensionHelper::IsLinkedExtension(extension_name)) {
+		const bool is_install = info->load_type == LoadType::INSTALL || info->load_type == LoadType::FORCE_INSTALL;
+		if (!is_install || info->load_after_install) {
+			DuckDB db_wrapper(*context.client.db);
+			ExtensionHelper::LoadExtension(db_wrapper, extension_name);
+			ExtensionLoader::RefreshSearchPath(context.client);
+		}
+		return SourceResultType::FINISHED;
+	}
+
+	if (info->load_type == LoadType::INSTALL || info->load_type == LoadType::FORCE_INSTALL) {
 		if (info->repository.empty()) {
 			ExtensionInstallOptions options;
 			options.force_install = info->load_type == LoadType::FORCE_INSTALL;

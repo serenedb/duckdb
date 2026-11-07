@@ -78,6 +78,15 @@ TEST_CASE("Test GetTableNames", "[api]") {
 	REQUIRE(table_names.size() == 1);
 	REQUIRE(table_names.count("my_table_for_view"));
 
+	// macros are expanded
+	REQUIRE_NO_FAIL(con.Query("CREATE TABLE my_table_for_macro(i INT)"));
+	REQUIRE_NO_FAIL(con.Query("CREATE MACRO m1(x) AS x + x + (SELECT count(*) FROM my_table_for_macro)"));
+
+	table_names = con.GetTableNames("SELECT m1(col_a) FROM my_table");
+	REQUIRE(table_names.size() == 2);
+	REQUIRE(table_names.count("my_table"));
+	REQUIRE(table_names.count("my_table_for_macro"));
+
 	// * exclude
 	table_names = con.GetTableNames("select * exclude (x) from df");
 	REQUIRE(table_names.size() == 1);

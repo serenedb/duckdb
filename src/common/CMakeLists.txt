@@ -45,7 +45,9 @@ add_library_unity(
   encryption_types.cpp
   exception.cpp
   exception_format_value.cpp
+  explain_value.cpp
   logical_type_info.cpp
+  fault_points.cpp
   file_buffer.cpp
   file_system.cpp
   filename_pattern.cpp
@@ -69,7 +71,9 @@ add_library_unity(
   radix_partitioning.cpp
   re2_regex.cpp
   random_engine.cpp
+  stack_depth.cpp
   stacktrace.cpp
+  string_format.cpp
   string_util.cpp
   enum_util.cpp
   storage_compatibility.cpp

@@ -3,6 +3,7 @@
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/table_function_catalog_entry.hpp"
 #include "duckdb/common/bind_helpers.hpp"
+#include "duckdb/common/enums/file_compression_type.hpp"
 #include "duckdb/common/filename_pattern.hpp"
 #include "duckdb/common/index_vector.hpp"
 #include "duckdb/common/local_file_system.hpp"
@@ -10,6 +11,7 @@
 #include "duckdb/function/table/read_csv.hpp"
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/main/database.hpp"
+#include "duckdb/main/settings.hpp"
 #include "duckdb/parser/expression/columnref_expression.hpp"
 #include "duckdb/parser/expression/function_expression.hpp"
 #include "duckdb/parser/expression/star_expression.hpp"
@@ -26,12 +28,15 @@
 #include "duckdb/planner/operator/logical_column_data_get.hpp"
 #include "duckdb/planner/operator/logical_copy_to_file.hpp"
 #include "duckdb/planner/operator/logical_get.hpp"
+#include "duckdb/planner/expression_binder/where_binder.hpp"
+#include "duckdb/planner/operator/logical_filter.hpp"
 #include "duckdb/planner/operator/logical_projection.hpp"
 #include "duckdb/planner/expression_binder/table_function_binder.hpp"
 #include "duckdb/planner/bound_result_modifier.hpp"
 #include "duckdb/common/algorithm.hpp"
 
 #include "duckdb/main/extension_entries.hpp"
+#include "duckdb/main/extension_helper.hpp"
 
 namespace duckdb {
 
@@ -45,13 +50,16 @@ static bool GetBooleanArg(ClientContext &context, const vector<Value> &arg) {
 	return arg.empty() || arg[0].CastAs(context, LogicalType::BOOLEAN).GetValue<bool>();
 }
 
-void IsFormatExtensionKnown(const string &format) {
+void IsFormatExtensionKnown(ClientContext &context, const string &format) {
 	for (auto &file_postfixes : EXTENSION_FILE_POSTFIXES) {
 		if (format == file_postfixes.name + 1) {
 			// It's a match, we must throw
-			throw CatalogException(
-			    "Copy Function with name \"%s\" is not in the catalog, but it exists in the %s extension.", format,
-			    file_postfixes.extension);
+			throw CatalogException(ExtensionHelper::AddExtensionInstallHintToErrorMsg(
+			    context,
+			    StringUtil::Format("Copy Function with name \"%s\" does not exist in SereneDB (DuckDB provides it in "
+			                       "its %s extension).",
+			                       format, file_postfixes.extension),
+			    file_postfixes.extension));
 		}
 	}
 }
@@ -352,6 +360,9 @@ protected:
 		case ExpressionClass::SUBQUERY:
 			return BindResult(BinderException::Unsupported(expr, "cannot use subquery in PARTITION_PATH"));
 		case ExpressionClass::COLUMN_REF:
+			if (IsArgumentReference(expr.Cast<ColumnRefExpression>())) {
+				return ExpressionBinder::BindExpression(expr_ptr, depth, root_expression);
+			}
 			return BindColumnReference(expr.Cast<ColumnRefExpression>());
 		default:
 			return ExpressionBinder::BindExpression(expr_ptr, depth, root_expression);
@@ -374,7 +385,7 @@ private:
 			for (idx_t i = 0; i < partition_columns.size(); i++) {
 				auto column_idx = partition_columns[i];
 				if (names[column_idx] == column_name) {
-					return BindResult(make_uniq<BoundReferenceExpression>(types[column_idx], i));
+					return BindChunkColumn(column_name, types[column_idx], i);
 				}
 			}
 		}
@@ -654,6 +665,26 @@ BoundStatement Binder::BindCopyFrom(CopyStatement &stmt, const CopyFunction &fun
 	// lookup the table to copy into
 	stmt.info->SetQualifiedName(BindTableName(stmt.info->GetQualifiedName()));
 	auto &table = Catalog::GetEntry<TableCatalogEntry>(context, stmt.info->GetQualifiedName());
+	const bool postgres_csv =
+	    stmt.info->format == "csv" && table.ParentCatalog().Compatibility() == SqlCompatibility::POSTGRES;
+	if (postgres_csv) {
+		auto &options = stmt.info->options;
+		options.try_emplace("allow_quoted_nulls", vector<Value> {Value::BOOLEAN(false)});
+		if (!stmt.info->is_format_auto_detected && !options.contains("auto_detect")) {
+			bool delimiter_given = false;
+			for (auto &option : options) {
+				delimiter_given |= option.first.StartsWith("delim") || option.first.StartsWith("sep");
+			}
+			if (!delimiter_given) {
+				options.emplace("delimiter", vector<Value> {Value(",")});
+			}
+			auto quote = options.try_emplace("quote", vector<Value> {Value("\"")}).first->second;
+			options.try_emplace("escape", std::move(quote));
+			options.try_emplace("comment", vector<Value> {Value("")});
+			options.try_emplace("skip", vector<Value> {Value::BIGINT(0)});
+			options.try_emplace("header", vector<Value> {Value::BOOLEAN(false)});
+		}
+	}
 	IndexVector<idx_t, PhysicalIndex> column_index_map;
 	vector<LogicalIndex> named_column_map;
 	vector<LogicalType> expected_types;
@@ -698,7 +729,19 @@ BoundStatement Binder::BindCopyFrom(CopyStatement &stmt, const CopyFunction &fun
 	for (idx_t i = 0; i < expected_types.size(); i++) {
 		get->AddColumnId(i);
 	}
-	*copy_source = std::move(get);
+	unique_ptr<LogicalOperator> source = std::move(get);
+
+	// COPY FROM ... WHERE: inject a filter between the file scan and insert.
+	if (stmt.info->where_clause) {
+		bind_context.AddGenericBinding(source_bindings[0].table_index, table.name, expected_names, expected_types);
+		WhereBinder where_binder(*this, context);
+		auto condition = where_binder.Bind(stmt.info->where_clause);
+		PlanSubqueries(condition, source);
+		auto filter = make_uniq<LogicalFilter>(std::move(condition));
+		filter->AddChild(std::move(source));
+		source = std::move(filter);
+	}
+	*copy_source = std::move(source);
 	result.plan = std::move(insert_statement.plan);
 	return result;
 }
@@ -745,26 +788,26 @@ vector<Value> BindCopyOption(ClientContext &context, TableFunctionBinder &option
 	return result;
 }
 
+namespace {
+// Derive the COPY format from a file extension (after stripping a .gz/.zst suffix).
 string ExtractFormat(const string &file_path) {
 	auto format = StringUtil::Lower(file_path);
-	// We first remove extension suffixes
 	if (StringUtil::EndsWith(format, CompressionExtensionFromType(FileCompressionType::GZIP))) {
 		format = format.substr(0, format.size() - 3);
 	} else if (StringUtil::EndsWith(format, CompressionExtensionFromType(FileCompressionType::ZSTD))) {
 		format = format.substr(0, format.size() - 4);
 	}
-	// Now lets check for the last .
 	size_t dot_pos = format.rfind('.');
-	if (dot_pos == std::string::npos || dot_pos == format.length() - 1) {
-		// No format found
+	if (dot_pos == string::npos || dot_pos == format.length() - 1) {
 		return "";
 	}
-	// We found something
 	return format.substr(dot_pos + 1);
 }
+} // namespace
 
 void Binder::BindCopyOptions(CopyInfo &info) {
-	TableFunctionBinder option_binder(*this, context, "Copy", "Copy options");
+	TableFunctionBinder option_binder(*this, context, "Copy", "Copy options", true);
+	bool resolved_path_expression = info.file_path_expression != nullptr;
 	if (info.file_path_expression) {
 		auto inputs = BindCopyOption(context, option_binder, "filename", info.file_path_expression);
 		if (inputs.size() != 1 || inputs[0].type().id() != LogicalTypeId::VARCHAR) {
@@ -797,10 +840,49 @@ void Binder::BindCopyOptions(CopyInfo &info) {
 			info.is_format_auto_detected = false;
 			continue;
 		}
+		// PG compat aliases: ON_ERROR 'ignore' -> ignore_errors true,
+		// REJECT_LIMIT N -> rejects_limit N.
+		if (option_name == "on_error") {
+			auto val = inputs.empty() ? "" : inputs[0].ToString();
+			if (StringUtil::CIEquals(val, "ignore")) {
+				info.options["ignore_errors"] = {Value::BOOLEAN(true)};
+			} else if (StringUtil::CIEquals(val, "stop")) {
+				// STOP is the default — do nothing.
+			} else {
+				throw ParserException("invalid value for parameter %s: \"%s\"", option_name, val);
+			}
+			continue;
+		}
+		if (option_name == "reject_limit") {
+			if (!inputs.empty()) {
+				auto limit = inputs[0].GetValue<int64_t>();
+				if (limit < 0) {
+					throw ParserException("REJECT_LIMIT (%lld) must be greater than zero", limit);
+				}
+			}
+			info.options["rejects_limit"] = std::move(inputs);
+			continue;
+		}
 		info.options[option_name] = std::move(inputs);
 	}
-	if (info.is_format_auto_detected && info.format.empty()) {
-		info.format = ExtractFormat(info.file_path);
+	// An expression source (e.g. getvariable()) only resolves to a path here, so the
+	// parse-time format guess can be wrong (it defaults to "text" for an unknown path).
+	// Re-derive from the resolved extension when the user didn't specify a format. Limit
+	// this to a just-resolved path expression: a concrete path is already resolved at
+	// parse, and a format plan re-binding its rewritten statement (e.g. JSON COPY routed
+	// through the CSV writer) relies on the format it set surviving this pass.
+	if (resolved_path_expression && info.is_format_auto_detected) {
+		auto derived = ExtractFormat(info.file_path);
+		if (!derived.empty()) {
+			info.format = derived;
+		}
+	}
+	// Whether an unqualified CSV write gets a header line. Decided here because this is the first point
+	// where the format is known for every target shape -- a path that only resolves during binding (a
+	// parameter or getvariable()) included -- so all of them agree.
+	if (!info.is_from && info.format == "csv" && !info.options.contains("header") &&
+	    !Settings::Get<CopyCsvHeaderDefaultSetting>(context)) {
+		info.options["header"] = {Value::BOOLEAN(false)};
 	}
 	info.parsed_options.clear();
 	if (partition_path) {
@@ -839,20 +921,24 @@ BoundStatement Binder::Bind(CopyStatement &stmt, CopyToType copy_to_type) {
 	    stmt.info->is_format_auto_detected ? OnEntryNotFound::RETURN_NULL : OnEntryNotFound::THROW_EXCEPTION;
 	CatalogEntryRetriever entry_retriever {context};
 	auto &catalog = Catalog::GetSystemCatalog(context);
-	auto entry = catalog.GetEntry(
-	    entry_retriever,
-	    EntryLookupInfo(CatalogType::COPY_FUNCTION_ENTRY,
-	                    QualifiedName(catalog.GetName(), Identifier::DefaultSchema(), Identifier(stmt.info->format))),
-	    on_entry_do);
+	auto entry = catalog
+	                 .LookupEntry(entry_retriever,
+	                              EntryLookupInfo(CatalogType::COPY_FUNCTION_ENTRY,
+	                                              QualifiedName(catalog.GetName(), *catalog.GetDefaultSchema(),
+	                                                            Identifier(stmt.info->format))),
+	                              on_entry_do)
+	                 .entry;
 
 	if (!entry) {
-		IsFormatExtensionKnown(stmt.info->format);
+		IsFormatExtensionKnown(context, stmt.info->format);
 		// If we did not find an entry, we default to a CSV
-		entry = catalog.GetEntry(
-		    entry_retriever,
-		    EntryLookupInfo(CatalogType::COPY_FUNCTION_ENTRY,
-		                    QualifiedName(catalog.GetName(), Identifier::DefaultSchema(), Identifier("csv"))),
-		    OnEntryNotFound::THROW_EXCEPTION);
+		entry = catalog
+		            .LookupEntry(entry_retriever,
+		                         EntryLookupInfo(
+		                             CatalogType::COPY_FUNCTION_ENTRY,
+		                             QualifiedName(catalog.GetName(), *catalog.GetDefaultSchema(), Identifier("csv"))),
+		                         OnEntryNotFound::THROW_EXCEPTION)
+		            .entry;
 	}
 	auto &copy_function = entry->Cast<CopyFunctionCatalogEntry>();
 	auto &function = copy_function.function;

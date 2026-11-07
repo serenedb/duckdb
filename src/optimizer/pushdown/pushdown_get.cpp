@@ -2,7 +2,7 @@
 #include "duckdb/optimizer/in_clause_rewriter.hpp"
 #include "duckdb/optimizer/optimizer.hpp"
 #include "duckdb/planner/expression/bound_columnref_expression.hpp"
-#include "duckdb/planner/expression/bound_parameter_expression.hpp"
+#include "duckdb/planner/expression/bound_conjunction_expression.hpp"
 #include "duckdb/planner/expression_iterator.hpp"
 #include "duckdb/planner/operator/logical_get.hpp"
 #include "duckdb/planner/operator/logical_empty_result.hpp"
@@ -110,17 +110,20 @@ unique_ptr<LogicalOperator> FilterPushdown::PushdownGet(unique_ptr<LogicalOperat
 		barrier_filters.clear();
 	};
 
+	bool has_parameters = false;
 	if (get.function.pushdown_complex_filter || get.function.filter_pushdown) {
 		// this scan supports some form of filter push-down
 		// check if there are any parameters
-		// if there are, invalidate them to force a re-bind on execution
+		// if there are, the statement is re-bound on execution, with their values
 		for (auto &filter : filters) {
-			if (filter->filter->HasParameter()) {
-				// there is a parameter in the filters! invalidate it
-				BoundParameterExpression::InvalidateRecursive(*filter->filter);
-			}
+			has_parameters = has_parameters || filter->filter->HasParameter();
 		}
 	}
+	auto require_rebind = [&] {
+		if (has_parameters) {
+			optimizer.binder.SetAlwaysRequireRebind();
+		}
+	};
 	const bool assigns_ordinality = get.ordinality_idx.IsValid();
 	if (get.function.pushdown_complex_filter && !assigns_ordinality) {
 		// for the remaining filters, check if we can push any of them into the scan as well
@@ -133,6 +136,9 @@ unique_ptr<LogicalOperator> FilterPushdown::PushdownGet(unique_ptr<LogicalOperat
 
 		get.function.pushdown_complex_filter(optimizer.context, get, get.bind_data.get(), expressions);
 
+		if (!get.bind_data || !get.bind_data->ReadsParametersAtExecution()) {
+			require_rebind();
+		}
 		if (expressions.empty()) {
 			restore_barrier_filters();
 			return PushFinalFilters(std::move(op));
@@ -144,6 +150,8 @@ unique_ptr<LogicalOperator> FilterPushdown::PushdownGet(unique_ptr<LogicalOperat
 			f->ExtractBindings();
 			filters.push_back(std::move(f));
 		}
+	} else {
+		require_rebind();
 	}
 	// Partial type-based filter pushdown is not implemented for table in-out functions.
 	const bool requires_partial_pushdown = !get.children.empty() && get.function.supports_pushdown_type;
@@ -189,15 +197,23 @@ unique_ptr<LogicalOperator> FilterPushdown::PushdownGet(unique_ptr<LogicalOperat
 		    (expr.CanThrow() || InClauseRewriter::HasRewritableInClause(expr))) {
 			continue;
 		}
-		// Allow pushing down filters that can throw only if there is a single expression
-		if (expr.CanThrow() && filters.size() > 1) {
+		if (expr.GetExpressionType() == ExpressionType::CONJUNCTION_OR &&
+		    expr.Cast<BoundConjunctionExpression>().GetChildren().size() == 2 &&
+		    combiner.TryPushdownOrClause(get.table_filters, column_ids, expr) != FilterPushdownResult::NO_PUSHDOWN) {
 			continue;
 		}
-		pushdown_result = combiner.TryPushdownGenericExpression(get, expr);
-		if (pushdown_result == FilterPushdownResult::PUSHED_DOWN_FULLY) {
-			filters.erase_at(i);
-			pushdown_results.erase_at(i);
-			i--;
+		// Allow pushing down filters that can throw only if there is a single expression
+		if (!expr.CanThrow() || filters.size() == 1) {
+			pushdown_result = combiner.TryPushdownGenericExpression(get, expr);
+			if (pushdown_result == FilterPushdownResult::PUSHED_DOWN_FULLY) {
+				filters.erase_at(i);
+				pushdown_results.erase_at(i);
+				i--;
+				continue;
+			}
+		}
+		if (pushdown_result == FilterPushdownResult::NO_PUSHDOWN) {
+			combiner.TryPushdownOrClause(get.table_filters, column_ids, expr);
 		}
 	}
 

@@ -1,4 +1,5 @@
 #include "duckdb/catalog/default/default_generator.hpp"
+#include "duckdb/catalog/catalog.hpp"
 #include "duckdb/catalog/catalog_transaction.hpp"
 
 namespace duckdb {
@@ -19,6 +20,14 @@ unique_ptr<CatalogEntry> DefaultGenerator::CreateDefaultEntry(CatalogTransaction
 		return nullptr;
 	}
 	return CreateDefaultEntry(*transaction.context, entry_name);
+}
+
+bool DefaultGenerator::ServesDefaults(const Identifier &schema, const Identifier &defaults) const {
+	if (schema == defaults) {
+		return true;
+	}
+	auto default_schema = catalog.GetDefaultSchema();
+	return defaults == DEFAULT_SCHEMA && default_schema && schema == *default_schema;
 }
 
 } // namespace duckdb

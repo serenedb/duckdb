@@ -49,6 +49,9 @@ bool BaseSelectBinder::ClaimsAlias(ColumnRefExpression &colref) {
 }
 
 bool BaseSelectBinder::MatchesGroup(ParsedExpression &expr) {
+	if (inside_aggregate || node.bind_state.group_map.empty()) {
+		return false;
+	}
 	// the groups are keyed by the qualified form, so qualify against this scope before matching
 	auto qualified = expr.Copy();
 	ExpressionBinder::QualifyColumnNames(binder, qualified);
@@ -63,7 +66,7 @@ ProjectionIndex BaseSelectBinder::TryBindGroup(ParsedExpression &expr) {
 	auto &alias_map = node.bind_state.group_alias_map;
 	if (expr.GetExpressionType() == ExpressionType::COLUMN_REF) {
 		auto &colref = expr.Cast<ColumnRefExpression>();
-		if (!colref.IsQualified()) {
+		if (!colref.IsQualified() && !colref.MacroParameter().IsValid()) {
 			auto alias_entry = alias_map.find(colref.ColumnNames()[0]);
 			if (alias_entry != alias_map.end()) {
 				// found entry!
@@ -78,10 +81,12 @@ ProjectionIndex BaseSelectBinder::TryBindGroup(ParsedExpression &expr) {
 	if (entry != group_map.end()) {
 		return entry->second;
 	}
-#ifdef DEBUG
-	for (auto map_entry : group_map) {
-		D_ASSERT(!map_entry.first.get().Equals(expr));
-		D_ASSERT(!expr.Equals(map_entry.first.get()));
+#ifdef D_ASSERT_IS_ENABLED
+	if (DUCKDB_DEBUG_VERIFY_ENABLED()) {
+		for (auto map_entry : group_map) {
+			D_ASSERT(!map_entry.first.get().Equals(expr));
+			D_ASSERT(!expr.Equals(map_entry.first.get()));
+		}
 	}
 #endif
 	return ProjectionIndex();
@@ -106,8 +111,7 @@ BindResult BaseSelectBinder::BindGroupingFunction(OperatorExpression &op, idx_t 
 			ExpressionBinder::QualifyColumnNames(binder, child);
 			auto idx = TryBindGroup(*child);
 			if (!idx.IsValid()) {
-				return BindResult(
-				    BinderException(op, "GROUPING child \"%s\" must be a grouping column", child->GetName()));
+				return BindResult(BinderException(op, "GROUPING child %s must be a grouping column", child->GetName()));
 			}
 			group_indexes.push_back(idx);
 		}

@@ -32,14 +32,13 @@ SELECT name, value, input_type FROM duckdb_settings() WHERE name = 'max_executio
 ----
 max_execution_time	0	BIGINT
 
-# set small value and verify it shows
 statement ok
-SET max_execution_time=100
+SET max_execution_time=100000
 
 query III
 SELECT name, value, input_type FROM duckdb_settings() WHERE name = 'max_execution_time'
 ----
-max_execution_time	100	BIGINT
+max_execution_time	100000	BIGINT
 
 # test timeout triggers (50ms timeout on slow cross-product query)
 statement ok
@@ -155,6 +154,12 @@ SET max_execution_time=50
 
 statement error
 SELECT DISTINCT i FROM range(50000000) t(i)
+----
+Query exceeded maximum execution time
+
+# sleep_ms wakes up before its full duration once the deadline passes
+statement error
+SELECT sleep_ms(5000)
 ----
 Query exceeded maximum execution time
 

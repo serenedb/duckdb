@@ -14,14 +14,14 @@ DistributivityRule::DistributivityRule(ExpressionRewriter &rewriter) : Rule(rewr
 	root->expr_type = make_uniq<SpecificExpressionTypeMatcher>(ExpressionType::CONJUNCTION_OR);
 }
 
-void DistributivityRule::AddExpressionSet(Expression &expr, expression_set_t &set) {
+void DistributivityRule::AddExpressionSet(Expression &expr, hashed_expression_set_t<Expression> &set) {
 	if (expr.GetExpressionType() == ExpressionType::CONJUNCTION_AND) {
 		auto &and_expr = expr.Cast<BoundConjunctionExpression>();
 		for (auto &child : and_expr.GetChildrenMutable()) {
-			set.insert(*child);
+			set.insert({*child, child->Hash()});
 		}
 	} else {
-		set.insert(expr);
+		set.insert({expr, expr.Hash()});
 	}
 }
 
@@ -62,15 +62,15 @@ unique_ptr<Expression> DistributivityRule::Apply(LogicalOperator &op, vector<ref
 	// i.e. (X AND A) OR (X AND B) => X occurs in all branches
 	// first, for the initial child, we create an expression set of which expressions occur
 	// this is our initial candidate set (in the example: [X, A])
-	expression_set_t candidate_set;
+	hashed_expression_set_t<Expression> candidate_set;
 	AddExpressionSet(*initial_or.GetChildrenMutable()[0], candidate_set);
 	// now for each of the remaining children, we create a set again and intersect them
 	// in our example: the second set would be [X, B]
 	// the intersection would leave [X]
 	for (idx_t i = 1; i < initial_or.GetChildrenMutable().size(); i++) {
-		expression_set_t next_set;
+		hashed_expression_set_t<Expression> next_set;
 		AddExpressionSet(*initial_or.GetChildrenMutable()[i], next_set);
-		expression_set_t intersect_result;
+		hashed_expression_set_t<Expression> intersect_result;
 		for (auto &expr : candidate_set) {
 			if (next_set.find(expr) != next_set.end()) {
 				intersect_result.insert(expr);
@@ -89,7 +89,7 @@ unique_ptr<Expression> DistributivityRule::Apply(LogicalOperator &op, vector<ref
 		D_ASSERT(initial_or.GetChildrenMutable().size() > 0);
 
 		// extract the expression from the first child of the OR
-		auto result = ExtractExpression(initial_or, 0, expr.get());
+		auto result = ExtractExpression(initial_or, 0, expr.expr.get());
 		// now for the subsequent expressions, simply remove the expression
 		for (idx_t i = 1; i < initial_or.GetChildrenMutable().size(); i++) {
 			ExtractExpression(initial_or, i, *result);

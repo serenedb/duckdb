@@ -1,5 +1,6 @@
 #include "duckdb/optimizer/statistics_propagator.hpp"
 
+#include "duckdb/common/stack_depth.hpp"
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/main/settings.hpp"
 #include "duckdb/optimizer/compressed_materialization.hpp"
@@ -34,6 +35,7 @@ StatisticsPropagator::StatisticsPropagator(Optimizer &optimizer_p, unique_ptr<Lo
 
 void StatisticsPropagator::ReplaceWithEmptyResult(unique_ptr<LogicalOperator> &node) {
 	node = make_uniq<LogicalEmptyResult>(std::move(node));
+	node->ResolveOperatorTypes();
 }
 
 unique_ptr<NodeStatistics> StatisticsPropagator::PropagateChildren(LogicalOperator &node,
@@ -103,10 +105,10 @@ unique_ptr<NodeStatistics> StatisticsPropagator::PropagateStatistics(LogicalOper
 		result = PropagateChildren(node, node_ptr);
 	}
 
-	if (mode == StatisticsPropagationMode::FULL &&
+	if (mode == StatisticsPropagationMode::FULL && uncompressed.get() != &node &&
 	    !optimizer.OptimizerDisabled(OptimizerType::COMPRESSED_MATERIALIZATION)) {
 		// compress data based on statistics for materializing operators
-		CompressedMaterialization compressed_materialization(optimizer, *root, statistics_map);
+		CompressedMaterialization compressed_materialization(optimizer, *root, statistics_map, types_resolved, path);
 		compressed_materialization.Compress(node_ptr);
 	}
 
@@ -114,7 +116,11 @@ unique_ptr<NodeStatistics> StatisticsPropagator::PropagateStatistics(LogicalOper
 }
 
 unique_ptr<NodeStatistics> StatisticsPropagator::PropagateStatistics(unique_ptr<LogicalOperator> &node_ptr) {
-	return PropagateStatistics(*node_ptr, node_ptr);
+	StackDepth::Check();
+	path.push_back(node_ptr);
+	auto result = PropagateStatistics(*node_ptr, node_ptr);
+	path.pop_back();
+	return result;
 }
 
 unique_ptr<NodeStatistics> StatisticsPropagator::PropagateStatistics(LogicalCopyToFile &op,
@@ -153,6 +159,13 @@ unique_ptr<BaseStatistics> StatisticsPropagator::PropagateExpression(Expression 
 		return PropagateExpression(expr.Cast<BoundColumnRefExpression>(), expr_ptr);
 	case ExpressionClass::BOUND_OPERATOR:
 		return PropagateExpression(expr.Cast<BoundOperatorExpression>(), expr_ptr);
+	case ExpressionClass::BOUND_REF:
+		if (lambda_columns) {
+			auto index = expr.Cast<BoundReferenceExpression>().Index();
+			D_ASSERT(index < lambda_columns->size());
+			return (*lambda_columns)[index].ToUnique();
+		}
+		break;
 	default:
 		break;
 	}

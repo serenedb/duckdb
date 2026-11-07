@@ -53,6 +53,7 @@ enum class LogicalOperatorType : uint8_t {
 	LOGICAL_POSITIONAL_JOIN = 55,
 	LOGICAL_ASOF_JOIN = 56,
 	LOGICAL_DEPENDENT_JOIN = 57,
+	LOGICAL_LOOKUP_JOIN = 58,
 	// -----------------------------
 	// SetOps
 	// -----------------------------
@@ -88,6 +89,11 @@ enum class LogicalOperatorType : uint8_t {
 	LOGICAL_ATTACH = 136,
 	LOGICAL_DETACH = 137,
 	LOGICAL_CREATE_TRIGGER = 138,
+	LOGICAL_CREATE_JOB = 139,
+	LOGICAL_CREATE_ROLE = 140,
+	LOGICAL_CREATE_FOREIGN_SERVER = 141,
+	LOGICAL_CREATE_TOKENIZER = 142,
+	LOGICAL_CREATE_DATABASE = 143,
 
 	// -----------------------------
 	// Explain

@@ -9,7 +9,7 @@ LogicalTrigger::LogicalTrigger(string trigger_name_p, TriggerTiming timing_p, Tr
 }
 
 vector<ColumnBinding> LogicalTrigger::GetColumnBindings() {
-	return children[0]->GetColumnBindings();
+	return GetDerivedColumnBindings();
 }
 
 void LogicalTrigger::ResolveTypes() {

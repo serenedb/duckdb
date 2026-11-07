@@ -15,7 +15,11 @@ struct DuckDBCoordinateSystemsData : public GlobalTableFunctionState {
 	DuckDBCoordinateSystemsData() : offset(0) {
 	}
 
-	vector<reference<CoordinateSystemCatalogEntry>> entries;
+	struct ListedCoordinateSystem {
+		reference<SchemaCatalogEntry> schema;
+		reference<CoordinateSystemCatalogEntry> entry;
+	};
+	vector<ListedCoordinateSystem> entries;
 	idx_t offset;
 	unordered_set<int64_t> oids;
 };
@@ -61,9 +65,11 @@ static unique_ptr<GlobalTableFunctionState> DuckDBCoordinateSystemsInit(ClientCo
 	auto result = make_uniq<DuckDBCoordinateSystemsData>();
 	auto schemas = Catalog::GetAllSchemas(context);
 	for (auto &schema : schemas) {
-		schema.get().Scan(context, CatalogType::COORDINATE_SYSTEM_ENTRY, [&](CatalogEntry &entry) {
-			result->entries.push_back(entry.Cast<CoordinateSystemCatalogEntry>());
-		});
+		Catalog::ScanListedEntries(context, schema.get(), CatalogType::COORDINATE_SYSTEM_ENTRY,
+		                           [&](CatalogEntry &entry) {
+			                           result->entries.push_back(DuckDBCoordinateSystemsData::ListedCoordinateSystem {
+			                               schema, entry.Cast<CoordinateSystemCatalogEntry>()});
+		                           });
 	};
 	return std::move(result);
 }
@@ -100,12 +106,13 @@ static void DuckDBCoordinateSystemsFunction(ClientContext &context, TableFunctio
 	auto &wkt2_2019 = output.data[9];
 
 	while (data.offset < data.entries.size() && count < STANDARD_VECTOR_SIZE) {
-		auto &crs_entry = data.entries[data.offset++].get();
+		auto &listed_schema = data.entries[data.offset].schema.get();
+		auto &crs_entry = data.entries[data.offset++].entry.get();
 
-		database_name.Append(Value(crs_entry.catalog.GetName()));
-		database_oid.Append(Value::BIGINT(NumericCast<int64_t>(crs_entry.catalog.GetOid())));
-		schema_name.Append(Value(crs_entry.schema.name));
-		schema_oid.Append(Value::BIGINT(NumericCast<int64_t>(crs_entry.schema.oid)));
+		database_name.Append(Value(listed_schema.ParentCatalog().GetName()));
+		database_oid.Append(Value::BIGINT(NumericCast<int64_t>(listed_schema.ParentCatalog().GetOid())));
+		schema_name.Append(Value(listed_schema.name));
+		schema_oid.Append(Value::BIGINT(NumericCast<int64_t>(listed_schema.oid)));
 		int64_t oid = NumericCast<int64_t>(crs_entry.oid);
 		Value oid_val;
 		if (data.oids.find(oid) == data.oids.end()) {

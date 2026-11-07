@@ -23,8 +23,8 @@ struct FixedSizeAnalyzeState : public AnalyzeState {
 	idx_t count;
 };
 
-unique_ptr<AnalyzeState> FixedSizeInitAnalyze(ColumnData &col_data, PhysicalType type) {
-	return make_uniq<FixedSizeAnalyzeState>(col_data.GetBlockManager());
+unique_ptr<AnalyzeState> FixedSizeInitAnalyze(CompressionAnalyzeContext &ctx, PhysicalType type) {
+	return make_uniq<FixedSizeAnalyzeState>(ctx.block_manager);
 }
 
 bool FixedSizeAnalyze(AnalyzeState &state_p, const Vector &input) {
@@ -68,11 +68,13 @@ void UncompressedCompressState::CreateEmptySegment() {
 	auto compressed_segment = CreateNewSegment();
 	if (type.InternalType() == PhysicalType::VARCHAR) {
 		auto &state = compressed_segment->GetSegmentState()->Cast<UncompressedStringSegmentState>();
-		auto &storage_manager = checkpoint_data.GetStorageManager();
-		if (!storage_manager.InMemory()) {
+		if (checkpoint_data.GetOverflowStringWriter()) {
+			state.overflow_writer = checkpoint_data.GetOverflowStringWriter();
+		} else if (checkpoint_data.HasStorageManager() && !checkpoint_data.GetStorageManager().InMemory()) {
 			auto &partial_block_manager = checkpoint_data.GetCheckpointState().GetPartialBlockManager();
 			state.block_manager = partial_block_manager.GetBlockManager();
-			state.overflow_writer = make_uniq<WriteOverflowStringsToDisk>(partial_block_manager);
+			state.owned_overflow_writer = make_uniq<WriteOverflowStringsToDisk>(partial_block_manager);
+			state.overflow_writer = state.owned_overflow_writer.get();
 		}
 	}
 	current_segment = std::move(compressed_segment);
@@ -81,18 +83,18 @@ void UncompressedCompressState::CreateEmptySegment() {
 }
 
 void UncompressedCompressState::FlushSegment(idx_t segment_size) {
-	auto &state = checkpoint_data.GetCheckpointState();
 	if (current_segment->GetType().InternalType() == PhysicalType::VARCHAR) {
 		auto &segment_state = current_segment->GetSegmentState()->Cast<UncompressedStringSegmentState>();
 		if (segment_state.overflow_writer) {
 			segment_state.overflow_writer->Flush();
-			segment_state.overflow_writer.reset();
+			segment_state.overflow_writer = nullptr;
+			segment_state.owned_overflow_writer.reset();
 		}
 	}
 	append_state.child_appends.clear();
 	append_state.append_state.reset();
 	append_state.lock.reset();
-	state.FlushSegmentInternal(std::move(current_segment), segment_size);
+	checkpoint_data.FlushSegmentInternal(std::move(current_segment), segment_size);
 }
 
 void UncompressedCompressState::Finalize(idx_t segment_size) {
@@ -189,15 +191,16 @@ void FixedSizeScan(ColumnSegment &segment, ColumnScanState &state, idx_t scan_co
 // Fetch
 //===--------------------------------------------------------------------===//
 template <class T>
-void FixedSizeFetchRow(ColumnSegment &segment, ColumnFetchState &state, row_t row_id, Vector &result,
-                       idx_t result_idx) {
-	auto row_index = NumericCast<idx_t>(row_id);
-	auto &buffer_manager = BufferManager::GetBufferManager(segment.GetDatabase());
-	auto handle = buffer_manager.Pin(state.context, segment.GetBlockHandle());
-	auto reader = CompressionSegmentReader::FromSegment(handle, segment, "fixed-size segment");
+void FixedSizeFetchRows(ColumnSegment &segment, ColumnFetchState &state, const idx_t *rows, idx_t count, Vector &result,
+                        const SelectionVector &result_sel, idx_t result_offset) {
+	auto reader =
+	    CompressionSegmentReader::FromSegment(state.GetOrInsertHandle(segment), segment, "fixed-size segment");
 
 	// first fetch the data from the base table
-	FlatVector::GetDataMutable<T>(result)[result_idx] = reader.GetArrayElement<T>(0, segment.count, row_index);
+	auto result_data = FlatVector::GetDataMutable<T>(result);
+	for (idx_t i = 0; i < count; i++) {
+		result_data[result_offset + result_sel.get_index(i)] = reader.GetArrayElement<T>(0, segment.count, rows[i]);
+	}
 }
 
 //===--------------------------------------------------------------------===//
@@ -282,7 +285,7 @@ CompressionFunction FixedSizeGetFunction(PhysicalType data_type) {
 	return CompressionFunction(CompressionType::COMPRESSION_UNCOMPRESSED, data_type, FixedSizeInitAnalyze,
 	                           FixedSizeAnalyze, FixedSizeFinalAnalyze<T>, UncompressedFunctions::InitCompression,
 	                           UncompressedFunctions::Compress, UncompressedFunctions::FinalizeCompress,
-	                           FixedSizeInitScan, FixedSizeScan<T>, FixedSizeScanPartial<T>, FixedSizeFetchRow<T>,
+	                           FixedSizeInitScan, FixedSizeScan<T>, FixedSizeScanPartial<T>, FixedSizeFetchRows<T>,
 	                           UncompressedFunctions::EmptySkip, nullptr, FixedSizeInitAppend,
 	                           FixedSizeAppend<T, APPENDER>, FixedSizeFinalizeAppend<T>);
 }

@@ -2,7 +2,6 @@
 #include "duckdb/common/multi_file/multi_file_list.hpp"
 #include "duckdb/common/arrow/arrow_type_extension.hpp"
 #include "duckdb/main/profiler/metrics_manager.hpp"
-#include "duckdb/parser/peg/compiled_grammar.hpp"
 
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/main/http/http_util.hpp"
@@ -40,6 +39,7 @@
 #include "duckdb/storage/compression/empty_validity.hpp"
 #include "duckdb/storage/external_file_cache/external_file_cache.hpp"
 #include "duckdb/storage/object_cache.hpp"
+#include "duckdb/storage/shared_object_cache.hpp"
 #include "duckdb/storage/standard_buffer_manager.hpp"
 #include "duckdb/storage/storage_extension.hpp"
 #include "duckdb/storage/storage_manager.hpp"
@@ -81,15 +81,10 @@ DBConfig::DBConfig(const identifier_map_t<Value> &config_dict, bool read_only) :
 DBConfig::~DBConfig() {
 }
 
-DatabaseInstance::DatabaseInstance() : db_validity(*this) {
+DatabaseInstance::DatabaseInstance() : db_validity(*this, ValidChecker::Scope::DATABASE) {
 	config.is_user_config = false;
 	create_api_v1 = nullptr;
 	invoke_capi_v2 = nullptr;
-	parser_cache = make_uniq<ParserCache>();
-}
-
-ParserCache &DatabaseInstance::GetParserCache() {
-	return *parser_cache;
 }
 
 DatabaseInstance::~DatabaseInstance() {
@@ -101,6 +96,7 @@ DatabaseInstance::~DatabaseInstance() {
 	// destroy child elements
 	connection_manager.reset();
 	object_cache.reset();
+	shared_object_cache.reset();
 	scheduler.reset();
 	db_manager.reset();
 
@@ -205,6 +201,9 @@ shared_ptr<AttachedDatabase> DatabaseInstance::CreateAttachedDatabase(ClientCont
 	shared_ptr<AttachedDatabase> attached_database;
 	auto &catalog = Catalog::GetSystemCatalog(*this);
 
+	if (options.create_catalog) {
+		return make_shared_ptr<AttachedDatabase>(*this, catalog, info.name, options);
+	}
 	if (!options.db_type.empty()) {
 		// Find the storage extension for this database file.
 		auto extension_name = ExtensionHelper::ApplyExtensionAlias(options.db_type);
@@ -282,12 +281,12 @@ void DatabaseInstance::LoadExtensionSettings() {
 			}
 			ExtensionOption extension_option;
 			if (!config.TryGetExtensionOption(name, extension_option)) {
-				throw InternalException("Extension %s did not provide the '%s' config setting", extension_name, name);
+				throw InternalException("Extension %s did not provide the %s config setting", extension_name, name);
 			}
 			// if the extension provided the option, it should no longer be unrecognized.
 			D_ASSERT(config.options.unrecognized_options.find(name) == config.options.unrecognized_options.end());
 			auto &context = *con.context;
-			PhysicalSet::SetExtensionVariable(context, extension_option, SetScope::GLOBAL, value);
+			PhysicalSet::SetExtensionVariable(context, extension_option, name, SetScope::GLOBAL, value);
 		}
 
 		con.Commit();
@@ -327,7 +326,7 @@ void DatabaseInstance::InitializeEmpty(DBConfig *user_config) {
 
 void DatabaseInstance::StartScheduler() {
 	scheduler->SetThreads(config.options.maximum_threads, Settings::Get<ExternalThreadsSetting>(config));
-	scheduler->SetAsyncThreads(config.options.async_threads);
+	scheduler->SetAsyncThreads(DBConfig::GetSystemMaxAsyncThreads(*config.file_system));
 	scheduler->RelaunchThreads();
 }
 
@@ -373,6 +372,7 @@ void DatabaseInstance::InitializeInstance(const char *database_path, DBConfig *u
 	scheduler = make_uniq<TaskScheduler>(*this);
 	object_cache = make_uniq<ObjectCache>(*config.buffer_pool);
 	config.buffer_pool->SetObjectCache(object_cache.get());
+	shared_object_cache = make_uniq<SharedObjectCache>(config.buffer_pool);
 	connection_manager = make_uniq<ConnectionManager>();
 	extension_manager = make_uniq<ExtensionManager>(*this);
 
@@ -453,6 +453,10 @@ DatabaseManager &DatabaseManager::Get(ClientContext &db) {
 
 TaskScheduler &DatabaseInstance::GetScheduler() {
 	return *scheduler;
+}
+
+SharedObjectCache &DatabaseInstance::GetSharedObjectCache() {
+	return *shared_object_cache;
 }
 
 ObjectCache &DatabaseInstance::GetObjectCache() {
@@ -569,9 +573,6 @@ void DatabaseInstance::Configure(DBConfig &new_config, const char *database_path
 	if (new_config.options.maximum_threads == DConstants::INVALID_INDEX) {
 		config.options.maximum_threads = config.GetSystemMaxThreads(*config.file_system);
 	}
-	if (new_config.options.async_threads == DConstants::INVALID_INDEX) {
-		config.options.async_threads = config.GetSystemMaxAsyncThreads(*config.file_system);
-	}
 	config.allocator = std::move(new_config.allocator);
 	if (!config.allocator) {
 		config.allocator = make_uniq<Allocator>();
@@ -607,6 +608,9 @@ void DatabaseInstance::Configure(DBConfig &new_config, const char *database_path
 	}
 	config.db_cache_entry = std::move(new_config.db_cache_entry);
 	config.path_manager = std::move(new_config.path_manager);
+	config.create_internal_catalog = new_config.create_internal_catalog;
+	config.create_client_context = new_config.create_client_context;
+	config.create_secret_storage = new_config.create_secret_storage;
 }
 
 DBConfig &DBConfig::GetConfig(ClientContext &context) {
@@ -679,12 +683,9 @@ shared_ptr<EncryptionUtil> DatabaseInstance::GetEncryptionUtil(bool read_only) {
 		return GetMbedTLSUtil(force_mbedtls);
 	}
 
-	throw InvalidConfigurationException(" DuckDB currently has a read-only crypto module "
-	                                    "loaded. Please ensure httpfs is loaded using `LOAD httpfs`, or for DuckDB "
-	                                    "database files consider READONLY mode."
-	                                    " To write an encrypted database or parquet file that is NOT securely "
-	                                    "encrypted, one can use SET force_mbedtls_unsafe = "
-	                                    "'true'.");
+	throw InvalidConfigurationException("SereneDB currently has a read-only crypto module loaded. To write an "
+	                                    "encrypted database or parquet file that is NOT securely encrypted, one can "
+	                                    "use SET force_mbedtls_unsafe = 'true'.");
 }
 
 ValidChecker &DatabaseInstance::GetValidChecker() {

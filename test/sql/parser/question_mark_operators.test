@@ -1,0 +1,37 @@
+# name: test/sql/parser/question_mark_operators.test
+# description: After an expression, where ? can be no parameter, ? and an operator are one operator, and ?| is one before an expression; elsewhere ? stays a parameter
+# group: [parser]
+
+statement ok
+CREATE MACRO "?-"(a, b) AS a - b
+
+query I
+SELECT 7 ?- 2
+----
+5
+
+statement error
+SELECT 7 ?# 2
+----
+<REGEX>:Catalog Error: Scalar Function with name \?# does not exist.*
+
+statement ok
+CREATE MACRO "?|"(a) AS -a
+
+query I
+SELECT ?| 5
+----
+-5
+
+query I
+SELECT ? | 1
+----
+-1
+
+statement ok
+PREPARE question_mark_parameters AS SELECT ?-1 AS a, ?||'b' AS b
+
+query II
+EXECUTE question_mark_parameters(5, 'a')
+----
+4	ab

@@ -128,3 +128,13 @@ TEST_CASE("Standalone parser options can be customized", "[parse_expression]") {
 	REQUIRE(expressions[0]->Cast<ColumnRefExpression>().GetColumnName().GetIdentifierName() == "MIXEDCASE");
 	REQUIRE(expressions[1]->Cast<FunctionExpression>().GetQualifiedName().Name() == "//");
 }
+
+TEST_CASE("XMLCONCAT and IS DOCUMENT are calls of the XML functions", "[parse_expression]") {
+	auto expressions = Parser::GetBuiltinParser().ParseExpressionList(
+	    "XMLCONCAT(a, b, c), a IS DOCUMENT, a IS NOT DOCUMENT, NOT a IS DOCUMENT AND b IS NOT NULL");
+	REQUIRE(expressions.size() == 4);
+	REQUIRE(expressions[0]->ToString() == "\"xmlconcat\"(a, b, c)");
+	REQUIRE(expressions[1]->ToString() == "xml_is_well_formed_document(a)");
+	REQUIRE(expressions[2]->ToString() == "(NOT xml_is_well_formed_document(a))");
+	REQUIRE(expressions[3]->ToString() == "((NOT xml_is_well_formed_document(a)) AND (b IS NOT NULL))");
+}

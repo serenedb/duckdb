@@ -42,6 +42,25 @@ namespace duckdb {
 // Defined in binder.cpp — rejects 'excluded'-qualified columns in RETURNING, matching the no-trigger path.
 void VerifyNotExcluded(const ParsedExpression &root_expr);
 
+vector<const_reference<TriggerCatalogEntry>> Binder::FiringTriggers(TableCatalogEntry &table, TriggerTiming timing,
+                                                                    TriggerEventType event_type,
+                                                                    TriggerForEach for_each) {
+	auto triggers =
+	    table.GetTriggersForEvent(table.ParentCatalog().GetCatalogTransaction(context), timing, event_type, for_each);
+	const auto role = GetReplicationRole(context);
+	vector<const_reference<TriggerCatalogEntry>> result;
+	for (auto &trigger : triggers) {
+		const auto firing = trigger.get().firing;
+		if (firing == TriggerFiring::ORIGIN || firing == TriggerFiring::REPLICA) {
+			GetStatementProperties().replication_role = role;
+		}
+		if (trigger.get().Fires(role)) {
+			result.push_back(trigger);
+		}
+	}
+	return result;
+}
+
 unique_ptr<BoundStatement> Binder::TryExpandTriggers(QueryNode &node, TableCatalogEntry &table,
                                                      TriggerEventType event_type) {
 	D_ASSERT(node.type == QueryNodeType::INSERT_QUERY_NODE || node.type == QueryNodeType::UPDATE_QUERY_NODE ||
@@ -55,10 +74,9 @@ unique_ptr<BoundStatement> Binder::TryExpandTriggers(QueryNode &node, TableCatal
 		}
 		return nullptr;
 	}
-	auto txn = table.ParentCatalog().GetCatalogTransaction(context);
 	// FOR EACH ROW triggers are expanded separately via TryExpandRowTriggers; this path only fires statement triggers.
-	auto before_triggers = table.GetTriggersForEvent(txn, TriggerTiming::BEFORE, event_type, TriggerForEach::STATEMENT);
-	auto after_triggers = table.GetTriggersForEvent(txn, TriggerTiming::AFTER, event_type, TriggerForEach::STATEMENT);
+	auto before_triggers = FiringTriggers(table, TriggerTiming::BEFORE, event_type, TriggerForEach::STATEMENT);
+	auto after_triggers = FiringTriggers(table, TriggerTiming::AFTER, event_type, TriggerForEach::STATEMENT);
 
 	// UPDATE OF <cols>: drop triggers whose OF list is disjoint from the SET list.
 	// Triggers without an OF list are unrestricted and always fire.
@@ -164,7 +182,7 @@ static void InlineGeneratedColumnRefs(unique_ptr<ParsedExpression> &expr, const 
 		if (!colref.IsQualified() && table.GetColumns().ColumnExists(colref.GetColumnName())) {
 			auto &column = table.GetColumns().GetColumn(colref.GetColumnName());
 			if (column.Generated()) {
-				expr = column.GeneratedExpression().Copy();
+				expr = table.GetColumns().SharedGeneratedExpression(column);
 				InlineGeneratedColumnRefs(expr, table);
 				return;
 			}
@@ -210,7 +228,7 @@ static unique_ptr<CommonTableExpressionInfo> MakeUpdateOldAliasCTE(const TableCa
 	auto outer = make_uniq<SelectNode>();
 	for (auto &column : table.GetColumns().Logical()) {
 		if (column.Generated()) {
-			auto expr = column.GeneratedExpression().Copy();
+			auto expr = table.GetColumns().SharedGeneratedExpression(column);
 			InlineGeneratedColumnRefs(expr, table);
 			expr->SetAlias(column.Name());
 			outer->select_list.push_back(std::move(expr));
@@ -581,8 +599,7 @@ unique_ptr<BoundStatement> Binder::TryExpandRowTriggers(QueryNode &node,
 	if (expanded_tables.find(table) != expanded_tables.end()) {
 		return nullptr;
 	}
-	auto triggers = table.GetTriggersForEvent(table.ParentCatalog().GetCatalogTransaction(context),
-	                                          TriggerTiming::AFTER, event_type, TriggerForEach::ROW);
+	auto triggers = FiringTriggers(table, TriggerTiming::AFTER, event_type, TriggerForEach::ROW);
 	if (triggers.empty()) {
 		return nullptr;
 	}
@@ -685,13 +702,13 @@ BoundStatement Binder::ExpandRowTriggers(QueryNode &node, vector<unique_ptr<Pars
 		}
 
 		if (BoundBodyTargetsTable(*bound_body.plan, table)) {
-			throw BinderException("FOR EACH ROW trigger \"%s\" on table \"%s\" writes to the trigger table "
+			throw BinderException("FOR EACH ROW trigger %s on table %s writes to the trigger table "
 			                      "(self-referential triggers are not supported)",
 			                      trigger.name, table.name);
 		}
 
 		if (BoundBodyContainsTrigger(*bound_body.plan)) {
-			throw NotImplementedException("FOR EACH ROW trigger \"%s\" on table \"%s\" writes to a table that has its "
+			throw NotImplementedException("FOR EACH ROW trigger %s on table %s writes to a table that has its "
 			                              "own FOR EACH ROW trigger (cascading row triggers are not yet supported)",
 			                              trigger.name, table.name);
 		}

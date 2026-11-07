@@ -15,10 +15,21 @@ PhysicalStreamingLimit::PhysicalStreamingLimit(PhysicalPlan &physical_plan, vect
 //===--------------------------------------------------------------------===//
 class StreamingLimitOperatorState : public OperatorState {
 public:
-	explicit StreamingLimitOperatorState(const PhysicalStreamingLimit &op) {
+	explicit StreamingLimitOperatorState(const PhysicalStreamingLimit &op) : op(op) {
 		PhysicalLimit::SetInitialLimits(op.limit_val, op.offset_val, limit, offset);
 	}
 
+	bool SupportsReuse() const override {
+		return true;
+	}
+
+	void Reset() override {
+		limit = optional_idx();
+		offset = optional_idx();
+		PhysicalLimit::SetInitialLimits(op.limit_val, op.offset_val, limit, offset);
+	}
+
+	const PhysicalStreamingLimit &op;
 	optional_idx limit;
 	optional_idx offset;
 };

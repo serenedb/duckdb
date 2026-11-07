@@ -1,0 +1,33 @@
+# name: test/sql/table_function/table_function_in_select.test
+# description: A table function in a select list returns its first column, and its rows when expanded or read by field; a table macro its rows
+# group: [table_function]
+
+statement ok
+CREATE TABLE t(a INTEGER, b VARCHAR)
+
+query I
+SELECT pragma_table_info('t') ORDER BY 1
+----
+0
+1
+
+query II
+SELECT (pragma_table_info('t')).name, (pragma_table_info('t')).type ORDER BY 1
+----
+a	INTEGER
+b	VARCHAR
+
+query IIIIII
+SELECT (pragma_table_info('t')).* ORDER BY 1
+----
+0	a	INTEGER	false	NULL	false
+1	b	VARCHAR	false	NULL	false
+
+statement ok
+CREATE MACRO pairs(n) AS TABLE SELECT i, i * 10 AS j FROM range(n) t(i)
+
+query II
+SELECT (pairs(2)).i, (pairs(2)).j
+----
+0	0
+1	10

@@ -4,6 +4,7 @@
 #include "duckdb/catalog/catalog_entry/schema_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/view_catalog_entry.hpp"
 #include "duckdb/common/string_util.hpp"
+#include "duckdb/common/case_insensitive_map.hpp"
 
 namespace duckdb {
 
@@ -227,30 +228,46 @@ static const DefaultView internal_views[] = {
 
 static unique_ptr<CreateViewInfo> GetDefaultView(ClientContext &context, const Identifier &input_schema,
                                                  const Identifier &input_name) {
-	auto schema = StringUtil::Lower(input_schema.GetIdentifierName());
-	auto name = StringUtil::Lower(input_name.GetIdentifierName());
-	for (idx_t index = 0; internal_views[index].name != nullptr; index++) {
-		if (internal_views[index].schema == schema && internal_views[index].name == name) {
-			auto result = make_uniq<CreateViewInfo>();
-			result->SetQualifiedName(QualifiedName({Identifier(schema)}, Identifier(name)));
-			result->sql = internal_views[index].sql;
-			result->temporary = true;
-			result->internal = true;
-
-			auto parser = Parser::GetBuiltinParser();
-			return CreateViewInfo::FromSelect(parser, std::move(result));
-		}
+	// (schema, name) -> view, built once over the static view literals: no per-call linear scan.
+	using key_t = std::pair<std::string_view, std::string_view>;
+	static const absl::flat_hash_map<key_t, const DefaultView *, CaseInsensitivePairHash, CaseInsensitivePairEquality>
+	    view_index = [] {
+		    absl::flat_hash_map<key_t, const DefaultView *, CaseInsensitivePairHash, CaseInsensitivePairEquality> m;
+		    for (idx_t index = 0; internal_views[index].name != nullptr; index++) {
+			    m.emplace(key_t(internal_views[index].schema, internal_views[index].name), &internal_views[index]);
+		    }
+		    return m;
+	    }();
+	auto it = view_index.find(key_t(input_schema.GetIdentifierName(), input_name.GetIdentifierName()));
+	if (it == view_index.end()) {
+		return nullptr;
 	}
-	return nullptr;
+	auto result = make_uniq<CreateViewInfo>();
+	result->SetQualifiedName(QualifiedName({input_schema}, input_name));
+	result->sql = it->second->sql;
+	result->temporary = true;
+	result->internal = true;
+	auto parser = Parser::GetBuiltinParser();
+	return CreateViewInfo::FromSelect(parser, std::move(result));
 }
 
 DefaultViewGenerator::DefaultViewGenerator(Catalog &catalog, SchemaCatalogEntry &schema)
     : DefaultGenerator(catalog), schema(schema) {
 }
 
+bool DefaultViewGenerator::ServesViewsOf(const Identifier &view_schema) const {
+	return (view_schema == DEFAULT_SCHEMA || catalog.IsDuckCatalog()) && ServesDefaults(schema.name, view_schema);
+}
+
 unique_ptr<CatalogEntry> DefaultViewGenerator::CreateDefaultEntry(ClientContext &context,
                                                                   const Identifier &entry_name) {
-	auto info = GetDefaultView(context, schema.name, entry_name);
+	unique_ptr<CreateViewInfo> info;
+	if (ServesViewsOf(schema.name)) {
+		info = GetDefaultView(context, schema.name, entry_name);
+	}
+	if (!info && ServesViewsOf(DEFAULT_SCHEMA)) {
+		info = GetDefaultView(context, DEFAULT_SCHEMA, entry_name);
+	}
 	if (info) {
 		return make_uniq_base<CatalogEntry, ViewCatalogEntry>(catalog, schema, *info);
 	}
@@ -260,7 +277,7 @@ unique_ptr<CatalogEntry> DefaultViewGenerator::CreateDefaultEntry(ClientContext 
 vector<Identifier> DefaultViewGenerator::GetDefaultEntries() {
 	vector<Identifier> result;
 	for (idx_t index = 0; internal_views[index].name != nullptr; index++) {
-		if (internal_views[index].schema == schema.name) {
+		if (ServesViewsOf(internal_views[index].schema)) {
 			result.emplace_back(internal_views[index].name);
 		}
 	}

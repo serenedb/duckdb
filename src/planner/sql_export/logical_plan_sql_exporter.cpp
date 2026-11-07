@@ -1,4 +1,5 @@
 #include "duckdb/planner/sql_export/logical_plan_sql_exporter_internal.hpp"
+#include "duckdb/common/stack_depth.hpp"
 #include "duckdb/function/scalar/compressed_materialization_utils.hpp"
 #include "duckdb/planner/logical_plan_sql_exporter.hpp"
 #include "duckdb/planner/sql_export/bound_expression_sql_exporter_internal.hpp"
@@ -122,6 +123,7 @@ LogicalPlanSQLExportContext::LogicalPlanSQLExportContext(ClientContext &context_
 
 LogicalPlanSQLExportResult LogicalPlanSQLExportContext::Export(LogicalOperator &op,
                                                                const LogicalPlanVerificationPath &path) {
+	StackDepth::Check();
 	for (auto scope = source_scope; scope; scope = scope->parent) {
 		for (auto &source : scope->sources) {
 			if (&source.op.get() == &op) {

@@ -43,6 +43,9 @@ statement ok
 INSERT INTO b VALUES (1), (2), (3), (4), (5)
 
 statement ok
+DEALLOCATE s1
+
+statement ok
 PREPARE s1 AS UPDATE b SET i=$1 WHERE i=$2
 
 query I

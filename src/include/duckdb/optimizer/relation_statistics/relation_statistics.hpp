@@ -8,6 +8,7 @@
 
 #pragma once
 
+#include "duckdb/planner/column_binding_map.hpp"
 #include "duckdb/common/optional_idx.hpp"
 #include "duckdb/common/optional_ptr.hpp"
 #include "duckdb/common/types.hpp"
@@ -52,6 +53,17 @@ public:
 	double filter_strength = 1;
 	bool stats_initialized = false;
 	Identifier table_name;
+};
+
+class RelationColumnLookup {
+public:
+	explicit RelationColumnLookup(const RelationStats &stats);
+
+	optional_ptr<const RelationColumnStats> GetColumnStats(ColumnBinding binding) const;
+
+private:
+	const RelationStats &stats;
+	column_binding_map_t<idx_t> positions;
 };
 
 } // namespace duckdb

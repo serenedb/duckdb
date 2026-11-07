@@ -496,18 +496,39 @@ string TestResultHelper::SQLLogicTestConvertValue(Value value, LogicalType sql_t
 
 // standard result conversion: one line per value
 void TestResultHelper::DuckDBConvertResult(QueryResult &result, bool original_sqlite_test, vector<string> &out_result) {
-	size_t r, c;
-	idx_t row_count = result.RowCount();
-	idx_t column_count = result.ColumnCount();
-
-	out_result.resize(row_count * column_count);
-	auto rows = result.Collection().GetRows();
-	for (r = 0; r < row_count; r++) {
-		for (c = 0; c < column_count; c++) {
-			auto value = rows.GetValue(c, r);
-			auto converted_value = SQLLogicTestConvertValue(value, result.GetTypes()[c], original_sqlite_test);
-			out_result[r * column_count + c] = converted_value;
+	const idx_t column_count = result.ColumnCount();
+	const auto &types = result.GetTypes();
+	out_result.resize(result.RowCount() * column_count);
+	idx_t row = 0;
+	for (auto &chunk : result.Collection().Chunks()) {
+		for (idx_t c = 0; c < column_count; c++) {
+			const auto type_id = types[c].id();
+			const bool per_value =
+			    type_id == LogicalTypeId::BOOLEAN ||
+			    (original_sqlite_test && (type_id == LogicalTypeId::DECIMAL || type_id == LogicalTypeId::FLOAT ||
+			                              type_id == LogicalTypeId::DOUBLE));
+			if (per_value) {
+				for (idx_t r = 0; r < chunk.size(); r++) {
+					out_result[(row + r) * column_count + c] =
+					    SQLLogicTestConvertValue(chunk.GetValue(c, r), types[c], original_sqlite_test);
+				}
+				continue;
+			}
+			Vector strings(LogicalType::VARCHAR, chunk.size());
+			VectorOperations::Cast(*runner.con->context, chunk.data[c], strings, chunk.size());
+			auto values = strings.Values<string_t>();
+			for (idx_t r = 0; r < chunk.size(); r++) {
+				auto entry = values[r];
+				auto &out = out_result[(row + r) * column_count + c];
+				if (!entry.IsValid()) {
+					out = "NULL";
+					continue;
+				}
+				out = entry.GetValue().GetString();
+				out = out.empty() ? "(empty)" : StringUtil::Replace(out, string("\0", 1), "\\0");
+			}
 		}
+		row += chunk.size();
 	}
 }
 

@@ -7,4 +7,4 @@ require parquet
 query III
 SELECT * FROM parquet_scan('{DATA_DIR}/parquet-testing/aws1.snappy.parquet') limit 100
 ----
-11000 values hashing to 5a3700bd7f58ae786d89a06bfb6fb4f6
+11000 values hashing to 7be4f84203e4c0bac84d7054f641feec

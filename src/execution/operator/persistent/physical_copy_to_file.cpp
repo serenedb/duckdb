@@ -24,7 +24,6 @@
 #include "fmt/format.h"
 
 #include <algorithm>
-#include <condition_variable>
 #include <exception>
 #include <functional>
 #include <type_traits>
@@ -133,7 +132,7 @@ private:
 
 private:
 	mutex lock;
-	std::condition_variable condition;
+	absl::CondVar condition;
 	unordered_map<string, DirectoryEntry> directories;
 };
 
@@ -316,9 +315,8 @@ class CopyFileLifecycleExecutor {
 public:
 	explicit CopyFileLifecycleExecutor(ClientContext &context_p)
 	    : context(context_p), executor(context_p, TaskSchedulerType::ASYNC) {
-		auto &scheduler = TaskScheduler::GetScheduler(context);
-		async_threads = scheduler.NumberOfAsyncThreads();
-		auto regular_threads = scheduler.NumberOfThreads();
+		async_threads = TaskScheduler::QueryAsyncThreads(context);
+		auto regular_threads = TaskScheduler::QueryThreads(context);
 		max_pending_tasks = MaxValue<idx_t>(MIN_PENDING_TASKS, (async_threads + regular_threads) * 4);
 	}
 
@@ -488,6 +486,7 @@ public:
 	    DUCKDB_EXCLUDES(lock);
 	FileStateHandle FinalizeFileStateLocked(FileStateHandle file_state) DUCKDB_REQUIRES(lock);
 	void FinalizeFileState(FileStateHandle file_state) DUCKDB_EXCLUDES(lock);
+	void AbandonFileState(FileStateHandle file_state) noexcept DUCKDB_EXCLUDES(lock);
 
 	FileStateHandle TryFinalizeOwnedFileStateLocked() DUCKDB_REQUIRES(lock);
 	void TryFinalizeOwnedFileState() DUCKDB_EXCLUDES(lock);
@@ -551,6 +550,7 @@ class PartitionedCopyLocalState;
 class CopyToFileLocalState : public LocalSinkState {
 public:
 	CopyToFileLocalState(const PhysicalCopyToFile &op_p, ExecutionContext &context_p, CopyToFileGlobalState &gstate_p);
+	~CopyToFileLocalState() override;
 
 public:
 	const PhysicalCopyToFile &op;
@@ -1696,7 +1696,7 @@ bool CopyFileLifecycleExecutor::WorkOnTask(bool throw_error) {
 
 void CopyFileLifecycleExecutor::WorkOnTaskOrYield() {
 	if (!WorkOnTask()) {
-		TaskScheduler::YieldThread();
+		executor.WaitForProgress();
 	}
 }
 
@@ -1708,7 +1708,7 @@ void CopyFileLifecycleExecutor::WaitForTaskSlot(CopyFileLifecycleWaitMode mode) 
 		if (async_threads == 0 || mode == CopyFileLifecycleWaitMode::DRAIN) {
 			WorkOnTaskOrYield();
 		} else {
-			TaskScheduler::YieldThread();
+			executor.WaitForProgress();
 		}
 	}
 }
@@ -1745,7 +1745,7 @@ bool CopyDirectoryManager::EnsureDirectory(FileSystem &fs, const string &dir_pat
 			if (entry->second.state == CopyDirectoryState::FAILED) {
 				std::rethrow_exception(entry->second.error);
 			}
-			condition.wait(guard);
+			condition.Wait(guard.mutex());
 		}
 	}
 
@@ -1768,7 +1768,7 @@ bool CopyDirectoryManager::EnsureDirectory(FileSystem &fs, const string &dir_pat
 		entry->second.error = error;
 		entry->second.created = created;
 	}
-	condition.notify_all();
+	condition.SignalAll();
 
 	if (error) {
 		std::rethrow_exception(error);
@@ -2577,10 +2577,9 @@ void PartitionedCopyState::CreateTaskList() {
 	}
 	std::sort(partition_blocks.begin(), partition_blocks.end(), std::greater<PartitionBlock>());
 
-	auto &ts = TaskScheduler::GetScheduler(partitioned_copy.context);
 	const auto &max_block = partition_blocks.front();
 
-	const auto threads = MinValue<idx_t>(locals, ts.NumberOfThreads());
+	const auto threads = MinValue<idx_t>(locals, TaskScheduler::QueryThreads(partitioned_copy.context));
 	const auto aligned_scale = MaxValue<idx_t>(ValidityMask::BITS_PER_VALUE / STANDARD_VECTOR_SIZE, 1);
 	const auto aligned_count = PartitionedCopyHashGroup::BinValue(max_block.first, aligned_scale);
 	const auto per_thread = aligned_scale * PartitionedCopyHashGroup::BinValue(aligned_count, threads);
@@ -2923,7 +2922,7 @@ public:
 				partitioned_copy.Flush(execution_context, interrupt_state);
 			} else {
 				if (!partitioned_copy.DrainDelayedPartitions(execution_context, interrupt_state)) {
-					TaskScheduler::YieldThread();
+					partitioned_copy.copy_gstate.lifecycle_executor.WorkOnTaskOrYield();
 				}
 			}
 		}
@@ -3792,6 +3791,19 @@ void CopyToFileGlobalState::FinalizeFileState(FileStateHandle file_state) {
 	}
 }
 
+void CopyToFileGlobalState::AbandonFileState(FileStateHandle file_state) noexcept {
+	try {
+		annotated_lock_guard<annotated_mutex> guard(lock);
+		auto state = file_state.GetFileStatePtr();
+		auto prepare_state = prepare_global_state.load(std::memory_order_acquire);
+		if (state && prepare_state && RefersToSameObject(*prepare_state.get(), *state.get())) {
+			// concurrent prepares still use this state - keep it alive until the global state is destroyed
+			prepare_global_state_owned = std::move(file_state);
+		}
+	} catch (...) {
+	}
+}
+
 FileStateHandle CopyToFileGlobalState::TryFinalizeOwnedFileStateLocked() {
 	if (prepare_global_state_owned) {
 		prepare_global_state.store(nullptr, std::memory_order_release);
@@ -3822,6 +3834,12 @@ void CopyToFileGlobalState::MarkSuccessful() noexcept {
 //===--------------------------------------------------------------------===//
 // Copy Local State
 //===--------------------------------------------------------------------===//
+CopyToFileLocalState::~CopyToFileLocalState() {
+	if (global_file_state) {
+		gstate.AbandonFileState(std::move(global_file_state));
+	}
+}
+
 CopyToFileLocalState::CopyToFileLocalState(const PhysicalCopyToFile &op_p, ExecutionContext &context_p,
                                            CopyToFileGlobalState &gstate_p)
     : op(op_p), context(context_p), gstate(gstate_p) {
@@ -3964,15 +3982,22 @@ SinkResultType PhysicalCopyToFile::Sink(ExecutionContext &context, DataChunk &ch
 		// if we are only writing the file when there are rows to write we need to initialize here
 		gstate.Initialize();
 	}
+	auto &progress_callback = ClientConfig::GetConfig(context.client).sink_progress_callback;
 	if (partition_output) {
 		auto result =
 		    gstate.partitioned_copy->Sink(context, chunk, *lstate.partitioned_copy_local_state, input.interrupt_state);
 		if (result != SinkResultType::BLOCKED) {
 			lstate.total_rows_copied += chunk.size();
+			if (progress_callback) {
+				progress_callback(chunk.size(), chunk.GetAllocationSize());
+			}
 		}
 		return result;
 	}
 	lstate.total_rows_copied += chunk.size();
+	if (progress_callback) {
+		progress_callback(chunk.size(), chunk.GetAllocationSize());
+	}
 
 	if (per_thread_output) {
 		if (!lstate.global_file_state) {
@@ -4000,6 +4025,34 @@ SinkResultType PhysicalCopyToFile::Sink(ExecutionContext &context, DataChunk &ch
 	}
 
 	return SinkResultType::NEED_MORE_INPUT;
+}
+
+static unique_ptr<ColumnDataCollection> TopUpBatch(ClientContext &context, const PhysicalCopyToFile &op,
+                                                   CopyBatchSlicer &slicer, ColumnDataCollection &batch,
+                                                   ColumnDataCollection &source) {
+	ColumnDataAppendState batch_append;
+	batch.InitializeAppend(batch_append);
+	unique_ptr<ColumnDataCollection> rest;
+	ColumnDataAppendState rest_append;
+	DataChunk chunk;
+	ColumnDataScanState scan_state;
+	source.InitializeScan(scan_state);
+	source.InitializeScanChunk(scan_state, chunk);
+	while (source.Scan(scan_state, chunk)) {
+		idx_t offset = 0;
+		while (offset < chunk.size()) {
+			if (!CopyFunctionBatchAnalyzer(batch, op.batch_size, op.batch_size_bytes).MeetsFlushCriteria()) {
+				batch.Append(batch_append, slicer.Slice(chunk, offset, batch));
+				continue;
+			}
+			if (!rest) {
+				rest = make_uniq<ColumnDataCollection>(context, op.expected_types);
+				rest->InitializeAppend(rest_append);
+			}
+			rest->Append(rest_append, slicer.Slice(chunk, offset, *rest));
+		}
+	}
+	return rest;
 }
 
 SinkCombineResultType PhysicalCopyToFile::Combine(ExecutionContext &context, OperatorSinkCombineInput &input) const {
@@ -4042,11 +4095,11 @@ SinkCombineResultType PhysicalCopyToFile::Combine(ExecutionContext &context, Ope
 			const auto size_in_bytes = gstate.last_batch->SizeInBytes() + lstate.batch->SizeInBytes();
 			const CopyFunctionBatchAnalyzer batch_analyzer(count, size_in_bytes, batch_size, batch_size_bytes);
 			if (batch_analyzer.MeetsFlushCriteria()) {
-				// Combining makes us overshoot, make sure the smallest one gets flushed now
 				auto &small = lstate.batch->Count() < gstate.last_batch->Count() ? lstate.batch : gstate.last_batch;
 				auto &large = lstate.batch->Count() < gstate.last_batch->Count() ? gstate.last_batch : lstate.batch;
 				batch = std::move(large);
-				gstate.last_batch = std::move(small);
+				auto source = std::move(small);
+				gstate.last_batch = TopUpBatch(context.client, *this, *lstate.batch_slicer, *batch, *source);
 			} else {
 				gstate.last_batch->Combine(*lstate.batch);
 			}
@@ -4213,14 +4266,19 @@ void PhysicalCopyToFile::FlushBatch(ClientContext &context, GlobalSinkState &gst
 		annotated_unique_lock<annotated_mutex> file_guard(ready_file_state->lock);
 		if (PhysicalCopyRotateNow(*this, *ready_file_state)) {
 			// Global state must be rotated. Move to local scope, create an new one, and immediately release global lock
-			auto owned_file_state = std::move(file_state);
+			// If this is the file state all prepares run against, hand it over to the global state while we still hold
+			// the lock: creating the replacement below can throw (e.g. when another thread's error interrupts the
+			// query), and a handle that goes out of scope would free a file state other threads still prepare into
+			auto owned_file_state = gstate.FinalizeFileStateLocked(std::move(file_state));
 			file_guard.unlock();
 			global_guard.unlock();
 
 			gstate.EnsureFileStateReady(file_state, create_file_state_fun);
 
 			// Finalize this file!
-			gstate.FinalizeFileState(std::move(owned_file_state));
+			if (owned_file_state) {
+				gstate.FinalizeFileState(std::move(owned_file_state));
+			}
 		} else {
 			global_guard.unlock();
 			ready_file_state->num_batches++;

@@ -109,6 +109,9 @@ public:
 	//! Scan a chunk
 	virtual AsyncResult Scan(ClientContext &context, GlobalTableFunctionState &global_state,
 	                         LocalTableFunctionState &local_state, DataChunk &chunk) = 0;
+	DUCKDB_API virtual void Lookup(ClientContext &context, GlobalTableFunctionState &global_state,
+	                               LocalTableFunctionState &local_state, std::span<const int64_t> rows,
+	                               std::span<idx_t> survivors, DataChunk &chunk);
 	//! Finish scanning a given file
 	DUCKDB_API virtual void FinishFile(ClientContext &context, GlobalTableFunctionState &gstate);
 	//! Get progress within a given file

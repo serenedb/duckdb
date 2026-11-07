@@ -95,7 +95,7 @@ select json_transform('{"a": 42}', '{"a":"NULL"}')
 statement error
 select json_transform('{"a": 42}', '{"a":"ARRAY"}')
 ----
-<REGEX>:.*Invalid Input Error.*can not be converted to a DuckDB Type.*
+<REGEX>:.*Invalid Input Error.*Value "ARRAY" can not be converted to a valid type.*
 
 # arrays
 statement error

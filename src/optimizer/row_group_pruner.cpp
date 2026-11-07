@@ -9,10 +9,19 @@
 #include "duckdb/storage/table/row_group_reorderer.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/planner/expression/bound_columnref_expression.hpp"
+#include "duckdb/planner/expression/bound_constant_expression.hpp"
 
 namespace duckdb {
 
 RowGroupPruner::RowGroupPruner(ClientContext &context_p) : context(context_p) {
+}
+
+static std::shared_ptr<const Expression> LimitNodeExpression(const BoundLimitNode &node) {
+	if (node.Type() == LimitNodeType::EXPRESSION_VALUE) {
+		return std::shared_ptr<const Expression>(node.GetValueExpression().Copy());
+	}
+	return std::shared_ptr<const Expression>(
+	    make_uniq<BoundConstantExpression>(Value::BIGINT(NumericCast<int64_t>(node.GetConstantValue()))));
 }
 
 unique_ptr<LogicalOperator> RowGroupPruner::Optimize(unique_ptr<LogicalOperator> op) {
@@ -28,6 +37,7 @@ unique_ptr<LogicalOperator> RowGroupPruner::Optimize(unique_ptr<LogicalOperator>
 bool RowGroupPruner::TryOptimize(LogicalOperator &op) const {
 	optional_idx row_limit;
 	optional_idx row_offset;
+	bool push_limit = true;
 
 	if (op.type != LogicalOperatorType::LOGICAL_LIMIT) {
 		return false;
@@ -53,9 +63,11 @@ bool RowGroupPruner::TryOptimize(LogicalOperator &op) const {
 		}
 		if (op_type == LogicalOperatorType::LOGICAL_FILTER ||
 		    op_type == LogicalOperatorType::LOGICAL_AGGREGATE_AND_GROUP_BY ||
-		    op_type == LogicalOperatorType::LOGICAL_DISTINCT) {
+		    op_type == LogicalOperatorType::LOGICAL_DISTINCT || op_type == LogicalOperatorType::LOGICAL_UNNEST ||
+		    op_type == LogicalOperatorType::LOGICAL_SAMPLE) {
 			row_limit.SetInvalid();
 			row_offset.SetInvalid();
+			push_limit = false;
 		}
 		current_op = *current_op.get().children[0];
 	}
@@ -71,19 +83,45 @@ bool RowGroupPruner::TryOptimize(LogicalOperator &op) const {
 	}
 
 	if (logical_get->table_filters.HasFilters()) {
-		// If there are filters, we only order the row groups but do not prune
-		row_limit.SetInvalid();
-		row_offset.SetInvalid();
+		bool invalidate;
+		if (logical_get->function.supports_pushdown_filter && logical_get->bind_data) {
+			// Per-filter: keep the pushed limit only if EVERY filter is applied before it
+			// (BeforeLimit, e.g. an INCLUDE column). AfterLimit (lookup source) applies after the
+			// limit, and Reject becomes a Filter node above the scan -- both force us to drop it.
+			invalidate = false;
+			for (auto &entry : logical_get->table_filters) {
+				const auto col_id = logical_get->GetColumnIndex(entry.GetIndex()).GetPrimaryIndex();
+				const auto pushdown =
+				    logical_get->function.supports_pushdown_filter(*logical_get->bind_data, col_id, entry.Filter());
+				// BeforeLimit is applied before the limit; Drop is removed entirely (redundant with how the
+				// scan enforces the limit, e.g. a top-k collector's own boundary) -- neither invalidates the
+				// pushed limit. AfterLimit / Reject do.
+				if (pushdown != TableFilterPushdown::BeforeLimit && pushdown != TableFilterPushdown::Drop) {
+					invalidate = true;
+					break;
+				}
+			}
+		} else {
+			// No per-filter callback: filters present + the function does not apply filters before the
+			// limit -> only reorder row groups, do not push the limit.
+			invalidate = true;
+		}
+		if (invalidate) {
+			row_limit.SetInvalid();
+			row_offset.SetInvalid();
+			push_limit = false;
+		}
 	}
 
 	// We can use the RowGroupReorderer!
+	const auto single_order_key = logical_order->orders.size() == 1;
 	const auto &primary_order = logical_order->orders[0];
 	auto options = CreateRowGroupReordererOptions(row_limit, row_offset, primary_order, *logical_get, storage_index,
-	                                              logical_limit);
+	                                              logical_limit, single_order_key, push_limit);
 	if (!options) {
 		return false;
 	}
-	logical_get->SetScanOrder(std::move(options));
+	logical_get->SetScanOrder(context, std::move(options));
 
 	return true;
 }
@@ -136,7 +174,7 @@ optional_ptr<LogicalGet> RowGroupPruner::FindLogicalGet(const LogicalOrder &logi
 	vector<JoinFilterPushdownColumn> columns {std::move(column)};
 	vector<PushdownFilterTarget> pushdown_targets;
 	JoinFilterPushdownOptimizer::GetPushdownFilterTargets(*logical_order.children[0], std::move(columns),
-	                                                      pushdown_targets);
+	                                                      pushdown_targets, true);
 
 	if (pushdown_targets.empty()) {
 		return nullptr;
@@ -167,16 +205,16 @@ optional_ptr<LogicalGet> RowGroupPruner::FindLogicalGet(const LogicalOrder &logi
 unique_ptr<RowGroupOrderOptions>
 RowGroupPruner::CreateRowGroupReordererOptions(const optional_idx row_limit, const optional_idx row_offset,
                                                const BoundOrderByNode &primary_order, const LogicalGet &logical_get,
-                                               const StorageIndex &storage_index, LogicalLimit &logical_limit) const {
+                                               const StorageIndex &storage_index, LogicalLimit &logical_limit,
+                                               const bool single_order_key, const bool push_limit) const {
 	const auto &colref = primary_order.expression->Cast<BoundColumnRefExpression>();
 	const auto column_type =
 	    colref.GetReturnType() == LogicalType::VARCHAR ? OrderByColumnType::STRING : OrderByColumnType::NUMERIC;
 	const auto order_type = primary_order.type;
 	const auto null_order = primary_order.null_order;
 	const auto order_by = order_type == OrderType::ASCENDING ? OrderByStatistics::MIN : OrderByStatistics::MAX;
-	optional_idx combined_limit = row_limit.IsValid()
-	                                  ? row_limit.GetIndex() + (row_offset.IsValid() ? row_offset.GetIndex() : 0)
-	                                  : optional_idx();
+	optional_idx combined_limit =
+	    row_limit.IsValid() && row_offset.IsValid() ? row_limit.GetIndex() + row_offset.GetIndex() : optional_idx();
 
 	if (row_offset.IsValid() && row_offset.GetIndex() > 0 && logical_get.function.get_partition_stats) {
 		// Try to prune with offset
@@ -200,13 +238,29 @@ RowGroupPruner::CreateRowGroupReordererOptions(const optional_idx row_limit, con
 
 				return make_uniq<RowGroupOrderOptions>(storage_index, order_by, order_type, null_order, column_type,
 				                                       combined_limit, offset_puning_result.pruned_row_group_count,
-				                                       offset_puning_result.leading_null_group_offset);
+				                                       offset_puning_result.leading_null_group_offset,
+				                                       single_order_key);
 			}
 		}
 	}
 	// Only sort row groups by primary order column and prune with limit if set
+	std::shared_ptr<const Expression> limit_expression;
+	std::shared_ptr<const Expression> offset_expression;
+	const auto &limit_val = logical_limit.limit_val;
+	const auto &offset_val = logical_limit.offset_val;
+	const auto is_value = [](const BoundLimitNode &node) {
+		return node.Type() == LimitNodeType::CONSTANT_VALUE || node.Type() == LimitNodeType::EXPRESSION_VALUE;
+	};
+	if (push_limit && is_value(limit_val) && (is_value(offset_val) || offset_val.Type() == LimitNodeType::UNSET) &&
+	    (limit_val.Type() == LimitNodeType::EXPRESSION_VALUE || offset_val.Type() == LimitNodeType::EXPRESSION_VALUE)) {
+		limit_expression = LimitNodeExpression(limit_val);
+		if (offset_val.Type() != LimitNodeType::UNSET) {
+			offset_expression = LimitNodeExpression(offset_val);
+		}
+	}
 	return make_uniq<RowGroupOrderOptions>(storage_index, order_by, order_type, null_order, column_type, combined_limit,
-	                                       NumericCast<uint64_t>(0));
+	                                       NumericCast<uint64_t>(0), NumericCast<uint64_t>(0), single_order_key,
+	                                       std::move(limit_expression), std::move(offset_expression));
 }
 
 } // namespace duckdb

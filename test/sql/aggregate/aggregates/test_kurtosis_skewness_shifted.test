@@ -1,0 +1,44 @@
+# name: test/sql/aggregate/aggregates/test_kurtosis_skewness_shifted.test
+# description: kurtosis and skewness of constant and nearly constant inputs, single and multi threaded
+# group: [aggregates]
+
+query III
+SELECT kurtosis(x), skewness(x), kurtosis_pop(x) FROM (SELECT 435090932899640449::BIGINT AS x FROM range(12));
+----
+NULL	NULL	NULL
+
+query II
+SELECT kurtosis(x), skewness(x) FROM (SELECT 5::DOUBLE AS x FROM range(12));
+----
+NULL	NULL
+
+query III
+SELECT list_skewness([5, 5, 5]), list_skewness([1.5, 1.5, 1.5]), list_kurtosis([5, 5, 5, 5]);
+----
+NULL	NULL	NULL
+
+query III
+SELECT g, kurtosis(x) IS NULL, skewness(x) IS NULL
+FROM (SELECT i % 2 AS g, CASE WHEN i % 2 = 0 THEN 435090932899640449 ELSE i END::DOUBLE AS x FROM range(40) t(i))
+GROUP BY g ORDER BY g;
+----
+0	true	true
+1	false	false
+
+query I
+SELECT round(kurtosis(x), 9) FROM (VALUES (435090932899640449::DOUBLE), (435090932899640449::DOUBLE), (435090932899640449::DOUBLE), (435090932899641449::DOUBLE)) t(x);
+----
+4.0
+
+statement ok
+SET threads=8;
+
+query II
+SELECT kurtosis(x), skewness(x) FROM (SELECT 435090932899640449::DOUBLE AS x FROM range(2000000));
+----
+NULL	NULL
+
+query II
+SELECT round(kurtosis(i::DOUBLE), 9), abs(skewness(i::DOUBLE)) < 1e-9 FROM range(2000000) t(i);
+----
+-1.2	true

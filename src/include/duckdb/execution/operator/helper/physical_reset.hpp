@@ -17,6 +17,7 @@ namespace duckdb {
 
 struct DBConfig;
 struct ExtensionOption;
+struct ConfigurationOption;
 
 //! PhysicalReset represents a RESET operation (e.g. RESET a = 42)
 class PhysicalReset : public PhysicalOperator {
@@ -38,12 +39,17 @@ public:
 		return true;
 	}
 
+	static void ResetAll(ExecutionContext &context, SetScope scope);
+
 public:
 	const String name;
 	const SetScope scope;
 
 private:
-	void ResetExtensionVariable(ExecutionContext &context, DBConfig &config, ExtensionOption &extension_option) const;
+	static void ResetOption(ExecutionContext &context, DBConfig &config, const ConfigurationOption &option,
+	                        const char *name, SetScope effective_scope);
+	static void ResetExtensionVariable(ExecutionContext &context, DBConfig &config, const Identifier &name,
+	                                   ExtensionOption &extension_option, SetScope effective_scope);
 };
 
 } // namespace duckdb

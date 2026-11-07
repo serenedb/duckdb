@@ -1,0 +1,37 @@
+# name: test/sql/function/string/regex_prefix_reject.test
+# description: unanchored regexp_matches with literal, case-folded, multi-literal and first-byte prefix acceleration agrees with an anchored full match
+# group: [string]
+
+statement ok
+CREATE TABLE s AS SELECT i, CASE i % 9
+    WHEN 0 THEN 'http://google.ru/x' || i::VARCHAR
+    WHEN 1 THEN 'http://GOOGLE.COM/' || i::VARCHAR
+    WHEN 2 THEN 'googl'
+    WHEN 3 THEN repeat('x', (i % 50)::INTEGER) || 'google.co'
+    WHEN 4 THEN ''
+    WHEN 5 THEN 'foobaz barbaz ' || i::VARCHAR || 'x'
+    WHEN 6 THEN 'line' || chr(10) || 'google.com' || chr(10)
+    WHEN 7 THEN 'Привет google.ru мир'
+    ELSE 'nothing here ' || i::VARCHAR END AS v FROM range(3000) r(i);
+
+statement ok
+CREATE TABLE p AS SELECT * FROM (VALUES ('google\.(ru|com)'), ('(?i)google\.com'), ('(?:foo|bar)baz'), ('[0-9]+x'), ('[0-9]'), ('google$'), ('(?m)^google'), ('\bgoogle'), ('x*google'), ('(?i)привет'), ('мир'), ('a?')) t(pat);
+
+query I
+SELECT count(*) FROM s, p WHERE regexp_matches(v, pat) IS DISTINCT FROM regexp_full_match(v, '(?s).*(?:' || pat || ').*');
+----
+0
+
+foreach pat google\.(ru|com) (?i)google\.com (?:foo|bar)baz [0-9]+x
+
+query I
+SELECT count(*) FROM s WHERE regexp_matches(v, '${pat}') IS DISTINCT FROM regexp_full_match(v, '(?s).*(?:${pat}).*');
+----
+0
+
+endloop
+
+query IIII
+SELECT count(*) FILTER (WHERE regexp_matches(v, 'google\.(ru|com)')), count(*) FILTER (WHERE regexp_matches(v, '(?i)google\.com')), count(*) FILTER (WHERE regexp_matches(v, '(?:foo|bar)baz')), count(*) FILTER (WHERE regexp_matches(v, '[0-9]+x')) FROM s;
+----
+1000	667	333	333

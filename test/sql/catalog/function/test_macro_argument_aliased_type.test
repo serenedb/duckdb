@@ -1,0 +1,23 @@
+# name: test/sql/catalog/function/test_macro_argument_aliased_type.test
+# description: A constant argument a macro uses twice keeps its aliased type
+# group: [function]
+
+require inet
+
+statement ok
+CREATE MACRO type_twice(a) AS typeof(a) || ' ' || typeof(a);
+
+query T
+SELECT type_twice('10.0.0.1/24'::INET);
+----
+INET INET
+
+query T
+SELECT type_twice(['10.0.0.1'::INET, '::1'::INET]);
+----
+INET[] INET[]
+
+query T
+SELECT array_to_string(['10.0.0.1/24'::INET, '::1'::INET], ',');
+----
+10.0.0.1/24,::1

@@ -65,6 +65,9 @@ public:
 
 protected:
 	void ResolveTypes() override;
+	optional_ptr<LogicalOperator> GetBindingChild() override {
+		return children[0].get();
+	}
 
 private:
 	LogicalSecureView();

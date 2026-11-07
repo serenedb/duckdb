@@ -38,9 +38,28 @@ static optional_idx TryGetChildOffset(const list_entry_t &list_entry, const int6
 	return optional_idx(list_entry.offset + unsigned_offset);
 }
 
+static bool IsFirstOfSingleElementLists(const Vector &list, const Vector &offsets, const idx_t count) {
+	if (count == 0 || offsets.GetVectorType() != VectorType::CONSTANT_VECTOR || ConstantVector::IsNull(offsets) ||
+	    ConstantVector::GetData<int64_t>(offsets)[0] != 1 || list.GetVectorType() != VectorType::FLAT_VECTOR ||
+	    !FlatVector::Validity(list).AllValid() || ListVector::GetListSize(list) != count ||
+	    ListVector::GetChild(list).GetVectorType() != VectorType::FLAT_VECTOR) {
+		return false;
+	}
+	auto entries = FlatVector::GetData<list_entry_t>(list);
+	bool single = true;
+	for (idx_t i = 0; i < count; i++) {
+		single &= entries[i].length == 1 && entries[i].offset == i;
+	}
+	return single;
+}
+
 static void ExecuteListExtract(Vector &result, const Vector &list, const Vector &offsets) {
 	D_ASSERT(list.GetType().id() == LogicalTypeId::LIST);
 	const auto count = list.size();
+	if (IsFirstOfSingleElementLists(list, offsets, count)) {
+		result.Reference(ListVector::GetChild(list));
+		return;
+	}
 
 	auto list_entries = list.Values<list_entry_t>();
 	auto offsets_entries = offsets.Values<int64_t>();
@@ -98,6 +117,7 @@ static void ExecuteStringExtract(Vector &result, const Vector &input_vector, con
 	BinaryExecutor::Execute<string_t, int64_t, string_t>(
 	    input_vector, subscript_vector, result,
 	    [&](string_t input_string, int64_t subscript) { return SubstringUnicode(result, input_string, subscript, 1); });
+	StringVector::AddHeapReference(result, input_vector);
 }
 
 static void ListExtractFunction(DataChunk &args, ExpressionState &state, Vector &result) {

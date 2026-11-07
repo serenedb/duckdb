@@ -61,4 +61,12 @@ BinderException BinderException::Unsupported(ParsedExpression &expr, const strin
 	auto extra_info = Exception::InitializeExtraInfo("UNSUPPORTED", expr.GetQueryLocation());
 	return BinderException(extra_info, message);
 }
+
+BinderException BinderException::MissingPreparedStatement(const Identifier &name) {
+	auto extra_info = Exception::InitializeExtraInfo("MISSING_ENTRY", QueryLocation());
+	extra_info["name"] = name.GetIdentifierName();
+	extra_info["type"] = "prepared statement";
+	return BinderException(extra_info,
+	                       StringUtil::Format("prepared statement \"%s\" does not exist", name.GetIdentifierName()));
+}
 } // namespace duckdb

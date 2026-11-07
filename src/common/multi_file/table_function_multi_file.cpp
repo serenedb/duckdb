@@ -336,6 +336,23 @@ AsyncResult TableFunctionFileReader::Scan(ClientContext &context, GlobalTableFun
 	return AsyncResult::FromChunk(chunk);
 }
 
+void TableFunctionFileReader::Lookup(ClientContext &context, GlobalTableFunctionState &,
+                                     LocalTableFunctionState &lstate_p, std::span<const int64_t> rows,
+                                     std::span<idx_t> survivors, DataChunk &chunk) {
+	auto &lstate = lstate_p.Cast<TableFunctionMultiFileLocalState>();
+	if (function.init_local && lstate.reader.get() != this) {
+		TableFunctionFileInitInput file_input;
+		auto init_input = GetInitInput(file_input);
+		ExecutionContext execution_context(context, lstate.thread_context, nullptr);
+		lstate.local_state = function.init_local(execution_context, init_input, global_state.get());
+	}
+	lstate.reader = shared_from_this();
+	TableFunctionInput input(bind_data.get(), lstate.local_state.get(), global_state.get());
+	input.pk_lookups = rows;
+	input.pk_survivors = survivors;
+	settings.lookup(context, input, chunk);
+}
+
 void TableFunctionFileReader::FinishBatch(ClientContext &context, LocalTableFunctionState &local_state) {
 	if (!settings.finish_batch) {
 		return;
@@ -619,6 +636,24 @@ bool TableFunctionMultiFileWrapper::SupportsReadAhead(const MultiFileBindData &b
 	return settings.supports_read_ahead(file_bind_data.get());
 }
 
+static optional_ptr<const FunctionData> SchemaFileBindData(const MultiFileBindData &bind_data) {
+	auto &data = bind_data.bind_data->Cast<TableFunctionMultiFileData>();
+	if (data.options.schema_bind_data) {
+		return data.options.schema_bind_data.get();
+	}
+	if (!bind_data.union_readers.empty()) {
+		return bind_data.union_readers[0]->Cast<TableFunctionUnionData>().bind_data.get();
+	}
+	return nullptr;
+}
+
+bool TableFunctionMultiFileWrapper::SupportsLookup(const MultiFileBindData &bind_data,
+                                                   TableFunctionLookupInfo &info) const {
+	info.row_storage = settings.row_storage;
+	info.row_id_names = settings.row_id_names;
+	return settings.lookup && (!settings.supports_lookup || settings.supports_lookup(SchemaFileBindData(bind_data)));
+}
+
 void TableFunctionMultiFileWrapper::FinishReading(ClientContext &context, GlobalTableFunctionState &,
                                                   LocalTableFunctionState &lstate_p) {
 	auto &lstate = lstate_p.Cast<TableFunctionMultiFileLocalState>();
@@ -766,6 +801,10 @@ vector<PartitionStatistics> TableFunctionMultiFileWrapper::GetPartitionStats(Cli
 	return function.get_partition_stats(context, file_input);
 }
 
+static vector<column_t> TableFunctionMultiFileGetRowIdColumns(ClientContext &, optional_ptr<FunctionData>) {
+	return {MultiFileReader::COLUMN_IDENTIFIER_FILE_INDEX, MultiFileReader::COLUMN_IDENTIFIER_FILE_ROW_NUMBER};
+}
+
 TableFunction TableFunctionMultiFileWrapper::CreateFunction(TableFunction single_file_function, Identifier name,
                                                             TableFunctionMultiFileSettings settings,
                                                             table_function_bind_t bind) {
@@ -803,6 +842,9 @@ TableFunction TableFunctionMultiFileWrapper::CreateFunction(TableFunction single
 	if (single_file_function.statistics) {
 		// the statistics of the scan are those of its files, combined
 		result.statistics_extended = TableFunctionMultiFileFunction::MultiFileScanStatsExtended;
+	}
+	if (settings.lookup) {
+		result.get_row_id_columns = TableFunctionMultiFileGetRowIdColumns;
 	}
 	// NOTE: callbacks that take bind data are NOT forwarded - through the wrapper they are handed the bind data of
 	// the multi-file scan, not the bind data the wrapped function produced for a file. A format that wants one sets

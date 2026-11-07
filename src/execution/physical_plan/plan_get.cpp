@@ -4,6 +4,7 @@
 #include "duckdb/execution/operator/projection/physical_tableinout_function.hpp"
 #include "duckdb/execution/operator/scan/physical_table_scan.hpp"
 #include "duckdb/execution/physical_plan_generator.hpp"
+#include "duckdb/function/scalar/lower_equality_to_ilike.hpp"
 #include "duckdb/function/table/table_scan.hpp"
 #include "duckdb/planner/expression/bound_cast_expression.hpp"
 #include "duckdb/planner/expression/bound_constant_expression.hpp"
@@ -19,11 +20,15 @@ unique_ptr<TableFilterSet> MoveTableFilters(TableFilterSet &table_filters) {
 	// create the table filter map
 	auto table_filter_set = make_uniq<TableFilterSet>();
 	for (auto &entry : table_filters) {
-		table_filter_set->SetFilterByColumnIndex(entry.GetIndex(), entry.TakeFilter());
+		auto filter = entry.TakeFilter();
+		LowerEqualityToILike::Rewrite(ExpressionFilter::GetExpressionFilter(*filter, "MoveTableFilters").expr);
+		table_filter_set->SetFilterByColumnIndex(entry.GetIndex(), std::move(filter));
 	}
 	for (const auto &filter : table_filters.GetMultiColumnFilters()) {
 		const auto &expression_filter = ExpressionFilter::GetExpressionFilter(*filter, "MoveTableFilters");
-		table_filter_set->PushMultiColumnFilter(expression_filter.Copy());
+		auto copy = expression_filter.Copy();
+		LowerEqualityToILike::Rewrite(copy->expr);
+		table_filter_set->PushMultiColumnFilter(std::move(copy));
 	}
 	return table_filter_set;
 }
@@ -109,9 +114,10 @@ PhysicalOperator &PhysicalPlanGenerator::CreatePlan(LogicalGet &op) {
 	}
 
 	optional_ptr<PhysicalOperator> filter;
+	optional_ptr<PhysicalOperator> filter_projection;
 	auto &projection_ids = op.projection_ids;
 
-	if (table_filters && op.function.supports_pushdown_type) {
+	if (table_filters && (op.function.supports_pushdown_filter || op.function.supports_pushdown_type)) {
 		vector<unique_ptr<Expression>> select_list;
 		unique_ptr<Expression> unsupported_filter;
 		unordered_set<ProjectionIndex> to_remove;
@@ -125,12 +131,39 @@ PhysicalOperator &PhysicalPlanGenerator::CreatePlan(LogicalGet &op) {
 			auto &filter_expr = entry.Filter();
 			auto &column_idx = op.GetColumnIndex(filter_idx);
 			auto column_id = column_idx.GetPrimaryIndex();
-			if (!op.function.supports_pushdown_type(*op.bind_data, column_id)) {
+			const auto pushdown =
+			    op.function.supports_pushdown_filter
+			        ? op.function.supports_pushdown_filter(*op.bind_data, column_id, filter_expr)
+			        : (op.function.supports_pushdown_type(*op.bind_data, column_id) ? TableFilterPushdown::BeforeLimit
+			                                                                        : TableFilterPushdown::Reject);
+			if (pushdown == TableFilterPushdown::Drop) {
+				// A redundant filter (e.g. the top-k collector's own score boundary that TOP_N pushed
+				// back into the scan): remove it entirely -- neither pushed into the scan nor rehosted
+				// as a Filter node above it.
+				to_remove.insert(filter_idx);
+				continue;
+			}
+			if (pushdown == TableFilterPushdown::Reject) {
+				// column_ids is already pruned to only the columns this scan reads -- the
+				// filter column plus the query's outputs (e.g. a delete/update row-id). An
+				// empty projection_ids means "emit all of them". Declining a filter appends
+				// its column to projection_ids below; leaving it empty would make that append
+				// narrow the output to only the filter column, dropping the row-id. Emit the
+				// pruned set explicitly first so every output survives (and so the Filter node
+				// built from projection_ids below gets its output types).
+				if (projection_ids.empty()) {
+					for (idx_t i = 0; i < column_ids.size(); i++) {
+						projection_ids.push_back(ProjectionIndex(i));
+					}
+				}
+				Identifier column_name;
 				LogicalType column_type;
 				if (IsVirtualColumn(column_id)) {
 					auto &column = virtual_columns.at(column_id);
+					column_name = column.name;
 					column_type = column.type;
 				} else {
+					column_name = op.names[column_id];
 					column_type = op.returned_types[column_id];
 				}
 				optional_idx column_id_filter;
@@ -144,7 +177,8 @@ PhysicalOperator &PhysicalPlanGenerator::CreatePlan(LogicalGet &op) {
 					projection_ids.push_back(filter_idx);
 					column_id_filter = projection_ids.size() - 1;
 				}
-				auto column = make_uniq<BoundReferenceExpression>(column_type, column_id_filter.GetIndex());
+				auto column =
+				    make_uniq<BoundReferenceExpression>(column_name, column_type, column_id_filter.GetIndex());
 				select_list.push_back(filter_expr.ToExpression(*column));
 				to_remove.insert(filter_idx);
 			}
@@ -165,6 +199,16 @@ PhysicalOperator &PhysicalPlanGenerator::CreatePlan(LogicalGet &op) {
 				}
 			}
 			filter = Make<PhysicalFilter>(filter_types, std::move(select_list), op.estimated_cardinality);
+			if (filter_types.size() > op.types.size()) {
+				vector<unique_ptr<Expression>> planned_columns;
+				planned_columns.reserve(op.types.size());
+				for (idx_t i = 0; i < op.types.size(); i++) {
+					planned_columns.push_back(make_uniq<BoundReferenceExpression>(op.types[i], i));
+				}
+				filter_projection =
+				    Make<PhysicalProjection>(op.types, std::move(planned_columns), op.estimated_cardinality);
+				filter_projection->children.push_back(*filter);
+			}
 		}
 	}
 	op.ResolveOperatorTypes();
@@ -229,7 +273,7 @@ PhysicalOperator &PhysicalPlanGenerator::CreatePlan(LogicalGet &op) {
 	cast_table_scan.dynamic_filters = op.dynamic_filters;
 	if (filter) {
 		filter->children.push_back(table_scan);
-		return *filter;
+		return filter_projection ? *filter_projection : *filter;
 	}
 	return table_scan;
 }

@@ -54,6 +54,7 @@ public:
 
 public:
 	optional_ptr<ProducerToken> token;
+	bool blocking = false;
 };
 
 } // namespace duckdb

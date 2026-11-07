@@ -1,0 +1,65 @@
+# name: test/sql/table_function/generate_series_integer.test
+# description: generate_series of integer arguments generates integers
+# group: [table_function]
+
+query TI
+SELECT typeof(generate_series), generate_series FROM generate_series(1, 3) ORDER BY 2
+----
+INTEGER	1
+INTEGER	2
+INTEGER	3
+
+query TI
+SELECT typeof(generate_series), generate_series FROM generate_series(10, 1, -4) ORDER BY 2
+----
+INTEGER	2
+INTEGER	6
+INTEGER	10
+
+query I
+SELECT count(*) FROM generate_series(3, 1)
+----
+0
+
+query I
+SELECT generate_series FROM generate_series(2147483645, 2147483647) ORDER BY 1
+----
+2147483645
+2147483646
+2147483647
+
+query I
+SELECT generate_series FROM generate_series(2147483646, 2147483647, 5)
+----
+2147483646
+
+query I
+SELECT generate_series FROM generate_series(-2147483646, -2147483648, -1) ORDER BY 1
+----
+-2147483648
+-2147483647
+-2147483646
+
+query T
+SELECT DISTINCT typeof(generate_series) FROM generate_series(1, 3::BIGINT)
+----
+BIGINT
+
+query T
+SELECT DISTINCT typeof(generate_series) FROM generate_series(1, 3000000000, 1000000000)
+----
+BIGINT
+
+query IIT
+SELECT a, g, typeof(g) FROM (VALUES (1, 3), (5, 6)) v(a, b), generate_series(a, b) t(g) ORDER BY ALL
+----
+1	1	INTEGER
+1	2	INTEGER
+1	3	INTEGER
+5	5	INTEGER
+5	6	INTEGER
+
+statement error
+SELECT * FROM generate_series(1, 3, 0)
+----
+interval cannot be 0

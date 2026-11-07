@@ -6,6 +6,8 @@ SequenceOption <-
 	SeqSetMinMax /
 	SeqNoMinMax /
 	SeqStartWith /
+	SeqCache /
+	SeqAsType /
 	SeqOwnedBy
 
 SeqSetCycle <- SeqCycle / SeqNoCycle
@@ -15,7 +17,11 @@ SeqSetIncrement <- 'INCREMENT' 'BY'? Expression
 SeqSetMinMax <- SeqMinOrMax Expression
 SeqNoMinMax <- 'NO' SeqMinOrMax
 SeqStartWith <- 'START' 'WITH'? Expression
-SeqOwnedBy <- 'OWNED' 'BY' QualifiedName
+SeqCache <- 'CACHE' Expression
+SeqAsType <- 'AS' Type
+SeqOwnedBy <- 'OWNED' 'BY' SeqOwner
+SeqOwner <- SeqOwnerNone / QualifiedName
+SeqOwnerNone <- 'NONE'
 
 SeqMinOrMax <- MinValue / MaxValue
 MinValue <- 'MINVALUE'

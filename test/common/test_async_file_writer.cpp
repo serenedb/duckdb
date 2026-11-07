@@ -14,7 +14,6 @@
 
 #include <atomic>
 #include <chrono>
-#include <condition_variable>
 #include <thread>
 
 using namespace duckdb;
@@ -43,6 +42,29 @@ public:
 	static idx_t PendingBytes(ManagedAsyncWriteQueue &queue) {
 		lock_guard<mutex> guard(queue.lock);
 		return queue.pending_bytes;
+	}
+	static ManagedAsyncWriteQueue &UnderlyingQueue(ManagedAsyncWriteStreamQueue &queue) {
+		return *queue.write_queue;
+	}
+
+	static bool WaitForClosed(ManagedAsyncWriteQueue &queue) {
+		lock_guard<mutex> guard(queue.lock);
+		return queue.lock.AwaitWithTimeout(absl::Condition(&queue.closed), absl::Seconds(5));
+	}
+
+	static idx_t PendingBytes(ManagedAsyncWriteStreamQueue &queue) {
+		annotated_lock_guard<annotated_mutex> guard(queue.lock);
+		return queue.pending_bytes;
+	}
+
+	static bool TryCompletionRefill(ManagedAsyncWriteStreamQueue &queue) {
+		// Bound the wait so the broken lock order fails instead of hanging this completion.
+		if (!queue.submission_lock.try_lock()) {
+			return false;
+		}
+		queue.submission_lock.unlock();
+		queue.SchedulePendingWritesInternal();
+		return true;
 	}
 };
 
@@ -313,8 +335,11 @@ public:
 	}
 
 	bool WaitForBlockedWrites(idx_t count) {
-		unique_lock<mutex> guard(block_lock);
-		return cv.wait_for(guard, std::chrono::seconds(5), [&]() { return blocked_writes >= count; });
+		lock_guard<mutex> guard(block_lock);
+		auto reached = [&]() {
+			return blocked_writes >= count;
+		};
+		return block_lock.AwaitWithTimeout(absl::Condition(&reached), absl::Seconds(5));
 	}
 
 	idx_t BlockedWrites() {
@@ -323,11 +348,8 @@ public:
 	}
 
 	void ReleaseWrites() {
-		{
-			lock_guard<mutex> guard(block_lock);
-			release_writes = true;
-		}
-		cv.notify_all();
+		lock_guard<mutex> guard(block_lock);
+		release_writes = true;
 	}
 
 	idx_t MaxActiveWrites() {
@@ -337,28 +359,23 @@ public:
 
 private:
 	void EnterWrite() {
-		unique_lock<mutex> guard(block_lock);
+		lock_guard<mutex> guard(block_lock);
 		active_writes++;
 		max_active_writes = MaxValue(max_active_writes, active_writes);
 		blocked_writes++;
-		cv.notify_all();
-		cv.wait(guard, [&]() { return release_writes; });
+		block_lock.Await(absl::Condition(&release_writes));
 	}
 
 	void LeaveWrite() {
-		{
-			lock_guard<mutex> guard(block_lock);
-			D_ASSERT(active_writes > 0);
-			active_writes--;
-		}
-		cv.notify_all();
+		lock_guard<mutex> guard(block_lock);
+		D_ASSERT(active_writes > 0);
+		active_writes--;
 	}
 
 private:
 	const FileWriteMode write_mode;
 
 	mutex block_lock;
-	std::condition_variable cv;
 	idx_t active_writes = 0;
 	idx_t max_active_writes = 0;
 	idx_t blocked_writes = 0;
@@ -421,9 +438,11 @@ public:
 
 		auto write_size = UnsafeNumericCast<idx_t>(nr_bytes);
 		{
-			unique_lock<mutex> guard(state_lock);
-			if (!state_cv.wait_for(guard, std::chrono::seconds(5),
-			                       [&]() { return location == next_admission_offset; })) {
+			lock_guard<mutex> guard(state_lock);
+			auto admitted = [&]() {
+				return location == next_admission_offset;
+			};
+			if (!state_lock.AwaitWithTimeout(absl::Condition(&admitted), absl::Seconds(5))) {
 				throw InternalException("Concurrent-sequential write was not admitted in stream order");
 			}
 			admitted_offsets.push_back(location);
@@ -431,56 +450,54 @@ public:
 			active_backend_writes++;
 			max_active_backend_writes = MaxValue(max_active_backend_writes, active_backend_writes);
 			entered_backend_writes++;
-			state_cv.notify_all();
 			if (block_backend_writes) {
-				state_cv.wait(guard, [&]() { return release_all_writes || IsReleased(location); });
+				auto released = [&]() {
+					return release_all_writes || IsReleased(location);
+				};
+				state_lock.Await(absl::Condition(&released));
 			}
 		}
 
 		try {
 			TrackingWriteFileSystem::Write(handle, buffer, nr_bytes, location);
-			{
-				lock_guard<mutex> guard(state_lock);
-				D_ASSERT(active_backend_writes > 0);
-				active_backend_writes--;
-				completed_offsets.push_back(location);
-			}
-			state_cv.notify_all();
+			lock_guard<mutex> guard(state_lock);
+			D_ASSERT(active_backend_writes > 0);
+			active_backend_writes--;
+			completed_offsets.push_back(location);
 		} catch (...) {
 			{
 				lock_guard<mutex> guard(state_lock);
 				D_ASSERT(active_backend_writes > 0);
 				active_backend_writes--;
 			}
-			state_cv.notify_all();
 			throw;
 		}
 	}
 
 	bool WaitForBackendWrites(idx_t count) {
-		unique_lock<mutex> guard(state_lock);
-		return state_cv.wait_for(guard, std::chrono::seconds(5), [&]() { return entered_backend_writes >= count; });
+		lock_guard<mutex> guard(state_lock);
+		auto reached = [&]() {
+			return entered_backend_writes >= count;
+		};
+		return state_lock.AwaitWithTimeout(absl::Condition(&reached), absl::Seconds(5));
 	}
 
 	bool WaitForCompletedWrites(idx_t count) {
-		unique_lock<mutex> guard(state_lock);
-		return state_cv.wait_for(guard, std::chrono::seconds(5), [&]() { return completed_offsets.size() >= count; });
+		lock_guard<mutex> guard(state_lock);
+		auto reached = [&]() {
+			return completed_offsets.size() >= count;
+		};
+		return state_lock.AwaitWithTimeout(absl::Condition(&reached), absl::Seconds(5));
 	}
 
 	void ReleaseWrite(idx_t offset) {
-		{
-			lock_guard<mutex> guard(state_lock);
-			released_offsets.push_back(offset);
-		}
-		state_cv.notify_all();
+		lock_guard<mutex> guard(state_lock);
+		released_offsets.push_back(offset);
 	}
 
 	void ReleaseAllWrites() {
-		{
-			lock_guard<mutex> guard(state_lock);
-			release_all_writes = true;
-		}
-		state_cv.notify_all();
+		lock_guard<mutex> guard(state_lock);
+		release_all_writes = true;
 	}
 
 	idx_t EnteredBackendWrites() {
@@ -516,7 +533,6 @@ private:
 private:
 	const bool block_backend_writes;
 	mutex state_lock;
-	std::condition_variable state_cv;
 	vector<idx_t> admitted_offsets;
 	vector<idx_t> released_offsets;
 	vector<idx_t> completed_offsets;
@@ -544,13 +560,12 @@ public:
 
 		idx_t write_id;
 		{
-			unique_lock<mutex> guard(block_lock);
+			lock_guard<mutex> guard(block_lock);
 			write_id = ++entered_writes;
-			cv.notify_all();
 			if (write_id == 1) {
-				cv.wait(guard, [&]() { return fail_first_write; });
+				block_lock.Await(absl::Condition(&fail_first_write));
 			} else if (write_id == 2) {
-				cv.wait(guard, [&]() { return release_second_write; });
+				block_lock.Await(absl::Condition(&release_second_write));
 			}
 		}
 
@@ -561,29 +576,25 @@ public:
 	}
 
 	bool WaitForEnteredWrites(idx_t count) {
-		unique_lock<mutex> guard(block_lock);
-		return cv.wait_for(guard, std::chrono::seconds(5), [&]() { return entered_writes >= count; });
+		lock_guard<mutex> guard(block_lock);
+		auto reached = [&]() {
+			return entered_writes >= count;
+		};
+		return block_lock.AwaitWithTimeout(absl::Condition(&reached), absl::Seconds(5));
 	}
 
 	void FailFirstWrite() {
-		{
-			lock_guard<mutex> guard(block_lock);
-			fail_first_write = true;
-		}
-		cv.notify_all();
+		lock_guard<mutex> guard(block_lock);
+		fail_first_write = true;
 	}
 
 	void ReleaseSecondWrite() {
-		{
-			lock_guard<mutex> guard(block_lock);
-			release_second_write = true;
-		}
-		cv.notify_all();
+		lock_guard<mutex> guard(block_lock);
+		release_second_write = true;
 	}
 
 private:
 	mutex block_lock;
-	std::condition_variable cv;
 	idx_t entered_writes = 0;
 	bool fail_first_write = false;
 	bool release_second_write = false;
@@ -609,32 +620,27 @@ private:
 class BlockingMaterializationState {
 public:
 	void Materialize() {
-		unique_lock<mutex> guard(lock);
+		lock_guard<mutex> guard(lock);
 		entered = true;
-		cv.notify_all();
-		cv.wait(guard, [&]() { return released; });
+		lock.Await(absl::Condition(&released));
 		if (fail) {
 			throw IOException("Injected payload materialization failure");
 		}
 	}
 
 	bool WaitForEntered() {
-		unique_lock<mutex> guard(lock);
-		return cv.wait_for(guard, std::chrono::seconds(5), [&]() { return entered; });
+		lock_guard<mutex> guard(lock);
+		return lock.AwaitWithTimeout(absl::Condition(&entered), absl::Seconds(5));
 	}
 
 	void Release(bool fail_p) {
-		{
-			lock_guard<mutex> guard(lock);
-			fail = fail_p;
-			released = true;
-		}
-		cv.notify_all();
+		lock_guard<mutex> guard(lock);
+		fail = fail_p;
+		released = true;
 	}
 
 private:
 	mutex lock;
-	std::condition_variable cv;
 	bool entered = false;
 	bool released = false;
 	bool fail = false;
@@ -687,29 +693,27 @@ class BlockingAsyncWriteTarget : public AsyncWriteTarget {
 public:
 	void Write(data_ptr_t buffer, idx_t size, idx_t offset) override {
 		(void)buffer;
-		unique_lock<mutex> guard(lock);
+		lock_guard<mutex> guard(lock);
 		active_writes++;
 		max_active_writes = MaxValue(max_active_writes, active_writes);
 		entered_writes++;
-		cv.notify_all();
-		cv.wait(guard, [&]() { return release_writes; });
+		lock.Await(absl::Condition(&release_writes));
 		write_sizes.push_back(size);
 		offsets.push_back(offset);
 		active_writes--;
-		cv.notify_all();
 	}
 
 	bool WaitForEnteredWrites(idx_t count) {
-		unique_lock<mutex> guard(lock);
-		return cv.wait_for(guard, std::chrono::seconds(5), [&]() { return entered_writes >= count; });
+		lock_guard<mutex> guard(lock);
+		auto reached = [&]() {
+			return entered_writes >= count;
+		};
+		return lock.AwaitWithTimeout(absl::Condition(&reached), absl::Seconds(5));
 	}
 
 	void ReleaseWrites() {
-		{
-			lock_guard<mutex> guard(lock);
-			release_writes = true;
-		}
-		cv.notify_all();
+		lock_guard<mutex> guard(lock);
+		release_writes = true;
 	}
 
 	idx_t MaxActiveWrites() {
@@ -718,7 +722,6 @@ public:
 	}
 
 	mutex lock;
-	std::condition_variable cv;
 	vector<idx_t> write_sizes;
 	vector<idx_t> offsets;
 	idx_t entered_writes = 0;
@@ -727,31 +730,58 @@ public:
 	bool release_writes = false;
 };
 
+class SequentialAsyncWriteStreamTarget : public ManagedAsyncWriteStreamTarget {
+public:
+	SequentialAsyncWriteStreamTarget(BlockingAsyncWriteTarget &target_p, bool local_file_p)
+	    : target(target_p), local_file(local_file_p) {
+	}
+
+	FileWriteMode GetWriteMode() override {
+		return FileWriteMode::SEQUENTIAL;
+	}
+
+	bool IsLocalFile() override {
+		return local_file;
+	}
+
+	void Write(data_ptr_t, idx_t, idx_t) override {
+		throw InternalException("Unexpected positional write to sequential test target");
+	}
+
+	void Write(data_ptr_t buffer, idx_t size) override {
+		target.Write(buffer, size, offset);
+		offset += size;
+	}
+
+private:
+	BlockingAsyncWriteTarget &target;
+	const bool local_file;
+	idx_t offset = 0;
+};
+
 class BlockingAsyncTaskState {
 public:
 	bool WaitForStarted(idx_t count) {
-		unique_lock<mutex> guard(lock);
-		return cv.wait_for(guard, std::chrono::seconds(5), [&]() { return started_tasks >= count; });
+		lock_guard<mutex> guard(lock);
+		auto reached = [&]() {
+			return started_tasks >= count;
+		};
+		return lock.AwaitWithTimeout(absl::Condition(&reached), absl::Seconds(5));
 	}
 
 	void Release() {
-		{
-			lock_guard<mutex> guard(lock);
-			released = true;
-		}
-		cv.notify_all();
+		lock_guard<mutex> guard(lock);
+		released = true;
 	}
 
 	void Enter() {
-		unique_lock<mutex> guard(lock);
+		lock_guard<mutex> guard(lock);
 		started_tasks++;
-		cv.notify_all();
-		cv.wait(guard, [&]() { return released; });
+		lock.Await(absl::Condition(&released));
 	}
 
 private:
 	mutex lock;
-	std::condition_variable cv;
 	idx_t started_tasks = 0;
 	bool released = false;
 };
@@ -772,8 +802,8 @@ private:
 
 class AsyncThreadBlocker {
 public:
-	AsyncThreadBlocker(ClientContext &context, idx_t task_count_p)
-	    : task_count(task_count_p), executor(context, TaskSchedulerType::ASYNC) {
+	AsyncThreadBlocker(ClientContext &context, idx_t task_count_p, TaskSchedulerType type = TaskSchedulerType::ASYNC)
+	    : task_count(task_count_p), executor(context, type) {
 		for (idx_t task_idx = 0; task_idx < task_count; task_idx++) {
 			executor.ScheduleTask(make_uniq<BlockingAsyncTask>(executor, state));
 		}
@@ -939,6 +969,64 @@ TEST_CASE("ManagedAsyncWriteQueue accepts non-contiguous positional writes", "[a
 	REQUIRE(saw_second);
 }
 
+TEST_CASE("ManagedAsyncWriteStreamQueue abort permits an in-flight completion refill", "[async_write_queue]") {
+	DuckDB db(nullptr);
+	auto con = CreateConnectionWithAsyncThreads(db);
+	BlockingAsyncWriteTarget target;
+	target.ReleaseWrites();
+	SequentialAsyncWriteStreamTarget stream_target(target, true);
+	ManagedAsyncWriteStreamQueue queue(*con->context, stream_target);
+	auto &underlying_queue = ManagedAsyncWriteQueueTest::UnderlyingQueue(queue);
+	REQUIRE(underlying_queue.IsAsync());
+	mutex completion_lock;
+	bool completion_entered = false;
+	bool release_completion = false;
+	atomic<bool> completion_released {false};
+	atomic<bool> refill_finished {false};
+	// Stand in for a completion that already selected a refill before the stream was closed.
+	auto completion = [&](idx_t, idx_t, optional_ptr<const ErrorData>) {
+		{
+			lock_guard<mutex> guard(completion_lock);
+			completion_entered = true;
+			completion_released =
+			    completion_lock.AwaitWithTimeout(absl::Condition(&release_completion), absl::Seconds(5));
+		}
+		if (completion_released) {
+			refill_finished = ManagedAsyncWriteQueueTest::TryCompletionRefill(queue);
+		}
+	};
+	underlying_queue.RegisterWrite(AsyncWriteRequest(make_uniq<StringAsyncWriteBuffer>("abc"), 0, completion));
+	bool entered_completion;
+	{
+		lock_guard<mutex> guard(completion_lock);
+		entered_completion = completion_lock.AwaitWithTimeout(absl::Condition(&completion_entered), absl::Seconds(5));
+	}
+
+	queue.RegisterWrite(make_uniq<StringAsyncWriteBuffer>("pending"), 0,
+	                    ManagedAsyncWriteStreamQueue::ScheduleMode::DEFER);
+	auto pending_bytes = ManagedAsyncWriteQueueTest::PendingBytes(queue);
+
+	string abort_error;
+	std::thread abort_thread([&]() { abort_error = CaptureException([&]() { queue.AbortWrites(); }); });
+	// Closing the underlying queue follows closing the stream and discarding its pending writes.
+	auto underlying_closed = ManagedAsyncWriteQueueTest::WaitForClosed(underlying_queue);
+	{
+		lock_guard<mutex> guard(completion_lock);
+		release_completion = true;
+	}
+	abort_thread.join();
+
+	REQUIRE(entered_completion);
+	REQUIRE(underlying_closed);
+	REQUIRE(completion_released);
+	REQUIRE(refill_finished);
+	REQUIRE(pending_bytes == 7);
+	REQUIRE(abort_error.empty());
+	REQUIRE(ManagedAsyncWriteQueueTest::PendingBytes(queue) == 0);
+	REQUIRE(ManagedAsyncWriteQueueTest::ExternalPendingBytes(underlying_queue) == 0);
+	REQUIRE(target.write_sizes == vector<idx_t> {3});
+}
+
 TEST_CASE("ManagedAsyncWriteQueue reports accounted request adoption ownership", "[async_write_queue]") {
 	DuckDB db(nullptr);
 	auto con = CreateConnectionWithAsyncThreads(db);
@@ -997,10 +1085,11 @@ TEST_CASE("ManagedAsyncWriteQueue reports accounted request adoption ownership",
 }
 
 static void TestQueuedDrainTaskCoversNewTinyTail(bool local_file, const string &path_name) {
-	DuckDB db(nullptr);
+	DBConfig config;
+	config.options.maximum_threads = 2;
+	DuckDB db(nullptr, &config);
 	auto con = CreateConnectionWithAsyncThreads(db, 2);
-	auto &scheduler = TaskScheduler::GetScheduler(*con->context);
-	AsyncThreadBlocker async_thread_blocker(*con->context, NumericCast<idx_t>(scheduler.NumberOfAsyncThreads()));
+	AsyncThreadBlocker async_thread_blocker(*con->context, 1, TaskSchedulerType::REGULAR);
 	REQUIRE(async_thread_blocker.WaitForStarted());
 
 	BlockingWriteFileSystem fs(FileWriteMode::POSITIONAL, local_file);

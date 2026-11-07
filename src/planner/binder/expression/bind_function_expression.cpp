@@ -2,13 +2,17 @@
 #include "duckdb/logging/log_manager.hpp"
 #include "duckdb/catalog/catalog_entry/aggregate_function_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/scalar_function_catalog_entry.hpp"
+#include "duckdb/catalog/catalog_entry/macro_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/scalar_macro_catalog_entry.hpp"
+#include "duckdb/catalog/catalog_entry/table_macro_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/window_function_catalog_entry.hpp"
 #include "duckdb/common/assert.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/function/function_binder.hpp"
+#include "duckdb/parser/expression/constant_expression.hpp"
 #include "duckdb/parser/expression/function_expression.hpp"
 #include "duckdb/parser/expression/lambda_expression.hpp"
+#include "duckdb/parser/srf_utils.hpp"
 #include "duckdb/planner/binder.hpp"
 #include "duckdb/planner/expression/bound_cast_expression.hpp"
 #include "duckdb/planner/expression/bound_constant_expression.hpp"
@@ -16,7 +20,9 @@
 #include "duckdb/planner/expression/bound_lambda_expression.hpp"
 #include "duckdb/planner/expression/bound_reference_expression.hpp"
 #include "duckdb/planner/expression_binder.hpp"
+#include "duckdb/planner/expression_iterator.hpp"
 #include "duckdb/planner/column_qualifier.hpp"
+#include "duckdb/planner/expression_binder/select_binder.hpp"
 #include "duckdb/main/settings.hpp"
 
 #include <functional>
@@ -150,12 +156,13 @@ ListReduceRebindResult MaybeRebindListReduceLambda(ClientContext &context, idx_t
 		auto rebind_child_types = function_child_types;
 		rebind_child_types[2] = accumulator_type;
 
-		auto lambda_expr_rebind_copy = lambda_expr_copy->Copy();
-		auto &lambda_expr_rebind = lambda_expr_rebind_copy->Cast<LambdaExpression>();
-		bind_lambda_result = bind_lambda_expression(lambda_expr_rebind, depth, rebind_child_types,
-		                                            &bind_lambda_function, bind_lambda_context);
-		if (bind_lambda_result.HasError()) {
-			bind_lambda_result.error.Throw();
+		if (accumulator_type != function_child_types[2]) {
+			auto &lambda_expr_rebind = lambda_expr_copy->Cast<LambdaExpression>();
+			bind_lambda_result = bind_lambda_expression(lambda_expr_rebind, depth, rebind_child_types,
+			                                            &bind_lambda_function, bind_lambda_context);
+			if (bind_lambda_result.HasError()) {
+				bind_lambda_result.error.Throw();
+			}
 		}
 
 		auto &rebound_lambda_expr = bind_lambda_result.expression->Cast<BoundLambdaExpression>();
@@ -165,13 +172,13 @@ ListReduceRebindResult MaybeRebindListReduceLambda(ClientContext &context, idx_t
 		    TypeContainsDecimal(rebound_lambda_expr.LambdaExpr()->GetReturnType())) {
 			if (rebound_lambda_expr.LambdaExpr()->GetReturnType() != accumulator_type) {
 				const auto old_return_type = rebound_lambda_expr.LambdaExpr()->GetReturnType();
-				auto cast_expr = BoundCastExpression::AddCastToType(
-				    context, std::move(rebound_lambda_expr.LambdaExprMutable()), accumulator_type);
+				auto cast_expr = BoundCastExpression::AddCastToType(context, rebound_lambda_expr.LambdaExpr()->Copy(),
+				                                                    accumulator_type);
 				if (!cast_expr) {
 					throw BinderException("Could not cast lambda return type %s to accumulator type %s",
 					                      old_return_type.ToString(), accumulator_type.ToString());
 				}
-				rebound_lambda_expr.LambdaExprMutable() = std::move(cast_expr);
+				rebound_lambda_expr.SetLambdaExpr(std::move(cast_expr));
 			}
 		}
 		result.did_rebind = true;
@@ -196,7 +203,19 @@ ListReduceRebindResult MaybeRebindListReduceLambda(ClientContext &context, idx_t
 	return result;
 }
 
+constexpr const char *DEPRECATED_LAMBDA_ARROW =
+    "Deprecated lambda arrow (->) detected. Please transition to the new lambda syntax, "
+    "i.e., lambda x, i: x + i.\n"
+    "Use SET lambda_syntax='ENABLE_SINGLE_ARROW' to revert to the deprecated behavior.";
+
 } // namespace
+
+void ExpressionBinder::VerifyLambdaSyntax(ClientContext &context, LambdaSyntaxType syntax_type) {
+	if (syntax_type == LambdaSyntaxType::SINGLE_ARROW &&
+	    Settings::Get<LambdaSyntaxSetting>(context) != LambdaSyntax::ENABLE_SINGLE_ARROW) {
+		throw BinderException(DEPRECATED_LAMBDA_ARROW);
+	}
+}
 
 BindResult ExpressionBinder::TryBindLambdaOrJson(FunctionExpression &function, idx_t depth, CatalogEntry &func,
                                                  const LambdaSyntaxType syntax_type) {
@@ -204,14 +223,6 @@ BindResult ExpressionBinder::TryBindLambdaOrJson(FunctionExpression &function, i
 		// lambda x: x + 1 syntax.
 		return BindLambdaFunction(function, func.Cast<ScalarFunctionCatalogEntry>(), depth);
 	}
-
-	auto setting = Settings::Get<LambdaSyntaxSetting>(context);
-	bool invalid_syntax = setting != LambdaSyntax::ENABLE_SINGLE_ARROW && syntax_type == LambdaSyntaxType::SINGLE_ARROW;
-	bool warn_deprecated_syntax = setting == LambdaSyntax::DEFAULT && syntax_type == LambdaSyntaxType::SINGLE_ARROW;
-	const string msg = "Deprecated lambda arrow (->) detected. Please transition to the new lambda syntax, "
-	                   "i.e.., lambda x, i: x + i, before DuckDB's next release.\n"
-	                   "Use SET lambda_syntax='ENABLE_SINGLE_ARROW' to revert to the deprecated behavior.\n"
-	                   "For more information, see https://duckdb.org/docs/current/sql/functions/lambda.html.";
 
 	BindResult lambda_bind_result;
 	ErrorData error;
@@ -221,21 +232,16 @@ BindResult ExpressionBinder::TryBindLambdaOrJson(FunctionExpression &function, i
 		error = ErrorData(ex);
 	}
 
-	if (error.HasError() && error.Type() == ExceptionType::PARAMETER_NOT_RESOLVED && invalid_syntax) {
-		ErrorData deprecation_error(ExceptionType::BINDER, msg);
-		deprecation_error.Throw();
-	} else if (error.HasError()) {
+	if (error.HasError()) {
+		if (error.Type() == ExceptionType::PARAMETER_NOT_RESOLVED) {
+			VerifyLambdaSyntax(context, syntax_type);
+		}
 		error.Throw();
 	}
 
 	if (!lambda_bind_result.HasError()) {
-		if (!invalid_syntax) {
-			if (warn_deprecated_syntax) {
-				DUCKDB_LOG_WARNING(context, msg);
-			}
-			return lambda_bind_result;
-		}
-		throw BinderException(msg);
+		VerifyLambdaSyntax(context, syntax_type);
+		return lambda_bind_result;
 	}
 
 	// The lambda reading failed - the JSON reading binds the same nodes from scratch. Any child the
@@ -259,52 +265,117 @@ CatalogEntry &ExpressionBinder::BindFunction(FunctionExpression &function) {
 	ColumnQualifier qualifier(binder);
 	auto func = qualifier.QualifyFunction(function);
 	if (!func) {
-		// function was not found - check if we this is a table function (to throw a more helpful error message)
+		// scalar lookup missed - fall back to table function / table macro so the
+		// outer switch can route to the unnest rewrite (PG-compat SRF in SELECT)
+		// or surface the canonical procedure error.
 		EntryLookupInfo table_function_lookup(CatalogType::TABLE_FUNCTION_ENTRY, function.GetQualifiedName(),
 		                                      error_context);
 		auto table_func = GetCatalogEntry(table_function_lookup, OnEntryNotFound::RETURN_NULL);
 		if (table_func) {
-			throw BinderException(function,
-			                      "Function %s is a table function but it was used as a scalar function. This "
-			                      "function has to be called in a FROM clause (similar to a table).",
-			                      function.FunctionName());
+			if (table_func->type == CatalogType::TABLE_MACRO_ENTRY) {
+				auto &macro = table_func->Cast<MacroCatalogEntry>();
+				if (macro.is_procedure) {
+					throw BinderException(function, "%s() is a procedure\nHINT: To call a procedure, use CALL.",
+					                      function.FunctionName().GetIdentifierName());
+				}
+			}
+			func = table_func;
 		}
-		// not a table function - rebind to throw an error
+	}
+	if (!func) {
+		// not a table function - rebind to throw a real catalog-missing error
 		EntryLookupInfo function_lookup(CatalogType::SCALAR_FUNCTION_ENTRY, function.GetQualifiedName(), error_context);
 		func = GetCatalogEntry(function_lookup, OnEntryNotFound::THROW_EXCEPTION);
 	}
 	return *func;
 }
 
+//! Runs `fun` with the select-list set-returning rewrite disabled, so a nested
+//! generate_series resolves to its scalar LIST-returning overload instead of being
+//! expanded into rows. Ordinary expression nesting (`generate_series(1,3) + 1`,
+//! `abs(generate_series(1,3))`) is unaffected -- PostgreSQL expands those.
+template <class FUN>
+static BindResult BindWithoutSetReturningExpansionImpl(ExpressionBinder &binder, FUN &&fun) {
+	auto *select_binder = dynamic_cast<SelectBinder *>(&binder);
+	if (!select_binder) {
+		return fun();
+	}
+	select_binder->function_arg_level++;
+	try {
+		auto result = fun();
+		select_binder->function_arg_level--;
+		return result;
+	} catch (...) {
+		select_binder->function_arg_level--;
+		throw;
+	}
+}
+
 BindResult ExpressionBinder::BindExpression(FunctionExpression &function, idx_t depth,
                                             unique_ptr<ParsedExpression> &expr_ptr) {
-	auto &func = BindFunction(function);
+	const bool whole_row = std::exchange(whole_row_call, false);
+	reference<CatalogEntry> func = BindFunction(function);
 
-	switch (func.type) {
+	// PG compat: in a SELECT list, if the scalar lookup won but a table
+	// function with the same name exists, prefer the table function so it
+	// expands to rows via the unnest rewrite below. Only when we're in a
+	// SelectBinder (not FROM-clause args) and not inside an UNNEST argument
+	// (unnest_level == 0), otherwise the rewrite creates nested UNNESTs.
+	auto *select_binder = dynamic_cast<SelectBinder *>(this);
+	// PG-compat: for the specific functions PG returns a set for, prefer the
+	// TABLE_FUNCTION_ENTRY over the SCALAR_FUNCTION_ENTRY when called in a
+	// SELECT list. Other scalar/table dual-name functions like `repeat` keep
+	// their scalar semantics.
+	if (func.get().type == CatalogType::SCALAR_FUNCTION_ENTRY && depth == 0 && select_binder &&
+	    select_binder->unnest_level == 0 && select_binder->function_arg_level == 0 &&
+	    IsSelectListSetReturningFunction(function.FunctionName())) {
+		QueryErrorContext error_context(function.GetQueryLocation());
+		EntryLookupInfo tbl_lookup(CatalogType::TABLE_FUNCTION_ENTRY, function.GetQualifiedName(), error_context);
+		auto tbl_func = GetCatalogEntry(tbl_lookup, OnEntryNotFound::RETURN_NULL);
+		if (tbl_func && tbl_func->type == CatalogType::TABLE_FUNCTION_ENTRY) {
+			func = *tbl_func;
+		}
+	}
+
+	switch (func.get().type) {
 	case CatalogType::AGGREGATE_FUNCTION_ENTRY:
 	case CatalogType::WINDOW_FUNCTION_ENTRY:
+	case CatalogType::MACRO_ENTRY:
 		break;
 	default:
 		if (function.Distinct() || function.Filter() || !function.OrderBy()->orders.empty()) {
 			throw InvalidInputException("Function %s is a %s. \"DISTINCT\", \"FILTER\", and \"ORDER BY\" are only "
 			                            "applicable to window and aggregate functions.",
-			                            function.FunctionName(), CatalogTypeToString(func.type));
+			                            function.FunctionName(), CatalogTypeToString(func.get().type));
 		}
 		break;
 	}
 
-	switch (func.type) {
+	switch (func.get().type) {
 	case CatalogType::SCALAR_FUNCTION_ENTRY: {
 		auto child = function.IsLambdaFunction();
 		if (child) {
 			auto syntax_type = child->Cast<LambdaExpression>().GetLambdaSyntaxType();
-			return TryBindLambdaOrJson(function, depth, func, syntax_type);
+			// A lambda function consumes its argument as a LIST, so a set-returning
+			// function there has to stay scalar -- list_apply(generate_series(1, n), ...)
+			auto result = BindWithoutSetReturningExpansionImpl(
+			    *this, [&]() { return TryBindLambdaOrJson(function, depth, func, syntax_type); });
+			return result;
 		}
-		return BindFunction(function, func.Cast<ScalarFunctionCatalogEntry>(), depth);
+		return BindFunction(function, func.get().Cast<ScalarFunctionCatalogEntry>(), depth);
 	}
-	case CatalogType::MACRO_ENTRY:
+	case CatalogType::MACRO_ENTRY: {
+		// PG-compat: SELECT proc() / SELECT proc(...) when `proc` is a procedure
+		// must yield the canonical PG error pointing the user at CALL, matching
+		// the table-function path in bind_table_function.cpp.
+		auto &macro_entry = func.get().Cast<ScalarMacroCatalogEntry>();
+		if (macro_entry.is_procedure) {
+			throw BinderException(function, "%s() is a procedure\nHINT: To call a procedure, use CALL.",
+			                      function.FunctionName().GetIdentifierName());
+		}
 		// macro function
-		return BindMacro(function, func.Cast<ScalarMacroCatalogEntry>(), depth, expr_ptr);
+		return BindMacro(function, macro_entry, depth, expr_ptr);
+	}
 	case CatalogType::AGGREGATE_FUNCTION_ENTRY: {
 		// an aggregate belongs to the innermost query level in which one of its arguments resolves a
 		// column of that level, so that the level collecting it is the one the arguments refer to
@@ -314,11 +385,36 @@ BindResult ExpressionBinder::BindExpression(FunctionExpression &function, idx_t 
 				return BindAggregateInEnclosingScope(function, owner.GetIndex(), depth, expr_ptr);
 			}
 		}
-		return BindAggregate(function, func.Cast<AggregateFunctionCatalogEntry>(), depth);
+		// PostgreSQL forbids a set-returning function in an aggregate argument, so generate_series stays the
+		// scalar LIST overload there
+		return BindWithoutSetReturningExpansionImpl(
+		    *this, [&]() { return BindAggregate(function, func.get().Cast<AggregateFunctionCatalogEntry>(), depth); });
 	}
 	case CatalogType::WINDOW_FUNCTION_ENTRY:
 		// window function
-		return BindWindow(function, func.Cast<WindowFunctionCatalogEntry>(), depth);
+		return BindWindow(function, func.get().Cast<WindowFunctionCatalogEntry>(), depth);
+	case CatalogType::TABLE_FUNCTION_ENTRY:
+	case CatalogType::TABLE_MACRO_ENTRY: {
+		// PG-compat: procedures with a table body are catalogued as TABLE_MACRO.
+		// `SELECT proc()` for a procedure (CALL-only) must surface the canonical PG error.
+		if (func.get().type == CatalogType::TABLE_MACRO_ENTRY &&
+		    func.get().Cast<TableMacroCatalogEntry>().is_procedure) {
+			throw BinderException(function, "%s() is a procedure\nHINT: To call a procedure, use CALL.",
+			                      function.FunctionName().GetIdentifierName());
+		}
+		// PG compat: table functions in SELECT -> unnest their results as rows.
+		// Routes through SelectBinder::BindUnnest, sharing BoundUnnestNode with other SRFs.
+		const bool record = func.get().type == CatalogType::TABLE_MACRO_ENTRY || whole_row;
+		auto unnest_func = make_uniq<FunctionExpression>("unnest", vector<unique_ptr<ParsedExpression>> {});
+		unnest_func->GetArgumentsMutable().push_back(WrapTableFuncAsList(function.Copy(), record));
+		if (record) {
+			unnest_func->GetArgumentsMutable().emplace_back(Identifier("set_returning"),
+			                                                ConstantExpression::Boolean(true));
+		}
+		unnest_func->SetAlias(function.GetAlias().empty() ? function.FunctionName() : function.GetAlias());
+		expr_ptr = std::move(unnest_func);
+		return BindExpression(expr_ptr, depth, false);
+	}
 	default:
 		throw InvalidInputException("Unsupported catalog type when binding function");
 	}
@@ -457,8 +553,17 @@ BindResult ExpressionBinder::BindLambdaFunction(FunctionExpression &function, Sc
 		}
 	}
 
-	// bind the lambda parameter
 	auto &lambda_expr = args[lambda_expr_idx].GetExpressionMutable()->Cast<LambdaExpression>();
+	return BindLambdaFunction(function, func, lambda_expr, lambda_expr_idx, std::move(bound_children),
+	                          std::move(function_child_types), depth);
+}
+
+BindResult ExpressionBinder::BindLambdaFunction(const FunctionExpression &function, ScalarFunctionCatalogEntry &func,
+                                                LambdaExpression &lambda_expr, idx_t lambda_expr_idx,
+                                                vector<unique_ptr<Expression>> bound_children,
+                                                vector<LogicalType> function_child_types, idx_t depth) {
+	auto bind_lambda_function = func.functions.functions.front()->GetBindLambdaCallback();
+	ErrorData error;
 
 	unique_ptr<ParsedExpression> lambda_expr_copy;
 	const bool is_list_reduce = func.name == "list_reduce";
@@ -503,7 +608,7 @@ BindResult ExpressionBinder::BindLambdaFunction(FunctionExpression &function, Sc
 	}
 
 	// successfully bound: keep the bound lambda alongside the other bound children
-	auto alias = args[lambda_expr_idx].GetExpression().GetAlias();
+	auto alias = lambda_expr.GetAlias();
 	bind_lambda_result.expression->SetAlias(alias);
 
 	bound_children[lambda_expr_idx] = std::move(bind_lambda_result.expression);
@@ -518,8 +623,54 @@ BindResult ExpressionBinder::BindLambdaFunction(FunctionExpression &function, Sc
 
 	// capture the (lambda) columns
 	auto &bound_lambda_expr = children[lambda_expr_idx]->Cast<BoundLambdaExpression>();
-	CaptureLambdaColumns(bound_lambda_expr, bound_lambda_expr.LambdaExprMutable(), capture_bind_lambda,
-	                     override_bind_lambda_context, capture_child_types);
+	auto captured_body = CaptureLambdaColumns(bound_lambda_expr, bound_lambda_expr.LambdaExprMutable(),
+	                                          capture_bind_lambda, override_bind_lambda_context, capture_child_types);
+	if (captured_body) {
+		bound_lambda_expr.SetLambdaExpr(std::move(captured_body));
+	}
+	vector<bool> used_parameters;
+	if (lambda_bindings) {
+		const auto parameter_count = bound_lambda_expr.ParameterCount();
+		idx_t enclosing_count = 0;
+		for (auto &binding : *lambda_bindings) {
+			enclosing_count += binding.GetColumnCount();
+		}
+		used_parameters.resize(enclosing_count, false);
+		auto &body = bound_lambda_expr.LambdaExprMutable();
+		const auto visit_references = [&](auto &&callback) {
+			if (body.GetExpressionClass() == ExpressionClass::BOUND_REF) {
+				callback(body.Cast<BoundReferenceExpression>());
+				return;
+			}
+			ExpressionIterator::EnumerateChildren(body, [&](unique_ptr<Expression> &child) {
+				ExpressionIterator::VisitExpressionMutable<BoundReferenceExpression>(
+				    child, [&](BoundReferenceExpression &reference, unique_ptr<Expression> &) { callback(reference); });
+			});
+		};
+		visit_references([&](BoundReferenceExpression &reference) {
+			const auto index = reference.Index();
+			if (index >= parameter_count && index < parameter_count + enclosing_count) {
+				used_parameters[index - parameter_count] = true;
+			}
+		});
+		vector<idx_t> kept_index(enclosing_count);
+		idx_t kept = 0;
+		for (idx_t i = 0; i < enclosing_count; i++) {
+			kept_index[i] = kept;
+			kept += used_parameters[i];
+		}
+		if (kept != enclosing_count) {
+			visit_references([&](BoundReferenceExpression &reference) {
+				auto &index = reference.IndexMutable();
+				if (index < parameter_count) {
+					return;
+				}
+				index = index < parameter_count + enclosing_count
+				            ? parameter_count + kept_index[index - parameter_count]
+				            : index - (enclosing_count - kept);
+			});
+		}
+	}
 
 	FunctionBinder function_binder(binder);
 	unique_ptr<Expression> result =
@@ -548,10 +699,11 @@ BindResult ExpressionBinder::BindLambdaFunction(FunctionExpression &function, Sc
 			D_ASSERT(column_names.size() == column_types.size());
 
 			for (idx_t column_idx = column_names.size(); column_idx > 0; column_idx--) {
-				auto bound_lambda_param = make_uniq<BoundReferenceExpression>(column_names[column_idx - 1],
-				                                                              column_types[column_idx - 1], offset);
+				if (used_parameters[offset]) {
+					bound_function_expr.GetChildrenMutable().push_back(make_uniq<BoundReferenceExpression>(
+					    column_names[column_idx - 1], column_types[column_idx - 1], offset));
+				}
 				offset++;
-				bound_function_expr.GetChildrenMutable().push_back(std::move(bound_lambda_param));
 			}
 		}
 	}
@@ -577,6 +729,10 @@ BindResult ExpressionBinder::BindWindow(FunctionExpression &expr, WindowFunction
 
 BindResult ExpressionBinder::BindUnnest(FunctionExpression &expr, idx_t depth, bool root_expression) {
 	return BindUnsupportedExpression(expr, depth, UnsupportedUnnestMessage());
+}
+
+BindResult ExpressionBinder::BindStar(StarExpression &expr, idx_t depth, bool root_expression) {
+	return BindResult(BinderException::Unsupported(expr, "STAR expression is not supported here"));
 }
 
 void ExpressionBinder::ThrowIfUnnestInLambda(const ColumnBinding &column_binding) {

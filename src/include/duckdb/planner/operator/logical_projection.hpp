@@ -28,6 +28,8 @@ public:
 public:
 	//! Projects every column of the child unchanged
 	static unique_ptr<LogicalProjection> CreateIdentity(TableIndex table_index, unique_ptr<LogicalOperator> child);
+	static unique_ptr<LogicalProjection> CreateResolvedIdentity(TableIndex table_index,
+	                                                            unique_ptr<LogicalOperator> child);
 
 	vector<ColumnBinding> GetColumnBindings() override;
 	void Serialize(Serializer &serializer) const override;

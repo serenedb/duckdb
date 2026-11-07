@@ -56,5 +56,96 @@
         "categories": ["array"],
         "type": "scalar_function_set",
         "aliases": ["array_negative_dot_product"]
+    },
+    {
+        "name": "l2_distance",
+        "parameters": "vector1,vector2",
+        "description": "Computes the Euclidean distance between two vectors of the same size, given as lists or arrays of `FLOAT` or `DOUBLE`. The elements can not be `NULL`.",
+        "example": "l2_distance([1.0, 2.0, 3.0], [2.0, 3.0, 4.0])",
+        "categories": ["array", "list"],
+        "type": "scalar_function_set"
+    },
+    {
+        "name": "l2_sqr_distance",
+        "parameters": "vector1,vector2",
+        "description": "Computes the squared Euclidean distance between two vectors of the same size, given as lists or arrays of `FLOAT` or `DOUBLE`. The elements can not be `NULL`.",
+        "example": "l2_sqr_distance([1.0, 2.0, 3.0], [2.0, 3.0, 4.0])",
+        "categories": ["array", "list"],
+        "type": "scalar_function_set"
+    },
+    {
+        "name": "l1_distance",
+        "parameters": "vector1,vector2",
+        "description": "Computes the Manhattan distance between two vectors of the same size, given as lists or arrays of `FLOAT` or `DOUBLE`. The elements can not be `NULL`.",
+        "example": "l1_distance([1.0, 2.0, 3.0], [2.0, 3.0, 4.0])",
+        "categories": ["array", "list"],
+        "type": "scalar_function_set",
+        "aliases": ["<+>"]
+    },
+    {
+        "name": "cosine_distance",
+        "parameters": "vector1,vector2",
+        "description": "Computes the cosine distance between two vectors of the same size, given as lists or arrays of `FLOAT` or `DOUBLE`. The elements can not be `NULL`; a zero vector is at distance 1 from every vector.",
+        "example": "cosine_distance([1.0, 2.0, 3.0], [2.0, 3.0, 4.0])",
+        "categories": ["array", "list"],
+        "type": "scalar_function_set"
+    },
+    {
+        "name": "cosine_similarity",
+        "parameters": "vector1,vector2",
+        "description": "Computes the cosine similarity between two vectors of the same size, given as lists or arrays of `FLOAT` or `DOUBLE`. The elements can not be `NULL`; a zero vector has similarity 0 with every vector.",
+        "example": "cosine_similarity([1.0, 2.0, 3.0], [2.0, 3.0, 4.0])",
+        "categories": ["array", "list"],
+        "type": "scalar_function_set"
+    },
+    {
+        "name": "inner_product",
+        "parameters": "vector1,vector2",
+        "description": "Computes the inner product between two vectors of the same size, given as lists or arrays of `FLOAT` or `DOUBLE`. The elements can not be `NULL`.",
+        "example": "inner_product([1.0, 2.0, 3.0], [2.0, 3.0, 4.0])",
+        "categories": ["array", "list"],
+        "type": "scalar_function_set"
+    },
+    {
+        "name": "negative_inner_product",
+        "parameters": "vector1,vector2",
+        "description": "Computes the negative inner product between two vectors of the same size, given as lists or arrays of `FLOAT` or `DOUBLE`. The elements can not be `NULL`.",
+        "example": "negative_inner_product([1.0, 2.0, 3.0], [2.0, 3.0, 4.0])",
+        "categories": ["array", "list"],
+        "type": "scalar_function_set",
+        "aliases": ["<#>"]
+    },
+    {
+        "name": "l1_norm",
+        "parameters": "vector",
+        "description": "Computes the Manhattan norm of a vector given as a list or array of `FLOAT` or `DOUBLE`. The elements can not be `NULL`.",
+        "example": "l1_norm([3.0, -4.0])",
+        "categories": ["array", "list"],
+        "type": "scalar_function_set"
+    },
+    {
+        "name": "l2_norm",
+        "parameters": "vector",
+        "description": "Computes the Euclidean norm of a vector given as a list or array of `FLOAT` or `DOUBLE`. The elements can not be `NULL`.",
+        "example": "l2_norm([3.0, -4.0])",
+        "categories": ["array", "list"],
+        "type": "scalar_function_set",
+        "aliases": ["vector_norm"]
+    },
+    {
+        "name": "l1_normalize",
+        "parameters": "vector",
+        "description": "Divides a vector, given as a list or array of `FLOAT` or `DOUBLE`, by its Manhattan norm. A zero vector stays zero. The elements can not be `NULL`.",
+        "example": "l1_normalize([3.0, -4.0])",
+        "categories": ["array", "list"],
+        "type": "scalar_function_set"
+    },
+    {
+        "name": "l2_normalize",
+        "parameters": "vector",
+        "description": "Divides a vector, given as a list or array of `FLOAT` or `DOUBLE`, by its Euclidean norm. A zero vector stays zero. The elements can not be `NULL`.",
+        "example": "l2_normalize([3.0, -4.0])",
+        "categories": ["array", "list"],
+        "type": "scalar_function_set"
     }
 ]

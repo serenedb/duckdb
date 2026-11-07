@@ -2,7 +2,6 @@
 #include "duckdb/storage/table/table_index_list.hpp"
 
 #include "duckdb/catalog/catalog_entry/duck_table_entry.hpp"
-#include "duckdb/common/types/constraint_conflict_info.hpp"
 #include "duckdb/common/types/conflict_manager.hpp"
 #include "duckdb/common/vector_operations/vector_operations.hpp"
 #include "duckdb/storage/table/append_state.hpp"
@@ -18,8 +17,10 @@
 
 namespace duckdb {
 
-IndexEntry::IndexEntry(unique_ptr<Index> index_p, idx_t index_oid_p, const ConstraintCheckMode check_mode_p)
-    : index_oid(index_oid_p), owned_index(std::move(index_p)), check_mode(check_mode_p) {
+IndexEntry::IndexEntry(unique_ptr<Index> index_p, idx_t index_oid_p, const ConstraintCheckMode check_mode_p,
+                       transaction_t built_through_p)
+    : index_oid(index_oid_p), owned_index(std::move(index_p)), check_mode(check_mode_p),
+      built_through(built_through_p) {
 	if (owned_index->IsBound()) {
 		bind_state = IndexBindState::BOUND;
 	} else {
@@ -75,7 +76,7 @@ ErrorData IndexEntry::Append(DataChunk &chunk, Vector &row_ids, const shared_ptr
 			if (auto delta = deltas.Find(IndexDeltaType::REMOVED_DATA_DURING_CHECKPOINT)) {
 				lookup_append_info.delete_indexes.push_back(*delta);
 			}
-			bound_index.VerifyAppend(chunk, lookup_append_info, optional_ptr<ConflictManager>());
+			bound_index.VerifyAppend(chunk, lookup_append_info);
 		}
 
 		IndexAppendInfo index_append_info(append_mode, nullptr);
@@ -91,6 +92,14 @@ ErrorData IndexEntry::Append(DataChunk &chunk, Vector &row_ids, const shared_ptr
 		error = ErrorData(ex);
 	}
 	return error;
+}
+
+ErrorData IndexEntry::FinishAppend() {
+	auto entry_lock = lock.GetExclusiveLock();
+	if (!owned_index->IsBound()) {
+		return ErrorData();
+	}
+	return owned_index->Cast<BoundIndex>().FinishAppend();
 }
 
 void IndexEntry::RevertAppend(DataChunk &chunk, Vector &row_ids) {
@@ -134,7 +143,7 @@ void IndexEntry::InitializeLocalIndexesInternal(TableIndexList &delete_indexes,
 void IndexEntry::AppendToDeleteIndexes(DataChunk &chunk, Vector &row_ids) {
 	auto entry_lock = lock.GetExclusiveLock();
 	D_ASSERT(owned_index->IsBound());
-	if (!owned_index->IsUnique()) {
+	if (!owned_index->IsUnique() && !owned_index->IsForeign()) {
 		return;
 	}
 	auto &bound_index = owned_index->Cast<BoundIndex>();
@@ -269,7 +278,19 @@ void IndexEntry::RemoveFromIndex(DataChunk &chunk, Vector &row_ids, const IndexR
 	auto entry_lock = lock.GetExclusiveLock();
 	if (!owned_index->IsBound()) {
 		// Buffer the delete: chunk is in table layout with all indexed columns populated.
-		owned_index->Cast<UnboundIndex>().BufferChunk(chunk, row_ids, BufferedIndexReplay::DEL_ENTRY);
+		auto &unbound_index = owned_index->Cast<UnboundIndex>();
+		switch (removal_type) {
+		case IndexRemovalType::MAIN_INDEX:
+		case IndexRemovalType::MAIN_INDEX_ONLY:
+			unbound_index.BufferChunk(chunk, row_ids, BufferedIndexReplay::DEL_ENTRY);
+			break;
+		case IndexRemovalType::REVERT_MAIN_INDEX:
+		case IndexRemovalType::REVERT_MAIN_INDEX_ONLY:
+			unbound_index.BufferChunk(chunk, row_ids, BufferedIndexReplay::INSERT_ENTRY);
+			break;
+		case IndexRemovalType::DELETED_ROWS_IN_USE:
+			break;
+		}
 		return;
 	}
 
@@ -293,11 +314,16 @@ bool IndexEntry::IsUnique() const {
 	return owned_index->IsUnique();
 }
 
+bool IndexEntry::IsForeign() const {
+	auto entry_lock = lock.GetSharedLock();
+	return owned_index->IsForeign();
+}
+
 bool IndexEntry::IsDeferred() const {
 	return check_mode == ConstraintCheckMode::DEFERRED;
 }
 
-bool IndexEntry::IsForeignKeyIndex(const vector<PhysicalIndex> &fk_keys, const ForeignKeyType fk_type) const {
+bool IndexEntry::IsForeignKeyIndex(std::span<const PhysicalIndex> fk_keys, const ForeignKeyType fk_type) const {
 	auto entry_lock = lock.GetSharedLock();
 	if (fk_type == ForeignKeyType::FK_TYPE_PRIMARY_KEY_TABLE) {
 		// Foreign keys cannot reference a deferred key.
@@ -364,8 +390,7 @@ void IndexEntry::CommitBind(unique_ptr<BoundIndex> bound_index) {
 	bind_state = IndexBindState::BOUND;
 }
 
-void IndexEntry::VerifyAppend(const shared_ptr<IndexEntry> &delete_entry, DataChunk &chunk,
-                              optional_ptr<ConflictManager> manager) {
+void IndexEntry::VerifyAppend(const shared_ptr<IndexEntry> &delete_entry, DataChunk &chunk) {
 	auto entry_lock = lock.GetExclusiveLock();
 	D_ASSERT(owned_index->IsBound());
 	auto &bound_index = owned_index->Cast<BoundIndex>();
@@ -377,12 +402,10 @@ void IndexEntry::VerifyAppend(const shared_ptr<IndexEntry> &delete_entry, DataCh
 		D_ASSERT(delete_entry->owned_index->IsBound());
 		index_append_info.delete_indexes.push_back(delete_entry->owned_index->Cast<BoundIndex>());
 	}
-	if (!manager) {
-		if (auto delta = deltas.Find(IndexDeltaType::REMOVED_DATA_DURING_CHECKPOINT)) {
-			index_append_info.delete_indexes.push_back(*delta);
-		}
+	if (auto delta = deltas.Find(IndexDeltaType::REMOVED_DATA_DURING_CHECKPOINT)) {
+		index_append_info.delete_indexes.push_back(*delta);
 	}
-	bound_index.VerifyAppend(chunk, index_append_info, manager);
+	bound_index.VerifyAppend(chunk, index_append_info);
 }
 
 void IndexEntry::VerifyForeignKey(const shared_ptr<IndexEntry> &delete_entry, DataChunk &chunk,
@@ -417,7 +440,7 @@ string IndexEntry::GetConstraintViolationMessage(const VerifyExistenceType verif
 	return owned_index->Cast<BoundIndex>().GetConstraintViolationMessage(verify_type, failed_index, input);
 }
 
-void IndexEntry::VerifyUpdate(const vector<PhysicalIndex> &column_ids) const {
+void IndexEntry::VerifyUpdate(std::span<const PhysicalIndex> column_ids) const {
 #ifdef DEBUG
 	auto entry_lock = lock.GetSharedLock();
 	D_ASSERT(owned_index->IsBound());
@@ -445,7 +468,7 @@ void IndexEntry::Rebuild(const IndexRebuildScan &scan) {
 	IndexRebuildAppend append = [&](DataChunk &chunk, Vector &row_ids) {
 		auto error = bound_index.Append(chunk, row_ids);
 		if (error.HasError()) {
-			throw InternalException("Failed to rebuild index '%s' after vacuum: %s", bound_index.GetIndexName(),
+			throw InternalException("Failed to rebuild index %s after vacuum: %s", bound_index.GetIndexName(),
 			                        error.Message());
 		}
 	};
@@ -488,7 +511,14 @@ IndexInfo IndexEntry::GetStorageInfo() const {
 	result.is_foreign = owned_index->IsForeign();
 	result.check_mode = check_mode;
 	result.column_set = owned_index->GetColumnIdSet();
+	result.removal_needs_column_values =
+	    !owned_index->IsBound() || owned_index->Cast<BoundIndex>().RemovalNeedsColumnValues();
 	return result;
+}
+
+vector<column_t> IndexEntry::GetColumnIds() const {
+	auto entry_lock = lock.GetSharedLock();
+	return owned_index->GetColumnIds();
 }
 
 idx_t IndexEntry::GetInMemorySize() const {

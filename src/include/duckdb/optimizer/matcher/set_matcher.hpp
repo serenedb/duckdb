@@ -10,7 +10,8 @@
 
 #include "duckdb/common/common.hpp"
 #include "duckdb/common/numeric_utils.hpp"
-#include "duckdb/common/unordered_set.hpp"
+
+#include <absl/cleanup/cleanup.h>
 
 namespace duckdb {
 
@@ -30,45 +31,69 @@ public:
 		INVALID
 	};
 
-	/* The double {{}} in the initializer for excluded_entries is intentional, workaround for bug in gcc-4.9 */
 	template <class T, class MATCHER>
-	static bool MatchRecursive(vector<unique_ptr<MATCHER>> &matchers, vector<reference<T>> &entries,
-	                           vector<reference<T>> &bindings, unordered_set<idx_t> excluded_entries, idx_t m_idx = 0) {
+	static bool MatchRecursive(vector<unique_ptr<MATCHER>> &matchers, vector<unique_ptr<T>> &entries,
+	                           vector<reference<T>> &bindings, idx_t m_idx) {
 		if (m_idx == matchers.size()) {
-			// matched all matchers!
 			return true;
 		}
-		// try to find a match for the current matcher (m_idx)
-		idx_t previous_binding_count = bindings.size();
-		for (idx_t e_idx = 0; e_idx < entries.size(); e_idx++) {
-			// first check if this entry has already been matched
-			if (excluded_entries.find(e_idx) != excluded_entries.end()) {
-				// it has been matched: skip this entry
+		auto previous_binding_count = NumericCast<int64_t>(bindings.size());
+		for (auto &entry : entries) {
+			if (!entry) {
 				continue;
 			}
-			// otherwise check if the current matcher matches this entry
-			if (matchers[m_idx]->Match(entries[e_idx], bindings)) {
-				// m_idx matches e_idx!
-				// check if we can find a complete match for this path
-				// first add e_idx to the new set of excluded entries
-				unordered_set<idx_t> new_excluded_entries;
-				new_excluded_entries = excluded_entries;
-				new_excluded_entries.insert(e_idx);
-				// then match the next matcher in the set
-				if (MatchRecursive(matchers, entries, bindings, new_excluded_entries, m_idx + 1)) {
-					// we found a match for this path! success
+			if (matchers[m_idx]->Match(*entry, bindings)) {
+				auto matched = std::move(entry);
+				absl::Cleanup restore = [&] {
+					entry = std::move(matched);
+				};
+				if (MatchRecursive(matchers, entries, bindings, m_idx + 1)) {
 					return true;
-				} else {
-					// we did not find a match! remove any bindings we added in the call to Match()
-					bindings.erase(bindings.begin() + NumericCast<int64_t>(previous_binding_count), bindings.end());
 				}
 			}
+			bindings.erase(bindings.begin() + previous_binding_count, bindings.end());
 		}
 		return false;
 	}
 
 	template <class T, class MATCHER>
-	static bool Match(vector<unique_ptr<MATCHER>> &matchers, vector<reference<T>> &entries,
+	static idx_t MatchFirst(MATCHER &matcher, const vector<unique_ptr<T>> &entries, vector<reference<T>> &bindings,
+	                        idx_t from, idx_t skip = DConstants::INVALID_INDEX) {
+		auto previous_binding_count = NumericCast<int64_t>(bindings.size());
+		for (auto e_idx = from; e_idx < entries.size(); e_idx++) {
+			if (e_idx == skip) {
+				continue;
+			}
+			if (matcher.Match(*entries[e_idx], bindings)) {
+				return e_idx;
+			}
+			bindings.erase(bindings.begin() + previous_binding_count, bindings.end());
+		}
+		return DConstants::INVALID_INDEX;
+	}
+
+	template <class T, class MATCHER>
+	static bool MatchTwo(vector<unique_ptr<MATCHER>> &matchers, const vector<unique_ptr<T>> &entries,
+	                     vector<reference<T>> &bindings) {
+		auto previous_binding_count = NumericCast<int64_t>(bindings.size());
+		auto first = MatchFirst(*matchers[0], entries, bindings, 0);
+		if (first == DConstants::INVALID_INDEX) {
+			return false;
+		}
+		if (MatchFirst(*matchers[1], entries, bindings, 0, first) != DConstants::INVALID_INDEX) {
+			return true;
+		}
+		bindings.erase(bindings.begin() + previous_binding_count, bindings.end());
+		if (MatchFirst(*matchers[0], entries, bindings, first + 1) != DConstants::INVALID_INDEX &&
+		    matchers[1]->Match(*entries[first], bindings)) {
+			return true;
+		}
+		bindings.erase(bindings.begin() + previous_binding_count, bindings.end());
+		return false;
+	}
+
+	template <class T, class MATCHER>
+	static bool Match(vector<unique_ptr<MATCHER>> &matchers, vector<unique_ptr<T>> &entries,
 	                  vector<reference<T>> &bindings, Policy policy) {
 		if (policy == Policy::ORDERED) {
 			// ordered policy, count has to match
@@ -77,7 +102,7 @@ public:
 			}
 			// now entries have to match in order
 			for (idx_t i = 0; i < matchers.size(); i++) {
-				if (!matchers[i]->Match(entries[i], bindings)) {
+				if (!matchers[i]->Match(*entries[i], bindings)) {
 					return false;
 				}
 			}
@@ -88,7 +113,7 @@ public:
 			}
 			// now provided entries have to match in order
 			for (idx_t i = 0; i < matchers.size(); i++) {
-				if (!matchers[i]->Match(entries[i], bindings)) {
+				if (!matchers[i]->Match(*entries[i], bindings)) {
 					return false;
 				}
 			}
@@ -104,25 +129,18 @@ public:
 			}
 			// now perform the actual matching
 			// every matcher has to match a UNIQUE entry
-			// we perform this matching in a recursive way
-			unordered_set<idx_t> excluded_entries;
-			if (!MatchRecursive(matchers, entries, bindings, excluded_entries)) {
-				return false;
+			switch (matchers.size()) {
+			case 0:
+				return true;
+			case 1:
+				return MatchFirst(*matchers[0], entries, bindings, 0) != DConstants::INVALID_INDEX;
+			case 2:
+				return MatchTwo(matchers, entries, bindings);
+			default:
+				D_ASSERT(false);
+				return MatchRecursive(matchers, entries, bindings, 0);
 			}
-			return true;
 		}
-	}
-
-	template <class T, class MATCHER>
-	static bool Match(vector<unique_ptr<MATCHER>> &matchers, vector<unique_ptr<T>> &entries,
-	                  vector<reference<T>> &bindings, Policy policy) {
-		// convert vector of unique_ptr to vector of normal pointers
-		vector<reference<T>> ptr_entries;
-		for (auto &entry : entries) {
-			ptr_entries.push_back(*entry);
-		}
-		// then just call the normal match function
-		return Match(matchers, ptr_entries, bindings, policy);
 	}
 };
 

@@ -44,7 +44,7 @@ query I
 with t as (
   values ('a',1), ('c',3), ('b',2)
 )
-select list(col0 order by col1) from t
+select list(column1 order by column2) from t
 ----
 [a, b, c]
 

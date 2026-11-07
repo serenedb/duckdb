@@ -1,0 +1,116 @@
+# name: test/sql/optimizer/column_projection_folding.test
+# description: A projection that only selects columns is emitted by the scan or lookup join below it
+# group: [optimizer]
+
+require parquet
+
+statement ok
+SET profiling_renderer_settings = MAP {'operator_casing': 'upper'};
+
+statement ok
+CREATE TABLE t AS SELECT i AS a, i % 7 AS b, 'x' || i::VARCHAR AS c, i * 2 AS d FROM range(10000) t(i);
+
+statement ok
+CHECKPOINT;
+
+statement ok
+COPY t TO '{TEST_DIR}/column_projection_folding.parquet' (FORMAT parquet);
+
+query II
+EXPLAIN SELECT c, b, a, d FROM t WHERE b = 3;
+----
+physical_plan	<!REGEX>:.*PROJECTION.*
+
+query IIII rowsort
+SELECT c, b, a, d FROM t WHERE b = 3 AND a < 30;
+----
+x10	3	10	20
+x17	3	17	34
+x24	3	24	48
+x3	3	3	6
+
+query II
+EXPLAIN SELECT d, a, d FROM t WHERE b = 3;
+----
+physical_plan	<!REGEX>:.*PROJECTION.*
+
+query III rowsort
+SELECT d, a, d FROM t WHERE b = 3 AND a < 30;
+----
+20	10	20
+34	17	34
+48	24	48
+6	3	6
+
+query II
+EXPLAIN SELECT d, c, b, a FROM '{TEST_DIR}/column_projection_folding.parquet' WHERE b = 3;
+----
+physical_plan	<!REGEX>:.*PROJECTION.*
+
+query IIII rowsort
+SELECT d, c, b, a FROM '{TEST_DIR}/column_projection_folding.parquet' WHERE b = 3 AND a < 30;
+----
+20	x10	3	10
+34	x17	3	17
+48	x24	3	24
+6	x3	3	3
+
+query III rowsort
+SELECT a, d, a FROM '{TEST_DIR}/column_projection_folding.parquet' WHERE b = 3 AND a < 30;
+----
+10	20	10
+17	34	17
+24	48	24
+3	6	3
+
+statement ok
+ATTACH '{TEST_DIR}/column_projection_folding.db' AS folding
+
+statement ok
+CREATE TABLE folding.t AS FROM t
+
+statement ok
+DETACH folding
+
+query II
+EXPLAIN SELECT d, c, b, a FROM read_duckdb('{TEST_DIR}/column_projection_folding.db', table_name='t') WHERE b = 3;
+----
+physical_plan	<!REGEX>:.*PROJECTION.*
+
+query IIII rowsort
+SELECT d, c, b, a FROM read_duckdb('{TEST_DIR}/column_projection_folding.db', table_name='t') WHERE b = 3 AND a < 30;
+----
+20	x10	3	10
+34	x17	3	17
+48	x24	3	24
+6	x3	3	3
+
+query II
+EXPLAIN SELECT c, d, a FROM t WHERE b = 3 ORDER BY d DESC LIMIT 3;
+----
+physical_plan	<REGEX>:.*LOOKUP_JOIN.*
+
+query II
+EXPLAIN SELECT c, d, a FROM t WHERE b = 3 ORDER BY d DESC LIMIT 3;
+----
+physical_plan	<!REGEX>:.*PROJECTION.*
+
+query III
+SELECT c, d, a FROM t WHERE b = 3 ORDER BY d DESC LIMIT 3;
+----
+x9999	19998	9999
+x9992	19984	9992
+x9985	19970	9985
+
+query II
+EXPLAIN SELECT d + 1, a FROM t WHERE b = 3;
+----
+physical_plan	<REGEX>:.*PROJECTION.*
+
+query II rowsort
+SELECT d + 1, a FROM t WHERE b = 3 AND a < 30;
+----
+21	10
+35	17
+49	24
+7	3

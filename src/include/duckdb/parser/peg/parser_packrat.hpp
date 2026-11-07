@@ -9,24 +9,11 @@
 
 #include "duckdb/common/common.hpp"
 #include "duckdb/common/optional_ptr.hpp"
-#include "duckdb/common/unordered_map.hpp"
+#include "duckdb/storage/arena_allocator.hpp"
 
 namespace duckdb {
 class Matcher;
 class ParseResult;
-
-struct ParserPackratKey {
-	idx_t matcher_id;
-	idx_t token_index;
-
-	bool operator==(const ParserPackratKey &other) const {
-		return matcher_id == other.matcher_id && token_index == other.token_index;
-	}
-};
-
-struct ParserPackratKeyHash {
-	size_t operator()(const ParserPackratKey &key) const;
-};
 
 struct ParserPackratEntry {
 	bool success = false;
@@ -37,14 +24,35 @@ struct ParserPackratEntry {
 
 class ParserPackratCache {
 public:
-	ParserPackratCache();
-	~ParserPackratCache();
+	ParserPackratCache(ArenaAllocator &arena, idx_t first_token, idx_t slot_count);
 
-	optional_ptr<const ParserPackratEntry> Lookup(const Matcher &matcher, idx_t token_index) const;
-	void Store(const Matcher &matcher, idx_t token_index, ParserPackratEntry entry);
+	optional_ptr<const ParserPackratEntry> Lookup(idx_t slot, idx_t token_index) const {
+		auto offset = token_index - first_token;
+		auto row = offset / BLOCK_TOKENS;
+		if (slot >= slot_count || row >= row_count) {
+			return nullptr;
+		}
+		auto block = blocks[row * slot_count + slot];
+		auto index = offset % BLOCK_TOKENS;
+		if (!block || !CachedFlags(block)[index]) {
+			return nullptr;
+		}
+		return block[index];
+	}
+	void Store(idx_t slot, idx_t token_index, const ParserPackratEntry &entry);
 
 private:
-	unordered_map<ParserPackratKey, ParserPackratEntry, ParserPackratKeyHash> entries;
+	static constexpr idx_t BLOCK_TOKENS = 32;
+
+	static bool *CachedFlags(ParserPackratEntry *block) {
+		return reinterpret_cast<bool *>(block + BLOCK_TOKENS);
+	}
+
+	ArenaAllocator &arena;
+	vector<ParserPackratEntry *> blocks;
+	idx_t first_token;
+	idx_t slot_count;
+	idx_t row_count = 0;
 };
 
 } // namespace duckdb

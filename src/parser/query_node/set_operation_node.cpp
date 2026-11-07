@@ -1,5 +1,6 @@
 #include "duckdb/parser/query_node/set_operation_node.hpp"
 #include "duckdb/common/serializer/serializer.hpp"
+#include "duckdb/common/stack_depth.hpp"
 
 namespace duckdb {
 
@@ -59,6 +60,7 @@ bool SetOperationNode::Equals(const QueryNode *other_p) const {
 }
 
 unique_ptr<QueryNode> SetOperationNode::Copy() const {
+	StackDepth::Check();
 	auto result = make_uniq<SetOperationNode>();
 	result->setop_type = setop_type;
 	result->setop_all = setop_all;

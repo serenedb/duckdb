@@ -4,3 +4,17 @@
 
 statement ok
 SELECT * FROM duckdb_keywords();
+
+query II
+SELECT keyword_name, keyword_category FROM duckdb_keywords() WHERE keyword_name IN ('destroy', 'register', 'resources') ORDER BY ALL
+----
+destroy	unreserved
+register	unreserved
+resources	unreserved
+
+statement ok
+CREATE TABLE register (destroy INTEGER, resources INTEGER)
+
+query II
+SELECT destroy, resources FROM register
+----

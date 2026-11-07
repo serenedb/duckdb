@@ -30,6 +30,28 @@ optional_ptr<const RelationColumnStats> RelationStats::GetColumnStats(ColumnBind
 	return columns[column_idx.GetIndex()];
 }
 
+RelationColumnLookup::RelationColumnLookup(const RelationStats &stats) : stats(stats) {
+	static constexpr idx_t LINEAR_SCAN_COLUMNS = 8;
+	if (stats.columns.size() <= LINEAR_SCAN_COLUMNS) {
+		return;
+	}
+	positions.reserve(stats.columns.size());
+	for (idx_t column_idx = 0; column_idx < stats.columns.size(); column_idx++) {
+		positions.emplace(stats.columns[column_idx].binding, column_idx);
+	}
+}
+
+optional_ptr<const RelationColumnStats> RelationColumnLookup::GetColumnStats(ColumnBinding binding) const {
+	if (positions.empty()) {
+		return stats.GetColumnStats(binding);
+	}
+	auto entry = positions.find(binding);
+	if (entry == positions.end()) {
+		return nullptr;
+	}
+	return stats.columns[entry->second];
+}
+
 bool RelationStats::MatchesBindings(const vector<ColumnBinding> &bindings) const {
 	if (columns.size() != bindings.size()) {
 		return false;

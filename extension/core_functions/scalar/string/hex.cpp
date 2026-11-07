@@ -6,18 +6,16 @@
 #include "duckdb/common/vector_operations/unary_executor.hpp"
 #include "duckdb/common/vector_operations/vector_operations.hpp"
 #include "duckdb/planner/expression/bound_function_expression.hpp"
+#include "core_functions/scalar/hex_digits.hpp"
 #include "core_functions/scalar/string_functions.hpp"
 
 namespace duckdb {
 
 static void WriteHexBytes(uint64_t x, char *&output, idx_t buffer_size) {
-	idx_t offset = buffer_size * 4;
-
-	for (; offset >= 4; offset -= 4) {
-		uint8_t byte = (x >> (offset - 4)) & 0x0F;
-		*output = Blob::HEX_TABLE[byte];
-		output++;
-	}
+	char digits[16];
+	WriteHexDigits16<true>(x, digits);
+	memcpy(output, digits + 16 - buffer_size, buffer_size);
+	output += buffer_size;
 }
 
 template <class T>

@@ -104,9 +104,21 @@ protected:
 			result += text;
 			return;
 		}
-		result += ShellHighlight::TerminalCode(element.color, element.intensity);
-		result += text;
-		result += ShellHighlight::ResetTerminalCode();
+		idx_t start = 0;
+		while (start < text.size()) {
+			auto end = text.find('\n', start);
+			auto line_end = end == string::npos ? text.size() : end;
+			if (line_end > start) {
+				result += ShellHighlight::TerminalCode(element.color, element.intensity);
+				result.append(text, start, line_end - start);
+				result += ShellHighlight::ResetTerminalCode();
+			}
+			if (end == string::npos) {
+				break;
+			}
+			result += '\n';
+			start = end + 1;
+		}
 	}
 
 private:

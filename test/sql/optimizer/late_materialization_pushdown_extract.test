@@ -6,6 +6,9 @@ statement ok
 SET late_materialization_max_rows = 100;
 
 statement ok
+SET late_materialization_lookup_max_rows = 0;
+
+statement ok
 CREATE TABLE lm_pushdown_extract (
     id INTEGER,
     s STRUCT(a INTEGER, b VARCHAR),
@@ -42,7 +45,7 @@ PRAGMA explain_output = OPTIMIZED_ONLY
 query II
 EXPLAIN SELECT s, x FROM lm_pushdown_extract WHERE s.a = 1 ORDER BY id LIMIT 1
 ----
-logical_opt	<!REGEX>:.*COMPARISON_JOIN.*rowid = rowid.*
+logical_opt	<REGEX>:.*COMPARISON_JOIN.*rowid = rowid.*
 
 statement ok
 PRAGMA explain_output = PHYSICAL_ONLY

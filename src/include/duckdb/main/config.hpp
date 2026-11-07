@@ -68,11 +68,27 @@ class HTTPUtil;
 class DatabaseFilePathManager;
 class ExtensionCallbackManager;
 class TypeManager;
+class AttachedDatabase;
+class Catalog;
+class DatabaseInstance;
+class SecretStorage;
+class TransactionManager;
 
 struct CompressionFunctionSet;
 struct DatabaseCacheEntry;
 struct DBConfig;
 struct SettingLookupResult;
+
+struct InternalCatalog {
+	unique_ptr<Catalog> catalog;
+	unique_ptr<TransactionManager> transaction_manager;
+};
+
+typedef std::function<InternalCatalog(AttachedDatabase &db)> create_internal_catalog_t;
+
+typedef shared_ptr<ClientContext> (*create_client_context_t)(DatabaseInstance &db);
+
+typedef unique_ptr<SecretStorage> (*create_secret_storage_t)(DatabaseInstance &db, const string &name, bool persistent);
 
 //! NOTE: DBConfigOptions is mostly deprecated.
 //! If you want to add a setting that can be set by the user, add it as a generic setting to `settings.json`.
@@ -100,8 +116,6 @@ struct DBConfigOptions {
 	idx_t maximum_swap_space = DConstants::INVALID_INDEX;
 	//! The maximum amount of CPU threads used by the database system. Default: all available.
 	idx_t maximum_threads = DConstants::INVALID_INDEX;
-	//! The maximum amount of async threads used by the database system. Default: all available.
-	idx_t async_threads = DConstants::INVALID_INDEX;
 	//! HTTP client limit derived from thread counts unless configured
 	idx_t http_client_pool_capacity = DConstants::INVALID_INDEX;
 	//! Whether or not to create and use a temporary directory to store intermediates that do not fit in memory
@@ -118,7 +132,7 @@ struct DBConfigOptions {
 	//! Run a checkpoint on successful shutdown and delete the WAL, to leave only a single database file behind
 	bool checkpoint_on_shutdown = true;
 	//! Serialize the metadata on checkpoint with compatibility for a given DuckDB version.
-	StorageCompatibility storage_compatibility = StorageCompatibility::Default();
+	StorageCompatibility storage_compatibility = StorageCompatibility::DuckDBDefault();
 	//! Initialize the database with the standard set of DuckDB functions
 	//! You should probably not touch this unless you know what you are doing
 	bool initialize_default_database = true;
@@ -210,6 +224,9 @@ public:
 	shared_ptr<DatabaseCacheEntry> db_cache_entry;
 	//! Reference to the database file path manager
 	shared_ptr<DatabaseFilePathManager> path_manager;
+	create_internal_catalog_t create_internal_catalog;
+	create_client_context_t create_client_context = nullptr;
+	create_secret_storage_t create_secret_storage = nullptr;
 	//! Database configuration variables as controlled by SET
 	GlobalUserSettings user_settings;
 
@@ -230,6 +247,10 @@ public:
 	                                   const Value &default_value = Value(), set_option_callback_t function = nullptr,
 	                                   SetScope default_scope = SetScope::SESSION, bool is_debug = false,
 	                                   bool is_deprecated = false);
+	DUCKDB_API void AddExtensionOption(const Identifier &name, string description, LogicalType parameter,
+	                                   const Value &default_value, set_option_callback_t function,
+	                                   reset_option_callback_t reset_function,
+	                                   SetScope default_scope = SetScope::SESSION, bool no_reset_all = false);
 	DUCKDB_API bool HasExtensionOption(const Identifier &name) const;
 	DUCKDB_API identifier_map_t<ExtensionOption> GetExtensionSettings() const;
 	DUCKDB_API bool TryGetExtensionOption(const Identifier &name, ExtensionOption &result) const;

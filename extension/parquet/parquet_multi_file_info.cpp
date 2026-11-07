@@ -3,9 +3,12 @@
 #include "duckdb/main/client_context.hpp"
 
 #include <stdint.h>
+#include <algorithm>
+#include <atomic>
 #include <unordered_map>
 
 #include "duckdb/common/multi_file/multi_file_function.hpp"
+#include "duckdb/common/vector_operations/vector_operations.hpp"
 #include "duckdb/common/serializer/serializer.hpp"
 #include "duckdb/common/serializer/deserializer.hpp"
 #include "duckdb/planner/expression/bound_function_expression.hpp"
@@ -28,8 +31,14 @@
 #include "duckdb/function/partition_stats.hpp"
 #include "duckdb/main/database.hpp"
 #include "duckdb/parallel/async_result.hpp"
+#include "duckdb/parallel/lookup_tasks.hpp"
+#include "duckdb/parallel/task_scheduler.hpp"
 #include "duckdb/parser/expression/constant_expression.hpp"
 #include "duckdb/parser/parsed_expression.hpp"
+#include "duckdb/planner/filter/expression_filter.hpp"
+#include "duckdb/planner/table_filter_state.hpp"
+#include "duckdb/storage/table/column_segment.hpp"
+#include "duckdb/planner/table_filter_set.hpp"
 #include "parquet_column_schema.hpp"
 #include "parquet_file_metadata_cache.hpp"
 #include "parquet_reader.hpp"
@@ -233,6 +242,174 @@ static vector<PartitionStatistics> ParquetMultiFileGetPartitionStats(ClientConte
 		encryption_config = ParquetScanFunction::GetFileOptions(*file_bind_data).encryption_config;
 	}
 	return GetCachedPartitionStats(context, LoadMetadataCaches(context, *bind_data.file_list), encryption_config);
+}
+
+ParquetLookupCursor::ParquetLookupCursor(ClientContext &context, ParquetReader &reader,
+                                         const vector<LogicalType> &scan_types_p, vector<idx_t> output_to_scan_col_p)
+    : scan_types(scan_types_p), output_to_scan_col(std::move(output_to_scan_col_p)), selection(STANDARD_VECTOR_SIZE) {
+	const auto *meta = reader.GetFileMetadata();
+	row_group_starts.reserve(meta->row_groups.size() + 1);
+	row_group_starts.push_back(0);
+	idx_t cum = 0;
+	for (auto &rg : meta->row_groups) {
+		cum += NumericCast<idx_t>(rg.num_rows);
+		row_group_starts.push_back(cum);
+	}
+	scan_chunk.Initialize(context, scan_types);
+	scatter_sel.Initialize(STANDARD_VECTOR_SIZE);
+}
+
+namespace {
+
+// Synchronously drain an AsyncResult: while BLOCKED, run the I/O tasks at the
+// call site and continue. The lookup TF has no pipeline to suspend onto.
+void DrainAsync(AsyncResult result) {
+	while (result.GetResultType() == AsyncResultType::BLOCKED) {
+		result.ExecuteTasksSynchronously();
+	}
+}
+
+bool LookupReadsMostOfGroup(std::span<const int64_t> pks, idx_t group_start, idx_t group_end) {
+	idx_t needed_vectors = 0;
+	idx_t last_vector = DConstants::INVALID_INDEX;
+	for (idx_t i = 0; i < pks.size() && NumericCast<idx_t>(pks[i]) < group_end; ++i) {
+		const idx_t vector_idx = (NumericCast<idx_t>(pks[i]) - group_start) / STANDARD_VECTOR_SIZE;
+		if (vector_idx != last_vector) {
+			++needed_vectors;
+			last_vector = vector_idx;
+		}
+	}
+	const idx_t group_vectors = (group_end - group_start + STANDARD_VECTOR_SIZE - 1) / STANDARD_VECTOR_SIZE;
+	return needed_vectors * 2 >= group_vectors;
+}
+
+struct ParquetLookupRange {
+	idx_t group;
+	idx_t begin;
+	idx_t end;
+};
+
+void LookupRowGroup(ClientContext &context, ParquetReader &reader, ParquetReadGlobalState &reader_gstate,
+                    ParquetLookupCursor &cursor, idx_t group, std::span<const int64_t> pks, idx_t begin, idx_t end,
+                    std::span<idx_t> survivors, DataChunk &output) {
+	const auto group_start = cursor.row_group_starts[group];
+	const auto group_rows = cursor.row_group_starts[group + 1] - group_start;
+	const auto offset_of = [&](idx_t i) {
+		return NumericCast<idx_t>(pks[i]) - group_start;
+	};
+	auto &scan_state = cursor.reader_lstate.scan_state;
+	if (cursor.cur_group != group ||
+	    scan_state.offset_in_group > offset_of(begin) / STANDARD_VECTOR_SIZE * STANDARD_VECTOR_SIZE) {
+		cursor.reader_lstate.group_index = group;
+		reader.PrepareScan(context, reader_gstate, cursor.reader_lstate);
+		if (cursor.cur_group == DConstants::INVALID_INDEX) {
+			cursor.can_prefetch = scan_state.prefetch_mode;
+		}
+		scan_state.prefetch_mode = cursor.can_prefetch && LookupReadsMostOfGroup(pks.subspan(begin, end - begin),
+		                                                                         group_start, group_start + group_rows);
+		DrainAsync(reader.ScheduleIO(context, reader_gstate, cursor.reader_lstate));
+		cursor.cur_group = group;
+	}
+	auto w = output.size();
+	auto i = begin;
+	while (i < end) {
+		const auto vector_start = offset_of(i) / STANDARD_VECTOR_SIZE * STANDARD_VECTOR_SIZE;
+		const auto vector_end = MinValue<idx_t>(vector_start + STANDARD_VECTOR_SIZE, group_rows);
+		if (vector_start > scan_state.offset_in_group) {
+			reader.SkipRows(scan_state, vector_start - scan_state.offset_in_group);
+		}
+		idx_t selected = 0;
+		for (auto j = i; j < end && offset_of(j) < vector_end; j++) {
+			const auto row = UnsafeNumericCast<sel_t>(offset_of(j) - vector_start);
+			if (selected == 0 || cursor.selection[selected - 1] != row) {
+				cursor.selection[selected++] = row;
+			}
+		}
+		scan_state.lookup_rows = std::span<const sel_t>(cursor.selection.data(), selected);
+		cursor.scan_chunk.Reset();
+		auto result = reader.Scan(context, reader_gstate, cursor.reader_lstate, cursor.scan_chunk);
+		while (result.GetResultType() == AsyncResultType::BLOCKED) {
+			result.ExecuteTasksSynchronously();
+			result = reader.Scan(context, reader_gstate, cursor.reader_lstate, cursor.scan_chunk);
+		}
+		scan_state.lookup_rows = {};
+		const auto first = w;
+		for (idx_t r = 0; r < cursor.scan_chunk.size(); r++) {
+			const auto row = vector_start + scan_state.sel.get_index(r);
+			while (i < end && offset_of(i) < row) {
+				i++;
+			}
+			if (i < end && offset_of(i) == row) {
+				cursor.scatter_sel.set_index(w - first, r);
+				survivors[w++] = i++;
+			}
+		}
+		while (i < end && offset_of(i) < vector_end) {
+			i++;
+		}
+		if (w == first) {
+			continue;
+		}
+		for (idx_t c = 0; c < cursor.output_to_scan_col.size(); c++) {
+			const auto column = cursor.output_to_scan_col[c];
+			if (column != DConstants::INVALID_INDEX) {
+				VectorOperations::Copy(cursor.scan_chunk.data[column], output.data[c], cursor.scatter_sel, w - first, 0,
+				                       first);
+			}
+		}
+	}
+	output.SetCardinality(w);
+}
+
+} // namespace
+
+void ParquetLookupRows(ClientContext &context, ParquetReader &reader, ParquetReadGlobalState &reader_gstate,
+                       ParquetLookupCursor &cursor, std::span<const int64_t> pks, std::span<idx_t> survivors,
+                       DataChunk &output) {
+	const auto &starts = cursor.row_group_starts;
+	vector<ParquetLookupRange> ranges;
+	for (idx_t i = 0; i < pks.size();) {
+		const auto group =
+		    NumericCast<idx_t>(std::upper_bound(starts.begin(), starts.end(), NumericCast<idx_t>(pks[i])) -
+		                       starts.begin()) -
+		    1;
+		if (group + 1 >= starts.size()) {
+			break;
+		}
+		auto end = i;
+		while (end < pks.size() && NumericCast<idx_t>(pks[end]) < starts[group + 1]) {
+			end++;
+		}
+		ranges.push_back({group, i, end});
+		i = end;
+	}
+	cursor.reader_lstate.scan_state.op = nullptr;
+	const auto workers = MinValue<idx_t>(ranges.size(), TaskScheduler::QueryThreads(context));
+	if (workers <= 1) {
+		for (const auto &[group, begin, end] : ranges) {
+			LookupRowGroup(context, reader, reader_gstate, cursor, group, pks, begin, end, survivors, output);
+		}
+		return;
+	}
+	while (cursor.workers.size() < workers) {
+		cursor.workers.push_back(
+		    make_uniq<ParquetLookupCursor>(context, reader, cursor.scan_types, cursor.output_to_scan_col));
+		cursor.workers.back()->reader_lstate.scan_state.op = nullptr;
+	}
+	for (idx_t t = 0; t < workers; t++) {
+		cursor.workers[t]->ResetFound(context, output.GetTypes(), pks.size());
+	}
+	RunLookupTasks(context, workers, ranges.size(), [&](idx_t task, idx_t index) {
+		auto &worker = *cursor.workers[task];
+		const auto &range = ranges[index];
+		LookupRowGroup(context, reader, reader_gstate, worker, range.group, pks, range.begin, range.end,
+		               worker.found_rows, worker.found);
+	});
+	auto w = output.size();
+	for (idx_t t = 0; t < workers; t++) {
+		w = cursor.workers[t]->AppendFound(output, cursor.output_to_scan_col.data(), survivors.data(), w);
+	}
+	output.SetCardinality(w);
 }
 
 void ParquetScanFunction::AddNamedParameters(TableFunction &table_function) {

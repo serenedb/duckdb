@@ -1,33 +1,14 @@
 #include "duckdb/function/scalar/string_common.hpp"
 #include "duckdb/function/scalar/string_functions.hpp"
 #include "duckdb/common/exception.hpp"
-#include "duckdb/common/swar.hpp"
 
 #include "utf8proc.hpp"
+#include <simdutf.h>
 
 namespace duckdb {
 
-idx_t FirstNonAscii(const char *input, idx_t n) {
-	// Check 8 bytes at a time
-	idx_t i = 0;
-	for (; i + SwarWord::SIZE <= n; i += SwarWord::SIZE) {
-		if (!SwarWord::IsAscii(Load<uint64_t>(const_data_ptr_cast(input + i)))) {
-			// non-ascii character in the next 8 bytes
-			break;
-		}
-	}
-
-	// Less than 8 bytes remain, or a non-ascii byte was found
-	for (; i < n; i++) {
-		if (input[i] & 0x80) {
-			return i;
-		}
-	}
-	return n;
-}
-
 bool IsAscii(const char *input, idx_t n) {
-	return FirstNonAscii(input, n) == n;
+	return simdutf::validate_ascii(input, n);
 }
 
 idx_t DecodeCodepoint(const char *input, idx_t size, int32_t &codepoint) {

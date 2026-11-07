@@ -1,0 +1,19 @@
+# name: test/sql/cte/materialized/materialized_cte_limit_early_batch.test
+# description: A buffered LIMIT consumer keeps its earliest batch when another of its threads fills the limit first
+# group: [materialized]
+
+require no_alternative_verify
+
+statement ok
+SET threads=16
+
+statement ok
+CREATE TABLE t AS SELECT range AS i FROM range(2000000)
+
+query II
+WITH d AS MATERIALIZED (SELECT i FROM t)
+SELECT (SELECT sum(i) FROM d),
+       (SELECT sum(i) FROM (
+           SELECT i FROM d WHERE CASE WHEN i < 122880 THEN length(repeat(i::VARCHAR, 20000)) > 0 ELSE true END LIMIT 5000))
+----
+1999999000000	12497500

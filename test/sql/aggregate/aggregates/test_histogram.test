@@ -39,7 +39,7 @@ WITH d(v) AS (
 )
 SELECT histogram(v)::VARCHAR FROM d;
 ----
-{1.0=2, nan=2}
+{1=2, nan=2}
 
 # window histograms keep the legacy state but use the same equality
 query T
@@ -48,7 +48,7 @@ WITH d(v) AS (
 )
 SELECT histogram(v) OVER ()::VARCHAR FROM d LIMIT 1;
 ----
-{1.0=2, nan=2}
+{1=2, nan=2}
 
 statement ok
 CREATE TABLE hist_data (g INTEGER, e INTEGER)
@@ -198,7 +198,7 @@ WITH d(v) AS (
 )
 SELECT histogram(v)::VARCHAR FROM d;
 ----
-{1.0=2, nan=2}
+{1=2, nan=2}
 
 statement ok
 SET enable_optimizer=true;

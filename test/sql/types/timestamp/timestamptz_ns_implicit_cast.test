@@ -1,0 +1,23 @@
+# name: test/sql/types/timestamp/timestamptz_ns_implicit_cast.test
+# description: TIMESTAMPTZ_NS casts implicitly to TIMESTAMPTZ, like TIMESTAMP_NS to TIMESTAMP
+# group: [timestamp]
+
+require icu
+
+statement ok
+SET TimeZone='UTC'
+
+query T
+SELECT typeof(CAST('2020-01-02 03:04:05' AS TIMESTAMP_MS) AT TIME ZONE 'UTC')
+----
+TIMESTAMPTZ_NS
+
+query T
+SELECT date_trunc('day', CAST('2020-01-02 03:04:05' AS TIMESTAMP_MS) AT TIME ZONE 'UTC')
+----
+2020-01-02 00:00:00+00
+
+query T
+SELECT date_trunc('hour', CAST('2020-01-02 03:04:05.123456789+00' AS TIMESTAMPTZ_NS))
+----
+2020-01-02 03:00:00+00

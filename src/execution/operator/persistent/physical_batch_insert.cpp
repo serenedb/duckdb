@@ -453,6 +453,10 @@ SinkResultType PhysicalBatchInsert::Sink(ExecutionContext &context, DataChunk &i
 			}
 		}
 	}
+	auto &progress_callback = ClientConfig::GetConfig(context.client).sink_progress_callback;
+	if (progress_callback) {
+		progress_callback(insert_chunk.size(), insert_chunk.GetAllocationSize());
+	}
 	if (!lstate.collection_index.IsValid()) {
 		annotated_lock_guard<annotated_mutex> l(gstate.lock);
 		// no collection yet: create a new one
@@ -470,8 +474,7 @@ SinkResultType PhysicalBatchInsert::Sink(ExecutionContext &context, DataChunk &i
 	auto &storage = table.GetStorage();
 	auto &local_storage = LocalStorage::Get(context.client, storage.db);
 	auto local_table_storage = local_storage.GetStorage(table.GetStorage());
-	storage.VerifyAppendConstraints(*lstate.constraint_state, context.client, insert_chunk, local_table_storage,
-	                                nullptr);
+	storage.VerifyAppendConstraints(*lstate.constraint_state, context.client, insert_chunk, local_table_storage);
 
 	auto &optimistic_collection = table.GetStorage().GetOptimisticCollection(context.client, lstate.collection_index);
 	auto &collection = *optimistic_collection.collection;
@@ -601,7 +604,7 @@ SinkFinalizeType PhysicalBatchInsert::Finalize(Pipeline &pipeline, Event &event,
 		auto &optimistic_collection = data_table.GetOptimisticCollection(context, entry.collection_index);
 		auto &collection = *optimistic_collection.collection;
 		for (auto &insert_chunk : collection.Chunks(transaction)) {
-			data_table.LocalAppend(append_state, table, context, insert_chunk, false);
+			data_table.LocalAppend(append_state, context, insert_chunk, false);
 		}
 		data_table.ResetOptimisticCollection(context, entry.collection_index);
 	}

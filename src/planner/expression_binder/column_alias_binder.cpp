@@ -48,6 +48,7 @@ bool ColumnAliasBinder::BindAlias(ExpressionBinder &enclosing_binder, unique_ptr
 
 	// We found an alias, so we copy the alias expression into this expression.
 	auto original_expr = bind_state.BindAlias(alias_entry->second);
+	enclosing_binder.ShareAliasReferences(original_expr, bind_state);
 	expr_ptr = std::move(original_expr);
 	visited_select_indexes.insert(alias_entry->second);
 

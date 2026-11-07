@@ -1,0 +1,82 @@
+# name: test/sql/cte/recursive_cte_operator_state_reuse.test
+# description: Operator states reused between recursive CTE iterations start every iteration afresh
+# group: [cte]
+
+statement ok
+SET enable_caching_operators=true
+
+statement ok
+CREATE TABLE small AS SELECT range AS x FROM range(3)
+
+query IIII
+WITH RECURSIVE r(n, s, c, l) AS (
+	SELECT 1, 0::HUGEINT, 0::BIGINT, []::INTEGER[]
+	UNION ALL
+	SELECT max(n) + 1, sum(n), count(*) FILTER (WHERE n % 2 = 0), list(n)
+	FROM r
+	HAVING max(n) < 6
+)
+SELECT list(n ORDER BY n), list(s ORDER BY n), list(c ORDER BY n), list(l ORDER BY n) FROM r
+----
+[1, 2, 3, 4, 5, 6]	[0, 1, 2, 3, 4, 5]	[0, 0, 1, 0, 1, 0]	[[], [1], [2], [3], [4], [5]]
+
+query II
+WITH RECURSIVE r(n, d) AS (
+	SELECT 1, 0::BIGINT
+	UNION ALL
+	SELECT max(n) + 1, count(DISTINCT x) FROM r, small WHERE x <= n % 3 HAVING max(n) < 6
+)
+SELECT list(n ORDER BY n), list(d ORDER BY n) FROM r
+----
+[1, 2, 3, 4, 5, 6]	[0, 2, 3, 1, 2, 3]
+
+query II
+WITH RECURSIVE r(n) AS (
+	SELECT 0
+	UNION ALL
+	SELECT n + 1 FROM r JOIN small ON (n + x) % 2 = 0 OR n + x = 100 WHERE n < 4
+)
+SELECT n, count(*) FROM r GROUP BY n ORDER BY n
+----
+0	1
+1	2
+2	2
+3	4
+4	4
+
+query II
+WITH RECURSIVE r(n, x) AS (
+	SELECT 0, NULL::BIGINT
+	UNION ALL
+	SELECT n + 1, small.x FROM r LEFT JOIN small ON (n + small.x) % 5 = 0 OR n + small.x = 100 WHERE n < 4
+)
+SELECT n, x FROM r ORDER BY n
+----
+0	NULL
+1	0
+2	NULL
+3	NULL
+4	2
+
+query III
+WITH RECURSIVE r(n, x) AS (
+	SELECT 0, 1
+	UNION ALL
+	SELECT n + 1, unnest([x, x + 1]) FROM r WHERE n < 3
+)
+SELECT n, count(*), sum(x) FROM r GROUP BY n ORDER BY n
+----
+0	1	1
+1	2	3
+2	4	8
+3	8	20
+
+query I
+WITH RECURSIVE r(n) AS (
+	SELECT 0
+	UNION ALL
+	SELECT n + 1 FROM (SELECT n FROM r LIMIT 1 OFFSET 0) s WHERE n < 5
+)
+SELECT list(n ORDER BY n) FROM r
+----
+[0, 1, 2, 3, 4, 5]

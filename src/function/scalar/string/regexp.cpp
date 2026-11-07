@@ -4,6 +4,7 @@
 #include "duckdb/common/vector/string_vector.hpp"
 #include "duckdb/common/vector/struct_vector.hpp"
 #include "duckdb/function/scalar/regexp.hpp"
+#include "duckdb/function/scalar/regexp_replace_constant.hpp"
 
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/vector_operations/binary_executor.hpp"
@@ -14,6 +15,7 @@
 #include "duckdb/function/scalar/string_functions.hpp"
 #include "duckdb/planner/expression/bound_function_expression.hpp"
 #include "re2/stringpiece.h"
+#include "util/utf.h"
 #include "utf8proc_wrapper.hpp"
 
 namespace duckdb {
@@ -67,7 +69,7 @@ unique_ptr<FunctionLocalState> RegexInitLocalState(ExpressionState &state, const
 	if (info.constant_pattern) {
 		return make_uniq<RegexLocalState>(info);
 	}
-	return nullptr;
+	return make_uniq<RegexPatternCacheState>(info);
 }
 
 //===--------------------------------------------------------------------===//
@@ -106,6 +108,8 @@ unique_ptr<FunctionData> RegexpMatchesBind(BindScalarFunctionInput &input) {
 	D_ASSERT(arguments.size() == 2 || arguments.size() == 3);
 	RE2::Options options;
 	options.set_log_errors(false);
+	options.set_thread_safe(false);
+	options.set_valid_utf8(true);
 	if (arguments.size() == 3) {
 		ParseRegexOptions(input.GetConstant(2), options);
 	}
@@ -142,9 +146,10 @@ static void RegexpMatchesFunction(DataChunk &args, ExpressionState &state, Vecto
 			return OP::Operation(CreateStringPiece(input), lstate.constant_pattern);
 		});
 	} else {
+		auto &cache = ExecuteFunctionState::GetFunctionState(state)->Cast<RegexPatternCacheState>().cache;
 		BinaryExecutor::Execute<string_t, string_t, bool>(strings, patterns, result,
 		                                                  [&](string_t input, string_t pattern) {
-			                                                  RE2 re(CreateStringPiece(pattern), info.options);
+			                                                  auto &re = cache.Get(CreateStringPiece(pattern));
 			                                                  if (!re.ok()) {
 				                                                  throw InvalidInputException(re.error());
 			                                                  }
@@ -183,7 +188,94 @@ static unique_ptr<FunctionData> RegexReplaceBind(BindScalarFunctionInput &input)
 		ParseRegexOptions(input.GetConstant(3), data->options, &data->global_replace);
 	}
 	data->options.set_log_errors(false);
+	data->options.set_thread_safe(false);
+	data->options.set_valid_utf8(true);
 	return std::move(data);
+}
+
+static constexpr idx_t REGEXP_REPLACE_CHECK_MATCHES = 1 << 10;
+
+static bool RegexpReplaceFirst(duckdb_re2::StringPiece str, const RE2 &re, duckdb_re2::StringPiece rewrite,
+                               std::string &out) {
+	duckdb_re2::StringPiece vec[10];
+	const int nvec = 1 + RE2::MaxSubmatch(rewrite);
+	if (nvec > 1 + re.NumberOfCapturingGroups() || nvec > static_cast<int>(sizeof(vec) / sizeof(vec[0]))) {
+		return false;
+	}
+	if (!re.Match(str, 0, str.size(), RE2::UNANCHORED, vec, nvec)) {
+		return false;
+	}
+	out.assign(str.data(), NumericCast<size_t>(vec[0].data() - str.data()));
+	if (!re.Rewrite(&out, rewrite, vec, nvec)) {
+		return false;
+	}
+	const auto match_end = vec[0].data() + vec[0].size();
+	out.append(match_end, NumericCast<size_t>(str.data() + str.size() - match_end));
+	return true;
+}
+
+static bool RegexpGlobalReplace(ExpressionState &state, duckdb_re2::StringPiece str, const RE2 &re,
+                                duckdb_re2::StringPiece rewrite, std::string &out) {
+	duckdb_re2::StringPiece vec[10];
+	const int nvec = 1 + RE2::MaxSubmatch(rewrite);
+	if (nvec > 1 + re.NumberOfCapturingGroups() || nvec > static_cast<int>(sizeof(vec) / sizeof(vec[0]))) {
+		return false;
+	}
+	const char *p = str.data();
+	const char *ep = p + str.size();
+	const char *lastend = nullptr;
+	out.clear();
+	idx_t count = 0;
+	idx_t unchecked = 0;
+	while (p <= ep) {
+		if (++unchecked == REGEXP_REPLACE_CHECK_MATCHES) {
+			unchecked = 0;
+			state.InterruptCheck();
+			if (out.size() > string_t::MAX_STRING_SIZE) {
+				throw OutOfRangeException("Cannot create a string of size: '%d' in REGEXP_REPLACE, the maximum "
+				                          "supported string size is: '%d'",
+				                          out.size(), string_t::MAX_STRING_SIZE);
+			}
+		}
+		if (!re.Match(str, static_cast<size_t>(p - str.data()), str.size(), RE2::UNANCHORED, vec, nvec)) {
+			break;
+		}
+		if (p < vec[0].data()) {
+			out.append(p, vec[0].data() - p);
+		}
+		if (vec[0].data() == lastend && vec[0].empty()) {
+			if (re.options().encoding() == RE2::Options::EncodingUTF8 &&
+			    duckdb_re2::fullrune(p, static_cast<int>(MinValue<ptrdiff_t>(4, ep - p)))) {
+				duckdb_re2::Rune r;
+				int n = duckdb_re2::chartorune(&r, p);
+				if (r > duckdb_re2::Runemax) {
+					n = 1;
+					r = duckdb_re2::Runeerror;
+				}
+				if (!(n == 1 && r == duckdb_re2::Runeerror)) {
+					out.append(p, NumericCast<idx_t>(n));
+					p += n;
+					continue;
+				}
+			}
+			if (p < ep) {
+				out.append(p, 1);
+			}
+			p++;
+			continue;
+		}
+		re.Rewrite(&out, rewrite, vec, nvec);
+		p = vec[0].data() + vec[0].size();
+		lastend = p;
+		count++;
+	}
+	if (count == 0) {
+		return false;
+	}
+	if (p < ep) {
+		out.append(p, ep - p);
+	}
+	return true;
 }
 
 static void RegexReplaceFunction(DataChunk &args, ExpressionState &state, Vector &result) {
@@ -194,47 +286,51 @@ static void RegexReplaceFunction(DataChunk &args, ExpressionState &state, Vector
 	const auto &patterns = args.data[1];
 	const auto &replaces = args.data[2];
 
+	if (info.constant_pattern && !info.global_replace && replaces.GetVectorType() == VectorType::CONSTANT_VECTOR &&
+	    !ConstantVector::IsNull(replaces)) {
+		auto &lstate = ExecuteFunctionState::GetFunctionState(state)->Cast<RegexLocalState>();
+		RegexpReplaceConstant::Execute(strings, ConstantVector::GetData<string_t>(replaces)[0], lstate, result);
+		return;
+	}
 	auto &heap = StringVector::GetStringHeap(result);
+	std::string out;
+	const bool constant_rewrite = info.constant_pattern && replaces.GetVectorType() == VectorType::CONSTANT_VECTOR;
+	bool rewrite_checked = false;
+	auto replace_row = [&](string_t input, const RE2 &re, string_t replace) {
+		auto replace_piece = CreateStringPiece(replace);
+		if (!rewrite_checked) {
+			std::string rewrite_error;
+			if (!re.CheckRewriteString(replace_piece, &rewrite_error)) {
+				throw InvalidInputException("Invalid replacement string for regexp_replace: %s", rewrite_error);
+			}
+			rewrite_checked = constant_rewrite;
+		}
+		auto input_piece = CreateStringPiece(input);
+		const bool replaced = info.global_replace ? RegexpGlobalReplace(state, input_piece, re, replace_piece, out)
+		                                          : RegexpReplaceFirst(input_piece, re, replace_piece, out);
+		if (!replaced) {
+			return input;
+		}
+		VerifyUTF8Result(out.data(), out.size());
+		return heap.AddString(out);
+	};
 	if (info.constant_pattern) {
 		auto &lstate = ExecuteFunctionState::GetFunctionState(state)->Cast<RegexLocalState>();
 		BinaryExecutor::Execute<string_t, string_t, string_t>(
-		    strings, replaces, result, [&](string_t input, string_t replace) {
-			    auto replace_piece = CreateStringPiece(replace);
-			    std::string rewrite_error;
-			    if (!lstate.constant_pattern.CheckRewriteString(replace_piece, &rewrite_error)) {
-				    throw InvalidInputException("Invalid replacement string for regexp_replace: %s", rewrite_error);
-			    }
-			    std::string sstring = input.GetString();
-			    if (info.global_replace) {
-				    RE2::GlobalReplace(&sstring, lstate.constant_pattern, replace_piece);
-			    } else {
-				    RE2::Replace(&sstring, lstate.constant_pattern, replace_piece);
-			    }
-			    VerifyUTF8Result(sstring.c_str(), sstring.size());
-			    return heap.AddString(sstring);
-		    });
+		    strings, replaces, result,
+		    [&](string_t input, string_t replace) { return replace_row(input, lstate.constant_pattern, replace); });
 	} else {
+		auto &cache = ExecuteFunctionState::GetFunctionState(state)->Cast<RegexPatternCacheState>().cache;
 		TernaryExecutor::Execute<string_t, string_t, string_t, string_t>(
 		    strings, patterns, replaces, result, [&](string_t input, string_t pattern, string_t replace) {
-			    RE2 re(CreateStringPiece(pattern), info.options);
+			    auto &re = cache.Get(CreateStringPiece(pattern));
 			    if (!re.ok()) {
 				    throw InvalidInputException(re.error());
 			    }
-			    auto replace_piece = CreateStringPiece(replace);
-			    std::string rewrite_error;
-			    if (!re.CheckRewriteString(replace_piece, &rewrite_error)) {
-				    throw InvalidInputException("Invalid replacement string for regexp_replace: %s", rewrite_error);
-			    }
-			    std::string sstring = input.GetString();
-			    if (info.global_replace) {
-				    RE2::GlobalReplace(&sstring, re, replace_piece);
-			    } else {
-				    RE2::Replace(&sstring, re, replace_piece);
-			    }
-			    VerifyUTF8Result(sstring.c_str(), sstring.size());
-			    return heap.AddString(sstring);
+			    return replace_row(input, re, replace);
 		    });
 	}
+	StringVector::AddHeapReference(result, strings);
 }
 
 //===--------------------------------------------------------------------===//
@@ -278,11 +374,49 @@ static void RegexExtractFunction(DataChunk &args, ExpressionState &state, Vector
 			return ExtractCaptureGroup(input, re, info.group_index, info.no_match_returns_input);
 		});
 	} else {
+		auto &cache = ExecuteFunctionState::GetFunctionState(state)->Cast<RegexPatternCacheState>().cache;
 		BinaryExecutor::Execute<string_t, string_t, string_t>(
 		    strings, patterns, result, [&](string_t input, string_t pattern) {
-			    RE2 re(CreateStringPiece(pattern), info.options);
-			    return ExtractCaptureGroup(input, re, info.group_index, info.no_match_returns_input);
+			    return ExtractCaptureGroup(input, cache.Get(CreateStringPiece(pattern)), info.group_index,
+			                               info.no_match_returns_input);
 		    });
+	}
+}
+
+static optional<string_t> ExtractSubstring(const string_t &input, const RE2 &re) {
+	duckdb_re2::StringPiece in_piece(input.GetData(), input.GetSize());
+	duckdb_re2::StringPiece submatch[2];
+	const int group = re.NumberOfCapturingGroups() > 0 ? 1 : 0;
+	if (!re.Match(in_piece, 0, in_piece.size(), duckdb_re2::RE2::UNANCHORED, submatch, group + 1) ||
+	    !submatch[group].data()) {
+		return {};
+	}
+	VerifyUTF8Result(submatch[group].data(), submatch[group].size());
+	return string_t(submatch[group].data(), UnsafeNumericCast<uint32_t>(submatch[group].size()));
+}
+
+static void RegexSubstringFunction(DataChunk &args, ExpressionState &state, Vector &result) {
+	auto &func_expr = state.expr.Cast<BoundFunctionExpression>();
+	const auto &info = func_expr.BindInfo()->Cast<RegexpExtractBindData>();
+
+	const auto &strings = args.data[0];
+	const auto &patterns = args.data[1];
+	StringVector::AddHeapReference(result, strings);
+
+	if (info.constant_pattern) {
+		auto &lstate = ExecuteFunctionState::GetFunctionState(state)->Cast<RegexLocalState>();
+		UnaryExecutor::Execute<string_t, string_t>(
+		    strings, result, [&](string_t input) { return ExtractSubstring(input, lstate.constant_pattern); });
+	} else {
+		auto &cache = ExecuteFunctionState::GetFunctionState(state)->Cast<RegexPatternCacheState>().cache;
+		BinaryExecutor::Execute<string_t, string_t, string_t>(strings, patterns, result,
+		                                                      [&](string_t input, string_t pattern) {
+			                                                      auto &re = cache.Get(CreateStringPiece(pattern));
+			                                                      if (!re.ok()) {
+				                                                      throw InvalidInputException(re.error());
+			                                                      }
+			                                                      return ExtractSubstring(input, re);
+		                                                      });
 	}
 }
 
@@ -375,6 +509,8 @@ static unique_ptr<FunctionData> RegexExtractBind(BindScalarFunctionInput &input)
 	D_ASSERT(arguments.size() >= 2);
 
 	duckdb_re2::RE2::Options options;
+	options.set_thread_safe(false);
+	options.set_valid_utf8(true);
 
 	string constant_string;
 	bool constant_pattern = TryParseConstantPattern(input.TryGetConstant(1), constant_string);
@@ -537,6 +673,14 @@ ScalarFunctionSet RegexpExtractAllFun::GetFunctions() {
 	// throws when accessing a group that the pattern does not have
 	regexp_extract_all.SetFallible();
 	return (regexp_extract_all);
+}
+
+ScalarFunction RegexpSubstring::GetFunction() {
+	ScalarFunction fun(SubstringFun::Name, {}, LogicalType::VARCHAR, RegexSubstringFunction, RegexExtractBind, nullptr,
+	                   RegexInitLocalState);
+	fun.GetSignature().AddParameter("string", LogicalType::VARCHAR);
+	fun.GetSignature().AddParameter("pattern", LogicalType::VARCHAR);
+	return fun;
 }
 
 } // namespace duckdb

@@ -30,6 +30,9 @@ statement ok con1
 CREATE SEQUENCE seq
 
 statement ok con2
+DEALLOCATE v
+
+statement ok con2
 PREPARE v AS SELECT nextval('seq')
 
 statement ok con2

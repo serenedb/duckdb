@@ -25,10 +25,24 @@ public:
 	void VisitOperator(LogicalOperator &op) override;
 
 protected:
+	unique_ptr<Expression> VisitReplace(BoundColumnRefExpression &expr, unique_ptr<Expression> *expr_ptr) override;
+
+	const vector<ColumnBinding> &Bindings() const {
+		return bindings;
+	}
+	const vector<LogicalType> &Types() const {
+		return types;
+	}
+	optional_idx FindBinding(ColumnBinding binding);
+
+private:
+	void SetBindings(vector<ColumnBinding> new_bindings, vector<LogicalType> new_types);
+
 	vector<ColumnBinding> bindings;
 	vector<LogicalType> types;
 	bool verify_only;
-
-	unique_ptr<Expression> VisitReplace(BoundColumnRefExpression &expr, unique_ptr<Expression> *expr_ptr) override;
+	idx_t external_binding_updates = 0;
+	bool binding_positions_valid = false;
+	column_binding_map_t<idx_t> binding_positions;
 };
 } // namespace duckdb

@@ -95,7 +95,7 @@ select format('{:.2}', 0.00023404094995959);
 query I
 select format('{:.3}', 0.0);
 ----
-0.00
+0
 
 # incorrect number of parameters
 # too few parameters

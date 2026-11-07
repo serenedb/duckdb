@@ -29,12 +29,15 @@ public:
 	Identifier catalog;
 	//! Whether this dependency is automatically satisfied and must never block a DROP/ALTER of the entry it depends on
 	DependencyDependentFlags flags = DependencyDependentFlags().SetBlocking();
+	bool owned_by = false;
+	subdependency_set_t subdependencies;
+	idx_t oid = 0;
 
 public:
 	explicit LogicalDependency(CatalogEntry &entry);
 	LogicalDependency();
 	LogicalDependency(optional_ptr<Catalog> catalog, CatalogEntryInfo entry, Identifier catalog_str);
-	bool operator==(const LogicalDependency &other) const;
+	bool Refers(const CatalogEntry &target) const;
 
 public:
 	void Serialize(Serializer &serializer) const;
@@ -61,7 +64,6 @@ public:
 	DUCKDB_API bool Contains(CatalogEntry &entry);
 
 public:
-	DUCKDB_API void VerifyDependencies(Catalog &catalog, const Identifier &name);
 	void Serialize(Serializer &serializer) const;
 	static LogicalDependencyList Deserialize(Deserializer &deserializer);
 	bool operator==(const LogicalDependencyList &other) const;

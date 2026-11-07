@@ -1,11 +1,6 @@
-if (${BUILD_COMPLETE_EXTENSION_SET} AND NOT ${WASM_ENABLED})
-################# SPATIAL
 duckdb_extension_load(spatial
-    LOAD_TESTS
-    GIT_URL https://github.com/duckdb/duckdb-spatial
-    GIT_TAG 686950e980a0629c5ffbc788b498681e2b06e75e
-    INCLUDE_DIR src/spatial
-    TEST_DIR test/sql
-    APPLY_PATCHES
-    )
-endif()
+        SOURCE_DIR ${CMAKE_SOURCE_DIR}/third_party/duckdb_spatial
+        INCLUDE_DIR ${CMAKE_SOURCE_DIR}/third_party/duckdb_spatial/src/spatial
+        LOAD_TESTS
+        TEST_DIR ${CMAKE_SOURCE_DIR}/third_party/duckdb_spatial/test/sql
+        )

@@ -11,7 +11,10 @@ string CheckConstraint::ToString() const {
 }
 
 unique_ptr<Constraint> CheckConstraint::Copy() const {
-	return make_uniq<CheckConstraint>(expression->Copy());
+	auto copy = make_uniq<CheckConstraint>(expression->Copy());
+	copy->constraint_name = constraint_name;
+	copy->oid = oid;
+	return copy;
 }
 
 } // namespace duckdb

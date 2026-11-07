@@ -90,7 +90,7 @@ TEST_CASE("Table function registration retains canonical qualification", "[api][
 	ExtensionLoader loader(*db.instance, "function_qualification");
 	REQUIRE_NO_FAIL(
 	    connection.Query("CREATE SCHEMA shadow; CREATE MACRO shadow.qualified_range(x) AS TABLE SELECT 99"));
-	REQUIRE_NO_FAIL(connection.Query("SET search_path='shadow,main'"));
+	REQUIRE_NO_FAIL(connection.Query("SET search_path = shadow, main"));
 	auto shadow = connection.Query("SELECT * FROM qualified_range(2)");
 	REQUIRE_NO_FAIL(*shadow);
 	REQUIRE(shadow->Collection().GetValue(0, 0) == Value::INTEGER(99));

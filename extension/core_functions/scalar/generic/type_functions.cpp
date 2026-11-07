@@ -18,8 +18,10 @@ static void TypeOfFunction(DataChunk &args, ExpressionState &state, Vector &resu
 }
 
 static unique_ptr<Expression> BindTypeOfFunctionExpression(FunctionBindExpressionInput &input) {
-	auto &return_type = input.children[0]->GetReturnType();
-	if (return_type.id() == LogicalTypeId::UNKNOWN || return_type.id() == LogicalTypeId::SQLNULL) {
+	auto &argument = *input.children[0];
+	auto &return_type = argument.GetReturnType();
+	if (return_type.id() == LogicalTypeId::UNKNOWN || return_type.id() == LogicalTypeId::SQLNULL ||
+	    argument.IsVolatile() || argument.HasSubquery()) {
 		// parameter - unknown return type
 		return nullptr;
 	}

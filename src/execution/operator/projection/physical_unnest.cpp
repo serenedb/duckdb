@@ -56,6 +56,14 @@ public:
 	void ResetState();
 	//! Prepare the input for the next unnest
 	void PrepareInput(DataChunk &input, const vector<unique_ptr<Expression>> &select_list);
+
+	bool SupportsReuse() const override {
+		return true;
+	}
+
+	void Reset() override {
+		ResetState();
+	}
 };
 
 void UnnestOperatorState::ResetState() {

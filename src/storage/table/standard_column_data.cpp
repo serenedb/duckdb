@@ -56,6 +56,17 @@ void StandardColumnData::InitializeScanWithOffset(ColumnScanState &state, idx_t 
 	validity->InitializeScanWithOffset(state.child_states[0], row_idx);
 }
 
+void StandardColumnData::ReinitializeScan(ColumnScanState &state) {
+	D_ASSERT(state.child_states.size() == 1);
+	// Keep the main data cursor warm (e.g. the FSST dict/decoder), falling back to an own-only re-init;
+	// then reposition the validity child the same way. Without recursing the child, the base guard would
+	// bail on every string/numeric column (they all carry a validity child) and rebuild the dict per batch.
+	if (!TryReinitializeScan(state)) {
+		ColumnData::InitializeScan(state);
+	}
+	validity->ReinitializeScan(state.child_states[0]);
+}
+
 idx_t StandardColumnData::Scan(TransactionData transaction, idx_t vector_index, ColumnScanState &state, Vector &result,
                                idx_t target_count) {
 	D_ASSERT(state.offset_in_column == state.child_states[0].offset_in_column);
@@ -112,9 +123,7 @@ void StandardColumnData::Select(TransactionData transaction, idx_t vector_index,
 	auto validity_compression = validity->GetCompressionFunction();
 	bool validity_has_select = validity_compression && validity_compression->select;
 	auto target_count = GetVectorCount(vector_index);
-	auto scan_type = GetVectorScanType(state, target_count, result);
-	bool scan_entire_vector = scan_type == ScanVectorType::SCAN_ENTIRE_VECTOR;
-	if (!has_select || !validity_has_select || !scan_entire_vector) {
+	if (!has_select || !validity_has_select || HasUpdates() || result.GetVectorType() != VectorType::FLAT_VECTOR) {
 		// we are not scanning an entire vector - this can have several causes (updates, etc)
 		ColumnData::Select(transaction, vector_index, state, result, sel, sel_count);
 		return;
@@ -163,8 +172,8 @@ void StandardColumnData::Update(TransactionData transaction, DuckTableEntry &tab
 	ColumnScanState validity_state(nullptr);
 	Vector base_vector(type);
 
-	FetchUpdateData(standard_state, row_ids, base_vector, row_group_start);
-	validity->FetchUpdateData(validity_state, row_ids, base_vector, row_group_start);
+	FetchUpdateData(standard_state, row_ids, update_count, base_vector, row_group_start);
+	validity->FetchUpdateData(validity_state, row_ids, update_count, base_vector, row_group_start);
 
 	UpdateInternal(transaction, table_entry, column_index, update_vector, row_ids, update_count, base_vector,
 	               row_group_start);
@@ -352,7 +361,8 @@ void StandardColumnData::GetColumnSegmentInfo(const QueryContext &context, duckd
 }
 
 void StandardColumnData::Verify(RowGroup &parent) {
-#ifdef DEBUG
+#ifdef D_ASSERT_IS_ENABLED
+	DUCKDB_DEBUG_VERIFY_GUARD();
 	ColumnData::Verify(parent);
 	validity->Verify(parent);
 #endif

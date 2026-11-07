@@ -15,7 +15,11 @@ struct DuckDBTypesData : public GlobalTableFunctionState {
 	DuckDBTypesData() : offset(0), constructor_offset(0) {
 	}
 
-	vector<reference<TypeCatalogEntry>> entries;
+	struct ListedType {
+		reference<SchemaCatalogEntry> schema;
+		reference<TypeCatalogEntry> entry;
+	};
+	vector<ListedType> entries;
 	idx_t offset;
 	//! Every type emits one row per constructor overload, like duckdb_functions() does for functions
 	idx_t constructor_offset;
@@ -76,15 +80,19 @@ static unique_ptr<FunctionData> DuckDBTypesBind(ClientContext &context, TableFun
 	names.emplace_back("varargs");
 	return_types.emplace_back(LogicalType::VARCHAR);
 
-	return nullptr;
+	auto result = make_uniq<DuckDBSystemIncludeHiddenBindData>();
+	result->include_hidden = DuckDBSystemIncludeHiddenBindData::ReadParameter(input);
+	return std::move(result);
 }
 
 unique_ptr<GlobalTableFunctionState> DuckDBTypesInit(ClientContext &context, TableFunctionInitInput &input) {
 	auto result = make_uniq<DuckDBTypesData>();
-	auto schemas = Catalog::GetAllSchemas(context);
+	auto &bind_data = input.bind_data->Cast<DuckDBSystemIncludeHiddenBindData>();
+	auto schemas = Catalog::GetAllSchemas(context, bind_data.include_hidden, bind_data.DatabaseFilter(context));
 	for (auto &schema : schemas) {
-		schema.get().Scan(context, CatalogType::TYPE_ENTRY,
-		                  [&](CatalogEntry &entry) { result->entries.push_back(entry.Cast<TypeCatalogEntry>()); });
+		Catalog::ScanListedEntries(context, schema.get(), CatalogType::TYPE_ENTRY, [&](CatalogEntry &entry) {
+			result->entries.push_back(DuckDBTypesData::ListedType {schema, entry.Cast<TypeCatalogEntry>()});
+		});
 	};
 	return std::move(result);
 }
@@ -135,7 +143,8 @@ void DuckDBTypesFunction(ClientContext &context, TableFunctionInput &data_p, Dat
 	auto &varargs = output.data[16];
 
 	while (data.offset < data.entries.size() && count < STANDARD_VECTOR_SIZE) {
-		auto &type_entry = data.entries[data.offset].get();
+		auto &listed_schema = data.entries[data.offset].schema.get();
+		auto &type_entry = data.entries[data.offset].entry.get();
 		auto &type = type_entry.user_type;
 		auto &constructor = *type_entry.constructors.GetFunctionByOffset(data.constructor_offset++);
 		if (data.constructor_offset >= type_entry.constructors.functions.size()) {
@@ -143,10 +152,10 @@ void DuckDBTypesFunction(ClientContext &context, TableFunctionInput &data_p, Dat
 			data.constructor_offset = 0;
 		}
 
-		database_name.Append(Value(type_entry.catalog.GetName()));
-		database_oid.Append(Value::BIGINT(NumericCast<int64_t>(type_entry.catalog.GetOid())));
-		schema_name.Append(Value(type_entry.schema.name));
-		schema_oid.Append(Value::BIGINT(NumericCast<int64_t>(type_entry.schema.oid)));
+		database_name.Append(Value(listed_schema.ParentCatalog().GetName()));
+		database_oid.Append(Value::BIGINT(NumericCast<int64_t>(listed_schema.ParentCatalog().GetOid())));
+		schema_name.Append(Value(listed_schema.name));
+		schema_oid.Append(Value::BIGINT(NumericCast<int64_t>(listed_schema.oid)));
 		int64_t oid;
 		if (type_entry.internal) {
 			oid = NumericCast<int64_t>(type.id());
@@ -260,7 +269,10 @@ void DuckDBTypesFunction(ClientContext &context, TableFunctionInput &data_p, Dat
 }
 
 void DuckDBTypesFun::RegisterFunction(BuiltinFunctions &set) {
-	set.AddFunction(TableFunction("duckdb_types", {}, DuckDBTypesFunction, DuckDBTypesBind, DuckDBTypesInit));
+	TableFunction fn("duckdb_types", {}, DuckDBTypesFunction, DuckDBTypesBind, DuckDBTypesInit);
+	fn.pushdown_complex_filter = DuckDBSystemIncludeHiddenBindData::PushdownDatabaseFilters;
+	fn.GetSignature().AddKeywordOnly("include_hidden", LogicalType::BOOLEAN, Value::BOOLEAN(false));
+	set.AddFunction(fn);
 }
 
 } // namespace duckdb

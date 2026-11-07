@@ -59,7 +59,7 @@ UUID	BLOB	BIT	BIGNUM	HUGEINT	UHUGEINT	INTERVAL
 query II
 SELECT c_enum, c_udt FROM gen
 ----
-ok	{'x': 1.0, 'y': 2.0}
+ok	{'x': 1, 'y': 2}
 
 # the values survive the round trip, not just the types
 query IIIII

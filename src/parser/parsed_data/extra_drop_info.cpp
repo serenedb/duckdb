@@ -26,4 +26,15 @@ unique_ptr<ExtraDropInfo> ExtraDropSecretInfo::Copy() const {
 	return std::move(make_uniq<ExtraDropSecretInfo>(*this));
 }
 
+ExtraDropDiscardInfo::ExtraDropDiscardInfo() : ExtraDropInfo(ExtraDropInfoType::DISCARD_INFO) {
+}
+
+ExtraDropDiscardInfo::ExtraDropDiscardInfo(DiscardTarget target)
+    : ExtraDropInfo(ExtraDropInfoType::DISCARD_INFO), target(target) {
+}
+
+unique_ptr<ExtraDropInfo> ExtraDropDiscardInfo::Copy() const {
+	return make_uniq<ExtraDropDiscardInfo>(target);
+}
+
 } // namespace duckdb

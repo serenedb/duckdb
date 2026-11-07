@@ -16,3 +16,11 @@
 
 #define DUCKDB_LIKELY(...)   DUCKDB_BUILTIN_EXPECT((__VA_ARGS__), 1)
 #define DUCKDB_UNLIKELY(...) DUCKDB_BUILTIN_EXPECT((__VA_ARGS__), 0)
+
+#if __GNUC__
+#define DUCKDB_NOINLINE __attribute__((noinline))
+#elif defined(_MSC_VER)
+#define DUCKDB_NOINLINE __declspec(noinline)
+#else
+#define DUCKDB_NOINLINE
+#endif

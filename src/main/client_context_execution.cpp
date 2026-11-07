@@ -2,6 +2,7 @@
 
 #include "duckdb/common/chrono.hpp"
 #include "duckdb/common/error_data.hpp"
+#include "duckdb/common/time_point.hpp"
 #include "duckdb/common/progress_bar/progress_bar.hpp"
 #include "duckdb/execution/executor.hpp"
 #include "duckdb/execution/operator/helper/physical_result_collector.hpp"
@@ -46,13 +47,14 @@ void ClientContext::BeginQueryInternal(ClientContextLock &lock, const SQLStateme
 	LogQueryInternal(lock, query);
 	active_query->query = query;
 
-	query_progress.Initialize();
+	{
+		lock_guard<mutex> guard(query_progress_lock);
+		query_progress.Initialize();
+	}
 	// Set query deadline if max_execution_time is configured
 	auto max_execution_time = Settings::Get<MaxExecutionTimeSetting>(*this);
 	if (max_execution_time > 0) {
-		auto now = steady_clock::now();
-		auto deadline_tp = now + milliseconds(max_execution_time);
-		query_deadline = NumericCast<idx_t>(duration_cast<milliseconds>(deadline_tp.time_since_epoch()).count());
+		query_deadline = NumericCast<idx_t>(TimePoint::Now() + TimePoint::FromNanos(max_execution_time * 1000000));
 	} else {
 		query_deadline.SetInvalid();
 	}
@@ -60,6 +62,7 @@ void ClientContext::BeginQueryInternal(ClientContextLock &lock, const SQLStateme
 	for (auto &state : registered_state->States()) {
 		state->QueryBegin(*this);
 	}
+	OnQueryBegin();
 
 	// Flush the old logger.
 	logger->Flush();
@@ -82,7 +85,10 @@ ErrorData ClientContext::EndQueryInternal(ClientContextLock &lock, bool success,
 	D_ASSERT(active_query.get());
 	active_query.reset();
 	query_deadline.SetInvalid();
-	query_progress.Initialize();
+	{
+		lock_guard<mutex> guard(query_progress_lock);
+		query_progress.Initialize();
+	}
 	ErrorData error;
 	try {
 		if (transaction.HasActiveTransaction()) {
@@ -112,7 +118,14 @@ ErrorData ClientContext::EndQueryInternal(ClientContextLock &lock, bool success,
 		error = ErrorData("Unhandled exception!");
 	} // LCOV_EXCL_STOP
 
-	client_data->profiler->EndQuery();
+	try {
+		client_data->profiler->EndQuery();
+	} catch (std::exception &ex) {
+		// e.g. the profiling output could not be written - report it as the error of the query
+		if (!error.HasError()) {
+			error = ErrorData(ex);
+		}
+	}
 
 	// Refresh the logger
 	logger->Flush();
@@ -128,6 +141,7 @@ ErrorData ClientContext::EndQueryInternal(ClientContextLock &lock, bool success,
 			s->QueryEnd(*this, previous_error);
 		}
 	}
+	OnQueryEnd();
 	return error;
 }
 
@@ -168,6 +182,10 @@ Executor &ClientContext::GetExecutor() {
 	return *active_query->executor;
 }
 
+void ClientContext::SetSchedulerAccount(shared_ptr<SchedulerAccount> account) {
+	scheduler_account = std::move(account);
+}
+
 const string &ClientContext::GetCurrentQuery() {
 	D_ASSERT(active_query);
 	return active_query->query;
@@ -205,8 +223,10 @@ unique_ptr<QueryResult> ClientContext::SubmitPreparedStatementInternal(
 			    config.display_create_func ? config.display_create_func : ProgressBar::DefaultProgressBarDisplay;
 		}
 		active_query->progress_bar =
-		    make_uniq<ProgressBar>(executor, NumericCast<idx_t>(config.wait_time), display_create_func);
+		    make_uniq<ProgressBar>(executor, NumericCast<idx_t>(config.wait_time),
+		                           NumericCast<idx_t>(config.progress_update_interval_ms), display_create_func);
 		active_query->progress_bar->Start();
+		lock_guard<mutex> guard(query_progress_lock);
 		query_progress.Restart();
 	}
 
@@ -259,6 +279,7 @@ unique_ptr<QueryResult> ClientContext::SubmitPreparedStatementInternal(
 		sink.SetResultBuffer(buffer);
 	}
 	executor.SetResultBuffer(buffer);
+	executor.SetCallerDrives(parameters.caller_drives);
 
 	executor.Initialize(std::move(collector));
 
@@ -268,7 +289,7 @@ unique_ptr<QueryResult> ClientContext::SubmitPreparedStatementInternal(
 	auto result = make_uniq<QueryResult>(shared_from_this(), statement_data, std::move(types),
 	                                     std::move(client_properties), std::move(buffer));
 	active_query->SetOpenResult(*result);
-	if (delegating) {
+	if (delegating && !parameters.caller_drives) {
 		// The collector builds its own result object: run the query and hand that object out. The
 		// handle is released first, so destroying it never takes the context lock held here
 		result->context.reset();
@@ -310,7 +331,8 @@ void ClientContext::WaitForTask(ClientContextLock &lock, BaseQueryResult &result
 	executor.WaitForTask();
 }
 
-QueryResultState ClientContext::ExecuteTaskInternal(ClientContextLock &lock, BaseQueryResult &result) {
+QueryResultState ClientContext::ExecuteTaskInternal(ClientContextLock &lock, BaseQueryResult &result,
+                                                    std::function<void()> on_reschedule_arg) {
 	D_ASSERT(active_query);
 	D_ASSERT(active_query->IsOpenResult(result));
 	try {
@@ -320,7 +342,7 @@ QueryResultState ClientContext::ExecuteTaskInternal(ClientContextLock &lock, Bas
 		if (IsInterrupted() && !active_query->executor->HasError()) {
 			throw InterruptException();
 		}
-		auto state = active_query->executor->ExecuteTask();
+		auto state = active_query->executor->ExecuteTask(std::move(on_reschedule_arg));
 		UpdateProgressInternal(state);
 		return state;
 	} catch (std::exception &ex) {
@@ -349,8 +371,11 @@ void ClientContext::UpdateProgressInternal(QueryResultState state) {
 		return;
 	}
 	// todo: this is not correct for streaming results
-	active_query->progress_bar->Update(IsObservable(state));
-	query_progress = active_query->progress_bar->GetDetailedQueryProgress();
+	if (active_query->progress_bar->Update(IsObservable(state))) {
+		auto progress = active_query->progress_bar->GetDetailedQueryProgress();
+		lock_guard<mutex> guard(query_progress_lock);
+		query_progress = progress;
+	}
 }
 
 QueryResultState ClientContext::FailQueryInternal(ClientContextLock &lock, BaseQueryResult &result, ErrorData error) {

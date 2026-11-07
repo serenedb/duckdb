@@ -10,7 +10,8 @@ namespace duckdb {
 StructExtractStructPackFoldingRule::StructExtractStructPackFoldingRule(ExpressionRewriter &rewriter) : Rule(rewriter) {
 	auto func = make_uniq<FunctionExpressionMatcher>();
 	// a bracket subscript on a struct binds to the "array_extract" overload - fold both the same way
-	func->function = make_uniq<ManyFunctionMatcher>(identifier_set_t {"struct_extract", "array_extract"});
+	static const case_insensitive_set_view_t functions {"struct_extract", "array_extract"};
+	func->function = make_uniq<ManyFunctionMatcher>(&functions);
 	func->policy = SetMatcher::Policy::ORDERED;
 	auto packed = make_uniq<FunctionExpressionMatcher>();
 	packed->function = make_uniq<SpecificFunctionMatcher>("struct_pack");

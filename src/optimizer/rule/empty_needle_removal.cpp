@@ -6,26 +6,51 @@
 #include "duckdb/planner/expression/bound_constant_expression.hpp"
 #include "duckdb/planner/expression/bound_operator_expression.hpp"
 #include "duckdb/planner/expression/bound_case_expression.hpp"
+#include "duckdb/planner/expression/bound_cast_expression.hpp"
+#include "duckdb/function/function_binder.hpp"
 #include "duckdb/optimizer/expression_rewriter.hpp"
+#include "duckdb/optimizer/rule/concat_flattening.hpp"
 
 namespace duckdb {
+
+static bool IsEmptyString(ClientContext &context, Expression &expr) {
+	if (!expr.IsFoldable()) {
+		return false;
+	}
+	Value value;
+	return ExpressionExecutor::TryEvaluateScalar(context, expr, value) && !value.IsNull() &&
+	       value.type().id() == LogicalTypeId::VARCHAR && StringValue::Get(value).empty();
+}
 
 static unique_ptr<Expression> TryRemoveEmptyStringConcat(ClientContext &context, BoundFunctionExpression &root) {
 	if (root.GetReturnType().id() != LogicalTypeId::VARCHAR) {
 		return nullptr;
 	}
 	auto &children = root.GetChildrenMutable();
+	vector<bool> empty(children.size());
+	idx_t empty_count = 0;
 	for (idx_t child_idx = 0; child_idx < children.size(); child_idx++) {
-		if (!children[child_idx]->IsFoldable()) {
-			continue;
-		}
-		auto value = ExpressionExecutor::EvaluateScalar(context, *children[child_idx]);
-		if (value.IsNull() || value.type().id() != LogicalTypeId::VARCHAR || !StringValue::Get(value).empty()) {
-			continue;
-		}
-		return Expression::PreserveReturnType(root.GetReturnType(), std::move(children[1 - child_idx]));
+		empty[child_idx] = IsEmptyString(context, *children[child_idx]);
+		empty_count += empty[child_idx];
 	}
-	return nullptr;
+	if (empty_count == 0 || empty_count == children.size()) {
+		return nullptr;
+	}
+	vector<unique_ptr<Expression>> remaining;
+	for (idx_t child_idx = 0; child_idx < children.size(); child_idx++) {
+		if (!empty[child_idx]) {
+			remaining.push_back(std::move(children[child_idx]));
+		}
+	}
+	if (remaining.size() == 1) {
+		return Expression::PreserveReturnType(root.GetReturnType(), std::move(remaining[0]));
+	}
+	FunctionBinder binder(context);
+	auto result = binder.BindScalarFunction(root.Function().GetDefinition(), std::move(remaining), root.IsOperator());
+	if (result->GetReturnType() != root.GetReturnType()) {
+		return BoundCastExpression::AddCastToType(context, std::move(result), root.GetReturnType());
+	}
+	return result;
 }
 
 EmptyNeedleRemovalRule::EmptyNeedleRemovalRule(ExpressionRewriter &rewriter) : Rule(rewriter) {
@@ -35,18 +60,21 @@ EmptyNeedleRemovalRule::EmptyNeedleRemovalRule(ExpressionRewriter &rewriter) : R
 	func->matchers.push_back(make_uniq<ExpressionMatcher>());
 	func->policy = SetMatcher::Policy::SOME;
 
-	identifier_set_t functions = {"prefix", "contains", "suffix", "||"};
-	func->function = make_uniq<ManyFunctionMatcher>(functions);
+	static const case_insensitive_set_view_t functions {"prefix", "contains", "suffix", "||"};
+	func->function = make_uniq<ManyFunctionMatcher>(&functions);
 	root = std::move(func);
 }
 
 unique_ptr<Expression> EmptyNeedleRemovalRule::Apply(LogicalOperator &op, vector<reference<Expression>> &bindings,
                                                      bool &changes_made, bool is_root) {
 	auto &root = bindings[0].get().Cast<BoundFunctionExpression>();
-	D_ASSERT(root.GetChildren().size() == 2);
 	if (root.Function().GetName() == "||") {
+		if (!ConcatFlatteningRule::IsConcatOperator(root)) {
+			return nullptr;
+		}
 		return TryRemoveEmptyStringConcat(GetContext(), root);
 	}
+	D_ASSERT(root.GetChildren().size() == 2);
 	auto &prefix_expr = bindings[2].get();
 
 	// the constant_expr is a scalar expression that we have to fold
@@ -55,7 +83,10 @@ unique_ptr<Expression> EmptyNeedleRemovalRule::Apply(LogicalOperator &op, vector
 	}
 	D_ASSERT(root.GetReturnType().id() == LogicalTypeId::BOOLEAN);
 
-	auto prefix_value = ExpressionExecutor::EvaluateScalar(GetContext(), prefix_expr);
+	Value prefix_value;
+	if (!ExpressionExecutor::TryEvaluateScalar(GetContext(), prefix_expr, prefix_value)) {
+		return nullptr;
+	}
 
 	if (prefix_value.IsNull()) {
 		return make_uniq<BoundConstantExpression>(Value(LogicalType::BOOLEAN));

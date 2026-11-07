@@ -25,9 +25,8 @@ public:
 static void EnableLogging(ClientContext &context, TableFunctionInput &data, DataChunk &output) {
 	auto bind_data = data.bind_data->Cast<EnableLoggingBindData>();
 
-	DUCKDB_LOG_WARNING(context, "The logging settings have been changed so you may lose warnings printed in the CLI.\n"
-	                            "To continue printing warnings to the console, set storage='shell_log_storage'.\n"
-	                            "For more info see https://duckdb.org/docs/current/operations_manual/logging/overview.")
+	DUCKDB_LOG_DEBUG(context, "The logging settings have been changed so you may lose warnings printed in the CLI.\n"
+	                          "To continue printing warnings to the console, set storage='shell_log_storage'.")
 
 	auto &log_manager = context.db->GetLogManager();
 

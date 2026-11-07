@@ -13,9 +13,10 @@ namespace duckdb {
 
 PhysicalTopN::PhysicalTopN(PhysicalPlan &physical_plan, vector<LogicalType> types, vector<BoundOrderByNode> orders,
                            idx_t limit, idx_t offset, shared_ptr<DynamicFilterData> dynamic_filter_p,
-                           idx_t estimated_cardinality)
+                           idx_t estimated_cardinality, vector<idx_t> projections_p)
     : PhysicalOperator(physical_plan, PhysicalOperatorType::TOP_N, std::move(types), estimated_cardinality),
-      orders(std::move(orders)), limit(limit), offset(offset), dynamic_filter(std::move(dynamic_filter_p)) {
+      orders(std::move(orders)), limit(limit), offset(offset), dynamic_filter(std::move(dynamic_filter_p)),
+      projections(std::move(projections_p)) {
 }
 
 PhysicalTopN::~PhysicalTopN() {
@@ -54,6 +55,7 @@ struct TopNBoundaryValue {
 	mutex lock;
 	string boundary_value;
 	bool is_set = false;
+	atomic<idx_t> version {0};
 	Vector boundary_vector;
 	OrderModifiers boundary_modifiers;
 
@@ -67,7 +69,11 @@ struct TopNBoundaryValue {
 		if (!is_set || boundary_val < string_t(boundary_value)) {
 			boundary_value = boundary_val.GetString();
 			is_set = true;
+			version.store(version.load(std::memory_order_relaxed) + 1, std::memory_order_release);
 			if (op.dynamic_filter) {
+				// DecodeSortKey only ever clears validity, so the reused vector has to start out valid:
+				// otherwise the first NULL boundary pins every later one to NULL and the filter never arms.
+				FlatVector::ValidityMutable(boundary_vector).SetAllValid(1);
 				CreateSortKeyHelpers::DecodeSortKey(boundary_val, boundary_vector, 0, boundary_modifiers);
 				auto new_dynamic_value = boundary_vector.GetValue(0);
 				l.unlock();
@@ -80,11 +86,11 @@ struct TopNBoundaryValue {
 class TopNHeap {
 public:
 	TopNHeap(ClientContext &context, const vector<LogicalType> &payload_types, const vector<BoundOrderByNode> &orders,
-	         idx_t limit, idx_t offset);
+	         idx_t limit, idx_t offset, const vector<idx_t> &projections);
 	TopNHeap(ExecutionContext &context, const vector<LogicalType> &payload_types,
-	         const vector<BoundOrderByNode> &orders, idx_t limit, idx_t offset);
+	         const vector<BoundOrderByNode> &orders, idx_t limit, idx_t offset, const vector<idx_t> &projections);
 	TopNHeap(ClientContext &context, Allocator &allocator, const vector<LogicalType> &payload_types,
-	         const vector<BoundOrderByNode> &orders, idx_t limit, idx_t offset);
+	         const vector<BoundOrderByNode> &orders, idx_t limit, idx_t offset, const vector<idx_t> &projections);
 
 	Allocator &allocator;
 	BufferManager &buffer_manager;
@@ -92,6 +98,7 @@ public:
 	unsafe_arena_vector<TopNEntry> heap;
 	const vector<LogicalType> &payload_types;
 	const vector<BoundOrderByNode> &orders;
+	const vector<idx_t> &projections;
 	vector<OrderModifiers> modifiers;
 	idx_t limit;
 	idx_t offset;
@@ -110,6 +117,7 @@ public:
 	DataChunk boundary_values;
 	//! Cached global boundary value in sort-key format
 	string boundary_val;
+	idx_t boundary_version = 0;
 	SelectionVector final_sel;
 	SelectionVector true_sel;
 	SelectionVector false_sel;
@@ -171,12 +179,13 @@ private:
 // TopNHeap
 //===--------------------------------------------------------------------===//
 TopNHeap::TopNHeap(ClientContext &context, Allocator &allocator, const vector<LogicalType> &payload_types_p,
-                   const vector<BoundOrderByNode> &orders_p, idx_t limit, idx_t offset)
+                   const vector<BoundOrderByNode> &orders_p, idx_t limit, idx_t offset,
+                   const vector<idx_t> &projections_p)
     : allocator(allocator), buffer_manager(BufferManager::GetBufferManager(context)), arena_allocator(allocator),
-      heap(arena_allocator), payload_types(payload_types_p), orders(orders_p), limit(limit), offset(offset),
-      heap_size(limit + offset), executor(context), sort_key_heap(allocator), matching_sel(STANDARD_VECTOR_SIZE),
-      final_sel(STANDARD_VECTOR_SIZE), true_sel(STANDARD_VECTOR_SIZE), false_sel(STANDARD_VECTOR_SIZE),
-      new_remaining_sel(STANDARD_VECTOR_SIZE) {
+      heap(arena_allocator), payload_types(payload_types_p), orders(orders_p), projections(projections_p), limit(limit),
+      offset(offset), heap_size(limit + offset), executor(context), sort_key_heap(allocator),
+      matching_sel(STANDARD_VECTOR_SIZE), final_sel(STANDARD_VECTOR_SIZE), true_sel(STANDARD_VECTOR_SIZE),
+      false_sel(STANDARD_VECTOR_SIZE), new_remaining_sel(STANDARD_VECTOR_SIZE) {
 	// initialize the executor and the sort_chunk
 	vector<LogicalType> sort_types;
 	for (auto &order : orders) {
@@ -196,13 +205,14 @@ TopNHeap::TopNHeap(ClientContext &context, Allocator &allocator, const vector<Lo
 }
 
 TopNHeap::TopNHeap(ClientContext &context, const vector<LogicalType> &payload_types,
-                   const vector<BoundOrderByNode> &orders, idx_t limit, idx_t offset)
-    : TopNHeap(context, BufferAllocator::Get(context), payload_types, orders, limit, offset) {
+                   const vector<BoundOrderByNode> &orders, idx_t limit, idx_t offset, const vector<idx_t> &projections)
+    : TopNHeap(context, BufferAllocator::Get(context), payload_types, orders, limit, offset, projections) {
 }
 
 TopNHeap::TopNHeap(ExecutionContext &context, const vector<LogicalType> &payload_types,
-                   const vector<BoundOrderByNode> &orders, idx_t limit, idx_t offset)
-    : TopNHeap(context.client, BufferAllocator::Get(context.client), payload_types, orders, limit, offset) {
+                   const vector<BoundOrderByNode> &orders, idx_t limit, idx_t offset, const vector<idx_t> &projections)
+    : TopNHeap(context.client, BufferAllocator::Get(context.client), payload_types, orders, limit, offset,
+               projections) {
 }
 
 void TopNHeap::AddSmallHeap(DataChunk &input, const Vector &sort_keys_vec) {
@@ -273,15 +283,13 @@ void TopNHeap::AddLargeHeap(DataChunk &input, const Vector &sort_keys_vec) {
 }
 
 bool TopNHeap::CheckBoundaryValues(DataChunk &sort_chunk, DataChunk &payload, TopNBoundaryValue &global_boundary) {
-	// get the global boundary value
-	auto current_boundary_val = global_boundary.GetBoundaryValue();
-	if (current_boundary_val.empty()) {
-		// no boundary value (yet) - don't do anything
+	const auto version = global_boundary.version.load(std::memory_order_acquire);
+	if (version == 0) {
 		return true;
 	}
-	if (current_boundary_val != boundary_val) {
-		// new boundary value - decode
-		boundary_val = std::move(current_boundary_val);
+	if (version != boundary_version) {
+		boundary_version = version;
+		boundary_val = global_boundary.GetBoundaryValue();
 		boundary_values.Reset();
 		CreateSortKeyHelpers::DecodeSortKey(string_t(boundary_val), boundary_values, 0, modifiers);
 		for (auto &col : boundary_values.data) {
@@ -476,13 +484,19 @@ void TopNHeap::Scan(TopNScanState &state, DataChunk &chunk, idx_t &pos) {
 	pos += STANDARD_VECTOR_SIZE;
 
 	chunk.Reset();
-	chunk.Slice(heap_data, sel, count);
+	D_ASSERT(projections.size() == chunk.ColumnCount());
+	for (idx_t i = 0; i < projections.size(); ++i) {
+		D_ASSERT(projections[i] < heap_data.ColumnCount());
+		chunk.data[i].Slice(heap_data.data[projections[i]], sel, count);
+	}
+	chunk.SetCardinality(count);
 }
 
 class TopNGlobalSinkState : public GlobalSinkState {
 public:
 	TopNGlobalSinkState(ClientContext &context, const PhysicalTopN &op)
-	    : heap(context, op.types, op.orders, op.limit, op.offset), boundary_value(op) {
+	    : heap(context, op.children[0].get().types, op.orders, op.limit, op.offset, op.projections),
+	      boundary_value(op) {
 	}
 
 	mutex lock;
@@ -493,15 +507,16 @@ public:
 class TopNLocalSinkState : public LocalSinkState {
 public:
 	TopNLocalSinkState(ExecutionContext &context, const vector<LogicalType> &payload_types,
-	                   const vector<BoundOrderByNode> &orders, idx_t limit, idx_t offset)
-	    : heap(context, payload_types, orders, limit, offset) {
+	                   const vector<BoundOrderByNode> &orders, idx_t limit, idx_t offset,
+	                   const vector<idx_t> &projections)
+	    : heap(context, payload_types, orders, limit, offset, projections) {
 	}
 
 	TopNHeap heap;
 };
 
 unique_ptr<LocalSinkState> PhysicalTopN::GetLocalSinkState(ExecutionContext &context) const {
-	return make_uniq<TopNLocalSinkState>(context, types, orders, limit, offset);
+	return make_uniq<TopNLocalSinkState>(context, children[0].get().types, orders, limit, offset, projections);
 }
 
 unique_ptr<GlobalSinkState> PhysicalTopN::GetGlobalSinkState(ClientContext &context) const {

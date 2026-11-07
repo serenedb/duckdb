@@ -145,7 +145,7 @@ statement ok
 CREATE MACRO slice_shadow.array_slice(a,b,c) AS [99];
 
 statement ok
-SET search_path='slice_shadow,main';
+SET search_path = slice_shadow, main;
 
 statement error
 SELECT b[:] FROM slice_input ORDER BY id;

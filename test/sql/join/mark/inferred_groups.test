@@ -46,7 +46,7 @@ Unsupported explicit MARK join conditions
 query TT
 EXPLAIN SELECT __mark_join_marker FROM probes p JOIN BY (TYPE MARK) candidates c ON p.g IS NOT DISTINCT FROM c.g AND p.v=c.v;
 ----
-physical_plan	<REGEX>:.*Hash Join.*
+physical_plan	<REGEX>:.*HASH_JOIN.*
 
 statement ok
 DELETE FROM candidates;

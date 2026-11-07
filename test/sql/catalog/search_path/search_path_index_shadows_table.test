@@ -1,0 +1,39 @@
+# name: test/sql/catalog/search_path/search_path_index_shadows_table.test
+# description: An index name in an earlier search path schema shadows a table in a later one
+# group: [search_path]
+
+statement ok
+CREATE SCHEMA first_schema;
+
+statement ok
+CREATE SCHEMA second_schema;
+
+statement ok
+CREATE TABLE first_schema.src (i INTEGER);
+
+statement ok
+CREATE INDEX rel ON first_schema.src (i);
+
+statement ok
+CREATE TABLE second_schema.rel AS SELECT 42 AS i;
+
+statement ok
+SET search_path TO first_schema, second_schema;
+
+statement error
+SELECT i FROM rel
+----
+Table with name rel does not exist
+
+statement ok
+SET search_path TO second_schema, first_schema;
+
+query I
+SELECT i FROM rel
+----
+42
+
+query I
+SELECT i FROM second_schema.rel
+----
+42

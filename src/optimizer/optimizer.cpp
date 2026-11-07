@@ -61,7 +61,10 @@
 #include "duckdb/planner/binder.hpp"
 #include "duckdb/planner/logical_plan_verifier.hpp"
 #include "duckdb/planner/planner.hpp"
+#include "duckdb/planner/operator/logical_execute.hpp"
+#include "duckdb/planner/operator/logical_get.hpp"
 #include "duckdb/planner/operator/logical_prepare.hpp"
+#include "duckdb/planner/operator/logical_projection.hpp"
 #include "duckdb/planner/operator/logical_secure_view.hpp"
 #include "duckdb/optimizer/remote_pushdown_optimizer.hpp"
 #include "duckdb/main/database_manager.hpp"
@@ -69,16 +72,27 @@
 
 namespace duckdb {
 
-Optimizer::Optimizer(Binder &binder, ClientContext &context) : context(context), binder(binder), rewriter(context) {
-	rewriter.rules.push_back(make_uniq<ConstantOrderNormalizationRule>(rewriter));
+Optimizer::Optimizer(Binder &binder, ClientContext &context)
+    : context(context), binder(binder), rewriter(context),
+      enable_optimizer(Settings::Get<EnableOptimizerSetting>(context)),
+      optimizer_extensions(OptimizerExtension::Iterate(context)) {
+	AddExpressionRules(rewriter);
+}
+
+void Optimizer::AddExpressionRules(ExpressionRewriter &rewriter) {
 	rewriter.rules.push_back(make_uniq<ConstantFoldingRule>(rewriter));
+	rewriter.rules.push_back(make_uniq<ConcatFlatteningRule>(rewriter));
 	rewriter.rules.push_back(make_uniq<StructExtractStructPackFoldingRule>(rewriter));
+	rewriter.rules.push_back(make_uniq<ListExtractListValueFoldingRule>(rewriter));
+	rewriter.rules.push_back(make_uniq<InvokeInliningRule>(rewriter));
+	rewriter.rules.push_back(make_uniq<ListTransformUnrollingRule>(rewriter));
 	rewriter.rules.push_back(make_uniq<DistributivityRule>(rewriter));
 	rewriter.rules.push_back(make_uniq<ArithmeticSimplificationRule>(rewriter));
 	rewriter.rules.push_back(make_uniq<LeastGreatestSimplificationRule>(rewriter));
 	rewriter.rules.push_back(make_uniq<CaseSimplificationRule>(rewriter));
 	rewriter.rules.push_back(make_uniq<ConjunctionSimplificationRule>(rewriter));
 	rewriter.rules.push_back(make_uniq<DatePartSimplificationRule>(rewriter));
+	rewriter.rules.push_back(make_uniq<MonotonePredicateRule>(rewriter));
 	rewriter.rules.push_back(make_uniq<DateTruncSimplificationRule>(rewriter));
 	rewriter.rules.push_back(make_uniq<ComparisonSimplificationRule>(rewriter));
 	rewriter.rules.push_back(make_uniq<RowComparisonSimplificationRule>(rewriter));
@@ -116,12 +130,29 @@ Optimizer::Optimizer(Binder &binder, ClientContext &context) : context(context),
 #endif
 }
 
+unique_ptr<Expression> Optimizer::OptimizeExpression(ClientContext &context, unique_ptr<Expression> expr) {
+	if (OptimizerDisabled(context, OptimizerType::EXPRESSION_REWRITER)) {
+		return expr;
+	}
+	ExpressionRewriter rewriter(context);
+	AddExpressionRules(rewriter);
+	vector<unique_ptr<Expression>> expressions;
+	expressions.push_back(std::move(expr));
+	LogicalProjection projection(TableIndex(0), std::move(expressions));
+	rewriter.VisitOperator(projection);
+	return std::move(projection.expressions[0]);
+}
+
 ClientContext &Optimizer::GetContext() {
 	return context;
 }
 
 bool Optimizer::OptimizerDisabled(OptimizerType type) {
-	return OptimizerDisabled(context, type);
+	if (!enable_optimizer) {
+		// all optimizers are disabled
+		return true;
+	}
+	return OptimizerDisabledInternal(context, type);
 }
 
 bool Optimizer::OptimizerDisabled(ClientContext &context_p, OptimizerType type) {
@@ -129,14 +160,20 @@ bool Optimizer::OptimizerDisabled(ClientContext &context_p, OptimizerType type) 
 		// all optimizes are disabled
 		return true;
 	}
+	return OptimizerDisabledInternal(context_p, type);
+}
+
+bool Optimizer::OptimizerDisabledInternal(ClientContext &context_p, OptimizerType type) {
+	auto &client_config = ClientConfig::GetConfig(context_p);
+	if (client_config.has_disabled_optimizers) {
+		return client_config.disabled_optimizers.contains(type);
+	}
 	auto &config = DBConfig::GetConfig(context_p);
-	return config.options.disabled_optimizers.find(type) != config.options.disabled_optimizers.end();
+	return config.options.disabled_optimizers.contains(type);
 }
 
 void Optimizer::RunOptimizer(OptimizerType type, const std::function<void()> &callback) {
-	if (context.IsInterrupted()) {
-		throw InterruptException();
-	}
+	context.InterruptCheck();
 
 	if (OptimizerDisabled(type)) {
 		// optimizer is marked as disabled: skip
@@ -144,8 +181,33 @@ void Optimizer::RunOptimizer(OptimizerType type, const std::function<void()> &ca
 	}
 	auto &profiler = QueryProfiler::Get(context);
 	{
-		auto optimizer_timer = profiler.StartTimerInternal("optimizer." + StringUtil::Lower(EnumUtil::ToString(type)));
+		MetricsTimer optimizer_timer;
+		if (profiler.IsEnabled()) {
+			optimizer_timer = profiler.StartTimerInternal("optimizer." + StringUtil::Lower(EnumUtil::ToString(type)));
+		}
+		// Fire anchored Before-rules registered for this built-in pass.
+		for (auto &ext : optimizer_extensions) {
+			if (!ext.rule || ext.anchor != type || ext.where != OptimizerHookPosition::Before) {
+				continue;
+			}
+			OptimizerExtensionInput input {GetContext(), *this, ext.optimizer_info.get()};
+			ext.rule(input, plan);
+			if (plan) {
+				Verify(*plan);
+			}
+		}
 		callback();
+		// Fire anchored After-rules registered for this built-in pass.
+		for (auto &ext : optimizer_extensions) {
+			if (!ext.rule || ext.anchor != type || ext.where != OptimizerHookPosition::After) {
+				continue;
+			}
+			OptimizerExtensionInput input {GetContext(), *this, ext.optimizer_info.get()};
+			ext.rule(input, plan);
+			if (plan) {
+				Verify(*plan);
+			}
+		}
 	}
 	if (plan) {
 		Verify(*plan);
@@ -185,16 +247,53 @@ static bool ContainsDML(const LogicalOperator &op) {
 	return false;
 }
 
-static bool ContainsDataSource(const LogicalOperator &op) {
+static bool CollectDataVersions(const LogicalOperator &op, vector<shared_ptr<PlanDataVersion>> &versions) {
 	if (op.type == LogicalOperatorType::LOGICAL_GET) {
-		return true;
+		auto &get = op.Cast<LogicalGet>();
+		auto version = get.bind_data ? get.bind_data->GetPlanDataVersion() : nullptr;
+		if (!version) {
+			return false;
+		}
+		versions.push_back(std::move(version));
+	}
+	if (op.type == LogicalOperatorType::LOGICAL_EXECUTE && op.children.empty()) {
+		auto &executed = *op.Cast<LogicalExecute>().prepared;
+		if (executed.properties.always_require_rebind) {
+			return false;
+		}
+		versions.insert(versions.end(), executed.data_versions.begin(), executed.data_versions.end());
 	}
 	for (auto &child : op.children) {
-		if (ContainsDataSource(*child)) {
-			return true;
+		if (!CollectDataVersions(*child, versions)) {
+			return false;
 		}
 	}
-	return false;
+	return true;
+}
+
+template <class VISIT>
+static void VisitPreparedStatements(LogicalOperator &plan, VISIT &&visit) {
+	for (optional_ptr<LogicalOperator> op = &plan; op; op = op->children.empty() ? nullptr : op->children[0].get()) {
+		if (op->type == LogicalOperatorType::LOGICAL_PREPARE) {
+			visit(plan, *op->Cast<LogicalPrepare>().prepared);
+		} else if (op->type == LogicalOperatorType::LOGICAL_EXECUTE && op->Cast<LogicalExecute>().replaces) {
+			visit(*op->children[0], *op->Cast<LogicalExecute>().prepared);
+		} else {
+			break;
+		}
+	}
+}
+
+static void TrackDataVersions(const LogicalOperator &plan, PreparedStatementData &prepared) {
+	if (prepared.properties.read_databases.empty()) {
+		return;
+	}
+	vector<shared_ptr<PlanDataVersion>> versions;
+	if (CollectDataVersions(plan, versions)) {
+		prepared.data_versions = std::move(versions);
+	} else {
+		prepared.properties.always_require_rebind = true;
+	}
 }
 
 // Returns true if the plan contains a DML statement inside a CTE body. A top-level
@@ -215,17 +314,17 @@ static bool CTEContainsDML(const LogicalOperator &op) {
 	return false;
 }
 
-void Optimizer::OptimizeStatement(unique_ptr<SQLStatement> &statement) {
-	if (!Settings::Get<EnableOptimizerSetting>(context)) {
+void Optimizer::OptimizeStatement(Binder &binder, ClientContext &context, unique_ptr<SQLStatement> &statement) {
+	if (!Settings::Get<EnableOptimizerSetting>(context) || DatabaseManager::Get(context).GetRemoteCatalogCount() == 0) {
 		return;
 	}
-	if (DatabaseManager::Get(context).GetRemoteCatalogCount() > 0) {
-		// if we have any remote catalogs attached then pushdown into remote
-		RunOptimizer(OptimizerType::REMOTE_PUSHDOWN, [&]() {
-			RemotePushdownOptimizer optimizer(binder);
-			optimizer.Rewrite(statement);
-		});
-	}
+	// if we have any remote catalogs attached then pushdown into remote
+	Optimizer optimizer(binder, context);
+	optimizer.RunOptimizer(OptimizerType::REMOTE_PUSHDOWN, [&] {
+		RemotePushdownOptimizer pushdown(binder);
+		pushdown.Rewrite(statement);
+		pushdown.RevertUnshippedFolds();
+	});
 }
 
 void Optimizer::RunBuiltInOptimizers() {
@@ -277,7 +376,7 @@ void Optimizer::RunBuiltInOptimizers() {
 
 	// perform filter pushdown
 	RunOptimizer(OptimizerType::FILTER_PUSHDOWN, [&]() {
-		FilterPushdown filter_pushdown(*this);
+		FilterPushdown filter_pushdown(*this, true, FilterPushdown::ProjectionMode::REWRITE_COMPUTED_EXPRESSIONS);
 		unordered_set<TableIndex> top_bindings;
 		filter_pushdown.CheckMarkToSemi(*plan, top_bindings);
 		plan = filter_pushdown.Rewrite(std::move(plan));
@@ -342,6 +441,7 @@ void Optimizer::RunBuiltInOptimizers() {
 
 	// Pull up projection from joins
 	RunOptimizer(OptimizerType::PROJECTION_PULLUP, [&]() {
+		plan->ResolveOperatorTypes();
 		ProjectionPullup projection_pullup(*this, plan);
 		projection_pullup.Optimize(plan);
 	});
@@ -566,22 +666,21 @@ unique_ptr<LogicalOperator> Optimizer::LowerMandatoryAggregateRewrites(unique_pt
 
 unique_ptr<LogicalOperator> Optimizer::Optimize(unique_ptr<LogicalOperator> plan_p) {
 	plan_p = LowerMandatoryAggregateRewrites(std::move(plan_p));
-	if (!Settings::Get<EnableOptimizerSetting>(context)) {
+	if (!enable_optimizer) {
 		CTEFilterPusher::ClearDependencies(*plan_p);
 		return plan_p;
 	}
 	Verify(*plan_p);
 
 	this->plan = std::move(plan_p);
-	if (plan->type == LogicalOperatorType::LOGICAL_PREPARE) {
-		auto &prepared = plan->Cast<LogicalPrepare>().prepared;
-		// Optimizers can embed the current database state in the executable plan.
-		if (!prepared->properties.read_databases.empty() && ContainsDataSource(*plan)) {
-			prepared->properties.always_require_rebind = true;
-		}
-	}
+	VisitPreparedStatements(*plan, [](const LogicalOperator &planned, PreparedStatementData &prepared) {
+		TrackDataVersions(planned, prepared);
+	});
 
-	for (auto &pre_optimizer_extension : OptimizerExtension::Iterate(context)) {
+	for (auto &pre_optimizer_extension : optimizer_extensions) {
+		if (pre_optimizer_extension.anchor != OptimizerType::INVALID) {
+			continue; // anchored: fires inside RunOptimizer instead
+		}
 		RunOptimizer(OptimizerType::EXTENSION, [&]() {
 			OptimizerExtensionInput input {GetContext(), *this, pre_optimizer_extension.optimizer_info.get()};
 			if (pre_optimizer_extension.pre_optimize_function) {
@@ -593,12 +692,21 @@ unique_ptr<LogicalOperator> Optimizer::Optimize(unique_ptr<LogicalOperator> plan
 
 	RunBuiltInOptimizers();
 
-	for (auto &optimizer_extension : OptimizerExtension::Iterate(context)) {
+	for (auto &optimizer_extension : optimizer_extensions) {
+		if (optimizer_extension.anchor != OptimizerType::INVALID) {
+			continue; // anchored: fires inside RunOptimizer instead
+		}
 		RunOptimizer(OptimizerType::EXTENSION, [&]() {
 			OptimizerExtensionInput input {GetContext(), *this, optimizer_extension.optimizer_info.get()};
 			if (optimizer_extension.optimize_function) {
 				optimizer_extension.optimize_function(input, plan);
 			}
+		});
+	}
+
+	if (binder.GetStatementProperties().always_require_rebind) {
+		VisitPreparedStatements(*plan, [](const LogicalOperator &, PreparedStatementData &prepared) {
+			prepared.properties.always_require_rebind = true;
 		});
 	}
 

@@ -14,8 +14,8 @@ PhysicalOperator &PhysicalPlanGenerator::CreatePlan(LogicalOrder &op) {
 	}
 
 	auto projection_map = PhysicalJoin::FillProjectionMap(plan, op.projection_map);
-	auto &order =
-	    Make<PhysicalOrder>(op.types, std::move(op.orders), std::move(projection_map), op.estimated_cardinality);
+	auto &order = Make<PhysicalOrder>(context, plan.types, op.types, std::move(op.orders), std::move(projection_map),
+	                                  op.estimated_cardinality);
 	order.children.push_back(plan);
 	return order;
 }

@@ -33,6 +33,12 @@
 #include <sys/mman.h>
 #include <sys/types.h>
 #include <unistd.h>
+#if defined(__linux__)
+#include <sys/vfs.h>
+#elif defined(__APPLE__)
+#include <sys/param.h>
+#include <sys/mount.h>
+#endif
 #else
 #include "duckdb/common/windows_util.hpp"
 
@@ -61,29 +67,51 @@ extern "C" WINBASEAPI BOOL QueryFullProcessImageNameW(HANDLE, DWORD, LPWSTR, PDW
 
 namespace duckdb {
 
-#ifndef _WIN32
-bool LocalFileSystem::FileExists(const string &filename, optional_ptr<FileOpener> opener) {
-	if (!filename.empty()) {
-		auto normalized_file = ExpandPath(filename, opener);
-		struct stat status;
-		if (stat(normalized_file.c_str(), &status) == 0 && S_ISREG(status.st_mode)) {
-			return true;
-		}
+static FileExistence StatFailure(const string &path, int error_code, optional_ptr<ErrorData> error) {
+	if (error_code == ENOENT || error_code == ENOTDIR) {
+		return FileExistence::MISSING;
 	}
-	// if any condition fails
-	return false;
+	if (error) {
+		*error = ErrorData(IOException({{"errno", std::to_string(error_code)}},
+		                               "Cannot check whether \"%s\" exists: %s", path, strerror(error_code)));
+	}
+	return error_code == EACCES || error_code == EPERM ? FileExistence::FORBIDDEN : FileExistence::UNKNOWN;
+}
+
+static bool IsPipeOrThrow(const string &path, bool stat_ok, bool is_pipe, int error_code) {
+	if (stat_ok) {
+		return is_pipe;
+	}
+	ErrorData error;
+	if (StatFailure(path, error_code, &error) == FileExistence::MISSING) {
+		return false;
+	}
+	error.Throw();
+}
+
+#ifndef _WIN32
+FileExistence LocalFileSystem::TryFileExists(const string &filename, optional_ptr<FileOpener> opener,
+                                             optional_ptr<ErrorData> error) {
+	if (filename.empty()) {
+		return FileExistence::MISSING;
+	}
+	auto normalized_file = ExpandPath(filename, opener);
+	struct stat status;
+	if (stat(normalized_file.c_str(), &status) != 0) {
+		return StatFailure(normalized_file, errno, error);
+	}
+	return S_ISREG(status.st_mode) ? FileExistence::EXISTS : FileExistence::MISSING;
 }
 
 bool LocalFileSystem::IsPipe(const string &filename, optional_ptr<FileOpener> opener) {
-	if (!filename.empty()) {
-		auto normalized_file = ExpandPath(filename, opener);
-		struct stat status;
-		if (stat(normalized_file.c_str(), &status) == 0 && (S_ISFIFO(status.st_mode) || S_ISCHR(status.st_mode))) {
-			return true;
-		}
+	if (filename.empty()) {
+		return false;
 	}
-	// if any condition fails
-	return false;
+	auto normalized_file = ExpandPath(filename, opener);
+	struct stat status;
+	const bool stat_ok = stat(normalized_file.c_str(), &status) == 0;
+	return IsPipeOrThrow(normalized_file, stat_ok, stat_ok && (S_ISFIFO(status.st_mode) || S_ISCHR(status.st_mode)),
+	                     errno);
 }
 
 #else
@@ -155,23 +183,22 @@ static std::wstring NormalizePathAndConvertToUnicode(FileSystem &fs, const strin
 	return WINDOWS_LOCAL_LONG_PATH_PREFIX + abs_path;
 }
 
-bool LocalFileSystem::FileExists(const string &filename, optional_ptr<FileOpener> opener) {
+FileExistence LocalFileSystem::TryFileExists(const string &filename, optional_ptr<FileOpener> opener,
+                                             optional_ptr<ErrorData> error) {
 	auto unicode_path = NormalizePathAndConvertToUnicode(*this, filename, opener);
 	const wchar_t *wpath = unicode_path.c_str();
 	struct _stati64 status; // typos:ignore
-	if (_wstati64(wpath, &status) == 0 && (status.st_mode & S_IFREG)) {
-		return true;
+	if (_wstati64(wpath, &status) != 0) {
+		return StatFailure(filename, errno, error);
 	}
-	return false;
+	return (status.st_mode & S_IFREG) ? FileExistence::EXISTS : FileExistence::MISSING;
 }
 bool LocalFileSystem::IsPipe(const string &filename, optional_ptr<FileOpener> opener) {
 	auto unicode_path = NormalizePathAndConvertToUnicode(*this, filename, opener);
 	const wchar_t *wpath = unicode_path.c_str();
 	struct _stati64 status; // typos:ignore
-	if (_wstati64(wpath, &status) == 0 && (status.st_mode & _S_IFCHR)) {
-		return true;
-	}
-	return false;
+	const bool stat_ok = _wstati64(wpath, &status) == 0;
+	return IsPipeOrThrow(filename, stat_ok, stat_ok && (status.st_mode & _S_IFCHR), errno);
 }
 #endif
 
@@ -284,6 +311,14 @@ static FileMetadata StatsInternal(int fd, const string &path) {
 	return StatsFromStruct(s);
 }
 
+#ifdef F_OFD_SETLK
+static constexpr int SET_FILE_LOCK = F_OFD_SETLK;
+static constexpr int GET_FILE_LOCK = F_OFD_GETLK;
+#else
+static constexpr int SET_FILE_LOCK = F_SETLK;
+static constexpr int GET_FILE_LOCK = F_GETLK;
+#endif
+
 // Apply a fcntl advisory lock per flags.Lock(); throws (and closes fd) on failure. Shared
 // by OpenFile and MemoryMapFile.
 static void TryAcquireFileLock(FileSystem &fs, int fd, const string &path, FileOpenFlags flags) {
@@ -301,7 +336,7 @@ static void TryAcquireFileLock(FileSystem &fs, int fd, const string &path, FileO
 	fl.l_whence = SEEK_SET;
 	fl.l_start = 0;
 	fl.l_len = 0;
-	int rc = fcntl(fd, F_SETLK, &fl);
+	int rc = fcntl(fd, SET_FILE_LOCK, &fl);
 	int retained_errno = errno;
 	bool has_error = rc == -1;
 	string extended_error;
@@ -320,11 +355,13 @@ static void TryAcquireFileLock(FileSystem &fs, int fd, const string &path, FileO
 	}
 	if (extended_error.empty()) {
 		// who is holding the lock?
-		rc = fcntl(fd, F_GETLK, &fl);
+		rc = fcntl(fd, GET_FILE_LOCK, &fl);
 		if (rc == -1) {
 			extended_error = strerror(errno);
+		} else if (fl.l_type == F_UNLCK || fl.l_pid <= 0) {
+			extended_error = "Conflicting lock is held by another open of this file";
 		} else if (fl.l_pid == ProcessUtil::CurrentProcessId()) {
-			extended_error = "Lock is already held in current process, likely another DuckDB instance";
+			extended_error = "Lock is already held in current process, likely another SereneDB instance";
 		} else {
 			auto process = ProcessUtil::GetProcessDescription(fs, fl.l_pid);
 			if (!process.empty()) {
@@ -334,15 +371,17 @@ static void TryAcquireFileLock(FileSystem &fs, int fd, const string &path, FileO
 		if (flags.Lock() == FileLockType::WRITE_LOCK) {
 			// could we get a read lock?
 			fl.l_type = F_RDLCK;
-			rc = fcntl(fd, F_SETLK, &fl);
-			if (rc != -1) {
+			fl.l_start = 0;
+			fl.l_len = 0;
+			fl.l_pid = 0;
+			rc = fcntl(fd, GET_FILE_LOCK, &fl);
+			if (rc != -1 && fl.l_type == F_UNLCK) {
 				extended_error += ". However, you would be able to open this database in read-only mode, e.g. by "
 				                  "using the -readonly parameter in the CLI";
 			}
 		}
 	}
 	CloseFileAndAppendError(fd, extended_error);
-	extended_error += ". See also https://duckdb.org/docs/current/connect/concurrency";
 	throw IOException({{"errno", std::to_string(retained_errno)}}, "Could not set lock on file \"%s\": %s", path,
 	                  extended_error);
 }
@@ -387,10 +426,10 @@ unique_ptr<FileHandle> LocalFileSystem::OpenFile(const string &path_p, FileOpenF
 	} else {
 		throw InternalException("READ, WRITE or both should be specified when opening a file");
 	}
+	open_flags |= O_CLOEXEC;
 	if (open_write) {
 		// need Read or Write
 		D_ASSERT(flags.OpenForWriting());
-		open_flags |= O_CLOEXEC;
 		if (flags.CreateFileIfNotExists() || flags.OverwriteExistingFile()) {
 			open_flags |= O_CREAT;
 		}
@@ -648,18 +687,19 @@ void LocalFileSystem::Truncate(FileHandle &handle, int64_t new_size) {
 	}
 }
 
-bool LocalFileSystem::DirectoryExists(const string &directory, optional_ptr<FileOpener> opener) {
+FileExistence LocalFileSystem::TryDirectoryExists(const string &directory, optional_ptr<FileOpener> opener,
+                                                  optional_ptr<ErrorData> error) {
 	ApplyLocalFileSystemDelay(opener);
 
-	if (!directory.empty()) {
-		auto normalized_dir = ExpandPath(directory, opener);
-		struct stat status;
-		if (stat(normalized_dir.c_str(), &status) == 0 && S_ISDIR(status.st_mode)) {
-			return true;
-		}
+	if (directory.empty()) {
+		return FileExistence::MISSING;
 	}
-	// if any condition fails
-	return false;
+	auto normalized_dir = ExpandPath(directory, opener);
+	struct stat status;
+	if (stat(normalized_dir.c_str(), &status) != 0) {
+		return StatFailure(normalized_dir, errno, error);
+	}
+	return S_ISDIR(status.st_mode) ? FileExistence::EXISTS : FileExistence::MISSING;
 }
 
 void LocalFileSystem::CreateDirectory(const string &directory, optional_ptr<FileOpener> opener) {
@@ -715,7 +755,7 @@ int RemoveDirectoryRecursive(const char *path) {
 			if (buf) {
 				struct stat statbuf;
 				snprintf(buf, len, "%s/%s", path, p->d_name);
-				if (!stat(buf, &statbuf)) {
+				if (!lstat(buf, &statbuf)) {
 					if (S_ISDIR(statbuf.st_mode)) {
 						r2 = RemoveDirectoryRecursive(buf);
 					} else {
@@ -850,6 +890,61 @@ void LocalFileSystem::FileSync(FileHandle &handle) {
 	throw IOException("Could not fsync file \"%s\": %s", handle.GetPath(), strerror(errno));
 }
 
+FileSyncParallelism LocalFileSystem::SyncParallelism(FileHandle &handle) {
+#if defined(__linux__)
+	struct statfs fs_info;
+	if (fstatfs(handle.Cast<UnixFileHandle>().fd, &fs_info) != 0) {
+		return FileSyncParallelism::SERIAL;
+	}
+	static constexpr uint32_t NFS_MAGIC = 0x6969;
+	static constexpr uint32_t CIFS_MAGIC = 0xFF534D42;
+	static constexpr uint32_t SMB2_MAGIC = 0xFE534D42;
+	static constexpr uint32_t SMB_MAGIC = 0x517B;
+	static constexpr uint32_t FUSE_MAGIC = 0x65735546;
+	static constexpr uint32_t V9FS_MAGIC = 0x01021997;
+	static constexpr uint32_t CODA_MAGIC = 0x73757245;
+	static constexpr uint32_t AFS_MAGIC = 0x5346414F;
+	static constexpr uint32_t LUSTRE_MAGIC = 0x0BD00BD0;
+	static constexpr uint32_t CEPH_MAGIC = 0x00C36400;
+	static constexpr uint32_t IBRIX_MAGIC = 0x013111A8;
+	static constexpr uint32_t ACFS_MAGIC = 0x61756673;
+	static constexpr uint32_t BEEGFS_MAGIC = 0x0062656C;
+	static constexpr uint32_t VXFS_CLUSTER_MAGIC = 0xA501FCF5;
+	switch (static_cast<uint32_t>(fs_info.f_type)) {
+	case NFS_MAGIC:
+	case CIFS_MAGIC:
+	case SMB2_MAGIC:
+	case SMB_MAGIC:
+	case FUSE_MAGIC:
+	case V9FS_MAGIC:
+	case CODA_MAGIC:
+	case AFS_MAGIC:
+	case LUSTRE_MAGIC:
+	case CEPH_MAGIC:
+	case IBRIX_MAGIC:
+	case ACFS_MAGIC:
+	case BEEGFS_MAGIC:
+	case VXFS_CLUSTER_MAGIC:
+		return FileSyncParallelism::PARALLEL;
+	default:
+		return FileSyncParallelism::SERIAL;
+	}
+#elif defined(__APPLE__)
+	struct statfs fs_info;
+	if (fstatfs(handle.Cast<UnixFileHandle>().fd, &fs_info) != 0) {
+		return FileSyncParallelism::SERIAL;
+	}
+	const std::string_view fs_name(fs_info.f_fstypename);
+	if (fs_name == "nfs" || fs_name == "smbfs" || fs_name == "afpfs" || fs_name == "webdav" ||
+	    StringUtil::StartsWith(fs_name, "fuse") || fs_name == "macfuse" || fs_name == "osxfuse") {
+		return FileSyncParallelism::PARALLEL;
+	}
+	return FileSyncParallelism::SERIAL;
+#else
+	return FileSyncParallelism::SERIAL;
+#endif
+}
+
 void LocalFileSystem::MoveFile(const string &source, const string &target, optional_ptr<FileOpener> opener) {
 	auto normalized_source = ExpandPath(source, opener);
 	auto normalized_target = ExpandPath(target, opener);
@@ -964,6 +1059,7 @@ unique_ptr<MemoryMappedFile> LocalFileSystem::MemoryMapFile(const OpenFileInfo &
 	} else {
 		throw InternalException("READ or READ+WRITE must be specified when memory-mapping a file");
 	}
+	open_flags |= O_CLOEXEC;
 	if (open_write && flags.CreateFileIfNotExists()) {
 		open_flags |= O_CREAT;
 	}
@@ -1446,9 +1542,21 @@ static DWORD WindowsGetFileAttributes(const std::wstring &filename) {
 	return GetFileAttributesW(filename.c_str());
 }
 
-bool LocalFileSystem::DirectoryExists(const string &directory, optional_ptr<FileOpener> opener) {
+FileExistence LocalFileSystem::TryDirectoryExists(const string &directory, optional_ptr<FileOpener> opener,
+                                                  optional_ptr<ErrorData> error) {
 	DWORD attrs = WindowsGetFileAttributes(*this, directory, opener);
-	return (attrs != INVALID_FILE_ATTRIBUTES && (attrs & FILE_ATTRIBUTE_DIRECTORY));
+	if (attrs != INVALID_FILE_ATTRIBUTES) {
+		return (attrs & FILE_ATTRIBUTE_DIRECTORY) ? FileExistence::EXISTS : FileExistence::MISSING;
+	}
+	auto error_code = GetLastError();
+	if (error_code == ERROR_FILE_NOT_FOUND || error_code == ERROR_PATH_NOT_FOUND) {
+		return FileExistence::MISSING;
+	}
+	if (error) {
+		auto message = LocalFileSystem::GetLastErrorAsString();
+		*error = ErrorData(IOException("Cannot check whether \"%s\" exists: %s", directory, message));
+	}
+	return error_code == ERROR_ACCESS_DENIED ? FileExistence::FORBIDDEN : FileExistence::UNKNOWN;
 }
 
 void LocalFileSystem::CreateDirectory(const string &directory, optional_ptr<FileOpener> opener) {
@@ -1622,6 +1730,20 @@ void LocalFileSystem::FileSync(FileHandle &handle) {
 	if (FlushFileBuffers(hFile) == 0) {
 		throw IOException("Could not flush file handle to disk!");
 	}
+}
+
+FileSyncParallelism LocalFileSystem::SyncParallelism(FileHandle &handle) {
+	const auto &path = handle.GetPath();
+	if (path.size() >= 2 && path[0] == '\\' && path[1] == '\\') {
+		return FileSyncParallelism::PARALLEL;
+	}
+	if (path.size() >= 2 && path[1] == ':') {
+		wchar_t root[4] = {static_cast<wchar_t>(path[0]), L':', L'\\', L'\0'};
+		if (GetDriveTypeW(root) == DRIVE_REMOTE) {
+			return FileSyncParallelism::PARALLEL;
+		}
+	}
+	return FileSyncParallelism::SERIAL;
 }
 
 static bool TryMoveFileWithPosixSemantics(HANDLE source_handle, const std::wstring &target) {

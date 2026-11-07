@@ -1,3 +1,4 @@
+#include "duckdb/main/query_result.hpp"
 #include "duckdb/parser/expression/columnref_expression.hpp"
 #include "duckdb/parser/expression/constant_expression.hpp"
 #include "duckdb/parser/expression_map.hpp"
@@ -58,6 +59,9 @@ void SetOpAliasGatherer::GatherAliases(BoundStatement &stmt, const vector<idx_t>
 	auto &select_list = stmt.extra_info.original_expressions;
 	for (idx_t i = 0; i < select_list.size(); i++) {
 		auto &expr = select_list[i];
+		if (!expr) {
+			continue;
+		}
 		idx_t index = reorder_idx[i];
 		// now check if the node is already in the set of expressions
 		auto expr_entry = bind_state.projection_map.find(*expr);
@@ -126,6 +130,11 @@ void Binder::BuildUnionByNameInfo(BoundSetOperationNode &result) {
 	D_ASSERT(result.names.empty());
 	for (auto &child : result.bound_children) {
 		auto &child_names = child.names;
+		// `?column?` is the placeholder for a column the user did not name, so several of them are not a
+		// duplicate-name conflict: they only need distinct keys to line up positionally
+		QueryResult::DeduplicateColumns(child_names, [](const Identifier &name) {
+			return name.GetIdentifierName() == BaseExpression::ANONYMOUS_COLUMN_NAME;
+		});
 		identifier_map_t<ProjectionIndex> node_name_map;
 		for (idx_t i = 0; i < child_names.size(); ++i) {
 			auto &col_name = child_names[i];
@@ -133,7 +142,7 @@ void Binder::BuildUnionByNameInfo(BoundSetOperationNode &result) {
 				throw BinderException(
 				    "UNION (ALL) BY NAME operation doesn't support duplicate names in the SELECT list - "
 				    "the name \"%s\" occurs multiple times",
-				    col_name);
+				    col_name.GetIdentifierName());
 			}
 			if (global_name_set.find(col_name) == global_name_set.end()) {
 				// column is not yet present in the result
@@ -227,6 +236,39 @@ void Binder::BuildUnionByNameInfo(BoundSetOperationNode &result) {
 		child.plan = std::move(child_projection);
 		child.types = std::move(child_types);
 	}
+}
+
+static bool IsPositionalOrderExpression(const ParsedExpression &expr) {
+	if (expr.GetExpressionClass() == ExpressionClass::POSITIONAL_REFERENCE) {
+		return true;
+	}
+	int64_t index;
+	return expr.GetExpressionClass() == ExpressionClass::CONSTANT &&
+	       expr.Cast<ConstantExpression>().GetLiteral().TryGetInt64(index);
+}
+
+static bool ModifiersReferenceColumns(const SetOperationNode &statement) {
+	for (auto &modifier : statement.modifiers) {
+		switch (modifier->type) {
+		case ResultModifierType::DISTINCT_MODIFIER:
+			if (!modifier->Cast<DistinctModifier>().distinct_on_targets.empty()) {
+				return true;
+			}
+			break;
+		case ResultModifierType::ORDER_MODIFIER:
+			for (auto &order : modifier->Cast<OrderModifier>().orders) {
+				if (!IsPositionalOrderExpression(*order.expression)) {
+					return true;
+				}
+			}
+			break;
+		case ResultModifierType::LIMIT_MODIFIER:
+			break;
+		default:
+			return true;
+		}
+	}
+	return false;
 }
 
 static void GatherSetOpBinders(vector<BoundStatement> &children, vector<shared_ptr<Binder>> &binders,
@@ -382,8 +424,12 @@ BoundStatement Binder::BindNode(SetOperationNode &statement) {
 	if (!statement.modifiers.empty()) {
 		// handle the ORDER BY/DISTINCT clauses
 		vector<reference<Binder>> binders;
-		GatherSetOpBinders(result.bound_children, result.child_binders, binders);
-		GatherAliases(result, result.bound_children, bind_state);
+		if (ModifiersReferenceColumns(statement)) {
+			GatherSetOpBinders(result.bound_children, result.child_binders, binders);
+			GatherAliases(result, result.bound_children, bind_state);
+		} else {
+			binders.push_back(*result.child_binders[0]);
+		}
 
 		// now we perform the actual resolution of the ORDER BY/DISTINCT expressions
 		OrderBinder order_binder(binders, bind_state);

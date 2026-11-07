@@ -1,0 +1,94 @@
+# name: test/sql/storage/compression/select_across_segments.test
+# description: Rows selected from vectors whose rows span several segments
+# group: [compression]
+
+statement ok
+SET storage_compatibility_version='latest';
+
+foreach block_size 262144 16384
+
+statement ok
+ATTACH '{TEMP_DIR}/select_across_segments_{block_size}.db' AS db (BLOCK_SIZE {block_size});
+
+statement ok
+CREATE TABLE db.wide AS
+SELECT i AS id,
+       i % 97 AS k,
+       (i * 7919) % 1000003 AS n,
+       (i * 0.37)::DOUBLE AS d,
+       CASE WHEN i % 13 = 0 THEN NULL ELSE repeat(md5(i::VARCHAR), 16) END AS body
+FROM range(0, 30000) t(i);
+
+statement ok
+CHECKPOINT db;
+
+query I
+SELECT count(*) > 30000 // 2048 FROM pragma_storage_info('db.wide') WHERE column_name = 'body' AND segment_type <> 'VALIDITY';
+----
+true
+
+statement ok
+CREATE OR REPLACE TEMP MACRO intact(id, n, d, body) AS
+    n = (id * 7919) % 1000003 AND d = (id * 0.37)::DOUBLE AND
+    body IS NOT DISTINCT FROM CASE WHEN id % 13 = 0 THEN NULL ELSE repeat(md5(id::VARCHAR), 16) END;
+
+loop fetch_row 0 2
+
+statement ok
+SET debug_force_fetch_row = {fetch_row};
+
+query II
+SELECT count(*), count(*) FILTER (WHERE intact(id, n, d, body)) FROM db.wide WHERE k = 5;
+----
+310	310
+
+query II
+SELECT count(*), count(*) FILTER (WHERE intact(id, n, d, body)) FROM db.wide WHERE id % 500 < 3;
+----
+180	180
+
+query II
+SELECT count(*), count(*) FILTER (WHERE intact(id, n, d, body)) FROM db.wide WHERE k <> 5;
+----
+29690	29690
+
+query II
+SELECT count(*), count(*) FILTER (WHERE intact(id, n, d, body)) FROM (SELECT * FROM db.wide ORDER BY k DESC, id LIMIT 300);
+----
+300	300
+
+endloop
+
+statement ok
+RESET debug_force_fetch_row;
+
+query II
+EXPLAIN SELECT * FROM db.wide ORDER BY k DESC, id LIMIT 300;
+----
+physical_plan	<REGEX>:.*LOOKUP_JOIN.*
+
+statement ok
+DELETE FROM db.wide WHERE id % 11 = 0;
+
+query II
+SELECT count(*), count(*) FILTER (WHERE intact(id, n, d, body)) FROM db.wide WHERE k = 5;
+----
+282	282
+
+query II
+SELECT count(*), count(*) FILTER (WHERE intact(id, n, d, body)) FROM (SELECT * FROM db.wide ORDER BY k DESC, id LIMIT 300);
+----
+300	300
+
+statement ok
+UPDATE db.wide SET body = 'updated-' || id WHERE k = 5 AND id % 2 = 0;
+
+query III
+SELECT count(*), count(*) FILTER (WHERE body = 'updated-' || id), count(*) FILTER (WHERE intact(id, n, d, body)) FROM db.wide WHERE k = 5;
+----
+282	141	141
+
+statement ok
+DETACH db;
+
+endloop

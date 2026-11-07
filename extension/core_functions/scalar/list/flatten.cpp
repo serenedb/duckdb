@@ -52,6 +52,7 @@ void ListFlattenFunction(DataChunk &args, ExpressionState &, Vector &result) {
 	// This can be more than items_count if the inner list reference the same item(s) multiple times.
 
 	idx_t total_items = 0;
+	bool reference_items = items_vec.GetVectorType() == VectorType::FLAT_VECTOR;
 
 	const auto outer_data = UnifiedVectorFormat::GetData<list_entry_t>(outer_format);
 	const auto inner_data = UnifiedVectorFormat::GetData<list_entry_t>(inner_format);
@@ -65,6 +66,7 @@ void ListFlattenFunction(DataChunk &args, ExpressionState &, Vector &result) {
 
 		const auto &outer_entry = outer_data[outer_idx];
 
+		optional_idx next_offset;
 		for (idx_t inner_raw_idx = outer_entry.offset; inner_raw_idx < outer_entry.offset + outer_entry.length;
 		     inner_raw_idx++) {
 			const auto inner_idx = inner_format.sel->get_index(inner_raw_idx);
@@ -74,9 +76,42 @@ void ListFlattenFunction(DataChunk &args, ExpressionState &, Vector &result) {
 			}
 
 			const auto &inner_entry = inner_data[inner_idx];
+			if (inner_entry.length > 0) {
+				if (next_offset.IsValid() && next_offset.GetIndex() != inner_entry.offset) {
+					reference_items = false;
+				}
+				next_offset = inner_entry.offset + inner_entry.length;
+			}
 
 			total_items += inner_entry.length;
 		}
+	}
+
+	if (reference_items) {
+		for (idx_t outer_raw_idx = 0; outer_raw_idx < outer_count; outer_raw_idx++) {
+			const auto outer_idx = outer_format.sel->get_index(outer_raw_idx);
+			if (!outer_format.validity.RowIsValid(outer_idx)) {
+				flat_list_data.WriteNull();
+				continue;
+			}
+			const auto &outer_entry = outer_data[outer_idx];
+			list_entry_t list_entry(0, 0);
+			for (idx_t inner_raw_idx = outer_entry.offset; inner_raw_idx < outer_entry.offset + outer_entry.length;
+			     inner_raw_idx++) {
+				const auto inner_idx = inner_format.sel->get_index(inner_raw_idx);
+				if (!inner_format.validity.RowIsValid(inner_idx)) {
+					continue;
+				}
+				const auto &inner_entry = inner_data[inner_idx];
+				if (inner_entry.length > 0 && list_entry.length == 0) {
+					list_entry.offset = inner_entry.offset;
+				}
+				list_entry.length += inner_entry.length;
+			}
+			flat_list_data.WriteValue(list_entry);
+		}
+		ListVector::GetChildMutable(result).Reference(items_vec);
+		return;
 	}
 
 	// Now we know the total amount of items, we can create our selection vector.

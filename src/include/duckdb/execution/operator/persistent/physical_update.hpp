@@ -12,6 +12,7 @@
 #include "duckdb/planner/expression.hpp"
 #include "duckdb/planner/bound_constraint.hpp"
 #include "duckdb/common/enums/row_id_handling.hpp"
+#include "duckdb/storage/storage_index.hpp"
 
 namespace duckdb {
 class DataTable;
@@ -36,6 +37,7 @@ public:
 	vector<unique_ptr<Expression>> bound_defaults;
 	vector<unique_ptr<BoundConstraint>> bound_constraints;
 	bool update_is_del_and_insert;
+	idx_t update_column_count = 0;
 	//! If the returning statement is present, or transition tables are captured, return the whole chunk
 	bool return_chunk;
 	//! If set, also emit the pre-update (OLD) row image after the NEW image
@@ -45,8 +47,25 @@ public:
 	//! How to handle a target row-id that appears more than once in the input (e.g. UPDATE ... FROM): keep the
 	//! lock-free path (ASSUME_UNIQUE), deduplicate keeping the first match (KEEP_FIRST), or error (ERROR).
 	RowIdHandling row_id_handling;
-	//! Set to true, if we are updating an index column.
-	bool index_update;
+	//! Set when the UPDATE is a DELETE + INSERT only because it sets indexed columns: rows whose indexed values do
+	//! not change are then updated in place instead
+	bool in_place_unchanged_rows = false;
+	//! The update chunk positions of the columns whose previous values a DELETE + INSERT reads, and the input chunk
+	//! indexes of those values, or DConstants::INVALID_INDEX for the ones it fetches by row id: the indexed columns it
+	//! sets when it compares them, otherwise the ones it sets that the delete indexes read
+	vector<idx_t> old_value_positions;
+	vector<idx_t> old_value_inputs;
+	//! The physical columns of the previous values it fetches
+	vector<StorageIndex> fetched_old_value_columns;
+	//! The update chunk positions and physical columns of the other columns it sets
+	vector<idx_t> in_place_positions;
+	vector<PhysicalIndex> in_place_columns;
+
+public:
+	//! Sets up which previous values a DELETE + INSERT update reads, and whether it updates in place the rows that keep
+	//! their indexed values
+	void InitializeDelAndInsert(const vector<idx_t> &old_value_positions_p, const vector<idx_t> &old_value_inputs_p,
+	                            bool in_place_unchanged_rows_p);
 
 public:
 	// Source interface

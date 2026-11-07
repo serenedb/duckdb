@@ -1,0 +1,42 @@
+# name: test/sql/returning/returning_delete_virtual_columns.test
+# description: DELETE ... RETURNING reads a virtual column from the slot its layout gives it, through joins too
+# group: [returning]
+
+statement ok
+CREATE TABLE t AS SELECT i AS id, i * 10 AS v FROM range(20) r(i);
+
+statement ok
+CREATE TABLE s AS SELECT i AS id FROM range(0, 20, 3) r(i), range(3) d(j);
+
+query III rowsort
+DELETE FROM t USING s WHERE t.id = s.id AND t.id < 10 RETURNING rowid, t.id, v;
+----
+0	0	0
+3	3	30
+6	6	60
+9	9	90
+
+query III
+DELETE FROM t WHERE id = 1 RETURNING rowid + 100, rowid, id;
+----
+101	1	1
+
+query II rowsort
+DELETE FROM t USING s WHERE t.id = s.id + 1 AND t.id < 12 RETURNING t.id, rowid - t.id;
+----
+10	0
+4	0
+7	0
+
+query II rowsort
+DELETE FROM t WHERE id IN (SELECT id + 2 FROM s WHERE id < 10) RETURNING rowid, id;
+----
+11	11
+2	2
+5	5
+8	8
+
+query I
+SELECT count(*) FROM t;
+----
+8

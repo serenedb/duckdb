@@ -96,6 +96,9 @@ public:
 	const Identifier &GetIndexName() const override {
 		return GetCreateInfo().GetIndexName();
 	}
+	void SetIndexName(Identifier name) override {
+		create_info->Cast<CreateIndexInfo>().SetIndexName(std::move(name));
+	}
 	IndexConstraintType GetConstraintType() const override {
 		return GetCreateInfo().constraint_type;
 	}

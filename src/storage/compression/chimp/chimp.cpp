@@ -2,7 +2,6 @@
 #include "duckdb/function/compression_function.hpp"
 #include "duckdb/storage/compression/chimp/chimp_analyze.hpp"
 #include "duckdb/storage/compression/chimp/chimp_compress.hpp"
-#include "duckdb/storage/compression/chimp/chimp_fetch.hpp"
 #include "duckdb/storage/compression/chimp/chimp_scan.hpp"
 
 namespace duckdb {
@@ -36,8 +35,8 @@ template <class T>
 CompressionFunction GetChimpFunction(PhysicalType data_type) {
 	return CompressionFunction(CompressionType::COMPRESSION_CHIMP, data_type, ChimpInitAnalyze<T>, ChimpAnalyze<T>,
 	                           ChimpFinalAnalyze<T>, ChimpInitCompression<T>, ChimpCompress<T>,
-	                           ChimpFinalizeCompress<T>, ChimpInitScan<T>, ChimpScan<T>, ChimpScanPartial<T>,
-	                           ChimpFetchRow<T>, ChimpSkip<T>);
+	                           ChimpFinalizeCompress<T>, ChimpInitScan<T>, ChimpScan<T>, ChimpScanPartial<T>, nullptr,
+	                           ChimpSkip<T>);
 }
 
 CompressionFunction ChimpCompressionFun::GetFunction(PhysicalType type) {

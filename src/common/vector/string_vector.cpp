@@ -1,14 +1,10 @@
 #include "duckdb/common/vector/string_vector.hpp"
 #include "duckdb/common/vector/dictionary_vector.hpp"
+#include "duckdb/common/vector/immutable_strings.hpp"
 #include "duckdb/common/types/bignum.hpp"
 #include "duckdb/common/types/bit.hpp"
 
 namespace duckdb {
-
-VectorWriter<string_t>::VectorWriter(Vector &vector, idx_t count, idx_t offset)
-    : vector(vector), data(FlatVector::GetDataMutable<string_t>(vector)), validity(FlatVector::ValidityMutable(vector)),
-      count(offset + count), current_idx(offset) {
-}
 
 void VectorWriter<string_t>::InitializeHeap() {
 	heap = StringVector::GetStringHeap(vector);
@@ -167,9 +163,13 @@ buffer_ptr<VectorBuffer> VectorStringBuffer::FlattenSliceInternal(const LogicalT
 	}
 	// add heap reference from source to result
 	if (auxiliary_data) {
-		result->AddAuxiliaryData(make_uniq<AuxiliaryDataSetHolder>(auxiliary_data));
+		result->AddAuxiliaryData(ImmutableStrings::Reference(auxiliary_data));
 	}
 	return result;
+}
+
+string_t StringVector::AddString(Vector &vector, std::string_view data) {
+	return StringVector::AddString(vector, string_t(data.data(), UnsafeNumericCast<uint32_t>(data.size())));
 }
 
 string_t StringVector::AddString(Vector &vector, const char *data, idx_t len) {

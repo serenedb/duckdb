@@ -21,4 +21,8 @@ ConversionException::ConversionException(QueryLocation error_location, const str
     : Exception(Exception::InitializeExtraInfo(error_location), ExceptionType::CONVERSION, msg) {
 }
 
+ConversionException::ConversionException(const unordered_map<string, string> &extra_info, const string &msg)
+    : Exception(extra_info, ExceptionType::CONVERSION, msg) {
+}
+
 } // namespace duckdb

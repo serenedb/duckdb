@@ -8,6 +8,7 @@ add_library_unity(
   executor.cpp
   event.cpp
   interrupt.cpp
+  lookup_tasks.cpp
   pipeline.cpp
   pipeline_broadcast_exchange.cpp
   pipeline_complete_event.cpp

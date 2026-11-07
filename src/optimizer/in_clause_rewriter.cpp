@@ -1,4 +1,5 @@
 #include "duckdb/optimizer/in_clause_rewriter.hpp"
+#include "duckdb/execution/constant_in_list.hpp"
 #include "duckdb/optimizer/optimizer.hpp"
 #include "duckdb/planner/binder.hpp"
 #include "duckdb/planner/expression/bound_comparison_expression.hpp"
@@ -77,6 +78,19 @@ unique_ptr<Expression> InClauseRewriter::VisitReplace(BoundOperatorExpression &e
 			all_scalar = false;
 		}
 	}
+	if (expr.GetChildrenMutable().size() >= IN_CLAUSE_REWRITE_THRESHOLD &&
+	    expr.GetChildrenMutable().size() - 1 <= ConstantInList::MAX_CONSTANTS && ConstantInList::Supports(in_type)) {
+		bool all_constant = true;
+		for (idx_t i = 1; i < expr.GetChildrenMutable().size(); i++) {
+			auto &child = *expr.GetChildrenMutable()[i];
+			all_constant &=
+			    child.GetExpressionClass() == ExpressionClass::BOUND_CONSTANT && child.GetReturnType() == in_type;
+		}
+		if (all_constant) {
+			VisitExpressionChildren(expr);
+			return nullptr;
+		}
+	}
 	const bool rewrite_to_join = expr.GetChildrenMutable().size() >= IN_CLAUSE_REWRITE_THRESHOLD && all_scalar;
 	if (!rewrite_to_join) {
 		VisitExpressionChildren(expr);
@@ -115,7 +129,7 @@ unique_ptr<Expression> InClauseRewriter::VisitReplace(BoundOperatorExpression &e
 	for (idx_t i = 1; i < expr.GetChildrenMutable().size(); i++) {
 		// resolve this expression to a constant
 		Value value;
-		if (!ExpressionExecutor::TryEvaluateScalar(context, *expr.GetChildrenMutable()[i], value)) {
+		if (!ExpressionExecutor::TryEvaluateFoldable(context, *expr.GetChildrenMutable()[i], value)) {
 			// error while evaluating scalar
 			return nullptr;
 		}

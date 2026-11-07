@@ -59,6 +59,10 @@
 #include "duckdb/parser/statement/explain_statement.hpp"
 #include "duckdb/planner/operator/logical_get.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
+#include "duckdb/parser/statement/alter_statement.hpp"
+#include "duckdb/parser/statement/attach_statement.hpp"
+#include "duckdb/parser/statement/create_statement.hpp"
+#include "duckdb/parser/statement/drop_statement.hpp"
 #include "duckdb/common/local_file_system.hpp"
 #include "shell_progress_bar.hpp"
 #include "shell_prompt.hpp"
@@ -99,6 +103,7 @@
 #include "shell_highlight.hpp"
 #include "shell_manual.hpp"
 #include "shell_state.hpp"
+#include "shell_docs.hpp"
 #include "duckdb/main/error_manager.hpp"
 #include "duckdb/main/client_config.hpp"
 
@@ -803,7 +808,7 @@ static void InterruptHandler(int NotUsed) {
 		ShellState::Exit(1);
 	}
 	if (state.conn) {
-		state.conn->Interrupt();
+		state.conn->context->InterruptFromSignal();
 	}
 }
 }
@@ -1026,6 +1031,44 @@ SuccessState ShellState::ExecuteStatement(unique_ptr<duckdb::SQLStatement> state
 	return render_state;
 }
 
+bool ShellState::TryForwardClusterDdl(const duckdb::SQLStatement &statement, const string &original_sql,
+                                      SuccessState &result) {
+	if (subcommand != ShellSubcommand::PSQL || psql_dbname.empty()) {
+		return false;
+	}
+	auto cluster_wide = [](duckdb::CatalogType type) {
+		return type == duckdb::CatalogType::DATABASE_ENTRY || type == duckdb::CatalogType::ROLE_ENTRY;
+	};
+	bool forward = false;
+	switch (statement.type) {
+	case duckdb::StatementType::ATTACH_STATEMENT: {
+		auto &info = *statement.Cast<duckdb::AttachStatement>().info;
+		auto entry = info.options.find("type");
+		forward = entry != info.options.end() && !entry->second.IsNull() &&
+		          duckdb::StringUtil::CIEquals(entry->second.ToString(), "serenedb");
+		break;
+	}
+	case duckdb::StatementType::CREATE_STATEMENT:
+		forward = cluster_wide(statement.Cast<duckdb::CreateStatement>().info->type);
+		break;
+	case duckdb::StatementType::ALTER_STATEMENT:
+		forward = cluster_wide(statement.Cast<duckdb::AlterStatement>().info->GetCatalogType());
+		break;
+	case duckdb::StatementType::DROP_STATEMENT:
+		forward = cluster_wide(statement.Cast<duckdb::DropStatement>().info->type);
+		break;
+	default:
+		break;
+	}
+	if (!forward) {
+		return false;
+	}
+	auto query = StringUtil::Format("CALL postgres_execute(%s, %s, use_transaction := false)", SQLString(psql_dbname),
+	                                SQLString(original_sql));
+	result = ExecuteSQL(query);
+	return true;
+}
+
 /*
 ** Execute a statement or set of statements.  Print
 ** any result rows/columns depending on the current mode
@@ -1033,6 +1076,7 @@ SuccessState ShellState::ExecuteStatement(unique_ptr<duckdb::SQLStatement> state
 */
 void ShellState::SetupPrettyExplain(duckdb::SQLStatement &statement) {
 	auto &explain = statement.Cast<duckdb::ExplainStatement>();
+	last_explain_analyze = explain.explain_type == duckdb::ExplainType::EXPLAIN_ANALYZE;
 	if (explain.format != duckdb::ProfilerPrintFormat::Default()) {
 		// the user explicitly requested an output format (e.g. EXPLAIN (FORMAT json))
 		return;
@@ -1101,6 +1145,13 @@ SuccessState ShellState::ExecuteSQL(const string &zSql) {
 
 			// Reset before bind; the `_` replacement scan sets it to true if it fires.
 			last_result_referenced = false;
+			SuccessState forwarded_rc;
+			if (TryForwardClusterDdl(*statement, zStmtSql, forwarded_rc)) {
+				if (forwarded_rc != SuccessState::SUCCESS) {
+					return forwarded_rc;
+				}
+				continue;
+			}
 			auto rc = ExecuteStatement(std::move(statement));
 			if (agent_mode_active) {
 				// keep stdout in step with the stderr progress/estimate lines when both go to the same pipe
@@ -1271,13 +1322,13 @@ void ShellState::OpenDB(ShellOpenFlags flags) {
 
 	if (!db) {
 		try {
-			db = make_uniq<duckdb::DuckDB>(zDbFilename.c_str(), &config);
+			db = make_uniq<duckdb::DuckDB>(*engine.open(zDbFilename));
 			RegisterShellLogger(*db, storage_ptr);
 			conn = make_uniq<duckdb::Connection>(*db);
 		} catch (std::exception &ex) {
 			PrintDatabaseError(duckdb::ErrorData(ex));
 			if (flags == ShellOpenFlags::KEEP_ALIVE_ON_FAILURE) {
-				db = make_uniq<duckdb::DuckDB>(":memory:", &config);
+				db = make_uniq<duckdb::DuckDB>(*engine.open(IN_MEMORY_PATH));
 				RegisterShellLogger(*db, storage_ptr);
 				conn = make_uniq<duckdb::Connection>(*db);
 			} else {
@@ -3393,6 +3444,21 @@ static void linenoise_completion(const char *zLine, linenoiseCompletions *lc) {
 		idx_t nLine = ShellState::StringLength(zLine);
 		if (zLine[0] == '.') {
 			// auto-complete dot command
+			duckdb::idx_t argument_start = 0;
+			duckdb::vector<DocsCompletion> docs_completions;
+			if (DocsCompletions(zLine, nLine, argument_start, docs_completions)) {
+				linenoiseCompletionMenu(lc);
+				for (duckdb::idx_t i = 0; i < docs_completions.size(); i++) {
+					auto &completion = docs_completions[i];
+					linenoiseAddLabeledCompletion(lc, zLine, completion.text.c_str(), completion.text.size(),
+					                              argument_start, completion.label.c_str(), completion.label.size(),
+					                              "keyword");
+					if (completion.selected) {
+						linenoiseSelectCompletion(lc, i);
+					}
+				}
+				return;
+			}
 			auto dot_completions = ShellState::GetMetadataCompletions(zLine, nLine);
 			for (auto &completion : dot_completions) {
 				linenoiseAddCompletion(lc, zLine, completion.c_str(), completion.size(), 0, "keyword", 0, '\0');
@@ -3454,7 +3520,7 @@ void ShellState::Initialize() {
 	string default_prompt;
 	default_prompt = "{max_length:50}{highlight_element:prompt_connect}{setting:connect_name_prefix}{highlight_element:"
 	                 "prompt}{setting:current_database_and_schema}"
-	                 "{color:reset} D ";
+	                 "{color:reset} S ";
 	main_prompt->ParsePrompt(default_prompt);
 	vector<string> default_components;
 	default_components.push_back("{setting:progress_bar_percentage} {setting:progress_bar}{setting:eta}");
@@ -3663,6 +3729,15 @@ static void CollectScanEstimates(duckdb::ClientContext &context, duckdb::Logical
 	}
 }
 
+static bool StdinIsPipe() {
+#if defined(_WIN32) || defined(WIN32)
+	return GetFileType(GetStdHandle(STD_INPUT_HANDLE)) == FILE_TYPE_PIPE;
+#else
+	struct stat info;
+	return fstat(STDIN_FILENO, &info) == 0 && (S_ISFIFO(info.st_mode) || S_ISSOCK(info.st_mode));
+#endif
+}
+
 void ShellState::PrintQueryEstimate(const string &sql, const duckdb::SQLStatement &statement) {
 	switch (statement.type) {
 	case duckdb::StatementType::SELECT_STATEMENT:
@@ -3674,6 +3749,9 @@ void ShellState::PrintQueryEstimate(const string &sql, const duckdb::SQLStatemen
 		break;
 	default:
 		// nothing to estimate
+		return;
+	}
+	if (!readStdin && StdinIsPipe()) {
 		return;
 	}
 	try {
@@ -3773,7 +3851,9 @@ static bool IsStdStreamAConsole(int std_fd) {
 #endif
 }
 
-int RunShell(int argc, const char **argv) {
+namespace duckdb_shell {
+
+int RunShell(int argc, char **argv, ShellSubcommand subcommand, ShellEngine engine) {
 	int rc = 0;
 	vector<string> extra_commands;
 
@@ -3787,6 +3867,33 @@ int RunShell(int argc, const char **argv) {
 	data.stderr_is_console = IsStdStreamAConsole(2);
 
 	data.Initialize();
+	// Honour the NO_COLOR convention (https://no-color.org/): when the
+	// variable is present and non-empty, suppress ANSI colour output
+	// across all three paths -- the master highlighter (help text,
+	// section headers), result rendering, and error rendering.
+	if (const char *v = std::getenv("NO_COLOR"); v && *v) {
+		data.highlighting_enabled = false;
+		data.highlight_results = OptionType::OFF;
+		data.highlight_errors = OptionType::OFF;
+	}
+	data.subcommand = subcommand;
+	data.engine = engine;
+	if (subcommand == duckdb_shell::ShellSubcommand::PSQL) {
+		// Seed psql connection params from PG* env vars. Explicit flags
+		// (-h/-p/-d/-U or positionals) parsed later overwrite these.
+		if (const char *v = std::getenv("PGHOST"); v && *v) {
+			data.psql_host = v;
+		}
+		if (const char *v = std::getenv("PGPORT"); v && *v) {
+			data.psql_port = v;
+		}
+		if (const char *v = std::getenv("PGDATABASE"); v && *v) {
+			data.psql_dbname = v;
+		}
+		if (const char *v = std::getenv("PGUSER"); v && *v) {
+			data.psql_user = v;
+		}
+	}
 
 	/* On Windows, we must translate command-line arguments into UTF-8.
 	 */
@@ -3808,10 +3915,32 @@ int RunShell(int argc, const char **argv) {
 	** the size of the alternative malloc heap,
 	** and the first command to execute.
 	*/
+	int psql_positional_count = 0;
 	vector<CommandLineCall> command_line_calls;
 	for (int i = 1; i < argc; i++) {
 		auto z = argv[i];
 		if (z[0] != '-') {
+			// Positional argument. In psql mode, psql convention is
+			// `psql [OPTION]... [DBNAME [USERNAME]]` -- treat the first
+			// positional as DBNAME, the second as USERNAME (unless those
+			// have already been set via flags). Anything beyond falls
+			// through to the normal "extra commands" path.
+			if (data.subcommand == ShellSubcommand::PSQL) {
+				if (psql_positional_count == 0) {
+					if (data.psql_dbname.empty()) {
+						data.psql_dbname = z;
+					}
+					psql_positional_count++;
+					continue;
+				}
+				if (psql_positional_count == 1) {
+					if (data.psql_user.empty()) {
+						data.psql_user = z;
+					}
+					psql_positional_count++;
+					continue;
+				}
+			}
 			if (data.zDbFilename.empty()) {
 				data.zDbFilename = z;
 			} else {
@@ -3823,14 +3952,43 @@ int RunShell(int argc, const char **argv) {
 			}
 			continue;
 		}
+		const string raw_arg = argv[i]; // preserved for error display
 		z++;
 		if (z[0] == '-') {
 			// allow for double dashes, i.e. --init and -init are both valid
 			z++;
 		}
+		// `-` or `--` after stripping leave an empty option name. Error
+		// out explicitly so the user sees what they typed, not a stale
+		// suggestion for "-".
+		if (z[0] == '\0') {
+			string err = StringUtil::Format("Invalid Option Error: '%s' has empty option name\n", raw_arg);
+			data.PrintDatabaseError(err);
+			return 1;
+		}
+
+		// Try the raw token first so that option names with a literal '='
+		// (e.g. psql's `--help=interactive`) match before we fall back to
+		// the long-form `--foo=value` split.
+		string option_name(z);
+		string inline_value;
+		bool has_inline_value = false;
 
 		string error_msg;
-		auto command_line_option = data.FindCommandLineOption(z, error_msg);
+		auto command_line_option = data.FindCommandLineOption(option_name, raw_arg, error_msg);
+		if (!command_line_option) {
+			if (auto eq = option_name.find('='); eq != string::npos) {
+				string short_name = option_name.substr(0, eq);
+				string err2;
+				if (auto opt = data.FindCommandLineOption(short_name, raw_arg, err2)) {
+					command_line_option = opt;
+					inline_value = option_name.substr(eq + 1);
+					option_name = std::move(short_name);
+					has_inline_value = true;
+					error_msg.clear();
+				}
+			}
+		}
 		if (!command_line_option) {
 			data.PrintDatabaseError(error_msg);
 			return 1;
@@ -3839,18 +3997,29 @@ int RunShell(int argc, const char **argv) {
 		// parse arguments
 		vector<string> arguments;
 		arguments.push_back(option.option);
-		for (idx_t arg_idx = 0; arg_idx < option.argument_count; arg_idx++) {
-			if (i + 1 >= argc) {
-				string error =
-				    StringUtil::Format("Missing Argument Error: Argument '-%s' needs %llu arguments, but got %llu\n",
-				                       option.option, option.argument_count, arg_idx);
-				error += StringUtil::Format("OPTION:\n  -%s %s    %s\n\n", option.option, option.arguments,
-				                            option.description);
-				error += StringUtil::Format("Run '%s -help' for a list of options.\n", data.program_name);
+		if (has_inline_value) {
+			if (option.argument_count != 1) {
+				string error = StringUtil::Format(
+				    "Invalid Argument Error: option '--%s' uses inline value syntax but takes %llu arguments\n",
+				    option.option, option.argument_count);
 				data.PrintDatabaseError(error);
 				return 1;
 			}
-			arguments.emplace_back(argv[++i]);
+			arguments.emplace_back(std::move(inline_value));
+		} else {
+			for (idx_t arg_idx = 0; arg_idx < option.argument_count; arg_idx++) {
+				if (i + 1 >= argc) {
+					string error = StringUtil::Format(
+					    "Missing Argument Error: Argument '-%s' needs %llu arguments, but got %llu\n", option.option,
+					    option.argument_count, arg_idx);
+					error += StringUtil::Format("OPTION:\n  -%s %s    %s\n\n", option.option, option.arguments,
+					                            option.description);
+					error += StringUtil::Format("Run '%s -help' for a list of options.\n", data.program_name);
+					data.PrintDatabaseError(error);
+					return 1;
+				}
+				arguments.emplace_back(argv[++i]);
+			}
 		}
 		if (option.optional_argument && i + 1 < argc && argv[i + 1][0] != '-') {
 			// an optional argument is only consumed when it is not an option itself
@@ -3907,6 +4076,87 @@ int RunShell(int argc, const char **argv) {
 
 	data.DetectDarkLightMode();
 
+	// PSQL auto-attach: with all connection params now resolved (env vars,
+	// then flags, then positionals all populated psql_*), synthesise an
+	// ATTACH against the remote pg-wire endpoint and run it before the
+	// user's -c / -cmd / -f commands so they see the alias as the
+	// current database.
+	//
+	// Skip the attach when an exit-style option is queued (-V/-?/-help)
+	// -- those callbacks run in the second pass and would have made the
+	// attach attempt pointless (or worse, fail the invocation that the
+	// user explicitly asked to short-circuit).
+	bool psql_skip_attach = false;
+	if (data.subcommand == ShellSubcommand::PSQL) {
+		for (auto &call : command_line_calls) {
+			const string opt(call.option.option);
+			if (opt == "?" || opt == "V" || opt == "help" || opt == "version" || opt == "help=interactive" ||
+			    opt == "help=interactive-all") {
+				psql_skip_attach = true;
+				break;
+			}
+		}
+	}
+	if (!psql_skip_attach && data.subcommand == ShellSubcommand::PSQL) {
+		if (data.psql_user.empty()) {
+			if (const char *v = std::getenv("USER"); v && *v) {
+				data.psql_user = v;
+			} else {
+				data.psql_user = "postgres";
+			}
+		}
+		if (data.psql_dbname.empty()) {
+			data.psql_dbname = data.psql_user;
+		}
+		// Escape connection params into the conninfo literal ('->'') and the
+		// attached-database identifier ("->"").
+		auto conn_lit = [](const string &s) {
+			return StringUtil::Replace(s, "'", "''");
+		};
+		const string db_id = StringUtil::Replace(data.psql_dbname, "\"", "\"\"");
+		string attach = "SET pg_use_text_protocol = true;";
+		attach += "SET pg_use_binary_copy = false;";
+		attach += "ATTACH 'host=" + conn_lit(data.psql_host) + " port=" + conn_lit(data.psql_port) +
+		          " dbname=" + conn_lit(data.psql_dbname) + " user=" + conn_lit(data.psql_user) + "' AS \"" + db_id +
+		          "\" (TYPE postgres);";
+		attach += "USE \"" + db_id + "\";";
+		auto rc = data.RunInitialCommand(attach.c_str(), /*bail=*/true);
+		if (rc != 0) {
+			ShellState::Exit(rc);
+			return rc;
+		}
+	}
+
+	// psql `-1`/`--single-transaction`: wrap the queued -c/-f batch in
+	// BEGIN/COMMIT. Only kicks in when something non-interactive is queued
+	// (matches psql, which docs the flag as "if non-interactive"). BEGIN
+	// runs eagerly here; COMMIT is appended to the option-call queue so
+	// the existing post-init dispatch fires it after the -c/-f body even
+	// though -c sets readStdin=false. CommandLineCall holds a reference
+	// member, so we can only append (no insert at begin).
+	if (data.psql_single_transaction) {
+		bool has_runner = false;
+		for (auto &call : command_line_calls) {
+			const string opt(call.option.option);
+			if (opt == "c" || opt == "f" || opt == "command" || opt == "file") {
+				has_runner = true;
+				break;
+			}
+		}
+		if (has_runner) {
+			rc = data.RunInitialCommand("BEGIN;", /*bail=*/true);
+			if (rc != 0) {
+				ShellState::Exit(rc);
+				return rc;
+			}
+			string err;
+			auto cmd_opt = data.FindCommandLineOption("cmd", /*raw_arg=*/"--cmd", err);
+			if (cmd_opt) {
+				command_line_calls.emplace_back(*cmd_opt, vector<string> {"cmd", "COMMIT;"});
+			}
+		}
+	}
+
 	/* Make a second pass through the command-line argument and set
 	** options.  This second pass is delayed until after the initialization
 	** file is processed so that the command-line arguments will override
@@ -3949,13 +4199,7 @@ int RunShell(int argc, const char **argv) {
 			const char *zHistory;
 			ShellHighlight highlight(data);
 
-			auto startup_version = StringUtil::Format("DuckDB %s (%s", duckdb::DuckDB::LibraryVersion(),
-			                                          duckdb::DuckDB::ReleaseCodename());
-			if (StringUtil::Contains(duckdb::DuckDB::ReleaseCodename(), "Development")) {
-				startup_version += ", ";
-				startup_version += duckdb::DuckDB::SourceID();
-			}
-			startup_version += ")\n";
+			auto startup_version = StringUtil::Format("SereneDB %s\n", SERENEDB_SHELL_VERSION);
 			if (data.startup_text != StartupText::NONE) {
 				highlight.PrintText(startup_version, PrintOutput::STDOUT, HighlightElementType::STARTUP_VERSION);
 			}
@@ -4004,3 +4248,29 @@ int RunShell(int argc, const char **argv) {
 	data.ClearTempFile();
 	return rc;
 }
+
+int Run(int argc, char **argv, ShellSubcommand subcommand, ShellEngine engine) {
+	auto &shell_state = ShellState::GetReference();
+	int rc = 0;
+	try {
+		rc = RunShell(argc, argv, subcommand, engine);
+	} catch (std::exception &ex) {
+		rc = 1;
+		ErrorData error(ex);
+		fprintf(stderr, "Exited due to error: %s", error.Message().c_str());
+	}
+	try {
+		// destroy shell state prior to program clean-up
+		if (shell_state) {
+			delete shell_state;
+		}
+		shell_state = nullptr;
+	} catch (std::exception &ex) {
+		rc = 1;
+		ErrorData error(ex);
+		fprintf(stderr, "Error during clean-up due to error: %s", error.Message().c_str());
+	}
+	return rc;
+}
+
+} // namespace duckdb_shell

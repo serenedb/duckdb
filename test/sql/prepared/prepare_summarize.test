@@ -16,6 +16,9 @@ query I nosort summarize
 EXECUTE query(1);
 
 statement ok
+DEALLOCATE query
+
+statement ok
 PREPARE query AS (SUMMARIZE SELECT * FROM accounts WHERE id = $1);
 
 query I nosort summarize
@@ -26,10 +29,16 @@ query I nosort describe
 DESCRIBE SELECT * FROM accounts WHERE id = 1;
 
 statement ok
+DEALLOCATE query
+
+statement ok
 PREPARE query AS DESCRIBE SELECT * FROM accounts WHERE id = $1;
 
 query I nosort describe
 EXECUTE query(1);
+
+statement ok
+DEALLOCATE query
 
 statement ok
 PREPARE query AS (DESCRIBE SELECT * FROM accounts WHERE id = $1);

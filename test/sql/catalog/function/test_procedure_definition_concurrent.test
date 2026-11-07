@@ -1,0 +1,30 @@
+# name: test/sql/catalog/function/test_procedure_definition_concurrent.test
+# description: Rendering a procedure's definition from several connections leaves its body intact
+# group: [function]
+
+statement ok
+CREATE TABLE log (s VARCHAR, n INTEGER);
+
+statement ok
+CREATE PROCEDURE p(x INTEGER) AS $$ INSERT INTO log VALUES ('a:' || x, x) $$ LANGUAGE sql;
+
+concurrentloop threadid 0 8
+
+loop i 0 200
+
+query I
+SELECT macro_definition FROM duckdb_functions() WHERE function_name = 'p';
+----
+INSERT INTO log (VALUES (('a:' || x), x))
+
+endloop
+
+endloop
+
+statement ok
+CALL p(1);
+
+query II
+SELECT s, n FROM log;
+----
+a:1	1

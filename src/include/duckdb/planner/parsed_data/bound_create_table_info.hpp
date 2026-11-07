@@ -8,6 +8,7 @@
 
 #pragma once
 
+#include "duckdb/catalog/permissions.hpp"
 #include "duckdb/parser/parsed_data/create_table_info.hpp"
 #include "duckdb/planner/bound_constraint.hpp"
 #include "duckdb/planner/expression.hpp"
@@ -21,6 +22,13 @@
 
 namespace duckdb {
 class CatalogEntry;
+
+struct BoundSerialSequence {
+	Identifier column;
+	Identifier name;
+	vector<Identifier> dependents;
+	Permissions permissions;
+};
 
 struct BoundCreateTableInfo {
 	explicit BoundCreateTableInfo(SchemaCatalogEntry &schema, unique_ptr<CreateInfo> base_p)
@@ -36,6 +44,8 @@ struct BoundCreateTableInfo {
 	ColumnDependencyManager column_dependency_manager;
 	//! List of constraints on the table
 	vector<unique_ptr<Constraint>> constraints;
+	SubDependency subdependency;
+	vector<BoundSerialSequence> serial_sequences;
 	//! The existing table data on disk (if any)
 	unique_ptr<PersistentTableData> data;
 	//! CREATE TABLE from QUERY
@@ -47,6 +57,7 @@ struct BoundCreateTableInfo {
 		D_ASSERT(base);
 		return base->Cast<CreateTableInfo>();
 	}
+	void AddSubDependency(AlterTableType alter, const Identifier &name);
 };
 
 } // namespace duckdb

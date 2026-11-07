@@ -40,6 +40,15 @@ struct QualifiedColumnEquality {
 
 using qualified_column_set_t = unordered_set<QualifiedColumnName, QualifiedColumnHashFunction, QualifiedColumnEquality>;
 
+struct QualifiedNameHashFunction {
+	uint64_t operator()(const QualifiedName &name) const {
+		return name.Hash();
+	}
+};
+
+template <class T>
+using qualified_name_map_t = unordered_map<QualifiedName, T, QualifiedNameHashFunction>;
+
 template <class T>
 using qualified_column_map_t =
     unordered_map<QualifiedColumnName, T, QualifiedColumnHashFunction, QualifiedColumnEquality>;

@@ -9,10 +9,11 @@ namespace duckdb {
 namespace {
 
 struct KurtosisState {
-	static constexpr const char *STATE_NAMES[] = {"n", "sum", "sum_sqr", "sum_cub", "sum_four"};
-	using STATE_TYPE = StructStateType<idx_t, double, double, double, double>;
+	static constexpr const char *STATE_NAMES[] = {"n", "shift", "sum", "sum_sqr", "sum_cub", "sum_four"};
+	using STATE_TYPE = StructStateType<idx_t, double, double, double, double, double>;
 
 	idx_t n;
+	double shift;
 	double sum;
 	double sum_sqr;
 	double sum_cub;
@@ -35,11 +36,16 @@ struct KurtosisOperation {
 
 	template <class INPUT_TYPE, class STATE, class OP>
 	static void Operation(STATE &state, const INPUT_TYPE &input, AggregateUnaryInput &unary_input) {
+		if (state.n == 0) {
+			state.shift = static_cast<double>(input);
+		}
 		state.n++;
-		state.sum += input;
-		state.sum_sqr += pow(input, 2);
-		state.sum_cub += pow(input, 3);
-		state.sum_four += pow(input, 4);
+		const double value = static_cast<double>(input) - state.shift;
+		state.sum += value;
+		const double square = value * value;
+		state.sum_sqr += square;
+		state.sum_cub += square * value;
+		state.sum_four += square * square;
 	}
 
 	template <class STATE, class OP>
@@ -47,11 +53,19 @@ struct KurtosisOperation {
 		if (source.n == 0) {
 			return;
 		}
+		if (target.n == 0) {
+			target = source;
+			return;
+		}
+		const double n = static_cast<double>(source.n);
+		const double d = source.shift - target.shift;
+		const double d2 = d * d;
 		target.n += source.n;
-		target.sum += source.sum;
-		target.sum_sqr += source.sum_sqr;
-		target.sum_cub += source.sum_cub;
-		target.sum_four += source.sum_four;
+		target.sum_four +=
+		    source.sum_four + 4 * d * source.sum_cub + 6 * d2 * source.sum_sqr + 4 * d2 * d * source.sum + n * d2 * d2;
+		target.sum_cub += source.sum_cub + 3 * d * source.sum_sqr + 3 * d2 * source.sum + n * d2 * d;
+		target.sum_sqr += source.sum_sqr + 2 * d * source.sum + n * d2;
+		target.sum += source.sum + n * d;
 	}
 
 	template <class TARGET_TYPE, class STATE>

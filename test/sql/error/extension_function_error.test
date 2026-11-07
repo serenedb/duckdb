@@ -46,10 +46,9 @@ Table with name TimeZone does not exist
 # after loading the extension the function works like a normal function
 require tpch
 
-statement error
+query I
 SELECT dbgen()
 ----
-Function "dbgen" is a table function but it was used as a scalar function
 
 statement error
 CALL dbge()

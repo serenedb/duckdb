@@ -38,41 +38,51 @@ public:
 	queue(queue<DATA_TYPE, CONTAINER, INTERNAL_SAFE> &&other) : original(std::move(other)) { // NOLINT
 	}
 
-	inline void clear() noexcept {
+	[[gnu::always_inline]] void clear() noexcept {
 		original::c.clear();
 	}
 
-	reference front() {
-		if (MemorySafety<SAFE>::ENABLED && original::empty()) {
-			ThrowQueueFrontOnEmpty();
+	[[gnu::always_inline]] reference front() {
+		if constexpr (MemorySafety<SAFE>::ENABLED) {
+			if (DUCKDB_UNLIKELY(original::empty())) {
+				ThrowQueueFrontOnEmpty();
+			}
 		}
 		return original::front();
 	}
 
-	const_reference front() const {
-		if (MemorySafety<SAFE>::ENABLED && original::empty()) {
-			ThrowQueueFrontOnEmpty();
+	[[gnu::always_inline]] const_reference front() const {
+		if constexpr (MemorySafety<SAFE>::ENABLED) {
+			if (DUCKDB_UNLIKELY(original::empty())) {
+				ThrowQueueFrontOnEmpty();
+			}
 		}
 		return original::front();
 	}
 
-	reference back() {
-		if (MemorySafety<SAFE>::ENABLED && original::empty()) {
-			ThrowQueueBackOnEmpty();
+	[[gnu::always_inline]] reference back() {
+		if constexpr (MemorySafety<SAFE>::ENABLED) {
+			if (DUCKDB_UNLIKELY(original::empty())) {
+				ThrowQueueBackOnEmpty();
+			}
 		}
 		return original::back();
 	}
 
-	const_reference back() const {
-		if (MemorySafety<SAFE>::ENABLED && original::empty()) {
-			ThrowQueueBackOnEmpty();
+	[[gnu::always_inline]] const_reference back() const {
+		if constexpr (MemorySafety<SAFE>::ENABLED) {
+			if (DUCKDB_UNLIKELY(original::empty())) {
+				ThrowQueueBackOnEmpty();
+			}
 		}
 		return original::back();
 	}
 
-	void pop() {
-		if (MemorySafety<SAFE>::ENABLED && original::empty()) {
-			ThrowQueuePopOnEmpty();
+	[[gnu::always_inline]] void pop() {
+		if constexpr (MemorySafety<SAFE>::ENABLED) {
+			if (DUCKDB_UNLIKELY(original::empty())) {
+				ThrowQueuePopOnEmpty();
+			}
 		}
 		original::pop();
 	}

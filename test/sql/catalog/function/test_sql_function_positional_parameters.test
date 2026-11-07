@@ -1,0 +1,131 @@
+# name: test/sql/catalog/function/test_sql_function_positional_parameters.test
+# description: $n in the body of a LANGUAGE sql function names its n-th parameter, as in PostgreSQL
+# group: [function]
+
+statement ok
+CREATE FUNCTION add_one(integer) RETURNS integer LANGUAGE sql RETURN $1 + 1;
+
+query I
+SELECT add_one(41);
+----
+42
+
+statement ok
+CREATE FUNCTION add_mixed(a integer, b integer) RETURNS integer LANGUAGE sql RETURN $1 + b;
+
+query I
+SELECT add_mixed(40, 2);
+----
+42
+
+statement ok
+CREATE FUNCTION add_atomic(integer, integer) RETURNS integer LANGUAGE sql BEGIN ATOMIC SELECT $1 + $2; END;
+
+query I
+SELECT add_atomic(40, 2);
+----
+42
+
+statement error
+CREATE FUNCTION add_missing(integer) RETURNS integer LANGUAGE sql RETURN $2;
+----
+Parameter expressions within macro's are not supported
+
+statement ok
+CREATE FUNCTION add_one_subquery(a integer) RETURNS integer LANGUAGE sql RETURN (SELECT $1 + 1);
+
+query I
+SELECT add_one_subquery(41);
+----
+42
+
+statement ok
+CREATE FUNCTION count_below(integer) RETURNS bigint LANGUAGE sql RETURN (SELECT count(*) FROM range(10) t(i) WHERE i < $1);
+
+query I
+SELECT count_below(4);
+----
+4
+
+statement ok
+CREATE FUNCTION in_range(integer) RETURNS boolean LANGUAGE sql BEGIN ATOMIC SELECT EXISTS (SELECT 1 FROM range(10) t(i) WHERE i = $1); END;
+
+query II
+SELECT in_range(4), in_range(40);
+----
+true	false
+
+statement ok
+CREATE FUNCTION is_double_above(integer) RETURNS boolean LANGUAGE sql BEGIN ATOMIC SELECT $1 IN (SELECT i * 2 FROM range(10) t(i) WHERE i > $1 - 3); END;
+
+query II
+SELECT is_double_above(4), is_double_above(5);
+----
+true	false
+
+statement ok
+CREATE FUNCTION add_one_nested(integer) RETURNS integer LANGUAGE sql BEGIN ATOMIC SELECT (SELECT (SELECT $1) + 1); END;
+
+query I
+SELECT add_one_nested(41);
+----
+42
+
+statement ok
+CREATE FUNCTION doubled_return(integer) RETURNS integer RETURN $1 * 2;
+
+query I
+SELECT doubled_return(21);
+----
+42
+
+statement ok
+CREATE FUNCTION add_one_atomic(integer) RETURNS integer BEGIN ATOMIC SELECT $1 + 1; END;
+
+query I
+SELECT add_one_atomic(41);
+----
+42
+
+statement ok
+CREATE TABLE named_rows (id INTEGER, v VARCHAR);
+
+statement ok
+INSERT INTO named_rows VALUES (1, 'a'), (2, 'b'), (3, 'c');
+
+statement ok
+CREATE FUNCTION count_named_below(v VARCHAR) RETURNS BIGINT LANGUAGE sql AS 'SELECT count(*) FROM named_rows WHERE named_rows.v < $1';
+
+query I
+SELECT count_named_below('c');
+----
+2
+
+statement ok
+CREATE FUNCTION numeric_kind(numeric) RETURNS VARCHAR LANGUAGE sql AS 'SELECT typeof($1)';
+
+query T
+SELECT numeric_kind(5);
+----
+DECIMAL(18,3)
+
+statement ok
+CREATE TYPE feeling AS ENUM ('sad', 'ok');
+
+statement ok
+CREATE FUNCTION feeling_kind(feeling) RETURNS VARCHAR RETURN typeof($1);
+
+query T
+SELECT feeling_kind('ok'::feeling);
+----
+ENUM('sad', 'ok')
+
+statement error
+SELECT feeling_kind('ok');
+----
+does not support the supplied arguments
+
+statement error
+CREATE FUNCTION missing_kind(no_such_type) RETURNS VARCHAR RETURN typeof($1);
+----
+no_such_type

@@ -17,7 +17,7 @@ keyword_categories_t DuckDBKeywordHelper::GetIdentifierMask(SuggestionState type
 	return DefaultKeywordMaps::GetIdentifierMask(type);
 }
 
-KeywordCategory DuckDBKeywordHelper::GetKeywordCategory(const string &text) const {
+KeywordCategory DuckDBKeywordHelper::GetKeywordCategory(std::string_view text) const {
 	return DefaultKeywordMaps::GetKeywordCategory(LookupKeyword(text));
 }
 

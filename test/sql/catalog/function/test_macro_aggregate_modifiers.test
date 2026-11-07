@@ -1,0 +1,50 @@
+# name: test/sql/catalog/function/test_macro_aggregate_modifiers.test
+# description: DISTINCT, FILTER and ORDER BY on a macro call apply to the aggregates in its body
+# group: [function]
+
+statement ok
+CREATE MACRO my_list(x) AS list(x)
+
+query I
+SELECT my_list(x ORDER BY x DESC) FROM (VALUES (1), (3), (2)) t(x)
+----
+[3, 2, 1]
+
+query I
+SELECT my_list(DISTINCT x ORDER BY x) FROM (VALUES (2), (1), (2)) t(x)
+----
+[1, 2]
+
+query I
+SELECT my_list(x ORDER BY x) FILTER (WHERE x > 1) FROM (VALUES (1), (2), (3)) t(x)
+----
+[2, 3]
+
+statement ok
+CREATE MACRO my_sorted_list(x) AS list(x ORDER BY x DESC)
+
+query I
+SELECT my_sorted_list(x ORDER BY x % 2) FROM (VALUES (1), (2), (3), (4)) t(x)
+----
+[4, 2, 3, 1]
+
+statement ok
+CREATE MACRO my_bounds(x) AS min(x) || '-' || max(x)
+
+query I
+SELECT my_bounds(x) FILTER (WHERE x < 3) FROM (VALUES (1), (2), (3)) t(x)
+----
+1-2
+
+statement error
+SELECT my_bounds(DISTINCT x) FROM (VALUES (1), (2)) t(x)
+----
+is a Macro Function. "DISTINCT", "FILTER", and "ORDER BY" are only applicable to window and aggregate functions.
+
+statement ok
+CREATE MACRO my_plus(x) AS x + 1
+
+statement error
+SELECT my_plus(x ORDER BY x) FROM (VALUES (1)) t(x)
+----
+is a Macro Function. "DISTINCT", "FILTER", and "ORDER BY" are only applicable to window and aggregate functions.

@@ -2,9 +2,12 @@
 
 #include "duckdb/execution/expression_executor.hpp"
 #include "duckdb/function/arg_properties.hpp"
+#include "duckdb/function/lambda_functions.hpp"
+#include "duckdb/function/scalar/generic_functions.hpp"
 #include "duckdb/planner/expression/bound_comparison_expression.hpp"
 #include "duckdb/planner/expression/bound_constant_expression.hpp"
 #include "duckdb/planner/expression/bound_function_expression.hpp"
+#include "duckdb/planner/expression/bound_lambda_expression.hpp"
 #include "duckdb/storage/statistics/numeric_stats.hpp"
 #include "duckdb/storage/statistics/string_stats.hpp"
 
@@ -19,9 +22,8 @@ bool TryEvaluateAtConstants(ClientContext &context, const BoundFunctionExpressio
 		children.push_back(make_uniq<BoundConstantExpression>(v));
 	}
 	// Functions such as alias() inspect expression metadata during execution.
-	auto clone = func.Copy();
-	clone->Cast<BoundFunctionExpression>().GetChildrenMutable() = std::move(children);
-	return ExpressionExecutor::TryEvaluateScalar(context, *clone, result);
+	auto clone = func.CopyWithChildren(std::move(children));
+	return ExpressionExecutor::TryEvaluateFoldable(context, *clone, result);
 }
 
 // Equal bounds need not imply identical inputs for certain types, so we skip this optimization for those values.
@@ -34,6 +36,17 @@ bool CanInferConstantFromNumericBounds(const Value &value) {
 		return value.GetValue<double>() != 0.0;
 	case PhysicalType::INTERVAL:
 		return false;
+	default:
+		return true;
+	}
+}
+
+bool IsFiniteBound(const Value &value) {
+	switch (value.type().id()) {
+	case LogicalTypeId::FLOAT:
+		return Value::IsFinite(value.GetValue<float>());
+	case LogicalTypeId::DOUBLE:
+		return Value::IsFinite(value.GetValue<double>());
 	default:
 		return true;
 	}
@@ -84,10 +97,8 @@ unique_ptr<BaseStatistics> StatisticsPropagator::PropagateConstantInputs(ClientC
 		auto &child = *func.GetChildren()[idx];
 		auto &stats = child_stats[idx];
 		Value value;
-		if (child.IsFoldable()) {
-			if (!ExpressionExecutor::TryEvaluateScalar(context, child, value)) {
-				return nullptr;
-			}
+		if (child.GetExpressionClass() == ExpressionClass::BOUND_CONSTANT) {
+			value = child.Cast<BoundConstantExpression>().GetValue();
 		} else if (!TryInferConstantBounds(stats, value)) {
 			return nullptr;
 		}
@@ -126,13 +137,13 @@ unique_ptr<BaseStatistics> StatisticsPropagator::PropagateMonotoneBounds(ClientC
 		auto &cs = child_stats[i];
 		auto &props = func.Function().GetArgProperties(i);
 
-		if (child.IsFoldable()) {
-			Value v;
-			if (!ExpressionExecutor::TryEvaluateScalar(context, child, v) || v.IsNull()) {
+		if (child.GetExpressionClass() == ExpressionClass::BOUND_CONSTANT) {
+			auto &v = child.Cast<BoundConstantExpression>().GetValue();
+			if (v.IsNull()) {
 				return nullptr;
 			}
 			lo_args[i] = v;
-			hi_args[i] = std::move(v);
+			hi_args[i] = v;
 			continue;
 		}
 
@@ -145,6 +156,9 @@ unique_ptr<BaseStatistics> StatisticsPropagator::PropagateMonotoneBounds(ClientC
 		}
 		Value lo = NumericStats::Min(cs);
 		Value hi = NumericStats::Max(cs);
+		if (!IsFiniteBound(lo) || !IsFiniteBound(hi)) {
+			return nullptr;
+		}
 
 		if (!IsKnownMonotonic(m)) {
 			return nullptr;
@@ -190,7 +204,7 @@ unique_ptr<BaseStatistics> StatisticsPropagator::PropagateMonotoneBounds(ClientC
 		return nullptr;
 	}
 	if (out_hi < out_lo) {
-		throw InternalException("Monotonic arg annotation violated for '%s': output min exceeds output max",
+		throw InternalException("Monotonic arg annotation violated for %s: output min exceeds output max",
 		                        func.Function().GetName());
 	}
 
@@ -223,6 +237,9 @@ unique_ptr<BaseStatistics> StatisticsPropagator::PropagateExpression(BoundFuncti
 			stats.push_back(stat->Copy());
 		}
 	}
+	if (func.Function().GetName() == InvokeFun::Name) {
+		return PropagateInvoke(func, stats);
+	}
 	auto constant_stats = PropagateConstantInputs(context, func, stats);
 	if (constant_stats) {
 		return constant_stats;
@@ -232,6 +249,27 @@ unique_ptr<BaseStatistics> StatisticsPropagator::PropagateExpression(BoundFuncti
 		return func.Function().GetStatisticsCallback()(context, input);
 	}
 	return PropagateMonotoneBounds(context, func, stats);
+}
+
+unique_ptr<BaseStatistics> StatisticsPropagator::PropagateInvoke(BoundFunctionExpression &invoke,
+                                                                 const vector<BaseStatistics> &stats) {
+	auto &children = invoke.GetChildrenMutable();
+	auto &lambda = children[0]->Cast<BoundLambdaExpression>();
+	const auto parameter_count = lambda.ParameterCount();
+	vector<BaseStatistics> columns;
+	columns.reserve(children.size() - 1);
+	for (idx_t column = 0; column + 1 < children.size(); column++) {
+		columns.push_back(stats[column < parameter_count ? parameter_count - column : column + 1].Copy());
+	}
+	auto body = lambda.LambdaExpr()->Copy();
+	auto outer_columns = lambda_columns;
+	lambda_columns = &columns;
+	auto result = PropagateExpression(body);
+	lambda_columns = outer_columns;
+	shared_ptr<Expression> shared_body = std::move(body);
+	lambda.SetLambdaExpr(shared_body);
+	invoke.BindInfoMutable()->Cast<LambdaFunctionData>().SetLambdaExpression(std::move(shared_body));
+	return result;
 }
 
 } // namespace duckdb

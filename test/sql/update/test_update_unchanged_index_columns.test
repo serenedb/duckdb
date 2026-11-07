@@ -1,0 +1,489 @@
+# name: test/sql/update/test_update_unchanged_index_columns.test
+# description: An UPDATE that sets indexed columns updates in place the rows whose indexed values do not change
+# group: [update]
+
+statement ok
+CREATE TABLE t (id INTEGER PRIMARY KEY, u INTEGER UNIQUE, v VARCHAR);
+
+statement ok
+INSERT INTO t SELECT i, i * 10, 'v' || i FROM range(1, 5001) r(i);
+
+statement ok
+UPDATE t SET u = u, v = v || '!';
+
+query II
+SELECT count(*), count(*) FILTER (WHERE v = 'v' || id || '!') FROM t;
+----
+5000	5000
+
+query III
+SELECT * FROM t WHERE u = 420;
+----
+42	420	v42!
+
+statement error
+INSERT INTO t VALUES (6000, 420, 'dup');
+----
+<REGEX>:Constraint Error.*Duplicate key.*
+
+# some rows keep their indexed value, others change it
+statement ok
+UPDATE t SET u = CASE WHEN id % 2 = 0 THEN u + 1 ELSE u END, v = 'w' || id WHERE id <= 10;
+
+query III
+SELECT * FROM t WHERE id <= 4 ORDER BY id;
+----
+1	10	w1
+2	21	w2
+3	30	w3
+4	41	w4
+
+query I
+SELECT id FROM t WHERE u = 21;
+----
+2
+
+query I
+SELECT count(*) FROM t WHERE u = 20;
+----
+0
+
+statement error
+UPDATE t SET u = 30, v = 'x' WHERE id = 2;
+----
+<REGEX>:Constraint Error.*Duplicate key.*
+
+# NULL indexed values
+statement ok
+CREATE TABLE n (id INTEGER PRIMARY KEY, u INTEGER UNIQUE, v INTEGER);
+
+statement ok
+INSERT INTO n VALUES (1, NULL, 1), (2, NULL, 2), (3, 30, 3);
+
+statement ok
+UPDATE n SET u = CASE id WHEN 2 THEN 20 WHEN 3 THEN NULL ELSE u END, v = v * 10;
+
+query III
+SELECT * FROM n ORDER BY id;
+----
+1	NULL	10
+2	20	20
+3	NULL	30
+
+query I
+SELECT id FROM n WHERE u = 20;
+----
+2
+
+# a unique column referenced by a foreign key can be set to its own value
+statement ok
+CREATE TABLE p (id INTEGER PRIMARY KEY, u INTEGER UNIQUE, v INTEGER);
+
+statement ok
+CREATE TABLE c (pu INTEGER REFERENCES p (u));
+
+statement ok
+INSERT INTO p VALUES (1, 10, 100), (2, 20, 200);
+
+statement ok
+INSERT INTO c VALUES (10);
+
+statement ok
+UPDATE p SET u = u, v = v + 1;
+
+query III
+SELECT * FROM p ORDER BY id;
+----
+1	10	101
+2	20	201
+
+statement error
+UPDATE p SET u = 11 WHERE id = 1;
+----
+<REGEX>:Constraint Error.*foreign key.*
+
+statement ok
+UPDATE p SET u = 21 WHERE id = 2;
+
+# rows inserted by the same transaction, and a rollback
+statement ok
+BEGIN;
+
+statement ok
+INSERT INTO t VALUES (7000, 70000, 'local');
+
+statement ok
+UPDATE t SET u = u, v = 'local!' WHERE id >= 7000 OR id = 1;
+
+query III
+SELECT * FROM t WHERE id IN (1, 7000) ORDER BY id;
+----
+1	10	local!
+7000	70000	local!
+
+statement ok
+ROLLBACK;
+
+query III
+SELECT * FROM t WHERE id IN (1, 7000) ORDER BY id;
+----
+1	10	w1
+
+# a CHECK constraint over an indexed and another column keeps the DELETE + INSERT
+statement ok
+CREATE TABLE k (id INTEGER PRIMARY KEY, u INTEGER UNIQUE, v INTEGER, CHECK (v > u));
+
+statement ok
+INSERT INTO k VALUES (1, 10, 11), (2, 20, 21);
+
+statement ok
+UPDATE k SET u = u, v = v + 1;
+
+statement error
+UPDATE k SET u = u, v = 0 WHERE id = 1;
+----
+<REGEX>:Constraint Error.*CHECK constraint.*
+
+query III
+SELECT * FROM k ORDER BY id;
+----
+1	10	12
+2	20	22
+
+# equal but different floating point values are written
+statement ok
+CREATE TABLE d (id INTEGER PRIMARY KEY, u DOUBLE UNIQUE, v INTEGER);
+
+statement ok
+INSERT INTO d VALUES (1, -0.0, 1);
+
+statement ok
+UPDATE d SET u = 0.0, v = 2;
+
+query II
+SELECT signbit(u), v FROM d;
+----
+false	2
+
+# a unique index over two columns
+statement ok
+CREATE TABLE m (id INTEGER PRIMARY KEY, a INTEGER, b INTEGER, v INTEGER, UNIQUE (a, b));
+
+statement ok
+INSERT INTO m VALUES (1, 1, 1, 1), (2, 1, 2, 2);
+
+statement ok
+UPDATE m SET a = a, v = v + 10;
+
+statement ok
+UPDATE m SET b = 3, v = v + 100 WHERE id = 2;
+
+query IIII
+SELECT * FROM m ORDER BY id;
+----
+1	1	1	11
+2	1	3	112
+
+statement error
+INSERT INTO m VALUES (3, 1, 3, 0);
+----
+<REGEX>:Constraint Error.*Duplicate key.*
+
+# UPDATE ... FROM
+statement ok
+CREATE TABLE s (id INTEGER, u INTEGER, v VARCHAR);
+
+statement ok
+INSERT INTO s SELECT id, u, 'from' FROM t WHERE id BETWEEN 100 AND 3099;
+
+statement ok
+UPDATE t SET u = s.u, v = s.v FROM s WHERE t.id = s.id;
+
+query I
+SELECT count(*) FROM t WHERE v = 'from';
+----
+3000
+
+query III
+SELECT * FROM t WHERE u = 1500;
+----
+150	1500	from
+
+# RETURNING
+query III
+UPDATE t SET u = u, v = 'ret' WHERE id = 3 RETURNING *;
+----
+3	30	ret
+
+query III rowsort
+UPDATE p SET u = u, v = v + 1 RETURNING *;
+----
+1	10	102
+2	21	202
+
+# the previous values of the indexed columns an UPDATE sets reach the delete indexes, so later statements of the
+# same transaction can take them, also when every row is deleted and inserted
+foreach force false true
+
+statement ok
+SET force_update_to_del_and_insert = {force};
+
+statement ok
+CREATE TABLE w_{force} (id INTEGER PRIMARY KEY, u INTEGER UNIQUE, v INTEGER);
+
+statement ok
+INSERT INTO w_{force} VALUES (1, 10, 1), (2, 20, 2);
+
+statement ok
+BEGIN;
+
+statement ok
+UPDATE w_{force} SET u = 30, v = 3 WHERE id = 1;
+
+statement ok
+UPDATE w_{force} SET u = 10, v = 4 WHERE id = 2;
+
+statement ok
+INSERT INTO w_{force} VALUES (3, 20, 5);
+
+statement ok
+COMMIT;
+
+query III
+SELECT * FROM w_{force} ORDER BY id;
+----
+1	30	3
+2	10	4
+3	20	5
+
+statement ok
+CREATE TABLE l_{force} (id INTEGER PRIMARY KEY, u INTEGER UNIQUE, xs INTEGER[]);
+
+statement ok
+INSERT INTO l_{force} VALUES (1, 10, [1]), (2, 20, [2]);
+
+statement ok
+BEGIN;
+
+statement ok
+UPDATE l_{force} SET xs = xs || [3];
+
+statement ok
+UPDATE l_{force} SET u = u + 1, xs = [0] WHERE id = 1;
+
+statement ok
+INSERT INTO l_{force} VALUES (3, 10, []);
+
+statement ok
+COMMIT;
+
+query III
+SELECT * FROM l_{force} ORDER BY id;
+----
+1	11	[0]
+2	20	[2, 3]
+3	10	[]
+
+statement ok
+CREATE TABLE g_{force} (id INTEGER PRIMARY KEY, a INTEGER, v INTEGER);
+
+statement ok
+CREATE INDEX g_a_{force} ON g_{force} (a);
+
+statement ok
+INSERT INTO g_{force} SELECT i, i % 7, i FROM range(1, 3001) r(i);
+
+statement ok
+UPDATE g_{force} SET a = CASE WHEN id % 3 = 0 THEN a + 100 ELSE a END, v = -v;
+
+query II
+SELECT count(*), sum(v) FROM g_{force} WHERE a >= 100;
+----
+1000	-1501500
+
+query I
+SELECT count(*) FROM g_{force} WHERE a = 3;
+----
+286
+
+statement error
+INSERT INTO g_{force} VALUES (3000, 0, 0);
+----
+<REGEX>:Constraint Error.*Duplicate key.*
+
+# an UPDATE ... FROM that matches each row twice updates it once, with the previous values of that row
+statement ok
+CREATE TABLE f_{force} (id INTEGER PRIMARY KEY, u INTEGER UNIQUE, v INTEGER);
+
+statement ok
+INSERT INTO f_{force} SELECT i, i * 10, 0 FROM range(1, 1001) r(i);
+
+statement ok
+BEGIN;
+
+statement ok
+UPDATE f_{force} SET u = CASE WHEN f_{force}.id % 2 = 0 THEN -f_{force}.u ELSE f_{force}.u END, v = src.i
+FROM (SELECT (i + 1) // 2 AS i FROM range(2000, 0, -1) r(i)) src WHERE f_{force}.id = src.i;
+
+statement ok
+INSERT INTO f_{force} SELECT i + 2000, i * 10, 0 FROM range(2, 1001, 2) r(i);
+
+statement ok
+COMMIT;
+
+query III
+SELECT count(*) FILTER (WHERE id <= 1000 AND u = CASE WHEN id % 2 = 0 THEN -id * 10 ELSE id * 10 END AND v = id), count(*) FILTER (WHERE id > 2000 AND u = (id - 2000) * 10), count(*) FROM f_{force};
+----
+1000	500	1500
+
+statement error
+INSERT INTO f_{force} VALUES (5000, 10, 0);
+----
+<REGEX>:Constraint Error.*Duplicate key.*
+
+# the same when the UPDATE does not read the column it sets, so it fetches the previous values by row id
+statement ok
+BEGIN;
+
+statement ok
+UPDATE f_{force} SET u = -src.i * 10, v = -src.i
+FROM (SELECT (i + 1) // 2 AS i FROM range(2000, 0, -1) r(i)) src WHERE f_{force}.id = src.i;
+
+statement ok
+INSERT INTO f_{force} SELECT i + 4000, i * 10, 0 FROM range(1, 1001, 2) r(i);
+
+statement ok
+COMMIT;
+
+query IIII
+SELECT count(*) FILTER (WHERE id <= 1000 AND u = -id * 10 AND v = -id), count(*) FILTER (WHERE id BETWEEN 2001 AND 3000 AND u = (id - 2000) * 10), count(*) FILTER (WHERE id > 4000 AND u = (id - 4000) * 10), count(*) FROM f_{force};
+----
+1000	500	500	2000
+
+statement error
+INSERT INTO f_{force} VALUES (6000, 30, 0);
+----
+<REGEX>:Constraint Error.*Duplicate key.*
+
+endloop
+
+statement ok
+RESET force_update_to_del_and_insert;
+
+# MERGE updates in place the rows that keep their indexed values
+statement ok
+CREATE TABLE mp (id INTEGER PRIMARY KEY, u INTEGER UNIQUE, v INTEGER);
+
+statement ok
+CREATE TABLE mc (pu INTEGER REFERENCES mp (u));
+
+statement ok
+INSERT INTO mp VALUES (1, 10, 100), (2, 20, 200), (3, 30, 300);
+
+statement ok
+INSERT INTO mc VALUES (10), (20);
+
+statement ok
+MERGE INTO mp USING (VALUES (1, 10, 101), (3, 31, 301)) s(id, u, v) ON mp.id = s.id
+WHEN MATCHED THEN UPDATE SET u = s.u, v = s.v;
+
+query III
+SELECT * FROM mp ORDER BY id;
+----
+1	10	101
+2	20	200
+3	31	301
+
+statement error
+MERGE INTO mp USING (VALUES (1, 11, 102)) s(id, u, v) ON mp.id = s.id WHEN MATCHED THEN UPDATE SET u = s.u, v = s.v;
+----
+<REGEX>:Constraint Error.*foreign key.*
+
+query IIII rowsort
+MERGE INTO mp USING (VALUES (1, 10, 103), (3, 32, 303), (4, 40, 400)) s(id, u, v) ON mp.id = s.id
+WHEN MATCHED THEN UPDATE SET u = s.u, v = s.v
+WHEN NOT MATCHED THEN INSERT VALUES (s.id, s.u, s.v)
+RETURNING merge_action, *;
+----
+INSERT	4	40	400
+UPDATE	1	10	103
+UPDATE	3	32	303
+
+# each UPDATE action of a MERGE reads the previous values of the indexed columns that it sets
+statement ok
+MERGE INTO mp USING (VALUES (3, 34, 304), (4, 40, 401)) s(id, u, v) ON mp.id = s.id
+WHEN MATCHED AND s.u = mp.u THEN UPDATE SET u = s.u, v = s.v
+WHEN MATCHED THEN UPDATE SET v = s.v, u = s.u;
+
+query III
+SELECT * FROM mp WHERE id >= 3 ORDER BY id;
+----
+3	34	304
+4	40	401
+
+query I
+SELECT id FROM mp WHERE u = 34;
+----
+3
+
+query I
+SELECT count(*) FROM mp WHERE u = 32;
+----
+0
+
+# INSERT ... ON CONFLICT DO UPDATE is a MERGE
+statement ok
+INSERT INTO mp VALUES (2, 20, 202), (5, 50, 500) ON CONFLICT (id) DO UPDATE SET u = excluded.u, v = excluded.v;
+
+query III
+INSERT INTO mp VALUES (1, 10, 104) ON CONFLICT (id) DO UPDATE SET u = excluded.u, v = excluded.v RETURNING *;
+----
+1	10	104
+
+statement error
+INSERT INTO mp VALUES (2, 21, 203) ON CONFLICT (id) DO UPDATE SET u = excluded.u, v = excluded.v;
+----
+<REGEX>:Constraint Error.*foreign key.*
+
+query III
+SELECT * FROM mp ORDER BY id;
+----
+1	10	104
+2	20	202
+3	34	304
+4	40	401
+5	50	500
+
+# INSERT OR REPLACE sets every column but the unique ones, here one of a non-unique index
+statement ok
+CREATE TABLE rp (id INTEGER PRIMARY KEY, a INTEGER, v INTEGER);
+
+statement ok
+CREATE INDEX rp_a ON rp (a);
+
+statement ok
+INSERT INTO rp VALUES (1, 1, 1), (2, 2, 2);
+
+statement ok
+INSERT OR REPLACE INTO rp VALUES (1, 1, 10), (2, 3, 20);
+
+query III
+SELECT * FROM rp ORDER BY id;
+----
+1	1	10
+2	3	20
+
+query I
+SELECT id FROM rp WHERE a = 1;
+----
+1
+
+query I
+SELECT id FROM rp WHERE a = 3;
+----
+2
+
+query I
+SELECT count(*) FROM rp WHERE a = 2;
+----
+0

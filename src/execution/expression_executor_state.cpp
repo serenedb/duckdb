@@ -1,6 +1,7 @@
 #include "duckdb/execution/expression_executor_state.hpp"
 
 #include "duckdb/execution/expression_executor.hpp"
+#include "duckdb/main/client_context.hpp"
 #include "duckdb/planner/expression.hpp"
 #include "duckdb/planner/expression/bound_function_expression.hpp"
 #include "duckdb/common/exception/binder_exception.hpp"
@@ -33,6 +34,12 @@ bool ExpressionState::HasContext() {
 	return root.executor->HasContext();
 }
 
+void ExpressionState::InterruptCheck() {
+	if (HasContext()) {
+		GetContext().InterruptCheck();
+	}
+}
+
 ClientContext &ExpressionState::GetContext() {
 	if (!HasContext()) {
 		throw BinderException("Cannot use %s in this context",
@@ -61,8 +68,11 @@ void ExpressionState::ResetDictionaryStates() {
 }
 
 void ExpressionExecutorState::Verify() {
+#ifdef D_ASSERT_IS_ENABLED
+	DUCKDB_DEBUG_VERIFY_GUARD();
 	D_ASSERT(executor);
 	root_state->Verify(*this);
+#endif
 }
 
 } // namespace duckdb

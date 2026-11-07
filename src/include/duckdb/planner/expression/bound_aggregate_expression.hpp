@@ -77,17 +77,20 @@ public:
 	bool IsFoldable() const override {
 		return false;
 	}
-	bool IsVolatile() const override;
+	using Expression::IsVolatile;
 	bool PropagatesNullValues() const override;
 
 	string ToString() const override;
 
-	hash_t Hash() const override;
 	bool Equals(const BaseExpression &other) const override;
 	unique_ptr<Expression> Copy() const override;
 
 	void Serialize(Serializer &serializer) const override;
 	static unique_ptr<Expression> Deserialize(Deserializer &deserializer);
+
+protected:
+	bool IsNodeVolatile() const override;
+	hash_t NodeHash() const override;
 
 private:
 	//! The bound function expression

@@ -166,12 +166,12 @@ duckdb_logical_type duckdb_param_logical_type(duckdb_prepared_statement prepared
 
 	LogicalType param_type;
 
-	if (wrapper->statement->TryGetParameterType(duckdb::Identifier(identifier), param_type)) {
+	if (wrapper->statement->TryGetParameterType(identifier, param_type)) {
 		return reinterpret_cast<duckdb_logical_type>(new LogicalType(param_type));
 	}
 	// The value_map is gone after executing the prepared statement
 	// See if this is the case and we still have a value registered for it
-	auto it = wrapper->values.find(duckdb::Identifier(identifier));
+	auto it = wrapper->values.find(identifier);
 	if (it != wrapper->values.end()) {
 		return reinterpret_cast<duckdb_logical_type>(new LogicalType(it->second.return_type));
 	}

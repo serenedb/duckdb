@@ -66,7 +66,7 @@ public:
 	ObjectCache(idx_t max_memory, BufferPool &buffer_pool_p) : lru_cache(max_memory), buffer_pool(buffer_pool_p) {
 	}
 
-	shared_ptr<ObjectCacheEntry> GetObject(const string &key) {
+	shared_ptr<ObjectCacheEntry> GetObject(std::string_view key) {
 		const lock_guard<mutex> lock(lock_mutex);
 		auto non_evictable_it = non_evictable_entries.find(key);
 		if (non_evictable_it != non_evictable_entries.end()) {
@@ -76,7 +76,7 @@ public:
 	}
 
 	template <class T>
-	shared_ptr<T> Get(const string &key) {
+	shared_ptr<T> Get(std::string_view key) {
 		shared_ptr<ObjectCacheEntry> object = GetObject(key);
 		if (!object || object->GetObjectType() != T::ObjectType()) {
 			return nullptr;
@@ -85,7 +85,7 @@ public:
 	}
 
 	template <class T, class... ARGS>
-	shared_ptr<T> GetOrCreate(const string &key, ARGS &&... args) {
+	shared_ptr<T> GetOrCreate(std::string_view key, ARGS &&... args) {
 		const lock_guard<mutex> lock(lock_mutex);
 
 		// Check non-evictable entries first
@@ -112,13 +112,13 @@ public:
 		const auto estimated_memory = value->GetEstimatedCacheMemory();
 		const bool is_evictable = estimated_memory.IsValid();
 		if (!is_evictable) {
-			non_evictable_entries[key] = value;
+			non_evictable_entries.emplace(key, value);
 			return value;
 		}
 
 		auto reservation =
 		    make_uniq<TempBufferPoolReservation>(MemoryTag::OBJECT_CACHE, buffer_pool, estimated_memory.GetIndex());
-		lru_cache.Put(key, value, std::move(reservation));
+		lru_cache.Put(string(key), value, std::move(reservation));
 		return value;
 	}
 
@@ -140,7 +140,7 @@ public:
 		lru_cache.Put(std::move(key), std::move(value), std::move(reservation));
 	}
 
-	void Delete(const string &key) {
+	void Delete(std::string_view key) {
 		const lock_guard<mutex> lock(lock_mutex);
 		auto iter = non_evictable_entries.find(key);
 		if (iter != non_evictable_entries.end()) {
@@ -154,23 +154,23 @@ public:
 	//! ObjectType so that callers can pass a natural key (e.g. a file path) without having to build a unique
 	//! cache key themselves.
 	template <class T>
-	shared_ptr<T> GetWithTypePrefix(const string &key) {
+	shared_ptr<T> GetWithTypePrefix(std::string_view key) {
 		return Get<T>(MakeCacheKey<T>(key));
 	}
 
 	template <class T, class... ARGS>
-	shared_ptr<T> GetOrCreateWithTypePrefix(const string &key, ARGS &&... args) {
+	shared_ptr<T> GetOrCreateWithTypePrefix(std::string_view key, ARGS &&... args) {
 		return GetOrCreate<T>(MakeCacheKey<T>(key), std::forward<ARGS>(args)...);
 	}
 
 	template <class T>
-	void PutWithTypePrefix(const string &key,
+	void PutWithTypePrefix(std::string_view key,
 	                       shared_ptr<ObjectCacheEntry> value) { // NOLINT(performance-unnecessary-value-param)
 		Put(MakeCacheKey<T>(key), std::move(value));
 	}
 
 	template <class T>
-	void DeleteWithTypePrefix(const string &key) {
+	void DeleteWithTypePrefix(std::string_view key) {
 		Delete(MakeCacheKey<T>(key));
 	}
 
@@ -202,7 +202,7 @@ private:
 	//! Build the internal cache key for a typed entry by namespacing the caller-provided key with the entry's
 	//! ObjectType.
 	template <class T>
-	static string MakeCacheKey(const string &key) {
+	static string MakeCacheKey(std::string_view key) {
 		return StringUtil::Format("%s-%s", T::ObjectType(), key);
 	}
 

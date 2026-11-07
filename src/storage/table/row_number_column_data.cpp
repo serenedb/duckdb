@@ -14,6 +14,7 @@ idx_t RowNumberColumnData::GetRowNumberBase(ColumnScanState &state) {
 }
 
 FilterPropagateResult RowNumberColumnData::CheckZonemap(ColumnScanState &state, TableFilter &filter,
+                                                        TableFilterState &filter_state,
                                                         optional_ptr<SegmentNode<ColumnSegment>> &checked_segment) {
 	// row_number columns don't have zonemaps - we cannot prune based on row number
 	checked_segment = nullptr;
@@ -25,6 +26,11 @@ void RowNumberColumnData::InitializePrefetch(PrefetchState &prefetch_state, Colu
 
 void RowNumberColumnData::InitializeScan(ColumnScanState &state) {
 	InitializeScanWithOffset(state, 0);
+}
+
+void RowNumberColumnData::ReinitializeScan(ColumnScanState &state) {
+	// generated column: no pinned block or per-segment decode state to keep warm; a fresh init is free.
+	InitializeScan(state);
 }
 
 void RowNumberColumnData::InitializeScanWithOffset(ColumnScanState &state, idx_t row_idx) {

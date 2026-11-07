@@ -1,0 +1,218 @@
+# name: test/sql/alter/alter_col/test_set_not_null_after_update.test
+# description: SET NOT NULL and ADD CHECK verify the rows the transaction itself updated
+# group: [alter_col]
+
+statement ok
+CREATE TABLE t(i INTEGER, j INTEGER)
+
+statement ok
+INSERT INTO t SELECT i, NULL FROM range(3000) tbl(i)
+
+statement ok
+BEGIN TRANSACTION
+
+statement ok
+UPDATE t SET j = i
+
+statement ok
+ALTER TABLE t ALTER COLUMN j SET NOT NULL
+
+statement ok
+COMMIT
+
+statement error
+INSERT INTO t VALUES (1, NULL)
+----
+NOT NULL constraint failed
+
+statement ok
+CREATE TABLE u(i INTEGER, j INTEGER, s VARCHAR)
+
+statement ok
+INSERT INTO u SELECT i, i, 'short' FROM range(3000) tbl(i)
+
+statement ok
+BEGIN TRANSACTION
+
+statement ok
+UPDATE u SET j = NULL WHERE i = 2500
+
+statement error
+ALTER TABLE u ALTER COLUMN j SET NOT NULL
+----
+NOT NULL constraint failed
+
+statement ok
+ROLLBACK
+
+statement ok
+BEGIN TRANSACTION
+
+statement ok
+UPDATE u SET j = NULL WHERE i = 0
+
+statement error
+ALTER TABLE u ALTER COLUMN j SET NOT NULL
+----
+NOT NULL constraint failed
+
+statement ok
+ROLLBACK
+
+statement ok
+BEGIN TRANSACTION
+
+statement ok
+UPDATE u SET j = NULL WHERE i = 1000
+
+statement ok
+UPDATE u SET j = 1000 WHERE i = 1000
+
+statement ok
+ALTER TABLE u ALTER COLUMN j SET NOT NULL
+
+statement ok
+ROLLBACK
+
+statement ok
+BEGIN TRANSACTION
+
+statement ok
+UPDATE u SET j = NULL WHERE i = 2000
+
+statement ok
+DELETE FROM u WHERE i = 2000
+
+statement ok
+ALTER TABLE u ALTER COLUMN j SET NOT NULL
+
+statement ok
+ROLLBACK
+
+query I
+SELECT count(*) FROM u
+----
+3000
+
+statement ok
+BEGIN TRANSACTION
+
+statement ok
+UPDATE u SET j = -1 WHERE i = 2500
+
+statement error
+ALTER TABLE u ADD CHECK (j >= 0)
+----
+CHECK constraint failed
+
+statement ok
+ROLLBACK
+
+statement ok
+UPDATE u SET j = -1 WHERE i = 2500
+
+statement error
+ALTER TABLE u ADD CHECK (j >= 0)
+----
+CHECK constraint failed
+
+statement ok
+BEGIN TRANSACTION
+
+statement ok
+UPDATE u SET j = 2500 WHERE i = 2500
+
+statement ok
+ALTER TABLE u ADD CHECK (j >= 0)
+
+statement ok
+COMMIT
+
+statement error
+INSERT INTO u VALUES (5000, -1, 'short')
+----
+CHECK constraint failed
+
+statement ok
+BEGIN TRANSACTION
+
+statement ok
+UPDATE u SET s = repeat('x', 30)
+
+statement ok
+UPDATE u SET s = repeat('y', 29) WHERE i = 2999
+
+statement error
+ALTER TABLE u ADD CHECK (length(s) = 30)
+----
+CHECK constraint failed
+
+statement ok
+ROLLBACK
+
+statement ok
+BEGIN TRANSACTION
+
+statement ok
+UPDATE u SET s = repeat('x', 30)
+
+statement ok
+ALTER TABLE u ADD CHECK (length(s) = 30)
+
+statement ok
+COMMIT
+
+query I
+SELECT count(*) FROM u WHERE length(s) = 30
+----
+3000
+
+statement ok con1
+BEGIN TRANSACTION
+
+statement ok con1
+UPDATE u SET j = j + 1 WHERE i = 10
+
+statement error con2
+ALTER TABLE u ALTER COLUMN j SET NOT NULL
+----
+outstanding updates of another transaction
+
+statement error con2
+ALTER TABLE u ADD CHECK (j < 100000)
+----
+outstanding updates of another transaction
+
+statement ok con1
+ROLLBACK
+
+statement ok con1
+BEGIN TRANSACTION
+
+statement ok con1
+UPDATE u SET j = j + 1 WHERE i = 10
+
+statement ok con1
+COMMIT
+
+statement ok con2
+BEGIN TRANSACTION
+
+statement ok con2
+UPDATE u SET j = j + 1 WHERE i = 10
+
+statement ok con2
+ALTER TABLE u ALTER COLUMN j SET NOT NULL
+
+statement ok con2
+COMMIT
+
+query I
+SELECT j FROM u WHERE i = 10
+----
+12
+
+query I
+SELECT count(*) FROM u WHERE j IS NULL
+----
+0

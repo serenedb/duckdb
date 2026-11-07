@@ -31,7 +31,9 @@ struct ReadFileGlobalState : public GlobalTableFunctionState {
 	vector<idx_t> column_ids;
 	bool requires_file_open = false;
 	bool requires_file_metadata = false;
+};
 
+struct ReadFileLocalState : public LocalTableFunctionState {
 	unique_ptr<MemoryStream> stream;
 };
 

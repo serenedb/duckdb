@@ -25,6 +25,9 @@
 #include "duckdb/storage/storage_lock.hpp"
 #include "duckdb/storage/table/data_table_info.hpp"
 #include "duckdb/storage/table/scan_state.hpp"
+#include "duckdb/common/algorithm.hpp"
+
+#include <functional>
 
 namespace duckdb {
 
@@ -148,21 +151,20 @@ UndoBufferReference DuckTransaction::CreateUpdateInfo(DuckTableEntry &table_entr
 	return undo_entry;
 }
 
-void DuckTransaction::PushSequenceUsage(SequenceCatalogEntry &sequence, const SequenceData &data) {
+void DuckTransaction::PushSequenceUsage(const SequenceValue &value) {
 	lock_guard<mutex> l(sequence_lock);
+	auto &sequence = *value.entry;
 	auto entry = sequence_usage.find(sequence);
 	if (entry == sequence_usage.end()) {
 		auto undo_entry = undo_buffer.CreateEntry(UndoFlags::SEQUENCE_VALUE, sizeof(SequenceValue));
-		auto sequence_info = reinterpret_cast<SequenceValue *>(undo_entry.GetDataMutable());
-		sequence_info->entry = &sequence;
-		sequence_info->usage_count = data.usage_count;
-		sequence_info->counter = data.counter;
+		auto sequence_info = new (undo_entry.GetDataMutable()) SequenceValue(value);
 		sequence_usage.emplace(sequence, *sequence_info);
 	} else {
 		auto &sequence_info = entry->second.get();
 		D_ASSERT(RefersToSameObject(*sequence_info.entry, sequence));
-		sequence_info.usage_count = data.usage_count;
-		sequence_info.counter = data.counter;
+		if (value.usage_count > sequence_info.usage_count) {
+			sequence_info = value;
+		}
 	}
 }
 
@@ -174,6 +176,27 @@ UndoBufferProperties DuckTransaction::GetUndoProperties() {
 	auto properties = undo_buffer.GetProperties();
 	properties.estimated_size += storage->EstimatedSize();
 	return properties;
+}
+
+vector<unique_ptr<StorageLockKey>> DuckTransaction::LockModifiedTables() {
+	vector<reference<DataTableInfo>> tables;
+	for (auto &table : storage->GetTables()) {
+		tables.push_back(*table.get().GetDataTableInfo());
+	}
+	undo_buffer.AddModifiedTables(tables);
+	std::sort(tables.begin(), tables.end(), [](const DataTableInfo &left, const DataTableInfo &right) {
+		return std::less<const DataTableInfo *>()(&left, &right);
+	});
+	vector<unique_ptr<StorageLockKey>> locks;
+	optional_ptr<DataTableInfo> previous;
+	for (auto &table : tables) {
+		if (previous.get() == &table.get()) {
+			continue;
+		}
+		previous = table.get();
+		locks.push_back(table.get().alter_lock.GetSharedLock());
+	}
+	return locks;
 }
 
 bool DuckTransaction::AutomaticCheckpoint(AttachedDatabase &db, const UndoBufferProperties &properties) {
@@ -242,7 +265,10 @@ ErrorData DuckTransaction::AppendLocalStorage(ClientContext &context, AttachedDa
 	try {
 		if (ShouldWriteToWAL(db)) {
 			auto &storage_manager = db.GetStorageManager();
-			commit_state = storage_manager.GenStorageCommitState(*storage_manager.GetWAL());
+			auto wal = storage_manager.GetWAL();
+			if (wal) {
+				commit_state = storage_manager.GenStorageCommitState(*wal);
+			}
 		}
 		auto &profiler = *context.client_data->profiler;
 		auto commit_timer = profiler.StartTimer<MetricStorageCommitLocalStorageLatency>();
@@ -272,7 +298,7 @@ ErrorData DuckTransaction::WriteToWAL(ClientContext &context, AttachedDatabase &
 
 		// no FileSync is required here: any optimistically written blocks that the WAL references
 		// have already been synced by FlushBulkAppendBlocksAndSync, before the commit locks were taken
-		D_ASSERT(!commit_state->HasRowGroupData() || storage->SyncedFlushedBlocks());
+		D_ASSERT(!commit_state || !commit_state->HasRowGroupData() || storage->SyncedFlushedBlocks());
 	} catch (std::exception &ex) {
 		// Call RevertCommit() outside this try-catch as it itself may throw
 		error_data = ErrorData(ex);

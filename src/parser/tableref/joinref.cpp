@@ -2,6 +2,7 @@
 
 #include "duckdb/common/limits.hpp"
 #include "duckdb/common/serializer/serializer.hpp"
+#include "duckdb/common/stack_depth.hpp"
 
 namespace duckdb {
 
@@ -111,6 +112,7 @@ bool JoinRef::Equals(const TableRef &other_p) const {
 }
 
 unique_ptr<TableRef> JoinRef::Copy() {
+	StackDepth::Check();
 	auto copy = make_uniq<JoinRef>(ref_type);
 	copy->left = left->Copy();
 	copy->right = right->Copy();

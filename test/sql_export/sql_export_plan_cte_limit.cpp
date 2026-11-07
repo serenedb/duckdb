@@ -21,7 +21,7 @@ TEST_CASE("Logical plan SQL export preserves partial CTE streams and errors",
           "[sql_export][logical_plan_sql_export][cte_sql_export]") {
 	DuckDB db(nullptr);
 	Connection connection(db);
-	REQUIRE_NO_FAIL(connection.Query("SET threads=1; SET max_streaming_buffer_size='1b'"));
+	REQUIRE_NO_FAIL(connection.Query("SET GLOBAL threads=1; SET max_streaming_buffer_size='1b'"));
 	REQUIRE_NO_FAIL(connection.Query(
 	    "CREATE TABLE cte_stream AS SELECT CASE WHEN i=4096 THEN 'bad' ELSE '1' END s FROM range(4097)t(i)"));
 	for (auto scenario : {"producer error", "consumer error", "close consumer"}) {

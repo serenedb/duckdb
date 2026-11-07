@@ -14,7 +14,7 @@
 #include "duckdb/common/string_util.hpp"
 #include "utf8proc_wrapper.hpp"
 
-#include <unordered_set>
+#include "duckdb/common/case_insensitive_map.hpp"
 
 namespace duckdb {
 
@@ -31,10 +31,10 @@ private:
 	const FormatterConfig &config;
 
 	// Keyword classification helpers
-	static bool IsClauseKeyword(const string &kw);
-	static bool IsJoinModifier(const string &kw);
-	static bool IsClauseKeywordLine(const string &trimmed);
-	static bool ShouldUppercase(const string &kw);
+	static bool IsClauseKeyword(std::string_view kw);
+	static bool IsJoinModifier(std::string_view kw);
+	static bool IsClauseKeywordLine(std::string_view trimmed);
+	static bool ShouldUppercase(std::string_view kw);
 
 	// Token lookahead helpers
 	static string PeekKeyword(const vector<MatcherToken> &tokens, idx_t i, idx_t offset);
@@ -48,7 +48,7 @@ private:
 	static string JoinLines(const vector<string> &lines);
 
 	// Phase 1: token-stream -> multiline string
-	string ApplyCase(const string &upper_kw, const string &orig_kw, bool is_structural = false) const;
+	string ApplyCase(const string &upper_kw, std::string_view orig_kw, bool is_structural = false) const;
 	string FormatMultiline(const string &sql, const vector<MatcherToken> &tokens) const;
 
 	// Phase 2: inline short struct literals
@@ -124,23 +124,23 @@ string SQLFormatter::Format(const string &sql) {
 
 //! Returns true if kw (already uppercased) is a structural clause keyword that
 //! starts a new line in the formatted output.
-bool SQLFormatter::IsClauseKeyword(const string &kw) {
-	static const std::unordered_set<string> clause_keywords = {
+bool SQLFormatter::IsClauseKeyword(std::string_view kw) {
+	static const case_insensitive_set_view_t clause_keywords = {
 	    "SELECT",    "FROM",    "WHERE", "HAVING", "LIMIT",    "OFFSET",     "JOIN",  "UNION",
 	    "INTERSECT", "EXCEPT",  "WITH",  "INSERT", "UPDATE",   "DELETE",     "SET",   "RETURNING",
 	    "VALUES",    "CREATE",  "DROP",  "ALTER",  "TRUNCATE", "QUALIFY",    "PIVOT", "UNPIVOT",
 	    "REFRESH",   "INSTALL", "LOAD",  "ATTACH", "DETACH",   "CHECKPOINT", "FORCE", "COPY"};
-	return clause_keywords.count(kw) > 0;
+	return clause_keywords.contains(kw);
 }
 
-bool SQLFormatter::IsJoinModifier(const string &kw) {
+bool SQLFormatter::IsJoinModifier(std::string_view kw) {
 	return kw == "INNER" || kw == "LEFT" || kw == "RIGHT" || kw == "FULL" || kw == "CROSS" || kw == "NATURAL";
 }
 
 //! Complete set of clause keyword *strings* as they appear in the formatted
 //! output (single words AND compound forms).  Used by the post-processing pass.
-bool SQLFormatter::IsClauseKeywordLine(const string &trimmed) {
-	static const std::unordered_set<string> all_clause_strings = {
+bool SQLFormatter::IsClauseKeywordLine(std::string_view trimmed) {
+	static const case_insensitive_set_view_t all_clause_strings = {
 	    // Single-word clause starters
 	    "SELECT", "FROM", "WHERE", "HAVING", "LIMIT", "OFFSET", "JOIN", "UNION", "INTERSECT", "EXCEPT", "WITH",
 	    "INSERT", "UPDATE", "DELETE", "SET", "RETURNING", "VALUES", "CREATE", "DROP", "ALTER", "TRUNCATE", "QUALIFY",
@@ -157,14 +157,14 @@ bool SQLFormatter::IsClauseKeywordLine(const string &trimmed) {
 	    "CREATE OR REPLACE INDEX", "CREATE OR REPLACE MACRO", "CREATE OR REPLACE FUNCTION", "CREATE OR REPLACE TYPE",
 	    "CREATE OR REPLACE TEMP TABLE", "CREATE OR REPLACE TEMP VIEW", "CREATE OR REPLACE TEMPORARY TABLE",
 	    "CREATE OR REPLACE TEMPORARY VIEW", "ALTER TABLE"};
-	return all_clause_strings.count(StringUtil::Upper(trimmed)) > 0;
+	return all_clause_strings.contains(trimmed);
 }
 
 //! Structural keywords that are always uppercased.  Unreserved keywords used
 //! as identifiers (e.g. "name", "value", "type") are excluded so their
 //! original casing is preserved.
-bool SQLFormatter::ShouldUppercase(const string &kw) {
-	static const std::unordered_set<string> uppercase_set = {
+bool SQLFormatter::ShouldUppercase(std::string_view kw) {
+	static const case_insensitive_set_view_t uppercase_set = {
 	    "SELECT",     "DISTINCT",  "FROM",        "WHERE",      "HAVING",       "LIMIT",      "OFFSET",
 	    "GROUP",      "BY",        "ORDER",       "UNION",      "INTERSECT",    "EXCEPT",     "ALL",
 	    "JOIN",       "INNER",     "LEFT",        "RIGHT",      "FULL",         "OUTER",      "CROSS",
@@ -187,7 +187,7 @@ bool SQLFormatter::ShouldUppercase(const string &kw) {
 	    "LOAD",       "INSTALL",   "FORCE",       "POSITIONAL", "ASOF",         "LATERAL",    "TABLESAMPLE",
 	    "REPEATABLE", "USING",     "SYSTEM",      "BERNOULLI",  "RESERVOIR",    "NEAREST",    "APPROX",
 	    "EXACT",      "DISTANCE",  "SIMILARITY"};
-	return uppercase_set.count(kw) > 0;
+	return uppercase_set.contains(kw);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -357,14 +357,17 @@ string SQLFormatter::JoinLines(const vector<string> &lines) {
 //! orig_kw is the original token text (or joined original tokens for compounds).
 //! is_structural=true means the keyword is a clause/set-operator keyword that is
 //! always uppercased in UPPER mode (bypasses the ShouldUppercase whitelist check).
-string SQLFormatter::ApplyCase(const string &upper_kw, const string &orig_kw, bool is_structural) const {
+string SQLFormatter::ApplyCase(const string &upper_kw, std::string_view orig_kw, bool is_structural) const {
 	switch (config.keyword_case) {
 	case KeywordCase::UPPER:
-		return (is_structural || ShouldUppercase(upper_kw)) ? upper_kw : orig_kw;
+		if (is_structural || ShouldUppercase(upper_kw)) {
+			return upper_kw;
+		}
+		return string(orig_kw);
 	case KeywordCase::LOWER:
 		return StringUtil::Lower(upper_kw);
 	case KeywordCase::PRESERVE:
-		return orig_kw;
+		return string(orig_kw);
 	default:
 		return upper_kw;
 	}
@@ -450,7 +453,7 @@ string SQLFormatter::FormatMultiline(const string &sql, const vector<MatcherToke
 			// Preserve blank lines from the original SQL between statements.
 			if (i + 1 < tokens.size()) {
 				write_newline();
-				idx_t end_of_semi = tok.offset + tok.length;
+				idx_t end_of_semi = tok.offset + tok.text.size();
 				idx_t next_start = tokens[i + 1].offset;
 				idx_t newline_count = 0;
 				for (idx_t k = end_of_semi; k < next_start && k < sql.size(); k++) {
@@ -469,9 +472,9 @@ string SQLFormatter::FormatMultiline(const string &sql, const vector<MatcherToke
 
 		if (tok.type == TokenType::COMMENT) {
 			// Strip trailing newline from comment text — we manage newlines ourselves.
-			string comment_text = tok.text;
+			std::string_view comment_text = tok.text;
 			while (!comment_text.empty() && (comment_text.back() == '\n' || comment_text.back() == '\r')) {
-				comment_text.pop_back();
+				comment_text.remove_suffix(1);
 			}
 			bool is_block = comment_text.size() >= 2 && comment_text[0] == '/' && comment_text[1] == '*';
 			bool is_line = comment_text.size() >= 2 && comment_text[0] == '-' && comment_text[1] == '-';
@@ -497,7 +500,7 @@ string SQLFormatter::FormatMultiline(const string &sql, const vector<MatcherToke
 			// Insert a space before '(' for most keywords (e.g. AS, IN, EXISTS,
 			// OVER, FILTER, USING ...) but NOT for function-like keywords or type
 			// names where no space is conventional (COALESCE, CAST, DECIMAL, ...).
-			static const std::unordered_set<string> no_space_before_paren = {
+			static const case_insensitive_set_view_t no_space_before_paren = {
 			    "COALESCE",   "NULLIF",    "CAST",          "TRY_CAST",    "EXTRACT", "OVERLAY",       "POSITION",
 			    "SUBSTRING",  "TRIM",      "GROUPING",      "GROUPING_ID", "TREAT",   "XMLATTRIBUTES", "XMLCONCAT",
 			    "XMLELEMENT", "XMLFOREST", "XMLNAMESPACES", "XMLPARSE",    "XMLPI",   "XMLROOT",       "XMLSERIALIZE",
@@ -506,7 +509,7 @@ string SQLFormatter::FormatMultiline(const string &sql, const vector<MatcherToke
 			    "NATIONAL",   "NCHAR",     "NUMERIC",       "PRECISION",   "REAL",    "SMALLINT",      "STRUCT",
 			    "TIME",       "TIMESTAMP", "VARCHAR",
 			};
-			if (prev_was_keyword && !no_space_before_paren.count(prev_keyword) && !at_line_start) {
+			if (prev_was_keyword && !no_space_before_paren.contains(prev_keyword) && !at_line_start) {
 				write_space();
 			}
 			after_clause = false;

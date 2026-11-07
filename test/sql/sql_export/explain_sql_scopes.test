@@ -5,7 +5,7 @@
 query TT
 EXPLAIN (SQL) SELECT 1;
 ----
-sql	SELECT CAST(1 AS INTEGER) AS "1"
+sql	SELECT CAST(1 AS INTEGER) AS "?column?"
 
 query TT
 EXPLAIN (SQL) SELECT NULL::INTEGER AS "null value", 2::BIGINT AS "two";

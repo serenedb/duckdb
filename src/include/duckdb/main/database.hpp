@@ -33,6 +33,7 @@ class ExtensionManager;
 class FileSystem;
 class TaskScheduler;
 class ObjectCache;
+class SharedObjectCache;
 struct AttachInfo;
 struct AttachOptions;
 class DatabaseFileSystem;
@@ -41,7 +42,6 @@ class LogManager;
 class MetricsManager;
 class ExternalFileCache;
 class ResultSetManager;
-struct ParserCache;
 
 class DatabaseInstance : public enable_shared_from_this<DatabaseInstance> {
 	friend class DuckDB;
@@ -66,12 +66,12 @@ public:
 	DUCKDB_API ResultSetManager &GetResultSetManager();
 	DUCKDB_API TaskScheduler &GetScheduler();
 	DUCKDB_API ObjectCache &GetObjectCache();
+	DUCKDB_API SharedObjectCache &GetSharedObjectCache();
 	DUCKDB_API ConnectionManager &GetConnectionManager();
 	DUCKDB_API ExtensionManager &GetExtensionManager();
 	DUCKDB_API ValidChecker &GetValidChecker();
 	DUCKDB_API LogManager &GetLogManager() const;
 	DUCKDB_API MetricsManager &GetMetricsManager();
-	DUCKDB_API ParserCache &GetParserCache();
 
 	DUCKDB_API const duckdb_ext_api_v1 GetExtensionAPIV1();
 	//! Runs a V2 C API extension entrypoint, see invoke_capi_v2
@@ -116,6 +116,7 @@ private:
 	unique_ptr<ExternalResourcesManager> external_resources_manager;
 	unique_ptr<TaskScheduler> scheduler;
 	unique_ptr<ObjectCache> object_cache;
+	unique_ptr<SharedObjectCache> shared_object_cache;
 	unique_ptr<ConnectionManager> connection_manager;
 	unique_ptr<ExtensionManager> extension_manager;
 	ValidChecker db_validity;
@@ -125,7 +126,6 @@ private:
 	unique_ptr<MetricsManager> metrics_manager;
 	unique_ptr<ExternalFileCache> external_file_cache;
 	unique_ptr<ResultSetManager> result_set_manager;
-	unique_ptr<ParserCache> parser_cache;
 
 	duckdb_ext_api_v1 (*create_api_v1)();
 	//! Set in Initialize. Loading a V2 C API extension builds the C API function table and opens a connection, both of

@@ -1,5 +1,6 @@
 #include "duckdb/common/vector/flat_vector.hpp"
 #include "duckdb/common/vector/list_vector.hpp"
+#include "duckdb/common/vector_operations/vector_operations.hpp"
 #include "duckdb/execution/operator/projection/physical_pivot.hpp"
 
 #include "duckdb/execution/physical_plan_generator.hpp"
@@ -60,8 +61,23 @@ OperatorResultType PhysicalPivot::Execute(ExecutionContext &context, DataChunk &
 	}
 
 	// move the pivots to the given columns
+	const auto aggregate_count = empty_aggregates.size();
+	const auto value_columns = chunk.ColumnCount() - bound_pivot.group_count;
+	struct PivotMatch {
+		idx_t row;
+		idx_t element;
+		idx_t column;
+	};
+	vector<PivotMatch> matches;
+	vector<idx_t> column_start(value_columns + 1, 0);
 	for (idx_t r = 0; r < input.size(); r++) {
 		auto list = pivot_column_lists[r];
+		for (idx_t aggr = 0; aggr < aggregate_count; aggr++) {
+			auto pivot_value_lists = FlatVector::GetData<list_entry_t>(input.data[bound_pivot.group_count + aggr]);
+			if (list.length != pivot_value_lists[r].length) {
+				throw InternalException("Pivot - unaligned lists between values and columns!?");
+			}
+		}
 		for (idx_t l = 0; l < list.length; l++) {
 			// figure out the column value number of this list
 			auto &column_name = pivot_columns[list.offset + l];
@@ -70,15 +86,37 @@ OperatorResultType PhysicalPivot::Execute(ExecutionContext &context, DataChunk &
 				// column entry not found in map - that means this element is explicitly excluded from the pivot list
 				continue;
 			}
-			auto column_idx = entry->second;
-			for (idx_t aggr = 0; aggr < empty_aggregates.size(); aggr++) {
-				auto pivot_value_lists = FlatVector::GetData<list_entry_t>(input.data[bound_pivot.group_count + aggr]);
-				auto &pivot_value_child = ListVector::GetChild(input.data[bound_pivot.group_count + aggr]);
-				if (list.length != pivot_value_lists[r].length) {
-					throw InternalException("Pivot - unaligned lists between values and columns!?");
-				}
-				chunk.data[column_idx + aggr].SetValue(r, pivot_value_child.GetValue(pivot_value_lists[r].offset + l));
+			auto column = entry->second - bound_pivot.group_count;
+			matches.push_back({r, l, column});
+			for (idx_t aggr = 0; aggr < aggregate_count; aggr++) {
+				column_start[column + aggr + 1]++;
 			}
+		}
+	}
+	for (idx_t c = 0; c < value_columns; c++) {
+		column_start[c + 1] += column_start[c];
+	}
+	vector<idx_t> next(column_start.begin(), column_start.end() - 1);
+	vector<idx_t> target_rows(column_start.back());
+	SelectionVector sources(MaxValue<idx_t>(column_start.back(), 1));
+	for (auto &match : matches) {
+		for (idx_t aggr = 0; aggr < aggregate_count; aggr++) {
+			auto pivot_value_lists = FlatVector::GetData<list_entry_t>(input.data[bound_pivot.group_count + aggr]);
+			auto position = next[match.column + aggr]++;
+			target_rows[position] = match.row;
+			sources.set_index(position, pivot_value_lists[match.row].offset + match.element);
+		}
+	}
+	for (idx_t c = 0; c < value_columns; c++) {
+		auto &source = ListVector::GetChild(input.data[bound_pivot.group_count + c % aggregate_count]);
+		auto &target = chunk.data[bound_pivot.group_count + c];
+		for (idx_t begin = column_start[c]; begin < column_start[c + 1];) {
+			auto end = begin + 1;
+			while (end < column_start[c + 1] && target_rows[end] == target_rows[end - 1] + 1) {
+				end++;
+			}
+			VectorOperations::Copy(source, target, sources, end, begin, target_rows[begin]);
+			begin = end;
 		}
 	}
 	return OperatorResultType::NEED_MORE_INPUT;

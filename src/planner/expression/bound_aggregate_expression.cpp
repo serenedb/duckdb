@@ -19,8 +19,8 @@ BoundAggregateExpression::BoundAggregateExpression(BoundAggregateFunction functi
 	D_ASSERT(!this->function.GetName().empty());
 }
 
-bool BoundAggregateExpression::IsVolatile() const {
-	return function.GetStability() == FunctionStability::VOLATILE || Expression::IsVolatile();
+bool BoundAggregateExpression::IsNodeVolatile() const {
+	return function.GetStability() == FunctionStability::VOLATILE;
 }
 
 string BoundAggregateExpression::ToString() const {
@@ -63,8 +63,8 @@ string BoundAggregateExpression::ToString() const {
 	return result;
 }
 
-hash_t BoundAggregateExpression::Hash() const {
-	hash_t result = Expression::Hash();
+hash_t BoundAggregateExpression::NodeHash() const {
+	hash_t result = Expression::NodeHash();
 	result = CombineHash(result, function.Hash());
 	result = CombineHash(result, duckdb::Hash(IsDistinct()));
 	return result;

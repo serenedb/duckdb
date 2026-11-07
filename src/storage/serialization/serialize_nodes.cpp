@@ -22,6 +22,7 @@
 #include "duckdb/parser/tableref/pivotref.hpp"
 #include "duckdb/planner/tableref/bound_pivotref.hpp"
 #include "duckdb/parser/column_definition.hpp"
+#include "duckdb/catalog/permissions.hpp"
 #include "duckdb/parser/column_list.hpp"
 #include "duckdb/planner/column_binding.hpp"
 #include "duckdb/planner/expression/bound_parameter_data.hpp"
@@ -44,6 +45,7 @@
 #include "duckdb/common/extra_operator_info.hpp"
 #include "duckdb/storage/table/row_group_reorderer.hpp"
 #include "duckdb/storage/storage_index.hpp"
+#include "duckdb/catalog/job_schedule.hpp"
 
 namespace duckdb {
 
@@ -70,6 +72,22 @@ unique_ptr<BlockingSample> BlockingSample::Deserialize(Deserializer &deserialize
 	}
 	result->base_reservoir_sample = std::move(base_reservoir_sample);
 	result->destroyed = destroyed;
+	return result;
+}
+
+void AclItem::Serialize(Serializer &serializer) const {
+	serializer.WritePropertyWithDefault<idx_t>(100, "grantee", grantee);
+	serializer.WritePropertyWithDefault<idx_t>(101, "grantor", grantor);
+	serializer.WriteProperty<AclMode>(102, "privs", privs);
+	serializer.WriteProperty<AclMode>(103, "grant_option", grant_option);
+}
+
+AclItem AclItem::Deserialize(Deserializer &deserializer) {
+	AclItem result;
+	deserializer.ReadPropertyWithDefault<idx_t>(100, "grantee", result.grantee);
+	deserializer.ReadPropertyWithDefault<idx_t>(101, "grantor", result.grantor);
+	deserializer.ReadProperty<AclMode>(102, "privs", result.privs);
+	deserializer.ReadProperty<AclMode>(103, "grant_option", result.grant_option);
 	return result;
 }
 
@@ -238,7 +256,11 @@ void ColumnDefinition::Serialize(Serializer &serializer) const {
 	serializer.WriteProperty<TableColumnType>(103, "category", category);
 	serializer.WriteProperty<duckdb::CompressionType>(104, "compression_type", compression_type);
 	serializer.WritePropertyWithDefault<Value>(105, "comment", comment, Value());
-	serializer.WritePropertyWithDefault<InsertionOrderPreservingMap<string>>(106, "tags", tags, InsertionOrderPreservingMap<string>());
+	serializer.WritePropertyWithDefault<InsertionOrderPreservingMap<string>>(106, "tags", tags);
+	serializer.WritePropertyWithDefault<vector<AclItem>>(16484, "acl", acl);
+	if (serializer.ShouldSerialize(StorageVersion::SERENEDB_V1)) {
+		serializer.WritePropertyWithDefault<idx_t>(16485, "catalog_oid", catalog_oid);
+	}
 }
 
 ColumnDefinition ColumnDefinition::Deserialize(Deserializer &deserializer) {
@@ -249,7 +271,9 @@ ColumnDefinition ColumnDefinition::Deserialize(Deserializer &deserializer) {
 	ColumnDefinition result(std::move(name), std::move(type), std::move(expression), category);
 	deserializer.ReadProperty<duckdb::CompressionType>(104, "compression_type", result.compression_type);
 	deserializer.ReadPropertyWithExplicitDefault<Value>(105, "comment", result.comment, Value());
-	deserializer.ReadPropertyWithExplicitDefault<InsertionOrderPreservingMap<string>>(106, "tags", result.tags, InsertionOrderPreservingMap<string>());
+	deserializer.ReadPropertyWithDefault<InsertionOrderPreservingMap<string>>(106, "tags", result.tags);
+	deserializer.ReadPropertyWithDefault<vector<AclItem>>(16484, "acl", result.acl);
+	deserializer.ReadPropertyWithDefault<idx_t>(16485, "catalog_oid", result.catalog_oid);
 	return result;
 }
 
@@ -287,11 +311,31 @@ ColumnInfo ColumnInfo::Deserialize(Deserializer &deserializer) {
 
 void ColumnList::Serialize(Serializer &serializer) const {
 	serializer.WritePropertyWithDefault<vector<ColumnDefinition>>(100, "columns", columns);
+	if (serializer.ShouldSerialize(StorageVersion::SERENEDB_V1)) {
+		serializer.WritePropertyWithDefault<bool>(16484, "allow_duplicate_names", allow_duplicate_names);
+	}
+	if (serializer.ShouldSerialize(StorageVersion::SERENEDB_V1)) {
+		serializer.WritePropertyWithDefault<bool>(16485, "case_sensitive", case_sensitive);
+	}
 }
 
 ColumnList ColumnList::Deserialize(Deserializer &deserializer) {
 	auto columns = deserializer.ReadPropertyWithDefault<vector<ColumnDefinition>>(100, "columns");
-	ColumnList result(std::move(columns));
+	auto allow_duplicate_names = deserializer.ReadPropertyWithDefault<bool>(16484, "allow_duplicate_names");
+	auto case_sensitive = deserializer.ReadPropertyWithDefault<bool>(16485, "case_sensitive");
+	ColumnList result(std::move(columns), allow_duplicate_names, case_sensitive);
+	return result;
+}
+
+void ColumnPrivilege::Serialize(Serializer &serializer) const {
+	serializer.WritePropertyWithDefault<Identifier>(100, "column", column);
+	serializer.WriteProperty<AclMode>(101, "privileges", privileges);
+}
+
+ColumnPrivilege ColumnPrivilege::Deserialize(Deserializer &deserializer) {
+	ColumnPrivilege result;
+	deserializer.ReadPropertyWithDefault<Identifier>(100, "column", result.column);
+	deserializer.ReadProperty<AclMode>(101, "privileges", result.privileges);
 	return result;
 }
 
@@ -330,6 +374,22 @@ void CommonTableExpressionMap::Serialize(Serializer &serializer) const {
 CommonTableExpressionMap CommonTableExpressionMap::Deserialize(Deserializer &deserializer) {
 	CommonTableExpressionMap result;
 	deserializer.ReadPropertyWithDefault<InsertionOrderPreservingMap<unique_ptr<CommonTableExpressionInfo>, Identifier, identifier_map_t<idx_t>>>(100, "map", result.map);
+	return result;
+}
+
+void DefaultAcl::Serialize(Serializer &serializer) const {
+	serializer.WritePropertyWithDefault<idx_t>(100, "role", role);
+	serializer.WriteProperty<CatalogType>(101, "objtype", objtype);
+	serializer.WritePropertyWithDefault<vector<AclItem>>(102, "acl", acl);
+	serializer.WritePropertyWithDefault<idx_t>(103, "scope", scope);
+}
+
+DefaultAcl DefaultAcl::Deserialize(Deserializer &deserializer) {
+	DefaultAcl result;
+	deserializer.ReadPropertyWithDefault<idx_t>(100, "role", result.role);
+	deserializer.ReadProperty<CatalogType>(101, "objtype", result.objtype);
+	deserializer.ReadPropertyWithDefault<vector<AclItem>>(102, "acl", result.acl);
+	deserializer.ReadPropertyWithDefault<idx_t>(103, "scope", result.scope);
 	return result;
 }
 
@@ -409,6 +469,24 @@ HivePartitioningIndex HivePartitioningIndex::Deserialize(Deserializer &deseriali
 	return result;
 }
 
+void JobSchedule::Serialize(Serializer &serializer) const {
+	serializer.WriteProperty<JobScheduleKind>(100, "kind", kind);
+	serializer.WriteProperty<Value>(101, "interval", interval);
+	serializer.WriteProperty<Value>(102, "offset", offset);
+	serializer.WritePropertyWithDefault<bool>(103, "concurrent", concurrent, false);
+	serializer.WritePropertyWithDefault<Value>(104, "randomize", randomize, Value::INTERVAL(interval_t()));
+}
+
+JobSchedule JobSchedule::Deserialize(Deserializer &deserializer) {
+	JobSchedule result;
+	deserializer.ReadProperty<JobScheduleKind>(100, "kind", result.kind);
+	deserializer.ReadProperty<Value>(101, "interval", result.interval);
+	deserializer.ReadProperty<Value>(102, "offset", result.offset);
+	deserializer.ReadPropertyWithExplicitDefault<bool>(103, "concurrent", result.concurrent, false);
+	deserializer.ReadPropertyWithExplicitDefault<Value>(104, "randomize", result.randomize, Value::INTERVAL(interval_t()));
+	return result;
+}
+
 void JoinCondition::Serialize(Serializer &serializer) const {
 	serializer.WritePropertyWithDefault<unique_ptr<Expression>>(100, "left", left);
 	serializer.WritePropertyWithDefault<unique_ptr<Expression>>(101, "right", right);
@@ -472,6 +550,24 @@ MatchRecognizeSubset MatchRecognizeSubset::Deserialize(Deserializer &deserialize
 	MatchRecognizeSubset result;
 	deserializer.ReadPropertyWithDefault<string>(100, "name", result.name);
 	deserializer.ReadPropertyWithDefault<vector<string>>(101, "members", result.members);
+	return result;
+}
+
+void Membership::Serialize(Serializer &serializer) const {
+	serializer.WritePropertyWithDefault<idx_t>(100, "role", role);
+	serializer.WritePropertyWithDefault<idx_t>(101, "grantor", grantor);
+	serializer.WritePropertyWithDefault<bool>(102, "admin_option", admin_option);
+	serializer.WritePropertyWithDefault<bool>(103, "inherit_option", inherit_option);
+	serializer.WritePropertyWithDefault<bool>(104, "set_option", set_option);
+}
+
+Membership Membership::Deserialize(Deserializer &deserializer) {
+	Membership result;
+	deserializer.ReadPropertyWithDefault<idx_t>(100, "role", result.role);
+	deserializer.ReadPropertyWithDefault<idx_t>(101, "grantor", result.grantor);
+	deserializer.ReadPropertyWithDefault<bool>(102, "admin_option", result.admin_option);
+	deserializer.ReadPropertyWithDefault<bool>(103, "inherit_option", result.inherit_option);
+	deserializer.ReadPropertyWithDefault<bool>(104, "set_option", result.set_option);
 	return result;
 }
 
@@ -550,6 +646,20 @@ OrderByNode OrderByNode::Deserialize(Deserializer &deserializer) {
 	auto null_order = deserializer.ReadProperty<OrderByNullType>(101, "null_order");
 	auto expression = deserializer.ReadPropertyWithDefault<unique_ptr<ParsedExpression>>(102, "expression");
 	OrderByNode result(type, null_order, std::move(expression));
+	return result;
+}
+
+void Permissions::Serialize(Serializer &serializer) const {
+	serializer.WritePropertyWithDefault<idx_t>(100, "owner", owner);
+	serializer.WritePropertyWithDefault<vector<AclItem>>(101, "acl", acl);
+	serializer.WritePropertyWithDefault<vector<DefaultAcl>>(102, "defaults", defaults);
+}
+
+Permissions Permissions::Deserialize(Deserializer &deserializer) {
+	Permissions result;
+	deserializer.ReadPropertyWithDefault<idx_t>(100, "owner", result.owner);
+	deserializer.ReadPropertyWithDefault<vector<AclItem>>(101, "acl", result.acl);
+	deserializer.ReadPropertyWithDefault<vector<DefaultAcl>>(102, "defaults", result.defaults);
 	return result;
 }
 
@@ -634,6 +744,7 @@ void RowGroupOrderOptions::Serialize(Serializer &serializer) const {
 	serializer.WriteProperty<optional_idx>(105, "row_limit", row_limit);
 	serializer.WritePropertyWithDefault<idx_t>(106, "row_group_offset", row_group_offset);
 	serializer.WritePropertyWithDefault<idx_t>(107, "leading_null_group_offset", leading_null_group_offset);
+	serializer.WritePropertyWithDefault<bool>(16484, "single_order_key", single_order_key, true);
 }
 
 unique_ptr<RowGroupOrderOptions> RowGroupOrderOptions::Deserialize(Deserializer &deserializer) {
@@ -645,7 +756,8 @@ unique_ptr<RowGroupOrderOptions> RowGroupOrderOptions::Deserialize(Deserializer 
 	auto row_limit = deserializer.ReadProperty<optional_idx>(105, "row_limit");
 	auto row_group_offset = deserializer.ReadPropertyWithDefault<idx_t>(106, "row_group_offset");
 	auto leading_null_group_offset = deserializer.ReadPropertyWithDefault<idx_t>(107, "leading_null_group_offset");
-	auto result = duckdb::unique_ptr<RowGroupOrderOptions>(new RowGroupOrderOptions(column_idx, order_by, order_type, null_order, column_type, row_limit, row_group_offset, leading_null_group_offset));
+	auto single_order_key = deserializer.ReadPropertyWithExplicitDefault<bool>(16484, "single_order_key", true);
+	auto result = duckdb::unique_ptr<RowGroupOrderOptions>(new RowGroupOrderOptions(column_idx, order_by, order_type, null_order, column_type, row_limit, row_group_offset, leading_null_group_offset, single_order_key));
 	return result;
 }
 
@@ -876,13 +988,13 @@ TableColumn TableColumn::Deserialize(Deserializer &deserializer) {
 }
 
 void TableFilterSet::Serialize(Serializer &serializer) const {
-	serializer.WritePropertyWithDefault<map<ProjectionIndex, unique_ptr<TableFilter>>>(100, "filters", GetTableFiltersForSerialization(serializer));
+	serializer.WritePropertyWithDefault<map<ProjectionIndex, unique_ptr<TableFilter>>>(100, "filters", filters);
 	serializer.WritePropertyWithDefault<vector<unique_ptr<TableFilter>>>(101, "multi_column_filters", multi_column_filters, vector<unique_ptr<TableFilter>>());
 }
 
 TableFilterSet TableFilterSet::Deserialize(Deserializer &deserializer) {
 	TableFilterSet result;
-	deserializer.ReadPropertyWithDefault<map<ProjectionIndex, unique_ptr<TableFilter>>>(100, "filters", result.GetTableFiltersForDeserialization(deserializer));
+	deserializer.ReadPropertyWithDefault<map<ProjectionIndex, unique_ptr<TableFilter>>>(100, "filters", result.filters);
 	deserializer.ReadPropertyWithExplicitDefault<vector<unique_ptr<TableFilter>>>(101, "multi_column_filters", result.multi_column_filters, vector<unique_ptr<TableFilter>>());
 	return result;
 }
@@ -890,12 +1002,14 @@ TableFilterSet TableFilterSet::Deserialize(Deserializer &deserializer) {
 void VacuumOptions::Serialize(Serializer &serializer) const {
 	serializer.WritePropertyWithDefault<bool>(100, "vacuum", vacuum);
 	serializer.WritePropertyWithDefault<bool>(101, "analyze", analyze);
+	serializer.WritePropertyWithDefault<string>(16484, "serenedb_pragma_option", serenedb_pragma_option);
 }
 
 VacuumOptions VacuumOptions::Deserialize(Deserializer &deserializer) {
 	VacuumOptions result;
 	deserializer.ReadPropertyWithDefault<bool>(100, "vacuum", result.vacuum);
 	deserializer.ReadPropertyWithDefault<bool>(101, "analyze", result.analyze);
+	deserializer.ReadPropertyWithDefault<string>(16484, "serenedb_pragma_option", result.serenedb_pragma_option);
 	return result;
 }
 

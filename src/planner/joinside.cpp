@@ -85,7 +85,7 @@ static JoinSide GetJoinSideInternal(const Expression &expression, const unordere
                                     const unordered_set<TableIndex> &right_bindings, bool current_scope_only) {
 	if (expression.GetExpressionType() == ExpressionType::BOUND_COLUMN_REF) {
 		auto &colref = expression.Cast<BoundColumnRefExpression>();
-		if (colref.Depth() > 0) {
+		if (colref.Depth() > 0 || !colref.Binding().table_index.IsValid()) {
 			return JoinSide::NONE;
 		}
 		return GetJoinSideInternal(colref.Binding().table_index, left_bindings, right_bindings, current_scope_only);

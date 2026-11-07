@@ -18,9 +18,8 @@ LikeOptimizationRule::LikeOptimizationRule(ExpressionRewriter &rewriter) : Rule(
 	func->matchers.push_back(make_uniq<ConstantExpressionMatcher>());
 	func->policy = SetMatcher::Policy::ORDERED;
 	// we match on LIKE ("~~"), NOT LIKE ("!~~"), GLOB ("~~~"), NOT GLOB ("!~~~"), ILIKE ("~~*"), and NOT ILIKE ("!~~*")
-	func->function =
-	    make_uniq<ManyFunctionMatcher>(identifier_set_t {Identifier("!~~"), Identifier("~~"), Identifier("!~~~"),
-	                                                     Identifier("~~~"), Identifier("~~*"), Identifier("!~~*")});
+	static const case_insensitive_set_view_t like_functions {"!~~", "~~", "!~~~", "~~~", "~~*", "!~~*"};
+	func->function = make_uniq<ManyFunctionMatcher>(&like_functions);
 	root = std::move(func);
 }
 
@@ -31,7 +30,7 @@ static bool PatternIsConstant(const string &pattern, PatternMatchType match_type
 				return false;
 			}
 		} else {
-			if (pattern[i] == '%' || pattern[i] == '_') {
+			if (pattern[i] == '%' || pattern[i] == '_' || pattern[i] == '\\') {
 				return false;
 			}
 		}
@@ -60,7 +59,7 @@ static bool PatternIsPrefix(const string &pattern, PatternMatchType match_type) 
 				return false;
 			}
 		} else {
-			if (pattern[i - 1] == '%' || pattern[i - 1] == '_') {
+			if (pattern[i - 1] == '%' || pattern[i - 1] == '_' || pattern[i - 1] == '\\') {
 				return false;
 			}
 		}
@@ -89,7 +88,7 @@ static bool PatternIsSuffix(const string &pattern, PatternMatchType match_type) 
 				return false;
 			}
 		} else {
-			if (pattern[i] == '%' || pattern[i] == '_') {
+			if (pattern[i] == '%' || pattern[i] == '_' || pattern[i] == '\\') {
 				return false;
 			}
 		}
@@ -122,7 +121,7 @@ static bool PatternIsContains(const string &pattern, PatternMatchType match_type
 				return false;
 			}
 		} else {
-			if (pattern[i] == '%' || pattern[i] == '_') {
+			if (pattern[i] == '%' || pattern[i] == '_' || pattern[i] == '\\') {
 				return false;
 			}
 		}
@@ -163,6 +162,8 @@ unique_ptr<Expression> LikeOptimizationRule::Apply(LogicalOperator &op, vector<r
 		return BoundComparisonExpression::Create(
 		    is_not_like ? ExpressionType::COMPARE_NOTEQUAL : ExpressionType::COMPARE_EQUAL,
 		    std::move(root.GetChildrenMutable()[0]), std::move(root.GetChildrenMutable()[1]));
+	} else if (root.GetChildren()[0]->GetReturnType().id() != LogicalTypeId::VARCHAR) {
+		return nullptr;
 	} else if (PatternIsPrefix(patt_str, match_type)) {
 		// Prefix LIKE pattern : [^%_]*[%]+, ignoring underscore
 		return ApplyRule(root, "prefix", patt_str, is_not_like, match_type);

@@ -28,7 +28,9 @@ private:
 		}
 		LogicalOperator &materialized_cte;
 		vector<reference<LogicalCTERef>> references;
-		vector<TableIndex> ancestors;
+		idx_t position = 0;
+		idx_t body_begin = 0;
+		idx_t body_end = 0;
 	};
 
 	void FindCandidates(LogicalOperator &op);
@@ -37,7 +39,7 @@ private:
 private:
 	Optimizer &optimizer;
 	InsertionOrderPreservingMap<unique_ptr<MaterializedCTEInfo>> cte_info_map;
-	vector<TableIndex> available_ctes;
+	idx_t cte_count = 0;
 };
 
 } // namespace duckdb

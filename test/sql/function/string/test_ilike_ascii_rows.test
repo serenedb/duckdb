@@ -1,0 +1,49 @@
+# name: test/sql/function/string/test_ilike_ascii_rows.test
+# description: ILIKE gives the same answers for ASCII strings, matched without lowercasing them, as for the others
+# group: [string]
+
+statement ok
+CREATE TABLE mixed AS SELECT i AS id, CASE i % 6 WHEN 0 THEN 'kelvin ' || i WHEN 1 THEN chr(8490) || 'ELVIN ' || i WHEN 2 THEN 'B' || chr(304) || 'RNEN ' || i WHEN 3 THEN 'Äpfel und Birnen ' || i WHEN 4 THEN 'APFEL UND BIRNEN, an ASCII row longer than thirty-two bytes ' || i END AS s FROM range(1, 1201) t(i)
+
+query IIIIIIIIII
+SELECT count(*) FILTER (WHERE s ILIKE '%kelvin%'), count(*) FILTER (WHERE s ILIKE 'KELVIN%'), count(*) FILTER (WHERE s ILIKE '%birnen%'), count(*) FILTER (WHERE s ILIKE '%äpfel%'), count(*) FILTER (WHERE s ILIKE '%APFEL%'), count(*) FILTER (WHERE s ILIKE '%thirty-two BYTES%'), count(*) FILTER (WHERE s ILIKE 'b_rnen%'), count(*) FILTER (WHERE s NOT ILIKE '%n%'), count(*) FILTER (WHERE s ILIKE '%' || chr(8490) || '%'), count(*) FILTER (WHERE s ILIKE '%1') FROM mixed
+----
+400	400	600	200	200	200	200	0	400	80
+
+query II
+SELECT count(*) FILTER (WHERE s ILIKE CASE id % 4 WHEN 0 THEN '%kelvin%' WHEN 1 THEN '%BIRNEN%' WHEN 2 THEN '%' || chr(304) || '%' ELSE 'äpfel%' END), count(*) FILTER (WHERE s NOT ILIKE CASE id % 4 WHEN 0 THEN '%kelvin%' WHEN 1 THEN '%BIRNEN%' WHEN 2 THEN '%' || chr(304) || '%' ELSE 'äpfel%' END) FROM mixed
+----
+600	400
+
+statement ok
+CREATE TABLE bounds AS SELECT * FROM (VALUES (1, 'a@b'), (2, 'A`B'), (3, 'z[y'), (4, 'Z{Y'), (5, repeat('-', 40) || 'A@B[Z' || repeat('-', 40)), (6, repeat('-', 40) || 'a`b{z' || repeat('-', 40))) t(id, s)
+
+query IIIIIIII
+SELECT id, s ILIKE '%a@b%', s ILIKE '%a`b%', s ILIKE '%z[y%', s ILIKE '%z{y%', s ILIKE '%a@b[z%', s ILIKE '%A`B{Z%', s ILIKE '%@%' FROM bounds ORDER BY id
+----
+1	true	false	false	false	false	false	true
+2	false	true	false	false	false	false	false
+3	false	false	true	false	false	false	false
+4	false	false	false	true	false	false	false
+5	true	false	false	false	true	false	true
+6	false	true	false	false	false	true	false
+
+statement ok
+CREATE TABLE gen AS SELECT i AS id, CASE i % 3 WHEN 0 THEN upper(md5(i::VARCHAR)) WHEN 1 THEN md5(i::VARCHAR) ELSE md5(i::VARCHAR) || upper(md5((i + 1)::VARCHAR)) || md5((i + 2)::VARCHAR) END AS s, CASE i % 5 WHEN 0 THEN substr(md5((i * 7)::VARCHAR), 1, 2) || '%' WHEN 1 THEN '%' || upper(substr(md5((i * 7)::VARCHAR), 1, 1 + i % 4)) WHEN 2 THEN '%' || substr(md5((i * 7)::VARCHAR), 1, 2) || '_' || substr(md5((i * 7)::VARCHAR), 3, 2) || '%' ELSE '%' || substr(md5((i * 7)::VARCHAR), 1, 1 + i % 4) || '%' END AS p FROM range(1, 3001) t(i)
+
+statement ok
+CREATE TABLE gen_mixed AS SELECT id, CASE WHEN id % 7 = 0 THEN 'Ä' || s ELSE s END AS s, p FROM gen
+
+foreach table gen gen_mixed
+
+query II
+SELECT count(*) FILTER (WHERE (s ILIKE p) IS DISTINCT FROM (lower(s) LIKE lower(p))), count(*) FILTER (WHERE s ILIKE p) > 100 FROM {table}
+----
+0	true
+
+query II
+SELECT count(*) FILTER (WHERE (t.s ILIKE ps.p) IS DISTINCT FROM (lower(t.s) LIKE lower(ps.p))), count(*) FILTER (WHERE t.s ILIKE ps.p) > 1000 FROM {table} t, (SELECT p FROM gen WHERE id <= 20) ps
+----
+0	true
+
+endloop

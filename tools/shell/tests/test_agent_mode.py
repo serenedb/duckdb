@@ -1,5 +1,6 @@
 # fmt: off
 
+import os
 import re
 import pytest
 from conftest import ShellTest
@@ -252,6 +253,17 @@ def test_no_estimate_without_scans(shell):
     result = test.run()
     result.check_stdout("42")
     assert "estimate:" not in result.stderr
+
+@pytest.mark.skipif(os.name == 'nt', reason="Skipped on windows")
+def test_no_estimate_when_stdin_is_a_pipe(shell):
+    test = (
+        agent_shell(shell)
+        .input_file('data/csv/test/test.csv')
+        .statement("SELECT count(*) FROM read_csv('/dev/stdin')")
+        .add_argument(':memory:')
+    )
+    result = test.run()
+    result.check_stdout("| 5000 |")
 
 def test_no_estimate_without_agent(shell):
     test = ShellTest(shell).statement("SELECT count(*) FROM range(1000)")

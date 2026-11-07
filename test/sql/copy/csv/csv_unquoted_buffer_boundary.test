@@ -1,0 +1,25 @@
+# name: test/sql/copy/csv/csv_unquoted_buffer_boundary.test
+# group: [csv]
+
+statement ok
+SET threads=8
+
+statement ok
+COPY (SELECT i, 'v' || i AS s, i % 7 AS k FROM range(5000) r(i)) TO '__TEST_DIR__/unquoted_boundary.csv';
+
+statement ok
+COPY (SELECT CASE WHEN i % 3 = 0 THEN '#c' || i ELSE i || ',v' || i || ',' || (i % 7) END FROM range(5000) r(i)) TO '__TEST_DIR__/comment_boundary.csv' (DELIMITER '|', HEADER false, QUOTE '');
+
+loop buf 20 64
+
+query IIII
+SELECT count(*), sum(i), count(DISTINCT s), sum(k) FROM read_csv('__TEST_DIR__/unquoted_boundary.csv', buffer_size=${buf}, max_line_size=${buf});
+----
+5000	12497500	5000	14995
+
+query IIII
+SELECT count(*), sum(c0), count(DISTINCT c1), sum(c2) FROM read_csv('__TEST_DIR__/comment_boundary.csv', comment='#', header=false, names=['c0', 'c1', 'c2'], buffer_size=${buf}, max_line_size=${buf});
+----
+3333	8331667	3333	9997
+
+endloop

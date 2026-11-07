@@ -1,0 +1,17 @@
+# name: test/sql/storage/compression/alp/alp_corrupt_exception_position_fetch.test
+# group: [alp]
+
+require vector_size 2048
+
+unzip data/storage/corrupt/alp_corrupt_exception_position.db.gz {TEST_DIR}/alp_corrupt_exception_position_fetch.db
+
+statement ok
+ATTACH '{TEST_DIR}/alp_corrupt_exception_position_fetch.db' AS db2
+
+statement ok
+SET debug_force_fetch_row=true;
+
+statement error
+SELECT * FROM db2.two_alp LIMIT 1;
+----
+Data Corruption Error: Corrupted ALP segment: exception position 60000 is outside vector size 1024

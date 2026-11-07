@@ -15,12 +15,18 @@ namespace duckdb {
 
 struct SelectionVector;
 class Vector;
+class ZonemapChecker;
 
 struct ExpressionFilterExecutor {
 	virtual ~ExpressionFilterExecutor() = default;
 
 	virtual idx_t FilterSelection(SelectionVector &sel, Vector &vector, idx_t scan_count,
 	                              idx_t &approved_tuple_count) = 0;
+
+	virtual bool FiltersValues() const {
+		return false;
+	}
+	virtual bool FilterValue(const_data_ptr_t value, bool valid);
 };
 
 //! Thread-local state for executing a table filter
@@ -61,6 +67,14 @@ public:
 
 	unique_ptr<ExpressionExecutor> executor;
 	unique_ptr<ExpressionFilterExecutor> fast_executor;
+	//! The expression's statistics check compiled once with the state: every scan-time
+	//! CheckStatistics probe routes through it instead of re-walking the expression
+	unique_ptr<ZonemapChecker> zonemap_checker;
+	//! Scratch selections reused across FilterSelection calls: the result is
+	//! repointed into the caller's selection, which is always consumed before
+	//! this filter runs again.
+	buffer_ptr<SelectionData> result_scratch;
+	buffer_ptr<SelectionData> chunk_scratch;
 };
 
 } // namespace duckdb

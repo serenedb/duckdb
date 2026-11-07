@@ -1,0 +1,119 @@
+# name: test/sql/prepared/discard.test
+# description: DISCARD PLANS, SEQUENCES, TEMP and ALL
+# group: [prepared]
+
+statement ok
+PREPARE s AS SELECT 1
+
+statement ok
+DISCARD PLANS
+
+statement ok
+DISCARD SEQUENCES
+
+statement ok
+DISCARD TEMP
+
+statement ok
+DISCARD TEMPORARY
+
+query I
+EXECUTE s
+----
+1
+
+statement ok
+CREATE TABLE pt (a INTEGER)
+
+statement ok
+CREATE TEMP TABLE tt (a INTEGER)
+
+statement ok
+CREATE TEMP VIEW tv AS SELECT * FROM tt
+
+statement ok
+CREATE TEMP SEQUENCE ts
+
+statement ok
+CREATE TEMP MACRO tm() AS 42
+
+statement ok
+BEGIN
+
+statement ok
+DISCARD TEMP
+
+statement error
+SELECT * FROM tt
+----
+does not exist
+
+statement ok
+ROLLBACK
+
+query I
+SELECT count(*) FROM tv
+----
+0
+
+statement ok
+DISCARD TEMP
+
+statement error
+SELECT * FROM tt
+----
+does not exist
+
+statement error
+SELECT * FROM tv
+----
+does not exist
+
+statement error
+SELECT nextval('ts')
+----
+does not exist
+
+statement error
+SELECT tm()
+----
+does not exist
+
+query I
+SELECT 42::INTEGER
+----
+42
+
+query I
+SELECT count(*) FROM pt
+----
+0
+
+statement ok
+CREATE TEMP TABLE tt (a INTEGER)
+
+statement ok
+SET explain_output = 'all'
+
+statement ok
+DISCARD ALL
+
+query T
+SELECT lower(current_setting('explain_output')::VARCHAR)
+----
+physical_only
+
+statement error
+EXECUTE s
+----
+prepared statement "s" does not exist
+
+statement error
+SELECT * FROM tt
+----
+does not exist
+
+query I
+SELECT count(*) FROM pt
+----
+0

@@ -53,3 +53,30 @@ statement error
 SELECT nextval('sequence1');
 ----
 <REGEX>:.*Catalog Error.*does not exist.*
+
+statement ok
+CREATE SEQUENCE owner_sequence;
+
+statement ok
+CREATE SEQUENCE owned_sequence;
+
+statement ok
+ALTER SEQUENCE owned_sequence OWNED BY owner_sequence;
+
+query I
+SELECT setval('owned_sequence', 5);
+----
+5
+
+query I
+SELECT nextval('owned_sequence');
+----
+6
+
+statement ok
+ALTER SEQUENCE owned_sequence RESTART WITH 10;
+
+query I
+SELECT nextval('owned_sequence');
+----
+10

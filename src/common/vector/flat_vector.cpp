@@ -25,6 +25,7 @@ StandardVectorBuffer::StandardVectorBuffer(capacity_t capacity, idx_t type_size_
 StandardVectorBuffer::StandardVectorBuffer(data_ptr_t data_ptr_p, count_t count, idx_t type_size_p)
     : VectorBuffer(VectorType::FLAT_VECTOR, VectorBufferType::STANDARD_BUFFER, count), data_ptr(data_ptr_p),
       type_size(type_size_p), capacity(count) {
+	validity.Resize(capacity);
 }
 StandardVectorBuffer::StandardVectorBuffer(AllocatedData &&data_p, count_t count, idx_t type_size_p)
     : VectorBuffer(VectorType::FLAT_VECTOR, VectorBufferType::STANDARD_BUFFER, count), data_ptr(data_p.get()),
@@ -32,6 +33,7 @@ StandardVectorBuffer::StandardVectorBuffer(AllocatedData &&data_p, count_t count
 	if (count > capacity) {
 		throw InternalException("Count is out of range for capacity");
 	}
+	validity.Resize(capacity);
 }
 
 void StandardVectorBuffer::SetVectorType(VectorType new_vector_type) {
@@ -39,6 +41,9 @@ void StandardVectorBuffer::SetVectorType(VectorType new_vector_type) {
 }
 
 void StandardVectorBuffer::ResetCapacity(idx_t capacity_p) {
+	if (allocated_data.IsSet() && type_size != 0) {
+		capacity_p = MaxValue<idx_t>(capacity_p, allocated_data.GetSize() / type_size);
+	}
 	capacity = capacity_p;
 	validity.Reset(capacity);
 }

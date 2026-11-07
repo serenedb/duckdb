@@ -110,7 +110,7 @@ DUCKDB_V2_ERROR duckdb_v2_statement_iterator_next(duckdb_v2_statement_iterator_h
 			// shape honors errors_as_json (JSON, else LINE/caret), then re-throw to
 			// route back through WithErrorHandler.
 			wrapper->finished = true;
-			duckdb::ErrorData error(ex);
+			duckdb::ErrorData error(ex, nullptr);
 			wrapper->context->ProcessError(error, wrapper->query);
 			error.Throw();
 		}

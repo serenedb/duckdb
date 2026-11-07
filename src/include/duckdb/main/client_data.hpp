@@ -8,6 +8,7 @@
 
 #pragma once
 
+#include "duckdb/catalog/catalog_entry/sequence_catalog_entry.hpp"
 #include "duckdb/common/case_insensitive_map.hpp"
 #include "duckdb/common/common.hpp"
 
@@ -37,6 +38,7 @@ public:
 	shared_ptr<AttachedDatabase> temporary_objects;
 	//! The set of bound prepared statements belonging to this client.
 	identifier_map_t<shared_ptr<PreparedStatementData>> prepared_statements;
+	unique_ptr<SequenceSession> sequence_session;
 
 	//! The random generator used by random().
 	//! Its seed value can be set by setseed().

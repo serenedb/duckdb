@@ -471,7 +471,6 @@ This regenerates:
 - Function registration
 - Settings
 - Serialization code
-- Storage info
 - Metric enums
 - Enum utilities
 

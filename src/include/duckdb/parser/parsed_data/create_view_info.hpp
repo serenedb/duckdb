@@ -47,9 +47,13 @@ public:
 	CreateViewBindingMode binding_mode = CreateViewBindingMode::BIND_ON_CREATE;
 	//! Whether this is a secure view - secure views act as an optimization barrier
 	ViewSecurityType security_type = ViewSecurityType::REGULAR_VIEW;
+	//! WITH (security_invoker=true) -> the view runs with the caller's privileges;
+	//! false (default) is definer rights (the view owner's), matching PostgreSQL.
+	bool security_invoker = false;
 
 public:
 	unique_ptr<CreateInfo> Copy() const override;
+	unique_ptr<AlterInfo> GetAlterInfo() const override;
 
 	//! Gets a bound CreateViewInfo object from a SELECT statement and a view name, schema name, etc
 	DUCKDB_API static unique_ptr<CreateViewInfo> FromSelect(Parser &parser, unique_ptr<CreateViewInfo> info);

@@ -31,6 +31,7 @@ public:
 
 public:
 	vector<const_reference<PhysicalOperator>> GetChildren() const override;
+	vector<const_reference<PhysicalOperator>> GetSources() const override;
 
 	bool IsSink() const override {
 		return true;

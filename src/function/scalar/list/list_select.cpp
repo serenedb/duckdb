@@ -145,7 +145,7 @@ void ListSelectFunction(const DataChunk &args, ExpressionState &state, Vector &r
 		const idx_t entry_offset = offset;
 		// Set all selected values in the result
 		for (idx_t child_idx = 0; child_idx < selection_len; child_idx++) {
-			if (selection_entry.GetValue(selection_offset + child_idx).IsNull()) {
+			if (!selection_entry_data[selection_offset + child_idx].IsValid()) {
 				throw InvalidInputException("NULLs are not allowed as list elements in the second input parameter.");
 			}
 			OP::SetSelectionVector(result_selection_vec, entry_validity_mask, input_validity, selection_entry_data,

@@ -1,0 +1,240 @@
+# name: test/sql/optimizer/late_materialization_lookup_join_files.test
+# description: Late materialization of read_parquet scans through a LOOKUP_JOIN
+# group: [optimizer]
+
+require parquet
+
+statement ok
+SET profiling_renderer_settings = MAP {'operator_casing': 'upper'};
+
+statement ok
+CREATE TABLE src AS SELECT
+    i AS id,
+    i % 7 AS grp,
+    md5(i::VARCHAR) || md5((i + 1)::VARCHAR) AS payload,
+    {'a': i, 'b': 'v' || i::VARCHAR} AS s,
+    [i, i + 1] AS l
+FROM range(12000) t(i);
+
+statement ok
+COPY (FROM src WHERE id < 5000) TO '{TEST_DIR}/lj_files_1.parquet' (ROW_GROUP_SIZE 2048);
+
+statement ok
+COPY (FROM src WHERE id >= 5000 AND id < 9000) TO '{TEST_DIR}/lj_files_2.parquet' (ROW_GROUP_SIZE 2048);
+
+statement ok
+COPY (FROM src WHERE id >= 9000) TO '{TEST_DIR}/lj_files_3.parquet';
+
+query II
+EXPLAIN SELECT * FROM '{TEST_DIR}/lj_files_1.parquet' ORDER BY id DESC LIMIT 3;
+----
+physical_plan	<REGEX>:.*LOOKUP_JOIN.*Key: file_index,.*file_row_number.*TOP_N.*
+
+query IIIII
+SELECT id, grp, payload = md5(id::VARCHAR) || md5((id + 1)::VARCHAR), s, l FROM '{TEST_DIR}/lj_files_1.parquet' ORDER BY id DESC LIMIT 3;
+----
+4999	1	true	{'a': 4999, 'b': v4999}	[4999, 5000]
+4998	0	true	{'a': 4998, 'b': v4998}	[4998, 4999]
+4997	6	true	{'a': 4997, 'b': v4997}	[4997, 4998]
+
+query II
+EXPLAIN SELECT * FROM read_parquet('{TEST_DIR}/lj_files_*.parquet') ORDER BY id % 5000, id LIMIT 6;
+----
+physical_plan	<REGEX>:.*LOOKUP_JOIN.*TOP_N.*
+
+query III
+SELECT id, payload = md5(id::VARCHAR) || md5((id + 1)::VARCHAR), s.b FROM read_parquet('{TEST_DIR}/lj_files_*.parquet') ORDER BY id % 5000, id LIMIT 6;
+----
+0	true	v0
+5000	true	v5000
+10000	true	v10000
+1	true	v1
+5001	true	v5001
+10001	true	v10001
+
+query I
+SELECT count(*) FROM (SELECT * FROM read_parquet('{TEST_DIR}/lj_files_*.parquet') ORDER BY grp, id DESC LIMIT 40) WHERE payload <> md5(id::VARCHAR) || md5((id + 1)::VARCHAR) OR s.a <> id OR l[2] <> id + 1
+----
+0
+
+query II
+EXPLAIN SELECT * FROM read_parquet('{TEST_DIR}/lj_files_*.parquet') LIMIT 7000 OFFSET 11;
+----
+physical_plan	<!REGEX>:.*LOOKUP_JOIN.*
+
+statement ok
+SET late_materialization_lookup_max_rows = 10000;
+
+query II
+EXPLAIN SELECT * FROM read_parquet('{TEST_DIR}/lj_files_*.parquet') LIMIT 7000 OFFSET 11;
+----
+physical_plan	<REGEX>:.*LOOKUP_JOIN.*
+
+query IIII
+SELECT count(*), min(id), max(id), bool_and(payload = md5(id::VARCHAR) || md5((id + 1)::VARCHAR) AND s.a = id) FROM (SELECT * FROM read_parquet('{TEST_DIR}/lj_files_*.parquet') LIMIT 7000 OFFSET 11);
+----
+7000	11	7010	true
+
+query I
+SELECT bool_and(id = rn + 10) FROM (SELECT id, row_number() OVER () AS rn FROM (SELECT * FROM read_parquet('{TEST_DIR}/lj_files_*.parquet') LIMIT 7000 OFFSET 11));
+----
+true
+
+statement ok
+RESET late_materialization_lookup_max_rows;
+
+query III
+SELECT id, payload = md5(id::VARCHAR) || md5((id + 1)::VARCHAR), l FROM read_parquet(['{TEST_DIR}/lj_files_3.parquet', '{TEST_DIR}/lj_files_1.parquet']) ORDER BY id LIMIT 2;
+----
+0	true	[0, 1]
+1	true	[1, 2]
+
+statement ok
+COPY (SELECT id::INTEGER AS id, payload FROM src WHERE id < 100) TO '{TEST_DIR}/lj_union_a.parquet';
+
+statement ok
+COPY (SELECT payload, id, grp FROM src WHERE id >= 100 AND id < 200) TO '{TEST_DIR}/lj_union_b.parquet';
+
+query II
+EXPLAIN SELECT * FROM read_parquet('{TEST_DIR}/lj_union_*.parquet', union_by_name = true) ORDER BY id DESC LIMIT 3;
+----
+physical_plan	<REGEX>:.*LOOKUP_JOIN.*
+
+query III
+SELECT id, grp, payload = md5(id::VARCHAR) || md5((id + 1)::VARCHAR) FROM read_parquet('{TEST_DIR}/lj_union_*.parquet', union_by_name = true) ORDER BY id DESC LIMIT 3;
+----
+199	3	true
+198	2	true
+197	1	true
+
+query III
+SELECT id, grp, payload = md5(id::VARCHAR) || md5((id + 1)::VARCHAR) FROM read_parquet('{TEST_DIR}/lj_union_*.parquet', union_by_name = true) ORDER BY id % 100, id LIMIT 4;
+----
+0	NULL	true
+100	2	true
+1	NULL	true
+101	3	true
+
+statement ok
+COPY (FROM src WHERE id < 3000) TO '{TEST_DIR}/lj_hive' (FORMAT parquet, PARTITION_BY (grp));
+
+query II
+EXPLAIN SELECT * FROM read_parquet('{TEST_DIR}/lj_hive/**/*.parquet', hive_partitioning = true) WHERE grp = 3 ORDER BY id DESC LIMIT 2;
+----
+physical_plan	<!REGEX>:.*LOOKUP_JOIN.*
+
+query II
+EXPLAIN SELECT * FROM read_parquet('{TEST_DIR}/lj_hive/**/*.parquet', hive_partitioning = true) WHERE grp = 3 ORDER BY id DESC LIMIT 2;
+----
+physical_plan	<REGEX>:.*HASH_JOIN.*
+
+query III
+SELECT id, grp, payload = md5(id::VARCHAR) || md5((id + 1)::VARCHAR) FROM read_parquet('{TEST_DIR}/lj_hive/**/*.parquet', hive_partitioning = true) WHERE grp = 3 ORDER BY id DESC LIMIT 2;
+----
+2999	3	true
+2992	3	true
+
+query II
+EXPLAIN SELECT * FROM read_parquet('{TEST_DIR}/lj_files_*.parquet', filename = true) ORDER BY id DESC LIMIT 2;
+----
+physical_plan	<!REGEX>:.*LOOKUP_JOIN.*
+
+query III
+SELECT id, payload = md5(id::VARCHAR) || md5((id + 1)::VARCHAR), parse_filename(filename) FROM read_parquet('{TEST_DIR}/lj_files_*.parquet', filename = true) ORDER BY id DESC LIMIT 2;
+----
+11999	true	lj_files_3.parquet
+11998	true	lj_files_3.parquet
+
+query II
+EXPLAIN SELECT * FROM read_parquet('{TEST_DIR}/lj_files_*.parquet') WHERE filename >= '{TEST_DIR}/lj_files_2.parquet' ORDER BY id LIMIT 2;
+----
+physical_plan	<REGEX>:.*LOOKUP_JOIN.*
+
+query III
+SELECT id, payload = md5(id::VARCHAR) || md5((id + 1)::VARCHAR), parse_filename(filename) FROM read_parquet('{TEST_DIR}/lj_files_*.parquet') WHERE filename >= '{TEST_DIR}/lj_files_2.parquet' ORDER BY id LIMIT 2;
+----
+5000	true	lj_files_2.parquet
+5001	true	lj_files_2.parquet
+
+statement ok
+COPY (SELECT CASE WHEN i % 2 = 0 THEN {'x': 5::BIGINT, 'y': 400::BIGINT}::VARIANT ELSE {'x': 'a', 'y': 'hello'}::VARIANT END AS v, i FROM range(4096) t(i)) TO '{TEST_DIR}/lj_variant.parquet';
+
+query I
+SELECT v.y::UINTEGER FROM '{TEST_DIR}/lj_variant.parquet' WHERE variant_typeof(v.x) = 'INT64' AND v.x = 5 ORDER BY i LIMIT 1;
+----
+400
+
+query II
+SELECT v.y, i FROM '{TEST_DIR}/lj_variant.parquet' WHERE variant_typeof(v.x) = 'INT64' AND v.x = 5 ORDER BY i DESC LIMIT 1;
+----
+400	4094
+
+statement ok
+SET threads = 8;
+
+statement ok
+COPY (SELECT i AS id, (i * 7919) % 1000 AS k,
+    CASE WHEN i % 13 = 0 THEN NULL ELSE repeat(md5(i::VARCHAR), 4) END AS body,
+    CASE WHEN i % 17 = 0 THEN NULL ELSE {'a': i, 'b': 'w' || i::VARCHAR || '-long-enough-to-not-inline'} END AS s,
+    CASE WHEN i % 19 = 0 THEN NULL ELSE [i, i + 1, i + 2] END AS l
+FROM range(61440) t(i)) TO '{TEST_DIR}/lj_groups.parquet' (ROW_GROUP_SIZE 2048);
+
+query II
+EXPLAIN SELECT * FROM '{TEST_DIR}/lj_groups.parquet' ORDER BY k, id LIMIT 2000;
+----
+physical_plan	<REGEX>:.*LOOKUP_JOIN.*TOP_N.*
+
+query IIII
+SELECT id, k, body = repeat(md5(id::VARCHAR), 4), s.b FROM '{TEST_DIR}/lj_groups.parquet' ORDER BY k, id LIMIT 4;
+----
+0	0	NULL	NULL
+1000	0	true	w1000-long-enough-to-not-inline
+2000	0	true	w2000-long-enough-to-not-inline
+3000	0	true	w3000-long-enough-to-not-inline
+
+query III
+SELECT count(*),
+    count(*) FILTER (WHERE body IS NOT DISTINCT FROM (CASE WHEN id % 13 = 0 THEN NULL ELSE repeat(md5(id::VARCHAR), 4) END)
+        AND s IS NOT DISTINCT FROM (CASE WHEN id % 17 = 0 THEN NULL ELSE {'a': id, 'b': 'w' || id::VARCHAR || '-long-enough-to-not-inline'} END)
+        AND l IS NOT DISTINCT FROM (CASE WHEN id % 19 = 0 THEN NULL ELSE [id, id + 1, id + 2] END)),
+    count(*) FILTER (WHERE id IN (SELECT id FROM '{TEST_DIR}/lj_groups.parquet' ORDER BY k, id LIMIT 2000))
+FROM (SELECT * FROM '{TEST_DIR}/lj_groups.parquet' ORDER BY k, id LIMIT 2000);
+----
+2000	2000	2000
+
+query I
+SELECT bool_and(k = (id * 7919) % 1000 AND l[1] IS NOT DISTINCT FROM (CASE WHEN id % 19 = 0 THEN NULL ELSE id END)) FROM (SELECT * FROM '{TEST_DIR}/lj_groups.parquet' ORDER BY k DESC, id LIMIT 5);
+----
+true
+
+statement ok
+SET late_materialization_lookup_max_rows = 10000;
+
+query II
+EXPLAIN SELECT * FROM '{TEST_DIR}/lj_groups.parquet' ORDER BY k, id LIMIT 5000;
+----
+physical_plan	<REGEX>:.*LOOKUP_JOIN.*TOP_N.*
+
+query III
+SELECT count(*),
+    count(*) FILTER (WHERE body IS NOT DISTINCT FROM (CASE WHEN id % 13 = 0 THEN NULL ELSE repeat(md5(id::VARCHAR), 4) END)
+        AND s IS NOT DISTINCT FROM (CASE WHEN id % 17 = 0 THEN NULL ELSE {'a': id, 'b': 'w' || id::VARCHAR || '-long-enough-to-not-inline'} END)
+        AND l IS NOT DISTINCT FROM (CASE WHEN id % 19 = 0 THEN NULL ELSE [id, id + 1, id + 2] END)),
+    count(*) FILTER (WHERE id IN (SELECT id FROM '{TEST_DIR}/lj_groups.parquet' ORDER BY k, id LIMIT 5000))
+FROM (SELECT * FROM '{TEST_DIR}/lj_groups.parquet' ORDER BY k, id LIMIT 5000);
+----
+5000	5000	5000
+
+query I
+SELECT count(*) FROM (
+    SELECT k, id, lag(k) OVER () AS prev_k, lag(id) OVER () AS prev_id
+    FROM (SELECT * FROM '{TEST_DIR}/lj_groups.parquet' ORDER BY k, id LIMIT 5000))
+WHERE prev_k > k OR (prev_k = k AND prev_id >= id);
+----
+0
+
+statement ok
+RESET late_materialization_lookup_max_rows;
+
+statement ok
+RESET threads;

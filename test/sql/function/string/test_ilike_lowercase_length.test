@@ -1,0 +1,21 @@
+# name: test/sql/function/string/test_ilike_lowercase_length.test
+# description: ILIKE over strings whose lowercase takes more or fewer bytes than the string
+# group: [string]
+
+query IIIII
+SELECT repeat(chr(570), 100) ILIKE repeat(chr(11365), 100), repeat(chr(570), 100) ILIKE '%' || repeat(chr(11365), 50) || '%', 'x' || chr(570) || 'y' ILIKE 'X_Y', repeat(chr(570), 100) NOT ILIKE repeat(chr(570), 101), repeat(chr(304), 100) ILIKE repeat('i', 100)
+----
+true	true	true	true	true
+
+statement ok
+CREATE TABLE growth AS SELECT i AS id, repeat(chr(570), i) AS s FROM range(1, 200) t(i)
+
+query III
+SELECT count(*) FILTER (WHERE s ILIKE repeat(chr(11365), id)), count(*) FILTER (WHERE s ILIKE '%' || repeat(chr(11365), 3) || '%'), count(*) FILTER (WHERE s NOT ILIKE '_' || repeat(chr(11365), id - 1)) FROM growth
+----
+199	197	0
+
+query I
+SELECT count(*) FROM growth WHERE s ILIKE repeat(chr(11365), id) ESCAPE '#'
+----
+199

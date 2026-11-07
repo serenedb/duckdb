@@ -1,0 +1,46 @@
+# name: test/sql/alter/add_col/test_add_col_primary_key.test
+# description: ADD COLUMN preserves and enforces PRIMARY KEY constraints
+# group: [add_col]
+
+statement ok
+CREATE TABLE t(a INTEGER);
+
+statement ok
+ALTER TABLE t ADD COLUMN b INTEGER PRIMARY KEY;
+
+statement ok
+INSERT INTO t VALUES (1, 42);
+
+statement error
+INSERT INTO t VALUES (2, 42);
+----
+<REGEX>:Constraint Error.*violates primary key constraint.*
+
+statement error
+INSERT INTO t VALUES (3, NULL);
+----
+<REGEX>:Constraint Error.*NOT NULL constraint failed.*
+
+statement ok
+CREATE TABLE both_constraints(a INTEGER);
+
+statement ok
+ALTER TABLE both_constraints ADD COLUMN b INTEGER UNIQUE PRIMARY KEY;
+
+statement ok
+INSERT INTO both_constraints VALUES (1, 42);
+
+statement error
+INSERT INTO both_constraints VALUES (2, 42);
+----
+<REGEX>:Constraint Error.*violates primary key constraint.*
+
+statement error
+ALTER TABLE both_constraints ADD COLUMN c INTEGER PRIMARY KEY DEFERRED
+----
+Parser Error: Adding columns with deferrable PRIMARY KEY constraints is not supported yet
+
+statement error
+ALTER TABLE both_constraints ADD COLUMN IF NOT EXISTS d INTEGER PRIMARY KEY
+----
+Not implemented Error: Adding a PRIMARY KEY column with IF NOT EXISTS is not supported

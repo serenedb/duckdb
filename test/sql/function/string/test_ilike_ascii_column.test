@@ -1,0 +1,24 @@
+# name: test/sql/function/string/test_ilike_ascii_column.test
+# description: ILIKE on a column whose statistics rule out non-ASCII strings lowercases its pattern like any other ILIKE
+# group: [string]
+
+statement ok
+CREATE TABLE ascii_strs AS SELECT i AS id, CASE i % 4 WHEN 0 THEN 'KELVIN kelvin ' || i WHEN 1 THEN 'quick brown fox ' || i WHEN 2 THEN 'x' END AS s FROM range(1, 4001) t(i)
+
+query IIII
+SELECT (SELECT count(*) FROM ascii_strs WHERE s ILIKE chr(8490) || '%'), (SELECT count(*) FROM ascii_strs WHERE s ILIKE '%' || chr(304) || '%'), (SELECT count(*) FROM ascii_strs WHERE s NOT ILIKE chr(8490) || '%'), (SELECT count(*) FROM ascii_strs WHERE s ILIKE CASE id % 2 WHEN 0 THEN '%' || chr(8490) || '%' ELSE '%BROWN%' END)
+----
+1000	2000	2000	2000
+
+query III
+SELECT id, s ILIKE chr(8490) || 'ELVIN%', s NOT ILIKE '%' || chr(304) || '%' FROM ascii_strs WHERE id <= 4 ORDER BY id
+----
+1	false	false
+2	false	true
+3	NULL	NULL
+4	true	false
+
+query II
+SELECT count(*) FILTER (WHERE s ILIKE chr(8490) || '%'), count(*) FILTER (WHERE s ILIKE '%' || chr(304) || '%') FROM ascii_strs
+----
+1000	2000

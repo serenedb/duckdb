@@ -63,10 +63,9 @@ public:
 };
 
 template <class T>
-unique_ptr<AnalyzeState> AlpInitAnalyze(ColumnData &col_data, PhysicalType type) {
-	auto &storage_manager = col_data.GetStorageManager();
-	auto &block_manager = col_data.GetBlockManager();
-	const auto storage_version = storage_manager.GetStorageVersion();
+unique_ptr<AnalyzeState> AlpInitAnalyze(CompressionAnalyzeContext &ctx, PhysicalType type) {
+	auto &block_manager = ctx.block_manager;
+	const auto storage_version = ctx.storage_version;
 
 	if (block_manager.GetBlockSize() + block_manager.GetBlockHeaderSize() < DEFAULT_BLOCK_ALLOC_SIZE) {
 		if (StorageManager::IsPriorToVersion(StorageVersion::V1_5_0, storage_version)) {

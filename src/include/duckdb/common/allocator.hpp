@@ -130,6 +130,7 @@ public:
 	static void ThreadFlush(bool allocator_background_threads, idx_t threshold, idx_t thread_count);
 	static void ThreadIdle();
 	static void FlushAll();
+	static optional_idx UnpurgedBytes();
 	static void SetBackgroundThreads(bool enable);
 
 private:

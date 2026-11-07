@@ -140,11 +140,19 @@ void ExpressionBinder::CombineErrors(ErrorData &current, ErrorData new_error) {
 	current = std::move(new_error);
 }
 
-ColumnResolution ExpressionBinder::ResolveColumn(ColumnRefExpression &colref, idx_t start) {
+ColumnResolution ExpressionBinder::ResolveColumn(ColumnRefExpression &colref, idx_t start, bool report_errors) {
 	ColumnResolution result;
+	const auto macro_parameter = colref.MacroParameter();
+	optional_ptr<const ExpressionBinder> caller;
+	if (macro_parameter.IsValid()) {
+		caller = binder.global_binder_state->macro_parameters[macro_parameter.GetIndex()].caller;
+	}
 	for (idx_t depth = start; depth < ScopeCount(); depth++) {
 		auto &scope = ScopeAt(depth);
-		if (scope.ClaimsAlias(colref)) {
+		if (macro_parameter.IsValid() && &scope == caller.get()) {
+			break;
+		}
+		if (!macro_parameter.IsValid() && scope.ClaimsAlias(colref)) {
 			// the scope has a select-list alias of this name: it owns the reference even though
 			// qualification cannot produce a replacement for it
 			result.found = true;
@@ -152,6 +160,7 @@ ColumnResolution ExpressionBinder::ResolveColumn(ColumnRefExpression &colref, id
 			return result;
 		}
 		auto qualifier = scope.CreateColumnQualifier();
+		qualifier->report_errors = report_errors;
 		ErrorData error;
 		auto qualified = qualifier->QualifyColumnName(colref, error);
 		if (qualified) {
@@ -160,7 +169,7 @@ ColumnResolution ExpressionBinder::ResolveColumn(ColumnRefExpression &colref, id
 			result.qualified = std::move(qualified);
 			return result;
 		}
-		if (scope.MatchesGroup(colref)) {
+		if (!macro_parameter.IsValid() && scope.MatchesGroup(colref)) {
 			// the name is one of this scope's groups by alias, which qualification cannot see
 			result.found = true;
 			result.depth = depth;
@@ -172,6 +181,22 @@ ColumnResolution ExpressionBinder::ResolveColumn(ColumnRefExpression &colref, id
 			CombineErrors(result.error, std::move(error));
 		}
 	}
+	return result;
+}
+
+ColumnResolution ExpressionBinder::ResolveMacroParameter(ColumnRefExpression &colref) {
+	return ResolveColumn(colref, 0, false);
+}
+
+unique_ptr<ParsedExpression> ExpressionBinder::MacroParameterArgument(const ColumnRefExpression &colref) {
+	auto &parameter = binder.global_binder_state->macro_parameters[colref.MacroParameter().GetIndex()];
+	auto result = parameter.argument->Copy();
+	auto &names = colref.ColumnNames();
+	for (idx_t i = parameter.names; i < names.size(); i++) {
+		result = CreateStructExtract(std::move(result), names[i]);
+	}
+	result->SetAlias(colref.GetAlias());
+	result->SetNamedParameter(colref.IsNamedParameter());
 	return result;
 }
 
@@ -191,6 +216,10 @@ static void CollectResolvableColumns(ParsedExpression &expr, vector<identifier_s
 		// a lambda parameter is always a bare name, so a qualified reference is a column even when its
 		// last component happens to match one - `t.x` inside `lambda x: ...` names the table's column
 		if (!col_ref.IsQualified() && LambdaExpression::IsLambdaParameter(lambda_params, col_ref.GetName())) {
+			return;
+		}
+		if (col_ref.IsQualified() &&
+		    col_ref.ColumnNames()[col_ref.ColumnNames().size() - 2].StartsWith(DummyBinding::VALUES_NAME)) {
 			return;
 		}
 		result.push_back(col_ref);
@@ -240,7 +269,7 @@ optional_idx ExpressionBinder::ResolveAggregateOwner(FunctionExpression &aggrega
 	auto owner = start;
 	bool found = false;
 	for (auto &colref : columns) {
-		auto resolution = ResolveColumn(colref.get(), start);
+		auto resolution = ResolveColumn(colref.get(), start, false);
 		if (!resolution.found) {
 			// an alias or a column that does not resolve at all - it says nothing about ownership,
 			// and the scope we settle on reports the error

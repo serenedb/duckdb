@@ -28,9 +28,9 @@ public:
 	//! Whether the combining marks in the text are in canonical order
 	static bool IsFCD(const vector<uint32_t> &text);
 	//! Replaces the text with its canonical decomposition (NFD)
-	static void Decompose(vector<uint32_t> &text);
+	static void Decompose(vector<uint32_t> &text, vector<uint32_t> &scratch);
 	//! Decomposes Hangul syllables into jamo, which are always collated separately
-	static void DecomposeHangul(vector<uint32_t> &text);
+	static void DecomposeHangul(vector<uint32_t> &text, vector<uint32_t> &scratch);
 	//! The canonical combining class of a code point
 	static uint8_t CombiningClass(uint32_t codepoint);
 };

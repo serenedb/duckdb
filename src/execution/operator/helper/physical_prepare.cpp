@@ -8,7 +8,10 @@ SourceResultType PhysicalPrepare::GetDataInternal(ExecutionContext &context, Dat
 	auto &client = context.client;
 
 	// store the prepared statement in the context
-	ClientData::Get(client).prepared_statements[Identifier(name.ToStdString())] = prepared;
+	const std::string_view identifier(name.data(), name.size());
+	if (!ClientData::Get(client).prepared_statements.try_emplace(identifier, prepared).second) {
+		throw CatalogException::DuplicatePreparedStatement(Identifier(identifier));
+	}
 
 	return SourceResultType::FINISHED;
 }

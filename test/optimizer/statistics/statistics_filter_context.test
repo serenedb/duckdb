@@ -34,7 +34,7 @@ query II
 EXPLAIN SELECT count(*)
 FROM filter_context_address address
 JOIN filter_context_sales sales USING (k)
-WHERE substring(zip, 1, 5) IN ('10000', '30000', '40000', '50000', '60000', '70000')
+WHERE substring(zip, 1, 5) IN ('10000', '30000', '40000', '50000', '60000', '70000', 'x00', 'x01', 'x02', 'x03', 'x04', 'x05', 'x06', 'x07', 'x08', 'x09', 'x10', 'x11', 'x12', 'x13', 'x14', 'x15', 'x16', 'x17', 'x18', 'x19', 'x20', 'x21', 'x22', 'x23', 'x24', 'x25', 'x26', 'x27', 'x28', 'x29')
 	OR state = 'CA'
 	OR price > 100;
 ----
@@ -44,7 +44,7 @@ query II
 EXPLAIN SELECT count(*)
 FROM filter_context_address address
 JOIN filter_context_sales sales USING (k)
-WHERE substring(zip, 1, 5) IN ('10000', '30000', '40000', '50000', '60000', '70000')
+WHERE substring(zip, 1, 5) IN ('10000', '30000', '40000', '50000', '60000', '70000', 'x00', 'x01', 'x02', 'x03', 'x04', 'x05', 'x06', 'x07', 'x08', 'x09', 'x10', 'x11', 'x12', 'x13', 'x14', 'x15', 'x16', 'x17', 'x18', 'x19', 'x20', 'x21', 'x22', 'x23', 'x24', 'x25', 'x26', 'x27', 'x28', 'x29')
 	OR state = 'CA'
 	OR price > 100;
 ----
@@ -54,7 +54,7 @@ query I
 SELECT count(*)
 FROM filter_context_address address
 JOIN filter_context_sales sales USING (k)
-WHERE substring(zip, 1, 5) IN ('10000', '30000', '40000', '50000', '60000', '70000')
+WHERE substring(zip, 1, 5) IN ('10000', '30000', '40000', '50000', '60000', '70000', 'x00', 'x01', 'x02', 'x03', 'x04', 'x05', 'x06', 'x07', 'x08', 'x09', 'x10', 'x11', 'x12', 'x13', 'x14', 'x15', 'x16', 'x17', 'x18', 'x19', 'x20', 'x21', 'x22', 'x23', 'x24', 'x25', 'x26', 'x27', 'x28', 'x29')
 	OR state = 'CA'
 	OR price > 100;
 ----
@@ -74,7 +74,7 @@ query II
 EXPLAIN SELECT count(*)
 FROM filter_context_address address
 JOIN filter_context_sales_not_null sales USING (k)
-WHERE substring(zip, 1, 5) IN ('10000', '30000', '40000', '50000', '60000', '70000')
+WHERE substring(zip, 1, 5) IN ('10000', '30000', '40000', '50000', '60000', '70000', 'x00', 'x01', 'x02', 'x03', 'x04', 'x05', 'x06', 'x07', 'x08', 'x09', 'x10', 'x11', 'x12', 'x13', 'x14', 'x15', 'x16', 'x17', 'x18', 'x19', 'x20', 'x21', 'x22', 'x23', 'x24', 'x25', 'x26', 'x27', 'x28', 'x29')
 	OR state = 'CA'
 	OR price > 100;
 ----
@@ -84,7 +84,7 @@ query I
 SELECT count(*)
 FROM filter_context_address address
 JOIN filter_context_sales_not_null sales USING (k)
-WHERE substring(zip, 1, 5) IN ('10000', '30000', '40000', '50000', '60000', '70000')
+WHERE substring(zip, 1, 5) IN ('10000', '30000', '40000', '50000', '60000', '70000', 'x00', 'x01', 'x02', 'x03', 'x04', 'x05', 'x06', 'x07', 'x08', 'x09', 'x10', 'x11', 'x12', 'x13', 'x14', 'x15', 'x16', 'x17', 'x18', 'x19', 'x20', 'x21', 'x22', 'x23', 'x24', 'x25', 'x26', 'x27', 'x28', 'x29')
 	OR state = 'CA'
 	OR price > 100;
 ----
@@ -95,7 +95,7 @@ query II
 EXPLAIN SELECT count(*)
 FROM filter_context_address address
 JOIN filter_context_sales_not_null sales USING (k)
-WHERE substring(zip, 1, 5) IN ('10000', '30000', '40000', '50000', '60000', '70000')
+WHERE substring(zip, 1, 5) IN ('10000', '30000', '40000', '50000', '60000', '70000', 'x00', 'x01', 'x02', 'x03', 'x04', 'x05', 'x06', 'x07', 'x08', 'x09', 'x10', 'x11', 'x12', 'x13', 'x14', 'x15', 'x16', 'x17', 'x18', 'x19', 'x20', 'x21', 'x22', 'x23', 'x24', 'x25', 'x26', 'x27', 'x28', 'x29')
 	OR price IS NULL;
 ----
 logical_opt	<REGEX>:.*INNER.*IN \(\.\.\.\).*MARK.*filter_context_address.*
@@ -104,7 +104,7 @@ query I
 SELECT count(*)
 FROM filter_context_address address
 JOIN filter_context_sales_not_null sales USING (k)
-WHERE substring(zip, 1, 5) IN ('10000', '30000', '40000', '50000', '60000', '70000')
+WHERE substring(zip, 1, 5) IN ('10000', '30000', '40000', '50000', '60000', '70000', 'x00', 'x01', 'x02', 'x03', 'x04', 'x05', 'x06', 'x07', 'x08', 'x09', 'x10', 'x11', 'x12', 'x13', 'x14', 'x15', 'x16', 'x17', 'x18', 'x19', 'x20', 'x21', 'x22', 'x23', 'x24', 'x25', 'x26', 'x27', 'x28', 'x29')
 	OR price IS NULL;
 ----
 1
@@ -180,7 +180,7 @@ query I
 SELECT count(*)
 FROM filter_context_address address
 JOIN filter_context_sales sales USING (k)
-WHERE substring(zip, 1, 5) IN ('10000', '30000', '40000', '50000', '60000', '70000')
+WHERE substring(zip, 1, 5) IN ('10000', '30000', '40000', '50000', '60000', '70000', 'x00', 'x01', 'x02', 'x03', 'x04', 'x05', 'x06', 'x07', 'x08', 'x09', 'x10', 'x11', 'x12', 'x13', 'x14', 'x15', 'x16', 'x17', 'x18', 'x19', 'x20', 'x21', 'x22', 'x23', 'x24', 'x25', 'x26', 'x27', 'x28', 'x29')
 	OR state = 'CA'
 	OR price > 100;
 ----
@@ -190,7 +190,7 @@ query I
 SELECT count(*)
 FROM filter_context_address address
 JOIN filter_context_sales_not_null sales USING (k)
-WHERE substring(zip, 1, 5) IN ('10000', '30000', '40000', '50000', '60000', '70000')
+WHERE substring(zip, 1, 5) IN ('10000', '30000', '40000', '50000', '60000', '70000', 'x00', 'x01', 'x02', 'x03', 'x04', 'x05', 'x06', 'x07', 'x08', 'x09', 'x10', 'x11', 'x12', 'x13', 'x14', 'x15', 'x16', 'x17', 'x18', 'x19', 'x20', 'x21', 'x22', 'x23', 'x24', 'x25', 'x26', 'x27', 'x28', 'x29')
 	OR state = 'CA'
 	OR price > 100;
 ----
@@ -200,7 +200,7 @@ query I
 SELECT count(*)
 FROM filter_context_address address
 JOIN filter_context_sales_not_null sales USING (k)
-WHERE substring(zip, 1, 5) IN ('10000', '30000', '40000', '50000', '60000', '70000')
+WHERE substring(zip, 1, 5) IN ('10000', '30000', '40000', '50000', '60000', '70000', 'x00', 'x01', 'x02', 'x03', 'x04', 'x05', 'x06', 'x07', 'x08', 'x09', 'x10', 'x11', 'x12', 'x13', 'x14', 'x15', 'x16', 'x17', 'x18', 'x19', 'x20', 'x21', 'x22', 'x23', 'x24', 'x25', 'x26', 'x27', 'x28', 'x29')
 	OR price IS NULL;
 ----
 1

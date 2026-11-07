@@ -5,11 +5,17 @@
 namespace duckdb {
 
 vector<ColumnBinding> LogicalUnnest::GetColumnBindings() {
-	auto child_bindings = children[0]->GetColumnBindings();
+	return GetDerivedColumnBindings();
+}
+
+optional_ptr<LogicalOperator> LogicalUnnest::GetBindingChild() {
+	return children[0].get();
+}
+
+void LogicalUnnest::DeriveColumnBindings(vector<ColumnBinding> &bindings) {
 	for (auto unnest_col_idx : ProjectionIndex::GetIndexes(expressions.size())) {
-		child_bindings.emplace_back(unnest_index, unnest_col_idx);
+		bindings.emplace_back(unnest_index, unnest_col_idx);
 	}
-	return child_bindings;
 }
 
 void LogicalUnnest::ResolveTypes() {

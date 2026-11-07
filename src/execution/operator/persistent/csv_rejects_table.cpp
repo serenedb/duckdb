@@ -11,15 +11,15 @@ namespace duckdb {
 
 TableCatalogEntry &CSVRejectsTable::GetErrorsTable(ClientContext &context) {
 	auto &temp_catalog = Catalog::GetCatalog(context, Identifier::TempCatalog());
-	auto &table_entry = temp_catalog.GetEntry<TableCatalogEntry>(
-	    context, QualifiedName(Identifier::TempCatalog(), Identifier::DefaultSchema(), Identifier(errors_table)));
+	auto &table_entry =
+	    temp_catalog.GetEntry<TableCatalogEntry>(context, *temp_catalog.GetDefaultSchema(), Identifier(errors_table));
 	return table_entry;
 }
 
 TableCatalogEntry &CSVRejectsTable::GetScansTable(ClientContext &context) {
 	auto &temp_catalog = Catalog::GetCatalog(context, Identifier::TempCatalog());
-	auto &table_entry = temp_catalog.GetEntry<TableCatalogEntry>(
-	    context, QualifiedName(Identifier::TempCatalog(), Identifier::DefaultSchema(), Identifier(scan_table)));
+	auto &table_entry =
+	    temp_catalog.GetEntry<TableCatalogEntry>(context, *temp_catalog.GetDefaultSchema(), Identifier(scan_table));
 	return table_entry;
 }
 
@@ -37,13 +37,11 @@ shared_ptr<CSVRejectsTable> CSVRejectsTable::GetOrCreate(ClientContext &context,
 	auto &cache = ObjectCache::GetObjectCache(context);
 	auto &catalog = Catalog::GetCatalog(context, Identifier::TempCatalog());
 	auto rejects_scan_exist =
-	    catalog.GetEntry<TableCatalogEntry>(
-	        context, QualifiedName(catalog.GetName(), Identifier::DefaultSchema(), Identifier(rejects_scan)),
-	        OnEntryNotFound::RETURN_NULL) != nullptr;
+	    catalog.GetEntry<TableCatalogEntry>(context, *catalog.GetDefaultSchema(), Identifier(rejects_scan),
+	                                        OnEntryNotFound::RETURN_NULL) != nullptr;
 	auto rejects_error_exist =
-	    catalog.GetEntry<TableCatalogEntry>(
-	        context, QualifiedName(catalog.GetName(), Identifier::DefaultSchema(), Identifier(rejects_error)),
-	        OnEntryNotFound::RETURN_NULL) != nullptr;
+	    catalog.GetEntry<TableCatalogEntry>(context, *catalog.GetDefaultSchema(), Identifier(rejects_error),
+	                                        OnEntryNotFound::RETURN_NULL) != nullptr;
 	if ((rejects_scan_exist || rejects_error_exist) && !cache.Get<CSVRejectsTable>(key)) {
 		std::ostringstream error;
 		if (rejects_scan_exist) {
@@ -101,6 +99,8 @@ void CSVRejectsTable::InitializeTable(ClientContext &context, const ReadCSVData 
 
 	LogicalType enum_type = LogicalType::ENUM(enum_name, order_errors, number_of_accepted_errors);
 	auto type_info = make_uniq<CreateTypeInfo>(enum_name, enum_type);
+	type_info->SetQualifiedName(
+	    QualifiedName(Identifier::TempCatalog(), *catalog.GetDefaultSchema(), Identifier(enum_name)));
 	type_info->temporary = true;
 	type_info->on_conflict = OnCreateConflict::IGNORE_ON_CONFLICT;
 	catalog.CreateType(context, *type_info);
@@ -108,7 +108,7 @@ void CSVRejectsTable::InitializeTable(ClientContext &context, const ReadCSVData 
 	// Create Rejects Scans Table
 	{
 		auto info = make_uniq<CreateTableInfo>(
-		    QualifiedName(Identifier::TempCatalog(), Identifier::DefaultSchema(), Identifier(scan_table)));
+		    QualifiedName(Identifier::TempCatalog(), *catalog.GetDefaultSchema(), Identifier(scan_table)));
 		info->temporary = true;
 		info->on_conflict = OnCreateConflict::IGNORE_ON_CONFLICT;
 		// 0. Scan ID
@@ -142,7 +142,7 @@ void CSVRejectsTable::InitializeTable(ClientContext &context, const ReadCSVData 
 	{
 		// Create Rejects Error Table
 		auto info = make_uniq<CreateTableInfo>(
-		    QualifiedName(Identifier::TempCatalog(), Identifier::DefaultSchema(), Identifier(errors_table)));
+		    QualifiedName(Identifier::TempCatalog(), *catalog.GetDefaultSchema(), Identifier(errors_table)));
 		info->temporary = true;
 		info->on_conflict = OnCreateConflict::IGNORE_ON_CONFLICT;
 		// 0. Scan ID

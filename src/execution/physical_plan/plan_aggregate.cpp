@@ -1,4 +1,7 @@
+#include <absl/algorithm/container.h>
+
 #include "duckdb/main/settings.hpp"
+#include "duckdb/execution/perfect_hash_budget.hpp"
 #include "duckdb/function/partition_stats.hpp"
 
 #include "duckdb/execution/operator/aggregate/physical_hash_aggregate.hpp"
@@ -10,19 +13,11 @@
 #include "duckdb/execution/physical_plan_generator.hpp"
 #include "duckdb/function/function_binder.hpp"
 #include "duckdb/main/client_context.hpp"
+#include "duckdb/parser/expression_map.hpp"
 #include "duckdb/planner/expression/bound_reference_expression.hpp"
 #include "duckdb/planner/operator/logical_aggregate.hpp"
 
 namespace duckdb {
-
-static uint32_t RequiredBitsForValue(uint32_t n) {
-	idx_t required_bits = 0;
-	while (n > 0) {
-		n >>= 1;
-		required_bits++;
-	}
-	return UnsafeNumericCast<uint32_t>(required_bits);
-}
 
 template <class T>
 hugeint_t GetRangeHugeint(const BaseStatistics &nstats) {
@@ -133,6 +128,7 @@ static bool CanUsePerfectHashAggregate(ClientContext &context, LogicalAggregate 
 		return false;
 	}
 	idx_t perfect_hash_bits = 0;
+	const auto max_bits = PerfectHashBudget::MaxBits(context, op.expressions);
 	for (idx_t group_idx = 0; group_idx < op.groups.size(); group_idx++) {
 		auto &group = op.groups[group_idx];
 		auto &stats = op.group_stats[group_idx];
@@ -227,11 +223,11 @@ static bool CanUsePerfectHashAggregate(ClientContext &context, LogicalAggregate 
 
 		range += 2;
 		// figure out how many bits we need
-		idx_t required_bits = RequiredBitsForValue(UnsafeNumericCast<uint32_t>(range));
+		idx_t required_bits = PerfectHashBudget::RequiredBits(UnsafeNumericCast<uint32_t>(range));
 		bits_per_group.push_back(required_bits);
 		perfect_hash_bits += required_bits;
 		// check if we have exceeded the bits for the hash
-		if (perfect_hash_bits > Settings::Get<PerfectHtThresholdSetting>(context)) {
+		if (perfect_hash_bits > max_bits) {
 			// too many bits for perfect hash
 			return false;
 		}
@@ -325,30 +321,58 @@ PhysicalOperator &PhysicalPlanGenerator::ExtractAggregateExpressions(PhysicalOpe
 			FunctionBinder::BindSortedAggregate(context, bound_aggr, groups, grouping_sets);
 		}
 	}
+	expression_map_t<idx_t> dedupe_slots;
+	auto add_slot = [&](unique_ptr<Expression> &expr) {
+		const idx_t slot = expressions.size();
+		types.push_back(expr->GetReturnType());
+		if (!expr->IsVolatile()) {
+			dedupe_slots.emplace(*expr, slot);
+		}
+		expressions.push_back(std::move(expr));
+		return slot;
+	};
 	for (auto &group : groups) {
-		auto ref = make_uniq<BoundReferenceExpression>(group->GetReturnType(), expressions.size());
-		types.push_back(group->GetReturnType());
-		expressions.push_back(std::move(group));
-		group = std::move(ref);
+		const idx_t slot = add_slot(group);
+		group = make_uniq<BoundReferenceExpression>(types[slot], slot);
 	}
+	auto extract = [&](unique_ptr<Expression> &expr) {
+		idx_t slot = expressions.size();
+		if (!expr->IsVolatile()) {
+			auto entry = dedupe_slots.find(*expr);
+			if (entry != dedupe_slots.end()) {
+				slot = entry->second;
+			}
+		}
+		if (slot == expressions.size()) {
+			slot = add_slot(expr);
+		}
+		expr = make_uniq<BoundReferenceExpression>(types[slot], slot);
+	};
 	for (auto &aggr : aggregates) {
 		auto &bound_aggr = aggr->Cast<BoundAggregateExpression>();
 		for (auto &child_expr : bound_aggr.GetChildrenMutable()) {
-			auto ref = make_uniq<BoundReferenceExpression>(child_expr->GetReturnType(), expressions.size());
-			types.push_back(child_expr->GetReturnType());
-			expressions.push_back(std::move(child_expr));
-			child_expr = std::move(ref);
+			extract(child_expr);
 		}
 		if (bound_aggr.GetFilter()) {
-			auto &filter = bound_aggr.GetFilterMutable();
-			auto ref = make_uniq<BoundReferenceExpression>(filter->GetReturnType(), expressions.size());
-			types.push_back(filter->GetReturnType());
-			expressions.push_back(std::move(filter));
-			bound_aggr.GetFilterMutable() = std::move(ref);
+			extract(bound_aggr.GetFilterMutable());
 		}
 	}
 	if (expressions.empty()) {
 		return child;
+	}
+	// Skip the projection when it is an identity over the child's output: every
+	// expression is a positional reference to its own column and all columns are
+	// covered. The aggregate then reads the child directly instead of copying it
+	// through a no-op projection (e.g. min(x) over a scan that already emits x).
+	if (expressions.size() == child.types.size()) {
+		idx_t pos = 0;
+		const bool identity = absl::c_all_of(expressions, [&](const unique_ptr<Expression> &expr) {
+			return expr->GetExpressionType() == ExpressionType::BOUND_REF &&
+			       expr->Cast<BoundReferenceExpression>().Index() == pos++;
+		});
+		if (identity) {
+			return child;
+		}
 	}
 	auto &proj = Make<PhysicalProjection>(std::move(types), std::move(expressions), child.estimated_cardinality);
 	proj.children.push_back(child);

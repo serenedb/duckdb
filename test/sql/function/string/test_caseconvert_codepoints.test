@@ -1,0 +1,64 @@
+# name: test/sql/function/string/test_caseconvert_codepoints.test
+# description: lower() and upper() of every code point, and of strings mixing ASCII runs with characters of every size whose conversion keeps or changes their size
+# group: [string]
+
+query IIIIIIII
+SELECT md5(string_agg(lower(chr(cp::INTEGER)), '' ORDER BY cp)), md5(string_agg(upper(chr(cp::INTEGER)), '' ORDER BY cp)), count(*) FILTER (WHERE lower(chr(cp::INTEGER)) <> chr(cp::INTEGER)), count(*) FILTER (WHERE upper(chr(cp::INTEGER)) <> chr(cp::INTEGER)), count(*) FILTER (WHERE strlen(lower(chr(cp::INTEGER))) <> strlen(chr(cp::INTEGER))), count(*) FILTER (WHERE strlen(upper(chr(cp::INTEGER))) <> strlen(chr(cp::INTEGER))), max(strlen(lower(chr(cp::INTEGER))) * 2 // strlen(chr(cp::INTEGER))), max(strlen(upper(chr(cp::INTEGER))) * 2 // strlen(chr(cp::INTEGER))) FROM range(1, 1114112) t(cp) WHERE cp < 55296 OR cp > 57343
+----
+8106ded8561c3530477195f84ca29c27	62005b7f48c9a632925cd58b7d637a6f	1488	1506	27	34	3	3
+
+query T
+SELECT string_agg(printf('U+%04X', cp), ' ' ORDER BY cp) FROM range(1, 1114112) t(cp) WHERE (cp < 55296 OR cp > 57343) AND strlen(lower(chr(cp::INTEGER))) <> strlen(chr(cp::INTEGER))
+----
+U+0130 U+023A U+023E U+1E9E U+2126 U+212A U+212B U+2C62 U+2C64 U+2C6D U+2C6E U+2C6F U+2C70 U+2C7E U+2C7F U+A78D U+A7AA U+A7AB U+A7AC U+A7AD U+A7AE U+A7B0 U+A7B1 U+A7B2 U+A7C5 U+A7CB U+A7DC
+
+query T
+SELECT string_agg(printf('U+%04X', cp), ' ' ORDER BY cp) FROM range(1, 1114112) t(cp) WHERE (cp < 55296 OR cp > 57343) AND strlen(upper(chr(cp::INTEGER))) <> strlen(chr(cp::INTEGER))
+----
+U+00DF U+0131 U+017F U+019B U+023F U+0240 U+0250 U+0251 U+0252 U+025C U+0261 U+0264 U+0265 U+0266 U+026A U+026B U+026C U+0271 U+027D U+0282 U+0287 U+029D U+029E U+1C80 U+1C81 U+1C82 U+1C83 U+1C84 U+1C85 U+1C86 U+1C87 U+1FBE U+2C65 U+2C66
+
+statement ok
+CREATE TABLE pieces AS SELECT list_transform([65, 90, 97, 122, 64, 91, 96, 123, 32, 48, 196, 228, 223, 201, 1040, 1072, 913, 969, 931, 962, 256, 383, 304, 305, 570, 592, 181, 837, 2047, 128, 19990, 8364, 8212, 12354, 44032, 2048, 65533, 8490, 8486, 8491, 7838, 9398, 65313, 7680, 11365, 8072, 8544, 129414, 66560, 66600, 119808, 1114111], lambda cp: chr(cp)) || ['ABCDEFGHijklmnop', 'Hello, World! ', 'QRSTUVWXYZ0123456789', 'mIxEd', 'Straße', 'İSTANBUL', 'ışık'] AS p
+
+statement ok
+CREATE TABLE mixed AS SELECT i, array_to_string(list_transform(range(i % 41), lambda k: p[1 + ((i * 7919 + k * 104729) % len(p))::INTEGER]), '') AS s, array_to_string(list_transform(range(i % 41), lambda k: lower(p[1 + ((i * 7919 + k * 104729) % len(p))::INTEGER])), '') AS lowered, array_to_string(list_transform(range(i % 41), lambda k: upper(p[1 + ((i * 7919 + k * 104729) % len(p))::INTEGER])), '') AS uppered FROM range(4000) t(i), pieces
+
+query IIIIIII
+SELECT count(*) FILTER (WHERE lower(s) <> lowered), count(*) FILTER (WHERE upper(s) <> uppered), count(*) FILTER (WHERE strlen(lowered) <> strlen(s)), count(*) FILTER (WHERE strlen(uppered) <> strlen(s)), max(strlen(s)), count(*) FILTER (WHERE strlen(s) BETWEEN 1 AND 12), count(*) FILTER (WHERE s = lowered AND s = uppered) FROM mixed
+----
+0	0	3067	2362	155	397	143
+
+query II
+SELECT md5(string_agg(lower(s), '|' ORDER BY i)), md5(string_agg(upper(s), '|' ORDER BY i)) FROM mixed
+----
+7547cc1d5ee16a1c10084ed2c2758bab	682e57339edc5f9b4b9fec5c3d11c59c
+
+query III
+SELECT count(*) FILTER (WHERE (a.s ILIKE b.p) <> (lower(a.s) LIKE lower(b.p))), count(*) FILTER (WHERE a.s ILIKE b.p), count(*) FILTER (WHERE a.s NOT ILIKE b.p) FROM mixed a JOIN (SELECT i, '%' || substr(s, 2 + i % 3, 1 + i % 4) || '%' AS p FROM mixed) b ON b.i = (a.i * 7 + 1) % 4000
+----
+0	1599	2401
+
+query TII
+SELECT p, count(*) FILTER (WHERE (s ILIKE p) <> (lower(s) LIKE lower(p))), count(*) FILTER (WHERE s ILIKE p) FROM mixed, (VALUES ('%İ%'), ('%k%'), ('%ß%'), ('%STRASSE%'), ('%straße%'), ('%ışık%'), ('%I%'), ('%Ω%'), ('%ω%'), ('%mixed%'), ('%Ä_ä%')) v(p) GROUP BY p ORDER BY p
+----
+%I%	0	3107
+%STRASSE%	0	0
+%k%	0	2867
+%mixed%	0	1355
+%straße%	0	1351
+%Ä_ä%	0	0
+%ß%	0	2036
+%İ%	0	3107
+%ışık%	0	1351
+%Ω%	0	2357
+%ω%	0	2357
+
+query TTTTTTT
+SELECT lower(repeat('İ', 16)), lower('İ' || repeat('AbCdEfGh', 3) || 'İ'), upper(repeat('ß', 9)), upper('ı' || repeat('x', 17)), lower(repeat('K', 5) || 'ABCDEFGHI'), upper('ⱥ' || repeat('a', 9) || 'ⱦ'), lower('Ⱥ' || repeat('A', 9) || 'Ⱦ')
+----
+iiiiiiiiiiiiiiii	iabcdefghabcdefghabcdefghi	ẞẞẞẞẞẞẞẞẞ	IXXXXXXXXXXXXXXXXX	kkkkkabcdefghi	ȺAAAAAAAAAȾ	ⱥaaaaaaaaaⱦ
+
+query TTTTTT
+SELECT lower('ABCDEFG'), upper('abcdefgh'), lower('@[`{AZaz'), upper('@[`{AZaz'), lower('HELLO WORLD, THIS IS ASCII ONLY'), upper(repeat('xY', 33))
+----
+abcdefg	ABCDEFGH	@[`{azaz	@[`{AZAZ	hello world, this is ascii only	XYXYXYXYXYXYXYXYXYXYXYXYXYXYXYXYXYXYXYXYXYXYXYXYXYXYXYXYXYXYXYXYXY

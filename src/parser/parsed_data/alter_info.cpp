@@ -3,8 +3,19 @@
 
 #include "duckdb/parser/parsed_data/alter_table_info.hpp"
 #include "duckdb/parser/constraints/unique_constraint.hpp"
+#include "duckdb/common/sql_identifier.hpp"
 
 namespace duckdb {
+
+string RenameEntryToString(CatalogType entry_type, const string &target, OnEntryNotFound if_not_found,
+                           const Identifier &new_name) {
+	string result = "ALTER " + ParseInfo::TypeToString(entry_type) + " ";
+	if (if_not_found == OnEntryNotFound::RETURN_NULL) {
+		result += "IF EXISTS ";
+	}
+	result += target + " RENAME TO " + SQLIdentifier(new_name) + ";";
+	return result;
+}
 
 AlterInfo::AlterInfo(AlterType type, QualifiedName name_p, OnEntryNotFound if_not_found)
     : ParseInfo(TYPE), type(type), if_not_found(if_not_found), allow_internal(false),

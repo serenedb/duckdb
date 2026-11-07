@@ -27,7 +27,7 @@ IgnoreOrRespectNulls <- IgnoreNulls / RespectNulls
 IgnoreNulls <- 'IGNORE' 'NULLS'
 RespectNulls <- 'RESPECT' 'NULLS'
 
-ParenthesisExpression <- Parens(List(Expression)?)
+ParenthesisExpression <- Parens(List(Expression)?) OverlapsTail?
 LiteralExpression <- StringLiteral / NumberLiteral / ConstantLiteral
 ConstantLiteral <- NullLiteral / TrueLiteral / FalseLiteral
 NullLiteral <- 'NULL'
@@ -128,6 +128,11 @@ ListComprehensionFilter <- 'IF' Expression
 
 ParensExpression <- Parens(Expression)
 
+OverlapsTail <- 'OVERLAPS' OverlapsRow
+OverlapsRow <- OverlapsRowExpression / OverlapsParenthesisExpression
+OverlapsRowExpression <- 'ROW' Parens(List(Expression)?)
+OverlapsParenthesisExpression <- Parens(List(Expression)?)
+
 # RUNNING and FINAL say how much of a MATCH_RECOGNIZE match the call below them reads. They are only
 # meaningful in MEASURES, which is where the binder checks for them.
 MeasureSemanticsExpression <- MeasureSemantics FunctionExpression
@@ -182,8 +187,9 @@ IsTestTail <- IsTest
 IsDistinctTail <- IsDistinctFromTail
 IsComparisonTail <- ComparisonExpressionTail
 IsOtherOperatorTail <- OtherOperatorTail
-IsTest <- IsLiteral / NotNull / IsNull
+IsTest <- IsLiteral / IsDocument / NotNull / IsNull
 IsLiteral <- 'IS' 'NOT'? IsLiteralValue
+IsDocument <- 'IS' 'NOT'? 'DOCUMENT'
 IsLiteralValue <- TrueLiteral / FalseLiteral / NullLiteral / UnknownLiteral
 UnknownLiteral <- 'UNKNOWN'
 NotNull <- NotNullKeyword / NotNullOperator
@@ -237,8 +243,10 @@ InExpression <- InExpressionList / InSelectStatement / InContainsExpression
 InContainsExpression <- OtherOperatorExpression
 InExpressionList <- Parens(List(Expression))
 InSelectStatement <- Parens(SelectStatementInternal)
-BetweenClause <- 'BETWEEN' Asymmetric? OtherOperatorExpression 'AND' OtherOperatorExpression
-Asymmetric <- 'ASYMMETRIC'
+BetweenClause <- 'BETWEEN' BetweenSymmetry? OtherOperatorExpression 'AND' OtherOperatorExpression
+BetweenSymmetry <- BetweenSymmetric / BetweenAsymmetric
+BetweenSymmetric <- 'SYMMETRIC'
+BetweenAsymmetric <- 'ASYMMETRIC'
 # LEVEL 8
 OtherOperatorExpression <- InfixOtherOperatorExpression / CustomPrefixExpression
 InfixOtherOperatorExpression <- BitwiseExpression OtherOperatorTail*
@@ -248,7 +256,8 @@ OtherOperator <-
     AnyAllParsedOperator / NamedOtherOperator
 AnyAllParsedOperator <- AnyAllOperator
 NamedOtherOperator <-
-    QualifiedOperator / OperatorLiteral
+    QualifiedOperator / OperatorLiteral / QuestionMarkOperator
+QuestionMarkOperator <- '?' AnyOperatorLiteral
 OperatorLiteral <- Identifier
 AnyOperatorLiteral <- Identifier
 AnyAllOperator <- AnyOperatorLiteral AnyOrAll
@@ -285,19 +294,22 @@ AtTimeZoneExpressionTail <- AtTimeZoneOperator PrefixExpression
 AtTimeZoneOperator <- 'AT' 'TIME' 'ZONE'
 # LEVEL 15
 PrefixExpression <- PrefixOperator* BaseExpression
-PrefixOperator <- QualifiedOperator / MinusPrefixOperator / PlusPrefixOperator
+PrefixOperator <- QualifiedOperator / MinusPrefixOperator / PlusPrefixOperator / DoubleNotPrefixOperator / QuestionMarkPrefixOperator
+QuestionMarkPrefixOperator <- '?' '|'
 MinusPrefixOperator <- '-'
 PlusPrefixOperator <- '+'
 TildePrefixOperator <- '~'
+DoubleNotPrefixOperator <- '!!'
 # LEVEL 16 (Highest)
 BaseExpression <- SingleExpression IndirectionList?
 IndirectionList <- Indirection+
 
 Indirection <- CastOperator / DotOperator / SliceExpression / PostfixOperator
 CastOperator <- '::' Type
-DotOperator <- DotMethodOperator / DotColumnOperator
+DotOperator <- DotMethodOperator / DotColumnOperator / DotStarOperator
 DotMethodOperator <- '.' MethodExpression
 DotColumnOperator <- '.' ColLabel
+DotStarOperator <- '.' '*'
 MethodExpression <- ColLabel MethodExpressionArguments
 MethodExpressionArguments <- Parens(MethodExpressionArgumentList)
 MethodExpressionArgumentList <- DistinctOrAll? MethodFunctionArguments? OrderByClause? IgnoreOrRespectNulls?
@@ -311,8 +323,9 @@ StepSliceBound <- ':' Expression?
 PostfixOperator <- '!'
 
 
-SpecialFunctionExpression <- CoalesceExpression / UnpackExpression / TryExpression / ColumnsExpression / ExtractExpression / LambdaExpression / NullIfExpression / PositionExpression / RowExpression / SubstringExpression / TrimExpression / OverlayExpression
+SpecialFunctionExpression <- CoalesceExpression / UnpackExpression / TryExpression / ColumnsExpression / ExtractExpression / LambdaExpression / NullIfExpression / PositionExpression / RowExpression / SubstringSimilarExpression / SubstringExpression / TrimExpression / OverlayExpression / XmlConcatExpression
 CoalesceExpression <- 'COALESCE' Parens(List(Expression))
+XmlConcatExpression <- 'XMLCONCAT' Parens(List(Expression))
 UnpackExpression <- 'UNPACK' Parens(Expression)
 TryExpression <- 'TRY' Parens(Expression)
 ColumnsExpression <- StarSymbol? 'COLUMNS' Parens(Expression)
@@ -323,7 +336,7 @@ NullIfExpression <- 'NULLIF' Parens(NullIfArguments)
 NullIfArguments <- Expression ',' Expression
 PositionExpression <- 'POSITION' Parens(PositionArguments)
 PositionArguments <- OtherOperatorExpression 'IN' Expression
-RowExpression <- 'ROW' Parens(List(Expression)?)
+RowExpression <- 'ROW' Parens(List(Expression)?) OverlapsTail?
 SubstringExpression <- 'SUBSTRING' Parens(SubstringArguments)
 SubstringArguments <- SubstringParameters / SubstringExpressionList
 SubstringExpressionList <- List(Expression)
@@ -331,6 +344,8 @@ SubstringParameters <- Expression SubstringFromFor
 SubstringFromFor <- SubstringFromOptionalFor / SubstringFor
 SubstringFromOptionalFor <- FromExpression ForExpression?
 SubstringFor <- ForExpression
+SubstringSimilarExpression <- 'SUBSTRING' Parens(SubstringSimilar)
+SubstringSimilar <- Expression 'SIMILAR' Expression 'ESCAPE' Expression
 TrimExpression <- 'TRIM' Parens(TrimArguments)
 TrimArguments <- TrimDirection? TrimSource? List(Expression)
 TrimDirection <- TrimBoth / TrimLeading / TrimTrailing

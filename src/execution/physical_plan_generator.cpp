@@ -1,13 +1,16 @@
 #include "duckdb/execution/physical_plan_generator.hpp"
 
 #include "duckdb/catalog/catalog_entry/scalar_function_catalog_entry.hpp"
+#include "duckdb/common/stack_depth.hpp"
 #include "duckdb/common/types/column/column_data_collection.hpp"
 #include "duckdb/execution/column_binding_resolver.hpp"
+#include "duckdb/function/scalar/lower_equality_to_ilike.hpp"
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/main/config.hpp"
 #include "duckdb/main/query_profiler.hpp"
 #include "duckdb/planner/expression/list.hpp"
 #include "duckdb/planner/logical_operator_repeatability.hpp"
+#include "duckdb/planner/logical_operator_visitor.hpp"
 #include "duckdb/planner/operator/logical_extension_operator.hpp"
 #include "duckdb/planner/operator/list.hpp"
 #include "duckdb/execution/operator/helper/physical_verify_vector.hpp"
@@ -73,11 +76,27 @@ unique_ptr<PhysicalPlan> PhysicalPlanGenerator::PlanInternal(LogicalOperator &op
 }
 
 PhysicalOperator &PhysicalPlanGenerator::CreatePlan(LogicalOperator &op) {
+	StackDepth::Check();
 	const auto repeatable = ClassifyLogicalOperatorRepeatability(op) == LogicalOperatorRepeatability::REPEATABLE;
+	const auto planned_side_effects = subtree_has_side_effects;
+	subtree_has_side_effects = op.HasOwnSideEffects();
+	switch (op.type) {
+	case LogicalOperatorType::LOGICAL_FILTER:
+	case LogicalOperatorType::LOGICAL_COMPARISON_JOIN:
+	case LogicalOperatorType::LOGICAL_DELIM_JOIN:
+	case LogicalOperatorType::LOGICAL_ASOF_JOIN:
+	case LogicalOperatorType::LOGICAL_ANY_JOIN:
+		LogicalOperatorVisitor::EnumerateExpressions(
+		    op, [](unique_ptr<Expression> *expr) { LowerEqualityToILike::Rewrite(*expr); });
+		break;
+	default:
+		break;
+	}
 	auto &result = CreatePlanInternal(op);
-	if (!repeatable) {
+	if (!repeatable || subtree_has_side_effects) {
 		non_repeatable_operators.insert(result);
 	}
+	subtree_has_side_effects = subtree_has_side_effects || planned_side_effects;
 	return result;
 }
 
@@ -119,6 +138,8 @@ PhysicalOperator &PhysicalPlanGenerator::CreatePlanInternal(LogicalOperator &op)
 		return CreatePlan(op.Cast<LogicalCrossProduct>());
 	case LogicalOperatorType::LOGICAL_POSITIONAL_JOIN:
 		return CreatePlan(op.Cast<LogicalPositionalJoin>());
+	case LogicalOperatorType::LOGICAL_LOOKUP_JOIN:
+		return CreatePlan(op.Cast<LogicalLookupJoin>());
 	case LogicalOperatorType::LOGICAL_UNION:
 	case LogicalOperatorType::LOGICAL_EXCEPT:
 	case LogicalOperatorType::LOGICAL_INTERSECT:
@@ -159,6 +180,11 @@ PhysicalOperator &PhysicalPlanGenerator::CreatePlanInternal(LogicalOperator &op)
 	case LogicalOperatorType::LOGICAL_CREATE_MACRO:
 	case LogicalOperatorType::LOGICAL_CREATE_TYPE:
 	case LogicalOperatorType::LOGICAL_CREATE_TRIGGER:
+	case LogicalOperatorType::LOGICAL_CREATE_JOB:
+	case LogicalOperatorType::LOGICAL_CREATE_ROLE:
+	case LogicalOperatorType::LOGICAL_CREATE_FOREIGN_SERVER:
+	case LogicalOperatorType::LOGICAL_CREATE_TOKENIZER:
+	case LogicalOperatorType::LOGICAL_CREATE_DATABASE:
 		return CreatePlan(op.Cast<LogicalCreate>());
 	case LogicalOperatorType::LOGICAL_PRAGMA:
 		return CreatePlan(op.Cast<LogicalPragma>());

@@ -969,7 +969,6 @@ generate-files: $(CAPIGEN_SETUP_DEPS)
 	$(PYTHON) scripts/generate_settings.py
 	$(PYTHON) scripts/generate_serialization.py
 	$(PYTHON) scripts/generate_util.py
-	$(PYTHON) scripts/generate_storage_info.py
 	$(PYTHON) scripts/generate_enum_util.py
 	$(PYTHON) scripts/generate_html_template.py
 	$(MAKE) parser-grammar

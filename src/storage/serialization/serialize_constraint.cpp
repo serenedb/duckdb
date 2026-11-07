@@ -11,10 +11,18 @@ namespace duckdb {
 
 void Constraint::Serialize(Serializer &serializer) const {
 	serializer.WriteProperty<ConstraintType>(100, "type", type);
+	if (serializer.ShouldSerialize(StorageVersion::SERENEDB_V1)) {
+		serializer.WritePropertyWithDefault<string>(16484, "constraint_name", constraint_name);
+	}
+	if (serializer.ShouldSerialize(StorageVersion::SERENEDB_V1)) {
+		serializer.WritePropertyWithDefault<idx_t>(16485, "oid", oid);
+	}
 }
 
 unique_ptr<Constraint> Constraint::Deserialize(Deserializer &deserializer) {
 	auto type = deserializer.ReadProperty<ConstraintType>(100, "type");
+	auto constraint_name = deserializer.ReadPropertyWithDefault<string>(16484, "constraint_name");
+	auto oid = deserializer.ReadPropertyWithDefault<idx_t>(16485, "oid");
 	unique_ptr<Constraint> result;
 	switch (type) {
 	case ConstraintType::CHECK:
@@ -32,6 +40,8 @@ unique_ptr<Constraint> Constraint::Deserialize(Deserializer &deserializer) {
 	default:
 		throw SerializationException("Unsupported type for deserialization of Constraint!");
 	}
+	result->constraint_name = std::move(constraint_name);
+	result->oid = oid;
 	return result;
 }
 
@@ -88,6 +98,9 @@ void UniqueConstraint::Serialize(Serializer &serializer) const {
 	if (serializer.ShouldSerialize(StorageVersion::V2_0_0)) {
 		serializer.WritePropertyWithDefault<ConstraintCheckMode>(203, "check_mode", check_mode, ConstraintCheckMode::DEFAULT);
 	}
+	if (serializer.ShouldSerialize(StorageVersion::SERENEDB_V1)) {
+		serializer.WritePropertyWithDefault<idx_t>(16584, "index_oid", index_oid);
+	}
 }
 
 unique_ptr<Constraint> UniqueConstraint::Deserialize(Deserializer &deserializer) {
@@ -96,6 +109,7 @@ unique_ptr<Constraint> UniqueConstraint::Deserialize(Deserializer &deserializer)
 	deserializer.ReadProperty<LogicalIndex>(201, "index", result->index);
 	deserializer.ReadPropertyWithDefault<vector<Identifier>>(202, "columns", result->columns);
 	deserializer.ReadPropertyWithExplicitDefault<ConstraintCheckMode>(203, "check_mode", result->check_mode, ConstraintCheckMode::DEFAULT);
+	deserializer.ReadPropertyWithDefault<idx_t>(16584, "index_oid", result->index_oid);
 	return std::move(result);
 }
 

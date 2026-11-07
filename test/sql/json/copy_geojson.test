@@ -199,8 +199,8 @@ SELECT replace(replace(trim(content, chr(10)), chr(10), ' '), chr(9), '') FROM r
 query II
 SELECT ST_AsText(geometry), bbox FROM read_json('{TEST_DIR}/ids_bbox.geojsonl') ORDER BY id;
 ----
-POINT (1 2)	[1.0, 2.0, 1.0, 2.0]
-LINESTRING (0 0, 3 4)	[0.0, 0.0, 3.0, 4.0]
+POINT (1 2)	[1, 2, 1, 2]
+LINESTRING (0 0, 3 4)	[0, 0, 3, 4]
 
 # A 3D bbox is ordered as all the minimums followed by all the maximums, and geometries without a finite extent
 # get no bbox at all

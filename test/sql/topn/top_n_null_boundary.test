@@ -1,0 +1,51 @@
+# name: test/sql/topn/top_n_null_boundary.test
+# description: Top N dynamic filter must still arm after a NULL boundary value
+# group: [topn]
+
+statement ok
+SET profiling_renderer_settings = MAP {'operator_casing': 'upper'};
+
+require no_alternative_verify
+
+statement ok
+ATTACH '{TEST_DIR}/top_n_null_boundary.duckdb' AS db (ROW_GROUP_SIZE 2048)
+
+statement ok
+USE db
+
+statement ok
+CREATE TABLE p(i BIGINT)
+
+# A leading all-NULL row group makes the first full heap publish a NULL boundary
+statement ok
+INSERT INTO p SELECT NULL FROM range(2048)
+
+statement ok
+INSERT INTO p SELECT 1000 + range FROM range(2048)
+
+statement ok
+INSERT INTO p SELECT range % 1000 FROM range(2048)
+
+statement ok
+INSERT INTO p SELECT range % 1000 FROM range(2048)
+
+statement ok
+SET threads TO 1
+
+# Scan the row groups in storage order so the NULL group is sunk first
+statement ok
+SET disabled_optimizers='row_group_pruner'
+
+# Once the second row group fills the heap the boundary is 1000, so the two
+# trailing row groups (max 999) are pruned by their zonemap: 2 groups scanned.
+query II
+EXPLAIN ANALYZE SELECT * FROM p ORDER BY i DESC LIMIT 2048
+----
+analyzed_plan	<REGEX>:.*TABLE_SCAN.*4,096 rows.*
+
+query I
+SELECT i FROM p ORDER BY i DESC LIMIT 3
+----
+3047
+3046
+3045

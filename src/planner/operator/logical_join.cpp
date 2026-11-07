@@ -11,24 +11,38 @@ LogicalJoin::LogicalJoin(JoinType join_type, LogicalOperatorType logical_type)
 }
 
 vector<ColumnBinding> LogicalJoin::GetColumnBindings() {
-	auto left_bindings = MapBindings(children[0]->GetColumnBindings(), left_projection_map);
+	return GetDerivedColumnBindings();
+}
+
+optional_ptr<LogicalOperator> LogicalJoin::GetBindingChild() {
+	if (join_type == JoinType::RIGHT_SEMI || join_type == JoinType::RIGHT_ANTI) {
+		return children[1].get();
+	}
+	return children[0].get();
+}
+
+void LogicalJoin::DeriveColumnBindings(vector<ColumnBinding> &bindings) {
+	if (join_type == JoinType::RIGHT_SEMI || join_type == JoinType::RIGHT_ANTI) {
+		if (!right_projection_map.empty()) {
+			bindings = MapBindings(bindings, right_projection_map);
+		}
+		return;
+	}
+	if (!left_projection_map.empty()) {
+		bindings = MapBindings(bindings, left_projection_map);
+	}
 	if (join_type == JoinType::SEMI || join_type == JoinType::ANTI) {
 		// for SEMI and ANTI join we only project the left hand side
-		return left_bindings;
+		return;
 	}
-
 	if (join_type == JoinType::MARK) {
 		// for MARK join we project the left hand side plus the MARK column
-		left_bindings.emplace_back(mark_index, ProjectionIndex(0));
-		return left_bindings;
+		bindings.emplace_back(mark_index, ProjectionIndex(0));
+		return;
 	}
 	// for other join types we project both the LHS and the RHS
 	auto right_bindings = MapBindings(children[1]->GetColumnBindings(), right_projection_map);
-	if (join_type == JoinType::RIGHT_SEMI || join_type == JoinType::RIGHT_ANTI) {
-		return right_bindings;
-	}
-	left_bindings.insert(left_bindings.end(), right_bindings.begin(), right_bindings.end());
-	return left_bindings;
+	bindings.insert(bindings.end(), right_bindings.begin(), right_bindings.end());
 }
 
 vector<TableIndex> LogicalJoin::GetTableIndex() const {

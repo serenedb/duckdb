@@ -26,8 +26,12 @@ public:
 	                       LocalTableFunctionState &lstate) override;
 	AsyncResult Scan(ClientContext &context, GlobalTableFunctionState &global_state,
 	                 LocalTableFunctionState &local_state, DataChunk &chunk) override;
+	void Lookup(ClientContext &context, GlobalTableFunctionState &global_state, LocalTableFunctionState &local_state,
+	            std::span<const int64_t> rows, std::span<idx_t> survivors, DataChunk &chunk) override;
 	void FinishFile(ClientContext &context, GlobalTableFunctionState &gstate) override;
 	double GetProgressInFile(ClientContext &context) override;
+
+	void AddVirtualColumn(column_t virtual_column_id) override;
 
 	string GetReaderType() const override {
 		return "File";

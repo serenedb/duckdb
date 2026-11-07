@@ -1,4 +1,5 @@
 #include "json_deserializer.hpp"
+#include "duckdb/common/stack_depth.hpp"
 #include "duckdb/common/types/blob.hpp"
 
 namespace duckdb {
@@ -96,6 +97,7 @@ void JsonDeserializer::Dump(yyjson_val *val) {
 // Nested Types Hooks
 //===--------------------------------------------------------------------===//
 void JsonDeserializer::OnObjectBegin() {
+	StackDepth::Check();
 	auto val = GetNextValue();
 	if (!yyjson_is_obj(val)) {
 		ThrowTypeError(val, "object");

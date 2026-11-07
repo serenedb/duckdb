@@ -163,10 +163,10 @@ struct NFCNormalizeFun {
 
 struct LengthFun {
 	static constexpr const char *Name = "length";
-	static constexpr const char *Parameters = "string::VARCHAR\001bit::BIT\001list::ANY[]";
-	static constexpr const char *Description = "Number of characters in `string`.\001Returns the bit-length of the `bit` argument.\001Returns the length of the `list`.";
-	static constexpr const char *Example = "length('Hello🦆')\001length(42::TINYINT::BIT)\001length([1,2,3])";
-	static constexpr const char *Categories = "string\001numeric\001list";
+	static constexpr const char *Parameters = "string::VARCHAR\001bit::BIT\001list::ANY[]\001blob::BLOB";
+	static constexpr const char *Description = "Number of characters in `string`.\001Returns the bit-length of the `bit` argument.\001Returns the length of the `list`.\001Number of bytes in `blob`.";
+	static constexpr const char *Example = "length('Hello🦆')\001length(42::TINYINT::BIT)\001length([1,2,3])\001length('\\xAA\\xBB'::BLOB)";
+	static constexpr const char *Categories = "string\001numeric\001list\001blob";
 
 	static ScalarFunctionSet GetFunctions();
 };
@@ -252,17 +252,21 @@ struct OverlayFun {
 struct SubstringFun {
 	static constexpr const char *Name = "substring";
 	static constexpr const char *Parameters = "string,start,length";
-	static constexpr const char *Description = "Extracts substring starting from character `start` up to the end of the string. If optional argument `length` is set, extracts a substring of `length` characters instead. Note that a `start` value of `1` refers to the first character of the `string`.";
-	static constexpr const char *Example = "substring('Hello', 2)\002substring('Hello', 2, 2)";
+	static constexpr const char *Description = "Extracts substring starting from character `start` up to the end of the string. If optional argument `length` is set, extracts a substring of `length` characters instead. Note that a `start` value of `1` refers to the first character of the `string`. Given a text `pattern` instead of `start`, returns the part of `string` that the first capturing group of the regular expression matches, or the whole match when it has no capturing group; `NULL` when nothing matches.";
+	static constexpr const char *Example = "substring('Hello', 2)\002substring('Hello', 2, 2)\002substring('Hello', 'l+')";
 	static constexpr const char *Categories = "string";
 
 	static ScalarFunctionSet GetFunctions();
 };
 
 struct SubstrFun {
-	using ALIAS = SubstringFun;
-
 	static constexpr const char *Name = "substr";
+	static constexpr const char *Parameters = "string,start,length";
+	static constexpr const char *Description = "Extracts substring starting from character `start` up to the end of the string. If optional argument `length` is set, extracts a substring of `length` characters instead. Note that a `start` value of `1` refers to the first character of the `string`.";
+	static constexpr const char *Example = "substr('Hello', 2)\002substr('Hello', 2, 2)";
+	static constexpr const char *Categories = "string";
+
+	static ScalarFunctionSet GetFunctions();
 };
 
 struct SubstringGraphemeFun {
@@ -273,6 +277,16 @@ struct SubstringGraphemeFun {
 	static constexpr const char *Categories = "string";
 
 	static ScalarFunctionSet GetFunctions();
+};
+
+struct SplitPartFun {
+	static constexpr const char *Name = "split_part";
+	static constexpr const char *Parameters = "string,delimiter,position";
+	static constexpr const char *Description = "Splits the `string` along the `delimiter` and returns the part at `position`, counted from 1, or from the end when `position` is negative. Returns an empty string when there is no such part.";
+	static constexpr const char *Example = "split_part('a;b;c', ';', 2)";
+	static constexpr const char *Categories = "string";
+
+	static ScalarFunction GetFunction();
 };
 
 struct StringSplitFun {
@@ -345,6 +359,12 @@ struct RegexpMatchesFun {
 	static ScalarFunctionSet GetFunctions();
 };
 
+struct RegexpLikeFun {
+	using ALIAS = RegexpMatchesFun;
+
+	static constexpr const char *Name = "regexp_like";
+};
+
 struct RegexpReplaceFun {
 	static constexpr const char *Name = "regexp_replace";
 	static constexpr const char *Parameters = "string,regex,replacement,options";
@@ -412,7 +432,7 @@ struct LikeFun {
 	static constexpr const char *Example = "";
 	static constexpr const char *Categories = "";
 
-	static ScalarFunction GetFunction();
+	static ScalarFunctionSet GetFunctions();
 };
 
 struct NotLikeFun {
@@ -422,7 +442,7 @@ struct NotLikeFun {
 	static constexpr const char *Example = "";
 	static constexpr const char *Categories = "";
 
-	static ScalarFunction GetFunction();
+	static ScalarFunctionSet GetFunctions();
 };
 
 struct GlobPatternFun {
@@ -462,7 +482,17 @@ struct LikeEscapeFun {
 	static constexpr const char *Example = "like_escape('a%c', 'a$%c', '$')";
 	static constexpr const char *Categories = "string";
 
-	static ScalarFunction GetFunction();
+	static ScalarFunctionSet GetFunctions();
+};
+
+struct SimilarToEscapeFun {
+	static constexpr const char *Name = "similar_to_escape";
+	static constexpr const char *Parameters = "pattern,escape_character";
+	static constexpr const char *Description = "Translates a SQL `SIMILAR TO` pattern into the equivalent regular expression, so that `string SIMILAR TO pattern` can be evaluated as `regexp_full_match(string, similar_to_escape(pattern))`. `escape_character` defaults to a backslash.";
+	static constexpr const char *Example = "similar_to_escape('a%c')";
+	static constexpr const char *Categories = "string";
+
+	static ScalarFunctionSet GetFunctions();
 };
 
 struct NotLikeEscapeFun {
@@ -472,7 +502,7 @@ struct NotLikeEscapeFun {
 	static constexpr const char *Example = "not_like_escape('a%c', 'a$%c', '$')";
 	static constexpr const char *Categories = "string";
 
-	static ScalarFunction GetFunction();
+	static ScalarFunctionSet GetFunctions();
 };
 
 struct IlikeEscapeFun {

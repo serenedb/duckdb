@@ -1,0 +1,50 @@
+# name: test/sql/copy/parquet/parquet_select_across_pages.test
+# description: Strings selected from vectors whose rows span several parquet pages
+# group: [parquet]
+
+require parquet
+
+statement ok
+COPY (
+    SELECT i AS id,
+           i % 97 AS k,
+           CASE WHEN i % 13 = 0 THEN NULL ELSE repeat(md5(i::VARCHAR), 4) END AS body,
+           CASE WHEN i % 11 = 0 THEN NULL ELSE 'tag-' || (i % 5)::VARCHAR || '-long-enough-to-not-inline' END AS tag
+    FROM range(30000) t(i)
+) TO '{TEST_DIR}/select_across_pages.parquet' (FORMAT parquet, DATA_PAGE_SIZE_LIMIT 4096, ROW_GROUP_SIZE 10240);
+
+query II
+SELECT path_in_schema, bool_and(encodings ILIKE '%DICTIONARY%') FROM parquet_metadata('{TEST_DIR}/select_across_pages.parquet') WHERE path_in_schema IN ('body', 'tag') GROUP BY ALL ORDER BY ALL;
+----
+body	false
+tag	true
+
+statement ok
+CREATE MACRO intact(id, body, tag) AS
+    body IS NOT DISTINCT FROM (CASE WHEN id % 13 = 0 THEN NULL ELSE repeat(md5(id::VARCHAR), 4) END) AND
+    tag IS NOT DISTINCT FROM (CASE WHEN id % 11 = 0 THEN NULL ELSE 'tag-' || (id % 5)::VARCHAR || '-long-enough-to-not-inline' END);
+
+query II
+SELECT count(*), count(*) FILTER (WHERE intact(id, body, tag)) FROM '{TEST_DIR}/select_across_pages.parquet' WHERE k = 5;
+----
+310	310
+
+query II
+SELECT count(*), count(*) FILTER (WHERE intact(id, body, tag)) FROM '{TEST_DIR}/select_across_pages.parquet' WHERE id % 500 < 3;
+----
+180	180
+
+query II
+SELECT count(*), count(*) FILTER (WHERE intact(id, body, tag)) FROM '{TEST_DIR}/select_across_pages.parquet' WHERE k <> 5;
+----
+29690	29690
+
+query II
+EXPLAIN SELECT * FROM '{TEST_DIR}/select_across_pages.parquet' ORDER BY k DESC, id LIMIT 300;
+----
+physical_plan	<REGEX>:.*LOOKUP_JOIN.*
+
+query II
+SELECT count(*), count(*) FILTER (WHERE intact(id, body, tag)) FROM (SELECT * FROM '{TEST_DIR}/select_across_pages.parquet' ORDER BY k DESC, id LIMIT 300);
+----
+300	300

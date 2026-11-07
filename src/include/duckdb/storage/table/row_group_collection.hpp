@@ -66,6 +66,8 @@ enum class VacuumIndexStrategy : uint8_t {
 struct ColumnSegmentInfoScanState {
 	shared_ptr<RowGroupSegmentTree> row_groups;
 	optional_ptr<SegmentNode<RowGroup>> current_row_group;
+	//! Scan position for table implementations that do not iterate row groups.
+	idx_t position = 0;
 	ColumnSegmentInfoScanOptions options;
 };
 
@@ -132,7 +134,8 @@ public:
 	RowGroupIterationHelper Chunks(DuckTransaction &transaction, const vector<StorageIndex> &column_ids);
 
 	void Fetch(TransactionData transaction, DataChunk &result, const vector<StorageIndex> &column_ids,
-	           const Vector &row_identifiers, idx_t fetch_count, ColumnFetchState &state);
+	           const Vector &row_identifiers, idx_t fetch_count, ColumnFetchState &state,
+	           optional_ptr<SelectionVector> fetched = nullptr);
 
 	//! Returns true, if the row group can fetch the row id for the transaction.
 	bool CanFetch(TransactionData, const row_t row_id);
@@ -160,7 +163,7 @@ public:
 
 	idx_t Delete(TransactionData transaction, DuckTableEntry &table_entry, row_t *ids, idx_t count);
 	void Update(TransactionData transaction, DuckTableEntry &table_entry, row_t *ids,
-	            const vector<PhysicalIndex> &column_ids, DataChunk &updates);
+	            std::span<const PhysicalIndex> column_ids, DataChunk &updates);
 	void UpdateColumn(TransactionData transaction, DuckTableEntry &table_entry, Vector &row_ids,
 	                  const vector<column_t> &column_path, DataChunk &updates);
 

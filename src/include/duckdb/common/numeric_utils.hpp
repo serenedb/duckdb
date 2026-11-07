@@ -11,6 +11,7 @@
 #include <cmath>
 #include <type_traits>
 
+#include "duckdb/common/exception.hpp"
 #include "duckdb/common/hugeint.hpp"
 #include "duckdb/common/limits.hpp"
 

@@ -58,7 +58,7 @@ SELECT count(*) FROM t WHERE __internal_barrier(i > 5000 AND i < 5010);
 query II
 EXPLAIN ANALYZE SELECT count(*) FROM t WHERE __internal_barrier(i = 1000000);
 ----
-analyzed_plan	<REGEX>:.*Empty Result.*
+analyzed_plan	<REGEX>:.*EMPTY_RESULT.*
 
 query I
 SELECT count(*) FROM t WHERE __internal_barrier(i = 1000000);

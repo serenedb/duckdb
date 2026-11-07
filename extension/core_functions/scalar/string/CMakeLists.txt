@@ -17,10 +17,16 @@ add_library_unity(
   left_right.cpp
   to_base.cpp
   pad.cpp
+  fast_reverse.cpp
+  fast_trim.cpp
+  ascii_translate.cpp
+  bit_parallel_levenshtein.cpp
+  simple_printf.cpp
   trim.cpp
   format_bytes.cpp
   parse_formatted_bytes.cpp
   hex.cpp
+  to_hex.cpp
   repeat.cpp
   translate.cpp
   chr.cpp

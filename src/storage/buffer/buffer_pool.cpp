@@ -592,10 +592,20 @@ void BufferPool::FlushOnBulkDeallocation() {
 	}
 	// freed memory that the allocator still holds only matters once it could push us past the memory limit
 	const auto used_memory = memory_usage.GetUsedMemory(MemoryUsageCaches::NO_FLUSH);
-	if (used_memory + deallocated <= maximum_memory.load(std::memory_order_relaxed)) {
+	const auto maximum = maximum_memory.load(std::memory_order_relaxed);
+	if (used_memory + deallocated <= maximum) {
 		return;
 	}
-	block_allocator.TryFlushDeallocated(threshold);
+	const auto claimed = block_allocator.ClaimDeallocated(threshold);
+	if (claimed == 0) {
+		return;
+	}
+	const auto unpurged = Allocator::UnpurgedBytes();
+	if (unpurged.IsValid() && used_memory + unpurged.GetIndex() <= maximum) {
+		block_allocator.AddDeallocated(unpurged.GetIndex());
+		return;
+	}
+	FlushAllocator(claimed);
 }
 
 vector<EvictionQueueInformation> BufferPool::GetEvictionQueueInfo() const {

@@ -1,0 +1,34 @@
+# name: test/sql/catalog/sequence/test_serial_aliases.test
+# description: serial2, serial4 and serial8 declare serial columns of the matching integer type
+# group: [sequence]
+
+statement ok
+CREATE TABLE a(x serial2, y serial4, z serial8, v INTEGER)
+
+statement ok
+INSERT INTO a (v) VALUES (1), (2)
+
+query IIII
+SELECT x, y, z, v FROM a ORDER BY v
+----
+1	1	1	1
+2	2	2	2
+
+query TTT
+SELECT typeof(x), typeof(y), typeof(z) FROM a LIMIT 1
+----
+SMALLINT	INTEGER	BIGINT
+
+statement ok
+ALTER TABLE a ADD COLUMN w serial4
+
+query I
+SELECT w FROM a ORDER BY v
+----
+1
+2
+
+statement error
+SELECT 1::serial4
+----
+Catalog Error

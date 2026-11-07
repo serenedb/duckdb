@@ -8,7 +8,7 @@ namespace duckdb {
 
 ScalarFunction InternalCompressedMaterializationCastFun::GetFunction() {
 	auto function = CastFun::GetFunction();
-	function.SetQualifiedName(QualifiedName("system", "main", Name));
+	function.SetQualifiedName(QualifiedName(Name));
 	function.SetBindCallback(CMUtils::Bind);
 	return function;
 }

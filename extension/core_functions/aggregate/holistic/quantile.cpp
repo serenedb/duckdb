@@ -1,4 +1,5 @@
 #include "core_functions/aggregate/holistic_functions.hpp"
+#include "core_functions/aggregate/quantile_histogram.hpp"
 #include "core_functions/aggregate/quantile_state.hpp"
 #include "duckdb/common/enums/quantile_enum.hpp"
 #include "duckdb/common/operator/abs.hpp"
@@ -179,7 +180,16 @@ struct QuantileScalarOperation : public QuantileOperation {
 		D_ASSERT(bind_data.quantiles.size() == 1);
 		auto &flattened = FlattenedQuantileValues<typename STATE::InputType>::Flatten(finalize_data, state.linked_list);
 		QuantileInterpolator<DISCRETE> interp(bind_data.quantiles[0], state.linked_list.total_capacity, bind_data.desc);
-		target = interp.template Operation<typename STATE::InputType, T>(flattened.Data(), finalize_data.result);
+		using INPUT = typename STATE::InputType;
+		if constexpr (QuantileHistogram<INPUT>::SUPPORTED) {
+			INPUT selected[2];
+			if (QuantileHistogram<INPUT>::Select(flattened.Data(), state.linked_list.total_capacity, interp.FRN,
+			                                     interp.CRN, bind_data.desc, selected)) {
+				target = interp.template Extract<INPUT, T>(selected, finalize_data.result);
+				return;
+			}
+		}
+		target = interp.template Operation<INPUT, T>(flattened.Data(), finalize_data.result);
 	}
 
 	template <class STATE, class INPUT_TYPE, class RESULT_TYPE>
@@ -210,8 +220,8 @@ struct QuantileScalarOperation : public QuantileOperation {
 					continue;
 				}
 
-				rdata[ridx] = gstate->GetWindowState().template WindowScalar<RESULT_TYPE, DISCRETE>(data, frames, n,
-				                                                                                    result, quantile);
+				rdata[ridx] = gstate->GetWindowState().template WindowScalar<RESULT_TYPE, DISCRETE>(
+				    partition.context.client, data, frames, n, result, quantile);
 			}
 		} else {
 			auto &window_state = state.GetOrCreateWindowState();
@@ -228,8 +238,8 @@ struct QuantileScalarOperation : public QuantileOperation {
 				window_state.UpdateSkip(data, frames, included);
 
 				// Find the position(s) needed
-				rdata[ridx] =
-				    window_state.template WindowScalar<RESULT_TYPE, DISCRETE>(data, frames, n, result, quantile);
+				rdata[ridx] = window_state.template WindowScalar<RESULT_TYPE, DISCRETE>(partition.context.client, data,
+				                                                                        frames, n, result, quantile);
 
 				//	Save the previous state for next time
 				window_state.prevs = frames;
@@ -339,8 +349,8 @@ struct QuantileListOperation : QuantileOperation {
 					continue;
 				}
 
-				gstate->GetWindowState().template WindowList<CHILD_TYPE, DISCRETE>(data, frames, n, list, lidx,
-				                                                                   bind_data);
+				gstate->GetWindowState().template WindowList<CHILD_TYPE, DISCRETE>(partition.context.client, data,
+				                                                                   frames, n, list, lidx, bind_data);
 			}
 		} else {
 			auto &window_state = state.GetOrCreateWindowState();
@@ -353,7 +363,8 @@ struct QuantileListOperation : QuantileOperation {
 				}
 
 				window_state.UpdateSkip(data, frames, included);
-				window_state.template WindowList<CHILD_TYPE, DISCRETE>(data, frames, n, list, lidx, bind_data);
+				window_state.template WindowList<CHILD_TYPE, DISCRETE>(partition.context.client, data, frames, n, list,
+				                                                       lidx, bind_data);
 				window_state.prevs = frames;
 			}
 		}

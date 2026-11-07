@@ -8,6 +8,8 @@ add_library_unity(
   hive_partition_component.cpp
   length.cpp
   like.cpp
+  lower_equality_to_ilike.cpp
+  segmented_grapheme_count.cpp
   md5.cpp
   nfc_normalize.cpp
   overlay.cpp

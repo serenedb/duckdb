@@ -11,7 +11,7 @@
 #include "writer/parquet_write_stats.hpp"
 #include "parquet_interval.hpp"
 #include "parquet_timestamp.hpp"
-#include "zstd/common/xxhash.hpp"
+#include "common/xxhash.h"
 #include "duckdb/common/types/time.hpp"
 #include "duckdb/common/types/uhugeint.hpp"
 #include "duckdb/common/types/uuid.hpp"
@@ -257,7 +257,7 @@ struct ParquetIntervalOperator : public BaseParquetOperator {
 	template <class SRC, class TGT>
 	static TGT Operation(SRC input) {
 		if (input.days < 0 || input.months < 0 || input.micros < 0) {
-			throw IOException("Parquet files do not support negative intervals");
+			throw NotImplementedException("Parquet files do not support negative intervals");
 		}
 		TGT result;
 		ParquetIntervalUtils::Encode(input, result.bytes);

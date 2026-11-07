@@ -9,16 +9,28 @@ LogicalProjection::LogicalProjection(TableIndex table_index, vector<unique_ptr<E
     : LogicalOperator(LogicalOperatorType::LOGICAL_PROJECTION, std::move(select_list)), table_index(table_index) {
 }
 
-unique_ptr<LogicalProjection> LogicalProjection::CreateIdentity(TableIndex table_index,
-                                                                unique_ptr<LogicalOperator> child) {
-	child->ResolveOperatorTypes();
-	auto bindings = child->GetColumnBindings();
+static vector<unique_ptr<Expression>> IdentityExpressions(LogicalOperator &child) {
+	auto bindings = child.GetColumnBindings();
 	vector<unique_ptr<Expression>> expressions;
 	expressions.reserve(bindings.size());
 	for (idx_t i = 0; i < bindings.size(); i++) {
-		expressions.push_back(make_uniq<BoundColumnRefExpression>(child->types[i], bindings[i]));
+		expressions.push_back(make_uniq<BoundColumnRefExpression>(child.types[i], bindings[i]));
 	}
-	auto projection = make_uniq<LogicalProjection>(table_index, std::move(expressions));
+	return expressions;
+}
+
+unique_ptr<LogicalProjection> LogicalProjection::CreateIdentity(TableIndex table_index,
+                                                                unique_ptr<LogicalOperator> child) {
+	child->ResolveOperatorTypes();
+	auto projection = make_uniq<LogicalProjection>(table_index, IdentityExpressions(*child));
+	projection->children.push_back(std::move(child));
+	return projection;
+}
+
+unique_ptr<LogicalProjection> LogicalProjection::CreateResolvedIdentity(TableIndex table_index,
+                                                                        unique_ptr<LogicalOperator> child) {
+	auto projection = make_uniq<LogicalProjection>(table_index, IdentityExpressions(*child));
+	projection->types = child->types;
 	projection->children.push_back(std::move(child));
 	return projection;
 }

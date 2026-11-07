@@ -1,0 +1,18 @@
+# name: test/sql/cast/test_float_to_varchar_shortest.test
+# description: FLOAT and DOUBLE to VARCHAR print the shortest round-trip representation, including the longest ones
+# group: [cast]
+
+query IIIIII
+SELECT (-1.7976931348623157e308)::DOUBLE::VARCHAR, 5e-324::DOUBLE::VARCHAR, (1 / 3)::DOUBLE::VARCHAR, 0.1::DOUBLE::VARCHAR, '-0.0'::DOUBLE::VARCHAR, 1e16::DOUBLE::VARCHAR;
+----
+-1.7976931348623157e+308	5e-324	0.3333333333333333	0.1	-0	1e+16
+
+query IIII
+SELECT (-3.4028235e38)::FLOAT::VARCHAR, 1.4e-45::FLOAT::VARCHAR, 'nan'::DOUBLE::VARCHAR, '-inf'::FLOAT::VARCHAR;
+----
+-3.4028235e+38	1e-45	nan	-inf
+
+query I
+SELECT count(*) FROM range(20000) r(i) WHERE ((i * 0.37 - 3000) / 7)::DOUBLE::VARCHAR::DOUBLE <> ((i * 0.37 - 3000) / 7)::DOUBLE;
+----
+0

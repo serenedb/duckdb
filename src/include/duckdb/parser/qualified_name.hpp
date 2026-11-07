@@ -10,6 +10,7 @@
 
 #include "duckdb/common/string.hpp"
 #include "duckdb/common/case_insensitive_map.hpp"
+#include "duckdb/common/enums/identifier_case_mode.hpp"
 #include "duckdb/common/identifier.hpp"
 #include "duckdb/parser/keyword_helper.hpp"
 #include "duckdb/common/vector.hpp"
@@ -139,8 +140,9 @@ struct QualifiedName {
 
 	//! Parse the (optional) schema and a name from a string in the format of e.g. "schema"."table"; if there is no dot
 	//! the schema will be set to INVALID_SCHEMA
-	static QualifiedName Parse(const string &input);
-	static vector<Identifier> ParseComponents(const string &input);
+	static QualifiedName Parse(std::string_view input, IdentifierCaseMode mode = IdentifierCaseMode::PRESERVE_CASE);
+	static vector<Identifier> ParseComponents(std::string_view input,
+	                                          IdentifierCaseMode mode = IdentifierCaseMode::PRESERVE_CASE);
 	string ToString(QualifiedNameToStringMode mode = QualifiedNameToStringMode::DEFAULT) const;
 	//! Render only the qualification (every component before the name), with a trailing "." after each component
 	string QualificationToString(QualifiedNameToStringMode mode = QualifiedNameToStringMode::DEFAULT) const;

@@ -82,6 +82,10 @@ public:
 	DUCKDB_API optional_idx GetCatalogVersion(ClientContext &context) override;
 
 	optional_ptr<DependencyManager> GetDependencyManager() override;
+	void ScanSubjects(CatalogTransaction transaction, CatalogEntry &entry,
+	                  const std::function<void(CatalogEntry &)> &callback) override;
+	catalog_entry_vector_t OwnedEntries(CatalogTransaction transaction, const CatalogEntry &owner) override;
+	optional_ptr<CatalogEntry> OwnerOf(CatalogTransaction transaction, CatalogEntry &owned) override;
 
 private:
 	DUCKDB_API void DropSchema(CatalogTransaction transaction, DropInfo &info);

@@ -67,6 +67,10 @@ public:
 	//! Scan one vector while applying a filter to the vector, returning only the matching elements
 	void Filter(ColumnScanState &state, idx_t scan_count, Vector &result, SelectionVector &sel, idx_t &sel_count,
 	            const TableFilter &filter, TableFilterState &filter_state);
+	//! Fetch the rows with the given indexes in the segment, strictly ascending; row i goes to result position
+	//! result_offset + result_sel.get_index(i)
+	void FetchRows(ColumnFetchState &state, const idx_t *rows, idx_t row_count, Vector &result,
+	               const SelectionVector &result_sel, idx_t result_offset);
 	//! Fetch a value of the specific row id and append it to the result
 	void FetchRow(ColumnFetchState &state, row_t row_id, Vector &result, idx_t result_idx);
 

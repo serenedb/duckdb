@@ -5,6 +5,7 @@
 #include "duckdb/parser/query_node/recursive_cte_node.hpp"
 #include "duckdb/parser/query_node/cte_node.hpp"
 #include "duckdb/common/limits.hpp"
+#include "duckdb/common/stack_depth.hpp"
 namespace duckdb {
 
 CommonTableExpressionMap::CommonTableExpressionMap() {
@@ -112,6 +113,7 @@ string QueryNode::ResultModifiersToString() const {
 }
 
 bool QueryNode::Equals(const QueryNode *other) const {
+	StackDepth::Check();
 	if (!other) {
 		return false;
 	}

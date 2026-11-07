@@ -1,0 +1,76 @@
+# name: test/sql/function/blob/test_blob_like.test
+# description: LIKE, NOT LIKE and their ESCAPE forms on BLOB operands match bytes
+# group: [blob]
+
+statement ok
+CREATE TABLE blobs (id INTEGER, b BLOB, p BLOB);
+
+statement ok
+INSERT INTO blobs VALUES
+    (1, 'beast', 'b%'),
+    (2, 'mr\xFFbeast', 'mr_beast'),
+    (3, '\xC3\xBF', '_'),
+    (4, '\xC3\xBF', '__'),
+    (5, '\xFFbeast', '%beast'),
+    (6, NULL, 'b%'),
+    (7, 'beast', NULL);
+
+query IIIIII
+SELECT id, b LIKE 'b%', b LIKE '%beast', b LIKE '%eas%', b LIKE 'beast', b NOT LIKE 'b%' FROM blobs ORDER BY id
+----
+1	true	true	true	true	false
+2	false	true	true	false	true
+3	false	false	false	false	true
+4	false	false	false	false	true
+5	false	true	true	false	true
+6	NULL	NULL	NULL	NULL	NULL
+7	true	true	true	true	false
+
+query IIII
+SELECT id, b LIKE '_', b LIKE '__', b LIKE 'mr_beast' FROM blobs WHERE id IN (2, 3) ORDER BY id
+----
+2	false	false	true
+3	false	true	false
+
+query III
+SELECT id, b LIKE p, b NOT LIKE p FROM blobs ORDER BY id
+----
+1	true	false
+2	true	false
+3	false	true
+4	true	false
+5	true	false
+6	NULL	NULL
+7	NULL	NULL
+
+query I
+SELECT id FROM blobs WHERE b LIKE 'b%' ORDER BY id
+----
+1
+7
+
+query I
+SELECT id FROM blobs WHERE b LIKE 'beast' ORDER BY id
+----
+1
+7
+
+query III
+SELECT 'b%st'::BLOB LIKE 'b!%%' ESCAPE '!', 'bxst'::BLOB LIKE 'b!%%' ESCAPE '!', 'bxst'::BLOB NOT LIKE 'b!%%' ESCAPE '!'
+----
+true	false	true
+
+query II
+SELECT 'mr\xFFbeast'::BLOB LIKE 'mr!_beast' ESCAPE '!', 'mr_beast'::BLOB LIKE 'mr!_beast' ESCAPE '!'
+----
+false	true
+
+query II
+SELECT 'beast'::BLOB LIKE NULL::BLOB, 'beast'::BLOB NOT LIKE NULL::BLOB
+----
+NULL	NULL
+
+query III
+SELECT {'a': 'beast'}::VARIANT LIKE '%beast%', {'a': 'beast'}::VARIANT NOT LIKE '%beast%', {'a': 'b%'}::VARIANT LIKE '%b!%%' ESCAPE '!'
+----
+true	false	true

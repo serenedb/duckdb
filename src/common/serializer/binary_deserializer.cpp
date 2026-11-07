@@ -1,5 +1,7 @@
 #include "duckdb/common/serializer/binary_deserializer.hpp"
 
+#include "duckdb/common/stack_depth.hpp"
+
 namespace duckdb {
 
 //-------------------------------------------------------------------------
@@ -29,6 +31,7 @@ void BinaryDeserializer::OnOptionalPropertyEnd(bool present) {
 }
 
 void BinaryDeserializer::OnObjectBegin() {
+	StackDepth::Check();
 	nesting_level++;
 }
 

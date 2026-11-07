@@ -93,7 +93,7 @@ SELECT count(*) FROM not_null_integers WHERE i IS NOT DISTINCT FROM NULL;
 query II
 EXPLAIN ANALYZE SELECT count(*) FROM not_null_integers WHERE i IS NOT DISTINCT FROM NULL;
 ----
-analyzed_plan	<REGEX>:.*Empty Result.*
+analyzed_plan	<REGEX>:.*EMPTY_RESULT.*
 
 query I
 SELECT count(*) FROM not_null_integers WHERE NULL IS NOT DISTINCT FROM i;
@@ -103,4 +103,4 @@ SELECT count(*) FROM not_null_integers WHERE NULL IS NOT DISTINCT FROM i;
 query II
 EXPLAIN ANALYZE SELECT count(*) FROM not_null_integers WHERE NULL IS NOT DISTINCT FROM i;
 ----
-analyzed_plan	<REGEX>:.*Empty Result.*
+analyzed_plan	<REGEX>:.*EMPTY_RESULT.*

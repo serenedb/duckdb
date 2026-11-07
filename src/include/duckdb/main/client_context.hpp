@@ -35,6 +35,7 @@ class Logger;
 
 class Appender;
 class AttachedDatabase;
+class Binder;
 class Catalog;
 class CatalogSearchPath;
 class ColumnDataCollection;
@@ -48,6 +49,7 @@ class Relation;
 class BufferedFileWriter;
 class QueryProfiler;
 class ClientContextLock;
+class SchedulerAccount;
 struct CreateScalarFunctionInfo;
 class ScalarFunctionCatalogEntry;
 struct ActiveQueryContext;
@@ -93,13 +95,13 @@ class ClientContext : public enable_shared_from_this<ClientContext> {
 
 public:
 	DUCKDB_API explicit ClientContext(shared_ptr<DatabaseInstance> db);
-	DUCKDB_API ~ClientContext();
+	DUCKDB_API virtual ~ClientContext();
 
 	//! The database that this client is connected to
 	shared_ptr<DatabaseInstance> db;
 	//! Interrupt state for the current query
 	atomic<ClientInterruptState> interrupt_state {ClientInterruptState::NOT_INTERRUPTED};
-	//! The deadline for the current query (milliseconds since epoch)
+	//! The deadline for the current query (TimePoint ticks)
 	optional_idx query_deadline;
 	//! Set of optional states (e.g. Caches) that can be held by the ClientContext
 	unique_ptr<RegisteredStateManager> registered_state;
@@ -111,6 +113,37 @@ public:
 	unique_ptr<ClientData> client_data;
 	//! Data for the currently running transaction
 	TransactionContext transaction;
+
+	//! PG session_user — the role the connection authenticated as. Used to
+	//! resolve the literal "$user" placeholder in catalog_search_path. Set by
+	//! the wire layer at connect time; updated on SET ROLE if applicable.
+	string session_user;
+
+public:
+	virtual void ValidateIsolationLevel(TransactionIsolationLevel level) {
+	}
+	virtual bool EmitWarning(const char *message) {
+		return false;
+	}
+	virtual bool IsSettingVisible(const string &name) {
+		return true;
+	}
+	virtual void OnSettingChange(const string &name, SetScope scope) {
+	}
+	virtual void OnQueryBegin() {
+	}
+	virtual void OnQueryEnd() {
+	}
+	virtual void OnTransactionPreCommit(MetaTransaction &transaction) {
+	}
+	virtual void OnTransactionPreRollback(MetaTransaction &transaction) {
+	}
+	virtual void OnTransactionCommit(MetaTransaction &transaction) {
+	}
+	virtual void OnTransactionRollback(MetaTransaction &transaction) {
+	}
+	virtual void OnBoundPlan(Binder &binder, LogicalOperator &plan) {
+	}
 
 public:
 	//! Connect this client to a remote-style AttachedDatabase. Subsequent non-control SQL routes via
@@ -134,7 +167,10 @@ public:
 		return transaction.ActiveTransaction();
 	}
 
+	DUCKDB_API void WarnUser(const string &message);
+
 	//! Interrupts the running query. Async-signal-safe: sets a flag and nothing else
+	DUCKDB_API void InterruptFromSignal();
 	DUCKDB_API void Interrupt();
 	DUCKDB_API bool IsInterrupted() const;
 	DUCKDB_API void ClearInterrupt();
@@ -145,34 +181,47 @@ public:
 	//! Check for interrupt or timeout, throws InterruptException if triggered
 	DUCKDB_API void InterruptCheck() const;
 
+	template <typename F>
+	void Await(const F &condition) {
+		if (condition()) {
+			return;
+		}
+		auto ready = [&] {
+			return condition() || IsInterrupted();
+		};
+		Block(absl::Condition(&ready));
+	}
+	DUCKDB_API static mutex &AwaitMutex();
+	DUCKDB_API static void Notify();
+
 	//! Enable query profiling
 	DUCKDB_API void EnableProfiling();
 	//! Disable query profiling
 	DUCKDB_API void DisableProfiling();
 
 	//! Blocking. Runs the query to completion and returns its handle. The result is retained
-	DUCKDB_API unique_ptr<QueryResult> Query(const string &query, QueryParameters query_parameters);
+	DUCKDB_API unique_ptr<QueryResult> Query(std::string_view query, QueryParameters query_parameters);
 	DUCKDB_API unique_ptr<QueryResult> Query(unique_ptr<SQLStatement> statement, QueryParameters query_parameters);
 	//! As above, in the given result format
-	DUCKDB_API unique_ptr<QueryResult> Query(const string &query, shared_ptr<ResultFormat> format);
+	DUCKDB_API unique_ptr<QueryResult> Query(std::string_view query, shared_ptr<ResultFormat> format);
 	DUCKDB_API unique_ptr<QueryResult> Query(unique_ptr<SQLStatement> statement, shared_ptr<ResultFormat> format);
 
 	//! Non-blocking. Submits the query and returns its handle. The engine runs it iff threads - external_threads > 0,
 	//! but produces no data until the caller either calls a materializing method on the handle or opens a
 	//! QueryResultStream on it. The query may only contain a single statement.
-	DUCKDB_API unique_ptr<QueryResult> Submit(const string &query, const QueryParameters &query_parameters);
+	DUCKDB_API unique_ptr<QueryResult> Submit(std::string_view query, const QueryParameters &query_parameters);
 	//! Non-blocking. As above, for a parsed statement
 	DUCKDB_API unique_ptr<QueryResult> Submit(unique_ptr<SQLStatement> statement,
 	                                          const QueryParameters &query_parameters);
 	//! Non-blocking. As above, in the given result format
-	DUCKDB_API unique_ptr<QueryResult> Submit(const string &query, shared_ptr<ResultFormat> format);
+	DUCKDB_API unique_ptr<QueryResult> Submit(std::string_view query, shared_ptr<ResultFormat> format);
 	DUCKDB_API unique_ptr<QueryResult> Submit(unique_ptr<SQLStatement> statement, shared_ptr<ResultFormat> format);
 
 	//! Non-blocking. As above, for bound parameter values
 	DUCKDB_API unique_ptr<QueryResult> Submit(unique_ptr<SQLStatement> statement,
 	                                          identifier_map_t<BoundParameterData> &values,
 	                                          QueryParameters query_parameters);
-	DUCKDB_API unique_ptr<QueryResult> Submit(const string &query, identifier_map_t<BoundParameterData> &values,
+	DUCKDB_API unique_ptr<QueryResult> Submit(std::string_view query, identifier_map_t<BoundParameterData> &values,
 	                                          QueryParameters query_parameters);
 
 	//! Blocking. Runs a statement that was generated internally rather than parsed from user SQL. Statement
@@ -210,12 +259,23 @@ public:
 	//! Blocking. Runs a relation to completion and returns its handle
 	DUCKDB_API unique_ptr<QueryResult> Execute(const shared_ptr<Relation> &relation);
 
-	//! Prepare a query
-	DUCKDB_API unique_ptr<PreparedStatement> Prepare(const string &query);
+	//! Prepare a query. Optional `parameter_type_hints` declares
+	//! per-parameter bind types (e.g. PG protocol Parse OIDs) without supplying
+	//! a value -- the slot remains a real parameter and is re-bound at Execute.
+	//! Identifiers use the same scheme as named_param_map (positional "1",
+	//! "2", ... or named).
+	DUCKDB_API unique_ptr<PreparedStatement>
+	Prepare(std::string_view query,
+	        optional_ptr<const case_insensitive_map_t<LogicalType>> parameter_type_hints = nullptr);
 	//! Directly prepare a SQL statement
-	DUCKDB_API unique_ptr<PreparedStatement> Prepare(unique_ptr<SQLStatement> statement);
+	DUCKDB_API unique_ptr<PreparedStatement>
+	Prepare(unique_ptr<SQLStatement> statement,
+	        optional_ptr<const case_insensitive_map_t<LogicalType>> parameter_type_hints = nullptr,
+	        optional_ptr<const Identifier> name = nullptr);
 	//! Deallocate the prepared statement with the given name - does nothing if it does not exist
 	DUCKDB_API void RemovePreparedStatement(const string &name);
+	DUCKDB_API void RegisterPreparedStatement(const Identifier &name, unique_ptr<SQLStatement> statement);
+	DUCKDB_API static bool IsPreparedStatementHandle(const Identifier &name);
 	//! Bind a statement and return its signature, without building a PreparedStatement, optimizing, or
 	//! executing. Read-only: binding touches no in-flight query state, so a live result survives. Throws on error.
 	DUCKDB_API StatementSignature BindStatement(unique_ptr<SQLStatement> statement);
@@ -228,17 +288,17 @@ public:
 
 	//! Iterate a query's statements as a StatementIterator (iterator-style API). The caller drives
 	//! Peek() + GetStatement() to walk through ready-to-execute statements one by one
-	DUCKDB_API StatementIterator IterateStatements(const string &query);
+	DUCKDB_API StatementIterator IterateStatements(std::string_view query, bool wrap_multi = true);
 
 	//! Preprocess a peel of parse-facing statements into engine-facing ones (PRAGMA reparse,
 	//! MULTI_STATEMENT unpack, transaction wrapping), replacing `buffer` in place. Acquires the
 	//! context lock internally when `lock` is null (callers that do not already hold it, e.g. the
 	//! shell). Drives StatementIterator's preprocessing.
 	DUCKDB_API void PreprocessStatements(vector<unique_ptr<SQLStatement>> &buffer,
-	                                     optional_ptr<ClientContextLock> lock = nullptr);
+	                                     optional_ptr<ClientContextLock> lock = nullptr, bool wrap_multi = true);
 
 	//! Extract the logical plan of a query
-	DUCKDB_API unique_ptr<LogicalOperator> ExtractPlan(const string &query);
+	DUCKDB_API unique_ptr<LogicalOperator> ExtractPlan(std::string_view query);
 
 	//! Runs a function with a valid transaction context, potentially starting a transaction if the context is in auto
 	//! commit mode.
@@ -269,6 +329,11 @@ public:
 	//! Returns the current executor
 	Executor &GetExecutor();
 
+	const shared_ptr<SchedulerAccount> &GetSchedulerAccount() const {
+		return scheduler_account;
+	}
+	DUCKDB_API void SetSchedulerAccount(shared_ptr<SchedulerAccount> account);
+
 	//! Return the current logger
 	Logger &GetLogger() const;
 
@@ -280,7 +345,7 @@ public:
 	//! Fetch the set of tables names of the query.
 	//! Returns the fully qualified, escaped table names, if qualified is set to true,
 	//! else returns the not qualified, not escaped table names.
-	DUCKDB_API unordered_set<string> GetTableNames(const string &query, const bool qualified = false);
+	DUCKDB_API unordered_set<string> GetTableNames(std::string_view query, const bool qualified = false);
 
 	DUCKDB_API ClientProperties GetClientProperties();
 
@@ -288,7 +353,7 @@ public:
 	DUCKDB_API bool ExecutionIsFinished();
 
 	//! Process an error for display to the user
-	DUCKDB_API void ProcessError(ErrorData &error, const string &query) const;
+	DUCKDB_API void ProcessError(ErrorData &error, std::string_view query) const;
 
 	DUCKDB_API LogicalType ParseLogicalType(const string &type);
 
@@ -296,6 +361,8 @@ private:
 	friend class Parser;
 	friend class ParseIterator;
 	ParserOptions GetParserOptions();
+
+	DUCKDB_API void Block(const absl::Condition &ready);
 
 	//! Runs a transaction statement without going through the local query processing pipeline.
 	void RunTransactionStatement(const TransactionInfo &info);
@@ -312,7 +379,7 @@ private:
 	unique_ptr<QueryResult> CompleteDelegatedInternal(ClientContextLock &lock, QueryResult &result);
 
 	//! Parse statements from a query
-	vector<unique_ptr<SQLStatement>> ParseStatementsInternal(ClientContextLock &lock, const string &query);
+	vector<unique_ptr<SQLStatement>> ParseStatementsInternal(ClientContextLock &lock, std::string_view query);
 	void StatementVerification(ClientContextLock &lock, unique_ptr<SQLStatement> &statement,
 	                           QueryParameters query_parameters);
 
@@ -335,8 +402,11 @@ private:
 	                                                const QueryParameters &parameters);
 	unique_ptr<QueryResult> RunStatementInternal(ClientContextLock &lock, unique_ptr<SQLStatement> statement,
 	                                             const QueryParameters &parameters, bool verify = true);
-	unique_ptr<PreparedStatement> PrepareInternal(ClientContextLock &lock, unique_ptr<SQLStatement> statement);
-	void LogQueryInternal(ClientContextLock &lock, const string &query);
+	unique_ptr<PreparedStatement>
+	PrepareInternal(ClientContextLock &lock, unique_ptr<SQLStatement> statement,
+	                optional_ptr<const case_insensitive_map_t<LogicalType>> parameter_type_hints = nullptr,
+	                optional_ptr<const Identifier> name = nullptr);
+	void LogQueryInternal(ClientContextLock &lock, std::string_view query);
 
 	unique_ptr<ClientContextLock> LockContext();
 
@@ -347,7 +417,8 @@ private:
 	//! Wait until a task is available to execute
 	void WaitForTask(ClientContextLock &lock, BaseQueryResult &result);
 	//! Run one partial task slice of the open result on the calling thread
-	QueryResultState ExecuteTaskInternal(ClientContextLock &lock, BaseQueryResult &result);
+	QueryResultState ExecuteTaskInternal(ClientContextLock &lock, BaseQueryResult &result,
+	                                     std::function<void()> on_reschedule_arg = {});
 	//! Report the execution state of the open result without running any task
 	QueryResultState PollInternal(ClientContextLock &lock, BaseQueryResult &result);
 	//! Record the error on the result, end the query and report EXECUTION_ERROR
@@ -358,7 +429,7 @@ private:
 	                                       const QueryParameters &query_parameters);
 
 	template <class T>
-	unique_ptr<T> ErrorResult(ErrorData error, const string &query = string());
+	unique_ptr<T> ErrorResult(ErrorData error, std::string_view query = {});
 
 	shared_ptr<PreparedStatementData> CreatePreparedStatementInternal(ClientContextLock &lock,
 	                                                                  unique_ptr<SQLStatement> statement,
@@ -373,6 +444,7 @@ private:
 	unique_ptr<ActiveQueryContext> active_query;
 	//! The current query progress
 	QueryProgress query_progress;
+	mutex query_progress_lock;
 	//! The connection corresponding to this client context
 	connection_t connection_id;
 	//! Routing target for SQL execution while CONNECT-ed (CONNECT/DISCONNECT). When is_connected is
@@ -380,6 +452,7 @@ private:
 	//! `Catalog::RemoteExecute(string)` and wraps the returned TableRef into a SelectStatement.
 	weak_ptr<AttachedDatabase> connected_to_database;
 	bool is_connected = false;
+	shared_ptr<SchedulerAccount> scheduler_account;
 };
 
 class ClientContextLock {

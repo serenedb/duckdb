@@ -285,7 +285,7 @@ public:
 	void Append(bool null, uint16_t amount = 1);
 	void OverrideArray(data_ptr_t &destination, bool nulls, idx_t count);
 	void OverrideRun(data_ptr_t &destination, idx_t count);
-	void OverrideUncompressed(data_ptr_t &destination);
+	void OverrideUncompressed(data_ptr_t &destination, idx_t container_size);
 	void Finalize();
 	ContainerMetadata GetResult();
 	void Reset();
@@ -323,6 +323,7 @@ public:
 	uint8_t base_run_counts[COMPRESSED_SEGMENT_COUNT];
 
 	validity_t *uncompressed = nullptr;
+	idx_t uncompressed_size = 0;
 	//! Whether the state has been finalized
 	bool finalized = false;
 	//! The function called to append to the state
@@ -533,7 +534,8 @@ public:
 	}
 
 	void Verify() const override {
-#ifdef DEBUG
+#ifdef D_ASSERT_IS_ENABLED
+		DUCKDB_DEBUG_VERIFY_GUARD();
 		uint16_t index = 0;
 		auto array = reinterpret_cast<uint16_t *>(data);
 		for (uint16_t i = 0; i < count; i++) {
@@ -572,7 +574,8 @@ public:
 		this->array_index++;
 	}
 	void Verify() const override {
-#ifdef DEBUG
+#ifdef D_ASSERT_IS_ENABLED
+		DUCKDB_DEBUG_VERIFY_GUARD();
 		uint16_t index = 0;
 		ContainerSegmentScan verify_segment(segments);
 		for (uint16_t i = 0; i < this->count; i++) {
@@ -616,6 +619,8 @@ public:
 	ContainerMetadata GetContainerMetadata(idx_t container_index);
 	data_ptr_t GetStartOfContainerData(idx_t container_index);
 	ContainerScanState &LoadContainer(idx_t container_index, idx_t internal_offset);
+	bool RowIsValid(idx_t row);
+	const idx_t *CompressedSegmentStarts(idx_t container_index, const uint8_t *segments, idx_t count);
 	void ScanInternal(ContainerScanState &scan_state, idx_t to_scan, ValidityMask &result, idx_t offset);
 	idx_t GetContainerIndex(idx_t start_index, idx_t &offset);
 	void ScanPartial(idx_t start_idx, ValidityMask &result, idx_t offset, idx_t count);
@@ -629,6 +634,8 @@ public:
 	ContainerMetadataCollection metadata_collection;
 	vector<ContainerMetadata> container_metadata;
 	vector<idx_t> data_start_position;
+	idx_t lookup_container = DConstants::INVALID_INDEX;
+	idx_t lookup_starts[COMPRESSED_SEGMENT_COUNT + 1];
 };
 
 //! Boolean BitPacking

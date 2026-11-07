@@ -9,6 +9,9 @@
 #include "duckdb/parser/expression/positional_reference_expression.hpp"
 #include "duckdb/planner/expression_binder/having_binder.hpp"
 #include "duckdb/planner/planner_extension.hpp"
+#include "duckdb/common/case_insensitive_map.hpp"
+
+#include <absl/algorithm/container.h>
 
 namespace duckdb {
 
@@ -19,41 +22,23 @@ ColumnQualifier::ColumnQualifier(Binder &binder_p, optional_ptr<vector<DummyBind
       having_binder(having_binder_p) {
 }
 
-static Identifier GetSQLValueFunctionName(const Identifier &column_name) {
-	if (column_name == "current_catalog") {
-		return "current_catalog";
-	}
-	if (column_name == "current_date") {
-		return "current_date";
-	}
-	if (column_name == "current_schema") {
-		return "current_schema";
-	}
-	if (column_name == "current_role") {
-		return "current_role";
-	}
-	if (column_name == "current_time") {
-		return "get_current_time";
-	}
-	if (column_name == "current_timestamp") {
-		return "get_current_timestamp";
-	}
-	if (column_name == "current_user") {
-		return "current_user";
-	}
-	if (column_name == "localtime") {
-		return "current_localtime";
-	}
-	if (column_name == "localtimestamp") {
-		return "current_localtimestamp";
-	}
-	if (column_name == "session_user") {
-		return "session_user";
-	}
-	if (column_name == "user") {
-		return "user";
-	}
-	return Identifier();
+static const case_insensitive_map_view_t<std::string_view> value_functions {
+    {"current_catalog", "current_catalog"},
+    {"current_date", "current_date"},
+    {"current_schema", "current_schema"},
+    {"current_role", "current_role"},
+    {"current_time", "get_current_time"},
+    {"current_timestamp", "get_current_timestamp"},
+    {"current_user", "current_user"},
+    {"localtime", "current_localtime"},
+    {"localtimestamp", "current_localtimestamp"},
+    {"session_user", "session_user"},
+    {"user", "user"},
+};
+
+static std::string_view GetSQLValueFunctionName(const Identifier &column_name) {
+	auto it = value_functions.find(column_name.GetIdentifierName());
+	return it != value_functions.end() ? it->second : std::string_view {};
 }
 
 unique_ptr<ParsedExpression> Binder::GetSQLValueFunction(const Identifier &column_name) {
@@ -74,7 +59,7 @@ unique_ptr<ParsedExpression> Binder::GetSQLValueFunction(const Identifier &colum
 	}
 
 	vector<unique_ptr<ParsedExpression>> children;
-	return make_uniq<FunctionExpression>(value_function, std::move(children));
+	return make_uniq<FunctionExpression>(Identifier(value_function), std::move(children));
 }
 
 unique_ptr<ParsedExpression> ColumnQualifier::CreateStructExtract(unique_ptr<ParsedExpression> base,
@@ -158,37 +143,32 @@ unique_ptr<ParsedExpression> ColumnQualifier::QualifyColumnName(const ParsedExpr
 		}
 	}
 
-	// try binding as a lambda parameter
-	auto lambda_ref = LambdaRefExpression::FindMatchingBinding(lambda_bindings, column_name);
-	if (lambda_ref) {
-		return lambda_ref;
-	}
+	const bool macro_parameter = expr.Cast<ColumnRefExpression>().MacroParameter().IsValid();
+	if (!macro_parameter) {
+		// try binding as a lambda parameter
+		auto lambda_ref = LambdaRefExpression::FindMatchingBinding(lambda_bindings, column_name);
+		if (lambda_ref) {
+			return lambda_ref;
+		}
 
-	// find a table binding that contains this column name
-	auto table_binding = binder.bind_context.GetMatchingBinding(column_name, expr);
-
-	// throw an error if a macro parameter name conflicts with a column name
-	auto is_macro_column = false;
-	if (binder.macro_binding && binder.macro_binding->HasMatchingBinding(column_name)) {
-		is_macro_column = true;
-		if (table_binding) {
-			throw BinderException(expr, "Conflicting column names for column " + column_name + "!");
+		if (binder.global_binder_state->bound_macro_arguments.count(column_name)) {
+			return make_uniq<ColumnRefExpression>(column_name);
 		}
 	}
 
-	// bind as a macro column
-	if (is_macro_column) {
-		return binder.bind_context.CreateColumnReference(binder.macro_binding->GetBindingAlias(), column_name);
-	}
-
-	// bind as a regular column
+	auto table_binding = binder.bind_context.GetMatchingBinding(column_name, expr);
 	if (table_binding) {
 		return binder.bind_context.CreateColumnReference(table_binding->GetBindingAlias(), column_name);
 	}
+	if (!macro_parameter && binder.macro_binding && binder.macro_binding->HasMatchingBinding(column_name)) {
+		return binder.bind_context.CreateColumnReference(binder.macro_binding->GetBindingAlias(), column_name);
+	}
 
 	// it's not, find candidates and error
-	auto similar_bindings = binder.bind_context.GetSimilarBindings(column_name);
-	error = ErrorData(BinderException::ColumnNotFound(column_name, similar_bindings));
+	if (report_errors) {
+		auto similar_bindings = binder.bind_context.GetSimilarBindings(column_name);
+		error = ErrorData(BinderException::ColumnNotFound(column_name, similar_bindings));
+	}
 	return nullptr;
 }
 
@@ -219,6 +199,7 @@ void ColumnQualifier::QualifyColumnNames(unique_ptr<ParsedExpression> &expr, vec
 
 			// replace the expression with the qualified column reference
 			new_expr->SetQueryLocation(col_ref.GetQueryLocation());
+			new_expr->SetNamedParameter(expr->IsNamedParameter());
 			expr = std::move(new_expr);
 		}
 		return;
@@ -261,6 +242,11 @@ optional_ptr<CatalogEntry> ColumnQualifier::QualifyFunction(FunctionExpression &
 	D_ASSERT(!ExpressionBinder::IsUnnestFunction(function.FunctionName()));
 	// lookup the function in the catalog
 	QueryErrorContext error_context(function.GetQueryLocation());
+	if (function.IsBuiltin()) {
+		return binder.GetBuiltinEntry(
+		    EntryLookupInfo(CatalogType::SCALAR_FUNCTION_ENTRY, QualifiedName(function.FunctionName()), error_context),
+		    OnEntryNotFound::RETURN_NULL);
+	}
 	// promote a lone qualifier that names an attached database to a catalog, so that "db.f()" is not mistaken for a
 	// dot-call on a column named "db" by the rewrite below
 	binder.BindSchemaOrCatalog(function.GetQualifiedNameMutable());
@@ -398,6 +384,11 @@ unique_ptr<ParsedExpression> ColumnQualifier::QualifyColumnNameWithManyDotsInter
 			break;
 		}
 	}
+	auto parameter = QualifyFunctionParameter(col_ref);
+	if (parameter) {
+		struct_extract_start = 2;
+		return parameter;
+	}
 	// part1 could be a column
 	ErrorData unused_error;
 	auto result_expr = QualifyColumnName(col_ref, names[0], unused_error);
@@ -426,13 +417,9 @@ bool ColumnQualifier::TableNameExists(const Identifier &table_name) {
 }
 
 bool ColumnQualifier::TableBindingExists(const BindingAlias &alias) {
-	try {
-		ErrorData error;
-		return binder.bind_context.GetBinding(alias, error) != nullptr;
-	} catch (const std::exception &) {
-		// an ambiguity between multiple matching tables still means the table qualification exists
-		return true;
-	}
+	return absl::c_any_of(binder.bind_context.GetBindingsList(), [&](const unique_ptr<Binding> &binding) {
+		return binding->GetBindingAlias().Matches(alias);
+	});
 }
 
 unique_ptr<ParsedExpression> ColumnQualifier::QualifyColumnNameWithManyDots(ColumnRefExpression &col_ref,
@@ -451,15 +438,25 @@ unique_ptr<ParsedExpression> ColumnQualifier::QualifyColumnNameWithManyDots(Colu
 	return result_expr;
 }
 
+unique_ptr<ParsedExpression> ColumnQualifier::QualifyFunctionParameter(const ColumnRefExpression &col_ref) {
+	auto &names = col_ref.ColumnNames();
+	if (col_ref.MacroParameter().IsValid() || !binder.macro_binding || names[0] != binder.macro_binding->dummy_name ||
+	    !binder.macro_binding->HasMatchingBinding(names[1])) {
+		return nullptr;
+	}
+	return binder.bind_context.CreateColumnReference(binder.macro_binding->GetBindingAlias(), names[1]);
+}
+
 unique_ptr<ParsedExpression> ColumnQualifier::QualifyColumnName(ColumnRefExpression &colref, ErrorData &error) {
 	auto qualified_colref = QualifyColumnNameInternal(colref, error);
+	const bool macro_parameter = colref.MacroParameter().IsValid();
 	if (!qualified_colref) {
-		if (alias_binder) {
+		if (alias_binder && !macro_parameter) {
 			return alias_binder->ResolveAlias(colref);
 		}
 		return nullptr;
 	}
-	if (!having_binder) {
+	if (!having_binder || macro_parameter) {
 		return qualified_colref;
 	}
 	auto group_index = having_binder->TryBindGroup(*qualified_colref);
@@ -474,7 +471,7 @@ unique_ptr<ParsedExpression> ColumnQualifier::QualifyColumnName(ColumnRefExpress
 
 unique_ptr<ParsedExpression> ColumnQualifier::QualifyColumnNameInternal(ColumnRefExpression &col_ref,
                                                                         ErrorData &error) {
-	if (!col_ref.IsQualified()) {
+	if (!col_ref.IsQualified() && !col_ref.MacroParameter().IsValid()) {
 		// Try binding as a lambda parameter.
 		auto lambda_ref = LambdaRefExpression::FindMatchingBinding(lambda_bindings, col_ref.GetColumnName());
 		if (lambda_ref) {
@@ -510,6 +507,10 @@ unique_ptr<ParsedExpression> ColumnQualifier::QualifyColumnNameInternal(ColumnRe
 		if (binding) {
 			// it is! return the column reference directly
 			return binder.bind_context.CreateColumnReference(binding->GetBindingAlias(), col_ref.GetColumnName());
+		}
+		auto parameter = QualifyFunctionParameter(col_ref);
+		if (parameter) {
+			return parameter;
 		}
 
 		// otherwise check if we can turn this into a struct extract

@@ -1,0 +1,33 @@
+# name: test/sql/function/timestamp/test_timestamp_add_day_interval.test
+# description: TIMESTAMP plus or minus intervals without months matches microsecond arithmetic; month intervals, infinities and overflow keep their behaviour
+# group: [timestamp]
+
+statement ok
+CREATE TABLE t AS SELECT TIMESTAMP '1969-12-30 23:59:59.5' + INTERVAL (i * 37) MINUTE + INTERVAL (i * 13) MICROSECOND AS ts, (i % 23) - 11 AS d, (i * 7919) % 86400000001 - 43200000000 AS m FROM range(4000) r(i);
+
+query I
+SELECT count(*) FROM t
+WHERE ts + to_days(d::INTEGER) + to_microseconds(m) <> make_timestamp(epoch_us(ts) + d * 86400000000 + m)
+   OR ts - to_days(d::INTEGER) <> make_timestamp(epoch_us(ts) - d * 86400000000)
+   OR ts + INTERVAL 1 DAY <> make_timestamp(epoch_us(ts) + 86400000000);
+----
+0
+
+query II
+SELECT TIMESTAMP '2024-02-28 12:00:00' + INTERVAL 1 DAY, TIMESTAMP '2024-01-31 00:00:00' + INTERVAL 1 MONTH;
+----
+2024-02-29 12:00:00	2024-02-29 00:00:00
+
+query II
+SELECT 'infinity'::TIMESTAMP + INTERVAL 1 DAY, '-infinity'::TIMESTAMP - INTERVAL 3 HOUR;
+----
+infinity	-infinity
+
+query I
+SELECT TIMESTAMP '0001-01-01 00:00:00' - INTERVAL 1 MICROSECOND;
+----
+0001-12-31 (BC) 23:59:59.999999
+
+statement error
+SELECT TIMESTAMP '290000-01-01 00:00:00' + INTERVAL 10000000 DAY;
+----

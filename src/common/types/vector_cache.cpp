@@ -33,10 +33,13 @@ public:
 		}
 		case PhysicalType::STRUCT: {
 			auto &child_types = StructType::GetChildTypes(type);
+			vector<Vector> child_vectors;
+			child_vectors.reserve(child_types.size());
 			for (auto &child_type : child_types) {
 				child_caches.push_back(make_uniq<VectorCacheEntry>(allocator, child_type.second, capacity));
+				child_vectors.emplace_back(child_type.second, nullptr);
 			}
-			buffer = make_buffer<VectorStructBuffer>(type);
+			buffer = make_buffer<VectorStructBuffer>(std::move(child_vectors), capacity);
 			break;
 		}
 		case PhysicalType::VARCHAR:

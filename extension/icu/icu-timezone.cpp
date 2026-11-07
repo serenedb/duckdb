@@ -8,6 +8,8 @@
 #include "duckdb/planner/expression/bound_function_expression.hpp"
 #include "include/icu-casts.hpp"
 #include "include/icu-datefunc.hpp"
+#include "include/icu-timezone-stats.hpp"
+#include "include/icu-zone-lut-casts.hpp"
 #include "duckdb/transaction/meta_transaction.hpp"
 #include "duckdb/common/operator/cast_operators.hpp"
 #include "duckdb/main/settings.hpp"
@@ -210,7 +212,7 @@ struct ICUFromNaiveTimestamp : public ICUDateFunc {
 	static bool CastFromNaive(Vector &source, Vector &result, idx_t count, CastParameters &parameters) {
 		auto &cast_data = parameters.cast_data->Cast<CastData>();
 		auto &info = cast_data.info->Cast<BindData>();
-		CalendarPtr calendar(info.calendar->Copy());
+		CalendarPtr calendar;
 
 		bool all_converted = true;
 		UnaryExecutor::Execute<SRC, DST>(source, result, count, [&](SRC input) -> optional<DST> {
@@ -221,8 +223,14 @@ struct ICUFromNaiveTimestamp : public ICUDateFunc {
 				all_converted = false;
 				return nullopt;
 			}
-			// the zone shift can overflow, and a TRY_CAST must see that as NULL rather than an exception
 			DST shifted;
+			if (info.lut && ICUZoneCasts::Try(*info.lut, naive, shifted)) {
+				return shifted;
+			}
+			if (!calendar) {
+				calendar = info.calendar->Copy();
+			}
+			// the zone shift can overflow, and a TRY_CAST must see that as NULL rather than an exception
 			string error;
 			if (!TryOperation(calendar.get(), naive, shifted, error)) {
 				HandleCastError::AssignError(error, parameters);
@@ -286,6 +294,11 @@ struct ICUFromNaiveTimestamp : public ICUDateFunc {
 		AddCast(casts, LogicalType::TIMESTAMP_NS, LogicalType::TIMESTAMP_TZ_NS);
 		AddCast(casts, LogicalType::TIMESTAMP_S, LogicalType::TIMESTAMP_TZ);
 		AddCast(casts, LogicalType::DATE, LogicalType::TIMESTAMP_TZ);
+
+		AddCast(casts, LogicalType::TIMESTAMP, LogicalType::TIMESTAMP_TZ_NS);
+		AddCast(casts, LogicalType::TIMESTAMP_MS, LogicalType::TIMESTAMP_TZ_NS);
+		AddCast(casts, LogicalType::TIMESTAMP_S, LogicalType::TIMESTAMP_TZ_NS);
+		AddCast(casts, LogicalType::DATE, LogicalType::TIMESTAMP_TZ_NS);
 	}
 };
 
@@ -370,18 +383,23 @@ struct ICUToNaiveTimestamp : public ICUDateFunc {
 	static bool CastToNaive(Vector &source, Vector &result, idx_t count, CastParameters &parameters) {
 		auto &cast_data = parameters.cast_data->Cast<CastData>();
 		auto &info = cast_data.info->Cast<BindData>();
-		CalendarPtr calendar(info.calendar->Copy());
+		CalendarPtr calendar;
 
 		bool all_converted = true;
 		UnaryExecutor::Execute<SRC, DST>(source, result, count, [&](SRC input) -> optional<DST> {
 			using NAIVE = timestamp_base_t<SRC::PRECISION, false>;
-			// the zone shift itself can fail, and a TRY_CAST must see that as NULL rather than an exception
 			NAIVE naive;
-			string error;
-			if (!TryOperation(calendar.get(), input, naive, error)) {
-				HandleCastError::AssignError(error, parameters);
-				all_converted = false;
-				return nullopt;
+			if (!info.lut || !ICUZoneCasts::Try(*info.lut, input, naive)) {
+				if (!calendar) {
+					calendar = info.calendar->Copy();
+				}
+				// the zone shift itself can fail, and a TRY_CAST must see that as NULL rather than an exception
+				string error;
+				if (!TryOperation(calendar.get(), input, naive, error)) {
+					HandleCastError::AssignError(error, parameters);
+					all_converted = false;
+					return nullopt;
+				}
 			}
 			DST output;
 			if (!TryCast::Operation(naive, output)) {
@@ -409,19 +427,33 @@ struct ICUToNaiveTimestamp : public ICUDateFunc {
 		switch (source.id()) {
 		case LogicalTypeId::TIMESTAMP_TZ:
 			switch (target.id()) {
+			case LogicalType::TIME:
+				return BoundCastInfo(CastToNaive<timestamp_tz_t, dtime_t>, std::move(cast_data));
+			case LogicalType::TIME_NS:
+				return BoundCastInfo(CastToNaive<timestamp_tz_t, dtime_ns_t>, std::move(cast_data));
 			case LogicalType::TIMESTAMP:
 				return BoundCastInfo(CastToNaive<timestamp_tz_t, timestamp_t>, std::move(cast_data));
+			case LogicalType::TIMESTAMP_S:
+				return BoundCastInfo(CastToNaive<timestamp_tz_t, timestamp_sec_t>, std::move(cast_data));
 			case LogicalType::TIMESTAMP_MS:
 				return BoundCastInfo(CastToNaive<timestamp_tz_t, timestamp_ms_t>, std::move(cast_data));
 			case LogicalType::TIMESTAMP_NS:
 				return BoundCastInfo(CastToNaive<timestamp_tz_t, timestamp_ns_t>, std::move(cast_data));
-			case LogicalType::TIMESTAMP_S:
-				return BoundCastInfo(CastToNaive<timestamp_tz_t, timestamp_sec_t>, std::move(cast_data));
 			default:
 				throw InternalException("Type %s not handled in BindCastToNaive", LogicalTypeIdToString(target.id()));
 			}
 		case LogicalTypeId::TIMESTAMP_TZ_NS:
 			switch (target.id()) {
+			case LogicalType::TIME:
+				return BoundCastInfo(CastToNaive<timestamp_tz_ns_t, dtime_t>, std::move(cast_data));
+			case LogicalType::TIME_NS:
+				return BoundCastInfo(CastToNaive<timestamp_tz_ns_t, dtime_ns_t>, std::move(cast_data));
+			case LogicalType::TIMESTAMP:
+				return BoundCastInfo(CastToNaive<timestamp_tz_ns_t, timestamp_t>, std::move(cast_data));
+			case LogicalType::TIMESTAMP_S:
+				return BoundCastInfo(CastToNaive<timestamp_tz_ns_t, timestamp_sec_t>, std::move(cast_data));
+			case LogicalType::TIMESTAMP_MS:
+				return BoundCastInfo(CastToNaive<timestamp_tz_ns_t, timestamp_ms_t>, std::move(cast_data));
 			case LogicalType::TIMESTAMP_NS:
 				return BoundCastInfo(CastToNaive<timestamp_tz_ns_t, timestamp_ns_t>, std::move(cast_data));
 			default:
@@ -445,8 +477,15 @@ struct ICUToNaiveTimestamp : public ICUDateFunc {
 		AddCast(casts, LogicalType::TIMESTAMP_TZ, LogicalType::TIMESTAMP_MS);
 		AddCast(casts, LogicalType::TIMESTAMP_TZ, LogicalType::TIMESTAMP_NS);
 		AddCast(casts, LogicalType::TIMESTAMP_TZ, LogicalType::TIMESTAMP_S);
+		AddCast(casts, LogicalType::TIMESTAMP_TZ, LogicalType::TIME);
+		AddCast(casts, LogicalType::TIMESTAMP_TZ, LogicalType::TIME_NS);
 
 		AddCast(casts, LogicalType::TIMESTAMP_TZ_NS, LogicalType::TIMESTAMP_NS);
+		AddCast(casts, LogicalType::TIMESTAMP_TZ_NS, LogicalType::TIME_NS);
+		AddCast(casts, LogicalType::TIMESTAMP_TZ_NS, LogicalType::TIMESTAMP);
+		AddCast(casts, LogicalType::TIMESTAMP_TZ_NS, LogicalType::TIMESTAMP_MS);
+		AddCast(casts, LogicalType::TIMESTAMP_TZ_NS, LogicalType::TIMESTAMP_S);
+		AddCast(casts, LogicalType::TIMESTAMP_TZ_NS, LogicalType::TIME);
 	}
 };
 
@@ -566,18 +605,48 @@ bool ICUToTimeTZ::CastToTimeTZ(Vector &source, Vector &result, idx_t count, Cast
 	auto &info = cast_data.info->Cast<BindData>();
 	CalendarPtr calendar(info.calendar->Copy());
 
-	UnaryExecutor::Execute<timestamp_tz_t, dtime_tz_t>(source, result, count,
-	                                                   [&](timestamp_tz_t input) -> optional<dtime_tz_t> {
-		                                                   dtime_tz_t output;
-		                                                   string error_message;
-		                                                   if (ToTimeTZ(calendar.get(), input, output, error_message)) {
-			                                                   return output;
-		                                                   }
-		                                                   if (!error_message.empty()) {
-			                                                   HandleCastError::AssignError(error_message, parameters);
-		                                                   }
-		                                                   return nullopt;
-	                                                   });
+	UnaryExecutor::Execute<timestamp_tz_t, dtime_tz_t>(
+	    source, result, count, [&](timestamp_tz_t input) -> optional<dtime_tz_t> {
+		    dtime_tz_t output;
+		    if (info.lut && ICUZoneCasts::Try(*info.lut, input, output)) {
+			    return output;
+		    }
+		    string error_message;
+		    if (ToTimeTZ(calendar.get(), input, output, error_message)) {
+			    return output;
+		    }
+		    if (!error_message.empty()) {
+			    HandleCastError::AssignError(error_message, parameters);
+		    }
+		    return nullopt;
+	    });
+	return true;
+}
+
+bool ICUToTimeTZ::CastToTimeTZNs(Vector &source, Vector &result, idx_t count, CastParameters &parameters) {
+	auto &cast_data = parameters.cast_data->Cast<CastData>();
+	auto &info = cast_data.info->Cast<BindData>();
+	CalendarPtr calendar(info.calendar->Copy());
+
+	UnaryExecutor::Execute<timestamp_tz_ns_t, dtime_tz_t>(
+	    source, result, count, [&](timestamp_tz_ns_t input) -> optional<dtime_tz_t> {
+		    if (!input.IsFinite()) {
+			    return nullopt;
+		    }
+		    const auto micros = Cast::Operation<timestamp_ns_t, timestamp_t>(timestamp_ns_t(input.value));
+		    dtime_tz_t output;
+		    if (info.lut && ICUZoneCasts::Try(*info.lut, timestamp_tz_t(micros.value), output)) {
+			    return output;
+		    }
+		    string error_message;
+		    if (ToTimeTZ(calendar.get(), timestamp_tz_t(micros.value), output, error_message)) {
+			    return output;
+		    }
+		    if (!error_message.empty()) {
+			    HandleCastError::AssignError(error_message, parameters);
+		    }
+		    return nullopt;
+	    });
 	return true;
 }
 
@@ -589,6 +658,9 @@ BoundCastInfo ICUToTimeTZ::BindCastToTimeTZ(BindCastInput &input, const LogicalT
 
 	auto cast_data = make_uniq<CastData>(make_uniq<BindData>(*input.context));
 
+	if (source.id() == LogicalTypeId::TIMESTAMP_TZ_NS) {
+		return BoundCastInfo(CastToTimeTZNs, std::move(cast_data));
+	}
 	return BoundCastInfo(CastToTimeTZ, std::move(cast_data));
 }
 
@@ -631,6 +703,9 @@ void ICUToTimeTZ::AddCasts(ExtensionLoader &loader) {
 	const auto implicit_cost = CastRules::ImplicitCast(LogicalType::TIMESTAMP_TZ, LogicalType::TIME_TZ);
 	loader.RegisterCastFunction(LogicalType::TIMESTAMP_TZ, LogicalType::TIME_TZ, BindCastToTimeTZ, implicit_cost);
 
+	const auto ns_implicit_cost = CastRules::ImplicitCast(LogicalType::TIMESTAMP_TZ_NS, LogicalType::TIME_TZ);
+	loader.RegisterCastFunction(LogicalType::TIMESTAMP_TZ_NS, LogicalType::TIME_TZ, BindCastToTimeTZ, ns_implicit_cost);
+
 	const auto time_implicit_cost = CastRules::ImplicitCast(LogicalType::TIME, LogicalType::TIME_TZ);
 	loader.RegisterCastFunction(LogicalType::TIME, LogicalType::TIME_TZ, BindCastFromTime, time_implicit_cost);
 }
@@ -649,7 +724,15 @@ struct ICUTimeZoneFunc : public ICUDateFunc {
 				throw InternalException("ICUTimeZone called with constant NULL tz");
 			}
 			auto calendar = cache.GetCalendar(*ConstantVector::GetData<string_t>(tz_vec));
-			UnaryExecutor::Execute<SRC, DST>(ts_vec, result, [&](SRC ts) { return OP::Operation(calendar, ts); });
+			const auto lut =
+			    std::string_view(calendar->GetType()) == "gregorian" ? ZoneLUT::Get(calendar->GetTimeZone()) : nullptr;
+			UnaryExecutor::Execute<SRC, DST>(ts_vec, result, [&](SRC ts) {
+				DST converted;
+				if (lut && ICUZoneCasts::Try(*lut, ts, converted)) {
+					return converted;
+				}
+				return OP::Operation(calendar, ts);
+			});
 		} else {
 			BinaryExecutor::Execute<string_t, SRC, DST>(tz_vec, ts_vec, result, [&](string_t tz_id, SRC ts) {
 				if (ts.IsFinite()) {
@@ -699,6 +782,9 @@ struct ICUTimeZoneFunc : public ICUDateFunc {
 		set.ApplyToFunctions([](ScalarFunction &func) {
 			func.SetFallible();
 			func.SetInitStateCallback(InitCalendarCache);
+			if (func.GetReturnType().id() != LogicalTypeId::TIME_TZ) {
+				func.SetStatisticsCallback(ICUTimeZoneStats::Propagate);
+			}
 		});
 		loader.RegisterFunction(set);
 	}

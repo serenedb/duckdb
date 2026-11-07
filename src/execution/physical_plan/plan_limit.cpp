@@ -9,7 +9,9 @@
 #include "duckdb/execution/physical_plan_generator.hpp"
 #include "duckdb/logging/logger.hpp"
 #include "duckdb/main/config.hpp"
+#include "duckdb/planner/expression/bound_aggregate_expression.hpp"
 #include "duckdb/planner/operator/logical_limit.hpp"
+#include "duckdb/planner/operator/logical_order.hpp"
 
 namespace duckdb {
 
@@ -91,6 +93,28 @@ static bool CanUseLimitedDistinct(const PhysicalHashAggregate &hash_aggregate) {
 	return true;
 }
 
+static void TrySetGroupLimit(PhysicalOperator &plan, idx_t limit) {
+	auto *child = &plan;
+	if (child->type == PhysicalOperatorType::PROJECTION && child->children.size() == 1) {
+		child = &child->children[0].get();
+	}
+	if (child->type != PhysicalOperatorType::HASH_GROUP_BY || limit > STANDARD_VECTOR_SIZE) {
+		return;
+	}
+	auto &hash_aggregate = child->Cast<PhysicalHashAggregate>();
+	auto &data = hash_aggregate.grouped_aggregate_data;
+	if (data.groups.empty() || hash_aggregate.grouping_sets.size() != 1 || !data.GetGroupingFunctions().empty()) {
+		return;
+	}
+	for (auto &aggregate : data.aggregates) {
+		auto &bound = aggregate->Cast<BoundAggregateExpression>();
+		if (bound.IsDistinct() || bound.GetOrderBys()) {
+			return;
+		}
+	}
+	data.group_limit = limit;
+}
+
 static PhysicalOperator &CreateLimitedDistinct(PhysicalPlanGenerator &generator, PhysicalHashAggregate &hash_aggregate,
                                                idx_t limit) {
 	D_ASSERT(hash_aggregate.children.size() == 1);
@@ -137,15 +161,21 @@ static PhysicalOperator *TryCreateLimitedDistinct(PhysicalPlanGenerator &generat
 
 PhysicalOperator &PhysicalPlanGenerator::CreatePlan(LogicalLimit &op) {
 	D_ASSERT(op.children.size() == 1);
+	if (op.children[0]->type == LogicalOperatorType::LOGICAL_ORDER_BY) {
+		auto &order = op.children[0]->Cast<LogicalOrder>();
+		if (auto consumed = TryConsumeTopN(*order.children[0], order.orders.size(), order.projection_map, op.limit_val,
+		                                   op.offset_val)) {
+			return *consumed;
+		}
+	}
 	auto &plan = CreatePlan(*op.children[0]);
 	auto *limit_child = &plan;
 	auto total_limit = GetLimit(op.limit_val, op.offset_val);
 	if (op.offset_val.Type() != LimitNodeType::UNSET && !PreserveInsertionOrder(plan)) {
-		DUCKDB_LOG_WARNING(context,
-		                   "OFFSET is applied to a query whose row order is not guaranteed - the result may "
-		                   "differ between runs. This happens when the query contains order-breaking operators (e.g. "
-		                   "hash joins or aggregations), reads from a source that does not preserve order, or when "
-		                   "preserve_insertion_order=false. Add an ORDER BY to make the result deterministic.");
+		context.WarnUser("OFFSET is applied to a query whose row order is not guaranteed - the result may "
+		                 "differ between runs. This happens when the query contains order-breaking operators (e.g. "
+		                 "hash joins or aggregations), reads from a source that does not preserve order, or when "
+		                 "preserve_insertion_order=false. Add an ORDER BY to make the result deterministic.");
 	}
 	// Unpartitioned hash tables become expensive to Combine at large sizes
 	static constexpr idx_t LIMITED_DISTINCT_THRESHOLD = 100000;
@@ -154,6 +184,8 @@ PhysicalOperator &PhysicalPlanGenerator::CreatePlan(LogicalLimit &op) {
 		// The LIMIT node still stays on top to enforce the actual LIMIT/OFFSET semantics.
 		if (auto *limited_plan = TryCreateLimitedDistinct(*this, plan, total_limit.GetIndex())) {
 			limit_child = limited_plan;
+		} else {
+			TrySetGroupLimit(plan, total_limit.GetIndex());
 		}
 	}
 

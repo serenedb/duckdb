@@ -239,7 +239,7 @@ COPY copy_subset FROM 'data/csv/tpcds_14.csv' (FORMAT csv)
 query I
 SELECT count(*) FROM copy_subset
 ----
-19806
+19807
 
 # COPY TO is shared with the regular CSV copy function, so a round trip works
 statement ok

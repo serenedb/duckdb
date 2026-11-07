@@ -156,6 +156,23 @@ vector<shared_ptr<Pipeline>> MetaPipeline::AddDependenciesFrom(Pipeline &dependa
 	return created_pipelines;
 }
 
+vector<shared_ptr<Pipeline>> MetaPipeline::AddDependenciesFrom(Pipeline &dependant, optional_idx previous_idx,
+                                                               idx_t begin, PipelineDependencyType dependency_type) {
+	vector<shared_ptr<Pipeline>> dependencies;
+	if (previous_idx.IsValid()) {
+		dependencies.push_back(pipelines[previous_idx.GetIndex()]);
+	}
+	for (idx_t pipeline_idx = begin; pipeline_idx < pipelines.size(); pipeline_idx++) {
+		if (!RefersToSameObject(*pipelines[pipeline_idx], dependant)) {
+			dependencies.push_back(pipelines[pipeline_idx]);
+		}
+	}
+	for (auto &dependency : dependencies) {
+		AddPipelineDependency(dependant, *dependency, dependency_type);
+	}
+	return dependencies;
+}
+
 static bool PipelineExceedsThreadCount(Pipeline &pipeline, const idx_t thread_count) {
 #ifdef DEBUG
 	// we always add the dependency in debug mode so that this is well-tested
@@ -188,7 +205,7 @@ void MetaPipeline::AddRecursiveDependencies(const vector<shared_ptr<Pipeline>> &
 	// by only adding the dependencies if the source operator can likely keep all threads busy.
 	// when dependencies are forced (e.g. for DML CTEs), we always add them regardless,
 	// because the ordering is required for correctness, not just performance.
-	const auto thread_count = TaskScheduler::GetScheduler(executor.context).NumberOfThreads();
+	const auto thread_count = TaskScheduler::QueryThreads(executor.context);
 	for (; it != child_meta_pipelines.end(); it++) {
 		for (auto &pipeline : it->get()->pipelines) {
 			if (dependency_mode == RecursiveDependencyMode::RESPECT_PARALLELISM &&
@@ -233,7 +250,7 @@ void MetaPipeline::AddFinishEvent(Pipeline &pipeline) {
 	}
 	it++;
 	for (; it != pipelines.end(); it++) {
-		finish_map.emplace(**it, pipeline);
+		finish_map.emplace(**it, &pipeline);
 	}
 }
 
@@ -243,7 +260,7 @@ bool MetaPipeline::HasFinishEvent(Pipeline &pipeline) const {
 
 optional_ptr<Pipeline> MetaPipeline::GetFinishGroup(Pipeline &pipeline) const {
 	auto it = finish_map.find(pipeline);
-	return it == finish_map.end() ? nullptr : &it->second;
+	return it == finish_map.end() ? nullptr : it->second;
 }
 
 const vector<shared_ptr<MetaPipeline>> &MetaPipeline::GetChildren() const {

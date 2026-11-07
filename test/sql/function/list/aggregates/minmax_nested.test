@@ -202,7 +202,7 @@ SELECT f, (SELECT MIN({'v': x}) FROM (VALUES (f)) t(x)) FROM float_values ORDER 
 ----
 -inf	{'v': -inf}
 -3.4e+38	{'v': -3.4e+38}
-0.0	{'v': 0.0}
+0	{'v': 0}
 3.4e+38	{'v': 3.4e+38}
 inf	{'v': inf}
 nan	{'v': nan}
@@ -218,7 +218,7 @@ SELECT d, (SELECT MIN({'v': x}) FROM (VALUES (d)) t(x)) FROM double_values ORDER
 ----
 -inf	{'v': -inf}
 -1e+308	{'v': -1e+308}
-0.0	{'v': 0.0}
+0	{'v': 0}
 1e+308	{'v': 1e+308}
 inf	{'v': inf}
 nan	{'v': nan}

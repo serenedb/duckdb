@@ -1,0 +1,30 @@
+# name: test/sql/catalog/sequence/sequence_ordered_execution.test
+# description: nextval runs in row order wherever it is evaluated
+# group: [sequence]
+
+require skip_reload
+
+statement ok
+CREATE SEQUENCE seq_nested
+
+query I
+SELECT count(*) FROM (SELECT i, (nextval('seq_nested') + 1) * 2 AS v FROM range(1000000) t(i)) WHERE v = (i + 2) * 2
+----
+1000000
+
+statement ok
+CREATE SEQUENCE seq_filter
+
+query I
+SELECT count(*) FROM range(1000000) t(i) WHERE nextval('seq_filter') = i + 1
+----
+1000000
+
+statement ok
+CREATE SEQUENCE seq_lambda
+
+query I
+SELECT count(*) FROM (SELECT i, list_transform([i], lambda x: nextval('seq_lambda'))[1] AS v FROM range(1000000) t(i))
+WHERE v = i + 1
+----
+1000000

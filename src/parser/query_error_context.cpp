@@ -9,17 +9,17 @@ namespace duckdb {
 QueryErrorContext::QueryErrorContext(const ParsedExpression &expr) : query_location(expr.GetQueryLocation()) {
 }
 
-string QueryErrorContext::Format(const string &query, const string &error_message, optional_idx error_loc,
+string QueryErrorContext::Format(std::string_view query, std::string_view error_message, optional_idx error_loc,
                                  idx_t error_length, bool add_line_indicator) {
 	static constexpr idx_t MAX_LINE_RENDER_WIDTH = 120;
 	if (!error_loc.IsValid()) {
 		// no location in query provided
-		return error_message;
+		return string(error_message);
 	}
 	idx_t error_location = error_loc.GetIndex();
 	if (error_location >= query.size()) {
 		// out of bounds
-		return error_message;
+		return string(error_message);
 	}
 	// count the line numbers until the error location
 	// and set the start position as the first character of that line
@@ -57,7 +57,7 @@ string QueryErrorContext::Format(const string &query, const string &error_messag
 	// now start scanning from the start pos
 	// we want to figure out the start and end pos of what we are going to render
 	// we want to render at most 80 characters in total, with the error_location located in the middle
-	const char *buf = query.c_str() + start_pos;
+	const char *buf = query.data() + start_pos;
 	idx_t len = end_pos - start_pos;
 	vector<idx_t> render_widths;
 	vector<idx_t> positions;
@@ -170,10 +170,16 @@ string QueryErrorContext::Format(const string &query, const string &error_messag
 	}
 
 	// now first print the error message plus the current line (or a subset of the line)
-	string result = error_message;
-	result += "\n\n" + line_indicator + begin_trunc + query.substr(start_pos, end_pos - start_pos) + end_trunc;
+	string result(error_message);
+	result += "\n\n";
+	result += line_indicator;
+	result += begin_trunc;
+	result += query.substr(start_pos, end_pos - start_pos);
+	result += end_trunc;
 	// print arrows pointing at the error location
-	result += "\n" + string(error_render_width, ' ') + string(caret_width, '^');
+	result += '\n';
+	result.append(error_render_width, ' ');
+	result.append(caret_width, '^');
 	return result;
 }
 

@@ -49,4 +49,4 @@ SELECT 42;
 query I
 SELECT current_setting('enable_external_access');
 ----
-0
+off

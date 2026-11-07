@@ -20,11 +20,13 @@ ColumnDefinition ColumnDefinition::Copy() const {
 	ColumnDefinition copy(name, type);
 	copy.oid = oid;
 	copy.storage_oid = storage_oid;
+	copy.catalog_oid = catalog_oid;
 	copy.expression = expression ? expression->Copy() : nullptr;
 	copy.compression_type = compression_type;
 	copy.category = category;
 	copy.comment = comment;
 	copy.tags = tags;
+	copy.acl = acl;
 	return copy;
 }
 
@@ -35,6 +37,11 @@ const ParsedExpression &ColumnDefinition::DefaultValue() const {
 		}
 		throw InternalException("DefaultValue() called on a column without a default value");
 	}
+	return *expression;
+}
+
+ParsedExpression &ColumnDefinition::DefaultValueMutable() {
+	D_ASSERT(HasDefaultValue());
 	return *expression;
 }
 
@@ -77,6 +84,14 @@ const Value &ColumnDefinition::Comment() const {
 
 void ColumnDefinition::SetComment(const Value &comment) {
 	this->comment = comment;
+}
+
+const vector<AclItem> &ColumnDefinition::Acl() const {
+	return acl;
+}
+
+void ColumnDefinition::SetAcl(vector<AclItem> new_acl) {
+	acl = std::move(new_acl);
 }
 
 const InsertionOrderPreservingMap<string> &ColumnDefinition::Tags() const {
@@ -124,7 +139,7 @@ const TableColumnType &ColumnDefinition::Category() const {
 }
 
 bool ColumnDefinition::Generated() const {
-	return category == TableColumnType::GENERATED;
+	return category == TableColumnType::GENERATED_VIRTUAL || category == TableColumnType::GENERATED_STORED;
 }
 
 string ColumnDefinition::ToSQLString() const {
@@ -150,6 +165,9 @@ string ColumnDefinition::ToSQLString() const {
 			generated_expression = cast_expr.Child();
 		}
 		result += " GENERATED ALWAYS AS(" + generated_expression.get().ToString() + ")";
+		if (category == TableColumnType::GENERATED_STORED) {
+			result += " STORED";
+		}
 	} else if (HasDefaultValue()) {
 		result += " DEFAULT(" + DefaultValue().ToString() + ")";
 	}
@@ -199,8 +217,8 @@ LogicalType ColumnDefinition::GetType() const {
 	return type;
 }
 
-void ColumnDefinition::SetGeneratedExpression(unique_ptr<ParsedExpression> new_expr) {
-	category = TableColumnType::GENERATED;
+void ColumnDefinition::SetGeneratedExpression(unique_ptr<ParsedExpression> new_expr, TableColumnType col_type) {
+	category = col_type;
 
 	if (new_expr->HasSubquery()) {
 		throw ParserException("Expression of generated column %s contains a subquery, which isn't allowed", name);
