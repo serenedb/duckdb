@@ -166,6 +166,8 @@ overrides = {
         "COMPRESSION_COL_FSST_PLUS": "FSST_PLUS",
         "COMPRESSION_COL_DICT_ONPAIR": "DICT_ONPAIR",
         "COMPRESSION_COL_ONPAIR": "ONPAIR",
+        "COMPRESSION_COL_DICT_FSST12": "DICT_FSST12",
+        "COMPRESSION_COL_FSST12": "FSST12",
     },
     "ArrowFormatVersion": {"V1_0": "1.0", "V1_1": "1.1", "V1_2": "1.2", "V1_3": "1.3", "V1_4": "1.4", "V1_5": "1.5"},
     "TriggerTiming": {"BEFORE": "BEFORE", "AFTER": "AFTER", "INSTEAD_OF": "INSTEAD OF"},
