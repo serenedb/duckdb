@@ -266,11 +266,15 @@ static void BindMissingColumns(TableCatalogEntry &table, LogicalGet &get, Logica
 	if (found_column_count != bound_columns.size()) {
 		// columns that were required are not all part of the UPDATE
 		// add them to the scan and update set
+		vector<PhysicalIndex> missing;
 		for (auto &physical_id : bound_columns) {
-			if (found_columns.find(physical_id) != found_columns.end()) {
-				// column is already projected
-				continue;
+			if (found_columns.find(physical_id) == found_columns.end()) {
+				missing.push_back(physical_id);
 			}
+		}
+		std::sort(missing.begin(), missing.end(),
+		          [](PhysicalIndex left, PhysicalIndex right) { return left.index < right.index; });
+		for (auto physical_id : missing) {
 			// column is not projected yet: project it by adding the clause "i=i" to the set of updated columns
 			auto &column = table.GetColumns().GetColumn(physical_id);
 			auto column_id = column.Logical().index;
