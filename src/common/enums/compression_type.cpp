@@ -28,6 +28,15 @@ struct CompressionMethodRequirements {
 
 CompressionAvailabilityResult CompressionTypeIsAvailable(CompressionType compression_type,
                                                          optional_ptr<StorageManager> storage_manager) {
+	StorageVersion current_storage_version = StorageVersion::INVALID;
+	if (storage_manager && storage_manager->HasStorageVersion()) {
+		current_storage_version = storage_manager->GetStorageVersion();
+	}
+	return CompressionTypeIsAvailable(compression_type, current_storage_version);
+}
+
+CompressionAvailabilityResult CompressionTypeIsAvailable(CompressionType compression_type,
+                                                         StorageVersion current_storage_version) {
 	//! Max storage compatibility
 	// if minimum version is StorageVersion::INVALID, this is an indication that the
 	// compression method is deprecated (e.g. chimp and patas)
@@ -43,10 +52,6 @@ CompressionAvailabilityResult CompressionTypeIsAvailable(CompressionType compres
 	     {CompressionType::COMPRESSION_PFOR_DELTA, NextDuckDBStorageVersion(StorageVersion::DUCKDB_LATEST),
 	      StorageVersion::INVALID}});
 
-	StorageVersion current_storage_version = StorageVersion::INVALID;
-	if (storage_manager && storage_manager->HasStorageVersion()) {
-		current_storage_version = storage_manager->GetStorageVersion();
-	}
 	for (auto &candidate : candidates) {
 		auto &type = candidate.type;
 		if (type != compression_type) {

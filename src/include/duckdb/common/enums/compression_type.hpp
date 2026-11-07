@@ -11,6 +11,7 @@
 #include "duckdb/common/constants.hpp"
 #include "duckdb/common/vector.hpp"
 #include "duckdb/common/optional_ptr.hpp"
+#include "duckdb_versions/storage_version.hpp"
 
 namespace duckdb {
 
@@ -78,6 +79,8 @@ public:
 
 CompressionAvailabilityResult CompressionTypeIsAvailable(CompressionType compression_type,
                                                          optional_ptr<StorageManager> storage_manager = nullptr);
+CompressionAvailabilityResult CompressionTypeIsAvailable(CompressionType compression_type,
+                                                         StorageVersion storage_version);
 vector<string> ListCompressionTypes(void);
 string CompressionTypeToString(CompressionType type);
 
