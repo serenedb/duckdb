@@ -29,10 +29,7 @@ unique_ptr<CreateInfo> CreateTableInfo::Copy() const {
 		result->partition_keys.push_back(partition->Copy());
 	}
 	for (auto &order : sort_keys) {
-		result->sort_keys.push_back(order->Copy());
-	}
-	for (auto &order : sort_orders) {
-		result->sort_orders.emplace_back(order.type, order.null_order, order.expression->Copy());
+		result->sort_keys.emplace_back(order.type, order.null_order, order.expression->Copy());
 	}
 	result->serial_columns = serial_columns;
 	for (auto &option : options) {
@@ -65,16 +62,8 @@ string CreateTableInfo::ExtraOptionsToString() const {
 		ret += ")";
 	}
 	if (!sort_keys.empty()) {
-		ret += " SORTED BY (";
-		for (auto &order : sort_keys) {
-			ret += order->ToString() + ",";
-		}
-		ret.pop_back();
-		ret += ")";
-	}
-	if (!sort_orders.empty()) {
 		vector<string> keys;
-		for (auto &order : sort_orders) {
+		for (auto &order : sort_keys) {
 			keys.push_back(order.ToString());
 		}
 		ret += " SORTED BY (" + StringUtil::Join(keys, ", ") + ")";

@@ -248,8 +248,9 @@
       },
       {
         "id": 205,
-        "name": "sort_keys",
-        "type": "vector<ParsedExpression*>"
+        "name": "sort_key_expressions",
+        "type": "vector<ParsedExpression*>",
+        "status": "deleted"
       },
       {
         "id": 206,
@@ -258,7 +259,7 @@
       },
       {
         "id": 16584,
-        "name": "sort_orders",
+        "name": "sort_keys",
         "type": "vector<OrderByNode>"
       }
     ],
