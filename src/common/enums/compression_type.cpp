@@ -139,6 +139,10 @@ string CompressionTypeToString(CompressionType type) {
 		return "DICT_ONPAIR";
 	case CompressionType::COMPRESSION_COL_ONPAIR:
 		return "ONPAIR";
+	case CompressionType::COMPRESSION_COL_DICT_FSST12:
+		return "DICT_FSST12";
+	case CompressionType::COMPRESSION_COL_FSST12:
+		return "FSST12";
 	default:
 		throw InternalException("Unrecognized compression type!");
 	}
