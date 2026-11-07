@@ -1314,6 +1314,12 @@ CatalogEntryLookup Catalog::TryLookupEntryAcrossCatalogs(CatalogEntryRetriever &
 		lookups.emplace_back(std::move(lookup));
 	}
 
+	auto &system = GetSystemCatalog(retriever.GetContext());
+	auto builtin_schema = system.GetDefaultSchema();
+	if (!system.IsDuckCatalog() && builtin_schema && catalog.empty() && (schema.empty() || schema == *builtin_schema)) {
+		lookups.emplace_back(system, *builtin_schema, lookup_info);
+	}
+
 	bool allow_default_lookup = catalog.empty() && schema.empty();
 
 	return TryLookupEntry(retriever, lookups, lookup_info, if_not_found, allow_default_lookup);
