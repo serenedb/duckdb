@@ -99,6 +99,8 @@ void CSVRejectsTable::InitializeTable(ClientContext &context, const ReadCSVData 
 
 	LogicalType enum_type = LogicalType::ENUM(enum_name, order_errors, number_of_accepted_errors);
 	auto type_info = make_uniq<CreateTypeInfo>(enum_name, enum_type);
+	type_info->SetQualifiedName(
+	    QualifiedName(Identifier::TempCatalog(), *catalog.GetDefaultSchema(), Identifier(enum_name)));
 	type_info->temporary = true;
 	type_info->on_conflict = OnCreateConflict::IGNORE_ON_CONFLICT;
 	catalog.CreateType(context, *type_info);
