@@ -28,7 +28,6 @@ void Binder::BindVacuumTable(LogicalVacuum &vacuum, unique_ptr<LogicalOperator> 
 		throw BinderException("Can only vacuum or analyze base tables");
 	}
 	auto &table = *table_ptr;
-	vacuum.SetTable(table);
 
 	// Bind columns against the name the table ref was bound under, not the
 	// catalog entry's name: for facade tables the resolved entry is the hidden
@@ -73,6 +72,10 @@ void Binder::BindVacuumTable(LogicalVacuum &vacuum, unique_ptr<LogicalOperator> 
 		select_list.push_back(std::move(result.expression));
 	}
 	info.columns = non_generated_column_names;
+	if (!table.IsDuckTable()) {
+		return;
+	}
+	vacuum.SetTable(table);
 
 	auto &column_ids = get.GetColumnIds();
 	D_ASSERT(select_list.size() == column_ids.size());
