@@ -201,6 +201,31 @@ TEST_CASE("Heap memory files map in place, block files do not", "[memory_file_sy
 	REQUIRE(grown->Size() == 1);
 }
 
+TEST_CASE("Memory files added over bytes they borrow read and map those bytes in place", "[memory_file_system]") {
+	DuckDB db(nullptr);
+	MemoryFileSystem blocks(*db.instance);
+	MemoryFileSystem heap;
+	vector<uint8_t> bytes(3 * MEMORY_BLOCK);
+	for (idx_t i = 0; i < bytes.size(); i++) {
+		bytes[i] = ByteAt(i);
+	}
+	const string path = "memory://borrowed/index.bin";
+	for (auto &fs : vector<reference<MemoryFileSystem>> {blocks, heap}) {
+		fs.get().AddFile(path, bytes.data(), bytes.size());
+		REQUIRE(!fs.get().OpenBlockFile(path));
+		REQUIRE(ReadsBack(fs.get(), path, bytes.size()));
+		auto mapped = fs.get().MemoryMapFile(OpenFileInfo(path), FileFlags::FILE_FLAGS_READ, MMapOptions());
+		REQUIRE(mapped->Size() == bytes.size());
+		REQUIRE(mapped->GetData(0, mapped->Size()) == bytes.data());
+		vector<string> listed;
+		fs.get().ListFiles("memory://borrowed", [&](const string &name, bool) { listed.push_back(name); });
+		REQUIRE(listed == vector<string> {"index.bin"});
+		REQUIRE_THROWS(fs.get().OpenFile(path, FileFlags::FILE_FLAGS_WRITE));
+		fs.get().RemoveFile(path);
+		REQUIRE(!fs.get().FileExists(path));
+	}
+}
+
 TEST_CASE("Compacted memory files map in place", "[memory_file_system]") {
 	DuckDB db(nullptr);
 	MemoryFileSystem fs(*db.instance);

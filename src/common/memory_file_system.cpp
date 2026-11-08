@@ -33,6 +33,7 @@ struct MemoryFile {
 	//! A heap file, grown without zeroing; the bytes past its size are its writer's window
 	unsafe_unique_array<data_t> heap DUCKDB_GUARDED_BY(lock);
 	idx_t heap_capacity DUCKDB_GUARDED_BY(lock) = 0;
+	data_ptr_t borrowed DUCKDB_GUARDED_BY(lock) = nullptr;
 	//! Open writers; a heap file moves while it grows, so it maps only once they are closed
 	idx_t writers DUCKDB_GUARDED_BY(lock) = 0;
 };
@@ -66,6 +67,10 @@ void GrowHeap(MemoryFile &file, idx_t size, idx_t needed) DUCKDB_REQUIRES(file.l
 	}
 	file.heap = std::move(grown);
 	file.heap_capacity = capacity;
+}
+
+data_ptr_t ContiguousBytes(MemoryFile &file) DUCKDB_REQUIRES(file.lock) {
+	return file.heap ? file.heap.get() : file.borrowed;
 }
 
 void CopyRange(BlockCacheFile &file, idx_t offset, idx_t count, data_ptr_t target) {
@@ -278,14 +283,26 @@ shared_ptr<MemoryFile> MemoryFileSystem::Create(std::string_view path) {
 		annotated_lock_guard<annotated_mutex> file_guard(file->lock);
 		file->blocks = BlockCache::Get(*db).CreateUnbackedFile(file->path);
 	}
-	shared_ptr<MemoryFile> replaced;
-	{
-		annotated_lock_guard<annotated_mutex> guard(lock);
-		auto &slot = files[file->path];
-		replaced = std::move(slot);
-		slot = file;
-	}
+	Install(file);
 	return file;
+}
+
+void MemoryFileSystem::Install(shared_ptr<MemoryFile> file) {
+	shared_ptr<MemoryFile> replaced;
+	annotated_lock_guard<annotated_mutex> guard(lock);
+	auto &slot = files[file->path];
+	replaced = std::move(slot);
+	slot = std::move(file);
+}
+
+void MemoryFileSystem::AddFile(const string &path, data_ptr_t data, idx_t size) {
+	auto file = make_shared_ptr<MemoryFile>(string(Normalize(path)));
+	{
+		annotated_lock_guard<annotated_mutex> guard(file->lock);
+		file->borrowed = data;
+	}
+	file->size.store(size, std::memory_order_release);
+	Install(std::move(file));
 }
 
 unique_ptr<FileHandle> MemoryFileSystem::OpenFile(const string &path, FileOpenFlags flags,
@@ -339,7 +356,7 @@ unique_ptr<MemoryMappedFile> MemoryFileSystem::MemoryMapFile(const OpenFileInfo 
 		}
 		if (!file->span) {
 			const auto size = file->size.load(std::memory_order_acquire);
-			auto result = make_uniq<MemoryFileMapping>(file->path, flags, file->heap.get(), size);
+			auto result = make_uniq<MemoryFileMapping>(file->path, flags, ContiguousBytes(*file), size);
 			result->file = file;
 			return std::move(result);
 		}
@@ -444,8 +461,8 @@ void MemoryFileSystem::Read(FileHandle &handle_p, void *buffer, int64_t nr_bytes
 	shared_ptr<BlockHandle> span;
 	{
 		annotated_lock_guard<annotated_mutex> guard(file.lock);
-		if (file.heap) {
-			memcpy(target, file.heap.get() + location, bytes);
+		if (const auto contiguous = ContiguousBytes(file)) {
+			memcpy(target, contiguous + location, bytes);
 			return;
 		}
 		blocks = file.blocks;

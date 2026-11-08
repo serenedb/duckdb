@@ -25,7 +25,8 @@ struct MemoryFile;
 //! Files that exist only in memory, under memory:// paths, written once from start to end. The instance a database
 //! registers keeps them in unbacked blocks of its block cache, which spill instead of being dropped, so they can grow
 //! past the cache, until Compact moves a file into one buffer-managed allocation that maps in place; a private
-//! instance keeps each file in one heap allocation, which maps in place.
+//! instance keeps each file in one heap allocation, which maps in place. AddFile makes a file of memory its caller
+//! keeps for as long as the file system, which maps in place too.
 class MemoryFileSystem : public FileSystem {
 public:
 	static constexpr const char *PREFIX = "memory://";
@@ -79,6 +80,7 @@ public:
 	//! Writes the file in its blocks or on the heap, whatever [keep_cached] says
 	unique_ptr<FileWriter> OpenFileWriter(const string &path, bool keep_cached) override;
 	void Compact(const string &path) override;
+	void AddFile(const string &path, data_ptr_t data, idx_t size);
 	//! Removes every file; the database calls it before its block cache goes
 	void Clear();
 
@@ -91,6 +93,7 @@ private:
 	//! The file at [path]; when there is none, null if [null_if_missing], else an error that [verb] found none
 	shared_ptr<MemoryFile> FindExisting(const string &path, const char *verb, bool null_if_missing);
 	shared_ptr<MemoryFile> Create(std::string_view path);
+	void Install(shared_ptr<MemoryFile> file);
 	static std::string_view Normalize(std::string_view path);
 
 	optional_ptr<DatabaseInstance> db;
