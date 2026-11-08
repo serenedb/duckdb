@@ -253,6 +253,9 @@ public:
 	unique_ptr<HTTPResponse> Options(OptionsRequestInfo &) override {
 		return nullptr;
 	}
+	unique_ptr<HTTPResponse> Patch(PatchRequestInfo &) override {
+		return nullptr;
+	}
 
 private:
 	shared_ptr<MockTransportState> state;

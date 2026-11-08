@@ -108,7 +108,8 @@ enum class RequestType : uint8_t {
 	HEAD_REQUEST,
 	DELETE_REQUEST,
 	POST_REQUEST,
-	OPTIONS_REQUEST
+	OPTIONS_REQUEST,
+	PATCH_REQUEST
 };
 
 enum class HTTPClientCachePolicy : uint8_t { DEFAULT, BYPASS_CACHE };
@@ -275,21 +276,41 @@ private:
 	idx_t offset = 0;
 };
 
-struct PutRequestInfo : public BaseRequest {
-	PutRequestInfo(const string &path, const HTTPHeaders &headers, HTTPParams &params, const_data_ptr_t buffer_in,
-	               idx_t buffer_in_len, const string &content_type)
-	    : BaseRequest(RequestType::PUT_REQUEST, path, headers, params), buffer_in(buffer_in),
-	      buffer_in_len(buffer_in_len), content_type(content_type) {
+struct BodyRequestInfo : public BaseRequest {
+	BodyRequestInfo(RequestType type, const string &path, const HTTPHeaders &headers, HTTPParams &params,
+	                const_data_ptr_t buffer_in, idx_t buffer_in_len, const string &content_type)
+	    : BaseRequest(type, path, headers, params), buffer_in(buffer_in), buffer_in_len(buffer_in_len),
+	      content_type(content_type) {
 		request_body_length = buffer_in_len;
 	}
-	DUCKDB_API PutRequestInfo(const string &path, const HTTPHeaders &headers, HTTPParams &params,
-	                          std::span<const HTTPBodyPiece> body, const string &content_type);
-	DUCKDB_API ~PutRequestInfo();
+	DUCKDB_API BodyRequestInfo(RequestType type, const string &path, const HTTPHeaders &headers, HTTPParams &params,
+	                           std::span<const HTTPBodyPiece> body, const string &content_type);
+	DUCKDB_API ~BodyRequestInfo();
 
 	const_data_ptr_t buffer_in;
 	idx_t buffer_in_len;
 	std::span<const HTTPBodyPiece> pieces;
 	const string &content_type;
+};
+
+struct PutRequestInfo : public BodyRequestInfo {
+	PutRequestInfo(const string &path, const HTTPHeaders &headers, HTTPParams &params, const_data_ptr_t buffer_in,
+	               idx_t buffer_in_len, const string &content_type)
+	    : BodyRequestInfo(RequestType::PUT_REQUEST, path, headers, params, buffer_in, buffer_in_len, content_type) {
+	}
+	PutRequestInfo(const string &path, const HTTPHeaders &headers, HTTPParams &params,
+	               std::span<const HTTPBodyPiece> body, const string &content_type)
+	    : BodyRequestInfo(RequestType::PUT_REQUEST, path, headers, params, body, content_type) {
+	}
+	DUCKDB_API ~PutRequestInfo();
+};
+
+struct PatchRequestInfo : public BodyRequestInfo {
+	PatchRequestInfo(const string &path, const HTTPHeaders &headers, HTTPParams &params,
+	                 std::span<const HTTPBodyPiece> body, const string &content_type)
+	    : BodyRequestInfo(RequestType::PATCH_REQUEST, path, headers, params, body, content_type) {
+	}
+	DUCKDB_API ~PatchRequestInfo();
 };
 
 struct HeadRequestInfo : public BaseRequest {
@@ -347,6 +368,7 @@ public:
 	virtual unique_ptr<HTTPResponse> Delete(DeleteRequestInfo &info) = 0;
 	virtual unique_ptr<HTTPResponse> Post(PostRequestInfo &info) = 0;
 	virtual unique_ptr<HTTPResponse> Options(OptionsRequestInfo &info) = 0;
+	virtual unique_ptr<HTTPResponse> Patch(PatchRequestInfo &info) = 0;
 	//! Remove request-local credentials, headers, callbacks and borrowed state before pooling.
 	//! Throw if cleanup cannot make the client reusable; the manager will destroy it.
 	virtual void Cleanup() {};

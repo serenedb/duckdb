@@ -165,15 +165,16 @@ BaseRequest::BaseRequest(RequestType type, const string &url, const HTTPHeaders 
 // loadable side-module extensions (e.g. the aws/httpfs extensions) can link against them at load time.
 BaseRequest::~BaseRequest() = default;
 GetRequestInfo::~GetRequestInfo() = default;
+BodyRequestInfo::~BodyRequestInfo() = default;
 PutRequestInfo::~PutRequestInfo() = default;
+PatchRequestInfo::~PatchRequestInfo() = default;
 HeadRequestInfo::~HeadRequestInfo() = default;
 DeleteRequestInfo::~DeleteRequestInfo() = default;
 PostRequestInfo::~PostRequestInfo() = default;
 
-PutRequestInfo::PutRequestInfo(const string &path, const HTTPHeaders &headers, HTTPParams &params,
-                               std::span<const HTTPBodyPiece> body, const string &content_type)
-    : BaseRequest(RequestType::PUT_REQUEST, path, headers, params), buffer_in(nullptr), buffer_in_len(0),
-      content_type(content_type) {
+BodyRequestInfo::BodyRequestInfo(RequestType type, const string &path, const HTTPHeaders &headers, HTTPParams &params,
+                                 std::span<const HTTPBodyPiece> body, const string &content_type)
+    : BaseRequest(type, path, headers, params), buffer_in(nullptr), buffer_in_len(0), content_type(content_type) {
 	for (auto &piece : body) {
 		buffer_in_len += piece.size;
 	}
@@ -548,6 +549,8 @@ unique_ptr<HTTPResponse> HTTPClient::Request(BaseRequest &request) {
 		return Post(request.Cast<PostRequestInfo>());
 	case RequestType::OPTIONS_REQUEST:
 		return Options(request.Cast<OptionsRequestInfo>());
+	case RequestType::PATCH_REQUEST:
+		return Patch(request.Cast<PatchRequestInfo>());
 	default:
 		throw InternalException("Unsupported request type");
 	}
