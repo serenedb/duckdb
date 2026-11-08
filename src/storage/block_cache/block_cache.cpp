@@ -13,9 +13,23 @@
 #include <algorithm>
 #include <cstring>
 
+#if defined(__has_feature)
+#if __has_feature(memory_sanitizer)
+#include <sanitizer/msan_interface.h>
+#endif
+#endif
+
 namespace duckdb {
 
 namespace {
+
+void UnpoisonPastEnd(data_ptr_t data, idx_t size) {
+#if defined(__has_feature)
+#if __has_feature(memory_sanitizer)
+	__msan_unpoison(data, size);
+#endif
+#endif
+}
 
 constexpr idx_t MAX_IN_FLIGHT = 16 * BlockCache::MAX_FILE_IN_FLIGHT;
 
@@ -234,7 +248,7 @@ BlockCachePin BlockCacheAppender::ShareWindow(idx_t count) {
 void BlockCacheAppender::Finish(const string &version_tag, timestamp_t last_modified) {
 	if (current.IsValid()) {
 		const auto end = size % BlockCache::BLOCK_SIZE;
-		memset(current.GetDataMutable() + end, 0, BlockCache::BLOCK_SIZE - end);
+		UnpoisonPastEnd(current.GetDataMutable() + end, BlockCache::BLOCK_SIZE - end);
 		current.Reset();
 	}
 	if (!file->IsUnbacked()) {
@@ -586,7 +600,7 @@ void BlockCache::Fetch(BlockCacheFile &file, idx_t first_block, std::span<option
 			continue;
 		}
 		auto data = loads[i]->buffer->GetDataMutable();
-		memset(data + block_bytes, 0, BLOCK_SIZE - block_bytes);
+		UnpoisonPastEnd(data + block_bytes, BLOCK_SIZE - block_bytes);
 		targets.push_back({data, block_bytes});
 	}
 	source->file_system.ReadScattered(*source, targets, start);

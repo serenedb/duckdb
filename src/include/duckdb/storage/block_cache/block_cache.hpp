@@ -227,8 +227,8 @@ public:
 	idx_t Size() const {
 		return size;
 	}
-	//! Ends the write, zeroing the rest of the last block; a written file is published at the size appended, as the
-	//! version [version_tag] of its source, last modified at [last_modified]
+	//! Ends the write; a written file is published at the size appended, as the version [version_tag] of its source,
+	//! last modified at [last_modified]
 	void Finish(const string &version_tag = string(), timestamp_t last_modified = timestamp_t(0));
 	//! Ends the write of a written file and drops its blocks
 	void Abandon();
@@ -371,7 +371,7 @@ private:
 	//! [written] for it
 	void PublishWrittenFile(BlockCacheFile &file, const CacheValidationInfo &written);
 	//! Pins a new block [block] of the unbacked or written [file] for its writer, holding whatever its buffer held
-	//! before; BlockCacheAppender fills it and zeroes what lies past the end of the file
+	//! before; BlockCacheAppender fills it up to the end of the file
 	BlockCachePin CreateBlock(BlockCacheFile &file, idx_t block);
 	//! Extends the unbacked [file] to [size] bytes once its blocks are written
 	void SetUnbackedSize(BlockCacheFile &file, idx_t size);

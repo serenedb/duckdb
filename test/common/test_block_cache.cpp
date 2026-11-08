@@ -1135,25 +1135,16 @@ TEST_CASE("Block cache never lets the buffer pool evict a pinned block", "[block
 	REQUIRE(cache.GetStatistics().used <= 16 * BLOCK);
 }
 
-TEST_CASE("Block cache zeroes a fetched last block past the end of its file", "[block_cache]") {
+TEST_CASE("Block cache pins a fetched last block with only the bytes of its file", "[block_cache]") {
 	DuckDB db(nullptr);
 	BlockCache cache(*db.instance);
 	CountingSourceFileSystem fs;
 	TestFile partial("block_cache_partial.bin", BLOCK + 1000);
-	const auto zeroed_past_end = [](const BlockCachePin &pin) {
-		for (idx_t i = pin.Size(); i < BLOCK; i++) {
-			if (pin.Ptr()[i] != 0) {
-				return false;
-			}
-		}
-		return true;
-	};
 
 	auto cached = partial.Open(cache, fs);
 	auto single = cache.Pin(*cached, 1);
 	REQUIRE(single.Size() == 1000);
 	REQUIRE(HoldsExpectedBytes(single, 1));
-	REQUIRE(zeroed_past_end(single));
 	single.Reset();
 	cached.reset();
 	cache.ForgetFile(partial.path);
@@ -1161,8 +1152,8 @@ TEST_CASE("Block cache zeroes a fetched last block past the end of its file", "[
 	cached = partial.Open(cache, fs);
 	auto pins = cache.PinRange(*cached, 0, BLOCK + 1000);
 	REQUIRE(pins.size() == 2);
+	REQUIRE(pins[1].Size() == 1000);
 	REQUIRE(HoldsExpectedBytes(pins[1], 1));
-	REQUIRE(zeroed_past_end(pins[1]));
 }
 
 TEST_CASE("Block cache pins fail with the read error and later pins fetch again", "[block_cache]") {
