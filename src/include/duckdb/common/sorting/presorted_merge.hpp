@@ -95,10 +95,6 @@ public:
 	bool Merge(PresortedMergeState &state, vector<PresortedRun> &runs, idx_t max_runs,
 	           const std::function<bool()> &proceed, optional_idx &unsorted_input) const;
 
-	idx_t InputCount() const {
-		return inputs.size();
-	}
-
 private:
 	vector<LogicalType> key_types;
 	vector<OrderModifiers> modifiers;
