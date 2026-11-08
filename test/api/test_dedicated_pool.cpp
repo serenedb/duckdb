@@ -109,6 +109,90 @@ private:
 	string label;
 };
 
+struct Latch {
+	explicit Latch(idx_t count) : left(count) {
+	}
+
+	void Arrive() {
+		const absl::MutexLock guard(lock);
+		left--;
+	}
+
+	bool Await() {
+		lock.Lock();
+		const bool done = lock.AwaitWithTimeout(absl::Condition(this, &Latch::Done), absl::Seconds(30));
+		lock.Unlock();
+		return done;
+	}
+
+	bool Done() const {
+		return left == 0;
+	}
+
+	mutex lock;
+	idx_t left;
+};
+
+//! Yields with TASK_NOT_FINISHED until its steps are used up, as a pipeline task does under PROCESS_PARTIAL
+class StepTask : public Task {
+public:
+	StepTask(idx_t steps, Latch &latch) : steps(steps), latch(latch) {
+	}
+
+	TaskExecutionResult Execute(TaskExecutionMode mode) override {
+		if (mode != TaskExecutionMode::PROCESS_PARTIAL) {
+			whole = true;
+		}
+		if (++runs < steps) {
+			return TaskExecutionResult::TASK_NOT_FINISHED;
+		}
+		latch.Arrive();
+		return TaskExecutionResult::TASK_FINISHED;
+	}
+
+	idx_t steps;
+	Latch &latch;
+	atomic<idx_t> runs {0};
+	atomic<bool> whole {false};
+};
+
+//! Blocks on its first run and keeps itself alive while descheduled, as a pipeline task waiting on IO does
+class BlockOnceTask : public Task {
+public:
+	explicit BlockOnceTask(Latch &latch) : latch(latch) {
+	}
+
+	TaskExecutionResult Execute(TaskExecutionMode) override {
+		if (++runs == 1) {
+			return TaskExecutionResult::TASK_BLOCKED;
+		}
+		latch.Arrive();
+		return TaskExecutionResult::TASK_FINISHED;
+	}
+
+	void Deschedule() override {
+		const absl::MutexLock guard(lock);
+		parked = shared_from_this();
+	}
+
+	shared_ptr<Task> TakeParked() {
+		lock.Lock();
+		const bool done = lock.AwaitWithTimeout(absl::Condition(this, &BlockOnceTask::Parked), absl::Seconds(30));
+		auto task = done ? std::move(parked) : nullptr;
+		lock.Unlock();
+		return task;
+	}
+
+	bool Parked() const {
+		return parked != nullptr;
+	}
+
+	Latch &latch;
+	atomic<idx_t> runs {0};
+	mutex lock;
+	shared_ptr<Task> parked;
+};
+
 } // namespace
 
 TEST_CASE("A dedicated pool runs at most its thread count of tasks at once", "[api][scheduler]") {
@@ -214,4 +298,54 @@ TEST_CASE("Dedicated tasks never enter the shared queue", "[api][scheduler]") {
 	blocker.AwaitTasks();
 	executor.AwaitTasks();
 	REQUIRE(probe.done == 4);
+}
+
+TEST_CASE("A dedicated pool re-enqueues a task that is not finished", "[api][scheduler]") {
+	DuckDB db(nullptr);
+	auto &scheduler = TaskScheduler::GetScheduler(*db.instance);
+	auto pool = scheduler.CreateDedicatedPool(1);
+	auto producer = scheduler.CreateProducer(scheduler.CreateAccount(pool));
+	const auto before = scheduler.GetNumberOfTasks();
+	Latch latch(1);
+	auto task = make_shared_ptr<StepTask>(4, latch);
+	scheduler.ScheduleTask(*producer, task);
+	REQUIRE(latch.Await());
+	REQUIRE(task->runs == 4);
+	REQUIRE_FALSE(task->whole);
+	REQUIRE(scheduler.GetTaskCountForProducer(*producer) == 0);
+	REQUIRE(scheduler.GetNumberOfTasks() == before);
+}
+
+TEST_CASE("A dedicated pool deschedules a blocked task and runs it when it is rescheduled", "[api][scheduler]") {
+	DuckDB db(nullptr);
+	auto &scheduler = TaskScheduler::GetScheduler(*db.instance);
+	auto pool = scheduler.CreateDedicatedPool(1);
+	auto producer = scheduler.CreateProducer(scheduler.CreateAccount(pool));
+	Latch latch(1);
+	auto task = make_shared_ptr<BlockOnceTask>(latch);
+	scheduler.ScheduleTask(*producer, task);
+	auto parked = task->TakeParked();
+	REQUIRE(parked);
+	REQUIRE(task->runs == 1);
+	scheduler.ScheduleTask(*producer, std::move(parked));
+	REQUIRE(latch.Await());
+	REQUIRE(task->runs == 2);
+	REQUIRE(scheduler.GetTaskCountForProducer(*producer) == 0);
+}
+
+TEST_CASE("Dedicated tasks scheduled in bulk stay out of the shared queue", "[api][scheduler]") {
+	DuckDB db(nullptr);
+	auto &scheduler = TaskScheduler::GetScheduler(*db.instance);
+	auto pool = scheduler.CreateDedicatedPool(2);
+	auto producer = scheduler.CreateProducer(scheduler.CreateAccount(pool));
+	const auto before = scheduler.GetNumberOfTasks();
+	Latch latch(8);
+	vector<shared_ptr<Task>> tasks;
+	for (idx_t i = 0; i < 8; i++) {
+		tasks.push_back(make_shared_ptr<StepTask>(1, latch));
+	}
+	scheduler.ScheduleTasks(*producer, tasks);
+	REQUIRE(scheduler.GetNumberOfTasks() == before);
+	REQUIRE(latch.Await());
+	REQUIRE(scheduler.GetTaskCountForProducer(*producer) == 0);
 }
