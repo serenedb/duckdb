@@ -763,6 +763,14 @@ shared_ptr<BlockCacheFile> FileSystem::OpenBlockFile(const string &path) {
 FileWriter::~FileWriter() {
 }
 
+FileWriteHold::~FileWriteHold() {
+}
+
+void FileSystem::WriteHeld(FileHandle &handle, data_ptr_t buffer, idx_t nr_bytes, idx_t location,
+                           unique_ptr<FileWriteHold> hold) {
+	Write(handle, buffer, UnsafeNumericCast<int64_t>(nr_bytes), location);
+}
+
 unique_ptr<FileWriter> FileSystem::OpenFileWriter(const string &path, bool keep_cached) {
 	return nullptr;
 }

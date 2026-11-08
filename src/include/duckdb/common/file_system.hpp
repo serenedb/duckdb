@@ -136,6 +136,11 @@ public:
 	DUCKDB_API virtual void Abort() noexcept = 0;
 };
 
+class FileWriteHold {
+public:
+	DUCKDB_API virtual ~FileWriteHold();
+};
+
 //! A buffer one piece of a scattered read fills, or the bytes it skips when it has no data
 struct FileReadTarget {
 	data_ptr_t data = nullptr;
@@ -326,6 +331,8 @@ public:
 	//! Write exactly nr_bytes to the specified location in the file. Fails if nr_bytes could not be written. This is
 	//! equivalent to calling SetFilePointer(location) followed by calling Write().
 	DUCKDB_API virtual void Write(FileHandle &handle, void *buffer, int64_t nr_bytes, idx_t location);
+	DUCKDB_API virtual void WriteHeld(FileHandle &handle, data_ptr_t buffer, idx_t nr_bytes, idx_t location,
+	                                  unique_ptr<FileWriteHold> hold);
 	//! Read nr_bytes from the specified file into the buffer, moving the file pointer forward by nr_bytes. Returns the
 	//! amount of bytes read.
 	DUCKDB_API virtual int64_t Read(FileHandle &handle, void *buffer, int64_t nr_bytes);

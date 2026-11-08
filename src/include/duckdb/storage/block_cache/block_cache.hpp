@@ -222,6 +222,7 @@ public:
 	FileWriteWindow Window();
 	//! Appends the first [count] bytes of the last window
 	void Commit(idx_t count);
+	BlockCachePin ShareWindow(idx_t count);
 	//! The bytes appended
 	idx_t Size() const {
 		return size;

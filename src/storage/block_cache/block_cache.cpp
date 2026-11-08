@@ -227,6 +227,10 @@ void BlockCacheAppender::Commit(idx_t count) {
 	}
 }
 
+BlockCachePin BlockCacheAppender::ShareWindow(idx_t count) {
+	return current.Share(size % BlockCache::BLOCK_SIZE, count);
+}
+
 void BlockCacheAppender::Finish(const string &version_tag, timestamp_t last_modified) {
 	if (current.IsValid()) {
 		const auto end = size % BlockCache::BLOCK_SIZE;

@@ -520,6 +520,15 @@ shared_ptr<BlockCacheFile> DatabaseFileSystem::OpenBlockFile(const string &path)
 
 namespace {
 
+class HeldBlock final : public FileWriteHold {
+public:
+	explicit HeldBlock(BlockCachePin pin_p) : pin(std::move(pin_p)) {
+	}
+
+private:
+	BlockCachePin pin;
+};
+
 //! Uploads a remote file and keeps its bytes in the block cache blocks they are written into, which its readers read
 //! once it closes; a window that gets no block uploads its bytes without the cache, as does the rest of the file
 class CachedRemoteFileWriter final : public FileWriter {
@@ -536,7 +545,9 @@ public:
 		if (appender) {
 			try {
 				SDB_IF_FAILURE("remote_write_cache_block") {
-					throw OutOfMemoryException("Injected failure to get a block cache block");
+					if (appender->Size() > 0) {
+						throw OutOfMemoryException("Injected failure to get a block cache block");
+					}
 				}
 				window = appender->Window();
 				return window;
@@ -557,7 +568,12 @@ public:
 		if (nr_bytes == 0) {
 			return;
 		}
-		handle->Write(QueryContext(), window.data, nr_bytes, size);
+		if (appender) {
+			handle->file_system.WriteHeld(*handle, window.data, nr_bytes, size,
+			                              make_uniq<HeldBlock>(appender->ShareWindow(nr_bytes)));
+		} else {
+			handle->Write(QueryContext(), window.data, nr_bytes, size);
+		}
 		size += nr_bytes;
 		window = {window.data + nr_bytes, window.size - nr_bytes};
 		if (appender) {
