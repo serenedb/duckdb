@@ -15,6 +15,7 @@
 #include "duckdb/common/types/timestamp.hpp"
 #include "duckdb/common/time_point.hpp"
 #include <functional>
+#include <span>
 
 namespace duckdb {
 class DatabaseInstance;
@@ -255,6 +256,25 @@ struct GetRequestInfo : public BaseRequest {
 	std::function<bool(const HTTPResponse &response)> response_handler;
 };
 
+struct HTTPBodyPiece {
+	const_data_ptr_t data = nullptr;
+	idx_t size = 0;
+};
+
+class HTTPBodyReader {
+public:
+	explicit HTTPBodyReader(std::span<const HTTPBodyPiece> pieces_p) : pieces(pieces_p) {
+	}
+
+	DUCKDB_API idx_t Read(data_ptr_t buffer, idx_t count);
+	DUCKDB_API bool Seek(idx_t position);
+
+private:
+	std::span<const HTTPBodyPiece> pieces;
+	idx_t piece = 0;
+	idx_t offset = 0;
+};
+
 struct PutRequestInfo : public BaseRequest {
 	PutRequestInfo(const string &path, const HTTPHeaders &headers, HTTPParams &params, const_data_ptr_t buffer_in,
 	               idx_t buffer_in_len, const string &content_type)
@@ -262,10 +282,13 @@ struct PutRequestInfo : public BaseRequest {
 	      buffer_in_len(buffer_in_len), content_type(content_type) {
 		request_body_length = buffer_in_len;
 	}
+	DUCKDB_API PutRequestInfo(const string &path, const HTTPHeaders &headers, HTTPParams &params,
+	                          std::span<const HTTPBodyPiece> body, const string &content_type);
 	DUCKDB_API ~PutRequestInfo();
 
 	const_data_ptr_t buffer_in;
 	idx_t buffer_in_len;
+	std::span<const HTTPBodyPiece> pieces;
 	const string &content_type;
 };
 

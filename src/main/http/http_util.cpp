@@ -170,6 +170,47 @@ HeadRequestInfo::~HeadRequestInfo() = default;
 DeleteRequestInfo::~DeleteRequestInfo() = default;
 PostRequestInfo::~PostRequestInfo() = default;
 
+PutRequestInfo::PutRequestInfo(const string &path, const HTTPHeaders &headers, HTTPParams &params,
+                               std::span<const HTTPBodyPiece> body, const string &content_type)
+    : BaseRequest(RequestType::PUT_REQUEST, path, headers, params), buffer_in(nullptr), buffer_in_len(0),
+      content_type(content_type) {
+	for (auto &piece : body) {
+		buffer_in_len += piece.size;
+	}
+	if (body.size() == 1) {
+		buffer_in = body.front().data;
+	} else if (body.size() > 1) {
+		pieces = body;
+	}
+	request_body_length = buffer_in_len;
+}
+
+idx_t HTTPBodyReader::Read(data_ptr_t buffer, idx_t count) {
+	idx_t read = 0;
+	while (read < count && piece < pieces.size()) {
+		auto &current = pieces[piece];
+		auto chunk = MinValue<idx_t>(count - read, current.size - offset);
+		memcpy(buffer + read, current.data + offset, chunk);
+		read += chunk;
+		offset += chunk;
+		if (offset == current.size) {
+			piece++;
+			offset = 0;
+		}
+	}
+	return read;
+}
+
+bool HTTPBodyReader::Seek(idx_t position) {
+	piece = 0;
+	while (piece < pieces.size() && position >= pieces[piece].size) {
+		position -= pieces[piece].size;
+		piece++;
+	}
+	offset = position;
+	return position == 0 || piece < pieces.size();
+}
+
 unique_ptr<HTTPClient> HTTPUtil::InitializeClient(HTTPParams &http_params, const string &proto_host_port) {
 	return nullptr;
 }
