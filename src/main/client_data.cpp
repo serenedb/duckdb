@@ -154,7 +154,7 @@ public:
 	Allocator &GetBufferAllocator() override {
 		return buffer_manager.GetBufferAllocator();
 	}
-	void ReserveMemory(MemoryTag tag, idx_t size) override {
+	TempBufferPoolReservation ReserveMemory(MemoryTag tag, idx_t size) override {
 		return buffer_manager.ReserveMemory(tag, size);
 	}
 	void FreeReservedMemory(MemoryTag tag, idx_t size) override {
