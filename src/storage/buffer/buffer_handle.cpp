@@ -27,12 +27,6 @@ void BufferHandle::Destroy() {
 	node = nullptr;
 }
 
-BufferHandle BufferHandle::Share() {
-	D_ASSERT(IsValid() && memory->GetBufferType() != FileBufferType::TINY_BUFFER);
-	memory->IncrementReaders();
-	return BufferHandle(*memory, node);
-}
-
 FileBuffer &BufferHandle::GetFileBuffer() {
 	D_ASSERT(node);
 	return *node;

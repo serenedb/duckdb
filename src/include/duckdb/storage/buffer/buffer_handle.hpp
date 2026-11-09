@@ -72,7 +72,11 @@ public:
 	//! Destroys the buffer handle
 	DUCKDB_API void Destroy();
 	//! Another pin of the pinned block, which does not own the block handle. Handle must be valid.
-	DUCKDB_API BufferHandle Share();
+	BufferHandle Share() {
+		D_ASSERT(IsValid() && memory->GetBufferType() != FileBufferType::TINY_BUFFER);
+		memory->IncrementReaders();
+		return BufferHandle(*memory, node);
+	}
 
 	//! The pinned block, empty once its last other owner is gone
 	DUCKDB_API shared_ptr<BlockHandle> GetBlockHandle() const;

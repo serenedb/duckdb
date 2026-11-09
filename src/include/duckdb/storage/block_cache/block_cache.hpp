@@ -84,7 +84,13 @@ public:
 		return size;
 	}
 	//! Another pin of the [size] bytes at [offset] of the pinned bytes
-	BlockCachePin Share(idx_t offset, idx_t size);
+	BlockCachePin Share(idx_t offset, idx_t size_p) {
+		if (!handle.IsValid()) {
+			return {};
+		}
+		D_ASSERT(offset <= size && size_p <= size - offset);
+		return BlockCachePin(handle.Share(), data + offset, size_p);
+	}
 	//! Narrows this pin to the [size] bytes at [offset] of its bytes
 	void Narrow(idx_t offset, idx_t size_p) {
 		D_ASSERT(offset <= size && size_p <= size - offset);
@@ -92,7 +98,7 @@ public:
 		size = size_p;
 	}
 	void Reset() {
-		handle.Destroy();
+		BufferHandle released = std::move(handle);
 		data = nullptr;
 		size = 0;
 	}

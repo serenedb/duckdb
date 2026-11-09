@@ -101,18 +101,6 @@ void ForEachPiece(idx_t count, FUNC &&callback) {
 } // namespace
 
 //===--------------------------------------------------------------------===//
-// BlockCachePin
-//===--------------------------------------------------------------------===//
-
-BlockCachePin BlockCachePin::Share(idx_t offset, idx_t size_p) {
-	if (!handle.IsValid()) {
-		return {};
-	}
-	D_ASSERT(offset <= size && size_p <= size - offset);
-	return BlockCachePin(handle.Share(), data + offset, size_p);
-}
-
-//===--------------------------------------------------------------------===//
 // BlockCacheBlocks
 //===--------------------------------------------------------------------===//
 
