@@ -253,6 +253,11 @@ public:
 	BufferPoolReservation &GetMemoryCharge() {
 		return memory_charge;
 	}
+	TempBufferPoolReservation TakeMemoryCharge(BlockLock &l) {
+		VerifyMutex(l);
+		memory_usage = 0;
+		return memory_charge.Split(memory_charge.size);
+	}
 	//! Returns true, if there is a swizzled memory pointer, else false.
 	bool IsSwizzled() const {
 		return !unswizzled;

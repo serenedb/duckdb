@@ -35,4 +35,12 @@ void BufferPoolReservation::Merge(BufferPoolReservation src) {
 	src.size = 0;
 }
 
+TempBufferPoolReservation BufferPoolReservation::Split(idx_t split_size) {
+	D_ASSERT(split_size <= size);
+	TempBufferPoolReservation result(tag, pool, 0);
+	result.size = split_size;
+	size -= split_size;
+	return result;
+}
+
 } // namespace duckdb
