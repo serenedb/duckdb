@@ -3532,15 +3532,17 @@ void CopyToFileGlobalState::Initialize() {
 
 void CopyToFileGlobalState::PrepareOutputDirectory() {
 	auto &fs = FileSystem::GetFileSystem(context);
-	if (!fs.IsRemoteFile(op.file_path)) {
-		if (fs.FileExists(op.file_path)) {
-			if (op.overwrite_mode == CopyOverwriteMode::COPY_OVERWRITE) {
-				fs.RemoveFile(op.file_path);
-			} else {
-				throw IOException("Cannot write to \"%s\" - it exists and is a file, not a directory! Enable "
-				                  "OVERWRITE option to overwrite the file",
-				                  op.file_path);
-			}
+	if (fs.IsRemoteFile(op.file_path)) {
+		CheckDirectory(fs, op.file_path, op.overwrite_mode);
+		return;
+	}
+	if (fs.FileExists(op.file_path)) {
+		if (op.overwrite_mode == CopyOverwriteMode::COPY_OVERWRITE) {
+			fs.RemoveFile(op.file_path);
+		} else {
+			throw IOException("Cannot write to \"%s\" - it exists and is a file, not a directory! Enable "
+			                  "OVERWRITE option to overwrite the file",
+			                  op.file_path);
 		}
 	}
 
@@ -3578,6 +3580,9 @@ void CopyToFileGlobalState::EnsureOutputDirectoryReady() {
 
 void CopyToFileGlobalState::EnsureDirectory(const string &dir_path) {
 	auto &fs = FileSystem::GetFileSystem(context);
+	if (fs.IsRemoteFile(dir_path)) {
+		return;
+	}
 	if (directory_manager.EnsureDirectory(fs, dir_path)) {
 		output_lifecycle.RegisterCreatedDirectory(dir_path);
 	}
