@@ -101,7 +101,7 @@ public:
 	//! Get the buffer allocator.
 	virtual DUCKDB_API Allocator &GetBufferAllocator();
 	//! Reserve memory allocated outside the buffer pool, evicting blocks to make room; throws when it can't.
-	virtual DUCKDB_API void ReserveMemory(MemoryTag tag, idx_t size);
+	virtual DUCKDB_API TempBufferPoolReservation ReserveMemory(MemoryTag tag, idx_t size);
 	//! Free reserved memory.
 	virtual DUCKDB_API void FreeReservedMemory(MemoryTag tag, idx_t size);
 	//! GetMemoryUsageInfo returns MemoryInformation for each memory tag.

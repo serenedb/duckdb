@@ -797,13 +797,11 @@ vector<TemporaryFileInformation> StandardBufferManager::GetTemporaryFiles() {
 	return result;
 }
 
-void StandardBufferManager::ReserveMemory(MemoryTag tag, idx_t size) {
+TempBufferPoolReservation StandardBufferManager::ReserveMemory(MemoryTag tag, idx_t size) {
 	if (size == 0) {
-		return;
+		return TempBufferPoolReservation(tag, buffer_pool, 0);
 	}
-	auto reservation =
-	    EvictBlocksOrThrow(QueryContext(), tag, size, nullptr, "failed to reserve memory data of size %s%s");
-	reservation.size = 0;
+	return EvictBlocksOrThrow(QueryContext(), tag, size, nullptr, "failed to reserve memory data of size %s%s");
 }
 
 void StandardBufferManager::FreeReservedMemory(MemoryTag tag, idx_t size) {
