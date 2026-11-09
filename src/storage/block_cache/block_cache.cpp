@@ -40,7 +40,7 @@ bool IsDropped(const BlockMemory &memory) {
 
 //! Whether a block whose slot holds [memory] has to be fetched: it holds no data and no one is loading it
 bool IsMissing(const BlockMemory *memory) {
-	return !memory || (!memory->IsLoading() && IsDropped(*memory));
+	return !memory || (IsDropped(*memory) && !memory->IsLoading());
 }
 
 //! Gives back the claims in [claimed], clearing them
