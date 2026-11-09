@@ -164,7 +164,7 @@ duckdb_fsst12_decompress(
    unsigned long long*__restrict__ symbol = (unsigned long long* __restrict__) decoder->symbol; 
    unsigned char*__restrict__ strOut = (unsigned char* __restrict__) output;
    unsigned long posOut = 0, posIn = 0;
-#define FSST12_UNALIGNED_STORE(dst,src) memcpy((unsigned long long*) (dst), &(src), sizeof(unsigned long long))
+#define FSST12_UNALIGNED_STORE(dst,src) memcpy((void*) (dst), &(src), sizeof(unsigned long long))
 #ifndef FSST_MUST_ALIGN /* defining on platforms that require aligned memory access may help their performance */
    while (posOut+16 <= size && posIn+4 < lenIn) {
       unsigned int code, code0, code1;

@@ -71,18 +71,19 @@ struct Symbol {
    mutable u32 gain; // mutable because gain value should be ignored in find() on unordered_set of Symbols
 
    // the byte sequence that this symbol stands for
-   u8 symbol[maxLength]; 
+   union { u8 str[maxLength]; u64 num; } val;
+   static_assert(sizeof(val.str) == sizeof(val.num), "a symbol's bytes are read as one u64");
 
    Symbol() : gcl(0) {}
 
-   explicit Symbol(u8 c, u16 code) : gcl((1<<28)|(code<<16)|7) { *(u64*) symbol = c; } // single-char symbol
+   explicit Symbol(u8 c, u16 code) : gcl((1<<28)|(code<<16)|7) { val.num = c; } // single-char symbol
    explicit Symbol(const char* input, u32 len) {
       if (len < 8) {
-         *(u64*) symbol = 0;
-         for(u32 i=0; i<len; i++) symbol[i] = input[i];
+         val.num = 0;
+         for(u32 i=0; i<len; i++) val.str[i] = input[i];
       } else {
          len = 8;
-         *(u64*) symbol = *(u64*) input;
+         val.num = fsst_unaligned_load((const u8*) input);
       }
       set_code_len(FSST_CODE_MASK, len);
    }
@@ -94,16 +95,16 @@ struct Symbol {
    u16 code() const { return (gcl >> 16) & FSST_CODE_MASK; }
    u8 garbageBits() const { return gcl; }
 
-   u8 first() const { return 0xFF & *(u64*) symbol; }
-   u16 first2() const { assert(length() > 1); return (0xFFFF & *(u64*) symbol); }
+   u8 first() const { return 0xFF & val.num; }
+   u16 first2() const { assert(length() > 1); return (0xFFFF & val.num); }
 
 #define FSST_HASH_LOG2SIZE 14
 #define FSST_HASH_SHIFT 15 
 #define FSST_HASH_PRIME1 2971215073LL
 #define FSST_HASH(w) (((w)*FSST_HASH_PRIME1)^(((w)*FSST_HASH_PRIME1)>>13))
-   ulong hash() const { uint v0 = 0xFFFFFFFF & *(ulong*) symbol; return FSST_HASH(v0); }
+   ulong hash() const { uint v0 = 0xFFFFFFFF & val.num; return FSST_HASH(v0); }
 
-   bool operator==(const Symbol& other) const { return *(u64*) symbol == *(u64*) other.symbol && length() == other.length(); }
+   bool operator==(const Symbol& other) const { return val.num == other.val.num && length() == other.length(); }
 };
 
 // during search for the best dictionary, we probe both (in this order, first wins):  
@@ -174,7 +175,7 @@ struct SymbolMap {
       if (taken) return false; // collision in hash table
       hashTab[idx].gcl = s.gcl;
       hashTab[idx].gain = 0;
-      *(u64*) hashTab[idx].symbol = (*(u64*) s.symbol) & (0xFFFFFFFFFFFFFFFF >> (u8) s.gcl);
+      hashTab[idx].val.num = s.val.num & (0xFFFFFFFFFFFFFFFF >> (u8) s.gcl);
       return true;
    }
    bool add(Symbol s) {
@@ -196,7 +197,7 @@ struct SymbolMap {
    u16 hashFind(Symbol s) const {
       ulong idx = s.hash() & (hashTabSize-1);
       if (hashTab[idx].gcl <= s.gcl && 
-          *(u64*) hashTab[idx].symbol == (*(u64*) s.symbol & (0xFFFFFFFFFFFFFFFF >> ((u8) hashTab[idx].gcl)))) 
+          hashTab[idx].val.num == (s.val.num & (0xFFFFFFFFFFFFFFFF >> ((u8) hashTab[idx].gcl))))
          return (hashTab[idx].gcl>>16); // matched a long symbol 
       return 0;
    }
@@ -265,7 +266,7 @@ struct Counters {
    }
    u32 count1GetNext(u32 &pos1) { // note: we will advance pos1 to the next nonzero counter in register range
       // read 16-bits single symbol counter, split into two 8-bits numbers (count1Low, count1High), while skipping over zeros
-      u64 high = *(u64*) &count1High[pos1]; // note: this reads 8 subsequent counters [pos1..pos1+7]
+      u64 high = fsst_unaligned_load(&count1High[pos1]); // note: this reads 8 subsequent counters [pos1..pos1+7]
 
       u32 zero = high?(__builtin_ctzl(high)>>3):7; // number of zero bytes
       high = (high >> (zero << 3)) & 255; // advance to nonzero counter
@@ -278,7 +279,7 @@ struct Counters {
    }
    u32 count2GetNext(u32 pos1, u32 &pos2) { // note: we will advance pos2 to the next nonzero counter in register range
       // read 12-bits pairwise symbol counter, split into low 8-bits and high 4-bits number while skipping over zeros
-      u64 high = *(u64*) &count2High[pos1][pos2>>1]; // note: this reads 16 subsequent counters [pos2..pos2+15]
+      u64 high = fsst_unaligned_load(&count2High[pos1][pos2>>1]); // note: this reads 16 subsequent counters [pos2..pos2+15]
       high >>= (pos2&1) << 2; // odd pos2: ignore the lowest 4 bits & we see only 15 counters
 
       u32 zero = high?(__builtin_ctzl(high)>>2):(15-(pos2&1)); // number of zero 4-bits counters
