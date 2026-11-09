@@ -1,0 +1,31 @@
+# name: test/sql/storage/types/variant/variant_shredded_field_order.test
+# description: Shredded object fields are stored in name order, whatever order the objects list them in
+# group: [variant]
+
+load {TEST_DIR}/variant_shredded_field_order.db readwrite v1.5.0
+
+statement ok
+SET variant_minimum_shredding_size = 0;
+
+statement ok
+CREATE TABLE tbl (v VARIANT);
+
+statement ok
+INSERT INTO tbl SELECT {'e': DATE '2024-01-01' + i::INTEGER, 'd': i::INTEGER, 'c': i::DOUBLE, 'b': 'b' || i, 'a': i}::VARIANT FROM range(100) t(i);
+
+statement ok
+CHECKPOINT;
+
+query II
+SELECT column_path, segment_type FROM pragma_storage_info('tbl') WHERE column_path LIKE '[0, 2, 1, _]' AND segment_type != 'VALIDITY' ORDER BY column_path;
+----
+[0, 2, 1, 1]	BIGINT
+[0, 2, 1, 2]	VARCHAR
+[0, 2, 1, 3]	DOUBLE
+[0, 2, 1, 4]	INTEGER
+[0, 2, 1, 5]	DATE
+
+query I
+SELECT count(*) FROM tbl JOIN range(100) t(i) ON v.a::BIGINT = i WHERE v::VARCHAR = {'e': DATE '2024-01-01' + i::INTEGER, 'd': i::INTEGER, 'c': i::DOUBLE, 'b': 'b' || i, 'a': i}::VARIANT::VARCHAR;
+----
+100
