@@ -766,7 +766,7 @@ FileWriter::~FileWriter() {
 FileWriteHold::~FileWriteHold() {
 }
 
-void FileSystem::WriteHeld(FileHandle &handle, data_ptr_t buffer, idx_t nr_bytes, idx_t location,
+void FileSystem::WriteHeld(FileHandle &handle, data_ptr_t buffer, idx_t nr_bytes, idx_t location, uint32_t crc32c,
                            unique_ptr<FileWriteHold> hold) {
 	Write(handle, buffer, UnsafeNumericCast<int64_t>(nr_bytes), location);
 }

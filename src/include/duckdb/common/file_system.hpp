@@ -128,8 +128,8 @@ public:
 
 	//! The memory the next bytes of the file go to, at least one byte
 	DUCKDB_API virtual FileWriteWindow Window() = 0;
-	//! Appends the first [nr_bytes] bytes of the last window to the file
-	DUCKDB_API virtual void Commit(idx_t nr_bytes) = 0;
+	//! Appends the first [nr_bytes] bytes of the last window, whose CRC32C is [crc32c], to the file
+	DUCKDB_API virtual void Commit(idx_t nr_bytes, uint32_t crc32c) = 0;
 	//! Finishes the file at the bytes committed
 	DUCKDB_API virtual void Close() = 0;
 	//! Drops the file and the bytes committed
@@ -332,7 +332,7 @@ public:
 	//! equivalent to calling SetFilePointer(location) followed by calling Write().
 	DUCKDB_API virtual void Write(FileHandle &handle, void *buffer, int64_t nr_bytes, idx_t location);
 	DUCKDB_API virtual void WriteHeld(FileHandle &handle, data_ptr_t buffer, idx_t nr_bytes, idx_t location,
-	                                  unique_ptr<FileWriteHold> hold);
+	                                  uint32_t crc32c, unique_ptr<FileWriteHold> hold);
 	//! Read nr_bytes from the specified file into the buffer, moving the file pointer forward by nr_bytes. Returns the
 	//! amount of bytes read.
 	DUCKDB_API virtual int64_t Read(FileHandle &handle, void *buffer, int64_t nr_bytes);

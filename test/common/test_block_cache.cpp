@@ -886,7 +886,7 @@ void WriteThrough(FileWriter &writer, idx_t from, idx_t to) {
 		for (idx_t i = 0; i < count; i++) {
 			window.data[i] = ExpectedByte(written + i);
 		}
-		writer.Commit(count);
+		writer.Commit(count, 0);
 		written += count;
 	}
 }

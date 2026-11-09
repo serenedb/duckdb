@@ -563,13 +563,13 @@ public:
 		return window;
 	}
 
-	void Commit(idx_t nr_bytes) override {
+	void Commit(idx_t nr_bytes, uint32_t crc32c) override {
 		D_ASSERT(nr_bytes <= window.size);
 		if (nr_bytes == 0) {
 			return;
 		}
 		if (appender) {
-			handle->file_system.WriteHeld(*handle, window.data, nr_bytes, size,
+			handle->file_system.WriteHeld(*handle, window.data, nr_bytes, size, crc32c,
 			                              make_uniq<HeldBlock>(appender->ShareWindow(nr_bytes)));
 			appender->Commit(nr_bytes);
 		} else {

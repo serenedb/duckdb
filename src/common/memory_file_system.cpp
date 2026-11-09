@@ -112,7 +112,7 @@ public:
 		return {memory.heap.get() + size, memory.heap_capacity - size};
 	}
 
-	void Commit(idx_t nr_bytes) override {
+	void Commit(idx_t nr_bytes, uint32_t crc32c) override {
 		if (appender) {
 			appender->Commit(nr_bytes);
 			file->size.store(appender->Size(), std::memory_order_release);

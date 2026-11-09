@@ -50,7 +50,7 @@ void FillWriter(FileWriter &writer, idx_t size) {
 		for (idx_t i = 0; i < count; i++) {
 			window.data[i] = ByteAt(written + i);
 		}
-		writer.Commit(count);
+		writer.Commit(count, 0);
 		written += count;
 	}
 }
