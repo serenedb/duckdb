@@ -600,7 +600,7 @@ bool FileSystem::CreateDirectoryExtended(const string &directory, const CreateDi
 
 		bool target_created = false;
 		for (auto riter = directories.rbegin(); riter != directories.rend(); ++riter) {
-			auto created = CreateDirectoryExtended(*riter, {CreateDirectoryMode::SINGLE}, opener);
+			auto created = CreateDirectoryExtended(*riter, {CreateDirectoryMode::SINGLE, options.sync}, opener);
 			if (*riter == directories.front()) {
 				target_created = created;
 			}

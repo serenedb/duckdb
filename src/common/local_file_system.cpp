@@ -6,6 +6,7 @@
 #include "duckdb/common/file_opener.hpp"
 #include "duckdb/common/helper.hpp"
 #include "duckdb/common/memory_mapped_file.hpp"
+#include "duckdb/common/path.hpp"
 #include "duckdb/common/process_util.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/common/thread.hpp"
@@ -765,6 +766,9 @@ bool LocalFileSystem::CreateDirectoryExtended(const string &directory, const Cre
 	ApplyLocalFileSystemDelay(opener);
 	auto normalized_dir = ExpandPath(directory, opener);
 	if (mkdir(normalized_dir.c_str(), 0755) == 0) {
+		if (options.sync) {
+			SyncDirectory(Path::FromString(normalized_dir).Parent().ToString(), opener);
+		}
 		return true;
 	}
 	auto error = errno;
