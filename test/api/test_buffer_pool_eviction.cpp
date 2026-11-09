@@ -12,9 +12,6 @@
 using namespace duckdb; // NOLINT
 
 namespace {
-// Constants used in buffer pool memory limit setting.
-constexpr const char *EXCEPTION_POSTSCRIPT = "exception postscript";
-
 struct NonEvictableObject : public ObjectCacheEntry {
 	int value;
 	explicit NonEvictableObject(int value_p) : value(value_p) {
@@ -66,7 +63,7 @@ TEST_CASE("Test buffer pool eviction: pages before object cache", "[storage][buf
 
 	// Set limit to hold all objects and some pages, but not all pages with extra allocation
 	const idx_t memory_limit = (num_pages - 2) * actual_page_alloc_size + num_objects * obj_size;
-	buffer_pool.SetLimit(memory_limit, EXCEPTION_POSTSCRIPT);
+	buffer_pool.SetLimit(memory_limit);
 
 	// Add object cache entries first
 	for (idx_t idx = 0; idx < num_objects; ++idx) {
@@ -116,7 +113,7 @@ TEST_CASE("Test buffer pool eviction: pinned pages can evict object cache", "[st
 	// Set limit to hold all pages, some objects, and initial overhead
 	const idx_t after_eviction_memory = (num_objects - 2) * obj_size + num_pages * actual_page_alloc_size;
 	const idx_t total_memory_limit = initial_memory + after_eviction_memory;
-	buffer_pool.SetLimit(total_memory_limit, EXCEPTION_POSTSCRIPT);
+	buffer_pool.SetLimit(total_memory_limit);
 
 	// Add object cache entries first
 	for (idx_t idx = 0; idx < num_objects; ++idx) {
@@ -172,7 +169,7 @@ TEST_CASE("Test buffer pool eviction: non-evictable objects are kept", "[storage
 	// Set limit to hold all pages, some objects, and initial overhead
 	const idx_t after_eviction_memory = (num_evictable_objects - 2) * obj_size + num_pages * actual_page_alloc_size;
 	const idx_t total_memory_limit = initial_memory + after_eviction_memory;
-	buffer_pool.SetLimit(total_memory_limit, EXCEPTION_POSTSCRIPT);
+	buffer_pool.SetLimit(total_memory_limit);
 
 	// Add object cache entries first
 	for (idx_t idx = 0; idx < num_non_evictable_objects; ++idx) {
@@ -232,7 +229,7 @@ TEST_CASE("Test buffer pool eviction: failed to allocate space if every page and
 
 	// Set limit to hold all pages
 	const idx_t total_memory_limit = initial_memory + num_pages * actual_page_alloc_size;
-	buffer_pool.SetLimit(total_memory_limit, EXCEPTION_POSTSCRIPT);
+	buffer_pool.SetLimit(total_memory_limit);
 
 	// Add object cache entries first
 	for (idx_t idx = 0; idx < num_non_evictable_objects; ++idx) {
@@ -305,7 +302,7 @@ TEST_CASE("Test eviction queue: dead_nodes is incremented only for blocks with l
 	// Memory limit only large enough to hold `held_buffers` blocks at once, so subsequent
 	// allocations evict older destroyable blocks (their buffer becomes nullptr).
 	const idx_t memory_limit = initial_memory + held_buffers * actual_alloc_size;
-	buffer_pool.SetLimit(memory_limit, EXCEPTION_POSTSCRIPT);
+	buffer_pool.SetLimit(memory_limit);
 
 	vector<shared_ptr<BlockHandle>> handles;
 	handles.reserve(total_buffers);
@@ -361,7 +358,7 @@ TEST_CASE("Test eviction queue: dead_nodes invariants hold under destroyable blo
 	const idx_t actual_alloc_size = BufferManager::GetAllocSize(buffer_size + Storage::DEFAULT_BLOCK_HEADER_SIZE);
 
 	const idx_t memory_limit = initial_memory + resident_buffers * actual_alloc_size;
-	buffer_pool.SetLimit(memory_limit, EXCEPTION_POSTSCRIPT);
+	buffer_pool.SetLimit(memory_limit);
 
 	// Keep a small set of pinned buffers that stay resident throughout the test.
 	// Their queue entries (after each unpin/repin cycle below) are alive, latest-version,
@@ -413,7 +410,7 @@ TEST_CASE("Test buffer pool eviction: SetLimit evicts object cache", "[storage][
 
 	// Shrink limit to only accommodate 3 objects plus initial memory overhead
 	const idx_t target_limit = initial_memory + 3 * obj_size;
-	buffer_pool.SetLimit(target_limit, EXCEPTION_POSTSCRIPT);
+	buffer_pool.SetLimit(target_limit);
 
 	REQUIRE(cache.GetEntryCount() == 3);
 	REQUIRE(buffer_pool.GetUsedMemory() <= target_limit);
