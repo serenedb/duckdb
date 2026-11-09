@@ -330,8 +330,11 @@ TEST_CASE("Test buffer allocator", "[storage][.]") {
 		CHECK(buffer_manager.GetUsedMemory() == requested_size);
 	}
 
+	REQUIRE_THROWS_AS(allocator.ReallocateData(pointer, current_size, requested_size), OutOfMemoryException);
+	CHECK(buffer_manager.GetUsedMemory() == current_size);
+
 	// decrease
-	for (; requested_size >= block_size; requested_size /= 2) {
+	for (requested_size = current_size; requested_size >= block_size; requested_size /= 2) {
 		pointer = allocator.ReallocateData(pointer, current_size, requested_size);
 		current_size = requested_size;
 		CHECK(buffer_manager.GetUsedMemory() == requested_size);
