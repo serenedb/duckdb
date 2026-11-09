@@ -1,3 +1,4 @@
+#include "duckdb/common/algorithm.hpp"
 #include "duckdb/common/vector/flat_vector.hpp"
 #include "duckdb/common/vector/list_vector.hpp"
 #include "duckdb/common/vector/map_vector.hpp"
@@ -453,6 +454,9 @@ bool VariantShreddingStats::GetShreddedTypeInternal(const VariantColumnStatsData
 		if (child_types.empty()) {
 			return false;
 		}
+		std::sort(child_types.begin(), child_types.end(), [](const auto &a, const auto &b) {
+			return a.first.GetIdentifierName() < b.first.GetIdentifierName();
+		});
 		// always set objects as not being fully consistent
 		fully_consistent = false;
 		auto shredded_type = LogicalType::STRUCT(child_types);
