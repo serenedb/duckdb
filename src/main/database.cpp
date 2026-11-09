@@ -571,14 +571,12 @@ public:
 		if (appender) {
 			handle->file_system.WriteHeld(*handle, window.data, nr_bytes, size,
 			                              make_uniq<HeldBlock>(appender->ShareWindow(nr_bytes)));
+			appender->Commit(nr_bytes);
 		} else {
 			handle->Write(QueryContext(), window.data, nr_bytes, size);
 		}
 		size += nr_bytes;
 		window = {window.data + nr_bytes, window.size - nr_bytes};
-		if (appender) {
-			appender->Commit(nr_bytes);
-		}
 	}
 
 	void Close() override {
