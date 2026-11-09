@@ -266,8 +266,6 @@ struct BlockCacheRange {
 struct BlockCacheStatistics {
 	//! Memory the buffer pool holds for the cache's blocks and for the buffers of reads it does not keep
 	idx_t used = 0;
-	//! Pins that found the block in memory
-	idx_t hits = 0;
 	idx_t misses = 0;
 	idx_t fetched_bytes = 0;
 	idx_t fetches = 0;
@@ -397,12 +395,6 @@ private:
 		shared_ptr<BlockCacheBlocks> blocks;
 	};
 
-	//! Hits counted per CPU
-	struct alignas(64) HitCounter {
-		atomic<idx_t> value {0};
-	};
-	static constexpr idx_t HIT_COUNTERS = 64;
-
 	//! Pins the block in [slot] when it is in memory
 	bool PinLoaded(BlockCacheSlot &slot, idx_t size, BlockCachePin &result) const;
 	BlockMemory &MemoryOf(const BlockCacheFile &file, BlockCacheSlot &slot);
@@ -448,8 +440,6 @@ private:
 private:
 	DatabaseInstance &db;
 	BufferManager &buffer_manager;
-
-	mutable HitCounter hits[HIT_COUNTERS];
 
 	mutable annotated_mutex file_lock;
 	unordered_map<string, FileRecord> files DUCKDB_GUARDED_BY(file_lock);

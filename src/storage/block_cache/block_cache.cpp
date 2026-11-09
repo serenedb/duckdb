@@ -493,7 +493,6 @@ void BlockCache::ForgetDirectory(const string &directory) {
 		return false;
 	}
 	result = BlockCachePin(BufferHandle(*memory, memory->GetLoadedBuffer()), memory->GetLoadedData(), size);
-	hits[TaskScheduler::GetEstimatedCPUId() % HIT_COUNTERS].value.fetch_add(1, std::memory_order_relaxed);
 	return true;
 }
 
@@ -995,9 +994,6 @@ BlockCacheStatistics BlockCache::GetStatistics() const {
 			result.spilled = info.temporary_writes;
 			result.spill_reads = info.temporary_reads;
 		}
-	}
-	for (auto &counter : hits) {
-		result.hits += counter.value.load(std::memory_order_relaxed);
 	}
 	result.misses = misses.load(std::memory_order_relaxed);
 	result.fetched_bytes = fetched_bytes.load(std::memory_order_relaxed);
