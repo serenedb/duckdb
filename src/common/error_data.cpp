@@ -12,7 +12,13 @@
 
 namespace duckdb {
 
+static constexpr const char *STACK_TRACE_SEPARATOR = "\n\nStack Trace:\n";
+
 ErrorData::ErrorData() : initialized(false), type(ExceptionType::INVALID) {
+}
+
+string ErrorData::RawMessageWithoutStackTrace() const {
+	return raw_message.substr(0, raw_message.find(STACK_TRACE_SEPARATOR));
 }
 
 ErrorData::ErrorData(const std::exception &ex, const std::exception_ptr &ptr) : ErrorData(ex.what()) {
@@ -76,7 +82,7 @@ string ErrorData::ConstructFinalMessage() const {
 		auto entry = extra_info.find("stack_trace_pointers");
 		if (entry != extra_info.end()) {
 			auto stack_trace = StackTrace::ResolveStacktraceSymbols(entry->second);
-			error += "\n\nStack Trace:\n" + stack_trace;
+			error += STACK_TRACE_SEPARATOR + stack_trace;
 		}
 	}
 	return error;
@@ -170,7 +176,7 @@ void ErrorData::AddErrorLocation(std::string_view query) {
 	{
 		auto entry = extra_info.find("stack_trace");
 		if (entry != extra_info.end() && !entry->second.empty()) {
-			raw_message += "\n\nStack Trace:\n" + entry->second;
+			raw_message += STACK_TRACE_SEPARATOR + entry->second;
 			entry->second = "";
 		}
 	}

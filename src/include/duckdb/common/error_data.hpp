@@ -41,6 +41,8 @@ public:
 	DUCKDB_API const string &RawMessage() const {
 		return raw_message;
 	}
+	//! The raw message without the stack trace the error carries
+	DUCKDB_API string RawMessageWithoutStackTrace() const;
 	DUCKDB_API void Merge(const ErrorData &other);
 	DUCKDB_API bool operator==(const ErrorData &other) const;
 
