@@ -87,6 +87,13 @@ inline void AppendToArray(ContainerCompressionState &state, bool null, uint16_t 
 	state.array_idx[null] += amount;
 }
 
+template <uintptr_t ALIGNMENT>
+void AlignZeroed(data_ptr_t &destination) {
+	auto aligned = AlignPointer<ALIGNMENT>(destination);
+	memset(destination, 0, NumericCast<idx_t>(aligned - destination));
+	destination = aligned;
+}
+
 void ContainerCompressionState::Append(bool null, uint16_t amount) {
 	append_function(*this, null, amount);
 	last_is_null = null;
@@ -107,7 +114,7 @@ void ContainerCompressionState::OverrideArray(data_ptr_t &destination, bool null
 		auto data_start = destination + sizeof(uint8_t) * COMPRESSED_SEGMENT_COUNT;
 		compressed_arrays[nulls] = reinterpret_cast<uint8_t *>(data_start);
 	} else {
-		destination = AlignPointer<sizeof(uint16_t)>(destination);
+		AlignZeroed<sizeof(uint16_t)>(destination);
 		arrays[nulls] = reinterpret_cast<uint16_t *>(destination);
 	}
 }
@@ -121,14 +128,14 @@ void ContainerCompressionState::OverrideRun(data_ptr_t &destination, idx_t count
 		auto data_start = destination + sizeof(uint8_t) * COMPRESSED_SEGMENT_COUNT;
 		compressed_runs = reinterpret_cast<uint8_t *>(data_start);
 	} else {
-		destination = AlignPointer<sizeof(RunContainerRLEPair)>(destination);
+		AlignZeroed<sizeof(RunContainerRLEPair)>(destination);
 		runs = reinterpret_cast<RunContainerRLEPair *>(destination);
 	}
 }
 
 void ContainerCompressionState::OverrideUncompressed(data_ptr_t &destination, idx_t container_size) {
 	append_function = AppendBitset;
-	destination = AlignPointer<sizeof(idx_t)>(destination);
+	AlignZeroed<sizeof(idx_t)>(destination);
 	uncompressed = reinterpret_cast<validity_t *>(destination);
 	uncompressed_size = container_size;
 }
@@ -272,11 +279,8 @@ void RoaringCompressState::InitializeContainer() {
 
 	// Override the pointer to write directly into the block
 	if (metadata.IsUncompressed()) {
-		auto aligned_ptr = reinterpret_cast<data_ptr_t>(AlignValue<idx_t>(reinterpret_cast<idx_t>(data_ptr)));
-		memset(data_ptr, 0, NumericCast<idx_t>(aligned_ptr - data_ptr));
-		data_ptr = aligned_ptr;
-		memset(data_ptr, ~0, sizeof(validity_t) * (container_size / ValidityMask::BITS_PER_VALUE));
 		container_state.OverrideUncompressed(data_ptr, container_size);
+		memset(data_ptr, ~0, sizeof(validity_t) * (container_size / ValidityMask::BITS_PER_VALUE));
 	} else if (metadata.IsRun()) {
 		auto number_of_runs = metadata.NumberOfRuns();
 		container_state.OverrideRun(data_ptr, number_of_runs);
