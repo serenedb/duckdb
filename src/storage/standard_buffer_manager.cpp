@@ -143,23 +143,24 @@ TempBufferPoolReservation StandardBufferManager::EvictBlocksOrThrow(QueryContext
 	if (!source) {
 		return EvictBlocksOrThrow(context, tag, memory_delta, buffer, error_message);
 	}
-	auto taken = MinValue(source->size, memory_delta);
-	TempBufferPoolReservation reservation(tag, buffer_pool, taken);
-	source->Resize(source->size - taken);
-	if (taken < memory_delta) {
-		reservation.Merge(EvictBlocksOrThrow(context, tag, memory_delta - taken, buffer, error_message));
-	}
+	D_ASSERT(source->tag == tag);
+	const auto taken = MinValue(source->size, memory_delta);
+	auto reservation = taken < memory_delta
+	                       ? EvictBlocksOrThrow(context, tag, memory_delta - taken, buffer, error_message)
+	                       : TempBufferPoolReservation(tag, buffer_pool, 0);
+	reservation.Merge(source->Split(taken));
 	return reservation;
 }
 
-BufferHandle StandardBufferManager::AllocateTransientMemory(const idx_t size, BlockManager &block_manager,
-                                                            BufferPoolReservation &source) {
+shared_ptr<BlockHandle> StandardBufferManager::RegisterTransientMemoryFrom(const idx_t size,
+                                                                           BlockManager &block_manager,
+                                                                           BufferPoolReservation &source) {
 	D_ASSERT(size <= block_manager.GetBlockSize());
-	auto block = size < block_manager.GetBlockSize()
-	                 ? RegisterSmallMemoryFrom(MemoryTag::IN_MEMORY_TABLE, size, &source)
-	                 : RegisterMemory(MemoryTag::IN_MEMORY_TABLE, block_manager.GetBlockSize(),
-	                                  block_manager.GetBlockHeaderSize(), false, QueryContext(), &source);
-	return Pin(block);
+	if (size < block_manager.GetBlockSize()) {
+		return RegisterSmallMemoryFrom(source.tag, size, &source);
+	}
+	return RegisterMemory(source.tag, block_manager.GetBlockSize(), block_manager.GetBlockHeaderSize(), false,
+	                      QueryContext(), &source);
 }
 
 shared_ptr<BlockHandle> StandardBufferManager::RegisterTransientMemory(const idx_t size, BlockManager &block_manager) {
