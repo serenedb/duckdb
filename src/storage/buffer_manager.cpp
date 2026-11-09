@@ -46,8 +46,8 @@ shared_ptr<BlockHandle> BufferManager::RegisterTransientMemory(const idx_t size,
 	throw NotImplementedException("This type of BufferManager can not create 'transient-memory' blocks");
 }
 
-BufferHandle BufferManager::AllocateTransientMemory(const idx_t size, BlockManager &block_manager,
-                                                    BufferPoolReservation &source) {
+shared_ptr<BlockHandle> BufferManager::RegisterTransientMemoryFrom(const idx_t size, BlockManager &block_manager,
+                                                                   BufferPoolReservation &source) {
 	throw NotImplementedException("This type of BufferManager can not create 'transient-memory' blocks");
 }
 
