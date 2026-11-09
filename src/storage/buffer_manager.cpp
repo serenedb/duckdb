@@ -63,7 +63,7 @@ Allocator &BufferManager::GetBufferAllocator() {
 	throw NotImplementedException("This type of BufferManager does not have an Allocator");
 }
 
-void BufferManager::ReserveMemory(MemoryTag tag, idx_t size) {
+TempBufferPoolReservation BufferManager::ReserveMemory(MemoryTag tag, idx_t size) {
 	throw NotImplementedException("This type of BufferManager can not reserve memory");
 }
 
