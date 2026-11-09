@@ -98,6 +98,11 @@ public:
 		VerifyCanAccessDirectory(directory);
 		GetFileSystem().SyncDirectory(directory, GetOpener());
 	}
+	void SyncFile(const string &path, optional_ptr<FileOpener> opener) override {
+		VerifyNoOpener(opener);
+		VerifyCanAccessFile(path);
+		GetFileSystem().SyncFile(path, GetOpener());
+	}
 
 	FileExistence TryDirectoryExists(const string &directory, optional_ptr<FileOpener> opener,
 	                                 optional_ptr<ErrorData> error) override {

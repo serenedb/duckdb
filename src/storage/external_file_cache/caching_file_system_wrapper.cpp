@@ -114,6 +114,10 @@ void CachingFileSystemWrapper::SyncDirectory(const string &directory, optional_p
 	underlying_file_system.SyncDirectory(directory, opener);
 }
 
+void CachingFileSystemWrapper::SyncFile(const string &path, optional_ptr<FileOpener> opener) {
+	underlying_file_system.SyncFile(path, opener);
+}
+
 //===----------------------------------------------------------------------===//
 // OpenFile Operations
 //===----------------------------------------------------------------------===//

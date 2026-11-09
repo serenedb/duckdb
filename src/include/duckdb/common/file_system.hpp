@@ -413,6 +413,7 @@ public:
 	//! Makes the names of the files created, moved or removed in [directory] durable; a filesystem without
 	//! directory entries has nothing to sync
 	DUCKDB_API virtual void SyncDirectory(const string &directory, optional_ptr<FileOpener> opener = nullptr);
+	DUCKDB_API virtual void SyncFile(const string &path, optional_ptr<FileOpener> opener = nullptr);
 	//! Abandon an incomplete write represented by this file handle.
 	DUCKDB_API virtual void AbortFileWrite(FileHandle &handle);
 	//! Sets the working directory

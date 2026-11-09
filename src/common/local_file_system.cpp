@@ -14,6 +14,7 @@
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/main/database.hpp"
 #include "duckdb/main/settings.hpp"
+#include "duckdb/parallel/task_scheduler.hpp"
 #include "duckdb/logging/file_system_logger.hpp"
 #include "duckdb/logging/log_manager.hpp"
 #include "duckdb/common/multi_file/multi_file_list.hpp"
@@ -965,6 +966,7 @@ void LocalFileSystem::SyncDirectory(const string &directory, optional_ptr<FileOp
 		return;
 	}
 	auto path = ExpandPath(directory, opener);
+	TaskScheduler::BlockingScope blocking;
 	int fd = ::open(path.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC);
 	if (fd == -1) {
 		throw IOException({{"errno", std::to_string(errno)}}, "Could not open directory \"%s\" to sync it: %s", path,
@@ -2269,6 +2271,12 @@ FileWriteMode LocalFileSystem::GetWriteMode(FileHandle &handle) {
 
 bool LocalFileSystem::OnDiskFile(FileHandle &handle) {
 	return true;
+}
+
+void LocalFileSystem::SyncFile(const string &path, optional_ptr<FileOpener> opener) {
+	auto handle = OpenFile(path, FileFlags::FILE_FLAGS_READ, opener);
+	TaskScheduler::BlockingScope blocking;
+	FileSync(*handle);
 }
 
 string LocalFileSystem::CanonicalizePath(const string &input, optional_ptr<FileOpener> opener) {

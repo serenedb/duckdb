@@ -306,6 +306,10 @@ void VirtualFileSystem::SyncDirectory(const string &directory, optional_ptr<File
 	FindFileSystem(directory, opener).SyncDirectory(directory, opener);
 }
 
+void VirtualFileSystem::SyncFile(const string &path, optional_ptr<FileOpener> opener) {
+	FindFileSystem(path, opener).SyncFile(path, opener);
+}
+
 // need to look up correct fs for this
 FileExistence VirtualFileSystem::TryDirectoryExists(const string &directory, optional_ptr<FileOpener> opener,
                                                     optional_ptr<ErrorData> error) {

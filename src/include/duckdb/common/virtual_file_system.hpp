@@ -50,6 +50,7 @@ public:
 	void FileSync(FileHandle &handle) override;
 	void HintWriteback(FileHandle &handle, idx_t location, idx_t nr_bytes) override;
 	void SyncDirectory(const string &directory, optional_ptr<FileOpener> opener = nullptr) override;
+	void SyncFile(const string &path, optional_ptr<FileOpener> opener = nullptr) override;
 
 	// need to look up correct fs for this
 	FileExistence TryDirectoryExists(const string &directory, optional_ptr<FileOpener> opener,
