@@ -1,0 +1,29 @@
+# name: test/sql/vacuum/vacuum_serenedb_options.test
+# description: A VACUUM option DuckDB does not know lowers to the serenedb_vacuum pragma
+# group: [vacuum]
+
+statement ok
+CREATE TABLE t (i INTEGER);
+
+statement error
+VACUUM (REFRESH_TABLE) t;
+----
+serenedb_vacuum
+
+statement error
+VACUUM (no_such_option) t;
+----
+serenedb_vacuum
+
+statement error
+VACUUM (REFRESH_TABLE, COMPACT_TABLE) t;
+----
+VACUUM accepts at most one SereneDB option (got both 'refresh_table' and 'compact_table')
+
+statement error
+VACUUM (REFRESH_TABLE, ANALYZE) t;
+----
+VACUUM SereneDB option 'refresh_table' cannot be combined with standard VACUUM options
+
+statement ok
+VACUUM (ANALYZE) t;

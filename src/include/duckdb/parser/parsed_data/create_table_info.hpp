@@ -10,6 +10,7 @@
 
 #include "duckdb/parser/parsed_data/create_info.hpp"
 #include "duckdb/parser/constraint.hpp"
+#include "duckdb/parser/result_modifier.hpp"
 #include "duckdb/parser/statement/select_statement.hpp"
 #include "duckdb/parser/column_list.hpp"
 
@@ -39,7 +40,7 @@ struct CreateTableInfo : public CreateInfo {
 	//! Table Partition definitions
 	vector<unique_ptr<ParsedExpression>> partition_keys;
 	//! Table Sort definitions
-	vector<unique_ptr<ParsedExpression>> sort_keys;
+	vector<OrderByNode> sort_keys;
 	//! Extra Table options if any
 	case_insensitive_map_t<unique_ptr<ParsedExpression>> options;
 	vector<Identifier> serial_columns;

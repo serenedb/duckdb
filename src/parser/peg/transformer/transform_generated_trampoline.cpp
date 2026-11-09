@@ -9676,14 +9676,18 @@ PEGTransformerFactory::FinalizeDropDatabaseForceTrampoline(PEGTransformer &trans
 void PEGTransformerFactory::InitializeCreateIndexStmtTrampoline(PEGTransformer &transformer,
                                                                 GeneratedTransformProcess &process) {
 	auto &list_pr = process.parse_result.Cast<ListParseResult>();
-	process.ReserveChildSlots(7);
-	auto &where_clause_opt = list_pr.GetChild(9).Cast<OptionalParseResult>();
+	process.ReserveChildSlots(8);
+	auto &where_clause_opt = list_pr.GetChild(10).Cast<OptionalParseResult>();
 	if (where_clause_opt.HasResult()) {
-		process.PushChild({where_clause_opt.GetResult()}, 6);
+		process.PushChild({where_clause_opt.GetResult()}, 7);
 	}
-	auto &with_list_opt = list_pr.GetChild(8).Cast<OptionalParseResult>();
+	auto &with_list_opt = list_pr.GetChild(9).Cast<OptionalParseResult>();
 	if (with_list_opt.HasResult()) {
-		process.PushChild({with_list_opt.GetResult()}, 5);
+		process.PushChild({with_list_opt.GetResult()}, 6);
+	}
+	auto &sorted_options_opt = list_pr.GetChild(8).Cast<OptionalParseResult>();
+	if (sorted_options_opt.HasResult()) {
+		process.PushChild({sorted_options_opt.GetResult()}, 5);
 	}
 	process.PushChild({list_pr.GetChild(7)}, 4);
 	auto &index_type_opt = list_pr.GetChild(6).Cast<OptionalParseResult>();
@@ -9724,17 +9728,21 @@ PEGTransformerFactory::FinalizeCreateIndexStmtTrampoline(PEGTransformer &transfo
 		index_type = process.TakeResult<Identifier>(3);
 	}
 	auto index_columns = process.TakeResult<IndexColumnsDefinition>(4);
-	optional<case_insensitive_map_t<unique_ptr<ParsedExpression>>> with_list {};
+	optional<vector<OrderByNode>> sorted_options {};
 	if (process.child_results[5]) {
-		with_list = process.TakeResult<case_insensitive_map_t<unique_ptr<ParsedExpression>>>(5);
+		sorted_options = process.TakeResult<vector<OrderByNode>>(5);
+	}
+	optional<case_insensitive_map_t<unique_ptr<ParsedExpression>>> with_list {};
+	if (process.child_results[6]) {
+		with_list = process.TakeResult<case_insensitive_map_t<unique_ptr<ParsedExpression>>>(6);
 	}
 	optional<unique_ptr<ParsedExpression>> where_clause {};
-	if (process.child_results[6]) {
-		where_clause = process.TakeResult<unique_ptr<ParsedExpression>>(6);
+	if (process.child_results[7]) {
+		where_clause = process.TakeResult<unique_ptr<ParsedExpression>>(7);
 	}
-	auto result =
-	    TransformCreateIndexStmt(transformer, unique_index, if_not_exists, index_name, std::move(base_table_name),
-	                             index_type, std::move(index_columns), std::move(with_list), std::move(where_clause));
+	auto result = TransformCreateIndexStmt(transformer, unique_index, if_not_exists, index_name,
+	                                       std::move(base_table_name), index_type, std::move(index_columns),
+	                                       std::move(sorted_options), std::move(with_list), std::move(where_clause));
 	return transformer.MakeResult<unique_ptr<CreateStatement>>(std::move(result));
 }
 
@@ -11729,9 +11737,9 @@ arena_ptr<TransformResultValue>
 PEGTransformerFactory::FinalizePartitionOptSortedOptionsTrampoline(PEGTransformer &transformer,
                                                                    GeneratedTransformProcess &process) {
 	auto partition_options = process.TakeResult<vector<unique_ptr<ParsedExpression>>>(0);
-	optional<vector<unique_ptr<ParsedExpression>>> sorted_options {};
+	optional<vector<OrderByNode>> sorted_options {};
 	if (process.child_results[1]) {
-		sorted_options = process.TakeResult<vector<unique_ptr<ParsedExpression>>>(1);
+		sorted_options = process.TakeResult<vector<OrderByNode>>(1);
 	}
 	auto result =
 	    TransformPartitionOptSortedOptions(transformer, std::move(partition_options), std::move(sorted_options));
@@ -11752,7 +11760,7 @@ void PEGTransformerFactory::InitializeSortedOptPartitionOptionsTrampoline(PEGTra
 arena_ptr<TransformResultValue>
 PEGTransformerFactory::FinalizeSortedOptPartitionOptionsTrampoline(PEGTransformer &transformer,
                                                                    GeneratedTransformProcess &process) {
-	auto sorted_options = process.TakeResult<vector<unique_ptr<ParsedExpression>>>(0);
+	auto sorted_options = process.TakeResult<vector<OrderByNode>>(0);
 	optional<vector<unique_ptr<ParsedExpression>>> partition_options {};
 	if (process.child_results[1]) {
 		partition_options = process.TakeResult<vector<unique_ptr<ParsedExpression>>>(1);
@@ -11806,12 +11814,12 @@ PEGTransformerFactory::FinalizeSortedOptionsTrampoline(PEGTransformer &transform
 	auto &list_pr = process.parse_result.Cast<ListParseResult>();
 	auto dynamic_list_items = ExtractParseResultsFromList(ExtractResultFromParens(list_pr.GetChild(2)));
 	auto dynamic_child_count = dynamic_list_items.size();
-	vector<unique_ptr<ParsedExpression>> expression;
+	vector<OrderByNode> order_by_expression;
 	for (idx_t i = 0; i < 0 + dynamic_child_count; i++) {
-		expression.push_back(process.TakeResult<unique_ptr<ParsedExpression>>(i));
+		order_by_expression.push_back(process.TakeResult<OrderByNode>(i));
 	}
-	auto result = TransformSortedOptions(transformer, std::move(expression));
-	return transformer.MakeResult<vector<unique_ptr<ParsedExpression>>>(std::move(result));
+	auto result = TransformSortedOptions(transformer, std::move(order_by_expression));
+	return transformer.MakeResult<vector<OrderByNode>>(std::move(result));
 }
 
 void PEGTransformerFactory::InitializeWithDataTrampoline(PEGTransformer &transformer,

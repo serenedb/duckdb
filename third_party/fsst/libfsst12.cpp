@@ -24,7 +24,7 @@ Symbol concat(Symbol a, Symbol b) {
    Symbol s;
    u32 length = min(8, a.length()+b.length());
    s.set_code_len(FSST_CODE_MASK, length);
-   *(u64*) s.symbol = ((*(u64*) b.symbol) << (8*a.length())) | *(u64*) a.symbol;
+   s.val.num = (b.val.num << (8*a.length())) | a.val.num;
    return s;
 }
 }  // namespace libfsst12
@@ -35,7 +35,7 @@ class hash<libfsst12::Symbol> {
    public:
    size_t operator()(const libfsst12::Symbol& s) const {
       using namespace libfsst12;
-      uint64_t k = *(u64*) s.symbol;
+      uint64_t k = s.val.num;
       const uint64_t m = 0xc6a4a7935bd1e995;
       const int r = 47;
       uint64_t h = 0x8445d61a4e774912 ^ (8*m);
@@ -55,7 +55,7 @@ class hash<libfsst12::Symbol> {
 namespace libfsst12 {
 std::ostream& operator<<(std::ostream& out, const Symbol& s) {
    for (u32 i=0; i<s.length(); i++)
-      out << s.symbol[i];
+      out << s.val.str[i];
    return out;
 }
 
@@ -107,7 +107,7 @@ SymbolMap *buildSymbolMap(Counters& counters, long sampleParam, vector<ulong>& s
                   Symbol s = st->hashTab[idx];
                   pos2 = st->shortCodes[word & 0xFFFF];
                   word &= (0xFFFFFFFFFFFFFFFF >> (u8) s.gcl);
-                  if ((s.gcl < FSST_GCL_FREE) && (*(u64*) s.symbol == word)) {
+                  if ((s.gcl < FSST_GCL_FREE) && (s.val.num == word)) {
                      pos2 = s.code(); cur += s.length();
                   } else {
                      cur += (pos2 >> 12);
@@ -223,7 +223,7 @@ static inline ulong compressBulk(SymbolMap &symbolMap, ulong nlines, const ulong
          ulong idx = FSST_HASH(pos)&(symbolMap.hashTabSize-1);
          Symbol s = symbolMap.hashTab[idx];
          word &= (0xFFFFFFFFFFFFFFFF >> (u8) s.gcl);
-         if ((s.gcl < FSST_GCL_FREE) && *(ulong*) s.symbol == word) {
+         if ((s.gcl < FSST_GCL_FREE) && s.val.num == word) {
             code = s.gcl >> 16;
          }
          cur += (code >> 12);
@@ -234,7 +234,7 @@ static inline ulong compressBulk(SymbolMap &symbolMap, ulong nlines, const ulong
          idx = FSST_HASH(pos)&(symbolMap.hashTabSize-1);
          s = symbolMap.hashTab[idx];
          word &= (0xFFFFFFFFFFFFFFFF >> (u8) s.gcl);
-         if ((s.gcl < FSST_GCL_FREE) && *(ulong*) s.symbol == word) {
+         if ((s.gcl < FSST_GCL_FREE) && s.val.num == word) {
            code = s.gcl >> 16;
          }
          cur += (code >> 12);
@@ -346,7 +346,7 @@ extern "C" u32 duckdb_fsst12_export(duckdb_fsst12_encoder_t *encoder, u8 *buf) {
    for(u32 i = 0; i < e->symbolMap->symbolCount; i++) {
       buf[pos++] = e->symbolMap->symbols[i].length();
       for(u32 j = 0; j < e->symbolMap->symbols[i].length(); j++) {
-         buf[pos++] = ((u8*) &e->symbolMap->symbols[i].symbol)[j]; // serialize used symbol bytes
+         buf[pos++] = e->symbolMap->symbols[i].val.str[j]; // serialize used symbol bytes
       }
    }
    return pos; // length of what was serialized
