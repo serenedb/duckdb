@@ -59,10 +59,6 @@ static TemporaryBufferSize MinimumCompressedTemporaryBufferSize() {
 	return TemporaryBufferSize::S32K;
 }
 
-static TemporaryBufferSize MaximumCompressedTemporaryBufferSize() {
-	return TemporaryBufferSize::S224K;
-}
-
 //===--------------------------------------------------------------------===//
 // TemporaryFileIdentifier/TemporaryFileIndex
 //===--------------------------------------------------------------------===//
@@ -90,9 +86,9 @@ TemporaryFileIndex::TemporaryFileIndex() {
 }
 
 TemporaryFileIndex::TemporaryFileIndex(TemporaryFileIdentifier identifier_p, idx_t block_index_p,
-                                       idx_t block_header_size_p, FileBufferType buffer_type_p)
+                                       idx_t block_header_size_p, FileBufferType buffer_type_p, idx_t alloc_size_p)
     : identifier(identifier_p), block_index(block_index_p), block_header_size(block_header_size_p),
-      buffer_type(buffer_type_p) {
+      buffer_type(buffer_type_p), alloc_size(alloc_size_p) {
 }
 
 bool TemporaryFileIndex::IsValid() const {
@@ -155,10 +151,6 @@ idx_t BlockIndexManager::GetMaxIndex() const {
 	return max_index;
 }
 
-idx_t BlockIndexManager::GetUsedBlockCount() const {
-	return indexes_in_use.size();
-}
-
 bool BlockIndexManager::HasFreeBlocks() const {
 	return !free_indexes.empty();
 }
@@ -211,7 +203,8 @@ TemporaryFileHandle::~TemporaryFileHandle() {
 TemporaryFileHandle::TemporaryFileLock::TemporaryFileLock(mutex &mutex) : lock(mutex) {
 }
 
-TemporaryFileIndex TemporaryFileHandle::TryGetBlockIndex(idx_t block_header_size, FileBufferType buffer_type) {
+TemporaryFileIndex TemporaryFileHandle::TryGetBlockIndex(idx_t block_header_size, FileBufferType buffer_type,
+                                                         idx_t alloc_size) {
 	TemporaryFileLock lock(file_lock);
 	if (index_manager.GetMaxIndex() >= max_allowed_index && !index_manager.HasFreeBlocks()) {
 		// file is at capacity
@@ -221,7 +214,7 @@ TemporaryFileIndex TemporaryFileHandle::TryGetBlockIndex(idx_t block_header_size
 	CreateFileIfNotExists(lock);
 	// fetch a new block index to write to
 	auto block_index = index_manager.GetNewBlockIndex(identifier.size);
-	return TemporaryFileIndex(identifier, block_index, block_header_size, buffer_type);
+	return TemporaryFileIndex(identifier, block_index, block_header_size, buffer_type, alloc_size);
 }
 
 unique_ptr<FileBuffer> TemporaryFileHandle::ReadTemporaryBuffer(QueryContext context,
@@ -233,7 +226,7 @@ unique_ptr<FileBuffer> TemporaryFileHandle::ReadTemporaryBuffer(QueryContext con
 	AllocatedData compressed_buffer;
 	data_ptr_t read_buffer;
 	idx_t read_size;
-	bool is_uncompressed = identifier.size == TemporaryBufferSize::DEFAULT;
+	bool is_uncompressed = TemporaryBufferSizeToSize(identifier.size) == buffer->AllocSize();
 	if (is_uncompressed) {
 		// not compressed - read directly into buffer
 		read_buffer = buffer->InternalBuffer();
@@ -285,9 +278,8 @@ unique_ptr<FileBuffer> TemporaryFileHandle::ReadTemporaryBuffer(QueryContext con
 
 void TemporaryFileHandle::WriteTemporaryBuffer(QueryContext context, FileBuffer &buffer, const idx_t block_index,
                                                AllocatedData &compressed_buffer) const {
-	// We group DEFAULT_BLOCK_ALLOC_SIZE blocks into the same file.
-	D_ASSERT(buffer.AllocSize() == BufferManager::GetBufferManager(db).GetBlockAllocSize());
-	bool is_uncompressed = identifier.size == TemporaryBufferSize::DEFAULT;
+	D_ASSERT(TemporaryFileManager::FitsGroupedFiles(buffer));
+	bool is_uncompressed = TemporaryBufferSizeToSize(identifier.size) == buffer.AllocSize();
 	data_ptr_t write_buffer;
 	idx_t write_size;
 	if (is_uncompressed) {
@@ -511,9 +503,13 @@ TemporaryFileManager::~TemporaryFileManager() {
 TemporaryFileManager::TemporaryFileManagerLock::TemporaryFileManagerLock(mutex &mutex) : lock(mutex) {
 }
 
+bool TemporaryFileManager::FitsGroupedFiles(const FileBuffer &buffer) {
+	const auto size = buffer.AllocSize();
+	return size != 0 && size <= DEFAULT_BLOCK_ALLOC_SIZE && size % TEMPORARY_BUFFER_SIZE_GRANULARITY == 0;
+}
+
 idx_t TemporaryFileManager::WriteTemporaryBuffer(QueryContext context, block_id_t block_id, FileBuffer &buffer) {
-	// We group DEFAULT_BLOCK_ALLOC_SIZE blocks into the same file.
-	D_ASSERT(buffer.AllocSize() == BufferManager::GetBufferManager(db).GetBlockAllocSize());
+	D_ASSERT(FitsGroupedFiles(buffer));
 
 	auto header_size = buffer.GetHeaderSize();
 	auto buffer_type = buffer.GetBufferType();
@@ -531,7 +527,7 @@ idx_t TemporaryFileManager::WriteTemporaryBuffer(QueryContext context, block_id_
 		// first check if we can write to an open existing file
 		for (auto &entry : files.GetMapForSize(compression_result.size)) {
 			auto &temp_file = entry.second;
-			index = temp_file->TryGetBlockIndex(header_size, buffer_type);
+			index = temp_file->TryGetBlockIndex(header_size, buffer_type, buffer.AllocSize());
 			if (index.IsValid()) {
 				handle = entry.second.get();
 				break;
@@ -543,7 +539,7 @@ idx_t TemporaryFileManager::WriteTemporaryBuffer(QueryContext context, block_id_
 			const TemporaryFileIdentifier identifier(db, size, index_managers[size].GetNewBlockIndex(size),
 			                                         IsEncrypted());
 			auto &new_file = files.CreateFile(identifier);
-			index = new_file.TryGetBlockIndex(header_size, buffer_type);
+			index = new_file.TryGetBlockIndex(header_size, buffer_type, buffer.AllocSize());
 			handle = &new_file;
 		}
 		D_ASSERT(used_blocks.find(block_id) == used_blocks.end());
@@ -568,14 +564,15 @@ idx_t TemporaryFileManager::WriteTemporaryBuffer(QueryContext context, block_id_
 TemporaryFileManager::CompressionResult
 TemporaryFileManager::CompressBuffer(TemporaryFileCompressionAdaptivity &compression_adaptivity, FileBuffer &buffer,
                                      AllocatedData &compressed_buffer) {
+	const auto uncompressed = SizeToTemporaryBufferSize(buffer.AllocSize());
 	if (buffer.AllocSize() <= TemporaryBufferSizeToSize(MinimumCompressedTemporaryBufferSize())) {
 		// Buffer size is less or equal to the minimum compressed size - no point compressing
-		return {TemporaryBufferSize::DEFAULT, TemporaryCompressionLevel::UNCOMPRESSED};
+		return {uncompressed, TemporaryCompressionLevel::UNCOMPRESSED};
 	}
 
 	const auto level = compression_adaptivity.GetCompressionLevel();
 	if (level == TemporaryCompressionLevel::UNCOMPRESSED) {
-		return {TemporaryBufferSize::DEFAULT, TemporaryCompressionLevel::UNCOMPRESSED};
+		return {uncompressed, TemporaryCompressionLevel::UNCOMPRESSED};
 	}
 
 	const auto compression_level = static_cast<int>(level);
@@ -588,8 +585,8 @@ TemporaryFileManager::CompressBuffer(TemporaryFileCompressionAdaptivity &compres
 	Store<idx_t>(zstd_size, compressed_buffer.get());
 	const auto compressed_size = sizeof(idx_t) + zstd_size;
 
-	if (compressed_size > TemporaryBufferSizeToSize(MaximumCompressedTemporaryBufferSize())) {
-		return {TemporaryBufferSize::DEFAULT, level}; // Use default size if compression ratio is bad
+	if (compressed_size + TEMPORARY_BUFFER_SIZE_GRANULARITY > buffer.AllocSize()) {
+		return {uncompressed, level}; // Store it uncompressed if compression saves no size class
 	}
 
 	return {RoundUpSizeToTemporaryBufferSize(compressed_size), level};
@@ -669,7 +666,7 @@ bool TemporaryFileManager::IsEncrypted() const {
 
 unique_ptr<FileBuffer> TemporaryFileManager::ReadTemporaryBuffer(QueryContext context, block_id_t id,
                                                                  unique_ptr<FileBuffer> reusable_buffer,
-                                                                 idx_t *eviction_size) {
+                                                                 idx_t *eviction_size, bool keep) {
 	TemporaryFileIndex index;
 	optional_ptr<TemporaryFileHandle> handle;
 	{
@@ -685,11 +682,10 @@ unique_ptr<FileBuffer> TemporaryFileManager::ReadTemporaryBuffer(QueryContext co
 
 	auto &buffer_manager = BufferManager::GetBufferManager(db);
 	auto block_header_size = index.block_header_size.GetIndex();
-	auto buffer =
-	    buffer_manager.ConstructManagedBuffer(buffer_manager.GetBlockAllocSize() - block_header_size, block_header_size,
-	                                          std::move(reusable_buffer), index.buffer_type);
+	auto buffer = buffer_manager.ConstructManagedBuffer(index.alloc_size - block_header_size, block_header_size,
+	                                                    std::move(reusable_buffer), index.buffer_type);
 	buffer = handle->ReadTemporaryBuffer(context, index, std::move(buffer));
-	{
+	if (!keep) {
 		// remove the block (and potentially erase the temp file)
 		TemporaryFileManagerLock lock(manager_lock);
 		EraseUsedBlock(lock, id, *handle, index);
@@ -911,10 +907,9 @@ void TemporaryDirectoryHandle::SweepAbandonedInstances() {
 TemporaryDirectoryHandle::~TemporaryDirectoryHandle() {
 	// first release any temporary files
 	temp_file.reset();
-	// Nothing here may throw - this is a destructor - but it reaches RemoveFile, which does: another
-	// instance removing a file between TryRemoveFile's existence check and its removal raises ENOENT,
-	// and Windows refuses to remove a file another instance holds open. A later instance reaps
-	// whatever is left, so there is nothing to do but log.
+	// Nothing here may throw - this is a destructor - but it reaches RemoveFile, which does: Windows
+	// refuses to remove a file another instance holds open. A later instance reaps whatever is left,
+	// so there is nothing to do but log.
 	try {
 		CleanupTemporaryDirectory();
 	} catch (...) { // NOLINT

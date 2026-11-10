@@ -20,8 +20,8 @@
 
 namespace duckdb {
 
-Connection::Connection(DatabaseInstance &database)
-    : context(make_shared_ptr<ClientContext>(database.shared_from_this())) {
+Connection::Connection(DatabaseInstance &database, shared_ptr<AttachedDatabase> shared_temporary_objects)
+    : context(make_shared_ptr<ClientContext>(database.shared_from_this(), std::move(shared_temporary_objects))) {
 	auto &connection_manager = ConnectionManager::Get(database);
 	connection_manager.AssignConnectionId(*this);
 	connection_manager.AddConnection(*context);

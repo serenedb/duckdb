@@ -36,7 +36,7 @@ PasswordNullOption  <- 'PASSWORD' 'NULL'
 # before the native AlterStatement so OWNER TO is intercepted (DuckDB's alter
 # binder does not support ownership changes).
 AlterOwnerStatement <- 'ALTER' OwnerObjectType QualifiedName 'OWNER' 'TO' OwnerRoleSpec
-OwnerObjectType <- 'TABLE' / 'VIEW' / 'SEQUENCE' / 'SCHEMA' / 'TYPE' / 'JOB'
+OwnerObjectType <- 'TABLE' / 'VIEW' / 'SEQUENCE' / 'SCHEMA' / 'TYPE' / 'JOB' / 'TABLESPACE'
 OwnerRoleSpec <- 'CURRENT_USER' / 'SESSION_USER' / 'CURRENT_ROLE' / ColId
 
 # ALTER DEFAULT PRIVILEGES [FOR ROLE r,...] [IN SCHEMA s,...] (GRANT|REVOKE) ...
@@ -101,7 +101,7 @@ OptionBool <- 'TRUE' / 'FALSE'
 
 RoleOrUser <- 'ROLE' / 'USER'
 # Object class for GRANT/REVOKE ... ON <type> name. Absent defaults to TABLE.
-GrantObjType <- ForeignServerObjType / 'TABLE' / 'SEQUENCE' / 'FUNCTION' / 'DATABASE' / 'SCHEMA' / 'TYPE' / 'DOMAIN'
+GrantObjType <- ForeignServerObjType / 'TABLE' / 'SEQUENCE' / 'FUNCTION' / 'DATABASE' / 'SCHEMA' / 'TYPE' / 'DOMAIN' / 'TABLESPACE'
 ForeignServerObjType <- 'FOREIGN' 'SERVER'
 # PUBLIC is the pseudo-role; otherwise a normal role identifier.
 Grantee <- 'PUBLIC' / ColId

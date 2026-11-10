@@ -107,10 +107,6 @@ TemporaryMemoryManager &BufferManager::GetTemporaryMemoryManager() {
 	throw NotImplementedException("This type of BufferManager does not have a TemporaryMemoryManager");
 }
 
-void BufferManager::AddToEvictionQueue(shared_ptr<BlockHandle> &handle) {
-	throw NotImplementedException("This type of BufferManager does not support 'AddToEvictionQueue");
-}
-
 BufferHandle BufferManager::Allocate(QueryContext context, MemoryTag tag, idx_t block_size, bool can_destroy) {
 	return Allocate(tag, block_size, can_destroy);
 }
@@ -128,6 +124,32 @@ vector<unique_ptr<AsyncTask>> BufferManager::CreatePrefetchTasks(QueryContext co
 
 void BufferManager::WriteTemporaryBuffer(QueryContext context, MemoryTag tag, block_id_t block_id, FileBuffer &buffer) {
 	throw NotImplementedException("This type of BufferManager does not support 'WriteTemporaryBuffer");
+}
+
+bool BufferManager::TryWriteTemporaryCopy(QueryContext context, MemoryTag tag, block_id_t block_id,
+                                          FileBuffer &buffer) {
+	return false;
+}
+
+shared_ptr<BlockHandle> BufferManager::RegisterUnloadedMemory(MemoryTag tag, idx_t block_size, idx_t block_header_size,
+                                                              DestroyBufferUpon destroy_buffer_upon) {
+	throw NotImplementedException("This type of BufferManager does not support 'RegisterUnloadedMemory'");
+}
+
+BufferHandle BufferManager::LoadClaimed(const QueryContext &context, shared_ptr<BlockHandle> &handle) {
+	throw NotImplementedException("This type of BufferManager does not support 'LoadClaimed'");
+}
+
+BlockLoad BufferManager::PrepareLoad(BlockMemory &memory, idx_t block_size, idx_t block_header_size) {
+	throw NotImplementedException("This type of BufferManager does not support 'PrepareLoad'");
+}
+
+BufferHandle BufferManager::CompleteLoad(BlockMemory &memory, BlockLoad load) {
+	throw NotImplementedException("This type of BufferManager does not support 'CompleteLoad'");
+}
+
+void BufferManager::Discard(BlockMemory &memory) {
+	throw NotImplementedException("This type of BufferManager does not support 'Discard'");
 }
 
 unique_ptr<FileBuffer> BufferManager::ReadTemporaryBuffer(QueryContext context, MemoryTag tag, BlockHandle &block,

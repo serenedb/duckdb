@@ -27,6 +27,7 @@
 #include "duckdb/common/vector.hpp"
 
 #include <functional>
+#include <span>
 
 #undef CreateDirectory
 #undef MoveFile
@@ -44,6 +45,7 @@ class CompressedFileSystem;
 class QueryContext;
 class MemoryMappedFile;
 struct MMapOptions;
+class ExternalFileCacheFile;
 class MultiFileList;
 
 enum class CreateDirectoryMode : uint8_t {
@@ -62,10 +64,15 @@ enum class RemoveDirectoryMode : uint8_t {
 
 struct CreateDirectoryOptions {
 	CreateDirectoryMode mode = CreateDirectoryMode::SINGLE;
+	bool sync = false;
 };
 
 struct RemoveDirectoryOptions {
 	RemoveDirectoryMode mode = RemoveDirectoryMode::SINGLE;
+};
+
+struct ListFilesOptions {
+	bool recursive = false;
 };
 
 enum class FileType {
@@ -108,6 +115,97 @@ struct FileMetadata {
 	unordered_map<string, Value> extended_file_info;
 };
 
+//! Bytes after the end of a file written from start to end, which its writer fills in place
+struct FileWriteWindow {
+	data_ptr_t data = nullptr;
+	idx_t size = 0;
+};
+
+//! Writes a new file from start to end in place: the bytes of the file are written straight into the windows it
+//! gives. A writer destroyed before it closes aborts
+class FileWriter {
+public:
+	DUCKDB_API virtual ~FileWriter();
+
+	//! The memory the next bytes of the file go to, at least one byte
+	DUCKDB_API virtual FileWriteWindow Window() = 0;
+	//! Appends the first [nr_bytes] bytes of the last window, whose CRC32C is [crc32c], to the file
+	DUCKDB_API virtual void Commit(idx_t nr_bytes, uint32_t crc32c) = 0;
+	//! Finishes the file at the bytes committed
+	DUCKDB_API virtual void Close() = 0;
+	//! Drops the file and the bytes committed
+	DUCKDB_API virtual void Abort() noexcept = 0;
+};
+
+class FileWriteHold {
+public:
+	DUCKDB_API virtual ~FileWriteHold();
+};
+
+//! A buffer one piece of a scattered read fills, or the bytes it skips when it has no data
+struct FileReadTarget {
+	data_ptr_t data = nullptr;
+	idx_t size = 0;
+
+	//! The bytes a scattered read into [targets] reads
+	static idx_t TotalSize(std::span<const FileReadTarget> targets) {
+		idx_t size = 0;
+		for (auto &target : targets) {
+			size += target.size;
+		}
+		return size;
+	}
+};
+
+class FileReadTargetWriter {
+public:
+	explicit FileReadTargetWriter(std::span<const FileReadTarget> targets_p)
+	    : targets(targets_p), capacity(FileReadTarget::TotalSize(targets_p)) {
+	}
+
+	idx_t Capacity() const {
+		return capacity;
+	}
+	idx_t Written() const {
+		return written;
+	}
+
+	bool Write(const_data_ptr_t data, idx_t size) {
+		if (size > capacity - written) {
+			return false;
+		}
+		written += size;
+		while (size > 0) {
+			auto &target = targets[index];
+			const auto chunk = MinValue(size, target.size - offset);
+			if (target.data) {
+				memcpy(target.data + offset, data, chunk);
+			}
+			data += chunk;
+			size -= chunk;
+			offset += chunk;
+			if (offset == target.size) {
+				index++;
+				offset = 0;
+			}
+		}
+		return true;
+	}
+
+	void Reset() {
+		index = 0;
+		offset = 0;
+		written = 0;
+	}
+
+private:
+	std::span<const FileReadTarget> targets;
+	idx_t capacity;
+	idx_t index = 0;
+	idx_t offset = 0;
+	idx_t written = 0;
+};
+
 //! Measured network throughput for a (remote) file handle. Used to size prefetch coalescing gaps.
 struct NetworkThroughputEstimate {
 	//! Round-trip latency + request setup, in seconds
@@ -137,6 +235,8 @@ public:
 	DUCKDB_API void Reset();
 	DUCKDB_API idx_t SeekPosition();
 	DUCKDB_API void Sync();
+	//! Starts writing back [location, location + nr_bytes), already written, so a later Sync waits less
+	DUCKDB_API void HintWriteback(idx_t location, idx_t nr_bytes);
 	DUCKDB_API void Truncate(int64_t new_size);
 	//! Abandon an incomplete write without publishing any buffered or staged data.
 	DUCKDB_API void AbortWrite();
@@ -211,13 +311,29 @@ public:
 	DUCKDB_API virtual unique_ptr<MemoryMappedFile> MemoryMapFile(const OpenFileInfo &path, FileOpenFlags flags,
 	                                                              const MMapOptions &options,
 	                                                              optional_ptr<FileOpener> opener = nullptr);
+	//! [path] as a file of cache blocks, which a reader pins, when this filesystem reads the file through the
+	//! external file cache; null for a file it reads any other way, such as by mapping it
+	DUCKDB_API virtual shared_ptr<ExternalFileCacheFile> OpenBlockFile(const string &path);
+	//! A writer of a new file at [path], replacing any file there, that fills the file in place; null when this
+	//! filesystem writes [path] through a handle only. With [keep_cached], a filesystem that reads [path] through the
+	//! external file cache keeps the blocks written there for the file's readers
+	DUCKDB_API virtual unique_ptr<FileWriter> OpenFileWriter(const string &path, bool keep_cached);
+	//! Copies a closed file this filesystem keeps in cache blocks into one buffer-managed allocation, which spills
+	//! only while nothing maps it; readers that pinned its blocks keep them until they close. Any other file stays
+	//! as it is
+	DUCKDB_API virtual void Compact(const string &path);
 
 	//! Read exactly nr_bytes from the specified location in the file. Fails if nr_bytes could not be read. This is
 	//! equivalent to calling SetFilePointer(location) followed by calling Read().
 	DUCKDB_API virtual void Read(FileHandle &handle, void *buffer, int64_t nr_bytes, idx_t location);
+	//! Reads the consecutive bytes at [location] into [targets] in order, as one read, skipping the bytes of a target
+	//! without data. Fails if they could not all be read.
+	DUCKDB_API virtual void ReadScattered(FileHandle &handle, std::span<const FileReadTarget> targets, idx_t location);
 	//! Write exactly nr_bytes to the specified location in the file. Fails if nr_bytes could not be written. This is
 	//! equivalent to calling SetFilePointer(location) followed by calling Write().
 	DUCKDB_API virtual void Write(FileHandle &handle, void *buffer, int64_t nr_bytes, idx_t location);
+	DUCKDB_API virtual void WriteHeld(FileHandle &handle, data_ptr_t buffer, idx_t nr_bytes, idx_t location,
+	                                  uint32_t crc32c, unique_ptr<FileWriteHold> hold);
 	//! Read nr_bytes from the specified file into the buffer, moving the file pointer forward by nr_bytes. Returns the
 	//! amount of bytes read.
 	DUCKDB_API virtual int64_t Read(FileHandle &handle, void *buffer, int64_t nr_bytes);
@@ -270,7 +386,8 @@ public:
 	                                  const std::function<void(const string &, bool)> &callback,
 	                                  FileOpener *opener = nullptr);
 	DUCKDB_API bool ListFiles(const string &directory, const std::function<void(OpenFileInfo &info)> &callback,
-	                          optional_ptr<FileOpener> opener = nullptr);
+	                          optional_ptr<FileOpener> opener = nullptr,
+	                          const ListFilesOptions &options = ListFilesOptions());
 
 	//! Move a file from source path to the target, StorageManager relies on this being an atomic action for ACID
 	//! properties
@@ -292,6 +409,12 @@ public:
 	//! Sync a file handle to disk
 	DUCKDB_API virtual void FileSync(FileHandle &handle);
 	DUCKDB_API virtual FileSyncParallelism SyncParallelism(FileHandle &handle);
+	//! Starts writing back [location, location + nr_bytes) of a file being written; does nothing by default
+	DUCKDB_API virtual void HintWriteback(FileHandle &handle, idx_t location, idx_t nr_bytes);
+	//! Makes the names of the files created, moved or removed in [directory] durable; a filesystem without
+	//! directory entries has nothing to sync
+	DUCKDB_API virtual void SyncDirectory(const string &directory, optional_ptr<FileOpener> opener = nullptr);
+	DUCKDB_API virtual void SyncFile(const string &path, optional_ptr<FileOpener> opener = nullptr);
 	//! Abandon an incomplete write represented by this file handle.
 	DUCKDB_API virtual void AbortFileWrite(FileHandle &handle);
 	//! Sets the working directory
@@ -414,8 +537,10 @@ protected:
 
 	DUCKDB_API virtual bool ListFilesExtended(const string &directory,
 	                                          const std::function<void(OpenFileInfo &info)> &callback,
-	                                          optional_ptr<FileOpener> opener);
+	                                          optional_ptr<FileOpener> opener, const ListFilesOptions &options);
 	DUCKDB_API virtual bool SupportsListFilesExtended() const;
+	DUCKDB_API bool WalkFiles(const string &directory, const std::function<void(OpenFileInfo &info)> &callback,
+	                          optional_ptr<FileOpener> opener);
 
 	DUCKDB_API virtual unique_ptr<MultiFileList> GlobFilesExtended(const string &path, const FileGlobInput &input,
 	                                                               optional_ptr<FileOpener> opener = nullptr);

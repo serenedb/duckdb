@@ -89,7 +89,7 @@ struct TemporaryFileIndex {
 public:
 	TemporaryFileIndex();
 	TemporaryFileIndex(TemporaryFileIdentifier identifier, idx_t block_index, idx_t block_header_size,
-	                   FileBufferType buffer_type);
+	                   FileBufferType buffer_type, idx_t alloc_size);
 
 public:
 	//! Whether this temporary file index is valid (fields have been set)
@@ -104,6 +104,8 @@ public:
 	optional_idx block_header_size;
 	//! The buffer type
 	FileBufferType buffer_type = FileBufferType::MANAGED_BUFFER;
+	//! The allocation size of the buffer; it is stored uncompressed when its size class is this size
+	idx_t alloc_size = DEFAULT_BLOCK_ALLOC_SIZE;
 };
 
 //===--------------------------------------------------------------------===//
@@ -123,8 +125,6 @@ public:
 	idx_t GetMaxIndex() const;
 	//! Whether there are free blocks available within the file
 	bool HasFreeBlocks() const;
-	//! Get the count of blocks currently holding data
-	idx_t GetUsedBlockCount() const;
 
 private:
 	//! Get/set max block index
@@ -165,7 +165,7 @@ public:
 
 public:
 	//! Try to get an index of where to write in this file. Returns an invalid index if full
-	TemporaryFileIndex TryGetBlockIndex(idx_t block_header_size, FileBufferType buffer_type);
+	TemporaryFileIndex TryGetBlockIndex(idx_t block_header_size, FileBufferType buffer_type, idx_t alloc_size);
 	//! Remove block index from this TemporaryFileHandle
 	void EraseBlockIndex(block_id_t block_index);
 
@@ -309,11 +309,14 @@ public:
 		lock_guard<mutex> lock;
 	};
 
+	//! Whether [buffer] is written to the grouped files: its size is one of their size classes
+	static bool FitsGroupedFiles(const FileBuffer &buffer);
 	//! Create/Read/Update/Delete operations for temporary buffers
 	idx_t WriteTemporaryBuffer(QueryContext context, block_id_t block_id, FileBuffer &buffer);
 	bool HasTemporaryBuffer(block_id_t block_id);
+	//! Reads the buffer [id], which stays in the file when [keep]
 	unique_ptr<FileBuffer> ReadTemporaryBuffer(QueryContext context, block_id_t id,
-	                                           unique_ptr<FileBuffer> reusable_buffer, idx_t *eviction_size = nullptr);
+	                                           unique_ptr<FileBuffer> reusable_buffer, idx_t *eviction_size, bool keep);
 	idx_t DeleteTemporaryBuffer(block_id_t id);
 	bool IsEncrypted() const;
 

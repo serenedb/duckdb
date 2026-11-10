@@ -1,5 +1,7 @@
 #include "duckdb/storage/block_manager.hpp"
 
+#include <absl/cleanup/cleanup.h>
+
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/storage/buffer/block_handle.hpp"
 #include "duckdb/storage/buffer/buffer_pool.hpp"
@@ -51,6 +53,7 @@ shared_ptr<BlockHandle> BlockManager::RegisterBlock(block_id_t block_id) {
 	}
 	// create a new block pointer for this block
 	auto result = make_shared_ptr<BlockHandle>(*this, block_id, MemoryTag::BASE_TABLE);
+	result->GetMemory().SetOwner(result);
 	// register the block pointer in the set of blocks as a weak pointer
 	blocks[block_id] = weak_ptr<BlockHandle>(result);
 	return result;
@@ -79,12 +82,16 @@ shared_ptr<BlockHandle> BlockManager::ConvertToPersistent(QueryContext context, 
 	auto lock = old_block_memory.GetLock();
 	D_ASSERT(old_block_memory.GetState() == BlockState::BLOCK_LOADED);
 	D_ASSERT(old_block_memory.GetBuffer(lock));
-	if (old_block_memory.GetReaders() > 1) {
+	// Readers that pin without the block lock back off once the block is unloaded.
+	if (!old_block_memory.TryMarkUnloaded(1)) {
 		throw InternalException(
 		    "BlockManager::ConvertToPersistent in destructive mode - cannot be called for block %d as old_block has "
 		    "multiple readers active",
 		    block_id);
 	}
+	absl::Cleanup restore = [&] {
+		old_block_memory.SetState(BlockState::BLOCK_LOADED);
+	};
 
 	// Temp buffers can be larger than the storage block size.
 	// But persistent buffers cannot.
@@ -97,6 +104,7 @@ shared_ptr<BlockHandle> BlockManager::ConvertToPersistent(QueryContext context, 
 	Write(context, *converted_buffer, block_id);
 
 	// now convert the actual block
+	std::move(restore).Cancel();
 	old_block_memory.ConvertToPersistent(lock, *new_block, std::move(converted_buffer));
 
 	// destroy the old buffer
@@ -104,15 +112,10 @@ shared_ptr<BlockHandle> BlockManager::ConvertToPersistent(QueryContext context, 
 	old_handle.Destroy();
 	old_block.reset();
 
-	// potentially purge the queue
-	bool purge_queue;
 	{
-		// AddToEvictionQueue requires the block lock. new_block was just created here, so this is uncontended.
+		// new_block was just created here, so its lock is uncontended.
 		auto new_lock = new_block->GetMemory().GetLock();
-		purge_queue = buffer_manager.GetBufferPool().AddToEvictionQueue(new_lock, new_block);
-	}
-	if (purge_queue) {
-		buffer_manager.GetBufferPool().PurgeQueue(*new_block);
+		buffer_manager.GetBufferPool().AddBlock(new_block->GetMemory());
 	}
 	return new_block;
 }

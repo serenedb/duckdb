@@ -137,6 +137,7 @@ overrides = {
         "DELETE_REQUEST": "DELETE",
         "POST_REQUEST": "POST",
         "OPTIONS_REQUEST": "OPTIONS",
+        "PATCH_REQUEST": "PATCH",
     },
     "CompressionType": {
         "COMPRESSION_AUTO": "AUTO",

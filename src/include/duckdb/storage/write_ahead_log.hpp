@@ -161,6 +161,9 @@ public:
 	void WriteCreateForeignServer(const InCatalogEntry &entry);
 	void WriteDropForeignServer(const InCatalogEntry &entry);
 
+	void WriteCreateTablespace(const InCatalogEntry &entry);
+	void WriteDropTablespace(const InCatalogEntry &entry);
+
 	void WriteCreateSubscription(const InCatalogEntry &entry);
 	void WriteDropSubscription(const InCatalogEntry &entry);
 	void WriteCreateReplicationOrigin(const InCatalogEntry &entry);

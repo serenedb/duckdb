@@ -154,8 +154,7 @@ static catalog_entry_vector_t GetTableEntries(vector<reference<SchemaCatalogEntr
 
 static catalog_entry_vector_t GetCatalogEntries(DuckCatalog &catalog, vector<reference<SchemaCatalogEntry>> &schemas) {
 	catalog_entry_vector_t entries;
-	for (auto type : {CatalogType::ROLE_ENTRY, CatalogType::DATABASE_ENTRY, CatalogType::FOREIGN_SERVER_ENTRY,
-	                  CatalogType::SUBSCRIPTION_ENTRY, CatalogType::REPLICATION_ORIGIN_ENTRY}) {
+	for (auto type : CATALOG_LEVEL_TYPES) {
 		catalog.GetCatalogSet(type).Scan([&](CatalogEntry &entry) {
 			if (entry.internal) {
 				return;
@@ -534,6 +533,9 @@ void WriteCatalogEntries(WriteAheadLog &log, DuckCatalog &catalog) {
 			break;
 		case CatalogType::REPLICATION_ORIGIN_ENTRY:
 			log.WriteCreateReplicationOrigin(entry.Cast<InCatalogEntry>());
+			break;
+		case CatalogType::TABLESPACE_ENTRY:
+			log.WriteCreateTablespace(entry.Cast<InCatalogEntry>());
 			break;
 		default:
 			throw InternalException("Unrecognized catalog type in WriteCatalogEntries");

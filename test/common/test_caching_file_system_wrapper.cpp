@@ -2,9 +2,11 @@
 #include "caching_test_utils.hpp"
 #include "duckdb/common/mutex.hpp"
 #include "duckdb/common/opener_file_system.hpp"
+#include "duckdb/common/optional.hpp"
 #include "duckdb/common/thread_annotation.hpp"
 #include "duckdb/common/vector.hpp"
 #include "duckdb/main/database.hpp"
+#include "duckdb/storage/buffer_manager.hpp"
 #include "duckdb/storage/external_file_cache/caching_file_system.hpp"
 #include "duckdb/storage/external_file_cache/caching_file_system_wrapper.hpp"
 
@@ -35,6 +37,9 @@ public:
 			throw IOException("Injected read failure");
 		}
 		LocalFileSystem::Read(handle, buffer, nr_bytes, location);
+	}
+	void ReadScattered(FileHandle &handle, std::span<const FileReadTarget> targets, idx_t location) override {
+		FileSystem::ReadScattered(handle, targets, location);
 	}
 
 	void SetShouldFail(bool value) DUCKDB_EXCLUDES(mu) {
@@ -70,6 +75,9 @@ public:
 		const annotated_lock_guard<annotated_mutex> lock(read_calls_mutex);
 		read_calls.push_back({handle.GetPath(), location, UnsafeNumericCast<idx_t>(nr_bytes)});
 		LocalFileSystem::Read(handle, buffer, nr_bytes, location);
+	}
+	void ReadScattered(FileHandle &handle, std::span<const FileReadTarget> targets, idx_t location) override {
+		FileSystem::ReadScattered(handle, targets, location);
 	}
 
 	void Clear() {
@@ -512,7 +520,7 @@ TEST_CASE("Open file in opener filesystem cache modes", "[file_system][caching]"
 
 	// Shared variable both all caching modes.
 	string buffer(TEST_BUFFER_SIZE, '\0');
-	const auto &external_file_cache = db_instance.GetExternalFileCache();
+	auto &external_file_cache = db_instance.GetExternalFileCache();
 
 	auto run_case = [&](CachingMode mode) {
 		FileOpenFlags flags {FileFlags::FILE_FLAGS_READ};
@@ -731,7 +739,7 @@ TEST_CASE("CachingFileHandle Read returns correct FileBufferHandleGroup", "[file
 	auto &db_instance = *db.instance;
 	auto tracking_fs = make_uniq<TrackingFileSystem>();
 
-	const idx_t BLOCK_SIZE = db_instance.GetExternalFileCache().GetCacheMaxBlockSize(TestDirectoryPath());
+	const idx_t BLOCK_SIZE = ExternalFileCache::DEFAULT_BLOCK_SIZE;
 	const idx_t EXTRA = 100;
 	const idx_t FILE_SIZE = BLOCK_SIZE + EXTRA;
 
@@ -754,10 +762,10 @@ TEST_CASE("CachingFileHandle Read returns correct FileBufferHandleGroup", "[file
 		auto group = handle->Read(FILE_SIZE, 0);
 		auto &handles = group.GetHandles();
 		REQUIRE(handles.size() == 2);
-		REQUIRE(handles[0].start_offset == 0);
-		REQUIRE(handles[0].length == BLOCK_SIZE);
-		REQUIRE(handles[1].start_offset == 0);
-		REQUIRE(handles[1].length == EXTRA);
+		REQUIRE(memcmp(handles[0].Ptr(), content.data(), BLOCK_SIZE) == 0);
+		REQUIRE(handles[0].Size() == BLOCK_SIZE);
+		REQUIRE(memcmp(handles[1].Ptr(), content.data() + BLOCK_SIZE, EXTRA) == 0);
+		REQUIRE(handles[1].Size() == EXTRA);
 
 		string result(FILE_SIZE, '\0');
 		group.CopyTo(reinterpret_cast<data_ptr_t>(&result[0]), FILE_SIZE);
@@ -784,10 +792,10 @@ TEST_CASE("CachingFileHandle Read returns correct FileBufferHandleGroup", "[file
 		auto group = handle->Read(read_size, read_offset);
 		auto &handles = group.GetHandles();
 		REQUIRE(handles.size() == 2);
-		REQUIRE(handles[0].start_offset == BLOCK_SIZE - 200);
-		REQUIRE(handles[0].length == 200);
-		REQUIRE(handles[1].start_offset == 0);
-		REQUIRE(handles[1].length == 50);
+		REQUIRE(memcmp(handles[0].Ptr(), content.data() + read_offset, 200) == 0);
+		REQUIRE(handles[0].Size() == 200);
+		REQUIRE(memcmp(handles[1].Ptr(), content.data() + BLOCK_SIZE, 50) == 0);
+		REQUIRE(handles[1].Size() == 50);
 
 		string result(read_size, '\0');
 		group.CopyTo(reinterpret_cast<data_ptr_t>(&result[0]), read_size);
@@ -800,8 +808,8 @@ TEST_CASE("CachingFileHandle Read returns correct FileBufferHandleGroup", "[file
 		auto group = handle->Read(read_size, read_offset);
 		auto &handles = group.GetHandles();
 		REQUIRE(handles.size() == 1);
-		REQUIRE(handles[0].start_offset == 10);
-		REQUIRE(handles[0].length == 50);
+		REQUIRE(memcmp(handles[0].Ptr(), content.data() + read_offset, 50) == 0);
+		REQUIRE(handles[0].Size() == 50);
 
 		string result(read_size, '\0');
 		group.CopyTo(reinterpret_cast<data_ptr_t>(&result[0]), read_size);
@@ -812,8 +820,8 @@ TEST_CASE("CachingFileHandle Read returns correct FileBufferHandleGroup", "[file
 		auto group = handle->Read(100, 0);
 		auto &handles = group.GetHandles();
 		REQUIRE(handles.size() == 1);
-		REQUIRE(handles[0].start_offset == 0);
-		REQUIRE(handles[0].length == 100);
+		REQUIRE(memcmp(handles[0].Ptr(), content.data(), 100) == 0);
+		REQUIRE(handles[0].Size() == 100);
 	}
 }
 
@@ -839,7 +847,7 @@ TEST_CASE("CachingFileHandle EOF read behavior", "[file_system][caching]") {
 		auto group = handle->Read(100, content.size() - 10);
 		auto &handles = group.GetHandles();
 		REQUIRE(handles.size() == 1);
-		REQUIRE(handles[0].length == 10);
+		REQUIRE(handles[0].Size() == 10);
 
 		string result(10, '\0');
 		group.CopyTo(reinterpret_cast<data_ptr_t>(&result[0]), 10);
@@ -865,7 +873,7 @@ TEST_CASE("Fully cached read skips doesn't open file", "[file_system][caching]")
 	auto counting_fs = make_uniq<CountingFileSystem>();
 	auto *counting_fs_ptr = counting_fs.get();
 
-	const idx_t BLOCK_SIZE = db_instance.GetExternalFileCache().GetCacheMaxBlockSize(TestDirectoryPath());
+	const idx_t BLOCK_SIZE = ExternalFileCache::DEFAULT_BLOCK_SIZE;
 	const idx_t FILE_SIZE = BLOCK_SIZE;
 
 	string content(FILE_SIZE, 'X');
@@ -899,6 +907,20 @@ TEST_CASE("Fully cached read skips doesn't open file", "[file_system][caching]")
 		REQUIRE(result == content);
 		REQUIRE(counting_fs_ptr->GetOpenCount() == 1);
 	}
+}
+
+TEST_CASE("A caching file handle outlives the caching file system that opened it", "[file_system][caching]") {
+	TestFileGuard test_file("handle_outlives_file_system.txt", "payload");
+	DuckDB opened_in(nullptr);
+	DuckDB other(nullptr);
+	LocalFileSystem fs;
+	optional<CachingFileSystem> caching;
+	caching.emplace(fs, *opened_in.instance);
+	auto handle = caching->OpenFile(test_file.GetPath(), FileFlags::FILE_FLAGS_READ);
+	caching.reset();
+	caching.emplace(fs, *other.instance);
+	REQUIRE(&handle->GetBufferAllocator() ==
+	        &BufferManager::GetBufferManager(*opened_in.instance).GetBufferAllocator());
 }
 
 } // namespace duckdb

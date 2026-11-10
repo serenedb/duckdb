@@ -18,6 +18,10 @@ class OpenerFileSystem : public FileSystem {
 public:
 	virtual FileSystem &GetFileSystem() const = 0;
 	virtual optional_ptr<FileOpener> GetOpener() const = 0;
+	//! Whether a path must pass enable_external_access and the allowed paths and directories
+	virtual bool ChecksAccess() const {
+		return true;
+	}
 
 	void VerifyNoOpener(optional_ptr<FileOpener> opener);
 	void VerifyCanAccessDirectory(const string &path);
@@ -44,6 +48,9 @@ public:
 
 	void Read(FileHandle &handle, void *buffer, int64_t nr_bytes, idx_t location) override {
 		GetFileSystem().Read(handle, buffer, nr_bytes, location);
+	}
+	void ReadScattered(FileHandle &handle, std::span<const FileReadTarget> targets, idx_t location) override {
+		GetFileSystem().ReadScattered(handle, targets, location);
 	}
 
 	void Write(FileHandle &handle, void *buffer, int64_t nr_bytes, idx_t location) override {
@@ -80,6 +87,21 @@ public:
 
 	void FileSync(FileHandle &handle) override {
 		GetFileSystem().FileSync(handle);
+	}
+
+	void HintWriteback(FileHandle &handle, idx_t location, idx_t nr_bytes) override {
+		GetFileSystem().HintWriteback(handle, location, nr_bytes);
+	}
+
+	void SyncDirectory(const string &directory, optional_ptr<FileOpener> opener) override {
+		VerifyNoOpener(opener);
+		VerifyCanAccessDirectory(directory);
+		GetFileSystem().SyncDirectory(directory, GetOpener());
+	}
+	void SyncFile(const string &path, optional_ptr<FileOpener> opener) override {
+		VerifyNoOpener(opener);
+		VerifyCanAccessFile(path);
+		GetFileSystem().SyncFile(path, GetOpener());
 	}
 
 	FileExistence TryDirectoryExists(const string &directory, optional_ptr<FileOpener> opener,
@@ -281,13 +303,16 @@ public:
 	unique_ptr<MemoryMappedFile> MemoryMapFile(const OpenFileInfo &path, FileOpenFlags flags,
 	                                           const MMapOptions &options,
 	                                           optional_ptr<FileOpener> opener = nullptr) override;
+	shared_ptr<ExternalFileCacheFile> OpenBlockFile(const string &path) override;
+	unique_ptr<FileWriter> OpenFileWriter(const string &path, bool keep_cached) override;
+	void Compact(const string &path) override;
 
 protected:
 	bool ListFilesExtended(const string &directory, const std::function<void(OpenFileInfo &info)> &callback,
-	                       optional_ptr<FileOpener> opener) override {
+	                       optional_ptr<FileOpener> opener, const ListFilesOptions &options) override {
 		VerifyNoOpener(opener);
 		VerifyCanAccessDirectory(directory);
-		return GetFileSystem().ListFiles(directory, callback, GetOpener().get());
+		return GetFileSystem().ListFiles(directory, callback, GetOpener().get(), options);
 	}
 
 	bool SupportsListFilesExtended() const override {

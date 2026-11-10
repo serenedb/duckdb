@@ -88,33 +88,23 @@ DependencyManager::DependencyManager(DuckCatalog &catalog, bool case_sensitive)
 }
 
 vector<Identifier> DependencyManager::GetSchemaPath(const CatalogEntry &entry) {
-	switch (entry.type) {
-	case CatalogType::SCHEMA_ENTRY:
+	if (entry.type == CatalogType::SCHEMA_ENTRY) {
 		return entry.Cast<SchemaCatalogEntry>().GetParentSchemaPath();
-	case CatalogType::ROLE_ENTRY:
-	case CatalogType::DATABASE_ENTRY:
-	case CatalogType::FOREIGN_SERVER_ENTRY:
-	case CatalogType::SUBSCRIPTION_ENTRY:
-	case CatalogType::REPLICATION_ORIGIN_ENTRY:
-		return vector<Identifier>();
-	default:
-		return entry.ParentSchemaPath();
 	}
+	if (IsCatalogLevelType(entry.type)) {
+		return vector<Identifier>();
+	}
+	return entry.ParentSchemaPath();
 }
 
 vector<Identifier> DependencyManager::GetSchemaPath(CatalogTransaction transaction, const CatalogEntry &entry) {
-	switch (entry.type) {
-	case CatalogType::SCHEMA_ENTRY:
+	if (entry.type == CatalogType::SCHEMA_ENTRY) {
 		return entry.Cast<SchemaCatalogEntry>().GetParentSchemaPath(transaction);
-	case CatalogType::ROLE_ENTRY:
-	case CatalogType::DATABASE_ENTRY:
-	case CatalogType::FOREIGN_SERVER_ENTRY:
-	case CatalogType::SUBSCRIPTION_ENTRY:
-	case CatalogType::REPLICATION_ORIGIN_ENTRY:
-		return vector<Identifier>();
-	default:
-		return entry.ParentSchemaPath(transaction);
 	}
+	if (IsCatalogLevelType(entry.type)) {
+		return vector<Identifier>();
+	}
+	return entry.ParentSchemaPath(transaction);
 }
 
 MangledEntryName DependencyManager::MangleName(const CatalogEntryInfo &info) {
@@ -772,6 +762,9 @@ static string EntryToString(const CatalogEntryInfo &info) {
 	case CatalogType::DATABASE_ENTRY: {
 		return StringUtil::Format("database %s", info.name);
 	}
+	case CatalogType::TABLESPACE_ENTRY: {
+		return StringUtil::Format("tablespace %s", info.name);
+	}
 	default:
 		throw InternalException("CatalogType not handled in EntryToString (DependencyManager) for %s",
 		                        CatalogTypeToString(type));
@@ -1057,8 +1050,8 @@ void DependencyManager::VerifyForeignSubjects(const vector<reference<DependencyE
 		}
 		auto &subjects = db->GetCatalog().Cast<DuckCatalog>();
 		subjects.GetDependencyManager()->VerifyExistence(
-		    CatalogTransaction(subjects.GetDatabase(), MAX_TRANSACTION_ID, VisibilityBound::AllCommitted()),
-		    VisibilityBound::AllCommitted(), dependency);
+		    CatalogTransaction::GetCommittedTransaction(subjects.GetDatabase()), VisibilityBound::AllCommitted(),
+		    dependency);
 	}
 }
 
@@ -1077,7 +1070,7 @@ void DependencyManager::VerifyForeignDependents(const vector<reference<CatalogEn
 	if (objects.empty()) {
 		return;
 	}
-	CatalogTransaction committed(catalog.GetDatabase(), MAX_TRANSACTION_ID, VisibilityBound::AllCommitted());
+	auto committed = CatalogTransaction::GetCommittedTransaction(catalog.GetDatabase());
 	vector<pair<reference<DependencyManager>, CatalogTransaction>> holders;
 	ForEachCatalog(
 	    committed, [&](DuckCatalog &other) { return other.GetDependencyManager()->MayDependOn(catalog.GetName()); },
@@ -1429,6 +1422,7 @@ void DependencyManager::AlterObject(CatalogTransaction transaction, CatalogEntry
 		case AlterType::ALTER_PERMISSIONS:
 		case AlterType::ALTER_ROLE:
 		case AlterType::ALTER_JOB:
+		case AlterType::ALTER_TABLESPACE:
 		case AlterType::CHANGE_OWNERSHIP: {
 			disallow_alter = false;
 			break;

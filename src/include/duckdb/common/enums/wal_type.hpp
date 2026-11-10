@@ -76,6 +76,8 @@ enum class WALType : uint8_t {
 	ADOPT_SEGMENTS = 219,
 	DELETE_ROW_POSITIONS = 220,
 	ROW_POSITION_MAPS = 221,
+	CREATE_TABLESPACE = 222,
+	DROP_TABLESPACE = 223,
 	// -----------------------------
 	// Flush
 	// -----------------------------

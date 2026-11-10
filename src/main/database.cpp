@@ -37,6 +37,10 @@
 #include "duckdb/storage/block_allocator.hpp"
 #include "duckdb/storage/buffer/buffer_pool.hpp"
 #include "duckdb/storage/compression/empty_validity.hpp"
+#include "duckdb/common/fault_points.hpp"
+#include "duckdb/common/memory_file_system.hpp"
+#include "duckdb/common/open_file_info.hpp"
+#include "duckdb/common/path.hpp"
 #include "duckdb/storage/external_file_cache/external_file_cache.hpp"
 #include "duckdb/storage/object_cache.hpp"
 #include "duckdb/storage/shared_object_cache.hpp"
@@ -97,12 +101,18 @@ DatabaseInstance::~DatabaseInstance() {
 	connection_manager.reset();
 	object_cache.reset();
 	shared_object_cache.reset();
+	if (external_file_cache) {
+		external_file_cache->StopFetching();
+	}
 	scheduler.reset();
 	db_manager.reset();
 
 	// stop the log manager, after this point Logger calls are unsafe.
 	log_manager.reset();
 
+	if (memory_file_system) {
+		memory_file_system->Clear();
+	}
 	external_file_cache.reset();
 	result_set_manager.reset();
 
@@ -346,7 +356,8 @@ void DatabaseInstance::InitializeInstance(const char *database_path, DBConfig *u
 	create_api_v1 = CreateAPIv1Wrapper;
 	invoke_capi_v2 = InvokeCAPIV2Entrypoint;
 
-	db_file_system = make_uniq<DatabaseFileSystem>(*this);
+	db_file_system = make_uniq<DatabaseFileSystem>(*this, true);
+	internal_file_system = make_uniq<DatabaseFileSystem>(*this, false);
 	local_db_file_system = make_uniq<LocalDatabaseFileSystem>(*this);
 	db_manager = make_uniq<DatabaseManager>(*this);
 	external_resource_type_registry = make_uniq<ExternalResourceTypeRegistry>();
@@ -362,8 +373,8 @@ void DatabaseInstance::InitializeInstance(const char *database_path, DBConfig *u
 
 	metrics_manager = make_uniq<MetricsManager>();
 
-	bool enable_external_file_cache = Settings::Get<EnableExternalFileCacheSetting>(config);
-	external_file_cache = make_uniq<ExternalFileCache>(*this, enable_external_file_cache);
+	external_file_cache = make_uniq<ExternalFileCache>(*this);
+	external_file_cache->SetEnabled(Settings::Get<EnableExternalFileCacheSetting>(config));
 	result_set_manager = make_uniq<ResultSetManager>(*this);
 
 	scheduler = make_uniq<TaskScheduler>(*this);
@@ -464,8 +475,206 @@ FileSystem &DatabaseInstance::GetFileSystem() {
 	return *db_file_system;
 }
 
+FileSystem &DatabaseInstance::GetInternalFileSystem() {
+	return *internal_file_system;
+}
+
 FileSystem &DatabaseInstance::GetLocalFileSystem() {
 	return *local_db_file_system;
+}
+
+bool DatabaseFileSystem::IsRemote(const string &path) {
+	return StringUtil::Contains(path, "://") && !StringUtil::StartsWith(path, MemoryFileSystem::PREFIX) &&
+	       Path::FromString(path).IsRemote();
+}
+
+void DatabaseFileSystem::ForgetRemoteFile(const string &path) {
+	if (IsRemote(path)) {
+		ExternalFileCache::Get(db).ForgetFile(path);
+	}
+}
+
+shared_ptr<ExternalFileCacheFile> DatabaseFileSystem::OpenBlockFile(const string &path) {
+	if (!IsRemote(path)) {
+		return OpenerFileSystem::OpenBlockFile(path);
+	}
+	auto &cache = ExternalFileCache::Get(db);
+	const auto flags = FileFlags::FILE_FLAGS_READ | FileFlags::FILE_FLAGS_PARALLEL_ACCESS;
+	ExternalFileCacheFileInfo known;
+	if (cache.TryGetFile(path, known) && !known.validation.version_tag.empty()) {
+		OpenFileInfo file(path);
+		file.extended_info = make_shared_ptr<ExtendedOpenFileInfo>();
+		auto &options = file.extended_info->options;
+		options.emplace("file_size", Value::UBIGINT(known.validation.file_size));
+		options.emplace("etag", Value(known.validation.version_tag));
+		options.emplace("last_modified", Value::TIMESTAMP(known.validation.last_modified));
+		return cache.OpenFile(path, known, false, OpenFile(file, flags));
+	}
+	shared_ptr<FileHandle> handle = OpenFile(path, flags);
+	ExternalFileCacheFileInfo info;
+	info.validation.file_size = NumericCast<idx_t>(handle->GetFileSize());
+	info.can_seek = handle->CanSeek();
+	info.on_disk = handle->OnDiskFile();
+	return cache.OpenFile(path, info, false, std::move(handle));
+}
+
+namespace {
+
+class HeldBlock final : public FileWriteHold {
+public:
+	explicit HeldBlock(ExternalFileCachePin pin_p) : pin(std::move(pin_p)) {
+	}
+
+private:
+	ExternalFileCachePin pin;
+};
+
+//! Uploads a remote file and keeps its bytes in the cache blocks they are written into, which its readers read
+//! once it closes; a window that gets no block uploads its bytes without the cache, as does the rest of the file
+class CachedRemoteFileWriter final : public FileWriter {
+public:
+	CachedRemoteFileWriter(unique_ptr<FileHandle> handle_p, shared_ptr<ExternalFileCacheFile> file)
+	    : handle(std::move(handle_p)) {
+		appender.emplace(std::move(file));
+	}
+	~CachedRemoteFileWriter() override {
+		CachedRemoteFileWriter::Abort();
+	}
+
+	FileWriteWindow Window() override {
+		if (appender) {
+			try {
+				SDB_IF_FAILURE("remote_write_cache_block") {
+					if (appender->Size() > 0) {
+						throw OutOfMemoryException("Injected failure to get an external file cache block");
+					}
+				}
+				window = appender->Window();
+				return window;
+			} catch (const OutOfMemoryException &) {
+				appender->Abandon();
+				appender.reset();
+			}
+		}
+		if (!buffer) {
+			buffer = make_unsafe_uniq_array_uninitialized<data_t>(ExternalFileCache::DEFAULT_BLOCK_SIZE);
+		}
+		window = {buffer.get(), ExternalFileCache::DEFAULT_BLOCK_SIZE};
+		return window;
+	}
+
+	void Commit(idx_t nr_bytes, uint32_t crc32c) override {
+		D_ASSERT(nr_bytes <= window.size);
+		if (nr_bytes == 0) {
+			return;
+		}
+		if (appender) {
+			handle->file_system.WriteHeld(*handle, window.data, nr_bytes, size, crc32c,
+			                              make_uniq<HeldBlock>(appender->ShareWindow(nr_bytes)));
+			appender->Commit(nr_bytes);
+		} else {
+			handle->Write(QueryContext(), window.data, nr_bytes, size);
+		}
+		size += nr_bytes;
+		window = {window.data + nr_bytes, window.size - nr_bytes};
+	}
+
+	void Close() override {
+		if (!handle) {
+			return;
+		}
+		handle->Close();
+		if (appender) {
+			auto &fs = handle->file_system;
+			try {
+				appender->Finish(fs.GetVersionTag(*handle), fs.GetLastModifiedTime(*handle));
+			} catch (std::exception &) {
+				appender->Abandon();
+			}
+			appender.reset();
+		}
+		handle.reset();
+	}
+
+	void Abort() noexcept override {
+		if (!handle) {
+			return;
+		}
+		try {
+			if (appender) {
+				appender->Abandon();
+			}
+		} catch (std::exception &) { // NOLINT
+		}
+		appender.reset();
+		try {
+			handle->AbortWrite();
+		} catch (std::exception &) { // NOLINT
+		}
+		handle.reset();
+	}
+
+private:
+	unique_ptr<FileHandle> handle;
+	optional<ExternalFileCacheAppender> appender;
+	//! The window of a write that got no block
+	unsafe_unique_array<data_t> buffer;
+	FileWriteWindow window;
+	idx_t size = 0;
+};
+
+} // namespace
+
+unique_ptr<FileWriter> DatabaseFileSystem::OpenFileWriter(const string &path, bool keep_cached) {
+	auto &cache = ExternalFileCache::Get(db);
+	if (!keep_cached || !IsRemote(path) || !cache.IsEnabled()) {
+		return OpenerFileSystem::OpenFileWriter(path, keep_cached);
+	}
+	auto handle = OpenFile(path, FileFlags::FILE_FLAGS_WRITE | FileFlags::FILE_FLAGS_FILE_CREATE_NEW);
+	return make_uniq<CachedRemoteFileWriter>(std::move(handle), cache.CreateWrittenFile(path));
+}
+
+unique_ptr<FileHandle> DatabaseFileSystem::OpenFileExtended(const OpenFileInfo &file, FileOpenFlags flags,
+                                                            optional_ptr<FileOpener> opener) {
+	if (flags.OpenForWriting()) {
+		ForgetRemoteFile(file.path);
+	}
+	return OpenerFileSystem::OpenFileExtended(file, flags, opener);
+}
+
+void DatabaseFileSystem::MoveFile(const string &source, const string &target, optional_ptr<FileOpener> opener) {
+	OpenerFileSystem::MoveFile(source, target, opener);
+	ForgetRemoteFile(source);
+	ForgetRemoteFile(target);
+}
+
+void DatabaseFileSystem::RemoveFile(const string &filename, optional_ptr<FileOpener> opener) {
+	OpenerFileSystem::RemoveFile(filename, opener);
+	ForgetRemoteFile(filename);
+}
+
+bool DatabaseFileSystem::TryRemoveFile(const string &filename, optional_ptr<FileOpener> opener) {
+	if (!OpenerFileSystem::TryRemoveFile(filename, opener)) {
+		return false;
+	}
+	ForgetRemoteFile(filename);
+	return true;
+}
+
+void DatabaseFileSystem::RemoveFiles(const vector<string> &filenames, optional_ptr<FileOpener> opener) {
+	OpenerFileSystem::RemoveFiles(filenames, opener);
+	for (const auto &filename : filenames) {
+		ForgetRemoteFile(filename);
+	}
+}
+
+bool DatabaseFileSystem::RemoveDirectoryExtended(const string &directory, const RemoveDirectoryOptions &options,
+                                                 optional_ptr<FileOpener> opener) {
+	const auto removed = OpenerFileSystem::RemoveDirectoryExtended(directory, options, opener);
+	if (IsRemote(directory)) {
+		ExternalFileCache::Get(db).ForgetDirectory(directory);
+	}
+	return removed;
 }
 
 static FileSystem &ResolveLocalFileSystem(DatabaseInstance &db, unique_ptr<FileSystem> &owned) {
@@ -491,6 +700,13 @@ FileSystem &LocalDatabaseFileSystem::GetFileSystem() const {
 
 ExternalFileCache &DatabaseInstance::GetExternalFileCache() {
 	return *external_file_cache;
+}
+
+MemoryFileSystem &DatabaseInstance::GetMemoryFileSystem() {
+	if (!memory_file_system) {
+		throw InternalException("The database has no memory:// filesystem");
+	}
+	return *memory_file_system;
 }
 
 ResultSetManager &DatabaseInstance::GetResultSetManager() {
@@ -553,6 +769,9 @@ void DatabaseInstance::Configure(DBConfig &new_config, const char *database_path
 		config.file_system = std::move(new_config.file_system);
 	} else {
 		config.file_system = make_uniq<VirtualFileSystem>(FileSystem::CreateLocal());
+		auto memory_fs = make_uniq<MemoryFileSystem>(*this);
+		memory_file_system = memory_fs.get();
+		config.file_system->RegisterSubSystem(std::move(memory_fs));
 	}
 	config.http_transport_manager->Initialize(config);
 	if (database_path && !Settings::Get<EnableExternalAccessSetting>(*this)) {
@@ -577,9 +796,12 @@ void DatabaseInstance::Configure(DBConfig &new_config, const char *database_path
 	config.block_allocator = std::move(new_config.block_allocator);
 	if (!config.block_allocator) {
 		auto default_block_size = Settings::Get<DefaultBlockSizeSetting>(config);
-		config.block_allocator = make_uniq<BlockAllocator>(
-		    *config.allocator, default_block_size, DBConfig::GetSystemAvailableMemory(*config.file_system) * 8 / 10,
-		    config.options.block_allocator_size);
+		const auto virtual_memory_size = DBConfig::GetSystemAvailableMemory(*config.file_system) * 8 / 10;
+		config.block_allocator = make_uniq<BlockAllocator>(*config.allocator, default_block_size, virtual_memory_size,
+		                                                   config.options.block_allocator_size);
+		if (ExternalFileCache::DEFAULT_BLOCK_SIZE != default_block_size) {
+			config.block_allocator->AddHugePagePool(ExternalFileCache::DEFAULT_BLOCK_SIZE, virtual_memory_size);
+		}
 	}
 	config.replacement_scans = std::move(new_config.replacement_scans);
 	if (new_config.callback_manager) {
@@ -600,11 +822,12 @@ void DatabaseInstance::Configure(DBConfig &new_config, const char *database_path
 		config.buffer_pool = std::move(new_config.buffer_pool);
 	} else {
 		config.buffer_pool = make_shared_ptr<BufferPool>(*config.block_allocator, config.options.maximum_memory,
-		                                                 config.options.buffer_manager_track_eviction_timestamps,
-		                                                 config.options.allocator_bulk_deallocation_flush_threshold);
+		                                                 config.options.allocator_bulk_deallocation_flush_threshold,
+		                                                 config.options.external_file_cache_min_memory);
 	}
 	config.db_cache_entry = std::move(new_config.db_cache_entry);
 	config.path_manager = std::move(new_config.path_manager);
+	config.create_temporary_catalog = new_config.create_temporary_catalog;
 }
 
 DBConfig &DBConfig::GetConfig(ClientContext &context) {

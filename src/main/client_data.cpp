@@ -104,8 +104,8 @@ public:
 	void Prefetch(QueryContext context, vector<shared_ptr<BlockHandle>> &handles) override {
 		return buffer_manager.Prefetch(context, handles);
 	}
-	void Unpin(shared_ptr<BlockHandle> &handle) override {
-		return buffer_manager.Unpin(handle);
+	void Unpin(BlockMemory &memory) override {
+		return buffer_manager.Unpin(memory);
 	}
 
 	idx_t GetUsedMemory() const override {
@@ -206,14 +206,27 @@ public:
 		return buffer_manager.GetTemporaryMemoryManager();
 	}
 
-	void PurgeQueue(const BlockHandle &handle) override {
-		return buffer_manager.PurgeQueue(handle);
+	shared_ptr<BlockHandle> RegisterUnloadedMemory(MemoryTag tag, idx_t block_size, idx_t block_header_size,
+	                                               DestroyBufferUpon destroy_buffer_upon) override {
+		return buffer_manager.RegisterUnloadedMemory(tag, block_size, block_header_size, destroy_buffer_upon);
 	}
-	void AddToEvictionQueue(shared_ptr<BlockHandle> &handle) override {
-		return buffer_manager.AddToEvictionQueue(handle);
+	BufferHandle LoadClaimed(const QueryContext &context, shared_ptr<BlockHandle> &handle) override {
+		return buffer_manager.LoadClaimed(context, handle);
+	}
+	BlockLoad PrepareLoad(BlockMemory &memory, idx_t block_size, idx_t block_header_size) override {
+		return buffer_manager.PrepareLoad(memory, block_size, block_header_size);
+	}
+	BufferHandle CompleteLoad(BlockMemory &memory, BlockLoad load) override {
+		return buffer_manager.CompleteLoad(memory, std::move(load));
+	}
+	void Discard(BlockMemory &memory) override {
+		return buffer_manager.Discard(memory);
 	}
 	void WriteTemporaryBuffer(QueryContext context, MemoryTag tag, block_id_t block_id, FileBuffer &buffer) override {
 		return buffer_manager.WriteTemporaryBuffer(context, tag, block_id, buffer);
+	}
+	bool TryWriteTemporaryCopy(QueryContext context, MemoryTag tag, block_id_t block_id, FileBuffer &buffer) override {
+		return buffer_manager.TryWriteTemporaryCopy(context, tag, block_id, buffer);
 	}
 	unique_ptr<FileBuffer> ReadTemporaryBuffer(QueryContext context, MemoryTag tag, BlockHandle &block,
 	                                           unique_ptr<FileBuffer> buffer) override {
@@ -234,7 +247,9 @@ private:
 	BufferManager &buffer_manager;
 };
 
-ClientData::ClientData(ClientContext &context) : catalog_search_path(make_uniq<CatalogSearchPath>(context)) {
+ClientData::ClientData(ClientContext &context, shared_ptr<AttachedDatabase> shared_temporary_objects)
+    : temporary_objects(std::move(shared_temporary_objects)), shares_temporary_objects(temporary_objects != nullptr),
+      catalog_search_path(make_uniq<CatalogSearchPath>(context)) {
 	auto &db = DatabaseInstance::GetDatabase(context);
 
 	default_database = DatabaseManager::Get(db).GetDefaultDatabase();
@@ -243,15 +258,17 @@ ClientData::ClientData(ClientContext &context) : catalog_search_path(make_uniq<C
 		                                                                          IdentifierEquality(true));
 	}
 	profiler = make_shared_ptr<QueryProfiler>(context);
-	temporary_objects = make_shared_ptr<AttachedDatabase>(db, AttachedDatabaseType::TEMP_DATABASE);
-	temporary_objects->oid = DatabaseManager::Get(db).NextOid();
 	random_engine = make_uniq<RandomEngine>();
 	sequence_session = make_uniq<SequenceSession>();
 	file_opener = make_uniq<ClientContextFileOpener>(context);
 	client_file_system = make_uniq<ClientFileSystem>(context);
 	client_buffer_manager = make_uniq<ClientBufferManager>(context, db.GetBufferManager());
 
-	temporary_objects->Initialize();
+	if (!shares_temporary_objects) {
+		temporary_objects = make_shared_ptr<AttachedDatabase>(db, AttachedDatabaseType::TEMP_DATABASE);
+		temporary_objects->oid = DatabaseManager::Get(db).NextOid();
+		temporary_objects->Initialize();
+	}
 }
 
 ClientData::~ClientData() {

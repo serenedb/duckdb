@@ -109,6 +109,9 @@ public:
 	}
 	//! Allocate normally, requesting huge-page backing where supported. Advice failure is ignored.
 	DUCKDB_API AllocatedData TryAllocateHuge(idx_t size);
+	//! Requests huge-page backing for the huge pages [pointer, pointer + size) contains whole. Advice failure is
+	//! ignored.
+	DUCKDB_API static void AdviseHugePages(data_ptr_t pointer, idx_t size);
 
 	static data_ptr_t DefaultAllocate(PrivateAllocatorData *private_data, idx_t size);
 	static void DefaultFree(PrivateAllocatorData *private_data, data_ptr_t pointer, idx_t size);

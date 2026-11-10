@@ -1568,19 +1568,11 @@ void CheckDirectory(FileSystem &fs, const string &file_path, CopyOverwriteMode o
 		return;
 	}
 	vector<string> file_list;
-	vector<string> directory_list;
-	directory_list.push_back(file_path);
-	for (idx_t dir_idx = 0; dir_idx < directory_list.size(); dir_idx++) {
-		auto directory = directory_list[dir_idx];
-		fs.ListFiles(directory, [&](const string &path, bool is_directory) {
-			auto full_path = fs.JoinPath(directory, path);
-			if (is_directory) {
-				directory_list.emplace_back(std::move(full_path));
-			} else {
-				file_list.emplace_back(std::move(full_path));
-			}
-		});
-	}
+	ListFilesOptions recursive;
+	recursive.recursive = true;
+	fs.ListFiles(
+	    file_path, [&](OpenFileInfo &info) { file_list.push_back(fs.JoinPath(file_path, info.path)); }, nullptr,
+	    recursive);
 	if (file_list.empty()) {
 		return;
 	}
@@ -3540,15 +3532,17 @@ void CopyToFileGlobalState::Initialize() {
 
 void CopyToFileGlobalState::PrepareOutputDirectory() {
 	auto &fs = FileSystem::GetFileSystem(context);
-	if (!fs.IsRemoteFile(op.file_path)) {
-		if (fs.FileExists(op.file_path)) {
-			if (op.overwrite_mode == CopyOverwriteMode::COPY_OVERWRITE) {
-				fs.RemoveFile(op.file_path);
-			} else {
-				throw IOException("Cannot write to \"%s\" - it exists and is a file, not a directory! Enable "
-				                  "OVERWRITE option to overwrite the file",
-				                  op.file_path);
-			}
+	if (fs.IsRemoteFile(op.file_path)) {
+		CheckDirectory(fs, op.file_path, op.overwrite_mode);
+		return;
+	}
+	if (fs.FileExists(op.file_path)) {
+		if (op.overwrite_mode == CopyOverwriteMode::COPY_OVERWRITE) {
+			fs.RemoveFile(op.file_path);
+		} else {
+			throw IOException("Cannot write to \"%s\" - it exists and is a file, not a directory! Enable "
+			                  "OVERWRITE option to overwrite the file",
+			                  op.file_path);
 		}
 	}
 
@@ -3586,6 +3580,9 @@ void CopyToFileGlobalState::EnsureOutputDirectoryReady() {
 
 void CopyToFileGlobalState::EnsureDirectory(const string &dir_path) {
 	auto &fs = FileSystem::GetFileSystem(context);
+	if (fs.IsRemoteFile(dir_path)) {
+		return;
+	}
 	if (directory_manager.EnsureDirectory(fs, dir_path)) {
 		output_lifecycle.RegisterCreatedDirectory(dir_path);
 	}

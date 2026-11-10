@@ -14,6 +14,9 @@
 
 namespace duckdb {
 
+//! How the mapping is read, which sets the kernel's read-ahead on page faults
+enum class MappedFileAccess : uint8_t { NORMAL, SEQUENTIAL, RANDOM };
+
 struct MMapOptions {
 	//! Size of the virtual mapping. Writable mappings sparsely extend the file up to this
 	//! size at open time so the region never has to be remapped. Ignored for read-only.
@@ -41,6 +44,12 @@ public:
 		return true;
 	}
 	DUCKDB_API virtual void Close() = 0;
+
+	DUCKDB_API virtual void Advise(MappedFileAccess access);
+	//! Starts reading [location, location + nr_bytes) of the file into the page cache
+	DUCKDB_API virtual void Prefetch(idx_t location, idx_t nr_bytes);
+	//! Drops the whole pages of [location, location + nr_bytes) from the mapping and the page cache
+	DUCKDB_API virtual void Evict(idx_t location, idx_t nr_bytes);
 
 	DUCKDB_API idx_t Size() const {
 		return size;

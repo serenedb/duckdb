@@ -30,4 +30,8 @@ CatalogTransaction CatalogTransaction::GetSystemTransaction(DatabaseInstance &db
 	return CatalogTransaction(db, SYSTEM_TRANSACTION_TIMESTAMP, VisibilityBound::Through(SYSTEM_TRANSACTION_TIMESTAMP));
 }
 
+CatalogTransaction CatalogTransaction::GetCommittedTransaction(DatabaseInstance &db) {
+	return CatalogTransaction(db, MAX_TRANSACTION_ID, VisibilityBound::AllCommitted());
+}
+
 } // namespace duckdb

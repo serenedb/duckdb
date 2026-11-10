@@ -165,10 +165,52 @@ BaseRequest::BaseRequest(RequestType type, const string &url, const HTTPHeaders 
 // loadable side-module extensions (e.g. the aws/httpfs extensions) can link against them at load time.
 BaseRequest::~BaseRequest() = default;
 GetRequestInfo::~GetRequestInfo() = default;
+BodyRequestInfo::~BodyRequestInfo() = default;
 PutRequestInfo::~PutRequestInfo() = default;
+PatchRequestInfo::~PatchRequestInfo() = default;
 HeadRequestInfo::~HeadRequestInfo() = default;
 DeleteRequestInfo::~DeleteRequestInfo() = default;
 PostRequestInfo::~PostRequestInfo() = default;
+
+BodyRequestInfo::BodyRequestInfo(RequestType type, const string &path, const HTTPHeaders &headers, HTTPParams &params,
+                                 std::span<const HTTPBodyPiece> body, const string &content_type)
+    : BaseRequest(type, path, headers, params), buffer_in(nullptr), buffer_in_len(0), content_type(content_type) {
+	for (auto &piece : body) {
+		buffer_in_len += piece.size;
+	}
+	if (body.size() == 1) {
+		buffer_in = body.front().data;
+	} else if (body.size() > 1) {
+		pieces = body;
+	}
+	request_body_length = buffer_in_len;
+}
+
+idx_t HTTPBodyReader::Read(data_ptr_t buffer, idx_t count) {
+	idx_t read = 0;
+	while (read < count && piece < pieces.size()) {
+		auto &current = pieces[piece];
+		auto chunk = MinValue<idx_t>(count - read, current.size - offset);
+		memcpy(buffer + read, current.data + offset, chunk);
+		read += chunk;
+		offset += chunk;
+		if (offset == current.size) {
+			piece++;
+			offset = 0;
+		}
+	}
+	return read;
+}
+
+bool HTTPBodyReader::Seek(idx_t position) {
+	piece = 0;
+	while (piece < pieces.size() && position >= pieces[piece].size) {
+		position -= pieces[piece].size;
+		piece++;
+	}
+	offset = position;
+	return position == 0 || piece < pieces.size();
+}
 
 unique_ptr<HTTPClient> HTTPUtil::InitializeClient(HTTPParams &http_params, const string &proto_host_port) {
 	return nullptr;
@@ -410,7 +452,7 @@ HTTPUtil::RunRequestWithRetry(const std::function<unique_ptr<HTTPResponse>(void)
 			                        response->status == HTTPStatusCode::NotModified_304;
 			    return HTTPRetryDecision::Finish();
 		    }
-		    if (!HTTPUtil::IsIdempotent(request.type)) {
+		    if (!HTTPUtil::IsIdempotent(request.type) && !(response && response->unsent)) {
 			    return HTTPRetryDecision::Finish();
 		    }
 		    const bool throttled = (response && (response->status == HTTPStatusCode::TooManyRequests_429 ||
@@ -467,6 +509,8 @@ void HTTPParams::Initialize(optional_ptr<FileOpener> opener) {
 	auto client_context = FileOpener::TryGetClientContext(opener);
 	if (client_context) {
 		logger = client_context->logger;
+	} else if (db) {
+		logger = db->GetLogManager().GlobalLoggerReference();
 	}
 }
 
@@ -505,6 +549,8 @@ unique_ptr<HTTPResponse> HTTPClient::Request(BaseRequest &request) {
 		return Post(request.Cast<PostRequestInfo>());
 	case RequestType::OPTIONS_REQUEST:
 		return Options(request.Cast<OptionsRequestInfo>());
+	case RequestType::PATCH_REQUEST:
+		return Patch(request.Cast<PatchRequestInfo>());
 	default:
 		throw InternalException("Unsupported request type");
 	}

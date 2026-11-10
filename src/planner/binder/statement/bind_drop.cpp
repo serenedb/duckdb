@@ -137,6 +137,7 @@ BoundStatement Binder::Bind(DropStatement &stmt) {
 		break;
 	case CatalogType::ROLE_ENTRY:
 	case CatalogType::DATABASE_ENTRY:
+	case CatalogType::TABLESPACE_ENTRY:
 		break;
 	case CatalogType::FOREIGN_SERVER_ENTRY: {
 		auto catalog = BindCatalog(stmt.info->GetQualifiedName().Catalog());

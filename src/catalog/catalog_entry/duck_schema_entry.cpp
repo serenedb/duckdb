@@ -468,7 +468,7 @@ optional_ptr<CatalogEntry> DuckSchemaEntry::CreateIndex(CatalogTransaction trans
 		throw CatalogException("An index with the name " + info.GetIndexName() + " already exists!");
 	}
 
-	auto index = catalog.Cast<DuckCatalog>().MakeIndexEntry(*this, info, relation);
+	auto index = catalog.Cast<DuckCatalog>().MakeIndexEntry(transaction, *this, info, relation);
 	auto dependencies = index->dependencies;
 	return AddEntryInternal(transaction, std::move(index), info.on_conflict, dependencies);
 }

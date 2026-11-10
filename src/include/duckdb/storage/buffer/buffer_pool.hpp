@@ -24,17 +24,6 @@ class TemporaryMemoryManager;
 class ObjectCache;
 struct EvictionQueue;
 
-struct BufferEvictionNode {
-	BufferEvictionNode() {
-	}
-	BufferEvictionNode(weak_ptr<BlockMemory> block_memory_p, idx_t eviction_seq_num);
-
-	weak_ptr<BlockMemory> memory_p;
-	idx_t handle_sequence_number;
-
-	bool IsDeadNode(optional_idx debug_sleep_micros = optional_idx());
-};
-
 //! The BufferPool is in charge of handling memory management for one or more databases. It defines memory limits
 //! and implements priority eviction among all users of the pool.
 class BufferPool {
@@ -45,8 +34,8 @@ class BufferPool {
 	friend class StandardBufferManager;
 
 public:
-	BufferPool(BlockAllocator &block_allocator, idx_t maximum_memory, bool track_eviction_timestamps,
-	           idx_t allocator_bulk_deallocation_flush_threshold);
+	BufferPool(BlockAllocator &block_allocator, idx_t maximum_memory, idx_t allocator_bulk_deallocation_flush_threshold,
+	           idx_t external_file_cache_min_memory);
 	virtual ~BufferPool();
 
 	//! Set a new memory limit to the buffer pool, throws an exception if the new limit is too low and not enough
@@ -55,7 +44,9 @@ public:
 
 	//! If bulk deallocation larger than this occurs, flush outstanding allocations
 	void SetAllocatorBulkDeallocationFlushThreshold(idx_t threshold);
-	idx_t GetAllocatorBulkDeallocationFlushThreshold();
+
+	void SetExternalFileCacheMinMemory(idx_t size);
+	idx_t GetExternalFileCacheMinMemory() const;
 
 	void UpdateUsedMemory(MemoryTag tag, int64_t size);
 
@@ -92,8 +83,8 @@ protected:
 	virtual EvictionResult EvictBlocks(QueryContext context, MemoryTag tag, idx_t extra_memory, idx_t memory_limit,
 	                                   unique_ptr<FileBuffer> *buffer = nullptr);
 	virtual EvictionResult EvictBlocksInternal(QueryContext context, EvictionQueue &queue, MemoryTag tag,
-	                                           idx_t extra_memory, idx_t memory_limit,
-	                                           unique_ptr<FileBuffer> *buffer = nullptr);
+	                                           idx_t extra_memory, idx_t memory_limit, idx_t keep,
+	                                           unique_ptr<FileBuffer> *buffer);
 
 	//! Evict object cache entries if needed.
 	EvictionResult EvictObjectCacheEntries(MemoryTag tag, idx_t extra_memory, idx_t memory_limit);
@@ -105,24 +96,22 @@ protected:
 	//! Freed memory that has to accumulate before the allocator is flushed
 	idx_t GetBulkDeallocationFlushThreshold() const;
 
-	//! Purge all blocks that haven't been pinned within the last N seconds
-	idx_t PurgeAgedBlocks(uint32_t max_age_sec);
-	idx_t PurgeAgedBlocksInternal(EvictionQueue &queue, uint32_t max_age_sec, int64_t now, int64_t limit);
-
-	//! Garbage collect dead nodes in the eviction queue.
-	void PurgeQueue(const BlockHandle &handle);
-	//! Add a buffer handle to the eviction queue. Returns true, if the queue is
-	//! ready to be purged, and false otherwise. Requires the handle's block lock.
-	bool AddToEvictionQueue(BlockLock &lock, shared_ptr<BlockHandle> &handle);
+	//! A loaded block joins the eviction queue of its type and priority, and leaves it once it is unloaded or
+	//! destroyed. Requires the block lock, or exclusive ownership of the block.
+	void AddBlock(BlockMemory &memory);
+	void RemoveBlock(BlockMemory &memory);
+	//! The blocks of [tag] evicted since start
+	idx_t GetEvictions(MemoryTag tag) const;
+	void CountEviction(const BlockMemory &memory);
 	//! Gets the eviction queue for the specified type
 	EvictionQueue &GetEvictionQueueForBlockMemory(const BlockMemory &memory);
-	//! Increments the dead nodes for the queue with specified type
-	void IncrementDeadNodes(const BlockMemory &memory);
 
-	//! How many eviction queue types we have (BLOCK and EXTERNAL_FILE go into same queue)
-	static constexpr idx_t EVICTION_QUEUE_TYPES = FILE_BUFFER_TYPE_COUNT - 1;
+	//! How many eviction queue types we have (BLOCK and EXTERNAL_FILE go into same queue, except EXTERNAL_FILE blocks
+	//! that keep a copy, the blocks of remote files)
+	static constexpr idx_t EVICTION_QUEUE_TYPES = 4;
 	//! How many eviction queues we have for the different FileBufferTypes
 	static constexpr idx_t BLOCK_AND_EXTERNAL_FILE_QUEUE_SIZE = 1;
+	static constexpr idx_t REMOTE_FILE_QUEUE_SIZE = 1;
 	static constexpr idx_t MANAGED_BUFFER_QUEUE_SIZE = 6;
 	static constexpr idx_t TINY_BUFFER_QUEUE_SIZE = 1;
 	//! Mapping and priority order for the eviction queues
@@ -180,8 +169,8 @@ protected:
 	atomic<idx_t> allocator_bulk_deallocation_flush_threshold;
 	//! Freed memory is flushed once it exceeds this fraction of the memory limit
 	static constexpr idx_t BULK_DEALLOCATION_FLUSH_DIVISOR = 16;
-	//! Record timestamps of buffer manager unpin() events. Usable by custom eviction policies.
-	bool track_eviction_timestamps;
+	atomic<idx_t> external_file_cache_min_memory;
+	static constexpr idx_t EXTERNAL_FILE_CACHE_MIN_MEMORY_DIVISOR = 20;
 	//! Eviction queues
 	vector<unique_ptr<EvictionQueue>> queues;
 	//! Memory manager for concurrently used temporary memory, e.g., for physical operators
@@ -194,6 +183,7 @@ protected:
 	BlockAllocator &block_allocator;
 	//! Per-database singleton object cache managed by buffer pool.
 	optional_ptr<ObjectCache> object_cache = nullptr;
+	array<atomic<idx_t>, MEMORY_TAG_COUNT> evictions_per_tag {};
 };
 
 } // namespace duckdb

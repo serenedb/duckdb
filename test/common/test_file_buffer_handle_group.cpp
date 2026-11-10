@@ -11,8 +11,8 @@
 namespace duckdb {
 
 namespace {
-BufferHandle AllocateAndFill(BufferManager &bm, idx_t size, uint8_t fill) {
-	auto handle = bm.Allocate(MemoryTag::EXTERNAL_FILE_CACHE, size);
+ExternalFileCachePin AllocateAndFill(BufferManager &bm, idx_t size, uint8_t fill) {
+	auto handle = ExternalFileCache::AllocateUncached(bm.GetDatabase(), size);
 	memset(handle.GetDataMutable(), fill, size);
 	return handle;
 }
@@ -29,9 +29,9 @@ TEST_CASE("FileBufferHandleGroup copy with single handle", "[file_buffer_handle_
 		handle.GetDataMutable()[i] = static_cast<uint8_t>(i & 0xFF);
 	}
 
-	vector<FileBufferHandleGroup::MemoryHandle> mem_handles;
-	mem_handles.push_back({std::move(handle), /*start_offset=*/0, /*length=*/BUF_SIZE});
-	FileBufferHandleGroup group(std::move(mem_handles));
+	vector<ExternalFileCachePin> pins;
+	pins.push_back(std::move(handle));
+	FileBufferHandleGroup group(std::move(pins));
 
 	array<uint8_t, 64> dest {};
 	group.CopyTo(dest.data(), dest.size());
@@ -52,9 +52,10 @@ TEST_CASE("FileBufferHandleGroup copy with single handle with offset", "[file_bu
 	}
 
 	constexpr idx_t OFFSET = 50;
-	vector<FileBufferHandleGroup::MemoryHandle> mem_handles;
-	mem_handles.push_back({std::move(handle), OFFSET, BUF_SIZE - OFFSET});
-	FileBufferHandleGroup group(std::move(mem_handles));
+	vector<ExternalFileCachePin> pins;
+	handle.Narrow(OFFSET, BUF_SIZE - OFFSET);
+	pins.push_back(std::move(handle));
+	FileBufferHandleGroup group(std::move(pins));
 
 	array<uint8_t, 32> dest {};
 	group.CopyTo(dest.data(), dest.size());
@@ -77,10 +78,12 @@ TEST_CASE("FileBufferHandleGroup copy partial across handles", "[file_buffer_han
 	auto h1 = AllocateAndFill(bm, BUF_SIZE, 0x11);
 	auto h2 = AllocateAndFill(bm, BUF_SIZE, 0x22);
 
-	vector<FileBufferHandleGroup::MemoryHandle> mem_handles;
-	mem_handles.push_back({std::move(h1), /*start_offset=*/H1_OFFSET, /*length=*/H1_LENGTH});
-	mem_handles.push_back({std::move(h2), /*start_offset=*/0, /*length=*/H2_LENGTH});
-	FileBufferHandleGroup group(std::move(mem_handles));
+	vector<ExternalFileCachePin> pins;
+	h1.Narrow(H1_OFFSET, H1_LENGTH);
+	h2.Narrow(0, H2_LENGTH);
+	pins.push_back(std::move(h1));
+	pins.push_back(std::move(h2));
+	FileBufferHandleGroup group(std::move(pins));
 
 	array<uint8_t, COPY_SIZE> dest {};
 	group.CopyTo(dest.data(), dest.size());

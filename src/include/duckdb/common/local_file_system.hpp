@@ -25,6 +25,7 @@ public:
 	//! Read exactly nr_bytes from the specified location in the file. Fails if nr_bytes could not be read. This is
 	//! equivalent to calling SetFilePointer(location) followed by calling Read().
 	void Read(FileHandle &handle, void *buffer, int64_t nr_bytes, idx_t location) override;
+	void ReadScattered(FileHandle &handle, std::span<const FileReadTarget> targets, idx_t location) override;
 	//! Write exactly nr_bytes to the specified location in the file. Fails if nr_bytes could not be written. This is
 	//! equivalent to calling SetFilePointer(location) followed by calling Write().
 	void Write(FileHandle &handle, void *buffer, int64_t nr_bytes, idx_t location) override;
@@ -78,9 +79,13 @@ public:
 	bool IsPipe(const string &filename, optional_ptr<FileOpener> opener = nullptr) override;
 	//! Remove a file from disk
 	void RemoveFile(const string &filename, optional_ptr<FileOpener> opener = nullptr) override;
+	bool TryRemoveFile(const string &filename, optional_ptr<FileOpener> opener = nullptr) override;
 	//! Sync a file handle to disk
 	void FileSync(FileHandle &handle) override;
 	FileSyncParallelism SyncParallelism(FileHandle &handle) override;
+	void HintWriteback(FileHandle &handle, idx_t location, idx_t nr_bytes) override;
+	void SyncDirectory(const string &directory, optional_ptr<FileOpener> opener = nullptr) override;
+	void SyncFile(const string &path, optional_ptr<FileOpener> opener = nullptr) override;
 	//! Close and remove an incomplete output file
 	void AbortFileWrite(FileHandle &handle) override;
 
@@ -126,7 +131,7 @@ public:
 
 protected:
 	bool ListFilesExtended(const string &directory, const std::function<void(OpenFileInfo &info)> &callback,
-	                       optional_ptr<FileOpener> opener) override;
+	                       optional_ptr<FileOpener> opener, const ListFilesOptions &options) override;
 
 	bool SupportsListFilesExtended() const override {
 		return true;

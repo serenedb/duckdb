@@ -41,6 +41,7 @@ struct DatabaseCacheEntry;
 class LogManager;
 class MetricsManager;
 class ExternalFileCache;
+class MemoryFileSystem;
 class ResultSetManager;
 
 class DatabaseInstance : public enable_shared_from_this<DatabaseInstance> {
@@ -61,8 +62,12 @@ public:
 	DUCKDB_API ExternalResourceTypeRegistry &GetExternalResourceTypeRegistry();
 	DUCKDB_API ExternalResourcesManager &GetExternalResourcesManager();
 	DUCKDB_API FileSystem &GetFileSystem();
+	//! The filesystem of the files the database keeps itself, which enable_external_access does not restrict
+	DUCKDB_API FileSystem &GetInternalFileSystem();
 	DUCKDB_API FileSystem &GetLocalFileSystem();
 	DUCKDB_API ExternalFileCache &GetExternalFileCache();
+	//! The filesystem of memory:// paths that the default virtual filesystem routes to
+	DUCKDB_API MemoryFileSystem &GetMemoryFileSystem();
 	DUCKDB_API ResultSetManager &GetResultSetManager();
 	DUCKDB_API TaskScheduler &GetScheduler();
 	DUCKDB_API ObjectCache &GetObjectCache();
@@ -121,10 +126,14 @@ private:
 	unique_ptr<ExtensionManager> extension_manager;
 	ValidChecker db_validity;
 	unique_ptr<DatabaseFileSystem> db_file_system;
+	unique_ptr<DatabaseFileSystem> internal_file_system;
 	unique_ptr<LocalDatabaseFileSystem> local_db_file_system;
 	unique_ptr<LogManager> log_manager;
 	unique_ptr<MetricsManager> metrics_manager;
 	unique_ptr<ExternalFileCache> external_file_cache;
+	//! The memory:// filesystem registered with the default virtual filesystem, whose files live in the
+	//! external file cache
+	optional_ptr<MemoryFileSystem> memory_file_system;
 	unique_ptr<ResultSetManager> result_set_manager;
 
 	duckdb_ext_api_v1 (*create_api_v1)();

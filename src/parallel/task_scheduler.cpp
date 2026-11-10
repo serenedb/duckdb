@@ -9,6 +9,7 @@
 #include "duckdb/parallel/task_scheduler_pool.hpp"
 #include "duckdb/parallel/task_scheduler_queue.hpp"
 #include "duckdb/storage/block_allocator.hpp"
+#include "duckdb/storage/object_cache.hpp"
 
 #ifndef DUCKDB_NO_THREADS
 #include "lightweightsemaphore.h"
@@ -144,6 +145,32 @@ unique_ptr<ProducerToken> TaskScheduler::CreateProducer() {
 
 unique_ptr<ProducerToken> TaskScheduler::CreateProducer(shared_ptr<SchedulerAccount> account) {
 	return make_uniq<ProducerToken>(*this, account ? std::move(account) : background_account);
+}
+
+namespace {
+
+class DatabaseProducer : public ObjectCacheEntry {
+public:
+	explicit DatabaseProducer(TaskScheduler &scheduler) : token(scheduler.CreateProducer()) {
+	}
+
+	static string ObjectType() {
+		return "database_producer";
+	}
+	string GetObjectType() override {
+		return ObjectType();
+	}
+	optional_idx GetEstimatedCacheMemory() const override {
+		return optional_idx();
+	}
+
+	const unique_ptr<ProducerToken> token;
+};
+
+} // namespace
+
+ProducerToken &TaskScheduler::GetDatabaseProducer() {
+	return *db.GetObjectCache().GetOrCreate<DatabaseProducer>(DatabaseProducer::ObjectType(), *this)->token;
 }
 
 void TaskScheduler::ScheduleTask(ProducerToken &token, shared_ptr<Task> task) {
@@ -716,6 +743,10 @@ idx_t TaskScheduler::NumberOfThreads() {
 	return pool->NumberOfThreads();
 }
 
+bool TaskScheduler::HasWorkers() const {
+	return target.load(std::memory_order_relaxed) != 0;
+}
+
 idx_t TaskScheduler::QueryThreads(ClientContext &context) {
 	const auto pool = GetScheduler(context).NumberOfThreads();
 	const auto &cap = ClientConfig::GetConfig(context).threads;
@@ -724,6 +755,10 @@ idx_t TaskScheduler::QueryThreads(ClientContext &context) {
 
 idx_t TaskScheduler::NumberOfAsyncThreads() {
 	return async_threads.load(std::memory_order_relaxed);
+}
+
+TaskSchedulerType TaskScheduler::AsyncPool() {
+	return NumberOfAsyncThreads() == 0 ? TaskSchedulerType::REGULAR : TaskSchedulerType::ASYNC;
 }
 
 idx_t TaskScheduler::QueryAsyncThreads(ClientContext &context) {

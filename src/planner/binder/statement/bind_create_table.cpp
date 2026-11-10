@@ -114,7 +114,7 @@ static void QualifyUserFunctions(CatalogEntryRetriever &retriever, const Catalog
 			    retriever.GetEntry(EntryLookupInfo(CatalogType::SCALAR_FUNCTION_ENTRY, function.GetQualifiedName()),
 			                       OnEntryNotFound::RETURN_NULL);
 			if (entry && !entry->internal) {
-				if (entry->ParentCatalog().IsTemporaryCatalog()) {
+				if (entry->ParentCatalog().IsTemporaryCatalog() && !home.IsTemporaryCatalog()) {
 					throw BinderException("Cannot use temporary function %s in a non-temporary relation", entry->name);
 				}
 				if (!home_schema.IsValid() || entry->ParentSchemaOid() != home_schema.GetIndex()) {

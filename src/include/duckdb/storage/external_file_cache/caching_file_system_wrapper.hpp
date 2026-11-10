@@ -43,8 +43,8 @@ private:
 };
 
 //! [CachingFileSystemWrapper] is an adapter class, which wraps [CachingFileSystem] to conform to FileSystem API.
-//! Different from [CachingFileSystem], which owns cache content and returns a [BufferHandle] to achieve zero-copy on
-//! read, the wrapper class always copies requested bytes into the provided address.
+//! Different from [CachingFileSystem], which returns pins of the cache's blocks to achieve zero-copy on read,
+//! the wrapper class always copies requested bytes into the provided address.
 //!
 //! NOTICE: Currently only read and seek operations are supported, write operations are disabled.
 class CachingFileSystemWrapper : public FileSystem, public enable_shared_from_this<CachingFileSystemWrapper> {
@@ -77,6 +77,8 @@ public:
 	                                                   optional_ptr<FileOpener> opener = nullptr) override;
 	DUCKDB_API void Truncate(FileHandle &handle, int64_t new_size) override;
 	DUCKDB_API void FileSync(FileHandle &handle) override;
+	DUCKDB_API void SyncDirectory(const string &directory, optional_ptr<FileOpener> opener = nullptr) override;
+	DUCKDB_API void SyncFile(const string &path, optional_ptr<FileOpener> opener = nullptr) override;
 
 	DUCKDB_API FileExistence TryDirectoryExists(const string &directory, optional_ptr<FileOpener> opener = nullptr,
 	                                            optional_ptr<ErrorData> error = nullptr) override;
@@ -132,7 +134,7 @@ protected:
 	                                                   optional_ptr<FileOpener> opener) override;
 	DUCKDB_API bool SupportsOpenFileExtended() const override;
 	DUCKDB_API bool ListFilesExtended(const string &directory, const std::function<void(OpenFileInfo &info)> &callback,
-	                                  optional_ptr<FileOpener> opener) override;
+	                                  optional_ptr<FileOpener> opener, const ListFilesOptions &options) override;
 	DUCKDB_API bool SupportsListFilesExtended() const override;
 
 private:
