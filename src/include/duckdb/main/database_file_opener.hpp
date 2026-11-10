@@ -70,14 +70,13 @@ public:
 		return checks_access;
 	}
 
-	//! A remote file opens in the block cache, without asking the store for its metadata when the cache knows a fresh
-	//! version of it
-	shared_ptr<BlockCacheFile> OpenBlockFile(const string &path) override;
-	//! With [keep_cached] and the block cache enabled, a remote file is uploaded through a writer that keeps the
-	//! blocks it fills in the block cache for the file's readers
+	//! A remote file opens in the external file cache, without asking the store for its metadata when the cache knows
+	//! a fresh version of it
+	shared_ptr<ExternalFileCacheFile> OpenBlockFile(const string &path) override;
+	//! With [keep_cached] and the external file cache enabled, a remote file is uploaded through a writer that keeps
+	//! the blocks it fills in the cache for the file's readers
 	unique_ptr<FileWriter> OpenFileWriter(const string &path, bool keep_cached) override;
-	//! Writing, moving or removing a remote file, or removing a directory it is in, drops its blocks from the block
-	//! cache
+	//! Writing, moving or removing a remote file, or removing a directory it is in, drops its blocks from the cache
 	void MoveFile(const string &source, const string &target, optional_ptr<FileOpener> opener) override;
 	void RemoveFile(const string &filename, optional_ptr<FileOpener> opener) override;
 	bool TryRemoveFile(const string &filename, optional_ptr<FileOpener> opener) override;
@@ -90,7 +89,7 @@ protected:
 	                                        optional_ptr<FileOpener> opener = nullptr) override;
 
 private:
-	//! A file on an object store or a web server, which is read through the block cache
+	//! A file on an object store or a web server, which is read through the external file cache
 	static bool IsRemote(const string &path);
 	void ForgetRemoteFile(const string &path);
 

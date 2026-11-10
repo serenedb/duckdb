@@ -138,7 +138,7 @@ unique_ptr<MemoryMappedFile> VirtualFileSystem::MemoryMapFile(const OpenFileInfo
 	return internal_filesystem.MemoryMapFile(path, flags, options, opener);
 }
 
-shared_ptr<BlockCacheFile> VirtualFileSystem::OpenBlockFile(const string &path) {
+shared_ptr<ExternalFileCacheFile> VirtualFileSystem::OpenBlockFile(const string &path) {
 	return FindFileSystem(path, nullptr).OpenBlockFile(path);
 }
 

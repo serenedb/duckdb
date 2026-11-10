@@ -759,7 +759,7 @@ void FileSystem::SyncDirectory(const string &directory, optional_ptr<FileOpener>
 void FileSystem::SyncFile(const string &path, optional_ptr<FileOpener> opener) {
 }
 
-shared_ptr<BlockCacheFile> FileSystem::OpenBlockFile(const string &path) {
+shared_ptr<ExternalFileCacheFile> FileSystem::OpenBlockFile(const string &path) {
 	return nullptr;
 }
 

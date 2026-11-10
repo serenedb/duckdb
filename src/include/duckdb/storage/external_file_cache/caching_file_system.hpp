@@ -17,8 +17,8 @@
 #include "duckdb/common/query_context.hpp"
 #include "duckdb/common/shared_ptr.hpp"
 #include "duckdb/common/winapi.hpp"
-#include "duckdb/storage/block_cache/block_cache.hpp"
 #include "duckdb/storage/external_file_cache/cache_validation.hpp"
+#include "duckdb/storage/external_file_cache/external_file_cache.hpp"
 #include "duckdb/storage/external_file_cache/file_buffer_handle_group.hpp"
 
 namespace duckdb {
@@ -77,10 +77,10 @@ public:
 private:
 	//! Remove the 'force_full_download' option from the file handle if present, and return whether it was present
 	bool StripForceFullDownloadIfPresent();
-	//! Whether the settings let this file's reads go through the block cache
+	//! Whether the settings let this file's reads go through the external file cache
 	bool CacheAllowed() const;
-	//! The block cache's view of the file, registered on first use; null when reads must not use the cache
-	shared_ptr<BlockCacheFile> GetCachedFile();
+	//! The external file cache's view of the file, registered on first use; null when reads must not use the cache
+	shared_ptr<ExternalFileCacheFile> GetCachedFile();
 	FileBufferHandleGroup ReadUncached(idx_t nr_bytes, idx_t location);
 	//! Record a timed read of a local file into the throughput estimate
 	void RecordReadThroughput(double total_seconds, idx_t bytes);
@@ -99,13 +99,13 @@ private:
 	CacheValidationMode validate;
 
 	//! The metadata of the file: from the cache when it knew the file at the open, otherwise from opening it
-	BlockCacheFileInfo info;
+	ExternalFileCacheFileInfo info;
 	annotated_mutex file_handle_mutex;
 	//! File handle for the internal filesystem.
 	shared_ptr<FileHandle> file_handle DUCKDB_GUARDED_BY(file_handle_mutex);
 	//! The freshness deadline of the metadata, which the responses to this handle's reads tighten
 	optional<timestamp_t> cache_valid_until DUCKDB_GUARDED_BY(file_handle_mutex);
-	shared_ptr<BlockCacheFile> cached_file DUCKDB_GUARDED_BY(file_handle_mutex);
+	shared_ptr<ExternalFileCacheFile> cached_file DUCKDB_GUARDED_BY(file_handle_mutex);
 
 	//! Current position (if non-seeking reads)
 	idx_t position;
@@ -134,7 +134,8 @@ public:
 	                                                  optional_ptr<FileOpener> opener = nullptr);
 
 private:
-	//! Whether reads of [path] go through the block cache: remote files, and local ones when cache_local_files is set
+	//! Whether reads of [path] go through the external file cache: remote files, and local ones when
+	//! cache_local_files is set
 	bool ShouldCacheFile(const string &path) const;
 
 	//! The Client FileSystem (needs to be client-specific so we can do, e.g., HTTPFS profiling)

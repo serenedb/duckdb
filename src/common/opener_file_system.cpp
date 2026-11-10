@@ -23,7 +23,7 @@ unique_ptr<MemoryMappedFile> OpenerFileSystem::MemoryMapFile(const OpenFileInfo 
 	return GetFileSystem().MemoryMapFile(path, flags, options, GetOpener());
 }
 
-shared_ptr<BlockCacheFile> OpenerFileSystem::OpenBlockFile(const string &path) {
+shared_ptr<ExternalFileCacheFile> OpenerFileSystem::OpenBlockFile(const string &path) {
 	VerifyCanAccessFile(path);
 	return GetFileSystem().OpenBlockFile(path);
 }

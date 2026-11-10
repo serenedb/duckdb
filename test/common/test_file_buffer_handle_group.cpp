@@ -11,8 +11,8 @@
 namespace duckdb {
 
 namespace {
-BlockCachePin AllocateAndFill(BufferManager &bm, idx_t size, uint8_t fill) {
-	auto handle = BlockCache::AllocateUncached(bm.GetDatabase(), size);
+ExternalFileCachePin AllocateAndFill(BufferManager &bm, idx_t size, uint8_t fill) {
+	auto handle = ExternalFileCache::AllocateUncached(bm.GetDatabase(), size);
 	memset(handle.GetDataMutable(), fill, size);
 	return handle;
 }
@@ -29,7 +29,7 @@ TEST_CASE("FileBufferHandleGroup copy with single handle", "[file_buffer_handle_
 		handle.GetDataMutable()[i] = static_cast<uint8_t>(i & 0xFF);
 	}
 
-	vector<BlockCachePin> pins;
+	vector<ExternalFileCachePin> pins;
 	pins.push_back(std::move(handle));
 	FileBufferHandleGroup group(std::move(pins));
 
@@ -52,7 +52,7 @@ TEST_CASE("FileBufferHandleGroup copy with single handle with offset", "[file_bu
 	}
 
 	constexpr idx_t OFFSET = 50;
-	vector<BlockCachePin> pins;
+	vector<ExternalFileCachePin> pins;
 	handle.Narrow(OFFSET, BUF_SIZE - OFFSET);
 	pins.push_back(std::move(handle));
 	FileBufferHandleGroup group(std::move(pins));
@@ -78,7 +78,7 @@ TEST_CASE("FileBufferHandleGroup copy partial across handles", "[file_buffer_han
 	auto h1 = AllocateAndFill(bm, BUF_SIZE, 0x11);
 	auto h2 = AllocateAndFill(bm, BUF_SIZE, 0x22);
 
-	vector<BlockCachePin> pins;
+	vector<ExternalFileCachePin> pins;
 	h1.Narrow(H1_OFFSET, H1_LENGTH);
 	h2.Narrow(0, H2_LENGTH);
 	pins.push_back(std::move(h1));

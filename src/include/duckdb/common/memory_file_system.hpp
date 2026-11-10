@@ -12,7 +12,7 @@
 #include "duckdb/common/memory_mapped_file.hpp"
 #include "duckdb/common/mutex.hpp"
 #include "duckdb/common/shared_ptr.hpp"
-#include "duckdb/storage/block_cache/block_cache.hpp"
+#include "duckdb/storage/external_file_cache/external_file_cache.hpp"
 
 #include <absl/container/btree_map.h>
 #include <absl/container/btree_set.h>
@@ -23,15 +23,15 @@ namespace duckdb {
 struct MemoryFile;
 
 //! Files that exist only in memory, under memory:// paths, written once from start to end. The instance a database
-//! registers keeps them in unbacked blocks of its block cache, which spill instead of being dropped, so they can grow
-//! past the cache, until Compact moves a file into one buffer-managed allocation that maps in place; a private
-//! instance keeps each file in one heap allocation, which maps in place. AddFile makes a file of memory its caller
-//! keeps for as long as the file system, which maps in place too.
+//! registers keeps them in unbacked blocks of its external file cache, which spill instead of being dropped, so they
+//! can grow past the cache, until Compact moves a file into one buffer-managed allocation that maps in place; a
+//! private instance keeps each file in one heap allocation, which maps in place. AddFile makes a file of memory its
+//! caller keeps for as long as the file system, which maps in place too.
 class MemoryFileSystem : public FileSystem {
 public:
 	static constexpr const char *PREFIX = "memory://";
 
-	//! Files in blocks of the block cache of [db]
+	//! Files in blocks of the external file cache of [db]
 	explicit MemoryFileSystem(DatabaseInstance &db);
 	//! Files on the heap, for an instance no virtual filesystem knows
 	MemoryFileSystem();
@@ -76,12 +76,12 @@ public:
 	string PathSeparator(const string &path) override;
 
 	//! Null for a heap or compacted file
-	shared_ptr<BlockCacheFile> OpenBlockFile(const string &path) override;
+	shared_ptr<ExternalFileCacheFile> OpenBlockFile(const string &path) override;
 	//! Writes the file in its blocks or on the heap, whatever [keep_cached] says
 	unique_ptr<FileWriter> OpenFileWriter(const string &path, bool keep_cached) override;
 	void Compact(const string &path) override;
 	void AddFile(const string &path, data_ptr_t data, idx_t size);
-	//! Removes every file; the database calls it before its block cache goes
+	//! Removes every file; the database calls it before its external file cache goes
 	void Clear();
 
 private:

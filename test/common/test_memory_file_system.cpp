@@ -6,13 +6,13 @@
 #include "duckdb/common/memory_mapped_file.hpp"
 #include "duckdb/main/connection.hpp"
 #include "duckdb/main/database.hpp"
-#include "duckdb/storage/block_cache/block_cache.hpp"
+#include "duckdb/storage/external_file_cache/external_file_cache.hpp"
 
 namespace duckdb {
 
 namespace {
 
-constexpr idx_t MEMORY_BLOCK = BlockCache::BLOCK_SIZE;
+constexpr idx_t MEMORY_BLOCK = ExternalFileCache::BLOCK_SIZE;
 
 uint8_t ByteAt(idx_t offset) {
 	return static_cast<uint8_t>((offset * 13 + offset / MEMORY_BLOCK) & 0xFF);
@@ -229,7 +229,7 @@ TEST_CASE("Memory files added over bytes they borrow read and map those bytes in
 TEST_CASE("Compacted memory files map in place", "[memory_file_system]") {
 	DuckDB db(nullptr);
 	MemoryFileSystem fs(*db.instance);
-	auto &cache = BlockCache::Get(*db.instance);
+	auto &cache = ExternalFileCache::Get(*db.instance);
 	for (const idx_t size : {idx_t(0), idx_t(1), MEMORY_BLOCK, 5 * MEMORY_BLOCK + 123}) {
 		const auto path = "memory://compact/f" + to_string(size);
 		WriteFile(fs, path, size);
@@ -278,10 +278,11 @@ TEST_CASE("The virtual filesystem finds and compacts the block files of memory f
 	REQUIRE(ReadsBack(vfs, local, 1));
 }
 
-TEST_CASE("A memory file counts as the block cache's memory before and after its compaction", "[memory_file_system]") {
+TEST_CASE("A memory file counts as the external file cache's memory before and after its compaction",
+          "[memory_file_system]") {
 	DuckDB db(nullptr);
 	auto &memory = db.instance->GetMemoryFileSystem();
-	auto &cache = BlockCache::Get(*db.instance);
+	auto &cache = ExternalFileCache::Get(*db.instance);
 	const string path = "memory://tagged/file";
 	constexpr idx_t size = 4 * MEMORY_BLOCK;
 	const auto before = cache.GetStatistics().used;
@@ -352,7 +353,7 @@ TEST_CASE("Memory files larger than the memory limit spill and read back", "[mem
 	REQUIRE_NO_FAIL(con.Query("SET memory_limit='1MB'"));
 	auto &fs = FileSystem::GetFileSystem(*db.instance);
 	WriteFile(fs, "memory://spill/big.bin", 16 * MEMORY_BLOCK + 99, MEMORY_BLOCK / 2 + 1);
-	auto &cache = BlockCache::Get(*db.instance);
+	auto &cache = ExternalFileCache::Get(*db.instance);
 	REQUIRE(cache.GetStatistics().spilled > 0);
 	REQUIRE(ReadsBack(fs, "memory://spill/big.bin", 16 * MEMORY_BLOCK + 99));
 

@@ -1,7 +1,7 @@
 //===----------------------------------------------------------------------===//
 //                         DuckDB
 //
-// duckdb/storage/block_cache/block_cache.hpp
+// duckdb/storage/external_file_cache/external_file_cache.hpp
 //
 //
 //===----------------------------------------------------------------------===//
@@ -30,10 +30,10 @@
 
 namespace duckdb {
 
-class BlockCache;
+class ExternalFileCache;
 
 //! What the cache knows of a file without opening it
-struct BlockCacheFileInfo {
+struct ExternalFileCacheFileInfo {
 	CacheValidationInfo validation;
 	bool can_seek = true;
 	//! A file on local disk, read again as cheaply as a temporary file, so its evicted blocks are dropped
@@ -42,21 +42,21 @@ struct BlockCacheFileInfo {
 
 //! A block held in the cache, or bytes read into a buffer the pin owns: they stay valid and unchanged while the pin
 //! lives
-class BlockCachePin {
+class ExternalFileCachePin {
 public:
-	BlockCachePin() = default;
-	BlockCachePin(BufferHandle handle_p, idx_t size_p)
+	ExternalFileCachePin() = default;
+	ExternalFileCachePin(BufferHandle handle_p, idx_t size_p)
 	    : handle(std::move(handle_p)), data(handle.GetDataMutable()), size(size_p) {
 	}
-	[[gnu::always_inline]] BlockCachePin(BufferHandle handle_p, data_ptr_t data_p, idx_t size_p)
+	[[gnu::always_inline]] ExternalFileCachePin(BufferHandle handle_p, data_ptr_t data_p, idx_t size_p)
 	    : handle(std::move(handle_p)), data(data_p), size(size_p) {
 	}
-	[[gnu::always_inline]] BlockCachePin(BlockCachePin &&other) noexcept
+	[[gnu::always_inline]] ExternalFileCachePin(ExternalFileCachePin &&other) noexcept
 	    : handle(std::move(other.handle)), data(other.data), size(other.size) {
 		other.data = nullptr;
 		other.size = 0;
 	}
-	[[gnu::always_inline]] BlockCachePin &operator=(BlockCachePin &&other) noexcept {
+	[[gnu::always_inline]] ExternalFileCachePin &operator=(ExternalFileCachePin &&other) noexcept {
 		if (this != &other) {
 			BufferHandle released = std::move(handle);
 			handle = std::move(other.handle);
@@ -67,8 +67,8 @@ public:
 		}
 		return *this;
 	}
-	BlockCachePin(const BlockCachePin &) = delete;
-	BlockCachePin &operator=(const BlockCachePin &) = delete;
+	ExternalFileCachePin(const ExternalFileCachePin &) = delete;
+	ExternalFileCachePin &operator=(const ExternalFileCachePin &) = delete;
 
 	bool IsValid() const {
 		return handle.IsValid();
@@ -84,12 +84,12 @@ public:
 		return size;
 	}
 	//! Another pin of the [size] bytes at [offset] of the pinned bytes
-	BlockCachePin Share(idx_t offset, idx_t size_p) {
+	ExternalFileCachePin Share(idx_t offset, idx_t size_p) {
 		if (!handle.IsValid()) {
 			return {};
 		}
 		D_ASSERT(offset <= size && size_p <= size - offset);
-		return BlockCachePin(handle.Share(), data + offset, size_p);
+		return ExternalFileCachePin(handle.Share(), data + offset, size_p);
 	}
 	//! Narrows this pin to the [size] bytes at [offset] of its bytes
 	void Narrow(idx_t offset, idx_t size_p) {
@@ -111,21 +111,21 @@ private:
 
 //! The slot of a block of a file: the memory of its buffer-managed block, which the buffer pool may evict, or null
 //! while the block has none
-using BlockCacheSlot = atomic<BlockMemory *>;
+using ExternalFileCacheSlot = atomic<BlockMemory *>;
 
 //! The slots of the blocks of one version of a file, and the blocks, which live as long as the slots
-class BlockCacheBlocks {
+class ExternalFileCacheBlocks {
 public:
-	explicit BlockCacheBlocks(idx_t block_count);
-	BlockCacheBlocks(const BlockCacheBlocks &) = delete;
-	BlockCacheBlocks &operator=(const BlockCacheBlocks &) = delete;
+	explicit ExternalFileCacheBlocks(idx_t block_count);
+	ExternalFileCacheBlocks(const ExternalFileCacheBlocks &) = delete;
+	ExternalFileCacheBlocks &operator=(const ExternalFileCacheBlocks &) = delete;
 
 private:
-	friend class BlockCache;
+	friend class ExternalFileCache;
 
 	static constexpr idx_t CHUNK = 512;
 	struct Chunk {
-		BlockCacheSlot slots[CHUNK] {};
+		ExternalFileCacheSlot slots[CHUNK] {};
 	};
 	struct Directory {
 		explicit Directory(idx_t size_p) : size(size_p), chunks(new atomic<Chunk *>[size_p] {}) {
@@ -135,7 +135,7 @@ private:
 	};
 
 	//! The slot of block [block], or null when it has none yet
-	BlockCacheSlot *Find(idx_t block) const {
+	ExternalFileCacheSlot *Find(idx_t block) const {
 		const auto directory = current.load(std::memory_order_acquire);
 		if (block / CHUNK >= directory->size) {
 			return nullptr;
@@ -149,7 +149,7 @@ private:
 		return slot ? slot->load(std::memory_order_acquire) : nullptr;
 	}
 	//! The slot of block [block], created when missing
-	BlockCacheSlot &Get(idx_t block);
+	ExternalFileCacheSlot &Get(idx_t block);
 	//! Calls [callback] with every slot and its block number
 	template <class FUNC>
 	void ForEach(FUNC &&callback);
@@ -164,13 +164,13 @@ private:
 };
 
 //! An open file whose blocks the cache holds; opens of the same path and version share its blocks
-class BlockCacheFile {
+class ExternalFileCacheFile {
 public:
-	BlockCacheFile(BlockCache &cache, string path, bool unbacked, BlockCacheFileInfo info,
-	               shared_ptr<FileHandle> source, shared_ptr<BlockCacheBlocks> blocks);
+	ExternalFileCacheFile(ExternalFileCache &cache, string path, bool unbacked, ExternalFileCacheFileInfo info,
+	                      shared_ptr<FileHandle> source, shared_ptr<ExternalFileCacheBlocks> blocks);
 
 	//! The cache that holds the blocks
-	BlockCache &GetCache() const {
+	ExternalFileCache &GetCache() const {
 		return cache;
 	}
 	const string &GetPath() const {
@@ -183,7 +183,7 @@ public:
 		return unbacked;
 	}
 	//! The metadata the blocks belong to, as of this open
-	const BlockCacheFileInfo &Info() const {
+	const ExternalFileCacheFileInfo &Info() const {
 		return info;
 	}
 	//! Bytes of block [block] that lie inside the file
@@ -198,19 +198,19 @@ public:
 	}
 
 private:
-	friend class BlockCache;
-	friend class BlockCacheFetchTask;
+	friend class ExternalFileCache;
+	friend class ExternalFileCacheFetchTask;
 
 	shared_ptr<FileHandle> Source() const;
 
-	BlockCache &cache;
+	ExternalFileCache &cache;
 	const string path;
 	atomic<idx_t> size;
 	const bool unbacked;
-	const BlockCacheFileInfo info;
+	const ExternalFileCacheFileInfo info;
 	mutable annotated_mutex source_lock;
 	shared_ptr<FileHandle> source DUCKDB_GUARDED_BY(source_lock);
-	const shared_ptr<BlockCacheBlocks> blocks;
+	const shared_ptr<ExternalFileCacheBlocks> blocks;
 	//! Bytes the background fetches of this file are fetching right now
 	atomic<idx_t> in_flight {0};
 	atomic<bool> reuse_forbidden {false};
@@ -218,9 +218,9 @@ private:
 
 //! Writes an unbacked or written file from start to end: it creates each block as the write reaches it and pins the
 //! block it fills until the block is full or the write ends
-class BlockCacheAppender {
+class ExternalFileCacheAppender {
 public:
-	explicit BlockCacheAppender(shared_ptr<BlockCacheFile> file);
+	explicit ExternalFileCacheAppender(shared_ptr<ExternalFileCacheFile> file);
 
 	//! Appends [count] bytes of [data]; readers of an unbacked file see them once they are appended
 	void Append(const_data_ptr_t data, idx_t count);
@@ -228,7 +228,7 @@ public:
 	FileWriteWindow Window();
 	//! Appends the first [count] bytes of the last window
 	void Commit(idx_t count);
-	BlockCachePin ShareWindow(idx_t count);
+	ExternalFileCachePin ShareWindow(idx_t count);
 	//! The bytes appended
 	idx_t Size() const {
 		return size;
@@ -240,13 +240,13 @@ public:
 	void Abandon();
 
 private:
-	shared_ptr<BlockCacheFile> file;
-	BlockCachePin current;
+	shared_ptr<ExternalFileCacheFile> file;
+	ExternalFileCachePin current;
 	idx_t size = 0;
 };
 
 //! Where one reader of a file is in it, so that the cache reads ahead of a reader that pins the file's blocks in order
-struct BlockCacheReadAhead {
+struct ExternalFileCacheReadAhead {
 	//! The block a reader that keeps reading in order pins next
 	idx_t next_block = NumericLimits<idx_t>::Maximum();
 	//! The end of the blocks fetched ahead so far
@@ -256,14 +256,14 @@ struct BlockCacheReadAhead {
 };
 
 //! Whether a prefetch is a guess at what a reader may read next or the blocks it will read
-enum class BlockCachePrefetch : uint8_t { HINT, NEED };
+enum class ExternalFileCachePrefetch : uint8_t { HINT, NEED };
 
-struct BlockCacheRange {
+struct ExternalFileCacheRange {
 	idx_t offset = 0;
 	idx_t size = 0;
 };
 
-struct BlockCacheStatistics {
+struct ExternalFileCacheStatistics {
 	//! Memory the buffer pool holds for the cache's blocks and for the buffers of reads it does not keep
 	idx_t used = 0;
 	idx_t misses = 0;
@@ -280,7 +280,7 @@ struct BlockCacheStatistics {
 //! buffer-managed block, which the buffer pool evicts like any other: blocks of in-memory files go to temporary files,
 //! blocks of remote files keep a copy there while the copies have room, and the cache fetches a dropped block again
 //! into the same block. A lookup writes nothing shared and a pin is one atomic add on the block.
-class BlockCache {
+class ExternalFileCache {
 public:
 	static constexpr idx_t BLOCK_SIZE = 128ULL * 1024ULL;
 	//! Missing runs closer than this are fetched by one request
@@ -300,58 +300,60 @@ public:
 	}
 
 public:
-	explicit BlockCache(DatabaseInstance &db);
-	~BlockCache();
+	explicit ExternalFileCache(DatabaseInstance &db);
+	~ExternalFileCache();
 
-	static BlockCache &Get(DatabaseInstance &db);
+	static ExternalFileCache &Get(DatabaseInstance &db);
 	//! A pin owning a new buffer of [size] bytes for a read the cache does not keep
-	static BlockCachePin AllocateUncached(DatabaseInstance &db, idx_t size);
+	static ExternalFileCachePin AllocateUncached(DatabaseInstance &db, idx_t size);
 
 	//! Registers an open of [path] whose metadata is [current], reading missing blocks from [source], which may be
 	//! set later. It shares the blocks of an earlier open that [current] validates; without [validate] it shares them
 	//! while they are fresh, and [current] may then be the earlier open's metadata.
-	shared_ptr<BlockCacheFile> OpenFile(const string &path, const BlockCacheFileInfo &current, bool validate,
-	                                    shared_ptr<FileHandle> source);
+	shared_ptr<ExternalFileCacheFile> OpenFile(const string &path, const ExternalFileCacheFileInfo &current,
+	                                           bool validate, shared_ptr<FileHandle> source);
 	//! The metadata of the fresh blocks of an earlier open of [path], when there are any
-	bool TryGetFile(const string &path, BlockCacheFileInfo &result);
+	bool TryGetFile(const string &path, ExternalFileCacheFileInfo &result);
 	//! Stops sharing the blocks of [file] and drops them, once a response forbids reusing them or their writer abandons
 	//! them
-	void ForbidReuse(BlockCacheFile &file);
+	void ForbidReuse(ExternalFileCacheFile &file);
 	//! A file whose blocks exist only in the cache and its temporary files
-	shared_ptr<BlockCacheFile> CreateUnbackedFile(const string &path);
+	shared_ptr<ExternalFileCacheFile> CreateUnbackedFile(const string &path);
 	//! A file the caller writes under [path], replacing earlier opens of [path]: its writer creates the blocks, and
-	//! once its BlockCacheAppender finishes, opens of [path] share them like fetched blocks
-	shared_ptr<BlockCacheFile> CreateWrittenFile(const string &path);
+	//! once its ExternalFileCacheAppender finishes, opens of [path] share them like fetched blocks
+	shared_ptr<ExternalFileCacheFile> CreateWrittenFile(const string &path);
 	//! Drops the blocks of every open of [path]; current pins keep their bytes
 	void ForgetFile(const string &path);
 	//! Drops the blocks of every open of a file below [directory]; current pins keep their bytes
 	void ForgetDirectory(const string &directory);
 
 	//! Pins block [block] of [file], fetching it when missing; throws when the fetch fails
-	BlockCachePin Pin(BlockCacheFile &file, idx_t block);
+	ExternalFileCachePin Pin(ExternalFileCacheFile &file, idx_t block);
 	//! Pins block [block] of [file] for a reader that may read it in order: when the reader's last pin was of the
 	//! block before and [ahead] holds, the blocks from [block] on are fetched ahead, twice as many as the time before
 	//! (2 to READ_AHEAD_BLOCKS)
-	BlockCachePin PinInOrder(const shared_ptr<BlockCacheFile> &file, idx_t block, BlockCacheReadAhead &read_ahead,
-	                         bool ahead);
+	ExternalFileCachePin PinInOrder(const shared_ptr<ExternalFileCacheFile> &file, idx_t block,
+	                                ExternalFileCacheReadAhead &read_ahead, bool ahead);
 	//! Pins the bytes of [offset, offset + size) of [file] that lie inside it, a pin per block they span, fetching the
 	//! missing blocks together
-	vector<BlockCachePin> PinRange(BlockCacheFile &file, idx_t offset, idx_t size);
+	vector<ExternalFileCachePin> PinRange(ExternalFileCacheFile &file, idx_t offset, idx_t size);
 	//! Pins the [size] bytes at [offset] of [file] in one piece: in their block when they lie in one, otherwise in a
 	//! copy the pin owns; Ptr() and Size() are the bytes either way
-	BlockCachePin PinBytes(BlockCacheFile &file, idx_t offset, idx_t size);
+	ExternalFileCachePin PinBytes(ExternalFileCacheFile &file, idx_t offset, idx_t size);
 	//! Pins the bytes of [offset, offset + size) of [file] like PinRange when all of their blocks are in memory; empty
 	//! otherwise
-	vector<BlockCachePin> TryPinRange(BlockCacheFile &file, idx_t offset, idx_t size);
+	vector<ExternalFileCachePin> TryPinRange(ExternalFileCacheFile &file, idx_t offset, idx_t size);
 	//! Whether every block of [offset, offset + size) is in memory, in a temporary file or loading
-	bool IsCached(BlockCacheFile &file, idx_t offset, idx_t size) const;
+	bool IsCached(ExternalFileCacheFile &file, idx_t offset, idx_t size) const;
 	//! Starts fetching the missing blocks of [offset, offset + size) and returns; a HINT stops at the bytes a file and
 	//! the cache may have in flight
-	void Prefetch(const shared_ptr<BlockCacheFile> &file, idx_t offset, idx_t size, BlockCachePrefetch kind);
+	void Prefetch(const shared_ptr<ExternalFileCacheFile> &file, idx_t offset, idx_t size,
+	              ExternalFileCachePrefetch kind);
 	//! Prefetches [ranges] like one Prefetch per range, where ranges closer than MERGE_GAP make one; sorts and merges
 	//! [ranges] in place
-	void Prefetch(const shared_ptr<BlockCacheFile> &file, std::span<BlockCacheRange> ranges, BlockCachePrefetch kind);
-	void MarkUnused(const BlockCacheFile &file, idx_t offset, idx_t size) const;
+	void Prefetch(const shared_ptr<ExternalFileCacheFile> &file, std::span<ExternalFileCacheRange> ranges,
+	              ExternalFileCachePrefetch kind);
+	void MarkUnused(const ExternalFileCacheFile &file, idx_t offset, idx_t size) const;
 
 	//! Whether external file reads go through the cache; turning it off drops the blocks of backed files, while current
 	//! pins keep their bytes
@@ -360,25 +362,25 @@ public:
 		return enabled.load(std::memory_order_relaxed);
 	}
 
-	BlockCacheStatistics GetStatistics() const;
+	ExternalFileCacheStatistics GetStatistics() const;
 	//! The cached blocks of files the cache can name, in memory or only in temporary files
-	vector<CachedFileInformation> GetBlockInformation() const;
+	vector<CachedFileInformation> GetCachedFileInformation() const;
 
 	//! Waits for the fetch tasks in flight and refuses new ones; the database calls it before its scheduler stops
 	void StopFetching();
 
 private:
-	friend class BlockCacheAppender;
-	friend class BlockCacheFetchTask;
+	friend class ExternalFileCacheAppender;
+	friend class ExternalFileCacheFetchTask;
 
 	//! Ends the write of [file], which wrote the version [written] describes: its blocks stay, and TryGetFile reports
 	//! [written] for it
-	void PublishWrittenFile(BlockCacheFile &file, const CacheValidationInfo &written);
+	void PublishWrittenFile(ExternalFileCacheFile &file, const CacheValidationInfo &written);
 	//! Pins a new block [block] of the unbacked or written [file] for its writer, holding whatever its buffer held
-	//! before; BlockCacheAppender fills it up to the end of the file
-	BlockCachePin CreateBlock(BlockCacheFile &file, idx_t block);
+	//! before; ExternalFileCacheAppender fills it up to the end of the file
+	ExternalFileCachePin CreateBlock(ExternalFileCacheFile &file, idx_t block);
 	//! Extends the unbacked [file] to [size] bytes once its blocks are written
-	void SetUnbackedSize(BlockCacheFile &file, idx_t size);
+	void SetUnbackedSize(ExternalFileCacheFile &file, idx_t size);
 
 	struct RunPlan {
 		idx_t first_block;
@@ -390,21 +392,21 @@ private:
 		bool exhausted;
 	};
 	struct FileRecord {
-		BlockCacheFileInfo info;
+		ExternalFileCacheFileInfo info;
 		//! The blocks of this version of the file, which its open files share
-		shared_ptr<BlockCacheBlocks> blocks;
+		shared_ptr<ExternalFileCacheBlocks> blocks;
 	};
 
 	//! Pins the block in [slot] when it is in memory
-	bool PinLoaded(BlockCacheSlot &slot, idx_t size, BlockCachePin &result) const;
-	BlockMemory &MemoryOf(const BlockCacheFile &file, BlockCacheSlot &slot);
-	optional_ptr<BlockMemory> ClaimMissing(BlockCacheFile &file, idx_t block);
+	bool PinLoaded(ExternalFileCacheSlot &slot, idx_t size, ExternalFileCachePin &result) const;
+	BlockMemory &MemoryOf(const ExternalFileCacheFile &file, ExternalFileCacheSlot &slot);
+	optional_ptr<BlockMemory> ClaimMissing(ExternalFileCacheFile &file, idx_t block);
 	//! Lets the slots of [blocks] go, destroying their blocks and the copies of them at once or with their last pin
-	void DropBlocks(BlockCacheBlocks &blocks);
+	void DropBlocks(ExternalFileCacheBlocks &blocks);
 
 	//! Gives [record] new blocks for [info], returning the version it replaces; sets [sweep] when the record is new and
 	//! the records are due a sweep
-	optional<FileRecord> NewVersion(FileRecord &record, const BlockCacheFileInfo &info, bool &sweep)
+	optional<FileRecord> NewVersion(FileRecord &record, const ExternalFileCacheFileInfo &info, bool &sweep)
 	    DUCKDB_REQUIRES(file_lock);
 	//! Drops the blocks of [replaced], a version of a file the records no longer name, and sweeps the records when
 	//! [sweep]
@@ -416,21 +418,22 @@ private:
 	//! the run's bytes with it, bridging gaps of up to MERGE_GAP of blocks it does not fetch; the run takes at most
 	//! MAX_REQUEST and never ends in a gap
 	template <class ADMIT>
-	RunPlan PlanRun(BlockCacheFile &file, idx_t block, idx_t end, ADMIT &&admit);
+	RunPlan PlanRun(ExternalFileCacheFile &file, idx_t block, idx_t end, ADMIT &&admit);
 	//! Reads the [claimed] blocks of the run of [file] from [first_block] with one request and gives back their
 	//! claims, clearing each entry, also when it throws; when [pins] is not empty, pins each block read there. Null
 	//! entries are blocks the run does not fetch
-	void Fetch(BlockCacheFile &file, idx_t first_block, std::span<optional_ptr<BlockMemory>> claimed,
-	           std::span<BlockCachePin> pins);
+	void Fetch(ExternalFileCacheFile &file, idx_t first_block, std::span<optional_ptr<BlockMemory>> claimed,
+	           std::span<ExternalFileCachePin> pins);
 	//! Fetches the runs of [plans] of [file] as concurrent pieces of at most PIECE_SIZE, pinning each block read in
 	//! [pins], which start at block [first]; throws the first error, and leaves the claims of pieces it did not fetch
-	void FetchConcurrently(BlockCacheFile &file, vector<RunPlan> &plans, idx_t first, vector<BlockCachePin> &pins);
+	void FetchConcurrently(ExternalFileCacheFile &file, vector<RunPlan> &plans, idx_t first,
+	                       vector<ExternalFileCachePin> &pins);
 	//! Waits while [memory] loads; when the scheduler has no workers to run queued fetches, runs them until it loads
 	void WaitForLoad(BlockMemory &memory);
 
 	//! Fetches the [claimed] blocks of the run of [file] from [first_block] in the background, a task per piece of at
 	//! most PIECE_SIZE
-	void ScheduleFetch(const shared_ptr<BlockCacheFile> &file, idx_t first_block,
+	void ScheduleFetch(const shared_ptr<ExternalFileCacheFile> &file, idx_t first_block,
 	                   vector<optional_ptr<BlockMemory>> claimed);
 	ProducerToken &Producer();
 	void FinishFetchTask(idx_t bytes);

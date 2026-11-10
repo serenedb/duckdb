@@ -2,7 +2,7 @@
 #include "duckdb/common/atomic.hpp"
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/main/database.hpp"
-#include "duckdb/storage/block_cache/block_cache.hpp"
+#include "duckdb/storage/external_file_cache/external_file_cache.hpp"
 
 namespace duckdb {
 
@@ -40,7 +40,7 @@ static unique_ptr<FunctionData> DuckDBExternalFileCacheBind(ClientContext &conte
 unique_ptr<GlobalTableFunctionState> DuckDBExternalFileCacheInit(ClientContext &context,
                                                                  TableFunctionInitInput &input) {
 	auto result = make_uniq<DuckDBExternalFileCacheData>();
-	result->entries = context.db->GetBlockCache().GetBlockInformation();
+	result->entries = ExternalFileCache::Get(*context.db).GetCachedFileInformation();
 	return std::move(result);
 }
 

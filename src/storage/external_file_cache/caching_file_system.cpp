@@ -30,8 +30,8 @@ void TightenCacheDeadline(optional<timestamp_t> &cached, const optional<timestam
 	}
 }
 
-FileBufferHandleGroup OnePin(BlockCachePin pin) {
-	vector<BlockCachePin> pins;
+FileBufferHandleGroup OnePin(ExternalFileCachePin pin) {
+	vector<ExternalFileCachePin> pins;
 	pins.push_back(std::move(pin));
 	return FileBufferHandleGroup(std::move(pins));
 }
@@ -83,7 +83,7 @@ CachingFileHandle::CachingFileHandle(QueryContext context, CachingFileSystem &ca
                                                                                caching_file_system_p.db)),
       position(0) {
 	// If caching is disabled, or if we must validate cache entries, we always have to open the file
-	if (!CacheAllowed() || Validate() || !BlockCache::Get(caching_file_system.db).TryGetFile(path.path, info)) {
+	if (!CacheAllowed() || Validate() || !ExternalFileCache::Get(caching_file_system.db).TryGetFile(path.path, info)) {
 		auto handle = GetFileHandle();
 		// Snapshot the metadata with a single Stats call, avoiding repeated metadata lookups (e.g., fstat)
 		info.validation = GetValidationInfo(caching_file_system.file_system, *handle);
@@ -126,7 +126,7 @@ bool CachingFileHandle::StripForceFullDownloadIfPresent() {
 }
 
 bool CachingFileHandle::CacheAllowed() const {
-	return caching_file_system.ShouldCacheFile(path.path) && BlockCache::Get(caching_file_system.db).IsEnabled();
+	return caching_file_system.ShouldCacheFile(path.path) && ExternalFileCache::Get(caching_file_system.db).IsEnabled();
 }
 
 shared_ptr<FileHandle> CachingFileHandle::GetFileHandle() {
@@ -135,7 +135,7 @@ shared_ptr<FileHandle> CachingFileHandle::GetFileHandle() {
 		return file_handle;
 	}
 
-	// The block cache reads blocks in parallel through one FileHandle. Request parallel access on it to avoid races in
+	// The cache reads blocks in parallel through one FileHandle. Request parallel access on it to avoid races in
 	// implementations that require explicit opt-in for concurrent pread-style access (e.g., HTTPFS).
 	auto internal_flags = flags | FileFlags::FILE_FLAGS_PARALLEL_ACCESS;
 	internal_flags.SetCachingMode(CachingMode::NO_CACHING);
@@ -143,11 +143,11 @@ shared_ptr<FileHandle> CachingFileHandle::GetFileHandle() {
 	return file_handle;
 }
 
-shared_ptr<BlockCacheFile> CachingFileHandle::GetCachedFile() {
+shared_ptr<ExternalFileCacheFile> CachingFileHandle::GetCachedFile() {
 	if (!CacheAllowed()) {
 		return nullptr;
 	}
-	shared_ptr<BlockCacheFile> file;
+	shared_ptr<ExternalFileCacheFile> file;
 	optional<timestamp_t> deadline;
 	{
 		annotated_lock_guard<annotated_mutex> guard(file_handle_mutex);
@@ -157,7 +157,7 @@ shared_ptr<BlockCacheFile> CachingFileHandle::GetCachedFile() {
 	if (!file) {
 		auto current = info;
 		current.validation.cache_valid_until = deadline;
-		auto &cache = BlockCache::Get(caching_file_system.db);
+		auto &cache = ExternalFileCache::Get(caching_file_system.db);
 		if (current.validation.IsCacheReuseProhibited() ||
 		    (Validate() && !deadline && !CacheValidation::HasValidationMetadata(current.validation))) {
 			cache.ForgetFile(path.path);
@@ -187,7 +187,7 @@ Allocator &CachingFileHandle::GetBufferAllocator() const {
 }
 
 FileBufferHandleGroup CachingFileHandle::ReadUncached(idx_t nr_bytes, idx_t location) {
-	auto buf = BlockCache::AllocateUncached(caching_file_system.db, nr_bytes);
+	auto buf = ExternalFileCache::AllocateUncached(caching_file_system.db, nr_bytes);
 	auto handle = GetFileHandle();
 	const auto read_start = steady_clock::now();
 	handle->Read(context, buf.GetDataMutable(), nr_bytes, location);
@@ -210,8 +210,8 @@ FileBufferHandleGroup CachingFileHandle::Read(const idx_t nr_bytes, const idx_t 
 	if (location >= file->GetSize()) {
 		return FileBufferHandleGroup();
 	}
-	auto &cache = BlockCache::Get(caching_file_system.db);
-	vector<BlockCachePin> pins;
+	auto &cache = ExternalFileCache::Get(caching_file_system.db);
+	vector<ExternalFileCachePin> pins;
 	if (!file->HasSource()) {
 		pins = cache.TryPinRange(*file, location, nr_bytes);
 		if (pins.empty()) {
@@ -234,7 +234,7 @@ FileBufferHandleGroup CachingFileHandle::Read(idx_t &nr_bytes) {
 	// If we can't seek, we can't use the cache for these calls,
 	// because we won't be able to seek over any parts we skipped by reading from the cache
 	if (!CanSeek() || !GetCachedFile()) {
-		auto buf = BlockCache::AllocateUncached(caching_file_system.db, nr_bytes);
+		auto buf = ExternalFileCache::AllocateUncached(caching_file_system.db, nr_bytes);
 		auto file_handle = GetFileHandle();
 		// Do positional read if handle can seek, otherwise have to fallback to sequential read.
 		if (file_handle->CanSeek()) {

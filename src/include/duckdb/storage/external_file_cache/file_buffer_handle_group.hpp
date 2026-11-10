@@ -10,17 +10,17 @@
 
 #include "duckdb/common/typedefs.hpp"
 #include "duckdb/common/vector.hpp"
-#include "duckdb/storage/block_cache/block_cache.hpp"
+#include "duckdb/storage/external_file_cache/external_file_cache.hpp"
 
 namespace duckdb {
 
 class FileBufferHandleGroup {
 public:
 	FileBufferHandleGroup() = default;
-	//! The bytes of a read, in order: pinned in block cache blocks or in buffers the pins own
-	explicit FileBufferHandleGroup(vector<BlockCachePin> handles_p);
+	//! The bytes of a read, in order: pinned in cache blocks or in buffers the pins own
+	explicit FileBufferHandleGroup(vector<ExternalFileCachePin> handles_p);
 
-	const vector<BlockCachePin> &GetHandles() const;
+	const vector<ExternalFileCachePin> &GetHandles() const;
 
 	// Util function to copy from the start of the group to the destination address for the requested number of bytes
 	void CopyTo(data_ptr_t dest, idx_t nr_bytes) const;
@@ -30,7 +30,7 @@ public:
 	const_data_ptr_t Ptr() const;
 
 private:
-	vector<BlockCachePin> handles;
+	vector<ExternalFileCachePin> handles;
 };
 
 } // namespace duckdb

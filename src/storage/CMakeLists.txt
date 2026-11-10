@@ -1,4 +1,3 @@
-add_subdirectory(block_cache)
 add_subdirectory(buffer)
 add_subdirectory(checkpoint)
 add_subdirectory(compression)

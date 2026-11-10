@@ -5,10 +5,10 @@
 
 namespace duckdb {
 
-FileBufferHandleGroup::FileBufferHandleGroup(vector<BlockCachePin> handles_p) : handles(std::move(handles_p)) {
+FileBufferHandleGroup::FileBufferHandleGroup(vector<ExternalFileCachePin> handles_p) : handles(std::move(handles_p)) {
 }
 
-const vector<BlockCachePin> &FileBufferHandleGroup::GetHandles() const {
+const vector<ExternalFileCachePin> &FileBufferHandleGroup::GetHandles() const {
 	return handles;
 }
 

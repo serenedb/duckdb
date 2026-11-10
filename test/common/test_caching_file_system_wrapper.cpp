@@ -518,7 +518,7 @@ TEST_CASE("Open file in opener filesystem cache modes", "[file_system][caching]"
 
 	// Shared variable both all caching modes.
 	string buffer(TEST_BUFFER_SIZE, '\0');
-	auto &block_cache = db_instance.GetBlockCache();
+	auto &external_file_cache = db_instance.GetExternalFileCache();
 
 	auto run_case = [&](CachingMode mode) {
 		FileOpenFlags flags {FileFlags::FILE_FLAGS_READ};
@@ -536,13 +536,13 @@ TEST_CASE("Open file in opener filesystem cache modes", "[file_system][caching]"
 	SECTION("cache enabled") {
 		run_case(CachingMode::ALWAYS_CACHE);
 		// Check external cache file has something cached.
-		REQUIRE(!block_cache.GetBlockInformation().empty());
+		REQUIRE(!external_file_cache.GetCachedFileInformation().empty());
 	}
 
 	SECTION("cache disabled") {
 		run_case(CachingMode::NO_CACHING);
 		// Check external cache file has nothing cached.
-		REQUIRE(block_cache.GetBlockInformation().empty());
+		REQUIRE(external_file_cache.GetCachedFileInformation().empty());
 	}
 }
 
@@ -737,7 +737,7 @@ TEST_CASE("CachingFileHandle Read returns correct FileBufferHandleGroup", "[file
 	auto &db_instance = *db.instance;
 	auto tracking_fs = make_uniq<TrackingFileSystem>();
 
-	const idx_t BLOCK_SIZE = BlockCache::BLOCK_SIZE;
+	const idx_t BLOCK_SIZE = ExternalFileCache::BLOCK_SIZE;
 	const idx_t EXTRA = 100;
 	const idx_t FILE_SIZE = BLOCK_SIZE + EXTRA;
 
@@ -753,7 +753,7 @@ TEST_CASE("CachingFileHandle Read returns correct FileBufferHandleGroup", "[file
 	file_info.extended_info->options["validate_external_file_cache"] = Value::BOOLEAN(false);
 
 	auto handle = cfs.OpenFile(file_info, FileFlags::FILE_FLAGS_READ);
-	auto &cache = db_instance.GetBlockCache();
+	auto &cache = db_instance.GetExternalFileCache();
 
 	// Full file read: should produce 2 handles
 	{
@@ -770,7 +770,7 @@ TEST_CASE("CachingFileHandle Read returns correct FileBufferHandleGroup", "[file
 		REQUIRE(result == content);
 
 		// Both blocks should be cached
-		auto cached = cache.GetBlockInformation();
+		auto cached = cache.GetCachedFileInformation();
 		REQUIRE(cached.size() == 2);
 		std::sort(cached.begin(), cached.end(), [](const CachedFileInformation &a, const CachedFileInformation &b) {
 			return a.location < b.location;
@@ -871,7 +871,7 @@ TEST_CASE("Fully cached read skips doesn't open file", "[file_system][caching]")
 	auto counting_fs = make_uniq<CountingFileSystem>();
 	auto *counting_fs_ptr = counting_fs.get();
 
-	const idx_t BLOCK_SIZE = BlockCache::BLOCK_SIZE;
+	const idx_t BLOCK_SIZE = ExternalFileCache::BLOCK_SIZE;
 	const idx_t FILE_SIZE = BLOCK_SIZE;
 
 	string content(FILE_SIZE, 'X');

@@ -26,8 +26,8 @@ struct MemoryFile {
 	atomic<idx_t> size {0};
 
 	annotated_mutex lock;
-	//! A file of a registered instance, in unbacked block cache blocks
-	shared_ptr<BlockCacheFile> blocks DUCKDB_GUARDED_BY(lock);
+	//! A file of a registered instance, in unbacked blocks of the external file cache
+	shared_ptr<ExternalFileCacheFile> blocks DUCKDB_GUARDED_BY(lock);
 	//! A compacted file of a registered instance, in one buffer-managed allocation
 	shared_ptr<BlockHandle> span DUCKDB_GUARDED_BY(lock);
 	//! A heap file, grown without zeroing; the bytes past its size are its writer's window
@@ -73,12 +73,12 @@ data_ptr_t ContiguousBytes(MemoryFile &file) DUCKDB_REQUIRES(file.lock) {
 	return file.heap ? file.heap.get() : file.borrowed;
 }
 
-void CopyRange(BlockCacheFile &file, idx_t offset, idx_t count, data_ptr_t target) {
+void CopyRange(ExternalFileCacheFile &file, idx_t offset, idx_t count, data_ptr_t target) {
 	for (idx_t done = 0; done < count;) {
 		const auto at = offset + done;
-		auto pin = file.GetCache().Pin(file, at / BlockCache::BLOCK_SIZE);
-		const auto in_block = at % BlockCache::BLOCK_SIZE;
-		const auto chunk = MinValue(count - done, BlockCache::BLOCK_SIZE - in_block);
+		auto pin = file.GetCache().Pin(file, at / ExternalFileCache::BLOCK_SIZE);
+		const auto in_block = at % ExternalFileCache::BLOCK_SIZE;
+		const auto chunk = MinValue(count - done, ExternalFileCache::BLOCK_SIZE - in_block);
 		memcpy(target + done, pin.Ptr() + in_block, chunk);
 		done += chunk;
 	}
@@ -86,7 +86,7 @@ void CopyRange(BlockCacheFile &file, idx_t offset, idx_t count, data_ptr_t targe
 
 } // namespace
 
-//! Fills a memory file: in its block cache blocks for the instance a database registers, on the heap otherwise
+//! Fills a memory file: in its cache blocks for the instance a database registers, on the heap otherwise
 class MemoryFileWriter final : public FileWriter {
 public:
 	MemoryFileWriter(MemoryFileSystem &fs_p, shared_ptr<MemoryFile> file_p) : fs(fs_p), file(std::move(file_p)) {
@@ -174,8 +174,8 @@ private:
 
 	MemoryFileSystem &fs;
 	shared_ptr<MemoryFile> file;
-	//! Writes a file in block cache blocks
-	optional<BlockCacheAppender> appender;
+	//! Writes a file in cache blocks
+	optional<ExternalFileCacheAppender> appender;
 	bool open = true;
 };
 
@@ -281,7 +281,7 @@ shared_ptr<MemoryFile> MemoryFileSystem::Create(std::string_view path) {
 	auto file = make_shared_ptr<MemoryFile>(string(path));
 	if (db) {
 		annotated_lock_guard<annotated_mutex> file_guard(file->lock);
-		file->blocks = BlockCache::Get(*db).CreateUnbackedFile(file->path);
+		file->blocks = ExternalFileCache::Get(*db).CreateUnbackedFile(file->path);
 	}
 	Install(file);
 	return file;
@@ -348,8 +348,8 @@ unique_ptr<MemoryMappedFile> MemoryFileSystem::MemoryMapFile(const OpenFileInfo 
 	{
 		annotated_lock_guard<annotated_mutex> guard(file->lock);
 		if (file->blocks) {
-			throw NotImplementedException("\"%s\" is held in block cache blocks, which are read with OpenBlockFile",
-			                              path.path);
+			throw NotImplementedException(
+			    "\"%s\" is held in external file cache blocks, which are read with OpenBlockFile", path.path);
 		}
 		if (file->writers != 0) {
 			throw IOException("Cannot map file \"%s\": it is still open for writing", path.path);
@@ -370,7 +370,7 @@ unique_ptr<MemoryMappedFile> MemoryFileSystem::MemoryMapFile(const OpenFileInfo 
 	return std::move(result);
 }
 
-shared_ptr<BlockCacheFile> MemoryFileSystem::OpenBlockFile(const string &path) {
+shared_ptr<ExternalFileCacheFile> MemoryFileSystem::OpenBlockFile(const string &path) {
 	auto file = FindExisting(path, "open", false);
 	annotated_lock_guard<annotated_mutex> guard(file->lock);
 	return file->blocks;
@@ -392,7 +392,7 @@ void MemoryFileSystem::Unlink(const MemoryFile &file) {
 
 void MemoryFileSystem::Compact(const string &path) {
 	auto file = FindExisting(path, "compact", false);
-	shared_ptr<BlockCacheFile> blocks;
+	shared_ptr<ExternalFileCacheFile> blocks;
 	{
 		annotated_lock_guard<annotated_mutex> guard(file->lock);
 		if (file->writers != 0) {
@@ -457,7 +457,7 @@ void MemoryFileSystem::Read(FileHandle &handle_p, void *buffer, int64_t nr_bytes
 		return;
 	}
 	auto target = data_ptr_cast(buffer);
-	shared_ptr<BlockCacheFile> blocks;
+	shared_ptr<ExternalFileCacheFile> blocks;
 	shared_ptr<BlockHandle> span;
 	{
 		annotated_lock_guard<annotated_mutex> guard(file.lock);

@@ -45,7 +45,7 @@ class CompressedFileSystem;
 class QueryContext;
 class MemoryMappedFile;
 struct MMapOptions;
-class BlockCacheFile;
+class ExternalFileCacheFile;
 class MultiFileList;
 
 enum class CreateDirectoryMode : uint8_t {
@@ -311,12 +311,12 @@ public:
 	DUCKDB_API virtual unique_ptr<MemoryMappedFile> MemoryMapFile(const OpenFileInfo &path, FileOpenFlags flags,
 	                                                              const MMapOptions &options,
 	                                                              optional_ptr<FileOpener> opener = nullptr);
-	//! [path] as a file of block cache blocks, which a reader pins, when this filesystem reads the file through the
-	//! block cache; null for a file it reads any other way, such as by mapping it
-	DUCKDB_API virtual shared_ptr<BlockCacheFile> OpenBlockFile(const string &path);
+	//! [path] as a file of cache blocks, which a reader pins, when this filesystem reads the file through the
+	//! external file cache; null for a file it reads any other way, such as by mapping it
+	DUCKDB_API virtual shared_ptr<ExternalFileCacheFile> OpenBlockFile(const string &path);
 	//! A writer of a new file at [path], replacing any file there, that fills the file in place; null when this
 	//! filesystem writes [path] through a handle only. With [keep_cached], a filesystem that reads [path] through the
-	//! block cache keeps the blocks written there for the file's readers
+	//! external file cache keeps the blocks written there for the file's readers
 	DUCKDB_API virtual unique_ptr<FileWriter> OpenFileWriter(const string &path, bool keep_cached);
 	//! Copies a closed file this filesystem keeps in cache blocks into one buffer-managed allocation, which spills
 	//! only while nothing maps it; readers that pinned its blocks keep them until they close. Any other file stays
