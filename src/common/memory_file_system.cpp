@@ -74,11 +74,12 @@ data_ptr_t ContiguousBytes(MemoryFile &file) DUCKDB_REQUIRES(file.lock) {
 }
 
 void CopyRange(ExternalFileCacheFile &file, idx_t offset, idx_t count, data_ptr_t target) {
+	const auto &blocks = file.Blocks();
 	for (idx_t done = 0; done < count;) {
 		const auto at = offset + done;
-		auto pin = file.GetCache().Pin(file, at / ExternalFileCache::BLOCK_SIZE);
-		const auto in_block = at % ExternalFileCache::BLOCK_SIZE;
-		const auto chunk = MinValue(count - done, ExternalFileCache::BLOCK_SIZE - in_block);
+		auto pin = file.GetCache().Pin(file, blocks.BlockOf(at));
+		const auto in_block = blocks.OffsetInBlock(at);
+		const auto chunk = MinValue(count - done, blocks.BlockSize() - in_block);
 		memcpy(target + done, pin.Ptr() + in_block, chunk);
 		done += chunk;
 	}

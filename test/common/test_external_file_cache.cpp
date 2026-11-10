@@ -223,7 +223,7 @@ TEST_CASE("Reads fetch the cache blocks around them", "[external_file_cache]") {
 	auto recording_fs = make_uniq<ReadRecordingFileSystem>();
 	auto &cache = db_instance.GetExternalFileCache();
 
-	const idx_t BLOCK_SIZE = ExternalFileCache::BLOCK_SIZE;
+	const idx_t BLOCK_SIZE = ExternalFileCache::DEFAULT_BLOCK_SIZE;
 	const idx_t FILE_SIZE = 3 * BLOCK_SIZE + 50;
 	auto content = MakeTestContent(FILE_SIZE);
 	EFCTestFileGuard test_file("test_efc_cache_sized.bin", content);
@@ -256,7 +256,7 @@ TEST_CASE("Reads past the end of the file fetch only the bytes in it", "[externa
 	auto recording_fs = make_uniq<ReadRecordingFileSystem>();
 	auto &cache = db_instance.GetExternalFileCache();
 
-	const idx_t BLOCK_SIZE = ExternalFileCache::BLOCK_SIZE;
+	const idx_t BLOCK_SIZE = ExternalFileCache::DEFAULT_BLOCK_SIZE;
 	const idx_t FILE_SIZE = 2 * BLOCK_SIZE + 50;
 	auto content = MakeTestContent(FILE_SIZE);
 	EFCTestFileGuard test_file("test_efc_past_end.bin", content);
@@ -317,7 +317,7 @@ TEST_CASE("Sequential read preserves its position when the cache is disabled", "
 	auto &cache = db.instance->GetExternalFileCache();
 	auto tracking_fs = make_uniq<EFCTrackingFileSystem>();
 
-	const idx_t block_size = ExternalFileCache::BLOCK_SIZE;
+	const idx_t block_size = ExternalFileCache::DEFAULT_BLOCK_SIZE;
 	const string first_block(block_size, 'A');
 	const string second_block(block_size, 'B');
 	EFCTestFileGuard test_file("test_efc_disabled_sequential_position.bin", first_block + second_block);
@@ -336,7 +336,7 @@ TEST_CASE("Concurrent SET and Read do not corrupt data or cache state", "[extern
 	DuckDB db = MakeCacheLocalFilesDB();
 	auto &db_instance = *db.instance;
 
-	constexpr idx_t FILE_SIZE = 2 * ExternalFileCache::BLOCK_SIZE + 137; // odd tail to stress boundaries
+	constexpr idx_t FILE_SIZE = 2 * ExternalFileCache::DEFAULT_BLOCK_SIZE + 137; // odd tail to stress boundaries
 	const auto content = MakeTestContent(FILE_SIZE);
 	EFCTestFileGuard test_file("test_efc_set_vs_read.bin", content);
 
@@ -356,7 +356,7 @@ TEST_CASE("Concurrent SET and Read do not corrupt data or cache state", "[extern
 	const array<ReadFixture, 5> FIXTURES = {{
 	    {0, 4096},
 	    {123, 8000},
-	    {ExternalFileCache::BLOCK_SIZE - 8500, 17000},
+	    {ExternalFileCache::DEFAULT_BLOCK_SIZE - 8500, 17000},
 	    {FILE_SIZE - 1024, 1024},
 	    {0, FILE_SIZE},
 	}};
@@ -419,7 +419,7 @@ TEST_CASE("Disabling external file cache drops its blocks", "[external_file_cach
 	auto &cache = db_instance.GetExternalFileCache();
 	Connection con(db);
 
-	const auto content = MakeTestContent(ExternalFileCache::BLOCK_SIZE);
+	const auto content = MakeTestContent(ExternalFileCache::DEFAULT_BLOCK_SIZE);
 	EFCTestFileGuard test_file("test_efc_disable_drops_blocks.bin", content);
 
 	{
@@ -444,7 +444,7 @@ TEST_CASE("File with freshness deadline but no validators is cached and reused",
 
 	auto fresh_fs = make_uniq<FreshnessOnlyFileSystem>();
 
-	const idx_t BLOCK_SIZE = ExternalFileCache::BLOCK_SIZE;
+	const idx_t BLOCK_SIZE = ExternalFileCache::DEFAULT_BLOCK_SIZE;
 	const string content_a(BLOCK_SIZE, 'A');
 	const string content_b(BLOCK_SIZE, 'B'); // same size as content_a
 	EFCTestFileGuard test_file("test_efc_freshness_reuse.bin", content_a);
@@ -483,7 +483,7 @@ TEST_CASE("NO_VALIDATION retains and enforces the initial freshness deadline", "
 	const auto max_age_micros = fresh_fs->max_age_micros;
 	fresh_fs->max_age_micros = SHORT_MAX_AGE_MICROS;
 
-	const idx_t BLOCK_SIZE = ExternalFileCache::BLOCK_SIZE;
+	const idx_t BLOCK_SIZE = ExternalFileCache::DEFAULT_BLOCK_SIZE;
 	const string content_a(BLOCK_SIZE, 'A');
 	const string content_b(BLOCK_SIZE, 'B');
 	const string content_c(BLOCK_SIZE, 'C');
@@ -534,7 +534,7 @@ TEST_CASE("File with freshness deadline is invalidated when the file size change
 
 	auto fresh_fs = make_uniq<FreshnessOnlyFileSystem>();
 
-	const idx_t BLOCK_SIZE = ExternalFileCache::BLOCK_SIZE;
+	const idx_t BLOCK_SIZE = ExternalFileCache::DEFAULT_BLOCK_SIZE;
 	const string content_a(BLOCK_SIZE, 'A');
 	const string content_b(BLOCK_SIZE * 2, 'B');
 	EFCTestFileGuard test_file("test_efc_freshness_size_change.bin", content_a);
@@ -564,7 +564,7 @@ TEST_CASE("Long-lived handle does not use cache after the freshness deadline", "
 	auto fresh_fs = make_uniq<FreshnessOnlyFileSystem>();
 	fresh_fs->max_age_micros = SHORT_MAX_AGE_MICROS;
 
-	const idx_t BLOCK_SIZE = ExternalFileCache::BLOCK_SIZE;
+	const idx_t BLOCK_SIZE = ExternalFileCache::DEFAULT_BLOCK_SIZE;
 	const string content_a(BLOCK_SIZE, 'A');
 	const string content_b(BLOCK_SIZE, 'B');
 	EFCTestFileGuard test_file("test_efc_freshness_long_lived_handle.bin", content_a);
@@ -582,7 +582,7 @@ TEST_CASE("Long-lived handle with validators stops using cache after the freshne
 	DuckDB db = MakeCacheLocalFilesDB();
 	auto validating_fs = make_uniq<CachePolicyFileSystem>();
 
-	const idx_t block_size = ExternalFileCache::BLOCK_SIZE;
+	const idx_t block_size = ExternalFileCache::DEFAULT_BLOCK_SIZE;
 	const string content_a(block_size, 'A');
 	const string content_b(block_size, 'B');
 	EFCTestFileGuard test_file("test_efc_validator_freshness_long_lived_handle.bin", content_a);
@@ -605,7 +605,7 @@ TEST_CASE("File marked as not cacheable does not retain cached blocks", "[extern
 	auto &cache = db.instance->GetExternalFileCache();
 	auto policy_fs = make_uniq<CachePolicyFileSystem>();
 
-	const idx_t block_size = ExternalFileCache::BLOCK_SIZE;
+	const idx_t block_size = ExternalFileCache::DEFAULT_BLOCK_SIZE;
 	const string content_a(block_size, 'A');
 	const string content_b(block_size, 'B');
 	EFCTestFileGuard test_file("test_efc_no_store.bin", content_a);
@@ -633,7 +633,7 @@ TEST_CASE("Explicit cache reuse prohibition is honored under NO_VALIDATION", "[e
 	auto policy_fs = make_uniq<CachePolicyFileSystem>();
 	policy_fs->cache_valid_until = timestamp_t::ninfinity();
 
-	const idx_t block_size = ExternalFileCache::BLOCK_SIZE;
+	const idx_t block_size = ExternalFileCache::DEFAULT_BLOCK_SIZE;
 	const string content_a(block_size, 'A');
 	const string content_b(block_size, 'B');
 	EFCTestFileGuard test_file("test_efc_no_reuse_no_validation.bin", content_a);
@@ -660,7 +660,7 @@ TEST_CASE("Expired freshness deadline is not served from cache", "[external_file
 	auto fresh_fs = make_uniq<FreshnessOnlyFileSystem>();
 	fresh_fs->max_age_micros = -1000000; // deadline is always in the past
 
-	const idx_t BLOCK_SIZE = ExternalFileCache::BLOCK_SIZE;
+	const idx_t BLOCK_SIZE = ExternalFileCache::DEFAULT_BLOCK_SIZE;
 	const string content_a(BLOCK_SIZE, 'A');
 	const string content_b(BLOCK_SIZE, 'B'); // same size as content_a
 	EFCTestFileGuard test_file("test_efc_freshness_expired.bin", content_a);
@@ -685,7 +685,7 @@ TEST_CASE("Waiter on a loading block refetches when the response prohibits shari
 	auto &cache = db.instance->GetExternalFileCache();
 	auto policy_fs = make_uniq<BlockingCachePolicyFileSystem>();
 
-	const idx_t block_size = ExternalFileCache::BLOCK_SIZE;
+	const idx_t block_size = ExternalFileCache::DEFAULT_BLOCK_SIZE;
 	const string content(block_size, 'A');
 	EFCTestFileGuard test_file("test_efc_loading_waiter.bin", content);
 	CachingFileSystem cfs(*policy_fs, *db.instance);
@@ -733,7 +733,7 @@ TEST_CASE("Content response can prohibit cache reuse", "[external_file_cache]") 
 	auto &cache = db.instance->GetExternalFileCache();
 	auto policy_fs = make_uniq<CachePolicyFileSystem>();
 
-	const idx_t block_size = ExternalFileCache::BLOCK_SIZE;
+	const idx_t block_size = ExternalFileCache::DEFAULT_BLOCK_SIZE;
 	const string content_a(block_size, 'A');
 	const string content_b(block_size, 'B');
 	EFCTestFileGuard test_file("test_efc_content_policy.bin", content_a);
@@ -757,7 +757,7 @@ TEST_CASE("No-metadata file is not cached and always returns fresh content", "[e
 
 	auto no_meta_fs = make_uniq<EFCNoMetadataFileSystem>();
 
-	const idx_t BLOCK_SIZE = ExternalFileCache::BLOCK_SIZE;
+	const idx_t BLOCK_SIZE = ExternalFileCache::DEFAULT_BLOCK_SIZE;
 	const string content_a(BLOCK_SIZE, 'A');
 	const string content_b(BLOCK_SIZE * 2, 'B');
 	EFCTestFileGuard test_file("test_efc_no_metadata.bin", content_a);
@@ -789,7 +789,7 @@ TEST_CASE("Dropping cache blocks preserves existing readers", "[external_file_ca
 	auto &cache = db.instance->GetExternalFileCache();
 	auto policy_fs = make_uniq<CachePolicyFileSystem>();
 
-	const idx_t block_size = ExternalFileCache::BLOCK_SIZE;
+	const idx_t block_size = ExternalFileCache::DEFAULT_BLOCK_SIZE;
 	const string content_a(block_size, 'A');
 	const string content_b(block_size, 'B');
 	EFCTestFileGuard test_file("test_efc_drop_blocks.bin", content_a);
@@ -816,9 +816,15 @@ TEST_CASE("Dropping cache blocks preserves existing readers", "[external_file_ca
 
 namespace {
 
-constexpr idx_t BLOCK = ExternalFileCache::BLOCK_SIZE;
-constexpr idx_t PIECE_BLOCKS = ExternalFileCache::BlockCountOf(ExternalFileCache::PIECE_SIZE);
-constexpr idx_t REQUEST_BLOCKS = ExternalFileCache::BlockCountOf(ExternalFileCache::MAX_REQUEST);
+constexpr idx_t BLOCK = ExternalFileCache::DEFAULT_BLOCK_SIZE;
+constexpr idx_t PIECE_SIZE = 4ULL * 1024ULL * 1024ULL;
+
+constexpr idx_t BlockCountOf(idx_t size) {
+	return (size + BLOCK - 1) / BLOCK;
+}
+
+constexpr idx_t PIECE_BLOCKS = BlockCountOf(PIECE_SIZE);
+constexpr idx_t REQUEST_BLOCKS = BlockCountOf(ExternalFileCache::MAX_REQUEST);
 
 uint8_t ExpectedByte(idx_t offset) {
 	return static_cast<uint8_t>((offset * 31 + offset / BLOCK * 7) & 0xFF);
@@ -1032,7 +1038,7 @@ TEST_CASE("External file cache pins hold the bytes of their block", "[external_f
 	TestFile file("external_file_cache_pins.bin", 5 * BLOCK + 1000);
 	auto cached = file.Open(cache, fs);
 
-	REQUIRE(ExternalFileCache::BlockCountOf(cached->GetSize()) == 6);
+	REQUIRE(BlockCountOf(cached->GetSize()) == 6);
 	for (idx_t block = 0; block < 6; block++) {
 		auto pin = cache.Pin(*cached, block);
 		REQUIRE(pin.Size() == (block == 5 ? 1000 : BLOCK));
@@ -1174,7 +1180,7 @@ TEST_CASE("External file cache prefetch merges runs across small gaps and caps e
 	auto reads = fs.TakeReads();
 	idx_t covered = 0;
 	for (auto &read : reads) {
-		REQUIRE(read.second <= ExternalFileCache::PIECE_SIZE);
+		REQUIRE(read.second <= PIECE_SIZE);
 		REQUIRE(read.first % BLOCK == 0);
 		covered += read.second;
 	}
@@ -1224,7 +1230,7 @@ TEST_CASE("External file cache evicts the blocks a reader marked unused before t
 
 TEST_CASE("External file cache drops a hinted prefetch past the bytes a file has in flight but never a needed one",
           "[external_file_cache]") {
-	constexpr idx_t in_flight = ExternalFileCache::BlockCountOf(ExternalFileCache::MAX_FILE_IN_FLIGHT);
+	constexpr idx_t in_flight = BlockCountOf(ExternalFileCache::MAX_FILE_IN_FLIGHT);
 	DuckDB db(nullptr);
 	ExternalFileCache cache(*db.instance);
 	CountingSourceFileSystem fs;
@@ -1320,10 +1326,81 @@ TEST_CASE("External file cache fetches a long run in concurrent pieces and hands
 	REQUIRE(reads.size() == 4);
 	idx_t covered = 0;
 	for (auto &read : reads) {
-		REQUIRE(read.second <= ExternalFileCache::PIECE_SIZE);
+		REQUIRE(read.second <= PIECE_SIZE);
 		covered += read.second;
 	}
 	REQUIRE(covered == RUN * BLOCK);
+}
+
+TEST_CASE("External file cache gives a file version the block size set when the cache starts holding it",
+          "[external_file_cache]") {
+	DuckDB db(nullptr);
+	Connection con(db);
+	ExternalFileCache cache(*db.instance);
+	constexpr idx_t SMALL = 32 * 1024;
+	constexpr idx_t SIZE = 3 * BLOCK + 100;
+	CountingSourceFileSystem large_fs;
+	CountingSourceFileSystem small_fs;
+	TestFile large_file("external_file_cache_large_blocks.bin", SIZE);
+	TestFile small_file("external_file_cache_small_blocks.bin", SIZE);
+	auto large = large_file.Open(cache, large_fs);
+	REQUIRE_NO_FAIL(con.Query("SET external_file_cache_remote_min_block_size = 32768"));
+	auto small = small_file.Open(cache, small_fs);
+	auto reopened = large_file.Open(cache, large_fs);
+	REQUIRE(large->BlockSize() == BLOCK);
+	REQUIRE(reopened->BlockSize() == BLOCK);
+	REQUIRE(small->BlockSize() == SMALL);
+
+	auto pin = cache.Pin(*small, 5);
+	REQUIRE(pin.Size() == SMALL);
+	REQUIRE(HoldsExpectedBytesAt(pin, 5 * SMALL));
+	REQUIRE(cache.Pin(*large, 3).Size() == 100);
+	REQUIRE(cache.Pin(*small, SIZE / SMALL).Size() == 100);
+	for (auto &file : {large, small}) {
+		const auto block_size = file->BlockSize();
+		auto pins = cache.PinRange(*file, block_size - 10, block_size + 20);
+		REQUIRE(pins.size() == 3);
+		idx_t at = block_size - 10;
+		for (auto &range_pin : pins) {
+			REQUIRE(HoldsExpectedBytesAt(range_pin, at));
+			at += range_pin.Size();
+		}
+		REQUIRE(at == 2 * block_size + 10);
+		auto bytes = cache.PinBytes(*file, block_size - 10, 20);
+		REQUIRE(bytes.Size() == 20);
+		REQUIRE(HoldsExpectedBytesAt(bytes, block_size - 10));
+	}
+	for (auto &read : small_fs.TakeReads()) {
+		REQUIRE(read.first % SMALL == 0);
+	}
+	for (auto &read : large_fs.TakeReads()) {
+		REQUIRE(read.first % BLOCK == 0);
+	}
+}
+
+TEST_CASE("External file cache fetches a long run in pieces of the remote or local max block size",
+          "[external_file_cache]") {
+	DBConfig config;
+	config.options.maximum_threads = 4;
+	DuckDB db(nullptr, &config);
+	Connection con(db);
+	REQUIRE_NO_FAIL(con.Query("SET external_file_cache_remote_max_block_size = 1048576"));
+	REQUIRE_NO_FAIL(con.Query("SET external_file_cache_local_max_block_size = 524288"));
+	ExternalFileCache cache(*db.instance);
+	constexpr idx_t SIZE = 4ULL * 1024ULL * 1024ULL;
+	for (const bool on_disk : {false, true}) {
+		CountingSourceFileSystem fs;
+		TestFile file(on_disk ? "external_file_cache_local_pieces.bin" : "external_file_cache_remote_pieces.bin", SIZE);
+		auto cached = file.Open(cache, fs, "v1", on_disk);
+		auto pins = cache.PinRange(*cached, 0, SIZE);
+		REQUIRE(pins.size() == SIZE / BLOCK);
+		const idx_t piece = on_disk ? 524288 : 1048576;
+		auto reads = fs.TakeReads();
+		REQUIRE(reads.size() == SIZE / piece);
+		for (auto &read : reads) {
+			REQUIRE(read.second == piece);
+		}
+	}
 }
 
 TEST_CASE("External file cache range pins fetch the runs and pieces of a range concurrently", "[external_file_cache]") {
@@ -1357,7 +1434,7 @@ TEST_CASE("External file cache range pins fetch the runs and pieces of a range c
 	REQUIRE(reads.size() == 4);
 	idx_t covered = 0;
 	for (auto &read : reads) {
-		REQUIRE(read.second <= ExternalFileCache::PIECE_SIZE);
+		REQUIRE(read.second <= PIECE_SIZE);
 		covered += read.second;
 	}
 	REQUIRE(covered == (FULL - PIECE_BLOCKS / 2) * BLOCK + 100);
@@ -1985,7 +2062,7 @@ TEST_CASE("External file cache gives back the blocks of a fetch piece that never
 	DuckDB db(nullptr, &config);
 	ExternalFileCache cache(*db.instance);
 	CountingSourceFileSystem fs;
-	constexpr idx_t PIECE_BLOCKS = ExternalFileCache::PIECE_SIZE / BLOCK;
+	constexpr idx_t PIECE_BLOCKS = PIECE_SIZE / BLOCK;
 	TestFile file("external_file_cache_cancelled_piece.bin", 2 * PIECE_BLOCKS * BLOCK);
 	auto cached = file.Open(cache, fs);
 
@@ -2042,6 +2119,28 @@ TEST_CASE("External file cache drops evicted blocks of remote files when externa
 	ExternalFileCache cache(*db.instance);
 	CountingSourceFileSystem fs;
 	TestFile file("external_file_cache_no_copies.bin", 32 * BLOCK);
+	auto cached = file.Open(cache, fs);
+	for (idx_t round = 0; round < 2; round++) {
+		for (idx_t block = 0; block < 32; block++) {
+			REQUIRE(HoldsExpectedBytes(cache.Pin(*cached, block), block));
+		}
+	}
+	REQUIRE(fs.ReadCount() > 32);
+	REQUIRE(cache.GetStatistics().spilled == 0);
+	REQUIRE(BufferManager::GetBufferManager(*db.instance).GetUsedSwap() == 0);
+}
+
+TEST_CASE("External file cache drops evicted blocks of remote files when external_file_cache_spill is off",
+          "[external_file_cache]") {
+	const auto directory = TestCreatePath("external_file_cache_spill_off");
+	DBConfig config;
+	LimitMemory(config, 8, directory);
+	DuckDB db(nullptr, &config);
+	Connection con(db);
+	REQUIRE_NO_FAIL(con.Query("SET external_file_cache_spill = false"));
+	ExternalFileCache cache(*db.instance);
+	CountingSourceFileSystem fs;
+	TestFile file("external_file_cache_spill_off.bin", 32 * BLOCK);
 	auto cached = file.Open(cache, fs);
 	for (idx_t round = 0; round < 2; round++) {
 		for (idx_t block = 0; block < 32; block++) {
@@ -2252,7 +2351,7 @@ TEST_CASE("External file cache gives memory back to the buffer pool", "[external
 	Connection con(db);
 	REQUIRE_NO_FAIL(con.Query("SET memory_limit='64MiB'"));
 	auto &cache = ExternalFileCache::Get(*db.instance);
-	constexpr idx_t FULL = ExternalFileCache::BlockCountOf(16 * 1024 * 1024);
+	constexpr idx_t FULL = BlockCountOf(16 * 1024 * 1024);
 	CountingSourceFileSystem fs;
 	TestFile file("external_file_cache_shrink.bin", FULL * BLOCK);
 	auto cached = file.Open(cache, fs);

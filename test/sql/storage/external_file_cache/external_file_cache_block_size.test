@@ -1,0 +1,145 @@
+# name: test/sql/storage/external_file_cache/external_file_cache_block_size.test
+# description: Test that a block size change applies to files cached afterwards, keeps cached blocks and reads stay correct
+# group: [external_file_cache]
+
+require parquet
+
+# the cache skips local files unless forced, these tests exercise it with local files
+statement ok
+set cache_local_files=true;
+
+statement ok
+set enable_external_file_cache=true;
+
+statement ok
+copy (select range i, md5(range::varchar) s from range(100000)) to '{TEST_DIR}/block_size_a.parquet';
+
+statement ok
+copy (select range i, md5(range::varchar) s from range(100000)) to '{TEST_DIR}/block_size_b.parquet';
+
+statement ok
+copy (select range i, md5(range::varchar) s from range(100000)) to '{TEST_DIR}/block_size_c.parquet';
+
+query I
+select current_setting('external_file_cache_remote_min_block_size');
+----
+131072
+
+query III
+select count(*), sum(i), sum(length(s)) from '{TEST_DIR}/block_size_a.parquet';
+----
+100000	4999950000	3200000
+
+query II
+select count(*) > 0, max(nr_bytes) from duckdb_external_file_cache() where path like '%block_size_a.parquet';
+----
+true	131072
+
+statement ok
+create temp table cached_bytes_before as select sum(nr_bytes) as total from duckdb_external_file_cache();
+
+statement ok
+set external_file_cache_remote_min_block_size=32768;
+
+# the blocks cached before the change stay
+query I
+select (select sum(nr_bytes) from duckdb_external_file_cache()) = (select total from cached_bytes_before);
+----
+true
+
+query III
+select count(*), sum(i), sum(length(s)) from '{TEST_DIR}/block_size_a.parquet';
+----
+100000	4999950000	3200000
+
+# a file cached after the change gets blocks of the new size
+query III
+select count(*), sum(i), sum(length(s)) from '{TEST_DIR}/block_size_b.parquet';
+----
+100000	4999950000	3200000
+
+query II
+select count(*) > 0, max(nr_bytes) from duckdb_external_file_cache() where path like '%block_size_b.parquet';
+----
+true	32768
+
+query I
+select max(nr_bytes) from duckdb_external_file_cache() where path like '%block_size_a.parquet';
+----
+131072
+
+# smaller pieces of a long read
+statement ok
+set external_file_cache_local_max_block_size=65536;
+
+statement ok
+set external_file_cache_remote_max_block_size=1048576;
+
+query III
+select count(*), sum(i), sum(length(s)) from '{TEST_DIR}/block_size_c.parquet';
+----
+100000	4999950000	3200000
+
+statement ok
+reset external_file_cache_remote_min_block_size;
+
+statement ok
+reset external_file_cache_local_max_block_size;
+
+statement ok
+reset external_file_cache_remote_max_block_size;
+
+query I
+select current_setting('external_file_cache_remote_max_block_size');
+----
+4194304
+
+# invalid values are rejected
+statement error
+set external_file_cache_remote_min_block_size=0;
+----
+value must be positive
+
+statement error
+set external_file_cache_remote_min_block_size=100000;
+----
+block size must be a power of two
+
+statement error
+set external_file_cache_remote_min_block_size=16384;
+----
+block size must be between 32768 and 262144 bytes
+
+statement error
+set external_file_cache_remote_min_block_size=524288;
+----
+block size must be between 32768 and 262144 bytes
+
+statement error
+set external_file_cache_local_max_block_size=0;
+----
+value must be positive
+
+statement error
+set external_file_cache_remote_max_block_size=0;
+----
+value must be positive
+
+statement error
+set external_file_cache_remote_max_block_size=3000000;
+----
+block size must be a power of two
+
+# evicted blocks of remote files keep a copy unless spilling is off
+query I
+select current_setting('external_file_cache_spill');
+----
+on
+
+statement ok
+set external_file_cache_spill=false;
+
+query I
+select current_setting('external_file_cache_spill');
+----
+off

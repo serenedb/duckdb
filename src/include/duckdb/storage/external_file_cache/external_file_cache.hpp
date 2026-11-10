@@ -116,9 +116,25 @@ using ExternalFileCacheSlot = atomic<BlockMemory *>;
 //! The slots of the blocks of one version of a file, and the blocks, which live as long as the slots
 class ExternalFileCacheBlocks {
 public:
-	explicit ExternalFileCacheBlocks(idx_t block_count);
+	ExternalFileCacheBlocks(idx_t block_size, idx_t file_size);
 	ExternalFileCacheBlocks(const ExternalFileCacheBlocks &) = delete;
 	ExternalFileCacheBlocks &operator=(const ExternalFileCacheBlocks &) = delete;
+
+	idx_t BlockSize() const {
+		return idx_t(1) << block_shift;
+	}
+	idx_t BlockOf(idx_t offset) const {
+		return offset >> block_shift;
+	}
+	idx_t BlockStart(idx_t block) const {
+		return block << block_shift;
+	}
+	idx_t OffsetInBlock(idx_t offset) const {
+		return offset & (BlockSize() - 1);
+	}
+	idx_t BlockCountOf(idx_t size) const {
+		return (size + BlockSize() - 1) >> block_shift;
+	}
 
 private:
 	friend class ExternalFileCache;
@@ -154,6 +170,7 @@ private:
 	template <class FUNC>
 	void ForEach(FUNC &&callback);
 
+	const uint8_t block_shift;
 	atomic<Directory *> current;
 	annotated_mutex lock;
 	//! Every directory the slots had: readers may still look at an earlier one
@@ -185,6 +202,12 @@ public:
 	//! The metadata the blocks belong to, as of this open
 	const ExternalFileCacheFileInfo &Info() const {
 		return info;
+	}
+	const ExternalFileCacheBlocks &Blocks() const {
+		return *blocks;
+	}
+	idx_t BlockSize() const {
+		return blocks->BlockSize();
 	}
 	//! Bytes of block [block] that lie inside the file
 	idx_t BlockBytes(idx_t block) const;
@@ -282,22 +305,17 @@ struct ExternalFileCacheStatistics {
 //! into the same block. A lookup writes nothing shared and a pin is one atomic add on the block.
 class ExternalFileCache {
 public:
-	static constexpr idx_t BLOCK_SIZE = 128ULL * 1024ULL;
-	//! Missing runs closer than this are fetched by one request
-	static constexpr idx_t MERGE_GAP = 4 * BLOCK_SIZE;
+	static constexpr idx_t DEFAULT_BLOCK_SIZE = 128ULL * 1024ULL;
+	static constexpr idx_t MIN_BLOCK_SIZE = 32ULL * 1024ULL;
+	static constexpr idx_t MAX_BLOCK_SIZE = 256ULL * 1024ULL;
+	//! Missing runs closer than this many bytes are fetched by one request
+	static constexpr idx_t MERGE_GAP = 512ULL * 1024ULL;
 	//! The largest run of blocks fetched together
 	static constexpr idx_t MAX_REQUEST = 16ULL * 1024ULL * 1024ULL;
-	//! A longer run is fetched as concurrent requests of at most this size, and the blocks of each are handed out as
-	//! soon as it lands
-	static constexpr idx_t PIECE_SIZE = 4ULL * 1024ULL * 1024ULL;
 	//! Bytes one file may have in flight, which bounds hints tuned for the page cache
 	static constexpr idx_t MAX_FILE_IN_FLIGHT = 64ULL * 1024ULL * 1024ULL;
-	//! The most blocks one read-ahead fetches
-	static constexpr idx_t READ_AHEAD_BLOCKS = 64;
-
-	static constexpr idx_t BlockCountOf(idx_t size) {
-		return (size + BLOCK_SIZE - 1) / BLOCK_SIZE;
-	}
+	//! The most bytes one read-ahead fetches
+	static constexpr idx_t MAX_READ_AHEAD = 8ULL * 1024ULL * 1024ULL;
 
 public:
 	explicit ExternalFileCache(DatabaseInstance &db);
@@ -331,7 +349,7 @@ public:
 	ExternalFileCachePin Pin(ExternalFileCacheFile &file, idx_t block);
 	//! Pins block [block] of [file] for a reader that may read it in order: when the reader's last pin was of the
 	//! block before and [ahead] holds, the blocks from [block] on are fetched ahead, twice as many as the time before
-	//! (2 to READ_AHEAD_BLOCKS)
+	//! (2 blocks up to MAX_READ_AHEAD bytes)
 	ExternalFileCachePin PinInOrder(const shared_ptr<ExternalFileCacheFile> &file, idx_t block,
 	                                ExternalFileCacheReadAhead &read_ahead, bool ahead);
 	//! Pins the bytes of [offset, offset + size) of [file] that lie inside it, a pin per block they span, fetching the
@@ -404,10 +422,10 @@ private:
 	//! Lets the slots of [blocks] go, destroying their blocks and the copies of them at once or with their last pin
 	void DropBlocks(ExternalFileCacheBlocks &blocks);
 
-	//! Gives [record] new blocks for [info], returning the version it replaces; sets [sweep] when the record is new and
-	//! the records are due a sweep
-	optional<FileRecord> NewVersion(FileRecord &record, const ExternalFileCacheFileInfo &info, bool &sweep)
-	    DUCKDB_REQUIRES(file_lock);
+	//! Gives [record] new blocks of [block_size] bytes for [info], returning the version it replaces; sets [sweep] when
+	//! the record is new and the records are due a sweep
+	optional<FileRecord> NewVersion(FileRecord &record, const ExternalFileCacheFileInfo &info, idx_t block_size,
+	                                bool &sweep) DUCKDB_REQUIRES(file_lock);
 	//! Drops the blocks of [replaced], a version of a file the records no longer name, and sweeps the records when
 	//! [sweep]
 	void RetireRecord(optional<FileRecord> replaced, bool sweep);
@@ -424,7 +442,7 @@ private:
 	//! entries are blocks the run does not fetch
 	void Fetch(ExternalFileCacheFile &file, idx_t first_block, std::span<optional_ptr<BlockMemory>> claimed,
 	           std::span<ExternalFileCachePin> pins);
-	//! Fetches the runs of [plans] of [file] as concurrent pieces of at most PIECE_SIZE, pinning each block read in
+	//! Fetches the runs of [plans] of [file] as concurrent pieces of at most PieceBlocks, pinning each block read in
 	//! [pins], which start at block [first]; throws the first error, and leaves the claims of pieces it did not fetch
 	void FetchConcurrently(ExternalFileCacheFile &file, vector<RunPlan> &plans, idx_t first,
 	                       vector<ExternalFileCachePin> &pins);
@@ -432,9 +450,11 @@ private:
 	void WaitForLoad(BlockMemory &memory);
 
 	//! Fetches the [claimed] blocks of the run of [file] from [first_block] in the background, a task per piece of at
-	//! most PIECE_SIZE
+	//! most PieceBlocks
 	void ScheduleFetch(const shared_ptr<ExternalFileCacheFile> &file, idx_t first_block,
 	                   vector<optional_ptr<BlockMemory>> claimed);
+	idx_t PieceBlocks(const ExternalFileCacheFile &file) const;
+	idx_t NewBlockSize() const;
 	ProducerToken &Producer();
 	void FinishFetchTask(idx_t bytes);
 	//! Takes a queued fetch task, which a waiter runs itself and shutdown abandons

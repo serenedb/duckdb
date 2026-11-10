@@ -4,6 +4,7 @@
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/helper.hpp"
 #include "duckdb/main/database.hpp"
+#include "duckdb/main/settings.hpp"
 #include "duckdb/parallel/task.hpp"
 #include "duckdb/parallel/task_executor.hpp"
 #include "duckdb/storage/buffer/block_handle.hpp"
@@ -11,6 +12,7 @@
 
 #include <absl/cleanup/cleanup.h>
 #include <algorithm>
+#include <bit>
 #include <cstring>
 
 #if defined(__has_feature)
@@ -53,9 +55,9 @@ void ReleaseClaims(std::span<optional_ptr<BlockMemory>> claimed) {
 	}
 }
 
-idx_t BlockBytesOf(idx_t file_size, idx_t block) {
-	const auto start = block * ExternalFileCache::BLOCK_SIZE;
-	return start >= file_size ? 0 : MinValue(ExternalFileCache::BLOCK_SIZE, file_size - start);
+idx_t BlockBytesOf(const ExternalFileCacheBlocks &blocks, idx_t file_size, idx_t block) {
+	const auto start = blocks.BlockStart(block);
+	return start >= file_size ? 0 : MinValue(blocks.BlockSize(), file_size - start);
 }
 
 struct BlockRange {
@@ -65,34 +67,32 @@ struct BlockRange {
 
 //! The blocks [first, end) that hold the bytes [offset, offset + size) of a file of [file_size] bytes, as far as they
 //! lie inside it
-BlockRange BlocksOf(idx_t file_size, idx_t offset, idx_t size) {
+BlockRange BlocksOf(const ExternalFileCacheBlocks &blocks, idx_t file_size, idx_t offset, idx_t size) {
 	if (size == 0 || offset >= file_size) {
 		return {0, 0};
 	}
-	return {offset / ExternalFileCache::BLOCK_SIZE,
-	        (MinValue(offset + size, file_size) - 1) / ExternalFileCache::BLOCK_SIZE + 1};
+	return {blocks.BlockOf(offset), blocks.BlockOf(MinValue(offset + size, file_size) - 1) + 1};
 }
 
 //! Narrows [pins] of the blocks that hold [offset, end) of a file to those bytes
-void NarrowPins(vector<ExternalFileCachePin> &pins, idx_t offset, idx_t end) {
+void NarrowPins(const ExternalFileCacheBlocks &blocks, vector<ExternalFileCachePin> &pins, idx_t offset, idx_t end) {
 	if (pins.empty()) {
 		return;
 	}
 	auto &last = pins.back();
-	last.Narrow(0, end - (offset / ExternalFileCache::BLOCK_SIZE + pins.size() - 1) * ExternalFileCache::BLOCK_SIZE);
+	last.Narrow(0, end - blocks.BlockStart(blocks.BlockOf(offset) + pins.size() - 1));
 	auto &head = pins.front();
-	head.Narrow(offset % ExternalFileCache::BLOCK_SIZE, head.Size() - offset % ExternalFileCache::BLOCK_SIZE);
+	head.Narrow(blocks.OffsetInBlock(offset), head.Size() - blocks.OffsetInBlock(offset));
 }
 
 //! Calls [callback] with the offset and the block count of each piece of a run of [count] blocks: equal pieces of at
-//! most PIECE_SIZE
+//! most [max_blocks]
 template <class FUNC>
-void ForEachPiece(idx_t count, FUNC &&callback) {
+void ForEachPiece(idx_t count, idx_t max_blocks, FUNC &&callback) {
 	if (count == 0) {
 		return;
 	}
-	constexpr idx_t MAX_BLOCKS = ExternalFileCache::PIECE_SIZE / ExternalFileCache::BLOCK_SIZE;
-	const auto pieces = (count + MAX_BLOCKS - 1) / MAX_BLOCKS;
+	const auto pieces = (count + max_blocks - 1) / max_blocks;
 	const auto piece_blocks = (count + pieces - 1) / pieces;
 	for (idx_t offset = 0; offset < count; offset += piece_blocks) {
 		callback(offset, MinValue(piece_blocks, count - offset));
@@ -120,8 +120,10 @@ void ExternalFileCacheBlocks::ForEach(FUNC &&callback) {
 	}
 }
 
-ExternalFileCacheBlocks::ExternalFileCacheBlocks(idx_t block_count) {
-	auto directory = make_uniq<Directory>(MaxValue<idx_t>(1, (block_count + CHUNK - 1) / CHUNK));
+ExternalFileCacheBlocks::ExternalFileCacheBlocks(idx_t block_size, idx_t file_size)
+    : block_shift(NumericCast<uint8_t>(std::countr_zero(block_size))) {
+	D_ASSERT(IsPowerOfTwo(block_size));
+	auto directory = make_uniq<Directory>(MaxValue<idx_t>(1, (BlockCountOf(file_size) + CHUNK - 1) / CHUNK));
 	current.store(directory.get(), std::memory_order_release);
 	annotated_lock_guard<annotated_mutex> guard(lock);
 	directories.push_back(std::move(directory));
@@ -186,7 +188,7 @@ shared_ptr<FileHandle> ExternalFileCacheFile::Source() const {
 }
 
 idx_t ExternalFileCacheFile::BlockBytes(idx_t block) const {
-	return BlockBytesOf(GetSize(), block);
+	return BlockBytesOf(*blocks, GetSize(), block);
 }
 
 //===--------------------------------------------------------------------===//
@@ -209,17 +211,19 @@ void ExternalFileCacheAppender::Append(const_data_ptr_t data, idx_t count) {
 }
 
 FileWriteWindow ExternalFileCacheAppender::Window() {
-	const auto offset = size % ExternalFileCache::BLOCK_SIZE;
+	const auto &blocks = file->Blocks();
+	const auto offset = blocks.OffsetInBlock(size);
 	if (!current.IsValid()) {
-		current = file->GetCache().CreateBlock(*file, size / ExternalFileCache::BLOCK_SIZE);
+		current = file->GetCache().CreateBlock(*file, blocks.BlockOf(size));
 	}
-	return {current.GetDataMutable() + offset, ExternalFileCache::BLOCK_SIZE - offset};
+	return {current.GetDataMutable() + offset, blocks.BlockSize() - offset};
 }
 
 void ExternalFileCacheAppender::Commit(idx_t count) {
-	const auto offset = size % ExternalFileCache::BLOCK_SIZE;
+	const auto &blocks = file->Blocks();
+	const auto offset = blocks.OffsetInBlock(size);
 	D_ASSERT(current.IsValid() || count == 0);
-	D_ASSERT(offset + count <= ExternalFileCache::BLOCK_SIZE);
+	D_ASSERT(offset + count <= blocks.BlockSize());
 	if (count == 0) {
 		return;
 	}
@@ -227,19 +231,20 @@ void ExternalFileCacheAppender::Commit(idx_t count) {
 	if (file->IsUnbacked()) {
 		file->GetCache().SetUnbackedSize(*file, size);
 	}
-	if (offset + count == ExternalFileCache::BLOCK_SIZE) {
+	if (offset + count == blocks.BlockSize()) {
 		current.Reset();
 	}
 }
 
 ExternalFileCachePin ExternalFileCacheAppender::ShareWindow(idx_t count) {
-	return current.Share(size % ExternalFileCache::BLOCK_SIZE, count);
+	return current.Share(file->Blocks().OffsetInBlock(size), count);
 }
 
 void ExternalFileCacheAppender::Finish(const string &version_tag, timestamp_t last_modified) {
 	if (current.IsValid()) {
-		const auto end = size % ExternalFileCache::BLOCK_SIZE;
-		UnpoisonPastEnd(current.GetDataMutable() + end, ExternalFileCache::BLOCK_SIZE - end);
+		const auto &blocks = file->Blocks();
+		const auto end = blocks.OffsetInBlock(size);
+		UnpoisonPastEnd(current.GetDataMutable() + end, blocks.BlockSize() - end);
 		current.Reset();
 	}
 	if (!file->IsUnbacked()) {
@@ -337,8 +342,9 @@ void ExternalFileCache::DropBlocks(ExternalFileCacheBlocks &blocks) {
 	}
 }
 
-optional<ExternalFileCache::FileRecord>
-ExternalFileCache::NewVersion(FileRecord &record, const ExternalFileCacheFileInfo &info, bool &sweep) {
+optional<ExternalFileCache::FileRecord> ExternalFileCache::NewVersion(FileRecord &record,
+                                                                      const ExternalFileCacheFileInfo &info,
+                                                                      idx_t block_size, bool &sweep) {
 	optional<FileRecord> replaced;
 	if (record.blocks) {
 		replaced = std::move(record);
@@ -346,7 +352,7 @@ ExternalFileCache::NewVersion(FileRecord &record, const ExternalFileCacheFileInf
 		sweep = true;
 		sweep_at = NumericLimits<idx_t>::Maximum();
 	}
-	record = FileRecord {info, make_shared_ptr<ExternalFileCacheBlocks>(BlockCountOf(info.validation.file_size))};
+	record = FileRecord {info, make_shared_ptr<ExternalFileCacheBlocks>(block_size, info.validation.file_size)};
 	return replaced;
 }
 
@@ -365,12 +371,13 @@ shared_ptr<ExternalFileCacheFile> ExternalFileCache::OpenFile(const string &path
 	FileRecord opened;
 	optional<FileRecord> replaced;
 	bool sweep = false;
+	const auto block_size = NewBlockSize();
 	{
 		annotated_lock_guard<annotated_mutex> guard(file_lock);
 		auto &record = files[path];
 		if (!record.blocks || (validate ? !CacheValidation::IsValid(record.info.validation, current.validation)
 		                                : record.info.validation.IsExpired())) {
-			replaced = NewVersion(record, current, sweep);
+			replaced = NewVersion(record, current, block_size, sweep);
 		} else if (validate) {
 			const auto preserved = record.info.validation.cache_valid_until;
 			record.info = current;
@@ -429,7 +436,7 @@ void ExternalFileCache::ForbidReuse(ExternalFileCacheFile &file) {
 
 shared_ptr<ExternalFileCacheFile> ExternalFileCache::CreateUnbackedFile(const string &path) {
 	return make_shared_ptr<ExternalFileCacheFile>(*this, path, true, ExternalFileCacheFileInfo(), nullptr,
-	                                              make_shared_ptr<ExternalFileCacheBlocks>(0));
+	                                              make_shared_ptr<ExternalFileCacheBlocks>(DEFAULT_BLOCK_SIZE, 0));
 }
 
 shared_ptr<ExternalFileCacheFile> ExternalFileCache::CreateWrittenFile(const string &path) {
@@ -437,10 +444,11 @@ shared_ptr<ExternalFileCacheFile> ExternalFileCache::CreateWrittenFile(const str
 	FileRecord created;
 	optional<FileRecord> replaced;
 	bool sweep = false;
+	const auto block_size = NewBlockSize();
 	{
 		annotated_lock_guard<annotated_mutex> guard(file_lock);
 		auto &record = files[path];
-		replaced = NewVersion(record, info, sweep);
+		replaced = NewVersion(record, info, block_size, sweep);
 		created = record;
 	}
 	RetireRecord(std::move(replaced), sweep);
@@ -512,7 +520,7 @@ BlockMemory &ExternalFileCache::MemoryOf(const ExternalFileCacheFile &file, Exte
 	                                 : file.Info().on_disk ? DestroyBufferUpon::EVICTION
 	                                                       : DestroyBufferUpon::KEEP_COPY;
 	auto handle =
-	    buffer_manager.RegisterUnloadedMemory(MemoryTag::EXTERNAL_FILE_CACHE, BLOCK_SIZE, 0, destroy_buffer_upon);
+	    buffer_manager.RegisterUnloadedMemory(MemoryTag::EXTERNAL_FILE_CACHE, file.BlockSize(), 0, destroy_buffer_upon);
 	auto &created = handle->GetMemory();
 	if (!slot.compare_exchange_strong(memory, &created, std::memory_order_seq_cst)) {
 		return *memory;
@@ -548,7 +556,7 @@ void ExternalFileCache::WaitForLoad(BlockMemory &memory) {
 }
 
 bool ExternalFileCache::IsCached(ExternalFileCacheFile &file, idx_t offset, idx_t size) const {
-	const auto range = BlocksOf(file.GetSize(), offset, size);
+	const auto range = BlocksOf(*file.blocks, file.GetSize(), offset, size);
 	for (auto block = range.first; block < range.end; block++) {
 		if (IsMissing(file.blocks->Load(block))) {
 			return false;
@@ -576,14 +584,16 @@ void ExternalFileCache::Fetch(ExternalFileCacheFile &file, idx_t first_block,
 		return;
 	}
 	TaskScheduler::BlockingScope blocking;
+	const auto &blocks = *file.blocks;
+	const auto block_size = blocks.BlockSize();
 	vector<optional<BlockLoad>> loads(claimed.size());
 	for (idx_t i = first; i <= last; i++) {
 		if (claimed[i]) {
-			loads[i].emplace(buffer_manager.PrepareLoad(*claimed[i], BLOCK_SIZE, 0));
+			loads[i].emplace(buffer_manager.PrepareLoad(*claimed[i], block_size, 0));
 		}
 	}
-	const auto start = (first_block + first) * BLOCK_SIZE;
-	const auto end = MinValue(file.GetSize(), (first_block + last + 1) * BLOCK_SIZE);
+	const auto start = blocks.BlockStart(first_block + first);
+	const auto end = MinValue(file.GetSize(), blocks.BlockStart(first_block + last + 1));
 	auto source = file.Source();
 	vector<FileReadTarget> targets;
 	targets.reserve(last - first + 1);
@@ -594,7 +604,7 @@ void ExternalFileCache::Fetch(ExternalFileCacheFile &file, idx_t first_block,
 			continue;
 		}
 		auto data = loads[i]->buffer->GetDataMutable();
-		UnpoisonPastEnd(data + block_bytes, BLOCK_SIZE - block_bytes);
+		UnpoisonPastEnd(data + block_bytes, block_size - block_bytes);
 		targets.push_back({data, block_bytes});
 	}
 	source->file_system.ReadScattered(*source, targets, start);
@@ -611,7 +621,7 @@ void ExternalFileCache::Fetch(ExternalFileCacheFile &file, idx_t first_block,
 		}
 		shared_ptr<BlockHandle> unshared;
 		if (!shareable) {
-			unshared = buffer_manager.RegisterUnloadedMemory(MemoryTag::EXTERNAL_FILE_CACHE, BLOCK_SIZE, 0,
+			unshared = buffer_manager.RegisterUnloadedMemory(MemoryTag::EXTERNAL_FILE_CACHE, block_size, 0,
 			                                                 DestroyBufferUpon::UNPIN);
 		}
 		auto buffer = buffer_manager.CompleteLoad(unshared ? unshared->GetMemory() : *claimed[i], std::move(*loads[i]));
@@ -673,10 +683,12 @@ ExternalFileCachePin ExternalFileCache::PinInOrder(const shared_ptr<ExternalFile
 		read_ahead.blocks = 0;
 		read_ahead.end = 0;
 	} else if (ahead && read_ahead.end <= block + 1 + read_ahead.blocks / 2) {
-		read_ahead.blocks = MinValue<idx_t>(MaxValue<idx_t>(read_ahead.blocks * 2, 2), READ_AHEAD_BLOCKS);
+		const auto &blocks = file->Blocks();
+		read_ahead.blocks = MinValue<idx_t>(MaxValue<idx_t>(read_ahead.blocks * 2, 2), blocks.BlockOf(MAX_READ_AHEAD));
 		read_ahead.end = MaxValue(block + 1, read_ahead.end) + read_ahead.blocks;
 		try {
-			Prefetch(file, block * BLOCK_SIZE, (read_ahead.end - block) * BLOCK_SIZE, ExternalFileCachePrefetch::HINT);
+			Prefetch(file, blocks.BlockStart(block), blocks.BlockStart(read_ahead.end - block),
+			         ExternalFileCachePrefetch::HINT);
 		} catch (...) {
 		}
 	}
@@ -686,14 +698,15 @@ ExternalFileCachePin ExternalFileCache::PinInOrder(const shared_ptr<ExternalFile
 template <class ADMIT>
 ExternalFileCache::RunPlan ExternalFileCache::PlanRun(ExternalFileCacheFile &file, idx_t block, idx_t end,
                                                       ADMIT &&admit) {
+	const auto &blocks = *file.blocks;
 	RunPlan plan {block, {}, block, false};
-	plan.claimed.reserve(MAX_REQUEST / BLOCK_SIZE);
+	plan.claimed.reserve(blocks.BlockOf(MAX_REQUEST));
 	absl::Cleanup abandon = [&] {
 		ReleaseClaims(plan.claimed);
 	};
 	idx_t bytes = 0;
 	idx_t gap = 0;
-	for (; plan.next < end && (plan.claimed.size() + 1) * BLOCK_SIZE <= MAX_REQUEST; plan.next++) {
+	for (; plan.next < end && blocks.BlockStart(plan.claimed.size() + 1) <= MAX_REQUEST; plan.next++) {
 		if (IsMissing(file.blocks->Load(plan.next))) {
 			const auto block_bytes = file.BlockBytes(plan.next);
 			if (!admit(bytes + block_bytes)) {
@@ -708,7 +721,7 @@ ExternalFileCache::RunPlan ExternalFileCache::PlanRun(ExternalFileCacheFile &fil
 				continue;
 			}
 		}
-		if ((gap + 1) * BLOCK_SIZE > MERGE_GAP) {
+		if (blocks.BlockStart(gap + 1) > MERGE_GAP) {
 			break;
 		}
 		gap++;
@@ -723,7 +736,7 @@ ExternalFileCache::RunPlan ExternalFileCache::PlanRun(ExternalFileCacheFile &fil
 
 vector<ExternalFileCachePin> ExternalFileCache::PinRange(ExternalFileCacheFile &file, idx_t offset, idx_t size) {
 	vector<ExternalFileCachePin> result;
-	const auto range = BlocksOf(file.GetSize(), offset, size);
+	const auto range = BlocksOf(*file.blocks, file.GetSize(), offset, size);
 	if (range.first == range.end) {
 		return result;
 	}
@@ -758,15 +771,16 @@ vector<ExternalFileCachePin> ExternalFileCache::PinRange(ExternalFileCacheFile &
 			result[block - range.first] = Pin(file, block);
 		}
 	}
-	NarrowPins(result, offset, MinValue(offset + size, file.GetSize()));
+	NarrowPins(*file.blocks, result, offset, MinValue(offset + size, file.GetSize()));
 	return result;
 }
 
 ExternalFileCachePin ExternalFileCache::PinBytes(ExternalFileCacheFile &file, idx_t offset, idx_t size) {
 	D_ASSERT(size != 0 && offset + size <= file.GetSize());
-	if ((offset + size - 1) / BLOCK_SIZE == offset / BLOCK_SIZE) {
-		auto pin = Pin(file, offset / BLOCK_SIZE);
-		pin.Narrow(offset % BLOCK_SIZE, size);
+	const auto &blocks = *file.blocks;
+	if (blocks.BlockOf(offset + size - 1) == blocks.BlockOf(offset)) {
+		auto pin = Pin(file, blocks.BlockOf(offset));
+		pin.Narrow(blocks.OffsetInBlock(offset), size);
 		return pin;
 	}
 	auto pins = PinRange(file, offset, size);
@@ -781,9 +795,10 @@ ExternalFileCachePin ExternalFileCache::PinBytes(ExternalFileCacheFile &file, id
 
 void ExternalFileCache::FetchConcurrently(ExternalFileCacheFile &file, vector<RunPlan> &plans, idx_t first,
                                           vector<ExternalFileCachePin> &pins) {
+	const auto piece_blocks = PieceBlocks(file);
 	const auto for_each_piece = [&](auto &&callback) {
 		for (auto &plan : plans) {
-			ForEachPiece(plan.claimed.size(), [&](idx_t offset, idx_t count) {
+			ForEachPiece(plan.claimed.size(), piece_blocks, [&](idx_t offset, idx_t count) {
 				const auto piece_first = plan.first_block + offset;
 				callback(piece_first, std::span(plan.claimed).subspan(offset, count),
 				         std::span(pins).subspan(piece_first - first, count));
@@ -812,7 +827,7 @@ void ExternalFileCache::FetchConcurrently(ExternalFileCacheFile &file, vector<Ru
 
 vector<ExternalFileCachePin> ExternalFileCache::TryPinRange(ExternalFileCacheFile &file, idx_t offset, idx_t size) {
 	vector<ExternalFileCachePin> result;
-	const auto range = BlocksOf(file.GetSize(), offset, size);
+	const auto range = BlocksOf(*file.blocks, file.GetSize(), offset, size);
 	result.reserve(range.end - range.first);
 	for (auto block = range.first; block < range.end; block++) {
 		const auto slot = file.blocks->Find(block);
@@ -823,7 +838,7 @@ vector<ExternalFileCachePin> ExternalFileCache::TryPinRange(ExternalFileCacheFil
 		}
 		result.push_back(std::move(pin));
 	}
-	NarrowPins(result, offset, MinValue(offset + size, file.GetSize()));
+	NarrowPins(*file.blocks, result, offset, MinValue(offset + size, file.GetSize()));
 	return result;
 }
 
@@ -872,7 +887,7 @@ void ExternalFileCache::Prefetch(const shared_ptr<ExternalFileCacheFile> &file_p
 	if (file.IsUnbacked()) {
 		return;
 	}
-	const auto range = BlocksOf(file.GetSize(), offset, size);
+	const auto range = BlocksOf(*file.blocks, file.GetSize(), offset, size);
 	const auto admit = [&](idx_t bytes) {
 		return kind == ExternalFileCachePrefetch::NEED ||
 		       (file.in_flight.load(std::memory_order_relaxed) + bytes <= MAX_FILE_IN_FLIGHT &&
@@ -917,9 +932,10 @@ void ExternalFileCache::MarkUnused(const ExternalFileCacheFile &file, idx_t offs
 	if (size == 0 || offset >= file_size) {
 		return;
 	}
+	const auto &blocks = *file.blocks;
 	const auto end = MinValue(offset + size, file_size);
-	const auto last = end == file_size ? (end - 1) / BLOCK_SIZE + 1 : end / BLOCK_SIZE;
-	for (auto block = (offset + BLOCK_SIZE - 1) / BLOCK_SIZE; block < last; block++) {
+	const auto last = end == file_size ? blocks.BlockOf(end - 1) + 1 : blocks.BlockOf(end);
+	for (auto block = blocks.BlockCountOf(offset); block < last; block++) {
 		if (const auto memory = file.blocks->Load(block)) {
 			memory->TakeReferenced();
 		}
@@ -933,7 +949,7 @@ void ExternalFileCache::ScheduleFetch(const shared_ptr<ExternalFileCacheFile> &f
 		ReleaseClaims(std::span(claimed).subspan(handed));
 	};
 	auto &scheduler = TaskScheduler::GetScheduler(db);
-	ForEachPiece(claimed.size(), [&](idx_t offset, idx_t count) {
+	ForEachPiece(claimed.size(), PieceBlocks(*file), [&](idx_t offset, idx_t count) {
 		const auto piece_first = first_block + offset;
 		const auto range = std::span(claimed).subspan(offset, count);
 		vector<optional_ptr<BlockMemory>> piece_claimed(range.begin(), range.end());
@@ -972,8 +988,8 @@ ExternalFileCachePin ExternalFileCache::CreateBlock(ExternalFileCacheFile &file,
 	absl::Cleanup finish = [&] {
 		memory.FinishLoad();
 	};
-	auto buffer = buffer_manager.CompleteLoad(memory, buffer_manager.PrepareLoad(memory, BLOCK_SIZE, 0));
-	return ExternalFileCachePin(std::move(buffer), BLOCK_SIZE);
+	auto buffer = buffer_manager.CompleteLoad(memory, buffer_manager.PrepareLoad(memory, file.BlockSize(), 0));
+	return ExternalFileCachePin(std::move(buffer), file.BlockSize());
 }
 
 void ExternalFileCache::SetUnbackedSize(ExternalFileCacheFile &file, idx_t size) {
@@ -1033,11 +1049,22 @@ vector<CachedFileInformation> ExternalFileCache::GetCachedFileInformation() cons
 			const bool loaded = memory && memory->GetState() == BlockState::BLOCK_LOADED;
 			const bool spilled = memory && memory->HasTemporaryFile();
 			if (loaded || spilled) {
-				result.push_back({file.path, BlockBytesOf(file.size, block), block * BLOCK_SIZE, loaded, spilled});
+				result.push_back({file.path, BlockBytesOf(*file.blocks, file.size, block),
+				                  file.blocks->BlockStart(block), loaded, spilled});
 			}
 		});
 	}
 	return result;
+}
+
+idx_t ExternalFileCache::NewBlockSize() const {
+	return Settings::Get<ExternalFileCacheRemoteMinBlockSizeSetting>(db);
+}
+
+idx_t ExternalFileCache::PieceBlocks(const ExternalFileCacheFile &file) const {
+	const idx_t piece = file.Info().on_disk ? Settings::Get<ExternalFileCacheLocalMaxBlockSizeSetting>(db)
+	                                        : Settings::Get<ExternalFileCacheRemoteMaxBlockSizeSetting>(db);
+	return MaxValue<idx_t>(1, file.Blocks().BlockOf(MinValue(piece, MAX_REQUEST)));
 }
 
 } // namespace duckdb

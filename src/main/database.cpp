@@ -557,9 +557,9 @@ public:
 			}
 		}
 		if (!buffer) {
-			buffer = make_unsafe_uniq_array_uninitialized<data_t>(ExternalFileCache::BLOCK_SIZE);
+			buffer = make_unsafe_uniq_array_uninitialized<data_t>(ExternalFileCache::DEFAULT_BLOCK_SIZE);
 		}
-		window = {buffer.get(), ExternalFileCache::BLOCK_SIZE};
+		window = {buffer.get(), ExternalFileCache::DEFAULT_BLOCK_SIZE};
 		return window;
 	}
 
@@ -799,8 +799,8 @@ void DatabaseInstance::Configure(DBConfig &new_config, const char *database_path
 		const auto virtual_memory_size = DBConfig::GetSystemAvailableMemory(*config.file_system) * 8 / 10;
 		config.block_allocator = make_uniq<BlockAllocator>(*config.allocator, default_block_size, virtual_memory_size,
 		                                                   config.options.block_allocator_size);
-		if (ExternalFileCache::BLOCK_SIZE != default_block_size) {
-			config.block_allocator->AddHugePagePool(ExternalFileCache::BLOCK_SIZE, virtual_memory_size);
+		if (ExternalFileCache::DEFAULT_BLOCK_SIZE != default_block_size) {
+			config.block_allocator->AddHugePagePool(ExternalFileCache::DEFAULT_BLOCK_SIZE, virtual_memory_size);
 		}
 	}
 	config.replacement_scans = std::move(new_config.replacement_scans);

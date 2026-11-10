@@ -654,7 +654,8 @@ void StandardBufferManager::WriteTemporaryBuffer(QueryContext context, MemoryTag
 
 bool StandardBufferManager::TryWriteTemporaryCopy(QueryContext context, MemoryTag tag, block_id_t block_id,
                                                   FileBuffer &buffer) {
-	if (!HasTemporaryDirectory() || !TemporaryFileManager::FitsGroupedFiles(buffer)) {
+	if (!HasTemporaryDirectory() || !TemporaryFileManager::FitsGroupedFiles(buffer) ||
+	    !Settings::Get<ExternalFileCacheSpillSetting>(db)) {
 		return false;
 	}
 	RequireTemporaryDirectory();

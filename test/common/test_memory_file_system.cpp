@@ -12,7 +12,7 @@ namespace duckdb {
 
 namespace {
 
-constexpr idx_t MEMORY_BLOCK = ExternalFileCache::BLOCK_SIZE;
+constexpr idx_t MEMORY_BLOCK = ExternalFileCache::DEFAULT_BLOCK_SIZE;
 
 uint8_t ByteAt(idx_t offset) {
 	return static_cast<uint8_t>((offset * 13 + offset / MEMORY_BLOCK) & 0xFF);

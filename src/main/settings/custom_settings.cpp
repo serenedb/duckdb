@@ -684,6 +684,38 @@ void EnableExternalFileCacheSetting::OnSet(SettingCallbackInfo &info, Value &inp
 }
 
 //===----------------------------------------------------------------------===//
+// External File Cache Block Sizes
+//===----------------------------------------------------------------------===//
+static void ValidateExternalFileCacheBlockSize(const char *name, const Value &input) {
+	const auto bytes = input.GetValue<uint64_t>();
+	if (bytes == 0) {
+		throw InvalidInputException("Invalid option for %s: value must be positive", string(name));
+	}
+	if (!IsPowerOfTwo(bytes)) {
+		throw InvalidInputException("Invalid option for %s: block size must be a power of two, got %llu", string(name),
+		                            bytes);
+	}
+}
+
+void ExternalFileCacheLocalMaxBlockSizeSetting::OnSet(SettingCallbackInfo &info, Value &input) {
+	ValidateExternalFileCacheBlockSize(Name, input);
+}
+
+void ExternalFileCacheRemoteMaxBlockSizeSetting::OnSet(SettingCallbackInfo &info, Value &input) {
+	ValidateExternalFileCacheBlockSize(Name, input);
+}
+
+void ExternalFileCacheRemoteMinBlockSizeSetting::OnSet(SettingCallbackInfo &info, Value &input) {
+	ValidateExternalFileCacheBlockSize(Name, input);
+	const auto bytes = input.GetValue<uint64_t>();
+	if (bytes < ExternalFileCache::MIN_BLOCK_SIZE || bytes > ExternalFileCache::MAX_BLOCK_SIZE) {
+		throw InvalidInputException("Invalid option for %s: block size must be between %llu and %llu bytes, got %llu",
+		                            string(Name), ExternalFileCache::MIN_BLOCK_SIZE, ExternalFileCache::MAX_BLOCK_SIZE,
+		                            bytes);
+	}
+}
+
+//===----------------------------------------------------------------------===//
 // External File Cache Min Memory
 //===----------------------------------------------------------------------===//
 void ExternalFileCacheMinMemorySetting::SetGlobal(DatabaseInstance *db, DBConfig &config, const Value &input) {

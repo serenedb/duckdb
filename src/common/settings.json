@@ -905,11 +905,57 @@
         ]
     },
     {
+        "name": "external_file_cache_local_max_block_size",
+        "description": "Size in bytes of the pieces a long read of a local file the external file cache caches (cache_local_files) is split into, which are fetched in parallel.",
+        "type": "UBIGINT",
+        "default_scope": "global",
+        "default_value": "4194304",
+        "custom_implementation": [
+            "set"
+        ],
+        "on_callbacks": [
+            "set"
+        ]
+    },
+    {
         "name": "external_file_cache_min_memory",
         "description": "The memory that external file cache blocks of remote files keep when queries need memory (e.g. 1GB), by default 5% of memory_limit; below it, queries spill to the temporary directory first.",
         "type": "VARCHAR",
         "scope": "global",
         "custom_implementation": true
+    },
+    {
+        "name": "external_file_cache_remote_max_block_size",
+        "description": "Size in bytes of the pieces a long read of a remote file (e.g. HTTP/S3) is split into, which are fetched in parallel.",
+        "type": "UBIGINT",
+        "default_scope": "global",
+        "default_value": "4194304",
+        "custom_implementation": [
+            "set"
+        ],
+        "on_callbacks": [
+            "set"
+        ]
+    },
+    {
+        "name": "external_file_cache_remote_min_block_size",
+        "description": "Size in bytes of the blocks the external file cache keeps of the files it starts caching (32KB to 256KB): reads are rounded out to aligned blocks of this size, so tiny reads do not each cost a request.",
+        "type": "UBIGINT",
+        "default_scope": "global",
+        "default_value": "131072",
+        "custom_implementation": [
+            "set"
+        ],
+        "on_callbacks": [
+            "set"
+        ]
+    },
+    {
+        "name": "external_file_cache_spill",
+        "description": "Whether evicted external file cache blocks of remote files keep a copy in the temporary directory, up to external_file_cache_spill_size, so that they are re-read from there rather than re-fetched from the source.",
+        "type": "BOOLEAN",
+        "scope": "global",
+        "default_value": "true"
     },
     {
         "name": "external_file_cache_spill_size",
