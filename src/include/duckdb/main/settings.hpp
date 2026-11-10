@@ -1621,6 +1621,22 @@ struct ExtensionRepositoryDirectorySetting {
 	static void OnSet(SettingCallbackInfo &info, Value &input);
 };
 
+struct ExternalFileCacheLocalMaxBlockSizeSetting {
+	using RETURN_TYPE = idx_t;
+	static constexpr const char *Name = "external_file_cache_local_max_block_size";
+	static constexpr const char *Description =
+	    "Size in bytes of the pieces a long read of a local file the external file cache caches (cache_local_files) is "
+	    "split into, which are fetched in parallel.";
+	static constexpr const char *InputType = "UBIGINT";
+	static constexpr bool IsDebug = false;
+	static constexpr bool IsDeprecated = false;
+	static constexpr bool NoResetAll = false;
+	static constexpr const char *DefaultValue = "4194304";
+	static constexpr SettingScopeTarget Scope = SettingScopeTarget::GLOBAL_DEFAULT;
+	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
+	static void OnSet(SettingCallbackInfo &info, Value &input);
+};
+
 struct ExternalFileCacheMinMemorySetting {
 	using RETURN_TYPE = string;
 	static constexpr const char *Name = "external_file_cache_min_memory";
@@ -1634,6 +1650,52 @@ struct ExternalFileCacheMinMemorySetting {
 	static void SetGlobal(DatabaseInstance *db, DBConfig &config, const Value &parameter);
 	static void ResetGlobal(DatabaseInstance *db, DBConfig &config);
 	static Value GetSetting(const ClientContext &context);
+};
+
+struct ExternalFileCacheRemoteMaxBlockSizeSetting {
+	using RETURN_TYPE = idx_t;
+	static constexpr const char *Name = "external_file_cache_remote_max_block_size";
+	static constexpr const char *Description = "Size in bytes of the pieces a long read of a remote file (e.g. "
+	                                           "HTTP/S3) is split into, which are fetched in parallel.";
+	static constexpr const char *InputType = "UBIGINT";
+	static constexpr bool IsDebug = false;
+	static constexpr bool IsDeprecated = false;
+	static constexpr bool NoResetAll = false;
+	static constexpr const char *DefaultValue = "4194304";
+	static constexpr SettingScopeTarget Scope = SettingScopeTarget::GLOBAL_DEFAULT;
+	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
+	static void OnSet(SettingCallbackInfo &info, Value &input);
+};
+
+struct ExternalFileCacheRemoteMinBlockSizeSetting {
+	using RETURN_TYPE = idx_t;
+	static constexpr const char *Name = "external_file_cache_remote_min_block_size";
+	static constexpr const char *Description =
+	    "Size in bytes of the blocks the external file cache keeps of the files it starts caching (32KB to 256KB): "
+	    "reads are rounded out to aligned blocks of this size, so tiny reads do not each cost a request.";
+	static constexpr const char *InputType = "UBIGINT";
+	static constexpr bool IsDebug = false;
+	static constexpr bool IsDeprecated = false;
+	static constexpr bool NoResetAll = false;
+	static constexpr const char *DefaultValue = "131072";
+	static constexpr SettingScopeTarget Scope = SettingScopeTarget::GLOBAL_DEFAULT;
+	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
+	static void OnSet(SettingCallbackInfo &info, Value &input);
+};
+
+struct ExternalFileCacheSpillSetting {
+	using RETURN_TYPE = bool;
+	static constexpr const char *Name = "external_file_cache_spill";
+	static constexpr const char *Description =
+	    "Whether evicted external file cache blocks of remote files keep a copy in the temporary directory, up to "
+	    "external_file_cache_spill_size, so that they are re-read from there rather than re-fetched from the source.";
+	static constexpr const char *InputType = "BOOLEAN";
+	static constexpr bool IsDebug = false;
+	static constexpr bool IsDeprecated = false;
+	static constexpr bool NoResetAll = false;
+	static constexpr const char *DefaultValue = "true";
+	static constexpr SettingScopeTarget Scope = SettingScopeTarget::GLOBAL_ONLY;
+	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
 };
 
 struct ExternalFileCacheSpillSizeSetting {

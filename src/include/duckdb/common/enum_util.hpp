@@ -108,8 +108,6 @@ enum class BindingMode : uint8_t;
 
 enum class BitpackingMode : uint8_t;
 
-enum class BlockCachePrefetch : uint8_t;
-
 enum class BlockIteratorStateType : int8_t;
 
 enum class BlockState : uint8_t;
@@ -249,6 +247,8 @@ enum class ExtensionRepositoryAccess : uint8_t;
 enum class ExtensionRepositoryType : uint8_t;
 
 enum class ExtensionUpdateResultTag : uint8_t;
+
+enum class ExternalFileCachePrefetch : uint8_t;
 
 enum class ExternalResourceOperation : uint8_t;
 
@@ -827,9 +827,6 @@ template<>
 const char* EnumUtil::ToChars<BitpackingMode>(BitpackingMode value);
 
 template<>
-const char* EnumUtil::ToChars<BlockCachePrefetch>(BlockCachePrefetch value);
-
-template<>
 const char* EnumUtil::ToChars<BlockIteratorStateType>(BlockIteratorStateType value);
 
 template<>
@@ -1038,6 +1035,9 @@ const char* EnumUtil::ToChars<ExtensionRepositoryType>(ExtensionRepositoryType v
 
 template<>
 const char* EnumUtil::ToChars<ExtensionUpdateResultTag>(ExtensionUpdateResultTag value);
+
+template<>
+const char* EnumUtil::ToChars<ExternalFileCachePrefetch>(ExternalFileCachePrefetch value);
 
 template<>
 const char* EnumUtil::ToChars<ExternalResourceOperation>(ExternalResourceOperation value);
@@ -1845,9 +1845,6 @@ template<>
 BitpackingMode EnumUtil::FromString<BitpackingMode>(std::string_view value);
 
 template<>
-BlockCachePrefetch EnumUtil::FromString<BlockCachePrefetch>(std::string_view value);
-
-template<>
 BlockIteratorStateType EnumUtil::FromString<BlockIteratorStateType>(std::string_view value);
 
 template<>
@@ -2056,6 +2053,9 @@ ExtensionRepositoryType EnumUtil::FromString<ExtensionRepositoryType>(std::strin
 
 template<>
 ExtensionUpdateResultTag EnumUtil::FromString<ExtensionUpdateResultTag>(std::string_view value);
+
+template<>
+ExternalFileCachePrefetch EnumUtil::FromString<ExternalFileCachePrefetch>(std::string_view value);
 
 template<>
 ExternalResourceOperation EnumUtil::FromString<ExternalResourceOperation>(std::string_view value);

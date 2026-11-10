@@ -238,12 +238,12 @@
 #include "duckdb/planner/logical_operator_repeatability.hpp"
 #include "duckdb/planner/logical_plan_verification_result.hpp"
 #include "duckdb/planner/table_filter.hpp"
-#include "duckdb/storage/block_cache/block_cache.hpp"
 #include "duckdb/storage/buffer/block_handle.hpp"
 #include "duckdb/storage/buffer/buffer_pool_reservation.hpp"
 #include "duckdb/storage/caching_mode.hpp"
 #include "duckdb/storage/compression/bitpacking.hpp"
 #include "duckdb/storage/compression/dict_fsst/common.hpp"
+#include "duckdb/storage/external_file_cache/external_file_cache.hpp"
 #include "duckdb/storage/magic_bytes.hpp"
 #include "duckdb/storage/statistics/base_statistics.hpp"
 #include "duckdb/storage/statistics/variant_stats.hpp"
@@ -1048,24 +1048,6 @@ const char* EnumUtil::ToChars<BitpackingMode>(BitpackingMode value) {
 template<>
 BitpackingMode EnumUtil::FromString<BitpackingMode>(std::string_view value) {
 	return static_cast<BitpackingMode>(StringUtil::StringToEnum(GetBitpackingModeValues(), 6, "BitpackingMode", value));
-}
-
-const StringUtil::EnumStringLiteral *GetBlockCachePrefetchValues() {
-	static constexpr StringUtil::EnumStringLiteral values[] {
-		{ static_cast<uint32_t>(BlockCachePrefetch::HINT), "HINT" },
-		{ static_cast<uint32_t>(BlockCachePrefetch::NEED), "NEED" }
-	};
-	return values;
-}
-
-template<>
-const char* EnumUtil::ToChars<BlockCachePrefetch>(BlockCachePrefetch value) {
-	return StringUtil::EnumToString(GetBlockCachePrefetchValues(), 2, "BlockCachePrefetch", static_cast<uint32_t>(value));
-}
-
-template<>
-BlockCachePrefetch EnumUtil::FromString<BlockCachePrefetch>(std::string_view value) {
-	return static_cast<BlockCachePrefetch>(StringUtil::StringToEnum(GetBlockCachePrefetchValues(), 2, "BlockCachePrefetch", value));
 }
 
 const StringUtil::EnumStringLiteral *GetBlockIteratorStateTypeValues() {
@@ -2669,6 +2651,24 @@ const char* EnumUtil::ToChars<ExtensionUpdateResultTag>(ExtensionUpdateResultTag
 template<>
 ExtensionUpdateResultTag EnumUtil::FromString<ExtensionUpdateResultTag>(std::string_view value) {
 	return static_cast<ExtensionUpdateResultTag>(StringUtil::StringToEnum(GetExtensionUpdateResultTagValues(), 8, "ExtensionUpdateResultTag", value));
+}
+
+const StringUtil::EnumStringLiteral *GetExternalFileCachePrefetchValues() {
+	static constexpr StringUtil::EnumStringLiteral values[] {
+		{ static_cast<uint32_t>(ExternalFileCachePrefetch::HINT), "HINT" },
+		{ static_cast<uint32_t>(ExternalFileCachePrefetch::NEED), "NEED" }
+	};
+	return values;
+}
+
+template<>
+const char* EnumUtil::ToChars<ExternalFileCachePrefetch>(ExternalFileCachePrefetch value) {
+	return StringUtil::EnumToString(GetExternalFileCachePrefetchValues(), 2, "ExternalFileCachePrefetch", static_cast<uint32_t>(value));
+}
+
+template<>
+ExternalFileCachePrefetch EnumUtil::FromString<ExternalFileCachePrefetch>(std::string_view value) {
+	return static_cast<ExternalFileCachePrefetch>(StringUtil::StringToEnum(GetExternalFileCachePrefetchValues(), 2, "ExternalFileCachePrefetch", value));
 }
 
 const StringUtil::EnumStringLiteral *GetExternalResourceOperationValues() {
@@ -5836,19 +5836,20 @@ const StringUtil::EnumStringLiteral *GetRequestTypeValues() {
 		{ static_cast<uint32_t>(RequestType::HEAD_REQUEST), "HEAD" },
 		{ static_cast<uint32_t>(RequestType::DELETE_REQUEST), "DELETE" },
 		{ static_cast<uint32_t>(RequestType::POST_REQUEST), "POST" },
-		{ static_cast<uint32_t>(RequestType::OPTIONS_REQUEST), "OPTIONS" }
+		{ static_cast<uint32_t>(RequestType::OPTIONS_REQUEST), "OPTIONS" },
+		{ static_cast<uint32_t>(RequestType::PATCH_REQUEST), "PATCH" }
 	};
 	return values;
 }
 
 template<>
 const char* EnumUtil::ToChars<RequestType>(RequestType value) {
-	return StringUtil::EnumToString(GetRequestTypeValues(), 6, "RequestType", static_cast<uint32_t>(value));
+	return StringUtil::EnumToString(GetRequestTypeValues(), 7, "RequestType", static_cast<uint32_t>(value));
 }
 
 template<>
 RequestType EnumUtil::FromString<RequestType>(std::string_view value) {
-	return static_cast<RequestType>(StringUtil::StringToEnum(GetRequestTypeValues(), 6, "RequestType", value));
+	return static_cast<RequestType>(StringUtil::StringToEnum(GetRequestTypeValues(), 7, "RequestType", value));
 }
 
 const StringUtil::EnumStringLiteral *GetResultEagernessValues() {
