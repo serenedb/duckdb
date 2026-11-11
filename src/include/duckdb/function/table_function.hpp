@@ -235,6 +235,8 @@ public:
 	//! into `pk_lookups` it came from, then sets `output`'s cardinality to the
 	//! survivor count. A row missing from the source or dropped by a pushed
 	//! filter gets no slot -- `output` is always compact.
+	//! An in-out function with `batch_projected_input` writes `pk_survivors[w]`
+	//! = the input row that output row w belongs to.
 	std::span<const int64_t> pk_lookups;
 	std::span<idx_t> pk_survivors;
 };
@@ -635,6 +637,8 @@ public:
 	bool sampling_pushdown;
 	//! Whether or not the table function supports late materialization
 	bool late_materialization;
+	//! Whether the in-out function takes whole input chunks when its input is projected (LATERAL)
+	bool batch_projected_input = false;
 	TableFunctionReturnType return_type;
 	//! The return type used when this function is invoked through a CALL statement
 	//! By default a CALL returns a query result - functions that only have side effects can use NOTHING instead

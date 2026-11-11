@@ -35,5 +35,7 @@ public:
 	bool perform_delim = true;
 	bool any_join = false;
 	bool propagate_null_values = true;
+	//! The join is an EXACT NEAREST BY
+	bool exact_nearest = false;
 };
 } // namespace duckdb

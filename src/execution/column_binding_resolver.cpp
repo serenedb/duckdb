@@ -174,6 +174,13 @@ void ColumnBindingResolver::VisitOperator(LogicalOperator &op) {
 		return;
 	}
 	case LogicalOperatorType::LOGICAL_GET: {
+		//! The expressions of an in-out function are its arguments, evaluated over its input
+		if (!op.children.empty()) {
+			SetBindings(op.children[0]->GetColumnBindings(), op.children[0]->types);
+			VisitOperatorExpressions(op);
+			SetBindings(op.GetColumnBindings(), op.types);
+			return;
+		}
 		//! We first need to update the current set of bindings and then visit operator expressions
 		SetBindings(op.GetColumnBindings(), op.types);
 		VisitOperatorExpressions(op);

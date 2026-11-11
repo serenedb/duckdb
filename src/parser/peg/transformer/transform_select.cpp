@@ -641,6 +641,7 @@ static unique_ptr<TableRef> BuildNearestJoin(const optional<JoinType> &join_type
 	}
 	result->nearest_order_type = distance_or_similarity;
 	result->nearest_approx = approx_or_exact.value_or(false);
+	result->nearest_default = !approx_or_exact;
 	result->ranking_expression = std::move(expression);
 	result->right = std::move(table_ref);
 	return std::move(result);

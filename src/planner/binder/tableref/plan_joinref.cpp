@@ -411,7 +411,7 @@ unique_ptr<LogicalOperator> Binder::CreatePlan(BoundJoinRef &ref) {
 			throw NotImplementedException("Unsupported explicit MARK join conditions");
 		}
 		auto new_plan = PlanLateralJoin(std::move(left), std::move(right), ref.correlated_columns, ref.type,
-		                                std::move(ref.condition));
+		                                std::move(ref.condition), ref.exact_nearest);
 		return new_plan;
 	}
 	switch (ref.ref_type) {
