@@ -626,6 +626,13 @@
         "name": "catalog_oid",
         "type": "idx_t",
         "version": "serenedb_v1"
+      },
+      {
+        "id": 16486,
+        "name": "compression_level",
+        "type": "uint8_t",
+        "default": 0,
+        "version": "serenedb_v1"
       }
     ],
     "constructor": [

@@ -47,6 +47,10 @@ void CommitDropState::DropEntry(CatalogEntry &entry) {
 	dropped_entries.push_back(entry);
 }
 
+void CommitDropState::AlterEntry(CatalogEntry &entry, unique_ptr<AlterInfo> info) {
+	altered_entries.push_back(PendingAlter {entry, std::move(info)});
+}
+
 void CommitDropState::FinalizeCommit() {
 	if (block_manager) {
 		for (auto block_id : dropped_block_ids) {
@@ -59,16 +63,21 @@ void CommitDropState::FinalizeCommit() {
 	for (auto &removal : pending_index_removals) {
 		removal.indexes.get().RemoveIndex(removal.index_oid);
 	}
+	for (auto &altered : altered_entries) {
+		altered.entry.get().OnAlter(*altered.info);
+	}
 	for (auto &entry : dropped_entries) {
 		entry.get().OnDrop();
 	}
 	dropped_block_ids.clear();
 	pending_index_removals.clear();
+	altered_entries.clear();
 	dropped_entries.clear();
 }
 
 bool CommitDropState::Empty() const {
-	return dropped_block_ids.empty() && pending_index_removals.empty() && dropped_entries.empty();
+	return dropped_block_ids.empty() && pending_index_removals.empty() && altered_entries.empty() &&
+	       dropped_entries.empty();
 }
 
 //===--------------------------------------------------------------------===//
@@ -211,6 +220,7 @@ void CommitState::CommitEntryDrop(CatalogEntry &entry, data_ptr_t dataptr, Commi
 			default:
 				throw InternalException("Don't know how to alter this type!");
 			}
+			drop_state.AlterEntry(parent, unique_ptr_cast<ParseInfo, AlterInfo>(std::move(parse_info)));
 		} else {
 			switch (parent.type) {
 			case CatalogType::TABLE_ENTRY:

@@ -33,8 +33,31 @@ enum class CompressionType : uint8_t {
 	COMPRESSION_ROARING = 13,
 	COMPRESSION_EMPTY = 14, // internal only
 	COMPRESSION_DICT_FSST = 15,
-	ENUM_SIZE // This has to stay the last entry of the type!
+	ENUM_SIZE, // This has to stay the last entry of the type!
+	COMPRESSION_DICT_LZ4 = 100,
+	COMPRESSION_DICT_ZSTD = 101,
+	COMPRESSION_LZ4 = 102,
+	// the columnstore's own dict_fsst / fsst; they carry the user-facing names of their duckdb namesakes, which
+	// a search table maps onto them
+	COMPRESSION_COL_DICT_FSST = 103,
+	COMPRESSION_COL_FSST = 104,
+	COMPRESSION_DICT_ZXC = 105,
+	COMPRESSION_ZXC = 106,
+	COMPRESSION_COL_ZSTD = 107,
+	COMPRESSION_COL_SEQUENCE = 108, // internal only
+	COMPRESSION_COL_NUMERIC = 109,  // internal only
+	COMPRESSION_COL_DICT_FSST_PLUS = 110,
+	COMPRESSION_COL_FSST_PLUS = 111,
+	COMPRESSION_COL_DICT_ONPAIR = 112,
+	COMPRESSION_COL_ONPAIR = 113,
+	COMPRESSION_COL_DICT_FSST12 = 114,
+	COMPRESSION_COL_FSST12 = 115,
+	COMPRESSION_SERENEDB_COUNT // This has to stay the last SereneDB entry!
 };
+
+inline bool IsSereneDBCompressionType(CompressionType type) {
+	return type >= CompressionType::COMPRESSION_DICT_LZ4 && type < CompressionType::COMPRESSION_SERENEDB_COUNT;
+}
 
 struct CompressionAvailabilityResult {
 private:

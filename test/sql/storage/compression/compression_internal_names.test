@@ -1,0 +1,23 @@
+# name: test/sql/storage/compression/compression_internal_names.test
+# description: The columnstore's internal compression types have no name to parse
+# group: [compression]
+
+statement error
+CREATE TABLE t (i INTEGER USING COMPRESSION compression_col_numeric);
+----
+unrecognized value
+
+statement error
+CREATE TABLE t (s VARCHAR USING COMPRESSION compression_col_sequence);
+----
+unrecognized value
+
+statement error
+SET force_compression = 'compression_col_numeric';
+----
+unrecognized value
+
+statement error
+SET disabled_compression_methods = 'compression_col_sequence';
+----
+unrecognized value
