@@ -40,6 +40,7 @@ public:
 	static void OptimizeStatement(Binder &binder, ClientContext &context, unique_ptr<SQLStatement> &statement);
 	static void AddExpressionRules(ExpressionRewriter &rewriter);
 	static unique_ptr<Expression> OptimizeExpression(ClientContext &context, unique_ptr<Expression> expr);
+	void RunOptimizer(OptimizerType type, const std::function<void()> &callback);
 
 public:
 	ClientContext &context;
@@ -50,7 +51,6 @@ private:
 	friend class FilterStatisticsOptimizer;
 
 	void RunBuiltInOptimizers();
-	void RunOptimizer(OptimizerType type, const std::function<void()> &callback);
 	void Verify(LogicalOperator &op);
 
 public:
@@ -65,8 +65,6 @@ private:
 	unique_ptr<LogicalOperator> plan;
 	//! Value of the enable_optimizer setting, read once per optimizer
 	bool enable_optimizer;
-	//! Snapshot of the registered optimizer extensions, taken once per optimizer
-	ExtensionCallbackIteratorHelper<OptimizerExtension> optimizer_extensions;
 
 private:
 	unique_ptr<Expression> BindScalarFunction(const Identifier &name, vector<unique_ptr<Expression>> children);

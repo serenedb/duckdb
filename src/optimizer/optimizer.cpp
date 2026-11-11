@@ -4,6 +4,7 @@
 #include "duckdb/function/function_binder.hpp"
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/main/config.hpp"
+#include "duckdb/main/engine_host.hpp"
 #include "duckdb/main/query_profiler.hpp"
 #include "duckdb/optimizer/build_probe_side_optimizer.hpp"
 #include "duckdb/optimizer/column_lifetime_analyzer.hpp"
@@ -74,8 +75,7 @@ namespace duckdb {
 
 Optimizer::Optimizer(Binder &binder, ClientContext &context)
     : context(context), binder(binder), rewriter(context),
-      enable_optimizer(Settings::Get<EnableOptimizerSetting>(context)),
-      optimizer_extensions(OptimizerExtension::Iterate(context)) {
+      enable_optimizer(Settings::Get<EnableOptimizerSetting>(context)) {
 	AddExpressionRules(rewriter);
 }
 
@@ -185,29 +185,10 @@ void Optimizer::RunOptimizer(OptimizerType type, const std::function<void()> &ca
 		if (profiler.IsEnabled()) {
 			optimizer_timer = profiler.StartTimerInternal("optimizer." + StringUtil::Lower(EnumUtil::ToString(type)));
 		}
-		// Fire anchored Before-rules registered for this built-in pass.
-		for (auto &ext : optimizer_extensions) {
-			if (!ext.rule || ext.anchor != type || ext.where != OptimizerHookPosition::Before) {
-				continue;
-			}
-			OptimizerExtensionInput input {GetContext(), *this, ext.optimizer_info.get()};
-			ext.rule(input, plan);
-			if (plan) {
-				Verify(*plan);
-			}
-		}
+		auto &host = EngineHost::Get();
+		host.BeforeOptimizer(type, *this, plan);
 		callback();
-		// Fire anchored After-rules registered for this built-in pass.
-		for (auto &ext : optimizer_extensions) {
-			if (!ext.rule || ext.anchor != type || ext.where != OptimizerHookPosition::After) {
-				continue;
-			}
-			OptimizerExtensionInput input {GetContext(), *this, ext.optimizer_info.get()};
-			ext.rule(input, plan);
-			if (plan) {
-				Verify(*plan);
-			}
-		}
+		host.AfterOptimizer(type, *this, plan);
 	}
 	if (plan) {
 		Verify(*plan);
@@ -677,32 +658,10 @@ unique_ptr<LogicalOperator> Optimizer::Optimize(unique_ptr<LogicalOperator> plan
 		TrackDataVersions(planned, prepared);
 	});
 
-	for (auto &pre_optimizer_extension : optimizer_extensions) {
-		if (pre_optimizer_extension.anchor != OptimizerType::INVALID) {
-			continue; // anchored: fires inside RunOptimizer instead
-		}
-		RunOptimizer(OptimizerType::EXTENSION, [&]() {
-			OptimizerExtensionInput input {GetContext(), *this, pre_optimizer_extension.optimizer_info.get()};
-			if (pre_optimizer_extension.pre_optimize_function) {
-				CTEFilterPusher::ClearDependencies(*plan);
-				pre_optimizer_extension.pre_optimize_function(input, plan);
-			}
-		});
-	}
-
+	auto &host = EngineHost::Get();
+	host.PreOptimize(*this, plan);
 	RunBuiltInOptimizers();
-
-	for (auto &optimizer_extension : optimizer_extensions) {
-		if (optimizer_extension.anchor != OptimizerType::INVALID) {
-			continue; // anchored: fires inside RunOptimizer instead
-		}
-		RunOptimizer(OptimizerType::EXTENSION, [&]() {
-			OptimizerExtensionInput input {GetContext(), *this, optimizer_extension.optimizer_info.get()};
-			if (optimizer_extension.optimize_function) {
-				optimizer_extension.optimize_function(input, plan);
-			}
-		});
-	}
+	host.PostOptimize(*this, plan);
 
 	if (binder.GetStatementProperties().always_require_rebind) {
 		VisitPreparedStatements(*plan, [](const LogicalOperator &, PreparedStatementData &prepared) {

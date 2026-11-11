@@ -62,9 +62,9 @@ private:
 	};
 
 	//! Apply a set of rules to a specific expression
-	unique_ptr<Expression> ApplyRules(LogicalOperator &op, const vector<rewrite_barrier_t> &barriers,
-	                                  unique_ptr<Expression> expr, bool &changes_made, bool is_root = false);
-	bool RewriteLambdaBody(LogicalOperator &op, const vector<rewrite_barrier_t> &barriers, Expression &expr);
+	unique_ptr<Expression> ApplyRules(LogicalOperator &op, unique_ptr<Expression> expr, bool &changes_made,
+	                                  bool is_root = false);
+	bool RewriteLambdaBody(LogicalOperator &op, Expression &expr);
 	const vector<reference<Rule>> &RulesFor(const Expression &expr);
 	vector<reference<Rule>> SelectRules(ExpressionClass expression_class, ExpressionType expression_type,
 	                                    optional_ptr<const Identifier> function_name) const;
@@ -75,7 +75,6 @@ private:
 	bool throws = false;
 	bool child_not_foldable = false;
 	bool not_foldable = false;
-	vector<rewrite_barrier_t> to_apply_barriers;
 	unordered_map<uint16_t, RuleSet> rule_sets;
 	idx_t rule_sets_rule_count = 0;
 };

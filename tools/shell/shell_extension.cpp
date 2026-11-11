@@ -2,6 +2,7 @@
 #include "duckdb/main/extension/extension_loader.hpp"
 #include "duckdb/common/vector_operations/unary_executor.hpp"
 #include "duckdb/main/config.hpp"
+#include "duckdb/main/engine_host.hpp"
 #include "duckdb/main/settings.hpp"
 #include "duckdb/planner/planner_extension.hpp"
 #include "duckdb/planner/logical_operator.hpp"
@@ -59,7 +60,7 @@ unique_ptr<TableRef> ShellScanLastResult(ClientContext &context, ReplacementScan
 // Runs after the binder has finished. Releases the previous last_result early if it's
 // safe — i.e. the new query doesn't statically reference `_` (the replacement scan
 // would have fired)
-void ShellPostBind(PlannerExtensionInput &input, BoundStatement &statement) {
+void ShellExtension::PostBind(PlannerExtensionInput &input, BoundStatement &statement) {
 	auto &state = duckdb_shell::ShellState::Get();
 	if (!state.conn || !RefersToSameObject(*state.conn->context, input.context)) {
 		return;
@@ -132,9 +133,11 @@ void ShellExtension::Load(ExtensionLoader &loader) {
 	config.SetOptionByName("duckdb_api", DUCKDB_API_CLI);
 	config.replacement_scans.push_back(duckdb::ReplacementScan(duckdb::ShellScanLastResult));
 
-	PlannerExtension planner_ext;
-	planner_ext.post_bind_function = duckdb::ShellPostBind;
-	PlannerExtension::Register(config, planner_ext);
+	if (!EngineHost::IsInstalled()) {
+		PlannerExtension planner_ext;
+		planner_ext.post_bind_function = ShellExtension::PostBind;
+		PlannerExtension::Register(config, planner_ext);
+	}
 
 	// highlight the CLI profiler "query_tree" output
 	duckdb_shell::RegisterProfilerHighlighting(config);

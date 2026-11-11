@@ -7,6 +7,7 @@
 #include "duckdb/catalog/catalog_entry/type_catalog_entry.hpp"
 #include "duckdb/common/case_insensitive_map.hpp"
 #include "duckdb/common/string_util.hpp"
+#include "duckdb/main/engine_host.hpp"
 #include "duckdb/parser/parsed_data/create_type_info.hpp"
 #include "duckdb/common/types/decimal.hpp"
 #include "duckdb/common/exception/binder_exception.hpp"
@@ -389,11 +390,6 @@ void RegisterGeometryConstructors(TypeConstructorSet &set) {
 
 } // namespace
 
-extern "C" __attribute__((weak)) const duckdb::DefaultType *duckdb_external_types(duckdb::idx_t *count) {
-	*count = 0;
-	return nullptr;
-}
-
 namespace {
 
 using builtin_type_array = std::array<DefaultType, 83>;
@@ -502,11 +498,10 @@ optional_ptr<const DefaultType> TryGetDefaultTypeEntry(const Identifier &name) {
 	static const auto type_index = [] {
 		case_insensitive_map_view_t<const DefaultType *> m;
 		auto &internal_types = GetBuiltinTypes();
-		idx_t count = 0;
-		const auto *external_types = duckdb_external_types(&count);
-		m.reserve(internal_types.size() + count);
-		for (idx_t i = 0; i < count; i++) {
-			m.try_emplace(external_types[i].name, &external_types[i]);
+		const auto external_types = EngineHost::Get().GetTypes();
+		m.reserve(internal_types.size() + external_types.size());
+		for (auto &type : external_types) {
+			m.try_emplace(type.name, &type);
 		}
 		for (auto &type : internal_types) {
 			m.try_emplace(type.name, &type);
@@ -578,10 +573,8 @@ vector<Identifier> DefaultTypeGenerator::GetDefaultEntries() {
 	for (auto &type : internal_types) {
 		result.emplace_back(StringUtil::Lower(type.name));
 	}
-	idx_t count = 0;
-	const auto *external_types = duckdb_external_types(&count);
-	for (idx_t i = 0; i < count; i++) {
-		result.emplace_back(StringUtil::Lower(external_types[i].name));
+	for (auto &type : EngineHost::Get().GetTypes()) {
+		result.emplace_back(StringUtil::Lower(type.name));
 	}
 	return result;
 }
