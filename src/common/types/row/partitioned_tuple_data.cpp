@@ -351,15 +351,32 @@ void PartitionedTupleData::Repartition(ClientContext &context, PartitionedTupleD
 		if (partition.Count() > 0) {
 			TupleDataChunkIterator iterator(partition, TupleDataPinProperties::DESTROY_AFTER_DONE, true);
 			auto &chunk_state = iterator.GetChunkState();
-			do {
-				// Check for interrupts with each chunk
-				context.InterruptCheck();
-				const auto count = iterator.GetCurrentChunkCount();
-				new_partitioned_data.Append(append_state, chunk_state, count);
-				if (key_tracker) {
-					key_tracker->RepartitionChunk(partition, chunk_state, append_state, count);
+			bool tracked_chunk_moved = false;
+			try {
+				do {
+					// Check for interrupts with each chunk
+					context.InterruptCheck();
+					const auto count = iterator.GetCurrentChunkCount();
+					new_partitioned_data.Append(append_state, chunk_state, count);
+					if (key_tracker) {
+						try {
+							key_tracker->RepartitionChunk(partition, chunk_state, append_state, count);
+						} catch (...) {
+							tracked_chunk_moved = true;
+							throw;
+						}
+					}
+				} while (iterator.Next());
+			} catch (...) {
+				partition.RemoveFirstChunks(iterator.GetCurrentChunkIndex() + (tracked_chunk_moved ? 1 : 0));
+				count = 0;
+				data_size = 0;
+				for (auto &remaining : partitions) {
+					count += remaining->Count();
+					data_size += remaining->data_size;
 				}
-			} while (iterator.Next());
+				throw;
+			}
 
 			RepartitionFinalizeStates(*this, new_partitioned_data, append_state, partition_idx);
 		}

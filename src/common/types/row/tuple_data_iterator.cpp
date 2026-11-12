@@ -77,6 +77,14 @@ idx_t TupleDataChunkIterator::GetCurrentChunkCount() const {
 	return collection.segments[current_segment_idx]->chunks[current_chunk_idx]->count;
 }
 
+idx_t TupleDataChunkIterator::GetCurrentChunkIndex() const {
+	auto chunk_index = current_chunk_idx;
+	for (idx_t segment_idx = 0; segment_idx < current_segment_idx; segment_idx++) {
+		chunk_index += collection.segments[segment_idx]->ChunkCount();
+	}
+	return chunk_index;
+}
+
 TupleDataChunkState &TupleDataChunkIterator::GetChunkState() {
 	return state.chunk_state;
 }

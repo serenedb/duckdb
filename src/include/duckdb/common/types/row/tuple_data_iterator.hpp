@@ -29,6 +29,7 @@ public:
 	void Reset();
 	//! Get the count of the current "DataChunk"
 	idx_t GetCurrentChunkCount() const;
+	idx_t GetCurrentChunkIndex() const;
 	//! Get the Chunk state of the scan state of this iterator
 	TupleDataChunkState &GetChunkState();
 	//! Get the array holding the row locations

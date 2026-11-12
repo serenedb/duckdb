@@ -92,6 +92,7 @@ public:
 	vector<data_ptr_t> GetRowBlockPointers();
 	//! Destroy the blocks corresponding to the chunk indices
 	void DestroyChunks(idx_t chunk_idx_begin, idx_t chunk_idx_end);
+	void RemoveFirstChunks(idx_t chunk_count);
 
 	//! Gets the scatter function for the given type
 	static TupleDataScatterFunction GetScatterFunction(const LogicalType &type, bool within_collection = false);

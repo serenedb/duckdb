@@ -179,6 +179,9 @@ public:
 	                     optional_ptr<atomic<idx_t>> combined_chunks);
 	idx_t CombineSliced(unique_ptr<TupleDataCollection> &data, ValidityMask &alive, idx_t radix_bits, idx_t slice_bits,
 	                    optional_ptr<atomic<idx_t>> combined_chunks);
+	static void DestroyStates(RowOperationsState &row_state, TupleDataCollection &data, idx_t chunk_from,
+	                          idx_t row_offset, optional_ptr<const ValidityMask> alive);
+	static void DestroyStates(PartitionedTupleData &data);
 	//! Reset the HT for a new execution while reusing internal allocations where possible
 	void ResetForNewIteration(idx_t radix_bits);
 

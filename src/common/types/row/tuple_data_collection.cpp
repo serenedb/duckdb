@@ -181,6 +181,29 @@ void TupleDataCollection::DestroyChunks(const idx_t chunk_idx_begin, const idx_t
 	}
 }
 
+void TupleDataCollection::RemoveFirstChunks(idx_t chunk_count) {
+	D_ASSERT(chunk_count <= ChunkCount());
+	for (idx_t segment_idx = 0; chunk_count != 0; segment_idx++) {
+		auto &segment = *segments[segment_idx];
+		const auto remove_count = MinValue(chunk_count, segment.ChunkCount());
+		for (idx_t chunk_idx = 0; chunk_idx < remove_count; chunk_idx++) {
+			const auto &chunk = *segment.chunks[chunk_idx];
+			auto chunk_size = chunk.count * layout.GetRowWidth();
+			if (!layout.AllConstant()) {
+				for (auto part_id = chunk.part_ids.Start(); part_id < chunk.part_ids.End(); part_id++) {
+					chunk_size += segment.chunk_parts[part_id]->total_heap_size;
+				}
+			}
+			segment.count -= chunk.count;
+			segment.data_size -= chunk_size;
+			count -= chunk.count;
+			data_size -= chunk_size;
+		}
+		segment.chunks.erase(segment.chunks.begin(), segment.chunks.begin() + NumericCast<int64_t>(remove_count));
+		chunk_count -= remove_count;
+	}
+}
+
 // LCOV_EXCL_START
 void VerifyAppendColumns(const TupleDataLayout &layout, const vector<column_t> &column_ids) {
 #ifdef D_ASSERT_IS_ENABLED

@@ -145,7 +145,12 @@ GroupedAggregateHashTable::AcquirePartitionedData(unique_ptr<PartitionedTupleDat
 	// Return and re-initialize
 	auto result = std::move(partitioned_data);
 	partitioned_data = std::move(replacement);
-	InitializePartitionedData();
+	try {
+		InitializePartitionedData();
+	} catch (...) {
+		DestroyStates(*result);
+		throw;
+	}
 	return result;
 }
 
@@ -172,7 +177,12 @@ void GroupedAggregateHashTable::Abandon() {
 void GroupedAggregateHashTable::Repartition() {
 	auto old = AcquirePartitionedData();
 	D_ASSERT(old->GetPartitions().size() != partitioned_data->GetPartitions().size());
-	old->Repartition(context, *partitioned_data);
+	try {
+		old->Repartition(context, *partitioned_data);
+	} catch (...) {
+		DestroyStates(*old);
+		throw;
+	}
 }
 
 shared_ptr<ArenaAllocator> GroupedAggregateHashTable::GetAggregateAllocator() {
@@ -202,15 +212,62 @@ void GroupedAggregateHashTable::DestroyAggregateData(PartitionedTupleData &data,
 	// Call the destructor for each of the aggregates
 	data.FlushAppendState(append_state);
 	for (auto &data_collection : data.GetPartitions()) {
-		if (data_collection->Count() == 0) {
-			continue;
+		DestroyStates(state.row_state, *data_collection, 0, 0, nullptr);
+	}
+}
+
+void GroupedAggregateHashTable::DestroyStates(RowOperationsState &row_state, TupleDataCollection &data,
+                                              idx_t chunk_from, idx_t row_offset,
+                                              optional_ptr<const ValidityMask> alive) {
+	const auto chunk_count = data.ChunkCount();
+	if (chunk_count == 0) {
+		return;
+	}
+	if (chunk_from < chunk_count) {
+		try {
+			const auto layout_ptr = data.GetLayoutPtr();
+			auto &layout = *layout_ptr;
+			TupleDataChunkIterator iterator(data, TupleDataPinProperties::DESTROY_AFTER_DONE, chunk_from, chunk_count,
+			                                false);
+			auto &row_locations = iterator.GetChunkState().row_locations;
+			if (!alive || alive->CannotHaveNull()) {
+				do {
+					RowOperations::DestroyStates(row_state, layout, row_locations);
+				} while (iterator.Next());
+			} else {
+				Vector alive_row_locations(LogicalType::POINTER);
+				do {
+					const auto count = iterator.GetCurrentChunkCount();
+					const auto locations = FlatVector::GetData<data_ptr_t>(row_locations);
+					const auto alive_locations = FlatVector::GetDataMutable<data_ptr_t>(alive_row_locations);
+					idx_t alive_count = 0;
+					for (idx_t i = 0; i < count; i++) {
+						if (alive->RowIsValid(row_offset + i)) {
+							alive_locations[alive_count++] = locations[i];
+						}
+					}
+					row_offset += count;
+					FlatVector::SetSize(alive_row_locations, alive_count);
+					RowOperations::DestroyStates(row_state, layout, alive_row_locations);
+				} while (iterator.Next());
+			}
+		} catch (const OutOfMemoryException &) {
+		} catch (const IOException &) {
 		}
-		TupleDataChunkIterator iterator(*data_collection, TupleDataPinProperties::DESTROY_AFTER_DONE, false);
-		auto &row_locations = iterator.GetChunkState().row_locations;
-		do {
-			RowOperations::DestroyStates(state.row_state, *layout_ptr, row_locations);
-		} while (iterator.Next());
-		data_collection->Reset();
+	}
+	data.Reset();
+}
+
+void GroupedAggregateHashTable::DestroyStates(PartitionedTupleData &data) {
+	if (data.Count() == 0 || !data.GetLayout().HasDestructor()) {
+		return;
+	}
+	ArenaAllocator allocator(Allocator::DefaultAllocator());
+	RowOperationsState row_state(allocator);
+	for (auto &partition : data.GetPartitions()) {
+		if (partition) {
+			DestroyStates(row_state, *partition, 0, 0, nullptr);
+		}
 	}
 }
 
@@ -1336,19 +1393,43 @@ void GroupedAggregateHashTable::Combine(TupleDataCollection &other_data, optiona
 
 	FlushMoveState fm_state(other_data);
 
-	while (fm_state.Scan()) {
-		// Check for interrupts with each chunk
-		context.InterruptCheck();
-		FindOrCreateGroups(fm_state.groups, fm_state.hashes, fm_state.group_addresses, fm_state.new_groups_sel);
-		RowOperations::CombineStates(state.row_state, *layout_ptr, fm_state.scan_state.chunk_state.row_locations,
-		                             fm_state.group_addresses);
-		if (layout_ptr->HasDestructor()) {
-			RowOperations::DestroyStates(state.row_state, *layout_ptr, fm_state.scan_state.chunk_state.row_locations);
-		}
+	try {
+		while (fm_state.Scan()) {
+			try {
+				// Check for interrupts with each chunk
+				context.InterruptCheck();
+				FindOrCreateGroups(fm_state.groups, fm_state.hashes, fm_state.group_addresses, fm_state.new_groups_sel);
+				RowOperations::CombineStates(state.row_state, *layout_ptr,
+				                             fm_state.scan_state.chunk_state.row_locations, fm_state.group_addresses);
+			} catch (...) {
+				if (layout_ptr->HasDestructor()) {
+					RowOperations::DestroyStates(state.row_state, *layout_ptr,
+					                             fm_state.scan_state.chunk_state.row_locations);
+				}
+				throw;
+			}
+			if (layout_ptr->HasDestructor()) {
+				RowOperations::DestroyStates(state.row_state, *layout_ptr,
+				                             fm_state.scan_state.chunk_state.row_locations);
+			}
 
-		if (combined_chunks) {
-			combined_chunks->fetch_add(1, std::memory_order_relaxed);
+			if (combined_chunks) {
+				combined_chunks->fetch_add(1, std::memory_order_relaxed);
+			}
 		}
+	} catch (...) {
+		if (layout_ptr->HasDestructor()) {
+			try {
+				while (fm_state.Scan()) {
+					RowOperations::DestroyStates(state.row_state, *layout_ptr,
+					                             fm_state.scan_state.chunk_state.row_locations);
+				}
+			} catch (const OutOfMemoryException &) {
+			} catch (const IOException &) {
+			}
+		}
+		other_data.Reset();
+		throw;
 	}
 
 	Verify();
@@ -1407,7 +1488,16 @@ idx_t GroupedAggregateHashTable::CombineInPlace(TupleDataCollection &data, Valid
 		if (duplicate_count != 0) {
 			FlatVector::SetSize(sources, duplicate_count);
 			FlatVector::SetSize(targets, duplicate_count);
-			RowOperations::CombineStates(state.row_state, *layout_ptr, sources, targets);
+			try {
+				RowOperations::CombineStates(state.row_state, *layout_ptr, sources, targets);
+			} catch (...) {
+				for (idx_t i = 0; i < chunk_count; i++) {
+					if (group_rows[i] != row_locations[i]) {
+						alive.SetValidUnsafe(row_offset + i);
+					}
+				}
+				throw;
+			}
 			if (layout_ptr->HasDestructor()) {
 				RowOperations::DestroyStates(state.row_state, *layout_ptr, sources);
 			}
@@ -1431,34 +1521,51 @@ idx_t GroupedAggregateHashTable::CombineSliced(unique_ptr<TupleDataCollection> &
 	source.GetPartitions()[0] = std::move(data);
 	RadixPartitionedTupleData slices(buffer_manager, layout_ptr, MemoryTag::HASH_TABLE, slice_bits, hash_col_idx,
 	                                 context, radix_bits);
-	source.Repartition(context, slices);
+	try {
+		source.Repartition(context, slices);
 
-	idx_t max_slice_count = 0;
-	for (auto &slice : slices.GetPartitions()) {
-		max_slice_count = MaxValue(max_slice_count, slice->Count());
-	}
-	D_ASSERT(Count() == 0);
-	if (ResizeThreshold() < max_slice_count) {
-		Resize(GetCapacityForCount(max_slice_count));
-	}
-
-	alive.Initialize(row_count);
-	idx_t group_count = 0;
-	idx_t alive_offset = 0;
-	for (auto &slice : slices.GetPartitions()) {
-		ClearPointerTable();
-		count = 0;
-		adopted_rows = false;
-		group_count += CombineInPlace(*slice, alive, alive_offset, combined_chunks);
-		alive_offset += slice->Count();
-		if (!data) {
-			data = std::move(slice);
-		} else {
-			data->Combine(*slice);
+		idx_t max_slice_count = 0;
+		for (auto &slice : slices.GetPartitions()) {
+			max_slice_count = MaxValue(max_slice_count, slice->Count());
 		}
+		D_ASSERT(Count() == 0);
+		if (ResizeThreshold() < max_slice_count) {
+			Resize(GetCapacityForCount(max_slice_count));
+		}
+
+		alive.Initialize(row_count);
+		idx_t group_count = 0;
+		idx_t alive_offset = 0;
+		for (auto &slice : slices.GetPartitions()) {
+			ClearPointerTable();
+			count = 0;
+			adopted_rows = false;
+			group_count += CombineInPlace(*slice, alive, alive_offset, combined_chunks);
+			alive_offset += slice->Count();
+			if (!data) {
+				data = std::move(slice);
+			} else {
+				data->Combine(*slice);
+			}
+		}
+		D_ASSERT(alive_offset == row_count);
+		return group_count;
+	} catch (...) {
+		auto &unmoved = source.GetPartitions()[0];
+		if (unmoved) {
+			DestroyStates(state.row_state, *unmoved, 0, 0, nullptr);
+		}
+		auto slice_offset = data ? data->Count() : 0;
+		for (auto &slice : slices.GetPartitions()) {
+			if (!slice) {
+				continue;
+			}
+			const auto slice_count = slice->Count();
+			DestroyStates(state.row_state, *slice, 0, slice_offset, &alive);
+			slice_offset += slice_count;
+		}
+		throw;
 	}
-	D_ASSERT(alive_offset == row_count);
-	return group_count;
 }
 
 void GroupedAggregateHashTable::InitializeScan(AggregateHTScanState &scan_state) {
