@@ -832,7 +832,7 @@ static void VerifyGeneratedColumns(ClientContext &context, const TableCatalogEnt
 		return;
 	}
 	// Verify the generated columns against the inserted values.
-	auto binder = Binder::CreateBinder(context);
+	auto binder = Binder::CreateTableBinder(context, table.ParentSchema(context));
 	physical_index_set_t bound_columns;
 	CheckBinder generated_check_binder(*binder, context, table.name, table.GetColumns(), bound_columns);
 	for (auto &col : table.GetColumns().Logical()) {
@@ -1257,7 +1257,7 @@ void DataTable::LocalAppend(DuckTableEntry &table, ClientContext &context, Colum
 		active_expressions[col.Physical()] = std::move(expr);
 	}
 
-	auto binder = Binder::CreateBinder(context);
+	auto binder = Binder::CreateTableBinder(context, table.ParentSchema(context));
 	ConstantBinder default_binder(*binder, context, "DEFAULT value");
 	vector<unique_ptr<Expression>> expressions;
 	for (idx_t i = 0; i < column_list.PhysicalColumnCount(); i++) {

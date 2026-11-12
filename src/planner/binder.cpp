@@ -691,4 +691,11 @@ shared_ptr<Binder> Binder::CreateBinderWithSearchPath(const Identifier &catalog_
 	return new_binder;
 }
 
+shared_ptr<Binder> Binder::CreateTableBinder(ClientContext &context, const SchemaCatalogEntry &schema,
+                                             optional_ptr<Binder> parent) {
+	auto binder = Binder::CreateBinder(context, parent);
+	binder->entry_retriever.SetTableSearchPath(schema);
+	return binder;
+}
+
 } // namespace duckdb

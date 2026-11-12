@@ -28,6 +28,7 @@
 #include "duckdb/storage/storage_manager.hpp"
 #include "duckdb/common/type_visitor.hpp"
 #include "duckdb/main/config.hpp"
+#include "duckdb/main/settings.hpp"
 
 namespace duckdb {
 
@@ -92,7 +93,7 @@ vector<unique_ptr<BoundConstraint>> Binder::BindConstraints(ClientContext &conte
 }
 
 vector<unique_ptr<BoundConstraint>> Binder::BindConstraints(const TableCatalogEntry &table) {
-	auto binder = CreateBinderWithSearchPath(table.ParentCatalog().GetName(), table.ParentSchema(context).name);
+	auto binder = CreateTableBinder(context, table.ParentSchema(context), this);
 	return binder->BindConstraints(table.GetConstraints(), table.name, table.GetColumns());
 }
 
@@ -105,39 +106,216 @@ vector<unique_ptr<BoundConstraint>> Binder::BindConstraints(const vector<unique_
 	return bound_constraints;
 }
 
-static void QualifyUserFunctions(CatalogEntryRetriever &retriever, const Catalog &home, optional_idx home_schema,
-                                 ParsedExpression &expression) {
+namespace {
+
+//! A function or a sequence that a table expression names, as one scope resolves it
+struct TableExpressionName {
+	FunctionExpression &function;
+	//! The sequence name literal, for a sequence
+	optional_ptr<unique_ptr<ParsedExpression>> literal;
+	QualifiedName name;
+	CatalogEntry &entry;
+
+	const char *Kind() const {
+		return literal ? "sequence" : "function";
+	}
+
+	void Rename(const QualifiedName &qualified) {
+		if (literal) {
+			*literal = ConstantExpression::String(qualified.ToString());
+		} else {
+			function.SetQualifiedName(qualified);
+		}
+	}
+};
+
+} // namespace
+
+static optional_ptr<CatalogEntry> LookupName(CatalogEntryRetriever &scope, CatalogType type, QualifiedName name) {
+	Binder::BindSchemaOrCatalog(scope, name);
+	return scope.GetEntry(EntryLookupInfo(type, Binder::BindTableName(scope, name)), OnEntryNotFound::RETURN_NULL);
+}
+
+static optional_ptr<CatalogEntry> LookupName(CatalogEntryRetriever &scope, const TableExpressionName &use) {
+	return LookupName(scope,
+	                  use.entry.type == CatalogType::SEQUENCE_ENTRY ? CatalogType::SEQUENCE_ENTRY
+	                                                                : CatalogType::SCALAR_FUNCTION_ENTRY,
+	                  use.name);
+}
+
+static optional_ptr<unique_ptr<ParsedExpression>> SequenceLiteral(FunctionExpression &function) {
+	auto &arguments = function.GetArgumentsMutable();
+	if (arguments.empty()) {
+		return nullptr;
+	}
+	reference<unique_ptr<ParsedExpression>> argument = arguments[0].GetExpressionMutable();
+	while (argument.get()->GetExpressionClass() == ExpressionClass::CAST) {
+		argument = argument.get()->Cast<CastExpression>().ChildMutable();
+	}
+	if (argument.get()->GetExpressionClass() != ExpressionClass::CONSTANT ||
+	    argument.get()->Cast<ConstantExpression>().GetLiteral().IsNull()) {
+		return nullptr;
+	}
+	return &argument.get();
+}
+
+static string SequenceLiteralText(const unique_ptr<ParsedExpression> &literal) {
+	return literal->Cast<ConstantExpression>().GetLiteral().ToValue().ToString();
+}
+
+static bool TakesSequenceName(const FunctionExpression &function) {
+	auto &name = function.GetQualifiedName().Name();
+	return name == Identifier("nextval") || name == Identifier("currval") || name == Identifier("setval");
+}
+
+//! Resolves the function a call names in the scope; x.f() that names no function f of a schema x is a call of f on
+//! the column x and is rewritten to f(x), the form it binds as
+static optional_ptr<CatalogEntry> ResolveFunction(CatalogEntryRetriever &scope, FunctionExpression &function) {
+	auto name = function.GetQualifiedName();
+	Binder::BindSchemaOrCatalog(scope, name);
+	auto entry = LookupName(scope, CatalogType::SCALAR_FUNCTION_ENTRY, name);
+	if (entry || name.Schema().empty() || !name.Catalog().empty()) {
+		return entry;
+	}
+	entry = LookupName(scope, CatalogType::SCALAR_FUNCTION_ENTRY, QualifiedName(name.Name()));
+	if (!entry || entry->internal) {
+		return nullptr;
+	}
+	unique_ptr<ParsedExpression> column = make_uniq<ColumnRefExpression>(name.Schema());
+	function.GetArgumentsMutable().insert(function.GetArgumentsMutable().begin(), std::move(column));
+	function.SetQualifiedName(QualifiedName(name.Name()));
+	return entry;
+}
+
+//! Calls the callback for every function and sequence the expression names that the scope resolves
+template <class CALLBACK>
+static void ForEachName(CatalogEntryRetriever &scope, ParsedExpression &expression, CALLBACK &&callback) {
 	if (expression.GetExpressionClass() == ExpressionClass::FUNCTION) {
 		auto &function = expression.Cast<FunctionExpression>();
-		if (function.GetQualifiedName().Schema().empty()) {
-			auto entry =
-			    retriever.GetEntry(EntryLookupInfo(CatalogType::SCALAR_FUNCTION_ENTRY, function.GetQualifiedName()),
-			                       OnEntryNotFound::RETURN_NULL);
-			if (entry && !entry->internal) {
-				if (entry->ParentCatalog().IsTemporaryCatalog() && !home.IsTemporaryCatalog()) {
-					throw BinderException("Cannot use temporary function %s in a non-temporary relation", entry->name);
-				}
-				if (!home_schema.IsValid() || &entry->ParentCatalog() != &home ||
-				    entry->ParentSchemaOid() != home_schema.GetIndex()) {
-					auto qualified = entry->Cast<StandardEntry>().GetQualifiedName(entry->name);
-					if (&entry->ParentCatalog() == &home) {
-						qualified.StripCatalog();
-					}
-					function.SetQualifiedName(std::move(qualified));
+		if (!function.IsOperator()) {
+			if (auto entry = ResolveFunction(scope, function)) {
+				callback(TableExpressionName {function, nullptr, function.GetQualifiedName(), *entry});
+			}
+			auto literal = TakesSequenceName(function) ? SequenceLiteral(function) : nullptr;
+			if (literal) {
+				auto name = QualifiedName::Parse(SequenceLiteralText(*literal),
+				                                 Settings::Get<PreserveIdentifierCaseSetting>(scope.GetContext()));
+				if (auto entry = LookupName(scope, CatalogType::SEQUENCE_ENTRY, name)) {
+					callback(TableExpressionName {function, literal, std::move(name), *entry});
 				}
 			}
 		}
 	}
-	ParsedExpressionIterator::EnumerateChildren(
-	    expression, [&](ParsedExpression &child) { QualifyUserFunctions(retriever, home, home_schema, child); });
+	ParsedExpressionIterator::EnumerateChildren(expression,
+	                                            [&](ParsedExpression &child) { ForEachName(scope, child, callback); });
+}
+
+static void VerifyNotTemporary(const TableExpressionName &use, const Catalog &home) {
+	if (use.entry.ParentCatalog().IsTemporaryCatalog() && !home.IsTemporaryCatalog()) {
+		throw BinderException("Cannot use temporary %s %s in a non-temporary relation", use.Kind(), use.entry.name);
+	}
+}
+
+static QualifiedName FullName(CatalogEntry &entry, const Catalog &home) {
+	auto &catalog = entry.ParentCatalog();
+	if (catalog.IsSystemCatalog() && !catalog.IsDuckCatalog()) {
+		// a system catalog that isn't DuckDB's serves its entries as a schema of every database
+		return QualifiedName(home.GetName(), *catalog.GetDefaultSchema(), entry.name);
+	}
+	return entry.Cast<StandardEntry>().GetQualifiedName(entry.name);
+}
+
+//! The name stored for an entry: without the database when it is the table's, unless the entry's schema is nested
+static QualifiedName StoredName(CatalogEntry &entry, const Catalog &home) {
+	auto qualified = FullName(entry, home);
+	if (&entry.ParentCatalog() == &home && entry.ParentSchemaPath().size() == 1) {
+		qualified.StripCatalog();
+	}
+	return qualified;
 }
 
 void Binder::QualifyUserFunctions(const Catalog &home, ParsedExpression &expression) {
-	duckdb::QualifyUserFunctions(entry_retriever, home, optional_idx(), expression);
+	ForEachName(entry_retriever, expression, [&](TableExpressionName use) {
+		if (use.entry.internal) {
+			return;
+		}
+		VerifyNotTemporary(use, home);
+		use.Rename(StoredName(use.entry, home));
+	});
 }
 
 void Binder::QualifyUserFunctions(const SchemaCatalogEntry &home, ParsedExpression &expression) {
-	duckdb::QualifyUserFunctions(entry_retriever, home.ParentCatalog(), home.oid, expression);
+	auto &catalog = home.ParentCatalog();
+	CatalogEntryRetriever table_scope(context);
+	table_scope.SetTableSearchPath(home);
+	ForEachName(entry_retriever, expression, [&](TableExpressionName use) {
+		if (use.entry.internal) {
+			return;
+		}
+		VerifyNotTemporary(use, catalog);
+		if (LookupName(table_scope, use).get() != &use.entry) {
+			use.Rename(StoredName(use.entry, catalog));
+		}
+	});
+}
+
+unique_ptr<ParsedExpression> Binder::QualifyTableExpression(ClientContext &context, const TableCatalogEntry &table,
+                                                            unique_ptr<ParsedExpression> expression) {
+	CatalogEntryRetriever table_scope(context);
+	table_scope.SetTableSearchPath(table.ParentSchema(context));
+	ForEachName(table_scope, *expression,
+	            [&](TableExpressionName use) { use.Rename(FullName(use.entry, table.ParentCatalog())); });
+	return expression;
+}
+
+unique_ptr<ParsedExpression> Binder::QualifiedGeneratedExpression(ClientContext &context,
+                                                                  const TableCatalogEntry &table,
+                                                                  const ColumnDefinition &column) {
+	return QualifyTableExpression(context, table, table.GetColumns().SharedGeneratedExpression(column));
+}
+
+unique_ptr<ParsedExpression> Binder::QualifiedDefaultValue(ClientContext &context, const TableCatalogEntry &table,
+                                                           const ColumnDefinition &column) {
+	if (!column.HasDefaultValue()) {
+		return ConstantExpression::FromValue(Value(column.Type()));
+	}
+	return QualifyTableExpression(context, table, column.DefaultValue().Copy());
+}
+
+void Binder::VerifyMovedTableExpressions(ClientContext &context, TableCatalogEntry &table,
+                                         const SchemaCatalogEntry &target) {
+	CatalogEntryRetriever current(context);
+	current.SetTableSearchPath(table.ParentSchema(context));
+	CatalogEntryRetriever moved(context);
+	moved.SetTableSearchPath(target);
+	auto &catalog = table.ParentCatalog();
+	auto transaction = catalog.GetCatalogTransaction(context);
+	auto verify = [&](const ParsedExpression &expression) {
+		ForEachName(current, *expression.Copy(), [&](TableExpressionName use) {
+			if (LookupName(moved, use).get() == &use.entry) {
+				return;
+			}
+			if (use.literal && catalog.OwnerOf(transaction, use.entry).get() == &table) {
+				return;
+			}
+			throw BinderException("Cannot move table %s to schema %s: its expressions %s %s %s, which would resolve "
+			                      "to a different %s there",
+			                      table.name, target.name, use.literal ? "use" : "call", use.Kind(), use.entry.name,
+			                      use.Kind());
+		});
+	};
+	for (auto &column : table.GetColumns().Logical()) {
+		if (column.Generated()) {
+			verify(column.GeneratedExpression());
+		} else if (column.HasDefaultValue()) {
+			verify(column.DefaultValue());
+		}
+	}
+	for (auto &constraint : table.GetConstraints()) {
+		if (constraint->type == ConstraintType::CHECK) {
+			verify(*constraint->Cast<CheckConstraint>().expression);
+		}
+	}
 }
 
 void Binder::QualifyUserFunctions(const SchemaCatalogEntry &home, ColumnDefinition &column) {
@@ -408,20 +586,15 @@ void Binder::BindGeneratedColumns(BoundCreateTableInfo &info) {
 }
 
 void Binder::BindDefaultValue(const ColumnDefinition &column, vector<unique_ptr<Expression>> &bound_defaults,
-                              const string &catalog, const string &schema) {
+                              const SchemaCatalogEntry &schema) {
 	ColumnList col_list;
 	col_list.AddColumn(column.Copy());
-	BindDefaultValues(col_list, bound_defaults, catalog, schema);
+	BindDefaultValues(col_list, bound_defaults, schema);
 }
 
 void Binder::BindDefaultValues(const ColumnList &columns, vector<unique_ptr<Expression>> &bound_defaults,
-                               const string &catalog_name, const string &schema_p) {
-	string schema_name = schema_p;
-	if (schema_p.empty()) {
-		schema_name = DEFAULT_SCHEMA;
-	}
-
-	auto default_binder = CreateBinderWithSearchPath(Identifier(catalog_name), Identifier(schema_name));
+                               const SchemaCatalogEntry &schema) {
+	auto default_binder = CreateTableBinder(context, schema, this);
 
 	for (auto &column : columns.Physical()) {
 		unique_ptr<Expression> bound_default;
@@ -830,11 +1003,12 @@ static void BindSerialSequences(ClientContext &context, SchemaCatalogEntry &sche
 		BoundSerialSequence serial;
 		serial.column = serial_column;
 		serial.name = Binder::FreeSequenceName(transaction, schema, table.GetTableName(), serial_column);
+		auto sequence = schema.GetQualifiedName(serial.name);
 		vector<unique_ptr<ParsedExpression>> arguments;
-		arguments.push_back(ConstantExpression::String(QualifiedName(serial.name).ToString()));
+		arguments.push_back(ConstantExpression::String(
+		    (schema.GetParentSchemaPath().empty() ? QualifiedName(serial.name) : sequence).ToString()));
 		table.columns.GetColumnMutable(serial_column)
 		    .SetDefaultValue(make_uniq<FunctionExpression>(Identifier("nextval"), std::move(arguments)));
-		auto sequence = schema.GetQualifiedName(serial.name);
 		for (auto &column : table.columns.Physical()) {
 			if (Binder::DefaultNamesSequence(column, sequence, equals)) {
 				serial.dependents.push_back(column.Name());
@@ -1011,22 +1185,19 @@ unique_ptr<BoundCreateTableInfo> Binder::BindCreateTableInfo(unique_ptr<CreateIn
 		if (AnyConstraintReferencesGeneratedColumn(base)) {
 			throw BinderException("Constraints on virtual generated columns are not supported");
 		}
-		auto constraint_binder = CreateBinderWithSearchPath(schema.ParentCatalog().GetName(), schema.name);
+		auto constraint_binder = CreateTableBinder(context, schema, this);
 		bound_constraints = constraint_binder->BindNewConstraints(*result);
 		for (auto &constraint : base.constraints) {
 			VerifyConstraintCheckModeStorageVersion(*constraint, catalog, base.temporary);
 		}
 		if (bind_mode != AlterBindMode::SKIP_BINDING) {
 			BindSerialSequences(context, schema, *result);
-			auto &catalog_name = schema.ParentCatalog().GetName();
-			auto &schema_name = schema.name;
 			for (auto &column : base.columns.Physical()) {
 				result->AddSubDependency(AlterTableType::SET_DEFAULT, column.Name());
 				if (NamesPendingSerialSequence(*result, column.Name())) {
 					continue;
 				}
-				BindDefaultValue(column, bound_defaults, catalog_name.GetIdentifierName(),
-				                 schema_name.GetIdentifierName());
+				BindDefaultValue(column, bound_defaults, schema);
 			}
 		}
 	}

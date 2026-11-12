@@ -332,6 +332,10 @@ BoundStatement Binder::Bind(AlterStatement &stmt) {
 	if (catalog.Compatibility() == SqlCompatibility::POSTGRES) {
 		auto &schema = entry->ParentSchema(context);
 		QualifyAlterUserFunctions(*this, schema, stmt);
+		if (stmt.info->type == AlterType::SET_SCHEMA && entry->type == CatalogType::TABLE_ENTRY) {
+			VerifyMovedTableExpressions(context, entry->Cast<TableCatalogEntry>(),
+			                            catalog.GetSchema(context, stmt.info->Cast<SetSchemaInfo>().new_schema));
+		}
 	}
 
 	if (catalog.IsSystemCatalog()) {

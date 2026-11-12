@@ -18,6 +18,7 @@
 namespace duckdb {
 
 class ClientContext;
+class SchemaCatalogEntry;
 
 struct CatalogSearchEntry {
 	CatalogSearchEntry(Identifier catalog, Identifier schema, bool default_schema_precedence = false);
@@ -64,6 +65,9 @@ public:
 	DUCKDB_API explicit CatalogSearchPath(ClientContext &client_p);
 	DUCKDB_API CatalogSearchPath(ClientContext &client_p, vector<CatalogSearchEntry> entries);
 	CatalogSearchPath(const CatalogSearchPath &other) = delete;
+
+	//! The path the expressions of a table in this schema are bound with
+	DUCKDB_API static shared_ptr<CatalogSearchPath> ForTable(ClientContext &context, const SchemaCatalogEntry &schema);
 
 	DUCKDB_API void Set(CatalogSearchEntry new_value, CatalogSetPathType set_type);
 	DUCKDB_API void Set(vector<CatalogSearchEntry> new_paths, CatalogSetPathType set_type);
@@ -113,6 +117,8 @@ private:
 private:
 	ClientContext &context;
 	vector<CatalogSearchEntry> paths;
+	//! The position in paths of the entry GetDefault returns
+	idx_t default_index = 1;
 	//! Only the paths that were explicitly set (minus the always included paths)
 	vector<CatalogSearchEntry> set_paths;
 	//! Connection-level defaults restored by Reset() (RESET search_path / RESET ALL).

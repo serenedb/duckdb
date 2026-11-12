@@ -71,6 +71,10 @@ public:
 
 	const CatalogSearchPath &GetSearchPath() const;
 	void SetSearchPath(vector<CatalogSearchEntry> entries);
+	//! A table's expressions store names, so they are bound with a path that doesn't depend on the session:
+	//! a temporary object, a search_path or an object created later can't change what a stored name means.
+	//! TODO(mkornaukhov): store OIDs in table expressions instead of names.
+	void SetTableSearchPath(const SchemaCatalogEntry &schema);
 
 	void SetCallback(catalog_entry_callback_t callback);
 	catalog_entry_callback_t GetCallback();

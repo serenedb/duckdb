@@ -242,7 +242,8 @@ static void BakeTableName(ParsedExpression &root_expr, const BindingAlias &bindi
 	});
 }
 
-unique_ptr<ParsedExpression> TableBinding::ExpandGeneratedColumn(const Identifier &column_name) {
+unique_ptr<ParsedExpression> TableBinding::ExpandGeneratedColumn(ClientContext &context,
+                                                                 const Identifier &column_name) {
 	auto catalog_entry = GetStandardEntry();
 	D_ASSERT(catalog_entry); // Should only be called on a TableBinding
 
@@ -254,7 +255,7 @@ unique_ptr<ParsedExpression> TableBinding::ExpandGeneratedColumn(const Identifie
 	D_ASSERT(table_entry.GetColumn(LogicalIndex(column_index)).Generated());
 	// Get a copy of the generated column
 	auto expression =
-	    table_entry.GetColumns().SharedGeneratedExpression(table_entry.GetColumn(LogicalIndex(column_index)));
+	    Binder::QualifiedGeneratedExpression(context, table_entry, table_entry.GetColumn(LogicalIndex(column_index)));
 	unordered_map<idx_t, Identifier> alias_map;
 	for (auto &entry : name_map) {
 		alias_map[entry.second] = entry.first;

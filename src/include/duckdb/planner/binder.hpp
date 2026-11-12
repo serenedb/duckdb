@@ -352,6 +352,19 @@ public:
 	                                                    const Identifier &table_name, const ColumnList &columns);
 	vector<unique_ptr<BoundConstraint>> BindConstraints(const TableCatalogEntry &table);
 	vector<unique_ptr<BoundConstraint>> BindNewConstraints(BoundCreateTableInfo &info);
+	//! A binder that binds the expressions of a table in this schema
+	static shared_ptr<Binder> CreateTableBinder(ClientContext &context, const SchemaCatalogEntry &schema,
+	                                            optional_ptr<Binder> parent = nullptr);
+	//! A copy of a table's expression to bind inside another statement: its names mean there what they mean in
+	//! the table
+	static unique_ptr<ParsedExpression> QualifiedGeneratedExpression(ClientContext &context,
+	                                                                 const TableCatalogEntry &table,
+	                                                                 const ColumnDefinition &column);
+	static unique_ptr<ParsedExpression> QualifiedDefaultValue(ClientContext &context, const TableCatalogEntry &table,
+	                                                          const ColumnDefinition &column);
+	//! Fails when a name in the table's expressions would resolve differently once the table is in the target schema
+	static void VerifyMovedTableExpressions(ClientContext &context, TableCatalogEntry &table,
+	                                        const SchemaCatalogEntry &target);
 	void QualifyUserFunctions(const Catalog &home, ParsedExpression &expression);
 	void QualifyUserFunctions(const SchemaCatalogEntry &home, ParsedExpression &expression);
 	void QualifyUserFunctions(const SchemaCatalogEntry &home, ColumnDefinition &column);
@@ -452,6 +465,7 @@ public:
 
 	static void BindSchemaOrCatalog(ClientContext &context, Identifier &catalog, Identifier &schema);
 	static void BindSchemaOrCatalog(ClientContext &context, QualifiedName &qualified_name);
+	static void BindSchemaOrCatalog(CatalogEntryRetriever &retriever, QualifiedName &qualified_name);
 
 	void BindLogicalType(LogicalType &type);
 	//! Resolve a type expression into a concrete type
@@ -499,7 +513,7 @@ public:
 	void SetSearchPath(Catalog &catalog, const Identifier &schema);
 
 	void BindDefaultValue(const ColumnDefinition &column, vector<unique_ptr<Expression>> &bound_defaults,
-	                      const string &catalog = "", const string &schema = "");
+	                      const SchemaCatalogEntry &schema);
 	unique_ptr<ParsedExpression> GetSQLValueFunction(const Identifier &column_name);
 	Identifier GetExpressionName(const ParsedExpression &expr);
 
@@ -542,7 +556,7 @@ private:
 	void BindGeneratedColumns(BoundCreateTableInfo &info);
 	//! Bind the default values of the columns of a table
 	void BindDefaultValues(const ColumnList &columns, vector<unique_ptr<Expression>> &bound_defaults,
-	                       const string &catalog = "", const string &schema = "");
+	                       const SchemaCatalogEntry &schema);
 	//! Bind a limit value (LIMIT or OFFSET)
 	BoundLimitNode BindLimitValue(OrderBinder &order_binder, unique_ptr<ParsedExpression> limit_val,
 	                              LimitValueType value_type, bool is_offset);
@@ -756,7 +770,6 @@ private:
 	static void BindSchemaOrCatalog(CatalogEntryRetriever &retriever, Identifier &catalog, Identifier &schema);
 	//! Resolve the (optional) schema/catalog of a qualified name in-place, overwriting it with the resolved name
 	void BindSchemaOrCatalog(QualifiedName &qualified_name);
-	static void BindSchemaOrCatalog(CatalogEntryRetriever &retriever, QualifiedName &qualified_name);
 	Identifier BindCatalog(const Identifier &catalog_name);
 	SchemaCatalogEntry &BindCreateSchema(CreateInfo &info);
 	void MergeMacroOverloads(CreateInfo &info);
@@ -783,7 +796,8 @@ private:
 	void BindInsertColumnList(TableCatalogEntry &table, vector<Identifier> &columns, bool default_values,
 	                          vector<LogicalIndex> &named_column_map, vector<LogicalType> &expected_types,
 	                          IndexVector<idx_t, PhysicalIndex> &column_index_map);
-	void TryReplaceDefaultExpression(unique_ptr<ParsedExpression> &expr, const ColumnDefinition &column);
+	void TryReplaceDefaultExpression(unique_ptr<ParsedExpression> &expr, const TableCatalogEntry &table,
+	                                 const ColumnDefinition &column);
 	void ExpandDefaultInValuesList(InsertQueryNode &node, TableCatalogEntry &table,
 	                               optional_ptr<ExpressionListRef> values_list,
 	                               const vector<LogicalIndex> &named_column_map);
@@ -794,10 +808,10 @@ private:
 	                                                   const vector<LogicalType> &source_types);
 	//! Expand a stored generated column's expression into a self-contained parsed expression by inlining every
 	//! reference to another generated column, so chains resolve without an ordering pass.
-	static void ExpandStoredGeneratedExpression(unique_ptr<ParsedExpression> &expr, TableCatalogEntry &table);
+	void ExpandStoredGeneratedExpression(unique_ptr<ParsedExpression> &expr, TableCatalogEntry &table);
 	//! As above, but `substitute` may also replace a reference with a caller-supplied value (the assigned value
 	//! in UPDATE); every other reference is left for the caller to bind.
-	static void
+	void
 	ExpandStoredGeneratedExpression(unique_ptr<ParsedExpression> &expr, TableCatalogEntry &table,
 	                                absl::FunctionRef<unique_ptr<ParsedExpression>(const Identifier &name)> substitute);
 	//! Fill the stored-generated slots of `column_values` (indexed by physical position; non-generated slots
@@ -818,6 +832,8 @@ private:
 	BoundStatement FinishCTE(BoundCTEData &bound_cte, BoundStatement child_data);
 
 	shared_ptr<Binder> CreateBinderWithSearchPath(const Identifier &catalog_name, const Identifier &schema_name);
+	static unique_ptr<ParsedExpression> QualifyTableExpression(ClientContext &context, const TableCatalogEntry &table,
+	                                                           unique_ptr<ParsedExpression> expression);
 
 	bool DebugAggregateStateExportVerify(BoundSelectNode &statement, unique_ptr<LogicalOperator> &root);
 

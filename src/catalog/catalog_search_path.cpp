@@ -2,6 +2,7 @@
 #include "duckdb/catalog/default/default_schemas.hpp"
 
 #include "duckdb/catalog/catalog.hpp"
+#include "duckdb/catalog/catalog_entry/schema_catalog_entry.hpp"
 #include "duckdb/common/constants.hpp"
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/sql_identifier.hpp"
@@ -154,6 +155,59 @@ vector<CatalogSearchEntry> CatalogSearchEntry::ParseList(const string &input) {
 CatalogSearchPath::CatalogSearchPath(ClientContext &context_p, vector<CatalogSearchEntry> entries)
     : context(context_p) {
 	SetPathsInternal(std::move(entries));
+}
+
+shared_ptr<CatalogSearchPath> CatalogSearchPath::ForTable(ClientContext &context, const SchemaCatalogEntry &schema) {
+	auto &catalog = schema.ParentCatalog();
+	auto &catalog_name = catalog.GetName();
+	const bool system_builtins = Catalog::GetSystemCatalog(context).IsDuckCatalog();
+	vector<CatalogSearchEntry> builtins;
+	if (system_builtins) {
+		builtins.emplace_back(SYSTEM_CATALOG, DEFAULT_SCHEMA);
+	}
+	builtins.emplace_back(catalog_name, "pg_catalog");
+	if (system_builtins) {
+		builtins.emplace_back(SYSTEM_CATALOG, "pg_catalog");
+	}
+	vector<CatalogSearchEntry> home;
+	if (schema.GetParentSchemaPath().empty()) {
+		home.emplace_back(catalog_name, schema.name);
+	}
+	if (home.empty() || schema.name != DEFAULT_SCHEMA) {
+		home.emplace_back(catalog_name, DEFAULT_SCHEMA);
+	}
+	// PostgreSQL looks built-ins up first, so an object created later in the table's schema can't shadow one
+	const bool builtins_first = catalog.Compatibility() == SqlCompatibility::POSTGRES;
+
+	auto result = make_shared_ptr<CatalogSearchPath>(context, vector<CatalogSearchEntry>());
+	auto &paths = result->paths;
+	paths.clear();
+	if (builtins_first) {
+		paths.insert(paths.end(), builtins.begin(), builtins.end());
+	}
+	result->default_index = paths.size();
+	paths.insert(paths.end(), home.begin(), home.end());
+	if (!builtins_first) {
+		// names are qualified at definition only for PostgreSQL: elsewhere the session's path stays behind the table's
+		for (auto path : ClientData::Get(context).catalog_search_path->GetSetPaths()) {
+			if (IsInvalidCatalog(path.GetCatalog())) {
+				path.SetCatalog(DatabaseManager::TryGetDefaultDatabase(context));
+			}
+			if (!IsInvalidCatalog(path.GetCatalog())) {
+				paths.push_back(std::move(path));
+			}
+		}
+		paths.insert(paths.end(), builtins.begin(), builtins.end());
+	}
+	if (system_builtins) {
+		for (auto &extension_schema : ExtensionCallbackManager::Get(context).GetExtensionSchemas()) {
+			paths.emplace_back(Identifier(SYSTEM_CATALOG), Identifier(extension_schema));
+		}
+	}
+	// a schema-qualified name without a database resolves in the table's database
+	paths.emplace_back(catalog_name, INVALID_SCHEMA);
+	result->set_paths = std::move(home);
+	return result;
 }
 
 CatalogSearchPath::CatalogSearchPath(ClientContext &context_p)
@@ -473,7 +527,7 @@ vector<CatalogSearchEntry> CatalogSearchPath::GetWithPrecedenceSchemas(ClientCon
 
 const CatalogSearchEntry &CatalogSearchPath::GetDefault() const {
 	D_ASSERT(paths.size() >= 2);
-	return paths[1];
+	return paths[default_index];
 }
 
 CatalogSearchEntry CatalogSearchPath::GetResolvedDefault() const {
@@ -486,16 +540,15 @@ CatalogSearchEntry CatalogSearchPath::GetResolvedDefault() const {
 	// Walk the user-set range and return the first entry whose schema resolves
 	// AND actually exists in the target catalog. PG falls through to the next
 	// search_path entry when "$user" doesn't match a real schema.
-	auto user_end = 1 + set_paths.size();
 	const bool can_check_existence = context.transaction.HasActiveTransaction();
-	for (idx_t i = 1; i < user_end; i++) {
-		auto resolved = ResolveSchema(context, paths[i]);
+	for (auto &path : set_paths) {
+		auto resolved = ResolveSchema(context, path);
 		if (resolved.empty()) {
 			continue;
 		}
 		if (!can_check_existence ||
-		    Catalog::GetSchema(context, paths[i].GetCatalog(), Identifier(resolved), OnEntryNotFound::RETURN_NULL)) {
-			return CatalogSearchEntry(paths[i].GetCatalog(), Identifier(std::move(resolved)));
+		    Catalog::GetSchema(context, path.GetCatalog(), Identifier(resolved), OnEntryNotFound::RETURN_NULL)) {
+			return CatalogSearchEntry(path.GetCatalog(), Identifier(std::move(resolved)));
 		}
 	}
 	return GetDefault();

@@ -1247,8 +1247,7 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 		auto &table_schema = BindCreateSchema(create_info);
 		auto &table_catalog = table_schema.ParentCatalog();
 		if (table_catalog.Compatibility() == SqlCompatibility::POSTGRES) {
-			CreateBinderWithSearchPath(table_catalog.GetName(), table_schema.name)
-			    ->QualifyUserFunctions(table_schema, create_info);
+			QualifyUserFunctions(table_schema, create_info);
 		}
 		auto bound_info = BindCreateTableInfo(std::move(stmt.info), table_schema);
 		auto root = std::move(bound_info->query);
