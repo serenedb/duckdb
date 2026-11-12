@@ -12,6 +12,7 @@ add_library_unity(
   join_order_conflict_detector.cpp
   large_constant_values.cpp
   logical_plan_verification.cpp
+  pullup_filters_scan.cpp
   relation_statistics.cpp
   remove_unused_columns.cpp
   unchecked_cast.cpp

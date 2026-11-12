@@ -17,8 +17,8 @@ namespace duckdb {
 
 class FilterPullup {
 public:
-	explicit FilterPullup(bool pullup = false, bool add_column = false)
-	    : can_pullup(pullup), can_add_column(add_column) {
+	explicit FilterPullup(bool pullup = false, bool add_column = false, bool set_operation = false)
+	    : can_pullup(pullup), can_add_column(add_column), over_set_operation(set_operation) {
 	}
 
 	//! Perform filter pullup
@@ -32,6 +32,8 @@ private:
 
 	// identify case the branch is a set operation (INTERSECT or EXCEPT)
 	bool can_add_column = false;
+
+	bool over_set_operation = false;
 
 private:
 	// Generate logical filters pulled up
