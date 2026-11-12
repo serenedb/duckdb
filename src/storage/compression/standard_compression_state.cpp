@@ -9,8 +9,7 @@ CompressionState::CompressionState(ColumnDataCheckpointData &checkpoint_data_p, 
 }
 
 unique_ptr<ColumnSegment> CompressionState::CreateNewSegment() {
-	return ColumnSegment::CreateTransientSegment(checkpoint_data.GetDatabase(), function, checkpoint_data.GetType(),
-	                                             info.GetBlockSize(), info.GetBlockManager());
+	return checkpoint_data.CreateTransientSegment(function, info.GetBlockSize(), info.GetBlockManager());
 }
 
 const LogicalType &CompressionState::GetType() {

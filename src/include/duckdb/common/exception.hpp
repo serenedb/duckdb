@@ -200,9 +200,6 @@ public:
 	explicit OutOfMemoryException(std::string_view msg, ARGS &&...params)
 	    : OutOfMemoryException(ConstructMessage(msg, std::forward<ARGS>(params)...)) {
 	}
-
-private:
-	string ExtendOutOfMemoryError(std::string_view msg);
 };
 
 class SyntaxException : public Exception {

@@ -7,7 +7,7 @@ DictionaryCompressionCompressState::DictionaryCompressionCompressState(ColumnDat
     : StandardCompressionState(checkpoint_data_p, CompressionType::COMPRESSION_DICTIONARY),
       stats_writer(checkpoint_data.GetType()),
       current_string_map(
-          info.GetBlockManager().buffer_manager.GetBufferAllocator(),
+          checkpoint_data.GetAllocator(),
           max_unique_count_across_all_segments * 2, // * 2 results in less linear probing, improving performance
           1 // maximum_target_capacity_p, 1 because we don't care about target for our use-case, as we
             // only use PrimitiveDictionary for duplicate checks, and not for writing to any target

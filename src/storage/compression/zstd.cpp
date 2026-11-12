@@ -245,7 +245,7 @@ public:
 
 		stream_writer = checkpoint_data.GetColumnStreamWriter();
 		if (stream_writer) {
-			auto &allocator = BufferManager::GetBufferManager(checkpoint_data.GetDatabase()).GetBufferAllocator();
+			auto &allocator = checkpoint_data.GetAllocator();
 			stream_staging = allocator.Allocate(info.GetBlockSize());
 			stream_lengths = allocator.Allocate(ZSTD_VECTOR_SIZE * sizeof(string_length_t));
 		}
