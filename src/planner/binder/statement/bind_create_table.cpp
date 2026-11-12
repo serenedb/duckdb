@@ -92,7 +92,7 @@ vector<unique_ptr<BoundConstraint>> Binder::BindConstraints(ClientContext &conte
 }
 
 vector<unique_ptr<BoundConstraint>> Binder::BindConstraints(const TableCatalogEntry &table) {
-	auto binder = CreateBinderWithSearchPath(table.ParentCatalog().GetName(), table.ParentSchema(context).name);
+	auto binder = CreateBinderWithSearchPath(table.ParentCatalog(), table.ParentSchema(context).name);
 	return binder->BindConstraints(table.GetConstraints(), table.name, table.GetColumns());
 }
 
@@ -420,7 +420,8 @@ void Binder::BindDefaultValues(const ColumnList &columns, vector<unique_ptr<Expr
 		schema_name = DEFAULT_SCHEMA;
 	}
 
-	auto default_binder = CreateBinderWithSearchPath(Identifier(catalog_name), Identifier(schema_name));
+	auto default_binder =
+	    CreateBinderWithSearchPath(Catalog::GetCatalog(context, Identifier(catalog_name)), Identifier(schema_name));
 
 	for (auto &column : columns.Physical()) {
 		unique_ptr<Expression> bound_default;
@@ -1010,7 +1011,7 @@ unique_ptr<BoundCreateTableInfo> Binder::BindCreateTableInfo(unique_ptr<CreateIn
 		if (AnyConstraintReferencesGeneratedColumn(base)) {
 			throw BinderException("Constraints on virtual generated columns are not supported");
 		}
-		auto constraint_binder = CreateBinderWithSearchPath(schema.ParentCatalog().GetName(), schema.name);
+		auto constraint_binder = CreateBinderWithSearchPath(schema.ParentCatalog(), schema.name);
 		bound_constraints = constraint_binder->BindNewConstraints(*result);
 		for (auto &constraint : base.constraints) {
 			VerifyConstraintCheckModeStorageVersion(*constraint, catalog, base.temporary);

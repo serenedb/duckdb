@@ -59,8 +59,7 @@ void Binder::BindUpdateSet(TableIndex proj_index, unique_ptr<LogicalOperator> &r
 	shared_ptr<Binder> binder_with_search_path;
 
 	if (prioritize_table_when_binding) {
-		binder_with_search_path =
-		    CreateBinderWithSearchPath(table.ParentCatalog().GetName(), table.ParentSchema(context).name);
+		binder_with_search_path = CreateBinderWithSearchPath(table.ParentCatalog(), table.ParentSchema(context).name);
 		expr_binder_ptr = binder_with_search_path.get();
 	}
 
