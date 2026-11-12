@@ -104,10 +104,16 @@ TupleDataSegment::TupleDataSegment(shared_ptr<TupleDataAllocator> allocator_p)
       pinned_row_handles(allocator->GetStlAllocator()), pinned_heap_handles(allocator->GetStlAllocator()) {
 }
 
-TupleDataSegment::~TupleDataSegment() {
-	if (allocator) {
-		allocator->SetDestroyBufferUponUnpin(); // Prevent blocks from being added to eviction queue
+void arena_deleter<TupleDataSegment>::operator()(TupleDataSegment *segment) {
+	auto arena_owner = std::move(segment->allocator);
+	if (arena_owner) {
+		arena_owner->SetDestroyBufferUponUnpin();
 	}
+	segment->~TupleDataSegment();
+}
+
+TupleDataSegment::~TupleDataSegment() {
+	D_ASSERT(!allocator);
 	// Avoid triggering the mutex init slow-path (on macOS, first lock on a fresh mutex is expensive).
 	// In the destructor we are the sole owner, so checking without the lock is safe.
 	if (!pinned_row_handles.empty() || !pinned_heap_handles.empty()) {

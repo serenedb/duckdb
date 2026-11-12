@@ -190,4 +190,9 @@ public:
 	unsafe_arena_vector<BufferHandle> pinned_heap_handles;
 };
 
+template <>
+struct arena_deleter<TupleDataSegment> {
+	void operator()(TupleDataSegment *segment);
+};
+
 } // namespace duckdb
