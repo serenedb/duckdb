@@ -163,9 +163,11 @@ protected:
 	void VisitOperator(LogicalOperator &op) override {
 		if (op.type == LogicalOperatorType::LOGICAL_DEPENDENT_JOIN) {
 			AdjustCorrelatedColumns(op.Cast<LogicalDependentJoin>().correlated_columns, scope_depth + 1);
+			VisitOperator(*op.children[0]);
 			scope_depth++;
-			LogicalOperatorVisitor::VisitOperator(op);
+			VisitOperator(*op.children[1]);
 			scope_depth--;
+			VisitOperatorExpressions(op);
 			return;
 		}
 		if (op.type == LogicalOperatorType::LOGICAL_RECURSIVE_CTE ||

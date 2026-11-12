@@ -15,6 +15,9 @@ void ExpressionExecutor::Execute(const BoundReferenceExpression &expr, Expressio
 	D_ASSERT(expr.Index() != DConstants::INVALID_INDEX);
 	D_ASSERT(expr.Index() < chunk->ColumnCount());
 
+	if (lazy_columns && lazy_columns->Load(*chunk, expr.Index(), sel, count, result)) {
+		return;
+	}
 	if (sel) {
 		result.Slice(chunk->data[expr.Index()], *sel, count);
 	} else {

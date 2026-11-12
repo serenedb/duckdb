@@ -318,6 +318,9 @@ void TypeExpression::Serialize(Serializer &serializer) const {
 	if (serializer.ShouldSerialize(StorageVersion::V2_0_0) || (qualified_name.Path().size() > 3)) {
 		serializer.WriteProperty<QualifiedName>(204, "qualified_name", qualified_name);
 	}
+	if (serializer.ShouldSerialize(StorageVersion::V2_0_0)) {
+		serializer.WritePropertyWithDefault<LogicalType>(205, "bound_type", bound_type, LogicalType::INVALID);
+	}
 }
 
 unique_ptr<ParsedExpression> TypeExpression::Deserialize(Deserializer &deserializer) {
@@ -327,6 +330,7 @@ unique_ptr<ParsedExpression> TypeExpression::Deserialize(Deserializer &deseriali
 	auto type_name = deserializer.ReadPropertyWithDefault<Identifier>(202, "type_name");
 	deserializer.ReadPropertyWithDefault<vector<unique_ptr<ParsedExpression>>>(203, "children", result->children);
 	auto qualified_name = deserializer.ReadPropertyWithExplicitDefault<QualifiedName>(204, "qualified_name", QualifiedName());
+	deserializer.ReadPropertyWithExplicitDefault<LogicalType>(205, "bound_type", result->bound_type, LogicalType::INVALID);
 	result->SetQualifiedName(std::move(catalog), std::move(schema), std::move(type_name));
 	if (!qualified_name.Path().empty()) {
 		result->SetQualifiedName(std::move(qualified_name));

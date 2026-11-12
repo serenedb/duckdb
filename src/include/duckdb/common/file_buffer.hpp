@@ -33,6 +33,8 @@ public:
 	//! DIRECT_IO
 	FileBuffer(BlockAllocator &allocator, FileBufferType type, uint64_t user_size, idx_t block_header_size);
 	FileBuffer(BlockAllocator &allocator, FileBufferType type, BlockManager &block_manager);
+	FileBuffer(BlockAllocator &allocator, FileBufferType type, MemoryMappedFile &handle, uint64_t location,
+	           uint64_t user_size, idx_t block_header_size);
 	FileBuffer(FileBuffer &source, FileBufferType type, idx_t block_header_size);
 
 	virtual ~FileBuffer();

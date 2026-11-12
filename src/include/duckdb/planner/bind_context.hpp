@@ -12,6 +12,7 @@
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/common/case_insensitive_map.hpp"
 #include "duckdb/common/column_index.hpp"
+#include "duckdb/common/insertion_order_preserving_map.hpp"
 #include "duckdb/common/reference_map.hpp"
 #include "duckdb/common/exception/binder_exception.hpp"
 #include "duckdb/parser/expression/columnref_expression.hpp"
@@ -104,7 +105,8 @@ public:
 	//! Adds a call to a table function with the given alias to the BindContext.
 	void AddTableFunction(TableIndex index, const Identifier &alias, const vector<Identifier> &names,
 	                      const vector<LogicalType> &types, vector<ColumnIndex> &bound_column_ids,
-	                      optional_ptr<StandardEntry> entry, virtual_column_map_t virtual_columns);
+	                      optional_ptr<StandardEntry> entry, virtual_column_map_t virtual_columns,
+	                      vector<column_t> row_id_columns = {});
 	//! Adds a table view with a given alias to the BindContext.
 	void AddView(TableIndex index, const Identifier &alias, SubqueryRef &ref, BoundStatement &subquery,
 	             ViewCatalogEntry &view);
@@ -117,7 +119,7 @@ public:
 	                     const vector<LogicalType> &types, StandardEntry &entry);
 	//! Adds a base table with the given alias to the BindContext.
 	void AddGenericBinding(TableIndex index, const Identifier &alias, const vector<Identifier> &names,
-	                       const vector<LogicalType> &types);
+	                       const vector<LogicalType> &types, bool case_sensitive = false);
 
 	//! Registers an alternative name for a column of the binding with the given index
 	//! The alias can be bound like a regular column, but is not emitted by *
@@ -154,7 +156,7 @@ public:
 	//! Alias a set of column names for the specified table, using the original names if there are not enough aliases
 	//! specified.
 	static vector<Identifier> AliasColumnNames(const Identifier &table_name, const vector<Identifier> &names,
-	                                           const vector<Identifier> &column_aliases);
+	                                           const vector<Identifier> &column_aliases, bool case_sensitive = false);
 
 	//! Add all the bindings from a BindContext to this BindContext. The other BindContext is destroyed in the process.
 	void AddContext(BindContext other);
@@ -176,12 +178,22 @@ private:
 	void AddBinding(unique_ptr<Binding> binding);
 	static string AmbiguityException(const BindingAlias &alias, const vector<reference<Binding>> &bindings);
 
+public:
+	//! Starts a new top-level FROM item (the operands of an implicit, i.e. comma, cross join). `SELECT *`
+	//! expands one item at a time, so a USING column merged inside one item stays with that item.
+	void BeginFromItem() {
+		from_item_counter++;
+	}
+
 private:
 	Binder &binder;
 	//! The list of bindings in insertion order
 	vector<unique_ptr<Binding>> bindings_list;
-	//! The set of columns used in USING join conditions
-	identifier_map_t<reference_set_t<UsingColumnSet>> using_columns;
+	//! The FROM item each entry of bindings_list belongs to
+	vector<idx_t> binding_from_item;
+	idx_t from_item_counter = 0;
+	//! The set of columns used in USING join conditions, in USING clause order
+	InsertionOrderPreservingMap<reference_set_t<UsingColumnSet>, Identifier> using_columns;
 	//! The set of CTE bindings
 	vector<unique_ptr<CTEBinding>> cte_bindings;
 };

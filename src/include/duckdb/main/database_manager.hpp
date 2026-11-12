@@ -37,6 +37,13 @@ public:
 	explicit DatabaseManager(DatabaseInstance &db);
 	~DatabaseManager();
 
+	//! Oids come in fixed ranges, so a user object's oid does not depend on how many builtins the system catalog
+	//! registers, and a catalog replayed by oid survives a builtin added or removed: [0, 2^17) belongs to the host
+	//! (PostgreSQL numbers its own objects below 16384), the system catalog takes [2^17, 2^18), and user objects
+	//! start at 2^18.
+	static constexpr idx_t FIRST_SYSTEM_OID = 131072;
+	static constexpr idx_t FIRST_OID = 262144;
+
 public:
 	static DatabaseManager &Get(DatabaseInstance &db);
 	static DatabaseManager &Get(ClientContext &db);
@@ -52,6 +59,7 @@ public:
 	//! Get an attached database by its name
 	optional_ptr<AttachedDatabase> GetDatabase(ClientContext &context, const Identifier &name);
 	shared_ptr<AttachedDatabase> GetDatabase(const Identifier &name);
+	bool IsReservedName(const Identifier &name) const;
 	//! Attach a new database
 	shared_ptr<AttachedDatabase> AttachDatabase(ClientContext &context, AttachInfo &info, AttachOptions &options);
 
@@ -122,8 +130,17 @@ public:
 	transaction_t ActiveTransactionNumber() const {
 		return current_transaction_id;
 	}
-	idx_t NextOid() {
-		return next_oid++;
+	idx_t NextOid(idx_t count = 1) {
+		return next_oid.fetch_add(count, std::memory_order_relaxed);
+	}
+	idx_t NextSystemOid(idx_t count = 1);
+	idx_t ClaimOid(idx_t oid) {
+		for (auto current = next_oid.load(); current <= oid;) {
+			if (next_oid.compare_exchange_weak(current, oid + 1)) {
+				break;
+			}
+		}
+		return oid;
 	}
 	bool HasAttachedDatabase() {
 		lock_guard<mutex> guard(databases_lock);
@@ -135,8 +152,11 @@ public:
 	shared_ptr<AttachedDatabase> GetDatabaseInternal(const lock_guard<mutex> &, const Identifier &name);
 
 private:
-	optional_ptr<AttachedDatabase> FinalizeAttach(ClientContext &context, AttachInfo &info,
-	                                              shared_ptr<AttachedDatabase> database);
+	//! Register a database under `name`, renaming it to that name once it is claimed. Returns the database
+	//! that owns the name, which is a different one if IF NOT EXISTS lost a race for it
+	shared_ptr<AttachedDatabase> FinalizeAttach(ClientContext &context, AttachInfo &info,
+	                                            shared_ptr<AttachedDatabase> database, const Identifier &name);
+	shared_ptr<AttachedDatabase> ReattachDatabase(ClientContext &context, AttachInfo &info, AttachOptions &options);
 
 private:
 	DatabaseInstance &db;
@@ -150,6 +170,7 @@ private:
 	Identifier default_database;
 	//! The next object id handed out by the NextOid method
 	atomic<idx_t> next_oid;
+	atomic<idx_t> next_system_oid;
 	//! The current query number
 	atomic<transaction_t> current_query_number;
 	//! The current transaction number

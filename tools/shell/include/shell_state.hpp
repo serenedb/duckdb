@@ -19,6 +19,7 @@
 #include "duckdb/main/query_result.hpp"
 #include "duckdb/common/atomic.hpp"
 #include "duckdb.hpp"
+#include "duckdb_shell.hpp"
 
 namespace duckdb_shell {
 using duckdb::make_uniq;
@@ -225,6 +226,7 @@ public:
 	bool last_result_referenced = false;
 	//! Whether the last EXPLAIN ANALYZE tree folded any operators (so ".last" has a fuller tree to show)
 	bool last_explain_hid_content = false;
+	bool last_explain_analyze = false;
 	//! The widest rendered line of the last EXPLAIN tree, in display columns (used for the pager-width decision)
 	idx_t last_explain_width = 0;
 	//! If the following flag is set, then command execution stops at an error
@@ -267,6 +269,23 @@ public:
 	atomic<idx_t> seenInterrupt;
 	//! Name of our program
 	const char *program_name;
+	//! Subcommand context for help rendering. Drives the Usage line, the
+	//! help-section layout, and (for PSQL) the auto-ATTACH wiring after
+	//! option parsing.
+	ShellSubcommand subcommand = ShellSubcommand::SHELL;
+	ShellEngine engine {};
+	//! PSQL connection parameters. The `-h`/`-p`/`-d`/`-U` flags (plus
+	//! their long forms and the DBNAME/USERNAME positionals) populate
+	//! these; we synthesise an ATTACH against them after option parsing.
+	//! Defaults track psql's behaviour with serened-specific tweaks
+	//! (TCP not Unix socket; `postgres` final fallback for user).
+	string psql_host = "localhost";
+	string psql_port = "5432";
+	string psql_dbname;
+	string psql_user;
+	//! psql `-1`/`--single-transaction`: when a -c/-f is queued, wrap the
+	//! whole batch in BEGIN/COMMIT.
+	bool psql_single_transaction = false;
 
 	//! Whether or not syntax highlighting is enabled
 	bool highlighting_enabled = true;
@@ -379,6 +398,7 @@ public:
 	unique_ptr<ShellRenderer> GetRenderer(RenderMode mode);
 	vector<string> TableColumnList(const char *zTab);
 	SuccessState ExecuteStatement(unique_ptr<duckdb::SQLStatement> statement);
+	bool TryForwardClusterDdl(const duckdb::SQLStatement &statement, const string &original_sql, SuccessState &result);
 	static bool UseDescribeRenderMode(const duckdb::SQLStatement &stmt, string &describe_table_name);
 	//! Route EXPLAIN ANALYZE output through the shell's direct-printing renderer when on an interactive console
 	void SetupPrettyExplain(duckdb::SQLStatement &statement);
@@ -470,7 +490,8 @@ public:
 	static string Win32MbcsToUtf8(const string &zText, bool useAnsi);
 	static string Win32Utf8ToMbcs(const string &zText, bool useAnsi);
 #endif
-	optional_ptr<const CommandLineOption> FindCommandLineOption(const string &option, string &error_msg) const;
+	optional_ptr<const CommandLineOption> FindCommandLineOption(const string &option, const string &raw_arg,
+	                                                            string &error_msg) const;
 	optional_ptr<const MetadataCommand> FindMetadataCommand(const string &option, string &error_msg) const;
 	static vector<string> GetMetadataCompletions(const char *zLine, idx_t nLine);
 

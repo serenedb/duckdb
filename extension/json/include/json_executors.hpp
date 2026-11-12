@@ -19,7 +19,7 @@
 namespace duckdb {
 
 template <class T>
-using json_function_t = std::function<optional<T>(yyjson_val *, yyjson_alc *, Vector &)>;
+using json_function_t = optional<T> (*)(yyjson_val *, yyjson_alc *, Vector &);
 
 struct JSONExecutors {
 public:
@@ -105,16 +105,26 @@ public:
 				casted_paths = make_uniq<Vector>(LogicalTypeId::VARCHAR);
 				VectorOperations::DefaultCast(args.data[1], *casted_paths, args.size(), true);
 			}
-			BinaryExecutor::Execute<string_t, string_t, T>(
-			    inputs, *casted_paths, result, args.size(), [&](string_t input, string_t path) -> optional<T> {
-				    auto doc = JSONCommon::ReadDocument(input, JSONCommon::READ_FLAG, alc);
-				    auto val = JSONCommon::Get(doc->root, path, args.data[1].GetType().IsIntegral());
-				    if (SET_NULL_IF_NOT_FOUND && !val) {
-					    return nullopt;
-				    } else {
-					    return fun(val, alc, result);
-				    }
-			    });
+			const bool integral_path = args.data[1].GetType().IsIntegral();
+			auto extract = [&](yyjson_val *root, string_t path) -> optional<T> {
+				auto val = JSONCommon::Get(root, path, integral_path);
+				if (SET_NULL_IF_NOT_FOUND && !val) {
+					return nullopt;
+				}
+				return fun(val, alc, result);
+			};
+			if (inputs.GetVectorType() == VectorType::CONSTANT_VECTOR && !ConstantVector::IsNull(inputs)) {
+				auto doc =
+				    JSONCommon::ReadDocument(ConstantVector::GetData<string_t>(inputs)[0], JSONCommon::READ_FLAG, alc);
+				UnaryExecutor::Execute<string_t, T>(*casted_paths, result, args.size(),
+				                                    [&](string_t path) { return extract(doc->root, path); });
+			} else {
+				BinaryExecutor::Execute<string_t, string_t, T>(
+				    inputs, *casted_paths, result, args.size(), [&](string_t input, string_t path) {
+					    auto doc = JSONCommon::ReadDocument(input, JSONCommon::READ_FLAG, alc);
+					    return extract(doc->root, path);
+				    });
+			}
 		}
 		JSONAllocator::AddBuffer(result, alc);
 	}

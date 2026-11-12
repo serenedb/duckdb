@@ -12,6 +12,8 @@
 #include "duckdb/common/exception/binder_exception.hpp"
 #include "duckdb/planner/expression/bound_function_expression.hpp"
 #include "duckdb/planner/expression/bound_reference_expression.hpp"
+#include "duckdb/planner/filter/expression_filter.hpp"
+#include "duckdb/common/case_insensitive_map.hpp"
 
 namespace duckdb {
 
@@ -21,15 +23,10 @@ unique_ptr<FunctionData> TableFilterFunctions::Bind(BindScalarFunctionInput &inp
 }
 
 bool TableFilterFunctions::IsTableFilterFunction(const Identifier &name) {
-	static const char *const TABLE_FILTER_FUNCTIONS[] = {BloomFilterScalarFun::NAME, DynamicFilterScalarFun::NAME,
-	                                                     OptionalFilterScalarFun::NAME, PrefixRangeScalarFun::NAME,
-	                                                     SelectivityOptionalFilterScalarFun::NAME};
-	for (auto function_name : TABLE_FILTER_FUNCTIONS) {
-		if (name == function_name) {
-			return true;
-		}
-	}
-	return false;
+	static const case_insensitive_set_view_t table_filter_functions {
+	    BloomFilterScalarFun::NAME, DynamicFilterScalarFun::NAME, OptionalFilterScalarFun::NAME,
+	    PrefixRangeScalarFun::NAME, SelectivityOptionalFilterScalarFun::NAME};
+	return table_filter_functions.contains(name.GetIdentifierName());
 }
 // LCOV_EXCL_STOP
 
@@ -110,6 +107,13 @@ unique_ptr<Expression> CreateDynamicFilterExpression(shared_ptr<DynamicFilterDat
 	                                          std::move(bind_data));
 }
 
+string TableFilterFunctionToString(FunctionToStringInput &input) {
+	// The single argument is the column reference; its ToString() is the column name.
+	const string column_name = input.children.empty() ? string() : input.children[0]->ToString();
+	return ExpressionFilter::InternalFunctionToString(input.bound_function.GetName().GetIdentifierName(),
+	                                                  input.bind_data, column_name);
+}
+
 void TableFilterFunctionSerialize(Serializer &serializer, const optional_ptr<FunctionData> bind_data,
                                   const BoundScalarFunction &function) {
 	// Runtime state cannot be serialized - write nothing
@@ -126,7 +130,7 @@ unique_ptr<FunctionData> TableFilterFunctionDeserialize(Deserializer &deserializ
 	if (function.GetName() == DynamicFilterScalarFun::NAME) {
 		return make_uniq<DynamicFilterFunctionData>(nullptr);
 	}
-	throw InternalException("Unsupported table filter function \"%s\" during deserialization", function.GetName());
+	throw InternalException("Unsupported table filter function %s during deserialization", function.GetName());
 }
 
 } // namespace duckdb

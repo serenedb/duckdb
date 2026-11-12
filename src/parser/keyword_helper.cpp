@@ -5,15 +5,15 @@
 
 namespace duckdb {
 
-bool KeywordHelper::IsKeyword(const string &text, KeywordCategory category) {
+bool KeywordHelper::IsKeyword(std::string_view text, KeywordCategory category) {
 	return DuckDBKeywordHelper::Instance().GetKeywordCategory(text) != category;
 }
 
-KeywordCategory KeywordHelper::KeywordCategoryType(const string &text) {
+KeywordCategory KeywordHelper::KeywordCategoryType(std::string_view text) {
 	return DuckDBKeywordHelper::Instance().GetKeywordCategory(text);
 }
 
-bool KeywordHelper::RequiresQuotes(const string &text, bool allow_caps) {
+bool KeywordHelper::RequiresQuotes(std::string_view text, bool allow_caps) {
 	for (size_t i = 0; i < text.size(); i++) {
 		if (i > 0 && (text[i] >= '0' && text[i] <= '9')) {
 			continue;
@@ -38,7 +38,7 @@ string KeywordHelper::EscapeQuotes(const string &text, char quote) {
 	return StringUtil::Replace(text, string(1, quote), string(2, quote));
 }
 
-string KeywordHelper::WriteQuotedAndEscaped(const string &text, char quote) {
+string KeywordHelper::WriteQuotedAndEscaped(std::string_view text, char quote) {
 	string result;
 	result.reserve(text.size() + 2);
 	result += quote;
@@ -53,7 +53,7 @@ string KeywordHelper::WriteQuotedAndEscaped(const string &text, char quote) {
 	return result;
 }
 
-string KeywordHelper::WriteQuoted(const string &text, char quote) {
+string KeywordHelper::WriteQuoted(std::string_view text, char quote) {
 	// 1. Escapes all occurrences of 'quote' by doubling them (escape in SQL)
 	// 2. Adds quotes around the string
 	return WriteQuotedAndEscaped(text, quote);
@@ -105,7 +105,7 @@ string SQLQuotedIdentifier::ToString(const char *identifier) {
 	return ToString(string(identifier));
 }
 
-string SQLString::ToString(const string &literal) {
+string SQLString::ToString(std::string_view literal) {
 	return KeywordHelper::WriteQuotedAndEscaped(literal, '\'');
 }
 

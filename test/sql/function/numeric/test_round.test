@@ -53,6 +53,18 @@ select round(a, b) from roundme
 ----
 42.123000
 
+statement ok
+CREATE TABLE round_constant_precision AS SELECT * FROM (VALUES (1, 1.25::DOUBLE), (2, -17.5::DOUBLE), (3, NULL), (4, 125.5::DOUBLE), (5, 'inf'::DOUBLE)) t(i, d)
+
+query RRRRR
+SELECT round(d, 1), round(d, -1), round(d, NULL), round(d::FLOAT, -1), round_even(d, 1) FROM round_constant_precision ORDER BY i
+----
+1.3	0.0	NULL	0.0	1.2
+-17.5	-20.0	NULL	-20.0	-17.5
+NULL	NULL	NULL	NULL	NULL
+125.5	130.0	NULL	130.0	125.5
+inf	0.0	NULL	0.0	inf
+
 query I
 SELECT round(1.0, (-2147483648)::INT);
 ----

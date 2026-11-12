@@ -1,3 +1,4 @@
+#include "duckdb/common/type_visitor.hpp"
 #include "duckdb/common/vector/array_vector.hpp"
 #include "duckdb/common/vector/flat_vector.hpp"
 #include "duckdb/common/vector/list_vector.hpp"
@@ -215,9 +216,16 @@ public:
 	bool write_bbox;
 };
 
-static LogicalType GetJSONType(StructNames &const_struct_names, const LogicalType &type) {
+static bool HasOwnJSONCast(const CastFunctionSet &casts, const LogicalType &type) {
+	return type.HasAlias() && casts.HasExactRegisteredCast(type, LogicalType::JSON());
+}
+
+static LogicalType GetJSONType(StructNames &const_struct_names, const CastFunctionSet &casts, const LogicalType &type) {
 	if (type.IsJSONType()) {
 		return type;
+	}
+	if (HasOwnJSONCast(casts, type)) {
+		return LogicalType::JSON();
 	}
 
 	switch (type.id()) {
@@ -259,16 +267,16 @@ static LogicalType GetJSONType(StructNames &const_struct_names, const LogicalTyp
 	case LogicalTypeId::VARIANT:
 		return LogicalType::JSON();
 	case LogicalTypeId::LIST:
-		return LogicalType::LIST(GetJSONType(const_struct_names, ListType::GetChildType(type)));
+		return LogicalType::LIST(GetJSONType(const_struct_names, casts, ListType::GetChildType(type)));
 	case LogicalTypeId::ARRAY:
-		return LogicalType::ARRAY(GetJSONType(const_struct_names, ArrayType::GetChildType(type)),
+		return LogicalType::ARRAY(GetJSONType(const_struct_names, casts, ArrayType::GetChildType(type)),
 		                          ArrayType::GetSize(type));
 	// Struct and MAP are treated as JSON values
 	case LogicalTypeId::STRUCT: {
 		child_list_t<LogicalType> child_types;
 		for (const auto &child_type : StructType::GetChildTypes(type)) {
 			const_struct_names.Insert(child_type.first.GetIdentifierName());
-			child_types.emplace_back(child_type.first, GetJSONType(const_struct_names, child_type.second));
+			child_types.emplace_back(child_type.first, GetJSONType(const_struct_names, casts, child_type.second));
 		}
 		return LogicalType::STRUCT(child_types);
 	}
@@ -276,12 +284,13 @@ static LogicalType GetJSONType(StructNames &const_struct_names, const LogicalTyp
 	case LogicalTypeId::TUPLE: {
 		vector<LogicalType> child_types;
 		for (const auto &child_type : StructType::GetChildTypes(type)) {
-			child_types.push_back(GetJSONType(const_struct_names, child_type.second));
+			child_types.push_back(GetJSONType(const_struct_names, casts, child_type.second));
 		}
 		return LogicalType::TUPLE(std::move(child_types));
 	}
 	case LogicalTypeId::MAP: {
-		return LogicalType::MAP(MapType::KeyType(type), GetJSONType(const_struct_names, MapType::ValueType(type)));
+		return LogicalType::MAP(MapType::KeyType(type),
+		                        GetJSONType(const_struct_names, casts, MapType::ValueType(type)));
 	}
 	case LogicalTypeId::UNION: {
 		child_list_t<LogicalType> member_types;
@@ -289,7 +298,7 @@ static LogicalType GetJSONType(StructNames &const_struct_names, const LogicalTyp
 			auto &member_name = UnionType::GetMemberName(type, member_idx);
 			auto &member_type = UnionType::GetMemberType(type, member_idx);
 			const_struct_names.Insert(member_name.GetIdentifierName());
-			member_types.emplace_back(member_name, GetJSONType(const_struct_names, member_type));
+			member_types.emplace_back(member_name, GetJSONType(const_struct_names, casts, member_type));
 		}
 		return LogicalType::UNION(member_types);
 	}
@@ -299,8 +308,10 @@ static LogicalType GetJSONType(StructNames &const_struct_names, const LogicalTyp
 	}
 }
 
-static unique_ptr<FunctionData> JSONCreateBindParams(BoundScalarFunction &bound_function,
-                                                     vector<unique_ptr<Expression>> &arguments, bool object) {
+static unique_ptr<FunctionData> JSONCreateBindParams(BindScalarFunctionInput &input, bool object) {
+	auto &bound_function = input.GetBoundFunction();
+	auto &arguments = input.GetArguments();
+	auto &casts = CastFunctionSet::Get(input.GetClientContext());
 	StructNames const_struct_names;
 	auto &bound_arguments = bound_function.GetArguments();
 	bound_arguments.clear();
@@ -311,44 +322,39 @@ static unique_ptr<FunctionData> JSONCreateBindParams(BoundScalarFunction &bound_
 			throw ParameterNotResolvedException();
 		} else if (object && i % 2 == 0) {
 			if (type != LogicalType::VARCHAR) {
-				throw BinderException("json_object() keys must be VARCHAR, add an explicit cast to argument \"%s\"",
+				throw BinderException("json_object() keys must be VARCHAR, add an explicit cast to argument %s",
 				                      arguments[i]->GetName());
 			}
 			bound_arguments.push_back(LogicalType::VARCHAR);
 		} else {
 			// Value, cast to types that we can put in JSON
-			bound_arguments.push_back(GetJSONType(const_struct_names, type));
+			bound_arguments.push_back(GetJSONType(const_struct_names, casts, type));
 		}
 	}
 	return make_uniq<JSONCreateFunctionData>(std::move(const_struct_names));
 }
 
 static unique_ptr<FunctionData> JSONObjectBind(BindScalarFunctionInput &input) {
-	auto &bound_function = input.GetBoundFunction();
 	auto &arguments = input.GetArguments();
 	if (arguments.size() % 2 != 0) {
 		throw BinderException("json_object() requires an even number of arguments");
 	}
-	return JSONCreateBindParams(bound_function, arguments, true);
+	return JSONCreateBindParams(input, true);
 }
 
 static unique_ptr<FunctionData> JSONArrayBind(BindScalarFunctionInput &input) {
-	auto &bound_function = input.GetBoundFunction();
-	auto &arguments = input.GetArguments();
-	return JSONCreateBindParams(bound_function, arguments, false);
+	return JSONCreateBindParams(input, false);
 }
 
 static unique_ptr<FunctionData> ToJSONBind(BindScalarFunctionInput &input) {
-	auto &bound_function = input.GetBoundFunction();
 	auto &arguments = input.GetArguments();
 	if (arguments.size() != 1) {
 		throw BinderException("to_json() takes exactly one argument");
 	}
-	return JSONCreateBindParams(bound_function, arguments, false);
+	return JSONCreateBindParams(input, false);
 }
 
 static unique_ptr<FunctionData> ArrayToJSONBind(BindScalarFunctionInput &input) {
-	auto &bound_function = input.GetBoundFunction();
 	auto &arguments = input.GetArguments();
 	if (arguments.size() != 1) {
 		throw BinderException("array_to_json() takes exactly one argument");
@@ -360,11 +366,10 @@ static unique_ptr<FunctionData> ArrayToJSONBind(BindScalarFunctionInput &input) 
 	if (arg_id != LogicalTypeId::LIST && arg_id != LogicalTypeId::ARRAY && arg_id != LogicalTypeId::SQLNULL) {
 		throw BinderException("array_to_json() argument type must be LIST or ARRAY");
 	}
-	return JSONCreateBindParams(bound_function, arguments, false);
+	return JSONCreateBindParams(input, false);
 }
 
 static unique_ptr<FunctionData> RowToJSONBind(BindScalarFunctionInput &input) {
-	auto &bound_function = input.GetBoundFunction();
 	auto &arguments = input.GetArguments();
 	if (arguments.size() != 1) {
 		throw BinderException("row_to_json() takes exactly one argument");
@@ -373,10 +378,17 @@ static unique_ptr<FunctionData> RowToJSONBind(BindScalarFunctionInput &input) {
 	if (arguments[0]->HasParameter()) {
 		throw ParameterNotResolvedException();
 	}
-	if (arguments[0]->GetReturnType().id() != LogicalTypeId::STRUCT && arg_id != LogicalTypeId::SQLNULL) {
+	if (arg_id == LogicalTypeId::TUPLE) {
+		child_list_t<LogicalType> fields;
+		for (auto &child : StructType::GetChildTypes(arguments[0]->GetReturnType())) {
+			fields.emplace_back(Identifier("f" + to_string(fields.size() + 1)), child.second);
+		}
+		arguments[0] = BoundCastExpression::AddCastToType(input.GetClientContext(), std::move(arguments[0]),
+		                                                  LogicalType::STRUCT(std::move(fields)));
+	} else if (arg_id != LogicalTypeId::STRUCT && arg_id != LogicalTypeId::SQLNULL) {
 		throw BinderException("row_to_json() argument type must be STRUCT");
 	}
-	return JSONCreateBindParams(bound_function, arguments, false);
+	return JSONCreateBindParams(input, false);
 }
 
 static bool BindJSONCopyFormat(ClientContext &context, Expression &argument, const string &name, string &format_string,
@@ -1398,7 +1410,7 @@ static unique_ptr<FunctionData> JSONCopyToGeoJSONBind(BindScalarFunctionInput &i
 
 	StructNames const_struct_names;
 	auto &bound_arguments = bound_function.GetArguments();
-	bound_arguments[0] = GetJSONType(const_struct_names, payload_type);
+	bound_arguments[0] = GetJSONType(const_struct_names, CastFunctionSet::Get(input.GetClientContext()), payload_type);
 	bound_function.SetReturnType(LogicalType::JSON());
 
 	auto formats = CreateJSONCopyToJSONFunctionData(input.GetClientContext(), std::move(const_struct_names),
@@ -1431,10 +1443,10 @@ static unique_ptr<FunctionData> JSONCopyToJSONDeserialize(Deserializer &deserial
 		                        JSON_COPY_TO_JSON_INTERNAL_NAME);
 	}
 
-	StructNames const_struct_names;
-	GetJSONType(const_struct_names, arguments[0]);
-
 	auto &context = deserializer.Get<ClientContext &>();
+	StructNames const_struct_names;
+	GetJSONType(const_struct_names, CastFunctionSet::Get(context), arguments[0]);
+
 	return CreateJSONCopyToJSONFunctionData(context, std::move(const_struct_names), has_date_format,
 	                                        std::move(date_format_string), has_timestamp_format,
 	                                        std::move(timestamp_format_string));
@@ -1445,7 +1457,7 @@ unique_ptr<Expression> JSONFunctions::CreateJSONCopyToJSONExpression(ClientConte
                                                                      unique_ptr<Expression> date_format,
                                                                      unique_ptr<Expression> timestamp_format) {
 	StructNames const_struct_names;
-	auto json_type = GetJSONType(const_struct_names, payload->GetReturnType());
+	auto json_type = GetJSONType(const_struct_names, CastFunctionSet::Get(context), payload->GetReturnType());
 	auto bind_data =
 	    CreateJSONCopyToJSONFunctionData(context, std::move(const_struct_names), *date_format, *timestamp_format);
 
@@ -1538,11 +1550,12 @@ ScalarFunctionSet JSONFunctions::GetRowToJSONFunction() {
 
 struct NestedToJSONCastData : public BoundCastData {
 public:
-	explicit NestedToJSONCastData(optional_ptr<ClientContext> client) : client(client) {
+	NestedToJSONCastData(optional_ptr<ClientContext> client, LogicalType json_type, BoundCastInfo json_type_cast)
+	    : client(client), json_type(std::move(json_type)), json_type_cast(std::move(json_type_cast)) {
 	}
 
 	unique_ptr<BoundCastData> Copy() const override {
-		auto result = make_uniq<NestedToJSONCastData>(client);
+		auto result = make_uniq<NestedToJSONCastData>(client, json_type, json_type_cast.Copy());
 		result->const_struct_names = const_struct_names.Copy();
 		return std::move(result);
 	}
@@ -1550,10 +1563,29 @@ public:
 public:
 	optional_ptr<ClientContext> client;
 	StructNames const_struct_names;
+	LogicalType json_type;
+	BoundCastInfo json_type_cast;
 };
 
+struct NestedToJSONLocalState : public JSONFunctionLocalState {
+	using JSONFunctionLocalState::JSONFunctionLocalState;
+
+	unique_ptr<FunctionLocalState> json_type_cast_state;
+};
+
+static unique_ptr<FunctionLocalState> InitNestedToJSONLocalState(CastLocalStateParameters &parameters) {
+	auto result = parameters.context ? make_uniq<NestedToJSONLocalState>(*parameters.context)
+	                                 : make_uniq<NestedToJSONLocalState>(Allocator::DefaultAllocator());
+	auto &json_type_cast = parameters.cast_data->Cast<NestedToJSONCastData>().json_type_cast;
+	if (json_type_cast.HasFunction() && json_type_cast.HasInitLocalState()) {
+		CastLocalStateParameters json_type_parameters(parameters, json_type_cast.GetCastData());
+		result->json_type_cast_state = json_type_cast.InitLocalState(json_type_parameters);
+	}
+	return std::move(result);
+}
+
 static bool AnyToJSONCast(Vector &source, Vector &result, idx_t count, CastParameters &parameters) {
-	auto &lstate = parameters.local_state->Cast<JSONFunctionLocalState>();
+	auto &lstate = parameters.local_state->Cast<NestedToJSONLocalState>();
 	lstate.json_allocator->Reset();
 	auto alc = lstate.json_allocator->GetYYAlc();
 	auto &cast_data = parameters.cast_data->Cast<NestedToJSONCastData>();
@@ -1564,14 +1596,29 @@ static bool AnyToJSONCast(Vector &source, Vector &result, idx_t count, CastParam
 	if (cast_data.client) {
 		options.geometry_format = ClientGeometryFormat(*cast_data.client);
 	}
-	ToJSONFunctionInternal(names, source, count, result, alc, options);
-	return true;
+	if (!cast_data.json_type_cast.HasFunction()) {
+		ToJSONFunctionInternal(names, source, count, result, alc, options);
+		return true;
+	}
+	Vector json_typed(cast_data.json_type, count);
+	CastParameters json_type_parameters(parameters, cast_data.json_type_cast.GetCastData(),
+	                                    lstate.json_type_cast_state);
+	const auto success = cast_data.json_type_cast.Cast(source, json_typed, count, json_type_parameters);
+	ToJSONFunctionInternal(names, json_typed, count, result, alc, options);
+	return success;
 }
 
 static BoundCastInfo AnyToJSONCastBind(BindCastInput &input, const LogicalType &source, const LogicalType &target) {
-	auto cast_data = make_uniq<NestedToJSONCastData>(input.context);
-	GetJSONType(cast_data->const_struct_names, source);
-	return BoundCastInfo(AnyToJSONCast, std::move(cast_data), JSONFunctionLocalState::InitCastLocalState);
+	StructNames const_struct_names;
+	auto json_type = GetJSONType(const_struct_names, input.function_set, source);
+	BoundCastInfo json_type_cast(nullptr);
+	if (TypeVisitor::Contains(source,
+	                          [&](const LogicalType &type) { return HasOwnJSONCast(input.function_set, type); })) {
+		json_type_cast = input.GetCastFunction(source, json_type);
+	}
+	auto cast_data = make_uniq<NestedToJSONCastData>(input.context, std::move(json_type), std::move(json_type_cast));
+	cast_data->const_struct_names = std::move(const_struct_names);
+	return BoundCastInfo(AnyToJSONCast, std::move(cast_data), InitNestedToJSONLocalState);
 }
 
 void JSONFunctions::RegisterJSONCreateCastFunctions(ExtensionLoader &loader) {

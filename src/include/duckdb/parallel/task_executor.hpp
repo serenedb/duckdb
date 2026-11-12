@@ -65,6 +65,8 @@ class TaskExecutor {
 public:
 	explicit TaskExecutor(ClientContext &context, TaskSchedulerType type = TaskSchedulerType::REGULAR);
 	explicit TaskExecutor(TaskScheduler &scheduler, TaskSchedulerType type = TaskSchedulerType::REGULAR);
+	TaskExecutor(TaskScheduler &scheduler, shared_ptr<SchedulerAccount> account,
+	             TaskSchedulerType type = TaskSchedulerType::REGULAR);
 	~TaskExecutor();
 
 	//! Push an error into the TaskExecutor
@@ -88,6 +90,7 @@ public:
 
 	//! Get a task - returns true if a task was found
 	bool GetTask(shared_ptr<Task> &task);
+	void WaitForProgress();
 
 public:
 	//! Joins the executor when the scope is left, so that its tasks never outlive the state they reference.

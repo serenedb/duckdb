@@ -21,9 +21,10 @@ void ByteArrayLengthColumnReader::PlainSkip(ByteBuffer &plain_data, uint8_t *def
 }
 
 void ByteArrayLengthColumnReader::PlainSelect(shared_ptr<ResizeableBuffer> &plain_data, uint8_t *defines,
-                                              idx_t num_values, Vector &result, const SelectionVector &sel,
-                                              idx_t count) {
-	PlainSelectTemplated<int64_t, ByteArrayLengthValueConversion>(*plain_data, defines, num_values, result, sel, count);
+                                              idx_t num_values, Vector &result, const SelectionVector &sel, idx_t count,
+                                              idx_t result_offset) {
+	PlainSelectTemplated<int64_t, ByteArrayLengthValueConversion>(*plain_data, defines, num_values, result, sel, count,
+	                                                              result_offset);
 }
 
 } // namespace duckdb

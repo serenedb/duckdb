@@ -99,6 +99,11 @@ enum class PhysicalOperatorType : uint8_t {
 	TRANSACTION,
 	CREATE_TYPE,
 	CREATE_TRIGGER,
+	CREATE_JOB,
+	CREATE_ROLE,
+	CREATE_FOREIGN_SERVER,
+	CREATE_TOKENIZER,
+	CREATE_DATABASE,
 	ATTACH,
 	DETACH,
 
@@ -135,6 +140,7 @@ enum class PhysicalOperatorType : uint8_t {
 	SECURE_VIEW,
 	//! Source of a MERGE INTO action pipeline. Keep appended to preserve existing enum values.
 	MERGE_ACTION_SOURCE,
+	LOOKUP_JOIN,
 };
 
 string PhysicalOperatorToString(PhysicalOperatorType type);

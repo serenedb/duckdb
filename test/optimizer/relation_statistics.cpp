@@ -311,7 +311,9 @@ TEST_CASE("Distinct statistics derive cardinality before relation registration",
 TEST_CASE("Generated scans and explain outputs have explicit statistics", "[optimizer][relation_statistics]") {
 	DuckDB db;
 	Connection connection(db);
-	auto in_plan = connection.ExtractPlan("SELECT * FROM range(10) t(i) WHERE i IN (1, 2, 3, 4, 5, 6)");
+	auto in_plan =
+	    connection.ExtractPlan("SELECT * FROM range(40) t(i) WHERE i IN (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, "
+	                           "14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33)");
 	auto chunk_get = FindOperator(*in_plan, LogicalOperatorType::LOGICAL_CHUNK_GET);
 	REQUIRE(chunk_get);
 	RelationStatsExtractor chunk_extractor(*connection.context);

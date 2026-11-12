@@ -59,7 +59,7 @@ EXPLAIN ANALYZE
 SELECT count(*) FROM case_pruning
 WHERE (CASE WHEN x % 2 = 0 THEN x ELSE 0 END) > 1000000;
 ----
-analyzed_plan	<REGEX>:.*Empty Result.*
+analyzed_plan	<REGEX>:.*EMPTY_RESULT.*
 
 query I
 SELECT count(*) FROM case_pruning

@@ -1,2 +1,13 @@
-DeallocateStatement <- 'DEALLOCATE' DeallocatePrepare? ColIdOrString
+DeallocateStatement <- 'DEALLOCATE' DeallocatePrepare? DeallocateTarget
 DeallocatePrepare <- 'PREPARE'
+# PG accepts both DEALLOCATE <name> and DEALLOCATE [PREPARE] ALL.
+# The ALL form drops every prepared statement on the session.
+DeallocateTarget <- DeallocateAll / ColIdOrString
+DeallocateAll <- 'ALL'
+
+DiscardStatement <- 'DISCARD' DiscardTarget
+DiscardTarget <- DiscardAll / DiscardPlans / DiscardSequences / DiscardTemp
+DiscardAll <- 'ALL'
+DiscardPlans <- 'PLANS'
+DiscardSequences <- 'SEQUENCES'
+DiscardTemp <- 'TEMPORARY' / 'TEMP'

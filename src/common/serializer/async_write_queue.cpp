@@ -74,25 +74,29 @@ public:
 	}
 
 	~AsyncWriteQueueTask() override {
-		if (!started) {
+		if (!settled) {
 			queue.CancelScheduledTask();
 		}
 	}
 
 	void ExecuteTask() override {
-		started = true;
+		settled = true;
 		queue.DrainRequests();
+	}
+
+	void Cancel() override {
+		settled = true;
+		queue.CancelScheduledTask();
 	}
 
 private:
 	AsyncWriteQueue &queue;
-	bool started = false;
+	bool settled = false;
 };
 
 AsyncWriteQueue::AsyncWriteQueue(ClientContext &client_context_p, AsyncWriteTarget &target_p)
     : client_context(client_context_p), target(target_p) {
-	auto &scheduler = TaskScheduler::GetScheduler(client_context);
-	auto async_threads = scheduler.NumberOfAsyncThreads();
+	auto async_threads = TaskScheduler::QueryAsyncThreads(client_context);
 	max_active_tasks = MaxValue<idx_t>(async_threads, 1);
 	if (async_threads == 0) {
 		return;
@@ -378,7 +382,7 @@ void AsyncWriteQueue::WorkOnPendingTask() {
 	}
 	shared_ptr<Task> task;
 	if (!executor->GetTask(task)) {
-		TaskScheduler::YieldThread();
+		executor->WaitForProgress();
 		return;
 	}
 #ifdef D_ASSERT_IS_ENABLED
@@ -508,8 +512,7 @@ idx_t ManagedAsyncWriteQueue::PendingWrite::Size() const {
 
 ManagedAsyncWriteQueue::ManagedAsyncWriteQueue(ClientContext &client_context_p, AsyncWriteTarget &target_p)
     : client_context(client_context_p), target(target_p), memory_governor(client_context_p) {
-	auto &scheduler = TaskScheduler::GetScheduler(client_context);
-	auto async_threads = scheduler.NumberOfAsyncThreads();
+	auto async_threads = TaskScheduler::QueryAsyncThreads(client_context);
 	max_active_drain_tasks = MaxValue<idx_t>(async_threads, 1);
 
 	AsyncWriteTarget &async_target = *this;
@@ -1032,8 +1035,7 @@ ManagedAsyncWriteStreamQueue::ManagedAsyncWriteStreamQueue(ClientContext &client
 	drain_task_byte_budget = MaxValue(AsyncWriteConfig::DRAIN_TASK_BYTE_BUDGET, coalesce_threshold);
 	limit_coalesced_write_size = local_file;
 
-	auto &scheduler = TaskScheduler::GetScheduler(client_context);
-	auto async_threads = scheduler.NumberOfAsyncThreads();
+	auto async_threads = TaskScheduler::QueryAsyncThreads(client_context);
 
 	write_mode = target.GetWriteMode();
 	// Explicit-offset writes let multiple async requests drain one logical write queue concurrently. Sequential writes
@@ -1608,7 +1610,7 @@ void ManagedAsyncWriteStreamQueue::Close() {
 
 void ManagedAsyncWriteStreamQueue::AbortWrites() {
 	std::exception_ptr error;
-	lock_guard<mutex> submission_guard(submission_lock);
+	unique_lock<mutex> submission_guard(submission_lock);
 	idx_t discarded_bytes;
 	shared_ptr<const ErrorData> local_error_ref;
 	{
@@ -1625,6 +1627,8 @@ void ManagedAsyncWriteStreamQueue::AbortWrites() {
 		local_error_ref = local_error;
 	}
 	write_queue->DiscardExternalPendingBytes(discarded_bytes);
+	// After closing and discarding, release the lock before draining completions that may be waiting to refill.
+	submission_guard.unlock();
 	try {
 		write_queue->AbortWrites();
 	} catch (...) {

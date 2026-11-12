@@ -9,6 +9,7 @@
 #include "duckdb/parser/tableref/basetableref.hpp"
 #include "duckdb/common/enum_util.hpp"
 #include "duckdb/common/helper.hpp"
+#include "duckdb/common/stack_depth.hpp"
 #include "duckdb/main/config.hpp"
 #include "duckdb/main/database.hpp"
 #include "duckdb/main/settings.hpp"
@@ -38,20 +39,6 @@
 
 namespace duckdb {
 
-idx_t Binder::GetBinderDepth() const {
-	return depth;
-}
-
-void Binder::IncreaseDepth() {
-	depth++;
-	auto max_expression_depth = Settings::Get<MaxExpressionDepthSetting>(context);
-	if (depth > max_expression_depth) {
-		throw BinderException("Max expression depth limit of %lld exceeded. Use \"SET max_expression_depth TO x\" to "
-		                      "increase the maximum expression depth.",
-		                      max_expression_depth);
-	}
-}
-
 shared_ptr<Binder> Binder::CreateBinder(ClientContext &context, optional_ptr<Binder> parent, BinderType binder_type) {
 	return shared_ptr<Binder>(new Binder(context, parent ? parent->shared_from_this() : nullptr, binder_type));
 }
@@ -59,19 +46,18 @@ shared_ptr<Binder> Binder::CreateBinder(ClientContext &context, optional_ptr<Bin
 Binder::Binder(ClientContext &context, shared_ptr<Binder> parent_p, BinderType binder_type)
     : context(context), bind_context(*this), parent(std::move(parent_p)), binder_type(binder_type),
       global_binder_state(parent ? parent->global_binder_state : make_shared_ptr<GlobalBinderState>()),
-      entry_retriever(context), depth(parent ? parent->GetBinderDepth() : 1) {
-	IncreaseDepth();
+      entry_retriever(context) {
 	if (parent) {
 		entry_retriever.Inherit(parent->entry_retriever);
 		inside_subquery = parent->inside_subquery;
-
-		// We have to inherit macro and lambda parameter bindings and from the parent binder, if there is a parent.
 		macro_binding = parent->macro_binding;
-		lambda_bindings = parent->lambda_bindings;
 		if (binder_type != BinderType::VIEW_BINDER) {
 			// inherit expression binders from parent
 			active_binders = parent->active_binders;
 		}
+	} else {
+		entry_retriever.SetCallback(
+		    [this](CatalogEntry &entry) { GetStatementProperties().resolved_entries.push_back(&entry); });
 	}
 }
 
@@ -111,8 +97,6 @@ BoundStatement Binder::Bind(SQLStatement &statement) {
 		return Bind(statement.Cast<SetStatement>());
 	case StatementType::LOAD_STATEMENT:
 		return Bind(statement.Cast<LoadStatement>());
-	case StatementType::EXTENSION_STATEMENT:
-		return Bind(statement.Cast<ExtensionStatement>());
 	case StatementType::PREPARE_STATEMENT:
 		return Bind(statement.Cast<PrepareStatement>());
 	case StatementType::EXECUTE_STATEMENT:
@@ -146,6 +130,7 @@ BoundStatement Binder::Bind(QueryNode &node) {
 }
 
 BoundStatement Binder::Bind(TableRef &ref) {
+	StackDepth::Check();
 	BoundStatement result;
 	switch (ref.type) {
 	case TableReferenceType::BASE_TABLE:
@@ -196,25 +181,72 @@ BoundStatement Binder::Bind(TableRef &ref) {
 }
 
 optional_ptr<CTEBinding> Binder::GetCTEBinding(const BindingAlias &name) {
+#ifdef D_ASSERT_IS_ENABLED
+	auto get_by_walk = [&] {
+		reference<Binder> current_binder(*this);
+		optional_ptr<CTEBinding> result;
+		while (true) {
+			auto &current = current_binder.get();
+			auto entry = current.bind_context.GetCTEBinding(name);
+			if (entry) {
+				if (entry->CanBeReferenced()) {
+					return entry;
+				}
+				result = entry;
+			}
+			if (!current.parent || current.binder_type != BinderType::REGULAR_BINDER) {
+				break;
+			}
+			current_binder = *current.parent;
+		}
+		return result;
+	};
+#endif
 	reference<Binder> current_binder(*this);
 	optional_ptr<CTEBinding> result;
 	while (true) {
 		auto &current = current_binder.get();
-		auto entry = current.bind_context.GetCTEBinding(name);
-		if (entry) {
-			// we only directly return the CTE if it can be referenced
-			// if it cannot be referenced (circular reference) we keep going up the stack
-			// to look for a CTE that can be referenced
-			if (entry->CanBeReferenced()) {
-				return entry;
+		if (current.cte_chain) {
+			auto &chain = *current.cte_chain;
+			auto entry = name.IsSet() ? chain.bindings.find(name.GetAlias()) : chain.bindings.end();
+			if (entry != chain.bindings.end()) {
+				for (idx_t i = entry->second.size(); i > 0; i--) {
+					auto &candidate = entry->second[i - 1];
+					if (candidate.first > current.cte_chain_position) {
+						continue;
+					}
+					auto &binding = candidate.second.get();
+					if (!binding.GetBindingAlias().Matches(name)) {
+						continue;
+					}
+					// we only directly return the CTE if it can be referenced
+					// if it cannot be referenced (circular reference) we keep going up the stack
+					// to look for a CTE that can be referenced
+					if (binding.CanBeReferenced()) {
+						D_ASSERT_V(&binding == get_by_walk().get());
+						return binding;
+					}
+					result = binding;
+				}
 			}
-			result = entry;
+			current_binder = chain.root;
+		} else {
+			auto entry = current.bind_context.GetCTEBinding(name);
+			if (entry) {
+				if (entry->CanBeReferenced()) {
+					D_ASSERT_V(entry == get_by_walk());
+					return entry;
+				}
+				result = entry;
+			}
 		}
-		if (!current.parent || current.binder_type != BinderType::REGULAR_BINDER) {
+		auto &last = current_binder.get();
+		if (!last.parent || last.binder_type != BinderType::REGULAR_BINDER) {
 			break;
 		}
-		current_binder = *current.parent;
+		current_binder = *last.parent;
 	}
+	D_ASSERT_V(result == get_by_walk());
 	return result;
 }
 
@@ -223,7 +255,7 @@ void Binder::AddBoundView(ViewCatalogEntry &view) {
 	auto current = this;
 	while (current) {
 		if (current->bound_views.find(view) != current->bound_views.end()) {
-			throw BinderException("infinite recursion detected: attempting to recursively bind view \"%s\"", view.name);
+			throw BinderException("infinite recursion detected: attempting to recursively bind view %s", view.name);
 		}
 		current = current->parent.get();
 	}
@@ -450,7 +482,7 @@ void Binder::BindDeleteReturningColumns(TableCatalogEntry &table, LogicalGet &ge
 		// Get the column by logical index, then get its storage index
 		auto logical_idx = col_id.GetPrimaryIndex();
 		auto &col = columns.GetColumn(LogicalIndex(logical_idx));
-		if (!col.Generated()) {
+		if (col.Category() != TableColumnType::GENERATED_VIRTUAL) {
 			auto storage_idx = col.StorageOid();
 			return_columns[storage_idx] = chunk_idx;
 		}
@@ -497,15 +529,15 @@ void Binder::BindDeleteReturningColumns(TableCatalogEntry &table, LogicalGet &ge
 }
 
 void Binder::BindDeleteIndexColumns(TableCatalogEntry &table, LogicalGet &get, vector<idx_t> &return_columns) {
-	// Build a mapping from storage column index to scan chunk index for unique index tracking.
+	// Build a mapping from storage column index to scan chunk index for delete index tracking.
 	// This is a sparse mapping - only indexed columns have valid indices.
-	// Used when DELETE has no RETURNING but table has unique indexes.
+	// Used when DELETE has no RETURNING but the table has unique or foreign key indexes.
 	auto &storage = table.GetStorage();
 	auto &info = storage.GetDataTableInfo();
 	auto &indexes = info->GetIndexes();
 
-	// Collect column IDs from unique indexes
-	auto indexed_column_ids = indexes.GetUniqueIndexColumns();
+	// Collect column IDs from unique and foreign key indexes
+	auto indexed_column_ids = indexes.GetDeleteIndexColumns();
 
 	if (indexed_column_ids.empty()) {
 		return;
@@ -526,9 +558,9 @@ void Binder::BindDeleteIndexColumns(TableCatalogEntry &table, LogicalGet &get, v
 		}
 		auto logical_idx = col_id.GetPrimaryIndex();
 		auto &col = columns.GetColumn(LogicalIndex(logical_idx));
-		if (!col.Generated()) {
+		if (col.Category() != TableColumnType::GENERATED_VIRTUAL) {
 			auto storage_idx = col.StorageOid();
-			// Only map if this column is in a unique index
+			// Only map if this column is in a unique or foreign key index
 			if (indexed_column_ids.count(storage_idx)) {
 				return_columns[storage_idx] = chunk_idx;
 			}
@@ -563,7 +595,8 @@ void Binder::BindDeleteIndexColumns(TableCatalogEntry &table, LogicalGet &get, v
 
 BoundStatement Binder::BindReturning(vector<unique_ptr<ParsedExpression>> returning_list, TableCatalogEntry &table,
                                      const Identifier &alias, TableIndex update_table_index,
-                                     unique_ptr<LogicalOperator> child_operator, virtual_column_map_t virtual_columns) {
+                                     unique_ptr<LogicalOperator> child_operator, virtual_column_map_t virtual_columns,
+                                     optional_ptr<vector<column_t>> bound_virtual_columns) {
 	vector<LogicalType> types;
 	vector<Identifier> names;
 
@@ -574,11 +607,12 @@ BoundStatement Binder::BindReturning(vector<unique_ptr<ParsedExpression>> return
 	for (auto &col : table.GetColumns().Logical()) {
 		names.emplace_back(col.Name());
 		types.push_back(col.Type());
-		if (!col.Generated()) {
+		if (col.Category() != TableColumnType::GENERATED_VIRTUAL) {
 			bound_columns.emplace_back(column_count);
 		}
 		column_count++;
 	}
+	const auto table_column_count = bound_columns.size();
 
 	binder->bind_context.AddBaseTable(update_table_index, alias, names, types, bound_columns, table,
 	                                  std::move(virtual_columns));
@@ -598,6 +632,11 @@ BoundStatement Binder::BindReturning(vector<unique_ptr<ParsedExpression>> return
 	}
 	if (new_returning_list.empty()) {
 		throw BinderException("RETURNING list is empty!");
+	}
+	if (bound_virtual_columns) {
+		for (idx_t i = table_column_count; i < bound_columns.size(); i++) {
+			bound_virtual_columns->push_back(bound_columns[i].GetPrimaryIndex());
+		}
 	}
 	auto projection = make_uniq<LogicalProjection>(GenerateTableIndex(), std::move(projection_expressions));
 	projection->AddChild(std::move(child_operator));
@@ -626,6 +665,17 @@ optional_ptr<CatalogEntry> Binder::GetCatalogEntry(const EntryLookupInfo &lookup
 	return entry_retriever.GetEntry(lookup_info, on_entry_not_found);
 }
 
+optional_ptr<CatalogEntry> Binder::GetBuiltinEntry(const EntryLookupInfo &lookup_info,
+                                                   OnEntryNotFound on_entry_not_found) {
+	auto &system = Catalog::GetSystemCatalog(context);
+	return system
+	    .LookupEntry(entry_retriever,
+	                 EntryLookupInfo(lookup_info, QualifiedName(system.GetName(), *system.GetDefaultSchema(),
+	                                                            lookup_info.GetEntryIdentifier())),
+	                 on_entry_not_found)
+	    .entry;
+}
+
 //! Create a binder whose catalog search path is anchored to the table's catalog+schema
 shared_ptr<Binder> Binder::CreateBinderWithSearchPath(const Identifier &catalog_name, const Identifier &schema_name) {
 	shared_ptr<Binder> new_binder = Binder::CreateBinder(context, this);
@@ -633,8 +683,9 @@ shared_ptr<Binder> Binder::CreateBinderWithSearchPath(const Identifier &catalog_
 	vector<CatalogSearchEntry> search_path;
 
 	search_path.emplace_back(catalog_name, schema_name);
-	if (schema_name != DEFAULT_SCHEMA) {
-		search_path.emplace_back(catalog_name, DEFAULT_SCHEMA);
+	auto default_schema = Catalog::GetCatalog(context, catalog_name).GetDefaultSchema();
+	if (default_schema && schema_name != *default_schema) {
+		search_path.emplace_back(catalog_name, *default_schema);
 	}
 	new_binder->entry_retriever.SetSearchPath(std::move(search_path));
 	return new_binder;

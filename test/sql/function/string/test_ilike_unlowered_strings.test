@@ -1,0 +1,41 @@
+# name: test/sql/function/string/test_ilike_unlowered_strings.test
+# description: ILIKE with an ASCII pattern matches non-ASCII strings as they are and agrees with lower() and LIKE
+# group: [string]
+
+query I
+SELECT list(cp ORDER BY cp) FROM range(128, 1114112) t(cp) WHERE (cp < 55296 OR cp > 57343) AND ascii(lower(chr(cp::INTEGER))) < 128
+----
+[304, 8490]
+
+statement ok
+CREATE TABLE pats_ascii AS SELECT i AS pid, array_to_string(list_transform(range(1 + i % 6), lambda k: ['a', 'b', 'k', 'i', 'x', 'A', 'K', 'I', '_', '_', '%', '%', 'ab'][1 + (hash(i * 17 + k) % 13)::INTEGER]), '') AS p FROM range(40) t(i)
+
+statement ok
+CREATE TABLE pats_unicode AS SELECT pid, CASE pid % 4 WHEN 0 THEN p || 'ä' WHEN 1 THEN 'Ä' || p WHEN 2 THEN p || chr(570) ELSE '%' || chr(11365) || p END AS p FROM pats_ascii
+
+foreach kind ascii unicode
+
+statement ok
+CREATE TABLE strs_{kind} AS SELECT id, CASE (id // 40) % 5 WHEN 0 THEN array_to_string(list_transform(range(id % 13), lambda k: ['a', 'B', 'k', 'K', 'i', 'I', 'ä', 'Ä', 'ß', chr(570), chr(11365), chr(304), chr(8490), '中', '🦆', ' ', '_', '%', 'x', 'Y'][1 + (hash(id * 31 + k) % 20)::INTEGER]), '') WHEN 1 THEN inst WHEN 2 THEN upper(inst) WHEN 3 THEN replace(replace(inst, 'k', chr(8490)), 'I', chr(304)) ELSE inst || ['z', 'ä', chr(570)][1 + (id % 3)::INTEGER] END AS s FROM (SELECT i AS id, replace(replace(p, '%', ['', 'ä', 'ß' || chr(570), '中🦆', 'Äb', chr(304)][1 + (hash(i) % 6)::INTEGER]), '_', ['ä', 'É', chr(11365), '🦆', '_', chr(8490)][1 + (hash(i * 7) % 6)::INTEGER]) AS inst FROM range(1, 4001) t(i) JOIN pats_{kind} ON pid = i % 40)
+
+query III
+SELECT count(*) FILTER (WHERE (s ILIKE p) IS DISTINCT FROM (lower(s) LIKE lower(p))), count(*) FILTER (WHERE s ILIKE p) >= 1600, count(DISTINCT pid) FILTER (WHERE s ILIKE p) = 40 FROM strs_{kind} JOIN pats_{kind} ON pid = id % 40
+----
+0	true	true
+
+query II
+SELECT count(*) FILTER (WHERE (s ILIKE p) IS DISTINCT FROM (lower(s) LIKE lower(p))), count(*) FILTER (WHERE s ILIKE p) >= 1600 FROM strs_{kind}, pats_{kind}
+----
+0	true
+
+query II
+SELECT count(*) FILTER (WHERE (s NOT ILIKE p) IS DISTINCT FROM (lower(s) NOT LIKE lower(p))), count(*) FILTER (WHERE (s ILIKE p ESCAPE '#') IS DISTINCT FROM (lower(s) LIKE lower(p) ESCAPE '#')) FROM strs_{kind}, pats_{kind}
+----
+0	0
+
+endloop
+
+query IIIIII
+SELECT 'Grüße aus Köln' ILIKE '%AUS K%', 'Grüße aus Köln' ILIKE 'gr__e%', 'İstanbul' ILIKE 'istanbul', chr(8490) || 'elvin' ILIKE 'KELVIN', 'x' || chr(8490) || 'y' ILIKE '%k%', '🦆 duck' ILIKE '_ DUCK'
+----
+true	true	true	true	true	true

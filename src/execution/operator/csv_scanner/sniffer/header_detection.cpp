@@ -175,26 +175,24 @@ bool CSVSniffer::DetectHeaderWithSetColumn(ClientContext &context, vector<Header
 	}
 
 	if (!has_header) {
-		bool all_varchar = true;
+		// The first row does not match the declared column names. With a known
+		// schema we only call it a header when it cannot be data: some non-VARCHAR
+		// column fails to cast. An all-VARCHAR schema is ambiguous (any string is
+		// valid data), so we keep the row instead of dropping it -- matching PG's
+		// COPY FROM, which never auto-skips a header.
 		bool first_row_consistent = true;
-		// We verify if the types are consistent
 		for (idx_t col = 0; col < set_columns.Size(); col++) {
 			// try cast to sql_type of column
 			const auto &sql_type = (*set_columns.types)[col];
-			if (sql_type != LogicalType::VARCHAR) {
-				all_varchar = false;
-				if (!CSVSniffer::CanYouCastIt(context, best_header_row[col].value, sql_type, options.dialect_options,
-				                              best_header_row[col].IsNull(), options.decimal_separator[0],
-				                              options.thousands_separator)) {
-					first_row_consistent = false;
-				}
+			if (sql_type != LogicalType::VARCHAR &&
+			    !CSVSniffer::CanYouCastIt(context, best_header_row[col].value, sql_type, options.dialect_options,
+			                              best_header_row[col].IsNull(), options.decimal_separator[0],
+			                              options.thousands_separator)) {
+				first_row_consistent = false;
 			}
 		}
 		if (!first_row_consistent) {
 			options.sniffer_user_mismatch_error += error.str();
-		}
-		if (all_varchar) {
-			return true;
 		}
 		return !first_row_consistent;
 	}

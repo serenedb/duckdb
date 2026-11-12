@@ -5,8 +5,6 @@
 #include "duckdb/common/assert.hpp"
 #include "duckdb/common/thread_annotation/thread_annotation.hpp"
 
-#include <condition_variable>
-
 namespace duckdb {
 
 // A phase-fair read-write lock: waiters sleep on a condition variable instead of busy-spinning.
@@ -18,7 +16,6 @@ public:
 	}
 
 	mutex state_lock;
-	std::condition_variable state_cv;
 	idx_t read_count;
 	bool writer_active;
 	//! Incremented when a writer registers (blocking acquisition) or acquires (try/upgrade)
@@ -28,18 +25,24 @@ public:
 
 public:
 	unique_ptr<StorageLockKey> GetExclusiveLock() DUCKDB_NO_THREAD_SAFETY_ANALYSIS {
-		unique_lock<mutex> guard(state_lock);
+		lock_guard<mutex> guard(state_lock);
 		writer_tickets++;
-		state_cv.wait(guard, [&]() { return !writer_active && read_count == 0; });
+		auto writable = [this]() DUCKDB_NO_THREAD_SAFETY_ANALYSIS {
+			return !writer_active && read_count == 0;
+		};
+		state_lock.Await(absl::Condition(&writable));
 		writer_active = true;
 		return make_uniq<StorageLockKey>(shared_from_this(), StorageLockType::EXCLUSIVE);
 	}
 
 	unique_ptr<StorageLockKey> GetSharedLock() DUCKDB_NO_THREAD_SAFETY_ANALYSIS {
-		unique_lock<mutex> guard(state_lock);
+		lock_guard<mutex> guard(state_lock);
 		// wait for the writers registered before us (they drain and run first), but not for later ones
 		auto target = writer_tickets;
-		state_cv.wait(guard, [&]() { return !writer_active && writers_done >= target; });
+		auto readable = [this, target]() DUCKDB_NO_THREAD_SAFETY_ANALYSIS {
+			return !writer_active && writers_done >= target;
+		};
+		state_lock.Await(absl::Condition(&readable));
 		read_count++;
 		return make_uniq<StorageLockKey>(shared_from_this(), StorageLockType::SHARED);
 	}
@@ -71,24 +74,13 @@ public:
 	}
 
 	void ReleaseExclusiveLock() DUCKDB_NO_THREAD_SAFETY_ANALYSIS {
-		{
-			lock_guard<mutex> guard(state_lock);
-			writer_active = false;
-			writers_done++;
-		}
-		state_cv.notify_all();
+		lock_guard<mutex> guard(state_lock);
+		writer_active = false;
+		writers_done++;
 	}
 	void ReleaseSharedLock() DUCKDB_NO_THREAD_SAFETY_ANALYSIS {
-		bool notify;
-		{
-			lock_guard<mutex> guard(state_lock);
-			read_count--;
-			notify = read_count == 0;
-		}
-		if (notify) {
-			// last reader left - wake a waiting writer
-			state_cv.notify_all();
-		}
+		lock_guard<mutex> guard(state_lock);
+		read_count--;
 	}
 };
 

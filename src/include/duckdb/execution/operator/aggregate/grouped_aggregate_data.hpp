@@ -35,6 +35,7 @@ public:
 	//! Pointers to the aggregates
 	vector<BoundAggregateExpression *> bindings;
 	idx_t filter_count;
+	optional_idx group_limit;
 
 public:
 	idx_t GroupCount() const;

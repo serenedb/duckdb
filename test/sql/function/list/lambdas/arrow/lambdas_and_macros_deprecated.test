@@ -5,14 +5,16 @@
 statement ok
 SET lambda_syntax='ENABLE_SINGLE_ARROW'
 
-# conflicting column names
 statement ok
 create table test as select range i from range(3);
 
-statement error
+statement ok
 create macro my_macro(i) as (select i in (select i from test));
+
+query II
+select my_macro(1), my_macro(5)
 ----
-Binder Error: Conflicting column names for column i!
+true	false
 
 statement ok
 CREATE MACRO list_contains_macro(x, y) AS (list_contains(x, y))
@@ -53,15 +55,12 @@ statement error
 SELECT other_reduce_macro([1, 2, 3, 4], 5, 6);
 ----
 
-# lambda scoping
+# lambda scoping: a single arrow whose LHS names a macro parameter is a JSON extract, not a lambda
 
-statement ok
+statement error
 CREATE MACRO scoping_macro(x, y, z) AS (SELECT list_transform(x, x -> x + y + z));
-
-query I
-SELECT scoping_macro([11, 22], 3, 4);
 ----
-[18, 29]
+Invalid lambda parameters!
 
 statement ok
 CREATE OR REPLACE MACRO foo(bar) AS (SELECT apply([bar], x -> 0));

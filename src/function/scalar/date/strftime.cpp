@@ -1,4 +1,6 @@
 #include "duckdb/function/scalar/strftime_format.hpp"
+#include "duckdb/function/scalar/date_bucket_rewrite.hpp"
+#include "duckdb/function/scalar/fast_strftime.hpp"
 
 #include "duckdb/common/vector_operations/unary_executor.hpp"
 #include "duckdb/execution/expression_executor.hpp"
@@ -79,6 +81,11 @@ static void StrfTimeFunctionTimestamp(DataChunk &args, ExpressionState &state, V
 
 	if (info.is_null) {
 		ConstantVector::SetNull(result, count_t(args.size()));
+		return;
+	}
+	FastStrftime fast;
+	if (fast.Compile(info.format_string)) {
+		fast.Execute(args.data[REVERSED ? 1 : 0], result);
 		return;
 	}
 	info.format.ConvertTimestampVector(args.data[REVERSED ? 1 : 0], result);
@@ -337,6 +344,8 @@ ScalarFunctionSet StrfTimeFun::GetFunctions() {
 
 	// throws for unsupported format specifiers
 	strftime.SetFallible();
+	strftime.ApplyToFunctions(
+	    [](ScalarFunction &function) { function.SetBucketRewriteCallback(StrfTimeBucketRewrite); });
 	return strftime;
 }
 ScalarFunctionSet StrpTimeFun::GetFunctions() {

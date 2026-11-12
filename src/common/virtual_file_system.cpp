@@ -121,7 +121,7 @@ VirtualFileSystem::~VirtualFileSystem() {
 unique_ptr<MemoryMappedFile> VirtualFileSystem::MemoryMapFile(const OpenFileInfo &path, FileOpenFlags flags,
                                                               const MMapOptions &options,
                                                               optional_ptr<FileOpener> opener) {
-	auto registry = file_system_registry.atomic_load();
+	auto registry = file_system_registry.plain_load();
 	auto &internal_filesystem = FindFileSystem(registry, path.path, opener);
 	return internal_filesystem.MemoryMapFile(path, flags, options, opener);
 }
@@ -182,7 +182,7 @@ unique_ptr<FileHandle> VirtualFileSystem::OpenFileExtended(const OpenFileInfo &f
 	// open the base file handle in UNCOMPRESSED mode
 	flags.SetCompression(FileCompressionType::UNCOMPRESSED);
 
-	auto registry = file_system_registry.atomic_load();
+	auto registry = file_system_registry.plain_load();
 	auto &internal_filesystem = FindFileSystem(registry, file.path, opener);
 
 	// File handle gets created.
@@ -271,8 +271,13 @@ void VirtualFileSystem::FileSync(FileHandle &handle) {
 }
 
 // need to look up correct fs for this
-bool VirtualFileSystem::DirectoryExists(const string &directory, optional_ptr<FileOpener> opener) {
-	return FindFileSystem(directory, opener).DirectoryExists(directory, opener);
+FileExistence VirtualFileSystem::TryDirectoryExists(const string &directory, optional_ptr<FileOpener> opener,
+                                                    optional_ptr<ErrorData> error) {
+	try {
+		return FindFileSystem(directory, opener).TryDirectoryExists(directory, opener, error);
+	} catch (std::exception &ex) {
+		return ClassifyExistenceFailure(ex, error);
+	}
 }
 void VirtualFileSystem::CreateDirectory(const string &directory, optional_ptr<FileOpener> opener) {
 	CreateDirectoryExtended(directory, {CreateDirectoryMode::SINGLE}, opener);
@@ -306,8 +311,13 @@ void VirtualFileSystem::MoveFile(const string &source, const string &target, opt
 	FindFileSystem(source, opener).MoveFile(source, target, opener);
 }
 
-bool VirtualFileSystem::FileExists(const string &filename, optional_ptr<FileOpener> opener) {
-	return FindFileSystem(filename, opener).FileExists(filename, opener);
+FileExistence VirtualFileSystem::TryFileExists(const string &filename, optional_ptr<FileOpener> opener,
+                                               optional_ptr<ErrorData> error) {
+	try {
+		return FindFileSystem(filename, opener).TryFileExists(filename, opener, error);
+	} catch (std::exception &ex) {
+		return ClassifyExistenceFailure(ex, error);
+	}
 }
 
 bool VirtualFileSystem::IsPipe(const string &filename, optional_ptr<FileOpener> opener) {
@@ -382,7 +392,7 @@ unique_ptr<FileSystem> VirtualFileSystem::ExtractSubSystem(const string &name) {
 }
 
 vector<string> VirtualFileSystem::ListSubSystems() {
-	auto registry = file_system_registry.atomic_load();
+	auto registry = file_system_registry.plain_load();
 	auto &sub_systems = registry->sub_systems;
 	vector<string> names;
 	for (auto &sub_system : sub_systems) {
@@ -396,13 +406,13 @@ std::string VirtualFileSystem::GetName() const {
 }
 
 bool VirtualFileSystem::SubSystemIsDisabled(const string &name) {
-	auto registry = file_system_registry.atomic_load();
+	auto registry = file_system_registry.plain_load();
 	auto &disabled_file_systems = registry->disabled_file_systems;
 	return disabled_file_systems.find(name) != disabled_file_systems.end();
 }
 
 bool VirtualFileSystem::IsDisabledForPath(const string &path) {
-	auto registry = file_system_registry.atomic_load();
+	auto registry = file_system_registry.plain_load();
 	auto &disabled_file_systems = registry->disabled_file_systems;
 	if (disabled_file_systems.empty()) {
 		return false;
@@ -415,7 +425,7 @@ bool VirtualFileSystem::IsDisabledForPath(const string &path) {
 }
 
 FileSystem &VirtualFileSystem::FindFileSystem(const string &path, optional_ptr<FileOpener> opener) {
-	auto registry = file_system_registry.atomic_load();
+	auto registry = file_system_registry.plain_load();
 	return FindFileSystem(registry, path, opener);
 }
 
@@ -427,7 +437,7 @@ FileSystem &VirtualFileSystem::FindFileSystem(shared_ptr<FileSystemRegistry> &re
 	if (!fs && db_instance) {
 		ExtensionHelper::AutoLoadExtensionForPath(*db_instance, path);
 		// refresh the registry after loading extensions
-		registry = file_system_registry.atomic_load();
+		registry = file_system_registry.plain_load();
 
 		// Retry after having autoloaded
 		fs = FindFileSystemInternal(*registry, path);

@@ -1,4 +1,5 @@
 #include "duckdb/parser/query_node/cte_node.hpp"
+#include "duckdb/common/stack_depth.hpp"
 #include "duckdb/parser/query_node/update_query_node.hpp"
 #include "duckdb/parser/query_node/delete_query_node.hpp"
 #include "duckdb/parser/query_node/insert_query_node.hpp"
@@ -33,6 +34,7 @@ static bool IsSideEffectingQueryNode(QueryNodeType type) {
 }
 
 BoundStatement Binder::BindNode(QueryNode &node) {
+	StackDepth::Check();
 	reference<Binder> current_binder(*this);
 	vector<BoundCTEData> bound_ctes;
 	idx_t dml_cte_count = 0;
@@ -49,7 +51,8 @@ BoundStatement Binder::BindNode(QueryNode &node) {
 		if (IsDMLQueryNode(cte_type)) {
 			++dml_cte_count;
 		}
-		bound_ctes.push_back(current_binder.get().PrepareCTE(cte.first, *cte.second));
+		auto continues_chain = !bound_ctes.empty();
+		bound_ctes.push_back(current_binder.get().PrepareCTE(cte.first, *cte.second, continues_chain));
 		current_binder = *bound_ctes.back().child_binder;
 	}
 	BoundStatement result;
@@ -96,7 +99,7 @@ BoundStatement Binder::BindNode(QueryNode &node) {
 			auto db = manager.GetDatabase(context, entry.first);
 			if (db && !db->GetCatalog().SupportsMultipleDMLCTEs()) {
 				throw BinderException("Multiple DML statements in a single WITH clause are not supported for "
-				                      "database \"%s\"",
+				                      "database %s",
 				                      entry.first);
 			}
 		}
@@ -149,7 +152,7 @@ void CTEBindState::Bind(CTEBinding &binding) {
 	QueryResult::DeduplicateColumns(names);
 }
 
-BoundCTEData Binder::PrepareCTE(const Identifier &ctename, CommonTableExpressionInfo &statement) {
+BoundCTEData Binder::PrepareCTE(const Identifier &ctename, CommonTableExpressionInfo &statement, bool continues_chain) {
 	BoundCTEData result;
 
 	// first recursively visit the materialized CTE operations
@@ -170,7 +173,17 @@ BoundCTEData Binder::PrepareCTE(const Identifier &ctename, CommonTableExpression
 	// as we are binding a CTE currently, we take precedence over the existing binding.
 	// This implements the CTE shadowing behavior.
 	auto cte_binding = make_uniq<CTEBinding>(BindingAlias(ctename), result.cte_bind_state, result.setop_index);
-	result.child_binder->bind_context.AddCTEBinding(std::move(cte_binding));
+	auto &binding = *cte_binding;
+	auto &child = *result.child_binder;
+	child.bind_context.AddCTEBinding(std::move(cte_binding));
+	if (continues_chain) {
+		D_ASSERT(cte_chain);
+		child.cte_chain = cte_chain;
+		child.cte_chain_position = cte_chain_position + 1;
+	} else {
+		child.cte_chain = make_shared_ptr<CTEChain>(child);
+	}
+	child.cte_chain->bindings[binding.GetBindingAlias().GetAlias()].emplace_back(child.cte_chain_position, binding);
 	return result;
 }
 

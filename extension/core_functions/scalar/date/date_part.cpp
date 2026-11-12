@@ -1,6 +1,7 @@
 #include "duckdb/parser/expression/function_expression.hpp"
 #include "duckdb/common/vector/struct_vector.hpp"
 #include "core_functions/scalar/date_functions.hpp"
+#include "duckdb/function/scalar/date_bucket_rewrite.hpp"
 #include "duckdb/common/case_insensitive_map.hpp"
 #include "duckdb/common/enum_util.hpp"
 #include "duckdb/common/enums/date_part_specifier.hpp"
@@ -2686,6 +2687,8 @@ ScalarFunctionSet LastDayFun::GetFunctions() {
 	last_day.AddFunction(ts_fun);
 	last_day.SetFallible();
 	last_day.SetUnaryArgProperties(ArgProperties().NonDecreasing());
+	last_day.ApplyToFunctions(
+	    [](ScalarFunction &function) { function.SetBucketRewriteCallback(LastDayBucketRewrite); });
 	return last_day;
 }
 
@@ -2697,6 +2700,8 @@ ScalarFunctionSet MonthNameFun::GetFunctions() {
 	ScalarFunction ts_fun({}, LogicalType::VARCHAR, DatePart::UnaryFunction<timestamp_t, string_t, MonthNameOperator>);
 	ts_fun.GetSignature().AddParameter("ts", LogicalType::TIMESTAMP);
 	monthname.AddFunction(ts_fun);
+	monthname.ApplyToFunctions(
+	    [](ScalarFunction &function) { function.SetBucketRewriteCallback(MonthNameBucketRewrite); });
 	return monthname;
 }
 
@@ -2708,6 +2713,7 @@ ScalarFunctionSet DayNameFun::GetFunctions() {
 	ScalarFunction ts_fun({}, LogicalType::VARCHAR, DatePart::UnaryFunction<timestamp_t, string_t, DayNameOperator>);
 	ts_fun.GetSignature().AddParameter("ts", LogicalType::TIMESTAMP);
 	dayname.AddFunction(ts_fun);
+	dayname.ApplyToFunctions([](ScalarFunction &function) { function.SetBucketRewriteCallback(DayNameBucketRewrite); });
 	return dayname;
 }
 

@@ -31,6 +31,16 @@ SELECT subtract_args(#1, #2) FROM (VALUES (NULL::INTEGER, 3)) AS t(y, x);
 ----
 NULL
 
+statement ok
+CREATE MACRO add_count_below(x) AS x + (SELECT count(*) FROM range(3) r(v) WHERE v < x);
+
+query II
+SELECT add_count_below(#1), add_count_below(x := #1 + 0) FROM range(3) t(i) ORDER BY 1;
+----
+0	0
+2	2
+4	4
+
 # default parameter
 statement ok
 CREATE MACRO join_args(x, y := 'default') AS coalesce(x, 'null') || ':' || y;

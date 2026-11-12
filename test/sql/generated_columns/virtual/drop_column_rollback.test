@@ -1,0 +1,56 @@
+# name: test/sql/generated_columns/virtual/drop_column_rollback.test
+# description: A rolled-back DROP COLUMN leaves the generated-column dependencies of the table as they were
+# group: [virtual]
+
+statement ok
+CREATE TABLE t (x INTEGER, a INTEGER, g INTEGER GENERATED ALWAYS AS (a + 1) VIRTUAL);
+
+statement ok
+INSERT INTO t (x, a) VALUES (1, 10);
+
+statement ok
+BEGIN;
+
+statement ok
+ALTER TABLE t DROP COLUMN x;
+
+statement ok
+ROLLBACK;
+
+statement ok
+ALTER TABLE t DROP COLUMN x;
+
+statement error
+ALTER TABLE t DROP COLUMN a;
+----
+<REGEX>:.*Catalog Error.*Cannot drop column: column is a dependency of 1 or more generated column.*
+
+query II
+SELECT a, g FROM t;
+----
+10	11
+
+statement ok
+CREATE TABLE t2 (a INTEGER, g INTEGER GENERATED ALWAYS AS (a + 1) VIRTUAL, b INTEGER);
+
+statement ok
+BEGIN;
+
+statement ok
+ALTER TABLE t2 DROP COLUMN a CASCADE;
+
+statement ok
+ROLLBACK;
+
+statement error
+ALTER TABLE t2 DROP COLUMN a;
+----
+<REGEX>:.*Catalog Error.*Cannot drop column: column is a dependency of 1 or more generated column.*
+
+statement ok
+ALTER TABLE t2 DROP COLUMN a CASCADE;
+
+query I
+SELECT column_name FROM duckdb_columns() WHERE table_name = 't2' ORDER BY column_index;
+----
+b

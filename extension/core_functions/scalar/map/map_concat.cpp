@@ -1,36 +1,84 @@
+#include "duckdb/common/vector/list_vector.hpp"
 #include "duckdb/common/vector/map_vector.hpp"
+#include "duckdb/common/vector/vector_iterator.hpp"
+#include "duckdb/common/string_map_set.hpp"
 #include "duckdb/planner/expression/bound_function_expression.hpp"
-#include "duckdb/common/string_util.hpp"
 #include "duckdb/function/scalar/nested_functions.hpp"
 #include "duckdb/common/types/data_chunk.hpp"
-#include "duckdb/common/pair.hpp"
 #include "duckdb/common/types.hpp"
-#include "duckdb/common/unordered_map.hpp"
 #include "core_functions/scalar/map_functions.hpp"
+
+#include <absl/container/flat_hash_map.h>
 
 namespace duckdb {
 
 namespace {
 
-struct MapKeyIndexPair {
-	MapKeyIndexPair(idx_t map, idx_t key) : map_index(map), key_index(key) {
+struct MapConcatInput {
+	explicit MapConcatInput(const Vector &map) : map(map), entries(map.Values<list_entry_t>()) {
 	}
-	// The index of the map that this key comes from
-	idx_t map_index;
-	// The index within the maps key_list
-	idx_t key_index;
+
+	const VectorIterator<string_t> &SortKeys() {
+		if (!sort_keys) {
+			auto &keys = MapVector::GetKeys(map);
+			sort_key_data = make_uniq<Vector>(LogicalType::BLOB, keys.size());
+			MapVector::CreateKeySortKeys(keys, *sort_key_data);
+			sort_keys = make_uniq<VectorIterator<string_t>>(*sort_key_data);
+		}
+		return *sort_keys;
+	}
+
+	const Vector &map;
+	VectorIterator<list_entry_t> entries;
+	unique_ptr<Vector> sort_key_data;
+	unique_ptr<VectorIterator<string_t>> sort_keys;
 };
 
-vector<Value> GetListEntries(vector<Value> keys, vector<Value> values) {
-	D_ASSERT(keys.size() == values.size());
-	vector<Value> entries;
-	for (idx_t i = 0; i < keys.size(); i++) {
-		child_list_t<Value> children;
-		children.emplace_back(make_pair("key", std::move(keys[i])));
-		children.emplace_back(make_pair("value", std::move(values[i])));
-		entries.push_back(Value::STRUCT(std::move(children)));
+struct MapConcatSource {
+	idx_t input;
+	idx_t index;
+};
+
+template <class GET_COMPONENT>
+void GatherMapComponent(Vector &target, const vector<MapConcatInput> &inputs, const vector<MapConcatSource> &sources,
+                        GET_COMPONENT get_component) {
+	const auto total = sources.size();
+	vector<idx_t> starts(inputs.size() + 1, 0);
+	for (auto &source : sources) {
+		starts[source.input + 1]++;
 	}
-	return entries;
+	idx_t used_inputs = 0;
+	for (idx_t i = 0; i < inputs.size(); i++) {
+		used_inputs += starts[i + 1] != 0;
+		starts[i + 1] += starts[i];
+	}
+	SelectionVector sel(total);
+	if (used_inputs == 1) {
+		for (idx_t i = 0; i < total; i++) {
+			sel.set_index(i, sources[i].index);
+		}
+		target.Slice(get_component(inputs[sources[0].input].map), sel, total);
+		target.Flatten();
+		return;
+	}
+	vector<idx_t> next(starts.begin(), starts.end() - 1);
+	SelectionVector input_sel(total);
+	for (idx_t i = 0; i < total; i++) {
+		auto position = next[sources[i].input]++;
+		input_sel.set_index(position, sources[i].index);
+		sel.set_index(i, position);
+	}
+	Vector staged(target.GetType(), total);
+	for (idx_t i = 0; i < inputs.size(); i++) {
+		const auto length = starts[i + 1] - starts[i];
+		if (length == 0) {
+			continue;
+		}
+		SelectionVector segment(input_sel.data() + starts[i], length);
+		staged.Append(get_component(inputs[i].map), segment, length, VectorAppendMode::ALLOW_RESIZE);
+	}
+	target.Slice(staged, sel, total);
+	target.Flatten();
 }
 
 void MapConcatFunction(DataChunk &args, ExpressionState &state, Vector &result) {
@@ -44,75 +92,78 @@ void MapConcatFunction(DataChunk &args, ExpressionState &state, Vector &result) 
 	D_ASSERT(result.GetType().id() == LogicalTypeId::MAP);
 	auto count = args.size();
 
-	auto map_count = args.ColumnCount();
-	vector<UnifiedVectorFormat> map_formats(map_count);
-	for (idx_t i = 0; i < map_count; i++) {
-		const auto &map = args.data[i];
-		map.ToUnifiedFormat(map_formats[i]);
+	vector<MapConcatInput> inputs;
+	inputs.reserve(args.ColumnCount());
+	for (auto &map : args.data) {
+		if (map.GetType().id() != LogicalTypeId::SQLNULL) {
+			inputs.emplace_back(map);
+		}
 	}
+	vector<MapConcatSource> key_sources;
+	vector<MapConcatSource> value_sources;
+	absl::flat_hash_map<string_t, idx_t, StringHash, StringEquality> positions;
 	auto result_data = FlatVector::Writer<list_entry_t>(result, count);
-	for (idx_t i = 0; i < count; i++) {
-		// Loop through all the maps per list
-		// we cant do better because all the entries of the child vector have to be contiguous
-		// so we cant start the next row before we have finished the one before it
-		vector<MapKeyIndexPair> index_to_map;
-		vector<Value> keys_list;
+	for (idx_t row = 0; row < count; row++) {
+		const auto row_start = key_sources.size();
+		optional_idx first;
 		bool all_null = true;
-		for (idx_t map_idx = 0; map_idx < map_count; map_idx++) {
-			if (args.data[map_idx].GetType().id() == LogicalTypeId::SQLNULL) {
+		bool indexed = false;
+		for (idx_t i = 0; i < inputs.size(); i++) {
+			auto entry = inputs[i].entries[row];
+			if (!entry.IsValid()) {
 				continue;
 			}
-
-			auto &map_format = map_formats[map_idx];
-			auto index = map_format.sel->get_index(i);
-			if (!map_format.validity.RowIsValid(index)) {
-				continue;
-			}
-
 			all_null = false;
-			const auto &keys = MapVector::GetKeys(args.data[map_idx]);
-			auto entry = UnifiedVectorFormat::GetData<list_entry_t>(map_format)[index];
-
-			// Update the list for this row
-			for (idx_t list_idx = 0; list_idx < entry.length; list_idx++) {
-				auto key_index = entry.offset + list_idx;
-				auto key = keys.GetValue(key_index);
-				auto entry = std::find(keys_list.begin(), keys_list.end(), key);
-				if (entry == keys_list.end()) {
-					// Result list does not contain this value yet
-					keys_list.push_back(key);
-					index_to_map.emplace_back(map_idx, key_index);
+			auto &list = entry.GetValue();
+			if (list.length == 0) {
+				continue;
+			}
+			if (!first.IsValid()) {
+				first = i;
+				for (idx_t k = 0; k < list.length; k++) {
+					key_sources.push_back({i, list.offset + k});
+					value_sources.push_back({i, list.offset + k});
+				}
+				continue;
+			}
+			if (!indexed) {
+				indexed = true;
+				auto &first_keys = inputs[first.GetIndex()].SortKeys();
+				for (idx_t position = row_start; position < key_sources.size(); position++) {
+					positions.emplace(first_keys[key_sources[position].index].GetValue(), position);
+				}
+			}
+			auto &keys = inputs[i].SortKeys();
+			for (idx_t k = 0; k < list.length; k++) {
+				const auto index = list.offset + k;
+				auto inserted = positions.emplace(keys[index].GetValue(), key_sources.size());
+				if (inserted.second) {
+					key_sources.push_back({i, index});
+					value_sources.push_back({i, index});
 				} else {
-					// Result list already contains this, update where to find the value at
-					auto distance = std::distance(keys_list.begin(), entry);
-					auto &mapping = *(index_to_map.begin() + distance);
-					mapping.key_index = key_index;
-					mapping.map_index = map_idx;
+					value_sources[inserted.first->second] = {i, index};
 				}
 			}
 		}
-
-		result_data.WriteValue(list_entry_t(ListVector::GetListSize(result), keys_list.size()));
+		if (indexed) {
+			positions.clear();
+		}
 		if (all_null) {
-			D_ASSERT(keys_list.empty() && index_to_map.empty());
-			FlatVector::SetNull(result, i, true);
+			result_data.WriteNull();
 			continue;
 		}
-
-		vector<Value> values_list;
-		D_ASSERT(keys_list.size() == index_to_map.size());
-		// Get the values from the mapping
-		for (auto &mapping : index_to_map) {
-			const auto &map = args.data[mapping.map_index];
-			const auto &values = MapVector::GetValues(map);
-			values_list.push_back(values.GetValue(mapping.key_index));
-		}
-		D_ASSERT(values_list.size() == keys_list.size());
-		auto list_entries = GetListEntries(std::move(keys_list), std::move(values_list));
-		for (auto &list_entry : list_entries) {
-			ListVector::PushBack(result, list_entry);
-		}
+		result_data.WriteValue(list_entry_t(row_start, key_sources.size() - row_start));
 	}
+	const auto total = key_sources.size();
+	if (total == 0) {
+		return;
+	}
+	ListVector::SetListSize(result, total);
+	GatherMapComponent(MapVector::GetKeys(result), inputs, key_sources,
+	                   [](const Vector &map) -> const Vector & { return MapVector::GetKeys(map); });
+	GatherMapComponent(MapVector::GetValues(result), inputs, value_sources,
+	                   [](const Vector &map) -> const Vector & { return MapVector::GetValues(map); });
+	FlatVector::ValidityMutable(ListVector::GetChildMutable(result)).Resize(total);
 }
 
 bool IsEmptyMap(const LogicalType &map) {

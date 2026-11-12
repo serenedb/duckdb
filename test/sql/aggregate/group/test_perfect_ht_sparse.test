@@ -1,0 +1,45 @@
+# name: test/sql/aggregate/group/test_perfect_ht_sparse.test
+# description: Perfect hash aggregate over a wide key range where few groups are touched
+# group: [group]
+
+statement ok
+SET threads=4
+
+statement ok
+PRAGMA perfect_ht_threshold=20;
+
+statement ok
+CREATE TABLE t AS SELECT i::INTEGER AS k, i::VARCHAR || '_long_string_payload' AS s FROM range(0, 200000) t(i)
+
+query II
+EXPLAIN SELECT k, count(*), string_agg(s, ','), list(s) FROM t WHERE k % 50000 = 7 GROUP BY k
+----
+physical_plan	<REGEX>:.*PERFECT_HASH_GROUP_BY.*
+
+query IIII
+SELECT k, count(*), string_agg(s, ','), list(s) FROM t WHERE k % 50000 = 7 GROUP BY k ORDER BY k
+----
+7	1	7_long_string_payload	[7_long_string_payload]
+50007	1	50007_long_string_payload	[50007_long_string_payload]
+100007	1	100007_long_string_payload	[100007_long_string_payload]
+150007	1	150007_long_string_payload	[150007_long_string_payload]
+
+query II
+SELECT k, sum(k) FROM t WHERE k IN (3, 199999) GROUP BY k ORDER BY k
+----
+3	3
+199999	199999
+
+query I
+SELECT count(*) FROM (SELECT k, list(s) FROM t WHERE k < 0 GROUP BY k)
+----
+0
+
+statement ok
+INSERT INTO t VALUES (NULL, 'null_row_with_a_long_payload')
+
+query III
+SELECT k, count(*), string_agg(s, ',') FROM t WHERE k IS NULL OR k = 199998 GROUP BY k ORDER BY k NULLS FIRST
+----
+NULL	1	null_row_with_a_long_payload
+199998	1	199998_long_string_payload

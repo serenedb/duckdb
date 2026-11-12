@@ -9,6 +9,7 @@
 #pragma once
 
 #include "duckdb/common/unordered_set.hpp"
+#include "duckdb/parser/constraints/check_constraint.hpp"
 #include "duckdb/planner/bound_constraint.hpp"
 #include "duckdb/planner/expression.hpp"
 #include "duckdb/common/index_map.hpp"
@@ -22,17 +23,19 @@ public:
 	static constexpr const ConstraintType TYPE = ConstraintType::CHECK;
 
 public:
-	BoundCheckConstraint() : BoundConstraint(ConstraintType::CHECK) {
+	explicit BoundCheckConstraint(const CheckConstraint &source)
+	    : BoundConstraint(ConstraintType::CHECK), source(source) {
 	}
 
 	//! The expression
 	unique_ptr<Expression> expression;
 	//! The columns used by the CHECK constraint
 	physical_index_set_t bound_columns;
+	const CheckConstraint &source;
 
 public:
 	unique_ptr<BoundConstraint> Copy() const override {
-		auto result = make_uniq<BoundCheckConstraint>();
+		auto result = make_uniq<BoundCheckConstraint>(source);
 		result->expression = expression->Copy();
 		result->bound_columns = bound_columns;
 		return std::move(result);

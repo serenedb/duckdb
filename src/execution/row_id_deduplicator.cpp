@@ -18,6 +18,15 @@ RowIdDeduplicator::RowIdDeduplicator(ClientContext &context, vector<LogicalType>
 RowIdDeduplicator::~RowIdDeduplicator() {
 }
 
+LockedRowIdSet::LockedRowIdSet(ClientContext &context, vector<LogicalType> row_id_types)
+    : rows(context, std::move(row_id_types)) {
+}
+
+idx_t LockedRowIdSet::Register(DataChunk &input, idx_t row_id_start) {
+	lock_guard<mutex> guard(lock);
+	return rows.Register(input, row_id_start);
+}
+
 idx_t RowIdDeduplicator::Register(DataChunk &input, idx_t row_id_start, optional_ptr<SelectionVector> sel) {
 	if (row_id_start >= input.ColumnCount() || input.ColumnCount() - row_id_start != row_id_types.size()) {
 		throw InternalException("Row ID column range does not match the deduplicator types");

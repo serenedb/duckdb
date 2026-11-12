@@ -98,11 +98,3 @@ select time from parquet_scan('{DATA_DIR}/parquet-testing/timestamp*.parquet') w
 query I nosort empty
 explain select time from parquet_scan('{DATA_DIR}/parquet-testing/timestamp*.parquet') where time > '2020-10-06'
 ----
-
-statement ok
-pragma disable_object_cache
-
-# no stats again
-query I nosort nostats
-explain select time from parquet_scan('{DATA_DIR}/parquet-testing/timestamp*.parquet') where time > '2020-10-06'
-----

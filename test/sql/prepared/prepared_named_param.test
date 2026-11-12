@@ -25,7 +25,7 @@ prepare q01 as select $1, ?, $2;
 statement error
 execute q01(4, 2, 0)
 ----
-Parameter argument/count mismatch, identifiers of the excess parameters: 3
+Parser Error: wrong number of parameters for prepared statement "q01"
 
 statement error
 prepare q02 as select $1, $param, $2;

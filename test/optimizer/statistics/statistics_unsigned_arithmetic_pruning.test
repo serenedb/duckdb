@@ -20,7 +20,7 @@ CHECKPOINT;
 query II
 EXPLAIN SELECT count(*) FROM (SELECT (x + 100::UINTEGER) AS y FROM tu) WHERE y > 100000::UINTEGER;
 ----
-physical_plan	<REGEX>:.*Empty Result.*
+physical_plan	<REGEX>:.*EMPTY_RESULT.*
 
 query I
 SELECT count(*) FROM (SELECT (x + 100::UINTEGER) AS y FROM tu) WHERE y > 100000::UINTEGER;

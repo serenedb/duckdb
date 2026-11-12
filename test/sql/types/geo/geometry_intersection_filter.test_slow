@@ -16,7 +16,7 @@ create table t1 as
 query II
 explain select * from t1 where g && 'POLYGON((0 0, 100 0, 100 100, 0 100, 0 0))';
 ----
-physical_plan	<REGEX>:(?s).*Filters.*g &&.*
+physical_plan	<REGEX>:(?s).*Column Filter.*g &&.*
 
 query II rowsort res_1
 select * from t1 where g && 'POLYGON((0 0, 100 0, 100 100, 0 100, 0 0))' order by id;

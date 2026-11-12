@@ -55,6 +55,9 @@ public:
 		if (count.IsValid()) {
 			return count.GetIndex();
 		}
+		if (!data.empty() && data[0].GetBufferRef()) {
+			return data[0].size();
+		}
 		return DeriveSize();
 	}
 	inline idx_t ColumnCount() const {
@@ -103,17 +106,17 @@ public:
 	DUCKDB_API void Move(DataChunk &chunk);
 
 	//! Initializes a DataChunk with the given types and without any vector data allocation.
-	DUCKDB_API void InitializeEmpty(const vector<LogicalType> &types);
+	DUCKDB_API void InitializeEmpty(std::span<const LogicalType> types);
 
 	//! Initializes a DataChunk with the given types. Then, if the corresponding boolean in the initialize-vector is
 	//! true, it initializes the vector for that data type.
-	DUCKDB_API void Initialize(ClientContext &context, const vector<LogicalType> &types,
+	DUCKDB_API void Initialize(ClientContext &context, std::span<const LogicalType> types,
 	                           idx_t capacity = STANDARD_VECTOR_SIZE);
-	DUCKDB_API void Initialize(Allocator &allocator, const vector<LogicalType> &types,
+	DUCKDB_API void Initialize(Allocator &allocator, std::span<const LogicalType> types,
 	                           idx_t capacity = STANDARD_VECTOR_SIZE);
-	DUCKDB_API void Initialize(ClientContext &context, const vector<LogicalType> &types, const vector<bool> &initialize,
-	                           idx_t capacity = STANDARD_VECTOR_SIZE);
-	DUCKDB_API void Initialize(Allocator &allocator, const vector<LogicalType> &types, const vector<bool> &initialize,
+	DUCKDB_API void Initialize(ClientContext &context, std::span<const LogicalType> types,
+	                           const vector<bool> &initialize, idx_t capacity = STANDARD_VECTOR_SIZE);
+	DUCKDB_API void Initialize(Allocator &allocator, std::span<const LogicalType> types, const vector<bool> &initialize,
 	                           idx_t capacity = STANDARD_VECTOR_SIZE);
 
 	//! Append the other DataChunk to this one. The column count and types of
@@ -161,6 +164,7 @@ public:
 	//! function was called. This sets the count to 0, the capacity to initial_capacity and resets each member
 	//! Vector to point back to the data owned by this DataChunk.
 	DUCKDB_API void Reset();
+	DUCKDB_API void ResetColumn(idx_t column_idx);
 
 	DUCKDB_API void Serialize(Serializer &serializer, bool compressed_serialization = true) const;
 	DUCKDB_API void Deserialize(Deserializer &source);

@@ -9,6 +9,8 @@
 
 #pragma once
 
+#include "core_functions/aggregate/algebraic/batch_moments.hpp"
+
 #include "duckdb/function/aggregate_function.hpp"
 
 namespace duckdb {
@@ -41,6 +43,23 @@ struct CovarOperation {
 		state.meanx = meanx;
 		state.meany = meany;
 		state.co_moment = C;
+	}
+
+	template <class A_TYPE, class B_TYPE, class STATE>
+	static void BatchUpdate(STATE &state, const A_TYPE *y, const B_TYPE *x, const SelectionVector &ysel,
+	                        const SelectionVector &xsel, const ValidityMask &yvalidity, const ValidityMask &xvalidity,
+	                        idx_t count, AggregateInputData &aggr_input_data) {
+		BatchMoments moments;
+		moments.Compute(y, x, ysel, xsel, yvalidity, xvalidity, count);
+		if (moments.count == 0) {
+			return;
+		}
+		STATE chunk;
+		chunk.count = moments.count;
+		chunk.meanx = moments.mean_b;
+		chunk.meany = moments.mean_a;
+		chunk.co_moment = moments.co_moment;
+		Combine<STATE, CovarOperation>(chunk, state, aggr_input_data);
 	}
 
 	template <class STATE, class OP>

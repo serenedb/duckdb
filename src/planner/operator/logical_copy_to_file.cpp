@@ -97,8 +97,7 @@ unique_ptr<LogicalOperator> LogicalCopyToFile::Deserialize(Deserializer &deseria
 	auto &context = deserializer.Get<ClientContext &>();
 	auto name = deserializer.ReadProperty<string>(210, "function_name");
 
-	auto &func_catalog_entry = Catalog::GetEntry<CopyFunctionCatalogEntry>(
-	    context, QualifiedName(Identifier::SystemCatalog(), Identifier::DefaultSchema(), Identifier(name)));
+	auto &func_catalog_entry = Catalog::GetBuiltinEntry<CopyFunctionCatalogEntry>(context, Identifier(name));
 	if (func_catalog_entry.type != CatalogType::COPY_FUNCTION_ENTRY) {
 		throw InternalException("DeserializeFunction - cant find catalog entry for function %s", name);
 	}
@@ -139,7 +138,7 @@ unique_ptr<LogicalOperator> LogicalCopyToFile::Deserialize(Deserializer &deseria
 	if (!has_serialize) {
 		// If not serialized, re-bind with the copy info
 		if (!function.copy_to_bind) {
-			throw InternalException("Copy function \"%s\" has neither bind nor (de)serialize", function.name);
+			throw InternalException("Copy function %s has neither bind nor (de)serialize", function.name);
 		}
 
 		CopyFunctionBindInput function_bind_input(*copy_info, function.function_info);

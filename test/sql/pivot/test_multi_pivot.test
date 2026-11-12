@@ -70,7 +70,7 @@ SELECT (SELECT * FROM (SELECT 1 a, 2 b, 3 c) PIVOT (min(a) FOR (b, c) IN ((NULL,
 NULL
 
 query I
-SELECT * FROM (VALUES (1)) PIVOT (count(col0) FOR col0 IN (1::INT));
+SELECT * FROM (VALUES (1)) PIVOT (count(column1) FOR column1 IN (1::INT));
 ----
 1
 

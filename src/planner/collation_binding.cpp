@@ -1,4 +1,5 @@
 #include "duckdb/planner/collation_binding.hpp"
+#include "duckdb/common/stack_depth.hpp"
 #include "duckdb/catalog/catalog_entry/collate_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/scalar_function_catalog_entry.hpp"
 #include "duckdb/planner/expression/bound_function_expression.hpp"
@@ -31,12 +32,20 @@ static vector<string> GetVarcharCollationFunctions(ClientContext &context, const
 		collation = str_collation;
 	}
 	collation = StringUtil::Lower(collation);
-	// bind the collation
-	if (collation.empty() || collation == "binary" || collation == "c" || collation == "posix") {
+
+	// PG-compat: collations can be schema-qualified ("pg_catalog.default",
+	// "pg_catalog.C", ...).
+	static constexpr std::string_view kPgCatalogPrefix = "pg_catalog.";
+	if (collation.starts_with(kPgCatalogPrefix)) {
+		collation = collation.substr(kPgCatalogPrefix.size());
+	}
+
+	// bind
+	if (collation.empty() || collation == "binary" || collation == "c" || collation == "posix" ||
+	    collation == "default") {
 		// no collation or binary collation: skip
 		return result;
 	}
-	auto &catalog = Catalog::GetSystemCatalog(context);
 	auto splits = StringUtil::Split(StringUtil::Lower(collation), ".");
 	vector<reference<CollateCatalogEntry>> entries;
 	unordered_set<string> collations;
@@ -45,8 +54,7 @@ static vector<string> GetVarcharCollationFunctions(ClientContext &context, const
 			// we already applied this collation
 			continue;
 		}
-		auto &collation_entry = catalog.GetEntry<CollateCatalogEntry>(
-		    context, QualifiedName(catalog.GetName(), Identifier::DefaultSchema(), Identifier(collation_argument)));
+		auto &collation_entry = Catalog::GetBuiltinEntry<CollateCatalogEntry>(context, Identifier(collation_argument));
 		if (collation_entry.combinable) {
 			entries.insert(entries.begin(), collation_entry);
 		} else {
@@ -158,7 +166,7 @@ static bool PushStructCollation(ClientContext &context, unique_ptr<Expression> &
 	auto is_null = make_uniq<BoundOperatorExpression>(ExpressionType::OPERATOR_IS_NULL, LogicalType::BOOLEAN);
 	is_null->GetChildrenMutable().push_back(lambda_parameter_expr->Copy());
 	auto null_result = make_uniq<BoundConstantExpression>(Value(result->GetReturnType()));
-	auto body = make_uniq<BoundCaseExpression>(std::move(is_null), std::move(null_result), std::move(result));
+	auto body = make_shared_ptr<BoundCaseExpression>(std::move(is_null), std::move(null_result), std::move(result));
 	auto lambda = make_uniq<BoundLambdaExpression>(ExpressionType::LAMBDA, LogicalType::LAMBDA, std::move(body), 1);
 	lambda->SetParameterNames({lambda_parameter});
 
@@ -185,10 +193,8 @@ static bool PushNestedCollation(ClientContext &context, unique_ptr<Expression> &
 		return false;
 	}
 
-	auto &catalog = Catalog::GetSystemCatalog(context);
-	auto list_transform = catalog.GetEntry<ScalarFunctionCatalogEntry>(
-	    context, QualifiedName(catalog.GetName(), Identifier::DefaultSchema(), "list_transform"),
-	    OnEntryNotFound::RETURN_NULL);
+	auto list_transform = Catalog::GetBuiltinEntry<ScalarFunctionCatalogEntry>(context, Identifier("list_transform"),
+	                                                                           OnEntryNotFound::RETURN_NULL);
 	if (!list_transform) {
 		// list_transform is not available - cannot push the collation into the list
 		return false;
@@ -213,6 +219,7 @@ static bool PushNestedCollation(ClientContext &context, unique_ptr<Expression> &
 
 bool CollationBinding::PushCollation(ClientContext &context, unique_ptr<Expression> &source,
                                      const LogicalType &sql_type, CollationType type) const {
+	StackDepth::Check();
 	// Leave collation of aliased structs, lists and arrays to the registered callbacks.
 	if (!sql_type.HasAlias()) {
 		if (StructType::IsStruct(sql_type)) {

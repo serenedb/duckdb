@@ -29,25 +29,30 @@ PhysicalUpdate::PhysicalUpdate(PhysicalPlan &physical_plan, vector<LogicalType> 
       tableref(tableref), table(table), columns(std::move(columns)), expressions(std::move(expressions)),
       bound_defaults(std::move(bound_defaults)), bound_constraints(std::move(bound_constraints)),
       return_chunk(return_chunk), capture_old_rows(capture_old_rows), old_row_columns(std::move(old_row_columns)),
-      row_id_handling(row_id_handling), index_update(false) {
-	auto &indexes = table.GetDataTableInfo().get()->GetIndexes();
-	auto index_columns = indexes.GetIndexedColumns();
+      row_id_handling(row_id_handling) {
+}
 
-	unordered_set<column_t> update_columns;
-	update_columns.reserve(this->columns.size());
-	for (const auto col : this->columns) {
-		update_columns.insert(col.index);
+void PhysicalUpdate::InitializeDelAndInsert(const vector<idx_t> &old_value_positions_p,
+                                            const vector<idx_t> &old_value_inputs_p, bool in_place_unchanged_rows_p) {
+	D_ASSERT(old_value_positions_p.size() == old_value_inputs_p.size());
+	old_value_positions = old_value_positions_p;
+	old_value_inputs = old_value_inputs_p;
+	in_place_unchanged_rows = in_place_unchanged_rows_p;
+	for (idx_t i = 0; i < old_value_positions.size(); i++) {
+		if (old_value_inputs[i] == DConstants::INVALID_INDEX) {
+			fetched_old_value_columns.emplace_back(columns[old_value_positions[i]].index);
+		}
 	}
-
-	for (const auto &col : table.Columns()) {
-		if (index_columns.find(col.Physical().index) == index_columns.end()) {
+	if (!in_place_unchanged_rows) {
+		return;
+	}
+	for (idx_t i = 0, next = 0; i < update_column_count; i++) {
+		if (next < old_value_positions.size() && old_value_positions[next] == i) {
+			next++;
 			continue;
 		}
-		if (update_columns.find(col.Physical().index) == update_columns.end()) {
-			continue;
-		}
-		index_update = true;
-		break;
+		in_place_positions.push_back(i);
+		in_place_columns.push_back(columns[i]);
 	}
 }
 
@@ -74,7 +79,8 @@ class UpdateLocalState : public LocalSinkState {
 public:
 	UpdateLocalState(ClientContext &context, const vector<unique_ptr<Expression>> &expressions,
 	                 const vector<LogicalType> &table_types, const vector<unique_ptr<Expression>> &bound_defaults,
-	                 const vector<unique_ptr<BoundConstraint>> &bound_constraints, bool capture_old_rows)
+	                 const vector<unique_ptr<BoundConstraint>> &bound_constraints, bool capture_old_rows,
+	                 const vector<PhysicalIndex> &columns, idx_t update_column_count)
 	    : default_executor(context, bound_defaults), bound_constraints(bound_constraints) {
 		// Initialize the update chunk.
 		auto &allocator = Allocator::Get(context);
@@ -85,9 +91,16 @@ public:
 		}
 		update_chunk.Initialize(allocator, update_types);
 
+		if (update_column_count != 0) {
+			write_columns.assign(columns.begin(), columns.begin() + NumericCast<int64_t>(update_column_count));
+			vector<LogicalType> write_types(update_types.begin(),
+			                                update_types.begin() + NumericCast<int64_t>(update_column_count));
+			write_chunk.Initialize(allocator, write_types);
+		}
+
 		// Initialize the mock and delete chunk.
 		mock_chunk.Initialize(allocator, table_types);
-		delete_chunk.Initialize(allocator, table_types);
+		delete_chunk.InitializeEmpty(table_types);
 
 		// When capturing OLD rows, the return chunk holds the NEW image followed by the OLD image.
 		if (capture_old_rows) {
@@ -98,9 +111,17 @@ public:
 	}
 
 	DataChunk update_chunk;
+	vector<PhysicalIndex> write_columns;
+	DataChunk write_chunk;
 	DataChunk mock_chunk;
 	DataChunk delete_chunk;
 	DataChunk combined_chunk;
+	DataChunk old_values;
+	DataChunk fetched_old_values;
+	DataChunk in_place_chunk;
+	SelectionVector unchanged_sel;
+	SelectionVector next_sel;
+	SelectionVector changed_sel;
 	ExpressionExecutor default_executor;
 	unique_ptr<TableDeleteState> delete_state;
 	unique_ptr<TableUpdateState> update_state;
@@ -142,9 +163,66 @@ static void AppendReturnRows(ColumnDataCollection &collection, DataChunk &combin
 	collection.Append(combined);
 }
 
+// Arrange the columns in the standard table order, then validate + set the cardinality from the referenced columns.
+// The del+insert path projects every table column (it re-inserts the full row), so all are referenced.
+static void ArrangeTableColumns(DataChunk &mock_chunk, const vector<PhysicalIndex> &columns, DataChunk &update_chunk,
+                                idx_t count) {
+	for (idx_t i = 0; i < columns.size(); i++) {
+		mock_chunk.data[columns[i].index].Reference(update_chunk.data[i]);
+	}
+	mock_chunk.CheckCardinality(count);
+}
+
+// Updates in place the rows whose indexed values the update leaves unchanged and returns their count; the other rows
+// remain in update_chunk, row_ids and old_values for the DELETE + INSERT.
+static idx_t UpdateUnchangedRows(const PhysicalUpdate &op, ExecutionContext &context, UpdateLocalState &state,
+                                 DataChunk &update_chunk, Vector &row_ids, idx_t count) {
+	auto &old_values = state.old_values;
+	idx_t unchanged = count;
+	optional_ptr<const SelectionVector> sel;
+	for (idx_t i = 0; i < op.old_value_positions.size() && unchanged > 0; i++) {
+		unchanged = VectorOperations::NotDistinctFrom(update_chunk.data[op.old_value_positions[i]], old_values.data[i],
+		                                              sel, unchanged, &state.next_sel, nullptr);
+		std::swap(state.unchanged_sel, state.next_sel);
+		sel = &state.unchanged_sel;
+	}
+	if (unchanged == 0) {
+		return 0;
+	}
+
+	idx_t changed = 0;
+	for (idx_t row = 0, next = 0; row < count; row++) {
+		if (next < unchanged && state.unchanged_sel.get_index(next) == row) {
+			next++;
+		} else {
+			state.changed_sel.set_index(changed++, row);
+		}
+	}
+
+	auto &values = state.in_place_chunk;
+	for (idx_t i = 0; i < op.in_place_positions.size(); i++) {
+		values.data[i].Slice(update_chunk.data[op.in_place_positions[i]], state.unchanged_sel, unchanged);
+	}
+	values.CheckCardinality(unchanged);
+	Vector unchanged_row_ids(row_ids, state.unchanged_sel, unchanged);
+	auto &update_state = state.GetUpdateState(op.table, op.tableref, context.client);
+	op.table.Update(update_state, context.client, op.tableref, unchanged_row_ids, op.in_place_columns, values);
+	if (changed != 0) {
+		update_chunk.Slice(state.changed_sel, changed);
+		row_ids.Slice(state.changed_sel, changed);
+		old_values.Slice(state.changed_sel, changed);
+	}
+	return unchanged;
+}
+
 SinkResultType PhysicalUpdate::Sink(ExecutionContext &context, DataChunk &chunk, OperatorSinkInput &input) const {
 	auto &g_state = input.global_state.Cast<UpdateGlobalState>();
 	auto &l_state = input.local_state.Cast<UpdateLocalState>();
+
+	auto &progress_callback = ClientConfig::GetConfig(context.client).sink_progress_callback;
+	if (progress_callback) {
+		progress_callback(chunk.size(), chunk.GetAllocationSize());
+	}
 
 	chunk.Flatten();
 	l_state.default_executor.SetChunk(chunk);
@@ -180,9 +258,6 @@ SinkResultType PhysicalUpdate::Sink(ExecutionContext &context, DataChunk &chunk,
 			lock_guard<mutex> glock(g_state.lock);
 			D_ASSERT(g_state.updated_rows);
 			update_count = g_state.updated_rows->Register(row_ids, update_chunk.size(), sel);
-			if (row_id_handling == RowIdHandling::ERROR && update_count != update_chunk.size()) {
-				throw InvalidInputException("UPDATE command cannot update the same row more than once");
-			}
 			if (update_count != update_chunk.size()) {
 				update_chunk.Slice(sel, update_count);
 				update_row_ids.Slice(row_ids, sel, update_count);
@@ -198,7 +273,17 @@ SinkResultType PhysicalUpdate::Sink(ExecutionContext &context, DataChunk &chunk,
 			mock_chunk.CheckCardinality(update_count);
 		}
 		auto &update_state = l_state.GetUpdateState(table, tableref, context.client);
-		table.Update(update_state, context.client, tableref, update_row_ids, columns, update_chunk);
+		if (update_column_count == 0) {
+			table.Update(update_state, context.client, tableref, update_row_ids, columns, update_chunk);
+		} else {
+			auto &write_chunk = l_state.write_chunk;
+			write_chunk.Reset();
+			for (idx_t i = 0; i < update_column_count; i++) {
+				write_chunk.data[i].Reference(update_chunk.data[i]);
+			}
+			write_chunk.SetCardinality(update_chunk.size());
+			table.Update(update_state, context.client, tableref, update_row_ids, l_state.write_columns, write_chunk);
+		}
 
 		if (return_chunk) {
 			lock_guard<mutex> glock(g_state.lock);
@@ -226,47 +311,19 @@ SinkResultType PhysicalUpdate::Sink(ExecutionContext &context, DataChunk &chunk,
 	if (deduplicate) {
 		D_ASSERT(g_state.updated_rows);
 		update_count = g_state.updated_rows->Register(row_ids, update_chunk.size(), sel);
-		if (row_id_handling == RowIdHandling::ERROR && update_count != update_chunk.size()) {
-			throw InvalidInputException("UPDATE command cannot update the same row more than once");
-		}
 	}
 
 	// The update chunk now contains exactly those rows that we are deleting.
 	Vector del_row_ids(Vector::Ref(row_ids));
-	if (deduplicate && update_count != update_chunk.size()) {
+	const bool sliced = deduplicate && update_count != update_chunk.size();
+	if (sliced) {
 		update_chunk.Slice(sel, update_count);
 		del_row_ids.Slice(row_ids, sel, update_count);
 	}
 
-	auto &delete_chunk = index_update ? l_state.delete_chunk : l_state.mock_chunk;
-	delete_chunk.Reset();
-
-	if (index_update) {
-		auto &transaction = DuckTransaction::Get(context.client, table.db);
-		vector<StorageIndex> column_ids;
-		for (idx_t i = 0; i < table.ColumnCount(); i++) {
-			column_ids.emplace_back(i);
-		};
-		// Fetch the previous index keys for exactly the rows we delete. Use the deduplicated row-ids
-		// (del_row_ids) so Fetch, Delete, and LocalAppend all operate on the same rows; flatten first because
-		// deduplication slices del_row_ids into a dictionary vector, which Fetch cannot read.
-		del_row_ids.Flatten();
-		auto fetch_state = ColumnFetchState();
-		table.Fetch(transaction, delete_chunk, column_ids, del_row_ids, update_count, fetch_state);
-	}
-
-	auto &delete_state = l_state.GetDeleteState(table, tableref, context.client);
-	table.Delete(delete_state, context.client, tableref, del_row_ids, update_count);
-
-	// Arrange the columns in the standard table order, then validate + set the cardinality from the referenced
-	// columns. The del+insert path projects every table column (it re-inserts the full row), so all are referenced.
-	for (idx_t i = 0; i < columns.size(); i++) {
-		mock_chunk.data[columns[i].index].Reference(update_chunk.data[i]);
-	}
-	mock_chunk.CheckCardinality(update_count);
-
-	table.LocalAppend(tableref, context.client, mock_chunk, bound_constraints, del_row_ids, delete_chunk);
+	// Every row is returned with its new values, whether it is updated in place or deleted and inserted.
 	if (return_chunk) {
+		ArrangeTableColumns(mock_chunk, columns, update_chunk, update_count);
 		if (capture_old_rows) {
 			// Apply the dedup selection vector to the OLD columns so they line up with the NEW image.
 			AppendReturnRows(g_state.return_collection, l_state.combined_chunk, mock_chunk, chunk,
@@ -276,7 +333,60 @@ SinkResultType PhysicalUpdate::Sink(ExecutionContext &context, DataChunk &chunk,
 		}
 	}
 
-	g_state.updated_count += update_count;
+	idx_t unchanged_count = 0;
+	if (!old_value_positions.empty()) {
+		auto &fetched = l_state.fetched_old_values;
+		if (!fetched_old_value_columns.empty()) {
+			// Flatten first because deduplication slices del_row_ids into a dictionary vector, which Fetch cannot read.
+			del_row_ids.Flatten();
+			fetched.Reset();
+			ColumnFetchState fetch_state;
+			table.Fetch(DuckTransaction::Get(context.client, table.db), fetched, fetched_old_value_columns, del_row_ids,
+			            update_count, fetch_state);
+		}
+		auto &old_values = l_state.old_values;
+		old_values.Reset();
+		for (idx_t i = 0, fetched_index = 0; i < old_value_positions.size(); i++) {
+			if (old_value_inputs[i] == DConstants::INVALID_INDEX) {
+				old_values.data[i].Reference(fetched.data[fetched_index++]);
+			} else if (sliced) {
+				old_values.data[i].Slice(chunk.data[old_value_inputs[i]], sel, update_count);
+			} else {
+				old_values.data[i].Reference(chunk.data[old_value_inputs[i]]);
+			}
+		}
+		old_values.CheckCardinality(update_count);
+		if (in_place_unchanged_rows) {
+			unchanged_count = UpdateUnchangedRows(*this, context, l_state, update_chunk, del_row_ids, update_count);
+			update_count -= unchanged_count;
+			if (update_count == 0) {
+				g_state.updated_count += unchanged_count;
+				return SinkResultType::NEED_MORE_INPUT;
+			}
+		}
+	}
+
+	auto &delete_state = l_state.GetDeleteState(table, tableref, context.client);
+	table.Delete(delete_state, context.client, tableref, del_row_ids, update_count);
+
+	ArrangeTableColumns(mock_chunk, columns, update_chunk, update_count);
+	// The delete indexes read the previous values of the deleted rows: the read ones of the columns we set, and
+	// those the mock chunk holds for the other columns.
+	auto &delete_chunk = old_value_positions.empty() ? mock_chunk : l_state.delete_chunk;
+	if (!old_value_positions.empty()) {
+		delete_chunk.Reset();
+		for (idx_t i = 0; i < mock_chunk.ColumnCount(); i++) {
+			delete_chunk.data[i].Reference(mock_chunk.data[i]);
+		}
+		for (idx_t i = 0; i < old_value_positions.size(); i++) {
+			delete_chunk.data[columns[old_value_positions[i]].index].Reference(l_state.old_values.data[i]);
+		}
+		delete_chunk.CheckCardinality(update_count);
+	}
+
+	table.LocalAppend(tableref, context.client, mock_chunk, bound_constraints, del_row_ids, delete_chunk);
+
+	g_state.updated_count += unchanged_count + update_count;
 	return SinkResultType::NEED_MORE_INPUT;
 }
 
@@ -285,8 +395,35 @@ unique_ptr<GlobalSinkState> PhysicalUpdate::GetGlobalSinkState(ClientContext &co
 }
 
 unique_ptr<LocalSinkState> PhysicalUpdate::GetLocalSinkState(ExecutionContext &context) const {
-	return make_uniq<UpdateLocalState>(context.client, expressions, table.GetTypes(), bound_defaults, bound_constraints,
-	                                   capture_old_rows);
+	auto state = make_uniq<UpdateLocalState>(context.client, expressions, table.GetTypes(), bound_defaults,
+	                                         bound_constraints, capture_old_rows, columns, update_column_count);
+	if (old_value_positions.empty()) {
+		return std::move(state);
+	}
+	auto table_types = table.GetTypes();
+	vector<LogicalType> old_value_types;
+	for (auto position : old_value_positions) {
+		old_value_types.push_back(table_types[columns[position].index]);
+	}
+	state->old_values.InitializeEmpty(old_value_types);
+	if (!fetched_old_value_columns.empty()) {
+		vector<LogicalType> fetched_types;
+		for (auto &column : fetched_old_value_columns) {
+			fetched_types.push_back(table_types[column.GetPrimaryIndex()]);
+		}
+		state->fetched_old_values.Initialize(Allocator::Get(context.client), fetched_types);
+	}
+	if (in_place_unchanged_rows) {
+		vector<LogicalType> in_place_types;
+		for (auto &column : in_place_columns) {
+			in_place_types.push_back(table_types[column.index]);
+		}
+		state->in_place_chunk.InitializeEmpty(in_place_types);
+		state->unchanged_sel.Initialize();
+		state->next_sel.Initialize();
+		state->changed_sel.Initialize();
+	}
+	return std::move(state);
 }
 
 SinkCombineResultType PhysicalUpdate::Combine(ExecutionContext &context, OperatorSinkCombineInput &input) const {

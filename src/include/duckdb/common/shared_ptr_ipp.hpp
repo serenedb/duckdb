@@ -18,7 +18,7 @@ public:
 	using weak_type = weak_ptr<T, SAFE>;
 
 private:
-	static inline void AssertNotNull(const bool null) {
+	[[gnu::always_inline]] static void AssertNotNull(const bool null) {
 #if defined(DUCKDB_DEBUG_NO_SAFETY) || defined(DUCKDB_CLANG_TIDY)
 		return;
 #else
@@ -196,8 +196,8 @@ public:
 		return internal.operator bool();
 	}
 
-	typename std::add_lvalue_reference<T>::type operator*() const {
-		if (MemorySafety<SAFE>::ENABLED) {
+	[[gnu::always_inline]] typename std::add_lvalue_reference<T>::type operator*() const {
+		if constexpr (MemorySafety<SAFE>::ENABLED) {
 			const auto ptr = internal.get();
 			AssertNotNull(!ptr);
 			return *ptr;
@@ -206,8 +206,8 @@ public:
 		}
 	}
 
-	T *operator->() const {
-		if (MemorySafety<SAFE>::ENABLED) {
+	[[gnu::always_inline]] T *operator->() const {
+		if constexpr (MemorySafety<SAFE>::ENABLED) {
 			const auto ptr = internal.get();
 			AssertNotNull(!ptr);
 			return ptr;
@@ -256,6 +256,19 @@ public:
 
 	shared_ptr<T, SAFE> atomic_load(std::memory_order order) const {
 		return shared_ptr<T, SAFE>(std::atomic_load_explicit(&internal, order));
+	}
+
+	// Read a read-mostly registry that is only atomic_store()d at startup. When
+	// extension load/install is compiled out the registry is immutable while
+	// serving, so we skip std::atomic_load -- on libc++ that takes a real mutex
+	// from a global __sp_mut pool (hashed by this member's address, so every
+	// caller serializes on one mutex). A plain refcounted copy avoids it.
+	shared_ptr<T, SAFE> plain_load() const {
+#ifdef DUCKDB_DISABLE_EXTENSION_LOAD
+		return shared_ptr<T, SAFE>(internal);
+#else
+		return atomic_load();
+#endif
 	}
 
 	void atomic_store(const shared_ptr<T, SAFE> &new_ptr) {

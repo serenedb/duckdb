@@ -340,7 +340,7 @@ EXPLAIN SELECT l.id, r.id, s.id
 FROM (semi_l l LEFT JOIN semi_r r ON l.id = r.id)
 JOIN inner_s s ON coalesce(r.id, l.id) = s.id;
 ----
-physical_plan	<REGEX>:.*Hash Join.*INNER.*Hash Join.*LEFT.*
+physical_plan	<REGEX>:.*HASH_JOIN.*INNER.*HASH_JOIN.*LEFT.*
 
 # ===== MIXED SEMI/ANTI WITH THREE TABLES =====
 

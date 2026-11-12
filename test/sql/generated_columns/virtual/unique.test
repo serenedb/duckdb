@@ -11,7 +11,7 @@ CREATE TABLE unit (
 	amount_sold AS (price) UNIQUE,
 );
 ----
-<REGEX>:.*Binder Error.*not supported yet.*
+<REGEX>:.*Binder Error.*Constraints on virtual generated columns are not supported.*
 
 # Also not as a column list
 statement error
@@ -21,7 +21,7 @@ CREATE TABLE unit (
 	UNIQUE (amount_sold),
 );
 ----
-<REGEX>:.*Binder Error.*not supported yet.*
+<REGEX>:.*Binder Error.*Constraints on virtual generated columns are not supported.*
 
 # Show that proper UNIQUE constraints still work when mixed in when generated columns
 statement ok

@@ -9,6 +9,9 @@
 #pragma once
 
 #include "duckdb/catalog/catalog.hpp"
+#include "duckdb/catalog/catalog_entry.hpp"
+#include "duckdb/catalog/standard_entry.hpp"
+#include "duckdb/catalog/duck_catalog.hpp"
 #include "duckdb/storage/partial_block_manager.hpp"
 
 namespace duckdb {

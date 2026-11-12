@@ -4,7 +4,7 @@
 
 namespace duckdb {
 
-bool TryGetDatePartSpecifier(const string &specifier_p, DatePartSpecifier &result) {
+bool TryGetDatePartSpecifier(std::string_view specifier_p, DatePartSpecifier &result) {
 	auto specifier = StringUtil::Lower(specifier_p);
 	if (specifier == "year" || specifier == "yr" || specifier == "y" || specifier == "years" || specifier == "yrs") {
 		result = DatePartSpecifier::YEAR;
@@ -74,7 +74,7 @@ bool TryGetDatePartSpecifier(const string &specifier_p, DatePartSpecifier &resul
 	return true;
 }
 
-DatePartSpecifier GetDatePartSpecifier(const string &specifier) {
+DatePartSpecifier GetDatePartSpecifier(std::string_view specifier) {
 	DatePartSpecifier result;
 	if (!TryGetDatePartSpecifier(specifier, result)) {
 		throw ConversionException("extract specifier \"%s\" not recognized", specifier);

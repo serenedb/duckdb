@@ -45,7 +45,8 @@ public:
 	void FileSync(FileHandle &handle) override;
 
 	// need to look up correct fs for this
-	bool DirectoryExists(const string &directory, optional_ptr<FileOpener> opener) override;
+	FileExistence TryDirectoryExists(const string &directory, optional_ptr<FileOpener> opener,
+	                                 optional_ptr<ErrorData> error) override;
 	void CreateDirectory(const string &directory, optional_ptr<FileOpener> opener) override;
 	bool CreateDirectoryExtended(const string &directory, const CreateDirectoryOptions &options,
 	                             optional_ptr<FileOpener> opener = nullptr) override;
@@ -57,7 +58,8 @@ public:
 
 	void MoveFile(const string &source, const string &target, optional_ptr<FileOpener> opener) override;
 
-	bool FileExists(const string &filename, optional_ptr<FileOpener> opener) override;
+	FileExistence TryFileExists(const string &filename, optional_ptr<FileOpener> opener,
+	                            optional_ptr<ErrorData> error) override;
 
 	bool IsPipe(const string &filename, optional_ptr<FileOpener> opener) override;
 	void RemoveFile(const string &filename, optional_ptr<FileOpener> opener) override;

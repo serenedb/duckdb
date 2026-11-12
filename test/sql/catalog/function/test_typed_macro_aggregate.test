@@ -1,0 +1,67 @@
+# name: test/sql/catalog/function/test_typed_macro_aggregate.test
+# description: Typed macros whose parameters are used inside aggregates, windows and subqueries
+# group: [function]
+
+statement ok
+CREATE MACRO typed_sum(x INTEGER) AS sum(x);
+
+query I
+SELECT typed_sum(i::INTEGER) FROM range(3) t(i);
+----
+3
+
+statement ok
+CREATE MACRO typed_avg(x DOUBLE) AS sum(x) / count(x);
+
+query R
+SELECT typed_avg(i) FROM range(4) t(i);
+----
+1.5
+
+query II
+SELECT g, typed_sum(i::INTEGER) FROM range(4) t(i), (SELECT 1 AS g) GROUP BY g;
+----
+1	6
+
+statement ok
+CREATE MACRO typed_positive(x INTEGER) AS count(*) FILTER (WHERE x > 0);
+
+query I
+SELECT typed_positive(i::INTEGER) FROM range(3) t(i);
+----
+2
+
+statement ok
+CREATE MACRO typed_window(x INTEGER) AS sum(x) OVER ();
+
+query I
+SELECT typed_window(i::INTEGER) FROM range(3) t(i);
+----
+3
+3
+3
+
+statement ok
+CREATE MACRO typed_below(x INTEGER) AS (SELECT count(*) FROM range(10) r(j) WHERE j < x);
+
+query I
+SELECT typed_below(i::INTEGER) FROM range(3) t(i) ORDER BY 1;
+----
+0
+1
+2
+
+statement ok
+CREATE MACRO typed_twice(x INTEGER) AS x + x;
+
+query I
+SELECT typed_twice(typed_twice(typed_twice(i::INTEGER))) FROM range(3) t(i) ORDER BY 1;
+----
+0
+8
+16
+
+query I
+SELECT typed_sum(typed_twice(i::INTEGER)) FROM range(3) t(i);
+----
+6

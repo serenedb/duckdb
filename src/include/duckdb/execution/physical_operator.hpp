@@ -8,6 +8,7 @@
 
 #pragma once
 
+#include "duckdb/common/explain_value.hpp"
 #include "duckdb/common/arena_linked_list.hpp"
 #include "duckdb/common/case_insensitive_map.hpp"
 #include "duckdb/common/common.hpp"
@@ -76,7 +77,11 @@ public:
 	virtual InsertionOrderPreservingMap<string> ParamsToString() const {
 		return InsertionOrderPreservingMap<string>();
 	}
+	//! Structured operator info: defaults to wrapping ParamsToString; overridden where a
+	//! producer attaches structured values (e.g. table scans with a to_string_value callback)
+	virtual InsertionOrderPreservingMap<ExplainValue> ParamsToValue() const;
 	static void SetEstimatedCardinality(InsertionOrderPreservingMap<string> &result, idx_t estimated_cardinality);
+	static void SetEstimatedCardinality(InsertionOrderPreservingMap<ExplainValue> &result, idx_t estimated_cardinality);
 	virtual string ToString(optional_ptr<ClientContext> context = nullptr,
 	                        const ProfilerPrintFormat &format = ProfilerPrintFormat::Default()) const;
 	void Print() const;
@@ -125,6 +130,10 @@ public:
 	}
 
 	virtual bool RequiresFinalExecute() const {
+		return false;
+	}
+
+	virtual bool FinalExecuteNeedsInput() const {
 		return false;
 	}
 
@@ -187,6 +196,8 @@ public:
 	//! Returns the current progress percentage, or a negative value if progress bars are not supported
 	virtual ProgressData GetProgress(ClientContext &context, GlobalSourceState &gstate) const;
 	virtual void SourceFinished(ClientContext &context, GlobalSourceState &gstate) const;
+	virtual void LocalSourceFinished(ExecutionContext &context, GlobalSourceState &gstate,
+	                                 LocalSourceState &lstate) const;
 
 	//! Returns the current progress percentage, or a negative value if progress bars are not supported
 	virtual ProgressData GetSinkProgress(ClientContext &context, GlobalSinkState &gstate,
@@ -269,6 +280,9 @@ public:
 		}
 		return reinterpret_cast<const TARGET &>(*this);
 	}
+
+private:
+	mutable optional_idx estimated_thread_count;
 };
 
 //! Accumulator that lets a dictionary column survive the cache: pinned entry + concatenated per-chunk sels
@@ -336,6 +350,10 @@ public:
 
 	bool RequiresFinalExecute() const final {
 		return caching_supported;
+	}
+
+	bool FinalExecuteNeedsInput() const final {
+		return true;
 	}
 
 protected:

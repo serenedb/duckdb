@@ -56,7 +56,8 @@ public:
 	void Truncate(FileHandle &handle, int64_t new_size) override;
 
 	//! Check if a directory exists
-	bool DirectoryExists(const string &directory, optional_ptr<FileOpener> opener = nullptr) override;
+	FileExistence TryDirectoryExists(const string &directory, optional_ptr<FileOpener> opener = nullptr,
+	                                 optional_ptr<ErrorData> error = nullptr) override;
 	//! Create a directory if it does not exist
 	void CreateDirectory(const string &directory, optional_ptr<FileOpener> opener = nullptr) override;
 	bool CreateDirectoryExtended(const string &directory, const CreateDirectoryOptions &options,
@@ -70,7 +71,8 @@ public:
 	//! properties
 	void MoveFile(const string &source, const string &target, optional_ptr<FileOpener> opener = nullptr) override;
 	//! Check if a file exists
-	bool FileExists(const string &filename, optional_ptr<FileOpener> opener = nullptr) override;
+	FileExistence TryFileExists(const string &filename, optional_ptr<FileOpener> opener = nullptr,
+	                            optional_ptr<ErrorData> error = nullptr) override;
 
 	//! Check if path is a pipe or character device
 	bool IsPipe(const string &filename, optional_ptr<FileOpener> opener = nullptr) override;
@@ -78,6 +80,7 @@ public:
 	void RemoveFile(const string &filename, optional_ptr<FileOpener> opener = nullptr) override;
 	//! Sync a file handle to disk
 	void FileSync(FileHandle &handle) override;
+	FileSyncParallelism SyncParallelism(FileHandle &handle) override;
 	//! Close and remove an incomplete output file
 	void AbortFileWrite(FileHandle &handle) override;
 

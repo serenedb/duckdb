@@ -19,6 +19,8 @@ public:
 
 	DUCKDB_API explicit ConversionException(QueryLocation error_location, const string &msg);
 
+	DUCKDB_API explicit ConversionException(const unordered_map<string, string> &extra_info, const string &msg);
+
 	DUCKDB_API ConversionException(const PhysicalType orig_type, const PhysicalType new_type);
 
 	DUCKDB_API ConversionException(const LogicalType &orig_type, const LogicalType &new_type);

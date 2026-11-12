@@ -96,10 +96,11 @@ public:
 	      stream(nullptr, 0), deserializer(stream_p), deserialize_only(deserialize_only) {
 		deserializer.Set<Catalog &>(catalog);
 	}
-	WriteAheadLogDeserializer(ReplayState &state_p, unique_ptr<data_t[]> data_p, idx_t size,
+	WriteAheadLogDeserializer(ReplayState &state_p, unique_ptr<data_t[]> data_p, idx_t size, idx_t entry_offset_p,
 	                          bool deserialize_only = false)
 	    : state(state_p), db(state.db), context(state.context), catalog(state.catalog), data(std::move(data_p)),
-	      stream(data.get(), size), deserializer(stream), deserialize_only(deserialize_only) {
+	      stream(data.get(), size), deserializer(stream), deserialize_only(deserialize_only),
+	      entry_offset(entry_offset_p) {
 		deserializer.Set<Catalog &>(catalog);
 	}
 
@@ -137,7 +138,7 @@ public:
 				    offset, computed_checksum, stored_checksum);
 			}
 
-			return WriteAheadLogDeserializer(state_p, std::move(buffer), size, deserialize_only);
+			return WriteAheadLogDeserializer(state_p, std::move(buffer), size, offset, deserialize_only);
 		}
 
 		if (state_p.wal_version == 3) {
@@ -215,14 +216,14 @@ public:
 				    offset, computed_checksum, stored_checksum);
 			}
 
-			return WriteAheadLogDeserializer(state_p, std::move(out_buffer), size, deserialize_only);
+			return WriteAheadLogDeserializer(state_p, std::move(out_buffer), size, offset, deserialize_only);
 		}
 
 		throw IOException("Failed to read WAL of version %llu - can only read version 1, 2 and 3 (encrypted)",
 		                  state_p.wal_version);
 	}
 
-	bool ReplayEntry() {
+	bool ReplayEntry() try {
 		deserializer.Begin();
 		auto wal_type = deserializer.ReadProperty<WALType>(100, "wal_type");
 		if (wal_type == WALType::WAL_FLUSH) {
@@ -238,6 +239,14 @@ public:
 		}
 		deserializer.End();
 		return false;
+	} catch (SerializationException &ex) {
+		if (!entry_offset.IsValid()) {
+			throw;
+		}
+		ErrorData error(ex);
+		throw IOException("The WAL entry at byte position %llu matches its checksum but could not be replayed, it "
+		                  "may have been written by a newer version of DuckDB: %s",
+		                  entry_offset.GetIndex(), error.RawMessage());
 	}
 
 	bool DeserializeOnly() const {
@@ -335,6 +344,7 @@ private:
 	MemoryStream stream;
 	BinaryDeserializer deserializer;
 	bool deserialize_only;
+	optional_idx entry_offset;
 	optional_idx expected_checkpoint_id;
 };
 
@@ -921,8 +931,10 @@ void WriteAheadLogDeserializer::ReplayIndexData(IndexStorageInfo &info) {
 			auto buffer_handle = buffer_manager.Allocate(MemoryTag::ART_INDEX, block_manager.get(), false);
 			auto block_handle = buffer_handle.GetBlockHandle();
 			auto data_ptr = buffer_handle.GetDataMutable();
+			auto allocation_size = data_info.allocation_sizes[j];
 
-			list.ReadElement<bool>(data_ptr, data_info.allocation_sizes[j]);
+			list.ReadElement<bool>(data_ptr, allocation_size);
+			memset(data_ptr + allocation_size, 0, buffer_handle.GetFileBuffer().Size() - allocation_size);
 
 			// For read-only mode, retain the transient block handle and release the pin held by the buffer handle. The
 			// buffer can then be evicted to temporary storage until the index is bound.
@@ -1127,7 +1139,7 @@ void WriteAheadLogDeserializer::ReplayDropTrigger() {
 		return;
 	}
 	if (table_name.empty()) {
-		throw InternalException("WAL replay: DROP TRIGGER entry has an empty table name for trigger \"%s\"",
+		throw InternalException("WAL replay: DROP TRIGGER entry has an empty table name for trigger %s",
 		                        info.GetQualifiedName().Name());
 	}
 	// the trigger lives in the same (possibly nested) schema as its base table
@@ -1250,7 +1262,7 @@ void WriteAheadLogDeserializer::ReplayCreateIndex() {
 	auto &io_manager = TableIOManager::Get(storage);
 
 	// Create the index in the catalog.
-	auto index_entry = table.schema.CreateIndex(context, info, table);
+	auto index_entry = table.ParentSchema(context).CreateIndex(context, info, table);
 
 	// add the index to the storage
 	auto unbound_index = make_uniq<UnboundIndex>(std::move(create_info), std::move(index_info), io_manager, db);
@@ -1345,7 +1357,7 @@ void WriteAheadLogDeserializer::ReplayRowGroupData() {
 			// Deleted index entries are removed when the replay transaction commits. Duplicates can temporarily
 			// exist, similar to tuple WAL replay.
 			auto error = indexes.Append(nullptr, chunk, NumericCast<row_t>(current_row_id),
-			                            IndexAppendMode::INSERT_DUPLICATES, optional_idx());
+			                            IndexAppendMode::INSERT_DUPLICATES, optional_idx(), nullptr);
 			if (error.HasError()) {
 				throw InternalException("Failed to append to index during ROW_GROUP_DATA WAL replay: %s",
 				                        error.Message());

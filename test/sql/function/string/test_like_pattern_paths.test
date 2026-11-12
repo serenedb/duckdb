@@ -1,0 +1,90 @@
+# name: test/sql/function/string/test_like_pattern_paths.test
+# description: LIKE, ILIKE and their ESCAPE forms agree whether the pattern is constant, the same on every row of a chunk, or different per row
+# group: [string]
+
+statement ok
+CREATE TABLE strs AS SELECT i AS id, CASE i % 5 WHEN 0 THEN 'quick brown fox ' || i WHEN 1 THEN '50% off ' || i WHEN 2 THEN 'lazy_dog ' || i WHEN 3 THEN 'back\slash ' || i END AS s FROM range(1, 5001) t(i)
+
+statement ok
+CREATE TABLE pattern_rows AS SELECT id, s, CASE WHEN id <= 2500 THEN '%brown%' WHEN id <= 3500 THEN (CASE id % 2 WHEN 0 THEN '%off%' ELSE '%dog%' END) WHEN id <= 4200 THEN '%#%%' WHEN id <= 4800 THEN '%y_d%' END AS p FROM strs
+
+query TIIIII
+SELECT p, count(*) FILTER (WHERE s LIKE p), count(*) FILTER (WHERE s NOT LIKE p), count(*) FILTER (WHERE s LIKE p ESCAPE '#'), count(*) FILTER (WHERE s NOT LIKE p ESCAPE '#'), count(*) FILTER (WHERE s ILIKE upper(p) ESCAPE '#') FROM pattern_rows GROUP BY p ORDER BY p
+----
+%#%%	0	560	140	420	140
+%brown%	500	1500	500	1500	500
+%dog%	100	300	100	300	100
+%off%	100	300	100	300	100
+%y_d%	120	360	120	360	120
+NULL	0	0	0	0	0
+
+query I
+SELECT count(*) FROM (SELECT s LIKE p AS uniform, s LIKE CASE WHEN id % 2 = 0 THEN p ELSE p || '%' END AS mixed FROM pattern_rows) WHERE uniform IS DISTINCT FROM mixed
+----
+0
+
+query I
+SELECT count(*) FROM (SELECT s LIKE p ESCAPE '#' AS uniform, s LIKE CASE WHEN id % 2 = 0 THEN p ELSE p || '%' END ESCAPE '#' AS mixed FROM pattern_rows) WHERE uniform IS DISTINCT FROM mixed
+----
+0
+
+query I
+SELECT count(*) FROM (SELECT s ILIKE upper(p) AS uniform, s ILIKE CASE WHEN id % 2 = 0 THEN upper(p) ELSE upper(p) || '%' END AS mixed FROM pattern_rows) WHERE uniform IS DISTINCT FROM mixed
+----
+0
+
+query IIIIIIIII
+SELECT count(*) FILTER (WHERE s LIKE '%\%%'), count(*) FILTER (WHERE s LIKE '50\% off%'), count(*) FILTER (WHERE s LIKE '%\%'), count(*) FILTER (WHERE s LIKE '%y\_d%'), count(*) FILTER (WHERE s LIKE 'back\\slash%'), count(*) FILTER (WHERE s LIKE '%\%%' ESCAPE ''), count(*) FILTER (WHERE s LIKE '%50#% off%' ESCAPE '#'), count(*) FILTER (WHERE s ILIKE '%50#% OFF%' ESCAPE '#'), count(*) FILTER (WHERE s NOT LIKE '%#%%' ESCAPE '#') FROM strs
+----
+1000	1000	0	1000	1000	1000	1000	1000	3000
+
+query I
+SELECT count(*) FROM strs WHERE s LIKE 'a%%b' ESCAPE '%'
+----
+0
+
+query I
+SELECT count(*) FROM strs WHERE s LIKE 'abc\'
+----
+0
+
+query II
+SELECT 'abc' LIKE 'abc\', 'abc' LIKE 'abc#' ESCAPE '#'
+----
+false	false
+
+statement error
+SELECT 'abcd' LIKE 'abc\'
+----
+LIKE pattern must not end with escape character
+
+statement error
+SELECT 'abcd' LIKE 'abc#' ESCAPE '#'
+----
+LIKE pattern must not end with escape character
+
+statement ok
+PREPARE like_param AS SELECT count(*) FROM strs WHERE s LIKE $1
+
+query I
+EXECUTE like_param('%\%%')
+----
+1000
+
+query I
+EXECUTE like_param('%brown%')
+----
+1000
+
+statement ok
+PREPARE like_escape_param AS SELECT count(*) FROM strs WHERE s LIKE $1 ESCAPE $2
+
+query I
+EXECUTE like_escape_param('%#%%', '#')
+----
+1000
+
+query I
+EXECUTE like_escape_param('%\%%', '')
+----
+1000

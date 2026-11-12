@@ -48,8 +48,8 @@ public:
 	void FlushAll(optional_idx extra_memory = optional_idx()) const;
 	//! Memory freed since the last flush, which the allocator may still hold
 	idx_t GetDeallocatedSinceFlush() const;
-	//! Flush if at least threshold bytes were freed since the last flush, returns whether a flush happened
-	bool TryFlushDeallocated(idx_t threshold) const;
+	idx_t ClaimDeallocated(idx_t threshold) const;
+	void AddDeallocated(idx_t size) const;
 
 private:
 	bool IsActive() const;

@@ -183,17 +183,20 @@ void ApplyFunctionalDependencies::VisitOrderBys(vector<BoundOrderByNode> &orders
 	}
 
 	//	Remove orderings that are FD on the prefix
-	vector<reference<Expression>> refs;
-	refs.emplace_back(*orders[0].expression);
-	for (idx_t i = 1; i < orders.size();) {
-		auto &expr = orders[i].expression;
-		if (BaseSelectBinder::IsFunctionallyDependent(expr, refs)) {
-			orders.erase(orders.begin() + NumericCast<int64_t>(i));
+	FunctionalDependencies prefix_dependencies;
+	prefix_dependencies.Add(*orders[0].expression);
+	idx_t kept = 1;
+	for (idx_t i = 1; i < orders.size(); i++) {
+		if (prefix_dependencies.IsDependent(*orders[i].expression)) {
 			continue;
 		}
-		refs.emplace_back(*expr);
-		++i;
+		prefix_dependencies.Add(*orders[i].expression);
+		if (kept != i) {
+			orders[kept] = std::move(orders[i]);
+		}
+		kept++;
 	}
+	orders.erase(orders.begin() + NumericCast<int64_t>(kept), orders.end());
 
 	//	Remove trailing orderings that are FD on a primary key
 	if (result.empty()) {
@@ -226,19 +229,23 @@ void ApplyFunctionalDependencies::VisitOrderBys(vector<BoundOrderByNode> &orders
 
 void ApplyFunctionalDependencies::VisitPartitioning(vector<unique_ptr<Expression>> &partitions) const {
 	//	Remove partitioning keys that are FD on the others
-	for (idx_t i = 0; i < partitions.size();) {
-		vector<reference<Expression>> refs;
-		for (idx_t j = 0; j < partitions.size(); ++j) {
-			if (i != j) {
-				refs.emplace_back(*partitions[j]);
-			}
-		}
-		if (BaseSelectBinder::IsFunctionallyDependent(partitions[i], refs)) {
-			partitions.erase(partitions.begin() + NumericCast<int64_t>(i));
-		} else {
-			++i;
-		}
+	FunctionalDependencies others;
+	for (auto &partition : partitions) {
+		others.Add(*partition);
 	}
+	idx_t kept = 0;
+	for (idx_t i = 0; i < partitions.size(); i++) {
+		others.Remove(*partitions[i]);
+		if (others.IsDependent(*partitions[i])) {
+			continue;
+		}
+		others.Add(*partitions[i]);
+		if (kept != i) {
+			partitions[kept] = std::move(partitions[i]);
+		}
+		kept++;
+	}
+	partitions.erase(partitions.begin() + NumericCast<int64_t>(kept), partitions.end());
 
 	//	Extract the partitioning references
 	column_binding_set_t partition_bindings;

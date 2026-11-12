@@ -68,7 +68,7 @@ string QualifyTableCallback(ClientContext &context, const string &name) {
 	if (!entry) {
 		return string();
 	}
-	return QualifiedName(entry->ParentCatalog().GetName(), entry->ParentSchema().name, entry->name).ToString();
+	return QualifiedName(entry->ParentCatalog().GetName(), entry->ParentSchemaName(), entry->name).ToString();
 }
 
 ExternalResourcesManager &ExternalResourcesManager::Get(DatabaseInstance &db) {

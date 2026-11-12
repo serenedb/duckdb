@@ -1,5 +1,6 @@
 #include "duckdb/common/vector/flat_vector.hpp"
 #include "duckdb/common/vector/string_vector.hpp"
+#include "duckdb/parser/expression/type_expression.hpp"
 #include "duckdb/parser/peg/transformer/peg_transformer.hpp"
 #include "duckdb/parser/parsed_data/create_type_info.hpp"
 
@@ -21,6 +22,25 @@ unique_ptr<CreateTypeInfo> PEGTransformerFactory::TransformCreateTypeFromType(PE
                                                                               const LogicalType &type) {
 	auto result = make_uniq<CreateTypeInfo>();
 	result->type = type;
+	return result;
+}
+
+unique_ptr<CreateTypeInfo>
+PEGTransformerFactory::TransformCreateTypeComposite(PEGTransformer &transformer,
+                                                    const child_list_t<LogicalType> &col_id_type_list) {
+	auto result = make_uniq<CreateTypeInfo>();
+	identifier_set_t seen;
+	vector<unique_ptr<ParsedExpression>> struct_children;
+	for (auto &col : col_id_type_list) {
+		if (!seen.insert(col.first).second) {
+			throw ParserException("column \"%s\" specified more than once", col.first.GetIdentifierName());
+		}
+		auto &type_expr = UnboundType::GetTypeExpression(col.second);
+		auto new_type_expr = type_expr->Copy();
+		new_type_expr->SetAlias(col.first);
+		struct_children.push_back(std::move(new_type_expr));
+	}
+	result->type = LogicalType::UNBOUND(make_uniq<TypeExpression>(Identifier("STRUCT"), std::move(struct_children)));
 	return result;
 }
 

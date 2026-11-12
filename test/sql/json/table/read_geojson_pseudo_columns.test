@@ -20,8 +20,8 @@ query IIIII
 SELECT ST_AsText(geometry), id, bbox, id_1, name
 FROM read_json('data/json/geojson/pseudo_columns.geojsonl') ORDER BY id;
 ----
-POINT (1 2)	FEATURE-1	[0.0, 0.0, 1.0, 1.0]	PROP-1	a
-POINT (3 4)	FEATURE-2	[2.0, 2.0, 3.0, 3.0]	PROP-2	b
+POINT (1 2)	FEATURE-1	[0, 0, 1, 1]	PROP-1	a
+POINT (3 4)	FEATURE-2	[2, 2, 3, 3]	PROP-2	b
 
 # The two are resolved by position, not by name, so neither shadows the other
 query II
@@ -103,8 +103,8 @@ COPY boxes FROM 'data/json/geojson/pseudo_columns.geojsonl' (FORMAT GEOJSON);
 query II
 SELECT ST_AsText(geometry), bbox FROM boxes ORDER BY bbox;
 ----
-POINT (1 2)	[0.0, 0.0, 1.0, 1.0]
-POINT (3 4)	[2.0, 2.0, 3.0, 3.0]
+POINT (1 2)	[0, 0, 1, 1]
+POINT (3 4)	[2, 2, 3, 3]
 
 # When the Features have no id of their own, a column named "id" reads the "id" property instead - which is
 # where auto-detection finds it too

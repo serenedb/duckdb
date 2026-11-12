@@ -12,6 +12,7 @@
 #include "duckdb/planner/operator/logical_filter.hpp"
 #include "duckdb/planner/operator/logical_order.hpp"
 #include "duckdb/planner/operator/logical_projection.hpp"
+#include "duckdb/planner/operator/logical_top_n.hpp"
 #include "duckdb/main/settings.hpp"
 #include "duckdb/planner/binder.hpp"
 
@@ -58,11 +59,25 @@ void ColumnLifetimeAnalyzer::ExtractColumnBindings(const Expression &expr, vecto
 void ColumnLifetimeAnalyzer::VisitOperator(LogicalOperator &op) {
 	Verify(op);
 	if (TopN::CanOptimize(op) && op.children[0]->type == LogicalOperatorType::LOGICAL_ORDER_BY) {
-		// Let's not mess with this, TopN is more important than projection maps
-		// TopN does not support a projection map like Order does
-		VisitOperatorExpressions(op);                        // Visit LIMIT
-		VisitOperatorExpressions(*op.children[0]);           // Visit ORDER
-		StandardVisitOperator(*op.children[0]->children[0]); // Recurse into child of ORDER
+		// The Limit+Order fuses into a TopN, which now carries a projection map
+		// (topn_optimizer moves order_by.projection_map onto it). Prune the
+		// Order's unused output columns via that map, exactly like the standalone
+		// ORDER_BY/TOP_N case below -- without it, columns not needed above (e.g.
+		// a sort key absent from the SELECT list) survive the TopN and force an
+		// extra projection above it.
+		if (everything_referenced) {
+			VisitOperatorExpressions(op);                        // Visit LIMIT
+			VisitOperatorExpressions(*op.children[0]);           // Visit ORDER
+			StandardVisitOperator(*op.children[0]->children[0]); // Recurse into child of ORDER
+			return;
+		}
+		auto &order = op.children[0]->Cast<LogicalOrder>();
+		column_binding_set_t unused_bindings;
+		ExtractUnusedColumnBindings(order.children[0]->GetColumnBindings(), unused_bindings);
+		VisitOperatorExpressions(op);              // Visit LIMIT
+		VisitOperatorExpressions(order);           // Visit ORDER
+		StandardVisitOperator(*order.children[0]); // Recurse into child of ORDER
+		GenerateProjectionMap(order.children[0]->GetColumnBindings(), unused_bindings, order.projection_map);
 		return;
 	}
 	switch (op.type) {
@@ -129,18 +144,20 @@ void ColumnLifetimeAnalyzer::VisitOperator(LogicalOperator &op) {
 		analyzer.StandardVisitOperator(op);
 		return;
 	}
-	case LogicalOperatorType::LOGICAL_ORDER_BY: {
-		auto &order = op.Cast<LogicalOrder>();
+	case LogicalOperatorType::LOGICAL_ORDER_BY:
+	case LogicalOperatorType::LOGICAL_TOP_N: {
 		if (everything_referenced) {
 			break;
 		}
+		auto &projection_map = op.type == LogicalOperatorType::LOGICAL_TOP_N ? op.Cast<LogicalTopN>().projection_map
+		                                                                     : op.Cast<LogicalOrder>().projection_map;
 
 		column_binding_set_t unused_bindings;
 		ExtractUnusedColumnBindings(op.children[0]->GetColumnBindings(), unused_bindings);
 
 		StandardVisitOperator(op);
 
-		GenerateProjectionMap(op.children[0]->GetColumnBindings(), unused_bindings, order.projection_map);
+		GenerateProjectionMap(op.children[0]->GetColumnBindings(), unused_bindings, projection_map);
 		return;
 	}
 	case LogicalOperatorType::LOGICAL_DISTINCT: {
@@ -196,6 +213,8 @@ void ColumnLifetimeAnalyzer::VisitOperator(LogicalOperator &op) {
 }
 
 void ColumnLifetimeAnalyzer::Verify(LogicalOperator &op) {
+#ifdef D_ASSERT_IS_ENABLED
+	DUCKDB_DEBUG_VERIFY_GUARD();
 	if (!Settings::Get<DebugVerificationProjectionSetting>(optimizer.context)) {
 		return;
 	}
@@ -218,6 +237,7 @@ void ColumnLifetimeAnalyzer::Verify(LogicalOperator &op) {
 	default:
 		break;
 	}
+#endif
 }
 
 void ColumnLifetimeAnalyzer::AddVerificationProjection(unique_ptr<LogicalOperator> &child) {

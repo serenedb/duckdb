@@ -11,8 +11,11 @@
 #include "duckdb/catalog/catalog_entry.hpp"
 #include "duckdb/catalog/catalog_set.hpp"
 #include "duckdb/catalog/dependency.hpp"
+#include "duckdb/catalog/dependency_list.hpp"
 #include "duckdb/catalog/catalog_entry_map.hpp"
 #include "duckdb/catalog/catalog_transaction.hpp"
+#include "duckdb/common/case_insensitive_map.hpp"
+#include "duckdb/common/mutex.hpp"
 #include "duckdb/common/stack.hpp"
 #include "duckdb/common/string_util.hpp"
 
@@ -38,6 +41,7 @@ struct DependencyDependent {
 	CatalogEntryInfo entry;
 	//! The type of dependency this is (e.g, blocking, non-blocking, ownership)
 	DependencyDependentFlags flags;
+	subdependency_set_t subdependencies;
 };
 
 //! Every dependency consists of a subject (the entry being depended on) and a dependent (the entry that has the
@@ -90,12 +94,23 @@ public:
 	//! Scans all dependencies, returning pairs of (object, dependent)
 	void Scan(ClientContext &context,
 	          const std::function<void(CatalogEntry &, CatalogEntry &, const DependencyDependentFlags &)> &callback);
+	void ScanEdges(CatalogTransaction transaction, CatalogEntry &entry, bool subjects,
+	               const std::function<void(CatalogEntry &, const DependencyDependentFlags &)> &callback);
+	//! Removes the (dependent -> subject) dependency edge if present; one direction only, no-op when absent.
+	void RemoveDependencyBetween(CatalogTransaction transaction, CatalogEntry &dependent, CatalogEntry &subject);
 
 	void AddOwnership(CatalogTransaction transaction, CatalogEntry &owner, CatalogEntry &entry);
+	void RemoveOwnership(CatalogTransaction transaction, CatalogEntry &entry);
+	catalog_entry_vector_t OwnedEntries(CatalogTransaction transaction, const CatalogEntry &owner);
+	catalog_entry_vector_t FollowingDependents(CatalogTransaction transaction, const CatalogEntry &object);
+	optional_ptr<CatalogEntry> OwnerOf(CatalogTransaction transaction, CatalogEntry &entry);
 
 	//! Get the order of entries needed by EXPORT, the objects with no dependencies are exported first
 	void ReorderEntries(catalog_entry_vector_t &entries);
-	void ReorderEntries(catalog_entry_vector_t &entries, ClientContext &context);
+
+	static bool CanDepend(Catalog &dependent, Catalog &subject);
+	void ScanDependentEntries(CatalogTransaction transaction, CatalogEntry &object,
+	                          const std::function<void(CatalogEntry &)> &callback);
 
 private:
 	DuckCatalog &catalog;
@@ -103,22 +118,26 @@ private:
 	CatalogSet dependents;
 
 private:
-	bool IsSystemEntry(CatalogEntry &entry) const;
-	optional_ptr<CatalogEntry> LookupEntry(CatalogTransaction transaction, const LogicalDependency &dependency);
+	bool IsSystemEntry(const CatalogEntry &entry) const;
 	optional_ptr<CatalogEntry> LookupEntry(CatalogTransaction transaction, CatalogEntry &dependency);
 	optional_ptr<CatalogEntry> LookupEntry(CatalogTransaction transaction, const CatalogEntryInfo &info);
 	//! Look up a trigger dependency through the table it is defined on
 	optional_ptr<CatalogEntry> LookupTrigger(CatalogTransaction transaction, SchemaCatalogEntry &schema_entry,
 	                                         const CatalogEntryInfo &info);
-	string CollectDependents(CatalogTransaction transaction, catalog_entry_set_t &entries, CatalogEntryInfo &info);
+	string CollectDependents(CatalogTransaction transaction, catalog_entry_set_t &entries, CatalogEntryInfo &info,
+	                         catalog_entry_set_t &listed);
 	void CleanupDependencies(CatalogTransaction transaction, CatalogEntry &entry);
 
 public:
 	//! The path of (nested) schemas that contain this entry, outermost first (empty for a top-level schema)
 	static vector<Identifier> GetSchemaPath(const CatalogEntry &entry);
+	static vector<Identifier> GetSchemaPath(CatalogTransaction transaction, const CatalogEntry &entry);
 	static MangledEntryName MangleName(const CatalogEntryInfo &info);
 	static MangledEntryName MangleName(const CatalogEntry &entry);
 	static CatalogEntryInfo GetLookupProperties(const CatalogEntry &entry);
+	static CatalogEntryInfo GetLookupProperties(CatalogTransaction transaction, const CatalogEntry &entry);
+	optional_ptr<CatalogEntry> LookupEntry(CatalogTransaction transaction, const LogicalDependency &dependency);
+	LogicalDependency WithCurrentNames(CatalogTransaction transaction, LogicalDependency dependency);
 	//! The drop error for an entry with dependents, for catalogs that track their own dependents.
 	DUCKDB_API static string FormatDropError(const CatalogEntry &object,
 	                                         const vector<reference<CatalogEntry>> &dependents);
@@ -126,6 +145,9 @@ public:
 	//! empty path (the entry lives in the catalog root) or if a schema along the path does not exist.
 	optional_ptr<SchemaCatalogEntry> NavigateSchemaPath(CatalogTransaction transaction,
 	                                                    const vector<Identifier> &schema_path);
+	//! Returns the objects that should be dropped alongside the object
+	catalog_entry_map_t<subdependency_set_t> CheckDropDependencies(CatalogTransaction transaction, CatalogEntry &object,
+	                                                               bool cascade);
 
 private:
 	void ReorderEntry(CatalogTransaction transaction, CatalogEntry &entry, catalog_entry_set_t &visited,
@@ -134,8 +156,11 @@ private:
 	void AddObject(CatalogTransaction transaction, CatalogEntry &object, const LogicalDependencyList &dependencies);
 	void VerifyExistence(CatalogTransaction transaction, DependencyEntry &object);
 	void VerifyCommitDrop(CatalogTransaction transaction, VisibilityBound visibility_bound, CatalogEntry &object);
-	//! Returns the objects that should be dropped alongside the object
-	catalog_entry_set_t CheckDropDependencies(CatalogTransaction transaction, CatalogEntry &object, bool cascade);
+	void DropSubDependencies(CatalogTransaction transaction, CatalogEntry &table,
+	                         const subdependency_set_t &subdependencies);
+	void OrderDrop(CatalogTransaction transaction, CatalogEntry &entry,
+	               const catalog_entry_map_t<subdependency_set_t> &to_drop, catalog_entry_set_t &visited,
+	               catalog_entry_vector_t &order);
 	void DropObject(CatalogTransaction transaction, CatalogEntry &object, bool cascade);
 	void AlterObject(CatalogTransaction transaction, CatalogEntry &old_obj, CatalogEntry &new_obj, AlterInfo &info);
 
@@ -153,6 +178,10 @@ private:
 	using dependency_callback_t = const std::function<void(DependencyEntry &)>;
 	void ScanDependents(CatalogTransaction transaction, const CatalogEntryInfo &info, dependency_callback_t &callback);
 	void ScanSubjects(CatalogTransaction transaction, const CatalogEntryInfo &info, dependency_callback_t &callback);
+	void ScanAllDependents(CatalogTransaction transaction, const CatalogEntryInfo &info,
+	                       dependency_callback_t &callback);
+	void RemoveDependencies(CatalogTransaction transaction, const CatalogEntry &object,
+	                        const LogicalDependencyList &dependencies);
 	void ScanSetInternal(CatalogTransaction transaction, const CatalogEntryInfo &info, bool subjects,
 	                     dependency_callback_t &callback);
 	void PrintSubjects(CatalogTransaction transaction, const CatalogEntryInfo &info);

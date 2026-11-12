@@ -32,7 +32,7 @@ static LogicalType ListTransformBindLambda(ClientContext &context, const vector<
 
 ScalarFunction ListTransformFun::GetFunction() {
 	ScalarFunction fun({}, LogicalType::LIST(LogicalType::ANY), LambdaFunctions::ListTransformFunction,
-	                   ListTransformBind, nullptr, nullptr);
+	                   ListTransformBind, nullptr, LambdaFunctions::ListLambdaInitLocalState);
 	fun.GetSignature()
 	    .AddParameter("list", LogicalType::LIST(LogicalType::ANY))
 	    .AddParameter("lambda", LogicalType::LAMBDA);

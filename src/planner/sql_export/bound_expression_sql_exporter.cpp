@@ -1,5 +1,6 @@
 #include "duckdb/planner/sql_export/bound_expression_sql_exporter_internal.hpp"
 #include "duckdb/common/extension_type_info.hpp"
+#include "duckdb/common/stack_depth.hpp"
 #include "duckdb/function/scalar/compressed_materialization_utils.hpp"
 #include "duckdb/planner/bound_expression_sql_exporter.hpp"
 #include "duckdb/planner/sql_export_helpers.hpp"
@@ -155,6 +156,7 @@ BoundExpressionSQLExportResult BoundExpressionSQLExportState::Export(const Expre
 
 BoundExpressionSQLExportResult BoundExpressionSQLExportState::ExportInternal(const Expression &expression,
                                                                              const LogicalPlanVerificationPath &path) {
+	StackDepth::Check();
 	switch (expression.GetExpressionClass()) {
 	case ExpressionClass::BOUND_CONSTANT:
 		return ExportConstant(expression.Cast<BoundConstantExpression>(), path);
@@ -179,9 +181,6 @@ BoundExpressionSQLExportResult BoundExpressionSQLExportState::ExportInternal(con
 	case ExpressionClass::BOUND_UNNEST:
 	case ExpressionClass::BOUND_LAMBDA:
 	case ExpressionClass::BOUND_LAMBDA_REF:
-	case ExpressionClass::LEGACY_BOUND_CAST:
-	case ExpressionClass::LEGACY_BOUND_COMPARISON:
-	case ExpressionClass::LEGACY_BOUND_BETWEEN:
 		return BoundExpressionSQLExportResult::Failure({UnsupportedExpression(path, expression.GetExpressionClass())});
 	case ExpressionClass::BOUND_EXPANDED:
 	case ExpressionClass::AGGREGATE:

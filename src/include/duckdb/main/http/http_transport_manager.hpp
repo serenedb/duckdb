@@ -61,6 +61,7 @@ public:
 	DUCKDB_API void SetCapacity(idx_t capacity) DUCKDB_EXCLUDES(lock);
 	DUCKDB_API idx_t GetCapacity() const DUCKDB_EXCLUDES(lock);
 	DUCKDB_API static idx_t AutomaticCapacity(const DBConfig &config);
+	DUCKDB_API static idx_t AutomaticCapacity(const DBConfig &config, int64_t async_threads);
 
 private:
 	explicit HTTPTransportManager(const shared_ptr<HTTPUtil> &initial_http_util);

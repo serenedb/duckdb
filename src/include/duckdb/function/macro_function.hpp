@@ -8,6 +8,7 @@
 
 #pragma once
 
+#include "duckdb/common/enums/sql_compatibility.hpp"
 #include "duckdb/function/function.hpp"
 #include "duckdb/parser/expression/constant_expression.hpp"
 #include "duckdb/parser/query_node.hpp"
@@ -20,6 +21,12 @@ class FunctionExpression;
 class ScalarMacroFunction;
 
 enum class MacroType : uint8_t { VOID_MACRO = 0, TABLE_MACRO = 1, SCALAR_MACRO = 2 };
+
+struct MacroBoundArguments {
+	vector<bool> bind_in_place;
+	vector<unique_ptr<Expression>> positional;
+	identifier_map_t<unique_ptr<Expression>> named;
+};
 
 struct MacroBindResult {
 	explicit MacroBindResult(string error_p) : error(std::move(error_p)) {
@@ -43,6 +50,14 @@ public:
 	InsertionOrderPreservingMap<unique_ptr<ParsedExpression>, Identifier, identifier_map_t<idx_t>> default_parameters;
 	//! The types of the parameters
 	vector<LogicalType> types;
+	vector<LogicalType> return_types;
+	vector<string> return_names;
+	string parameter_modes;
+	//! Whether this overload is a procedure (CALL only, not usable in SELECT/FROM)
+	bool is_procedure = false;
+	bool strict = false;
+	FunctionStability stability = FunctionStability::VOLATILE;
+	string source;
 
 public:
 	virtual ~MacroFunction() {
@@ -52,14 +67,25 @@ public:
 
 	virtual unique_ptr<MacroFunction> Copy() const = 0;
 
+	vector<LogicalType> ParameterTypes() const;
+	bool HasParameterTypes(const vector<LogicalType> &parameter_types) const;
+	static string ParameterTypesToString(const vector<LogicalType> &parameter_types);
+	static LogicalType WithoutTypmod(const LogicalType &type);
+	static bool IsVoid(const LogicalType &type);
+	static bool ResultNeedsCast(const LogicalType &result, const LogicalType &declared);
+	LogicalType ResultType() const;
+
 	vector<unique_ptr<ParsedExpression>> GetPositionalParametersForSerialization(Serializer &serializer) const;
 	void FinalizeDeserialization();
 
 	static MacroBindResult BindMacroFunction(
 	    Binder &binder, const vector<unique_ptr<MacroFunction>> &macro_functions, const Identifier &name,
-	    FunctionExpression &function_expr, vector<unique_ptr<ParsedExpression>> &positional_arguments,
+	    SqlCompatibility compatibility, FunctionExpression &function_expr,
+	    vector<unique_ptr<ParsedExpression>> &positional_arguments,
 	    InsertionOrderPreservingMap<unique_ptr<ParsedExpression>, Identifier, identifier_map_t<idx_t>> &named_arguments,
-	    idx_t depth);
+	    idx_t depth, optional_ptr<vector<DummyBinding>> lambda_bindings = nullptr,
+	    optional_ptr<ExpressionBinder> argument_binder = nullptr,
+	    optional_ptr<MacroBoundArguments> bound_arguments = nullptr);
 	static unique_ptr<DummyBinding>
 	CreateDummyBinding(const MacroFunction &macro_def, const Identifier &name,
 	                   vector<unique_ptr<ParsedExpression>> &positional_arguments,

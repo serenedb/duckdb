@@ -8,7 +8,7 @@ LogicalLimit::LogicalLimit(BoundLimitNode limit_val, BoundLimitNode offset_val)
 }
 
 vector<ColumnBinding> LogicalLimit::GetColumnBindings() {
-	return children[0]->GetColumnBindings();
+	return GetDerivedColumnBindings();
 }
 
 idx_t LogicalLimit::EstimateCardinality(ClientContext &context) {

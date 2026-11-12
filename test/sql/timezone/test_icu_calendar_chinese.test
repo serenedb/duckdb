@@ -98,7 +98,7 @@ SELECT date_diff('day', '2023-06-15 12:00:00+00'::TIMESTAMPTZ, '2024-06-15 12:00
 query I
 SELECT age('2024-06-15 12:00:00+00'::TIMESTAMPTZ, '1900-06-15 12:00:00+00'::TIMESTAMPTZ)
 ----
-127 years 9 months 20 days
+127 years 9 mons 20 days
 
 query I
 SELECT date_part(['year','month','day','era','dayofyear','week','isoyear'], '2024-06-15 12:00:00+00'::TIMESTAMPTZ)

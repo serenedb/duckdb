@@ -40,6 +40,8 @@ public:
 	                                       const OperatorPartitionInfo &partition_info) const override;
 	ProgressData GetProgress(ClientContext &context, GlobalSourceState &gstate) const override;
 	void SourceFinished(ClientContext &context, GlobalSourceState &gstate) const override;
+	void LocalSourceFinished(ExecutionContext &context, GlobalSourceState &gstate,
+	                         LocalSourceState &lstate) const override;
 	bool SupportsPartitioning(const OperatorPartitionInfo &partition_info) const override;
 	OrderPreservationType SourceOrder() const override;
 

@@ -9,6 +9,7 @@
 #pragma once
 
 #include "duckdb/parser/parsed_expression.hpp"
+#include "duckdb/common/optional_idx.hpp"
 #include "duckdb/common/vector.hpp"
 
 namespace duckdb {
@@ -38,6 +39,13 @@ public:
 		return column_names;
 	}
 
+	optional_idx MacroParameter() const {
+		return macro_parameter;
+	}
+	void SetMacroParameter(optional_idx parameter) {
+		macro_parameter = parameter;
+	}
+
 	bool IsQualified() const;
 	const Identifier &GetColumnName() const;
 	bool IsScalar() const override {
@@ -48,7 +56,7 @@ public:
 	string ToString() const override;
 
 	bool Equals(const ParsedExpression &other) const override;
-	hash_t Hash() const override;
+	hash_t NodeHash() const override;
 
 	unique_ptr<ParsedExpression> Copy() const override;
 
@@ -58,6 +66,7 @@ public:
 private:
 	//! The stack of names in order of which they appear (column_names[0].column_names[1].column_names[2]....)
 	vector<Identifier> column_names;
+	optional_idx macro_parameter;
 
 private:
 	ColumnRefExpression();

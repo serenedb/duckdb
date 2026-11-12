@@ -11,21 +11,26 @@ namespace {
 //! Yields the statement without looking at its tokens - the text is filled in from the parse result's extent
 class PassthroughTransformProcess final : public TransformProcess {
 public:
-	TransformStep Resume(unique_ptr<TransformResultValue> child_result) override {
+	explicit PassthroughTransformProcess(PEGTransformer &transformer_p) : transformer(transformer_p) {
+	}
+
+	TransformStep Resume(arena_ptr<TransformResultValue> child_result) override {
 		D_ASSERT(!child_result);
 		unique_ptr<SQLStatement> statement = make_uniq<PassthroughStatement>();
-		return TransformStep::Complete(make_uniq<TypedTransformResult<unique_ptr<SQLStatement>>>(std::move(statement)));
+		return TransformStep::Complete(transformer.MakeResult(std::move(statement)));
 	}
+
+private:
+	PEGTransformer &transformer;
 };
 
-unique_ptr<TransformProcess> StartPassthroughTransform(PEGTransformer &, ParseResult &) {
-	return make_uniq<PassthroughTransformProcess>();
+arena_ptr<TransformProcess> StartPassthroughTransform(PEGTransformer &transformer, ParseResult &) {
+	return transformer.MakeProcess<PassthroughTransformProcess>(transformer);
 }
 
 } // namespace
 
-void PassthroughDialect::ApplyGrammarChanges(GrammarChangesInput &input) {
-	auto &grammar = input.parsed_grammar;
+void ApplyPassthroughDialect(ParsedGrammar &grammar) {
 	// the body is a placeholder: the terminal override below is what matches a token
 	grammar.AddRule("PassthroughToken <- Identifier");
 	grammar.AddTerminalRuleOverride("PassthroughToken", [](const PEGKeywordHelper &) -> unique_ptr<Matcher> {

@@ -10,7 +10,7 @@
 
 #include "duckdb/common/multi_file/multi_file_data.hpp"
 #include "duckdb/common/atomic.hpp"
-#include "duckdb/common/condition_variable.hpp"
+#include "duckdb/common/mutex.hpp"
 #include "duckdb/common/multi_file/multi_file_options.hpp"
 #include "duckdb/common/multi_file/base_file_reader.hpp"
 #include "duckdb/common/multi_file/multi_file_list.hpp"
@@ -89,8 +89,10 @@ struct MultiFileBindData : public TableFunctionData {
 	//! Table column names - set when using COPY tbl FROM file.parquet
 	vector<string> table_columns;
 	shared_ptr<BaseFileReader> initial_reader;
+	weak_ptr<BaseFileReader> statistics_reader;
 	// The union readers are created (when the union_by_name option is on) during binding
 	vector<shared_ptr<BaseUnionData>> union_readers;
+	vector<weak_ptr<BaseUnionData>> statistics_union_readers;
 
 	void Initialize(shared_ptr<BaseFileReader> reader) {
 		initial_reader = std::move(reader);
@@ -174,7 +176,7 @@ struct MultiFileGlobalState : public GlobalTableFunctionState {
 	//! Atomic because a cancelled file open settles it while the scheduling thread may hold the lock.
 	atomic<bool> error_opening_file {false};
 	//! Signalled when an async file open settles, waking the threads waiting for the front file
-	condition_variable async_open_settled;
+	absl::CondVar async_open_settled;
 
 	//! Index of file currently up for scanning
 	atomic<idx_t> file_index;
@@ -265,6 +267,32 @@ public:
 	idx_t rows_scanned = 0;
 	//! FinalizeScan may have no job, here's a special batch index for it
 	optional_idx finalize_batch_index;
+};
+
+struct MultiFileLookupWorkspace {
+	MultiFileLookupWorkspace(ClientContext &context, const vector<LogicalType> &output_types) : executor(context) {
+		file_output.Initialize(context, output_types);
+	}
+
+	DataChunk scan_chunk;
+	idx_t scan_chunk_file_index = DConstants::INVALID_INDEX;
+	ExpressionExecutor executor;
+	DataChunk file_output;
+	vector<idx_t> survivors;
+};
+
+struct MultiFileLookupGroup {
+	idx_t file_index;
+	idx_t begin;
+	idx_t end;
+};
+
+struct MultiFileLookupLocalState : public LocalTableFunctionState {
+	unordered_map<idx_t, unique_ptr<LocalTableFunctionState>> scan_states;
+	vector<unique_ptr<MultiFileLookupWorkspace>> workspaces;
+	vector<idx_t> order;
+	vector<int64_t> rows;
+	vector<MultiFileLookupGroup> groups;
 };
 
 } // namespace duckdb

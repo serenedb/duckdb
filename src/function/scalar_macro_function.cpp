@@ -27,6 +27,7 @@ ScalarMacroFunction::ScalarMacroFunction(void) : MacroFunction(MacroType::SCALAR
 unique_ptr<MacroFunction> ScalarMacroFunction::Copy() const {
 	auto result = make_uniq<ScalarMacroFunction>();
 	result->expression = expression->Copy();
+	result->query_body = query_body;
 	CopyProperties(*result);
 
 	return std::move(result);

@@ -683,7 +683,7 @@ TEST_CASE("V2: connection_progress_get advances while stepping a query", "[capi_
 
 	// Single-threaded so all execution happens in our steps, and the
 	// progress bar enabled so the engine publishes progress at all.
-	for (const char *setup_sql : {"SET threads=1", "CREATE TABLE tbl AS SELECT range a FROM range(1000000)",
+	for (const char *setup_sql : {"SET GLOBAL threads=1", "CREATE TABLE tbl AS SELECT range a FROM range(1000000)",
 	                              "SET enable_progress_bar=true", "SET enable_progress_bar_print=false"}) {
 		duckdb_v2_result_handle setup = nullptr;
 		REQUIRE(Query(fx.conn, setup_sql, &setup, nullptr) == DUCKDB_V2_ERROR_NONE);

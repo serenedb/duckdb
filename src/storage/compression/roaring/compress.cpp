@@ -20,7 +20,7 @@ ContainerCompressionState::ContainerCompressionState() {
 inline void AppendBitset(ContainerCompressionState &state, bool null, uint16_t amount) {
 	D_ASSERT(state.uncompressed);
 	if (null) {
-		ValidityMask mask(state.uncompressed, ROARING_CONTAINER_SIZE);
+		ValidityMask mask(state.uncompressed, state.uncompressed_size);
 		SetInvalidRange(mask, state.appended_count, state.appended_count + amount);
 	}
 }
@@ -107,7 +107,9 @@ void ContainerCompressionState::OverrideArray(data_ptr_t &destination, bool null
 		auto data_start = destination + sizeof(uint8_t) * COMPRESSED_SEGMENT_COUNT;
 		compressed_arrays[nulls] = reinterpret_cast<uint8_t *>(data_start);
 	} else {
-		destination = AlignPointer<sizeof(uint16_t)>(destination);
+		auto aligned = AlignPointer<sizeof(uint16_t)>(destination);
+		memset(destination, 0, NumericCast<idx_t>(aligned - destination));
+		destination = aligned;
 		arrays[nulls] = reinterpret_cast<uint16_t *>(destination);
 	}
 }
@@ -121,15 +123,18 @@ void ContainerCompressionState::OverrideRun(data_ptr_t &destination, idx_t count
 		auto data_start = destination + sizeof(uint8_t) * COMPRESSED_SEGMENT_COUNT;
 		compressed_runs = reinterpret_cast<uint8_t *>(data_start);
 	} else {
-		destination = AlignPointer<sizeof(RunContainerRLEPair)>(destination);
+		auto aligned = AlignPointer<sizeof(RunContainerRLEPair)>(destination);
+		memset(destination, 0, NumericCast<idx_t>(aligned - destination));
+		destination = aligned;
 		runs = reinterpret_cast<RunContainerRLEPair *>(destination);
 	}
 }
 
-void ContainerCompressionState::OverrideUncompressed(data_ptr_t &destination) {
+void ContainerCompressionState::OverrideUncompressed(data_ptr_t &destination, idx_t container_size) {
 	append_function = AppendBitset;
 	destination = AlignPointer<sizeof(idx_t)>(destination);
 	uncompressed = reinterpret_cast<validity_t *>(destination);
+	uncompressed_size = container_size;
 }
 
 void ContainerCompressionState::Finalize() {
@@ -271,9 +276,11 @@ void RoaringCompressState::InitializeContainer() {
 
 	// Override the pointer to write directly into the block
 	if (metadata.IsUncompressed()) {
-		data_ptr = reinterpret_cast<data_ptr_t>(AlignValue<idx_t>(reinterpret_cast<idx_t>(data_ptr)));
+		auto aligned_ptr = reinterpret_cast<data_ptr_t>(AlignValue<idx_t>(reinterpret_cast<idx_t>(data_ptr)));
+		memset(data_ptr, 0, NumericCast<idx_t>(aligned_ptr - data_ptr));
+		data_ptr = aligned_ptr;
 		memset(data_ptr, ~0, sizeof(validity_t) * (container_size / ValidityMask::BITS_PER_VALUE));
-		container_state.OverrideUncompressed(data_ptr);
+		container_state.OverrideUncompressed(data_ptr, container_size);
 	} else if (metadata.IsRun()) {
 		auto number_of_runs = metadata.NumberOfRuns();
 		container_state.OverrideRun(data_ptr, number_of_runs);
@@ -308,6 +315,7 @@ void RoaringCompressState::FlushSegment() {
 	// Size of the 'd' part
 	auto unaligned_data_size = NumericCast<idx_t>(data_ptr - base_ptr);
 	auto data_size = AlignValue<idx_t, 8>(unaligned_data_size);
+	memset(data_ptr, 0, data_size - unaligned_data_size);
 	data_ptr += data_size - unaligned_data_size;
 
 	// Size of the 'm' part

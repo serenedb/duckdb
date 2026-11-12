@@ -268,21 +268,28 @@ static inline bool ValueStateTransition(StringCastInputState &input_state, optio
 	return true;
 }
 
-template <class OP>
-static bool SplitStringListInternal(const string_t &input, OP &state) {
+static constexpr idx_t NESTED_CAST_CHECK_BYTES = 1 << 20;
+
+template <class OP, bool CUSTOM_DELIMITER>
+static bool SplitStringListInternal(const string_t &input, char array_delimiter, OP &state,
+                                    const CastParameters &parameters) {
 	const char *buf = input.GetData();
 	idx_t len = input.GetSize();
 	idx_t pos = 0;
+	idx_t checked_pos = 0;
 
 	StringCastInputState input_state(buf, pos, len);
 
 	SkipWhitespace(input_state);
-	if (pos == len || buf[pos] != '[') {
+	//! Accept DuckDB list syntax `[...]` and PostgreSQL array syntax `{...}`
+	if (pos == len || (buf[pos] != '[' && buf[pos] != '{')) {
 		//! Does not have a valid list start
 		return false;
 	}
+	const char close_bracket = buf[pos] == '[' ? ']' : '}';
+	const char delimiter = CUSTOM_DELIMITER && buf[pos] != '[' ? array_delimiter : ',';
 
-	//! Skip the '['
+	//! Skip the opening bracket
 	pos++;
 	SkipWhitespace(input_state);
 	bool seen_value = false;
@@ -290,7 +297,7 @@ static bool SplitStringListInternal(const string_t &input, OP &state) {
 		optional_idx start_pos;
 		idx_t end_pos;
 
-		while (pos < len && (buf[pos] != ',' && buf[pos] != ']')) {
+		while (pos < len && (buf[pos] != delimiter && buf[pos] != close_bracket)) {
 			if (!ValueStateTransition(input_state, start_pos, end_pos)) {
 				return false;
 			}
@@ -298,7 +305,7 @@ static bool SplitStringListInternal(const string_t &input, OP &state) {
 		if (pos == len) {
 			return false;
 		}
-		if (buf[pos] != ']' || start_pos.IsValid() || seen_value) {
+		if (buf[pos] != close_bracket || start_pos.IsValid() || seen_value) {
 			if (!start_pos.IsValid()) {
 				state.HandleValue(buf, 0, 0);
 			} else {
@@ -307,8 +314,12 @@ static bool SplitStringListInternal(const string_t &input, OP &state) {
 			}
 			seen_value = true;
 		}
-		if (buf[pos] == ']') {
+		if (buf[pos] == close_bracket) {
 			break;
+		}
+		if (pos - checked_pos >= NESTED_CAST_CHECK_BYTES) {
+			parameters.InterruptCheck();
+			checked_pos = pos;
 		}
 
 		pos++;
@@ -319,15 +330,28 @@ static bool SplitStringListInternal(const string_t &input, OP &state) {
 	return (pos == len);
 }
 
-bool VectorStringToList::SplitStringList(const string_t &input, string_t *child_data, idx_t &child_start,
-                                         Vector &child) {
+bool VectorStringToList::SplitStringList(const string_t &input, string_t *child_data, idx_t &child_start, Vector &child,
+                                         const CastParameters &parameters) {
 	SplitStringListOperation state(child_data, child_start, child);
-	return SplitStringListInternal<SplitStringListOperation>(input, state);
+	return SplitStringListInternal<SplitStringListOperation, false>(input, ',', state, parameters);
 }
 
-idx_t VectorStringToList::CountPartsList(const string_t &input) {
+bool VectorStringToList::SplitStringList(const string_t &input, char array_delimiter, string_t *child_data,
+                                         idx_t &child_start, Vector &child, const CastParameters &parameters) {
+	SplitStringListOperation state(child_data, child_start, child);
+	return SplitStringListInternal<SplitStringListOperation, true>(input, array_delimiter, state, parameters);
+}
+
+idx_t VectorStringToList::CountPartsList(const string_t &input, const CastParameters &parameters) {
 	CountPartOperation state;
-	SplitStringListInternal<CountPartOperation>(input, state);
+	SplitStringListInternal<CountPartOperation, false>(input, ',', state, parameters);
+	return state.count;
+}
+
+idx_t VectorStringToList::CountPartsList(const string_t &input, char array_delimiter,
+                                         const CastParameters &parameters) {
+	CountPartOperation state;
+	SplitStringListInternal<CountPartOperation, true>(input, array_delimiter, state, parameters);
 	return state.count;
 }
 
@@ -368,10 +392,11 @@ struct SplitStringMapOperation {
 };
 
 template <class OP>
-static bool SplitStringMapInternal(const string_t &input, OP &state) {
+static bool SplitStringMapInternal(const string_t &input, OP &state, const CastParameters &parameters) {
 	const char *buf = input.GetData();
 	idx_t len = input.GetSize();
 	idx_t pos = 0;
+	idx_t checked_pos = 0;
 	StringCastInputState input_state(buf, pos, len);
 
 	SkipWhitespace(input_state);
@@ -429,6 +454,10 @@ static bool SplitStringMapInternal(const string_t &input, OP &state) {
 		if (buf[pos] == '}') {
 			break;
 		}
+		if (pos - checked_pos >= NESTED_CAST_CHECK_BYTES) {
+			parameters.InterruptCheck();
+			checked_pos = pos;
+		}
 		pos++;
 		SkipWhitespace(input_state);
 	}
@@ -438,14 +467,15 @@ static bool SplitStringMapInternal(const string_t &input, OP &state) {
 }
 
 bool VectorStringToMap::SplitStringMap(const string_t &input, string_t *child_key_data, string_t *child_val_data,
-                                       idx_t &child_start, Vector &varchar_key, Vector &varchar_val) {
+                                       idx_t &child_start, Vector &varchar_key, Vector &varchar_val,
+                                       const CastParameters &parameters) {
 	SplitStringMapOperation state(child_key_data, child_val_data, child_start, varchar_key, varchar_val);
-	return SplitStringMapInternal<SplitStringMapOperation>(input, state);
+	return SplitStringMapInternal<SplitStringMapOperation>(input, state, parameters);
 }
 
-idx_t VectorStringToMap::CountPartsMap(const string_t &input) {
+idx_t VectorStringToMap::CountPartsMap(const string_t &input, const CastParameters &parameters) {
 	CountPartOperation state;
-	SplitStringMapInternal<CountPartOperation>(input, state);
+	SplitStringMapInternal<CountPartOperation>(input, state, parameters);
 	return state.count;
 }
 

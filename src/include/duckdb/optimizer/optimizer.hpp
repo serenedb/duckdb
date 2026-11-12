@@ -9,6 +9,7 @@
 #pragma once
 
 #include "duckdb/optimizer/expression_rewriter.hpp"
+#include "duckdb/optimizer/optimizer_extension.hpp"
 #include "duckdb/planner/logical_operator.hpp"
 #include "duckdb/planner/logical_operator_visitor.hpp"
 #include "duckdb/common/enums/optimizer_type.hpp"
@@ -32,10 +33,13 @@ public:
 	ClientContext &GetContext();
 	//! Whether the specific optimizer is disabled
 	bool OptimizerDisabled(OptimizerType type);
+	static bool OptimizerDisabledInternal(ClientContext &context, OptimizerType type);
 	static bool OptimizerDisabled(ClientContext &context, OptimizerType type);
 
 	//! Pre-binder statement-level optimization pass
-	void OptimizeStatement(unique_ptr<SQLStatement> &statement);
+	static void OptimizeStatement(Binder &binder, ClientContext &context, unique_ptr<SQLStatement> &statement);
+	static void AddExpressionRules(ExpressionRewriter &rewriter);
+	static unique_ptr<Expression> OptimizeExpression(ClientContext &context, unique_ptr<Expression> expr);
 
 public:
 	ClientContext &context;
@@ -59,6 +63,10 @@ public:
 
 private:
 	unique_ptr<LogicalOperator> plan;
+	//! Value of the enable_optimizer setting, read once per optimizer
+	bool enable_optimizer;
+	//! Snapshot of the registered optimizer extensions, taken once per optimizer
+	ExtensionCallbackIteratorHelper<OptimizerExtension> optimizer_extensions;
 
 private:
 	unique_ptr<Expression> BindScalarFunction(const Identifier &name, vector<unique_ptr<Expression>> children);

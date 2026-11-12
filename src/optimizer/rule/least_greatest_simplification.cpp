@@ -7,7 +7,8 @@ namespace duckdb {
 
 LeastGreatestSimplificationRule::LeastGreatestSimplificationRule(ExpressionRewriter &rewriter) : Rule(rewriter) {
 	auto function = make_uniq<FunctionExpressionMatcher>();
-	function->function = make_uniq<ManyFunctionMatcher>(identifier_set_t {"least", "greatest"});
+	static const case_insensitive_set_view_t functions {"least", "greatest"};
+	function->function = make_uniq<ManyFunctionMatcher>(&functions);
 	function->matchers.push_back(make_uniq<ExpressionMatcher>());
 	function->matchers.push_back(make_uniq<ExpressionMatcher>());
 	function->policy = SetMatcher::Policy::ORDERED;

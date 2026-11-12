@@ -1,0 +1,21 @@
+# name: test/sql/types/struct/struct_alias_cast_invertible.test
+# description: A cast between STRUCT types with different aliases stays on its side of a comparison
+# group: [struct]
+
+require inet
+
+statement ok
+CREATE TABLE c (x CIDR)
+
+statement ok
+INSERT INTO c VALUES ('10.0.0.0/8')
+
+query I
+SELECT count(*) FROM c WHERE x::INET < '10.0.0.5/8'::INET
+----
+1
+
+query I
+SELECT count(*) FROM c WHERE x::INET = '10.0.0.5/8'::INET
+----
+0

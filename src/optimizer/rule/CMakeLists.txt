@@ -19,6 +19,7 @@ add_library_unity(
   string_prefix.cpp
   like_optimizations.cpp
   list_comprehension_rewrite.cpp
+  monotone_predicate.cpp
   monotone_preimage.cpp
   move_constants.cpp
   not_comparison_simplification.cpp
@@ -27,8 +28,11 @@ add_library_unity(
   predicate_factoring.cpp
   regex_optimizations.cpp
   struct_extract_struct_pack_folding.cpp
+  list_extract_list_value_folding.cpp
+  invoke_inlining.cpp
+  list_transform_unrolling.cpp
   timestamp_comparison.cpp
-  constant_order_normalization.cpp
+  concat_flattening.cpp
   contains_to_in_clause.cpp)
 set(ALL_OBJECT_FILES
     ${ALL_OBJECT_FILES} $<TARGET_OBJECTS:duckdb_optimizer_rules>

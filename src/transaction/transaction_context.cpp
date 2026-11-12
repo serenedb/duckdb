@@ -4,11 +4,11 @@
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/exception/transaction_exception.hpp"
 #include "duckdb/main/client_context.hpp"
+#include "duckdb/main/settings.hpp"
 #include "duckdb/main/client_data.hpp"
 #include "duckdb/main/database.hpp"
 #include "duckdb/transaction/meta_transaction.hpp"
 #include "duckdb/main/attached_database.hpp"
-#include "duckdb/main/settings.hpp"
 #include "duckdb/main/database_manager.hpp"
 
 namespace duckdb {
@@ -64,16 +64,52 @@ void TransactionContext::Commit() {
 		throw TransactionException("failed to commit: no transaction active");
 	}
 	autocheckpoint_error = ErrorData();
+	ErrorData precommit_error;
+	std::exception_ptr precommit_exception;
+	try {
+		context.OnTransactionPreCommit(*current_transaction);
+	} catch (std::exception &ex) {
+		precommit_error = ErrorData(ex);
+		precommit_exception = std::current_exception();
+	}
 	auto transaction = std::move(current_transaction);
 	ClearTransaction();
+	if (precommit_exception) {
+		// The commit never ran, so the rollback is ours to drive. It mirrors
+		// Rollback(): finalize only once the rollback succeeded, and rethrow the
+		// hook's own exception so the refusal keeps the caller's error class.
+		auto rolled_back = false;
+		try {
+			transaction->Rollback();
+			rolled_back = true;
+		} catch (...) { // NOLINT: the refusal is the error worth reporting
+		}
+		for (auto const &s : context.registered_state->States()) {
+			s->TransactionRollback(*transaction, context, precommit_error);
+		}
+		context.OnTransactionRollback(*transaction);
+
+		// match Rollback behaviour - Finalize only successful rollback.
+		if (rolled_back) {
+			try {
+				transaction->Finalize();
+			} catch (...) { // NOLINT: the refusal is the error worth reporting
+			}
+		}
+		std::rethrow_exception(precommit_exception);
+	}
 	auto error = transaction->Commit();
 	// Notify any registered state of transaction commit
 	if (error.HasError()) {
 		for (auto const &s : context.registered_state->States()) {
 			s->TransactionRollback(*transaction, context, error);
 		}
+		context.OnTransactionRollback(*transaction);
 		if (Exception::InvalidatesDatabase(error.Type()) || error.Type() == ExceptionType::INTERNAL) {
 			// throw fatal / internal exceptions directly
+			error.Throw();
+		}
+		if (error.Type() == ExceptionType::INVALID) {
 			error.Throw();
 		}
 		throw TransactionException("Failed to commit: %s", error.RawMessage());
@@ -81,6 +117,7 @@ void TransactionContext::Commit() {
 	for (auto &state : context.registered_state->States()) {
 		state->TransactionCommit(*transaction, context);
 	}
+	context.OnTransactionCommit(*transaction);
 	transaction->Finalize();
 	if (autocheckpoint_error.HasError()) {
 		auto err = std::move(autocheckpoint_error);
@@ -96,6 +133,11 @@ void TransactionContext::SetAutoCommit(bool value) {
 	}
 }
 
+void TransactionContext::SetIsolationLevel(TransactionIsolationLevel new_isolation_level) {
+	context.ValidateIsolationLevel(new_isolation_level);
+	isolation_level = new_isolation_level;
+}
+
 void TransactionContext::SetReadOnly() {
 	current_transaction->SetReadOnly();
 }
@@ -104,6 +146,7 @@ void TransactionContext::Rollback(optional_ptr<ErrorData> error) {
 	if (!current_transaction) {
 		throw TransactionException("failed to rollback: no transaction active");
 	}
+	context.OnTransactionPreRollback(*current_transaction);
 	auto transaction = std::move(current_transaction);
 	ClearTransaction();
 	context.client_data->profiler->Reset();
@@ -118,6 +161,7 @@ void TransactionContext::Rollback(optional_ptr<ErrorData> error) {
 	for (auto const &s : context.registered_state->States()) {
 		s->TransactionRollback(*transaction, context, error);
 	}
+	context.OnTransactionRollback(*transaction);
 	if (rollback_error.HasError()) {
 		rollback_error.Throw();
 	}
@@ -126,6 +170,7 @@ void TransactionContext::Rollback(optional_ptr<ErrorData> error) {
 
 void TransactionContext::ClearTransaction() {
 	SetAutoCommit(true);
+	isolation_level = Settings::Get<DefaultTransactionIsolationSetting>(context);
 	current_transaction = nullptr;
 }
 

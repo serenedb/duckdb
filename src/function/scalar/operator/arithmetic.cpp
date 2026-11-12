@@ -1,3 +1,4 @@
+#include "duckdb/catalog/catalog.hpp"
 #include "duckdb/common/assert.hpp"
 #include "duckdb/common/types.hpp"
 #include "duckdb/common/types/value.hpp"
@@ -21,6 +22,7 @@
 #include "duckdb/common/types/timestamp.hpp"
 #include "duckdb/function/scalar/operators.hpp"
 #include "duckdb/function/scalar/operator_functions.hpp"
+#include "duckdb/function/scalar/overflow_check_function.hpp"
 #include "duckdb/function/scalar/string_functions.hpp"
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/planner/expression/bound_function_expression.hpp"
@@ -493,7 +495,7 @@ ScalarFunction AddFunction::GetFunction(const LogicalType &left_type, const Logi
 			return function;
 		} else if (left_type.IsIntegral()) {
 			ScalarFunction function("+", {left_type, right_type}, left_type,
-			                        GetScalarIntegerFunction<AddOperatorOverflowCheck>(left_type.InternalType()),
+			                        GetOverflowCheckFunction<AddOperatorOverflowCheck>(left_type.InternalType()),
 			                        nullptr,
 			                        PropagateNumericStats<TryAddOperator, AddPropagateStatistics, AddOperator>);
 			function.SetFallible();
@@ -798,6 +800,55 @@ static unique_ptr<FunctionData> IntegerNegateBind(BindScalarFunctionInput &input
 	return nullptr;
 }
 
+template <class T>
+static T NegateWrapping(T value) {
+	if constexpr (std::is_same_v<T, hugeint_t> || std::is_same_v<T, uhugeint_t>) {
+		return -value;
+	} else {
+		using UNSIGNED = std::make_unsigned_t<T>;
+		return static_cast<T>(static_cast<UNSIGNED>(0) - static_cast<UNSIGNED>(value));
+	}
+}
+
+template <class T>
+static void IntegerNegateFunction(DataChunk &input, ExpressionState &state, Vector &result) {
+	bool overflow = false;
+	UnaryExecutor::Execute<T, T>(input.data[0], result, [&overflow](T value) {
+		overflow |= !NegateOperator::CanNegate<T>(value);
+		return NegateWrapping(value);
+	});
+	if (overflow && !IntegerOverflowWraps(state)) {
+		throw OutOfRangeException("Overflow in negation of numeric value!");
+	}
+}
+
+static scalar_function_t GetNegateFunction(const LogicalType &type) {
+	switch (type.InternalType()) {
+	case PhysicalType::INT8:
+		return IntegerNegateFunction<int8_t>;
+	case PhysicalType::INT16:
+		return IntegerNegateFunction<int16_t>;
+	case PhysicalType::INT32:
+		return IntegerNegateFunction<int32_t>;
+	case PhysicalType::INT64:
+		return IntegerNegateFunction<int64_t>;
+	case PhysicalType::INT128:
+		return IntegerNegateFunction<hugeint_t>;
+	case PhysicalType::UINT8:
+		return IntegerNegateFunction<uint8_t>;
+	case PhysicalType::UINT16:
+		return IntegerNegateFunction<uint16_t>;
+	case PhysicalType::UINT32:
+		return IntegerNegateFunction<uint32_t>;
+	case PhysicalType::UINT64:
+		return IntegerNegateFunction<uint64_t>;
+	case PhysicalType::UINT128:
+		return IntegerNegateFunction<uhugeint_t>;
+	default:
+		return ScalarFunction::GetScalarUnaryFunction<NegateOperator>(type);
+	}
+}
+
 ScalarFunction SubtractFunction::GetFunction(const LogicalType &type) {
 	if (type.id() == LogicalTypeId::INTERVAL) {
 		ScalarFunction func("-", {type}, type, ScalarFunction::UnaryFunction<interval_t, interval_t, NegateOperator>);
@@ -814,8 +865,7 @@ ScalarFunction SubtractFunction::GetFunction(const LogicalType &type) {
 		return func;
 	} else {
 		D_ASSERT(type.IsNumeric());
-		ScalarFunction func("-", {type}, type, ScalarFunction::GetScalarUnaryFunction<NegateOperator>(type),
-		                    IntegerNegateBind);
+		ScalarFunction func("-", {type}, type, GetNegateFunction(type), IntegerNegateBind);
 		func.SetFallible();
 		func.SetUnaryArgProperties(ArgProperties().StrictlyDecreasing());
 		return func;
@@ -836,7 +886,7 @@ ScalarFunction SubtractFunction::GetFunction(const LogicalType &left_type, const
 		} else if (left_type.IsIntegral()) {
 			ScalarFunction function(
 			    "-", {left_type, right_type}, left_type,
-			    GetScalarIntegerFunction<SubtractOperatorOverflowCheck>(left_type.InternalType()), nullptr,
+			    GetOverflowCheckFunction<SubtractOperatorOverflowCheck>(left_type.InternalType()), nullptr,
 			    PropagateNumericStats<TrySubtractOperator, SubtractPropagateStatistics, SubtractOperator>);
 			function.SetFallible();
 			function.SetArgProperties({ArgProperties().StrictlyIncreasing(), ArgProperties().StrictlyDecreasing()});
@@ -1099,7 +1149,7 @@ ScalarFunctionSet OperatorMultiplyFun::GetFunctions() {
 			multiply.AddFunction(function);
 		} else if (TypeIsIntegral(type.InternalType())) {
 			multiply.AddFunction(ScalarFunction(
-			    {type, type}, type, GetScalarIntegerFunction<MultiplyOperatorOverflowCheck>(type.InternalType()),
+			    {type, type}, type, GetOverflowCheckFunction<MultiplyOperatorOverflowCheck>(type.InternalType()),
 			    nullptr, PropagateNumericStats<TryMultiplyOperator, MultiplyPropagateStatistics, MultiplyOperator>));
 		} else if (type.IsFloating()) {
 			multiply.AddFunction(ScalarFunction({type, type}, type,
@@ -1163,10 +1213,15 @@ interval_t DivideOperator::Operation(interval_t left, double right) {
 
 namespace {
 
-[[noreturn]] void ThrowDivisionByZero(const Expression &expr) {
-	throw InvalidInputException("Division by zero in expression %s. Use TRY(...) to return NULL for this expression, "
-	                            "or SET error_on_division_by_zero=false to return NULL for all divisions by zero.",
-	                            expr.ToString());
+[[noreturn]] void ThrowDivisionByZero(ExpressionState &state) {
+	auto message = StringUtil::Format("Division by zero in expression %s. Use TRY(...) to return NULL for this "
+	                                  "expression, or SET error_on_division_by_zero=false to return NULL for all "
+	                                  "divisions by zero.",
+	                                  state.expr.ToString());
+	if (state.HasContext() && Catalog::DefaultCompatibility(state.GetContext()) == SqlCompatibility::POSTGRES) {
+		throw Exception(ExceptionType::DIVIDE_BY_ZERO, message);
+	}
+	throw InvalidInputException(message);
 }
 
 template <bool NULL_ON_ZERO>
@@ -1174,7 +1229,11 @@ struct BinaryNumericDivideWrapper {
 	template <class FUNC, class OP, class LEFT_TYPE, class RIGHT_TYPE, class RESULT_TYPE>
 	static inline RESULT_TYPE Operation(FUNC fun, LEFT_TYPE left, RIGHT_TYPE right, ValidityMask &mask, idx_t idx) {
 		if (left == NumericLimits<LEFT_TYPE>::Minimum() && right == -1) {
-			throw OutOfRangeException("Overflow in division of %d / %d", left, right);
+			if constexpr (std::is_same_v<OP, ModuloOperator>) {
+				return 0;
+			} else {
+				throw OutOfRangeException("Overflow in division of %d / %d", left, right);
+			}
 		} else if (right == 0) {
 			if (!NULL_ON_ZERO) {
 				ThrowDivisionByZero(fun.get());
@@ -1216,7 +1275,11 @@ struct BinaryNumericDivideHugeintWrapper {
 	template <class FUNC, class OP, class LEFT_TYPE, class RIGHT_TYPE, class RESULT_TYPE>
 	static inline RESULT_TYPE Operation(FUNC fun, LEFT_TYPE left, RIGHT_TYPE right, ValidityMask &mask, idx_t idx) {
 		if (left == NumericLimits<LEFT_TYPE>::Minimum() && right == -1) {
-			throw OutOfRangeException("Overflow in division of %s / %s", left.ToString(), right.ToString());
+			if constexpr (std::is_same_v<OP, ModuloOperator>) {
+				return RESULT_TYPE(0);
+			} else {
+				throw OutOfRangeException("Overflow in division of %s / %s", left.ToString(), right.ToString());
+			}
 		} else if (right == 0) {
 			if (!NULL_ON_ZERO) {
 				ThrowDivisionByZero(fun.get());
@@ -1236,7 +1299,19 @@ struct BinaryNumericDivideHugeintWrapper {
 template <class TA, class TB, class TC, class OP, class ZWRAPPER>
 void BinaryScalarFunctionZeroCheck(DataChunk &input, ExpressionState &state, Vector &result) {
 	BinaryExecutor::ExecuteWithWrapper<TA, TB, TC, OP, ZWRAPPER>(input.data[0], input.data[1], result, input.size(),
-	                                                             reference<const Expression>(state.expr));
+	                                                             reference<ExpressionState>(state));
+}
+
+template <class T, class OP, bool NULL_ON_ZERO>
+void BinaryFloatingPointZeroCheck(DataChunk &input, ExpressionState &state, Vector &result) {
+	bool zero = false;
+	BinaryExecutor::Execute<T, T, T>(input.data[0], input.data[1], result, input.size(), [&](T left, T right) {
+		zero |= right == 0;
+		return OP::template Operation<T, T, T>(left, right);
+	});
+	if (zero) {
+		BinaryScalarFunctionZeroCheck<T, T, T, OP, BinaryZeroCheckWrapper<NULL_ON_ZERO>>(input, state, result);
+	}
 }
 
 template <class OP, bool NULL_ON_ZERO>
@@ -1265,9 +1340,9 @@ scalar_function_t GetBinaryFunctionZeroCheck(PhysicalType type) {
 		return BinaryScalarFunctionZeroCheck<uhugeint_t, uhugeint_t, uhugeint_t, OP,
 		                                     BinaryZeroCheckWrapper<NULL_ON_ZERO>>;
 	case PhysicalType::FLOAT:
-		return BinaryScalarFunctionZeroCheck<float, float, float, OP, BinaryZeroCheckWrapper<NULL_ON_ZERO>>;
+		return BinaryFloatingPointZeroCheck<float, OP, NULL_ON_ZERO>;
 	case PhysicalType::DOUBLE:
-		return BinaryScalarFunctionZeroCheck<double, double, double, OP, BinaryZeroCheckWrapper<NULL_ON_ZERO>>;
+		return BinaryFloatingPointZeroCheck<double, OP, NULL_ON_ZERO>;
 	default:
 		throw NotImplementedException("Unimplemented type for GetBinaryFunctionZeroCheck");
 	}
@@ -1390,10 +1465,17 @@ ScalarFunctionSet OperatorIntegerDivideFun::GetFunctions() {
 		} else if (TypeIsIntegral(type.InternalType())) {
 			full_divide.AddFunction(ScalarFunction({type, type}, type, nullptr, BindDivisionByZero<DivideOperator>,
 			                                       PropagateIntegerDivideStats));
+		} else if (type.id() == LogicalTypeId::FLOAT || type.id() == LogicalTypeId::DOUBLE) {
+			full_divide.AddFunction(
+			    ScalarFunction({type, type}, type, nullptr, BindBinaryFloatingPoint<DivideOperator>));
 		} else {
 			full_divide.AddFunction(ScalarFunction({type, type}, type, nullptr, BindDivisionByZero<DivideOperator>));
 		}
 	}
+	// integer_division rewrites every `/` to `//`, including the ones whose operands are not numeric at
+	// all, so `//` has to resolve everything `/` resolves.
+	full_divide.AddFunction(ScalarFunction({LogicalType::INTERVAL, LogicalType::DOUBLE}, LogicalType::INTERVAL, nullptr,
+	                                       BindIntervalDivide));
 	full_divide.SetFallible();
 	full_divide.ApplyToFunctions(NameOperatorParameters);
 	return full_divide;

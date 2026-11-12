@@ -7,7 +7,6 @@ select xvariable a = 1;
 ----
 Parser Error: syntax error at or near "="
 
-# Here we should get the error from the parser override
 statement error
 select xvariable a = 1;
 ----

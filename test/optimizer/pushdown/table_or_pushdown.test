@@ -12,7 +12,7 @@ CREATE TABLE integers AS SELECT a as a, a as b FROM generate_series(1, 5, 1) tbl
 query II
 EXPLAIN SELECT * FROM integers WHERE a=1 OR b=2 AND (a>3 OR b<5)
 ----
-physical_plan	<!REGEX>:.*SEQ_SCAN.*Filters.*
+physical_plan	<!REGEX>:.*SEQ_SCAN.*Column Filter.*
 
 query II
 SELECT * FROM integers WHERE a=1 OR b=2 AND (a>3 OR b<5)
@@ -25,7 +25,7 @@ SELECT * FROM integers WHERE a=1 OR b=2 AND (a>3 OR b<5)
 query II
 EXPLAIN SELECT * FROM integers WHERE a=1 OR a=2 AND (a>3 OR b<5)
 ----
-physical_plan	<REGEX>:.*SEQ_SCAN.*Filters: a=1 OR a=2[ ]*|.*
+physical_plan	<REGEX>:.*SEQ_SCAN.*Column Filter: a=1 OR a=2[ ]*|.*
 
 query II
 SELECT * FROM integers WHERE a=1 OR a=2 AND (a>3 OR b<5)
@@ -38,7 +38,7 @@ SELECT * FROM integers WHERE a=1 OR a=2 AND (a>3 OR b<5)
 query II
 EXPLAIN SELECT * FROM integers WHERE a=1 OR (a>3 AND a<5)
 ----
-physical_plan	<REGEX>:.*SEQ_SCAN.*Filters: a=1 OR a>3 AND a<5|.*
+physical_plan	<REGEX>:.*SEQ_SCAN.*Column Filter: a=1 OR a>3 AND a<5|.*
 
 query II
 SELECT * FROM integers WHERE a=1 OR (a>3 AND a<5)
@@ -50,7 +50,7 @@ SELECT * FROM integers WHERE a=1 OR (a>3 AND a<5)
 query II
 EXPLAIN SELECT * FROM integers WHERE a=1 OR a>3 OR a<5
 ----
-physical_plan	<REGEX>:.*SEQ_SCAN.*Filters: a=1 OR a>3 OR a<5|.*
+physical_plan	<REGEX>:.*SEQ_SCAN.*Column Filter: a=1 OR a>3 OR a<5|.*
 
 query II
 SELECT * FROM integers WHERE a=1 OR a>3 OR a<5 ORDER by a
@@ -72,7 +72,7 @@ INSERT INTO strings VALUES ('AAAAAAAAAAAAAAA11111'), ('AAAAAAAAAAAAAAA99999')
 query II
 EXPLAIN SELECT * FROM strings WHERE s>'AAAAAAAAAAAAAAA1'
 ----
-physical_plan	<REGEX>:.*SEQ_SCAN.*Filters.*s > 'AAAAAAAAAAAAAAA1'.*
+physical_plan	<REGEX>:.*SEQ_SCAN.*Column Filter.*s > 'AAAAAAAAAAAAAAA1'.*
 
 query I
 SELECT * FROM strings WHERE s>'AAAAAAAAAAAAAAA1'
@@ -85,7 +85,7 @@ AAAAAAAAAAAAAAA99999
 query II
 EXPLAIN SELECT * FROM strings WHERE s>'AAAAAAAAAAAAAAA' OR s<'AAAAAAAAAAAAAAA99999A'
 ----
-physical_plan	<REGEX>:.*SEQ_SCAN.*Filters.*s >.*'AAAAAAAAAAAAAAA'|.*OR.*s <.*'AAAAAAAAAAAAAAA99999A'.*
+physical_plan	<REGEX>:.*SEQ_SCAN.*Column Filter.*s >.*'AAAAAAAAAAAAAAA'|.*OR.*s <.*'AAAAAAAAAAAAAAA99999A'.*
 
 query I
 SELECT * FROM strings WHERE s>'AAAAAAAAAAAAAAA' OR s<'AAAAAAAAAAAAAAA99999A'
@@ -101,7 +101,7 @@ INSERT INTO strings VALUES ('BBBB'), ('CCCC')
 query II
 EXPLAIN SELECT * FROM strings WHERE s!='111' OR s!='WWW'
 ----
-physical_plan	<!REGEX>:.*SEQ_SCAN.*Filters.*
+physical_plan	<!REGEX>:.*SEQ_SCAN.*Column Filter.*
 
 query I
 SELECT * FROM strings WHERE s!='111' OR s!='WWW' ORDER BY s
@@ -116,7 +116,7 @@ CCCC
 query II
 EXPLAIN SELECT * FROM strings WHERE s!='BBBB' or s>'BBBB'
 ----
-physical_plan	<REGEX>:.*SEQ_SCAN.*Filters.*s !=.*'BBBB'.*OR.*s >.*'BBBB'.*
+physical_plan	<REGEX>:.*SEQ_SCAN.*Column Filter.*s !=.*'BBBB'.*OR.*s >.*'BBBB'.*
 
 
 query I
@@ -129,7 +129,7 @@ CCCC
 query II
 EXPLAIN SELECT * FROM integers WHERE a!=1 OR a!=2
 ----
-physical_plan	<REGEX>:.*SEQ_SCAN.*Filters.*a != 1.*OR.*a.*!.*= 2.*
+physical_plan	<REGEX>:.*SEQ_SCAN.*Column Filter.*a != 1.*OR.*a.*!.*= 2.*
 
 query II
 SELECT * FROM integers WHERE a!=1 OR a!=2 ORDER BY a
@@ -144,7 +144,7 @@ SELECT * FROM integers WHERE a!=1 OR a!=2 ORDER BY a
 query II
 EXPLAIN SELECT * FROM integers WHERE a>2 AND (a=3 OR a=5)
 ----
-physical_plan	<REGEX>:.*SEQ_SCAN.*Filters.*a > 2.*
+physical_plan	<REGEX>:.*SEQ_SCAN.*Column Filter.*a > 2.*
 
 query II
 SELECT * FROM integers WHERE a>2 AND (a=3 OR a=5) ORDER BY a
@@ -158,7 +158,7 @@ SELECT * FROM integers WHERE a>2 AND (a=3 OR a=5) ORDER BY a
 query II
 EXPLAIN SELECT * FROM integers WHERE (a<2 OR a>3) AND (a=1 OR a=4)
 ----
-physical_plan	<REGEX>:.*SEQ_SCAN.*Filters.*a.*<.*2.*OR.*a.*>.*3.*AND.*a.*=.*1.*OR.*a.*=.*4.*
+physical_plan	<REGEX>:.*SEQ_SCAN.*Column Filter.*a.*<.*2.*OR.*a.*>.*3.*AND.*a.*=.*1.*OR.*a.*=.*4.*
 
 query II
 SELECT * FROM integers WHERE (a<2 OR a>3) AND (a=1 OR a=4)
@@ -169,7 +169,7 @@ SELECT * FROM integers WHERE (a<2 OR a>3) AND (a=1 OR a=4)
 query II
 EXPLAIN SELECT * FROM integers WHERE (a<2 OR a>3) AND (a=1 OR a=4) AND (b=1 OR b<5)
 ----
-physical_plan	<REGEX>:.*SEQ_SCAN.*Filters.*a.*<.*2.*OR.*a.*>.*3.*AND.*a.*=.*1.*OR.*a.*=.*4.*b.*=.*1.*OR.*b.*<.*5.*
+physical_plan	<REGEX>:.*SEQ_SCAN.*Column Filter.*a.*<.*2.*OR.*a.*>.*3.*AND.*a.*=.*1.*OR.*a.*=.*4.*b.*=.*1.*OR.*b.*<.*5.*
 
 query II
 SELECT * FROM integers WHERE (a<2 OR a>3) AND (a=1 OR a=4) AND (b=1 OR b<5)
@@ -181,7 +181,7 @@ SELECT * FROM integers WHERE (a<2 OR a>3) AND (a=1 OR a=4) AND (b=1 OR b<5)
 query II
 EXPLAIN SELECT * FROM integers WHERE concat(a=1, b=1)='truetrue' OR a=2 ORDER by a
 ----
-physical_plan	<!REGEX>:.*SEQ_SCAN.*Filters.*
+physical_plan	<!REGEX>:.*SEQ_SCAN.*Column Filter.*
 
 query II
 SELECT * FROM integers WHERE concat(a=1, b=1)='truetrue' OR a=2 ORDER by a
@@ -193,7 +193,7 @@ SELECT * FROM integers WHERE concat(a=1, b=1)='truetrue' OR a=2 ORDER by a
 query II
 EXPLAIN SELECT * FROM strings WHERE s>'BBBB' OR s LIKE '%AAAAAAAAAAAAAAA%' ORDER BY s
 ----
-physical_plan	<REGEX>:.*SEQ_SCAN.*Filters.*
+physical_plan	<REGEX>:.*SEQ_SCAN.*Column Filter.*
 
 query I
 SELECT * FROM strings WHERE s>'BBBB' OR s LIKE '%AAAAAAAAAAAAAAA%' ORDER BY s
@@ -206,7 +206,7 @@ CCCC
 query II
 EXPLAIN SELECT * FROM integers WHERE a=1 OR (CASE WHEN a=2 THEN true WHEN a=4 THEN true ELSE false END)
 ----
-physical_plan	<REGEX>:.*SEQ_SCAN.*Filters.*
+physical_plan	<REGEX>:.*SEQ_SCAN.*Column Filter.*
 
 query II
 SELECT * FROM integers WHERE a=1 OR (CASE WHEN a=2 THEN true WHEN a=4 THEN true ELSE false END)
@@ -219,7 +219,7 @@ SELECT * FROM integers WHERE a=1 OR (CASE WHEN a=2 THEN true WHEN a=4 THEN true 
 query II
 EXPLAIN SELECT * FROM integers WHERE (a=1 OR a=4) AND (a=1 OR (CASE WHEN a%2=0 THEN true ELSE false END)) AND (concat(a=1, b=1)='truetrue' OR a=2) AND (a::CHAR LIKE '1' OR a=5)
 ----
-physical_plan	<REGEX>:.*SEQ_SCAN.*Filters.*a = 1.*OR.*a.*=.*4.*|$
+physical_plan	<REGEX>:.*SEQ_SCAN.*Column Filter.*a = 1.*OR.*a.*=.*4.*|$
 
 query II
 SELECT * FROM integers WHERE (a=1 OR a=4) AND (a=1 OR (CASE WHEN a%2=0 THEN true ELSE false END)) AND (concat(a=1, b=1)='truetrue' OR a=2) AND (a::CHAR LIKE '1' OR a=5)
@@ -233,7 +233,7 @@ INSERT INTO integers VALUES (NULL, NULL)
 query II
 EXPLAIN SELECT * FROM integers WHERE a=1 OR a IS NULL ORDER BY a
 ----
-physical_plan	<REGEX>:.*SEQ_SCAN.*Filters.*
+physical_plan	<REGEX>:.*SEQ_SCAN.*Column Filter.*
 
 query II
 SELECT * FROM integers WHERE a=1 OR a IS NULL ORDER BY a
@@ -244,7 +244,7 @@ NULL	NULL
 query II
 EXPLAIN SELECT * FROM integers WHERE a=1 OR a IS NOT NULL
 ----
-physical_plan	<REGEX>:.*SEQ_SCAN.*Filters.*
+physical_plan	<REGEX>:.*SEQ_SCAN.*Column Filter.*
 
 query II
 SELECT * FROM integers WHERE a=1 OR a IS NOT NULL
@@ -259,7 +259,7 @@ SELECT * FROM integers WHERE a=1 OR a IS NOT NULL
 query II
 EXPLAIN SELECT * FROM integers WHERE a!=1 OR a IS NULL ORDER BY a
 ----
-physical_plan	<REGEX>:.*SEQ_SCAN.*Filters.*
+physical_plan	<REGEX>:.*SEQ_SCAN.*Column Filter.*
 
 query II
 SELECT * FROM integers WHERE a!=1 OR a IS NULL ORDER BY a
@@ -274,7 +274,7 @@ NULL	NULL
 query II
 EXPLAIN SELECT * FROM integers WHERE a!=1 OR a IS NOT NULL ORDER BY a
 ----
-physical_plan	<REGEX>:.*SEQ_SCAN.*Filters.*
+physical_plan	<REGEX>:.*SEQ_SCAN.*Column Filter.*
 
 query II
 SELECT * FROM integers WHERE a!=1 OR a IS NOT NULL ORDER BY a
@@ -288,7 +288,7 @@ SELECT * FROM integers WHERE a!=1 OR a IS NOT NULL ORDER BY a
 query II
 EXPLAIN SELECT * FROM integers WHERE a!=1 OR a>3 OR a<2 ORDER by a
 ----
-physical_plan	<REGEX>:.*SEQ_SCAN.*Filters.*a != 1.*OR.*a.*>.*3.*OR.*a.*<.*2.*
+physical_plan	<REGEX>:.*SEQ_SCAN.*Column Filter.*a != 1.*OR.*a.*>.*3.*OR.*a.*<.*2.*
 
 query II
 SELECT * FROM integers WHERE a!=1 OR a>3 OR a<2 ORDER by a
@@ -345,7 +345,7 @@ mode skip instable
 query II
 EXPLAIN SELECT * FROM integers WHERE a!=10 OR a>3
 ----
-physical_plan	<!REGEX>:.*SEQ_SCAN.*Filters.*
+physical_plan	<!REGEX>:.*SEQ_SCAN.*Column Filter.*
 
 ## The predicate a!=10 is greater than the numeric_statistics::max implying that it is always true within an OR conjunction
 
@@ -370,13 +370,13 @@ mode skip instable
 query II
 EXPLAIN ANALYZE SELECT a FROM integers WHERE a<2 OR a>4
 ----
-analyzed_plan	<REGEX>:.*SEQ_SCAN.*Filters.*a < 2.*OR.*a >.*4.*2 Rows.*
+analyzed_plan	<REGEX>:.*SEQ_SCAN.*Column Filter.*a < 2.*OR.*a >.*4.*2 Rows.*
 
 # should return 1 row: 1
 query II
 EXPLAIN ANALYZE SELECT a FROM integers WHERE a<2 OR a>5
 ----
-analyzed_plan	<REGEX>:.*SEQ_SCAN.*Filters: a < 2.*OR.*a >.*5.*1 Rows.*
+analyzed_plan	<REGEX>:.*SEQ_SCAN.*Column Filter: a < 2.*OR.*a >.*5.*1 Rows.*
 
 mode unskip
 
@@ -393,7 +393,7 @@ CREATE TABLE integers AS SELECT a as A, a as B FROM generate_series(1, 1, 1) tbl
 query II
 EXPLAIN SELECT * FROM integers WHERE a!=1 OR a<2
 ----
-physical_plan	<!REGEX>:.*SEQ_SCAN.*Filters.*
+physical_plan	<!REGEX>:.*SEQ_SCAN.*Column Filter.*
 
 query II
 SELECT * FROM integers WHERE a!=1 OR a<3

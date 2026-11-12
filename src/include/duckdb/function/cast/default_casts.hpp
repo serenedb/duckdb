@@ -69,8 +69,10 @@ struct CastParameters {
 	CastParameters(CastParameters &parent, optional_ptr<BoundCastData> cast_data,
 	               optional_ptr<FunctionLocalState> local_state)
 	    : cast_data(cast_data), strict(parent.strict), error_message(parent.error_message), local_state(local_state),
-	      query_location(parent.query_location) {
+	      query_location(parent.query_location), context(parent.context) {
 	}
+
+	DUCKDB_API void InterruptCheck() const;
 
 	//! The bound cast data (if any)
 	optional_ptr<BoundCastData> cast_data;
@@ -88,6 +90,7 @@ struct CastParameters {
 	QueryLocation query_location;
 	//! In the case of a nested type, when facing a cast error, if we nullify the parent
 	bool nullify_parent = false;
+	optional_ptr<ClientContext> context;
 };
 
 struct CastLocalStateParameters {
@@ -136,6 +139,8 @@ struct BoundCastInfo {
 	    cast_function_t function, unique_ptr<BoundCastData> cast_data = nullptr,
 	    init_cast_local_state_t init_local_state = nullptr);
 
+	bucket_rewrite_t bucket_rewrite = nullptr;
+
 	bool Cast(Vector &source, Vector &result, idx_t count, CastParameters &parameters) const {
 		auto all_ok = function(source, result, count, parameters);
 		FlatVector::SetSize(result, count);
@@ -155,6 +160,9 @@ public:
 	}
 	bool HasFunction() const {
 		return function;
+	}
+	bool UsesFunction(cast_function_t other) const {
+		return function == other;
 	}
 	bool IsNopCast() const;
 	//! Whether this is the fallback cast used when no cast exists between the types
@@ -202,6 +210,9 @@ public:
 struct DefaultCasts {
 	DUCKDB_API static BoundCastInfo GetDefaultCastFunction(BindCastInput &input, const LogicalType &source,
 	                                                       const LogicalType &target);
+
+	DUCKDB_API static BoundCastInfo StringToListCast(BindCastInput &input, const LogicalType &target,
+	                                                 char array_delimiter);
 
 	DUCKDB_API static bool NopCast(Vector &source, Vector &result, idx_t count, CastParameters &parameters);
 	DUCKDB_API static bool TryVectorNullCast(Vector &source, Vector &result, idx_t count, CastParameters &parameters);

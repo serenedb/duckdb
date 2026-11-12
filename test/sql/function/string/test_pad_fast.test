@@ -1,0 +1,92 @@
+# name: test/sql/function/string/test_pad_fast.test
+# description: lpad/rpad over ASCII and non-ASCII strings and pads, truncation, repeated multi-byte pads and errors
+# group: [string]
+
+statement ok
+CREATE TABLE t(id INTEGER, s VARCHAR, n INTEGER, p VARCHAR);
+
+statement ok
+INSERT INTO t VALUES
+    (1, 'abc', 8, '*'),
+    (2, 'abc', 8, 'xyz'),
+    (3, 'abcdefghij', 4, '*'),
+    (4, 'abc', 3, ''),
+    (5, 'abc', 0, '*'),
+    (6, 'abc', -5, '*'),
+    (7, 'привет', 8, '*'),
+    (8, 'abc', 7, 'ё'),
+    (9, 'abc', 9, 'éx'),
+    (10, 'ab漢字', 3, '*'),
+    (11, 'ab漢字', 6, '-='),
+    (12, NULL, 5, '*'),
+    (13, 'abc', NULL, '*'),
+    (14, 'abc', 5, NULL),
+    (15, '', 5, 'ab'),
+    (16, 'abcdefghij', 10, '');
+
+query III
+SELECT id, lpad(s, n, p), rpad(s, n, p) FROM t ORDER BY id;
+----
+1	*****abc	abc*****
+2	xyzxyabc	abcxyzxy
+3	abcd	abcd
+4	abc	abc
+5	(empty)	(empty)
+6	(empty)	(empty)
+7	**привет	привет**
+8	ёёёёabc	abcёёёё
+9	éxéxéxabc	abcéxéxéx
+10	ab漢	ab漢
+11	-=ab漢字	ab漢字-=
+12	NULL	NULL
+13	NULL	NULL
+14	NULL	NULL
+15	ababa	ababa
+16	abcdefghij	abcdefghij
+
+query II
+SELECT lpad(s, 40, '0123456789'), rpad(s, 40, '0123456789') FROM t WHERE id = 1;
+----
+0123456789012345678901234567890123456abc	abc0123456789012345678901234567890123456
+
+query II
+SELECT lpad(s, n, '.'), rpad(s, n, '.') FROM t WHERE id = 7;
+----
+..привет	привет..
+
+statement error
+SELECT lpad('abc', 5, '');
+----
+Insufficient padding in LPAD
+
+statement error
+SELECT rpad('abc', 5, '');
+----
+Insufficient padding in RPAD
+
+query II
+SELECT count(*), sum(length(lpad(i::VARCHAR, 6, '0'))) FROM range(100000) r(i) WHERE lpad(i::VARCHAR, 6, '0') = printf('%06d', i);
+----
+100000	600000
+
+query II
+SELECT lpad('abc', 6, 'éx'), rpad('abc', 6, 'éx');
+----
+éxéabc	abcéxé
+
+query II
+SELECT lpad('приветмир', 4, '*'), rpad('ab漢字cd', 5, 'ё');
+----
+прив	ab漢字c
+
+query II
+SELECT lpad('漢字', 5, '漢x'), rpad('', 3, '字');
+----
+漢x漢漢字	字字字
+
+query I
+SELECT count(*) FROM (SELECT s, (i % 13)::INTEGER AS n, p FROM range(5000) r(i), (VALUES ('привет'), ('ab'), ('漢字漢字漢字'), ('')) v(s), (VALUES ('é*'), ('-'), ('ab漢')) w(p))
+WHERE lpad(s, n, p) <> CASE WHEN length(s) >= n THEN left(s, n) ELSE left(repeat(p, n), n - length(s)) || s END
+   OR rpad(s, n, p) <> CASE WHEN length(s) >= n THEN left(s, n) ELSE s || left(repeat(p, n), n - length(s)) END;
+----
+0

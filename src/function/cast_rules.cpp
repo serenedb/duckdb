@@ -32,8 +32,12 @@ static int64_t TargetTypeCost(const LogicalType &type) {
 		return 123;
 	case LogicalTypeId::TIMESTAMP_TZ_NS:
 		return 124;
+	case LogicalTypeId::BIT:
+		return 111;
 	case LogicalTypeId::VARCHAR:
 		return 149;
+	case LogicalTypeId::BLOB:
+		return 150;
 	case LogicalTypeId::STRUCT:
 	case LogicalTypeId::TUPLE:
 	case LogicalTypeId::MAP:
@@ -288,6 +292,15 @@ static int64_t ImplicitCastTimestampNS(const LogicalType &to) {
 	}
 }
 
+static int64_t ImplicitCastTimestampTZNS(const LogicalType &to) {
+	switch (to.id()) {
+	case LogicalTypeId::TIMESTAMP_TZ:
+		return TargetTypeCost(to);
+	default:
+		return -1;
+	}
+}
+
 static int64_t ImplicitCastTimestamp(const LogicalType &to) {
 	switch (to.id()) {
 	case LogicalTypeId::TIMESTAMP_NS:
@@ -386,6 +399,8 @@ int64_t ImplicitCastToUnionMember(const LogicalType &from, const LogicalType &to
 	return found ? cost : -1;
 }
 
+[[gnu::always_inline]] static inline int64_t ImplicitCastBaseType(const LogicalType &from, const LogicalType &to);
+
 int64_t CastRules::ImplicitCast(const LogicalType &from, const LogicalType &to) {
 	if (from.id() == LogicalTypeId::SQLNULL && to.id() == LogicalTypeId::TEMPLATE) {
 		// Prefer the TEMPLATE type for NULL casts, as it is the most generic
@@ -413,7 +428,27 @@ int64_t CastRules::ImplicitCast(const LogicalType &from, const LogicalType &to) 
 		if (to.id() == LogicalTypeId::VARCHAR && to.GetAlias().empty()) {
 			return 1;
 		}
-		return 20;
+		// Prefer numeric types over date/time types for string literals,
+		// matching PostgreSQL's type category preference (numeric is "preferred").
+		// This makes 'SELECT '1' + 2' resolve to +(INTEGER, INTEGER) not +(DATE, INTEGER).
+		switch (to.id()) {
+		case LogicalTypeId::TINYINT:
+		case LogicalTypeId::SMALLINT:
+		case LogicalTypeId::INTEGER:
+		case LogicalTypeId::BIGINT:
+		case LogicalTypeId::UTINYINT:
+		case LogicalTypeId::USMALLINT:
+		case LogicalTypeId::UINTEGER:
+		case LogicalTypeId::UBIGINT:
+		case LogicalTypeId::HUGEINT:
+		case LogicalTypeId::UHUGEINT:
+		case LogicalTypeId::FLOAT:
+		case LogicalTypeId::DOUBLE:
+		case LogicalTypeId::DECIMAL:
+			return 19;
+		default:
+			return 20;
+		}
 	}
 	if (from.id() == LogicalTypeId::INTEGER_LITERAL) {
 		// the integer literal has an underlying type - this type always matches
@@ -441,11 +476,21 @@ int64_t CastRules::ImplicitCast(const LogicalType &from, const LogicalType &to) 
 			return ImplicitCastToUnionMember(from, to);
 		}
 
-		return -1;
+		// If the target has no alias, allow casting from an aliased type
+		// to its base type (e.g. pg_statistic -> STRUCT).
+		if (!to.GetAlias().empty()) {
+			return -1;
+		}
+		auto cost = ImplicitCastBaseType(from, to);
+		return cost < 0 ? cost : cost + 1;
 	}
+	return ImplicitCastBaseType(from, to);
+}
+
+static int64_t ImplicitCastBaseType(const LogicalType &from, const LogicalType &to) {
 	if (from.id() == LogicalTypeId::LIST && to.id() == LogicalTypeId::LIST) {
 		// Lists can be cast if their child types can be cast
-		auto child_cost = ImplicitCast(ListType::GetChildType(from), ListType::GetChildType(to));
+		auto child_cost = CastRules::ImplicitCast(ListType::GetChildType(from), ListType::GetChildType(to));
 		if (child_cost >= 1) {
 			// subtract one from the cost because we prefer LIST[X] -> LIST[VARCHAR] over LIST[X] -> VARCHAR
 			child_cost--;
@@ -459,7 +504,7 @@ int64_t CastRules::ImplicitCast(const LogicalType &from, const LogicalType &to) 
 		auto to_size = ArrayType::GetSize(to);
 		auto to_is_any_size = ArrayType::IsAnySize(to);
 		if (from_size == to_size || to_is_any_size) {
-			auto child_cost = ImplicitCast(ArrayType::GetChildType(from), ArrayType::GetChildType(to));
+			auto child_cost = CastRules::ImplicitCast(ArrayType::GetChildType(from), ArrayType::GetChildType(to));
 			if (child_cost >= 100) {
 				// subtract one from the cost because we prefer ARRAY[X] -> ARRAY[VARCHAR] over ARRAY[X] -> VARCHAR
 				child_cost--;
@@ -470,7 +515,7 @@ int64_t CastRules::ImplicitCast(const LogicalType &from, const LogicalType &to) 
 	}
 	if (from.id() == LogicalTypeId::ARRAY && to.id() == LogicalTypeId::LIST) {
 		// Arrays can be cast to lists for the cost of casting the child type
-		auto child_cost = ImplicitCast(ArrayType::GetChildType(from), ListType::GetChildType(to));
+		auto child_cost = CastRules::ImplicitCast(ArrayType::GetChildType(from), ListType::GetChildType(to));
 		if (child_cost < 0) {
 			return -1;
 		}
@@ -481,7 +526,7 @@ int64_t CastRules::ImplicitCast(const LogicalType &from, const LogicalType &to) 
 		// Lists can be cast to arrays for the cost of casting the child type, if the target size is known
 		// there is no way for us to resolve the size at bind-time without inspecting the list values.
 		// TODO: if we can access the expression we could resolve the size if the list is constant.
-		return ImplicitCast(ListType::GetChildType(from), ArrayType::GetChildType(to));
+		return CastRules::ImplicitCast(ListType::GetChildType(from), ArrayType::GetChildType(to));
 	}
 	if (from.id() == LogicalTypeId::UNION && to.id() == LogicalTypeId::UNION) {
 		// Check that the target union type is fully resolved.
@@ -505,7 +550,7 @@ int64_t CastRules::ImplicitCast(const LogicalType &from, const LogicalType &to) 
 					auto &from_member_type = UnionType::GetMemberType(from, from_member_idx);
 					auto &to_member_type = UnionType::GetMemberType(to, to_member_idx);
 
-					auto child_cost = ImplicitCast(from_member_type, to_member_type);
+					auto child_cost = CastRules::ImplicitCast(from_member_type, to_member_type);
 					cost = MaxValue(cost, child_cost);
 					found = true;
 					break;
@@ -565,7 +610,7 @@ int64_t CastRules::ImplicitCast(const LogicalType &from, const LogicalType &to) 
 				}
 				auto target_idx = entry->second;
 				target_members.erase(entry);
-				auto child_cost = ImplicitCast(source_child.second, target_children[target_idx].second);
+				auto child_cost = CastRules::ImplicitCast(source_child.second, target_children[target_idx].second);
 				if (child_cost == -1) {
 					return -1;
 				}
@@ -576,7 +621,7 @@ int64_t CastRules::ImplicitCast(const LogicalType &from, const LogicalType &to) 
 			for (idx_t i = 0; i < source_children.size(); i++) {
 				auto &source_child = source_children[i];
 				auto &target_child = target_children[i];
-				auto child_cost = ImplicitCast(source_child.second, target_child.second);
+				auto child_cost = CastRules::ImplicitCast(source_child.second, target_child.second);
 				if (child_cost == -1) {
 					return -1;
 				}
@@ -632,6 +677,8 @@ int64_t CastRules::ImplicitCast(const LogicalType &from, const LogicalType &to) 
 		return ImplicitCastTimestampMS(to);
 	case LogicalTypeId::TIMESTAMP_NS:
 		return ImplicitCastTimestampNS(to);
+	case LogicalTypeId::TIMESTAMP_TZ_NS:
+		return ImplicitCastTimestampTZNS(to);
 	case LogicalTypeId::TIMESTAMP:
 		return ImplicitCastTimestamp(to);
 	case LogicalTypeId::BIGNUM:

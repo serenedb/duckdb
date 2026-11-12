@@ -25,7 +25,7 @@ SET max_vacuum_tasks = 1000;
 # time plus the checkpoint work that follows it.
 
 statement ok
-SET threads = 1;
+SET GLOBAL threads = 1;
 
 statement ok
 ATTACH '{TEST_DIR}/single_thread_vacuum_latency.db' AS single_thread_vacuum (ROW_GROUP_SIZE 2048);

@@ -43,7 +43,7 @@ public:
 	Identifier GetName() const override;
 	string ToString() const override;
 	bool Equals(const ParsedExpression &other) const override;
-	hash_t Hash() const override;
+	hash_t NodeHash() const override;
 	unique_ptr<ParsedExpression> Copy() const override;
 
 	//! Traverses the lambda_bindings to find a matching binding for the column_name

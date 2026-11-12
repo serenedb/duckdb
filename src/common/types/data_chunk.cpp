@@ -29,28 +29,28 @@ DataChunk::DataChunk() {
 DataChunk::~DataChunk() {
 }
 
-void DataChunk::InitializeEmpty(const vector<LogicalType> &types) {
+void DataChunk::InitializeEmpty(std::span<const LogicalType> types) {
 	D_ASSERT(data.empty());
 	for (idx_t i = 0; i < types.size(); i++) {
 		data.emplace_back(types[i], nullptr);
 	}
 }
 
-void DataChunk::Initialize(ClientContext &context, const vector<LogicalType> &types, idx_t capacity_p) {
+void DataChunk::Initialize(ClientContext &context, std::span<const LogicalType> types, idx_t capacity_p) {
 	Initialize(Allocator::Get(context), types, capacity_p);
 }
 
-void DataChunk::Initialize(Allocator &allocator, const vector<LogicalType> &types, idx_t capacity_p) {
+void DataChunk::Initialize(Allocator &allocator, std::span<const LogicalType> types, idx_t capacity_p) {
 	auto initialize = vector<bool>(types.size(), true);
 	Initialize(allocator, types, initialize, capacity_p);
 }
 
-void DataChunk::Initialize(ClientContext &context, const vector<LogicalType> &types, const vector<bool> &initialize,
+void DataChunk::Initialize(ClientContext &context, std::span<const LogicalType> types, const vector<bool> &initialize,
                            idx_t capacity_p) {
 	Initialize(Allocator::Get(context), types, initialize, capacity_p);
 }
 
-void DataChunk::Initialize(Allocator &allocator, const vector<LogicalType> &types, const vector<bool> &initialize,
+void DataChunk::Initialize(Allocator &allocator, std::span<const LogicalType> types, const vector<bool> &initialize,
                            idx_t capacity) {
 	D_ASSERT(types.size() == initialize.size());
 	D_ASSERT(data.empty());
@@ -127,6 +127,11 @@ void DataChunk::Reset() {
 	for (idx_t i = 0; i < ColumnCount(); i++) {
 		data[i].ResetFromCache(vector_caches[i]);
 	}
+}
+
+void DataChunk::ResetColumn(idx_t column_idx) {
+	D_ASSERT(column_idx < vector_caches.size());
+	data[column_idx].ResetFromCache(vector_caches[column_idx]);
 }
 
 void DataChunk::Destroy() {
@@ -465,6 +470,8 @@ void DataChunk::Verify() {
 }
 
 void DataChunk::VerifyInternal(DebugVerificationMode mode, optional_ptr<DatabaseInstance> db) {
+#ifdef D_ASSERT_IS_ENABLED
+	DUCKDB_DEBUG_VERIFY_GUARD();
 	if (mode == DebugVerificationMode::DEFAULT) {
 		mode = DBConfigOptions::global_verification_mode;
 	}
@@ -504,7 +511,7 @@ void DataChunk::VerifyInternal(DebugVerificationMode mode, optional_ptr<Database
 		// ensure that all valid in-memory states can be verified.
 
 		SerializationOptions options;
-		options.storage_compatibility = StorageCompatibility::Latest();
+		options.storage_compatibility = StorageCompatibility::SereneDBLatest();
 
 		if (db) {
 			DBConfig &config = DBConfig::GetConfig(*db);
@@ -532,6 +539,7 @@ void DataChunk::VerifyInternal(DebugVerificationMode mode, optional_ptr<Database
 			throw InternalException("Data Chunk Verification: Serialization size mismatch");
 		}
 	}
+#endif
 }
 
 void DataChunk::Print() const {

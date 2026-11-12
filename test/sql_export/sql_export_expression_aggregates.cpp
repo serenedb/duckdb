@@ -91,7 +91,7 @@ TEST_CASE("Aggregate SQL clauses retain logical result annotations",
 		auto call = BoundExpressionSQLExporter::ExportAggregateCallAtPath(aggregate, context, path);
 		REQUIRE(call.IsSuccess());
 		REQUIRE(call.GetValue()->GetExpressionClass() == ExpressionClass::FUNCTION);
-		REQUIRE(call.GetValue()->GetQualifiedName() == QualifiedName("system", "main", "last"));
+		REQUIRE(call.GetValue()->GetQualifiedName() == QualifiedName(Identifier("last")));
 		auto direct = connection.Query("SELECT (" + call.GetValue()->ToString() + ")='A' FROM clause_values");
 		REQUIRE_NO_FAIL(*direct);
 		REQUIRE(direct->Collection().GetValue(0, 0) == Value::BOOLEAN(false));

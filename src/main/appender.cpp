@@ -651,7 +651,7 @@ Value Appender::GetDefaultValue(idx_t column) {
 	if (it == default_values.end()) {
 		auto &name = description->columns[index].Name();
 		throw NotImplementedException(
-		    "AppendDefault is not supported for column \"%s\": not a foldable default expressions.", name);
+		    "AppendDefault is not supported for column %s: not a foldable default expressions.", name);
 	}
 	return it->second;
 }
@@ -745,9 +745,7 @@ InternalAppender::~InternalAppender() {
 }
 
 void InternalAppender::FlushInternal(ColumnDataCollection &collection) {
-	auto binder = Binder::CreateBinder(context);
-	auto bound_constraints = binder->BindConstraints(table);
-	table.GetStorage().LocalAppend(table.Cast<DuckTableEntry>(), context, collection, bound_constraints, nullptr);
+	table.InternalAppend(context, collection);
 }
 
 void BaseAppender::Close() {

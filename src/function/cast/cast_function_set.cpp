@@ -3,7 +3,10 @@
 
 #include "duckdb/main/settings.hpp"
 
+#include "duckdb/common/array.hpp"
+#include "duckdb/common/bitset.hpp"
 #include "duckdb/common/pair.hpp"
+#include "duckdb/common/type_visitor.hpp"
 #include "duckdb/common/types/type_map.hpp"
 #include "duckdb/function/cast_rules.hpp"
 #include "duckdb/planner/collation_binding.hpp"
@@ -107,16 +110,52 @@ struct MapCastNode {
 	int64_t implicit_cast_cost;
 };
 
+struct MapCastTypeHash {
+	uint64_t operator()(const LogicalType &type) const {
+		auto &alias = type.GetTypeInfo().alias;
+		auto hash = type.Hash();
+		return alias.empty() ? hash : CombineHash(hash, Hash(alias.c_str(), alias.size()));
+	}
+};
+
+template <class T>
+using cast_type_map_t = unordered_map<LogicalType, T, MapCastTypeHash, LogicalTypeEquality>;
+
+static bool ContainsAlias(const LogicalType &type) {
+	return TypeVisitor::Contains(type, [](const LogicalType &child) { return !child.GetTypeInfo().alias.empty(); });
+}
+
+static bool HasFamilyKey(LogicalTypeId id) {
+	switch (id) {
+	case LogicalTypeId::LIST:
+	case LogicalTypeId::STRUCT:
+	case LogicalTypeId::TUPLE:
+	case LogicalTypeId::MAP:
+	case LogicalTypeId::UNION:
+	case LogicalTypeId::ARRAY:
+	case LogicalTypeId::DECIMAL:
+	case LogicalTypeId::ENUM:
+		return true;
+	default:
+		return false;
+	}
+}
+
 template <class MAP>
 static auto RelaxedTypeMatch(MAP &map, const LogicalType &type) -> decltype(map.find(type)) {
-	D_ASSERT(map.find(type) == map.end()); // we shouldn't be here
 	switch (type.id()) {
-	case LogicalTypeId::LIST:
-		return map.find(LogicalType::LIST(LogicalType::ANY));
-	case LogicalTypeId::STRUCT:
-		return map.find(LogicalType::STRUCT({{"any", LogicalType::ANY}}));
-	case LogicalTypeId::TUPLE:
-		return map.find(LogicalType::TUPLE({LogicalType::ANY}));
+	case LogicalTypeId::LIST: {
+		static const auto any_list = LogicalType::LIST(LogicalType::ANY);
+		return map.find(any_list);
+	}
+	case LogicalTypeId::STRUCT: {
+		static const auto any_struct = LogicalType::STRUCT({{"any", LogicalType::ANY}});
+		return map.find(any_struct);
+	}
+	case LogicalTypeId::TUPLE: {
+		static const auto any_tuple = LogicalType::TUPLE({LogicalType::ANY});
+		return map.find(any_tuple);
+	}
 	case LogicalTypeId::MAP:
 		for (auto it = map.begin(); it != map.end(); it++) {
 			const auto &entry_type = it->first;
@@ -131,10 +170,14 @@ static auto RelaxedTypeMatch(MAP &map, const LogicalType &type) -> decltype(map.
 			}
 		}
 		return map.end();
-	case LogicalTypeId::UNION:
-		return map.find(LogicalType::UNION({{"any", LogicalType::ANY}}));
-	case LogicalTypeId::ARRAY:
-		return map.find(LogicalType::ARRAY(LogicalType::ANY, optional_idx()));
+	case LogicalTypeId::UNION: {
+		static const auto any_union = LogicalType::UNION({{"any", LogicalType::ANY}});
+		return map.find(any_union);
+	}
+	case LogicalTypeId::ARRAY: {
+		static const auto any_array = LogicalType::ARRAY(LogicalType::ANY, optional_idx());
+		return map.find(any_array);
+	}
 	case LogicalTypeId::DECIMAL:
 		return map.find(LogicalTypeId::DECIMAL);
 	case LogicalTypeId::ENUM:
@@ -147,6 +190,9 @@ static auto RelaxedTypeMatch(MAP &map, const LogicalType &type) -> decltype(map.
 struct MapCastInfo : public BindCastInfo {
 public:
 	optional_ptr<const MapCastNode> GetEntry(const LogicalType &source, const LogicalType &target) const {
+		if (!MayHaveEntry(source, target)) {
+			return nullptr;
+		}
 		auto source_type_id_entry = casts.find(source.id());
 		if (source_type_id_entry == casts.end()) {
 			source_type_id_entry = casts.find(LogicalTypeId::ANY);
@@ -157,14 +203,22 @@ public:
 
 		auto &source_type_entries = source_type_id_entry->second;
 		auto source_type_entry = source_type_entries.find(source);
-		if (source_type_entry == source_type_entries.end()) {
-			source_type_entry = RelaxedTypeMatch(source_type_entries, source);
-			if (source_type_entry == source_type_entries.end()) {
-				return nullptr;
+		if (source_type_entry != source_type_entries.end()) {
+			auto entry = GetTargetEntry(source_type_entry->second, target);
+			if (entry || !HasFamilyKey(source.id())) {
+				return entry;
 			}
 		}
+		source_type_entry = RelaxedTypeMatch(source_type_entries, source);
+		if (source_type_entry == source_type_entries.end()) {
+			return nullptr;
+		}
+		return GetTargetEntry(source_type_entry->second, target);
+	}
 
-		auto &target_type_id_entries = source_type_entry->second;
+	static optional_ptr<const MapCastNode>
+	GetTargetEntry(const type_id_map_t<cast_type_map_t<MapCastNode>> &target_type_id_entries,
+	               const LogicalType &target) {
 		auto target_type_id_entry = target_type_id_entries.find(target.id());
 		if (target_type_id_entry == target_type_id_entries.end()) {
 			target_type_id_entry = target_type_id_entries.find(LogicalTypeId::ANY);
@@ -185,16 +239,77 @@ public:
 		return &target_type_entry->second;
 	}
 
+	bool HasExactEntry(const LogicalType &source, const LogicalType &target) const {
+		auto source_type_id_entry = casts.find(source.id());
+		if (source_type_id_entry == casts.end()) {
+			return false;
+		}
+		auto source_type_entry = source_type_id_entry->second.find(source);
+		if (source_type_entry == source_type_id_entry->second.end()) {
+			return false;
+		}
+		auto target_type_id_entry = source_type_entry->second.find(target.id());
+		if (target_type_id_entry == source_type_entry->second.end()) {
+			return false;
+		}
+		return target_type_id_entry->second.find(target) != target_type_id_entry->second.end();
+	}
+
 	void AddEntry(const LogicalType &source, const LogicalType &target, MapCastNode node) {
 		casts[source.id()][source][target.id()].insert(make_pair(target, std::move(node)));
+		auto source_id = static_cast<uint8_t>(source.id());
+		auto target_id = static_cast<uint8_t>(target.id());
+		source_ids.set(source_id);
+		target_ids[source_id].set(target_id);
+		auto &alias = target.GetTypeInfo().alias;
+		if (!alias.empty()) {
+			target_aliases[source_id].insert(alias);
+		}
+		if (!ContainsAlias(target)) {
+			unaliased_target_ids[source_id].set(target_id);
+		}
 	}
 
 private:
-	type_id_map_t<type_map_t<type_id_map_t<type_map_t<MapCastNode>>>> casts;
+	bool MayHaveEntry(const LogicalType &source, const LogicalType &target) const {
+		auto source_id = static_cast<uint8_t>(source.id());
+		if (!source_ids[source_id]) {
+			source_id = static_cast<uint8_t>(LogicalTypeId::ANY);
+			if (!source_ids[source_id]) {
+				return false;
+			}
+		}
+		auto &targets = target_ids[source_id];
+		if (targets[static_cast<uint8_t>(LogicalTypeId::ANY)]) {
+			return true;
+		}
+		auto target_id = static_cast<uint8_t>(target.id());
+		if (!targets[target_id]) {
+			return false;
+		}
+		if (target.id() == LogicalTypeId::MAP || unaliased_target_ids[source_id][target_id]) {
+			return true;
+		}
+		auto &alias = target.GetTypeInfo().alias;
+		if (!alias.empty()) {
+			return target_aliases[source_id].contains(alias);
+		}
+		return target.IsNested() && ContainsAlias(target);
+	}
+
+	type_id_map_t<cast_type_map_t<type_id_map_t<cast_type_map_t<MapCastNode>>>> casts;
+	bitset<256> source_ids;
+	array<bitset<256>, 256> target_ids;
+	array<bitset<256>, 256> unaliased_target_ids;
+	array<unordered_set<string>, 256> target_aliases;
 };
 
 bool CastFunctionSet::HasRegisteredCast(const LogicalType &source, const LogicalType &target) const {
 	return map_info && map_info->GetEntry(source, target);
+}
+
+bool CastFunctionSet::HasExactRegisteredCast(const LogicalType &source, const LogicalType &target) const {
+	return map_info && map_info->HasExactEntry(source, target);
 }
 
 bool CastFunctionSet::CanOverrideDefaultCast(const LogicalType &source, const LogicalType &target) const {
@@ -216,8 +331,8 @@ int64_t CastFunctionSet::ImplicitCastCost(optional_ptr<ClientContext> context, c
 	if (registration_probe && registration_probe->HasRegisteredCast(source, target)) {
 		registered_cast_found = true;
 	}
-	// check if a cast has been registered
-	if (map_info) {
+	// check if a cast has been registered - a type never casts to itself, so none applies to it
+	if (map_info && source != target) {
 		auto entry = map_info->GetEntry(source, target);
 		if (entry) {
 			return entry->implicit_cast_cost;

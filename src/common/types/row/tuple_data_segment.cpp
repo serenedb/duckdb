@@ -50,6 +50,7 @@ TupleDataChunkPart &TupleDataChunk::AddPart(TupleDataSegment &segment, unsafe_ar
 
 void TupleDataChunk::Verify(const TupleDataSegment &segment) const {
 #ifdef D_ASSERT_IS_ENABLED
+	DUCKDB_DEBUG_VERIFY_GUARD();
 	idx_t total_count = 0;
 	for (auto part_id = part_ids.Start(); part_id < part_ids.End(); part_id++) {
 		total_count += segment.chunk_parts[part_id]->count;
@@ -121,8 +122,10 @@ void TupleDataSegment::Reset() {
 	data_size = 0;
 	// Release any remaining pin handles before clearing. For UNPIN_AFTER_DONE, pinned_row_handles /
 	// pinned_heap_handles may be non-empty due to resize-only calls in CreateRowBlock / CreateHeapBlock
-	// (actual BufferHandles are in the TupleDataPinState, not here).  Unpin() safely clears them.
+	// (actual BufferHandles are in the TupleDataPinState, not here).
 	Unpin();
+	pinned_row_handles.clear();
+	pinned_heap_handles.clear();
 	// chunk/chunk_part destructors are trivial (only POD fields), so clear is cheap.
 	chunks.clear();
 	chunk_parts.clear();
@@ -138,12 +141,17 @@ idx_t TupleDataSegment::SizeInBytes() const {
 
 void TupleDataSegment::Unpin() {
 	lock_guard<mutex> guard(pinned_handles_lock);
-	pinned_row_handles.clear();
-	pinned_heap_handles.clear();
+	for (auto &handle : pinned_row_handles) {
+		handle.Destroy();
+	}
+	for (auto &handle : pinned_heap_handles) {
+		handle.Destroy();
+	}
 }
 
 void TupleDataSegment::Verify() const {
 #ifdef D_ASSERT_IS_ENABLED
+	DUCKDB_DEBUG_VERIFY_GUARD();
 	const auto &allocator_layout = allocator->GetLayout();
 
 	idx_t total_count = 0;

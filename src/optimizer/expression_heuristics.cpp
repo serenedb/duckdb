@@ -1,4 +1,6 @@
 #include "duckdb/optimizer/expression_heuristics.hpp"
+#include "duckdb/common/enums/filter_reorder.hpp"
+#include "duckdb/main/settings.hpp"
 #include "duckdb/planner/table_filter_set.hpp"
 #include "duckdb/planner/expression/bound_between_expression.hpp"
 #include "duckdb/planner/expression/bound_comparison_expression.hpp"
@@ -8,10 +10,95 @@
 #include "duckdb/planner/filter/table_filter_functions.hpp"
 #include "duckdb/planner/expression/expression_barrier.hpp"
 
+#include "duckdb/common/case_insensitive_map.hpp"
+
 namespace duckdb {
 
+namespace {
+
+struct ExpressionCosts {
+	unique_ptr<Expression> expr;
+	idx_t cost;
+
+	bool operator==(const ExpressionCosts &p) const {
+		return cost == p.cost;
+	}
+	bool operator<(const ExpressionCosts &p) const {
+		return cost < p.cost;
+	}
+};
+
+vector<ExpressionCosts> ReorderAlways(vector<unique_ptr<Expression>> &expressions) {
+	vector<ExpressionCosts> expression_costs;
+	expression_costs.reserve(expressions.size());
+	for (auto &expr : expressions) {
+		expression_costs.push_back({nullptr, ExpressionHeuristics::Cost(*expr)});
+		expression_costs.back().expr = std::move(expr);
+	}
+	sort(expression_costs.begin(), expression_costs.end());
+	return expression_costs;
+}
+
+vector<ExpressionCosts> ReorderSafe(vector<unique_ptr<Expression>> &expressions) {
+	vector<ExpressionCosts> expression_costs;
+	expression_costs.reserve(expressions.size());
+	idx_t block = 0;
+	for (auto &expr : expressions) {
+		expression_costs.push_back({nullptr, ExpressionHeuristics::Cost(*expr)});
+		expression_costs.back().expr = std::move(expr);
+		if (expression_costs.back().expr->CanThrow()) {
+			if (expression_costs.size() - 1 - block > 1) {
+				sort(expression_costs.begin() + NumericCast<int64_t>(block), expression_costs.end() - 1);
+			}
+			block = expression_costs.size();
+		}
+	}
+	sort(expression_costs.begin() + NumericCast<int64_t>(block), expression_costs.end());
+	return expression_costs;
+}
+
+vector<ExpressionCosts> ReorderFast(vector<unique_ptr<Expression>> &expressions) {
+	vector<idx_t> costs(expressions.size());
+	vector<idx_t> non_failing;
+	vector<pair<idx_t, idx_t>> failing;
+	idx_t max_cost = 0;
+	for (idx_t i = 0; i < expressions.size(); i++) {
+		costs[i] = ExpressionHeuristics::Cost(*expressions[i]);
+		if (expressions[i]->CanThrow()) {
+			failing.emplace_back(i, max_cost);
+			max_cost = 0;
+		} else {
+			non_failing.push_back(i);
+			max_cost = MaxValue(max_cost, costs[i]);
+		}
+	}
+	sort(non_failing.begin(), non_failing.end(), [&](idx_t l, idx_t r) { return costs[l] < costs[r]; });
+
+	vector<ExpressionCosts> expression_costs;
+	expression_costs.reserve(expressions.size());
+	auto emit = [&](idx_t i) {
+		expression_costs.push_back({std::move(expressions[i]), costs[i]});
+	};
+	idx_t next = 0;
+	for (auto &[idx, required_cost] : failing) {
+		while (next < non_failing.size() &&
+		       (costs[non_failing[next]] <= required_cost || costs[non_failing[next]] < costs[idx])) {
+			emit(non_failing[next++]);
+		}
+		emit(idx);
+	}
+	while (next < non_failing.size()) {
+		emit(non_failing[next++]);
+	}
+	return expression_costs;
+}
+
+} // namespace
+
 unique_ptr<LogicalOperator> ExpressionHeuristics::Rewrite(unique_ptr<LogicalOperator> op) {
-	VisitOperator(*op);
+	if (Settings::Get<FilterReorderSetting>(optimizer.context) != FilterReorder::NEVER) {
+		VisitOperator(*op);
+	}
 	return op;
 }
 
@@ -35,35 +122,25 @@ unique_ptr<Expression> ExpressionHeuristics::VisitReplace(BoundConjunctionExpres
 }
 
 void ExpressionHeuristics::ReorderExpressions(vector<unique_ptr<Expression>> &expressions) {
-	struct ExpressionCosts {
-		unique_ptr<Expression> expr;
-		idx_t cost;
-
-		bool operator==(const ExpressionCosts &p) const {
-			return cost == p.cost;
-		}
-		bool operator<(const ExpressionCosts &p) const {
-			return cost < p.cost;
-		}
-	};
-
-	for (idx_t i = 0; i < expressions.size(); i++) {
-		if (expressions[i]->CanThrow() || ExpressionBarrier::Contains(*expressions[i])) {
-			// do not allow reordering if an expression can throw, or carries a barrier
+	for (auto &expr : expressions) {
+		if (ExpressionBarrier::Contains(*expr)) {
 			return;
 		}
 	}
-
 	vector<ExpressionCosts> expression_costs;
-	expression_costs.reserve(expressions.size());
-	// iterate expressions, get cost for each one
-	for (idx_t i = 0; i < expressions.size(); i++) {
-		idx_t cost = Cost(*expressions[i]);
-		expression_costs.push_back({std::move(expressions[i]), cost});
+	switch (Settings::Get<FilterReorderSetting>(optimizer.context)) {
+	case FilterReorder::NEVER:
+		return;
+	case FilterReorder::SAFE:
+		expression_costs = ReorderSafe(expressions);
+		break;
+	case FilterReorder::FAST:
+		expression_costs = ReorderFast(expressions);
+		break;
+	case FilterReorder::ALWAYS:
+		expression_costs = ReorderAlways(expressions);
+		break;
 	}
-
-	// sort by cost and put back in place
-	sort(expression_costs.begin(), expression_costs.end());
 	for (idx_t i = 0; i < expression_costs.size(); i++) {
 		expressions[i] = std::move(expression_costs[i].expr);
 	}
@@ -132,18 +209,19 @@ idx_t ExpressionHeuristics::ExpressionCost(const BoundFunctionExpression &expr) 
 	if (BoundCastExpression::IsCast(expr)) {
 		return CastExpressionCost(expr);
 	}
-	identifier_map_t<idx_t> function_costs = {{"+", 5},       {"-", 5},    {"&", 5},          {"#", 5},
-	                                          {">>", 5},      {"<<", 5},   {"abs", 5},        {"*", 10},
-	                                          {"%", 10},      {"/", 15},   {"date_part", 20}, {"year", 20},
-	                                          {"round", 100}, {"~~", 200}, {"!~~", 200},      {"regexp_matches", 200},
-	                                          {"||", 200}};
+	static const case_insensitive_map_view_t<idx_t> function_costs = {
+	    {"+", 5},       {"-", 5},    {"&", 5},          {"#", 5},
+	    {">>", 5},      {"<<", 5},   {"abs", 5},        {"*", 10},
+	    {"%", 10},      {"/", 15},   {"date_part", 20}, {"year", 20},
+	    {"round", 100}, {"~~", 200}, {"!~~", 200},      {"regexp_matches", 200},
+	    {"||", 200}};
 
 	idx_t cost_children = 0;
 	for (auto &child : expr.GetChildren()) {
 		cost_children += Cost(*child);
 	}
 
-	auto cost_function = function_costs.find(expr.Function().GetName());
+	auto cost_function = function_costs.find(expr.Function().GetName().GetIdentifierName());
 	if (cost_function != function_costs.end()) {
 		return cost_children + cost_function->second;
 	} else {

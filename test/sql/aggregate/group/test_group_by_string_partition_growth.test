@@ -1,0 +1,16 @@
+# name: test/sql/aggregate/group/test_group_by_string_partition_growth.test
+# description: Hash aggregates over many distinct string keys, enough data per thread to grow the partitions more than once
+# group: [group]
+
+statement ok
+SET threads=8
+
+query III
+SELECT count(*), sum(c), sum(length(s)) FROM (SELECT md5(i::VARCHAR) || '_a_longer_string_payload' AS s, count(*) AS c FROM range(3000000) t(i) GROUP BY s)
+----
+3000000	3000000	168000000
+
+query III
+SELECT count(*), sum(c), max(c) FROM (SELECT md5((i % 1000000)::VARCHAR) || '_a_longer_string_payload' AS s, i % 3 AS k, count(*) AS c FROM range(6000000) t(i) GROUP BY s, k)
+----
+3000000	6000000	2

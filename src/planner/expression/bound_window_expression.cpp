@@ -20,9 +20,9 @@ BoundWindowExpression::BoundWindowExpression(LogicalType return_type, unique_ptr
       distinct(false) {
 }
 
-bool BoundWindowExpression::IsVolatile() const {
+bool BoundWindowExpression::IsNodeVolatile() const {
 	auto stability = aggregate ? aggregate->GetStability() : window->GetStability();
-	return stability == FunctionStability::VOLATILE || Expression::IsVolatile();
+	return stability == FunctionStability::VOLATILE;
 }
 
 string BoundWindowExpression::ToString() const {
@@ -229,49 +229,10 @@ unique_ptr<Expression> BoundWindowExpression::Copy() const {
 	return std::move(new_window);
 }
 
-vector<unique_ptr<Expression>> BoundWindowExpression::SerializedChildren(Serializer &serializer) const {
-	vector<unique_ptr<Expression>> result;
-	idx_t nargs = children.size();
-	if (!serializer.ShouldSerialize(StorageVersion::V2_0_0) && window) {
-		const auto &function_name = window->GetName();
-		if (function_name == "lead" || function_name == "lag") {
-			nargs = 1;
-		}
-	}
-
-	for (idx_t i = 0; i < nargs; ++i) {
-		result.emplace_back(children[i]->Copy());
-	}
-
-	return result;
-}
-
-unique_ptr<Expression> BoundWindowExpression::SerializedOffset(Serializer &serializer) const {
-	if (!serializer.ShouldSerialize(StorageVersion::V2_0_0) && children.size() > 1 && window) {
-		const auto &function_name = window->GetName();
-		if (function_name == "lead" || function_name == "lag") {
-			return children[1]->Copy();
-		}
-	}
-
-	return nullptr;
-}
-
-unique_ptr<Expression> BoundWindowExpression::SerializedDefault(Serializer &serializer) const {
-	if (!serializer.ShouldSerialize(StorageVersion::V2_0_0) && children.size() > 2 && window) {
-		const auto &function_name = window->GetName();
-		if (function_name == "lead" || function_name == "lag") {
-			return children[2]->Copy();
-		}
-	}
-
-	return nullptr;
-}
-
 void BoundWindowExpression::Serialize(Serializer &serializer) const {
 	Expression::Serialize(serializer);
 	serializer.WriteProperty(200, "return_type", return_type);
-	serializer.WriteProperty(201, "children", SerializedChildren(serializer));
+	serializer.WriteProperty(201, "children", children);
 	if (type == ExpressionType::WINDOW_AGGREGATE) {
 		D_ASSERT(aggregate);
 		FunctionSerializer::Serialize(serializer, *aggregate, bind_info.get());
@@ -289,8 +250,6 @@ void BoundWindowExpression::Serialize(Serializer &serializer) const {
 	serializer.WriteProperty(207, "end", end);
 	serializer.WritePropertyWithDefault(208, "start_expr", start_expr, unique_ptr<Expression>());
 	serializer.WritePropertyWithDefault(209, "end_expr", end_expr, unique_ptr<Expression>());
-	serializer.WritePropertyWithDefault(210, "offset_expr", SerializedOffset(serializer), unique_ptr<Expression>());
-	serializer.WritePropertyWithDefault(211, "default_expr", SerializedDefault(serializer), unique_ptr<Expression>());
 	serializer.WriteProperty(212, "exclude_clause", exclude_clause);
 	serializer.WriteProperty(213, "distinct", distinct);
 	serializer.WriteProperty(214, "arg_orders", arg_orders);
@@ -326,7 +285,6 @@ unique_ptr<Expression> BoundWindowExpression::Deserialize(Deserializer &deserial
 	}
 	auto result =
 	    make_uniq<BoundWindowExpression>(return_type, std::move(aggregate), std::move(window), std::move(bind_info));
-	unique_ptr<Expression> expr;
 	result->children = std::move(children);
 	deserializer.ReadProperty(202, "partitions", result->partitions);
 	deserializer.ReadProperty(203, "orders", result->orders);
@@ -336,15 +294,6 @@ unique_ptr<Expression> BoundWindowExpression::Deserialize(Deserializer &deserial
 	deserializer.ReadProperty(207, "end", result->end);
 	deserializer.ReadPropertyWithExplicitDefault(208, "start_expr", result->start_expr, unique_ptr<Expression>());
 	deserializer.ReadPropertyWithExplicitDefault(209, "end_expr", result->end_expr, unique_ptr<Expression>());
-	// offset and default are now just children
-	deserializer.ReadPropertyWithExplicitDefault(210, "offset_expr", expr, unique_ptr<Expression>());
-	if (expr) {
-		result->children.emplace_back(std::move(expr));
-	}
-	deserializer.ReadPropertyWithExplicitDefault(211, "default_expr", expr, unique_ptr<Expression>());
-	if (expr) {
-		result->children.emplace_back(std::move(expr));
-	}
 	deserializer.ReadProperty(212, "exclude_clause", result->exclude_clause);
 	deserializer.ReadProperty(213, "distinct", result->distinct);
 	deserializer.ReadPropertyWithExplicitDefault(214, "arg_orders", result->arg_orders, vector<BoundOrderByNode>());
@@ -372,10 +321,9 @@ unique_ptr<Expression> BoundWindowExpression::Deserialize(Deserializer &deserial
 
 		auto &context = deserializer.Get<ClientContext &>();
 		auto binder = Binder::CreateBinder(context);
-		EntryLookupInfo lookup(CatalogType::SCALAR_FUNCTION_ENTRY, QualifiedName(Identifier(name)));
-		auto entry = binder->GetCatalogEntry(Identifier::SystemCatalog(), Identifier::DefaultSchema(), lookup,
-		                                     OnEntryNotFound::THROW_EXCEPTION);
-		auto &func = entry->Cast<WindowFunctionCatalogEntry>();
+		auto &func = Catalog::GetBuiltinEntry(context, CatalogType::SCALAR_FUNCTION_ENTRY, Identifier(name),
+		                                      OnEntryNotFound::THROW_EXCEPTION)
+		                 ->Cast<WindowFunctionCatalogEntry>();
 
 		FunctionBinder function_binder(*binder);
 		ErrorData error_win;

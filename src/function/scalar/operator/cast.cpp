@@ -1,7 +1,6 @@
 #include "duckdb/function/scalar/operator_functions.hpp"
 #include "duckdb/function/scalar_function.hpp"
 #include "duckdb/planner/expression/bound_cast_expression.hpp"
-#include "duckdb/planner/expression/legacy_bound_cast_expression.hpp"
 #include "duckdb/planner/expression/bound_function_expression.hpp"
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/serializer/serializer.hpp"
@@ -89,6 +88,9 @@ void CastFunction(DataChunk &args, ExpressionState &state, Vector &result) {
 	auto error_ref = cast_data.try_cast ? &error_message : nullptr;
 	CastParameters parameters(cast_data.bound_cast.GetCastData(), false, error_ref, lstate);
 	parameters.query_location = cast_expr.GetQueryLocation();
+	if (state.HasContext()) {
+		parameters.context = &state.GetContext();
+	}
 	parameters.cast_source = &BoundCastExpression::Child(cast_expr);
 	parameters.cast_target = cast_expr;
 	cast_data.bound_cast.Cast(source, result, count, parameters);
@@ -124,14 +126,6 @@ static ExpressionType CastGetExpressionType(FunctionToStringInput &input) {
 	return ExpressionType::OPERATOR_CAST;
 }
 
-static unique_ptr<Expression> CastLegacySerializeCallback(FunctionToStringInput &input) {
-	auto &cast_data = input.bind_data->Cast<CastFunctionData>();
-	if (cast_data.is_default_cast) {
-		throw NotImplementedException("Default casts cannot be represented by the legacy cast format");
-	}
-	return make_uniq<LegacyBoundCastExpression>(input.GetChild(0).Copy(), cast_data.target_type, cast_data.try_cast);
-}
-
 static void CastFunctionSerialize(Serializer &serializer, const optional_ptr<FunctionData> bind_data_p,
                                   const BoundScalarFunction &function) {
 	auto &bind_data = bind_data_p->Cast<CastFunctionData>();
@@ -160,7 +154,6 @@ ScalarFunction CastFun::GetFunction() {
 	cast_fun.GetSignature().AddParameter("value", LogicalType::ANY);
 	cast_fun.SetToStringCallback(CastToString);
 	cast_fun.SetGetExpressionTypeCallback(CastGetExpressionType);
-	cast_fun.SetLegacySerializeCallback(CastLegacySerializeCallback);
 	cast_fun.SetSerializeCallback(CastFunctionSerialize);
 	cast_fun.SetDeserializeCallback(CastFunctionDeserialize);
 	cast_fun.SetInitStateCallback(CastInitLocalState);

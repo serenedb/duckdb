@@ -200,9 +200,8 @@ public:
 
 	//! Create a blob Value from a data pointer and a length: no bytes are interpreted
 	DUCKDB_API static Value BLOB(const_data_ptr_t data, idx_t len);
-	static Value BLOB_RAW(const string &data) { // NOLINT
-		return Value::BLOB(const_data_ptr_cast(data.c_str()), data.size());
-	}
+	//! Create a blob Value that takes over the bytes of `data`: no bytes are interpreted
+	DUCKDB_API static Value BLOB_RAW(string data); // NOLINT
 	static Value BLOB_RAW(std::string_view data) {
 		return Value::BLOB(
 		    const_data_ptr_cast(data.data()), // NOLINT(bugprone-suspicious-stringview-data-usage): length is passed
@@ -376,6 +375,12 @@ private:
 	template <class T>
 	T GetValueInternal() const;
 };
+
+// Abseil hash support: delegates to Value::Hash(). Found via ADL.
+template <typename H>
+H AbslHashValue(H h, const Value &v) {
+	return H::combine(std::move(h), v.Hash());
+}
 
 //===--------------------------------------------------------------------===//
 // Type-specific getters

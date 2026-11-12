@@ -27,6 +27,10 @@ BindResult HavingBinder::BindColumnRef(unique_ptr<ParsedExpression> &expr_ptr, i
 	auto col_ref = expr_ptr->Cast<ColumnRefExpression>();
 	const auto &column_name = col_ref.GetColumnName();
 
+	auto &names = col_ref.ColumnNames();
+	if (binder.macro_binding && col_ref.IsQualified() && names[names.size() - 2] == binder.macro_binding->GetAlias()) {
+		return ExpressionBinder::BindExpression(expr_ptr, depth);
+	}
 	if (!col_ref.IsQualified()) {
 		// Try binding as a lambda parameter.
 		auto lambda_ref = LambdaRefExpression::FindMatchingBinding(lambda_bindings, col_ref.GetColumnName());
@@ -45,7 +49,7 @@ BindResult HavingBinder::BindColumnRef(unique_ptr<ParsedExpression> &expr_ptr, i
 	auto found_alias = column_alias_binder.BindAlias(*this, expr_ptr, depth, root_expression, alias_result);
 	if (found_alias) {
 		if (depth > 0) {
-			throw BinderException("Having clause cannot reference alias \"%s\" in correlated subquery", column_name);
+			throw BinderException("Having clause cannot reference alias %s in correlated subquery", column_name);
 		}
 		return alias_result;
 	}
@@ -60,7 +64,7 @@ BindResult HavingBinder::BindColumnRef(unique_ptr<ParsedExpression> &expr_ptr, i
 	}
 
 	if (depth > 0) {
-		throw BinderException("Having clause cannot reference column \"%s\" in correlated subquery and group by all",
+		throw BinderException("Having clause cannot reference column %s in correlated subquery and group by all",
 		                      column_name);
 	}
 

@@ -1,5 +1,8 @@
 #include "duckdb/common/multi_file/multi_file_list.hpp"
+#include "duckdb/common/multi_file/multi_file_reader.hpp"
+#include "duckdb/common/multi_file/multi_file_states.hpp"
 #include "duckdb/common/multi_file/table_function_multi_file.hpp"
+#include "duckdb/execution/operator/csv_scanner/string_value_scanner.hpp"
 #include "duckdb/execution/operator/csv_scanner/csv_error.hpp"
 #include "duckdb/execution/operator/csv_scanner/csv_schema_discovery.hpp"
 #include "duckdb/execution/operator/csv_scanner/global_csv_state.hpp"
@@ -45,6 +48,7 @@ struct ReadSingleCSVFileLocalState : public LocalTableFunctionState {
 	CSVLocalState state;
 	//! Whether our caller claims the batches we read - see table_function_claim_batch_t
 	bool claimed_externally = false;
+	unique_ptr<StringValueScanner> lookup;
 };
 
 //! The columns "force_not_null" was given, looked up the way column names are compared
@@ -327,7 +331,21 @@ static unique_ptr<GlobalTableFunctionState> ReadSingleCSVFileInitGlobal(ClientCo
 	auto &file_scan = *result->file_scan;
 	for (auto &column_index : input.column_indexes) {
 		const auto col_id = column_index.GetPrimaryIndex();
+		column_t virtual_column_id = DConstants::INVALID_INDEX;
 		if (IsVirtualColumn(col_id)) {
+			virtual_column_id = col_id;
+		} else if (file_input.virtual_columns) {
+			auto entry = file_input.virtual_columns->find(col_id);
+			if (entry != file_input.virtual_columns->end()) {
+				virtual_column_id = entry->second;
+			}
+		}
+		if (virtual_column_id == MultiFileReader::COLUMN_IDENTIFIER_FILE_ROW_NUMBER) {
+			file_scan.column_ids.push_back(MultiFileLocalColumnId(col_id));
+			file_scan.AddVirtualColumn(virtual_column_id);
+			continue;
+		}
+		if (virtual_column_id != DConstants::INVALID_INDEX) {
 			continue;
 		}
 		file_scan.column_ids.push_back(MultiFileLocalColumnId(col_id));
@@ -472,10 +490,90 @@ static unique_ptr<NodeStatistics> ReadSingleCSVFileCardinality(ClientContext &co
 	return make_uniq<NodeStatistics>(per_file_cardinality);
 }
 
+static virtual_column_map_t ReadSingleCSVFileGetVirtualColumns(ClientContext &, optional_ptr<FunctionData>) {
+	// file_row_number for CSV = byte offset of the row's start in the file. Unique per row, stable across re-reads
+	// of the same file, so it can serve as a primary key for consumers that re-locate a row (the lookup function
+	// below seeks to these offsets).
+	virtual_column_map_t result;
+	result.emplace(MultiFileReader::COLUMN_IDENTIFIER_FILE_ROW_NUMBER,
+	               TableColumn("file_row_number", LogicalType::BIGINT));
+	return result;
+}
+
+namespace {
+
+// Maps a global byte offset to (buffer_idx, buffer_pos) and returns a tight
+// CSVIterator pinned to that offset. SetExactBoundary marks first_one=true
+// so the scanner trusts the offset is a real row start (no SetStart).
+//
+// Quirk: the pk encoding for non-first rows points at the trailing newline of
+// the previous row (pre-existing upstream behavior of
+// line_positions_per_row.begin -- see StringValueResult::AddRowInternal).
+CSVIterator MakeTightIterator(CSVFileScan &file_scan, idx_t global_offset, idx_t boundary_idx) {
+	const auto buf_size = file_scan.buffer_manager->GetBufferSize();
+	idx_t buf_idx = global_offset / buf_size;
+	idx_t buf_pos = global_offset % buf_size;
+	auto handle = file_scan.buffer_manager->GetBuffer(buf_idx);
+	const bool empty_lines_are_rows = file_scan.state_machine->dialect_options.num_cols == 1;
+	for (bool skipped_newline = false; handle;) {
+		if (buf_pos == handle->actual_size) {
+			if (handle->is_last_buffer) {
+				break;
+			}
+			handle = file_scan.buffer_manager->GetBuffer(++buf_idx);
+			buf_pos = 0;
+			continue;
+		}
+		const char c = handle->Ptr()[buf_pos];
+		if ((c != '\r' && c != '\n') || (skipped_newline && empty_lines_are_rows)) {
+			break;
+		}
+		skipped_newline = skipped_newline || c == '\n';
+		++buf_pos;
+	}
+	CSVIterator iter = file_scan.start_iterator;
+	iter.SetExactBoundary(buf_idx, buf_pos, buf_pos + 1, boundary_idx);
+	return iter;
+}
+
+void ReadSingleCSVFileLookup(ClientContext &context, TableFunctionInput &input, DataChunk &output) {
+	auto &gstate = input.global_state->Cast<ReadSingleCSVFileGlobalState>();
+	auto &lstate = input.local_state->Cast<ReadSingleCSVFileLocalState>();
+	auto &file_scan = gstate.file_scan;
+	if (!lstate.lookup) {
+		lstate.lookup =
+		    make_uniq<StringValueScanner>(0, file_scan->buffer_manager, file_scan->state_machine,
+		                                  file_scan->error_handler, file_scan, false, file_scan->start_iterator);
+		lstate.lookup->row_lookup = true;
+	}
+	auto &scanner = *lstate.lookup;
+	scanner.GetStringValueResult().Reset();
+	for (idx_t i = 0; i < input.pk_lookups.size(); i++) {
+		scanner.ResetForAppend(MakeTightIterator(*file_scan, NumericCast<idx_t>(input.pk_lookups[i]), i));
+		scanner.ParseChunkAppend();
+		while (scanner.IsSuspended()) {
+			file_scan->buffer_manager->GetBuffer(scanner.PendingBufferIdx());
+			scanner.ParseChunk();
+		}
+		input.pk_survivors[i] = i;
+	}
+	scanner.Flush(output, false);
+	D_ASSERT(output.size() == input.pk_lookups.size());
+	if (file_scan->file_row_number_idx != DConstants::INVALID_INDEX) {
+		auto writer = FlatVector::Writer<int64_t>(output.data[file_scan->file_row_number_idx], output.size());
+		for (auto offset : input.pk_lookups) {
+			writer.WriteValue(offset);
+		}
+	}
+}
+
+} // namespace
+
 TableFunction ReadCSVTableFunction::GetSingleFileFunction() {
 	TableFunction read_csv("read_single_csv_file", FunctionSignature().AddPositionalOnly("path", LogicalType::VARCHAR),
 	                       ReadSingleCSVFileFunction, ReadSingleCSVFileBind, ReadSingleCSVFileInitGlobal,
 	                       ReadSingleCSVFileInitLocal);
+	read_csv.get_virtual_columns = ReadSingleCSVFileGetVirtualColumns;
 	read_csv.table_scan_progress = ReadSingleCSVFileProgress;
 	read_csv.cardinality = ReadSingleCSVFileCardinality;
 	read_csv.projection_pushdown = true;
@@ -498,6 +596,10 @@ TableFunction ReadCSVTableFunction::GetMultiFileFunction(Identifier name) {
 	settings.finish_batch = ReadSingleCSVFileFinishBatch;
 	settings.supports_read_ahead = ReadSingleCSVFileSupportsReadAhead;
 	settings.schedule_io = ReadSingleCSVFileScheduleIO;
+	settings.lookup = ReadSingleCSVFileLookup;
+	settings.supports_lookup = ReadSingleCSVFileSupportsReadAhead;
+	settings.row_storage = true;
+	settings.row_id_names = {"file_index", "file_offset"};
 	// the scanner converts to the types the scan asks for while parsing, rather than casting its output
 	settings.supports_cast_map = true;
 	return TableFunctionMultiFileWrapper::CreateFunction(GetSingleFileFunction(), std::move(name), std::move(settings));

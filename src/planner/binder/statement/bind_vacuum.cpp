@@ -1,5 +1,6 @@
 #include "duckdb/parser/expression/columnref_expression.hpp"
 #include "duckdb/parser/statement/vacuum_statement.hpp"
+#include "duckdb/parser/tableref/basetableref.hpp"
 #include "duckdb/planner/binder.hpp"
 #include "duckdb/planner/operator/logical_get.hpp"
 #include "duckdb/planner/operator/logical_projection.hpp"
@@ -27,7 +28,13 @@ void Binder::BindVacuumTable(LogicalVacuum &vacuum, unique_ptr<LogicalOperator> 
 		throw BinderException("Can only vacuum or analyze base tables");
 	}
 	auto &table = *table_ptr;
-	vacuum.SetTable(table);
+
+	// Bind columns against the name the table ref was bound under, not the
+	// catalog entry's name: for facade tables the resolved entry is the hidden
+	// store table (a different, qualified name), so table.name would not match
+	// the binding alias.
+	auto &base_ref = info.ref->Cast<BaseTableRef>();
+	auto &binding_name = info.ref->alias.empty() ? base_ref.Table() : info.ref->alias;
 
 	vector<unique_ptr<Expression>> select_list;
 	auto &columns = info.columns;
@@ -47,7 +54,7 @@ void Binder::BindVacuumTable(LogicalVacuum &vacuum, unique_ptr<LogicalOperator> 
 		}
 		column_name_set.insert(col_name);
 		if (!table.ColumnExists(col_name)) {
-			throw BinderException("Column with name \"%s\" does not exist", col_name);
+			throw BinderException("Column with name %s does not exist", col_name);
 		}
 		auto &col = table.GetColumn(col_name);
 		// ignore generated column
@@ -57,7 +64,7 @@ void Binder::BindVacuumTable(LogicalVacuum &vacuum, unique_ptr<LogicalOperator> 
 			    col.GetName());
 		}
 		non_generated_column_names.emplace_back(col_name);
-		ColumnRefExpression colref(col_name, table.name);
+		ColumnRefExpression colref(col_name, binding_name);
 		auto result = bind_context.BindColumn(colref, 0);
 		if (result.HasError()) {
 			result.error.Throw();
@@ -65,6 +72,10 @@ void Binder::BindVacuumTable(LogicalVacuum &vacuum, unique_ptr<LogicalOperator> 
 		select_list.push_back(std::move(result.expression));
 	}
 	info.columns = non_generated_column_names;
+	if (!table.IsDuckTable()) {
+		return;
+	}
+	vacuum.SetTable(table);
 
 	auto &column_ids = get.GetColumnIds();
 	D_ASSERT(select_list.size() == column_ids.size());

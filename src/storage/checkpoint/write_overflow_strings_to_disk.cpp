@@ -144,6 +144,7 @@ void WriteOverflowStringsToDisk::AllocateNewBlock(UncompressedStringSegmentState
 	}
 	offset = 0;
 	block_id = new_block_id;
+	Store<block_id_t>(INVALID_BLOCK, handle.GetDataMutable() + GetStringSpace());
 	auto &block_manager = partial_block_manager.GetBlockManager();
 	state.RegisterBlock(block_manager, new_block_id);
 }

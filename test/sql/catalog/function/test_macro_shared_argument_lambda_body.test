@@ -1,0 +1,77 @@
+# name: test/sql/catalog/function/test_macro_shared_argument_lambda_body.test
+# description: A macro shares an argument its body uses twice only if the arguments inlined next to it can be in a lambda body
+# group: [function]
+
+statement ok
+CREATE TABLE tab0(col0 INTEGER, col1 INTEGER, col2 INTEGER)
+
+statement ok
+INSERT INTO tab0 VALUES (83, 0, 38), (26, 0, 79), (43, 81, 24)
+
+statement ok
+CREATE MACRO pick(a, b := 0) AS CASE WHEN a > b THEN a ELSE -a END
+
+statement ok
+CREATE MACRO mx(x) AS max(x)
+
+query II
+SELECT col1, NULLIF(count(*), max(-NULLIF(-col2, col2))) FROM tab0 GROUP BY col1 ORDER BY col1
+----
+0	2
+81	1
+
+query II
+SELECT col1, NULLIF(count(*), random() * 0 + max(-NULLIF(-col2, col2))) FROM tab0 GROUP BY col1 ORDER BY col1
+----
+0	2
+81	1
+
+query II
+SELECT col1, NULLIF(count(*), mx(-NULLIF(-col2, col2))) FROM tab0 GROUP BY col1 ORDER BY col1
+----
+0	2
+81	1
+
+query II
+SELECT col1, pick(count(*), b := max(-NULLIF(-col2, col2))) FROM tab0 GROUP BY col1 ORDER BY col1
+----
+0	-2
+81	-1
+
+query I
+SELECT col1 FROM tab0 GROUP BY col1 HAVING NULLIF(count(*), max(-NULLIF(-col2, col2))) > 1
+----
+0
+
+statement ok
+PREPARE shared_with_aggregate AS SELECT col1, NULLIF(count(*), max(-NULLIF(-col2, col2))) FROM tab0 GROUP BY col1 ORDER BY col1
+
+query II
+EXECUTE shared_with_aggregate
+----
+0	2
+81	1
+
+query II
+SELECT col1, NULLIF(count(*), (SELECT max(col0) FROM tab0)) FROM tab0 GROUP BY col1 ORDER BY col1
+----
+0	2
+81	1
+
+query II
+SELECT col1, NULLIF(count(*), (SELECT col1 * 0 + 2)) FROM tab0 GROUP BY col1 ORDER BY col1
+----
+0	NULL
+81	1
+
+query II
+SELECT col1, NULLIF(count(*), row_number() OVER (ORDER BY col1)) FROM tab0 GROUP BY col1 ORDER BY col1
+----
+0	2
+81	1
+
+query II
+SELECT col1, NULLIF(max(-NULLIF(-col2, col2)), 5) FROM tab0 GROUP BY col1 ORDER BY col1
+----
+0	79
+81	24

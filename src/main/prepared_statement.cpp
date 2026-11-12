@@ -76,7 +76,7 @@ idx_t PreparedStatement::GetParameterCount() const {
 	return info.named_param_map.size();
 }
 
-bool PreparedStatement::TryGetParameterType(const Identifier &identifier, LogicalType &result) const {
+bool PreparedStatement::TryGetParameterType(std::string_view identifier, LogicalType &result) const {
 	auto entry = info.parameter_types.find(identifier);
 	if (entry == info.parameter_types.end()) {
 		return false;

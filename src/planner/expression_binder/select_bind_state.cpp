@@ -4,19 +4,23 @@
 namespace duckdb {
 
 unique_ptr<ParsedExpression> SelectBindState::BindAlias(idx_t index) {
+	ReferenceAlias(index);
+	return original_expressions[index]->Copy();
+}
+
+void SelectBindState::ReferenceAlias(idx_t index) {
 	if (volatile_expressions.find(index) != volatile_expressions.end()) {
-		throw BinderException("Alias \"%s\" referenced - but the expression has side "
+		throw BinderException("Alias %s referenced - but the expression has side "
 		                      "effects. This is not yet supported.",
 		                      original_expressions[index]->GetAlias());
 	}
 	referenced_aliases.insert(index);
-	return original_expressions[index]->Copy();
 }
 
 void SelectBindState::SetExpressionIsVolatile(idx_t index) {
 	// check if this expression has been referenced before
 	if (referenced_aliases.find(index) != referenced_aliases.end()) {
-		throw BinderException("Alias \"%s\" referenced - but the expression has side "
+		throw BinderException("Alias %s referenced - but the expression has side "
 		                      "effects. This is not yet supported.",
 		                      original_expressions[index]->GetAlias());
 	}

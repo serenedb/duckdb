@@ -44,6 +44,14 @@ struct SwarWord {
 		return (word & MSB) == 0;
 	}
 
+	static inline uint64_t LowerAscii(uint64_t word) {
+		return word | (Letters(word, 'A') >> 2);
+	}
+
+	static inline uint64_t UpperAscii(uint64_t word) {
+		return word ^ (Letters(word, 'a') >> 2);
+	}
+
 	//! Sums up the individual bytes of `word`, only valid if the sum does not exceed 255
 	static inline idx_t SumBytes(uint64_t word) {
 		return static_cast<idx_t>((word * LSB) >> 56);
@@ -75,6 +83,12 @@ struct SwarWord {
 private:
 	//! Moves the flag of byte i to bit 56 + i
 	static constexpr uint64_t PACK_MULTIPLIER = 0x0102040810204080ULL;
+
+	static inline uint64_t Letters(uint64_t word, uint8_t first) {
+		const auto low = word & LOW7;
+		return (low + Repeat(static_cast<uint8_t>(0x80 - first))) &
+		       ~(low + Repeat(static_cast<uint8_t>(0x80 - first - 26))) & ~word & MSB;
+	}
 };
 
 //! Bit masks over blocks of 64 bytes, one bit per byte (bit i is byte i)

@@ -19,6 +19,39 @@ bool ExpressionMatcher::Match(Expression &expr, vector<reference<Expression>> &b
 	return true;
 }
 
+bool ExpressionMatcher::CanMatch(ExpressionClass expression_class, ExpressionType expression_type,
+                                 optional_ptr<const Identifier> function_name) const {
+	if (expr_type && !expr_type->Match(expression_type)) {
+		return false;
+	}
+	return expr_class == ExpressionClass::INVALID || expr_class == expression_class;
+}
+
+bool ComparisonExpressionMatcher::CanMatch(ExpressionClass expression_class, ExpressionType expression_type,
+                                           optional_ptr<const Identifier> function_name) const {
+	return ExpressionMatcher::CanMatch(expression_class, expression_type, function_name) &&
+	       BoundComparisonExpression::IsComparison(expression_type);
+}
+
+bool InClauseExpressionMatcher::CanMatch(ExpressionClass expression_class, ExpressionType expression_type,
+                                         optional_ptr<const Identifier> function_name) const {
+	return ExpressionMatcher::CanMatch(expression_class, expression_type, function_name) &&
+	       expression_type == ExpressionType::COMPARE_IN;
+}
+
+bool FunctionExpressionMatcher::CanMatch(ExpressionClass expression_class, ExpressionType expression_type,
+                                         optional_ptr<const Identifier> function_name) const {
+	if (!ExpressionMatcher::CanMatch(expression_class, expression_type, function_name)) {
+		return false;
+	}
+	return !function || !function_name || function->Match(*function_name);
+}
+
+bool FoldableConstantMatcher::CanMatch(ExpressionClass expression_class, ExpressionType expression_type,
+                                       optional_ptr<const Identifier> function_name) const {
+	return expression_class != ExpressionClass::BOUND_LAMBDA && !Expression::IsNeverFoldable(expression_class);
+}
+
 bool ExpressionEqualityMatcher::Match(Expression &expr, vector<reference<Expression>> &bindings) {
 	if (!expr.Equals(expression)) {
 		return false;

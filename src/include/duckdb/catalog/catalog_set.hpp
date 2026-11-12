@@ -98,7 +98,7 @@ public:
 
 	//! Rollback <entry> to be the currently valid entry for a certain catalog
 	//! entry
-	void Undo(CatalogEntry &entry);
+	void Undo(CatalogTransaction transaction, CatalogEntry &entry);
 
 	//! Scan the catalog set, invoking the callback method for every committed entry
 	DUCKDB_API void Scan(const std::function<void(CatalogEntry &)> &callback);
@@ -168,8 +168,9 @@ private:
 	bool VerifyVacancy(CatalogTransaction transaction, CatalogEntry &entry);
 	//! Start the catalog entry chain with a dummy node
 	bool StartChain(CatalogTransaction transaction, const Identifier &name, unique_lock<mutex> &read_lock);
-	bool RenameEntryInternal(CatalogTransaction transaction, CatalogEntry &old, const Identifier &new_name,
-	                         AlterInfo &alter_info, unique_lock<mutex> &read_lock);
+	bool RenameEntryInternal(CatalogTransaction transaction, CatalogEntry &old, CatalogSet &target,
+	                         const Identifier &new_name, AlterInfo &alter_info, unique_lock<mutex> &read_lock,
+	                         unique_lock<mutex> &target_lock);
 
 private:
 	DuckCatalog &catalog;

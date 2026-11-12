@@ -11,7 +11,7 @@
 #include "parquet_float16.hpp"
 #include "reader/string_column_reader.hpp"
 #include "reader/variant_column_reader.hpp"
-#include "zstd/common/xxhash.hpp"
+#include "common/xxhash.h"
 #include "duckdb/common/types/blob.hpp"
 #include "duckdb/common/types/time.hpp"
 #include "duckdb/common/types/uuid.hpp"

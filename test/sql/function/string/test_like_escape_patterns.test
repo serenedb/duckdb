@@ -1,0 +1,95 @@
+# name: test/sql/function/string/test_like_escape_patterns.test
+# description: LIKE, LIKE ... ESCAPE and GLOB with constant patterns that escape their wildcards match as the same patterns read from a table, pushed into the scan and as expressions
+# group: [string]
+
+statement ok
+CREATE TABLE strs AS SELECT unnest(['', 'a', 'a%b', 'a_b', 'a\b', 'ab', 'axb', 'a%', '50%', '50% off', 'x50%y', '%', '_', '\', 'a*b?', 'a*bc', 'a[b', 'a#b', '#', 'a%b%c', 'A%B', 'a_bc', 'a_b%', 'za\b', 'a\\b', '%_', 'a_', 'zz*bc']) AS s
+
+statement ok
+CREATE TABLE pats(id INTEGER, kind VARCHAR, p VARCHAR, e VARCHAR)
+
+statement ok
+INSERT INTO pats VALUES (1, 'like', 'a\%b', NULL), (2, 'like', 'a\_b%', NULL), (3, 'like', '%a\\b', NULL), (4, 'like', '%50\%%', NULL), (5, 'like', 'a\%', NULL), (6, 'like', '\%', NULL), (7, 'like', '\_', NULL), (8, 'like', '\\', NULL), (9, 'like', '%\%', NULL), (10, 'like', '_', NULL), (11, 'like', '%', NULL), (12, 'like', '', NULL), (13, 'like', '%%', NULL), (14, 'like', 'a\b', NULL), (15, 'like', '\a\b', NULL), (16, 'escape', 'a#%b', '#'), (17, 'escape', 'a%%b', '%'), (18, 'escape', 'a$_b%%', '$'), (19, 'escape', '%a\b', ''), (20, 'escape', '%%50#%%%', '#'), (21, 'escape', 'a%b', ''), (22, 'escape', '#%#_', '#'), (23, 'escape', '##', '#'), (24, 'escape', 'a__', '_'), (25, 'glob', 'a\*b\?*', NULL), (26, 'glob', 'a\[*', NULL), (27, 'glob', '*\*bc', NULL), (28, 'glob', 'a\*b?', NULL), (29, 'glob', '\\', NULL), (30, 'not_like', 'a\_b%', NULL), (31, 'not_like', '%50\%%', NULL), (32, 'not_escape', 'a#%b', '#')
+
+statement ok
+CREATE TABLE matched AS SELECT id, count(*) FILTER (WHERE CASE kind WHEN 'like' THEN s LIKE p WHEN 'escape' THEN s LIKE p ESCAPE e WHEN 'glob' THEN s GLOB p WHEN 'not_like' THEN s NOT LIKE p ELSE s NOT LIKE p ESCAPE e END) AS c FROM strs, pats GROUP BY id
+
+statement ok
+CREATE TABLE pushed AS
+SELECT 1 AS id, count(*) AS c FROM strs WHERE s LIKE 'a\%b' UNION ALL
+SELECT 2, count(*) FROM strs WHERE s LIKE 'a\_b%' UNION ALL
+SELECT 3, count(*) FROM strs WHERE s LIKE '%a\\b' UNION ALL
+SELECT 4, count(*) FROM strs WHERE s LIKE '%50\%%' UNION ALL
+SELECT 5, count(*) FROM strs WHERE s LIKE 'a\%' UNION ALL
+SELECT 6, count(*) FROM strs WHERE s LIKE '\%' UNION ALL
+SELECT 7, count(*) FROM strs WHERE s LIKE '\_' UNION ALL
+SELECT 8, count(*) FROM strs WHERE s LIKE '\\' UNION ALL
+SELECT 9, count(*) FROM strs WHERE s LIKE '%\%' UNION ALL
+SELECT 10, count(*) FROM strs WHERE s LIKE '_' UNION ALL
+SELECT 11, count(*) FROM strs WHERE s LIKE '%' UNION ALL
+SELECT 12, count(*) FROM strs WHERE s LIKE '' UNION ALL
+SELECT 13, count(*) FROM strs WHERE s LIKE '%%' UNION ALL
+SELECT 14, count(*) FROM strs WHERE s LIKE 'a\b' UNION ALL
+SELECT 15, count(*) FROM strs WHERE s LIKE '\a\b' UNION ALL
+SELECT 16, count(*) FROM strs WHERE s LIKE 'a#%b' ESCAPE '#' UNION ALL
+SELECT 17, count(*) FROM strs WHERE s LIKE 'a%%b' ESCAPE '%' UNION ALL
+SELECT 18, count(*) FROM strs WHERE s LIKE 'a$_b%%' ESCAPE '$' UNION ALL
+SELECT 19, count(*) FROM strs WHERE s LIKE '%a\b' ESCAPE '' UNION ALL
+SELECT 20, count(*) FROM strs WHERE s LIKE '%%50#%%%' ESCAPE '#' UNION ALL
+SELECT 21, count(*) FROM strs WHERE s LIKE 'a%b' ESCAPE '' UNION ALL
+SELECT 22, count(*) FROM strs WHERE s LIKE '#%#_' ESCAPE '#' UNION ALL
+SELECT 23, count(*) FROM strs WHERE s LIKE '##' ESCAPE '#' UNION ALL
+SELECT 24, count(*) FROM strs WHERE s LIKE 'a__' ESCAPE '_' UNION ALL
+SELECT 25, count(*) FROM strs WHERE s GLOB 'a\*b\?*' UNION ALL
+SELECT 26, count(*) FROM strs WHERE s GLOB 'a\[*' UNION ALL
+SELECT 27, count(*) FROM strs WHERE s GLOB '*\*bc' UNION ALL
+SELECT 28, count(*) FROM strs WHERE s GLOB 'a\*b?' UNION ALL
+SELECT 29, count(*) FROM strs WHERE s GLOB '\\' UNION ALL
+SELECT 30, count(*) FROM strs WHERE s NOT LIKE 'a\_b%' UNION ALL
+SELECT 31, count(*) FROM strs WHERE s NOT LIKE '%50\%%' UNION ALL
+SELECT 32, count(*) FROM strs WHERE s NOT LIKE 'a#%b' ESCAPE '#'
+
+statement ok
+CREATE TABLE filtered AS
+SELECT 1 AS id, count(*) FILTER (WHERE s LIKE 'a\%b') AS c FROM strs UNION ALL
+SELECT 2, count(*) FILTER (WHERE s LIKE 'a\_b%') FROM strs UNION ALL
+SELECT 3, count(*) FILTER (WHERE s LIKE '%a\\b') FROM strs UNION ALL
+SELECT 4, count(*) FILTER (WHERE s LIKE '%50\%%') FROM strs UNION ALL
+SELECT 5, count(*) FILTER (WHERE s LIKE 'a\%') FROM strs UNION ALL
+SELECT 6, count(*) FILTER (WHERE s LIKE '\%') FROM strs UNION ALL
+SELECT 7, count(*) FILTER (WHERE s LIKE '\_') FROM strs UNION ALL
+SELECT 8, count(*) FILTER (WHERE s LIKE '\\') FROM strs UNION ALL
+SELECT 9, count(*) FILTER (WHERE s LIKE '%\%') FROM strs UNION ALL
+SELECT 10, count(*) FILTER (WHERE s LIKE '_') FROM strs UNION ALL
+SELECT 11, count(*) FILTER (WHERE s LIKE '%') FROM strs UNION ALL
+SELECT 12, count(*) FILTER (WHERE s LIKE '') FROM strs UNION ALL
+SELECT 13, count(*) FILTER (WHERE s LIKE '%%') FROM strs UNION ALL
+SELECT 14, count(*) FILTER (WHERE s LIKE 'a\b') FROM strs UNION ALL
+SELECT 15, count(*) FILTER (WHERE s LIKE '\a\b') FROM strs UNION ALL
+SELECT 16, count(*) FILTER (WHERE s LIKE 'a#%b' ESCAPE '#') FROM strs UNION ALL
+SELECT 17, count(*) FILTER (WHERE s LIKE 'a%%b' ESCAPE '%') FROM strs UNION ALL
+SELECT 18, count(*) FILTER (WHERE s LIKE 'a$_b%%' ESCAPE '$') FROM strs UNION ALL
+SELECT 19, count(*) FILTER (WHERE s LIKE '%a\b' ESCAPE '') FROM strs UNION ALL
+SELECT 20, count(*) FILTER (WHERE s LIKE '%%50#%%%' ESCAPE '#') FROM strs UNION ALL
+SELECT 21, count(*) FILTER (WHERE s LIKE 'a%b' ESCAPE '') FROM strs UNION ALL
+SELECT 22, count(*) FILTER (WHERE s LIKE '#%#_' ESCAPE '#') FROM strs UNION ALL
+SELECT 23, count(*) FILTER (WHERE s LIKE '##' ESCAPE '#') FROM strs UNION ALL
+SELECT 24, count(*) FILTER (WHERE s LIKE 'a__' ESCAPE '_') FROM strs UNION ALL
+SELECT 25, count(*) FILTER (WHERE s GLOB 'a\*b\?*') FROM strs UNION ALL
+SELECT 26, count(*) FILTER (WHERE s GLOB 'a\[*') FROM strs UNION ALL
+SELECT 27, count(*) FILTER (WHERE s GLOB '*\*bc') FROM strs UNION ALL
+SELECT 28, count(*) FILTER (WHERE s GLOB 'a\*b?') FROM strs UNION ALL
+SELECT 29, count(*) FILTER (WHERE s GLOB '\\') FROM strs UNION ALL
+SELECT 30, count(*) FILTER (WHERE s NOT LIKE 'a\_b%') FROM strs UNION ALL
+SELECT 31, count(*) FILTER (WHERE s NOT LIKE '%50\%%') FROM strs UNION ALL
+SELECT 32, count(*) FILTER (WHERE s NOT LIKE 'a#%b' ESCAPE '#') FROM strs
+
+query IIII
+SELECT count(*) FILTER (WHERE pushed.c IS DISTINCT FROM matched.c), count(*) FILTER (WHERE filtered.c IS DISTINCT FROM matched.c), count(*), count(*) FILTER (WHERE matched.c > 0) FROM pushed FULL OUTER JOIN filtered USING (id) FULL OUTER JOIN matched USING (id)
+----
+0	0	32	32
+
+query IIIIIII
+SELECT count(*) FILTER (WHERE s LIKE 'a\%b'), count(*) FILTER (WHERE s LIKE 'a\_b%'), count(*) FILTER (WHERE s LIKE '%50\%%'), count(*) FILTER (WHERE s LIKE 'a#%b' ESCAPE '#'), count(*) FILTER (WHERE s LIKE 'a__' ESCAPE '_'), count(*) FILTER (WHERE s GLOB 'a\*b\?*'), count(*) FILTER (WHERE s LIKE '\a\b') FROM strs
+----
+1	3	3	1	1	1	1

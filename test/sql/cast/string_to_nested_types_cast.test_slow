@@ -26,7 +26,7 @@ foreach type DOUBLE[] FLOAT[]
 query I
 SELECT CAST('[[1,2,3], [3.333, 2.2, 1.1], [0]]' AS {type}[]);
 ----
-[[1.0, 2.0, 3.0], [3.333, 2.2, 1.1], [0.0]]
+[[1, 2, 3], [3.333, 2.2, 1.1], [0]]
 
 endloop
 
@@ -80,7 +80,7 @@ SELECT CAST(LIST(blob)::VARCHAR AS BLOB[]) FROM test_all_types();
 query I
 SELECT CAST(LIST(interval)::VARCHAR AS INTERVAL[]) FROM test_all_types();
 ----
-['00:00:00', '83 years 3 months 999 days 00:16:39.999999', NULL]
+['00:00:00', '83 years 3 mons 999 days 00:16:39.999999', NULL]
 
 
 #               Larger input to List cast
@@ -123,7 +123,7 @@ foreach type DOUBLE FLOAT
 query I
 SELECT CAST('{a:1, b:{a:2}, c: 0.00002}' AS STRUCT(a {type}, b STRUCT(a {type}), c {type}));
 ----
-{'a': 1.0, 'b': {'a': 2.0}, 'c': 2e-05}
+{'a': 1, 'b': {'a': 2}, 'c': 2e-05}
 
 endloop
 
@@ -196,5 +196,5 @@ query I
 SELECT CAST(struct_pack(A=>interval)::VARCHAR AS STRUCT(A INTERVAL)) FROM test_all_types();
 ----
 {'A': '00:00:00'}
-{'A': '83 years 3 months 999 days 00:16:39.999999'}
+{'A': '83 years 3 mons 999 days 00:16:39.999999'}
 {'A': NULL}

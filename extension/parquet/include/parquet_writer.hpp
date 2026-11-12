@@ -102,6 +102,12 @@ enum class TimeStampIsAdjustedToUTC : uint8_t {
 	ALWAYS_FALSE,
 };
 
+template <>
+const char *EnumUtil::ToChars<TimeStampIsAdjustedToUTC>(TimeStampIsAdjustedToUTC value);
+
+template <>
+TimeStampIsAdjustedToUTC EnumUtil::FromString<TimeStampIsAdjustedToUTC>(std::string_view value);
+
 class ParquetWriteTransformData {
 public:
 	ParquetWriteTransformData(ClientContext &context, const vector<LogicalType> &types,
@@ -283,6 +289,7 @@ public:
 	void SetWrittenStatistics(CopyFunctionFileStatistics &written_stats);
 	void FlushColumnStats(idx_t col_idx, duckdb_parquet::ColumnChunk &chunk,
 	                      optional_ptr<ColumnWriterStatistics> writer_stats);
+	void FlushNestedColumnStats(idx_t schema_idx, idx_t null_count, idx_t num_values);
 	void InitializePreprocessing(unique_ptr<ParquetWriteTransformData> &transform_data);
 	void InitializeSchemaElements();
 
@@ -308,7 +315,7 @@ private:
 	unique_ptr<AsyncFileWriter> writer;
 	std::shared_ptr<duckdb_apache::thrift::protocol::TProtocol> protocol;
 	duckdb_parquet::FileMetaData file_meta_data;
-	std::mutex lock;
+	mutex lock;
 
 	vector<unique_ptr<ColumnWriter>> column_writers;
 

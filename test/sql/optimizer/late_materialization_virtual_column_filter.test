@@ -1,0 +1,28 @@
+# name: test/sql/optimizer/late_materialization_virtual_column_filter.test
+# description: Late materialization of a scan that filters on its row id
+# group: [optimizer]
+
+statement ok
+SET late_materialization_lookup_max_rows = 0;
+
+statement ok
+CREATE TABLE lm_rowid AS SELECT i AS id, i % 7 AS grp, 'payload-' || i::VARCHAR AS payload FROM range(1000) t(i);
+
+query II
+EXPLAIN SELECT id, grp, payload FROM lm_rowid WHERE rowid > 5 ORDER BY grp, id LIMIT 3;
+----
+physical_plan	<REGEX>:.*HASH_JOIN.*SEMI.*
+
+query III
+SELECT id, grp, payload FROM lm_rowid WHERE rowid > 5 ORDER BY grp, id LIMIT 3;
+----
+7	0	payload-7
+14	0	payload-14
+21	0	payload-21
+
+query III
+SELECT id, grp, payload FROM lm_rowid WHERE rowid BETWEEN 100 AND 900 ORDER BY payload DESC LIMIT 3;
+----
+900	4	payload-900
+899	3	payload-899
+898	2	payload-898

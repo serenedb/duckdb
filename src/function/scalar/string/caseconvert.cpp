@@ -11,6 +11,8 @@
 
 #include "utf8proc_wrapper.hpp"
 
+#include <absl/strings/ascii.h>
+
 #include <string.h>
 
 namespace duckdb {
@@ -20,30 +22,172 @@ static string_t ASCIICaseConvert(StringHeap &heap, const char *input_data, idx_t
 	idx_t output_length = input_length;
 	auto result_str = heap.EmptyString(output_length);
 	auto result_data = result_str.GetDataWriteable();
-	for (idx_t i = 0; i < input_length; i++) {
-		result_data[i] = UnsafeNumericCast<char>(IS_UPPER ? StringUtil::ASCII_TO_UPPER_MAP[uint8_t(input_data[i])]
-		                                                  : StringUtil::ASCII_TO_LOWER_MAP[uint8_t(input_data[i])]);
+	if constexpr (IS_UPPER) {
+		absl::ascii_internal::AsciiStrToUpper(result_data, input_data, input_length);
+	} else {
+		absl::ascii_internal::AsciiStrToLower(result_data, input_data, input_length);
 	}
 	result_str.Finalize();
 	return result_str;
 }
 
+namespace {
+
+template <bool IS_UPPER>
+int32_t ConvertCodepoint(int32_t codepoint) {
+	return IS_UPPER ? Utf8Proc::CodepointToUpper(codepoint) : Utf8Proc::CodepointToLower(codepoint);
+}
+
+template <bool IS_UPPER>
+char ConvertAscii(char c) {
+	return UnsafeNumericCast<char>(IS_UPPER ? absl::ascii_toupper(static_cast<uint8_t>(c))
+	                                        : absl::ascii_tolower(static_cast<uint8_t>(c)));
+}
+
+template <bool IS_UPPER>
+uint64_t ConvertAsciiWord(const char *input, char *output) {
+	auto word = Load<uint64_t>(const_data_ptr_cast(input));
+	Store<uint64_t>(IS_UPPER ? SwarWord::UpperAscii(word) : SwarWord::LowerAscii(word), data_ptr_cast(output));
+	return word;
+}
+
+template <bool IS_UPPER>
+idx_t ConvertAsciiRun(const char *input, idx_t i, idx_t size, idx_t words_end, char *output) {
+	for (; i + SwarWord::SIZE <= words_end; i += SwarWord::SIZE) {
+		auto high = ConvertAsciiWord<IS_UPPER>(input + i, output + i) & SwarWord::MSB;
+		if (high) {
+			return i + SwarWord::FirstFlagged(high);
+		}
+	}
+	if (i < size && words_end == size && size >= SwarWord::SIZE) {
+		auto last = size - SwarWord::SIZE;
+		if (SwarWord::IsAscii(Load<uint64_t>(const_data_ptr_cast(input + last)))) {
+			ConvertAsciiWord<IS_UPPER>(input + last, output + last);
+			return size;
+		}
+	}
+	for (; i < size && !(input[i] & 0x80); i++) {
+		output[i] = ConvertAscii<IS_UPPER>(input[i]);
+	}
+	return i;
+}
+
+template <bool IS_UPPER>
+struct CaseTable {
+	CaseTable() : two_byte(), changing_blocks() {
+		for (int32_t codepoint = 0x80; codepoint < 0x800; codepoint++) {
+			auto converted = ConvertCodepoint<IS_UPPER>(codepoint);
+			if (converted < 0x80 || converted >= 0x800) {
+				continue;
+			}
+			const char bytes[] = {static_cast<char>(0xC0 | (converted >> 6)),
+			                      static_cast<char>(0x80 | (converted & 0x3F))};
+			memcpy(&two_byte[codepoint - 0x80], bytes, sizeof(bytes));
+		}
+		for (int32_t codepoint = 0x800; codepoint < 0x10000; codepoint++) {
+			if ((codepoint >= 0xD800 && codepoint < 0xE000) || ConvertCodepoint<IS_UPPER>(codepoint) != codepoint) {
+				changing_blocks[codepoint >> 14] |= uint64_t(1) << ((codepoint >> 8) & 63);
+			}
+		}
+	}
+
+	static const CaseTable &Get() {
+		static const CaseTable table;
+		return table;
+	}
+
+	bool Changing(int32_t codepoint) const {
+		return (changing_blocks[codepoint >> 14] >> ((codepoint >> 8) & 63)) & 1;
+	}
+
+	uint16_t two_byte[0x800 - 0x80];
+	uint64_t changing_blocks[4];
+};
+
+template <bool IS_UPPER>
+DUCKDB_NOINLINE idx_t ConvertCodepointSameSize(const char *input, idx_t size, char *output) {
+	int input_size = 0;
+	auto codepoint = Utf8Proc::UTF8ToCodepoint(input, input_size, size);
+	char converted[4];
+	int converted_size = 0;
+	if (!Utf8Proc::CodepointToUtf8(ConvertCodepoint<IS_UPPER>(codepoint), converted_size, converted) ||
+	    converted_size != input_size) {
+		return 0;
+	}
+	memcpy(output, converted, UnsafeNumericCast<idx_t>(converted_size));
+	return UnsafeNumericCast<idx_t>(converted_size);
+}
+
+template <bool IS_UPPER>
+[[gnu::always_inline]] inline idx_t ConvertSameSize(const CaseTable<IS_UPPER> &table, const char *input, idx_t size,
+                                                    char *output) {
+	auto lead = static_cast<uint8_t>(input[0]);
+	if (lead >= 0xC2 && lead < 0xE0 && size >= 2 && !IsCharacter(input[1])) {
+		auto codepoint = (lead & 0x1F) << 6 | (static_cast<uint8_t>(input[1]) & 0x3F);
+		auto bytes = table.two_byte[codepoint - 0x80];
+		if (!bytes) {
+			return 0;
+		}
+		memcpy(output, &bytes, sizeof(bytes));
+		return sizeof(bytes);
+	}
+	if (lead >= 0xE0 && lead < 0xF0 && size >= 3 && !IsCharacter(input[1]) && !IsCharacter(input[2])) {
+		auto codepoint = (lead & 0x0F) << 12 | (static_cast<uint8_t>(input[1]) & 0x3F) << 6 |
+		                 (static_cast<uint8_t>(input[2]) & 0x3F);
+		if (codepoint >= 0x800 && !table.Changing(codepoint)) {
+			memcpy(output, input, 3);
+			return 3;
+		}
+	}
+	return ConvertCodepointSameSize<IS_UPPER>(input, size, output);
+}
+
+template <bool IS_UPPER>
+idx_t ConvertSameLength(const char *input, idx_t size, char *output, idx_t capacity) {
+	auto &table = CaseTable<IS_UPPER>::Get();
+	auto words_end = MinValue(size, capacity);
+	idx_t i = 0;
+	while (i < size) {
+		if (!(input[i] & 0x80)) {
+			// ascii
+			i = ConvertAsciiRun<IS_UPPER>(input, i, size, words_end, output);
+			continue;
+		}
+		auto converted = ConvertSameSize<IS_UPPER>(table, input + i, size - i, output + i);
+		if (!converted) {
+			return i;
+		}
+		i += converted;
+	}
+	return size;
+}
+
+} // namespace
+
 template <bool IS_UPPER>
 static idx_t GetResultLength(const char *input_data, idx_t input_length) {
+	auto &table = CaseTable<IS_UPPER>::Get();
 	idx_t output_length = 0;
 	for (idx_t i = 0; i < input_length;) {
 		if (!(input_data[i] & 0x80)) {
 			// ASCII.
-			output_length++;
-			i++;
+			auto ascii = FirstNonAscii(input_data + i, input_length - i);
+			output_length += ascii;
+			i += ascii;
 			continue;
 		}
 
 		// UTF-8.
+		char converted[4];
+		auto same_size = ConvertSameSize<IS_UPPER>(table, input_data + i, input_length - i, converted);
+		if (same_size) {
+			output_length += same_size;
+			i += same_size;
+			continue;
+		}
 		int sz = 0;
 		auto codepoint = Utf8Proc::UTF8ToCodepoint(input_data + i, sz, input_length - i);
-		auto converted = IS_UPPER ? Utf8Proc::CodepointToUpper(codepoint) : Utf8Proc::CodepointToLower(codepoint);
-		auto new_sz = Utf8Proc::CodepointLength(converted);
+		auto new_sz = Utf8Proc::CodepointLength(ConvertCodepoint<IS_UPPER>(codepoint));
 		output_length += UnsafeNumericCast<idx_t>(new_sz);
 		D_ASSERT(sz != 0);
 		i += UnsafeNumericCast<idx_t>(sz);
@@ -52,26 +196,26 @@ static idx_t GetResultLength(const char *input_data, idx_t input_length) {
 }
 
 template <bool IS_UPPER>
-static void CaseConvert(const char *input_data, idx_t input_length, char *result_data) {
-	for (idx_t i = 0; i < input_length;) {
-		if (input_data[i] & 0x80) {
-			// non-ascii character
-			int sz = 0, new_sz = 0;
-			auto codepoint = Utf8Proc::UTF8ToCodepoint(input_data + i, sz, input_length - i);
-			auto converted_codepoint =
-			    IS_UPPER ? Utf8Proc::CodepointToUpper(codepoint) : Utf8Proc::CodepointToLower(codepoint);
-			auto success = Utf8Proc::CodepointToUtf8(converted_codepoint, new_sz, result_data);
-			D_ASSERT(success);
-			(void)success;
-			result_data += new_sz;
-			i += UnsafeNumericCast<idx_t>(sz);
-		} else {
-			// ascii
-			*result_data = UnsafeNumericCast<char>(IS_UPPER ? StringUtil::ASCII_TO_UPPER_MAP[uint8_t(input_data[i])]
-			                                                : StringUtil::ASCII_TO_LOWER_MAP[uint8_t(input_data[i])]);
-			result_data++;
-			i++;
+static idx_t CaseConvert(const char *input_data, idx_t input_length, char *result_data, idx_t result_capacity) {
+	idx_t input_pos = 0;
+	idx_t result_pos = 0;
+	while (true) {
+		auto same = ConvertSameLength<IS_UPPER>(input_data + input_pos, input_length - input_pos,
+		                                        result_data + result_pos, result_capacity - result_pos);
+		input_pos += same;
+		result_pos += same;
+		if (input_pos == input_length) {
+			return result_pos;
 		}
+		// non-ascii character
+		int sz = 0, new_sz = 0;
+		auto codepoint = Utf8Proc::UTF8ToCodepoint(input_data + input_pos, sz, input_length - input_pos);
+		auto success =
+		    Utf8Proc::CodepointToUtf8(ConvertCodepoint<IS_UPPER>(codepoint), new_sz, result_data + result_pos);
+		D_ASSERT(success);
+		(void)success;
+		input_pos += UnsafeNumericCast<idx_t>(sz);
+		result_pos += static_cast<idx_t>(new_sz);
 	}
 }
 
@@ -79,23 +223,27 @@ idx_t LowerLength(const char *input_data, idx_t input_length) {
 	return GetResultLength<false>(input_data, input_length);
 }
 
-void LowerCase(const char *input_data, idx_t input_length, char *result_data) {
-	CaseConvert<false>(input_data, input_length, result_data);
+idx_t LowerCase(const char *input_data, idx_t input_length, char *result_data, idx_t result_capacity) {
+	return CaseConvert<false>(input_data, input_length, result_data, result_capacity);
 }
 
 template <bool IS_UPPER>
 static string_t UnicodeCaseConvert(StringHeap &heap, const char *input_data, idx_t input_length) {
-	const auto ascii_end = FirstNonAscii(input_data, input_length);
-	if (ascii_end == input_length) {
+	if (FirstNonAscii(input_data, input_length) == input_length) {
 		// ASCII: code points and bytes coincide
 		return ASCIICaseConvert<IS_UPPER>(heap, input_data, input_length);
 	}
-	// first figure out the output length: the ASCII prefix is one byte per code point
-	idx_t output_length = ascii_end + GetResultLength<IS_UPPER>(input_data + ascii_end, input_length - ascii_end);
+	auto same_length = heap.EmptyString(input_length);
+	auto same = ConvertSameLength<IS_UPPER>(input_data, input_length, same_length.GetDataWriteable(), input_length);
+	if (same == input_length) {
+		same_length.Finalize();
+		return same_length;
+	}
+	auto output_length = same + GetResultLength<IS_UPPER>(input_data + same, input_length - same);
 	auto result_str = heap.EmptyString(output_length);
 	auto result_data = result_str.GetDataWriteable();
-
-	CaseConvert<IS_UPPER>(input_data, input_length, result_data);
+	memcpy(result_data, same_length.GetData(), same);
+	CaseConvert<IS_UPPER>(input_data + same, input_length - same, result_data + same, output_length - same);
 	result_str.Finalize();
 	return result_str;
 }
@@ -167,7 +315,7 @@ static unique_ptr<BaseStatistics> CaseConvertPropagateStats(ClientContext &conte
 	}
 	string converted;
 	converted.resize(GetResultLength<IS_UPPER>(min.c_str(), min.size()));
-	CaseConvert<IS_UPPER>(min.c_str(), min.size(), &converted[0]);
+	CaseConvert<IS_UPPER>(min.c_str(), min.size(), &converted[0], converted.size());
 	auto stats_type = is_exact ? StringStatsType::EXACT_STATS : StringStatsType::TRUNCATED_STATS;
 	// case conversion can lengthen a string beyond what the stats can store
 	if (converted.size() > StringStatsData::CURRENT_MAX_STRING_MINMAX_SIZE) {

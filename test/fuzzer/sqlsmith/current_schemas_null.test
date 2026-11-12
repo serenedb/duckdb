@@ -11,7 +11,7 @@ INSERT INTO booleans VALUES(NULL);
 query I
 SELECT current_schemas(false);
 ----
-[]
+[main]
 
 query I
 SELECT current_schemas(NULL);

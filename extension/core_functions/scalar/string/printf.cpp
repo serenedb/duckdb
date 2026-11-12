@@ -1,25 +1,21 @@
 #include "core_functions/scalar/string_functions.hpp"
+#include "core_functions/scalar/simple_printf.hpp"
 #include "duckdb/planner/expression/bound_function_expression.hpp"
 #include "duckdb/common/limits.hpp"
-#include "fmt/format.h"
-#include "fmt/printf.h"
+#include "duckdb/common/string_format.hpp"
 #include "utf8proc_wrapper.hpp"
 
 namespace duckdb {
 
 struct FMTPrintf {
-	template <class CTX>
-	static string OP(const char *format_str, vector<duckdb_fmt::basic_format_arg<CTX>> &format_args) {
-		return duckdb_fmt::vsprintf(
-		    format_str, duckdb_fmt::basic_format_args<CTX>(format_args.data(), static_cast<int>(format_args.size())));
+	static void OP(string &result, std::string_view format_str, const vector<FormatArgument> &format_args) {
+		StringFormat::Printf(result, format_str, format_args);
 	}
 };
 
 struct FMTFormat {
-	template <class CTX>
-	static string OP(const char *format_str, vector<duckdb_fmt::basic_format_arg<CTX>> &format_args) {
-		return duckdb_fmt::vformat(
-		    format_str, duckdb_fmt::basic_format_args<CTX>(format_args.data(), static_cast<int>(format_args.size())));
+	static void OP(string &result, std::string_view format_str, const vector<FormatArgument> &format_args) {
+		StringFormat::Format(result, format_str, format_args);
 	}
 };
 
@@ -73,119 +69,113 @@ static unique_ptr<FunctionData> BindPrintfFunction(BindScalarFunctionInput &inpu
 	return nullptr;
 }
 
-struct StandardConstructArgument {
-	template <class T, class CTX>
-	static void ConstructArgument(const T &input, vector<duckdb_fmt::basic_format_arg<CTX>> &result) {
-		result.emplace_back(duckdb_fmt::internal::make_arg<CTX>(input));
+struct PrintfArgumentColumn {
+	explicit PrintfArgumentColumn(const Vector &input) : type(input.GetType().id()) {
+		input.ToUnifiedFormat(format);
 	}
-};
 
-struct StringConstructArgument {
-	template <class T, class CTX>
-	static void ConstructArgument(const T &input, vector<duckdb_fmt::basic_format_arg<CTX>> &result) {
-		auto string_view = duckdb_fmt::basic_string_view<char>(input.GetData(), input.GetSize());
-		result.emplace_back(duckdb_fmt::internal::make_arg<CTX>(string_view));
+	template <class T>
+	const T &Get(idx_t idx) const {
+		return UnifiedVectorFormat::GetData<T>(format)[idx];
 	}
-};
 
-template <class T, class OP = StandardConstructArgument, class CTX>
-static void ConvertArguments(const Vector &input, idx_t arg_idx,
-                             vector<vector<duckdb_fmt::basic_format_arg<CTX>>> &result_args) {
-	auto result = input.Values<T>();
-	for (idx_t i = 0; i < input.size(); i++) {
-		auto &args = result_args[i];
-		if (args.size() != arg_idx - 1) {
-			// this entry has a NULL as one of the parameters
-			continue;
+	//! Appends the argument of the row, returns false if it is NULL
+	bool Append(idx_t row, vector<FormatArgument> &result) const {
+		const auto idx = format.sel->get_index(row);
+		if (!format.validity.RowIsValid(idx)) {
+			return false;
 		}
-		auto entry = result[i];
-		if (!entry.IsValid()) {
-			args.clear();
-			continue;
-		}
-		OP::ConstructArgument(entry.GetValue(), args);
-	}
-}
-
-template <class FORMAT_FUN, class CTX>
-static void PrintfFunction(DataChunk &args, ExpressionState &state, Vector &result) {
-	idx_t count = args.size();
-
-	// convert all format arguments
-	vector<vector<duckdb_fmt::basic_format_arg<CTX>>> format_args;
-	format_args.resize(count);
-
-	auto format_data = args.data[0].Values<string_t>();
-
-	for (idx_t i = 1; i < args.ColumnCount(); i++) {
-		const auto &col = args.data[i];
-		switch (col.GetType().id()) {
+		switch (type) {
 		case LogicalTypeId::BOOLEAN:
-			ConvertArguments<bool>(col, i, format_args);
+			result.emplace_back(Get<bool>(idx));
 			break;
 		case LogicalTypeId::TINYINT:
-			ConvertArguments<int8_t>(col, i, format_args);
+			result.emplace_back(static_cast<int64_t>(Get<int8_t>(idx)));
 			break;
 		case LogicalTypeId::SMALLINT:
-			ConvertArguments<int16_t>(col, i, format_args);
+			result.emplace_back(static_cast<int64_t>(Get<int16_t>(idx)));
 			break;
 		case LogicalTypeId::INTEGER:
-			ConvertArguments<int32_t>(col, i, format_args);
+			result.emplace_back(static_cast<int64_t>(Get<int32_t>(idx)));
 			break;
 		case LogicalTypeId::BIGINT:
-			ConvertArguments<int64_t>(col, i, format_args);
+			result.emplace_back(Get<int64_t>(idx));
 			break;
 		case LogicalTypeId::UBIGINT:
-			ConvertArguments<uint64_t>(col, i, format_args);
+			result.emplace_back(Get<uint64_t>(idx));
 			break;
 		case LogicalTypeId::FLOAT:
-			ConvertArguments<float>(col, i, format_args);
+			result.emplace_back(static_cast<double>(Get<float>(idx)));
 			break;
 		case LogicalTypeId::HUGEINT:
-			ConvertArguments<hugeint_t>(col, i, format_args);
+			result.emplace_back(Get<hugeint_t>(idx));
 			break;
 		case LogicalTypeId::UHUGEINT:
-			ConvertArguments<uhugeint_t>(col, i, format_args);
+			result.emplace_back(Get<uhugeint_t>(idx));
 			break;
 		case LogicalTypeId::DOUBLE:
-			ConvertArguments<double>(col, i, format_args);
+			result.emplace_back(Get<double>(idx));
 			break;
-		case LogicalTypeId::VARCHAR:
-			ConvertArguments<string_t, StringConstructArgument>(col, i, format_args);
+		case LogicalTypeId::VARCHAR: {
+			const auto &input = Get<string_t>(idx);
+			result.emplace_back(std::string_view(input.GetData(), input.GetSize()));
 			break;
+		}
 		default:
 			throw InternalException("Unexpected type for printf format");
 		}
+		return true;
 	}
 
-	// now perform the actual formatting
+	LogicalTypeId type;
+	UnifiedVectorFormat format;
+};
+
+template <class FORMAT_FUN>
+static void PrintfFunction(DataChunk &args, ExpressionState &state, Vector &result) {
+	if (SimplePrintf::TryExecute(args, result, std::is_same<FORMAT_FUN, FMTPrintf>::value)) {
+		return;
+	}
+	idx_t count = args.size();
+
+	auto format_data = args.data[0].Values<string_t>();
+	vector<PrintfArgumentColumn> columns;
+	columns.reserve(args.ColumnCount() - 1);
+	for (idx_t i = 1; i < args.ColumnCount(); i++) {
+		columns.emplace_back(args.data[i]);
+	}
+
+	vector<FormatArgument> row_args;
+	row_args.reserve(columns.size());
+	string formatted;
 	auto result_data = FlatVector::Writer<string_t>(result, count);
 	for (idx_t idx = 0; idx < count; idx++) {
 		auto entry = format_data[idx];
-		auto &current_args = format_args[idx];
-		if (!entry.IsValid() || current_args.size() != args.ColumnCount() - 1) {
+		row_args.clear();
+		bool has_null = !entry.IsValid();
+		for (idx_t col = 0; col < columns.size() && !has_null; col++) {
+			has_null = !columns[col].Append(idx, row_args);
+		}
+		if (has_null) {
 			// either format string or one of the input arguments is NULL
 			result_data.WriteNull();
 			continue;
 		}
 
-		auto format_string = entry.GetValue().GetString();
-
-		// finally actually perform the format
-		string dynamic_result = FORMAT_FUN::template OP<CTX>(format_string.c_str(), current_args);
-		if (!Utf8Proc::IsValid(dynamic_result.c_str(), dynamic_result.size())) {
+		const auto &format_string = entry.GetValue();
+		const std::string_view format_view(format_string.GetData(), format_string.GetSize());
+		FORMAT_FUN::OP(formatted, format_view, row_args);
+		if (!Utf8Proc::IsValid(formatted.c_str(), formatted.size())) {
 			throw InvalidInputException("Invalid UTF8 produced by format string \"%s\" - note that %%c writes a "
 			                            "single byte, use chr(...) to write a Unicode code point",
-			                            format_string);
+			                            string(format_view));
 		}
-		result_data.WriteValue(dynamic_result);
+		result_data.WriteValue(string_t(formatted.data(), UnsafeNumericCast<uint32_t>(formatted.size())));
 	}
 }
 
 ScalarFunction PrintfFun::GetFunction() {
-	// duckdb_fmt::printf_context, duckdb_fmt::vsprintf
-	ScalarFunction printf_fun({}, LogicalType::VARCHAR, PrintfFunction<FMTPrintf, duckdb_fmt::printf_context>,
-	                          BindPrintfFunction);
+	ScalarFunction printf_fun({}, LogicalType::VARCHAR, PrintfFunction<FMTPrintf>, BindPrintfFunction);
 	printf_fun.GetSignature().AddParameter("format", LogicalType::VARCHAR);
 	printf_fun.GetSignature().AddArgs("args", LogicalType::ANY);
 	printf_fun.SetFallible();
@@ -193,9 +183,7 @@ ScalarFunction PrintfFun::GetFunction() {
 }
 
 ScalarFunction FormatFun::GetFunction() {
-	// duckdb_fmt::format_context, duckdb_fmt::vformat
-	ScalarFunction format_fun({}, LogicalType::VARCHAR, PrintfFunction<FMTFormat, duckdb_fmt::format_context>,
-	                          BindPrintfFunction);
+	ScalarFunction format_fun({}, LogicalType::VARCHAR, PrintfFunction<FMTFormat>, BindPrintfFunction);
 	format_fun.GetSignature().AddParameter("format", LogicalType::VARCHAR);
 	format_fun.GetSignature().AddArgs("args", LogicalType::ANY);
 	format_fun.SetFallible();

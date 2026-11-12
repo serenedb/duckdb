@@ -1,0 +1,65 @@
+# name: test/sql/prepared/prepare_result_type_change.test
+# description: EXECUTE fails once a catalog change alters the result type of a prepared statement
+# group: [prepared]
+
+statement ok
+CREATE TABLE t(a INTEGER)
+
+statement ok
+INSERT INTO t VALUES (1)
+
+statement ok
+PREPARE star AS SELECT * FROM t
+
+statement ok
+PREPARE plus(INTEGER) AS SELECT a + $1 FROM t
+
+statement ok
+PREPARE untyped AS SELECT $1
+
+statement ok
+ALTER TABLE t ADD COLUMN b VARCHAR
+
+statement error
+EXECUTE star
+----
+cached plan must not change result type
+
+query I
+EXECUTE plus(1)
+----
+2
+
+query I
+EXECUTE untyped(1)
+----
+1
+
+query I
+EXECUTE untyped('x')
+----
+x
+
+statement ok
+DEALLOCATE star
+
+statement ok
+PREPARE star AS SELECT * FROM t
+
+query II
+EXECUTE star
+----
+1	NULL
+
+statement ok
+ALTER TABLE t ALTER a TYPE BIGINT
+
+statement error
+EXECUTE star
+----
+cached plan must not change result type
+
+statement error
+EXECUTE plus(1)
+----
+cached plan must not change result type

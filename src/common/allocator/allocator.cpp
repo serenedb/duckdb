@@ -1,11 +1,13 @@
 #include "duckdb/common/allocator.hpp"
 
+#include "duckdb/common/array.hpp"
 #include "duckdb/common/assert.hpp"
 #include "duckdb/common/atomic.hpp"
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/helper.hpp"
 #include "duckdb/common/numeric_utils.hpp"
 #include "duckdb/common/time_point.hpp"
+#include "duckdb/parallel/task_scheduler.hpp"
 
 #include <cstdint>
 
@@ -16,7 +18,7 @@
 #include <unistd.h>
 #endif
 
-#ifdef __GLIBC__
+#if defined(__GLIBC__) && !defined(DUCKDB_ENABLE_JEMALLOC)
 #include <malloc.h>
 #endif
 
@@ -73,7 +75,6 @@ void AllocatedData::Reset() {
 //===--------------------------------------------------------------------===//
 struct AllocatorDebugInfo {
 #ifdef DEBUG
-	AllocatorDebugInfo();
 	~AllocatorDebugInfo();
 
 	void AllocateData(data_ptr_t pointer, idx_t size);
@@ -81,9 +82,17 @@ struct AllocatorDebugInfo {
 	void ReallocateData(data_ptr_t pointer, data_ptr_t new_pointer, idx_t old_size, idx_t new_size);
 
 private:
+	struct alignas(64) AllocationCount {
+		atomic<int64_t> bytes {0};
+	};
+	static constexpr idx_t ALLOCATION_COUNT_SHARDS = 64;
+
+	atomic<int64_t> &LocalAllocationCount();
+	int64_t TotalAllocationCount() const;
+
 	//! The number of bytes that are outstanding (i.e. that have been allocated - but not freed)
 	//! Used for debug purposes
-	atomic<idx_t> allocation_count;
+	array<AllocationCount, ALLOCATION_COUNT_SHARDS> allocation_count;
 #ifdef DUCKDB_DEBUG_ALLOCATION
 	mutex pointer_lock;
 	//! Set of active outstanding pointers together with stack traces
@@ -223,7 +232,7 @@ Allocator &Allocator::DefaultAllocator() {
 }
 
 void Allocator::MallocTrim(idx_t pad) {
-#ifdef __GLIBC__
+#if defined(__GLIBC__) && !defined(DUCKDB_ENABLE_JEMALLOC)
 	static constexpr int64_t TRIM_INTERVAL_MS = 100;
 	static atomic<int64_t> LAST_TRIM_TICK_MS {-TRIM_INTERVAL_MS};
 
@@ -247,12 +256,9 @@ void Allocator::MallocTrim(idx_t pad) {
 // Debug Info (extended)
 //===--------------------------------------------------------------------===//
 #ifdef DEBUG
-AllocatorDebugInfo::AllocatorDebugInfo() {
-	allocation_count = 0;
-}
 AllocatorDebugInfo::~AllocatorDebugInfo() {
 #ifdef DUCKDB_DEBUG_ALLOCATION
-	if (allocation_count != 0) {
+	if (TotalAllocationCount() != 0) {
 		printf("Outstanding allocations found for Allocator\n");
 		for (auto &entry : pointers) {
 			printf("Allocation of size %llu at address %p\n", entry.second.first, (void *)entry.first);
@@ -264,11 +270,23 @@ AllocatorDebugInfo::~AllocatorDebugInfo() {
 	//! Verify that there is no outstanding memory still associated with the batched allocator
 	//! Only works for access to the batched allocator through the batched allocator interface
 	//! If this assertion triggers, enable DUCKDB_DEBUG_ALLOCATION for more information about the allocations
-	D_ASSERT(allocation_count == 0);
+	D_ASSERT(TotalAllocationCount() == 0);
+}
+
+atomic<int64_t> &AllocatorDebugInfo::LocalAllocationCount() {
+	return allocation_count[TaskScheduler::GetEstimatedCPUId() % ALLOCATION_COUNT_SHARDS].bytes;
+}
+
+int64_t AllocatorDebugInfo::TotalAllocationCount() const {
+	int64_t total = 0;
+	for (auto &count : allocation_count) {
+		total += count.bytes.load(std::memory_order_relaxed);
+	}
+	return total;
 }
 
 void AllocatorDebugInfo::AllocateData(data_ptr_t pointer, idx_t size) {
-	allocation_count += size;
+	LocalAllocationCount().fetch_add(NumericCast<int64_t>(size), std::memory_order_relaxed);
 #ifdef DUCKDB_DEBUG_ALLOCATION
 	lock_guard<mutex> l(pointer_lock);
 	pointers[pointer] = make_pair(size, Exception::GetStackTrace());
@@ -276,8 +294,7 @@ void AllocatorDebugInfo::AllocateData(data_ptr_t pointer, idx_t size) {
 }
 
 void AllocatorDebugInfo::FreeData(data_ptr_t pointer, idx_t size) {
-	D_ASSERT(allocation_count >= size);
-	allocation_count -= size;
+	LocalAllocationCount().fetch_sub(NumericCast<int64_t>(size), std::memory_order_relaxed);
 #ifdef DUCKDB_DEBUG_ALLOCATION
 	lock_guard<mutex> l(pointer_lock);
 	// verify that the pointer exists

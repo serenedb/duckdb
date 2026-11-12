@@ -34,6 +34,9 @@ public:
 	virtual bool LockDuringCreate() const {
 		return false;
 	}
+
+protected:
+	bool ServesDefaults(const Identifier &schema, const Identifier &defaults) const;
 };
 
 } // namespace duckdb

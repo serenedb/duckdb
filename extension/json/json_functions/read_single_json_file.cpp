@@ -1,9 +1,13 @@
 #include "duckdb/common/multi_file/multi_file_list.hpp"
+#include "duckdb/common/multi_file/multi_file_reader.hpp"
+#include "duckdb/common/multi_file/multi_file_states.hpp"
 #include "duckdb/common/multi_file/table_function_multi_file.hpp"
 #include "duckdb/common/mutex.hpp"
+#include "json_common.hpp"
 #include "json_functions.hpp"
 #include "json_scan.hpp"
 #include "json_structure.hpp"
+#include "json_transform.hpp"
 
 namespace duckdb {
 
@@ -69,6 +73,10 @@ public:
 	bool scan_initialized = false;
 	//! Whether our caller claims the batches we read - see table_function_claim_batch_t
 	bool claimed_externally = false;
+	shared_ptr<JSONReader> lookup_reader;
+	unique_ptr<JSONReaderScanState> lookup_state;
+	vector<yyjson_val *> lookup_vals;
+	vector<string_t> lookup_strings;
 };
 
 static unique_ptr<FunctionData> ReadSingleJSONFileBind(ClientContext &context, TableFunctionBindInput &input,
@@ -150,10 +158,24 @@ static unique_ptr<GlobalTableFunctionState> ReadSingleJSONFileInitGlobal(ClientC
 	auto &gstate = result->state;
 
 	// perform projection pushdown - the JSON reader extracts columns by name, so we only need the projected names
+	auto &file_input = TableFunctionFileInitInput::Get(input);
 	for (idx_t col_idx = 0; col_idx < input.column_indexes.size(); col_idx++) {
 		auto &column_index = input.column_indexes[col_idx];
 		const auto col_id = column_index.GetPrimaryIndex();
+		column_t virtual_column_id = DConstants::INVALID_INDEX;
 		if (IsVirtualColumn(col_id)) {
+			virtual_column_id = col_id;
+		} else if (file_input.virtual_columns) {
+			auto entry = file_input.virtual_columns->find(col_id);
+			if (entry != file_input.virtual_columns->end()) {
+				virtual_column_id = entry->second;
+			}
+		}
+		if (virtual_column_id != DConstants::INVALID_INDEX) {
+			// file_row_number is filled with byte offsets after the transform, other virtual columns are skipped
+			if (virtual_column_id == MultiFileReader::COLUMN_IDENTIFIER_FILE_ROW_NUMBER) {
+				gstate.file_row_number_idx = col_idx;
+			}
 			continue;
 		}
 		gstate.names.push_back(json_data.key_names[col_id]);
@@ -306,6 +328,102 @@ static unique_ptr<NodeStatistics> ReadSingleJSONFileCardinality(ClientContext &c
 	return make_uniq<NodeStatistics>(per_file_cardinality);
 }
 
+static virtual_column_map_t ReadSingleJSONFileGetVirtualColumns(ClientContext &, optional_ptr<FunctionData>) {
+	// file_row_number = byte offset of the record start; usable as an exact-seek key.
+	virtual_column_map_t result;
+	result.emplace(MultiFileReader::COLUMN_IDENTIFIER_FILE_ROW_NUMBER,
+	               TableColumn("file_row_number", LogicalType::BIGINT));
+	return result;
+}
+
+namespace {
+
+void ReadSingleJSONFileLookup(ClientContext &context, TableFunctionInput &input, DataChunk &output) {
+	auto &gstate = input.global_state->Cast<ReadSingleJSONFileGlobalState>();
+	auto &lstate = input.local_state->Cast<ReadSingleJSONFileLocalState>();
+	auto &state = gstate.state;
+	auto &json_data = state.json_data.Cast<ReadSingleJSONFileData>();
+	if (!lstate.lookup_reader) {
+		lstate.lookup_reader = make_shared_ptr<JSONReader>(context, json_data.options, json_data.file);
+		lstate.lookup_reader->OpenJSONFile();
+		lstate.lookup_state = make_uniq<JSONReaderScanState>(
+		    context, BufferAllocator::Get(context), json_data.options.maximum_object_size * 2 + YYJSON_PADDING_SIZE);
+	}
+	auto &reader = *lstate.lookup_reader;
+	auto &scan_state = *lstate.lookup_state;
+	const auto rows = input.pk_lookups;
+	D_ASSERT(rows.size() <= STANDARD_VECTOR_SIZE);
+	reader.ClearLookupBuffers(scan_state);
+	scan_state.allocator.Reset();
+
+	const bool objects = json_data.options.type == JSONScanType::READ_JSON_OBJECTS;
+	lstate.lookup_vals.resize(rows.size());
+	lstate.lookup_strings.resize(rows.size());
+	idx_t w = 0;
+	for (idx_t pk_idx = 0; pk_idx < rows.size(); ++pk_idx) {
+		if (!reader.FetchRow(scan_state, UnsafeNumericCast<idx_t>(rows[pk_idx]))) {
+			continue;
+		}
+		lstate.lookup_vals[w] = scan_state.values[0];
+		lstate.lookup_strings[w] = string_t(scan_state.units[0].pointer, scan_state.units[0].size);
+		input.pk_survivors[w] = pk_idx;
+		++w;
+	}
+	if (state.file_row_number_idx != DConstants::INVALID_INDEX) {
+		auto numbers = FlatVector::Writer<int64_t>(output.data[state.file_row_number_idx], w);
+		for (idx_t r = 0; r < w; ++r) {
+			numbers.WriteValue(rows[input.pk_survivors[r]]);
+		}
+	}
+	if (!state.column_ids.empty() && w != 0) {
+		if (objects) {
+			auto strings = FlatVector::Writer<string_t>(output.data[state.column_ids[0]], w);
+			for (idx_t r = 0; r < w; ++r) {
+				if (lstate.lookup_vals[r]) {
+					strings.WriteStringRef(lstate.lookup_strings[r]);
+				} else {
+					strings.WriteNull();
+				}
+			}
+		} else {
+			vector<Vector *> result_vectors(state.column_ids.size());
+			for (idx_t c = 0; c < state.column_ids.size(); ++c) {
+				result_vectors[c] = &output.data[state.column_ids[c]];
+			}
+			auto *alc = scan_state.allocator.GetYYAlc();
+			auto &transform_options = lstate.state.transform_options;
+			if (json_data.options.record_type == JSONRecordType::RECORDS) {
+				JSONTransform::TransformObject(lstate.lookup_vals.data(), alc, w, state.names, result_vectors,
+				                               transform_options, state.column_indices,
+				                               transform_options.error_unknown_key);
+			} else {
+				D_ASSERT(json_data.options.record_type == JSONRecordType::VALUES);
+				D_ASSERT(state.column_ids.size() == 1);
+				optional_ptr<const ColumnIndex> column_index =
+				    state.column_indices.empty() ? nullptr : &state.column_indices[0];
+				JSONTransform::Transform(lstate.lookup_vals.data(), alc, *result_vectors[0], w, transform_options,
+				                         column_index);
+			}
+		}
+	}
+	output.SetCardinality(w);
+}
+
+bool ReadSingleJSONFileSupportsLookup(optional_ptr<const FunctionData> bind_data) {
+	if (!bind_data) {
+		return false;
+	}
+	auto &json_data = bind_data->Cast<ReadSingleJSONFileData>();
+	auto &compression = json_data.options.compression;
+	const auto path = StringUtil::Lower(json_data.file.path);
+	const bool compressed = compression.IsCompressed() ||
+	                        (compression.IsAutoDetect() && (IsFileCompressed(path, FileCompressionType::GZIP) ||
+	                                                        IsFileCompressed(path, FileCompressionType::ZSTD)));
+	return json_data.feature_columns.empty() && !compressed;
+}
+
+} // namespace
+
 TableFunction JSONFunctions::GetReadSingleJSONFileTableFunction(shared_ptr<JSONScanInfo> function_info) {
 	const auto scan_type = function_info->type;
 	TableFunction table_function(
@@ -317,6 +435,7 @@ TableFunction JSONFunctions::GetReadSingleJSONFileTableFunction(shared_ptr<JSONS
 		JSONScan::AddReadJSONParameters(table_function);
 		JSONScan::AddAutoDetectParameters(table_function);
 	}
+	table_function.get_virtual_columns = ReadSingleJSONFileGetVirtualColumns;
 	table_function.table_scan_progress = ReadSingleJSONFileProgress;
 	table_function.cardinality = ReadSingleJSONFileCardinality;
 	table_function.function_info = std::move(function_info);
@@ -335,6 +454,10 @@ TableFunction JSONFunctions::GetJSONTableFunction(Identifier name, shared_ptr<JS
 	settings.combine_schema = ReadSingleJSONFileCombineSchema;
 	settings.claim_batch = ReadSingleJSONFileClaimBatch;
 	settings.finish_batch = ReadSingleJSONFileFinishBatch;
+	settings.lookup = ReadSingleJSONFileLookup;
+	settings.supports_lookup = ReadSingleJSONFileSupportsLookup;
+	settings.row_storage = true;
+	settings.row_id_names = {"file_index", "file_offset"};
 	return TableFunctionMultiFileWrapper::CreateFunction(std::move(single_file_function), std::move(name),
 	                                                     std::move(settings));
 }

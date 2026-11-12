@@ -23,6 +23,7 @@ struct tpcds_table_def {
 	const char *name;
 	int fl_small;
 	int fl_child;
+	int fl_type_2;
 	int first_column;
 	int64_t *null_bitmap;
 };

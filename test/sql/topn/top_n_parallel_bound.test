@@ -1,0 +1,29 @@
+# name: test/sql/topn/top_n_parallel_bound.test
+# description: threads that read the shared Top-N bound while others tighten it keep exactly the first rows
+# group: [topn]
+
+statement ok
+SET threads = 8
+
+statement ok
+CREATE TABLE t AS SELECT i, (i * 7919) % 2000003 AS k, ((i * 104729) % 1000)::VARCHAR AS s FROM range(2000000) r(i)
+
+query I
+SELECT list(k) FROM (SELECT k FROM t ORDER BY k LIMIT 10)
+----
+[0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+
+query II
+SELECT count(*), bool_and(k = rk) FROM (SELECT k, row_number() OVER (ORDER BY k DESC) AS rn FROM (SELECT k FROM t ORDER BY k DESC LIMIT 100)) a JOIN (SELECT k AS rk, row_number() OVER (ORDER BY k DESC) AS rn FROM t QUALIFY rn <= 100) b USING (rn)
+----
+100	true
+
+query II
+SELECT count(*), bool_and(a.s = b.s AND a.k = b.k) FROM (SELECT s, k, row_number() OVER (ORDER BY s, k) AS rn FROM (SELECT s, k FROM t ORDER BY s, k LIMIT 50)) a JOIN (SELECT s, k, row_number() OVER (ORDER BY s, k) AS rn FROM t QUALIFY rn <= 50) b USING (rn)
+----
+50	true
+
+query II
+SELECT count(*), bool_and(a.k = b.k) FROM (SELECT k, row_number() OVER (ORDER BY k) AS rn FROM (SELECT k FROM t WHERE i % 3 = 0 ORDER BY k LIMIT 20 OFFSET 30)) a JOIN (SELECT k, row_number() OVER (ORDER BY k) - 30 AS rn FROM t WHERE i % 3 = 0 QUALIFY rn BETWEEN 1 AND 20) b USING (rn)
+----
+20	true

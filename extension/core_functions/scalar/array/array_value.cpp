@@ -1,4 +1,5 @@
 #include "duckdb/common/vector/array_vector.hpp"
+#include "duckdb/common/vector_operations/vector_operations.hpp"
 #include "core_functions/scalar/array_functions.hpp"
 #include "duckdb/function/scalar/nested_functions.hpp"
 #include "duckdb/storage/statistics/array_stats.hpp"
@@ -28,19 +29,27 @@ void ArrayValueFunction(DataChunk &args, ExpressionState &state, Vector &result)
 
 	auto &child = ArrayVector::GetChildMutable(result);
 
-	if (num_columns > 1) {
-		// Ensure that the child has a validity mask of the correct size
-		// The SetValue call below expects the validity mask to be initialized
-		auto &child_validity = FlatVector::ValidityMutable(child);
-		child_validity.Resize(num_rows * num_columns);
-	}
-
-	for (idx_t i = 0; i < num_rows; i++) {
-		for (idx_t j = 0; j < num_columns; j++) {
-			auto val = args.GetValue(j, i).DefaultCastAs(child_type);
-			child.SetValue((i * num_columns) + j, val);
+	const auto total = num_rows * num_columns;
+	Vector staged(child_type, MaxValue<idx_t>(total, 1));
+	for (auto &column : args.data) {
+		if (column.GetType() == child_type) {
+			staged.Append(column, num_rows, VectorAppendMode::ALLOW_RESIZE);
+		} else {
+			Vector cast(child_type, num_rows);
+			string error;
+			if (!VectorOperations::DefaultTryCast(column, cast, num_rows, &error)) {
+				throw InvalidInputException("Failed to cast value: %s", error);
+			}
+			staged.Append(cast, num_rows, VectorAppendMode::ALLOW_RESIZE);
 		}
 	}
+	SelectionVector interleave(MaxValue<idx_t>(total, 1));
+	for (idx_t i = 0; i < num_rows; i++) {
+		for (idx_t j = 0; j < num_columns; j++) {
+			interleave.set_index(i * num_columns + j, j * num_rows + i);
+		}
+	}
+	VectorOperations::Copy(staged, child, interleave, total, 0, 0);
 
 	result.Verify();
 }

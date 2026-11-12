@@ -1,0 +1,16 @@
+CreateJobStmt <- 'JOB' IfNotExists? QualifiedName JobSchedule JobSuspended? 'AS' JobBody
+
+JobBody <- JobScript / Statement
+JobScript <- StringLiteral
+
+JobSchedule <- JobEvery / JobAfter
+JobEvery <- 'EVERY' JobInterval JobOffset? JobRandomize? JobConcurrent?
+JobAfter <- 'AFTER' JobInterval JobRandomize?
+JobOffset <- 'OFFSET' JobInterval
+JobRandomize <- 'RANDOMIZE' 'FOR' JobInterval
+JobInterval <- IntervalLiteral / JobIntervalShort / JobIntervalExpression
+JobIntervalShort <- JobIntervalUnit+
+JobIntervalUnit <- NumberLiteral Interval
+JobIntervalExpression <- Parens(Expression)
+JobConcurrent <- 'CONCURRENT'
+JobSuspended <- 'SUSPENDED'

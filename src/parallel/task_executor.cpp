@@ -15,7 +15,7 @@ public:
 
 public:
 	TaskExecutionResult Execute(TaskExecutionMode mode) override {
-		FinishGuard guard(executor);
+		FinishGuard guard(executor, task);
 		if (executor.HasError() || executor.IsCancelled()) {
 			// another task encountered an error, or the executor was cancelled - retire without doing the work
 			return RunGuarded([&]() { task->Cancel(); }, "Unknown exception while cancelling a task");
@@ -23,10 +23,9 @@ public:
 		TaskExecutionResult result;
 		try {
 			TaskNotifier task_notifier {executor.context};
-			// PROCESS_ALL must run to completion, so loop the steps; PROCESS_PARTIAL does one and yields
 			do {
 				result = task->ExecuteTaskStep();
-			} while (result == TaskExecutionResult::TASK_NOT_FINISHED && mode == TaskExecutionMode::PROCESS_ALL);
+			} while (result == TaskExecutionResult::TASK_NOT_FINISHED && !TaskScheduler::ShouldYield(mode));
 		} catch (std::exception &ex) {
 			executor.PushError(ErrorData(ex));
 			return TaskExecutionResult::TASK_ERROR;
@@ -64,10 +63,11 @@ private:
 	//! Settles the executor's task counter on every exit path, so that a drain always terminates
 	class FinishGuard {
 	public:
-		explicit FinishGuard(TaskExecutor &executor) : executor(executor) {
+		FinishGuard(TaskExecutor &executor, unique_ptr<BaseExecutorTask> &task) : executor(executor), task(task) {
 		}
 		~FinishGuard() {
 			if (!dismissed) {
+				task.reset();
 				executor.FinishTask();
 			}
 		}
@@ -78,6 +78,7 @@ private:
 
 	private:
 		TaskExecutor &executor;
+		unique_ptr<BaseExecutorTask> &task;
 		bool dismissed = false;
 	};
 
@@ -104,8 +105,14 @@ TaskExecutor::TaskExecutor(TaskScheduler &scheduler, TaskSchedulerType type_p)
     : scheduler(scheduler), type(type_p), token(scheduler.CreateProducer()) {
 }
 
+TaskExecutor::TaskExecutor(TaskScheduler &scheduler, shared_ptr<SchedulerAccount> account, TaskSchedulerType type_p)
+    : scheduler(scheduler), type(type_p), token(scheduler.CreateProducer(std::move(account))) {
+}
+
 TaskExecutor::TaskExecutor(ClientContext &context_p, TaskSchedulerType type_p)
-    : TaskExecutor(TaskScheduler::GetScheduler(context_p), type_p) {
+    : scheduler(TaskScheduler::GetScheduler(context_p)),
+      type(type_p == TaskSchedulerType::ASYNC ? TaskScheduler::QueryAsyncPool(context_p) : type_p),
+      token(scheduler.CreateProducer(context_p.GetSchedulerAccount())) {
 	context = context_p;
 }
 
@@ -147,14 +154,14 @@ void TaskExecutor::ScheduleTask(unique_ptr<BaseExecutorTask> task) {
 	}
 	try {
 		// hold on to our own reference, so that a task that fails to queue can still be retired
-		scheduler.ScheduleTask(*token, scheduled_task, type);
+		scheduler.ScheduleConcurrentTask(*token, scheduled_task, type);
 	} catch (...) {
 		{
 			const annotated_lock_guard<annotated_mutex> lock(token->producer_lock);
 			// We failed to schedule the task, so we decrement the total number of tasks, instead of incrementing
 			// completed tasks count.
 			--total_tasks;
-			token->producer_cv.notify_one();
+			token->producer_cv.Signal();
 		}
 		scheduled_task->Retire();
 		throw;
@@ -163,7 +170,14 @@ void TaskExecutor::ScheduleTask(unique_ptr<BaseExecutorTask> task) {
 void TaskExecutor::FinishTask() {
 	const annotated_lock_guard<annotated_mutex> lk(token->producer_lock);
 	++completed_tasks;
-	token->producer_cv.notify_one();
+	token->producer_cv.SignalAll();
+}
+
+void TaskExecutor::WaitForProgress() {
+	static constexpr auto WAIT = absl::Milliseconds(1);
+	TaskScheduler::BlockingScope blocking;
+	annotated_unique_lock<annotated_mutex> lk(token->producer_lock);
+	token->producer_cv.WaitWithTimeout(lk.mutex(), WAIT);
 }
 
 void TaskExecutor::DrainTasks() {
@@ -176,7 +190,8 @@ void TaskExecutor::DrainTasks() {
 				break;
 			}
 			if (!scheduler.GetTaskFromProducerLocked(*token, task_from_producer)) {
-				token->producer_cv.wait(lk);
+				TaskScheduler::BlockingScope blocking;
+				token->producer_cv.Wait(lk.mutex());
 				continue;
 			}
 		}

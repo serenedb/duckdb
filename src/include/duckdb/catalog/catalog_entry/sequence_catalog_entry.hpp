@@ -12,7 +12,9 @@
 #include "duckdb/common/mutex.hpp"
 #include "duckdb/parser/parsed_data/create_sequence_info.hpp"
 #include "duckdb/parser/parsed_data/alter_table_info.hpp"
+#include "duckdb/parser/parsed_data/alter_sequence_info.hpp"
 #include "duckdb/common/optional.hpp"
+#include "duckdb/common/unordered_map.hpp"
 
 namespace duckdb {
 class DuckTransaction;
@@ -22,10 +24,37 @@ struct SequenceValue {
 	SequenceCatalogEntry *entry;
 	uint64_t usage_count;
 	int64_t counter;
+	optional<int64_t> last_value;
+};
+
+struct SequenceSessionValue {
+	int64_t next = 0;
+	idx_t remaining = 0;
+	int64_t increment = 0;
+	uint64_t usage_count = 0;
+	int64_t counter = 0;
+	optional<int64_t> block_last;
+	optional<int64_t> last;
+};
+
+struct SequenceSession {
+	static SequenceSession &Get(ClientContext &context);
+
+	mutex lock;
+	unordered_map<idx_t, SequenceSessionValue> values;
+	optional_idx last_used;
+};
+
+struct SequenceRuns {
+	int64_t first[2];
+	idx_t count[2];
+	idx_t size = 0;
 };
 
 struct SequenceData {
-	explicit SequenceData(CreateSequenceInfo &info);
+	explicit SequenceData(const CreateSequenceInfo &info);
+
+	int64_t Successor(int64_t value) const;
 
 	//! The amount of times the sequence has been used
 	uint64_t usage_count;
@@ -43,6 +72,19 @@ struct SequenceData {
 	int64_t max_value;
 	//! Whether or not the sequence cycles
 	bool cycle;
+	uint64_t cache;
+};
+
+struct SequenceState {
+	explicit SequenceState(const SequenceData &data);
+
+	mutable mutex lock;
+	mutex log_lock;
+	SequenceData data;
+	uint64_t reserved_usage_count;
+	int64_t reserved_counter;
+	optional<int64_t> reserved_last_value;
+	idx_t generation = 0;
 };
 
 //! A sequence catalog entry
@@ -54,23 +96,46 @@ public:
 public:
 	//! Create a real TableCatalogEntry and initialize storage for it
 	SequenceCatalogEntry(Catalog &catalog, SchemaCatalogEntry &schema, CreateSequenceInfo &info);
+	~SequenceCatalogEntry() override;
 
 public:
 	unique_ptr<CatalogEntry> Copy(ClientContext &context) const override;
 	unique_ptr<CreateInfo> GetInfo() const override;
+	unique_ptr<CatalogEntry> AlterEntry(ClientContext &context, AlterInfo &info) override;
+	void SetAsRoot(optional_ptr<CatalogTransaction> transaction, optional_ptr<CatalogEntry> previous) override;
+	void Rollback(CatalogEntry &prev_entry) override;
 
 	SequenceData GetData() const;
-	int64_t CurrentValue();
-	int64_t NextValue(DuckTransaction &transaction);
-	int64_t SetValue(DuckTransaction &transaction, int64_t value, bool is_called);
+	int64_t CurrentValue(SequenceSession &session);
+	int64_t NextValue(optional_ptr<DuckTransaction> transaction, SequenceSession &session);
+	void NextValues(optional_ptr<DuckTransaction> transaction, SequenceSession &session, idx_t count,
+	                SequenceRuns &runs);
+	int64_t NextValues(optional_ptr<DuckTransaction> transaction, idx_t count);
+	int64_t SetValue(optional_ptr<DuckTransaction> transaction, SequenceSession &session, int64_t value,
+	                 bool is_called);
+	int64_t SetValue(optional_ptr<DuckTransaction> transaction, int64_t value, bool is_called);
 	void ReplayValue(uint64_t usage_count, int64_t counter, optional<int64_t> last_value);
 
 	string ToSQL() const override;
 
+	optional_idx owner_column;
+
 private:
-	//! Lock for getting a value on the sequence
-	mutable mutex lock;
-	//! Sequence data
-	SequenceData data;
+	bool Committed() const;
+	bool LogsValues() const;
+	idx_t Block() const;
+	void ThrowIfSuperseded() const;
+	SequenceData Restarted(RestartSequenceInfo &info) const;
+	void Fetch(SequenceSessionValue &cached, idx_t needed);
+	void FetchLocked(SequenceSessionValue &cached, idx_t needed);
+	void Cover(uint64_t usage_count);
+	void RaiseReserved(uint64_t usage_count, int64_t counter, optional<int64_t> last_value);
+	void AppendReservation(const SequenceData &target);
+
+private:
+	shared_ptr<SequenceState> state;
+	idx_t generation = 0;
+	shared_ptr<SequenceState> replaced;
+	idx_t replaced_generation = 0;
 };
 } // namespace duckdb

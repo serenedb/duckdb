@@ -33,6 +33,29 @@ struct CorrOperation {
 		STDDevBaseOperation::Execute<B_TYPE, StddevState>(state.dev_pop_y, y);
 	}
 
+	template <class A_TYPE, class B_TYPE, class STATE>
+	static void BatchUpdate(STATE &state, const A_TYPE *y, const B_TYPE *x, const SelectionVector &ysel,
+	                        const SelectionVector &xsel, const ValidityMask &yvalidity, const ValidityMask &xvalidity,
+	                        idx_t count, AggregateInputData &aggr_input_data) {
+		BatchMoments moments;
+		moments.Compute(y, x, ysel, xsel, yvalidity, xvalidity, count);
+		if (moments.count == 0) {
+			return;
+		}
+		STATE chunk;
+		chunk.cov_pop.count = moments.count;
+		chunk.cov_pop.meanx = moments.mean_b;
+		chunk.cov_pop.meany = moments.mean_a;
+		chunk.cov_pop.co_moment = moments.co_moment;
+		chunk.dev_pop_x.count = moments.count;
+		chunk.dev_pop_x.mean = moments.mean_b;
+		chunk.dev_pop_x.dsquared = moments.m2_b;
+		chunk.dev_pop_y.count = moments.count;
+		chunk.dev_pop_y.mean = moments.mean_a;
+		chunk.dev_pop_y.dsquared = moments.m2_a;
+		Combine<STATE, CorrOperation>(chunk, state, aggr_input_data);
+	}
+
 	template <class STATE, class OP>
 	static void Combine(const STATE &source, STATE &target, AggregateInputData &aggr_input_data) {
 		CovarOperation::Combine<CovarState, OP>(source.cov_pop, target.cov_pop, aggr_input_data);

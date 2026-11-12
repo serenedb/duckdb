@@ -4,8 +4,12 @@
 namespace duckdb {
 
 vector<string> LoadedExtensionTestPaths() {
-	return {
+	vector<string> paths = {
 @EXT_TEST_PATH_INITIALIZER@	};
+	for (auto &path : paths) {
+		path = TestMakeAbsolute(path, TestGetCurrentDirectory());
+	}
+	return paths;
 }
 
 } // namespace duckdb

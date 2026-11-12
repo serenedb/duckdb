@@ -2,6 +2,7 @@
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/execution/expression_executor.hpp"
 #include "duckdb/logging/logger.hpp"
+#include "duckdb/main/settings.hpp"
 #include "duckdb/planner/expression/bound_conjunction_expression.hpp"
 #include "duckdb/execution/adaptive_filter.hpp"
 
@@ -11,12 +12,33 @@ namespace duckdb {
 
 struct ConjunctionState : public ExpressionState {
 	ConjunctionState(const Expression &expr, ExpressionExecutorState &root) : ExpressionState(expr, root) {
-		adaptive_filter = make_uniq<AdaptiveFilter>(expr);
 		if (HasContext()) {
+			adaptive_filter = make_uniq<AdaptiveFilter>(expr, Settings::Get<FilterReorderSetting>(GetContext()));
 			adaptive_filter->SetLogger(GetContext().logger);
+		} else {
+			adaptive_filter = make_uniq<AdaptiveFilter>(
+			    expr, EnumUtil::FromString<FilterReorder>(FilterReorderSetting::DefaultValue));
 		}
 	}
+	SelectionVector &TempTrue() {
+		if (!temp_true.data()) {
+			temp_true.Initialize(STANDARD_VECTOR_SIZE);
+		}
+		return temp_true;
+	}
+
+	SelectionVector &TempFalse() {
+		if (!temp_false.data()) {
+			temp_false.Initialize(STANDARD_VECTOR_SIZE);
+		}
+		return temp_false;
+	}
+
 	unique_ptr<AdaptiveFilter> adaptive_filter;
+
+private:
+	SelectionVector temp_true;
+	SelectionVector temp_false;
 };
 
 unique_ptr<ExpressionState> ExpressionExecutor::InitializeState(const BoundConjunctionExpression &expr,
@@ -24,6 +46,12 @@ unique_ptr<ExpressionState> ExpressionExecutor::InitializeState(const BoundConju
 	auto result = make_uniq<ConjunctionState>(expr, root);
 	for (auto &child : expr.GetChildren()) {
 		result->AddChild(*child);
+	}
+	if (expr.GetChildren().size() > 1) {
+		for (idx_t i = 0; i < 2; i++) {
+			result->types.push_back(LogicalType::BOOLEAN);
+			result->initialize.push_back(true);
+		}
 	}
 
 	result->Finalize();
@@ -34,14 +62,17 @@ void ExpressionExecutor::Execute(const BoundConjunctionExpression &expr, Express
                                  const SelectionVector *sel, idx_t count, Vector &result) {
 	// execute the children
 	state->intermediate_chunk.Reset();
-	for (idx_t i = 0; i < expr.GetChildren().size(); i++) {
+	const auto child_count = expr.GetChildren().size();
+	for (idx_t i = 0; i < child_count; i++) {
 		auto &current_result = state->intermediate_chunk.data[i];
 		Execute(*expr.GetChildren()[i], state->child_states[i].get(), sel, count, current_result);
 		if (i == 0) {
 			// move the result
 			result.Reference(current_result);
 		} else {
-			Vector intermediate(LogicalType::BOOLEAN);
+			const auto scratch = child_count + i % 2;
+			state->intermediate_chunk.ResetColumn(scratch);
+			auto &intermediate = state->intermediate_chunk.data[scratch];
 			// AND/OR together
 			switch (expr.GetExpressionType()) {
 			case ExpressionType::CONJUNCTION_AND:
@@ -71,13 +102,12 @@ idx_t ExpressionExecutor::Select(const BoundConjunctionExpression &expr, Express
 		idx_t current_count = count;
 		idx_t false_count = 0;
 
-		unique_ptr<SelectionVector> temp_true, temp_false;
+		optional_ptr<SelectionVector> temp_false;
 		if (false_sel) {
-			temp_false = make_uniq<SelectionVector>(STANDARD_VECTOR_SIZE);
+			temp_false = &state.TempFalse();
 		}
 		if (!true_sel) {
-			temp_true = make_uniq<SelectionVector>(STANDARD_VECTOR_SIZE);
-			true_sel = temp_true.get();
+			true_sel = &state.TempTrue();
 		}
 		for (idx_t i = 0; i < expr.GetChildren().size(); i++) {
 			idx_t tcount = Select(*expr.GetChildren()[permutation[i]], state.child_states[permutation[i]].get(),
@@ -112,13 +142,12 @@ idx_t ExpressionExecutor::Select(const BoundConjunctionExpression &expr, Express
 		idx_t current_count = count;
 		idx_t result_count = 0;
 
-		unique_ptr<SelectionVector> temp_true, temp_false;
+		optional_ptr<SelectionVector> temp_true;
 		if (true_sel) {
-			temp_true = make_uniq<SelectionVector>(STANDARD_VECTOR_SIZE);
+			temp_true = &state.TempTrue();
 		}
 		if (!false_sel) {
-			temp_false = make_uniq<SelectionVector>(STANDARD_VECTOR_SIZE);
-			false_sel = temp_false.get();
+			false_sel = &state.TempFalse();
 		}
 		for (idx_t i = 0; i < expr.GetChildren().size(); i++) {
 			idx_t tcount = Select(*expr.GetChildren()[permutation[i]], state.child_states[permutation[i]].get(),

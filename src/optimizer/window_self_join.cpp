@@ -1,4 +1,5 @@
 #include "duckdb/optimizer/window_self_join.hpp"
+#include "duckdb/common/stack_depth.hpp"
 #include "duckdb/optimizer/optimizer.hpp"
 #include "duckdb/planner/binder.hpp"
 #include "duckdb/planner/operator/logical_prepare.hpp"
@@ -173,6 +174,7 @@ bool WindowSelfJoinOptimizer::CanOptimize(const BoundWindowExpression &w_expr,
 }
 
 bool WindowSelfJoinOptimizer::CanOptimize(const LogicalOperator &op) {
+	StackDepth::Check();
 	switch (op.type) {
 	case LogicalOperatorType::LOGICAL_GET:
 	case LogicalOperatorType::LOGICAL_EXPRESSION_GET:
@@ -192,6 +194,7 @@ bool WindowSelfJoinOptimizer::CanOptimize(const LogicalOperator &op) {
 
 unique_ptr<LogicalOperator> WindowSelfJoinOptimizer::OptimizeInternal(unique_ptr<LogicalOperator> op,
                                                                       ColumnBindingReplacer &replacer) {
+	StackDepth::Check();
 	if (op->type == LogicalOperatorType::LOGICAL_PREPARE) {
 		parameter_data = op->Cast<LogicalPrepare>().prepared->value_map;
 	}

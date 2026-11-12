@@ -32,7 +32,8 @@ enum class UpdateScanType {
 	//! allow updates
 	STANDARD,
 	// disallow updates - throw on updates
-	DISALLOW_UPDATES
+	DISALLOW_UPDATES,
+	ALLOW_OWN_UPDATES
 };
 
 struct ScanOptions {

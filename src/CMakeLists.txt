@@ -4,26 +4,6 @@ if(${DISABLE_THREADS})
   add_definitions(-DDUCKDB_NO_THREADS)
 endif()
 
-if(NOT MSVC)
-  set(CMAKE_CXX_FLAGS_DEBUG
-      "${CMAKE_CXX_FLAGS_DEBUG} -Wextra -Wno-unused-parameter -Wno-redundant-move"
-  )
-  if(CMAKE_COMPILER_IS_GNUCC)
-    if(CMAKE_CXX_COMPILER_VERSION VERSION_GREATER 6)
-      set(CMAKE_CXX_FLAGS_DEBUG
-          "${CMAKE_CXX_FLAGS_DEBUG} -Wimplicit-fallthrough")
-    endif()
-  else()
-    set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -Wimplicit-fallthrough")
-  endif()
-endif()
-if("${CMAKE_CXX_COMPILER_ID}" STREQUAL "Clang" OR "${CMAKE_CXX_COMPILER_ID}"
-                                                  STREQUAL "AppleClang")
-  set(CMAKE_CXX_FLAGS_DEBUG
-      "${CMAKE_CXX_FLAGS_DEBUG} -Wimplicit-int-conversion -Wshorten-64-to-32 -Wnarrowing -Wsign-conversion -Wsign-compare -Wconversion -Wtype-limits"
-  )
-endif()
-
 if(MSVC)
   add_compile_options("/bigobj")
 endif()
@@ -61,20 +41,12 @@ add_subdirectory(transaction)
 
 set(DUCKDB_LINK_LIBS
     duckdb_fsst
-    duckdb_fmt
-    duckdb_re2
-    duckdb_miniz
     duckdb_utf8proc
     duckdb_hyperloglog
     duckdb_fastpforlib
     duckdb_skiplistlib
     duckdb_mbedtls
-    duckdb_yyjson
-    duckdb_zstd)
-
-if(JEMALLOC_ENABLED)
-  list(APPEND DUCKDB_LINK_LIBS duckdb_jemalloc)
-endif()
+    duckdb_yyjson)
 
 foreach(LINK_LIB ${DUCKDB_LINK_LIBS})
   list(APPEND LINK_OBJECTS $<TARGET_OBJECTS:${LINK_LIB}>)

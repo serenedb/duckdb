@@ -38,8 +38,7 @@ public:
 	virtual vector<AutoCompleteCandidate> SuggestPragmaName() = 0;
 	virtual vector<AutoCompleteCandidate> SuggestSettingName() = 0;
 
-	//! Get the parser cache for syntax-level autocomplete.
-	virtual shared_ptr<CompiledGrammar> GetCompiledGrammar() = 0;
+	virtual const CompiledGrammar &GetCompiledGrammar() = 0;
 };
 
 //! Empty provider — returns no catalog suggestions.
@@ -76,15 +75,9 @@ public:
 	vector<AutoCompleteCandidate> SuggestSettingName() override {
 		return {};
 	}
-	shared_ptr<CompiledGrammar> GetCompiledGrammar() override {
-		if (!compiled_grammar) {
-			compiled_grammar = CompiledGrammar::Create();
-		}
-		return compiled_grammar;
+	const CompiledGrammar &GetCompiledGrammar() override {
+		return CompiledGrammar::Base();
 	}
-
-private:
-	shared_ptr<CompiledGrammar> compiled_grammar;
 };
 
 //! Get a human-readable string for a suggestion type.

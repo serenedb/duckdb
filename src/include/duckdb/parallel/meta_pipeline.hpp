@@ -74,6 +74,11 @@ public:
 	vector<shared_ptr<Pipeline>>
 	AddDependenciesFrom(Pipeline &dependant, const Pipeline &start, bool including,
 	                    PipelineDependencyType dependency_type = PipelineDependencyType::REQUIRED);
+	idx_t PipelineCount() const {
+		return pipelines.size();
+	}
+	vector<shared_ptr<Pipeline>> AddDependenciesFrom(Pipeline &dependant, optional_idx previous_idx, idx_t begin,
+	                                                 PipelineDependencyType dependency_type);
 	//! Recursively makes all children of this MetaPipeline depend on the given Pipeline.
 	//! Force dependencies when ordering is mandatory, rather than using the pipeline/thread-count heuristic.
 	void
@@ -135,7 +140,7 @@ private:
 	//! Pipelines (other than the base pipeline) that need their own PipelineFinishEvent (e.g., for IEJoin)
 	reference_set_t<Pipeline> finish_pipelines;
 	//! Mapping from pipeline (e.g., child or union) to finish pipeline
-	reference_map_t<Pipeline, Pipeline &> finish_map;
+	reference_map_t<Pipeline, Pipeline *> finish_map;
 };
 
 } // namespace duckdb

@@ -1,0 +1,30 @@
+# name: test/sql/function/timestamp/test_icu_time_bucket_dst_gap.test
+# description: time_bucket with a time zone starts at or before its timestamp when a bucket boundary falls in a DST gap
+# group: [timestamp]
+
+require icu
+
+statement ok
+SET TimeZone = 'UTC';
+
+query II
+SELECT time_bucket(INTERVAL '3 days', TIMESTAMPTZ '1993-03-18 20:48:58+00', 'Asia/Tehran') AS b, b <= TIMESTAMPTZ '1993-03-18 20:48:58+00'
+----
+1993-03-15 21:30:00+00	true
+
+query II
+SELECT time_bucket(INTERVAL '3 days', ts, tz) AS b, b <= ts FROM (VALUES (TIMESTAMPTZ '1993-03-18 20:48:58+00', 'Asia/Tehran'), (TIMESTAMPTZ '1993-03-18 20:48:58+00', 'Iran')) t(ts, tz)
+----
+1993-03-15 21:30:00+00	true
+1993-03-15 21:30:00+00	true
+
+query II
+SELECT time_bucket(INTERVAL '1 day', TIMESTAMPTZ '1991-04-29 22:48:26+00', 'Asia/Beirut') AS b, b <= TIMESTAMPTZ '1991-04-29 22:48:26+00'
+----
+1991-04-28 23:00:00+00	true
+
+query II
+SELECT time_bucket(w, ts, 'Asia/Beirut') AS b, b <= ts FROM (VALUES (INTERVAL '1 day', TIMESTAMPTZ '1991-04-29 22:48:26+00'), (INTERVAL '1 day', TIMESTAMPTZ '1991-04-29 22:48:26+00')) t(w, ts)
+----
+1991-04-28 23:00:00+00	true
+1991-04-28 23:00:00+00	true

@@ -31,9 +31,12 @@ public:
 	vector<LogicalType> expected_types;
 	//! Expected table names.
 	vector<Identifier> expected_names;
+	bool case_sensitive_names = false;
 
 public:
 	string ToString() const override;
+	//! The VALUES list without its alias
+	string ValuesToString() const;
 	bool Equals(const TableRef &other_p) const override;
 
 	unique_ptr<TableRef> Copy() override;

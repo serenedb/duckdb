@@ -67,6 +67,9 @@ public:
 	vector<unique_ptr<ParsedExpression>> &GetChildren() {
 		return children;
 	}
+	const LogicalType &GetBoundType() const {
+		return bound_type;
+	}
 
 public:
 	string ToString() const override;
@@ -74,7 +77,7 @@ public:
 	unique_ptr<ParsedExpression> Copy() const override;
 
 	bool Equals(const ParsedExpression &other) const override;
-	hash_t Hash() const override;
+	hash_t NodeHash() const override;
 
 	void Serialize(Serializer &serializer) const override;
 	static unique_ptr<ParsedExpression> Deserialize(Deserializer &deserializer);
@@ -89,6 +92,9 @@ private:
 
 	//! Children of the type expression (e.g. type parameters)
 	vector<unique_ptr<ParsedExpression>> children;
+
+	//! The catalog type this expression was made from, which binding returns as is
+	LogicalType bound_type = LogicalType::INVALID;
 };
 
 } // namespace duckdb

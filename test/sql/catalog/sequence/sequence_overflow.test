@@ -125,6 +125,11 @@ create sequence seq8 MINVALUE -9223372036854775808 MAXVALUE 9223372036854775807 
 statement ok
 SELECT setval('seq8', 9223372036854775807, false);
 
+query I
+SELECT nextval('seq8');
+----
+9223372036854775807
+
 statement error
 SELECT nextval('seq8');
 ----
@@ -140,6 +145,11 @@ create sequence seq9 MINVALUE -9223372036854775808 MAXVALUE 9223372036854775807 
 
 statement ok
 SELECT setval('seq9', -9223372036854775808, false);
+
+query I
+SELECT nextval('seq9');
+----
+-9223372036854775808
 
 statement error
 SELECT nextval('seq9');

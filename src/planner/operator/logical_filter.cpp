@@ -16,7 +16,17 @@ void LogicalFilter::ResolveTypes() {
 }
 
 vector<ColumnBinding> LogicalFilter::GetColumnBindings() {
-	return MapBindings(children[0]->GetColumnBindings(), projection_map);
+	return GetDerivedColumnBindings();
+}
+
+optional_ptr<LogicalOperator> LogicalFilter::GetBindingChild() {
+	return children[0].get();
+}
+
+void LogicalFilter::DeriveColumnBindings(vector<ColumnBinding> &bindings) {
+	if (!projection_map.empty()) {
+		bindings = MapBindings(bindings, projection_map);
+	}
 }
 
 // Split the predicates separated by AND statements

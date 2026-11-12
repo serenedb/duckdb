@@ -130,7 +130,7 @@ static unique_ptr<ParsedExpression> TableFunctionColumn(const LogicalGet &get, c
                                                         const ColumnIndex &index) {
 	if (get.GetTable()) {
 		if (index.IsRowNumberColumn()) {
-			auto row_number = make_uniq<WindowExpression>("system", "main", "row_number");
+			auto row_number = make_uniq<WindowExpression>("", "", "row_number");
 			row_number->WindowStartMutable() = WindowBoundary::UNBOUNDED_PRECEDING;
 			row_number->WindowEndMutable() = WindowBoundary::CURRENT_ROW_RANGE;
 			return std::move(row_number);
@@ -197,7 +197,7 @@ SQLSourceQueryResult LogicalPlanSQLExportHelpers::ReconstructSQLSource(ClientCon
 		source = std::move(result.source);
 	} else if (auto table = get.GetTable()) {
 		auto reference = make_uniq<BaseTableRef>();
-		reference->SetQualifiedName(table->schema.GetQualifiedName(table->name));
+		reference->SetQualifiedName(table->GetQualifiedName(table->name));
 		source = std::move(reference);
 	} else {
 		if (get.bind_info) {

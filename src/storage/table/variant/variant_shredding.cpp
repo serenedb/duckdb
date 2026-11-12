@@ -11,7 +11,7 @@
 #include "duckdb/function/variant/variant_normalize.hpp"
 #include "duckdb/common/serializer/varint.hpp"
 #include "duckdb/common/vector_operations/vector_operations.hpp"
-#ifdef DEBUG
+#ifdef D_ASSERT_IS_ENABLED
 #include "duckdb/common/value_operations/value_operations.hpp"
 #endif
 
@@ -793,7 +793,8 @@ void VariantColumnData::ShredVariantData(const Vector &input, Vector &output, id
 		FlatVector::SetSize(unshredded, count_t(count));
 	}
 
-#ifdef DEBUG
+#ifdef D_ASSERT_IS_ENABLED
+	DUCKDB_DEBUG_VERIFY_GUARD();
 	Vector roundtrip_result(LogicalType::VARIANT(), count);
 	VariantUtils::UnshredVariantData(output, roundtrip_result, count);
 
@@ -829,6 +830,7 @@ void VariantColumnData::DebugShred(Vector &variant, idx_t count) {
 
 	Vector materialized(LogicalType::VARIANT(), count);
 	VectorOperations::Copy(variant, materialized, count, 0, 0);
+	FlatVector::SetSize(materialized, count);
 	variant.Reference(materialized);
 
 	//! Derive the shredding schema from the *first* value only - subsequent values that don't match it

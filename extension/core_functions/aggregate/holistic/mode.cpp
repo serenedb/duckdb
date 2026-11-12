@@ -31,9 +31,7 @@ namespace {
 static unique_ptr<BoundAggregateExpression> BindAggregate(ClientContext &context, const char *name,
                                                           vector<unique_ptr<Expression>> children,
                                                           unique_ptr<Expression> filter = nullptr) {
-	auto &catalog = Catalog::GetSystemCatalog(context);
-	auto &entry = catalog.GetEntry<AggregateFunctionCatalogEntry>(
-	    context, QualifiedName(catalog.GetName(), Identifier::DefaultSchema(), name));
+	auto &entry = Catalog::GetBuiltinEntry<AggregateFunctionCatalogEntry>(context, Identifier(name));
 	vector<LogicalType> child_types;
 	for (auto &child : children) {
 		child_types.push_back(child->GetReturnType());

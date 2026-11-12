@@ -53,7 +53,7 @@ public:
 public:
 	InsertionOrderPreservingMap<string> ParamsToString() const override;
 	vector<ColumnBinding> GetColumnBindings() override {
-		return children[1]->GetColumnBindings();
+		return GetDerivedColumnBindings();
 	}
 
 	void Serialize(Serializer &serializer) const override;
@@ -64,6 +64,9 @@ public:
 protected:
 	void ResolveTypes() override {
 		types = children[1]->types;
+	}
+	optional_ptr<LogicalOperator> GetBindingChild() override {
+		return children[1].get();
 	}
 };
 } // namespace duckdb

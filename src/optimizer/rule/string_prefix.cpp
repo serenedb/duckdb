@@ -28,8 +28,9 @@ StringPrefixRule::StringPrefixRule(ExpressionRewriter &rewriter) : Rule(rewriter
 	op->policy = SetMatcher::Policy::UNORDERED;
 
 	auto func = make_uniq<FunctionExpressionMatcher>();
-	func->function =
-	    make_uniq<ManyFunctionMatcher>(identifier_set_t {"left", "array_slice", "list_slice", "substring", "substr"});
+	static const case_insensitive_set_view_t slice_functions {"left", "array_slice", "list_slice", "substring",
+	                                                          "substr"};
+	func->function = make_uniq<ManyFunctionMatcher>(&slice_functions);
 	func->type = make_uniq<TypeMatcherId>(LogicalTypeId::VARCHAR);
 
 	func->matchers.push_back(make_uniq<ExpressionMatcher>());
@@ -52,7 +53,8 @@ InstrPrefixRule::InstrPrefixRule(ExpressionRewriter &rewriter) : Rule(rewriter) 
 	op->policy = SetMatcher::Policy::UNORDERED;
 
 	auto func = make_uniq<FunctionExpressionMatcher>();
-	func->function = make_uniq<ManyFunctionMatcher>(identifier_set_t {"instr", "position", "strpos"});
+	static const case_insensitive_set_view_t position_functions {"instr", "position", "strpos"};
+	func->function = make_uniq<ManyFunctionMatcher>(&position_functions);
 	func->type = make_uniq<TypeMatcherId>(LogicalTypeId::BIGINT);
 	func->matchers.push_back(make_uniq<ExpressionMatcher>());
 	func->matchers.push_back(make_uniq<ConstantExpressionMatcher>());

@@ -47,6 +47,9 @@ public:
 	virtual bool RendersSinglePlan() {
 		return false;
 	}
+	virtual bool RendersLines() {
+		return false;
+	}
 
 	//! Returns the sink to render into when printing this format's output directly. Only invoked when we are about
 	//! to print (the default renderer writes straight to the output stream), so it is never created for the

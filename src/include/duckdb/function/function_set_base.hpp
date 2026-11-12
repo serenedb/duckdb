@@ -10,6 +10,8 @@
 
 #include "duckdb/function/function.hpp"
 
+#include <absl/algorithm/container.h>
+
 namespace duckdb {
 
 template <class T>
@@ -31,11 +33,15 @@ public:
 
 public:
 	auto AddFunction(T function) & -> FunctionSet<T> & {
-		functions.push_back(make_shared_ptr<T>(std::move(function)));
+		AddFunction(make_shared_ptr<T>(std::move(function)));
 		return *this;
 	}
 	void AddFunction(shared_ptr<const T> function) {
-		functions.push_back(std::move(function));
+		if (IsTypeScoped(function) || functions.empty() || !IsTypeScoped(functions.back())) {
+			functions.push_back(std::move(function));
+			return;
+		}
+		functions.insert(absl::c_find_if(functions, IsTypeScoped), std::move(function));
 	}
 	idx_t Size() {
 		return functions.size();
@@ -55,6 +61,7 @@ public:
 			callback(*modified);
 			function = std::move(modified);
 		}
+		TypeScopedLast();
 	}
 
 	bool MergeFunctionSet(const FunctionSet<T> &new_functions, bool override = false) {
@@ -80,7 +87,17 @@ public:
 				functions.push_back(new_func);
 			}
 		}
+		TypeScopedLast();
 		return true;
+	}
+
+private:
+	static bool IsTypeScoped(const shared_ptr<const T> &function) {
+		return function->GetSignature().IsTypeScoped();
+	}
+	void TypeScopedLast() {
+		absl::c_stable_partition(functions,
+		                         [](const shared_ptr<const T> &function) { return !IsTypeScoped(function); });
 	}
 };
 

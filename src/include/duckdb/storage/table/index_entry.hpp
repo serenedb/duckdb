@@ -15,6 +15,7 @@
 #include "duckdb/execution/index/bound_index.hpp"
 #include "duckdb/storage/index.hpp"
 #include "duckdb/storage/storage_lock.hpp"
+#include "duckdb/transaction/transaction_data.hpp"
 
 #include <functional>
 #include <memory>
@@ -112,12 +113,14 @@ private:
 //! The IndexEntry provides a stable logical identity which refers to an interchangeable snapshot of an index.
 class IndexEntry : public enable_shared_from_this<IndexEntry> {
 public:
-	IndexEntry(unique_ptr<Index> index, idx_t index_oid, ConstraintCheckMode check_mode);
+	IndexEntry(unique_ptr<Index> index, idx_t index_oid, ConstraintCheckMode check_mode,
+	           transaction_t built_through = 0);
 	//! Append a chunk to the physical index, buffering it while the index is unbound.
 	void Append(DataChunk &chunk, Vector &row_ids);
 	//! Appends a chunk using delete and checkpoint indexes where required.
 	ErrorData Append(DataChunk &chunk, Vector &row_ids, const shared_ptr<IndexEntry> &delete_entry,
 	                 IndexAppendMode append_mode, optional_idx active_checkpoint);
+	ErrorData FinishAppend();
 	//! Reverts an append to the physical index or its checkpoint delta.
 	void RevertAppend(DataChunk &chunk, Vector &row_ids);
 	//! Appends deleted rows to the bound physical index if it enforces uniqueness.
@@ -125,12 +128,16 @@ public:
 	//! Applies a removal or removal rollback to the physical index and its deltas.
 	void RemoveFromIndex(DataChunk &chunk, Vector &row_ids, IndexRemovalType removal_type,
 	                     optional_idx active_checkpoint);
+	bool ServesSnapshot(const SnapshotView &view) const {
+		return view.Sees(built_through);
+	}
 	//! Returns whether the physical index enforces a unique constraint.
 	bool IsUnique() const;
+	bool IsForeign() const;
 	//! Returns whether the constraint enforced by the physical index is only checked when committing.
 	bool IsDeferred() const;
 	//! Returns whether the physical index matches the foreign key columns and role.
-	bool IsForeignKeyIndex(const vector<PhysicalIndex> &fk_keys, ForeignKeyType fk_type) const;
+	bool IsForeignKeyIndex(std::span<const PhysicalIndex> fk_keys, ForeignKeyType fk_type) const;
 	//! Returns the name of the physical index.
 	Identifier GetName() const;
 	//! Returns the physical index type.
@@ -144,15 +151,14 @@ public:
 	//! Replaces the unbound physical index with its bound representation.
 	void CommitBind(unique_ptr<BoundIndex> bound_index);
 	//! Verifies that rows can be appended to the bound physical index.
-	void VerifyAppend(const shared_ptr<IndexEntry> &delete_entry, DataChunk &chunk,
-	                  optional_ptr<ConflictManager> manager);
+	void VerifyAppend(const shared_ptr<IndexEntry> &delete_entry, DataChunk &chunk);
 	//! Verifies a foreign key constraint against the physical index and its checkpoint deltas.
 	void VerifyForeignKey(const shared_ptr<IndexEntry> &delete_entry, DataChunk &chunk,
 	                      ConflictManager &conflict_manager);
 	//! Constructs the physical index's constraint violation message.
 	string GetConstraintViolationMessage(VerifyExistenceType verify_type, idx_t failed_index, DataChunk &input) const;
 	//! Verifies that the physical index is not updated by the given columns.
-	void VerifyUpdate(const vector<PhysicalIndex> &column_ids) const;
+	void VerifyUpdate(std::span<const PhysicalIndex> column_ids) const;
 	//! Vacuums the physical index if it is bound.
 	void Vacuum();
 	//! Rebuilds the bound physical index with chunks supplied by the scan callback.
@@ -164,6 +170,7 @@ public:
 	void VerifyBuffers();
 	//! Returns a copy of the physical index's table storage metadata.
 	IndexInfo GetStorageInfo() const;
+	vector<column_t> GetColumnIds() const;
 	//! Returns the in-memory size of the physical index, or zero if it is unbound.
 	idx_t GetInMemorySize() const;
 	//! Serializes the physical index for a checkpoint.
@@ -203,6 +210,7 @@ private:
 	friend class IndexReadHandle;
 	template <class>
 	friend class IndexWriteHandle;
+	friend class TableIndexList;
 	void InitializeLocalIndexesInternal(TableIndexList &delete_indexes,
 	                                    optional_ptr<TableIndexList> append_indexes) const;
 
@@ -215,6 +223,7 @@ private:
 	unique_ptr<Index> owned_index;
 	//! Whether the enforced constraint is deferred. Derived from the catalog constraint, not serialized.
 	const ConstraintCheckMode check_mode;
+	const transaction_t built_through;
 	IndexDeltas deltas;
 };
 

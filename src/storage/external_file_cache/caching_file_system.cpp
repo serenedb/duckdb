@@ -66,8 +66,8 @@ public:
 			case CacheBlockState::LOADED: {
 				auto pin = buffer_manager.Pin(block->block_handle);
 				if (pin.IsValid()) {
-#ifdef DEBUG
-					D_ASSERT(Checksum(pin.Ptr(), block->nr_bytes) == block->checksum);
+#ifdef D_ASSERT_IS_ENABLED
+					D_ASSERT_V(Checksum(pin.Ptr(), block->nr_bytes) == block->checksum);
 #endif
 					result_pin = std::move(pin);
 					return;
@@ -108,7 +108,7 @@ public:
 					block->block_handle = buf.GetBlockHandle();
 					block->nr_bytes = to_read;
 					block->state = CacheBlockState::LOADED;
-#ifdef DEBUG
+#ifdef D_ASSERT_IS_ENABLED
 					block->checksum = Checksum(buf.Ptr(), to_read);
 #endif
 					result_pin = std::move(buf);
@@ -122,8 +122,9 @@ public:
 				return;
 			}
 			case CacheBlockState::LOADING: {
-				block->cv.wait(lk,
-				               [&]() DUCKDB_REQUIRES(block->mtx) { return block->state != CacheBlockState::LOADING; });
+				while (block->state == CacheBlockState::LOADING) {
+					block->cv.Wait(&block->mtx);
+				}
 				continue;
 			}
 			case CacheBlockState::IO_ERROR: {
@@ -374,7 +375,9 @@ FileBufferHandleGroup CachingFileHandle::Read(const idx_t nr_bytes, const idx_t 
 	// Schedule block fetch tasks for all blocks.
 	vector<BufferHandle> pins(num_blocks);
 	auto &scheduler = TaskScheduler::GetScheduler(caching_file_system.db);
-	TaskExecutor executor(scheduler, TaskSchedulerType::ASYNC);
+	auto client_context = context.GetClientContext();
+	TaskExecutor executor(scheduler, client_context ? client_context->GetSchedulerAccount() : nullptr,
+	                      client_context ? TaskScheduler::QueryAsyncPool(*client_context) : TaskSchedulerType::ASYNC);
 
 	for (idx_t idx = 0; idx < num_blocks; idx++) {
 		executor.ScheduleTask(make_uniq<FetchBlockTask>(

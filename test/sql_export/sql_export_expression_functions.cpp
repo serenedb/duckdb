@@ -253,8 +253,7 @@ TEST_CASE("Incremental scalar registration preserves live SQL identity",
 		REQUIRE(exported.IsValid());
 		REQUIRE(exported.IsSuccess());
 		REQUIRE(exported.GetValue());
-		REQUIRE(exported.GetValue()->Cast<FunctionExpression>().GetQualifiedName() ==
-		        QualifiedName(Identifier::SystemCatalog(), Identifier::DefaultSchema(), name));
+		REQUIRE(exported.GetValue()->Cast<FunctionExpression>().GetQualifiedName() == QualifiedName(name));
 		plan.reset();
 		auto rebound = target.Query("SELECT " + exported.GetValue()->ToString());
 		REQUIRE_NO_FAIL(*rebound);
@@ -455,9 +454,7 @@ TEST_CASE("Bound expression SQL export canonicalizes native function definitions
 			auto exported = BoundExpressionSQLExporter::Export(*bound, context);
 			REQUIRE(exported.IsSuccess());
 			auto &name = exported.GetValue()->Cast<FunctionExpression>().GetQualifiedName();
-			REQUIRE(name.Name() == Identifier("abs"));
-			REQUIRE(name.Catalog() == Identifier::SystemCatalog());
-			REQUIRE(name.Schema() == Identifier::DefaultSchema());
+			REQUIRE(name == QualifiedName(Identifier("abs")));
 			RequireRoundTrip(connection, *bound->Copy(), context, string(), "abs(-7::INTEGER)");
 		}
 	}
@@ -548,39 +545,6 @@ TEST_CASE("Bound expression SQL export preserves qualified operator function ide
 	REQUIRE_FALSE(rebound->HasError());
 	REQUIRE(rebound->GetTypes() == vector<LogicalType> {LogicalType::INTEGER});
 	REQUIRE(rebound->Collection().GetValue(0, 0) == Value::INTEGER(5));
-	connection.Rollback();
-}
-
-TEST_CASE("SQL export recovers calls from supported binary compatibility targets",
-          "[sql_export][bound_expression_sql_export][serialization]") {
-	DuckDB db;
-	Connection connection(db);
-	REQUIRE_NO_FAIL(connection.Query("CREATE TABLE compatibility_values(i INTEGER)"));
-	REQUIRE_NO_FAIL(connection.Query("INSERT INTO compatibility_values VALUES (1), (2)"));
-	connection.BeginTransaction();
-	for (auto call : {"abs(i)", "log2(i)", "sum(i)", "quantile_cont(i, 0.5)"}) {
-		INFO(call);
-		auto plan = BindExportQuery(connection, string("SELECT ") + call + " FROM compatibility_values");
-		auto expression = FindExpression(*plan, [](const Expression &candidate) {
-			return candidate.GetExpressionClass() == ExpressionClass::BOUND_AGGREGATE ||
-			       (candidate.GetExpressionClass() == ExpressionClass::BOUND_FUNCTION &&
-			        candidate.GetExpressionType() == ExpressionType::BOUND_FUNCTION);
-		});
-		REQUIRE(expression);
-		auto source = CreateSyntheticSQLSource(*expression);
-		auto current =
-		    BinaryRoundTrip(*connection.context, *expression, StorageCompatibility::FromIndex(StorageVersion::V2_0_0));
-		LogicalPlanVerificationPath current_path;
-		current_path.root = LogicalPlanVerificationPathRoot::STANDALONE_EXPRESSION;
-		RequireRoundTrip(connection, *current, source.context, source.from_clause,
-		                 StringUtil::Replace(call, "(i", "(v.exported_0"));
-		auto legacy =
-		    BinaryRoundTrip(*connection.context, *expression, StorageCompatibility::FromIndex(StorageVersion::V1_5_0));
-		REQUIRE(legacy->GetReturnType() == expression->GetReturnType());
-		LogicalPlanVerificationPath path;
-		path.root = LogicalPlanVerificationPathRoot::STANDALONE_EXPRESSION;
-		REQUIRE(BoundExpressionSQLExporter::Export(*legacy, source.context).IsSuccess());
-	}
 	connection.Rollback();
 }
 

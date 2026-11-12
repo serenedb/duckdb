@@ -9,3 +9,13 @@ select s.min, s.max from (select stats(l_comment) s from 'data/parquet-testing/l
 ----
  Tiresias 	zle carefully sauternes. quickly
 
+query II
+select s.min, s.max from (select stats(l_comment) s from (select l_comment, l_orderkey from 'data/parquet-testing/lineitem-top10000.gzip.parquet' ORDER BY l_orderkey LIMIT 1))
+----
+ Tiresias 	zle carefully sauternes. quickly
+
+query II
+select s.min, s.max from (select stats(l_comment) s from read_parquet(['data/parquet-testing/lineitem-top10000.gzip.parquet', 'data/parquet-testing/lineitem-top10000.gzip.parquet'], union_by_name = true) USING SAMPLE 1 ROWS)
+----
+ Tiresias 	zle carefully sauternes. quickly
+

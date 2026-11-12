@@ -10,11 +10,13 @@ add_library_unity(
   filter_pushdown_alias.cpp
   function_invocation_serialization.cpp
   join_order_conflict_detector.cpp
+  large_constant_values.cpp
   logical_plan_verification.cpp
   relation_statistics.cpp
   remove_unused_columns.cpp
   unchecked_cast.cpp
-  union_alls.cpp)
+  union_alls.cpp
+  wide_query_shapes.cpp)
 
 set(UNITTEST_OBJECT_FILES
     ${UNITTEST_OBJECT_FILES} $<TARGET_OBJECTS:test_optimizer>

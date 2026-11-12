@@ -40,11 +40,11 @@ TEST_CASE("The none external extension provider refuses installing and loading",
 
 	auto load = con.Query("LOAD 'does_not_exist.duckdb_extension'");
 	REQUIRE(load->HasError());
-	CHECK(StringUtil::Contains(load->GetError(), "does not link the loadable_extensions library"));
+	CHECK(StringUtil::Contains(load->GetError(), "LOAD is not supported by SereneDB"));
 
 	auto install = con.Query("INSTALL does_not_exist FROM 'http://127.0.0.1:9'");
 	REQUIRE(install->HasError());
-	CHECK(StringUtil::Contains(install->GetError(), "does not link the loadable_extensions library"));
+	CHECK(StringUtil::Contains(install->GetError(), "INSTALL is not supported by SereneDB"));
 
 	CHECK(!ExtensionHelper::CanAutoloadExtension(*db.instance, "json"));
 	REQUIRE_THROWS(db.instance->config.SetExternalExtensionProvider(nullptr));

@@ -25,7 +25,7 @@ logical_opt	<!REGEX>:.*COMPARISON_JOIN.*
 
 # Non-contiguous list. Should still use a join
 query II
-EXPLAIN FROM the_table WHERE the_id in [1,42,999,12345,99999,100001]
+EXPLAIN FROM the_table WHERE the_id in [1,42,999,12345,99999,100001,-1000,-1001,-1002,-1003,-1004,-1005,-1006,-1007,-1008,-1009,-1010,-1011,-1012,-1013,-1014,-1015,-1016,-1017,-1018,-1019,-1020,-1021,-1022,-1023,-1024,-1025,-1026,-1027,-1028,-1029]
 ----
 logical_opt	<REGEX>:.*COMPARISON_JOIN.*
 

@@ -1,6 +1,6 @@
 module: tokenizer
 #
-# Lexical tokenization of SQL text, in the context of whatever grammar extensions are loaded on the given connection.
+# Lexical tokenization of SQL text, with the grammar of the given connection.
 # The connection is not used for anything else and `[[token_iterator]]` can outlive the connection. Offsets are byte
 # offsets into the input exactly as given, the input is not normalized or validated.
 #
@@ -53,8 +53,8 @@ functions:
     description: |
       Tokenizes a SQL string into an iterator over its tokens.
 
-      Lexical tokenization, in the context of whatever grammar extensions are loaded on the given connection. Closing
-      the connection or changing settings afterwards does not affect the tokens. The SQL string is borrowed for the call
+      Lexical tokenization, with the grammar of the given connection. Closing the connection or changing settings
+      afterwards does not affect the tokens. The SQL string is borrowed for the call
       only, the caller may free it once this call returns. Whitespace is not a token. Malformed input is not an error;
       `[[token_iterator_ends_unterminated]]` reports whether the input ended inside an open token.
 

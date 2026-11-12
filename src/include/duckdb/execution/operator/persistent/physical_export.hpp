@@ -27,6 +27,8 @@ struct ExportEntries {
 	vector<reference<CatalogEntry>> views;
 	vector<reference<CatalogEntry>> indexes;
 	vector<reference<CatalogEntry>> macros;
+	vector<reference<CatalogEntry>> tokenizers;
+	vector<reference<CatalogEntry>> jobs;
 };
 
 //! Parse a file from disk using a specified copy function and return the set of chunks retrieved from the file
@@ -58,6 +60,8 @@ public:
 	static void ExtractEntries(ClientContext &context, vector<reference<SchemaCatalogEntry>> &schemas,
 	                           ExportEntries &result);
 	static catalog_entry_vector_t GetNaiveExportOrder(ClientContext &context, Catalog &catalog);
+	static bool QualifyUserTypes(LogicalType &type, const unordered_map<idx_t, QualifiedName> &user_types,
+	                             bool nested_only = false);
 
 public:
 	// Sink interface

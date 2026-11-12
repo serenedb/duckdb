@@ -8,6 +8,21 @@ DeleteQueryNode::DeleteQueryNode() : QueryNode(QueryNodeType::DELETE_QUERY_NODE)
 }
 
 string DeleteQueryNode::ToString() const {
+	if (is_truncate) {
+		string result = "TRUNCATE ";
+		if (truncate_group.empty()) {
+			result += table->ToString();
+		} else {
+			result += StringUtil::Join(truncate_group, ", ", [](const auto &target) { return target->ToString(); });
+		}
+		if (truncate_restart_identity) {
+			result += " RESTART IDENTITY";
+		}
+		if (truncate_cascade) {
+			result += " CASCADE";
+		}
+		return result;
+	}
 	string result;
 	result = cte_map.ToString();
 	result += "DELETE FROM ";
@@ -48,6 +63,18 @@ bool DeleteQueryNode::Equals(const QueryNode *other_p) const {
 		return false;
 	}
 	auto &other = other_p->Cast<DeleteQueryNode>();
+	if (is_truncate != other.is_truncate || truncate_cascade != other.truncate_cascade ||
+	    truncate_restart_identity != other.truncate_restart_identity) {
+		return false;
+	}
+	if (truncate_group.size() != other.truncate_group.size()) {
+		return false;
+	}
+	for (idx_t i = 0; i < truncate_group.size(); i++) {
+		if (!TableRef::Equals(truncate_group[i], other.truncate_group[i])) {
+			return false;
+		}
+	}
 	if (!TableRef::Equals(table, other.table)) {
 		return false;
 	}
@@ -84,6 +111,12 @@ unique_ptr<QueryNode> DeleteQueryNode::Copy() const {
 	}
 	for (auto &expr : returning_list) {
 		result->returning_list.push_back(expr->Copy());
+	}
+	result->is_truncate = is_truncate;
+	result->truncate_cascade = truncate_cascade;
+	result->truncate_restart_identity = truncate_restart_identity;
+	for (auto &target : truncate_group) {
+		result->truncate_group.push_back(target->Copy());
 	}
 	CopyProperties(*result);
 	return std::move(result);

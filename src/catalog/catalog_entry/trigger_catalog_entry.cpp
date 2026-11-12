@@ -3,6 +3,8 @@
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/catalog/catalog_entry/schema_catalog_entry.hpp"
 #include "duckdb/common/enum_util.hpp"
+#include "duckdb/common/string_util.hpp"
+#include "duckdb/main/client_context.hpp"
 #include "duckdb/parser/keyword_helper.hpp"
 #include "duckdb/parser/parsed_data/alter_table_info.hpp"
 #include "duckdb/parser/parsed_data/parse_info.hpp"
@@ -10,15 +12,16 @@
 namespace duckdb {
 
 TriggerCatalogEntry::TriggerCatalogEntry(Catalog &catalog, SchemaCatalogEntry &schema, CreateTriggerInfo &info)
-    : StandardEntry(CatalogType::TRIGGER_ENTRY, schema, catalog, info.GetTriggerName()),
+    : StandardEntry(CatalogType::TRIGGER_ENTRY, schema, catalog, info.GetTriggerName(), info.oid),
       base_table(unique_ptr_cast<TableRef, BaseTableRef>(info.base_table->Copy())), timing(info.timing),
       event_type(info.event_type), columns(info.columns), for_each(info.for_each),
       referencing_new_table(info.referencing_new_table), referencing_old_table(info.referencing_old_table),
-      trigger_action(info.trigger_action->Copy()) {
+      trigger_action(info.trigger_action->Copy()), firing(info.firing) {
 	this->temporary = info.temporary;
 	this->dependencies = info.dependencies;
 	this->comment = info.comment;
 	this->tags = info.tags;
+	this->permissions = info.permissions;
 }
 
 unique_ptr<CatalogEntry> TriggerCatalogEntry::AlterEntry(CatalogTransaction transaction, AlterInfo &alter_info) {
@@ -26,6 +29,12 @@ unique_ptr<CatalogEntry> TriggerCatalogEntry::AlterEntry(CatalogTransaction tran
 		return CatalogEntry::AlterEntry(transaction, alter_info);
 	}
 	auto &table_info = alter_info.Cast<AlterTableInfo>();
+	if (table_info.alter_table_type == AlterTableType::SET_TRIGGER_FIRING) {
+		auto info_copy = GetInfo();
+		auto &cast_info = info_copy->Cast<CreateTriggerInfo>();
+		cast_info.firing = table_info.Cast<SetTriggerFiringInfo>().firing;
+		return make_uniq<TriggerCatalogEntry>(catalog, ParentSchema(transaction), cast_info);
+	}
 	if (table_info.alter_table_type != AlterTableType::RENAME_COLUMN) {
 		return CatalogEntry::AlterEntry(transaction, alter_info);
 	}
@@ -42,18 +51,18 @@ unique_ptr<CatalogEntry> TriggerCatalogEntry::AlterEntry(CatalogTransaction tran
 	if (!updated) {
 		return nullptr;
 	}
-	return make_uniq<TriggerCatalogEntry>(catalog, schema, cast_info);
+	return make_uniq<TriggerCatalogEntry>(catalog, ParentSchema(transaction), cast_info);
 }
 
 unique_ptr<CatalogEntry> TriggerCatalogEntry::Copy(ClientContext &context) const {
 	auto info_copy = GetInfo();
 	auto &cast_info = info_copy->Cast<CreateTriggerInfo>();
-	return make_uniq<TriggerCatalogEntry>(catalog, schema, cast_info);
+	return make_uniq<TriggerCatalogEntry>(catalog, ParentSchema(context), cast_info);
 }
 
 unique_ptr<CreateInfo> TriggerCatalogEntry::GetInfo() const {
 	auto result = make_uniq<CreateTriggerInfo>();
-	result->SetQualifiedName(schema.GetQualifiedName(name));
+	result->SetQualifiedName(GetQualifiedName(name));
 	result->base_table = unique_ptr_cast<TableRef, BaseTableRef>(base_table->Copy());
 	result->timing = timing;
 	result->event_type = event_type;
@@ -62,9 +71,11 @@ unique_ptr<CreateInfo> TriggerCatalogEntry::GetInfo() const {
 	result->referencing_new_table = referencing_new_table;
 	result->referencing_old_table = referencing_old_table;
 	result->trigger_action = trigger_action->Copy();
+	result->firing = firing;
 	result->dependencies = dependencies;
 	result->comment = comment;
 	result->tags = tags;
+	result->permissions = permissions;
 	return std::move(result);
 }
 
@@ -100,6 +111,35 @@ string TriggerCatalogEntry::ToSQL() const {
 	ss << " " << trigger_action->ToString();
 	ss << ";";
 	return ss.str();
+}
+
+bool TriggerCatalogEntry::Fires(ReplicationRole role) const {
+	switch (firing) {
+	case TriggerFiring::ORIGIN:
+		return role != ReplicationRole::REPLICA;
+	case TriggerFiring::REPLICA:
+		return role == ReplicationRole::REPLICA;
+	case TriggerFiring::ALWAYS:
+		return true;
+	case TriggerFiring::DISABLED:
+		return false;
+	}
+	return false;
+}
+
+ReplicationRole GetReplicationRole(ClientContext &context) {
+	Value value;
+	if (!context.TryGetCurrentSetting(Identifier("session_replication_role"), value) || value.IsNull()) {
+		return ReplicationRole::ORIGIN;
+	}
+	const auto role = value.ToString();
+	if (StringUtil::CIEquals(role, "replica")) {
+		return ReplicationRole::REPLICA;
+	}
+	if (StringUtil::CIEquals(role, "local")) {
+		return ReplicationRole::LOCAL;
+	}
+	return ReplicationRole::ORIGIN;
 }
 
 } // namespace duckdb

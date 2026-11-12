@@ -8,6 +8,7 @@
 
 #pragma once
 
+#include "duckdb/common/mutex.hpp"
 #include "duckdb/common/optional_ptr.hpp"
 #include "duckdb/common/types/data_chunk.hpp"
 
@@ -36,6 +37,28 @@ private:
 	Vector addresses;
 	SelectionVector new_groups;
 	DataChunk row_id_chunk;
+};
+
+//! The row ids a statement's threads register; a table whose row ids allow it provides a cheaper one.
+class RowIdSet {
+public:
+	virtual ~RowIdSet() = default;
+
+	//! Registers the trailing row-ID columns of input, starting at row_id_start, and returns how many were new. May
+	//! slice input to the new rows.
+	virtual idx_t Register(DataChunk &input, idx_t row_id_start) = 0;
+};
+
+//! A RowIdDeduplicator under a lock: works for any row-ID layout.
+class LockedRowIdSet final : public RowIdSet {
+public:
+	LockedRowIdSet(ClientContext &context, vector<LogicalType> row_id_types);
+
+	idx_t Register(DataChunk &input, idx_t row_id_start) final;
+
+private:
+	mutex lock;
+	RowIdDeduplicator rows;
 };
 
 } // namespace duckdb

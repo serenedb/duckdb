@@ -30,13 +30,14 @@ class Tokenizer;
 
 class TokenizerBehavior {
 public:
-	TokenizerBehavior(const string &sql, vector<MatcherToken> &tokens);
+	TokenizerBehavior(std::string_view sql, vector<MatcherToken> &tokens);
 	virtual ~TokenizerBehavior() = default;
 
 public:
 	virtual void PushToken(idx_t start, idx_t end, TokenType type, bool unterminated = false);
 	virtual void OnStatementEnd(idx_t pos);
-	virtual void OnLastToken(const Tokenizer &tokenizer, TokenizeState state, string last_word, idx_t last_pos);
+	virtual void OnLastToken(const Tokenizer &tokenizer, TokenizeState state, std::string_view last_word,
+	                         idx_t last_pos);
 
 	//! Sentinel appended at the end of the token vector on a clean exit. Override to return
 	//! `END_OF_INPUT_AUTOCOMPLETE` for autocomplete behavior. Dirty exits (unterminated comment /
@@ -46,7 +47,7 @@ public:
 	}
 
 public:
-	const string &sql;
+	std::string_view sql;
 	vector<MatcherToken> &tokens;
 	bool has_block_comment = false;
 	idx_t last_block_comment_position = 0;
@@ -54,19 +55,21 @@ public:
 
 class Tokenizer {
 public:
-	virtual ~Tokenizer() = default;
 	explicit Tokenizer(const PEGKeywordHelper &keyword_helper);
 
 public:
 	//! Tokenize the behavior's input and return whether autocomplete can be offered.
-	virtual bool TokenizeInput(TokenizerBehavior &behavior) const;
+	bool TokenizeInput(TokenizerBehavior &behavior) const;
 
 protected:
-	virtual bool BackslashEscapesStringLiterals() const;
-	virtual bool IsQuotedIdentifierDelimiter(char character) const;
-	virtual void PushOperatorToken(TokenizerBehavior &behavior, idx_t start, idx_t end) const;
-	virtual void HandleLastToken(TokenizerBehavior &behavior, TokenizeState state, const string &sql,
-	                             idx_t last_pos) const;
+	bool BackslashEscapesStringLiterals() const {
+		return false;
+	}
+	bool IsQuotedIdentifierDelimiter(char character) const {
+		return character == '"';
+	}
+	void PushOperatorToken(TokenizerBehavior &behavior, idx_t start, idx_t end) const;
+	void HandleLastToken(TokenizerBehavior &behavior, TokenizeState state, std::string_view sql, idx_t last_pos) const;
 
 private:
 	//! Core tokenization loop. Returns true on a clean exit, false if the input ended inside an
@@ -74,23 +77,125 @@ private:
 	//! `TokenizeInput()` is the one that appends `GetTerminator()` (clean) or `END_OF_INPUT`
 	//! (dirty) based on the return value.
 	bool TokenizeInputInternal(TokenizerBehavior &behavior) const;
-	bool IsCompoundColonToken(const string &sql, idx_t pos, idx_t &token_length) const;
+	bool IsCompoundColonToken(std::string_view sql, idx_t pos, idx_t &token_length) const;
+	static bool IsHashOperatorToken(std::string_view sql, idx_t pos, idx_t &token_length);
 
 public:
-	static bool IsSingleByteOperator(char c);
-	static bool CharacterIsInitialNumber(char c);
-	static bool CharacterIsNumber(char c);
-	static bool CharacterIsScientific(char c);
-	static bool CharacterIsControlFlow(char c);
-	static bool CharacterIsKeyword(char c);
-	static bool CharacterIsOperator(char c);
-	static bool CharacterIsSpecialStringCharacter(char c);
+	static bool IsSingleByteOperator(char c) {
+		switch (c) {
+		case '(':
+		case ')':
+		case '{':
+		case '}':
+		case '[':
+		case ']':
+		case ',':
+		case ':':
+		case '?':
+		case '$':
+		case '#':
+			return true;
+		default:
+			return false;
+		}
+	}
+	static bool CharacterIsInitialNumber(char c) {
+		if (c >= '0' && c <= '9') {
+			return true;
+		}
+		return c == '.';
+	}
+	static bool CharacterIsNumber(char c) {
+		if (CharacterIsInitialNumber(c)) {
+			return true;
+		}
+		switch (c) {
+		case 'e': // exponents
+		case 'E':
+		case '_':
+			return true;
+		default:
+			return false;
+		}
+	}
+	static bool CharacterIsScientific(char c) {
+		switch (c) {
+		case 'e':
+		case 'E':
+			return true;
+		default:
+			return false;
+		}
+	}
+	static bool CharacterIsControlFlow(char c) {
+		switch (c) {
+		case '\'':
+		case ';':
+		case '"':
+		case '.':
+			return true;
+		default:
+			return false;
+		}
+	}
+	static bool CharacterIsKeyword(char c) {
+		if (IsSingleByteOperator(c)) {
+			return false;
+		}
+		if (StringUtil::CharacterIsOperator(c)) {
+			return false;
+		}
+		if (StringUtil::CharacterIsSpace(c)) {
+			return false;
+		}
+		if (CharacterIsControlFlow(c)) {
+			return false;
+		}
+		return true;
+	}
+	static bool CharacterIsOperator(char c) {
+		switch (c) {
+		case '+':
+		case '-':
+		case '*':
+		case '/':
+		case '%':
+		case '^':
+		case '<':
+		case '>':
+		case '=':
+		case '~':
+		case '!':
+		case '@':
+		case '&':
+		case '|':
+			return true;
+		default:
+			return false;
+		}
+	}
+	static bool CharacterIsSpecialStringCharacter(char c) {
+		if (c == 'N' || c == 'n') {
+			return true;
+		}
+		if (c == 'X' || c == 'x') {
+			return true;
+		}
+		if (c == 'E' || c == 'e') {
+			return true;
+		}
+		if (c == 'B' || c == 'b') {
+			return true;
+		}
+		return false;
+	}
 	static bool IsValidDollarTagCharacter(char c);
 	static TokenType TokenizeStateToType(TokenizeState state);
 	static bool IsUnterminatedState(TokenizeState state);
 
 public:
 	const PEGKeywordHelper &keyword_helper;
+	const GrammarLiteralTable &literal_table;
 };
 
 } // namespace duckdb

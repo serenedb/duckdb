@@ -7,9 +7,6 @@ require tpch
 statement ok
 CALL dbgen(sf=1);
 
-statement ok
-SET scheduler_process_partial=true;
-
 concurrentloop i 1 23
 
 onlyif i<=9

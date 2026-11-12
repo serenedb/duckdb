@@ -1,0 +1,22 @@
+# name: test/sql/catalog/dependencies/test_drop_dependents_order.test
+# description: A refused DROP lists the dependents in a stable order
+# group: [dependencies]
+
+statement ok
+CREATE SEQUENCE seq
+
+statement ok
+CREATE TABLE t3 (a INTEGER DEFAULT nextval('seq'))
+
+statement ok
+CREATE TABLE t1 (a INTEGER DEFAULT nextval('seq'))
+
+statement ok
+CREATE TABLE t2 (a INTEGER DEFAULT nextval('seq'))
+
+statement error
+DROP SEQUENCE seq
+----
+table "t1" depends on sequence "seq".
+table "t2" depends on sequence "seq".
+table "t3" depends on sequence "seq".

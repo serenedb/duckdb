@@ -11,12 +11,12 @@ select i from generate_series(1, 2) i;
 query TT
 select column_name, column_type from (describe select * from generate_series(1, 2) i);
 ----
-i	BIGINT
+i	INTEGER
 
 query TT
 select column_name, column_type from (describe select * from generate_series(1, 2) t(i));
 ----
-i	BIGINT
+i	INTEGER
 
 # range behaves like generate_series, even though Postgres does not have it
 query I

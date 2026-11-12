@@ -76,13 +76,6 @@ Vector::Vector(const Value &value, count_t count) : type(value.type()) {
 Vector::Vector(Vector &&other) noexcept : type(std::move(other.type)), buffer(std::move(other.buffer)) {
 }
 
-idx_t Vector::size() const {
-	if (!buffer) {
-		return 0;
-	}
-	return buffer->Size();
-}
-
 void Vector::CheckCapacity(idx_t capacity) const {
 	if (!buffer) {
 		// no buffer - we accept any capacity
@@ -358,7 +351,7 @@ Value Vector::GetValueInternal(const Vector &v_p, idx_t index_p) {
 Value Vector::GetValue(const Vector &v_p, idx_t index_p) {
 	auto value = GetValueInternal(v_p, index_p);
 	// the value's type is reconstructed from the data - restore the source type so that the alias survives
-	if (v_p.GetType().HasAlias()) {
+	if (v_p.GetType().HasAlias() || v_p.GetType().HasExtensionInfo()) {
 		value = value.WithType(v_p.GetType());
 	}
 	if (v_p.GetType().id() != LogicalTypeId::LEGACY_AGGREGATE_STATE &&
@@ -858,6 +851,8 @@ void Vector::Verify(idx_t) const {
 }
 
 void Vector::Verify() const {
+#ifdef D_ASSERT_IS_ENABLED
+	DUCKDB_DEBUG_VERIFY_GUARD();
 	if (DBConfigOptions::global_verification_mode != DebugVerificationMode::VERIFY_VECTORS) {
 		return;
 	}
@@ -865,9 +860,12 @@ void Vector::Verify() const {
 		return;
 	}
 	buffer->Verify(GetType());
+#endif
 }
 
 void Vector::Verify(const SelectionVector &sel, idx_t count) const {
+#ifdef D_ASSERT_IS_ENABLED
+	DUCKDB_DEBUG_VERIFY_GUARD();
 	if (DBConfigOptions::global_verification_mode != DebugVerificationMode::VERIFY_VECTORS) {
 		return;
 	}
@@ -875,6 +873,7 @@ void Vector::Verify(const SelectionVector &sel, idx_t count) const {
 		return;
 	}
 	buffer->Verify(GetType(), sel, count);
+#endif
 }
 
 void Vector::DebugTransformToDictionary(Vector &vector) {

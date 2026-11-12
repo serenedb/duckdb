@@ -46,8 +46,6 @@ enum class ExternalInputEventState : uint8_t {
 };
 
 class PipelineTask : public ExecutorTask {
-	static constexpr const idx_t PARTIAL_CHUNK_COUNT = 50;
-
 public:
 	explicit PipelineTask(Pipeline &pipeline_p, shared_ptr<Event> event_p);
 
@@ -144,17 +142,21 @@ public:
 	void Ready();
 	void Reset();
 	void ResetSink();
-	void ResetSinkForReschedule();
-	void ResetForReschedule(bool reset_sink);
+	void ResetSinkForReschedule(idx_t thread_count);
+	void ResetOperatorsForReschedule(reference_set_t<PhysicalOperator> &reset_operators);
+	void ResetSourceForReschedule();
 	void ResetSource(bool force);
 	void PrepareExternalInput();
 	void ClearSource();
+	void ClearStates();
 	void Schedule(shared_ptr<Event> &event);
 	void PrepareFinalize();
 
 	//! Compute the maximum number of threads for parallel execution of this pipeline
 	//! Returns 1 if the pipeline cannot be parallelized
 	idx_t GetMaxThreads();
+	//! The number of tasks the pipeline was last scheduled with, empty before it was scheduled
+	optional_idx GetScheduledThreads() const;
 
 	string ToString() const;
 	void Print() const;
@@ -214,6 +216,8 @@ private:
 	bool ready;
 	//! Whether or not the pipeline has been initialized
 	atomic<bool> initialized;
+	//! The number of tasks the pipeline was last scheduled with, 0 before it was scheduled
+	atomic<idx_t> scheduled_threads;
 	//! The source of this pipeline
 	optional_ptr<PhysicalOperator> source;
 	//! The chain of intermediate operators

@@ -3,17 +3,17 @@
 #include "duckdb/common/vector_operations/vector_operations.hpp"
 #include "duckdb/planner/expression/bound_aggregate_expression.hpp"
 #include "duckdb/common/algorithm.hpp"
-#include <limits>
 
 namespace duckdb {
 
 namespace {
 
 struct SkewState {
-	static constexpr const char *STATE_NAMES[] = {"n", "sum", "sum_sqr", "sum_cub"};
-	using STATE_TYPE = StructStateType<idx_t, double, double, double>;
+	static constexpr const char *STATE_NAMES[] = {"n", "shift", "sum", "sum_sqr", "sum_cub"};
+	using STATE_TYPE = StructStateType<idx_t, double, double, double, double>;
 
 	idx_t n;
+	double shift;
 	double sum;
 	double sum_sqr;
 	double sum_cub;
@@ -30,10 +30,15 @@ struct SkewnessOperation {
 
 	template <class INPUT_TYPE, class STATE, class OP>
 	static void Operation(STATE &state, const INPUT_TYPE &input, AggregateUnaryInput &unary_input) {
+		if (state.n == 0) {
+			state.shift = static_cast<double>(input);
+		}
 		state.n++;
-		state.sum += input;
-		state.sum_sqr += pow(input, 2);
-		state.sum_cub += pow(input, 3);
+		const double value = static_cast<double>(input) - state.shift;
+		state.sum += value;
+		const double square = value * value;
+		state.sum_sqr += square;
+		state.sum_cub += square * value;
 	}
 
 	template <class STATE, class OP>
@@ -41,11 +46,17 @@ struct SkewnessOperation {
 		if (source.n == 0) {
 			return;
 		}
-
+		if (target.n == 0) {
+			target = source;
+			return;
+		}
+		const double n = static_cast<double>(source.n);
+		const double d = source.shift - target.shift;
+		const double d2 = d * d;
 		target.n += source.n;
-		target.sum += source.sum;
-		target.sum_sqr += source.sum_sqr;
-		target.sum_cub += source.sum_cub;
+		target.sum_cub += source.sum_cub + 3 * d * source.sum_sqr + 3 * d2 * source.sum + n * d2 * d;
+		target.sum_sqr += source.sum_sqr + 2 * d * source.sum + n * d2;
+		target.sum += source.sum + n * d;
 	}
 
 	template <class TARGET_TYPE, class STATE>
@@ -57,10 +68,7 @@ struct SkewnessOperation {
 		double n = state.n;
 		double temp = 1 / n;
 		double raw_m2 = state.sum_sqr - state.sum * state.sum * temp;
-		// Only treat finite second-moment noise as zero; overflow should still surface as out-of-range.
-		if (Value::DoubleIsFinite(raw_m2) && Value::DoubleIsFinite(state.sum_sqr) &&
-		    // Scale the tolerance by the accumulated squared magnitude instead of using a fixed epsilon.
-		    std::abs(raw_m2) <= std::numeric_limits<double>::epsilon() * std::max(1.0, std::abs(state.sum_sqr))) {
+		if (raw_m2 == 0) {
 			finalize_data.ReturnNull();
 			return;
 		}

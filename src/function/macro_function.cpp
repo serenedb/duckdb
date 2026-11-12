@@ -1,4 +1,5 @@
 #include "duckdb/function/macro_function.hpp"
+#include "duckdb/planner/expression/bound_cast_expression.hpp"
 #include "duckdb/planner/binder.hpp"
 #include "duckdb/planner/expression_binder.hpp"
 
@@ -6,6 +7,7 @@
 
 #include "duckdb/catalog/catalog_entry/scalar_function_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/scalar_macro_catalog_entry.hpp"
+#include "duckdb/catalog/default/default_types.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/function/scalar_macro_function.hpp"
 #include "duckdb/function/table_macro_function.hpp"
@@ -45,13 +47,23 @@ string FormatMacroFunction(const MacroFunction &function, const Identifier &name
 	return result;
 }
 
+static int64_t ArgumentCastCost(ClientContext &context, const LogicalType &argument, const LogicalType &parameter) {
+	if (argument.id() == LogicalTypeId::INTEGER_LITERAL && parameter.IsIntegral() && parameter.IsSigned() &&
+	    !parameter.HasAlias()) {
+		return CastFunctionSet::ImplicitCastCost(context, IntegerLiteral::GetType(argument), parameter);
+	}
+	return CastFunctionSet::ImplicitCastCost(context, argument, parameter);
+}
+
 MacroBindResult MacroFunction::BindMacroFunction(
     Binder &binder, const vector<unique_ptr<MacroFunction>> &functions, const Identifier &name,
-    FunctionExpression &function_expr, vector<unique_ptr<ParsedExpression>> &positional_arguments,
+    SqlCompatibility compatibility, FunctionExpression &function_expr,
+    vector<unique_ptr<ParsedExpression>> &positional_arguments,
     InsertionOrderPreservingMap<unique_ptr<ParsedExpression>, Identifier, identifier_map_t<idx_t>> &named_arguments,
-    idx_t depth) {
+    idx_t depth, optional_ptr<vector<DummyBinding>> lambda_bindings, optional_ptr<ExpressionBinder> argument_binder,
+    optional_ptr<MacroBoundArguments> bound_arguments) {
 	ExpressionBinder expr_binder(binder, binder.context);
-	expr_binder.lambda_bindings = binder.lambda_bindings;
+	expr_binder.lambda_bindings = lambda_bindings;
 
 	// Figure out whether we even need to bind arguments
 	bool requires_bind = false;
@@ -67,23 +79,48 @@ MacroBindResult MacroFunction::BindMacroFunction(
 		}
 	}
 
+	const auto argument_type = [&](const Expression &argument) {
+		return compatibility == SqlCompatibility::POSTGRES ? ExpressionBinder::GetExpressionReturnType(argument)
+		                                                   : argument.GetReturnType();
+	};
+
 	// Find argument types and separate positional and default arguments
 	vector<LogicalType> positional_arg_types;
 	InsertionOrderPreservingMap<LogicalType, Identifier, identifier_map_t<idx_t>> named_arg_types;
+	idx_t argument_idx = 0;
 	for (auto &arg : function_expr.GetArgumentsMutable()) {
 		auto arg_copy = arg.GetExpression().Copy();
 		LogicalType arg_type = LogicalType::UNKNOWN;
-		if (requires_bind) {
-			const auto arg_bind_result = expr_binder.BindExpression(arg_copy, depth + 1);
-			arg_type = arg_bind_result.HasError() ? LogicalType::UNKNOWN : arg_bind_result.expression->GetReturnType();
+		unique_ptr<Expression> bound_arg;
+		const bool bind_in_place = bound_arguments && argument_idx < bound_arguments->bind_in_place.size() &&
+		                           bound_arguments->bind_in_place[argument_idx];
+		argument_idx++;
+		if (requires_bind && argument_binder && bind_in_place && !arg_copy->HasParameter()) {
+			ErrorData error;
+			bound_arg = argument_binder->BindChild(arg_copy, depth, error);
+			if (bound_arg) {
+				arg_type = argument_type(*bound_arg);
+			}
+		} else if (requires_bind) {
+			const auto correlated_columns = binder.correlated_columns;
+			const auto arg_bind_result = expr_binder.BindMacroArgumentType(arg_copy, depth + 1);
+			binder.correlated_columns = correlated_columns;
+			arg_type = arg_bind_result.HasError() ? LogicalType::UNKNOWN : argument_type(*arg_bind_result.expression);
 		}
-		if (!arg.GetExpression().GetAlias().empty()) {
-			// Default argument
+		if (arg.GetExpression().IsNamedParameter()) {
+			// User-written `name := value` (or `name => value`) named argument.
+			// Check IsNamedParameter() instead of !GetAlias().empty(): aliases
+			// are also set on expressions for display/output-column purposes
+			// (e.g. ARRAY(subquery) sets alias="array"), and using GetAlias()
+			// here misclassifies such positional args as named.
 			if (named_arguments.find(arg.GetExpression().GetAlias()) != named_arguments.end()) {
-				return MacroBindResult(StringUtil::Format("Macro %s() has named argument repeated '%s'", name,
+				return MacroBindResult(StringUtil::Format("Macro %s() has named argument repeated %s", name,
 				                                          arg.GetExpression().GetAlias()));
 			}
 			named_arg_types.insert(arg.GetExpression().GetAlias(), std::move(arg_type));
+			if (bound_arguments && bound_arg) {
+				bound_arguments->named[arg.GetExpression().GetAlias()] = std::move(bound_arg);
+			}
 			named_arguments[arg.GetExpression().GetAlias()] = std::move(arg.GetExpressionMutable());
 		} else if (!named_arguments.empty()) {
 			return MacroBindResult(
@@ -92,6 +129,9 @@ MacroBindResult MacroFunction::BindMacroFunction(
 			// Positional argument
 			positional_arguments.push_back(std::move(arg.GetExpressionMutable()));
 			positional_arg_types.push_back(std::move(arg_type));
+			if (bound_arguments) {
+				bound_arguments->positional.push_back(std::move(bound_arg));
+			}
 		}
 	}
 
@@ -145,8 +185,7 @@ MacroBindResult MacroFunction::BindMacroFunction(
 			if (param_type == LogicalType::UNKNOWN) {
 				macro_cost += 1000000;
 			} else {
-				const auto cast_cost =
-				    CastFunctionSet::ImplicitCastCost(binder.context, positional_arg_types[param_idx], param_type);
+				const auto cast_cost = ArgumentCastCost(binder.context, positional_arg_types[param_idx], param_type);
 				if (cast_cost < 0) {
 					bail = true;
 					break;
@@ -175,8 +214,7 @@ MacroBindResult MacroFunction::BindMacroFunction(
 			if (param_type == LogicalType::UNKNOWN) {
 				macro_cost += 1000000;
 			} else {
-				const auto cast_cost =
-				    CastFunctionSet::ImplicitCastCost(binder.context, named_arg_types[param_name], param_type);
+				const auto cast_cost = ArgumentCastCost(binder.context, named_arg_types[param_name], param_type);
 				if (cast_cost < 0) {
 					break; // No cast possible
 				}
@@ -230,6 +268,11 @@ MacroBindResult MacroFunction::BindMacroFunction(
 			// This macro parameter is typed, add a cast
 			auto &positional_arg = positional_arguments[param_idx];
 			positional_arg = make_uniq<CastExpression>(parameter_types[param_idx], std::move(positional_arg));
+			if (bound_arguments && bound_arguments->positional[param_idx]) {
+				auto &bound = bound_arguments->positional[param_idx];
+				bound =
+				    BoundCastExpression::AddCastToType(binder.context, std::move(bound), parameter_types[param_idx]);
+			}
 		}
 	}
 
@@ -243,6 +286,13 @@ MacroBindResult MacroFunction::BindMacroFunction(
 				// This macro parameter is typed, add a cast
 				auto &named_arg = named_arg_it->second;
 				named_arg = make_uniq<CastExpression>(parameter_types[param_idx], std::move(named_arg));
+				if (bound_arguments) {
+					auto bound = bound_arguments->named.find(param_name);
+					if (bound != bound_arguments->named.end()) {
+						bound->second = BoundCastExpression::AddCastToType(binder.context, std::move(bound->second),
+						                                                   parameter_types[param_idx]);
+					}
+				}
 			}
 			continue;
 		}
@@ -280,6 +330,63 @@ unique_ptr<DummyBinding> MacroFunction::CreateDummyBinding(
 	return res;
 }
 
+vector<LogicalType> MacroFunction::ParameterTypes() const {
+	auto result = types;
+	result.resize(parameters.size(), LogicalType::UNKNOWN);
+	return result;
+}
+
+LogicalType MacroFunction::ResultType() const {
+	if (type == MacroType::SCALAR_MACRO && return_types.size() > 1) {
+		child_list_t<LogicalType> fields;
+		for (idx_t i = 0; i < return_types.size(); i++) {
+			fields.emplace_back(Identifier(return_names[i]), return_types[i]);
+		}
+		return LogicalType::STRUCT(std::move(fields));
+	}
+	return return_types.size() == 1 ? return_types[0] : LogicalType::INVALID;
+}
+
+LogicalType MacroFunction::WithoutTypmod(const LogicalType &type) {
+	if (type.HasAlias()) {
+		return type;
+	}
+	if (type.id() == LogicalTypeId::DECIMAL) {
+		return DefaultTypeGenerator::TryDefaultBind("decimal", {});
+	}
+	if (type.id() == LogicalTypeId::TIMESTAMP_SEC || type.id() == LogicalTypeId::TIMESTAMP_MS ||
+	    type.id() == LogicalTypeId::TIMESTAMP_NS) {
+		return LogicalType::TIMESTAMP;
+	}
+	if (type.id() == LogicalTypeId::LIST) {
+		return LogicalType::LIST(WithoutTypmod(ListType::GetChildType(type)));
+	}
+	if (type.id() == LogicalTypeId::ARRAY) {
+		return LogicalType::ARRAY(WithoutTypmod(ArrayType::GetChildType(type)), ArrayType::GetSize(type));
+	}
+	return type;
+}
+
+bool MacroFunction::IsVoid(const LogicalType &type) {
+	return type.id() == LogicalTypeId::SQLNULL && type.GetAlias() == "void";
+}
+
+bool MacroFunction::ResultNeedsCast(const LogicalType &result, const LogicalType &declared) {
+	if (result == declared || declared.id() == LogicalTypeId::ANY || IsVoid(declared)) {
+		return false;
+	}
+	return WithoutTypmod(result) != WithoutTypmod(declared);
+}
+
+bool MacroFunction::HasParameterTypes(const vector<LogicalType> &parameter_types) const {
+	return ParameterTypes() == parameter_types;
+}
+
+string MacroFunction::ParameterTypesToString(const vector<LogicalType> &parameter_types) {
+	return StringUtil::Join(parameter_types, parameter_types.size(), ", ",
+	                        [](const LogicalType &type) { return type.ToString(); });
+}
+
 void MacroFunction::CopyProperties(MacroFunction &other) const {
 	other.type = type;
 	for (auto &param : parameters) {
@@ -289,6 +396,13 @@ void MacroFunction::CopyProperties(MacroFunction &other) const {
 		other.default_parameters[kv.first] = kv.second->Copy();
 	}
 	other.types = types;
+	other.return_types = return_types;
+	other.return_names = return_names;
+	other.parameter_modes = parameter_modes;
+	other.is_procedure = is_procedure;
+	other.strict = strict;
+	other.stability = stability;
+	other.source = source;
 }
 
 vector<unique_ptr<ParsedExpression>>
@@ -304,7 +418,7 @@ MacroFunction::GetPositionalParametersForSerialization(Serializer &serializer) c
 	// Serializing targeting an older version - delete all named parameters from the list of positional parameters
 	for (auto &param : parameters) {
 		auto &colref = param->Cast<ColumnRefExpression>();
-		if (default_parameters.find(Identifier(colref.GetName())) != default_parameters.end()) {
+		if (default_parameters.find(colref.GetName()) != default_parameters.end()) {
 			// This is a default parameter - do not serialize
 			continue;
 		}

@@ -270,13 +270,16 @@ struct SortedAggregateFunction {
 		}
 		// Pack the buffered columns into a single struct vector and append the rows through the list update
 		const auto &order_bind = aggr_input_data.bind_data->Cast<SortedAggregateBindData>();
-		Vector packed(order_bind.buffered_struct_type, count);
-		auto &entries = StructVector::GetEntries(packed);
 		const auto &buffered_cols = order_bind.buffered_cols;
-		for (idx_t b = 0; b < buffered_cols.size(); ++b) {
-			D_ASSERT(buffered_cols[b] < input_count);
-			entries[b].Reference(inputs[buffered_cols[b]]);
+		D_ASSERT(buffered_cols.size() == StructType::GetChildCount(order_bind.buffered_struct_type));
+		vector<Vector> entries;
+		entries.reserve(buffered_cols.size());
+		for (const auto col : buffered_cols) {
+			D_ASSERT(col < input_count);
+			entries.emplace_back(Vector::Ref(inputs[col]));
 		}
+		Vector packed(order_bind.buffered_struct_type,
+		              make_buffer<VectorStructBuffer>(std::move(entries), capacity_t(count)));
 		FlatVector::SetSize(packed, count_t(count));
 		ListUpdateFunction(&packed, aggr_input_data, 1, states, count);
 	}

@@ -312,6 +312,8 @@ void PartitionedTupleData::Combine(PartitionedTupleData &other) {
 	}
 	this->count += other.count;
 	this->data_size += other.data_size;
+	other.count = 0;
+	other.data_size = 0;
 	Verify();
 }
 
@@ -421,6 +423,7 @@ void PartitionedTupleData::GetSizesAndCounts(vector<idx_t> &partition_sizes, vec
 
 void PartitionedTupleData::Verify() const {
 #ifdef D_ASSERT_IS_ENABLED
+	DUCKDB_DEBUG_VERIFY_GUARD();
 	idx_t total_count = 0;
 	idx_t total_size = 0;
 	for (auto &partition : partitions) {

@@ -27,6 +27,16 @@ FileBuffer::FileBuffer(BlockAllocator &allocator, FileBufferType type, BlockMana
 	Resize(block_manager);
 }
 
+FileBuffer::FileBuffer(BlockAllocator &allocator, FileBufferType type, MemoryMappedFile &handle, uint64_t location,
+                       uint64_t user_size, idx_t block_header_size)
+    : allocator(allocator), type(type) {
+	Init();
+	auto req = CalculateMemory(user_size, block_header_size);
+	internal_size = req.alloc_size;
+	size = internal_size - req.header_size;
+	Read(QueryContext(), handle, location);
+}
+
 void FileBuffer::Init() {
 	buffer = nullptr;
 	size = 0;

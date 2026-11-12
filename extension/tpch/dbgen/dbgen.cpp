@@ -148,7 +148,7 @@ struct tpch_append_information {
 			storage.InitializeLocalAppend(local_append_state, table, context, bound_constraints);
 			auto &transaction = DuckTransaction::Get(context, table.catalog);
 			for (auto &insert_chunk : row_collection.Chunks(transaction)) {
-				storage.LocalAppend(local_append_state, table, context, insert_chunk, false);
+				storage.LocalAppend(local_append_state, context, insert_chunk, false);
 			}
 			storage.FinalizeLocalAppend(local_append_state);
 			ResetOptimisticCollection(context);
@@ -1169,7 +1169,7 @@ public:
 		base_context.tdefs[REGION].base = regions.count;
 
 #ifndef DUCKDB_NO_THREADS
-		auto thread_count = TaskScheduler::GetScheduler(context).NumberOfThreads();
+		auto thread_count = TaskScheduler::QueryThreads(context);
 		if (!ExplicitPartialGeneration() && thread_count > 1) {
 			mode = DBGenMode::PARALLEL;
 			parallel_thread_count = thread_count;

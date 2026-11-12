@@ -149,6 +149,24 @@ void linenoiseAddCompletion(linenoiseCompletions *lc, const char *zLine, const c
 	completions.completions.push_back(std::move(c));
 }
 
+void linenoiseAddLabeledCompletion(linenoiseCompletions *lc, const char *zLine, const char *completion,
+                                   size_t nCompletion, size_t completion_start, const char *label, size_t nLabel,
+                                   const char *completion_type) {
+	linenoiseAddCompletion(lc, zLine, completion, nCompletion, completion_start, completion_type, 0, '\0');
+	if (nLabel > 0) {
+		reinterpret_cast<duckdb::TabCompletion *>(lc)->completions.back().original_completion =
+		    duckdb::string(label, nLabel);
+	}
+}
+
+void linenoiseSelectCompletion(linenoiseCompletions *lc, size_t index) {
+	reinterpret_cast<duckdb::TabCompletion *>(lc)->selected = index;
+}
+
+void linenoiseCompletionMenu(linenoiseCompletions *lc) {
+	reinterpret_cast<duckdb::TabCompletion *>(lc)->menu = true;
+}
+
 size_t linenoiseComputeRenderWidth(const char *buf, size_t len) {
 	return Linenoise::ComputeRenderWidth(buf, len);
 }

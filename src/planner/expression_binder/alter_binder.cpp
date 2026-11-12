@@ -13,12 +13,6 @@ AlterBinder::AlterBinder(Binder &binder, ClientContext &context, TableCatalogEnt
 	this->target_type = std::move(target_type);
 }
 
-BindResult AlterBinder::BindLambdaReference(LambdaRefExpression &expr, idx_t depth) {
-	D_ASSERT(lambda_bindings && expr.LambdaIndex() < lambda_bindings->size());
-	auto &lambda_ref = expr.Cast<LambdaRefExpression>();
-	return (*lambda_bindings)[expr.LambdaIndex()].Bind(lambda_ref, depth);
-}
-
 BindResult AlterBinder::BindExpression(unique_ptr<ParsedExpression> &expr_ptr, idx_t depth, bool root_expression) {
 	auto &expr = *expr_ptr;
 	switch (expr.GetExpressionClass()) {
@@ -27,7 +21,10 @@ BindResult AlterBinder::BindExpression(unique_ptr<ParsedExpression> &expr_ptr, i
 	case ExpressionClass::SUBQUERY:
 		return BindResult(BinderException::Unsupported(expr, "cannot use subquery in alter statement"));
 	case ExpressionClass::COLUMN_REF:
-		return BindColumnReference(expr.Cast<ColumnRefExpression>(), depth);
+		if (IsArgumentReference(expr.Cast<ColumnRefExpression>())) {
+			return ExpressionBinder::BindExpression(expr_ptr, depth);
+		}
+		return BindColumnReference(expr.Cast<ColumnRefExpression>());
 	default:
 		return ExpressionBinder::BindExpression(expr_ptr, depth);
 	}
@@ -37,15 +34,7 @@ string AlterBinder::UnsupportedAggregateMessage() {
 	return "aggregate functions are not allowed in alter statement";
 }
 
-BindResult AlterBinder::BindColumnReference(ColumnRefExpression &col_ref, idx_t depth) {
-	if (!col_ref.IsQualified()) {
-		// Try binding as a lambda parameter.
-		auto lambda_ref = LambdaRefExpression::FindMatchingBinding(lambda_bindings, col_ref.GetColumnName());
-		if (lambda_ref) {
-			return BindLambdaReference(lambda_ref->Cast<LambdaRefExpression>(), depth);
-		}
-	}
-
+BindResult AlterBinder::BindColumnReference(ColumnRefExpression &col_ref) {
 	if (col_ref.ColumnNames().size() > 1) {
 		return BindQualifiedColumnName(col_ref, table.name);
 	}
@@ -60,7 +49,7 @@ BindResult AlterBinder::BindColumnReference(ColumnRefExpression &col_ref, idx_t 
 		throw BinderException("Using generated columns in alter statement not supported");
 	}
 	bound_columns.push_back(idx);
-	return BindResult(make_uniq<BoundReferenceExpression>(table.GetColumn(idx).Type(), bound_columns.size() - 1));
+	return BindChunkColumn(col_name, table.GetColumn(idx).Type(), bound_columns.size() - 1);
 }
 
 } // namespace duckdb

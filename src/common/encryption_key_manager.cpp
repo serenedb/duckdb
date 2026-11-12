@@ -125,12 +125,7 @@ void EncryptionKeyManager::KeyDerivationFunctionSHA256(data_ptr_t user_key, idx_
 }
 
 string EncryptionKeyManager::Base64Decode(const string &key) {
-	auto result_size = Blob::FromBase64Size(key);
-	auto output = duckdb::unique_ptr<unsigned char[]>(new unsigned char[result_size]);
-	Blob::FromBase64(key, output.get(), result_size);
-	string decoded_key(reinterpret_cast<const char *>(output.get()), result_size);
-	duckdb_mbedtls::MbedTlsWrapper::AESStateMBEDTLS::SecureClearData(output.get(), result_size);
-	return decoded_key;
+	return Blob::FromBase64(key);
 }
 
 void EncryptionKeyManager::DeriveKey(string &user_key, data_ptr_t salt, data_ptr_t derived_key) {

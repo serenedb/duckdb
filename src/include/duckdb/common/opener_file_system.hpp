@@ -82,10 +82,15 @@ public:
 		GetFileSystem().FileSync(handle);
 	}
 
-	bool DirectoryExists(const string &directory, optional_ptr<FileOpener> opener) override {
+	FileExistence TryDirectoryExists(const string &directory, optional_ptr<FileOpener> opener,
+	                                 optional_ptr<ErrorData> error) override {
 		VerifyNoOpener(opener);
-		VerifyCanAccessDirectory(directory);
-		return GetFileSystem().DirectoryExists(directory, GetOpener());
+		try {
+			VerifyCanAccessDirectory(directory);
+		} catch (std::exception &ex) {
+			return ClassifyExistenceFailure(ex, error);
+		}
+		return GetFileSystem().TryDirectoryExists(directory, GetOpener(), error);
 	}
 	void CreateDirectory(const string &directory, optional_ptr<FileOpener> opener) override {
 		CreateDirectoryExtended(directory, {CreateDirectoryMode::SINGLE}, opener);
@@ -128,7 +133,7 @@ public:
 	}
 
 	bool DirectoryExists(const string &directory) {
-		return DirectoryExists(directory, nullptr);
+		return FileSystem::DirectoryExists(directory, nullptr);
 	}
 	void CreateDirectory(const string &directory) {
 		CreateDirectory(directory, nullptr);
@@ -149,7 +154,7 @@ public:
 		return GetStatsIfExists(file, nullptr);
 	}
 	bool FileExists(const string &filename) {
-		return FileExists(filename, nullptr);
+		return FileSystem::FileExists(filename, nullptr);
 	}
 	bool IsPipe(const string &filename) {
 		return IsPipe(filename, nullptr);
@@ -172,10 +177,15 @@ public:
 		return FileSystem::ExpandPath(path, GetOpener());
 	}
 
-	bool FileExists(const string &filename, optional_ptr<FileOpener> opener) override {
+	FileExistence TryFileExists(const string &filename, optional_ptr<FileOpener> opener,
+	                            optional_ptr<ErrorData> error) override {
 		VerifyNoOpener(opener);
-		VerifyCanAccessFile(filename);
-		return GetFileSystem().FileExists(filename, GetOpener());
+		try {
+			VerifyCanAccessFile(filename);
+		} catch (std::exception &ex) {
+			return ClassifyExistenceFailure(ex, error);
+		}
+		return GetFileSystem().TryFileExists(filename, GetOpener(), error);
 	}
 
 	optional<FileMetadata> GetStatsIfExists(const OpenFileInfo &file, optional_ptr<FileOpener> opener) override {

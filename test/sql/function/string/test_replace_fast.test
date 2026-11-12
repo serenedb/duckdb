@@ -1,0 +1,46 @@
+# name: test/sql/function/string/test_replace_fast.test
+# description: replace with constant and per-row needles, overlapping candidates, unmatched long strings and empty needles
+# group: [string]
+
+query IIIII
+SELECT replace('aaaaa', 'aa', 'b'), replace('abcabc', 'abc', ''), replace('abc', '', 'x'), replace('abc', 'abcd', 'x'), replace('', 'a', 'b');
+----
+bba	(empty)	abc	abc	(empty)
+
+query III
+SELECT replace(NULL, 'a', 'b'), replace('a', NULL, 'b'), replace('a', 'a', NULL);
+----
+NULL	NULL	NULL
+
+query I
+SELECT replace('http://example.com/http/page?u=http://x', 'http', 'HTTPS');
+----
+HTTPS://example.com/HTTPS/page?u=HTTPS://x
+
+query I
+SELECT replace('привет мир, привет', 'привет', 'hi');
+----
+hi мир, hi
+
+statement ok
+CREATE TABLE t AS SELECT i, repeat(chr((97 + i % 3)::INTEGER), (i % 17)::INTEGER) || 'http://site' || (i % 11)::VARCHAR || '/a/b/c/' || repeat('ab', (i % 23)::INTEGER) AS s,
+    (['a', 'ab', 'aa', 'http', '/', 'zzz', 'b/c', 'site1'])[(i % 8 + 1)::INTEGER] AS needle FROM range(4000) r(i);
+
+query I
+SELECT count(*) FROM t WHERE replace(s, needle, '<>') <> array_to_string(string_split(s, needle), '<>');
+----
+0
+
+foreach needle a ab aa http / zzz b/c site1 abababababababababababababababababab
+
+query I
+SELECT count(*) FROM t WHERE replace(s, '${needle}', 'X') <> array_to_string(string_split(s, '${needle}'), 'X') OR replace(s, '${needle}', '') <> array_to_string(string_split(s, '${needle}'), '');
+----
+0
+
+endloop
+
+query II
+SELECT count(*), sum(strlen(replace(s, 'nomatch', 'x')) - strlen(s)) FROM t WHERE replace(s, 'nomatch', 'x') = s;
+----
+4000	0

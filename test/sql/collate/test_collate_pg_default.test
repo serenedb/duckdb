@@ -1,0 +1,57 @@
+# name: test/sql/collate/test_collate_pg_default.test
+# description: Outside PostgreSQL mode, COLLATE "default" and pg_catalog.default compare bytes, as COLLATE C and POSIX do
+# group: [collate]
+
+statement ok
+CREATE TABLE accents(s VARCHAR COLLATE NOACCENT)
+
+statement ok
+INSERT INTO accents VALUES ('e'), ('é'), ('f')
+
+query I
+SELECT count(*) FROM accents WHERE s = 'e'
+----
+2
+
+query I
+SELECT count(*) FROM accents WHERE s COLLATE "default" = 'e'
+----
+1
+
+query I
+SELECT count(*) FROM accents WHERE s COLLATE pg_catalog.default = 'e'
+----
+1
+
+query I
+SELECT count(*) FROM accents WHERE s COLLATE C = 'e'
+----
+1
+
+query I
+SELECT count(*) FROM accents WHERE s COLLATE POSIX = 'e'
+----
+1
+
+query T
+SELECT string_agg(s, ',' ORDER BY s COLLATE C) FROM accents
+----
+e,f,é
+
+statement error
+SELECT 'A' COLLATE "default" = 'a' COLLATE NOCASE
+----
+Cannot combine types with different collation
+
+statement ok
+SET default_collation = 'nocase'
+
+query II
+SELECT 'A' COLLATE "default" = 'a', 'A' COLLATE pg_catalog.default = 'a'
+----
+false	false
+
+query II
+SELECT 'A' COLLATE C = 'a', 'A' COLLATE "binary" = 'a'
+----
+false	false

@@ -1,0 +1,14 @@
+# name: test/sql/types/timestamp/timestamp_ns_whole_seconds.test
+# description: A string without a fractional second casts to the nanosecond timestamp types with zero nanoseconds
+# group: [timestamp]
+
+query III
+SELECT epoch_ns('1992-01-01'::TIMESTAMP_NS), epoch_ns('1992-01-01 12:34:56'::TIMESTAMP_NS),
+       epoch_ns('1992-01-01 12:34:56.5'::TIMESTAMP_NS)
+----
+694224000000000000	694269296000000000	694269296500000000
+
+query II
+SELECT '12:34:56'::TIME_NS, '12:34:56.000000001'::TIME_NS
+----
+12:34:56	12:34:56.000000001

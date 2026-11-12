@@ -565,131 +565,6 @@ TEST_CASE("Table function overloads selected by named arguments survive serializ
 		REQUIRE(copied_get.returned_types == vector<LogicalType> {test_case.type});
 		REQUIRE(copied_get.bind_data->Cast<KeywordScanBindData>().value == test_case.value);
 	}
-
-	// a plan for an older version records only the positional arguments, which cannot select the first overload
-	Parser parser(context);
-	parser.ParseQuery(cases[0].sql);
-	Planner planner(context);
-	planner.CreatePlan(std::move(parser.statements[0]));
-	SerializationOptions options;
-	options.storage_compatibility = StorageCompatibility::FromString("v1.5.0");
-	MemoryStream stream(Allocator::Get(context));
-	REQUIRE_THROWS_WITH(BinarySerializer::Serialize(FindGet(*planner.plan), stream, options),
-	                    Catch::Matchers::Contains("required keyword-only parameter"));
-	connection.Rollback();
-}
-
-TEST_CASE("Table function options survive plans written for older versions", "[serialization][function_invocation]") {
-	DuckDB db(nullptr);
-	Connection connection(db);
-	connection.BeginTransaction();
-	auto &context = *connection.context;
-	bool serialize_bind_data = false;
-	SECTION("Rebound on deserialization") {
-	}
-	SECTION("Bind data serialized") {
-		serialize_bind_data = true;
-	}
-	TableFunctionSet set("keyword_scan");
-	set.AddFunction(KeywordScan(
-	    FunctionSignature()
-	        .AddParameter(LogicalType::VARCHAR)
-	        .WithTypedKwargs("options", [](TypedKwargs &options) { options.Add("opt", LogicalType::DOUBLE); }),
-	    serialize_bind_data));
-	CreateTableFunctionInfo info(set);
-	Catalog::GetSystemCatalog(context).CreateFunction(context, info);
-
-	Parser parser(context);
-	parser.ParseQuery("SELECT * FROM keyword_scan('a', opt := 1.5)");
-	Planner planner(context);
-	planner.CreatePlan(std::move(parser.statements[0]));
-	auto &get = FindGet(*planner.plan);
-
-	for (const auto &version : {"v1.3.0", "v1.4.0", "v1.5.0"}) {
-		CAPTURE(version);
-		SerializationOptions options;
-		options.storage_compatibility = StorageCompatibility::FromString(version);
-		MemoryStream stream(Allocator::Get(context));
-		BinarySerializer::Serialize(get, stream, options);
-		stream.Rewind();
-		bound_parameter_map_t parameters;
-		auto copy = BinaryDeserializer::Deserialize<LogicalOperator>(stream, context, parameters);
-		auto &copied_get = copy->Cast<LogicalGet>();
-		REQUIRE(copied_get.function.GetDefinition() == get.function.GetDefinition());
-		if (!serialize_bind_data) {
-			// older versions write the options only when the bind is repeated on deserialization
-			REQUIRE(copied_get.named_parameters == get.named_parameters);
-		}
-		REQUIRE(copied_get.returned_types == vector<LogicalType> {LogicalType::DOUBLE});
-		REQUIRE(copied_get.bind_data->Cast<KeywordScanBindData>().value == Value::DOUBLE(1.5));
-	}
-	connection.Rollback();
-}
-
-TEST_CASE("Plans written for older versions select overloads with required keyword-only parameters",
-          "[serialization][function_invocation]") {
-	DuckDB db(nullptr);
-	Connection connection(db);
-	connection.BeginTransaction();
-	auto &context = *connection.context;
-	// shaped like repeat_row, whose "num_rows" an older version recorded only as a named parameter - also declared as
-	// ANY, a type that has no value of its own
-	vector<TableFunction> functions;
-	for (auto &type : vector<LogicalType> {LogicalType::BIGINT, LogicalType::ANY}) {
-		TableFunction function(Identifier("legacy_required_keyword_" + StringUtil::Lower(type.ToString())),
-		                       FunctionSignature().AddArgs("args", LogicalType::ANY).AddKeywordOnly("num_rows", type),
-		                       nullptr);
-		function.bind = [](ClientContext &, TableFunctionBindInput &input, vector<LogicalType> &types,
-		                   vector<Identifier> &names) -> unique_ptr<FunctionData> {
-			auto entry = input.named_parameters.find("num_rows");
-			if (entry == input.named_parameters.end()) {
-				throw BinderException("num_rows is required");
-			}
-			types.push_back(LogicalType::BIGINT);
-			names.emplace_back("num_rows");
-			return make_uniq<KeywordScanBindData>(entry->second);
-		};
-		CreateTableFunctionInfo info(function);
-		Catalog::GetSystemCatalog(context).CreateFunction(context, info);
-		functions.push_back(std::move(function));
-	}
-
-	bool pass_num_rows = true;
-	SECTION("Passed") {
-	}
-	SECTION("Left out") {
-		pass_num_rows = false;
-	}
-	for (auto &function : functions) {
-		CAPTURE(function.GetName().GetIdentifierName());
-		LogicalGet get(TableIndex(0), BoundTableFunction(function), make_uniq<KeywordScanBindData>(Value::BIGINT(3)),
-		               {LogicalType::BIGINT}, {Identifier("num_rows")});
-		get.parameters = {Value::INTEGER(1)};
-		if (pass_num_rows) {
-			get.named_parameters["num_rows"] = Value::BIGINT(3);
-		}
-
-		for (const auto &version : {"v1.3.0", "v1.4.0", "v1.5.0"}) {
-			CAPTURE(version);
-			SerializationOptions options;
-			options.storage_compatibility = StorageCompatibility::FromString(version);
-			MemoryStream stream(Allocator::Get(context));
-			BinarySerializer::Serialize(get, stream, options);
-			stream.Rewind();
-			bound_parameter_map_t parameters;
-			if (!pass_num_rows) {
-				// the bind still rejects the call, as it did when the plan was written
-				REQUIRE_THROWS_WITH(BinaryDeserializer::Deserialize<LogicalOperator>(stream, context, parameters),
-				                    Catch::Matchers::Contains("num_rows is required"));
-				continue;
-			}
-			auto copy = BinaryDeserializer::Deserialize<LogicalOperator>(stream, context, parameters);
-			auto &copied_get = copy->Cast<LogicalGet>();
-			REQUIRE(copied_get.parameters == get.parameters);
-			REQUIRE(copied_get.named_parameters == get.named_parameters);
-			REQUIRE(copied_get.bind_data->Cast<KeywordScanBindData>().value == Value::BIGINT(3));
-		}
-	}
 	connection.Rollback();
 }
 
@@ -709,25 +584,18 @@ TEST_CASE("Table function defaults survive serialization", "[serialization][func
 	struct Case {
 		string sql;
 		Value value;
-		//! Whether to drop the option from the plan before writing it, as a version that did not place defaults did
-		bool drop_option;
 	};
-	vector<Case> cases {{"SELECT * FROM keyword_scan('a')", Value::DOUBLE(7), false},
-	                    {"SELECT * FROM keyword_scan('a', opt := NULL)", Value(LogicalType::DOUBLE), false},
-	                    {"SELECT * FROM keyword_scan('a', opt := 1)", Value::DOUBLE(1), false},
-	                    {"SELECT * FROM keyword_scan('a')", Value::DOUBLE(7), true}};
+	vector<Case> cases {{"SELECT * FROM keyword_scan('a')", Value::DOUBLE(7)},
+	                    {"SELECT * FROM keyword_scan('a', opt := NULL)", Value(LogicalType::DOUBLE)},
+	                    {"SELECT * FROM keyword_scan('a', opt := 1)", Value::DOUBLE(1)}};
 	for (auto &test_case : cases) {
 		CAPTURE(test_case.sql);
-		CAPTURE(test_case.drop_option);
 		Parser parser(context);
 		parser.ParseQuery(test_case.sql);
 		Planner planner(context);
 		planner.CreatePlan(std::move(parser.statements[0]));
 		auto &get = FindGet(*planner.plan);
 		REQUIRE(Value::NotDistinctFrom(get.named_parameters.at("opt"), test_case.value));
-		if (test_case.drop_option) {
-			get.named_parameters.clear();
-		}
 
 		MemoryStream stream(Allocator::Get(context));
 		BinarySerializer::Serialize(get, stream, SerializationOptions());

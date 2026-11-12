@@ -1,0 +1,38 @@
+# name: test/sql/ordinality/ordinality_macro.test
+# description: WITH ORDINALITY over table macros and scalar macros used as table functions
+# group: [ordinality]
+
+statement ok
+CREATE MACRO pudge_hooks(n) AS TABLE SELECT range * 10 AS hook FROM range(n)
+
+statement ok
+CREATE MACRO chopa_meat(x) AS x + 1
+
+query II
+SELECT * FROM pudge_hooks(3) WITH ORDINALITY
+----
+0	1
+10	2
+20	3
+
+query II
+SELECT hook, depth FROM pudge_hooks(3) WITH ORDINALITY AS a(hook, depth)
+----
+0	1
+10	2
+20	3
+
+query II
+SELECT * FROM chopa_meat(41) WITH ORDINALITY AS a(meat, depth)
+----
+42	1
+
+query I
+SELECT count(*) FROM pudge_hooks(2) WITH ORDINALITY AS a(hook, depth) WHERE depth = 2
+----
+1
+
+statement error
+SELECT * FROM pudge_hooks(3) AS a(hook, depth)
+----
+has 1 columns available but 2 columns specified

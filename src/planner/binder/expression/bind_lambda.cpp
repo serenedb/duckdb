@@ -1,3 +1,5 @@
+#include "duckdb/parser/expression/comparison_expression.hpp"
+#include "duckdb/parser/expression/conjunction_expression.hpp"
 #include "duckdb/parser/expression/lambda_expression.hpp"
 #include "duckdb/parser/expression/operator_expression.hpp"
 #include "duckdb/planner/expression_binder.hpp"
@@ -9,6 +11,8 @@
 #include "duckdb/planner/expression/bound_lambdaref_expression.hpp"
 #include "duckdb/planner/expression/bound_lambda_expression.hpp"
 #include "duckdb/planner/expression_iterator.hpp"
+
+#include <absl/cleanup/cleanup.h>
 
 namespace duckdb {
 
@@ -38,7 +42,7 @@ static idx_t GetLambdaParamIndex(vector<DummyBinding> &lambda_bindings, const Bo
 static void ExtractParameter(const ParsedExpression &expr, vector<Identifier> &column_names,
                              vector<string> &column_aliases) {
 	auto &column_ref = expr.Cast<ColumnRefExpression>();
-	if (column_ref.IsQualified()) {
+	if (column_ref.IsQualified() || column_ref.MacroParameter().IsValid()) {
 		throw BinderException(LambdaExpression::InvalidParametersErrorMessage());
 	}
 
@@ -83,6 +87,96 @@ static unique_ptr<ParsedExpression> RestructureArrowChain(LambdaExpression &expr
 	return std::move(restructured);
 }
 
+// Returns true if there is a `->>` (json-string) operator on the leftmost
+// descendant chain of `expr`. The PEG grammar puts `->` at LambdaArrow
+// precedence (very low) while `->>` is at OtherOperator (high). For PG
+// semantics, both should be at the same level (left-associative). If a `->>`
+// appears nested as the LEFT operand of higher-precedence operators (e.g.
+// comparisons, AND/OR), the surrounding LambdaExpression is actually a JSON
+// `->` op that needs to be pushed down to wrap around the `->>` chain.
+static bool LeftmostChainHasDoubleArrow(const ParsedExpression &expr) {
+	switch (expr.GetExpressionClass()) {
+	case ExpressionClass::FUNCTION: {
+		auto &f = expr.Cast<FunctionExpression>();
+		if (f.IsOperator() && f.FunctionName() == "->>" && f.GetArguments().size() == 2) {
+			return true;
+		}
+		if (f.IsOperator() && f.GetArguments().size() >= 1) {
+			return LeftmostChainHasDoubleArrow(f.GetArguments()[0].GetExpression());
+		}
+		return false;
+	}
+	case ExpressionClass::COMPARISON: {
+		auto &c = expr.Cast<ComparisonExpression>();
+		return LeftmostChainHasDoubleArrow(c.Left());
+	}
+	case ExpressionClass::CONJUNCTION: {
+		auto &c = expr.Cast<ConjunctionExpression>();
+		if (!c.GetChildren().empty() && c.GetChildren()[0]) {
+			return LeftmostChainHasDoubleArrow(*c.GetChildren()[0]);
+		}
+		return false;
+	}
+	case ExpressionClass::OPERATOR: {
+		auto &o = expr.Cast<OperatorExpression>();
+		if (!o.GetChildren().empty() && o.GetChildren()[0]) {
+			return LeftmostChainHasDoubleArrow(*o.GetChildren()[0]);
+		}
+		return false;
+	}
+	default:
+		return false;
+	}
+}
+
+// Push a LambdaExpression(lhs, ...) down into the leftmost descendant of
+// `node` until we either reach a `->>` Function (where the lambda wraps the
+// `->>`'s LHS) or run out of leftmost children (where the lambda wraps the
+// node itself). Caller must have verified `LeftmostChainHasDoubleArrow(node)`.
+static unique_ptr<ParsedExpression> PushArrowDown(unique_ptr<ParsedExpression> lhs, unique_ptr<ParsedExpression> node,
+                                                  LambdaSyntaxType syntax) {
+	switch (node->GetExpressionClass()) {
+	case ExpressionClass::FUNCTION: {
+		auto &f = node->Cast<FunctionExpression>();
+		if (f.IsOperator() && f.FunctionName() == "->>" && f.GetArguments().size() == 2) {
+			// Wrap the LHS of `->>` with the lambda, mirroring RestructureArrowChain.
+			auto inner_lambda = make_uniq<LambdaExpression>(
+			    std::move(lhs), std::move(f.GetArgumentsMutable()[0].GetExpressionMutable()));
+			inner_lambda->GetLambdaSyntaxTypeMutable() = syntax;
+			f.GetArgumentsMutable()[0].GetExpressionMutable() = std::move(inner_lambda);
+			return node;
+		}
+		if (f.IsOperator() && f.GetArguments().size() >= 1) {
+			f.GetArgumentsMutable()[0].GetExpressionMutable() =
+			    PushArrowDown(std::move(lhs), std::move(f.GetArgumentsMutable()[0].GetExpressionMutable()), syntax);
+			return node;
+		}
+		break;
+	}
+	case ExpressionClass::COMPARISON: {
+		auto &c = node->Cast<ComparisonExpression>();
+		c.LeftMutable() = PushArrowDown(std::move(lhs), std::move(c.LeftMutable()), syntax);
+		return node;
+	}
+	case ExpressionClass::CONJUNCTION: {
+		auto &c = node->Cast<ConjunctionExpression>();
+		c.GetChildrenMutable()[0] = PushArrowDown(std::move(lhs), std::move(c.GetChildrenMutable()[0]), syntax);
+		return node;
+	}
+	case ExpressionClass::OPERATOR: {
+		auto &o = node->Cast<OperatorExpression>();
+		o.GetChildrenMutable()[0] = PushArrowDown(std::move(lhs), std::move(o.GetChildrenMutable()[0]), syntax);
+		return node;
+	}
+	default:
+		break;
+	}
+	// Unreachable when caller checked LeftmostChainHasDoubleArrow.
+	auto fallback = make_uniq<LambdaExpression>(std::move(lhs), std::move(node));
+	fallback->GetLambdaSyntaxTypeMutable() = syntax;
+	return std::move(fallback);
+}
+
 BindResult ExpressionBinder::BindExpression(LambdaExpression &expr, idx_t depth,
                                             const vector<LogicalType> &function_child_types,
                                             optional_ptr<bind_lambda_function_t> bind_lambda_function,
@@ -96,6 +190,14 @@ BindResult ExpressionBinder::BindExpression(LambdaExpression &expr, idx_t depth,
 		// Restructure to match standard behavior before binding.
 		if (IsDoubleArrowRHS(expr.Right())) {
 			unique_ptr<ParsedExpression> restructured = RestructureArrowChain(expr);
+			return BindExpression(restructured, depth);
+		}
+		// Generalised case: `col -> 'a' ->> 'b' = 'x'` parses as
+		// `LambdaExpression(col, Comparison(F('->>', ['a', 'b']), '=', 'x'))`.
+		// Push the lambda down so PG-style `(col -> 'a' ->> 'b') = 'x'` binding succeeds.
+		if (LeftmostChainHasDoubleArrow(expr.Right())) {
+			unique_ptr<ParsedExpression> restructured = PushArrowDown(
+			    std::move(expr.LeftMutable()), std::move(expr.RightMutable()), expr.GetLambdaSyntaxType());
 			return BindExpression(restructured, depth);
 		}
 
@@ -140,18 +242,20 @@ BindResult ExpressionBinder::BindExpression(LambdaExpression &expr, idx_t depth,
 	}
 	DummyBinding new_lambda_binding(column_types, column_names, table_alias);
 	lambda_bindings->push_back(new_lambda_binding);
+	absl::Cleanup pop_lambda_binding = [&] {
+		lambda_bindings->pop_back();
+		// successfully bound a subtree of nested lambdas, set this to nullptr in case other parts of the
+		// query also contain lambdas
+		if (lambda_bindings->empty()) {
+			lambda_bindings = nullptr;
+		}
+	};
 
 	if (expr.CopiedExprMutable()) {
 		expr.RightMutable() = std::move(expr.CopiedExprMutable());
 	}
 	auto result = BindExpression(expr.RightMutable(), depth, false);
-	lambda_bindings->pop_back();
-
-	// successfully bound a subtree of nested lambdas, set this to nullptr in case other parts of the
-	// query also contain lambdas
-	if (lambda_bindings->empty()) {
-		lambda_bindings = nullptr;
-	}
+	std::move(pop_lambda_binding).Invoke();
 
 	if (result.HasError()) {
 		result.error.Throw();
@@ -216,55 +320,55 @@ void ExpressionBinder::TransformCapturedLambdaColumn(unique_ptr<Expression> &ori
 	bound_lambda_expr.CapturesMutable().push_back(std::move(original));
 }
 
-void ExpressionBinder::CaptureLambdaColumns(BoundLambdaExpression &bound_lambda_expr, unique_ptr<Expression> &expr,
-                                            const optional_ptr<bind_lambda_function_t> bind_lambda_function,
-                                            const optional_ptr<BindLambdaContext> bind_lambda_context,
-                                            const vector<LogicalType> &function_child_types) {
-	if (expr->GetExpressionClass() == ExpressionClass::BOUND_SUBQUERY) {
+unique_ptr<Expression>
+ExpressionBinder::CaptureLambdaColumns(BoundLambdaExpression &bound_lambda_expr, Expression &expr,
+                                       const optional_ptr<bind_lambda_function_t> bind_lambda_function,
+                                       const optional_ptr<BindLambdaContext> bind_lambda_context,
+                                       const vector<LogicalType> &function_child_types) {
+	if (expr.GetExpressionClass() == ExpressionClass::BOUND_SUBQUERY) {
 		throw BinderException("subqueries in lambda expressions are not supported");
 	}
 
 	// lambdas are bound depth-first, so an inner lambda has already had its own columns captured by the
 	// time we get here - its captures are children of the function it belongs to, which we do visit
-	if (expr->GetExpressionClass() == ExpressionClass::BOUND_LAMBDA) {
-		return;
+	if (expr.GetExpressionClass() == ExpressionClass::BOUND_LAMBDA) {
+		return nullptr;
 	}
 
 	// we do not need to replace anything, as these will be constant in the lambda expression
 	// when executed by the expression executor
-	if (expr->GetExpressionClass() == ExpressionClass::BOUND_CONSTANT) {
-		return;
+	if (expr.GetExpressionClass() == ExpressionClass::BOUND_CONSTANT) {
+		return nullptr;
 	}
 
 	// these expression classes do not have children, transform them
-	if (expr->GetExpressionClass() == ExpressionClass::BOUND_COLUMN_REF ||
-	    expr->GetExpressionClass() == ExpressionClass::BOUND_PARAMETER ||
-	    expr->GetExpressionClass() == ExpressionClass::BOUND_LAMBDA_REF) {
-		if (expr->GetExpressionClass() == ExpressionClass::BOUND_COLUMN_REF) {
+	if (expr.GetExpressionClass() == ExpressionClass::BOUND_COLUMN_REF ||
+	    expr.GetExpressionClass() == ExpressionClass::BOUND_PARAMETER ||
+	    expr.GetExpressionClass() == ExpressionClass::BOUND_LAMBDA_REF) {
+		if (expr.GetExpressionClass() == ExpressionClass::BOUND_COLUMN_REF) {
 			// Search for UNNEST.
-			auto &column_binding = expr->Cast<BoundColumnRefExpression>().Binding();
+			auto &column_binding = expr.Cast<BoundColumnRefExpression>().Binding();
 			ThrowIfUnnestInLambda(column_binding);
 		}
 
-		// move the expr because we are going to replace it
-		auto original = std::move(expr);
+		auto original = expr.Copy();
 		unique_ptr<Expression> replacement;
-
 		TransformCapturedLambdaColumn(original, replacement, bound_lambda_expr, bind_lambda_function,
 		                              bind_lambda_context, function_child_types);
-
-		// replace the expression
-		expr = std::move(replacement);
-
-	} else {
-		// recursively enumerate the children of the expression
-		ExpressionIterator::EnumerateChildren(*expr, [&](unique_ptr<Expression> &child) {
-			CaptureLambdaColumns(bound_lambda_expr, child, bind_lambda_function, bind_lambda_context,
-			                     function_child_types);
-		});
+		replacement->Verify();
+		return replacement;
 	}
 
-	expr->Verify();
+	// recursively enumerate the children of the expression
+	ExpressionIterator::EnumerateChildren(expr, [&](unique_ptr<Expression> &child) {
+		auto replacement = CaptureLambdaColumns(bound_lambda_expr, *child, bind_lambda_function, bind_lambda_context,
+		                                        function_child_types);
+		if (replacement) {
+			child = std::move(replacement);
+		}
+	});
+	expr.Verify();
+	return nullptr;
 }
 
 } // namespace duckdb

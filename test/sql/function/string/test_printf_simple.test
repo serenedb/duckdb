@@ -1,0 +1,76 @@
+# name: test/sql/function/string/test_printf_simple.test
+# description: printf and format with constant formats of plain integer and string placeholders agree with the general formatter
+# group: [string]
+
+statement ok
+CREATE TABLE t AS SELECT i, CASE WHEN i % 11 = 0 THEN NULL ELSE (i * 7919 - 50000)::BIGINT END AS a,
+    CASE WHEN i % 13 = 0 THEN NULL ELSE 'v' || (i % 37)::VARCHAR || CASE WHEN i % 5 = 0 THEN 'Привет' ELSE '' END END AS s,
+    (i * 104729)::UBIGINT AS u FROM range(3000) r(i);
+
+statement ok
+INSERT INTO t VALUES (-1, -9223372036854775808, '', 18446744073709551615), (-2, 9223372036854775807, NULL, 0);
+
+query I
+SELECT count(*) FROM t, (SELECT '%d-%d' AS f) q WHERE printf('%d-%d', a, u) IS DISTINCT FROM printf(q.f, a, u);
+----
+0
+
+query I
+SELECT count(*) FROM t, (SELECT '%s|%s' AS f) q WHERE printf('%s|%s', s, s) IS DISTINCT FROM printf(q.f, s, s);
+----
+0
+
+query I
+SELECT count(*) FROM t, (SELECT '[%i] %s %%' AS f) q WHERE printf('[%i] %s %%', u, s) IS DISTINCT FROM printf(q.f, u, s);
+----
+0
+
+query I
+SELECT count(*) FROM t, (SELECT '%d' AS f) q WHERE printf('%d', a) IS DISTINCT FROM printf(q.f, a);
+----
+0
+
+query I
+SELECT count(*) FROM t, (SELECT 'no args' AS f) q WHERE printf('no args') IS DISTINCT FROM printf(q.f);
+----
+0
+
+query I
+SELECT count(*) FROM t, (SELECT '%5d %s' AS f) q WHERE printf('%5d %s', a, s) IS DISTINCT FROM printf(q.f, a, s);
+----
+0
+
+query I
+SELECT count(*) FROM t, (SELECT '%x %s' AS f) q WHERE printf('%x %s', a, s) IS DISTINCT FROM printf(q.f, a, s);
+----
+0
+
+query I
+SELECT count(*) FROM t, (SELECT '{}-{}' AS f) q WHERE format('{}-{}', a, s) IS DISTINCT FROM format(q.f, a, s);
+----
+0
+
+query I
+SELECT count(*) FROM t, (SELECT '{{{}}} {}' AS f) q WHERE format('{{{}}} {}', a, s) IS DISTINCT FROM format(q.f, a, s);
+----
+0
+
+query I
+SELECT count(*) FROM t, (SELECT '{} {}' AS f) q WHERE format('{} {}', a, s) IS DISTINCT FROM format(q.f, a, s);
+----
+0
+
+query I
+SELECT count(*) FROM t, (SELECT '{0} {1}' AS f) q WHERE format('{0} {1}', a, s) IS DISTINCT FROM format(q.f, a, s);
+----
+0
+
+query I
+SELECT count(*) FROM t, (SELECT '{:>5} {}' AS f) q WHERE format('{:>5} {}', a, s) IS DISTINCT FROM format(q.f, a, s);
+----
+0
+
+query III
+SELECT printf('%d-%d', 1, -2), format('{}|{}', 'a', 42), printf('%s:%s', 'x', NULL);
+----
+1--2	a|42	NULL

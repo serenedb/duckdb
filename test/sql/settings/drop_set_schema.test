@@ -29,11 +29,11 @@ my_schema
 statement ok
 drop schema my_schema;
 
-# The 'current_schema' setting should be reset to the default ('main')
+# the search path still names the dropped schema, so no schema is current (as in PostgreSQL)
 query I
-select current_schema();
+select current_schema() IS NULL;
 ----
-main
+true
 
 # Create two new schemas
 
@@ -84,11 +84,11 @@ select current_schema();
 ----
 schema1
 
-# Only when we drop the other 'schema1' should it be altered again
+# dropping the schema the search path names leaves no current schema, as in PostgreSQL
 statement ok
 drop schema schema1;
 
 query I
-select current_schema();
+select current_schema() IS NULL;
 ----
-main
+true

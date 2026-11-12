@@ -22,6 +22,7 @@ struct VacuumOptions {
 
 	bool vacuum;
 	bool analyze;
+	string serenedb_pragma_option;
 
 	void Serialize(Serializer &serializer) const;
 	static VacuumOptions Deserialize(Deserializer &deserializer);

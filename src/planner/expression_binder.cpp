@@ -1,5 +1,8 @@
 #include "duckdb/planner/expression_binder.hpp"
 
+#include <absl/time/clock.h>
+
+#include "duckdb/common/fault_points.hpp"
 #include "duckdb/function/match_recognize.hpp"
 
 #include "duckdb/parser/expression/list.hpp"
@@ -8,8 +11,8 @@
 #include "duckdb/planner/expression/list.hpp"
 #include "duckdb/planner/expression_iterator.hpp"
 #include "duckdb/common/operator/cast_operators.hpp"
+#include "duckdb/common/stack_depth.hpp"
 #include "duckdb/main/client_config.hpp"
-#include "duckdb/main/settings.hpp"
 #include "duckdb/common/string_util.hpp"
 
 namespace duckdb {
@@ -19,34 +22,51 @@ void ExpressionBinder::SetCatalogLookupCallback(catalog_entry_callback_t callbac
 }
 
 ExpressionBinder::ExpressionBinder(Binder &binder, ClientContext &context) : binder(binder), context(context) {
-	InitializeStackCheck();
 }
 
 ExpressionBinder::~ExpressionBinder() {
 }
 
-void ExpressionBinder::InitializeStackCheck() {
-	static constexpr idx_t INITIAL_DEPTH = 5;
-	if (binder.HasEnclosingScope()) {
-		stack_depth = binder.GetInnermostScope().stack_depth + INITIAL_DEPTH;
-	} else {
-		stack_depth = INITIAL_DEPTH;
-	}
+idx_t ExpressionBinder::SharedMacroArguments() const {
+	return binder.global_binder_state->shared_macro_arguments;
 }
 
-StackChecker<ExpressionBinder> ExpressionBinder::StackCheck(const ParsedExpression &expr, idx_t extra_stack) {
-	D_ASSERT(stack_depth != DConstants::INVALID_INDEX);
-	auto max_expression_depth = Settings::Get<MaxExpressionDepthSetting>(context);
-	if (stack_depth + extra_stack >= max_expression_depth) {
-		throw BinderException("Max expression depth limit of %lld exceeded. Use \"SET max_expression_depth TO x\" to "
-		                      "increase the maximum expression depth.",
-		                      max_expression_depth);
+bool ExpressionBinder::IsArgumentReference(const ColumnRefExpression &col_ref) {
+	if (col_ref.IsQualified()) {
+		return false;
 	}
-	return StackChecker<ExpressionBinder>(*this, extra_stack);
+	auto &name = col_ref.GetColumnName();
+	if (binder.global_binder_state->bound_macro_arguments.count(name)) {
+		return true;
+	}
+	if (lambda_bindings) {
+		for (auto &binding : *lambda_bindings) {
+			if (binding.HasMatchingBinding(name)) {
+				return true;
+			}
+		}
+	}
+	return false;
+}
+
+BindResult ExpressionBinder::BindChunkColumn(const Identifier &name, const LogicalType &type, idx_t position) {
+	if (!chunk_columns.IsValid()) {
+		chunk_columns = binder.GenerateTableIndex();
+	}
+	return BindResult(
+	    make_uniq<BoundColumnRefExpression>(name, type, ColumnBinding(chunk_columns, ProjectionIndex(position))));
 }
 
 BindResult ExpressionBinder::BindExpression(unique_ptr<ParsedExpression> &expr, idx_t depth, bool root_expression) {
-	auto stack_checker = StackCheck(*expr);
+	static constexpr idx_t INTERRUPT_INTERVAL = 256;
+	StackDepth::Check();
+	SDB_IF_FAILURE("slow_expression_bind") {
+		absl::SleepFor(absl::Milliseconds(1));
+	}
+	if (++binds_since_interrupt_check >= INTERRUPT_INTERVAL) {
+		binds_since_interrupt_check = 0;
+		context.InterruptCheck();
+	}
 
 	auto &expr_ref = *expr;
 	switch (expr_ref.GetExpressionClass()) {
@@ -104,7 +124,7 @@ BindResult ExpressionBinder::BindExpression(unique_ptr<ParsedExpression> &expr, 
 	case ExpressionClass::POSITIONAL_REFERENCE:
 		return BindPositionalReference(expr, depth, root_expression);
 	case ExpressionClass::STAR:
-		return BindResult(BinderException::Unsupported(expr_ref, "STAR expression is not supported here"));
+		return BindStar(expr_ref.Cast<StarExpression>(), depth, root_expression);
 	case ExpressionClass::WINDOW:
 		// a binder that does not handle windows itself reports that they are unsupported here
 		return BindUnsupportedExpression(expr_ref, depth, UnsupportedWindowMessage());
@@ -270,6 +290,14 @@ unique_ptr<Expression> ExpressionBinder::Bind(unique_ptr<ParsedExpression> &expr
 		bind_result.error.Throw();
 	}
 	unique_ptr<Expression> result = std::move(bind_result.expression);
+	if (chunk_columns.IsValid()) {
+		ExpressionIterator::VisitExpressionMutable<BoundColumnRefExpression>(
+		    result, [&](BoundColumnRefExpression &column, unique_ptr<Expression> &reference) {
+			    D_ASSERT(column.Binding().table_index == chunk_columns);
+			    reference = make_uniq<BoundReferenceExpression>(column.GetAlias(), column.GetReturnType(),
+			                                                    column.Binding().column_index.GetIndex());
+		    });
+	}
 	if (target_type.id() != LogicalTypeId::INVALID) {
 		// the binder has a specific target type: add a cast to that type
 		result = BoundCastExpression::AddCastToType(context, std::move(result), target_type);
@@ -295,7 +323,30 @@ unique_ptr<Expression> ExpressionBinder::Bind(unique_ptr<ParsedExpression> &expr
 BindResult ExpressionBinder::Bind(unique_ptr<ParsedExpression> &expr, idx_t depth, bool root_expression) {
 	auto query_location = expr->GetQueryLocation();
 	auto alias = expr->GetAlias();
-	BindResult result = BindExpression(expr, depth, root_expression);
+	BindResult result;
+	if (expr->GetExpressionClass() == ExpressionClass::COLUMN_REF &&
+	    expr->Cast<ColumnRefExpression>().MacroParameter().IsValid() && !MatchesGroup(*expr)) {
+		auto &column = expr->Cast<ColumnRefExpression>();
+		auto resolution = ResolveMacroParameter(column);
+		if (!resolution.found) {
+			expr = MacroParameterArgument(column);
+			return Bind(expr, depth, root_expression);
+		}
+		expr = std::move(resolution.qualified);
+		result = resolution.depth == 0 ? BindExpression(expr, depth, root_expression)
+		                               : DispatchToScope(resolution.depth, expr, depth);
+	}
+	auto &bound_macro_arguments = binder.global_binder_state->bound_macro_arguments;
+	if (!result.expression && !result.HasError() && !bound_macro_arguments.empty() &&
+	    expr->GetExpressionClass() == ExpressionClass::COLUMN_REF && !expr->Cast<ColumnRefExpression>().IsQualified()) {
+		auto bound = bound_macro_arguments.find(expr->Cast<ColumnRefExpression>().GetColumnName());
+		if (bound != bound_macro_arguments.end()) {
+			result = BindResult(BindMacroArgument(bound->second));
+		}
+	}
+	if (!result.expression && !result.HasError()) {
+		result = BindExpression(expr, depth, root_expression);
+	}
 	if (result.HasError()) {
 		return result;
 	}
@@ -324,6 +375,13 @@ BindResult ExpressionBinder::BindUnsupportedExpression(ParsedExpression &expr, i
 
 bool ExpressionBinder::IsUnnestFunction(const Identifier &function_name) {
 	return function_name == "unnest" || function_name == "unlist";
+}
+
+bool ExpressionBinder::IsSelectListSetReturningFunction(const Identifier &function_name) {
+	// UNNEST is a binder special form with its own dispatch; callers that can
+	// encounter it must check IsUnnestFunction before consulting this predicate
+	D_ASSERT(!IsUnnestFunction(function_name));
+	return function_name == "generate_series";
 }
 
 bool ExpressionBinder::IsPotentialAlias(const ColumnRefExpression &colref) {

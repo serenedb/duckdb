@@ -1,5 +1,6 @@
 #include "duckdb/optimizer/rule/predicate_factoring.hpp"
 
+#include "duckdb/parser/expression_map.hpp"
 #include "duckdb/planner/expression/bound_conjunction_expression.hpp"
 #include "duckdb/planner/expression/bound_columnref_expression.hpp"
 #include "duckdb/planner/expression_iterator.hpp"
@@ -93,6 +94,13 @@ static column_binding_map_t<vector<reference<Expression>>> GetDisjunctedPredicat
 	D_ASSERT(!ExpressionIsDisjunction(first_child));
 	column_binding_map_t<vector<reference<Expression>>> remaining_binding_map;
 	ExtractDisjunctedPredicates(first_child, remaining_binding_map);
+	column_binding_map_t<expression_set_t> seen_predicates;
+	for (auto &entry : remaining_binding_map) {
+		auto &seen = seen_predicates[entry.first];
+		for (auto &predicate : entry.second) {
+			seen.insert(predicate.get());
+		}
+	}
 
 	for (idx_t child_idx = 1; child_idx < disjuncted_children.size(); child_idx++) {
 		auto &child = disjuncted_children[child_idx].get();
@@ -101,26 +109,19 @@ static column_binding_map_t<vector<reference<Expression>>> GetDisjunctedPredicat
 		ExtractDisjunctedPredicates(child, child_binding_map);
 
 		// Bindings must appear in both maps to be considered for predicate factoring
-		for (auto it = remaining_binding_map.begin(); it != remaining_binding_map.end();) {
-			auto child_it = child_binding_map.find(it->first);
+		erase_if(remaining_binding_map, [&](auto &entry) {
+			auto child_it = child_binding_map.find(entry.first);
 			if (child_it == child_binding_map.end()) {
-				it = remaining_binding_map.erase(it);
-			} else {
-				for (auto &new_predicate : child_it->second) {
-					bool found = false;
-					for (auto &existing_predicate : it->second) {
-						if (new_predicate.get().Equals(existing_predicate.get())) {
-							found = true;
-							break;
-						}
-					}
-					if (!found) {
-						it->second.push_back(new_predicate.get());
-					}
-				}
-				it++;
+				return true;
 			}
-		}
+			auto &seen = seen_predicates[entry.first];
+			for (auto &new_predicate : child_it->second) {
+				if (seen.insert(new_predicate.get()).second) {
+					entry.second.push_back(new_predicate.get());
+				}
+			}
+			return false;
+		});
 	}
 
 	return remaining_binding_map;
@@ -150,38 +151,45 @@ unique_ptr<Expression> PredicateFactoringRule::Apply(LogicalOperator &op, vector
 		return nullptr; // None qualify
 	}
 
-	unique_ptr<Expression> derived_filter;
+	// binding_map is a hash map whose iteration order depends on memory layout, so iterating it
+	// directly makes the derived filter -- and therefore the EXPLAIN plan -- vary between builds.
+	// Visit the bindings in a deterministic (table_index, column_index) order instead.
+	vector<ColumnBinding> sorted_bindings;
+	sorted_bindings.reserve(binding_map.size());
 	for (auto &entry : binding_map) {
-		D_ASSERT(!entry.second.empty());
+		sorted_bindings.push_back(entry.first);
+	}
+	std::sort(sorted_bindings.begin(), sorted_bindings.end(), [](const ColumnBinding &lhs, const ColumnBinding &rhs) {
+		return lhs.table_index != rhs.table_index ? lhs.table_index < rhs.table_index
+		                                          : lhs.column_index < rhs.column_index;
+	});
+
+	auto derived_filter = make_uniq<BoundConjunctionExpression>(ExpressionType::CONJUNCTION_AND);
+	for (auto binding_it = sorted_bindings.rbegin(); binding_it != sorted_bindings.rend(); ++binding_it) {
+		auto &predicates = binding_map.find(*binding_it)->second;
+		D_ASSERT(!predicates.empty());
 
 		// Create disjunction on single-column predicates
-		unique_ptr<Expression> column_filter;
-		for (auto &expr : entry.second) {
-			if (!column_filter) {
-				column_filter = expr.get().Copy();
-			} else {
-				auto new_disjunction = make_uniq<BoundConjunctionExpression>(ExpressionType::CONJUNCTION_OR);
-				new_disjunction->GetChildrenMutable().push_back(std::move(column_filter));
-				new_disjunction->GetChildrenMutable().push_back(expr.get().Copy());
-				column_filter = std::move(new_disjunction);
-			}
+		if (predicates.size() == 1) {
+			derived_filter->GetChildrenMutable().push_back(predicates[0].get().Copy());
+			continue;
 		}
-
-		// Conjunct each single-column predicate together
-		if (!derived_filter) {
-			derived_filter = std::move(column_filter);
-		} else {
-			auto new_conjunction = make_uniq<BoundConjunctionExpression>(ExpressionType::CONJUNCTION_AND);
-			new_conjunction->GetChildrenMutable().push_back(std::move(column_filter));
-			new_conjunction->GetChildrenMutable().push_back(std::move(derived_filter));
-			derived_filter = std::move(new_conjunction);
+		auto column_filter = make_uniq<BoundConjunctionExpression>(ExpressionType::CONJUNCTION_OR);
+		column_filter->GetChildrenMutable().reserve(predicates.size());
+		for (auto &expr : predicates) {
+			column_filter->GetChildrenMutable().push_back(expr.get().Copy());
 		}
+		derived_filter->GetChildrenMutable().push_back(std::move(column_filter));
 	}
 
 	// Now add the derived filter as an AND to the original expression
 	auto result = make_uniq<BoundConjunctionExpression>(ExpressionType::CONJUNCTION_AND);
 	result->GetChildrenMutable().push_back(bindings[0].get().Copy());
-	result->GetChildrenMutable().push_back(std::move(derived_filter));
+	if (derived_filter->GetChildren().size() == 1) {
+		result->GetChildrenMutable().push_back(std::move(derived_filter->GetChildrenMutable()[0]));
+	} else {
+		result->GetChildrenMutable().push_back(std::move(derived_filter));
+	}
 	return std::move(result);
 }
 

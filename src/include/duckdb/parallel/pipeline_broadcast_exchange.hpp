@@ -144,6 +144,7 @@ public:
 	SourceResultType Scan(idx_t consumer_idx, DataChunk &chunk, PipelineBroadcastExchangeScanState &scan_state,
 	                      optional_idx &batch_index, SourceBatchIndexState &batch_index_state,
 	                      const InterruptState &interrupt_state);
+	void FinishScan(idx_t consumer_idx, PipelineBroadcastExchangeScanState &scan_state);
 	void UnregisterConsumer(idx_t consumer_idx);
 
 	ProgressData ScanProgress(idx_t consumer_idx, idx_t estimated_cardinality) const;

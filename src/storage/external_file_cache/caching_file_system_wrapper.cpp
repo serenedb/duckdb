@@ -229,8 +229,9 @@ optional<FileMetadata> CachingFileSystemWrapper::GetStatsIfExists(const OpenFile
 //===----------------------------------------------------------------------===//
 // Directory Operations
 //===----------------------------------------------------------------------===//
-bool CachingFileSystemWrapper::DirectoryExists(const string &directory, optional_ptr<FileOpener> opener) {
-	return underlying_file_system.DirectoryExists(directory, opener);
+FileExistence CachingFileSystemWrapper::TryDirectoryExists(const string &directory, optional_ptr<FileOpener> opener,
+                                                           optional_ptr<ErrorData> error) {
+	return underlying_file_system.TryDirectoryExists(directory, opener, error);
 }
 
 void CachingFileSystemWrapper::CreateDirectory(const string &directory, optional_ptr<FileOpener> opener) {
@@ -277,8 +278,9 @@ void CachingFileSystemWrapper::MoveFile(const string &source, const string &targ
 	underlying_file_system.MoveFile(source, target, opener);
 }
 
-bool CachingFileSystemWrapper::FileExists(const string &filename, optional_ptr<FileOpener> opener) {
-	return underlying_file_system.FileExists(filename, opener);
+FileExistence CachingFileSystemWrapper::TryFileExists(const string &filename, optional_ptr<FileOpener> opener,
+                                                      optional_ptr<ErrorData> error) {
+	return underlying_file_system.TryFileExists(filename, opener, error);
 }
 
 bool CachingFileSystemWrapper::IsPipe(const string &filename, optional_ptr<FileOpener> opener) {

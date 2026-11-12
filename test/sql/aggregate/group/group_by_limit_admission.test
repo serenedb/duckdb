@@ -1,0 +1,74 @@
+# name: test/sql/aggregate/group/group_by_limit_admission.test
+# description: a GROUP BY or DISTINCT under a LIMIT without ORDER BY aggregates only the groups it returns, completely
+# group: [group]
+
+statement ok
+SET threads = 8
+
+statement ok
+CREATE TABLE t AS SELECT i, (i % 1000) * 1000000007 AS g, (i % 7)::VARCHAR AS s, CASE WHEN i % 13 = 0 THEN NULL ELSE i % 5 END AS n FROM range(2000000) r(i)
+
+query II
+EXPLAIN SELECT g, count(*) FROM t GROUP BY g LIMIT 10
+----
+physical_plan	<REGEX>:.*Group Limit: 10.*
+
+query II
+EXPLAIN SELECT DISTINCT s FROM t LIMIT 3
+----
+physical_plan	<REGEX>:.*LIMITED_DISTINCT.*
+
+query II
+EXPLAIN SELECT g, count(*) FROM t GROUP BY g LIMIT 5 OFFSET 3
+----
+physical_plan	<REGEX>:.*Group Limit: 8.*
+
+query II
+EXPLAIN SELECT g, count(*) FROM t GROUP BY g HAVING count(*) > 0 LIMIT 10
+----
+physical_plan	<!REGEX>:.*Group Limit.*
+
+query II
+EXPLAIN SELECT g, count(DISTINCT s) FROM t GROUP BY g LIMIT 10
+----
+physical_plan	<REGEX>:.*Group Limit: 10.*
+
+query II
+SELECT count(*), bool_and(cd = 7) FROM (SELECT g, count(DISTINCT s) AS cd FROM t GROUP BY g LIMIT 10)
+----
+10	true
+
+query II
+EXPLAIN SELECT g, count(*) FROM t GROUP BY g ORDER BY g LIMIT 10
+----
+physical_plan	<!REGEX>:.*Group Limit.*
+
+query II
+SELECT count(*), bool_and(c = 2000 AND sm = (SELECT sum(i) FROM t WHERE t.g = r.g)) FROM (SELECT g, count(*) AS c, sum(i) AS sm FROM t GROUP BY g LIMIT 10) r
+----
+10	true
+
+query II
+SELECT count(*), bool_and(c = (SELECT count(*) FROM t WHERE t.g = r.g AND t.s = r.s)) FROM (SELECT g, s, count(*) AS c FROM t GROUP BY g, s LIMIT 100 OFFSET 20) r
+----
+100	true
+
+query II
+SELECT count(*), bool_and(c = (SELECT count(*) FROM t WHERE t.n IS NOT DISTINCT FROM r.n)) FROM (SELECT n, count(*) AS c FROM t GROUP BY n LIMIT 10) r
+----
+6	true
+
+query I
+SELECT count(*) FROM (SELECT DISTINCT g FROM t LIMIT 7)
+----
+7
+
+query I
+SELECT count(DISTINCT g) FROM (SELECT DISTINCT g FROM t LIMIT 2048)
+----
+1000
+
+query II
+SELECT count(*), sum(c) FROM (SELECT s, count(*) AS c FROM t GROUP BY s LIMIT 10)
+----
+7	2000000

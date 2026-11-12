@@ -1,6 +1,7 @@
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/main/database_manager.hpp"
 #include "duckdb/catalog/catalog.hpp"
+#include "duckdb/common/stack_depth.hpp"
 #include "duckdb/execution/expression_executor.hpp"
 #include "duckdb/planner/binder.hpp"
 #include "duckdb/planner/expression/bound_constant_expression.hpp"
@@ -18,6 +19,16 @@ static bool IsValidTypeLookup(optional_ptr<CatalogEntry> entry) {
 }
 
 BindResult ExpressionBinder::BindExpression(TypeExpression &type_expr, idx_t depth) {
+	auto result_expr = make_uniq<BoundConstantExpression>(Value::TYPE(BindTypeExpression(type_expr)));
+	result_expr->SetQueryLocation(type_expr.GetQueryLocation());
+	return BindResult(std::move(result_expr));
+}
+
+LogicalType ExpressionBinder::BindTypeExpression(TypeExpression &type_expr) {
+	StackDepth::Check();
+	if (type_expr.GetBoundType().id() != LogicalTypeId::INVALID) {
+		return type_expr.GetBoundType();
+	}
 	auto &type_name = type_expr.GetTypeName();
 
 	QueryErrorContext error_context(type_expr);
@@ -33,8 +44,10 @@ BindResult ExpressionBinder::BindExpression(TypeExpression &type_expr, idx_t dep
 
 	if (type_catalog.empty() && !DatabaseManager::Get(context).HasAttachedDatabase()) {
 		// Look in the system catalog if no catalog was specified
-		entry = binder.entry_retriever.GetEntry(
-		    EntryLookupInfo(type_lookup, bound_name.WithCatalog(Identifier::SystemCatalog())));
+		entry = Catalog::GetSystemCatalog(context)
+		            .LookupEntry(binder.entry_retriever, EntryLookupInfo(type_lookup, bound_name),
+		                         OnEntryNotFound::THROW_EXCEPTION)
+		            .entry;
 	} else {
 		// Try to search from most specific to least specific
 		// The search path should already have been set to the correct catalog/schema,
@@ -60,10 +73,7 @@ BindResult ExpressionBinder::BindExpression(TypeExpression &type_expr, idx_t dep
 			    OnEntryNotFound::RETURN_NULL);
 		}
 		if (!IsValidTypeLookup(entry)) {
-			entry = binder.entry_retriever.GetEntry(
-			    EntryLookupInfo(type_lookup, QualifiedName(Identifier::SystemCatalog(), Identifier::DefaultSchema(),
-			                                               type_lookup.GetEntryIdentifier())),
-			    OnEntryNotFound::THROW_EXCEPTION);
+			entry = binder.GetBuiltinEntry(type_lookup, OnEntryNotFound::THROW_EXCEPTION);
 		}
 	}
 
@@ -78,14 +88,19 @@ BindResult ExpressionBinder::BindExpression(TypeExpression &type_expr, idx_t dep
 	vector<TypeArgument> bound_parameters;
 
 	for (auto &param : unbound_parameters) {
+		if (param->GetExpressionClass() == ExpressionClass::TYPE) {
+			bound_parameters.emplace_back(param->GetAlias().GetIdentifierName(),
+			                              BindTypeExpression(param->Cast<TypeExpression>()), param->GetQueryLocation());
+			continue;
+		}
 		// Otherwise, try to fold it to a constant value
-		ConstantBinder binder(this->binder, context, StringUtil::Format("Type parameter for type '%s'", type_name));
+		ConstantBinder binder(this->binder, context, StringUtil::Format("Type parameter for type %s", type_name));
 
 		auto expr = param->Copy();
 		auto bound_expr = binder.Bind(expr);
 
 		if (!bound_expr->IsFoldable()) {
-			throw BinderException(type_expr, "Type parameter expression for type '%s' is not a constant", type_name);
+			throw BinderException(type_expr, "Type parameter expression for type %s is not a constant", type_name);
 		}
 
 		// The location comes from the parsed parameter, not the bound one.
@@ -105,13 +120,7 @@ BindResult ExpressionBinder::BindExpression(TypeExpression &type_expr, idx_t dep
 	};
 
 	// Select the matching constructor and call it
-	auto result_type =
-	    type_entry.constructors.Bind(context, type_entry.user_type, bound_parameters, type_expr.GetQueryLocation());
-
-	// Return the resulting type!
-	auto result_expr = make_uniq<BoundConstantExpression>(Value::TYPE(result_type));
-	result_expr->SetQueryLocation(type_expr.GetQueryLocation());
-	return BindResult(std::move(result_expr));
+	return type_entry.constructors.Bind(context, type_entry.user_type, bound_parameters, type_expr.GetQueryLocation());
 }
 
 } // namespace duckdb

@@ -22,7 +22,7 @@ PRAGMA disable_profiling;
 # Evaluate results.
 
 query I rowsort
-SELECT unnest(current_setting('tracked_metrics')) ORDER BY ALL;
+SELECT unnest(current_setting('tracked_metrics')::VARCHAR[]) ORDER BY ALL;
 ----
 operator.extra_info
 operator.intermediate_rows
@@ -46,7 +46,7 @@ statement ok
 SET tracked_metrics = ['query.sql', 'query.cpu_time', 'operator.extra_info', 'query.total_intermediate_rows', 'query.total_rows_scanned'];
 
 query I
-SELECT unnest(current_setting('tracked_metrics')) ORDER BY ALL
+SELECT unnest(current_setting('tracked_metrics')::VARCHAR[]) ORDER BY ALL
 ----
 operator.extra_info
 query.cpu_time

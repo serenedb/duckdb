@@ -61,7 +61,18 @@ public:
 	}
 
 	idx_t MaxThreads() override {
-		return max_threads;
+		if (max_threads <= 1) {
+			return max_threads;
+		}
+		idx_t producer_threads = 0;
+		for (auto &producer : exchange->GetProducerPipelines()) {
+			auto threads = producer.get().GetScheduledThreads();
+			if (!threads.IsValid()) {
+				return max_threads;
+			}
+			producer_threads += threads.GetIndex();
+		}
+		return producer_threads == 0 ? max_threads : MinValue(max_threads, producer_threads);
 	}
 
 	//! Signal that the pipeline of this action no longer reads from the exchange - the merge into must not block on
@@ -132,8 +143,9 @@ InsertionOrderPreservingMap<string> PhysicalMergeActionSource::ParamsToString() 
 PhysicalMergeInto::PhysicalMergeInto(PhysicalPlan &physical_plan, vector<LogicalType> types, PhysicalOperator &child,
                                      map<MergeActionCondition, vector<unique_ptr<MergeIntoOperator>>> actions_p,
                                      idx_t row_id_index, optional_idx source_marker, bool parallel_p,
-                                     bool return_chunk_p, bool serialize_actions_p)
-    : PhysicalOperator(physical_plan, PhysicalOperatorType::MERGE_INTO, std::move(types), 1),
+                                     bool return_chunk_p, bool serialize_actions_p,
+                                     optional_ptr<TableCatalogEntry> table_p)
+    : PhysicalOperator(physical_plan, PhysicalOperatorType::MERGE_INTO, std::move(types), 1), table(table_p),
       row_id_index(row_id_index), source_marker(source_marker), parallel(parallel_p), return_chunk(return_chunk_p),
       serialize_actions(serialize_actions_p) {
 	children.push_back(child);
@@ -353,7 +365,8 @@ public:
 class MergeIntoGlobalState : public GlobalSinkState {
 public:
 	MergeIntoGlobalState(ClientContext &context, const PhysicalMergeInto &op)
-	    : op(op), matched_rows(context, GetRowIdTypes(op)) {
+	    : op(op), matched_rows(op.table ? op.table->GetMatchedRowSet(context, GetRowIdTypes(op))
+	                                    : make_uniq<LockedRowIdSet>(context, GetRowIdTypes(op))) {
 		merged_count = 0;
 		for (auto &action : op.actions) {
 			shared_ptr<PipelineBroadcastExchange> exchange;
@@ -390,15 +403,13 @@ public:
 	vector<shared_ptr<PipelineBroadcastExchange>> exchanges;
 	atomic<idx_t> merged_count;
 	//! Target row-ids already matched by a WHEN MATCHED modifying action, to detect a second action on a row.
-	mutex match_lock;
-	RowIdDeduplicator matched_rows;
+	unique_ptr<RowIdSet> matched_rows;
 
 	//! Record the matched target rows; throw if any row was already matched (cardinality violation). A distinct
 	//! count below the input count means a row ID repeated.
 	void CheckMatchedRows(DataChunk &matched, idx_t row_id_index) {
-		lock_guard<mutex> glock(match_lock);
-		auto distinct = matched_rows.Register(matched, row_id_index);
-		if (distinct != matched.size()) {
+		const auto count = matched.size();
+		if (matched_rows->Register(matched, row_id_index) != count) {
 			throw InvalidInputException(
 			    "MERGE INTO command cannot affect the same target row more than once. A target row matched more "
 			    "than one source row; ensure the source rows are deduplicated or the ON condition is unique.");
@@ -650,6 +661,15 @@ void PhysicalMergeInto::BuildPipelines(Pipeline &current, MetaPipeline &meta_pip
 	// build the pipelines that push data into the merge into
 	auto &child_meta_pipeline = meta_pipeline.CreateChildMetaPipeline(current, *this);
 	child_meta_pipeline.Build(children[0].get());
+	vector<shared_ptr<Pipeline>> producers;
+	child_meta_pipeline.GetPipelines(producers, false);
+	std::erase_if(producers,
+	              [this](const shared_ptr<Pipeline> &pipeline) { return pipeline->GetSink().get() != this; });
+	for (auto &action : actions) {
+		if (action->source && !producers.empty()) {
+			action->source->exchange->SetProducerPipelines(producers);
+		}
+	}
 
 	// with RETURNING every action emits its own set of rows - create a pipeline per action to emit them
 	vector<reference<Pipeline>> result_pipelines;
@@ -659,7 +679,7 @@ void PhysicalMergeInto::BuildPipelines(Pipeline &current, MetaPipeline &meta_pip
 		result_pipelines.push_back(current);
 		for (idx_t i = 1; i < action_pipeline_count; i++) {
 			// the actions emit their rows in order - the union pipelines run after the current pipeline
-			auto &union_pipeline = meta_pipeline.CreateUnionPipeline(current, true);
+			auto &union_pipeline = meta_pipeline.CreateUnionPipeline(result_pipelines.back(), true);
 			meta_pipeline.AssignNextBatchIndex(union_pipeline);
 			result_pipelines.push_back(union_pipeline);
 		}
@@ -676,6 +696,9 @@ void PhysicalMergeInto::BuildPipelines(Pipeline &current, MetaPipeline &meta_pip
 		auto &action_meta_pipeline = meta_pipeline.CreateChildMetaPipeline(current, *action->op);
 		action_meta_pipeline.Build(action->op->children[0].get());
 		auto &action_pipeline = action_meta_pipeline.GetBasePipeline();
+		for (auto &producer : producers) {
+			action_pipeline->AddDataflowDependency(producer);
+		}
 		if (serialize_actions && previous_action_pipeline) {
 			// the operators of the actions cannot append to the table concurrently - chain the pipelines
 			action_pipeline->AddDependency(*previous_action_pipeline);

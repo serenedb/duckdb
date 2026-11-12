@@ -116,7 +116,8 @@ private:
 class RadixPartitionedTupleData : public PartitionedTupleData {
 public:
 	RadixPartitionedTupleData(BufferManager &buffer_manager, shared_ptr<TupleDataLayout> layout_ptr, MemoryTag tag,
-	                          idx_t radix_bits_p, idx_t hash_col_idx_p, QueryContext context = QueryContext());
+	                          idx_t radix_bits_p, idx_t hash_col_idx_p, QueryContext context = QueryContext(),
+	                          idx_t skip_bits_p = 0);
 	RadixPartitionedTupleData(RadixPartitionedTupleData &other);
 	~RadixPartitionedTupleData() override;
 
@@ -153,6 +154,7 @@ private:
 	const idx_t radix_bits;
 	//! The index of the column holding the hashes
 	const idx_t hash_col_idx;
+	const idx_t skip_bits;
 };
 
 } // namespace duckdb

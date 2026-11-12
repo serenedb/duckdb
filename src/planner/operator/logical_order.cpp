@@ -7,11 +7,17 @@ LogicalOrder::LogicalOrder(vector<BoundOrderByNode> orders)
 }
 
 vector<ColumnBinding> LogicalOrder::GetColumnBindings() {
-	auto child_bindings = children[0]->GetColumnBindings();
-	if (!HasProjectionMap()) {
-		return child_bindings;
+	return GetDerivedColumnBindings();
+}
+
+optional_ptr<LogicalOperator> LogicalOrder::GetBindingChild() {
+	return children[0].get();
+}
+
+void LogicalOrder::DeriveColumnBindings(vector<ColumnBinding> &bindings) {
+	if (HasProjectionMap()) {
+		bindings = MapBindings(bindings, projection_map);
 	}
-	return MapBindings(child_bindings, projection_map);
 }
 
 InsertionOrderPreservingMap<string> LogicalOrder::ParamsToString() const {

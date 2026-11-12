@@ -13,11 +13,13 @@
 #include "duckdb/common/unique_ptr.hpp"
 #include "duckdb/storage/table/data_table_info.hpp"
 #include "duckdb/storage/table/persistent_table_data.hpp"
+#include "duckdb/storage/table/scan_state.hpp"
 #include "duckdb/transaction/local_storage.hpp"
 
 namespace duckdb {
 
 class BoundForeignKeyConstraint;
+class BoundIndex;
 class AttachedDatabase;
 class ClientContext;
 class ColumnList;
@@ -65,7 +67,7 @@ enum class DataTableVersion {
 class DataTable : public enable_shared_from_this<DataTable> {
 public:
 	//! Constructs a new data table from an (optional) set of persistent segments
-	DataTable(AttachedDatabase &db, shared_ptr<TableIOManager> table_io_manager, vector<Identifier> schema_path,
+	DataTable(AttachedDatabase &db, shared_ptr<TableIOManager> table_io_manager, shared_ptr<SchemaInfo> schema_info,
 	          Identifier table, vector<ColumnDefinition> column_definitions_p,
 	          unique_ptr<PersistentTableData> data = nullptr);
 	//! Constructs a DataTable as a delta on an existing data table with a newly added column
@@ -94,6 +96,24 @@ public:
 
 	void InitializeScan(ClientContext &context, DuckTransaction &transaction, TableScanState &state,
 	                    const vector<StorageIndex> &column_ids, optional_ptr<TableFilterSet> table_filters = nullptr);
+	//! Rowid lookup: fetches `column_ids` for the ascending row ids [pk_begin, pk_end), applies
+	//! `table_filters` in-scan, and writes the surviving rows densely into `output` in pk order (mapped
+	//! fetch column -> output column via `output_to_fetch`; INVALID_INDEX entries skipped). A requested
+	//! id that is absent (deleted) behaves exactly like a filtered-out row: it gets no output row.
+	//! Fills `out_survivor_idx[w]` with each output row's index into `pk_begin` and returns the survivor
+	//! count. Skips row groups / vectors holding no requested id; `scratch` is a caller-owned chunk typed
+	//! to `column_ids`. `state` is a caller-owned persistent cursor (kept across batches so the
+	//! scan/decode state stays warm); pass a default-null unique_ptr that the source holds for the
+	//! query's lifetime. The rows are written from output row `w` on.
+	idx_t LookupScan(DuckTransaction &transaction, ClientContext &context, const vector<StorageIndex> &column_ids,
+	                 optional_ptr<TableFilterSet> table_filters, const row_t *pk_begin, const row_t *pk_end,
+	                 idx_t *out_survivor_idx, const idx_t *output_to_fetch, DataChunk &scratch, DataChunk &output,
+	                 unique_ptr<TableScanState> &state, idx_t w = 0);
+	//! LookupScan of the row groups holding the requested ids, in parallel, so the output is in no particular
+	//! order. `state` is kept by the caller across calls.
+	idx_t LookupRows(DuckTransaction &transaction, ClientContext &context, const vector<StorageIndex> &column_ids,
+	                 optional_ptr<TableFilterSet> table_filters, const row_t *pk_begin, const row_t *pk_end,
+	                 idx_t *out_survivor_idx, const idx_t *output_to_fetch, DataChunk &output, TableLookupState &state);
 
 	//! Returns the maximum amount of threads that should be assigned to scan this data table
 	idx_t MaxThreads(ClientContext &context) const;
@@ -123,8 +143,7 @@ public:
 	void InitializeLocalStorage(LocalAppendState &state, DuckTableEntry &table, ClientContext &context,
 	                            const vector<unique_ptr<BoundConstraint>> &bound_constraints);
 	//! Append a DataChunk to the transaction-local storage of the table.
-	void LocalAppend(LocalAppendState &state, DuckTableEntry &table_entry, ClientContext &context, DataChunk &chunk,
-	                 bool unsafe);
+	void LocalAppend(LocalAppendState &state, ClientContext &context, DataChunk &chunk, bool unsafe);
 	//! Finalizes a transaction-local append
 	void FinalizeLocalAppend(LocalAppendState &state);
 	//! Append a chunk to the transaction-local storage of this table and update the delete indexes.
@@ -163,7 +182,7 @@ public:
 	                                              const vector<unique_ptr<BoundConstraint>> &bound_constraints);
 	//! Update the entries with the specified row identifier from the table
 	void Update(TableUpdateState &state, ClientContext &context, DuckTableEntry &table_entry, Vector &row_ids,
-	            const vector<PhysicalIndex> &column_ids, DataChunk &data);
+	            std::span<const PhysicalIndex> column_ids, DataChunk &data);
 	//! Update a single (sub-)column along a column path
 	//! The column_path vector is a *path* towards a column within the table
 	//! i.e. if we have a table with a single column S STRUCT(A INT, B INT)
@@ -250,16 +269,21 @@ public:
 
 	//! Scans the next chunk for the CREATE INDEX operator
 	bool CreateIndexScan(TableScanState &state, DataChunk &result);
-	//! Returns true, if the index name is unique (i.e., no PK, UNIQUE, FK constraint has the same name)
+	//! Returns true, if the index name is unique (i.e., no PK, UNIQUE, FK constraint other than the dropped indexes
+	//! and the replaced one has the same name)
 	//! FIXME: This is only necessary until we treat all indexes as catalog entries, allowing to alter constraints
-	bool IndexNameIsUnique(const string &name);
+	bool IndexNameIsUnique(const string &name, optional_ptr<const unordered_set<idx_t>> dropped, optional_idx replaced);
 
 	//! Initialize constraint verification state
 	unique_ptr<ConstraintState> InitializeConstraintState(TableCatalogEntry &table,
 	                                                      const vector<unique_ptr<BoundConstraint>> &bound_constraints);
 	//! Verify constraints with a chunk from the Append containing all columns of the table
 	void VerifyAppendConstraints(ConstraintState &constraint_state, ClientContext &context, DataChunk &chunk,
-	                             optional_ptr<LocalTableStorage> local_storage, optional_ptr<ConflictManager> manager);
+	                             optional_ptr<LocalTableStorage> local_storage);
+	static void VerifyRowConstraint(ClientContext &context, const TableCatalogEntry &table,
+	                                const BoundConstraint &constraint, DataChunk &chunk);
+	static void VerifyRowConstraints(ClientContext &context, const TableCatalogEntry &table,
+	                                 const vector<unique_ptr<BoundConstraint>> &bound_constraints, DataChunk &chunk);
 
 	shared_ptr<DataTableInfo> &GetDataTableInfo();
 
@@ -272,15 +296,18 @@ public:
 	void BindIndexes(ClientContext &context);
 	bool HasIndexes() const;
 	bool HasUniqueIndexes() const;
-	bool HasForeignKeyIndex(const vector<PhysicalIndex> &keys, ForeignKeyType type);
+	bool HasDeleteIndexes() const;
+	bool HasForeignKeyIndex(std::span<const PhysicalIndex> keys, ForeignKeyType type);
 	void SetIndexStorageInfo(vector<IndexStorageInfo> index_storage_info);
 	void VacuumIndexes();
+	void RebuildIndex(IndexEntry &entry);
 	void VerifyIndexBuffers() const;
 	void CleanupAppend(VisibilityBound lowest_visibility_bound, idx_t start, idx_t count);
 	void Destroy();
 
 	Identifier GetTableName() const;
 	void SetTableName(Identifier new_name);
+	void SetColumnName(PhysicalIndex index, const Identifier &new_name);
 
 	TableStorageInfo GetStorageInfo() const;
 
@@ -292,6 +319,8 @@ public:
 	              IndexStorageInfo index_info, idx_t index_oid, ConstraintCheckMode check_mode);
 	//! AddIndex moves an index to this table's index list.
 	void AddIndex(unique_ptr<Index> index, idx_t index_oid);
+	shared_ptr<IndexEntry> AddBuiltIndex(DuckTransaction &transaction, unique_ptr<BoundIndex> index, idx_t index_oid,
+	                                     ConstraintCheckMode check_mode, idx_t built_row_end);
 
 	//! Returns a list of the partition stats
 	vector<PartitionStatistics> GetPartitionStats(ClientContext &context);
@@ -302,7 +331,7 @@ private:
 
 	//! Verify constraints with a chunk from the Update containing only the specified column_ids
 	void VerifyUpdateConstraints(ConstraintState &state, ClientContext &context, DataChunk &chunk,
-	                             const vector<PhysicalIndex> &column_ids);
+	                             std::span<const PhysicalIndex> column_ids);
 	//! Verify constraints with a chunk from the Delete containing all columns of the table
 	void VerifyDeleteConstraints(optional_ptr<LocalTableStorage> storage, TableDeleteState &state,
 	                             ClientContext &context, DataChunk &chunk);
@@ -312,6 +341,7 @@ private:
 
 	//! Rebuild all indexes after vacuuming changed rowid's (used with vacuum_rebuild_indexes setting).
 	void RebuildIndexes();
+	void ScanIndexColumns(const vector<column_t> &col_ids, const IndexRebuildAppend &append);
 
 	void VerifyForeignKeyConstraint(optional_ptr<LocalTableStorage> storage,
 	                                const BoundForeignKeyConstraint &bound_foreign_key, ClientContext &context,

@@ -25,7 +25,7 @@ LIMIT 3
 query II
 EXPLAIN (FORMAT text) SELECT * FROM renderer_plan
 ----
-physical_plan	<REGEX>:.*Top N.*Hash Join.*
+physical_plan	<REGEX>:.*TOP_N.*HASH_JOIN.*
 
 query II
 EXPLAIN (FORMAT json) SELECT * FROM renderer_plan
@@ -73,17 +73,17 @@ analyzed_plan	<REGEX>:(?s).*TOP_N \(est=\d+, rows=\d+, time=[0-9.]+s\).*HASH_JOI
 query II
 EXPLAIN (FORMAT default) SELECT * FROM renderer_plan
 ----
-physical_plan	<REGEX>:.*Top N.*
+physical_plan	<REGEX>:.*TOP_N.*
 
 query II
 EXPLAIN (FORMAT query_tree) SELECT * FROM renderer_plan
 ----
-physical_plan	<REGEX>:.*Top N.*
+physical_plan	<REGEX>:.*TOP_N.*
 
 query II
 EXPLAIN (FORMAT query_tree_optimizer) SELECT * FROM renderer_plan
 ----
-physical_plan	<REGEX>:.*Top N.*
+physical_plan	<REGEX>:.*TOP_N.*
 
 # the format that deliberately renders nothing
 query II

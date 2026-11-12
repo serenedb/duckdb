@@ -17,9 +17,11 @@ struct CreateMacroInfo : public CreateFunctionInfo {
 	explicit CreateMacroInfo(CatalogType type);
 
 	vector<unique_ptr<MacroFunction>> macros;
+	bool is_procedure = false;
 
 public:
 	unique_ptr<CreateInfo> Copy() const override;
+	unique_ptr<AlterInfo> GetAlterInfo() const override;
 
 	string ToString() const override;
 	DUCKDB_API void Serialize(Serializer &serializer) const override;

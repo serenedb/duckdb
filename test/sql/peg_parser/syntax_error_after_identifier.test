@@ -1,0 +1,173 @@
+# name: test/sql/peg_parser/syntax_error_after_identifier.test
+# description: Syntax errors at and after identifiers that rules skipped by their second token would have consumed
+# group: [peg_parser]
+
+statement error
+CALL x;
+----
+Parser Error: syntax error at or near ";"
+
+statement error
+SELECT x y z FROM t;
+----
+Parser Error: syntax error at or near "z"
+
+statement error
+SELECT * FROM t WHERE x y;
+----
+Parser Error: syntax error at or near "y"
+
+statement error
+SELECT CAST x AS INT;
+----
+Parser Error: syntax error at or near "x"
+
+statement error
+SELECT x::;
+----
+Parser Error: syntax error at or near ";"
+
+statement error
+CREATE TABLE t (a INT b);
+----
+Parser Error: syntax error at or near "b"
+
+statement error
+INSERT INTO t VALUES (1 2);
+----
+Parser Error: syntax error at or near "2"
+
+statement error
+SELECT x FROM t GROUP x;
+----
+Parser Error: syntax error at or near "x"
+
+statement error
+SELECT f(x y);
+----
+Parser Error: syntax error at or near ")"
+
+statement error
+SELECT x AS FROM t;
+----
+Parser Error: syntax error at or near "t"
+
+statement error
+UPDATE t SET x y;
+----
+Parser Error: syntax error at or near "y"
+
+statement error
+SELECT x(;
+----
+Parser Error: syntax error at or near ";"
+
+statement error
+SELECT mytype 'abc' 'def';
+----
+Parser Error: syntax error at or near "'def'"
+
+statement error
+SELECT a b c;
+----
+Parser Error: syntax error at or near "c"
+
+statement error
+SELECT x FROM t t2 t3;
+----
+Parser Error: syntax error at or near "t3"
+
+statement error
+SELECT * FROM t JOIN u ON;
+----
+Parser Error: syntax error at or near ";"
+
+statement error
+SELECT count(*) FILTER x FROM t;
+----
+Parser Error: syntax error at or near "x"
+
+statement error
+SELECT x OVER w FROM t;
+----
+Parser Error: syntax error at or near "w"
+
+statement error
+SELECT x[1 FROM t;
+----
+Parser Error: syntax error at or near "FROM"
+
+statement error
+SELECT CASE x WHEN y z END;
+----
+Parser Error: syntax error at or near "z"
+
+statement error
+SELECT x IS y z;
+----
+Parser Error: syntax error at or near "y"
+
+statement error
+SELECT x BETWEEN y z;
+----
+Parser Error: syntax error at or near "z"
+
+statement error
+SELECT x NOT y;
+----
+Parser Error: syntax error at or near "y"
+
+statement error
+SELECT DISTINCT ON x FROM t;
+----
+Parser Error: syntax error at or near "x"
+
+statement error
+CREATE VIEW v AS SELECT x y z;
+----
+Parser Error: syntax error at or near "z"
+
+statement error
+DROP TABLE x y;
+----
+Parser Error: syntax error at or near "y"
+
+statement error
+ALTER TABLE x ADD y z w;
+----
+Parser Error: syntax error at or near "w"
+
+statement error
+SELECT abc def ghi jkl;
+----
+Parser Error: syntax error at or near "ghi"
+
+statement error
+WITH x AS SELECT 1;
+----
+Parser Error: syntax error at or near "SELECT"
+
+statement error
+SELECT select FROM t;
+----
+Parser Error: syntax error at or near "select"
+
+statement error
+SELECT x FROM from;
+----
+Parser Error: syntax error at or near "from"
+
+statement error
+SELECT 1 + ;
+----
+Parser Error: syntax error at or near ";"
+
+statement error
+SELECT f(1, , 2);
+----
+Parser Error: syntax error at or near ","
+
+statement error
+SELECT x y.z;
+----
+Parser Error: syntax error at or near "."

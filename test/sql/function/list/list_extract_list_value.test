@@ -1,0 +1,38 @@
+# name: test/sql/function/list/list_extract_list_value.test
+# description: Extracting a constant index from a list literal reads the element directly
+# group: [list]
+
+query IIIIII
+SELECT [10, 20, 30][2], [10, 20, 30][-1], [10, 20, 30][0], [10, 20, 30][4], [10, 20, 30][-4], [10, 20, 30][1 + 1]
+----
+20	30	NULL	NULL	NULL	20
+
+query I
+SELECT [10, 20, 30][NULL]
+----
+NULL
+
+query I
+SELECT [1, 2.5][1]
+----
+1.0
+
+query I
+SELECT sum([i, i + 1, i + 2][2]) FROM range(10) t(i)
+----
+55
+
+query II
+EXPLAIN SELECT [i, i + 1, i + 2][2] FROM range(10) t(i)
+----
+physical_plan	<!REGEX>:.*list_value.*
+
+query I
+SELECT [random() < 2, true][2]
+----
+true
+
+query II
+EXPLAIN SELECT [random() < 2, i > 3][2] FROM range(10) t(i)
+----
+physical_plan	<REGEX>:.*list_value.*

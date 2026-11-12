@@ -56,14 +56,18 @@ private:
 	//! Returns a pointer to the buffer in memory, and calls Deserialize, if the buffer is not in memory.
 	//! DEPRECATED. Use segment handles.
 	data_ptr_t GetDeprecated(const bool dirty_p = true) {
-		lock_guard<mutex> l(lock);
-		if (!InMemory()) {
-			LoadFromDisk();
+		auto data = memory.load(std::memory_order_acquire);
+		if (!data) {
+			lock_guard<mutex> l(lock);
+			if (!InMemory()) {
+				LoadFromDisk();
+			}
+			data = buffer_handle.GetDataMutable();
 		}
-		if (dirty_p) {
-			dirty = dirty_p;
+		if (dirty_p && !dirty.load(std::memory_order_relaxed)) {
+			dirty.store(true, std::memory_order_relaxed);
 		}
-		return buffer_handle.GetDataMutable();
+		return data;
 	}
 
 	//! Returns true, if the buffer is in-memory
@@ -100,7 +104,7 @@ private:
 	idx_t allocation_size;
 
 	//! True: the in-memory buffer is no longer consistent with its optional copy on disk.
-	bool dirty;
+	atomic<bool> dirty;
 	//! True: can be vacuumed after the vacuum operation.
 	bool vacuum;
 	//! True: has been loaded from disk.
@@ -110,6 +114,8 @@ private:
 	BlockPointer block_pointer;
 	//! The buffer handle of the in-memory buffer
 	BufferHandle buffer_handle;
+	//! The data of the in-memory buffer, or nullptr if it is not in memory
+	atomic<data_ptr_t> memory {nullptr};
 	//! The block handle of the on-disk buffer
 	shared_ptr<BlockHandle> block_handle;
 	//! The lock for this fixed size buffer handle
@@ -176,8 +182,7 @@ public:
 	}
 
 	void MarkModified() {
-		lock_guard<mutex> l(buffer_ptr->lock);
-		buffer_ptr->dirty = true;
+		buffer_ptr->dirty.store(true, std::memory_order_relaxed);
 	}
 
 private:

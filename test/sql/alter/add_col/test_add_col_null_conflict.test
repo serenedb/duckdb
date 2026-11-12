@@ -1,0 +1,35 @@
+# name: test/sql/alter/add_col/test_add_col_null_conflict.test
+# description: ADD COLUMN rejects NULL together with NOT NULL or PRIMARY KEY
+# group: [add_col]
+
+statement ok
+CREATE TABLE t(i INTEGER)
+
+statement error
+ALTER TABLE t ADD COLUMN a INTEGER NOT NULL NULL
+----
+Parser Error: conflicting NULL/NOT NULL declarations for column "a" of table "t"
+
+statement error
+ALTER TABLE t ADD COLUMN b INTEGER NULL NOT NULL
+----
+Parser Error: conflicting NULL/NOT NULL declarations for column "b" of table "t"
+
+statement error
+ALTER TABLE t ADD COLUMN c INTEGER NULL PRIMARY KEY
+----
+Parser Error: conflicting NULL/NOT NULL declarations for column "c" of table "t"
+
+statement ok
+ALTER TABLE t ADD COLUMN d INTEGER NULL UNIQUE
+
+statement ok
+ALTER TABLE t ADD COLUMN e INTEGER NULL NULL
+
+statement ok
+INSERT INTO t VALUES (1, NULL, NULL)
+
+query III
+SELECT i, d, e FROM t
+----
+1	NULL	NULL

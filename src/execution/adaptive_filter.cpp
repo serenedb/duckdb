@@ -14,12 +14,15 @@
 
 namespace duckdb {
 
-AdaptiveFilter::AdaptiveFilter(const Expression &expr) : observe_interval(10), execute_interval(20), warmup(true) {
+AdaptiveFilter::AdaptiveFilter(const Expression &expr, FilterReorder reorder_p)
+    : disable_permutations(reorder_p == FilterReorder::NEVER), reorder(reorder_p), observe_interval(10),
+      execute_interval(20), warmup(true) {
 	auto &conj_expr = expr.Cast<BoundConjunctionExpression>();
 	D_ASSERT(conj_expr.GetChildren().size() > 1);
 	for (idx_t idx = 0; idx < conj_expr.GetChildren().size(); idx++) {
 		permutation.push_back(idx);
-		if (conj_expr.GetChildren()[idx]->CanThrow() || ExpressionBarrier::Contains(*conj_expr.GetChildren()[idx])) {
+		can_throw.push_back(conj_expr.GetChildren()[idx]->CanThrow());
+		if (ExpressionBarrier::Contains(*conj_expr.GetChildren()[idx])) {
 			disable_permutations = true;
 		}
 		if (idx != conj_expr.GetChildren().size() - 1) {
@@ -44,6 +47,17 @@ AdaptiveFilter::AdaptiveFilter(const TableFilterSet &table_filters, vector<idx_t
 	}
 	filter_global_pos = std::move(filter_global_pos_p);
 	right_random_border = 100 * (table_filters.FilterCount() - 1);
+}
+
+AdaptiveFilter::AdaptiveFilter(idx_t filter_count) : observe_interval(10), execute_interval(20), warmup(true) {
+	D_ASSERT(filter_count > 1);
+	for (idx_t idx = 0; idx < filter_count; idx++) {
+		permutation.push_back(idx);
+		if (idx != filter_count - 1) {
+			swap_likeliness.push_back(100);
+		}
+	}
+	right_random_border = 100 * (filter_count - 1);
 }
 
 bool AdaptiveFilter::Remap(const TableFilterSet &new_filters, vector<idx_t> new_ids) {
@@ -94,6 +108,21 @@ vector<pair<string, string>> AdaptiveFilter::BuildInitInfo(AdaptiveFilterSource 
 		info.emplace_back("columns", std::move(columns_str));
 	}
 	return info;
+}
+
+bool AdaptiveFilter::CanSwap(idx_t idx) const {
+	auto left = permutation[idx];
+	auto right = permutation[idx + 1];
+	switch (reorder) {
+	case FilterReorder::SAFE:
+		return !can_throw[left] && !can_throw[right];
+	case FilterReorder::FAST:
+		return !can_throw[right] || right < left;
+	case FilterReorder::NEVER:
+		return false;
+	case FilterReorder::ALWAYS:
+		return true;
+	}
 }
 
 AdaptiveFilterState AdaptiveFilter::BeginFilter() const {
@@ -163,7 +192,7 @@ void AdaptiveFilter::AdaptRuntimeStatistics(double duration) {
 			idx_t likeliness = random_number - 100 * swap_idx; // random number between [0, 100)
 
 			// check if swap is going to happen
-			if (swap_likeliness[swap_idx] > likeliness) { // always true for the first swap of an index
+			if (swap_likeliness[swap_idx] > likeliness && CanSwap(swap_idx)) {
 				// swap
 				std::swap(permutation[swap_idx], permutation[swap_idx + 1]);
 

@@ -87,6 +87,10 @@ enum class FileType {
 	FILE_TYPE_INVALID,
 };
 
+enum class FileSyncParallelism : uint8_t { SERIAL, PARALLEL };
+
+enum class FileExistence : uint8_t { EXISTS, MISSING, FORBIDDEN, UNKNOWN };
+
 struct FileMetadata {
 	int64_t file_size = -1;
 	timestamp_t last_modification_time = timestamp_t::ninfinity();
@@ -244,7 +248,10 @@ public:
 	DUCKDB_API virtual void Truncate(FileHandle &handle, int64_t new_size);
 
 	//! Check if a directory exists
-	DUCKDB_API virtual bool DirectoryExists(const string &directory, optional_ptr<FileOpener> opener = nullptr);
+	DUCKDB_API virtual FileExistence TryDirectoryExists(const string &directory,
+	                                                    optional_ptr<FileOpener> opener = nullptr,
+	                                                    optional_ptr<ErrorData> error = nullptr);
+	DUCKDB_API bool DirectoryExists(const string &directory, optional_ptr<FileOpener> opener = nullptr);
 	//! Create a directory if it does not exist
 	DUCKDB_API virtual void CreateDirectory(const string &directory, optional_ptr<FileOpener> opener = nullptr);
 	//! Create one directory or a directory tree. Returns whether this call is known to have created the target.
@@ -270,7 +277,10 @@ public:
 	DUCKDB_API virtual void MoveFile(const string &source, const string &target,
 	                                 optional_ptr<FileOpener> opener = nullptr);
 	//! Check if a file exists
-	DUCKDB_API virtual bool FileExists(const string &filename, optional_ptr<FileOpener> opener = nullptr);
+	DUCKDB_API virtual FileExistence TryFileExists(const string &filename, optional_ptr<FileOpener> opener = nullptr,
+	                                               optional_ptr<ErrorData> error = nullptr);
+	DUCKDB_API bool FileExists(const string &filename, optional_ptr<FileOpener> opener = nullptr);
+	DUCKDB_API static FileExistence ClassifyExistenceFailure(const std::exception &ex, optional_ptr<ErrorData> error);
 	//! Check if path is a pipe or character device
 	DUCKDB_API virtual bool IsPipe(const string &filename, optional_ptr<FileOpener> opener = nullptr);
 	//! Remove a file from disk
@@ -281,6 +291,7 @@ public:
 	DUCKDB_API virtual void RemoveFiles(const vector<string> &filenames, optional_ptr<FileOpener> opener = nullptr);
 	//! Sync a file handle to disk
 	DUCKDB_API virtual void FileSync(FileHandle &handle);
+	DUCKDB_API virtual FileSyncParallelism SyncParallelism(FileHandle &handle);
 	//! Abandon an incomplete write represented by this file handle.
 	DUCKDB_API virtual void AbortFileWrite(FileHandle &handle);
 	//! Sets the working directory

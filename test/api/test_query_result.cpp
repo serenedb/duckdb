@@ -133,7 +133,7 @@ TEST_CASE("A submitted query parks for the consumer's choice", "[api][query_resu
 TEST_CASE("ExecuteTask on a parked undecided handle reports READY and runs nothing", "[api][query_result]") {
 	DuckDB db(nullptr);
 	Connection con(db);
-	REQUIRE_NO_FAIL(con.Query("SET threads=1"));
+	REQUIRE_NO_FAIL(con.Query("SET GLOBAL threads=1"));
 
 	auto handle = Submit(con, "SELECT i FROM range(500000) t(i)");
 	Deadline deadline;
@@ -161,7 +161,7 @@ TEST_CASE("Materialize returns at once and the workers complete the query", "[ap
 	REQUIRE_NO_FAIL(con.Query("CREATE TABLE t AS SELECT range i FROM range(200000)"));
 
 	// The unordered plan uses the simple store, the table scan the batched one
-	for (auto query : {"SELECT i FROM range(200000) t(i)", "SELECT i FROM t"}) {
+	for (auto query : {"SELECT i FROM range_st(200000) t(i)", "SELECT i FROM t"}) {
 		auto handle = Submit(con, query);
 
 		handle->Materialize();

@@ -199,6 +199,8 @@ public:
 				return len;
 			}
 			memcpy(buf, prefetch_buffer_fallback->buffer_ptr + location - prefetch_buffer_fallback->location, len);
+		} else if (prefetch_mode && len > 0 && file_handle.IsRemoteFile()) {
+			file_handle.Read(len, location).CopyTo(buf, len);
 		} else {
 			// No prefetch, do a regular (non-caching) read
 			file_handle.GetFileHandle()->Read(context, buf, len, location);

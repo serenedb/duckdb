@@ -69,6 +69,29 @@ struct ParquetReadLocalState : public LocalTableFunctionState {
 	idx_t group_index;
 };
 
+struct ParquetLookupCursor : LookupTaskOutput {
+	ParquetLookupCursor(ClientContext &context, ParquetReader &reader, const vector<LogicalType> &scan_types,
+	                    vector<idx_t> output_to_scan_col);
+
+	//! row_group_starts[i] = global row index of the first row in group i;
+	//! row_group_starts[num_groups] = total rows.
+	vector<idx_t> row_group_starts;
+	vector<LogicalType> scan_types;
+	vector<idx_t> output_to_scan_col;
+	DataChunk scan_chunk;
+	SelectionVector scatter_sel;
+	vector<sel_t> selection;
+	ParquetReadLocalState reader_lstate;
+	idx_t cur_group = DConstants::INVALID_INDEX;
+	bool can_prefetch = false;
+
+	vector<unique_ptr<ParquetLookupCursor>> workers;
+};
+
+void ParquetLookupRows(ClientContext &context, ParquetReader &reader, ParquetReadGlobalState &reader_gstate,
+                       ParquetLookupCursor &cursor, std::span<const int64_t> rows, std::span<idx_t> survivors,
+                       DataChunk &output);
+
 struct ParquetMultiFileInfo : MultiFileReaderInterface {
 	static unique_ptr<MultiFileReaderInterface> CreateInterface(ClientContext &context);
 

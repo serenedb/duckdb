@@ -11,6 +11,8 @@
 #include "duckdb/common/unordered_set.hpp"
 #include "duckdb/optimizer/filter_combiner.hpp"
 #include "duckdb/optimizer/rule.hpp"
+#include "duckdb/planner/expression/bound_columnref_expression.hpp"
+#include "duckdb/planner/expression_iterator.hpp"
 
 namespace duckdb {
 
@@ -19,7 +21,11 @@ class Optimizer;
 
 class FilterPushdown {
 public:
-	enum class ProjectionMode : uint8_t { ALLOW_COMPUTED_EXPRESSIONS, PRESERVE_COMPUTED_EXPRESSIONS };
+	enum class ProjectionMode : uint8_t {
+		ALLOW_COMPUTED_EXPRESSIONS,
+		REWRITE_COMPUTED_EXPRESSIONS,
+		PRESERVE_COMPUTED_EXPRESSIONS
+	};
 
 	explicit FilterPushdown(Optimizer &optimizer, bool convert_mark_joins = true,
 	                        ProjectionMode projection_mode = ProjectionMode::ALLOW_COMPUTED_EXPRESSIONS);
@@ -29,7 +35,7 @@ public:
 	//! Return a reference to the client context (from the optimizer)
 	ClientContext &GetContext();
 
-	void CheckMarkToSemi(LogicalOperator &op, const unordered_set<TableIndex> &table_bindings);
+	void CheckMarkToSemi(LogicalOperator &op, unordered_set<TableIndex> &referenced_bindings);
 
 	//! Whether a filter carrying a barrier may be pushed through this operator - i.e. whether the operator is
 	//! guaranteed not to remove any rows. A barred expression must never be evaluated on rows that an operator below
@@ -127,6 +133,7 @@ private:
 
 	unique_ptr<LogicalOperator> PushFiltersIntoDelimJoin(unique_ptr<LogicalOperator> op);
 	FilterResult AddFilter(unique_ptr<Expression> expr);
+	FilterResult RewriteAndAddFilter(unique_ptr<Expression> expr);
 	//! Extract filter bindings to compare them with expressions in an operator and determine if the filter
 	//! can be pushed down
 	void ExtractFilterBindings(const Expression &expr, vector<ColumnBinding> &bindings);
@@ -135,6 +142,25 @@ private:
 	//! if there are filters in this FilterPushdown node, push them into the combiner. Returns
 	//! FilterResult::UNSATISFIABLE if the subtree should be stripped, or FilterResult::SUCCESS otherwise
 	FilterResult PushFilters();
+
+	template <class OP, class F>
+	static bool ReferencesExpression(OP &op, const Expression &filter, F &&predicate) {
+		return ExpressionIterator::AnyExpression<BoundColumnRefExpression>(
+		    filter, [&](const BoundColumnRefExpression &colref) {
+			    D_ASSERT(colref.Depth() == 0);
+			    return predicate(op.GetExpression(colref.Binding()));
+		    });
+	}
+	template <class OP>
+	static bool ReferencesVolatileExpression(OP &op, const Expression &filter) {
+		return ReferencesExpression(op, filter, [](const Expression &expr) { return expr.IsVolatile(); });
+	}
+	template <class OP>
+	static bool ReferencesComputedExpression(OP &op, const Expression &filter) {
+		return ReferencesExpression(op, filter, [](const Expression &expr) {
+			return expr.GetExpressionClass() != ExpressionClass::BOUND_COLUMN_REF;
+		});
+	}
 };
 
 } // namespace duckdb

@@ -71,7 +71,7 @@ void TransactionSecretStorage::DropSecretByName(const Identifier &name, OnEntryN
 	auto entry = secrets.find(name);
 	if (entry == secrets.end()) {
 		if (on_entry_not_found == OnEntryNotFound::THROW_EXCEPTION) {
-			throw InvalidInputException("Failed to remove non-existent transaction secret '%s'", name);
+			throw InvalidInputException("Failed to remove non-existent transaction secret %s", name);
 		}
 		return;
 	}
@@ -93,7 +93,7 @@ SecretMatch TransactionSecretStorage::LookupSecret(const string &path, const str
 unique_ptr<SecretEntry> TransactionSecretStorage::GetSecretByName(const string &name,
                                                                   optional_ptr<CatalogTransaction> transaction) {
 	lock_guard<mutex> guard(lock);
-	auto entry = secrets.find(Identifier(name));
+	auto entry = secrets.find(name);
 	if (entry == secrets.end()) {
 		return nullptr;
 	}
@@ -178,7 +178,7 @@ void CatalogSetSecretStorage::DropSecretByName(const Identifier &name, OnEntryNo
 		if (on_entry_not_found == OnEntryNotFound::THROW_EXCEPTION) {
 			string persist_string = persistent ? "persistent" : "temporary";
 			string storage_string = persistent ? " in secret storage '" + storage_name + "'" : "";
-			throw InvalidInputException("Failed to remove non-existent %s secret '%s'%s", persist_string, name,
+			throw InvalidInputException("Failed to remove non-existent %s secret %s%s", persist_string, name,
 			                            storage_string);
 		}
 		return;
@@ -315,7 +315,7 @@ void LocalFileSecretStorage::WriteSecret(const BaseSecret &secret, OnCreateConfl
 void LocalFileSecretStorage::RemoveSecret(const string &secret, OnEntryNotFound on_entry_not_found) {
 	auto &fs = FileSystem::GetLocal(db);
 	string file = fs.JoinPath(secret_path, secret + ".duckdb_secret");
-	persistent_secrets.erase(Identifier(secret));
+	persistent_secrets.erase(secret);
 	try {
 		fs.RemoveFile(file);
 	} catch (std::exception &ex) {
@@ -459,7 +459,7 @@ unique_ptr<SecretEntry> ConnectionSecretStorage::GetSecretByName(const string &n
 		return nullptr;
 	}
 	lock_guard<mutex> guard(state->lock);
-	auto entry = state->secrets.find(Identifier(name));
+	auto entry = state->secrets.find(name);
 	if (entry == state->secrets.end()) {
 		return nullptr;
 	}

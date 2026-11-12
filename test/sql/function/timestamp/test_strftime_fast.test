@@ -1,0 +1,44 @@
+# name: test/sql/function/timestamp/test_strftime_fast.test
+# description: strftime with numeric date/time specifiers matches the generic formatter across years, signs, infinities and repeated minutes
+# group: [timestamp]
+
+statement ok
+CREATE TABLE ts AS
+SELECT TIMESTAMP '1969-12-31 23:58:00' + INTERVAL (i * 7) SECOND AS t FROM range(2000) r(i)
+UNION ALL SELECT TIMESTAMP '2013-07-15 10:00:00' + INTERVAL (i // 3) SECOND + INTERVAL (i * 13) MILLISECOND FROM range(5000) r(i)
+UNION ALL SELECT TIMESTAMP '0001-01-01 00:00:00' + INTERVAL (i * 997) DAY + INTERVAL (i * 3671) SECOND FROM range(4000) r(i)
+UNION ALL SELECT * FROM (VALUES (TIMESTAMP '-0044-03-15 12:34:56'), (TIMESTAMP '12345-06-07 08:09:10'), (TIMESTAMP '0000-01-01 00:00:00'), ('infinity'::TIMESTAMP), ('-infinity'::TIMESTAMP), (NULL::TIMESTAMP));
+
+foreach fmt %Y-%m-%d<SPACE>%H:%M %Y %d/%m/%Y %H:%M:%S %%Y<SPACE>%Y%% at<SPACE>%M %S %Y%m%d%H%M%S
+
+query I
+SELECT count(*) FROM ts WHERE strftime(t, '${fmt}') IS DISTINCT FROM split_part(strftime(t, '${fmt}' || '#%f'), '#', 1) AND isfinite(t);
+----
+0
+
+query I
+SELECT count(*) FROM ts WHERE strftime(t, '${fmt}') IS DISTINCT FROM strftime(t, '${fmt}' || '%f')[1:length(strftime(t, '${fmt}' || '%f')) - 6] AND isfinite(t);
+----
+0
+
+endloop
+
+query III
+SELECT strftime(TIMESTAMP '-0044-03-15 12:34:56', '%Y-%m-%d %H:%M:%S'), strftime(TIMESTAMP '12345-06-07 08:09:10', '%Y/%m'), strftime(TIMESTAMP '0042-01-02 03:04:05', '%Y%%%d');
+----
+-44-03-15 12:34:56	12345/06	0042%02
+
+query II
+SELECT strftime('infinity'::TIMESTAMP, '%Y-%m-%d'), strftime(NULL::TIMESTAMP, '%Y');
+----
+infinity	NULL
+
+query I
+SELECT strftime('%Y-%m-%d %H:%M', TIMESTAMP '2013-07-15 10:11:12');
+----
+2013-07-15 10:11
+
+query I
+SELECT count(DISTINCT strftime(t, '%Y-%m-%d %H:%M')) = count(DISTINCT date_trunc('minute', t)) FROM ts WHERE isfinite(t);
+----
+true

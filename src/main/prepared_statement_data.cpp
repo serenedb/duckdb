@@ -1,6 +1,7 @@
 #include "duckdb/main/prepared_statement_data.hpp"
 #include "duckdb/parser/sql_statement.hpp"
 #include "duckdb/catalog/catalog.hpp"
+#include "duckdb/catalog/catalog_entry/trigger_catalog_entry.hpp"
 #include "duckdb/common/exception/binder_exception.hpp"
 #include "duckdb/main/attached_database.hpp"
 #include "duckdb/main/client_config.hpp"
@@ -108,6 +109,9 @@ bool PreparedStatementData::RequireRebind(ClientContext &context,
 		// this statement must always be re-bound
 		return true;
 	}
+	if (properties.replication_role && *properties.replication_role != GetReplicationRole(context)) {
+		return true;
+	}
 	if (!properties.bound_all_parameters) {
 		// parameters not yet bound: query always requires a rebind
 		return true;
@@ -133,6 +137,16 @@ bool PreparedStatementData::RequireRebind(ClientContext &context,
 		}
 	}
 	return false;
+}
+
+bool PreparedStatementData::DataIsCurrent(ClientContext &context) const {
+	for (auto &read : properties.data_reads) {
+		const auto current = read.entry->GetDataVersion(context);
+		if (!current.IsValid() || current.GetIndex() != read.version) {
+			return false;
+		}
+	}
+	return true;
 }
 
 void PreparedStatementData::Bind(ClientContext &context, const identifier_map_t<BoundParameterData> &values) {

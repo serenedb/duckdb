@@ -6,4 +6,4 @@
 statement error
 CREATE TABLE t0();
 ----
-<REGEX>:Parser Error:.*at least one column.*
+<REGEX>:Binder Error:.*without physical.*

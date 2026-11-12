@@ -1,0 +1,43 @@
+# name: test/sql/function/string/test_like_underscore_patterns.test
+# description: LIKE and ILIKE patterns with '_' give the same answers whether one pattern covers the chunk or each row has its own
+# group: [string]
+
+statement ok
+CREATE TABLE pats AS SELECT i AS pid, array_to_string(list_transform(range(1 + i % 7), lambda k: ['a', 'b', 'c', 'é', '€', '_', '_', '%', '%', '#_', '#%', '##', 'ab', 'B'][1 + (hash(i * 17 + k) % 14)::INTEGER]), '') AS p FROM range(60) t(i)
+
+statement ok
+CREATE TABLE strs AS SELECT id, CASE (id // 60) % 4 WHEN 0 THEN array_to_string(list_transform(range(id % 17), lambda k: ['a', 'b', 'B', 'c', '_', '%', '#', '\', 'é', 'É', '€', '🦆', chr(8490), ' ', 'ab', 'abc'][1 + (hash(id * 31 + k) % 16)::INTEGER]), '') WHEN 1 THEN inst WHEN 2 THEN upper(inst) ELSE inst || ['z', '_', 'é'][1 + (id % 3)::INTEGER] END AS s FROM (SELECT i AS id, replace(replace(replace(replace(replace(replace(replace(replace(p, '##', chr(3)), '#%', chr(1)), '#_', chr(2)), '%', ['', 'x', 'é€', '🦆b', 'abab'][1 + (hash(i) % 5)::INTEGER]), '_', ['a', 'É', '€', '🦆', '_'][1 + (hash(i * 7) % 5)::INTEGER]), chr(1), '%'), chr(2), '_'), chr(3), '#') AS inst FROM range(1, 4001) t(i) JOIN pats ON pid = i % 60)
+
+foreach op LIKE ILIKE
+
+query I
+SELECT count(*) FROM (SELECT pid, count(*) FILTER (WHERE pid = id % 60 AND m) AS c FROM (SELECT id, pid, s {op} p ESCAPE '#' AS m FROM strs, pats) GROUP BY pid) chunk_wide JOIN (SELECT pid, count(*) FILTER (WHERE s {op} p ESCAPE '#') AS c FROM strs JOIN pats ON pid = id % 60 GROUP BY pid) per_row USING (pid) WHERE chunk_wide.c <> per_row.c
+----
+0
+
+query I
+SELECT count(*) FROM (SELECT pid, count(*) FILTER (WHERE pid = id % 60 AND NOT m) AS c FROM (SELECT id, pid, s {op} p ESCAPE '#' AS m FROM strs, pats) GROUP BY pid) chunk_wide JOIN (SELECT pid, count(*) FILTER (WHERE s NOT {op} p ESCAPE '#') AS c FROM strs JOIN pats ON pid = id % 60 GROUP BY pid) per_row USING (pid) WHERE chunk_wide.c <> per_row.c
+----
+0
+
+query II
+SELECT count(*) FILTER (WHERE s {op} p ESCAPE '#') >= 1000, count(DISTINCT pid) FILTER (WHERE s {op} p ESCAPE '#') = 60 FROM strs JOIN pats ON pid = id % 60
+----
+true	true
+
+endloop
+
+query I
+SELECT count(*) FROM (SELECT pid, count(*) FILTER (WHERE pid = id % 60 AND m) AS c FROM (SELECT id, pid, s LIKE replace(p, '#', '\') AS m FROM strs, pats) GROUP BY pid) chunk_wide JOIN (SELECT pid, count(*) FILTER (WHERE s LIKE replace(p, '#', '\')) AS c FROM strs JOIN pats ON pid = id % 60 GROUP BY pid) per_row USING (pid) WHERE chunk_wide.c <> per_row.c
+----
+0
+
+query IIIIIIII
+SELECT 'abc' LIKE 'a_c', 'abc' LIKE '_b_', 'ab' LIKE '___', 'aé€' LIKE 'a__', '🦆x' LIKE '_x', 'x🦆' LIKE '%_', '' LIKE '%_%', 'a' LIKE '%_%'
+----
+true	true	false	true	true	true	false	true
+
+query IIIIII
+SELECT 'ABC' ILIKE 'a_c', 'Éa' ILIKE '_A', 'aÉb' ILIKE 'A_B', 'a_b' LIKE 'a#_b' ESCAPE '#', 'axb' LIKE 'a#_b' ESCAPE '#', 'a%b' NOT LIKE 'a_b'
+----
+true	true	true	true	false	false

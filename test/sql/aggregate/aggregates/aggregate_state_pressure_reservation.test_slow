@@ -1,0 +1,29 @@
+# name: test/sql/aggregate/aggregates/aggregate_state_pressure_reservation.test_slow
+# description: Arena-backed aggregate states under state pressure grow the reservation before exporting
+# group: [aggregates]
+
+require skip_reload
+
+statement ok
+SET threads=32;
+
+statement ok
+SET preserve_insertion_order=false;
+
+query II
+SELECT count(*), count(*) FILTER (WHERE w != repeat(md5(k::VARCHAR), 8)) FROM (
+    SELECT k, min(wide) AS w
+    FROM (SELECT i % 3000000 AS k, repeat(md5((i % 3000000)::VARCHAR), 8) AS wide FROM range(6000000) t(i)) s1
+    GROUP BY k
+) s2;
+----
+3000000	0
+
+query II
+SELECT count(*), count(*) FILTER (WHERE w != repeat(md5(k::VARCHAR), 8)) FROM (
+    SELECT k, max(wide) AS w, avg(length(wide)) AS l
+    FROM (SELECT i % 3000000 AS k, repeat(md5((i % 3000000)::VARCHAR), 8) AS wide FROM range(6000000) t(i)) s1
+    GROUP BY k
+) s2;
+----
+3000000	0

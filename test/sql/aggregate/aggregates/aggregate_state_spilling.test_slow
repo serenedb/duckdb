@@ -117,7 +117,7 @@ ORDER BY iter;
 query II
 SELECT count(*), sum(length(w)) FROM (
   SELECT k, first(wide) AS w
-  FROM (SELECT i % 100000 AS k, repeat(md5((i % 100000)::VARCHAR), 64) AS wide FROM range(200000) t(i))
+  FROM (SELECT i % 100000 AS k, repeat(md5((i % 100000)::VARCHAR), 64) AS wide FROM range_st(200000) t(i))
   GROUP BY k);
 ----
 100000	204800000

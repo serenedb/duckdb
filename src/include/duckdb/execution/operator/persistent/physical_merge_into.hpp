@@ -8,6 +8,7 @@
 
 #pragma once
 
+#include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/execution/physical_operator.hpp"
 #include "duckdb/common/enums/merge_action_type.hpp"
 
@@ -102,8 +103,11 @@ public:
 public:
 	PhysicalMergeInto(PhysicalPlan &physical_plan, vector<LogicalType> types, PhysicalOperator &child,
 	                  map<MergeActionCondition, vector<unique_ptr<MergeIntoOperator>>> actions, idx_t row_id_index,
-	                  optional_idx source_marker, bool parallel, bool return_chunk, bool serialize_actions = false);
+	                  optional_idx source_marker, bool parallel, bool return_chunk, bool serialize_actions = false,
+	                  optional_ptr<TableCatalogEntry> table = nullptr);
 
+	//! The target table - provides the set the matched rows are registered in
+	optional_ptr<TableCatalogEntry> table;
 	//! List of all actions
 	vector<unique_ptr<MergeIntoOperator>> actions;
 	//! Sequence of match actions

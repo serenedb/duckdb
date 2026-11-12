@@ -21,6 +21,7 @@
 #include "duckdb/storage/storage_info.hpp"
 #include "duckdb/storage/storage_manager.hpp"
 
+#include <absl/strings/str_cat.h>
 #include <algorithm>
 #include <cstring>
 
@@ -175,11 +176,9 @@ bool DecryptCanary(MainHeader &main_header, const shared_ptr<EncryptionState> &e
 
 void MainHeader::Write(WriteStream &ser) {
 	ser.WriteData(const_data_ptr_cast(MAGIC_BYTES), MAGIC_BYTE_SIZE);
-	if (static_cast<StorageVersion>(version_number) >= StorageVersion::V2_0_0) {
-		// from v2.0.0 we write 999, to indicate that the version number is deprecated
-		version_number = static_cast<idx_t>(StorageVersion::DEPRECATED);
-	}
-	ser.Write<idx_t>(version_number);
+	// from v2.0.0 we write 999, to indicate that the version number is deprecated
+	const auto written_version = version_number >= StorageVersion::V2_0_0 ? StorageVersion::DEPRECATED : version_number;
+	ser.Write<idx_t>(StorageVersionToDisk(written_version));
 	for (idx_t i = 0; i < FLAG_COUNT; i++) {
 		ser.Write<uint64_t>(flags[i]);
 	}
@@ -214,26 +213,27 @@ void MainHeader::CheckMagicBytes(MemoryMappedFile &handle) {
 	}
 }
 
-static void ShowUnsupportedStorageVersionError(const idx_t version_number) {
+static void ShowUnsupportedStorageVersionError(const StorageVersion version_number) {
 	// Check the version number to determine if we can read this file.
-	auto version = GetDuckDBVersions(static_cast<StorageVersion>(version_number));
+	auto version = GetDuckDBVersions(version_number);
 	string version_text;
 	if (!version.empty()) {
 		// Known version.
-		version_text = "DuckDB version " + string(version);
-	} else if (version_number > VERSION_NUMBER_UPPER) {
-		version_text = "a newer version of DuckDB";
+		version_text = absl::StrCat("storage version ", version);
+	} else if (version_number >
+	           (IsSereneDBStorageVersion(version_number) ? SERENEDB_VERSION_UPPER : DUCKDB_VERSION_UPPER)) {
+		version_text = "a newer storage version";
 	} else {
-		version_text = "an older development version of DuckDB";
+		version_text = "an older development storage version";
 	}
-	throw IOException(
-	    "Trying to read a database file with storage version number %lld, but we can only read storage versions "
-	    "between %lld and %lld.\n"
-	    "The database file was created with %s.\n\n"
-	    "Newer DuckDB version might introduce backward incompatible changes (possibly guarded by compatibility "
-	    "settings).\n"
-	    "See the storage page for migration strategy and more information: https://duckdb.org/internals/storage",
-	    version_number, VERSION_NUMBER_LOWER, VERSION_NUMBER_UPPER, version_text);
+	throw IOException("This database file uses storage format version %llu, but this version of SereneDB can only "
+	                  "read DuckDB versions %s through %s and serenedb versions %s through %s.\n"
+	                  "The file was created with %s.",
+	                  StorageVersionToDisk(version_number),
+	                  StorageVersionInfo::GetStorageVersionString(DUCKDB_VERSION_LOWER),
+	                  StorageVersionInfo::GetStorageVersionString(DUCKDB_VERSION_UPPER),
+	                  StorageVersionInfo::GetStorageVersionString(SERENEDB_VERSION_LOWER),
+	                  StorageVersionInfo::GetStorageVersionString(SERENEDB_VERSION_UPPER), version_text);
 }
 
 MainHeader MainHeader::Read(ReadStream &source) {
@@ -245,12 +245,12 @@ MainHeader MainHeader::Read(ReadStream &source) {
 		throw IOException("The file is not a valid DuckDB database file!");
 	}
 
-	header.version_number = source.Read<idx_t>();
+	header.version_number = StorageVersionFromDisk(source.Read<idx_t>());
 
-	if (static_cast<StorageVersion>(header.version_number) == DEPRECATED_VERSION_NUMBER) {
+	if (header.version_number == DEPRECATED_VERSION_NUMBER) {
 		// if the version number in the main header is deprecated, then we just ignore the main header version number
 		// TODO: if we are confident, we can remove the check below
-	} else if (header.version_number < VERSION_NUMBER_LOWER || header.version_number > VERSION_NUMBER_UPPER) {
+	} else if (!IsReadableStorageVersion(header.version_number)) {
 		ShowUnsupportedStorageVersionError(header.version_number);
 	}
 
@@ -284,26 +284,23 @@ void DatabaseHeader::Write(WriteStream &ser) {
 		auto ser_version = GetSerializationVersionDeprecated(storage_version_string.c_str());
 		ser.Write<idx_t>(ser_version);
 	} else {
-		ser.Write<idx_t>(static_cast<idx_t>(storage_compatibility));
+		ser.Write<idx_t>(StorageVersionToDisk(storage_compatibility));
 	}
 }
 
 void DatabaseHeader::SetStorageVersionInDatabaseHeader(DatabaseHeader &header, StorageVersion main_version,
-                                                       StorageVersion read_version) {
-	if ((main_version == MainHeader::DEPRECATED_VERSION_NUMBER) || (read_version >= StorageVersion::V2_0_0)) {
+                                                       idx_t read_version) {
+	if ((main_version == MainHeader::DEPRECATED_VERSION_NUMBER) ||
+	    (read_version >= StorageVersionToDisk(StorageVersion::V2_0_0))) {
 		// From v2.0.0 onwards, we use and store only the storage version number
-		switch (read_version) {
-		case StorageVersion::V2_0_0:
-			header.storage_compatibility = StorageVersion::V2_0_0;
-			break;
-			// new versions should be added here
-		default:
-			if (static_cast<idx_t>(read_version) > VERSION_NUMBER_UPPER) {
-				ShowUnsupportedStorageVersionError(static_cast<idx_t>(read_version));
-			}
-			throw InvalidInputException("Unsupported Storage Version '%d' in the database header!",
-			                            static_cast<idx_t>(read_version));
+		const auto storage_version = StorageVersionFromDisk(read_version);
+		if (!IsReadableStorageVersion(storage_version)) {
+			ShowUnsupportedStorageVersionError(storage_version);
 		}
+		if (storage_version < StorageVersion::V2_0_0) {
+			throw InvalidInputException("Unsupported Storage Version '%llu' in the database header!", read_version);
+		}
+		header.storage_compatibility = storage_version;
 	} else {
 		// Before V2.0.0 the Storage Version in the main header could be written in two different ways
 		// 1) When the DB is created from scratch -- with e.g. ATTACH (STORAGE_VERSION "v1.4.0")
@@ -315,13 +312,13 @@ void DatabaseHeader::SetStorageVersionInDatabaseHeader(DatabaseHeader &header, S
 		// that's also why we need the logic below for backwards compatibility
 		// if the main header version and db header version are < v2.0.0
 		// then we fall back to the serialization version
-		switch (static_cast<idx_t>(read_version)) {
+		switch (read_version) {
 			// In some old duckdb versions, storage version (64)
 			// is (by mistake) serialized instead of serialization version
 		case static_cast<idx_t>(StorageVersion::INVALID):
 			// If read version is 0
 		case static_cast<idx_t>(SerializationVersionDeprecated::V0_10_2):
-		case static_cast<idx_t>(StorageVersion::V0_10_2):
+		case DuckDBVersionNumber(StorageVersion::V0_10_2):
 		case static_cast<idx_t>(SerializationVersionDeprecated::V1_0_0):
 		case static_cast<idx_t>(SerializationVersionDeprecated::V1_1_0):
 			header.storage_compatibility = StorageVersion::V0_10_2;
@@ -339,8 +336,7 @@ void DatabaseHeader::SetStorageVersionInDatabaseHeader(DatabaseHeader &header, S
 			header.storage_compatibility = StorageVersion::V1_5_0;
 			break;
 		default:
-			throw InvalidInputException("Deprecated Serialization Version '%d' is not found!",
-			                            static_cast<idx_t>(read_version));
+			throw InvalidInputException("Unsupported deprecated DuckDB serialization version '%llu'", read_version);
 		}
 	}
 }
@@ -364,16 +360,14 @@ DatabaseHeader DatabaseHeader::Read(const MainHeader &main_header, ReadStream &s
 		header.vector_size = DEFAULT_STANDARD_VECTOR_SIZE;
 	}
 	if (header.vector_size != STANDARD_VECTOR_SIZE) {
-		throw IOException("Cannot read database file: DuckDB's compiled vector size is %llu bytes, but the file has a "
-		                  "vector size of %llu bytes.",
+		throw IOException("Cannot read database file: SereneDB's compiled vector size is %llu bytes, but the DuckDB "
+		                  "database file has a vector size of %llu bytes.",
 		                  STANDARD_VECTOR_SIZE, header.vector_size);
 	}
 
 	// storage version from the database header
-	auto h_storage_version = source.Read<idx_t>();
-	auto database_header_storage_version = static_cast<StorageVersion>(h_storage_version);
-	SetStorageVersionInDatabaseHeader(header, static_cast<StorageVersion>(main_header.version_number),
-	                                  database_header_storage_version);
+	auto database_header_storage_version = source.Read<idx_t>();
+	SetStorageVersionInDatabaseHeader(header, main_header.version_number, database_header_storage_version);
 
 	return header;
 }
@@ -417,14 +411,12 @@ StorageVersion SingleFileBlockManager::GetVersionNumber() const {
 	if (StorageManager::IsPriorToVersion(StorageVersion::V1_2_0, storage_version)) {
 		return StorageVersion::V0_10_2;
 	}
-	// Look up the matching version number.
-	auto version_name = GetStorageVersionName(storage_version, false);
-	return GetStorageVersion(version_name.c_str());
+	return storage_version;
 }
 
 MainHeader ConstructMainHeader(StorageVersion version_number) {
 	MainHeader header;
-	header.version_number = static_cast<idx_t>(version_number);
+	header.version_number = version_number;
 	memset(header.flags, 0, sizeof(uint64_t) * MainHeader::FLAG_COUNT);
 	return header;
 }
@@ -533,7 +525,7 @@ void SingleFileBlockManager::CreateNewDatabase(QueryContext context) {
 	header_buffer.Clear();
 
 	if (options.storage_version == StorageVersion::INVALID) {
-		options.storage_version = StorageCompatibility::Latest().storage_version;
+		options.storage_version = StorageCompatibility::DuckDBLatest().storage_version;
 	}
 
 	options.version_number = GetVersionNumber();
@@ -701,7 +693,7 @@ void SingleFileBlockManager::LoadExistingDatabase(QueryContext context) {
 		    static_cast<EncryptionTypes::EncryptionVersion>(main_header.GetEncryptionVersion()));
 	}
 
-	options.version_number = static_cast<StorageVersion>(main_header.version_number);
+	options.version_number = main_header.version_number;
 
 	// read the database headers from disk
 	DatabaseHeader h1;
@@ -829,6 +821,18 @@ void SingleFileBlockManager::Initialize(const DatabaseHeader &header, const opti
 		                              header.block_alloc_size);
 	}
 
+	if (IsSereneDBStorageVersion(header.storage_compatibility) && !IsSereneDBStorageVersion(options.storage_version)) {
+		throw InvalidInputException("Error opening \"%s\": the file has SereneDB storage version %s. "
+		                            "A file with a SereneDB storage version opens only at a SereneDB storage version.",
+		                            path, GetStorageVersionName(header.storage_compatibility, false));
+	}
+	if (!IsSereneDBStorageVersion(header.storage_compatibility) && IsSereneDBStorageVersion(options.storage_version)) {
+		throw InvalidInputException(
+		    "Error opening \"%s\": the file has storage version %s, which is not a SereneDB storage version. "
+		    "It was written by a release of SereneDB older than %s, or it is not a SereneDB database file.",
+		    path, GetStorageVersionName(header.storage_compatibility, false),
+		    GetStorageVersionName(SERENEDB_VERSION_LOWER, false));
+	}
 	free_list_id = header.free_list;
 	meta_block = header.meta_block;
 	iteration_count = header.iteration;
@@ -838,19 +842,17 @@ void SingleFileBlockManager::Initialize(const DatabaseHeader &header, const opti
 		auto requested_compat_version = options.storage_version;
 		if (requested_compat_version < header.storage_compatibility) {
 			throw InvalidInputException(
-			    "Error opening \"%s\": cannot initialize database with storage version %d - which is lower than what "
-			    "the database itself uses (%d). The storage version of an existing database cannot be lowered.",
-			    path, requested_compat_version, header.storage_compatibility);
+			    "Error opening \"%s\": cannot initialize database with DuckDB storage format version %s (%llu) - which "
+			    "is lower than what the database file itself uses (%s (%llu)). The storage format version of an "
+			    "existing DuckDB database file cannot be lowered.",
+			    path, GetStorageVersionName(requested_compat_version, false),
+			    StorageVersionToDisk(requested_compat_version),
+			    GetStorageVersionName(header.storage_compatibility, false),
+			    StorageVersionToDisk(header.storage_compatibility));
 		}
 	} else {
 		// load storage version from header
 		options.storage_version = header.storage_compatibility;
-	}
-	if (header.storage_compatibility > StorageCompatibility::Latest().storage_version) {
-		throw InvalidInputException(
-		    "Error opening \"%s\": file was written with a storage version greater than the latest version supported "
-		    "by this DuckDB instance. Try opening the file with a newer version of DuckDB.",
-		    path);
 	}
 
 	db.GetStorageManager().SetStorageVersion(options.storage_version);
@@ -1197,7 +1199,12 @@ void SingleFileBlockManager::ReadBlock(Block &block, bool skip_block_header) con
 
 void SingleFileBlockManager::Read(QueryContext context, Block &block) {
 	D_ASSERT(block.id >= 0);
-	D_ASSERT(std::find(free_list.begin(), free_list.end(), block.id) == free_list.end());
+#ifdef D_ASSERT_IS_ENABLED
+	{
+		lock_guard<mutex> guard(single_file_block_lock);
+		D_ASSERT(free_list.find(block.id) == free_list.end());
+	}
+#endif
 	ReadAndChecksum(context, block, GetBlockLocation(block.id));
 }
 

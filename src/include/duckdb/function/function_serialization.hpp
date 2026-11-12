@@ -20,19 +20,20 @@ class ClientContext;
 
 class FunctionSerializer {
 private:
-	static QualifiedName DeserializeQualifiedName(Deserializer &deserializer, Identifier name) {
-		auto catalog = deserializer.ReadPropertyWithDefault<Identifier>(505, "catalog_name");
-		auto schema = deserializer.ReadPropertyWithDefault<Identifier>(506, "schema_name");
-		auto qname = deserializer.ReadPropertyWithExplicitDefault<QualifiedName>(507, "qname", QualifiedName());
-		if (!qname.Name().empty()) {
-			if (qname.Schema().empty()) {
-				return QualifiedName(qname.Catalog().empty() ? Identifier::SystemCatalog() : qname.Catalog(),
-				                     Identifier::DefaultSchema(), qname.Name());
-			}
-			return qname.Catalog().empty() ? qname.WithCatalog(Identifier::SystemCatalog()) : qname;
+	static QualifiedName DeserializeQualifiedName(Deserializer &deserializer) {
+		return deserializer.ReadProperty<QualifiedName>(507, "qname");
+	}
+
+	static CatalogEntry &LookupFunction(ClientContext &context, CatalogType type, const QualifiedName &name) {
+		auto &system = Catalog::GetSystemCatalog(context);
+		auto &catalog = name.Catalog();
+		if (!catalog.empty() && catalog != Identifier::SystemCatalog() && catalog != system.GetName()) {
+			return Catalog::GetEntry(context, type, name);
 		}
-		return QualifiedName(catalog.empty() ? Identifier::SystemCatalog() : catalog,
-		                     schema.empty() ? Identifier::DefaultSchema() : schema, std::move(name));
+		auto &schema = name.Schema();
+		return system.GetEntry(
+		    context, type,
+		    schema.empty() || schema == Identifier::DefaultSchema() ? *system.GetDefaultSchema() : schema, name.Name());
 	}
 
 	class DeserializeContext {
@@ -77,22 +78,8 @@ public:
 	template <class FUNC>
 	static void Serialize(Serializer &serializer, const FUNC &function, optional_ptr<FunctionData> bind_info) {
 		D_ASSERT(!function.GetName().empty());
-		if (!serializer.ShouldSerialize(StorageVersion::V2_0_0)) {
-			serializer.WriteProperty(500, "name", function.GetName());
-		}
-		serializer.WriteProperty(501, "arguments", GetSerializedArguments(serializer, function));
-		if (!serializer.ShouldSerialize(StorageVersion::V2_0_0)) {
-			// binds no longer erase the arguments they fold into their bind data, so the argument list above is
-			// always the full one - older versions read this field unconditionally, so write it (empty) for them
-			serializer.WriteProperty(502, "original_arguments", vector<LogicalType>());
-		}
-
-		if (serializer.ShouldSerialize(StorageVersion::V2_0_0)) {
-			serializer.WriteProperty(507, "qname", function.GetQualifiedName());
-		} else {
-			serializer.WritePropertyWithDefault(505, "catalog_name", function.GetCatalogName(), Identifier());
-			serializer.WritePropertyWithDefault(506, "schema_name", function.GetSchemaName(), Identifier());
-		}
+		serializer.WriteProperty(501, "arguments", function.GetArguments());
+		serializer.WriteProperty(507, "qname", function.GetQualifiedName());
 
 		bool has_serialize = function.HasSerializationCallbacks();
 		serializer.WriteProperty(503, "has_serialize", has_serialize);
@@ -106,33 +93,6 @@ public:
 		}
 	}
 
-	//! Older versions select a table function by its positional arguments alone
-	template <class FUNC>
-	static vector<LogicalType> GetSerializedArguments(Serializer &serializer, const FUNC &function) {
-		if constexpr (std::is_same_v<FUNC, BoundTableFunction>) {
-			if (!serializer.ShouldSerialize(StorageVersion::V2_0_0)) {
-				VerifyLegacyTableFunctionArguments(function);
-				auto &arguments = function.GetArguments();
-				auto positional_end = arguments.begin() + NumericCast<int64_t>(function.GetPositionalArgumentCount());
-				return vector<LogicalType>(arguments.begin(), positional_end);
-			}
-		}
-		return function.GetArguments();
-	}
-
-	//! A required keyword-only option selects its overload, which an older version cannot be told about
-	static void VerifyLegacyTableFunctionArguments(const BoundTableFunction &function) {
-		auto &signature = function.GetSignature();
-		for (auto &name : function.GetNamedArguments()) {
-			auto param_idx = signature.GetParameterIndexByName(name);
-			if (param_idx.IsValid() && !signature.GetParameter(param_idx.GetIndex()).HasDefaultValue()) {
-				throw SerializationException("Table function %s has a required keyword-only parameter %s, which "
-				                             "cannot be serialized to a storage version older than v2.0.0",
-				                             function.GetName(), name);
-			}
-		}
-	}
-
 	//! Only written if the function was called with keyword-only or "**kwargs" arguments
 	template <class FUNC>
 	static void SerializeNamedArguments(Serializer &serializer, const FUNC &function) {
@@ -140,31 +100,8 @@ public:
 		if (named_arguments.empty()) {
 			return;
 		}
-		if constexpr (std::is_same_v<FUNC, BoundTableFunction>) {
-			if (!serializer.ShouldSerialize(StorageVersion::V2_0_0)) {
-				// older versions read a table function's options from the operator's named parameters instead
-				return;
-			}
-		}
-		if (!serializer.ShouldSerialize(StorageVersion::V2_0_0)) {
-			if (named_arguments.size() > function.GetKwargsCount()) {
-				throw SerializationException("Function %s has keyword-only parameters, which cannot be serialized "
-				                             "to a storage version older than v2.0.0",
-				                             function.GetName());
-			}
-			// the "**kwargs" arguments are matched to "*args" instead, or named after their alias
-			return;
-		}
 		serializer.WriteProperty(508, "positional_arguments", function.GetPositionalArgumentCount());
 		serializer.WriteProperty(509, "named_arguments", named_arguments);
-	}
-
-	//! Plans written by versions whose binds erased the arguments they folded into their bind data record the
-	//! pre-erase list separately - use that as the argument list, so that the function looks the same either way
-	static void RestoreErasedArguments(vector<LogicalType> &arguments, vector<LogicalType> &original_arguments) {
-		if (!original_arguments.empty()) {
-			arguments = std::move(original_arguments);
-		}
 	}
 
 	//! Splits the argument types a plan recorded into those passed by position and those passed by name
@@ -187,44 +124,20 @@ public:
 		}
 	}
 
-	//! Selects the overload of a plan written before v2.0.0, which records its named arguments only as the operator's
-	//! named parameters. Required keyword-only parameters are treated as if they had a default - the bind receives
-	//! those named parameters and rejects a missing one, as it did when the plan was written
-	static optional_idx SelectWithoutNamedArguments(FunctionBinder &binder, const Identifier &name,
-	                                                const TableFunctionSet &functions,
-	                                                const vector<LogicalType> &positional_types) {
-		auto relaxed = functions;
-		relaxed.ApplyToFunctions([](TableFunction &function) {
-			auto &signature = function.GetSignature();
-			for (idx_t i = 0; i < signature.GetParameterCount(); i++) {
-				auto &param = signature.GetParameter(i);
-				if (param.GetKind() == FunctionParameterKind::KEYWORD_ONLY && !param.HasDefaultValue()) {
-					// selection only checks that there is a default - an untyped NULL suits a parameter of any type
-					param.SetDefaultValue(Value());
-				}
-			}
-		});
-		ErrorData error;
-		return binder.BindFunction(name, relaxed, positional_types, {}, error);
-	}
-
 	//! Deserializes a table function, and whether the plan holds its bind data. Without it, the caller binds again
 	static pair<BoundTableFunction, bool> DeserializeTableFunction(Deserializer &deserializer) {
 		auto &context = deserializer.Get<ClientContext &>();
-		auto name = deserializer.ReadPropertyWithDefault<Identifier>(500, "name");
 		auto arguments = deserializer.ReadProperty<vector<LogicalType>>(501, "arguments");
-		auto original_arguments = deserializer.ReadPropertyWithDefault<vector<LogicalType>>(502, "original_arguments");
-		auto qualified_name = DeserializeQualifiedName(deserializer, std::move(name));
+		auto qualified_name = DeserializeQualifiedName(deserializer);
 		auto has_serialize = deserializer.ReadProperty<bool>(503, "has_serialize");
 		auto positional_count = deserializer.ReadPropertyWithDefault<idx_t>(508, "positional_arguments");
 		auto named_arguments = deserializer.ReadPropertyWithDefault<vector<Identifier>>(509, "named_arguments");
 
-		RestoreErasedArguments(arguments, original_arguments);
 		if (named_arguments.empty()) {
 			positional_count = arguments.size();
 		}
 
-		auto &func_catalog = Catalog::GetEntry(context, CatalogType::TABLE_FUNCTION_ENTRY, qualified_name);
+		auto &func_catalog = LookupFunction(context, CatalogType::TABLE_FUNCTION_ENTRY, qualified_name);
 		if (func_catalog.type != CatalogType::TABLE_FUNCTION_ENTRY) {
 			throw InternalException("DeserializeTableFunction - cant find catalog entry for function %s",
 			                        qualified_name.Name().GetIdentifierName());
@@ -239,9 +152,6 @@ public:
 		FunctionBinder binder(context);
 		ErrorData error;
 		auto func_idx = binder.BindFunction(qualified_name.Name(), functions, positional_types, keyword_types, error);
-		if (!func_idx.IsValid() && named_arguments.empty()) {
-			func_idx = SelectWithoutNamedArguments(binder, qualified_name.Name(), functions, positional_types);
-		}
 		if (!func_idx.IsValid()) {
 			throw SerializationException("Failed to find function %s(%s)\n%s", qualified_name.ToString(),
 			                             StringUtil::ToString(arguments, ","), error.RawMessage());
@@ -303,49 +213,17 @@ public:
 		}
 	}
 
-	//! Plans written before the argument names were serialized hold the names of the named arguments in the aliases
-	//! of the trailing arguments. Only the arguments behind the standard parameters can have been named.
-	template <class FUNCTION_SET>
-	static void RestoreNamesFromAliases(const FUNCTION_SET &functions, const vector<unique_ptr<Expression>> &children,
-	                                    idx_t &positional_count, vector<Identifier> &named_arguments) {
-		bool takes_named = false;
-		idx_t standard_count = 0;
-		for (auto &function : functions.functions) {
-			auto &signature = function->GetSignature();
-			if (!signature.GetKwargs()) {
-				continue;
-			}
-			takes_named = true;
-			standard_count = MaxValue(standard_count, signature.GetPositionalParameterCount());
-		}
-		if (!takes_named || children.size() != positional_count) {
-			return;
-		}
-		idx_t named_offset = children.size();
-		while (named_offset > standard_count && !children[named_offset - 1]->GetAlias().empty()) {
-			named_offset--;
-		}
-		for (idx_t i = named_offset; i < children.size(); i++) {
-			named_arguments.push_back(children[i]->GetAlias());
-		}
-		positional_count = named_offset;
-	}
-
 	template <class FUNC, class CATALOG_ENTRY>
 	static pair<FUNC, unique_ptr<FunctionData>> Deserialize(Deserializer &deserializer, CatalogType catalog_type,
 	                                                        vector<unique_ptr<Expression>> &children,
 	                                                        LogicalType return_type) { // NOLINT: clang-tidy bug
 		auto &context = deserializer.Get<ClientContext &>();
 
-		auto name = deserializer.ReadPropertyWithDefault<Identifier>(500, "name");
 		auto arguments = deserializer.ReadProperty<vector<LogicalType>>(501, "arguments");
-		auto original_arguments = deserializer.ReadPropertyWithDefault<vector<LogicalType>>(502, "original_arguments");
-		auto qualified_name = DeserializeQualifiedName(deserializer, std::move(name));
+		auto qualified_name = DeserializeQualifiedName(deserializer);
 		auto has_serialize = deserializer.ReadProperty<bool>(503, "has_serialize");
 		auto positional_count = deserializer.ReadPropertyWithDefault<idx_t>(508, "positional_arguments");
 		auto named_arguments = deserializer.ReadPropertyWithDefault<vector<Identifier>>(509, "named_arguments");
-
-		RestoreErasedArguments(arguments, original_arguments);
 
 		if (arguments.empty() && !children.empty()) {
 			// The function is specified as having no arguments, but somehow expressions were passed anyway
@@ -358,7 +236,7 @@ public:
 		}
 
 		// Now lookup the function in the catalog.
-		auto &func_catalog = Catalog::GetEntry(context, catalog_type, qualified_name);
+		auto &func_catalog = LookupFunction(context, catalog_type, qualified_name);
 
 		if (func_catalog.type != catalog_type) {
 			throw InternalException("DeserializeFunction - cant find catalog entry for function %s",
@@ -370,7 +248,6 @@ public:
 		// If there are no argument names serialized, treat all arguments as positional
 		if (named_arguments.empty()) {
 			positional_count = arguments.size();
-			RestoreNamesFromAliases(functions, children, positional_count, named_arguments);
 		}
 
 		// Sanity check: The named arguments are the last arguments, so the number of arguments has to add up

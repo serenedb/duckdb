@@ -43,6 +43,10 @@ struct RegexpExtractAll {
 	                                                     FunctionData *bind_data);
 };
 
+struct RegexpSubstring {
+	static ScalarFunction GetFunction();
+};
+
 struct RegexpBaseBindData : public FunctionData {
 	RegexpBaseBindData();
 	RegexpBaseBindData(duckdb_re2::RE2::Options options, string constant_string, bool constant_pattern = true);
@@ -187,6 +191,29 @@ struct RegexLocalState : public FunctionLocalState {
 	RE2 constant_pattern;
 	//! Used by regexp_extract_all to pre-allocate the args
 	RegexStringPieceArgs group_buffer;
+};
+
+class RegexPatternCache {
+public:
+	explicit RegexPatternCache(duckdb_re2::RE2::Options options);
+
+	duckdb_re2::RE2 &Get(duckdb_re2::StringPiece pattern);
+
+private:
+	static constexpr idx_t CAPACITY = 8;
+
+	duckdb_re2::RE2::Options options;
+	vector<pair<string, unique_ptr<duckdb_re2::RE2>>> entries;
+	idx_t last_used = 0;
+	idx_t next_replaced = 0;
+};
+
+struct RegexPatternCacheState : public FunctionLocalState {
+	explicit RegexPatternCacheState(const RegexpBaseBindData &info) : cache(info.options) {
+		D_ASSERT(!info.constant_pattern);
+	}
+
+	RegexPatternCache cache;
 };
 
 unique_ptr<FunctionLocalState> RegexInitLocalState(ExpressionState &state, const BoundFunctionExpression &expr,

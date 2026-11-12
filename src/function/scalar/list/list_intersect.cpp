@@ -6,7 +6,11 @@
 #include "duckdb/common/string_map_set.hpp"
 #include "duckdb/common/helper.hpp"
 
+#include <absl/container/flat_hash_map.h>
+
 namespace duckdb {
+
+static constexpr idx_t LIST_INTERSECT_CHECK_ELEMENTS = 1 << 20;
 
 static void ListIntersectFunction(DataChunk &args, ExpressionState &state, Vector &result) {
 	auto row_count = args.size();
@@ -42,6 +46,17 @@ static void ListIntersectFunction(DataChunk &args, ExpressionState &state, Vecto
 	auto l_validity = l_child.Validity();
 	auto r_validity = r_child.Validity();
 
+	absl::flat_hash_map<string_t, idx_t, StringHash, StringEquality> hashed;
+	idx_t unchecked = 0;
+	auto check = [&] {
+		if (++unchecked == LIST_INTERSECT_CHECK_ELEMENTS) {
+			state.InterruptCheck();
+			unchecked = 0;
+		}
+	};
+
+	const auto result_offset = ListVector::GetListSize(result);
+	vector<sel_t> result_rows;
 	auto result_data = FlatVector::Writer<list_entry_t>(result, row_count);
 	for (idx_t i = 0; i < row_count; i++) {
 		auto l_entry = l_entries[i];
@@ -52,8 +67,9 @@ static void ListIntersectFunction(DataChunk &args, ExpressionState &state, Vecto
 			continue;
 		}
 
-		auto list = result_data.WriteDynamicList();
+		const auto row_start = result_rows.size();
 		if (!r_entry.IsValid()) {
+			result_data.WriteValue(list_entry_t(result_offset + row_start, 0));
 			continue;
 		}
 
@@ -61,12 +77,11 @@ static void ListIntersectFunction(DataChunk &args, ExpressionState &state, Vecto
 		const auto &r_list = r_entry.GetValue();
 
 		if (l_list.length == 0 || r_list.length == 0) {
+			result_data.WriteValue(list_entry_t(result_offset + row_start, 0));
 			continue;
 		}
 
-		string_set_t set;
-		string_set_t result_set;
-		string_map_t<idx_t> key_to_index_map;
+		hashed.clear();
 
 		// Choose which side to hash and which to iterate
 		const bool use_l_for_hash = l_list.length <= r_list.length;
@@ -78,42 +93,36 @@ static void ListIntersectFunction(DataChunk &args, ExpressionState &state, Vecto
 		const auto &iter_keys = use_l_for_hash ? r_sortkey_ptr : l_sortkey_ptr;
 
 		for (idx_t j = 0; j < hash_list.length; j++) {
+			check();
 			const idx_t h_idx = hash_list.offset + j;
 			if (!hash_fmt.IsValid(h_idx)) {
 				// value is NULL - skip
 				continue;
 			}
-			const auto &key = hash_keys.GetValueUnsafe(h_idx);
-			set.insert(key);
-			if (use_l_for_hash) {
-				key_to_index_map[key] = h_idx;
-			}
+			hashed.insert_or_assign(hash_keys.GetValueUnsafe(h_idx), h_idx);
 		}
 
 		// Iterate the chosen side, but ALWAYS emit a LEFT index
-		const idx_t row_max_length = MinValue(l_list.length, r_list.length);
-		SelectionVector row_sel(row_max_length);
-		idx_t row_result_length = 0;
 		for (idx_t j = 0; j < iter_list.length; j++) {
+			check();
 			const idx_t it_idx = iter_list.offset + j;
 			if (!iter_fmt.IsValid(it_idx)) {
 				// value is NULL - skip
 				continue;
 			}
-			const auto &key = iter_keys.GetValueUnsafe(it_idx);
-			if (set.find(key) == set.end() || result_set.find(key) != result_set.end()) {
+			auto entry = hashed.find(iter_keys.GetValueUnsafe(it_idx));
+			if (entry == hashed.end() || entry->second == DConstants::INVALID_INDEX) {
 				continue;
 			}
-			result_set.insert(key);
+			const idx_t emit_left_idx = use_l_for_hash ? entry->second : it_idx;
+			entry->second = DConstants::INVALID_INDEX;
 
-			const idx_t emit_left_idx = use_l_for_hash ? key_to_index_map[key] : it_idx;
-
-			row_sel.set_index(row_result_length, emit_left_idx);
-			row_result_length++;
+			result_rows.push_back(UnsafeNumericCast<sel_t>(emit_left_idx));
 		}
 
-		list.Append(l_child, row_sel, l_size, 0, row_result_length);
+		result_data.WriteValue(list_entry_t(result_offset + row_start, result_rows.size() - row_start));
 	}
+	ListVector::Append(result, l_child, SelectionVector(result_rows.data(), result_rows.size()), result_rows.size());
 }
 static unique_ptr<FunctionData> ListIntersectBind(BindScalarFunctionInput &input) {
 	auto &context = input.GetClientContext();

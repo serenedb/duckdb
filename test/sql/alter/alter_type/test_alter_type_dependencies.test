@@ -23,12 +23,10 @@ EXECUTE v1
 statement ok
 ALTER TABLE test ALTER i TYPE VARCHAR USING i::VARCHAR
 
-# executing the prepared statement now works as the alter type has not broken the query
-query II
+statement error
 EXECUTE v1
 ----
-1	1
-2	2
+cached plan must not change result type
 
 statement ok
 ALTER TABLE test ALTER i TYPE INTEGER USING i::INTEGER
@@ -50,4 +48,4 @@ ALTER TABLE test ALTER i TYPE VARCHAR USING i::VARCHAR
 statement error
 EXECUTE v2
 ----
-Invalid Input Error: Values were not provided
+wrong number of parameters for prepared statement

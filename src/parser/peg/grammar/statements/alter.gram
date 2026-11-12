@@ -1,16 +1,43 @@
 AlterStatement <- 'ALTER' AlterOptions
 
-AlterOptions <- AlterTableStmt / AlterViewStmt / AlterSequenceStmt / AlterDatabaseStmt / AlterSchemaStmt
+AlterOptions <- AlterSetSchemaStmt / AlterTableStmt / AlterViewStmt / AlterIndexStmt / AlterFunctionStmt / AlterSequenceStmt / AlterDatabaseStmt / AlterSchemaStmt / AlterJobStmt
 
-AlterTableStmt <- 'TABLE' IfExists? BaseTableName List(AlterTableOptions)
+AlterSetSchemaStmt <- SetSchemaEntryType IfExists? BaseTableName 'SET' 'SCHEMA' ColId
+SetSchemaEntryType <- CommentTable / CommentView / CommentSequence / CommentType / CommentFunction / SetSchemaProcedure /
+        CommentMacroTable / CommentMacro / SetSchemaDictionary
+SetSchemaProcedure <- 'PROCEDURE'
+SetSchemaDictionary <- 'TEXT' 'SEARCH' 'DICTIONARY'
+
+AlterJobStmt <- 'JOB' IfExists? QualifiedName AlterJobAction
+AlterJobAction <- AlterJobRename / AlterJobSuspend / AlterJobResume / AlterJobSetSchedule
+AlterJobRename <- 'RENAME' 'TO' ColId
+AlterJobSuspend <- 'SUSPEND'
+AlterJobResume <- 'RESUME'
+AlterJobSetSchedule <- 'SET' 'SCHEDULE' JobSchedule
+
+AlterIndexStmt <- 'INDEX' IfExists? BaseTableName AlterIndexAlter
+AlterIndexAlter <- RenameAlter / SetOptions / ResetOptions
+AlterFunctionStmt <- 'FUNCTION' IfExists? QualifiedName RenameAlter
+
+AlterTableStmt <- 'TABLE' IfExists? 'ONLY'? BaseTableName List(AlterTableOptions)
 AlterSchemaStmt <- 'SCHEMA' IfExists? QualifiedName AlterSchemaOptions
 AlterSchemaOptions <- RenameAlter / SetOptions / ResetOptions
 
 AlterTableOptions <- AddColumn / DropConstraint / DropColumn / AlterColumn / AddConstraint / ChangeNullability /
-        RenameColumn / RenameAlter / SetPartitionedBy / ResetPartitionedBy / SetSortedBy / ResetSortedBy / SetOptions / ResetOptions
+        RenameConstraint / RenameColumn / RenameAlter / SetPartitionedBy / ResetPartitionedBy / SetSortedBy / ResetSortedBy / SetOptions / ResetOptions /
+        EnableTrigger / DisableTrigger
 
 AddConstraint <- 'ADD' TopLevelConstraint
+EnableTrigger <- 'ENABLE' TriggerFireMode? 'TRIGGER' TriggerTarget
+DisableTrigger <- 'DISABLE' 'TRIGGER' TriggerTarget
+TriggerFireMode <- ReplicaFireMode / AlwaysFireMode
+ReplicaFireMode <- 'REPLICA'
+AlwaysFireMode <- 'ALWAYS'
+TriggerTarget <- AllTriggers / UserTriggers / ColId
+AllTriggers <- 'ALL'
+UserTriggers <- 'USER'
 DropConstraint <- 'DROP' 'CONSTRAINT' IfExists? ConstraintName DropBehavior?
+RenameConstraint <- 'RENAME' 'CONSTRAINT' ConstraintName 'TO' ConstraintName
 AddColumn <- 'ADD' 'COLUMN'? IfNotExists? AddColumnEntry
 AddColumnEntry <- DottedIdentifier Type? GeneratedColumn? ColumnConstraint*
 DropColumn <- 'DROP' 'COLUMN'? IfExists? NestedColumnName DropBehavior?
@@ -49,6 +76,9 @@ QualifiedSequenceName <- CatalogQualification? SchemaQualification? SequenceName
 
 AlterSequenceOptions <- RenameAlterSequenceOptions / SetSequenceOption
 RenameAlterSequenceOptions <- RenameAlter
-SetSequenceOption <- SequenceOption+
+SetSequenceOption <- AlterSequenceOption+
+AlterSequenceOption <- SeqRestart / SequenceOption
+SeqRestart <- 'RESTART' SeqRestartValue?
+SeqRestartValue <- 'WITH'? Expression
 
 AlterDatabaseStmt <- 'DATABASE' IfExists? Identifier 'SET' 'ALIAS' 'TO' Identifier

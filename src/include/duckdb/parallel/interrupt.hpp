@@ -14,8 +14,6 @@
 #include "duckdb/common/shared_ptr.hpp"
 #include "duckdb/parallel/task.hpp"
 
-#include <condition_variable>
-
 namespace duckdb {
 
 //! InterruptMode specifies how operators should block/unblock, note that this will happen transparently to the
@@ -34,9 +32,8 @@ struct InterruptDoneSignalState {
 	//! Await the callback signalling the interrupt is over
 	void Await();
 
-protected:
-	annotated_mutex lock;
-	std::condition_variable cv;
+private:
+	absl::Mutex lock;
 	bool done = false;
 };
 
@@ -95,6 +92,16 @@ public:
 	vector<InterruptState> TakeBlockedTasks() DUCKDB_REQUIRES(lock) {
 		vector<InterruptState> result;
 		result.swap(blocked_tasks);
+		return result;
+	}
+
+	vector<InterruptState> TakeBlockedTasks(idx_t max_count) DUCKDB_REQUIRES(lock) {
+		vector<InterruptState> result;
+		result.reserve(MinValue<idx_t>(max_count, blocked_tasks.size()));
+		while (result.size() < max_count && !blocked_tasks.empty()) {
+			result.push_back(std::move(blocked_tasks.back()));
+			blocked_tasks.pop_back();
+		}
 		return result;
 	}
 

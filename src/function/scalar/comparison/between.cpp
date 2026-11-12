@@ -6,7 +6,6 @@
 #include "duckdb/parser/expression/between_expression.hpp"
 #include "duckdb/planner/expression/bound_between_expression.hpp"
 #include "duckdb/planner/expression/bound_function_expression.hpp"
-#include "duckdb/planner/expression/legacy_bound_between_expression.hpp"
 
 namespace duckdb {
 
@@ -29,17 +28,27 @@ public:
 	}
 };
 
+#if !DUCKDB_SMALLER_BINARY(between_select)
+static bool TryBetweenExecute(const Vector &input, const Vector &lower, const Vector &upper, Vector &result,
+                              bool lower_inclusive, bool upper_inclusive);
+#endif
+
 void BetweenFunction(DataChunk &args, ExpressionState &state, Vector &result) {
 	auto &between_expr = state.expr.Cast<BoundFunctionExpression>();
 	bool upper_inclusive = BoundBetweenExpression::UpperInclusive(between_expr);
 	bool lower_inclusive = BoundBetweenExpression::LowerInclusive(between_expr);
 
-	Vector intermediate1(LogicalType::BOOLEAN);
-	Vector intermediate2(LogicalType::BOOLEAN);
-
 	const auto &input = args.data[0];
 	const auto &lower = args.data[1];
 	const auto &upper = args.data[2];
+#if !DUCKDB_SMALLER_BINARY(between_select)
+	if (TryBetweenExecute(input, lower, upper, result, lower_inclusive, upper_inclusive)) {
+		return;
+	}
+#endif
+
+	Vector intermediate1(LogicalType::BOOLEAN);
+	Vector intermediate2(LogicalType::BOOLEAN);
 
 	if (upper_inclusive && lower_inclusive) {
 		VectorOperations::GreaterThanEquals(input, lower, intermediate1);
@@ -138,6 +147,80 @@ static idx_t BetweenLoopTypeSwitch(const Vector &input, const Vector &lower, con
 	}
 }
 
+template <class T, class OP>
+static void BetweenExecute(const Vector &input, const Vector &lower, const Vector &upper, Vector &result) {
+	TernaryExecutor::Execute<T, T, T, bool>(input, lower, upper, result, [](T value, T lower_bound, T upper_bound) {
+		return OP::template Operation<T>(value, lower_bound, upper_bound);
+	});
+}
+
+template <class OP>
+static bool BetweenExecuteTypeSwitch(const Vector &input, const Vector &lower, const Vector &upper, Vector &result) {
+	switch (input.GetType().InternalType()) {
+	case PhysicalType::BOOL:
+	case PhysicalType::INT8:
+		BetweenExecute<int8_t, OP>(input, lower, upper, result);
+		return true;
+	case PhysicalType::INT16:
+		BetweenExecute<int16_t, OP>(input, lower, upper, result);
+		return true;
+	case PhysicalType::INT32:
+		BetweenExecute<int32_t, OP>(input, lower, upper, result);
+		return true;
+	case PhysicalType::INT64:
+		BetweenExecute<int64_t, OP>(input, lower, upper, result);
+		return true;
+	case PhysicalType::INT128:
+		BetweenExecute<hugeint_t, OP>(input, lower, upper, result);
+		return true;
+	case PhysicalType::UINT8:
+		BetweenExecute<uint8_t, OP>(input, lower, upper, result);
+		return true;
+	case PhysicalType::UINT16:
+		BetweenExecute<uint16_t, OP>(input, lower, upper, result);
+		return true;
+	case PhysicalType::UINT32:
+		BetweenExecute<uint32_t, OP>(input, lower, upper, result);
+		return true;
+	case PhysicalType::UINT64:
+		BetweenExecute<uint64_t, OP>(input, lower, upper, result);
+		return true;
+	case PhysicalType::UINT128:
+		BetweenExecute<uhugeint_t, OP>(input, lower, upper, result);
+		return true;
+	case PhysicalType::FLOAT:
+		BetweenExecute<float, OP>(input, lower, upper, result);
+		return true;
+	case PhysicalType::DOUBLE:
+		BetweenExecute<double, OP>(input, lower, upper, result);
+		return true;
+	case PhysicalType::VARCHAR:
+		BetweenExecute<string_t, OP>(input, lower, upper, result);
+		return true;
+	case PhysicalType::INTERVAL:
+		BetweenExecute<interval_t, OP>(input, lower, upper, result);
+		return true;
+	default:
+		return false;
+	}
+}
+
+static bool TryBetweenExecute(const Vector &input, const Vector &lower, const Vector &upper, Vector &result,
+                              bool lower_inclusive, bool upper_inclusive) {
+	if (!input.Validity().CannotHaveNull() || !lower.Validity().CannotHaveNull() ||
+	    !upper.Validity().CannotHaveNull()) {
+		return false;
+	}
+	if (upper_inclusive && lower_inclusive) {
+		return BetweenExecuteTypeSwitch<BothInclusiveBetweenOperator>(input, lower, upper, result);
+	} else if (lower_inclusive) {
+		return BetweenExecuteTypeSwitch<LowerInclusiveBetweenOperator>(input, lower, upper, result);
+	} else if (upper_inclusive) {
+		return BetweenExecuteTypeSwitch<UpperInclusiveBetweenOperator>(input, lower, upper, result);
+	}
+	return BetweenExecuteTypeSwitch<ExclusiveBetweenOperator>(input, lower, upper, result);
+}
+
 idx_t BetweenSelect(DataChunk &args, ExpressionState &state, optional_ptr<const SelectionVector> sel,
                     optional_ptr<SelectionVector> true_sel, optional_ptr<SelectionVector> false_sel) {
 	auto &between_expr = state.expr.Cast<BoundFunctionExpression>();
@@ -191,13 +274,6 @@ ExpressionType BetweenGetExpressionType(FunctionToStringInput &input) {
 	return ExpressionType::COMPARE_BETWEEN;
 }
 
-unique_ptr<Expression> BetweenLegacySerializeCallback(FunctionToStringInput &input) {
-	auto &between_info = input.bind_data->Cast<BetweenFunctionData>();
-	return make_uniq<LegacyBoundBetweenExpression>(input.GetChild(0).Copy(), input.GetChild(1).Copy(),
-	                                               input.GetChild(2).Copy(), between_info.lower_inclusive,
-	                                               between_info.upper_inclusive);
-}
-
 void BetweenFunctionSerialize(Serializer &serializer, const optional_ptr<FunctionData> bind_data_p,
                               const BoundScalarFunction &function) {
 	auto &bind_data = bind_data_p->Cast<BetweenFunctionData>();
@@ -220,7 +296,6 @@ ScalarFunction BetweenFun::GetFunction() {
 	between_fun.SetNullHandling(FunctionNullHandling::SPECIAL_HANDLING);
 	between_fun.SetToStringCallback(BetweenToString);
 	between_fun.SetGetExpressionTypeCallback(BetweenGetExpressionType);
-	between_fun.SetLegacySerializeCallback(BetweenLegacySerializeCallback);
 	between_fun.SetSerializeCallback(BetweenFunctionSerialize);
 	between_fun.SetDeserializeCallback(BetweenFunctionDeserialize);
 #if !DUCKDB_SMALLER_BINARY(between_select)

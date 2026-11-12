@@ -48,22 +48,26 @@ public:
 	bool &IsOperatorMutable() {
 		return is_operator;
 	}
-	bool RequiresOrderedExecution() const;
 
-	bool IsVolatile() const override;
+	using Expression::IsVolatile;
 	bool IsConsistent() const override;
 	bool IsFoldable() const override;
 	bool CanThrow() const override;
+	bool RequiresOrderedExecution() const override;
 	string ToString() const override;
 	bool PropagatesNullValues() const override;
-	hash_t Hash() const override;
 	bool Equals(const BaseExpression &other) const override;
 
 	unique_ptr<Expression> Copy() const override;
+	unique_ptr<Expression> CopyWithChildren(vector<unique_ptr<Expression>> new_children) const;
 	void Verify() const override;
 
 	void Serialize(Serializer &serializer) const override;
 	static unique_ptr<Expression> Deserialize(Deserializer &deserializer);
+
+protected:
+	bool IsNodeVolatile() const override;
+	hash_t NodeHash() const override;
 
 private:
 	static ExpressionType GetFunctionExpressionType(const BoundScalarFunction &bound_function,

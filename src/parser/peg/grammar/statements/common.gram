@@ -5,6 +5,25 @@ TopLevelStatement <- Statement? (';'+ / EndOfInput)
 Statement <-
 	ExternalResourceStatement /
 	ExtensionRepositoryStatement /
+	CreateDatabaseStatement /
+	DropDatabaseStatement /
+	CreateTSDictionaryStatement /
+	DropTSDictionaryStatement /
+	CreateServerStatement /
+	DropServerStatement /
+	DropSubscriptionStatement /
+	AlterSubscriptionStatement /
+	CreateRoleStatement /
+	DropRoleStatement /
+	CreatePolicyStatement /
+	AlterPolicyStatement /
+	DropPolicyStatement /
+	AlterTableRowSecurityStatement /
+	AlterOwnerStatement /
+	AlterDefaultPrivilegesStatement /
+	AlterRoleStatement /
+	GrantStatement /
+	RevokeStatement /
 	CreateStatement /
 	SelectStatement /
 	SetStatement /
@@ -16,6 +35,7 @@ Statement <-
 	ExplainStatement /
 	UpdateStatement /
 	PrepareStatement /
+	ExecuteJobStatement /
 	ExecuteStatement /
 	AlterStatement /
 	TransactionStatement /
@@ -25,11 +45,13 @@ Statement <-
 	DetachStatement /
 	CheckpointStatement /
 	VacuumStatement /
+	ReindexStatement /
 	ResetStatement /
 	ExportStatement /
 	ImportStatement /
 	CommentStatement /
 	DeallocateStatement /
+	DiscardStatement /
 	TruncateStatement /
 	LoadStatement /
 	InstallStatement /
@@ -38,6 +60,11 @@ Statement <-
 	MergeIntoStatement /
 	ConnectStatement /
 	DisconnectStatement /
+	CreatePublicationStatement /
+	CreateSubscriptionStatement /
+	ListenStatement /
+	NotifyStatement /
+	UnlistenStatement /
 	ExpressionStatement
 
 AnalyzeKeyword <- 'ANALYZE' / 'ANALYSE'

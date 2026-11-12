@@ -72,4 +72,20 @@ CatalogException CatalogException::EntryAlreadyExists(CatalogType type, const Id
 	                                                       CatalogTypeToString(type), name.GetIdentifierName()));
 }
 
+CatalogException CatalogException::MissingPreparedStatement(const Identifier &name) {
+	auto extra_info = Exception::InitializeExtraInfo("MISSING_ENTRY", QueryLocation());
+	extra_info["name"] = name.GetIdentifierName();
+	extra_info["type"] = "prepared statement";
+	return CatalogException(extra_info,
+	                        StringUtil::Format("prepared statement \"%s\" does not exist", name.GetIdentifierName()));
+}
+
+CatalogException CatalogException::DuplicatePreparedStatement(const Identifier &name) {
+	auto extra_info = Exception::InitializeExtraInfo("ENTRY_ALREADY_EXISTS", QueryLocation());
+	extra_info["name"] = name.GetIdentifierName();
+	extra_info["type"] = "prepared statement";
+	return CatalogException(extra_info,
+	                        StringUtil::Format("prepared statement \"%s\" already exists", name.GetIdentifierName()));
+}
+
 } // namespace duckdb

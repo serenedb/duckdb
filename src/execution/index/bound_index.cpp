@@ -48,7 +48,7 @@ ErrorData BoundIndex::Append(DataChunk &chunk, Vector &row_ids, IndexAppendInfo 
 	return Append(l, chunk, row_ids, info);
 }
 
-void BoundIndex::VerifyAppend(DataChunk &chunk, IndexAppendInfo &info, optional_ptr<ConflictManager> manager) {
+void BoundIndex::VerifyAppend(DataChunk &chunk, IndexAppendInfo &info) {
 	throw NotImplementedException("this implementation of VerifyAppend does not exist.");
 }
 
@@ -98,8 +98,11 @@ bool BoundIndex::MergeIndexes(BoundIndex &other_index) {
 }
 
 void BoundIndex::Verify() {
+#ifdef D_ASSERT_IS_ENABLED
+	DUCKDB_DEBUG_VERIFY_GUARD();
 	IndexLock l(*this);
 	Verify(l);
+#endif
 }
 
 string BoundIndex::ToString(bool display_ascii) {
@@ -132,8 +135,17 @@ idx_t BoundIndex::GetInMemorySize() const {
 	return GetInMemorySize(state);
 }
 
+idx_t BoundIndex::GetAllocationSize() const {
+	IndexLock state(*this);
+	return GetAllocationSize(state);
+}
+
 void BoundIndex::ExecuteExpressions(DataChunk &input, DataChunk &result) const {
 	executor.Execute(input, result);
+}
+
+void BoundIndex::ExecuteExpressions(ClientContext &context, DataChunk &input, DataChunk &result) const {
+	executor.Execute(context, input, result);
 }
 
 idx_t BoundIndex::UnboundExpressionCount() const {
@@ -156,7 +168,7 @@ unique_ptr<Expression> BoundIndex::BindExpression(unique_ptr<Expression> root_ex
 	return root_expr;
 }
 
-bool BoundIndex::IndexIsUpdated(const vector<PhysicalIndex> &column_ids_p) const {
+bool BoundIndex::IndexIsUpdated(std::span<const PhysicalIndex> column_ids_p) const {
 	for (auto &column : column_ids_p) {
 		if (column_id_set.find(column.index) != column_id_set.end()) {
 			return true;

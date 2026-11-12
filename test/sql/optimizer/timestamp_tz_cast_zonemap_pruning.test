@@ -10,7 +10,10 @@ ATTACH '{TEST_DIR}/ts_tz_cast_prune.duckdb' AS db (ROW_GROUP_SIZE 2048);
 statement ok
 USE db;
 
-# all tables are created under the default UTC time zone -> 5 row groups of 2048 rows each
+statement ok
+SET TimeZone = 'UTC';
+
+# all tables are created under the UTC time zone -> 5 row groups of 2048 rows each
 
 # plain wall-clock data: 2000-01-01 00:00:00 .. 02:50:39 in 1-second steps
 statement ok

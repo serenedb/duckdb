@@ -69,7 +69,8 @@ const FileOpenFlags FileFlags::FILE_FLAGS_ENABLE_EXTENSION_INSTALL =
     FileOpenFlags(FileOpenFlags::FILE_FLAGS_ENABLE_EXTENSION_INSTALL);
 
 void FileOpenFlags::Verify() {
-#ifdef DEBUG
+#ifdef D_ASSERT_IS_ENABLED
+	DUCKDB_DEBUG_VERIFY_GUARD();
 	bool is_read = flags & FileOpenFlags::FILE_FLAGS_READ;
 	bool is_write = flags & FileOpenFlags::FILE_FLAGS_WRITE;
 	bool is_create =
@@ -526,8 +527,39 @@ void FileSystem::Truncate(FileHandle &handle, int64_t new_size) {
 	throw NotImplementedException("%s: Truncate is not implemented!", GetName());
 }
 
+FileExistence FileSystem::ClassifyExistenceFailure(const std::exception &ex, optional_ptr<ErrorData> error) {
+	ErrorData data(ex);
+	auto status = data.ExtraInfo().find("status_code");
+	const bool forbidden = data.Type() == ExceptionType::PERMISSION ||
+	                       (status != data.ExtraInfo().end() && (status->second == "401" || status->second == "403"));
+	if (error) {
+		*error = std::move(data);
+	}
+	return forbidden ? FileExistence::FORBIDDEN : FileExistence::UNKNOWN;
+}
+
+static bool ExistsOrThrow(FileExistence existence, const ErrorData &error) {
+	switch (existence) {
+	case FileExistence::EXISTS:
+		return true;
+	case FileExistence::MISSING:
+		return false;
+	default:
+		error.Throw();
+	}
+}
+
+FileExistence FileSystem::TryDirectoryExists(const string &directory, optional_ptr<FileOpener> opener,
+                                             optional_ptr<ErrorData> error) {
+	if (error) {
+		*error = ErrorData(NotImplementedException("%s: DirectoryExists is not implemented!", GetName()));
+	}
+	return FileExistence::UNKNOWN;
+}
+
 bool FileSystem::DirectoryExists(const string &directory, optional_ptr<FileOpener> opener) {
-	throw NotImplementedException("%s: DirectoryExists is not implemented!", GetName());
+	ErrorData error;
+	return ExistsOrThrow(TryDirectoryExists(directory, opener, &error), error);
 }
 
 void FileSystem::CreateDirectory(const string &directory, optional_ptr<FileOpener> opener) {
@@ -636,8 +668,17 @@ void FileSystem::MoveFile(const string &source, const string &target, optional_p
 	throw NotImplementedException("%s: MoveFile is not implemented!", GetName());
 }
 
+FileExistence FileSystem::TryFileExists(const string &filename, optional_ptr<FileOpener> opener,
+                                        optional_ptr<ErrorData> error) {
+	if (error) {
+		*error = ErrorData(NotImplementedException("%s: FileExists is not implemented!", GetName()));
+	}
+	return FileExistence::UNKNOWN;
+}
+
 bool FileSystem::FileExists(const string &filename, optional_ptr<FileOpener> opener) {
-	throw NotImplementedException("%s: FileExists is not implemented!", GetName());
+	ErrorData error;
+	return ExistsOrThrow(TryFileExists(filename, opener, &error), error);
 }
 
 bool FileSystem::IsPipe(const string &filename, optional_ptr<FileOpener> opener) {
@@ -664,6 +705,10 @@ void FileSystem::RemoveFiles(const vector<string> &filenames, optional_ptr<FileO
 
 void FileSystem::FileSync(FileHandle &handle) {
 	throw NotImplementedException("%s: FileSync is not implemented!", GetName());
+}
+
+FileSyncParallelism FileSystem::SyncParallelism(FileHandle &handle) {
+	return FileSyncParallelism::SERIAL;
 }
 
 void FileSystem::AbortFileWrite(FileHandle &handle) {

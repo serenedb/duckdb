@@ -1,8 +1,16 @@
 #include "duckdb/execution/expression_executor.hpp"
 
+#include <absl/cleanup/cleanup.h>
+
+#include "duckdb/common/stack_depth.hpp"
+#include "duckdb/common/vector/array_vector.hpp"
 #include "duckdb/common/vector/flat_vector.hpp"
+#include "duckdb/common/vector/list_vector.hpp"
+#include "duckdb/common/vector/struct_vector.hpp"
+#include "duckdb/common/vector/vector_iterator.hpp"
 #include "duckdb/common/vector_operations/vector_operations.hpp"
 #include "duckdb/execution/execution_context.hpp"
+#include "duckdb/function/scalar/struct_utils.hpp"
 #include "duckdb/storage/statistics/base_statistics.hpp"
 #include "duckdb/planner/expression/list.hpp"
 #include "duckdb/main/settings.hpp"
@@ -35,6 +43,15 @@ ExpressionExecutor::ExpressionExecutor(ClientContext &context, const vector<uniq
 	}
 }
 
+ExpressionExecutor::ExpressionExecutor(ExpressionState &parent_p)
+    : parent(parent_p.root.executor), debug_vector_verification(parent->debug_vector_verification) {
+}
+
+ExpressionExecutor::ExpressionExecutor(ExpressionState &parent_p, const Expression &expression)
+    : ExpressionExecutor(parent_p) {
+	AddExpression(expression);
+}
+
 ExpressionExecutor::ExpressionExecutor(const vector<unique_ptr<Expression>> &exprs) : context(nullptr) {
 	D_ASSERT(exprs.size() > 0);
 	for (auto &expr : exprs) {
@@ -46,30 +63,41 @@ ExpressionExecutor::ExpressionExecutor() : context(nullptr) {
 }
 
 bool ExpressionExecutor::HasContext() {
-	return context;
+	return GetContextPtr();
 }
 
 ClientContext &ExpressionExecutor::GetContext() {
-	if (!context) {
+	auto result = GetContextPtr();
+	if (!result) {
 		throw InternalException("Calling ExpressionExecutor::GetContext on an expression executor without a context");
 	}
-	return *context;
+	return *result;
 }
 
 optional_ptr<ClientContext> ExpressionExecutor::GetContextPtr() {
-	return context;
+	return context || !parent ? context : parent->GetContextPtr();
 }
 
 Allocator &ExpressionExecutor::GetAllocator() {
-	return context ? Allocator::Get(*context) : Allocator::DefaultAllocator();
+	auto client = GetContextPtr();
+	return client ? Allocator::Get(*client) : Allocator::DefaultAllocator();
 }
 
 void ExpressionExecutor::AddExpression(const Expression &expr) {
 	expressions.push_back(&expr);
-	auto state = make_uniq<ExpressionExecutorState>();
-	Initialize(expr, *state);
-	state->Verify();
-	states.push_back(std::move(state));
+	states.push_back(make_uniq<ExpressionExecutorState>());
+	if (HasContext()) {
+		RootState(states.size() - 1);
+	}
+}
+
+ExpressionState *ExpressionExecutor::RootState(idx_t expr_idx) {
+	auto &state = *states[expr_idx];
+	if (!state.root_state) {
+		Initialize(*expressions[expr_idx], state);
+		state.Verify();
+	}
+	return state.root_state.get();
 }
 
 void ExpressionExecutor::ClearExpressions() {
@@ -91,7 +119,16 @@ void ExpressionExecutor::Execute(DataChunk *input, DataChunk &result) {
 		ExecuteExpression(i, result.data[i]);
 	}
 	result.SetChildCardinality(input ? input->size() : 1);
-	result.Verify(context);
+	result.Verify(GetContextPtr());
+}
+
+void ExpressionExecutor::Execute(ClientContext &context_p, DataChunk &input, DataChunk &result) {
+	D_ASSERT(!context && !parent);
+	context = &context_p;
+	absl::Cleanup reset = [this]() noexcept {
+		context = nullptr;
+	};
+	Execute(&input, result);
 }
 
 void ExpressionExecutor::ExecuteExpression(DataChunk &input, Vector &result) {
@@ -103,9 +140,8 @@ void ExpressionExecutor::ExecuteExpression(DataChunk &input, Vector &result, con
 	SetChunk(&input);
 	D_ASSERT(!expressions.empty());
 	auto &expression = expressions[0];
-	auto &state = states[0];
 	D_ASSERT(result.GetType().id() == expression->GetReturnType().id());
-	Execute(*expression, state->root_state.get(), &sel, count, result);
+	Execute(*expression, RootState(0), &sel, count, result);
 }
 
 idx_t ExpressionExecutor::SelectExpression(DataChunk &input, SelectionVector &sel) {
@@ -123,8 +159,8 @@ idx_t ExpressionExecutor::SelectExpression(DataChunk &input, optional_ptr<Select
 	D_ASSERT(expressions.size() == 1);
 	D_ASSERT(current_count <= input.size());
 	SetChunk(&input);
-	idx_t selected_tuples = Select(*expressions[0], states[0]->root_state.get(), current_sel.get(), current_count,
-	                               true_sel.get(), false_sel.get());
+	idx_t selected_tuples =
+	    Select(*expressions[0], RootState(0), current_sel.get(), current_count, true_sel.get(), false_sel.get());
 	return selected_tuples;
 }
 
@@ -136,12 +172,113 @@ void ExpressionExecutor::ExecuteExpression(Vector &result) {
 void ExpressionExecutor::ExecuteExpression(idx_t expr_idx, Vector &result) {
 	D_ASSERT(expr_idx < expressions.size());
 	D_ASSERT(result.GetType().id() == expressions[expr_idx]->GetReturnType().id());
-	Execute(*expressions[expr_idx], states[expr_idx]->root_state.get(), nullptr, chunk ? chunk->size() : 1, result);
+	Execute(*expressions[expr_idx], RootState(expr_idx), nullptr, chunk ? chunk->size() : 1, result);
+}
+
+static bool TryFoldNestedValue(ClientContext &context, const Expression &expr, Value &result) {
+	if (expr.GetExpressionClass() != ExpressionClass::BOUND_FUNCTION) {
+		return false;
+	}
+	auto &function = expr.Cast<BoundFunctionExpression>();
+	auto &name = function.Function().GetName();
+	const bool is_constructor = name == "list_value" || name == "struct_pack";
+	if (!is_constructor && name != "list_extract" && name != "array_extract" && name != "struct_extract") {
+		return false;
+	}
+	auto &children = function.GetChildren();
+	vector<Value> values;
+	values.reserve(children.size());
+	for (auto &child : children) {
+		if (child->GetExpressionClass() == ExpressionClass::BOUND_CONSTANT) {
+			values.push_back(child->Cast<BoundConstantExpression>().GetValue());
+			continue;
+		}
+		Value value;
+		if (child->GetReturnType().IsNested() || !child->IsFoldable() ||
+		    !ExpressionExecutor::TryEvaluateScalar(context, *child, value)) {
+			return false;
+		}
+		values.push_back(std::move(value));
+	}
+	auto &return_type = expr.GetReturnType();
+	if (name == "list_value" && return_type.id() == LogicalTypeId::LIST) {
+		auto &child_type = ListType::GetChildType(return_type);
+		for (auto &value : values) {
+			if (value.type() != child_type) {
+				return false;
+			}
+		}
+		result = Value::LIST(child_type, std::move(values)).WithType(return_type);
+		return true;
+	}
+	if (name == "struct_pack" && return_type.id() == LogicalTypeId::STRUCT) {
+		auto &child_types = StructType::GetChildTypes(return_type);
+		if (child_types.size() != values.size()) {
+			return false;
+		}
+		for (idx_t i = 0; i < values.size(); i++) {
+			if (values[i].type() != child_types[i].second) {
+				return false;
+			}
+		}
+		result = Value::STRUCT(return_type, std::move(values));
+		return true;
+	}
+	if (is_constructor || values.size() != 2) {
+		return false;
+	}
+	auto &input = values[0];
+	if (input.type().id() == LogicalTypeId::LIST) {
+		auto &index = values[1];
+		if (name == "struct_extract" || index.type().id() != LogicalTypeId::BIGINT ||
+		    ListType::GetChildType(input.type()) != return_type) {
+			return false;
+		}
+		if (input.IsNull() || index.IsNull()) {
+			result = Value(return_type);
+			return true;
+		}
+		auto &elements = ListValue::GetChildren(input);
+		const auto offset = BigIntValue::Get(index);
+		const auto length = static_cast<int64_t>(elements.size());
+		if (offset > 0 && offset <= length) {
+			result = elements[static_cast<idx_t>(offset - 1)].WithType(return_type);
+		} else if (offset < 0 && offset >= -length) {
+			result = elements[static_cast<idx_t>(length + offset)].WithType(return_type);
+		} else {
+			result = Value(return_type);
+		}
+		return true;
+	}
+	if (input.type().id() == LogicalTypeId::STRUCT && name != "list_extract" && function.BindInfo()) {
+		auto index = function.BindInfo()->Cast<StructExtractBindData>().index;
+		auto &child_types = StructType::GetChildTypes(input.type());
+		if (index >= child_types.size() || child_types[index].second != return_type) {
+			return false;
+		}
+		result = input.IsNull() ? Value(return_type) : StructValue::GetChildren(input)[index].WithType(return_type);
+		return true;
+	}
+	return false;
+}
+
+static bool TryTakeConstant(const Expression &expr, Value &result) {
+	if (expr.GetExpressionClass() != ExpressionClass::BOUND_CONSTANT || expr.GetReturnType().IsNested()) {
+		return false;
+	}
+	auto &value = expr.Cast<BoundConstantExpression>().GetValue();
+	D_ASSERT(value.type().InternalType() == expr.GetReturnType().InternalType());
+	result = value.WithType(expr.GetReturnType());
+	return true;
 }
 
 Value ExpressionExecutor::EvaluateScalar(ClientContext &context, const Expression &expr, bool allow_unfoldable) {
 	D_ASSERT(allow_unfoldable || expr.IsFoldable());
 	D_ASSERT(expr.IsScalar());
+	Value nested;
+	if (TryTakeConstant(expr, nested) || TryFoldNestedValue(context, expr, nested)) {
+		return nested;
+	}
 	// use an ExpressionExecutor to execute the expression
 	ExpressionExecutor executor(context, expr);
 
@@ -160,12 +297,69 @@ bool ExpressionExecutor::TryEvaluateScalar(ClientContext &context, const Express
 		return true;
 	} catch (InternalException &ex) {
 		throw;
+	} catch (InterruptException &ex) {
+		throw;
 	} catch (...) {
 		return false;
 	}
 }
 
+static idx_t FoldedValueSize(const Vector &vector, idx_t count, idx_t max_size) {
+	idx_t size = count * sizeof(Value);
+	if (size > max_size) {
+		return size;
+	}
+	auto &type = vector.GetType();
+	switch (type.InternalType()) {
+	case PhysicalType::LIST:
+		return size + FoldedValueSize(ListVector::GetChild(vector), ListVector::GetListSize(vector), max_size);
+	case PhysicalType::ARRAY:
+		return size + FoldedValueSize(ArrayVector::GetChild(vector), count * ArrayType::GetSize(type), max_size);
+	case PhysicalType::STRUCT:
+		for (auto &child : StructVector::GetEntries(vector)) {
+			size += FoldedValueSize(child, count, max_size);
+			if (size > max_size) {
+				break;
+			}
+		}
+		return size;
+	default:
+		return size;
+	}
+}
+
+ExpressionExecutor::FoldResult ExpressionExecutor::EvaluateFoldable(ClientContext &context, const Expression &expr,
+                                                                    Value &result, idx_t max_size) {
+	D_ASSERT(expr.IsFoldable());
+	D_ASSERT(expr.IsScalar());
+	if (TryTakeConstant(expr, result)) {
+		return FoldResult::FOLDED;
+	}
+	if (TryFoldNestedValue(context, expr, result)) {
+		return FoldResult::FOLDED;
+	}
+	try {
+		ExpressionExecutor executor(context, expr);
+		Vector vector(expr.GetReturnType());
+		executor.ExecuteExpression(vector);
+		D_ASSERT(vector.GetVectorType() == VectorType::CONSTANT_VECTOR);
+		if (FoldedValueSize(vector, 1, max_size) > max_size) {
+			return FoldResult::TOO_LARGE;
+		}
+		result = vector.GetValue(0).WithType(expr.GetReturnType());
+		return FoldResult::FOLDED;
+	} catch (InternalException &ex) {
+		throw;
+	} catch (InterruptException &ex) {
+		throw;
+	} catch (...) {
+		return FoldResult::THROWS;
+	}
+}
+
 void ExpressionExecutor::Verify(const Expression &expr, Vector &vector, idx_t count) {
+#ifdef D_ASSERT_IS_ENABLED
+	DUCKDB_DEBUG_VERIFY_GUARD();
 	D_ASSERT(expr.GetReturnType().id() == vector.GetType().id());
 	vector.Verify();
 	if (expr.GetVerificationStats()) {
@@ -227,10 +421,12 @@ void ExpressionExecutor::Verify(const Expression &expr, Vector &vector, idx_t co
 			vector.Verify();
 		}
 	}
+#endif
 }
 
 unique_ptr<ExpressionState> ExpressionExecutor::InitializeState(const Expression &expr,
                                                                 ExpressionExecutorState &state) {
+	StackDepth::Check();
 	switch (expr.GetExpressionClass()) {
 	case ExpressionClass::BOUND_REF:
 		return InitializeState(expr.Cast<BoundReferenceExpression>(), state);
@@ -255,16 +451,16 @@ unique_ptr<ExpressionState> ExpressionExecutor::InitializeState(const Expression
 
 void ExpressionExecutor::Execute(const Expression &expr, ExpressionState *state, const SelectionVector *sel,
                                  idx_t count, Vector &result) {
+	StackDepth::Check();
 #ifdef DEBUG
 	// The result vector must be used for the first time, or must be reset.
 	// Otherwise, the validity mask can contain previous (now incorrect) data.
-	if (result.GetVectorType() == VectorType::FLAT_VECTOR) {
-		// We do not initialize vector caches for these expressions.
-		if (expr.GetExpressionClass() != ExpressionClass::BOUND_REF &&
-		    expr.GetExpressionClass() != ExpressionClass::BOUND_CONSTANT &&
-		    expr.GetExpressionClass() != ExpressionClass::BOUND_PARAMETER) {
-			D_ASSERT(FlatVector::ValidityMutable(result).CheckAllValid(count));
-		}
+	// We do not initialize vector caches for these expressions.
+	if (expr.GetExpressionClass() != ExpressionClass::BOUND_REF &&
+	    expr.GetExpressionClass() != ExpressionClass::BOUND_CONSTANT &&
+	    expr.GetExpressionClass() != ExpressionClass::BOUND_PARAMETER &&
+	    result.GetVectorType() == VectorType::FLAT_VECTOR) {
+		D_ASSERT(FlatVector::ValidityMutable(result).CheckAllValid(count));
 	}
 #endif
 

@@ -1,6 +1,7 @@
 #include "duckdb/optimizer/cse_optimizer.hpp"
 
 #include "duckdb/planner/expression/bound_columnref_expression.hpp"
+#include "duckdb/planner/expression/bound_function_expression.hpp"
 #include "duckdb/planner/expression_iterator.hpp"
 #include "duckdb/planner/operator/logical_projection.hpp"
 #include "duckdb/planner/column_binding_map.hpp"
@@ -18,12 +19,18 @@ struct CSENode {
 	}
 };
 
+struct CSEExpressionInfo {
+	hash_t hash;
+	bool is_volatile;
+};
+
 //! The CSEReplacementState
 struct CSEReplacementState {
+	unordered_map<const Expression *, CSEExpressionInfo> infos;
 	//! The projection index of the new projection
 	TableIndex projection_index;
 	//! Map of expression -> CSENode
-	expression_map_t<CSENode> expression_count;
+	hashed_expression_map_t<Expression, CSENode> expression_count;
 	//! Map of column bindings to column indexes in the projection expression list
 	column_binding_map_t<ProjectionIndex> column_map;
 	//! The set of expressions of the resulting projection
@@ -46,6 +53,29 @@ void CommonSubExpressionOptimizer::VisitOperator(LogicalOperator &op) {
 	LogicalOperatorVisitor::VisitOperator(op);
 }
 
+static CSEExpressionInfo GetExpressionInfo(const Expression &expr, CSEReplacementState &state) {
+	auto entry = state.infos.find(&expr);
+	if (entry != state.infos.end()) {
+		return entry->second;
+	}
+	CSEExpressionInfo info;
+	info.hash = expr.Hash([&](const Expression &child) { return GetExpressionInfo(child, state).hash; });
+	info.is_volatile =
+	    expr.IsVolatile([&](const Expression &child) { return GetExpressionInfo(child, state).is_volatile; });
+	state.infos.emplace(&expr, info);
+	return info;
+}
+
+static bool ShortCircuits(const Expression &expr) {
+	switch (expr.GetExpressionClass()) {
+	case ExpressionClass::BOUND_CONJUNCTION:
+	case ExpressionClass::BOUND_CASE:
+		return true;
+	default:
+		return expr.GetExpressionType() == ExpressionType::OPERATOR_COALESCE;
+	}
+}
+
 void CommonSubExpressionOptimizer::CountExpressions(Expression &expr, CSEReplacementState &state) {
 	// we only consider expressions with children for CSE elimination
 	switch (expr.GetExpressionClass()) {
@@ -58,40 +88,43 @@ void CommonSubExpressionOptimizer::CountExpressions(Expression &expr, CSEReplace
 	default:
 		break;
 	}
-	if (expr.GetExpressionClass() != ExpressionClass::BOUND_AGGREGATE && !expr.IsVolatile()) {
+	if (expr.GetExpressionClass() != ExpressionClass::BOUND_AGGREGATE) {
 		// we can't move aggregates to a projection, so we only consider the children of the aggregate
-		auto node = state.expression_count.find(expr);
-		if (node == state.expression_count.end()) {
-			// first time we encounter this expression, insert this node with [count = 1]
-			// but only if it is not an interior argument of a short circuit sensitive expression.
-			if (!state.short_circuited) {
-				state.expression_count[expr] = CSENode();
+		auto info = GetExpressionInfo(expr, state);
+		if (!info.is_volatile) {
+			HashedExpression<Expression> key {expr, info.hash};
+			auto node = state.expression_count.find(key);
+			if (node == state.expression_count.end()) {
+				// first time we encounter this expression, insert this node with [count = 1]
+				// but only if it is not an interior argument of a short circuit sensitive expression.
+				if (!state.short_circuited) {
+					state.expression_count.emplace(key, CSENode());
+				}
+			} else {
+				// we encountered this expression before, increment the occurrence count
+				node->second.count++;
 			}
-		} else {
-			// we encountered this expression before, increment the occurrence count
-			node->second.count++;
 		}
 	}
 
 	// If we have a function that uses short circuiting, then we can only extract CSEs from the leftmost
 	// side of the argument tree (child_no == 0)
-	switch (expr.GetExpressionClass()) {
-	case ExpressionClass::BOUND_CONJUNCTION:
-	case ExpressionClass::BOUND_CASE: {
-		// Save the short circuit reference
-		const auto save_short_circuit = state.short_circuited;
+	const auto save_short_circuit = state.short_circuited;
+	if (expr.GetExpressionType() == ExpressionType::OPERATOR_TRY ||
+	    (expr.GetExpressionClass() == ExpressionClass::BOUND_FUNCTION &&
+	     expr.Cast<BoundFunctionExpression>().Function().GetLazyArguments())) {
+		state.short_circuited = true;
+	}
+	if (ShortCircuits(expr)) {
 		ExpressionIterator::EnumerateChildren(expr, [&](Expression &child) {
 			CountExpressions(child, state);
 			state.short_circuited = true;
 		});
-		state.short_circuited = save_short_circuit;
-		break;
-	}
-	default:
+	} else {
 		// recursively count the children
 		ExpressionIterator::EnumerateChildren(expr, [&](Expression &child) { CountExpressions(child, state); });
-		break;
 	}
+	state.short_circuited = save_short_circuit;
 }
 
 void CommonSubExpressionOptimizer::PerformCSEReplacement(unique_ptr<Expression> &expr_ptr, CSEReplacementState &state) {
@@ -114,8 +147,12 @@ void CommonSubExpressionOptimizer::PerformCSEReplacement(unique_ptr<Expression> 
 		return;
 	}
 	// check if this child is eligible for CSE elimination
-	if (state.expression_count.find(expr) != state.expression_count.end()) {
-		auto &node = state.expression_count[expr];
+	auto info = state.infos.find(&expr);
+	auto entry = info == state.infos.end()
+	                 ? state.expression_count.end()
+	                 : state.expression_count.find(HashedExpression<Expression> {expr, info->second.hash});
+	if (entry != state.expression_count.end()) {
+		auto &node = entry->second;
 		if (node.count > 1) {
 			// this expression occurs more than once! push it into the projection
 			// check if it has already been pushed into the projection

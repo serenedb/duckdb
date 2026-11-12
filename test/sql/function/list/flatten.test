@@ -182,3 +182,23 @@ FROM flatten_db.inputs
 WHERE flatten(nested) IS NOT NULL;
 ----
 analyzed_plan	<REGEX>:.*Row Groups Scanned: 2 / 3.*
+
+query III
+SELECT sum(len(flatten(ll))), max(flatten(ll)), count(flatten(ll))
+FROM (SELECT [range(i % 3), NULL, range(i % 4)] AS ll FROM range(3000) t(i))
+----
+7500	[0, 1, 2]	3000
+
+query I
+SELECT flatten([l, l]) FROM (SELECT i, range(i % 4) AS l FROM range(5) t(i)) ORDER BY i
+----
+[]
+[0, 0]
+[0, 1, 0, 1]
+[0, 1, 2, 0, 1, 2]
+[]
+
+query I
+SELECT sum(len(flatten([l, l]))) FROM (SELECT range(i % 5) AS l FROM range(3000) t(i))
+----
+12000

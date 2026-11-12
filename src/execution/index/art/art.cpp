@@ -543,14 +543,16 @@ ARTConflictType ART::Build(unsafe_vector<ARTKey> &keys, unsafe_vector<ARTKey> &r
 		return result;
 	}
 
-#ifdef DEBUG
-	set<row_t> row_ids_debug;
-	Iterator it(*this);
-	it.FindMinimum(root_ptr);
-	ARTKey empty_key = ARTKey();
-	RowIdSetOutput output(row_ids_debug, NumericLimits<idx_t>().Maximum());
-	it.Scan(empty_key, output, false);
-	D_ASSERT(row_count == row_ids_debug.size());
+#ifdef D_ASSERT_IS_ENABLED
+	if (DUCKDB_DEBUG_VERIFY_ENABLED()) {
+		set<row_t> row_ids_debug;
+		Iterator it(*this);
+		it.FindMinimum(root_ptr);
+		ARTKey empty_key = ARTKey();
+		RowIdSetOutput output(row_ids_debug, NumericLimits<idx_t>().Maximum());
+		it.Scan(empty_key, output, false);
+		D_ASSERT(row_count == row_ids_debug.size());
+	}
 #endif
 
 	return ARTConflictType::NO_CONFLICT;
@@ -659,13 +661,9 @@ ErrorData ART::Append(IndexLock &l, DataChunk &chunk, Vector &row_ids, IndexAppe
 	return Insert(l, expr_chunk, row_ids, info);
 }
 
-void ART::VerifyAppend(DataChunk &chunk, IndexAppendInfo &info, optional_ptr<ConflictManager> manager) {
-	if (manager) {
-		D_ASSERT(manager->GetVerifyExistenceType() == VerifyExistenceType::APPEND);
-		return VerifyConstraint(chunk, info, *manager);
-	}
-	ConflictManager local_manager(VerifyExistenceType::APPEND, chunk.size());
-	VerifyConstraint(chunk, info, local_manager);
+void ART::VerifyAppend(DataChunk &chunk, IndexAppendInfo &info) {
+	ConflictManager manager(VerifyExistenceType::APPEND, chunk.size());
+	VerifyConstraint(chunk, info, manager);
 }
 
 //===--------------------------------------------------------------------===//
@@ -953,51 +951,81 @@ string ART::GenerateConstraintErrorMessage(VerifyExistenceType verify_type, cons
 	}
 }
 
+namespace {
+
+struct RowIdAppender {
+	vector<row_t> &row_ids;
+
+	bool TryAdd(const row_t row_id) {
+		row_ids.push_back(row_id);
+		return true;
+	}
+	void SetKey(const IteratorKey &, const idx_t) {
+	}
+};
+
+struct LiveRowIdFinder {
+	const vector<row_t> &deleted_row_ids;
+	optional<row_t> row_id;
+
+	bool TryAdd(const row_t candidate) {
+		if (std::binary_search(deleted_row_ids.begin(), deleted_row_ids.end(), candidate)) {
+			return true;
+		}
+		row_id = candidate;
+		return false;
+	}
+	void SetKey(const IteratorKey &, const idx_t) {
+	}
+};
+
+template <class Output>
+void ScanLeafRowIds(const ART &art, const NodePtr &leaf_ptr, Output &output) {
+	Iterator it(art);
+	it.FindMinimum(leaf_ptr);
+	it.Scan(ARTKey(), output, false);
+}
+
+} // namespace
+
 void ART::VerifyLeaf(const NodePtr &leaf_ptr, const ARTKey &key, DeleteIndexInfo delete_index_info,
                      ConflictManager &manager, optional_idx &conflict_idx, idx_t i) const {
-	// Get the set of deleted row ids for this value if we have any delete indexes
 	vector<row_t> deleted_row_ids;
 	if (delete_index_info.delete_indexes) {
+		RowIdAppender appender {deleted_row_ids};
 		for (auto &index : *delete_index_info.delete_indexes) {
 			auto &delete_art = index.get().Cast<ART>();
 			auto deleted_leaf_ptr = ARTOperator::Lookup(delete_art, delete_art.root_ptr, key, 0);
-			if (!deleted_leaf_ptr) {
-				continue;
+			if (deleted_leaf_ptr) {
+				ScanLeafRowIds(delete_art, deleted_leaf_ptr.Get(), appender);
 			}
-			// All leaves in the delete ART are inlined.
-			if (deleted_leaf_ptr.Get().GetType() != NType::LEAF_INLINED) {
-				throw InternalException("Non-inlined leaf?");
-			}
-			auto deleted_row_id = deleted_leaf_ptr.Get().GetRowId();
-			deleted_row_ids.push_back(deleted_row_id);
 		}
+		std::sort(deleted_row_ids.begin(), deleted_row_ids.end());
 	}
+	const auto deleted = [&](const row_t row_id) {
+		return std::binary_search(deleted_row_ids.begin(), deleted_row_ids.end(), row_id);
+	};
 
 	if (leaf_ptr.GetType() == NType::LEAF_INLINED) {
-		auto this_row_id = leaf_ptr.GetRowId();
-		if (!deleted_row_ids.empty()) {
-			// The leaf is inlined, and the same key exists in the delete ART.
-			// check if the row-id matches - if it does there is no conflict
-			for (auto &deleted_row_id : deleted_row_ids) {
-				if (deleted_row_id == this_row_id) {
-					return;
-				}
-			}
+		if (deleted(leaf_ptr.GetRowId())) {
+			return;
 		}
-
-		if (manager.AddHit(i, this_row_id)) {
+		if (manager.AddHit(i)) {
 			conflict_idx = i;
 		}
 		return;
 	}
 
-	// Fast path for FOREIGN KEY constraints.
-	// Up to here, the above code paths work implicitly for FKs, as the leaf is inlined.
-	// FIXME: proper foreign key + delete ART support.
 	if (index_constraint_type == IndexConstraintType::FOREIGN) {
-		D_ASSERT(deleted_row_ids.empty());
-		// We don't handle FK conflicts in UPSERT, so the row ID should not matter.
-		if (manager.AddHit(i, MAX_ROW_ID)) {
+		if (deleted_row_ids.empty()) {
+			if (manager.AddHit(i)) {
+				conflict_idx = i;
+			}
+			return;
+		}
+		LiveRowIdFinder finder {deleted_row_ids, nullopt};
+		ScanLeafRowIds(*this, leaf_ptr, finder);
+		if (finder.row_id && manager.AddHit(i)) {
 			conflict_idx = i;
 		}
 		return;
@@ -1014,22 +1042,15 @@ void ART::VerifyLeaf(const NodePtr &leaf_ptr, const ARTKey &key, DeleteIndexInfo
 		throw InternalException("VerifyLeaf expects exactly two row IDs to be scanned");
 	}
 
-	if (!deleted_row_ids.empty()) {
-		for (const auto row_id : row_ids) {
-			for (auto deleted_row_id : deleted_row_ids) {
-				if (deleted_row_id == row_id) {
-					return;
-				}
-			}
+	for (const auto row_id : row_ids) {
+		if (deleted(row_id)) {
+			return;
 		}
 	}
 
-	auto row_id_it = row_ids.begin();
-	if (manager.AddHit(i, *row_id_it)) {
+	if (manager.AddHit(i)) {
 		conflict_idx = i;
 	}
-	row_id_it++;
-	manager.AddSecondHit(i, *row_id_it);
 }
 
 void ART::VerifyConstraint(DataChunk &chunk, IndexAppendInfo &info, ConflictManager &manager) {
@@ -1060,7 +1081,6 @@ void ART::VerifyConstraint(DataChunk &chunk, IndexAppendInfo &info, ConflictMana
 		VerifyLeaf(leaf_ptr.Get(), keys[i], DeleteIndexInfo(info.delete_indexes), manager, conflict_idx, i);
 	}
 
-	manager.FinishLookup();
 	if (!conflict_idx.IsValid()) {
 		return;
 	}
@@ -1249,6 +1269,17 @@ idx_t ART::GetInMemorySize(IndexLock &index_lock) const {
 		in_memory_size += allocator->GetInMemorySize();
 	}
 	return in_memory_size;
+}
+
+idx_t ART::GetAllocationSize(IndexLock &index_lock) const {
+	index_lock.AssertHeld(*this);
+	D_ASSERT(owns_data);
+
+	idx_t allocation_size = 0;
+	for (const auto &allocator : *allocators) {
+		allocation_size += allocator->GetSegmentCount() * allocator->GetSegmentSize();
+	}
+	return allocation_size;
 }
 
 bool ART::SupportsDeltaIndexes() const {
@@ -1574,7 +1605,8 @@ void ART::VerifyAllocations(IndexLock &l) {
 }
 
 void ART::VerifyAllocationsInternal() {
-#ifdef DEBUG
+#ifdef D_ASSERT_IS_ENABLED
+	DUCKDB_DEBUG_VERIFY_GUARD();
 	unordered_map<uint8_t, idx_t> node_counts;
 	for (idx_t i = 0; i < allocators->size(); i++) {
 		node_counts[NumericCast<uint8_t>(i)] = 0;

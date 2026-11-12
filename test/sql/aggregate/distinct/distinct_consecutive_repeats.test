@@ -1,0 +1,49 @@
+# name: test/sql/aggregate/distinct/distinct_consecutive_repeats.test
+# description: DISTINCT and count(DISTINCT) inputs with runs of repeated rows, NULL runs and keys that change at different rates
+# group: [distinct]
+
+statement ok
+SET threads = 4
+
+statement ok
+CREATE TABLE t AS SELECT i, i // 7 AS u, (i // 3) % 5 AS r, CASE WHEN (i // 11) % 4 = 0 THEN NULL ELSE i // 11 END AS n, ((i // 5) % 1000)::VARCHAR || repeat('x', 20) AS s, (i // 13)::HUGEINT AS h, (i // 2)::DOUBLE AS d FROM range(1000000) r(i)
+
+query I
+SELECT count(DISTINCT u) FROM t
+----
+142858
+
+query II
+SELECT count(*), bool_and(c = rc) FROM (SELECT r, count(DISTINCT u) AS c FROM t GROUP BY r) a JOIN (SELECT r, count(*) AS rc FROM (SELECT r, u, count(*) FROM t GROUP BY r, u) GROUP BY r) b USING (r)
+----
+5	true
+
+query I
+SELECT count(*) = (SELECT count(*) FROM (SELECT r, u, count(*) FROM t GROUP BY r, u)) FROM (SELECT DISTINCT r, u FROM t)
+----
+true
+
+query II
+SELECT count(DISTINCT n), count(*) FROM (SELECT DISTINCT n FROM t)
+----
+68182	68183
+
+query I
+SELECT count(DISTINCT n) = (SELECT count(*) FROM (SELECT n, count(*) FROM t WHERE n IS NOT NULL GROUP BY n)) FROM t
+----
+true
+
+query I
+SELECT count(DISTINCT s) FROM t
+----
+1000
+
+query II
+SELECT count(*), bool_and(c = rc) FROM (SELECT r, count(DISTINCT s) AS c FROM t GROUP BY r) a JOIN (SELECT r, count(*) AS rc FROM (SELECT r, s, count(*) FROM t GROUP BY r, s) GROUP BY r) b USING (r)
+----
+5	true
+
+query III
+SELECT count(DISTINCT h), count(DISTINCT d), count(DISTINCT (u, r)) = (SELECT count(*) FROM (SELECT u, r, count(*) FROM t GROUP BY u, r)) FROM t
+----
+76924	500000	true

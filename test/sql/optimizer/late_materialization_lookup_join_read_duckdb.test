@@ -1,0 +1,79 @@
+# name: test/sql/optimizer/late_materialization_lookup_join_read_duckdb.test
+# description: Late materialization of read_duckdb scans through a LOOKUP_JOIN
+# group: [optimizer]
+
+statement ok
+SET profiling_renderer_settings = MAP {'operator_casing': 'upper'};
+
+statement ok
+CREATE TABLE src AS SELECT
+    i AS id,
+    i % 7 AS grp,
+    md5(i::VARCHAR) || md5((i + 1)::VARCHAR) AS payload,
+    {'a': i, 'b': 'v' || i::VARCHAR} AS s,
+    [i, i + 1] AS l
+FROM range(12000) t(i);
+
+statement ok
+ATTACH '{TEST_DIR}/lj_files_a.duckdb' AS lj_a;
+
+statement ok
+CREATE TABLE lj_a.t AS FROM src WHERE id < 6000;
+
+statement ok
+DETACH lj_a;
+
+statement ok
+ATTACH '{TEST_DIR}/lj_files_b.duckdb' AS lj_b;
+
+statement ok
+CREATE TABLE lj_b.t AS FROM src WHERE id >= 6000;
+
+statement ok
+DETACH lj_b;
+
+query II
+EXPLAIN SELECT * FROM read_duckdb('{TEST_DIR}/lj_files_a.duckdb', table_name = 't') ORDER BY id DESC LIMIT 3;
+----
+physical_plan	<REGEX>:.*LOOKUP_JOIN.*Key: file_index,.*rowid.*TOP_N.*
+
+query IIII
+SELECT id, grp, payload = md5(id::VARCHAR) || md5((id + 1)::VARCHAR), s FROM read_duckdb('{TEST_DIR}/lj_files_a.duckdb', table_name = 't') ORDER BY id DESC LIMIT 3;
+----
+5999	0	true	{'a': 5999, 'b': v5999}
+5998	6	true	{'a': 5998, 'b': v5998}
+5997	5	true	{'a': 5997, 'b': v5997}
+
+query III
+SELECT id, payload = md5(id::VARCHAR) || md5((id + 1)::VARCHAR), l FROM read_duckdb('{TEST_DIR}/lj_files_*.duckdb', table_name = 't') ORDER BY id % 6000, id LIMIT 4;
+----
+0	true	[0, 1]
+6000	true	[6000, 6001]
+1	true	[1, 2]
+6001	true	[6001, 6002]
+
+query II
+EXPLAIN SELECT * FROM read_duckdb('{TEST_DIR}/lj_files_*.duckdb', table_name = 't') LIMIT 7000 OFFSET 11;
+----
+physical_plan	<!REGEX>:.*LOOKUP_JOIN.*
+
+statement ok
+SET late_materialization_lookup_max_rows = 10000;
+
+query II
+EXPLAIN SELECT * FROM read_duckdb('{TEST_DIR}/lj_files_*.duckdb', table_name = 't') LIMIT 7000 OFFSET 11;
+----
+physical_plan	<REGEX>:.*LOOKUP_JOIN.*
+
+query IIII
+SELECT count(*), min(id), max(id), bool_and(payload = md5(id::VARCHAR) || md5((id + 1)::VARCHAR) AND s.a = id) FROM (SELECT * FROM read_duckdb('{TEST_DIR}/lj_files_*.duckdb', table_name = 't') LIMIT 7000 OFFSET 11);
+----
+7000	11	7010	true
+
+query I
+SELECT bool_and(id = rn + 10) FROM (SELECT id, row_number() OVER () AS rn FROM (SELECT * FROM read_duckdb('{TEST_DIR}/lj_files_*.duckdb', table_name = 't') LIMIT 7000 OFFSET 11));
+----
+true
+
+statement ok
+RESET late_materialization_lookup_max_rows;

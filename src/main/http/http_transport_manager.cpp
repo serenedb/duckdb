@@ -5,6 +5,8 @@
 #include "duckdb/common/limits.hpp"
 #include "duckdb/main/config.hpp"
 #include "duckdb/main/database.hpp"
+#include "duckdb/main/settings.hpp"
+#include "duckdb/parallel/task_scheduler.hpp"
 
 #if !defined(_WIN32) && !defined(__EMSCRIPTEN__)
 #include <sys/resource.h>
@@ -279,10 +281,13 @@ void HTTPTransportManager::Initialize(const DBConfig &config) {
 }
 
 idx_t HTTPTransportManager::AutomaticCapacity(const DBConfig &config) {
+	return AutomaticCapacity(config, Settings::Get<AsyncThreadsSetting>(config));
+}
+
+idx_t HTTPTransportManager::AutomaticCapacity(const DBConfig &config, int64_t async_threads) {
 	auto &fs = *config.file_system;
-	auto io_concurrency = config.options.async_threads == DConstants::INVALID_INDEX
-	                          ? DBConfig::GetSystemMaxAsyncThreads(fs)
-	                          : config.options.async_threads;
+	auto io_concurrency =
+	    async_threads < 0 ? DBConfig::GetSystemMaxAsyncThreads(fs) : NumericCast<idx_t>(async_threads);
 	return CalculateCapacity(DBConfig::GetSystemMaxThreads(fs), GetFileDescriptorLimit(), io_concurrency);
 }
 
@@ -481,6 +486,7 @@ unique_ptr<HTTPResponse> HTTPTransportManager::PerformRequest(Session &session, 
 		throw InvalidInputException("HTTP parameters do not belong to this transport session");
 	}
 
+	TaskScheduler::BlockingScope blocking;
 	auto &state = *session.state;
 	if (state.reuse_policy == HTTPTransportReusePolicy::CLIENT_FREE) {
 		{

@@ -9,10 +9,12 @@
 #pragma once
 
 #include "duckdb/catalog/catalog_entry.hpp"
+#include "duckdb/catalog/catalog_entry_map.hpp"
 #include "duckdb/catalog/catalog_transaction.hpp"
 #include "duckdb/common/atomic.hpp"
 #include "duckdb/common/enums/catalog_lookup_behavior.hpp"
 #include "duckdb/common/enums/on_entry_not_found.hpp"
+#include "duckdb/common/enums/sql_compatibility.hpp"
 #include "duckdb/common/error_data.hpp"
 #include "duckdb/common/exception/catalog_exception.hpp"
 #include "duckdb/common/map.hpp"
@@ -24,6 +26,11 @@
 #include "duckdb/parser/qualified_name.hpp"
 #include "duckdb/catalog/entry_lookup_info.hpp"
 #include "duckdb/common/types/string.hpp"
+#include "duckdb/storage/storage_index.hpp"
+#include "duckdb/storage/table/row_group_collection.hpp"
+#include "duckdb/storage/table/table_index_list.hpp"
+#include "duckdb/storage/write_ahead_log.hpp"
+#include "duckdb/transaction/duck_transaction.hpp"
 
 #include <functional>
 
@@ -40,6 +47,11 @@ struct CreatePragmaFunctionInfo;
 struct CreateFunctionInfo;
 struct CreateViewInfo;
 struct CreateSequenceInfo;
+struct CreateJobInfo;
+struct CreateTokenizerInfo;
+struct CreateRoleInfo;
+struct CreateDatabaseInfo;
+struct CreateForeignServerInfo;
 struct CreateCollationInfo;
 struct CreateCoordinateSystemInfo;
 struct CreateIndexInfo;
@@ -67,6 +79,7 @@ class DatabaseInstance;
 class DependencyManager;
 
 struct CatalogLookup;
+struct SequenceValue;
 struct CatalogEntryLookup;
 struct SimilarCatalogEntry;
 
@@ -127,12 +140,30 @@ public:
 	                                                        const Identifier &catalog_name);
 	//! Get the specific Catalog from the AttachedDatabase
 	DUCKDB_API static Catalog &GetCatalog(AttachedDatabase &db);
+	DUCKDB_API static Catalog &GetDDLCatalog(ClientContext &context, CatalogType type, const Identifier &catalog_name);
 
 	DUCKDB_API AttachedDatabase &GetAttached();
 	DUCKDB_API const AttachedDatabase &GetAttached() const;
 	DUCKDB_API DatabaseInstance &GetDatabase();
 
 	virtual bool IsDuckCatalog() {
+		return false;
+	}
+
+	virtual SqlCompatibility Compatibility() const {
+		return SqlCompatibility::DUCK;
+	}
+	DUCKDB_API static SqlCompatibility DefaultCompatibility(ClientContext &context);
+	bool IsCaseSensitive() const {
+		return Compatibility() == SqlCompatibility::POSTGRES;
+	}
+
+	virtual bool LogsSequences() const {
+		return false;
+	}
+	virtual void LogSequenceValue(const SequenceValue &value) {
+	}
+	virtual bool CrossCatalogDependencies() const {
 		return false;
 	}
 
@@ -191,6 +222,16 @@ public:
 	//! Creates a sequence in the catalog.
 	DUCKDB_API optional_ptr<CatalogEntry> CreateSequence(CatalogTransaction transaction, CreateSequenceInfo &info);
 	DUCKDB_API optional_ptr<CatalogEntry> CreateSequence(ClientContext &context, CreateSequenceInfo &info);
+	DUCKDB_API optional_ptr<CatalogEntry> CreateJob(ClientContext &context, CreateJobInfo &info);
+	DUCKDB_API optional_ptr<CatalogEntry> CreateTokenizer(ClientContext &context, CreateTokenizerInfo &info);
+	DUCKDB_API virtual optional_ptr<CatalogEntry> CreateRole(CatalogTransaction transaction, CreateRoleInfo &info);
+	DUCKDB_API virtual optional_ptr<CatalogEntry> CreateDatabase(CatalogTransaction transaction,
+	                                                             CreateDatabaseInfo &info);
+	DUCKDB_API virtual optional_ptr<CatalogEntry> CreateForeignServer(CatalogTransaction transaction,
+	                                                                  CreateForeignServerInfo &info);
+	DUCKDB_API virtual void DropRole(CatalogTransaction transaction, DropInfo &info);
+	DUCKDB_API virtual void DropDatabase(CatalogTransaction transaction, DropInfo &info);
+	DUCKDB_API virtual void DropForeignServer(CatalogTransaction transaction, DropInfo &info);
 	//! Creates a Enum in the catalog.
 	DUCKDB_API optional_ptr<CatalogEntry> CreateType(CatalogTransaction transaction, CreateTypeInfo &info);
 	DUCKDB_API optional_ptr<CatalogEntry> CreateType(ClientContext &context, CreateTypeInfo &info);
@@ -240,6 +281,7 @@ public:
 
 	//! Drops an entry from the catalog
 	DUCKDB_API void DropEntry(ClientContext &context, DropInfo &info);
+	static bool InRelationNamespace(CatalogType type);
 
 	DUCKDB_API virtual optional_ptr<SchemaCatalogEntry> LookupSchema(CatalogTransaction transaction,
 	                                                                 const EntryLookupInfo &schema_lookup,
@@ -340,19 +382,51 @@ public:
 	         const EntryLookupInfo &lookup_info);
 
 	template <class T>
-	[[deprecated("Fold the catalog/schema into a QualifiedName and use GetEntry<T>(context, QualifiedName, ...) "
-	             "instead")]] optional_ptr<T>
-	GetEntry(ClientContext &context, const Identifier &schema_name, const Identifier &name,
-	         OnEntryNotFound if_not_found, QueryErrorContext error_context = QueryErrorContext()) {
-		return GetEntry<T>(context, QualifiedName(GetName(), schema_name, name), if_not_found, error_context);
+	optional_ptr<T> GetEntry(ClientContext &context, const Identifier &schema_name, const Identifier &name,
+	                         OnEntryNotFound if_not_found, QueryErrorContext error_context = QueryErrorContext()) {
+		EntryLookupInfo lookup_info(T::Type, QualifiedName(GetName(), schema_name, name), error_context);
+		auto entry = GetEntry(context, schema_name, lookup_info, if_not_found);
+		if (!entry) {
+			return nullptr;
+		}
+		if (entry->type != T::Type) {
+			throw CatalogException(error_context, "%s is not an %s", name.GetIdentifierName(), T::Name);
+		}
+		return &entry->template Cast<T>();
 	}
 
 	template <class T>
-	[[deprecated("Fold the catalog/schema into a QualifiedName and use GetEntry<T>(context, QualifiedName, ...) "
-	             "instead")]] T &
-	GetEntry(ClientContext &context, const Identifier &schema_name, const Identifier &name,
-	         QueryErrorContext error_context = QueryErrorContext()) {
-		return GetEntry<T>(context, QualifiedName(GetName(), schema_name, name), error_context);
+	T &GetEntry(ClientContext &context, const Identifier &schema_name, const Identifier &name,
+	            QueryErrorContext error_context = QueryErrorContext()) {
+		return *GetEntry<T>(context, schema_name, name, OnEntryNotFound::THROW_EXCEPTION, error_context);
+	}
+
+	DUCKDB_API static optional_ptr<CatalogEntry> GetBuiltinEntry(ClientContext &context, CatalogType type,
+	                                                             const Identifier &name, OnEntryNotFound if_not_found,
+	                                                             QueryErrorContext error_context = QueryErrorContext());
+	template <class T>
+	static optional_ptr<T> GetBuiltinEntry(ClientContext &context, const Identifier &name, OnEntryNotFound if_not_found,
+	                                       QueryErrorContext error_context = QueryErrorContext()) {
+		auto entry = GetBuiltinEntry(context, T::Type, name, if_not_found, error_context);
+		if (!entry) {
+			return nullptr;
+		}
+		if (entry->type != T::Type) {
+			throw CatalogException(error_context, "%s is not an %s", name.GetIdentifierName(), T::Name);
+		}
+		return &entry->template Cast<T>();
+	}
+	template <class T>
+	static T &GetBuiltinEntry(ClientContext &context, const Identifier &name,
+	                          QueryErrorContext error_context = QueryErrorContext()) {
+		return *GetBuiltinEntry<T>(context, name, OnEntryNotFound::THROW_EXCEPTION, error_context);
+	}
+	DUCKDB_API static optional_ptr<CatalogEntry> GetBuiltinEntry(DatabaseInstance &db, CatalogType type,
+	                                                             const Identifier &name);
+	template <class T>
+	static optional_ptr<T> GetBuiltinEntry(DatabaseInstance &db, const Identifier &name) {
+		auto entry = GetBuiltinEntry(db, T::Type, name);
+		return entry ? &entry->template Cast<T>() : nullptr;
 	}
 
 	//! Gets the "catalog.schema.name" entry of the specified type from a QualifiedName
@@ -367,7 +441,7 @@ public:
 	DUCKDB_API optional_ptr<CatalogEntry> AddFunction(ClientContext &context, CreateFunctionInfo &info);
 
 	//! Alter an existing entry in the catalog.
-	DUCKDB_API void Alter(CatalogTransaction transaction, AlterInfo &info);
+	DUCKDB_API virtual void Alter(CatalogTransaction transaction, AlterInfo &info);
 	DUCKDB_API void Alter(ClientContext &context, AlterInfo &info);
 
 	virtual PhysicalOperator &PlanCreateTableAs(ClientContext &context, PhysicalPlanGenerator &planner,
@@ -384,6 +458,8 @@ public:
 	                                        LogicalMergeInto &op, PhysicalOperator &plan);
 	virtual unique_ptr<LogicalOperator> BindCreateIndex(Binder &binder, CreateStatement &stmt, TableCatalogEntry &table,
 	                                                    unique_ptr<LogicalOperator> plan);
+	virtual unique_ptr<LogicalOperator> BindCreateViewIndex(Binder &binder, CreateStatement &stmt,
+	                                                        ViewCatalogEntry &view, unique_ptr<LogicalOperator> plan);
 	virtual unique_ptr<LogicalOperator> BindAlterAddIndex(Binder &binder, TableCatalogEntry &table_entry,
 	                                                      unique_ptr<LogicalOperator> plan,
 	                                                      unique_ptr<CreateIndexInfo> create_info,
@@ -446,6 +522,10 @@ public:
 
 	//! Returns the dependency manager of this catalog - if the catalog has any
 	virtual optional_ptr<DependencyManager> GetDependencyManager();
+	virtual void ScanSubjects(CatalogTransaction transaction, CatalogEntry &entry,
+	                          const std::function<void(CatalogEntry &)> &callback);
+	virtual catalog_entry_vector_t OwnedEntries(CatalogTransaction transaction, const CatalogEntry &owner);
+	virtual optional_ptr<CatalogEntry> OwnerOf(CatalogTransaction transaction, CatalogEntry &owned);
 
 	//! Whether attaching a catalog with the given path and attach options would be considered a conflict
 	virtual bool HasConflictingAttachOptions(const string &path, const AttachOptions &options);
@@ -490,7 +570,11 @@ public:
 	                                                                   const string &catalog_name);
 	DUCKDB_API static vector<reference<SchemaCatalogEntry>> GetSchemas(CatalogEntryRetriever &retriever,
 	                                                                   const string &catalog_name);
-	DUCKDB_API static vector<reference<SchemaCatalogEntry>> GetAllSchemas(ClientContext &context);
+	DUCKDB_API static vector<reference<SchemaCatalogEntry>>
+	GetAllSchemas(ClientContext &context, bool include_hidden = false,
+	              const std::function<bool(AttachedDatabase &)> &needs_database = nullptr);
+	DUCKDB_API static void ScanListedEntries(ClientContext &context, SchemaCatalogEntry &schema, CatalogType type,
+	                                         const std::function<void(CatalogEntry &)> &callback);
 
 	static vector<reference<CatalogEntry>> GetAllEntries(ClientContext &context, CatalogType catalog_type);
 
@@ -570,6 +654,8 @@ private:
 	                                                           const reference_set_t<SchemaCatalogEntry> &schemas);
 
 	virtual void DropSchema(ClientContext &context, DropInfo &info) = 0;
+	DUCKDB_API virtual void AlterSchemaEntry(CatalogTransaction transaction, SchemaCatalogEntry &schema,
+	                                         AlterInfo &info);
 
 public:
 	template <class TARGET>

@@ -1,6 +1,5 @@
 #include "duckdb/common/vector_operations/binary_executor.hpp"
 #include "duckdb/common/vector_operations/ternary_executor.hpp"
-#include "duckdb/execution/expression_executor.hpp"
 #include "json_common.hpp"
 #include "json_functions.hpp"
 
@@ -55,16 +54,12 @@ public:
 		return constant == other.constant && path == other.path;
 	}
 	static unique_ptr<FunctionData> Bind(BindScalarFunctionInput &input) {
-		auto &context = input.GetClientContext();
-		auto &arguments = input.GetArguments();
 		bool constant = false;
 		string path;
-		if (arguments[1]->IsFoldable()) {
-			const auto path_val = ExpressionExecutor::EvaluateScalar(context, *arguments[1]);
-			if (!path_val.IsNull()) {
-				constant = true;
-				path = path_val.DefaultCastAs(LogicalType::VARCHAR).GetValue<string>();
-			}
+		auto path_val = input.TryGetConstant(1);
+		if (path_val && !path_val->IsNull()) {
+			constant = true;
+			path = path_val->DefaultCastAs(LogicalType::VARCHAR).GetValue<string>();
 		}
 		return make_uniq<JSONModifyFunctionData>(constant, std::move(path));
 	}

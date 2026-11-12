@@ -43,9 +43,7 @@ unique_ptr<Expression> RewriteOrderedFirst(AggregateRewriteInput &input) {
 		function_name = "arg_min_null";
 	}
 
-	auto &catalog = Catalog::GetSystemCatalog(input.context);
-	auto &entry = catalog.GetEntry<AggregateFunctionCatalogEntry>(
-	    input.context, QualifiedName(catalog.GetName(), Identifier::DefaultSchema(), function_name));
+	auto &entry = Catalog::GetBuiltinEntry<AggregateFunctionCatalogEntry>(input.context, Identifier(function_name));
 	vector<LogicalType> child_types;
 	for (auto &child : children) {
 		child_types.push_back(child->GetReturnType());

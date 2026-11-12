@@ -9,30 +9,6 @@
 
 namespace duckdb {
 
-static bool IsVolatile(LogicalProjection &proj, const Expression &expr) {
-	bool is_volatile = false;
-	ExpressionIterator::VisitExpression<BoundColumnRefExpression>(expr, [&](const BoundColumnRefExpression &colref) {
-		D_ASSERT(colref.Depth() == 0);
-		auto &proj_expr = proj.GetExpression(colref.Binding());
-		if (proj_expr.IsVolatile()) {
-			is_volatile = true;
-		}
-	});
-	return is_volatile;
-}
-
-static bool ReferencesComputedExpression(LogicalProjection &proj, const Expression &expr) {
-	bool references_computed_expression = false;
-	ExpressionIterator::VisitExpression<BoundColumnRefExpression>(expr, [&](const BoundColumnRefExpression &colref) {
-		D_ASSERT(colref.Depth() == 0);
-		auto &proj_expr = proj.GetExpression(colref.Binding());
-		if (proj_expr.GetExpressionClass() != ExpressionClass::BOUND_COLUMN_REF) {
-			references_computed_expression = true;
-		}
-	});
-	return references_computed_expression;
-}
-
 static unique_ptr<Expression> CreateColumnReference(const Expression &expr, ColumnBinding binding) {
 	unique_ptr<Expression> result = make_uniq<BoundColumnRefExpression>(expr.GetReturnType(), binding);
 	if (!expr.GetAlias().empty()) {
@@ -160,7 +136,7 @@ unique_ptr<LogicalOperator> FilterPushdown::PushdownProjection(unique_ptr<Logica
 	for (auto &filter : filters) {
 		auto &f = *filter;
 		D_ASSERT(f.bindings.size() <= 1);
-		bool is_volatile = IsVolatile(proj, *f.filter);
+		bool is_volatile = ReferencesVolatileExpression(proj, *f.filter);
 		bool preserve_computed_expression = projection_mode == ProjectionMode::PRESERVE_COMPUTED_EXPRESSIONS &&
 		                                    ReferencesComputedExpression(proj, *f.filter);
 		if (is_volatile || (f.filter->CanThrow() && !f.has_barrier)) {
@@ -172,10 +148,14 @@ unique_ptr<LogicalOperator> FilterPushdown::PushdownProjection(unique_ptr<Logica
 			// Compute filter-dependent projection expressions once, below the filter.
 			split_expressions.push_back(std::move(f.filter));
 		} else {
+			bool composes_expression = projection_mode != ProjectionMode::ALLOW_COMPUTED_EXPRESSIONS &&
+			                           ReferencesComputedExpression(proj, *f.filter);
 			// rewrite the bindings within this subquery
 			f.filter = ReplaceProjectionBindings(proj, std::move(f.filter));
 			// add the filter to the child pushdown
-			if (child_pushdown.AddFilter(std::move(f.filter)) == FilterResult::UNSATISFIABLE) {
+			auto result = composes_expression ? child_pushdown.RewriteAndAddFilter(std::move(f.filter))
+			                                  : child_pushdown.AddFilter(std::move(f.filter));
+			if (result == FilterResult::UNSATISFIABLE) {
 				// filter statically evaluates to false, strip tree
 				return make_uniq<LogicalEmptyResult>(std::move(op));
 			}

@@ -5,7 +5,7 @@
 namespace duckdb {
 
 // LCOV_EXCL_START
-string StatementTypeToString(StatementType type) {
+std::string_view StatementTypeToString(StatementType type) {
 	switch (type) {
 	case StatementType::SELECT_STATEMENT:
 		return "SELECT";
@@ -82,7 +82,7 @@ string StatementTypeToString(StatementType type) {
 	return "INVALID";
 }
 
-string StatementReturnTypeToString(StatementReturnType type) {
+std::string_view StatementReturnTypeToString(StatementReturnType type) {
 	switch (type) {
 	case StatementReturnType::QUERY_RESULT:
 		return "QUERY_RESULT";
@@ -99,6 +99,12 @@ void StatementProperties::RegisterDBRead(Catalog &catalog, ClientContext &contex
 	auto catalog_identity = CatalogIdentity {catalog.GetOid(), catalog.GetCatalogVersion(context)};
 	D_ASSERT(read_databases.count(catalog.GetName()) == 0 || read_databases[catalog.GetName()] == catalog_identity);
 	read_databases[catalog.GetName()] = catalog_identity;
+}
+
+void StatementProperties::RegisterDataRead(const CatalogEntry &entry, ClientContext &context) {
+	if (const auto version = entry.GetDataVersion(context); version.IsValid()) {
+		data_reads.push_back({.entry = &entry, .version = version.GetIndex()});
+	}
 }
 
 void StatementProperties::RegisterDBModify(Catalog &catalog, ClientContext &context,

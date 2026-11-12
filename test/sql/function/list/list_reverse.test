@@ -140,7 +140,7 @@ statement ok
 INSERT INTO palindromes VALUES ('racecar'), ('civic'), ('defied'), ('repaper'), ('kayak'), ('rotator'), ('tattarrattat'), ('saippuakivikauppias'), ('malayalam');
 
 query I
-SELECT list_aggr(list_reverse(str_split(s, '')), 'string_agg', '') FROM palindromes ORDER BY s;
+SELECT list_aggr(list_reverse(str_split(s, NULL)), 'string_agg', '') FROM palindromes ORDER BY s;
 ----
 civic
 deifed
@@ -245,7 +245,7 @@ SELECT ([[1], [1, 2], NULL, [NULL], [], [1, 2, 3]]).list_reverse()
 
 
 statement ok
-CREATE OR REPLACE TABLE lists AS SELECT range % 4 g, list(range) l FROM range(10000) GROUP BY range % 4;
+CREATE OR REPLACE TABLE lists AS SELECT range % 4 g, list(range) l FROM range_st(10000) GROUP BY range % 4;
 
 query T
 with cte0 as (

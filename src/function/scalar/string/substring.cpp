@@ -3,6 +3,7 @@
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/vector_operations/vector_operations.hpp"
 #include "duckdb/common/vector_operations/ternary_executor.hpp"
+#include "duckdb/function/scalar/regexp.hpp"
 #include "duckdb/function/scalar/string_common.hpp"
 #include "duckdb/function/scalar/string_functions.hpp"
 #include "duckdb/planner/expression/bound_constant_expression.hpp"
@@ -43,12 +44,8 @@ static string_t SubstringEmptyString(Vector &result) {
 	return result_string;
 }
 
-static string_t SubstringSlice(Vector &result, const char *input_data, int64_t offset, int64_t length) {
-	auto result_string = StringVector::EmptyString(result, UnsafeNumericCast<idx_t>(length));
-	auto result_data = result_string.GetDataWriteable();
-	memcpy(result_data, input_data + offset, UnsafeNumericCast<size_t>(length));
-	result_string.Finalize();
-	return result_string;
+static string_t SubstringSlice(const char *input_data, int64_t offset, int64_t length) {
+	return string_t(input_data + offset, UnsafeNumericCast<uint32_t>(length));
 }
 
 // compute start and end characters from the given input size and offset/length
@@ -106,7 +103,7 @@ string_t SubstringASCII(Vector &result, string_t input, int64_t offset, int64_t 
 	if (!SubstringASCIIBounds(UnsafeNumericCast<int64_t>(input_size), offset, length, start, end)) {
 		return SubstringEmptyString(result);
 	}
-	return SubstringSlice(result, input_data, start, UnsafeNumericCast<int64_t>(end - start));
+	return SubstringSlice(input_data, start, UnsafeNumericCast<int64_t>(end - start));
 }
 
 string_t SubstringUnicode(Vector &result, string_t input, int64_t offset, int64_t length) {
@@ -193,7 +190,7 @@ string_t SubstringUnicode(Vector &result, string_t input, int64_t offset, int64_
 	}
 	D_ASSERT(end_pos >= start_pos);
 	// after we have found these, we can slice the substring
-	return SubstringSlice(result, input_data, UnsafeNumericCast<int64_t>(start_pos),
+	return SubstringSlice(input_data, UnsafeNumericCast<int64_t>(start_pos),
 	                      UnsafeNumericCast<int64_t>(end_pos - start_pos));
 }
 
@@ -223,7 +220,7 @@ string_t SubstringGrapheme(Vector &result, string_t input, int64_t offset, int64
 	}
 	if (is_ascii) {
 		// all characters are ascii, we can just slice the substring
-		return SubstringSlice(result, input_data, start, end - start);
+		return SubstringSlice(input_data, start, end - start);
 	}
 	// if the characters are not ascii, we need to scan grapheme clusters
 	// first figure out which direction we need to scan
@@ -254,7 +251,7 @@ string_t SubstringGrapheme(Vector &result, string_t input, int64_t offset, int64
 		return SubstringEmptyString(result);
 	}
 	// after we have found these, we can slice the substring
-	return SubstringSlice(result, input_data, UnsafeNumericCast<int64_t>(start_pos),
+	return SubstringSlice(input_data, UnsafeNumericCast<int64_t>(start_pos),
 	                      UnsafeNumericCast<int64_t>(end_pos - start_pos));
 }
 
@@ -290,6 +287,7 @@ void SubstringFunction(DataChunk &args, ExpressionState &state, Vector &result) 
 			    return OP::Substring(result, input_string, offset, NumericLimits<uint32_t>::Maximum());
 		    });
 	}
+	StringVector::AddHeapReference(result, input_vector);
 }
 
 void SubstringFunctionASCII(DataChunk &args, ExpressionState &state, Vector &result) {
@@ -309,6 +307,7 @@ void SubstringFunctionASCII(DataChunk &args, ExpressionState &state, Vector &res
 			    return SubstringASCII(result, input_string, offset, NumericLimits<uint32_t>::Maximum());
 		    });
 	}
+	StringVector::AddHeapReference(result, input_vector);
 }
 
 struct SubstringStatsParameters {
@@ -455,10 +454,8 @@ unique_ptr<BaseStatistics> SubstringGraphemePropagateStats(ClientContext &contex
 	return result.ToUnique();
 }
 
-} // namespace
-
-ScalarFunctionSet SubstringFun::GetFunctions() {
-	ScalarFunctionSet substr("substring");
+ScalarFunctionSet PositionalSubstring(const char *name) {
+	ScalarFunctionSet substr(name);
 
 	ScalarFunction three_arg({}, LogicalType::VARCHAR, SubstringFunction<SubstringUnicodeOp>, SubstringBind,
 	                         SubstringPropagateStats);
@@ -472,10 +469,24 @@ ScalarFunctionSet SubstringFun::GetFunctions() {
 	                       SubstringPropagateStats);
 	two_arg.GetSignature().AddParameter("string", LogicalType::VARCHAR).AddParameter("start", LogicalType::BIGINT);
 	substr.AddFunction(two_arg);
+	return substr;
+}
 
+} // namespace
+
+ScalarFunctionSet SubstringFun::GetFunctions() {
+	auto substr = PositionalSubstring(SubstringFun::Name);
+	substr.AddFunction(RegexpSubstring::GetFunction());
 	// throws if the offset or length are out of the supported range
 	substr.SetFallible();
-	return (substr);
+	return substr;
+}
+
+ScalarFunctionSet SubstrFun::GetFunctions() {
+	auto substr = PositionalSubstring(SubstrFun::Name);
+	// throws if the offset or length are out of the supported range
+	substr.SetFallible();
+	return substr;
 }
 
 ScalarFunctionSet SubstringGraphemeFun::GetFunctions() {

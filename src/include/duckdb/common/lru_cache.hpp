@@ -28,8 +28,9 @@ struct DefaultPayload {
 
 // A LRU cache implementation, whose value could be accessed in a shared manner with shared pointer.
 // Notice, it's not thread-safe.
-template <typename Key, typename Val, typename Payload = DefaultPayload, typename KeyHash = std::hash<Key>,
-          typename KeyEqual = std::equal_to<Key>>
+template <typename Key, typename Val, typename Payload = DefaultPayload,
+          typename KeyHash = absl::container_internal::hash_default_hash<Key>,
+          typename KeyEqual = absl::container_internal::hash_default_eq<Key>>
 class SharedLruCache {
 public:
 	using key_type = Key;
@@ -78,7 +79,8 @@ public:
 
 	// Delete the entry with key `key`.
 	// Return whether the requested `key` is found in the cache.
-	bool Delete(const Key &key) {
+	template <typename K>
+	bool Delete(const K &key) {
 		auto it = entry_map.find(key);
 		if (it == entry_map.end()) {
 			return false;
@@ -88,7 +90,8 @@ public:
 	}
 
 	// Look up the entry with key `key`. Return nullptr if not found.
-	shared_ptr<Val> Get(const Key &key) {
+	template <typename K>
+	shared_ptr<Val> Get(const K &key) {
 		auto entry_map_iter = entry_map.find(key);
 		if (entry_map_iter == entry_map.end()) {
 			return nullptr;
@@ -146,14 +149,30 @@ private:
 	using KeyConstReference = std::reference_wrapper<const Key>;
 
 	struct KeyReferenceHash {
+		using is_transparent = void;
+
 		size_t operator()(KeyConstReference key) const {
 			return KeyHash()(key.get());
+		}
+		template <typename K>
+		size_t operator()(const K &key) const {
+			return KeyHash()(key);
 		}
 	};
 
 	struct KeyReferenceEqual {
+		using is_transparent = void;
+
 		bool operator()(KeyConstReference lhs, KeyConstReference rhs) const {
 			return KeyEqual()(lhs.get(), rhs.get());
+		}
+		template <typename K>
+		bool operator()(KeyConstReference lhs, const K &rhs) const {
+			return KeyEqual()(lhs.get(), rhs);
+		}
+		template <typename K>
+		bool operator()(const K &lhs, KeyConstReference rhs) const {
+			return KeyEqual()(lhs, rhs.get());
 		}
 	};
 

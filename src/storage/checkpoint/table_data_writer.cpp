@@ -3,12 +3,16 @@
 
 #include "duckdb/catalog/catalog_entry/duck_table_entry.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
+#include "duckdb/catalog/catalog_transaction.hpp"
 #include "duckdb/common/serializer/binary_deserializer.hpp"
 #include "duckdb/common/serializer/binary_serializer.hpp"
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/main/database.hpp"
 #include "duckdb/main/settings.hpp"
 #include "duckdb/parallel/task_scheduler.hpp"
+#include "duckdb/parser/constraints/foreign_key_constraint.hpp"
+#include "duckdb/parser/constraints/unique_constraint.hpp"
+#include "duckdb/storage/table/index_entry.hpp"
 #include "duckdb/planner/parsed_data/bound_create_table_info.hpp"
 #include "duckdb/storage/checkpoint/table_data_reader.hpp"
 #include "duckdb/storage/metadata/metadata_reader.hpp"
@@ -149,7 +153,9 @@ void SingleFileTableDataWriter::FinalizeTable(const TableStatistics &global_stat
 		if (debug_verify_blocks) {
 			vector<MetaBlockPointer> read_pointers;
 			MetadataReader reader(metadata_manager, pointer, read_pointers);
-			auto bound_info = Binder::BindCreateTableCheckpoint(table.GetInfo(), table.schema);
+			CatalogTransaction transaction(table.catalog.GetDatabase(), MAX_COMMIT_ID,
+			                               VisibilityBound::Before(MAX_COMMIT_ID));
+			auto bound_info = Binder::BindCreateTableCheckpoint(table.GetInfo(), table.ParentSchema(transaction));
 			TableDataReader data_reader(reader, *bound_info, pointer);
 			data_reader.ReadTableData();
 			for (idx_t row_group = 0; row_group < bound_info->data->row_group_count; ++row_group) {
@@ -195,6 +201,13 @@ void SingleFileTableDataWriter::FinalizeTable(const TableStatistics &global_stat
 	IndexSerializationInfo serialization_info;
 	if (!v1_0_0_storage) {
 		serialization_info.options.emplace("v1_0_0_storage", v1_0_0_storage);
+	}
+	for (auto &constraint : table.GetConstraints()) {
+		if (constraint->type == ConstraintType::UNIQUE ||
+		    (constraint->type == ConstraintType::FOREIGN_KEY &&
+		     constraint->Cast<ForeignKeyConstraint>().info.IsAppendConstraint())) {
+			serialization_info.constraint_index_oids.insert(constraint->GetBackingIndexOid());
+		}
 	}
 
 	auto index_storage_infos = info.GetIndexes().SerializeToDisk(context, serialization_info);

@@ -29,9 +29,11 @@ EXECUTE s1('asdf', 'asdf')
 statement ok
 DEALLOCATE s1
 
-# we can deallocate non-existing statements
-statement ok
+# deallocating a non-existing statement is an error
+statement error
 DEALLOCATE s2
+----
+prepared statement "s2" does not exist
 
 # now its gone
 statement error
@@ -66,6 +68,9 @@ PREPARE s1 AS SELECT NOT($1), 10+$2, $3+20, 4 IN (2, 3, $4), $5 IN (2, 3, 4)
 
 statement ok
 EXECUTE s1(1, 2, 3, 4, 2)
+
+statement ok
+DEALLOCATE s1
 
 # these types default to varchar
 statement ok

@@ -1,0 +1,114 @@
+# name: test/sql/alter/add_col/test_add_col_serial.test
+# description: ADD COLUMN with a serial type numbers the existing rows from a sequence of its own
+# group: [add_col]
+
+statement ok
+CREATE TABLE t(i INTEGER)
+
+statement ok
+INSERT INTO t VALUES (10), (20)
+
+statement ok
+ALTER TABLE t ADD COLUMN id serial
+
+query II
+SELECT i, id FROM t ORDER BY i
+----
+10	1
+20	2
+
+statement ok
+INSERT INTO t (i) VALUES (30)
+
+query I
+SELECT id FROM t WHERE i = 30
+----
+3
+
+statement error
+INSERT INTO t VALUES (40, NULL)
+----
+NOT NULL constraint failed
+
+statement error
+ALTER TABLE t ADD COLUMN bad serial DEFAULT 5
+----
+Parser Error: multiple default values specified for column "bad" of table "t"
+
+statement error
+ALTER TABLE t ADD COLUMN bad serial NULL
+----
+Parser Error: conflicting NULL/NOT NULL declarations for column "bad" of table "t"
+
+statement ok
+CREATE SEQUENCE t_big_seq
+
+statement ok
+ALTER TABLE t ADD COLUMN big bigserial
+
+query II
+SELECT i, big FROM t ORDER BY i
+----
+10	1
+20	2
+30	3
+
+query I
+SELECT sequence_name FROM duckdb_sequences() WHERE sequence_name LIKE 't\_%' ESCAPE '\' ORDER BY sequence_name
+----
+t_big_seq
+t_big_seq1
+t_id_seq
+
+statement ok
+ALTER TABLE t ADD COLUMN IF NOT EXISTS id serial
+
+statement ok
+ALTER TABLE t ADD COLUMN IF NOT EXISTS small smallserial
+
+query I
+SELECT small FROM t ORDER BY i
+----
+1
+2
+3
+
+statement ok
+ALTER TABLE IF EXISTS missing ADD COLUMN id serial
+
+statement ok
+BEGIN
+
+statement ok
+ALTER TABLE t ADD COLUMN gone serial
+
+statement ok
+ROLLBACK
+
+query I
+SELECT count(*) FROM duckdb_sequences() WHERE sequence_name = 't_gone_seq'
+----
+0
+
+statement ok
+CREATE TEMP TABLE tt(i INTEGER)
+
+statement ok
+INSERT INTO tt VALUES (1), (2)
+
+statement ok
+ALTER TABLE tt ADD COLUMN id serial
+
+query II
+SELECT i, id FROM tt ORDER BY i
+----
+1	1
+2	2
+
+statement ok
+DROP TABLE t
+
+query I
+SELECT sequence_name FROM duckdb_sequences() WHERE sequence_name LIKE 't\_%' ESCAPE '\' ORDER BY sequence_name
+----
+t_big_seq

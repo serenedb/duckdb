@@ -2,22 +2,43 @@
 #include "duckdb/common/string.hpp"
 #include "duckdb/common/to_string.hpp"
 #include "duckdb/common/exception/catalog_exception.hpp"
+#include "duckdb/parser/expression/columnref_expression.hpp"
+#include "duckdb/parser/expression/function_expression.hpp"
+#include "duckdb/parser/expression/lambda_expression.hpp"
+#include "duckdb/parser/parsed_expression_iterator.hpp"
+#include "duckdb/parser/qualified_name.hpp"
 
 namespace duckdb {
 
-ColumnList::ColumnList(bool allow_duplicate_names) : allow_duplicate_names(allow_duplicate_names) {
+ColumnList::ColumnList(bool allow_duplicate_names, bool case_sensitive)
+    : name_map(0, IdentifierHashFunction(case_sensitive), IdentifierEquality(case_sensitive)),
+      allow_duplicate_names(allow_duplicate_names), case_sensitive(case_sensitive) {
 }
 
-ColumnList::ColumnList(vector<ColumnDefinition> columns, bool allow_duplicate_names)
-    : allow_duplicate_names(allow_duplicate_names) {
+ColumnList::ColumnList(vector<ColumnDefinition> columns, bool allow_duplicate_names, bool case_sensitive)
+    : ColumnList(allow_duplicate_names, case_sensitive) {
 	for (auto &col : columns) {
 		AddColumn(std::move(col));
 	}
 }
 
+void ColumnList::SetCaseSensitive(bool case_sensitive_p) {
+	if (case_sensitive == case_sensitive_p) {
+		return;
+	}
+	case_sensitive = case_sensitive_p;
+	identifier_map_t<column_t> rekeyed(0, IdentifierHashFunction(case_sensitive), IdentifierEquality(case_sensitive));
+	for (auto &entry : name_map) {
+		if (!rekeyed.emplace(entry.first, entry.second).second && !allow_duplicate_names) {
+			throw CatalogException("Column with name %s already exists!", entry.first);
+		}
+	}
+	name_map = std::move(rekeyed);
+}
+
 void ColumnList::AddColumn(ColumnDefinition column) {
 	auto oid = columns.size();
-	if (!column.Generated()) {
+	if (column.Category() != TableColumnType::GENERATED_VIRTUAL) {
 		column.SetStorageOid(physical_columns.size());
 		physical_columns.push_back(oid);
 	} else {
@@ -95,7 +116,7 @@ const ColumnDefinition &ColumnList::GetColumn(PhysicalIndex physical) const {
 const ColumnDefinition &ColumnList::GetColumn(const Identifier &name) const {
 	auto entry = name_map.find(name);
 	if (entry == name_map.end()) {
-		throw InternalException("Column with name \"%s\" does not exist", name);
+		throw InternalException("Column with name %s does not exist", name);
 	}
 	auto logical_index = entry->second;
 	D_ASSERT(logical_index < columns.size());
@@ -125,9 +146,47 @@ bool ColumnList::ColumnExists(const Identifier &name) const {
 	return entry != name_map.end();
 }
 
+unique_ptr<ParsedExpression> ColumnList::SharedGeneratedExpression(const ColumnDefinition &column) const {
+	auto expression = column.GeneratedExpression().Copy();
+	vector<idx_t> uses(columns.size(), 0);
+	ParsedExpressionIterator::VisitExpression<ColumnRefExpression>(*expression, [&](const ColumnRefExpression &colref) {
+		auto &referenced = GetColumn(colref.GetColumnName());
+		if (referenced.Generated()) {
+			uses[referenced.Logical().index]++;
+		}
+	});
+	vector<string> parameters;
+	vector<unique_ptr<ParsedExpression>> arguments;
+	arguments.emplace_back();
+	identifier_map_t<Identifier> renamed;
+	for (auto &referenced : Logical()) {
+		if (uses[referenced.Logical().index] < 2) {
+			continue;
+		}
+		Identifier parameter(SHARED_GENERATED_PREFIX + referenced.Name().GetIdentifierName());
+		parameters.push_back(parameter.GetIdentifierName());
+		renamed.emplace(referenced.Name(), std::move(parameter));
+		arguments.push_back(make_uniq<ColumnRefExpression>(referenced.Name()));
+	}
+	if (parameters.empty()) {
+		return expression;
+	}
+	ParsedExpressionIterator::VisitExpressionMutable<ColumnRefExpression>(
+	    *expression, [&](ColumnRefExpression &colref) {
+		    auto entry = renamed.find(colref.GetColumnName());
+		    if (entry != renamed.end()) {
+			    colref.ColumnNamesMutable() = vector<Identifier> {entry->second};
+		    }
+	    });
+	arguments[0] = make_uniq<LambdaExpression>(std::move(parameters), std::move(expression));
+	auto invoke = make_uniq<FunctionExpression>("invoke", std::move(arguments));
+	invoke->BuiltinMutable() = true;
+	return std::move(invoke);
+}
+
 PhysicalIndex ColumnList::LogicalToPhysical(LogicalIndex logical) const {
 	auto &column = GetColumn(logical);
-	if (column.Generated()) {
+	if (column.Category() == TableColumnType::GENERATED_VIRTUAL) {
 		throw InternalException("Column at position %d is not a physical column", logical.index);
 	}
 	return column.Physical();
@@ -152,7 +211,7 @@ LogicalIndex ColumnList::GetColumnIndex(Identifier &column_name) const {
 }
 
 ColumnList ColumnList::Copy() const {
-	ColumnList result(allow_duplicate_names);
+	ColumnList result(allow_duplicate_names, case_sensitive);
 	for (auto &col : columns) {
 		result.AddColumn(col.Copy());
 	}

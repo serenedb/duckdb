@@ -13,6 +13,7 @@
 #include "duckdb/parser/parsed_expression.hpp"
 #include "duckdb/common/enums/compression_type.hpp"
 #include "duckdb/catalog/catalog_entry/table_column_type.hpp"
+#include "duckdb/catalog/permissions.hpp"
 
 namespace duckdb {
 
@@ -31,6 +32,7 @@ public:
 public:
 	//! default_value
 	const ParsedExpression &DefaultValue() const;
+	ParsedExpression &DefaultValueMutable();
 	bool HasDefaultValue() const;
 	void SetDefaultValue(unique_ptr<ParsedExpression> default_value);
 
@@ -51,6 +53,9 @@ public:
 	DUCKDB_API const InsertionOrderPreservingMap<string> &Tags() const;
 	void SetTags(InsertionOrderPreservingMap<string> new_tags);
 
+	DUCKDB_API const vector<AclItem> &Acl() const;
+	void SetAcl(vector<AclItem> new_acl);
+
 	//! compression_type
 	const duckdb::CompressionType &CompressionType() const;
 	void SetCompressionType(duckdb::CompressionType compression_type);
@@ -65,6 +70,13 @@ public:
 	//! oid
 	const column_t &Oid() const;
 	void SetOid(column_t oid);
+
+	idx_t CatalogOid() const {
+		return catalog_oid;
+	}
+	void SetCatalogOid(idx_t catalog_oid_p) {
+		catalog_oid = catalog_oid_p;
+	}
 
 	//! category
 	const TableColumnType &Category() const;
@@ -83,7 +95,7 @@ public:
 
 	ParsedExpression &GeneratedExpressionMutable();
 	const ParsedExpression &GeneratedExpression() const;
-	void SetGeneratedExpression(unique_ptr<ParsedExpression> expression);
+	void SetGeneratedExpression(unique_ptr<ParsedExpression> expression, TableColumnType type);
 	void ChangeGeneratedExpressionType(const LogicalType &type);
 	void GetListOfDependencies(vector<string> &dependencies) const;
 
@@ -102,6 +114,8 @@ private:
 	storage_t storage_oid = DConstants::INVALID_INDEX;
 	//! The index of the column in the table
 	idx_t oid = DConstants::INVALID_INDEX;
+	//! The stable column id
+	idx_t catalog_oid = 0;
 	//! The category of the column
 	TableColumnType category = TableColumnType::STANDARD;
 	//! The default value of the column (for non-generated columns)
@@ -111,6 +125,7 @@ private:
 	Value comment;
 	//! Tags on this column
 	InsertionOrderPreservingMap<string> tags;
+	vector<AclItem> acl;
 };
 
 } // namespace duckdb

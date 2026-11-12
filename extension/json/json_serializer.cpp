@@ -1,4 +1,5 @@
 #include "json_serializer.hpp"
+#include "duckdb/common/stack_depth.hpp"
 #include "duckdb/common/types/blob.hpp"
 
 namespace duckdb {
@@ -70,6 +71,7 @@ void JsonSerializer::OnListEnd() {
 }
 
 void JsonSerializer::OnObjectBegin() {
+	StackDepth::Check();
 	auto new_value = yyjson_mut_obj(doc);
 	auto can_be_omitted = yyjson_mut_is_obj(Current()) && CurrentPropertyCanBeOmitted();
 	PushValue(new_value);

@@ -6,9 +6,12 @@
 
 namespace duckdb {
 
+static constexpr idx_t EXPRESSION_SCAN_CACHED_EXECUTORS = 64;
+
 class ExpressionScanState : public OperatorState {
 public:
-	explicit ExpressionScanState(Allocator &allocator, const PhysicalExpressionScan &op) {
+	explicit ExpressionScanState(Allocator &allocator, const PhysicalExpressionScan &op)
+	    : executors(MinValue<idx_t>(op.expressions.size(), EXPRESSION_SCAN_CACHED_EXECUTORS)) {
 		temp_chunk.Initialize(allocator, op.GetTypes());
 		ResetState();
 	}
@@ -17,6 +20,7 @@ public:
 	idx_t expression_index;
 	//! Temporary chunk for evaluating expressions
 	DataChunk temp_chunk;
+	vector<unique_ptr<ExpressionExecutor>> executors;
 
 private:
 	void ResetState() {
@@ -45,7 +49,17 @@ OperatorResultType PhysicalExpressionScan::Execute(ExecutionContext &context, Da
 	for (; chunk.size() + input.size() <= STANDARD_VECTOR_SIZE && state.expression_index < expressions.size();
 	     state.expression_index++) {
 		state.temp_chunk.Reset();
-		EvaluateExpression(context.client, state.expression_index, &input, chunk, &state.temp_chunk);
+		if (state.expression_index >= state.executors.size()) {
+			EvaluateExpression(context.client, state.expression_index, &input, chunk, &state.temp_chunk);
+			continue;
+		}
+		auto &executor = state.executors[state.expression_index];
+		if (!executor) {
+			executor = make_uniq<ExpressionExecutor>(context.client, expressions[state.expression_index]);
+		}
+		input.Verify(context.client.db);
+		executor->Execute(input, state.temp_chunk);
+		chunk.Append(state.temp_chunk);
 	}
 	if (state.expression_index < expressions.size()) {
 		return OperatorResultType::HAVE_MORE_OUTPUT;

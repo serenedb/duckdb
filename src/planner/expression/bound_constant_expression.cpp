@@ -36,9 +36,8 @@ bool BoundConstantExpression::Equals(const BaseExpression &other_p) const {
 	return value.type() == other.value.type() && !ValueOperations::DistinctFrom(value, other.value);
 }
 
-hash_t BoundConstantExpression::Hash() const {
-	hash_t result = Expression::Hash();
-	return CombineHash(value.Hash(), result);
+hash_t BoundConstantExpression::NodeHash() const {
+	return CombineHash(value.Hash(), Expression::NodeHash());
 }
 
 unique_ptr<Expression> BoundConstantExpression::Copy() const {

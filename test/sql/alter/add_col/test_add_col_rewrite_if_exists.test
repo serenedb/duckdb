@@ -1,0 +1,38 @@
+# name: test/sql/alter/add_col/test_add_col_rewrite_if_exists.test
+# description: IF EXISTS skips every step of an ADD COLUMN that runs as several statements when the table is missing
+# group: [add_col]
+
+statement ok
+ALTER TABLE IF EXISTS missing ADD COLUMN r DOUBLE DEFAULT random()
+
+statement ok
+ALTER TABLE IF EXISTS missing ADD COLUMN n INTEGER NOT NULL DEFAULT 1
+
+statement ok
+ALTER TABLE IF EXISTS missing ADD COLUMN u INTEGER UNIQUE
+
+statement ok
+ALTER TABLE IF EXISTS missing ADD COLUMN p INTEGER PRIMARY KEY
+
+statement error
+ALTER TABLE missing ADD COLUMN r DOUBLE DEFAULT random()
+----
+<REGEX>:Catalog Error.*missing does not exist.*
+
+statement ok
+CREATE TABLE present(i INTEGER)
+
+statement ok
+INSERT INTO present VALUES (1), (2)
+
+statement ok
+ALTER TABLE IF EXISTS present ADD COLUMN r DOUBLE DEFAULT random()
+
+statement ok
+ALTER TABLE IF EXISTS present ADD COLUMN n INTEGER NOT NULL DEFAULT 1
+
+query III
+SELECT i, r IS NOT NULL, n FROM present ORDER BY i
+----
+1	true	1
+2	true	1

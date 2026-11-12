@@ -11,7 +11,7 @@ statement ok
 SET preserve_insertion_order=false
 
 query I
-CREATE TABLE integers AS SELECT * FROM range(10000000) tbl(i);
+CREATE TABLE integers AS SELECT * FROM range_st(10000000) tbl(i);
 ----
 10000000
 

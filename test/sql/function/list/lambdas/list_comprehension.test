@@ -103,3 +103,18 @@ SELECT [i FOR x, i IN [4, 5, 6] IF i % 2 = 0];
 ----
 [2]
 
+# A NULL list that is not a constant reaches the rule that rewrites list comprehensions
+query I
+SELECT list_transform(CASE WHEN i > 0 THEN NULL END, lambda x: x + 1) FROM range(3) t(i)
+----
+NULL
+NULL
+NULL
+
+query I
+SELECT list_transform(list_filter(CASE WHEN i > 0 THEN NULL END, lambda x: x > 1), lambda y: y * y) FROM range(3) t(i)
+----
+NULL
+NULL
+NULL
+

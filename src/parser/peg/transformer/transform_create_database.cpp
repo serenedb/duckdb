@@ -1,0 +1,52 @@
+#include "duckdb/common/string_util.hpp"
+#include "duckdb/parser/expression/constant_expression.hpp"
+#include "duckdb/parser/parsed_data/create_database_info.hpp"
+#include "duckdb/parser/statement/create_statement.hpp"
+#include "duckdb/parser/statement/drop_statement.hpp"
+#include "duckdb/parser/peg/transformer/peg_transformer.hpp"
+
+namespace duckdb {
+
+unique_ptr<SQLStatement> PEGTransformerFactory::TransformCreateDatabaseStatement(
+    PEGTransformer &transformer, const optional<bool> &if_not_exists, const Identifier &catalog_name,
+    optional<case_insensitive_map_t<unique_ptr<ParsedExpression>>> with_list) {
+	auto result = make_uniq<CreateStatement>();
+	auto info = make_uniq<CreateDatabaseInfo>();
+	info->SetName(catalog_name);
+	if (with_list) {
+		for (auto &option : *with_list) {
+			auto name = StringUtil::Lower(option.first);
+			if (name != "block_size" && name != "row_group_size") {
+				throw ParserException("option \"%s\" not recognized", option.first);
+			}
+			if (option.second->GetExpressionType() != ExpressionType::VALUE_CONSTANT) {
+				throw ParserException("CREATE DATABASE option \"%s\" must be a constant", option.first);
+			}
+			auto value = option.second->Cast<ConstantExpression>().GetLiteral().ToValue();
+			if (value.IsNull()) {
+				throw ParserException("CREATE DATABASE option \"%s\" needs a value", option.first);
+			}
+			info->options[name] = value;
+		}
+	}
+	info->on_conflict = if_not_exists ? OnCreateConflict::IGNORE_ON_CONFLICT : OnCreateConflict::ERROR_ON_CONFLICT;
+	result->info = std::move(info);
+	return std::move(result);
+}
+
+unique_ptr<SQLStatement> PEGTransformerFactory::TransformDropDatabaseStatement(
+    PEGTransformer &transformer, const optional<bool> &if_exists, const Identifier &catalog_name,
+    const optional<bool> &drop_database_force, const optional<bool> &drop_behavior) {
+	auto result = make_uniq<DropStatement>();
+	result->info->type = CatalogType::DATABASE_ENTRY;
+	result->info->SetQualifiedName(Identifier(), Identifier(), catalog_name);
+	result->info->if_not_found = if_exists ? OnEntryNotFound::RETURN_NULL : OnEntryNotFound::THROW_EXCEPTION;
+	result->info->cascade = drop_behavior && *drop_behavior;
+	return std::move(result);
+}
+
+bool PEGTransformerFactory::TransformDropDatabaseForce(PEGTransformer &transformer) {
+	return true;
+}
+
+} // namespace duckdb

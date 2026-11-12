@@ -27,7 +27,7 @@ positive integer
 endloop
 
 statement ok
-SET async_threads = 0
+SET GLOBAL async_threads = 0
 
 query I
 SELECT current_setting('http_client_pool_capacity')
@@ -38,12 +38,12 @@ statement ok
 RESET http_client_pool_capacity
 
 query I
-SELECT current_setting('http_client_pool_capacity') >= 1
+SELECT current_setting('http_client_pool_capacity')::BIGINT >= 1
 ----
 true
 
 statement ok
-RESET async_threads
+RESET GLOBAL async_threads
 
 query I
 SELECT current_setting('http_client_pool_capacity') = getvariable('default_http_capacity')

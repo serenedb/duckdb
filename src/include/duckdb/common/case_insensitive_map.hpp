@@ -14,17 +14,25 @@
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/common/helper.hpp"
 #include "duckdb/common/map.hpp"
+#include "duckdb/common/types/hash.hpp"
+
+#include <absl/container/flat_hash_map.h>
+#include <absl/container/flat_hash_set.h>
 
 namespace duckdb {
 
 struct CaseInsensitiveStringHashFunction {
-	uint64_t operator()(const string &str) const {
+	using is_transparent = void;
+
+	uint64_t operator()(std::string_view str) const {
 		return StringUtil::CIHash(str);
 	}
 };
 
 struct CaseInsensitiveStringEquality {
-	bool operator()(const string &a, const string &b) const {
+	using is_transparent = void;
+
+	bool operator()(std::string_view a, std::string_view b) const {
 		return StringUtil::CIEquals(a, b);
 	}
 };
@@ -36,12 +44,38 @@ using case_insensitive_map_t =
 using case_insensitive_set_t = unordered_set<string, CaseInsensitiveStringHashFunction, CaseInsensitiveStringEquality>;
 
 struct CaseInsensitiveStringCompare {
-	bool operator()(const string &s1, const string &s2) const {
+	using is_transparent = void;
+
+	bool operator()(std::string_view s1, std::string_view s2) const {
 		return StringUtil::CILessThan(s1, s2);
 	}
 };
 
 template <typename T>
 using case_insensitive_tree_t = map<string, T, CaseInsensitiveStringCompare>;
+
+// For lookups over a set of STATIC string literals (compile-time arrays): a
+// contiguous flat table of non-owning string_views -- no per-element allocation
+// and no node indirection, so faster than the node_hash<string> variants above.
+// The views must point at storage that outlives the container.
+using case_insensitive_set_view_t =
+    absl::flat_hash_set<std::string_view, CaseInsensitiveStringHashFunction, CaseInsensitiveStringEquality>;
+
+template <typename T>
+using case_insensitive_map_view_t =
+    absl::flat_hash_map<std::string_view, T, CaseInsensitiveStringHashFunction, CaseInsensitiveStringEquality>;
+
+struct CaseInsensitivePairHash {
+	uint64_t operator()(const std::pair<std::string_view, std::string_view> &key) const {
+		return CombineHash(StringUtil::CIHash(key.first), StringUtil::CIHash(key.second));
+	}
+};
+
+struct CaseInsensitivePairEquality {
+	bool operator()(const std::pair<std::string_view, std::string_view> &a,
+	                const std::pair<std::string_view, std::string_view> &b) const {
+		return StringUtil::CIEquals(a.first, b.first) && StringUtil::CIEquals(a.second, b.second);
+	}
+};
 
 } // namespace duckdb

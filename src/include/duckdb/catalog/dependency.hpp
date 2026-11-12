@@ -13,6 +13,7 @@
 #include "duckdb/common/enums/catalog_type.hpp"
 #include "duckdb/common/unordered_set.hpp"
 #include "duckdb/common/string_util.hpp"
+#include "duckdb/common/types/hash.hpp"
 
 namespace duckdb {
 class CatalogEntry;
@@ -164,6 +165,31 @@ public:
 	static DependencyDependentFlags Deserialize(Deserializer &deserializer);
 };
 
+enum class AlterTableType : uint8_t;
+
+struct SubDependency {
+public:
+	AlterTableType alter {};
+	Identifier name;
+
+public:
+	bool operator==(const SubDependency &other) const {
+		return other.alter == alter && other.name == name;
+	}
+
+public:
+	void Serialize(Serializer &serializer) const;
+	static SubDependency Deserialize(Deserializer &deserializer);
+};
+
+struct SubDependencyHashFunction {
+	uint64_t operator()(const SubDependency &a) const {
+		return CombineHash(Hash<uint8_t>(static_cast<uint8_t>(a.alter)), a.name.Hash());
+	}
+};
+
+using subdependency_set_t = unordered_set<SubDependency, SubDependencyHashFunction>;
+
 struct CatalogEntryInfo {
 public:
 	CatalogType type;
@@ -173,19 +199,28 @@ public:
 	Identifier name;
 	//! The table that owns this entry, for entries that are not unique within their schema (triggers)
 	Identifier table;
+	Identifier catalog {};
 
 public:
+	static bool SamePath(const vector<Identifier> &a, const vector<Identifier> &b) {
+		return std::equal(a.begin(), a.end(), b.begin(), b.end(), IdentifierEquality(true));
+	}
+
 	bool operator==(const CatalogEntryInfo &other) const {
+		IdentifierEquality same(true);
 		if (other.type != type) {
 			return false;
 		}
-		if (other.schema_path != schema_path) {
+		if (!SamePath(other.schema_path, schema_path)) {
 			return false;
 		}
-		if (other.name != name) {
+		if (!same(other.name, name)) {
 			return false;
 		}
-		if (other.table != table) {
+		if (!same(other.table, table)) {
+			return false;
+		}
+		if (!same(other.catalog, catalog)) {
 			return false;
 		}
 		return true;

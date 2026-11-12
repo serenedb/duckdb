@@ -37,8 +37,7 @@ query I
 SELECT t.row_groups_scanned
 FROM '{TEST_DIR}/output.json' prof,
      LATERAL unnest(prof.operator) t0(op0),
-     LATERAL unnest(op0.children) t1(op1),
-     LATERAL unnest(op1.children) t2(t)
+     LATERAL unnest(op0.children) t1(t)
 WHERE t.type = 'TABLE_SCAN';
 ----
 2

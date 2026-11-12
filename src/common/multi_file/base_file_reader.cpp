@@ -30,6 +30,11 @@ void BaseFileReader::PrepareReader(ClientContext &context, GlobalTableFunctionSt
 void BaseFileReader::PrepareReadAhead(ClientContext &context, GlobalTableFunctionState &) {
 }
 
+void BaseFileReader::Lookup(ClientContext &, GlobalTableFunctionState &, LocalTableFunctionState &,
+                            std::span<const int64_t>, std::span<idx_t>, DataChunk &) {
+	throw InternalException("Reader %s does not support Lookup", GetReaderType());
+}
+
 void BaseFileReader::FinishFile(ClientContext &context, GlobalTableFunctionState &gstate) {
 }
 

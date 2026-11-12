@@ -456,7 +456,7 @@ TEST_CASE("Logical plan SQL export retains sampling errors and partial consumpti
 					CAPTURE(clause, consumption, late_error, route);
 					DuckDB db(nullptr);
 					Connection connection(db);
-					REQUIRE_NO_FAIL(connection.Query("SET threads=1; "
+					REQUIRE_NO_FAIL(connection.Query("SET GLOBAL threads=1; "
 					                                 "SET max_streaming_buffer_size='1b'; CREATE SEQUENCE seq"));
 					connection.BeginTransaction();
 					auto plan = OptimizeLogicalPlanExportQuery(connection, sql);

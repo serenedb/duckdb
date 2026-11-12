@@ -20,9 +20,7 @@ enum class RowIdHandling : uint8_t {
 	//! Row-ids are assumed unique; do not deduplicate (keeps the lock-free path). Used by plain UPDATE.
 	ASSUME_UNIQUE = 0,
 	//! Deduplicate row-ids, keeping the first occurrence of each. Used by UPDATE ... FROM.
-	KEEP_FIRST = 1,
-	//! Raise a cardinality error when a row-id repeats. (MERGE enforces this at the outer MERGE operator.)
-	ERROR = 2
+	KEEP_FIRST = 1
 };
 
 } // namespace duckdb

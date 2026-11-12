@@ -180,26 +180,6 @@ TEST_CASE("The order of the parameter kinds is verified", "[api][scalar_function
 	REQUIRE_THROWS(CreateScalarFunctionInfo(fn));
 }
 
-TEST_CASE("Argument names cannot be serialized to older storage versions", "[api][scalar_function]") {
-	DBConfig config;
-	config.SetOptionByName("storage_compatibility_version", Value("v1.0.0"));
-	DuckDB db(nullptr, &config);
-	Connection con(db);
-
-	FunctionSignature sig;
-	sig.AddArgs("args", LogicalType::INTEGER);
-	sig.AddKeywordOnly("kw", LogicalType::INTEGER);
-	sig.SetReturnType(LogicalType::BIGINT);
-	CreateScalarFunctionInfo info(ScalarFunction("count_arguments", std::move(sig), CountArgumentsExec));
-	con.context->RunFunctionInTransaction(
-	    [&]() { Catalog::GetSystemCatalog(*con.context).CreateFunction(*con.context, info); });
-
-	REQUIRE_NO_FAIL(con.Query("SET debug_verify_serializer=true"));
-	auto result = con.Query("SELECT count_arguments(i::INTEGER, kw := 1) FROM range(1) t(i)");
-	REQUIRE(result->HasError());
-	REQUIRE(StringUtil::Contains(result->GetError(), "cannot be serialized to a storage version older than"));
-}
-
 namespace {
 
 //! The arguments the last bind of "defaults_probe" received

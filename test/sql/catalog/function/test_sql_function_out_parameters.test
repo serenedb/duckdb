@@ -1,0 +1,176 @@
+# name: test/sql/catalog/function/test_sql_function_out_parameters.test
+# description: OUT and INOUT parameters of a SQL function make its result
+# group: [function]
+
+statement ok
+CREATE FUNCTION split(IN a INTEGER, OUT b INTEGER, OUT c VARCHAR) LANGUAGE sql AS 'SELECT a + 1, a::VARCHAR';
+
+query IT
+SELECT * FROM split(5);
+----
+6	5
+
+query T
+SELECT split(5);
+----
+{'b': 6, 'c': 5}
+
+query T
+SELECT split(5).c;
+----
+5
+
+query IT
+SELECT (split(5)).*;
+----
+6	5
+
+query II
+SELECT ((SELECT {'a': 1, 'b': 2})).*;
+----
+1	2
+
+statement ok
+CREATE FUNCTION shifted(result INTEGER, OUT a INTEGER, OUT b INTEGER) LANGUAGE sql AS 'SELECT result, result + 1';
+
+query II
+SELECT * FROM shifted(5);
+----
+5	6
+
+query TI
+SELECT shifted(5), (shifted(5)).b;
+----
+{'a': 5, 'b': 6}	6
+
+statement ok
+CREATE FUNCTION next_pair(x INTEGER, OUT a INTEGER, OUT b INTEGER) LANGUAGE sql RETURN (x, x + 1);
+
+query II
+SELECT a, b FROM next_pair(1);
+----
+1	2
+
+statement ok
+CREATE FUNCTION doubled(a INTEGER, OUT b BIGINT) LANGUAGE sql AS 'SELECT a * 2';
+
+query IT
+SELECT doubled(4), typeof(doubled(4));
+----
+8	BIGINT
+
+query I
+SELECT b FROM doubled(4);
+----
+8
+
+query IT
+SELECT x, typeof(x) FROM doubled(4) AS x;
+----
+8	BIGINT
+
+statement ok
+CREATE FUNCTION swap(INOUT a INTEGER, OUT b VARCHAR) LANGUAGE sql AS 'SELECT a * 10, a::VARCHAR';
+
+query IT
+SELECT * FROM swap(2);
+----
+20	2
+
+statement ok
+CREATE FUNCTION upto(a INTEGER, OUT n INTEGER) RETURNS SETOF INTEGER LANGUAGE sql AS 'SELECT * FROM range(1, a + 1)';
+
+query IT
+SELECT n, typeof(n) FROM upto(2) ORDER BY 1;
+----
+1	INTEGER
+2	INTEGER
+
+statement error
+CREATE FUNCTION bad(a INTEGER, OUT b INTEGER) RETURNS TABLE(c INTEGER) LANGUAGE sql AS 'SELECT 1';
+----
+OUT and INOUT arguments aren't allowed in TABLE functions
+
+statement error
+CREATE FUNCTION too_wide(OUT a INTEGER, OUT b INTEGER) LANGUAGE sql AS 'SELECT 1, 2, 3';
+----
+Final statement returns too many columns
+
+statement error
+CREATE FUNCTION too_narrow(OUT a INTEGER, OUT b INTEGER) LANGUAGE sql AS 'SELECT 1';
+----
+Final statement returns too few columns
+
+statement ok
+CREATE FUNCTION empty_pair(OUT a INTEGER, OUT b VARCHAR) LANGUAGE sql AS 'SELECT 1, ''x'' WHERE false';
+
+query II
+SELECT a IS NULL, b IS NULL FROM empty_pair();
+----
+true	true
+
+statement ok
+CREATE FUNCTION two_rows(OUT a INTEGER, OUT b INTEGER) LANGUAGE sql AS 'SELECT * FROM (VALUES (1, 2), (3, 4)) t ORDER BY 1';
+
+query II
+SELECT * FROM two_rows();
+----
+1	2
+
+statement ok
+CREATE FUNCTION random_pair(OUT a DOUBLE, OUT b DOUBLE) LANGUAGE sql AS 'SELECT r, r FROM (SELECT random() AS r)';
+
+query I
+SELECT a = b FROM random_pair();
+----
+true
+
+statement ok
+CREATE FUNCTION record_subquery(OUT a INTEGER, OUT b INTEGER) LANGUAGE sql RETURN (SELECT ROW(1, 2));
+
+query II
+SELECT * FROM record_subquery();
+----
+1	2
+
+statement error
+CREATE FUNCTION out_as_integer(OUT a INTEGER, OUT b INTEGER) RETURNS INTEGER LANGUAGE sql AS 'SELECT 1, 2';
+----
+function result type must be record because of OUT parameters
+
+statement error
+CREATE FUNCTION out_as_setof(OUT a INTEGER, OUT b INTEGER) RETURNS SETOF INTEGER LANGUAGE sql AS 'SELECT 1, 2';
+----
+function result type must be record because of OUT parameters
+
+statement error
+CREATE FUNCTION out_as_varchar(OUT a INTEGER) RETURNS VARCHAR LANGUAGE sql AS 'SELECT 1';
+----
+function result type must be integer because of OUT parameters
+
+statement error
+CREATE FUNCTION out_as_record(OUT a INTEGER) RETURNS record LANGUAGE sql AS 'SELECT 1';
+----
+function result type must be integer because of OUT parameters
+
+statement ok
+CREATE FUNCTION record_pair(OUT a INTEGER, OUT b INTEGER) RETURNS record LANGUAGE sql AS 'SELECT 1, 2';
+
+statement ok
+CREATE FUNCTION same_integer(OUT a INT4) RETURNS INTEGER LANGUAGE sql AS 'SELECT 3';
+
+statement ok
+CREATE FUNCTION any_scale(OUT a DECIMAL(4,2)) RETURNS DECIMAL LANGUAGE sql AS 'SELECT 1.5';
+
+query IIII
+SELECT * FROM record_pair(), same_integer(), any_scale();
+----
+1	2	3	1.5
+
+statement ok
+CREATE FUNCTION two_inouts(INOUT INTEGER, INOUT INTEGER) LANGUAGE sql AS 'SELECT $1 * 10, $2 * 10';
+
+query II
+SELECT column1, column2 FROM two_inouts(1, 2);
+----
+10	20

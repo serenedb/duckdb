@@ -51,8 +51,9 @@ void ListColumnData::SetDataType(ColumnDataType data_type) {
 }
 
 FilterPropagateResult ListColumnData::CheckZonemap(ColumnScanState &state, TableFilter &filter,
+                                                   TableFilterState &filter_state,
                                                    optional_ptr<SegmentNode<ColumnSegment>> &checked_segment) {
-	return CheckValidityZonemap(state, filter, checked_segment, *validity);
+	return CheckValidityZonemap(state, filter, filter_state, checked_segment, *validity);
 }
 
 void ListColumnData::InitializePrefetch(PrefetchState &prefetch_state, ColumnScanState &scan_state, idx_t rows) {
@@ -78,6 +79,16 @@ void ListColumnData::InitializeScan(ColumnScanState &state) {
 
 	// initialize the child scan
 	child_column->InitializeScan(state.child_states[1]);
+}
+
+void ListColumnData::ReinitializeScan(ColumnScanState &state) {
+	D_ASSERT(state.child_states.size() == 2);
+	// own offset/size data: keep its decode state warm if position-independent, else cold-init this level
+	if (!TryReinitializeScan(state)) {
+		ColumnData::InitializeScan(state);
+	}
+	validity->ReinitializeScan(state.child_states[0]);
+	child_column->ReinitializeScan(state.child_states[1]);
 }
 
 uint64_t ListColumnData::FetchListOffset(idx_t row_idx) {

@@ -1,4 +1,5 @@
 #include "duckdb/common/multi_file/multi_file_column_mapper.hpp"
+#include "duckdb/common/stack_depth.hpp"
 #include "duckdb/function/builtin_function_lookup.hpp"
 #include "duckdb/planner/expression/bound_cast_expression.hpp"
 #include "duckdb/planner/expression/bound_comparison_expression.hpp"
@@ -12,7 +13,6 @@
 #include "duckdb/planner/expression/bound_operator_expression.hpp"
 #include "duckdb/planner/expression/bound_reference_expression.hpp"
 #include "duckdb/parser/expression/constant_expression.hpp"
-#include "duckdb/planner/filter/list.hpp"
 #include "duckdb/function/scalar/struct_functions.hpp"
 #include "duckdb/function/scalar/struct_utils.hpp"
 #include "duckdb/function/scalar/nested_functions.hpp"
@@ -119,7 +119,7 @@ struct FieldIdMapper : public ColumnMapper {
 	static unique_ptr<Expression> GetDefault(ClientContext &context, const MultiFileColumnDefinition &column) {
 		auto &default_val = column.default_expression;
 		if (!default_val) {
-			throw InvalidInputException("Field \"%s\" (field id %d) is missing from the file schema and has no default "
+			throw InvalidInputException("Field %s (field id %d) is missing from the file schema and has no default "
 			                            "expression",
 			                            column.name, column.GetIdentifierFieldId());
 		}
@@ -294,7 +294,7 @@ static ColumnMapResult MapColumnList(ClientContext &context, const MultiFileColu
 
 	if (child_map.column_index) {
 		child_indexes.push_back(std::move(*child_map.column_index));
-		mapping->child_mapping.insert(make_pair(0, std::move(child_map.mapping)));
+		mapping->child_mapping.emplace(0, std::move(child_map.mapping));
 	}
 	if (!child_map.column_map.IsNull()) {
 		// found a column mapping for this child - emplace it
@@ -418,7 +418,7 @@ static ColumnMapResult MapColumnMap(ClientContext &context, const MultiFileColum
 
 		if (map_result.column_index) {
 			child_indexes.push_back(std::move(*map_result.column_index));
-			mapping->child_mapping.insert(make_pair(i, std::move(map_result.mapping)));
+			mapping->child_mapping.emplace(i, std::move(map_result.mapping));
 		}
 		if (!map_result.column_map.IsNull()) {
 			// found a column mapping for the component - emplace it
@@ -523,7 +523,7 @@ static ColumnMapResult MapColumnStruct(ClientContext &context, const MultiFileCo
 
 		if (child_map.column_index) {
 			child_indexes.push_back(std::move(*child_map.column_index));
-			mapping->child_mapping.insert(make_pair(i, std::move(child_map.mapping)));
+			mapping->child_mapping.emplace(i, std::move(child_map.mapping));
 		}
 		if (!child_map.column_map.IsNull()) {
 			// found a column mapping for this child - emplace it
@@ -864,7 +864,7 @@ Value MultiFileColumnMapper::GetConstantValue(MultiFileGlobalIndex global_index)
 		}
 	}
 	auto &global_column = global_columns[global_column_id];
-	throw InternalException("Column '%s' is not present in the file, but no constant_map entry exists for it!",
+	throw InternalException("Column %s is not present in the file, but no constant_map entry exists for it!",
 	                        global_column.name);
 }
 
@@ -940,6 +940,7 @@ struct RewrittenMappedExpression {
 static RewrittenMappedExpression RewriteMappedValueExpression(const Expression &expr,
                                                               const MultiFileIndexMapping &mapping,
                                                               const LogicalType &target_type) {
+	StackDepth::Check();
 	RewrittenMappedExpression result;
 	switch (expr.GetExpressionClass()) {
 	case ExpressionClass::BOUND_REF:
@@ -976,7 +977,7 @@ static RewrittenMappedExpression RewriteMappedValueExpression(const Expression &
 
 static unique_ptr<Expression> RewriteDynamicFilterExpression(const shared_ptr<DynamicFilterData> &filter_data,
                                                              const LogicalType &target_type) {
-	if (!filter_data || !filter_data->initialized) {
+	if (!filter_data || filter_data->version.load(std::memory_order_acquire) == 0) {
 		return nullptr;
 	}
 	lock_guard<mutex> lock(filter_data->lock);

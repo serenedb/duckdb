@@ -14,9 +14,9 @@ SELECT alias.nope;
 ----
 Binder Error:
 
-# alias to a subquery should error
+# alias to a subquery inside an aggregate should error
 statement error
-SELECT (SELECT 1) AS x, alias.x
+SELECT (SELECT 1) AS x, sum(alias.x)
 ----
 Alias "x" referenced in a SELECT clause - but the expression has a subquery. This is not yet supported
 

@@ -14,11 +14,13 @@ add_library_unity(
   column_definition.cpp
   column_list.cpp
   constraint.cpp
+  expression_depth_check.cpp
   expression_util.cpp
   keyword_helper.cpp
   literal.cpp
   parsed_expression.cpp
   parsed_expression_iterator.cpp
+  parse_tree_delete.cpp
   parser.cpp
   qualified_name.cpp
   query_error_context.cpp

@@ -57,6 +57,7 @@ public:
 	//! or (2) after they enter cleanup_queue.
 	//! Some (after rollback) enter cleanup_queue, but do not require Cleanup.
 	bool awaiting_cleanup;
+	idx_t active_index = 0;
 
 public:
 	static DuckTransaction &Get(ClientContext &context, AttachedDatabase &db);
@@ -90,10 +91,11 @@ public:
 
 	bool ChangesMade();
 	UndoBufferProperties GetUndoProperties();
+	vector<unique_ptr<StorageLockKey>> LockModifiedTables();
 
 	void PushDelete(DuckTableEntry &table_entry, RowVersionManager &info, idx_t vector_idx, row_t rows[], idx_t count,
 	                idx_t base_row);
-	void PushSequenceUsage(SequenceCatalogEntry &entry, const SequenceData &data);
+	void PushSequenceUsage(const SequenceValue &value);
 	void PushAppend(DuckTableEntry &table_entry, idx_t row_start, idx_t row_count);
 	UndoBufferReference CreateUpdateInfo(DuckTableEntry &table_entry, idx_t type_size, idx_t entries,
 	                                     idx_t row_group_start);
@@ -125,7 +127,6 @@ private:
 	unique_ptr<StorageLockKey> vacuum_lock;
 	//! Lock for accessing sequence_usage
 	mutex sequence_lock;
-	//! Map of all sequences that were used during the transaction and the value they had in this transaction
 	reference_map_t<SequenceCatalogEntry, reference<SequenceValue>> sequence_usage;
 	//! Flag to prevent auto-checkpointing inside a checkpoint transaction.
 	bool is_checkpoint_transaction = false;

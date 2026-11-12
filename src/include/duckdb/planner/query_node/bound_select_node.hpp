@@ -31,6 +31,7 @@ struct BoundUnnestNode {
 	TableIndex index;
 	//! The set of expressions
 	vector<unique_ptr<Expression>> expressions;
+	vector<pair<unique_ptr<ParsedExpression>, unique_ptr<Expression>>> calls;
 };
 
 using BoundUnnestMap = unordered_map<idx_t, BoundUnnestNode>;
@@ -107,6 +108,9 @@ public:
 	//! Index of pruned node
 	TableIndex prune_index;
 	bool need_prune = false;
+
+	TableIndex lateral_index;
+	bool lateral_aliases_by_value = false;
 
 public:
 	TableIndex GetRootIndex() override {

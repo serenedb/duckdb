@@ -33,6 +33,14 @@ public:
 	vector<unique_ptr<TableRef>> using_clauses;
 	//! keep track of optional returningList if statement contains a RETURNING keyword
 	vector<unique_ptr<ParsedExpression>> returning_list;
+	//! True iff this DeleteQueryNode was synthesized from a TRUNCATE TABLE
+	//! statement. Carries the user's intent past the parser so downstream
+	//! catalogs can dispatch to a truncate-specific physical operator
+	//! (different transactional semantics than per-row DELETE).
+	bool is_truncate = false;
+	bool truncate_cascade = false;
+	bool truncate_restart_identity = false;
+	vector<unique_ptr<TableRef>> truncate_group;
 
 public:
 	string ToString() const override;

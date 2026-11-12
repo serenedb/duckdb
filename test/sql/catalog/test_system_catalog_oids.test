@@ -1,0 +1,62 @@
+# name: test/sql/catalog/test_system_catalog_oids.test
+# description: The system catalog's entries take oids from [131072, 262144), so the oids of user objects do not depend on how many builtins there are
+# group: [catalog]
+
+require skip_reload
+
+query I
+SELECT count(*) FROM duckdb_functions() WHERE database_name = 'system' AND (function_oid < 131072 OR function_oid >= 262144)
+----
+0
+
+query I
+SELECT count(*) FROM duckdb_schemas() WHERE database_name = 'system' AND (oid < 131072 OR oid >= 262144)
+----
+0
+
+query I
+SELECT count(*) FROM duckdb_views() WHERE database_name = 'system' AND (view_oid < 131072 OR view_oid >= 262144)
+----
+0
+
+query I
+SELECT count(*) FROM duckdb_functions() WHERE database_name = 'system'
+----
+<REGEX>:[1-9][0-9]*
+
+statement ok
+CREATE TABLE t(i INTEGER)
+
+statement ok
+CREATE MACRO m(x) AS x + 1
+
+statement ok
+CREATE TYPE mood AS ENUM ('sad', 'ok')
+
+query I
+SELECT table_oid >= 262144 FROM duckdb_tables() WHERE table_name = 't'
+----
+true
+
+query I
+SELECT function_oid >= 262144 FROM duckdb_functions() WHERE function_name = 'm'
+----
+true
+
+query I
+SELECT type_oid >= 262144 FROM duckdb_types() WHERE type_name = 'mood'
+----
+true
+
+query I
+SELECT database_oid >= 262144 FROM duckdb_databases() WHERE NOT internal
+----
+true
+
+statement ok
+ATTACH ':memory:' AS second
+
+query I
+SELECT count(*) FROM duckdb_databases() WHERE NOT internal AND database_oid < 262144
+----
+0

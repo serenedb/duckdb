@@ -1,11 +1,15 @@
 #include "duckdb/catalog/default/default_functions.hpp"
 #include "duckdb/parser/parser.hpp"
+#include "duckdb/parser/expression/function_expression.hpp"
+#include "duckdb/parser/parsed_expression_iterator.hpp"
+#include "duckdb/function/scalar_macro_function.hpp"
 #include "duckdb/parser/parsed_data/create_macro_info.hpp"
 #include "duckdb/parser/statement/create_statement.hpp"
 #include "duckdb/catalog/catalog_entry/scalar_macro_catalog_entry.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/main/database.hpp"
+#include "duckdb/common/case_insensitive_map.hpp"
 
 namespace duckdb {
 
@@ -89,7 +93,8 @@ static const DefaultMacro internal_macros[] = {
      "when 'BIGINT' then 'int8' when 'BOOLEAN' then 'bool' else lower(logical_type) end"},
     {"pg_catalog", "format_type",
      "(type_oid, typemod) AS (select format_pg_type(logical_type, type_name) from duckdb_types() t where "
-     "t.type_oid=type_oid) || case when typemod>0 then concat('(', typemod//1000, ',', typemod%1000, ')') else '' end"},
+     "t.type_oid=format_type.type_oid) || case when typemod>0 then concat('(', typemod//1000, ',', typemod%1000, "
+     "')') else '' end"},
     {"pg_catalog", "map_to_pg_oid",
      "(type_name) AS case type_name when 'bool' then 16 when 'int16' then 21 when 'int' then 23 when 'bigint' then 20 "
      "when 'date' then 1082 when 'time' then 1083 when 'datetime' then 1114 when 'dec' then 1700 when 'float' then 700 "
@@ -124,7 +129,6 @@ static const DefaultMacro internal_macros[] = {
     {"pg_catalog", "pg_size_pretty", "(bytes) AS format_bytes(bytes)"},
     {"pg_catalog", "pg_sleep", "(seconds) AS sleep_ms(CAST(seconds * 1000 AS BIGINT))"},
 
-    {DEFAULT_SCHEMA, "nullif", "(a, b) AS CASE WHEN a=b THEN NULL ELSE a END"},
     {DEFAULT_SCHEMA, "if", "(a, b, c) AS CASE WHEN a THEN b ELSE c END"},
     {DEFAULT_SCHEMA, "assert_true",
      "(condition) AS CASE WHEN condition THEN NULL ELSE error('Assertion failed') END, "
@@ -145,12 +149,11 @@ static const DefaultMacro internal_macros[] = {
      "(arr, sep := ',') AS case len(arr::varchar[]) when 0 then '' else list_aggr(arr::varchar[], 'string_agg', sep) "
      "end"},
 
-    {DEFAULT_SCHEMA, "generate_subscripts", "(arr, dim := 1) AS unnest(generate_series(1, array_length(arr, dim)))"},
+    {DEFAULT_SCHEMA, "generate_subscripts",
+     "(arr, dim := 1, reverse := false) AS unnest(CASE WHEN reverse THEN generate_series(array_length(arr, dim), 1, "
+     "-1) ELSE generate_series(1, array_length(arr, dim)) END)"},
     {DEFAULT_SCHEMA, "fdiv", "(x, y) AS floor(x/y)"},
     {DEFAULT_SCHEMA, "fmod", "(x, y) AS (x-y*floor(x/y))"},
-    {DEFAULT_SCHEMA, "split_part",
-     "(string, delimiter, \"position\") AS if(string IS NOT NULL AND delimiter IS NOT NULL AND position IS NOT NULL, "
-     "coalesce(string_split(string, delimiter)[position],''), NULL)"},
     {DEFAULT_SCHEMA, "geomean", "(x) AS exp(avg(ln(x)))"},
     {DEFAULT_SCHEMA, "geometric_mean", "(x) AS geomean(x)"},
 
@@ -226,6 +229,19 @@ static const DefaultMacro internal_macros[] = {
 
     {nullptr, nullptr, nullptr}};
 
+static void MarkBuiltinCalls(ParsedExpression &expr) {
+	if (expr.GetExpressionClass() == ExpressionClass::FUNCTION) {
+		auto &function = expr.Cast<FunctionExpression>();
+		auto &name = function.GetQualifiedName();
+		if (name.Path().size() > 1 && name.Schema() == DEFAULT_SCHEMA &&
+		    (name.Catalog().empty() || name.Catalog() == SYSTEM_CATALOG)) {
+			function.SetQualifiedName(QualifiedName(name.Name()));
+			function.BuiltinMutable() = true;
+		}
+	}
+	ParsedExpressionIterator::EnumerateChildren(expr, [](ParsedExpression &child) { MarkBuiltinCalls(child); });
+}
+
 unique_ptr<CreateMacroInfo> DefaultFunctionGenerator::CreateInternalMacroInfo(const DefaultMacro &default_macro) {
 	auto parser = Parser::GetBuiltinParser();
 	auto bind_info = make_uniq<CreateMacroInfo>(CatalogType::MACRO_ENTRY);
@@ -246,6 +262,9 @@ unique_ptr<CreateMacroInfo> DefaultFunctionGenerator::CreateInternalMacroInfo(co
 				type = UnboundType::TryDefaultBind(type);
 			}
 		}
+		if (macro->type == MacroType::SCALAR_MACRO) {
+			MarkBuiltinCalls(*macro->Cast<ScalarMacroFunction>().expression);
+		}
 	}
 	bind_info->macros = std::move(macro_info.macros);
 	bind_info->SetQualifiedName(
@@ -255,19 +274,22 @@ unique_ptr<CreateMacroInfo> DefaultFunctionGenerator::CreateInternalMacroInfo(co
 	return bind_info;
 }
 
-static bool DefaultFunctionMatches(const DefaultMacro &macro, const Identifier &schema, const Identifier &name) {
-	return macro.schema == schema && macro.name == name;
-}
-
 static unique_ptr<CreateFunctionInfo> GetDefaultFunction(const Identifier &input_schema, const Identifier &input_name) {
-	auto &schema = input_schema;
-	auto &name = input_name;
-	for (idx_t index = 0; internal_macros[index].name != nullptr; index++) {
-		if (DefaultFunctionMatches(internal_macros[index], schema, name)) {
-			return DefaultFunctionGenerator::CreateInternalMacroInfo(internal_macros[index]);
-		}
+	// (schema, name) -> macro, built once over the static macro literals: no per-call linear scan.
+	using key_t = std::pair<std::string_view, std::string_view>;
+	static const absl::flat_hash_map<key_t, const DefaultMacro *, CaseInsensitivePairHash, CaseInsensitivePairEquality>
+	    macro_index = [] {
+		    absl::flat_hash_map<key_t, const DefaultMacro *, CaseInsensitivePairHash, CaseInsensitivePairEquality> m;
+		    for (idx_t index = 0; internal_macros[index].name != nullptr; index++) {
+			    m.emplace(key_t(internal_macros[index].schema, internal_macros[index].name), &internal_macros[index]);
+		    }
+		    return m;
+	    }();
+	auto it = macro_index.find(key_t(input_schema.GetIdentifierName(), input_name.GetIdentifierName()));
+	if (it == macro_index.end()) {
+		return nullptr;
 	}
-	return nullptr;
+	return DefaultFunctionGenerator::CreateInternalMacroInfo(*it->second);
 }
 
 DefaultFunctionGenerator::DefaultFunctionGenerator(Catalog &catalog, SchemaCatalogEntry &schema)
@@ -277,6 +299,9 @@ DefaultFunctionGenerator::DefaultFunctionGenerator(Catalog &catalog, SchemaCatal
 unique_ptr<CatalogEntry> DefaultFunctionGenerator::CreateDefaultEntry(ClientContext &context,
                                                                       const Identifier &entry_name) {
 	auto info = GetDefaultFunction(schema.name, entry_name);
+	if (!info && ServesDefaults(schema.name, DEFAULT_SCHEMA)) {
+		info = GetDefaultFunction(DEFAULT_SCHEMA, entry_name);
+	}
 	if (info) {
 		return make_uniq_base<CatalogEntry, ScalarMacroCatalogEntry>(catalog, schema, info->Cast<CreateMacroInfo>());
 	}
@@ -289,7 +314,7 @@ vector<Identifier> DefaultFunctionGenerator::GetDefaultEntries() {
 		if (StringUtil::Lower(internal_macros[index].name) != internal_macros[index].name) {
 			throw InternalException("Default macro name %s should be lowercase", internal_macros[index].name);
 		}
-		if (internal_macros[index].schema == schema.name) {
+		if (ServesDefaults(schema.name, internal_macros[index].schema)) {
 			result.emplace_back(internal_macros[index].name);
 		}
 	}

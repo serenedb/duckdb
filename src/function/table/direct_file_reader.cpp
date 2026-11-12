@@ -42,7 +42,7 @@ static void AssertMaxFileSize(const string &file_name, idx_t file_size) {
 }
 
 static inline void VERIFY(const string &filename, const string_t &content) {
-	if (Utf8Proc::Analyze(content.GetData(), content.GetSize()) == UnicodeType::INVALID) {
+	if (!Utf8Proc::IsValid(content.GetData(), content.GetSize())) {
 		throw InvalidInputException("read_text: could not read content of file '%s' as valid UTF-8 encoded text. You "
 		                            "may want to use read_blob instead.",
 		                            filename);
@@ -94,6 +94,13 @@ AsyncResult DirectFileReader::Scan(ClientContext &context, GlobalTableFunctionSt
 		if (proj_idx == COLUMN_IDENTIFIER_ROW_ID) {
 			continue;
 		}
+		if (proj_idx == MultiFileReader::COLUMN_IDENTIFIER_FILE_ROW_NUMBER) {
+			FlatVector::GetDataMutable<int64_t>(output.data[col_idx])[out_idx] = 0;
+			continue;
+		}
+		if (IsVirtualColumn(proj_idx)) {
+			continue;
+		}
 		try {
 			switch (proj_idx) {
 			case ReadFileBindData::FILE_NAME_COLUMN: {
@@ -108,10 +115,11 @@ AsyncResult DirectFileReader::Scan(ClientContext &context, GlobalTableFunctionSt
 				const bool read_until_eof = file_handle->IsPipe() || file_size == 0;
 
 				// Initialize write stream if not yet done
-				if (!state.stream) {
-					state.stream = make_uniq<MemoryStream>(BufferAllocator::Get(context), NextPowerOfTwo(file_size));
+				auto &stream = local_state.Cast<ReadFileLocalState>().stream;
+				if (!stream) {
+					stream = make_uniq<MemoryStream>(BufferAllocator::Get(context), NextPowerOfTwo(file_size));
 				}
-				state.stream->Rewind();
+				stream->Rewind();
 
 				// Read in batches of 128mb
 				constexpr idx_t MAX_READ_SIZE = 128LL * 1024 * 1024;
@@ -120,11 +128,11 @@ AsyncResult DirectFileReader::Scan(ClientContext &context, GlobalTableFunctionSt
 				auto remaining_bytes = read_until_eof ? read_size : file_size;
 				while (remaining_bytes > 0) {
 					const auto bytes_to_read = MinValue(remaining_bytes, read_size);
-					state.stream->GrowCapacity(bytes_to_read);
-					idx_t actually_read = NumericCast<idx_t>(file_handle->Read(
-					    context, state.stream->GetData() + state.stream->GetPosition(), bytes_to_read));
-					state.stream->SetPosition(state.stream->GetPosition() + actually_read);
-					AssertMaxFileSize(file.path, state.stream->GetPosition());
+					stream->GrowCapacity(bytes_to_read);
+					idx_t actually_read = NumericCast<idx_t>(
+					    file_handle->Read(context, stream->GetData() + stream->GetPosition(), bytes_to_read));
+					stream->SetPosition(stream->GetPosition() + actually_read);
+					AssertMaxFileSize(file.path, stream->GetPosition());
 
 					if (read_until_eof) {
 						if (actually_read == 0) {
@@ -143,8 +151,8 @@ AsyncResult DirectFileReader::Scan(ClientContext &context, GlobalTableFunctionSt
 
 				auto &file_content_vector = output.data[col_idx];
 				auto &content_string = FlatVector::GetDataMutable<string_t>(file_content_vector)[out_idx];
-				content_string = string_t(char_ptr_cast(state.stream->GetData()),
-				                          NumericCast<uint32_t>(state.stream->GetPosition()));
+				content_string =
+				    string_t(char_ptr_cast(stream->GetData()), NumericCast<uint32_t>(stream->GetPosition()));
 
 				if (type == LogicalType::VARCHAR) {
 					VERIFY(file.path, content_string);
@@ -196,12 +204,35 @@ AsyncResult DirectFileReader::Scan(ClientContext &context, GlobalTableFunctionSt
 	return AsyncResult(SourceResultType::HAVE_MORE_OUTPUT);
 }
 
+void DirectFileReader::Lookup(ClientContext &context, GlobalTableFunctionState &global_state,
+                              LocalTableFunctionState &local_state, std::span<const int64_t> rows,
+                              std::span<idx_t> survivors, DataChunk &chunk) {
+	for (idx_t i = 0; i < rows.size(); i++) {
+		if (rows[i] != 0) {
+			continue;
+		}
+		done.store(false, std::memory_order_relaxed);
+		Scan(context, global_state, local_state, chunk);
+		if (chunk.size() != 0) {
+			survivors[0] = i;
+		}
+		return;
+	}
+}
+
 void DirectFileReader::FinishFile(ClientContext &context, GlobalTableFunctionState &gstate) {
 	return;
 }
 
 double DirectFileReader::GetProgressInFile(ClientContext &context) {
 	return done.load(std::memory_order_relaxed) ? 100.0 : 0.0;
+}
+
+void DirectFileReader::AddVirtualColumn(column_t virtual_column_id) {
+	if (virtual_column_id != MultiFileReader::COLUMN_IDENTIFIER_FILE_ROW_NUMBER) {
+		throw InternalException("read_text/read_blob only supports file_row_number as a virtual column (got id %llu)",
+		                        static_cast<uint64_t>(virtual_column_id));
+	}
 }
 
 } // namespace duckdb

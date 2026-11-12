@@ -126,7 +126,7 @@ INSERT INTO doubles VALUES (1.5), (9.7);
 query II
 SELECT s.min, s.max FROM (SELECT STATS(floor(x)) s FROM doubles LIMIT 1)
 ----
-1.0	9.0
+1	9
 
 # year(date) is non-decreasing: corner eval succeeds when min/max are finite dates
 statement ok
@@ -178,7 +178,7 @@ NULL	NULL
 query II
 SELECT s.min, s.max FROM (SELECT STATS(exp(x)) s FROM mixed LIMIT 1)
 ----
-1.0	2.718281828459045
+1	2.718281828459045
 
 # sqrt is strictly increasing: perfect squares round exactly, so bounds are exact
 statement ok
@@ -190,7 +190,7 @@ INSERT INTO squares VALUES (4.0), (16.0);
 query II
 SELECT s.min, s.max FROM (SELECT STATS(sqrt(x)) s FROM squares LIMIT 1)
 ----
-2.0	4.0
+2	4
 
 # sqrt of a negative corner throws/NaN: propagator bails, no derived bounds
 statement ok

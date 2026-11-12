@@ -61,7 +61,7 @@ optional_ptr<const ParsedGrammarRule> ParsedGrammar::GetRule(const string &rule_
 	}
 	return *entry->second;
 }
-ParsedGrammarRule &ParsedGrammar::GetMutableRule(const string &rule_name) {
+ParsedGrammarRule &ParsedGrammar::GetMutableRule(std::string_view rule_name) {
 	auto entry = rules.find(rule_name);
 	if (entry == rules.end()) {
 		throw InvalidInputException("Grammar rule '%s' does not exist", rule_name);
@@ -110,102 +110,6 @@ void ParsedGrammar::AddRule(const string &rule_definition, grammar_transform_pro
 	AddParsedRule(std::move(rule));
 }
 
-static idx_t FindChoice(const ParsedGrammarRule &rule, const grammar_cursor_function_t &find_cursor) {
-	for (idx_t child_idx = 0; child_idx < rule.recipe.expression.children.size(); child_idx++) {
-		auto &expression = rule.recipe.expression.children[child_idx];
-		if (!find_cursor(expression)) {
-			continue;
-		}
-		return child_idx;
-	}
-	throw InvalidInputException("Could not find a choice cursor in grammar rule '%s'", rule.name);
-}
-
-static idx_t FindChoiceCursor(const ParsedGrammarRule &rule, const grammar_cursor_function_t &find_cursor,
-                              bool prepend) {
-	if (!find_cursor) {
-		return prepend ? 0 : rule.recipe.expression.children.size();
-	}
-	return FindChoice(rule, find_cursor) + (prepend ? 0 : 1);
-}
-
-void ParsedGrammar::InsertChoice(const string &rule_name, const string &choice,
-                                 const grammar_cursor_function_t &find_cursor, bool prepend) {
-	auto choice_definition = StringUtil::Format("Choice <- %s", choice);
-	auto choice_rule = ParseSingleRule(choice_definition);
-	auto &rule = GetMutableRule(rule_name);
-	RegisterStrings(choice_rule.recipe);
-	if (rule.recipe.expression.type != PEGExpression::Type::CHOICE) {
-		//! Wrap in CHOICE beforehand
-		PEGExpression choice_expression(PEGExpression::Type::CHOICE, "/");
-		choice_expression.children.push_back(rule.recipe.expression);
-		rule.recipe.expression = std::move(choice_expression);
-	}
-	auto cursor = FindChoiceCursor(rule, find_cursor, prepend);
-
-	vector<PEGExpression> children;
-	children.reserve(rule.recipe.expression.children.size() + choice_rule.recipe.expression.children.size() + 1);
-	for (idx_t child_idx = 0; child_idx < cursor; child_idx++) {
-		children.push_back(rule.recipe.expression.children[child_idx]);
-	}
-	children.push_back(std::move(choice_rule.recipe.expression));
-	for (idx_t child_idx = cursor; child_idx < rule.recipe.expression.children.size(); child_idx++) {
-		children.push_back(rule.recipe.expression.children[child_idx]);
-	}
-	rule.recipe.expression.children = std::move(children);
-}
-
-void ParsedGrammar::AddChoice(const string &rule_name, const string &choice,
-                              const grammar_cursor_function_t &find_cursor) {
-	InsertChoice(rule_name, choice, find_cursor, false);
-}
-
-void ParsedGrammar::PrependChoice(const string &rule_name, const string &choice,
-                                  const grammar_cursor_function_t &find_cursor) {
-	InsertChoice(rule_name, choice, find_cursor, true);
-}
-
-void ParsedGrammar::ReplaceChoice(const string &rule_name, const string &choice,
-                                  const grammar_cursor_function_t &find_cursor) {
-	if (!find_cursor) {
-		throw InvalidInputException("ReplaceChoice requires a choice cursor");
-	}
-
-	auto &rule = GetMutableRule(rule_name);
-	if (rule.recipe.expression.type != PEGExpression::Type::CHOICE) {
-		throw InvalidInputException("Grammar rule '%s' does not contain a choice", rule.name);
-	}
-
-	auto choice_definition = StringUtil::Format("Choice <- %s", choice);
-	auto choice_rule = ParseSingleRule(choice_definition);
-	RegisterStrings(choice_rule.recipe);
-
-	auto cursor = FindChoiceCursor(rule, find_cursor, true);
-	rule.recipe.expression.children[cursor] = std::move(choice_rule.recipe.expression);
-}
-
-void ParsedGrammar::RemoveChoice(const string &rule_name, const grammar_cursor_function_t &find_cursor) {
-	if (!find_cursor) {
-		throw InvalidInputException("RemoveChoice requires a choice cursor");
-	}
-	auto &rule = GetMutableRule(rule_name);
-	if (rule.recipe.expression.type != PEGExpression::Type::CHOICE) {
-		throw InvalidInputException("Grammar rule '%s' does not contain a choice", rule.name);
-	}
-	auto &children = rule.recipe.expression.children;
-	if (children.size() <= 1) {
-		throw InternalException(
-		    "Choice rule '%s' has %d children, this shouldn't happen, minimum children for CHOICE is 2", rule.name,
-		    children.size());
-	}
-	auto cursor = FindChoice(rule, find_cursor);
-	children.erase_at(cursor);
-	if (children.size() == 1) {
-		auto remaining_choice = std::move(children[0]);
-		rule.recipe.expression = std::move(remaining_choice);
-	}
-}
-
 void ParsedGrammar::ReplaceRule(const string &rule_definition, grammar_transform_process_function_t transform_process) {
 	auto rule = ParseSingleRule(rule_definition);
 	auto entry = rules.find(rule.name);
@@ -217,11 +121,13 @@ void ParsedGrammar::ReplaceRule(const string &rule_definition, grammar_transform
 	entry->second = make_uniq<ParsedGrammarRule>(std::move(rule));
 }
 
-void ParsedGrammar::SetTransformProcess(const string &rule_name, grammar_transform_process_function_t transform_process,
-                                        bool collapsible) {
+void ParsedGrammar::SetTransformProcess(std::string_view rule_name,
+                                        grammar_transform_process_function_t transform_process, bool collapsible,
+                                        optional_idx generated_transform) {
 	auto &rule = GetMutableRule(rule_name);
 	rule.transform_process = std::move(transform_process);
 	rule.collapsible = collapsible;
+	rule.generated_transform = generated_transform;
 }
 
 void ParsedGrammar::AddTerminalRuleOverride(const string &rule_name, terminal_rule_matcher_factory_t matcher_factory) {

@@ -133,9 +133,9 @@ SELECT (skewness(42) EXPORT_STATE)::BLOB;
 
 # but we can cast it to the matching struct type
 query I
-SELECT (skewness(42) EXPORT_STATE)::STRUCT(n UBIGINT, sum DOUBLE, sum_sqr DOUBLE, sum_cub DOUBLE);
+SELECT (skewness(42) EXPORT_STATE)::STRUCT(n UBIGINT, shift DOUBLE, sum DOUBLE, sum_sqr DOUBLE, sum_cub DOUBLE);
 ----
-{'n': 1, 'sum': 42.0, 'sum_sqr': 1764.0, 'sum_cub': 74088.0}
+{'n': 1, 'shift': 42, 'sum': 0, 'sum_sqr': 0, 'sum_cub': 0}
 
 statement error
 SELECT (skewness(42) EXPORT_STATE)::INTEGER;

@@ -13,7 +13,7 @@ using namespace duckdb_yyjson; // NOLINT
 
 namespace duckdb {
 
-static bool IsPrefixPattern(const string &pattern) {
+static bool IsPrefixPattern(std::string_view pattern) {
 	if (pattern.empty() || pattern.back() != '*') {
 		return false;
 	}
@@ -49,7 +49,7 @@ void GatheredMetrics::ResetMetrics() {
 	metrics.clear();
 }
 
-bool GatheredMetrics::MetricIsTracked(const string &key) const {
+bool GatheredMetrics::MetricIsTracked(std::string_view key) const {
 	if (track_all) {
 		return true;
 	}
@@ -70,35 +70,35 @@ bool GatheredMetrics::MetricIsTracked(const string &key) const {
 	}
 	// Arbitrary glob patterns
 	for (const auto &glob : tracked_globs) {
-		if (Glob(key.c_str(), key.size(), glob.c_str(), glob.size())) {
+		if (Glob(key.data(), key.size(), glob.c_str(), glob.size())) {
 			return true;
 		}
 	}
 	return false;
 }
 
-void GatheredMetrics::SetMetric(const string &key, Value new_value) {
+void GatheredMetrics::SetMetric(std::string_view key, Value new_value) {
 	if (!MetricIsTracked(key)) {
 		return;
 	}
 	metrics[key] = std::move(new_value);
 }
 
-void GatheredMetrics::SetMetric(const string &key, idx_t value) {
+void GatheredMetrics::SetMetric(std::string_view key, idx_t value) {
 	if (!MetricIsTracked(key)) {
 		return;
 	}
 	metrics[key] = Value::UBIGINT(value);
 }
 
-void GatheredMetrics::SetMetric(const string &key, double value) {
+void GatheredMetrics::SetMetric(std::string_view key, double value) {
 	if (!MetricIsTracked(key)) {
 		return;
 	}
 	metrics[key] = Value::DOUBLE(value);
 }
 
-void GatheredMetrics::SetMetric(const string &key, const string &value) {
+void GatheredMetrics::SetMetric(std::string_view key, std::string_view value) {
 	if (!MetricIsTracked(key)) {
 		return;
 	}
@@ -115,7 +115,7 @@ void GatheredMetrics::WriteMetricsToLog(ClientContext &context) const {
 	}
 }
 
-static QueryProfileResult &GetOrCreateObject(QueryProfileResult &parent, const string &key) {
+static QueryProfileResult &GetOrCreateObject(QueryProfileResult &parent, std::string_view key) {
 	for (auto &child : parent.children) {
 		if (child->kind == QueryProfileResultKind::OBJECT && child->key == key) {
 			return *child;
@@ -124,7 +124,7 @@ static QueryProfileResult &GetOrCreateObject(QueryProfileResult &parent, const s
 	return parent.AddObject(key);
 }
 
-static void AddMetricToResult(QueryProfileResult &obj, const string &key, const Value &value) {
+static void AddMetricToResult(QueryProfileResult &obj, std::string_view key, const Value &value) {
 	auto dot_pos = key.find('.');
 	if (dot_pos == string::npos) {
 		obj.AddValue(key, value);

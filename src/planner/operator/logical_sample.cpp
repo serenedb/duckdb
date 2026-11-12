@@ -11,7 +11,7 @@ LogicalSample::LogicalSample(unique_ptr<SampleOptions> sample_options_p, unique_
 }
 
 vector<ColumnBinding> LogicalSample::GetColumnBindings() {
-	return children[0]->GetColumnBindings();
+	return GetDerivedColumnBindings();
 }
 
 idx_t LogicalSample::EstimateCardinality(ClientContext &context) {

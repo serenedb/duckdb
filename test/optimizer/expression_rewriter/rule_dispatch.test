@@ -1,0 +1,181 @@
+# name: test/optimizer/expression_rewriter/rule_dispatch.test
+# description: Every node is rewritten by the rules for its expression class, its expression type and its function, side by side with other kinds of nodes and in every operator
+# group: [expression_rewriter]
+
+statement ok
+CREATE TYPE mood AS ENUM ('sad', 'ok', 'happy');
+
+statement ok
+CREATE TABLE t AS SELECT i::INTEGER AS i, (i % 7)::INTEGER AS j, i::VARCHAR AS s, DATE '2020-01-01' + i::INTEGER AS d, TIMESTAMP '2020-01-01' + INTERVAL (i) HOUR AS ts, (['sad', 'ok', 'happy'][i % 3 + 1])::mood AS e FROM range(100) tbl(i);
+
+statement ok
+PRAGMA explain_output = OPTIMIZED_ONLY
+
+# a NOT over a comparison, an arithmetic function, a CASE, an IN list and a NOT over another comparison type
+query II
+EXPLAIN SELECT NOT (i = 1), i + 0, CASE WHEN true THEN s ELSE 'x' END, j IN (3), NOT (j > 1) FROM t
+----
+logical_opt	<REGEX>:(?s).*i != 1.*i, s.*j = 3.*j <= 1.*
+
+query II
+EXPLAIN SELECT NOT (i = 1), i + 0, CASE WHEN true THEN s ELSE 'x' END, j IN (3), NOT (j > 1) FROM t
+----
+logical_opt	<!REGEX>:(?s).*(NOT \(|\+ 0|CASE| IN \().*
+
+query I
+SELECT count(*) FROM t WHERE NOT (i = 1) AND i + 0 > 5 AND CASE WHEN true THEN s ELSE 'x' END LIKE '1%' AND j IN (3)
+----
+2
+
+# functions whose rules match them by name, next to each other
+query II
+EXPLAIN SELECT s LIKE 'ab%', regexp_matches(s, 'ab'), date_part('year', d), least(i, i), [i, j][1], replace(s, 'a', 'a'), contains(s, ''), s || '' || s FROM t
+----
+logical_opt	<REGEX>:(?s).*prefix\(s, 'ab'\).*contains\(s, 'ab'\).*"year"\(d\).*constant_or_null\(true, s\).*s \|\| s.*
+
+query II
+EXPLAIN SELECT s LIKE 'ab%', regexp_matches(s, 'ab'), date_part('year', d), least(i, i), [i, j][1], replace(s, 'a', 'a'), contains(s, ''), s || '' || s FROM t
+----
+logical_opt	<!REGEX>:(?s).*(~~|regexp_matches|date_part|least|replace|''|\[i, j\]).*
+
+# the same functions called in other letter cases
+query II
+EXPLAIN SELECT CONTAINS(s, ''), DATE_PART('year', d), Regexp_Matches(s, 'ab'), REPLACE(s, 'a', 'a') FROM t
+----
+logical_opt	<REGEX>:(?s).*constant_or_null\(true, s\).*"year"\(d\).*contains\(s, 'ab'\).*
+
+query I
+SELECT count(*) FROM t WHERE Regexp_Matches(s, '9') AND DATE_PART('year', d) = 2020 AND CONTAINS(s, '') AND REPLACE(s, 'a', 'a') = s
+----
+19
+
+# comparisons of every type over arithmetic, a cast and BETWEEN
+query II
+EXPLAIN SELECT i FROM t WHERE i + 1 > 5 AND j + 1 <> 3 AND i - 1 <= 50 AND CAST(j AS BIGINT) < 6
+----
+logical_opt	<REGEX>:(?s).*i > 4.*i <= 51.*j != 2.*j < 6.*
+
+query II
+EXPLAIN SELECT i FROM t WHERE i + 2 >= 10 AND j - 1 = 3 AND i + 1 BETWEEN 2 AND 50
+----
+logical_opt	<REGEX>:(?s).*i >= 8.*i <= 49.*j = 4.*
+
+query I
+SELECT count(*) FROM t WHERE i + 2 >= 10 AND j - 1 = 3 AND i + 1 BETWEEN 2 AND 50
+----
+6
+
+# slicing and position comparisons, a contains over a constant list and a date_trunc comparison in one filter
+query II
+EXPLAIN SELECT i FROM t WHERE left(s, 1) = '9' AND instr(s, '9') = 1 AND list_contains([1, 2, 99], i) AND date_trunc('day', d) = DATE '2020-03-01'
+----
+logical_opt	<REGEX>:(?s).*\(i = 1\) OR \(i = 2\) OR \(i = 99\).*s >= '9'.*d = '2020-03-01'::DATE.*
+
+query II
+EXPLAIN SELECT i FROM t WHERE left(s, 1) = '9' AND instr(s, '9') = 1 AND list_contains([1, 2, 99], i) AND date_trunc('day', d) = DATE '2020-03-01'
+----
+logical_opt	<!REGEX>:(?s).*(left|instr|list_contains|date_trunc).*
+
+# aggregates and window functions
+query II
+EXPLAIN SELECT sum(i ORDER BY j), min(DISTINCT i), max(DISTINCT j) FROM t
+----
+logical_opt	<REGEX>:(?s).*AGGREGATE.*sum_no_overflow\(i\),.*min\(i\), max\(j\).*
+
+query III
+SELECT sum(i ORDER BY j), min(DISTINCT i), max(DISTINCT j) FROM t
+----
+4950	0	6
+
+query II
+EXPLAIN SELECT max(DISTINCT i) OVER (), i + (1 + 2) FROM t
+----
+logical_opt	<REGEX>:(?s).*i \+ 3.*
+
+query II
+SELECT max(DISTINCT i) OVER (), i + (1 + 2) FROM t WHERE i = 5
+----
+5	8
+
+# a function rewritten by name in the select list, the grouping and the filter of one statement
+query II
+EXPLAIN SELECT date_part('year', d), count(*) FROM t WHERE date_part('month', d) = 2 GROUP BY date_part('year', d)
+----
+logical_opt	<REGEX>:(?s).*"year"\(d\).*"month"\(d\) = 2.*
+
+query II
+SELECT date_part('year', d), count(*) FROM t WHERE date_part('month', d) = 2 GROUP BY date_part('year', d)
+----
+2020	29
+
+# rules over AND and OR
+query II
+EXPLAIN SELECT i FROM t WHERE ((j = 1 AND i = 8) OR (j = 1 AND i = 29)) AND (i > 0 AND true)
+----
+logical_opt	<REGEX>:(?s).*\(i = 8\) OR \(i = 29\).*j = 1.*
+
+query I
+SELECT count(*) FROM t WHERE ((j = 1 AND i = 8) OR (j = 1 AND i = 29)) AND (i > 0 AND true)
+----
+2
+
+query II
+EXPLAIN SELECT i FROM t WHERE NOT (i > 1 AND j > 2)
+----
+logical_opt	<REGEX>:(?s).*\(i <= 1\) OR \(j <= 2\).*
+
+query I
+SELECT count(*) FROM t WHERE NOT (i > 1 AND j > 2)
+----
+44
+
+query II
+EXPLAIN SELECT i FROM t WHERE (i = j) OR (i IS NULL AND j IS NULL)
+----
+logical_opt	<REGEX>:(?s).*i IS NOT DISTINCT FROM j.*
+
+query I
+SELECT count(*) FROM t WHERE (i = j) OR (i IS NULL AND j IS NULL)
+----
+7
+
+# a cast in an IN list, a timestamp cast to a date, an enum cast to text and a multiplication, each compared with constants
+query II
+EXPLAIN SELECT i FROM t WHERE CAST(j AS BIGINT) IN (1, 2)
+----
+logical_opt	<REGEX>:(?s).*\(j = 1\) OR \(j = 2\).*
+
+query I
+SELECT count(*) FROM t WHERE CAST(j AS BIGINT) IN (1, 2)
+----
+29
+
+query II
+EXPLAIN SELECT i FROM t WHERE ts::DATE = DATE '2020-01-02'
+----
+logical_opt	<REGEX>:(?s).*ts >= '2020-01-02 00:00:00'::TIMESTAMP.*ts < '2020-01-03 00:00:00'::TIMESTAMP.*
+
+query I
+SELECT count(*) FROM t WHERE ts::DATE = DATE '2020-01-02'
+----
+24
+
+query II
+EXPLAIN SELECT i FROM t WHERE e::VARCHAR = 'ok' AND e::VARCHAR IN ('sad', 'ok')
+----
+logical_opt	<REGEX>:(?s).*\(e = 'sad'\) OR \(e = 'ok'\).*e = 'ok'.*
+
+query I
+SELECT count(*) FROM t WHERE e::VARCHAR = 'ok' AND e::VARCHAR IN ('sad', 'ok')
+----
+33
+
+query II
+EXPLAIN SELECT i FROM t WHERE i * 2 > 10
+----
+logical_opt	<REGEX>:(?s).*Column Filter: i > 5.*
+
+query I
+SELECT count(*) FROM t WHERE i * 2 > 10
+----
+94

@@ -117,6 +117,10 @@ void EncryptionEngine::EncryptBlock(AttachedDatabase &attached_db, const string 
 
 	//! store the generated tag *behind* the nonce (but still at the beginning of the block)
 	memcpy(block_offset_internal + nonce.size(), tag.data(), tag.size());
+	const auto header_end = nonce.size() + tag.size();
+	if (header_end < delta) {
+		memset(block_offset_internal + header_end, 0, delta - header_end);
+	}
 }
 
 void EncryptionEngine::DecryptBlock(AttachedDatabase &attached_db, const string &key_id, data_ptr_t internal_buffer,

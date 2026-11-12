@@ -95,7 +95,7 @@ PREPARE stmt_positional_auto AS SELECT ?
 statement error
 EXECUTE stmt_positional_auto
 ----
-Values were not provided
+wrong number of parameters for prepared statement
 
 query I
 EXECUTE stmt_positional_auto(7)
@@ -108,7 +108,7 @@ PREPARE stmt_positional_numbered AS SELECT $1
 statement error
 EXECUTE stmt_positional_numbered
 ----
-Values were not provided
+wrong number of parameters for prepared statement
 
 query I
 EXECUTE stmt_positional_numbered(8)

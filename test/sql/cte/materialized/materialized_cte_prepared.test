@@ -30,7 +30,7 @@ statement ok
 PREPARE buffered_fanout_cte AS
 WITH c AS MATERIALIZED (
   SELECT i, repeat('x', 512) AS payload
-  FROM range(150000) t(i)
+  FROM range_st(150000) t(i)
 )
 SELECT (SELECT sum(length(payload)) FROM c),
        (SELECT length(payload) FROM c LIMIT 1),

@@ -142,7 +142,8 @@ void UpdateInfo::Initialize(UpdateInfo &info, DuckTableEntry &table_entry, trans
 }
 
 void UpdateInfo::Verify() {
-#ifdef DEBUG
+#ifdef D_ASSERT_IS_ENABLED
+	DUCKDB_DEBUG_VERIFY_GUARD();
 	auto tuples = GetTuples();
 	for (idx_t i = 1; i < N; i++) {
 		D_ASSERT(tuples[i] > tuples[i - 1] && tuples[i] < STANDARD_VECTOR_SIZE);
@@ -1566,6 +1567,26 @@ bool UpdateSegment::HasUncommittedUpdates(idx_t vector_index) {
 	auto &info = UpdateInfo::Get(pin);
 	if (info.HasNext()) {
 		return true;
+	}
+	return false;
+}
+
+bool UpdateSegment::HasOtherUncommittedUpdates(idx_t vector_index, transaction_t transaction_id) {
+	auto read_lock = lock.GetSharedLock();
+	auto entry = GetUpdateNode(*read_lock, vector_index);
+	if (!entry.IsSet()) {
+		return false;
+	}
+	auto pin = entry.Pin();
+	auto update_ptr = UpdateInfo::Get(pin).next;
+	while (update_ptr.IsSet()) {
+		auto info_pin = update_ptr.Pin();
+		auto &info = UpdateInfo::Get(info_pin);
+		auto version = info.version_number.load();
+		if (version >= TRANSACTION_ID_START && version != transaction_id) {
+			return true;
+		}
+		update_ptr = info.next;
 	}
 	return false;
 }

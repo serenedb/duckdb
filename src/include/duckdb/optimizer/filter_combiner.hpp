@@ -9,6 +9,7 @@
 #pragma once
 
 #include "duckdb/common/types/value.hpp"
+#include "duckdb/common/types/value_map.hpp"
 #include "duckdb/common/unordered_map.hpp"
 #include "duckdb/parser/expression_map.hpp"
 #include "duckdb/planner/expression.hpp"
@@ -60,6 +61,8 @@ public:
 	                                        vector<FilterPushdownResult> &pushdown_results);
 
 	FilterPushdownResult TryPushdownGenericExpression(LogicalGet &get, Expression &expr);
+	FilterPushdownResult TryPushdownOrClause(TableFilterSet &table_filters, const vector<ColumnIndex> &column_ids,
+	                                         Expression &expr);
 
 private:
 	FilterResult AddFilter(Expression &expr);
@@ -68,7 +71,7 @@ private:
 	unique_ptr<Expression> FindTransitiveFilter(const Expression &expr);
 	Expression &GetNode(Expression &expr);
 	idx_t GetEquivalenceSet(Expression &expr);
-	FilterResult AddConstantComparison(vector<ExpressionValueInformation> &info_list, ExpressionValueInformation info);
+	FilterResult AddConstantComparison(idx_t equivalence_set, ExpressionValueInformation info);
 
 	FilterPushdownResult TryPushdownConstantFilter(TableFilterSet &table_filters, const vector<ColumnIndex> &column_ids,
 	                                               column_t column_id, vector<ExpressionValueInformation> &info_list);
@@ -79,8 +82,6 @@ private:
 	FilterPushdownResult TryPushdownLikeFilter(TableFilterSet &table_filters, const vector<ColumnIndex> &column_ids,
 	                                           Expression &expr);
 	FilterPushdownResult TryPushdownInFilter(TableFilterSet &table_filters, const vector<ColumnIndex> &column_ids,
-	                                         Expression &expr);
-	FilterPushdownResult TryPushdownOrClause(TableFilterSet &table_filters, const vector<ColumnIndex> &column_ids,
 	                                         Expression &expr);
 	FilterPushdownResult TryPushdownTemporalCastFilter(TableFilterSet &table_filters,
 	                                                   const vector<ColumnIndex> &column_ids, Expression &expr);
@@ -96,6 +97,15 @@ private:
 	map<idx_t, vector<ExpressionValueInformation>> constant_values;
 	map<idx_t, vector<reference<Expression>>> equivalence_map;
 	idx_t set_index = 0;
+
+	struct ConstantComparisonIndex {
+		bool valid = false;
+		optional<ExpressionValueInformation> equal;
+		optional<ExpressionValueInformation> lower;
+		optional<ExpressionValueInformation> upper;
+		value_set_t not_equal;
+	};
+	unordered_map<idx_t, ConstantComparisonIndex> constant_indexes;
 };
 
 } // namespace duckdb

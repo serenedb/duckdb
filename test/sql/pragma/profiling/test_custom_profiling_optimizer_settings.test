@@ -23,7 +23,7 @@ statement ok
 PRAGMA disable_profiling;
 
 query I
-SELECT unnest(current_setting('tracked_metrics'));
+SELECT unnest(current_setting('tracked_metrics')::VARCHAR[]);
 ----
 optimizer.total_time
 
@@ -37,7 +37,7 @@ statement ok
 PRAGMA disable_profiling;
 
 query I
-SELECT unnest(current_setting('tracked_metrics')) ORDER BY ALL;
+SELECT unnest(current_setting('tracked_metrics')::VARCHAR[]) ORDER BY ALL;
 ----
 
 statement ok
@@ -56,7 +56,7 @@ statement ok
 PRAGMA disable_profiling;
 
 query I
-SELECT unnest(current_setting('tracked_metrics')) ORDER BY ALL;
+SELECT unnest(current_setting('tracked_metrics')::VARCHAR[]) ORDER BY ALL;
 ----
 optimizer.join_order
 
@@ -119,7 +119,7 @@ statement ok
 PRAGMA disable_profiling;
 
 query I
-SELECT unnest(current_setting('tracked_metrics'));
+SELECT unnest(current_setting('tracked_metrics')::VARCHAR[]);
 ----
 *
 
@@ -142,7 +142,7 @@ statement ok
 PRAGMA disable_profiling;
 
 query I
-SELECT unnest(current_setting('tracked_metrics')) ORDER BY ALL;
+SELECT unnest(current_setting('tracked_metrics')::VARCHAR[]) ORDER BY ALL;
 ----
 *
 

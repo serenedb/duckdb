@@ -12,6 +12,7 @@
 #include "duckdb/planner/filter/expression_filter.hpp"
 #include "duckdb/planner/column_binding_map.hpp"
 
+#include <absl/algorithm/container.h>
 #include <algorithm>
 
 namespace duckdb {
@@ -255,13 +256,19 @@ private:
 				get.source_ordinality = OrdinalityType::WITHOUT_ORDINALITY;
 				D_ASSERT(column_ids.empty());
 				// Grab selected GET columns and populate with all possible columns
-				column_ids = std::move(get.GetMutableColumnIds());
+				auto &mut_column_ids = get.GetMutableColumnIds();
+				column_ids = std::move(mut_column_ids);
 				for (idx_t col_idx = 0; col_idx < get.names.size(); col_idx++) {
-					get.GetMutableColumnIds().push_back(ColumnIndex(col_idx));
+					mut_column_ids.push_back(ColumnIndex(col_idx));
 				}
+				const auto virtual_start = mut_column_ids.size();
 				for (const auto &vc : get.virtual_columns) {
-					get.GetMutableColumnIds().push_back(ColumnIndex(vc.first));
+					mut_column_ids.push_back(ColumnIndex(vc.first));
 				}
+				std::sort(mut_column_ids.begin() + virtual_start, mut_column_ids.end(),
+				          [](const ColumnIndex &lhs, const ColumnIndex &rhs) {
+					          return lhs.GetPrimaryIndex() < rhs.GetPrimaryIndex();
+				          });
 
 				// Also temporarily don't project any columns out
 				projection_ids = std::move(get.projection_ids);
@@ -517,8 +524,8 @@ public:
 	PlanSignature(const MemoryStream &stream_p, idx_t offset_p, idx_t length_p,
 	              vector<reference<PlanSignature>> &&child_signatures_p, idx_t operator_count_p)
 	    : stream(stream_p), offset(offset_p), length(length_p),
-	      signature_hash(Hash(stream_p.GetData() + offset, length)), child_signatures(std::move(child_signatures_p)),
-	      operator_count(operator_count_p) {
+	      signature_hash(CombineChildHashes(Hash(stream_p.GetData() + offset, length), child_signatures_p)),
+	      child_signatures(std::move(child_signatures_p)), operator_count(operator_count_p) {
 	}
 
 public:
@@ -562,15 +569,14 @@ public:
 	}
 
 	hash_t HashSignature() const {
-		auto res = signature_hash;
-		for (auto &child : child_signatures) {
-			res = CombineHash(res, child.get().HashSignature());
-		}
-		return res;
+		return signature_hash;
 	}
 
 	bool Equals(const PlanSignature &other) const {
-		if (this->GetSignature() != other.GetSignature()) {
+		if (this == &other) {
+			return true;
+		}
+		if (this->signature_hash != other.signature_hash || this->GetSignature() != other.GetSignature()) {
 			return false;
 		}
 		if (this->child_signatures.size() != other.child_signatures.size()) {
@@ -585,6 +591,13 @@ public:
 	}
 
 private:
+	static hash_t CombineChildHashes(hash_t hash, const vector<reference<PlanSignature>> &child_signatures) {
+		for (auto &child : child_signatures) {
+			hash += duckdb::Hash<hash_t>(child.get().HashSignature());
+		}
+		return hash;
+	}
+
 	String GetSignature() const {
 		return String(char_ptr_cast(stream.GetData() + offset), NumericCast<uint32_t>(length));
 	}
@@ -678,14 +691,16 @@ struct Subplan {
 
 struct SubplanInfo {
 	SubplanInfo(ArenaAllocator &allocator, unique_ptr<LogicalOperator> &op,
-	            arena_vector<idx_t> &&canonical_table_indices_p, arena_vector<ColumnBinding> &&canonical_bindings)
+	            arena_vector<idx_t> &&canonical_table_indices_p, arena_vector<ColumnBinding> &&canonical_bindings,
+	            idx_t discovery_order_p)
 	    : canonical_table_indices(std::move(canonical_table_indices_p)), subplans(allocator),
-	      lowest_common_ancestor(op) {
+	      lowest_common_ancestor(op), discovery_order(discovery_order_p) {
 		subplans.push_back({op, std::move(canonical_bindings)});
 	}
 	arena_vector<idx_t> canonical_table_indices;
 	arena_vector<Subplan> subplans;
 	reference<unique_ptr<LogicalOperator>> lowest_common_ancestor;
+	idx_t discovery_order;
 };
 
 using subplan_map_t = unordered_map<reference<PlanSignature>, SubplanInfo, PlanSignatureHash, PlanSignatureEquality>;
@@ -700,16 +715,18 @@ public:
 
 private:
 	struct OperatorInfo {
-		OperatorInfo(unique_ptr<LogicalOperator> &parent_p, const idx_t &depth_p) : parent(parent_p), depth(depth_p) {
+		OperatorInfo(unique_ptr<LogicalOperator> &parent_p, idx_t visit_order_p)
+		    : parent(parent_p), visit_order(visit_order_p) {
 		}
 
 		unique_ptr<LogicalOperator> &parent;
-		const idx_t depth;
+		const idx_t visit_order;
 		arena_ptr<PlanSignature> signature;
 	};
 
 	struct StackNode {
-		explicit StackNode(unique_ptr<LogicalOperator> &op_p) : op(op_p), child_index(0) {
+		StackNode(unique_ptr<LogicalOperator> &op_p, idx_t visit_order_p)
+		    : op(op_p), visit_order(visit_order_p), child_index(0) {
 		}
 
 		bool HasMoreChildren() const {
@@ -722,6 +739,7 @@ private:
 		};
 
 		unique_ptr<LogicalOperator> &op;
+		idx_t visit_order;
 		idx_t child_index;
 	};
 
@@ -738,15 +756,11 @@ private:
 
 public:
 	void FindCommonSubplans(reference<unique_ptr<LogicalOperator>> root) {
-		// Find first operator with more than 1 child
-		while (root.get()->children.size() == 1) {
-			root = root.get()->children[0];
-		}
-
 		// Recurse through query plan using stack-based recursion
 		arena_vector<StackNode> stack(state.allocator);
-		stack.emplace_back(root);
-		operator_infos.emplace(root, OperatorInfo(root, 0));
+		idx_t visit_order = 0;
+		stack.emplace_back(root, visit_order);
+		operator_infos.emplace(root, OperatorInfo(root, visit_order));
 
 		while (!stack.empty()) {
 			auto &current = stack.back();
@@ -754,8 +768,9 @@ public:
 			// Depth-first
 			if (current.HasMoreChildren()) {
 				auto &child = current.GetNextChild();
-				operator_infos.emplace(child, OperatorInfo(current.op, stack.size()));
-				stack.emplace_back(child);
+				visit_order++;
+				operator_infos.emplace(child, OperatorInfo(current.op, visit_order));
+				stack.emplace_back(child, visit_order);
 				continue;
 			}
 
@@ -781,7 +796,7 @@ public:
 
 						// Add new subplan
 						SubplanInfo subplan_info(state.allocator, current.op, std::move(canonical_table_indices),
-						                         GetCanonicalBindings(*current.op));
+						                         GetCanonicalBindings(*current.op), subplans.size());
 						subplans.emplace(*signature, std::move(subplan_info));
 					} else {
 						auto &info = it->second;
@@ -794,7 +809,7 @@ public:
 
 						// Add subplan to existing
 						info.subplans.push_back({current.op, GetCanonicalBindings(*current.op)});
-						info.lowest_common_ancestor = LowestCommonAncestor(info.lowest_common_ancestor, current.op);
+						info.lowest_common_ancestor = LowestCommonAncestor(stack, info.lowest_common_ancestor);
 					}
 				}
 			}
@@ -1078,34 +1093,16 @@ private:
 		return GetCanonicalBindings(original_bindings);
 	}
 
-	unique_ptr<LogicalOperator> &LowestCommonAncestor(reference<unique_ptr<LogicalOperator>> a,
-	                                                  reference<unique_ptr<LogicalOperator>> b) {
-		auto a_it = operator_infos.find(a);
-		auto b_it = operator_infos.find(b);
-		D_ASSERT(a_it != operator_infos.end() && b_it != operator_infos.end());
-
-		// Get parents of a and b until they're at the same depth
-		while (a_it->second.depth > b_it->second.depth) {
-			a = a_it->second.parent;
-			a_it = operator_infos.find(a);
-			D_ASSERT(a_it != operator_infos.end());
-		}
-		while (b_it->second.depth > a_it->second.depth) {
-			b = b_it->second.parent;
-			b_it = operator_infos.find(b);
-			D_ASSERT(b_it != operator_infos.end());
-		}
-
-		// Move up one level at a time for both until ancestor is the same
-		while (!RefersToSameObject(a, b)) {
-			a_it = operator_infos.find(a);
-			b_it = operator_infos.find(b);
-			D_ASSERT(a_it != operator_infos.end() && b_it != operator_infos.end());
-			a = a_it->second.parent;
-			b = b_it->second.parent;
-		}
-
-		return a.get();
+	unique_ptr<LogicalOperator> &LowestCommonAncestor(const arena_vector<StackNode> &stack,
+	                                                  reference<unique_ptr<LogicalOperator>> op) {
+		auto op_it = operator_infos.find(op);
+		D_ASSERT(op_it != operator_infos.end());
+		auto ancestor =
+		    absl::c_upper_bound(stack, op_it->second.visit_order, [](idx_t visit_order, const StackNode &node) {
+			    return visit_order < node.visit_order;
+		    });
+		D_ASSERT(ancestor != stack.begin());
+		return std::prev(ancestor)->op;
 	}
 
 	vector<ColumnBinding> GetExpandedColumnBindings(LogicalOperator &op) {
@@ -1278,7 +1275,12 @@ private:
 		}
 		std::sort(subplan_infos.begin(), subplan_infos.end(),
 		          [](reference<subplan_map_t::value_type> lhs, reference<subplan_map_t::value_type> rhs) {
-			          return lhs.get().first.get().OperatorCount() < rhs.get().first.get().OperatorCount();
+			          auto lhs_count = lhs.get().first.get().OperatorCount();
+			          auto rhs_count = rhs.get().first.get().OperatorCount();
+			          if (lhs_count != rhs_count) {
+				          return lhs_count < rhs_count;
+			          }
+			          return lhs.get().second.discovery_order < rhs.get().second.discovery_order;
 		          });
 		return subplan_infos;
 	}
@@ -1305,9 +1307,19 @@ CommonSubplanOptimizer::CommonSubplanOptimizer(Optimizer &optimizer_p) : optimiz
 }
 
 unique_ptr<LogicalOperator> CommonSubplanOptimizer::Optimize(unique_ptr<LogicalOperator> op) {
+	// Find first operator with more than 1 child
+	reference<unique_ptr<LogicalOperator>> root(op);
+	while (root.get()->children.size() == 1) {
+		root = root.get()->children[0];
+	}
+	if (root.get()->children.empty()) {
+		// The plan is a single-child chain: identical disjoint subplans require
+		// a branching operator above them, so there is nothing to deduplicate
+		return op;
+	}
 	// Bottom-up identification of identical subplans
 	CommonSubplanFinder finder(optimizer.context);
-	finder.FindCommonSubplans(op);
+	finder.FindCommonSubplans(root);
 	finder.FilterSubplans();
 	finder.ConvertSubplansToCTEs(optimizer, op);
 	return op;

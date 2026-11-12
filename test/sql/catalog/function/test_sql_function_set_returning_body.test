@@ -1,0 +1,13 @@
+# name: test/sql/catalog/function/test_sql_function_set_returning_body.test
+# group: [function]
+
+statement ok
+CREATE FUNCTION first_unnested(x INTEGER) RETURNS INTEGER LANGUAGE sql AS 'SELECT x + unnest([1, 2])';
+
+statement ok
+CREATE FUNCTION first_generated(x INTEGER) RETURNS INTEGER LANGUAGE sql AS 'SELECT x + generate_series(1, 2)';
+
+query II
+SELECT first_unnested(10), first_generated(20)
+----
+11	21

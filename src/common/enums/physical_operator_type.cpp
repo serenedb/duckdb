@@ -135,6 +135,8 @@ string PhysicalOperatorToString(PhysicalOperatorType type) {
 		return "RECURSIVE_KEY_JOIN";
 	case PhysicalOperatorType::MERGE_ACTION_SOURCE:
 		return "MERGE_ACTION_SOURCE";
+	case PhysicalOperatorType::LOOKUP_JOIN:
+		return "LOOKUP_JOIN";
 	case PhysicalOperatorType::DROP:
 		return "DROP";
 	case PhysicalOperatorType::PRAGMA:
@@ -159,6 +161,16 @@ string PhysicalOperatorToString(PhysicalOperatorType type) {
 		return "CREATE_TYPE";
 	case PhysicalOperatorType::CREATE_TRIGGER:
 		return "CREATE_TRIGGER";
+	case PhysicalOperatorType::CREATE_JOB:
+		return "CREATE_JOB";
+	case PhysicalOperatorType::CREATE_ROLE:
+		return "CREATE_ROLE";
+	case PhysicalOperatorType::CREATE_FOREIGN_SERVER:
+		return "CREATE_FOREIGN_SERVER";
+	case PhysicalOperatorType::CREATE_TOKENIZER:
+		return "CREATE_TOKENIZER";
+	case PhysicalOperatorType::CREATE_DATABASE:
+		return "CREATE_DATABASE";
 	case PhysicalOperatorType::ATTACH:
 		return "ATTACH";
 	case PhysicalOperatorType::DETACH:

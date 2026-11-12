@@ -28,13 +28,11 @@ public:
 	double GetPercentage();
 	uint64_t GetRowsProcessed();
 	uint64_t GetTotalRowsToProcess();
-	QueryProgress &operator=(const QueryProgress &other);
-	QueryProgress(const QueryProgress &other);
 
 private:
-	atomic<double> percentage;
-	atomic<uint64_t> rows_processed;
-	atomic<uint64_t> total_rows_to_process;
+	double percentage;
+	uint64_t rows_processed;
+	uint64_t total_rows_to_process;
 };
 
 class ProgressBar {
@@ -43,13 +41,14 @@ public:
 	static void SystemOverrideCheck(ClientConfig &config);
 
 	explicit ProgressBar(
-	    Executor &executor, idx_t show_progress_after,
+	    Executor &executor, idx_t show_progress_after, idx_t update_interval_ms,
 	    const progress_bar_display_create_func_t &create_display_func = ProgressBar::DefaultProgressBarDisplay);
 
 	//! Starts the thread
 	void Start();
-	//! Updates the progress bar and prints it to the screen
-	void Update(bool final);
+	//! Updates the progress bar and prints it to the screen; returns whether the
+	//! progress was recomputed (headless updates are throttled)
+	bool Update(bool final);
 	QueryProgress GetDetailedQueryProgress();
 	void PrintProgress(double percentage);
 	void FinishProgressBarPrint();
@@ -63,6 +62,10 @@ private:
 	Profiler profiler;
 	//! The time in ms after which to start displaying the progress bar
 	idx_t show_progress_after;
+	//! Minimum interval between headless progress recomputations
+	idx_t update_interval_ms;
+	//! Elapsed time (seconds) of the last headless recomputation
+	double last_compute_time = 0;
 	//! Keeps track of the total progress of a query
 	QueryProgress query_progress;
 	//! The display used to print the progress

@@ -44,5 +44,17 @@
         "type": "TableRef*"
       }
     ]
+  },
+  {
+    "class": "ExtraDropDiscardInfo",
+    "base": "ExtraDropInfo",
+    "enum": "DISCARD_INFO",
+    "members": [
+      {
+        "id": 203,
+        "name": "target",
+        "type": "DiscardTarget"
+      }
+    ]
   }
 ]

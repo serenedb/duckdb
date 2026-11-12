@@ -48,6 +48,9 @@ EXECUTE v1(5)
 9996
 
 statement ok
+DEALLOCATE v1
+
+statement ok
 PREPARE v1 AS SELECT * FROM generate_series(0, 10000, 1) tbl(i) ORDER BY i DESC LIMIT ?::VARCHAR %
 
 query I

@@ -59,12 +59,12 @@ main
 query I
 SELECT current_schemas(true);
 ----
-[main, main, main, pg_catalog]
+[pg_catalog, main]
 
 query I
 SELECT current_schemas(false);
 ----
-[]
+[main]
 
 query IIII
 SELECT inet_client_addr(), inet_client_port(), inet_server_addr(), inet_server_port();

@@ -40,7 +40,7 @@ struct TransactionData;
 class LocalTableStorage : public enable_shared_from_this<LocalTableStorage> {
 public:
 	// Create a new LocalTableStorage
-	explicit LocalTableStorage(ClientContext &context, DataTable &table);
+	LocalTableStorage(ClientContext &context, DataTable &table, const unordered_set<idx_t> &dropped_indexes);
 	//! Create a LocalTableStorage from an ALTER TYPE.
 	LocalTableStorage(ClientContext &context, DataTable &new_data_table, LocalTableStorage &parent,
 	                  const idx_t alter_column_index, const LogicalType &target_type,
@@ -56,7 +56,7 @@ public:
 
 	reference<DataTable> table_ref;
 	//! The DuckTableEntry visible to this transaction that references table_ref.
-	//! Updated through the append path (InitializeAppend, Append, LocalMerge) and
+	//! Updated through the append path (InitializeAppend, InitializeStorage, LocalMerge) and
 	//! propagated from parent storage on ALTER operations.
 	optional_ptr<DuckTableEntry> table_entry;
 
@@ -96,10 +96,12 @@ public:
 	void Rollback();
 	idx_t EstimatedSize() const;
 
-	void AppendToIndexes(DuckTransaction &transaction, TableAppendState &append_state);
+	void AppendToIndexes(DuckTransaction &transaction, TableAppendState &append_state,
+	                     const unordered_set<idx_t> &dropped_indexes);
 	void AppendToTable(DuckTransaction &transaction, TableAppendState &append_state);
 	ErrorData AppendToIndexes(DuckTransaction &transaction, RowGroupCollection &source, TableIndexList &index_list,
-	                          const vector<LogicalType> &table_types, row_t &start_row);
+	                          const vector<LogicalType> &table_types, row_t &start_row,
+	                          optional_ptr<const unordered_set<idx_t>> dropped_indexes);
 	void AppendToDeleteIndexes(Vector &row_ids, DataChunk &delete_chunk);
 
 	//! Create an optimistic row group collection for this table.
@@ -125,14 +127,19 @@ public:
 	reference_map_t<const DataTable, shared_ptr<LocalTableStorage>> MoveEntries();
 	vector<shared_ptr<LocalTableStorage>> GetEntries() const;
 	optional_ptr<LocalTableStorage> GetStorage(const DataTable &table) const;
-	LocalTableStorage &GetOrCreateStorage(ClientContext &context, DataTable &table);
+	LocalTableStorage &GetOrCreateStorage(ClientContext &context, DataTable &table,
+	                                      optional_ptr<DuckTableEntry> table_entry = nullptr);
 	idx_t EstimatedSize() const;
 	bool IsEmpty() const;
+	vector<reference<DataTable>> GetTables() const;
 	void InsertEntry(DataTable &table, shared_ptr<LocalTableStorage> entry);
+	void DropIndex(idx_t index_oid);
+	const unordered_set<idx_t> &DroppedIndexes() const;
 
 private:
 	mutable mutex table_storage_lock;
 	reference_map_t<const DataTable, shared_ptr<LocalTableStorage>> table_storage;
+	unordered_set<idx_t> dropped_indexes;
 };
 
 //! The LocalStorage class holds appends that have not been committed yet
@@ -167,7 +174,7 @@ public:
 	void InitializeStorage(LocalAppendState &state, DataTable &table, DuckTableEntry &table_entry);
 
 	//! Append a chunk to the local storage
-	static void Append(LocalAppendState &state, DuckTableEntry &table_entry, DataChunk &table_chunk);
+	static void Append(LocalAppendState &state, DataChunk &table_chunk);
 	//! Finish appending to the local storage
 	static void FinalizeAppend(LocalAppendState &state);
 	//! Merge a row group collection into the transaction-local storage
@@ -185,8 +192,8 @@ public:
 	//! Delete a set of rows from the local storage
 	idx_t Delete(DataTable &table, DuckTableEntry &table_entry, Vector &row_ids, idx_t count);
 	//! Update a set of rows in the local storage
-	void Update(DataTable &table, DuckTableEntry &table_entry, Vector &row_ids, const vector<PhysicalIndex> &column_ids,
-	            DataChunk &data);
+	void Update(DataTable &table, DuckTableEntry &table_entry, Vector &row_ids,
+	            std::span<const PhysicalIndex> column_ids, DataChunk &data);
 
 	//! Commits the local storage, writing it to the WAL and completing the commit
 	void Commit(optional_ptr<StorageCommitState> commit_state);
@@ -197,7 +204,10 @@ public:
 	idx_t EstimatedSize();
 
 	void DropTable(DataTable &table);
+	void DropIndex(DataTable &table, idx_t index_oid);
+	const unordered_set<idx_t> &DroppedIndexes() const;
 	bool Find(DataTable &table);
+	vector<reference<DataTable>> GetTables() const;
 
 	idx_t AddedRows(DataTable &table);
 	vector<PartitionStatistics> GetPartitionStats(DataTable &table, TransactionData transaction) const;
@@ -210,7 +220,7 @@ public:
 
 	void MoveStorage(DataTable &old_dt, DataTable &new_dt);
 	void FetchChunk(DataTable &table, const Vector &row_ids, idx_t count, const vector<StorageIndex> &col_ids,
-	                DataChunk &chunk, ColumnFetchState &fetch_state);
+	                DataChunk &chunk, ColumnFetchState &fetch_state, optional_ptr<SelectionVector> fetched = nullptr);
 	//! Returns true, if the local storage contains the row id.
 	bool CanFetch(DataTable &table, const row_t row_id);
 	TableIndexList &GetIndexes(ClientContext &context, DataTable &table);

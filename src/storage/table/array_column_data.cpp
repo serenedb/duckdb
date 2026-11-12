@@ -28,8 +28,9 @@ void ArrayColumnData::SetDataType(ColumnDataType data_type) {
 }
 
 FilterPropagateResult ArrayColumnData::CheckZonemap(ColumnScanState &state, TableFilter &filter,
+                                                    TableFilterState &filter_state,
                                                     optional_ptr<SegmentNode<ColumnSegment>> &checked_segment) {
-	return CheckValidityZonemap(state, filter, checked_segment, *validity);
+	return CheckValidityZonemap(state, filter, filter_state, checked_segment, *validity);
 }
 
 void ArrayColumnData::InitializePrefetch(PrefetchState &prefetch_state, ColumnScanState &scan_state, idx_t rows) {
@@ -50,6 +51,15 @@ void ArrayColumnData::InitializeScan(ColumnScanState &state) {
 
 	// initialize the child scan
 	child_column->InitializeScan(state.child_states[1]);
+}
+
+void ArrayColumnData::ReinitializeScan(ColumnScanState &state) {
+	// no own data segments (array length is fixed) -- just reset the cursor and warm-keep the children
+	D_ASSERT(state.child_states.size() == 2);
+	state.offset_in_column = 0;
+	state.current = nullptr;
+	validity->ReinitializeScan(state.child_states[0]);
+	child_column->ReinitializeScan(state.child_states[1]);
 }
 
 void ArrayColumnData::InitializeScanWithOffset(ColumnScanState &state, idx_t row_idx) {
@@ -396,7 +406,8 @@ void ArrayColumnData::GetColumnSegmentInfo(const QueryContext &context, idx_t ro
 }
 
 void ArrayColumnData::Verify(RowGroup &parent) {
-#ifdef DEBUG
+#ifdef D_ASSERT_IS_ENABLED
+	DUCKDB_DEBUG_VERIFY_GUARD();
 	ColumnData::Verify(parent);
 	validity->Verify(parent);
 	child_column->Verify(parent);

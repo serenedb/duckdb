@@ -198,10 +198,8 @@ char *StrfTimeFormat::Write2(char *target, uint8_t value) const {
 // write a value in the range of 0..99 padded to 2 digits
 char *StrfTimeFormat::WritePadded2(char *target, uint32_t value) const {
 	D_ASSERT(value < 100);
-	auto index = static_cast<unsigned>(value * 2);
-	*target++ = duckdb_fmt::internal::data::digits[index];
-	*target++ = duckdb_fmt::internal::data::digits[index + 1];
-	return target;
+	memcpy(target, fmt::detail::digits2(value), 2);
+	return target + 2;
 }
 
 // write a value in the range of 0..999 padded
@@ -221,6 +219,7 @@ char *StrfTimeFormat::WritePadded3(char *target, uint32_t value) const {
 // write a value in the range of 0..999999... padded to the given number of digits
 char *StrfTimeFormat::WritePadded(char *target, uint32_t value, size_t padding) const {
 	D_ASSERT(padding > 1);
+	const auto width = padding;
 	if (padding % 2) {
 		uint32_t decimals = value % 1000u;
 		WritePadded3(target + padding - 3, decimals);
@@ -232,7 +231,7 @@ char *StrfTimeFormat::WritePadded(char *target, uint32_t value, size_t padding) 
 		WritePadded2(target + padding - 2 * (i + 1), decimals);
 		value /= 100;
 	}
-	return target + padding;
+	return target + width;
 }
 
 bool StrfTimeFormat::IsDateSpecifier(StrTimeSpecifier specifier) {

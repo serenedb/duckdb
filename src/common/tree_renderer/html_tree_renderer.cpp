@@ -57,7 +57,8 @@ void HTMLTreeRenderer::Render(const Pipeline &op, BaseTreeRenderer &ss) {
 
 //! Map an operator name (and, for leaves, its details) to a coarse "kind" used for colour-coding in the UI. Mirrors
 //! the classification used by the text renderer.
-static const char *ClassifyKind(const string &name, bool is_leaf, const InsertionOrderPreservingMap<string> &extra) {
+static const char *ClassifyKind(const string &name, bool is_leaf,
+                                const InsertionOrderPreservingMap<ExplainValue> &extra) {
 	// CTE first: CTE_SCAN contains "SCAN" but should be classified as a CTE operator
 	if (StringUtil::Contains(name, "CTE")) {
 		return "cte";
@@ -122,7 +123,7 @@ static JSONMutableValue BuildNodeJSON(JSONWriter &writer, RenderTree &tree, idx_
 	auto details = writer.CreateArray();
 	for (auto &entry : node.extra_text) {
 		auto &key = entry.first;
-		auto &value = entry.second;
+		auto value = entry.second.ToString();
 		if (key == RenderTreeNode::CARDINALITY) {
 			if (!value.empty()) {
 				obj.Add("cardinality", writer.CreateSignedInteger(std::strtoll(value.c_str(), nullptr, 10)));

@@ -36,5 +36,7 @@ public:
 
 protected:
 	void ResolveTypes() override;
+	optional_ptr<LogicalOperator> GetBindingChild() override;
+	void DeriveColumnBindings(vector<ColumnBinding> &bindings) override;
 };
 } // namespace duckdb

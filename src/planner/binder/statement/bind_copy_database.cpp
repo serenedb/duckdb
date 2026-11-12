@@ -28,8 +28,31 @@ unique_ptr<LogicalOperator> Binder::BindCopyDatabaseSchema(Catalog &from_databas
 	catalog_entries = PhysicalExport::GetNaiveExportOrder(context, from_database);
 
 	auto info = make_uniq<CopyDatabaseInfo>(target_database_name);
+	auto dependency_manager = from_database.GetDependencyManager();
+	auto transaction = from_database.GetCatalogTransaction(context);
+	unordered_map<idx_t, QualifiedName> user_types;
 	for (auto &entry : catalog_entries) {
+		if (entry.get().type == CatalogType::TYPE_ENTRY && !entry.get().internal) {
+			user_types.emplace(entry.get().oid,
+			                   QualifiedName::FromCatalogSchema(target_database_name, entry.get().ParentSchemaPath(),
+			                                                    entry.get().name));
+		}
+	}
+	for (auto &entry : catalog_entries) {
+		if (entry.get().type == CatalogType::JOB_ENTRY || entry.get().type == CatalogType::INDEX_ENTRY) {
+			continue;
+		}
 		auto create_info = entry.get().GetInfo();
+		if (create_info->type == CatalogType::TABLE_ENTRY) {
+			auto &columns = create_info->Cast<CreateTableInfo>().columns;
+			for (idx_t i = 0; i < columns.LogicalColumnCount(); i++) {
+				auto &column = columns.GetColumnMutable(LogicalIndex(i));
+				auto type = column.Type();
+				if (PhysicalExport::QualifyUserTypes(type, user_types)) {
+					column.SetType(type);
+				}
+			}
+		}
 		// re-root the entry (keeping its possibly nested schema path) in the target database
 		create_info->SetQualifiedName(create_info->GetQualifiedName().WithCatalog(target_database_name));
 		auto on_conflict = create_info->type == CatalogType::SCHEMA_ENTRY ? OnCreateConflict::IGNORE_ON_CONFLICT
@@ -38,7 +61,13 @@ unique_ptr<LogicalOperator> Binder::BindCopyDatabaseSchema(Catalog &from_databas
 		LogicalDependencyList altered_dependencies;
 		for (auto &dep : create_info->dependencies.Set()) {
 			auto altered_dep = dep;
-			altered_dep.catalog = target_database_name;
+			if (dep.catalog == from_database.GetName()) {
+				if (dependency_manager) {
+					altered_dep = dependency_manager->WithCurrentNames(transaction, dep);
+				}
+				altered_dep.catalog = target_database_name;
+				altered_dep.oid = 0;
+			}
 			altered_dependencies.AddDependency(altered_dep);
 		}
 		create_info->dependencies = altered_dependencies;
@@ -64,7 +93,7 @@ unique_ptr<LogicalOperator> Binder::BindCopyDatabaseData(Catalog &source_catalog
 		InsertStatement insert_stmt;
 		auto &insert_node = *insert_stmt.node;
 		// the table can live in a nested schema - carry the full schema path on both sides
-		auto source_name = table.ParentSchema().GetQualifiedName(table.name);
+		auto source_name = table.GetQualifiedName(table.name);
 		insert_node.qualified_name = source_name.WithCatalog(target_database_name);
 
 		auto from_tbl = make_uniq<BaseTableRef>();

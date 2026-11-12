@@ -1,0 +1,40 @@
+# name: test/sql/aggregate/aggregates/test_quantile_small_int_histogram.test
+# description: exact quantiles of large 8- and 16-bit integer inputs match the same quantiles over 32-bit integers
+# group: [aggregates]
+
+statement ok
+CREATE TABLE t AS SELECT ((i * 7919) % 60001 - 30000)::SMALLINT AS s, ((i * 31) % 255 - 127)::TINYINT AS b,
+    ((i * 13) % 251)::UTINYINT AS u, i % 3 AS g FROM range(1200000) r(i);
+
+foreach q 0.0 0.1 0.25 0.5 0.9 0.999 1.0
+
+query I
+SELECT quantile_cont(s, ${q}) = quantile_cont(s::INTEGER, ${q}) AND quantile_disc(s, ${q}) = quantile_disc(s::INTEGER, ${q})
+   AND quantile_cont(b, ${q}) = quantile_cont(b::INTEGER, ${q}) AND quantile_disc(b, ${q}) = quantile_disc(b::INTEGER, ${q})
+   AND quantile_cont(u, ${q}) = quantile_cont(u::INTEGER, ${q}) AND quantile_disc(u, ${q}) = quantile_disc(u::INTEGER, ${q})
+FROM t;
+----
+true
+
+endloop
+
+query I
+SELECT median(s) = median(s::INTEGER) AND median(b) = median(b::INTEGER) AND median(u) = median(u::INTEGER) FROM t;
+----
+true
+
+query I
+SELECT quantile_cont(0.3 ORDER BY s DESC) = quantile_cont(0.3 ORDER BY s::INTEGER DESC)
+   AND quantile_disc(0.3 ORDER BY b DESC) = quantile_disc(0.3 ORDER BY b::INTEGER DESC) FROM t;
+----
+true
+
+query I
+SELECT count(*) FROM (SELECT g, quantile_cont(s, 0.75) AS a, quantile_cont(s::INTEGER, 0.75) AS c FROM t GROUP BY g) WHERE a <> c;
+----
+0
+
+query I
+SELECT quantile_cont(s, 0.5) FROM (SELECT * FROM t LIMIT 10);
+----
+-10202.5

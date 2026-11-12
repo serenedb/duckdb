@@ -58,6 +58,20 @@ optional_ptr<DependencyManager> DuckCatalog::GetDependencyManager() {
 	return dependency_manager.get();
 }
 
+void DuckCatalog::ScanSubjects(CatalogTransaction transaction, CatalogEntry &entry,
+                               const std::function<void(CatalogEntry &)> &callback) {
+	dependency_manager->ScanEdges(transaction, entry, true,
+	                              [&](CatalogEntry &subject, const DependencyDependentFlags &) { callback(subject); });
+}
+
+catalog_entry_vector_t DuckCatalog::OwnedEntries(CatalogTransaction transaction, const CatalogEntry &owner) {
+	return dependency_manager->OwnedEntries(transaction, owner);
+}
+
+optional_ptr<CatalogEntry> DuckCatalog::OwnerOf(CatalogTransaction transaction, CatalogEntry &owned) {
+	return dependency_manager->OwnerOf(transaction, owned);
+}
+
 //===--------------------------------------------------------------------===//
 // Schema
 //===--------------------------------------------------------------------===//
@@ -95,6 +109,8 @@ void DuckCatalog::AlterSchema(CatalogTransaction transaction, SchemaCatalogEntry
 		throw NotImplementedException("SET (<options>) is not supported for DuckDB schemas");
 	case AlterSchemaType::RESET_SCHEMA_OPTIONS:
 		throw NotImplementedException("RESET (<options>) is not supported for DuckDB schemas");
+	case AlterSchemaType::RENAME_SCHEMA:
+		throw NotImplementedException("Altering schemas is not yet supported");
 	default:
 		throw InternalException("Unrecognized alter schema type!");
 	}
@@ -195,7 +211,8 @@ string DuckCatalog::GetEncryptionCipher() const {
 }
 
 void DuckCatalog::Verify() {
-#ifdef DEBUG
+#ifdef D_ASSERT_IS_ENABLED
+	DUCKDB_DEBUG_VERIFY_GUARD();
 	Catalog::Verify();
 	schemas->Verify(*this);
 #endif

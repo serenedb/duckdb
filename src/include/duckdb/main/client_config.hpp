@@ -12,10 +12,10 @@
 #include "duckdb/common/common.hpp"
 #include "duckdb/common/identifier.hpp"
 #include "duckdb/common/optional_idx.hpp"
+#include "duckdb/common/enums/optimizer_type.hpp"
 #include "duckdb/common/enums/output_type.hpp"
 #include "duckdb/common/progress_bar/progress_bar.hpp"
 #include "duckdb/common/types/value.hpp"
-#include "duckdb/common/optional.hpp"
 #include "duckdb/common/enums/profiling_coverage.hpp"
 #include "duckdb/main/user_settings.hpp"
 
@@ -24,7 +24,6 @@ namespace duckdb {
 class ClientContext;
 class PhysicalResultCollector;
 class PreparedStatementData;
-struct CompiledGrammar;
 struct ReplacementScan;
 
 typedef std::function<unique_ptr<PhysicalOperator>(ClientContext &context, PreparedStatementData &data)>
@@ -54,6 +53,17 @@ struct ClientConfig {
 	bool print_progress_bar = true;
 	//! The wait time before showing the progress bar
 	int wait_time = 2000;
+	//! Minimum interval between progress recomputations when the bar is not printed
+	int progress_update_interval_ms = 0;
+	//! Called per chunk flowing into a write sink (INSERT, COPY ... TO) so an embedding server can report progress
+	std::function<void(idx_t rows, idx_t bytes)> sink_progress_callback;
+
+	//! Session-scoped override of the disabled_optimizers setting; when unset
+	//! the database-wide DBConfig set applies.
+	bool has_disabled_optimizers = false;
+	set<OptimizerType> disabled_optimizers;
+
+	optional_idx threads;
 
 	//! Force parallelism of small tables, used for testing
 	bool verify_parallelism = false;
@@ -86,14 +96,6 @@ struct ClientConfig {
 
 	//! Function that is used to create the result collector for a materialized result.
 	get_result_collector_t get_result_collector = nullptr;
-
-	optional<string> current_dialect;
-	//! The (ordered) list of grammar extensions currently used by the parser
-	vector<string> active_grammar_extensions;
-	//! The compiled grammar active for the connection
-	shared_ptr<CompiledGrammar> cached_grammar;
-	//! The grammar of the database this client is CONNECT-ed to; unset when not connected
-	shared_ptr<CompiledGrammar> connected_grammar;
 
 public:
 	static ClientConfig &GetConfig(ClientContext &context);

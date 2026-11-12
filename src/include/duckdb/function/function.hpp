@@ -70,6 +70,8 @@ public:
 	DUCKDB_API virtual bool Equals(const FunctionData &other) const = 0;
 	DUCKDB_API static bool Equals(const FunctionData *left, const FunctionData *right);
 	DUCKDB_API virtual bool SupportStatementCache() const;
+	DUCKDB_API virtual bool ReadsParametersAtExecution() const;
+	DUCKDB_API virtual bool RegistersDataVersions() const;
 
 	template <class TARGET>
 	TARGET &Cast() {
@@ -412,10 +414,25 @@ public:
 
 	hash_t Hash() const;
 
+	bool IsTypeScoped() const {
+		return type_scoped;
+	}
+	void SetTypeScoped() {
+		type_scoped = true;
+	}
+	bool IsRecordResult() const {
+		return record_result;
+	}
+	void SetRecordResult() {
+		record_result = true;
+	}
+
 private:
 	vector<FunctionParameter> parameters;
 	shared_ptr<TypedKwargs> typed_kwargs; // optional "schema" for the accepted **kwargs
 	LogicalType return_type;
+	bool type_scoped = false;
+	bool record_result = false;
 };
 
 //! Function is the base class used for any type of function (scalar, aggregate or simple function)
@@ -584,6 +601,7 @@ public:
 	bool requires_expression_names = false;
 	//! Whether calls to this function must follow input order
 	bool requires_ordered_execution = false;
+	bool lazy_arguments = false;
 };
 
 class BoundSimpleFunction {

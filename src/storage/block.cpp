@@ -20,6 +20,12 @@ Block::Block(BlockAllocator &allocator, block_id_t id, BlockManager &block_manag
 	D_ASSERT((AllocSize() & (Storage::SECTOR_SIZE - 1)) == 0);
 }
 
+Block::Block(BlockAllocator &allocator, block_id_t id, MemoryMappedFile &handle, uint64_t location, idx_t block_size,
+             idx_t block_header_size)
+    : FileBuffer(allocator, FileBufferType::BLOCK, handle, location, block_size, block_header_size), id(id) {
+	D_ASSERT((AllocSize() & (Storage::SECTOR_SIZE - 1)) == 0);
+}
+
 Block::Block(FileBuffer &source, block_id_t id, idx_t block_header_size)
     : FileBuffer(source, FileBufferType::BLOCK, block_header_size), id(id) {
 	D_ASSERT((AllocSize() & (Storage::SECTOR_SIZE - 1)) == 0);

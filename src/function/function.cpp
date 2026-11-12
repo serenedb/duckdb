@@ -109,7 +109,7 @@ bool FunctionProperties::operator==(const FunctionProperties &rhs) const {
 	return stability == rhs.stability && null_handling == rhs.null_handling && errors == rhs.errors &&
 	       collation_handling == rhs.collation_handling && capture_argument_aliases == rhs.capture_argument_aliases &&
 	       requires_expression_names == rhs.requires_expression_names &&
-	       requires_ordered_execution == rhs.requires_ordered_execution;
+	       requires_ordered_execution == rhs.requires_ordered_execution && lazy_arguments == rhs.lazy_arguments;
 }
 
 bool FunctionProperties::operator!=(const FunctionProperties &rhs) const {
@@ -142,6 +142,14 @@ bool TableFunctionData::Equals(const FunctionData &other) const {
 
 bool FunctionData::SupportStatementCache() const {
 	return true;
+}
+
+bool FunctionData::ReadsParametersAtExecution() const {
+	return false;
+}
+
+bool FunctionData::RegistersDataVersions() const {
+	return false;
 }
 
 Function::Function(Identifier name_p) : name(std::move(name_p)) {
@@ -325,7 +333,7 @@ void FunctionSignature::Verify() const {
 			found_default_value = true;
 		} else if (found_default_value) {
 			throw InvalidInputException(
-			    "Parameters with default values must be at the end of the parameter list. Parameter '%s' does not "
+			    "Parameters with default values must be at the end of the parameter list. Parameter %s does not "
 			    "have a default value but follows a parameter with a default value.",
 			    param.GetName());
 		}
@@ -386,7 +394,7 @@ void FunctionSignature::Verify() const {
 		// a named argument binds to a parameter of its name first, so an option of the same name is never reached
 		for (auto &param : parameters) {
 			if (param.AcceptsName() && typed_kwargs->Find(param.GetName())) {
-				throw InvalidInputException("Option '%s' has the same name as a parameter", param.GetName());
+				throw InvalidInputException("Option %s has the same name as a parameter", param.GetName());
 			}
 		}
 	}
@@ -600,7 +608,7 @@ Value BindFunctionInput::GetConstant(idx_t arg_idx, bool accept_null) const {
 	}
 	auto value = ExpressionExecutor::EvaluateScalar(context, expr);
 	if (!accept_null && value.IsNull()) {
-		throw BinderException(expr, "%s in function '%s' must not be NULL", argument_name, function.GetName());
+		throw BinderException(expr, "%s in function %s must not be NULL", argument_name, function.GetName());
 	}
 	return value;
 }
@@ -624,7 +632,11 @@ optional<Value> BindFunctionInput::TryGetConstant(idx_t arg_idx) const {
 	if (!expr.IsFoldable()) {
 		return {};
 	}
-	return ExpressionExecutor::EvaluateScalar(context, expr);
+	Value result;
+	if (!ExpressionExecutor::TryEvaluateScalar(context, expr, result)) {
+		return {};
+	}
+	return result;
 }
 
 optional<Value> BindFunctionInput::TryGetConstant(const Identifier &name) const {
@@ -637,7 +649,7 @@ optional<Value> BindFunctionInput::TryGetConstant(const Identifier &name) const 
 
 optional_idx BindFunctionInput::GetArgumentIndex(const Identifier &name) const {
 	if (!argument_names) {
-		throw InternalException("Function '%s' was bound without argument names, cannot look up argument '%s' by name",
+		throw InternalException("Function %s was bound without argument names, cannot look up argument %s by name",
 		                        function.GetName(), name);
 	}
 	// The binder resolves every argument to a slot and reports its name: the signature parameter name for standard

@@ -1,5 +1,7 @@
 #include "duckdb/common/serializer/binary_serializer.hpp"
 
+#include "duckdb/common/stack_depth.hpp"
+
 #ifdef DEBUG
 #include "duckdb/common/string_util.hpp"
 #endif
@@ -7,6 +9,9 @@
 namespace duckdb {
 
 void BinarySerializer::OnPropertyBegin(const field_id_t field_id, const char *tag) {
+	if (field_id >= SERENEDB_FIELD_ID_BASE) {
+		RequireSereneDBStorageVersion(tag);
+	}
 	// Just write the field id straight up
 	Write<field_id_t>(field_id);
 #ifdef DEBUG
@@ -57,6 +62,7 @@ void BinarySerializer::OnOptionalPropertyEnd(bool present) {
 // Nested Type Hooks
 //-------------------------------------------------------------------------
 void BinarySerializer::OnObjectBegin() {
+	StackDepth::Check();
 #ifdef DEBUG
 	debug_stack.emplace_back();
 #endif

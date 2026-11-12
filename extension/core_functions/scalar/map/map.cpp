@@ -4,7 +4,6 @@
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/common/types/data_chunk.hpp"
 #include "duckdb/common/pair.hpp"
-#include "duckdb/common/types/value_map.hpp"
 #include "duckdb/function/scalar/nested_functions.hpp"
 
 namespace duckdb {
@@ -99,6 +98,7 @@ static void MapFunction(DataChunk &args, ExpressionState &, Vector &result) {
 	SelectionVector sel_keys(result_child_size);
 	SelectionVector sel_values(result_child_size);
 	idx_t offset = 0;
+	MapValidityChecker key_checker(keys, keys_child_vector);
 
 	for (idx_t row_idx = 0; row_idx < row_count; row_idx++) {
 		auto keys_idx = keys_data.sel->get_index(row_idx);
@@ -117,23 +117,10 @@ static void MapFunction(DataChunk &args, ExpressionState &, Vector &result) {
 			MapVector::EvalMapInvalidReason(MapInvalidReason::NOT_ALIGNED);
 		}
 
-		// set the selection vectors and perform a duplicate key check
-		value_set_t unique_keys;
+		MapVector::EvalMapInvalidReason(key_checker.CheckRow(row_idx));
 		for (idx_t child_idx = 0; child_idx < keys_entry.length; child_idx++) {
 			auto key_idx = keys_child_data.sel->get_index(keys_entry.offset + child_idx);
 			auto value_idx = values_child_data.sel->get_index(values_entry.offset + child_idx);
-
-			// NULL check
-			if (!keys_child_data.validity.RowIsValid(key_idx)) {
-				MapVector::EvalMapInvalidReason(MapInvalidReason::NULL_KEY);
-			}
-
-			// unique check
-			auto value = keys_child_vector.GetValue(key_idx);
-			auto unique = unique_keys.insert(value).second;
-			if (!unique) {
-				MapVector::EvalMapInvalidReason(MapInvalidReason::DUPLICATE_KEY);
-			}
 
 			// set selection vectors
 			sel_keys.set_index(offset + child_idx, key_idx);

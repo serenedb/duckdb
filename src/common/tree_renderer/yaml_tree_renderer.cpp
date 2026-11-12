@@ -6,7 +6,6 @@
 #include "duckdb/execution/physical_operator.hpp"
 #include "duckdb/parallel/pipeline.hpp"
 #include "duckdb/planner/logical_operator.hpp"
-#include "fmt/printf.h"
 
 namespace duckdb {
 
@@ -85,7 +84,9 @@ static string EscapedString(const string &str) {
 			break;
 		default:
 			if ((unsigned char)ch < ' ') {
-				out += duckdb_fmt::sprintf("\\u%04x", (int)ch);
+				out += "\\u00";
+				out += "0123456789abcdef"[(unsigned char)ch >> 4];
+				out += "0123456789abcdef"[(unsigned char)ch & 0x0F];
 			} else {
 				out += ch;
 			}
@@ -108,7 +109,7 @@ void YAMLTreeRenderer::RenderRecursive(RenderTree &node, BaseTreeRenderer &ss, i
 	if (!current_node.extra_text.empty()) {
 		for (const auto &info : current_node.extra_text) {
 			auto &key = info.first;
-			auto &value = info.second;
+			auto value = info.second.ToString();
 			auto splits = StringUtil::Split(value, "\n");
 			ss << string(indent, ' ') << EscapedString(key) << ":";
 			if (splits.size() > 1) { // list

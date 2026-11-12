@@ -9,6 +9,7 @@
 #pragma once
 
 #include "duckdb/common/arrow/arrow_wrapper.hpp"
+#include "duckdb/common/mutex.hpp"
 #include "duckdb/function/table/arrow/arrow_duck_schema.hpp"
 #include <mutex>
 
@@ -138,7 +139,7 @@ struct HashTypeInfo {
 struct ArrowTypeExtensionSet {
 	ArrowTypeExtensionSet() {};
 	static void Initialize(const DBConfig &config);
-	std::mutex lock;
+	mutex lock;
 	unordered_map<ArrowExtensionMetadata, ArrowTypeExtension, HashArrowTypeExtension> type_extensions;
 	unordered_map<TypeInfo, vector<ArrowExtensionMetadata>, HashTypeInfo> type_to_info;
 };

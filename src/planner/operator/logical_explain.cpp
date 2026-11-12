@@ -7,8 +7,9 @@
 namespace duckdb {
 
 LogicalExplain::LogicalExplain(unique_ptr<LogicalOperator> plan, ExplainType explain_type,
-                               const ProfilerPrintFormat &format)
-    : LogicalOperator(LogicalOperatorType::LOGICAL_EXPLAIN), explain_type(explain_type), format(format) {
+                               const ProfilerPrintFormat &format, ExplainFormatShape output_shape)
+    : LogicalOperator(LogicalOperatorType::LOGICAL_EXPLAIN), explain_type(explain_type), format(format),
+      output_shape(output_shape) {
 	children.push_back(std::move(plan));
 }
 
@@ -47,14 +48,17 @@ unique_ptr<LogicalOperator> LogicalExplain::CreateSQLResult(ClientContext &conte
 			throw NotImplementedException({{"sql_export_unsupported", "true"}}, message);
 		}
 	}
-	vector<LogicalType> result_types {LogicalType::VARCHAR, LogicalType::VARCHAR};
+	const bool keyed = output_shape != ExplainFormatShape::PG;
+	vector<LogicalType> result_types(keyed ? 2 : 1, LogicalType::VARCHAR);
 	auto collection =
 	    make_uniq<ColumnDataCollection>(context, result_types, ColumnDataAllocatorType::IN_MEMORY_ALLOCATOR);
 	if (exported.IsSuccess()) {
 		DataChunk chunk;
 		chunk.Initialize(Allocator::Get(context), result_types);
-		chunk.data[0].Append(Value("sql"));
-		chunk.data[1].Append(Value(exported.GetValue().query->ToString()));
+		if (keyed) {
+			chunk.data[0].Append(Value("sql"));
+		}
+		chunk.data.back().Append(Value(exported.GetValue().query->ToString()));
 		collection->Append(chunk);
 	}
 	return make_uniq<LogicalColumnDataGet>(table_index, std::move(result_types), std::move(collection));
@@ -70,12 +74,17 @@ bool LogicalExplain::SupportSerialization() const {
 }
 
 void LogicalExplain::ResolveTypes() {
-	types = {LogicalType::VARCHAR, LogicalType::VARCHAR};
+	if (output_shape == ExplainFormatShape::PG) {
+		types = {LogicalType::VARCHAR};
+	} else {
+		types = {LogicalType::VARCHAR, LogicalType::VARCHAR};
+	}
 }
 vector<ColumnBinding> LogicalExplain::GetColumnBindings() {
 	vector<ColumnBinding> result;
 	TableIndex explain_tbl_idx(0);
-	for (auto explain_col_idx : ProjectionIndex::GetIndexes(2)) {
+	auto column_count = output_shape == ExplainFormatShape::PG ? 1 : 2;
+	for (auto explain_col_idx : ProjectionIndex::GetIndexes(column_count)) {
 		result.emplace_back(explain_tbl_idx, explain_col_idx);
 	}
 	return result;

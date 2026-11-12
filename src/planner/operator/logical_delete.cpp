@@ -30,8 +30,7 @@ vector<TableIndex> LogicalDelete::GetTableIndex() const {
 vector<ColumnBinding> LogicalDelete::GetColumnBindings() {
 	if (return_chunk) {
 		// Include table columns + virtual columns (e.g., rowid)
-		auto virtual_columns = table.GetVirtualColumns();
-		return GenerateColumnBindings(table_index, table.GetTypes().size() + virtual_columns.size());
+		return GenerateColumnBindings(table_index, table.GetTypes().size() + returning_virtual_columns.size());
 	}
 	return {ColumnBinding(table_index, ProjectionIndex(0))};
 }
@@ -41,8 +40,10 @@ void LogicalDelete::ResolveTypes() {
 		types = table.GetTypes();
 		// Add virtual columns (e.g., rowid)
 		auto virtual_columns = table.GetVirtualColumns();
-		for (auto &entry : virtual_columns) {
-			types.push_back(entry.second.type);
+		for (auto column_id : returning_virtual_columns) {
+			auto entry = virtual_columns.find(column_id);
+			D_ASSERT(entry != virtual_columns.end());
+			types.push_back(entry->second.type);
 		}
 	} else {
 		types.emplace_back(LogicalType::BIGINT);

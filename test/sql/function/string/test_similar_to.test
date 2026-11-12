@@ -13,27 +13,27 @@ SELECT 'aaa' SIMILAR TO 'aaa'
 1
 
 query T
-SELECT 'aaa' SIMILAR TO '.*'
+SELECT 'aaa' SIMILAR TO '%'
 ----
 1
 
 query T
-SELECT 'aaa' SIMILAR TO 'a.*'
+SELECT 'aaa' SIMILAR TO 'a%'
 ----
 1
 
 query T
-SELECT 'aaa' SIMILAR TO '.*a'
+SELECT 'aaa' SIMILAR TO '%a'
 ----
 1
 
 query T
-SELECT 'aaa' SIMILAR TO '.*b'
+SELECT 'aaa' SIMILAR TO '%b'
 ----
 0
 
 query T
-SELECT 'aaa' SIMILAR TO 'b.*'
+SELECT 'aaa' SIMILAR TO 'b%'
 ----
 0
 
@@ -48,12 +48,12 @@ SELECT 'aaa' SIMILAR TO 'a[a-z]{2}'
 1
 
 query T
-SELECT 'aaa' SIMILAR TO 'a[a-z].*'
+SELECT 'aaa' SIMILAR TO 'a[a-z]%'
 ----
 1
 
 query T
-SELECT 'aaa' SIMILAR TO '[a-z][a-z].*'
+SELECT 'aaa' SIMILAR TO '[a-z][a-z]%'
 ----
 1
 
@@ -109,10 +109,10 @@ statement ok
 CREATE TABLE strings (s STRING, p STRING);
 
 statement ok
-INSERT INTO strings VALUES('aaa', 'a[a-z]a'), ('abab', 'ab.*'), ('aaa', 'a[a-z]a'), ('aaa', '.*b.*');
+INSERT INTO strings VALUES('aaa', 'a[a-z]a'), ('abab', 'ab%'), ('aaa', 'a[a-z]a'), ('aaa', '%b%');
 
 query T
-SELECT s FROM strings WHERE s SIMILAR TO 'ab.*'
+SELECT s FROM strings WHERE s SIMILAR TO 'ab%'
 ----
 abab
 
@@ -141,3 +141,19 @@ statement error
 SELECT s FROM strings WHERE s SIMILAR TO 'ab.*%' {escape ''}
 ----
 <REGEX>:.*Parser Error: syntax error.*
+
+# an empty escape string means no escape character
+query II
+SELECT 'a\b' SIMILAR TO 'a\b' ESCAPE '', 'ab' SIMILAR TO 'a\b' ESCAPE ''
+----
+true	false
+
+statement error
+SELECT 'abc' SIMILAR TO 'abc' ESCAPE '##'
+----
+<REGEX>:.*Syntax Error: invalid escape string.*
+
+statement error
+SELECT 'abc' SIMILAR TO 'a\"b\"c\"d'
+----
+<REGEX>:.*Invalid Input Error: SQL regular expression may not contain more than two escape-double-quote separators.*

@@ -45,7 +45,7 @@ SELECT count(*) FROM t WHERE x = 5 OR NULL OR NULL::BOOLEAN;
 query II
 EXPLAIN SELECT count(*) FROM t WHERE NULL OR NULL::BOOLEAN;
 ----
-physical_plan	<REGEX>:.*Empty Result.*
+physical_plan	<REGEX>:.*EMPTY_RESULT.*
 
 query I
 SELECT count(*) FROM t WHERE NULL OR NULL::BOOLEAN;
@@ -56,7 +56,7 @@ SELECT count(*) FROM t WHERE NULL OR NULL::BOOLEAN;
 query II
 EXPLAIN SELECT count(*) FROM t WHERE x = 5 AND NULL;
 ----
-physical_plan	<REGEX>:.*Empty Result.*
+physical_plan	<REGEX>:.*EMPTY_RESULT.*
 
 query I
 SELECT count(*) FROM t WHERE x = 5 AND NULL;

@@ -12,7 +12,7 @@ static void MapContainsFunction(DataChunk &input, ExpressionState &state, Vector
 	const auto &key_vec = MapVector::GetKeys(map_vec);
 	const auto &arg_vec = input.data[1];
 
-	ListSearchOp<bool>(map_vec, key_vec, arg_vec, result, count);
+	ListSearchOp<bool>(map_vec, key_vec, arg_vec, result, count, ListSearchState::Get(state));
 }
 
 ScalarFunction MapContainsFun::GetFunction() {
@@ -21,6 +21,7 @@ ScalarFunction MapContainsFun::GetFunction() {
 
 	ScalarFunction fun("map_contains", {}, LogicalType::BOOLEAN, MapContainsFunction);
 	fun.GetSignature().AddParameter("map", LogicalType::MAP(key_type, val_type)).AddParameter("key", key_type);
+	fun.SetInitStateCallback(ListSearchState::Init);
 	return fun;
 }
 

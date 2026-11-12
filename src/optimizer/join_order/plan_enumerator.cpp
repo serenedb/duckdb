@@ -413,6 +413,17 @@ bool PlanEnumerator::SolveJoinOrderApproximately() {
 	for (idx_t i = 0; i < query_graph_manager.relation_manager.NumRelations(); i++) {
 		join_relations.push_back(query_graph_manager.set_manager.GetJoinRelation(RelationIndex(i)));
 	}
+	struct PairCost {
+		bool connected = false;
+		double cost = 0;
+	};
+	struct PairHash {
+		size_t operator()(const pair<const JoinRelationSet *, const JoinRelationSet *> &key) const {
+			return CombineHash(Hash(reinterpret_cast<uintptr_t>(key.first)),
+			                   Hash(reinterpret_cast<uintptr_t>(key.second)));
+		}
+	};
+	unordered_map<pair<const JoinRelationSet *, const JoinRelationSet *>, PairCost, PairHash> pair_costs;
 	while (join_relations.size() > 1) {
 		// now in every step of the algorithm, we greedily pick the join between the to-be-joined relations that has the
 		// smallest cost. This is O(r^2) per step, and every step will reduce the total amount of relations to-be-joined
@@ -423,35 +434,41 @@ bool PlanEnumerator::SolveJoinOrderApproximately() {
 		bool found_connection = false;
 		double best_cost = NumericLimits<double>::Maximum();
 		for (idx_t i = 0; i < join_relations.size(); i++) {
+			query_graph_manager.context.InterruptCheck();
 			auto left = join_relations[i];
 			for (idx_t j = i + 1; j < join_relations.size(); j++) {
 				auto right = join_relations[j];
-				// check if we can connect these two relations
-				auto &connection = GetConnections(left, right);
-				if (!connection.empty()) {
-					// we can check the cost of this connection
-					auto node = EmitPair(left, right, connection);
-					if (!node) {
-						continue;
+				auto key = make_pair(&left.get(), &right.get());
+				auto entry = pair_costs.find(key);
+				if (entry == pair_costs.end()) {
+					PairCost pair_cost;
+					// check if we can connect these two relations
+					auto &connection = GetConnections(left, right);
+					if (!connection.empty()) {
+						// we can check the cost of this connection
+						auto node = EmitPair(left, right, connection);
+						if (node) {
+							pair_cost.connected = true;
+							pair_cost.cost = node->cost;
+						}
 					}
-
-					// update the DP tree in case a plan created by the DP algorithm uses the node
-					// that was potentially just updated by EmitPair. You will get a use-after-free
-					// error if future plans rely on the old node that was just replaced.
-					// if node in FullPath, then updateDP tree.
-
-					if (!found_connection || node->cost < best_cost) {
-						// best pair found so far
-						found_connection = true;
-						best_cost = node->cost;
-						best_left = i;
-						best_right = j;
-					}
+					entry = pair_costs.emplace(key, pair_cost).first;
+				}
+				if (!entry->second.connected) {
+					continue;
+				}
+				if (!found_connection || entry->second.cost < best_cost) {
+					// best pair found so far
+					found_connection = true;
+					best_cost = entry->second.cost;
+					best_left = i;
+					best_right = j;
 				}
 			}
 		}
 		if (!found_connection) {
 			if (ActivateRequiredCrossProducts()) {
+				pair_costs.clear();
 				continue;
 			}
 			// Optimizer-introduced cross products are valid only inside an inner-join companion set (Section 6.2).
@@ -482,6 +499,7 @@ bool PlanEnumerator::SolveJoinOrderApproximately() {
 			// create a cross product edge (i.e. edge with empty filter) between these two sets in the query graph
 			query_graph_manager.CreateQueryGraphCrossProduct(left, right);
 			connection_cache.clear();
+			pair_costs.clear();
 			// now emit the pair and continue with the algorithm
 			auto &connections = GetConnections(left, right);
 			D_ASSERT(!connections.empty());

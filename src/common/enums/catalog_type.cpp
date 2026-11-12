@@ -45,6 +45,18 @@ string CatalogTypeToString(CatalogType type) {
 		return "Sequence";
 	case CatalogType::TRIGGER_ENTRY:
 		return "Trigger";
+	case CatalogType::TOKENIZER_ENTRY:
+		return "Tokenizer";
+	case CatalogType::ROLE_ENTRY:
+		return "Role";
+	case CatalogType::FOREIGN_SERVER_ENTRY:
+		return "Foreign Server";
+	case CatalogType::SUBSCRIPTION_ENTRY:
+		return "Subscription";
+	case CatalogType::REPLICATION_ORIGIN_ENTRY:
+		return "Replication Origin";
+	case CatalogType::JOB_ENTRY:
+		return "Job";
 	case CatalogType::SECRET_ENTRY:
 		return "Secret";
 	case CatalogType::SECRET_TYPE_ENTRY:
@@ -114,6 +126,24 @@ CatalogType CatalogTypeFromString(const string &type) {
 	}
 	if (type == "Trigger") {
 		return CatalogType::TRIGGER_ENTRY;
+	}
+	if (type == "Tokenizer") {
+		return CatalogType::TOKENIZER_ENTRY;
+	}
+	if (type == "Role") {
+		return CatalogType::ROLE_ENTRY;
+	}
+	if (type == "Foreign Server") {
+		return CatalogType::FOREIGN_SERVER_ENTRY;
+	}
+	if (type == "Subscription") {
+		return CatalogType::SUBSCRIPTION_ENTRY;
+	}
+	if (type == "Replication Origin") {
+		return CatalogType::REPLICATION_ORIGIN_ENTRY;
+	}
+	if (type == "Job") {
+		return CatalogType::JOB_ENTRY;
 	}
 	if (type == "INVALID") {
 		return CatalogType::INVALID;

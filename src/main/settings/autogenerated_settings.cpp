@@ -35,16 +35,6 @@ Value AccessModeSetting::GetSetting(const ClientContext &context) {
 }
 
 //===----------------------------------------------------------------------===//
-// Allow Parser Override Extension
-//===----------------------------------------------------------------------===//
-void AllowParserOverrideExtensionSetting::OnSet(SettingCallbackInfo &info, Value &parameter) {
-	if (parameter.IsNull()) {
-		throw InvalidInputException("allow_parser_override_extension setting cannot be NULL");
-	}
-	EnumUtil::FromString<AllowParserOverride>(StringValue::Get(parameter));
-}
-
-//===----------------------------------------------------------------------===//
 // Arrow Output Version
 //===----------------------------------------------------------------------===//
 void ArrowOutputVersionSetting::OnSet(SettingCallbackInfo &info, Value &parameter) {
@@ -236,6 +226,26 @@ void ExplainOutputSetting::OnSet(SettingCallbackInfo &info, Value &parameter) {
 }
 
 //===----------------------------------------------------------------------===//
+// Explain Output Format
+//===----------------------------------------------------------------------===//
+void ExplainOutputFormatSetting::OnSet(SettingCallbackInfo &info, Value &parameter) {
+	if (parameter.IsNull()) {
+		throw InvalidInputException("explain_output_format setting cannot be NULL");
+	}
+	EnumUtil::FromString<ExplainFormatShape>(StringValue::Get(parameter));
+}
+
+//===----------------------------------------------------------------------===//
+// Filter Reorder
+//===----------------------------------------------------------------------===//
+void FilterReorderSetting::OnSet(SettingCallbackInfo &info, Value &parameter) {
+	if (parameter.IsNull()) {
+		throw InvalidInputException("filter_reorder setting cannot be NULL");
+	}
+	EnumUtil::FromString<FilterReorder>(StringValue::Get(parameter));
+}
+
+//===----------------------------------------------------------------------===//
 // Fsync Mode
 //===----------------------------------------------------------------------===//
 void FsyncModeSetting::OnSet(SettingCallbackInfo &info, Value &parameter) {
@@ -251,6 +261,16 @@ void FsyncModeSetting::OnSet(SettingCallbackInfo &info, Value &parameter) {
 Value HTTPProxySetting::GetSetting(const ClientContext &context) {
 	auto &config = DBConfig::GetConfig(context);
 	return Value(config.options.http_proxy);
+}
+
+//===----------------------------------------------------------------------===//
+// Integer Overflow
+//===----------------------------------------------------------------------===//
+void IntegerOverflowSetting::OnSet(SettingCallbackInfo &info, Value &parameter) {
+	if (parameter.IsNull()) {
+		throw InvalidInputException("integer_overflow setting cannot be NULL");
+	}
+	EnumUtil::FromString<IntegerOverflowMode>(StringValue::Get(parameter));
 }
 
 //===----------------------------------------------------------------------===//

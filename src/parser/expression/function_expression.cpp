@@ -57,6 +57,29 @@ FunctionExpression::FunctionExpression(const Identifier &function_name, vector<F
                          distinct, is_operator, export_state) {
 }
 
+unique_ptr<FunctionExpression> FunctionExpression::Builtin(const Identifier &function_name,
+                                                           vector<unique_ptr<ParsedExpression>> children) {
+	auto result = make_uniq<FunctionExpression>(function_name, std::move(children));
+	result->builtin = true;
+	return result;
+}
+
+unique_ptr<FunctionExpression> FunctionExpression::Builtin(const Identifier &function_name,
+                                                           vector<FunctionArgument> arguments) {
+	auto result = make_uniq<FunctionExpression>(function_name, std::move(arguments));
+	result->builtin = true;
+	return result;
+}
+
+static string &BuiltinPrefix() {
+	static string prefix = "\"system\".main.";
+	return prefix;
+}
+
+void FunctionExpression::SetBuiltinPrefix(string prefix) {
+	BuiltinPrefix() = std::move(prefix);
+}
+
 string FunctionExpression::ToString() const {
 	if (is_operator) {
 		// built-in operator
@@ -74,7 +97,7 @@ string FunctionExpression::ToString() const {
 		}
 	}
 	// standard function call - render the full qualification, the schema path can be nested (e.g. s1.s2.s3.my_macro)
-	string result = qualified_name.QualificationToString();
+	string result = builtin ? BuiltinPrefix() : qualified_name.QualificationToString();
 	result += SQLIdentifier(qualified_name.Name());
 	result += "(";
 	if (distinct) {
@@ -129,8 +152,12 @@ optional_ptr<ParsedExpression> FunctionExpression::IsLambdaFunction() {
 
 void FunctionExpression::Serialize(Serializer &serializer) const {
 	ParsedExpression::Serialize(serializer);
-	serializer.WritePropertyWithDefault<Identifier>(200, "function_name", qualified_name.Name());
-	serializer.WritePropertyWithDefault<Identifier>(201, "schema", qualified_name.Schema());
+	const bool serenedb = serializer.ShouldSerialize(StorageVersion::SERENEDB_V1);
+	const auto written = builtin && !serenedb ? QualifiedName(Identifier::SystemCatalog(), Identifier::DefaultSchema(),
+	                                                          qualified_name.Name())
+	                                          : qualified_name;
+	serializer.WritePropertyWithDefault<Identifier>(200, "function_name", written.Name());
+	serializer.WritePropertyWithDefault<Identifier>(201, "schema", written.Schema());
 
 	if (!serializer.ShouldSerialize(StorageVersion::V2_0_0)) {
 		// Legacy serialization.
@@ -148,15 +175,19 @@ void FunctionExpression::Serialize(Serializer &serializer) const {
 	serializer.WritePropertyWithDefault<bool>(205, "distinct", distinct);
 	serializer.WritePropertyWithDefault<bool>(206, "is_operator", is_operator);
 	serializer.WritePropertyWithDefault<bool>(207, "export_state", export_state);
-	serializer.WritePropertyWithDefault<Identifier>(208, "catalog", qualified_name.Catalog());
+	serializer.WritePropertyWithDefault<Identifier>(208, "catalog", written.Catalog());
 
 	if (serializer.ShouldSerialize(StorageVersion::V2_0_0)) {
 		serializer.WritePropertyWithDefault<vector<FunctionArgument>>(209, "arguments", arguments);
 	}
 
-	if (serializer.ShouldSerialize(StorageVersion::V2_0_0) || qualified_name.Path().size() > 3) {
+	if (serializer.ShouldSerialize(StorageVersion::V2_0_0) || written.Path().size() > 3) {
 		// the catalog/schema properties above cannot represent a nested schema path
-		serializer.WriteProperty<QualifiedName>(210, "qualified_name", qualified_name);
+		serializer.WriteProperty<QualifiedName>(210, "qualified_name", written);
+	}
+	if (serenedb) {
+		serializer.WritePropertyWithDefault<bool>(16584, "from_operator", from_operator);
+		serializer.WritePropertyWithDefault<bool>(16585, "builtin", builtin);
 	}
 }
 
@@ -197,6 +228,14 @@ unique_ptr<ParsedExpression> FunctionExpression::Deserialize(Deserializer &deser
 	    deserializer.ReadPropertyWithExplicitDefault<QualifiedName>(210, "qualified_name", QualifiedName());
 	if (!qualified_name.Path().empty()) {
 		result->SetQualifiedName(std::move(qualified_name));
+	}
+	deserializer.ReadPropertyWithDefault<bool>(16584, "from_operator", result->from_operator);
+	deserializer.ReadPropertyWithDefault<bool>(16585, "builtin", result->builtin);
+	auto &read_name = result->qualified_name;
+	if (read_name.Path().size() == 3 && read_name.Catalog() == Identifier::SystemCatalog() &&
+	    read_name.Schema() == Identifier::DefaultSchema()) {
+		result->builtin = true;
+		read_name = QualifiedName(read_name.Name());
 	}
 
 	return std::move(result);

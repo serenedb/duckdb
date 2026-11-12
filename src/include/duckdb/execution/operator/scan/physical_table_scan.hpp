@@ -61,7 +61,14 @@ public:
 public:
 	string GetName() const override;
 	InsertionOrderPreservingMap<string> ParamsToString() const override;
+	InsertionOrderPreservingMap<ExplainValue> ParamsToValue() const override;
 
+private:
+	template <class MAP>
+	void AddScanParams(MAP &result) const;
+	TableFunctionToStringInput MakeToStringInput() const;
+
+public:
 	bool Equals(const PhysicalOperator &other) const override;
 
 	OrderPreservationType SourceOrder() const override {
@@ -72,6 +79,8 @@ public:
 	unique_ptr<LocalSourceState> GetLocalSourceState(ExecutionContext &context,
 	                                                 GlobalSourceState &gstate) const override;
 	unique_ptr<GlobalSourceState> GetGlobalSourceState(ClientContext &context) const override;
+	unique_ptr<GlobalSourceState> GetGlobalSourceState(ClientContext &context,
+	                                                   const OperatorPartitionInfo &partition_info) const override;
 	SourceResultType GetDataInternal(ExecutionContext &context, DataChunk &chunk,
 	                                 OperatorSourceInput &input) const override;
 	OperatorPartitionData GetPartitionData(ExecutionContext &context, DataChunk &chunk, GlobalSourceState &gstate,

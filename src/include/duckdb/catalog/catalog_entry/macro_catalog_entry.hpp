@@ -25,9 +25,12 @@ public:
 
 	//! The macro function
 	vector<unique_ptr<MacroFunction>> macros;
+	//! Whether this is a procedure (CALL only, not usable in SELECT/FROM)
+	bool is_procedure = false;
 
 public:
 	unique_ptr<CreateInfo> GetInfo() const override;
+	unique_ptr<CatalogEntry> AlterEntry(CatalogTransaction transaction, AlterInfo &info) override;
 
 	string ToSQL() const override;
 };

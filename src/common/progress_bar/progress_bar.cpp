@@ -30,21 +30,6 @@ QueryProgress::QueryProgress() {
 	Initialize();
 }
 
-QueryProgress &QueryProgress::operator=(const QueryProgress &other) {
-	if (this != &other) {
-		percentage = other.percentage.load();
-		rows_processed = other.rows_processed.load();
-		total_rows_to_process = other.total_rows_to_process.load();
-	}
-	return *this;
-}
-
-QueryProgress::QueryProgress(const QueryProgress &other) {
-	percentage = other.percentage.load();
-	rows_processed = other.rows_processed.load();
-	total_rows_to_process = other.total_rows_to_process.load();
-}
-
 void ProgressBar::SystemOverrideCheck(ClientConfig &config) {
 	if (config.system_progress_bar_disable_reason != nullptr) {
 		throw InvalidInputException("Could not change the progress bar setting because: '%s'",
@@ -56,9 +41,9 @@ unique_ptr<ProgressBarDisplay> ProgressBar::DefaultProgressBarDisplay() {
 	return make_uniq<TerminalProgressBarDisplay>();
 }
 
-ProgressBar::ProgressBar(Executor &executor, idx_t show_progress_after,
+ProgressBar::ProgressBar(Executor &executor, idx_t show_progress_after, idx_t update_interval_ms,
                          const progress_bar_display_create_func_t &create_display_func)
-    : executor(executor), show_progress_after(show_progress_after) {
+    : executor(executor), show_progress_after(show_progress_after), update_interval_ms(update_interval_ms) {
 	if (create_display_func) {
 		display = create_display_func();
 	}
@@ -104,9 +89,22 @@ bool ProgressBar::ShouldPrint(bool final) const {
 	return query_progress.percentage > -1;
 }
 
-void ProgressBar::Update(bool final) {
+bool ProgressBar::Update(bool final) {
 	if (!final && !supported) {
-		return;
+		return false;
+	}
+	if (!PrintEnabled() && update_interval_ms > 0) {
+		// Headless: progress is only observed through GetDetailedQueryProgress polling,
+		// so walking the pipelines on every task slice is wasted work. The final update
+		// is skipped too - the query is gone before anyone can observe it.
+		if (final) {
+			return false;
+		}
+		const auto elapsed = profiler.Elapsed();
+		if (elapsed - last_compute_time < static_cast<double>(update_interval_ms) / 1000.0) {
+			return false;
+		}
+		last_compute_time = elapsed;
 	}
 
 	ProgressData progress;
@@ -123,7 +121,7 @@ void ProgressBar::Update(bool final) {
 	}
 
 	if (!final && invalid_pipelines > 0) {
-		return;
+		return true;
 	}
 
 	if (new_percentage > query_progress.percentage) {
@@ -133,9 +131,10 @@ void ProgressBar::Update(bool final) {
 		if (final) {
 			FinishProgressBarPrint();
 		} else {
-			PrintProgress(query_progress.percentage.load());
+			PrintProgress(query_progress.percentage);
 		}
 	}
+	return true;
 }
 
 void ProgressBar::PrintProgress(double current_percentage_p) {

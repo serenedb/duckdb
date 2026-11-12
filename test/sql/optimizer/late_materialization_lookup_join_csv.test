@@ -1,0 +1,92 @@
+# name: test/sql/optimizer/late_materialization_lookup_join_csv.test
+# description: Local read_csv scans keep their rows: no LOOKUP_JOIN for local row storage
+# group: [optimizer]
+
+statement ok
+SET profiling_renderer_settings = MAP {'operator_casing': 'upper'};
+
+statement ok
+CREATE TABLE src AS SELECT
+    i AS id,
+    i % 7 AS grp,
+    CASE WHEN i % 11 = 0 THEN NULL ELSE md5(i::VARCHAR) || md5((i + 1)::VARCHAR) END AS payload,
+    CASE WHEN i % 5 = 0 THEN 'line one' || chr(10) || 'line, two ' || i::VARCHAR ELSE 'short' END AS note
+FROM range(6000) t(i);
+
+statement ok
+COPY (FROM src WHERE id < 4000) TO '{TEST_DIR}/lj_csv_1.csv' (HEADER);
+
+statement ok
+COPY (FROM src WHERE id >= 4000) TO '{TEST_DIR}/lj_csv_2.csv' (HEADER);
+
+statement ok
+COPY (FROM src) TO '{TEST_DIR}/lj_csv.csv.gz' (HEADER);
+
+query II
+EXPLAIN SELECT * FROM read_csv('{TEST_DIR}/lj_csv_1.csv') ORDER BY id DESC LIMIT 3;
+----
+physical_plan	<!REGEX>:.*LOOKUP_JOIN.*
+
+query IIII
+SELECT id, grp, payload IS NOT DISTINCT FROM (CASE WHEN id % 11 = 0 THEN NULL ELSE md5(id::VARCHAR) || md5((id + 1)::VARCHAR) END), note FROM read_csv('{TEST_DIR}/lj_csv_1.csv') ORDER BY id DESC LIMIT 3;
+----
+3999	2	true	short
+3998	1	true	short
+3997	0	true	short
+
+query I
+SELECT count(*) FROM (SELECT * FROM read_csv('{TEST_DIR}/lj_csv_*.csv') ORDER BY grp, id DESC LIMIT 600)
+WHERE payload IS DISTINCT FROM (CASE WHEN id % 11 = 0 THEN NULL ELSE md5(id::VARCHAR) || md5((id + 1)::VARCHAR) END)
+   OR note <> CASE WHEN id % 5 = 0 THEN 'line one' || chr(10) || 'line, two ' || id::VARCHAR ELSE 'short' END
+----
+0
+
+query II
+SELECT id, replace(note, chr(10), '|') FROM read_csv('{TEST_DIR}/lj_csv_*.csv') WHERE id % 5 = 0 ORDER BY id DESC LIMIT 2;
+----
+5995	line one|line, two 5995
+5990	line one|line, two 5990
+
+query II
+SELECT count(*), count(DISTINCT file_row_number) FROM read_csv('{TEST_DIR}/lj_csv_1.csv', buffer_size = 4096);
+----
+4000	4000
+
+query I
+SELECT count(*) FROM read_csv('{TEST_DIR}/lj_csv_1.csv', buffer_size = 4096) r, read_text('{TEST_DIR}/lj_csv_1.csv') f
+WHERE substr(f.content, r.file_row_number + 1 + (substr(f.content, r.file_row_number + 1, 1) = chr(10))::INTEGER, length(r.id::VARCHAR) + 1) <> r.id::VARCHAR || ','
+----
+0
+
+query I
+SELECT count(*) FROM (SELECT * FROM read_csv('{TEST_DIR}/lj_csv_*.csv', buffer_size = 4096) ORDER BY grp, id DESC LIMIT 900)
+WHERE payload IS DISTINCT FROM (CASE WHEN id % 11 = 0 THEN NULL ELSE md5(id::VARCHAR) || md5((id + 1)::VARCHAR) END)
+   OR note <> CASE WHEN id % 5 = 0 THEN 'line one' || chr(10) || 'line, two ' || id::VARCHAR ELSE 'short' END
+----
+0
+
+query II
+EXPLAIN SELECT * FROM read_csv('{TEST_DIR}/lj_csv.csv.gz') ORDER BY id DESC LIMIT 3;
+----
+physical_plan	<!REGEX>:.*LOOKUP_JOIN.*
+
+query II
+SELECT id, note FROM read_csv('{TEST_DIR}/lj_csv.csv.gz') ORDER BY id DESC LIMIT 2;
+----
+5999	short
+5998	short
+
+statement ok
+COPY (SELECT line FROM (VALUES (1, 'a,b'), (2, '1,x'), (3, NULL), (4, '2,yyyyyyyyyyyyyyyyyyyy'), (5, NULL), (6, NULL), (7, '3,zzzzzzzzzzzzzzzzzzzz')) t(i, line) ORDER BY i) TO '{TEST_DIR}/lj_csv_blank.csv' (HEADER false, DELIMITER '|');
+
+query II
+EXPLAIN SELECT a, b FROM read_csv('{TEST_DIR}/lj_csv_blank.csv') ORDER BY a DESC LIMIT 3;
+----
+physical_plan	<!REGEX>:.*LOOKUP_JOIN.*
+
+query II
+SELECT a, b FROM read_csv('{TEST_DIR}/lj_csv_blank.csv') ORDER BY a DESC LIMIT 3;
+----
+3	zzzzzzzzzzzzzzzzzzzz
+2	yyyyyyyyyyyyyyyyyyyy
+1	x

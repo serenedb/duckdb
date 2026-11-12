@@ -85,7 +85,7 @@ public:
 	//! Returns the number of parameters of the prepared statement
 	DUCKDB_API idx_t GetParameterCount() const;
 	//! Try to get the expected type of the parameter with the given identifier
-	DUCKDB_API bool TryGetParameterType(const Identifier &identifier, LogicalType &result) const;
+	DUCKDB_API bool TryGetParameterType(std::string_view identifier, LogicalType &result) const;
 	//! Returns the map of parameter index to the expected type of parameter
 	DUCKDB_API case_insensitive_map_t<LogicalType> GetExpectedParameterTypes() const;
 

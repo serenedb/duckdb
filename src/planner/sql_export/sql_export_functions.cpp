@@ -19,7 +19,7 @@ static bool IsOptimizerFunctionQualification(const FUNCTION &function) {
 	if (function.GetCatalogName().empty() && function.GetSchemaName().empty()) {
 		return true;
 	}
-	return function.GetCatalogName() == "system" && function.GetSchemaName() == "main";
+	return function.GetCatalogName() == Identifier::SystemCatalog();
 }
 
 BoundExpressionSQLExportResult BoundExpressionSQLExportState::ExportLambda(const BoundLambdaExpression &lambda,
@@ -227,9 +227,9 @@ BoundExpressionSQLExportState::ExportScalarFunction(const BoundFunctionExpressio
 		for (idx_t argument_index = 0; argument_index < children.size(); argument_index++) {
 			arguments.emplace_back(argument_names[argument_index], std::move(children[argument_index]));
 		}
-		result = make_uniq<FunctionExpression>(*name, std::move(arguments), nullptr, nullptr, false, false, false);
+		result = SQLExportHelpers::Function(*name, std::move(arguments));
 	} else {
-		result = make_uniq<FunctionExpression>(*name, std::move(children), nullptr, nullptr, false, false, false);
+		result = SQLExportHelpers::Function(*name, std::move(children));
 	}
 	// Restore result types when binding or optimization changed argument types.
 	const bool can_restore_result_type = SQLExportHelpers::IsSQLRepresentableType(expression.GetReturnType()) &&
@@ -322,7 +322,7 @@ BoundExpressionSQLExportState::BuildAggregateCall(const BoundAggregateExpression
 			                         : Identifier();
 			arguments.emplace_back(std::move(argument_name), std::move(children[i]));
 		}
-		result = make_uniq<FunctionExpression>(*name, std::move(arguments));
+		result = SQLExportHelpers::Function(*name, std::move(arguments));
 	}
 	idx_t child_index = expression.GetChildren().size();
 	unique_ptr<ParsedExpression> filter;

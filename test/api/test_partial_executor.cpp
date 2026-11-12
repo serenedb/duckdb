@@ -38,7 +38,6 @@ TEST_CASE("TaskExecutor drains tasks that are in flight when the workers are rem
 	DuckDB db;
 	Connection con {db};
 	REQUIRE_NO_FAIL(con.Query("SET threads=5"));
-	REQUIRE_NO_FAIL(con.Query("SET scheduler_process_partial=true"));
 	TaskExecutor executor {*con.context};
 
 	// One task per background worker (threads=5, external=1 -> 4 workers).

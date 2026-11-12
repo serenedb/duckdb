@@ -17,7 +17,7 @@ TEST_CASE("A stream drains in order and settles the retention on draining", "[ap
 	REQUIRE_NO_FAIL(con.Query("CREATE TABLE t AS SELECT range i FROM range(200000)"));
 
 	// The unordered plan uses the simple store, the table scan the batched one
-	for (auto query : {"SELECT i FROM range(200000) t(i)", "SELECT i FROM t"}) {
+	for (auto query : {"SELECT i FROM range_st(200000) t(i)", "SELECT i FROM t"}) {
 		auto stream = OpenStream(con, query);
 		DrainWatchdog watchdog(con);
 		REQUIRE(stream->GetBufferedData().Lifetime() == ResultLifetime::DRAINING);

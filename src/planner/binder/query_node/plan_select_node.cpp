@@ -1,4 +1,6 @@
 #include "duckdb/planner/binder.hpp"
+#include "duckdb/planner/column_binding_map.hpp"
+#include "duckdb/planner/expression_iterator.hpp"
 #include "duckdb/planner/expression/bound_columnref_expression.hpp"
 #include "duckdb/planner/expression/bound_reference_expression.hpp"
 #include "duckdb/planner/operator/list.hpp"
@@ -66,7 +68,6 @@ bool Binder::DebugAggregateStateExportVerify(BoundSelectNode &statement, unique_
 		finalize_expressions.push_back(std::move(group_ref));
 		final_group_expressions.push_back(std::move(final_group_ref));
 	}
-	auto &system_catalog = Catalog::GetSystemCatalog(context);
 	ErrorData error;
 	FunctionBinder function_binder(context);
 	for (idx_t aggr_idx = 0; aggr_idx < statement.aggregates.size(); aggr_idx++) {
@@ -81,8 +82,7 @@ bool Binder::DebugAggregateStateExportVerify(BoundSelectNode &statement, unique_
 		// create the "finalize" expression
 		vector<unique_ptr<Expression>> finalize_children;
 		finalize_children.push_back(std::move(aggr_state_ref));
-		auto &finalize_function = system_catalog.GetEntry<ScalarFunctionCatalogEntry>(
-		    context, QualifiedName(system_catalog.GetName(), DEFAULT_SCHEMA, "finalize"));
+		auto &finalize_function = Catalog::GetBuiltinEntry<ScalarFunctionCatalogEntry>(context, Identifier("finalize"));
 		auto result =
 		    function_binder.BindScalarFunction(finalize_function, std::move(finalize_children), error, false, *this);
 		if (!result) {
@@ -90,8 +90,7 @@ bool Binder::DebugAggregateStateExportVerify(BoundSelectNode &statement, unique_
 		}
 
 		// create the "first" expression
-		auto &first_function = system_catalog.GetEntry<AggregateFunctionCatalogEntry>(
-		    context, QualifiedName(system_catalog.GetName(), DEFAULT_SCHEMA, "first"));
+		auto &first_function = Catalog::GetBuiltinEntry<AggregateFunctionCatalogEntry>(context, Identifier("first"));
 		auto finalize_ref = make_uniq<BoundColumnRefExpression>(
 		    result->GetReturnType(),
 		    ColumnBinding(intermediate_proj_index, ProjectionIndex(finalize_expressions.size())));
@@ -124,6 +123,105 @@ bool Binder::DebugAggregateStateExportVerify(BoundSelectNode &statement, unique_
 	final_aggr->AddChild(std::move(proj));
 	root = std::move(final_aggr);
 	return true;
+}
+
+namespace {
+
+struct LateralReference {
+	ColumnBinding binding;
+	LogicalType type;
+};
+
+vector<LateralReference> CollectReferences(const Expression &expr) {
+	vector<LateralReference> references;
+	column_binding_set_t seen;
+	ExpressionIterator::VisitExpressionClass(expr, ExpressionClass::BOUND_COLUMN_REF, [&](const Expression &child) {
+		auto &column_ref = child.Cast<BoundColumnRefExpression>();
+		if (column_ref.Depth() == 0 && seen.insert(column_ref.Binding()).second) {
+			references.push_back({column_ref.Binding(), column_ref.GetReturnType()});
+		}
+	});
+	return references;
+}
+
+void RebindColumns(unique_ptr<Expression> &expr, const column_binding_map_t<ColumnBinding> &bindings) {
+	ExpressionIterator::VisitExpressionClassMutable(expr, ExpressionClass::BOUND_COLUMN_REF,
+	                                                [&](unique_ptr<Expression> &child) {
+		                                                auto &column_ref = child->Cast<BoundColumnRefExpression>();
+		                                                if (column_ref.Depth() != 0) {
+			                                                return;
+		                                                }
+		                                                auto entry = bindings.find(column_ref.Binding());
+		                                                if (entry != bindings.end()) {
+			                                                column_ref.BindingMutable() = entry->second;
+		                                                }
+	                                                });
+}
+
+} // namespace
+
+unique_ptr<LogicalOperator> Binder::PlanLateralAliases(BoundSelectNode &statement, unique_ptr<LogicalOperator> root) {
+	auto &select_list = statement.select_list;
+	const auto lateral = statement.lateral_index;
+	const idx_t count = select_list.size();
+	vector<vector<LateralReference>> references(count);
+	vector<idx_t> levels(count, 0);
+	vector<bool> referenced(count, false);
+	idx_t level_count = 0;
+	for (idx_t i = 0; i < count; i++) {
+		references[i] = CollectReferences(*select_list[i]);
+		for (auto &reference : references[i]) {
+			if (reference.binding.table_index != lateral) {
+				continue;
+			}
+			const auto source = reference.binding.column_index.GetIndex();
+			referenced[source] = true;
+			levels[i] = MaxValue(levels[i], levels[source] + 1);
+			level_count = MaxValue(level_count, levels[source] + 1);
+		}
+	}
+
+	column_binding_map_t<ColumnBinding> current;
+	for (idx_t level = 0; level < level_count; level++) {
+		const auto index = GenerateTableIndex();
+		vector<unique_ptr<Expression>> expressions;
+		column_binding_map_t<ColumnBinding> next;
+		for (idx_t i = 0; i < count; i++) {
+			if (!referenced[i] || levels[i] != level) {
+				continue;
+			}
+			RebindColumns(select_list[i], current);
+			const ColumnBinding source(lateral, ProjectionIndex(i));
+			next[source] = ColumnBinding(index, ProjectionIndex(expressions.size()));
+			auto type = select_list[i]->GetReturnType();
+			auto alias = select_list[i]->GetAlias();
+			expressions.push_back(std::move(select_list[i]));
+			select_list[i] = make_uniq<BoundColumnRefExpression>(std::move(alias), type, source);
+			references[i] = {LateralReference {source, std::move(type)}};
+		}
+		for (auto &item_references : references) {
+			for (auto &reference : item_references) {
+				if (next.find(reference.binding) != next.end()) {
+					continue;
+				}
+				auto input = current.find(reference.binding);
+				if (reference.binding.table_index == lateral && input == current.end()) {
+					continue;
+				}
+				next[reference.binding] = ColumnBinding(index, ProjectionIndex(expressions.size()));
+				expressions.push_back(make_uniq<BoundColumnRefExpression>(
+				    reference.type, input == current.end() ? reference.binding : input->second));
+			}
+		}
+		auto projection = make_uniq<LogicalProjection>(index, std::move(expressions));
+		projection->AddChild(std::move(root));
+		root = std::move(projection);
+		current = std::move(next);
+	}
+	for (auto &expr : select_list) {
+		RebindColumns(expr, current);
+	}
+	return root;
 }
 
 unique_ptr<LogicalOperator> Binder::CreatePlan(BoundSelectNode &statement) {
@@ -215,6 +313,9 @@ unique_ptr<LogicalOperator> Binder::CreatePlan(BoundSelectNode &statement) {
 
 	for (auto &expr : statement.select_list) {
 		PlanSubqueries(expr, root);
+	}
+	if (statement.lateral_index.IsValid()) {
+		root = PlanLateralAliases(statement, std::move(root));
 	}
 
 	auto proj = make_uniq<LogicalProjection>(statement.projection_index, std::move(statement.select_list));

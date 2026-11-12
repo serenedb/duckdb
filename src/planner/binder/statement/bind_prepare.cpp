@@ -6,8 +6,15 @@
 namespace duckdb {
 
 BoundStatement Binder::Bind(PrepareStatement &stmt) {
+	for (auto &entry : stmt.parameter_type_hints) {
+		BindLogicalType(entry.second);
+	}
 	Planner prepared_planner(context);
+	prepared_planner.parameter_type_hints = stmt.parameter_type_hints;
+	stmt.statement->query = stmt.query;
 	auto prepared_data = prepared_planner.PrepareSQLStatement(std::move(stmt.statement));
+	prepared_data->parameter_type_hints = std::move(stmt.parameter_type_hints);
+	prepared_data->prepare_time = timestamp_tz_t(Timestamp::GetCurrentTimestamp());
 	global_binder_state->bound_tables = prepared_planner.binder->global_binder_state->bound_tables;
 
 	if (prepared_planner.properties.always_require_rebind) {
@@ -19,6 +26,8 @@ BoundStatement Binder::Bind(PrepareStatement &stmt) {
 	// we can always prepare, even if the transaction has been invalidated
 	// this is required because most clients ALWAYS invoke prepared statements
 	auto &properties = GetStatementProperties();
+	properties.view_scopes = prepared_planner.properties.view_scopes;
+	properties.resolved_entries = prepared_planner.properties.resolved_entries;
 	properties.requires_valid_transaction = false;
 	properties.result_eagerness = ResultEagerness::FORCED;
 	properties.bound_all_parameters = true;

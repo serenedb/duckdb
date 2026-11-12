@@ -31,7 +31,7 @@ Value VectorFSSTStringBuffer::GetValue(const LogicalType &type, idx_t index) con
 	case LogicalTypeId::VARCHAR:
 		return Value(std::move(string_val));
 	case LogicalTypeId::BLOB:
-		return Value::BLOB_RAW(string_val);
+		return Value::BLOB_RAW(std::move(string_val));
 	default:
 		throw InternalException("Unsupported type for FSST vector GetValue");
 	}
@@ -58,6 +58,9 @@ buffer_ptr<VectorBuffer> VectorFSSTStringBuffer::FlattenSliceInternal(const Logi
 		if (compressed_string.GetSize() > 0) {
 			result_data[target_idx] = FSSTPrimitives::DecompressValue(
 			    decoder, str_allocator, compressed_string.GetData(), compressed_string.GetSize());
+			if (result_data[target_idx].GetSize() > decompress_buffer.size()) {
+				FSSTPrimitives::ThrowDecodedStringTooLarge();
+			}
 		} else {
 			// empty string
 			result_data[target_idx] = string_t(nullptr, 0);

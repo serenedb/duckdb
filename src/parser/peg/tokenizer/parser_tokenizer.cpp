@@ -1,21 +1,23 @@
 #include "duckdb/parser/peg/tokenizer/parser_tokenizer.hpp"
 #include "duckdb/common/exception/parser_exception.hpp"
 
+#include <absl/strings/str_cat.h>
+
 namespace duckdb {
 
-static bool IsEmptyQuotedIdentifier(const string &sql, idx_t start, idx_t end, TokenType type) {
+static bool IsEmptyQuotedIdentifier(std::string_view sql, idx_t start, idx_t end, TokenType type) {
 	return type == TokenType::IDENTIFIER && end == start + 2 && sql.substr(start, 2) == "\"\"";
 }
 
-ParserTokenizerBehavior::ParserTokenizerBehavior(const string &sql, vector<MatcherToken> &tokens)
+ParserTokenizerBehavior::ParserTokenizerBehavior(std::string_view sql, vector<MatcherToken> &tokens)
     : TokenizerBehavior(sql, tokens) {
 }
 
 void ParserTokenizerBehavior::PushToken(idx_t start, idx_t end, TokenType type, bool unterminated) {
 	if (type == TokenType::COMMENT && unterminated) {
-		auto comment = sql.substr(start, end - start);
-		throw ParserException::SyntaxError(sql, "unterminated /* comment at or near \"" + comment + "\"",
-		                                   optional_idx(start));
+		throw ParserException::SyntaxError(
+		    sql, absl::StrCat("unterminated /* comment at or near \"", sql.substr(start, end - start), "\""),
+		    optional_idx(start));
 	}
 	if (IsEmptyQuotedIdentifier(sql, start, end, type)) {
 		throw ParserException::SyntaxError(sql, "zero-length delimited identifier", optional_idx(start));
@@ -29,7 +31,7 @@ void ParserTokenizerBehavior::OnStatementEnd(idx_t pos) {
 	tokens.emplace_back(";", pos, TokenType::TERMINATOR);
 }
 
-void ParserTokenizerBehavior::OnLastToken(const Tokenizer &tokenizer, TokenizeState state, string last_word,
+void ParserTokenizerBehavior::OnLastToken(const Tokenizer &tokenizer, TokenizeState state, std::string_view last_word,
                                           idx_t last_pos) {
 	switch (state) {
 	case TokenizeState::STRING_LITERAL:
@@ -39,7 +41,7 @@ void ParserTokenizerBehavior::OnLastToken(const Tokenizer &tokenizer, TokenizeSt
 	default:
 		break;
 	}
-	TokenizerBehavior::OnLastToken(tokenizer, state, std::move(last_word), last_pos);
+	TokenizerBehavior::OnLastToken(tokenizer, state, last_word, last_pos);
 }
 
 } // namespace duckdb

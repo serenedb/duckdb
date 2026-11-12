@@ -1,0 +1,19 @@
+# name: test/sql/aggregate/aggregates/approx_quantile_in_place_combine.test
+# description: approx_quantile digests grown while several threads combine partitions in place
+# group: [aggregates]
+
+statement ok
+PRAGMA threads=16;
+
+loop i 0 3
+
+query II
+SELECT count(*), count(*) FILTER (WHERE q BETWEEN 0 AND 1) FROM (
+	SELECT g, approx_quantile(x, 0.5) AS q
+	FROM (SELECT i % 2700 AS g, random() AS x FROM range(5000000) t(i))
+	GROUP BY g
+);
+----
+2700	2700
+
+endloop

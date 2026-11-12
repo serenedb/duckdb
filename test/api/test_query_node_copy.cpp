@@ -4,7 +4,10 @@
 #include "duckdb/parser/common_table_expression_info.hpp"
 #include "duckdb/parser/expression/columnref_expression.hpp"
 #include "duckdb/parser/expression/constant_expression.hpp"
+#include "duckdb/parser/parser.hpp"
 #include "duckdb/parser/query_node/select_node.hpp"
+#include "duckdb/parser/query_node/statement_node.hpp"
+#include "duckdb/parser/tableref/delimgetref.hpp"
 
 using namespace duckdb;
 
@@ -76,4 +79,15 @@ TEST_CASE("CTE containers preserve complete entries when copied", "[api][parser]
 	auto copied_select_entry = copied_cte_map.find("generated_cte");
 	REQUIRE(copied_select_entry != copied_cte_map.end());
 	RequireEquivalentCTE(*select.cte_map.map["generated_cte"], *copied_select_entry->second);
+}
+
+TEST_CASE("Statement nodes and delim gets are copied", "[api][parser]") {
+	auto parser = Parser::GetBuiltinParser();
+	parser.ParseQuery("SELECT 67");
+	REQUIRE(parser.statements.size() == 1);
+	StatementNode node(*parser.statements[0]);
+	REQUIRE(node.Copy()->type == QueryNodeType::STATEMENT_NODE);
+
+	DelimGetRef ref({LogicalType::INTEGER});
+	REQUIRE(ref.Copy()->type == TableReferenceType::DELIM_GET);
 }

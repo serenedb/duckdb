@@ -616,8 +616,8 @@ TEST_CASE("V2 replacement scan: claims a column data collection", "[capi_v2][rep
 	registry.collection = cdc;
 	ReplRegisterRegistry(fx.conn, registry);
 
-	// Readable like a table, with the default col1..colN naming.
-	REQUIRE(ReplQueryI64(fx.conn, "SELECT col1 FROM my_batch ORDER BY col1") == std::vector<int64_t> {10, 20});
+	// Readable like a table, with the default column1..columnN naming.
+	REQUIRE(ReplQueryI64(fx.conn, "SELECT column1 FROM my_batch ORDER BY column1") == std::vector<int64_t> {10, 20});
 
 	// The motivating case: a client-side buffer as the source of an INSERT.
 	ExecSQL(fx.conn, "CREATE TABLE sink (v BIGINT)");
@@ -625,7 +625,7 @@ TEST_CASE("V2 replacement scan: claims a column data collection", "[capi_v2][rep
 	REQUIRE(ReplQueryI64(fx.conn, "SELECT v FROM sink ORDER BY v") == std::vector<int64_t> {10, 20});
 
 	// Joined against a real table, and re-read after the collection changed underneath.
-	REQUIRE(ReplQueryI64(fx.conn, "SELECT s.v FROM sink s JOIN my_batch b ON s.v = b.col1 ORDER BY s.v") ==
+	REQUIRE(ReplQueryI64(fx.conn, "SELECT s.v FROM sink s JOIN my_batch b ON s.v = b.column1 ORDER BY s.v") ==
 	        std::vector<int64_t> {10, 20});
 
 	// Names it does not recognise are declined, so the normal catalog error surfaces.
@@ -665,7 +665,7 @@ TEST_CASE("V2 replacement scan: a prepared collection claim caches its borrow", 
 	ReplRegisterRegistry(fx.conn, registry);
 
 	duckdb_v2_statement_iterator_handle iter = nullptr;
-	REQUIRE(duckdb_v2_parse_sql(fx.conn, "SELECT col1 FROM cached_batch ORDER BY col1", &iter, nullptr) ==
+	REQUIRE(duckdb_v2_parse_sql(fx.conn, "SELECT column1 FROM cached_batch ORDER BY column1", &iter, nullptr) ==
 	        DUCKDB_V2_ERROR_NONE);
 	duckdb_v2_sql_statement_handle stmt = nullptr;
 	REQUIRE(duckdb_v2_statement_iterator_next(iter, &stmt, nullptr) == DUCKDB_V2_ERROR_NONE);
@@ -700,7 +700,7 @@ TEST_CASE("V2 replacement scan: empty collection binds and yields no rows", "[ca
 	registry.collection = cdc;
 	ReplRegisterRegistry(fx.conn, registry);
 
-	REQUIRE(ReplQueryI64(fx.conn, "SELECT col1 FROM empty_batch").empty());
+	REQUIRE(ReplQueryI64(fx.conn, "SELECT column1 FROM empty_batch").empty());
 	REQUIRE(ReplQueryI64(fx.conn, "SELECT count(*)::BIGINT FROM empty_batch") == std::vector<int64_t> {0});
 
 	duckdb_v2_column_data_collection_destroy(&cdc);
@@ -717,7 +717,7 @@ TEST_CASE("V2 replacement scan: collection column name validation", "[capi_v2][r
 	ReplRegisterRegistry(fx.conn, registry);
 
 	// The valid claim at the end still lands, so the query itself succeeds.
-	REQUIRE(ReplQueryI64(fx.conn, "SELECT col1 FROM probe_batch ORDER BY col1") == std::vector<int64_t> {1, 2});
+	REQUIRE(ReplQueryI64(fx.conn, "SELECT column1 FROM probe_batch ORDER BY column1") == std::vector<int64_t> {1, 2});
 	// More names than columns, an empty name, and a null array with a non-zero count are all refused.
 	REQUIRE(registry.wrong_count_rc == DUCKDB_V2_ERROR_INPUT_INVALID);
 	REQUIRE(registry.empty_name_rc == DUCKDB_V2_ERROR_INPUT_INVALID);

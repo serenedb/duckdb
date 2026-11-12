@@ -9,6 +9,7 @@
 #pragma once
 
 #include "duckdb/common/exception.hpp"
+#include "duckdb/common/likely.hpp"
 
 namespace duckdb {
 
@@ -18,8 +19,8 @@ class optional_idx {
 public:
 	optional_idx() : index(INVALID_INDEX) {
 	}
-	optional_idx(idx_t index) : index(index) { // NOLINT: allow implicit conversion from idx_t
-		if (index == INVALID_INDEX) {
+	[[gnu::always_inline]] optional_idx(idx_t index) : index(index) { // NOLINT: allow implicit conversion from idx_t
+		if (DUCKDB_UNLIKELY(index == INVALID_INDEX)) {
 			ThrowInvalidInitialization();
 		}
 	}
@@ -36,8 +37,8 @@ public:
 		index = INVALID_INDEX;
 	}
 
-	idx_t GetIndex() const {
-		if (index == INVALID_INDEX) {
+	[[gnu::always_inline]] idx_t GetIndex() const {
+		if (DUCKDB_UNLIKELY(index == INVALID_INDEX)) {
 			ThrowNotSet();
 		}
 		return index;

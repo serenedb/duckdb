@@ -12,6 +12,6 @@
 
 namespace duckdb {
 
-enum class CollationType { ALL_COLLATIONS, COMBINABLE_COLLATIONS };
+enum class CollationType { ALL_COLLATIONS, COMBINABLE_COLLATIONS, EQUALITY_COLLATIONS };
 
 } // namespace duckdb

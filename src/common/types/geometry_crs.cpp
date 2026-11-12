@@ -1,6 +1,7 @@
 #include "duckdb/common/types/geometry_crs.hpp"
 #include "duckdb/common/common.hpp"
 #include "duckdb/main/extension_callback_manager.hpp"
+#include "duckdb/common/case_insensitive_map.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/common/serializer/serializer.hpp"
 #include "duckdb/common/serializer/deserializer.hpp"
@@ -480,18 +481,12 @@ bool CoordinateReferenceSystem::TryParsePROJJSON(const string &text, CoordinateR
 	// Check that the type is one of the PROJJSON CRS types
 	// There are other (derived CRS) types, but they can not be used as root CRS definitions
 	const string type_str = type_val.GetString();
-	const auto projjson_crs_types = {"GeographicCRS", "GeodeticCRS",    "ProjectedCRS", "CompoundCRS",  "BoundCRS",
-	                                 "VerticalCRS",   "EngineeringCRS", "TemporalCRS",  "ParametricCRS"};
+	static const case_insensitive_set_view_t projjson_crs_types {
+	    "GeographicCRS", "GeodeticCRS",    "ProjectedCRS", "CompoundCRS",   "BoundCRS",
+	    "VerticalCRS",   "EngineeringCRS", "TemporalCRS",  "ParametricCRS",
+	};
 
-	auto found = false;
-	for (auto &kw : projjson_crs_types) {
-		if (StringUtil::CIEquals(type_str, kw)) {
-			found = true;
-			break;
-		}
-	}
-
-	if (!found) {
+	if (!projjson_crs_types.contains(type_str)) {
 		return false;
 	}
 
@@ -664,9 +659,8 @@ unique_ptr<CoordinateReferenceSystem> CoordinateReferenceSystem::TryConvert(Clie
 		return make_uniq<CoordinateReferenceSystem>(source_crs);
 	}
 
-	auto &catalog = Catalog::GetSystemCatalog(context);
-	auto entry = catalog.GetEntry(context, CatalogType::COORDINATE_SYSTEM_ENTRY, Identifier::DefaultSchema(),
-	                              Identifier(source_crs.GetIdentifier()), OnEntryNotFound::RETURN_NULL);
+	auto entry = Catalog::GetBuiltinEntry(context, CatalogType::COORDINATE_SYSTEM_ENTRY,
+	                                      Identifier(source_crs.GetIdentifier()), OnEntryNotFound::RETURN_NULL);
 	if (!entry) {
 		return nullptr;
 	}

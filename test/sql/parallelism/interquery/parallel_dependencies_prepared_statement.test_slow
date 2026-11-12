@@ -34,6 +34,12 @@ loop x 0 100
 
 onlyif threadid>0
 statement maybe
+DEALLOCATE s1
+----
+does not exist
+
+onlyif threadid>0
+statement maybe
 PREPARE s1 AS SELECT SUM(i) FROM integers
 ----
 does not exist

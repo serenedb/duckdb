@@ -11,6 +11,8 @@
 #include "duckdb/common/chrono.hpp"
 #include "duckdb/common/common.hpp"
 
+#include <absl/base/internal/cycleclock.h>
+
 namespace duckdb {
 
 //! Monotonic clock time point, which is used to measure intervals.
@@ -19,6 +21,11 @@ public:
 	TimePoint();
 
 	static TimePoint Tick();
+	static int64_t Now() {
+		return absl::base_internal::CycleClock::Now();
+	}
+	static int64_t FromNanos(int64_t nanos);
+	static int64_t ToNanos(int64_t ticks);
 
 	// Get current monotonic clock time in milliseconds.
 	static int64_t GetTickMs();
@@ -35,9 +42,9 @@ public:
 	int64_t ElapsedNanos() const;
 
 private:
-	explicit TimePoint(time_point<steady_clock> value_p);
+	explicit TimePoint(int64_t ticks_p);
 
-	time_point<steady_clock> value;
+	int64_t ticks;
 };
 
 } // namespace duckdb

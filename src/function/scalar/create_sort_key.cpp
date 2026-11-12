@@ -889,9 +889,10 @@ void CreateSortKeyInternal(vector<unique_ptr<SortKeyVectorData>> &sort_key_data,
 	FinalizeSortData(result, row_count, key_lengths, offsets);
 }
 
-#ifdef DEBUG
+#ifdef D_ASSERT_IS_ENABLED
 static void AssertSortKeyRoundTrip(vector<unique_ptr<SortKeyVectorData>> &sort_key_data,
                                    const vector<OrderModifiers> &modifiers, const Vector &result, idx_t row_count) {
+	DUCKDB_DEBUG_VERIFY_GUARD();
 	D_ASSERT(sort_key_data.size() == modifiers.size());
 	UnifiedVectorFormat result_format;
 	result.ToUnifiedFormat(result_format);
@@ -1021,7 +1022,7 @@ static void CreateSortKeyFunction(DataChunk &args, ExpressionState &state, Vecto
 		sort_key_data.push_back(make_uniq<SortKeyVectorData>(args.data[c], args.size(), bind_data.modifiers[c / 2]));
 	}
 	CreateSortKeyInternal(sort_key_data, bind_data.modifiers, bind_data.all_constant, result, args.size());
-#ifdef DEBUG
+#ifdef D_ASSERT_IS_ENABLED
 	AssertSortKeyRoundTrip(sort_key_data, bind_data.modifiers, result, args.size());
 #endif
 }

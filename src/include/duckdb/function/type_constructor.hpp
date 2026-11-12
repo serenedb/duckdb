@@ -28,6 +28,10 @@ public:
 	TypeArgument(string name_p, Value value_p, QueryLocation query_location_p)
 	    : name(std::move(name_p)), value(std::move(value_p)), query_location(query_location_p) {
 	}
+	TypeArgument(string name_p, LogicalType type_p, QueryLocation query_location_p)
+	    : name(std::move(name_p)), value(LogicalType::TYPE()), type_argument(std::move(type_p)),
+	      query_location(query_location_p) {
+	}
 	QueryLocation GetQueryLocation() const {
 		return query_location;
 	}
@@ -35,6 +39,9 @@ public:
 		return name;
 	}
 	const Value &GetValue() const {
+		if (IsTypeArgument() && value.IsNull()) {
+			value = Value::TYPE(type_argument);
+		}
 		return value;
 	}
 	bool HasName() const {
@@ -44,15 +51,22 @@ public:
 		return StringUtil::CIEquals(name, name_to_check);
 	}
 	bool IsNotNull() const {
-		return !value.IsNull();
+		return IsTypeArgument() || !value.IsNull();
 	}
 	const LogicalType &GetType() const {
 		return value.type();
 	}
+	bool IsTypeArgument() const {
+		return type_argument.id() != LogicalTypeId::INVALID;
+	}
+	LogicalType GetTypeArgument() const {
+		return IsTypeArgument() ? type_argument : TypeValue::GetType(value);
+	}
 
 private:
 	string name;
-	Value value;
+	mutable Value value;
+	LogicalType type_argument;
 	QueryLocation query_location;
 };
 

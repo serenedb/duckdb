@@ -17,7 +17,9 @@ query I
 SELECT generate_subscripts(NULL, 1)
 ----
 
-statement error
+# PostgreSQL's multi-dimensional introspection is implemented here, so the second dimension has subscripts
+query I
 SELECT generate_subscripts([[1,2],[3,4],[5,6]], 2)
 ----
-<REGEX>:.*Not implemented Error.*not implemented.*
+1
+2

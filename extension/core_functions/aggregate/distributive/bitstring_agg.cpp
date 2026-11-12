@@ -104,7 +104,7 @@ struct BitStringAggOperation {
 			state.is_set = true;
 		}
 		if (input >= state.min && input <= state.max) {
-			Execute(state, input, bind_agg_data.min.GetValue<INPUT_TYPE>());
+			Execute(state, input, state.min);
 		} else {
 			throw OutOfRangeException("Value %s is outside of provided min and max range (%s <-> %s)",
 			                          NumericHelper::ToString(input), NumericHelper::ToString(state.min),

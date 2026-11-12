@@ -290,27 +290,28 @@ LogicalPlanVerifier::LogicalPlanVerifier(LogicalPlanVerificationState &verificat
 unique_ptr<Expression> LogicalPlanVerifier::VisitReplace(BoundColumnRefExpression &expr,
                                                          unique_ptr<Expression> *expr_ptr) {
 	D_ASSERT(expr.Depth() == 0);
-	for (idx_t binding_index = 0; binding_index < bindings.size(); binding_index++) {
-		if (expr.Binding() != bindings[binding_index]) {
-			continue;
-		}
-		if (types.empty()) {
-			return nullptr;
-		}
-		if (bindings.size() != types.size()) {
-			verification_state.AddBindingTypeArityMismatch(expr, bindings.size(), types.size());
-			return nullptr;
-		}
-		if (!types[binding_index].IsComplete() || !expr.GetReturnType().IsComplete()) {
-			verification_state.AddIncompleteBindingType(expr, types[binding_index]);
-			return nullptr;
-		}
-		if (expr.GetReturnType() != types[binding_index]) {
-			verification_state.AddTypeMismatch(expr, types[binding_index]);
-		}
+	auto &bindings = Bindings();
+	auto &types = Types();
+	auto position = FindBinding(expr.Binding());
+	if (!position.IsValid()) {
+		verification_state.AddInvalidBinding(expr, bindings);
 		return nullptr;
 	}
-	verification_state.AddInvalidBinding(expr, bindings);
+	auto binding_index = position.GetIndex();
+	if (types.empty()) {
+		return nullptr;
+	}
+	if (bindings.size() != types.size()) {
+		verification_state.AddBindingTypeArityMismatch(expr, bindings.size(), types.size());
+		return nullptr;
+	}
+	if (!types[binding_index].IsComplete() || !expr.GetReturnType().IsComplete()) {
+		verification_state.AddIncompleteBindingType(expr, types[binding_index]);
+		return nullptr;
+	}
+	if (expr.GetReturnType() != types[binding_index]) {
+		verification_state.AddTypeMismatch(expr, types[binding_index]);
+	}
 	return nullptr;
 }
 

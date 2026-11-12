@@ -170,7 +170,7 @@ TEST_CASE("A simple stream reports an execution error while a chunk is still buf
 	REQUIRE_NO_FAIL(con.Query("SET max_streaming_buffer_size='1b'"));
 
 	auto stream = ExecuteStreaming(con, "SELECT (CASE WHEN i = " + to_string(2 * STANDARD_VECTOR_SIZE) +
-	                                        " THEN 'boom' ELSE i::VARCHAR END)::INT FROM range(" +
+	                                        " THEN 'boom' ELSE i::VARCHAR END)::INT FROM range_st(" +
 	                                        to_string(4 * STANDARD_VECTOR_SIZE) + ") t(i)");
 	// The pop wakes the parked producer, whose next chunk fails on the worker thread
 	REQUIRE(stream->Fetch());
@@ -355,7 +355,7 @@ TEST_CASE("A simple stream result never exceeds the buffer cap", "[api][stream_b
 	// an exactly-full one, or the size-aware block spins the replenish loop
 	REQUIRE_NO_FAIL(con.Query("SET max_streaming_buffer_size='100000b'"));
 
-	auto result = ExecuteStreaming(con, "SELECT i FROM range(500000) t(i)");
+	auto result = ExecuteStreaming(con, "SELECT i FROM range_st(500000) t(i)");
 	auto &stream = *result;
 	DrainWatchdog watchdog(con);
 	idx_t row_count = 0;
@@ -449,7 +449,7 @@ TEST_CASE("Poll on a draining stream reports READY exactly when a chunk is poppa
 	REQUIRE_NO_FAIL(con.Query("SET max_streaming_buffer_size='64KB'"));
 
 	// The unordered plan uses the simple store, the table scan the batched one
-	for (auto query : {"SELECT i FROM range(2000000) t(i)", "SELECT i FROM t"}) {
+	for (auto query : {"SELECT i FROM range_st(2000000) t(i)", "SELECT i FROM t"}) {
 		auto result = ExecuteStreaming(con, query);
 		auto &stream = *result;
 		auto &buffered = stream.GetBufferedData();

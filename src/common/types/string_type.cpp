@@ -10,7 +10,8 @@ constexpr idx_t string_t::MAX_STRING_SIZE;
 constexpr idx_t string_t::INLINE_LENGTH;
 
 void string_t::Verify() const {
-#ifdef DEBUG
+#ifdef D_ASSERT_IS_ENABLED
+	DUCKDB_DEBUG_VERIFY_GUARD();
 	ForceVerify();
 #endif
 }
@@ -25,8 +26,7 @@ void string_t::VerifyUTF8() const {
 	(void)dataptr;
 	D_ASSERT(dataptr);
 
-	auto utf_type = Utf8Proc::Analyze(dataptr, GetSize());
-	if (utf_type == UnicodeType::INVALID) {
+	if (!Utf8Proc::IsValid(dataptr, GetSize())) {
 		throw InternalException("Invalid UTF8 found in string - %s", string(dataptr, GetSize()));
 	}
 }

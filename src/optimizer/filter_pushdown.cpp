@@ -1,4 +1,5 @@
 #include "duckdb/optimizer/filter_pushdown.hpp"
+#include "duckdb/common/stack_depth.hpp"
 #include "duckdb/optimizer/filter_combiner.hpp"
 #include "duckdb/optimizer/optimizer.hpp"
 #include "duckdb/planner/expression_iterator.hpp"
@@ -30,14 +31,16 @@ static bool ExpressionsBecomeFilters(const LogicalOperator &op) {
 	}
 }
 
-void FilterPushdown::CheckMarkToSemi(LogicalOperator &op, const unordered_set<TableIndex> &table_bindings) {
-	auto referenced_bindings = table_bindings;
+void FilterPushdown::CheckMarkToSemi(LogicalOperator &op, unordered_set<TableIndex> &referenced_bindings) {
+	vector<TableIndex> added_bindings;
 	if (!ExpressionsBecomeFilters(op)) {
 		LogicalOperatorVisitor::EnumerateExpressions(
 		    static_cast<const LogicalOperator &>(op), [&](const unique_ptr<Expression> *expression) {
 			    ExpressionIterator::VisitExpression<BoundColumnRefExpression>(
 			        **expression, [&](const BoundColumnRefExpression &column_ref) {
-				        referenced_bindings.insert(column_ref.Binding().table_index);
+				        if (referenced_bindings.insert(column_ref.Binding().table_index).second) {
+					        added_bindings.push_back(column_ref.Binding().table_index);
+				        }
 			        });
 		    });
 	}
@@ -71,6 +74,9 @@ void FilterPushdown::CheckMarkToSemi(LogicalOperator &op, const unordered_set<Ta
 	// Recurse into each child with the bindings referenced on this path.
 	for (auto &child : op.children) {
 		CheckMarkToSemi(*child, referenced_bindings);
+	}
+	for (auto &binding : added_bindings) {
+		referenced_bindings.erase(binding);
 	}
 }
 
@@ -106,6 +112,7 @@ vector<unique_ptr<Expression>> FilterPushdown::ExtractBarrierFilters() {
 }
 
 unique_ptr<LogicalOperator> FilterPushdown::Rewrite(unique_ptr<LogicalOperator> op) {
+	StackDepth::Check();
 	D_ASSERT(!combiner.HasFilters());
 	if (!BarrierCanPassThrough(op->type)) {
 		// this operator can remove rows - barred expressions must be evaluated on top of it instead of below it
@@ -247,6 +254,17 @@ FilterResult FilterPushdown::AddFilter(unique_ptr<Expression> expr) {
 		return FilterResult::UNSATISFIABLE;
 	}
 	return combiner.AddConjuncts(std::move(expr));
+}
+
+FilterResult FilterPushdown::RewriteAndAddFilter(unique_ptr<Expression> expr) {
+	LogicalFilter filter(std::move(expr));
+	optimizer.rewriter.VisitOperator(filter);
+	for (auto &rewritten : filter.expressions) {
+		if (AddFilter(std::move(rewritten)) == FilterResult::UNSATISFIABLE) {
+			return FilterResult::UNSATISFIABLE;
+		}
+	}
+	return FilterResult::SUCCESS;
 }
 
 void FilterPushdown::GenerateFilters() {

@@ -12,6 +12,7 @@
 #include "duckdb/common/identifier.hpp"
 #include "duckdb/common/enums/catalog_type.hpp"
 #include "duckdb/common/exception.hpp"
+#include "duckdb/catalog/permissions.hpp"
 #include "duckdb/common/atomic.hpp"
 #include "duckdb/common/optional_ptr.hpp"
 #include "duckdb/common/exception/catalog_exception.hpp"
@@ -35,7 +36,7 @@ struct CreateInfo;
 //! Abstract base class of an entry in the catalog
 class CatalogEntry {
 public:
-	CatalogEntry(CatalogType type, Catalog &catalog, Identifier name);
+	CatalogEntry(CatalogType type, Catalog &catalog, Identifier name, idx_t oid = 0);
 	CatalogEntry(CatalogType type, Identifier name, idx_t oid);
 	virtual ~CatalogEntry();
 
@@ -57,10 +58,13 @@ public:
 	Identifier extension_name;
 	//! Timestamp at which the catalog entry was created
 	atomic<transaction_t> timestamp;
+	atomic<CatalogEntry *> previous_version;
 	//! (optional) comment on this entry
 	Value comment;
 	//! (optional) extra data associated with this entry
 	InsertionOrderPreservingMap<string> tags;
+	//! Ownership and grants; core carries them, the access-control layer reads them
+	Permissions permissions;
 
 private:
 	//! Child entry
@@ -73,23 +77,34 @@ public:
 	virtual unique_ptr<CatalogEntry> AlterEntry(CatalogTransaction transaction, AlterInfo &info);
 	virtual void UndoAlter(ClientContext &context, AlterInfo &info);
 	virtual void Rollback(CatalogEntry &prev_entry);
+	static bool CreatedObject(const CatalogEntry &prev_entry);
+	//! Called by the statement that drops this entry, before the drop is installed
+	virtual void BeforeDrop(CatalogTransaction transaction);
 	virtual void OnDrop();
+
+	virtual optional_idx GetDataVersion(ClientContext &context) const;
 
 	virtual unique_ptr<CatalogEntry> Copy(ClientContext &context) const;
 
 	virtual unique_ptr<CreateInfo> GetInfo() const;
+	virtual unique_ptr<CreateInfo> GetInfo(CatalogTransaction transaction) const;
+	unique_ptr<CreateInfo> GetSerializedInfo() const;
 
 	//! Sets the CatalogEntry as the new root entry (i.e. the newest entry)
-	// this is called on a rollback to an AlterEntry
-	virtual void SetAsRoot();
+	virtual void SetAsRoot(optional_ptr<CatalogTransaction> transaction, optional_ptr<CatalogEntry> previous);
 
 	//! Convert the catalog entry to a SQL string that can be used to re-construct the catalog entry
 	virtual string ToSQL() const;
 
 	virtual Catalog &ParentCatalog();
 	virtual const Catalog &ParentCatalog() const;
-	virtual SchemaCatalogEntry &ParentSchema();
-	virtual const SchemaCatalogEntry &ParentSchema() const;
+	virtual Identifier ParentSchemaName() const;
+	virtual Identifier ParentSchemaName(CatalogTransaction transaction) const;
+	virtual vector<Identifier> ParentSchemaPath() const;
+	virtual vector<Identifier> ParentSchemaPath(CatalogTransaction transaction) const;
+	virtual idx_t ParentSchemaOid() const;
+	virtual SchemaCatalogEntry &ParentSchema(CatalogTransaction transaction) const;
+	SchemaCatalogEntry &ParentSchema(ClientContext &context) const;
 
 	virtual void Verify(Catalog &catalog);
 
@@ -120,7 +135,7 @@ public:
 
 class InCatalogEntry : public CatalogEntry {
 public:
-	InCatalogEntry(CatalogType type, Catalog &catalog, Identifier name);
+	InCatalogEntry(CatalogType type, Catalog &catalog, Identifier name, idx_t oid = 0);
 	~InCatalogEntry() override;
 
 	//! The catalog the entry belongs to

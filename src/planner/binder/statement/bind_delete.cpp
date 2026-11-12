@@ -8,12 +8,47 @@
 #include "duckdb/planner/operator/logical_get.hpp"
 #include "duckdb/planner/operator/logical_cross_product.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
+#include "duckdb/catalog/dependency_manager.hpp"
+#include "duckdb/common/string_util.hpp"
+#include "duckdb/parser/constraints/foreign_key_constraint.hpp"
+#include "duckdb/parser/tableref/basetableref.hpp"
 #include "duckdb/storage/data_table.hpp"
 
 namespace duckdb {
 
 BoundStatement Binder::Bind(DeleteStatement &stmt) {
 	return Bind(*stmt.node);
+}
+
+vector<QualifiedName> Binder::TruncateIdentitySequences(ClientContext &context, TableCatalogEntry &table) {
+	vector<QualifiedName> result;
+	auto &catalog = table.ParentCatalog();
+	for (auto &owned : catalog.OwnedEntries(catalog.GetCatalogTransaction(context), table)) {
+		auto &entry = owned.get();
+		result.emplace_back(catalog.GetName(), entry.ParentSchema(context).name, entry.name);
+	}
+	return result;
+}
+
+vector<idx_t> Binder::BindTruncateGroup(DeleteQueryNode &node, TableCatalogEntry &table) {
+	vector<idx_t> group {table.oid};
+	for (auto &target : node.truncate_group) {
+		group.push_back(
+		    Catalog::GetEntry<TableCatalogEntry>(context, target->Cast<BaseTableRef>().GetQualifiedName()).oid);
+	}
+	for (auto &entry : table.ReferencingTables(context)) {
+		auto &referencing = entry.get();
+		if (std::find(group.begin(), group.end(), referencing.oid) != group.end()) {
+			continue;
+		}
+		auto extra_info = Exception::InitializeExtraInfo("UNSUPPORTED", optional_idx());
+		extra_info["detail"] = StringUtil::Format("Table \"%s\" references \"%s\".",
+		                                          referencing.name.GetIdentifierName(), table.name.GetIdentifierName());
+		extra_info["hint"] = StringUtil::Format("Truncate table \"%s\" at the same time, or use TRUNCATE ... CASCADE.",
+		                                        referencing.name.GetIdentifierName());
+		throw CatalogException(extra_info, "cannot truncate a table referenced in a foreign key constraint");
+	}
+	return group;
 }
 
 BoundStatement Binder::BindNode(DeleteQueryNode &node) {
@@ -28,6 +63,9 @@ BoundStatement Binder::BindNode(DeleteQueryNode &node) {
 	if (!table_ptr) {
 		throw BinderException("Can only delete from base table");
 	}
+	if (get.function.verify_dml_target) {
+		get.function.verify_dml_target(context, get.bind_data.get());
+	}
 	auto &table = *table_ptr;
 
 	if (auto expanded = TryExpandTriggers(node, table, TriggerEventType::DELETE_EVENT)) {
@@ -40,7 +78,7 @@ BoundStatement Binder::BindNode(DeleteQueryNode &node) {
 	if (!table.temporary) {
 		// delete from persistent table: not read only!
 		auto &properties = GetStatementProperties();
-		properties.RegisterDBModify(table.catalog, context, DatabaseModificationType::DELETE_DATA);
+		properties.RegisterDBModify(table.GetStorageCatalog(context), context, DatabaseModificationType::DELETE_DATA);
 	}
 
 	// plan any tables from the various using clauses
@@ -77,19 +115,25 @@ BoundStatement Binder::BindNode(DeleteQueryNode &node) {
 	// create the delete node
 	auto del = make_uniq<LogicalDelete>(table, GenerateTableIndex());
 	del->bound_constraints = BindConstraints(table);
+	del->row_id_handling = node.using_clauses.empty() ? RowIdHandling::ASSUME_UNIQUE : RowIdHandling::KEEP_FIRST;
+	del->is_truncate = node.is_truncate;
+	if (node.is_truncate) {
+		del->truncate_group = BindTruncateGroup(node, table);
+	}
 
 	auto is_duck_table = table.IsDuckTable();
-	if (is_duck_table) {
+	auto columns_as_expressions = is_duck_table || table.ParentCatalog().Compatibility() == SqlCompatibility::POSTGRES;
+	if (columns_as_expressions) {
 		// Bind the row id before the table columns so it remains the first delete expression.
 		BindRowIdColumns(table, get, del->expressions);
 	}
 
 	// Add columns to the scan to avoid fetching by row ID in PhysicalDelete:
 	// - If RETURNING: add all physical columns (for RETURNING projection)
-	// - Else if unique indexes exist: add only indexed columns (for delete index tracking)
+	// - Else if unique or foreign key indexes exist: add only indexed columns (for delete index tracking)
 	if (!node.returning_list.empty()) {
 		// Add all physical columns for RETURNING
-		if (is_duck_table) {
+		if (columns_as_expressions) {
 			BindDeleteReturningColumns(table, get, del->return_columns, del->expressions, get);
 		} else {
 			BindDeleteReturningColumns(table, get, del->return_columns);
@@ -97,14 +141,14 @@ BoundStatement Binder::BindNode(DeleteQueryNode &node) {
 	} else if (is_duck_table) {
 		// Only optimize for DuckDB tables (not attached external tables like SQLite)
 		auto &storage = table.GetStorage();
-		if (storage.HasUniqueIndexes()) {
+		if (storage.HasDeleteIndexes()) {
 			BindDeleteIndexColumns(table, get, del->return_columns, del->expressions, get);
 		}
 	}
 
 	del->AddChild(std::move(root));
 
-	if (!is_duck_table) {
+	if (!columns_as_expressions) {
 		// Bind external table row IDs after the returning columns to preserve their scan layout.
 		BindRowIdColumns(table, get, del->expressions);
 	}
@@ -115,11 +159,12 @@ BoundStatement Binder::BindNode(DeleteQueryNode &node) {
 		auto update_table_index = GenerateTableIndex();
 		del->table_index = update_table_index;
 
+		auto &returned_virtual_columns = del->returning_virtual_columns;
 		unique_ptr<LogicalOperator> del_as_logicaloperator = std::move(del);
 		// Include virtual columns (like rowid) so they can be referenced in RETURNING
 		auto virtual_columns = table.GetVirtualColumns();
 		return BindReturning(std::move(node.returning_list), table, node.table->alias, update_table_index,
-		                     std::move(del_as_logicaloperator), std::move(virtual_columns));
+		                     std::move(del_as_logicaloperator), std::move(virtual_columns), &returned_virtual_columns);
 	}
 	BoundStatement result;
 	result.plan = std::move(del);
@@ -128,7 +173,9 @@ BoundStatement Binder::BindNode(DeleteQueryNode &node) {
 
 	auto &properties = GetStatementProperties();
 	properties.result_eagerness = ResultEagerness::FORCED;
-	properties.return_type = StatementReturnType::CHANGED_ROWS;
+	if (!IsInsideSubquery()) {
+		properties.return_type = StatementReturnType::CHANGED_ROWS;
+	}
 
 	return result;
 }

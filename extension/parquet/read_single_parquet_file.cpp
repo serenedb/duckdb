@@ -7,6 +7,8 @@
 #include "duckdb/planner/expression/bound_function_expression.hpp"
 #include "duckdb/planner/operator/logical_get.hpp"
 
+#include <numeric>
+
 namespace duckdb {
 
 //! Bind data of read_single_parquet_file - the single file that is read, and how it is read
@@ -83,6 +85,7 @@ public:
 
 struct ReadSingleParquetFileLocalState : public LocalTableFunctionState {
 	ParquetReadLocalState state;
+	unique_ptr<ParquetLookupCursor> lookup;
 	//! Whether our caller claims the row groups we read - see table_function_claim_batch_t
 	bool claimed_externally = false;
 	//! Whether this thread holds a row group that it has not finished scanning
@@ -356,6 +359,19 @@ static void ReadSingleParquetFileFunction(ClientContext &context, TableFunctionI
 	}
 }
 
+static void ReadSingleParquetFileLookup(ClientContext &context, TableFunctionInput &input, DataChunk &output) {
+	auto &gstate = input.global_state->Cast<ReadSingleParquetFileGlobalState>();
+	auto &lstate = input.local_state->Cast<ReadSingleParquetFileLocalState>();
+	auto &reader = *gstate.reader;
+	if (!lstate.lookup) {
+		vector<idx_t> output_to_scan_col(output.ColumnCount());
+		std::iota(output_to_scan_col.begin(), output_to_scan_col.end(), 0);
+		lstate.lookup =
+		    make_uniq<ParquetLookupCursor>(context, reader, output.GetTypes(), std::move(output_to_scan_col));
+	}
+	ParquetLookupRows(context, reader, gstate.state, *lstate.lookup, input.pk_lookups, input.pk_survivors, output);
+}
+
 static double ReadSingleParquetFileProgress(ClientContext &context, const FunctionData *bind_data,
                                             const GlobalTableFunctionState *global_state) {
 	if (!global_state) {
@@ -537,6 +553,7 @@ TableFunctionMultiFileSettings ParquetScanFunction::GetMultiFileSettings() {
 	settings.schedule_io = ReadSingleParquetFileScheduleIO;
 	settings.prepare_read_ahead = ReadSingleParquetFilePrepareReadAhead;
 	settings.get_file_columns = ReadSingleParquetFileColumns;
+	settings.lookup = ReadSingleParquetFileLookup;
 	// the order the filters are best applied in is learned while reading, and carries over to the next file
 	settings.reuses_local_state = true;
 	return settings;

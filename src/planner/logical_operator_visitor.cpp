@@ -1,5 +1,6 @@
 #include "duckdb/planner/logical_operator_visitor.hpp"
 
+#include "duckdb/common/stack_depth.hpp"
 #include "duckdb/planner/expression/list.hpp"
 #include "duckdb/planner/expression_iterator.hpp"
 #include "duckdb/planner/operator/list.hpp"
@@ -16,6 +17,7 @@ void LogicalOperatorVisitor::VisitOperator(LogicalOperator &op) {
 }
 
 void LogicalOperatorVisitor::VisitOperatorChildren(LogicalOperator &op) {
+	StackDepth::Check();
 	if (op.HasProjectionMap()) {
 		VisitOperatorWithProjectionMapChildren(op);
 	} else {
@@ -49,6 +51,8 @@ optional_ptr<vector<ProjectionIndex>> LogicalOperatorVisitor::GetProjectionMap(L
 	}
 	case LogicalOperatorType::LOGICAL_ORDER_BY:
 		return op.Cast<LogicalOrder>().projection_map;
+	case LogicalOperatorType::LOGICAL_TOP_N:
+		return op.Cast<LogicalTopN>().projection_map;
 	case LogicalOperatorType::LOGICAL_FILTER:
 		return op.Cast<LogicalFilter>().projection_map;
 	default:
@@ -130,16 +134,6 @@ static void EnumerateOperatorExpressions(OPERATOR &op, const FUNC &callback) {
 		}
 		for (auto &aggregate : rec.payload_aggregates) {
 			callback(&aggregate);
-		}
-		break;
-	}
-	case LogicalOperatorType::LOGICAL_INSERT: {
-		auto &insert = op.template Cast<LogicalInsert>();
-		if (insert.on_conflict_info.on_conflict_condition) {
-			callback(&insert.on_conflict_info.on_conflict_condition);
-		}
-		if (insert.on_conflict_info.do_update_condition) {
-			callback(&insert.on_conflict_info.do_update_condition);
 		}
 		break;
 	}

@@ -20,7 +20,7 @@ static void MapExtractValueFunc(DataChunk &args, ExpressionState &state, Vector 
 
 	// Collect the matching positions
 	Vector pos_vec(LogicalType::INTEGER, count);
-	ListSearchOp<int32_t>(map_vec, key_vec, arg_vec, pos_vec, args.size());
+	ListSearchOp<int32_t>(map_vec, key_vec, arg_vec, pos_vec, args.size(), ListSearchState::Get(state));
 
 	UnifiedVectorFormat pos_format;
 	UnifiedVectorFormat lst_format;
@@ -68,7 +68,7 @@ static void MapExtractListFunc(DataChunk &args, ExpressionState &state, Vector &
 
 	// Collect the matching positions
 	Vector pos_vec(LogicalType::INTEGER, count);
-	ListSearchOp<int32_t>(map_vec, key_vec, arg_vec, pos_vec, args.size());
+	ListSearchOp<int32_t>(map_vec, key_vec, arg_vec, pos_vec, args.size(), ListSearchState::Get(state));
 
 	auto pos_entries = pos_vec.Values<int32_t>();
 	auto map_entries = map_vec.Values<list_entry_t>();
@@ -116,6 +116,7 @@ ScalarFunction MapExtractValueFun::GetFunction() {
 	fun.GetSignature().AddParameter("map", LogicalType::MAP(key_type, val_type)).AddParameter("key", key_type);
 	fun.SetStatisticsCallback(MapExtractValueStats);
 	fun.SetNullHandling(FunctionNullHandling::SPECIAL_HANDLING);
+	fun.SetInitStateCallback(ListSearchState::Init);
 	return fun;
 }
 
@@ -126,6 +127,7 @@ ScalarFunction MapExtractFun::GetFunction() {
 	ScalarFunction fun({}, LogicalType::LIST(val_type), MapExtractListFunc);
 	fun.GetSignature().AddParameter("map", LogicalType::MAP(key_type, val_type)).AddParameter("key", key_type);
 	fun.SetNullHandling(FunctionNullHandling::SPECIAL_HANDLING);
+	fun.SetInitStateCallback(ListSearchState::Init);
 	return fun;
 }
 

@@ -6,6 +6,7 @@
 #include "duckdb/common/types/timestamp.hpp"
 #include "duckdb/planner/expression/bound_function_expression.hpp"
 #include "include/icu-datefunc.hpp"
+#include "include/icu-scalar-fast.hpp"
 #include "icu-helpers.hpp"
 
 namespace duckdb {
@@ -167,7 +168,8 @@ interval_t ICUCalendarSub::Operation(timestamp_tz_t end_date, timestamp_tz_t sta
 	auto min_diff = SubtractField(calendar, CAL_MINUTE, end_date);
 	auto sec_diff = SubtractField(calendar, CAL_SECOND, end_date);
 	auto ms_diff = SubtractField(calendar, CAL_MILLISECOND, end_date);
-	auto micros_diff = UnsafeNumericCast<int32_t>(ms_diff * Interval::MICROS_PER_MSEC + (end_micros - start_micros));
+	auto micros_diff = UnsafeNumericCast<int32_t>(
+	    ms_diff * Interval::MICROS_PER_MSEC + (static_cast<int64_t>(end_micros) - static_cast<int64_t>(start_micros)));
 	result.micros = Time::FromTime(hour_diff, min_diff, sec_diff, micros_diff).value;
 
 	return result;
@@ -206,7 +208,8 @@ interval_t ICUCalendarAge::Operation(timestamp_tz_t end_date, timestamp_tz_t sta
 	auto min_diff = SubtractField(calendar, CAL_MINUTE, end_date);
 	auto sec_diff = SubtractField(calendar, CAL_SECOND, end_date);
 	auto ms_diff = SubtractField(calendar, CAL_MILLISECOND, end_date);
-	auto micros_diff = UnsafeNumericCast<int32_t>(ms_diff * Interval::MICROS_PER_MSEC + (end_micros - start_micros));
+	auto micros_diff = UnsafeNumericCast<int32_t>(
+	    ms_diff * Interval::MICROS_PER_MSEC + (static_cast<int64_t>(end_micros) - static_cast<int64_t>(start_micros)));
 	result.micros = Time::FromTime(hour_diff, min_diff, sec_diff, micros_diff).value;
 
 	return result;
@@ -243,9 +246,16 @@ struct ICUDateAdd : public ICUDateFunc {
 		auto &info = func_expr.BindInfo()->Cast<BindData>();
 		TZCalendar calendar(*info.calendar, info.cal_setting);
 
-		BinaryExecutor::Execute<TA, TB, TR>(args.data[0], args.data[1], result, [&](TA left, TB right) {
+		const auto operation = std::is_same<OP, ICUCalendarAdd>::value   ? ICUScalarFast::Operation::ADD
+		                       : std::is_same<OP, ICUCalendarSub>::value ? ICUScalarFast::Operation::SUBTRACT
+		                                                                 : ICUScalarFast::Operation::AGE;
+		auto row = [&](TA left, TB right) {
 			return OP::template Operation<TA, TB, TR>(left, right, calendar);
-		});
+		};
+		if (ICUScalarFast::IntervalArithmetic<TA, TB>::Try(args, result, info, operation, row)) {
+			return;
+		}
+		BinaryExecutor::Execute<TA, TB, TR>(args.data[0], args.data[1], result, row);
 	}
 
 	template <typename TA, typename TB, typename TR, typename OP>
