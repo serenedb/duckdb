@@ -426,7 +426,6 @@ bool Executor::WorkOnTasks() {
 }
 
 void Executor::SignalTaskRescheduled(lock_guard<mutex> &) {
-	task_reschedule.notify_one();
 	if (on_reschedule) {
 		std::exchange(on_reschedule, {})();
 	}
@@ -434,13 +433,10 @@ void Executor::SignalTaskRescheduled(lock_guard<mutex> &) {
 
 void Executor::UnregisterTask() {
 #ifndef DUCKDB_NO_THREADS
-	lock_guard<mutex> l(executor_lock);
-	{
-		const annotated_lock_guard<annotated_mutex> producer_lock(producer->producer_lock);
-		executor_tasks--;
-		producer->producer_cv.SignalAll();
-	}
-	task_reschedule.notify_all();
+	const annotated_lock_guard<annotated_mutex> producer_lock(producer->producer_lock);
+	executor_tasks--;
+	producer->epoch++;
+	producer->producer_cv.SignalAll();
 #else
 	executor_tasks--;
 #endif
@@ -454,31 +450,38 @@ void Executor::WaitForTask(absl::FunctionRef<bool()> is_done) {
 #ifndef DUCKDB_NO_THREADS
 	static constexpr std::chrono::microseconds WAIT_TIME_MS = std::chrono::microseconds(WAIT_TIME * 1000);
 	auto begin = TimePoint::Tick();
-	std::unique_lock<mutex> l(executor_lock);
-	auto end = TimePoint::Tick();
-	auto blocked_micros = NumericCast<idx_t>(TimePoint::ElapsedMicros(begin, end));
-
-	if (ExecutionIsFinished() || is_done()) {
-		blocked_thread_time += blocked_micros;
-		return;
-	}
-	if (ResultCollectorIsBlocked()) {
-		// Only the consumer's decision or pop lets the query progress, so waiting here is pointless
-		blocked_thread_time += blocked_micros;
-		return;
-	}
-	if (TaskScheduler::GetScheduler(context).GetTaskCountForProducer(*producer) > 0) {
-		// A new task is available for the calling thread, the next step will make progress without waiting
-		blocked_thread_time += blocked_micros;
-		return;
+	idx_t epoch;
+	{
+		std::unique_lock<mutex> l(executor_lock);
+		auto end = TimePoint::Tick();
+		blocked_thread_time += NumericCast<idx_t>(TimePoint::ElapsedMicros(begin, end));
+		{
+			const annotated_lock_guard<annotated_mutex> producer_guard(producer->producer_lock);
+			epoch = producer->epoch;
+		}
+		if (ExecutionIsFinished() || is_done()) {
+			return;
+		}
+		if (ResultCollectorIsBlocked()) {
+			// Only the consumer's decision or pop lets the query progress, so waiting here is pointless
+			return;
+		}
+		if (TaskScheduler::GetScheduler(context).GetTaskCountForProducer(*producer) > 0) {
+			// A new task is available for the calling thread, the next step will make progress without waiting
+			return;
+		}
 	}
 	// Nothing to run on this thread, all remaining tasks are either running on other threads or descheduled.
-	// Wait (bounded), but wake up on task completion or reschedule.
+	// Wait (bounded) until a task of this producer is enqueued, finishes or parks on the result collector.
 	const auto wait_begin = TimePoint::Tick();
-	TaskScheduler::BlockingScope blocking;
-	task_reschedule.WaitWithTimeout(l.mutex(), absl::FromChrono(WAIT_TIME_MS));
-	const auto wait_micros = NumericCast<idx_t>(TimePoint::ElapsedMicros(wait_begin, TimePoint::Tick()));
-	blocked_thread_time += blocked_micros + wait_micros;
+	{
+		TaskScheduler::BlockingScope blocking;
+		annotated_unique_lock<annotated_mutex> producer_guard(producer->producer_lock);
+		if (producer->epoch == epoch) {
+			producer->producer_cv.WaitWithTimeout(producer_guard.mutex(), absl::FromChrono(WAIT_TIME_MS));
+		}
+	}
+	blocked_thread_time += NumericCast<idx_t>(TimePoint::ElapsedMicros(wait_begin, TimePoint::Tick()));
 #endif
 }
 
@@ -513,7 +516,11 @@ void Executor::AddToBeRescheduled(shared_ptr<Task> &task_p) {
 	to_be_rescheduled_tasks[task_ref] = std::move(task_p);
 	// Only a result-sink park needs the consumer, so only a store that can park wakes it
 	if (ResultStoreCanPark()) {
-		task_reschedule.notify_all();
+		{
+			const annotated_lock_guard<annotated_mutex> producer_guard(producer->producer_lock);
+			producer->epoch++;
+			producer->producer_cv.SignalAll();
+		}
 		if (on_reschedule && ResultCollectorIsBlocked()) {
 			// A streaming result chunk is ready (the collector blocked waiting for Fetch): the next
 			// ExecuteTask will return READY. Wake an async driver parked on NO_TASKS.

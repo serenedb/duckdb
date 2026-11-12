@@ -190,7 +190,8 @@ void TaskScheduler::Enqueue(ProducerToken &producer, shared_ptr<Task> *tasks, id
 		keep_claim = !blocking && count == 1 && current_worker && (keep_in_task || !current_worker->in_task) &&
 		             !current_worker->rotate && current_worker->account.get() == account.get();
 		activated = queue.Enqueue(producer, tasks, count, keep_claim);
-		producer.producer_cv.Signal();
+		producer.epoch++;
+		producer.producer_cv.SignalAll();
 	}
 	if (activated) {
 		queue.Publish(*account);

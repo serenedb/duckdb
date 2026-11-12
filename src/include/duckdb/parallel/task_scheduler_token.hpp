@@ -64,6 +64,7 @@ public:
 public:
 	annotated_mutex producer_lock;
 	absl::CondVar producer_cv;
+	idx_t epoch DUCKDB_GUARDED_BY(producer_lock) = 0;
 
 private:
 	friend class TaskSchedulerQueue;
