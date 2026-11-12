@@ -1302,7 +1302,8 @@ idx_t RadixPartitionedHashTable::MaxThreads(GlobalSinkState &sink_p) const {
 			filled++;
 		}
 	}
-	const auto max_threads = MinValue<idx_t>(TaskScheduler::QueryThreads(sink.context), MaxValue<idx_t>(filled, 1));
+	const auto max_threads =
+	    filled <= 1 ? idx_t(1) : MinValue<idx_t>(TaskScheduler::QueryThreads(sink.context), sink.partitions.size());
 	sink.temporary_memory_state->SetRemainingSizeAndUpdateReservation(
 	    sink.context, sink.stored_allocators_size + max_threads * sink.max_partition_size);
 
