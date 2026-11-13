@@ -1,5 +1,6 @@
 #include "duckdb/function/table/read_duckdb.hpp"
 #include "duckdb/catalog/catalog.hpp"
+#include "duckdb/common/fault_points.hpp"
 #include "duckdb/logging/log_manager.hpp"
 #include "duckdb/common/multi_file/multi_file_reader.hpp"
 #include "duckdb/common/multi_file/multi_file_function.hpp"
@@ -282,6 +283,7 @@ AttachedDatabase &DuckDBReader::GetAttachedDatabase() {
 
 		auto attached = db_manager.AttachDatabase(context, info, attach_options);
 		db_wrapper = make_shared_ptr<AttachedDatabaseWrapper>(context, info.name, std::move(attached));
+		SDB_PARK_ONCE_ON_FAILURE("read_duckdb_reader_attached");
 	}
 	return *db_wrapper->attached_database;
 }

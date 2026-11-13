@@ -88,7 +88,7 @@ public:
 	bool ReferencesDatabase(AttachedDatabase &database);
 	AttachedDatabase &UseDatabase(shared_ptr<AttachedDatabase> &database);
 	void DetachDatabase(AttachedDatabase &database);
-	vector<shared_ptr<AttachedDatabase>> &GetStatementDatabases(ClientContext &context);
+	vector<shared_ptr<AttachedDatabase>> &GetStatementDatabases(ClientContext &context, bool include_hidden);
 
 private:
 	friend class SecretManager;
@@ -115,6 +115,12 @@ private:
 	//! enumerations see one stable, pinned set even under concurrent ATTACH/DETACH.
 	//! Reset at each statement boundary in SetActiveQuery, lazy initialization.
 	vector<shared_ptr<AttachedDatabase>> statement_databases;
+	enum class FrozenDatabases : uint8_t {
+		NONE,
+		VISIBLE,
+		ALL,
+	};
+	FrozenDatabases frozen_databases = FrozenDatabases::NONE;
 };
 
 } // namespace duckdb

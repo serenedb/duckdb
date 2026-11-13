@@ -41,6 +41,7 @@
 #include "duckdb/catalog/default/default_types.hpp"
 #include "duckdb/main/extension_entries.hpp"
 #include "duckdb/main/connection.hpp"
+#include "duckdb/common/fault_points.hpp"
 #include "duckdb/main/attached_database.hpp"
 #include "duckdb/main/database_manager.hpp"
 #include "duckdb/transaction/meta_transaction.hpp"
@@ -1759,7 +1760,7 @@ Catalog::GetAllSchemas(ClientContext &context, bool include_hidden,
 	vector<reference<SchemaCatalogEntry>> result;
 
 	auto &meta_transaction = MetaTransaction::Get(context);
-	auto &databases = meta_transaction.GetStatementDatabases(context);
+	auto &databases = meta_transaction.GetStatementDatabases(context, include_hidden);
 	for (auto &database : databases) {
 		if (!include_hidden && database->GetVisibility() == AttachVisibility::HIDDEN) {
 			continue;
@@ -1782,6 +1783,7 @@ Catalog::GetAllSchemas(ClientContext &context, bool include_hidden,
 		}
 		result.insert(result.end(), new_schemas.begin(), new_schemas.end());
 	}
+	SDB_PARK_ONCE_ON_FAILURE("catalog_all_schemas_listed");
 	sort(result.begin(), result.end(),
 	     [&](reference<SchemaCatalogEntry> left_p, reference<SchemaCatalogEntry> right_p) {
 		     auto &left = left_p.get();
