@@ -469,6 +469,14 @@ struct SIMDjob {
    u64 out:19,pos:9,end:18,cur:18; // cur/end is input offsets (2^18=256KB), out is output offset (2^19=512KB)  
 };
 
+bool fsst_avx512Compiled();
+bool fsst_hasAVX512();
+
+size_t fsst_compressAVX512(SymbolTable &symbolTable, u8 *codeBase, u8 *symbolBase, SIMDjob *input, SIMDjob *output,
+                           size_t n, size_t unroll);
+size_t compressSIMD(SymbolTable &symbolTable, u8 *symbolBase, size_t nlines, const size_t len[], u8 *const line[],
+                    size_t size, u8 *dst, size_t lenOut[], u8 *strOut[], int unroll);
+
 // C++ fsst-compress function with some more control of how the compression happens (algorithm flavor, simd unroll degree)
 size_t compressImpl(Encoder *encoder, size_t n, const size_t lenIn[], const u8 *strIn[], size_t size, u8 * output, size_t *lenOut, u8 *strOut[], bool noSuffixOpt, bool avoidBranch, int simd);
 size_t compressAuto(Encoder *encoder, size_t n, const size_t lenIn[], const u8 *strIn[], size_t size, u8 * output, size_t *lenOut, u8 *strOut[], int simd);

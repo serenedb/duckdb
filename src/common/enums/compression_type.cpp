@@ -121,6 +121,28 @@ string CompressionTypeToString(CompressionType type) {
 		return "DICT_FSST";
 	case CompressionType::COMPRESSION_EMPTY:
 		return "Empty Validity";
+	case CompressionType::COMPRESSION_DICT_LZ4:
+		return "DICT_LZ4";
+	case CompressionType::COMPRESSION_DICT_ZSTD:
+		return "DICT_ZSTD";
+	case CompressionType::COMPRESSION_LZ4:
+		return "LZ4";
+	case CompressionType::COMPRESSION_DICT_ZXC:
+		return "DICT_ZXC";
+	case CompressionType::COMPRESSION_ZXC:
+		return "ZXC";
+	case CompressionType::COMPRESSION_COL_DICT_FSST_PLUS:
+		return "DICT_FSST_PLUS";
+	case CompressionType::COMPRESSION_COL_FSST_PLUS:
+		return "FSST_PLUS";
+	case CompressionType::COMPRESSION_COL_DICT_ONPAIR:
+		return "DICT_ONPAIR";
+	case CompressionType::COMPRESSION_COL_ONPAIR:
+		return "ONPAIR";
+	case CompressionType::COMPRESSION_COL_DICT_FSST12:
+		return "DICT_FSST12";
+	case CompressionType::COMPRESSION_COL_FSST12:
+		return "FSST12";
 	default:
 		throw InternalException("Unrecognized compression type!");
 	}

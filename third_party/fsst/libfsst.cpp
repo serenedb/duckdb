@@ -33,6 +33,19 @@ Symbol concat(Symbol a, Symbol b) {
 namespace libfsst {
 bool isEscapeCode(u16 pos) { return pos < FSST_CODE_BASE; }
 
+bool fsst_hasAVX512() {
+#if (defined(__x86_64__) || defined(_M_X64)) && (defined(__GNUC__) || defined(__clang__)) && !defined(_MSC_VER)
+	static const bool has = fsst_avx512Compiled() && [] {
+		__builtin_cpu_init();
+		return __builtin_cpu_supports("avx512f") && __builtin_cpu_supports("avx512bw") &&
+		       __builtin_cpu_supports("avx512dq");
+	}();
+	return has;
+#else
+	return false;
+#endif
+}
+
 std::ostream& operator<<(std::ostream& out, const Symbol& s) {
 	for (u32 i=0; i<s.length(); i++)
 		out << s.val.str[i];
@@ -481,8 +494,36 @@ extern "C" u32 duckdb_fsst_import(duckdb_fsst_decoder_t *decoder, const u8 *buf,
 }
 
 // runtime check for simd
-inline size_t _compressImpl(Encoder *e, size_t nlines, size_t lenIn[], u8 *strIn[], size_t size, u8 *output, size_t *lenOut, u8 *strOut[], bool noSuffixOpt, bool avoidBranch, int) {
-	return compressBulk(*e->symbolTable, nlines, lenIn, strIn, size, output, lenOut, strOut, noSuffixOpt, avoidBranch);
+static constexpr size_t FSST_SIMD_MAX_LINE = 511;
+
+inline size_t _compressImpl(Encoder *e, size_t nlines, size_t lenIn[], u8 *strIn[], size_t size, u8 *output, size_t *lenOut, u8 *strOut[], bool noSuffixOpt, bool avoidBranch, int simd) {
+	if (!simd || !fsst_hasAVX512()) {
+		return compressBulk(*e->symbolTable, nlines, lenIn, strIn, size, output, lenOut, strOut, noSuffixOpt, avoidBranch);
+	}
+	size_t done = 0;
+	u8 *out = output;
+	while (done < nlines) {
+		const bool fits = lenIn[done] <= FSST_SIMD_MAX_LINE;
+		size_t end = done + 1;
+		while (end < nlines && (lenIn[end] <= FSST_SIMD_MAX_LINE) == fits) {
+			end++;
+		}
+		const size_t count = end - done;
+		const size_t budget = size - (size_t) (out - output);
+		const size_t compressed =
+		    fits ? compressSIMD(*e->symbolTable, e->simdbuf, count, lenIn + done, strIn + done, budget, out,
+		                        lenOut + done, strOut + done, simd)
+		         : compressBulk(*e->symbolTable, count, lenIn + done, strIn + done, budget, out, lenOut + done,
+		                        strOut + done, noSuffixOpt, avoidBranch);
+		if (compressed > 0) {
+			out = strOut[done + compressed - 1] + lenOut[done + compressed - 1];
+		}
+		done += compressed;
+		if (compressed < count) {
+			break;
+		}
+	}
+	return done;
 }
 size_t compressImpl(Encoder *e, size_t nlines, size_t lenIn[], u8 *strIn[], size_t size, u8 *output, size_t *lenOut, u8 *strOut[], bool noSuffixOpt, bool avoidBranch, int simd) {
 	return _compressImpl(e, nlines, lenIn, strIn, size, output, lenOut, strOut, noSuffixOpt, avoidBranch, simd);

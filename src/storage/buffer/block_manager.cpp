@@ -38,6 +38,10 @@ shared_ptr<BlockHandle> BlockManager::TryGetBlock(block_id_t block_id) {
 }
 
 shared_ptr<BlockHandle> BlockManager::RegisterBlock(block_id_t block_id) {
+	return RegisterBlock(block_id, GetBlockAllocSize());
+}
+
+shared_ptr<BlockHandle> BlockManager::RegisterBlock(block_id_t block_id, idx_t block_alloc_size) {
 	lock_guard<mutex> lock(blocks_lock);
 	// check if the block already exists
 	auto entry = blocks.find(block_id);
@@ -50,7 +54,7 @@ shared_ptr<BlockHandle> BlockManager::RegisterBlock(block_id_t block_id) {
 		}
 	}
 	// create a new block pointer for this block
-	auto result = make_shared_ptr<BlockHandle>(*this, block_id, MemoryTag::BASE_TABLE);
+	auto result = make_shared_ptr<BlockHandle>(*this, block_id, MemoryTag::BASE_TABLE, block_alloc_size);
 	// register the block pointer in the set of blocks as a weak pointer
 	blocks[block_id] = weak_ptr<BlockHandle>(result);
 	return result;
