@@ -255,7 +255,7 @@ void TableCatalogEntry::InternalAppend(ClientContext &context, ColumnDataCollect
 }
 // LCOV_EXCL_STOP
 
-vector<FunctionCall> TableCatalogEntry::IndexFunctionCalls(ClientContext &context) {
+vector<IndexCalls> TableCatalogEntry::IndexFunctionCalls(ClientContext &context) {
 	return {};
 }
 

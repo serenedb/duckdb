@@ -264,6 +264,13 @@ struct RequiredPrivilege {
 	bool any_column;
 };
 
+struct IndexWrite {
+	reference<TableCatalogEntry> table;
+	RoleAccess role;
+	vector<LogicalIndex> changed;
+	bool all_columns;
+};
+
 struct GlobalBinderState {
 	//! The count of bound_tables
 	idx_t bound_tables = 0;
@@ -277,6 +284,7 @@ struct GlobalBinderState {
 	unordered_map<idx_t, RoleAccess> role_access;
 	optional_ptr<vector<FunctionCall>> recorded_calls;
 	vector<RequiredPrivilege> required_privileges;
+	vector<IndexWrite> index_writes;
 	//! Statement properties
 	StatementProperties prop;
 	vector<shared_ptr<ColumnReadCheck>> column_reads;
@@ -465,7 +473,7 @@ public:
 	void RecordCalls(optional_ptr<vector<FunctionCall>> calls);
 	void RecordCall(const CatalogEntry &function, idx_t overload);
 	void RecordCall(MacroCatalogEntry &macro, const MacroFunction &overload, idx_t overload_index);
-	void CheckIndexCalls(TableCatalogEntry &table);
+	void RequireIndexCalls(TableCatalogEntry &table, optional_ptr<const vector<LogicalIndex>> changed);
 	void BindAsFunctionBody(const SelectStatement &statement);
 	void UseFunctionSearchPath(const vector<string> &config);
 	TableRefUse table_ref_use = TableRefUse::READ;
