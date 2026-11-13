@@ -1124,7 +1124,7 @@ void ClientContext::RefreshSecurity() {
 	if (transaction.HasActiveTransaction()) {
 		auto &meta = MetaTransaction::Get(*this);
 		auto &cluster = Catalog::GetSystemCatalog(*this);
-		auto cluster_transaction = meta.ModifiedDatabase() ? meta.TryGetTransaction(cluster.GetAttached()) : nullptr;
+		auto cluster_transaction = meta.TryGetTransaction(cluster.GetAttached());
 		if (cluster_transaction && !cluster_transaction->IsReadOnly()) {
 			const auto version = cluster.GetCatalogVersion(*this).GetIndex();
 			if (!local_security || local_security_version != version) {
