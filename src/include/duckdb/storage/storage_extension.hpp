@@ -38,7 +38,6 @@ public:
 
 	//! Additional info passed to the various storage functions
 	shared_ptr<StorageExtensionInfo> storage_info;
-	bool creates_database = false;
 	vector<string> user_options;
 	vector<string> password_options;
 	case_insensitive_map_t<Value> user_forced_options;

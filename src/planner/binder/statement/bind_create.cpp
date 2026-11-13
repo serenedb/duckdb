@@ -32,6 +32,7 @@
 #include "duckdb/parser/expression/function_expression.hpp"
 #include "duckdb/parser/expression/operator_expression.hpp"
 #include "duckdb/parser/expression/subquery_expression.hpp"
+#include "duckdb/parser/parsed_data/create_database_info.hpp"
 #include "duckdb/parser/parsed_data/create_foreign_server_info.hpp"
 #include "duckdb/parser/parsed_data/create_index_info.hpp"
 #include "duckdb/parser/parsed_data/create_sequence_info.hpp"
@@ -1546,9 +1547,24 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 	case CatalogType::TABLESPACE_ENTRY:
 		result.plan = make_uniq<LogicalCreate>(LogicalOperatorType::LOGICAL_CREATE_TABLESPACE, std::move(stmt.info));
 		break;
-	case CatalogType::DATABASE_ENTRY:
+	case CatalogType::DATABASE_ENTRY: {
+		auto &info = stmt.info->Cast<CreateDatabaseInfo>();
+		auto &role = CheckAs();
+		if (!role.is_superuser && !role.Has(RoleOption::CreateDb)) {
+			throw PermissionException("permission denied to create database");
+		}
+		if (auto owner = info.options.find("owner"); owner != info.options.end()) {
+			info.permissions.owner = RoleSpecId(context, owner->second.ToString());
+			info.options.erase(owner);
+			if (!role.CanSet(info.permissions.owner)) {
+				throw PermissionException("must be able to SET ROLE \"%s\"", RoleName(context, info.permissions.owner));
+			}
+		} else if (!role.IsSystem()) {
+			info.permissions.owner = role.role;
+		}
 		result.plan = make_uniq<LogicalCreate>(LogicalOperatorType::LOGICAL_CREATE_DATABASE, std::move(stmt.info));
 		break;
+	}
 	case CatalogType::FOREIGN_SERVER_ENTRY: {
 		auto catalog = BindCatalog(stmt.info->GetQualifiedName().Catalog());
 		if (auto &role = CheckAs(); !role.IsSystem()) {

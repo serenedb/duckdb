@@ -15,7 +15,6 @@
 #include "duckdb/main/config.hpp"
 #include "duckdb/main/database.hpp"
 #include "duckdb/main/database_manager.hpp"
-#include "duckdb/main/extension_helper.hpp"
 #include "duckdb/main/settings.hpp"
 #include "duckdb/optimizer/optimizer.hpp"
 #include "duckdb/parser/expression/function_expression.hpp"
@@ -37,7 +36,6 @@
 #include "duckdb/planner/query_node/list.hpp"
 #include "duckdb/planner/tableref/list.hpp"
 #include "duckdb/storage/data_table.hpp"
-#include "duckdb/storage/storage_extension.hpp"
 #include "duckdb/common/types/uuid.hpp"
 
 #include <algorithm>
@@ -90,24 +88,9 @@ static void CheckStatementKind(ClientContext &context, const RoleAccess &role, S
 	case StatementType::CONNECT_STATEMENT:
 	case StatementType::EXTERNAL_RESOURCE_STATEMENT:
 	case StatementType::DETACH_STATEMENT:
+	case StatementType::ATTACH_STATEMENT:
 		RequireSuperuser(role);
 		break;
-	case StatementType::ATTACH_STATEMENT: {
-		auto &info = *statement.Cast<AttachStatement>().info;
-		auto type = info.options.find("type");
-		optional_ptr<StorageExtension> storage;
-		if (info.path.empty() && !info.external_resource && type != info.options.end()) {
-			storage = StorageExtension::Find(DBConfig::GetConfig(context),
-			                                 ExtensionHelper::ApplyExtensionAlias(type->second.ToString()));
-		}
-		if (!storage || !storage->creates_database) {
-			RequireSuperuser(role);
-		}
-		if (!role.Has(RoleOption::CreateDb)) {
-			throw PermissionException("permission denied to create database");
-		}
-		break;
-	}
 	case StatementType::INVALID_STATEMENT:
 	case StatementType::SELECT_STATEMENT:
 	case StatementType::INSERT_STATEMENT:
