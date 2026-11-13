@@ -1614,7 +1614,7 @@ void RequireLanguageUsage(ClientContext &context, const RoleAccess &role, const 
 }
 
 void RequireUserSchema(const SchemaCatalogEntry &schema, const Identifier &name) {
-	if (schema.internal && DefaultSchemaGenerator::IsDefaultSchema(schema.name)) {
+	if (schema.internal && (!schema.catalog.IsDuckCatalog() || DefaultSchemaGenerator::IsDefaultSchema(schema.name))) {
 		throw PermissionException(
 		    unordered_map<string, string> {{"detail", "System catalog modifications are currently disallowed."}},
 		    StringUtil::Format("permission denied to create \"%s.%s\"", schema.name.GetIdentifierName(),
