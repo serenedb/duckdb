@@ -1,5 +1,6 @@
 #include "duckdb/function/table/system_functions.hpp"
 #include "duckdb/catalog/catalog.hpp"
+#include "duckdb/common/fault_points.hpp"
 #include "duckdb/main/database_manager.hpp"
 #include "duckdb/main/attached_database.hpp"
 #include "duckdb/storage/storage_manager.hpp"
@@ -12,7 +13,6 @@ struct DuckDBDatabasesData : public GlobalTableFunctionState {
 
 	vector<shared_ptr<AttachedDatabase>> entries;
 	idx_t offset;
-	bool include_hidden = false;
 };
 
 static unique_ptr<FunctionData> DuckDBDatabasesBind(ClientContext &context, TableFunctionBindInput &input,
@@ -57,15 +57,16 @@ static unique_ptr<FunctionData> DuckDBDatabasesBind(ClientContext &context, Tabl
 unique_ptr<GlobalTableFunctionState> DuckDBDatabasesInit(ClientContext &context, TableFunctionInitInput &input) {
 	auto result = make_uniq<DuckDBDatabasesData>();
 	auto &bind_data = input.bind_data->Cast<DuckDBSystemIncludeHiddenBindData>();
-	result->include_hidden = bind_data.include_hidden;
 
 	// scan all the schemas for tables and collect them and collect them
 	auto &db_manager = DatabaseManager::Get(context);
 	result->entries = db_manager.GetDatabases(context);
-	if (auto needs_database = bind_data.DatabaseFilter(context)) {
-		std::erase_if(result->entries,
-		              [&](const shared_ptr<AttachedDatabase> &entry) { return !needs_database(*entry); });
-	}
+	auto needs_database = bind_data.DatabaseFilter(context);
+	std::erase_if(result->entries, [&](const shared_ptr<AttachedDatabase> &entry) {
+		return (!bind_data.include_hidden && entry->GetVisibility() == AttachVisibility::HIDDEN) ||
+		       (needs_database && !needs_database(*entry));
+	});
+	SDB_PARK_ONCE_ON_FAILURE("duckdb_databases_listed");
 	return std::move(result);
 }
 
@@ -106,9 +107,6 @@ void DuckDBDatabasesFunction(ClientContext &context, TableFunctionInput &data_p,
 		auto &entry = data.entries[data.offset++];
 		auto &attached = *entry;
 		auto &catalog = attached.GetCatalog();
-		if (!data.include_hidden && attached.GetVisibility() == AttachVisibility::HIDDEN) {
-			continue;
-		}
 
 		database_name.Append(Value(attached.GetName()));
 		database_oid.Append(Value::BIGINT(NumericCast<int64_t>(attached.oid)));
