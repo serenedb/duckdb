@@ -15,7 +15,6 @@
 #include "duckdb/function/table/table_scan.hpp"
 #include "duckdb/main/attached_database.hpp"
 #include "duckdb/main/client_context.hpp"
-#include "duckdb/catalog/default/default_schemas.hpp"
 #include "duckdb/main/client_data.hpp"
 #include "duckdb/main/config.hpp"
 #include "duckdb/main/database.hpp"
@@ -374,12 +373,7 @@ SchemaCatalogEntry &Binder::BindCreateSchema(CreateInfo &info) {
 	if (info.type != CatalogType::TRIGGER_ENTRY) {
 		RequireCreate(context, CheckAs(), schema, info, info.GetQualifiedName().Name());
 	}
-	if (schema.internal && DefaultSchemaGenerator::IsDefaultSchema(schema.name)) {
-		throw PermissionException(
-		    unordered_map<string, string> {{"detail", "System catalog modifications are currently disallowed."}},
-		    StringUtil::Format("permission denied to create \"%s.%s\"", schema.name.GetIdentifierName(),
-		                       info.GetQualifiedName().Name().GetIdentifierName()));
-	}
+	RequireUserSchema(schema, info.GetQualifiedName().Name());
 	if (!CheckAs().IsSystem()) {
 		AssignOwner(context, info.permissions, schema.ParentCatalog(), Permissions::AclClass(info.type), &schema,
 		            CreationOwner(context, info, CheckAs()));

@@ -542,6 +542,7 @@ BoundStatement Binder::Bind(AlterStatement &stmt) {
 		EntryLookupInfo schema_lookup(CatalogType::SCHEMA_ENTRY,
 		                              QualifiedName(entry->ParentCatalog().GetName(), Identifier(), *new_schema));
 		if (auto target = Catalog::GetSchema(entry_retriever, schema_lookup, OnEntryNotFound::RETURN_NULL)) {
+			RequireUserSchema(*target, entry->name);
 			RequireSchemaCreate(context, CheckAs(), *target);
 		}
 	}
