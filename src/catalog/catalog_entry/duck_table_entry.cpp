@@ -522,10 +522,7 @@ unique_ptr<CatalogEntry> DuckTableEntry::AddColumn(ClientContext &context, AddCo
 	    binder->BindCreateTableInfo(std::move(create_info), schema, bound_defaults, info.bind_mode);
 	if (info.bind_mode == AlterBindMode::SKIP_BINDING) {
 		// When replaying WAL, only Bind DEFAULT for added Column
-		auto &catalog_name = schema.ParentCatalog().GetName();
-		auto &schema_name = schema.name;
-		binder->BindDefaultValue(info.new_column, bound_defaults, catalog_name.GetIdentifierName(),
-		                         schema_name.GetIdentifierName());
+		binder->BindDefaultValue(info.new_column, bound_defaults, schema);
 	}
 	SetAlterDependencies(*bound_create_info, info);
 	auto new_storage = make_shared_ptr<DataTable>(context, *storage, info.new_column, *bound_defaults.back());

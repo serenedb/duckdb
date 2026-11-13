@@ -51,19 +51,12 @@ void Binder::CheckInsertColumnCountMismatch(idx_t expected_columns, idx_t result
 	}
 }
 
-unique_ptr<ParsedExpression> ExpandDefaultExpression(const ColumnDefinition &column) {
-	if (column.HasDefaultValue()) {
-		return column.DefaultValue().Copy();
-	} else {
-		return ConstantExpression::FromValue(Value(column.Type()));
-	}
-}
-
-void Binder::TryReplaceDefaultExpression(unique_ptr<ParsedExpression> &expr, const ColumnDefinition &column) {
+void Binder::TryReplaceDefaultExpression(unique_ptr<ParsedExpression> &expr, const TableCatalogEntry &table,
+                                         const ColumnDefinition &column) {
 	if (expr->GetExpressionType() != ExpressionType::VALUE_DEFAULT) {
 		return;
 	}
-	expr = ExpandDefaultExpression(column);
+	expr = Binder::QualifiedDefaultValue(context, table, column);
 }
 
 void Binder::ExpandDefaultInValuesList(InsertQueryNode &node, TableCatalogEntry &table,
@@ -95,13 +88,20 @@ void Binder::ExpandDefaultInValuesList(InsertQueryNode &node, TableCatalogEntry 
 
 		// A generated column only accepts DEFAULT (its value is computed, not stored); anything else is an error,
 		// matching PostgreSQL. Otherwise, replace any DEFAULT with the column's default expression.
+		unique_ptr<ParsedExpression> default_value;
 		for (idx_t list_idx = 0; list_idx < expr_list.values.size(); list_idx++) {
 			auto &value = expr_list.values[list_idx][col_idx];
-			if (column.Generated() && value->GetExpressionType() != ExpressionType::VALUE_DEFAULT) {
-				throw BinderException("Cannot insert a non-DEFAULT value into generated column \"%s\"",
-				                      column.Name().GetIdentifierName());
+			if (value->GetExpressionType() != ExpressionType::VALUE_DEFAULT) {
+				if (column.Generated()) {
+					throw BinderException("Cannot insert a non-DEFAULT value into generated column \"%s\"",
+					                      column.Name().GetIdentifierName());
+				}
+				continue;
 			}
-			TryReplaceDefaultExpression(value, column);
+			if (!default_value) {
+				default_value = QualifiedDefaultValue(context, table, column);
+			}
+			value = default_value->Copy();
 		}
 	}
 }
@@ -132,7 +132,7 @@ void Binder::ComputeStoredGeneratedColumns(TableCatalogEntry &table, vector<uniq
 	idx_t pos = 0;
 	for (auto &col : columns.Physical()) {
 		if (col.Category() == TableColumnType::GENERATED_STORED) {
-			auto generated_expr = table.GetColumns().SharedGeneratedExpression(col);
+			auto generated_expr = Binder::QualifiedGeneratedExpression(context, table, col);
 			ExpandStoredGeneratedExpression(generated_expr, table);
 			auto bound = generated_expr_binder.Bind(generated_expr);
 			ExpressionIterator::VisitExpressionMutable<BoundColumnRefExpression>(
@@ -580,11 +580,7 @@ unique_ptr<MergeIntoStatement> Binder::GenerateMergeInto(InsertQueryNode &node, 
 				unique_ptr<ParsedExpression> expr;
 				if (set_columns.find(name) == set_columns.end()) {
 					// column is not specified - at the default value
-					if (column.HasDefaultValue()) {
-						expr = column.DefaultValue().Copy();
-					} else {
-						expr = ConstantExpression::FromValue(Value(column.Type()));
-					}
+					expr = Binder::QualifiedDefaultValue(context, table, column);
 				} else {
 					// column is specified - add a reference to it
 					expr = make_uniq<ColumnRefExpression>(name);
@@ -755,10 +751,7 @@ BoundStatement Binder::BindNode(InsertQueryNode &node) {
 	}
 
 	// bind the default values
-	auto &catalog_name = table.ParentCatalog().GetName();
-	auto schema_name = table.ParentSchema(context).name;
-	BindDefaultValues(table.GetColumns(), insert->bound_defaults, catalog_name.GetIdentifierName(),
-	                  schema_name.GetIdentifierName());
+	BindDefaultValues(table.GetColumns(), insert->bound_defaults, table.ParentSchema(context));
 	insert->bound_constraints = BindConstraints(table);
 	if (!node.select_statement && !node.default_values) {
 		result.plan = std::move(insert);

@@ -43,7 +43,7 @@ void Binder::ExpandStoredGeneratedExpression(
 	}
 	// A reference to another generated column is inlined and expanded, so chains resolve here.
 	if (table.ColumnExists(name) && table.GetColumn(name).Generated()) {
-		expr = table.GetColumns().SharedGeneratedExpression(table.GetColumn(name));
+		expr = Binder::QualifiedGeneratedExpression(context, table, table.GetColumn(name));
 		ExpandStoredGeneratedExpression(expr, table, substitute);
 	}
 }
@@ -141,7 +141,7 @@ void Binder::BindUpdateSet(TableIndex proj_index, unique_ptr<LogicalOperator> &r
 		if (column.Category() != TableColumnType::GENERATED_STORED) {
 			continue;
 		}
-		auto recompute = table.GetColumns().SharedGeneratedExpression(column);
+		auto recompute = Binder::QualifiedGeneratedExpression(context, table, column);
 		bool depends_on_update = false;
 		ExpandStoredGeneratedExpression(recompute, table, [&](const Identifier &name) -> unique_ptr<ParsedExpression> {
 			auto entry = parsed_set_exprs.find(name);
@@ -154,9 +154,7 @@ void Binder::BindUpdateSet(TableIndex proj_index, unique_ptr<LogicalOperator> &r
 			if (entry->second->GetExpressionType() != ExpressionType::VALUE_DEFAULT) {
 				return entry->second->Copy();
 			}
-			auto &base_col = table.GetColumn(name);
-			return base_col.HasDefaultValue() ? base_col.DefaultValue().Copy()
-			                                  : ConstantExpression::FromValue(Value(base_col.Type()));
+			return Binder::QualifiedDefaultValue(context, table, table.GetColumn(name));
 		});
 		if (depends_on_update) {
 			append_assignment(column, recompute);
@@ -310,10 +308,7 @@ BoundStatement Binder::BindNode(UpdateQueryNode &node) {
 	// a plain UPDATE cannot produce duplicate row-ids, so it keeps the lock-free path.
 	update->row_id_handling = node.from_table ? RowIdHandling::KEEP_FIRST : RowIdHandling::ASSUME_UNIQUE;
 	// bind the default values
-	auto &catalog_name = table.ParentCatalog().GetName();
-	auto schema_name = table.ParentSchema(context).name;
-	BindDefaultValues(table.GetColumns(), update->bound_defaults, catalog_name.GetIdentifierName(),
-	                  schema_name.GetIdentifierName());
+	BindDefaultValues(table.GetColumns(), update->bound_defaults, table.ParentSchema(context));
 	update->bound_constraints = BindConstraints(table);
 
 	// project any additional columns required for the condition/expressions

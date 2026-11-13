@@ -138,7 +138,7 @@ public:
 	vector<column_t> row_id_columns;
 
 public:
-	unique_ptr<ParsedExpression> ExpandGeneratedColumn(const Identifier &column_name);
+	unique_ptr<ParsedExpression> ExpandGeneratedColumn(ClientContext &context, const Identifier &column_name);
 	BindResult Bind(ColumnRefExpression &colref, idx_t depth) override;
 	optional_ptr<StandardEntry> GetStandardEntry() override;
 	ErrorData ColumnNotFoundError(const Identifier &column_name) const override;

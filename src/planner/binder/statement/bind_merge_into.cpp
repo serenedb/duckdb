@@ -145,7 +145,7 @@ Binder::BindMergeAction(LogicalMergeInto &merge_into, TableCatalogEntry &table, 
 			InsertBinder insert_binder(*this, context);
 			insert_binder.target_type = table.GetExpectedTypeForInsert(column);
 
-			TryReplaceDefaultExpression(action.expressions[i], column);
+			TryReplaceDefaultExpression(action.expressions[i], table, column);
 			auto insert_expr = insert_binder.Bind(action.expressions[i]);
 			auto insert_type = insert_expr->GetReturnType();
 			auto expr_index = ColumnBinding::PushExpression(expressions, std::move(insert_expr));
@@ -316,10 +316,7 @@ BoundStatement Binder::BindNode(MergeQueryNode &node) {
 	vector<unique_ptr<Expression>> projection_expressions;
 
 	// bind table constraints/default values in case these are referenced
-	auto &catalog_name = table.ParentCatalog().GetName();
-	auto schema_name = table.ParentSchema(context).name;
-	BindDefaultValues(table.GetColumns(), merge_into->bound_defaults, catalog_name.GetIdentifierName(),
-	                  schema_name.GetIdentifierName());
+	BindDefaultValues(table.GetColumns(), merge_into->bound_defaults, table.ParentSchema(context));
 
 	merge_into->bound_constraints = BindConstraints(table);
 
