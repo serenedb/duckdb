@@ -178,11 +178,7 @@ static CatalogEntry &ResolvePermissionsTarget(Binder &binder, AlterPermissionsIn
 
 static void RefuseOwnedSequence(ClientContext &context, CatalogEntry &sequence) {
 	auto &catalog = sequence.ParentCatalog();
-	auto dependency_manager = catalog.GetDependencyManager();
-	if (!dependency_manager) {
-		return;
-	}
-	auto table = dependency_manager->OwnerOf(catalog.GetCatalogTransaction(context), sequence);
+	auto table = catalog.OwnerOf(catalog.GetCatalogTransaction(context), sequence);
 	if (!table) {
 		return;
 	}
