@@ -131,6 +131,9 @@ static void QualifyAlterUserFunctions(Binder &binder, const SchemaCatalogEntry &
 	case AlterTableType::ADD_COLUMN:
 		binder.QualifyUserFunctions(schema, table_info.Cast<AddColumnInfo>().new_column);
 		break;
+	case AlterTableType::ADD_FIELD:
+		binder.QualifyUserFunctions(schema, table_info.Cast<AddFieldInfo>().new_field);
+		break;
 	case AlterTableType::SET_DEFAULT: {
 		auto &expression = table_info.Cast<SetDefaultInfo>().expression;
 		if (expression) {
