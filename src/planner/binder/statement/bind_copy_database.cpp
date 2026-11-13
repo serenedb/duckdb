@@ -82,9 +82,9 @@ unique_ptr<LogicalOperator> Binder::BindCopyDatabaseData(Catalog &source_catalog
                                                          const Identifier &target_database_name) {
 	auto source_schemas = source_catalog.GetSchemas(context);
 
-	// We can just use ExtractEntries here because the order doesn't matter
 	ExportEntries entries;
 	PhysicalExport::ExtractEntries(context, source_schemas, entries);
+	ReorderTableEntries(entries.tables);
 
 	vector<unique_ptr<LogicalOperator>> insert_nodes;
 	for (auto &table_ref : entries.tables) {

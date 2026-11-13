@@ -31,6 +31,8 @@ struct ExportEntries {
 	vector<reference<CatalogEntry>> jobs;
 };
 
+void ReorderTableEntries(catalog_entry_vector_t &tables);
+
 //! Parse a file from disk using a specified copy function and return the set of chunks retrieved from the file
 class PhysicalExport : public PhysicalOperator {
 public:

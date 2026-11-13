@@ -28,8 +28,6 @@
 
 namespace duckdb {
 
-void ReorderTableEntries(catalog_entry_vector_t &tables);
-
 using duckdb::stringstream;
 
 PhysicalExport::PhysicalExport(PhysicalPlan &physical_plan, vector<LogicalType> types, CopyFunction function,
