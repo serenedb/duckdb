@@ -9,6 +9,8 @@
 #include "duckdb/storage/buffer_manager.hpp"
 #include "duckdb/common/sorting/sort_key.hpp"
 
+#include <absl/cleanup/cleanup.h>
+
 namespace duckdb {
 
 using ValidityBytes = TupleDataLayout::ValidityBytes;
@@ -186,45 +188,44 @@ void TupleDataAllocator::Build(TupleDataSegment &segment, TupleDataPinState &pin
 		// Build the chunk parts for the incoming data
 		chunk_state.chunk_part_indices.clear();
 		idx_t offset = 0;
-		try {
-			while (offset != append_count) {
-				if (chunks.empty() || chunks.back()->count == STANDARD_VECTOR_SIZE) {
-					chunks.push_back(stl_allocator->MakeUnsafePtr<TupleDataChunk>(*stl_allocator->Make<mutex>()));
-				}
-				auto &chunk = *chunks.back();
-
-				// Build the next part
-				auto next = MinValue<idx_t>(append_count - offset, STANDARD_VECTOR_SIZE - chunk.count);
-				auto &chunk_part = chunk.AddPart(
-				    segment, BuildChunkPart(segment, pin_state, chunk_state, append_offset + offset, next, chunk));
-				next = chunk_part.count;
-
-				segment.count += next;
-				segment.data_size += chunk_part.count * layout.GetRowWidth();
-				if (!layout.AllConstant()) {
-					segment.data_size += chunk_part.total_heap_size;
-				}
-
-				if (layout.HasDestructor()) {
-					const auto base_row_ptr = GetRowPointer(pin_state, chunk_part);
-					for (auto &aggr_idx : layout.GetAggregateDestructorIndices()) {
-						const auto aggr_offset = layout.GetOffsets()[layout.ColumnCount() + aggr_idx];
-						auto &aggr_fun = layout.GetAggregates()[aggr_idx];
-						for (idx_t i = 0; i < next; i++) {
-							memset(base_row_ptr + i * layout.GetRowWidth() + aggr_offset, '\0', aggr_fun.payload_size);
-						}
-					}
-				}
-
-				offset += next;
-				chunk_state.chunk_part_indices.emplace_back(chunks.size() - 1, chunk.part_ids.End() - 1);
-			}
-		} catch (...) {
+		absl::Cleanup drop_empty = [&] {
 			if (!chunks.empty() && chunks.back()->count == 0) {
 				chunks.pop_back();
 			}
-			throw;
+		};
+		while (offset != append_count) {
+			if (chunks.empty() || chunks.back()->count == STANDARD_VECTOR_SIZE) {
+				chunks.push_back(stl_allocator->MakeUnsafePtr<TupleDataChunk>(*stl_allocator->Make<mutex>()));
+			}
+			auto &chunk = *chunks.back();
+
+			// Build the next part
+			auto next = MinValue<idx_t>(append_count - offset, STANDARD_VECTOR_SIZE - chunk.count);
+			auto &chunk_part = chunk.AddPart(
+			    segment, BuildChunkPart(segment, pin_state, chunk_state, append_offset + offset, next, chunk));
+			next = chunk_part.count;
+
+			segment.count += next;
+			segment.data_size += chunk_part.count * layout.GetRowWidth();
+			if (!layout.AllConstant()) {
+				segment.data_size += chunk_part.total_heap_size;
+			}
+
+			if (layout.HasDestructor()) {
+				const auto base_row_ptr = GetRowPointer(pin_state, chunk_part);
+				for (auto &aggr_idx : layout.GetAggregateDestructorIndices()) {
+					const auto aggr_offset = layout.GetOffsets()[layout.ColumnCount() + aggr_idx];
+					auto &aggr_fun = layout.GetAggregates()[aggr_idx];
+					for (idx_t i = 0; i < next; i++) {
+						memset(base_row_ptr + i * layout.GetRowWidth() + aggr_offset, '\0', aggr_fun.payload_size);
+					}
+				}
+			}
+
+			offset += next;
+			chunk_state.chunk_part_indices.emplace_back(chunks.size() - 1, chunk.part_ids.End() - 1);
 		}
+		std::move(drop_empty).Cancel();
 
 		// Now initialize the pointers to write the data to
 		chunk_state.chunk_parts.clear();

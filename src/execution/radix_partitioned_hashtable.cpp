@@ -14,6 +14,8 @@
 #include "duckdb/planner/expression/bound_reference_expression.hpp"
 #include "duckdb/storage/temporary_memory_manager.hpp"
 
+#include <absl/cleanup/cleanup.h>
+
 namespace duckdb {
 
 RadixPartitionedHashTable::RadixPartitionedHashTable(GroupingSet &grouping_set_p, const GroupedAggregateData &op_p,
@@ -746,23 +748,21 @@ void GrowAbandonedDataToRadixBits(ClientContext &context, RadixHTGlobalSinkState
 	auto new_abandoned_data = make_uniq<RadixPartitionedTupleData>(
 	    BufferManager::GetBufferManager(context), gstate.radix_ht.GetLayoutPtr(), MemoryTag::HASH_TABLE, radix_bits,
 	    gstate.radix_ht.GetLayout().ColumnCount() - 1, context);
-	try {
-		lstate.abandoned_data->Repartition(context, *new_abandoned_data);
-	} catch (...) {
+	absl::Cleanup destroy = [&] {
 		GroupedAggregateHashTable::DestroyStates(*new_abandoned_data);
-		throw;
-	}
+	};
+	lstate.abandoned_data->Repartition(context, *new_abandoned_data);
+	std::move(destroy).Cancel();
 	lstate.abandoned_data = std::move(new_abandoned_data);
 }
 
 static void AbandonHTData(ClientContext &context, GroupedAggregateHashTable &ht, PartitionedTupleData &abandoned_data) {
 	auto data = ht.AcquirePartitionedData();
-	try {
-		data->Repartition(context, abandoned_data);
-	} catch (...) {
+	absl::Cleanup destroy = [&] {
 		GroupedAggregateHashTable::DestroyStates(*data);
-		throw;
-	}
+	};
+	data->Repartition(context, abandoned_data);
+	std::move(destroy).Cancel();
 }
 
 // Grow a set of exported collections to a larger partition count by splitting each collection
@@ -1123,29 +1123,28 @@ void RadixPartitionedHashTable::Combine(ExecutionContext &context, GlobalSinkSta
 
 	auto &ht = *lstate.ht;
 	auto lstate_data = ht.AcquirePartitionedData(gstate.TakeSpareData(ht.GetRadixBits()));
-	try {
-		if (lstate.abandoned_data) {
-			// Data is abandoned when the sink goes external, and also when aggregate state pressure
-			// forces the states to be exported without the sink being external
-			D_ASSERT(gstate.external || gstate.spill_plan);
-			// The global radix bits may have grown after we last sized abandoned_data - grow it to match before
-			// combining
-			GrowAbandonedDataToRadixBits(context.client, gstate, lstate, gstate.config.GetRadixBits());
-			D_ASSERT(lstate.abandoned_data->PartitionCount() == lstate.ht->GetPartitionedData().PartitionCount());
-			D_ASSERT(lstate.abandoned_data->PartitionCount() ==
-			         RadixPartitioning::NumberOfPartitions(gstate.config.GetRadixBits()));
-			FoldGenerations(context.client, lstate, *lstate.abandoned_data);
-			lstate.abandoned_data->Combine(*lstate_data);
-		} else {
-			FoldGenerations(context.client, lstate, *lstate_data);
-			lstate.abandoned_data = std::move(lstate_data);
-		}
-	} catch (...) {
+	absl::Cleanup destroy = [&] {
 		if (lstate_data) {
 			GroupedAggregateHashTable::DestroyStates(*lstate_data);
 		}
-		throw;
+	};
+	if (lstate.abandoned_data) {
+		// Data is abandoned when the sink goes external, and also when aggregate state pressure
+		// forces the states to be exported without the sink being external
+		D_ASSERT(gstate.external || gstate.spill_plan);
+		// The global radix bits may have grown after we last sized abandoned_data - grow it to match before
+		// combining
+		GrowAbandonedDataToRadixBits(context.client, gstate, lstate, gstate.config.GetRadixBits());
+		D_ASSERT(lstate.abandoned_data->PartitionCount() == lstate.ht->GetPartitionedData().PartitionCount());
+		D_ASSERT(lstate.abandoned_data->PartitionCount() ==
+		         RadixPartitioning::NumberOfPartitions(gstate.config.GetRadixBits()));
+		FoldGenerations(context.client, lstate, *lstate.abandoned_data);
+		lstate.abandoned_data->Combine(*lstate_data);
+	} else {
+		FoldGenerations(context.client, lstate, *lstate_data);
+		lstate.abandoned_data = std::move(lstate_data);
 	}
+	std::move(destroy).Cancel();
 
 	bool must_export = false;
 	if (gstate.spill_plan) {
@@ -1574,12 +1573,11 @@ void RadixHTLocalSourceState::Finalize(RadixHTGlobalSinkState &sink, RadixHTGlob
 		                                                sink.radix_ht.GetLayoutPtr(), MemoryTag::HASH_TABLE, nullptr,
 		                                                gstate.context);
 		auto combined = ht->AcquirePartitionedData();
-		try {
-			partition.data->Combine(*combined->GetPartitions()[0]);
-		} catch (...) {
+		absl::Cleanup destroy = [&] {
 			GroupedAggregateHashTable::DestroyStates(*combined);
-			throw;
-		}
+		};
+		partition.data->Combine(*combined->GetPartitions()[0]);
+		std::move(destroy).Cancel();
 		partition.group_count = partition.data->Count();
 	}
 

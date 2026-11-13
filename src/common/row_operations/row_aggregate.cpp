@@ -4,6 +4,8 @@
 #include "duckdb/common/types/row/tuple_data_layout.hpp"
 #include "duckdb/execution/operator/aggregate/aggregate_object.hpp"
 
+#include <absl/cleanup/cleanup.h>
+
 namespace duckdb {
 
 void RowOperations::InitializeStates(TupleDataLayout &layout, Vector &addresses, const SelectionVector &sel,
@@ -131,6 +133,12 @@ void RowOperations::CombineStates(RowOperationsState &state, TupleDataLayout &la
 	// Keep track of the offset
 	idx_t offset = layout.GetAggrOffset();
 
+	// Subtract the offset to get back to the original position
+	absl::Cleanup restore = [&] {
+		VectorOperations::AddInPlace(sources, -UnsafeNumericCast<int64_t>(offset));
+		VectorOperations::AddInPlace(targets, -UnsafeNumericCast<int64_t>(offset));
+	};
+
 	for (auto &aggr : layout.GetAggregates()) {
 		D_ASSERT(aggr.function.HasStateCombineCallback());
 		AggregateInputData aggr_input_data(aggr, state.allocator, AggregateCombineType::ALLOW_DESTRUCTIVE);
@@ -143,10 +151,6 @@ void RowOperations::CombineStates(RowOperationsState &state, TupleDataLayout &la
 		// Increment the offset
 		offset += aggr.payload_size;
 	}
-
-	// Now subtract the offset to get back to the original position
-	VectorOperations::AddInPlace(sources, -UnsafeNumericCast<int64_t>(offset));
-	VectorOperations::AddInPlace(targets, -UnsafeNumericCast<int64_t>(offset));
 }
 
 void RowOperations::FinalizeStates(RowOperationsState &state, TupleDataLayout &layout, Vector &addresses,
