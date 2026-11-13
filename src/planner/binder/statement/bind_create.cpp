@@ -1030,9 +1030,7 @@ SchemaCatalogEntry &Binder::BindCreateTriggerInfo(CreateTriggerInfo &create_trig
 		throw BinderException("CREATE TRIGGER requires a base table");
 	}
 	auto &table = *table_ptr;
-	if (!CheckAs().Can(CatalogType::TABLE_ENTRY, table.permissions, AclMode::Trigger)) {
-		ThrowPermissionDenied(table);
-	}
+	RequireEntryPrivilege(CheckAs(), table, AclMode::Trigger);
 	// Dropping the trigger's own table must not require CASCADE. If the trigger body also references this table,
 	// the body-reference dependency below merges in ALTER-blocking flags.
 	create_trigger_info.dependencies.AddDependency(table, DependencyDependentFlags());
