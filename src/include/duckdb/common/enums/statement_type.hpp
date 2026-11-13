@@ -138,6 +138,7 @@ struct StatementProperties {
 	bool always_require_rebind;
 	optional<ReplicationRole> replication_role;
 	optional_idx acting_role;
+	optional_idx search_path_generation;
 
 	bool IsReadOnly() {
 		return modified_databases.empty();

@@ -5,6 +5,8 @@
 #include "duckdb/common/exception/binder_exception.hpp"
 #include "duckdb/main/attached_database.hpp"
 #include "duckdb/main/client_config.hpp"
+#include "duckdb/catalog/catalog_search_path.hpp"
+#include "duckdb/main/client_data.hpp"
 #include "duckdb/main/database_manager.hpp"
 #include "duckdb/main/prepared_statement.hpp"
 #include "duckdb/transaction/transaction.hpp"
@@ -113,6 +115,10 @@ bool PreparedStatementData::RequireRebind(ClientContext &context,
 		return true;
 	}
 	if (properties.acting_role.IsValid() && properties.acting_role.GetIndex() != context.ActingRole()) {
+		return true;
+	}
+	if (properties.search_path_generation.IsValid() &&
+	    properties.search_path_generation.GetIndex() != ClientData::Get(context).catalog_search_path->Generation()) {
 		return true;
 	}
 	if (!properties.bound_all_parameters) {

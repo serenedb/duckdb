@@ -512,6 +512,7 @@ static Identifier TemporarySchema(ClientContext &context) {
 
 void CatalogSearchPath::SetPathsInternal(vector<CatalogSearchEntry> new_paths) {
 	this->set_paths = std::move(new_paths);
+	generation++;
 
 	paths.clear();
 	paths.reserve(set_paths.size() + 4);

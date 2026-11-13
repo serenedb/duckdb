@@ -1,5 +1,6 @@
 #include "duckdb/planner/planner.hpp"
 
+#include "duckdb/catalog/catalog_search_path.hpp"
 #include "duckdb/common/serializer/binary_deserializer.hpp"
 #include "duckdb/common/serializer/binary_serializer.hpp"
 #include "duckdb/common/serializer/memory_stream.hpp"
@@ -239,6 +240,7 @@ void Planner::CreatePlan(SQLStatement &statement) {
 	this->properties.parameter_count = parameter_count;
 	properties.bound_all_parameters = !bound_parameters.rebind && parameters_resolved;
 	properties.acting_role = context.ActingRole();
+	properties.search_path_generation = ClientData::Get(context).catalog_search_path->Generation();
 
 	Planner::VerifyPlan(context, plan, bound_parameters.GetParametersPtr());
 

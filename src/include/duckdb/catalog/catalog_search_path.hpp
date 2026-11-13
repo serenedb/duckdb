@@ -75,6 +75,9 @@ public:
 	DUCKDB_API void SetDefaultPaths(vector<CatalogSearchEntry> new_defaults);
 
 	DUCKDB_API vector<CatalogSearchEntry> Get() const;
+	idx_t Generation() const {
+		return generation;
+	}
 	const vector<CatalogSearchEntry> &GetSetPaths() const {
 		return set_paths;
 	}
@@ -117,6 +120,7 @@ private:
 	vector<CatalogSearchEntry> set_paths;
 	//! Connection-level defaults restored by Reset() (RESET search_path / RESET ALL).
 	vector<CatalogSearchEntry> default_paths;
+	idx_t generation = 0;
 };
 
 } // namespace duckdb
