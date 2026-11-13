@@ -337,11 +337,16 @@ BoundStatement Binder::BindNode(UpdateQueryNode &node) {
 	                              update->columns, node.prioritize_table_when_binding);
 	D_ASSERT(proj_tmp->type == LogicalOperatorType::LOGICAL_PROJECTION);
 	auto proj = unique_ptr_cast<LogicalOperator, LogicalProjection>(std::move(proj_tmp));
+	vector<LogicalIndex> changed;
 	vector<LogicalIndex> updated;
 	for (auto index : update->columns) {
-		updated.push_back(table.GetColumns().GetColumn(index).Logical());
+		auto &column = table.GetColumns().GetColumn(index);
+		changed.push_back(column.Logical());
+		if (column.Category() != TableColumnType::GENERATED_STORED) {
+			updated.push_back(column.Logical());
+		}
 	}
-	RequireIndexCalls(table, updated);
+	RequireIndexCalls(table, changed);
 	RequirePrivilege(table, AclMode::Update, std::move(updated), false);
 
 	// bind any extra columns necessary for CHECK constraints or indexes;
