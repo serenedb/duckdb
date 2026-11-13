@@ -511,9 +511,7 @@ void Binder::RequireResolvedTypeUsage(optional_ptr<const LogicalDependencyList> 
 		if (entry.type != CatalogType::TYPE_ENTRY || IsUnowned(entry) || !checked.insert(entry).second) {
 			return;
 		}
-		if (!role.Can(entry.type, entry.permissions, AclMode::Usage)) {
-			ThrowPermissionDenied(entry);
-		}
+		RequireEntryPrivilege(role, entry, AclMode::Usage);
 	};
 	if (dependencies) {
 		for (auto &dependency : dependencies->Set()) {

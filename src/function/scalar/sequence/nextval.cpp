@@ -89,8 +89,8 @@ unique_ptr<FunctionLocalState> NextValLocalFunction(ExpressionState &state, cons
 	auto &info = bind_data->Cast<NextvalBindData>();
 	auto &sequence = info.sequence;
 	const auto role = info.role.IsValid() ? context.AccessOf(info.role.GetIndex()) : context.CurrentRole();
-	if (!IsUnowned(sequence) && !role.CanAny(CatalogType::SEQUENCE_ENTRY, sequence.permissions, OP::MODES)) {
-		ThrowPermissionDenied(sequence);
+	if (!IsUnowned(sequence)) {
+		RequireEntryPrivilege(role, sequence, OP::MODES);
 	}
 	optional_ptr<DuckTransaction> transaction;
 	if (sequence.catalog.IsDuckCatalog()) {

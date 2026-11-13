@@ -389,6 +389,7 @@ DUCKDB_API string PermissionKindName(const CatalogEntry &entry);
 DUCKDB_API string RoleOptionsToSQL(RoleOption set_options, RoleOption clear_options);
 DUCKDB_API string ValidUntilToSQL(int64_t valid_until);
 [[noreturn]] DUCKDB_API void ThrowPermissionDenied(const CatalogEntry &entry);
+DUCKDB_API void RequireEntryPrivilege(const RoleAccess &role, const CatalogEntry &entry, AclMode any);
 DUCKDB_API void RequireSuperuser(const RoleAccess &role);
 DUCKDB_API void RequireOwner(const RoleAccess &role, const CatalogEntry &entry, idx_t owner);
 DUCKDB_API void RequireOwner(ClientContext &context, const RoleAccess &role, CatalogEntry &entry);
