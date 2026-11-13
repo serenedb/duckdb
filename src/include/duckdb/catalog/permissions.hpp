@@ -402,6 +402,7 @@ DUCKDB_API void RequireForeignDataWrapperUsage(ClientContext &context, const Rol
                                                const Identifier &database, const string &wrapper);
 DUCKDB_API void RequireLanguageUsage(ClientContext &context, const RoleAccess &role, const Identifier &database,
                                      const string &language);
+DUCKDB_API void RequireUserSchema(const SchemaCatalogEntry &schema, const Identifier &name);
 DUCKDB_API void RequireSchemaCreate(ClientContext &context, const RoleAccess &role, SchemaCatalogEntry &schema);
 DUCKDB_API void RequireTypeUsage(ClientContext &context, const RoleAccess &role, const LogicalType &type,
                                  Catalog &catalog);

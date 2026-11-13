@@ -17,6 +17,7 @@
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/view_catalog_entry.hpp"
 #include "duckdb/catalog/duck_catalog.hpp"
+#include "duckdb/catalog/default/default_schemas.hpp"
 #include "duckdb/common/case_insensitive_map.hpp"
 #include "duckdb/common/extension_type_info.hpp"
 #include "duckdb/main/attached_database.hpp"
@@ -1618,6 +1619,15 @@ void RequireLanguageUsage(ClientContext &context, const RoleAccess &role, const 
 		}
 	}
 	throw PermissionException("permission denied for language %s", language);
+}
+
+void RequireUserSchema(const SchemaCatalogEntry &schema, const Identifier &name) {
+	if (schema.internal && DefaultSchemaGenerator::IsDefaultSchema(schema.name)) {
+		throw PermissionException(
+		    unordered_map<string, string> {{"detail", "System catalog modifications are currently disallowed."}},
+		    StringUtil::Format("permission denied to create \"%s.%s\"", schema.name.GetIdentifierName(),
+		                       name.GetIdentifierName()));
+	}
 }
 
 void RequireSchemaCreate(ClientContext &context, const RoleAccess &role, SchemaCatalogEntry &schema) {
