@@ -1,5 +1,5 @@
 #include "duckdb/main/settings.hpp"
-#include "duckdb/catalog/duck_catalog.hpp"
+#include "duckdb/catalog/catalog.hpp"
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/main/config.hpp"
 
@@ -109,12 +109,9 @@ optional<SettingAccess> Settings::GetAccess(ClientContext &context, const Identi
 }
 
 static AclMode HeldParameterPrivileges(ClientContext &context, const Identifier &name) {
-	auto &config = DBConfig::GetConfig(context);
-	if (config.cluster_catalog.empty()) {
-		return AclMode::NoRights;
-	}
-	auto &cluster = Catalog::GetCatalog(context, config.cluster_catalog).Cast<DuckCatalog>();
-	auto holder = cluster.GetOidIndex().GetVisible(config.bootstrap_role, cluster.GetCatalogTransaction(context).view);
+	auto &cluster = Catalog::GetSystemCatalog(context);
+	auto holder =
+	    cluster.LookupOwner(cluster.GetCatalogTransaction(context), DBConfig::GetConfig(context).bootstrap_role);
 	if (!holder) {
 		return AclMode::NoRights;
 	}

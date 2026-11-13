@@ -263,11 +263,10 @@ static idx_t RequireRoutineOwner(Binder &binder, CatalogEntry &entry, bool has_f
 
 CatalogEntry &Binder::ResolveDatabaseEntry(CatalogType type, AlterInfo &info) {
 	auto &name = info.GetQualifiedName().Name();
-	auto &catalog =
-	    type == CatalogType::SUBSCRIPTION_ENTRY
-	        ? SubscriptionCatalog(Identifier()).Cast<DuckCatalog>()
-	        : Catalog::GetCatalog(context, DatabaseManager::GetDefaultDatabase(context)).Cast<DuckCatalog>();
-	auto entry = catalog.GetCatalogSet(type).GetEntry(catalog.GetCatalogTransaction(context), name);
+	auto &catalog = type == CatalogType::SUBSCRIPTION_ENTRY
+	                    ? SubscriptionCatalog(Identifier())
+	                    : Catalog::GetCatalog(context, DatabaseManager::GetDefaultDatabase(context));
+	auto entry = catalog.LookupTopLevelEntry(catalog.GetCatalogTransaction(context), type, name);
 	if (!entry) {
 		const bool server = type == CatalogType::FOREIGN_SERVER_ENTRY;
 		throw CatalogException(unordered_map<string, string> {{"type", server ? "Foreign Server" : "Subscription"}},
@@ -295,7 +294,7 @@ BoundStatement Binder::Bind(AlterStatement &stmt) {
 
 	// Special handling for ALTER DATABASE - doesn't use schema binding
 	if (stmt.info->type == AlterType::ALTER_DATABASE) {
-		if (!DBConfig::GetConfig(context).cluster_catalog.empty()) {
+		if (!Catalog::GetSystemCatalog(context).IsDuckCatalog()) {
 			throw NotImplementedException("renaming a database is not supported");
 		}
 		auto &properties = GetStatementProperties();
@@ -325,7 +324,7 @@ BoundStatement Binder::Bind(AlterStatement &stmt) {
 
 	if (stmt.info->type == AlterType::SET_COMMENT && (stmt.info->GetCatalogType() == CatalogType::DATABASE_ENTRY ||
 	                                                  stmt.info->GetCatalogType() == CatalogType::ROLE_ENTRY)) {
-		if (DBConfig::GetConfig(context).cluster_catalog.empty()) {
+		if (Catalog::GetSystemCatalog(context).IsDuckCatalog()) {
 			throw NotImplementedException("Adding comments to %ss is not implemented",
 			                              stmt.info->GetCatalogType() == CatalogType::DATABASE_ENTRY ? "database"
 			                                                                                         : "role");

@@ -13,10 +13,8 @@
 #include "duckdb/catalog/catalog_entry/table_function_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/type_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/window_function_catalog_entry.hpp"
-#include "duckdb/catalog/catalog_set.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/view_catalog_entry.hpp"
-#include "duckdb/catalog/duck_catalog.hpp"
 #include "duckdb/catalog/default/default_schemas.hpp"
 #include "duckdb/common/case_insensitive_map.hpp"
 #include "duckdb/common/extension_type_info.hpp"
@@ -1125,19 +1123,26 @@ bool BuiltinCallGranted(ClientContext &context, const RoleAccess &role, const Ca
 	return false;
 }
 
-static bool IsClusterDatabase(AttachedDatabase &database) {
-	return database.GetCatalog().UsesCatalogLog() && !database.IsReadOnly();
+static optional_ptr<Catalog> RoleCatalog(ClientContext &context) {
+	auto &system = Catalog::GetSystemCatalog(context);
+	if (system.IsDuckCatalog()) {
+		return nullptr;
+	}
+	return &system;
+}
+
+static bool IsClusterDatabase(ClientContext &context, AttachedDatabase &database) {
+	return !database.IsReadOnly() && ClusterEntry(context, CatalogType::DATABASE_ENTRY, database.GetName());
 }
 
 static optional_ptr<CatalogEntry> FindForeignServer(ClientContext &context, const Identifier &name) {
 	for (auto &db : DatabaseManager::Get(*context.db).GetDatabases()) {
-		if (!IsClusterDatabase(*db)) {
+		if (db->IsSystem() || db->IsTemporary() || db->IsReadOnly()) {
 			continue;
 		}
-		auto &duck_catalog = db->GetCatalog().Cast<DuckCatalog>();
-		auto server = duck_catalog.GetCatalogSet(CatalogType::FOREIGN_SERVER_ENTRY)
-		                  .GetEntry(duck_catalog.GetCatalogTransaction(context), name);
-		if (server) {
+		auto &catalog = db->GetCatalog();
+		if (auto server = catalog.LookupTopLevelEntry(catalog.GetCatalogTransaction(context),
+		                                              CatalogType::FOREIGN_SERVER_ENTRY, name)) {
 			return server;
 		}
 	}
@@ -1145,23 +1150,18 @@ static optional_ptr<CatalogEntry> FindForeignServer(ClientContext &context, cons
 }
 
 static bool CanUseDatabase(ClientContext &context, const RoleAccess &role, const Identifier &name) {
-	auto &cluster_catalog = DBConfig::GetConfig(context).cluster_catalog;
-	if (cluster_catalog.empty() ||
-	    name.GetIdentifierName() == ClientData::Get(context).default_database.GetIdentifierName()) {
+	if (name.GetIdentifierName() == ClientData::Get(context).default_database.GetIdentifierName()) {
 		return true;
 	}
-	auto &cluster = Catalog::GetCatalog(context, cluster_catalog).Cast<DuckCatalog>();
-	auto database =
-	    cluster.GetCatalogSet(CatalogType::DATABASE_ENTRY).GetEntry(cluster.GetCatalogTransaction(context), name);
+	auto database = ClusterEntry(context, CatalogType::DATABASE_ENTRY, name);
 	return !database || role.Can(CatalogType::DATABASE_ENTRY, database->permissions, AclMode::Connect);
 }
 
 bool DatabaseVisible(ClientContext &context, const RoleAccess &role, AttachedDatabase &database) {
-	if (database.IsSystem() || database.IsTemporary() ||
-	    database.GetName() == DBConfig::GetConfig(context).cluster_catalog) {
+	if (database.IsSystem() || database.IsTemporary()) {
 		return true;
 	}
-	if (IsClusterDatabase(database)) {
+	if (IsClusterDatabase(context, database)) {
 		return CanUseDatabase(context, role, database.GetName());
 	}
 	auto server = FindForeignServer(context, database.GetName());
@@ -1228,7 +1228,7 @@ void CheckReference(ClientContext &context, const RoleAccess &role, CatalogEntry
 	                                                           : entry.ParentCatalog().GetAttached();
 	if (!DatabaseVisible(context, role, database)) {
 		auto &name = database.GetName().GetIdentifierName();
-		if (IsClusterDatabase(database)) {
+		if (IsClusterDatabase(context, database)) {
 			throw PermissionException({{"detail", "User does not have CONNECT privilege."}},
 			                          StringUtil::Format("permission denied for database \"%s\"", name));
 		}
@@ -1496,12 +1496,11 @@ void RequireCreate(ClientContext &context, const RoleAccess &role, SchemaCatalog
 }
 
 optional_ptr<CatalogEntry> ClusterEntry(ClientContext &context, CatalogType type, const Identifier &name) {
-	auto &cluster_catalog = DBConfig::GetConfig(context).cluster_catalog;
-	if (cluster_catalog.empty()) {
+	auto cluster = RoleCatalog(context);
+	if (!cluster) {
 		return nullptr;
 	}
-	auto &cluster = Catalog::GetCatalog(context, cluster_catalog).Cast<DuckCatalog>();
-	return cluster.GetCatalogSet(type).GetEntry(cluster.GetCatalogTransaction(context), name);
+	return cluster->LookupTopLevelEntry(cluster->GetCatalogTransaction(context), type, name);
 }
 
 CatalogEntry &ClusterDatabase(ClientContext &context, const Identifier &name) {
@@ -1514,11 +1513,11 @@ CatalogEntry &ClusterDatabase(ClientContext &context, const Identifier &name) {
 }
 
 QualifiedName ClusterName(ClientContext &context, const QualifiedName &name) {
-	auto &cluster_catalog = DBConfig::GetConfig(context).cluster_catalog;
-	if (cluster_catalog.empty()) {
+	auto cluster = RoleCatalog(context);
+	if (!cluster) {
 		return name;
 	}
-	return QualifiedName(cluster_catalog, Identifier(), name.Name());
+	return QualifiedName(cluster->GetName(), Identifier(), name.Name());
 }
 
 idx_t RoleId(ClientContext &context, const Identifier &name) {
@@ -1546,19 +1545,12 @@ idx_t RoleSpecId(ClientContext &context, const string &name) {
 }
 
 string RoleName(ClientContext &context, idx_t role) {
-	string result;
-	auto &cluster_catalog = DBConfig::GetConfig(context).cluster_catalog;
-	if (cluster_catalog.empty()) {
-		return result;
+	auto cluster = RoleCatalog(context);
+	if (!cluster) {
+		return string();
 	}
-	auto &cluster = Catalog::GetCatalog(context, cluster_catalog).Cast<DuckCatalog>();
-	cluster.GetCatalogSet(CatalogType::ROLE_ENTRY)
-	    .Scan(cluster.GetCatalogTransaction(context), [&](CatalogEntry &entry) {
-		    if (entry.oid == role) {
-			    result = entry.name.GetIdentifierName();
-		    }
-	    });
-	return result;
+	auto entry = cluster->LookupOwner(cluster->GetCatalogTransaction(context), role);
+	return entry && entry->type == CatalogType::ROLE_ENTRY ? entry->name.GetIdentifierName() : string();
 }
 
 static bool StoresPermissions(Catalog &catalog) {
@@ -1660,11 +1652,9 @@ void RequireTypeUsage(ClientContext &context, const RoleAccess &role, const Logi
 	if (auto extension = element.get().GetExtensionInfo()) {
 		auto oid = extension->properties.find(ExtensionTypeInfo::CATALOG_OID_PROPERTY);
 		if (oid != extension->properties.end()) {
-			auto entry =
-			    catalog.IsDuckCatalog()
-			        ? catalog.Cast<DuckCatalog>().FindIn<TypeCatalogEntry>(context, oid->second.GetValue<idx_t>())
-			        : nullptr;
-			if (entry && !IsUnowned(*entry) && !role.Can(CatalogType::TYPE_ENTRY, entry->permissions, AclMode::Usage)) {
+			auto entry = catalog.LookupOwner(catalog.GetCatalogTransaction(context), oid->second.GetValue<idx_t>());
+			if (entry && entry->type == CatalogType::TYPE_ENTRY && !IsUnowned(*entry) &&
+			    !role.Can(CatalogType::TYPE_ENTRY, entry->permissions, AclMode::Usage)) {
 				ThrowPermissionDenied(*entry);
 			}
 			return;

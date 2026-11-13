@@ -456,6 +456,11 @@ optional_ptr<CatalogEntry> Catalog::LookupOwner(CatalogTransaction transaction, 
 	return nullptr;
 }
 
+optional_ptr<CatalogEntry> Catalog::LookupTopLevelEntry(CatalogTransaction transaction, CatalogType type,
+                                                        const Identifier &name) {
+	return nullptr;
+}
+
 void Catalog::DropForeignServer(CatalogTransaction transaction, DropInfo &info) {
 	throw NotImplementedException("DROP SERVER is not supported by a %s catalog", GetCatalogType());
 }

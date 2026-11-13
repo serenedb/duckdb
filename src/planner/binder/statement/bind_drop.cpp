@@ -2,7 +2,6 @@
 #include "duckdb/planner/binder.hpp"
 #include "duckdb/planner/operator/logical_drop.hpp"
 #include "duckdb/catalog/catalog.hpp"
-#include "duckdb/catalog/duck_catalog.hpp"
 #include "duckdb/catalog/standard_entry.hpp"
 #include "duckdb/catalog/catalog_entry/macro_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/schema_catalog_entry.hpp"
@@ -154,13 +153,10 @@ void Binder::BindDrop(DropInfo &info, StatementProperties &properties) {
 		info.SetQualifiedName(QualifiedName(catalog, Identifier(), info.GetQualifiedName().Name()));
 		auto &server_catalog = Catalog::GetCatalog(context, catalog);
 		properties.RegisterDBModify(server_catalog, context, DatabaseModificationType::DROP_CATALOG_ENTRY);
-		if (server_catalog.IsDuckCatalog()) {
-			auto &duck_catalog = server_catalog.Cast<DuckCatalog>();
-			auto server = duck_catalog.GetCatalogSet(CatalogType::FOREIGN_SERVER_ENTRY)
-			                  .GetEntry(duck_catalog.GetCatalogTransaction(context), info.GetQualifiedName().Name());
-			if (server) {
-				RequireOwner(context, CheckAs(), *server);
-			}
+		if (auto server =
+		        server_catalog.LookupTopLevelEntry(server_catalog.GetCatalogTransaction(context),
+		                                           CatalogType::FOREIGN_SERVER_ENTRY, info.GetQualifiedName().Name())) {
+			RequireOwner(context, CheckAs(), *server);
 		}
 		break;
 	}
@@ -169,9 +165,8 @@ void Binder::BindDrop(DropInfo &info, StatementProperties &properties) {
 		auto name = info.GetQualifiedName().Name();
 		info.SetQualifiedName(QualifiedName(subscription_catalog.GetName(), Identifier(), name));
 		properties.RegisterDBModify(subscription_catalog, context, DatabaseModificationType::DROP_CATALOG_ENTRY);
-		auto subscription = subscription_catalog.Cast<DuckCatalog>()
-		                        .GetCatalogSet(CatalogType::SUBSCRIPTION_ENTRY)
-		                        .GetEntry(subscription_catalog.GetCatalogTransaction(context), name);
+		auto subscription = subscription_catalog.LookupTopLevelEntry(
+		    subscription_catalog.GetCatalogTransaction(context), CatalogType::SUBSCRIPTION_ENTRY, name);
 		if (subscription) {
 			RequireOwner(context, CheckAs(), *subscription);
 		} else if (info.if_not_found == OnEntryNotFound::THROW_EXCEPTION) {

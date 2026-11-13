@@ -254,7 +254,6 @@ public:
 	identifier_set_t builtin_relations;
 	unordered_map<string, ForeignDataWrapper> foreign_data_wrappers;
 	case_insensitive_map_t<Language> languages;
-	Identifier cluster_catalog;
 	idx_t bootstrap_role = 0;
 	idx_t database_owner_role = 0;
 	typedef string (*builtin_function_key_t)(const CatalogEntry &function, idx_t overload);
