@@ -34,7 +34,8 @@ optional_ptr<PhysicalOperator> PhysicalPlanGenerator::TryConsumeTopN(LogicalOper
                                                                      const BoundLimitNode &limit,
                                                                      const BoundLimitNode &offset) {
 	auto consumer = LogicalGet::TopNConsumer(child, order_count, limit, offset);
-	if (!consumer || !consumer->function.consume_top_n(context, *consumer->bind_data, limit, offset)) {
+	if (!consumer ||
+	    !consumer->function.consume_top_n(context, *consumer->bind_data, consumer->table_filters, limit, offset)) {
 		return nullptr;
 	}
 	auto &get = *consumer;

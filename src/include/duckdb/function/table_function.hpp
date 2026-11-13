@@ -469,7 +469,8 @@ typedef void (*table_function_set_scan_order)(ClientContext &context, unique_ptr
                                               optional_ptr<FunctionData> bind_data);
 
 typedef bool (*table_function_consume_top_n_t)(ClientContext &context, FunctionData &bind_data,
-                                               const BoundLimitNode &limit, const BoundLimitNode &offset);
+                                               const TableFilterSet &filters, const BoundLimitNode &limit,
+                                               const BoundLimitNode &offset);
 
 typedef void (*table_function_set_partitions_to_scan_t)(vector<idx_t> partition_indices,
                                                         optional_ptr<FunctionData> bind_data);
