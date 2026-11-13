@@ -44,7 +44,8 @@ void PhysicalReset::ResetExtensionVariable(ExecutionContext &context, DBConfig &
 
 	// The rollback observer only needs to see real changes; gate it with
 	// is_user_set so RESET ALL no-ops don't reach the sdb tracker.
-	context.client.OnSettingChange(name.GetIdentifierName(), effective_scope);
+	context.client.OnSettingChange(name.GetIdentifierName(), effective_scope,
+	                               PhysicalSet::SessionValue(context.client, name, extension_option.setting_index));
 
 	if (extension_option.reset_function) {
 		extension_option.reset_function(context.client, effective_scope);
@@ -73,7 +74,8 @@ void PhysicalReset::ResetOption(ExecutionContext &context, DBConfig &config, con
 		}
 		// Gate the rollback observer on is_user_set so RESET ALL no-ops don't
 		// reach the sdb tracker.
-		context.client.OnSettingChange(name, variable_scope);
+		context.client.OnSettingChange(name, variable_scope,
+		                               PhysicalSet::SessionValue(context.client, Identifier(name), setting_index));
 		if (option.set_callback) {
 			SettingCallbackInfo info(context.client, variable_scope);
 			info.is_reset = true;
@@ -93,7 +95,7 @@ void PhysicalReset::ResetOption(ExecutionContext &context, DBConfig &config, con
 		if (!option.set_global) {
 			throw CatalogException("option \"%s\" cannot be reset globally", option.name);
 		}
-		context.client.OnSettingChange(name, variable_scope);
+		context.client.OnSettingChange(name, variable_scope, Value());
 		auto &db = DatabaseInstance::GetDatabase(context.client);
 		config.ResetOption(&db, option);
 		break;
@@ -113,7 +115,7 @@ void PhysicalReset::ResetOption(ExecutionContext &context, DBConfig &config, con
 		const bool had_post = context.client.TryGetCurrentSetting(option.name, post_value);
 		const bool changed = had_pre != had_post || !Value::NotDistinctFrom(pre_value, post_value);
 		if (changed) {
-			context.client.OnSettingChange(name, variable_scope);
+			context.client.OnSettingChange(name, variable_scope, pre_value);
 		}
 		break;
 	}
