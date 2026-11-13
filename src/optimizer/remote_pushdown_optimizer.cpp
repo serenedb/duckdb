@@ -1467,6 +1467,8 @@ void RemotePushdownOptimizer::StripCatalogName(ParsedExpression &expr, const Ide
 	// (e.g. "rpc.my_func()" parsed as schema="rpc", catalog="").
 	if (expr.GetExpressionClass() == ExpressionClass::FUNCTION) {
 		auto &func = expr.Cast<FunctionExpression>();
+		// the server has the built-in functions under its own system catalog, so they go out by their bare names
+		func.BuiltinMutable() = false;
 		if (func.GetQualifiedName().Catalog() == catalog_name) {
 			func.SetQualifiedName(
 			    QualifiedName(Identifier(), func.GetQualifiedName().Schema(), func.GetQualifiedName().Name()));
