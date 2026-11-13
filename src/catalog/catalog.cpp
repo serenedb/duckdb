@@ -1996,9 +1996,14 @@ void Catalog::AlterSchemaEntry(CatalogTransaction transaction, SchemaCatalogEntr
 
 void Catalog::Alter(CatalogTransaction transaction, AlterInfo &info) {
 	if (info.type == AlterType::REASSIGN_OWNED || info.type == AlterType::DROP_OWNED) {
-		throw NotImplementedException("%s is not supported by a %s catalog",
-		                              info.type == AlterType::REASSIGN_OWNED ? "REASSIGN OWNED" : "DROP OWNED",
-		                              GetCatalogType());
+		auto &system = GetSystemCatalog(transaction.GetContext());
+		if (&system == this) {
+			throw NotImplementedException("%s is not supported by a %s catalog",
+			                              info.type == AlterType::REASSIGN_OWNED ? "REASSIGN OWNED" : "DROP OWNED",
+			                              GetCatalogType());
+		}
+		system.Alter(system.GetCatalogTransaction(transaction.GetContext()), info);
+		return;
 	}
 	if (info.type == AlterType::ALTER_SCHEMA) {
 		auto &schema_info = info.Cast<AlterSchemaInfo>();
