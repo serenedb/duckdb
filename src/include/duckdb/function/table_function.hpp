@@ -466,7 +466,12 @@ typedef void (*table_function_set_scan_order)(ClientContext &context, unique_ptr
                                               optional_ptr<FunctionData> bind_data);
 
 typedef bool (*table_function_consume_top_n_t)(ClientContext &context, FunctionData &bind_data,
-                                               const BoundLimitNode &limit, const BoundLimitNode &offset);
+                                               const TableFilterSet &filters, const BoundLimitNode &limit,
+                                               const BoundLimitNode &offset);
+
+//! Offered when only count_star() reads the scan: returning true commits the scan to emit, in its single output
+//! column as BIGINT, how many rows each of its output rows stands for
+typedef bool (*table_function_consume_count_t)(ClientContext &context, FunctionData &bind_data);
 
 typedef void (*table_function_set_partitions_to_scan_t)(vector<idx_t> partition_indices,
                                                         optional_ptr<FunctionData> bind_data);
@@ -614,6 +619,7 @@ public:
 	//! (Optional) sets the order to scan the row groups in
 	table_function_set_scan_order set_scan_order;
 	table_function_consume_top_n_t consume_top_n = nullptr;
+	table_function_consume_count_t consume_count = nullptr;
 	//! (Optional) restricts the scan to a specific subset of partitions (by index in get_partition_stats order)
 	table_function_set_partitions_to_scan_t set_partitions_to_scan = nullptr;
 	table_function_supports_lookup_t supports_lookup = nullptr;
