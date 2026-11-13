@@ -141,6 +141,7 @@ public:
 	unique_ptr<AlterInfo> Copy() const override;
 	string ToString() const override;
 	void ApplyTo(Permissions &permissions, CatalogType entry_type, optional_ptr<vector<ColumnAcl>> columns) const;
+	void ApplyTo(Permissions &permissions, CatalogType entry_type, ColumnList &columns) const;
 
 	void Serialize(Serializer &serializer) const override;
 	static unique_ptr<AlterInfo> Deserialize(Deserializer &deserializer);

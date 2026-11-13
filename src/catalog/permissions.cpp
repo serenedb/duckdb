@@ -495,6 +495,20 @@ void AlterPermissionsInfo::ApplyTo(Permissions &permissions, CatalogType entry_t
 	ApplyGrant(info, owner, acl, Permissions::AclClass(entry_type), columns);
 }
 
+void AlterPermissionsInfo::ApplyTo(Permissions &permissions, CatalogType entry_type, ColumnList &columns) const {
+	vector<ColumnAcl> column_acls;
+	for (auto &column : columns.Logical()) {
+		if (!column.Acl().empty()) {
+			column_acls.push_back(ColumnAcl {column.Name(), column.Acl()});
+		}
+	}
+	ApplyTo(permissions, entry_type, &column_acls);
+	for (auto &column : columns.Logical()) {
+		const auto acl = FindColumnAcl(column_acls, column.Name());
+		columns.GetColumnMutable(column.Logical()).SetAcl(vector<AclItem>(acl.begin(), acl.end()));
+	}
+}
+
 void Permissions::AssignOwner(idx_t new_owner, CatalogType objtype, optional_ptr<const Permissions> database,
                               optional_idx schema) {
 	owner = new_owner;
