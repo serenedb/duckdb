@@ -2079,6 +2079,9 @@ catalog_entry_vector_t Catalog::DropOrder(CatalogTransaction transaction, const 
 	return dependency_manager ? dependency_manager->DropOrder(transaction, entries) : entries;
 }
 
+void Catalog::RefuseDroppingTogether(CatalogTransaction transaction, const catalog_entry_vector_t &entries) {
+}
+
 ErrorData Catalog::SupportsCreateTable(BoundCreateTableInfo &info) {
 	auto &base = info.Base().Cast<CreateTableInfo>();
 	if (!base.partition_keys.empty()) {
