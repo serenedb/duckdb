@@ -144,6 +144,9 @@ public:
 	}
 	virtual void OnBoundPlan(Binder &binder, LogicalOperator &plan) {
 	}
+	virtual idx_t ActingRole() const {
+		return 0;
+	}
 
 public:
 	//! Connect this client to a remote-style AttachedDatabase. Subsequent non-control SQL routes via

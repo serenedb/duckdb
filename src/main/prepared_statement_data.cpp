@@ -112,6 +112,9 @@ bool PreparedStatementData::RequireRebind(ClientContext &context,
 	if (properties.replication_role && *properties.replication_role != GetReplicationRole(context)) {
 		return true;
 	}
+	if (properties.acting_role.IsValid() && properties.acting_role.GetIndex() != context.ActingRole()) {
+		return true;
+	}
 	if (!properties.bound_all_parameters) {
 		// parameters not yet bound: query always requires a rebind
 		return true;

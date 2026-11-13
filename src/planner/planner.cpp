@@ -238,6 +238,7 @@ void Planner::CreatePlan(SQLStatement &statement) {
 	this->properties = binder->GetStatementProperties();
 	this->properties.parameter_count = parameter_count;
 	properties.bound_all_parameters = !bound_parameters.rebind && parameters_resolved;
+	properties.acting_role = context.ActingRole();
 
 	Planner::VerifyPlan(context, plan, bound_parameters.GetParametersPtr());
 

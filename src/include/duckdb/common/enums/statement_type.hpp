@@ -137,6 +137,7 @@ struct StatementProperties {
 	//! Whether or not the statement ALWAYS requires a rebind
 	bool always_require_rebind;
 	optional<ReplicationRole> replication_role;
+	optional_idx acting_role;
 
 	bool IsReadOnly() {
 		return modified_databases.empty();
