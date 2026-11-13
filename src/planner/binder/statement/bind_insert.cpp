@@ -895,7 +895,7 @@ BoundStatement Binder::BindNode(InsertQueryNode &node) {
 		return column_index_map.empty() || column_index_map[column.Physical()] == DConstants::INVALID_INDEX;
 	});
 	insert->bound_constraints = BindConstraints(table);
-	CheckIndexCalls(table);
+	RequireIndexCalls(table, nullptr);
 	if (!node.select_statement && !node.default_values) {
 		check_insert(named_column_map.size());
 		result.plan = std::move(insert);

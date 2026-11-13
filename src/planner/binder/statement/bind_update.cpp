@@ -341,6 +341,7 @@ BoundStatement Binder::BindNode(UpdateQueryNode &node) {
 	for (auto index : update->columns) {
 		updated.push_back(table.GetColumns().GetColumn(index).Logical());
 	}
+	RequireIndexCalls(table, updated);
 	RequirePrivilege(table, AclMode::Update, std::move(updated), false);
 
 	// bind any extra columns necessary for CHECK constraints or indexes;
@@ -351,9 +352,6 @@ BoundStatement Binder::BindNode(UpdateQueryNode &node) {
 		storage_table->BindUpdateConstraints(*this, *get, *proj, *update, context);
 	} else {
 		table.BindUpdateConstraints(*this, *get, *proj, *update, context);
-	}
-	if (update->update_is_del_and_insert) {
-		CheckIndexCalls(table);
 	}
 
 	// capture the pre-update (OLD) row image before rowid so rowid stays the final input column

@@ -79,6 +79,11 @@ Binder::BindMergeAction(LogicalMergeInto &merge_into, TableCatalogEntry &table, 
 		unique_ptr<LogicalOperator> fake_root;
 		BindUpdateSet(proj_index, fake_root, *action.update_info, table, result->columns, merge_into.bound_defaults,
 		              result->expressions, expressions);
+		vector<LogicalIndex> updated;
+		for (auto index : result->columns) {
+			updated.push_back(table.GetColumns().GetColumn(index).Logical());
+		}
+		RequireIndexCalls(table, updated);
 
 		// bind any additional columns that need to be bound for update constraints
 		// FIXME: this is pretty hacky
@@ -117,6 +122,7 @@ Binder::BindMergeAction(LogicalMergeInto &merge_into, TableCatalogEntry &table, 
 		break;
 	}
 	case MergeActionType::MERGE_INSERT: {
+		RequireIndexCalls(table, nullptr);
 		if (action.column_order == InsertColumnOrder::INSERT_BY_NAME) {
 			// INSERT BY NAME - get the name list from the source binder and push it into the table
 			if (!action.insert_columns.empty()) {
@@ -497,17 +503,6 @@ BoundStatement Binder::BindNode(MergeQueryNode &node) {
 				                       *target_binding);
 			}
 		}
-	}
-
-	auto writes_index_entries = false;
-	for (auto &entry : merge_into->actions) {
-		for (auto &action : entry.second) {
-			writes_index_entries |=
-			    action->action_type == MergeActionType::MERGE_INSERT || action->update_is_del_and_insert;
-		}
-	}
-	if (writes_index_entries) {
-		CheckIndexCalls(table);
 	}
 
 	merge_into->row_id_start = projection_expressions.size();

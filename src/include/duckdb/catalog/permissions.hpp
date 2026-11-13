@@ -359,6 +359,11 @@ struct FunctionCall {
 	optional_idx macro_overload;
 };
 
+struct IndexCalls {
+	vector<LogicalIndex> columns;
+	vector<FunctionCall> calls;
+};
+
 DUCKDB_API bool IsUnowned(const CatalogEntry &entry);
 DUCKDB_API const Permissions &EffectivePermissions(ClientContext &context, const CatalogEntry &entry);
 DUCKDB_API optional_ptr<const vector<ColumnAcl>> EffectiveColumnAcls(ClientContext &context, const CatalogEntry &entry);

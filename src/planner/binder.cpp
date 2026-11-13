@@ -414,12 +414,12 @@ void Binder::RecordCall(MacroCatalogEntry &macro, const MacroFunction &overload,
 	}
 }
 
-void Binder::CheckIndexCalls(TableCatalogEntry &table) {
+void Binder::RequireIndexCalls(TableCatalogEntry &table, optional_ptr<const vector<LogicalIndex>> changed) {
 	auto &role = CurrentRole();
 	if (role.is_superuser) {
 		return;
 	}
-	CheckFunctionCalls(context, role, table.IndexFunctionCalls(context));
+	global_binder_state->index_writes.push_back({table, role, changed ? *changed : vector<LogicalIndex>(), !changed});
 }
 
 void Binder::BindAsFunctionBody(const SelectStatement &statement) {
@@ -476,8 +476,10 @@ void Binder::AdoptPrivilegeChecks(Binder &other) {
 	state.column_reads.insert(state.column_reads.end(), source.column_reads.begin(), source.column_reads.end());
 	state.required_privileges.insert(state.required_privileges.end(), source.required_privileges.begin(),
 	                                 source.required_privileges.end());
+	state.index_writes.insert(state.index_writes.end(), source.index_writes.begin(), source.index_writes.end());
 	source.column_reads.clear();
 	source.required_privileges.clear();
+	source.index_writes.clear();
 }
 
 void Binder::RequirePrivilege(TableCatalogEntry &table, AclMode mode, vector<LogicalIndex> columns, bool any_column) {
@@ -578,6 +580,17 @@ void Binder::CheckPrivileges() {
 	for (auto &read : global_binder_state->column_reads) {
 		if (!read->Allowed()) {
 			ThrowPermissionDenied(read->entry);
+		}
+	}
+	for (auto &write : global_binder_state->index_writes) {
+		for (auto &index : write.table.get().IndexFunctionCalls(context)) {
+			const auto changes =
+			    write.all_columns || std::any_of(index.columns.begin(), index.columns.end(), [&](LogicalIndex column) {
+				    return std::find(write.changed.begin(), write.changed.end(), column) != write.changed.end();
+			    });
+			if (changes) {
+				CheckFunctionCalls(context, write.role, index.calls);
+			}
 		}
 	}
 }
