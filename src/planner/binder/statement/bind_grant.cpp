@@ -3,6 +3,7 @@
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/type_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/view_catalog_entry.hpp"
+#include "duckdb/catalog/default/default_schemas.hpp"
 #include "duckdb/catalog/dependency_manager.hpp"
 #include "duckdb/catalog/permissions.hpp"
 #include "duckdb/common/string_util.hpp"
@@ -304,15 +305,15 @@ static void ResolveGrant(Binder &binder, AlterPermissionsInfo &info) {
 			}
 		}
 	}
-	if (!target.internal || IsUnowned(target)) {
+	const bool schema = target.type == CatalogType::SCHEMA_ENTRY;
+	if (!target.internal || IsUnowned(target) || (!schema && !relation) ||
+	    !DefaultSchemaGenerator::IsDefaultSchema(schema ? target.name : target.ParentSchema(context).name)) {
 		return;
 	}
-	if (target.type == CatalogType::SCHEMA_ENTRY) {
+	if (schema) {
 		info.schema_id = target.oid;
-	} else if (relation) {
-		info.relation_id = target.oid;
 	} else {
-		return;
+		info.relation_id = target.oid;
 	}
 	info.builtin_acl = target.permissions.acl;
 	TargetDatabaseRow(info, target.permissions.owner, target.ParentCatalog().GetName());
