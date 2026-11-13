@@ -225,8 +225,13 @@ public:
 	}
 
 	template <class SELF, class FUNC>
-	void ReadListInternal(this SELF &self, FUNC func) {
+	void ReadListInternal(this SELF &self, FUNC func, const char *tag = nullptr,
+	                      optional_idx expected_size = optional_idx()) {
 		auto size = self.OnListBegin();
+		if (expected_size.IsValid() && size != expected_size.GetIndex()) {
+			throw SerializationException("Field \"%s\" holds %llu elements instead of %llu", tag, size,
+			                             expected_size.GetIndex());
+		}
 		TypedList<SELF> list {self};
 		for (idx_t i = 0; i < size; i++) {
 			func(list, i);
@@ -238,6 +243,14 @@ public:
 	void ReadList(this auto &self, const field_id_t field_id, const char *tag, FUNC func) {
 		self.OnPropertyBegin(field_id, tag);
 		self.ReadListInternal(func);
+		self.OnPropertyEnd();
+	}
+
+	//! A list its reader indexes by position, so it holds exactly `size` elements
+	template <class FUNC>
+	void ReadList(this auto &self, const field_id_t field_id, const char *tag, idx_t size, FUNC func) {
+		self.OnPropertyBegin(field_id, tag);
+		self.ReadListInternal(func, tag, size);
 		self.OnPropertyEnd();
 	}
 

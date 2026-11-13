@@ -817,7 +817,7 @@ private:
 	BoundCTEData PrepareCTE(const Identifier &ctename, CommonTableExpressionInfo &statement, bool continues_chain);
 	BoundStatement FinishCTE(BoundCTEData &bound_cte, BoundStatement child_data);
 
-	shared_ptr<Binder> CreateBinderWithSearchPath(const Identifier &catalog_name, const Identifier &schema_name);
+	shared_ptr<Binder> CreateBinderWithSearchPath(const Catalog &catalog, const Identifier &schema_name);
 
 	bool DebugAggregateStateExportVerify(BoundSelectNode &statement, unique_ptr<LogicalOperator> &root);
 
