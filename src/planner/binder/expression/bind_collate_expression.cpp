@@ -32,11 +32,11 @@ BindResult ExpressionBinder::BindExpression(CollateExpression &expr, idx_t depth
 	        SqlCompatibility::POSTGRES;
 	if (apply_default_collation) {
 		if (!StringType::GetCollation(child->GetReturnType()).empty()) {
-			child->SetReturnType(LogicalType::VARCHAR);
+			child->SetReturnType(StringType::WithCollation(child->GetReturnType(), string()));
 		}
 		return BindResult(std::move(child));
 	}
-	child->SetReturnType(collation_type);
+	child->SetReturnType(StringType::WithCollation(child->GetReturnType(), collation));
 	return BindResult(std::move(child));
 }
 

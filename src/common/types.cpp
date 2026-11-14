@@ -1572,6 +1572,11 @@ string StringType::GetCollation(const LogicalType &type) {
 	return info.Cast<StringTypeInfo>().collation;
 }
 
+LogicalType StringType::WithCollation(const LogicalType &type, string collation) {
+	auto result = collation.empty() ? LogicalType::VARCHAR : LogicalType::VARCHAR_COLLATION(std::move(collation));
+	return type.HasAlias() ? result.WithAlias(type.GetAlias()) : result;
+}
+
 LogicalType LogicalType::VARCHAR_COLLATION(string collation) { // NOLINT
 	auto string_info = make_uniq<StringTypeInfo>(std::move(collation));
 	return LogicalType(LogicalTypeId::VARCHAR, std::move(string_info));
