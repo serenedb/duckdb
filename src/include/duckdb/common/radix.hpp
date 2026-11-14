@@ -12,7 +12,6 @@
 #include "duckdb/common/common.hpp"
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/types.hpp"
-#include "duckdb/common/types/string_type.hpp"
 #include "duckdb/common/types/value.hpp"
 #include "duckdb/common/limits.hpp"
 
@@ -32,14 +31,6 @@ public:
 	template <class T>
 	static inline T DecodeData(const_data_ptr_t input) {
 		throw NotImplementedException("Cannot read data from this type");
-	}
-
-	static inline void EncodeStringDataPrefix(data_ptr_t dataptr, string_t value, idx_t prefix_len) {
-		auto len = value.GetSize();
-		memcpy(dataptr, value.GetData(), MinValue(len, prefix_len));
-		if (len < prefix_len) {
-			memset(dataptr + len, '\0', prefix_len - len);
-		}
 	}
 
 	static inline uint8_t FlipSign(uint8_t key_byte) {

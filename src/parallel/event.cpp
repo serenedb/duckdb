@@ -85,10 +85,7 @@ void Event::SetTasks(vector<shared_ptr<Task>> tasks) {
 		ts.ScheduleTasks(executor.GetToken(), tasks);
 		return;
 	}
-	if (tasks.size() > 1) {
-		tasks.erase(tasks.begin());
-		ts.ScheduleTasks(executor.GetToken(), tasks);
-	}
+	ts.ScheduleConcurrentTasks(executor.GetToken(), std::span(tasks).subspan(1));
 }
 
 } // namespace duckdb

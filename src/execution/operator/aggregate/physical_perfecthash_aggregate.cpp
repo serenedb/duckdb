@@ -98,8 +98,7 @@ public:
 
 class PerfectHashAggregateLocalState : public LocalSinkState {
 public:
-	PerfectHashAggregateLocalState(const PhysicalPerfectHashAggregate &op, ExecutionContext &context)
-	    : ht(op.CreateHT(Allocator::Get(context.client), context.client)) {
+	explicit PerfectHashAggregateLocalState(const PhysicalPerfectHashAggregate &op) {
 		group_chunk.InitializeEmpty(op.group_types);
 		if (!op.payload_types.empty()) {
 			aggregate_input_chunk.InitializeEmpty(op.payload_types);
@@ -117,7 +116,7 @@ unique_ptr<GlobalSinkState> PhysicalPerfectHashAggregate::GetGlobalSinkState(Cli
 }
 
 unique_ptr<LocalSinkState> PhysicalPerfectHashAggregate::GetLocalSinkState(ExecutionContext &context) const {
-	return make_uniq<PerfectHashAggregateLocalState>(*this, context);
+	return make_uniq<PerfectHashAggregateLocalState>(*this);
 }
 
 SinkResultType PhysicalPerfectHashAggregate::Sink(ExecutionContext &context, DataChunk &chunk,
@@ -154,6 +153,9 @@ SinkResultType PhysicalPerfectHashAggregate::Sink(ExecutionContext &context, Dat
 	aggregate_input_chunk.Verify(context.client.db);
 	D_ASSERT(aggregate_input_chunk.ColumnCount() == 0 || group_chunk.size() == aggregate_input_chunk.size());
 
+	if (!lstate.ht) {
+		lstate.ht = CreateHT(Allocator::Get(context.client), context.client);
+	}
 	lstate.ht->AddChunk(group_chunk, aggregate_input_chunk);
 	return SinkResultType::NEED_MORE_INPUT;
 }
@@ -165,6 +167,9 @@ SinkCombineResultType PhysicalPerfectHashAggregate::Combine(ExecutionContext &co
                                                             OperatorSinkCombineInput &input) const {
 	auto &lstate = input.local_state.Cast<PerfectHashAggregateLocalState>();
 	auto &gstate = input.global_state.Cast<PerfectHashAggregateGlobalState>();
+	if (!lstate.ht) {
+		return SinkCombineResultType::FINISHED;
+	}
 
 	lock_guard<mutex> l(gstate.lock);
 	gstate.ht->Combine(*lstate.ht);

@@ -133,22 +133,34 @@ bool StringStats::CanContainUnicode(const BaseStatistics &stats) {
 	return GetDataUnsafe(stats).has_unicode;
 }
 
-string StringStats::Min(const BaseStatistics &stats) {
+std::string_view StringStats::Min(const BaseStatistics &stats) {
 	auto &string_data = GetDataUnsafe(stats);
 	if (!StatsIsSet(string_data.min_type)) {
 		throw InternalException("StringStats::Min called but no string stats were found - call StringStats::HasMin or "
 		                        "StringStats::HasMinMax first");
 	}
-	return string_data.min.GetString();
+	return std::string_view(string_data.min.GetData(), string_data.min.GetSize());
 }
 
-string StringStats::Max(const BaseStatistics &stats) {
+std::string_view StringStats::Max(const BaseStatistics &stats) {
 	auto &string_data = GetDataUnsafe(stats);
 	if (!StatsIsSet(string_data.max_type)) {
 		throw InternalException("StringStats::Max called but no string stats were found - call StringStats::HasMax or "
 		                        "StringStats::HasMinMax first");
 	}
-	return string_data.max.GetString();
+	return std::string_view(string_data.max.GetData(), string_data.max.GetSize());
+}
+
+std::string_view StringStats::GetMinUnsafe(const BaseStatistics &stats) {
+	auto &string_data = GetDataUnsafe(stats);
+	D_ASSERT(StatsIsSet(string_data.min_type));
+	return std::string_view(string_data.min.GetData(), string_data.min.GetSize());
+}
+
+std::string_view StringStats::GetMaxUnsafe(const BaseStatistics &stats) {
+	auto &string_data = GetDataUnsafe(stats);
+	D_ASSERT(StatsIsSet(string_data.max_type));
+	return std::string_view(string_data.max.GetData(), string_data.max.GetSize());
 }
 
 Value StringStats::TryGetValidMin(const BaseStatistics &stats) {

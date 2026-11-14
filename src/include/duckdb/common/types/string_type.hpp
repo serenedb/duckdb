@@ -18,6 +18,7 @@
 
 #include <cstring>
 #include <algorithm>
+#include <string_view>
 
 namespace duckdb {
 
@@ -70,6 +71,9 @@ public:
 	}
 	string_t(const string &value) // NOLINT: Allow implicit conversion from `const char*`
 	    : string_t(value.c_str(), UnsafeNumericCast<uint32_t>(value.size())) {
+	}
+	string_t(std::string_view value) // NOLINT: Allow implicit conversion from `std::string_view`
+	    : string_t(value.data(), UnsafeNumericCast<uint32_t>(value.size())) {
 	}
 
 	bool IsInlined() const {

@@ -348,17 +348,23 @@ public:
 		}
 		return strcmp(s1, s2) == 0;
 	}
-	static bool Equals(const string &s1, const char *s2) {
-		return Equals(s1.c_str(), s2);
-	}
-	static bool Equals(const char *s1, const string &s2) {
-		return Equals(s1, s2.c_str());
-	}
 	static bool Equals(std::string_view s1, std::string_view s2) {
 		return s1 == s2;
 	}
+	static bool Equals(std::string_view s1, const char *s2);
+	static bool Equals(const char *s1, std::string_view s2) {
+		return Equals(s2, s1);
+	}
+	static bool Equals(const string &s1, const char *s2) {
+		return Equals(std::string_view(s1), s2);
+	}
+	static bool Equals(const char *s1, const string &s2) {
+		return Equals(s2, s1);
+	}
 	static bool Equals(const string_t &s1, const char *s2);
-	static bool Equals(const char *s1, const string_t &s2);
+	static bool Equals(const char *s1, const string_t &s2) {
+		return Equals(s2, s1);
+	}
 
 	//! JSON method that parses a { string: value } JSON blob into a flat key -> value map. Nested objects/arrays are
 	//! kept as their (re-serialized) JSON string value.

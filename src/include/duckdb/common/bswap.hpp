@@ -8,10 +8,9 @@
 
 #pragma once
 
-#include "duckdb/common/hugeint.hpp"
-#include "duckdb/common/uhugeint.hpp"
-
-#include <cstring>
+#include <bit>
+#include <cstdint>
+#include <type_traits>
 
 namespace duckdb {
 
@@ -23,98 +22,32 @@ namespace duckdb {
 #endif
 #endif
 
-#if defined(__clang__) || defined(__GNUC__) && (__GNUC__ > 4 || (__GNUC__ == 4 && __GNUC_MINOR__ >= 3))
-#define BSWAP16(x) __builtin_bswap16(static_cast<uint16_t>(x))
-#define BSWAP32(x) __builtin_bswap32(static_cast<uint32_t>(x))
-#define BSWAP64(x) __builtin_bswap64(static_cast<uint64_t>(x))
-#else
-#define BSWAP16(x) ((uint16_t)((((uint16_t)(x)&0xff00) >> 8) | (((uint16_t)(x)&0x00ff) << 8)))
-
-#define BSWAP32(x)                                                                                                     \
-	((uint32_t)((((uint32_t)(x)&0xff000000) >> 24) | (((uint32_t)(x)&0x00ff0000) >> 8) |                               \
-	            (((uint32_t)(x)&0x0000ff00) << 8) | (((uint32_t)(x)&0x000000ff) << 24)))
-
-#define BSWAP64(x)                                                                                                     \
-	((uint64_t)((((uint64_t)(x)&0xff00000000000000ull) >> 56) | (((uint64_t)(x)&0x00ff000000000000ull) >> 40) |        \
-	            (((uint64_t)(x)&0x0000ff0000000000ull) >> 24) | (((uint64_t)(x)&0x000000ff00000000ull) >> 8) |         \
-	            (((uint64_t)(x)&0x00000000ff000000ull) << 8) | (((uint64_t)(x)&0x0000000000ff0000ull) << 24) |         \
-	            (((uint64_t)(x)&0x000000000000ff00ull) << 40) | (((uint64_t)(x)&0x00000000000000ffull) << 56)))
-#endif
-
-static inline int8_t BSwap(const int8_t &x) {
-	return x;
-}
-
-static inline uint8_t BSwap(const uint8_t &x) {
-	return x;
-}
-
-static inline uint16_t BSwap(const uint16_t &x) {
-	return BSWAP16(x);
-}
-
-static inline int16_t BSwap(const int16_t &x) {
-	return static_cast<int16_t>(BSWAP16(x));
-}
-
-static inline uint32_t BSwap(const uint32_t &x) {
-	return BSWAP32(x);
-}
-
-static inline int32_t BSwap(const int32_t &x) {
-	return static_cast<int32_t>(BSWAP32(x));
-}
-
-static inline uint64_t BSwap(const uint64_t &x) {
-	return BSWAP64(x);
-}
-
-static inline int64_t BSwap(const int64_t &x) {
-	return static_cast<int64_t>(BSWAP64(x));
-}
-
-static inline uhugeint_t BSwap(const uhugeint_t &x) {
-	return uhugeint_t(BSWAP64(x.upper), BSWAP64(x.lower));
-}
-
-static inline hugeint_t BSwap(const hugeint_t &x) {
-	return hugeint_t(static_cast<int64_t>(BSWAP64(x.upper)), BSWAP64(x.lower));
-}
-
-static inline float BSwap(const float &x) {
-	uint32_t temp;
-	std::memcpy(&temp, &x, sizeof(temp));
-	temp = BSWAP32(temp);
-	float result;
-	std::memcpy(&result, &temp, sizeof(result));
-	return result;
-}
-
-static inline double BSwap(const double &x) {
-	uint64_t temp;
-	std::memcpy(&temp, &x, sizeof(temp));
-	temp = BSWAP64(temp);
-	double result;
-	std::memcpy(&result, &temp, sizeof(result));
-	return result;
+template <class T>
+inline T BSwap(T x) {
+	if constexpr (std::is_floating_point_v<T>) {
+		using Bits = std::conditional_t<sizeof(T) == sizeof(uint32_t), uint32_t, uint64_t>;
+		return std::bit_cast<T>(std::byteswap(std::bit_cast<Bits>(x)));
+	} else {
+		return std::byteswap(x);
+	}
 }
 
 template <class T>
-static inline T BSwapIfLE(const T &x) {
-#if DUCKDB_IS_BIG_ENDIAN
-	return x;
-#else
-	return BSwap(x);
-#endif
+inline T BSwapIfLE(T x) {
+	if constexpr (std::endian::native == std::endian::little) {
+		return BSwap(x);
+	} else {
+		return x;
+	}
 }
 
 template <class T>
-static inline T BSwapIfBE(const T &x) {
-#if DUCKDB_IS_BIG_ENDIAN
-	return BSwap(x);
-#else
-	return x;
-#endif
+inline T BSwapIfBE(T x) {
+	if constexpr (std::endian::native == std::endian::big) {
+		return BSwap(x);
+	} else {
+		return x;
+	}
 }
 
 } // namespace duckdb

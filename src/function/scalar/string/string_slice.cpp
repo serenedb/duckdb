@@ -11,8 +11,8 @@ namespace duckdb {
 namespace {
 
 // Find the byte length of the first character_count UTF-8 code points.
-bool GetPrefixByteLength(const string &value, idx_t character_count, idx_t &byte_count) {
-	auto data = reinterpret_cast<const utf8proc_uint8_t *>(value.c_str());
+bool GetPrefixByteLength(std::string_view value, idx_t character_count, idx_t &byte_count) {
+	auto data = reinterpret_cast<const utf8proc_uint8_t *>(value.data());
 	byte_count = 0;
 	for (idx_t character_idx = 0; character_idx < character_count; character_idx++) {
 		if (byte_count >= value.size()) {
@@ -30,7 +30,7 @@ bool GetPrefixByteLength(const string &value, idx_t character_count, idx_t &byte
 }
 
 // Return at most character_count UTF-8 code points, preserving shorter values in full.
-bool GetPrefix(const string &value, idx_t character_count, string &result) {
+bool GetPrefix(std::string_view value, idx_t character_count, string &result) {
 	idx_t prefix_size;
 	if (!GetPrefixByteLength(value, character_count, prefix_size) && prefix_size != value.size()) {
 		return false;
@@ -39,10 +39,10 @@ bool GetPrefix(const string &value, idx_t character_count, string &result) {
 	return true;
 }
 
-bool GetStringSliceStatsBound(const string &value, idx_t prefix_size, optional_idx character_count, string &result) {
+bool GetStringSliceStatsBound(std::string_view value, idx_t prefix_size, optional_idx character_count, string &result) {
 	auto suffix = value.substr(prefix_size);
 	if (!character_count.IsValid()) {
-		result = std::move(suffix);
+		result = suffix;
 		return true;
 	}
 	return GetPrefix(suffix, character_count.GetIndex(), result);

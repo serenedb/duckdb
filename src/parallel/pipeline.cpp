@@ -482,7 +482,7 @@ void Pipeline::PrepareExternalInput() {
 }
 
 shared_ptr<GlobalSourceState> Pipeline::GetSourceState() {
-	annotated_lock_guard<annotated_mutex> guard(source_state_lock);
+	const absl::ReaderMutexLock guard(&source_state_lock);
 	return source_state;
 }
 

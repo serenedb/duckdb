@@ -23,14 +23,18 @@ struct TemplatedValidityData {
 	static constexpr const V MAX_ENTRY = V(~V(0));
 
 public:
-	inline explicit TemplatedValidityData(idx_t count) {
+	inline explicit TemplatedValidityData(idx_t count) : capacity(count) {
+		owned_data = make_unsafe_uniq_array_uninitialized<V>(EntryCount(count));
+		SetAllValid(count);
+	}
+	inline void SetAllValid(idx_t count) {
+		D_ASSERT(count <= capacity);
 		auto entry_count = EntryCount(count);
-		owned_data = make_unsafe_uniq_array_uninitialized<V>(entry_count);
 		for (idx_t entry_idx = 0; entry_idx < entry_count; entry_idx++) {
 			owned_data[entry_idx] = MAX_ENTRY;
 		}
 	}
-	inline TemplatedValidityData(const V *validity_mask, idx_t count) {
+	inline TemplatedValidityData(const V *validity_mask, idx_t count) : capacity(count) {
 		D_ASSERT(validity_mask);
 		auto entry_count = EntryCount(count);
 		owned_data = make_unsafe_uniq_array_uninitialized<V>(entry_count);
@@ -40,6 +44,7 @@ public:
 	}
 
 	unsafe_unique_array<V> owned_data;
+	idx_t capacity;
 
 public:
 	static inline idx_t EntryCount(idx_t count) {
@@ -143,7 +148,9 @@ public:
 	}
 	inline void Reset(idx_t target_count_p = STANDARD_VECTOR_SIZE) {
 		validity_mask = nullptr;
-		validity_data.reset();
+		if (validity_data && validity_data.use_count() != 1) {
+			validity_data.reset();
+		}
 		capacity = target_count_p;
 	}
 
@@ -342,7 +349,11 @@ public:
 	}
 	inline void Initialize(idx_t count) {
 		capacity = count;
-		validity_data = make_buffer<ValidityBuffer>(count);
+		if (!validity_mask && validity_data && validity_data.use_count() == 1 && validity_data->capacity >= count) {
+			validity_data->SetAllValid(count);
+		} else {
+			validity_data = make_buffer<ValidityBuffer>(count);
+		}
 		validity_mask = validity_data->owned_data.get();
 	}
 	inline void Initialize() {

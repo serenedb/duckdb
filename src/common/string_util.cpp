@@ -68,25 +68,20 @@ bool StringUtil::CharacterIsHex(char c) {
 	return index <= 102 && hex_lookup[index] != 255;
 }
 
-bool StringUtil::Equals(const string_t &s1, const char *s2) {
-	auto s1_data = s1.GetData();
-	for (idx_t i = 0; i < s1.GetSize(); i++) {
-		if (s1_data[i] != s2[i]) {
-			return false;
-		}
-		if (s2[i] == '\0') {
-			return false;
-		}
-	}
-	if (s2[s1.GetSize()] != '\0') {
-		// not equal
+bool StringUtil::Equals(std::string_view s1, const char *s2) {
+	if (!s2) {
 		return false;
 	}
-	return true;
+	for (size_t i = 0; i < s1.size(); i++) {
+		if (s1[i] != s2[i] || s2[i] == '\0') {
+			return false;
+		}
+	}
+	return s2[s1.size()] == '\0';
 }
 
-bool StringUtil::Equals(const char *s1, const string_t &s2) {
-	return StringUtil::Equals(s2, s1);
+bool StringUtil::Equals(const string_t &s1, const char *s2) {
+	return Equals(std::string_view(s1.GetData(), s1.GetSize()), s2);
 }
 
 bool StringUtil::Contains(std::string_view haystack, std::string_view needle) {

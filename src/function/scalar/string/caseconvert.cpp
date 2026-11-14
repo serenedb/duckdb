@@ -303,19 +303,19 @@ static unique_ptr<BaseStatistics> CaseConvertPropagateStats(ClientContext &conte
 	const bool is_exact = min == max && StringStats::GetMinType(child_stats[0]) == StringStatsType::EXACT_STATS &&
 	                      StringStats::GetMaxType(child_stats[0]) == StringStatsType::EXACT_STATS;
 	if (!is_exact) {
-		min.resize(StringUtil::GetCommonPrefixSize(min, max));
+		min = min.substr(0, StringUtil::GetCommonPrefixSize(min, max));
 		// truncated stats can end in the middle of a character - only complete ones can be converted
 		size_t invalid_pos = 0;
-		if (Utf8Proc::Analyze(min.c_str(), min.size(), nullptr, &invalid_pos) == UnicodeType::INVALID) {
-			min.resize(invalid_pos);
+		if (Utf8Proc::Analyze(min.data(), min.size(), nullptr, &invalid_pos) == UnicodeType::INVALID) {
+			min = min.substr(0, invalid_pos);
 		}
 		if (min.empty()) {
 			return result.ToUnique();
 		}
 	}
 	string converted;
-	converted.resize(GetResultLength<IS_UPPER>(min.c_str(), min.size()));
-	CaseConvert<IS_UPPER>(min.c_str(), min.size(), &converted[0], converted.size());
+	converted.resize(GetResultLength<IS_UPPER>(min.data(), min.size()));
+	CaseConvert<IS_UPPER>(min.data(), min.size(), &converted[0], converted.size());
 	auto stats_type = is_exact ? StringStatsType::EXACT_STATS : StringStatsType::TRUNCATED_STATS;
 	// case conversion can lengthen a string beyond what the stats can store
 	if (converted.size() > StringStatsData::CURRENT_MAX_STRING_MINMAX_SIZE) {

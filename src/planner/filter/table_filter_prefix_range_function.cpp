@@ -667,12 +667,7 @@ FilterPropagateResult PrefixRangeScalarFun::FilterPrune(const FunctionStatistics
 		if (!NumericStats::HasMinMax(stats)) {
 			return FilterPropagateResult::NO_PRUNING_POSSIBLE;
 		}
-		const auto min = NumericStats::Min(stats);
-		const auto max = NumericStats::Max(stats);
-		if (min > max) {
-			return FilterPropagateResult::NO_PRUNING_POSSIBLE;
-		}
-		return data.filter->LookupRange(min, max);
+		return data.filter->LookupRange(NumericStats::Min(stats), NumericStats::Max(stats));
 	}
 	case StatisticsType::STRING_STATS: {
 		if (!StringStats::HasMinMax(stats)) {

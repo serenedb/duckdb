@@ -21,6 +21,42 @@ void InitializeEmptyFloatingPointStats(BaseStatistics &result) {
 	NumericStats::SetMax(result, NumericLimits<T>::Minimum());
 }
 
+template <class OP>
+auto VisitNumeric(PhysicalType type, OP &&op) {
+	switch (type) {
+	case PhysicalType::BOOL:
+		return op.template operator()<bool>();
+	case PhysicalType::INT8:
+		return op.template operator()<int8_t>();
+	case PhysicalType::INT16:
+		return op.template operator()<int16_t>();
+	case PhysicalType::INT32:
+		return op.template operator()<int32_t>();
+	case PhysicalType::INT64:
+		return op.template operator()<int64_t>();
+	case PhysicalType::UINT8:
+		return op.template operator()<uint8_t>();
+	case PhysicalType::UINT16:
+		return op.template operator()<uint16_t>();
+	case PhysicalType::UINT32:
+		return op.template operator()<uint32_t>();
+	case PhysicalType::UINT64:
+		return op.template operator()<uint64_t>();
+	case PhysicalType::INT128:
+		return op.template operator()<hugeint_t>();
+	case PhysicalType::UINT128:
+		return op.template operator()<uhugeint_t>();
+	case PhysicalType::FLOAT:
+		return op.template operator()<float>();
+	case PhysicalType::DOUBLE:
+		return op.template operator()<double>();
+	case PhysicalType::INTERVAL:
+		return op.template operator()<interval_t>();
+	default:
+		throw InternalException("Unsupported type %s for numeric statistics", TypeIdToString(type));
+	}
+}
+
 } // namespace
 
 BaseStatistics NumericStats::CreateUnknown(LogicalType type) {
@@ -59,119 +95,65 @@ const NumericStatsData &NumericStats::GetDataUnsafe(const BaseStatistics &stats)
 	return stats.stats_union.numeric_data;
 }
 
+const NumericValueUnion &NumericStats::GetBoundUnsafe(const BaseStatistics &stats, bool min, PhysicalType type,
+                                                      idx_t size) {
+	auto &data = GetDataUnsafe(stats);
+	D_ASSERT(min ? data.has_min : data.has_max);
+	D_ASSERT(type == stats.GetType().InternalType() ||
+	         (type == PhysicalType::INT8 && stats.GetType().InternalType() == PhysicalType::BOOL));
+	D_ASSERT(size == GetTypeIdSize(type));
+	return min ? data.min : data.max;
+}
+
 void NumericStats::Merge(BaseStatistics &stats, const BaseStatistics &other) {
 	if (other.GetType().id() == LogicalTypeId::VALIDITY) {
 		return;
 	}
 	D_ASSERT(stats.GetType() == other.GetType());
-	// If the min and max of the stats are not valid, we need to merge the min and max of the other stats.
-	if (NumericStats::HasMin(stats) && NumericStats::HasMax(stats) &&
-	    NumericStats::Min(stats) > NumericStats::Max(stats)) {
-		NumericStats::SetMin(stats, NumericStats::HasMin(other) ? NumericStats::Min(other) : Value());
-		NumericStats::SetMax(stats, NumericStats::HasMax(other) ? NumericStats::Max(other) : Value());
-		return;
-	}
-	if (NumericStats::HasMin(other) && NumericStats::HasMin(stats)) {
-		auto other_min = NumericStats::Min(other);
-		if (other_min < NumericStats::Min(stats)) {
-			NumericStats::SetMin(stats, other_min);
+	auto &data = GetDataUnsafe(stats);
+	const auto &other_data = GetDataUnsafe(other);
+	VisitNumeric(stats.GetType().InternalType(), [&]<class T>() {
+		// If the min and max of the stats are not valid, we need to merge the min and max of the other stats.
+		if (HasMin(stats) && HasMax(stats) && GreaterThan::Operation(GetMinUnsafe<T>(stats), GetMaxUnsafe<T>(stats))) {
+			data.has_min = HasMin(other);
+			data.has_max = HasMax(other);
+			data.min = other_data.min;
+			data.max = other_data.max;
+			return;
 		}
-	} else {
-		NumericStats::SetMin(stats, Value());
-	}
-	if (NumericStats::HasMax(other) && NumericStats::HasMax(stats)) {
-		auto other_max = NumericStats::Max(other);
-		if (other_max > NumericStats::Max(stats)) {
-			NumericStats::SetMax(stats, other_max);
+		if (HasMin(other) && HasMin(stats)) {
+			if (LessThan::Operation(GetMinUnsafe<T>(other), GetMinUnsafe<T>(stats))) {
+				data.min = other_data.min;
+			}
+		} else {
+			data.has_min = false;
 		}
-	} else {
-		NumericStats::SetMax(stats, Value());
-	}
+		if (HasMax(other) && HasMax(stats)) {
+			if (GreaterThan::Operation(GetMaxUnsafe<T>(other), GetMaxUnsafe<T>(stats))) {
+				data.max = other_data.max;
+			}
+		} else {
+			data.has_max = false;
+		}
+	});
 }
 
-struct GetNumericValueUnion {
-	template <class T>
-	static T Operation(const NumericValueUnion &v);
-};
-
-template <>
-bool GetNumericValueUnion::Operation(const NumericValueUnion &v) {
-	return v.value_.boolean;
+void NumericStats::ClampMin(BaseStatistics &stats, const BaseStatistics &other) {
+	D_ASSERT(stats.GetType() == other.GetType() && HasMinMax(stats) && HasMinMax(other));
+	VisitNumeric(stats.GetType().InternalType(), [&]<class T>() {
+		if (LessThan::Operation(GetMinUnsafe<T>(stats), GetMinUnsafe<T>(other))) {
+			GetDataUnsafe(stats).min = GetDataUnsafe(other).min;
+		}
+	});
 }
 
-template <>
-int8_t GetNumericValueUnion::Operation(const NumericValueUnion &v) {
-	return v.value_.tinyint;
-}
-
-template <>
-int16_t GetNumericValueUnion::Operation(const NumericValueUnion &v) {
-	return v.value_.smallint;
-}
-
-template <>
-int32_t GetNumericValueUnion::Operation(const NumericValueUnion &v) {
-	return v.value_.integer;
-}
-
-template <>
-int64_t GetNumericValueUnion::Operation(const NumericValueUnion &v) {
-	return v.value_.bigint;
-}
-
-template <>
-hugeint_t GetNumericValueUnion::Operation(const NumericValueUnion &v) {
-	return v.value_.hugeint;
-}
-
-template <>
-uhugeint_t GetNumericValueUnion::Operation(const NumericValueUnion &v) {
-	return v.value_.uhugeint;
-}
-
-template <>
-uint8_t GetNumericValueUnion::Operation(const NumericValueUnion &v) {
-	return v.value_.utinyint;
-}
-
-template <>
-uint16_t GetNumericValueUnion::Operation(const NumericValueUnion &v) {
-	return v.value_.usmallint;
-}
-
-template <>
-uint32_t GetNumericValueUnion::Operation(const NumericValueUnion &v) {
-	return v.value_.uinteger;
-}
-
-template <>
-uint64_t GetNumericValueUnion::Operation(const NumericValueUnion &v) {
-	return v.value_.ubigint;
-}
-
-template <>
-float GetNumericValueUnion::Operation(const NumericValueUnion &v) {
-	return v.value_.float_;
-}
-
-template <>
-double GetNumericValueUnion::Operation(const NumericValueUnion &v) {
-	return v.value_.double_;
-}
-
-template <>
-interval_t GetNumericValueUnion::Operation(const NumericValueUnion &v) {
-	return v.value_.interval;
-}
-
-template <class T>
-T NumericStats::GetMinUnsafe(const BaseStatistics &stats) {
-	return GetNumericValueUnion::Operation<T>(NumericStats::GetDataUnsafe(stats).min);
-}
-
-template <class T>
-T NumericStats::GetMaxUnsafe(const BaseStatistics &stats) {
-	return GetNumericValueUnion::Operation<T>(NumericStats::GetDataUnsafe(stats).max);
+void NumericStats::ClampMax(BaseStatistics &stats, const BaseStatistics &other) {
+	D_ASSERT(stats.GetType() == other.GetType() && HasMinMax(stats) && HasMinMax(other));
+	VisitNumeric(stats.GetType().InternalType(), [&]<class T>() {
+		if (GreaterThan::Operation(GetMaxUnsafe<T>(stats), GetMaxUnsafe<T>(other))) {
+			GetDataUnsafe(stats).max = GetDataUnsafe(other).max;
+		}
+	});
 }
 
 template <class T>
@@ -350,26 +332,23 @@ bool NumericStats::ConstantsCoverRange(const BaseStatistics &stats, array_ptr<co
 	return true;
 }
 
-template <class T>
-static bool ZeroSignsMatch(const BaseStatistics &stats) {
-	auto min = NumericStats::GetMinUnsafe<T>(stats);
-	auto max = NumericStats::GetMaxUnsafe<T>(stats);
-	return min != T(0) || std::signbit(min) == std::signbit(max);
-}
-
 bool NumericStats::IsConstant(const BaseStatistics &stats) {
-	if (NumericStats::Max(stats) > NumericStats::Min(stats)) {
-		return false;
+	if (!HasMin(stats) || !HasMax(stats)) {
+		throw InternalException("IsConstant() called on statistics that does not have min and max");
 	}
-	// -0.0 == 0.0, so a zero range is only constant if both bounds have the same sign
-	switch (stats.GetType().InternalType()) {
-	case PhysicalType::FLOAT:
-		return ZeroSignsMatch<float>(stats);
-	case PhysicalType::DOUBLE:
-		return ZeroSignsMatch<double>(stats);
-	default:
-		return true;
-	}
+	return VisitNumeric(stats.GetType().InternalType(), [&]<class T>() {
+		const auto min = GetMinUnsafe<T>(stats);
+		const auto max = GetMaxUnsafe<T>(stats);
+		if (GreaterThan::Operation(max, min)) {
+			return false;
+		}
+		if constexpr (std::is_floating_point_v<T>) {
+			// -0.0 == 0.0, so a zero range is only constant if both bounds have the same sign
+			return min != T(0) || std::signbit(min) == std::signbit(max);
+		} else {
+			return true;
+		}
+	});
 }
 
 void SetNumericValueInternal(const Value &input, const LogicalType &type, NumericValueUnion &val, bool &has_val) {
@@ -479,8 +458,9 @@ Value NumericValueUnionToValue(const LogicalType &type, const NumericValueUnion 
 }
 
 bool NumericStats::HasMinMax(const BaseStatistics &stats) {
-	return NumericStats::HasMin(stats) && NumericStats::HasMax(stats) &&
-	       NumericStats::Min(stats) <= NumericStats::Max(stats);
+	return HasMin(stats) && HasMax(stats) && VisitNumeric(stats.GetType().InternalType(), [&]<class T>() {
+		       return LessThanEquals::Operation(GetMinUnsafe<T>(stats), GetMaxUnsafe<T>(stats));
+	       });
 }
 
 bool NumericStats::HasMin(const BaseStatistics &stats) {
@@ -744,32 +724,4 @@ void NumericStats::Verify(const BaseStatistics &stats, const Vector &vector, con
 	}
 }
 
-template bool NumericStats::GetMinUnsafe(const BaseStatistics &stats);
-template bool NumericStats::GetMaxUnsafe(const BaseStatistics &stats);
-template int8_t NumericStats::GetMinUnsafe(const BaseStatistics &stats);
-template int8_t NumericStats::GetMaxUnsafe(const BaseStatistics &stats);
-template int16_t NumericStats::GetMinUnsafe(const BaseStatistics &stats);
-template int16_t NumericStats::GetMaxUnsafe(const BaseStatistics &stats);
-template int32_t NumericStats::GetMinUnsafe(const BaseStatistics &stats);
-template int32_t NumericStats::GetMaxUnsafe(const BaseStatistics &stats);
-template int64_t NumericStats::GetMinUnsafe(const BaseStatistics &stats);
-template int64_t NumericStats::GetMaxUnsafe(const BaseStatistics &stats);
-template uint8_t NumericStats::GetMinUnsafe(const BaseStatistics &stats);
-template uint8_t NumericStats::GetMaxUnsafe(const BaseStatistics &stats);
-template uint16_t NumericStats::GetMinUnsafe(const BaseStatistics &stats);
-template uint16_t NumericStats::GetMaxUnsafe(const BaseStatistics &stats);
-template uint32_t NumericStats::GetMinUnsafe(const BaseStatistics &stats);
-template uint32_t NumericStats::GetMaxUnsafe(const BaseStatistics &stats);
-template uint64_t NumericStats::GetMinUnsafe(const BaseStatistics &stats);
-template uint64_t NumericStats::GetMaxUnsafe(const BaseStatistics &stats);
-template hugeint_t NumericStats::GetMinUnsafe(const BaseStatistics &stats);
-template hugeint_t NumericStats::GetMaxUnsafe(const BaseStatistics &stats);
-template uhugeint_t NumericStats::GetMinUnsafe(const BaseStatistics &stats);
-template uhugeint_t NumericStats::GetMaxUnsafe(const BaseStatistics &stats);
-template float NumericStats::GetMinUnsafe(const BaseStatistics &stats);
-template float NumericStats::GetMaxUnsafe(const BaseStatistics &stats);
-template double NumericStats::GetMinUnsafe(const BaseStatistics &stats);
-template double NumericStats::GetMaxUnsafe(const BaseStatistics &stats);
-template interval_t NumericStats::GetMinUnsafe(const BaseStatistics &stats);
-template interval_t NumericStats::GetMaxUnsafe(const BaseStatistics &stats);
 } // namespace duckdb

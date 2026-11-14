@@ -11,6 +11,7 @@
 #include "duckdb/common/enums/expression_type.hpp"
 #include "duckdb/common/enums/filter_propagate_result.hpp"
 #include "duckdb/common/operator/comparison_operators.hpp"
+#include "duckdb/common/type_util.hpp"
 #include "duckdb/common/types/value.hpp"
 #include "duckdb/storage/statistics/numeric_stats_union.hpp"
 #include "duckdb/common/array_ptr.hpp"
@@ -80,6 +81,8 @@ struct NumericStats {
 	static bool ConstantsCoverRange(const BaseStatistics &stats, array_ptr<const Value> constants);
 
 	DUCKDB_API static void Merge(BaseStatistics &stats, const BaseStatistics &other_p);
+	DUCKDB_API static void ClampMin(BaseStatistics &stats, const BaseStatistics &other);
+	DUCKDB_API static void ClampMax(BaseStatistics &stats, const BaseStatistics &other);
 
 	DUCKDB_API static void Serialize(const BaseStatistics &stats, Serializer &serializer);
 	DUCKDB_API static void Deserialize(Deserializer &deserializer, BaseStatistics &stats);
@@ -110,20 +113,32 @@ struct NumericStats {
 
 	template <class T>
 	static T GetMin(const BaseStatistics &stats) {
-		return NumericStats::Min(stats).GetValueUnsafe<T>();
+		if (!HasMin(stats)) {
+			throw InternalException("GetMin() called on statistics that does not have min");
+		}
+		return GetMinUnsafe<T>(stats);
 	}
 	template <class T>
 	static T GetMax(const BaseStatistics &stats) {
-		return NumericStats::Max(stats).GetValueUnsafe<T>();
+		if (!HasMax(stats)) {
+			throw InternalException("GetMax() called on statistics that does not have max");
+		}
+		return GetMaxUnsafe<T>(stats);
 	}
 	template <class T>
-	static T GetMinUnsafe(const BaseStatistics &stats);
+	static T GetMinUnsafe(const BaseStatistics &stats) {
+		return Load<T>(const_data_ptr_cast(&GetBoundUnsafe(stats, true, GetTypeId<T>(), sizeof(T)).value_));
+	}
 	template <class T>
-	static T GetMaxUnsafe(const BaseStatistics &stats);
+	static T GetMaxUnsafe(const BaseStatistics &stats) {
+		return Load<T>(const_data_ptr_cast(&GetBoundUnsafe(stats, false, GetTypeId<T>(), sizeof(T)).value_));
+	}
 
 private:
 	static NumericStatsData &GetDataUnsafe(BaseStatistics &stats);
 	static const NumericStatsData &GetDataUnsafe(const BaseStatistics &stats);
+	static const NumericValueUnion &GetBoundUnsafe(const BaseStatistics &stats, bool min, PhysicalType type,
+	                                               idx_t size);
 	static Value MinOrNull(const BaseStatistics &stats);
 	static Value MaxOrNull(const BaseStatistics &stats);
 	template <class T>

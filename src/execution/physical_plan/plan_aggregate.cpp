@@ -173,11 +173,6 @@ static bool CanUsePerfectHashAggregate(ClientContext &context, LogicalAggregate 
 			return false;
 		}
 
-		if (NumericStats::Max(*stats) < NumericStats::Min(*stats)) {
-			// May result in underflow
-			return false;
-		}
-
 		// we have a min and a max value for the stats: use that to figure out how many bits we have
 		// we add two here, one for the NULL value, and one to make the computation one-indexed
 		// (e.g. if min and max are the same, we still need one entry in total)
