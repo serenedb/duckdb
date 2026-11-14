@@ -132,8 +132,26 @@ vector<AclItem> Permissions::AclDefault(CatalogType acl_class, idx_t owner) {
 	return acl;
 }
 
+bool Permissions::operator==(const Permissions &rhs) const {
+	return owner == rhs.owner && acl == rhs.acl && defaults == rhs.defaults && Rows() == rhs.Rows();
+}
+
+const GrantRows &Permissions::Rows() const {
+	static const GrantRows empty;
+	return rows ? *rows : empty;
+}
+
+GrantRows &Permissions::MutableRows() {
+	if (!rows) {
+		rows = make_shared_ptr<GrantRows>();
+	} else if (rows.use_count() > 1) {
+		rows = make_shared_ptr<GrantRows>(*rows);
+	}
+	return *rows;
+}
+
 std::span<const AclItem> Permissions::ForeignDataWrapperAcl(idx_t wrapper) const {
-	for (auto &row : foreign_data_wrappers) {
+	for (auto &row : Rows().foreign_data_wrappers) {
 		if (row.oid == wrapper) {
 			return row.acl;
 		}
@@ -142,7 +160,7 @@ std::span<const AclItem> Permissions::ForeignDataWrapperAcl(idx_t wrapper) const
 }
 
 std::span<const AclItem> Permissions::LanguageAcl(idx_t language) const {
-	for (auto &row : languages) {
+	for (auto &row : Rows().languages) {
 		if (row.oid == language) {
 			return row.acl;
 		}
@@ -151,7 +169,7 @@ std::span<const AclItem> Permissions::LanguageAcl(idx_t language) const {
 }
 
 std::span<const AclItem> Permissions::ParameterAcl(std::string_view parameter) const {
-	for (auto &row : parameters) {
+	for (auto &row : Rows().parameters) {
 		if (StringUtil::CIEquals(row.name, parameter)) {
 			return row.acl;
 		}
@@ -372,7 +390,7 @@ void AlterPermissionsInfo::ApplyTo(Permissions &permissions, CatalogType entry_t
 	}
 
 	if (info.foreign_data_wrapper_id) {
-		auto &wrappers = permissions.foreign_data_wrappers;
+		auto &wrappers = permissions.MutableRows().foreign_data_wrappers;
 		auto row = std::find_if(wrappers.begin(), wrappers.end(),
 		                        [&](const ObjectAcl &entry) { return entry.oid == info.foreign_data_wrapper_id; });
 		auto row_acl = row == wrappers.end() ? vector<AclItem> {} : row->acl;
@@ -386,7 +404,7 @@ void AlterPermissionsInfo::ApplyTo(Permissions &permissions, CatalogType entry_t
 	}
 
 	if (info.language_id) {
-		auto &languages = permissions.languages;
+		auto &languages = permissions.MutableRows().languages;
 		auto row = std::find_if(languages.begin(), languages.end(),
 		                        [&](const ObjectAcl &entry) { return entry.oid == info.language_id; });
 		auto row_acl = row == languages.end() ? vector<AclItem> {} : row->acl;
@@ -400,7 +418,7 @@ void AlterPermissionsInfo::ApplyTo(Permissions &permissions, CatalogType entry_t
 	}
 
 	if (info.relation_id) {
-		auto &relations = permissions.relations;
+		auto &relations = permissions.MutableRows().relations;
 		auto row = std::find_if(relations.begin(), relations.end(),
 		                        [&](const RelationAcl &entry) { return entry.oid == info.relation_id; });
 		auto row_acl = row == relations.end() ? info.builtin_acl : row->acl;
@@ -420,7 +438,7 @@ void AlterPermissionsInfo::ApplyTo(Permissions &permissions, CatalogType entry_t
 	}
 
 	if (!info.functions.empty()) {
-		auto &rows = permissions.functions;
+		auto &rows = permissions.MutableRows().functions;
 		unordered_map<string, idx_t> positions;
 		for (idx_t i = 0; i < rows.size(); i++) {
 			positions.emplace(rows[i].name, i);
@@ -440,7 +458,7 @@ void AlterPermissionsInfo::ApplyTo(Permissions &permissions, CatalogType entry_t
 	}
 
 	if (info.type_id) {
-		auto &rows = permissions.types;
+		auto &rows = permissions.MutableRows().types;
 		auto row =
 		    std::find_if(rows.begin(), rows.end(), [&](const ObjectAcl &entry) { return entry.oid == info.type_id; });
 		auto row_acl = row == rows.end() ? info.builtin_acl : row->acl;
@@ -454,7 +472,7 @@ void AlterPermissionsInfo::ApplyTo(Permissions &permissions, CatalogType entry_t
 	}
 
 	if (info.schema_id) {
-		auto &schemas = permissions.schemas;
+		auto &schemas = permissions.MutableRows().schemas;
 		auto row = std::find_if(schemas.begin(), schemas.end(),
 		                        [&](const ObjectAcl &entry) { return entry.oid == info.schema_id; });
 		auto row_acl = row == schemas.end() ? info.builtin_acl : row->acl;
@@ -473,7 +491,7 @@ void AlterPermissionsInfo::ApplyTo(Permissions &permissions, CatalogType entry_t
 	}
 
 	if (!info.parameter.empty()) {
-		auto &rows = permissions.parameters;
+		auto &rows = permissions.MutableRows().parameters;
 		auto row = std::find_if(rows.begin(), rows.end(), [&](const NamedAcl &entry) {
 			return StringUtil::CIEquals(entry.name, info.parameter);
 		});
@@ -792,18 +810,19 @@ shared_ptr<const SecuritySnapshot> SecuritySnapshot::Build(Catalog &cluster, Cat
 	auto &config = DBConfig::GetConfig(cluster.GetDatabase());
 	cluster.ScanTopLevelEntries(transaction, CatalogType::DATABASE_ENTRY, [&](CatalogEntry &entry) {
 		database_owners.emplace(entry.name.GetIdentifierName(), entry.permissions.owner);
-		for (auto &row : entry.permissions.relations) {
+		auto &rows = entry.permissions.Rows();
+		for (auto &row : rows.relations) {
 			relations[entry.name.GetIdentifierName()][row.oid] =
 			    Relation {Permissions {config.bootstrap_role, row.acl}, row.columns};
 		}
-		for (auto &row : entry.permissions.schemas) {
+		for (auto &row : rows.schemas) {
 			relations[entry.name.GetIdentifierName()][row.oid] =
 			    Relation {Permissions {config.bootstrap_role, row.acl}, {}};
 		}
-		for (auto &row : entry.permissions.functions) {
+		for (auto &row : rows.functions) {
 			functions[entry.name.GetIdentifierName()][row.name] = Permissions {config.bootstrap_role, row.acl};
 		}
-		for (auto &row : entry.permissions.types) {
+		for (auto &row : rows.types) {
 			types[entry.name.GetIdentifierName()][row.oid] = Permissions {config.bootstrap_role, row.acl};
 		}
 	});
@@ -1267,38 +1286,39 @@ static bool AnyRoleReference(const CatalogEntry &entry, F &&named) {
 			return true;
 		}
 	}
-	for (auto &row : permissions.foreign_data_wrappers) {
+	auto &rows = permissions.Rows();
+	for (auto &row : rows.foreign_data_wrappers) {
 		if (any_acl(row.acl)) {
 			return true;
 		}
 	}
-	for (auto &row : permissions.parameters) {
+	for (auto &row : rows.parameters) {
 		if (any_acl(row.acl)) {
 			return true;
 		}
 	}
-	for (auto &row : permissions.languages) {
+	for (auto &row : rows.languages) {
 		if (any_acl(row.acl)) {
 			return true;
 		}
 	}
-	for (auto &row : permissions.relations) {
+	for (auto &row : rows.relations) {
 		if (any_acl(row.acl) || std::any_of(row.columns.begin(), row.columns.end(),
 		                                    [&](const ColumnAcl &column) { return any_acl(column.acl); })) {
 			return true;
 		}
 	}
-	for (auto &row : permissions.schemas) {
+	for (auto &row : rows.schemas) {
 		if (any_acl(row.acl)) {
 			return true;
 		}
 	}
-	for (auto &row : permissions.functions) {
+	for (auto &row : rows.functions) {
 		if (any_acl(row.acl)) {
 			return true;
 		}
 	}
-	for (auto &row : permissions.types) {
+	for (auto &row : rows.types) {
 		if (any_acl(row.acl)) {
 			return true;
 		}
