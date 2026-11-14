@@ -73,7 +73,7 @@ static void ResolveBuiltinFunctionGrant(Binder &binder, CatalogEntry &function, 
 	auto &database = ClusterDatabase(context, database_name);
 	const auto owner = config.bootstrap_role;
 	auto builtin = BuiltinFunctionAcl(function, owner);
-	auto &rows = database.permissions.functions;
+	auto &rows = database.permissions.Rows().functions;
 	auto row = std::find_if(rows.begin(), rows.end(), [&](const NamedAcl &entry) { return entry.name == key; });
 	RequireGrantableAcl(binder.CheckAs(), owner, row == rows.end() ? builtin : row->acl, "function", name);
 	info.functions = {NamedAcl {std::move(key), std::move(builtin)}};
@@ -86,7 +86,7 @@ static void ResolveBuiltinTypeGrant(Binder &binder, idx_t type, const string &na
 	auto &database = ClusterDatabase(context, database_name);
 	const auto owner = DBConfig::GetConfig(context).bootstrap_role;
 	auto builtin = Permissions::AclDefault(CatalogType::TYPE_ENTRY, owner);
-	auto &rows = database.permissions.types;
+	auto &rows = database.permissions.Rows().types;
 	auto row = std::find_if(rows.begin(), rows.end(), [&](const ObjectAcl &entry) { return entry.oid == type; });
 	RequireGrantableAcl(binder.CheckAs(), owner, row == rows.end() ? builtin : row->acl, "type", name);
 	info.type_id = type;

@@ -769,42 +769,56 @@
         "type": "vector<DefaultAcl>"
       },
       {
-        "id": 103,
+        "id": 110,
+        "name": "rows",
+        "type": "shared_ptr<GrantRows>"
+      }
+    ],
+    "pointer_type": "none"
+  },
+  {
+    "class": "GrantRows",
+    "includes": [
+      "duckdb/catalog/permissions.hpp"
+    ],
+    "members": [
+      {
+        "id": 100,
         "name": "foreign_data_wrappers",
         "type": "vector<ObjectAcl>"
       },
       {
-        "id": 104,
+        "id": 101,
         "name": "parameters",
         "type": "vector<NamedAcl>"
       },
       {
-        "id": 105,
+        "id": 102,
         "name": "languages",
         "type": "vector<ObjectAcl>"
       },
       {
-        "id": 106,
+        "id": 103,
         "name": "relations",
         "type": "vector<RelationAcl>"
       },
       {
-        "id": 107,
+        "id": 104,
         "name": "schemas",
         "type": "vector<ObjectAcl>"
       },
       {
-        "id": 108,
+        "id": 105,
         "name": "functions",
         "type": "vector<NamedAcl>"
       },
       {
-        "id": 109,
+        "id": 106,
         "name": "types",
         "type": "vector<ObjectAcl>"
       }
     ],
-    "pointer_type": "none"
+    "pointer_type": "shared_ptr"
   },
   {
     "class": "ColumnAcl",

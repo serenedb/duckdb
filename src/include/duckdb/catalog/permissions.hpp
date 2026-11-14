@@ -199,10 +199,7 @@ struct RelationAcl {
 	static RelationAcl Deserialize(Deserializer &deserializer);
 };
 
-struct Permissions {
-	idx_t owner = 0;
-	vector<AclItem> acl;
-	vector<DefaultAcl> defaults;
+struct GrantRows {
 	vector<ObjectAcl> foreign_data_wrappers;
 	vector<NamedAcl> parameters;
 	vector<ObjectAcl> languages;
@@ -211,7 +208,22 @@ struct Permissions {
 	vector<NamedAcl> functions;
 	vector<ObjectAcl> types;
 
-	bool operator==(const Permissions &rhs) const = default;
+	bool operator==(const GrantRows &rhs) const = default;
+
+	void Serialize(Serializer &serializer) const;
+	static shared_ptr<GrantRows> Deserialize(Deserializer &deserializer);
+};
+
+struct Permissions {
+	idx_t owner = 0;
+	vector<AclItem> acl;
+	vector<DefaultAcl> defaults;
+	shared_ptr<GrantRows> rows;
+
+	bool operator==(const Permissions &rhs) const;
+
+	const GrantRows &Rows() const;
+	GrantRows &MutableRows();
 
 	static CatalogType AclClass(CatalogType entry_type);
 	static AclMode AllPrivileges(CatalogType acl_class);
