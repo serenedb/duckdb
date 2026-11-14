@@ -1592,9 +1592,6 @@ void RadixHTLocalSourceState::Finalize(RadixHTGlobalSinkState &sink, RadixHTGlob
 	} else {
 		sink.stored_allocators.emplace_back(ht->GetAggregateAllocator());
 	}
-	if (task_idx == sink.partitions.size()) {
-		ht.reset();
-	}
 	const auto finalizes_done = ++sink.finalize_done;
 	D_ASSERT(finalizes_done <= sink.partitions.size());
 	if (finalizes_done == sink.partitions.size()) {
