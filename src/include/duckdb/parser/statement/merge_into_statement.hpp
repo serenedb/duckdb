@@ -39,6 +39,7 @@ public:
 	bool default_values = false;
 	//! INSERT_BY_NAME exclude column list - columns to skip when generating the SET list
 	identifier_set_t exclude_columns;
+	bool on_conflict_update = false;
 
 	string ToString() const;
 	unique_ptr<MergeIntoAction> Copy() const;

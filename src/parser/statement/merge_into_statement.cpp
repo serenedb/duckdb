@@ -41,6 +41,9 @@ bool MergeIntoAction::Equals(const MergeIntoAction &left, const MergeIntoAction 
 	if (left.exclude_columns != right.exclude_columns) {
 		return false;
 	}
+	if (left.on_conflict_update != right.on_conflict_update) {
+		return false;
+	}
 	if (left.expressions.size() != right.expressions.size()) {
 		return false;
 	}
@@ -126,6 +129,8 @@ unique_ptr<MergeIntoAction> MergeIntoAction::Copy() const {
 	result->insert_columns = insert_columns;
 	result->default_values = default_values;
 	result->column_order = column_order;
+	result->exclude_columns = exclude_columns;
+	result->on_conflict_update = on_conflict_update;
 	for (auto &expr : expressions) {
 		result->expressions.push_back(expr->Copy());
 	}
