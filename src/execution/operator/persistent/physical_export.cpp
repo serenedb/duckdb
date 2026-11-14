@@ -28,8 +28,6 @@
 
 namespace duckdb {
 
-void ReorderTableEntries(catalog_entry_vector_t &tables);
-
 using duckdb::stringstream;
 
 PhysicalExport::PhysicalExport(PhysicalPlan &physical_plan, vector<LogicalType> types, CopyFunction function,
@@ -186,8 +184,9 @@ static void WriteJobState(stringstream &ss, const CatalogEntry &owner, const Cat
 	}
 }
 
-static optional_ptr<const ColumnDefinition> OwningColumn(CatalogTransaction transaction, const TableCatalogEntry &table,
-                                                         const CatalogEntry &owned) {
+optional_ptr<const ColumnDefinition> PhysicalExport::OwningColumn(CatalogTransaction transaction,
+                                                                  const TableCatalogEntry &table,
+                                                                  const CatalogEntry &owned) {
 	if (owned.type != CatalogType::SEQUENCE_ENTRY) {
 		return nullptr;
 	}
@@ -208,7 +207,7 @@ static void WriteOwnedBy(stringstream &ss, CatalogTransaction transaction, const
 	if (table.ParentCatalog().Compatibility() != SqlCompatibility::POSTGRES || owned.internal) {
 		return;
 	}
-	auto column = OwningColumn(transaction, table, owned);
+	auto column = PhysicalExport::OwningColumn(transaction, table, owned);
 	if (!column) {
 		return;
 	}

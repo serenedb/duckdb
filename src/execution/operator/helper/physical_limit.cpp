@@ -85,11 +85,12 @@ idx_t PhysicalLimit::GetLimitValue(const Value &val, idx_t null_value) {
 	if (val.IsNull()) {
 		return null_value;
 	}
-	auto value = val.GetValue<idx_t>();
-	if (value > MAX_LIMIT_VALUE) {
+	auto bigint = val.DefaultTryCastAs(LogicalType::BIGINT);
+	if (!bigint || bigint->GetValue<int64_t>() < 0) {
+		auto value = val.GetValue<idx_t>();
 		throw BinderException("Max value %llu for LIMIT/OFFSET is %llu", value, MAX_LIMIT_VALUE);
 	}
-	return value;
+	return MinValue<idx_t>(UnsafeNumericCast<idx_t>(bigint->GetValue<int64_t>()), MAX_LIMIT_VALUE);
 }
 
 bool PhysicalLimit::ComputeOffset(ExecutionContext &context, DataChunk &input, optional_idx &limit,

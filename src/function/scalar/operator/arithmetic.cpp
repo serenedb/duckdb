@@ -439,7 +439,32 @@ unique_ptr<FunctionData> NopDecimalBind(BindScalarFunctionInput &input) {
 	return nullptr;
 }
 
+bool IntegerOverflowWraps(ClientContext &context) {
+	return Settings::Get<IntegerOverflowSetting>(context) == IntegerOverflowMode::WRAP;
+}
+
+void BindWrappingArithmetic(BoundScalarFunction &bound_function, scalar_function_t function) {
+	bound_function.SetFunctionCallback(std::move(function));
+	bound_function.SetErrorMode(FunctionErrors::CANNOT_ERROR);
+	bound_function.SetArgProperties({});
+}
+
+template <class CHECKED_OP>
+unique_ptr<FunctionData> BindIntegerArithmetic(BindScalarFunctionInput &input) {
+	if (IntegerOverflowWraps(input.GetClientContext())) {
+		auto &bound_function = input.GetBoundFunction();
+		BindWrappingArithmetic(bound_function, GetOverflowCheckFunction<CHECKED_OP, IntegerOverflowMode::WRAP>(
+		                                           bound_function.GetReturnType().InternalType()));
+	}
+	return nullptr;
+}
+
 } // namespace
+
+bool ArithmeticWraps(const BoundFunctionExpression &arithmetic) {
+	return arithmetic.GetReturnType().IsIntegral() &&
+	       arithmetic.Function().GetErrorMode() == FunctionErrors::CANNOT_ERROR;
+}
 
 ScalarFunction AddFunction::GetFunction(const LogicalType &type) {
 	D_ASSERT(type.IsNumeric());
@@ -495,8 +520,9 @@ ScalarFunction AddFunction::GetFunction(const LogicalType &left_type, const Logi
 			return function;
 		} else if (left_type.IsIntegral()) {
 			ScalarFunction function("+", {left_type, right_type}, left_type,
-			                        GetOverflowCheckFunction<AddOperatorOverflowCheck>(left_type.InternalType()),
-			                        nullptr,
+			                        GetOverflowCheckFunction<AddOperatorOverflowCheck, IntegerOverflowMode::ERROR>(
+			                            left_type.InternalType()),
+			                        BindIntegerArithmetic<AddOperatorOverflowCheck>,
 			                        PropagateNumericStats<TryAddOperator, AddPropagateStatistics, AddOperator>);
 			function.SetFallible();
 			function.SetArgProperties({inc, inc});
@@ -764,9 +790,57 @@ static unique_ptr<FunctionData> DecimalNegateBind(BindScalarFunctionInput &input
 	return nullptr;
 }
 
+template <class T>
+static T NegateWrapping(T value) {
+	if constexpr (std::is_same_v<T, hugeint_t> || std::is_same_v<T, uhugeint_t>) {
+		return -value;
+	} else {
+		using UNSIGNED = std::make_unsigned_t<T>;
+		return static_cast<T>(static_cast<UNSIGNED>(0) - static_cast<UNSIGNED>(value));
+	}
+}
+
+template <class T>
+static void WrappingNegateFunction(DataChunk &input, ExpressionState &state, Vector &result) {
+	UnaryExecutor::Execute<T, T>(input.data[0], result, NegateWrapping<T>);
+}
+
+static scalar_function_t GetWrappingNegateFunction(PhysicalType type) {
+	switch (type) {
+	case PhysicalType::INT8:
+		return WrappingNegateFunction<int8_t>;
+	case PhysicalType::INT16:
+		return WrappingNegateFunction<int16_t>;
+	case PhysicalType::INT32:
+		return WrappingNegateFunction<int32_t>;
+	case PhysicalType::INT64:
+		return WrappingNegateFunction<int64_t>;
+	case PhysicalType::INT128:
+		return WrappingNegateFunction<hugeint_t>;
+	case PhysicalType::UINT8:
+		return WrappingNegateFunction<uint8_t>;
+	case PhysicalType::UINT16:
+		return WrappingNegateFunction<uint16_t>;
+	case PhysicalType::UINT32:
+		return WrappingNegateFunction<uint32_t>;
+	case PhysicalType::UINT64:
+		return WrappingNegateFunction<uint64_t>;
+	case PhysicalType::UINT128:
+		return WrappingNegateFunction<uhugeint_t>;
+	default:
+		throw InternalException("Unimplemented type for GetWrappingNegateFunction: %s", TypeIdToString(type));
+	}
+}
+
 static unique_ptr<FunctionData> IntegerNegateBind(BindScalarFunctionInput &input) {
 	auto &bound_function = input.GetBoundFunction();
 	D_ASSERT(input.GetArguments().size() == 1);
+
+	if (bound_function.GetReturnType().IsIntegral() && IntegerOverflowWraps(input.GetClientContext())) {
+		BindWrappingArithmetic(bound_function,
+		                       GetWrappingNegateFunction(bound_function.GetReturnType().InternalType()));
+		return nullptr;
+	}
 
 	// only need to promote if the argument is a constant that exactly equals the type's minimum value
 	auto constant = input.TryGetConstant(0);
@@ -800,55 +874,6 @@ static unique_ptr<FunctionData> IntegerNegateBind(BindScalarFunctionInput &input
 	return nullptr;
 }
 
-template <class T>
-static T NegateWrapping(T value) {
-	if constexpr (std::is_same_v<T, hugeint_t> || std::is_same_v<T, uhugeint_t>) {
-		return -value;
-	} else {
-		using UNSIGNED = std::make_unsigned_t<T>;
-		return static_cast<T>(static_cast<UNSIGNED>(0) - static_cast<UNSIGNED>(value));
-	}
-}
-
-template <class T>
-static void IntegerNegateFunction(DataChunk &input, ExpressionState &state, Vector &result) {
-	bool overflow = false;
-	UnaryExecutor::Execute<T, T>(input.data[0], result, [&overflow](T value) {
-		overflow |= !NegateOperator::CanNegate<T>(value);
-		return NegateWrapping(value);
-	});
-	if (overflow && !IntegerOverflowWraps(state)) {
-		throw OutOfRangeException("Overflow in negation of numeric value!");
-	}
-}
-
-static scalar_function_t GetNegateFunction(const LogicalType &type) {
-	switch (type.InternalType()) {
-	case PhysicalType::INT8:
-		return IntegerNegateFunction<int8_t>;
-	case PhysicalType::INT16:
-		return IntegerNegateFunction<int16_t>;
-	case PhysicalType::INT32:
-		return IntegerNegateFunction<int32_t>;
-	case PhysicalType::INT64:
-		return IntegerNegateFunction<int64_t>;
-	case PhysicalType::INT128:
-		return IntegerNegateFunction<hugeint_t>;
-	case PhysicalType::UINT8:
-		return IntegerNegateFunction<uint8_t>;
-	case PhysicalType::UINT16:
-		return IntegerNegateFunction<uint16_t>;
-	case PhysicalType::UINT32:
-		return IntegerNegateFunction<uint32_t>;
-	case PhysicalType::UINT64:
-		return IntegerNegateFunction<uint64_t>;
-	case PhysicalType::UINT128:
-		return IntegerNegateFunction<uhugeint_t>;
-	default:
-		return ScalarFunction::GetScalarUnaryFunction<NegateOperator>(type);
-	}
-}
-
 ScalarFunction SubtractFunction::GetFunction(const LogicalType &type) {
 	if (type.id() == LogicalTypeId::INTERVAL) {
 		ScalarFunction func("-", {type}, type, ScalarFunction::UnaryFunction<interval_t, interval_t, NegateOperator>);
@@ -865,7 +890,8 @@ ScalarFunction SubtractFunction::GetFunction(const LogicalType &type) {
 		return func;
 	} else {
 		D_ASSERT(type.IsNumeric());
-		ScalarFunction func("-", {type}, type, GetNegateFunction(type), IntegerNegateBind);
+		ScalarFunction func("-", {type}, type, ScalarFunction::GetScalarUnaryFunction<NegateOperator>(type),
+		                    IntegerNegateBind);
 		func.SetFallible();
 		func.SetUnaryArgProperties(ArgProperties().StrictlyDecreasing());
 		return func;
@@ -886,7 +912,9 @@ ScalarFunction SubtractFunction::GetFunction(const LogicalType &left_type, const
 		} else if (left_type.IsIntegral()) {
 			ScalarFunction function(
 			    "-", {left_type, right_type}, left_type,
-			    GetOverflowCheckFunction<SubtractOperatorOverflowCheck>(left_type.InternalType()), nullptr,
+			    GetOverflowCheckFunction<SubtractOperatorOverflowCheck, IntegerOverflowMode::ERROR>(
+			        left_type.InternalType()),
+			    BindIntegerArithmetic<SubtractOperatorOverflowCheck>,
 			    PropagateNumericStats<TrySubtractOperator, SubtractPropagateStatistics, SubtractOperator>);
 			function.SetFallible();
 			function.SetArgProperties({ArgProperties().StrictlyIncreasing(), ArgProperties().StrictlyDecreasing()});
@@ -1149,8 +1177,11 @@ ScalarFunctionSet OperatorMultiplyFun::GetFunctions() {
 			multiply.AddFunction(function);
 		} else if (TypeIsIntegral(type.InternalType())) {
 			multiply.AddFunction(ScalarFunction(
-			    {type, type}, type, GetOverflowCheckFunction<MultiplyOperatorOverflowCheck>(type.InternalType()),
-			    nullptr, PropagateNumericStats<TryMultiplyOperator, MultiplyPropagateStatistics, MultiplyOperator>));
+			    {type, type}, type,
+			    GetOverflowCheckFunction<MultiplyOperatorOverflowCheck, IntegerOverflowMode::ERROR>(
+			        type.InternalType()),
+			    BindIntegerArithmetic<MultiplyOperatorOverflowCheck>,
+			    PropagateNumericStats<TryMultiplyOperator, MultiplyPropagateStatistics, MultiplyOperator>));
 		} else if (type.IsFloating()) {
 			multiply.AddFunction(ScalarFunction({type, type}, type,
 			                                    GetScalarBinaryFunction<MultiplyOperator>(type.InternalType()), nullptr,

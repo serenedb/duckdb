@@ -15,7 +15,9 @@ MetaTransaction::MetaTransaction(ClientContext &context_p, timestamp_t start_tim
                                  transaction_t transaction_id_p)
     : context(context_p), start_timestamp(start_timestamp_p), global_transaction_id(transaction_id_p),
       transaction_validity(*context_p.db, ValidChecker::Scope::TRANSACTION), active_query(MAXIMUM_QUERY_ID),
-      modified_database(nullptr), is_read_only(false) {
+      modified_database(nullptr), is_read_only(false),
+      used_databases(0, IdentifierHashFunction(DatabaseManager::Get(context_p).CaseSensitiveNames()),
+                     IdentifierEquality(DatabaseManager::Get(context_p).CaseSensitiveNames())) {
 }
 
 MetaTransaction::~MetaTransaction() = default;
@@ -237,9 +239,21 @@ void MetaTransaction::SetActiveQuery(transaction_t query_number) {
 	lock_guard<mutex> guard(lock);
 	active_query = query_number;
 	statement_databases.clear();
-	frozen_databases = FrozenDatabases::NONE;
 	for (auto &entry : transactions) {
 		entry.second.transaction.active_query = query_number;
+	}
+}
+
+void MetaTransaction::StatementEnd() {
+	vector<reference<Transaction>> started;
+	{
+		lock_guard<mutex> guard(lock);
+		for (auto &entry : transactions) {
+			started.push_back(entry.second.transaction);
+		}
+	}
+	for (auto &transaction : started) {
+		transaction.get().OnStatementEnd(context);
 	}
 }
 
@@ -283,18 +297,10 @@ AttachedDatabase &MetaTransaction::UseDatabase(shared_ptr<AttachedDatabase> &dat
 	return db_ref;
 }
 
-vector<shared_ptr<AttachedDatabase>> &MetaTransaction::GetStatementDatabases(ClientContext &context,
-                                                                             bool include_hidden) {
+vector<shared_ptr<AttachedDatabase>> &MetaTransaction::GetStatementDatabases(ClientContext &context) {
 	lock_guard<mutex> guard(lock);
-	const auto wanted = include_hidden ? FrozenDatabases::ALL : FrozenDatabases::VISIBLE;
-	if (frozen_databases < wanted) {
-		for (auto &database : DatabaseManager::Get(context).GetDatabases(context)) {
-			if (database->GetVisibility() == AttachVisibility::HIDDEN ? include_hidden
-			                                                          : frozen_databases == FrozenDatabases::NONE) {
-				statement_databases.push_back(std::move(database));
-			}
-		}
-		frozen_databases = wanted;
+	if (statement_databases.empty()) {
+		statement_databases = DatabaseManager::Get(context).GetDatabases(context);
 	}
 	return statement_databases;
 }

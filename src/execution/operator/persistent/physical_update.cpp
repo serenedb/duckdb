@@ -146,9 +146,9 @@ public:
 // sourced from the captured OLD columns of the input chunk. old_row_columns[c] is the input-chunk index of the
 // c-th physical column's captured OLD value. When a selection vector is given (del+insert dedup), it is applied
 // to the OLD columns so their cardinality matches the NEW image.
-static void AppendReturnRows(ColumnDataCollection &collection, DataChunk &combined, DataChunk &new_image,
-                             DataChunk &input, idx_t new_col_count, const vector<idx_t> &old_row_columns, idx_t count,
-                             optional_ptr<const SelectionVector> sel) {
+void PhysicalUpdate::AppendReturnRows(ColumnDataCollection &collection, DataChunk &combined, DataChunk &new_image,
+                                      DataChunk &input, idx_t new_col_count, const vector<idx_t> &old_row_columns,
+                                      idx_t count, optional_ptr<const SelectionVector> sel) {
 	combined.Reset();
 	for (idx_t c = 0; c < new_col_count; c++) {
 		combined.data[c].Reference(new_image.data[c]);

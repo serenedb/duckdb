@@ -48,6 +48,7 @@ unique_ptr<MergeIntoOperator> PlanMergeIntoAction(ClientContext &context, Logica
 
 	result->action_type = action.action_type;
 	result->condition = std::move(action.condition);
+	result->on_conflict_update = action.on_conflict_update;
 	vector<unique_ptr<BoundConstraint>> bound_constraints;
 	for (auto &constraint : op.bound_constraints) {
 		bound_constraints.push_back(constraint->Copy());
@@ -186,6 +187,7 @@ static unique_ptr<MergeIntoOperator> PlanGenericMergeIntoAction(ClientContext &c
 	auto result = make_uniq<MergeIntoOperator>();
 	result->action_type = action.action_type;
 	result->condition = std::move(action.condition);
+	result->on_conflict_update = action.on_conflict_update;
 
 	auto &catalog = op.table.catalog;
 	// the operators of an action emit the same rows as those of a regular INSERT/UPDATE/DELETE - resolve the types

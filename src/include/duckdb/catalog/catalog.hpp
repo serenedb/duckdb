@@ -476,6 +476,9 @@ public:
 	virtual bool SupportsMultipleDMLCTEs() const {
 		return false;
 	}
+	virtual bool SupportsInsertOnConflict() const {
+		return false;
+	}
 	virtual bool IsEncrypted() const {
 		return false;
 	}

@@ -46,6 +46,7 @@ public:
 
 	static void SetVariable(ClientContext &context, const Identifier &name, SetScope scope, const Value &value);
 	static void SetGenericVariable(ClientContext &context, idx_t setting_index, SetScope scope, Value target_value);
+	static Value SessionValue(ClientContext &context, const Identifier &name, optional_idx setting_index);
 	static SetScope GetSettingScope(const ConfigurationOption &option, SetScope variable_scope);
 	static SetScope GetSettingScope(const ExtensionOption &option, SetScope variable_scope);
 

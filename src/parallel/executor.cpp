@@ -22,6 +22,7 @@
 #include "duckdb/parallel/progress_verifier.hpp"
 #include "duckdb/parallel/task_scheduler.hpp"
 #include "duckdb/parallel/thread_context.hpp"
+#include "duckdb/transaction/meta_transaction.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -641,6 +642,13 @@ void Executor::FailExecution() {
 
 QueryResultState Executor::FinishExecution() {
 	D_ASSERT(!task);
+	if (!HasError() && context.transaction.HasActiveTransaction()) {
+		try {
+			context.transaction.ActiveTransaction().StatementEnd();
+		} catch (std::exception &ex) {
+			error_manager.PushError(ErrorData(ex));
+		}
+	}
 	lock_guard<mutex> elock(executor_lock);
 	if (progress_verifier && !HasError()) {
 		auto progress_error = progress_verifier->Finalize(pipelines);

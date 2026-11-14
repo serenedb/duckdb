@@ -1,0 +1,28 @@
+# name: test/sql/collate/collate_aliased_type.test
+# description: A collation applied to a column of an aliased VARCHAR type keeps the type
+# group: [collate]
+
+require json
+
+statement ok
+CREATE TABLE t (j JSON);
+
+statement ok
+INSERT INTO t VALUES ('"b"'), ('"a"'), ('"A"');
+
+query I
+SELECT j COLLATE nocase AS c FROM t ORDER BY c, j;
+----
+"A"
+"a"
+"b"
+
+query I
+SELECT j FROM t ORDER BY j COLLATE nocase DESC, j LIMIT 1;
+----
+"b"
+
+query I
+SELECT typeof(j COLLATE nocase) FROM t LIMIT 1;
+----
+JSON

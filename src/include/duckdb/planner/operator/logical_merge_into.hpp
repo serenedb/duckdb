@@ -39,6 +39,7 @@ public:
 	vector<idx_t> old_value_inputs;
 	//! Whether a DELETE + INSERT update updates in place the rows whose indexed values it leaves unchanged
 	bool in_place_unchanged_rows = false;
+	bool on_conflict_update = false;
 
 	void Serialize(Serializer &serializer) const;
 	static unique_ptr<BoundMergeIntoAction> Deserialize(Deserializer &deserializer);

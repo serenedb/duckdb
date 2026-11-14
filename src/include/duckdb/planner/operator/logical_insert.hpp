@@ -10,6 +10,7 @@
 
 #include "duckdb/planner/logical_operator.hpp"
 #include "duckdb/common/index_vector.hpp"
+#include "duckdb/parser/statement/insert_statement.hpp"
 #include "duckdb/planner/bound_constraint.hpp"
 
 namespace duckdb {
@@ -38,6 +39,8 @@ public:
 	vector<unique_ptr<Expression>> bound_defaults;
 	//! The constraints used by the table
 	vector<unique_ptr<BoundConstraint>> bound_constraints;
+	OnConflictAction action_type = OnConflictAction::THROW;
+	unordered_set<column_t> on_conflict_filter;
 
 public:
 	void Serialize(Serializer &serializer) const override;

@@ -21,6 +21,7 @@ void MergeIntoAction::Serialize(Serializer &serializer) const {
 	serializer.WritePropertyWithDefault<InsertColumnOrder>(105, "column_order", column_order, InsertColumnOrder::INSERT_BY_POSITION);
 	serializer.WritePropertyWithDefault<bool>(106, "default_values", default_values, false);
 	serializer.WritePropertyWithDefault<identifier_set_t>(107, "exclude_columns", exclude_columns);
+	serializer.WritePropertyWithDefault<bool>(108, "on_conflict_update", on_conflict_update, false);
 }
 
 unique_ptr<MergeIntoAction> MergeIntoAction::Deserialize(Deserializer &deserializer) {
@@ -33,6 +34,7 @@ unique_ptr<MergeIntoAction> MergeIntoAction::Deserialize(Deserializer &deseriali
 	deserializer.ReadPropertyWithExplicitDefault<InsertColumnOrder>(105, "column_order", result->column_order, InsertColumnOrder::INSERT_BY_POSITION);
 	deserializer.ReadPropertyWithExplicitDefault<bool>(106, "default_values", result->default_values, false);
 	deserializer.ReadPropertyWithDefault<identifier_set_t>(107, "exclude_columns", result->exclude_columns);
+	deserializer.ReadPropertyWithExplicitDefault<bool>(108, "on_conflict_update", result->on_conflict_update, false);
 	return result;
 }
 

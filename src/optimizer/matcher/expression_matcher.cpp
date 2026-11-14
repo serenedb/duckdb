@@ -1,5 +1,6 @@
 #include "duckdb/optimizer/matcher/expression_matcher.hpp"
 
+#include "duckdb/function/scalar/operators.hpp"
 #include "duckdb/planner/expression/list.hpp"
 #include "duckdb/planner/expression/bound_comparison_expression.hpp"
 
@@ -158,6 +159,10 @@ bool FunctionExpressionMatcher::Match(Expression &expr_p, vector<reference<Expre
 		return false;
 	}
 	return true;
+}
+
+bool ExactArithmeticMatcher::Match(Expression &expr, vector<reference<Expression>> &bindings) {
+	return FunctionExpressionMatcher::Match(expr, bindings) && !ArithmeticWraps(expr.Cast<BoundFunctionExpression>());
 }
 
 bool AggregateExpressionMatcher::Match(Expression &expr_p, vector<reference<Expression>> &bindings) {

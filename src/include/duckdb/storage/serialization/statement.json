@@ -115,6 +115,12 @@
         "id": 107,
         "name": "exclude_columns",
         "type": "identifier_set_t"
+      },
+      {
+        "id": 108,
+        "name": "on_conflict_update",
+        "type": "bool",
+        "default": "false"
       }
     ]
   }

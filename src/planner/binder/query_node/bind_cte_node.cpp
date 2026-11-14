@@ -135,7 +135,10 @@ void CTEBindState::Bind(CTEBinding &binding) {
 	                                         vector<LogicalType>(), CTEType::CANNOT_BE_REFERENCED);
 
 	// bind the actual CTE
+	auto &properties = parent_binder.GetStatementProperties();
+	const auto return_type = properties.return_type;
 	query = query_binder->Bind(cte_def);
+	properties.return_type = return_type;
 
 	// after binding - we add the active binders we removed back so we can leave the binder in its original state
 	parent_binder.RestoreScopes(stored_binders);

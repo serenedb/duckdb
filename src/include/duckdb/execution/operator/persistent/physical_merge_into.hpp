@@ -82,6 +82,7 @@ public:
 	optional_ptr<PhysicalMergeActionSource> source;
 	//! Projection that emits the RETURNING data of this action - set up by the PhysicalMergeInto
 	optional_ptr<PhysicalOperator> returning_projection;
+	bool on_conflict_update = false;
 };
 
 //! Plans the source that feeds the operators of the given merge action, together with a projection for the

@@ -42,6 +42,7 @@ Binder::BindMergeAction(LogicalMergeInto &merge_into, TableCatalogEntry &table, 
                         const vector<BindingAlias> &source_aliases, const vector<Identifier> &source_names) {
 	auto result = make_uniq<BoundMergeIntoAction>();
 	result->action_type = action.action_type;
+	result->on_conflict_update = action.on_conflict_update;
 	if (action.condition) {
 		ProjectionBinder proj_binder(*this, context, proj_index, expressions, "WHERE clause");
 		proj_binder.target_type = LogicalType::BOOLEAN;

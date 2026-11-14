@@ -103,7 +103,12 @@ void ReorderTableEntries(catalog_entry_vector_t &tables) {
 	while (!unordered.empty()) {
 		// Now we will start moving tables that have foreign key constraints
 		// if the tables they reference are already moved
+		const auto remaining = unordered.size();
 		ScanForeignKeyTable(ordered, unordered, false);
+		if (unordered.size() == remaining) {
+			ordered.insert(ordered.end(), unordered.begin(), unordered.end());
+			break;
+		}
 	}
 	tables = ordered;
 }

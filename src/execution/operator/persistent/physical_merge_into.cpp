@@ -407,13 +407,19 @@ public:
 
 	//! Record the matched target rows; throw if any row was already matched (cardinality violation). A distinct
 	//! count below the input count means a row ID repeated.
-	void CheckMatchedRows(DataChunk &matched, idx_t row_id_index) {
+	void CheckMatchedRows(DataChunk &matched, idx_t row_id_index, bool on_conflict_update) {
 		const auto count = matched.size();
-		if (matched_rows->Register(matched, row_id_index) != count) {
-			throw InvalidInputException(
-			    "MERGE INTO command cannot affect the same target row more than once. A target row matched more "
-			    "than one source row; ensure the source rows are deduplicated or the ON condition is unique.");
+		if (matched_rows->Register(matched, row_id_index) == count) {
+			return;
 		}
+		const auto extra_info = Exception::InitializeExtraInfo("CARDINALITY_VIOLATION", QueryLocation());
+		if (on_conflict_update) {
+			throw InvalidInputException(extra_info, "ON CONFLICT DO UPDATE command cannot affect row a second time");
+		}
+		throw InvalidInputException(
+		    extra_info,
+		    "MERGE INTO command cannot affect the same target row more than once. A target row matched more "
+		    "than one source row; ensure the source rows are deduplicated or the ON condition is unique.");
 	}
 
 	SinkResultType Sink(ExecutionContext &context, DataChunk &chunk, MergeIntoLocalState &local_state,
@@ -437,7 +443,7 @@ public:
 				if (range.condition == MergeActionCondition::WHEN_MATCHED &&
 				    (action->action_type == MergeActionType::MERGE_UPDATE ||
 				     action->action_type == MergeActionType::MERGE_DELETE)) {
-					CheckMatchedRows(*input_chunk, op.row_id_index);
+					CheckMatchedRows(*input_chunk, op.row_id_index, action->on_conflict_update);
 				}
 			}
 			// process the action

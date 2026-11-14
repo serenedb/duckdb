@@ -124,7 +124,7 @@ public:
 		op->function = make_uniq<SpecificFunctionMatcher>("sum");
 		op->policy = SetMatcher::Policy::UNORDERED;
 
-		auto arithmetic = make_uniq<FunctionExpressionMatcher>();
+		auto arithmetic = make_uniq<ExactArithmeticMatcher>();
 		arithmetic->function = make_uniq<SpecificFunctionMatcher>("+");
 		arithmetic->type = make_uniq<IntegerTypeMatcher>();
 		auto child_constant_matcher = make_uniq<ConstantExpressionMatcher>();

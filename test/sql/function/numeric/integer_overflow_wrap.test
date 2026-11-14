@@ -54,3 +54,120 @@ statement error
 SELECT i * 9223372036854775807 FROM range(3) t(i)
 ----
 Overflow in multiplication
+
+statement ok
+CREATE TABLE wrap_i (x INTEGER)
+
+statement ok
+INSERT INTO wrap_i VALUES (-2147483648), (-2147483643), (5), (2147483647)
+
+statement ok
+CREATE TABLE wrap_u (x UINTEGER)
+
+statement ok
+INSERT INTO wrap_u VALUES (0), (5), (4294967294)
+
+statement ok
+PREPARE wrap_filter AS SELECT x FROM wrap_i WHERE x + 1 < 0 ORDER BY x
+
+query I
+EXECUTE wrap_filter
+----
+-2147483648
+-2147483643
+
+statement ok
+SET integer_overflow = 'wrap'
+
+query I
+EXECUTE wrap_filter
+----
+-2147483648
+-2147483643
+2147483647
+
+query IIII
+SELECT x, x + 1, x + 1 < 0, -x FROM wrap_i ORDER BY x
+----
+-2147483648	-2147483647	true	-2147483648
+-2147483643	-2147483642	true	2147483643
+5	6	false	-5
+2147483647	-2147483648	true	-2147483647
+
+query I
+SELECT x FROM wrap_i WHERE x * 2 = 10 ORDER BY x
+----
+-2147483643
+5
+
+query I
+SELECT x FROM wrap_i WHERE x - 1 > 0 ORDER BY x
+----
+-2147483648
+5
+2147483647
+
+query I
+SELECT x FROM wrap_i WHERE -x > 0 ORDER BY x
+----
+-2147483643
+
+query I
+SELECT x FROM wrap_i WHERE -x = -2147483648 ORDER BY x
+----
+-2147483648
+
+query I
+SELECT sum(x + 1) FROM wrap_i
+----
+-6442450931
+
+query II
+SELECT x + 1 AS g, count(*) FROM wrap_i GROUP BY g ORDER BY g
+----
+-2147483648	1
+-2147483647	1
+-2147483642	1
+6	1
+
+query II
+SELECT -x AS g, count(*) FROM wrap_i GROUP BY g ORDER BY g
+----
+-2147483648	1
+-2147483647	1
+-5	1
+2147483643	1
+
+query II
+SELECT x, -x FROM wrap_u ORDER BY x
+----
+0	0
+5	4294967291
+4294967294	2
+
+query I
+SELECT x FROM wrap_u WHERE x + 5 = 3
+----
+4294967294
+
+statement ok
+PREPARE wrap_constant AS SELECT 9223372036854775807::BIGINT + 1
+
+query I
+EXECUTE wrap_constant
+----
+-9223372036854775808
+
+statement ok
+RESET integer_overflow
+
+statement error
+EXECUTE wrap_constant
+----
+Overflow in addition
+
+query I
+EXECUTE wrap_filter
+----
+-2147483648
+-2147483643

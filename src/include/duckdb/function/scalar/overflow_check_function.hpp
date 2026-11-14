@@ -6,9 +6,7 @@
 #include "duckdb/common/operator/subtract.hpp"
 #include "duckdb/common/types/hugeint.hpp"
 #include "duckdb/common/types/uhugeint.hpp"
-#include "duckdb/execution/expression_executor_state.hpp"
 #include "duckdb/function/scalar_function.hpp"
-#include "duckdb/main/settings.hpp"
 
 #include <type_traits>
 
@@ -207,11 +205,7 @@ bool TryOverflowCheckFlat(const Vector &left, const Vector &right, Vector &resul
 	return true;
 }
 
-inline bool IntegerOverflowWraps(ExpressionState &state) {
-	return state.HasContext() && Settings::Get<IntegerOverflowSetting>(state.GetContext()) == IntegerOverflowMode::WRAP;
-}
-
-template <class T, class CHECKED_OP>
+template <class T, class CHECKED_OP, IntegerOverflowMode MODE>
 void OverflowCheckFunction(DataChunk &input, ExpressionState &state, Vector &result) {
 	D_ASSERT(input.ColumnCount() == 2);
 	using WRAPPING_OP = typename WrappingOperator<CHECKED_OP>::type;
@@ -221,34 +215,34 @@ void OverflowCheckFunction(DataChunk &input, ExpressionState &state, Vector &res
 			return WRAPPING_OP::Operation(left, right, overflow);
 		});
 	}
-	if (overflow && !IntegerOverflowWraps(state)) {
+	if (MODE == IntegerOverflowMode::ERROR && overflow) {
 		BinaryExecutor::ExecuteStandard<T, T, T, CHECKED_OP>(input.data[0], input.data[1], result);
 	}
 }
 
-template <class CHECKED_OP>
+template <class CHECKED_OP, IntegerOverflowMode MODE>
 scalar_function_t GetOverflowCheckFunction(PhysicalType type) {
 	switch (type) {
 	case PhysicalType::INT8:
-		return &OverflowCheckFunction<int8_t, CHECKED_OP>;
+		return &OverflowCheckFunction<int8_t, CHECKED_OP, MODE>;
 	case PhysicalType::INT16:
-		return &OverflowCheckFunction<int16_t, CHECKED_OP>;
+		return &OverflowCheckFunction<int16_t, CHECKED_OP, MODE>;
 	case PhysicalType::INT32:
-		return &OverflowCheckFunction<int32_t, CHECKED_OP>;
+		return &OverflowCheckFunction<int32_t, CHECKED_OP, MODE>;
 	case PhysicalType::INT64:
-		return &OverflowCheckFunction<int64_t, CHECKED_OP>;
+		return &OverflowCheckFunction<int64_t, CHECKED_OP, MODE>;
 	case PhysicalType::UINT8:
-		return &OverflowCheckFunction<uint8_t, CHECKED_OP>;
+		return &OverflowCheckFunction<uint8_t, CHECKED_OP, MODE>;
 	case PhysicalType::UINT16:
-		return &OverflowCheckFunction<uint16_t, CHECKED_OP>;
+		return &OverflowCheckFunction<uint16_t, CHECKED_OP, MODE>;
 	case PhysicalType::UINT32:
-		return &OverflowCheckFunction<uint32_t, CHECKED_OP>;
+		return &OverflowCheckFunction<uint32_t, CHECKED_OP, MODE>;
 	case PhysicalType::UINT64:
-		return &OverflowCheckFunction<uint64_t, CHECKED_OP>;
+		return &OverflowCheckFunction<uint64_t, CHECKED_OP, MODE>;
 	case PhysicalType::INT128:
-		return &OverflowCheckFunction<hugeint_t, CHECKED_OP>;
+		return &OverflowCheckFunction<hugeint_t, CHECKED_OP, MODE>;
 	case PhysicalType::UINT128:
-		return &OverflowCheckFunction<uhugeint_t, CHECKED_OP>;
+		return &OverflowCheckFunction<uhugeint_t, CHECKED_OP, MODE>;
 	default:
 		throw NotImplementedException("Unimplemented type for GetOverflowCheckFunction: %s", TypeIdToString(type));
 	}

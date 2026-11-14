@@ -25,6 +25,8 @@
 #include "duckdb/planner/expression_binder/select_binder.hpp"
 #include "duckdb/main/settings.hpp"
 
+#include <absl/cleanup/cleanup.h>
+
 #include <functional>
 
 namespace duckdb {
@@ -301,14 +303,10 @@ static BindResult BindWithoutSetReturningExpansionImpl(ExpressionBinder &binder,
 		return fun();
 	}
 	select_binder->function_arg_level++;
-	try {
-		auto result = fun();
+	absl::Cleanup restore = [&] {
 		select_binder->function_arg_level--;
-		return result;
-	} catch (...) {
-		select_binder->function_arg_level--;
-		throw;
-	}
+	};
+	return fun();
 }
 
 BindResult ExpressionBinder::BindExpression(FunctionExpression &function, idx_t depth,

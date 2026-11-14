@@ -16,6 +16,7 @@
 #include "duckdb/parser/parsed_data/exported_table_data.hpp"
 #include "duckdb/catalog/catalog_entry_map.hpp"
 #include "duckdb/catalog/catalog_entry/schema_catalog_entry.hpp"
+#include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 
 namespace duckdb {
 
@@ -30,6 +31,8 @@ struct ExportEntries {
 	vector<reference<CatalogEntry>> tokenizers;
 	vector<reference<CatalogEntry>> jobs;
 };
+
+void ReorderTableEntries(catalog_entry_vector_t &tables);
 
 //! Parse a file from disk using a specified copy function and return the set of chunks retrieved from the file
 class PhysicalExport : public PhysicalOperator {
@@ -62,6 +65,8 @@ public:
 	static catalog_entry_vector_t GetNaiveExportOrder(ClientContext &context, Catalog &catalog);
 	static bool QualifyUserTypes(LogicalType &type, const unordered_map<idx_t, QualifiedName> &user_types,
 	                             bool nested_only = false);
+	static optional_ptr<const ColumnDefinition> OwningColumn(CatalogTransaction transaction,
+	                                                         const TableCatalogEntry &table, const CatalogEntry &owned);
 
 public:
 	// Sink interface

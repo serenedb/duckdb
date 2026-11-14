@@ -1674,6 +1674,15 @@ PEGTransformerFactory::TransformInfixOtherOperatorExpression(PEGTransformer &tra
 				}
 				continue;
 			}
+			if (split_operator.size() == 1 ||
+			    (split_operator.size() == 2 && StringUtil::CIEquals(split_operator.front(), "pg_catalog"))) {
+				if (const auto comparison = OperatorToExpressionType(split_operator.back());
+				    comparison != ExpressionType::INVALID) {
+					expr = make_uniq<ComparisonExpression>(comparison, std::move(children_function[0]),
+					                                       std::move(children_function[1]));
+					continue;
+				}
+			}
 			expr = TransformOperatorFunction(other_operator, std::move(children_function));
 		}
 	}

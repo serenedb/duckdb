@@ -117,7 +117,8 @@ static void QualifyUserFunctions(CatalogEntryRetriever &retriever, const Catalog
 				if (entry->ParentCatalog().IsTemporaryCatalog() && !home.IsTemporaryCatalog()) {
 					throw BinderException("Cannot use temporary function %s in a non-temporary relation", entry->name);
 				}
-				if (!home_schema.IsValid() || entry->ParentSchemaOid() != home_schema.GetIndex()) {
+				if (!home_schema.IsValid() || &entry->ParentCatalog() != &home ||
+				    entry->ParentSchemaOid() != home_schema.GetIndex()) {
 					auto qualified = entry->Cast<StandardEntry>().GetQualifiedName(entry->name);
 					if (&entry->ParentCatalog() == &home) {
 						qualified.StripCatalog();
@@ -163,6 +164,68 @@ void BoundCreateTableInfo::AddSubDependency(AlterTableType alter, const Identifi
 		return;
 	}
 	subdependency = SubDependency {alter, name};
+}
+
+static void CollectColumnNames(const ParsedExpression &expr, case_insensitive_set_t &names) {
+	if (expr.GetExpressionType() == ExpressionType::COLUMN_REF) {
+		names.insert(expr.Cast<ColumnRefExpression>().GetColumnName().GetIdentifierName());
+		return;
+	}
+	ParsedExpressionIterator::EnumerateChildren(
+	    expr, [&](const ParsedExpression &child) { CollectColumnNames(child, names); });
+}
+
+static string DefaultConstraintName(const CreateTableInfo &base, const Constraint &constraint) {
+	auto &table = base.GetTableName();
+	switch (constraint.type) {
+	case ConstraintType::UNIQUE: {
+		auto &unique = constraint.Cast<UniqueConstraint>();
+		if (unique.IsPrimaryKey()) {
+			return table + "_pkey";
+		}
+		if (unique.HasIndex()) {
+			return table + "_" + base.columns.GetColumn(unique.GetIndex()).Name() + "_key";
+		}
+		return table + "_" + StringUtil::Join(unique.GetColumnNames(), "_") + "_key";
+	}
+	case ConstraintType::CHECK: {
+		case_insensitive_set_t columns;
+		CollectColumnNames(*constraint.Cast<CheckConstraint>().expression, columns);
+		return columns.size() == 1 ? table + "_" + *columns.begin() + "_check" : table + "_check";
+	}
+	case ConstraintType::FOREIGN_KEY:
+		return table + "_" + StringUtil::Join(constraint.Cast<ForeignKeyConstraint>().fk_columns, "_") + "_fkey";
+	case ConstraintType::NOT_NULL:
+		return table + "_" + base.columns.GetColumn(constraint.Cast<NotNullConstraint>().index).Name() + "_not_null";
+	default:
+		throw InternalException("Unrecognized constraint type in DefaultConstraintName");
+	}
+}
+
+static void NameConstraints(CreateTableInfo &base) {
+	unordered_set<string> names;
+	for (auto &constraint : base.constraints) {
+		const auto &name = constraint->constraint_name;
+		if (!name.empty() && !names.insert(name).second) {
+			auto extra_info = Exception::InitializeExtraInfo("ENTRY_ALREADY_EXISTS", optional_idx());
+			extra_info["type"] = "Constraint";
+			throw CatalogException(extra_info,
+			                       StringUtil::Format("constraint \"%s\" for relation \"%s\" already exists", name,
+			                                          base.GetTableName().GetIdentifierName()));
+		}
+	}
+	for (auto &constraint : base.constraints) {
+		if (!constraint->constraint_name.empty()) {
+			continue;
+		}
+		auto name = DefaultConstraintName(base, *constraint);
+		auto candidate = name;
+		for (idx_t attempt = 1; names.contains(candidate); attempt++) {
+			candidate = name + to_string(attempt);
+		}
+		names.insert(candidate);
+		constraint->constraint_name = candidate;
+	}
 }
 
 vector<unique_ptr<BoundConstraint>> Binder::BindNewConstraints(BoundCreateTableInfo &info) {
@@ -214,6 +277,9 @@ vector<unique_ptr<BoundConstraint>> Binder::BindNewConstraints(BoundCreateTableI
 			auto logical_index = columns.PhysicalToLogical(column_index);
 			constraints.push_back(make_uniq<NotNullConstraint>(logical_index));
 			bound_constraints.push_back(make_uniq<BoundNotNullConstraint>(column_index));
+		}
+		if (info.schema.ParentCatalog().Compatibility() == SqlCompatibility::POSTGRES) {
+			NameConstraints(base);
 		}
 	}
 
@@ -635,64 +701,6 @@ static void CheckForeignKeyTypes(const ColumnList &pk_columns, const ColumnList 
 			                      "column %s (\"%s\")",
 			                      pk_col.Name(), pk_col.Type().ToString(), fk_col.Name(), fk_col.Type().ToString());
 		}
-	}
-}
-
-static void CollectColumnNames(const ParsedExpression &expr, case_insensitive_set_t &names) {
-	if (expr.GetExpressionType() == ExpressionType::COLUMN_REF) {
-		names.insert(expr.Cast<ColumnRefExpression>().GetColumnName().GetIdentifierName());
-		return;
-	}
-	ParsedExpressionIterator::EnumerateChildren(
-	    expr, [&](const ParsedExpression &child) { CollectColumnNames(child, names); });
-}
-
-static string DefaultConstraintName(const CreateTableInfo &base, const Constraint &constraint) {
-	auto &table = base.GetTableName();
-	switch (constraint.type) {
-	case ConstraintType::UNIQUE: {
-		auto &unique = constraint.Cast<UniqueConstraint>();
-		if (unique.IsPrimaryKey()) {
-			return table + "_pkey";
-		}
-		if (unique.HasIndex()) {
-			return table + "_" + base.columns.GetColumn(unique.GetIndex()).Name() + "_key";
-		}
-		return table + "_" + StringUtil::Join(unique.GetColumnNames(), "_") + "_key";
-	}
-	case ConstraintType::CHECK: {
-		case_insensitive_set_t columns;
-		CollectColumnNames(*constraint.Cast<CheckConstraint>().expression, columns);
-		return columns.size() == 1 ? table + "_" + *columns.begin() + "_check" : table + "_check";
-	}
-	case ConstraintType::FOREIGN_KEY:
-		return table + "_" + StringUtil::Join(constraint.Cast<ForeignKeyConstraint>().fk_columns, "_") + "_fkey";
-	case ConstraintType::NOT_NULL:
-		return table + "_" + base.columns.GetColumn(constraint.Cast<NotNullConstraint>().index).Name() + "_not_null";
-	default:
-		return string();
-	}
-}
-
-static void NameConstraints(CreateTableInfo &base) {
-	case_insensitive_set_t names;
-	for (auto &constraint : base.constraints) {
-		names.insert(constraint->constraint_name);
-	}
-	for (auto &constraint : base.constraints) {
-		if (!constraint->constraint_name.empty()) {
-			continue;
-		}
-		auto name = DefaultConstraintName(base, *constraint);
-		if (name.empty()) {
-			continue;
-		}
-		auto candidate = name;
-		for (idx_t attempt = 1; names.contains(candidate); attempt++) {
-			candidate = name + to_string(attempt);
-		}
-		names.insert(candidate);
-		constraint->constraint_name = candidate;
 	}
 }
 

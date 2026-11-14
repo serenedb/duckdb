@@ -609,6 +609,7 @@ struct DecimalType {
 
 struct StringType {
 	DUCKDB_API static string GetCollation(const LogicalType &type);
+	DUCKDB_API static LogicalType WithCollation(const LogicalType &type, string collation);
 };
 
 struct ListType {

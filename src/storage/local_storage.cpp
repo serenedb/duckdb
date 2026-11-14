@@ -15,6 +15,8 @@
 #include "duckdb/transaction/duck_transaction.hpp"
 #include "duckdb/transaction/duck_transaction_manager.hpp"
 
+#include <absl/cleanup/cleanup.h>
+
 namespace duckdb {
 
 LocalTableStorage::LocalTableStorage(ClientContext &context, DataTable &table,
@@ -181,25 +183,24 @@ ErrorData LocalTableStorage::AppendToIndexes(DuckTransaction &transaction, RowGr
 	table_chunk.InitializeEmpty(table_types);
 
 	ErrorData error;
-	try {
-		for (auto &index_chunk : source.Chunks(transaction, mapped_column_ids)) {
-			D_ASSERT(index_chunk.ColumnCount() == mapped_column_ids.size());
-			for (idx_t i = 0; i < mapped_column_ids.size(); i++) {
-				auto col_id = mapped_column_ids[i].GetPrimaryIndex();
-				table_chunk.data[col_id].Reference(index_chunk.data[i]);
-			}
-
-			error = index_list.Append(delete_indexes, table_chunk, start_row, index_append_mode, checkpoint_id,
-			                          dropped_indexes);
-			if (error.HasError()) {
-				break;
-			}
-			start_row += UnsafeNumericCast<row_t>(index_chunk.size());
-		}
-	} catch (...) {
+	absl::Cleanup finish = [&] {
 		index_list.FinishAppend();
-		throw;
+	};
+	for (auto &index_chunk : source.Chunks(transaction, mapped_column_ids)) {
+		D_ASSERT(index_chunk.ColumnCount() == mapped_column_ids.size());
+		for (idx_t i = 0; i < mapped_column_ids.size(); i++) {
+			auto col_id = mapped_column_ids[i].GetPrimaryIndex();
+			table_chunk.data[col_id].Reference(index_chunk.data[i]);
+		}
+
+		error = index_list.Append(delete_indexes, table_chunk, start_row, index_append_mode, checkpoint_id,
+		                          dropped_indexes);
+		if (error.HasError()) {
+			break;
+		}
+		start_row += UnsafeNumericCast<row_t>(index_chunk.size());
 	}
+	std::move(finish).Cancel();
 	auto finished = index_list.FinishAppend();
 	if (!error.HasError()) {
 		error = std::move(finished);

@@ -128,7 +128,7 @@ public:
 	virtual bool IsSettingVisible(const string &name) {
 		return true;
 	}
-	virtual void OnSettingChange(const string &name, SetScope scope) {
+	virtual void OnSettingChange(const string &name, SetScope scope, const Value &previous) {
 	}
 	virtual void OnQueryBegin() {
 	}
@@ -143,6 +143,9 @@ public:
 	virtual void OnTransactionRollback(MetaTransaction &transaction) {
 	}
 	virtual void OnBoundPlan(Binder &binder, LogicalOperator &plan) {
+	}
+	virtual idx_t ActingRole() const {
+		return 0;
 	}
 
 public:

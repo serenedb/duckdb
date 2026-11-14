@@ -6,6 +6,8 @@
 #include "duckdb/common/printer.hpp"
 #include "duckdb/storage/buffer_manager.hpp"
 
+#include <absl/cleanup/cleanup.h>
+
 namespace duckdb {
 
 PartitionedTupleData::PartitionedTupleData(PartitionedTupleDataType type_p, BufferManager &buffer_manager_p,
@@ -352,22 +354,7 @@ void PartitionedTupleData::Repartition(ClientContext &context, PartitionedTupleD
 			TupleDataChunkIterator iterator(partition, TupleDataPinProperties::DESTROY_AFTER_DONE, true);
 			auto &chunk_state = iterator.GetChunkState();
 			bool tracked_chunk_moved = false;
-			try {
-				do {
-					// Check for interrupts with each chunk
-					context.InterruptCheck();
-					const auto count = iterator.GetCurrentChunkCount();
-					new_partitioned_data.Append(append_state, chunk_state, count);
-					if (key_tracker) {
-						try {
-							key_tracker->RepartitionChunk(partition, chunk_state, append_state, count);
-						} catch (...) {
-							tracked_chunk_moved = true;
-							throw;
-						}
-					}
-				} while (iterator.Next());
-			} catch (...) {
+			absl::Cleanup drop_moved = [&] {
 				partition.RemoveFirstChunks(iterator.GetCurrentChunkIndex() + (tracked_chunk_moved ? 1 : 0));
 				count = 0;
 				data_size = 0;
@@ -375,8 +362,19 @@ void PartitionedTupleData::Repartition(ClientContext &context, PartitionedTupleD
 					count += remaining->Count();
 					data_size += remaining->data_size;
 				}
-				throw;
-			}
+			};
+			do {
+				// Check for interrupts with each chunk
+				context.InterruptCheck();
+				const auto count = iterator.GetCurrentChunkCount();
+				new_partitioned_data.Append(append_state, chunk_state, count);
+				if (key_tracker) {
+					tracked_chunk_moved = true;
+					key_tracker->RepartitionChunk(partition, chunk_state, append_state, count);
+					tracked_chunk_moved = false;
+				}
+			} while (iterator.Next());
+			std::move(drop_moved).Cancel();
 
 			RepartitionFinalizeStates(*this, new_partitioned_data, append_state, partition_idx);
 		}

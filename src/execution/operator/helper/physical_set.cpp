@@ -13,6 +13,15 @@ void PhysicalSet::SetGenericVariable(ClientContext &context, idx_t setting_index
 	Settings::Set(context, setting_index, scope, std::move(target_value));
 }
 
+Value PhysicalSet::SessionValue(ClientContext &context, const Identifier &name, optional_idx setting_index) {
+	if (setting_index.IsValid() && !ClientConfig::GetConfig(context).user_settings.IsSet(setting_index.GetIndex())) {
+		return Value();
+	}
+	Value value;
+	context.TryGetCurrentSetting(name, value);
+	return value;
+}
+
 void PhysicalSet::SetExtensionVariable(ClientContext &context, ExtensionOption &extension_option,
                                        const Identifier &name, SetScope scope, const Value &value) {
 	// Resolve AUTOMATIC against the option's default_scope first so downstream
@@ -57,13 +66,15 @@ void PhysicalSet::SetVariable(ClientContext &context, const Identifier &name, Se
 		// Invoke the pre-SET observer after resolution so the handler only sees
 		// valid option names and can safely snapshot the current value.
 		Value casted_value = value.CastAs(context, extension_option.type);
-		context.OnSettingChange(name.GetIdentifierName(), scope);
+		context.OnSettingChange(name.GetIdentifierName(), scope,
+		                        SessionValue(context, name, extension_option.setting_index));
 		SetExtensionVariable(context, extension_option, name, scope, casted_value);
 		return;
 	}
 	SetScope variable_scope = GetSettingScope(*option, scope);
 	Value input_val = value.CastAs(context, DBConfig::ParseLogicalType(option->parameter_type));
-	context.OnSettingChange(name.GetIdentifierName(), scope);
+	context.OnSettingChange(name.GetIdentifierName(), scope,
+	                        SessionValue(context, name, option->default_value ? option->setting_idx : optional_idx()));
 	if (option->default_value) {
 		if (option->set_callback) {
 			SettingCallbackInfo info(context, variable_scope);
