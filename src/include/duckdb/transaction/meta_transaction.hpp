@@ -70,6 +70,7 @@ public:
 
 	idx_t GetActiveQuery();
 	void SetActiveQuery(transaction_t query_number);
+	void StatementEnd();
 
 	void SetReadOnly();
 	bool IsReadOnly() const;

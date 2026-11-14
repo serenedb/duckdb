@@ -242,6 +242,19 @@ void MetaTransaction::SetActiveQuery(transaction_t query_number) {
 	}
 }
 
+void MetaTransaction::StatementEnd() {
+	vector<reference<Transaction>> started;
+	{
+		lock_guard<mutex> guard(lock);
+		for (auto &entry : transactions) {
+			started.push_back(entry.second.transaction);
+		}
+	}
+	for (auto &transaction : started) {
+		transaction.get().OnStatementEnd(context);
+	}
+}
+
 optional_ptr<AttachedDatabase> MetaTransaction::GetReferencedDatabase(const Identifier &name) {
 	lock_guard<mutex> guard(referenced_database_lock);
 	auto entry = used_databases.find(name);
