@@ -3,6 +3,7 @@
 #include "duckdb/parser/statement/copy_database_statement.hpp"
 #include "duckdb/catalog/catalog_entry/list.hpp"
 #include "duckdb/parser/parsed_data/create_schema_info.hpp"
+#include "duckdb/parser/parsed_data/create_sequence_info.hpp"
 #include "duckdb/parser/parsed_data/create_table_info.hpp"
 #include "duckdb/planner/operator/logical_copy_database.hpp"
 #include "duckdb/execution/operator/persistent/physical_export.hpp"
@@ -43,6 +44,7 @@ unique_ptr<LogicalOperator> Binder::BindCopyDatabaseSchema(Catalog &from_databas
 			continue;
 		}
 		auto create_info = entry.get().GetInfo();
+		create_info->permissions = entry.get().permissions;
 		if (create_info->type == CatalogType::TABLE_ENTRY) {
 			auto &columns = create_info->Cast<CreateTableInfo>().columns;
 			for (idx_t i = 0; i < columns.LogicalColumnCount(); i++) {
@@ -60,6 +62,9 @@ unique_ptr<LogicalOperator> Binder::BindCopyDatabaseSchema(Catalog &from_databas
 		// Update all the dependencies of the entry to point to the newly created entries on the target database
 		LogicalDependencyList altered_dependencies;
 		for (auto &dep : create_info->dependencies.Set()) {
+			if (dep.owned_by) {
+				continue;
+			}
 			auto altered_dep = dep;
 			if (dep.catalog == from_database.GetName()) {
 				if (dependency_manager) {
@@ -72,6 +77,17 @@ unique_ptr<LogicalOperator> Binder::BindCopyDatabaseSchema(Catalog &from_databas
 		}
 		create_info->dependencies = altered_dependencies;
 		create_info->on_conflict = on_conflict;
+		if (create_info->type == CatalogType::SEQUENCE_ENTRY) {
+			auto &sequence = create_info->Cast<CreateSequenceInfo>();
+			sequence.owner_column.SetInvalid();
+			auto owner = from_database.OwnerOf(transaction, entry);
+			if (owner && owner->type == CatalogType::TABLE_ENTRY) {
+				auto &table = owner->Cast<TableCatalogEntry>();
+				if (auto column = PhysicalExport::OwningColumn(transaction, table, entry)) {
+					sequence.owned_by = {table.name, column->Name()};
+				}
+			}
+		}
 		info->entries.push_back(std::move(create_info));
 	}
 

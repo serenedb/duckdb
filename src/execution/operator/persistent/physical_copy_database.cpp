@@ -5,7 +5,9 @@
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/planner/binder.hpp"
 #include "duckdb/planner/parsed_data/bound_create_table_info.hpp"
+#include "duckdb/parser/parsed_data/alter_table_info.hpp"
 #include "duckdb/parser/parsed_data/create_schema_info.hpp"
+#include "duckdb/parser/parsed_data/create_sequence_info.hpp"
 #include "duckdb/parser/parsed_data/create_macro_info.hpp"
 #include "duckdb/parser/parsed_data/create_table_info.hpp"
 #include "duckdb/parser/parsed_data/create_tokenizer_info.hpp"
@@ -34,6 +36,7 @@ PhysicalCopyDatabase::~PhysicalCopyDatabase() {
 SourceResultType PhysicalCopyDatabase::GetDataInternal(ExecutionContext &context, DataChunk &chunk,
                                                        OperatorSourceInput &input) const {
 	auto &catalog = Catalog::GetCatalog(context.client, info->target_database);
+	vector<unique_ptr<ChangeOwnershipInfo>> ownerships;
 	for (auto &create_info : info->entries) {
 		switch (create_info->type) {
 		case CatalogType::SCHEMA_ENTRY:
@@ -42,9 +45,20 @@ SourceResultType PhysicalCopyDatabase::GetDataInternal(ExecutionContext &context
 		case CatalogType::VIEW_ENTRY:
 			catalog.CreateView(context.client, create_info->Cast<CreateViewInfo>());
 			break;
-		case CatalogType::SEQUENCE_ENTRY:
-			catalog.CreateSequence(context.client, create_info->Cast<CreateSequenceInfo>());
+		case CatalogType::SEQUENCE_ENTRY: {
+			auto &sequence = create_info->Cast<CreateSequenceInfo>();
+			if (!sequence.owned_by.empty()) {
+				auto ownership = make_uniq<ChangeOwnershipInfo>(
+				    CatalogType::SEQUENCE_ENTRY,
+				    AlterEntryData(sequence.GetQualifiedName(), OnEntryNotFound::THROW_EXCEPTION), Identifier(),
+				    Identifier());
+				ownership->owner_path = std::move(sequence.owned_by);
+				sequence.owned_by.clear();
+				ownerships.push_back(std::move(ownership));
+			}
+			catalog.CreateSequence(context.client, sequence);
 			break;
+		}
 		case CatalogType::TYPE_ENTRY:
 			catalog.CreateType(context.client, create_info->Cast<CreateTypeInfo>());
 			break;
@@ -65,6 +79,9 @@ SourceResultType PhysicalCopyDatabase::GetDataInternal(ExecutionContext &context
 			throw NotImplementedException("Entry type %s not supported in PhysicalCopyDatabase",
 			                              CatalogTypeToString(create_info->type));
 		}
+	}
+	for (auto &ownership : ownerships) {
+		catalog.Alter(context.client, *ownership);
 	}
 
 	return SourceResultType::FINISHED;
