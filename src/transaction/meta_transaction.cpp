@@ -237,7 +237,6 @@ void MetaTransaction::SetActiveQuery(transaction_t query_number) {
 	lock_guard<mutex> guard(lock);
 	active_query = query_number;
 	statement_databases.clear();
-	frozen_databases = FrozenDatabases::NONE;
 	for (auto &entry : transactions) {
 		entry.second.transaction.active_query = query_number;
 	}
@@ -283,18 +282,10 @@ AttachedDatabase &MetaTransaction::UseDatabase(shared_ptr<AttachedDatabase> &dat
 	return db_ref;
 }
 
-vector<shared_ptr<AttachedDatabase>> &MetaTransaction::GetStatementDatabases(ClientContext &context,
-                                                                             bool include_hidden) {
+vector<shared_ptr<AttachedDatabase>> &MetaTransaction::GetStatementDatabases(ClientContext &context) {
 	lock_guard<mutex> guard(lock);
-	const auto wanted = include_hidden ? FrozenDatabases::ALL : FrozenDatabases::VISIBLE;
-	if (frozen_databases < wanted) {
-		for (auto &database : DatabaseManager::Get(context).GetDatabases(context)) {
-			if (database->GetVisibility() == AttachVisibility::HIDDEN ? include_hidden
-			                                                          : frozen_databases == FrozenDatabases::NONE) {
-				statement_databases.push_back(std::move(database));
-			}
-		}
-		frozen_databases = wanted;
+	if (statement_databases.empty()) {
+		statement_databases = DatabaseManager::Get(context).GetDatabases(context);
 	}
 	return statement_databases;
 }

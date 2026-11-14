@@ -1760,7 +1760,7 @@ Catalog::GetAllSchemas(ClientContext &context, bool include_hidden,
 	vector<reference<SchemaCatalogEntry>> result;
 
 	auto &meta_transaction = MetaTransaction::Get(context);
-	auto &databases = meta_transaction.GetStatementDatabases(context, include_hidden);
+	auto &databases = meta_transaction.GetStatementDatabases(context);
 	for (auto &database : databases) {
 		if (!include_hidden && database->GetVisibility() == AttachVisibility::HIDDEN) {
 			continue;

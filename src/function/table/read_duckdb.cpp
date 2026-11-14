@@ -280,6 +280,7 @@ AttachedDatabase &DuckDBReader::GetAttachedDatabase() {
 		AttachOptions attach_options(attach_kv, AccessMode::READ_ONLY);
 		attach_options.visibility = AttachVisibility::HIDDEN;
 		attach_options.borrow_open_database = true;
+		attach_options.owner = &context;
 
 		auto attached = db_manager.AttachDatabase(context, info, attach_options);
 		db_wrapper = make_shared_ptr<AttachedDatabaseWrapper>(context, info.name, std::move(attached));
