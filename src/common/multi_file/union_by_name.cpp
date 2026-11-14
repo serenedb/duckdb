@@ -1,5 +1,7 @@
 #include "duckdb/common/multi_file/union_by_name.hpp"
+#include "duckdb/common/enums/role_capability.hpp"
 #include "duckdb/common/multi_file/multi_file_function.hpp"
+#include "duckdb/main/client_context.hpp"
 #include "duckdb/parallel/task_executor.hpp"
 
 namespace duckdb {
@@ -47,6 +49,9 @@ vector<shared_ptr<BaseUnionData>> UnionByName::UnionCols(ClientContext &context,
                                                          MultiFileReaderInterface &interface) {
 	vector<shared_ptr<BaseUnionData>> union_readers;
 	union_readers.resize(files.size());
+	for (auto &file : files) {
+		context.CheckFileAccess(file.path, RoleCapability::ReadServerFiles);
+	}
 
 	atomic<idx_t> next_file {0};
 	const auto num_tasks = MinValue<idx_t>(files.size(), TaskScheduler::QueryThreads(context));
