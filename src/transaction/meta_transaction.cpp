@@ -15,7 +15,9 @@ MetaTransaction::MetaTransaction(ClientContext &context_p, timestamp_t start_tim
                                  transaction_t transaction_id_p)
     : context(context_p), start_timestamp(start_timestamp_p), global_transaction_id(transaction_id_p),
       transaction_validity(*context_p.db, ValidChecker::Scope::TRANSACTION), active_query(MAXIMUM_QUERY_ID),
-      modified_database(nullptr), is_read_only(false) {
+      modified_database(nullptr), is_read_only(false),
+      used_databases(0, IdentifierHashFunction(DatabaseManager::Get(context_p).CaseSensitiveNames()),
+                     IdentifierEquality(DatabaseManager::Get(context_p).CaseSensitiveNames())) {
 }
 
 MetaTransaction::~MetaTransaction() = default;

@@ -51,6 +51,19 @@ void DatabaseManager::InitializeSystemCatalog() {
 	system->Initialize();
 }
 
+void DatabaseManager::UseExactNames() {
+	lock_guard<mutex> guard(databases_lock);
+	if (case_sensitive_names) {
+		return;
+	}
+	case_sensitive_names = true;
+	identifier_map_t<shared_ptr<AttachedDatabase>> exact(0, IdentifierHashFunction(true), IdentifierEquality(true));
+	for (auto &entry : databases) {
+		exact.emplace(entry.first, entry.second);
+	}
+	databases = std::move(exact);
+}
+
 void DatabaseManager::FinalizeStartup() {
 	auto dbs = GetDatabases();
 	for (auto &db : dbs) {

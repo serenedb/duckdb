@@ -54,6 +54,10 @@ public:
 	}
 	//! Initializes the system catalog of the attached SYSTEM_DATABASE.
 	void InitializeSystemCatalog();
+	void UseExactNames();
+	bool CaseSensitiveNames() const {
+		return case_sensitive_names;
+	}
 	//! Finalize starting up the system
 	void FinalizeStartup();
 	//! Get an attached database by its name
@@ -162,6 +166,7 @@ private:
 	DatabaseInstance &db;
 	//! The system database is a special database that holds system entries (e.g. functions)
 	shared_ptr<AttachedDatabase> system;
+	bool case_sensitive_names = false;
 	//! Lock for databases
 	mutex databases_lock;
 	//! The set of attached databases
