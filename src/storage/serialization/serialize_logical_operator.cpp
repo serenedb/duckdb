@@ -239,6 +239,7 @@ void BoundMergeIntoAction::Serialize(Serializer &serializer) const {
 	serializer.WritePropertyWithDefault<vector<idx_t>>(16585, "old_value_positions", old_value_positions);
 	serializer.WritePropertyWithDefault<vector<idx_t>>(16586, "old_value_inputs", old_value_inputs);
 	serializer.WritePropertyWithDefault<bool>(16587, "in_place_unchanged_rows", in_place_unchanged_rows);
+	serializer.WritePropertyWithDefault<bool>(16588, "on_conflict_update", on_conflict_update, false);
 }
 
 unique_ptr<BoundMergeIntoAction> BoundMergeIntoAction::Deserialize(Deserializer &deserializer) {
@@ -252,6 +253,7 @@ unique_ptr<BoundMergeIntoAction> BoundMergeIntoAction::Deserialize(Deserializer 
 	deserializer.ReadPropertyWithDefault<vector<idx_t>>(16585, "old_value_positions", result->old_value_positions);
 	deserializer.ReadPropertyWithDefault<vector<idx_t>>(16586, "old_value_inputs", result->old_value_inputs);
 	deserializer.ReadPropertyWithDefault<bool>(16587, "in_place_unchanged_rows", result->in_place_unchanged_rows);
+	deserializer.ReadPropertyWithExplicitDefault<bool>(16588, "on_conflict_update", result->on_conflict_update, false);
 	return result;
 }
 
@@ -656,6 +658,8 @@ void LogicalInsert::Serialize(Serializer &serializer) const {
 	serializer.WritePropertyWithDefault<TableIndex>(204, "table_index", table_index);
 	serializer.WritePropertyWithDefault<bool>(205, "return_chunk", return_chunk);
 	serializer.WritePropertyWithDefault<vector<unique_ptr<Expression>>>(206, "bound_defaults", bound_defaults);
+	serializer.WritePropertyWithDefault<OnConflictAction>(207, "action_type", action_type, OnConflictAction::THROW);
+	serializer.WritePropertyWithDefault<unordered_set<idx_t>>(209, "on_conflict_filter", on_conflict_filter);
 }
 
 unique_ptr<LogicalOperator> LogicalInsert::Deserialize(Deserializer &deserializer) {
@@ -666,6 +670,8 @@ unique_ptr<LogicalOperator> LogicalInsert::Deserialize(Deserializer &deserialize
 	deserializer.ReadPropertyWithDefault<TableIndex>(204, "table_index", result->table_index);
 	deserializer.ReadPropertyWithDefault<bool>(205, "return_chunk", result->return_chunk);
 	deserializer.ReadPropertyWithDefault<vector<unique_ptr<Expression>>>(206, "bound_defaults", result->bound_defaults);
+	deserializer.ReadPropertyWithExplicitDefault<OnConflictAction>(207, "action_type", result->action_type, OnConflictAction::THROW);
+	deserializer.ReadPropertyWithDefault<unordered_set<idx_t>>(209, "on_conflict_filter", result->on_conflict_filter);
 	return std::move(result);
 }
 
