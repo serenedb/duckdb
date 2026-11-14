@@ -15,6 +15,7 @@
 #include "duckdb/common/unordered_set.hpp"
 #include "duckdb/common/vector.hpp"
 #include "duckdb/common/enums/database_modification_type.hpp"
+#include "duckdb/common/enums/integer_overflow_mode.hpp"
 #include "duckdb/common/enums/trigger_type.hpp"
 #include "duckdb/common/optional.hpp"
 
@@ -139,6 +140,7 @@ struct StatementProperties {
 	optional<ReplicationRole> replication_role;
 	optional_idx acting_role;
 	optional_idx search_path_generation;
+	optional<IntegerOverflowMode> integer_overflow;
 
 	bool IsReadOnly() {
 		return modified_databases.empty();

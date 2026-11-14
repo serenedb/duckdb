@@ -28,6 +28,7 @@
 #include "duckdb/execution/expression_executor.hpp"
 #include "duckdb/function/function_binder.hpp"
 #include "duckdb/function/scalar/date_bucket_rewrite.hpp"
+#include "duckdb/function/scalar/operators.hpp"
 #include "duckdb/planner/expression/bound_case_expression.hpp"
 #include "duckdb/planner/expression/bound_cast_expression.hpp"
 #include "duckdb/planner/expression/bound_comparison_expression.hpp"
@@ -328,12 +329,16 @@ bool IsMonotone(const Folder &folder, Expression &expr, optional_ptr<Expression>
 			return true;
 		}
 		if (children.size() == 2 && NameIn(name, {"+", "-", "*"})) {
-			return (folder.IsConstant(*children[0]) || folder.IsConstant(*children[1])) &&
+			return !ArithmeticWraps(expr.Cast<BoundFunctionExpression>()) &&
+			       (folder.IsConstant(*children[0]) || folder.IsConstant(*children[1])) &&
 			       IsMonotone(folder, *children[0], column, columns) &&
 			       IsMonotone(folder, *children[1], column, columns);
 		}
 		if (children.size() == 2 && NameIn(name, {"/", "//", "round", "trunc"})) {
 			return folder.IsNonNullConstant(*children[1]) && IsMonotone(folder, *children[0], column, columns);
+		}
+		if (children.size() == 1 && name == "-" && ArithmeticWraps(expr.Cast<BoundFunctionExpression>())) {
+			return false;
 		}
 		if (children.size() == 1 && NameIn(name, {"-", "floor", "ceil", "ceiling", "trunc", "round", "ln", "log",
 		                                          "log2", "log10", "sqrt", "exp", "cbrt", "sign"})) {
@@ -738,6 +743,10 @@ bool WrapperAllowed(const Folder &folder, const Expression &expr, idx_t child_in
 	auto &children = expr.Cast<BoundFunctionExpression>().GetChildren();
 	const auto &name = FunctionName(expr);
 	const auto &child_type = children[child_index]->GetReturnType();
+	if (NameIn(name, {"+", "-", "*"}) && children.size() == 2 &&
+	    ArithmeticWraps(expr.Cast<BoundFunctionExpression>())) {
+		return false;
+	}
 	if (NameIn(name, {"+", "-", "*", "/", "//"}) && children.size() == 2) {
 		return ArithmeticWrapper(folder, expr, name, child_index, child_type, info);
 	}

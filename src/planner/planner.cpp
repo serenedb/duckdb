@@ -241,6 +241,7 @@ void Planner::CreatePlan(SQLStatement &statement) {
 	properties.bound_all_parameters = !bound_parameters.rebind && parameters_resolved;
 	properties.acting_role = context.ActingRole();
 	properties.search_path_generation = ClientData::Get(context).catalog_search_path->Generation();
+	properties.integer_overflow = Settings::Get<IntegerOverflowSetting>(context);
 
 	Planner::VerifyPlan(context, plan, bound_parameters.GetParametersPtr());
 

@@ -18,7 +18,7 @@ MoveConstantsRule::MoveConstantsRule(ExpressionRewriter &rewriter) : Rule(rewrit
 	op->matchers.push_back(make_uniq<ConstantExpressionMatcher>());
 	op->policy = SetMatcher::Policy::UNORDERED;
 
-	auto arithmetic = make_uniq<FunctionExpressionMatcher>();
+	auto arithmetic = make_uniq<ExactArithmeticMatcher>();
 	// we handle multiplication, addition and subtraction because those are "easy"
 	// integer division makes the division case difficult
 	// e.g. [x / 2 = 3] means [x = 6 OR x = 7] because of truncation -> no clean rewrite rules
@@ -241,7 +241,7 @@ MoveUnaryMinusRule::MoveUnaryMinusRule(ExpressionRewriter &rewriter) : Rule(rewr
 	op->policy = SetMatcher::Policy::UNORDERED;
 
 	// match a unary minus over a numeric expression, e.g. [-x = -5] or [-x < -3.14]
-	auto negation = make_uniq<FunctionExpressionMatcher>();
+	auto negation = make_uniq<ExactArithmeticMatcher>();
 	negation->function = make_uniq<SpecificFunctionMatcher>("-");
 	negation->type = make_uniq<NumericTypeMatcher>();
 	negation->matchers.push_back(make_uniq<ExpressionMatcher>());

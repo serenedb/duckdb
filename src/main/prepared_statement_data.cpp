@@ -9,6 +9,7 @@
 #include "duckdb/main/client_data.hpp"
 #include "duckdb/main/database_manager.hpp"
 #include "duckdb/main/prepared_statement.hpp"
+#include "duckdb/main/settings.hpp"
 #include "duckdb/transaction/transaction.hpp"
 #include "duckdb/execution/physical_plan_generator.hpp"
 
@@ -119,6 +120,9 @@ bool PreparedStatementData::RequireRebind(ClientContext &context,
 	}
 	if (properties.search_path_generation.IsValid() &&
 	    properties.search_path_generation.GetIndex() != ClientData::Get(context).catalog_search_path->Generation()) {
+		return true;
+	}
+	if (properties.integer_overflow && *properties.integer_overflow != Settings::Get<IntegerOverflowSetting>(context)) {
 		return true;
 	}
 	if (!properties.bound_all_parameters) {

@@ -145,6 +145,11 @@ public:
 	              optional_ptr<const Identifier> function_name) const override;
 };
 
+class ExactArithmeticMatcher : public FunctionExpressionMatcher {
+public:
+	bool Match(Expression &expr, vector<reference<Expression>> &bindings) override;
+};
+
 class AggregateExpressionMatcher : public ExpressionMatcher {
 public:
 	AggregateExpressionMatcher() : ExpressionMatcher(ExpressionClass::BOUND_AGGREGATE) {
