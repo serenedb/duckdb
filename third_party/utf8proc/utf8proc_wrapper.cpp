@@ -479,7 +479,7 @@ size_t Utf8Proc::RenderWidth(std::string_view str) {
 	return render_width;
 }
 
-bool Utf8Proc::ValidUpperBound(const string &str, string &result) {
+bool Utf8Proc::ValidUpperBound(std::string_view str, string &result) {
 	if (str.empty()) {
 		return false;
 	}
@@ -518,15 +518,16 @@ bool Utf8Proc::ValidUpperBound(const string &str, string &result) {
 	return FindNextLegalUTF8(result);
 }
 
-bool Utf8Proc::ValidLowerBound(const string &str, string &result) {
+bool Utf8Proc::ValidLowerBound(std::string_view str, string &result) {
 	size_t invalid_pos;
-	if (Analyze(str.c_str(), str.size(), nullptr, &invalid_pos) != UnicodeType::INVALID) {
+	if (Analyze(str.data(), str.size(), nullptr, &invalid_pos) != UnicodeType::INVALID) {
 		result = str;
 		return true;
 	}
 	// Everything before invalid_pos is valid UTF-8.  A NUL byte is always less
 	// than any byte a valid continuation or leading byte could produce (>= 0x80).
-	result = str.substr(0, invalid_pos) + '\0';
+	result = str.substr(0, invalid_pos + 1);
+	result[invalid_pos] = '\0';
 	return true;
 }
 

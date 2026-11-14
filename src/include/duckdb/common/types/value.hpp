@@ -308,8 +308,8 @@ public:
 		return true;
 	}
 	DUCKDB_API static bool StringIsValid(const char *str, idx_t length);
-	static bool StringIsValid(const string &str) {
-		return StringIsValid(str.c_str(), str.size());
+	static bool StringIsValid(std::string_view str) {
+		return StringIsValid(str.data(), str.size());
 	}
 
 	//! Returns true if the values are (approximately) equivalent. Note this is NOT the SQL equivalence. For this

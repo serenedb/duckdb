@@ -338,7 +338,7 @@ Value ParquetStatisticsUtils::ConvertValueInternal(const LogicalType &type, cons
 	}
 }
 
-bool IsVariantNull(const string &str) {
+bool IsVariantNull(std::string_view str) {
 	return str.size() == 1 && str[0] == '\0';
 }
 

@@ -9,6 +9,7 @@
 #pragma once
 
 #include <string>
+#include <string_view>
 #include <cassert>
 #include <cstring>
 #include <cstdint>
@@ -51,12 +52,12 @@ public:
 	//! compute the smallest valid UTF-8 string that is strictly greater than every
 	//! string that shares the same byte prefix.  Returns false when no finite upper
 	//! bound exists (e.g. the string is empty or consists entirely of U+10FFFF).
-	static bool ValidUpperBound(const std::string &str, std::string &result);
+	static bool ValidUpperBound(std::string_view str, std::string &result);
 
 	//! Given a string that may contain an invalid or truncated UTF-8 sequence,
 	//! compute a valid UTF-8 lower bound by replacing the first invalid byte (and
 	//! everything after it) with a NUL byte.
-	static bool ValidLowerBound(const std::string &str, std::string &result);
+	static bool ValidLowerBound(std::string_view str, std::string &result);
 
 	//! Transform a codepoint to utf8 and writes it to "c", sets "sz" to the size of the codepoint
 	static bool CodepointToUtf8(int cp, int &sz, char *c);

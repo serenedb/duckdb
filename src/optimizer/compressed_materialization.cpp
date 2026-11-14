@@ -783,11 +783,11 @@ unique_ptr<BaseStatistics> CMHelper::CreateStringCompressStats(const BaseStatist
 
 	uint8_t min_numeric = 0;
 	if (max_string_length != 0 && !min_string.empty()) {
-		min_numeric = *reinterpret_cast<const uint8_t *>(min_string.c_str());
+		min_numeric = *reinterpret_cast<const uint8_t *>(min_string.data());
 	}
 	uint8_t max_numeric = 0;
 	if (max_string_length != 0 && !max_string.empty()) {
-		max_numeric = *reinterpret_cast<const uint8_t *>(max_string.c_str());
+		max_numeric = *reinterpret_cast<const uint8_t *>(max_string.data());
 	}
 
 	Value min_val = Value::USMALLINT(min_numeric);

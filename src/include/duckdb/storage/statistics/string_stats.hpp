@@ -15,6 +15,8 @@
 #include "duckdb/common/array_ptr.hpp"
 #include "duckdb/storage/statistics/stats_merge_type.hpp"
 
+#include <absl/base/attributes.h>
+
 namespace duckdb {
 class BaseStatistics;
 struct SelectionVector;
@@ -82,9 +84,9 @@ struct StringStats {
 	//! Whether or not the strings can contain unicode
 	DUCKDB_API static bool CanContainUnicode(const BaseStatistics &stats);
 	//! Returns the min value
-	DUCKDB_API static string Min(const BaseStatistics &stats);
+	DUCKDB_API static std::string_view Min(const BaseStatistics &stats ABSL_ATTRIBUTE_LIFETIME_BOUND);
 	//! Returns the max value
-	DUCKDB_API static string Max(const BaseStatistics &stats);
+	DUCKDB_API static std::string_view Max(const BaseStatistics &stats ABSL_ATTRIBUTE_LIFETIME_BOUND);
 	//! Returns a valid UTF-8 lower bound for the min value, or NULL if stats have no min
 	DUCKDB_API static Value TryGetValidMin(const BaseStatistics &stats);
 	//! Returns a valid UTF-8 upper bound for the max value, or NULL if no finite bound exists
