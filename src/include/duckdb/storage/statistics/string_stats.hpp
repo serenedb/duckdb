@@ -87,6 +87,8 @@ struct StringStats {
 	DUCKDB_API static std::string_view Min(const BaseStatistics &stats ABSL_ATTRIBUTE_LIFETIME_BOUND);
 	//! Returns the max value
 	DUCKDB_API static std::string_view Max(const BaseStatistics &stats ABSL_ATTRIBUTE_LIFETIME_BOUND);
+	DUCKDB_API static std::string_view GetMinUnsafe(const BaseStatistics &stats ABSL_ATTRIBUTE_LIFETIME_BOUND);
+	DUCKDB_API static std::string_view GetMaxUnsafe(const BaseStatistics &stats ABSL_ATTRIBUTE_LIFETIME_BOUND);
 	//! Returns a valid UTF-8 lower bound for the min value, or NULL if stats have no min
 	DUCKDB_API static Value TryGetValidMin(const BaseStatistics &stats);
 	//! Returns a valid UTF-8 upper bound for the max value, or NULL if no finite bound exists

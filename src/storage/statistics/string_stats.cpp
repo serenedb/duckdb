@@ -151,6 +151,18 @@ std::string_view StringStats::Max(const BaseStatistics &stats) {
 	return std::string_view(string_data.max.GetData(), string_data.max.GetSize());
 }
 
+std::string_view StringStats::GetMinUnsafe(const BaseStatistics &stats) {
+	auto &string_data = GetDataUnsafe(stats);
+	D_ASSERT(StatsIsSet(string_data.min_type));
+	return std::string_view(string_data.min.GetData(), string_data.min.GetSize());
+}
+
+std::string_view StringStats::GetMaxUnsafe(const BaseStatistics &stats) {
+	auto &string_data = GetDataUnsafe(stats);
+	D_ASSERT(StatsIsSet(string_data.max_type));
+	return std::string_view(string_data.max.GetData(), string_data.max.GetSize());
+}
+
 Value StringStats::TryGetValidMin(const BaseStatistics &stats) {
 	auto min = Min(stats);
 	if (GetMinType(stats) == StringStatsType::EXACT_STATS) {
