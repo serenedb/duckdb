@@ -150,10 +150,15 @@ static void DropTogether(ClientContext &context, DropInfo &info) {
 	if (!info.cascade && entries.size() > 1) {
 		catalog.RefuseDroppingTogether(catalog.GetCatalogTransaction(context), entries);
 	}
+	vector<idx_t> together;
+	for (auto &entry : entries) {
+		together.push_back(entry.get().oid);
+	}
 	for (auto &entry : catalog.DropOrder(catalog.GetCatalogTransaction(context), entries)) {
 		for (auto &target : targets[entry]) {
 			auto drop = target.get().Copy();
 			drop->if_not_found = OnEntryNotFound::RETURN_NULL;
+			drop->dropped_together = together;
 			DropCatalog(context, *drop).DropEntry(context, *drop);
 		}
 	}

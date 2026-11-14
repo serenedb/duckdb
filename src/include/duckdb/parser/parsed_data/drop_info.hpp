@@ -44,6 +44,7 @@ public:
 	bool is_procedure = false;
 	bool is_macro = false;
 	vector<unique_ptr<DropInfo>> additional_drops;
+	vector<idx_t> dropped_together;
 
 	//! Extra info related to this drop
 	unique_ptr<ExtraDropInfo> extra_drop_info;
