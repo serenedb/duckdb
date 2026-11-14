@@ -8,6 +8,7 @@
 
 #pragma once
 
+#include "duckdb/common/types/column/column_data_collection.hpp"
 #include "duckdb/execution/physical_operator.hpp"
 #include "duckdb/planner/expression.hpp"
 #include "duckdb/planner/bound_constraint.hpp"
@@ -66,6 +67,9 @@ public:
 	//! their indexed values
 	void InitializeDelAndInsert(const vector<idx_t> &old_value_positions_p, const vector<idx_t> &old_value_inputs_p,
 	                            bool in_place_unchanged_rows_p);
+	static void AppendReturnRows(ColumnDataCollection &collection, DataChunk &combined, DataChunk &new_image,
+	                             DataChunk &input, idx_t new_col_count, const vector<idx_t> &old_row_columns,
+	                             idx_t count, optional_ptr<const SelectionVector> sel);
 
 public:
 	// Source interface
