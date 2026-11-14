@@ -493,7 +493,7 @@ private:
 
 	Value min_ = std::numeric_limits<Value>::max();
 
-	Value max_ = std::numeric_limits<Value>::min();
+	Value max_ = std::numeric_limits<Value>::lowest();
 
 	Index maxProcessed_;
 

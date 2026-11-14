@@ -1,0 +1,28 @@
+# name: test/sql/aggregate/aggregates/approx_quantile_nonpositive.test
+# description: approx_quantile stays within the range of values that are all zero or negative
+# group: [aggregates]
+
+query I
+SELECT approx_quantile(x, 0.9) FROM (VALUES (-1), (-1), (-1)) t(x)
+----
+-1
+
+query II
+SELECT approx_quantile(x, 0.9) BETWEEN -3 AND -1, approx_quantile(x::DOUBLE, 0.9) BETWEEN -3 AND -1 FROM (VALUES (-3), (-2), (-1)) t(x)
+----
+true	true
+
+query I
+SELECT qs[1] <= qs[2] FROM (SELECT approx_quantile(x::DOUBLE, [0.9, 1.0]) AS qs FROM (VALUES (-3), (-2), (-1)) t(x))
+----
+true
+
+query I
+SELECT approx_quantile(d, 0.9) BETWEEN DATE '1950-01-01' AND DATE '1950-01-03' FROM (VALUES (DATE '1950-01-01'), (DATE '1950-01-02'), (DATE '1950-01-03')) t(d)
+----
+true
+
+query I
+SELECT approx_quantile(x, 0.9) FROM (VALUES (0.0::DOUBLE), (0.0), (0.0)) t(x)
+----
+0.0
