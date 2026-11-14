@@ -678,8 +678,8 @@ static FilterPropagateResult CheckBoolStatistics(const BaseStatistics &stats, bo
 	if (!NumericStats::HasMinMax(stats)) {
 		return FilterPropagateResult::NO_PRUNING_POSSIBLE;
 	}
-	const auto min_v = NumericStats::Min(stats).GetValue<bool>();
-	const auto max_v = NumericStats::Max(stats).GetValue<bool>();
+	const auto min_v = NumericStats::GetMinUnsafe<bool>(stats);
+	const auto max_v = NumericStats::GetMaxUnsafe<bool>(stats);
 	if (min_v != max_v) {
 		return FilterPropagateResult::NO_PRUNING_POSSIBLE;
 	}

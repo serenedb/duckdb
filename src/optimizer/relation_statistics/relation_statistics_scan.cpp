@@ -34,8 +34,8 @@ static idx_t GetMinMaxSpanDistinctCount(uint64_t span, idx_t base_table_cardinal
 
 template <class T>
 static idx_t GetSignedMinMaxDistinctCount(const BaseStatistics &base_stats, idx_t base_table_cardinality) {
-	auto min_value = NumericStats::Min(base_stats).GetValueUnsafe<T>();
-	auto max_value = NumericStats::Max(base_stats).GetValueUnsafe<T>();
+	auto min_value = NumericStats::GetMinUnsafe<T>(base_stats);
+	auto max_value = NumericStats::GetMaxUnsafe<T>(base_stats);
 	if (max_value < min_value) {
 		return 0;
 	}
@@ -53,8 +53,8 @@ static idx_t GetSignedMinMaxDistinctCount(const BaseStatistics &base_stats, idx_
 
 template <class T>
 static idx_t GetUnsignedMinMaxDistinctCount(const BaseStatistics &base_stats, idx_t base_table_cardinality) {
-	auto min_value = NumericStats::Min(base_stats).GetValueUnsafe<T>();
-	auto max_value = NumericStats::Max(base_stats).GetValueUnsafe<T>();
+	auto min_value = NumericStats::GetMinUnsafe<T>(base_stats);
+	auto max_value = NumericStats::GetMaxUnsafe<T>(base_stats);
 	T span;
 	if (!TrySubtractOperator::Operation(max_value, min_value, span)) {
 		return 0;
@@ -63,8 +63,8 @@ static idx_t GetUnsignedMinMaxDistinctCount(const BaseStatistics &base_stats, id
 }
 
 static idx_t GetBooleanMinMaxDistinctCount(const BaseStatistics &base_stats, idx_t base_table_cardinality) {
-	auto min_value = NumericStats::Min(base_stats).GetValueUnsafe<bool>();
-	auto max_value = NumericStats::Max(base_stats).GetValueUnsafe<bool>();
+	auto min_value = NumericStats::GetMinUnsafe<bool>(base_stats);
+	auto max_value = NumericStats::GetMaxUnsafe<bool>(base_stats);
 	return CapMinMaxDistinctCount(min_value == max_value ? idx_t(1) : idx_t(2), base_table_cardinality);
 }
 

@@ -111,15 +111,11 @@ void StatisticsPropagator::UpdateFilterStatistics(BaseStatistics &lstats, BaseSt
 
 		// we know that left.max is AT MOST equal to right.max
 		// because any value in left that is BIGGER than right.max will not pass the filter
-		if (NumericStats::Max(lstats) > NumericStats::Max(rstats)) {
-			NumericStats::SetMax(lstats, NumericStats::Max(rstats));
-		}
+		NumericStats::ClampMax(lstats, rstats);
 
 		// we also know that right.min is AT MOST equal to left.min
 		// because any value in right that is SMALLER than left.min will not pass the filter
-		if (NumericStats::Min(rstats) < NumericStats::Min(lstats)) {
-			NumericStats::SetMin(rstats, NumericStats::Min(lstats));
-		}
+		NumericStats::ClampMin(rstats, lstats);
 		// so in our example, the bounds get updated as follows:
 		// left: [-50, 100], right: [-50, 100]
 		break;
@@ -128,12 +124,8 @@ void StatisticsPropagator::UpdateFilterStatistics(BaseStatistics &lstats, BaseSt
 		// LEFT > RIGHT OR LEFT >= RIGHT
 		// we know that every value of left is bigger (or equal to) every value in right
 		// this is essentially the inverse of the less than (or equal to) scenario
-		if (NumericStats::Max(rstats) > NumericStats::Max(lstats)) {
-			NumericStats::SetMax(rstats, NumericStats::Max(lstats));
-		}
-		if (NumericStats::Min(lstats) < NumericStats::Min(rstats)) {
-			NumericStats::SetMin(lstats, NumericStats::Min(rstats));
-		}
+		NumericStats::ClampMax(rstats, lstats);
+		NumericStats::ClampMin(lstats, rstats);
 		break;
 	case ExpressionType::COMPARE_EQUAL:
 	case ExpressionType::COMPARE_NOT_DISTINCT_FROM:
@@ -142,17 +134,11 @@ void StatisticsPropagator::UpdateFilterStatistics(BaseStatistics &lstats, BaseSt
 		// so if we have e.g. left = [-50, 250] and right = [-100, 100]
 		// the tighest bounds are [-50, 100]
 		// select the highest min
-		if (NumericStats::Min(lstats) > NumericStats::Min(rstats)) {
-			NumericStats::SetMin(rstats, NumericStats::Min(lstats));
-		} else {
-			NumericStats::SetMin(lstats, NumericStats::Min(rstats));
-		}
+		NumericStats::ClampMin(rstats, lstats);
+		NumericStats::ClampMin(lstats, rstats);
 		// select the lowest max
-		if (NumericStats::Max(lstats) < NumericStats::Max(rstats)) {
-			NumericStats::SetMax(rstats, NumericStats::Max(lstats));
-		} else {
-			NumericStats::SetMax(lstats, NumericStats::Max(rstats));
-		}
+		NumericStats::ClampMax(rstats, lstats);
+		NumericStats::ClampMax(lstats, rstats);
 		break;
 	default:
 		break;

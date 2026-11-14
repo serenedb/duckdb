@@ -180,22 +180,15 @@ static bool PartitionedExecutionCanUseStats(const unique_ptr<BaseStatistics> &st
 }
 
 static bool PartitionedExecutionMinMaxEqual(const BaseStatistics &stats) {
-	Value min;
-	Value max;
 	switch (stats.GetStatsType()) {
 	case StatisticsType::NUMERIC_STATS:
-		min = NumericStats::Min(stats);
-		max = NumericStats::Max(stats);
-		break;
+		return NumericStats::IsConstant(stats);
 	case StatisticsType::STRING_STATS:
-		min = Value::BLOB_RAW(StringStats::Min(stats));
-		max = Value::BLOB_RAW(StringStats::Max(stats));
-		break;
+		return StringStats::Min(stats) == StringStats::Max(stats);
 	default:
 		throw NotImplementedException("PartitionedExecutionMinMaxEqual for %s",
 		                              EnumUtil::ToString(stats.GetStatsType()));
 	}
-	return min == max;
 }
 
 static void PartitionedExecutionHandleGlobalStats(Optimizer &optimizer, LogicalOperator &op, LogicalGet &get,

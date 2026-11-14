@@ -133,16 +133,16 @@ static unique_ptr<BaseStatistics> PropagateAbsStats(ClientContext &context, Func
 			potential_overflow = false;
 			break;
 		case PhysicalType::INT8:
-			potential_overflow = NumericStats::Min(lstats).GetValue<int8_t>() == NumericLimits<int8_t>::Minimum();
+			potential_overflow = NumericStats::GetMinUnsafe<int8_t>(lstats) == NumericLimits<int8_t>::Minimum();
 			break;
 		case PhysicalType::INT16:
-			potential_overflow = NumericStats::Min(lstats).GetValue<int16_t>() == NumericLimits<int16_t>::Minimum();
+			potential_overflow = NumericStats::GetMinUnsafe<int16_t>(lstats) == NumericLimits<int16_t>::Minimum();
 			break;
 		case PhysicalType::INT32:
-			potential_overflow = NumericStats::Min(lstats).GetValue<int32_t>() == NumericLimits<int32_t>::Minimum();
+			potential_overflow = NumericStats::GetMinUnsafe<int32_t>(lstats) == NumericLimits<int32_t>::Minimum();
 			break;
 		case PhysicalType::INT64:
-			potential_overflow = NumericStats::Min(lstats).GetValue<int64_t>() == NumericLimits<int64_t>::Minimum();
+			potential_overflow = NumericStats::GetMinUnsafe<int64_t>(lstats) == NumericLimits<int64_t>::Minimum();
 			break;
 		default:
 			return nullptr;
@@ -1328,8 +1328,8 @@ unique_ptr<BaseStatistics> PropagatePowStats(ClientContext &context, FunctionSta
 		return nullptr;
 	}
 
-	auto exponent_min = NumericStats::Min(exponent_stats).GetValue<double>();
-	auto exponent_max = NumericStats::Max(exponent_stats).GetValue<double>();
+	auto exponent_min = NumericStats::GetMinUnsafe<double>(exponent_stats);
+	auto exponent_max = NumericStats::GetMaxUnsafe<double>(exponent_stats);
 	double result_min;
 	double result_max;
 	if (exponent_min == 0 && exponent_max == 0) {
@@ -1343,8 +1343,8 @@ unique_ptr<BaseStatistics> PropagatePowStats(ClientContext &context, FunctionSta
 		if (!NumericStats::HasMinMax(base_stats)) {
 			return nullptr;
 		}
-		auto base_min = NumericStats::Min(base_stats).GetValue<double>();
-		auto base_max = NumericStats::Max(base_stats).GetValue<double>();
+		auto base_min = NumericStats::GetMinUnsafe<double>(base_stats);
+		auto base_max = NumericStats::GetMaxUnsafe<double>(base_stats);
 		// Positive integer exponents have safe bounds across the complete finite base domain
 		if (!Value::IsFinite(base_min) || !Value::IsFinite(base_max)) {
 			return nullptr;

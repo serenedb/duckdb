@@ -209,14 +209,9 @@ bool VariantShreddedStats::IsFullyShredded(const BaseStatistics &stats) {
 		//! Has no min/max values, essentially double-checking the CanHaveNoNull from above
 		return false;
 	}
-	auto min_value = NumericStats::GetMinUnsafe<uint32_t>(untyped_value_index_stats);
-	auto max_value = NumericStats::GetMaxUnsafe<uint32_t>(untyped_value_index_stats);
-	if (min_value != max_value) {
-		//! Not a constant
-		return false;
-	}
 	//! 0 is reserved for missing values (field absent from parent object)
-	return min_value == 0;
+	return NumericStats::GetMinUnsafe<uint32_t>(untyped_value_index_stats) == 0 &&
+	       NumericStats::GetMaxUnsafe<uint32_t>(untyped_value_index_stats) == 0;
 }
 
 LogicalType ToStructuredType(const LogicalType &shredding) {

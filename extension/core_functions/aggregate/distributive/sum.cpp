@@ -314,24 +314,24 @@ unique_ptr<BaseStatistics> SumPropagateStats(ClientContext &context, BoundAggreg
 	hugeint_t max_positive = 0;
 	switch (internal_type) {
 	case PhysicalType::BOOL:
-		max_negative = NumericStats::Min(numeric_stats).GetValueUnsafe<bool>() ? 1 : 0;
-		max_positive = NumericStats::Max(numeric_stats).GetValueUnsafe<bool>() ? 1 : 0;
+		max_negative = NumericStats::GetMinUnsafe<bool>(numeric_stats) ? 1 : 0;
+		max_positive = NumericStats::GetMaxUnsafe<bool>(numeric_stats) ? 1 : 0;
 		break;
 	case PhysicalType::INT16:
-		max_negative = NumericStats::Min(numeric_stats).GetValueUnsafe<int16_t>();
-		max_positive = NumericStats::Max(numeric_stats).GetValueUnsafe<int16_t>();
+		max_negative = NumericStats::GetMinUnsafe<int16_t>(numeric_stats);
+		max_positive = NumericStats::GetMaxUnsafe<int16_t>(numeric_stats);
 		break;
 	case PhysicalType::INT32:
-		max_negative = NumericStats::Min(numeric_stats).GetValueUnsafe<int32_t>();
-		max_positive = NumericStats::Max(numeric_stats).GetValueUnsafe<int32_t>();
+		max_negative = NumericStats::GetMinUnsafe<int32_t>(numeric_stats);
+		max_positive = NumericStats::GetMaxUnsafe<int32_t>(numeric_stats);
 		break;
 	case PhysicalType::INT64:
-		max_negative = NumericStats::Min(numeric_stats).GetValueUnsafe<int64_t>();
-		max_positive = NumericStats::Max(numeric_stats).GetValueUnsafe<int64_t>();
+		max_negative = NumericStats::GetMinUnsafe<int64_t>(numeric_stats);
+		max_positive = NumericStats::GetMaxUnsafe<int64_t>(numeric_stats);
 		break;
 	case PhysicalType::INT128:
-		max_negative = NumericStats::Min(numeric_stats).GetValueUnsafe<hugeint_t>();
-		max_positive = NumericStats::Max(numeric_stats).GetValueUnsafe<hugeint_t>();
+		max_negative = NumericStats::GetMinUnsafe<hugeint_t>(numeric_stats);
+		max_positive = NumericStats::GetMaxUnsafe<hugeint_t>(numeric_stats);
 		break;
 	default:
 		throw InternalException("Unsupported type for propagate sum stats");
