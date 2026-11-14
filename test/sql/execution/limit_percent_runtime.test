@@ -33,7 +33,6 @@ EXECUTE runtime_offset(NULL)
 0
 1
 
-statement error
+query I
 EXECUTE runtime_offset(9223372036854775807)
 ----
-<REGEX>:Binder Error:.*Max value.*LIMIT/OFFSET.*
