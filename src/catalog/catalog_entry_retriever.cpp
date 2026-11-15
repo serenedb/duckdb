@@ -49,18 +49,23 @@ void CatalogEntryRetriever::RecordBinding(const EntryLookupInfo &lookup_info, Ca
 
 optional_ptr<CatalogEntry> CatalogEntryRetriever::GetEntry(const EntryLookupInfo &lookup_info,
                                                            OnEntryNotFound on_entry_not_found) {
+	optional_ptr<CatalogEntry> entry;
 	if ((bindings || recorded_bindings) && IsInvalidCatalog(lookup_info.GetCatalog()) &&
 	    IsInvalidSchema(lookup_info.GetSchema())) {
-		auto entry = bindings ? GetBoundEntry(lookup_info) : nullptr;
+		entry = bindings ? GetBoundEntry(lookup_info) : nullptr;
 		if (!entry) {
 			entry = Catalog::GetEntry(*this, lookup_info, on_entry_not_found);
 		}
 		if (entry && recorded_bindings) {
 			RecordBinding(lookup_info, *entry);
 		}
-		return ReturnAndCallback(entry);
+	} else {
+		entry = Catalog::GetEntry(*this, lookup_info, on_entry_not_found);
 	}
-	return ReturnAndCallback(Catalog::GetEntry(*this, lookup_info, on_entry_not_found));
+	if (entry) {
+		RequireUse(context, CheckAs(), *entry, lookup_info.GetUse());
+	}
+	return ReturnAndCallback(entry);
 }
 
 LogicalType CatalogEntryRetriever::GetType(const QualifiedName &name, OnEntryNotFound on_entry_not_found) {
@@ -80,6 +85,7 @@ optional_ptr<SchemaCatalogEntry> CatalogEntryRetriever::GetSchema(const EntryLoo
 	if (!result) {
 		return result;
 	}
+	RequireUse(context, CheckAs(), *result, schema_lookup.GetUse());
 	if (callback) {
 		// Call the callback if it's set
 		callback(*result);

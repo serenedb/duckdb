@@ -52,11 +52,12 @@ public:
 	optional_ptr<CatalogEntry> GetEntry(const EntryLookupInfo &lookup_info,
 	                                    OnEntryNotFound on_entry_not_found = OnEntryNotFound::THROW_EXCEPTION);
 	template <class T>
-	T &GetEntry(const QualifiedName &name) {
+	T &GetEntry(const QualifiedName &name, EntryUse use = EntryUse::REFERENCE) {
 		auto entry = GetEntry(EntryLookupInfo(T::Type, name), OnEntryNotFound::THROW_EXCEPTION);
 		if (entry->type != T::Type) {
 			throw CatalogException("%s is not an %s", name.Name().GetIdentifierName(), T::Name);
 		}
+		RequireUse(context, CheckAs(), *entry, use);
 		return entry->template Cast<T>();
 	}
 	//! Look up a (catalog/schema-qualified) type

@@ -9,6 +9,7 @@
 #pragma once
 
 #include "duckdb/catalog/catalog_entry.hpp"
+#include "duckdb/common/enums/entry_use.hpp"
 #include "duckdb/common/error_data.hpp"
 #include "duckdb/parser/query_error_context.hpp"
 #include "duckdb/parser/qualified_name.hpp"
@@ -24,6 +25,7 @@ public:
 	                QueryErrorContext error_context = QueryErrorContext());
 	EntryLookupInfo(CatalogType catalog_type, QualifiedName name, optional_ptr<BoundAtClause> at_clause,
 	                QueryErrorContext error_context);
+	EntryLookupInfo(CatalogType catalog_type, QualifiedName name, EntryUse use);
 	//! Deprecated: pass a QualifiedName instead (use QualifiedName(name) for an unqualified lookup)
 	[[deprecated("Pass a QualifiedName instead, e.g. QualifiedName(name)")]] EntryLookupInfo(
 	    CatalogType catalog_type, Identifier name, QueryErrorContext error_context = QueryErrorContext());
@@ -50,6 +52,7 @@ public:
 	const QueryErrorContext &GetErrorContext() const;
 	const optional_ptr<BoundAtClause> GetAtClause() const;
 	idx_t GetArgumentCount() const;
+	EntryUse GetUse() const;
 
 	//! Build a schema lookup from a (possibly nested) schema path ([outermost..innermost]); the innermost component is
 	//! the schema name and the preceding components are its parent schemas
@@ -61,6 +64,7 @@ private:
 	optional_ptr<BoundAtClause> at_clause;
 	QueryErrorContext error_context;
 	idx_t argument_count = DConstants::INVALID_INDEX;
+	EntryUse use = EntryUse::REFERENCE;
 };
 
 //! Return value of Catalog::LookupEntry

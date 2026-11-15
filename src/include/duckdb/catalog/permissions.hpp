@@ -11,6 +11,7 @@
 #include "duckdb/catalog/catalog_transaction.hpp"
 #include "duckdb/common/constants.hpp"
 #include "duckdb/common/enums/catalog_type.hpp"
+#include "duckdb/common/enums/entry_use.hpp"
 #include "duckdb/common/enums/role_capability.hpp"
 #include "duckdb/common/identifier.hpp"
 #include "duckdb/common/mutex.hpp"
@@ -486,6 +487,7 @@ DUCKDB_API void RequireOwner(const RoleAccess &role, const CatalogEntry &entry, 
 DUCKDB_API void RequireOwner(ClientContext &context, const RoleAccess &role, CatalogEntry &entry);
 DUCKDB_API void RequireDropOwner(ClientContext &context, const RoleAccess &role, CatalogEntry &entry,
                                  optional_ptr<MacroFunction> overload);
+DUCKDB_API void RequireUse(ClientContext &context, const RoleAccess &role, CatalogEntry &entry, EntryUse use);
 DUCKDB_API void RequireCreate(ClientContext &context, const RoleAccess &role, SchemaCatalogEntry &schema,
                               const CreateInfo &info, const Identifier &name);
 DUCKDB_API void RequireDatabasePrivilege(ClientContext &context, const RoleAccess &role, const Identifier &database,
