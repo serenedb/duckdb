@@ -1,6 +1,7 @@
 #include "duckdb/parser/parsed_data/create_subscription_info.hpp"
 
-#include "duckdb/parser/keyword_helper.hpp"
+#include "duckdb/common/sql_identifier.hpp"
+#include "duckdb/common/string_util.hpp"
 
 namespace duckdb {
 
@@ -33,37 +34,14 @@ unique_ptr<CreateInfo> CreateSubscriptionInfo::Copy() const {
 }
 
 string CreateSubscriptionInfo::ToString() const {
-	string result = "CREATE SUBSCRIPTION ";
-	result += KeywordHelper::WriteOptionallyQuoted(GetQualifiedName().Name().GetIdentifierName());
-	result += " CONNECTION " + KeywordHelper::WriteQuoted(conninfo, '\'');
-	result += " PUBLICATION ";
-	for (idx_t i = 0; i < publications.size(); i++) {
-		if (i > 0) {
-			result += ", ";
-		}
-		result += KeywordHelper::WriteOptionallyQuoted(publications[i]);
+	string result = "CREATE SUBSCRIPTION " + SQLIdentifier::ToString(GetQualifiedName().Name()) + " CONNECTION " +
+	                SQLString::ToString(conninfo) + " PUBLICATION " +
+	                StringUtil::Join(publications, ", ",
+	                                 [](const string &publication) { return SQLIdentifier::ToString(publication); });
+	if (!options.empty()) {
+		result += " WITH " + RenderSubscriptionOptions(options);
 	}
-	auto boolean = [](bool value) {
-		return value ? "true" : "false";
-	};
-	result += " WITH (enabled = ";
-	result += boolean(enabled);
-	result += ", slot_name = " + KeywordHelper::WriteQuoted(slot_name, '\'');
-	result += ", binary = ";
-	result += boolean(binary);
-	result += ", disable_on_error = ";
-	result += boolean(disable_on_error);
-	result += ", password_required = ";
-	result += boolean(password_required);
-	result += ", run_as_owner = ";
-	result += boolean(run_as_owner);
-	result += ", failover = ";
-	result += boolean(failover);
-	result += ", origin = " + KeywordHelper::WriteQuoted(origin, '\'');
-	result += ", synchronous_commit = " + KeywordHelper::WriteQuoted(synchronous_commit, '\'');
-	result += ", streaming = " + KeywordHelper::WriteQuoted(streaming, '\'');
-	result += ");";
-	return result;
+	return result + ";";
 }
 
 } // namespace duckdb

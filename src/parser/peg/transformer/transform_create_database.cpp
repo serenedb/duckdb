@@ -22,7 +22,7 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformCreateDatabaseStatement
 			} else if (option.first == "allow_connections") {
 				info->allow_connections = BooleanValue::Get(option.second);
 			} else {
-				info->options.emplace(option.first, std::move(option.second));
+				info->owner = Identifier(StringValue::Get(option.second));
 			}
 		}
 	}

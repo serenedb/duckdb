@@ -56,6 +56,9 @@ unique_ptr<CreateInfo> CreateSchemaInfo::Copy() const {
 
 string CreateSchemaInfo::ToString() const {
 	auto qualified = GetQualifiedName().Parent().ToString();
+	if (!authorization.empty()) {
+		qualified += " AUTHORIZATION " + RoleSpecToString(authorization.GetIdentifierName());
+	}
 
 	string temp = temporary ? "TEMPORARY " : "";
 	if (!options.empty()) {

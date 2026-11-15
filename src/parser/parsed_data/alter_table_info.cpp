@@ -12,16 +12,6 @@
 
 namespace duckdb {
 
-static string RoleSpecToSQL(const string &role) {
-	if (role == "public") {
-		return "PUBLIC";
-	}
-	if (role == "CURRENT_USER" || role == "SESSION_USER" || role == "CURRENT_ROLE") {
-		return role;
-	}
-	return SQLIdentifier::ToString(role);
-}
-
 static string DottedNameToSQL(const string &name) {
 	return StringUtil::Join(StringUtil::Split(name, '.'), ".",
 	                        [](const string &part) { return SQLIdentifier::ToString(part); });
@@ -297,7 +287,7 @@ string AlterPermissionsInfo::ToString() const {
 	};
 	if (!new_owner.empty()) {
 		return "ALTER " + TargetKeywordToSQL(*this) + " " + target_name(*this) + " OWNER TO " +
-		       RoleSpecToSQL(new_owner) + ";";
+		       ParseInfo::RoleSpecToString(new_owner) + ";";
 	}
 	string result;
 	if (default_objtype != CatalogType::INVALID) {
@@ -337,12 +327,12 @@ string AlterPermissionsInfo::ToString() const {
 	}
 	result += revoke ? " FROM " : " TO ";
 	result += DistinctToSQL(*this, additional_grants,
-	                        [](const AlterPermissionsInfo &info) { return RoleSpecToSQL(info.grantee); });
+	                        [](const AlterPermissionsInfo &info) { return ParseInfo::RoleSpecToString(info.grantee); });
 	if (!revoke && with_grant_option) {
 		result += " WITH GRANT OPTION";
 	}
 	if (!granted_by.empty()) {
-		result += " GRANTED BY " + RoleSpecToSQL(granted_by);
+		result += " GRANTED BY " + ParseInfo::RoleSpecToString(granted_by);
 	}
 	if (revoke && cascade) {
 		result += " CASCADE";
@@ -432,7 +422,7 @@ string AlterRoleInfo::ToString() const {
 		auto roles = DistinctToSQL(*this, additional_grants,
 		                           [](const AlterRoleInfo &info) { return SQLIdentifier::ToString(info.grant_role); });
 		auto members = DistinctToSQL(*this, additional_grants, [](const AlterRoleInfo &info) {
-			return RoleSpecToSQL(info.GetQualifiedName().Name().GetIdentifierName());
+			return ParseInfo::RoleSpecToString(info.GetQualifiedName().Name().GetIdentifierName());
 		});
 		if (alter_group) {
 			return "ALTER GROUP " + roles + (revoke ? " DROP USER " : " ADD USER ") + members + ";";
@@ -458,7 +448,7 @@ string AlterRoleInfo::ToString() const {
 			}
 		}
 		if (!granted_by.empty()) {
-			result += " GRANTED BY " + RoleSpecToSQL(granted_by);
+			result += " GRANTED BY " + ParseInfo::RoleSpecToString(granted_by);
 		}
 		if (revoke && cascade) {
 			result += " CASCADE";
@@ -466,7 +456,8 @@ string AlterRoleInfo::ToString() const {
 		return result + ";";
 	}
 	string result =
-	    "ALTER ROLE " + (all_roles ? string("ALL") : RoleSpecToSQL(GetQualifiedName().Name().GetIdentifierName()));
+	    "ALTER ROLE " +
+	    (all_roles ? string("ALL") : ParseInfo::RoleSpecToString(GetQualifiedName().Name().GetIdentifierName()));
 	if (!new_name.empty()) {
 		return result + " RENAME TO " + SQLIdentifier::ToString(new_name) + ";";
 	}
@@ -526,7 +517,7 @@ string AlterDatabaseSettingsInfo::ToString() const {
 		return "ALTER ROLE ALL IN DATABASE " + database + config + ";";
 	}
 	if (!role.empty()) {
-		return "ALTER ROLE " + RoleSpecToSQL(role) + " IN DATABASE " + database + config + ";";
+		return "ALTER ROLE " + ParseInfo::RoleSpecToString(role) + " IN DATABASE " + database + config + ";";
 	}
 	if (!config.empty()) {
 		return "ALTER DATABASE " + database + config + ";";
@@ -559,8 +550,8 @@ unique_ptr<AlterInfo> ReassignOwnedInfo::Copy() const {
 }
 
 string ReassignOwnedInfo::ToString() const {
-	return "REASSIGN OWNED BY " + StringUtil::Join(roles, ", ", RoleSpecToSQL) + " TO " + RoleSpecToSQL(new_owner) +
-	       ";";
+	return "REASSIGN OWNED BY " + StringUtil::Join(roles, ", ", ParseInfo::RoleSpecToString) + " TO " +
+	       ParseInfo::RoleSpecToString(new_owner) + ";";
 }
 
 DropOwnedInfo::DropOwnedInfo() : AlterInfo(AlterType::DROP_OWNED) {
@@ -581,7 +572,8 @@ unique_ptr<AlterInfo> DropOwnedInfo::Copy() const {
 }
 
 string DropOwnedInfo::ToString() const {
-	return "DROP OWNED BY " + StringUtil::Join(roles, ", ", RoleSpecToSQL) + (cascade ? " CASCADE;" : ";");
+	return "DROP OWNED BY " + StringUtil::Join(roles, ", ", ParseInfo::RoleSpecToString) +
+	       (cascade ? " CASCADE;" : ";");
 }
 
 //===--------------------------------------------------------------------===//
