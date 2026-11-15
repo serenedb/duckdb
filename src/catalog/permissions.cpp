@@ -1120,13 +1120,15 @@ void CheckBuiltinCall(ClientContext &context, const RoleAccess &role, const Cata
 	if (role.is_superuser) {
 		return;
 	}
+	auto &entry = function.Cast<FunctionEntry>();
 	if (auto granted = BuiltinGrant(context, function, overload)) {
-		if (!role.Can(CatalogType::MACRO_ENTRY, *granted, AclMode::Execute)) {
+		const bool holds_capability = entry.required_capability != RoleCapability::None && entry.MayCall(role);
+		if (!holds_capability && !role.Can(CatalogType::MACRO_ENTRY, *granted, AclMode::Execute)) {
 			ThrowPermissionDenied(function);
 		}
 		return;
 	}
-	if (!function.Cast<FunctionEntry>().MayCall(role)) {
+	if (!entry.MayCall(role)) {
 		ThrowPermissionDenied(function);
 	}
 }
