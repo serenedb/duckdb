@@ -71,8 +71,7 @@ PEGTransformerFactory::TransformDropTableFunction(PEGTransformer &transformer, c
 }
 
 // DropFunction <- FunctionTypeMacro IfExists? List(DropFunctionItem)
-// DropFunctionItem <- FunctionIdentifier DropFunctionArgs?
-// DropFunctionArgs <- '(' List(Type)? ')'
+// DropFunctionItem <- FunctionIdentifier FuncArgSignature?
 unique_ptr<DropStatement> PEGTransformerFactory::TransformDropFunction(PEGTransformer &transformer,
                                                                        ParseResult &parse_result) {
 	auto &list_pr = parse_result.Cast<ListParseResult>();
@@ -91,19 +90,8 @@ unique_ptr<DropStatement> PEGTransformerFactory::TransformDropFunction(PEGTransf
 		auto &item_pr = function_list[i].get().Cast<ListParseResult>();
 		auto function = transformer.Transform<QualifiedName>(item_pr.Child<ListParseResult>(0));
 		info->SetQualifiedName(function);
-		auto &args_opt = item_pr.Child<OptionalParseResult>(1);
-		if (args_opt.HasResult()) {
-			info->has_func_args = true;
-			auto &args_list = args_opt.GetResult().Cast<ListParseResult>();
-			// args_list children: '(', List(Type)?, ')'
-			auto &inner_opt = args_list.Child<OptionalParseResult>(1);
-			if (inner_opt.HasResult()) {
-				auto type_results = ExtractParseResultsFromList(inner_opt.GetResult());
-				for (auto type_ref : type_results) {
-					info->func_parameters.push_back(transformer.Transform<LogicalType>(type_ref));
-				}
-			}
-		}
+		info->has_func_args =
+		    TransformFunctionArgumentTypes(transformer, item_pr.Child<OptionalParseResult>(1), info->func_parameters);
 		info->if_not_found = if_exists ? OnEntryNotFound::RETURN_NULL : OnEntryNotFound::THROW_EXCEPTION;
 		if (i == 0) {
 			result->info = std::move(info);
