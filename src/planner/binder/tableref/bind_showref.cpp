@@ -260,20 +260,6 @@ bool Binder::TryBindShowSetting(ShowRef &ref, BoundStatement &result) {
 	return true;
 }
 
-static Identifier DottedName(const QualifiedName &name) {
-	string result;
-	for (auto &part : name.Path()) {
-		if (part.empty()) {
-			continue;
-		}
-		if (!result.empty()) {
-			result += ".";
-		}
-		result += part.GetIdentifierName();
-	}
-	return Identifier(std::move(result));
-}
-
 BoundStatement Binder::BindShowSetting(const Identifier &setting_name) {
 	vector<unique_ptr<ParsedExpression>> children;
 	children.push_back(ConstantExpression::String(setting_name.GetIdentifierName()));
@@ -318,17 +304,9 @@ BoundStatement Binder::BindShow(ShowRef &ref) {
 	bool can_be_setting = ref.GetSchemaName().empty() && ref.GetCatalogName().empty();
 
 	switch (behavior) {
-	case ShowBehaviorType::SETTING: {
+	case ShowBehaviorType::SETTING:
 		// "SHOW name" only ever resolves a setting.
-		if (can_be_setting) {
-			return BindShowSetting(ref.GetTableName());
-		}
-		const auto setting_name = DottedName(ref.qualified_name);
-		if (Settings::IsValidCustomName(setting_name.GetIdentifierName())) {
-			return BindShowSetting(setting_name);
-		}
-		throw CatalogException("Setting with name \"%s\" does not exist", name);
-	}
+		return BindShowSetting(Settings::PathName(ref.qualified_name.Path()));
 	case ShowBehaviorType::TABLE:
 		// "SHOW name" only ever describes a table (the historical behavior). Describing a table via SHOW is
 		// deprecated, so warn whenever one is shown.

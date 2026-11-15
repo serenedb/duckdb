@@ -103,6 +103,7 @@ struct Settings {
 	}
 	DUCKDB_API static string ConfigNameToSQL(std::string_view name);
 	DUCKDB_API static string ConfigToSQL(std::string_view entry);
+	DUCKDB_API static Identifier PathName(const vector<Identifier> &path);
 	DUCKDB_API static bool IsValidCustomName(std::string_view name);
 	DUCKDB_API static void CheckCustomName(const Identifier &name);
 	DUCKDB_API static bool IsCustomName(const Identifier &name);
