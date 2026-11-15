@@ -541,23 +541,46 @@ shared_ptr<AttachedDatabase> DatabaseManager::DetachInternal(const Identifier &n
 	return attached_db;
 }
 
-shared_ptr<AttachedDatabase> DatabaseManager::RevertAttach(AttachedDatabase &db) {
+static void DetachAtTransactionEnd(DatabaseManager &manager, optional_ptr<ClientContext> context,
+                                   AttachedDatabase &database) {
+	// Teardown runs SQL, which cannot happen under the transaction lock: it would need a
+	// transaction on the same manager, and rollback may not fail. Extracting the deleter is a
+	// field move, safe here; the DatabaseManager drains the queue once rollback completes.
+	auto deleter = database.ExtractDeleter();
+	if (context) {
+		database.OnDetach(*context);
+	}
+	if (deleter) {
+		manager.AddPendingTeardown(std::move(deleter));
+	}
+}
+
+void DatabaseManager::CommitAttach(optional_ptr<ClientContext> context, AttachedDatabase &db) {
+	if (auto replaced = db.TakeReplaced()) {
+		DetachAtTransactionEnd(*this, context, *replaced);
+	}
+}
+
+void DatabaseManager::RollbackAttach(optional_ptr<ClientContext> context, AttachedDatabase &db) {
 	auto replaced = db.TakeReplaced();
-	if (!replaced) {
-		return DetachInternal(db.GetName());
-	}
 	shared_ptr<AttachedDatabase> reverted;
-	{
-		lock_guard<mutex> guard(databases_lock);
-		reverted = std::exchange(databases[replaced->GetName()], replaced);
+	if (!replaced) {
+		reverted = DetachInternal(db.GetName());
+	} else {
+		{
+			lock_guard<mutex> guard(databases_lock);
+			reverted = std::exchange(databases[replaced->GetName()], replaced);
+		}
+		if (reverted && reverted->GetCatalog().Supports(RemoteCapability::IS_REMOTE)) {
+			--remote_catalog_count;
+		}
+		if (replaced->GetCatalog().Supports(RemoteCapability::IS_REMOTE)) {
+			++remote_catalog_count;
+		}
 	}
-	if (reverted && reverted->GetCatalog().Supports(RemoteCapability::IS_REMOTE)) {
-		--remote_catalog_count;
+	if (reverted) {
+		DetachAtTransactionEnd(*this, context, *reverted);
 	}
-	if (replaced->GetCatalog().Supports(RemoteCapability::IS_REMOTE)) {
-		++remote_catalog_count;
-	}
-	return reverted;
 }
 
 idx_t DatabaseManager::ApproxDatabaseCount() {
