@@ -118,30 +118,38 @@ static AclMode HeldParameterPrivileges(ClientContext &context, const Identifier 
 	return context.CurrentRole().HeldModes(holder->permissions.ParameterAcl(name.GetIdentifierName()));
 }
 
+bool Settings::MayChange(ClientContext &context, const Identifier &name, const SettingAccess &access, SetScope scope) {
+	if (access.context == SettingContext::INTERNAL) {
+		return false;
+	}
+	if (context.CurrentRole().is_superuser) {
+		return true;
+	}
+	if (scope == SetScope::GLOBAL) {
+		return (HeldParameterPrivileges(context, name) & AclMode::AlterSystem) != AclMode::NoRights;
+	}
+	return access.context != SettingContext::SUPERUSER ||
+	       (HeldParameterPrivileges(context, name) & AclMode::Set) != AclMode::NoRights;
+}
+
 void Settings::CheckChange(ClientContext &context, const Identifier &name, const SettingAccess &access,
                            SetScope scope) {
+	if (MayChange(context, name, access, scope)) {
+		return;
+	}
 	if (access.context == SettingContext::INTERNAL) {
 		throw Exception(unordered_map<string, string> {{"error_subtype", "CANT_CHANGE_RUNTIME_PARAM"}},
 		                ExceptionType::SETTINGS,
 		                StringUtil::Format("parameter \"%s\" cannot be changed", name.GetIdentifierName()));
 	}
-	if (context.CurrentRole().is_superuser) {
-		return;
-	}
 	if (scope == SetScope::GLOBAL) {
-		if ((HeldParameterPrivileges(context, name) & AclMode::AlterSystem) != AclMode::NoRights) {
-			return;
-		}
 		throw PermissionException(
 		    {{"detail", "Only roles with the SUPERUSER attribute may change the server-wide value of a parameter."}},
 		    StringUtil::Format("permission denied to set parameter \"%s\"", name.GetIdentifierName()));
 	}
-	if (access.context == SettingContext::SUPERUSER &&
-	    (HeldParameterPrivileges(context, name) & AclMode::Set) == AclMode::NoRights) {
-		throw PermissionException(
-		    {{"detail", "Only roles with the SUPERUSER attribute may change this parameter."}},
-		    StringUtil::Format("permission denied to set parameter \"%s\"", name.GetIdentifierName()));
-	}
+	throw PermissionException(
+	    {{"detail", "Only roles with the SUPERUSER attribute may change this parameter."}},
+	    StringUtil::Format("permission denied to set parameter \"%s\"", name.GetIdentifierName()));
 }
 
 bool Settings::CanRead(ClientContext &context, const SettingAccess &access) {
