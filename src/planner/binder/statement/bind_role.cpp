@@ -81,7 +81,7 @@ static void CheckConfigChange(ClientContext &context, const vector<string> &set_
 	reset_all_config = false;
 	for (auto &entry : current) {
 		const auto key = Settings::ConfigKey(entry);
-		if (AccessOf(context, key).context == SettingContext::USER) {
+		if (Settings::MayChange(context, Identifier(string(key)), AccessOf(context, key), SetScope::SESSION)) {
 			reset_config.emplace_back(key);
 		}
 	}
