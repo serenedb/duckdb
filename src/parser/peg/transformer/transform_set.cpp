@@ -8,6 +8,7 @@
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/common/types/interval.hpp"
 #include "duckdb/common/types/time.hpp"
+#include "duckdb/main/settings.hpp"
 
 namespace duckdb {
 
@@ -146,11 +147,9 @@ Identifier PEGTransformerFactory::TransformSettingPath(PEGTransformer &transform
 	if (!dot_identifier) {
 		return setting_name;
 	}
-	auto name = setting_name.GetIdentifierName();
-	for (auto &part : *dot_identifier) {
-		name += "." + part.GetIdentifierName();
-	}
-	return Identifier(std::move(name));
+	vector<Identifier> path {setting_name};
+	path.insert(path.end(), dot_identifier->begin(), dot_identifier->end());
+	return Settings::PathName(path);
 }
 
 // SetSetting <- SettingScope? SettingName

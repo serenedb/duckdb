@@ -68,6 +68,11 @@ string Settings::ConfigNameToSQL(std::string_view name) {
 	                        [](const string &part) { return SQLIdentifier::ToString(part); });
 }
 
+Identifier Settings::PathName(const vector<Identifier> &path) {
+	return Identifier(
+	    StringUtil::Join(path, path.size(), ".", [](const Identifier &part) { return part.GetIdentifierName(); }));
+}
+
 string Settings::ConfigToSQL(std::string_view entry) {
 	const auto key = ConfigKey(entry);
 	auto result = ConfigNameToSQL(key);
