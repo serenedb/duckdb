@@ -2,8 +2,8 @@
 
 #include <algorithm>
 
+#include "duckdb/common/sql_identifier.hpp"
 #include "duckdb/common/string_util.hpp"
-#include "duckdb/parser/keyword_helper.hpp"
 
 namespace duckdb {
 
@@ -17,12 +17,15 @@ unique_ptr<CreateInfo> CreateDatabaseInfo::Copy() const {
 	result->settings = settings;
 	result->connection_limit = connection_limit;
 	result->allow_connections = allow_connections;
+	result->owner = owner;
 	return std::move(result);
 }
 
 string CreateDatabaseInfo::ToString() const {
-	string result =
-	    "CREATE DATABASE " + KeywordHelper::WriteOptionallyQuoted(GetQualifiedName().Name().GetIdentifierName());
+	string result = GetCreatePrefix("DATABASE") + SQLIdentifier::ToString(GetQualifiedName().Name());
+	if (!owner.empty()) {
+		result += " OWNER " + SQLIdentifier::ToString(owner);
+	}
 	if (!allow_connections) {
 		result += " ALLOW_CONNECTIONS FALSE";
 	}

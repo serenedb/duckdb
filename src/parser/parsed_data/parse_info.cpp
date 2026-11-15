@@ -1,4 +1,7 @@
 #include "duckdb/parser/parsed_data/parse_info.hpp"
+
+#include <algorithm>
+
 #include "duckdb/parser/parsed_expression.hpp"
 #include "duckdb/common/sql_identifier.hpp"
 #include "duckdb/common/string_util.hpp"
@@ -62,6 +65,16 @@ string ParseInfo::RoutineKeyword(bool include_functions, bool include_procedures
 	return !include_procedures ? "FUNCTION" : !include_functions ? "PROCEDURE" : "ROUTINE";
 }
 
+string ParseInfo::RoleSpecToString(const string &role) {
+	if (role == "public") {
+		return "PUBLIC";
+	}
+	if (role == "CURRENT_USER" || role == "SESSION_USER" || role == "CURRENT_ROLE") {
+		return role;
+	}
+	return SQLIdentifier::ToString(role);
+}
+
 string RenderOptionList(const case_insensitive_map_t<unique_ptr<ParsedExpression>> &parsed_options,
                         const unordered_map<string, Value> &options) {
 	if (parsed_options.empty() && options.empty()) {
@@ -76,6 +89,15 @@ string RenderOptionList(const case_insensitive_map_t<unique_ptr<ParsedExpression
 		    StringUtil::Format("%s %s", SQLIdentifier::ToString(opt.first), opt.second.ToSQLString()));
 	}
 	return " (" + StringUtil::Join(stringified, ", ") + ")";
+}
+
+string RenderSubscriptionOptions(const case_insensitive_map_t<Value> &options) {
+	vector<string> items;
+	for (auto &option : options) {
+		items.push_back(option.first + " = " + option.second.ToSQLString());
+	}
+	std::sort(items.begin(), items.end());
+	return "(" + StringUtil::Join(items, ", ") + ")";
 }
 
 } // namespace duckdb

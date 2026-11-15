@@ -24,6 +24,7 @@ class Value;
 //! alike. Empty string when there is nothing to render, so callers can append it unconditionally.
 string RenderOptionList(const case_insensitive_map_t<unique_ptr<ParsedExpression>> &parsed_options,
                         const unordered_map<string, Value> &options);
+string RenderSubscriptionOptions(const case_insensitive_map_t<Value> &options);
 
 enum class CatalogType : uint8_t;
 
@@ -74,6 +75,7 @@ public:
 	static unique_ptr<ParseInfo> Deserialize(Deserializer &deserializer);
 	static string TypeToString(CatalogType type);
 	static string RoutineKeyword(bool include_functions, bool include_procedures);
+	static string RoleSpecToString(const string &role);
 };
 
 } // namespace duckdb

@@ -31,6 +31,7 @@ struct CreateDatabaseInfo : public CreateInfo {
 	vector<DatabaseSetting> settings;
 	int32_t connection_limit = -1;
 	bool allow_connections = true;
+	Identifier owner;
 
 public:
 	DUCKDB_API void Serialize(Serializer &serializer) const override;

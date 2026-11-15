@@ -1,9 +1,6 @@
 #include "duckdb/parser/parsed_data/alter_subscription_info.hpp"
 
-#include <algorithm>
-
 #include "duckdb/common/sql_identifier.hpp"
-#include "duckdb/common/string_util.hpp"
 #include "duckdb/parser/keyword_helper.hpp"
 
 namespace duckdb {
@@ -27,22 +24,13 @@ unique_ptr<AlterInfo> AlterSubscriptionInfo::Copy() const {
 	return std::move(result);
 }
 
-static string SubscriptionOptions(const case_insensitive_map_t<Value> &options) {
-	vector<string> items;
-	for (auto &option : options) {
-		items.push_back(option.first + " = " + option.second.ToSQLString());
-	}
-	std::sort(items.begin(), items.end());
-	return "(" + StringUtil::Join(items, ", ") + ")";
-}
-
 string AlterSubscriptionInfo::ToString() const {
 	string result = "ALTER SUBSCRIPTION " + SQLIdentifier(GetQualifiedName().Name());
 	string publication_list;
 	for (auto &publication : publications) {
 		publication_list += (publication_list.empty() ? " " : ", ") + KeywordHelper::WriteOptionallyQuoted(publication);
 	}
-	const auto with = options.empty() ? string() : " WITH " + SubscriptionOptions(options);
+	const auto with = options.empty() ? string() : " WITH " + RenderSubscriptionOptions(options);
 	switch (alter_subscription_type) {
 	case AlterSubscriptionType::ENABLE:
 		result += " ENABLE";
@@ -66,13 +54,13 @@ string AlterSubscriptionInfo::ToString() const {
 		result += " REFRESH PUBLICATION" + with;
 		break;
 	case AlterSubscriptionType::SKIP:
-		result += " SKIP " + SubscriptionOptions(options);
+		result += " SKIP " + RenderSubscriptionOptions(options);
 		break;
 	case AlterSubscriptionType::RENAME:
 		result += " RENAME TO " + SQLIdentifier(new_name);
 		break;
 	case AlterSubscriptionType::SET_OPTIONS:
-		result += " SET " + SubscriptionOptions(options);
+		result += " SET " + RenderSubscriptionOptions(options);
 		break;
 	}
 	return result + ";";

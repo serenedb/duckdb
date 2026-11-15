@@ -1585,9 +1585,8 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 		if (!role.is_superuser && !role.Has(RoleOption::CreateDb)) {
 			throw PermissionException("permission denied to create database");
 		}
-		if (auto owner = info.options.find("owner"); owner != info.options.end()) {
-			info.permissions.owner = RoleSpecId(context, owner->second.ToString());
-			info.options.erase(owner);
+		if (!info.owner.empty()) {
+			info.permissions.owner = RoleId(context, info.owner);
 			if (!role.CanSet(info.permissions.owner)) {
 				throw PermissionException("must be able to SET ROLE \"%s\"", RoleName(context, info.permissions.owner));
 			}
