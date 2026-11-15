@@ -2155,7 +2155,6 @@ excluded_rules:
   - AlterRoleRename
   - AlterRoleConfig
   - AlterRoleSet
-  - AlterRoleSetTo
   - AlterRoleReset
   - AlterRoleOptionList
   - AlterRoleOption
@@ -2189,6 +2188,7 @@ excluded_rules:
   - RoutineSignature
   - FuncArgSignature
   - FuncArg
+  - GrantParameterTarget
   - GrantNamedTarget
   - GrantedBy
   - MemberOptionList

@@ -198,9 +198,6 @@ CatalogType GrantObjectType(const string &keyword) {
 	if (keyword == "FOREIGN DATA WRAPPER") {
 		return CatalogType::FOREIGN_DATA_WRAPPER_ENTRY;
 	}
-	if (keyword == "PARAMETER") {
-		return CatalogType::PARAMETER_ENTRY;
-	}
 	if (keyword == "LANGUAGE") {
 		return CatalogType::LANGUAGE_ENTRY;
 	}
@@ -275,10 +272,7 @@ void PEGTransformerFactory::CollectConfigClause(PEGTransformer &transformer, Par
 		set_config.push_back(name);
 		return;
 	}
-	vector<unique_ptr<ParsedExpression>> values;
-	for (auto &element : ExtractParseResultsFromList(value.Cast<ListParseResult>().GetChild(1))) {
-		values.push_back(transformer.Transform<unique_ptr<ParsedExpression>>(element.get()));
-	}
+	auto values = transformer.Transform<vector<unique_ptr<ParsedExpression>>>(value);
 	if (values.size() == 1 && values[0]->GetExpressionType() == ExpressionType::VALUE_DEFAULT) {
 		reset_config.push_back(name);
 		return;
@@ -695,6 +689,13 @@ static vector<GrantTargetName> TransformGrantTarget(PEGTransformer &transformer,
 			name.has_func_args = PEGTransformerFactory::TransformFunctionArgumentTypes(
 			    transformer, signature.Child<OptionalParseResult>(1), name.func_parameters);
 			names.push_back(std::move(name));
+		}
+		return names;
+	}
+	if (chosen.Name() == "GrantParameterTarget") {
+		info.entry_catalog_type = CatalogType::PARAMETER_ENTRY;
+		for (auto &setting : PEGTransformerFactory::ExtractParseResultsFromList(target.GetChild(1))) {
+			names.push_back(GrantTargetName {QualifiedName(transformer.Transform<Identifier>(setting.get()))});
 		}
 		return names;
 	}

@@ -286,6 +286,9 @@ static string GrantObjectsToSQL(CatalogType type, bool include_functions, bool i
 
 string AlterPermissionsInfo::ToString() const {
 	auto target_name = [](const AlterPermissionsInfo &info) {
+		if (info.entry_catalog_type == CatalogType::PARAMETER_ENTRY) {
+			return Settings::ConfigNameToSQL(info.GetQualifiedName().Name().GetIdentifierName());
+		}
 		auto name = info.GetQualifiedName().ToString(QualifiedNameToStringMode::HIDE_DEFAULT_SCHEMA);
 		if (info.has_func_args) {
 			name += "(" + MacroFunction::ParameterTypesToString(info.func_parameters) + ")";

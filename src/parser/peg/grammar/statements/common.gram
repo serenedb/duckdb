@@ -90,7 +90,7 @@ ReservedColumnName <- Identifier
 IndexName <- Identifier
 ReservedIndexName <- Identifier
 SettingName <- Identifier
-SettingPath <- SettingName ('.' ColId)*
+SettingPath <- SettingName DotIdentifier*
 PragmaName <- Identifier
 FunctionName <- Identifier
 ReservedFunctionName <- Identifier
