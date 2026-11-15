@@ -420,7 +420,7 @@ void Binder::BindAsFunctionBody(const SelectStatement &statement) {
 
 void Binder::UseFunctionSearchPath(const vector<string> &config) {
 	for (auto &entry : config) {
-		auto paths = CatalogSearchEntry::ParseList(entry.substr(entry.find('=') + 1));
+		auto paths = CatalogSearchEntry::ParseList(string(Settings::ConfigValue(entry)));
 		const auto database = DatabaseManager::TryGetDefaultDatabase(context);
 		for (auto &path : paths) {
 			if (path.GetCatalog().empty()) {

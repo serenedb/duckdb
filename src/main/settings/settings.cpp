@@ -1,5 +1,8 @@
 #include "duckdb/main/settings.hpp"
 #include "duckdb/catalog/catalog.hpp"
+#include "duckdb/catalog/catalog_search_path.hpp"
+#include "duckdb/common/sql_identifier.hpp"
+#include "duckdb/common/string_util.hpp"
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/main/config.hpp"
 
@@ -58,6 +61,31 @@ void Settings::ResolveCurrentValues(ClientContext &context, vector<string> &conf
 		}
 		entry += "=" + FormatDisplayValue(context, value).ToString();
 	}
+}
+
+string Settings::ConfigNameToSQL(std::string_view name) {
+	return StringUtil::Join(StringUtil::Split(string(name), '.'), ".",
+	                        [](const string &part) { return SQLIdentifier::ToString(part); });
+}
+
+string Settings::ConfigToSQL(std::string_view entry) {
+	const auto key = ConfigKey(entry);
+	auto result = ConfigNameToSQL(key);
+	if (key.size() == entry.size()) {
+		return result + " FROM CURRENT";
+	}
+	const string value(ConfigValue(entry));
+	if (!StringUtil::CIEquals(key, "search_path")) {
+		return result + " TO " + SQLString::ToString(value);
+	}
+	auto paths = CatalogSearchEntry::ParseList(value);
+	if (paths.empty()) {
+		return result + " TO ''";
+	}
+	return result + " TO " + StringUtil::Join(paths, paths.size(), ", ", [](const CatalogSearchEntry &path) {
+		       return path.GetCatalog().empty() ? SQLString::ToString(path.GetSchema().GetIdentifierName())
+		                                        : path.ToString();
+	       });
 }
 
 bool Settings::IsValidCustomName(std::string_view name) {

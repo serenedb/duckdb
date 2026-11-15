@@ -7,8 +7,8 @@
 #include "duckdb/parser/parsed_data/create_role_info.hpp"
 #include "duckdb/common/logical_type_info.hpp"
 #include "duckdb/function/macro_function.hpp"
+#include "duckdb/main/settings.hpp"
 #include "duckdb/parser/constraint.hpp"
-#include "duckdb/parser/keyword_helper.hpp"
 
 namespace duckdb {
 
@@ -68,18 +68,12 @@ static string ConfigClauseToSQL(const vector<string> &set_config, const vector<s
 		return " RESET ALL";
 	}
 	if (!reset_config.empty()) {
-		return " RESET " + DottedNameToSQL(reset_config[0]);
+		return " RESET " + Settings::ConfigNameToSQL(reset_config[0]);
 	}
 	if (set_config.empty()) {
 		return string();
 	}
-	auto &setting = set_config[0];
-	auto separator = setting.find('=');
-	if (separator == string::npos) {
-		return " SET " + DottedNameToSQL(setting) + " FROM CURRENT";
-	}
-	return " SET " + DottedNameToSQL(setting.substr(0, separator)) + " TO " +
-	       KeywordHelper::WriteQuoted(setting.substr(separator + 1), '\'');
+	return " SET " + Settings::ConfigToSQL(set_config[0]);
 }
 
 //===--------------------------------------------------------------------===//
@@ -485,7 +479,7 @@ string AlterRoleInfo::ToString() const {
 		result += " VALID UNTIL " + ValidUntilToSQL(valid_until);
 	}
 	if (set_password) {
-		result += null_password ? " PASSWORD NULL" : " PASSWORD " + KeywordHelper::WriteQuoted(password, '\'');
+		result += null_password ? " PASSWORD NULL" : " PASSWORD " + SQLString::ToString(password);
 	}
 	return result + ";";
 }

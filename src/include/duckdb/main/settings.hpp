@@ -97,6 +97,12 @@ struct Settings {
 	static std::string_view ConfigKey(std::string_view entry) {
 		return entry.substr(0, entry.find('='));
 	}
+	static std::string_view ConfigValue(std::string_view entry) {
+		const auto separator = entry.find('=');
+		return separator == std::string_view::npos ? std::string_view() : entry.substr(separator + 1);
+	}
+	DUCKDB_API static string ConfigNameToSQL(std::string_view name);
+	DUCKDB_API static string ConfigToSQL(std::string_view entry);
 	DUCKDB_API static bool IsValidCustomName(std::string_view name);
 	DUCKDB_API static void CheckCustomName(const Identifier &name);
 	DUCKDB_API static bool IsCustomName(const Identifier &name);
