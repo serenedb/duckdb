@@ -232,7 +232,7 @@ void PhysicalReset::ResetAll(ExecutionContext &context, SetScope scope, bool dis
 	}
 	for (auto &ext : config.GetExtensionSettings()) {
 		auto variable_scope = PhysicalSet::GetSettingScope(ext.second, scope);
-		if ((ext.second.no_reset_all && !(discard && ext.second.reset_function)) ||
+		if ((ext.second.no_reset_all && !(discard && ext.second.access.session_identity)) ||
 		    variable_scope == SetScope::GLOBAL || !CanResetAt(ext.second, variable_scope)) {
 			continue;
 		}

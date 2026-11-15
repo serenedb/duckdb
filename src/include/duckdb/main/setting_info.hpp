@@ -81,6 +81,7 @@ struct SettingAccess {
 	SettingContext context = SettingContext::SUPERUSER;
 	bool superuser_read = false;
 	bool no_show_all = false;
+	bool session_identity = false;
 };
 
 typedef void (*set_callback_t)(SettingCallbackInfo &info, Value &parameter);
