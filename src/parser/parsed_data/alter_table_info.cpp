@@ -43,20 +43,10 @@ static string DistinctToSQL(const INFO &head, const vector<unique_ptr<INFO>> &ot
 }
 
 static string PrivilegesToSQL(AclMode privileges, const vector<ColumnPrivilege> &columns) {
-	struct NamedPrivilege {
-		AclMode mode;
-		const char *keyword;
-	};
-	static constexpr NamedPrivilege PRIVILEGES[] = {
-	    {AclMode::Select, "SELECT"},   {AclMode::Insert, "INSERT"},     {AclMode::Update, "UPDATE"},
-	    {AclMode::Delete, "DELETE"},   {AclMode::Truncate, "TRUNCATE"}, {AclMode::References, "REFERENCES"},
-	    {AclMode::Trigger, "TRIGGER"}, {AclMode::Maintain, "MAINTAIN"}, {AclMode::Execute, "EXECUTE"},
-	    {AclMode::Usage, "USAGE"},     {AclMode::Create, "CREATE"},     {AclMode::CreateTemp, "TEMPORARY"},
-	    {AclMode::Connect, "CONNECT"}, {AclMode::Set, "SET"},           {AclMode::AlterSystem, "ALTER SYSTEM"}};
 	vector<string> items;
-	for (auto &named : PRIVILEGES) {
+	for (auto &named : ACL_PRIVILEGES) {
 		if ((privileges & named.mode) != AclMode::NoRights) {
-			items.push_back(named.keyword);
+			items.emplace_back(named.keyword);
 		}
 		vector<string> names;
 		for (auto &column : columns) {

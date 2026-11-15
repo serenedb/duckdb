@@ -11,12 +11,11 @@ namespace duckdb {
 }
 
 static void RequireAttributes(const RoleAccess &caller, const string &verb, const string &action, RoleOption options) {
-	for (auto &[option, attribute] : {std::pair<RoleOption, const char *> {RoleOption::CreateDb, "CREATEDB"},
-	                                  std::pair<RoleOption, const char *> {RoleOption::Replication, "REPLICATION"},
-	                                  std::pair<RoleOption, const char *> {RoleOption::BypassRls, "BYPASSRLS"}}) {
-		if (HasOption(options, option) && !caller.Has(option)) {
-			DenyRoleAction(verb, StringUtil::Format("Only roles with the %s attribute may %s%s attribute.", attribute,
-			                                        action, attribute));
+	const auto attributes = options & (RoleOption::CreateDb | RoleOption::Replication | RoleOption::BypassRls);
+	for (auto &named : ROLE_OPTIONS) {
+		if (HasOption(attributes, named.option) && !caller.Has(named.option)) {
+			DenyRoleAction(verb, StringUtil::Format("Only roles with the %s attribute may %s%s attribute.",
+			                                        named.keyword, action, named.keyword));
 		}
 	}
 }

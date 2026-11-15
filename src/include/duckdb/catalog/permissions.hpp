@@ -84,6 +84,32 @@ constexpr AclMode &operator&=(AclMode &a, AclMode b) {
 
 constexpr AclMode ACL_COLUMN_PRIVILEGES = AclMode::Select | AclMode::Insert | AclMode::Update | AclMode::References;
 
+struct AclPrivilege {
+	AclMode mode;
+	char letter;
+	std::string_view keyword;
+};
+
+inline constexpr AclPrivilege ACL_PRIVILEGES[] = {
+    {AclMode::Insert, 'a', "INSERT"},
+    {AclMode::Select, 'r', "SELECT"},
+    {AclMode::Update, 'w', "UPDATE"},
+    {AclMode::Delete, 'd', "DELETE"},
+    {AclMode::Truncate, 'D', "TRUNCATE"},
+    {AclMode::References, 'x', "REFERENCES"},
+    {AclMode::Trigger, 't', "TRIGGER"},
+    {AclMode::Execute, 'X', "EXECUTE"},
+    {AclMode::Usage, 'U', "USAGE"},
+    {AclMode::Create, 'C', "CREATE"},
+    {AclMode::CreateTemp, 'T', "TEMPORARY"},
+    {AclMode::Connect, 'c', "CONNECT"},
+    {AclMode::Set, 's', "SET"},
+    {AclMode::AlterSystem, 'A', "ALTER SYSTEM"},
+    {AclMode::Maintain, 'm', "MAINTAIN"},
+};
+
+DUCKDB_API AclMode FindPrivilege(std::string_view keyword);
+
 enum class RoleOption : uint32_t {
 	None = 0x0,
 	Superuser = 0x1,
@@ -107,6 +133,17 @@ constexpr RoleOption operator~(RoleOption a) {
 constexpr bool HasOption(RoleOption options, RoleOption option) {
 	return (options & option) == option;
 }
+
+struct RoleOptionKeyword {
+	RoleOption option;
+	std::string_view keyword;
+};
+
+inline constexpr RoleOptionKeyword ROLE_OPTIONS[] = {
+    {RoleOption::Superuser, "SUPERUSER"}, {RoleOption::CreateDb, "CREATEDB"}, {RoleOption::CreateRole, "CREATEROLE"},
+    {RoleOption::Inherit, "INHERIT"},     {RoleOption::Login, "LOGIN"},       {RoleOption::Replication, "REPLICATION"},
+    {RoleOption::BypassRls, "BYPASSRLS"},
+};
 
 struct AclItem {
 	idx_t grantee = 0;
@@ -225,9 +262,57 @@ struct Permissions {
 	const GrantRows &Rows() const;
 	GrantRows &MutableRows();
 
-	static CatalogType AclClass(CatalogType entry_type);
-	static AclMode AllPrivileges(CatalogType acl_class);
-	static AclMode PublicPrivileges(CatalogType acl_class);
+	static constexpr CatalogType AclClass(CatalogType entry_type) {
+		switch (entry_type) {
+		case CatalogType::VIEW_ENTRY:
+			return CatalogType::TABLE_ENTRY;
+		case CatalogType::TABLE_MACRO_ENTRY:
+			return CatalogType::MACRO_ENTRY;
+		default:
+			return entry_type;
+		}
+	}
+	static constexpr AclMode AllPrivileges(CatalogType acl_class) {
+		switch (acl_class) {
+		case CatalogType::TABLE_ENTRY:
+			return AclMode::Select | AclMode::Insert | AclMode::Update | AclMode::Delete | AclMode::Truncate |
+			       AclMode::References | AclMode::Trigger | AclMode::Maintain;
+		case CatalogType::SEQUENCE_ENTRY:
+			return AclMode::Select | AclMode::Update | AclMode::Usage;
+		case CatalogType::DATABASE_ENTRY:
+			return AclMode::Create | AclMode::CreateTemp | AclMode::Connect;
+		case CatalogType::SCHEMA_ENTRY:
+			return AclMode::Usage | AclMode::Create;
+		case CatalogType::MACRO_ENTRY:
+		case CatalogType::TABLE_MACRO_ENTRY:
+			return AclMode::Execute;
+		case CatalogType::TYPE_ENTRY:
+		case CatalogType::FOREIGN_SERVER_ENTRY:
+		case CatalogType::FOREIGN_DATA_WRAPPER_ENTRY:
+		case CatalogType::LANGUAGE_ENTRY:
+			return AclMode::Usage;
+		case CatalogType::TABLESPACE_ENTRY:
+			return AclMode::Create;
+		case CatalogType::PARAMETER_ENTRY:
+			return AclMode::Set | AclMode::AlterSystem;
+		default:
+			return AclMode::NoRights;
+		}
+	}
+	static constexpr AclMode PublicPrivileges(CatalogType acl_class) {
+		switch (acl_class) {
+		case CatalogType::DATABASE_ENTRY:
+			return AclMode::Connect | AclMode::CreateTemp;
+		case CatalogType::MACRO_ENTRY:
+		case CatalogType::TABLE_MACRO_ENTRY:
+			return AclMode::Execute;
+		case CatalogType::TYPE_ENTRY:
+		case CatalogType::LANGUAGE_ENTRY:
+			return AclMode::Usage;
+		default:
+			return AclMode::NoRights;
+		}
+	}
 	static bool TryParsePrivilege(std::string_view keyword, CatalogType acl_class, AclMode &result);
 	static vector<AclItem> AclDefault(CatalogType acl_class, idx_t owner);
 
@@ -338,8 +423,7 @@ public:
 	bool HasFunctionGrants() const {
 		return !functions.empty();
 	}
-	bool HasFunctionGrants(std::string_view database) const;
-	optional_ptr<const Permissions> FunctionPermissions(std::string_view database, std::string_view function) const;
+	optional_ptr<const unordered_map<string, Permissions>> FunctionGrants(std::string_view database) const;
 	bool HasTypeGrants() const {
 		return !types.empty();
 	}
@@ -363,7 +447,7 @@ private:
 };
 
 struct FunctionCall {
-	string kind;
+	CatalogType type = CatalogType::INVALID;
 	string name;
 	string builtin_key;
 	RoleCapability capability = RoleCapability::None;
@@ -390,16 +474,16 @@ DUCKDB_API vector<NamedAcl> BuiltinFunctionRows(ClientContext &context, SchemaCa
 DUCKDB_API void CheckBuiltinCall(ClientContext &context, const RoleAccess &role, const CatalogEntry &function,
                                  idx_t overload);
 DUCKDB_API bool BuiltinCallGranted(ClientContext &context, const RoleAccess &role, const CatalogEntry &function);
+DUCKDB_API optional_ptr<const unordered_map<string, Permissions>> BuiltinFunctionGrants(ClientContext &context);
+DUCKDB_API optional_ptr<const Permissions> BuiltinTypeGrant(ClientContext &context, idx_t type);
 DUCKDB_API bool EntryVisible(ClientContext &context, const RoleAccess &role, CatalogEntry &entry);
 DUCKDB_API bool DatabaseVisible(ClientContext &context, const RoleAccess &role, AttachedDatabase &database);
 DUCKDB_API void CheckReference(ClientContext &context, const RoleAccess &role, CatalogEntry &entry);
 DUCKDB_API bool ReferencesRole(const CatalogEntry &entry, idx_t role);
 DUCKDB_API void ForEachRoleReference(const CatalogEntry &entry, const std::function<void(idx_t role)> &callback);
-DUCKDB_API vector<idx_t> RoleReferences(const CatalogEntry &entry);
-DUCKDB_API string PermissionKindName(CatalogType type);
-DUCKDB_API string PermissionKindName(const CatalogEntry &entry);
 DUCKDB_API string RoleOptionsToSQL(RoleOption set_options, RoleOption clear_options);
 DUCKDB_API string ValidUntilToSQL(int64_t valid_until);
+[[noreturn]] DUCKDB_API void ThrowPermissionDenied(CatalogType type, std::string_view name);
 [[noreturn]] DUCKDB_API void ThrowPermissionDenied(const CatalogEntry &entry);
 DUCKDB_API void RequireEntryPrivilege(const RoleAccess &role, const CatalogEntry &entry, AclMode any);
 DUCKDB_API void RequireSuperuser(const RoleAccess &role);
@@ -412,9 +496,9 @@ DUCKDB_API void RequireCreate(ClientContext &context, const RoleAccess &role, Sc
 DUCKDB_API void RequireDatabasePrivilege(ClientContext &context, const RoleAccess &role, const Identifier &database,
                                          AclMode need);
 DUCKDB_API void RequireForeignDataWrapperUsage(ClientContext &context, const RoleAccess &role,
-                                               const Identifier &database, const string &wrapper);
+                                               const Identifier &database, std::string_view wrapper);
 DUCKDB_API void RequireLanguageUsage(ClientContext &context, const RoleAccess &role, const Identifier &database,
-                                     const string &language);
+                                     std::string_view language);
 DUCKDB_API void RequireUserSchema(const SchemaCatalogEntry &schema, const Identifier &name);
 DUCKDB_API void RequireSchemaCreate(ClientContext &context, const RoleAccess &role, SchemaCatalogEntry &schema);
 DUCKDB_API void RequireTypeUsage(ClientContext &context, const RoleAccess &role, const LogicalType &type,
@@ -431,8 +515,8 @@ DUCKDB_API optional_ptr<CatalogEntry> ClusterEntry(ClientContext &context, Catal
 DUCKDB_API CatalogEntry &ClusterDatabase(ClientContext &context, const Identifier &name);
 DUCKDB_API QualifiedName ClusterName(ClientContext &context, const QualifiedName &name);
 DUCKDB_API idx_t RoleId(ClientContext &context, const Identifier &name);
-DUCKDB_API optional_idx RoleSpecKeyword(ClientContext &context, const string &name);
-DUCKDB_API idx_t RoleSpecId(ClientContext &context, const string &name);
+DUCKDB_API optional_idx RoleSpecKeyword(ClientContext &context, std::string_view name);
+DUCKDB_API idx_t RoleSpecId(ClientContext &context, std::string_view name);
 DUCKDB_API string RoleName(ClientContext &context, idx_t role);
 
 } // namespace duckdb
