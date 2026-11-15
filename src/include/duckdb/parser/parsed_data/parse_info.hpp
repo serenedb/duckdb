@@ -74,7 +74,6 @@ public:
 	static unique_ptr<ParseInfo> Deserialize(Deserializer &deserializer);
 	static string TypeToString(CatalogType type);
 	static string RoutineKeyword(bool include_functions, bool include_procedures);
-	static string RoutineToString(const QualifiedName &name, bool has_func_args, const vector<LogicalType> &parameters);
 };
 
 } // namespace duckdb

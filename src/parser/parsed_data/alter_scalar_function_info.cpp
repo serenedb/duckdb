@@ -1,6 +1,7 @@
 #include "duckdb/parser/parsed_data/alter_scalar_function_info.hpp"
 #include "duckdb/common/sql_identifier.hpp"
 #include "duckdb/common/string_util.hpp"
+#include "duckdb/function/macro_function.hpp"
 #include "duckdb/parser/parsed_data/create_scalar_function_info.hpp"
 
 namespace duckdb {
@@ -41,7 +42,10 @@ string RenameScalarFunctionInfo::ToString() const {
 	if (if_not_found == OnEntryNotFound::RETURN_NULL) {
 		result += "IF EXISTS ";
 	}
-	result += ParseInfo::RoutineToString(GetQualifiedName(), has_func_args, func_parameters);
+	result += GetQualifiedName().ToString(QualifiedNameToStringMode::HIDE_DEFAULT_SCHEMA);
+	if (has_func_args) {
+		result += "(" + MacroFunction::ParameterTypesToString(func_parameters) + ")";
+	}
 	return result + " RENAME TO " + SQLIdentifier(new_name) + ";";
 }
 
@@ -60,8 +64,8 @@ unique_ptr<AlterInfo> AlterFunctionAttributesInfo::Copy() const {
 	auto result = make_uniq<AlterFunctionAttributesInfo>(GetAlterEntryData());
 	result->include_functions = include_functions;
 	result->include_procedures = include_procedures;
-	result->parameter_types = parameter_types;
-	result->has_parameter_types = has_parameter_types;
+	result->func_parameters = func_parameters;
+	result->has_func_args = has_func_args;
 	result->set_security = set_security;
 	result->security_definer = security_definer;
 	result->set_stability = set_stability;
@@ -75,7 +79,10 @@ unique_ptr<AlterInfo> AlterFunctionAttributesInfo::Copy() const {
 
 string AlterFunctionAttributesInfo::ToString() const {
 	string result = "ALTER " + ParseInfo::RoutineKeyword(include_functions, include_procedures) + " " +
-	                ParseInfo::RoutineToString(GetQualifiedName(), has_parameter_types, parameter_types);
+	                GetQualifiedName().ToString(QualifiedNameToStringMode::HIDE_DEFAULT_SCHEMA);
+	if (has_func_args) {
+		result += "(" + MacroFunction::ParameterTypesToString(func_parameters) + ")";
+	}
 	if (set_security) {
 		result += security_definer ? " SECURITY DEFINER" : " SECURITY INVOKER";
 	}

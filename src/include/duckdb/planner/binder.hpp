@@ -487,6 +487,8 @@ public:
 	Catalog &SubscriptionCatalog(const Identifier &catalog_name);
 	optional_ptr<CatalogEntry> LookupRoutine(const QualifiedName &name, OnEntryNotFound if_not_found);
 	MacroFunction &ResolveOverload(MacroCatalogEntry &macro, bool has_func_args, vector<LogicalType> &func_parameters);
+	optional_ptr<MacroFunction> ResolveOverload(MacroCatalogEntry &macro, bool has_func_args,
+	                                            vector<LogicalType> &func_parameters, OnEntryNotFound if_not_found);
 	CatalogEntry &ResolveDatabaseEntry(CatalogType type, AlterInfo &info);
 	void RequireSubscriptionOwner(CatalogEntry &subscription);
 	void RequireResolvedTypeUsage(optional_ptr<const LogicalDependencyList> dependencies);

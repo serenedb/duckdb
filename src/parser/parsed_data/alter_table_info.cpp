@@ -6,6 +6,7 @@
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/parser/parsed_data/create_role_info.hpp"
 #include "duckdb/common/logical_type_info.hpp"
+#include "duckdb/function/macro_function.hpp"
 #include "duckdb/parser/constraint.hpp"
 #include "duckdb/parser/keyword_helper.hpp"
 
@@ -163,7 +164,10 @@ string SetCommentInfo::ToString() const {
 	result += "COMMENT ON ";
 	result += has_func_args ? "FUNCTION" : ParseInfo::TypeToString(entry_catalog_type);
 	result += " ";
-	result += ParseInfo::RoutineToString(GetQualifiedName(), has_func_args, func_parameters);
+	result += GetQualifiedName().ToString(QualifiedNameToStringMode::HIDE_DEFAULT_SCHEMA);
+	if (has_func_args) {
+		result += "(" + MacroFunction::ParameterTypesToString(func_parameters) + ")";
+	}
 	result += " IS ";
 	result += comment_value.ToSQLString();
 
@@ -261,7 +265,7 @@ unique_ptr<AlterInfo> AlterPermissionsInfo::Copy() const {
 	return std::move(result);
 }
 
-static string OwnerTargetToSQL(const AlterPermissionsInfo &info) {
+static string TargetKeywordToSQL(const AlterPermissionsInfo &info) {
 	if (info.entry_catalog_type == CatalogType::MACRO_ENTRY) {
 		return ParseInfo::RoutineKeyword(info.include_functions, info.include_procedures);
 	}
@@ -270,58 +274,33 @@ static string OwnerTargetToSQL(const AlterPermissionsInfo &info) {
 
 static string GrantTargetToSQL(const AlterPermissionsInfo &info) {
 	switch (info.entry_catalog_type) {
-	case CatalogType::TABLE_ENTRY:
 	case CatalogType::VIEW_ENTRY:
 		return "TABLE";
-	case CatalogType::SEQUENCE_ENTRY:
-		return "SEQUENCE";
-	case CatalogType::MACRO_ENTRY:
-		return ParseInfo::RoutineKeyword(info.include_functions, info.include_procedures);
-	case CatalogType::DATABASE_ENTRY:
-		return "DATABASE";
-	case CatalogType::SCHEMA_ENTRY:
-		return "SCHEMA";
-	case CatalogType::TYPE_ENTRY:
-		return "TYPE";
 	case CatalogType::FOREIGN_SERVER_ENTRY:
 		return "FOREIGN SERVER";
-	case CatalogType::FOREIGN_DATA_WRAPPER_ENTRY:
-		return "FOREIGN DATA WRAPPER";
-	case CatalogType::PARAMETER_ENTRY:
-		return "PARAMETER";
-	case CatalogType::LANGUAGE_ENTRY:
-		return "LANGUAGE";
-	case CatalogType::TABLESPACE_ENTRY:
-		return "TABLESPACE";
 	default:
-		throw InternalException("GRANT on a %s has no SQL form", CatalogTypeToString(info.entry_catalog_type));
+		return TargetKeywordToSQL(info);
 	}
 }
 
 static string GrantObjectsToSQL(CatalogType type, bool include_functions, bool include_procedures) {
-	switch (type) {
-	case CatalogType::TABLE_ENTRY:
-		return "TABLES";
-	case CatalogType::SEQUENCE_ENTRY:
-		return "SEQUENCES";
-	case CatalogType::MACRO_ENTRY:
+	if (type == CatalogType::MACRO_ENTRY) {
 		return ParseInfo::RoutineKeyword(include_functions, include_procedures) + "S";
-	case CatalogType::TYPE_ENTRY:
-		return "TYPES";
-	case CatalogType::SCHEMA_ENTRY:
-		return "SCHEMAS";
-	default:
-		throw InternalException("GRANT on all %ss has no SQL form", CatalogTypeToString(type));
 	}
+	return ParseInfo::TypeToString(type) + "S";
 }
 
 string AlterPermissionsInfo::ToString() const {
 	auto target_name = [](const AlterPermissionsInfo &info) {
-		return ParseInfo::RoutineToString(info.GetQualifiedName(), info.has_func_args, info.func_parameters);
+		auto name = info.GetQualifiedName().ToString(QualifiedNameToStringMode::HIDE_DEFAULT_SCHEMA);
+		if (info.has_func_args) {
+			name += "(" + MacroFunction::ParameterTypesToString(info.func_parameters) + ")";
+		}
+		return name;
 	};
 	if (!new_owner.empty()) {
-		return "ALTER " + OwnerTargetToSQL(*this) + " " + target_name(*this) + " OWNER TO " + RoleSpecToSQL(new_owner) +
-		       ";";
+		return "ALTER " + TargetKeywordToSQL(*this) + " " + target_name(*this) + " OWNER TO " +
+		       RoleSpecToSQL(new_owner) + ";";
 	}
 	string result;
 	if (default_objtype != CatalogType::INVALID) {

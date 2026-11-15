@@ -1362,20 +1362,15 @@ void RequireOwner(ClientContext &context, const RoleAccess &role, CatalogEntry &
 }
 
 void RequireDropOwner(ClientContext &context, const RoleAccess &role, CatalogEntry &entry,
-                      optional_ptr<const vector<LogicalType>> parameters) {
+                      optional_ptr<MacroFunction> overload) {
 	if (role.Owns(entry.ParentSchema(context).permissions.owner)) {
 		return;
 	}
-	if (!parameters || (entry.type != CatalogType::MACRO_ENTRY && entry.type != CatalogType::TABLE_MACRO_ENTRY)) {
+	if (!overload) {
 		RequireOwner(context, role, entry);
 		return;
 	}
-	auto &macro = entry.Cast<MacroCatalogEntry>();
-	for (auto &overload : macro.macros) {
-		if (overload->HasParameterTypes(*parameters)) {
-			RequireOwner(role, entry, macro.OverloadPermissions(*overload).owner);
-		}
-	}
+	RequireOwner(role, entry, entry.Cast<MacroCatalogEntry>().OverloadPermissions(*overload).owner);
 }
 
 void RequireCreate(ClientContext &context, const RoleAccess &role, SchemaCatalogEntry &schema, const CreateInfo &info,

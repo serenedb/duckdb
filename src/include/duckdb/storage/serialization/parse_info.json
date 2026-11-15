@@ -997,12 +997,12 @@
     "members": [
       {
         "id": 400,
-        "name": "parameter_types",
+        "name": "func_parameters",
         "type": "vector<LogicalType>"
       },
       {
         "id": 401,
-        "name": "has_parameter_types",
+        "name": "has_func_args",
         "type": "bool"
       },
       {

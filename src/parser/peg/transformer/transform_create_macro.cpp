@@ -667,8 +667,8 @@ unique_ptr<AlterInfo> PEGTransformerFactory::TransformAlterFunctionAttributesStm
 	auto result = make_uniq<AlterFunctionAttributesInfo>(
 	    AlterEntryData(transformer.Transform<QualifiedName>(list_pr.GetChild(1)), OnEntryNotFound::THROW_EXCEPTION));
 	TransformRoutineKind(list_pr.GetChild(0), result->include_functions, result->include_procedures);
-	result->has_parameter_types =
-	    TransformFunctionArgumentTypes(transformer, list_pr.Child<OptionalParseResult>(2), result->parameter_types);
+	result->has_func_args =
+	    TransformFunctionArgumentTypes(transformer, list_pr.Child<OptionalParseResult>(2), result->func_parameters);
 	ScalarMacroFunction attributes;
 	FunctionDecoratorInfo info;
 	ApplyFunctionDecorators(transformer, list_pr.Child<RepeatParseResult>(3), attributes, info);

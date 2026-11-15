@@ -46,6 +46,12 @@ string ParseInfo::TypeToString(CatalogType type) {
 		return "TABLESPACE";
 	case CatalogType::SUBSCRIPTION_ENTRY:
 		return "SUBSCRIPTION";
+	case CatalogType::FOREIGN_DATA_WRAPPER_ENTRY:
+		return "FOREIGN DATA WRAPPER";
+	case CatalogType::PARAMETER_ENTRY:
+		return "PARAMETER";
+	case CatalogType::LANGUAGE_ENTRY:
+		return "LANGUAGE";
 	default:
 		throw InternalException("ParseInfo::TypeToString for CatalogType with type: %s not implemented",
 		                        EnumUtil::ToString(type));
@@ -54,17 +60,6 @@ string ParseInfo::TypeToString(CatalogType type) {
 
 string ParseInfo::RoutineKeyword(bool include_functions, bool include_procedures) {
 	return !include_procedures ? "FUNCTION" : !include_functions ? "PROCEDURE" : "ROUTINE";
-}
-
-string ParseInfo::RoutineToString(const QualifiedName &name, bool has_func_args,
-                                  const vector<LogicalType> &parameters) {
-	auto result = name.ToString(QualifiedNameToStringMode::HIDE_DEFAULT_SCHEMA);
-	if (has_func_args) {
-		result +=
-		    "(" +
-		    StringUtil::Join(parameters, ", ", [](const LogicalType &parameter) { return parameter.ToString(); }) + ")";
-	}
-	return result;
 }
 
 string RenderOptionList(const case_insensitive_map_t<unique_ptr<ParsedExpression>> &parsed_options,

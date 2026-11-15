@@ -73,8 +73,8 @@ private:
 struct AlterFunctionAttributesInfo : public AlterScalarFunctionInfo {
 	explicit AlterFunctionAttributesInfo(const AlterEntryData &data);
 
-	vector<LogicalType> parameter_types;
-	bool has_parameter_types = false;
+	vector<LogicalType> func_parameters;
+	bool has_func_args = false;
 	bool set_security = false;
 	bool security_definer = false;
 	bool set_stability = false;
