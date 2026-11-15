@@ -100,14 +100,15 @@ void Binder::BindDrop(DropInfo &info, StatementProperties &properties) {
 		if (entry->internal) {
 			throw CatalogException("Cannot drop internal catalog entry %s!", entry->name);
 		}
+		optional_ptr<MacroFunction> overload;
 		if (entry->type == CatalogType::MACRO_ENTRY || entry->type == CatalogType::TABLE_MACRO_ENTRY) {
 			auto &macro = entry->Cast<MacroCatalogEntry>();
-			if (!info.has_func_args && !info.is_macro && macro.macros.size() > 1 &&
-			    entry->ParentCatalog().Compatibility() == SqlCompatibility::POSTGRES) {
-				auto extra_info = Exception::InitializeExtraInfo("AMBIGUOUS_FUNCTION", optional_idx());
-				extra_info["hint"] = "Specify the argument list to select the function unambiguously.";
-				throw CatalogException(extra_info, StringUtil::Format("function name \"%s\" is not unique",
-				                                                      entry->name.GetIdentifierName()));
+			if (info.has_func_args ||
+			    (!info.is_macro && entry->ParentCatalog().Compatibility() == SqlCompatibility::POSTGRES)) {
+				overload = ResolveOverload(macro, info.has_func_args, info.func_parameters, info.if_not_found);
+				if (!overload) {
+					break;
+				}
 			}
 			if (macro.is_procedure != info.is_procedure) {
 				throw BinderException("%s(%s) is not a %s", entry->name.GetIdentifierName(),
@@ -115,7 +116,7 @@ void Binder::BindDrop(DropInfo &info, StatementProperties &properties) {
 				                      info.is_procedure ? "procedure" : "function");
 			}
 		}
-		RequireDropOwner(context, CheckAs(), *entry, info.has_func_args ? &info.func_parameters : nullptr);
+		RequireDropOwner(context, CheckAs(), *entry, overload);
 		// keep the entry's full (possibly nested) schema path so execution navigates the same schema
 		info.SetQualifiedName(QualifiedName::FromCatalogSchema(
 		    entry->ParentCatalog().GetName(),

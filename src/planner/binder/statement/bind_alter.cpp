@@ -223,6 +223,12 @@ optional_ptr<CatalogEntry> Binder::LookupRoutine(const QualifiedName &name, OnEn
 
 MacroFunction &Binder::ResolveOverload(MacroCatalogEntry &macro, bool has_func_args,
                                        vector<LogicalType> &func_parameters) {
+	return *ResolveOverload(macro, has_func_args, func_parameters, OnEntryNotFound::THROW_EXCEPTION);
+}
+
+optional_ptr<MacroFunction> Binder::ResolveOverload(MacroCatalogEntry &macro, bool has_func_args,
+                                                    vector<LogicalType> &func_parameters,
+                                                    OnEntryNotFound if_not_found) {
 	auto &name = macro.name.GetIdentifierName();
 	if (has_func_args) {
 		for (auto &type : func_parameters) {
@@ -230,8 +236,11 @@ MacroFunction &Binder::ResolveOverload(MacroCatalogEntry &macro, bool has_func_a
 		}
 		for (auto &overload : macro.macros) {
 			if (overload->HasParameterTypes(func_parameters)) {
-				return *overload;
+				return overload.get();
 			}
+		}
+		if (if_not_found == OnEntryNotFound::RETURN_NULL) {
+			return nullptr;
 		}
 		auto extra_info = Exception::InitializeExtraInfo("MISSING_ENTRY", optional_idx());
 		extra_info["type"] = CatalogTypeToString(macro.type);
@@ -243,7 +252,7 @@ MacroFunction &Binder::ResolveOverload(MacroCatalogEntry &macro, bool has_func_a
 		extra_info["hint"] = "Specify the argument list to select the function unambiguously.";
 		throw CatalogException(extra_info, StringUtil::Format("function name \"%s\" is not unique", name));
 	}
-	return *macro.macros[0];
+	return macro.macros[0].get();
 }
 
 static idx_t RequireRoutineOwner(Binder &binder, CatalogEntry &entry, bool has_func_args,
@@ -390,7 +399,7 @@ BoundStatement Binder::Bind(AlterStatement &stmt) {
 	    stmt.info->Cast<AlterScalarFunctionInfo>().alter_scalar_function_type ==
 	        AlterScalarFunctionType::SET_FUNCTION_ATTRIBUTES) {
 		auto &info = stmt.info->Cast<AlterFunctionAttributesInfo>();
-		for (auto &type : info.parameter_types) {
+		for (auto &type : info.func_parameters) {
 			BindLogicalType(type);
 		}
 		const auto &name = info.GetQualifiedName().Name().GetIdentifierName();
@@ -399,16 +408,16 @@ BoundStatement Binder::Bind(AlterStatement &stmt) {
 			auto missing = Exception::InitializeExtraInfo("MISSING_ENTRY", optional_idx());
 			missing["type"] = CatalogTypeToString(CatalogType::MACRO_ENTRY);
 			throw CatalogException(missing,
-			                       info.has_parameter_types
+			                       info.has_func_args
 			                           ? StringUtil::Format("function %s(%s) does not exist", name,
-			                                                MacroFunction::ParameterTypesToString(info.parameter_types))
+			                                                MacroFunction::ParameterTypesToString(info.func_parameters))
 			                           : StringUtil::Format("could not find a function named \"%s\"", name));
 		}
 		if (function->internal) {
 			ThrowPermissionDenied(*function);
 		}
 		auto &routine = function->Cast<MacroCatalogEntry>();
-		auto &overload = ResolveOverload(routine, info.has_parameter_types, info.parameter_types);
+		auto &overload = ResolveOverload(routine, info.has_func_args, info.func_parameters);
 		RequireOwner(CheckAs(), *function, routine.OverloadPermissions(overload).owner);
 		auto create_info = routine.GetInfo();
 		const auto position =

@@ -1,5 +1,6 @@
 #include "duckdb/parser/parsed_data/drop_info.hpp"
 #include "duckdb/common/enum_util.hpp"
+#include "duckdb/function/macro_function.hpp"
 #include "duckdb/parser/parsed_data/extra_drop_info.hpp"
 #include "duckdb/parser/tableref/basetableref.hpp"
 
@@ -49,7 +50,10 @@ string DropInfo::ToString() const {
 			result += " IF EXISTS";
 		}
 		auto target = [&](const DropInfo &info) {
-			result += ParseInfo::RoutineToString(info.qualified_name, info.has_func_args, info.func_parameters);
+			result += info.qualified_name.ToString(QualifiedNameToStringMode::HIDE_DEFAULT_SCHEMA);
+			if (info.has_func_args) {
+				result += "(" + MacroFunction::ParameterTypesToString(info.func_parameters) + ")";
+			}
 		};
 		result += " ";
 		target(*this);
