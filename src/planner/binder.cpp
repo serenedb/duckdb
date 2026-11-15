@@ -1,6 +1,8 @@
 #include "duckdb/planner/binder.hpp"
 
 #include "duckdb/catalog/catalog_entry/aggregate_function_catalog_entry.hpp"
+#include "duckdb/catalog/catalog_entry/index_catalog_entry.hpp"
+#include "duckdb/catalog/catalog_entry/schema_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/view_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_search_path.hpp"
@@ -564,15 +566,22 @@ void Binder::CheckPrivileges() {
 		}
 	}
 	for (auto &write : global_binder_state->index_writes) {
-		for (auto &index : write.table.get().IndexFunctionCalls(context)) {
-			const auto changes =
-			    write.all_columns || std::any_of(index.columns.begin(), index.columns.end(), [&](LogicalIndex column) {
-				    return std::find(write.changed.begin(), write.changed.end(), column) != write.changed.end();
-			    });
-			if (changes) {
-				CheckFunctionCalls(context, write.role, index.calls);
+		auto &table = write.table.get();
+		table.ParentSchema(context).Scan(context, CatalogType::INDEX_ENTRY, [&](CatalogEntry &entry) {
+			auto &index = entry.Cast<IndexCatalogEntry>();
+			if (index.table_oid != table.oid) {
+				return;
 			}
-		}
+			const auto calls = index.GetFunctionCalls();
+			const auto changes = write.all_columns ||
+			                     std::any_of(index.column_ids.begin(), index.column_ids.end(), [&](column_t column) {
+				                     return std::find(write.changed.begin(), write.changed.end(),
+				                                      LogicalIndex(column)) != write.changed.end();
+			                     });
+			if (!calls.empty() && changes) {
+				CheckFunctionCalls(context, write.role, calls);
+			}
+		});
 	}
 }
 
