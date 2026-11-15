@@ -53,17 +53,7 @@ void RollbackState::RollbackEntry(UndoFlags type, data_ptr_t data) {
 	}
 	case UndoFlags::ATTACHED_DATABASE: {
 		auto db = Load<AttachedDatabase *>(data);
-		auto &db_manager = DatabaseManager::Get(db->GetDatabase());
-		auto attached_db = db_manager.RevertAttach(*db);
-		if (attached_db) {
-			// Teardown runs SQL, which cannot happen under the transaction lock: it would need a
-			// transaction on the same manager, and rollback may not fail. Extracting the deleter is a
-			// field move, safe here; the DatabaseManager drains the queue once rollback completes.
-			auto deleter = attached_db->ExtractDeleter();
-			if (deleter) {
-				db_manager.AddPendingTeardown(std::move(deleter));
-			}
-		}
+		DatabaseManager::Get(db->GetDatabase()).RollbackAttach(transaction.context.lock(), *db);
 		break;
 	}
 	case UndoFlags::SEQUENCE_VALUE:

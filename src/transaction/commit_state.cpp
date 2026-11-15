@@ -69,17 +69,7 @@ void CommitDropState::FinalizeCommit() {
 		entry.get().OnDrop();
 	}
 	for (auto &db : attached_databases) {
-		auto replaced = db.get().TakeReplaced();
-		if (!replaced) {
-			continue;
-		}
-		auto deleter = replaced->ExtractDeleter();
-		if (attach_context) {
-			replaced->OnDetach(*attach_context);
-		}
-		if (deleter) {
-			DatabaseManager::Get(replaced->GetDatabase()).AddPendingTeardown(std::move(deleter));
-		}
+		DatabaseManager::Get(db.get().GetDatabase()).CommitAttach(attach_context, db.get());
 	}
 	dropped_block_ids.clear();
 	pending_index_removals.clear();
