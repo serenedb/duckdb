@@ -473,14 +473,25 @@ BoundStatement Binder::Bind(AlterStatement &stmt) {
 	}
 
 	optional_ptr<CatalogEntry> entry;
+	auto use = EntryUse::OWN;
+	if (stmt.info->type != AlterType::SET_COLUMN_COMMENT) {
+		const auto type = stmt.info->GetCatalogType();
+		if (type == CatalogType::MACRO_ENTRY || type == CatalogType::TABLE_MACRO_ENTRY) {
+			use = EntryUse::REFERENCE;
+		} else if (stmt.info->GetNewName()) {
+			use = EntryUse::RENAME;
+		}
+	}
 	auto lookup = [&](CatalogType type, OnEntryNotFound if_not_found) {
-		EntryLookupInfo lookup_info(type, stmt.info->GetQualifiedName());
-		return entry_retriever.GetEntry(lookup_info, if_not_found);
+		return entry_retriever.GetEntry(EntryLookupInfo(type, stmt.info->GetQualifiedName(), use), if_not_found);
 	};
 	if (stmt.info->type == AlterType::SET_COLUMN_COMMENT) {
 		// Extra step for column comments: They can alter a table or a view, and we resolve that here.
 		auto &info = stmt.info->Cast<SetColumnCommentInfo>();
 		entry = info.TryResolveCatalogEntry(entry_retriever);
+		if (entry) {
+			RequireUse(context, CheckAs(), *entry, EntryUse::OWN);
+		}
 		if (entry && info.catalog_entry_type == CatalogType::VIEW_ENTRY) {
 			// when running SET COLUMN on a VIEW - ensure the view is bound
 			auto &view = entry->Cast<ViewCatalogEntry>();
@@ -534,17 +545,14 @@ BoundStatement Binder::Bind(AlterStatement &stmt) {
 	}
 
 	D_ASSERT(!entry->deleted);
-	if (stmt.info->type == AlterType::SET_COMMENT) {
-		auto &comment = stmt.info->Cast<SetCommentInfo>();
-		comment.overload_oid = RequireRoutineOwner(*this, *entry, comment.has_func_args, comment.func_parameters);
-	} else if (stmt.info->type == AlterType::SET_SCHEMA) {
-		vector<LogicalType> no_arguments;
-		RequireRoutineOwner(*this, *entry, false, no_arguments);
-	} else {
-		RequireOwner(context, CheckAs(), *entry);
-	}
-	if (stmt.info->GetNewName()) {
-		RequireSchemaCreate(context, CheckAs(), entry->ParentSchema(context));
+	if (entry->type == CatalogType::MACRO_ENTRY || entry->type == CatalogType::TABLE_MACRO_ENTRY) {
+		if (stmt.info->type == AlterType::SET_COMMENT) {
+			auto &comment = stmt.info->Cast<SetCommentInfo>();
+			comment.overload_oid = RequireRoutineOwner(*this, *entry, comment.has_func_args, comment.func_parameters);
+		} else {
+			vector<LogicalType> no_arguments;
+			RequireRoutineOwner(*this, *entry, false, no_arguments);
+		}
 	}
 	if (auto new_schema = stmt.info->GetNewSchema()) {
 		EntryLookupInfo schema_lookup(CatalogType::SCHEMA_ENTRY,

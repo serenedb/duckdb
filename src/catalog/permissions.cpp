@@ -1373,6 +1373,31 @@ void RequireDropOwner(ClientContext &context, const RoleAccess &role, CatalogEnt
 	RequireOwner(role, entry, entry.Cast<MacroCatalogEntry>().OverloadPermissions(*overload).owner);
 }
 
+void RequireUse(ClientContext &context, const RoleAccess &role, CatalogEntry &entry, EntryUse use) {
+	switch (use) {
+	case EntryUse::REFERENCE:
+		return;
+	case EntryUse::OWN:
+		RequireOwner(context, role, entry);
+		return;
+	case EntryUse::RENAME:
+		RequireOwner(context, role, entry);
+		if (entry.type == CatalogType::SCHEMA_ENTRY) {
+			RequireDatabasePrivilege(context, role, entry.ParentCatalog().GetName(), AclMode::Create);
+		} else {
+			RequireSchemaCreate(context, role, entry.ParentSchema(context));
+		}
+		return;
+	case EntryUse::DROP:
+		if (entry.type == CatalogType::SCHEMA_ENTRY) {
+			RequireOwner(context, role, entry);
+		} else {
+			RequireDropOwner(context, role, entry, nullptr);
+		}
+		return;
+	}
+}
+
 void RequireCreate(ClientContext &context, const RoleAccess &role, SchemaCatalogEntry &schema, const CreateInfo &info,
                    const Identifier &name) {
 	RequireSchemaCreate(context, role, schema);

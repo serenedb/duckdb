@@ -26,8 +26,7 @@ void Binder::BindDropTrigger(DropInfo &info, StatementProperties &properties) {
 	// resolve the (possibly nested) catalog/schema qualification of the base table
 	base_table_ref.SetQualifiedName(BindTableName(base_table_ref.GetQualifiedName()));
 	// IF EXISTS only guards the trigger, not the table (PostgreSQL-compatible behavior).
-	auto &table_entry = entry_retriever.GetEntry<TableCatalogEntry>(base_table_ref.GetQualifiedName());
-	RequireOwner(context, CheckAs(), table_entry);
+	auto &table_entry = entry_retriever.GetEntry<TableCatalogEntry>(base_table_ref.GetQualifiedName(), EntryUse::OWN);
 	// the trigger lives in the same (possibly nested) schema as its base table
 	info.SetQualifiedName(table_entry.GetQualifiedName(info.GetQualifiedName().Name()));
 	properties.RegisterDBModify(table_entry.ParentCatalog(), context, DatabaseModificationType::DROP_CATALOG_ENTRY);
@@ -86,7 +85,9 @@ void Binder::BindDrop(DropInfo &info, StatementProperties &properties) {
 				info.type = CatalogType::TABLE_MACRO_ENTRY;
 			}
 		} else {
-			EntryLookupInfo entry_lookup(info.type, info.GetQualifiedName());
+			EntryLookupInfo entry_lookup(info.type, info.GetQualifiedName(),
+			                             info.type == CatalogType::TABLE_MACRO_ENTRY ? EntryUse::REFERENCE
+			                                                                         : EntryUse::DROP);
 			auto if_not_found = info.if_not_found;
 			if (catalog && catalog->Compatibility() == SqlCompatibility::POSTGRES &&
 			    Catalog::InRelationNamespace(info.type)) {
@@ -115,8 +116,8 @@ void Binder::BindDrop(DropInfo &info, StatementProperties &properties) {
 				                      MacroFunction::ParameterTypesToString(info.func_parameters),
 				                      info.is_procedure ? "procedure" : "function");
 			}
+			RequireDropOwner(context, CheckAs(), *entry, overload);
 		}
-		RequireDropOwner(context, CheckAs(), *entry, overload);
 		// keep the entry's full (possibly nested) schema path so execution navigates the same schema
 		info.SetQualifiedName(QualifiedName::FromCatalogSchema(
 		    entry->ParentCatalog().GetName(),
