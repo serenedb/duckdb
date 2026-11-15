@@ -8,6 +8,7 @@
 
 #pragma once
 
+#include "duckdb/catalog/permissions.hpp"
 #include "duckdb/catalog/standard_entry.hpp"
 #include "duckdb/common/query_context.hpp"
 #include "duckdb/parser/parsed_data/create_index_info.hpp"
@@ -59,6 +60,7 @@ public:
 	virtual Identifier GetSchemaName() const = 0;
 	virtual Identifier GetTableName() const = 0;
 	virtual optional_ptr<CatalogEntry> GetRelation(CatalogTransaction transaction) const;
+	virtual std::span<const FunctionCall> GetFunctionCalls() const;
 	virtual void InitializeColumnSegmentInfoScan(ColumnSegmentInfoScanState &state) const {
 	}
 	virtual bool ScanColumnSegmentInfo(const QueryContext &context, ColumnSegmentInfoScanState &state,

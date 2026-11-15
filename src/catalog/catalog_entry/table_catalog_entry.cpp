@@ -255,10 +255,6 @@ void TableCatalogEntry::InternalAppend(ClientContext &context, ColumnDataCollect
 }
 // LCOV_EXCL_STOP
 
-vector<IndexCalls> TableCatalogEntry::IndexFunctionCalls(ClientContext &context) {
-	return {};
-}
-
 static void BindMissingColumns(TableCatalogEntry &table, LogicalGet &get, LogicalProjection &proj,
                                LogicalUpdate &update, const physical_index_set_t &bound_columns,
                                bool reuse_projected_columns) {
