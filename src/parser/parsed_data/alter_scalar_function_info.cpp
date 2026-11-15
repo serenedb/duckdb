@@ -2,6 +2,7 @@
 #include "duckdb/common/sql_identifier.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/function/macro_function.hpp"
+#include "duckdb/main/settings.hpp"
 #include "duckdb/parser/parsed_data/create_scalar_function_info.hpp"
 
 namespace duckdb {
@@ -98,10 +99,7 @@ string AlterFunctionAttributesInfo::ToString() const {
 		result += " RESET ALL";
 	}
 	for (auto &entry : config) {
-		auto separator = entry.find('=');
-		result += separator == string::npos
-		              ? " SET " + entry + " FROM CURRENT"
-		              : " SET " + entry.substr(0, separator) + " TO " + entry.substr(separator + 1);
+		result += " SET " + Settings::ConfigToSQL(entry);
 	}
 	return result + ";";
 }

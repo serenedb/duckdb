@@ -8,6 +8,7 @@
 #include "duckdb/parser/parsed_data/create_macro_info.hpp"
 #include "duckdb/parser/peg/transformer/peg_transformer.hpp"
 #include "duckdb/function/scalar_macro_function.hpp"
+#include "duckdb/main/settings.hpp"
 #include "duckdb/parser/parser.hpp"
 #include "duckdb/parser/statement/select_statement.hpp"
 #include "duckdb/parser/statement/insert_statement.hpp"
@@ -235,11 +236,11 @@ static void ApplyFunctionDecorators(PEGTransformer &transformer, RepeatParseResu
 			PEGTransformerFactory::CollectConfigClause(transformer, decorator_choice, set_config, reset_config,
 			                                           reset_all_config);
 			for (auto &entry : set_config) {
-				const auto key = entry.substr(0, entry.find('='));
+				const auto key = Settings::ConfigKey(entry);
 				if (!StringUtil::CIEquals(key, "search_path")) {
 					throw NotImplementedException({{"detail", "A function can set only search_path."}},
 					                              "SET of parameter \"%s\" on a function is not supported",
-					                              StringUtil::Lower(key));
+					                              StringUtil::Lower(string(key)));
 				}
 				macro_function.config = {"search_path" + entry.substr(key.size())};
 				info.has_config = true;

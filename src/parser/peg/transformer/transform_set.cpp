@@ -26,7 +26,11 @@ unique_ptr<SetStatement> TransformSetSearchPath(const Identifier &name, SetScope
 			return expr.ToString();
 		}
 		if (expr.GetExpressionType() == ExpressionType::VALUE_CONSTANT) {
-			return expr.Cast<ConstantExpression>().GetLiteral().ToValue().ToString();
+			auto &literal = expr.Cast<ConstantExpression>().GetLiteral();
+			if (literal.kind == LiteralKind::STRING && !literal.text.empty()) {
+				return "\"" + StringUtil::Replace(literal.text, "\"", "\"\"") + "\"";
+			}
+			return literal.ToValue().ToString();
 		}
 		throw ParserException("SET search_path: expected identifier or string literal");
 	};
@@ -38,18 +42,9 @@ unique_ptr<SetStatement> TransformSetSearchPath(const Identifier &name, SetScope
 		if (expr.GetExpressionType() == ExpressionType::VALUE_DEFAULT) {
 			return make_uniq<ResetVariableStatement>(name, scope);
 		}
-		// Single string literal: wrap in double quotes so commas in the literal
-		// are not treated as separators by ParseList. Empty literal stays empty.
-		if (expr.GetExpressionType() == ExpressionType::VALUE_CONSTANT) {
-			auto &literal = expr.Cast<ConstantExpression>().GetLiteral();
-			if (literal.kind == LiteralKind::STRING) {
-				const auto &raw = literal.text;
-				if (raw.empty()) {
-					return make_set(raw);
-				}
-				string wrapped = "\"" + StringUtil::Replace(raw, "\"", "\"\"") + "\"";
-				return make_set(std::move(wrapped));
-			}
+		if (expr.GetExpressionType() == ExpressionType::VALUE_CONSTANT &&
+		    expr.Cast<ConstantExpression>().GetLiteral().kind == LiteralKind::STRING) {
+			return make_set(serialize(expr));
 		}
 		if (expr.GetExpressionType() != ExpressionType::COLUMN_REF) {
 			// on top of PG's grammar, DuckDB allows any expression here and evaluates it: pass it on,
