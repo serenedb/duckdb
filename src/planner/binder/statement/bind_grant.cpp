@@ -441,12 +441,15 @@ void Binder::BindPrivilegeAlter(AlterInfo &info, StatementProperties &properties
 			settings.role_id = RoleSpecId(context, settings.role);
 		}
 		CheckAlterDatabaseSettings(settings);
+		Settings::ResolveCurrentValues(context, settings.set_config);
 	} else {
 		if (const auto role = RoleSpecKeyword(context, info.GetQualifiedName().Name().GetIdentifierName());
 		    role.IsValid()) {
 			info.SetQualifiedName(Identifier(), Identifier(), Identifier(RoleName(context, role.GetIndex())));
 		}
-		CheckAlterRole(info.Cast<AlterRoleInfo>());
+		auto &alter = info.Cast<AlterRoleInfo>();
+		CheckAlterRole(alter);
+		Settings::ResolveCurrentValues(context, alter.set_config);
 	}
 	const auto target_type = info.GetCatalogType();
 	if (target_type == CatalogType::DATABASE_ENTRY || target_type == CatalogType::ROLE_ENTRY) {
