@@ -34,8 +34,7 @@ static bool ResetToStartValue(ClientContext &context, const Identifier &name, Se
 }
 
 void PhysicalReset::ResetExtensionVariable(ExecutionContext &context, DBConfig &config, const Identifier &name,
-                                           ExtensionOption &extension_option, SetScope effective_scope,
-                                           bool reset_all) {
+                                           ExtensionOption &extension_option, SetScope effective_scope) {
 	// Compatibility: mirror the checks from PhysicalSet::SetExtensionVariable.
 	if (!CanResetAt(extension_option, effective_scope)) {
 		throw InvalidInputException("parameter \"%s\" cannot be reset locally", extension_option.description);
@@ -43,9 +42,6 @@ void PhysicalReset::ResetExtensionVariable(ExecutionContext &context, DBConfig &
 	if (effective_scope == SetScope::GLOBAL && !context.client.transaction.IsAutoCommit()) {
 		throw InvalidInputException("parameter \"%s\" is global and cannot be reset inside a transaction",
 		                            extension_option.description);
-	}
-	if (!reset_all) {
-		Settings::CheckChange(context.client, name, extension_option.access, effective_scope);
 	}
 	if (ResetToStartValue(context.client, name, effective_scope)) {
 		return;
@@ -82,11 +78,8 @@ void PhysicalReset::ResetExtensionVariable(ExecutionContext &context, DBConfig &
 }
 
 void PhysicalReset::ResetOption(ExecutionContext &context, DBConfig &config, const ConfigurationOption &option,
-                                const char *name, SetScope variable_scope, bool reset_all) {
+                                const char *name, SetScope variable_scope) {
 	config.CheckLock(option.name);
-	if (!reset_all) {
-		Settings::CheckChange(context.client, Identifier(name), option.access, variable_scope);
-	}
 	if (ResetToStartValue(context.client, Identifier(name), variable_scope)) {
 		return;
 	}
@@ -199,8 +192,9 @@ void PhysicalReset::ResetVariable(ExecutionContext &context, const Identifier &n
 	// ResetExtensionVariable so no-op RESETs don't reach sdb's tracker.
 	auto option = DBConfig::GetOptionByName(name);
 	if (option) {
-		ResetOption(context, config, *option, name.GetIdentifierName().c_str(),
-		            PhysicalSet::GetSettingScope(*option, scope), false);
+		const auto variable_scope = PhysicalSet::GetSettingScope(*option, scope);
+		Settings::CheckChange(context.client, name, option->access, variable_scope);
+		ResetOption(context, config, *option, name.GetIdentifierName().c_str(), variable_scope);
 		return;
 	}
 	ExtensionOption extension_option;
@@ -214,8 +208,9 @@ void PhysicalReset::ResetVariable(ExecutionContext &context, const Identifier &n
 			throw InvalidInputException("Extension parameter %s was not found after autoloading", name);
 		}
 	}
-	ResetExtensionVariable(context, config, name, extension_option,
-	                       PhysicalSet::GetSettingScope(extension_option, scope), false);
+	const auto variable_scope = PhysicalSet::GetSettingScope(extension_option, scope);
+	Settings::CheckChange(context.client, name, extension_option.access, variable_scope);
+	ResetExtensionVariable(context, config, name, extension_option, variable_scope);
 }
 
 void PhysicalReset::ResetAll(ExecutionContext &context, SetScope scope, bool discard) {
@@ -233,7 +228,7 @@ void PhysicalReset::ResetAll(ExecutionContext &context, SetScope scope, bool dis
 		if (variable_scope == SetScope::GLOBAL) {
 			continue;
 		}
-		ResetOption(context, config, *option, option->name, variable_scope, true);
+		ResetOption(context, config, *option, option->name, variable_scope);
 	}
 	for (auto &ext : config.GetExtensionSettings()) {
 		auto variable_scope = PhysicalSet::GetSettingScope(ext.second, scope);
@@ -241,7 +236,7 @@ void PhysicalReset::ResetAll(ExecutionContext &context, SetScope scope, bool dis
 		    variable_scope == SetScope::GLOBAL || !CanResetAt(ext.second, variable_scope)) {
 			continue;
 		}
-		ResetExtensionVariable(context, config, ext.first, ext.second, variable_scope, true);
+		ResetExtensionVariable(context, config, ext.first, ext.second, variable_scope);
 	}
 	if (scope == SetScope::GLOBAL) {
 		return;

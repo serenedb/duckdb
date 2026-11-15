@@ -87,17 +87,18 @@ void PhysicalSet::SetVariable(ClientContext &context, const Identifier &name, Se
 				throw InvalidInputException("Extension parameter %s was not found after autoloading", name);
 			}
 		}
+		const auto variable_scope = GetSettingScope(extension_option, scope);
 		if (check_access) {
-			Settings::CheckChange(context, name, extension_option.access, GetSettingScope(extension_option, scope));
+			Settings::CheckChange(context, name, extension_option.access, variable_scope);
 		}
 		// Invoke the pre-SET observer after resolution so the handler only sees
 		// valid option names and can safely snapshot the current value.
 		Value casted_value = value.CastAs(context, extension_option.type);
-		context.OnSettingChange(name.GetIdentifierName(), scope,
+		context.OnSettingChange(name.GetIdentifierName(), variable_scope,
 		                        SessionValue(context, name, extension_option.setting_index));
 		SetExtensionVariable(context, extension_option, name, scope, casted_value);
 		if (extension_option.rebind) {
-			Rebind(context, GetSettingScope(extension_option, scope));
+			Rebind(context, variable_scope);
 		}
 		return;
 	}
@@ -107,7 +108,7 @@ void PhysicalSet::SetVariable(ClientContext &context, const Identifier &name, Se
 	}
 	Value input_val = value.CastAs(context, DBConfig::ParseLogicalType(option->parameter_type));
 	context.OnSettingChange(
-	    name.GetIdentifierName(), scope,
+	    name.GetIdentifierName(), variable_scope,
 	    option->get_local ? option->get_local(context)
 	                      : SessionValue(context, name, option->default_value ? option->setting_idx : optional_idx()));
 	if (option->default_value) {
