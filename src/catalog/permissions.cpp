@@ -40,82 +40,26 @@
 
 namespace duckdb {
 
-CatalogType Permissions::AclClass(CatalogType entry_type) {
-	switch (entry_type) {
-	case CatalogType::VIEW_ENTRY:
-		return CatalogType::TABLE_ENTRY;
-	case CatalogType::TABLE_MACRO_ENTRY:
-		return CatalogType::MACRO_ENTRY;
-	default:
-		return entry_type;
+AclMode FindPrivilege(std::string_view keyword) {
+	if (StringUtil::CIEquals(keyword, "TEMP")) {
+		return AclMode::CreateTemp;
 	}
-}
-
-AclMode Permissions::AllPrivileges(CatalogType acl_class) {
-	switch (acl_class) {
-	case CatalogType::TABLE_ENTRY:
-		return AclMode::Select | AclMode::Insert | AclMode::Update | AclMode::Delete | AclMode::Truncate |
-		       AclMode::References | AclMode::Trigger | AclMode::Maintain;
-	case CatalogType::SEQUENCE_ENTRY:
-		return AclMode::Select | AclMode::Update | AclMode::Usage;
-	case CatalogType::DATABASE_ENTRY:
-		return AclMode::Create | AclMode::CreateTemp | AclMode::Connect;
-	case CatalogType::SCHEMA_ENTRY:
-		return AclMode::Usage | AclMode::Create;
-	case CatalogType::MACRO_ENTRY:
-	case CatalogType::TABLE_MACRO_ENTRY:
-		return AclMode::Execute;
-	case CatalogType::TYPE_ENTRY:
-	case CatalogType::FOREIGN_SERVER_ENTRY:
-	case CatalogType::FOREIGN_DATA_WRAPPER_ENTRY:
-	case CatalogType::LANGUAGE_ENTRY:
-		return AclMode::Usage;
-	case CatalogType::TABLESPACE_ENTRY:
-		return AclMode::Create;
-	case CatalogType::PARAMETER_ENTRY:
-		return AclMode::Set | AclMode::AlterSystem;
-	default:
-		return AclMode::NoRights;
+	for (auto &privilege : ACL_PRIVILEGES) {
+		if (StringUtil::CIEquals(keyword, privilege.keyword)) {
+			return privilege.mode;
+		}
 	}
-}
-
-AclMode Permissions::PublicPrivileges(CatalogType acl_class) {
-	switch (acl_class) {
-	case CatalogType::DATABASE_ENTRY:
-		return AclMode::Connect | AclMode::CreateTemp;
-	case CatalogType::MACRO_ENTRY:
-	case CatalogType::TABLE_MACRO_ENTRY:
-		return AclMode::Execute;
-	case CatalogType::TYPE_ENTRY:
-	case CatalogType::LANGUAGE_ENTRY:
-		return AclMode::Usage;
-	default:
-		return AclMode::NoRights;
-	}
+	return AclMode::NoRights;
 }
 
 bool Permissions::TryParsePrivilege(std::string_view keyword, CatalogType acl_class, AclMode &result) {
-	static const case_insensitive_map_view_t<AclMode> names {
-	    {"select", AclMode::Select},     {"insert", AclMode::Insert},
-	    {"update", AclMode::Update},     {"delete", AclMode::Delete},
-	    {"truncate", AclMode::Truncate}, {"references", AclMode::References},
-	    {"trigger", AclMode::Trigger},   {"maintain", AclMode::Maintain},
-	    {"execute", AclMode::Execute},   {"usage", AclMode::Usage},
-	    {"create", AclMode::Create},     {"temporary", AclMode::CreateTemp},
-	    {"temp", AclMode::CreateTemp},   {"connect", AclMode::Connect},
-	    {"set", AclMode::Set},           {"alter system", AclMode::AlterSystem},
-	};
 	const auto allowed = AllPrivileges(acl_class);
 	if (StringUtil::CIEquals(keyword, "ALL")) {
 		result = allowed;
 		return true;
 	}
-	auto entry = names.find(keyword);
-	if (entry == names.end() || (allowed & entry->second) != entry->second) {
-		return false;
-	}
-	result = entry->second;
-	return true;
+	result = FindPrivilege(keyword);
+	return result != AclMode::NoRights && (allowed & result) == result;
 }
 
 vector<AclItem> Permissions::AclDefault(CatalogType acl_class, idx_t owner) {
@@ -227,11 +171,7 @@ static void Revoke(vector<AclItem> &acl, idx_t grantee, idx_t grantor, AclMode p
 			Revoke(acl, dependent, grantee, lost, false, true);
 		}
 	}
-	acl.erase(std::remove_if(acl.begin(), acl.end(),
-	                         [](const AclItem &item) {
-		                         return item.privs == AclMode::NoRights && item.grant_option == AclMode::NoRights;
-	                         }),
-	          acl.end());
+	std::erase_if(acl, [](const AclItem &item) { return item.GrantsNothing(); });
 }
 
 static void ReplaceOwner(vector<AclItem> &acl, idx_t old_owner, idx_t new_owner) {
@@ -608,25 +548,22 @@ static AclMode CapabilityModes(const RoleAccess &access, CatalogType type) {
 	if (access.capabilities == RoleCapability::None) {
 		return modes;
 	}
-	const auto has = [&](RoleCapability capability) {
-		return (access.capabilities & capability) == capability;
-	};
 	switch (type) {
 	case CatalogType::TABLE_ENTRY:
 	case CatalogType::VIEW_ENTRY:
 	case CatalogType::SEQUENCE_ENTRY:
-		if (has(RoleCapability::ReadAllData)) {
+		if (access.Has(RoleCapability::ReadAllData)) {
 			modes |= AclMode::Select;
 		}
-		if (has(RoleCapability::WriteAllData)) {
+		if (access.Has(RoleCapability::WriteAllData)) {
 			modes |= AclMode::Insert | AclMode::Update | AclMode::Delete;
 		}
-		if (has(RoleCapability::Maintain) && type != CatalogType::SEQUENCE_ENTRY) {
+		if (access.Has(RoleCapability::Maintain) && type != CatalogType::SEQUENCE_ENTRY) {
 			modes |= AclMode::Maintain;
 		}
 		break;
 	case CatalogType::SCHEMA_ENTRY:
-		if (has(RoleCapability::ReadAllData) || has(RoleCapability::WriteAllData)) {
+		if (access.Has(RoleCapability::ReadAllData) || access.Has(RoleCapability::WriteAllData)) {
 			modes |= AclMode::Usage;
 		}
 		break;
@@ -920,18 +857,10 @@ optional_ptr<const vector<ColumnAcl>> SecuritySnapshot::RelationColumns(std::str
 	return row && !row->columns.empty() ? &row->columns : nullptr;
 }
 
-bool SecuritySnapshot::HasFunctionGrants(std::string_view database) const {
-	return !functions.empty() && functions.find(database) != functions.end();
-}
-
-optional_ptr<const Permissions> SecuritySnapshot::FunctionPermissions(std::string_view database,
-                                                                      std::string_view function) const {
+optional_ptr<const unordered_map<string, Permissions>>
+SecuritySnapshot::FunctionGrants(std::string_view database) const {
 	auto rows = functions.find(database);
-	if (rows == functions.end()) {
-		return nullptr;
-	}
-	auto row = rows->second.find(function);
-	return row == rows->second.end() ? nullptr : &row->second;
+	return rows == functions.end() ? nullptr : &rows->second;
 }
 
 optional_ptr<const Permissions> SecuritySnapshot::TypePermissions(std::string_view database, idx_t type) const {
@@ -1095,16 +1024,35 @@ vector<NamedAcl> BuiltinFunctionRows(ClientContext &context, SchemaCatalogEntry 
 	return rows;
 }
 
-template <class KEY>
-static optional_ptr<const Permissions> BuiltinGrant(ClientContext &context, const KEY &key) {
+optional_ptr<const unordered_map<string, Permissions>> BuiltinFunctionGrants(ClientContext &context) {
 	if (!context.security || !context.security->HasFunctionGrants()) {
 		return nullptr;
 	}
-	const auto database = DatabaseManager::TryGetDefaultDatabase(context);
-	if (!context.security->HasFunctionGrants(database.GetIdentifierName())) {
+	return context.security->FunctionGrants(DatabaseManager::TryGetDefaultDatabase(context).GetIdentifierName());
+}
+
+optional_ptr<const Permissions> BuiltinTypeGrant(ClientContext &context, idx_t type) {
+	if (!context.security || !context.security->HasTypeGrants()) {
 		return nullptr;
 	}
-	return context.security->FunctionPermissions(database.GetIdentifierName(), key());
+	return context.security->TypePermissions(DatabaseManager::TryGetDefaultDatabase(context).GetIdentifierName(), type);
+}
+
+static optional_ptr<const Permissions> GrantRow(optional_ptr<const unordered_map<string, Permissions>> grants,
+                                                std::string_view key) {
+	if (!grants) {
+		return nullptr;
+	}
+	auto row = grants->find(key);
+	return row == grants->end() ? nullptr : &row->second;
+}
+
+static bool MayCallBuiltin(const RoleAccess &role, optional_ptr<const Permissions> granted, RoleCapability capability) {
+	const bool holds_capability = capability != RoleCapability::None && role.Has(capability);
+	if (granted) {
+		return holds_capability || role.Can(CatalogType::MACRO_ENTRY, *granted, AclMode::Execute);
+	}
+	return capability == RoleCapability::None || holds_capability;
 }
 
 static optional_ptr<const Permissions> BuiltinGrant(ClientContext &context, const CatalogEntry &function,
@@ -1113,22 +1061,13 @@ static optional_ptr<const Permissions> BuiltinGrant(ClientContext &context, cons
 	if (!config.builtin_function_key || !function.internal) {
 		return nullptr;
 	}
-	return BuiltinGrant(context, [&] { return config.builtin_function_key(function, overload); });
+	auto grants = BuiltinFunctionGrants(context);
+	return grants ? GrantRow(grants, config.builtin_function_key(function, overload)) : nullptr;
 }
 
 void CheckBuiltinCall(ClientContext &context, const RoleAccess &role, const CatalogEntry &function, idx_t overload) {
-	if (role.is_superuser) {
-		return;
-	}
-	auto &entry = function.Cast<FunctionEntry>();
-	if (auto granted = BuiltinGrant(context, function, overload)) {
-		const bool holds_capability = entry.required_capability != RoleCapability::None && entry.MayCall(role);
-		if (!holds_capability && !role.Can(CatalogType::MACRO_ENTRY, *granted, AclMode::Execute)) {
-			ThrowPermissionDenied(function);
-		}
-		return;
-	}
-	if (!entry.MayCall(role)) {
+	if (!role.is_superuser && !MayCallBuiltin(role, BuiltinGrant(context, function, overload),
+	                                          function.Cast<FunctionEntry>().required_capability)) {
 		ThrowPermissionDenied(function);
 	}
 }
@@ -1152,8 +1091,8 @@ static optional_ptr<Catalog> RoleCatalog(ClientContext &context) {
 	return &system;
 }
 
-static bool IsClusterDatabase(ClientContext &context, AttachedDatabase &database) {
-	return !database.IsReadOnly() && ClusterEntry(context, CatalogType::DATABASE_ENTRY, database.GetName());
+static optional_ptr<CatalogEntry> ClusterDatabaseOf(ClientContext &context, AttachedDatabase &database) {
+	return database.IsReadOnly() ? nullptr : ClusterEntry(context, CatalogType::DATABASE_ENTRY, database.GetName());
 }
 
 static optional_ptr<CatalogEntry> FindForeignServer(ClientContext &context, const Identifier &name) {
@@ -1170,20 +1109,18 @@ static optional_ptr<CatalogEntry> FindForeignServer(ClientContext &context, cons
 	return nullptr;
 }
 
-static bool CanUseDatabase(ClientContext &context, const RoleAccess &role, const Identifier &name) {
-	if (name.GetIdentifierName() == ClientData::Get(context).default_database.GetIdentifierName()) {
-		return true;
-	}
-	auto database = ClusterEntry(context, CatalogType::DATABASE_ENTRY, name);
-	return !database || role.Can(CatalogType::DATABASE_ENTRY, database->permissions, AclMode::Connect);
+static bool CanConnect(ClientContext &context, const RoleAccess &role, const Identifier &name,
+                       optional_ptr<CatalogEntry> database) {
+	return !database || name.GetIdentifierName() == ClientData::Get(context).default_database.GetIdentifierName() ||
+	       role.Can(CatalogType::DATABASE_ENTRY, database->permissions, AclMode::Connect);
 }
 
 bool DatabaseVisible(ClientContext &context, const RoleAccess &role, AttachedDatabase &database) {
 	if (database.IsSystem() || database.IsTemporary()) {
 		return true;
 	}
-	if (IsClusterDatabase(context, database)) {
-		return CanUseDatabase(context, role, database.GetName());
+	if (auto entry = ClusterDatabaseOf(context, database)) {
+		return CanConnect(context, role, database.GetName(), entry);
 	}
 	auto server = FindForeignServer(context, database.GetName());
 	return server && role.Can(CatalogType::FOREIGN_SERVER_ENTRY, server->permissions, AclMode::Usage);
@@ -1191,7 +1128,7 @@ bool DatabaseVisible(ClientContext &context, const RoleAccess &role, AttachedDat
 
 bool EntryVisible(ClientContext &context, const RoleAccess &role, CatalogEntry &entry) {
 	if (entry.type == CatalogType::DATABASE_ENTRY) {
-		return CanUseDatabase(context, role, entry.name);
+		return CanConnect(context, role, entry.name, ClusterEntry(context, CatalogType::DATABASE_ENTRY, entry.name));
 	}
 	if ((entry.type == CatalogType::TABLE_FUNCTION_ENTRY || entry.type == CatalogType::SCALAR_FUNCTION_ENTRY) &&
 	    !entry.Cast<FunctionEntry>().MayCall(role) && !BuiltinCallGranted(context, role, entry)) {
@@ -1249,7 +1186,7 @@ void CheckReference(ClientContext &context, const RoleAccess &role, CatalogEntry
 	                                                           : entry.ParentCatalog().GetAttached();
 	if (!DatabaseVisible(context, role, database)) {
 		auto &name = database.GetName().GetIdentifierName();
-		if (IsClusterDatabase(context, database)) {
+		if (ClusterDatabaseOf(context, database)) {
 			throw PermissionException({{"detail", "User does not have CONNECT privilege."}},
 			                          StringUtil::Format("permission denied for database \"%s\"", name));
 		}
@@ -1359,95 +1296,30 @@ void ForEachRoleReference(const CatalogEntry &entry, const std::function<void(id
 	});
 }
 
-vector<idx_t> RoleReferences(const CatalogEntry &entry) {
-	vector<idx_t> roles;
-	ForEachRoleReference(entry, [&](idx_t role) { roles.push_back(role); });
-	std::sort(roles.begin(), roles.end());
-	roles.erase(std::unique(roles.begin(), roles.end()), roles.end());
-	return roles;
-}
-
-string PermissionKindName(CatalogType type) {
-	switch (type) {
-	case CatalogType::TABLE_ENTRY:
-		return "table";
-	case CatalogType::VIEW_ENTRY:
-		return "view";
-	case CatalogType::SEQUENCE_ENTRY:
-		return "sequence";
-	case CatalogType::MACRO_ENTRY:
-	case CatalogType::TABLE_MACRO_ENTRY:
-	case CatalogType::TABLE_FUNCTION_ENTRY:
-	case CatalogType::SCALAR_FUNCTION_ENTRY:
-	case CatalogType::PRAGMA_FUNCTION_ENTRY:
-		return "function";
-	case CatalogType::TYPE_ENTRY:
-		return "type";
-	case CatalogType::SCHEMA_ENTRY:
-		return "schema";
-	case CatalogType::DATABASE_ENTRY:
-		return "database";
-	case CatalogType::INDEX_ENTRY:
-		return "index";
-	case CatalogType::TOKENIZER_ENTRY:
-		return "text search dictionary";
-	case CatalogType::FOREIGN_SERVER_ENTRY:
-		return "foreign server";
-	case CatalogType::FOREIGN_DATA_WRAPPER_ENTRY:
-		return "foreign-data wrapper";
-	case CatalogType::PARAMETER_ENTRY:
-		return "parameter";
-	case CatalogType::LANGUAGE_ENTRY:
-		return "language";
-	case CatalogType::SUBSCRIPTION_ENTRY:
-		return "subscription";
-	case CatalogType::JOB_ENTRY:
-		return "job";
-	default:
-		return "object";
-	}
-}
-
-string PermissionKindName(const CatalogEntry &entry) {
-	if ((entry.type == CatalogType::MACRO_ENTRY || entry.type == CatalogType::TABLE_MACRO_ENTRY) &&
-	    entry.Cast<MacroCatalogEntry>().is_procedure) {
-		return "procedure";
-	}
-	return PermissionKindName(entry.type);
-}
-
 string RoleOptionsToSQL(RoleOption set_options, RoleOption clear_options) {
-	struct NamedOption {
-		RoleOption option;
-		const char *keyword;
-	};
-	static constexpr NamedOption OPTIONS[] = {
-	    {RoleOption::Superuser, "SUPERUSER"},   {RoleOption::CreateDb, "CREATEDB"},
-	    {RoleOption::CreateRole, "CREATEROLE"}, {RoleOption::Inherit, "INHERIT"},
-	    {RoleOption::Login, "LOGIN"},           {RoleOption::Replication, "REPLICATION"},
-	    {RoleOption::BypassRls, "BYPASSRLS"}};
 	string result;
-	for (auto &named : OPTIONS) {
+	for (auto &named : ROLE_OPTIONS) {
 		if (HasOption(set_options, named.option)) {
-			result += string(" ") + named.keyword;
+			result += " ";
+			result += named.keyword;
 		} else if (HasOption(clear_options, named.option)) {
-			result += string(" NO") + named.keyword;
+			result += " NO";
+			result += named.keyword;
 		}
 	}
 	return result;
 }
 
 string ValidUntilToSQL(int64_t valid_until) {
-	const timestamp_t value(valid_until);
-	auto text = Timestamp::ToString(value);
-	if (Value::IsFinite(value)) {
-		text += "+00";
-	}
-	return KeywordHelper::WriteQuoted(text, '\'');
+	return KeywordHelper::WriteQuoted(Value::TIMESTAMPTZ(timestamp_tz_t(valid_until)).ToString(), '\'');
+}
+
+void ThrowPermissionDenied(CatalogType type, std::string_view name) {
+	throw PermissionException("permission denied for %s %s", StringUtil::Lower(CatalogTypeToString(type)), name);
 }
 
 void ThrowPermissionDenied(const CatalogEntry &entry) {
-	throw PermissionException("permission denied for %s %s", PermissionKindName(entry), entry.name.GetIdentifierName());
+	ThrowPermissionDenied(entry.type, entry.name.GetIdentifierName());
 }
 
 void RequireEntryPrivilege(const RoleAccess &role, const CatalogEntry &entry, AclMode any) {
@@ -1464,7 +1336,8 @@ void RequireSuperuser(const RoleAccess &role) {
 
 void RequireOwner(const RoleAccess &role, const CatalogEntry &entry, idx_t owner) {
 	if (!role.Owns(owner)) {
-		throw PermissionException("must be owner of %s %s", PermissionKindName(entry), entry.name.GetIdentifierName());
+		throw PermissionException("must be owner of %s %s", StringUtil::Lower(CatalogTypeToString(entry.type)),
+		                          entry.name.GetIdentifierName());
 	}
 }
 
@@ -1557,7 +1430,7 @@ idx_t RoleId(ClientContext &context, const Identifier &name) {
 	return role->oid;
 }
 
-optional_idx RoleSpecKeyword(ClientContext &context, const string &name) {
+optional_idx RoleSpecKeyword(ClientContext &context, std::string_view name) {
 	if (name == "CURRENT_USER" || name == "CURRENT_ROLE") {
 		return context.current_role_id;
 	}
@@ -1567,7 +1440,7 @@ optional_idx RoleSpecKeyword(ClientContext &context, const string &name) {
 	return optional_idx();
 }
 
-idx_t RoleSpecId(ClientContext &context, const string &name) {
+idx_t RoleSpecId(ClientContext &context, std::string_view name) {
 	const auto keyword = RoleSpecKeyword(context, name);
 	return keyword.IsValid() ? keyword.GetIndex() : RoleId(context, Identifier(name));
 }
@@ -1607,37 +1480,30 @@ void RequireDatabasePrivilege(ClientContext &context, const RoleAccess &role, co
 }
 
 void RequireForeignDataWrapperUsage(ClientContext &context, const RoleAccess &role, const Identifier &database,
-                                    const string &wrapper) {
+                                    std::string_view wrapper) {
 	auto &found = DBConfig::GetConfig(context).GetForeignDataWrapper(wrapper);
 	if (role.Owns(found.owner)) {
 		return;
 	}
 	auto entry = ClusterEntry(context, CatalogType::DATABASE_ENTRY, database);
-	if (!entry ||
-	    (role.HeldModes(entry->permissions.ForeignDataWrapperAcl(found.oid)) & AclMode::Usage) == AclMode::NoRights) {
-		throw PermissionException("permission denied for foreign-data wrapper %s", wrapper);
+	if (!entry || !Allows(role, entry->permissions.ForeignDataWrapperAcl(found.oid),
+	                      CatalogType::FOREIGN_DATA_WRAPPER_ENTRY, AclMode::Usage, false)) {
+		ThrowPermissionDenied(CatalogType::FOREIGN_DATA_WRAPPER_ENTRY, wrapper);
 	}
 }
 
 void RequireLanguageUsage(ClientContext &context, const RoleAccess &role, const Identifier &database,
-                          const string &language) {
-	auto &languages = DBConfig::GetConfig(context).languages;
-	auto found = languages.find(language);
-	if (role.is_superuser || found == languages.end()) {
+                          std::string_view language) {
+	if (role.is_superuser) {
 		return;
 	}
-	if (found->second.trusted) {
-		Permissions permissions;
-		permissions.owner = found->second.owner;
-		if (auto entry = ClusterEntry(context, CatalogType::DATABASE_ENTRY, database)) {
-			auto acl = entry->permissions.LanguageAcl(found->second.oid);
-			permissions.acl.assign(acl.begin(), acl.end());
-		}
-		if (role.Can(CatalogType::LANGUAGE_ENTRY, permissions, AclMode::Usage)) {
-			return;
-		}
+	auto &found = DBConfig::GetConfig(context).GetLanguage(language);
+	auto entry = ClusterEntry(context, CatalogType::DATABASE_ENTRY, database);
+	auto acl = entry ? entry->permissions.LanguageAcl(found.oid) : std::span<const AclItem>();
+	if (!found.trusted ||
+	    (!role.Owns(found.owner) && !Allows(role, acl, CatalogType::LANGUAGE_ENTRY, AclMode::Usage, false))) {
+		ThrowPermissionDenied(CatalogType::LANGUAGE_ENTRY, language);
 	}
-	throw PermissionException("permission denied for language %s", language);
 }
 
 void RequireUserSchema(const SchemaCatalogEntry &schema, const Identifier &name) {
@@ -1693,10 +1559,9 @@ void RequireTypeUsage(ClientContext &context, const RoleAccess &role, const Logi
 	if (!oid) {
 		return;
 	}
-	const auto database = DatabaseManager::TryGetDefaultDatabase(context);
-	auto granted = context.security->TypePermissions(database.GetIdentifierName(), oid);
+	auto granted = BuiltinTypeGrant(context, oid);
 	if (granted && !role.Can(CatalogType::TYPE_ENTRY, *granted, AclMode::Usage)) {
-		throw PermissionException("permission denied for type %s", name);
+		ThrowPermissionDenied(CatalogType::TYPE_ENTRY, name);
 	}
 }
 
@@ -1711,7 +1576,7 @@ void CheckMacroCall(ClientContext &context, const RoleAccess &role, MacroCatalog
 
 FunctionCall FunctionCallOf(ClientContext &context, const CatalogEntry &function, idx_t overload) {
 	FunctionCall call;
-	call.kind = PermissionKindName(function);
+	call.type = function.type;
 	call.name = function.name.GetIdentifierName();
 	auto &config = DBConfig::GetConfig(context);
 	if (config.builtin_function_key && function.internal) {
@@ -1727,7 +1592,7 @@ FunctionCall MacroCallOf(ClientContext &context, MacroCatalogEntry &macro, const
 		return FunctionCallOf(context, macro, overload_index);
 	}
 	FunctionCall call;
-	call.kind = PermissionKindName(macro);
+	call.type = macro.type;
 	call.name = macro.name.GetIdentifierName();
 	call.catalog = macro.ParentCatalog().GetName();
 	call.macro_overload = macro.OverloadOid(overload);
@@ -1740,13 +1605,10 @@ void CheckFunctionCalls(ClientContext &context, const RoleAccess &role, std::spa
 	}
 	for (auto &call : calls) {
 		if (!call.macro_overload.IsValid()) {
-			optional_ptr<const Permissions> granted;
-			if (!call.builtin_key.empty()) {
-				granted = BuiltinGrant(context, [&]() -> const string & { return call.builtin_key; });
-			}
-			if (granted ? !role.Can(CatalogType::MACRO_ENTRY, *granted, AclMode::Execute)
-			            : !role.Has(call.capability)) {
-				throw PermissionException("permission denied for %s %s", call.kind, call.name);
+			auto granted =
+			    call.builtin_key.empty() ? nullptr : GrantRow(BuiltinFunctionGrants(context), call.builtin_key);
+			if (!MayCallBuiltin(role, granted, call.capability)) {
+				ThrowPermissionDenied(call.type, call.name);
 			}
 			continue;
 		}

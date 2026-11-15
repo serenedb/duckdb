@@ -636,7 +636,7 @@ string DBConfig::SystemObjectName(std::string_view name) const {
 	return absl::StrCat(options.system_object_prefix, name);
 }
 
-const ForeignDataWrapper &DBConfig::GetForeignDataWrapper(const string &name) const {
+const ForeignDataWrapper &DBConfig::GetForeignDataWrapper(std::string_view name) const {
 	auto wrapper = foreign_data_wrappers.find(name);
 	if (wrapper == foreign_data_wrappers.end()) {
 		throw CatalogException(unordered_map<string, string> {{"type", "Foreign Data Wrapper"}},
@@ -645,7 +645,7 @@ const ForeignDataWrapper &DBConfig::GetForeignDataWrapper(const string &name) co
 	return wrapper->second;
 }
 
-const Language &DBConfig::GetLanguage(const string &name) const {
+const Language &DBConfig::GetLanguage(std::string_view name) const {
 	auto language = languages.find(name);
 	if (language == languages.end()) {
 		throw CatalogException(unordered_map<string, string> {{"type", "Language"}},

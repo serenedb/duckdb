@@ -276,8 +276,8 @@ public:
 	DUCKDB_API static vector<Identifier> GetOptionNames();
 	DUCKDB_API static bool IsInMemoryDatabase(const char *database_path);
 	DUCKDB_API string SystemObjectName(std::string_view name) const;
-	DUCKDB_API const ForeignDataWrapper &GetForeignDataWrapper(const string &name) const;
-	DUCKDB_API const Language &GetLanguage(const string &name) const;
+	DUCKDB_API const ForeignDataWrapper &GetForeignDataWrapper(std::string_view name) const;
+	DUCKDB_API const Language &GetLanguage(std::string_view name) const;
 
 	DUCKDB_API void AddExtensionOption(const Identifier &name, string description, LogicalType parameter,
 	                                   const Value &default_value = Value(), set_option_callback_t function = nullptr,
