@@ -89,7 +89,7 @@ GrantFunctionTarget <- GrantRoutineKind List(RoutineSignature)
 RoutineSignature <- QualifiedName FuncArgSignature?
 GrantRoutineKind <- 'FUNCTION' / 'ROUTINE' / 'PROCEDURE'
 FuncArgSignature <- Parens(List(FuncArg)?)
-FuncArg <- (FuncArgMode? ColId Type) / (FuncArgMode? Type)
+FuncArg <- (FuncArgMode? FunctionName Type) / (FuncArgMode? Type)
 FuncArgMode <- InArgMode / OutArgMode / InoutArgMode / VariadicArgMode
 InArgMode <- 'IN'
 OutArgMode <- 'OUT'
