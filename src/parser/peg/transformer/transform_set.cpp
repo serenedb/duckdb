@@ -139,16 +139,14 @@ PEGTransformerFactory::TransformSetAssignment(PEGTransformer &transformer,
 	return variable_list;
 }
 
-Identifier PEGTransformerFactory::TransformSettingPath(PEGTransformer &transformer, ParseResult &parse_result) {
-	auto &list_pr = parse_result.Cast<ListParseResult>();
-	string name = list_pr.Child<IdentifierParseResult>(0).identifier.GetIdentifierName();
-	auto &parts = list_pr.Child<OptionalParseResult>(1);
-	if (parts.HasResult()) {
-		for (auto &part : parts.GetResult().Cast<RepeatParseResult>().GetChildren()) {
-			name += ".";
-			name +=
-			    transformer.Transform<Identifier>(part.get().Cast<ListParseResult>().GetChild(1)).GetIdentifierName();
-		}
+Identifier PEGTransformerFactory::TransformSettingPath(PEGTransformer &transformer, const Identifier &setting_name,
+                                                       const optional<vector<Identifier>> &dot_identifier) {
+	if (!dot_identifier) {
+		return setting_name;
+	}
+	auto name = setting_name.GetIdentifierName();
+	for (auto &part : *dot_identifier) {
+		name += "." + part.GetIdentifierName();
 	}
 	return Identifier(std::move(name));
 }

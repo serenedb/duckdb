@@ -239,14 +239,11 @@ static void ResolveGrant(Binder &binder, AlterPermissionsInfo &info) {
 		return;
 	}
 	if (info.entry_catalog_type == CatalogType::PARAMETER_ENTRY) {
-		auto &qualified = info.GetQualifiedName();
-		auto name = qualified.Name().GetIdentifierName();
-		if (!qualified.Schema().empty()) {
-			name = qualified.Schema().GetIdentifierName() + "." + name;
+		const auto setting = info.GetQualifiedName().Name();
+		if (!Settings::GetAccess(context, setting)) {
+			Catalog::AutoloadExtensionByConfigName(context, setting);
 		}
-		if (!Settings::GetAccess(context, Identifier(name))) {
-			throw InvalidInputException("unrecognized configuration parameter \"%s\"", name);
-		}
+		const auto &name = setting.GetIdentifierName();
 		const auto owner = DBConfig::GetConfig(context).bootstrap_role;
 		const Identifier holder(RoleName(context, owner));
 		auto entry = ClusterEntry(context, CatalogType::ROLE_ENTRY, holder);

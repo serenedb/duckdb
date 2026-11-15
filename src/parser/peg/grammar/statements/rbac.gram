@@ -21,8 +21,7 @@ AlterRoleRename     <- 'RENAME' 'TO' ColId
 # ALTER ROLE name SET guc (= | TO) value ... | SET guc FROM CURRENT | RESET guc
 # | RESET ALL  -> per-role GUC settings (pg_db_role_setting / rolconfig).
 AlterRoleConfig     <- AlterRoleSet / AlterRoleReset
-AlterRoleSet        <- 'SET' SettingPath (AlterRoleSetTo / AlterRoleSetFromCurrent)
-AlterRoleSetTo      <- ('=' / 'TO') List(Expression)
+AlterRoleSet        <- 'SET' SettingPath (SetAssignment / AlterRoleSetFromCurrent)
 AlterRoleSetFromCurrent <- 'FROM' 'CURRENT'
 AlterRoleReset      <- 'RESET' (AlterRoleResetAll / SettingPath)
 AlterRoleResetAll   <- 'ALL'
@@ -82,7 +81,7 @@ MemberOptionName <- 'ADMIN' / 'INHERIT' / 'SET'
 # first so 'ALL' is not mistaken for a relation name. A FUNCTION/ROUTINE target
 # may carry an argument-type signature -- fn(int) -- to pick a specific
 # overload; PROCEDURE is accepted as a routine synonym too.
-GrantTarget <- GrantAllInSchema / GrantFunctionTarget / GrantNamedTarget
+GrantTarget <- GrantAllInSchema / GrantFunctionTarget / GrantParameterTarget / GrantNamedTarget
 GrantAllInSchema <- 'ALL' GrantObjTypePlural 'IN' 'SCHEMA' List(QualifiedName)
 GrantObjTypePlural <- 'TABLES' / 'SEQUENCES' / 'FUNCTIONS' / 'ROUTINES' / 'PROCEDURES'
 GrantFunctionTarget <- GrantRoutineKind List(RoutineSignature)
@@ -95,6 +94,7 @@ InArgMode <- 'IN'
 OutArgMode <- 'OUT'
 InoutArgMode <- 'INOUT'
 VariadicArgMode <- 'VARIADIC'
+GrantParameterTarget <- 'PARAMETER' List(SettingPath)
 GrantNamedTarget <- GrantObjType? List(QualifiedName)
 
 # Optional WITH GRANT OPTION suffix on a table GRANT: the grantee may re-grant.
@@ -114,7 +114,7 @@ OptionBool <- 'TRUE' / 'FALSE'
 
 RoleOrUser <- 'ROLE' / 'USER' / 'GROUP'
 # Object class for GRANT/REVOKE ... ON <type> name. Absent defaults to TABLE.
-GrantObjType <- ForeignServerObjType / ForeignDataWrapperObjType / 'TABLE' / 'SEQUENCE' / 'FUNCTION' / 'DATABASE' / 'SCHEMA' / 'TYPE' / 'DOMAIN' / 'PARAMETER' / 'LANGUAGE' / 'TABLESPACE'
+GrantObjType <- ForeignServerObjType / ForeignDataWrapperObjType / 'TABLE' / 'SEQUENCE' / 'FUNCTION' / 'DATABASE' / 'SCHEMA' / 'TYPE' / 'DOMAIN' / 'LANGUAGE' / 'TABLESPACE'
 ForeignServerObjType <- 'FOREIGN' 'SERVER'
 ForeignDataWrapperObjType <- 'FOREIGN' 'DATA' 'WRAPPER'
 # PUBLIC is the pseudo-role; otherwise a normal role identifier.

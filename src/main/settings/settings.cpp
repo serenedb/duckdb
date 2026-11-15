@@ -57,7 +57,7 @@ void Settings::ResolveCurrentValues(ClientContext &context, vector<string> &conf
 		}
 		Value value;
 		if (!context.TryGetCurrentSetting(Identifier(entry), value)) {
-			throw InvalidInputException("unrecognized configuration parameter \"%s\"", entry);
+			throw Catalog::UnrecognizedConfigurationError(context, Identifier(entry));
 		}
 		entry += "=" + FormatDisplayValue(context, value).ToString();
 	}
