@@ -2,8 +2,8 @@
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/catalog/catalog_entry/table_macro_catalog_entry.hpp"
 #include "duckdb/function/scalar_macro_function.hpp"
-#include "duckdb/common/exception/binder_exception.hpp"
 #include "duckdb/common/exception/catalog_exception.hpp"
+#include "duckdb/common/string_util.hpp"
 #include "duckdb/main/attached_database.hpp"
 #include "duckdb/main/database.hpp"
 #include "duckdb/main/database_manager.hpp"
@@ -153,6 +153,12 @@ unique_ptr<CatalogEntry> MacroCatalogEntry::AlterEntry(CatalogTransaction transa
 			return macro->HasParameterTypes(function->ParameterTypes());
 		});
 		if (existing != macros.end()) {
+			if ((*existing)->is_procedure != function->is_procedure) {
+				auto extra_info = Exception::InitializeExtraInfo("WRONG_OBJECT_TYPE", optional_idx());
+				extra_info["detail"] = StringUtil::Format("\"%s\" is a %s.", name.GetIdentifierName(),
+				                                          (*existing)->is_procedure ? "procedure" : "function");
+				throw CatalogException(extra_info, "cannot change routine kind");
+			}
 			function->oid = (*existing)->oid;
 			function->permissions = (*existing)->permissions;
 			function->comment = (*existing)->comment;
@@ -162,9 +168,6 @@ unique_ptr<CatalogEntry> MacroCatalogEntry::AlterEntry(CatalogTransaction transa
 	}
 	auto replaced = definition.Copy();
 	auto &replaced_macro = replaced->Cast<CreateMacroInfo>();
-	if (replaced_macro.is_procedure != is_procedure) {
-		throw BinderException("cannot change routine kind");
-	}
 	replaced_macro.comment = comment;
 	replaced_macro.tags = tags;
 	if (replaced_macro.type == CatalogType::MACRO_ENTRY) {
