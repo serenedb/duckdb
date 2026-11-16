@@ -98,6 +98,18 @@ KeywordParseResult &FirstKeyword(ParseResult &node) {
 	}
 }
 
+optional_ptr<const RoleOptionKeyword> RoleOptionOf(ParseResult &option, bool &on) {
+	const auto keyword = StringUtil::Upper(FirstKeyword(option).keyword);
+	on = !StringUtil::StartsWith(keyword, "NO");
+	const auto name = std::string_view(keyword).substr(on ? 0 : 2);
+	for (auto &named : ROLE_OPTIONS) {
+		if (named.keyword == name) {
+			return &named;
+		}
+	}
+	return nullptr;
+}
+
 std::string_view TransformPassword(ParseResult &opt) {
 	auto &list = opt.Cast<ListParseResult>();
 	auto &encryption = list.Child<OptionalParseResult>(0);
@@ -322,11 +334,6 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformCreateRoleStatement(PEG
 			throw ParserException("conflicting or redundant options");
 		}
 	};
-	auto set_option = [&](ParseResult &node, std::string_view category, const char *positive, RoleOption option) {
-		once(category);
-		auto &kw = FirstKeyword(node);
-		info->options = StringUtil::Upper(kw.keyword) == positive ? info->options | option : info->options & ~option;
-	};
 	auto collect_members = [&](ParseResult &clause, vector<Identifier> &target) {
 		auto &cl = clause.Cast<ListParseResult>();
 		auto &names = cl.GetChild(cl.GetChildren().size() - 1);
@@ -345,21 +352,7 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformCreateRoleStatement(PEG
 		// which is itself a CHOICE wrapping the concrete option/clause.
 		auto &wrapper = clause_ref.get().Cast<ListParseResult>().Child<ChoiceParseResult>(0).GetResult();
 		auto &opt = wrapper.Cast<ListParseResult>().Child<ChoiceParseResult>(0).GetResult();
-		if (opt.Name() == "LoginOption") {
-			set_option(opt, "login", "LOGIN", RoleOption::Login);
-		} else if (opt.Name() == "SuperuserOption") {
-			set_option(opt, "superuser", "SUPERUSER", RoleOption::Superuser);
-		} else if (opt.Name() == "CreateDbOption") {
-			set_option(opt, "createdb", "CREATEDB", RoleOption::CreateDb);
-		} else if (opt.Name() == "CreateRoleOption") {
-			set_option(opt, "createrole", "CREATEROLE", RoleOption::CreateRole);
-		} else if (opt.Name() == "ReplicationOption") {
-			set_option(opt, "replication", "REPLICATION", RoleOption::Replication);
-		} else if (opt.Name() == "BypassRlsOption") {
-			set_option(opt, "bypassrls", "BYPASSRLS", RoleOption::BypassRls);
-		} else if (opt.Name() == "InheritOption") {
-			set_option(opt, "inherit", "INHERIT", RoleOption::Inherit);
-		} else if (opt.Name() == "ConnLimitOption") {
+		if (opt.Name() == "ConnLimitOption") {
 			once("connlimit");
 			info->conn_limit = TransformConnLimit(opt);
 		} else if (opt.Name() == "ValidUntilOption") {
@@ -379,7 +372,13 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformCreateRoleStatement(PEG
 		} else if (opt.Name() == "AdminClause") {
 			collect_members(opt, info->admin_members);
 		} else {
-			throw ParserException("Unexpected role option in CREATE ROLE: %s", opt.Name());
+			bool on;
+			auto named = RoleOptionOf(opt, on);
+			if (!named) {
+				throw ParserException("Unexpected role option in CREATE ROLE: %s", opt.Name());
+			}
+			once(named->keyword);
+			info->options = on ? info->options | named->option : info->options & ~named->option;
 		}
 	}
 
@@ -503,33 +502,16 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformAlterRoleStatement(PEGT
 			info->valid_until = TransformValidUntil(opt);
 			continue;
 		}
-		// Every other option is a rule wrapping a CHOICE of two keywords (the
-		// positive form and its NO* negation), like LoginOption.
-		auto &kw = opt.Cast<ListParseResult>().Child<ChoiceParseResult>(0).GetResult().Cast<KeywordParseResult>();
-		const bool on = StringUtil::Upper(kw.keyword).rfind("NO", 0) != 0;
-		once(opt.Name());
-		RoleOption option;
-		if (opt.Name() == "LoginOption") {
-			option = RoleOption::Login;
-		} else if (opt.Name() == "SuperuserOption") {
-			option = RoleOption::Superuser;
-		} else if (opt.Name() == "CreateDbOption") {
-			option = RoleOption::CreateDb;
-		} else if (opt.Name() == "CreateRoleOption") {
-			option = RoleOption::CreateRole;
-		} else if (opt.Name() == "ReplicationOption") {
-			option = RoleOption::Replication;
-		} else if (opt.Name() == "BypassRlsOption") {
-			option = RoleOption::BypassRls;
-		} else if (opt.Name() == "InheritOption") {
-			option = RoleOption::Inherit;
-		} else {
+		bool on;
+		auto named = RoleOptionOf(opt, on);
+		if (!named) {
 			throw ParserException("Unexpected role option in ALTER ROLE: %s", opt.Name());
 		}
+		once(named->keyword);
 		if (on) {
-			info->set_options = info->set_options | option;
+			info->set_options = info->set_options | named->option;
 		} else {
-			info->clear_options = info->clear_options | option;
+			info->clear_options = info->clear_options | named->option;
 		}
 	}
 

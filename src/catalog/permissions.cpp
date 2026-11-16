@@ -28,7 +28,7 @@
 #include "duckdb/common/types/hash.hpp"
 #include "duckdb/common/types/timestamp.hpp"
 #include "duckdb/common/types/value.hpp"
-#include "duckdb/parser/keyword_helper.hpp"
+#include "duckdb/common/sql_identifier.hpp"
 #include "duckdb/parser/column_list.hpp"
 #include "duckdb/parser/parsed_data/alter_table_info.hpp"
 #include "duckdb/parser/parsed_data/create_info.hpp"
@@ -1263,7 +1263,7 @@ string RoleOptionsToSQL(RoleOption set_options, RoleOption clear_options) {
 }
 
 string ValidUntilToSQL(int64_t valid_until) {
-	return KeywordHelper::WriteQuoted(Value::TIMESTAMPTZ(timestamp_tz_t(valid_until)).ToString(), '\'');
+	return SQLString::ToString(Value::TIMESTAMPTZ(timestamp_tz_t(valid_until)).ToString());
 }
 
 void ThrowPermissionDenied(CatalogType type, std::string_view name) {
