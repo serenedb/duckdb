@@ -296,6 +296,7 @@ AlterTableInfo:
     - DisableTrigger
     - SetSortedBy
     - ResetSortedBy
+    - SetTablespace
     - SetOptions
     - ResetOptions
 

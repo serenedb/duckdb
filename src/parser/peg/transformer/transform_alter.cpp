@@ -695,6 +695,11 @@ unique_ptr<AlterTableInfo> PEGTransformerFactory::TransformResetSortedBy(PEGTran
 	return std::move(result);
 }
 
+unique_ptr<AlterTableInfo> PEGTransformerFactory::TransformSetTablespace(PEGTransformer &transformer,
+                                                                         const Identifier &col_id) {
+	throw NotImplementedException("SET TABLESPACE is not supported");
+}
+
 unique_ptr<AlterTableInfo>
 PEGTransformerFactory::TransformSetOptions(PEGTransformer &transformer,
                                            case_insensitive_map_t<unique_ptr<ParsedExpression>> rel_option_list) {
