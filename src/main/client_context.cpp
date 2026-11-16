@@ -613,7 +613,10 @@ ClientContext::Prepare(unique_ptr<SQLStatement> statement,
 	}
 }
 
-StatementSignature ClientContext::BindStatement(unique_ptr<SQLStatement> statement) {
+StatementSignature
+ClientContext::BindStatement(unique_ptr<SQLStatement> statement,
+                             optional_ptr<const case_insensitive_map_t<LogicalType>> parameter_type_hints,
+                             optional_ptr<const identifier_map_t<BoundParameterData>> values) {
 	auto lock = LockContext();
 	auto named_param_map = statement->named_param_map;
 	StatementSignature signature;
@@ -623,6 +626,12 @@ StatementSignature ClientContext::BindStatement(unique_ptr<SQLStatement> stateme
 	    [&]() {
 		    try {
 			    Planner planner(*this);
+			    if (parameter_type_hints) {
+				    planner.parameter_type_hints = *parameter_type_hints;
+			    }
+			    if (values) {
+				    planner.parameter_data = *values;
+			    }
 			    planner.CreatePlan(std::move(statement));
 			    signature.names = planner.names;
 			    signature.types = planner.types;

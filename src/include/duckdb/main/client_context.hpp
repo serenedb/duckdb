@@ -299,7 +299,10 @@ public:
 	DUCKDB_API static bool IsPreparedStatementHandle(const Identifier &name);
 	//! Bind a statement and return its signature, without building a PreparedStatement, optimizing, or
 	//! executing. Read-only: binding touches no in-flight query state, so a live result survives. Throws on error.
-	DUCKDB_API StatementSignature BindStatement(unique_ptr<SQLStatement> statement);
+	DUCKDB_API StatementSignature
+	BindStatement(unique_ptr<SQLStatement> statement,
+	              optional_ptr<const case_insensitive_map_t<LogicalType>> parameter_type_hints = nullptr,
+	              optional_ptr<const identifier_map_t<BoundParameterData>> values = nullptr);
 
 	//! Gets current percentage of the query's progress, returns 0 in case the progress bar is disabled.
 	DUCKDB_API QueryProgress GetQueryProgress();
