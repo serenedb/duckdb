@@ -987,8 +987,6 @@ duckdb::string_t CastFromBitToString::Operation(duckdb::string_t input, StringHe
 struct CastFromBitToNumeric {
 	template <class SRC = string_t, class DST>
 	static inline bool Operation(SRC input, DST &result, CastParameters &parameters) {
-		D_ASSERT(input.GetSize() > 1);
-
 		// TODO: Allow conversion if the significant bytes of the bitstring can be cast to the target type
 		// Currently only allows bitstring -> numeric if the full bitstring fits inside the numeric type
 		if (input.GetSize() - 1 > sizeof(DST)) {
@@ -1010,7 +1008,6 @@ bool CastFromBitToNumeric::Operation(string_t input, uhugeint_t &result, CastPar
 struct CastFromBitToBlob {
 	template <class SRC>
 	static inline string_t Operation(SRC input, StringHeap &heap) {
-		D_ASSERT(input.GetSize() > 1);
 		return heap.AddBlob(Bit::BitToBlob(input));
 	}
 };

@@ -171,3 +171,8 @@ query I
 SELECT bit_position('010'::BIT, '1101110101011101'::BIT)
 ----
 7
+
+query III
+SELECT bit_position(''::BIT, '101'::BIT), bit_position('1'::BIT, ''::BIT), bit_position(''::BIT, ''::BIT)
+----
+1	0	0
