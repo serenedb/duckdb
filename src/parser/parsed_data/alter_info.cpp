@@ -28,6 +28,10 @@ AlterInfo::AlterInfo(AlterType type) : ParseInfo(TYPE), type(type) {
 AlterInfo::~AlterInfo() {
 }
 
+string AlterInfo::StatementToString(const vector<unique_ptr<AlterInfo>> &infos) const {
+	return ToString();
+}
+
 AlterEntryData AlterInfo::GetAlterEntryData() const {
 	return AlterEntryData(GetQualifiedName(), if_not_found);
 }

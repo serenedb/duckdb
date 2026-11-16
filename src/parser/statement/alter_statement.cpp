@@ -5,7 +5,14 @@ namespace duckdb {
 AlterStatement::AlterStatement() : SQLStatement(StatementType::ALTER_STATEMENT) {
 }
 
-AlterStatement::AlterStatement(const AlterStatement &other) : SQLStatement(other), info(other.info->Copy()) {
+AlterStatement::AlterStatement(unique_ptr<AlterInfo> info) : AlterStatement() {
+	infos.push_back(std::move(info));
+}
+
+AlterStatement::AlterStatement(const AlterStatement &other) : SQLStatement(other) {
+	for (auto &info : other.infos) {
+		infos.push_back(info->Copy());
+	}
 }
 
 unique_ptr<SQLStatement> AlterStatement::Copy() const {
@@ -13,7 +20,7 @@ unique_ptr<SQLStatement> AlterStatement::Copy() const {
 }
 
 string AlterStatement::ToString() const {
-	return info->ToString();
+	return infos[0]->StatementToString(infos);
 }
 
 } // namespace duckdb

@@ -17,8 +17,12 @@
 
 namespace duckdb {
 
-static idx_t GranteeId(Binder &binder, const string &name) {
-	return name == "public" ? ACL_ID_PUBLIC : RoleSpecId(binder.context, name);
+static vector<idx_t> GranteeIds(Binder &binder, const vector<string> &names) {
+	vector<idx_t> ids;
+	for (auto &name : names) {
+		ids.push_back(name == "public" ? ACL_ID_PUBLIC : RoleSpecId(binder.context, name));
+	}
+	return ids;
 }
 
 static void RequireGrantableAcl(const RoleAccess &role, idx_t owner, std::span<const AclItem> acl, CatalogType type,
@@ -198,7 +202,7 @@ static vector<idx_t> CallerGrantors(Binder &binder) {
 static void ResolveGrant(Binder &binder, AlterPermissionsInfo &info) {
 	auto &context = binder.context;
 	auto &role = binder.CheckAs();
-	info.grantee_id = GranteeId(binder, info.grantee);
+	info.grantee_ids = GranteeIds(binder, info.grantees);
 	if (!info.granted_by.empty()) {
 		auto granted_by = RoleSpecId(context, info.granted_by);
 		if (!role.MemberOf(granted_by)) {
@@ -361,18 +365,29 @@ static void ResolveOwner(Binder &binder, AlterPermissionsInfo &info) {
 
 static void ResolveDefaultPrivileges(Binder &binder, AlterPermissionsInfo &info) {
 	auto &context = binder.context;
-	info.target_role = info.for_role.empty() ? context.current_role_id : RoleSpecId(context, info.for_role);
-	if (!binder.CheckAs().MemberOf(info.target_role)) {
-		throw PermissionException("permission denied to change default privileges");
+	vector<idx_t> target_roles;
+	if (info.for_roles.empty()) {
+		target_roles.push_back(context.current_role_id);
 	}
-	info.grantee_id = GranteeId(binder, info.grantee);
+	for (auto &role : info.for_roles) {
+		target_roles.push_back(RoleSpecId(context, role));
+	}
+	for (auto role : target_roles) {
+		if (!binder.CheckAs().MemberOf(role)) {
+			throw PermissionException("permission denied to change default privileges");
+		}
+	}
+	info.target_roles = std::move(target_roles);
+	info.grantee_ids = GranteeIds(binder, info.grantees);
 	const auto database = DatabaseManager::GetDefaultDatabase(context);
-	if (!info.default_schema.empty()) {
-		info.default_scope = binder.EntryRetriever()
-		                         .GetSchema(database, {Identifier(info.default_schema)}, EntryUse::REFERENCE,
-		                                    OnEntryNotFound::THROW_EXCEPTION)
-		                         ->oid;
+	vector<idx_t> default_scopes;
+	for (auto &schema : info.default_schemas) {
+		default_scopes.push_back(
+		    binder.EntryRetriever()
+		        .GetSchema(database, {Identifier(schema)}, EntryUse::REFERENCE, OnEntryNotFound::THROW_EXCEPTION)
+		        ->oid);
 	}
+	info.default_scopes = std::move(default_scopes);
 	ClusterDatabase(context, database);
 	info.SetQualifiedName(Identifier(), Identifier(), database);
 }
@@ -454,6 +469,11 @@ void Binder::BindPrivilegeAlter(AlterInfo &info, StatementProperties &properties
 			info.SetQualifiedName(Identifier(), Identifier(), Identifier(RoleName(context, role.GetIndex())));
 		}
 		auto &alter = info.Cast<AlterRoleInfo>();
+		for (auto &member : alter.members) {
+			if (const auto role = RoleSpecKeyword(context, member); role.IsValid()) {
+				member = RoleName(context, role.GetIndex());
+			}
+		}
 		CheckAlterRole(alter);
 		Settings::ResolveCurrentValues(context, alter.set_config);
 	}

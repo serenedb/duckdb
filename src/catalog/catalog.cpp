@@ -440,7 +440,7 @@ optional_ptr<CatalogEntry> Catalog::CreateSubscription(CatalogTransaction transa
 	throw NotImplementedException("CREATE SUBSCRIPTION is not supported by a %s catalog", GetCatalogType());
 }
 
-void Catalog::DropRole(CatalogTransaction transaction, DropInfo &info) {
+void Catalog::DropRole(CatalogTransaction transaction, const vector<unique_ptr<DropInfo>> &infos) {
 	throw NotImplementedException("DROP ROLE is not supported by a %s catalog", GetCatalogType());
 }
 
@@ -564,10 +564,6 @@ void Catalog::DropEntry(ClientContext &context, DropInfo &info) {
 	if (info.type == CatalogType::SCHEMA_ENTRY) {
 		// DROP SCHEMA
 		DropSchema(context, info);
-		return;
-	}
-	if (info.type == CatalogType::ROLE_ENTRY) {
-		DropRole(GetCatalogTransaction(context), info);
 		return;
 	}
 	if (info.type == CatalogType::DATABASE_ENTRY) {

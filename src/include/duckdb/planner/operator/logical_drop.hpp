@@ -19,10 +19,10 @@ public:
 	static constexpr const LogicalOperatorType TYPE = LogicalOperatorType::LOGICAL_DROP;
 
 public:
-	explicit LogicalDrop(unique_ptr<DropInfo> info);
+	explicit LogicalDrop(vector<unique_ptr<DropInfo>> infos);
 	~LogicalDrop() override;
 
-	unique_ptr<DropInfo> info;
+	vector<unique_ptr<DropInfo>> infos;
 
 public:
 	void Serialize(Serializer &serializer) const override;
@@ -34,9 +34,6 @@ public:
 
 protected:
 	void ResolveTypes() override;
-
-private:
-	explicit LogicalDrop(unique_ptr<ParseInfo> info);
 };
 
 } // namespace duckdb

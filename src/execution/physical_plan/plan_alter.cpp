@@ -5,7 +5,7 @@
 namespace duckdb {
 
 PhysicalOperator &PhysicalPlanGenerator::CreatePlan(LogicalAlter &op) {
-	return Make<PhysicalAlter>(std::move(op.info), op.estimated_cardinality);
+	return Make<PhysicalAlter>(std::move(op.infos), op.estimated_cardinality);
 }
 
 } // namespace duckdb

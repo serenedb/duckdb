@@ -11,25 +11,13 @@ namespace duckdb {
 //===--------------------------------------------------------------------===//
 SourceResultType PhysicalAlter::GetDataInternal(ExecutionContext &context, DataChunk &chunk,
                                                 OperatorSourceInput &input) const {
-	if (info->type == AlterType::ALTER_DATABASE) {
-		auto &db_info = info->Cast<AlterDatabaseInfo>();
-		auto &db_manager = DatabaseManager::Get(context.client);
-		db_manager.Alter(context.client, db_info);
-		return SourceResultType::FINISHED;
-	}
-	auto alter = [&](AlterInfo &target) {
-		Catalog::GetDDLCatalog(context.client, target.GetCatalogType(), target.GetQualifiedName().Catalog())
-		    .Alter(context.client, target);
-	};
-	alter(*info);
-	if (info->type == AlterType::ALTER_PERMISSIONS) {
-		for (auto &grant : info->Cast<AlterPermissionsInfo>().additional_grants) {
-			alter(*grant);
+	for (auto &info : infos) {
+		if (info->type == AlterType::ALTER_DATABASE) {
+			DatabaseManager::Get(context.client).Alter(context.client, info->Cast<AlterDatabaseInfo>());
+			continue;
 		}
-	} else if (info->type == AlterType::ALTER_ROLE) {
-		for (auto &grant : info->Cast<AlterRoleInfo>().additional_grants) {
-			alter(*grant);
-		}
+		Catalog::GetDDLCatalog(context.client, info->GetCatalogType(), info->GetQualifiedName().Catalog())
+		    .Alter(context.client, *info);
 	}
 	return SourceResultType::FINISHED;
 }

@@ -220,24 +220,35 @@ void Binder::CheckAlterRole(AlterRoleInfo &info) {
 		                      Identifier(RoleName(context, DBConfig::GetConfig(context).bootstrap_role)));
 		return;
 	}
-	auto role = FindRole(*this, info.GetQualifiedName().Name().GetIdentifierName());
-	if (!role) {
-		return;
-	}
-	if (info.grant_role.empty() && role->IsPredefined()) {
-		throw Exception({{"error_subtype", "RESERVED_NAME"}, {"detail", "Cannot alter reserved roles."}},
-		                ExceptionType::INVALID_INPUT,
-		                StringUtil::Format("role name \"%s\" is reserved", role->name.GetIdentifierName()));
-	}
-	if (!info.grant_role.empty() && !info.revoke) {
-		CheckDatabaseOwnerMembership(*this, role->name.GetIdentifierName(), info.grant_role);
-	}
 	if (!info.grant_role.empty()) {
+		bool found = false;
+		for (auto &member : info.members) {
+			auto role = FindRole(*this, member);
+			if (!role) {
+				continue;
+			}
+			found = true;
+			if (!info.revoke) {
+				CheckDatabaseOwnerMembership(*this, role->name.GetIdentifierName(), info.grant_role);
+			}
+		}
+		if (!found) {
+			return;
+		}
 		if (!caller.is_superuser) {
 			RequireGrantableRole(*this, info.grant_role, info.revoke);
 		}
 		ResolveMembershipGrantor(*this, info);
 		return;
+	}
+	auto role = FindRole(*this, info.GetQualifiedName().Name().GetIdentifierName());
+	if (!role) {
+		return;
+	}
+	if (role->IsPredefined()) {
+		throw Exception({{"error_subtype", "RESERVED_NAME"}, {"detail", "Cannot alter reserved roles."}},
+		                ExceptionType::INVALID_INPUT,
+		                StringUtil::Format("role name \"%s\" is reserved", role->name.GetIdentifierName()));
 	}
 	if (caller.is_superuser) {
 		return;

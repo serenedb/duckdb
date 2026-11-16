@@ -100,6 +100,7 @@ public:
 	virtual CatalogType GetCatalogType() const = 0;
 	virtual unique_ptr<AlterInfo> Copy() const = 0;
 	virtual string ToString() const = 0;
+	virtual string StatementToString(const vector<unique_ptr<AlterInfo>> &infos) const;
 
 	void Serialize(Serializer &serializer) const override;
 	static unique_ptr<ParseInfo> Deserialize(Deserializer &deserializer);

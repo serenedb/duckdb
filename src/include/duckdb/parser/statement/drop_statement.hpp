@@ -19,8 +19,9 @@ public:
 
 public:
 	DropStatement();
+	explicit DropStatement(unique_ptr<DropInfo> info);
 
-	unique_ptr<DropInfo> info;
+	vector<unique_ptr<DropInfo>> infos;
 
 protected:
 	DropStatement(const DropStatement &other);

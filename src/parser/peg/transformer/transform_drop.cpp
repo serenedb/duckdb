@@ -8,9 +8,8 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformDropStatement(PEGTransf
                                                                        unique_ptr<DropStatement> drop_entries,
                                                                        const optional<bool> &drop_behavior) {
 	if (drop_behavior) {
-		drop_entries->info->cascade = *drop_behavior;
-		for (auto &target : drop_entries->info->additional_drops) {
-			target->cascade = *drop_behavior;
+		for (auto &info : drop_entries->infos) {
+			info->cascade = *drop_behavior;
 		}
 	}
 	return std::move(drop_entries);
@@ -18,14 +17,12 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformDropStatement(PEGTransf
 
 unique_ptr<DropStatement> PEGTransformerFactory::MakeDropStatement(unique_ptr<DropInfo> info,
                                                                    vector<QualifiedName> names) {
-	for (idx_t i = 1; i < names.size(); i++) {
-		auto target = info->Copy();
-		target->SetQualifiedName(std::move(names[i]));
-		info->additional_drops.push_back(std::move(target));
-	}
-	info->SetQualifiedName(std::move(names[0]));
 	auto result = make_uniq<DropStatement>();
-	result->info = std::move(info);
+	for (auto &name : names) {
+		auto target = info->Copy();
+		target->SetQualifiedName(std::move(name));
+		result->infos.push_back(std::move(target));
+	}
 	return result;
 }
 
@@ -93,11 +90,7 @@ unique_ptr<DropStatement> PEGTransformerFactory::TransformDropFunction(PEGTransf
 		info->has_func_args =
 		    TransformFunctionArgumentTypes(transformer, item_pr.Child<OptionalParseResult>(1), info->func_parameters);
 		info->if_not_found = if_exists ? OnEntryNotFound::RETURN_NULL : OnEntryNotFound::THROW_EXCEPTION;
-		if (i == 0) {
-			result->info = std::move(info);
-		} else {
-			result->info->additional_drops.push_back(std::move(info));
-		}
+		result->infos.push_back(std::move(info));
 	}
 	return result;
 }
@@ -214,7 +207,7 @@ unique_ptr<DropStatement> PEGTransformerFactory::TransformDropSecret(PEGTransfor
 		extra_drop_info->secret_storage = drop_secret_storage->GetIdentifierName();
 	}
 	info->extra_drop_info = std::move(extra_drop_info);
-	result->info = std::move(info);
+	result->infos.push_back(std::move(info));
 	return result;
 }
 
@@ -238,7 +231,7 @@ unique_ptr<DropStatement> PEGTransformerFactory::TransformDropTrigger(PEGTransfo
 	extra_info->base_table = std::move(base_table_name);
 	info->extra_drop_info = std::move(extra_info);
 
-	result->info = std::move(info);
+	result->infos.push_back(std::move(info));
 	return result;
 }
 

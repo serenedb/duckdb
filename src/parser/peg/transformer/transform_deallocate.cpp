@@ -10,14 +10,13 @@ Identifier PEGTransformerFactory::TransformDeallocateAll(PEGTransformer &transfo
 unique_ptr<SQLStatement> PEGTransformerFactory::TransformDeallocateStatement(PEGTransformer &transformer,
                                                                              const optional<bool> &deallocate_prepare,
                                                                              const Identifier &deallocate_target) {
-	auto result = make_uniq<DropStatement>();
-	result->info->type = CatalogType::PREPARED_STATEMENT;
-	result->info->SetName(deallocate_target);
+	auto info = make_uniq<DropInfo>();
+	info->type = CatalogType::PREPARED_STATEMENT;
+	info->SetName(deallocate_target);
 	// Empty name == DEALLOCATE ALL: succeed even if there's nothing to clear.
 	// Named DEALLOCATE: PG-shape error when the name doesn't exist.
-	result->info->if_not_found =
-	    deallocate_target.empty() ? OnEntryNotFound::RETURN_NULL : OnEntryNotFound::THROW_EXCEPTION;
-	return std::move(result);
+	info->if_not_found = deallocate_target.empty() ? OnEntryNotFound::RETURN_NULL : OnEntryNotFound::THROW_EXCEPTION;
+	return make_uniq<DropStatement>(std::move(info));
 }
 
 bool PEGTransformerFactory::TransformDeallocatePrepare(PEGTransformer &transformer) {
@@ -26,10 +25,10 @@ bool PEGTransformerFactory::TransformDeallocatePrepare(PEGTransformer &transform
 
 unique_ptr<SQLStatement> PEGTransformerFactory::TransformDiscardStatement(PEGTransformer &transformer,
                                                                           const DiscardTarget &discard_target) {
-	auto result = make_uniq<DropStatement>();
-	result->info->type = CatalogType::PREPARED_STATEMENT;
-	result->info->extra_drop_info = make_uniq<ExtraDropDiscardInfo>(discard_target);
-	return std::move(result);
+	auto info = make_uniq<DropInfo>();
+	info->type = CatalogType::PREPARED_STATEMENT;
+	info->extra_drop_info = make_uniq<ExtraDropDiscardInfo>(discard_target);
+	return make_uniq<DropStatement>(std::move(info));
 }
 
 DiscardTarget PEGTransformerFactory::TransformDiscardAll(PEGTransformer &transformer) {

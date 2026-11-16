@@ -240,7 +240,7 @@ public:
 	                                                               CreateTablespaceInfo &info);
 	DUCKDB_API virtual optional_ptr<CatalogEntry> CreateSubscription(CatalogTransaction transaction,
 	                                                                 CreateSubscriptionInfo &info);
-	DUCKDB_API virtual void DropRole(CatalogTransaction transaction, DropInfo &info);
+	DUCKDB_API virtual void DropRole(CatalogTransaction transaction, const vector<unique_ptr<DropInfo>> &infos);
 	DUCKDB_API virtual void DropDatabase(CatalogTransaction transaction, DropInfo &info);
 	DUCKDB_API virtual void ScanTopLevelEntries(CatalogTransaction transaction, CatalogType type,
 	                                            const std::function<void(CatalogEntry &)> &callback);

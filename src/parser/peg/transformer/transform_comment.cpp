@@ -14,7 +14,6 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformCommentStatement(PEGTra
                                                                           const CatalogType &comment_on_type,
                                                                           const vector<string> &comment_target,
                                                                           const Value &comment_value) {
-	auto result = make_uniq<AlterStatement>();
 	unique_ptr<AlterInfo> info;
 
 	Identifier column_name;
@@ -44,8 +43,7 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformCommentStatement(PEGTra
 	if (!info) {
 		throw NotImplementedException("Cannot comment on this type");
 	}
-	result->info = std::move(info);
-	return std::move(result);
+	return make_uniq<AlterStatement>(std::move(info));
 }
 
 // CommentRoutineStatement <- 'COMMENT' 'ON' GrantRoutineKind RoutineSignature 'IS' CommentValue
@@ -60,9 +58,7 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformCommentRoutineStatement
 	TransformRoutineKind(list_pr.GetChild(2), info->include_functions, info->include_procedures);
 	info->has_func_args =
 	    TransformFunctionArgumentTypes(transformer, signature.Child<OptionalParseResult>(1), info->func_parameters);
-	auto result = make_uniq<AlterStatement>();
-	result->info = std::move(info);
-	return std::move(result);
+	return make_uniq<AlterStatement>(std::move(info));
 }
 
 CatalogType PEGTransformerFactory::TransformCommentTable(PEGTransformer &transformer) {

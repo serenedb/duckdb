@@ -509,6 +509,26 @@
     "class": "AlterPermissionsInfo",
     "base": "AlterInfo",
     "enum": "ALTER_PERMISSIONS",
+    "finalize_deserialization": [
+      "if (!grantee.empty()) {",
+      "\tresult->grantees.push_back(grantee);",
+      "}",
+      "if (!grantee.empty() || grantee_id != ACL_ID_PUBLIC) {",
+      "\tresult->grantee_ids.push_back(grantee_id);",
+      "}",
+      "if (!for_role.empty()) {",
+      "\tresult->for_roles.push_back(for_role);",
+      "}",
+      "if (!default_schema.empty()) {",
+      "\tresult->default_schemas.push_back(default_schema);",
+      "}",
+      "if (target_role != 0) {",
+      "\tresult->target_roles.push_back(target_role);",
+      "}",
+      "if (default_scope != 0) {",
+      "\tresult->default_scopes.push_back(default_scope);",
+      "}"
+    ],
     "members": [
       {
         "id": 300,
@@ -538,12 +558,16 @@
       {
         "id": 307,
         "name": "grantee",
-        "type": "string"
+        "type": "string",
+        "serialize_property": "grantees.size() == 1 ? grantees[0] : string()",
+        "deserialize_skip_assign": true
       },
       {
         "id": 308,
         "name": "grantee_id",
-        "type": "idx_t"
+        "type": "idx_t",
+        "serialize_property": "grantee_ids.size() == 1 ? grantee_ids[0] : idx_t()",
+        "deserialize_skip_assign": true
       },
       {
         "id": 309,
@@ -583,22 +607,30 @@
       {
         "id": 316,
         "name": "for_role",
-        "type": "string"
+        "type": "string",
+        "serialize_property": "for_roles.size() == 1 ? for_roles[0] : string()",
+        "deserialize_skip_assign": true
       },
       {
         "id": 317,
         "name": "default_schema",
-        "type": "string"
+        "type": "string",
+        "serialize_property": "default_schemas.size() == 1 ? default_schemas[0] : string()",
+        "deserialize_skip_assign": true
       },
       {
         "id": 318,
         "name": "target_role",
-        "type": "idx_t"
+        "type": "idx_t",
+        "serialize_property": "target_roles.size() == 1 ? target_roles[0] : idx_t()",
+        "deserialize_skip_assign": true
       },
       {
         "id": 319,
         "name": "default_scope",
-        "type": "idx_t"
+        "type": "idx_t",
+        "serialize_property": "default_scopes.size() == 1 ? default_scopes[0] : idx_t()",
+        "deserialize_skip_assign": true
       },
       {
         "id": 320,
@@ -636,6 +668,42 @@
         "id": 334,
         "name": "database_rows",
         "type": "vector<GrantRow>"
+      },
+      {
+        "id": 335,
+        "name": "grantees",
+        "type": "vector<string>",
+        "serialize_property": "grantees.size() == 1 ? vector<string>() : grantees"
+      },
+      {
+        "id": 336,
+        "name": "grantee_ids",
+        "type": "vector<idx_t>",
+        "serialize_property": "grantee_ids.size() == 1 ? vector<idx_t>() : grantee_ids"
+      },
+      {
+        "id": 337,
+        "name": "for_roles",
+        "type": "vector<string>",
+        "serialize_property": "for_roles.size() == 1 ? vector<string>() : for_roles"
+      },
+      {
+        "id": 338,
+        "name": "default_schemas",
+        "type": "vector<string>",
+        "serialize_property": "default_schemas.size() == 1 ? vector<string>() : default_schemas"
+      },
+      {
+        "id": 339,
+        "name": "target_roles",
+        "type": "vector<idx_t>",
+        "serialize_property": "target_roles.size() == 1 ? vector<idx_t>() : target_roles"
+      },
+      {
+        "id": 340,
+        "name": "default_scopes",
+        "type": "vector<idx_t>",
+        "serialize_property": "default_scopes.size() == 1 ? vector<idx_t>() : default_scopes"
       }
     ]
   },
