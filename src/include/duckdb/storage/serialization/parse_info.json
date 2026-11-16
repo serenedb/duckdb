@@ -438,6 +438,20 @@
         "name": "overload_oid",
         "type": "idx_t",
         "version": "serenedb_v1"
+      },
+      {
+        "id": 16687,
+        "name": "include_functions",
+        "type": "bool",
+        "default": "true",
+        "version": "serenedb_v1"
+      },
+      {
+        "id": 16688,
+        "name": "include_procedures",
+        "type": "bool",
+        "default": "true",
+        "version": "serenedb_v1"
       }
     ]
   },

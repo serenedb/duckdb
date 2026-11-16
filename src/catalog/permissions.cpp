@@ -1364,15 +1364,20 @@ static void RequireRoleOwner(ClientContext &context, const RoleAccess &role, con
 	throw PermissionException({{"detail", detail}}, "permission denied");
 }
 
-void RequireOwner(ClientContext &context, const RoleAccess &role, CatalogEntry &entry) {
+void RequireOwner(ClientContext &context, const RoleAccess &role, CatalogEntry &entry,
+                  optional_ptr<MacroFunction> overload) {
 	if (entry.type == CatalogType::ROLE_ENTRY) {
 		RequireRoleOwner(context, role, entry.Cast<RoleEntry>());
 		return;
 	}
 	if (entry.type == CatalogType::MACRO_ENTRY || entry.type == CatalogType::TABLE_MACRO_ENTRY) {
 		auto &macro = entry.Cast<MacroCatalogEntry>();
-		for (auto &overload : macro.macros) {
+		if (overload) {
 			RequireOwner(role, entry, macro.OverloadPermissions(*overload).owner);
+			return;
+		}
+		for (auto &function : macro.macros) {
+			RequireOwner(role, entry, macro.OverloadPermissions(*function).owner);
 		}
 		return;
 	}
@@ -1388,24 +1393,13 @@ void RequireOwner(ClientContext &context, const RoleAccess &role, CatalogEntry &
 	RequireOwner(role, entry, owner);
 }
 
-void RequireDropOwner(ClientContext &context, const RoleAccess &role, CatalogEntry &entry,
-                      optional_ptr<MacroFunction> overload) {
-	if (role.Owns(entry.ParentSchema(context).permissions.owner)) {
-		return;
-	}
-	if (!overload) {
-		RequireOwner(context, role, entry);
-		return;
-	}
-	RequireOwner(role, entry, entry.Cast<MacroCatalogEntry>().OverloadPermissions(*overload).owner);
-}
-
-void RequireUse(ClientContext &context, const RoleAccess &role, CatalogEntry &entry, EntryUse use) {
+void RequireUse(ClientContext &context, const RoleAccess &role, CatalogEntry &entry, EntryUse use,
+                optional_ptr<MacroFunction> overload) {
 	switch (use) {
 	case EntryUse::REFERENCE:
 		return;
 	case EntryUse::OWN:
-		RequireOwner(context, role, entry);
+		RequireOwner(context, role, entry, overload);
 		if (entry.type == CatalogType::SUBSCRIPTION_ENTRY && !role.is_superuser &&
 		    !entry.GetInfo()->Cast<CreateSubscriptionInfo>().password_required) {
 			throw PermissionException(
@@ -1415,7 +1409,7 @@ void RequireUse(ClientContext &context, const RoleAccess &role, CatalogEntry &en
 		}
 		return;
 	case EntryUse::RENAME:
-		RequireOwner(context, role, entry);
+		RequireOwner(context, role, entry, overload);
 		if (entry.type == CatalogType::SCHEMA_ENTRY) {
 			RequireDatabasePrivilege(context, role, entry.ParentCatalog().GetName(), AclMode::Create);
 		} else {
@@ -1426,8 +1420,8 @@ void RequireUse(ClientContext &context, const RoleAccess &role, CatalogEntry &en
 		if (entry.type == CatalogType::SCHEMA_ENTRY || entry.type == CatalogType::DATABASE_ENTRY ||
 		    entry.type == CatalogType::FOREIGN_SERVER_ENTRY || entry.type == CatalogType::SUBSCRIPTION_ENTRY) {
 			RequireOwner(context, role, entry);
-		} else {
-			RequireDropOwner(context, role, entry, nullptr);
+		} else if (!role.Owns(entry.ParentSchema(context).permissions.owner)) {
+			RequireOwner(context, role, entry, overload);
 		}
 		return;
 	}

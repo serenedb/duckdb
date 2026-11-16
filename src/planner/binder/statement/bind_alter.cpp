@@ -212,62 +212,70 @@ static optional_ptr<CatalogEntry> BindSetSchemaEntry(SetSchemaInfo &info, const 
 	return lookup(declared, info.if_not_found);
 }
 
-optional_ptr<CatalogEntry> Binder::LookupRoutine(const QualifiedName &name, OnEntryNotFound if_not_found) {
-	for (auto type : {CatalogType::MACRO_ENTRY, CatalogType::TABLE_MACRO_ENTRY}) {
-		if (auto entry = entry_retriever.GetEntry(EntryLookupInfo(type, name), OnEntryNotFound::RETURN_NULL)) {
-			return entry;
+BoundRoutine Binder::BindRoutine(const RoutineReference &routine, EntryUse use, OnEntryNotFound if_not_found) {
+	for (auto &type : routine.func_parameters) {
+		BindLogicalType(type);
+	}
+	auto &name = routine.name.Name().GetIdentifierName();
+	BoundRoutine result;
+	for (auto type : {CatalogType::MACRO_ENTRY, CatalogType::TABLE_MACRO_ENTRY, CatalogType::PRAGMA_FUNCTION_ENTRY}) {
+		if (routine.type == CatalogType::MACRO_ENTRY || type == routine.type) {
+			result.entry = entry_retriever.GetEntry(EntryLookupInfo(type, routine.name), OnEntryNotFound::RETURN_NULL);
+		}
+		if (result.entry) {
+			break;
 		}
 	}
-	return entry_retriever.GetEntry(EntryLookupInfo(CatalogType::MACRO_ENTRY, name), if_not_found);
-}
-
-MacroFunction &Binder::ResolveOverload(MacroCatalogEntry &macro, bool has_func_args,
-                                       vector<LogicalType> &func_parameters) {
-	return *ResolveOverload(macro, has_func_args, func_parameters, OnEntryNotFound::THROW_EXCEPTION);
-}
-
-optional_ptr<MacroFunction> Binder::ResolveOverload(MacroCatalogEntry &macro, bool has_func_args,
-                                                    vector<LogicalType> &func_parameters,
-                                                    OnEntryNotFound if_not_found) {
-	auto &name = macro.name.GetIdentifierName();
-	if (has_func_args) {
-		for (auto &type : func_parameters) {
-			BindLogicalType(type);
-		}
-		for (auto &overload : macro.macros) {
-			if (overload->HasParameterTypes(func_parameters)) {
-				return overload.get();
+	optional_ptr<MacroCatalogEntry> macro;
+	if (result.entry &&
+	    (result.entry->type == CatalogType::MACRO_ENTRY || result.entry->type == CatalogType::TABLE_MACRO_ENTRY)) {
+		macro = result.entry->Cast<MacroCatalogEntry>();
+	}
+	if (macro && !macro->internal && !routine.every_overload) {
+		if (routine.has_func_args) {
+			for (auto &overload : macro->macros) {
+				if (overload->HasParameterTypes(routine.func_parameters)) {
+					result.overload = overload.get();
+				}
 			}
+		} else if (macro->macros.size() > 1) {
+			const auto kind =
+			    StringUtil::Lower(ParseInfo::RoutineKeyword(routine.include_functions, routine.include_procedures));
+			auto extra_info = Exception::InitializeExtraInfo("AMBIGUOUS_FUNCTION", optional_idx());
+			extra_info["hint"] = StringUtil::Format("Specify the argument list to select the %s unambiguously.", kind);
+			throw CatalogException(extra_info, StringUtil::Format("%s name \"%s\" is not unique", kind, name));
+		} else {
+			result.overload = macro->macros[0].get();
 		}
+		if (!result.overload) {
+			result.entry = nullptr;
+		}
+	}
+	if (!result.entry) {
 		if (if_not_found == OnEntryNotFound::RETURN_NULL) {
-			return nullptr;
+			return result;
 		}
+		const auto noun = routine.include_functions ? "function" : "procedure";
 		auto extra_info = Exception::InitializeExtraInfo("MISSING_ENTRY", optional_idx());
-		extra_info["type"] = CatalogTypeToString(macro.type);
-		throw CatalogException(extra_info, StringUtil::Format("function %s(%s) does not exist", name,
-		                                                      MacroFunction::ParameterTypesToString(func_parameters)));
+		extra_info["type"] = CatalogTypeToString(CatalogType::MACRO_ENTRY);
+		throw CatalogException(extra_info,
+		                       routine.has_func_args
+		                           ? StringUtil::Format("%s %s(%s) does not exist", noun, name,
+		                                                MacroFunction::ParameterTypesToString(routine.func_parameters))
+		                           : StringUtil::Format("could not find a %s named \"%s\"", noun, name));
 	}
-	if (macro.macros.size() > 1) {
-		auto extra_info = Exception::InitializeExtraInfo("AMBIGUOUS_FUNCTION", optional_idx());
-		extra_info["hint"] = "Specify the argument list to select the function unambiguously.";
-		throw CatalogException(extra_info, StringUtil::Format("function name \"%s\" is not unique", name));
+	const bool procedure = result.overload ? result.overload->is_procedure : macro && macro->is_procedure;
+	const bool kinds_differ = result.entry->ParentCatalog().Compatibility() == SqlCompatibility::POSTGRES;
+	if (kinds_differ && (procedure ? !routine.include_procedures : !routine.include_functions)) {
+		throw CatalogException(
+		    Exception::InitializeExtraInfo("WRONG_OBJECT_TYPE", optional_idx()),
+		    StringUtil::Format("%s(%s) is not a %s", result.entry->name.GetIdentifierName(),
+		                       MacroFunction::ParameterTypesToString(result.overload ? result.overload->ParameterTypes()
+		                                                                             : routine.func_parameters),
+		                       procedure ? "function" : "procedure"));
 	}
-	return macro.macros[0].get();
-}
-
-static idx_t RequireRoutineOwner(Binder &binder, CatalogEntry &entry, bool has_func_args,
-                                 vector<LogicalType> &func_parameters) {
-	const bool names_overload =
-	    !entry.internal && (entry.type == CatalogType::MACRO_ENTRY || entry.type == CatalogType::TABLE_MACRO_ENTRY) &&
-	    (has_func_args || entry.ParentCatalog().Compatibility() == SqlCompatibility::POSTGRES);
-	if (!names_overload) {
-		RequireOwner(binder.context, binder.CheckAs(), entry);
-		return 0;
-	}
-	auto &macro = entry.Cast<MacroCatalogEntry>();
-	auto &overload = binder.ResolveOverload(macro, has_func_args, func_parameters);
-	RequireOwner(binder.CheckAs(), entry, macro.OverloadPermissions(overload).owner);
-	return macro.OverloadOid(overload);
+	RequireUse(context, CheckAs(), *result.entry, use, result.overload);
+	return result;
 }
 
 CatalogEntry &Binder::ResolveDatabaseEntry(CatalogType type, AlterInfo &info, EntryUse use) {
@@ -380,26 +388,15 @@ BoundStatement Binder::Bind(AlterStatement &stmt) {
 	    stmt.info->Cast<AlterScalarFunctionInfo>().alter_scalar_function_type ==
 	        AlterScalarFunctionType::SET_FUNCTION_ATTRIBUTES) {
 		auto &info = stmt.info->Cast<AlterFunctionAttributesInfo>();
-		for (auto &type : info.func_parameters) {
-			BindLogicalType(type);
+		auto bound = BindRoutine({info.GetQualifiedName(), info.func_parameters, info.has_func_args,
+		                          info.include_functions, info.include_procedures},
+		                         EntryUse::OWN, OnEntryNotFound::THROW_EXCEPTION);
+		auto &function = *bound.entry;
+		if (function.internal) {
+			ThrowPermissionDenied(function);
 		}
-		const auto &name = info.GetQualifiedName().Name().GetIdentifierName();
-		auto function = LookupRoutine(info.GetQualifiedName(), OnEntryNotFound::RETURN_NULL);
-		if (!function) {
-			auto missing = Exception::InitializeExtraInfo("MISSING_ENTRY", optional_idx());
-			missing["type"] = CatalogTypeToString(CatalogType::MACRO_ENTRY);
-			throw CatalogException(missing,
-			                       info.has_func_args
-			                           ? StringUtil::Format("function %s(%s) does not exist", name,
-			                                                MacroFunction::ParameterTypesToString(info.func_parameters))
-			                           : StringUtil::Format("could not find a function named \"%s\"", name));
-		}
-		if (function->internal) {
-			ThrowPermissionDenied(*function);
-		}
-		auto &routine = function->Cast<MacroCatalogEntry>();
-		auto &overload = ResolveOverload(routine, info.has_func_args, info.func_parameters);
-		RequireOwner(CheckAs(), *function, routine.OverloadPermissions(overload).owner);
+		auto &routine = function.Cast<MacroCatalogEntry>();
+		auto &overload = *bound.overload;
 		auto create_info = routine.GetInfo();
 		const auto position =
 		    std::find_if(routine.macros.begin(), routine.macros.end(),
@@ -420,7 +417,7 @@ BoundStatement Binder::Bind(AlterStatement &stmt) {
 			Settings::ResolveCurrentValues(context, macro.config);
 		}
 		create_info->on_conflict = OnCreateConflict::ALTER_ON_CONFLICT;
-		auto &schema = function->ParentSchema(context);
+		auto &schema = function.ParentSchema(context);
 		auto &properties = GetStatementProperties();
 		properties.return_type = StatementReturnType::NOTHING;
 		properties.RegisterDBModify(schema.ParentCatalog(), context, DatabaseModificationType::ALTER_TABLE);
@@ -434,16 +431,16 @@ BoundStatement Binder::Bind(AlterStatement &stmt) {
 	if (stmt.info->type == AlterType::ALTER_SCALAR_FUNCTION &&
 	    stmt.info->Cast<AlterScalarFunctionInfo>().alter_scalar_function_type ==
 	        AlterScalarFunctionType::RENAME_SCALAR_FUNCTION) {
-		const bool unqualified = stmt.info->GetQualifiedName().Schema().empty();
-		auto function = LookupRoutine(stmt.info->GetQualifiedName(),
-		                              unqualified ? stmt.info->if_not_found : OnEntryNotFound::RETURN_NULL);
-		if (function && unqualified) {
-			stmt.info->SetQualifiedName(function->Cast<StandardEntry>().GetQualifiedName(function->name));
+		auto &rename = stmt.info->Cast<RenameScalarFunctionInfo>();
+		const bool unqualified = rename.GetQualifiedName().Schema().empty();
+		auto bound = BindRoutine({rename.GetQualifiedName(), rename.func_parameters, rename.has_func_args,
+		                          rename.include_functions, rename.include_procedures},
+		                         EntryUse::RENAME, rename.if_not_found);
+		if (bound.entry && unqualified) {
+			rename.SetQualifiedName(bound.entry->Cast<StandardEntry>().GetQualifiedName(bound.entry->name));
 		}
-		if (function) {
-			auto &rename = stmt.info->Cast<RenameScalarFunctionInfo>();
-			rename.overload_oid = RequireRoutineOwner(*this, *function, rename.has_func_args, rename.func_parameters);
-			RequireSchemaCreate(context, CheckAs(), function->ParentSchema(context));
+		if (bound.overload) {
+			rename.overload_oid = bound.entry->Cast<MacroCatalogEntry>().OverloadOid(*bound.overload);
 		}
 		auto &catalog = Catalog::GetCatalog(context, stmt.info->GetQualifiedName().Catalog());
 		auto &properties = GetStatementProperties();
@@ -504,10 +501,19 @@ BoundStatement Binder::Bind(AlterStatement &stmt) {
 		}
 	} else if (stmt.info->type == AlterType::SET_SCHEMA) {
 		entry = BindSetSchemaEntry(stmt.info->Cast<SetSchemaInfo>(), lookup);
-	} else if (stmt.info->type == AlterType::SET_COMMENT && stmt.info->GetCatalogType() == CatalogType::MACRO_ENTRY) {
-		entry = LookupRoutine(stmt.info->GetQualifiedName(), stmt.info->if_not_found);
+	} else if (stmt.info->type == AlterType::SET_COMMENT &&
+	           (stmt.info->GetCatalogType() == CatalogType::MACRO_ENTRY ||
+	            stmt.info->GetCatalogType() == CatalogType::TABLE_MACRO_ENTRY)) {
+		auto &comment = stmt.info->Cast<SetCommentInfo>();
+		auto bound = BindRoutine({comment.GetQualifiedName(), comment.func_parameters, comment.has_func_args,
+		                          comment.include_functions, comment.include_procedures, comment.entry_catalog_type},
+		                         EntryUse::OWN, comment.if_not_found);
+		entry = bound.entry;
+		if (bound.overload) {
+			comment.overload_oid = entry->Cast<MacroCatalogEntry>().OverloadOid(*bound.overload);
+		}
 		if (entry && entry->type == CatalogType::TABLE_MACRO_ENTRY) {
-			stmt.info->Cast<SetCommentInfo>().entry_catalog_type = CatalogType::TABLE_MACRO_ENTRY;
+			comment.entry_catalog_type = CatalogType::TABLE_MACRO_ENTRY;
 		}
 	} else {
 		// For any other ALTER, we retrieve the catalog entry directly.
@@ -526,14 +532,11 @@ BoundStatement Binder::Bind(AlterStatement &stmt) {
 	}
 
 	D_ASSERT(!entry->deleted);
-	if (entry->type == CatalogType::MACRO_ENTRY || entry->type == CatalogType::TABLE_MACRO_ENTRY) {
-		if (stmt.info->type == AlterType::SET_COMMENT) {
-			auto &comment = stmt.info->Cast<SetCommentInfo>();
-			comment.overload_oid = RequireRoutineOwner(*this, *entry, comment.has_func_args, comment.func_parameters);
-		} else {
-			vector<LogicalType> no_arguments;
-			RequireRoutineOwner(*this, *entry, false, no_arguments);
-		}
+	if (stmt.info->type != AlterType::SET_COMMENT &&
+	    (entry->type == CatalogType::MACRO_ENTRY || entry->type == CatalogType::TABLE_MACRO_ENTRY)) {
+		vector<LogicalType> no_arguments;
+		BindRoutine({stmt.info->GetQualifiedName(), no_arguments, false, true, true, entry->type}, EntryUse::OWN,
+		            OnEntryNotFound::THROW_EXCEPTION);
 	}
 	if (auto new_schema = stmt.info->GetNewSchema()) {
 		EntryLookupInfo schema_lookup(CatalogType::SCHEMA_ENTRY,

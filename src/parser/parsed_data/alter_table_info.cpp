@@ -139,6 +139,8 @@ unique_ptr<AlterInfo> SetCommentInfo::Copy() const {
 	result->overload_oid = overload_oid;
 	result->func_parameters = func_parameters;
 	result->has_func_args = has_func_args;
+	result->include_functions = include_functions;
+	result->include_procedures = include_procedures;
 	return std::move(result);
 }
 
@@ -146,7 +148,9 @@ string SetCommentInfo::ToString() const {
 	string result = "";
 
 	result += "COMMENT ON ";
-	result += has_func_args ? "FUNCTION" : ParseInfo::TypeToString(entry_catalog_type);
+	result += entry_catalog_type == CatalogType::MACRO_ENTRY
+	              ? ParseInfo::RoutineKeyword(include_functions, include_procedures)
+	              : ParseInfo::TypeToString(entry_catalog_type);
 	result += " ";
 	result += GetQualifiedName().ToString(QualifiedNameToStringMode::HIDE_DEFAULT_SCHEMA);
 	if (has_func_args) {

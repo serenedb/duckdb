@@ -62,6 +62,8 @@ struct SetCommentInfo : public AlterInfo {
 	idx_t overload_oid = 0;
 	vector<LogicalType> func_parameters;
 	bool has_func_args = false;
+	bool include_functions = true;
+	bool include_procedures = true;
 
 public:
 	CatalogType GetCatalogType() const override;
