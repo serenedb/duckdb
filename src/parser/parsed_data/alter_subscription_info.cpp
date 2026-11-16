@@ -1,7 +1,6 @@
 #include "duckdb/parser/parsed_data/alter_subscription_info.hpp"
 
 #include "duckdb/common/sql_identifier.hpp"
-#include "duckdb/parser/keyword_helper.hpp"
 
 namespace duckdb {
 
@@ -28,7 +27,7 @@ string AlterSubscriptionInfo::ToString() const {
 	string result = "ALTER SUBSCRIPTION " + SQLIdentifier(GetQualifiedName().Name());
 	string publication_list;
 	for (auto &publication : publications) {
-		publication_list += (publication_list.empty() ? " " : ", ") + KeywordHelper::WriteOptionallyQuoted(publication);
+		publication_list += (publication_list.empty() ? " " : ", ") + SQLIdentifier::ToString(publication);
 	}
 	const auto with = options.empty() ? string() : " WITH " + RenderSubscriptionOptions(options);
 	switch (alter_subscription_type) {
@@ -39,7 +38,7 @@ string AlterSubscriptionInfo::ToString() const {
 		result += " DISABLE";
 		break;
 	case AlterSubscriptionType::SET_CONNECTION:
-		result += " CONNECTION " + KeywordHelper::WriteQuoted(connection, '\'');
+		result += " CONNECTION " + SQLString::ToString(connection);
 		break;
 	case AlterSubscriptionType::SET_PUBLICATION:
 		result += " SET PUBLICATION" + publication_list + with;
