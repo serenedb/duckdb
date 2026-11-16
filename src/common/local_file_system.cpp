@@ -6,6 +6,7 @@
 #include "duckdb/common/file_opener.hpp"
 #include "duckdb/common/helper.hpp"
 #include "duckdb/common/memory_mapped_file.hpp"
+#include "duckdb/common/path.hpp"
 #include "duckdb/common/process_util.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/common/thread.hpp"
@@ -14,6 +15,7 @@
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/main/database.hpp"
 #include "duckdb/main/settings.hpp"
+#include "duckdb/parallel/task_scheduler.hpp"
 #include "duckdb/logging/file_system_logger.hpp"
 #include "duckdb/logging/log_manager.hpp"
 #include "duckdb/common/multi_file/multi_file_list.hpp"
@@ -721,6 +723,9 @@ bool LocalFileSystem::CreateDirectoryExtended(const string &directory, const Cre
 	ApplyLocalFileSystemDelay(opener);
 	auto normalized_dir = ExpandPath(directory, opener);
 	if (mkdir(normalized_dir.c_str(), 0755) == 0) {
+		if (options.sync) {
+			SyncDirectory(Path::FromString(normalized_dir).Parent().ToString(), opener);
+		}
 		return true;
 	}
 	auto error = errno;
@@ -2129,6 +2134,21 @@ FileWriteMode LocalFileSystem::GetWriteMode(FileHandle &handle) {
 
 bool LocalFileSystem::OnDiskFile(FileHandle &handle) {
 	return true;
+}
+
+void LocalFileSystem::SyncFiles(const vector<string> &paths, optional_ptr<FileOpener> opener) {
+	vector<unique_ptr<FileHandle>> handles;
+	handles.reserve(paths.size());
+	for (auto &path : paths) {
+		handles.push_back(OpenFile(path, FileFlags::FILE_FLAGS_READ, opener));
+	}
+	TaskScheduler::BlockingScope blocking;
+	for (auto &handle : handles) {
+		HintWriteback(*handle, 0, 0);
+	}
+	for (auto &handle : handles) {
+		FileSync(*handle);
+	}
 }
 
 string LocalFileSystem::CanonicalizePath(const string &input, optional_ptr<FileOpener> opener) {

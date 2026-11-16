@@ -62,6 +62,7 @@ enum class RemoveDirectoryMode : uint8_t {
 
 struct CreateDirectoryOptions {
 	CreateDirectoryMode mode = CreateDirectoryMode::SINGLE;
+	bool sync = false;
 };
 
 struct RemoveDirectoryOptions {
