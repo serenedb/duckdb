@@ -148,11 +148,17 @@ static CatalogEntry &ResolvePermissionsTarget(Binder &binder, AlterPermissionsIn
 	if (info.entry_catalog_type == CatalogType::DATABASE_ENTRY) {
 		return ClusterDatabase(context, name.Name());
 	}
-	auto entry = binder.GetCatalogEntry(EntryLookupInfo(info.entry_catalog_type, name), OnEntryNotFound::RETURN_NULL);
-	for (auto other : {CatalogType::TABLE_MACRO_ENTRY, CatalogType::PRAGMA_FUNCTION_ENTRY}) {
-		if (!entry && info.entry_catalog_type == CatalogType::MACRO_ENTRY) {
-			entry = binder.GetCatalogEntry(EntryLookupInfo(other, name), OnEntryNotFound::RETURN_NULL);
+	optional_ptr<CatalogEntry> entry;
+	if (info.entry_catalog_type == CatalogType::MACRO_ENTRY) {
+		auto routine = binder.BindRoutine(
+		    {name, info.func_parameters, info.has_func_args, info.include_functions, info.include_procedures},
+		    EntryUse::REFERENCE, OnEntryNotFound::THROW_EXCEPTION);
+		entry = routine.entry;
+		if (routine.overload && !IsUnowned(*entry)) {
+			info.overload_oid = entry->Cast<MacroCatalogEntry>().OverloadOid(*routine.overload);
 		}
+	} else {
+		entry = binder.GetCatalogEntry(EntryLookupInfo(info.entry_catalog_type, name), OnEntryNotFound::RETURN_NULL);
 	}
 	if (!entry) {
 		throw CatalogException::MissingEntry(EntryLookupInfo(info.entry_catalog_type, name), string());
@@ -165,11 +171,6 @@ static CatalogEntry &ResolvePermissionsTarget(Binder &binder, AlterPermissionsIn
 	info.SetQualifiedName(QualifiedName::FromCatalogSchema(
 	    entry->ParentCatalog().GetName(),
 	    entry->ParentSchemaPath(entry->ParentCatalog().GetCatalogTransaction(context)), entry->name));
-	if ((entry->type == CatalogType::MACRO_ENTRY || entry->type == CatalogType::TABLE_MACRO_ENTRY) &&
-	    !entry->internal && !IsUnowned(*entry)) {
-		auto &macro = entry->Cast<MacroCatalogEntry>();
-		info.overload_oid = macro.OverloadOid(binder.ResolveOverload(macro, info.has_func_args, info.func_parameters));
-	}
 	return *entry;
 }
 

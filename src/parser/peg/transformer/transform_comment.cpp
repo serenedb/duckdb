@@ -57,6 +57,7 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformCommentRoutineStatement
 	auto info =
 	    make_uniq<SetCommentInfo>(CatalogType::MACRO_ENTRY, name.Catalog(), name.Schema(), name.Name(),
 	                              transformer.Transform<Value>(list_pr.GetChild(5)), OnEntryNotFound::THROW_EXCEPTION);
+	TransformRoutineKind(list_pr.GetChild(2), info->include_functions, info->include_procedures);
 	info->has_func_args =
 	    TransformFunctionArgumentTypes(transformer, signature.Child<OptionalParseResult>(1), info->func_parameters);
 	auto result = make_uniq<AlterStatement>();

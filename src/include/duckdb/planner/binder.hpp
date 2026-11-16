@@ -117,6 +117,21 @@ enum class BindingMode : uint8_t {
 enum class BinderType : uint8_t { REGULAR_BINDER, VIEW_BINDER };
 enum class TableRefUse : uint8_t { READ, DML_TARGET, UTILITY_TARGET };
 
+struct RoutineReference {
+	const QualifiedName &name;
+	vector<LogicalType> &func_parameters;
+	bool has_func_args = false;
+	bool include_functions = true;
+	bool include_procedures = true;
+	CatalogType type = CatalogType::MACRO_ENTRY;
+	bool every_overload = false;
+};
+
+struct BoundRoutine {
+	optional_ptr<CatalogEntry> entry;
+	optional_ptr<MacroFunction> overload;
+};
+
 struct CorrelatedColumnInfo {
 	ColumnBinding binding;
 	LogicalType type;
@@ -487,10 +502,7 @@ public:
 	void AdoptPrivilegeChecks(Binder &other);
 	void CheckPrivileges();
 	Catalog &SubscriptionCatalog(const Identifier &catalog_name);
-	optional_ptr<CatalogEntry> LookupRoutine(const QualifiedName &name, OnEntryNotFound if_not_found);
-	MacroFunction &ResolveOverload(MacroCatalogEntry &macro, bool has_func_args, vector<LogicalType> &func_parameters);
-	optional_ptr<MacroFunction> ResolveOverload(MacroCatalogEntry &macro, bool has_func_args,
-	                                            vector<LogicalType> &func_parameters, OnEntryNotFound if_not_found);
+	BoundRoutine BindRoutine(const RoutineReference &routine, EntryUse use, OnEntryNotFound if_not_found);
 	CatalogEntry &ResolveDatabaseEntry(CatalogType type, AlterInfo &info, EntryUse use);
 	void RequireResolvedTypeUsage(optional_ptr<const LogicalDependencyList> dependencies);
 	void CheckCreateRole(const CreateRoleInfo &info);

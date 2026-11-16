@@ -71,20 +71,18 @@ void Binder::BindDrop(DropInfo &info, StatementProperties &properties) {
 			properties.RegisterDBRead(*catalog, context);
 		}
 		optional_ptr<CatalogEntry> entry;
-		if (info.type == CatalogType::MACRO_ENTRY) {
-			for (auto &type : info.func_parameters) {
-				BindLogicalType(type);
-			}
+		if (info.type == CatalogType::MACRO_ENTRY || info.type == CatalogType::TABLE_MACRO_ENTRY) {
 			// We also support "DROP MACRO" (instead of "DROP MACRO TABLE") for table macros
-			entry = LookupRoutine(info.GetQualifiedName(), info.if_not_found);
+			entry = BindRoutine({info.GetQualifiedName(), info.func_parameters, info.has_func_args, !info.is_procedure,
+			                     info.is_procedure, info.type, info.is_macro && !info.has_func_args},
+			                    EntryUse::DROP, info.if_not_found)
+			            .entry;
 			if (entry && entry->type == CatalogType::TABLE_MACRO_ENTRY) {
 				// Change type to table macro so future lookups get the correct one
 				info.type = CatalogType::TABLE_MACRO_ENTRY;
 			}
 		} else {
-			EntryLookupInfo entry_lookup(info.type, info.GetQualifiedName(),
-			                             info.type == CatalogType::TABLE_MACRO_ENTRY ? EntryUse::REFERENCE
-			                                                                         : EntryUse::DROP);
+			EntryLookupInfo entry_lookup(info.type, info.GetQualifiedName(), EntryUse::DROP);
 			auto if_not_found = info.if_not_found;
 			if (catalog && catalog->Compatibility() == SqlCompatibility::POSTGRES &&
 			    Catalog::InRelationNamespace(info.type)) {
@@ -97,23 +95,6 @@ void Binder::BindDrop(DropInfo &info, StatementProperties &properties) {
 		}
 		if (entry->internal) {
 			throw CatalogException("Cannot drop internal catalog entry %s!", entry->name);
-		}
-		optional_ptr<MacroFunction> overload;
-		if (entry->type == CatalogType::MACRO_ENTRY || entry->type == CatalogType::TABLE_MACRO_ENTRY) {
-			auto &macro = entry->Cast<MacroCatalogEntry>();
-			if (info.has_func_args ||
-			    (!info.is_macro && entry->ParentCatalog().Compatibility() == SqlCompatibility::POSTGRES)) {
-				overload = ResolveOverload(macro, info.has_func_args, info.func_parameters, info.if_not_found);
-				if (!overload) {
-					break;
-				}
-			}
-			if (macro.is_procedure != info.is_procedure) {
-				throw BinderException("%s(%s) is not a %s", entry->name.GetIdentifierName(),
-				                      MacroFunction::ParameterTypesToString(info.func_parameters),
-				                      info.is_procedure ? "procedure" : "function");
-			}
-			RequireDropOwner(context, CheckAs(), *entry, overload);
 		}
 		// keep the entry's full (possibly nested) schema path so execution navigates the same schema
 		info.SetQualifiedName(QualifiedName::FromCatalogSchema(

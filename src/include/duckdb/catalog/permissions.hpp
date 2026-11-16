@@ -486,10 +486,10 @@ DUCKDB_API void RequireEntryPrivilege(const RoleAccess &role, const CatalogEntry
 DUCKDB_API void RequireSuperuser(const RoleAccess &role);
 DUCKDB_API bool IsAdminOf(ClientContext &context, const RoleAccess &role, idx_t target);
 DUCKDB_API void RequireOwner(const RoleAccess &role, const CatalogEntry &entry, idx_t owner);
-DUCKDB_API void RequireOwner(ClientContext &context, const RoleAccess &role, CatalogEntry &entry);
-DUCKDB_API void RequireDropOwner(ClientContext &context, const RoleAccess &role, CatalogEntry &entry,
-                                 optional_ptr<MacroFunction> overload);
-DUCKDB_API void RequireUse(ClientContext &context, const RoleAccess &role, CatalogEntry &entry, EntryUse use);
+DUCKDB_API void RequireOwner(ClientContext &context, const RoleAccess &role, CatalogEntry &entry,
+                             optional_ptr<MacroFunction> overload = nullptr);
+DUCKDB_API void RequireUse(ClientContext &context, const RoleAccess &role, CatalogEntry &entry, EntryUse use,
+                           optional_ptr<MacroFunction> overload = nullptr);
 DUCKDB_API void RequireCreate(ClientContext &context, const RoleAccess &role, SchemaCatalogEntry &schema,
                               const CreateInfo &info, const Identifier &name);
 DUCKDB_API void RequireDatabasePrivilege(ClientContext &context, const RoleAccess &role, const Identifier &database,
