@@ -143,7 +143,7 @@ static CatalogEntry &ResolvePermissionsTarget(Binder &binder, AlterPermissionsIn
 	}
 	if (info.entry_catalog_type == CatalogType::FOREIGN_SERVER_ENTRY ||
 	    info.entry_catalog_type == CatalogType::SUBSCRIPTION_ENTRY) {
-		return binder.ResolveDatabaseEntry(info.entry_catalog_type, info);
+		return binder.ResolveDatabaseEntry(info.entry_catalog_type, info, EntryUse::REFERENCE);
 	}
 	if (info.entry_catalog_type == CatalogType::DATABASE_ENTRY) {
 		return ClusterDatabase(context, name.Name());
@@ -333,7 +333,7 @@ static void ResolveOwner(Binder &binder, AlterPermissionsInfo &info) {
 		return;
 	}
 	if (entry.type == CatalogType::SUBSCRIPTION_ENTRY) {
-		binder.RequireSubscriptionOwner(entry);
+		RequireUse(context, role, entry, EntryUse::OWN);
 	} else if (!relation) {
 		RequireOwner(role, entry, permissions.owner);
 	}

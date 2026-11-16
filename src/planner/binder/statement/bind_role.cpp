@@ -35,10 +35,6 @@ static void RequireNotSuperuser(const RoleEntry &role, const string &verb) {
 	                             role.name.GetIdentifierName(), verb));
 }
 
-static bool IsAdminOf(ClientContext &context, const RoleAccess &caller, idx_t role) {
-	return context.security && context.security->MembershipsOf(caller.role).IsAdminOf(role);
-}
-
 static bool AdministersRole(ClientContext &context, const RoleAccess &caller, const RoleEntry &role) {
 	return caller.Has(RoleOption::CreateRole) && IsAdminOf(context, caller, role.oid);
 }
@@ -302,37 +298,14 @@ void Binder::CheckSharedObjectComment(AlterInfo &info) {
 	}
 	auto &name = info.GetQualifiedName().Name();
 	if (info.GetCatalogType() == CatalogType::DATABASE_ENTRY) {
-		auto database = ClusterEntry(context, CatalogType::DATABASE_ENTRY, name);
-		if (!database) {
+		if (!ClusterEntry(context, caller, CatalogType::DATABASE_ENTRY, name, EntryUse::OWN,
+		                  OnEntryNotFound::RETURN_NULL)) {
 			context.WarnUser(StringUtil::Format("database \"%s\" does not exist", name.GetIdentifierName()));
 			info.if_not_found = OnEntryNotFound::RETURN_NULL;
-			return;
-		}
-		if (!caller.is_superuser && !caller.MemberOf(database->permissions.owner)) {
-			throw PermissionException("must be owner of database %s", name.GetIdentifierName());
 		}
 		return;
 	}
-	auto role = FindRole(*this, name.GetIdentifierName());
-	if (!role) {
-		throw CatalogException(unordered_map<string, string> {{"type", "Role"}},
-		                       StringUtil::Format("role \"%s\" does not exist", name.GetIdentifierName()));
-	}
-	if (caller.is_superuser) {
-		return;
-	}
-	string detail;
-	if (role->IsSuperuser()) {
-		detail = "The current user must have the SUPERUSER attribute.";
-	} else if (!caller.Has(RoleOption::CreateRole)) {
-		detail = "The current user must have the CREATEROLE attribute.";
-	} else if (!IsAdminOf(context, caller, role->oid)) {
-		detail = StringUtil::Format("The current user must have the ADMIN option on role \"%s\".",
-		                            role->name.GetIdentifierName());
-	} else {
-		return;
-	}
-	throw PermissionException({{"detail", detail}}, "permission denied");
+	ClusterEntry(context, caller, CatalogType::ROLE_ENTRY, name, EntryUse::OWN, OnEntryNotFound::THROW_EXCEPTION);
 }
 
 void Binder::CheckAlterDatabaseSettings(AlterDatabaseSettingsInfo &info) {

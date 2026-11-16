@@ -32,6 +32,7 @@
 #include "duckdb/parser/column_list.hpp"
 #include "duckdb/parser/parsed_data/alter_table_info.hpp"
 #include "duckdb/parser/parsed_data/create_info.hpp"
+#include "duckdb/parser/parsed_data/create_subscription_info.hpp"
 #include "duckdb/storage/storage_info.hpp"
 #include "duckdb/storage/storage_manager.hpp"
 
@@ -1341,7 +1342,33 @@ void RequireOwner(const RoleAccess &role, const CatalogEntry &entry, idx_t owner
 	}
 }
 
+bool IsAdminOf(ClientContext &context, const RoleAccess &role, idx_t target) {
+	return context.security && context.security->MembershipsOf(role.role).IsAdminOf(target);
+}
+
+static void RequireRoleOwner(ClientContext &context, const RoleAccess &role, const RoleEntry &target) {
+	if (role.is_superuser) {
+		return;
+	}
+	string detail;
+	if (target.IsSuperuser()) {
+		detail = "The current user must have the SUPERUSER attribute.";
+	} else if (!role.Has(RoleOption::CreateRole)) {
+		detail = "The current user must have the CREATEROLE attribute.";
+	} else if (!IsAdminOf(context, role, target.oid)) {
+		detail = StringUtil::Format("The current user must have the ADMIN option on role \"%s\".",
+		                            target.name.GetIdentifierName());
+	} else {
+		return;
+	}
+	throw PermissionException({{"detail", detail}}, "permission denied");
+}
+
 void RequireOwner(ClientContext &context, const RoleAccess &role, CatalogEntry &entry) {
+	if (entry.type == CatalogType::ROLE_ENTRY) {
+		RequireRoleOwner(context, role, entry.Cast<RoleEntry>());
+		return;
+	}
 	if (entry.type == CatalogType::MACRO_ENTRY || entry.type == CatalogType::TABLE_MACRO_ENTRY) {
 		auto &macro = entry.Cast<MacroCatalogEntry>();
 		for (auto &overload : macro.macros) {
@@ -1379,6 +1406,13 @@ void RequireUse(ClientContext &context, const RoleAccess &role, CatalogEntry &en
 		return;
 	case EntryUse::OWN:
 		RequireOwner(context, role, entry);
+		if (entry.type == CatalogType::SUBSCRIPTION_ENTRY && !role.is_superuser &&
+		    !entry.GetInfo()->Cast<CreateSubscriptionInfo>().password_required) {
+			throw PermissionException(
+			    unordered_map<string, string> {{"hint", "Subscriptions with the password_required option set to false "
+			                                            "may only be created or modified by the superuser."}},
+			    "password_required=false is superuser-only");
+		}
 		return;
 	case EntryUse::RENAME:
 		RequireOwner(context, role, entry);
@@ -1389,7 +1423,8 @@ void RequireUse(ClientContext &context, const RoleAccess &role, CatalogEntry &en
 		}
 		return;
 	case EntryUse::DROP:
-		if (entry.type == CatalogType::SCHEMA_ENTRY) {
+		if (entry.type == CatalogType::SCHEMA_ENTRY || entry.type == CatalogType::DATABASE_ENTRY ||
+		    entry.type == CatalogType::FOREIGN_SERVER_ENTRY || entry.type == CatalogType::SUBSCRIPTION_ENTRY) {
 			RequireOwner(context, role, entry);
 		} else {
 			RequireDropOwner(context, role, entry, nullptr);
@@ -1424,13 +1459,35 @@ optional_ptr<CatalogEntry> ClusterEntry(ClientContext &context, CatalogType type
 	return cluster->LookupTopLevelEntry(cluster->GetCatalogTransaction(context), type, name);
 }
 
-CatalogEntry &ClusterDatabase(ClientContext &context, const Identifier &name) {
-	auto database = ClusterEntry(context, CatalogType::DATABASE_ENTRY, name);
-	if (!database) {
-		throw CatalogException(unordered_map<string, string> {{"type", "Database"}},
-		                       StringUtil::Format("database \"%s\" does not exist", name.GetIdentifierName()));
+optional_ptr<CatalogEntry> TopLevelEntry(ClientContext &context, const RoleAccess &role, Catalog &catalog,
+                                         CatalogType type, const Identifier &name, EntryUse use,
+                                         OnEntryNotFound if_not_found) {
+	auto entry = catalog.LookupTopLevelEntry(catalog.GetCatalogTransaction(context), type, name);
+	if (!entry) {
+		if (if_not_found == OnEntryNotFound::THROW_EXCEPTION) {
+			throw CatalogException::MissingObject(type, name);
+		}
+		return nullptr;
 	}
-	return *database;
+	RequireUse(context, role, *entry, use);
+	return entry;
+}
+
+optional_ptr<CatalogEntry> ClusterEntry(ClientContext &context, const RoleAccess &role, CatalogType type,
+                                        const Identifier &name, EntryUse use, OnEntryNotFound if_not_found) {
+	auto cluster = RoleCatalog(context);
+	if (cluster) {
+		return TopLevelEntry(context, role, *cluster, type, name, use, if_not_found);
+	}
+	if (if_not_found == OnEntryNotFound::THROW_EXCEPTION) {
+		throw CatalogException::MissingObject(type, name);
+	}
+	return nullptr;
+}
+
+CatalogEntry &ClusterDatabase(ClientContext &context, const Identifier &name) {
+	return *ClusterEntry(context, RoleAccess::System(), CatalogType::DATABASE_ENTRY, name, EntryUse::REFERENCE,
+	                     OnEntryNotFound::THROW_EXCEPTION);
 }
 
 QualifiedName ClusterName(ClientContext &context, const QualifiedName &name) {
@@ -1442,12 +1499,9 @@ QualifiedName ClusterName(ClientContext &context, const QualifiedName &name) {
 }
 
 idx_t RoleId(ClientContext &context, const Identifier &name) {
-	auto role = ClusterEntry(context, CatalogType::ROLE_ENTRY, name);
-	if (!role) {
-		throw CatalogException(unordered_map<string, string> {{"type", "Role"}},
-		                       StringUtil::Format("role \"%s\" does not exist", name.GetIdentifierName()));
-	}
-	return role->oid;
+	return ClusterEntry(context, RoleAccess::System(), CatalogType::ROLE_ENTRY, name, EntryUse::REFERENCE,
+	                    OnEntryNotFound::THROW_EXCEPTION)
+	    ->oid;
 }
 
 optional_idx RoleSpecKeyword(ClientContext &context, std::string_view name) {

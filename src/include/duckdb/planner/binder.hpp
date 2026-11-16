@@ -41,6 +41,7 @@
 #include "duckdb/catalog/catalog_entry/function_entry.hpp"
 #include "duckdb/catalog/catalog_entry/trigger_catalog_entry.hpp"
 #include "duckdb/common/enums/copy_option_mode.hpp"
+#include "duckdb/common/enums/entry_use.hpp"
 #include "duckdb/common/enums/trigger_type.hpp"
 
 #include <absl/container/flat_hash_map.h>
@@ -489,8 +490,7 @@ public:
 	MacroFunction &ResolveOverload(MacroCatalogEntry &macro, bool has_func_args, vector<LogicalType> &func_parameters);
 	optional_ptr<MacroFunction> ResolveOverload(MacroCatalogEntry &macro, bool has_func_args,
 	                                            vector<LogicalType> &func_parameters, OnEntryNotFound if_not_found);
-	CatalogEntry &ResolveDatabaseEntry(CatalogType type, AlterInfo &info);
-	void RequireSubscriptionOwner(CatalogEntry &subscription);
+	CatalogEntry &ResolveDatabaseEntry(CatalogType type, AlterInfo &info, EntryUse use);
 	void RequireResolvedTypeUsage(optional_ptr<const LogicalDependencyList> dependencies);
 	void CheckCreateRole(const CreateRoleInfo &info);
 	void CheckAlterRole(AlterRoleInfo &info);

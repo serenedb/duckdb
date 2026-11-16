@@ -270,30 +270,14 @@ static idx_t RequireRoutineOwner(Binder &binder, CatalogEntry &entry, bool has_f
 	return macro.OverloadOid(overload);
 }
 
-CatalogEntry &Binder::ResolveDatabaseEntry(CatalogType type, AlterInfo &info) {
-	auto &name = info.GetQualifiedName().Name();
+CatalogEntry &Binder::ResolveDatabaseEntry(CatalogType type, AlterInfo &info, EntryUse use) {
 	auto &catalog = type == CatalogType::SUBSCRIPTION_ENTRY
 	                    ? SubscriptionCatalog(Identifier())
 	                    : Catalog::GetCatalog(context, DatabaseManager::GetDefaultDatabase(context));
-	auto entry = catalog.LookupTopLevelEntry(catalog.GetCatalogTransaction(context), type, name);
-	if (!entry) {
-		const bool server = type == CatalogType::FOREIGN_SERVER_ENTRY;
-		throw CatalogException(unordered_map<string, string> {{"type", server ? "Foreign Server" : "Subscription"}},
-		                       StringUtil::Format("%s \"%s\" does not exist", server ? "server" : "subscription",
-		                                          name.GetIdentifierName()));
-	}
-	info.SetQualifiedName(entry->ParentCatalog().GetName(), Identifier(), entry->name);
-	return *entry;
-}
-
-void Binder::RequireSubscriptionOwner(CatalogEntry &subscription) {
-	RequireOwner(context, CheckAs(), subscription);
-	if (!CheckAs().is_superuser && !subscription.GetInfo()->Cast<CreateSubscriptionInfo>().password_required) {
-		throw PermissionException(unordered_map<string, string> {{"hint", "Subscriptions with the password_required "
-		                                                                  "option set to false may only be created or "
-		                                                                  "modified by the superuser."}},
-		                          "password_required=false is superuser-only");
-	}
+	auto &entry = *TopLevelEntry(context, CheckAs(), catalog, type, info.GetQualifiedName().Name(), use,
+	                             OnEntryNotFound::THROW_EXCEPTION);
+	info.SetQualifiedName(entry.ParentCatalog().GetName(), Identifier(), entry.name);
+	return entry;
 }
 
 BoundStatement Binder::Bind(AlterStatement &stmt) {
@@ -345,8 +329,7 @@ BoundStatement Binder::Bind(AlterStatement &stmt) {
 	}
 
 	if (stmt.info->type == AlterType::ALTER_SUBSCRIPTION) {
-		auto &subscription = ResolveDatabaseEntry(CatalogType::SUBSCRIPTION_ENTRY, *stmt.info);
-		RequireSubscriptionOwner(subscription);
+		auto &subscription = ResolveDatabaseEntry(CatalogType::SUBSCRIPTION_ENTRY, *stmt.info, EntryUse::OWN);
 		auto &properties = GetStatementProperties();
 		properties.return_type = StatementReturnType::NOTHING;
 		properties.RegisterDBModify(subscription.ParentCatalog(), context, DatabaseModificationType::ALTER_TABLE);
