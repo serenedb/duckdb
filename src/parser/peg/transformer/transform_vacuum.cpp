@@ -59,8 +59,8 @@ VacuumOptions PEGTransformerFactory::TransformVacuumLegacyOptions(PEGTransformer
 VacuumOptions PEGTransformerFactory::TransformVacuumParensOptions(PEGTransformer &transformer,
                                                                   const vector<string> &vacuum_option) {
 	static constexpr const char *kSerenedbOptions[] = {
-	    "compact_database", "compact_schema", "compact_table", "compact_index", "compact_all",
-	    "flush_database",   "flush_schema",   "flush_table",   "flush_index",   "flush_all",
+	    "compact_database", "compact_schema", "compact_table", "compact_index", "compact_all", "flush_database",
+	    "flush_schema",     "flush_table",    "flush_index",   "flush_all",     "pack_table",
 	};
 	VacuumOptions options;
 	options.vacuum = true;
