@@ -32,6 +32,7 @@ struct HTTPParams {
 	virtual ~HTTPParams();
 
 	static constexpr uint64_t DEFAULT_TIMEOUT_SECONDS = 30; // 30 sec
+	static constexpr uint64_t DEFAULT_CONNECT_TIMEOUT_MS = 2000;
 	static constexpr uint64_t DEFAULT_RETRIES = 3;
 	static constexpr uint64_t DEFAULT_RETRY_WAIT_MS = 100;
 	static constexpr float DEFAULT_RETRY_BACKOFF = 4;
@@ -39,6 +40,8 @@ struct HTTPParams {
 
 	uint64_t timeout = DEFAULT_TIMEOUT_SECONDS; // seconds component of a timeout
 	uint64_t timeout_usec = 0;                  // usec component of a timeout
+	//! How long connecting, TLS included, may take before the request fails as never sent and is retried
+	uint64_t connect_timeout_ms = DEFAULT_CONNECT_TIMEOUT_MS;
 	uint64_t retries = DEFAULT_RETRIES;
 	uint64_t retry_wait_ms = DEFAULT_RETRY_WAIT_MS;
 	float retry_backoff = DEFAULT_RETRY_BACKOFF;
@@ -168,6 +171,8 @@ struct HTTPResponse {
 	string url;
 	string body;
 	string request_error;
+	//! Whether the request failed before any of it reached the server, so retrying it repeats nothing
+	bool unsent = false;
 	string reason;
 	HTTPHeaders headers;
 	bool success = true;
