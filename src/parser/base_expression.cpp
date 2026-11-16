@@ -177,7 +177,7 @@ Identifier BaseExpression::GetName() const {
 }
 
 // PG-compatible target-list column naming (FigureColname in parse_target.c).
-// Used only when computing SELECT result column headers.
+// Used when computing SELECT and RETURNING result column headers.
 string BaseExpression::GetColumnName() const {
 	if (!GetAlias().empty()) {
 		return GetAlias().GetIdentifierName();
