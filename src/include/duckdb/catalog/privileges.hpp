@@ -139,5 +139,64 @@ constexpr ObjectKind ObjectKindOf(CatalogType type) {
 	return {type, ObjectContainer::NONE, AclMode::NoRights, AclMode::NoRights, 0};
 }
 
+constexpr std::string_view ObjectNoun(CatalogType type) {
+	switch (type) {
+	case CatalogType::TABLE_ENTRY:
+		return "table";
+	case CatalogType::VIEW_ENTRY:
+		return "view";
+	case CatalogType::SEQUENCE_ENTRY:
+		return "sequence";
+	case CatalogType::INDEX_ENTRY:
+		return "index";
+	case CatalogType::TYPE_ENTRY:
+		return "type";
+	case CatalogType::MACRO_ENTRY:
+	case CatalogType::TABLE_MACRO_ENTRY:
+	case CatalogType::TABLE_FUNCTION_ENTRY:
+	case CatalogType::SCALAR_FUNCTION_ENTRY:
+	case CatalogType::PRAGMA_FUNCTION_ENTRY:
+	case CatalogType::WINDOW_FUNCTION_ENTRY:
+		return "function";
+	case CatalogType::TOKENIZER_ENTRY:
+		return "text search dictionary";
+	case CatalogType::SCHEMA_ENTRY:
+		return "schema";
+	case CatalogType::FOREIGN_SERVER_ENTRY:
+		return "foreign server";
+	case CatalogType::SUBSCRIPTION_ENTRY:
+		return "subscription";
+	case CatalogType::DATABASE_ENTRY:
+		return "database";
+	case CatalogType::FOREIGN_DATA_WRAPPER_ENTRY:
+		return "foreign-data wrapper";
+	case CatalogType::LANGUAGE_ENTRY:
+		return "language";
+	case CatalogType::PARAMETER_ENTRY:
+		return "parameter";
+	case CatalogType::AGGREGATE_FUNCTION_ENTRY:
+		return "aggregate";
+	case CatalogType::ROLE_ENTRY:
+	case CatalogType::JOB_ENTRY:
+	case CatalogType::INVALID:
+	case CatalogType::PREPARED_STATEMENT:
+	case CatalogType::COLLATION_ENTRY:
+	case CatalogType::COORDINATE_SYSTEM_ENTRY:
+	case CatalogType::TRIGGER_ENTRY:
+	case CatalogType::REPLICATION_ORIGIN_ENTRY:
+	case CatalogType::COPY_FUNCTION_ENTRY:
+	case CatalogType::DELETED_ENTRY:
+	case CatalogType::RENAMED_ENTRY:
+	case CatalogType::SECRET_ENTRY:
+	case CatalogType::SECRET_TYPE_ENTRY:
+	case CatalogType::SECRET_FUNCTION_ENTRY:
+	case CatalogType::DEPENDENCY_ENTRY:
+		break;
+	}
+	return {};
+}
+
+inline constexpr std::string_view PROCEDURE_NOUN = "procedure";
+
 } // namespace duckdb
 // clang-format on
