@@ -93,11 +93,10 @@ private:
 
 private:
 	QueryContext context;
-
-	//! The client caching file system that was used to create this CachingFileHandle
-	CachingFileSystem &caching_file_system;
-	//! The DB external file cache
-	ExternalFileCache &external_file_cache;
+	//! The client file system (copied, as the caching file system can be destroyed before the handle)
+	FileSystem &file_system;
+	//! The DatabaseInstance
+	DatabaseInstance &db;
 	//! For opening the file (possibly with extra info)
 	OpenFileInfo path;
 	//! Flags used to open the file

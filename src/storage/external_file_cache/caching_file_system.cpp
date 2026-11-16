@@ -293,7 +293,7 @@ string CachingFileHandle::GetVersionTag() {
 }
 
 bool CachingFileHandle::Validate() const {
-	if (!external_file_cache.ShouldCacheFile(path.path)) {
+	if (!CachingFileSystem::ShouldCacheFile(db, path.path)) {
 		// uncached files have no stale state to serve, so their metadata must always be read fresh
 		return true;
 	}
