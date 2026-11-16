@@ -253,6 +253,9 @@ public:
 	unique_ptr<HTTPResponse> Options(OptionsRequestInfo &) override {
 		return nullptr;
 	}
+	unique_ptr<HTTPResponse> Patch(PatchRequestInfo &) override {
+		return nullptr;
+	}
 
 private:
 	shared_ptr<MockTransportState> state;
@@ -729,6 +732,41 @@ TEST_CASE("HTTP transport manager synchronous session API", "[http_transport_man
 		CHECK(provider->state->created == 1);
 		CHECK(provider->state->high_water == 1);
 		CHECK(HTTPTransportManagerTestHelper::OccupiedSlots(*manager) == 1);
+	}
+
+	SECTION("the client whose request started last is reused first") {
+		auto provider = make_shared_ptr<MockHTTPUtil>(HTTPTransportReusePolicy::SHARED);
+		auto manager = HTTPTransportManagerTestHelper::Create(provider, 2);
+		auto session = manager->CreateSession(nullptr, nullptr);
+		auto second_params = make_uniq<HTTPParams>(session.Parameters());
+		BlockMockRequests(*provider->state);
+		std::thread::id first_thread;
+		// the client of the first request comes back after the client of the second one
+		provider->state->cleanup_callback = [&]() {
+			const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+			while (std::this_thread::get_id() == first_thread &&
+			       HTTPTransportManagerTestHelper::IdleClients(*manager) != 1 &&
+			       std::chrono::steady_clock::now() < deadline) {
+				std::this_thread::yield();
+			}
+		};
+
+		auto first = std::async(std::launch::async, [&]() {
+			first_thread = std::this_thread::get_id();
+			return RunManagedRequest(session, session.Parameters(), "https://example.com/");
+		});
+		REQUIRE(WaitForMockRequests(*provider->state, 1));
+		auto second = std::async(std::launch::async,
+		                         [&]() { return RunManagedRequest(session, *second_params, "https://example.com/"); });
+		REQUIRE(WaitForMockRequests(*provider->state, 2));
+		AllowMockRequests(*provider->state, 3);
+		REQUIRE(second.get());
+		REQUIRE(first.get());
+		CHECK(HTTPTransportManagerTestHelper::IdleClients(*manager) == 2);
+
+		// a slow connection is busy with its request while the others come back, so it is not the one to reuse
+		REQUIRE(RunManagedRequest(session, session.Parameters(), "https://example.com/"));
+		CHECK(provider->state->request_client_ids == vector<idx_t> {1, 2, 2});
 	}
 
 	SECTION("FIFO admission prevents a later exact-key request from barging") {

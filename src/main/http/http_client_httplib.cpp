@@ -80,6 +80,10 @@ public:
 		throw NotImplementedException("OPTIONS request not implemented");
 	}
 
+	unique_ptr<HTTPResponse> Patch(PatchRequestInfo &info) override {
+		throw NotImplementedException("PATCH request not implemented");
+	}
+
 	unique_ptr<duckdb_httplib::Client> client;
 
 private:

@@ -83,6 +83,8 @@ public:
 		BucketHandle bucket;
 		unique_ptr<HTTPClient> client;
 		ReservationKind kind = ReservationKind::NEW_CLIENT;
+		//! The reservation's place among all of the pool's, which its client keeps (HTTPClient::reuse_order)
+		uint64_t order = 0;
 
 	private:
 		friend class HTTPClientPool;
@@ -136,6 +138,7 @@ private:
 	vector<optional_ptr<ClientBucket>> non_empty_buckets;
 	deque<optional_ptr<AdmissionWaiter>> admission_waiters;
 	bool closed = false;
+	uint64_t reservations = 0;
 };
 
 } // namespace duckdb

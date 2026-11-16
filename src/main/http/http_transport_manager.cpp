@@ -477,6 +477,9 @@ HTTPTransportManager::Lease HTTPTransportManager::Acquire(Session &session, HTTP
 		DropReservation(std::move(reservation.client), reservation.bucket);
 		throw;
 	}
+	if (reservation.client) {
+		reservation.client->reuse_order = reservation.order;
+	}
 	return Lease(*this, state, reservation.bucket, std::move(reservation.client));
 }
 

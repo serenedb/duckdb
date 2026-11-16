@@ -27,6 +27,11 @@ void HTTPParams::SetTransportReuseDomain(idx_t transport_reuse_domain_p) {
 	transport_reuse_domain = transport_reuse_domain_p;
 }
 
+uint64_t HTTPParams::BodyDeadlineMs(idx_t bytes) const {
+	static constexpr uint64_t MIN_BYTES_PER_SECOND = 1ULL << 20;
+	return (timeout + bytes / MIN_BYTES_PER_SECOND) * 1000 + timeout_usec / 1000;
+}
+
 HTTPHeaders::HTTPHeaders(DatabaseInstance &db) {
 	headers.insert({"User-Agent", StringUtil::Format("%s %s", db.config.UserAgent(), DuckDB::SourceID())});
 }
@@ -165,10 +170,52 @@ BaseRequest::BaseRequest(RequestType type, const string &url, const HTTPHeaders 
 // loadable side-module extensions (e.g. the aws/httpfs extensions) can link against them at load time.
 BaseRequest::~BaseRequest() = default;
 GetRequestInfo::~GetRequestInfo() = default;
+BodyRequestInfo::~BodyRequestInfo() = default;
 PutRequestInfo::~PutRequestInfo() = default;
+PatchRequestInfo::~PatchRequestInfo() = default;
 HeadRequestInfo::~HeadRequestInfo() = default;
 DeleteRequestInfo::~DeleteRequestInfo() = default;
 PostRequestInfo::~PostRequestInfo() = default;
+
+BodyRequestInfo::BodyRequestInfo(RequestType type, const string &path, const HTTPHeaders &headers, HTTPParams &params,
+                                 std::span<const HTTPBodyPiece> body, const string &content_type)
+    : BaseRequest(type, path, headers, params), buffer_in(nullptr), buffer_in_len(0), content_type(content_type) {
+	for (auto &piece : body) {
+		buffer_in_len += piece.size;
+	}
+	if (body.size() == 1) {
+		buffer_in = body.front().data;
+	} else if (body.size() > 1) {
+		pieces = body;
+	}
+	request_body_length = buffer_in_len;
+}
+
+idx_t HTTPBodyReader::Read(data_ptr_t buffer, idx_t count) {
+	idx_t read = 0;
+	while (read < count && piece < pieces.size()) {
+		auto &current = pieces[piece];
+		auto chunk = MinValue<idx_t>(count - read, current.size - offset);
+		memcpy(buffer + read, current.data + offset, chunk);
+		read += chunk;
+		offset += chunk;
+		if (offset == current.size) {
+			piece++;
+			offset = 0;
+		}
+	}
+	return read;
+}
+
+bool HTTPBodyReader::Seek(idx_t position) {
+	piece = 0;
+	while (piece < pieces.size() && position >= pieces[piece].size) {
+		position -= pieces[piece].size;
+		piece++;
+	}
+	offset = position;
+	return position == 0 || piece < pieces.size();
+}
 
 unique_ptr<HTTPClient> HTTPUtil::InitializeClient(HTTPParams &http_params, const string &proto_host_port) {
 	return nullptr;
@@ -507,6 +554,8 @@ unique_ptr<HTTPResponse> HTTPClient::Request(BaseRequest &request) {
 		return Post(request.Cast<PostRequestInfo>());
 	case RequestType::OPTIONS_REQUEST:
 		return Options(request.Cast<OptionsRequestInfo>());
+	case RequestType::PATCH_REQUEST:
+		return Patch(request.Cast<PatchRequestInfo>());
 	default:
 		throw InternalException("Unsupported request type");
 	}

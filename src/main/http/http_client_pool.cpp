@@ -1,5 +1,6 @@
 #include "duckdb/main/http/http_client_pool.hpp"
 
+#include "duckdb/common/algorithm.hpp"
 #include "duckdb/common/exception.hpp"
 
 namespace duckdb {
@@ -111,6 +112,7 @@ HTTPClientPool::Reservation HTTPClientPool::Reserve(const ClientKey &key, const 
 	Reservation result;
 	result.key = key;
 	result.cacheable = cacheable;
+	result.order = ++reservations;
 	if (exact != client_buckets.end() && !exact->second.idle_clients.empty()) {
 		result.bucket = BucketHandle(exact->second);
 		result.client = TakeIdleClient(exact->second);
@@ -188,7 +190,11 @@ void HTTPClientPool::Return(BucketHandle handle, unique_ptr<HTTPClient> client) 
 	auto &bucket = *handle.bucket;
 	D_ASSERT(bucket.idle_clients.size() < bucket.idle_clients.capacity());
 	const bool was_empty = bucket.idle_clients.empty();
-	bucket.idle_clients.push_back(std::move(client));
+	// the idle clients stay in the order they were given out, the last one first to be reused
+	const auto later =
+	    std::upper_bound(bucket.idle_clients.begin(), bucket.idle_clients.end(), client->reuse_order,
+	                     [](uint64_t order, const unique_ptr<HTTPClient> &idle) { return order < idle->reuse_order; });
+	bucket.idle_clients.insert(later, std::move(client));
 	if (was_empty) {
 		AddNonEmptyBucket(bucket);
 	}
