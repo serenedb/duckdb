@@ -11,6 +11,7 @@
 #include "duckdb/common/types.hpp"
 #include "duckdb/common/types/vector.hpp"
 #include "duckdb/common/helper.hpp"
+#include "duckdb/common/optional_idx.hpp"
 #include "duckdb/common/optional_ptr.hpp"
 #include "duckdb/common/query_location.hpp"
 #include "duckdb/function/scalar_function.hpp"
@@ -202,6 +203,7 @@ struct BindCastInput {
 	optional_ptr<BindCastInfo> info;
 	optional_ptr<ClientContext> context;
 	QueryLocation query_location;
+	optional_idx caller_role;
 
 public:
 	DUCKDB_API BoundCastInfo GetCastFunction(const LogicalType &source, const LogicalType &target);

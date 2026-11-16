@@ -123,7 +123,7 @@ bool BoundFunctionExpression::Equals(const BaseExpression &other_p) const {
 	if (!FunctionData::Equals(bind_info.get(), other.bind_info.get())) {
 		return false;
 	}
-	return true;
+	return caller_role == other.caller_role;
 }
 
 unique_ptr<Expression> BoundFunctionExpression::Copy() const {
@@ -140,6 +140,7 @@ unique_ptr<Expression> BoundFunctionExpression::CopyWithChildren(vector<unique_p
 
 	auto copy =
 	    make_uniq<BoundFunctionExpression>(function, std::move(new_children), std::move(new_bind_info), is_operator);
+	copy->caller_role = caller_role;
 	copy->CopyProperties(*this);
 	return std::move(copy);
 }
@@ -155,6 +156,7 @@ void BoundFunctionExpression::Serialize(Serializer &serializer) const {
 	serializer.WriteProperty(201, "children", children);
 	FunctionSerializer::Serialize(serializer, function, bind_info.get());
 	serializer.WriteProperty(202, "is_operator", is_operator);
+	serializer.WritePropertyWithDefault<optional_idx>(16587, "caller_role", caller_role);
 }
 
 unique_ptr<Expression> BoundFunctionExpression::Deserialize(Deserializer &deserializer) {
@@ -165,6 +167,7 @@ unique_ptr<Expression> BoundFunctionExpression::Deserialize(Deserializer &deseri
 	    deserializer, CatalogType::SCALAR_FUNCTION_ENTRY, children, return_type);
 
 	auto is_operator = deserializer.ReadProperty<bool>(202, "is_operator");
+	auto caller_role = deserializer.ReadPropertyWithDefault<optional_idx>(16587, "caller_role");
 
 	if (entry.first.HasBindExpressionCallback()) {
 		// bind the function expression
@@ -183,6 +186,7 @@ unique_ptr<Expression> BoundFunctionExpression::Deserialize(Deserializer &deseri
 	auto result =
 	    make_uniq<BoundFunctionExpression>(std::move(entry.first), std::move(children), std::move(entry.second));
 	result->is_operator = is_operator;
+	result->caller_role = caller_role;
 	if (result->return_type != return_type) {
 		// return type mismatch - push a cast
 		auto &context = deserializer.Get<ClientContext &>();
