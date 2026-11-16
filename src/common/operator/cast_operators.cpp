@@ -1620,10 +1620,6 @@ string_t CastFromBlob::Operation(string_t input, StringHeap &heap) {
 
 template <>
 string_t CastFromBlobToBit::Operation(string_t input, StringHeap &heap) {
-	idx_t result_size = input.GetSize() + 1;
-	if (result_size <= 1) {
-		throw ConversionException("Cannot cast empty BLOB to BIT");
-	}
 	return heap.AddBlob(Bit::BlobToBit(input));
 }
 
@@ -1722,8 +1718,6 @@ bool TryCastToBit::Operation(string_t input, string_t &result, Vector &result_ve
 
 template <>
 bool CastFromBitToNumeric::Operation(string_t input, bool &result, CastParameters &parameters) {
-	D_ASSERT(input.GetSize() > 1);
-
 	uint8_t value;
 	bool success = CastFromBitToNumeric::Operation(input, value, parameters);
 	result = (value > 0);
@@ -1732,8 +1726,6 @@ bool CastFromBitToNumeric::Operation(string_t input, bool &result, CastParameter
 
 template <>
 bool CastFromBitToNumeric::Operation(string_t input, hugeint_t &result, CastParameters &parameters) {
-	D_ASSERT(input.GetSize() > 1);
-
 	if (input.GetSize() - 1 > sizeof(hugeint_t)) {
 		HandleCastError::AssignError("Bitstring doesn't fit inside of " + TypeIdToString(GetTypeId<hugeint_t>()),
 		                             parameters);
@@ -1745,8 +1737,6 @@ bool CastFromBitToNumeric::Operation(string_t input, hugeint_t &result, CastPara
 
 template <>
 bool CastFromBitToNumeric::Operation(string_t input, uhugeint_t &result, CastParameters &parameters) {
-	D_ASSERT(input.GetSize() > 1);
-
 	if (input.GetSize() - 1 > sizeof(uhugeint_t)) {
 		HandleCastError::AssignError("Bitstring doesn't fit inside of " + TypeIdToString(GetTypeId<uhugeint_t>()),
 		                             parameters);

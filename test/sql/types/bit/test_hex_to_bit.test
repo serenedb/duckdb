@@ -54,8 +54,8 @@ SELECT 'x01g'::BIT
 ----
 <REGEX>:Conversion Error.*Invalid character encountered.*
 
-statement error
+query I
 SELECT 'x'::BIT
 ----
-<REGEX>:Conversion Error.*Cannot cast empty string to BIT.*
+(empty)
 
