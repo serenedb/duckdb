@@ -79,7 +79,12 @@ public:
 	void Prefetch(QueryContext context, vector<shared_ptr<BlockHandle>> &handles) final;
 	vector<unique_ptr<AsyncTask>> CreatePrefetchTasks(QueryContext context,
 	                                                  vector<shared_ptr<BlockHandle>> &handles) final;
-	void Unpin(shared_ptr<BlockHandle> &handle) final;
+	void Unpin(BlockMemory &memory) final;
+	shared_ptr<BlockHandle> RegisterUnloadedMemory(idx_t block_size, DestroyBufferUpon destroy_buffer_upon) final;
+	BufferHandle LoadClaimed(const QueryContext &context, shared_ptr<BlockHandle> &handle) final;
+	BlockLoad PrepareLoad(BlockMemory &memory, idx_t block_size) final;
+	BufferHandle CompleteLoad(BlockMemory &memory, BlockLoad load) final;
+	void Discard(BlockMemory &memory) final;
 
 	//! Set a new memory limit to the buffer manager, throws an exception if the new limit is too low and not enough
 	//! blocks can be evicted
@@ -130,16 +135,14 @@ protected:
 	//! If we want to change this, e.g., to immediately destroy the buffer upon unpinning,
 	//! we can call BlockHandle::SetDestroyBufferUpon
 	//! The resulting buffer will already be allocated, but needs to be pinned in order to be used.
-	//! This needs to be private to prevent creating blocks without ever pinning them:
-	//! blocks that are never pinned are never added to the eviction queue
 	shared_ptr<BlockHandle> RegisterMemory(MemoryTag tag, idx_t block_size, idx_t block_header_size, bool can_destroy,
 	                                       QueryContext context = QueryContext());
 
+	//! Pins [block], a block RegisterMemory created, before the buffer pool may evict it
+	BufferHandle PinNew(shared_ptr<BlockHandle> &block);
+
 	//! Get allocated size for a block
 	idx_t GetBlockAllocSize(idx_t block_size) const;
-
-	//! Garbage collect eviction queue
-	void PurgeQueue(const BlockHandle &handle) final;
 
 	BufferPool &GetBufferPool() const final;
 	TemporaryMemoryManager &GetTemporaryMemoryManager() final;
@@ -156,8 +159,6 @@ protected:
 
 	void RequireTemporaryDirectory();
 
-	void AddToEvictionQueue(shared_ptr<BlockHandle> &handle) final;
-
 	const char *InMemoryWarning();
 
 	static data_ptr_t BufferAllocatorAllocate(PrivateAllocatorData *private_data, idx_t size);
@@ -167,7 +168,7 @@ protected:
 
 	//! When the BlockHandle reaches 0 readers, this creates a new FileBuffer for this BlockHandle and
 	//! overwrites the data within with garbage. Any readers that do not hold the pin will notice
-	void VerifyZeroReaders(BlockLock &l, shared_ptr<BlockHandle> &handle);
+	void VerifyZeroReaders(BlockLock &l, BlockMemory &memory);
 
 	//! A run of handles with adjacent block ids starting at first_block
 	struct PrefetchRun {

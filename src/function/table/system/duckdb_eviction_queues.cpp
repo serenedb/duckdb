@@ -23,9 +23,6 @@ static unique_ptr<FunctionData> DuckDBEvictionQueuesBind(ClientContext &context,
 	names.emplace_back("approximate_size");
 	return_types.emplace_back(LogicalType::BIGINT);
 
-	names.emplace_back("dead_nodes");
-	return_types.emplace_back(LogicalType::BIGINT);
-
 	names.emplace_back("total_insertions");
 	return_types.emplace_back(LogicalType::BIGINT);
 
@@ -51,17 +48,14 @@ void DuckDBEvictionQueuesFunction(ClientContext &context, TableFunctionInput &da
 	auto &queue_type = output.data[1];
 	// approximate_size, BIGINT
 	auto &approximate_size = output.data[2];
-	// dead_nodes, BIGINT
-	auto &dead_nodes = output.data[3];
 	// total_insertions, BIGINT
-	auto &total_insertions = output.data[4];
+	auto &total_insertions = output.data[3];
 
 	while (data.offset < data.entries.size() && count < STANDARD_VECTOR_SIZE) {
 		auto &entry = data.entries[data.offset++];
 		queue_index.Append(Value::BIGINT(UnsafeNumericCast<int64_t>(entry.queue_index)));
 		queue_type.Append(Value(entry.queue_type));
 		approximate_size.Append(Value::BIGINT(UnsafeNumericCast<int64_t>(entry.approximate_size)));
-		dead_nodes.Append(Value::BIGINT(UnsafeNumericCast<int64_t>(entry.dead_nodes)));
 		total_insertions.Append(Value::BIGINT(UnsafeNumericCast<int64_t>(entry.total_insertions)));
 		count++;
 	}

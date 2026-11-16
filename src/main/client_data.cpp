@@ -104,8 +104,8 @@ public:
 	void Prefetch(QueryContext context, vector<shared_ptr<BlockHandle>> &handles) override {
 		return buffer_manager.Prefetch(context, handles);
 	}
-	void Unpin(shared_ptr<BlockHandle> &handle) override {
-		return buffer_manager.Unpin(handle);
+	void Unpin(BlockMemory &memory) override {
+		return buffer_manager.Unpin(memory);
 	}
 
 	idx_t GetUsedMemory() const override {
@@ -206,11 +206,20 @@ public:
 		return buffer_manager.GetTemporaryMemoryManager();
 	}
 
-	void PurgeQueue(const BlockHandle &handle) override {
-		return buffer_manager.PurgeQueue(handle);
+	shared_ptr<BlockHandle> RegisterUnloadedMemory(idx_t block_size, DestroyBufferUpon destroy_buffer_upon) override {
+		return buffer_manager.RegisterUnloadedMemory(block_size, destroy_buffer_upon);
 	}
-	void AddToEvictionQueue(shared_ptr<BlockHandle> &handle) override {
-		return buffer_manager.AddToEvictionQueue(handle);
+	BufferHandle LoadClaimed(const QueryContext &context, shared_ptr<BlockHandle> &handle) override {
+		return buffer_manager.LoadClaimed(context, handle);
+	}
+	BlockLoad PrepareLoad(BlockMemory &memory, idx_t block_size) override {
+		return buffer_manager.PrepareLoad(memory, block_size);
+	}
+	BufferHandle CompleteLoad(BlockMemory &memory, BlockLoad load) override {
+		return buffer_manager.CompleteLoad(memory, std::move(load));
+	}
+	void Discard(BlockMemory &memory) override {
+		return buffer_manager.Discard(memory);
 	}
 	void WriteTemporaryBuffer(QueryContext context, MemoryTag tag, block_id_t block_id, FileBuffer &buffer) override {
 		return buffer_manager.WriteTemporaryBuffer(context, tag, block_id, buffer);
@@ -245,8 +254,6 @@ ClientData::ClientData(ClientContext &context, shared_ptr<AttachedDatabase> shar
 		                                                                           IdentifierEquality(true));
 	}
 	profiler = make_shared_ptr<QueryProfiler>(context);
-	temporary_objects = make_shared_ptr<AttachedDatabase>(db, AttachedDatabaseType::TEMP_DATABASE);
-	temporary_objects->oid = DatabaseManager::Get(db).NextOid();
 	random_engine = make_uniq<RandomEngine>();
 	sequence_session = make_uniq<SequenceSession>();
 	file_opener = make_uniq<ClientContextFileOpener>(context);

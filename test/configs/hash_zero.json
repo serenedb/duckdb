@@ -36,7 +36,6 @@
         "test/optimizer/deliminator.test",
         "test/sql/cte/materialized/test_materialized_cte.test",
         "test/sql/optimizer/monotone_preimage.test",
-        "test/sql/storage/test_eviction_queue_dead_nodes_underflow.test",
         "test/sql/copy/parquet/parquet_prefetch_tracked_memory.test",
         "test/sql/join/hash_join/hash_join_dict_surviving.test",
         "test/sql/filter/filter_cache_dictionary.test"

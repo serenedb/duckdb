@@ -26,7 +26,7 @@ set memory_limit='80mb'
 statement ok
 create table test as from '{TEST_DIR}/efc_eviction_queue.parquet'
 
-# query the base table, this should evict the file cache entries as they have a later timestamp
+# query the base table, this should evict the file cache entries, which the buffer pool evicts first
 statement ok
 from test
 

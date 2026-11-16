@@ -265,14 +265,6 @@ TEST_CASE("Test buffer pool eviction: failed to allocate space if every page and
 
 namespace {
 
-idx_t SumDeadNodes(const vector<EvictionQueueInformation> &info) {
-	idx_t total = 0;
-	for (const auto &q : info) {
-		total += q.dead_nodes;
-	}
-	return total;
-}
-
 idx_t SumApproxSize(const vector<EvictionQueueInformation> &info) {
 	idx_t total = 0;
 	for (const auto &q : info) {
@@ -283,13 +275,8 @@ idx_t SumApproxSize(const vector<EvictionQueueInformation> &info) {
 
 } // namespace
 
-// Regression test for eviction-queue dead-node accounting.
-//
-// Only blocks with a live queue entry (has_queue_entry == true) should increment dead_nodes on
-// destruction. Blocks that were evicted via IterateUnloadableBlocks had their live entry consumed
-// (has_queue_entry cleared) — they must NOT inflate the counter.
-TEST_CASE("Test eviction queue: dead_nodes is incremented only for blocks with live queue entries",
-          "[storage][buffer_pool]") {
+// A block is in the eviction queue while it is loaded: evicting or destroying it takes it out.
+TEST_CASE("Test eviction queue: blocks leave the queue when they are evicted or destroyed", "[storage][buffer_pool]") {
 	DuckDB db;
 	Connection con(db);
 	auto &context = *con.context;
@@ -330,24 +317,18 @@ TEST_CASE("Test eviction queue: dead_nodes is incremented only for blocks with l
 	REQUIRE(evicted_observed == total_buffers - held_buffers);
 	REQUIRE(loaded_observed == held_buffers);
 
-	const idx_t dead_before = SumDeadNodes(buffer_pool.GetEvictionQueueInfo());
+	const idx_t queued_before = SumApproxSize(buffer_pool.GetEvictionQueueInfo());
 
-	// Drop all BlockHandles. Only the still-loaded blocks (which still have a live queue entry,
-	// has_queue_entry == true) should increment dead_nodes. Evicted blocks had their entries
-	// consumed by IterateUnloadableBlocks, which cleared has_queue_entry.
+	// Dropping the blocks takes the loaded ones out of the queue; the evicted ones left it already.
 	handles.clear();
 
-	const idx_t dead_after = SumDeadNodes(buffer_pool.GetEvictionQueueInfo());
+	const idx_t queued_after = SumApproxSize(buffer_pool.GetEvictionQueueInfo());
 
-	REQUIRE(dead_after - dead_before == held_buffers);
+	REQUIRE(queued_before - queued_after == held_buffers);
 }
 
-// Sanity check the dead_nodes counter never exceeds the queue size and never decrements past
-// zero across a destroyable-block churn workload. This indirectly exercises PurgeIteration:
-// before the fix, pinned-but-current entries dequeued during purge would be both dropped from
-// the queue AND wrongly subtracted from the dead-node counter, leading to underflow on the
-// unsigned counter (observable as an absurdly large dead_nodes value).
-TEST_CASE("Test eviction queue: dead_nodes invariants hold under destroyable block churn", "[storage][buffer_pool]") {
+// Blocks that come and go leave no entries behind: the queue holds the loaded blocks only.
+TEST_CASE("Test eviction queue: block churn leaves only the loaded blocks queued", "[storage][buffer_pool]") {
 	DuckDB db;
 	Connection con(db);
 	auto &context = *con.context;
@@ -357,41 +338,24 @@ TEST_CASE("Test eviction queue: dead_nodes invariants hold under destroyable blo
 
 	constexpr idx_t buffer_size = 64 * 1024; // 64 KiB - smaller buffers so we can churn many of them
 	constexpr idx_t resident_buffers = 32;
-	constexpr idx_t churn_iterations = 20000; // > INSERT_INTERVAL (4096) to trigger purges
+	constexpr idx_t churn_iterations = 20000;
 	const idx_t actual_alloc_size = BufferManager::GetAllocSize(buffer_size + Storage::DEFAULT_BLOCK_HEADER_SIZE);
 
 	const idx_t memory_limit = initial_memory + resident_buffers * actual_alloc_size;
 	buffer_pool.SetLimit(memory_limit, EXCEPTION_POSTSCRIPT);
 
 	// Keep a small set of pinned buffers that stay resident throughout the test.
-	// Their queue entries (after each unpin/repin cycle below) are alive, latest-version,
-	// and currently unevictable - exactly the case the old PurgeIteration mishandled.
 	vector<BufferHandle> pinned_resident;
 	pinned_resident.reserve(resident_buffers / 4);
 	for (idx_t i = 0; i < resident_buffers / 4; ++i) {
 		pinned_resident.emplace_back(buffer_manager.Allocate(MemoryTag::EXTENSION, buffer_size, /*can_destroy=*/true));
 	}
 
-	// Drive churn: allocate, briefly hold, release. Each unpin enqueues a node; many of
-	// them go stale immediately when the BlockHandle is dropped, generating dead nodes.
+	const idx_t queued_before = SumApproxSize(buffer_pool.GetEvictionQueueInfo());
 	for (idx_t i = 0; i < churn_iterations; ++i) {
 		auto pin = buffer_manager.Allocate(MemoryTag::EXTENSION, buffer_size, /*can_destroy=*/true);
-		// pin destroyed -> enqueue; BlockHandle dropped -> BlockMemory destroyed -> dead++
 	}
-
-	const auto info = buffer_pool.GetEvictionQueueInfo();
-	const idx_t dead = SumDeadNodes(info);
-	const idx_t approx_size = SumApproxSize(info);
-
-	// Underflow check: total_dead_nodes is an unsigned atomic. If the old PurgeIteration
-	// over-decremented (treating pinned-but-current entries as dead), the counter would wrap
-	// to a value far larger than any plausible queue size.
-	REQUIRE(dead < approx_size + churn_iterations);
-
-	// Every queue must individually satisfy dead_nodes <= total_insertions.
-	for (const auto &q : info) {
-		REQUIRE(q.dead_nodes <= q.total_insertions);
-	}
+	REQUIRE(SumApproxSize(buffer_pool.GetEvictionQueueInfo()) == queued_before);
 }
 
 TEST_CASE("Test buffer pool eviction: SetLimit evicts object cache", "[storage][buffer_pool]") {

@@ -61,9 +61,11 @@ string CSVBufferManager::GetFilePath() const {
 	return file.path;
 }
 
-bool CSVBufferManager::IsBlockUnloaded(idx_t block_idx) {
-	if (block_idx < cached_buffers.size()) {
-		return cached_buffers[block_idx]->IsUnloaded();
+bool CSVBufferManager::AnyBlockUnloaded() {
+	for (auto &buffer : cached_buffers) {
+		if (buffer && buffer->IsUnloaded()) {
+			return true;
+		}
 	}
 	return false;
 }
