@@ -22,27 +22,38 @@ void CurrentQueryFunction(DataChunk &input, ExpressionState &state, Vector &resu
 	result.Reference(val, count_t(input.size()));
 }
 
-// current_schema
-// PG-compliant: returns the first schema in the search path that actually
-// exists, or NULL if none of them do.
-void CurrentSchemaFunction(DataChunk &input, ExpressionState &state, Vector &result) {
-	auto &context = state.GetContext();
+template <class VISIT>
+bool VisitUsableSearchPath(ClientContext &context, VISIT &&visit) {
 	auto current_catalog = DatabaseManager::GetDefaultDatabase(context);
-	// Only user-set entries, with "$user" resolved — no implicit/temp/system.
-	auto entries = ClientData::Get(context).catalog_search_path->GetResolvedSetPaths();
 	bool searched_current_catalog = false;
-	for (auto &entry : entries) {
-		// an entry set without a catalog qualifier belongs to whichever database is current
+	for (auto &entry : ClientData::Get(context).catalog_search_path->GetResolvedSetPaths()) {
 		if (!entry.GetCatalog().empty() && entry.GetCatalog() != current_catalog) {
 			continue;
 		}
 		searched_current_catalog = true;
 		auto schema_entry =
 		    Catalog::GetSchema(context, entry.GetCatalog(), entry.GetSchema(), OnEntryNotFound::RETURN_NULL);
-		if (schema_entry && CanUseSchema(context.CurrentRole(), *schema_entry)) {
-			result.Reference(Value(entry.GetSchema()), count_t(input.size()));
-			return;
+		if (schema_entry && CanUseSchema(context.CurrentRole(), *schema_entry) && !visit(entry.GetSchema())) {
+			break;
 		}
+	}
+	return searched_current_catalog;
+}
+
+// current_schema
+// PG-compliant: returns the first schema in the search path that actually
+// exists, or NULL if none of them do.
+void CurrentSchemaFunction(DataChunk &input, ExpressionState &state, Vector &result) {
+	auto &context = state.GetContext();
+	auto current_catalog = DatabaseManager::GetDefaultDatabase(context);
+	bool found = false;
+	const bool searched_current_catalog = VisitUsableSearchPath(context, [&](const Identifier &schema) {
+		result.Reference(Value(schema), count_t(input.size()));
+		found = true;
+		return false;
+	});
+	if (found) {
+		return;
 	}
 	// Only when the search path names no schema in the current catalog at all -- an
 	// embedded DuckDB rather than a serened session, which always sets one. A search
@@ -98,7 +109,6 @@ unique_ptr<FunctionData> CurrentSchemasBind(BindScalarFunctionInput &input) {
 		auto implicit_schemas = BooleanValue::Get(schema_value);
 		vector<Value> schema_list;
 		auto &catalog_search_path = ClientData::Get(context).catalog_search_path;
-		auto current_catalog = DatabaseManager::GetDefaultDatabase(context);
 		// PG-compliant implicit prefix: pg_temp (if the session has any temp
 		// objects), then pg_catalog. Then user-set schemas in the current DB.
 		if (implicit_schemas) {
@@ -129,20 +139,10 @@ unique_ptr<FunctionData> CurrentSchemasBind(BindScalarFunctionInput &input) {
 				schema_list.emplace_back("pg_catalog");
 			}
 		}
-		// PG-compliant: only include user-set schemas that actually exist,
-		// with "$user" resolved via the current session user.
-		for (auto &entry : catalog_search_path->GetResolvedSetPaths()) {
-			// an entry set without a catalog qualifier belongs to whichever database is current
-			if (!entry.GetCatalog().empty() && entry.GetCatalog() != current_catalog) {
-				continue;
-			}
-			auto schema_entry =
-			    Catalog::GetSchema(context, entry.GetCatalog(), entry.GetSchema(), OnEntryNotFound::RETURN_NULL);
-			if (!schema_entry || !CanUseSchema(context.CurrentRole(), *schema_entry)) {
-				continue;
-			}
-			schema_list.emplace_back(entry.GetSchema());
-		}
+		VisitUsableSearchPath(context, [&](const Identifier &schema) {
+			schema_list.emplace_back(schema);
+			return true;
+		});
 		result_val = Value::LIST(LogicalType::VARCHAR, schema_list);
 	}
 	return make_uniq<CurrentSchemasBindData>(std::move(result_val));
