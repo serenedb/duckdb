@@ -639,8 +639,7 @@ string DBConfig::SystemObjectName(std::string_view name) const {
 const ForeignDataWrapper &DBConfig::GetForeignDataWrapper(std::string_view name) const {
 	auto wrapper = foreign_data_wrappers.find(name);
 	if (wrapper == foreign_data_wrappers.end()) {
-		throw CatalogException(unordered_map<string, string> {{"type", "Foreign Data Wrapper"}},
-		                       StringUtil::Format("foreign-data wrapper \"%s\" does not exist", name));
+		throw CatalogException::MissingObject(CatalogType::FOREIGN_DATA_WRAPPER_ENTRY, Identifier(name));
 	}
 	return wrapper->second;
 }
@@ -648,8 +647,7 @@ const ForeignDataWrapper &DBConfig::GetForeignDataWrapper(std::string_view name)
 const Language &DBConfig::GetLanguage(std::string_view name) const {
 	auto language = languages.find(name);
 	if (language == languages.end()) {
-		throw CatalogException(unordered_map<string, string> {{"type", "Language"}},
-		                       StringUtil::Format("language \"%s\" does not exist", name));
+		throw CatalogException::MissingObject(CatalogType::LANGUAGE_ENTRY, Identifier(name));
 	}
 	return language->second;
 }

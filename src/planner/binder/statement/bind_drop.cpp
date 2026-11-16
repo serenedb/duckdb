@@ -142,9 +142,8 @@ void Binder::BindDrop(DropInfo &info, StatementProperties &properties) {
 	case CatalogType::TABLESPACE_ENTRY:
 		break;
 	case CatalogType::DATABASE_ENTRY:
-		if (auto database = ClusterEntry(context, CatalogType::DATABASE_ENTRY, info.GetQualifiedName().Name())) {
-			RequireOwner(context, CheckAs(), *database);
-		}
+		ClusterEntry(context, CheckAs(), CatalogType::DATABASE_ENTRY, info.GetQualifiedName().Name(), EntryUse::DROP,
+		             OnEntryNotFound::RETURN_NULL);
 		info.SetQualifiedName(ClusterName(context, info.GetQualifiedName()));
 		break;
 	case CatalogType::FOREIGN_SERVER_ENTRY: {
@@ -152,11 +151,8 @@ void Binder::BindDrop(DropInfo &info, StatementProperties &properties) {
 		info.SetQualifiedName(QualifiedName(catalog, Identifier(), info.GetQualifiedName().Name()));
 		auto &server_catalog = Catalog::GetCatalog(context, catalog);
 		properties.RegisterDBModify(server_catalog, context, DatabaseModificationType::DROP_CATALOG_ENTRY);
-		if (auto server =
-		        server_catalog.LookupTopLevelEntry(server_catalog.GetCatalogTransaction(context),
-		                                           CatalogType::FOREIGN_SERVER_ENTRY, info.GetQualifiedName().Name())) {
-			RequireOwner(context, CheckAs(), *server);
-		}
+		TopLevelEntry(context, CheckAs(), server_catalog, CatalogType::FOREIGN_SERVER_ENTRY,
+		              info.GetQualifiedName().Name(), EntryUse::DROP, OnEntryNotFound::RETURN_NULL);
 		break;
 	}
 	case CatalogType::SUBSCRIPTION_ENTRY: {
@@ -164,14 +160,8 @@ void Binder::BindDrop(DropInfo &info, StatementProperties &properties) {
 		auto name = info.GetQualifiedName().Name();
 		info.SetQualifiedName(QualifiedName(subscription_catalog.GetName(), Identifier(), name));
 		properties.RegisterDBModify(subscription_catalog, context, DatabaseModificationType::DROP_CATALOG_ENTRY);
-		auto subscription = subscription_catalog.LookupTopLevelEntry(
-		    subscription_catalog.GetCatalogTransaction(context), CatalogType::SUBSCRIPTION_ENTRY, name);
-		if (subscription) {
-			RequireOwner(context, CheckAs(), *subscription);
-		} else if (info.if_not_found == OnEntryNotFound::THROW_EXCEPTION) {
-			throw CatalogException(unordered_map<string, string> {{"type", "Subscription"}},
-			                       StringUtil::Format("subscription \"%s\" does not exist", name.GetIdentifierName()));
-		}
+		TopLevelEntry(context, CheckAs(), subscription_catalog, CatalogType::SUBSCRIPTION_ENTRY, name, EntryUse::DROP,
+		              info.if_not_found);
 		break;
 	}
 	default:

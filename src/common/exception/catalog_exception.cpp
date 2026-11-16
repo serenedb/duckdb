@@ -72,6 +72,14 @@ CatalogException CatalogException::EntryAlreadyExists(CatalogType type, const Id
 	                                                       CatalogTypeToString(type), name.GetIdentifierName()));
 }
 
+CatalogException CatalogException::MissingObject(CatalogType type, const Identifier &name) {
+	auto extra_info = Exception::InitializeExtraInfo("MISSING_ENTRY", QueryLocation());
+	extra_info["name"] = name.GetIdentifierName();
+	extra_info["type"] = CatalogTypeToString(type);
+	return CatalogException(
+	    extra_info, StringUtil::Format("%s \"%s\" does not exist", CatalogTypeToNoun(type), name.GetIdentifierName()));
+}
+
 CatalogException CatalogException::MissingPreparedStatement(const Identifier &name) {
 	auto extra_info = Exception::InitializeExtraInfo("MISSING_ENTRY", QueryLocation());
 	extra_info["name"] = name.GetIdentifierName();
