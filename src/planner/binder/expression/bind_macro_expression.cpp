@@ -1506,6 +1506,10 @@ ScalarMacroFunction &ExpressionBinder::UnfoldMacroExpression(FunctionExpression 
 		throw BinderException(*expr, bind_result.error);
 	}
 	auto &macro_def = macro_func.macros[bind_result.function_idx.GetIndex()]->Cast<ScalarMacroFunction>();
+	if (macro_def.is_procedure) {
+		throw BinderException(function, "%s() is a procedure\nHINT: To call a procedure, use CALL.",
+		                      function.FunctionName().GetIdentifierName());
+	}
 	const bool owned = !IsUnowned(macro_func);
 	CheckMacroCall(context, binder.CurrentRole(), macro_func, macro_def, bind_result.function_idx.GetIndex());
 	binder.RecordCall(macro_func, macro_def, bind_result.function_idx.GetIndex());

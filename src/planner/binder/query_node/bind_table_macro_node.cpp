@@ -39,6 +39,15 @@ unique_ptr<QueryNode> Binder::BindTableMacro(FunctionExpression &function, Macro
 	}
 	auto &macro_def = *macro_func.macros[bind_result.function_idx.GetIndex()];
 	definition = macro_def;
+	if (macro_def.is_procedure && !allow_procedure_call) {
+		throw BinderException(function, "%s() is a procedure\nHINT: To call a procedure, use CALL.",
+		                      function.FunctionName().GetIdentifierName());
+	}
+	if (!macro_def.is_procedure && allow_procedure_call &&
+	    macro_func.ParentCatalog().Compatibility() == SqlCompatibility::POSTGRES) {
+		throw BinderException(function, "%s() is not a procedure\nHINT: To call a function, use SELECT.",
+		                      function.FunctionName().GetIdentifierName());
+	}
 	const bool owned = !IsUnowned(macro_func);
 	CheckMacroCall(context, CurrentRole(), macro_func, macro_def, bind_result.function_idx.GetIndex());
 	const auto owner = owned && macro_def.security_definer
