@@ -143,6 +143,22 @@ string CompressionTypeToString(CompressionType type) {
 		return "DICT_FSST12";
 	case CompressionType::COMPRESSION_COL_FSST12:
 		return "FSST12";
+	case CompressionType::COMPRESSION_COL_FFOR:
+		return "FFOR";
+	case CompressionType::COMPRESSION_COL_DELTA_FFOR:
+		return "DELTA_FFOR";
+	case CompressionType::COMPRESSION_COL_RLE_FFOR:
+		return "RLE_FFOR";
+	case CompressionType::COMPRESSION_COL_DICT_FFOR:
+		return "DICT_FFOR";
+	case CompressionType::COMPRESSION_COL_DELTA_LZ4:
+		return "DELTA_LZ4";
+	case CompressionType::COMPRESSION_COL_RLE_LZ4:
+		return "RLE_LZ4";
+	case CompressionType::COMPRESSION_COL_DELTA_ZSTD:
+		return "DELTA_ZSTD";
+	case CompressionType::COMPRESSION_COL_RLE_ZSTD:
+		return "RLE_ZSTD";
 	default:
 		throw InternalException("Unrecognized compression type!");
 	}
