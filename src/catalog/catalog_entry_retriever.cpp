@@ -100,7 +100,7 @@ optional_ptr<SchemaCatalogEntry> CatalogEntryRetriever::GetSchema(const Identifi
 	if (!result) {
 		return result;
 	}
-	RequireUse(context, CheckAs(), *result, use);
+	CheckUse(*result, use);
 	if (callback) {
 		callback(*result);
 	}
