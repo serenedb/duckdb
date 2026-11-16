@@ -42,6 +42,8 @@ siz = "siz"
 cpy = "cpy"
 Cpy = "Cpy"
 acount = "acount"
+ffor = "ffor"
+FFOR = "FFOR"
 
 # API identifiers (to avoid breaking code)
 writeable = "writeable"
