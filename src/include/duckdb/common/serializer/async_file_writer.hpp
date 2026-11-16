@@ -58,10 +58,9 @@ public:
 	                           const FileOpenFlags &open_flags = DEFAULT_OPEN_FLAGS);
 	DUCKDB_API ~AsyncFileWriter() override;
 	using WriteStream::Write;
+	using WriteStream::WriteData;
 
 public:
-	//! Copy the provided bytes into owned storage and register them for asynchronous writing.
-	DUCKDB_API void WriteData(const_data_ptr_t buffer, idx_t write_size) override;
 	//! Transfer ownership of an existing write buffer and register it without copying.
 	DUCKDB_API void WriteData(unique_ptr<AsyncWriteBuffer> buffer);
 
@@ -104,6 +103,9 @@ private:
 	using BatchDrainMode = ManagedAsyncWriteStreamQueue::BatchDrainMode;
 	using ScheduleMode = ManagedAsyncWriteStreamQueue::ScheduleMode;
 	using SchedulePolicy = ManagedAsyncWriteStreamQueue::SchedulePolicy;
+
+	//! Copy the provided bytes into owned storage and register them for asynchronous writing.
+	void Overflow(const_data_ptr_t buffer, idx_t write_size) override;
 
 	//! Register an owned buffer for writing, using the configured synchronous/asynchronous mode.
 	void RegisterWrite(unique_ptr<AsyncWriteBuffer> buffer, ScheduleMode schedule_mode = ScheduleMode::ALLOW);

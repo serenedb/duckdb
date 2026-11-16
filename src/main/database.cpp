@@ -477,6 +477,238 @@ FileSystem &DatabaseInstance::GetLocalFileSystem() {
 	return *local_db_file_system;
 }
 
+bool DatabaseFileSystem::IsRemote(std::string_view path) {
+	return !path.starts_with(MemoryFileSystem::PREFIX) && Path::IsRemote(path);
+}
+
+void DatabaseFileSystem::ForgetRemoteFile(const string &path) {
+	if (IsRemote(path)) {
+		ExternalFileCache::Get(db).ForgetFile(path);
+	}
+}
+
+shared_ptr<InputFile> DatabaseFileSystem::OpenBlockFile(const string &path) {
+	if (!IsRemote(path)) {
+		return OpenerFileSystem::OpenBlockFile(path);
+	}
+	auto &cache = ExternalFileCache::Get(db);
+	const auto flags = FileFlags::FILE_FLAGS_READ | FileFlags::FILE_FLAGS_PARALLEL_ACCESS;
+	ExternalFileCacheFileInfo known;
+	if (cache.TryGetFile(path, known) && !known.validation.version_tag.empty()) {
+		OpenFileInfo file(path);
+		file.extended_info = make_shared_ptr<ExtendedOpenFileInfo>();
+		auto &options = file.extended_info->options;
+		options.emplace("file_size", Value::UBIGINT(known.validation.file_size));
+		options.emplace("etag", Value(known.validation.version_tag));
+		options.emplace("last_modified", Value::TIMESTAMP(known.validation.last_modified));
+		return cache.OpenFile(path, known, false, OpenFile(file, flags));
+	}
+	shared_ptr<FileHandle> handle = OpenFile(path, flags);
+	ExternalFileCacheFileInfo info;
+	info.validation = ExternalFileCacheUtil::GetValidationInfo(*handle);
+	info.can_seek = handle->CanSeek();
+	info.on_disk = handle->OnDiskFile();
+	return cache.OpenFile(path, info, false, std::move(handle));
+}
+
+namespace {
+
+//! The remote files being written and the bytes written to them
+atomic<idx_t> pending_upload_files {0};
+atomic<idx_t> pending_upload_bytes {0};
+
+class HeldBlock final : public FileWriteHold {
+public:
+	explicit HeldBlock(FilePin pin_p) : pin(std::move(pin_p)) {
+	}
+
+private:
+	FilePin pin;
+};
+
+//! Uploads a remote file. With [file] it keeps the bytes in the cache blocks they are written into, which the
+//! file's readers read once it closes; a window that gets no block uploads its bytes without the cache, as does the
+//! rest of the file
+class RemoteFileWriter final : public FileWriter {
+public:
+	RemoteFileWriter(unique_ptr<FileHandle> handle_p, shared_ptr<InputFile> file) : handle(std::move(handle_p)) {
+		if (file) {
+			appender.emplace(std::move(file));
+		}
+		pending_upload_files.fetch_add(1, std::memory_order_relaxed);
+	}
+	~RemoteFileWriter() override {
+		RemoteFileWriter::Abort();
+	}
+
+	FileWriteWindow Window() override {
+		if (appender) {
+			try {
+				SDB_IF_FAILURE("remote_write_cache_block") {
+					if (appender->Size() > 0) {
+						throw OutOfMemoryException("Injected failure to get an external file cache block");
+					}
+				}
+				window = appender->Window();
+				return window;
+			} catch (const OutOfMemoryException &) {
+				appender->Abandon();
+				appender.reset();
+			}
+		}
+		if (!buffer) {
+			buffer = make_unsafe_uniq_array_uninitialized<data_t>(ExternalFileCache::DEFAULT_BLOCK_SIZE);
+		}
+		window = {buffer.get(), ExternalFileCache::DEFAULT_BLOCK_SIZE};
+		return window;
+	}
+
+	void Commit(idx_t nr_bytes, uint32_t crc32c) override {
+		D_ASSERT(nr_bytes <= window.size);
+		if (nr_bytes == 0) {
+			return;
+		}
+		if (appender) {
+			handle->file_system.WriteHeld(*handle, window.data, nr_bytes, size, crc32c,
+			                              make_uniq<HeldBlock>(appender->ShareWindow(nr_bytes)));
+			appender->Commit(nr_bytes);
+		} else {
+			handle->Write(QueryContext(), window.data, nr_bytes, size);
+		}
+		Written(nr_bytes);
+		window = {window.data + nr_bytes, window.size - nr_bytes};
+	}
+
+	bool Append(const_data_ptr_t data, idx_t nr_bytes) override {
+		if (appender) {
+			return false;
+		}
+		handle->Write(QueryContext(), const_cast<data_ptr_t>(data), nr_bytes, size); // NOLINT: wrong API in Write
+		Written(nr_bytes);
+		return true;
+	}
+
+	void Close() override {
+		if (!handle) {
+			return;
+		}
+		handle->Close();
+		if (appender) {
+			auto &fs = handle->file_system;
+			try {
+				appender->Finish(fs.GetVersionTag(*handle), fs.GetLastModifiedTime(*handle));
+			} catch (std::exception &) {
+				appender->Abandon();
+			}
+			appender.reset();
+		}
+		Finished();
+	}
+
+	void Abort() noexcept override {
+		if (!handle) {
+			return;
+		}
+		try {
+			if (appender) {
+				appender->Abandon();
+			}
+		} catch (std::exception &) { // NOLINT
+		}
+		appender.reset();
+		try {
+			handle->AbortWrite();
+		} catch (std::exception &) { // NOLINT
+		}
+		Finished();
+	}
+
+private:
+	void Written(idx_t nr_bytes) {
+		size += nr_bytes;
+		pending_upload_bytes.fetch_add(nr_bytes, std::memory_order_relaxed);
+	}
+	//! The upload ended, completed or not
+	void Finished() noexcept {
+		handle.reset();
+		pending_upload_files.fetch_sub(1, std::memory_order_relaxed);
+		pending_upload_bytes.fetch_sub(size, std::memory_order_relaxed);
+	}
+
+private:
+	unique_ptr<FileHandle> handle;
+	optional<ExternalFileCacheAppender> appender;
+	//! The window of a write that got no block
+	unsafe_unique_array<data_t> buffer;
+	FileWriteWindow window;
+	idx_t size = 0;
+};
+
+} // namespace
+
+unique_ptr<FileWriter> DatabaseFileSystem::OpenFileWriter(const string &path, optional_ptr<FileOpener> opener) {
+	if (!IsRemote(path)) {
+		return OpenerFileSystem::OpenFileWriter(path, opener);
+	}
+	auto handle = OpenFile(path, FileFlags::FILE_FLAGS_WRITE | FileFlags::FILE_FLAGS_FILE_CREATE_NEW);
+	auto &cache = ExternalFileCache::Get(db);
+	shared_ptr<InputFile> cached;
+	if (cache.IsEnabled()) {
+		cached = cache.CreateWrittenFile(path);
+	}
+	return make_uniq<RemoteFileWriter>(std::move(handle), std::move(cached));
+}
+
+PendingUploads DatabaseFileSystem::GetPendingUploads() {
+	return {pending_upload_files.load(std::memory_order_relaxed), pending_upload_bytes.load(std::memory_order_relaxed)};
+}
+
+unique_ptr<FileHandle> DatabaseFileSystem::OpenFileExtended(const OpenFileInfo &file, FileOpenFlags flags,
+                                                            optional_ptr<FileOpener> opener) {
+	if (flags.OpenForWriting()) {
+		ForgetRemoteFile(file.path);
+	}
+	return OpenerFileSystem::OpenFileExtended(file, flags, opener);
+}
+
+void DatabaseFileSystem::MoveFile(const string &source, const string &target, optional_ptr<FileOpener> opener) {
+	OpenerFileSystem::MoveFile(source, target, opener);
+	ForgetRemoteFile(source);
+	ForgetRemoteFile(target);
+}
+
+void DatabaseFileSystem::RemoveFile(const string &filename, optional_ptr<FileOpener> opener) {
+	OpenerFileSystem::RemoveFile(filename, opener);
+	ForgetRemoteFile(filename);
+}
+
+bool DatabaseFileSystem::TryRemoveFile(const string &filename, optional_ptr<FileOpener> opener) {
+	if (!OpenerFileSystem::TryRemoveFile(filename, opener)) {
+		return false;
+	}
+	ForgetRemoteFile(filename);
+	return true;
+}
+
+void DatabaseFileSystem::RemoveFiles(const vector<string> &filenames, optional_ptr<FileOpener> opener) {
+	// a removal that fails part way has removed some of the files: their cached blocks go either way
+	absl::Cleanup forget = [&] {
+		for (const auto &filename : filenames) {
+			ForgetRemoteFile(filename);
+		}
+	};
+	OpenerFileSystem::RemoveFiles(filenames, opener);
+}
+
+bool DatabaseFileSystem::RemoveDirectoryExtended(const string &directory, const RemoveDirectoryOptions &options,
+                                                 optional_ptr<FileOpener> opener) {
+	const auto removed = OpenerFileSystem::RemoveDirectoryExtended(directory, options, opener);
+	if (IsRemote(directory)) {
+		ExternalFileCache::Get(db).ForgetDirectory(directory);
+	}
+	return removed;
+}
+
 static FileSystem &ResolveLocalFileSystem(DatabaseInstance &db, unique_ptr<FileSystem> &owned) {
 	auto &vfs = static_cast<VirtualFileSystem &>(*db.config.file_system);
 	auto &default_fs = vfs.GetDefaultFileSystem();

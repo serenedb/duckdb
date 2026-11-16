@@ -6,6 +6,7 @@
 #include "duckdb/common/compressed_file_system.hpp"
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/file_opener.hpp"
+#include "duckdb/common/handle_file_writer.hpp"
 #include "duckdb/common/helper.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/common/multi_file/multi_file_list.hpp"
@@ -776,6 +777,49 @@ void FileSystem::FileSync(FileHandle &handle) {
 
 FileSyncParallelism FileSystem::SyncParallelism(FileHandle &handle) {
 	return FileSyncParallelism::SERIAL;
+}
+
+void FileSystem::HintWriteback(FileHandle &handle, idx_t location, idx_t nr_bytes) {
+}
+
+void FileSystem::SyncDirectory(const string &directory, optional_ptr<FileOpener> opener) {
+}
+
+void FileSystem::SyncFiles(const vector<string> &paths, optional_ptr<FileOpener> opener) {
+}
+
+shared_ptr<InputFile> FileSystem::OpenBlockFile(const string &path) {
+	return nullptr;
+}
+
+shared_ptr<InputFile> FileSystem::OpenInputFile(const string &path, MappedFileAccess access) {
+	if (auto blocks = OpenBlockFile(path)) {
+		return blocks;
+	}
+	auto mapping = MemoryMapFile(OpenFileInfo(path), FileFlags::FILE_FLAGS_READ, MMapOptions());
+	if (access != MappedFileAccess::NORMAL) {
+		mapping->Advise(access);
+	}
+	return make_shared_ptr<InputFile>(std::move(mapping));
+}
+
+FileWriter::~FileWriter() {
+}
+
+FileWriteHold::~FileWriteHold() {
+}
+
+void FileSystem::WriteHeld(FileHandle &handle, data_ptr_t buffer, idx_t nr_bytes, idx_t location, uint32_t crc32c,
+                           unique_ptr<FileWriteHold> hold) {
+	Write(handle, buffer, UnsafeNumericCast<int64_t>(nr_bytes), location);
+}
+
+unique_ptr<FileWriter> FileSystem::OpenFileWriter(const string &path, optional_ptr<FileOpener> opener) {
+	return make_uniq<HandleFileWriter>(
+	    OpenFile(path, FileFlags::FILE_FLAGS_WRITE | FileFlags::FILE_FLAGS_FILE_CREATE_NEW, opener));
+}
+
+void FileSystem::Compact(const vector<string> &paths) {
 }
 
 void FileSystem::AbortFileWrite(FileHandle &handle) {

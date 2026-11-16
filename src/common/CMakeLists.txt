@@ -54,6 +54,7 @@ add_library_unity(
   path.cpp
   fsst.cpp
   gzip_file_system.cpp
+  handle_file_writer.cpp
   hash_functions.cpp
   identifier.cpp
   memory_safety.cpp

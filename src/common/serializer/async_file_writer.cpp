@@ -124,7 +124,7 @@ idx_t AsyncFileWriter::GetTotalWritten() const {
 	return total_written;
 }
 
-void AsyncFileWriter::WriteData(const_data_ptr_t buffer, idx_t write_size) {
+void AsyncFileWriter::Overflow(const_data_ptr_t buffer, idx_t write_size) {
 	RethrowError();
 	try {
 		WriteDataInternal(buffer, write_size);

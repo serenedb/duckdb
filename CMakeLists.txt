@@ -1194,6 +1194,7 @@ link_libraries(
   ZLIB::ZLIB
   ada::ada
   absl::strings
+  absl::crc32c
   absl::node_hash_set
   absl::node_hash_map
   absl::synchronization)

@@ -4,7 +4,9 @@
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/typedefs.hpp"
 
+#include <absl/crc/crc32c.h>
 #include <cstring>
+#include <utility>
 
 namespace duckdb {
 
@@ -13,66 +15,110 @@ const FileOpenFlags BufferedFileWriter::DEFAULT_OPEN_FLAGS =
 
 BufferedFileWriter::BufferedFileWriter(FileSystem &fs, const string &path_p, const FileOpenFlags &open_flags,
                                        QueryContext context_p)
-    : fs(fs), path(path_p), data(make_unsafe_uniq_array_uninitialized<data_t>(FILE_BUFFER_SIZE)), offset(0),
-      total_written(0), context(context_p) {
-	handle = fs.OpenFile(path, open_flags | FileLockType::WRITE_LOCK);
+    : fs(fs), path(path_p), checksummed(false) {
+	// the file may append or be a pipe, so its bytes go to the handle's own position
+	auto handle_writer =
+	    make_uniq<HandleFileWriter>(fs.OpenFile(path, open_flags | FileLockType::WRITE_LOCK), context_p, true);
+	handle = handle_writer->Handle();
+	writer = std::move(handle_writer);
+	OpenWindow();
+}
+
+BufferedFileWriter::BufferedFileWriter(FileSystem &fs, string path_p, unique_ptr<FileWriter> writer_p)
+    : fs(fs), path(std::move(path_p)), writer(std::move(writer_p)), checksummed(true) {
+	OpenWindow();
+}
+
+void BufferedFileWriter::OpenWindow() {
+	const auto window = writer->Window();
+	D_ASSERT(window.size != 0);
+	SetWindow(window.data, window.size);
+	window_checksum = 0;
+	checksummed_until = write_begin;
+}
+
+void BufferedFileWriter::ChecksumWindow() {
+	D_ASSERT(checksummed && checksummed_until <= write_pos);
+	window_checksum = static_cast<uint32_t>(
+	    absl::ExtendCrc32c(absl::crc32c_t {window_checksum}, {const_char_ptr_cast(checksummed_until),
+	                                                          static_cast<size_t>(write_pos - checksummed_until)}));
+	checksummed_until = write_pos;
 }
 
 idx_t BufferedFileWriter::GetFileSize() {
-	return NumericCast<idx_t>(fs.GetFileSize(*handle)) + offset;
+	return NumericCast<idx_t>(fs.GetFileSize(*handle)) + WindowSize();
 }
 
 idx_t BufferedFileWriter::GetTotalWritten() const {
-	return total_written + offset;
+	return Position();
 }
 
-void BufferedFileWriter::WriteData(const_data_ptr_t buffer, idx_t write_size) {
-	if (write_size >= (2ULL * FILE_BUFFER_SIZE - offset)) {
-		idx_t to_copy = 0;
-		// Check before performing direct IO if there is some data in the current internal buffer.
-		// If so, then fill the buffer (to avoid to small write operation), flush it and then write
-		// all the remain data directly.
-		// This is to avoid to split a large buffer into N*FILE_BUFFER_SIZE buffers
-		if (offset != 0) {
-			// Some data are still present in the buffer let write them before
-			to_copy = FILE_BUFFER_SIZE - offset;
-			memcpy(data.get() + offset, buffer, to_copy);
-			offset += to_copy;
-			Flush(); // Flush buffer before writing every things else
+void BufferedFileWriter::Overflow(const_data_ptr_t source, idx_t write_size) {
+	D_ASSERT(write_size > WindowRoom());
+	if (!writer) {
+		throw InternalException("Cannot write to the closed file \"%s\"", path);
+	}
+	const auto fill = [&] {
+		const auto chunk = MinValue(write_size, WindowRoom());
+		if (checksummed) {
+			ChecksumWindow();
+			window_checksum =
+			    static_cast<uint32_t>(absl::MemcpyCrc32c(write_pos, source, chunk, absl::crc32c_t {window_checksum}));
+			checksummed_until = write_pos + chunk;
+		} else {
+			memcpy(write_pos, source, chunk);
 		}
-		idx_t remaining_to_write = write_size - to_copy;
-		handle->Write(context, const_cast<data_ptr_t>(buffer + to_copy), // NOLINT: wrong API in Write
-		              remaining_to_write);
-		total_written += remaining_to_write;
-	} else {
-		// first copy anything we can from the buffer
-		const_data_ptr_t end_ptr = buffer + write_size;
-		while (buffer < end_ptr) {
-			idx_t to_write = MinValue<idx_t>(UnsafeNumericCast<idx_t>((end_ptr - buffer)), FILE_BUFFER_SIZE - offset);
-			D_ASSERT(to_write > 0);
-			memcpy(data.get() + offset, buffer, to_write);
-			offset += to_write;
-			buffer += to_write;
-			if (offset == FILE_BUFFER_SIZE) {
-				Flush();
-			}
+		write_pos += chunk;
+		source += chunk;
+		write_size -= chunk;
+	};
+	if (write_pos != write_begin) {
+		// a window that holds bytes is filled first, so that a write to the file is never a small one
+		fill();
+	}
+	Flush();
+	// the rest goes to the file as it is, instead of in buffers of the window's size, when the writer takes it so
+	if (write_size >= DIRECT_WRITE_SIZE && writer->Append(source, write_size)) {
+		if (checksummed) {
+			checksum = static_cast<uint32_t>(
+			    absl::ExtendCrc32c(absl::crc32c_t {checksum}, {const_char_ptr_cast(source), write_size}));
 		}
+		write_offset += write_size;
+		return;
+	}
+	while (true) {
+		OpenWindow();
+		fill();
+		if (write_size == 0) {
+			return;
+		}
+		Flush();
 	}
 }
 
 void BufferedFileWriter::Flush() {
-	if (offset == 0) {
-		return;
+	const auto buffered = WindowSize();
+	if (buffered != 0) {
+		if (checksummed) {
+			ChecksumWindow();
+			checksum = static_cast<uint32_t>(
+			    absl::ConcatCrc32c(absl::crc32c_t {checksum}, absl::crc32c_t {window_checksum}, buffered));
+		}
+		writer->Commit(buffered, window_checksum);
+		write_offset += buffered;
 	}
-	handle->Write(context, data.get(), offset);
-	total_written += offset;
-	offset = 0;
+	// the writer gives the memory of the next bytes when there are some
+	CloseWindow();
 }
 
 void BufferedFileWriter::Close() {
+	if (!writer) {
+		return;
+	}
 	Flush();
-	handle->Close();
-	handle.reset();
+	writer->Close();
+	writer.reset();
+	handle = nullptr;
 }
 
 void BufferedFileWriter::SyncHandle() {
@@ -86,20 +132,26 @@ void BufferedFileWriter::Sync() {
 
 void BufferedFileWriter::Truncate(idx_t size) {
 	auto persistent = NumericCast<idx_t>(fs.GetFileSize(*handle));
-	D_ASSERT(size <= persistent + offset);
+	D_ASSERT(size <= persistent + WindowSize());
 	if (persistent <= size) {
 		// truncating into the pending write buffer.
-		offset = size - persistent;
+		write_pos = write_begin + (size - persistent);
 	} else {
 		// truncate the physical file on disk
 		handle->Truncate(NumericCast<int64_t>(size));
 		// reset anything written in the buffer
-		offset = 0;
+		write_pos = write_begin;
 		// Reset the seek position if applicable
 		if (handle->CanSeek() && handle->SeekPosition() > size) {
 			handle->Seek(size);
 		}
 	}
+}
+
+uint32_t BufferedFileWriter::Checksum() {
+	D_ASSERT(checksummed);
+	Flush();
+	return std::exchange(checksum, 0);
 }
 
 } // namespace duckdb
