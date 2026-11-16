@@ -1,5 +1,3 @@
-#include <absl/cleanup/cleanup.h>
-
 #include "duckdb/parser/constraints/list.hpp"
 #include "duckdb/parser/expression/cast_expression.hpp"
 #include "duckdb/parser/keyword_helper.hpp"
@@ -750,11 +748,8 @@ void Binder::BindDefaultValue(const ColumnDefinition &column, vector<unique_ptr<
 
 void Binder::BindDefaultValues(const TableCatalogEntry &table, vector<unique_ptr<Expression>> &bound_defaults,
                                const std::function<bool(const ColumnDefinition &)> &evaluated) {
-	const auto lookup_role = entry_retriever.GetCheckAs();
+	BinderScope definition(*this);
 	BindStoredDefinition();
-	absl::Cleanup restore_role = [&] {
-		entry_retriever.SetCheckAs(lookup_role);
-	};
 	BindDefaultValues(table.GetColumns(), bound_defaults, table.ParentSchema(context), evaluated);
 }
 

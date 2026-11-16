@@ -29,6 +29,10 @@ FunctionBinder::FunctionBinder(ClientContext &context_p) : binder(nullptr), cont
 FunctionBinder::FunctionBinder(Binder &binder_p) : binder(&binder_p), context(binder_p.context) {
 }
 
+static const RoleAccess &CurrentRole(optional_ptr<Binder> binder, ClientContext &context) {
+	return binder ? binder->CurrentRole() : context.CurrentRole();
+}
+
 // Split the full (maybe-named) argument list into positional types + named (name, type) pairs.
 // Returns false if a positional argument follows a named one, which is not allowed.
 static bool TrySplitArgumentTypes(const vector<pair<Identifier, unique_ptr<Expression>>> &arguments,
@@ -1008,7 +1012,7 @@ unique_ptr<Expression> FunctionBinder::BindScalarFunction(const ScalarFunctionCa
 	}
 
 	// found a matching function!
-	CheckBuiltinCall(context, binder ? binder->CurrentRole() : context.CurrentRole(), func, best_function.GetIndex());
+	CheckBuiltinCall(context, CurrentRole(binder, context), func, best_function.GetIndex());
 	if (binder) {
 		binder->RecordCall(func, best_function.GetIndex());
 	}
@@ -1773,7 +1777,7 @@ FunctionBinder::BindAggregateFunction(const AggregateFunctionCatalogEntry &func,
 	}
 
 	// found a matching function!
-	CheckBuiltinCall(context, binder ? binder->CurrentRole() : context.CurrentRole(), func, best_function.GetIndex());
+	CheckBuiltinCall(context, CurrentRole(binder, context), func, best_function.GetIndex());
 	auto bound_function = func.functions.GetFunctionByOffset(best_function.GetIndex());
 
 	// now that the overload is fixed, split the arguments into their final positional/named children
@@ -1875,7 +1879,7 @@ FunctionBinder::BindWindowFunction(const WindowFunctionCatalogEntry &func,
 	}
 
 	// found a matching function!
-	CheckBuiltinCall(context, binder ? binder->CurrentRole() : context.CurrentRole(), func, best_function.GetIndex());
+	CheckBuiltinCall(context, CurrentRole(binder, context), func, best_function.GetIndex());
 	auto bound_function = func.functions.GetFunctionByOffset(best_function.GetIndex());
 
 	// now that the overload is fixed, split the arguments into their final positional/named children

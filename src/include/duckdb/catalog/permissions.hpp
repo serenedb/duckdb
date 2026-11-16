@@ -392,6 +392,7 @@ public:
 	shared_ptr<const SecuritySnapshot> ForDatabase(const Identifier &database) const;
 
 	optional_ptr<const RoleAccess> Access(idx_t role) const;
+	RoleAccess AccessOf(idx_t role) const;
 	optional_ptr<const Node> Find(idx_t role) const;
 	optional_idx FindByName(std::string_view name) const;
 	std::string_view NameOf(idx_t role) const;

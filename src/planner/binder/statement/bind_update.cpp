@@ -21,7 +21,6 @@
 #include "duckdb/storage/data_table.hpp"
 
 #include <absl/algorithm/container.h>
-#include <absl/cleanup/cleanup.h>
 
 namespace duckdb {
 
@@ -135,12 +134,8 @@ void Binder::BindUpdateSet(TableIndex proj_index, unique_ptr<LogicalOperator> &r
 	if (!has_stored_generated) {
 		return;
 	}
-	auto &retriever = expr_binder_ptr->entry_retriever;
-	const auto lookup_role = retriever.GetCheckAs();
+	BinderScope definition(*expr_binder_ptr);
 	expr_binder_ptr->BindStoredDefinition();
-	absl::Cleanup restore_role = [&] {
-		retriever.SetCheckAs(lookup_role);
-	};
 	// Recompute each stored generated column whose value depends on an assigned
 	// column. Generated-column references are expanded inline -- the same
 	// recursion the binder uses for INSERT defaults and SELECT -- and assigned
