@@ -80,42 +80,43 @@ struct ObjectKind {
 	AclMode privileges;
 	AclMode public_privileges;
 	idx_t pg_class;
+	bool shared;
 };
 
 constexpr ObjectKind ObjectKindOf(CatalogType type) {
 	switch (type) {
 	case CatalogType::TABLE_ENTRY:
 	case CatalogType::VIEW_ENTRY:
-		return {CatalogType::TABLE_ENTRY, ObjectContainer::SCHEMA, AclMode::Insert | AclMode::Select | AclMode::Update | AclMode::Delete | AclMode::Truncate | AclMode::References | AclMode::Trigger | AclMode::Maintain, AclMode::NoRights, 1259};
+		return {CatalogType::TABLE_ENTRY, ObjectContainer::SCHEMA, AclMode::Insert | AclMode::Select | AclMode::Update | AclMode::Delete | AclMode::Truncate | AclMode::References | AclMode::Trigger | AclMode::Maintain, AclMode::NoRights, 1259, false};
 	case CatalogType::SEQUENCE_ENTRY:
-		return {CatalogType::SEQUENCE_ENTRY, ObjectContainer::SCHEMA, AclMode::Select | AclMode::Update | AclMode::Usage, AclMode::NoRights, 1259};
+		return {CatalogType::SEQUENCE_ENTRY, ObjectContainer::SCHEMA, AclMode::Select | AclMode::Update | AclMode::Usage, AclMode::NoRights, 1259, false};
 	case CatalogType::INDEX_ENTRY:
-		return {CatalogType::INDEX_ENTRY, ObjectContainer::RELATION, AclMode::NoRights, AclMode::NoRights, 1259};
+		return {CatalogType::INDEX_ENTRY, ObjectContainer::RELATION, AclMode::NoRights, AclMode::NoRights, 1259, false};
 	case CatalogType::TYPE_ENTRY:
-		return {CatalogType::TYPE_ENTRY, ObjectContainer::SCHEMA, AclMode::Usage, AclMode::Usage, 1247};
+		return {CatalogType::TYPE_ENTRY, ObjectContainer::SCHEMA, AclMode::Usage, AclMode::Usage, 1247, false};
 	case CatalogType::MACRO_ENTRY:
 	case CatalogType::TABLE_MACRO_ENTRY:
-		return {CatalogType::MACRO_ENTRY, ObjectContainer::SCHEMA, AclMode::Execute, AclMode::Execute, 1255};
+		return {CatalogType::MACRO_ENTRY, ObjectContainer::SCHEMA, AclMode::Execute, AclMode::Execute, 1255, false};
 	case CatalogType::TOKENIZER_ENTRY:
-		return {CatalogType::TOKENIZER_ENTRY, ObjectContainer::SCHEMA, AclMode::NoRights, AclMode::NoRights, 3600};
+		return {CatalogType::TOKENIZER_ENTRY, ObjectContainer::SCHEMA, AclMode::NoRights, AclMode::NoRights, 3600, false};
 	case CatalogType::SCHEMA_ENTRY:
-		return {CatalogType::SCHEMA_ENTRY, ObjectContainer::DATABASE, AclMode::Usage | AclMode::Create, AclMode::NoRights, 2615};
+		return {CatalogType::SCHEMA_ENTRY, ObjectContainer::DATABASE, AclMode::Usage | AclMode::Create, AclMode::NoRights, 2615, false};
 	case CatalogType::FOREIGN_SERVER_ENTRY:
-		return {CatalogType::FOREIGN_SERVER_ENTRY, ObjectContainer::DATABASE, AclMode::Usage, AclMode::NoRights, 1417};
+		return {CatalogType::FOREIGN_SERVER_ENTRY, ObjectContainer::DATABASE, AclMode::Usage, AclMode::NoRights, 1417, false};
 	case CatalogType::SUBSCRIPTION_ENTRY:
-		return {CatalogType::SUBSCRIPTION_ENTRY, ObjectContainer::DATABASE, AclMode::NoRights, AclMode::NoRights, 6100};
+		return {CatalogType::SUBSCRIPTION_ENTRY, ObjectContainer::DATABASE, AclMode::NoRights, AclMode::NoRights, 6100, true};
 	case CatalogType::DATABASE_ENTRY:
-		return {CatalogType::DATABASE_ENTRY, ObjectContainer::CLUSTER, AclMode::Create | AclMode::CreateTemp | AclMode::Connect, AclMode::CreateTemp | AclMode::Connect, 1262};
+		return {CatalogType::DATABASE_ENTRY, ObjectContainer::CLUSTER, AclMode::Create | AclMode::CreateTemp | AclMode::Connect, AclMode::CreateTemp | AclMode::Connect, 1262, true};
 	case CatalogType::ROLE_ENTRY:
-		return {CatalogType::ROLE_ENTRY, ObjectContainer::CLUSTER, AclMode::NoRights, AclMode::NoRights, 1260};
+		return {CatalogType::ROLE_ENTRY, ObjectContainer::CLUSTER, AclMode::NoRights, AclMode::NoRights, 1260, true};
 	case CatalogType::FOREIGN_DATA_WRAPPER_ENTRY:
-		return {CatalogType::FOREIGN_DATA_WRAPPER_ENTRY, ObjectContainer::REGISTRY, AclMode::Usage, AclMode::NoRights, 2328};
+		return {CatalogType::FOREIGN_DATA_WRAPPER_ENTRY, ObjectContainer::REGISTRY, AclMode::Usage, AclMode::NoRights, 2328, false};
 	case CatalogType::LANGUAGE_ENTRY:
-		return {CatalogType::LANGUAGE_ENTRY, ObjectContainer::REGISTRY, AclMode::Usage, AclMode::Usage, 2612};
+		return {CatalogType::LANGUAGE_ENTRY, ObjectContainer::REGISTRY, AclMode::Usage, AclMode::Usage, 2612, false};
 	case CatalogType::PARAMETER_ENTRY:
-		return {CatalogType::PARAMETER_ENTRY, ObjectContainer::REGISTRY, AclMode::Set | AclMode::AlterSystem, AclMode::NoRights, 0};
+		return {CatalogType::PARAMETER_ENTRY, ObjectContainer::REGISTRY, AclMode::Set | AclMode::AlterSystem, AclMode::NoRights, 0, false};
 	case CatalogType::JOB_ENTRY:
-		return {CatalogType::JOB_ENTRY, ObjectContainer::SCHEMA, AclMode::NoRights, AclMode::NoRights, 0};
+		return {CatalogType::JOB_ENTRY, ObjectContainer::SCHEMA, AclMode::NoRights, AclMode::NoRights, 0, false};
 	case CatalogType::INVALID:
 	case CatalogType::PREPARED_STATEMENT:
 	case CatalogType::COLLATION_ENTRY:
@@ -136,7 +137,7 @@ constexpr ObjectKind ObjectKindOf(CatalogType type) {
 	case CatalogType::DEPENDENCY_ENTRY:
 		break;
 	}
-	return {type, ObjectContainer::NONE, AclMode::NoRights, AclMode::NoRights, 0};
+	return {type, ObjectContainer::NONE, AclMode::NoRights, AclMode::NoRights, 0, false};
 }
 
 constexpr std::string_view ObjectNoun(CatalogType type) {
