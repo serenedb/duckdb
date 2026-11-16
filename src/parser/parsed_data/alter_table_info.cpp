@@ -245,17 +245,10 @@ unique_ptr<AlterInfo> AlterPermissionsInfo::Copy() const {
 	result->all_in_schema = all_in_schema;
 	result->include_functions = include_functions;
 	result->include_procedures = include_procedures;
-	result->foreign_data_wrapper_id = foreign_data_wrapper_id;
 	result->object_owner_id = object_owner_id;
-	result->parameter = parameter;
 	result->drop_owned_role_id = drop_owned_role_id;
-	result->language_id = language_id;
-	result->relation_id = relation_id;
-	result->builtin_acl = builtin_acl;
 	result->overload_oid = overload_oid;
-	result->schema_id = schema_id;
-	result->functions = functions;
-	result->type_id = type_id;
+	result->database_rows = database_rows;
 	result->func_parameters = func_parameters;
 	result->has_func_args = has_func_args;
 	for (auto &other : additional_grants) {

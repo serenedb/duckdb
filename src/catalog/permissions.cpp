@@ -95,31 +95,46 @@ GrantRows &Permissions::MutableRows() {
 	return *rows;
 }
 
-std::span<const AclItem> Permissions::ForeignDataWrapperAcl(idx_t wrapper) const {
-	for (auto &row : Rows().foreign_data_wrappers) {
-		if (row.oid == wrapper) {
-			return row.acl;
-		}
+bool GrantRow::Is(CatalogType kind_p, idx_t oid_p, std::string_view name_p) const {
+	if (kind != kind_p) {
+		return false;
 	}
-	return {};
+	switch (kind) {
+	case CatalogType::PARAMETER_ENTRY:
+		return StringUtil::CIEquals(name, name_p);
+	case CatalogType::MACRO_ENTRY:
+		return name == name_p;
+	default:
+		return oid == oid_p;
+	}
 }
 
-std::span<const AclItem> Permissions::LanguageAcl(idx_t language) const {
-	for (auto &row : Rows().languages) {
-		if (row.oid == language) {
-			return row.acl;
-		}
-	}
-	return {};
+template <class ROWS>
+static auto KindRange(ROWS &rows, CatalogType kind) {
+	auto lower = std::lower_bound(rows.begin(), rows.end(), kind,
+	                              [](const GrantRow &row, CatalogType value) { return row.kind < value; });
+	auto upper = std::upper_bound(lower, rows.end(), kind,
+	                              [](CatalogType value, const GrantRow &row) { return value < row.kind; });
+	return std::make_pair(lower, upper);
 }
 
-std::span<const AclItem> Permissions::ParameterAcl(std::string_view parameter) const {
-	for (auto &row : Rows().parameters) {
-		if (StringUtil::CIEquals(row.name, parameter)) {
-			return row.acl;
+std::span<const GrantRow> GrantRows::OfKind(CatalogType kind) const {
+	auto range = KindRange(rows, kind);
+	return std::span<const GrantRow>(range.first, range.second);
+}
+
+optional_ptr<const GrantRow> Permissions::FindRow(CatalogType kind, idx_t oid, std::string_view name) const {
+	for (auto &row : Rows().OfKind(kind)) {
+		if (row.Is(kind, oid, name)) {
+			return row;
 		}
 	}
-	return {};
+	return nullptr;
+}
+
+std::span<const AclItem> Permissions::RowAcl(CatalogType kind, idx_t oid, std::string_view name) const {
+	auto row = FindRow(kind, oid, name);
+	return row ? std::span<const AclItem>(row->acl) : std::span<const AclItem>();
 }
 
 static AclMode HeldBy(const vector<AclItem> &acl, idx_t role, AclMode AclItem::*field) {
@@ -330,123 +345,76 @@ void AlterPermissionsInfo::ApplyTo(Permissions &permissions, CatalogType entry_t
 		return;
 	}
 
-	if (info.foreign_data_wrapper_id) {
-		auto &wrappers = permissions.MutableRows().foreign_data_wrappers;
-		auto row = std::find_if(wrappers.begin(), wrappers.end(),
-		                        [&](const ObjectAcl &entry) { return entry.oid == info.foreign_data_wrapper_id; });
-		auto row_acl = row == wrappers.end() ? vector<AclItem> {} : row->acl;
-		ApplyGrant(info, info.object_owner_id, row_acl, CatalogType::FOREIGN_DATA_WRAPPER_ENTRY, nullptr);
-		if (row == wrappers.end()) {
-			wrappers.push_back(ObjectAcl {info.foreign_data_wrapper_id, std::move(row_acl)});
-		} else {
-			row->acl = std::move(row_acl);
+	auto &targets = info.database_rows;
+	for (idx_t first = 0; first < targets.size();) {
+		const auto kind = targets[first].kind;
+		auto last = first;
+		while (last < targets.size() && targets[last].kind == kind) {
+			last++;
 		}
-		return;
-	}
-
-	if (info.language_id) {
-		auto &languages = permissions.MutableRows().languages;
-		auto row = std::find_if(languages.begin(), languages.end(),
-		                        [&](const ObjectAcl &entry) { return entry.oid == info.language_id; });
-		auto row_acl = row == languages.end() ? vector<AclItem> {} : row->acl;
-		ApplyGrant(info, info.object_owner_id, row_acl, CatalogType::LANGUAGE_ENTRY, nullptr);
-		if (row == languages.end()) {
-			languages.push_back(ObjectAcl {info.language_id, std::move(row_acl)});
-		} else {
-			row->acl = std::move(row_acl);
-		}
-		return;
-	}
-
-	if (info.relation_id) {
-		auto &relations = permissions.MutableRows().relations;
-		auto row = std::find_if(relations.begin(), relations.end(),
-		                        [&](const RelationAcl &entry) { return entry.oid == info.relation_id; });
-		auto row_acl = row == relations.end() ? info.builtin_acl : row->acl;
-		auto columns = row == relations.end() ? vector<ColumnAcl> {} : row->columns;
-		ApplyGrant(info, info.object_owner_id, row_acl, CatalogType::TABLE_ENTRY, &columns);
-		if (!info.builtin_acl.empty() && row_acl == info.builtin_acl && columns.empty()) {
-			if (row != relations.end()) {
-				relations.erase(row);
+		auto &stored = permissions.MutableRows().rows;
+		auto range = KindRange(stored, kind);
+		vector<GrantRow> rows(std::make_move_iterator(range.first), std::make_move_iterator(range.second));
+		auto insert_at = stored.erase(range.first, range.second) - stored.begin();
+		unordered_map<string, idx_t> functions;
+		if (kind == CatalogType::MACRO_ENTRY) {
+			for (idx_t i = 0; i < rows.size(); i++) {
+				functions.emplace(rows[i].name, i);
 			}
-		} else if (row == relations.end()) {
-			relations.push_back(RelationAcl {info.relation_id, std::move(row_acl), std::move(columns)});
-		} else {
-			row->acl = std::move(row_acl);
-			row->columns = std::move(columns);
 		}
-		return;
-	}
-
-	if (!info.functions.empty()) {
-		auto &rows = permissions.MutableRows().functions;
-		unordered_map<string, idx_t> positions;
-		for (idx_t i = 0; i < rows.size(); i++) {
-			positions.emplace(rows[i].name, i);
-		}
-		for (auto &function : info.functions) {
-			auto position = positions.find(function.name);
-			auto row_acl = position == positions.end() ? function.acl : rows[position->second].acl;
-			ApplyGrant(info, info.object_owner_id, row_acl, CatalogType::MACRO_ENTRY, nullptr);
-			if (position == positions.end()) {
-				positions.emplace(function.name, rows.size());
-				rows.push_back(NamedAcl {function.name, std::move(row_acl)});
+		vector<idx_t> dropped;
+		for (auto t = first; t < last; t++) {
+			auto &target = targets[t];
+			optional_idx position;
+			if (kind == CatalogType::MACRO_ENTRY) {
+				auto found = functions.find(target.name);
+				if (found != functions.end()) {
+					position = found->second;
+				}
 			} else {
-				rows[position->second].acl = std::move(row_acl);
+				for (idx_t i = 0; i < rows.size() && !position.IsValid(); i++) {
+					if (rows[i].Is(target.kind, target.oid, target.name)) {
+						position = i;
+					}
+				}
+			}
+			auto row_acl = position.IsValid() ? rows[position.GetIndex()].acl : target.acl;
+			auto row_columns = position.IsValid() ? rows[position.GetIndex()].columns : vector<ColumnAcl> {};
+			ApplyGrant(info, info.object_owner_id, row_acl, target.kind,
+			           target.kind == CatalogType::TABLE_ENTRY ? &row_columns : nullptr);
+			bool restates_default = false;
+			if (target.kind == CatalogType::PARAMETER_ENTRY) {
+				restates_default =
+				    row_acl.empty() || row_acl == Permissions::AclDefault(target.kind, info.object_owner_id);
+			} else if (target.kind == CatalogType::TABLE_ENTRY || target.kind == CatalogType::SCHEMA_ENTRY) {
+				restates_default =
+				    !target.acl.empty() && row_columns.empty() &&
+				    std::is_permutation(row_acl.begin(), row_acl.end(), target.acl.begin(), target.acl.end());
+			}
+			if (restates_default) {
+				if (position.IsValid()) {
+					dropped.push_back(position.GetIndex());
+				}
+			} else if (position.IsValid()) {
+				rows[position.GetIndex()].acl = std::move(row_acl);
+				rows[position.GetIndex()].columns = std::move(row_columns);
+			} else {
+				if (target.kind == CatalogType::MACRO_ENTRY) {
+					functions.emplace(target.name, rows.size());
+				}
+				rows.push_back(
+				    GrantRow {target.kind, target.oid, target.name, std::move(row_acl), std::move(row_columns)});
 			}
 		}
-		return;
-	}
-
-	if (info.type_id) {
-		auto &rows = permissions.MutableRows().types;
-		auto row =
-		    std::find_if(rows.begin(), rows.end(), [&](const ObjectAcl &entry) { return entry.oid == info.type_id; });
-		auto row_acl = row == rows.end() ? info.builtin_acl : row->acl;
-		ApplyGrant(info, info.object_owner_id, row_acl, CatalogType::TYPE_ENTRY, nullptr);
-		if (row == rows.end()) {
-			rows.push_back(ObjectAcl {info.type_id, std::move(row_acl)});
-		} else {
-			row->acl = std::move(row_acl);
+		std::sort(dropped.rbegin(), dropped.rend());
+		for (auto index : dropped) {
+			rows.erase(rows.begin() + NumericCast<int64_t>(index));
 		}
-		return;
+		stored.insert(stored.begin() + insert_at, std::make_move_iterator(rows.begin()),
+		              std::make_move_iterator(rows.end()));
+		first = last;
 	}
-
-	if (info.schema_id) {
-		auto &schemas = permissions.MutableRows().schemas;
-		auto row = std::find_if(schemas.begin(), schemas.end(),
-		                        [&](const ObjectAcl &entry) { return entry.oid == info.schema_id; });
-		auto row_acl = row == schemas.end() ? info.builtin_acl : row->acl;
-		ApplyGrant(info, info.object_owner_id, row_acl, CatalogType::SCHEMA_ENTRY, nullptr);
-		if (!info.builtin_acl.empty() &&
-		    std::is_permutation(row_acl.begin(), row_acl.end(), info.builtin_acl.begin(), info.builtin_acl.end())) {
-			if (row != schemas.end()) {
-				schemas.erase(row);
-			}
-		} else if (row == schemas.end()) {
-			schemas.push_back(ObjectAcl {info.schema_id, std::move(row_acl)});
-		} else {
-			row->acl = std::move(row_acl);
-		}
-		return;
-	}
-
-	if (!info.parameter.empty()) {
-		auto &rows = permissions.MutableRows().parameters;
-		auto row = std::find_if(rows.begin(), rows.end(), [&](const NamedAcl &entry) {
-			return StringUtil::CIEquals(entry.name, info.parameter);
-		});
-		auto row_acl = row == rows.end() ? vector<AclItem> {} : row->acl;
-		ApplyGrant(info, info.object_owner_id, row_acl, CatalogType::PARAMETER_ENTRY, nullptr);
-		if (row_acl.empty() || row_acl == Permissions::AclDefault(CatalogType::PARAMETER_ENTRY, info.object_owner_id)) {
-			if (row != rows.end()) {
-				rows.erase(row);
-			}
-		} else if (row == rows.end()) {
-			rows.push_back(NamedAcl {info.parameter, std::move(row_acl)});
-		} else {
-			row->acl = std::move(row_acl);
-		}
+	if (!targets.empty()) {
 		return;
 	}
 
@@ -747,21 +715,23 @@ shared_ptr<const SecuritySnapshot> SecuritySnapshot::Build(Catalog &cluster, Cat
 	unordered_map<string, unordered_map<idx_t, Permissions>> types;
 	auto &config = DBConfig::GetConfig(cluster.GetDatabase());
 	cluster.ScanTopLevelEntries(transaction, CatalogType::DATABASE_ENTRY, [&](CatalogEntry &entry) {
-		database_owners.emplace(entry.name.GetIdentifierName(), entry.permissions.owner);
-		auto &rows = entry.permissions.Rows();
-		for (auto &row : rows.relations) {
-			relations[entry.name.GetIdentifierName()][row.oid] =
-			    Relation {Permissions {config.bootstrap_role, row.acl}, row.columns};
-		}
-		for (auto &row : rows.schemas) {
-			relations[entry.name.GetIdentifierName()][row.oid] =
-			    Relation {Permissions {config.bootstrap_role, row.acl}, {}};
-		}
-		for (auto &row : rows.functions) {
-			functions[entry.name.GetIdentifierName()][row.name] = Permissions {config.bootstrap_role, row.acl};
-		}
-		for (auto &row : rows.types) {
-			types[entry.name.GetIdentifierName()][row.oid] = Permissions {config.bootstrap_role, row.acl};
+		auto &database = entry.name.GetIdentifierName();
+		database_owners.emplace(database, entry.permissions.owner);
+		for (auto &row : entry.permissions.Rows().rows) {
+			switch (row.kind) {
+			case CatalogType::TABLE_ENTRY:
+			case CatalogType::SCHEMA_ENTRY:
+				relations[database][row.oid] = Relation {Permissions {config.bootstrap_role, row.acl}, row.columns};
+				break;
+			case CatalogType::MACRO_ENTRY:
+				functions[database][row.name] = Permissions {config.bootstrap_role, row.acl};
+				break;
+			case CatalogType::TYPE_ENTRY:
+				types[database][row.oid] = Permissions {config.bootstrap_role, row.acl};
+				break;
+			default:
+				break;
+			}
 		}
 	});
 	return make_shared_ptr<const SecuritySnapshot>(std::move(nodes), std::move(database_owners),
@@ -992,9 +962,9 @@ vector<AclItem> BuiltinFunctionAcl(const CatalogEntry &function, idx_t owner) {
 	return {AclItem {owner, owner, AclMode::Execute, AclMode::NoRights}};
 }
 
-vector<NamedAcl> BuiltinFunctionRows(ClientContext &context, SchemaCatalogEntry &schema) {
+vector<GrantRow> BuiltinFunctionRows(ClientContext &context, SchemaCatalogEntry &schema) {
 	auto &config = DBConfig::GetConfig(context);
-	vector<NamedAcl> rows;
+	vector<GrantRow> rows;
 	unordered_set<string> keys;
 	const auto add = [&](CatalogEntry &entry) {
 		if (!entry.internal) {
@@ -1004,7 +974,8 @@ vector<NamedAcl> BuiltinFunctionRows(ClientContext &context, SchemaCatalogEntry 
 		for (idx_t overload = 0; overload < overloads; overload++) {
 			auto key = config.builtin_function_key(entry, overload);
 			if (!key.empty() && keys.insert(key).second) {
-				rows.push_back(NamedAcl {std::move(key), BuiltinFunctionAcl(entry, config.bootstrap_role)});
+				rows.push_back(GrantRow {
+				    CatalogType::MACRO_ENTRY, 0, std::move(key), BuiltinFunctionAcl(entry, config.bootstrap_role), {}});
 			}
 		}
 	};
@@ -1226,40 +1197,9 @@ static bool AnyRoleReference(const CatalogEntry &entry, F &&named) {
 			return true;
 		}
 	}
-	auto &rows = permissions.Rows();
-	for (auto &row : rows.foreign_data_wrappers) {
-		if (any_acl(row.acl)) {
-			return true;
-		}
-	}
-	for (auto &row : rows.parameters) {
-		if (any_acl(row.acl)) {
-			return true;
-		}
-	}
-	for (auto &row : rows.languages) {
-		if (any_acl(row.acl)) {
-			return true;
-		}
-	}
-	for (auto &row : rows.relations) {
+	for (auto &row : permissions.Rows().rows) {
 		if (any_acl(row.acl) || std::any_of(row.columns.begin(), row.columns.end(),
 		                                    [&](const ColumnAcl &column) { return any_acl(column.acl); })) {
-			return true;
-		}
-	}
-	for (auto &row : rows.schemas) {
-		if (any_acl(row.acl)) {
-			return true;
-		}
-	}
-	for (auto &row : rows.functions) {
-		if (any_acl(row.acl)) {
-			return true;
-		}
-	}
-	for (auto &row : rows.types) {
-		if (any_acl(row.acl)) {
 			return true;
 		}
 	}
@@ -1554,7 +1494,7 @@ void RequireForeignDataWrapperUsage(ClientContext &context, const RoleAccess &ro
 		return;
 	}
 	auto entry = ClusterEntry(context, CatalogType::DATABASE_ENTRY, database);
-	if (!entry || !Allows(role, entry->permissions.ForeignDataWrapperAcl(found.oid),
+	if (!entry || !Allows(role, entry->permissions.RowAcl(CatalogType::FOREIGN_DATA_WRAPPER_ENTRY, found.oid),
 	                      CatalogType::FOREIGN_DATA_WRAPPER_ENTRY, AclMode::Usage, false)) {
 		ThrowPermissionDenied(CatalogType::FOREIGN_DATA_WRAPPER_ENTRY, wrapper);
 	}
@@ -1567,7 +1507,7 @@ void RequireLanguageUsage(ClientContext &context, const RoleAccess &role, const 
 	}
 	auto &found = DBConfig::GetConfig(context).GetLanguage(language);
 	auto entry = ClusterEntry(context, CatalogType::DATABASE_ENTRY, database);
-	auto acl = entry ? entry->permissions.LanguageAcl(found.oid) : std::span<const AclItem>();
+	auto acl = entry ? entry->permissions.RowAcl(CatalogType::LANGUAGE_ENTRY, found.oid) : std::span<const AclItem>();
 	if (!found.trusted ||
 	    (!role.Owns(found.owner) && !Allows(role, acl, CatalogType::LANGUAGE_ENTRY, AclMode::Usage, false))) {
 		ThrowPermissionDenied(CatalogType::LANGUAGE_ENTRY, language);

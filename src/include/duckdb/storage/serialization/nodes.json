@@ -784,41 +784,45 @@
     "members": [
       {
         "id": 100,
-        "name": "foreign_data_wrappers",
-        "type": "vector<ObjectAcl>"
-      },
-      {
-        "id": 101,
-        "name": "parameters",
-        "type": "vector<NamedAcl>"
-      },
-      {
-        "id": 102,
-        "name": "languages",
-        "type": "vector<ObjectAcl>"
-      },
-      {
-        "id": 103,
-        "name": "relations",
-        "type": "vector<RelationAcl>"
-      },
-      {
-        "id": 104,
-        "name": "schemas",
-        "type": "vector<ObjectAcl>"
-      },
-      {
-        "id": 105,
-        "name": "functions",
-        "type": "vector<NamedAcl>"
-      },
-      {
-        "id": 106,
-        "name": "types",
-        "type": "vector<ObjectAcl>"
+        "name": "rows",
+        "type": "vector<GrantRow>"
       }
     ],
     "pointer_type": "shared_ptr"
+  },
+  {
+    "class": "GrantRow",
+    "includes": [
+      "duckdb/catalog/permissions.hpp"
+    ],
+    "members": [
+      {
+        "id": 100,
+        "name": "kind",
+        "type": "CatalogType"
+      },
+      {
+        "id": 101,
+        "name": "oid",
+        "type": "idx_t"
+      },
+      {
+        "id": 102,
+        "name": "name",
+        "type": "string"
+      },
+      {
+        "id": 103,
+        "name": "acl",
+        "type": "vector<AclItem>"
+      },
+      {
+        "id": 104,
+        "name": "columns",
+        "type": "vector<ColumnAcl>"
+      }
+    ],
+    "pointer_type": "none"
   },
   {
     "class": "ColumnAcl",
@@ -830,68 +834,6 @@
         "id": 100,
         "name": "column",
         "type": "Identifier"
-      },
-      {
-        "id": 101,
-        "name": "acl",
-        "type": "vector<AclItem>"
-      }
-    ],
-    "pointer_type": "none"
-  },
-  {
-    "class": "RelationAcl",
-    "includes": [
-      "duckdb/catalog/permissions.hpp"
-    ],
-    "members": [
-      {
-        "id": 100,
-        "name": "oid",
-        "type": "idx_t"
-      },
-      {
-        "id": 101,
-        "name": "acl",
-        "type": "vector<AclItem>"
-      },
-      {
-        "id": 102,
-        "name": "columns",
-        "type": "vector<ColumnAcl>"
-      }
-    ],
-    "pointer_type": "none"
-  },
-  {
-    "class": "ObjectAcl",
-    "includes": [
-      "duckdb/catalog/permissions.hpp"
-    ],
-    "members": [
-      {
-        "id": 100,
-        "name": "oid",
-        "type": "idx_t"
-      },
-      {
-        "id": 101,
-        "name": "acl",
-        "type": "vector<AclItem>"
-      }
-    ],
-    "pointer_type": "none"
-  },
-  {
-    "class": "NamedAcl",
-    "includes": [
-      "duckdb/catalog/permissions.hpp"
-    ],
-    "members": [
-      {
-        "id": 100,
-        "name": "name",
-        "type": "string"
       },
       {
         "id": 101,

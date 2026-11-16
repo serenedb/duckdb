@@ -148,7 +148,8 @@ static AclMode HeldParameterPrivileges(ClientContext &context, const Identifier 
 	if (!holder) {
 		return AclMode::NoRights;
 	}
-	return context.CurrentRole().HeldModes(holder->permissions.ParameterAcl(name.GetIdentifierName()));
+	return context.CurrentRole().HeldModes(
+	    holder->permissions.RowAcl(CatalogType::PARAMETER_ENTRY, 0, name.GetIdentifierName()));
 }
 
 bool Settings::MayChange(ClientContext &context, const Identifier &name, const SettingAccess &access, SetScope scope) {
