@@ -1092,19 +1092,17 @@ void ClientContext::ResolveCurrentRole() {
 	}
 	current_role = security ? security->Access(current_role_id) : nullptr;
 	if (!current_role) {
-		unknown_role = RoleAccess();
-		unknown_role.role = current_role_id;
+		unknown_role = RoleAccess {.role = current_role_id};
 		current_role = &unknown_role;
 	}
 }
 
 RoleAccess ClientContext::AccessOf(idx_t role) const {
-	if (auto access = security ? security->Access(role) : nullptr) {
-		return *access;
-	}
-	RoleAccess missing;
-	missing.role = role;
-	return missing;
+	return security ? security->AccessOf(role) : RoleAccess {.role = role};
+}
+
+RoleAccess ClientContext::CallerAccess(optional_idx caller) const {
+	return caller.IsValid() ? AccessOf(caller.GetIndex()) : CurrentRole();
 }
 
 void ClientContext::SetCurrentRole(idx_t role) {

@@ -226,6 +226,7 @@ public:
 		return *current_role;
 	}
 	DUCKDB_API RoleAccess AccessOf(idx_t role) const;
+	DUCKDB_API RoleAccess CallerAccess(optional_idx caller) const;
 	DUCKDB_API void SetCurrentRole(idx_t role);
 	DUCKDB_API void InstallSecurity(shared_ptr<const SecuritySnapshot> snapshot);
 	DUCKDB_API void RefreshSecurity();

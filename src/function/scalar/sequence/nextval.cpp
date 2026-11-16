@@ -88,7 +88,7 @@ unique_ptr<FunctionLocalState> NextValLocalFunction(ExpressionState &state, cons
 	auto &context = state.GetContext();
 	auto &info = bind_data->Cast<NextvalBindData>();
 	auto &sequence = info.sequence;
-	const auto role = info.role.IsValid() ? context.AccessOf(info.role.GetIndex()) : context.CurrentRole();
+	const auto role = context.CallerAccess(info.role);
 	if (!IsUnowned(sequence)) {
 		RequireEntryPrivilege(role, sequence, OP::MODES);
 	}
@@ -183,9 +183,7 @@ unique_ptr<FunctionData> NextValBind(BindScalarFunctionInput &input) {
 	}
 	auto &binder = input.GetBinder();
 	auto &seq = BindSequence(binder, Identifier(seqname.ToString()));
-	auto &caller = binder.CurrentRole();
-	return make_uniq<NextvalBindData>(seq, &caller != &binder.context.CurrentRole() ? optional_idx(caller.role)
-	                                                                                : optional_idx());
+	return make_uniq<NextvalBindData>(seq, binder.CallerRole());
 }
 
 void Serialize(Serializer &serializer, const optional_ptr<FunctionData> bind_data, const BoundScalarFunction &) {

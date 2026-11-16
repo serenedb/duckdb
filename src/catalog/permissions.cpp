@@ -768,6 +768,11 @@ optional_ptr<const RoleAccess> SecuritySnapshot::Access(idx_t role) const {
 	return &*it;
 }
 
+RoleAccess SecuritySnapshot::AccessOf(idx_t role) const {
+	auto access = Access(role);
+	return access ? *access : RoleAccess {.role = role};
+}
+
 optional_ptr<const SecuritySnapshot::Node> SecuritySnapshot::Find(idx_t role) const {
 	auto it = nodes.find(role);
 	return it == nodes.end() ? nullptr : &it->second;

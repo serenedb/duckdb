@@ -344,6 +344,11 @@ const RoleAccess &Binder::CurrentRole() const {
 	return current_role ? *current_role : context.CurrentRole();
 }
 
+optional_idx Binder::CallerRole() const {
+	auto &caller = CurrentRole();
+	return &caller != &context.CurrentRole() ? optional_idx(caller.role) : optional_idx();
+}
+
 const RoleAccess &Binder::AccessOf(idx_t role) {
 	auto entry = global_binder_state->role_access.try_emplace(role);
 	if (entry.second) {
@@ -418,6 +423,27 @@ void Binder::BindAsFunctionBody(const SelectStatement &statement) {
 	if (statement.function_config) {
 		UseFunctionSearchPath(*statement.function_config);
 	}
+}
+
+BinderScope::BinderScope(Binder &binder_p)
+    : binder(binder_p), check_as(binder.check_as), current_role(binder.current_role),
+      lookups(binder.EntryRetriever().GetCheckAs()), security_definer_body(binder.security_definer_body) {
+}
+
+BinderScope::~BinderScope() {
+	if (caller_path) {
+		binder.EntryRetriever().SwapSearchPath(*caller_path);
+	}
+	binder.check_as = check_as;
+	binder.current_role = current_role;
+	binder.EntryRetriever().SetCheckAs(lookups);
+	binder.security_definer_body = security_definer_body;
+}
+
+void BinderScope::UseFunctionSearchPath(const vector<string> &config) {
+	caller_path = make_uniq<CatalogEntryRetriever>(binder.context);
+	binder.EntryRetriever().SwapSearchPath(*caller_path);
+	binder.UseFunctionSearchPath(config);
 }
 
 void Binder::UseFunctionSearchPath(const vector<string> &config) {

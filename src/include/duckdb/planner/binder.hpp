@@ -479,6 +479,7 @@ public:
 	bool security_definer_body = false;
 	const RoleAccess &CheckAs() const;
 	const RoleAccess &CurrentRole() const;
+	optional_idx CallerRole() const;
 	const RoleAccess &AccessOf(idx_t role);
 	const RoleAccess &FunctionBodyRole(optional_idx owner);
 	void BindAsFunctionBody(const RoleAccess &role);
@@ -926,6 +927,24 @@ private:
 
 private:
 	Binder(ClientContext &context, shared_ptr<Binder> parent, BinderType binder_type);
+};
+
+class BinderScope {
+public:
+	explicit BinderScope(Binder &binder);
+	~BinderScope();
+	BinderScope(const BinderScope &) = delete;
+	BinderScope &operator=(const BinderScope &) = delete;
+
+	void UseFunctionSearchPath(const vector<string> &config);
+
+private:
+	Binder &binder;
+	optional_ptr<const RoleAccess> check_as;
+	optional_ptr<const RoleAccess> current_role;
+	optional_ptr<const RoleAccess> lookups;
+	bool security_definer_body;
+	unique_ptr<CatalogEntryRetriever> caller_path;
 };
 
 } // namespace duckdb

@@ -1,5 +1,3 @@
-#include <absl/cleanup/cleanup.h>
-
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/catalog/catalog_entry/trigger_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/macro_catalog_entry.hpp"
@@ -603,24 +601,14 @@ SchemaCatalogEntry &Binder::BindCreateFunctionInfo(CreateInfo &info) {
 	// try to bind each of the included functions
 	vector_of_logical_type_set_t type_overloads;
 	auto &base = info.Cast<CreateMacroInfo>();
-	absl::Cleanup restore_roles = [&, creator_check_as = check_as, creator_role = current_role] {
-		check_as = creator_check_as;
-		current_role = creator_role;
-	};
+	auto creator = make_uniq<BinderScope>(*this);
 	BindUnchecked();
 	for (auto &function : base.macros) {
 		Settings::ResolveCurrentValues(context, function->config);
-		unique_ptr<CatalogEntryRetriever> creator_path;
+		BinderScope body(*this);
 		if (!function->config.empty()) {
-			creator_path = make_uniq<CatalogEntryRetriever>(context);
-			entry_retriever.SwapSearchPath(*creator_path);
-			UseFunctionSearchPath(function->config);
+			body.UseFunctionSearchPath(function->config);
 		}
-		absl::Cleanup restore_path = [&] {
-			if (creator_path) {
-				entry_retriever.SwapSearchPath(*creator_path);
-			}
-		};
 		if (!store_types) {
 			for (const auto &type : function->types) {
 				if (type.id() != LogicalTypeId::UNKNOWN) {
@@ -954,7 +942,7 @@ SchemaCatalogEntry &Binder::BindCreateFunctionInfo(CreateInfo &info) {
 			error.Throw();
 		}
 	}
-	std::move(restore_roles).Invoke();
+	creator.reset();
 
 	auto &schema = BindCreateSchema(info);
 	if (auto &role = CheckAs(); !role.IsSystem()) {

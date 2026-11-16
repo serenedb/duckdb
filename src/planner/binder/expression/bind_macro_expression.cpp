@@ -1797,27 +1797,10 @@ BindResult ExpressionBinder::BindMacro(FunctionExpression &function, ScalarMacro
 	if (probed) {
 		return BindResult(make_uniq<BoundReferenceExpression>(macro_def.ResultType(), 0));
 	}
-	unique_ptr<CatalogEntryRetriever> caller_path;
+	BinderScope body(binder);
 	if (body_search_path) {
-		caller_path = make_uniq<CatalogEntryRetriever>(context);
-		binder.EntryRetriever().SwapSearchPath(*caller_path);
-		binder.UseFunctionSearchPath(macro_def.config);
+		body.UseFunctionSearchPath(macro_def.config);
 	}
-	absl::Cleanup restore_path = [&] {
-		if (caller_path) {
-			binder.EntryRetriever().SwapSearchPath(*caller_path);
-		}
-	};
-	absl::Cleanup restore_role = [&, check_as = binder.check_as, current_role = binder.current_role,
-	                              lookups = binder.EntryRetriever().GetCheckAs(),
-	                              security_definer_body = binder.security_definer_body] {
-		if (body_role) {
-			binder.check_as = check_as;
-			binder.current_role = current_role;
-			binder.EntryRetriever().SetCheckAs(lookups);
-			binder.security_definer_body = security_definer_body;
-		}
-	};
 	if (body_role) {
 		binder.BindAsFunctionBody(*body_role);
 		binder.security_definer_body |= macro_def.security_definer;
