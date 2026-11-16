@@ -377,7 +377,7 @@ SchemaCatalogEntry &Binder::BindCreateSchema(CreateInfo &info) {
 	}
 	RequireUserSchema(schema, info.GetQualifiedName().Name());
 	if (!CheckAs().IsSystem()) {
-		AssignOwner(context, info.permissions, schema.ParentCatalog(), Permissions::AclClass(info.type), &schema,
+		AssignOwner(context, info.permissions, schema.ParentCatalog(), ObjectKindOf(info.type).acl_class, &schema,
 		            CreationOwner(context, info, CheckAs()));
 	}
 	return schema;

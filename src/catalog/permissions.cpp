@@ -54,7 +54,7 @@ AclMode FindPrivilege(std::string_view keyword) {
 }
 
 bool Permissions::TryParsePrivilege(std::string_view keyword, CatalogType acl_class, AclMode &result) {
-	const auto allowed = AllPrivileges(acl_class);
+	const auto allowed = ObjectKindOf(acl_class).privileges;
 	if (StringUtil::CIEquals(keyword, "ALL")) {
 		result = allowed;
 		return true;
@@ -65,15 +65,14 @@ bool Permissions::TryParsePrivilege(std::string_view keyword, CatalogType acl_cl
 
 vector<AclItem> Permissions::AclDefault(CatalogType acl_class, idx_t owner) {
 	vector<AclItem> acl;
-	const auto owner_privs = AllPrivileges(acl_class);
-	if (owner_privs == AclMode::NoRights) {
+	const auto kind = ObjectKindOf(acl_class);
+	if (kind.privileges == AclMode::NoRights) {
 		return acl;
 	}
-	const auto public_privs = PublicPrivileges(acl_class);
-	if (public_privs != AclMode::NoRights) {
-		acl.push_back(AclItem {ACL_ID_PUBLIC, owner, public_privs, AclMode::NoRights});
+	if (kind.public_privileges != AclMode::NoRights) {
+		acl.push_back(AclItem {ACL_ID_PUBLIC, owner, kind.public_privileges, AclMode::NoRights});
 	}
-	acl.push_back(AclItem {owner, owner, owner_privs, AclMode::NoRights});
+	acl.push_back(AclItem {owner, owner, kind.privileges, AclMode::NoRights});
 	return acl;
 }
 
@@ -235,7 +234,7 @@ static void ApplyGrant(const AlterPermissionsInfo &info, idx_t owner, vector<Acl
 	auto stored = acl.empty() ? Permissions::AclDefault(acl_class, owner) : acl;
 	idx_t grantor = owner;
 	bool is_owner = true;
-	AclMode grantable = Permissions::AllPrivileges(acl_class);
+	AclMode grantable = ObjectKindOf(acl_class).privileges;
 	if (!info.grantors.empty() && std::find(info.grantors.begin(), info.grantors.end(), owner) == info.grantors.end()) {
 		grantor = info.grantors[0];
 		is_owner = false;
@@ -331,7 +330,7 @@ void AlterPermissionsInfo::ApplyTo(Permissions &permissions, CatalogType entry_t
 		const auto baseline = info.default_scope == 0 ? Permissions::AclDefault(info.default_objtype, info.target_role)
 		                                              : vector<AclItem> {};
 		auto row_acl = row == defaults.end() ? baseline : row->acl;
-		Apply(row_acl, info.target_role, Permissions::AllPrivileges(info.default_objtype), info.privileges, info);
+		Apply(row_acl, info.target_role, ObjectKindOf(info.default_objtype).privileges, info.privileges, info);
 		if (std::is_permutation(row_acl.begin(), row_acl.end(), baseline.begin(), baseline.end())) {
 			if (row != defaults.end()) {
 				defaults.erase(row);
@@ -418,7 +417,7 @@ void AlterPermissionsInfo::ApplyTo(Permissions &permissions, CatalogType entry_t
 		return;
 	}
 
-	ApplyGrant(info, owner, acl, Permissions::AclClass(entry_type), columns);
+	ApplyGrant(info, owner, acl, ObjectKindOf(entry_type).acl_class, columns);
 }
 
 void AlterPermissionsInfo::ApplyTo(Permissions &permissions, CatalogType entry_type, ColumnList &columns) const {
@@ -552,7 +551,7 @@ static bool Allows(const RoleAccess &access, std::span<const AclItem> stored, Ca
 	};
 	AclMode have = CapabilityModes(access, type);
 	if (stored.empty()) {
-		return done(have | Permissions::PublicPrivileges(type));
+		return done(have | ObjectKindOf(type).public_privileges);
 	}
 	if (done(have)) {
 		return true;
@@ -1120,13 +1119,16 @@ bool EntryVisible(ClientContext &context, const RoleAccess &role, CatalogEntry &
 	if (entry.internal || IsUnowned(entry)) {
 		return true;
 	}
-	auto &permissions = entry.permissions;
+	const auto kind = ObjectKindOf(entry.type);
 	switch (entry.type) {
 	case CatalogType::SCHEMA_ENTRY:
-		return role.CanAny(entry.type, permissions, AclMode::Usage | AclMode::Create);
+	case CatalogType::SEQUENCE_ENTRY:
+	case CatalogType::TYPE_ENTRY:
+	case CatalogType::JOB_ENTRY:
+		return role.CanAny(kind.acl_class, entry.permissions, kind.privileges);
 	case CatalogType::TABLE_ENTRY:
 	case CatalogType::VIEW_ENTRY: {
-		if (role.CanAny(CatalogType::TABLE_ENTRY, permissions, Permissions::AllPrivileges(CatalogType::TABLE_ENTRY))) {
+		if (role.CanAny(kind.acl_class, entry.permissions, kind.privileges)) {
 			return true;
 		}
 		const auto grants = [&](std::span<const AclItem> acl) {
@@ -1141,19 +1143,13 @@ bool EntryVisible(ClientContext &context, const RoleAccess &role, CatalogEntry &
 		return std::any_of(columns.begin(), columns.end(),
 		                   [&](const ColumnDefinition &column) { return grants(column.Acl()); });
 	}
-	case CatalogType::SEQUENCE_ENTRY:
-		return role.CanAny(entry.type, permissions, AclMode::Usage | AclMode::Select | AclMode::Update);
 	case CatalogType::MACRO_ENTRY:
 	case CatalogType::TABLE_MACRO_ENTRY: {
 		auto &macro = entry.Cast<MacroCatalogEntry>();
 		return std::any_of(macro.macros.begin(), macro.macros.end(), [&](const unique_ptr<MacroFunction> &overload) {
-			return role.Can(entry.type, macro.OverloadPermissions(*overload), AclMode::Execute);
+			return role.CanAny(kind.acl_class, macro.OverloadPermissions(*overload), kind.privileges);
 		});
 	}
-	case CatalogType::TYPE_ENTRY:
-		return role.Can(entry.type, permissions, AclMode::Usage);
-	case CatalogType::JOB_ENTRY:
-		return role.Owns(permissions.owner);
 	case CatalogType::INDEX_ENTRY: {
 		auto &index = entry.Cast<IndexCatalogEntry>();
 		auto relation = index.GetRelation(index.ParentCatalog().GetCatalogTransaction(context));
@@ -1275,7 +1271,7 @@ void ThrowPermissionDenied(const CatalogEntry &entry) {
 }
 
 void RequireEntryPrivilege(const RoleAccess &role, const CatalogEntry &entry, AclMode any) {
-	if (!role.CanAny(Permissions::AclClass(entry.type), entry.permissions, any)) {
+	if (!role.CanAny(ObjectKindOf(entry.type).acl_class, entry.permissions, any)) {
 		ThrowPermissionDenied(entry);
 	}
 }
@@ -1361,20 +1357,21 @@ void RequireUse(ClientContext &context, const RoleAccess &role, CatalogEntry &en
 		return;
 	case EntryUse::RENAME:
 		RequireOwner(context, role, entry, overload);
-		if (entry.type == CatalogType::SCHEMA_ENTRY) {
+		if (ObjectKindOf(entry.type).container == ObjectContainer::DATABASE) {
 			RequireDatabasePrivilege(context, role, entry.ParentCatalog().GetName(), AclMode::Create);
 		} else {
 			RequireSchemaCreate(context, role, entry.ParentSchema(context));
 		}
 		return;
-	case EntryUse::DROP:
-		if (entry.type == CatalogType::SCHEMA_ENTRY || entry.type == CatalogType::DATABASE_ENTRY ||
-		    entry.type == CatalogType::FOREIGN_SERVER_ENTRY || entry.type == CatalogType::SUBSCRIPTION_ENTRY) {
+	case EntryUse::DROP: {
+		const auto container = ObjectKindOf(entry.type).container;
+		if (container == ObjectContainer::DATABASE || container == ObjectContainer::CLUSTER) {
 			RequireOwner(context, role, entry);
 		} else if (!role.Owns(entry.ParentSchema(context).permissions.owner)) {
 			RequireOwner(context, role, entry, overload);
 		}
 		return;
+	}
 	}
 }
 

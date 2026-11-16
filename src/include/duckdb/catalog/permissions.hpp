@@ -9,6 +9,7 @@
 #pragma once
 
 #include "duckdb/catalog/catalog_transaction.hpp"
+#include "duckdb/catalog/privileges.hpp"
 #include "duckdb/common/constants.hpp"
 #include "duckdb/common/enums/catalog_type.hpp"
 #include "duckdb/common/enums/entry_use.hpp"
@@ -46,69 +47,6 @@ class SchemaCatalogEntry;
 class TableCatalogEntry;
 
 constexpr idx_t ACL_ID_PUBLIC = 0;
-
-enum class AclMode : uint64_t {
-	NoRights = 0x0,
-	Insert = 0x1,
-	Select = 0x2,
-	Update = 0x4,
-	Delete = 0x8,
-	Truncate = 0x10,
-	References = 0x20,
-	Trigger = 0x40,
-	Execute = 0x80,
-	Usage = 0x100,
-	Create = 0x200,
-	CreateTemp = 0x400,
-	Connect = 0x800,
-	Set = 0x1000,
-	AlterSystem = 0x2000,
-	Maintain = 0x4000,
-};
-
-constexpr AclMode operator|(AclMode a, AclMode b) {
-	return static_cast<AclMode>(static_cast<uint64_t>(a) | static_cast<uint64_t>(b));
-}
-constexpr AclMode operator&(AclMode a, AclMode b) {
-	return static_cast<AclMode>(static_cast<uint64_t>(a) & static_cast<uint64_t>(b));
-}
-constexpr AclMode operator~(AclMode a) {
-	return static_cast<AclMode>(~static_cast<uint64_t>(a));
-}
-constexpr AclMode &operator|=(AclMode &a, AclMode b) {
-	a = a | b;
-	return a;
-}
-constexpr AclMode &operator&=(AclMode &a, AclMode b) {
-	a = a & b;
-	return a;
-}
-
-constexpr AclMode ACL_COLUMN_PRIVILEGES = AclMode::Select | AclMode::Insert | AclMode::Update | AclMode::References;
-
-struct AclPrivilege {
-	AclMode mode;
-	char letter;
-	std::string_view keyword;
-};
-
-inline constexpr AclPrivilege ACL_PRIVILEGES[] = {
-    {AclMode::Insert, 'a', "INSERT"},
-    {AclMode::Select, 'r', "SELECT"},
-    {AclMode::Update, 'w', "UPDATE"},
-    {AclMode::Delete, 'd', "DELETE"},
-    {AclMode::Truncate, 'D', "TRUNCATE"},
-    {AclMode::References, 'x', "REFERENCES"},
-    {AclMode::Trigger, 't', "TRIGGER"},
-    {AclMode::Execute, 'X', "EXECUTE"},
-    {AclMode::Usage, 'U', "USAGE"},
-    {AclMode::Create, 'C', "CREATE"},
-    {AclMode::CreateTemp, 'T', "TEMPORARY"},
-    {AclMode::Connect, 'c', "CONNECT"},
-    {AclMode::Set, 's', "SET"},
-    {AclMode::AlterSystem, 'A', "ALTER SYSTEM"},
-    {AclMode::Maintain, 'm', "MAINTAIN"},
-};
 
 DUCKDB_API AclMode FindPrivilege(std::string_view keyword);
 
@@ -242,57 +180,6 @@ struct Permissions {
 	const GrantRows &Rows() const;
 	GrantRows &MutableRows();
 
-	static constexpr CatalogType AclClass(CatalogType entry_type) {
-		switch (entry_type) {
-		case CatalogType::VIEW_ENTRY:
-			return CatalogType::TABLE_ENTRY;
-		case CatalogType::TABLE_MACRO_ENTRY:
-			return CatalogType::MACRO_ENTRY;
-		default:
-			return entry_type;
-		}
-	}
-	static constexpr AclMode AllPrivileges(CatalogType acl_class) {
-		switch (acl_class) {
-		case CatalogType::TABLE_ENTRY:
-			return AclMode::Select | AclMode::Insert | AclMode::Update | AclMode::Delete | AclMode::Truncate |
-			       AclMode::References | AclMode::Trigger | AclMode::Maintain;
-		case CatalogType::SEQUENCE_ENTRY:
-			return AclMode::Select | AclMode::Update | AclMode::Usage;
-		case CatalogType::DATABASE_ENTRY:
-			return AclMode::Create | AclMode::CreateTemp | AclMode::Connect;
-		case CatalogType::SCHEMA_ENTRY:
-			return AclMode::Usage | AclMode::Create;
-		case CatalogType::MACRO_ENTRY:
-		case CatalogType::TABLE_MACRO_ENTRY:
-			return AclMode::Execute;
-		case CatalogType::TYPE_ENTRY:
-		case CatalogType::FOREIGN_SERVER_ENTRY:
-		case CatalogType::FOREIGN_DATA_WRAPPER_ENTRY:
-		case CatalogType::LANGUAGE_ENTRY:
-			return AclMode::Usage;
-		case CatalogType::TABLESPACE_ENTRY:
-			return AclMode::Create;
-		case CatalogType::PARAMETER_ENTRY:
-			return AclMode::Set | AclMode::AlterSystem;
-		default:
-			return AclMode::NoRights;
-		}
-	}
-	static constexpr AclMode PublicPrivileges(CatalogType acl_class) {
-		switch (acl_class) {
-		case CatalogType::DATABASE_ENTRY:
-			return AclMode::Connect | AclMode::CreateTemp;
-		case CatalogType::MACRO_ENTRY:
-		case CatalogType::TABLE_MACRO_ENTRY:
-			return AclMode::Execute;
-		case CatalogType::TYPE_ENTRY:
-		case CatalogType::LANGUAGE_ENTRY:
-			return AclMode::Usage;
-		default:
-			return AclMode::NoRights;
-		}
-	}
 	static bool TryParsePrivilege(std::string_view keyword, CatalogType acl_class, AclMode &result);
 	static vector<AclItem> AclDefault(CatalogType acl_class, idx_t owner);
 
