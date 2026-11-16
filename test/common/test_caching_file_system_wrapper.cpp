@@ -36,6 +36,9 @@ public:
 		}
 		LocalFileSystem::Read(handle, buffer, nr_bytes, location);
 	}
+	void ReadScattered(FileHandle &handle, std::span<const FileReadTarget> targets, idx_t location) override {
+		FileSystem::ReadScattered(handle, targets, location);
+	}
 
 	void SetShouldFail(bool value) DUCKDB_EXCLUDES(mu) {
 		const annotated_lock_guard<duckdb::annotated_mutex> lock(mu);
@@ -70,6 +73,9 @@ public:
 		const annotated_lock_guard<annotated_mutex> lock(read_calls_mutex);
 		read_calls.push_back({handle.GetPath(), location, UnsafeNumericCast<idx_t>(nr_bytes)});
 		LocalFileSystem::Read(handle, buffer, nr_bytes, location);
+	}
+	void ReadScattered(FileHandle &handle, std::span<const FileReadTarget> targets, idx_t location) override {
+		FileSystem::ReadScattered(handle, targets, location);
 	}
 
 	void Clear() {

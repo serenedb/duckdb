@@ -120,6 +120,125 @@ struct FileMetadata {
 	unordered_map<string, Value> extended_file_info;
 };
 
+//! Bytes after the end of a file written from start to end, which its writer fills in place
+struct FileWriteWindow {
+	data_ptr_t data = nullptr;
+	idx_t size = 0;
+};
+
+//! Writes a new file from start to end in place: the bytes of the file are written straight into the windows it
+//! gives. A writer destroyed before it closes aborts
+class FileWriter {
+public:
+	DUCKDB_API virtual ~FileWriter();
+
+	//! The memory the next bytes of the file go to, at least one byte
+	DUCKDB_API virtual FileWriteWindow Window() = 0;
+	//! Appends the first [nr_bytes] bytes of the last window, whose CRC32C is [crc32c], to the file
+	DUCKDB_API virtual void Commit(idx_t nr_bytes, uint32_t crc32c) = 0;
+	//! Appends [nr_bytes] bytes of the caller's, after a commit, when the writer takes them that way at least as
+	//! cheaply as through its windows. Returns false, having written nothing, when they have to go through a window
+	DUCKDB_API virtual bool Append(const_data_ptr_t data, idx_t nr_bytes) = 0;
+	//! Finishes the file at the bytes committed
+	DUCKDB_API virtual void Close() = 0;
+	//! Drops the file and the bytes committed
+	DUCKDB_API virtual void Abort() noexcept = 0;
+};
+
+class FileWriteHold {
+public:
+	DUCKDB_API virtual ~FileWriteHold();
+};
+
+//! A buffer one piece of a scattered read fills, or the bytes it skips when it has no data
+struct FileReadTarget {
+	data_ptr_t data = nullptr;
+	idx_t size = 0;
+
+	//! The bytes a scattered read into [targets] reads
+	static idx_t TotalSize(std::span<const FileReadTarget> targets) {
+		idx_t size = 0;
+		for (auto &target : targets) {
+			size += target.size;
+		}
+		return size;
+	}
+};
+
+//! Told, while a scattered read goes on, how many of its targets hold their bytes for good: a reader of the first
+//! bytes of a long read does not wait for its last ones
+class FileReadProgress {
+public:
+	virtual ~FileReadProgress() = default;
+	//! The first [count] targets are filled
+	virtual void Filled(idx_t count) = 0;
+};
+
+class FileReadTargetWriter {
+public:
+	explicit FileReadTargetWriter(std::span<const FileReadTarget> targets_p,
+	                              optional_ptr<FileReadProgress> progress_p = nullptr)
+	    : targets(targets_p), capacity(FileReadTarget::TotalSize(targets_p)), progress(progress_p) {
+	}
+
+	idx_t Capacity() const {
+		return capacity;
+	}
+	idx_t Written() const {
+		return written;
+	}
+
+	bool Write(const_data_ptr_t data, idx_t size) {
+		if (size > capacity - written) {
+			return false;
+		}
+		written += size;
+		while (size > 0) {
+			auto &target = targets[index];
+			const auto chunk = MinValue(size, target.size - offset);
+			if (target.data && index >= told) {
+				memcpy(target.data + offset, data, chunk);
+			}
+			data += chunk;
+			size -= chunk;
+			offset += chunk;
+			if (offset == target.size) {
+				index++;
+				offset = 0;
+				if (publishing && index > told) {
+					told = index;
+					progress->Filled(index);
+				}
+			}
+		}
+		return true;
+	}
+
+	//! The bytes written from here on are final: the progress is told of every target they fill
+	void Publish() {
+		publishing = bool(progress);
+	}
+
+	//! Starts over, unpublished. The targets the progress was told of keep their bytes: they may be read already
+	void Reset() {
+		index = 0;
+		offset = 0;
+		written = 0;
+		publishing = false;
+	}
+
+private:
+	std::span<const FileReadTarget> targets;
+	idx_t capacity;
+	optional_ptr<FileReadProgress> progress;
+	idx_t index = 0;
+	idx_t offset = 0;
+	idx_t written = 0;
+	//! The targets the progress was told of
+	idx_t told = 0;
+	bool publishing = false;
+};
+
 //! Measured network throughput for a (remote) file handle. Used to size prefetch coalescing gaps.
 struct NetworkThroughputEstimate {
 	//! Round-trip latency + request setup, in seconds
