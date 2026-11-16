@@ -94,12 +94,10 @@ typedef unique_ptr<SecretStorage> (*create_secret_storage_t)(DatabaseInstance &d
 
 struct ForeignDataWrapper {
 	idx_t oid = 0;
-	idx_t owner = 0;
 };
 
 struct Language {
 	idx_t oid = 0;
-	idx_t owner = 0;
 	bool trusted = false;
 };
 

@@ -1500,8 +1500,9 @@ void RequireDatabasePrivilege(ClientContext &context, const RoleAccess &role, co
 
 void RequireForeignDataWrapperUsage(ClientContext &context, const RoleAccess &role, const Identifier &database,
                                     std::string_view wrapper) {
-	auto &found = DBConfig::GetConfig(context).GetForeignDataWrapper(wrapper);
-	if (role.Owns(found.owner)) {
+	auto &config = DBConfig::GetConfig(context);
+	auto &found = config.GetForeignDataWrapper(wrapper);
+	if (role.Owns(config.bootstrap_role)) {
 		return;
 	}
 	auto entry = ClusterEntry(context, CatalogType::DATABASE_ENTRY, database);
@@ -1516,11 +1517,12 @@ void RequireLanguageUsage(ClientContext &context, const RoleAccess &role, const 
 	if (role.is_superuser) {
 		return;
 	}
-	auto &found = DBConfig::GetConfig(context).GetLanguage(language);
+	auto &config = DBConfig::GetConfig(context);
+	auto &found = config.GetLanguage(language);
 	auto entry = ClusterEntry(context, CatalogType::DATABASE_ENTRY, database);
 	auto acl = entry ? entry->permissions.RowAcl(CatalogType::LANGUAGE_ENTRY, found.oid) : std::span<const AclItem>();
 	if (!found.trusted ||
-	    (!role.Owns(found.owner) && !Allows(role, acl, CatalogType::LANGUAGE_ENTRY, AclMode::Usage, false))) {
+	    (!role.Owns(config.bootstrap_role) && !Allows(role, acl, CatalogType::LANGUAGE_ENTRY, AclMode::Usage, false))) {
 		ThrowPermissionDenied(CatalogType::LANGUAGE_ENTRY, language);
 	}
 }

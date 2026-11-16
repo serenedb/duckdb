@@ -209,19 +209,21 @@ static void ResolveGrant(Binder &binder, AlterPermissionsInfo &info) {
 	}
 	if (info.entry_catalog_type == CatalogType::FOREIGN_DATA_WRAPPER_ENTRY) {
 		auto &name = info.GetQualifiedName().Name().GetIdentifierName();
-		auto &wrapper = DBConfig::GetConfig(context).GetForeignDataWrapper(name);
+		auto &config = DBConfig::GetConfig(context);
+		auto &wrapper = config.GetForeignDataWrapper(name);
 		const auto database_name = DatabaseManager::GetDefaultDatabase(context);
 		auto &database = ClusterDatabase(context, database_name);
-		RequireGrantableAcl(role, wrapper.owner,
+		RequireGrantableAcl(role, config.bootstrap_role,
 		                    database.permissions.RowAcl(CatalogType::FOREIGN_DATA_WRAPPER_ENTRY, wrapper.oid),
 		                    CatalogType::FOREIGN_DATA_WRAPPER_ENTRY, name);
 		info.database_rows = {GrantRow {CatalogType::FOREIGN_DATA_WRAPPER_ENTRY, wrapper.oid, string(), {}, {}}};
-		TargetDatabaseRow(info, wrapper.owner, database_name);
+		TargetDatabaseRow(info, config.bootstrap_role, database_name);
 		return;
 	}
 	if (info.entry_catalog_type == CatalogType::LANGUAGE_ENTRY) {
 		auto &name = info.GetQualifiedName().Name().GetIdentifierName();
-		auto &language = DBConfig::GetConfig(context).GetLanguage(name);
+		auto &config = DBConfig::GetConfig(context);
+		auto &language = config.GetLanguage(name);
 		if (!language.trusted) {
 			auto extra_info = Exception::InitializeExtraInfo("WRONG_OBJECT_TYPE", optional_idx());
 			extra_info["detail"] = "GRANT and REVOKE are not allowed on untrusted languages, because only superusers "
@@ -231,11 +233,11 @@ static void ResolveGrant(Binder &binder, AlterPermissionsInfo &info) {
 		const auto database_name = DatabaseManager::GetDefaultDatabase(context);
 		auto &database = ClusterDatabase(context, database_name);
 		auto stored = database.permissions.RowAcl(CatalogType::LANGUAGE_ENTRY, language.oid);
-		auto acl = stored.empty() ? Permissions::AclDefault(CatalogType::LANGUAGE_ENTRY, language.owner)
+		auto acl = stored.empty() ? Permissions::AclDefault(CatalogType::LANGUAGE_ENTRY, config.bootstrap_role)
 		                          : vector<AclItem>(stored.begin(), stored.end());
-		RequireGrantableAcl(role, language.owner, acl, CatalogType::LANGUAGE_ENTRY, name);
+		RequireGrantableAcl(role, config.bootstrap_role, acl, CatalogType::LANGUAGE_ENTRY, name);
 		info.database_rows = {GrantRow {CatalogType::LANGUAGE_ENTRY, language.oid, string(), {}, {}}};
-		TargetDatabaseRow(info, language.owner, database_name);
+		TargetDatabaseRow(info, config.bootstrap_role, database_name);
 		return;
 	}
 	if (info.entry_catalog_type == CatalogType::PARAMETER_ENTRY) {
