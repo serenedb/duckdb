@@ -431,7 +431,7 @@ unique_ptr<FileHandle> FileSystem::OpenFileExtended(const OpenFileInfo &path,
 }
 
 bool FileSystem::ListFilesExtended(const string &directory, const std::function<void(OpenFileInfo &info)> &callback,
-                                   optional_ptr<FileOpener> opener) {
+                                   optional_ptr<FileOpener> opener, const ListFilesOptions &options) {
 	throw NotImplementedException("%s: ListFilesExtended is not implemented!", GetName());
 }
 
@@ -640,15 +640,17 @@ bool FileSystem::ListFiles(const string &directory, const std::function<void(con
 			    bool is_dir = IsDirectory(info);
 			    callback(info.path, is_dir);
 		    },
-		    opener);
+		    opener, ListFilesOptions());
 	}
 	throw NotImplementedException("%s: ListFiles is not implemented!", GetName());
 }
 
 bool FileSystem::ListFiles(const string &directory, const std::function<void(OpenFileInfo &info)> &callback,
-                           optional_ptr<FileOpener> opener) {
+                           optional_ptr<FileOpener> opener, const ListFilesOptions &options) {
 	if (SupportsListFilesExtended()) {
-		return ListFilesExtended(directory, callback, opener);
+		return ListFilesExtended(directory, callback, opener, options);
+	} else if (options.recursive) {
+		return WalkFiles(directory, callback, opener, options);
 	} else {
 		return ListFiles(
 		    directory,
@@ -662,6 +664,32 @@ bool FileSystem::ListFiles(const string &directory, const std::function<void(Ope
 		    },
 		    opener.get());
 	}
+}
+
+bool FileSystem::WalkFiles(const string &directory, const std::function<void(OpenFileInfo &info)> &callback,
+                           optional_ptr<FileOpener> opener, const ListFilesOptions &options) {
+	auto each = options;
+	each.recursive = false;
+	bool listed = false;
+	vector<string> directories {string()};
+	for (idx_t i = 0; i < directories.size(); i++) {
+		const auto relative = directories[i];
+		const bool found = ListFiles(
+		    relative.empty() ? directory : JoinPath(directory, relative),
+		    [&](OpenFileInfo &info) {
+			    if (!relative.empty()) {
+				    info.path = JoinPath(relative, info.path);
+			    }
+			    if (IsDirectory(info)) {
+				    directories.push_back(std::move(info.path));
+			    } else {
+				    callback(info);
+			    }
+		    },
+		    opener, each);
+		listed = listed || found;
+	}
+	return listed;
 }
 
 void FileSystem::MoveFile(const string &source, const string &target, optional_ptr<FileOpener> opener) {

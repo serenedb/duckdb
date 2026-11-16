@@ -343,8 +343,8 @@ bool DebugFileSystem::SupportsOpenFileExtended() const {
 
 bool DebugFileSystem::ListFilesExtended(const string &directory,
                                         const std::function<void(OpenFileInfo &info)> &callback,
-                                        optional_ptr<FileOpener> opener) {
-	return inner_fs->ListFiles(directory, callback, opener);
+                                        optional_ptr<FileOpener> opener, const ListFilesOptions &options) {
+	return inner_fs->ListFiles(directory, callback, opener, options);
 }
 
 bool DebugFileSystem::SupportsListFilesExtended() const {

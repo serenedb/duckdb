@@ -132,7 +132,7 @@ protected:
 	                                                   optional_ptr<FileOpener> opener) override;
 	DUCKDB_API bool SupportsOpenFileExtended() const override;
 	DUCKDB_API bool ListFilesExtended(const string &directory, const std::function<void(OpenFileInfo &info)> &callback,
-	                                  optional_ptr<FileOpener> opener) override;
+	                                  optional_ptr<FileOpener> opener, const ListFilesOptions &options) override;
 	DUCKDB_API bool SupportsListFilesExtended() const override;
 
 private:

@@ -66,6 +66,16 @@ struct CreateDirectoryOptions {
 
 struct RemoveDirectoryOptions {
 	RemoveDirectoryMode mode = RemoveDirectoryMode::SINGLE;
+	//! Fails with the reason when something of the directory cannot be removed, instead of leaving it; a directory
+	//! that does not exist is still no failure
+	bool strict = false;
+};
+
+struct ListFilesOptions {
+	bool recursive = false;
+	//! Fails with the reason when a directory cannot be read or one of its entries cannot be examined, instead of
+	//! listing less; a directory that does not exist still lists nothing
+	bool strict = false;
 };
 
 enum class FileType {
@@ -270,7 +280,8 @@ public:
 	                                  const std::function<void(const string &, bool)> &callback,
 	                                  FileOpener *opener = nullptr);
 	DUCKDB_API bool ListFiles(const string &directory, const std::function<void(OpenFileInfo &info)> &callback,
-	                          optional_ptr<FileOpener> opener = nullptr);
+	                          optional_ptr<FileOpener> opener = nullptr,
+	                          const ListFilesOptions &options = ListFilesOptions());
 
 	//! Move a file from source path to the target, StorageManager relies on this being an atomic action for ACID
 	//! properties
@@ -414,8 +425,10 @@ protected:
 
 	DUCKDB_API virtual bool ListFilesExtended(const string &directory,
 	                                          const std::function<void(OpenFileInfo &info)> &callback,
-	                                          optional_ptr<FileOpener> opener);
+	                                          optional_ptr<FileOpener> opener, const ListFilesOptions &options);
 	DUCKDB_API virtual bool SupportsListFilesExtended() const;
+	DUCKDB_API bool WalkFiles(const string &directory, const std::function<void(OpenFileInfo &info)> &callback,
+	                          optional_ptr<FileOpener> opener, const ListFilesOptions &options);
 
 	DUCKDB_API virtual unique_ptr<MultiFileList> GlobFilesExtended(const string &path, const FileGlobInput &input,
 	                                                               optional_ptr<FileOpener> opener = nullptr);
