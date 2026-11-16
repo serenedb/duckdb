@@ -544,9 +544,8 @@ unique_ptr<ParsedExpression> PEGTransformerFactory::TransformNumberLiteral(PEGTr
 	return ConstantExpression::Number(string(literal_pr.number));
 }
 
-unique_ptr<ParsedExpression> PEGTransformerFactory::TransformSetofType(PEGTransformer &transformer,
-                                                                       const LogicalType &type) {
-	return UnboundType::GetTypeExpression(type)->Copy();
+LogicalType PEGTransformerFactory::TransformSetofType(PEGTransformer &transformer, const LogicalType &type) {
+	return type;
 }
 
 // StringLiteral <- '\'' [^\']* '\''

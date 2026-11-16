@@ -25,7 +25,7 @@ TableMacroDefinition <- 'TABLE' SelectStatementInternal
 
 FunctionDecorator <- ReturnsClause / VolatilityKeyword / StrictClause / LanguageClause / SecurityClause / CostClause / RowsClause / ParallelClause / LeakproofClause
 
-ReturnsClause <- 'RETURNS' (ReturnsTable / ReturnsNull / Type)
+ReturnsClause <- 'RETURNS' (ReturnsTable / ReturnsNull / SetofType / Type)
 ReturnsTable <- 'TABLE' Parens(List(ColIdType))
 ReturnsNull <- 'NULL' 'ON' 'NULL' 'INPUT'
 VolatilityKeyword <- 'IMMUTABLE' / 'STABLE' / 'VOLATILE'

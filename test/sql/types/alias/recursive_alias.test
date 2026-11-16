@@ -4,7 +4,7 @@
 
 # recursive type definitions are not allowed
 statement error
-CREATE TYPE t4 AS UNION ( v0 SETOF t4 );
+CREATE TYPE t4 AS UNION ( v0 t4 );
 ----
 Type with name t4 does not exist
 

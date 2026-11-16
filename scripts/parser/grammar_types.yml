@@ -614,7 +614,6 @@ Expression:
     - IntervalWithSimpleSpecifier
     - IntervalWithoutSpecifier
     - IntervalNumber
-    - SetofType
     - DecType
     - NumericModType
     - CopyFileName
@@ -1386,6 +1385,7 @@ LogicalType:
   by_value: false
   rules:
     - Type
+    - SetofType
 
 LogicalTypeList:
   type: "vector<LogicalType>"
