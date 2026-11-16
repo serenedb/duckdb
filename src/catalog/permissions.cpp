@@ -847,20 +847,36 @@ optional_ptr<const Permissions> SecuritySnapshot::TypePermissions(std::string_vi
 	return row == rows->second.end() ? nullptr : &row->second;
 }
 
+const Permissions &EffectivePermissions(ClientContext &context, std::string_view database, idx_t oid,
+                                        const Permissions &stored) {
+	if (!context.security) {
+		return stored;
+	}
+	auto permissions = context.security->RelationPermissions(database, oid);
+	return permissions ? *permissions : stored;
+}
+
 const Permissions &EffectivePermissions(ClientContext &context, const CatalogEntry &entry) {
-	if (!entry.internal || !context.security) {
+	if (!entry.internal) {
 		return entry.permissions;
 	}
-	auto permissions =
-	    context.security->RelationPermissions(entry.ParentCatalog().GetName().GetIdentifierName(), entry.oid);
-	return permissions ? *permissions : entry.permissions;
+	return EffectivePermissions(context, entry.ParentCatalog().GetName().GetIdentifierName(), entry.oid,
+	                            entry.permissions);
+}
+
+optional_ptr<const vector<ColumnAcl>> EffectiveColumnAcls(ClientContext &context, std::string_view database,
+                                                          idx_t oid) {
+	if (!context.security) {
+		return nullptr;
+	}
+	return context.security->RelationColumns(database, oid);
 }
 
 optional_ptr<const vector<ColumnAcl>> EffectiveColumnAcls(ClientContext &context, const CatalogEntry &entry) {
-	if (!entry.internal || !context.security) {
+	if (!entry.internal) {
 		return nullptr;
 	}
-	return context.security->RelationColumns(entry.ParentCatalog().GetName().GetIdentifierName(), entry.oid);
+	return EffectiveColumnAcls(context, entry.ParentCatalog().GetName().GetIdentifierName(), entry.oid);
 }
 
 std::span<const AclItem> FindColumnAcl(const vector<ColumnAcl> &columns, const Identifier &column) {
