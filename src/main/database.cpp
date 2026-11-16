@@ -42,6 +42,7 @@
 #include "duckdb/common/open_file_info.hpp"
 #include "duckdb/common/path.hpp"
 #include "duckdb/storage/external_file_cache/external_file_cache.hpp"
+#include "duckdb/storage/external_file_cache/external_file_cache_util.hpp"
 #include "duckdb/storage/object_cache.hpp"
 #include "duckdb/storage/shared_object_cache.hpp"
 #include "duckdb/storage/standard_buffer_manager.hpp"

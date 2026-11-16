@@ -355,6 +355,18 @@ void ColumnReader::ReadData(const data_ptr_t buffer, const uint32_t buffer_size,
 	}
 }
 
+const_data_ptr_t ColumnReader::BorrowData(uint32_t size) {
+	if (reader.parquet_options.encryption_config) {
+		return nullptr;
+	}
+	auto &trans = reinterpret_cast<ThriftFileTransport &>(*protocol->getTransport());
+	const auto data = trans.Borrow(size);
+	if (data) {
+		trans.consume(size);
+	}
+	return data;
+}
+
 void ColumnReader::PrepareRead(optional_ptr<const TableFilter> filter, optional_ptr<TableFilterState> filter_state,
                                idx_t rows_to_skip) {
 	encoding = ColumnEncoding::INVALID;
@@ -496,12 +508,14 @@ void ColumnReader::PreparePageV2(PageHeader &page_hdr) {
 
 	if (compressed_bytes > 0) {
 		ResizeableBuffer compressed_buffer;
-		compressed_buffer.resize(GetAllocator(), compressed_bytes);
-
-		ReadData(compressed_buffer.ptr, compressed_bytes, page_hdr.type);
-
-		DecompressInternal(chunk->meta_data.codec, compressed_buffer.ptr, compressed_bytes,
-		                   block->ptr + uncompressed_bytes, page_hdr.uncompressed_page_size - uncompressed_bytes);
+		auto compressed = BorrowData(compressed_bytes);
+		if (!compressed) {
+			compressed_buffer.resize(GetAllocator(), compressed_bytes);
+			ReadData(compressed_buffer.ptr, compressed_bytes, page_hdr.type);
+			compressed = compressed_buffer.ptr;
+		}
+		DecompressInternal(chunk->meta_data.codec, compressed, compressed_bytes, block->ptr + uncompressed_bytes,
+		                   page_hdr.uncompressed_page_size - uncompressed_bytes);
 	}
 }
 
@@ -547,10 +561,13 @@ void ColumnReader::PreparePage(PageHeader &page_hdr) {
 	}
 
 	ResizeableBuffer compressed_buffer;
-	compressed_buffer.resize(GetAllocator(), compressed_page_size + 1);
-	ReadData(compressed_buffer.ptr, compressed_page_size, page_hdr.type);
-
-	DecompressInternal(chunk->meta_data.codec, compressed_buffer.ptr, compressed_page_size, block->ptr,
+	auto compressed = BorrowData(compressed_page_size);
+	if (!compressed) {
+		compressed_buffer.resize(GetAllocator(), compressed_page_size + 1);
+		ReadData(compressed_buffer.ptr, compressed_page_size, page_hdr.type);
+		compressed = compressed_buffer.ptr;
+	}
+	DecompressInternal(chunk->meta_data.codec, compressed, compressed_page_size, block->ptr,
 	                   page_hdr.uncompressed_page_size);
 }
 

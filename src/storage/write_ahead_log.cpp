@@ -102,7 +102,7 @@ public:
 	explicit ChecksumWriter(WriteAheadLog &wal) : wal(wal), memory_stream(Allocator::Get(wal.GetDatabase())) {
 	}
 
-	void WriteData(const_data_ptr_t buffer, idx_t write_size) override {
+	void Overflow(const_data_ptr_t buffer, idx_t write_size) override {
 		// buffer data into the memory stream
 		memory_stream.WriteData(buffer, write_size);
 	}

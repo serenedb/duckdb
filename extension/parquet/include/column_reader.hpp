@@ -252,6 +252,9 @@ protected:
 	void ReadDataEncrypted(const data_ptr_t buffer, const uint32_t buffer_size, PageType::type module);
 	void Read(PageHeader &page_hdr);
 	void ReadData(const data_ptr_t buffer, const uint32_t buffer_size, PageType::type page_type);
+	//! The next [size] bytes of the file where the transport holds them in one piece, moving past them; nullptr
+	//! where they have to be read into a buffer
+	const_data_ptr_t BorrowData(uint32_t size);
 
 private:
 	//! this function tries to skip a page in the below conditions:

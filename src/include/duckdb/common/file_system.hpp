@@ -44,8 +44,7 @@ class Logger;
 class ClientContext;
 class CompressedFileSystem;
 class QueryContext;
-class MemoryMappedFile;
-struct MMapOptions;
+class InputFile;
 class MultiFileList;
 
 enum class CreateDirectoryMode : uint8_t {

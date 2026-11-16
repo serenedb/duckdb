@@ -23,6 +23,7 @@ blacklist = [
     "VirtualColumnBindingType",
     "Slot",
     "State",
+    "Mode",
     "ScheduleMode",
     "MemoryUpdateMode",
     "SchedulePolicy",

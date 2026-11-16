@@ -248,8 +248,8 @@ void CachingFileHandle::ReadAhead(InputFile &file, const idx_t nr_bytes, const i
 FileBufferHandleGroup CachingFileHandle::Read(idx_t &nr_bytes) {
 	// If we can't seek, we can't use the cache for these calls,
 	// because we won't be able to seek over any parts we skipped by reading from the cache
-	if (!external_file_cache.IsEnabled() || !CanSeek() || !CanUseCache()) {
-		auto buf = AllocateUncachedReadBuffer(external_file_cache.GetBufferManager(), nr_bytes);
+	if (!CanSeek() || !GetInputFile()) {
+		auto buf = ExternalFileCache::AllocateUncached(db, nr_bytes);
 		auto file_handle = GetFileHandle();
 		// Do positional read if handle can seek, otherwise have to fallback to sequential read.
 		if (file_handle->CanSeek()) {

@@ -245,7 +245,7 @@ public:
 
 private:
 	class StdOutWriteStream : public WriteStream {
-		void WriteData(const_data_ptr_t buffer, idx_t write_size) override;
+		void Overflow(const_data_ptr_t buffer, idx_t write_size) override;
 	};
 
 	StdOutWriteStream stdout_stream;

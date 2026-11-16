@@ -18,9 +18,8 @@ class Allocator;
 class MemoryStream : public WriteStream, public ReadStream {
 private:
 	optional_ptr<Allocator> allocator;
-	idx_t position;
-	idx_t capacity;
-	data_ptr_t data;
+	idx_t capacity = 0;
+	data_ptr_t data = nullptr;
 
 public:
 	static constexpr idx_t DEFAULT_INITIAL_CAPACITY = 512;
@@ -47,19 +46,19 @@ public:
 
 	~MemoryStream() override;
 
-	//! Write data to the stream.
-	//! Throws if the write would exceed the capacity of the stream and the backing buffer is not owned by the stream
-	void WriteData(const_data_ptr_t buffer, idx_t write_size) override;
 	data_ptr_t Alloc(idx_t size) override;
+	//! Make room for a write of [write_size] bytes at the current position.
+	//! Throws if the write would exceed the capacity of the stream and the backing buffer is not owned by the stream
 	void GrowCapacity(idx_t write_size);
 
-	//! Read data from the stream.
-	//! Throws if the read would exceed the capacity of the stream
-	void ReadData(data_ptr_t buffer, idx_t read_size) override;
-	void ReadData(QueryContext context, data_ptr_t buffer, idx_t read_size) override;
-
 	//! Rewind the stream to the start, keeping the capacity and the backing buffer intact
-	void Rewind();
+	void Rewind() {
+		if (mode == Mode::WRITING) {
+			write_pos = write_begin;
+		} else {
+			Park(0);
+		}
+	}
 
 	//! Release ownership of the backing buffer and turn a owning stream into a non-owning one.
 	//! The stream will no longer be responsible for freeing the data.
@@ -67,16 +66,45 @@ public:
 	void Release();
 
 	//! Get a pointer to the underlying backing buffer
-	data_ptr_t GetData() const;
+	data_ptr_t GetData() const {
+		return data;
+	}
 
 	//! Get the current position in the stream
-	idx_t GetPosition() const;
+	idx_t GetPosition() const {
+		switch (mode) {
+		case Mode::WRITING:
+			return WindowSize();
+		case Mode::READING:
+			return capacity - ReadWindowRoom();
+		default:
+			return write_offset;
+		}
+	}
 
 	//! Get the capacity of the stream
-	idx_t GetCapacity() const;
+	idx_t GetCapacity() const {
+		return capacity;
+	}
 
 	//! Set the position in the stream
 	void SetPosition(idx_t position);
+
+protected:
+	//! Throws if the write would exceed the capacity of the stream and the backing buffer is not owned by the stream
+	void Overflow(const_data_ptr_t buffer, idx_t write_size) override;
+	//! Throws if the read would exceed the capacity of the stream
+	void Underflow(QueryContext context, data_ptr_t buffer, idx_t read_size) override;
+
+private:
+	//! The stream reads and writes at one position. Only the side that moved it last has its window open, so the
+	//! other side finds the position out on its next call
+	enum class Mode : uint8_t { PARKED, WRITING, READING };
+
+	//! Closes both windows at [position]
+	void Park(idx_t position);
+
+	Mode mode = Mode::PARKED;
 };
 
 } // namespace duckdb

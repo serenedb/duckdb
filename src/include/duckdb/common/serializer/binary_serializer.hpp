@@ -50,10 +50,7 @@ private:
 
 	template <class T>
 	void VarIntEncode(T value) {
-		uint8_t buffer[16] = {};
-		auto write_size = EncodingUtil::EncodeLEB128<T>(buffer, value);
-		D_ASSERT(write_size <= sizeof(buffer));
-		WriteData(buffer, write_size);
+		stream.WriteVarint(value);
 	}
 
 public:

@@ -15,6 +15,12 @@
 namespace duckdb {
 
 struct EncodingUtil {
+	// The largest number of bytes the LEB128 encoding of a T takes
+	template <class T>
+	static constexpr idx_t MaxLEB128Size() {
+		return (sizeof(T) * 8 + 6) / 7;
+	}
+
 	// Encode unsigned integer, returns the number of bytes written
 	template <class T>
 	static idx_t EncodeUnsignedLEB128(data_ptr_t target, T value) {
@@ -23,14 +29,12 @@ struct EncodingUtil {
 		static_assert(sizeof(T) <= sizeof(uint64_t), "Must be uint64_t or smaller");
 
 		idx_t offset = 0;
-		do {
-			uint8_t byte = value & 0x7F;
-			value >>= 7;
-			if (value != 0) {
-				byte |= 0x80;
+		while (value >= 0x80)
+			[[unlikely]] {
+				target[offset++] = static_cast<uint8_t>(value) | 0x80;
+				value >>= 7;
 			}
-			target[offset++] = byte;
-		} while (value != 0);
+		target[offset++] = static_cast<uint8_t>(value);
 		return offset;
 	}
 

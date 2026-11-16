@@ -15,7 +15,6 @@
 #include "duckdb/storage/external_file_cache/caching_file_system.hpp"
 #include "duckdb/storage/external_file_cache/file_buffer_handle_group.hpp"
 #include "duckdb/common/file_system.hpp"
-#include "duckdb/common/allocator.hpp"
 
 namespace duckdb {
 
@@ -26,26 +25,12 @@ struct ReadHead {
 	idx_t location;
 	uint64_t size;
 
-	// Current info
+	// Current info: the pins that hold the head's bytes, in order
 	FileBufferHandleGroup handle_group;
-	AllocatedData local_buffer;
-	const_data_ptr_t buffer_ptr = nullptr;
 	bool data_isset = false;
 
 	idx_t GetEnd() const {
 		return size + location;
-	}
-
-	// Materialize [buffer_ptr], should call before access.
-	// TODO(hjiang): Currently it's only used for `Prefetch` operation, should be able to save one copy.
-	void Materialize(Allocator &allocator) {
-		if (handle_group.GetHandles().size() == 1) {
-			buffer_ptr = handle_group.Ptr();
-		} else {
-			local_buffer = allocator.Allocate(size);
-			handle_group.CopyTo(local_buffer.get(), size);
-			buffer_ptr = local_buffer.get();
-		}
 	}
 
 	void Fetch(CachingFileHandle &file_handle) {
@@ -53,9 +38,53 @@ struct ReadHead {
 			throw std::runtime_error("Prefetch registered requested for bytes outside file");
 		}
 		handle_group = file_handle.Read(size, location);
-		Materialize(file_handle.GetBufferAllocator());
+		pin = 0;
+		pin_start = 0;
 		data_isset = true;
 	}
+
+	//! The [len] bytes at [offset] of the head where one pin holds them all, nullptr where they span pins
+	const_data_ptr_t Borrow(idx_t offset, idx_t len) {
+		D_ASSERT(data_isset && offset + len <= size);
+		auto &current = Seek(offset);
+		const auto at = offset - pin_start;
+		return at + len <= current.Size() ? current.Ptr() + at : nullptr;
+	}
+
+	//! Copies the [len] bytes at [offset] of the head, across its pins
+	void CopyTo(data_ptr_t dest, idx_t offset, idx_t len) {
+		D_ASSERT(data_isset && offset + len <= size);
+		while (len != 0) {
+			auto &current = Seek(offset);
+			const auto at = offset - pin_start;
+			const auto count = MinValue<idx_t>(len, current.Size() - at);
+			memcpy(dest, current.Ptr() + at, count);
+			dest += count;
+			offset += count;
+			len -= count;
+		}
+	}
+
+private:
+	//! The pin that holds [offset]; reads of a head mostly move forward, so the search starts at the last one
+	const FilePin &Seek(idx_t offset) {
+		auto &pins = handle_group.GetHandles();
+		while (offset < pin_start) {
+			pin--;
+			pin_start -= pins[pin].Size();
+		}
+		while (offset >= pin_start + pins[pin].Size()) {
+			if (pin + 1 == pins.size()) {
+				throw InternalException("ReadHead: offset %llu is outside the %llu bytes read", offset, size);
+			}
+			pin_start += pins[pin].Size();
+			pin++;
+		}
+		return pins[pin];
+	}
+
+	idx_t pin = 0;
+	idx_t pin_start = 0;
 };
 
 struct ReadHeadComparator {
@@ -174,6 +203,28 @@ public:
 		return ra_buffer.merge_set.key_comp().accepted_column_gap;
 	}
 
+	//! The next [len] bytes where a prefetched head holds them in one pin, without moving past them; nullptr
+	//! otherwise
+	const_data_ptr_t Borrow(uint32_t len) {
+		auto head = ra_buffer.GetReadHead(location);
+		if (!head || location - head->location + len > head->size) {
+			return nullptr;
+		}
+		if (!head->data_isset) {
+			head->Fetch(file_handle);
+		}
+		return head->Borrow(location - head->location, len);
+	}
+
+	//! Thrift's protocols decode from borrowed bytes where they can, instead of reading them one by one
+	const uint8_t *borrow(uint8_t *buf, uint32_t *len) {
+		return Borrow(*len);
+	}
+
+	void consume(uint32_t len) {
+		location += len;
+	}
+
 	uint32_t read(uint8_t *buf, uint32_t len) {
 		auto prefetch_buffer = ra_buffer.GetReadHead(location);
 		if (prefetch_buffer != nullptr && location - prefetch_buffer->location + len <= prefetch_buffer->size) {
@@ -182,7 +233,7 @@ public:
 			if (!prefetch_buffer->data_isset) {
 				prefetch_buffer->Fetch(file_handle);
 			}
-			memcpy(buf, prefetch_buffer->buffer_ptr + location - prefetch_buffer->location, len);
+			prefetch_buffer->CopyTo(buf, location - prefetch_buffer->location, len);
 		} else if (prefetch_mode && len < PREFETCH_FALLBACK_BUFFERSIZE && len > 0) {
 			auto file_size = file_handle.GetFileSize();
 			if (location >= file_size) {
@@ -198,7 +249,7 @@ public:
 				location += len;
 				return len;
 			}
-			memcpy(buf, prefetch_buffer_fallback->buffer_ptr + location - prefetch_buffer_fallback->location, len);
+			prefetch_buffer_fallback->CopyTo(buf, location - prefetch_buffer_fallback->location, len);
 		} else if (prefetch_mode && len > 0 && file_handle.IsRemoteFile()) {
 			file_handle.Read(len, location).CopyTo(buf, len);
 		} else {

@@ -24,20 +24,18 @@ public:
 	~MetadataReader() override;
 
 public:
-	//! Read content of size read_size into the buffer
-	void ReadData(data_ptr_t buffer, idx_t read_size) override;
-
-	void ReadData(QueryContext context, data_ptr_t buffer, idx_t read_size) override;
-
 	MetaBlockPointer GetMetaBlockPointer();
 
 	MetadataManager &GetMetadataManager() {
 		return manager;
 	}
 
+protected:
+	//! Read content of size read_size into the buffer, moving on to the next blocks
+	void Underflow(QueryContext context, data_ptr_t buffer, idx_t read_size) override;
+
 private:
 	data_ptr_t BasePtr();
-	data_ptr_t Ptr();
 
 	void ReadNextBlock();
 
@@ -53,9 +51,7 @@ private:
 	bool has_next_block;
 	optional_ptr<vector<MetaBlockPointer>> read_pointers;
 	idx_t index;
-	idx_t offset;
 	idx_t next_offset;
-	idx_t capacity;
 };
 
 } // namespace duckdb

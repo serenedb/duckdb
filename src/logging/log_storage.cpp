@@ -254,7 +254,7 @@ void BufferingLogStorage::UpdateConfigInternal(DatabaseInstance &db, case_insens
 	}
 }
 
-void StdOutLogStorage::StdOutWriteStream::WriteData(const_data_ptr_t buffer, idx_t write_size) {
+void StdOutLogStorage::StdOutWriteStream::Overflow(const_data_ptr_t buffer, idx_t write_size) {
 	string data(const_char_ptr_cast(buffer), NumericCast<size_t>(write_size));
 	Printer::RawPrint(OutputStream::STREAM_STDOUT, data);
 	Printer::Flush(OutputStream::STREAM_STDOUT);

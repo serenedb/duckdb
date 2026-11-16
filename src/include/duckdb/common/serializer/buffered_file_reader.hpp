@@ -15,20 +15,21 @@ namespace duckdb {
 
 class BufferedFileReader : public ReadStream {
 public:
+	//! The bytes of the file read at once
+	static constexpr idx_t BUFFER_SIZE = 64ULL * 1024;
+
 	BufferedFileReader(FileSystem &fs, const char *path, FileLockType lock_type = FileLockType::READ_LOCK,
 	                   optional_ptr<FileOpener> opener = nullptr);
 	BufferedFileReader(FileSystem &fs, unique_ptr<FileHandle> handle);
+	//! The stream's window points into its buffer
+	BufferedFileReader(const BufferedFileReader &) = delete;
+	BufferedFileReader &operator=(const BufferedFileReader &) = delete;
 
 	FileSystem &fs;
 	unsafe_unique_array<data_t> data;
-	idx_t offset;
-	idx_t read_data;
 	unique_ptr<FileHandle> handle;
 
 public:
-	void ReadData(data_ptr_t buffer, uint64_t read_size) override;
-	void ReadData(QueryContext context, data_ptr_t buffer, uint64_t read_size) override;
-
 	//! Returns true if the reader has finished reading the entire file
 	bool Finished();
 
@@ -41,8 +42,12 @@ public:
 	void Seek(uint64_t location);
 	uint64_t CurrentOffset();
 
+protected:
+	void Underflow(QueryContext context, data_ptr_t buffer, uint64_t read_size) override;
+
 private:
 	idx_t file_size;
+	//! The bytes of the file before the ones in the buffer
 	idx_t total_read;
 };
 

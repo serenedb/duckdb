@@ -5,7 +5,7 @@ namespace duckdb {
 MetadataReader::MetadataReader(MetadataManager &manager, MetaBlockPointer pointer,
                                optional_ptr<vector<MetaBlockPointer>> read_pointers_p, BlockReaderType type)
     : manager(manager), type(type), next_pointer(pointer), has_next_block(true), read_pointers(read_pointers_p),
-      index(0), offset(0), next_offset(pointer.offset), capacity(0) {
+      index(0), next_offset(pointer.offset) {
 }
 
 MetadataReader::MetadataReader(MetadataManager &manager, BlockPointer pointer)
@@ -23,34 +23,30 @@ MetadataPointer MetadataReader::FromDiskPointer(MetaBlockPointer pointer) {
 MetadataReader::~MetadataReader() {
 }
 
-void MetadataReader::ReadData(data_ptr_t buffer, idx_t read_size) {
-	ReadData(QueryContext(), buffer, read_size);
-}
-
-void MetadataReader::ReadData(QueryContext context, data_ptr_t buffer, idx_t read_size) {
-	while (offset + read_size > capacity) {
+void MetadataReader::Underflow(QueryContext context, data_ptr_t buffer, idx_t read_size) {
+	while (read_size > ReadWindowRoom()) {
 		// cannot read entire entry from block
 		// first read what we can from this block
-		idx_t to_read = capacity - offset;
+		idx_t to_read = ReadWindowRoom();
 		if (to_read > 0) {
-			memcpy(buffer, Ptr(), to_read);
+			memcpy(buffer, read_pos, to_read);
 			read_size -= to_read;
 			buffer += to_read;
-			offset += to_read;
+			read_pos += to_read;
 		}
 		// then move to the next block
 		ReadNextBlock(context);
 	}
 	// we have enough left in this block to read from the buffer
-	memcpy(buffer, Ptr(), read_size);
-	offset += read_size;
+	memcpy(buffer, read_pos, read_size);
+	read_pos += read_size;
 }
 
 MetaBlockPointer MetadataReader::GetMetaBlockPointer() {
-	if (capacity == 0) {
+	if (!block.handle.IsValid()) {
 		throw InternalException("GetMetaBlockPointer called but there is no active pointer");
 	}
-	return manager.GetDiskPointer(block.pointer, UnsafeNumericCast<uint32_t>(offset));
+	return manager.GetDiskPointer(block.pointer, UnsafeNumericCast<uint32_t>(read_pos - BasePtr()));
 }
 
 void MetadataReader::ReadNextBlock() {
@@ -80,17 +76,12 @@ void MetadataReader::ReadNextBlock(QueryContext context) {
 	if (next_offset > GetMetadataManager().GetMetadataBlockSize()) {
 		throw InternalException("next_offset cannot be bigger than block size");
 	}
-	offset = next_offset;
+	SetReadWindow(BasePtr() + next_offset, GetMetadataManager().GetMetadataBlockSize() - next_offset);
 	next_offset = sizeof(block_id_t);
-	capacity = GetMetadataManager().GetMetadataBlockSize();
 }
 
 data_ptr_t MetadataReader::BasePtr() {
 	return block.handle.GetDataMutable() + index * GetMetadataManager().GetMetadataBlockSize();
-}
-
-data_ptr_t MetadataReader::Ptr() {
-	return BasePtr() + offset;
 }
 
 } // namespace duckdb

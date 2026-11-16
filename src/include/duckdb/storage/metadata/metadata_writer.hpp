@@ -22,7 +22,6 @@ public:
 	~MetadataWriter() override;
 
 public:
-	void WriteData(const_data_ptr_t buffer, idx_t write_size) override;
 	void Flush();
 
 	BlockPointer GetBlockPointer();
@@ -34,11 +33,9 @@ public:
 
 protected:
 	virtual MetadataHandle NextHandle();
+	void Overflow(const_data_ptr_t buffer, idx_t write_size) override;
 
 private:
-	data_ptr_t BasePtr();
-	data_ptr_t Ptr();
-
 	void NextBlock();
 
 private:
@@ -46,8 +43,6 @@ private:
 	MetadataHandle block;
 	MetadataPointer current_pointer;
 	optional_ptr<vector<MetaBlockPointer>> written_pointers;
-	idx_t capacity;
-	idx_t offset;
 };
 
 } // namespace duckdb
