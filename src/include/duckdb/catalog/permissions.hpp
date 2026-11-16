@@ -447,7 +447,7 @@ DUCKDB_API vector<AclItem> BuiltinFunctionAcl(const CatalogEntry &function, idx_
 DUCKDB_API vector<GrantRow> BuiltinFunctionRows(ClientContext &context, SchemaCatalogEntry &schema);
 DUCKDB_API void CheckBuiltinCall(ClientContext &context, const RoleAccess &role, const CatalogEntry &function,
                                  idx_t overload);
-DUCKDB_API bool BuiltinCallGranted(ClientContext &context, const RoleAccess &role, const CatalogEntry &function);
+DUCKDB_API bool MayCallFunction(ClientContext &context, const RoleAccess &role, const CatalogEntry &function);
 DUCKDB_API optional_ptr<const unordered_map<string, Permissions>> BuiltinFunctionGrants(ClientContext &context);
 DUCKDB_API optional_ptr<const Permissions> BuiltinTypeGrant(ClientContext &context, idx_t type);
 DUCKDB_API bool EntryVisible(ClientContext &context, const RoleAccess &role, CatalogEntry &entry);

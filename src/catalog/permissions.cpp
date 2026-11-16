@@ -1019,12 +1019,15 @@ static optional_ptr<const Permissions> GrantRow(optional_ptr<const unordered_map
 	return row == grants->end() ? nullptr : &row->second;
 }
 
-static bool MayCallBuiltin(const RoleAccess &role, optional_ptr<const Permissions> granted, RoleCapability capability) {
-	const bool holds_capability = capability != RoleCapability::None && role.Has(capability);
-	if (granted) {
-		return holds_capability || role.Can(CatalogType::MACRO_ENTRY, *granted, AclMode::Execute);
+static bool MayCallBuiltin(ClientContext &context, const RoleAccess &role, optional_ptr<const Permissions> granted,
+                           RoleCapability capability) {
+	if (capability != RoleCapability::None && role.Has(capability)) {
+		return true;
 	}
-	return capability == RoleCapability::None || holds_capability;
+	if (granted) {
+		return role.Can(CatalogType::MACRO_ENTRY, *granted, AclMode::Execute);
+	}
+	return capability == RoleCapability::None || role.Owns(DBConfig::GetConfig(context).bootstrap_role);
 }
 
 static optional_ptr<const Permissions> BuiltinGrant(ClientContext &context, const CatalogEntry &function,
@@ -1038,17 +1041,20 @@ static optional_ptr<const Permissions> BuiltinGrant(ClientContext &context, cons
 }
 
 void CheckBuiltinCall(ClientContext &context, const RoleAccess &role, const CatalogEntry &function, idx_t overload) {
-	if (!role.is_superuser && !MayCallBuiltin(role, BuiltinGrant(context, function, overload),
+	if (!role.is_superuser && !MayCallBuiltin(context, role, BuiltinGrant(context, function, overload),
 	                                          function.Cast<FunctionEntry>().required_capability)) {
 		ThrowPermissionDenied(function);
 	}
 }
 
-bool BuiltinCallGranted(ClientContext &context, const RoleAccess &role, const CatalogEntry &function) {
+bool MayCallFunction(ClientContext &context, const RoleAccess &role, const CatalogEntry &function) {
+	const auto capability = function.Cast<FunctionEntry>().required_capability;
+	if (capability == RoleCapability::None) {
+		return true;
+	}
 	const auto overloads = FunctionOverloadCount(function);
 	for (idx_t overload = 0; overload < overloads; overload++) {
-		auto granted = BuiltinGrant(context, function, overload);
-		if (granted && role.Can(CatalogType::MACRO_ENTRY, *granted, AclMode::Execute)) {
+		if (MayCallBuiltin(context, role, BuiltinGrant(context, function, overload), capability)) {
 			return true;
 		}
 	}
@@ -1103,7 +1109,7 @@ bool EntryVisible(ClientContext &context, const RoleAccess &role, CatalogEntry &
 		return CanConnect(context, role, entry.name, ClusterEntry(context, CatalogType::DATABASE_ENTRY, entry.name));
 	}
 	if ((entry.type == CatalogType::TABLE_FUNCTION_ENTRY || entry.type == CatalogType::SCALAR_FUNCTION_ENTRY) &&
-	    !entry.Cast<FunctionEntry>().MayCall(role) && !BuiltinCallGranted(context, role, entry)) {
+	    !MayCallFunction(context, role, entry)) {
 		return false;
 	}
 	if (entry.internal || IsUnowned(entry)) {
@@ -1615,7 +1621,7 @@ void CheckFunctionCalls(ClientContext &context, const RoleAccess &role, std::spa
 		if (!call.macro_overload.IsValid()) {
 			auto granted =
 			    call.builtin_key.empty() ? nullptr : GrantRow(BuiltinFunctionGrants(context), call.builtin_key);
-			if (!MayCallBuiltin(role, granted, call.capability)) {
+			if (!MayCallBuiltin(context, role, granted, call.capability)) {
 				ThrowPermissionDenied(call.type, call.name);
 			}
 			continue;
