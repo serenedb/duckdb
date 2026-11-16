@@ -32,6 +32,11 @@ uint64_t HTTPParams::BodyDeadlineMs(idx_t bytes) const {
 	return (timeout + bytes / MIN_BYTES_PER_SECOND) * 1000 + timeout_usec / 1000;
 }
 
+void HTTPParams::PinCertificate(string sha256) {
+	pinned_certificate_sha256 = std::move(sha256);
+	transport_reuse_domain = 0;
+}
+
 HTTPHeaders::HTTPHeaders(DatabaseInstance &db) {
 	headers.insert({"User-Agent", StringUtil::Format("%s %s", db.config.UserAgent(), DuckDB::SourceID())});
 }

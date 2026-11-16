@@ -68,6 +68,14 @@ public:
 	//! The milliseconds a response body of [bytes] bytes may take before its request fails as stalled: the timeout
 	//! plus the time the bytes take at the slowest rate a healthy transfer has
 	DUCKDB_API uint64_t BodyDeadlineMs(idx_t bytes) const;
+	//! Trust the one server certificate whose SHA-256 is `sha256`, as 64 upper-case hex digits, in place of the CA
+	//! chain and the host name: a self-signed server is reached by its fingerprint. A connection is reused only with
+	//! the same pin, so the parameters' reuse domain is captured again.
+	DUCKDB_API void PinCertificate(string sha256);
+	//! Empty for the usual verification
+	const string &PinnedCertificate() const {
+		return pinned_certificate_sha256;
+	}
 
 	template <class TARGET>
 	TARGET &Cast() {
@@ -96,6 +104,7 @@ private:
 	idx_t transport_session_id = DConstants::INVALID_INDEX;
 	//! Provider-issued identity for transport-compatible parameters.
 	idx_t transport_reuse_domain = 0;
+	string pinned_certificate_sha256;
 };
 
 struct SignatureV4Params {
