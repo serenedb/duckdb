@@ -57,7 +57,7 @@ public:
 		if (entry->type != T::Type) {
 			throw CatalogException("%s is not an %s", name.Name().GetIdentifierName(), T::Name);
 		}
-		RequireUse(context, CheckAs(), *entry, use);
+		CheckUse(*entry, use);
 		return entry->template Cast<T>();
 	}
 	//! Look up a (catalog/schema-qualified) type
@@ -119,6 +119,11 @@ private:
 	optional_ptr<CatalogEntry> ReturnAndCallback(optional_ptr<CatalogEntry> result);
 	optional_ptr<CatalogEntry> GetBoundEntry(const EntryLookupInfo &lookup_info);
 	void RecordBinding(const EntryLookupInfo &lookup_info, CatalogEntry &entry);
+	void CheckUse(CatalogEntry &entry, EntryUse use) {
+		if (use != EntryUse::REFERENCE) {
+			RequireUse(context, CheckAs(), entry, use);
+		}
+	}
 
 private:
 	//! (optional) callback, called on every successful entry retrieval

@@ -63,7 +63,7 @@ optional_ptr<CatalogEntry> CatalogEntryRetriever::GetEntry(const EntryLookupInfo
 		entry = Catalog::GetEntry(*this, lookup_info, on_entry_not_found);
 	}
 	if (entry) {
-		RequireUse(context, CheckAs(), *entry, lookup_info.GetUse());
+		CheckUse(*entry, lookup_info.GetUse());
 	}
 	return ReturnAndCallback(entry);
 }
@@ -85,7 +85,7 @@ optional_ptr<SchemaCatalogEntry> CatalogEntryRetriever::GetSchema(const EntryLoo
 	if (!result) {
 		return result;
 	}
-	RequireUse(context, CheckAs(), *result, schema_lookup.GetUse());
+	CheckUse(*result, schema_lookup.GetUse());
 	if (callback) {
 		// Call the callback if it's set
 		callback(*result);
