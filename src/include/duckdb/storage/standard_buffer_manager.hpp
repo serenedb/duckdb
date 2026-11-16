@@ -149,6 +149,7 @@ protected:
 
 	//! Write a temporary buffer to disk
 	void WriteTemporaryBuffer(QueryContext context, MemoryTag tag, block_id_t block_id, FileBuffer &buffer) final;
+	bool TryWriteTemporaryCopy(QueryContext context, MemoryTag tag, block_id_t block_id, FileBuffer &buffer) final;
 	//! Read a temporary buffer from disk
 	unique_ptr<FileBuffer> ReadTemporaryBuffer(QueryContext context, MemoryTag tag, BlockHandle &block,
 	                                           unique_ptr<FileBuffer> buffer = nullptr) final;
@@ -214,6 +215,11 @@ protected:
 	unique_ptr<BlockManager> temp_block_manager;
 	//! Temporary evicted memory data per tag
 	atomic<CheckedInteger<idx_t, InternalException>> evicted_data_per_tag[MEMORY_TAG_COUNT];
+	//! Buffers written to and read back from temporary files per tag, since start
+	array<atomic<idx_t>, MEMORY_TAG_COUNT> temporary_writes_per_tag {};
+	array<atomic<idx_t>, MEMORY_TAG_COUNT> temporary_reads_per_tag {};
+	//! The bytes of the copies blocks that keep one have in temporary files
+	atomic<idx_t> copy_bytes {0};
 };
 
 } // namespace duckdb

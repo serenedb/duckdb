@@ -166,7 +166,7 @@ void CachingFileSystemWrapper::Read(FileHandle &handle, void *buffer, int64_t nr
 		return underlying_file_system.Read(handle, buffer, nr_bytes, location);
 	}
 
-	auto group = caching_handle->Read(NumericCast<idx_t>(nr_bytes), location);
+	auto group = caching_handle->ReadInOrder(NumericCast<idx_t>(nr_bytes), location);
 	group.CopyTo(static_cast<data_ptr_t>(buffer), NumericCast<idx_t>(nr_bytes));
 }
 

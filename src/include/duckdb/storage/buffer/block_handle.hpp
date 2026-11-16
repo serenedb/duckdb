@@ -187,6 +187,13 @@ public:
 	unique_ptr<FileBuffer> &GetBuffer() {
 		return buffer;
 	}
+	//! The buffer and its data, read on the reader word's cache line by a reader that pinned the loaded block.
+	FileBuffer *GetLoadedBuffer() const {
+		return loaded_buffer;
+	}
+	data_ptr_t GetLoadedData() const {
+		return loaded_data;
+	}
 	//! Sets the file buffer.
 	void SetBuffer(unique_ptr<FileBuffer> buffer_p) {
 		buffer = std::move(buffer_p);
@@ -218,8 +225,16 @@ public:
 	bool MustWriteToTemporaryFile() const {
 		return destroy_buffer_upon == DestroyBufferUpon::BLOCK;
 	}
+	//! Returns true, if eviction keeps a copy of the buffer in a temporary file when the copies have room for it.
+	bool KeepsCopy() const {
+		return destroy_buffer_upon == DestroyBufferUpon::KEEP_COPY;
+	}
 	void SetHasTemporaryFile(bool has_temporary_file_p) {
 		has_temporary_file = has_temporary_file_p;
+	}
+	//! Returns true, if the buffer is kept in a temporary file, which a block that keeps its copy has while loaded too.
+	bool HasTemporaryFile() const {
+		return has_temporary_file;
 	}
 	//! Returns the memory usage.
 	idx_t GetMemoryUsage() const {
@@ -282,6 +297,13 @@ private:
 	atomic<uint8_t> loading {0};
 	//! The file buffer type.
 	const FileBufferType buffer_type;
+	//! When to destroy the data buffer.
+	atomic<DestroyBufferUpon> destroy_buffer_upon;
+	//! The buffer and its data while the block is loaded, set before the reader word says so.
+	FileBuffer *loaded_buffer = nullptr;
+	data_ptr_t loaded_data = nullptr;
+	//! The memory tag.
+	ABSL_CACHELINE_ALIGNED const MemoryTag tag;
 	//! A pointer to the loaded data, if any.
 	unique_ptr<FileBuffer> buffer;
 	//! The eviction queue the loaded block is in, its stripe and slot there, and the memory it counts there; guarded

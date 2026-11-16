@@ -183,6 +183,7 @@ protected:
 	BlockAllocator &block_allocator;
 	//! Per-database singleton object cache managed by buffer pool.
 	optional_ptr<ObjectCache> object_cache = nullptr;
+	array<atomic<idx_t>, MEMORY_TAG_COUNT> evictions_per_tag {};
 };
 
 } // namespace duckdb

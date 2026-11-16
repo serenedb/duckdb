@@ -114,6 +114,10 @@ struct DBConfigOptions {
 	idx_t maximum_memory = DConstants::INVALID_INDEX;
 	//! The maximum size of the 'temp_directory' folder when set (in bytes). Default: 90% of available disk space.
 	idx_t maximum_swap_space = DConstants::INVALID_INDEX;
+	//! The disk space copies of evicted external file cache blocks may take (in bytes). Default: half of the swap
+	//! space.
+	idx_t external_file_cache_spill_size = DConstants::INVALID_INDEX;
+	idx_t external_file_cache_min_memory = DConstants::INVALID_INDEX;
 	//! The maximum amount of CPU threads used by the database system. Default: all available.
 	idx_t maximum_threads = DConstants::INVALID_INDEX;
 	//! HTTP client limit derived from thread counts unless configured

@@ -1,6 +1,8 @@
 add_library_unity(
   duckdb_external_file_cache
   OBJECT
+  cache_validation.cpp
+  input_file_reader.cpp
   caching_file_system.cpp
   caching_file_system_wrapper.cpp
   external_file_cache.cpp

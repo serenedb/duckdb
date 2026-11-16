@@ -56,6 +56,8 @@ BlockMemory::BlockMemory(BufferManager &buffer_manager, block_id_t block_id_p, M
       buffer(std::move(buffer_p)), memory_usage(size_p), memory_charge(tag, buffer_manager.GetBufferPool()),
       unswizzled(nullptr), eviction_queue_idx(DConstants::INVALID_INDEX) {
 	memory_charge = std::move(reservation); // Moved to constructor body due to tidy check.
+	loaded_buffer = buffer.get();
+	loaded_data = buffer->GetDataMutable();
 }
 
 BlockMemory::~BlockMemory() { // NOLINT: allow internal exceptions
@@ -83,6 +85,12 @@ BlockMemory::~BlockMemory() { // NOLINT: allow internal exceptions
 	} catch (...) { // NOLINT
 		            // FIXME: log silent exceptions.
 	}
+}
+
+void BlockMemory::ReleaseOrphan() {
+	shared_ptr<BlockMemory> owner;
+	auto lock = GetLock();
+	owner = TakeOrphanOwner(lock);
 }
 
 void BlockMemory::ChangeMemoryUsage(BlockLock &l, int64_t delta) {
@@ -280,14 +288,15 @@ BufferHandle BlockHandle::Load(QueryContext context, unique_ptr<FileBuffer> reus
 		block_manager.Read(context, *block);
 		memory.GetBuffer() = std::move(block);
 	} else {
-		if (!memory.MustWriteToTemporaryFile()) {
+		if (!memory.HasTemporaryFile()) {
 			// The buffer was destroyed upon unpin/evict, so there is no temporary buffer to read.
 			return BufferHandle();
 		}
 		auto &buffer_manager = memory.GetBufferManager();
 		auto &buffer = memory.GetBuffer();
 		buffer = buffer_manager.ReadTemporaryBuffer(context, memory.GetMemoryTag(), *this, std::move(reusable_buffer));
-		memory.SetHasTemporaryFile(false);
+		memory.SetHasTemporaryFile(memory.KeepsCopy());
+		SDB_PARK_ONCE_ON_FAILURE("block_load_before_loaded");
 	}
 	memory.SetState(BlockState::BLOCK_LOADED);
 	memory.IncrementReaders();

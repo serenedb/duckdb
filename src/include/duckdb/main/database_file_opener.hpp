@@ -51,6 +51,12 @@ private:
 	DatabaseInstance &db;
 };
 
+//! Remote files being written, and the bytes written to them so far
+struct PendingUploads {
+	idx_t files = 0;
+	idx_t bytes = 0;
+};
+
 class DatabaseFileSystem : public OpenerFileSystem {
 public:
 	explicit DatabaseFileSystem(DatabaseInstance &db_p) : db(db_p), database_opener(db_p) {

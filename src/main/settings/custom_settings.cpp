@@ -97,6 +97,11 @@ static idx_t GetAvailableSystemMemory(DBConfig &config) {
 	return DBConfig::GetSystemAvailableMemory(*local_fs);
 }
 
+static idx_t ParseSizeOrZero(const Value &input) {
+	const auto size = input.ToString();
+	return size == "0" ? 0 : DBConfig::ParseMemoryLimit(size);
+}
+
 } // namespace
 
 //===----------------------------------------------------------------------===//

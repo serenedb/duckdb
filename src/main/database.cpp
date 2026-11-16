@@ -97,6 +97,9 @@ DatabaseInstance::~DatabaseInstance() {
 	connection_manager.reset();
 	object_cache.reset();
 	shared_object_cache.reset();
+	if (external_file_cache) {
+		external_file_cache->StopFetching();
+	}
 	scheduler.reset();
 	db_manager.reset();
 
@@ -365,8 +368,8 @@ void DatabaseInstance::InitializeInstance(const char *database_path, DBConfig *u
 
 	metrics_manager = make_uniq<MetricsManager>();
 
-	bool enable_external_file_cache = Settings::Get<EnableExternalFileCacheSetting>(config);
-	external_file_cache = make_uniq<ExternalFileCache>(*this, enable_external_file_cache);
+	external_file_cache = make_uniq<ExternalFileCache>(*this);
+	external_file_cache->SetEnabled(Settings::Get<EnableExternalFileCacheSetting>(config));
 	result_set_manager = make_uniq<ResultSetManager>(*this);
 
 	scheduler = make_uniq<TaskScheduler>(*this);

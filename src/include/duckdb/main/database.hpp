@@ -125,6 +125,9 @@ private:
 	unique_ptr<LogManager> log_manager;
 	unique_ptr<MetricsManager> metrics_manager;
 	unique_ptr<ExternalFileCache> external_file_cache;
+	//! The memory:// filesystem registered with the default virtual filesystem, whose files live in the
+	//! external file cache
+	optional_ptr<MemoryFileSystem> memory_file_system;
 	unique_ptr<ResultSetManager> result_set_manager;
 
 	duckdb_ext_api_v1 (*create_api_v1)();

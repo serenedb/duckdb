@@ -1,5 +1,6 @@
 #include "catch.hpp"
 #include "caching_test_utils.hpp"
+#include "duckdb/common/algorithm.hpp"
 #include "duckdb/common/mutex.hpp"
 #include "duckdb/common/opener_file_system.hpp"
 #include "duckdb/common/thread_annotation.hpp"
@@ -81,6 +82,18 @@ public:
 	void Clear() {
 		const annotated_lock_guard<annotated_mutex> lock(read_calls_mutex);
 		read_calls.clear();
+	}
+
+	//! The reads made so far as (location, size), sorted by location; clears them
+	vector<pair<idx_t, idx_t>> TakeReads() {
+		const annotated_lock_guard<annotated_mutex> lock(read_calls_mutex);
+		vector<pair<idx_t, idx_t>> result;
+		for (const auto &call : read_calls) {
+			result.emplace_back(call.location, call.size);
+		}
+		read_calls.clear();
+		std::sort(result.begin(), result.end());
+		return result;
 	}
 
 	size_t GetReadCount(const string &path, idx_t location, idx_t size) const {
@@ -169,9 +182,9 @@ public:
 //===----------------------------------------------------------------------===//
 
 TEST_CASE("CachingFileSystemWrapper write operations not allowed", "[file_system][caching]") {
+	auto tracking_fs = make_uniq<TrackingFileSystem>();
 	DuckDB db = MakeCacheLocalFilesDB();
 	auto &db_instance = *db.instance;
-	auto tracking_fs = make_uniq<TrackingFileSystem>();
 	auto caching_wrapper =
 	    make_shared_ptr<CachingFileSystemWrapper>(*tracking_fs, db_instance, CachingMode::ALWAYS_CACHE);
 
@@ -213,9 +226,9 @@ TEST_CASE("CachingFileSystemWrapper write operations not allowed", "[file_system
 }
 
 TEST_CASE("CachingFileSystemWrapper caches reads", "[file_system][caching]") {
+	auto tracking_fs = make_uniq<TrackingFileSystem>();
 	DuckDB db = MakeCacheLocalFilesDB();
 	auto &db_instance = *db.instance;
-	auto tracking_fs = make_uniq<TrackingFileSystem>();
 	auto tracking_fs_ptr = tracking_fs.get();
 	auto caching_wrapper =
 	    make_shared_ptr<CachingFileSystemWrapper>(*tracking_fs, db_instance, CachingMode::ALWAYS_CACHE);
@@ -297,9 +310,9 @@ TEST_CASE("CachingFileSystemWrapper caches reads", "[file_system][caching]") {
 }
 
 TEST_CASE("CachingFileSystemWrapper sequential reads", "[file_system][caching]") {
+	auto tracking_fs = make_uniq<TrackingFileSystem>();
 	DuckDB db = MakeCacheLocalFilesDB();
 	auto &db_instance = *db.instance;
-	auto tracking_fs = make_uniq<TrackingFileSystem>();
 	auto tracking_fs_ptr = tracking_fs.get();
 	auto caching_wrapper =
 	    make_shared_ptr<CachingFileSystemWrapper>(*tracking_fs, db_instance, CachingMode::ALWAYS_CACHE);
@@ -327,10 +340,70 @@ TEST_CASE("CachingFileSystemWrapper sequential reads", "[file_system][caching]")
 	}
 }
 
+TEST_CASE("CachingFileSystemWrapper reads in order ask for the bytes behind them in windows that grow",
+          "[file_system][caching]") {
+	auto tracking_fs = make_uniq<TrackingFileSystem>();
+	DuckDB db = MakeCacheLocalFilesDB();
+	auto caching_wrapper =
+	    make_shared_ptr<CachingFileSystemWrapper>(*tracking_fs, *db.instance, CachingMode::ALWAYS_CACHE);
+
+	const idx_t BLOCK = ExternalFileCache::DEFAULT_BLOCK_SIZE;
+	const idx_t FILE_SIZE = 64 * BLOCK + 50;
+	string content(FILE_SIZE, '\0');
+	for (idx_t i = 0; i < FILE_SIZE; i++) {
+		content[i] = static_cast<char>('A' + (i * 7) % 26);
+	}
+	TestFileGuard test_file("test_caching_in_order.bin", content);
+	OpenFileInfo file_info(test_file.GetPath());
+	file_info.extended_info = make_shared_ptr<ExtendedOpenFileInfo>();
+	file_info.extended_info->options["validate_external_file_cache"] = Value::BOOLEAN(false);
+
+	auto handle = caching_wrapper->OpenFile(file_info, FileFlags::FILE_FLAGS_READ);
+	string read(FILE_SIZE, '\0');
+	for (idx_t offset = 0; offset < FILE_SIZE;) {
+		offset += NumericCast<idx_t>(handle->Read(&read[offset], 32 * 1024));
+	}
+	REQUIRE(read == content);
+	REQUIRE(tracking_fs->TakeReads() == vector<pair<idx_t, idx_t>> {{0, BLOCK},
+	                                                                {BLOCK, 2 * BLOCK},
+	                                                                {3 * BLOCK, 4 * BLOCK},
+	                                                                {7 * BLOCK, 8 * BLOCK},
+	                                                                {15 * BLOCK, 16 * BLOCK},
+	                                                                {31 * BLOCK, 32 * BLOCK},
+	                                                                {63 * BLOCK, BLOCK + 50}});
+}
+
+TEST_CASE("CachingFileSystemWrapper read elsewhere starts the window of the reads in order over",
+          "[file_system][caching]") {
+	auto tracking_fs = make_uniq<TrackingFileSystem>();
+	DuckDB db = MakeCacheLocalFilesDB();
+	auto caching_wrapper =
+	    make_shared_ptr<CachingFileSystemWrapper>(*tracking_fs, *db.instance, CachingMode::ALWAYS_CACHE);
+
+	const idx_t BLOCK = ExternalFileCache::DEFAULT_BLOCK_SIZE;
+	const idx_t STEP = 32 * 1024;
+	TestFileGuard test_file("test_caching_in_order_restart.bin", string(64 * BLOCK, 'x'));
+	OpenFileInfo file_info(test_file.GetPath());
+	file_info.extended_info = make_shared_ptr<ExtendedOpenFileInfo>();
+	file_info.extended_info->options["validate_external_file_cache"] = Value::BOOLEAN(false);
+
+	auto handle = caching_wrapper->OpenFile(file_info, FileFlags::FILE_FLAGS_READ);
+	string buffer(2 * BLOCK, '\0');
+	handle->Read(QueryContext(), &buffer[0], STEP, 0);
+	handle->Read(QueryContext(), &buffer[0], STEP, STEP);
+	handle->Read(QueryContext(), &buffer[0], STEP, 32 * BLOCK);
+	handle->Read(QueryContext(), &buffer[0], STEP, 32 * BLOCK + STEP);
+	// a read of the blocks asked for ahead, which waits for them
+	handle->Read(QueryContext(), &buffer[0], 2 * BLOCK, 33 * BLOCK);
+	REQUIRE(buffer == string(2 * BLOCK, 'x'));
+	REQUIRE(tracking_fs->TakeReads() ==
+	        vector<pair<idx_t, idx_t>> {{0, BLOCK}, {BLOCK, 2 * BLOCK}, {32 * BLOCK, BLOCK}, {33 * BLOCK, 2 * BLOCK}});
+}
+
 TEST_CASE("CachingFileSystemWrapper seek operations", "[file_system][caching]") {
+	auto tracking_fs = make_uniq<TrackingFileSystem>();
 	DuckDB db = MakeCacheLocalFilesDB();
 	auto &db_instance = *db.instance;
-	auto tracking_fs = make_uniq<TrackingFileSystem>();
 	auto caching_wrapper =
 	    make_shared_ptr<CachingFileSystemWrapper>(*tracking_fs, db_instance, CachingMode::ALWAYS_CACHE);
 
@@ -407,9 +480,9 @@ TEST_CASE("CachingFileSystemWrapper seek operations", "[file_system][caching]") 
 }
 
 TEST_CASE("CachingFileSystemWrapper list operations", "[file_system][caching]") {
+	auto tracking_fs = make_uniq<TrackingFileSystem>();
 	DuckDB db = MakeCacheLocalFilesDB();
 	auto &db_instance = *db.instance;
-	auto tracking_fs = make_uniq<TrackingFileSystem>();
 	auto caching_wrapper =
 	    make_shared_ptr<CachingFileSystemWrapper>(*tracking_fs, db_instance, CachingMode::ALWAYS_CACHE);
 
@@ -446,6 +519,17 @@ TEST_CASE("CachingFileSystemWrapper list operations", "[file_system][caching]") 
 		REQUIRE(actual_files[idx] == expected_files[idx]);
 	}
 
+	vector<string> listed;
+	ListFilesOptions strict;
+	strict.strict = true;
+	FileSystem &wrapper = *caching_wrapper;
+	REQUIRE(wrapper.ListFiles(
+	    test_dir, [&listed](OpenFileInfo &info) { listed.push_back(info.path); }, nullptr, strict));
+	std::sort(listed.begin(), listed.end());
+	REQUIRE(listed == expected_files);
+	caching_wrapper->SyncFiles({file_paths[0]});
+	caching_wrapper->SyncDirectory(test_dir);
+
 	for (const auto &file_path : file_paths) {
 		local_fs->TryRemoveFile(file_path);
 	}
@@ -453,9 +537,9 @@ TEST_CASE("CachingFileSystemWrapper list operations", "[file_system][caching]") 
 }
 
 TEST_CASE("CachingFileSystemWrapper read with parallel accesses", "[file_system][caching]") {
+	auto tracking_fs = make_uniq<TrackingFileSystem>();
 	DuckDB db = MakeCacheLocalFilesDB();
 	auto &db_instance = *db.instance;
-	auto tracking_fs = make_uniq<TrackingFileSystem>();
 	auto caching_wrapper =
 	    make_shared_ptr<CachingFileSystemWrapper>(*tracking_fs, db_instance, CachingMode::ALWAYS_CACHE);
 
@@ -518,7 +602,7 @@ TEST_CASE("Open file in opener filesystem cache modes", "[file_system][caching]"
 
 	// Shared variable both all caching modes.
 	string buffer(TEST_BUFFER_SIZE, '\0');
-	const auto &external_file_cache = db_instance.GetExternalFileCache();
+	auto &external_file_cache = db_instance.GetExternalFileCache();
 
 	auto run_case = [&](CachingMode mode) {
 		FileOpenFlags flags {FileFlags::FILE_FLAGS_READ};
@@ -569,9 +653,9 @@ TEST_CASE("Request over-sized range read", "[file_system][caching]") {
 }
 
 TEST_CASE("CachingFileSystemWrapper concurrent reads same block", "[file_system][caching]") {
+	auto tracking_fs = make_uniq<TrackingFileSystem>();
 	DuckDB db = MakeCacheLocalFilesDB();
 	auto &db_instance = *db.instance;
-	auto tracking_fs = make_uniq<TrackingFileSystem>();
 	auto tracking_fs_ptr = tracking_fs.get();
 	auto caching_wrapper =
 	    make_shared_ptr<CachingFileSystemWrapper>(*tracking_fs, db_instance, CachingMode::ALWAYS_CACHE);
@@ -615,9 +699,9 @@ TEST_CASE("CachingFileSystemWrapper concurrent reads same block", "[file_system]
 }
 
 TEST_CASE("CachingFileSystemWrapper IO error propagates to waiters", "[file_system][caching]") {
+	auto failing_fs = make_uniq<FailingFileSystem>();
 	DuckDB db = MakeCacheLocalFilesDB();
 	auto &db_instance = *db.instance;
-	auto failing_fs = make_uniq<FailingFileSystem>();
 	auto failing_fs_ptr = failing_fs.get();
 	auto caching_wrapper =
 	    make_shared_ptr<CachingFileSystemWrapper>(*failing_fs, db_instance, CachingMode::ALWAYS_CACHE);
@@ -659,9 +743,9 @@ TEST_CASE("CachingFileSystemWrapper IO error propagates to waiters", "[file_syst
 }
 
 TEST_CASE("CachingFileSystemWrapper transient IO error recovery", "[file_system][caching]") {
+	auto failing_fs = make_uniq<FailingFileSystem>();
 	DuckDB db = MakeCacheLocalFilesDB();
 	auto &db_instance = *db.instance;
-	auto failing_fs = make_uniq<FailingFileSystem>();
 	auto failing_fs_ptr = failing_fs.get();
 	auto caching_wrapper =
 	    make_shared_ptr<CachingFileSystemWrapper>(*failing_fs, db_instance, CachingMode::ALWAYS_CACHE);
@@ -692,9 +776,9 @@ TEST_CASE("CachingFileSystemWrapper transient IO error recovery", "[file_system]
 }
 
 TEST_CASE("CachingFileSystemWrapper zero-byte read", "[file_system][caching]") {
+	auto tracking_fs = make_uniq<TrackingFileSystem>();
 	DuckDB db = MakeCacheLocalFilesDB();
 	auto &db_instance = *db.instance;
-	auto tracking_fs = make_uniq<TrackingFileSystem>();
 	auto caching_wrapper =
 	    make_shared_ptr<CachingFileSystemWrapper>(*tracking_fs, db_instance, CachingMode::ALWAYS_CACHE);
 
@@ -713,9 +797,9 @@ TEST_CASE("CachingFileSystemWrapper zero-byte read", "[file_system][caching]") {
 }
 
 TEST_CASE("CachingFileSystemWrapper does not overflow on ninfinity last_modified", "[file_system][caching]") {
+	auto no_meta_fs = make_uniq<NoMetadataFileSystem>();
 	DuckDB db = MakeCacheLocalFilesDB();
 	auto &db_instance = *db.instance;
-	auto no_meta_fs = make_uniq<NoMetadataFileSystem>();
 	auto caching_wrapper =
 	    make_shared_ptr<CachingFileSystemWrapper>(*no_meta_fs, db_instance, CachingMode::ALWAYS_CACHE);
 
@@ -733,11 +817,11 @@ TEST_CASE("CachingFileSystemWrapper does not overflow on ninfinity last_modified
 //===----------------------------------------------------------------------===//
 
 TEST_CASE("CachingFileHandle Read returns correct FileBufferHandleGroup", "[file_system][caching]") {
+	auto tracking_fs = make_uniq<TrackingFileSystem>();
 	DuckDB db = MakeCacheLocalFilesDB();
 	auto &db_instance = *db.instance;
-	auto tracking_fs = make_uniq<TrackingFileSystem>();
 
-	const idx_t BLOCK_SIZE = db_instance.GetExternalFileCache().GetCacheMaxBlockSize(TestDirectoryPath());
+	const idx_t BLOCK_SIZE = ExternalFileCache::DEFAULT_BLOCK_SIZE;
 	const idx_t EXTRA = 100;
 	const idx_t FILE_SIZE = BLOCK_SIZE + EXTRA;
 
@@ -760,10 +844,10 @@ TEST_CASE("CachingFileHandle Read returns correct FileBufferHandleGroup", "[file
 		auto group = handle->Read(FILE_SIZE, 0);
 		auto &handles = group.GetHandles();
 		REQUIRE(handles.size() == 2);
-		REQUIRE(handles[0].start_offset == 0);
-		REQUIRE(handles[0].length == BLOCK_SIZE);
-		REQUIRE(handles[1].start_offset == 0);
-		REQUIRE(handles[1].length == EXTRA);
+		REQUIRE(memcmp(handles[0].Ptr(), content.data(), BLOCK_SIZE) == 0);
+		REQUIRE(handles[0].Size() == BLOCK_SIZE);
+		REQUIRE(memcmp(handles[1].Ptr(), content.data() + BLOCK_SIZE, EXTRA) == 0);
+		REQUIRE(handles[1].Size() == EXTRA);
 
 		string result(FILE_SIZE, '\0');
 		group.CopyTo(reinterpret_cast<data_ptr_t>(&result[0]), FILE_SIZE);
@@ -790,10 +874,10 @@ TEST_CASE("CachingFileHandle Read returns correct FileBufferHandleGroup", "[file
 		auto group = handle->Read(read_size, read_offset);
 		auto &handles = group.GetHandles();
 		REQUIRE(handles.size() == 2);
-		REQUIRE(handles[0].start_offset == BLOCK_SIZE - 200);
-		REQUIRE(handles[0].length == 200);
-		REQUIRE(handles[1].start_offset == 0);
-		REQUIRE(handles[1].length == 50);
+		REQUIRE(memcmp(handles[0].Ptr(), content.data() + read_offset, 200) == 0);
+		REQUIRE(handles[0].Size() == 200);
+		REQUIRE(memcmp(handles[1].Ptr(), content.data() + BLOCK_SIZE, 50) == 0);
+		REQUIRE(handles[1].Size() == 50);
 
 		string result(read_size, '\0');
 		group.CopyTo(reinterpret_cast<data_ptr_t>(&result[0]), read_size);
@@ -806,8 +890,8 @@ TEST_CASE("CachingFileHandle Read returns correct FileBufferHandleGroup", "[file
 		auto group = handle->Read(read_size, read_offset);
 		auto &handles = group.GetHandles();
 		REQUIRE(handles.size() == 1);
-		REQUIRE(handles[0].start_offset == 10);
-		REQUIRE(handles[0].length == 50);
+		REQUIRE(memcmp(handles[0].Ptr(), content.data() + read_offset, 50) == 0);
+		REQUIRE(handles[0].Size() == 50);
 
 		string result(read_size, '\0');
 		group.CopyTo(reinterpret_cast<data_ptr_t>(&result[0]), read_size);
@@ -818,15 +902,15 @@ TEST_CASE("CachingFileHandle Read returns correct FileBufferHandleGroup", "[file
 		auto group = handle->Read(100, 0);
 		auto &handles = group.GetHandles();
 		REQUIRE(handles.size() == 1);
-		REQUIRE(handles[0].start_offset == 0);
-		REQUIRE(handles[0].length == 100);
+		REQUIRE(memcmp(handles[0].Ptr(), content.data(), 100) == 0);
+		REQUIRE(handles[0].Size() == 100);
 	}
 }
 
 TEST_CASE("CachingFileHandle EOF read behavior", "[file_system][caching]") {
+	auto tracking_fs = make_uniq<TrackingFileSystem>();
 	DuckDB db = MakeCacheLocalFilesDB();
 	auto &db_instance = *db.instance;
-	auto tracking_fs = make_uniq<TrackingFileSystem>();
 
 	const string content = "Hello, this is test content for EOF behavior.";
 	TestFileGuard test_file("test_eof_behavior.bin", content);
@@ -845,7 +929,7 @@ TEST_CASE("CachingFileHandle EOF read behavior", "[file_system][caching]") {
 		auto group = handle->Read(100, content.size() - 10);
 		auto &handles = group.GetHandles();
 		REQUIRE(handles.size() == 1);
-		REQUIRE(handles[0].length == 10);
+		REQUIRE(handles[0].Size() == 10);
 
 		string result(10, '\0');
 		group.CopyTo(reinterpret_cast<data_ptr_t>(&result[0]), 10);
@@ -866,12 +950,12 @@ TEST_CASE("CachingFileHandle EOF read behavior", "[file_system][caching]") {
 }
 
 TEST_CASE("Fully cached read skips doesn't open file", "[file_system][caching]") {
+	auto counting_fs = make_uniq<CountingFileSystem>();
 	DuckDB db = MakeCacheLocalFilesDB();
 	auto &db_instance = *db.instance;
-	auto counting_fs = make_uniq<CountingFileSystem>();
 	auto *counting_fs_ptr = counting_fs.get();
 
-	const idx_t BLOCK_SIZE = db_instance.GetExternalFileCache().GetCacheMaxBlockSize(TestDirectoryPath());
+	const idx_t BLOCK_SIZE = ExternalFileCache::DEFAULT_BLOCK_SIZE;
 	const idx_t FILE_SIZE = BLOCK_SIZE;
 
 	string content(FILE_SIZE, 'X');

@@ -1,5 +1,5 @@
 # name: test/sql/storage/external_file_cache/external_file_cache_block_size.test
-# description: Test that changing the cache block size keeps cached blocks and reads stay correct
+# description: Test that a block size change applies to files cached afterwards, keeps cached blocks and reads stay correct
 # group: [external_file_cache]
 
 require parquet
@@ -11,140 +11,110 @@ set cache_local_files=true;
 statement ok
 set enable_external_file_cache=true;
 
-# Create a test parquet file
 statement ok
-copy (select range i, range % 100 j from range(10000)) to '{TEST_DIR}/test_block_size.parquet';
+copy (select range i, md5(range::varchar) s from range(100000)) to '{TEST_DIR}/block_size_a.parquet';
 
-# Read the file to populate cache at default 16KiB block size
 statement ok
-select * from '{TEST_DIR}/test_block_size.parquet';
+copy (select range i, md5(range::varchar) s from range(100000)) to '{TEST_DIR}/block_size_b.parquet';
 
-# Verify cache is populated
+statement ok
+copy (select range i, md5(range::varchar) s from range(100000)) to '{TEST_DIR}/block_size_c.parquet';
+
 query I
-select count(*) > 0 from duckdb_external_file_cache();
+select current_setting('external_file_cache_remote_min_block_size');
 ----
-true
+131072
 
-# Save total cached bytes before block size change
-statement ok
-create temp table cached_bytes_before as select sum(nr_bytes) as total from duckdb_external_file_cache();
-
-# Change local block size from 16KiB to 4KiB
-statement ok
-set external_file_cache_local_max_block_size=4096;
-
-# Cache should still have data
-query I
-select count(*) > 0 from duckdb_external_file_cache();
+query III
+select count(*), sum(i), sum(length(s)) from '{TEST_DIR}/block_size_a.parquet';
 ----
-true
+100000	4999950000	3200000
 
-# Total cached bytes should be preserved
-query I
-select (select sum(nr_bytes) from duckdb_external_file_cache()) = (select total from cached_bytes_before);
-----
-true
-
-# Reading returns correct data
 query II
-select count(*), sum(i) from '{TEST_DIR}/test_block_size.parquet';
+select count(*) > 0, max(nr_bytes) from duckdb_external_file_cache() where path like '%block_size_a.parquet';
 ----
-10000	49995000
-
-# Save bytes before merging back
-statement ok
-drop table cached_bytes_before;
+true	131072
 
 statement ok
 create temp table cached_bytes_before as select sum(nr_bytes) as total from duckdb_external_file_cache();
 
-# Change block size back to 16KiB
 statement ok
-set external_file_cache_local_max_block_size=16384;
+set external_file_cache_remote_min_block_size=32768;
 
-# Total cached bytes should be preserved
+# the blocks cached before the change stay
 query I
 select (select sum(nr_bytes) from duckdb_external_file_cache()) = (select total from cached_bytes_before);
 ----
 true
 
-# Verify reads are still correct
+query III
+select count(*), sum(i), sum(length(s)) from '{TEST_DIR}/block_size_a.parquet';
+----
+100000	4999950000	3200000
+
+# a file cached after the change gets blocks of the new size
+query III
+select count(*), sum(i), sum(length(s)) from '{TEST_DIR}/block_size_b.parquet';
+----
+100000	4999950000	3200000
+
 query II
-select count(*), sum(i) from '{TEST_DIR}/test_block_size.parquet';
+select count(*) > 0, max(nr_bytes) from duckdb_external_file_cache() where path like '%block_size_b.parquet';
 ----
-10000	49995000
-
-# Setting to same value should be a no-op
-statement ok
-drop table cached_bytes_before;
-
-statement ok
-create temp table cached_bytes_before as select sum(nr_bytes) as total from duckdb_external_file_cache();
-
-statement ok
-set external_file_cache_local_max_block_size=16384;
+true	32768
 
 query I
-select (select sum(nr_bytes) from duckdb_external_file_cache()) = (select total from cached_bytes_before);
+select max(nr_bytes) from duckdb_external_file_cache() where path like '%block_size_a.parquet';
 ----
-true
+131072
 
-# Reset local block size to default
+# smaller pieces of a long read
 statement ok
-drop table cached_bytes_before;
+set external_file_cache_local_max_block_size=65536;
 
 statement ok
-create temp table cached_bytes_before as select sum(nr_bytes) as total from duckdb_external_file_cache();
+set external_file_cache_remote_max_block_size=1048576;
+
+query III
+select count(*), sum(i), sum(length(s)) from '{TEST_DIR}/block_size_c.parquet';
+----
+100000	4999950000	3200000
+
+statement ok
+reset external_file_cache_remote_min_block_size;
 
 statement ok
 reset external_file_cache_local_max_block_size;
 
-query I
-select (select sum(nr_bytes) from duckdb_external_file_cache()) = (select total from cached_bytes_before);
-----
-true
-
-# Verify reads are still correct after reset
-query II
-select count(*), sum(i) from '{TEST_DIR}/test_block_size.parquet';
-----
-10000	49995000
-
-# Change to a different size, then reset
 statement ok
-drop table cached_bytes_before;
-
-statement ok
-create temp table cached_bytes_before as select sum(nr_bytes) as total from duckdb_external_file_cache();
-
-statement ok
-set external_file_cache_local_max_block_size=8192;
+reset external_file_cache_remote_max_block_size;
 
 query I
-select (select sum(nr_bytes) from duckdb_external_file_cache()) = (select total from cached_bytes_before);
+select current_setting('external_file_cache_remote_max_block_size');
 ----
-true
+4194304
 
-statement ok
-drop table cached_bytes_before;
-
-statement ok
-create temp table cached_bytes_before as select sum(nr_bytes) as total from duckdb_external_file_cache();
-
-statement ok
-reset external_file_cache_local_max_block_size;
-
-query I
-select (select sum(nr_bytes) from duckdb_external_file_cache()) = (select total from cached_bytes_before);
+# invalid values are rejected
+statement error
+set external_file_cache_remote_min_block_size=0;
 ----
-true
+value must be positive
 
-query II
-select count(*), sum(i) from '{TEST_DIR}/test_block_size.parquet';
+statement error
+set external_file_cache_remote_min_block_size=100000;
 ----
-10000	49995000
+block size must be a power of two
 
-# Verify invalid values are rejected
+statement error
+set external_file_cache_remote_min_block_size=16384;
+----
+block size must be between 32768 and 262144 bytes
+
+statement error
+set external_file_cache_remote_min_block_size=524288;
+----
+block size must be between 32768 and 262144 bytes
+
 statement error
 set external_file_cache_local_max_block_size=0;
 ----
@@ -154,3 +124,22 @@ statement error
 set external_file_cache_remote_max_block_size=0;
 ----
 value must be positive
+
+statement error
+set external_file_cache_remote_max_block_size=3000000;
+----
+block size must be a power of two
+
+# evicted blocks of remote files keep a copy unless spilling is off
+query I
+select current_setting('external_file_cache_spill');
+----
+on
+
+statement ok
+set external_file_cache_spill=false;
+
+query I
+select current_setting('external_file_cache_spill');
+----
+off

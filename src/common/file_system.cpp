@@ -1,5 +1,6 @@
 #include "duckdb/common/file_system.hpp"
 
+#include "duckdb/common/allocator.hpp"
 #include "duckdb/common/checksum.hpp"
 #include "duckdb/common/time_point.hpp"
 #include "duckdb/common/compressed_file_system.hpp"
@@ -476,6 +477,23 @@ bool FileSystem::SupportsGlobExtended() const {
 
 void FileSystem::Read(FileHandle &handle, void *buffer, int64_t nr_bytes, idx_t location) {
 	throw NotImplementedException("%s: Read (with location) is not implemented!", GetName());
+}
+
+void FileSystem::ReadScattered(FileHandle &handle, std::span<const FileReadTarget> targets, idx_t location) {
+	if (targets.size() == 1) {
+		Read(handle, targets[0].data, NumericCast<int64_t>(targets[0].size), location);
+		return;
+	}
+	FileReadTargetWriter writer(targets);
+	const auto size = writer.Capacity();
+	auto staging = Allocator::DefaultAllocator().Allocate(size);
+	Read(handle, staging.get(), NumericCast<int64_t>(size), location);
+	writer.Write(staging.get(), size);
+}
+
+void FileSystem::ReadStreamed(FileHandle &handle, std::span<const FileReadTarget> targets, idx_t location,
+                              FileReadProgress &) {
+	ReadScattered(handle, targets, location);
 }
 
 void FileSystem::Write(FileHandle &handle, void *buffer, int64_t nr_bytes, idx_t location) {

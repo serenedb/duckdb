@@ -28,6 +28,7 @@
 #include "duckdb/common/vector.hpp"
 
 #include <functional>
+#include <span>
 
 #undef CreateDirectory
 #undef MoveFile

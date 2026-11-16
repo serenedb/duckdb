@@ -6,7 +6,7 @@
 
 #include "duckdb/common/enums/cache_validation_mode.hpp"
 #include "duckdb/common/encryption_state.hpp"
-#include "duckdb/storage/external_file_cache/external_file_cache.hpp"
+#include "duckdb/storage/external_file_cache/cache_validation.hpp"
 #include "duckdb/storage/external_file_cache/external_file_cache_util.hpp"
 #include "duckdb/storage/external_file_cache/caching_file_system.hpp"
 #include "duckdb/common/file_system.hpp"
@@ -88,8 +88,8 @@ string ParquetFileMetadataCache::CreateEncryptionKeyHash(const ParquetEncryption
 }
 
 bool ParquetFileMetadataCache::IsValid(CachingFileHandle &new_handle) const {
-	return ExternalFileCache::IsValid(new_handle.Validate(), version_tag, last_modified, new_handle.GetVersionTag(),
-	                                  new_handle.GetLastModifiedTime());
+	return CacheValidation::IsValid(new_handle.Validate(), version_tag, last_modified, new_handle.GetVersionTag(),
+	                                new_handle.GetLastModifiedTime());
 }
 
 ParquetCacheValidity ParquetFileMetadataCache::IsValid(const OpenFileInfo &info, ClientContext &context) const {
@@ -112,7 +112,7 @@ ParquetCacheValidity ParquetFileMetadataCache::IsValid(const OpenFileInfo &info,
 	string new_etag;
 	extended_info.TryGetOption("etag", new_etag);
 
-	if (ExternalFileCache::IsValid(/*validate=*/true, version_tag, last_modified, new_etag, new_last_modified)) {
+	if (CacheValidation::IsValid(/*validate=*/true, version_tag, last_modified, new_etag, new_last_modified)) {
 		return ParquetCacheValidity::VALID;
 	}
 	return ParquetCacheValidity::INVALID;

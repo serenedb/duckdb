@@ -224,6 +224,9 @@ public:
 	void WriteTemporaryBuffer(QueryContext context, MemoryTag tag, block_id_t block_id, FileBuffer &buffer) override {
 		return buffer_manager.WriteTemporaryBuffer(context, tag, block_id, buffer);
 	}
+	bool TryWriteTemporaryCopy(QueryContext context, MemoryTag tag, block_id_t block_id, FileBuffer &buffer) override {
+		return buffer_manager.TryWriteTemporaryCopy(context, tag, block_id, buffer);
+	}
 	unique_ptr<FileBuffer> ReadTemporaryBuffer(QueryContext context, MemoryTag tag, BlockHandle &block,
 	                                           unique_ptr<FileBuffer> buffer) override {
 		return buffer_manager.ReadTemporaryBuffer(context, tag, block, std::move(buffer));

@@ -1,5 +1,6 @@
 #include "duckdb/storage/buffer/buffer_pool.hpp"
 #include "duckdb/storage/buffer_manager.hpp"
+#include "duckdb/common/allocator.hpp"
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/typedefs.hpp"
 #include "duckdb/parallel/task_scheduler.hpp"
@@ -203,17 +204,12 @@ void BufferPool::RemoveBlock(BlockMemory &memory) {
 	}
 }
 
-	auto ts = memory.NextEvictionSequenceNumber();
-	if (track_eviction_timestamps) {
-		memory.SetLRUTimestamp(std::chrono::time_point_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now())
-		                           .time_since_epoch()
-		                           .count());
-	}
-	memory.SetHasLiveQueueEntry(lock, true);
+void BufferPool::CountEviction(const BlockMemory &memory) {
+	evictions_per_tag[uint8_t(memory.GetMemoryTag())].fetch_add(1, std::memory_order_relaxed);
+}
 
-	// Get the eviction queue for the block and add it
-	BufferEvictionNode node(handle->GetMemoryWeak(), ts);
-	return queue.AddToEvictionQueue(std::move(node));
+idx_t BufferPool::GetEvictions(MemoryTag tag) const {
+	return evictions_per_tag[uint8_t(tag)].load(std::memory_order_relaxed);
 }
 
 EvictionQueue &BufferPool::GetEvictionQueueForBlockMemory(const BlockMemory &memory) {
@@ -260,18 +256,15 @@ TemporaryMemoryManager &BufferPool::GetTemporaryMemoryManager() {
 BufferPool::EvictionResult BufferPool::EvictObjectCacheEntries(MemoryTag tag, idx_t extra_memory, idx_t memory_limit) {
 	TempBufferPoolReservation r(tag, *this, extra_memory);
 	bool success = false;
-	while (!object_cache->IsEmpty()) {
+	while (true) {
 		const idx_t used = memory_usage.GetUsedMemory(MemoryUsageCaches::NO_FLUSH);
-		const idx_t overshoot = used > memory_limit ? (used - memory_limit) : 0;
-		const idx_t target = MaxValue(extra_memory, overshoot);
-		const idx_t freed_mem = object_cache->EvictToReduceMemory(target);
-		// Break if all entries cannot be evicted.
-		if (freed_mem == 0) {
+		if (used <= memory_limit) {
+			success = true;
 			break;
 		}
-
-		if (memory_usage.GetUsedMemory(MemoryUsageCaches::NO_FLUSH) <= memory_limit) {
-			success = true;
+		// Break if all entries cannot be evicted.
+		if (object_cache->IsEmpty() ||
+		    object_cache->EvictToReduceMemory(MaxValue(extra_memory, used - memory_limit)) == 0) {
 			break;
 		}
 	}
@@ -341,10 +334,10 @@ BufferPool::EvictionResult BufferPool::EvictBlocksInternal(QueryContext context,
 			}
 			continue;
 		}
-
-		// release the memory and mark the block as unloaded
-		handle->Unload(lock, context);
-
+		victim->Unload(lock, context);
+		if (victim->IsUnloaded()) {
+			CountEviction(*victim);
+		}
 		if (memory_usage.GetUsedMemory(MemoryUsageCaches::NO_FLUSH) <= memory_limit) {
 			found = true;
 			break;
