@@ -73,10 +73,9 @@ static void ResolveBuiltinFunctionGrant(Binder &binder, CatalogEntry &function, 
 	auto &database = ClusterDatabase(context, database_name);
 	const auto owner = config.bootstrap_role;
 	auto builtin = BuiltinFunctionAcl(function, owner);
-	auto &rows = database.permissions.Rows().functions;
-	auto row = std::find_if(rows.begin(), rows.end(), [&](const NamedAcl &entry) { return entry.name == key; });
-	RequireGrantableAcl(binder.CheckAs(), owner, row == rows.end() ? builtin : row->acl, function.type, name);
-	info.functions = {NamedAcl {std::move(key), std::move(builtin)}};
+	auto row = database.permissions.FindRow(CatalogType::MACRO_ENTRY, 0, key);
+	RequireGrantableAcl(binder.CheckAs(), owner, row ? row->acl : builtin, function.type, name);
+	info.database_rows = {GrantRow {CatalogType::MACRO_ENTRY, 0, std::move(key), std::move(builtin), {}}};
 	TargetDatabaseRow(info, owner, database_name);
 }
 
@@ -86,11 +85,9 @@ static void ResolveBuiltinTypeGrant(Binder &binder, idx_t type, const string &na
 	auto &database = ClusterDatabase(context, database_name);
 	const auto owner = DBConfig::GetConfig(context).bootstrap_role;
 	auto builtin = Permissions::AclDefault(CatalogType::TYPE_ENTRY, owner);
-	auto &rows = database.permissions.Rows().types;
-	auto row = std::find_if(rows.begin(), rows.end(), [&](const ObjectAcl &entry) { return entry.oid == type; });
-	RequireGrantableAcl(binder.CheckAs(), owner, row == rows.end() ? builtin : row->acl, CatalogType::TYPE_ENTRY, name);
-	info.type_id = type;
-	info.builtin_acl = std::move(builtin);
+	auto row = database.permissions.FindRow(CatalogType::TYPE_ENTRY, type);
+	RequireGrantableAcl(binder.CheckAs(), owner, row ? row->acl : builtin, CatalogType::TYPE_ENTRY, name);
+	info.database_rows = {GrantRow {CatalogType::TYPE_ENTRY, type, string(), std::move(builtin), {}}};
 	TargetDatabaseRow(info, owner, database_name);
 }
 
@@ -215,9 +212,10 @@ static void ResolveGrant(Binder &binder, AlterPermissionsInfo &info) {
 		auto &wrapper = DBConfig::GetConfig(context).GetForeignDataWrapper(name);
 		const auto database_name = DatabaseManager::GetDefaultDatabase(context);
 		auto &database = ClusterDatabase(context, database_name);
-		RequireGrantableAcl(role, wrapper.owner, database.permissions.ForeignDataWrapperAcl(wrapper.oid),
+		RequireGrantableAcl(role, wrapper.owner,
+		                    database.permissions.RowAcl(CatalogType::FOREIGN_DATA_WRAPPER_ENTRY, wrapper.oid),
 		                    CatalogType::FOREIGN_DATA_WRAPPER_ENTRY, name);
-		info.foreign_data_wrapper_id = wrapper.oid;
+		info.database_rows = {GrantRow {CatalogType::FOREIGN_DATA_WRAPPER_ENTRY, wrapper.oid, string(), {}, {}}};
 		TargetDatabaseRow(info, wrapper.owner, database_name);
 		return;
 	}
@@ -232,11 +230,11 @@ static void ResolveGrant(Binder &binder, AlterPermissionsInfo &info) {
 		}
 		const auto database_name = DatabaseManager::GetDefaultDatabase(context);
 		auto &database = ClusterDatabase(context, database_name);
-		auto stored = database.permissions.LanguageAcl(language.oid);
+		auto stored = database.permissions.RowAcl(CatalogType::LANGUAGE_ENTRY, language.oid);
 		auto acl = stored.empty() ? Permissions::AclDefault(CatalogType::LANGUAGE_ENTRY, language.owner)
 		                          : vector<AclItem>(stored.begin(), stored.end());
 		RequireGrantableAcl(role, language.owner, acl, CatalogType::LANGUAGE_ENTRY, name);
-		info.language_id = language.oid;
+		info.database_rows = {GrantRow {CatalogType::LANGUAGE_ENTRY, language.oid, string(), {}, {}}};
 		TargetDatabaseRow(info, language.owner, database_name);
 		return;
 	}
@@ -252,8 +250,9 @@ static void ResolveGrant(Binder &binder, AlterPermissionsInfo &info) {
 		if (!entry) {
 			throw NotImplementedException("parameter privileges are not supported by this catalog");
 		}
-		RequireGrantableAcl(role, owner, entry->permissions.ParameterAcl(name), CatalogType::PARAMETER_ENTRY, name);
-		info.parameter = StringUtil::Lower(name);
+		RequireGrantableAcl(role, owner, entry->permissions.RowAcl(CatalogType::PARAMETER_ENTRY, 0, name),
+		                    CatalogType::PARAMETER_ENTRY, name);
+		info.database_rows = {GrantRow {CatalogType::PARAMETER_ENTRY, 0, StringUtil::Lower(name), {}, {}}};
 		info.object_owner_id = owner;
 		info.entry_catalog_type = CatalogType::ROLE_ENTRY;
 		info.SetQualifiedName(Identifier(), Identifier(), holder);
@@ -304,12 +303,11 @@ static void ResolveGrant(Binder &binder, AlterPermissionsInfo &info) {
 	    !DefaultSchemaGenerator::IsDefaultSchema(schema ? target.name : target.ParentSchema(context).name)) {
 		return;
 	}
-	if (schema) {
-		info.schema_id = target.oid;
-	} else {
-		info.relation_id = target.oid;
-	}
-	info.builtin_acl = target.permissions.acl;
+	info.database_rows = {GrantRow {schema ? CatalogType::SCHEMA_ENTRY : CatalogType::TABLE_ENTRY,
+	                                target.oid,
+	                                string(),
+	                                target.permissions.acl,
+	                                {}}};
 	TargetDatabaseRow(info, target.permissions.owner, target.ParentCatalog().GetName());
 }
 

@@ -187,26 +187,6 @@ struct DefaultAcl {
 	static DefaultAcl Deserialize(Deserializer &deserializer);
 };
 
-struct ObjectAcl {
-	idx_t oid = 0;
-	vector<AclItem> acl;
-
-	bool operator==(const ObjectAcl &rhs) const = default;
-
-	void Serialize(Serializer &serializer) const;
-	static ObjectAcl Deserialize(Deserializer &deserializer);
-};
-
-struct NamedAcl {
-	string name;
-	vector<AclItem> acl;
-
-	bool operator==(const NamedAcl &rhs) const = default;
-
-	void Serialize(Serializer &serializer) const;
-	static NamedAcl Deserialize(Deserializer &deserializer);
-};
-
 struct ColumnPrivilege {
 	Identifier column;
 	AclMode privileges = AclMode::NoRights;
@@ -227,27 +207,25 @@ struct ColumnAcl {
 	static ColumnAcl Deserialize(Deserializer &deserializer);
 };
 
-struct RelationAcl {
+struct GrantRow {
+	CatalogType kind = CatalogType::INVALID;
 	idx_t oid = 0;
+	string name;
 	vector<AclItem> acl;
 	vector<ColumnAcl> columns;
 
-	bool operator==(const RelationAcl &rhs) const = default;
+	bool operator==(const GrantRow &rhs) const = default;
+	bool Is(CatalogType kind, idx_t oid, std::string_view name) const;
 
 	void Serialize(Serializer &serializer) const;
-	static RelationAcl Deserialize(Deserializer &deserializer);
+	static GrantRow Deserialize(Deserializer &deserializer);
 };
 
 struct GrantRows {
-	vector<ObjectAcl> foreign_data_wrappers;
-	vector<NamedAcl> parameters;
-	vector<ObjectAcl> languages;
-	vector<RelationAcl> relations;
-	vector<ObjectAcl> schemas;
-	vector<NamedAcl> functions;
-	vector<ObjectAcl> types;
+	vector<GrantRow> rows;
 
 	bool operator==(const GrantRows &rhs) const = default;
+	std::span<const GrantRow> OfKind(CatalogType kind) const;
 
 	void Serialize(Serializer &serializer) const;
 	static shared_ptr<GrantRows> Deserialize(Deserializer &deserializer);
@@ -318,9 +296,8 @@ struct Permissions {
 	static bool TryParsePrivilege(std::string_view keyword, CatalogType acl_class, AclMode &result);
 	static vector<AclItem> AclDefault(CatalogType acl_class, idx_t owner);
 
-	std::span<const AclItem> ForeignDataWrapperAcl(idx_t wrapper) const;
-	std::span<const AclItem> ParameterAcl(std::string_view parameter) const;
-	std::span<const AclItem> LanguageAcl(idx_t language) const;
+	optional_ptr<const GrantRow> FindRow(CatalogType kind, idx_t oid, std::string_view name = {}) const;
+	std::span<const AclItem> RowAcl(CatalogType kind, idx_t oid, std::string_view name = {}) const;
 	void AssignOwner(idx_t new_owner, CatalogType objtype, optional_ptr<const Permissions> database,
 	                 optional_idx schema);
 
@@ -467,7 +444,7 @@ DUCKDB_API bool CanUseSchema(const RoleAccess &role, const CatalogEntry &schema)
 DUCKDB_API bool CanUseNamedSchema(ClientContext &context, const RoleAccess &role, const CatalogEntry &schema);
 DUCKDB_API idx_t FunctionOverloadCount(const CatalogEntry &function);
 DUCKDB_API vector<AclItem> BuiltinFunctionAcl(const CatalogEntry &function, idx_t owner);
-DUCKDB_API vector<NamedAcl> BuiltinFunctionRows(ClientContext &context, SchemaCatalogEntry &schema);
+DUCKDB_API vector<GrantRow> BuiltinFunctionRows(ClientContext &context, SchemaCatalogEntry &schema);
 DUCKDB_API void CheckBuiltinCall(ClientContext &context, const RoleAccess &role, const CatalogEntry &function,
                                  idx_t overload);
 DUCKDB_API bool BuiltinCallGranted(ClientContext &context, const RoleAccess &role, const CatalogEntry &function);

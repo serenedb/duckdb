@@ -128,17 +128,10 @@ struct AlterPermissionsInfo : public AlterInfo {
 	bool all_in_schema = false;
 	bool include_functions = true;
 	bool include_procedures = true;
-	idx_t foreign_data_wrapper_id = 0;
 	idx_t object_owner_id = 0;
-	string parameter;
 	idx_t drop_owned_role_id = 0;
-	idx_t language_id = 0;
-	idx_t relation_id = 0;
-	vector<AclItem> builtin_acl;
 	idx_t overload_oid = 0;
-	idx_t schema_id = 0;
-	vector<NamedAcl> functions;
-	idx_t type_id = 0;
+	vector<GrantRow> database_rows;
 	vector<LogicalType> func_parameters;
 	bool has_func_args = false;
 	vector<unique_ptr<AlterPermissionsInfo>> additional_grants;
