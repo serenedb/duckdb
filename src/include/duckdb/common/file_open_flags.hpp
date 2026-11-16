@@ -64,8 +64,8 @@ public:
 	}
 
 	inline FileOpenFlags operator|(const FileOpenFlags &b) const {
-		FileOpenFlags result(flags | b.flags, MergeLock(lock, b.lock), MergeCompression(compression, b.compression));
-		result.request_sizing = MergeRequestSizing(request_sizing, b.request_sizing);
+		FileOpenFlags result = *this;
+		result |= b;
 		return result;
 	}
 	inline FileOpenFlags &operator|=(const FileOpenFlags &b) {
@@ -94,13 +94,6 @@ public:
 	}
 	void SetCachingMode(CachingMode new_caching_mode) {
 		caching_mode = new_caching_mode;
-	}
-
-	RequestSizing GetRequestSizing() const {
-		return request_sizing;
-	}
-	void SetRequestSizing(RequestSizing new_request_sizing) {
-		request_sizing = new_request_sizing;
 	}
 
 	void Verify();

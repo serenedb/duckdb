@@ -300,32 +300,8 @@ shared_ptr<FileHandle> CachingFileHandle::GetFileHandle() {
 	// Request parallel access on the underlying filesystem handle to avoid races in implementations that
 	// require explicit opt-in for concurrent pread-style access (e.g., HTTPFS).
 	auto internal_flags = flags | FileFlags::FILE_FLAGS_PARALLEL_ACCESS;
-	file_handle = caching_file_system.file_system.OpenFile(path, internal_flags, opener);
-	// Snapshot the metadata with a single Stats call, avoiding repeated metadata lookups (e.g., fstat)
-	validation_info = GetValidationInfo(caching_file_system.file_system, *file_handle);
-
-	{
-		annotated_lock_guard<annotated_mutex> meta_guard(cached_file->meta_lock);
-		const bool first_access = (cached_file->validation_info.file_size == 0);
-		const bool refresh_expired_cache = !Validate() && cached_file->validation_info.IsExpired();
-		if (first_access || Validate() || refresh_expired_cache) {
-			const bool cache_is_valid =
-			    !refresh_expired_cache &&
-			    ExternalFileCache::IsValid(Validate(), cached_file->validation_info, validation_info);
-			if (!cache_is_valid) {
-				external_file_cache.DropBlocks(*cached_file);
-			}
-			// A successful validator check refreshes freshness. Without validators, preserve the original deadline.
-			const bool revalidated = cache_is_valid && ExternalFileCache::HasValidationMetadata(validation_info);
-			const auto preserved_valid_until = cached_file->validation_info.cache_valid_until;
-			cached_file->validation_info = validation_info;
-			if (cache_is_valid && !revalidated) {
-				cached_file->validation_info.cache_valid_until = preserved_valid_until;
-			}
-			cached_file->can_seek = file_handle->CanSeek();
-			cached_file->on_disk_file = file_handle->OnDiskFile();
-		}
-	}
+	internal_flags.SetCachingMode(CachingMode::NO_CACHING);
+	file_handle = file_system.OpenFile(path, internal_flags, opener);
 	return file_handle;
 }
 
