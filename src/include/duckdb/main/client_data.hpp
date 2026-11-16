@@ -27,7 +27,7 @@ class BufferManager;
 
 struct ClientData {
 public:
-	explicit ClientData(ClientContext &context);
+	explicit ClientData(ClientContext &context, shared_ptr<AttachedDatabase> shared_temporary_objects);
 	~ClientData();
 
 public:

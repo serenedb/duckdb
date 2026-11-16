@@ -234,7 +234,9 @@ private:
 	BufferManager &buffer_manager;
 };
 
-ClientData::ClientData(ClientContext &context) : catalog_search_path(make_uniq<CatalogSearchPath>(context)) {
+ClientData::ClientData(ClientContext &context, shared_ptr<AttachedDatabase> shared_temporary_objects)
+    : temporary_objects(std::move(shared_temporary_objects)),
+      catalog_search_path(make_uniq<CatalogSearchPath>(context)) {
 	auto &db = DatabaseInstance::GetDatabase(context);
 
 	default_database = DatabaseManager::Get(db).GetDefaultDatabase();
@@ -251,7 +253,11 @@ ClientData::ClientData(ClientContext &context) : catalog_search_path(make_uniq<C
 	client_file_system = make_uniq<ClientFileSystem>(context);
 	client_buffer_manager = make_uniq<ClientBufferManager>(context, db.GetBufferManager());
 
-	temporary_objects->Initialize();
+	if (!temporary_objects) {
+		temporary_objects = make_shared_ptr<AttachedDatabase>(db, AttachedDatabaseType::TEMP_DATABASE);
+		temporary_objects->oid = DatabaseManager::Get(db).NextOid();
+		temporary_objects->Initialize();
+	}
 }
 
 ClientData::~ClientData() {

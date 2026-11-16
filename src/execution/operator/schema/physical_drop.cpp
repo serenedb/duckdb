@@ -15,10 +15,14 @@ namespace duckdb {
 
 static void DropTemporaryObjects(ClientContext &context) {
 	auto &catalog = Catalog::GetCatalog(context, TEMP_CATALOG);
+	vector<CatalogType> types {CatalogType::TABLE_ENTRY, CatalogType::SEQUENCE_ENTRY, CatalogType::MACRO_ENTRY,
+	                           CatalogType::TABLE_MACRO_ENTRY, CatalogType::TYPE_ENTRY};
+	if (!catalog.IsDuckCatalog()) {
+		types.push_back(CatalogType::JOB_ENTRY);
+	}
 	vector<unique_ptr<DropInfo>> drops;
 	catalog.ScanSchemas(context, [&](SchemaCatalogEntry &schema) {
-		for (auto type : {CatalogType::TABLE_ENTRY, CatalogType::SEQUENCE_ENTRY, CatalogType::MACRO_ENTRY,
-		                  CatalogType::TABLE_MACRO_ENTRY, CatalogType::TYPE_ENTRY}) {
+		for (auto type : types) {
 			schema.Scan(context, type, [&](CatalogEntry &entry) {
 				if (entry.internal) {
 					return;

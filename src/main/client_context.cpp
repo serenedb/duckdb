@@ -140,7 +140,8 @@ struct DebugClientContextState : public ClientContextState {
 };
 #endif
 
-ClientContext::ClientContext(shared_ptr<DatabaseInstance> database)
+ClientContext::ClientContext(shared_ptr<DatabaseInstance> database,
+                             shared_ptr<AttachedDatabase> shared_temporary_objects)
     : db(std::move(database)), interrupt_state(ClientInterruptState::NOT_INTERRUPTED), transaction(*this),
       connection_id(DConstants::INVALID_INDEX),
       scheduler_account(TaskScheduler::GetScheduler(*db).CreateAccount(SchedulerClass::FOREGROUND)) {
@@ -150,7 +151,7 @@ ClientContext::ClientContext(shared_ptr<DatabaseInstance> database)
 #endif
 	LoggingContext context(LogContextScope::CONNECTION);
 	logger = db->GetLogManager().CreateLogger(context, log_config);
-	client_data = make_uniq<ClientData>(*this);
+	client_data = make_uniq<ClientData>(*this, std::move(shared_temporary_objects));
 
 #ifdef __APPLE__
 	if (OsxRosettaIsActive()) {
