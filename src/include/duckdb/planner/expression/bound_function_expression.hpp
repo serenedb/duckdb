@@ -48,6 +48,12 @@ public:
 	bool &IsOperatorMutable() {
 		return is_operator;
 	}
+	optional_idx CallerRole() const {
+		return caller_role;
+	}
+	void SetCallerRole(optional_idx role) {
+		caller_role = role;
+	}
 
 	using Expression::IsVolatile;
 	bool IsConsistent() const override;
@@ -83,6 +89,7 @@ private:
 	unique_ptr<FunctionData> bind_info;
 	//! Whether or not the function is an operator, only used for rendering
 	bool is_operator;
+	optional_idx caller_role;
 };
 
 } // namespace duckdb

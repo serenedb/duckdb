@@ -89,10 +89,12 @@ unique_ptr<Expression> BoundCastExpression::AddDefaultCastToType(unique_ptr<Expr
 }
 
 unique_ptr<Expression> BoundCastExpression::AddCastToType(ClientContext &context, unique_ptr<Expression> expr,
-                                                          const LogicalType &target_type, bool try_cast) {
+                                                          const LogicalType &target_type, bool try_cast,
+                                                          optional_idx caller_role) {
 	auto &cast_functions = DBConfig::GetConfig(context).GetCastFunctions();
 	GetCastFunctionInput get_input(context);
 	get_input.query_location = expr->GetQueryLocation();
+	get_input.caller_role = caller_role;
 	return AddCastToTypeInternal(std::move(expr), target_type, cast_functions, get_input, try_cast,
 	                             CastBindSource::CONTEXT);
 }

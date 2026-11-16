@@ -50,7 +50,8 @@ struct BoundCastExpression {
 	                                                   bool try_cast = false);
 	//! Cast an expression to the specified SQL type if required
 	DUCKDB_API static unique_ptr<Expression> AddCastToType(ClientContext &context, unique_ptr<Expression> expr,
-	                                                       const LogicalType &target_type, bool try_cast = false);
+	                                                       const LogicalType &target_type, bool try_cast = false,
+	                                                       optional_idx caller_role = optional_idx());
 
 	//! If the expression returns an array, cast it to return a list with the same child type. Otherwise do nothing.
 	DUCKDB_API static unique_ptr<Expression> AddArrayCastToList(ClientContext &context, unique_ptr<Expression> expr);
