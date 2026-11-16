@@ -358,6 +358,10 @@ public:
 	DUCKDB_API static optional_ptr<SchemaCatalogEntry> GetSchema(ClientContext &context, const Identifier &catalog_name,
 	                                                             const vector<Identifier> &schema_path,
 	                                                             OnEntryNotFound if_not_found);
+	DUCKDB_API static optional_ptr<SchemaCatalogEntry> GetSchema(CatalogEntryRetriever &retriever,
+	                                                             const Identifier &catalog_name,
+	                                                             const vector<Identifier> &schema_path,
+	                                                             OnEntryNotFound if_not_found);
 	[[deprecated("Fold the catalog into the EntryLookupInfo and use GetSchema(retriever, "
 	             "EntryLookupInfo)")]] DUCKDB_API static optional_ptr<SchemaCatalogEntry>
 	GetSchema(CatalogEntryRetriever &retriever, const Identifier &catalog_name, const EntryLookupInfo &schema_lookup,

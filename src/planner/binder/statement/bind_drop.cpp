@@ -48,11 +48,8 @@ void Binder::BindDrop(DropInfo &info, StatementProperties &properties) {
 		auto &path = info.GetQualifiedName().Path();
 		auto &catalog = Catalog::GetCatalog(context, path.front());
 		properties.RegisterDBModify(catalog, context, DatabaseModificationType::DROP_CATALOG_ENTRY);
-		auto schema = Catalog::GetSchema(context, path.front(), vector<Identifier>(path.begin() + 1, path.end()),
-		                                 OnEntryNotFound::RETURN_NULL);
-		if (schema) {
-			RequireOwner(context, CheckAs(), *schema);
-		}
+		entry_retriever.GetSchema(path.front(), vector<Identifier>(path.begin() + 1, path.end()), EntryUse::DROP,
+		                          OnEntryNotFound::RETURN_NULL);
 		break;
 	}
 	case CatalogType::VIEW_ENTRY:

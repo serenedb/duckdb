@@ -65,6 +65,8 @@ public:
 	//! Look up the schema described by the (catalog-qualified) EntryLookupInfo
 	optional_ptr<SchemaCatalogEntry> GetSchema(const EntryLookupInfo &schema_lookup,
 	                                           OnEntryNotFound on_entry_not_found = OnEntryNotFound::THROW_EXCEPTION);
+	optional_ptr<SchemaCatalogEntry> GetSchema(const Identifier &catalog, const vector<Identifier> &schema_path,
+	                                           EntryUse use, OnEntryNotFound on_entry_not_found);
 
 	//! Deprecated: the catalog/schema qualification is now carried inside the EntryLookupInfo / QualifiedName - fold it
 	//! in there instead of passing it separately.
