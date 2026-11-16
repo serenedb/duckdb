@@ -55,6 +55,8 @@ public:
 	Permissions permissions;
 	idx_t oid = 0;
 	idx_t schema_oid = 0;
+	Identifier tablespace;
+	idx_t tablespace_oid = 0;
 
 public:
 	const QualifiedName &GetQualifiedName() const {

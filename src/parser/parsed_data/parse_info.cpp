@@ -42,6 +42,8 @@ string ParseInfo::TypeToString(CatalogType type) {
 		return "TEXT SEARCH DICTIONARY";
 	case CatalogType::FOREIGN_SERVER_ENTRY:
 		return "SERVER";
+	case CatalogType::TABLESPACE_ENTRY:
+		return "TABLESPACE";
 	default:
 		throw InternalException("ParseInfo::TypeToString for CatalogType with type: %s not implemented",
 		                        EnumUtil::ToString(type));

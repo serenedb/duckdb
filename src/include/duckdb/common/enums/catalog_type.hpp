@@ -35,6 +35,7 @@ enum class CatalogType : uint8_t {
 	SUBSCRIPTION_ENTRY = 231,
 	REPLICATION_ORIGIN_ENTRY = 232,
 	JOB_ENTRY = 233,
+	TABLESPACE_ENTRY = 234,
 
 	// functions
 	TABLE_FUNCTION_ENTRY = 25,

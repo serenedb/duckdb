@@ -67,12 +67,18 @@ SecretPersistType PEGTransformerFactory::TransformTemporaryPersistent(PEGTransfo
 
 unique_ptr<CreateStatement> PEGTransformerFactory::TransformCreateTableStmt(
     PEGTransformer &transformer, const optional<bool> &if_not_exists, const QualifiedName &qualified_name,
-    CreateTableDefinition create_table_definition, const optional<bool> &commit_action) {
+    CreateTableDefinition create_table_definition, const optional<bool> &commit_action,
+    const optional<Identifier> &tablespace_clause) {
 	auto result = make_uniq<CreateStatement>();
 	if (qualified_name.Name().empty()) {
 		throw ParserException("Empty table name not supported");
 	}
 	auto info = make_uniq<CreateTableInfo>(qualified_name);
+	if (tablespace_clause) {
+		info->tablespace = *tablespace_clause;
+	} else if (create_table_definition.tablespace) {
+		info->tablespace = *create_table_definition.tablespace;
+	}
 
 	info->on_conflict = if_not_exists ? OnCreateConflict::IGNORE_ON_CONFLICT : OnCreateConflict::ERROR_ON_CONFLICT;
 	if (!create_table_definition.null_conflict_columns.empty()) {
@@ -99,8 +105,10 @@ CreateTableDefinition
 PEGTransformerFactory::TransformCreateTableAs(PEGTransformer &transformer, optional<ColumnList> identifier_list,
                                               optional<PartitionSortedOptions> partition_sorted_options,
                                               optional<case_insensitive_map_t<unique_ptr<ParsedExpression>>> with_list,
+                                              const optional<Identifier> &tablespace_clause,
                                               unique_ptr<SQLStatement> statement, const optional<bool> &with_data) {
 	CreateTableDefinition result;
+	result.tablespace = tablespace_clause;
 	if (identifier_list) {
 		result.columns = std::move(*identifier_list);
 	}

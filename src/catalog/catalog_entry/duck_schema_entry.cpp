@@ -408,6 +408,9 @@ static bool IndexNameIsUnique(CatalogTransaction transaction, DuckSchemaEntry &s
 
 optional_ptr<CatalogEntry> DuckSchemaEntry::CreateIndex(CatalogTransaction transaction, CreateIndexInfo &info,
                                                         TableCatalogEntry &table) {
+	if (!info.tablespace.empty()) {
+		throw CatalogException("TABLESPACE is not supported for indexes in a %s catalog", catalog.GetCatalogType());
+	}
 	if (SkipsTakenName(*this, transaction, CatalogType::INDEX_ENTRY, info.on_conflict, info.GetIndexName())) {
 		return nullptr;
 	}

@@ -1,0 +1,13 @@
+# name: test/sql/catalog/test_tablespace_unsupported.test
+# description: A DuckDB catalog keeps no tablespaces
+# group: [catalog]
+
+statement error
+CREATE TABLESPACE ts LOCATION '__TEST_DIR__/ts';
+----
+CREATE TABLESPACE is not supported by a duckdb catalog
+
+statement error
+DROP TABLESPACE ts;
+----
+DROP TABLESPACE is not supported by a duckdb catalog

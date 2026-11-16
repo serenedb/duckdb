@@ -52,6 +52,7 @@ struct CreateTokenizerInfo;
 struct CreateRoleInfo;
 struct CreateDatabaseInfo;
 struct CreateForeignServerInfo;
+struct CreateTablespaceInfo;
 struct CreateCollationInfo;
 struct CreateCoordinateSystemInfo;
 struct CreateIndexInfo;
@@ -234,9 +235,12 @@ public:
 	                                                             CreateDatabaseInfo &info);
 	DUCKDB_API virtual optional_ptr<CatalogEntry> CreateForeignServer(CatalogTransaction transaction,
 	                                                                  CreateForeignServerInfo &info);
+	DUCKDB_API virtual optional_ptr<CatalogEntry> CreateTablespace(CatalogTransaction transaction,
+	                                                               CreateTablespaceInfo &info);
 	DUCKDB_API virtual void DropRole(CatalogTransaction transaction, DropInfo &info);
 	DUCKDB_API virtual void DropDatabase(CatalogTransaction transaction, DropInfo &info);
 	DUCKDB_API virtual void DropForeignServer(CatalogTransaction transaction, DropInfo &info);
+	DUCKDB_API virtual void DropTablespace(CatalogTransaction transaction, DropInfo &info);
 	//! Creates a Enum in the catalog.
 	DUCKDB_API optional_ptr<CatalogEntry> CreateType(CatalogTransaction transaction, CreateTypeInfo &info);
 	DUCKDB_API optional_ptr<CatalogEntry> CreateType(ClientContext &context, CreateTypeInfo &info);

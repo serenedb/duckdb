@@ -9,7 +9,8 @@ namespace duckdb {
 
 unique_ptr<SQLStatement> PEGTransformerFactory::TransformCreateDatabaseStatement(
     PEGTransformer &transformer, const optional<bool> &if_not_exists, const Identifier &catalog_name,
-    optional<case_insensitive_map_t<unique_ptr<ParsedExpression>>> with_list) {
+    optional<case_insensitive_map_t<unique_ptr<ParsedExpression>>> with_list,
+    const optional<Identifier> &database_tablespace) {
 	auto result = make_uniq<CreateStatement>();
 	auto info = make_uniq<CreateDatabaseInfo>();
 	info->SetName(catalog_name);
@@ -28,6 +29,9 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformCreateDatabaseStatement
 			}
 			info->options[name] = value;
 		}
+	}
+	if (database_tablespace) {
+		info->tablespace = *database_tablespace;
 	}
 	info->on_conflict = if_not_exists ? OnCreateConflict::IGNORE_ON_CONFLICT : OnCreateConflict::ERROR_ON_CONFLICT;
 	result->info = std::move(info);
