@@ -321,12 +321,10 @@ BoundStatement Binder::Bind(AlterStatement &stmt) {
 		auto &properties = GetStatementProperties();
 		properties.return_type = StatementReturnType::NOTHING;
 		properties.RegisterDBModify(catalog, context, DatabaseModificationType::ALTER_TABLE);
-		auto schema =
-		    Catalog::GetSchema(context, info.SchemaCatalog(), info.SchemaPath(), OnEntryNotFound::RETURN_NULL);
-		if (schema) {
-			RequireOwner(context, CheckAs(), *schema);
-			RequireDatabasePrivilege(context, CheckAs(), info.SchemaCatalog(), AclMode::Create);
-		}
+		entry_retriever.GetSchema(info.SchemaCatalog(), info.SchemaPath(),
+		                          info.alter_schema_type == AlterSchemaType::RENAME_SCHEMA ? EntryUse::RENAME
+		                                                                                   : EntryUse::OWN,
+		                          OnEntryNotFound::RETURN_NULL);
 		result.plan = make_uniq<LogicalAlter>(std::move(stmt.info));
 		return result;
 	}

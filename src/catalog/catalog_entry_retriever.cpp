@@ -93,6 +93,20 @@ optional_ptr<SchemaCatalogEntry> CatalogEntryRetriever::GetSchema(const EntryLoo
 	return result;
 }
 
+optional_ptr<SchemaCatalogEntry> CatalogEntryRetriever::GetSchema(const Identifier &catalog,
+                                                                  const vector<Identifier> &schema_path, EntryUse use,
+                                                                  OnEntryNotFound on_entry_not_found) {
+	auto result = Catalog::GetSchema(*this, catalog, schema_path, on_entry_not_found);
+	if (!result) {
+		return result;
+	}
+	RequireUse(context, CheckAs(), *result, use);
+	if (callback) {
+		callback(*result);
+	}
+	return result;
+}
+
 LogicalType CatalogEntryRetriever::GetType(Catalog &catalog, const Identifier &schema, const Identifier &name,
                                            OnEntryNotFound on_entry_not_found) {
 	return GetType(QualifiedName(catalog.GetName(), schema, name), on_entry_not_found);

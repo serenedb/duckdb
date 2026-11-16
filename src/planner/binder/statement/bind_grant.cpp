@@ -136,7 +136,8 @@ static CatalogEntry &ResolvePermissionsTarget(Binder &binder, AlterPermissionsIn
 	auto &context = binder.context;
 	auto &name = info.GetQualifiedName();
 	if (info.entry_catalog_type == CatalogType::SCHEMA_ENTRY) {
-		auto &schema = Catalog::GetSchema(context, name.Catalog(), name.Name());
+		auto &schema = *binder.EntryRetriever().GetSchema(name.Catalog(), {name.Name()}, EntryUse::REFERENCE,
+		                                                  OnEntryNotFound::THROW_EXCEPTION);
 		info.SetQualifiedName(schema.ParentCatalog().GetName(), Identifier(), schema.name);
 		return schema;
 	}
@@ -365,7 +366,10 @@ static void ResolveDefaultPrivileges(Binder &binder, AlterPermissionsInfo &info)
 	info.grantee_id = GranteeId(binder, info.grantee);
 	const auto database = DatabaseManager::GetDefaultDatabase(context);
 	if (!info.default_schema.empty()) {
-		info.default_scope = Catalog::GetSchema(context, database, Identifier(info.default_schema)).oid;
+		info.default_scope = binder.EntryRetriever()
+		                         .GetSchema(database, {Identifier(info.default_schema)}, EntryUse::REFERENCE,
+		                                    OnEntryNotFound::THROW_EXCEPTION)
+		                         ->oid;
 	}
 	ClusterDatabase(context, database);
 	info.SetQualifiedName(Identifier(), Identifier(), database);

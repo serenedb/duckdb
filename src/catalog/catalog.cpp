@@ -776,8 +776,18 @@ Catalog::LookupSchemaPath(CatalogTransaction transaction, const EntryLookupInfo 
 optional_ptr<SchemaCatalogEntry> Catalog::GetSchema(ClientContext &context, const Identifier &catalog_name,
                                                     const vector<Identifier> &schema_path,
                                                     OnEntryNotFound if_not_found) {
+	auto retriever = CatalogEntryRetriever::Internal(context);
+	return GetSchema(retriever, catalog_name, schema_path, if_not_found);
+}
+
+optional_ptr<SchemaCatalogEntry> Catalog::GetSchema(CatalogEntryRetriever &retriever, const Identifier &catalog_name,
+                                                    const vector<Identifier> &schema_path,
+                                                    OnEntryNotFound if_not_found) {
 	D_ASSERT(!schema_path.empty());
-	auto schema = GetSchema(context, catalog_name, schema_path[0], if_not_found);
+	auto schema =
+	    GetSchema(retriever,
+	              EntryLookupInfo(CatalogType::SCHEMA_ENTRY, QualifiedName(catalog_name, Identifier(), schema_path[0])),
+	              if_not_found);
 	if (!schema || schema_path.size() == 1) {
 		return schema;
 	}
@@ -786,7 +796,7 @@ optional_ptr<SchemaCatalogEntry> Catalog::GetSchema(ClientContext &context, cons
 	path.insert(path.begin(), catalog.GetName());
 	EntryLookupInfo lookup(CatalogType::SCHEMA_ENTRY, QualifiedName::FromPath(std::move(path)));
 	return catalog.LookupSchemaPath(
-	    catalog.GetCatalogTransaction(context), lookup, if_not_found,
+	    catalog.GetCatalogTransaction(retriever.GetContext()), lookup, if_not_found,
 	    [&](const EntryLookupInfo &) -> optional_ptr<CatalogEntry> { return schema.get(); });
 }
 
