@@ -726,6 +726,7 @@ bool FileSystem::TryRemoveFile(const string &filename, optional_ptr<FileOpener> 
 }
 
 void FileSystem::RemoveFiles(const vector<string> &filenames, optional_ptr<FileOpener> opener) {
+	ErrorData first;
 	for (const auto &filename : filenames) {
 		TryRemoveFile(filename, opener);
 	}
