@@ -1,12 +1,12 @@
 AlterStatement <- 'ALTER' AlterOptions
 
-AlterOptions <- AlterSetSchemaStmt / AlterTableStmt / AlterViewStmt / AlterIndexStmt / AlterFunctionStmt / AlterFunctionAttributesStmt / AlterSequenceStmt / AlterDatabaseStmt / AlterDatabaseConfigStmt / AlterDatabaseOptionsStmt / AlterSchemaStmt / AlterJobStmt
+AlterOptions <- AlterSetSchemaStmt / AlterRoutineSetSchemaStmt / AlterTableStmt / AlterViewStmt / AlterIndexStmt / AlterFunctionStmt / AlterFunctionAttributesStmt / AlterSequenceStmt / AlterDatabaseStmt / AlterDatabaseConfigStmt / AlterDatabaseOptionsStmt / AlterSchemaStmt / AlterJobStmt
 
 AlterSetSchemaStmt <- SetSchemaEntryType IfExists? BaseTableName 'SET' 'SCHEMA' ColId
-SetSchemaEntryType <- CommentTable / CommentView / CommentSequence / CommentType / CommentFunction / SetSchemaProcedure /
-        CommentMacroTable / CommentMacro / SetSchemaDictionary
-SetSchemaProcedure <- 'PROCEDURE'
+SetSchemaEntryType <- CommentTable / CommentView / CommentSequence / CommentType / CommentMacroTable / CommentMacro /
+        SetSchemaDictionary
 SetSchemaDictionary <- 'TEXT' 'SEARCH' 'DICTIONARY'
+AlterRoutineSetSchemaStmt <- GrantRoutineKind IfExists? QualifiedName FuncArgSignature? 'SET' 'SCHEMA' ColId
 
 AlterJobStmt <- 'JOB' IfExists? QualifiedName AlterJobAction
 AlterJobAction <- AlterJobRename / AlterJobSuspend / AlterJobResume / AlterJobSetSchedule

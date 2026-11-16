@@ -188,8 +188,6 @@ static optional_ptr<CatalogEntry> BindSetSchemaEntry(SetSchemaInfo &info, const 
 	vector<CatalogType> kinds {declared};
 	if (declared == CatalogType::TABLE_ENTRY) {
 		kinds.push_back(CatalogType::SEQUENCE_ENTRY);
-	} else if (declared == CatalogType::MACRO_ENTRY) {
-		kinds.push_back(CatalogType::TABLE_MACRO_ENTRY);
 	}
 	for (auto kind : kinds) {
 		auto entry = lookup(kind, OnEntryNotFound::RETURN_NULL);
@@ -452,13 +450,8 @@ BoundStatement Binder::Bind(AlterStatement &stmt) {
 
 	optional_ptr<CatalogEntry> entry;
 	auto use = EntryUse::OWN;
-	if (stmt.info->type != AlterType::SET_COLUMN_COMMENT) {
-		const auto type = stmt.info->GetCatalogType();
-		if (type == CatalogType::MACRO_ENTRY || type == CatalogType::TABLE_MACRO_ENTRY) {
-			use = EntryUse::REFERENCE;
-		} else if (stmt.info->GetNewName()) {
-			use = EntryUse::RENAME;
-		}
+	if (stmt.info->type != AlterType::SET_COLUMN_COMMENT && stmt.info->GetNewName()) {
+		use = EntryUse::RENAME;
 	}
 	auto lookup = [&](CatalogType type, OnEntryNotFound if_not_found) {
 		return entry_retriever.GetEntry(EntryLookupInfo(type, stmt.info->GetQualifiedName(), use), if_not_found);
@@ -499,8 +492,22 @@ BoundStatement Binder::Bind(AlterStatement &stmt) {
 		if (!entry) {
 			entry = lookup(declared, stmt.info->if_not_found);
 		}
-	} else if (stmt.info->type == AlterType::SET_SCHEMA) {
+	} else if (stmt.info->type == AlterType::SET_SCHEMA && stmt.info->GetCatalogType() != CatalogType::MACRO_ENTRY &&
+	           stmt.info->GetCatalogType() != CatalogType::TABLE_MACRO_ENTRY) {
 		entry = BindSetSchemaEntry(stmt.info->Cast<SetSchemaInfo>(), lookup);
+	} else if (stmt.info->type == AlterType::SET_SCHEMA) {
+		auto &set_schema = stmt.info->Cast<SetSchemaInfo>();
+		auto bound =
+		    BindRoutine({set_schema.GetQualifiedName(), set_schema.func_parameters, set_schema.has_func_args,
+		                 set_schema.include_functions, set_schema.include_procedures, set_schema.entry_catalog_type},
+		                EntryUse::OWN, set_schema.if_not_found);
+		entry = bound.entry;
+		if (bound.overload) {
+			set_schema.overload_oid = entry->Cast<MacroCatalogEntry>().OverloadOid(*bound.overload);
+		}
+		if (entry) {
+			set_schema.entry_catalog_type = entry->type;
+		}
 	} else if (stmt.info->type == AlterType::SET_COMMENT &&
 	           (stmt.info->GetCatalogType() == CatalogType::MACRO_ENTRY ||
 	            stmt.info->GetCatalogType() == CatalogType::TABLE_MACRO_ENTRY)) {
@@ -532,12 +539,6 @@ BoundStatement Binder::Bind(AlterStatement &stmt) {
 	}
 
 	D_ASSERT(!entry->deleted);
-	if (stmt.info->type != AlterType::SET_COMMENT &&
-	    (entry->type == CatalogType::MACRO_ENTRY || entry->type == CatalogType::TABLE_MACRO_ENTRY)) {
-		vector<LogicalType> no_arguments;
-		BindRoutine({stmt.info->GetQualifiedName(), no_arguments, false, true, true, entry->type}, EntryUse::OWN,
-		            OnEntryNotFound::THROW_EXCEPTION);
-	}
 	if (auto new_schema = stmt.info->GetNewSchema()) {
 		EntryLookupInfo schema_lookup(CatalogType::SCHEMA_ENTRY,
 		                              QualifiedName(entry->ParentCatalog().GetName(), Identifier(), *new_schema));

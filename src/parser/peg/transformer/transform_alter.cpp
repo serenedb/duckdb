@@ -152,12 +152,23 @@ unique_ptr<AlterInfo> PEGTransformerFactory::TransformAlterSetSchemaStmt(PEGTran
 	return make_uniq<SetSchemaInfo>(set_schema_entry_type, data, col_id);
 }
 
-CatalogType PEGTransformerFactory::TransformSetSchemaProcedure(PEGTransformer &transformer) {
-	return CatalogType::MACRO_ENTRY;
-}
-
 CatalogType PEGTransformerFactory::TransformSetSchemaDictionary(PEGTransformer &transformer) {
 	return CatalogType::TOKENIZER_ENTRY;
+}
+
+// AlterRoutineSetSchemaStmt <- GrantRoutineKind IfExists? QualifiedName FuncArgSignature? 'SET' 'SCHEMA' ColId
+unique_ptr<AlterInfo> PEGTransformerFactory::TransformAlterRoutineSetSchemaStmt(PEGTransformer &transformer,
+                                                                                ParseResult &parse_result) {
+	auto &list_pr = parse_result.Cast<ListParseResult>();
+	auto not_found = list_pr.Child<OptionalParseResult>(1).HasResult() ? OnEntryNotFound::RETURN_NULL
+	                                                                   : OnEntryNotFound::THROW_EXCEPTION;
+	AlterEntryData data(transformer.Transform<QualifiedName>(list_pr.GetChild(2)), not_found);
+	auto result = make_uniq<SetSchemaInfo>(CatalogType::MACRO_ENTRY, data,
+	                                       transformer.Transform<Identifier>(list_pr.GetChild(6)));
+	TransformRoutineKind(list_pr.GetChild(0), result->include_functions, result->include_procedures);
+	result->has_func_args =
+	    TransformFunctionArgumentTypes(transformer, list_pr.Child<OptionalParseResult>(3), result->func_parameters);
+	return std::move(result);
 }
 
 unique_ptr<AlterInfo> PEGTransformerFactory::TransformAlterDatabaseStmt(PEGTransformer &transformer,

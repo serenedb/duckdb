@@ -179,17 +179,28 @@ CatalogType SetSchemaInfo::GetCatalogType() const {
 }
 
 unique_ptr<AlterInfo> SetSchemaInfo::Copy() const {
-	return make_uniq_base<AlterInfo, SetSchemaInfo>(entry_catalog_type, GetAlterEntryData(), new_schema);
+	auto result = make_uniq<SetSchemaInfo>(entry_catalog_type, GetAlterEntryData(), new_schema);
+	result->overload_oid = overload_oid;
+	result->func_parameters = func_parameters;
+	result->has_func_args = has_func_args;
+	result->include_functions = include_functions;
+	result->include_procedures = include_procedures;
+	return std::move(result);
 }
 
 string SetSchemaInfo::ToString() const {
 	string result = "ALTER ";
-	result += ParseInfo::TypeToString(entry_catalog_type);
+	result += entry_catalog_type == CatalogType::MACRO_ENTRY
+	              ? ParseInfo::RoutineKeyword(include_functions, include_procedures)
+	              : ParseInfo::TypeToString(entry_catalog_type);
 	result += " ";
 	if (if_not_found == OnEntryNotFound::RETURN_NULL) {
 		result += "IF EXISTS ";
 	}
 	result += GetQualifiedName().ToString(QualifiedNameToStringMode::HIDE_DEFAULT_SCHEMA);
+	if (has_func_args) {
+		result += "(" + MacroFunction::ParameterTypesToString(func_parameters) + ")";
+	}
 	result += " SET SCHEMA ";
 	result += SQLIdentifier(new_schema);
 	result += ";";
