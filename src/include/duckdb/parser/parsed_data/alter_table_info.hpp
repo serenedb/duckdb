@@ -84,6 +84,11 @@ struct SetSchemaInfo : public AlterInfo {
 
 	CatalogType entry_catalog_type;
 	Identifier new_schema;
+	idx_t overload_oid = 0;
+	vector<LogicalType> func_parameters;
+	bool has_func_args = false;
+	bool include_functions = true;
+	bool include_procedures = true;
 
 public:
 	CatalogType GetCatalogType() const override;

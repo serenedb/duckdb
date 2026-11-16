@@ -4998,8 +4998,9 @@ public:
 	                                                         const optional<bool> &if_exists,
 	                                                         unique_ptr<BaseTableRef> base_table_name,
 	                                                         const Identifier &col_id);
-	static CatalogType TransformSetSchemaProcedure(PEGTransformer &transformer);
 	static CatalogType TransformSetSchemaDictionary(PEGTransformer &transformer);
+	static unique_ptr<AlterInfo> TransformAlterRoutineSetSchemaStmt(PEGTransformer &transformer,
+	                                                                ParseResult &parse_result);
 	static unique_ptr<AlterInfo> TransformAlterJobStmt(PEGTransformer &transformer, const optional<bool> &if_exists,
 	                                                   const QualifiedName &qualified_name,
 	                                                   unique_ptr<AlterInfo> alter_job_action);
