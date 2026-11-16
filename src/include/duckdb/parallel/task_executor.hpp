@@ -82,9 +82,25 @@ public:
 
 	//! Schedule a new task
 	void ScheduleTask(unique_ptr<BaseExecutorTask> task);
+	//! Schedule a new task once fewer than [limit] of the executor's tasks are unfinished. While it waits, the caller
+	//! works on the executor's queued tasks itself, so the limit holds whatever the number of worker threads. Threads
+	//! that schedule at once can overshoot it by one task each
+	void ScheduleTask(unique_ptr<BaseExecutorTask> task, idx_t limit);
+	//! Schedule [function] as a task, held inside the task; with a [limit], as the overload above
+	template <class F>
+	void ScheduleTask(F function, const char *task_type, idx_t limit = 0) {
+		auto task = make_uniq<FunctionTask<F>>(*this, std::move(function), task_type);
+		if (limit == 0) {
+			ScheduleTask(std::move(task));
+		} else {
+			ScheduleTask(std::move(task), limit);
+		}
+	}
 
 	//! Work on tasks until all tasks are finished. Throws an exception if any error occurred while executing the tasks.
 	void WorkOnTasks();
+	//! Work on tasks until all tasks are finished. Cancels nothing and does not throw: an error stays recorded.
+	void Join();
 	//! Cancel tasks that have not started yet and work on tasks until all tasks are finished. Does not throw.
 	void CancelAndDrain();
 
@@ -106,8 +122,26 @@ public:
 	};
 
 private:
-	//! Work on tasks until all tasks are finished
-	void DrainTasks();
+	template <class F>
+	class FunctionTask : public BaseExecutorTask {
+	public:
+		FunctionTask(TaskExecutor &executor, F function_p, const char *task_type_p)
+		    : BaseExecutorTask(executor), function(std::move(function_p)), task_type(task_type_p) {
+		}
+		void ExecuteTask() override {
+			function();
+		}
+		string TaskType() const override {
+			return task_type;
+		}
+
+	private:
+		F function;
+		const char *task_type;
+	};
+
+	//! Work on tasks until fewer than [limit] of them are unfinished
+	void DrainTasks(idx_t limit = 1);
 	//! Label a task as finished - called by the wrapper the executor puts around every scheduled task
 	void FinishTask();
 

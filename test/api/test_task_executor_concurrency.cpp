@@ -125,3 +125,49 @@ TEST_CASE("Tasks a worker schedules on a TaskExecutor run on idle workers while 
 	REQUIRE(!result->HasError());
 	REQUIRE(rendezvous.Met() == EXECUTOR_TASKS);
 }
+
+TEST_CASE("A TaskExecutor keeps no more tasks unfinished than the limit they are scheduled with", "[api][executor]") {
+	constexpr idx_t LIMIT = 3;
+	constexpr idx_t TASKS = 40;
+	for (const idx_t threads : {idx_t(1), idx_t(8)}) {
+		DBConfig config;
+		config.options.maximum_threads = threads;
+		DuckDB db(nullptr, &config);
+		auto &scheduler = TaskScheduler::GetScheduler(*db.instance);
+		scheduler.SetAsyncThreads(threads == 1 ? 0 : 4);
+		TaskExecutor executor(scheduler, TaskSchedulerType::ASYNC);
+		atomic<idx_t> running {0};
+		atomic<idx_t> most {0};
+		atomic<idx_t> ran {0};
+		for (idx_t i = 0; i < TASKS; i++) {
+			executor.ScheduleTask(
+			    [&] {
+				    const auto now = running.fetch_add(1) + 1;
+				    auto seen = most.load();
+				    while (seen < now && !most.compare_exchange_weak(seen, now)) {
+				    }
+				    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+				    running.fetch_sub(1);
+				    ran.fetch_add(1);
+			    },
+			    "LimitedTask", LIMIT);
+		}
+		executor.Join();
+		REQUIRE(ran.load() == TASKS);
+		REQUIRE(most.load() <= LIMIT);
+		REQUIRE(!executor.HasError());
+	}
+}
+
+TEST_CASE("A joined TaskExecutor keeps the error of a failed task for its owner", "[api][executor]") {
+	DuckDB db(nullptr);
+	TaskExecutor executor(TaskScheduler::GetScheduler(*db.instance), TaskSchedulerType::ASYNC);
+	atomic<idx_t> ran {0};
+	executor.ScheduleTask([] { throw IOException("the first task fails"); }, "FailingTask");
+	executor.Join();
+	REQUIRE(executor.HasError());
+	executor.ScheduleTask([&] { ran.fetch_add(1); }, "RetiredTask");
+	executor.Join();
+	REQUIRE(ran.load() == 0);
+	REQUIRE_THROWS_AS(executor.WorkOnTasks(), IOException);
+}
