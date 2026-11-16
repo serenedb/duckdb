@@ -314,11 +314,11 @@ public:
 	DUCKDB_API virtual string PathSeparator(const string &path);
 	//! Checks if path is is an absolute path
 	DUCKDB_API virtual bool IsPathAbsolute(const string &path);
-	//! Join two paths together
-	DUCKDB_API string JoinPath(const string &a, const string &path);
+	//! Join two paths together. A name joined onto a path that is normalized already is not parsed
+	DUCKDB_API static string JoinPath(std::string_view a, std::string_view path);
 	// Join N paths together
 	template <typename... ARGS>
-	string JoinPath(const string &a, const string &b, ARGS... args) {
+	static string JoinPath(std::string_view a, std::string_view b, ARGS... args) {
 		return JoinPath(JoinPath(a, b), args...);
 	}
 	//! Convert separators in a path to the local separators (e.g. convert "/" into \\ on windows)

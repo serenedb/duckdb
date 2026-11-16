@@ -12,7 +12,8 @@ static inline bool IsPathSeparator(char c) {
 }
 
 // Appends "normal" segments, ignores ".", and consumes trailing segment via "..", popping "<segment>/.."
-static void MaybeAppendSegment(vector<string> &segments, string::const_iterator begin, string::const_iterator end) {
+static void MaybeAppendSegment(vector<string> &segments, std::string_view::const_iterator begin,
+                               std::string_view::const_iterator end) {
 	if (end == begin || (end == begin + 1 && *begin == '.')) {
 		return;
 	}
@@ -24,7 +25,7 @@ static void MaybeAppendSegment(vector<string> &segments, string::const_iterator 
 	}
 }
 
-static void SegmentAndNormalizePath(string::const_iterator begin, string::const_iterator end,
+static void SegmentAndNormalizePath(std::string_view::const_iterator begin, std::string_view::const_iterator end,
                                     vector<string> &segments) {
 	auto prev_pos = begin;
 	for (auto pos = prev_pos; pos != end; pos++) {
@@ -40,7 +41,7 @@ static void SegmentAndNormalizePath(string::const_iterator begin, string::const_
 // Public methods (order matches path.hpp)
 // ---------------------------------------------------------------------------
 
-Path Path::FromString(const string &raw) {
+Path Path::FromString(std::string_view raw) {
 	Path parsed;
 #if defined(_WIN32)
 	const auto first_slash_pos = raw.find_first_of(R"(/\)");
@@ -76,6 +77,58 @@ Path Path::FromString(const string &raw) {
 	D_ASSERT(parsed.HasScheme() || !parsed.HasAuthority());
 	D_ASSERT(parsed.anchor.size() <= 4);
 	return parsed;
+}
+
+bool Path::IsNormalized(std::string_view path) {
+#if defined(_WIN32)
+	return false;
+#else
+	if (path.empty() || path.find_first_of("\\?") != std::string_view::npos || path.starts_with("file:")) {
+		return false;
+	}
+	size_t pos = path[0] == '/' ? 1 : 0;
+	const auto scheme_pos = path.find("://");
+	if (scheme_pos != std::string_view::npos) {
+		if (scheme_pos <= 1 || path.find('/') != scheme_pos + 1) {
+			return false;
+		}
+		for (size_t i = 0; i < scheme_pos; i++) {
+			if (path[i] >= 'A' && path[i] <= 'Z') {
+				return false;
+			}
+		}
+		const auto authority_pos = scheme_pos + 3;
+		const auto authority_end = path.find('/', authority_pos);
+		if (authority_end == authority_pos || authority_pos == path.size()) {
+			return false;
+		}
+		pos = authority_end == std::string_view::npos ? path.size() : authority_end + 1;
+	}
+	while (pos < path.size()) {
+		const auto end = MinValue(path.find('/', pos), path.size());
+		const auto size = end - pos;
+		if (size == 0 || (path[pos] == '.' && (size == 1 || (size == 2 && path[pos + 1] == '.')))) {
+			return false;
+		}
+		pos = end + 1;
+	}
+	return true;
+#endif
+}
+
+bool Path::IsSegment(std::string_view name) {
+	return !name.empty() && name != "." && name != ".." && name.find_first_of("/\\") == std::string_view::npos;
+}
+
+bool Path::IsRemote(std::string_view path) {
+#if defined(_WIN32)
+	return FromString(path).IsRemote();
+#else
+	// only the URL form gets a scheme from FromString: remote unless it is a file URL
+	const auto scheme_pos = path.find("://");
+	return scheme_pos != std::string_view::npos && scheme_pos > 1 && path.find('/') == scheme_pos + 1 &&
+	       !StringUtil::CIEquals(string(path.substr(0, 5)), "file:");
+#endif
 }
 
 string Path::ToString() const {
@@ -198,7 +251,7 @@ Path Path::Parent(int n) const {
 // Private methods (order matches path.hpp)
 // ---------------------------------------------------------------------------
 
-void Path::NormalizeSegments(const string &raw, size_t path_offset) {
+void Path::NormalizeSegments(std::string_view raw, size_t path_offset) {
 	// normalize URI schemes to lowercase; UNC prefixes (\\, \\?, \\?\UNC\) are not URI schemes
 	if (!scheme.empty() && !IsPathSeparator(scheme[0])) {
 		scheme = StringUtil::Lower(scheme);
@@ -222,7 +275,8 @@ void Path::NormalizeSegments(const string &raw, size_t path_offset) {
 
 	vector<string> raw_segs;
 	D_ASSERT(path_offset <= raw.size());
-	SegmentAndNormalizePath(raw.begin() + static_cast<string::difference_type>(path_offset), raw.end(), raw_segs);
+	SegmentAndNormalizePath(raw.begin() + static_cast<std::string_view::difference_type>(path_offset), raw.end(),
+	                        raw_segs);
 	segments.clear();
 	for (auto &seg : raw_segs) {
 		if (IsAbsolute() && segments.empty() && seg == "..") {
@@ -237,7 +291,7 @@ void Path::NormalizeSegments(const string &raw, size_t path_offset) {
 // - All URI paths are absolute, and URIs of the form proto://authority will be assigned path="/"
 // - Not full URI parsing, only for URI paths (e.g., no query, fragment, etc.)
 //
-size_t Path::ParseURIScheme(const string &input, Path &parsed) {
+size_t Path::ParseURIScheme(std::string_view input, Path &parsed) {
 	parsed.is_absolute = true;
 
 	const size_t auth_begin = input.find("://") + 3;
@@ -251,7 +305,7 @@ size_t Path::ParseURIScheme(const string &input, Path &parsed) {
 	return path_begin == string::npos ? input.size() : path_begin + 1;
 }
 
-size_t Path::ParseFilePathTail(const string &input, size_t start, Path &parsed) {
+size_t Path::ParseFilePathTail(std::string_view input, size_t start, Path &parsed) {
 	size_t pos = start;
 
 #if defined(_WIN32)
@@ -287,7 +341,7 @@ size_t Path::ParseFilePathTail(const string &input, size_t start, Path &parsed) 
 //
 // Additionally, the file: protocol does not support remote (non-localhost) hosts.
 //
-size_t Path::ParseFileSchemes(const string &input, Path &parsed) {
+size_t Path::ParseFileSchemes(std::string_view input, Path &parsed) {
 	parsed.is_absolute = true;
 
 	size_t input_len = input.size();
@@ -324,7 +378,7 @@ size_t Path::ParseFileSchemes(const string &input, Path &parsed) {
 // - anchor = "\"
 // - path = < the rest >
 //
-size_t Path::ParseUNCScheme(const string &input, Path &parsed) {
+size_t Path::ParseUNCScheme(std::string_view input, Path &parsed) {
 	D_ASSERT(input.size() >= 4 && input[0] == '\\' && input[1] == '\\');
 
 	static const char extended_prefix[] = R"(\\?\)";
@@ -345,7 +399,7 @@ size_t Path::ParseUNCScheme(const string &input, Path &parsed) {
 	auto pos = input.find_first_of("/\\", share_begin);
 	const auto share_len = (pos == string::npos ? input.size() : pos) - share_begin;
 	if (share_begin - server_begin <= 1 || share_len == 0) {
-		throw InvalidInputException("Path: UNC path missing server\\share: %s", input);
+		throw InvalidInputException("Path: UNC path missing server\\share: %s", string(input));
 	}
 
 	parsed.scheme = extended_unc ? extended_unc_prefix : R"(\\)";

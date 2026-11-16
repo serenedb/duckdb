@@ -49,7 +49,16 @@ namespace duckdb {
 class Path {
 public:
 	// Primary Constructor
-	static Path FromString(const string &raw);
+	static Path FromString(std::string_view raw);
+
+	//! What a caller can tell of a path without parsing it, to skip FromString where the answer is already there
+	//! Whether FromString leaves [path] as it is, a trailing separator aside: a posix path, or a URL with a lowercase
+	//! scheme and an authority, that has no query, no empty segment and no "." or ".." segment
+	static bool IsNormalized(std::string_view path);
+	//! Whether [name] is one segment of a path
+	static bool IsSegment(std::string_view name);
+	//! Whether FromString(path).IsRemote(), parsing no URL
+	static bool IsRemote(std::string_view path);
 
 	string ToString() const;
 
@@ -147,13 +156,13 @@ private:
 	bool has_trailing_separator = false;
 	bool is_absolute = false;
 
-	void NormalizeSegments(const string &raw, size_t path_offset);
+	void NormalizeSegments(std::string_view raw, size_t path_offset);
 
-	static size_t ParseURIScheme(const string &input, Path &parsed);
-	static size_t ParseFilePathTail(const string &input, size_t start, Path &parsed);
-	static size_t ParseFileSchemes(const string &input, Path &parsed);
+	static size_t ParseURIScheme(std::string_view input, Path &parsed);
+	static size_t ParseFilePathTail(std::string_view input, size_t start, Path &parsed);
+	static size_t ParseFileSchemes(std::string_view input, Path &parsed);
 #if defined(_WIN32)
-	static size_t ParseUNCScheme(const string &input, Path &parsed);
+	static size_t ParseUNCScheme(std::string_view input, Path &parsed);
 #endif
 };
 

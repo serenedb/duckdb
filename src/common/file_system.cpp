@@ -296,11 +296,11 @@ string FileSystem::JoinPath(const string &a, const string &b) {
 	auto scheme = a.find("://");
 	if (scheme != string::npos) {
 		auto query = a.find('?', scheme + 3);
-		if (query != string::npos) {
-			return Path::FromString(a.substr(0, query)).Join(b).ToString() + a.substr(query);
+		if (query != std::string_view::npos) {
+			return Path::FromString(a.substr(0, query)).Join(Path::FromString(b)).ToString() + string(a.substr(query));
 		}
 	}
-	return Path::FromString(a).Join(b).ToString();
+	return Path::FromString(a).Join(Path::FromString(b)).ToString();
 }
 
 string FileSystem::ConvertSeparators(const string &path) {
