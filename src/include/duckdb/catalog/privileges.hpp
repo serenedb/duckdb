@@ -5,7 +5,10 @@
 #include "duckdb/common/constants.hpp"
 #include "duckdb/common/enums/catalog_type.hpp"
 
+#include <array>
+#include <limits>
 #include <string_view>
+#include <type_traits>
 
 namespace duckdb {
 
@@ -83,7 +86,7 @@ struct ObjectKind {
 	bool shared;
 };
 
-constexpr ObjectKind ObjectKindOf(CatalogType type) {
+constexpr ObjectKind MakeObjectKind(CatalogType type) {
 	switch (type) {
 	case CatalogType::TABLE_ENTRY:
 	case CatalogType::VIEW_ENTRY:
@@ -138,6 +141,18 @@ constexpr ObjectKind ObjectKindOf(CatalogType type) {
 		break;
 	}
 	return {type, ObjectContainer::NONE, AclMode::NoRights, AclMode::NoRights, 0, false};
+}
+
+inline constexpr auto OBJECT_KINDS = [] {
+	std::array<ObjectKind, std::numeric_limits<std::underlying_type_t<CatalogType>>::max() + 1> kinds {};
+	for (idx_t type = 0; type < kinds.size(); type++) {
+		kinds[type] = MakeObjectKind(static_cast<CatalogType>(type));
+	}
+	return kinds;
+}();
+
+constexpr const ObjectKind &ObjectKindOf(CatalogType type) {
+	return OBJECT_KINDS[static_cast<std::underlying_type_t<CatalogType>>(type)];
 }
 
 constexpr std::string_view ObjectNoun(CatalogType type) {
