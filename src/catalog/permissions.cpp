@@ -205,17 +205,19 @@ static void ReplaceOwner(vector<AclItem> &acl, idx_t old_owner, idx_t new_owner)
 
 static void Apply(vector<AclItem> &acl, idx_t grantor, AclMode grantable, AclMode privileges,
                   const AlterPermissionsInfo &info) {
-	if (info.revoke) {
-		Revoke(acl, info.grantee_id, grantor, privileges, info.option_only, info.cascade);
-		return;
-	}
-	if (info.with_grant_option && info.grantee_id == ACL_ID_PUBLIC) {
-		throw Exception({{"error_subtype", "INVALID_GRANT_OPERATION"}}, ExceptionType::INVALID_INPUT,
-		                "grant options can only be granted to roles");
-	}
-	const auto granted = privileges & grantable;
-	if (granted != AclMode::NoRights) {
-		Grant(acl, info.grantee_id, grantor, granted, info.with_grant_option ? granted : AclMode::NoRights);
+	for (auto grantee : info.grantee_ids) {
+		if (info.revoke) {
+			Revoke(acl, grantee, grantor, privileges, info.option_only, info.cascade);
+			continue;
+		}
+		if (info.with_grant_option && grantee == ACL_ID_PUBLIC) {
+			throw Exception({{"error_subtype", "INVALID_GRANT_OPERATION"}}, ExceptionType::INVALID_INPUT,
+			                "grant options can only be granted to roles");
+		}
+		const auto granted = privileges & grantable;
+		if (granted != AclMode::NoRights) {
+			Grant(acl, grantee, grantor, granted, info.with_grant_option ? granted : AclMode::NoRights);
+		}
 	}
 }
 
@@ -262,8 +264,10 @@ static void ApplyGrant(const AlterPermissionsInfo &info, idx_t owner, vector<Acl
 		}
 		if (info.revoke && columns && (info.privileges & ACL_COLUMN_PRIVILEGES) != AclMode::NoRights) {
 			for (auto &column : *columns) {
-				Revoke(column.acl, info.grantee_id, grantor, info.privileges & ACL_COLUMN_PRIVILEGES, info.option_only,
-				       info.cascade);
+				for (auto grantee : info.grantee_ids) {
+					Revoke(column.acl, grantee, grantor, info.privileges & ACL_COLUMN_PRIVILEGES, info.option_only,
+					       info.cascade);
+				}
 			}
 		}
 	}
@@ -323,23 +327,31 @@ void AlterPermissionsInfo::ApplyTo(Permissions &permissions, CatalogType entry_t
 	}
 
 	if (info.default_objtype != CatalogType::INVALID) {
-		auto row = std::find_if(defaults.begin(), defaults.end(), [&](const DefaultAcl &entry) {
-			return entry.role == info.target_role && entry.scope == info.default_scope &&
-			       entry.objtype == info.default_objtype;
-		});
-		const auto baseline = info.default_scope == 0 ? Permissions::AclDefault(info.default_objtype, info.target_role)
-		                                              : vector<AclItem> {};
-		auto row_acl = row == defaults.end() ? baseline : row->acl;
-		Apply(row_acl, info.target_role, ObjectKindOf(info.default_objtype).privileges, info.privileges, info);
-		if (std::is_permutation(row_acl.begin(), row_acl.end(), baseline.begin(), baseline.end())) {
-			if (row != defaults.end()) {
-				defaults.erase(row);
+		auto apply_default = [&](idx_t target_role, idx_t scope) {
+			auto row = std::find_if(defaults.begin(), defaults.end(), [&](const DefaultAcl &entry) {
+				return entry.role == target_role && entry.scope == scope && entry.objtype == info.default_objtype;
+			});
+			const auto baseline =
+			    scope == 0 ? Permissions::AclDefault(info.default_objtype, target_role) : vector<AclItem> {};
+			auto row_acl = row == defaults.end() ? baseline : row->acl;
+			Apply(row_acl, target_role, ObjectKindOf(info.default_objtype).privileges, info.privileges, info);
+			if (std::is_permutation(row_acl.begin(), row_acl.end(), baseline.begin(), baseline.end())) {
+				if (row != defaults.end()) {
+					defaults.erase(row);
+				}
+			} else if (row == defaults.end()) {
+				defaults.push_back(DefaultAcl {target_role, scope, info.default_objtype, std::move(row_acl)});
+			} else {
+				row->acl = std::move(row_acl);
 			}
-		} else if (row == defaults.end()) {
-			defaults.push_back(
-			    DefaultAcl {info.target_role, info.default_scope, info.default_objtype, std::move(row_acl)});
-		} else {
-			row->acl = std::move(row_acl);
+		};
+		for (auto target_role : info.target_roles) {
+			if (info.default_scopes.empty()) {
+				apply_default(target_role, 0);
+			}
+			for (auto scope : info.default_scopes) {
+				apply_default(target_role, scope);
+			}
 		}
 		return;
 	}

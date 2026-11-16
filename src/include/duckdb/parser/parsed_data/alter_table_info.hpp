@@ -112,8 +112,8 @@ struct AlterPermissionsInfo : public AlterInfo {
 	idx_t new_owner_id = 0;
 	AclMode privileges = AclMode::NoRights;
 	vector<ColumnPrivilege> column_privileges;
-	string grantee;
-	idx_t grantee_id = ACL_ID_PUBLIC;
+	vector<string> grantees;
+	vector<idx_t> grantee_ids;
 	string granted_by;
 	vector<idx_t> grantors;
 	bool revoke = false;
@@ -121,10 +121,10 @@ struct AlterPermissionsInfo : public AlterInfo {
 	bool option_only = false;
 	bool cascade = false;
 	CatalogType default_objtype = CatalogType::INVALID;
-	string for_role;
-	string default_schema;
-	idx_t target_role = 0;
-	idx_t default_scope = 0;
+	vector<string> for_roles;
+	vector<string> default_schemas;
+	vector<idx_t> target_roles;
+	vector<idx_t> default_scopes;
 	bool all_in_schema = false;
 	bool include_functions = true;
 	bool include_procedures = true;
@@ -134,12 +134,12 @@ struct AlterPermissionsInfo : public AlterInfo {
 	vector<GrantRow> database_rows;
 	vector<LogicalType> func_parameters;
 	bool has_func_args = false;
-	vector<unique_ptr<AlterPermissionsInfo>> additional_grants;
 
 public:
 	CatalogType GetCatalogType() const override;
 	unique_ptr<AlterInfo> Copy() const override;
 	string ToString() const override;
+	string StatementToString(const vector<unique_ptr<AlterInfo>> &infos) const override;
 	void ApplyTo(Permissions &permissions, CatalogType entry_type, optional_ptr<vector<ColumnAcl>> columns) const;
 	void ApplyTo(Permissions &permissions, CatalogType entry_type, ColumnList &columns) const;
 
@@ -181,6 +181,7 @@ struct AlterRoleInfo : public AlterInfo {
 	vector<string> reset_config;
 	vector<string> set_config;
 	string grant_role;
+	vector<string> members;
 	bool revoke = false;
 	bool option_only = false;
 	int8_t admin_option = -1;
@@ -192,12 +193,12 @@ struct AlterRoleInfo : public AlterInfo {
 	bool cascade = false;
 	bool all_roles = false;
 	bool alter_group = false;
-	vector<unique_ptr<AlterRoleInfo>> additional_grants;
 
 public:
 	CatalogType GetCatalogType() const override;
 	unique_ptr<AlterInfo> Copy() const override;
 	string ToString() const override;
+	string StatementToString(const vector<unique_ptr<AlterInfo>> &infos) const override;
 
 	void Serialize(Serializer &serializer) const override;
 	static unique_ptr<AlterInfo> Deserialize(Deserializer &deserializer);

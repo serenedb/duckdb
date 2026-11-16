@@ -1,5 +1,6 @@
 #include "duckdb/parser/parsed_data/drop_info.hpp"
 #include "duckdb/common/enum_util.hpp"
+#include "duckdb/common/string_util.hpp"
 #include "duckdb/function/macro_function.hpp"
 #include "duckdb/parser/parsed_data/extra_drop_info.hpp"
 #include "duckdb/parser/tableref/basetableref.hpp"
@@ -16,51 +17,48 @@ DropInfo::DropInfo(const DropInfo &info)
       dropped_together(info.dropped_together),
       extra_drop_info(info.extra_drop_info ? info.extra_drop_info->Copy() : nullptr),
       qualified_name(info.qualified_name) {
-	for (auto &target : info.additional_drops) {
-		additional_drops.push_back(target->Copy());
-	}
 }
 
 unique_ptr<DropInfo> DropInfo::Copy() const {
 	return make_uniq<DropInfo>(*this);
 }
 
-string DropInfo::ToString() const {
+string DropInfo::ToString(const vector<unique_ptr<DropInfo>> &infos) {
+	auto &first = *infos[0];
+	auto &type = first.type;
+	auto &extra_drop_info = first.extra_drop_info;
 	string result = "";
 	if (type == CatalogType::PREPARED_STATEMENT) {
 		if (extra_drop_info) {
 			result += "DISCARD ";
 			result += EnumUtil::ToString(extra_drop_info->Cast<ExtraDropDiscardInfo>().target);
-		} else if (GetQualifiedName().Name().empty()) {
+		} else if (first.GetQualifiedName().Name().empty()) {
 			result += "DEALLOCATE ALL";
 		} else {
 			result += "DEALLOCATE PREPARE ";
-			result += SQLIdentifier(GetQualifiedName().Name());
+			result += SQLIdentifier(first.GetQualifiedName().Name());
 		}
 	} else {
 		result += "DROP";
-		if (is_procedure) {
+		if (first.is_procedure) {
 			result += " PROCEDURE";
-		} else if (type == CatalogType::MACRO_ENTRY && !is_macro) {
+		} else if (type == CatalogType::MACRO_ENTRY && !first.is_macro) {
 			result += " FUNCTION";
 		} else {
 			result += " " + ParseInfo::TypeToString(type);
 		}
-		if (if_not_found == OnEntryNotFound::RETURN_NULL) {
+		if (first.if_not_found == OnEntryNotFound::RETURN_NULL) {
 			result += " IF EXISTS";
 		}
-		auto target = [&](const DropInfo &info) {
-			result += info.qualified_name.ToString(QualifiedNameToStringMode::HIDE_DEFAULT_SCHEMA);
-			if (info.has_func_args) {
-				result += "(" + MacroFunction::ParameterTypesToString(info.func_parameters) + ")";
+		vector<string> targets;
+		for (auto &info : infos) {
+			auto target = info->qualified_name.ToString(QualifiedNameToStringMode::HIDE_DEFAULT_SCHEMA);
+			if (info->has_func_args) {
+				target += "(" + MacroFunction::ParameterTypesToString(info->func_parameters) + ")";
 			}
-		};
-		result += " ";
-		target(*this);
-		for (auto &other : additional_drops) {
-			result += ", ";
-			target(*other);
+			targets.push_back(std::move(target));
 		}
+		result += " " + StringUtil::Join(targets, ", ");
 		if (type == CatalogType::TRIGGER_ENTRY && extra_drop_info) {
 			auto &trigger_info = extra_drop_info->Cast<ExtraDropTriggerInfo>();
 			if (trigger_info.base_table) {
@@ -75,7 +73,7 @@ string DropInfo::ToString() const {
 				result += " FROM " + SQLIdentifier(secret_info.secret_storage);
 			}
 		}
-		if (cascade) {
+		if (first.cascade) {
 			result += " CASCADE";
 		}
 	}

@@ -19,12 +19,13 @@ public:
 	static constexpr const PhysicalOperatorType TYPE = PhysicalOperatorType::ALTER;
 
 public:
-	explicit PhysicalAlter(PhysicalPlan &physical_plan, unique_ptr<AlterInfo> info, idx_t estimated_cardinality)
+	explicit PhysicalAlter(PhysicalPlan &physical_plan, vector<unique_ptr<AlterInfo>> infos,
+	                       idx_t estimated_cardinality)
 	    : PhysicalOperator(physical_plan, PhysicalOperatorType::ALTER, {LogicalType::BOOLEAN}, estimated_cardinality),
-	      info(std::move(info)) {
+	      infos(std::move(infos)) {
 	}
 
-	unique_ptr<AlterInfo> info;
+	vector<unique_ptr<AlterInfo>> infos;
 
 public:
 	// Source interface

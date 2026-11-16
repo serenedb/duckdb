@@ -663,6 +663,7 @@ private:
 	BoundStatement Bind(CreateStatement &stmt);
 	BoundStatement Bind(DropStatement &stmt);
 	BoundStatement Bind(AlterStatement &stmt);
+	unique_ptr<LogicalOperator> BindAlter(unique_ptr<AlterInfo> &info);
 	BoundStatement Bind(PrepareStatement &stmt);
 	BoundStatement Bind(ExecuteStatement &stmt);
 	BoundStatement Bind(TransactionStatement &stmt);

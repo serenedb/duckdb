@@ -2,10 +2,17 @@
 
 namespace duckdb {
 
-DropStatement::DropStatement() : SQLStatement(StatementType::DROP_STATEMENT), info(make_uniq<DropInfo>()) {
+DropStatement::DropStatement() : SQLStatement(StatementType::DROP_STATEMENT) {
 }
 
-DropStatement::DropStatement(const DropStatement &other) : SQLStatement(other), info(other.info->Copy()) {
+DropStatement::DropStatement(unique_ptr<DropInfo> info) : DropStatement() {
+	infos.push_back(std::move(info));
+}
+
+DropStatement::DropStatement(const DropStatement &other) : SQLStatement(other) {
+	for (auto &info : other.infos) {
+		infos.push_back(info->Copy());
+	}
 }
 
 unique_ptr<SQLStatement> DropStatement::Copy() const {
@@ -13,7 +20,7 @@ unique_ptr<SQLStatement> DropStatement::Copy() const {
 }
 
 string DropStatement::ToString() const {
-	return info->ToString();
+	return DropInfo::ToString(infos);
 }
 
 } // namespace duckdb

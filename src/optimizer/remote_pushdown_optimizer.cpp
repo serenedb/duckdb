@@ -752,46 +752,53 @@ CatalogPushdownResult RemotePushdownOptimizer::RewriteStatement(CreateStatement 
 }
 
 CatalogPushdownResult RemotePushdownOptimizer::RewriteStatement(DropStatement &statement) {
-	auto &info = *statement.info;
-	switch (info.type) {
-	case CatalogType::TABLE_ENTRY:
-	case CatalogType::VIEW_ENTRY:
-	case CatalogType::SCHEMA_ENTRY:
-	case CatalogType::INDEX_ENTRY:
-	case CatalogType::SEQUENCE_ENTRY:
-	case CatalogType::TYPE_ENTRY:
-	case CatalogType::MACRO_ENTRY:
-	case CatalogType::TABLE_MACRO_ENTRY:
-		break;
-	default:
-		// prepared statements, secrets, ... never live in a remote catalog
-		return CatalogPushdownResult::Unknown();
+	auto target = CatalogPushdownResult::NoCatalogReference();
+	for (auto &info : statement.infos) {
+		switch (info->type) {
+		case CatalogType::TABLE_ENTRY:
+		case CatalogType::VIEW_ENTRY:
+		case CatalogType::SCHEMA_ENTRY:
+		case CatalogType::INDEX_ENTRY:
+		case CatalogType::SEQUENCE_ENTRY:
+		case CatalogType::TYPE_ENTRY:
+		case CatalogType::MACRO_ENTRY:
+		case CatalogType::TABLE_MACRO_ENTRY:
+			break;
+		default:
+			// prepared statements, secrets, ... never live in a remote catalog
+			return CatalogPushdownResult::Unknown();
+		}
+		target =
+		    Merge(std::move(target), ResolveDDLTarget(info->GetQualifiedName(), DDLTarget::EXISTING_ENTRY, info->type));
 	}
-	auto target = ResolveDDLTarget(info.GetQualifiedName(), DDLTarget::EXISTING_ENTRY, info.type);
 	return VerifyStatementSupport(statement, std::move(target));
 }
 
 CatalogPushdownResult RemotePushdownOptimizer::RewriteStatement(AlterStatement &statement) {
-	auto &info = *statement.info;
-	switch (info.type) {
-	case AlterType::ALTER_TABLE:
-	case AlterType::ALTER_VIEW:
-	case AlterType::ALTER_SEQUENCE:
-	case AlterType::CHANGE_OWNERSHIP:
-	case AlterType::SET_COMMENT:
-	case AlterType::SET_COLUMN_COMMENT:
-		break;
-	case AlterType::ALTER_DATABASE:
-		// renaming a database renames the attachment, which only exists locally
-		return CatalogPushdownResult::Unknown();
-	default:
-		// ALTER_SCALAR_FUNCTION / ALTER_TABLE_FUNCTION are only built by CreateInfo::GetAlterInfo when a
-		// CREATE resolves an OnCreateConflict, so they never reach the optimizer as a parsed statement
-		return CatalogPushdownResult::Unknown();
+	auto target = CatalogPushdownResult::NoCatalogReference();
+	for (auto &info : statement.infos) {
+		switch (info->type) {
+		case AlterType::ALTER_TABLE:
+		case AlterType::ALTER_VIEW:
+		case AlterType::ALTER_SEQUENCE:
+		case AlterType::CHANGE_OWNERSHIP:
+		case AlterType::SET_COMMENT:
+		case AlterType::SET_COLUMN_COMMENT:
+			break;
+		case AlterType::ALTER_DATABASE:
+			// renaming a database renames the attachment, which only exists locally
+			return CatalogPushdownResult::Unknown();
+		default:
+			// ALTER_SCALAR_FUNCTION / ALTER_TABLE_FUNCTION are only built by CreateInfo::GetAlterInfo when a
+			// CREATE resolves an OnCreateConflict, so they never reach the optimizer as a parsed statement
+			return CatalogPushdownResult::Unknown();
+		}
+		// COMMENT ON COLUMN targets either a table or a view, the exact type is only resolved at bind time
+		auto entry_type =
+		    info->type == AlterType::SET_COLUMN_COMMENT ? CatalogType::TABLE_ENTRY : info->GetCatalogType();
+		target =
+		    Merge(std::move(target), ResolveDDLTarget(info->GetQualifiedName(), DDLTarget::EXISTING_ENTRY, entry_type));
 	}
-	// COMMENT ON COLUMN targets either a table or a view, the exact type is only resolved at bind time
-	auto entry_type = info.type == AlterType::SET_COLUMN_COMMENT ? CatalogType::TABLE_ENTRY : info.GetCatalogType();
-	auto target = ResolveDDLTarget(info.GetQualifiedName(), DDLTarget::EXISTING_ENTRY, entry_type);
 	return VerifyStatementSupport(statement, std::move(target));
 }
 
@@ -1872,15 +1879,17 @@ void RemotePushdownOptimizer::StripCatalogName(SQLStatement &statement, const Id
 	case StatementType::CREATE_STATEMENT:
 		StripCatalogName(*statement.Cast<CreateStatement>().info, catalog_name);
 		break;
-	case StatementType::DROP_STATEMENT: {
-		auto &info = *statement.Cast<DropStatement>().info;
-		auto name = info.GetQualifiedName();
-		StripCatalogFromName(name, catalog_name);
-		info.SetQualifiedName(std::move(name));
+	case StatementType::DROP_STATEMENT:
+		for (auto &info : statement.Cast<DropStatement>().infos) {
+			auto name = info->GetQualifiedName();
+			StripCatalogFromName(name, catalog_name);
+			info->SetQualifiedName(std::move(name));
+		}
 		break;
-	}
 	case StatementType::ALTER_STATEMENT:
-		StripCatalogName(*statement.Cast<AlterStatement>().info, catalog_name);
+		for (auto &info : statement.Cast<AlterStatement>().infos) {
+			StripCatalogName(*info, catalog_name);
+		}
 		break;
 	default:
 		break;

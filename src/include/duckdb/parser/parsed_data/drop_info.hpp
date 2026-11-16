@@ -43,7 +43,6 @@ public:
 	//! Whether this is DROP PROCEDURE (vs DROP FUNCTION)
 	bool is_procedure = false;
 	bool is_macro = false;
-	vector<unique_ptr<DropInfo>> additional_drops;
 	vector<idx_t> dropped_together;
 
 	//! Extra info related to this drop
@@ -74,7 +73,7 @@ public:
 
 public:
 	virtual unique_ptr<DropInfo> Copy() const;
-	string ToString() const;
+	static string ToString(const vector<unique_ptr<DropInfo>> &infos);
 
 	void Serialize(Serializer &serializer) const override;
 	static unique_ptr<ParseInfo> Deserialize(Deserializer &deserializer);

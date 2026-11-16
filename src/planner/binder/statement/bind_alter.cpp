@@ -99,14 +99,14 @@ BoundStatement Binder::BindAlterAddIndex(BoundStatement &result, CatalogEntry &e
 	return std::move(result);
 }
 
-static void BindAlterTypes(Binder &binder, AlterStatement &stmt, optional_ptr<Catalog> catalog) {
+static void BindAlterTypes(Binder &binder, AlterInfo &info, optional_ptr<Catalog> catalog) {
 	auto require_usage = [&](const LogicalType &type) {
 		if (catalog) {
 			RequireTypeUsage(binder.context, binder.CheckAs(), type, *catalog);
 		}
 	};
-	if (stmt.info->type == AlterType::ALTER_TABLE) {
-		auto &table_info = stmt.info->Cast<AlterTableInfo>();
+	if (info.type == AlterType::ALTER_TABLE) {
+		auto &table_info = info.Cast<AlterTableInfo>();
 		switch (table_info.alter_table_type) {
 		case AlterTableType::ADD_COLUMN: {
 			auto &add_info = table_info.Cast<AddColumnInfo>();
@@ -132,19 +132,19 @@ static void BindAlterTypes(Binder &binder, AlterStatement &stmt, optional_ptr<Ca
 			break;
 		}
 	}
-	if (stmt.info->type == AlterType::ALTER_JOB) {
-		auto &job_info = stmt.info->Cast<AlterJobInfo>();
+	if (info.type == AlterType::ALTER_JOB) {
+		auto &job_info = info.Cast<AlterJobInfo>();
 		if (job_info.alter_job_type == AlterJobType::SET_SCHEDULE) {
 			binder.BindJobSchedule(job_info.schedule, job_info.parsed_schedule);
 		}
 	}
 }
 
-static void QualifyAlterUserFunctions(Binder &binder, const SchemaCatalogEntry &schema, AlterStatement &stmt) {
-	if (stmt.info->type != AlterType::ALTER_TABLE) {
+static void QualifyAlterUserFunctions(Binder &binder, const SchemaCatalogEntry &schema, AlterInfo &info) {
+	if (info.type != AlterType::ALTER_TABLE) {
 		return;
 	}
-	auto &table_info = stmt.info->Cast<AlterTableInfo>();
+	auto &table_info = info.Cast<AlterTableInfo>();
 	switch (table_info.alter_table_type) {
 	case AlterTableType::ADD_COLUMN:
 		binder.QualifyUserFunctions(schema, table_info.Cast<AddColumnInfo>().new_column);
@@ -290,104 +290,87 @@ BoundStatement Binder::Bind(AlterStatement &stmt) {
 	BoundStatement result;
 	result.names = {"Success"};
 	result.types = {LogicalType::BOOLEAN};
+	GetStatementProperties().return_type = StatementReturnType::NOTHING;
+	for (auto &info : stmt.infos) {
+		if (auto plan = BindAlter(info)) {
+			D_ASSERT(stmt.infos.size() == 1);
+			result.plan = std::move(plan);
+			return result;
+		}
+	}
+	result.plan = make_uniq<LogicalAlter>(std::move(stmt.infos));
+	return result;
+}
 
+unique_ptr<LogicalOperator> Binder::BindAlter(unique_ptr<AlterInfo> &info) {
+	auto &properties = GetStatementProperties();
 	// Special handling for ALTER DATABASE - doesn't use schema binding
-	if (stmt.info->type == AlterType::ALTER_DATABASE) {
+	if (info->type == AlterType::ALTER_DATABASE) {
 		if (!Catalog::GetSystemCatalog(context).IsDuckCatalog()) {
 			throw NotImplementedException("renaming a database is not supported");
 		}
-		auto &properties = GetStatementProperties();
-		properties.return_type = StatementReturnType::NOTHING;
 		properties.RegisterDBModify(Catalog::GetSystemCatalog(context), context, DatabaseModificationType::ALTER_TABLE);
-		result.plan = make_uniq<LogicalAlter>(std::move(stmt.info));
-		return result;
+		return nullptr;
 	}
 
-	if (stmt.info->type == AlterType::ALTER_SCHEMA) {
+	if (info->type == AlterType::ALTER_SCHEMA) {
 		// resolve the schema path the same way as CREATE SCHEMA does
-		auto &info = stmt.info->Cast<AlterSchemaInfo>();
-		info.SetQualifiedName(ResolveCatalog(context, info.GetQualifiedName()));
-		auto &catalog = Catalog::GetCatalog(context, info.SchemaCatalog());
-		auto &properties = GetStatementProperties();
-		properties.return_type = StatementReturnType::NOTHING;
+		auto &schema_info = info->Cast<AlterSchemaInfo>();
+		schema_info.SetQualifiedName(ResolveCatalog(context, schema_info.GetQualifiedName()));
+		auto &catalog = Catalog::GetCatalog(context, schema_info.SchemaCatalog());
 		properties.RegisterDBModify(catalog, context, DatabaseModificationType::ALTER_TABLE);
-		entry_retriever.GetSchema(info.SchemaCatalog(), info.SchemaPath(),
-		                          info.alter_schema_type == AlterSchemaType::RENAME_SCHEMA ? EntryUse::RENAME
-		                                                                                   : EntryUse::OWN,
+		entry_retriever.GetSchema(schema_info.SchemaCatalog(), schema_info.SchemaPath(),
+		                          schema_info.alter_schema_type == AlterSchemaType::RENAME_SCHEMA ? EntryUse::RENAME
+		                                                                                          : EntryUse::OWN,
 		                          OnEntryNotFound::RETURN_NULL);
-		result.plan = make_uniq<LogicalAlter>(std::move(stmt.info));
-		return result;
+		return nullptr;
 	}
 
-	if (stmt.info->type == AlterType::SET_COMMENT && (stmt.info->GetCatalogType() == CatalogType::DATABASE_ENTRY ||
-	                                                  stmt.info->GetCatalogType() == CatalogType::ROLE_ENTRY)) {
+	if (info->type == AlterType::SET_COMMENT &&
+	    (info->GetCatalogType() == CatalogType::DATABASE_ENTRY || info->GetCatalogType() == CatalogType::ROLE_ENTRY)) {
 		if (Catalog::GetSystemCatalog(context).IsDuckCatalog()) {
 			throw NotImplementedException("Adding comments to %ss is not implemented",
-			                              stmt.info->GetCatalogType() == CatalogType::DATABASE_ENTRY ? "database"
-			                                                                                         : "role");
+			                              info->GetCatalogType() == CatalogType::DATABASE_ENTRY ? "database" : "role");
 		}
-		CheckSharedObjectComment(*stmt.info);
-		auto &properties = GetStatementProperties();
-		properties.return_type = StatementReturnType::NOTHING;
-		stmt.info->SetQualifiedName(ClusterName(context, stmt.info->GetQualifiedName()));
-		result.plan = make_uniq<LogicalAlter>(std::move(stmt.info));
-		return result;
+		CheckSharedObjectComment(*info);
+		info->SetQualifiedName(ClusterName(context, info->GetQualifiedName()));
+		return nullptr;
 	}
 
-	if (stmt.info->type == AlterType::ALTER_SUBSCRIPTION) {
-		auto &subscription = ResolveDatabaseEntry(CatalogType::SUBSCRIPTION_ENTRY, *stmt.info, EntryUse::OWN);
-		auto &properties = GetStatementProperties();
-		properties.return_type = StatementReturnType::NOTHING;
+	if (info->type == AlterType::ALTER_SUBSCRIPTION) {
+		auto &subscription = ResolveDatabaseEntry(CatalogType::SUBSCRIPTION_ENTRY, *info, EntryUse::OWN);
 		properties.RegisterDBModify(subscription.ParentCatalog(), context, DatabaseModificationType::ALTER_TABLE);
-		result.plan = make_uniq<LogicalAlter>(std::move(stmt.info));
-		return result;
+		return nullptr;
 	}
 
-	if (stmt.info->type == AlterType::REASSIGN_OWNED || stmt.info->type == AlterType::DROP_OWNED) {
-		ResolveOwned(*stmt.info);
+	if (info->type == AlterType::REASSIGN_OWNED || info->type == AlterType::DROP_OWNED) {
+		ResolveOwned(*info);
 		auto &catalog = Catalog::GetCatalog(context, DatabaseManager::GetDefaultDatabase(context));
-		stmt.info->SetQualifiedName(catalog.GetName(), Identifier(), Identifier());
-		auto &properties = GetStatementProperties();
-		properties.return_type = StatementReturnType::NOTHING;
+		info->SetQualifiedName(catalog.GetName(), Identifier(), Identifier());
 		properties.RegisterDBModify(
 		    catalog, context, DatabaseModificationType::ALTER_TABLE | DatabaseModificationType::DROP_CATALOG_ENTRY);
-		result.plan = make_uniq<LogicalAlter>(std::move(stmt.info));
-		return result;
+		return nullptr;
 	}
 
-	if (stmt.info->type == AlterType::ALTER_TABLESPACE) {
-		GetStatementProperties().return_type = StatementReturnType::NOTHING;
-		result.plan = make_uniq<LogicalAlter>(std::move(stmt.info));
-		return result;
+	if (info->type == AlterType::ALTER_TABLESPACE) {
+		return nullptr;
 	}
 
-	if (stmt.info->type == AlterType::ALTER_PERMISSIONS || stmt.info->type == AlterType::ALTER_ROLE ||
-	    stmt.info->type == AlterType::ALTER_DATABASE_SETTINGS) {
-		auto &properties = GetStatementProperties();
-		properties.return_type = StatementReturnType::NOTHING;
-		BindPrivilegeAlter(*stmt.info, properties);
-		if (stmt.info->type == AlterType::ALTER_PERMISSIONS) {
-			for (auto &grant : stmt.info->Cast<AlterPermissionsInfo>().additional_grants) {
-				BindPrivilegeAlter(*grant, properties);
-			}
-		} else if (stmt.info->type == AlterType::ALTER_ROLE) {
-			for (auto &grant : stmt.info->Cast<AlterRoleInfo>().additional_grants) {
-				BindPrivilegeAlter(*grant, properties);
-			}
-		}
-		result.plan = make_uniq<LogicalAlter>(std::move(stmt.info));
-		return result;
+	if (info->type == AlterType::ALTER_PERMISSIONS || info->type == AlterType::ALTER_ROLE ||
+	    info->type == AlterType::ALTER_DATABASE_SETTINGS) {
+		BindPrivilegeAlter(*info, properties);
+		return nullptr;
 	}
 
 	// resolve the (possibly nested) catalog/schema qualification of the altered entry
-	stmt.info->SetQualifiedName(BindTableName(stmt.info->GetQualifiedName()));
+	info->SetQualifiedName(BindTableName(info->GetQualifiedName()));
 
-	if (stmt.info->type == AlterType::ALTER_SCALAR_FUNCTION &&
-	    stmt.info->Cast<AlterScalarFunctionInfo>().alter_scalar_function_type ==
+	if (info->type == AlterType::ALTER_SCALAR_FUNCTION &&
+	    info->Cast<AlterScalarFunctionInfo>().alter_scalar_function_type ==
 	        AlterScalarFunctionType::SET_FUNCTION_ATTRIBUTES) {
-		auto &info = stmt.info->Cast<AlterFunctionAttributesInfo>();
-		auto bound = BindRoutine({info.GetQualifiedName(), info.func_parameters, info.has_func_args,
-		                          info.include_functions, info.include_procedures},
+		auto &attributes = info->Cast<AlterFunctionAttributesInfo>();
+		auto bound = BindRoutine({attributes.GetQualifiedName(), attributes.func_parameters, attributes.has_func_args,
+		                          attributes.include_functions, attributes.include_procedures},
 		                         EntryUse::OWN, OnEntryNotFound::THROW_EXCEPTION);
 		auto &function = *bound.entry;
 		if (function.internal) {
@@ -401,35 +384,31 @@ BoundStatement Binder::Bind(AlterStatement &stmt) {
 		                 [&](const unique_ptr<MacroFunction> &candidate) { return candidate.get() == &overload; }) -
 		    routine.macros.begin();
 		auto &macro = *create_info->Cast<CreateMacroInfo>().macros[position];
-		if (info.set_strict && macro.strict != info.strict) {
+		if (attributes.set_strict && macro.strict != attributes.strict) {
 			throw NotImplementedException("ALTER FUNCTION cannot change whether a function is strict");
 		}
-		if (info.set_security) {
-			macro.security_definer = info.security_definer;
+		if (attributes.set_security) {
+			macro.security_definer = attributes.security_definer;
 		}
-		if (info.set_stability) {
-			macro.stability = info.stability;
+		if (attributes.set_stability) {
+			macro.stability = attributes.stability;
 		}
-		if (info.replace_config) {
-			macro.config = info.config;
+		if (attributes.replace_config) {
+			macro.config = attributes.config;
 			Settings::ResolveCurrentValues(context, macro.config);
 		}
 		create_info->on_conflict = OnCreateConflict::ALTER_ON_CONFLICT;
 		auto &schema = function.ParentSchema(context);
-		auto &properties = GetStatementProperties();
-		properties.return_type = StatementReturnType::NOTHING;
 		properties.RegisterDBModify(schema.ParentCatalog(), context, DatabaseModificationType::ALTER_TABLE);
-		result.plan =
-		    make_uniq<LogicalCreate>(LogicalOperatorType::LOGICAL_CREATE_MACRO, std::move(create_info), &schema);
-		return result;
+		return make_uniq<LogicalCreate>(LogicalOperatorType::LOGICAL_CREATE_MACRO, std::move(create_info), &schema);
 	}
 
 	// ALTER FUNCTION ... RENAME TO ... skips entry lookup (scalar-vs-table
 	// macro is ambiguous at parse time).
-	if (stmt.info->type == AlterType::ALTER_SCALAR_FUNCTION &&
-	    stmt.info->Cast<AlterScalarFunctionInfo>().alter_scalar_function_type ==
+	if (info->type == AlterType::ALTER_SCALAR_FUNCTION &&
+	    info->Cast<AlterScalarFunctionInfo>().alter_scalar_function_type ==
 	        AlterScalarFunctionType::RENAME_SCALAR_FUNCTION) {
-		auto &rename = stmt.info->Cast<RenameScalarFunctionInfo>();
+		auto &rename = info->Cast<RenameScalarFunctionInfo>();
 		const bool unqualified = rename.GetQualifiedName().Schema().empty();
 		auto bound = BindRoutine({rename.GetQualifiedName(), rename.func_parameters, rename.has_func_args,
 		                          rename.include_functions, rename.include_procedures},
@@ -440,63 +419,60 @@ BoundStatement Binder::Bind(AlterStatement &stmt) {
 		if (bound.overload) {
 			rename.overload_oid = bound.entry->Cast<MacroCatalogEntry>().OverloadOid(*bound.overload);
 		}
-		auto &catalog = Catalog::GetCatalog(context, stmt.info->GetQualifiedName().Catalog());
-		auto &properties = GetStatementProperties();
-		properties.return_type = StatementReturnType::NOTHING;
+		auto &catalog = Catalog::GetCatalog(context, info->GetQualifiedName().Catalog());
 		properties.RegisterDBModify(catalog, context, DatabaseModificationType::ALTER_TABLE);
-		result.plan = make_uniq<LogicalAlter>(std::move(stmt.info));
-		return result;
+		return nullptr;
 	}
 
 	optional_ptr<CatalogEntry> entry;
 	auto use = EntryUse::OWN;
-	if (stmt.info->type != AlterType::SET_COLUMN_COMMENT && stmt.info->GetNewName()) {
+	if (info->type != AlterType::SET_COLUMN_COMMENT && info->GetNewName()) {
 		use = EntryUse::RENAME;
 	}
 	auto lookup = [&](CatalogType type, OnEntryNotFound if_not_found) {
-		return entry_retriever.GetEntry(EntryLookupInfo(type, stmt.info->GetQualifiedName(), use), if_not_found);
+		return entry_retriever.GetEntry(EntryLookupInfo(type, info->GetQualifiedName(), use), if_not_found);
 	};
-	if (stmt.info->type == AlterType::SET_COLUMN_COMMENT) {
+	if (info->type == AlterType::SET_COLUMN_COMMENT) {
 		// Extra step for column comments: They can alter a table or a view, and we resolve that here.
-		auto &info = stmt.info->Cast<SetColumnCommentInfo>();
-		entry = info.TryResolveCatalogEntry(entry_retriever);
+		auto &column_comment = info->Cast<SetColumnCommentInfo>();
+		entry = column_comment.TryResolveCatalogEntry(entry_retriever);
 		if (entry) {
 			RequireUse(context, CheckAs(), *entry, EntryUse::OWN);
 		}
-		if (entry && info.catalog_entry_type == CatalogType::VIEW_ENTRY) {
+		if (entry && column_comment.catalog_entry_type == CatalogType::VIEW_ENTRY) {
 			// when running SET COLUMN on a VIEW - ensure the view is bound
 			auto &view = entry->Cast<ViewCatalogEntry>();
 			view.BindView(context);
 		}
-	} else if (stmt.info->GetNewName() && (stmt.info->GetCatalogType() == CatalogType::TABLE_ENTRY ||
-	                                       stmt.info->GetCatalogType() == CatalogType::INDEX_ENTRY)) {
-		auto &target_catalog = Catalog::GetCatalog(context, stmt.info->GetQualifiedName().Catalog());
+	} else if (info->GetNewName() && (info->GetCatalogType() == CatalogType::TABLE_ENTRY ||
+	                                  info->GetCatalogType() == CatalogType::INDEX_ENTRY)) {
+		auto &target_catalog = Catalog::GetCatalog(context, info->GetQualifiedName().Catalog());
 		const bool rename_spans_tables_and_indexes = target_catalog.Compatibility() == SqlCompatibility::POSTGRES;
-		const auto declared = stmt.info->GetCatalogType();
+		const auto declared = info->GetCatalogType();
 		const auto other = declared == CatalogType::TABLE_ENTRY ? CatalogType::INDEX_ENTRY : CatalogType::TABLE_ENTRY;
 		entry = lookup(declared, OnEntryNotFound::RETURN_NULL);
 		if (!entry && rename_spans_tables_and_indexes) {
 			entry = lookup(other, OnEntryNotFound::RETURN_NULL);
 			if (entry) {
-				auto data = stmt.info->GetAlterEntryData();
-				auto new_name = *stmt.info->GetNewName();
-				const auto allow_internal = stmt.info->allow_internal;
+				auto data = info->GetAlterEntryData();
+				auto new_name = *info->GetNewName();
+				const auto allow_internal = info->allow_internal;
 				if (other == CatalogType::INDEX_ENTRY) {
-					stmt.info = make_uniq<RenameIndexInfo>(data, std::move(new_name));
+					info = make_uniq<RenameIndexInfo>(data, std::move(new_name));
 				} else {
-					stmt.info = make_uniq<RenameTableInfo>(data, std::move(new_name));
+					info = make_uniq<RenameTableInfo>(data, std::move(new_name));
 				}
-				stmt.info->allow_internal = allow_internal;
+				info->allow_internal = allow_internal;
 			}
 		}
 		if (!entry) {
-			entry = lookup(declared, stmt.info->if_not_found);
+			entry = lookup(declared, info->if_not_found);
 		}
-	} else if (stmt.info->type == AlterType::SET_SCHEMA && stmt.info->GetCatalogType() != CatalogType::MACRO_ENTRY &&
-	           stmt.info->GetCatalogType() != CatalogType::TABLE_MACRO_ENTRY) {
-		entry = BindSetSchemaEntry(stmt.info->Cast<SetSchemaInfo>(), lookup);
-	} else if (stmt.info->type == AlterType::SET_SCHEMA) {
-		auto &set_schema = stmt.info->Cast<SetSchemaInfo>();
+	} else if (info->type == AlterType::SET_SCHEMA && info->GetCatalogType() != CatalogType::MACRO_ENTRY &&
+	           info->GetCatalogType() != CatalogType::TABLE_MACRO_ENTRY) {
+		entry = BindSetSchemaEntry(info->Cast<SetSchemaInfo>(), lookup);
+	} else if (info->type == AlterType::SET_SCHEMA) {
+		auto &set_schema = info->Cast<SetSchemaInfo>();
 		auto bound =
 		    BindRoutine({set_schema.GetQualifiedName(), set_schema.func_parameters, set_schema.has_func_args,
 		                 set_schema.include_functions, set_schema.include_procedures, set_schema.entry_catalog_type},
@@ -508,10 +484,9 @@ BoundStatement Binder::Bind(AlterStatement &stmt) {
 		if (entry) {
 			set_schema.entry_catalog_type = entry->type;
 		}
-	} else if (stmt.info->type == AlterType::SET_COMMENT &&
-	           (stmt.info->GetCatalogType() == CatalogType::MACRO_ENTRY ||
-	            stmt.info->GetCatalogType() == CatalogType::TABLE_MACRO_ENTRY)) {
-		auto &comment = stmt.info->Cast<SetCommentInfo>();
+	} else if (info->type == AlterType::SET_COMMENT && (info->GetCatalogType() == CatalogType::MACRO_ENTRY ||
+	                                                    info->GetCatalogType() == CatalogType::TABLE_MACRO_ENTRY)) {
+		auto &comment = info->Cast<SetCommentInfo>();
 		auto bound = BindRoutine({comment.GetQualifiedName(), comment.func_parameters, comment.has_func_args,
 		                          comment.include_functions, comment.include_procedures, comment.entry_catalog_type},
 		                         EntryUse::OWN, comment.if_not_found);
@@ -524,22 +499,18 @@ BoundStatement Binder::Bind(AlterStatement &stmt) {
 		}
 	} else {
 		// For any other ALTER, we retrieve the catalog entry directly.
-		entry = lookup(stmt.info->GetCatalogType(), stmt.info->if_not_found);
+		entry = lookup(info->GetCatalogType(), info->if_not_found);
 	}
 
-	auto &properties = GetStatementProperties();
-	properties.return_type = StatementReturnType::NOTHING;
 	if (!entry) {
 		// Bind types in this binder
-		BindAlterTypes(*this, stmt, nullptr);
+		BindAlterTypes(*this, *info, nullptr);
 		RequireResolvedTypeUsage(nullptr);
-
-		result.plan = make_uniq<LogicalAlter>(std::move(stmt.info));
-		return result;
+		return nullptr;
 	}
 
 	D_ASSERT(!entry->deleted);
-	if (auto new_schema = stmt.info->GetNewSchema()) {
+	if (auto new_schema = info->GetNewSchema()) {
 		EntryLookupInfo schema_lookup(CatalogType::SCHEMA_ENTRY,
 		                              QualifiedName(entry->ParentCatalog().GetName(), Identifier(), *new_schema));
 		if (auto target = Catalog::GetSchema(entry_retriever, schema_lookup, OnEntryNotFound::RETURN_NULL)) {
@@ -551,16 +522,16 @@ BoundStatement Binder::Bind(AlterStatement &stmt) {
 
 	// Bind types in the same catalog as the entry
 	auto type_binder = Binder::CreateBinder(context, *this);
-	type_binder->SetSearchPath(catalog, stmt.info->GetQualifiedName().Schema());
+	type_binder->SetSearchPath(catalog, info->GetQualifiedName().Schema());
 
-	BindAlterTypes(*type_binder, stmt, &catalog);
+	BindAlterTypes(*type_binder, *info, &catalog);
 	RequireResolvedTypeUsage(nullptr);
 	if (catalog.Compatibility() == SqlCompatibility::POSTGRES) {
 		auto &schema = entry->ParentSchema(context);
-		QualifyAlterUserFunctions(*this, schema, stmt);
-		if (stmt.info->type == AlterType::SET_SCHEMA && entry->type == CatalogType::TABLE_ENTRY) {
+		QualifyAlterUserFunctions(*this, schema, *info);
+		if (info->type == AlterType::SET_SCHEMA && entry->type == CatalogType::TABLE_ENTRY) {
 			VerifyMovedTableExpressions(context, entry->Cast<TableCatalogEntry>(),
-			                            catalog.GetSchema(context, stmt.info->Cast<SetSchemaInfo>().new_schema));
+			                            catalog.GetSchema(context, info->Cast<SetSchemaInfo>().new_schema));
 		}
 	}
 
@@ -571,16 +542,15 @@ BoundStatement Binder::Bind(AlterStatement &stmt) {
 		// We can only alter temporary tables and views in read-only mode.
 		properties.RegisterDBModify(catalog, context, DatabaseModificationType::ALTER_TABLE);
 	}
-	stmt.info->SetQualifiedName(QualifiedName::FromCatalogSchema(
+	info->SetQualifiedName(QualifiedName::FromCatalogSchema(
 	    catalog.GetName(), entry->ParentSchemaPath(catalog.GetCatalogTransaction(context)),
-	    stmt.info->GetQualifiedName().Name()));
+	    info->GetQualifiedName().Name()));
 
-	if (!stmt.info->IsAddUniqueConstraint()) {
-		result.plan = make_uniq<LogicalAlter>(std::move(stmt.info));
-		return result;
+	if (!info->IsAddUniqueConstraint()) {
+		return nullptr;
 	}
-
-	return BindAlterAddIndex(result, *entry, std::move(stmt.info));
+	BoundStatement result;
+	return std::move(BindAlterAddIndex(result, *entry, std::move(info)).plan);
 }
 
 } // namespace duckdb

@@ -154,11 +154,10 @@ BoundStatement Binder::Bind(DropStatement &stmt) {
 	BoundStatement result;
 
 	auto &properties = GetStatementProperties();
-	BindDrop(*stmt.info, properties);
-	for (auto &target : stmt.info->additional_drops) {
-		BindDrop(*target, properties);
+	for (auto &info : stmt.infos) {
+		BindDrop(*info, properties);
 	}
-	result.plan = make_uniq<LogicalDrop>(std::move(stmt.info));
+	result.plan = make_uniq<LogicalDrop>(std::move(stmt.infos));
 	result.names = {"Success"};
 	result.types = {LogicalType::BOOLEAN};
 
