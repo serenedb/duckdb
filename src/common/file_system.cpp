@@ -18,6 +18,7 @@
 #include "duckdb/common/windows_util.hpp"
 #include "duckdb/common/operator/multiply.hpp"
 #include "duckdb/logging/log_manager.hpp"
+#include "duckdb/storage/external_file_cache/external_file_cache.hpp"
 
 #include <cstdint>
 #include <cstdio>
@@ -289,12 +290,22 @@ string FileSystem::GetWorkingDirectory() {
 
 #endif
 
-string FileSystem::JoinPath(const string &a, const string &b) {
+string FileSystem::JoinPath(std::string_view a, std::string_view b) {
+	if (Path::IsSegment(b) && Path::IsNormalized(a)) {
+		string result;
+		result.reserve(a.size() + 1 + b.size());
+		result.append(a);
+		if (a.back() != '/') {
+			result.push_back('/');
+		}
+		result.append(b);
+		return result;
+	}
 	// A remote URL may carry a "?query" suffix (object version, requester-pays, an SSE-C key, ...).
 	// Appending a path segment after it would bury the query mid-path and corrupt both the query and
 	// the object path, so join onto the path without the query and keep the query at the very end.
 	auto scheme = a.find("://");
-	if (scheme != string::npos) {
+	if (scheme != std::string_view::npos) {
 		auto query = a.find('?', scheme + 3);
 		if (query != std::string_view::npos) {
 			return Path::FromString(a.substr(0, query)).Join(Path::FromString(b)).ToString() + string(a.substr(query));
@@ -728,7 +739,16 @@ bool FileSystem::TryRemoveFile(const string &filename, optional_ptr<FileOpener> 
 void FileSystem::RemoveFiles(const vector<string> &filenames, optional_ptr<FileOpener> opener) {
 	ErrorData first;
 	for (const auto &filename : filenames) {
-		TryRemoveFile(filename, opener);
+		try {
+			TryRemoveFile(filename, opener);
+		} catch (std::exception &ex) {
+			if (!first.HasError()) {
+				first = ErrorData(ex);
+			}
+		}
+	}
+	if (first.HasError()) {
+		first.Throw();
 	}
 }
 
@@ -1027,6 +1047,10 @@ idx_t FileHandle::GetFileSize() {
 
 void FileHandle::Sync() {
 	file_system.FileSync(*this);
+}
+
+void FileHandle::HintWriteback(idx_t location, idx_t nr_bytes) {
+	file_system.HintWriteback(*this, location, nr_bytes);
 }
 
 void FileHandle::Truncate(int64_t new_size) {

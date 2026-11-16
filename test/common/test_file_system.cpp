@@ -5,22 +5,29 @@
 #include "duckdb/common/file_system.hpp"
 #include "duckdb/common/fstream.hpp"
 #include "duckdb/common/local_file_system.hpp"
+#include "duckdb/common/memory_mapped_file.hpp"
 #include "duckdb/common/opener_file_system.hpp"
+#include "duckdb/common/path.hpp"
+#include "duckdb/common/serializer/buffered_file_reader.hpp"
+#include "duckdb/common/serializer/buffered_file_writer.hpp"
 #include "duckdb/common/string.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/common/unique_ptr.hpp"
 #include "duckdb/common/vector.hpp"
 #include "duckdb/common/virtual_file_system.hpp"
 #include "duckdb/main/client_context_file_opener.hpp"
+#include "duckdb/main/database_file_opener.hpp"
 #include "duckdb/main/database_manager.hpp"
 #include "test_helpers.hpp"
 #if (!defined(_WIN32) && !defined(WIN32))
 #define TEST_HAVE_SYMLINK
+#include <sys/stat.h>
 #include <unistd.h>
 #else
 #include "duckdb/common/windows.hpp"
 #endif
 
+#include <absl/crc/crc32c.h>
 #include <thread>
 
 using namespace duckdb;
@@ -565,6 +572,285 @@ TEST_CASE("re-register subsystem", "[file_system]") {
 	REQUIRE_THROWS(vfs.RegisterSubSystem(std::move(second_local_filesystem)));
 }
 
+TEST_CASE("Combined open flags keep the caching mode", "[file_system]") {
+	FileOpenFlags cached(FileFlags::FILE_FLAGS_READ);
+	cached.SetCachingMode(CachingMode::ALWAYS_CACHE);
+	REQUIRE((cached | FileFlags::FILE_FLAGS_PARALLEL_ACCESS).GetCachingMode() == CachingMode::ALWAYS_CACHE);
+	REQUIRE((FileOpenFlags(FileFlags::FILE_FLAGS_PARALLEL_ACCESS) | cached).GetCachingMode() ==
+	        CachingMode::ALWAYS_CACHE);
+}
+
+TEST_CASE("Mapped files take read-ahead hints", "[file_system]") {
+	LocalFileSystem fs;
+	auto path = TestCreatePath("mapped_file_hints.bin");
+	constexpr idx_t size = 1024 * 1024;
+	{
+		auto handle = fs.OpenFile(path, FileFlags::FILE_FLAGS_WRITE | FileFlags::FILE_FLAGS_FILE_CREATE_NEW);
+		vector<data_t> data(size, 7);
+		handle->Write(QueryContext(), data.data(), size, 0);
+	}
+	auto mapped = fs.MemoryMapFile(path, FileFlags::FILE_FLAGS_READ, MMapOptions());
+	REQUIRE(mapped->Size() == size);
+	mapped->Advise(MappedFileAccess::RANDOM);
+	mapped->Advise(MappedFileAccess::SEQUENTIAL);
+	mapped->Advise(MappedFileAccess::NORMAL);
+	mapped->Prefetch(0, size);
+	mapped->Prefetch(size + 10, 100);
+	idx_t sum = 0;
+	for (idx_t offset = 0; offset < size; offset += 512) {
+		sum += mapped->GetData(offset, 1)[0];
+	}
+	REQUIRE(sum == 7 * size / 512);
+	mapped->Close();
+	fs.RemoveFile(path);
+}
+
+TEST_CASE("Mapped files read evicted ranges back from the file", "[file_system]") {
+	LocalFileSystem fs;
+	auto path = TestCreatePath("mapped_file_evict.bin");
+	constexpr idx_t size = 1024 * 1024 + 321;
+	vector<data_t> data(size);
+	for (idx_t i = 0; i < size; i++) {
+		data[i] = static_cast<data_t>(i * 31 % 251);
+	}
+	{
+		auto handle = fs.OpenFile(path, FileFlags::FILE_FLAGS_WRITE | FileFlags::FILE_FLAGS_FILE_CREATE_NEW);
+		handle->Write(QueryContext(), data.data(), size, 0);
+	}
+	auto mapped = fs.MemoryMapFile(path, FileFlags::FILE_FLAGS_READ, MMapOptions());
+	REQUIRE(memcmp(mapped->GetData(0, size), data.data(), size) == 0);
+	mapped->Evict(1000, size - 2000);
+	mapped->Evict(0, size);
+	mapped->Evict(size - 10, 100);
+	mapped->Evict(size + 10, 100);
+	REQUIRE(memcmp(mapped->GetData(0, size), data.data(), size) == 0);
+	mapped->Close();
+	fs.RemoveFile(path);
+}
+
+TEST_CASE("Scattered reads of a local file take more targets than one system call reads", "[file_system]") {
+	LocalFileSystem fs;
+	auto path = TestCreatePath("scattered_read_many.bin");
+	constexpr idx_t size = 2 * 1024 * 1024 + 77;
+	vector<data_t> data(size);
+	for (idx_t i = 0; i < size; i++) {
+		data[i] = static_cast<data_t>(i * 31 % 251 + 1);
+	}
+	{
+		auto handle = fs.OpenFile(path, FileFlags::FILE_FLAGS_WRITE | FileFlags::FILE_FLAGS_FILE_CREATE_NEW);
+		handle->Write(QueryContext(), data.data(), size, 0);
+	}
+	auto handle = fs.OpenFile(path, FileFlags::FILE_FLAGS_READ);
+	vector<data_t> read(size, 0);
+	vector<FileReadTarget> targets;
+	idx_t offset = 100;
+	auto add = [&](idx_t bytes, bool skipped) {
+		targets.push_back({skipped ? nullptr : read.data() + offset, bytes});
+		offset += bytes;
+	};
+	add(1000, false);
+	add(50, true);
+	add(1024 * 1024, false);
+	add(0, false);
+	for (idx_t i = 0; i < 3000; i++) {
+		add(7, i % 1500 == 1499);
+	}
+	add(size - offset - 300, true);
+	add(200, false);
+	fs.ReadScattered(*handle, targets, 100);
+
+	vector<bool> taken(size, false);
+	offset = 100;
+	for (auto &target : targets) {
+		for (idx_t i = 0; target.data && i < target.size; i++) {
+			taken[offset + i] = true;
+		}
+		offset += target.size;
+	}
+	idx_t wrong = 0;
+	for (idx_t i = 0; i < size; i++) {
+		wrong += read[i] != (taken[i] ? data[i] : 0);
+	}
+	REQUIRE(wrong == 0);
+	handle.reset();
+	fs.RemoveFile(path);
+}
+
+TEST_CASE("Directory syncs and writeback hints reach the local filesystem", "[file_system]") {
+	LocalFileSystem fs;
+	auto directory = TestCreatePath("sync_directory");
+	fs.CreateDirectory(directory);
+	auto path = fs.JoinPath(directory, "written.bin");
+	{
+		auto handle = fs.OpenFile(path, FileFlags::FILE_FLAGS_WRITE | FileFlags::FILE_FLAGS_FILE_CREATE_NEW);
+		vector<data_t> data(64 * 1024, 3);
+		handle->Write(QueryContext(), data.data(), data.size(), 0);
+		handle->HintWriteback(0, data.size());
+		handle->Sync();
+	}
+	fs.SyncDirectory(directory);
+	REQUIRE_THROWS_AS(fs.SyncDirectory(fs.JoinPath(directory, "missing")), IOException);
+
+	VirtualFileSystem vfs;
+	vfs.SyncDirectory(directory);
+	fs.RemoveDirectory(directory);
+}
+
+TEST_CASE("A buffered file writer keeps writing after its file was truncated", "[file_system]") {
+	LocalFileSystem fs;
+	auto path = TestCreatePath("truncated_writer.bin");
+	fs.TryRemoveFile(path);
+	const vector<data_t> kept(100 * 1024, 1);
+	const vector<data_t> dropped(200 * 1024, 2);
+	const vector<data_t> later(1024 * 1024, 3);
+	constexpr idx_t LATER_WRITES = 10;
+	{
+		BufferedFileWriter writer(fs, path);
+		writer.WriteData(kept.data(), kept.size());
+		writer.WriteData(dropped.data(), dropped.size());
+		writer.Flush();
+		writer.Truncate(kept.size());
+		REQUIRE(writer.GetFileSize() == kept.size());
+		for (idx_t i = 0; i < LATER_WRITES; i++) {
+			writer.WriteData(later.data(), later.size());
+			writer.Flush();
+		}
+		REQUIRE(writer.GetFileSize() == kept.size() + LATER_WRITES * later.size());
+		writer.Sync();
+		writer.Close();
+	}
+	auto handle = fs.OpenFile(path, FileFlags::FILE_FLAGS_READ);
+	REQUIRE(NumericCast<idx_t>(handle->GetFileSize()) == kept.size() + LATER_WRITES * later.size());
+	vector<data_t> read(kept.size() + later.size());
+	handle->Read(QueryContext(), read.data(), read.size(), 0);
+	REQUIRE(memcmp(read.data(), kept.data(), kept.size()) == 0);
+	REQUIRE(memcmp(read.data() + kept.size(), later.data(), later.size()) == 0);
+	handle.reset();
+	fs.RemoveFile(path);
+}
+
+#ifndef _WIN32
+TEST_CASE("A buffered file writer writes any amount to a character device", "[file_system]") {
+	LocalFileSystem fs;
+	BufferedFileWriter writer(fs, "/dev/null", FileOpenFlags(FileOpenFlags::FILE_FLAGS_WRITE));
+	const vector<data_t> data(1024 * 1024, 7);
+	for (idx_t i = 0; i < 10; i++) {
+		writer.WriteData(data.data(), data.size());
+		writer.Flush();
+	}
+	REQUIRE(writer.GetTotalWritten() == 10 * data.size());
+	writer.Close();
+}
+#endif
+
+namespace {
+
+//! The bytes of [path]
+vector<data_t> ReadWholeFile(FileSystem &fs, const string &path) {
+	auto handle = fs.OpenFile(path, FileFlags::FILE_FLAGS_READ);
+	vector<data_t> bytes(NumericCast<idx_t>(handle->GetFileSize()));
+	handle->Read(QueryContext(), bytes.data(), bytes.size(), 0);
+	return bytes;
+}
+
+//! Grows [bytes] by [size] bytes of a pattern and returns where they start
+idx_t AppendPattern(vector<data_t> &bytes, idx_t size) {
+	const auto from = bytes.size();
+	bytes.resize(from + size);
+	for (idx_t i = from; i < bytes.size(); i++) {
+		bytes[i] = static_cast<data_t>(i * 13 + i / 251);
+	}
+	return from;
+}
+
+} // namespace
+
+TEST_CASE("A buffered file writer copies small writes into its buffer and hands large ones to the file as they are",
+          "[file_system]") {
+	LocalFileSystem fs;
+	constexpr idx_t BUFFER = BufferedFileWriter::DIRECT_WRITE_SIZE;
+	auto path = TestCreatePath("buffered_writer_sizes.bin");
+	fs.TryRemoveFile(path);
+	vector<data_t> expected;
+	{
+		BufferedFileWriter writer(fs, path);
+		REQUIRE(writer.handle);
+		// below, at and above the buffer's size, into a buffer that is empty, holds bytes or is full
+		for (const idx_t size : {idx_t(10), BUFFER, idx_t(1), 3 * BUFFER + 7, BUFFER - 18, idx_t(50), BUFFER - 1,
+		                         2 * BUFFER, idx_t(100), BUFFER - 100, idx_t(5)}) {
+			const auto from = AppendPattern(expected, size);
+			writer.WriteData(expected.data() + from, size);
+			REQUIRE(writer.GetTotalWritten() == expected.size());
+			REQUIRE(writer.GetFileSize() == expected.size());
+		}
+		// a truncation inside the buffer drops the bytes the buffer holds past it
+		writer.Flush();
+		const auto from = AppendPattern(expected, 100);
+		writer.WriteData(expected.data() + from, 100);
+		expected.resize(expected.size() - 40);
+		writer.Truncate(expected.size());
+		REQUIRE(writer.GetFileSize() == expected.size());
+		writer.Close();
+		writer.Close();
+		REQUIRE_FALSE(writer.handle);
+	}
+	REQUIRE(ReadWholeFile(fs, path) == expected);
+
+	// a writer that appends goes on after the bytes of the file, which is not its to drop
+	{
+		BufferedFileWriter writer(fs, path, FileFlags::FILE_FLAGS_WRITE | FileFlags::FILE_FLAGS_APPEND);
+		const auto from = AppendPattern(expected, BUFFER + 5);
+		writer.WriteData(expected.data() + from, BUFFER + 5);
+		writer.Sync();
+	}
+	REQUIRE(ReadWholeFile(fs, path) == expected);
+	fs.RemoveFile(path);
+}
+
+TEST_CASE("A buffered file writer over a file writer writes a new file and keeps the CRC32C of its bytes",
+          "[file_system]") {
+	LocalFileSystem fs;
+	constexpr idx_t BUFFER = BufferedFileWriter::DIRECT_WRITE_SIZE;
+	auto path = TestCreatePath("buffered_writer_in_place.bin");
+	fs.TryRemoveFile(path);
+	vector<data_t> data;
+	AppendPattern(data, 5 * BUFFER + 100);
+	const auto crc = [&](idx_t from, idx_t to) {
+		return static_cast<uint32_t>(absl::ComputeCrc32c({const_char_ptr_cast(data.data() + from), to - from}));
+	};
+	{
+		BufferedFileWriter writer(fs, path, fs.OpenFileWriter(path));
+		REQUIRE_FALSE(writer.handle);
+		writer.WriteData(data.data(), 1000);
+		REQUIRE(writer.Checksum() == crc(0, 1000));
+		// the checksum is of the bytes since the last one, whichever way they reached the file
+		writer.WriteData(data.data() + 1000, 10);
+		writer.WriteData(data.data() + 1010, data.size() - 1010);
+		REQUIRE(writer.Checksum() == crc(1000, data.size()));
+		REQUIRE(writer.Checksum() == 0);
+		REQUIRE(writer.GetTotalWritten() == data.size());
+		writer.Close();
+	}
+	REQUIRE(ReadWholeFile(fs, path) == data);
+	fs.RemoveFile(path);
+
+	// bytes written into a window in place and bytes copied into it in bulk are checksummed together
+	idx_t written = 0;
+	{
+		BufferedFileWriter writer(fs, path, fs.OpenFileWriter(path));
+		for (const idx_t size : {idx_t(7), BUFFER - 100, idx_t(300), BUFFER / 2, idx_t(1), BUFFER - 1, idx_t(9)}) {
+			writer.Write<data_t>(data[written]);
+			writer.WriteData(data.data() + written + 1, size);
+			written += size + 1;
+		}
+		REQUIRE(writer.Checksum() == crc(0, written));
+		writer.Close();
+	}
+	data.resize(written);
+	REQUIRE(ReadWholeFile(fs, path) == data);
+	fs.RemoveFile(path);
+}
+
 struct CanonicalizationTest {
 	CanonicalizationTest(string a_p, string b_p, string description_p)
 	    : a(std::move(a_p)), b(std::move(b_p)), description(std::move(description_p)) {
@@ -768,6 +1054,103 @@ TEST_CASE("Removing a directory removes its symlinks without following them", "[
 	REQUIRE(fs->FileExists(kept));
 
 	fs->RemoveDirectory(target);
+}
+
+TEST_CASE("A strict ListFiles fails where a directory or an entry cannot be read", "[file_system]") {
+	auto fs = FileSystem::CreateLocal();
+	auto root = TestCreatePath("list_files_strict");
+	if (fs->DirectoryExists(root)) {
+		fs->RemoveDirectory(root);
+	}
+	fs->CreateDirectory(root);
+	auto file = fs->JoinPath(root, "file");
+	CreateDummyFile(file);
+	auto loop = fs->JoinPath(root, "loop");
+	TestCreateSymlink(loop, "loop", false);
+
+	vector<string> listed;
+	const auto list = [&](const string &directory, bool strict, bool recursive) {
+		ListFilesOptions options;
+		options.strict = strict;
+		options.recursive = recursive;
+		listed.clear();
+		return fs->ListFiles(
+		    directory, [&](OpenFileInfo &info) { listed.push_back(info.path); }, nullptr, options);
+	};
+	REQUIRE(list(root, false, false));
+	REQUIRE(listed == vector<string> {"file"});
+	REQUIRE_THROWS_AS(list(root, true, false), IOException);
+	REQUIRE_THROWS_AS(list(root, true, true), IOException);
+
+	REQUIRE(!list(loop, false, false));
+	REQUIRE_THROWS_AS(list(loop, true, false), IOException);
+
+	REQUIRE(!list(fs->JoinPath(root, "missing"), true, false));
+	REQUIRE(!list(fs->JoinPath(file, "below_a_file"), true, false));
+
+	fs->RemoveFile(loop);
+	REQUIRE(list(root, true, true));
+	REQUIRE(listed == vector<string> {"file"});
+
+	fs->RemoveDirectory(root);
+}
+
+TEST_CASE("RemoveFiles removes every file it can before it reports one it cannot", "[file_system]") {
+	auto fs = FileSystem::CreateLocal();
+	auto dir = TestCreatePath("remove_files_past_a_failure");
+	if (fs->DirectoryExists(dir)) {
+		fs->RemoveDirectory(dir);
+	}
+	fs->CreateDirectory(dir);
+	auto first = fs->JoinPath(dir, "first");
+	auto last = fs->JoinPath(dir, "last");
+	CreateDummyFile(first);
+	CreateDummyFile(last);
+	auto loop = fs->JoinPath(dir, "loop");
+	TestCreateSymlink(loop, "loop", false);
+
+	REQUIRE_THROWS_AS(fs->RemoveFiles({first, fs->JoinPath(loop, "below_a_loop"), last}), IOException);
+	REQUIRE(!fs->FileExists(first));
+	REQUIRE(!fs->FileExists(last));
+
+	fs->RemoveDirectory(dir);
+}
+
+TEST_CASE("A strict recursive directory removal fails with the reason when something stays", "[file_system]") {
+	if (geteuid() == 0) {
+		// root removes a file whatever the mode of its directory
+		return;
+	}
+	auto fs = FileSystem::CreateLocal();
+	auto dir = TestCreatePath("remove_directory_strict");
+	auto sub = fs->JoinPath(dir, "sub");
+	if (fs->DirectoryExists(sub)) {
+		REQUIRE(chmod(sub.c_str(), 0700) == 0);
+	}
+	if (fs->DirectoryExists(dir)) {
+		fs->RemoveDirectory(dir);
+	}
+	fs->CreateDirectoriesRecursive(sub);
+	auto file = fs->JoinPath(sub, "file");
+	CreateDummyFile(file);
+	REQUIRE(chmod(sub.c_str(), 0500) == 0);
+
+	RemoveDirectoryOptions options;
+	options.mode = RemoveDirectoryMode::RECURSIVE;
+	REQUIRE(!fs->RemoveDirectoryExtended(dir, options));
+	options.strict = true;
+	try {
+		fs->RemoveDirectoryExtended(dir, options);
+		FAIL("the removal reported no failure");
+	} catch (IOException &ex) {
+		REQUIRE(StringUtil::Contains(ErrorData(ex).RawMessage(), strerror(EACCES)));
+	}
+	REQUIRE(fs->FileExists(file));
+
+	REQUIRE(chmod(sub.c_str(), 0700) == 0);
+	REQUIRE(!fs->RemoveDirectoryExtended(fs->JoinPath(dir, "missing"), options));
+	REQUIRE(fs->RemoveDirectoryExtended(dir, options));
+	REQUIRE(!fs->DirectoryExists(dir));
 }
 #endif
 
@@ -1580,4 +1963,203 @@ TEST_CASE("JoinPath keeps a remote URL's query string at the end of the path", "
 	REQUIRE(fs.JoinPath("s3://bucket/dir", "file.parquet") == "s3://bucket/dir/file.parquet");
 	// A '?' in a plain (non-URL) path is a literal character, not a query delimiter.
 	REQUIRE(fs.JoinPath("/tmp/weird?name", "file.parquet") == "/tmp/weird?name/file.parquet");
+}
+
+TEST_CASE("JoinPath of a name onto a path gives what parsing both gives, normalized or not", "[file_system]") {
+	LocalFileSystem fs;
+	const auto parsed = [](const string &a, const string &b) {
+		return Path::FromString(a).Join(b).ToString();
+	};
+	for (const string a :
+	     {"/",       "/a",        "/a/b",       "/a/b/",       "a",          "a/b",       "a/b/",
+	      "s3://b",  "s3://b/",   "s3://b/dir", "s3://b/d/s/", "memory://i", "az://c/d",  "/a/.hidden",
+	      "/a/...",  "~/.duckdb", "",           ".",           "..",         "/a//b",     "/a/./b",
+	      "/a/../b", "a/b//",     "S3://b/dir", "s3:///dir",   "s3://",      "file:/a/b", "file:///a/b",
+	      "/a\\b",   "x://y/z",   "/a://b",     "./a",         "../a",       "/a/..",     "/a/."}) {
+		for (const string b : {"file", "file.parquet", ".hidden", "...", "part=7", "a b", "name?x"}) {
+			INFO(a + " + " + b);
+			REQUIRE(fs.JoinPath(a, b) == parsed(a, b));
+		}
+	}
+	REQUIRE(fs.JoinPath("/a/b", "c") == "/a/b/c");
+	REQUIRE(fs.JoinPath("s3://bucket", "c") == "s3://bucket/c");
+	REQUIRE(fs.JoinPath("/a/b", "../c") == "/a/c");
+	REQUIRE(fs.JoinPath("/a/b", "./c/d") == "/a/b/c/d");
+	REQUIRE(fs.JoinPath("/a/b", "") == "/a/b");
+	REQUIRE(fs.JoinPath("/a/b", "c", "d", "e") == "/a/b/c/d/e");
+}
+
+TEST_CASE("The database filesystem tells remote paths as the path parser does, in-memory ones aside", "[file_system]") {
+	for (const string remote : {"s3://bucket/key", "s3://bucket", "https://host/path", "az://container/blob",
+	                            "abfss://fs@account.dfs.core.windows.net/dir", "hf://datasets/user/repo/file",
+	                            "S3://bucket/key", "filex://host/a"}) {
+		INFO(remote);
+		REQUIRE(DatabaseFileSystem::IsRemote(remote));
+		REQUIRE(Path::FromString(remote).IsRemote());
+	}
+	for (const string local : {"", "/", "/a/b", "a/b", "/a://b", "file:///a/b", "file://localhost/a/b",
+	                           "FILE://localhost/a", "file:x://host/a", "x://y"}) {
+		INFO(local);
+		REQUIRE_FALSE(DatabaseFileSystem::IsRemote(local));
+		REQUIRE_FALSE(Path::FromString(local).IsRemote());
+	}
+	REQUIRE_FALSE(DatabaseFileSystem::IsRemote("memory://index/file"));
+}
+
+TEST_CASE("Scattered reads fill their buffers in order", "[file_system]") {
+	constexpr idx_t SIZE = 4096;
+	auto fs = FileSystem::CreateLocal();
+	const auto path = TestCreatePath("scattered_read.bin");
+	vector<data_t> bytes(SIZE);
+	for (idx_t i = 0; i < SIZE; i++) {
+		bytes[i] = data_t(i * 31 + 7);
+	}
+	{
+		auto handle = fs->OpenFile(path, FileFlags::FILE_FLAGS_WRITE | FileFlags::FILE_FLAGS_FILE_CREATE_NEW);
+		handle->Write(QueryContext(), bytes.data(), SIZE, 0);
+		handle->Sync();
+	}
+	DuckDB db(nullptr);
+	Connection con(db);
+	VirtualFileSystem vfs;
+	for (auto *wrapper : {fs.get(), static_cast<FileSystem *>(&vfs), &FileSystem::GetFileSystem(*con.context)}) {
+		for (const bool staged : {false, true}) {
+			auto &file_system = *wrapper;
+			auto handle = file_system.OpenFile(path, FileFlags::FILE_FLAGS_READ);
+			vector<data_t> a(3), b(1000), c(97);
+			constexpr idx_t SKIPPED = 50;
+			const FileReadTarget targets[] = {
+			    {a.data(), a.size()}, {nullptr, SKIPPED}, {b.data(), b.size()}, {c.data(), c.size()}};
+			constexpr idx_t LOCATION = 7;
+			if (staged) {
+				file_system.FileSystem::ReadScattered(*handle, targets, LOCATION);
+			} else {
+				file_system.ReadScattered(*handle, targets, LOCATION);
+			}
+			REQUIRE(memcmp(a.data(), bytes.data() + LOCATION, a.size()) == 0);
+			idx_t offset = LOCATION + a.size() + SKIPPED;
+			for (auto *part : {&b, &c}) {
+				REQUIRE(memcmp(part->data(), bytes.data() + offset, part->size()) == 0);
+				offset += part->size();
+			}
+			const FileReadTarget past_end[] = {{b.data(), b.size()}, {c.data(), c.size()}};
+			REQUIRE_THROWS(file_system.ReadScattered(*handle, past_end, SIZE - 500));
+		}
+	}
+	{
+		auto write_only = fs->OpenFile(path, FileFlags::FILE_FLAGS_WRITE);
+		vector<data_t> refused(10);
+		const FileReadTarget targets[] = {{refused.data(), refused.size()}};
+		REQUIRE_THROWS_AS(fs->ReadScattered(*write_only, targets, 0), IOException);
+	}
+	fs->RemoveFile(path);
+}
+
+TEST_CASE("A buffered file reader reads on from where it seeks to", "[file_system]") {
+	auto fs = FileSystem::CreateLocal();
+	const auto path = TestCreatePath("buffered_reader_seek.bin");
+	constexpr uint32_t VALUES = 100000;
+	{
+		BufferedFileWriter writer(*fs, path);
+		for (uint32_t i = 0; i < VALUES; i++) {
+			writer.Write<uint32_t>(i);
+		}
+		writer.Sync();
+		writer.Close();
+	}
+	BufferedFileReader reader(*fs, path.c_str());
+	reader.Seek(sizeof(uint32_t) * 77777);
+	REQUIRE(reader.Read<uint32_t>() == 77777);
+	reader.Seek(sizeof(uint32_t));
+	REQUIRE(reader.Read<uint32_t>() == 1);
+	REQUIRE(reader.Read<uint32_t>() == 2);
+	fs->RemoveFile(path);
+}
+
+TEST_CASE("Wrapping file systems hand writeback hints and writers to the file system under them", "[file_system]") {
+	DuckDB db(nullptr);
+	Connection con(db);
+	auto &vfs = FileSystem::GetFileSystem(*db.instance);
+	auto &client = FileSystem::GetFileSystem(*con.context);
+	const auto path = TestCreatePath("wrapped_writer.bin");
+	string written(5000, 'w');
+	{
+		auto writer = client.OpenFileWriter(path);
+		REQUIRE(writer);
+		REQUIRE(writer->Append(const_data_ptr_cast(written.data()), written.size()));
+		writer->Close();
+	}
+	auto handle = client.OpenFile(path, FileFlags::FILE_FLAGS_READ | FileFlags::FILE_FLAGS_WRITE);
+	vfs.HintWriteback(*handle, 0, written.size());
+	client.HintWriteback(*handle, 0, written.size());
+	string read(written.size(), '\0');
+	handle->Read(QueryContext(), read.data(), read.size(), 0);
+	REQUIRE(read == written);
+	handle.reset();
+	vfs.RemoveFile(path);
+}
+
+TEST_CASE("A scattered read tells its progress once of each target its published bytes fill", "[file_system]") {
+	struct Told final : public FileReadProgress {
+		void Filled(idx_t count) override {
+			counts.push_back(count);
+		}
+		vector<idx_t> counts;
+	} told;
+	vector<data_t> a(4), b(6), c(2);
+	const FileReadTarget targets[] = {{a.data(), a.size()}, {nullptr, 3}, {b.data(), b.size()}, {c.data(), c.size()}};
+	data_t first[15], second[15];
+	for (idx_t i = 0; i < 15; i++) {
+		first[i] = data_t(1 + i);
+		second[i] = data_t(101 + i);
+	}
+	FileReadTargetWriter writer(targets, &told);
+
+	// bytes written before they are published tell nothing
+	REQUIRE(writer.Write(first, 5));
+	REQUIRE(told.counts.empty());
+	writer.Reset();
+	writer.Publish();
+	REQUIRE(writer.Write(first, 3));
+	REQUIRE(told.counts.empty());
+	REQUIRE(writer.Write(first + 3, 6));
+	REQUIRE(told.counts == vector<idx_t> {1, 2});
+
+	// a writer that starts over leaves the targets it told of as they are
+	writer.Reset();
+	REQUIRE(writer.Write(second, 15));
+	REQUIRE(!writer.Write(second, 1));
+	REQUIRE(writer.Written() == 15);
+	REQUIRE(told.counts == vector<idx_t> {1, 2});
+	REQUIRE(a == vector<data_t> {1, 2, 3, 4});
+	REQUIRE(b == vector<data_t> {108, 109, 110, 111, 112, 113});
+	REQUIRE(c == vector<data_t> {114, 115});
+	writer.Reset();
+	writer.Publish();
+	REQUIRE(writer.Write(first, 15));
+	REQUIRE(told.counts == vector<idx_t> {1, 2, 3, 4});
+	REQUIRE(b == vector<data_t> {8, 9, 10, 11, 12, 13});
+	REQUIRE(c == vector<data_t> {14, 15});
+
+	// a file system that reads its targets at once tells nothing, behind the wrappers too
+	DuckDB db(nullptr);
+	Connection con(db);
+	ClientContextFileOpener opener(*con.context);
+	auto fs = FileSystem::CreateLocal();
+	VirtualFileSystem vfs;
+	TestOpenerFileSystem opener_fs(vfs, opener);
+	const auto path = TestCreatePath("streamed_read.bin");
+	{
+		auto handle = fs->OpenFile(path, FileFlags::FILE_FLAGS_WRITE | FileFlags::FILE_FLAGS_FILE_CREATE_NEW);
+		handle->Write(QueryContext(), first, 15, 0);
+	}
+	told.counts.clear();
+	for (auto file_system : {fs.get(), static_cast<FileSystem *>(&vfs), static_cast<FileSystem *>(&opener_fs)}) {
+		auto handle = file_system->OpenFile(path, FileFlags::FILE_FLAGS_READ);
+		std::fill(b.begin(), b.end(), 0);
+		file_system->ReadStreamed(*handle, targets, 0, told);
+		REQUIRE(b == vector<data_t> {8, 9, 10, 11, 12, 13});
+	}
+	REQUIRE(told.counts.empty());
+	fs->RemoveFile(path);
 }

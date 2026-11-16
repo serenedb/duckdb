@@ -67,6 +67,7 @@ add_library_unity(
   opener_file_system.cpp
   open_file_info.cpp
   optional_idx.cpp
+  page_residency.cpp
   printer.cpp
   radix_partitioning.cpp
   re2_regex.cpp

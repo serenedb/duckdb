@@ -16,6 +16,7 @@
 #include "duckdb/common/error_data.hpp"
 #include "duckdb/common/file_buffer.hpp"
 #include "duckdb/common/file_open_flags.hpp"
+#include "duckdb/common/memory_mapped_file.hpp"
 #include "duckdb/common/open_file_info.hpp"
 #include "duckdb/common/optional.hpp"
 #include "duckdb/common/optional_idx.hpp"
@@ -148,6 +149,8 @@ public:
 	DUCKDB_API void Reset();
 	DUCKDB_API idx_t SeekPosition();
 	DUCKDB_API void Sync();
+	//! Starts writing back [location, location + nr_bytes), already written, so a later Sync waits less
+	DUCKDB_API void HintWriteback(idx_t location, idx_t nr_bytes);
 	DUCKDB_API void Truncate(int64_t new_size);
 	//! Abandon an incomplete write without publishing any buffered or staged data.
 	DUCKDB_API void AbortWrite();
@@ -222,6 +225,21 @@ public:
 	DUCKDB_API virtual unique_ptr<MemoryMappedFile> MemoryMapFile(const OpenFileInfo &path, FileOpenFlags flags,
 	                                                              const MMapOptions &options,
 	                                                              optional_ptr<FileOpener> opener = nullptr);
+	//! [path] as a file of cache blocks, which a reader pins, when this filesystem reads the file through the
+	//! external file cache; null for a file it reads any other way, such as by mapping it
+	DUCKDB_API virtual shared_ptr<InputFile> OpenBlockFile(const string &path);
+	//! Opens [path] to be read from memory: in cache blocks when this filesystem reads it through the external
+	//! file cache, mapped otherwise, with [access] as the way the mapping is read
+	DUCKDB_API shared_ptr<InputFile> OpenInputFile(const string &path,
+	                                               MappedFileAccess access = MappedFileAccess::NORMAL);
+	//! A writer of a new file at [path], replacing any file there, that fills the file in place. A filesystem that
+	//! reads [path] through the external file cache keeps the blocks written there for the file's readers
+	DUCKDB_API virtual unique_ptr<FileWriter> OpenFileWriter(const string &path,
+	                                                         optional_ptr<FileOpener> opener = nullptr);
+	//! Copies each closed file at [paths] this filesystem keeps in cache blocks into one buffer-managed allocation,
+	//! which spills only while nothing maps it; readers that pinned its blocks keep them until they close. Either all
+	//! of these files are copied or, when one fails, none. Any other file stays as it is
+	DUCKDB_API virtual void Compact(const vector<string> &paths);
 
 	//! Read exactly nr_bytes from the specified location in the file. Fails if nr_bytes could not be read. This is
 	//! equivalent to calling SetFilePointer(location) followed by calling Read().
@@ -299,11 +317,20 @@ public:
 	DUCKDB_API virtual void RemoveFile(const string &filename, optional_ptr<FileOpener> opener = nullptr);
 	//! Remove a file from disk if it exists - if it does not exist, return false
 	DUCKDB_API virtual bool TryRemoveFile(const string &filename, optional_ptr<FileOpener> opener = nullptr);
-	//! Remove multiple files from disk - does not error if any file does not exist
+	//! Remove multiple files from disk - does not error if any file does not exist. A file that cannot be removed
+	//! does not keep the others: its failure is thrown once all were tried
 	DUCKDB_API virtual void RemoveFiles(const vector<string> &filenames, optional_ptr<FileOpener> opener = nullptr);
 	//! Sync a file handle to disk
 	DUCKDB_API virtual void FileSync(FileHandle &handle);
 	DUCKDB_API virtual FileSyncParallelism SyncParallelism(FileHandle &handle);
+	//! Starts writing back [location, location + nr_bytes) of a file being written; does nothing by default
+	DUCKDB_API virtual void HintWriteback(FileHandle &handle, idx_t location, idx_t nr_bytes);
+	//! Makes the names of the files created, moved or removed in [directory] durable; a filesystem without
+	//! directory entries has nothing to sync
+	DUCKDB_API virtual void SyncDirectory(const string &directory, optional_ptr<FileOpener> opener = nullptr);
+	//! Makes the bytes of the closed files at [paths] durable. A local file system starts writing all of them back
+	//! before it waits for any, so their blocks are allocated in one journal transaction
+	DUCKDB_API virtual void SyncFiles(const vector<string> &paths, optional_ptr<FileOpener> opener = nullptr);
 	//! Abandon an incomplete write represented by this file handle.
 	DUCKDB_API virtual void AbortFileWrite(FileHandle &handle);
 	//! Sets the working directory

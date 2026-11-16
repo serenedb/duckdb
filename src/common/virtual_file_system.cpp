@@ -270,6 +270,31 @@ void VirtualFileSystem::FileSync(FileHandle &handle) {
 	handle.file_system.FileSync(handle);
 }
 
+void VirtualFileSystem::HintWriteback(FileHandle &handle, idx_t location, idx_t nr_bytes) {
+	handle.file_system.HintWriteback(handle, location, nr_bytes);
+}
+
+void VirtualFileSystem::SyncDirectory(const string &directory, optional_ptr<FileOpener> opener) {
+	FindFileSystem(directory, opener).SyncDirectory(directory, opener);
+}
+
+void VirtualFileSystem::SyncFiles(const vector<string> &paths, optional_ptr<FileOpener> opener) {
+	using Batch = pair<reference<FileSystem>, vector<string>>;
+	vector<Batch> batches;
+	for (auto &path : paths) {
+		auto &fs = FindFileSystem(path, opener);
+		auto batch = std::find_if(batches.begin(), batches.end(),
+		                          [&](const Batch &entry) { return RefersToSameObject(entry.first.get(), fs); });
+		if (batch == batches.end()) {
+			batch = batches.emplace(batches.end(), fs, vector<string>());
+		}
+		batch->second.push_back(path);
+	}
+	for (auto &batch : batches) {
+		batch.first.get().SyncFiles(batch.second, opener);
+	}
+}
+
 // need to look up correct fs for this
 FileExistence VirtualFileSystem::TryDirectoryExists(const string &directory, optional_ptr<FileOpener> opener,
                                                     optional_ptr<ErrorData> error) {
