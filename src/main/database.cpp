@@ -37,6 +37,10 @@
 #include "duckdb/storage/block_allocator.hpp"
 #include "duckdb/storage/buffer/buffer_pool.hpp"
 #include "duckdb/storage/compression/empty_validity.hpp"
+#include "duckdb/common/fault_points.hpp"
+#include "duckdb/common/memory_file_system.hpp"
+#include "duckdb/common/open_file_info.hpp"
+#include "duckdb/common/path.hpp"
 #include "duckdb/storage/external_file_cache/external_file_cache.hpp"
 #include "duckdb/storage/object_cache.hpp"
 #include "duckdb/storage/shared_object_cache.hpp"
@@ -45,6 +49,8 @@
 #include "duckdb/storage/storage_manager.hpp"
 #include "duckdb/transaction/transaction_manager.hpp"
 #include "mbedtls_wrapper.hpp"
+
+#include <absl/cleanup/cleanup.h>
 
 #ifndef DUCKDB_NO_THREADS
 #include "duckdb/common/thread.hpp"
@@ -355,7 +361,8 @@ void DatabaseInstance::InitializeInstance(const char *database_path, DBConfig *u
 	create_api_v1 = CreateAPIv1Wrapper;
 	invoke_capi_v2 = InvokeCAPIV2Entrypoint;
 
-	db_file_system = make_uniq<DatabaseFileSystem>(*this);
+	db_file_system = make_uniq<DatabaseFileSystem>(*this, true);
+	internal_file_system = make_uniq<DatabaseFileSystem>(*this, false);
 	local_db_file_system = make_uniq<LocalDatabaseFileSystem>(*this);
 	db_manager = make_uniq<DatabaseManager>(*this);
 	external_resource_type_registry = make_uniq<ExternalResourceTypeRegistry>();
@@ -471,6 +478,10 @@ ObjectCache &DatabaseInstance::GetObjectCache() {
 
 FileSystem &DatabaseInstance::GetFileSystem() {
 	return *db_file_system;
+}
+
+FileSystem &DatabaseInstance::GetInternalFileSystem() {
+	return *internal_file_system;
 }
 
 FileSystem &DatabaseInstance::GetLocalFileSystem() {

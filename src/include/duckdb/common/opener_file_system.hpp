@@ -18,6 +18,10 @@ class OpenerFileSystem : public FileSystem {
 public:
 	virtual FileSystem &GetFileSystem() const = 0;
 	virtual optional_ptr<FileOpener> GetOpener() const = 0;
+	//! Whether a path must pass enable_external_access and the allowed paths and directories
+	virtual bool ChecksAccess() const {
+		return true;
+	}
 
 	void VerifyNoOpener(optional_ptr<FileOpener> opener);
 	void VerifyCanAccessDirectory(const string &path);
