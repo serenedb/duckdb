@@ -126,6 +126,19 @@ unique_ptr<MemoryMappedFile> VirtualFileSystem::MemoryMapFile(const OpenFileInfo
 	return internal_filesystem.MemoryMapFile(path, flags, options, opener);
 }
 
+shared_ptr<InputFile> VirtualFileSystem::OpenBlockFile(const string &path) {
+	return FindFileSystem(path, nullptr).OpenBlockFile(path);
+}
+
+unique_ptr<FileWriter> VirtualFileSystem::OpenFileWriter(const string &path, optional_ptr<FileOpener> opener) {
+	return FindFileSystem(path, opener).OpenFileWriter(path, opener);
+}
+
+void VirtualFileSystem::Compact(const vector<string> &paths) {
+	D_ASSERT(!paths.empty());
+	FindFileSystem(paths[0], nullptr).Compact(paths);
+}
+
 FileSystem &VirtualFileSystem::GetDefaultFileSystem() {
 	auto &fs = *file_system_registry->default_fs->file_system;
 	if (SubSystemIsDisabled(fs.GetName())) {

@@ -106,6 +106,9 @@ DatabaseInstance::~DatabaseInstance() {
 	// stop the log manager, after this point Logger calls are unsafe.
 	log_manager.reset();
 
+	if (memory_file_system) {
+		memory_file_system->Clear();
+	}
 	external_file_cache.reset();
 	result_set_manager.reset();
 
@@ -559,6 +562,9 @@ void DatabaseInstance::Configure(DBConfig &new_config, const char *database_path
 		config.file_system = std::move(new_config.file_system);
 	} else {
 		config.file_system = make_uniq<VirtualFileSystem>(FileSystem::CreateLocal());
+		auto memory_fs = make_uniq<MemoryFileSystem>(*this);
+		memory_file_system = memory_fs.get();
+		config.file_system->RegisterSubSystem(std::move(memory_fs));
 	}
 	config.http_transport_manager->Initialize(config);
 	if (database_path && !Settings::Get<EnableExternalAccessSetting>(*this)) {

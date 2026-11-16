@@ -23,6 +23,27 @@ unique_ptr<MemoryMappedFile> OpenerFileSystem::MemoryMapFile(const OpenFileInfo 
 	return GetFileSystem().MemoryMapFile(path, flags, options, GetOpener());
 }
 
+shared_ptr<InputFile> OpenerFileSystem::OpenBlockFile(const string &path) {
+	VerifyCanAccessFile(path);
+	return GetFileSystem().OpenBlockFile(path);
+}
+
+unique_ptr<FileWriter> OpenerFileSystem::OpenFileWriter(const string &path, optional_ptr<FileOpener> opener) {
+	VerifyNoOpener(opener);
+	VerifyCanAccessFile(path);
+	if (IsDuckDBExtensionName(path)) {
+		VerifyCanAccessExtension(path, FileFlags::FILE_FLAGS_WRITE);
+	}
+	return GetFileSystem().OpenFileWriter(path, GetOpener());
+}
+
+void OpenerFileSystem::Compact(const vector<string> &paths) {
+	for (auto &path : paths) {
+		VerifyCanAccessFile(path);
+	}
+	GetFileSystem().Compact(paths);
+}
+
 unique_ptr<MultiFileList> OpenerFileSystem::GlobFilesExtended(const string &path, const FileGlobInput &input,
                                                               optional_ptr<FileOpener> opener) {
 	VerifyNoOpener(opener);

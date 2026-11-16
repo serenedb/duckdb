@@ -305,6 +305,9 @@ public:
 	unique_ptr<MemoryMappedFile> MemoryMapFile(const OpenFileInfo &path, FileOpenFlags flags,
 	                                           const MMapOptions &options,
 	                                           optional_ptr<FileOpener> opener = nullptr) override;
+	shared_ptr<InputFile> OpenBlockFile(const string &path) override;
+	unique_ptr<FileWriter> OpenFileWriter(const string &path, optional_ptr<FileOpener> opener = nullptr) override;
+	void Compact(const vector<string> &paths) override;
 
 protected:
 	bool ListFilesExtended(const string &directory, const std::function<void(OpenFileInfo &info)> &callback,

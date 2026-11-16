@@ -41,6 +41,7 @@ struct DatabaseCacheEntry;
 class LogManager;
 class MetricsManager;
 class ExternalFileCache;
+class MemoryFileSystem;
 class ResultSetManager;
 
 class DatabaseInstance : public enable_shared_from_this<DatabaseInstance> {

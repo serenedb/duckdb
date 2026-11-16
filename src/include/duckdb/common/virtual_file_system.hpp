@@ -34,6 +34,9 @@ public:
 	unique_ptr<MemoryMappedFile> MemoryMapFile(const OpenFileInfo &path, FileOpenFlags flags,
 	                                           const MMapOptions &options,
 	                                           optional_ptr<FileOpener> opener = nullptr) override;
+	shared_ptr<InputFile> OpenBlockFile(const string &path) override;
+	unique_ptr<FileWriter> OpenFileWriter(const string &path, optional_ptr<FileOpener> opener = nullptr) override;
+	void Compact(const vector<string> &paths) override;
 
 	int64_t GetFileSize(FileHandle &handle) override;
 	timestamp_t GetLastModifiedTime(FileHandle &handle) override;
