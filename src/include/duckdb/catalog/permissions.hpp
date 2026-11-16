@@ -323,7 +323,11 @@ struct FunctionCall {
 };
 
 DUCKDB_API bool IsUnowned(const CatalogEntry &entry);
+DUCKDB_API const Permissions &EffectivePermissions(ClientContext &context, std::string_view database, idx_t oid,
+                                                   const Permissions &stored);
 DUCKDB_API const Permissions &EffectivePermissions(ClientContext &context, const CatalogEntry &entry);
+DUCKDB_API optional_ptr<const vector<ColumnAcl>> EffectiveColumnAcls(ClientContext &context, std::string_view database,
+                                                                     idx_t oid);
 DUCKDB_API optional_ptr<const vector<ColumnAcl>> EffectiveColumnAcls(ClientContext &context, const CatalogEntry &entry);
 DUCKDB_API std::span<const AclItem> FindColumnAcl(const vector<ColumnAcl> &columns, const Identifier &column);
 DUCKDB_API std::span<const AclItem> ColumnAclAt(const CatalogEntry &entry,
