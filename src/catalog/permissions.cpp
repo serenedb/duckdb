@@ -1262,12 +1262,20 @@ string ValidUntilToSQL(int64_t valid_until) {
 	return SQLString::ToString(Value::TIMESTAMPTZ(timestamp_tz_t(valid_until)).ToString());
 }
 
-void ThrowPermissionDenied(CatalogType type, std::string_view name) {
-	throw PermissionException("permission denied for %s %s", StringUtil::Lower(CatalogTypeToString(type)), name);
+static string ObjectNounOf(CatalogType type, optional_ptr<const MacroFunction> overload) {
+	if (overload && overload->is_procedure) {
+		return string(PROCEDURE_NOUN);
+	}
+	const auto noun = ObjectNoun(type);
+	return noun.empty() ? StringUtil::Lower(CatalogTypeToString(type)) : string(noun);
 }
 
-void ThrowPermissionDenied(const CatalogEntry &entry) {
-	ThrowPermissionDenied(entry.type, entry.name.GetIdentifierName());
+void ThrowPermissionDenied(CatalogType type, std::string_view name, optional_ptr<const MacroFunction> overload) {
+	throw PermissionException("permission denied for %s %s", ObjectNounOf(type, overload), name);
+}
+
+void ThrowPermissionDenied(const CatalogEntry &entry, optional_ptr<const MacroFunction> overload) {
+	ThrowPermissionDenied(entry.type, entry.name.GetIdentifierName(), overload);
 }
 
 void RequireEntryPrivilege(const RoleAccess &role, const CatalogEntry &entry, AclMode any) {
@@ -1282,9 +1290,10 @@ void RequireSuperuser(const RoleAccess &role) {
 	}
 }
 
-void RequireOwner(const RoleAccess &role, const CatalogEntry &entry, idx_t owner) {
+void RequireOwner(const RoleAccess &role, const CatalogEntry &entry, idx_t owner,
+                  optional_ptr<const MacroFunction> overload) {
 	if (!role.Owns(owner)) {
-		throw PermissionException("must be owner of %s %s", StringUtil::Lower(CatalogTypeToString(entry.type)),
+		throw PermissionException("must be owner of %s %s", ObjectNounOf(entry.type, overload),
 		                          entry.name.GetIdentifierName());
 	}
 }
@@ -1320,11 +1329,11 @@ void RequireOwner(ClientContext &context, const RoleAccess &role, CatalogEntry &
 	if (entry.type == CatalogType::MACRO_ENTRY || entry.type == CatalogType::TABLE_MACRO_ENTRY) {
 		auto &macro = entry.Cast<MacroCatalogEntry>();
 		if (overload) {
-			RequireOwner(role, entry, macro.OverloadPermissions(*overload).owner);
+			RequireOwner(role, entry, macro.OverloadPermissions(*overload).owner, overload.get());
 			return;
 		}
 		for (auto &function : macro.macros) {
-			RequireOwner(role, entry, macro.OverloadPermissions(*function).owner);
+			RequireOwner(role, entry, macro.OverloadPermissions(*function).owner, function.get());
 		}
 		return;
 	}
@@ -1588,7 +1597,7 @@ void CheckMacroCall(ClientContext &context, const RoleAccess &role, MacroCatalog
 	if (IsUnowned(macro)) {
 		CheckBuiltinCall(context, role, macro, overload_index);
 	} else if (!role.Can(macro.type, macro.OverloadPermissions(overload), AclMode::Execute)) {
-		ThrowPermissionDenied(macro);
+		ThrowPermissionDenied(macro, overload);
 	}
 }
 
@@ -1641,7 +1650,7 @@ void CheckFunctionCalls(ClientContext &context, const RoleAccess &role, std::spa
 		auto &macro = entry->Cast<MacroCatalogEntry>();
 		auto overload = macro.FindOverload(call.macro_overload.GetIndex());
 		if (overload && !role.Can(macro.type, macro.OverloadPermissions(*overload), AclMode::Execute)) {
-			ThrowPermissionDenied(macro);
+			ThrowPermissionDenied(macro, overload.get());
 		}
 	}
 }

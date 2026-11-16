@@ -345,12 +345,15 @@ DUCKDB_API bool ReferencesRole(const CatalogEntry &entry, idx_t role);
 DUCKDB_API void ForEachRoleReference(const CatalogEntry &entry, const std::function<void(idx_t role)> &callback);
 DUCKDB_API string RoleOptionsToSQL(RoleOption set_options, RoleOption clear_options);
 DUCKDB_API string ValidUntilToSQL(int64_t valid_until);
-[[noreturn]] DUCKDB_API void ThrowPermissionDenied(CatalogType type, std::string_view name);
-[[noreturn]] DUCKDB_API void ThrowPermissionDenied(const CatalogEntry &entry);
+[[noreturn]] DUCKDB_API void ThrowPermissionDenied(CatalogType type, std::string_view name,
+                                                   optional_ptr<const MacroFunction> overload = nullptr);
+[[noreturn]] DUCKDB_API void ThrowPermissionDenied(const CatalogEntry &entry,
+                                                   optional_ptr<const MacroFunction> overload = nullptr);
 DUCKDB_API void RequireEntryPrivilege(const RoleAccess &role, const CatalogEntry &entry, AclMode any);
 DUCKDB_API void RequireSuperuser(const RoleAccess &role);
 DUCKDB_API bool IsAdminOf(ClientContext &context, const RoleAccess &role, idx_t target);
-DUCKDB_API void RequireOwner(const RoleAccess &role, const CatalogEntry &entry, idx_t owner);
+DUCKDB_API void RequireOwner(const RoleAccess &role, const CatalogEntry &entry, idx_t owner,
+                             optional_ptr<const MacroFunction> overload = nullptr);
 DUCKDB_API void RequireOwner(ClientContext &context, const RoleAccess &role, CatalogEntry &entry,
                              optional_ptr<MacroFunction> overload = nullptr);
 DUCKDB_API void RequireUse(ClientContext &context, const RoleAccess &role, CatalogEntry &entry, EntryUse use,
