@@ -1777,7 +1777,7 @@ BindResult ExpressionBinder::BindMacro(FunctionExpression &function, ScalarMacro
                                        unique_ptr<ParsedExpression> &expr) {
 	const bool constant_candidate = function.GetArguments().empty() &&
 	                                expr->GetExpressionClass() == ExpressionClass::FUNCTION &&
-	                                (!binder.current_role || binder.current_role->IsSystem());
+	                                (!binder.acting.current_user || binder.acting.current_user->IsSystem());
 	auto &constant_macros = binder.global_binder_state->constant_macros;
 	if (constant_candidate) {
 		auto constant = constant_macros.find(&macro_func);
@@ -1802,7 +1802,7 @@ BindResult ExpressionBinder::BindMacro(FunctionExpression &function, ScalarMacro
 	}
 	if (body_role) {
 		binder.BindAsFunctionBody(*body_role);
-		binder.security_definer_body |= macro_def.security_definer;
+		binder.acting.security_definer |= macro_def.security_definer;
 	}
 	BindResult result;
 	if (shared_arguments.empty()) {

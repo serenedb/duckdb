@@ -141,7 +141,7 @@ optional_ptr<SchemaCatalogEntry> CatalogEntryRetriever::GetSchema(const Identifi
 }
 
 const RoleAccess &CatalogEntryRetriever::CheckAs() const {
-	return check_as ? *check_as : context.CurrentRole();
+	return acting && acting->lookups ? *acting->lookups : context.CurrentRole();
 }
 
 optional_ptr<CatalogEntry> CatalogEntryRetriever::ReturnAndCallback(optional_ptr<CatalogEntry> result) {
@@ -160,7 +160,6 @@ void CatalogEntryRetriever::Inherit(const CatalogEntryRetriever &parent) {
 	this->callback = parent.callback;
 	this->search_path = parent.search_path;
 	this->at_clause = parent.at_clause;
-	this->check_as = parent.check_as;
 	this->bindings = parent.bindings;
 	this->recorded_bindings = parent.recorded_bindings;
 	this->bindings_catalog = parent.bindings_catalog;

@@ -441,7 +441,7 @@ void Binder::BindView(ClientContext &context, const RoleAccess &lookups, const S
                       vector<Identifier> &result_names) {
 	auto view_binder = Binder::CreateBinder(context);
 	view_binder->BindUnchecked();
-	view_binder->entry_retriever.SetCheckAs(&lookups);
+	view_binder->acting.lookups = &lookups;
 	auto &catalog = Catalog::GetCatalog(context, catalog_name);
 
 	if (dependencies) {
