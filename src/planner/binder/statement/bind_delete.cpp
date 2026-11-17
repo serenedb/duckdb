@@ -23,9 +23,11 @@ BoundStatement Binder::Bind(DeleteStatement &stmt) {
 vector<QualifiedName> Binder::TruncateIdentitySequences(ClientContext &context, TableCatalogEntry &table) {
 	vector<QualifiedName> result;
 	auto &catalog = table.ParentCatalog();
-	for (auto &owned : catalog.OwnedEntries(catalog.GetCatalogTransaction(context), table)) {
+	auto transaction = catalog.GetCatalogTransaction(context);
+	for (auto &owned : catalog.OwnedEntries(transaction, table)) {
 		auto &entry = owned.get();
-		result.emplace_back(catalog.GetName(), entry.ParentSchema(context).name, entry.name);
+		result.push_back(
+		    QualifiedName::FromCatalogSchema(catalog.GetName(), entry.ParentSchemaPath(transaction), entry.name));
 	}
 	return result;
 }
@@ -33,8 +35,8 @@ vector<QualifiedName> Binder::TruncateIdentitySequences(ClientContext &context, 
 vector<idx_t> Binder::BindTruncateGroup(DeleteQueryNode &node, TableCatalogEntry &table) {
 	vector<idx_t> group {table.oid};
 	for (auto &target : node.truncate_group) {
-		group.push_back(
-		    Catalog::GetEntry<TableCatalogEntry>(context, target->Cast<BaseTableRef>().GetQualifiedName()).oid);
+		auto name = BindTableName(entry_retriever, target->Cast<BaseTableRef>().GetQualifiedName());
+		group.push_back(Catalog::GetEntry<TableCatalogEntry>(context, name).oid);
 	}
 	for (auto &entry : table.ReferencingTables(context)) {
 		auto &referencing = entry.get();
