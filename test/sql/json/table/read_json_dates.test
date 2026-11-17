@@ -380,7 +380,7 @@ copy (select '2026-01-01 12:00:00+05:00'::TIMESTAMPTZ as ts) to '{TEMP_DIR}/my_f
 query I
 select ts from '{TEMP_DIR}/my_file.json';
 ----
-2026-01-01 +00
+2026-01-01 00:00:00+00
 
 # issue #23152: COPY JSON dateformat/timestampformat should apply inside nested JSON values
 statement ok

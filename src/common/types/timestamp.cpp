@@ -72,28 +72,40 @@ TimestampCastResult Timestamp::TryConvertTimestampTZ(const char *str, idx_t len,
 	if (str[pos] == ' ' || str[pos] == 'T') {
 		pos++;
 	}
-	idx_t time_pos = 0;
-	// TryConvertTime may recursively call us, so we use TryConvertInterval.
-	// Note that we can't pass strict== true here because we want to process any suffix.
 	auto time_len = TimestampTimeLength(str + pos, len - pos);
-	if (!Time::TryConvertInterval(str + pos, time_len, time_pos, time, false, nanos) || time_pos != time_len) {
-		return TimestampCastResult::ERROR_INCORRECT_FORMAT;
+	if (time_len == 0 && pos < len && (str[pos] == '+' || str[pos] == '-')) {
+		time = dtime_t(0);
+	} else {
+		idx_t time_pos = 0;
+		// TryConvertTime may recursively call us, so we use TryConvertInterval.
+		// Note that we can't pass strict== true here because we want to process any suffix.
+		if (!Time::TryConvertInterval(str + pos, time_len, time_pos, time, false, nanos) || time_pos != time_len) {
+			return TimestampCastResult::ERROR_INCORRECT_FORMAT;
+		}
+		//	We parsed an interval, so make sure it is in range.
+		if (time.value > Interval::MICROS_PER_DAY) {
+			return TimestampCastResult::ERROR_RANGE;
+		}
+		pos += time_pos;
 	}
-	//	We parsed an interval, so make sure it is in range.
-	if (time.value > Interval::MICROS_PER_DAY) {
-		return TimestampCastResult::ERROR_RANGE;
-	}
-	pos += time_pos;
 	if (!Timestamp::TryFromDatetime(date, time, result)) {
 		return TimestampCastResult::ERROR_RANGE;
 	}
 	if (pos < len) {
-		// skip a "Z" at the end (as per the ISO8601 specs)
 		int hh, mm, ss;
-		if (str[pos] == 'Z') {
-			pos++;
+		auto zone_pos = pos;
+		while (zone_pos < len && str[zone_pos] == ' ') {
+			zone_pos++;
+		}
+		const bool spaced = zone_pos > pos;
+		if (zone_pos < len && str[zone_pos] == 'Z' &&
+		    (!spaced || zone_pos + 1 == len || StringUtil::CharacterIsSpace(str[zone_pos + 1]))) {
+			// skip a "Z" at the end (as per the ISO8601 specs)
+			pos = zone_pos + 1;
 			has_offset = true;
-		} else if (Timestamp::TryParseUTCOffset(str, pos, len, hh, mm, ss)) {
+		} else if ((!spaced || (zone_pos < len && (str[zone_pos] == '+' || str[zone_pos] == '-'))) &&
+		           Timestamp::TryParseUTCOffset(str, zone_pos, len, hh, mm, ss)) {
+			pos = zone_pos;
 			const int64_t delta =
 			    hh * Interval::MICROS_PER_HOUR + mm * Interval::MICROS_PER_MINUTE + ss * Interval::MICROS_PER_SEC;
 			if (use_offset && !TrySubtractOperator::Operation(result.value, delta, result.value)) {
