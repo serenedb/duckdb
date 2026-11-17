@@ -207,3 +207,16 @@ BIGINT	BOOLEAN
 statement ok
 DROP TABLE test;
 
+statement ok
+COPY (SELECT * FROM (VALUES ('20240102', '20240102 10:11:12'), ('19991231', '19991231 23:59:59')) t(i, s)) TO '{TEMP_DIR}/basic_dates.csv' (HEADER);
+
+query TT
+SELECT typeof(i), typeof(s) FROM read_csv('{TEMP_DIR}/basic_dates.csv') LIMIT 1;
+----
+BIGINT	VARCHAR
+
+query II
+SELECT '20240102'::DATE = DATE '2024-01-02', '20240102 10:11:12'::TIMESTAMP = TIMESTAMP '2024-01-02 10:11:12';
+----
+true	true
+

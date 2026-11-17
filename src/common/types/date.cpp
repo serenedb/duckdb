@@ -203,8 +203,9 @@ bool Date::TryConvertDateSpecial(const char *buf, idx_t len, idx_t &pos, const D
 	return true;
 }
 
-DateCastResult Date::TryConvertDate(const char *buf, idx_t len, idx_t &pos, date_t &result, bool &special,
-                                    bool strict) {
+DateCastResult Date::TryConvertDate(const char *buf, idx_t len, idx_t &pos, date_t &result, bool &special, bool strict,
+                                    bool canonical) {
+	canonical = canonical || strict;
 	special = false;
 	pos = 0;
 	if (len == 0) {
@@ -257,44 +258,50 @@ DateCastResult Date::TryConvertDate(const char *buf, idx_t len, idx_t &pos, date
 		year = (buf[pos] - '0') + year * 10;
 		year_length++;
 	}
-	if (year_length < 2 && strict) {
+	if (year_length < 2 && canonical) {
 		return DateCastResult::ERROR_INCORRECT_FORMAT;
 	}
 	if (yearneg) {
 		year = -year;
 	}
 
-	if (pos >= len) {
-		return DateCastResult::ERROR_INCORRECT_FORMAT;
-	}
+	if (year_length == 8 && !yearneg && !canonical) {
+		day = year % 100;
+		month = year / 100 % 100;
+		year /= 10000;
+	} else {
+		if (pos >= len) {
+			return DateCastResult::ERROR_INCORRECT_FORMAT;
+		}
 
-	// fetch the separator
-	sep = buf[pos++];
-	if (sep != ' ' && sep != '-' && sep != '/' && sep != '\\') {
-		// invalid separator
-		return DateCastResult::ERROR_INCORRECT_FORMAT;
-	}
+		// fetch the separator
+		sep = buf[pos++];
+		if (sep != ' ' && sep != '-' && sep != '/' && sep != '\\') {
+			// invalid separator
+			return DateCastResult::ERROR_INCORRECT_FORMAT;
+		}
 
-	// parse the month
-	if (!Date::ParseDoubleDigit(buf, len, pos, month)) {
-		return DateCastResult::ERROR_INCORRECT_FORMAT;
-	}
+		// parse the month
+		if (!Date::ParseDoubleDigit(buf, len, pos, month)) {
+			return DateCastResult::ERROR_INCORRECT_FORMAT;
+		}
 
-	if (pos >= len) {
-		return DateCastResult::ERROR_INCORRECT_FORMAT;
-	}
+		if (pos >= len) {
+			return DateCastResult::ERROR_INCORRECT_FORMAT;
+		}
 
-	if (buf[pos++] != sep) {
-		return DateCastResult::ERROR_INCORRECT_FORMAT;
-	}
+		if (buf[pos++] != sep) {
+			return DateCastResult::ERROR_INCORRECT_FORMAT;
+		}
 
-	if (pos >= len) {
-		return DateCastResult::ERROR_INCORRECT_FORMAT;
-	}
+		if (pos >= len) {
+			return DateCastResult::ERROR_INCORRECT_FORMAT;
+		}
 
-	// now parse the day
-	if (!Date::ParseDoubleDigit(buf, len, pos, day)) {
-		return DateCastResult::ERROR_INCORRECT_FORMAT;
+		// now parse the day
+		if (!Date::ParseDoubleDigit(buf, len, pos, day)) {
+			return DateCastResult::ERROR_INCORRECT_FORMAT;
+		}
 	}
 
 	// check for an optional trailing " (BC)""
