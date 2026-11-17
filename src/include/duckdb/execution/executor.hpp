@@ -86,6 +86,7 @@ public:
 	//! Throw the exception that was pushed using PushError.
 	//! Should only be called if HasError returns true
 	void ThrowException();
+	bool IsCancelled();
 
 	//! Work on tasks for this specific executor, until there are no tasks remaining
 	bool WorkOnTasks();
