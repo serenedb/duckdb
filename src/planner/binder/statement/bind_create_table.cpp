@@ -28,6 +28,7 @@
 #include "duckdb/storage/data_table.hpp"
 #include "duckdb/storage/storage_manager.hpp"
 #include "duckdb/common/type_visitor.hpp"
+#include "duckdb/parser/tableref/basetableref.hpp"
 
 #include <absl/algorithm/container.h>
 #include "duckdb/main/config.hpp"
@@ -260,6 +261,51 @@ static void ForEachName(CatalogEntryRetriever &scope, ParsedExpression &expressi
 	});
 }
 
+using CteScope = vector<reference<const CommonTableExpressionMap>>;
+
+static void LookupQueryNames(CatalogEntryRetriever &scope, QueryNode &node, CteScope &ctes);
+
+static void LookupExpressionNames(CatalogEntryRetriever &scope, ParsedExpression &expression, CteScope &ctes) {
+	ForEachName(
+	    scope, expression, [](const TableExpressionName &) {}, true);
+	ParsedExpressionIterator::VisitExpressionClassMutable(
+	    expression, ExpressionClass::SUBQUERY, [&](ParsedExpression &subquery) {
+		    LookupQueryNames(scope, *subquery.Cast<SubqueryExpression>().Subquery()->node, ctes);
+	    });
+}
+
+static bool NamesCte(const CteScope &ctes, const QualifiedName &name) {
+	return name.Path().size() == 1 &&
+	       std::any_of(ctes.begin(), ctes.end(), [&](const auto &map) { return map.get().map.contains(name.Name()); });
+}
+
+static void LookupQueryNames(CatalogEntryRetriever &scope, QueryNode &node, CteScope &ctes) {
+	ctes.push_back(node.cte_map);
+	for (auto &cte : node.cte_map.map) {
+		LookupQueryNames(scope, *cte.second->query_node, ctes);
+	}
+	ParsedExpressionIterator::EnumerateQueryNodeChildren(
+	    node, [&](unique_ptr<ParsedExpression> &child) { LookupExpressionNames(scope, *child, ctes); },
+	    [&](TableRef &ref) {
+		    if (ref.type != TableReferenceType::BASE_TABLE) {
+			    return;
+		    }
+		    auto &name = ref.Cast<BaseTableRef>().GetQualifiedName();
+		    if (!NamesCte(ctes, name)) {
+			    LookupName(scope, CatalogType::TABLE_ENTRY, name);
+		    }
+	    });
+	ctes.pop_back();
+}
+
+void Binder::LookupBodyNames(ParsedExpression &expression) {
+	CteScope ctes;
+	LookupExpressionNames(entry_retriever, expression, ctes);
+}
+
+void Binder::LookupBodyNames(QueryNode &node) {
+	CteScope ctes;
+	LookupQueryNames(entry_retriever, node, ctes);
 }
 
 static void VerifyNotTemporary(const TableExpressionName &use, const Catalog &home) {

@@ -800,6 +800,10 @@ SchemaCatalogEntry &Binder::BindCreateFunctionInfo(CreateInfo &info) {
 			} catch (const std::exception &ex) {
 				error = ErrorData(ex);
 			}
+			if (should_create_dependencies && error.HasError() &&
+			    error.Type() == ExceptionType::PARAMETER_NOT_RESOLVED) {
+				LookupBodyNames(*function->Cast<ScalarMacroFunction>().expression->Copy());
+			}
 		} else {
 			D_ASSERT(info.type == CatalogType::TABLE_MACRO_ENTRY);
 			auto dummy_binder = CreateBinder(context, this);
@@ -866,6 +870,10 @@ SchemaCatalogEntry &Binder::BindCreateFunctionInfo(CreateInfo &info) {
 				}
 			} catch (const std::exception &ex) {
 				error = ErrorData(ex);
+			}
+			if (should_create_dependencies && error.HasError() &&
+			    error.Type() == ExceptionType::PARAMETER_NOT_RESOLVED) {
+				LookupBodyNames(*function->Cast<TableMacroFunction>().query_node->Copy());
 			}
 		}
 
