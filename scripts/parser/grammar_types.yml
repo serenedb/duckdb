@@ -1515,6 +1515,7 @@ DatePartSpecifier:
     - Interval
     - IntervalToInterval
     - IntervalToIntervalAsType
+    - ZoneIntervalField
     - YearKeyword
     - MonthKeyword
     - DayKeyword
