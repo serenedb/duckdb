@@ -48,6 +48,8 @@ static void SetGenericCopyOptionExpression(GenericCopyOption &copy_option, uniqu
 		copy_option.expression = std::move(expression);
 	} else if (expression->GetExpressionType() == ExpressionType::STAR) {
 		copy_option.children.push_back(Value("*"));
+	} else if (expression->GetExpressionType() == ExpressionType::VALUE_DEFAULT) {
+		copy_option.children.push_back(Value("default"));
 	} else if (expression->GetExpressionType() == ExpressionType::OPERATOR_CAST) {
 		auto &cast_expr = expression->Cast<CastExpression>();
 		if (cast_expr.Child().GetExpressionClass() == ExpressionClass::CONSTANT) {
@@ -190,6 +192,13 @@ GenericCopyOptionValue PEGTransformerFactory::TransformCopyBooleanKeyword(PEGTra
 	GenericCopyOptionValue result;
 	result.has_value = true;
 	result.expression = ConstantExpression::String("on");
+	return result;
+}
+
+GenericCopyOptionValue PEGTransformerFactory::TransformCopyVerboseKeyword(PEGTransformer &transformer) {
+	GenericCopyOptionValue result;
+	result.has_value = true;
+	result.expression = ConstantExpression::String("verbose");
 	return result;
 }
 
