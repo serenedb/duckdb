@@ -529,10 +529,10 @@ unique_ptr<LogicalOperator> Binder::BindAlter(unique_ptr<AlterInfo> &info) {
 	D_ASSERT(!entry->deleted);
 	if (auto new_schema = info->GetNewSchema()) {
 		EntryLookupInfo schema_lookup(CatalogType::SCHEMA_ENTRY,
-		                              QualifiedName(entry->ParentCatalog().GetName(), Identifier(), *new_schema));
-		if (auto target = Catalog::GetSchema(entry_retriever, schema_lookup, OnEntryNotFound::RETURN_NULL)) {
+		                              QualifiedName(entry->ParentCatalog().GetName(), Identifier(), *new_schema),
+		                              EntryUse::CREATE);
+		if (auto target = entry_retriever.GetSchema(schema_lookup, OnEntryNotFound::RETURN_NULL)) {
 			RequireUserSchema(*target, entry->name);
-			RequireSchemaCreate(context, CheckAs(), *target);
 		}
 	}
 	auto &catalog = entry->ParentCatalog();

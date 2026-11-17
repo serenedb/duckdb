@@ -338,7 +338,7 @@ void Binder::BindCreateSchema(CreateSchemaInfo &info) {
 	}
 }
 
-SchemaCatalogEntry &Binder::BindSchema(CreateInfo &info) {
+SchemaCatalogEntry &Binder::BindSchema(CreateInfo &info, EntryUse use) {
 	// resolve the target into [catalog, schema_path..., name] and fetch the (possibly nested) schema it lives in
 	SearchSchema(info);
 	auto &path = info.GetQualifiedName().Path();
@@ -346,7 +346,7 @@ SchemaCatalogEntry &Binder::BindSchema(CreateInfo &info) {
 	if (auto catalog = info.temporary ? nullptr : Catalog::GetCatalogEntry(context, path.front())) {
 		GetStatementProperties().RegisterDBModify(*catalog, context, DatabaseModificationType::CREATE_CATALOG_ENTRY);
 	}
-	auto &schema_obj = *Catalog::GetSchema(context, path.front(), schema_path, OnEntryNotFound::THROW_EXCEPTION);
+	auto &schema_obj = *entry_retriever.GetSchema(path.front(), schema_path, use, OnEntryNotFound::THROW_EXCEPTION);
 	D_ASSERT(schema_obj.type == CatalogType::SCHEMA_ENTRY);
 	return schema_obj;
 }
@@ -368,13 +368,29 @@ static idx_t CreationOwner(ClientContext &context, const CreateInfo &info, const
 	return creator.role;
 }
 
+static void RequireReplacedOwner(ClientContext &context, const RoleAccess &role, SchemaCatalogEntry &schema,
+                                 const CreateInfo &info, const Identifier &name) {
+	const bool merges_overloads =
+	    info.on_conflict == OnCreateConflict::ALTER_ON_CONFLICT &&
+	    (info.type == CatalogType::MACRO_ENTRY || info.type == CatalogType::TABLE_MACRO_ENTRY);
+	const bool replaces = info.on_conflict == OnCreateConflict::REPLACE_ON_CONFLICT ||
+	                      (info.on_conflict == OnCreateConflict::ALTER_ON_CONFLICT && !merges_overloads);
+	if (role.is_superuser || !replaces) {
+		return;
+	}
+	if (auto existing = schema.GetEntry(schema.catalog.GetCatalogTransaction(context), info.type, name)) {
+		RequireOwner(context, role, *existing);
+	}
+}
+
 SchemaCatalogEntry &Binder::BindCreateSchema(CreateInfo &info) {
-	auto &schema = BindSchema(info);
+	const bool trigger = info.type == CatalogType::TRIGGER_ENTRY;
+	auto &schema = BindSchema(info, trigger ? EntryUse::REFERENCE : EntryUse::CREATE);
 	if (schema.catalog.IsSystemCatalog()) {
 		throw BinderException("Cannot create entry in system catalog");
 	}
-	if (info.type != CatalogType::TRIGGER_ENTRY) {
-		RequireCreate(context, CheckAs(), schema, info, info.GetQualifiedName().Name());
+	if (!trigger) {
+		RequireReplacedOwner(context, CheckAs(), schema, info, info.GetQualifiedName().Name());
 	}
 	RequireUserSchema(schema, info.GetQualifiedName().Name());
 	if (!CheckAs().IsSystem()) {
@@ -1318,8 +1334,9 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 		if (table_ptr) {
 			auto &table = *table_ptr;
 			RequireOwner(context, CheckAs(), table);
-			RequireCreate(context, CheckAs(), table.ParentSchema(context), create_index_info,
-			              create_index_info.GetIndexName());
+			auto &schema = table.ParentSchema(context);
+			RequireUse(context, CheckAs(), schema, EntryUse::CREATE);
+			RequireReplacedOwner(context, CheckAs(), schema, create_index_info, create_index_info.GetIndexName());
 			if (table.temporary) {
 				stmt.info->temporary = true;
 			}
@@ -1331,8 +1348,9 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 			    BindTableName(create_index_info.GetQualifiedName().WithName(create_index_info.table)));
 			auto &view = EntryRetriever().GetEntry(view_lookup)->Cast<ViewCatalogEntry>();
 			RequireOwner(context, CheckAs(), view);
-			RequireCreate(context, CheckAs(), view.ParentSchema(context), create_index_info,
-			              create_index_info.GetIndexName());
+			auto &schema = view.ParentSchema(context);
+			RequireUse(context, CheckAs(), schema, EntryUse::CREATE);
+			RequireReplacedOwner(context, CheckAs(), schema, create_index_info, create_index_info.GetIndexName());
 			properties.RegisterDBModify(view.catalog, context, DatabaseModificationType::CREATE_INDEX);
 			result.plan = view.catalog.BindCreateViewIndex(*this, stmt, view, std::move(plan));
 		}
