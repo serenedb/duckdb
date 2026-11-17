@@ -28,6 +28,8 @@
 #include "duckdb/storage/data_table.hpp"
 #include "duckdb/storage/storage_manager.hpp"
 #include "duckdb/common/type_visitor.hpp"
+
+#include <absl/algorithm/container.h>
 #include "duckdb/main/config.hpp"
 #include "duckdb/main/settings.hpp"
 
@@ -913,7 +915,7 @@ static void FindMatchingPrimaryKeyColumns(const ColumnList &columns, const vecto
 			fk.pk_columns = pk_names;
 			return;
 		}
-		if (pk_names != fk.pk_columns) {
+		if (!absl::c_is_permutation(pk_names, fk.pk_columns)) {
 			continue;
 		}
 		if (unique.IsDeferred()) {
