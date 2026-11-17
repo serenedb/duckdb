@@ -54,7 +54,8 @@ public:
 	//! If the tz is not empty, the result is still an instant, but the parts can be extracted and applied to the TZ
 	DUCKDB_API static TimestampCastResult TryConvertTimestampTZ(const char *str, idx_t len, timestamp_t &result,
 	                                                            const bool use_offset, bool &has_offset, string_t &tz,
-	                                                            optional_ptr<int32_t> nanos = nullptr);
+	                                                            optional_ptr<int32_t> nanos = nullptr,
+	                                                            bool strict = false);
 	//! Strict Timestamp does not accept offsets.
 	DUCKDB_API static TimestampCastResult TryConvertTimestamp(const char *str, idx_t len, timestamp_t &result,
 	                                                          const bool use_offset,
