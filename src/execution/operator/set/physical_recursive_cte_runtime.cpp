@@ -20,6 +20,7 @@
 #include "duckdb/parallel/task_scheduler.hpp"
 
 #include "duckdb/common/atomic.hpp"
+#include "duckdb/common/fault_points.hpp"
 #include "duckdb/common/time_point.hpp"
 
 namespace duckdb {
@@ -211,6 +212,9 @@ public:
 	PipelineExecutor &pipeline_executor;
 
 	TaskExecutionResult ExecuteTask(TaskExecutionMode mode) override {
+		SDB_IF_FAILURE("recursive_cte_task_lost") {
+			return TaskExecutionResult::TASK_FINISHED;
+		}
 		pipeline_executor.SetTaskForInterrupts(shared_from_this());
 		const auto execute_start = COLLECT_METRICS ? TimePoint::Tick() : TimePoint();
 		const auto result = pipeline_executor.Execute(mode);
@@ -736,6 +740,7 @@ static bool InvariantRecursiveBuildsRemainReusable(const PhysicalRecursiveCTE &o
 }
 
 static void ProcessRecursiveExecutorTasks(Executor &executor, absl::FunctionRef<bool()> is_done) {
+	SDB_PARK_ONCE_ON_FAILURE("recursive_cte_wait");
 	// Only drain the recursive executor here. Re-entering the outer query executor while waiting for
 	// recursive work can run unrelated tasks and used to break recursive completion tracking.
 	if (!executor.WorkOnTasks()) {
@@ -744,6 +749,10 @@ static void ProcessRecursiveExecutorTasks(Executor &executor, absl::FunctionRef<
 	if (executor.HasError()) {
 		executor.ThrowException();
 	}
+	if (executor.IsCancelled()) {
+		throw InterruptException();
+	}
+	executor.context.InterruptCheck();
 }
 
 static void WaitForRecursiveEvents(Executor &executor, vector<shared_ptr<Event>> &events) {
