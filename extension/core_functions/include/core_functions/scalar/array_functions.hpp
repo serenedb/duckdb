@@ -179,6 +179,16 @@ struct NegativeInnerProductFunAlias {
 	static constexpr const char *Name = "<#>";
 };
 
+struct MaxsimFun {
+	static constexpr const char *Name = "maxsim";
+	static constexpr const char *Parameters = "document,query";
+	static constexpr const char *Description = "Computes the late-interaction (MaxSim) score of a set of query vectors against a set of document vectors, both given as lists of arrays of `FLOAT` or `DOUBLE` of the same size: the sum, over the query vectors, of each one's largest inner product with a document vector. Returns `NULL` when either list is `NULL` or empty; the vectors and their elements can not be `NULL`.";
+	static constexpr const char *Example = "maxsim([[1.0, 0.0], [0.0, 1.0]]::FLOAT[2][], [[1.0, 1.0], [2.0, 0.0]]::FLOAT[2][])";
+	static constexpr const char *Categories = "array,list";
+
+	static ScalarFunctionSet GetFunctions();
+};
+
 struct L1NormFun {
 	static constexpr const char *Name = "l1_norm";
 	static constexpr const char *Parameters = "vector";
