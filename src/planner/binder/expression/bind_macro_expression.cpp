@@ -1511,8 +1511,7 @@ ScalarMacroFunction &ExpressionBinder::UnfoldMacroExpression(FunctionExpression 
 		                      function.FunctionName().GetIdentifierName());
 	}
 	const bool owned = !IsUnowned(macro_func);
-	CheckMacroCall(context, binder.CurrentRole(), macro_func, macro_def);
-	binder.RecordCall(macro_func, macro_def);
+	binder.Execute(macro_func, macro_def);
 	const auto owner = owned && macro_def.security_definer
 	                       ? optional_idx(macro_func.OverloadPermissions(macro_def).owner)
 	                       : optional_idx();
