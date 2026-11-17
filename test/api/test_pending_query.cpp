@@ -2,6 +2,7 @@
 #include "test_helpers.hpp"
 
 #include <thread>
+#include "duckdb/common/fault_points.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/main/query_result_stream.hpp"
 
@@ -176,6 +177,32 @@ TEST_CASE("Abandoned stream must release the active query", "[api]") {
 	auto check = con.Query("SELECT 42");
 	REQUIRE(CHECK_COLUMN(check, 0, {42}));
 }
+
+#ifdef SDB_FAULT_INJECTION
+TEST_CASE("Abandoning a submitted query ends a recursive CTE waiting for its iteration", "[api]") {
+	DuckDB db;
+	Connection con(db);
+	REQUIRE_NO_FAIL(con.Query("SET threads=4"));
+
+	FaultPoints::Arm("recursive_cte_task_lost");
+	FaultPoints::Arm("recursive_cte_wait");
+	auto handle = con.Submit("WITH RECURSIVE t(i, n) AS (SELECT range, 0 FROM range(100000) UNION ALL "
+	                         "SELECT i, n + 1 FROM t WHERE n < 3) SELECT count(*) FROM t");
+	REQUIRE(!handle->HasError());
+	const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(60);
+	while (!FaultPoints::Armed("recursive_cte_wait:parked") && std::chrono::steady_clock::now() < deadline) {
+		std::this_thread::sleep_for(std::chrono::milliseconds(1));
+	}
+	REQUIRE(FaultPoints::Armed("recursive_cte_wait:parked"));
+	FaultPoints::Arm("recursive_cte_wait:release");
+
+	handle->Close();
+	FaultPoints::Clear();
+	REQUIRE(!con.context->transaction.HasActiveTransaction());
+	auto result = con.Query("SELECT 42");
+	REQUIRE(CHECK_COLUMN(result, 0, {42}));
+}
+#endif
 
 TEST_CASE("PROBE cancel a streaming producer parked on a full buffer", "[api][.]") {
 	// Force the producer to park on a full buffer (result >> streaming_buffer_size), abandon the
