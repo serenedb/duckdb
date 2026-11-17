@@ -245,6 +245,18 @@ unique_ptr<TimeZone> GetNormalizedTimeZone(std::string_view tz_str, string *reso
 		return tz;
 	}
 
+	if (!tz_str.empty() && (tz_str[0] == '+' || tz_str[0] == '-')) {
+		string mapped = tz_str[0] == '+' ? "GMT-" : "GMT+";
+		mapped.append(tz_str.substr(1));
+		tz = GetKnownTimeZone(mapped);
+		if (tz) {
+			if (resolved) {
+				*resolved = std::move(mapped);
+			}
+			return tz;
+		}
+	}
+
 	//	Map UTC±NN00 to Etc/UTC±N
 	do {
 		if (tz_str.size() <= 4) {
