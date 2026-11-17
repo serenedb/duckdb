@@ -1307,35 +1307,6 @@ void RequireTypeUsage(ClientContext &context, const RoleAccess &role, const Logi
 	}
 }
 
-void CheckMacroCall(ClientContext &context, const RoleAccess &role, MacroCatalogEntry &macro,
-                    const MacroFunction &overload) {
-	if (IsUnowned(macro)) {
-		CheckBuiltinCall(context, role, macro);
-	} else if (!role.Can(macro.type, macro.OverloadPermissions(overload), AclMode::Execute)) {
-		ThrowPermissionDenied(macro, overload);
-	}
-}
-
-FunctionCall FunctionCallOf(const CatalogEntry &function) {
-	FunctionCall call;
-	call.type = function.type;
-	call.name = function.name.GetIdentifierName();
-	call.capability = function.Cast<FunctionEntry>().required_capability;
-	return call;
-}
-
-FunctionCall MacroCallOf(MacroCatalogEntry &macro, const MacroFunction &overload) {
-	if (IsUnowned(macro)) {
-		return FunctionCallOf(macro);
-	}
-	FunctionCall call;
-	call.type = macro.type;
-	call.name = macro.name.GetIdentifierName();
-	call.catalog = macro.ParentCatalog().GetName();
-	call.macro_overload = macro.OverloadOid(overload);
-	return call;
-}
-
 void CheckFunctionCalls(ClientContext &context, const RoleAccess &role, std::span<const FunctionCall> calls) {
 	if (role.is_superuser) {
 		return;

@@ -488,8 +488,7 @@ public:
 	void BindStoredDefinition();
 	void BindSharedDefinition();
 	void RecordCalls(optional_ptr<vector<FunctionCall>> calls);
-	void RecordCall(const CatalogEntry &function);
-	void RecordCall(MacroCatalogEntry &macro, const MacroFunction &overload);
+	void Execute(const CatalogEntry &function, optional_ptr<const MacroFunction> overload = nullptr);
 	void RequireIndexCalls(TableCatalogEntry &table, optional_ptr<const vector<LogicalIndex>> changed);
 	void BindAsFunctionBody(const SelectStatement &statement);
 	void UseFunctionSearchPath(const vector<string> &config);

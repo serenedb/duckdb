@@ -2,6 +2,7 @@
 
 #include "duckdb/catalog/catalog_entry/aggregate_function_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/index_catalog_entry.hpp"
+#include "duckdb/catalog/catalog_entry/macro_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/schema_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/view_catalog_entry.hpp"
@@ -392,16 +393,27 @@ void Binder::RecordCalls(optional_ptr<vector<FunctionCall>> calls) {
 	global_binder_state->recorded_calls = calls;
 }
 
-void Binder::RecordCall(const CatalogEntry &function) {
-	if (global_binder_state->recorded_calls) {
-		global_binder_state->recorded_calls->push_back(FunctionCallOf(function));
+void Binder::Execute(const CatalogEntry &function, optional_ptr<const MacroFunction> overload) {
+	auto &role = CurrentRole();
+	const bool owned_overload = overload && !IsUnowned(function);
+	if (!owned_overload) {
+		CheckBuiltinCall(context, role, function);
+	} else if (!role.Can(function.type, function.Cast<MacroCatalogEntry>().OverloadPermissions(*overload),
+	                     AclMode::Execute)) {
+		ThrowPermissionDenied(function, overload);
 	}
-}
-
-void Binder::RecordCall(MacroCatalogEntry &macro, const MacroFunction &overload) {
-	if (global_binder_state->recorded_calls) {
-		global_binder_state->recorded_calls->push_back(MacroCallOf(macro, overload));
+	auto calls = global_binder_state->recorded_calls;
+	if (!calls) {
+		return;
 	}
+	FunctionCall call {function.type, function.name.GetIdentifierName()};
+	if (owned_overload) {
+		call.catalog = function.ParentCatalog().GetName();
+		call.macro_overload = function.Cast<MacroCatalogEntry>().OverloadOid(*overload);
+	} else {
+		call.capability = function.Cast<FunctionEntry>().required_capability;
+	}
+	calls->push_back(std::move(call));
 }
 
 void Binder::RequireIndexCalls(TableCatalogEntry &table, optional_ptr<const vector<LogicalIndex>> changed) {

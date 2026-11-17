@@ -332,10 +332,6 @@ DUCKDB_API void RequireForeignDataWrapperUsage(ClientContext &context, const Rol
 DUCKDB_API void RequireUserSchema(const SchemaCatalogEntry &schema, const Identifier &name);
 DUCKDB_API void RequireTypeUsage(ClientContext &context, const RoleAccess &role, const LogicalType &type,
                                  Catalog &catalog);
-DUCKDB_API void CheckMacroCall(ClientContext &context, const RoleAccess &role, MacroCatalogEntry &macro,
-                               const MacroFunction &overload);
-DUCKDB_API FunctionCall FunctionCallOf(const CatalogEntry &function);
-DUCKDB_API FunctionCall MacroCallOf(MacroCatalogEntry &macro, const MacroFunction &overload);
 DUCKDB_API void CheckFunctionCalls(ClientContext &context, const RoleAccess &role, std::span<const FunctionCall> calls);
 DUCKDB_API void AssignOwner(ClientContext &context, Permissions &permissions, Catalog &catalog, CatalogType objtype,
                             optional_ptr<SchemaCatalogEntry> schema, idx_t owner);
