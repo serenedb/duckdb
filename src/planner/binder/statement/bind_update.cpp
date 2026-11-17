@@ -332,17 +332,19 @@ BoundStatement Binder::BindNode(UpdateQueryNode &node) {
 	                              update->columns, node.prioritize_table_when_binding);
 	D_ASSERT(proj_tmp->type == LogicalOperatorType::LOGICAL_PROJECTION);
 	auto proj = unique_ptr_cast<LogicalOperator, LogicalProjection>(std::move(proj_tmp));
+	auto need = NeedOf(table);
+	if (need) {
+		need->modes |= AclMode::Update;
+	}
 	vector<LogicalIndex> changed;
-	vector<LogicalIndex> updated;
 	for (auto index : update->columns) {
 		auto &column = table.GetColumns().GetColumn(index);
 		changed.push_back(column.Logical());
-		if (column.Category() != TableColumnType::GENERATED_STORED) {
-			updated.push_back(column.Logical());
+		if (need && column.Category() != TableColumnType::GENERATED_STORED) {
+			need->updated.push_back(column.Logical().index);
 		}
 	}
 	RequireIndexCalls(table, changed);
-	RequirePrivilege(table, AclMode::Update, std::move(updated), false);
 
 	// bind any extra columns necessary for CHECK constraints or indexes;
 	// storage-derived decisions (index updates force delete+insert) come

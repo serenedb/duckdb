@@ -759,15 +759,16 @@ BoundStatement Binder::BindNode(InsertQueryNode &node) {
 		return std::move(*expanded);
 	}
 
+	auto need = NeedOf(table);
+	if (need) {
+		need->modes |= AclMode::Insert;
+	}
 	if (node.on_conflict_info) {
-		if (node.default_values) {
-			RequirePrivilege(table, AclMode::Insert, {}, true);
-		} else {
+		if (need && !node.default_values) {
 			auto values_list = node.GetValuesList();
-			RequireColumnPrivilege(table, AclMode::Insert, node.columns,
-			                       values_list && !values_list->values.empty()
-			                           ? values_list->values[0].size()
-			                           : table.GetColumns().LogicalColumnCount());
+			AddColumns(need->inserted, table, node.columns,
+			           values_list && !values_list->values.empty() ? values_list->values[0].size()
+			                                                       : table.GetColumns().LogicalColumnCount());
 		}
 	}
 
@@ -869,12 +870,9 @@ BoundStatement Binder::BindNode(InsertQueryNode &node) {
 	BindInsertColumnList(table, node.columns, node.default_values, named_column_map, insert->expected_types,
 	                     column_index_map);
 	const auto check_insert = [&](idx_t source_columns) {
-		vector<LogicalIndex> inserted;
-		for (idx_t i = 0; i < source_columns && i < named_column_map.size(); i++) {
-			inserted.push_back(named_column_map[i]);
+		for (idx_t i = 0; need && i < source_columns && i < named_column_map.size(); i++) {
+			need->inserted.push_back(named_column_map[i].index);
 		}
-		const bool any_column = inserted.empty();
-		RequirePrivilege(table, AclMode::Insert, std::move(inserted), any_column);
 	};
 
 	// An INSERT ... SELECT supplies a value for every targeted column, so naming a

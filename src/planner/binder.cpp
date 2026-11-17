@@ -478,57 +478,64 @@ BoundStatement Binder::BindTarget(TableRef &ref, TableRefUse use) {
 	return result;
 }
 
-void Binder::CheckTableRead(TableBinding &binding, TableCatalogEntry &table) {
+optional_ptr<RelationNeed> Binder::NeedOf(const StandardEntry &relation) {
 	auto &role = CheckAs();
-	if (table_ref_use == TableRefUse::UTILITY_TARGET || IsUnowned(table)) {
-		return;
+	if (role.is_superuser) {
+		return nullptr;
 	}
-	if (role.Can(CatalogType::TABLE_ENTRY, table.permissions, AclMode::Select)) {
-		return;
+	auto &needs = global_binder_state->relation_needs;
+	for (auto &need : needs) {
+		if (&need->relation == &relation && need->role.role == role.role) {
+			return need.get();
+		}
 	}
-	binding.column_read =
-	    make_shared_ptr<ColumnReadCheck>(table, table.permissions, role, table_ref_use != TableRefUse::DML_TARGET);
-	global_binder_state->column_reads.push_back(binding.column_read);
+	needs.push_back(make_uniq<RelationNeed>(relation, role));
+	return needs.back().get();
+}
+
+optional_ptr<RelationNeed> Binder::ReadNeed(const StandardEntry &relation) {
+	const bool system_view = relation.type == CatalogType::VIEW_ENTRY && relation.ParentCatalog().IsSystemCatalog();
+	if (table_ref_use == TableRefUse::UTILITY_TARGET || (IsUnowned(relation) && !system_view)) {
+		return nullptr;
+	}
+	if (table_ref_use == TableRefUse::DML_TARGET) {
+		return NeedOf(relation);
+	}
+	if (CheckAs().Can(CatalogType::TABLE_ENTRY, relation.permissions, AclMode::Select)) {
+		return nullptr;
+	}
+	auto need = NeedOf(relation);
+	need->modes |= AclMode::Select;
+	return need;
+}
+
+void Binder::AddColumns(vector<idx_t> &columns, const TableCatalogEntry &table, const vector<Identifier> &names,
+                        idx_t leading) {
+	if (names.empty()) {
+		for (auto &column : table.GetColumns().Logical()) {
+			if (column.Logical().index == leading) {
+				break;
+			}
+			columns.push_back(column.Logical().index);
+		}
+	}
+	for (auto &name : names) {
+		if (table.ColumnExists(name)) {
+			columns.push_back(table.GetColumn(name).Logical().index);
+		}
+	}
 }
 
 void Binder::AdoptPrivilegeChecks(Binder &other) {
 	auto &state = *global_binder_state;
 	auto &source = *other.global_binder_state;
 	D_ASSERT(&state != &source);
-	state.column_reads.insert(state.column_reads.end(), source.column_reads.begin(), source.column_reads.end());
-	state.required_privileges.insert(state.required_privileges.end(), source.required_privileges.begin(),
-	                                 source.required_privileges.end());
+	for (auto &need : source.relation_needs) {
+		state.relation_needs.push_back(std::move(need));
+	}
 	state.index_writes.insert(state.index_writes.end(), source.index_writes.begin(), source.index_writes.end());
-	source.column_reads.clear();
-	source.required_privileges.clear();
+	source.relation_needs.clear();
 	source.index_writes.clear();
-}
-
-void Binder::RequirePrivilege(TableCatalogEntry &table, AclMode mode, vector<LogicalIndex> columns, bool any_column) {
-	auto &role = CheckAs();
-	if (role.is_superuser) {
-		return;
-	}
-	global_binder_state->required_privileges.push_back({table, role, mode, std::move(columns), any_column});
-}
-
-void Binder::RequireColumnPrivilege(TableCatalogEntry &table, AclMode mode, const vector<Identifier> &names,
-                                    idx_t leading) {
-	vector<LogicalIndex> columns;
-	if (names.empty()) {
-		for (auto &column : table.GetColumns().Logical()) {
-			if (columns.size() == leading) {
-				break;
-			}
-			columns.push_back(column.Logical());
-		}
-	}
-	for (auto &name : names) {
-		if (table.ColumnExists(name)) {
-			columns.push_back(table.GetColumn(name).Logical());
-		}
-	}
-	RequirePrivilege(table, mode, std::move(columns), false);
 }
 
 Catalog &Binder::SubscriptionCatalog(const Identifier &catalog_name) {
@@ -578,29 +585,8 @@ void Binder::RequireResolvedTypeUsage(optional_ptr<const LogicalDependencyList> 
 }
 
 void Binder::CheckPrivileges() {
-	for (auto &required : global_binder_state->required_privileges) {
-		auto &table = required.table.get();
-		auto &role = required.role;
-		bool allowed;
-		if (required.any_column) {
-			allowed = role.CanAnyColumn(table.permissions, required.mode, table.GetColumns());
-		} else if (required.columns.empty()) {
-			allowed = role.Can(CatalogType::TABLE_ENTRY, table.permissions, required.mode);
-		} else {
-			vector<std::span<const AclItem>> acls;
-			for (auto column : required.columns) {
-				acls.emplace_back(table.GetColumn(column).Acl());
-			}
-			allowed = role.CanColumns(table.permissions, required.mode, acls);
-		}
-		if (!allowed) {
-			ThrowPermissionDenied(table);
-		}
-	}
-	for (auto &read : global_binder_state->column_reads) {
-		if (!read->Allowed()) {
-			ThrowPermissionDenied(read->entry);
-		}
+	for (auto &need : global_binder_state->relation_needs) {
+		Require(*need);
 	}
 	for (auto &write : global_binder_state->index_writes) {
 		auto &table = write.table.get();

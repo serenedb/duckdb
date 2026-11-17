@@ -45,6 +45,7 @@ class MacroCatalogEntry;
 class MacroFunction;
 class RoleEntry;
 class SchemaCatalogEntry;
+class StandardEntry;
 class TableCatalogEntry;
 
 constexpr idx_t ACL_ID_PUBLIC = 0;
@@ -221,17 +222,23 @@ struct RoleAccess {
 	bool CanSet(idx_t other) const;
 	bool Can(CatalogType type, const Permissions &permissions, AclMode need) const;
 	bool CanAny(CatalogType type, const Permissions &permissions, AclMode need) const;
-	bool CanColumns(const Permissions &permissions, AclMode need, std::span<const std::span<const AclItem>> acls) const;
-	bool CanAnyColumn(const Permissions &permissions, AclMode need, const ColumnList &columns) const;
+	bool CanColumns(const StandardEntry &relation, AclMode need, std::span<const idx_t> columns) const;
 	AclMode HeldModes(std::span<const AclItem> acl) const;
 	AclMode GrantableModes(std::span<const AclItem> acl) const;
 };
 
-struct ConstraintKeyReader {
-	const RoleAccess &role;
-	const TableCatalogEntry &table;
+struct RelationNeed {
+	RelationNeed(const StandardEntry &relation_p, const RoleAccess &role_p) : relation(relation_p), role(role_p) {
+	}
 
-	DUCKDB_API bool CanRead(std::span<const LogicalIndex> columns) const;
+	void Select(idx_t column);
+
+	const StandardEntry &relation;
+	RoleAccess role;
+	AclMode modes = AclMode::NoRights;
+	vector<idx_t> selected;
+	vector<idx_t> inserted;
+	vector<idx_t> updated;
 };
 
 struct RoleMemberships {
@@ -301,7 +308,6 @@ struct FunctionCall {
 
 DUCKDB_API bool IsUnowned(const CatalogEntry &entry);
 DUCKDB_API std::span<const AclItem> FindColumnAcl(const vector<ColumnAcl> &columns, const Identifier &column);
-DUCKDB_API std::span<const AclItem> ColumnAclAt(const CatalogEntry &entry, idx_t column_index);
 DUCKDB_API bool CanUseSchema(const RoleAccess &role, const CatalogEntry &schema);
 DUCKDB_API void CheckBuiltinCall(ClientContext &context, const RoleAccess &role, const CatalogEntry &function);
 DUCKDB_API bool MayCallFunction(ClientContext &context, const RoleAccess &role, const CatalogEntry &function);
@@ -317,6 +323,7 @@ DUCKDB_API string ValidUntilToSQL(int64_t valid_until);
 [[noreturn]] DUCKDB_API void ThrowPermissionDenied(const CatalogEntry &entry,
                                                    optional_ptr<const MacroFunction> overload = nullptr);
 DUCKDB_API void RequireEntryPrivilege(const RoleAccess &role, const CatalogEntry &entry, AclMode any);
+DUCKDB_API void Require(const RelationNeed &need);
 DUCKDB_API void RequireSuperuser(const RoleAccess &role);
 DUCKDB_API bool IsAdminOf(ClientContext &context, const RoleAccess &role, idx_t target);
 DUCKDB_API void RequireOwner(const RoleAccess &role, const CatalogEntry &entry, idx_t owner,

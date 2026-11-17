@@ -311,17 +311,10 @@ BoundStatement Binder::Bind(BaseTableRef &ref) {
 	case CatalogType::VIEW_ENTRY: {
 		// the node is a view: get the query that the view represents
 		auto &view_catalog_entry = table_or_view->Cast<ViewCatalogEntry>();
-		shared_ptr<ColumnReadCheck> column_read;
 		auto &role = CheckAs();
-		auto &view_permissions = view_catalog_entry.permissions;
-		if (table_ref_use != TableRefUse::UTILITY_TARGET &&
-		    (!IsUnowned(view_catalog_entry) || view_catalog_entry.ParentCatalog().IsSystemCatalog()) &&
-		    !role.Can(CatalogType::TABLE_ENTRY, view_permissions, AclMode::Select)) {
-			column_read = make_shared_ptr<ColumnReadCheck>(view_catalog_entry, view_permissions, role, true);
-			if (!column_read->CanReadAny()) {
-				ThrowPermissionDenied(view_catalog_entry);
-			}
-			global_binder_state->column_reads.push_back(column_read);
+		auto need = ReadNeed(view_catalog_entry);
+		if (need && !role.CanColumns(view_catalog_entry, AclMode::Select, {})) {
+			ThrowPermissionDenied(view_catalog_entry);
 		}
 		// We need to use a new binder for the view that doesn't reference any CTEs
 		// defined for this binder so there are no collisions between the CTEs defined
@@ -377,8 +370,7 @@ BoundStatement Binder::Bind(BaseTableRef &ref) {
 			    view_catalog_entry.ParentSchema(context).GetQualifiedName(view_catalog_entry.name), bound_child.types,
 			    entry_at_clause, std::move(bound_child.plan));
 		}
-		bind_context.AddView(root_index, subquery.alias, subquery, bound_child, view_catalog_entry).column_read =
-		    std::move(column_read);
+		bind_context.AddView(root_index, subquery.alias, subquery, bound_child, view_catalog_entry).need = need;
 		return bound_child;
 	}
 	default:

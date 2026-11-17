@@ -156,6 +156,14 @@ Value ViewCatalogEntry::GetColumnComment(idx_t column_index) {
 	return Value();
 }
 
+std::span<const AclItem> ViewCatalogEntry::ColumnAcl(idx_t column_index) const {
+	if (column_acls.empty()) {
+		return {};
+	}
+	return FindColumnAcl(column_acls,
+	                     column_index < aliases.size() ? aliases[column_index] : GetColumnInfo()->names[column_index]);
+}
+
 Identifier ViewCatalogEntry::ResolveColumnName(const Identifier &column_name) const {
 	auto view_columns = GetColumnInfo();
 	if (!view_columns) {

@@ -518,34 +518,57 @@ bool RoleAccess::CanAny(CatalogType type, const Permissions &permissions, AclMod
 	return Owns(permissions.owner) || Allows(*this, permissions.acl, type, need, true);
 }
 
-bool RoleAccess::CanColumns(const Permissions &permissions, AclMode need,
-                            std::span<const std::span<const AclItem>> acls) const {
-	if (Can(CatalogType::TABLE_ENTRY, permissions, need)) {
+bool RoleAccess::CanColumns(const StandardEntry &relation, AclMode need, std::span<const idx_t> columns) const {
+	if (Can(CatalogType::TABLE_ENTRY, relation.permissions, need)) {
 		return true;
 	}
-	return !acls.empty() && std::all_of(acls.begin(), acls.end(), [&](std::span<const AclItem> acl) {
+	const auto granted = [&](std::span<const AclItem> acl) {
 		return Allows(*this, acl, CatalogType::TABLE_ENTRY, need, false);
-	});
-}
-
-bool RoleAccess::CanAnyColumn(const Permissions &permissions, AclMode need, const ColumnList &columns) const {
-	if (Can(CatalogType::TABLE_ENTRY, permissions, need)) {
-		return true;
-	}
-	for (auto &column : columns.Logical()) {
-		if (Allows(*this, column.Acl(), CatalogType::TABLE_ENTRY, need, false)) {
-			return true;
+	};
+	if (relation.type == CatalogType::VIEW_ENTRY) {
+		auto &view = relation.Cast<ViewCatalogEntry>();
+		if (columns.empty()) {
+			return std::any_of(view.column_acls.begin(), view.column_acls.end(),
+			                   [&](const ColumnAcl &column) { return granted(column.acl); });
 		}
+		return std::all_of(columns.begin(), columns.end(),
+		                   [&](idx_t column) { return granted(view.ColumnAcl(column)); });
 	}
-	return false;
+	auto &table_columns = relation.Cast<TableCatalogEntry>().GetColumns();
+	if (columns.empty()) {
+		for (auto &column : table_columns.Logical()) {
+			if (granted(column.Acl())) {
+				return true;
+			}
+		}
+		return false;
+	}
+	return std::all_of(columns.begin(), columns.end(),
+	                   [&](idx_t column) { return granted(table_columns.GetColumn(LogicalIndex(column)).Acl()); });
 }
 
-bool ConstraintKeyReader::CanRead(std::span<const LogicalIndex> columns) const {
-	vector<std::span<const AclItem>> acls;
-	for (auto column : columns) {
-		acls.emplace_back(table.GetColumns().GetColumn(column).Acl());
+void RelationNeed::Select(idx_t column) {
+	modes |= AclMode::Select;
+	if (std::find(selected.begin(), selected.end(), column) == selected.end()) {
+		selected.push_back(column);
 	}
-	return role.CanColumns(table.permissions, AclMode::Select, acls);
+}
+
+void Require(const RelationNeed &need) {
+	auto &role = need.role;
+	auto &permissions = need.relation.permissions;
+	if (role.Can(CatalogType::TABLE_ENTRY, permissions, need.modes)) {
+		return;
+	}
+	const auto relation_only = need.modes & ~(AclMode::Select | AclMode::Insert | AclMode::Update);
+	const auto columns_granted = [&](AclMode mode, const vector<idx_t> &columns) {
+		return (need.modes & mode) == AclMode::NoRights || role.CanColumns(need.relation, mode, columns);
+	};
+	if ((relation_only != AclMode::NoRights && !role.Can(CatalogType::TABLE_ENTRY, permissions, relation_only)) ||
+	    !columns_granted(AclMode::Select, need.selected) || !columns_granted(AclMode::Insert, need.inserted) ||
+	    !columns_granted(AclMode::Update, need.updated)) {
+		ThrowPermissionDenied(need.relation);
+	}
 }
 
 AclMode RoleAccess::HeldModes(std::span<const AclItem> acl) const {
@@ -731,19 +754,6 @@ std::span<const AclItem> FindColumnAcl(const vector<ColumnAcl> &columns, const I
 		}
 	}
 	return {};
-}
-
-std::span<const AclItem> ColumnAclAt(const CatalogEntry &entry, idx_t column_index) {
-	if (entry.type == CatalogType::VIEW_ENTRY) {
-		auto &view = entry.Cast<ViewCatalogEntry>();
-		if (view.column_acls.empty()) {
-			return {};
-		}
-		return FindColumnAcl(view.column_acls, column_index < view.aliases.size()
-		                                           ? view.aliases[column_index]
-		                                           : view.GetColumnInfo()->names[column_index]);
-	}
-	return entry.Cast<TableCatalogEntry>().GetColumn(LogicalIndex(column_index)).Acl();
 }
 
 optional_idx SecuritySnapshot::BestAdmin(idx_t member, idx_t role) const {

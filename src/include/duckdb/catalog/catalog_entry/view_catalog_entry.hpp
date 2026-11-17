@@ -59,6 +59,7 @@ public:
 	//! Update the view with a new set of types / names
 	virtual void UpdateBinding(const vector<LogicalType> &types, const vector<Identifier> &names);
 	Value GetColumnComment(idx_t column_index);
+	std::span<const AclItem> ColumnAcl(idx_t column_index) const;
 	//! Returns the bound name of a visible column
 	Identifier ResolveColumnName(const Identifier &column_name) const;
 

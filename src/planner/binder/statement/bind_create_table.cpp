@@ -921,12 +921,12 @@ static void RequireReferences(CatalogEntryRetriever &entry_retriever, CatalogEnt
 		return;
 	}
 	auto &table = entry.Cast<TableCatalogEntry>();
-	vector<std::span<const AclItem>> acls;
+	vector<idx_t> columns;
 	for (auto &column : fk.pk_columns) {
 		Identifier name(column);
-		acls.push_back(table.GetColumn(table.GetColumnIndex(name)).Acl());
+		columns.push_back(table.GetColumnIndex(name).index);
 	}
-	if (!role.CanColumns(table.permissions, AclMode::References, acls)) {
+	if (!role.CanColumns(table, AclMode::References, columns)) {
 		ThrowPermissionDenied(table);
 	}
 }

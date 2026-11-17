@@ -67,7 +67,9 @@ BoundStatement Binder::BindNode(DeleteQueryNode &node) {
 		get.function.verify_dml_target(context, get.bind_data.get());
 	}
 	auto &table = *table_ptr;
-	RequirePrivilege(table, node.is_truncate ? AclMode::Truncate : AclMode::Delete, {}, false);
+	if (auto need = NeedOf(table)) {
+		need->modes |= node.is_truncate ? AclMode::Truncate : AclMode::Delete;
+	}
 
 	if (auto expanded = TryExpandTriggers(node, table, TriggerEventType::DELETE_EVENT)) {
 		return std::move(*expanded);

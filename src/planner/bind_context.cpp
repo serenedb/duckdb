@@ -797,7 +797,7 @@ void BindContext::AddBaseTable(TableIndex index, const Identifier &alias, const 
                                TableCatalogEntry &entry, virtual_column_map_t virtual_columns) {
 	auto binding = make_uniq<TableBinding>(GetEntryAlias(binder.context, alias, &entry), types, names, bound_column_ids,
 	                                       &entry, index, std::move(virtual_columns));
-	binder.CheckTableRead(*binding, entry);
+	binding->need = binder.ReadNeed(entry);
 	AddBinding(std::move(binding));
 }
 
@@ -826,7 +826,7 @@ void BindContext::AddTableFunction(TableIndex index, const Identifier &alias, co
 	auto binding = make_uniq<TableBinding>(GetEntryAlias(binder.context, alias, entry), types, names, bound_column_ids,
 	                                       entry, index, std::move(virtual_columns), std::move(row_id_columns));
 	if (entry && entry->type == CatalogType::TABLE_ENTRY) {
-		binder.CheckTableRead(*binding, entry->Cast<TableCatalogEntry>());
+		binding->need = binder.ReadNeed(*entry);
 	}
 	AddBinding(std::move(binding));
 }

@@ -265,35 +265,35 @@ BoundStatement Binder::BindNode(MergeQueryNode &node) {
 		}
 	}
 	auto &table = *table_ptr;
-	const auto all_columns = table.GetColumns().LogicalColumnCount();
-	for (auto &entry : node.actions) {
-		for (auto &action : entry.second) {
-			switch (action->action_type) {
-			case MergeActionType::MERGE_UPDATE:
-				if (action->update_info) {
-					RequireColumnPrivilege(table, AclMode::Update, action->update_info->columns, all_columns);
-				} else {
-					RequireColumnPrivilege(table, AclMode::Update, {}, all_columns);
-				}
-				break;
-			case MergeActionType::MERGE_DELETE:
-				RequirePrivilege(table, AclMode::Delete, {}, false);
-				break;
-			case MergeActionType::MERGE_INSERT:
-				if (on_conflict_merge.get() == &node) {
+	if (auto need = NeedOf(table)) {
+		const auto all_columns = table.GetColumns().LogicalColumnCount();
+		const vector<Identifier> all_names;
+		for (auto &entry : node.actions) {
+			for (auto &action : entry.second) {
+				switch (action->action_type) {
+				case MergeActionType::MERGE_UPDATE:
+					need->modes |= AclMode::Update;
+					AddColumns(need->updated, table, action->update_info ? action->update_info->columns : all_names,
+					           all_columns);
+					break;
+				case MergeActionType::MERGE_DELETE:
+					need->modes |= AclMode::Delete;
+					break;
+				case MergeActionType::MERGE_INSERT:
+					if (on_conflict_merge.get() == &node) {
+						break;
+					}
+					need->modes |= AclMode::Insert;
+					if (!action->default_values) {
+						AddColumns(need->inserted, table, action->insert_columns,
+						           action->column_order == InsertColumnOrder::INSERT_BY_POSITION
+						               ? action->expressions.size()
+						               : all_columns);
+					}
+					break;
+				default:
 					break;
 				}
-				if (action->default_values) {
-					RequirePrivilege(table, AclMode::Insert, {}, true);
-				} else {
-					RequireColumnPrivilege(table, AclMode::Insert, action->insert_columns,
-					                       action->column_order == InsertColumnOrder::INSERT_BY_POSITION
-					                           ? action->expressions.size()
-					                           : all_columns);
-				}
-				break;
-			default:
-				break;
 			}
 		}
 	}
