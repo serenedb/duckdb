@@ -2018,7 +2018,8 @@ dtime_tz_t Cast::Operation(string_t input) {
 //===--------------------------------------------------------------------===//
 template <>
 bool TryCastErrorMessage::Operation(string_t input, timestamp_t &result, CastParameters &parameters) {
-	switch (Timestamp::TryConvertTimestamp(input.GetData(), input.GetSize(), result, false)) {
+	switch (
+	    Timestamp::TryConvertTimestamp(input.GetData(), input.GetSize(), result, false, nullptr, parameters.strict)) {
 	case TimestampCastResult::SUCCESS:
 	case TimestampCastResult::STRICT_UTC:
 		return true;
@@ -2038,7 +2039,7 @@ bool TryCastErrorMessage::Operation(string_t input, timestamp_t &result, CastPar
 template <>
 bool TryCastErrorMessage::Operation(string_t input, timestamp_tz_t &result, CastParameters &parameters) {
 	timestamp_t us;
-	switch (Timestamp::TryConvertTimestamp(input.GetData(), input.GetSize(), us, true)) {
+	switch (Timestamp::TryConvertTimestamp(input.GetData(), input.GetSize(), us, true, nullptr, parameters.strict)) {
 	case TimestampCastResult::SUCCESS:
 	case TimestampCastResult::STRICT_UTC:
 		return TryCastTimestampBase<timestamp_t, timestamp_tz_t>(us, result, true);
@@ -2059,7 +2060,7 @@ bool TryCastErrorMessage::Operation(string_t input, timestamp_tz_t &result, Cast
 template <>
 bool TryCastErrorMessage::Operation(string_t input, timestamp_tz_ns_t &result, CastParameters &parameters) {
 	timestamp_ns_t ns;
-	switch (Timestamp::TryConvertTimestamp(input.GetData(), input.GetSize(), ns, true)) {
+	switch (Timestamp::TryConvertTimestamp(input.GetData(), input.GetSize(), ns, true, parameters.strict)) {
 	case TimestampCastResult::SUCCESS:
 	case TimestampCastResult::STRICT_UTC:
 		return TryCastTimestampBase<timestamp_ns_t, timestamp_tz_ns_t>(ns, result, true);
@@ -2076,29 +2077,33 @@ bool TryCastErrorMessage::Operation(string_t input, timestamp_tz_ns_t &result, C
 	return false;
 }
 
+static bool TimestampParsed(TimestampCastResult result) {
+	return result == TimestampCastResult::SUCCESS || result == TimestampCastResult::STRICT_UTC;
+}
+
 template <>
 bool TryCast::Operation(string_t input, timestamp_t &result, bool strict) {
-	return Timestamp::TryConvertTimestamp(input.GetData(), input.GetSize(), result, false) ==
-	       TimestampCastResult::SUCCESS;
+	return TimestampParsed(
+	    Timestamp::TryConvertTimestamp(input.GetData(), input.GetSize(), result, false, nullptr, strict));
 }
 
 template <>
 bool TryCast::Operation(string_t input, timestamp_ns_t &result, bool strict) {
-	return Timestamp::TryConvertTimestamp(input.GetData(), input.GetSize(), result, false) ==
-	       TimestampCastResult::SUCCESS;
+	return TimestampParsed(Timestamp::TryConvertTimestamp(input.GetData(), input.GetSize(), result, false, strict));
 }
 
 template <>
 bool TryCast::Operation(string_t input, timestamp_tz_t &result, bool strict) {
 	timestamp_t us;
-	return Timestamp::TryConvertTimestamp(input.GetData(), input.GetSize(), us, true) == TimestampCastResult::SUCCESS &&
+	return TimestampParsed(
+	           Timestamp::TryConvertTimestamp(input.GetData(), input.GetSize(), us, true, nullptr, strict)) &&
 	       TryCastTimestampBase<timestamp_t, timestamp_tz_t>(us, result, strict);
 }
 
 template <>
 bool TryCast::Operation(string_t input, timestamp_tz_ns_t &result, bool strict) {
 	timestamp_ns_t ns;
-	return Timestamp::TryConvertTimestamp(input.GetData(), input.GetSize(), ns, true) == TimestampCastResult::SUCCESS &&
+	return TimestampParsed(Timestamp::TryConvertTimestamp(input.GetData(), input.GetSize(), ns, true, strict)) &&
 	       TryCastTimestampBase<timestamp_ns_t, timestamp_tz_ns_t>(ns, result, strict);
 }
 

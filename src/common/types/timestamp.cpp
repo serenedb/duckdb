@@ -40,7 +40,8 @@ static idx_t TimestampTimeLength(const char *str, idx_t len) {
 // ISO 8601
 
 TimestampCastResult Timestamp::TryConvertTimestampTZ(const char *str, idx_t len, timestamp_t &result, bool use_offset,
-                                                     bool &has_offset, string_t &tz, optional_ptr<int32_t> nanos) {
+                                                     bool &has_offset, string_t &tz, optional_ptr<int32_t> nanos,
+                                                     bool strict) {
 	idx_t pos;
 	date_t date;
 	dtime_t time;
@@ -48,7 +49,7 @@ TimestampCastResult Timestamp::TryConvertTimestampTZ(const char *str, idx_t len,
 	if (nanos) {
 		*nanos = 0;
 	}
-	switch (Date::TryConvertDate(str, len, pos, date, has_offset)) {
+	switch (Date::TryConvertDate(str, len, pos, date, has_offset, false, strict)) {
 	case DateCastResult::ERROR_INCORRECT_FORMAT:
 		return TimestampCastResult::ERROR_INCORRECT_FORMAT;
 	case DateCastResult::ERROR_RANGE:
@@ -143,7 +144,7 @@ TimestampCastResult Timestamp::TryConvertTimestamp(const char *str, idx_t len, t
                                                    optional_ptr<int32_t> nanos, bool strict) {
 	string_t tz(nullptr, 0);
 	bool has_offset = false;
-	auto success = TryConvertTimestampTZ(str, len, result, use_offset, has_offset, tz, nanos);
+	auto success = TryConvertTimestampTZ(str, len, result, use_offset, has_offset, tz, nanos, strict);
 	if (success != TimestampCastResult::SUCCESS) {
 		return success;
 	}
@@ -189,13 +190,13 @@ TimestampCastResult Timestamp::TryConvertTimestamp(const char *str, idx_t len, t
 	int32_t nanos = 0;
 	timestamp_t micros;
 	auto success = TryConvertTimestamp(str, len, micros, use_offset, &nanos, strict);
-	if (success != TimestampCastResult::SUCCESS) {
+	if (success != TimestampCastResult::SUCCESS && success != TimestampCastResult::STRICT_UTC) {
 		return success;
 	}
 	if (!TryFromTimestampNanos(micros, nanos, result)) {
 		return TimestampCastResult::ERROR_INCORRECT_FORMAT;
 	}
-	return TimestampCastResult::SUCCESS;
+	return success;
 }
 
 string Timestamp::FormatError(const string &str) {
