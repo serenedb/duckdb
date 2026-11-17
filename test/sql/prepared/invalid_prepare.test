@@ -13,12 +13,10 @@ create view v1 as select ?;
 ----
 
 # start with a higher index than 1
-statement ok
-prepare v1 as select $2::int;
-
 statement error
-execute v1(0);
+prepare v1 as select $2::int;
 ----
+could not determine data type of parameter $1
 
 # cannot cast from varchar to int
 statement ok

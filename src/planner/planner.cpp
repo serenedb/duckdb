@@ -179,6 +179,27 @@ static void RunPostBindExtensions(ClientContext &context, Binder &binder, BoundS
 	}
 }
 
+static void CheckParameterGaps(const SQLStatement &statement,
+                               const case_insensitive_map_t<LogicalType> &parameter_type_hints) {
+	const auto &parameters = statement.named_param_map;
+	idx_t highest = 0;
+	for (auto &entry : parameters) {
+		highest = MaxValue(highest, entry.second);
+	}
+	if (highest == parameters.size()) {
+		return;
+	}
+	vector<bool> used(highest + 1, false);
+	for (auto &entry : parameters) {
+		used[entry.second] = true;
+	}
+	for (idx_t index = 1; index < highest; index++) {
+		if (!used[index] && !parameter_type_hints.contains(to_string(index))) {
+			throw ParameterNotAllowedException("could not determine data type of parameter $%d", index);
+		}
+	}
+}
+
 void Planner::CreatePlan(SQLStatement &statement) {
 	auto &profiler = QueryProfiler::Get(context);
 	auto parameter_count = statement.named_param_map.size();
@@ -227,6 +248,7 @@ void Planner::CreatePlan(SQLStatement &statement) {
 			throw;
 		}
 	}
+	CheckParameterGaps(statement, parameter_type_hints);
 	if (this->plan) {
 		RewriteTriggersToDependent(*this->binder, *this->plan);
 		RecursiveDependentJoinPlanner::Plan(*this->binder, this->plan);
