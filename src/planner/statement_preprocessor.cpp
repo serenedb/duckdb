@@ -160,9 +160,11 @@ void StatementPreprocessor::ExpandTruncate(MultiStatement &multi_statement) cons
 		}
 		group.push_back(table);
 	};
+	CatalogEntryRetriever retriever(context);
 	for (auto &statement : multi_statement.statements) {
 		auto &node = *statement->Cast<DeleteStatement>().node;
-		add(Catalog::GetEntry<TableCatalogEntry>(context, node.table->Cast<BaseTableRef>().GetQualifiedName()));
+		add(Catalog::GetEntry<TableCatalogEntry>(
+		    context, Binder::BindTableName(retriever, node.table->Cast<BaseTableRef>().GetQualifiedName())));
 	}
 	const auto named = group.size();
 	for (idx_t i = 0; cascade && i < group.size(); i++) {
