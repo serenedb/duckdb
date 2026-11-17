@@ -11,8 +11,11 @@
 
 #include "duckdb/execution/expression_executor.hpp"
 #include "re2/segment_plan.h"
+#include "utf8proc_wrapper.hpp"
 
 #include <absl/strings/ascii.h>
+#include <absl/strings/numbers.h>
+#include <absl/strings/str_cat.h>
 
 namespace duckdb {
 
@@ -475,17 +478,23 @@ bool LikeOperatorFunction(string_t &s, string_t &pat, char escape) {
 	                                                                pat.GetSize(), escape);
 }
 
-static void CheckEscapeString(const string_t &escape) {
-	// Only one escape character should be allowed
-	if (escape.GetSize() > 1) {
+static void CheckEscapeString(const string_t &escape, bool bytes) {
+	if (escape.GetSize() <= 1) {
+		return;
+	}
+	int length = 0;
+	if (!bytes) {
+		Utf8Proc::UTF8ToCodepoint(escape.GetData(), length, escape.GetSize());
+	}
+	if (static_cast<idx_t>(length) != escape.GetSize()) {
 		auto extra_info = Exception::InitializeExtraInfo("INVALID_ESCAPE_SEQUENCE", optional_idx());
 		extra_info["hint"] = "Escape string must be empty or one character.";
 		throw SyntaxException(extra_info, "invalid escape string");
 	}
 }
 
-char GetEscapeChar(string_t escape) {
-	CheckEscapeString(escape);
+char GetEscapeChar(string_t escape, bool bytes) {
+	CheckEscapeString(escape, bytes);
 	return escape.GetSize() == 0 ? '\0' : *escape.GetData();
 }
 
@@ -499,12 +508,13 @@ bool CaseCanChangeEscapes(const char *data, idx_t size, char escape) {
 	return found;
 }
 
-idx_t WithBackslashEscape(const char *data, idx_t size, char escape, char *result) {
+idx_t WithBackslashEscape(const char *data, idx_t size, std::string_view escape, char *result) {
 	idx_t length = 0;
 	for (idx_t i = 0; i < size; i++) {
-		if (data[i] == escape) {
+		if (std::string_view(data + i, size - i).starts_with(escape)) {
 			result[length++] = '\\';
-			if (++i < size) {
+			i += escape.size();
+			if (i < size) {
 				result[length++] = data[i];
 			}
 		} else if (data[i] == '\\') {
@@ -518,8 +528,15 @@ idx_t WithBackslashEscape(const char *data, idx_t size, char escape, char *resul
 }
 
 template <bool BYTES>
-bool LikeEscapeOperator(string_t str, string_t pattern, string_t escape) {
-	char escape_char = GetEscapeChar(escape);
+bool LikeEscapeOperator(string_t str, string_t pattern, string_t escape, string &rewritten) {
+	char escape_char = GetEscapeChar(escape, BYTES);
+	if (escape.GetSize() > 1) {
+		rewritten.resize(2 * pattern.GetSize());
+		rewritten.resize(WithBackslashEscape(pattern.GetData(), pattern.GetSize(),
+		                                     std::string_view(escape.GetData(), escape.GetSize()), rewritten.data()));
+		string_t backslash_pattern(rewritten.data(), UnsafeNumericCast<uint32_t>(rewritten.size()));
+		return LikeOperatorFunction<BYTES>(str, backslash_pattern, '\\');
+	}
 	return escape.GetSize() == 0 ? LikeOperatorFunction<BYTES>(str, pattern)
 	                             : LikeOperatorFunction<BYTES>(str, pattern, escape_char);
 }
@@ -727,12 +744,13 @@ struct ILikeMatcher {
 
 struct ILikeLocalState : public FunctionLocalState {
 	ILikePattern LowerPattern(string_t input, string_t escape) {
-		char escape_char = GetEscapeChar(escape);
+		char escape_char = GetEscapeChar(escape, false);
 		bool has_escape = escape.GetSize() != 0;
-		if (has_escape && StringUtil::CharacterIsAlpha(escape_char) &&
-		    CaseCanChangeEscapes(input.GetData(), input.GetSize(), escape_char)) {
+		if (escape.GetSize() > 1 || (has_escape && StringUtil::CharacterIsAlpha(escape_char) &&
+		                             CaseCanChangeEscapes(input.GetData(), input.GetSize(), escape_char))) {
 			auto result = escaped.Reserve(2 * input.GetSize());
-			auto size = WithBackslashEscape(input.GetData(), input.GetSize(), escape_char, result);
+			auto size = WithBackslashEscape(input.GetData(), input.GetSize(),
+			                                std::string_view(escape.GetData(), escape.GetSize()), result);
 			input = string_t(result, UnsafeNumericCast<uint32_t>(size));
 			escape_char = '\\';
 		}
@@ -785,14 +803,15 @@ void LikeEscapeFunction(DataChunk &args, ExpressionState &state, Vector &result)
 		auto escape_str = *ConstantVector::GetData<string_t>(escape);
 		if (escape_str.GetSize() <= 1) {
 			auto &lstate = ExecuteFunctionState::GetFunctionState(state)->Cast<LikeLocalState>();
-			LikeMatchPatterns<INVERT, BYTES>(lstate, str, pattern, escape_str.GetSize() == 1, GetEscapeChar(escape_str),
-			                                 result);
+			LikeMatchPatterns<INVERT, BYTES>(lstate, str, pattern, escape_str.GetSize() == 1,
+			                                 GetEscapeChar(escape_str, BYTES), result);
 			return;
 		}
 	}
+	string rewritten;
 	TernaryExecutor::Execute<string_t, string_t, string_t, bool>(
 	    str, pattern, escape, result, [&](string_t str, string_t pattern, string_t escape) {
-		    bool match = LikeEscapeOperator<BYTES>(str, pattern, escape);
+		    bool match = LikeEscapeOperator<BYTES>(str, pattern, escape, rewritten);
 		    return INVERT ? !match : match;
 	    });
 }
@@ -1063,6 +1082,77 @@ ScalarFunctionSet LikeEscapeFun::GetFunctions() {
 // `regexp_full_match(x, similar_to_escape(y))`, so this translation has to live
 // beside the parser rather than in a server-side function set -- otherwise the
 // rewrite emits a call that a plain DuckDB has no way to resolve.
+static void AppendCodepoint(string &result, uint32_t codepoint) {
+	absl::StrAppend(&result, "\\x{", absl::Hex(codepoint), "}");
+}
+
+static void AppendEscape(string &result, std::string_view pattern, idx_t &i) {
+	const char escaped = pattern[i];
+	const auto rest = pattern.substr(i + 1);
+	switch (escaped) {
+	case 'b':
+		return AppendCodepoint(result, 0x08);
+	case 'B':
+		result += "\\\\";
+		return;
+	case 'e':
+		return AppendCodepoint(result, 0x1B);
+	case 'y':
+		result += "\\b";
+		return;
+	case 'Y':
+		result += "\\B";
+		return;
+	case 'Z':
+		result += "\\z";
+		return;
+	case 'c':
+		if (!rest.empty()) {
+			int length = 0;
+			const auto codepoint = Utf8Proc::UTF8ToCodepoint(rest.data(), length, rest.size());
+			AppendCodepoint(result, static_cast<uint32_t>(codepoint) & 0x1F);
+			i += static_cast<idx_t>(length);
+			return;
+		}
+		break;
+	case 'x':
+	case 'u':
+	case 'U': {
+		const idx_t digits = static_cast<idx_t>(
+		    std::find_if_not(rest.begin(), rest.end(),
+		                     [](char c) { return absl::ascii_isxdigit(static_cast<unsigned char>(c)); }) -
+		    rest.begin());
+		const idx_t wanted = escaped == 'x' ? MinValue<idx_t>(digits, 8) : escaped == 'u' ? 4 : 8;
+		uint32_t codepoint = 0;
+		if (digits >= wanted && (escaped != 'x' || digits == wanted) && wanted != 0 &&
+		    absl::SimpleHexAtoi(rest.substr(0, wanted), &codepoint) && codepoint <= 0x10FFFF) {
+			AppendCodepoint(result, codepoint);
+			i += wanted;
+			return;
+		}
+		break;
+	}
+	case '0': {
+		uint32_t codepoint = 0;
+		idx_t digits = 0;
+		for (; digits < 2 && digits < rest.size() && rest[digits] >= '0' && rest[digits] <= '7'; digits++) {
+			codepoint = codepoint * 8 + static_cast<uint32_t>(rest[digits] - '0');
+		}
+		AppendCodepoint(result, codepoint);
+		i += digits;
+		return;
+	}
+	default:
+		if (static_cast<unsigned char>(escaped) >= 0x80) {
+			result += escaped;
+			return;
+		}
+		break;
+	}
+	result += '\\';
+	result += escaped;
+}
+
 static string SimilarToRegex(const string_t &pattern_str, std::string_view escape) {
 	auto pattern = pattern_str.GetData();
 	auto plen = pattern_str.GetSize();
@@ -1092,12 +1182,12 @@ static string SimilarToRegex(const string_t &pattern_str, std::string_view escap
 				}
 				nquotes++;
 			} else {
-				result += '\\';
-				result += pchar;
+				AppendEscape(result, std::string_view(pattern, plen), i);
 				charclass_pos = 3;
 			}
 			after_escape = false;
-		} else if (!escape.empty() && pchar == escape.front()) {
+		} else if (!escape.empty() && std::string_view(pattern + i, plen - i).starts_with(escape)) {
+			i += escape.size() - 1;
 			after_escape = true;
 		} else if (bracket_depth > 0) {
 			// inside a bracket expression the SIMILAR TO metacharacters are literal
@@ -1146,7 +1236,7 @@ static void SimilarToEscapeFunction(DataChunk &args, ExpressionState &, Vector &
 static void SimilarToEscapeWithEscapeFunction(DataChunk &args, ExpressionState &, Vector &result) {
 	BinaryExecutor::Execute<string_t, string_t, string_t>(
 	    args.data[0], args.data[1], result, args.size(), [&](string_t pattern, string_t escape) {
-		    CheckEscapeString(escape);
+		    CheckEscapeString(escape, false);
 		    return StringVector::AddString(
 		        result, SimilarToRegex(pattern, std::string_view {escape.GetData(), escape.GetSize()}));
 	    });
