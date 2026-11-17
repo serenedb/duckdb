@@ -230,11 +230,14 @@ void StandardVectorBuffer::ToUnifiedFormat(UnifiedVectorFormat &format) const {
 template <idx_t TYPE_SIZE>
 void FixedSizeCopy(data_ptr_t target_data, const_data_ptr_t source_data, const SelectionVector &sel,
                    idx_t base_source_offset, idx_t base_target_offset, idx_t copy_count) {
+	auto target = target_data + base_target_offset * TYPE_SIZE;
+	const auto indexes = sel.data();
+	if (!indexes) {
+		memcpy(target, source_data + base_source_offset * TYPE_SIZE, copy_count * TYPE_SIZE);
+		return;
+	}
 	for (idx_t i = 0; i < copy_count; i++) {
-		auto source_idx = sel.get_index(base_source_offset + i);
-		auto target_offset = (base_target_offset + i) * TYPE_SIZE;
-		auto source_offset = source_idx * TYPE_SIZE;
-		memcpy(target_data + target_offset, source_data + source_offset, TYPE_SIZE);
+		memcpy(target + i * TYPE_SIZE, source_data + indexes[base_source_offset + i] * TYPE_SIZE, TYPE_SIZE);
 	}
 }
 
