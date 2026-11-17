@@ -233,13 +233,19 @@ string ObjectTypeKeyword(ParseResult &objtype) {
 	return StringUtil::Join(words, " ");
 }
 
+QualifiedName ObjectName(CatalogType type, QualifiedName name) {
+	return type == CatalogType::DATABASE_ENTRY ? QualifiedName(name.Name()) : std::move(name);
+}
+
 void SetObjectTarget(AlterPermissionsInfo &info, CatalogType type, QualifiedName name) {
 	info.entry_catalog_type = type;
-	if (type == CatalogType::DATABASE_ENTRY) {
-		info.SetQualifiedName(Identifier(), Identifier(), name.Name());
-	} else {
-		info.SetQualifiedName(std::move(name));
-	}
+	info.SetQualifiedName(ObjectName(type, std::move(name)));
+}
+
+unique_ptr<SQLStatement> AlterStatementOf(unique_ptr<AlterInfo> info) {
+	auto result = make_uniq<AlterStatement>();
+	result->info = std::move(info);
+	return std::move(result);
 }
 
 } // namespace
@@ -438,7 +444,7 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformAlterRoleStatement(PEGT
 		settings->all_roles = all_roles;
 		CollectConfigClause(transformer, in_database.GetChild(3), settings->set_config, settings->reset_config,
 		                    settings->reset_all_config);
-		return make_uniq<AlterStatement>(std::move(settings));
+		return AlterStatementOf(std::move(settings));
 	}
 	if (all_roles) {
 		if (chosen.Name() != "AlterRoleConfig") {
@@ -447,7 +453,7 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformAlterRoleStatement(PEGT
 		auto info = make_uniq<AlterRoleInfo>(Identifier());
 		info->all_roles = true;
 		CollectConfigClause(transformer, chosen, info->set_config, info->reset_config, info->reset_all_config);
-		return make_uniq<AlterStatement>(std::move(info));
+		return AlterStatementOf(std::move(info));
 	}
 
 	auto info = make_uniq<AlterRoleInfo>(Identifier(name));
@@ -455,12 +461,12 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformAlterRoleStatement(PEGT
 	if (chosen.Name() == "AlterRoleRename") {
 		// LIST(AlterRoleRename): 0:'RENAME' 1:'TO' 2:ColId
 		info->new_name = Identifier(TransformColIdName(transformer, chosen.Cast<ListParseResult>().GetChild(2)));
-		return make_uniq<AlterStatement>(std::move(info));
+		return AlterStatementOf(std::move(info));
 	}
 
 	if (chosen.Name() == "AlterRoleConfig") {
 		CollectConfigClause(transformer, chosen, info->set_config, info->reset_config, info->reset_all_config);
-		return make_uniq<AlterStatement>(std::move(info));
+		return AlterStatementOf(std::move(info));
 	}
 
 	absl::flat_hash_set<std::string_view> seen;
@@ -510,7 +516,7 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformAlterRoleStatement(PEGT
 		}
 	}
 
-	return make_uniq<AlterStatement>(std::move(info));
+	return AlterStatementOf(std::move(info));
 }
 
 Identifier PEGTransformerFactory::TransformOwnerRoleSpec(PEGTransformer &transformer, ParseResult &owner_role_spec) {
@@ -542,7 +548,7 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformAlterOwnerStatement(PEG
 	}
 
 	info->new_owner = OwnerRoleName(transformer, list_pr.GetChild(4));
-	return make_uniq<AlterStatement>(std::move(info));
+	return AlterStatementOf(std::move(info));
 }
 
 unique_ptr<SQLStatement> PEGTransformerFactory::TransformReassignOwnedStatement(PEGTransformer &transformer,
@@ -554,7 +560,7 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformReassignOwnedStatement(
 		info->roles.push_back(OwnerRoleName(transformer, role.get()));
 	}
 	info->new_owner = OwnerRoleName(transformer, list_pr.GetChild(5));
-	return make_uniq<AlterStatement>(std::move(info));
+	return AlterStatementOf(std::move(info));
 }
 
 unique_ptr<SQLStatement> PEGTransformerFactory::TransformDropOwnedStatement(PEGTransformer &transformer,
@@ -566,7 +572,7 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformDropOwnedStatement(PEGT
 		info->roles.push_back(OwnerRoleName(transformer, role.get()));
 	}
 	transformer.TransformOptional<bool>(list_pr, 4, info->cascade);
-	return make_uniq<AlterStatement>(std::move(info));
+	return AlterStatementOf(std::move(info));
 }
 
 static void TransformPrivilegeList(PEGTransformer &transformer, ParseResult &privs_list, AlterPermissionsInfo &info) {
@@ -613,17 +619,11 @@ static void TransformPrivilegeList(PEGTransformer &transformer, ParseResult &pri
 	}
 }
 
-struct GrantTargetName {
-	QualifiedName name;
-	bool has_func_args = false;
-	vector<LogicalType> func_parameters;
-};
-
-static vector<GrantTargetName> TransformGrantTarget(PEGTransformer &transformer, ParseResult &target_choice_holder,
+static vector<ObjectReference> TransformGrantTarget(PEGTransformer &transformer, ParseResult &target_choice_holder,
                                                     AlterPermissionsInfo &info) {
 	auto &chosen = target_choice_holder.Cast<ListParseResult>().Child<ChoiceParseResult>(0).GetResult();
 	auto &target = chosen.Cast<ListParseResult>();
-	vector<GrantTargetName> names;
+	vector<ObjectReference> names;
 	if (chosen.Name() == "GrantAllInSchema") {
 		auto kind = StringUtil::Upper(target.GetChild(1)
 		                                  .Cast<ListParseResult>()
@@ -643,7 +643,7 @@ static vector<GrantTargetName> TransformGrantTarget(PEGTransformer &transformer,
 		info.all_in_schema = true;
 		for (auto &schema_ref : PEGTransformerFactory::ExtractParseResultsFromList(target.GetChild(4))) {
 			auto schema = transformer.Transform<QualifiedName>(schema_ref.get());
-			names.push_back(GrantTargetName {QualifiedName(schema.Schema(), schema.Name(), Identifier())});
+			names.push_back(ObjectReference {QualifiedName(schema.Schema(), schema.Name(), Identifier())});
 		}
 		return names;
 	}
@@ -654,7 +654,7 @@ static vector<GrantTargetName> TransformGrantTarget(PEGTransformer &transformer,
 		                                            info.include_procedures);
 		for (auto &routine : PEGTransformerFactory::ExtractParseResultsFromList(target.GetChild(1))) {
 			auto &signature = routine.get().Cast<ListParseResult>();
-			GrantTargetName name {transformer.Transform<QualifiedName>(signature.GetChild(0))};
+			ObjectReference name {transformer.Transform<QualifiedName>(signature.GetChild(0))};
 			name.has_func_args = PEGTransformerFactory::TransformFunctionArgumentTypes(
 			    transformer, signature.Child<OptionalParseResult>(1), name.func_parameters);
 			names.push_back(std::move(name));
@@ -664,7 +664,7 @@ static vector<GrantTargetName> TransformGrantTarget(PEGTransformer &transformer,
 	if (chosen.Name() == "GrantParameterTarget") {
 		info.entry_catalog_type = CatalogType::PARAMETER_ENTRY;
 		for (auto &setting : PEGTransformerFactory::ExtractParseResultsFromList(target.GetChild(1))) {
-			names.push_back(GrantTargetName {QualifiedName(transformer.Transform<Identifier>(setting.get()))});
+			names.push_back(ObjectReference {QualifiedName(transformer.Transform<Identifier>(setting.get()))});
 		}
 		return names;
 	}
@@ -673,7 +673,8 @@ static vector<GrantTargetName> TransformGrantTarget(PEGTransformer &transformer,
 	info.entry_catalog_type =
 	    GrantObjectType(objtype_opt.HasResult() ? ObjectTypeKeyword(objtype_opt.GetResult()) : "TABLE");
 	for (auto &name : PEGTransformerFactory::ExtractParseResultsFromList(target.GetChild(1))) {
-		names.push_back(GrantTargetName {transformer.Transform<QualifiedName>(name.get())});
+		names.push_back(
+		    ObjectReference {ObjectName(info.entry_catalog_type, transformer.Transform<QualifiedName>(name.get()))});
 	}
 	return names;
 }
@@ -682,8 +683,9 @@ static vector<GrantTargetName> TransformGrantTarget(PEGTransformer &transformer,
 // 4:List(Grantee) 5:WithGrantOption?/DropBehavior? 6:GrantedBy?
 static unique_ptr<SQLStatement> BuildGrantTable(PEGTransformer &transformer, ListParseResult &list_pr, bool revoke,
                                                 idx_t privs_child, bool option_only) {
-	AlterPermissionsInfo info(CatalogType::INVALID, QualifiedName());
-	auto targets = TransformGrantTarget(transformer, list_pr.GetChild(privs_child + 2), info);
+	auto grant = make_uniq<AlterPermissionsInfo>(CatalogType::INVALID, QualifiedName());
+	auto &info = *grant;
+	info.objects = TransformGrantTarget(transformer, list_pr.GetChild(privs_child + 2), info);
 	TransformPrivilegeList(transformer, list_pr.GetChild(privs_child), info);
 	info.revoke = revoke;
 	info.option_only = option_only;
@@ -701,20 +703,13 @@ static unique_ptr<SQLStatement> BuildGrantTable(PEGTransformer &transformer, Lis
 	for (auto &grantee : PEGTransformerFactory::ExtractParseResultsFromList(list_pr.GetChild(privs_child + 4))) {
 		info.grantees.push_back(TransformGrantee(transformer, grantee.get()));
 	}
-	auto result = make_uniq<AlterStatement>();
-	for (auto &target : targets) {
-		auto permissions = unique_ptr_cast<AlterInfo, AlterPermissionsInfo>(info.Copy());
-		SetObjectTarget(*permissions, info.entry_catalog_type, target.name);
-		permissions->has_func_args = target.has_func_args;
-		permissions->func_parameters = target.func_parameters;
-		result->infos.push_back(std::move(permissions));
-	}
-	return std::move(result);
+	return AlterStatementOf(std::move(grant));
 }
 
 static unique_ptr<SQLStatement> BuildGrantRole(PEGTransformer &transformer, ListParseResult &list_pr, idx_t roles_child,
                                                bool revoke, const string &option) {
-	AlterRoleInfo info {Identifier()};
+	auto grant = make_uniq<AlterRoleInfo>(Identifier());
+	auto &info = *grant;
 	info.revoke = revoke;
 	info.option_only = !option.empty();
 	if (option == "ADMIN") {
@@ -751,29 +746,26 @@ static unique_ptr<SQLStatement> BuildGrantRole(PEGTransformer &transformer, List
 		}
 	}
 
+	for (auto &role : PEGTransformerFactory::ExtractParseResultsFromList(list_pr.GetChild(roles_child))) {
+		info.granted_roles.push_back(TransformColIdName(transformer, role.get()));
+	}
 	for (auto &member : PEGTransformerFactory::ExtractParseResultsFromList(list_pr.GetChild(roles_child + 2))) {
 		info.members.push_back(PEGTransformerFactory::OwnerRoleName(transformer, member.get()));
 	}
-	auto result = make_uniq<AlterStatement>();
-	for (auto &role : PEGTransformerFactory::ExtractParseResultsFromList(list_pr.GetChild(roles_child))) {
-		auto membership = unique_ptr_cast<AlterInfo, AlterRoleInfo>(info.Copy());
-		membership->grant_role = TransformColIdName(transformer, role.get());
-		result->infos.push_back(std::move(membership));
-	}
-	return std::move(result);
+	return AlterStatementOf(std::move(grant));
 }
 
 unique_ptr<SQLStatement> PEGTransformerFactory::TransformAlterGroupStatement(PEGTransformer &transformer,
                                                                              ParseResult &parse_result) {
 	auto &list_pr = parse_result.Cast<ListParseResult>();
 	auto alter = make_uniq<AlterRoleInfo>(Identifier());
-	alter->grant_role = TransformColIdName(transformer, list_pr.GetChild(2));
+	alter->granted_roles.push_back(TransformColIdName(transformer, list_pr.GetChild(2)));
 	alter->revoke = StringUtil::Upper(FirstKeyword(list_pr.GetChild(3)).keyword) == "DROP";
 	alter->alter_group = true;
 	for (auto &member : ExtractParseResultsFromList(list_pr.GetChild(5))) {
 		alter->members.push_back(TransformColIdName(transformer, member.get()));
 	}
-	return make_uniq<AlterStatement>(std::move(alter));
+	return AlterStatementOf(std::move(alter));
 }
 
 // Shared body for GRANT/REVOKE. `revoke` selects the direction; `inner` is the
@@ -873,7 +865,7 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformAlterDefaultPrivilegesS
 	for (auto &grantee : PEGTransformerFactory::ExtractParseResultsFromList(g.GetChild(grantees_child))) {
 		info.grantees.push_back(TransformGrantee(transformer, grantee.get()));
 	}
-	return make_uniq<AlterStatement>(std::move(defaults));
+	return AlterStatementOf(std::move(defaults));
 }
 
 } // namespace duckdb

@@ -440,7 +440,7 @@ optional_ptr<CatalogEntry> Catalog::CreateSubscription(CatalogTransaction transa
 	throw NotImplementedException("CREATE SUBSCRIPTION is not supported by a %s catalog", GetCatalogType());
 }
 
-void Catalog::DropRole(CatalogTransaction transaction, const vector<unique_ptr<DropInfo>> &infos) {
+void Catalog::DropRole(CatalogTransaction transaction, const vector<reference<DropInfo>> &infos) {
 	throw NotImplementedException("DROP ROLE is not supported by a %s catalog", GetCatalogType());
 }
 
@@ -1309,7 +1309,7 @@ CatalogEntryLookup Catalog::TryLookupEntry(CatalogEntryRetriever &retriever, con
 	} else {
 		auto transaction = GetCatalogTransaction(context);
 		auto result = TryLookupEntryInternal(transaction, lookup_info);
-		if (result.schema && !CanUseNamedSchema(context, retriever.CheckAs(), *result.schema)) {
+		if (result.schema && !CanUseSchema(retriever.CheckAs(), *result.schema)) {
 			ThrowPermissionDenied(*result.schema);
 		}
 		if (result.Found()) {
@@ -1494,8 +1494,7 @@ CatalogEntryLookup Catalog::TryLookupEntry(CatalogEntryRetriever &retriever, con
 		auto transaction = lookup.catalog.GetCatalogTransaction(context);
 		result = lookup.catalog.TryLookupEntryInternal(transaction, lookup.lookup_info);
 		const bool named = !IsInvalidSchema(lookup_info.GetSchema());
-		if (result.schema && !(named ? CanUseNamedSchema(context, retriever.CheckAs(), *result.schema)
-		                             : CanUseSchema(retriever.CheckAs(), *result.schema))) {
+		if (result.schema && !CanUseSchema(retriever.CheckAs(), *result.schema)) {
 			if (named) {
 				ThrowPermissionDenied(*result.schema);
 			}

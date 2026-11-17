@@ -38,11 +38,12 @@ static bool IsSimpleDefaultValue(const ParsedExpression &val) {
 
 unique_ptr<SQLStatement> PEGTransformerFactory::TransformAlterStatement(PEGTransformer &transformer,
                                                                         unique_ptr<AlterInfo> alter_options) {
-	auto result = make_uniq<AlterStatement>(std::move(alter_options));
-	if (result->infos[0]->type != AlterType::ALTER_TABLE) {
+	auto result = make_uniq<AlterStatement>();
+	result->info = std::move(alter_options);
+	if (result->info->type != AlterType::ALTER_TABLE) {
 		return std::move(result);
 	}
-	auto &alter_table = result->infos[0]->Cast<AlterTableInfo>();
+	auto &alter_table = result->info->Cast<AlterTableInfo>();
 	if (alter_table.alter_table_type != AlterTableType::ADD_COLUMN) {
 		return std::move(result);
 	}
@@ -111,7 +112,7 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformAlterStatement(PEGTrans
 	} else {
 		multi_statement = make_uniq<MultiStatement>();
 		add_column.add_column_constraints = AddColumnConstraints();
-		AddToMultiStatement(multi_statement, std::move(result->infos[0]));
+		AddToMultiStatement(multi_statement, std::move(result->info));
 	}
 	if (follow_ups.add_not_null) {
 		AddToMultiStatement(multi_statement,
@@ -435,7 +436,8 @@ unique_ptr<ParsedExpression> PEGTransformerFactory::TransformSeqRestartValue(PEG
 
 void PEGTransformerFactory::AddToMultiStatement(const unique_ptr<MultiStatement> &multi_statement,
                                                 unique_ptr<AlterInfo> alter_info) {
-	auto alter_statement = make_uniq<AlterStatement>(std::move(alter_info));
+	auto alter_statement = make_uniq<AlterStatement>();
+	alter_statement->info = std::move(alter_info);
 	alter_statement->query = alter_statement->ToString();
 	multi_statement->statements.push_back(std::move(alter_statement));
 }

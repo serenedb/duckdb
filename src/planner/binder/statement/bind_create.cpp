@@ -1,6 +1,7 @@
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/catalog/catalog_entry/trigger_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/macro_catalog_entry.hpp"
+#include "duckdb/catalog/catalog_entry/role_entry.hpp"
 #include "duckdb/catalog/catalog_entry/schema_catalog_entry.hpp"
 #include "duckdb/common/algorithm.hpp"
 #include "duckdb/catalog/catalog_entry/type_catalog_entry.hpp"
@@ -944,13 +945,7 @@ SchemaCatalogEntry &Binder::BindCreateFunctionInfo(CreateInfo &info) {
 	}
 	creator.reset();
 
-	auto &schema = BindCreateSchema(info);
-	if (auto &role = CheckAs(); !role.IsSystem()) {
-		auto &database = schema.ParentCatalog().GetAttached().IsTemporary() ? ClientData::Get(context).default_database
-		                                                                    : schema.ParentCatalog().GetName();
-		RequireLanguageUsage(context, role, database, "sql");
-	}
-	return schema;
+	return BindCreateSchema(info);
 }
 
 LogicalType Binder::BindLogicalType(const ParsedExpression &type_expr) {
@@ -1197,22 +1192,22 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 	switch (catalog_type) {
 	case CatalogType::SCHEMA_ENTRY: {
 		auto &info = stmt.info->Cast<CreateSchemaInfo>();
-		if (const auto authorization = RoleSpecKeyword(context, info.authorization.GetIdentifierName());
-		    authorization.IsValid()) {
-			const Identifier role_name(RoleName(context, authorization.GetIndex()));
+		optional_ptr<RoleEntry> authorization;
+		if (!info.authorization.empty()) {
+			auto &written = info.authorization.GetIdentifierName();
+			authorization = RoleSpecEntry(context, written, OnEntryNotFound::THROW_EXCEPTION);
 			auto path = info.GetQualifiedName().Path();
-			if (path.size() == 2 && path[0].GetIdentifierName() == info.authorization.GetIdentifierName()) {
-				path[0] = role_name;
-				info.SetQualifiedName(QualifiedName::FromPath(std::move(path)));
+			if (RoleSpecKeyword(context, written).IsValid()) {
+				if (path.size() == 2 && path[0].GetIdentifierName() == written) {
+					path[0] = authorization->name;
+					info.SetQualifiedName(QualifiedName::FromPath(std::move(path)));
+				}
+				info.authorization = authorization->name;
 			}
-			info.authorization = role_name;
 		}
 		BindCreateSchema(info);
 		auto &role = CheckAs();
-		auto owner = role.role;
-		if (!role.IsSystem() && !info.authorization.empty()) {
-			owner = RoleId(context, info.authorization);
-		}
+		const auto owner = authorization && !role.IsSystem() ? authorization->oid : role.role;
 		RequireDatabasePrivilege(context, role, info.SchemaCatalog(), AclMode::Create);
 		if (!role.IsSystem()) {
 			if (!role.CanSet(owner)) {
@@ -1529,8 +1524,7 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 		break;
 	}
 	case CatalogType::ROLE_ENTRY:
-		CheckCreateRole(stmt.info->Cast<CreateRoleInfo>());
-		stmt.info->SetQualifiedName(ClusterName(context, stmt.info->GetQualifiedName()));
+		BindCreateRole(stmt.info->Cast<CreateRoleInfo>());
 		result.plan = make_uniq<LogicalCreate>(LogicalOperatorType::LOGICAL_CREATE_ROLE, std::move(stmt.info));
 		break;
 	case CatalogType::TABLESPACE_ENTRY:

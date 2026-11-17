@@ -1057,10 +1057,10 @@ bool ShellState::TryForwardClusterDdl(const duckdb::SQLStatement &statement, con
 		forward = cluster_wide(statement.Cast<duckdb::CreateStatement>().info->type);
 		break;
 	case duckdb::StatementType::ALTER_STATEMENT:
-		forward = cluster_wide(statement.Cast<duckdb::AlterStatement>().infos[0]->GetCatalogType());
+		forward = cluster_wide(statement.Cast<duckdb::AlterStatement>().info->GetCatalogType());
 		break;
 	case duckdb::StatementType::DROP_STATEMENT:
-		forward = cluster_wide(statement.Cast<duckdb::DropStatement>().infos[0]->type);
+		forward = cluster_wide(statement.Cast<duckdb::DropStatement>().info->type);
 		break;
 	default:
 		break;

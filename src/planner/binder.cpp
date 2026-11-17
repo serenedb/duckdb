@@ -392,15 +392,15 @@ void Binder::RecordCalls(optional_ptr<vector<FunctionCall>> calls) {
 	global_binder_state->recorded_calls = calls;
 }
 
-void Binder::RecordCall(const CatalogEntry &function, idx_t overload) {
+void Binder::RecordCall(const CatalogEntry &function) {
 	if (global_binder_state->recorded_calls) {
-		global_binder_state->recorded_calls->push_back(FunctionCallOf(context, function, overload));
+		global_binder_state->recorded_calls->push_back(FunctionCallOf(function));
 	}
 }
 
-void Binder::RecordCall(MacroCatalogEntry &macro, const MacroFunction &overload, idx_t overload_index) {
+void Binder::RecordCall(MacroCatalogEntry &macro, const MacroFunction &overload) {
 	if (global_binder_state->recorded_calls) {
-		global_binder_state->recorded_calls->push_back(MacroCallOf(context, macro, overload, overload_index));
+		global_binder_state->recorded_calls->push_back(MacroCallOf(macro, overload));
 	}
 }
 
@@ -471,12 +471,11 @@ void Binder::CheckTableRead(TableBinding &binding, TableCatalogEntry &table) {
 	if (table_ref_use == TableRefUse::UTILITY_TARGET || IsUnowned(table)) {
 		return;
 	}
-	auto &permissions = EffectivePermissions(context, table);
-	if (role.Can(CatalogType::TABLE_ENTRY, permissions, AclMode::Select)) {
+	if (role.Can(CatalogType::TABLE_ENTRY, table.permissions, AclMode::Select)) {
 		return;
 	}
-	binding.column_read = make_shared_ptr<ColumnReadCheck>(
-	    table, permissions, role, table_ref_use != TableRefUse::DML_TARGET, EffectiveColumnAcls(context, table));
+	binding.column_read =
+	    make_shared_ptr<ColumnReadCheck>(table, table.permissions, role, table_ref_use != TableRefUse::DML_TARGET);
 	global_binder_state->column_reads.push_back(binding.column_read);
 }
 

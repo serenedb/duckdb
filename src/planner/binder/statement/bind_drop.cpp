@@ -117,8 +117,7 @@ void Binder::BindDrop(DropInfo &info, StatementProperties &properties) {
 		BindDropTrigger(info, properties);
 		break;
 	case CatalogType::ROLE_ENTRY:
-		CheckDropRole(info);
-		info.SetQualifiedName(ClusterName(context, info.GetQualifiedName()));
+		BindDropRole(info);
 		break;
 	case CatalogType::TABLESPACE_ENTRY:
 		break;
@@ -154,10 +153,14 @@ BoundStatement Binder::Bind(DropStatement &stmt) {
 	BoundStatement result;
 
 	auto &properties = GetStatementProperties();
-	for (auto &info : stmt.infos) {
+	auto infos = stmt.info->SplitObjects();
+	if (infos.empty()) {
+		infos.push_back(std::move(stmt.info));
+	}
+	for (auto &info : infos) {
 		BindDrop(*info, properties);
 	}
-	result.plan = make_uniq<LogicalDrop>(std::move(stmt.infos));
+	result.plan = make_uniq<LogicalDrop>(std::move(infos));
 	result.names = {"Success"};
 	result.types = {LogicalType::BOOLEAN};
 

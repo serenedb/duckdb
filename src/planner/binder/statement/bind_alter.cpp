@@ -291,14 +291,18 @@ BoundStatement Binder::Bind(AlterStatement &stmt) {
 	result.names = {"Success"};
 	result.types = {LogicalType::BOOLEAN};
 	GetStatementProperties().return_type = StatementReturnType::NOTHING;
-	for (auto &info : stmt.infos) {
+	auto infos = stmt.info->SplitObjects();
+	if (infos.empty()) {
+		infos.push_back(std::move(stmt.info));
+	}
+	for (auto &info : infos) {
 		if (auto plan = BindAlter(info)) {
-			D_ASSERT(stmt.infos.size() == 1);
+			D_ASSERT(infos.size() == 1);
 			result.plan = std::move(plan);
 			return result;
 		}
 	}
-	result.plan = make_uniq<LogicalAlter>(std::move(stmt.infos));
+	result.plan = make_uniq<LogicalAlter>(std::move(infos));
 	return result;
 }
 
@@ -328,11 +332,18 @@ unique_ptr<LogicalOperator> Binder::BindAlter(unique_ptr<AlterInfo> &info) {
 
 	if (info->type == AlterType::SET_COMMENT &&
 	    (info->GetCatalogType() == CatalogType::DATABASE_ENTRY || info->GetCatalogType() == CatalogType::ROLE_ENTRY)) {
+		const auto type = info->GetCatalogType();
 		if (Catalog::GetSystemCatalog(context).IsDuckCatalog()) {
 			throw NotImplementedException("Adding comments to %ss is not implemented",
-			                              info->GetCatalogType() == CatalogType::DATABASE_ENTRY ? "database" : "role");
+			                              type == CatalogType::DATABASE_ENTRY ? "database" : "role");
 		}
-		CheckSharedObjectComment(*info);
+		auto &name = info->GetQualifiedName().Name();
+		if (!ClusterEntry(context, CheckAs(), type, name, EntryUse::OWN,
+		                  type == CatalogType::DATABASE_ENTRY ? OnEntryNotFound::RETURN_NULL
+		                                                      : OnEntryNotFound::THROW_EXCEPTION)) {
+			context.WarnUser(StringUtil::Format("database \"%s\" does not exist", name.GetIdentifierName()));
+			info->if_not_found = OnEntryNotFound::RETURN_NULL;
+		}
 		info->SetQualifiedName(ClusterName(context, info->GetQualifiedName()));
 		return nullptr;
 	}
@@ -355,10 +366,16 @@ unique_ptr<LogicalOperator> Binder::BindAlter(unique_ptr<AlterInfo> &info) {
 	if (info->type == AlterType::ALTER_TABLESPACE) {
 		return nullptr;
 	}
-
-	if (info->type == AlterType::ALTER_PERMISSIONS || info->type == AlterType::ALTER_ROLE ||
-	    info->type == AlterType::ALTER_DATABASE_SETTINGS) {
-		BindPrivilegeAlter(*info, properties);
+	if (info->type == AlterType::ALTER_ROLE) {
+		BindAlterRole(info->Cast<AlterRoleInfo>());
+		return nullptr;
+	}
+	if (info->type == AlterType::ALTER_DATABASE_SETTINGS) {
+		BindAlterDatabaseSettings(info->Cast<AlterDatabaseSettingsInfo>());
+		return nullptr;
+	}
+	if (info->type == AlterType::ALTER_PERMISSIONS) {
+		BindAlterPermissions(info->Cast<AlterPermissionsInfo>(), properties);
 		return nullptr;
 	}
 

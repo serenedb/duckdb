@@ -205,16 +205,16 @@ bool ColumnReadCheck::Allowed() const {
 }
 
 bool ColumnReadCheck::CanRead(idx_t column_index) const {
-	const auto acl = ColumnAclAt(entry, column_acls, column_index);
+	const auto acl = ColumnAclAt(entry, column_index);
 	return role.CanColumns(permissions, AclMode::Select, std::span<const std::span<const AclItem>>(&acl, 1));
 }
 
 bool ColumnReadCheck::CanReadAny() const {
-	if (!column_acls && entry.type != CatalogType::VIEW_ENTRY) {
+	if (entry.type != CatalogType::VIEW_ENTRY) {
 		auto &table = entry.Cast<TableCatalogEntry>();
 		return role.CanAnyColumn(permissions, AclMode::Select, table.GetColumns());
 	}
-	auto &rows = column_acls ? *column_acls : entry.Cast<ViewCatalogEntry>().column_acls;
+	auto &rows = entry.Cast<ViewCatalogEntry>().column_acls;
 	return std::any_of(rows.begin(), rows.end(), [&](const ColumnAcl &column) {
 		return (role.HeldModes(column.acl) & AclMode::Select) != AclMode::NoRights;
 	});

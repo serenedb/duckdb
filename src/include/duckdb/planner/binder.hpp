@@ -488,8 +488,8 @@ public:
 	void BindStoredDefinition();
 	void BindSharedDefinition();
 	void RecordCalls(optional_ptr<vector<FunctionCall>> calls);
-	void RecordCall(const CatalogEntry &function, idx_t overload);
-	void RecordCall(MacroCatalogEntry &macro, const MacroFunction &overload, idx_t overload_index);
+	void RecordCall(const CatalogEntry &function);
+	void RecordCall(MacroCatalogEntry &macro, const MacroFunction &overload);
 	void RequireIndexCalls(TableCatalogEntry &table, optional_ptr<const vector<LogicalIndex>> changed);
 	void BindAsFunctionBody(const SelectStatement &statement);
 	void UseFunctionSearchPath(const vector<string> &config);
@@ -505,11 +505,10 @@ public:
 	BoundRoutine BindRoutine(const RoutineReference &routine, EntryUse use, OnEntryNotFound if_not_found);
 	CatalogEntry &ResolveDatabaseEntry(CatalogType type, AlterInfo &info, EntryUse use);
 	void RequireResolvedTypeUsage(optional_ptr<const LogicalDependencyList> dependencies);
-	void CheckCreateRole(const CreateRoleInfo &info);
-	void CheckAlterRole(AlterRoleInfo &info);
-	void CheckDropRole(const DropInfo &info);
-	void CheckAlterDatabaseSettings(AlterDatabaseSettingsInfo &info);
-	void CheckSharedObjectComment(AlterInfo &info);
+	void BindCreateRole(CreateRoleInfo &info);
+	void BindAlterRole(AlterRoleInfo &info);
+	void BindDropRole(DropInfo &info);
+	void BindAlterDatabaseSettings(AlterDatabaseSettingsInfo &info);
 
 	void BeginSubqueryBind(Binder &parent, ExpressionBinder &binder);
 	//! The innermost enclosing scope
@@ -697,7 +696,7 @@ private:
 	//! and registers the catalog modification. IF EXISTS only guards the trigger, not the table.
 	void BindDropTrigger(DropInfo &info, StatementProperties &properties);
 	void BindDrop(DropInfo &info, StatementProperties &properties);
-	void BindPrivilegeAlter(AlterInfo &info, StatementProperties &properties);
+	void BindAlterPermissions(AlterPermissionsInfo &info, StatementProperties &properties);
 	void ResolveOwned(AlterInfo &info);
 	void BindRowIdColumns(TableCatalogEntry &table, LogicalGet &get, vector<unique_ptr<Expression>> &expressions);
 	//! Append references to the scanned pre-update (OLD) value of every physical column, in table order, to the
