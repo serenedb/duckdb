@@ -12,6 +12,6 @@
 
 namespace duckdb {
 
-enum class EntryUse : uint8_t { REFERENCE, OWN, RENAME, DROP };
+enum class EntryUse : uint8_t { REFERENCE, OWN, RENAME, DROP, CREATE };
 
 } // namespace duckdb

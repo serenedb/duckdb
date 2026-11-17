@@ -1088,6 +1088,22 @@ void RequireOwner(ClientContext &context, const RoleAccess &role, CatalogEntry &
 	RequireOwner(role, entry, owner);
 }
 
+static void RequireSchemaCreate(ClientContext &context, const RoleAccess &role, SchemaCatalogEntry &schema) {
+	if (role.is_superuser) {
+		return;
+	}
+	if (schema.ParentCatalog().GetAttached().IsTemporary()) {
+		auto &database = ClientData::Get(context).default_database;
+		auto entry = ClusterEntry(context, CatalogType::DATABASE_ENTRY, database);
+		if (entry && !role.Can(CatalogType::DATABASE_ENTRY, entry->permissions, AclMode::CreateTemp)) {
+			throw PermissionException("permission denied to create temporary tables in database \"%s\"",
+			                          database.GetIdentifierName());
+		}
+		return;
+	}
+	RequireEntryPrivilege(role, schema, AclMode::Create);
+}
+
 void RequireUse(ClientContext &context, const RoleAccess &role, CatalogEntry &entry, EntryUse use,
                 optional_ptr<MacroFunction> overload) {
 	switch (use) {
@@ -1120,24 +1136,9 @@ void RequireUse(ClientContext &context, const RoleAccess &role, CatalogEntry &en
 		}
 		return;
 	}
-	}
-}
-
-void RequireCreate(ClientContext &context, const RoleAccess &role, SchemaCatalogEntry &schema, const CreateInfo &info,
-                   const Identifier &name) {
-	RequireSchemaCreate(context, role, schema);
-	if (role.is_superuser || (info.on_conflict != OnCreateConflict::REPLACE_ON_CONFLICT &&
-	                          info.on_conflict != OnCreateConflict::ALTER_ON_CONFLICT)) {
+	case EntryUse::CREATE:
+		RequireSchemaCreate(context, role, entry.Cast<SchemaCatalogEntry>());
 		return;
-	}
-	const bool merged_overloads =
-	    info.on_conflict == OnCreateConflict::ALTER_ON_CONFLICT &&
-	    (info.type == CatalogType::MACRO_ENTRY || info.type == CatalogType::TABLE_MACRO_ENTRY);
-	if (merged_overloads) {
-		return;
-	}
-	if (auto existing = schema.GetEntry(schema.catalog.GetCatalogTransaction(context), info.type, name)) {
-		RequireOwner(context, role, *existing);
 	}
 }
 
@@ -1284,22 +1285,6 @@ void RequireUserSchema(const SchemaCatalogEntry &schema, const Identifier &name)
 		    StringUtil::Format("permission denied to create \"%s.%s\"", schema.name.GetIdentifierName(),
 		                       name.GetIdentifierName()));
 	}
-}
-
-void RequireSchemaCreate(ClientContext &context, const RoleAccess &role, SchemaCatalogEntry &schema) {
-	if (role.is_superuser) {
-		return;
-	}
-	if (schema.ParentCatalog().GetAttached().IsTemporary()) {
-		auto &database = ClientData::Get(context).default_database;
-		auto entry = ClusterEntry(context, CatalogType::DATABASE_ENTRY, database);
-		if (entry && !role.Can(CatalogType::DATABASE_ENTRY, entry->permissions, AclMode::CreateTemp)) {
-			throw PermissionException("permission denied to create temporary tables in database \"%s\"",
-			                          database.GetIdentifierName());
-		}
-		return;
-	}
-	RequireEntryPrivilege(role, schema, AclMode::Create);
 }
 
 void RequireTypeUsage(ClientContext &context, const RoleAccess &role, const LogicalType &type, Catalog &catalog) {

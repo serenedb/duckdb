@@ -449,7 +449,7 @@ public:
 	QualifiedName BindTableName(const QualifiedName &name);
 	//! Resolve the (possibly nested) name of a CREATE SCHEMA statement into a canonical [catalog, parents..., schema]
 	void BindCreateSchema(CreateSchemaInfo &info);
-	SchemaCatalogEntry &BindSchema(CreateInfo &info);
+	SchemaCatalogEntry &BindSchema(CreateInfo &info, EntryUse use);
 	SchemaCatalogEntry &BindCreateFunctionInfo(CreateInfo &info);
 	SchemaCatalogEntry &BindCreateTriggerInfo(CreateTriggerInfo &info);
 	SchemaCatalogEntry &BindCreateJobInfo(CreateJobInfo &info);
