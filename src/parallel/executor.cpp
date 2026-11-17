@@ -334,6 +334,11 @@ void Executor::InitializeInternal(PhysicalOperator &plan) {
 	}
 }
 
+bool Executor::IsCancelled() {
+	lock_guard<mutex> elock(executor_lock);
+	return cancelled;
+}
+
 void Executor::CancelTasks() {
 	task.reset();
 	{
