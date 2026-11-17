@@ -3,7 +3,6 @@
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/table_function_catalog_entry.hpp"
-#include "duckdb/catalog/catalog_entry/view_catalog_entry.hpp"
 #include "duckdb/parser/expression/columnref_expression.hpp"
 #include "duckdb/parser/tableref/subqueryref.hpp"
 #include "duckdb/planner/bind_context.hpp"
@@ -181,43 +180,14 @@ EntryBinding::EntryBinding(BindingAlias alias, vector<LogicalType> types_p, vect
 
 BindResult EntryBinding::Bind(ColumnRefExpression &colref, idx_t depth) {
 	column_t column_index;
-	if (column_read && TryGetBindingIndex(colref.GetColumnName(), column_index)) {
-		column_read->Read(column_index);
+	if (need && TryGetBindingIndex(colref.GetColumnName(), column_index)) {
+		need->Select(column_index);
 	}
 	return Binding::Bind(colref, depth);
 }
 
 optional_ptr<StandardEntry> EntryBinding::GetStandardEntry() {
 	return &entry;
-}
-
-void ColumnReadCheck::Read(idx_t column_index) {
-	if (std::find(columns.begin(), columns.end(), column_index) == columns.end()) {
-		columns.push_back(column_index);
-	}
-}
-
-bool ColumnReadCheck::Allowed() const {
-	if (columns.empty()) {
-		return !require_any || CanReadAny();
-	}
-	return std::all_of(columns.begin(), columns.end(), [&](idx_t column) { return CanRead(column); });
-}
-
-bool ColumnReadCheck::CanRead(idx_t column_index) const {
-	const auto acl = ColumnAclAt(entry, column_index);
-	return role.CanColumns(permissions, AclMode::Select, std::span<const std::span<const AclItem>>(&acl, 1));
-}
-
-bool ColumnReadCheck::CanReadAny() const {
-	if (entry.type != CatalogType::VIEW_ENTRY) {
-		auto &table = entry.Cast<TableCatalogEntry>();
-		return role.CanAnyColumn(permissions, AclMode::Select, table.GetColumns());
-	}
-	auto &rows = entry.Cast<ViewCatalogEntry>().column_acls;
-	return std::any_of(rows.begin(), rows.end(), [&](const ColumnAcl &column) {
-		return (role.HeldModes(column.acl) & AclMode::Select) != AclMode::NoRights;
-	});
 }
 
 TableBinding::TableBinding(BindingAlias alias, vector<LogicalType> types_p, vector<Identifier> names_p,
@@ -396,8 +366,8 @@ BindResult TableBinding::Bind(ColumnRefExpression &colref, idx_t depth) {
 		// normal column: fetch type from base column
 		col_type = types[column_index];
 		SetBoundColumnAlias(colref);
-		if (column_read) {
-			column_read->Read(column_index);
+		if (need) {
+			need->Select(column_index);
 		}
 	}
 	ColumnBinding binding = GetColumnBinding(column_index);

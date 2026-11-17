@@ -272,14 +272,6 @@ struct MacroFunctionLookup {
 	optional_ptr<ScalarMacroCatalogEntry> macro;
 };
 
-struct RequiredPrivilege {
-	reference<TableCatalogEntry> table;
-	RoleAccess role;
-	AclMode mode;
-	vector<LogicalIndex> columns;
-	bool any_column;
-};
-
 struct IndexWrite {
 	reference<TableCatalogEntry> table;
 	RoleAccess role;
@@ -299,11 +291,10 @@ struct GlobalBinderState {
 	idx_t macro_type_probing = 0;
 	unordered_map<idx_t, RoleAccess> role_access;
 	optional_ptr<vector<FunctionCall>> recorded_calls;
-	vector<RequiredPrivilege> required_privileges;
+	vector<unique_ptr<RelationNeed>> relation_needs;
 	vector<IndexWrite> index_writes;
 	//! Statement properties
 	StatementProperties prop;
-	vector<shared_ptr<ColumnReadCheck>> column_reads;
 	//! Binding mode
 	BindingMode mode = BindingMode::STANDARD_BINDING;
 	bool ignore_expression_errors = false;
@@ -496,9 +487,10 @@ public:
 	TableRefUse table_ref_use = TableRefUse::READ;
 	optional_ptr<const MergeQueryNode> on_conflict_merge;
 	BoundStatement BindTarget(TableRef &ref, TableRefUse use);
-	void CheckTableRead(TableBinding &binding, TableCatalogEntry &table);
-	void RequirePrivilege(TableCatalogEntry &table, AclMode mode, vector<LogicalIndex> columns, bool any_column);
-	void RequireColumnPrivilege(TableCatalogEntry &table, AclMode mode, const vector<Identifier> &names, idx_t leading);
+	optional_ptr<RelationNeed> NeedOf(const StandardEntry &relation);
+	optional_ptr<RelationNeed> ReadNeed(const StandardEntry &relation);
+	static void AddColumns(vector<idx_t> &columns, const TableCatalogEntry &table, const vector<Identifier> &names,
+	                       idx_t leading);
 	void AdoptPrivilegeChecks(Binder &other);
 	void CheckPrivileges();
 	Catalog &SubscriptionCatalog(const Identifier &catalog_name);
