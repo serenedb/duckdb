@@ -35,6 +35,12 @@ struct InnerProductOp {
 	}
 };
 
+void MaxSimAccumulate(const float *query, idx_t query_count, const float *doc, idx_t doc_count, idx_t dim, float *best);
+void MaxSimAccumulate(const double *query, idx_t query_count, const double *doc, idx_t doc_count, idx_t dim,
+                      double *best);
+float MaxSimSum(const float *best, idx_t count);
+double MaxSimSum(const double *best, idx_t count);
+
 struct NegativeInnerProductOp {
 	static constexpr bool ALLOW_EMPTY = true;
 
