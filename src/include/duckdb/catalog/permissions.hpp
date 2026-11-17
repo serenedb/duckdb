@@ -227,6 +227,13 @@ struct RoleAccess {
 	AclMode GrantableModes(std::span<const AclItem> acl) const;
 };
 
+struct ActingRoles {
+	optional_ptr<const RoleAccess> lookups;
+	optional_ptr<const RoleAccess> privileges;
+	optional_ptr<const RoleAccess> current_user;
+	bool security_definer = false;
+};
+
 struct RelationNeed {
 	RelationNeed(const StandardEntry &relation_p, const RoleAccess &role_p) : relation(relation_p), role(role_p) {
 	}

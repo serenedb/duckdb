@@ -52,14 +52,12 @@ shared_ptr<Binder> Binder::CreateBinder(ClientContext &context, optional_ptr<Bin
 Binder::Binder(ClientContext &context, shared_ptr<Binder> parent_p, BinderType binder_type)
     : context(context), bind_context(*this), parent(std::move(parent_p)), binder_type(binder_type),
       global_binder_state(parent ? parent->global_binder_state : make_shared_ptr<GlobalBinderState>()),
-      entry_retriever(context) {
+      entry_retriever(context, acting) {
 	if (parent) {
 		entry_retriever.Inherit(parent->entry_retriever);
 		inside_subquery = parent->inside_subquery;
 		macro_binding = parent->macro_binding;
-		check_as = parent->check_as;
-		current_role = parent->current_role;
-		security_definer_body = parent->security_definer_body;
+		acting = parent->acting;
 		if (binder_type != BinderType::VIEW_BINDER) {
 			// inherit expression binders from parent
 			active_binders = parent->active_binders;
@@ -338,11 +336,11 @@ bool Binder::InViewBody() const {
 }
 
 const RoleAccess &Binder::CheckAs() const {
-	return check_as ? *check_as : context.CurrentRole();
+	return acting.privileges ? *acting.privileges : context.CurrentRole();
 }
 
 const RoleAccess &Binder::CurrentRole() const {
-	return current_role ? *current_role : context.CurrentRole();
+	return acting.current_user ? *acting.current_user : context.CurrentRole();
 }
 
 optional_idx Binder::CallerRole() const {
@@ -363,25 +361,18 @@ const RoleAccess &Binder::FunctionBodyRole(optional_idx owner) {
 }
 
 void Binder::BindAsFunctionBody(const RoleAccess &role) {
-	check_as = &role;
-	current_role = &role;
-	entry_retriever.SetCheckAs(&role);
-}
-
-void Binder::InheritRoles(Binder &other) {
-	check_as = other.check_as;
-	current_role = other.current_role;
-	security_definer_body = other.security_definer_body;
-	entry_retriever.SetCheckAs(other.entry_retriever.GetCheckAs());
+	acting.lookups = &role;
+	acting.privileges = &role;
+	acting.current_user = &role;
 }
 
 void Binder::BindUnchecked() {
-	check_as = &RoleAccess::System();
-	current_role = &RoleAccess::System();
+	acting.privileges = &RoleAccess::System();
+	acting.current_user = &RoleAccess::System();
 }
 
 void Binder::BindStoredDefinition() {
-	entry_retriever.SetCheckAs(&RoleAccess::System());
+	acting.lookups = &RoleAccess::System();
 }
 
 void Binder::BindSharedDefinition() {
@@ -431,25 +422,20 @@ void Binder::BindAsFunctionBody(const SelectStatement &statement) {
 	if (!CheckAs().IsSystem()) {
 		BindAsFunctionBody(FunctionBodyRole(statement.function_owner));
 	}
-	security_definer_body |= statement.function_owner.IsValid();
+	acting.security_definer |= statement.function_owner.IsValid();
 	if (statement.function_config) {
 		UseFunctionSearchPath(*statement.function_config);
 	}
 }
 
-BinderScope::BinderScope(Binder &binder_p)
-    : binder(binder_p), check_as(binder.check_as), current_role(binder.current_role),
-      lookups(binder.EntryRetriever().GetCheckAs()), security_definer_body(binder.security_definer_body) {
+BinderScope::BinderScope(Binder &binder_p) : binder(binder_p), acting(binder.acting) {
 }
 
 BinderScope::~BinderScope() {
 	if (caller_path) {
 		binder.EntryRetriever().SwapSearchPath(*caller_path);
 	}
-	binder.check_as = check_as;
-	binder.current_role = current_role;
-	binder.EntryRetriever().SetCheckAs(lookups);
-	binder.security_definer_body = security_definer_body;
+	binder.acting = acting;
 }
 
 void BinderScope::UseFunctionSearchPath(const vector<string> &config) {
@@ -960,7 +946,7 @@ BoundStatement Binder::BindReturning(QueryNode &node, vector<unique_ptr<ParsedEx
 	}
 	const auto table_column_count = bound_columns.size();
 
-	binder->InheritRoles(*this);
+	binder->acting = acting;
 	binder->table_ref_use =
 	    global_binder_state->trigger_base_nodes.count(node) ? TableRefUse::UTILITY_TARGET : TableRefUse::DML_TARGET;
 	binder->bind_context.AddBaseTable(update_table_index, alias, names, types, bound_columns, table,

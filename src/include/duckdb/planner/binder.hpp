@@ -466,16 +466,13 @@ public:
 	void AddBoundView(ViewCatalogEntry &view);
 	bool InViewBody() const;
 
-	optional_ptr<const RoleAccess> check_as;
-	optional_ptr<const RoleAccess> current_role;
-	bool security_definer_body = false;
+	ActingRoles acting;
 	const RoleAccess &CheckAs() const;
 	const RoleAccess &CurrentRole() const;
 	optional_idx CallerRole() const;
 	const RoleAccess &AccessOf(idx_t role);
 	const RoleAccess &FunctionBodyRole(optional_idx owner);
 	void BindAsFunctionBody(const RoleAccess &role);
-	void InheritRoles(Binder &other);
 	void BindUnchecked();
 	void BindStoredDefinition();
 	void BindSharedDefinition();
@@ -934,10 +931,7 @@ public:
 
 private:
 	Binder &binder;
-	optional_ptr<const RoleAccess> check_as;
-	optional_ptr<const RoleAccess> current_role;
-	optional_ptr<const RoleAccess> lookups;
-	bool security_definer_body;
+	ActingRoles acting;
 	unique_ptr<CatalogEntryRetriever> caller_path;
 };
 
