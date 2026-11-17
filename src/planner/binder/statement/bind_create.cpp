@@ -492,6 +492,35 @@ void Binder::MergeMacroOverloads(CreateInfo &info) {
 	info.on_conflict = OnCreateConflict::ALTER_ON_CONFLICT;
 }
 
+static bool BindsOnItsOwn(ExpressionBinder &binder, const ParsedExpression &expr) {
+	auto copy = expr.Copy();
+	try {
+		return !binder.Bind(copy, 0, false).HasError();
+	} catch (const std::exception &ex) {
+		const ErrorData error(ex);
+		if (error.Type() == ExceptionType::INTERRUPT || error.Type() == ExceptionType::INTERNAL ||
+		    error.Type() == ExceptionType::OUT_OF_MEMORY || Exception::InvalidatesDatabase(error.Type())) {
+			throw;
+		}
+		return false;
+	}
+}
+
+static void BindMacroBodyPieces(ExpressionBinder &binder, ParsedExpression &expr, bool bind_subqueries) {
+	if (expr.GetExpressionClass() == ExpressionClass::SUBQUERY) {
+		if (bind_subqueries && BindsOnItsOwn(binder, expr)) {
+			return;
+		}
+		ParsedExpressionIterator::EnumerateQueryNodeChildren(
+		    *expr.Cast<SubqueryExpression>().Subquery()->node,
+		    [&](unique_ptr<ParsedExpression> &child) { BindMacroBodyPieces(binder, *child, false); });
+	} else if (BindsOnItsOwn(binder, expr)) {
+		return;
+	}
+	ParsedExpressionIterator::EnumerateChildren(
+	    expr, [&](ParsedExpression &child) { BindMacroBodyPieces(binder, child, bind_subqueries); });
+}
+
 SchemaCatalogEntry &Binder::BindCreateFunctionInfo(CreateInfo &info) {
 	//! Set to identify exact matches in macro overloads
 	struct VectorOfLogicalTypeHash {
@@ -797,6 +826,13 @@ SchemaCatalogEntry &Binder::BindCreateFunctionInfo(CreateInfo &info) {
 			} catch (const std::exception &ex) {
 				error = ErrorData(ex);
 			}
+			if (should_create_dependencies && error.HasError() &&
+			    error.Type() == ExceptionType::PARAMETER_NOT_RESOLVED) {
+				auto body = function->Cast<ScalarMacroFunction>().expression->Copy();
+				reference_parameters(body, false);
+				ExpressionBinder::QualifyColumnNames(*this, body);
+				BindMacroBodyPieces(binder, *body, true);
+			}
 		} else {
 			D_ASSERT(info.type == CatalogType::TABLE_MACRO_ENTRY);
 			auto dummy_binder = CreateBinder(context, this);
@@ -863,6 +899,20 @@ SchemaCatalogEntry &Binder::BindCreateFunctionInfo(CreateInfo &info) {
 				}
 			} catch (const std::exception &ex) {
 				error = ErrorData(ex);
+			}
+			if (should_create_dependencies && error.HasError() &&
+			    error.Type() == ExceptionType::PARAMETER_NOT_RESOLVED) {
+				auto lookup_binder = CreateBinder(context, this);
+				lookup_binder->SetCatalogLookupCallback(binder_callback);
+				BoundSelectNode lookup_node;
+				SelectBinder lookup_expression_binder(*lookup_binder, context, lookup_node);
+				lookup_expression_binder.SetCatalogLookupCallback(binder_callback);
+				auto body = function->Cast<TableMacroFunction>().query_node->Copy();
+				ParsedExpressionIterator::EnumerateQueryNodeChildren(*body, [&](unique_ptr<ParsedExpression> &child) {
+					reference_parameters(child, true);
+					ExpressionBinder::QualifyColumnNames(*lookup_binder, child);
+					BindMacroBodyPieces(lookup_expression_binder, *child, false);
+				});
 			}
 		}
 
