@@ -646,7 +646,7 @@
   {
     "class": "AclItem",
     "includes": [
-      "duckdb/catalog/permissions.hpp"
+      "duckdb/catalog/acl.hpp"
     ],
     "members": [
       {
@@ -675,7 +675,7 @@
   {
     "class": "Membership",
     "includes": [
-      "duckdb/catalog/permissions.hpp"
+      "duckdb/catalog/role_graph.hpp"
     ],
     "members": [
       {
@@ -709,7 +709,7 @@
   {
     "class": "ColumnPrivilege",
     "includes": [
-      "duckdb/catalog/permissions.hpp"
+      "duckdb/catalog/acl.hpp"
     ],
     "members": [
       {
@@ -728,7 +728,7 @@
   {
     "class": "DefaultAcl",
     "includes": [
-      "duckdb/catalog/permissions.hpp"
+      "duckdb/catalog/acl.hpp"
     ],
     "members": [
       {
@@ -757,7 +757,7 @@
   {
     "class": "Permissions",
     "includes": [
-      "duckdb/catalog/permissions.hpp"
+      "duckdb/catalog/acl.hpp"
     ],
     "members": [
       {
@@ -786,7 +786,7 @@
   {
     "class": "GrantRows",
     "includes": [
-      "duckdb/catalog/permissions.hpp"
+      "duckdb/catalog/acl.hpp"
     ],
     "members": [
       {
@@ -800,7 +800,7 @@
   {
     "class": "GrantRow",
     "includes": [
-      "duckdb/catalog/permissions.hpp"
+      "duckdb/catalog/acl.hpp"
     ],
     "members": [
       {
@@ -829,7 +829,7 @@
   {
     "class": "ColumnAcl",
     "includes": [
-      "duckdb/catalog/permissions.hpp"
+      "duckdb/catalog/acl.hpp"
     ],
     "members": [
       {

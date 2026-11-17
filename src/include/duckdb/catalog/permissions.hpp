@@ -8,224 +8,24 @@
 
 #pragma once
 
-#include "duckdb/catalog/catalog_transaction.hpp"
-#include "duckdb/catalog/privileges.hpp"
-#include "duckdb/common/constants.hpp"
-#include "duckdb/common/enums/catalog_type.hpp"
+#include "duckdb/catalog/acl.hpp"
+#include "duckdb/catalog/role_graph.hpp"
 #include "duckdb/common/enums/entry_use.hpp"
 #include "duckdb/common/enums/on_entry_not_found.hpp"
-#include "duckdb/common/enums/role_capability.hpp"
-#include "duckdb/common/identifier.hpp"
-#include "duckdb/common/mutex.hpp"
-#include "duckdb/common/optional_idx.hpp"
-#include "duckdb/common/optional_ptr.hpp"
-#include "duckdb/common/serializer/deserializer.hpp"
-#include "duckdb/common/serializer/serializer.hpp"
-#include "duckdb/common/shared_ptr.hpp"
-#include "duckdb/common/string.hpp"
 #include "duckdb/common/types.hpp"
-#include "duckdb/common/unordered_map.hpp"
-#include "duckdb/common/vector.hpp"
 #include "duckdb/parser/qualified_name.hpp"
 
-#include <algorithm>
 #include <functional>
-#include <span>
 
 namespace duckdb {
 class AttachedDatabase;
 class Catalog;
 class CatalogEntry;
 class ClientContext;
-class ColumnList;
-struct CreateInfo;
-class DuckCatalog;
-class FunctionEntry;
-class MacroCatalogEntry;
 class MacroFunction;
 class RoleEntry;
 class SchemaCatalogEntry;
 class StandardEntry;
-class TableCatalogEntry;
-
-constexpr idx_t ACL_ID_PUBLIC = 0;
-
-DUCKDB_API AclMode FindPrivilege(std::string_view keyword);
-
-enum class RoleOption : uint32_t {
-	None = 0x0,
-	Superuser = 0x1,
-	Inherit = 0x2,
-	CreateRole = 0x4,
-	CreateDb = 0x8,
-	Login = 0x10,
-	Replication = 0x20,
-	BypassRls = 0x40,
-};
-
-constexpr RoleOption operator|(RoleOption a, RoleOption b) {
-	return static_cast<RoleOption>(static_cast<uint32_t>(a) | static_cast<uint32_t>(b));
-}
-constexpr RoleOption operator&(RoleOption a, RoleOption b) {
-	return static_cast<RoleOption>(static_cast<uint32_t>(a) & static_cast<uint32_t>(b));
-}
-constexpr RoleOption operator~(RoleOption a) {
-	return static_cast<RoleOption>(~static_cast<uint32_t>(a));
-}
-constexpr bool HasOption(RoleOption options, RoleOption option) {
-	return (options & option) == option;
-}
-
-struct RoleOptionKeyword {
-	RoleOption option;
-	std::string_view keyword;
-};
-
-inline constexpr RoleOptionKeyword ROLE_OPTIONS[] = {
-    {RoleOption::Superuser, "SUPERUSER"}, {RoleOption::CreateDb, "CREATEDB"}, {RoleOption::CreateRole, "CREATEROLE"},
-    {RoleOption::Inherit, "INHERIT"},     {RoleOption::Login, "LOGIN"},       {RoleOption::Replication, "REPLICATION"},
-    {RoleOption::BypassRls, "BYPASSRLS"},
-};
-
-struct AclItem {
-	idx_t grantee = 0;
-	idx_t grantor = 0;
-	AclMode privs = AclMode::NoRights;
-	AclMode grant_option = AclMode::NoRights;
-
-	bool operator==(const AclItem &rhs) const = default;
-	bool GrantsNothing() const {
-		return privs == AclMode::NoRights && grant_option == AclMode::NoRights;
-	}
-
-	void Serialize(Serializer &serializer) const;
-	static AclItem Deserialize(Deserializer &deserializer);
-};
-
-struct Membership {
-	idx_t role = 0;
-	idx_t grantor = 0;
-	bool admin_option = false;
-	bool inherit_option = true;
-	bool set_option = true;
-
-	bool operator==(const Membership &rhs) const = default;
-
-	void Serialize(Serializer &serializer) const;
-	static Membership Deserialize(Deserializer &deserializer);
-};
-
-struct DefaultAcl {
-	idx_t role = 0;
-	idx_t scope = 0;
-	CatalogType objtype = CatalogType::INVALID;
-	vector<AclItem> acl;
-
-	bool operator==(const DefaultAcl &rhs) const = default;
-
-	void Serialize(Serializer &serializer) const;
-	static DefaultAcl Deserialize(Deserializer &deserializer);
-};
-
-struct ColumnPrivilege {
-	Identifier column;
-	AclMode privileges = AclMode::NoRights;
-
-	bool operator==(const ColumnPrivilege &rhs) const = default;
-
-	void Serialize(Serializer &serializer) const;
-	static ColumnPrivilege Deserialize(Deserializer &deserializer);
-};
-
-struct ColumnAcl {
-	Identifier column;
-	vector<AclItem> acl;
-
-	bool operator==(const ColumnAcl &rhs) const = default;
-
-	void Serialize(Serializer &serializer) const;
-	static ColumnAcl Deserialize(Deserializer &deserializer);
-};
-
-struct GrantRow {
-	CatalogType kind = CatalogType::INVALID;
-	idx_t oid = 0;
-	string name;
-	vector<AclItem> acl;
-
-	bool operator==(const GrantRow &rhs) const = default;
-	bool Is(CatalogType kind, idx_t oid, std::string_view name) const;
-
-	void Serialize(Serializer &serializer) const;
-	static GrantRow Deserialize(Deserializer &deserializer);
-};
-
-struct GrantRows {
-	vector<GrantRow> rows;
-
-	bool operator==(const GrantRows &rhs) const = default;
-	std::span<const GrantRow> OfKind(CatalogType kind) const;
-
-	void Serialize(Serializer &serializer) const;
-	static shared_ptr<GrantRows> Deserialize(Deserializer &deserializer);
-};
-
-struct Permissions {
-	idx_t owner = 0;
-	vector<AclItem> acl;
-	vector<DefaultAcl> defaults;
-	shared_ptr<GrantRows> rows;
-
-	bool operator==(const Permissions &rhs) const;
-
-	const GrantRows &Rows() const;
-	GrantRows &MutableRows();
-
-	static bool TryParsePrivilege(std::string_view keyword, CatalogType acl_class, AclMode &result);
-	static vector<AclItem> AclDefault(CatalogType acl_class, idx_t owner);
-
-	optional_ptr<const GrantRow> FindRow(CatalogType kind, idx_t oid, std::string_view name = {}) const;
-	std::span<const AclItem> RowAcl(CatalogType kind, idx_t oid, std::string_view name = {}) const;
-	void AssignOwner(idx_t new_owner, CatalogType objtype, optional_ptr<const Permissions> database,
-	                 optional_idx schema);
-
-	void Serialize(Serializer &serializer) const;
-	static Permissions Deserialize(Deserializer &deserializer);
-};
-
-struct RoleAccess {
-	idx_t role = 0;
-	RoleOption options = RoleOption::None;
-	RoleCapability capabilities = RoleCapability::None;
-	bool is_superuser = false;
-	std::span<const uint64_t> closure_filter;
-	std::span<const idx_t> closure;
-	std::span<const idx_t> settable;
-
-	DUCKDB_API static const RoleAccess &System();
-	bool IsSystem() const {
-		return this == &System();
-	}
-	bool Has(RoleOption option) const {
-		return HasOption(options, option);
-	}
-	bool Has(RoleCapability capability) const {
-		return is_superuser || (capabilities & capability) == capability;
-	}
-	bool Uses(idx_t other) const;
-	bool MemberOf(idx_t other) const {
-		return is_superuser || Uses(other);
-	}
-	bool Owns(idx_t owner) const {
-		return MemberOf(owner);
-	}
-	bool CanSet(idx_t other) const;
-	bool Can(CatalogType type, const Permissions &permissions, AclMode need) const;
-	bool CanAny(CatalogType type, const Permissions &permissions, AclMode need) const;
-	bool CanColumns(const StandardEntry &relation, AclMode need, std::span<const idx_t> columns) const;
-	AclMode HeldModes(std::span<const AclItem> acl) const;
-	AclMode GrantableModes(std::span<const AclItem> acl) const;
-};
 
 struct ActingRoles {
 	optional_ptr<const RoleAccess> lookups;
@@ -248,63 +48,6 @@ struct RelationNeed {
 	vector<idx_t> updated;
 };
 
-struct RoleMemberships {
-	vector<idx_t> members;
-	vector<idx_t> admin;
-
-	bool IsMember(idx_t role) const {
-		return std::binary_search(members.begin(), members.end(), role);
-	}
-	bool IsAdminOf(idx_t role) const {
-		return std::binary_search(admin.begin(), admin.end(), role);
-	}
-};
-
-class SecuritySnapshot {
-public:
-	struct Role {
-		idx_t role = 0;
-		RoleOption options = RoleOption::None;
-		RoleCapability capabilities = RoleCapability::None;
-		vector<idx_t> closure;
-		vector<idx_t> settable;
-	};
-	struct Node {
-		string name;
-		RoleOption options = RoleOption::None;
-		RoleCapability capabilities = RoleCapability::None;
-		vector<Membership> member_of;
-	};
-
-	SecuritySnapshot(unordered_map<idx_t, Node> nodes, unordered_map<string, idx_t> database_owners,
-	                 idx_t database_owner_role);
-	~SecuritySnapshot();
-
-	SecuritySnapshot(const SecuritySnapshot &) = delete;
-	SecuritySnapshot &operator=(const SecuritySnapshot &) = delete;
-
-	DUCKDB_API static shared_ptr<const SecuritySnapshot> Build(Catalog &cluster, CatalogTransaction transaction);
-	shared_ptr<const SecuritySnapshot> ForDatabase(const Identifier &database) const;
-
-	optional_ptr<const RoleAccess> Access(idx_t role) const;
-	RoleAccess AccessOf(idx_t role) const;
-	optional_ptr<const Node> Find(idx_t role) const;
-	optional_idx FindByName(std::string_view name) const;
-	std::string_view NameOf(idx_t role) const;
-	RoleMemberships MembershipsOf(idx_t role) const;
-	optional_idx BestAdmin(idx_t member, idx_t role) const;
-
-private:
-	vector<idx_t> arena;
-	vector<RoleAccess> roles;
-	unordered_map<idx_t, Node> nodes;
-	unordered_map<string, idx_t> by_name;
-	unordered_map<string, idx_t> database_owners;
-	idx_t database_owner_role;
-	mutable mutex derived_lock;
-	mutable unordered_map<idx_t, shared_ptr<const SecuritySnapshot>> derived;
-};
-
 struct FunctionCall {
 	CatalogType type = CatalogType::INVALID;
 	string name;
@@ -314,7 +57,6 @@ struct FunctionCall {
 };
 
 DUCKDB_API bool IsUnowned(const CatalogEntry &entry);
-DUCKDB_API std::span<const AclItem> FindColumnAcl(const vector<ColumnAcl> &columns, const Identifier &column);
 DUCKDB_API bool CanUseSchema(const RoleAccess &role, const CatalogEntry &schema);
 DUCKDB_API void CheckBuiltinCall(ClientContext &context, const RoleAccess &role, const CatalogEntry &function);
 DUCKDB_API bool MayCallFunction(ClientContext &context, const RoleAccess &role, const CatalogEntry &function);
