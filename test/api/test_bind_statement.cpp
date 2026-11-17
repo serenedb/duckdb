@@ -190,11 +190,8 @@ TEST_CASE("BindStatement parameter inference and coverage", "[api][bind_statemen
 	REQUIRE(FindParam(s3, "1").type == LogicalType::INTEGER);
 	REQUIRE(FindParam(s3, "2").type == LogicalType::VARCHAR);
 
-	// Gapped positional ($1, $3, no $2): both present, keyed by their index.
-	auto s4 = BindOne(con, "SELECT * FROM t WHERE a = $1 AND a = $3");
-	REQUIRE(s4.parameters.size() == 2);
-	REQUIRE(FindParam(s4, "1").type == LogicalType::INTEGER);
-	REQUIRE(FindParam(s4, "3").type == LogicalType::INTEGER);
+	REQUIRE_THROWS_WITH(BindOne(con, "SELECT * FROM t WHERE a = $1 AND a = $3"),
+	                    Catch::Contains("could not determine data type of parameter $2"));
 
 	// Out-of-order textual placement: each parameter typed by its own context.
 	auto s5 = BindOne(con, "SELECT * FROM t WHERE b = $2 AND a = $1");

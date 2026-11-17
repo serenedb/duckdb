@@ -731,7 +731,7 @@ TEST_CASE("V2: sql_statement parameter names come from the parse tree", "[capi_v
 
 TEST_CASE("V2: sql_statement parameter names are statement_bind's, in its order", "[capi_v2][sql_statement]") {
 	EnvFixture fx;
-	for (const char *sql : {"SELECT $a + $b", "SELECT $3 + $1", "SELECT $Name + $name"}) {
+	for (const char *sql : {"SELECT $a + $b", "SELECT $2 + $1", "SELECT $Name + $name"}) {
 		auto stmt = StmtParseOne(fx.conn, sql);
 		duckdb_v2_schema_handle out = nullptr;
 		duckdb_v2_schema_handle params = nullptr;
