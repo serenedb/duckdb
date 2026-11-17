@@ -57,7 +57,6 @@ unique_ptr<BoundPragmaInfo> Binder::BindPragma(PragmaInfo &info, QueryErrorConte
 		error.AddQueryLocation(error_context);
 		error.Throw();
 	}
-	CheckBuiltinCall(context, CurrentRole(), *entry, bound_idx.GetIndex());
 	auto bound_function = *entry->functions.GetFunctionByOffset(bound_idx.GetIndex());
 	return make_uniq<BoundPragmaInfo>(std::move(bound_function), std::move(params), std::move(named_parameters));
 }

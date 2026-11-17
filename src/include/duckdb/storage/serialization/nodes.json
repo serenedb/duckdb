@@ -822,11 +822,6 @@
         "id": 103,
         "name": "acl",
         "type": "vector<AclItem>"
-      },
-      {
-        "id": 104,
-        "name": "columns",
-        "type": "vector<ColumnAcl>"
       }
     ],
     "pointer_type": "none"

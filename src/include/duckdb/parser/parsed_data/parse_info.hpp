@@ -50,6 +50,12 @@ enum class ParseInfoType : uint8_t {
 	DISCONNECT_INFO
 };
 
+struct ObjectReference {
+	QualifiedName name;
+	vector<LogicalType> func_parameters;
+	bool has_func_args = false;
+};
+
 struct ParseInfo {
 	explicit ParseInfo(ParseInfoType info_type) : info_type(info_type) {
 	}

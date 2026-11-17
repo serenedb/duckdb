@@ -8,21 +8,18 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformDropStatement(PEGTransf
                                                                        unique_ptr<DropStatement> drop_entries,
                                                                        const optional<bool> &drop_behavior) {
 	if (drop_behavior) {
-		for (auto &info : drop_entries->infos) {
-			info->cascade = *drop_behavior;
-		}
+		drop_entries->info->cascade = *drop_behavior;
 	}
 	return std::move(drop_entries);
 }
 
 unique_ptr<DropStatement> PEGTransformerFactory::MakeDropStatement(unique_ptr<DropInfo> info,
                                                                    vector<QualifiedName> names) {
-	auto result = make_uniq<DropStatement>();
 	for (auto &name : names) {
-		auto target = info->Copy();
-		target->SetQualifiedName(std::move(name));
-		result->infos.push_back(std::move(target));
+		info->objects.push_back(ObjectReference {std::move(name)});
 	}
+	auto result = make_uniq<DropStatement>();
+	result->info = std::move(info);
 	return result;
 }
 
@@ -73,24 +70,20 @@ unique_ptr<DropStatement> PEGTransformerFactory::TransformDropFunction(PEGTransf
                                                                        ParseResult &parse_result) {
 	auto &list_pr = parse_result.Cast<ListParseResult>();
 	auto result = make_uniq<DropStatement>();
+	auto &info = *result->info;
+	info.type = CatalogType::MACRO_ENTRY;
 	// FunctionTypeMacro forwards a bool meaning is_procedure (PROCEDURE vs FUNCTION/MACRO).
 	auto &kind = list_pr.Child<ListParseResult>(0);
-	const bool is_procedure = transformer.Transform<bool>(kind);
-	const bool is_macro = kind.Child<ChoiceParseResult>(0).GetResult().Name() == "FunctionTypeMacroKeyword";
-	bool if_exists = list_pr.Child<OptionalParseResult>(1).HasResult();
-	auto function_list = ExtractParseResultsFromList(list_pr.Child<ListParseResult>(2));
-	for (idx_t i = 0; i < function_list.size(); i++) {
-		auto info = make_uniq<DropInfo>();
-		info->type = CatalogType::MACRO_ENTRY;
-		info->is_procedure = is_procedure;
-		info->is_macro = is_macro;
-		auto &item_pr = function_list[i].get().Cast<ListParseResult>();
-		auto function = transformer.Transform<QualifiedName>(item_pr.Child<ListParseResult>(0));
-		info->SetQualifiedName(function);
-		info->has_func_args =
-		    TransformFunctionArgumentTypes(transformer, item_pr.Child<OptionalParseResult>(1), info->func_parameters);
-		info->if_not_found = if_exists ? OnEntryNotFound::RETURN_NULL : OnEntryNotFound::THROW_EXCEPTION;
-		result->infos.push_back(std::move(info));
+	info.is_procedure = transformer.Transform<bool>(kind);
+	info.is_macro = kind.Child<ChoiceParseResult>(0).GetResult().Name() == "FunctionTypeMacroKeyword";
+	info.if_not_found = list_pr.Child<OptionalParseResult>(1).HasResult() ? OnEntryNotFound::RETURN_NULL
+	                                                                      : OnEntryNotFound::THROW_EXCEPTION;
+	for (auto &item : ExtractParseResultsFromList(list_pr.Child<ListParseResult>(2))) {
+		auto &item_pr = item.get().Cast<ListParseResult>();
+		ObjectReference function {transformer.Transform<QualifiedName>(item_pr.Child<ListParseResult>(0))};
+		function.has_func_args = TransformFunctionArgumentTypes(transformer, item_pr.Child<OptionalParseResult>(1),
+		                                                        function.func_parameters);
+		info.objects.push_back(std::move(function));
 	}
 	return result;
 }
@@ -207,7 +200,7 @@ unique_ptr<DropStatement> PEGTransformerFactory::TransformDropSecret(PEGTransfor
 		extra_drop_info->secret_storage = drop_secret_storage->GetIdentifierName();
 	}
 	info->extra_drop_info = std::move(extra_drop_info);
-	result->infos.push_back(std::move(info));
+	result->info = std::move(info);
 	return result;
 }
 
@@ -231,7 +224,7 @@ unique_ptr<DropStatement> PEGTransformerFactory::TransformDropTrigger(PEGTransfo
 	extra_info->base_table = std::move(base_table_name);
 	info->extra_drop_info = std::move(extra_info);
 
-	result->infos.push_back(std::move(info));
+	result->info = std::move(info);
 	return result;
 }
 

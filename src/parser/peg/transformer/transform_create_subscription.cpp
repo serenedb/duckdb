@@ -114,24 +114,29 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformDropSubscriptionStateme
 		info->if_not_found = OnEntryNotFound::RETURN_NULL;
 	}
 	transformer.TransformOptional<bool>(list_pr, 4, info->cascade);
-	return make_uniq<DropStatement>(std::move(info));
+	auto result = make_uniq<DropStatement>();
+	result->info = std::move(info);
+	return std::move(result);
 }
 
 unique_ptr<SQLStatement> PEGTransformerFactory::TransformAlterSubscriptionStatement(PEGTransformer &transformer,
                                                                                     ParseResult &parse_result) {
 	auto &list_pr = parse_result.Cast<ListParseResult>();
 	Identifier name(transformer.Transform<string>(list_pr.GetChild(2)));
+	auto result = make_uniq<AlterStatement>();
 	auto &action = SubscriptionUnwrap(list_pr.GetChild(3));
 	if (action.type == ParseResultType::KEYWORD) {
-		return make_uniq<AlterStatement>(make_uniq<AlterSubscriptionInfo>(
+		result->info = make_uniq<AlterSubscriptionInfo>(
 		    SubscriptionKeyword(action) == "enable" ? AlterSubscriptionType::ENABLE : AlterSubscriptionType::DISABLE,
-		    name));
+		    name);
+		return std::move(result);
 	}
 	auto &action_list = action.Cast<ListParseResult>();
 	if (action_list.Name() == "SubscriptionOwnerAction") {
 		auto info = make_uniq<AlterPermissionsInfo>(CatalogType::SUBSCRIPTION_ENTRY, QualifiedName(name));
 		info->new_owner = TransformOwnerRoleSpec(transformer, action_list.GetChild(2)).GetIdentifierName();
-		return make_uniq<AlterStatement>(std::move(info));
+		result->info = std::move(info);
+		return std::move(result);
 	}
 	unique_ptr<AlterSubscriptionInfo> info;
 	if (action_list.Name() == "SubscriptionConnectionAction") {
@@ -159,7 +164,8 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformAlterSubscriptionStatem
 		info = make_uniq<AlterSubscriptionInfo>(AlterSubscriptionType::SET_OPTIONS, name);
 		SubscriptionOptionListInto(transformer, action_list.GetChild(1), info->options);
 	}
-	return make_uniq<AlterStatement>(std::move(info));
+	result->info = std::move(info);
+	return std::move(result);
 }
 
 } // namespace duckdb

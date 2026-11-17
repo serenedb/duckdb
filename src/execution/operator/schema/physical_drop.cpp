@@ -1,5 +1,6 @@
 #include "duckdb/execution/operator/schema/physical_drop.hpp"
 #include "duckdb/catalog/catalog_entry/schema_catalog_entry.hpp"
+#include "duckdb/common/reference_map.hpp"
 #include "duckdb/execution/operator/helper/physical_reset.hpp"
 #include "duckdb/main/client_data.hpp"
 #include "duckdb/main/config.hpp"
@@ -108,7 +109,9 @@ static optional_ptr<CatalogEntry> DropTarget(ClientContext &context, const DropI
 		                          OnEntryNotFound::RETURN_NULL)
 		    .get();
 	}
+	case CatalogType::DATABASE_ENTRY:
 	case CatalogType::FOREIGN_SERVER_ENTRY:
+	case CatalogType::SUBSCRIPTION_ENTRY:
 		return nullptr;
 	default:
 		return Catalog::GetEntry(context, EntryLookupInfo(target.type, target.GetQualifiedName()),
@@ -116,49 +119,90 @@ static optional_ptr<CatalogEntry> DropTarget(ClientContext &context, const DropI
 	}
 }
 
-static void DropTogether(ClientContext &context, const vector<unique_ptr<DropInfo>> &infos) {
-	if (infos.size() == 1) {
-		DropCatalog(context, *infos[0]).DropEntry(context, *infos[0]);
-		return;
-	}
-	vector<reference<DropInfo>> unresolved;
-	catalog_entry_vector_t entries;
+static void DropTogether(ClientContext &context, const vector<reference<DropInfo>> &infos) {
+	vector<reference<Catalog>> catalogs;
+	reference_map_t<Catalog, catalog_entry_vector_t> entries;
 	catalog_entry_map_t<vector<reference<DropInfo>>> targets;
-	auto resolve = [&](DropInfo &target) {
+	for (auto &target : infos) {
 		auto entry = DropTarget(context, target);
-		if (!entry || (!entries.empty() && &entries[0].get().ParentCatalog() != &entry->ParentCatalog())) {
-			unresolved.push_back(target);
-			return;
+		if (!entry) {
+			DropCatalog(context, target).DropEntry(context, target);
+			continue;
 		}
 		auto &listed = targets[*entry];
 		if (listed.empty()) {
-			entries.push_back(*entry);
+			auto &catalog_entries = entries[entry->ParentCatalog()];
+			if (catalog_entries.empty()) {
+				catalogs.push_back(entry->ParentCatalog());
+			}
+			catalog_entries.push_back(*entry);
 		}
 		listed.push_back(target);
-	};
-	for (auto &target : infos) {
-		resolve(*target);
 	}
-	for (auto &target : unresolved) {
-		DropCatalog(context, target).DropEntry(context, target);
+	const bool cascade =
+	    std::all_of(infos.begin(), infos.end(), [](const reference<DropInfo> &info) { return info.get().cascade; });
+	for (auto &catalog : catalogs) {
+		auto &catalog_entries = entries[catalog];
+		auto transaction = catalog.get().GetCatalogTransaction(context);
+		if (!cascade && catalog_entries.size() > 1) {
+			catalog.get().RefuseDroppingTogether(transaction, catalog_entries);
+		}
+		vector<idx_t> together;
+		for (auto &entry : catalog_entries) {
+			together.push_back(entry.get().oid);
+		}
+		for (auto &entry : catalog.get().DropOrder(transaction, catalog_entries)) {
+			for (auto &target : targets[entry]) {
+				auto drop = target.get().Copy();
+				drop->if_not_found = OnEntryNotFound::RETURN_NULL;
+				drop->dropped_together = together;
+				DropCatalog(context, *drop).DropEntry(context, *drop);
+			}
+		}
 	}
-	if (entries.empty()) {
+}
+
+static void DropPreparedStatement(ExecutionContext &context, const DropInfo &info) {
+	auto &name = info.GetQualifiedName().Name();
+	if (info.extra_drop_info) {
+		Discard(context, info.extra_drop_info->Cast<ExtraDropDiscardInfo>().target);
+	} else if (name.empty()) {
+		DeallocateAll(context.client);
+	} else if (!ClientData::Get(context.client).prepared_statements.erase(name) &&
+	           info.if_not_found == OnEntryNotFound::THROW_EXCEPTION) {
+		throw CatalogException::MissingPreparedStatement(name);
+	}
+}
+
+static void DropSecret(ExecutionContext &context, const DropInfo &info) {
+	// Note: the schema param is used to optionally pass the storage to drop from
+	D_ASSERT(info.extra_drop_info);
+	auto &extra_info = info.extra_drop_info->Cast<ExtraDropSecretInfo>();
+	SecretManager::Get(context.client)
+	    .DropSecretByName(context.client, info.GetQualifiedName().Name(), info.if_not_found, extra_info.persist_mode,
+	                      Identifier(extra_info.secret_storage));
+}
+
+static void DropTrigger(ExecutionContext &context, const DropInfo &info) {
+	// Triggers are stored per-table; must be dropped through the table, not the schema
+	if (!info.extra_drop_info) {
+		throw InternalException("DROP TRIGGER: missing extra_drop_info (expected ExtraDropTriggerInfo)");
+	}
+	auto &trigger_extra = info.extra_drop_info->Cast<ExtraDropTriggerInfo>();
+	if (!trigger_extra.base_table) {
+		throw InternalException("DROP TRIGGER: ExtraDropTriggerInfo has no base_table");
+	}
+	auto &base_table_ref = trigger_extra.base_table->Cast<BaseTableRef>();
+	auto &table_entry = Catalog::GetEntry<TableCatalogEntry>(context.client, base_table_ref.GetQualifiedName());
+	auto transaction = table_entry.ParentCatalog().GetCatalogTransaction(context.client);
+	if (info.if_not_found != OnEntryNotFound::THROW_EXCEPTION &&
+	    !table_entry.GetTrigger(transaction, info.GetQualifiedName().Name())) {
 		return;
 	}
-	auto &catalog = entries[0].get().ParentCatalog();
-	if (!infos[0]->cascade && entries.size() > 1) {
-		catalog.RefuseDroppingTogether(catalog.GetCatalogTransaction(context), entries);
-	}
-	vector<idx_t> together;
-	for (auto &entry : entries) {
-		together.push_back(entry.get().oid);
-	}
-	for (auto &entry : catalog.DropOrder(catalog.GetCatalogTransaction(context), entries)) {
-		for (auto &target : targets[entry]) {
-			auto drop = target.get().Copy();
-			drop->if_not_found = OnEntryNotFound::RETURN_NULL;
-			drop->dropped_together = together;
-			DropCatalog(context, *drop).DropEntry(context, *drop);
+	if (!table_entry.DropTrigger(transaction, info.GetQualifiedName().Name(), info.cascade)) {
+		if (info.if_not_found == OnEntryNotFound::THROW_EXCEPTION) {
+			throw CatalogException("Trigger with name %s does not exist on table %s", info.GetQualifiedName().Name(),
+			                       base_table_ref.Table());
 		}
 	}
 }
@@ -168,63 +212,32 @@ static void DropTogether(ClientContext &context, const vector<unique_ptr<DropInf
 //===--------------------------------------------------------------------===//
 SourceResultType PhysicalDrop::GetDataInternal(ExecutionContext &context, DataChunk &chunk,
                                                OperatorSourceInput &input) const {
-	auto &info = *infos[0];
-	switch (info.type) {
-	case CatalogType::PREPARED_STATEMENT: {
-		auto &name = info.GetQualifiedName().Name();
-		if (info.extra_drop_info) {
-			Discard(context, info.extra_drop_info->Cast<ExtraDropDiscardInfo>().target);
-		} else if (name.empty()) {
-			DeallocateAll(context.client);
-		} else if (!ClientData::Get(context.client).prepared_statements.erase(name) &&
-		           info.if_not_found == OnEntryNotFound::THROW_EXCEPTION) {
-			throw CatalogException::MissingPreparedStatement(name);
-		}
-		break;
-	}
-	case CatalogType::SECRET_ENTRY: {
-		// Note: the schema param is used to optionally pass the storage to drop from
-		D_ASSERT(info.extra_drop_info);
-		auto &extra_info = info.extra_drop_info->Cast<ExtraDropSecretInfo>();
-		SecretManager::Get(context.client)
-		    .DropSecretByName(context.client, info.GetQualifiedName().Name(), info.if_not_found,
-		                      extra_info.persist_mode, Identifier(extra_info.secret_storage));
-		break;
-	}
-	case CatalogType::TRIGGER_ENTRY: {
-		// Triggers are stored per-table; must be dropped through the table, not the schema
-		if (!info.extra_drop_info) {
-			throw InternalException("DROP TRIGGER: missing extra_drop_info (expected ExtraDropTriggerInfo)");
-		}
-		auto &trigger_extra = info.extra_drop_info->Cast<ExtraDropTriggerInfo>();
-		if (!trigger_extra.base_table) {
-			throw InternalException("DROP TRIGGER: ExtraDropTriggerInfo has no base_table");
-		}
-		auto &base_table_ref = trigger_extra.base_table->Cast<BaseTableRef>();
-		auto &table_entry = Catalog::GetEntry<TableCatalogEntry>(context.client, base_table_ref.GetQualifiedName());
-		auto transaction = table_entry.ParentCatalog().GetCatalogTransaction(context.client);
-		if (info.if_not_found != OnEntryNotFound::THROW_EXCEPTION &&
-		    !table_entry.GetTrigger(transaction, info.GetQualifiedName().Name())) {
+	vector<reference<DropInfo>> roles;
+	vector<reference<DropInfo>> together;
+	for (auto &info : infos) {
+		switch (info->type) {
+		case CatalogType::PREPARED_STATEMENT:
+			DropPreparedStatement(context, *info);
+			break;
+		case CatalogType::SECRET_ENTRY:
+			DropSecret(context, *info);
+			break;
+		case CatalogType::TRIGGER_ENTRY:
+			DropTrigger(context, *info);
+			break;
+		case CatalogType::ROLE_ENTRY:
+			roles.push_back(*info);
+			break;
+		default:
+			together.push_back(*info);
 			break;
 		}
-		if (!table_entry.DropTrigger(transaction, info.GetQualifiedName().Name(), info.cascade)) {
-			if (info.if_not_found == OnEntryNotFound::THROW_EXCEPTION) {
-				throw CatalogException("Trigger with name %s does not exist on table %s",
-				                       info.GetQualifiedName().Name(), base_table_ref.Table());
-			}
-		}
-		break;
 	}
-	case CatalogType::ROLE_ENTRY: {
-		auto &catalog = Catalog::GetDDLCatalog(context.client, info.type, info.GetQualifiedName().Catalog());
-		catalog.DropRole(catalog.GetCatalogTransaction(context.client), infos);
-		break;
+	if (!roles.empty()) {
+		auto &catalog = Catalog::GetSystemCatalog(context.client);
+		catalog.DropRole(catalog.GetCatalogTransaction(context.client), roles);
 	}
-	default:
-		DropTogether(context.client, infos);
-		break;
-	}
-
+	DropTogether(context.client, together);
 	return SourceResultType::FINISHED;
 }
 

@@ -98,7 +98,6 @@ struct ForeignDataWrapper {
 
 struct Language {
 	idx_t oid = 0;
-	bool trusted = false;
 };
 
 //! NOTE: DBConfigOptions is mostly deprecated.
@@ -254,12 +253,6 @@ public:
 	case_insensitive_map_t<Language> languages;
 	idx_t bootstrap_role = 0;
 	idx_t database_owner_role = 0;
-	typedef string (*builtin_function_key_t)(const CatalogEntry &function, idx_t overload);
-	typedef string (*builtin_signature_key_t)(const CatalogEntry &function, const vector<LogicalType> &arguments);
-	builtin_function_key_t builtin_function_key = nullptr;
-	builtin_signature_key_t builtin_signature_key = nullptr;
-	typedef idx_t (*builtin_type_oid_t)(const LogicalType &type, string &name);
-	builtin_type_oid_t builtin_type_oid = nullptr;
 
 public:
 	DUCKDB_API static DBConfig &GetConfig(ClientContext &context);

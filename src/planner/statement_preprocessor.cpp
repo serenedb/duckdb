@@ -194,8 +194,9 @@ void StatementPreprocessor::ExpandTruncate(MultiStatement &multi_statement) cons
 	vector<unique_ptr<SQLStatement>> restarts;
 	for (auto &member : group) {
 		for (auto &sequence : Binder::TruncateIdentitySequences(context, member.get())) {
-			auto statement = make_uniq<AlterStatement>(make_uniq<RestartSequenceInfo>(
-			    AlterEntryData(std::move(sequence), OnEntryNotFound::THROW_EXCEPTION), optional<int64_t>()));
+			auto statement = make_uniq<AlterStatement>();
+			statement->info = make_uniq<RestartSequenceInfo>(
+			    AlterEntryData(std::move(sequence), OnEntryNotFound::THROW_EXCEPTION), optional<int64_t>());
 			statement->query = query;
 			restarts.push_back(std::move(statement));
 		}
@@ -215,7 +216,7 @@ void StatementPreprocessor::ResolveAddColumn(MultiStatement &multi_statement) co
 	if (statements.size() < 2 || statements[0]->type != StatementType::ALTER_STATEMENT) {
 		return;
 	}
-	auto &alter = *statements[0]->Cast<AlterStatement>().infos[0];
+	auto &alter = *statements[0]->Cast<AlterStatement>().info;
 	if (alter.type != AlterType::ALTER_TABLE ||
 	    alter.Cast<AlterTableInfo>().alter_table_type != AlterTableType::ADD_COLUMN) {
 		return;
@@ -263,7 +264,7 @@ void StatementPreprocessor::ResolveAddColumn(MultiStatement &multi_statement) co
 				step->Cast<UpdateStatement>().node->set_info->expressions[0] = NextvalOf(name);
 				step->query = step->ToString() + ";";
 			} else if (step->type == StatementType::ALTER_STATEMENT) {
-				auto &step_info = *step->Cast<AlterStatement>().infos[0];
+				auto &step_info = *step->Cast<AlterStatement>().info;
 				if (step_info.type == AlterType::ALTER_TABLE &&
 				    step_info.Cast<AlterTableInfo>().alter_table_type == AlterTableType::SET_DEFAULT) {
 					step_info.Cast<SetDefaultInfo>().expression = NextvalOf(name);

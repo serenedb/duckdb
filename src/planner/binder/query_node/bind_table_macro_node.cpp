@@ -49,7 +49,7 @@ unique_ptr<QueryNode> Binder::BindTableMacro(FunctionExpression &function, Macro
 		                      function.FunctionName().GetIdentifierName());
 	}
 	const bool owned = !IsUnowned(macro_func);
-	CheckMacroCall(context, CurrentRole(), macro_func, macro_def, bind_result.function_idx.GetIndex());
+	CheckMacroCall(context, CurrentRole(), macro_func, macro_def);
 	const auto owner = owned && macro_def.security_definer
 	                       ? optional_idx(macro_func.OverloadPermissions(macro_def).owner)
 	                       : optional_idx();

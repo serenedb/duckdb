@@ -20,9 +20,8 @@ public:
 
 public:
 	AlterStatement();
-	explicit AlterStatement(unique_ptr<AlterInfo> info);
 
-	vector<unique_ptr<AlterInfo>> infos;
+	unique_ptr<AlterInfo> info;
 
 protected:
 	AlterStatement(const AlterStatement &other);

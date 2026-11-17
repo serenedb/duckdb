@@ -28,8 +28,8 @@ AlterInfo::AlterInfo(AlterType type) : ParseInfo(TYPE), type(type) {
 AlterInfo::~AlterInfo() {
 }
 
-string AlterInfo::StatementToString(const vector<unique_ptr<AlterInfo>> &infos) const {
-	return ToString();
+vector<unique_ptr<AlterInfo>> AlterInfo::SplitObjects() {
+	return {};
 }
 
 AlterEntryData AlterInfo::GetAlterEntryData() const {
