@@ -1,0 +1,27 @@
+# name: test/sql/copy/csv/test_force_not_null_projection.test
+# description: force_not_null applies to the column it names whichever columns a scan projects and in which order
+# group: [csv]
+
+statement ok
+COPY (SELECT * FROM (VALUES (1, 'x', ''), (2, '', 'y'), (3, '', '')) t(a, b, c)) TO '{TEMP_DIR}/force_not_null_projection.csv' (HEADER false, QUOTE '');
+
+query IT
+SELECT a, c FROM read_csv('{TEMP_DIR}/force_not_null_projection.csv', force_not_null = ['c'], header = false, auto_detect = false, delim = ',', columns = {'a': 'INTEGER', 'b': 'VARCHAR', 'c': 'VARCHAR'}) ORDER BY a
+----
+1	(empty)
+2	y
+3	(empty)
+
+query TI
+SELECT c, a FROM read_csv('{TEMP_DIR}/force_not_null_projection.csv', force_not_null = ['c'], header = false, auto_detect = false, delim = ',', columns = {'a': 'INTEGER', 'b': 'VARCHAR', 'c': 'VARCHAR'}) ORDER BY a
+----
+(empty)	1
+y	2
+(empty)	3
+
+query TT
+SELECT c, b FROM read_csv('{TEMP_DIR}/force_not_null_projection.csv', force_not_null = ['c'], header = false, auto_detect = false, delim = ',', columns = {'a': 'INTEGER', 'b': 'VARCHAR', 'c': 'VARCHAR'}) ORDER BY ALL
+----
+(empty)	x
+(empty)	NULL
+y	NULL
