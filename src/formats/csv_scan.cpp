@@ -743,7 +743,8 @@ CsvScanGlobal::CsvScanGlobal(ClientContext &context_p, const CSVReaderOptions &o
 			column.parse_type = LogicalType::VARCHAR;
 			column.validate_utf8 = column.type.id() == LogicalTypeId::VARCHAR || column.type.IsNested();
 		}
-		column.force_not_null = i < options.force_not_null.size() && options.force_not_null[i];
+		column.force_not_null =
+		    column.file_column < options.force_not_null.size() && options.force_not_null[column.file_column];
 		columns.push_back(std::move(column));
 	}
 	filtered.assign(columns.size(), false);
@@ -2274,9 +2275,8 @@ void CsvScan::DecodeCell(const CsvScanColumn &column, Vector &vector, idx_t row)
 		return;
 	}
 	if (column.file_column >= csv_row.field_count) {
-		const bool padded_empty = options.null_padding && column.file_column < options.force_not_null.size() &&
-		                          options.force_not_null[column.file_column] &&
-		                          vector.GetType().InternalType() == PhysicalType::VARCHAR;
+		const bool padded_empty =
+		    options.null_padding && column.force_not_null && vector.GetType().InternalType() == PhysicalType::VARCHAR;
 		if (padded_empty) {
 			FlatVector::GetDataMutable<string_t>(vector)[row] = string_t();
 		} else {
@@ -2488,7 +2488,7 @@ bool CsvScan::DecodeLeanColumn(idx_t column_idx, idx_t first, idx_t count, DataC
 	source.quotes = cursor.quotes;
 	source.doubled = cursor.doubled;
 	source.padded = cursor.padded;
-	source.pad_empty = column.file_column < options.force_not_null.size() && options.force_not_null[column.file_column];
+	source.pad_empty = column.force_not_null;
 	source.allow_quoted_nulls = options.allow_quoted_nulls;
 	source.empty_only_null = global.empty_only_null;
 	source.null_strings = &global.null_strings;
