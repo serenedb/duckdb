@@ -8,6 +8,7 @@
 #include "duckdb/main/extension_helper.hpp"
 #include "duckdb/parallel/task_scheduler.hpp"
 #include "duckdb/storage/buffer_manager.hpp"
+#include "duckdb/storage/table/column_segment.hpp"
 #include "json_structure.hpp"
 #include "json_transform.hpp"
 #include "duckdb/common/multi_file/multi_file_list.hpp"
@@ -65,8 +66,55 @@ JSONScanGlobalState::JSONScanGlobalState(ClientContext &context, const JSONScanD
       enable_parallel_scans(total_file_count < system_threads) {
 }
 
+void JSONScanGlobalState::InitializeFilters(optional_ptr<TableFilterSet> table_filters) {
+	if (!table_filters) {
+		return;
+	}
+	for (auto &entry : *table_filters) {
+		Filter filter {entry.GetIndex(), optional_idx(), entry.Filter()};
+		for (idx_t i = 0; i < column_ids.size(); i++) {
+			if (column_ids[i] == filter.output_column) {
+				filter.name = i;
+			}
+		}
+		filters.push_back(filter);
+	}
+}
+
 JSONScanLocalState::JSONScanLocalState(ClientContext &context, JSONScanGlobalState &gstate)
     : scan_state(context, gstate.allocator, gstate.buffer_capacity) {
+	for (auto &filter : gstate.filters) {
+		filter_states.push_back(TableFilterState::Initialize(context, filter.filter.get()));
+	}
+	filter_selection.Initialize(STANDARD_VECTOR_SIZE);
+}
+
+idx_t JSONScanLocalState::ApplyFilters(JSONScanGlobalState &gstate, DataChunk &output, idx_t count,
+                                       bool filtered_columns_only) {
+	idx_t approved = count;
+	filter_selection.Initialize(nullptr);
+	for (idx_t i = 0; i < gstate.filters.size() && approved > 0; i++) {
+		auto &vector = output.data[gstate.filters[i].output_column];
+		FlatVector::SetSize(vector, count_t(count));
+		ColumnSegment::FilterSelection(filter_selection, vector, *filter_states[i], count, approved);
+	}
+	if (approved == count) {
+		return count;
+	}
+	for (idx_t i = 0; i < output.ColumnCount(); i++) {
+		if (filtered_columns_only) {
+			bool filtered = false;
+			for (auto &filter : gstate.filters) {
+				filtered = filtered || filter.output_column == i;
+			}
+			if (!filtered) {
+				continue;
+			}
+		}
+		output.data[i].Slice(filter_selection, approved);
+		output.data[i].Flatten(approved);
+	}
+	return approved;
 }
 
 JSONGlobalTableFunctionState::JSONGlobalTableFunctionState(ClientContext &context, const JSONScanData &json_data,
@@ -131,8 +179,8 @@ void JSONScan::TableFunctionDefaults(TableFunction &table_function) {
 	table_function.deserialize = Deserialize;
 
 	table_function.projection_pushdown = true;
-	table_function.filter_pushdown = false;
-	table_function.filter_prune = false;
+	table_function.filter_pushdown = true;
+	table_function.filter_prune = true;
 }
 
 void JSONScan::AddReadJSONParameters(TableFunction &table_function) {
@@ -434,7 +482,7 @@ void JSONScan::DeduplicateColumnNames(vector<Identifier> &names) {
 
 //! GeoJSON Features are read as two groups of columns: those taken from the Feature itself, and those taken from
 //! its "properties" object
-static bool TransformGeoJSONFeatures(yyjson_val *values[], yyjson_alc *alc, const idx_t count,
+static bool TransformGeoJSONFeatures(const JSONNode *values[], JSONTransformScratch &scratch, const idx_t count,
                                      JSONScanGlobalState &gstate, const vector<Vector *> &result_vectors,
                                      JSONTransformOptions &transform_options) {
 	D_ASSERT(gstate.feature_columns.size() == gstate.names.size());
@@ -457,17 +505,17 @@ static bool TransformGeoJSONFeatures(yyjson_val *values[], yyjson_alc *alc, cons
 	// "type", "properties" and "bbox" are consumed by the unnesting, so unknown keys are expected in both groups
 	bool success = true;
 	if (!feature_names.empty()) {
-		success = JSONTransform::TransformObject(values, alc, count, feature_names, feature_vectors, transform_options,
-		                                         feature_indices, false);
+		success = JSONTransform::TransformObject(values, scratch, count, feature_names, feature_vectors,
+		                                         transform_options, feature_indices, false);
 	}
 	if (success && !property_names.empty()) {
-		vector<yyjson_val *> property_values(count);
+		vector<const JSONNode *> property_values(count);
 		for (idx_t i = 0; i < count; i++) {
 			auto &val = values[i];
-			property_values[i] = val && unsafe_yyjson_is_obj(val) ? yyjson_obj_get(val, "properties") : nullptr;
+			property_values[i] = val ? val->Get(std::string_view("properties")) : nullptr;
 		}
-		success = JSONTransform::TransformObject(property_values.data(), alc, count, property_names, property_vectors,
-		                                         transform_options, property_indices, false);
+		success = JSONTransform::TransformObject(property_values.data(), scratch, count, property_names,
+		                                         property_vectors, transform_options, property_indices, false);
 	}
 	return success;
 }
@@ -489,14 +537,21 @@ static void FillFileRowNumbers(JSONReaderScanState &scan_state, JSONScanGlobalSt
 	}
 }
 
-void ReadJSONFunction(ClientContext &context, JSONReader &json_reader, JSONScanGlobalState &gstate,
-                      JSONScanLocalState &lstate, DataChunk &output) {
+static bool ReadJSONBatch(ClientContext &context, JSONReader &json_reader, JSONScanGlobalState &gstate,
+                          JSONScanLocalState &lstate, DataChunk &output) {
 	auto &scan_state = lstate.GetScanState();
 	D_ASSERT(RefersToSameObject(json_reader, *scan_state.current_reader));
 
-	const auto count = lstate.Read();
-	yyjson_val **values = scan_state.values;
+	auto count = lstate.Read();
+	const auto read = count;
+	const JSONNode **values = scan_state.values;
+	JSONTransformScratch scratch {scan_state.allocator, scan_state.writer};
 
+	const auto record_type = gstate.json_data.options.record_type;
+	bool late = record_type == JSONRecordType::RECORDS && !gstate.filters.empty() && !gstate.names.empty();
+	for (auto &filter : gstate.filters) {
+		late = late && filter.name.IsValid();
+	}
 	if (!gstate.names.empty()) {
 		vector<Vector *> result_vectors;
 		result_vectors.reserve(gstate.names.size());
@@ -504,19 +559,51 @@ void ReadJSONFunction(ClientContext &context, JSONReader &json_reader, JSONScanG
 			result_vectors.emplace_back(&output.data[i]);
 		}
 
-		D_ASSERT(gstate.json_data.options.record_type != JSONRecordType::AUTO_DETECT);
+		D_ASSERT(record_type != JSONRecordType::AUTO_DETECT);
 		bool success;
-		if (gstate.json_data.options.record_type == JSONRecordType::RECORDS) {
-			success = JSONTransform::TransformObject(values, scan_state.allocator.GetYYAlc(), count, gstate.names,
-			                                         result_vectors, lstate.transform_options, gstate.column_indices,
+		if (late) {
+			vector<Vector *> filter_vectors(result_vectors.size(), nullptr);
+			vector<Vector *> other_vectors = result_vectors;
+			for (auto &filter : gstate.filters) {
+				filter_vectors[filter.name.GetIndex()] = result_vectors[filter.name.GetIndex()];
+				other_vectors[filter.name.GetIndex()] = nullptr;
+			}
+			success = JSONTransform::TransformObject(values, scratch, count, gstate.names, filter_vectors,
+			                                         lstate.transform_options, gstate.column_indices,
+			                                         lstate.transform_options.error_unknown_key);
+			if (success) {
+				const auto approved = lstate.ApplyFilters(gstate, output, count, true);
+				if (approved != count) {
+					for (idx_t i = 0; i < approved; i++) {
+						const auto row = lstate.filter_selection.get_index(i);
+						values[i] = values[row];
+						scan_state.units[i] = scan_state.units[row];
+					}
+				}
+				auto options = lstate.transform_options;
+				options.error_duplicate_key = false;
+				options.error_missing_key = false;
+				success = JSONTransform::TransformObject(values, scratch, approved, gstate.names, other_vectors,
+				                                         options, gstate.column_indices, false);
+				if (!success) {
+					lstate.transform_options.error_message = options.error_message;
+					lstate.transform_options.object_index =
+					    approved != count ? lstate.filter_selection.get_index(options.object_index)
+					                      : options.object_index;
+				}
+				count = approved;
+			}
+		} else if (record_type == JSONRecordType::RECORDS) {
+			success = JSONTransform::TransformObject(values, scratch, count, gstate.names, result_vectors,
+			                                         lstate.transform_options, gstate.column_indices,
 			                                         lstate.transform_options.error_unknown_key);
 		} else if (gstate.json_data.options.record_type == JSONRecordType::FEATURES) {
-			success = TransformGeoJSONFeatures(values, scan_state.allocator.GetYYAlc(), count, gstate, result_vectors,
-			                                   lstate.transform_options);
+			success =
+			    TransformGeoJSONFeatures(values, scratch, count, gstate, result_vectors, lstate.transform_options);
 		} else {
 			D_ASSERT(gstate.json_data.options.record_type == JSONRecordType::VALUES);
-			success = JSONTransform::Transform(values, scan_state.allocator.GetYYAlc(), *result_vectors[0], count,
-			                                   lstate.transform_options, gstate.column_indices[0]);
+			success = JSONTransform::Transform(values, scratch, *result_vectors[0], count, lstate.transform_options,
+			                                   gstate.column_indices[0]);
 		}
 
 		if (!success) {
@@ -529,20 +616,31 @@ void ReadJSONFunction(ClientContext &context, JSONReader &json_reader, JSONScanG
 			          "'ignore_errors' to true.";
 			lstate.AddTransformError(lstate.transform_options.object_index,
 			                         lstate.transform_options.error_message + hint);
-			return;
+			return false;
 		}
 	}
 	FillFileRowNumbers(scan_state, gstate, count, output);
+	if (!late && !gstate.filters.empty()) {
+		count = lstate.ApplyFilters(gstate, output, count, false);
+	}
 	output.SetChildCardinality(count);
+	return count == 0 && read != 0;
 }
 
-void ReadJSONObjectsFunction(ClientContext &context, JSONReader &json_reader, JSONScanGlobalState &gstate,
-                             JSONScanLocalState &lstate, DataChunk &output) {
-	// Fetch next lines
+void ReadJSONFunction(ClientContext &context, JSONReader &json_reader, JSONScanGlobalState &gstate,
+                      JSONScanLocalState &lstate, DataChunk &output) {
+	while (ReadJSONBatch(context, json_reader, gstate, lstate, output)) {
+		output.Reset();
+	}
+}
+
+static bool ReadJSONObjectsBatch(ClientContext &context, JSONReader &json_reader, JSONScanGlobalState &gstate,
+                                 JSONScanLocalState &lstate, DataChunk &output) {
 	auto &scan_state = lstate.GetScanState();
 	D_ASSERT(RefersToSameObject(json_reader, *scan_state.current_reader));
 
-	const auto count = lstate.Read();
+	auto count = lstate.Read();
+	const auto read = count;
 	const auto units = scan_state.units;
 	const auto objects = scan_state.values;
 
@@ -559,7 +657,18 @@ void ReadJSONObjectsFunction(ClientContext &context, JSONReader &json_reader, JS
 	}
 
 	FillFileRowNumbers(scan_state, gstate, count, output);
+	if (!gstate.filters.empty()) {
+		count = lstate.ApplyFilters(gstate, output, count, false);
+	}
 	output.SetChildCardinality(count);
+	return count == 0 && read != 0;
+}
+
+void ReadJSONObjectsFunction(ClientContext &context, JSONReader &json_reader, JSONScanGlobalState &gstate,
+                             JSONScanLocalState &lstate, DataChunk &output) {
+	while (ReadJSONObjectsBatch(context, json_reader, gstate, lstate, output)) {
+		output.Reset();
+	}
 }
 
 } // namespace duckdb

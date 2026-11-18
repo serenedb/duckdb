@@ -2,12 +2,24 @@
 
 namespace duckdb {
 
+static inline optional<string_t> ExtractValueFromVal(const JSONNode *val, JSONFunctionLocalState &lstate,
+                                                     Vector &result) {
+	switch (val->type) {
+	case JSONValueType::JSON_NULL:
+	case JSONValueType::ARRAY:
+	case JSONValueType::OBJECT:
+		return nullopt;
+	default:
+		return JSONCommon::WriteVal(*val, lstate.writer, result);
+	}
+}
+
 static void ValueFunction(DataChunk &args, ExpressionState &state, Vector &result) {
-	JSONExecutors::BinaryExecute<string_t>(args, state, result, JSONCommon::JSONValue);
+	JSONExecutors::BinaryExecute<string_t>(args, state, result, ExtractValueFromVal);
 }
 
 static void ValueManyFunction(DataChunk &args, ExpressionState &state, Vector &result) {
-	JSONExecutors::ExecuteMany<string_t>(args, state, result, JSONCommon::JSONValue);
+	JSONExecutors::ExecuteMany<string_t>(args, state, result, ExtractValueFromVal);
 }
 
 static void GetValueFunctionsInternal(ScalarFunctionSet &set, const LogicalType &input_type) {

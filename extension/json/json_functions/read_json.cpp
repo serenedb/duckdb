@@ -103,7 +103,7 @@ public:
 			for (idx_t i = 0; i < next; i++) {
 				const auto &val = scan_state.values[i];
 				if (val) {
-					JSONStructure::ExtractStructure(val, node, true, options.geojson.value_or(false));
+					JSONStructure::ExtractStructure(*val, node, true, options.geojson.value_or(false));
 				}
 			}
 			remaining -= next;

@@ -148,64 +148,64 @@ Position ReadPosition(WKBReader &reader, const WKBHeader &header) {
 	return result;
 }
 
-void AppendOrdinates(yyjson_mut_doc *doc, yyjson_mut_val *arr, const Position &pos, const bool has_z) {
-	yyjson_mut_arr_add_real(doc, arr, pos.x);
-	yyjson_mut_arr_add_real(doc, arr, pos.y);
+void AppendOrdinates(JSONBuilder &builder, JSONBuildValue &arr, const Position &pos, const bool has_z) {
+	JSONBuilder::Append(arr, builder.Double(pos.x));
+	JSONBuilder::Append(arr, builder.Double(pos.y));
 	if (has_z) {
-		yyjson_mut_arr_add_real(doc, arr, pos.z);
+		JSONBuilder::Append(arr, builder.Double(pos.z));
 	}
 }
 
 //! Read a length-prefixed vertex run, appending one position array per vertex
-void ReadVertexArray(WKBReader &reader, const WKBHeader &header, yyjson_mut_doc *doc, yyjson_mut_val *arr) {
+void ReadVertexArray(WKBReader &reader, const WKBHeader &header, JSONBuilder &builder, JSONBuildValue &arr) {
 	const auto vert_count = reader.Read<uint32_t>();
 	for (uint32_t i = 0; i < vert_count; i++) {
 		const auto pos = ReadPosition(reader, header);
-		auto coord = yyjson_mut_arr(doc);
-		AppendOrdinates(doc, coord, pos, header.has_z);
-		yyjson_mut_arr_append(arr, coord);
+		auto coord = builder.Array();
+		AppendOrdinates(builder, *coord, pos, header.has_z);
+		JSONBuilder::Append(arr, coord);
 	}
 }
 
-void ToGeoJSONRecursive(WKBReader &reader, yyjson_mut_doc *doc, yyjson_mut_val *obj, const idx_t depth) {
+void ToGeoJSONRecursive(WKBReader &reader, JSONBuilder &builder, JSONBuildValue &obj, const idx_t depth) {
 	if (depth == Geometry::MAX_RECURSION_DEPTH) {
 		throw InvalidInputException("Geometry exceeds maximum recursion depth of %d", Geometry::MAX_RECURSION_DEPTH);
 	}
 
 	const auto header = ReadHeader(reader);
-	yyjson_mut_obj_add_str(doc, obj, "type", GeometryTypeToGeoJSONName(header.type));
+	JSONBuilder::Add(obj, "type", builder.String(GeometryTypeToGeoJSONName(header.type)));
 
 	if (header.type == GeometryType::GEOMETRYCOLLECTION) {
-		auto geometries = yyjson_mut_arr(doc);
-		yyjson_mut_obj_add_val(doc, obj, "geometries", geometries);
+		auto geometries = builder.Array();
+		JSONBuilder::Add(obj, "geometries", geometries);
 		const auto geom_count = reader.Read<uint32_t>();
 		for (uint32_t i = 0; i < geom_count; i++) {
-			auto child = yyjson_mut_obj(doc);
-			ToGeoJSONRecursive(reader, doc, child, depth + 1);
-			yyjson_mut_arr_append(geometries, child);
+			auto child = builder.Object();
+			ToGeoJSONRecursive(reader, builder, *child, depth + 1);
+			JSONBuilder::Append(*geometries, child);
 		}
 		return;
 	}
 
-	auto coords = yyjson_mut_arr(doc);
-	yyjson_mut_obj_add_val(doc, obj, "coordinates", coords);
+	auto coords = builder.Array();
+	JSONBuilder::Add(obj, "coordinates", coords);
 
 	switch (header.type) {
 	case GeometryType::POINT: {
 		const auto pos = ReadPosition(reader, header);
 		if (!pos.is_empty) {
-			AppendOrdinates(doc, coords, pos, header.has_z);
+			AppendOrdinates(builder, *coords, pos, header.has_z);
 		}
 	} break;
 	case GeometryType::LINESTRING:
-		ReadVertexArray(reader, header, doc, coords);
+		ReadVertexArray(reader, header, builder, *coords);
 		break;
 	case GeometryType::POLYGON: {
 		const auto ring_count = reader.Read<uint32_t>();
 		for (uint32_t i = 0; i < ring_count; i++) {
-			auto ring = yyjson_mut_arr(doc);
-			ReadVertexArray(reader, header, doc, ring);
-			yyjson_mut_arr_append(coords, ring);
+			auto ring = builder.Array();
+			ReadVertexArray(reader, header, builder, *ring);
+			JSONBuilder::Append(*coords, ring);
 		}
 	} break;
 	case GeometryType::MULTIPOINT: {
@@ -217,32 +217,32 @@ void ToGeoJSONRecursive(WKBReader &reader, yyjson_mut_doc *doc, yyjson_mut_val *
 			if (pos.is_empty) {
 				continue;
 			}
-			auto coord = yyjson_mut_arr(doc);
-			AppendOrdinates(doc, coord, pos, part.has_z);
-			yyjson_mut_arr_append(coords, coord);
+			auto coord = builder.Array();
+			AppendOrdinates(builder, *coord, pos, part.has_z);
+			JSONBuilder::Append(*coords, coord);
 		}
 	} break;
 	case GeometryType::MULTILINESTRING: {
 		const auto part_count = reader.Read<uint32_t>();
 		for (uint32_t i = 0; i < part_count; i++) {
 			const auto part = ReadHeader(reader);
-			auto line = yyjson_mut_arr(doc);
-			ReadVertexArray(reader, part, doc, line);
-			yyjson_mut_arr_append(coords, line);
+			auto line = builder.Array();
+			ReadVertexArray(reader, part, builder, *line);
+			JSONBuilder::Append(*coords, line);
 		}
 	} break;
 	case GeometryType::MULTIPOLYGON: {
 		const auto part_count = reader.Read<uint32_t>();
 		for (uint32_t i = 0; i < part_count; i++) {
 			const auto part = ReadHeader(reader);
-			auto poly = yyjson_mut_arr(doc);
+			auto poly = builder.Array();
 			const auto ring_count = reader.Read<uint32_t>();
 			for (uint32_t j = 0; j < ring_count; j++) {
-				auto ring = yyjson_mut_arr(doc);
-				ReadVertexArray(reader, part, doc, ring);
-				yyjson_mut_arr_append(poly, ring);
+				auto ring = builder.Array();
+				ReadVertexArray(reader, part, builder, *ring);
+				JSONBuilder::Append(*poly, ring);
 			}
-			yyjson_mut_arr_append(coords, poly);
+			JSONBuilder::Append(*coords, poly);
 		}
 	} break;
 	default:
@@ -254,18 +254,16 @@ void ToGeoJSONRecursive(WKBReader &reader, yyjson_mut_doc *doc, yyjson_mut_val *
 // GeoJSON -> WKB
 //===--------------------------------------------------------------------===//
 //! Whether any position in this coordinate tree carries a third ordinate
-bool CoordinatesHaveZ(yyjson_val *coords, const idx_t depth) {
-	if (depth == Geometry::MAX_RECURSION_DEPTH || !yyjson_is_arr(coords)) {
+bool CoordinatesHaveZ(const JSONNode *coords, const idx_t depth) {
+	if (depth == Geometry::MAX_RECURSION_DEPTH || !coords || coords->type != JSONValueType::ARRAY) {
 		return false;
 	}
-	size_t idx, max;
-	yyjson_val *child;
-	yyjson_arr_foreach(coords, idx, max, child) {
-		if (yyjson_is_num(child)) {
+	for (auto &child : coords->Elements()) {
+		if (child.IsNumber()) {
 			// This array is a position rather than a nesting level
-			return yyjson_arr_size(coords) >= 3;
+			return coords->size >= 3;
 		}
-		if (CoordinatesHaveZ(child, depth + 1)) {
+		if (CoordinatesHaveZ(&child, depth + 1)) {
 			return true;
 		}
 	}
@@ -274,40 +272,37 @@ bool CoordinatesHaveZ(yyjson_val *coords, const idx_t depth) {
 
 //! GeoJSON allows mixing 2D and 3D positions, but a geometry must have uniform dimensions, so a single
 //! 3D position promotes the whole geometry to XYZ (missing ordinates are padded with 0)
-bool GeometryHasZ(yyjson_val *val, const idx_t depth) {
-	if (depth == Geometry::MAX_RECURSION_DEPTH || !yyjson_is_obj(val)) {
+bool GeometryHasZ(const JSONNode *val, const idx_t depth) {
+	if (depth == Geometry::MAX_RECURSION_DEPTH || val->type != JSONValueType::OBJECT) {
 		return false;
 	}
-	auto geometries = yyjson_obj_get(val, "geometries");
-	if (geometries && yyjson_is_arr(geometries)) {
-		size_t idx, max;
-		yyjson_val *child;
-		yyjson_arr_foreach(geometries, idx, max, child) {
-			if (GeometryHasZ(child, depth + 1)) {
+	auto geometries = val->Get("geometries");
+	if (geometries && geometries->type == JSONValueType::ARRAY) {
+		for (auto &child : geometries->Elements()) {
+			if (GeometryHasZ(&child, depth + 1)) {
 				return true;
 			}
 		}
 		return false;
 	}
-	return CoordinatesHaveZ(yyjson_obj_get(val, "coordinates"), depth);
+	return CoordinatesHaveZ(val->Get("coordinates"), depth);
 }
 
-void WritePosition(WKBWriter &writer, yyjson_val *pos, const bool has_z, const char *context) {
-	if (!yyjson_is_arr(pos) || yyjson_arr_size(pos) < 2) {
+void WritePosition(WKBWriter &writer, const JSONNode &pos, const bool has_z, const char *context) {
+	if (pos.type != JSONValueType::ARRAY || pos.size < 2) {
 		throw InvalidInputException("Invalid GeoJSON: %s position must be an array of at least 2 numbers", context);
 	}
 	const auto dims = has_z ? 3u : 2u;
 	double ordinates[3] = {0, 0, 0};
-	size_t idx, max;
-	yyjson_val *child;
-	yyjson_arr_foreach(pos, idx, max, child) {
+	idx_t idx = 0;
+	for (auto &child : pos.Elements()) {
 		if (idx >= dims) {
 			break;
 		}
-		if (!yyjson_is_num(child)) {
+		if (!child.IsNumber()) {
 			throw InvalidInputException("Invalid GeoJSON: %s position must contain only numbers", context);
 		}
-		ordinates[idx] = yyjson_get_num(child);
+		ordinates[idx++] = child.GetNumber();
 	}
 	writer.Write(ordinates[0]);
 	writer.Write(ordinates[1]);
@@ -316,61 +311,55 @@ void WritePosition(WKBWriter &writer, yyjson_val *pos, const bool has_z, const c
 	}
 }
 
-void WriteVertexArray(WKBWriter &writer, yyjson_val *arr, const bool has_z, const char *context) {
-	if (!yyjson_is_arr(arr)) {
+void WriteVertexArray(WKBWriter &writer, const JSONNode &arr, const bool has_z, const char *context) {
+	if (arr.type != JSONValueType::ARRAY) {
 		throw InvalidInputException("Invalid GeoJSON: %s coordinates are nested too shallowly", context);
 	}
-	writer.Write<uint32_t>(NumericCast<uint32_t>(yyjson_arr_size(arr)));
-	size_t idx, max;
-	yyjson_val *child;
-	yyjson_arr_foreach(arr, idx, max, child) {
+	writer.Write<uint32_t>(arr.size);
+	for (auto &child : arr.Elements()) {
 		WritePosition(writer, child, has_z, context);
 	}
 }
 
-void FromGeoJSONRecursive(yyjson_val *val, WKBWriter &writer, const bool has_z, const idx_t depth) {
+void FromGeoJSONRecursive(const JSONNode &val, WKBWriter &writer, const bool has_z, const idx_t depth) {
 	if (depth == Geometry::MAX_RECURSION_DEPTH) {
 		throw InvalidInputException("GeoJSON geometry exceeds maximum recursion depth of %d",
 		                            Geometry::MAX_RECURSION_DEPTH);
 	}
-	if (!yyjson_is_obj(val)) {
+	if (val.type != JSONValueType::OBJECT) {
 		throw InvalidInputException("Invalid GeoJSON: geometry must be an object");
 	}
-	auto type_val = yyjson_obj_get(val, "type");
-	if (!type_val || !yyjson_is_str(type_val)) {
+	auto type_val = val.Get("type");
+	if (!type_val || type_val->type != JSONValueType::STRING) {
 		throw InvalidInputException("Invalid GeoJSON: geometry is missing a \"type\" string");
 	}
 	GeometryType type;
-	if (!GeoJSONNameToGeometryType(yyjson_get_str(type_val), yyjson_get_len(type_val), type)) {
-		throw InvalidInputException("Invalid GeoJSON: unknown geometry type \"%s\"", yyjson_get_str(type_val));
+	if (!GeoJSONNameToGeometryType(type_val->str, type_val->size, type)) {
+		throw InvalidInputException("Invalid GeoJSON: unknown geometry type \"%s\"", string(type_val->GetString()));
 	}
 	const auto context = GeometryTypeToGeoJSONName(type);
 	WriteHeader(writer, type, has_z);
 
 	if (type == GeometryType::GEOMETRYCOLLECTION) {
-		auto geometries = yyjson_obj_get(val, "geometries");
-		if (!geometries || !yyjson_is_arr(geometries)) {
+		auto geometries = val.Get("geometries");
+		if (!geometries || geometries->type != JSONValueType::ARRAY) {
 			throw InvalidInputException("Invalid GeoJSON: GeometryCollection requires a \"geometries\" array");
 		}
-		writer.Write<uint32_t>(NumericCast<uint32_t>(yyjson_arr_size(geometries)));
-		size_t idx, max;
-		yyjson_val *child;
-		yyjson_arr_foreach(geometries, idx, max, child) {
+		writer.Write<uint32_t>(geometries->size);
+		for (auto &child : geometries->Elements()) {
 			FromGeoJSONRecursive(child, writer, has_z, depth + 1);
 		}
 		return;
 	}
 
-	auto coords = yyjson_obj_get(val, "coordinates");
-	if (!coords || !yyjson_is_arr(coords)) {
+	auto coords = val.Get("coordinates");
+	if (!coords || coords->type != JSONValueType::ARRAY) {
 		throw InvalidInputException("Invalid GeoJSON: %s requires a \"coordinates\" array", context);
 	}
 
-	size_t idx, max;
-	yyjson_val *child;
 	switch (type) {
 	case GeometryType::POINT:
-		if (yyjson_arr_size(coords) == 0) {
+		if (coords->size == 0) {
 			// An empty point is stored as all-NaN ordinates
 			const auto nan = std::numeric_limits<double>::quiet_NaN();
 			writer.Write(nan);
@@ -379,43 +368,41 @@ void FromGeoJSONRecursive(yyjson_val *val, WKBWriter &writer, const bool has_z, 
 				writer.Write(nan);
 			}
 		} else {
-			WritePosition(writer, coords, has_z, context);
+			WritePosition(writer, *coords, has_z, context);
 		}
 		break;
 	case GeometryType::LINESTRING:
-		WriteVertexArray(writer, coords, has_z, context);
+		WriteVertexArray(writer, *coords, has_z, context);
 		break;
 	case GeometryType::POLYGON:
-		writer.Write<uint32_t>(NumericCast<uint32_t>(yyjson_arr_size(coords)));
-		yyjson_arr_foreach(coords, idx, max, child) {
+		writer.Write<uint32_t>(coords->size);
+		for (auto &child : coords->Elements()) {
 			WriteVertexArray(writer, child, has_z, context);
 		}
 		break;
 	case GeometryType::MULTIPOINT:
-		writer.Write<uint32_t>(NumericCast<uint32_t>(yyjson_arr_size(coords)));
-		yyjson_arr_foreach(coords, idx, max, child) {
+		writer.Write<uint32_t>(coords->size);
+		for (auto &child : coords->Elements()) {
 			WriteHeader(writer, GeometryType::POINT, has_z);
 			WritePosition(writer, child, has_z, context);
 		}
 		break;
 	case GeometryType::MULTILINESTRING:
-		writer.Write<uint32_t>(NumericCast<uint32_t>(yyjson_arr_size(coords)));
-		yyjson_arr_foreach(coords, idx, max, child) {
+		writer.Write<uint32_t>(coords->size);
+		for (auto &child : coords->Elements()) {
 			WriteHeader(writer, GeometryType::LINESTRING, has_z);
 			WriteVertexArray(writer, child, has_z, context);
 		}
 		break;
 	case GeometryType::MULTIPOLYGON:
-		writer.Write<uint32_t>(NumericCast<uint32_t>(yyjson_arr_size(coords)));
-		yyjson_arr_foreach(coords, idx, max, child) {
+		writer.Write<uint32_t>(coords->size);
+		for (auto &child : coords->Elements()) {
 			WriteHeader(writer, GeometryType::POLYGON, has_z);
-			if (!yyjson_is_arr(child)) {
+			if (child.type != JSONValueType::ARRAY) {
 				throw InvalidInputException("Invalid GeoJSON: %s coordinates are nested too shallowly", context);
 			}
-			writer.Write<uint32_t>(NumericCast<uint32_t>(yyjson_arr_size(child)));
-			size_t ring_idx, ring_max;
-			yyjson_val *ring;
-			yyjson_arr_foreach(child, ring_idx, ring_max, ring) {
+			writer.Write<uint32_t>(child.size);
+			for (auto &ring : child.Elements()) {
 				WriteVertexArray(writer, ring, has_z, context);
 			}
 		}
@@ -430,17 +417,17 @@ void FromGeoJSONRecursive(yyjson_val *val, WKBWriter &writer, const bool has_z, 
 //===--------------------------------------------------------------------===//
 // Public interface
 //===--------------------------------------------------------------------===//
-yyjson_mut_val *JSONGeometry::ToGeoJSON(const string_t &wkb, yyjson_mut_doc *doc) {
-	WKBReader reader(wkb.GetData(), wkb.GetSize());
-	auto obj = yyjson_mut_obj(doc);
-	ToGeoJSONRecursive(reader, doc, obj, 0);
+JSONBuildValue *JSONGeometry::ToGeoJSON(const string_t &geometry, JSONBuilder &builder) {
+	WKBReader reader(geometry.GetData(), geometry.GetSize());
+	auto obj = builder.Object();
+	ToGeoJSONRecursive(reader, builder, *obj, 0);
 	return obj;
 }
 
-bool JSONGeometry::FromGeoJSON(yyjson_val *val, string_t &result, Vector &result_vector, string &error) {
+bool JSONGeometry::FromGeoJSON(const JSONNode *val, string_t &result, Vector &result_vector, string &error) {
 	WKBWriter writer;
 	try {
-		FromGeoJSONRecursive(val, writer, GeometryHasZ(val, 0), 0);
+		FromGeoJSONRecursive(*val, writer, GeometryHasZ(val, 0), 0);
 		const auto &buffer = writer.GetBuffer();
 		const string_t wkb(buffer.data(), NumericCast<uint32_t>(buffer.size()));
 		// Let the core geometry code validate and normalize what we produced
@@ -452,20 +439,20 @@ bool JSONGeometry::FromGeoJSON(yyjson_val *val, string_t &result, Vector &result
 	}
 }
 
-bool JSONGeometry::IsGeoJSONGeometry(yyjson_val *val) {
-	if (!yyjson_is_obj(val)) {
+bool JSONGeometry::IsGeoJSONGeometry(const JSONNode *val) {
+	if (val->type != JSONValueType::OBJECT) {
 		return false;
 	}
-	auto type_val = yyjson_obj_get(val, "type");
-	if (!type_val || !yyjson_is_str(type_val)) {
+	auto type_val = val->Get("type");
+	if (!type_val || type_val->type != JSONValueType::STRING) {
 		return false;
 	}
 	GeometryType type;
-	if (!GeoJSONNameToGeometryType(yyjson_get_str(type_val), yyjson_get_len(type_val), type)) {
+	if (!GeoJSONNameToGeometryType(type_val->str, type_val->size, type)) {
 		return false;
 	}
-	const auto member = yyjson_obj_get(val, type == GeometryType::GEOMETRYCOLLECTION ? "geometries" : "coordinates");
-	return member && yyjson_is_arr(member);
+	const auto member = val->Get(type == GeometryType::GEOMETRYCOLLECTION ? "geometries" : "coordinates");
+	return member && member->type == JSONValueType::ARRAY;
 }
 
 //===--------------------------------------------------------------------===//
@@ -473,25 +460,24 @@ bool JSONGeometry::IsGeoJSONGeometry(yyjson_val *val) {
 //===--------------------------------------------------------------------===//
 static void AsGeoJSONFunction(DataChunk &args, ExpressionState &state, Vector &result) {
 	auto &lstate = JSONFunctionLocalState::ResetAndGet(state);
-	auto alc = lstate.json_allocator->GetYYAlc();
-	auto doc = JSONCommon::CreateDocument(alc);
+	JSONBuilder builder(lstate.arena);
 
 	UnaryExecutor::Execute<string_t, string_t>(args.data[0], result, args.size(), [&](const string_t &wkb) {
-		return JSONCommon::WriteVal<yyjson_mut_val>(JSONGeometry::ToGeoJSON(wkb, doc), alc);
+		auto geojson = JSONGeometry::ToGeoJSON(wkb, builder);
+		lstate.writer.Clear();
+		lstate.writer.Value(*geojson);
+		return StringVector::AddString(result, lstate.writer.View());
 	});
-
-	JSONAllocator::AddBuffer(result, alc);
 }
 
 static void GeomFromGeoJSONFunction(DataChunk &args, ExpressionState &state, Vector &result) {
 	auto &lstate = JSONFunctionLocalState::ResetAndGet(state);
-	auto alc = lstate.json_allocator->GetYYAlc();
 
 	UnaryExecutor::Execute<string_t, string_t>(args.data[0], result, args.size(), [&](const string_t &input) {
-		auto doc = JSONCommon::ReadDocument(input, JSONCommon::READ_FLAG, alc);
+		auto &root = JSONCommon::ReadDocument(lstate.parser, input);
 		string_t geom;
 		string error;
-		if (!JSONGeometry::FromGeoJSON(doc->root, geom, result, error)) {
+		if (!JSONGeometry::FromGeoJSON(&root, geom, result, error)) {
 			throw InvalidInputException(error);
 		}
 		return geom;

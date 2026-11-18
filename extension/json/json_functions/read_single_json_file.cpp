@@ -14,6 +14,7 @@ namespace duckdb {
 //! Bind data of read_single_json_file - the regular JSON scan data plus the single file that is read
 struct ReadSingleJSONFileData : public JSONScanData {
 	OpenFileInfo file;
+	vector<LogicalType> types;
 
 	//! Hand over the reader that detected the schema during the bind, if it has not been claimed yet
 	shared_ptr<JSONReader> TakeBindReader() const {
@@ -58,24 +59,33 @@ public:
 	shared_ptr<JSONReader> reader;
 	//! Assigning the next part of the file to a thread is done single-threadedly
 	mutex lock;
+	vector<column_t> projection_ids;
+	vector<LogicalType> scanned_types;
 };
 
 struct ReadSingleJSONFileLocalState : public LocalTableFunctionState {
 public:
-	ReadSingleJSONFileLocalState(ClientContext &context, JSONScanGlobalState &gstate) : state(context, gstate) {
+	ReadSingleJSONFileLocalState(ClientContext &context, JSONScanGlobalState &gstate,
+	                             const vector<LogicalType> &scanned_types)
+	    : state(context, gstate) {
 		// the transform options are thread-local
 		state.transform_options = gstate.transform_options;
+		if (!scanned_types.empty()) {
+			all_columns.Initialize(BufferAllocator::Get(context), scanned_types);
+		}
 	}
 
 public:
 	JSONScanLocalState state;
+	DataChunk all_columns;
 	//! Whether we have a part of the file assigned to us that we still need to read
 	bool scan_initialized = false;
 	//! Whether our caller claims the batches we read - see table_function_claim_batch_t
 	bool claimed_externally = false;
 	shared_ptr<JSONReader> lookup_reader;
 	unique_ptr<JSONReaderScanState> lookup_state;
-	vector<yyjson_val *> lookup_vals;
+	vector<idx_t> lookup_roots;
+	vector<const JSONNode *> lookup_vals;
 	vector<string_t> lookup_strings;
 };
 
@@ -126,6 +136,7 @@ static unique_ptr<FunctionData> ReadSingleJSONFileBind(ClientContext &context, T
 		JSONScan::FinalizeBind(*result, result->options.name_list);
 		names = result->options.name_list;
 		return_types = result->options.sql_type_list;
+		result->types = return_types;
 		return std::move(result);
 	}
 	if (file_input.HasExpectedSchema()) {
@@ -144,6 +155,7 @@ static unique_ptr<FunctionData> ReadSingleJSONFileBind(ClientContext &context, T
 	vector<shared_ptr<JSONReader>> sampled_readers;
 	JSONScan::BindSchema(context, *result, file_list, sampled_readers, return_types, names);
 	JSONScan::FinalizeBind(*result, names);
+	result->types = return_types;
 	if (!sampled_readers.empty() && sampled_readers[0]) {
 		// keep the reader that detected the schema around - the scan continues with it
 		result->SetBindReader(std::move(sampled_readers[0]));
@@ -189,6 +201,20 @@ static unique_ptr<GlobalTableFunctionState> ReadSingleJSONFileInitGlobal(ClientC
 		// if we don't need all columns present in the file we don't error on unseen columns
 		gstate.transform_options.error_unknown_key = false;
 	}
+	if (input.CanRemoveFilterColumns()) {
+		result->projection_ids.assign(input.projection_ids.begin(), input.projection_ids.end());
+		for (auto &column_index : input.column_indexes) {
+			const auto col_id = column_index.GetPrimaryIndex();
+			if (col_id == MultiFileReader::COLUMN_IDENTIFIER_FILE_ROW_NUMBER) {
+				result->scanned_types.push_back(LogicalType::BIGINT);
+			} else if (IsVirtualColumn(col_id)) {
+				result->scanned_types.push_back(LogicalType::BOOLEAN);
+			} else {
+				result->scanned_types.push_back(json_data.types[col_id]);
+			}
+		}
+	}
+	gstate.InitializeFilters(input.filters);
 	if (gstate.enable_parallel_scans) {
 		// if we are doing parallel scans we need to open the file here
 		result->reader->Initialize(gstate.allocator, gstate.buffer_capacity);
@@ -200,7 +226,7 @@ static unique_ptr<LocalTableFunctionState> ReadSingleJSONFileInitLocal(Execution
                                                                        TableFunctionInitInput &input,
                                                                        GlobalTableFunctionState *global_state) {
 	auto &gstate = global_state->Cast<ReadSingleJSONFileGlobalState>();
-	return make_uniq<ReadSingleJSONFileLocalState>(context.client, gstate.state);
+	return make_uniq<ReadSingleJSONFileLocalState>(context.client, gstate.state, gstate.scanned_types);
 }
 
 //! Assign the next batch to this thread - the JSON reader hands out one buffer at a time
@@ -230,6 +256,8 @@ static void ReadSingleJSONFileFunction(ClientContext &context, TableFunctionInpu
 	auto &gstate = input.global_state->Cast<ReadSingleJSONFileGlobalState>();
 	auto &lstate = input.local_state->Cast<ReadSingleJSONFileLocalState>();
 	auto &reader = *gstate.reader;
+	const bool projected = !gstate.projection_ids.empty();
+	auto &target = projected ? lstate.all_columns : output;
 
 	while (true) {
 		if (!lstate.scan_initialized) {
@@ -245,17 +273,23 @@ static void ReadSingleJSONFileFunction(ClientContext &context, TableFunctionInpu
 			}
 			lstate.scan_initialized = true;
 		}
+		if (projected) {
+			target.Reset();
+		}
 		switch (gstate.state.json_data.options.type) {
 		case JSONScanType::READ_JSON:
-			ReadJSONFunction(context, reader, gstate.state, lstate.state, output);
+			ReadJSONFunction(context, reader, gstate.state, lstate.state, target);
 			break;
 		case JSONScanType::READ_JSON_OBJECTS:
-			ReadJSONObjectsFunction(context, reader, gstate.state, lstate.state, output);
+			ReadJSONObjectsFunction(context, reader, gstate.state, lstate.state, target);
 			break;
 		default:
 			throw InternalException("Unsupported scan type for read_single_json_file");
 		}
-		if (output.size() != 0) {
+		if (target.size() != 0) {
+			if (projected) {
+				output.ReferenceColumns(target, gstate.projection_ids);
+			}
 			return;
 		}
 		// we have exhausted the part of the file that was assigned to us - try to grab the next part
@@ -308,6 +342,7 @@ static unique_ptr<FunctionData> ReadSingleJSONFileCombineSchema(ClientContext &c
 	result->options.sql_type_list = return_types;
 	result->options.auto_detect = false;
 	JSONScan::FinalizeBind(*result, names);
+	result->types = return_types;
 	return std::move(result);
 }
 
@@ -346,8 +381,8 @@ void ReadSingleJSONFileLookup(ClientContext &context, TableFunctionInput &input,
 	if (!lstate.lookup_reader) {
 		lstate.lookup_reader = make_shared_ptr<JSONReader>(context, json_data.options, json_data.file);
 		lstate.lookup_reader->OpenJSONFile();
-		lstate.lookup_state = make_uniq<JSONReaderScanState>(
-		    context, BufferAllocator::Get(context), json_data.options.maximum_object_size * 2 + YYJSON_PADDING_SIZE);
+		lstate.lookup_state = make_uniq<JSONReaderScanState>(context, BufferAllocator::Get(context),
+		                                                     json_data.options.maximum_object_size * 2);
 	}
 	auto &reader = *lstate.lookup_reader;
 	auto &scan_state = *lstate.lookup_state;
@@ -355,8 +390,10 @@ void ReadSingleJSONFileLookup(ClientContext &context, TableFunctionInput &input,
 	D_ASSERT(rows.size() <= STANDARD_VECTOR_SIZE);
 	reader.ClearLookupBuffers(scan_state);
 	scan_state.allocator.Reset();
+	scan_state.parser.Clear();
 
 	const bool objects = json_data.options.type == JSONScanType::READ_JSON_OBJECTS;
+	lstate.lookup_roots.resize(rows.size());
 	lstate.lookup_vals.resize(rows.size());
 	lstate.lookup_strings.resize(rows.size());
 	idx_t w = 0;
@@ -364,10 +401,13 @@ void ReadSingleJSONFileLookup(ClientContext &context, TableFunctionInput &input,
 		if (!reader.FetchRow(scan_state, UnsafeNumericCast<idx_t>(rows[pk_idx]))) {
 			continue;
 		}
-		lstate.lookup_vals[w] = scan_state.values[0];
+		lstate.lookup_roots[w] = scan_state.roots[0];
 		lstate.lookup_strings[w] = string_t(scan_state.units[0].pointer, scan_state.units[0].size);
 		input.pk_survivors[w] = pk_idx;
 		++w;
+	}
+	for (idx_t r = 0; r < w; ++r) {
+		lstate.lookup_vals[r] = scan_state.parser.Node(lstate.lookup_roots[r]);
 	}
 	if (state.file_row_number_idx != DConstants::INVALID_INDEX) {
 		auto numbers = FlatVector::Writer<int64_t>(output.data[state.file_row_number_idx], w);
@@ -390,10 +430,10 @@ void ReadSingleJSONFileLookup(ClientContext &context, TableFunctionInput &input,
 			for (idx_t c = 0; c < state.column_ids.size(); ++c) {
 				result_vectors[c] = &output.data[state.column_ids[c]];
 			}
-			auto *alc = scan_state.allocator.GetYYAlc();
+			JSONTransformScratch scratch {scan_state.allocator, scan_state.writer};
 			auto &transform_options = lstate.state.transform_options;
 			if (json_data.options.record_type == JSONRecordType::RECORDS) {
-				JSONTransform::TransformObject(lstate.lookup_vals.data(), alc, w, state.names, result_vectors,
+				JSONTransform::TransformObject(lstate.lookup_vals.data(), scratch, w, state.names, result_vectors,
 				                               transform_options, state.column_indices,
 				                               transform_options.error_unknown_key);
 			} else {
@@ -401,9 +441,18 @@ void ReadSingleJSONFileLookup(ClientContext &context, TableFunctionInput &input,
 				D_ASSERT(state.column_ids.size() == 1);
 				optional_ptr<const ColumnIndex> column_index =
 				    state.column_indices.empty() ? nullptr : &state.column_indices[0];
-				JSONTransform::Transform(lstate.lookup_vals.data(), alc, *result_vectors[0], w, transform_options,
+				JSONTransform::Transform(lstate.lookup_vals.data(), scratch, *result_vectors[0], w, transform_options,
 				                         column_index);
 			}
+		}
+	}
+	if (!state.filters.empty() && w != 0) {
+		const auto approved = lstate.state.ApplyFilters(state, output, w, false);
+		if (approved != w) {
+			for (idx_t r = 0; r < approved; ++r) {
+				input.pk_survivors[r] = input.pk_survivors[lstate.state.filter_selection.get_index(r)];
+			}
+			w = approved;
 		}
 	}
 	output.SetCardinality(w);

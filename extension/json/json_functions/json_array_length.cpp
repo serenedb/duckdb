@@ -2,8 +2,8 @@
 
 namespace duckdb {
 
-static inline optional<uint64_t> GetArrayLength(yyjson_val *val, yyjson_alc *, Vector &) {
-	return yyjson_arr_size(val);
+static inline optional<uint64_t> GetArrayLength(const JSONNode *val, JSONFunctionLocalState &, Vector &) {
+	return val->type == JSONValueType::ARRAY ? static_cast<uint64_t>(val->size) : 0;
 }
 
 static void UnaryArrayLengthFunction(DataChunk &args, ExpressionState &state, Vector &result) {

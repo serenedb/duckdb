@@ -2,8 +2,8 @@
 
 namespace duckdb {
 
-static inline optional<string_t> GetType(yyjson_val *val, yyjson_alc *, Vector &) {
-	return JSONCommon::ValTypeToStringT(val);
+static inline optional<string_t> GetType(const JSONNode *val, JSONFunctionLocalState &, Vector &) {
+	return JSONCommon::ValTypeToStringT(*val);
 }
 
 static void UnaryTypeFunction(DataChunk &args, ExpressionState &state, Vector &result) {
