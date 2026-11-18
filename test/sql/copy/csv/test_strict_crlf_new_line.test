@@ -1,0 +1,35 @@
+# name: test/sql/copy/csv/test_strict_crlf_new_line.test
+# description: A file with CR LF line breaks reads its rows when strict_mode and new_line = '\r\n' are given
+# group: [csv]
+
+query II
+FROM read_csv('{DATA_DIR}/csv/auto/issue_1254_rn.csv', new_line = '\r\n', strict_mode = true)
+----
+1	2
+1	2
+
+query II
+FROM read_csv('{DATA_DIR}/csv/auto/issue_1254_rn.csv', new_line = '\r\n', strict_mode = true, header = true, auto_detect = false, columns = {'a': 'INTEGER', 'b': 'INTEGER'})
+----
+1	2
+1	2
+
+query III
+SELECT count(*), min(column0), max(column2) FROM read_csv('{DATA_DIR}/csv/test/windows_newline.csv', new_line = '\r\n', strict_mode = true, header = false)
+----
+20000	0	20001
+
+query I
+SELECT count(*) FROM read_csv('{DATA_DIR}/csv/test/windows_newline.csv', new_line = '\r\n', strict_mode = true, header = false, skip = 3)
+----
+19997
+
+query III
+SELECT count(*), min(column0), max(column2) FROM read_csv('{DATA_DIR}/csv/test/windows_newline.csv', new_line = '\r\n', strict_mode = true, header = false, buffer_size = 1000)
+----
+20000	0	20001
+
+statement error
+FROM read_csv('{DATA_DIR}/csv/mixed_new_line.csv', columns = {'a': 'INTEGER', 'b': 'INTEGER', 'c': 'INTEGER'}, new_line = '\r\n', header = false, strict_mode = true, delim = ',', auto_detect = false)
+----
+The CSV Parser state machine reached an invalid state.

@@ -80,7 +80,7 @@ bool CsvSkip::Feed(const char *data, idx_t base, idx_t end) {
 				if (StartsRow(previous)) {
 					done = AddRow();
 				} else if (previous != CSVState::CARRIAGE_RETURN) {
-					done = EndLine(!grammar.only_crlf);
+					done = EndLine(true);
 				}
 				lines++;
 			}
@@ -332,7 +332,7 @@ void CsvSplitter::Terminate(idx_t position, bool carriage_return) {
 		} else if (previous != CSVState::CARRIAGE_RETURN) {
 			if (comment) {
 				UnsetComment(position);
-			} else if (!grammar.only_crlf) {
+			} else {
 				AddRow(position);
 			}
 		}
@@ -532,9 +532,7 @@ CsvRangeEntry CsvTransfer(const CsvGrammar &grammar, const char *bytes, idx_t ba
 			const CSVState next = Terminated(bits, bit);
 			const bool empty = StartsRow(previous);
 			const bool commented = previous == CSVState::COMMENT;
-			const bool silent = previous == CSVState::CARRIAGE_RETURN ||
-			                    (!empty && !commented && next == CSVState::CARRIAGE_RETURN && grammar.only_crlf);
-			if (!silent) {
+			if (previous != CSVState::CARRIAGE_RETURN) {
 				if (!empty) {
 					current.line_end = position;
 				}
