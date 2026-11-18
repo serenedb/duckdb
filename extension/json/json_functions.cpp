@@ -132,7 +132,7 @@ unique_ptr<FunctionData> JSONReadManyFunctionData::Bind(BindScalarFunctionInput 
 }
 
 JSONFunctionLocalState::JSONFunctionLocalState(Allocator &allocator)
-    : arena(allocator), parser(JSONCommon::READ_FLAG), second_parser(JSONCommon::READ_FLAG),
+    : arena(allocator), parser(JSONCommon::READ_FLAG, allocator), second_parser(JSONCommon::READ_FLAG, allocator),
       writer(JSONCommon::WRITE_FLAG) {
 }
 

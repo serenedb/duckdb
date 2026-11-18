@@ -116,9 +116,14 @@ struct VariantCastData : BoundCastData {
 };
 
 struct VariantLocalData : FunctionLocalState {
-	explicit VariantLocalData(const LogicalType &shredded_type) {
+	VariantLocalData(const LogicalType &shredded_type, Allocator &allocator)
+	    : json_parser(JSONReadFlags::ALLOW_INF_AND_NAN | JSONReadFlags::ALLOW_TRAILING_COMMAS |
+	                      JSONReadFlags::BIGNUM_AS_RAW,
+	                  allocator) {
 		Initialize(shredded_type, STANDARD_VECTOR_SIZE);
 	}
+
+	JSONTreeParser json_parser;
 
 	void Initialize(const LogicalType &shredded_type, idx_t new_capacity) {
 		capacity = new_capacity;
@@ -147,7 +152,8 @@ private:
 
 unique_ptr<FunctionLocalState> CastToVariantLocalState(CastLocalStateParameters &parameters) {
 	auto &cast_data = parameters.cast_data->Cast<VariantCastData>();
-	return make_uniq<VariantLocalData>(cast_data.shredded_type);
+	auto &allocator = parameters.context ? BufferAllocator::Get(*parameters.context) : Allocator::DefaultAllocator();
+	return make_uniq<VariantLocalData>(cast_data.shredded_type, allocator);
 }
 
 static bool SupportsShreddedCast(const LogicalType &type) {
@@ -214,6 +220,7 @@ static bool CastToVARIANT(Vector &source, Vector &result, idx_t count, CastParam
 	if (TryToShreddedCast(source, result, count, parameters)) {
 		return true;
 	}
+	auto &local_data = parameters.local_state->Cast<VariantLocalData>();
 	DataChunk offsets;
 	offsets.Initialize(Allocator::DefaultAllocator(),
 	                   {LogicalType::UINTEGER, LogicalType::UINTEGER, LogicalType::UINTEGER, LogicalType::UINTEGER},
@@ -229,7 +236,7 @@ static bool CastToVARIANT(Vector &source, Vector &result, idx_t count, CastParam
 
 	{
 		VariantVectorData variant_data(result);
-		ToVariantGlobalResultData result_data(variant_data, offsets, dictionary, keys_selvec);
+		ToVariantGlobalResultData result_data(variant_data, offsets, dictionary, keys_selvec, local_data.json_parser);
 		if (!GatherOffsetsAndSizes(source_data, result_data, count)) {
 			return false;
 		}
@@ -241,7 +248,7 @@ static bool CastToVARIANT(Vector &source, Vector &result, idx_t count, CastParam
 
 	{
 		VariantVectorData variant_data(result);
-		ToVariantGlobalResultData result_data(variant_data, offsets, dictionary, keys_selvec);
+		ToVariantGlobalResultData result_data(variant_data, offsets, dictionary, keys_selvec, local_data.json_parser);
 		if (!WriteVariantResultData(source_data, result_data, count)) {
 			return false;
 		}

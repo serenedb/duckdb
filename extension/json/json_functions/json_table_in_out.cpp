@@ -153,9 +153,9 @@ struct JSONTableInOutRecursionNode {
 };
 
 struct JSONTableInOutLocalState : LocalTableFunctionState {
-	explicit JSONTableInOutLocalState(JSONTableInOutGlobalState &gstate)
-	    : gstate(gstate), parser(JSONCommon::READ_FLAG), writer(JSONCommon::WRITE_FLAG), len(DConstants::INVALID_INDEX),
-	      doc_root(nullptr), initialized(false), total_count(0) {
+	JSONTableInOutLocalState(JSONTableInOutGlobalState &gstate, Allocator &allocator)
+	    : gstate(gstate), parser(JSONCommon::READ_FLAG, allocator), writer(JSONCommon::WRITE_FLAG),
+	      len(DConstants::INVALID_INDEX), doc_root(nullptr), initialized(false), total_count(0) {
 	}
 
 	string GetPath() const {
@@ -192,9 +192,10 @@ struct JSONTableInOutLocalState : LocalTableFunctionState {
 	vector<JSONTableInOutRecursionNode> recursion_nodes;
 };
 
-static unique_ptr<LocalTableFunctionState> JSONTableInOutInitLocal(ExecutionContext &, TableFunctionInitInput &,
+static unique_ptr<LocalTableFunctionState> JSONTableInOutInitLocal(ExecutionContext &context, TableFunctionInitInput &,
                                                                    GlobalTableFunctionState *global_state) {
-	return make_uniq<JSONTableInOutLocalState>(global_state->Cast<JSONTableInOutGlobalState>());
+	return make_uniq<JSONTableInOutLocalState>(global_state->Cast<JSONTableInOutGlobalState>(),
+	                                           BufferAllocator::Get(context.client));
 }
 
 static double JSONTableInOutProgress(ClientContext &, const FunctionData *,

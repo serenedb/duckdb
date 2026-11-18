@@ -1,6 +1,7 @@
 #pragma once
 
 #include "duckdb/common/types/data_chunk.hpp"
+#include "duckdb/common/json_document.hpp"
 #include "duckdb/function/scalar/variant_utils.hpp"
 #include "duckdb/common/types/vector.hpp"
 #include "duckdb/common/vector/flat_vector.hpp"
@@ -47,8 +48,10 @@ public:
 struct ToVariantGlobalResultData {
 public:
 	ToVariantGlobalResultData(VariantVectorData &variant, DataChunk &offsets,
-	                          OrderedOwningStringMap<uint32_t> &dictionary, SelectionVector &keys_selvec)
-	    : variant(variant), offsets(offsets), dictionary(dictionary), keys_selvec(keys_selvec) {
+	                          OrderedOwningStringMap<uint32_t> &dictionary, SelectionVector &keys_selvec,
+	                          JSONTreeParser &json_parser)
+	    : variant(variant), offsets(offsets), dictionary(dictionary), keys_selvec(keys_selvec),
+	      json_parser(json_parser) {
 	}
 
 public:
@@ -65,6 +68,7 @@ public:
 	OrderedOwningStringMap<uint32_t> &dictionary;
 	//! The selection vector to populate with mapping from keys index -> dictionary index
 	SelectionVector &keys_selvec;
+	JSONTreeParser &json_parser;
 };
 
 template <bool WRITE_DATA>

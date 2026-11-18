@@ -503,8 +503,8 @@ static inline void TrimWhitespace(JSONString &line) {
 
 JSONReaderScanState::JSONReaderScanState(ClientContext &context, Allocator &global_allocator, idx_t buffer_capacity)
     : fs(FileSystem::GetFileSystem(context)), global_allocator(global_allocator),
-      allocator(BufferAllocator::Get(context)), parser(JSONCommon::READ_FLAG), writer(JSONCommon::WRITE_FLAG),
-      buffer_capacity(buffer_capacity) {
+      allocator(BufferAllocator::Get(context)), parser(JSONCommon::READ_FLAG, BufferAllocator::Get(context)),
+      writer(JSONCommon::WRITE_FLAG), buffer_capacity(buffer_capacity) {
 }
 
 void JSONReaderScanState::ResolveValues(idx_t count) {
@@ -919,7 +919,7 @@ void JSONReader::AutoDetect(Allocator &allocator, idx_t buffer_capacity) {
 		return;
 	}
 	// perform auto-detection over the data we just read
-	JSONTreeParser detect_parser(ReadFlags());
+	JSONTreeParser detect_parser(ReadFlags(), allocator);
 	idx_t features_offset;
 	if (options.geojson.value_or(false) && GetFormat() == JSONFormat::AUTO_DETECT &&
 	    FindFeatureCollectionArray(buffer_ptr, read_size, features_offset)) {
