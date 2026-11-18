@@ -1,0 +1,30 @@
+# name: test/sql/json/table/read_json_document_edges.test
+# description: read_json: a file that is not UTF-8, a root value strict JSON refuses, and arrays one after another at the root
+# group: [table]
+
+require json
+
+statement ok
+COPY (SELECT '{"a": "caf\xE9"}'::BLOB) TO '{TEST_DIR}/latin1.json' (FORMAT BLOB);
+
+statement error
+SELECT * FROM read_json_objects('{TEST_DIR}/latin1.json');
+----
+<REGEX>:.*Malformed JSON in file.*invalid utf-8 encoding in string.*
+
+statement ok
+COPY (SELECT '+1' AS line) TO '{TEST_DIR}/plus.ndjson' (FORMAT csv, HEADER false, QUOTE '', ESCAPE '');
+
+statement error
+SELECT * FROM read_ndjson_objects('{TEST_DIR}/plus.ndjson', strict := true);
+----
+<REGEX>:.*at byte 1 in line 1: unexpected character, expected a JSON value.*
+
+statement ok
+COPY (SELECT line FROM (VALUES (1, '['), (2, '1'), (3, ']'), (4, '[2]')) t(i, line) ORDER BY i) TO '{TEST_DIR}/two_arrays.json' (FORMAT csv, HEADER false, QUOTE '', ESCAPE '');
+
+query I
+SELECT json FROM read_json('{TEST_DIR}/two_arrays.json', records := false, columns := {json: 'JSON'});
+----
+[1]
+[2]

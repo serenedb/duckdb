@@ -1,0 +1,13 @@
+# name: test/sql/types/geo/geometry_crs_projjson_numbers.test
+# description: a PROJJSON coordinate system reads an integer past 64 bits as a double and refuses a number past the double range
+# group: [geo]
+
+query I
+SELECT ST_CRS('POINT(0 1)'::GEOMETRY('{"type": "GeographicCRS", "name": "big", "id": {"authority": "X", "code": 18446744073709551616}}'));
+----
+{"type":"GeographicCRS","name":"big","id":{"authority":"X","code":18446744073709552000.0}}
+
+statement error
+SELECT 'POINT(0 1)'::GEOMETRY('{"type": "GeographicCRS", "name": "inf", "id": {"authority": "X", "code": 1e400}}');
+----
+Encountered unrecognized coordinate system
