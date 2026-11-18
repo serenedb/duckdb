@@ -1,0 +1,33 @@
+# name: test/sql/copy/csv/parallel/test_parallel_long_quoted.test_slow
+# description: Ranges that start inside quoted fields longer than a range read the same as one sequential scan
+# group: [parallel]
+
+require skip_reload
+
+statement ok
+SET threads = 2;
+
+statement ok
+CREATE TABLE long_quoted AS SELECT i AS id, CASE WHEN i % 1000 = 500 THEN repeat('x,y' || chr(10), 2000000) || i ELSE 'v' || i END AS v FROM range(5000) r(i);
+
+statement ok
+COPY long_quoted TO '{TEMP_DIR}/long_quoted.csv' (HEADER false);
+
+foreach parallel true false
+
+query III
+SELECT count(*), sum(id), sum(length(v)) FROM read_csv('{TEMP_DIR}/long_quoted.csv', auto_detect = false, header = false, columns = {'id': 'BIGINT', 'v': 'VARCHAR'}, max_line_size = 10000000, buffer_size = 40000000, parallel = {parallel});
+----
+5000	12497500	40023885
+
+query I
+SELECT count(*) FROM (FROM read_csv('{TEMP_DIR}/long_quoted.csv', auto_detect = false, header = false, columns = {'id': 'BIGINT', 'v': 'VARCHAR'}, max_line_size = 10000000, buffer_size = 40000000, parallel = {parallel}) EXCEPT ALL FROM long_quoted);
+----
+0
+
+query I
+SELECT count(*) FROM read_csv('{TEMP_DIR}/long_quoted.csv', auto_detect = false, header = false, columns = {'id': 'BIGINT', 'v': 'VARCHAR'}, max_line_size = 10000000, buffer_size = 40000000, parallel = {parallel});
+----
+5000
+
+endloop

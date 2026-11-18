@@ -1,0 +1,71 @@
+# name: test/sql/copy/csv/parallel/test_parallel_quoted_ranges.test
+# description: Quoted fields that look like rows read the same over ranges that start inside them
+# group: [parallel]
+
+require skip_reload
+
+statement ok
+CREATE TABLE quoted AS SELECT
+	i AS id,
+	CASE i % 6
+		WHEN 0 THEN 'plain' || i
+		WHEN 1 THEN i || ',' || (i + 1) || chr(10) || (i + 2) || ',' || (i + 3)
+		WHEN 2 THEN '"' || i || '",x' || chr(10) || 'y,"z' || chr(10)
+		WHEN 3 THEN repeat(i || ',' || chr(10), i % 7 + 1)
+		WHEN 4 THEN chr(10) || '"' || chr(10) || ',' || chr(13) || chr(10) || '""'
+		ELSE repeat('"a,b"' || chr(10), i % 3 + 1) || i
+	END AS v,
+	(i * 31 % 97)::VARCHAR AS w
+FROM range(3000) r(i);
+
+statement ok
+COPY quoted TO '{TEMP_DIR}/quoted_ranges.csv' (HEADER false);
+
+statement ok
+COPY quoted TO '{TEMP_DIR}/quoted_ranges_escape.csv' (HEADER false, ESCAPE '\');
+
+statement ok
+COPY (SELECT id || ',' || v || ',' || w FROM (SELECT id, '"' || replace(v, '"', '""') || '"' AS v, w FROM quoted) ORDER BY id) TO '{TEMP_DIR}/quoted_ranges_crlf.csv' (HEADER false, DELIMITER '\t', QUOTE '', NEW_LINE '\r\n');
+
+statement ok
+CREATE MACRO quoted_columns() AS {'id': 'BIGINT', 'v': 'VARCHAR', 'w': 'VARCHAR'};
+
+foreach buffer_size 64 97 256 1000
+
+foreach parallel true false
+
+query I
+SELECT count(*) FROM (
+	(FROM read_csv('{TEMP_DIR}/quoted_ranges.csv', header = false, auto_detect = false, columns = quoted_columns(), buffer_size = {buffer_size}, parallel = {parallel}) EXCEPT ALL FROM quoted)
+	UNION ALL
+	(FROM quoted EXCEPT ALL FROM read_csv('{TEMP_DIR}/quoted_ranges.csv', header = false, auto_detect = false, columns = quoted_columns(), buffer_size = {buffer_size}, parallel = {parallel}))
+)
+----
+0
+
+query I
+SELECT count(*) FROM (
+	(FROM read_csv('{TEMP_DIR}/quoted_ranges_escape.csv', header = false, auto_detect = false, escape = '\', columns = quoted_columns(), buffer_size = {buffer_size}, parallel = {parallel}) EXCEPT ALL FROM quoted)
+	UNION ALL
+	(FROM quoted EXCEPT ALL FROM read_csv('{TEMP_DIR}/quoted_ranges_escape.csv', header = false, auto_detect = false, escape = '\', columns = quoted_columns(), buffer_size = {buffer_size}, parallel = {parallel}))
+)
+----
+0
+
+query I
+SELECT count(*) FROM (
+	(FROM read_csv('{TEMP_DIR}/quoted_ranges_crlf.csv', header = false, auto_detect = false, new_line = '\r\n', columns = quoted_columns(), buffer_size = {buffer_size}, parallel = {parallel}) EXCEPT ALL FROM quoted)
+	UNION ALL
+	(FROM quoted EXCEPT ALL FROM read_csv('{TEMP_DIR}/quoted_ranges_crlf.csv', header = false, auto_detect = false, new_line = '\r\n', columns = quoted_columns(), buffer_size = {buffer_size}, parallel = {parallel}))
+)
+----
+0
+
+query II
+SELECT count(*), sum(id) FROM read_csv('{TEMP_DIR}/quoted_ranges.csv', header = false, auto_detect = false, columns = quoted_columns(), buffer_size = {buffer_size}, parallel = {parallel})
+----
+3000	4498500
+
+endloop
+
+endloop
