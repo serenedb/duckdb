@@ -38,6 +38,7 @@ struct RowDialect {
 	bool carry_on = false;
 	bool strict = false;
 	bool reopen = false;
+	bool quoted_spaces = false;
 	bool only_crlf = false;
 	NewLineIdentifier new_line = NewLineIdentifier::NOT_SET;
 	bool supported = true;
@@ -72,6 +73,8 @@ struct RowCursor {
 	uint64_t after_plain_cr = 0;
 	uint64_t after_closer = 0;
 	uint64_t after_opener = 0;
+	uint64_t closer_spaces = 0;
+	uint64_t start_space = 0;
 	uint64_t escape_carry = 0;
 	uint64_t pending_flag = 0;
 	uint64_t in_comment = 0;
