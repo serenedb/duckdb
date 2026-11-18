@@ -407,11 +407,7 @@ static void FillScanErrorTable(InternalAppender &appender, idx_t scan_idx, idx_t
 			appender.Append(string_t(format.format_specifier));
 		}
 	}
-	if (options.user_defined_parameters.empty()) {
-		appender.Append(Value());
-	} else {
-		appender.Append(string_t(options.GetUserDefinedParameters()));
-	}
+	appender.Append(string_t(options.GetUserDefinedParameters()));
 	appender.EndRow();
 }
 
