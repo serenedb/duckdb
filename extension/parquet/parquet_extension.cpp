@@ -1107,6 +1107,7 @@ static void LoadInternal(ExtensionLoader &loader) {
 	loader.RegisterFunction(VariantColumnWriter::GetBytesToVariantFunction());
 
 	CopyFunction function("parquet");
+	function.writes_typed_columns = true;
 	function.copy_to_select = ParquetWriteSelect;
 	function.copy_to_bind = ParquetWriteBind;
 	function.copy_to_propagate_statistics = ParquetCopyToPropagateStatistics;
