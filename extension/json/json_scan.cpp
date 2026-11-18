@@ -171,6 +171,7 @@ void JSONScan::TableFunctionDefaults(TableFunction &table_function) {
 	table_function.GetSignature().WithTypedKwargs("options", [](TypedKwargs &options) {
 		options.Add("maximum_object_size", LogicalType::UINTEGER)
 		    .Add("ignore_errors", LogicalType::BOOLEAN)
+		    .Add("strict", LogicalType::BOOLEAN)
 		    .Add("format", LogicalType::VARCHAR)
 		    .Add("compression", LogicalType::VARCHAR);
 	});
@@ -216,6 +217,10 @@ bool JSONScan::ParseOption(ClientContext &context, const Identifier &key, const 
 	}
 	if (key == "ignore_errors") {
 		options.ignore_errors = BooleanValue::Get(value);
+		return true;
+	}
+	if (key == "strict") {
+		options.strict = BooleanValue::Get(value);
 		return true;
 	}
 	if (key == "maximum_object_size") {

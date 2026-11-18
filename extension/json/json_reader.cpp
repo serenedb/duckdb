@@ -319,6 +319,7 @@ bool JSONReader::FetchRow(JSONReaderScanState &scan_state, idx_t file_offset) {
 	// arbitrary point lookups.
 	scan_state.current_reader = this;
 	scan_state.file_read_type = JSONFileReadType::SCAN_ENTIRE_FILE;
+	scan_state.parser.SetFlags(ReadFlags());
 
 	auto *handle = scan_state.current_buffer_handle.get();
 	bool read_at_offset = !handle || file_offset < handle->file_start ||
@@ -918,7 +919,7 @@ void JSONReader::AutoDetect(Allocator &allocator, idx_t buffer_capacity) {
 		return;
 	}
 	// perform auto-detection over the data we just read
-	JSONTreeParser detect_parser(JSONCommon::READ_FLAG);
+	JSONTreeParser detect_parser(ReadFlags());
 	idx_t features_offset;
 	if (options.geojson.value_or(false) && GetFormat() == JSONFormat::AUTO_DETECT &&
 	    FindFeatureCollectionArray(buffer_ptr, read_size, features_offset)) {
@@ -1092,6 +1093,7 @@ bool JSONReader::InitializeScan(JSONReaderScanState &scan_state, JSONFileReadTyp
 	scan_state.is_first_scan = true;
 	scan_state.skip_remainder_of_file = false;
 	scan_state.file_read_type = file_read_type;
+	scan_state.parser.SetFlags(ReadFlags());
 	if (file_read_type == JSONFileReadType::SCAN_ENTIRE_FILE) {
 		// when initializing a single-file scan we don't need to read anything yet
 		return true;
