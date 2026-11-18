@@ -20,7 +20,7 @@ namespace variant {
 template <bool WRITE_DATA, bool IGNORE_NULLS>
 static bool ConvertJSON(const JSONNode &val, ToVariantGlobalResultData &result, idx_t result_index, bool is_root);
 
-template <bool WRITE_DATA, bool IGNORE_NULLS>
+template <bool WRITE_DATA>
 static bool ConvertJSONArray(const JSONNode &arr, ToVariantGlobalResultData &result, idx_t result_index, bool is_root) {
 	auto &variant = result.variant;
 
@@ -47,14 +47,14 @@ static bool ConvertJSONArray(const JSONNode &arr, ToVariantGlobalResultData &res
 			variant.keys_index_validity.SetInvalid(start_child_index);
 			variant.values_index_data[start_child_index++] = values_offset_data[result_index];
 		}
-		if (!ConvertJSON<WRITE_DATA, IGNORE_NULLS>(val, result, result_index, false)) {
+		if (!ConvertJSON<WRITE_DATA, false>(val, result, result_index, false)) {
 			return false;
 		}
 	}
 	return true;
 }
 
-template <bool WRITE_DATA, bool IGNORE_NULLS>
+template <bool WRITE_DATA>
 static bool ConvertJSONObject(const JSONNode &obj, ToVariantGlobalResultData &result, idx_t result_index,
                               bool is_root) {
 	struct JSONObjectEntry {
@@ -114,7 +114,7 @@ static bool ConvertJSONObject(const JSONNode &obj, ToVariantGlobalResultData &re
 			result.keys_selvec.set_index(keys_list_entry.offset + keys_index, dictionary_index);
 		}
 
-		if (!ConvertJSON<WRITE_DATA, IGNORE_NULLS>(*entry.value, result, result_index, false)) {
+		if (!ConvertJSON<WRITE_DATA, false>(*entry.value, result, result_index, false)) {
 			return false;
 		}
 	}
@@ -208,9 +208,9 @@ static bool ConvertJSON(const JSONNode &val, ToVariantGlobalResultData &result, 
 	}
 
 	if (val.type == JSONValueType::ARRAY) {
-		return ConvertJSONArray<WRITE_DATA, IGNORE_NULLS>(val, result, result_index, is_root);
+		return ConvertJSONArray<WRITE_DATA>(val, result, result_index, is_root);
 	} else if (val.type == JSONValueType::OBJECT) {
-		return ConvertJSONObject<WRITE_DATA, IGNORE_NULLS>(val, result, result_index, is_root);
+		return ConvertJSONObject<WRITE_DATA>(val, result, result_index, is_root);
 	} else {
 		return ConvertJSONPrimitive<WRITE_DATA>(val, result, result_index, is_root);
 	}
