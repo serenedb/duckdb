@@ -71,6 +71,11 @@ link_extension_libraries(duckdb PRIVATE)
 
 link_threads(duckdb PUBLIC)
 
+if(TARGET nanoarrow::nanoarrow)
+  target_link_libraries(duckdb_static PRIVATE nanoarrow::nanoarrow)
+  target_link_libraries(duckdb PRIVATE nanoarrow::nanoarrow)
+endif()
+
 if(SET_DUCKDB_LIBRARY_VERSION)
   set_target_properties(
     duckdb PROPERTIES VERSION ${DUCKDB_VERSION_NUMBER}

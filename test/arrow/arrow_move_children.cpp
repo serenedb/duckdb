@@ -1,7 +1,7 @@
 #include "catch.hpp"
 
 #include "arrow/arrow_test_helper.hpp"
-#include "duckdb/common/adbc/single_batch_array_stream.hpp"
+#include "nanoarrow/nanoarrow.h"
 
 using namespace duckdb;
 
@@ -29,8 +29,8 @@ void AssertExpectedResult(ArrowSchema *schema, ArrowArrayWrapper &array, T expec
 	struct_array.release = EmptyRelease;
 	struct_array.offset = 0;
 
-	AdbcError unused;
-	(void)duckdb_adbc::BatchToArrayStream(&struct_array, schema, &stream, &unused);
+	REQUIRE(ArrowBasicArrayStreamInit(&stream, schema, 1) == NANOARROW_OK);
+	ArrowBasicArrayStreamSetArray(&stream, 0, &struct_array);
 
 	DuckDB db(nullptr);
 	Connection conn(db);
