@@ -1,0 +1,22 @@
+# name: test/parquet/variant/variant_bytes_to_json.test
+# description: A VARIANT decoded from Variant bytes keeps the last value of a repeated object key in JSON, and a key that is not valid UTF-8 fails JSON serialization
+# group: [variant]
+
+require parquet
+
+require json
+
+query I
+SELECT variant_bytes_to_variant('\x01\x01\x00\x01a\x02\x02\x00\x00\x00\x02\x04\x0C\x01\x0C\x02'::BLOB)::JSON;
+----
+{"a":2}
+
+statement error
+SELECT variant_bytes_to_variant('\x01\x01\x00\x01\xFF\x02\x01\x00\x00\x02\x0C\x01'::BLOB)::JSON;
+----
+Failed to serialize JSON: invalid utf-8 encoding in string
+
+statement error
+SELECT variant_extract_string(variant_bytes_to_variant('\x01\x01\x00\x01\xFF\x02\x01\x00\x00\x02\x0C\x01'::BLOB), '');
+----
+Failed to serialize JSON: invalid utf-8 encoding in string
