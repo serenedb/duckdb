@@ -314,6 +314,8 @@ struct LeanSource {
 	char escape_probe;
 	bool quotes;
 	bool doubled;
+	bool padded;
+	bool pad_empty;
 	bool allow_quoted_nulls;
 	bool empty_only_null;
 	const vector<string> *null_strings;
@@ -334,6 +336,7 @@ bool LeanValues(const LeanSource &source, idx_t count, bool force_not_null, Vect
 	const char quote = source.quote;
 	const bool quotes = source.quotes;
 	const bool doubled = source.doubled;
+	const uint32_t flag_test = quotes || source.padded ? ROW_FIELD_FLAG : 0;
 	const bool empty_only_null = source.empty_only_null && source.allow_quoted_nulls;
 	const auto selected = source.selected;
 	const idx_t first = source.first;
@@ -346,10 +349,16 @@ bool LeanValues(const LeanSource &source, idx_t count, bool force_not_null, Vect
 		idx_t begin = (begins[row * begin_stride] & ROW_FIELD_MASK) + begin_bias + shift;
 		idx_t end = (end_bits & ROW_FIELD_MASK) + shift;
 		bool quoted = false;
-		if (quotes && (end_bits & ROW_FIELD_FLAG) && end > begin && data[begin] == quote) {
-			begin++;
-			end--;
-			quoted = true;
+		if (end_bits & flag_test) {
+			if (begin > end) {
+				FlatVector::SetNull(vector, row, true);
+				continue;
+			}
+			if (quotes && end > begin && data[begin] == quote) {
+				begin++;
+				end--;
+				quoted = true;
+			}
 		}
 		const char *value = data + begin;
 		const idx_t size = end - begin;
@@ -383,6 +392,7 @@ bool LeanStrings(const LeanSource &source, idx_t count, const CsvScanColumn &col
 	const idx_t shift = source.shift;
 	const char quote = source.quote;
 	const bool quotes = source.quotes;
+	const uint32_t flag_test = quotes || source.padded ? ROW_FIELD_FLAG : 0;
 	const bool empty_only_null = source.empty_only_null && source.allow_quoted_nulls;
 	const auto selected = source.selected;
 	const idx_t first = source.first;
@@ -395,10 +405,20 @@ bool LeanStrings(const LeanSource &source, idx_t count, const CsvScanColumn &col
 		idx_t begin = (begins[row * begin_stride] & ROW_FIELD_MASK) + begin_bias + shift;
 		idx_t end = (end_bits & ROW_FIELD_MASK) + shift;
 		bool quoted = false;
-		if (quotes && (end_bits & ROW_FIELD_FLAG) && end > begin && data[begin] == quote) {
-			begin++;
-			end--;
-			quoted = true;
+		if (end_bits & flag_test) {
+			if (begin > end) {
+				if (source.pad_empty) {
+					out[row] = string_t();
+				} else {
+					FlatVector::SetNull(vector, row, true);
+				}
+				continue;
+			}
+			if (quotes && end > begin && data[begin] == quote) {
+				begin++;
+				end--;
+				quoted = true;
+			}
 		}
 		const char *value = data + begin;
 		const idx_t size = end - begin;
@@ -760,7 +780,7 @@ CsvScanGlobal::CsvScanGlobal(ClientContext &context_p, const CSVReaderOptions &o
 		return;
 	}
 	lean = make_uniq<RowLexer>(RowDialect::DuckDB(grammar), source.state_machine->dialect_options.num_cols,
-	                           options.maximum_line_size.GetValue(), !ignore_errors);
+	                           options.maximum_line_size.GetValue(), !ignore_errors, options.null_padding);
 	count_only = (columns.empty() || source.placeholder) && filters.empty() &&
 	             source.file_row_number == DConstants::INVALID_INDEX;
 	empty_only_null = null_strings.size() == 1 && null_strings[0].empty();
@@ -1456,7 +1476,7 @@ bool CsvScan::AdvanceLean() {
 	const idx_t limit = lean_stop != DConstants::INVALID_INDEX ? lean_stop : global.RangeEnd(range);
 	const idx_t feed_end = MinValue(limit, read_to);
 	const bool last = lean_stop != DConstants::INVALID_INDEX && feed_end == lean_stop;
-	if (cursor.pos < feed_end && (last || feed_end - cursor.pos >= CSV_BLOCK_BYTES)) {
+	if (cursor.pos < feed_end && (last || feed_end - cursor.pos >= CSV_BLOCK_BYTES + global.lean->Lookahead())) {
 		auto out = lean_extract && !lean_probe_only ? &fields : nullptr;
 		if (!global.lean->Feed(cursor, bytes->data, bytes->offset, feed_end, last, out)) {
 			return false;
@@ -2456,7 +2476,7 @@ bool CsvScan::DecodeLeanColumn(idx_t column_idx, idx_t first, idx_t count, DataC
 	} else {
 		source.begins = fields.ends.get() + column.file_column - 1;
 		source.begin_stride = columns;
-		source.begin_bias = 1;
+		source.begin_bias = grammar.delimiter_size;
 	}
 	source.ends = fields.ends.get() + column.file_column;
 	source.stride = columns;
@@ -2467,6 +2487,8 @@ bool CsvScan::DecodeLeanColumn(idx_t column_idx, idx_t first, idx_t count, DataC
 	source.escape_probe = grammar.escape && grammar.escape != grammar.quote ? grammar.escape : grammar.quote;
 	source.quotes = cursor.quotes;
 	source.doubled = cursor.doubled;
+	source.padded = cursor.padded;
+	source.pad_empty = column.file_column < options.force_not_null.size() && options.force_not_null[column.file_column];
 	source.allow_quoted_nulls = options.allow_quoted_nulls;
 	source.empty_only_null = global.empty_only_null;
 	source.null_strings = &global.null_strings;
