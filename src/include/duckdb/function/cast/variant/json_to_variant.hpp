@@ -288,7 +288,7 @@ static bool ConvertJSON(const JSONNode &val, ToVariantGlobalResultData &result, 
 			}
 		}
 		//! Converting the child may push a new frame, invalidating 'frame'
-		if (!ConvertJSONValue<WRITE_DATA, IGNORE_NULLS>(*child, result, result_index, false, stack)) {
+		if (!ConvertJSONValue<WRITE_DATA, false>(*child, result, result_index, false, stack)) {
 			return false;
 		}
 	}
