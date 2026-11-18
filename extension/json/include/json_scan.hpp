@@ -150,9 +150,6 @@ public:
 	SelectionVector filter_selection;
 
 private:
-	void ParseJSON(char *const json_start, const idx_t json_size, const idx_t remaining);
-
-private:
 	//! Scan state
 	JSONReaderScanState scan_state;
 };

@@ -158,11 +158,12 @@ struct JSONBuildFrame {
 	ondemand::object_iterator member;
 };
 
+static_assert(JSONTreeParser::PADDING >= simdjson::SIMDJSON_PADDING, "JSONTreeParser::PADDING covers simdjson's");
+
 struct JSONTreeParserState {
 	ondemand::parser parser;
 	unsafe_unique_array<char> input;
 	idx_t capacity = 0;
-	idx_t size = 0;
 	string cleaned;
 	vector<JSONNode> nodes;
 	vector<JSONBuildFrame> frames;
@@ -535,8 +536,8 @@ static void ReplaceInvalidJSONUnicode(const char *data, idx_t len, string &out) 
 	}
 }
 
-static optional_idx ParseInto(JSONTreeParserState &st, JSONReadFlags flags, const char *data, idx_t len, bool append,
-                              JSONParseError &error, optional_ptr<idx_t> consumed = nullptr);
+static optional_idx ParseInto(JSONTreeParserState &st, JSONReadFlags flags, const char *data, idx_t len, idx_t readable,
+                              bool append, JSONParseError &error, optional_ptr<idx_t> consumed = nullptr);
 
 JSONTreeParser::JSONTreeParser(JSONReadFlags flags_p) : flags(flags_p), state(make_uniq<JSONTreeParserState>()) {
 	SetFlags(flags_p);
@@ -567,17 +568,21 @@ const JSONNode *JSONTreeParser::Node(idx_t index) const {
 
 const JSONNode *JSONTreeParser::Parse(const char *data, idx_t len, JSONParseError &error) {
 	state->nodes.clear();
-	auto root = ParseInto(*state, flags, data, len, false, error);
+	auto root = ParseInto(*state, flags, data, len, len, false, error);
 	return root.IsValid() ? state->nodes.data() + root.GetIndex() : nullptr;
 }
 
 optional_idx JSONTreeParser::ParseAppend(const char *data, idx_t len, JSONParseError &error) {
-	return ParseInto(*state, flags, data, len, true, error);
+	return ParseInto(*state, flags, data, len, len, true, error);
+}
+
+optional_idx JSONTreeParser::ParseAppend(const char *data, idx_t len, idx_t readable, JSONParseError &error) {
+	return ParseInto(*state, flags, data, len, readable, true, error);
 }
 
 const JSONNode *JSONTreeParser::ParsePrefix(const char *data, idx_t len, idx_t &consumed, JSONParseError &error) {
 	state->nodes.clear();
-	auto root = ParseInto(*state, flags, data, len, false, error, &consumed);
+	auto root = ParseInto(*state, flags, data, len, len, false, error, &consumed);
 	return root.IsValid() ? state->nodes.data() + root.GetIndex() : nullptr;
 }
 
@@ -636,8 +641,8 @@ static optional_idx JSONParseFailure(JSONParseError &error, const char *message,
 	return optional_idx();
 }
 
-static optional_idx ParseInto(JSONTreeParserState &st, JSONReadFlags flags, const char *data, idx_t len, bool append,
-                              JSONParseError &error, optional_ptr<idx_t> consumed) {
+static optional_idx ParseInto(JSONTreeParserState &st, JSONReadFlags flags, const char *data, idx_t len, idx_t readable,
+                              bool append, JSONParseError &error, optional_ptr<idx_t> consumed) {
 	if (len >= 3 && memcmp(data, "\xEF\xBB\xBF", 3) == 0) {
 		return JSONParseFailure(error, "byte order mark (BOM) is not supported", 0);
 	}
@@ -648,6 +653,7 @@ static optional_idx ParseInto(JSONTreeParserState &st, JSONReadFlags flags, cons
 		}
 		data = st.cleaned.data();
 		len = st.cleaned.size();
+		readable = len;
 	}
 	if (HasFlag(flags, JSONReadFlags::ALLOW_INVALID_UNICODE) && !simdutf::validate_utf8(data, len)) {
 		string replaced;
@@ -655,21 +661,24 @@ static optional_idx ParseInto(JSONTreeParserState &st, JSONReadFlags flags, cons
 		st.cleaned = std::move(replaced);
 		data = st.cleaned.data();
 		len = st.cleaned.size();
+		readable = len;
 	}
-	const idx_t needed = len + simdjson::SIMDJSON_PADDING;
-	if (needed > st.capacity) {
-		st.capacity = MaxValue<idx_t>(needed, st.capacity * 2);
-		st.input = make_unsafe_uniq_array_uninitialized<char>(st.capacity);
+	if (readable < len + JSONTreeParser::PADDING) {
+		readable = len + JSONTreeParser::PADDING;
+		if (readable > st.capacity) {
+			st.capacity = MaxValue<idx_t>(readable, st.capacity * 2);
+			st.input = make_unsafe_uniq_array_uninitialized<char>(st.capacity);
+		}
+		memcpy(st.input.get(), data, len);
+		memset(st.input.get() + len, 0, JSONTreeParser::PADDING);
+		data = st.input.get();
 	}
-	memcpy(st.input.get(), data, len);
-	memset(st.input.get() + len, 0, simdjson::SIMDJSON_PADDING);
-	st.size = len;
 
 	const idx_t root = st.nodes.size();
 	st.frames.clear();
 	JSONBuildContext context {flags, st.nodes, st.frames, append ? &st.strings : nullptr};
 	ondemand::document document;
-	auto code = st.parser.iterate(st.input.get(), len, st.capacity).get(document);
+	auto code = st.parser.iterate(data, len, readable).get(document);
 	const bool started = !code;
 	std::string_view root_token;
 	if (!code) {
@@ -682,13 +691,12 @@ static optional_idx ParseInto(JSONTreeParserState &st, JSONReadFlags flags, cons
 		const char *end = root_token.data() + root_token.size();
 		if (st.nodes[root].IsContainer()) {
 			const char *location;
-			end = document.at_end() || document.current_location().get(location) ? st.input.get() + len : location;
+			end = document.at_end() || document.current_location().get(location) ? data + len : location;
 		}
-		*consumed = NumericCast<idx_t>(end - st.input.get());
+		*consumed = NumericCast<idx_t>(end - data);
 	} else if (!code) {
-		const bool trailing = st.nodes[root].IsContainer()
-		                          ? !document.at_end()
-		                          : root_token.data() + root_token.size() < st.input.get() + len;
+		const bool trailing =
+		    st.nodes[root].IsContainer() ? !document.at_end() : root_token.data() + root_token.size() < data + len;
 		if (trailing) {
 			code = simdjson::TRAILING_CONTENT;
 		}
@@ -697,9 +705,9 @@ static optional_idx ParseInto(JSONTreeParserState &st, JSONReadFlags flags, cons
 		idx_t position = 0;
 		const char *location;
 		if (started && !document.current_location().get(location)) {
-			position = NumericCast<idx_t>(location - st.input.get());
+			position = NumericCast<idx_t>(location - data);
 		}
-		code = DiagnoseJSONRoot(st.input.get(), len, flags, code, position);
+		code = DiagnoseJSONRoot(data, len, flags, code, position);
 		st.nodes.resize(root);
 		return JSONParseFailure(error, JSONErrorMessage(code), position);
 	}
