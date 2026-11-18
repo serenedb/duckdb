@@ -625,7 +625,8 @@ string Describe(const FuzzDialect &dialect, const string &input) {
 }
 
 FuzzDialect RandomDialect(std::mt19937_64 &rng) {
-	static const char *delimiters[] = {",", "|", ";", "\t", "||", "ab", "\xc2\xa6", "a|", ", ", "|~|", "::"};
+	static const char *delimiters[] = {",",  "|",  ";",   "\t", "||",   "ab", "\xc2\xa6",
+	                                   "a|", ", ", "|~|", "::", "~|~|", "|||"};
 	static const char quotes[] = {'"', '\'', '\0'};
 	FuzzDialect dialect;
 	dialect.delimiter = delimiters[rng() % (sizeof(delimiters) / sizeof(delimiters[0]))];
