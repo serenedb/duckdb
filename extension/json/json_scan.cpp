@@ -532,9 +532,9 @@ static void FillFileRowNumbers(JSONReaderScanState &scan_state, JSONScanGlobalSt
 	const auto *buffer_handle = scan_state.current_buffer_handle.get();
 	const auto *data_base = buffer_handle ? scan_state.buffer_ptr + buffer_handle->buffer_start : scan_state.buffer_ptr;
 	const auto file_base = buffer_handle ? buffer_handle->file_start : idx_t {0};
+	const auto file_offset = NumericCast<int64_t>(file_base);
 	for (idx_t i = 0; i < count; ++i) {
-		const auto local = UnsafeNumericCast<idx_t>(scan_state.units[i].pointer - data_base);
-		frn_data[i] = UnsafeNumericCast<int64_t>(file_base + local);
+		frn_data[i] = file_offset + (scan_state.units[i].pointer - data_base);
 	}
 }
 
