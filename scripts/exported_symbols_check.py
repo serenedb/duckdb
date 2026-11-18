@@ -16,7 +16,6 @@ WHITELIST = [
     'duckdb_fmt::',
     'duckdb_hll::',
     'duckdb_moodycamel::',
-    'duckdb_yyjson::',
     'duckdb_',
     'RefCounter',
     'registerTMCloneTable',
