@@ -787,7 +787,7 @@ CsvScanGlobal::CsvScanGlobal(ClientContext &context_p, const CSVReaderOptions &o
 
 	auto &manager = *source.buffer_manager;
 	size = manager.file_handle->FileSize();
-	if (source.sniffing || !manager.HasKnownBufferRanges() || grammar.only_crlf) {
+	if (source.sniffing || !manager.HasKnownBufferRanges()) {
 		return;
 	}
 	lean = make_uniq<RowLexer>(RowDialect::DuckDB(grammar), source.state_machine->dialect_options.num_cols,

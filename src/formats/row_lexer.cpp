@@ -207,8 +207,7 @@ RowDialect RowDialect::DuckDB(const CsvGrammar &grammar) {
 	result.reopen = grammar.quote == grammar.escape || (!grammar.strict_mode && grammar.escape != '\0');
 	result.quoted_spaces = grammar.quote != '\0' && grammar.trim_quoted_spaces;
 	result.new_line = grammar.new_line;
-	result.supported = !grammar.only_crlf && plain_delimiter;
-	result.only_crlf = grammar.only_crlf;
+	result.supported = plain_delimiter;
 	result.transitions = grammar.transitions;
 	return result;
 }
@@ -817,10 +816,8 @@ bool RowLexer::CountByte(RowCountCursor &cursor, char byte, idx_t position, vect
 			CountRow(c, position, c.starts_as_comment ? ROW_COUNT_COMMENT : ROW_COUNT_MID_COMMENT, rows);
 			c.comment = false;
 			c.starts_as_comment = false;
-		} else if (next == CSVState::RECORD_SEPARATOR || !dialect.only_crlf) {
-			CountRow(c, position, 0, rows);
 		} else {
-			return false;
+			CountRow(c, position, 0, rows);
 		}
 		return rows.size() >= limit;
 	case CSVState::DELIMITER:
@@ -898,9 +895,6 @@ bool RowLexer::CountPlain(RowCountCursor &cursor, const char *block, idx_t from,
 		if (before == CSVState::RECORD_SEPARATOR || before == CSVState::NOT_SET) {
 			c.empty_lines++;
 			c.line_start = offset + at + 1;
-			continue;
-		}
-		if (pair && dialect.only_crlf) {
 			continue;
 		}
 		c.states[0] = before;
