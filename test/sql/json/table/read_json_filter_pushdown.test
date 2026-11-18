@@ -95,3 +95,13 @@ SELECT id, num FROM read_json('{TEMP_DIR}/pushdown_errors.json', columns = {'id'
 ----
 2	NULL
 3	30
+
+statement error
+SELECT id FROM read_json('{TEMP_DIR}/pushdown_errors.json', columns = {'id': 'INTEGER', 'name': 'VARCHAR', 'num': 'INTEGER'}) WHERE num > 5
+----
+<REGEX>:.*JSON transform error.*line 2.*
+
+statement error
+SELECT id, num FROM read_json('{TEMP_DIR}/pushdown_errors.json', columns = {'id': 'INTEGER', 'name': 'VARCHAR', 'num': 'INTEGER'}) WHERE id >= 1
+----
+<REGEX>:.*JSON transform error.*line 2.*

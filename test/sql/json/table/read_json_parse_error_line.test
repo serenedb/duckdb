@@ -36,3 +36,16 @@ statement error
 SELECT * FROM read_json('{TEST_DIR}/bad_element.json', format := 'array', columns := {a: 'INTEGER'});
 ----
 at byte 7 in record/value 2: invalid literal, expected 'null'
+
+statement ok
+COPY (SELECT '[{"a": 1} {"a": 2}]' AS line) TO '{TEST_DIR}/missing_comma.json' (FORMAT csv, HEADER false, QUOTE '', ESCAPE '');
+
+statement error
+SELECT * FROM read_json('{TEST_DIR}/missing_comma.json', format := 'array', columns := {a: 'INTEGER'});
+----
+at byte 9 in record/value 2: unexpected character
+
+statement error
+SELECT * FROM read_json('{TEST_DIR}/missing_comma.json');
+----
+unexpected character

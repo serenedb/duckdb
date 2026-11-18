@@ -48,3 +48,17 @@ statement error
 SELECT g FROM read_json('{TEST_DIR}/badwkt.ndjson', columns={g: 'GEOMETRY'});
 ----
 <REGEX>:.*
+
+statement ok
+COPY (SELECT line FROM (VALUES
+	(1, '{"type":"Feature","geometry":{"type":"Point","coordinates":[1,2]},"properties":{"name":"a"}}'),
+	(2, '{"type":"Feature","properties":'),
+	(3, '{"type":"Feature","geometry":{"type":"Point","coordinates":[3,4]},"properties":{"name":"c"}}')
+) t(i, line) ORDER BY i) TO '{TEST_DIR}/broken_feature.geojsonl' (FORMAT CSV, HEADER false, QUOTE '', ESCAPE '');
+
+query II
+SELECT name, ST_AsText(geometry) FROM read_json('{TEST_DIR}/broken_feature.geojsonl', ignore_errors=true);
+----
+a	POINT (1 2)
+NULL	NULL
+c	POINT (3 4)

@@ -165,3 +165,28 @@ statement error
 SELECT ST_GeomFromGeoJSON('not json at all');
 ----
 <REGEX>:.*Malformed JSON.*
+
+statement error
+SELECT ST_GeomFromGeoJSON('{"type":1,"coordinates":[1,2]}');
+----
+<REGEX>:.*missing a "type" string.*
+
+statement error
+SELECT ST_GeomFromGeoJSON('{"type":"Point","coordinates":1}');
+----
+<REGEX>:.*Point requires a "coordinates" array.*
+
+statement error
+SELECT ST_GeomFromGeoJSON('{"type":"GeometryCollection","geometries":{}}');
+----
+<REGEX>:.*GeometryCollection requires a "geometries" array.*
+
+statement error
+SELECT ST_GeomFromGeoJSON('{"type":"MultiPolygon","coordinates":[1]}');
+----
+<REGEX>:.*MultiPolygon coordinates are nested too shallowly.*
+
+query I
+SELECT ST_AsText(ST_GeomFromGeoJSON('{"type":"GeometryCollection","geometries":[{"type":"Point","coordinates":[1,2]},{"type":"Point","coordinates":[3,4,5]}]}'));
+----
+GEOMETRYCOLLECTION Z (POINT Z (1 2 0), POINT Z (3 4 5))
