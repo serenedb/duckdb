@@ -1,5 +1,6 @@
 #include "duckdb/common/json_document.hpp"
 
+#include "duckdb/common/error_data.hpp"
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/helper.hpp"
 #include "duckdb/common/numeric_utils.hpp"
@@ -160,14 +161,68 @@ struct JSONBuildFrame {
 
 static_assert(JSONTreeParser::PADDING >= simdjson::SIMDJSON_PADDING, "JSONTreeParser::PADDING covers simdjson's");
 
+template <class T>
+struct JSONStateAllocator {
+	using value_type = T;
+
+	explicit JSONStateAllocator(Allocator &allocator_p) : allocator(&allocator_p) {
+	}
+	template <class U>
+	JSONStateAllocator(const JSONStateAllocator<U> &other) : allocator(other.allocator) {
+	}
+
+	T *allocate(size_t count) {
+		return reinterpret_cast<T *>(allocator->AllocateData(count * sizeof(T)));
+	}
+	void deallocate(T *pointer, size_t count) {
+		allocator->FreeData(data_ptr_cast(pointer), count * sizeof(T));
+	}
+	template <class U>
+	bool operator==(const JSONStateAllocator<U> &other) const {
+		return allocator == other.allocator;
+	}
+
+	Allocator *allocator;
+};
+
+using JSONNodes = vector<JSONNode, true, JSONStateAllocator<JSONNode>>;
+
+struct JSONParserBuffers {
+	explicit JSONParserBuffers(Allocator &allocator_p)
+	    : allocator(allocator_p), callbacks {Allocate, Deallocate, this} {
+	}
+
+	static void *Allocate(void *context, size_t size) noexcept {
+		auto &buffers = *static_cast<JSONParserBuffers *>(context);
+		try {
+			return buffers.allocator.AllocateData(size);
+		} catch (std::exception &ex) {
+			buffers.error = ErrorData(ex);
+			return nullptr;
+		}
+	}
+	static void Deallocate(void *context, void *pointer, size_t size) noexcept {
+		static_cast<JSONParserBuffers *>(context)->allocator.FreeData(static_cast<data_ptr_t>(pointer), size);
+	}
+
+	Allocator &allocator;
+	simdjson::buffer_allocator callbacks;
+	ErrorData error;
+};
+
 struct JSONTreeParserState {
+	explicit JSONTreeParserState(Allocator &allocator)
+	    : buffers(allocator), nodes(JSONStateAllocator<JSONNode>(allocator)), strings(allocator) {
+		parser.allocator = &buffers.callbacks;
+	}
+
+	JSONParserBuffers buffers;
 	ondemand::parser parser;
-	unsafe_unique_array<char> input;
-	idx_t capacity = 0;
+	AllocatedData input;
 	string cleaned;
-	vector<JSONNode> nodes;
+	JSONNodes nodes;
 	vector<JSONBuildFrame> frames;
-	ArenaAllocator strings {Allocator::DefaultAllocator()};
+	ArenaAllocator strings;
 };
 
 static std::string_view TrimJSONToken(std::string_view token) {
@@ -214,7 +269,7 @@ static JSONNode MakeJSONNode(JSONValueType type) {
 
 struct JSONBuildContext {
 	JSONReadFlags flags;
-	vector<JSONNode> &nodes;
+	JSONNodes &nodes;
 	vector<JSONBuildFrame> &frames;
 	optional_ptr<ArenaAllocator> keep;
 
@@ -539,7 +594,8 @@ static void ReplaceInvalidJSONUnicode(const char *data, idx_t len, string &out) 
 static optional_idx ParseInto(JSONTreeParserState &st, JSONReadFlags flags, const char *data, idx_t len, idx_t readable,
                               bool append, JSONParseError &error, optional_ptr<idx_t> consumed = nullptr);
 
-JSONTreeParser::JSONTreeParser(JSONReadFlags flags_p) : flags(flags_p), state(make_uniq<JSONTreeParserState>()) {
+JSONTreeParser::JSONTreeParser(JSONReadFlags flags_p, Allocator &allocator)
+    : flags(flags_p), state(make_uniq<JSONTreeParserState>(allocator)) {
 	SetFlags(flags_p);
 }
 
@@ -665,13 +721,13 @@ static optional_idx ParseInto(JSONTreeParserState &st, JSONReadFlags flags, cons
 	}
 	if (readable < len + JSONTreeParser::PADDING) {
 		readable = len + JSONTreeParser::PADDING;
-		if (readable > st.capacity) {
-			st.capacity = MaxValue<idx_t>(readable, st.capacity * 2);
-			st.input = make_unsafe_uniq_array_uninitialized<char>(st.capacity);
+		if (readable > st.input.GetSize()) {
+			st.input = st.buffers.allocator.Allocate(MaxValue<idx_t>(readable, st.input.GetSize() * 2));
 		}
-		memcpy(st.input.get(), data, len);
-		memset(st.input.get() + len, 0, JSONTreeParser::PADDING);
-		data = st.input.get();
+		auto input = char_ptr_cast(st.input.get());
+		memcpy(input, data, len);
+		memset(input + len, 0, JSONTreeParser::PADDING);
+		data = input;
 	}
 
 	const idx_t root = st.nodes.size();
@@ -679,6 +735,11 @@ static optional_idx ParseInto(JSONTreeParserState &st, JSONReadFlags flags, cons
 	JSONBuildContext context {flags, st.nodes, st.frames, append ? &st.strings : nullptr};
 	ondemand::document document;
 	auto code = st.parser.iterate(data, len, readable).get(document);
+	if (code == simdjson::MEMALLOC && st.buffers.error.HasError()) {
+		auto error = std::move(st.buffers.error);
+		st.buffers.error = ErrorData();
+		error.Throw();
+	}
 	const bool started = !code;
 	std::string_view root_token;
 	if (!code) {

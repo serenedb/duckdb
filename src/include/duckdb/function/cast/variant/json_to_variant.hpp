@@ -308,8 +308,7 @@ bool ConvertJSONToVariant(ToVariantSourceData &source, ToVariantGlobalResultData
 	auto blob_offset_data = OffsetData::GetBlob(result.offsets);
 
 	auto &variant = result.variant;
-	JSONTreeParser parser(JSONReadFlags::ALLOW_INF_AND_NAN | JSONReadFlags::ALLOW_TRAILING_COMMAS |
-	                      JSONReadFlags::BIGNUM_AS_RAW);
+	auto &parser = result.json_parser;
 	JSONParseError error;
 	JSONConversionStack stack;
 	for (idx_t i = 0; i < count; i++) {
