@@ -81,6 +81,84 @@ void WalkQuotes(const char *block, idx_t size, char quote, char escape, uint64_t
 	pending = escape_next;
 }
 
+bool PlainCountState(CSVState state) {
+	return state == CSVState::NOT_SET || state == CSVState::RECORD_SEPARATOR || state == CSVState::DELIMITER ||
+	       state == CSVState::STANDARD || state == CSVState::EMPTY_SPACE;
+}
+
+bool PlainCountTransitions(const StateMachine &table, const RowDialect &d, char (&specials)[4], idx_t &count,
+                           bool &line_feeds, bool &carriage_pairs) {
+	count = 0;
+	line_feeds = true;
+	carriage_pairs = true;
+	if (d.delimiter_size != 1) {
+		return false;
+	}
+	bool special[StateMachine::NUM_TRANSITIONS] = {};
+	special[static_cast<uint8_t>('\r')] = true;
+	for (const char byte : {d.quote, d.escape, d.comment}) {
+		if (byte != '\0' && !special[static_cast<uint8_t>(byte)]) {
+			special[static_cast<uint8_t>(byte)] = true;
+			specials[count++] = byte;
+		}
+	}
+	const auto delimiter = static_cast<uint8_t>(d.delimiter);
+	if (special[delimiter] || delimiter == '\n' || special[static_cast<uint8_t>('\n')]) {
+		return false;
+	}
+	const CSVState states[] = {CSVState::NOT_SET, CSVState::RECORD_SEPARATOR, CSVState::DELIMITER, CSVState::STANDARD,
+	                           CSVState::EMPTY_SPACE};
+	carriage_pairs = table[static_cast<uint8_t>('\n')][static_cast<uint8_t>(CSVState::CARRIAGE_RETURN)] ==
+	                 CSVState::RECORD_SEPARATOR;
+	for (const auto state : states) {
+		const auto from = static_cast<uint8_t>(state);
+		if (table[delimiter][from] != CSVState::DELIMITER) {
+			return false;
+		}
+		line_feeds = line_feeds && table[static_cast<uint8_t>('\n')][from] == CSVState::RECORD_SEPARATOR;
+		carriage_pairs = carriage_pairs && table[static_cast<uint8_t>('\r')][from] == CSVState::CARRIAGE_RETURN;
+		for (idx_t byte = 0; byte < StateMachine::NUM_TRANSITIONS; byte++) {
+			if (byte == delimiter || byte == '\n' || byte == ' ' || special[byte]) {
+				continue;
+			}
+			if (table[byte][from] != CSVState::STANDARD) {
+				return false;
+			}
+		}
+		if (delimiter != ' ') {
+			const auto space = table[static_cast<uint8_t>(' ')][from];
+			if (space != CSVState::STANDARD && space != CSVState::EMPTY_SPACE) {
+				return false;
+			}
+			if ((state == CSVState::STANDARD || state == CSVState::EMPTY_SPACE) && space != CSVState::STANDARD) {
+				return false;
+			}
+		}
+	}
+	return true;
+}
+
+idx_t RunStops(const StateMachine &table, CSVState first, CSVState second, char (&stops)[8]) {
+	idx_t count = 0;
+	for (idx_t byte = 0; byte < StateMachine::NUM_TRANSITIONS; byte++) {
+		const auto from_first = table[byte][static_cast<uint8_t>(first)];
+		const auto from_second = table[byte][static_cast<uint8_t>(second)];
+		const bool stays_first = from_first == first || from_first == second;
+		const bool stays_second = from_second == first || from_second == second;
+		if (stays_first != stays_second || (!stays_first && from_first != from_second)) {
+			return DConstants::INVALID_INDEX;
+		}
+		if (stays_first) {
+			continue;
+		}
+		if (count == 8) {
+			return DConstants::INVALID_INDEX;
+		}
+		stops[count++] = static_cast<char>(byte);
+	}
+	return count;
+}
+
 } // namespace
 
 RowDialect RowDialect::DuckDB(const CsvGrammar &grammar) {
@@ -109,6 +187,8 @@ RowDialect RowDialect::DuckDB(const CsvGrammar &grammar) {
 	result.reopen = grammar.quote == grammar.escape || (!grammar.strict_mode && grammar.escape != '\0');
 	result.new_line = grammar.new_line;
 	result.supported = !grammar.only_crlf && plain_delimiter;
+	result.only_crlf = grammar.only_crlf;
+	result.transitions = grammar.transitions;
 	return result;
 }
 
@@ -171,6 +251,14 @@ RowLexer::RowLexer(const RowDialect &dialect_p, idx_t columns_p, idx_t max_line_
 		for (idx_t phase = 0; phase < columns; phase++) {
 			patterns[phase] = ExpectedPattern(columns, phase);
 		}
+	}
+	if (dialect.transitions) {
+		const auto &table = *dialect.transitions;
+		count_plain = PlainCountTransitions(table, dialect, count_specials, count_special_count, count_line_feeds,
+		                                    count_carriage_pairs);
+		standard_stop_count = RunStops(table, CSVState::STANDARD, CSVState::STANDARD, standard_stops);
+		quoted_stop_count = RunStops(table, CSVState::QUOTED, CSVState::QUOTED_NEW_LINE, quoted_stops);
+		comment_stop_count = RunStops(table, CSVState::COMMENT, CSVState::COMMENT, comment_stops);
 	}
 }
 
@@ -644,6 +732,276 @@ idx_t RowLexer::CountLines(const char *data, idx_t base, idx_t begin, idx_t end)
 		after_cr = (carriage >> (size - 1)) & 1;
 	}
 	return lines;
+}
+
+void RowLexer::CountRow(RowCountCursor &cursor, idx_t position, uint8_t flags, vector<RowCount> &rows) const {
+	const CSVState before = cursor.states[0];
+	const CSVState current = cursor.states[1];
+	if ((before == CSVState::DELIMITER && (current == CSVState::RECORD_SEPARATOR ||
+	                                       current == CSVState::CARRIAGE_RETURN || current == CSVState::DELIMITER)) ||
+	    (before == CSVState::STANDARD && current == CSVState::DELIMITER)) {
+		flags |= ROW_COUNT_EMPTY_LAST;
+	}
+	const idx_t end = position == DConstants::INVALID_INDEX ? position : position + 1;
+	rows.push_back({cursor.delimiters + 1, cursor.empty_lines, cursor.line_start, end, flags});
+	cursor.delimiters = 0;
+	if (position != DConstants::INVALID_INDEX) {
+		cursor.line_start = end;
+	}
+}
+
+bool RowLexer::CountByte(RowCountCursor &cursor, char byte, idx_t position, vector<RowCount> &rows, idx_t limit) const {
+	auto &c = cursor;
+	const CSVState previous = c.states[1];
+	const CSVState next = (*dialect.transitions)[static_cast<uint8_t>(byte)][static_cast<uint8_t>(previous)];
+	c.states[0] = previous;
+	c.states[1] = next;
+	switch (next) {
+	case CSVState::INVALID:
+		c.invalid = true;
+		return true;
+	case CSVState::RECORD_SEPARATOR:
+	case CSVState::CARRIAGE_RETURN:
+		if (previous == CSVState::RECORD_SEPARATOR || previous == CSVState::NOT_SET) {
+			c.empty_lines++;
+			c.line_start = position + 1;
+			return false;
+		}
+		if (previous == CSVState::CARRIAGE_RETURN) {
+			return false;
+		}
+		if (c.comment) {
+			CountRow(c, position, c.starts_as_comment ? ROW_COUNT_COMMENT : ROW_COUNT_MID_COMMENT, rows);
+			c.comment = false;
+			c.starts_as_comment = false;
+		} else if (next == CSVState::RECORD_SEPARATOR || !dialect.only_crlf) {
+			CountRow(c, position, 0, rows);
+		} else {
+			return false;
+		}
+		return rows.size() >= limit;
+	case CSVState::DELIMITER:
+		c.delimiters++;
+		return false;
+	case CSVState::QUOTED:
+		if ((previous == CSVState::UNQUOTED || previous == CSVState::MAYBE_QUOTED) && dialect.escape != '\0') {
+			c.ever_escaped = true;
+		}
+		if ((previous == CSVState::ESCAPE || previous == CSVState::ESCAPED_RETURN ||
+		     previous == CSVState::UNQUOTED_ESCAPE) &&
+		    (byte == dialect.quote || !dialect.strict)) {
+			c.ever_escaped = true;
+			c.used_unstrictness = c.used_unstrictness || previous == CSVState::UNQUOTED_ESCAPE;
+		}
+		c.ever_quoted = true;
+		return false;
+	case CSVState::UNQUOTED:
+		c.ever_escaped = c.ever_escaped || previous == CSVState::MAYBE_QUOTED;
+		return false;
+	case CSVState::UNQUOTED_ESCAPE:
+		c.used_unstrictness = true;
+		return false;
+	case CSVState::COMMENT:
+		if (previous != CSVState::COMMENT) {
+			c.starts_as_comment = previous != CSVState::STANDARD && previous != CSVState::DELIMITER;
+			c.comment = true;
+		}
+		return false;
+	default:
+		return false;
+	}
+}
+
+CSVState RowLexer::PlainState(const char *block, idx_t position, idx_t first, CSVState incoming) const {
+	const char byte = block[position];
+	if (byte == dialect.delimiter) {
+		return CSVState::DELIMITER;
+	}
+	if (byte == '\n') {
+		return CSVState::RECORD_SEPARATOR;
+	}
+	if (byte == '\r') {
+		return CSVState::CARRIAGE_RETURN;
+	}
+	if (byte != ' ') {
+		return CSVState::STANDARD;
+	}
+	CSVState before = incoming;
+	if (position > first) {
+		const char previous = block[position - 1];
+		before = previous == dialect.delimiter ? CSVState::DELIMITER
+		         : previous == '\n'            ? CSVState::RECORD_SEPARATOR
+		                                       : CSVState::STANDARD;
+	}
+	return (*dialect.transitions)[static_cast<uint8_t>(' ')][static_cast<uint8_t>(before)];
+}
+
+bool RowLexer::CountPlain(RowCountCursor &cursor, const char *block, idx_t from, idx_t to, uint64_t delimiters,
+                          uint64_t terminators, uint64_t pairs, idx_t offset, vector<RowCount> &rows,
+                          idx_t limit) const {
+	auto &c = cursor;
+	const uint64_t below_to = to == CSV_BLOCK_BYTES ? ~uint64_t(0) : (uint64_t(1) << to) - 1;
+	const uint64_t range = below_to & (~uint64_t(0) << from);
+	const CSVState incoming = c.states[1];
+	uint64_t done = (uint64_t(1) << from) - 1;
+	for (uint64_t rest = terminators & range; rest; rest &= rest - 1) {
+		const auto at = static_cast<idx_t>(std::countr_zero(rest));
+		const bool pair = (pairs >> at) & 1;
+		const idx_t last = at + pair;
+		const uint64_t through = last == CSV_BLOCK_BYTES - 1 ? ~uint64_t(0) : (uint64_t(2) << last) - 1;
+		c.delimiters += static_cast<idx_t>(std::popcount(delimiters & through & ~done));
+		const CSVState before = at == from ? incoming : PlainState(block, at - 1, from, incoming);
+		done = through;
+		if (before == CSVState::RECORD_SEPARATOR || before == CSVState::NOT_SET) {
+			c.empty_lines++;
+			c.line_start = offset + at + 1;
+			continue;
+		}
+		if (pair && dialect.only_crlf) {
+			continue;
+		}
+		c.states[0] = before;
+		c.states[1] = pair ? CSVState::CARRIAGE_RETURN : CSVState::RECORD_SEPARATOR;
+		CountRow(c, offset + at, 0, rows);
+		if (rows.size() >= limit) {
+			c.pos = offset + at + 1;
+			return true;
+		}
+	}
+	c.delimiters += static_cast<idx_t>(std::popcount(delimiters & range & ~done));
+	c.states[0] = to - from >= 2 ? PlainState(block, to - 2, from, incoming) : incoming;
+	c.states[1] = PlainState(block, to - 1, from, incoming);
+	return false;
+}
+
+void RowLexer::CountRows(RowCountCursor &cursor, const char *data, idx_t base, idx_t end, idx_t max_rows,
+                         vector<RowCount> &rows) const {
+	auto &c = cursor;
+	const idx_t limit = rows.size() + max_rows;
+	char padded[CSV_BLOCK_BYTES];
+	while (c.pos < end && !c.invalid && rows.size() < limit) {
+		const idx_t size = MinValue<idx_t>(CSV_BLOCK_BYTES, end - c.pos);
+		const char *block = data + (c.pos - base);
+		uint64_t valid = ~uint64_t(0);
+		if (size < CSV_BLOCK_BYTES) {
+			memset(padded, 0, sizeof(padded));
+			memcpy(padded, block, size);
+			block = padded;
+			valid = (uint64_t(1) << size) - 1;
+		}
+		const CsvVector vector(block);
+		uint64_t delimiters = 0;
+		uint64_t terminators = 0;
+		uint64_t pairs = 0;
+		uint64_t specials = valid;
+		if (count_plain) {
+			delimiters = vector.Equal(dialect.delimiter) & valid;
+			const uint64_t line_feeds = vector.Equal('\n') & valid;
+			const uint64_t carriages = vector.Equal('\r') & valid;
+			pairs = count_carriage_pairs ? carriages & (line_feeds >> 1) : 0;
+			const uint64_t lone_feeds = line_feeds & ~(pairs << 1);
+			terminators = pairs | (count_line_feeds ? lone_feeds : 0);
+			specials = (carriages & ~pairs) | (count_line_feeds ? 0 : lone_feeds);
+			for (idx_t i = 0; i < count_special_count; i++) {
+				specials |= vector.Equal(count_specials[i]);
+			}
+			specials &= valid;
+		}
+		uint64_t standard_ends = 0;
+		uint64_t quoted_ends = 0;
+		uint64_t comment_ends = 0;
+		bool standard_ready = false;
+		bool quoted_ready = false;
+		bool comment_ready = false;
+		idx_t at = 0;
+		while (at < size) {
+			const CSVState state = c.states[1];
+			const uint64_t ahead = ~uint64_t(0) << at;
+			idx_t next = at;
+			if (count_plain && PlainCountState(state)) {
+				const uint64_t pending = specials & ahead;
+				next = pending ? static_cast<idx_t>(std::countr_zero(pending)) : size;
+				if (next > at && CountPlain(c, block, at, next, delimiters, terminators, pairs, c.pos, rows, limit)) {
+					return;
+				}
+			} else if (standard_stop_count != DConstants::INVALID_INDEX && state == CSVState::STANDARD) {
+				if (!standard_ready) {
+					for (idx_t i = 0; i < standard_stop_count; i++) {
+						standard_ends |= vector.Equal(standard_stops[i]);
+					}
+					standard_ends &= valid;
+					standard_ready = true;
+				}
+				const uint64_t pending = standard_ends & ahead;
+				next = pending ? static_cast<idx_t>(std::countr_zero(pending)) : size;
+				if (next > at) {
+					c.states[0] = CSVState::STANDARD;
+					c.states[1] = CSVState::STANDARD;
+				}
+			} else if (quoted_stop_count != DConstants::INVALID_INDEX &&
+			           (state == CSVState::QUOTED || state == CSVState::QUOTED_NEW_LINE)) {
+				if (!quoted_ready) {
+					for (idx_t i = 0; i < quoted_stop_count; i++) {
+						quoted_ends |= vector.Equal(quoted_stops[i]);
+					}
+					quoted_ends &= valid;
+					quoted_ready = true;
+				}
+				const uint64_t pending = quoted_ends & ahead;
+				next = pending ? static_cast<idx_t>(std::countr_zero(pending)) : size;
+				if (next > at) {
+					c.states[0] = next - at >= 2 ? CSVState::QUOTED : state;
+					c.states[1] = CSVState::QUOTED;
+				}
+			} else if (comment_stop_count != DConstants::INVALID_INDEX && state == CSVState::COMMENT) {
+				if (!comment_ready) {
+					for (idx_t i = 0; i < comment_stop_count; i++) {
+						comment_ends |= vector.Equal(comment_stops[i]);
+					}
+					comment_ends &= valid;
+					comment_ready = true;
+				}
+				const uint64_t pending = comment_ends & ahead;
+				next = pending ? static_cast<idx_t>(std::countr_zero(pending)) : size;
+				if (next > at) {
+					c.states[0] = next - at >= 2 ? CSVState::COMMENT : state;
+					c.states[1] = CSVState::COMMENT;
+				}
+			}
+			at = next;
+			if (at == size) {
+				break;
+			}
+			if (CountByte(c, block[at], c.pos + at, rows, limit)) {
+				c.pos += at + 1;
+				return;
+			}
+			at++;
+		}
+		c.pos += size;
+	}
+}
+
+void RowLexer::FinishCount(RowCountCursor &cursor, vector<RowCount> &rows) const {
+	auto &c = cursor;
+	if (c.invalid) {
+		return;
+	}
+	const CSVState current = c.states[1];
+	if ((current == CSVState::QUOTED || current == CSVState::QUOTED_NEW_LINE) && c.states[0] != CSVState::UNQUOTED) {
+		c.unterminated = true;
+		return;
+	}
+	if (current == CSVState::RECORD_SEPARATOR || current == CSVState::CARRIAGE_RETURN || current == CSVState::NOT_SET) {
+		return;
+	}
+	if (c.comment) {
+		CountRow(c, DConstants::INVALID_INDEX, c.starts_as_comment ? ROW_COUNT_COMMENT : ROW_COUNT_MID_COMMENT, rows);
+		c.comment = false;
+		c.starts_as_comment = false;
+		return;
+	}
+	CountRow(c, DConstants::INVALID_INDEX, 0, rows);
 }
 
 } // namespace duckdb
