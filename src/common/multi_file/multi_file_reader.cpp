@@ -767,7 +767,7 @@ static string GetExtendedMultiFileError(const MultiFileBindData &bind_data, cons
 		    reader.GetFileName(), local_col.name, source_type, target_type, reader_type, reader_type, reader_type);
 	}
 	first_message =
-	    StringUtil::Format("failed to cast column %s from type %s to %s: ", local_col.name, source_type, target_type);
+	    StringUtil::Format("failed to cast column %s from type %s to %s", local_col.name, source_type, target_type);
 	return extended_error;
 }
 
@@ -789,8 +789,15 @@ void MultiFileReader::FinalizeChunk(ClientContext &context, const MultiFileBindD
 			string first_message;
 			string extended_error =
 			    GetExtendedMultiFileError(bind_data, *executor.expressions[i], reader, i, first_message);
-			throw ConversionException("Error while reading file \"%s\": %s: %s\n\n%s", reader.GetFileName(),
-			                          first_message, original_error, extended_error);
+			auto message = StringUtil::Format("Error while reading file \"%s\": ", reader.GetFileName());
+			if (!first_message.empty()) {
+				message += first_message + ": ";
+			}
+			message += original_error;
+			if (!extended_error.empty()) {
+				message += "\n\n" + extended_error;
+			}
+			throw ConversionException(message);
 		}
 	}
 }
