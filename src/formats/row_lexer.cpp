@@ -86,6 +86,16 @@ void WalkQuotes(const char *block, idx_t size, char quote, char escape, uint64_t
 RowDialect RowDialect::DuckDB(const CsvGrammar &grammar) {
 	RowDialect result;
 	result.delimiter = grammar.delimiter[0];
+	result.delimiter_size = grammar.delimiter_size;
+	bool plain_delimiter = true;
+	for (idx_t i = 0; i < grammar.delimiter_size; i++) {
+		const char byte = grammar.delimiter[i];
+		plain_delimiter = plain_delimiter && byte != '\n' && byte != '\r' && (i == 0 || byte != '\0');
+		if (i > 0) {
+			result.delimiter_tail[i - 1] = byte;
+		}
+	}
+	result.distinct_delimiter = grammar.distinct_delimiter;
 	result.quote = grammar.quote;
 	result.escape = grammar.escape;
 	result.comment = grammar.comment;
@@ -98,7 +108,7 @@ RowDialect RowDialect::DuckDB(const CsvGrammar &grammar) {
 	result.strict = grammar.strict_mode;
 	result.reopen = grammar.quote == grammar.escape || (!grammar.strict_mode && grammar.escape != '\0');
 	result.new_line = grammar.new_line;
-	result.supported = grammar.delimiter_size == 1 && !grammar.only_crlf;
+	result.supported = !grammar.only_crlf && plain_delimiter;
 	return result;
 }
 
@@ -149,8 +159,9 @@ void RowFields::Drop(idx_t count, idx_t dropped_ends) {
 	end_count -= dropped_ends;
 }
 
-RowLexer::RowLexer(const RowDialect &dialect_p, idx_t columns_p, idx_t max_line_size_p, bool error_mode)
-    : dialect(dialect_p), columns(columns_p), max_line_size(max_line_size_p) {
+RowLexer::RowLexer(const RowDialect &dialect_p, idx_t columns_p, idx_t max_line_size_p, bool error_mode,
+                   bool pad_rows_p)
+    : dialect(dialect_p), columns(columns_p), max_line_size(max_line_size_p), pad_rows(pad_rows_p) {
 	const idx_t min_columns = dialect.merge_terms ? 2 : 1;
 	eligible = dialect.supported && columns >= min_columns && max_line_size >= CSV_BLOCK_BYTES;
 	settle_strict = error_mode && dialect.strict;
@@ -206,10 +217,15 @@ bool RowLexer::FeedBlocks(RowCursor &cursor, const char *data, idx_t base, idx_t
 		cursor = c;
 		return false;
 	};
+	const idx_t delimiter_size = d.delimiter_size;
 	char padded[CSV_BLOCK_BYTES];
+	char lookahead[CSV_BLOCK_BYTES];
 	while (c.pos < end) {
 		const idx_t size = MinValue<idx_t>(CSV_BLOCK_BYTES, end - c.pos);
 		if (size < CSV_BLOCK_BYTES && !last) {
+			break;
+		}
+		if (delimiter_size > 1 && !last && c.pos + CSV_BLOCK_BYTES + delimiter_size - 1 > end) {
 			break;
 		}
 		const char *block = data + (c.pos - base);
@@ -222,17 +238,23 @@ bool RowLexer::FeedBlocks(RowCursor &cursor, const char *data, idx_t base, idx_t
 		}
 		const CsvVector vector(block);
 		c.non_ascii |= vector.NonAscii();
-		uint64_t rejected = 0;
-		if (d.reject_escape) {
-			rejected |= vector.Equal(d.escape);
-		}
-		if (d.comment) {
-			rejected |= vector.Equal(d.comment);
-		}
-		if (rejected & valid) {
+		if (d.reject_escape && (vector.Equal(d.escape) & valid)) {
 			return fail();
 		}
-		const uint64_t delimiter = vector.Equal(d.delimiter);
+		uint64_t delimiter = vector.Equal(d.delimiter);
+		if (delimiter_size > 1) {
+			memset(lookahead, 0, sizeof(lookahead));
+			if (size == CSV_BLOCK_BYTES) {
+				memcpy(lookahead, block + CSV_BLOCK_BYTES,
+				       MinValue<idx_t>(delimiter_size - 1, end - (c.pos + CSV_BLOCK_BYTES)));
+			}
+			const CsvVector next(lookahead);
+			for (idx_t i = 1; i < delimiter_size; i++) {
+				const char byte = d.delimiter_tail[i - 1];
+				delimiter &= (vector.Equal(byte) >> i) | (next.Equal(byte) << (CSV_BLOCK_BYTES - i));
+			}
+			delimiter &= valid;
+		}
 		const uint64_t line_feed = vector.Equal('\n');
 		const uint64_t carriage_return = vector.Equal('\r');
 		uint64_t escape_bits = 0;
@@ -268,7 +290,50 @@ bool RowLexer::FeedBlocks(RowCursor &cursor, const char *data, idx_t base, idx_t
 		const uint64_t hidden = d.backslash ? (in | escaped) : in;
 		const uint64_t term_bits = d.carriage_terms ? (line_feed | carriage_return) : line_feed;
 		const uint64_t terms = term_bits & ~hidden & valid;
-		const uint64_t delims = delimiter & ~hidden & valid;
+		uint64_t delims = delimiter & ~hidden & valid;
+		if (delimiter_size > 1 && !d.distinct_delimiter) {
+			uint64_t covered = c.delimiter_tail;
+			uint64_t next_covered = 0;
+			for (idx_t i = 1; i < delimiter_size; i++) {
+				covered |= delims << i;
+				next_covered |= delims >> (CSV_BLOCK_BYTES - i);
+			}
+			if (delims & covered) {
+				return fail();
+			}
+			c.delimiter_tail = next_covered;
+		}
+		uint64_t comment_ends = 0;
+		uint64_t region = 0;
+		if (d.comment) {
+			const uint64_t comments = vector.Equal(d.comment) & ~hidden & valid;
+			if (comments | c.in_comment) {
+				const uint64_t line_starts = ((terms << 1) | c.after_term) & valid;
+				if (c.in_comment) {
+					const uint64_t stop = terms & (0 - terms);
+					region = stop ? stop - 1 : valid;
+					c.in_comment = stop ? 0 : 1;
+				}
+				for (uint64_t pending = comments & ~region & line_starts; pending; pending &= ~region) {
+					const uint64_t start = pending & (0 - pending);
+					const uint64_t after = terms & ~((start << 1) - 1);
+					const uint64_t stop = after & (0 - after);
+					region |= stop ? stop - start : valid & ~(start - 1);
+					if (!stop) {
+						c.in_comment = 1;
+					}
+				}
+				if ((comments & ~region) || (raw_quote & region)) {
+					return fail();
+				}
+				delims &= ~region;
+				comment_ends = terms & ((region << 1) | c.comment_tail);
+				if (d.carry_on && (comment_ends & line_feed)) {
+					return fail();
+				}
+			}
+			c.comment_tail = (region >> (size - 1)) & 1;
+		}
 		const uint64_t carriage = carriage_return & terms;
 		const uint64_t feeds = line_feed & terms;
 		if (d.carry_on) {
@@ -285,10 +350,11 @@ bool RowLexer::FeedBlocks(RowCursor &cursor, const char *data, idx_t base, idx_t
 				return fail();
 			}
 		}
+		const uint64_t field_starts = (delims << delimiter_size) | (terms << 1) | c.after_separator;
 		if (field_start_quotes && (quote | c.after_closer | c.after_opener)) {
 			const uint64_t openers = quote & in;
 			const uint64_t closers = quote & ~in;
-			const uint64_t starts = ((delims | terms) << 1) | c.after_separator;
+			const uint64_t starts = field_starts;
 			const uint64_t reopened = (closers << 1) | c.after_closer;
 			const uint64_t allowed = d.reopen ? reopened : 0;
 			if (openers & ~starts & ~allowed) {
@@ -322,38 +388,54 @@ bool RowLexer::FeedBlocks(RowCursor &cursor, const char *data, idx_t base, idx_t
 		    c.pos + size - c.origin > max_line_size) {
 			c.settled = true;
 		}
-		const uint64_t row_ends = d.merge_terms ? terms & ~((terms << 1) | c.after_term) : terms;
+		const uint64_t row_ends = (d.merge_terms ? terms & ~((terms << 1) | c.after_term) : terms) & ~comment_ends;
+		const uint64_t line_ends = row_ends | comment_ends;
 		const uint64_t boundaries = delims | row_ends;
+		idx_t pad_count = 0;
+		idx_t pad_total = 0;
+		uint8_t pad_at[CSV_BLOCK_BYTES];
+		uint32_t pad_size[CSV_BLOCK_BYTES];
 		if (c.check_arity && boundaries) {
 			const idx_t count = std::popcount(boundaries);
 #if defined(__BMI2__)
 			const uint64_t pattern = _pext_u64(row_ends, boundaries);
+#else
+			uint64_t pattern = 0;
+			for (uint64_t rows = row_ends; rows; rows &= rows - 1) {
+				pattern |= uint64_t(1) << std::popcount(boundaries & ((rows & (0 - rows)) - 1));
+			}
+#endif
 			const uint64_t mask = count == 64 ? ~uint64_t(0) : (uint64_t(1) << count) - 1;
-			if ((pattern ^ patterns[c.phase]) & mask) {
+			if (!((pattern ^ patterns[c.phase]) & mask)) {
+				c.phase = pattern ? count + std::countl_zero(pattern) - 64 : c.phase + count;
+			} else if (pad_rows) {
+				idx_t index = 0;
+				for (uint64_t rest = pattern; rest; rest &= rest - 1) {
+					const idx_t at = std::countr_zero(rest);
+					c.phase += at - index;
+					if (c.phase >= columns) {
+						return fail();
+					}
+					if (c.phase + 1 < columns) {
+						pad_at[pad_count] = static_cast<uint8_t>(at);
+						pad_size[pad_count] = static_cast<uint32_t>(columns - 1 - c.phase);
+						pad_total += pad_size[pad_count++];
+					}
+					c.phase = 0;
+					index = at + 1;
+				}
+				c.phase += count - index;
+				c.padded = c.padded || pad_count;
+			} else {
 				return fail();
 			}
-			c.phase = pattern ? count + std::countl_zero(pattern) - 64 : c.phase + count;
-#else
-			idx_t expect = columns - 1 - c.phase;
-			idx_t next_phase = c.phase + count;
-			for (uint64_t rows = row_ends; rows; rows &= rows - 1) {
-				const uint64_t below = (rows & (0 - rows)) - 1;
-				const idx_t index = std::popcount(boundaries & below);
-				if (index != expect) {
-					return fail();
-				}
-				expect += columns;
-				next_phase = count - index - 1;
-			}
-			c.phase = next_phase;
-#endif
 			if (c.phase >= columns) {
 				return fail();
 			}
 		}
 		const idx_t first_limit = max_line_size / 2;
-		if (row_ends) {
-			const idx_t first = c.pos + std::countr_zero(row_ends);
+		if (line_ends) {
+			const idx_t first = c.pos + std::countr_zero(line_ends);
 			if (c.last_row_end == DConstants::INVALID_INDEX) {
 				if (first - c.origin > first_limit) {
 					return fail();
@@ -362,7 +444,7 @@ bool RowLexer::FeedBlocks(RowCursor &cursor, const char *data, idx_t base, idx_t
 			} else if (first - c.last_row_end > max_line_size) {
 				return fail();
 			}
-			c.last_row_end = c.pos + 63 - std::countl_zero(row_ends);
+			c.last_row_end = c.pos + 63 - std::countl_zero(line_ends);
 			c.rows += std::popcount(row_ends);
 		} else if (c.last_row_end == DConstants::INVALID_INDEX) {
 			if (c.pos + size - c.origin > first_limit) {
@@ -384,7 +466,7 @@ bool RowLexer::FeedBlocks(RowCursor &cursor, const char *data, idx_t base, idx_t
 		if (EXTRACT) {
 			const uint32_t offset = static_cast<uint32_t>(c.pos - c.origin);
 			const uint64_t follows = (terms << 1) | c.after_term;
-			const uint64_t row_starts = (d.merge_terms ? follows & ~terms : follows) & valid;
+			const uint64_t row_starts = (d.merge_terms ? follows & ~terms : follows) & ~region & valid;
 			rows_out = WritePositions(row_starts, offset, rows_out);
 			uint32_t *block_ends = ends_out;
 			if (d.strip_carriage) {
@@ -423,9 +505,32 @@ bool RowLexer::FeedBlocks(RowCursor &cursor, const char *data, idx_t base, idx_t
 					block_ends[index] |= ROW_FIELD_FLAG;
 				}
 			}
+			if (pad_count) {
+				const idx_t first_end = static_cast<idx_t>(block_ends - fields->ends.get());
+				const idx_t written = static_cast<idx_t>(ends_out - block_ends);
+				const idx_t rows_used = static_cast<idx_t>(rows_out - fields->rows.get());
+				const idx_t more = pad_total + (end - c.pos) + CSV_BLOCK_BYTES;
+				if (MaxValue(rows_used, first_end + written) + more + FIELD_SLACK > fields->capacity) {
+					fields->row_count = rows_used;
+					fields->end_count = first_end + written;
+					fields->Reserve(more);
+					rows_out = fields->rows.get() + rows_used;
+				}
+				uint32_t *const block_start = fields->ends.get() + first_end;
+				idx_t shift = pad_total;
+				idx_t tail = written;
+				for (idx_t k = pad_count; k-- > 0;) {
+					const idx_t at = pad_at[k];
+					memmove(block_start + at + 1 + shift, block_start + at + 1, (tail - at - 1) * sizeof(uint32_t));
+					shift -= pad_size[k];
+					std::fill_n(block_start + at + 1 + shift, pad_size[k], block_start[at] | ROW_FIELD_FLAG);
+					tail = at + 1;
+				}
+				ends_out = block_start + written + pad_total;
+			}
 		}
 		c.in_quotes = (in >> (size - 1)) & 1;
-		c.after_separator = ((delims | terms) >> (size - 1)) & 1;
+		c.after_separator = (delims >> (CSV_BLOCK_BYTES - delimiter_size)) | ((terms >> (size - 1)) & 1);
 		c.after_term = (terms >> (size - 1)) & 1;
 		c.after_cr = (carriage >> (size - 1)) & 1;
 		c.pos += size;
@@ -450,15 +555,18 @@ bool RowLexer::Finish(RowCursor &cursor, const char *data, idx_t base, idx_t end
 		if (end != c.origin) {
 			const idx_t limit = c.last_row_end == DConstants::INVALID_INDEX ? max_line_size / 2 : max_line_size;
 			const idx_t prior = c.last_row_end == DConstants::INVALID_INDEX ? c.origin : c.last_row_end;
-			if (!eof || (c.check_arity && c.phase != columns - 1) || end - prior > limit) {
+			const bool row = !c.in_comment;
+			if (!eof || (row && c.check_arity && !pad_rows && c.phase != columns - 1) || end - prior > limit) {
 				c.ok = false;
 				return false;
 			}
-			c.rows++;
 			c.lines++;
 			c.unterminated = true;
-			if (fields) {
-				fields->Reserve(1);
+			c.rows += row;
+			const idx_t pads = row && c.check_arity && pad_rows ? columns - 1 - c.phase : 0;
+			c.padded = c.padded || pads;
+			if (row && fields) {
+				fields->Reserve(1 + pads);
 				auto position = static_cast<uint32_t>(end - c.origin);
 				if (dialect.strip_carriage && c.after_plain_cr) {
 					position--;
@@ -467,6 +575,9 @@ bool RowLexer::Finish(RowCursor &cursor, const char *data, idx_t base, idx_t end
 					position |= ROW_FIELD_FLAG;
 				}
 				fields->ends[fields->end_count++] = position;
+				for (idx_t i = 0; i < pads; i++) {
+					fields->ends[fields->end_count++] = position | ROW_FIELD_FLAG;
+				}
 			}
 		}
 	} else if (c.check_arity && c.phase != 0) {

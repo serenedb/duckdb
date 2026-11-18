@@ -22,6 +22,9 @@ struct RowDialect {
 	static RowDialect PostgresText(char delimiter);
 
 	char delimiter = ',';
+	char delimiter_tail[3] = {};
+	idx_t delimiter_size = 1;
+	bool distinct_delimiter = true;
 	char quote = '\0';
 	char escape = '\0';
 	char comment = '\0';
@@ -69,6 +72,9 @@ struct RowCursor {
 	uint64_t after_opener = 0;
 	uint64_t escape_carry = 0;
 	uint64_t pending_flag = 0;
+	uint64_t in_comment = 0;
+	uint64_t comment_tail = 0;
+	uint64_t delimiter_tail = 0;
 	uint64_t non_ascii = 0;
 	idx_t phase = 0;
 	idx_t rows = 0;
@@ -80,6 +86,7 @@ struct RowCursor {
 	idx_t quoted_newline = DConstants::INVALID_INDEX;
 	bool quotes = false;
 	bool doubled = false;
+	bool padded = false;
 	bool settled = false;
 	bool unterminated = false;
 	bool check_arity = true;
@@ -88,13 +95,16 @@ struct RowCursor {
 
 class RowLexer {
 public:
-	RowLexer(const RowDialect &dialect, idx_t columns, idx_t max_line_size, bool error_mode);
+	RowLexer(const RowDialect &dialect, idx_t columns, idx_t max_line_size, bool error_mode, bool pad_rows = false);
 
 	bool Eligible() const {
 		return eligible;
 	}
 	const RowDialect &Dialect() const {
 		return dialect;
+	}
+	idx_t Lookahead() const {
+		return dialect.delimiter_size - 1;
 	}
 	void Start(RowCursor &cursor, idx_t begin, bool settled, bool check_arity = true) const;
 	bool Feed(RowCursor &cursor, const char *data, idx_t base, idx_t end, bool last, RowFields *fields) const;
@@ -110,6 +120,7 @@ private:
 	const RowDialect dialect;
 	const idx_t columns;
 	const idx_t max_line_size;
+	const bool pad_rows;
 	bool eligible;
 	bool settle_strict;
 	bool settle_length;
