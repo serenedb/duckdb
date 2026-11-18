@@ -3540,6 +3540,7 @@ void ShellState::OpenCopyInput(bool binary) {
 		copy_in_line += '\n';
 	}
 	free(line);
+	clearerr(stdin);
 	copy_in_done = true;
 }
 
