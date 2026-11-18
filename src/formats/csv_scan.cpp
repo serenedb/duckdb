@@ -361,6 +361,69 @@ bool LeanValues(const LeanSource &source, idx_t count, bool force_not_null, Vect
 	return true;
 }
 
+bool IsStringColumnRef(const Expression &expr) {
+	return ExpressionFilter::IsSimpleFilterColumnRef(expr) && expr.GetReturnType().id() == LogicalTypeId::VARCHAR &&
+	       !expr.GetReturnType().IsJSONType();
+}
+
+const string *StringConstant(const Expression &expr) {
+	if (expr.GetExpressionClass() != ExpressionClass::BOUND_CONSTANT) {
+		return nullptr;
+	}
+	auto &value = expr.Cast<BoundConstantExpression>().GetValue();
+	if (value.IsNull() || value.type().id() != LogicalTypeId::VARCHAR) {
+		return nullptr;
+	}
+	return &StringValue::Get(value);
+}
+
+bool CollectRawPattern(const Expression &expr, bool negated, vector<CsvRawPredicate> &out) {
+	if (expr.GetExpressionClass() != ExpressionClass::BOUND_FUNCTION) {
+		return false;
+	}
+	auto &function = expr.Cast<BoundFunctionExpression>();
+	auto &children = function.GetChildren();
+	if (children.size() != 2 || !IsStringColumnRef(*children[0])) {
+		return false;
+	}
+	auto pattern = StringConstant(*children[1]);
+	if (!pattern) {
+		return false;
+	}
+	auto &name = function.Function().GetName();
+	CsvRawPredicate predicate {negated ? CsvRawKind::NOT_LIKE : CsvRawKind::LIKE};
+	if (name == "prefix" || name == "starts_with" || name == "^@") {
+		predicate.anchored_start = true;
+		predicate.values.push_back(*pattern);
+	} else if (name == "suffix" || name == "ends_with") {
+		predicate.anchored_end = true;
+		predicate.values.push_back(*pattern);
+	} else if (name == "contains") {
+		predicate.values.push_back(*pattern);
+	} else if (name == "~~" || name == "!~~") {
+		if (pattern->find_first_of("_\\") != string::npos) {
+			return false;
+		}
+		if (name == "!~~") {
+			predicate.kind = negated ? CsvRawKind::LIKE : CsvRawKind::NOT_LIKE;
+		}
+		predicate.anchored_start = pattern->empty() || pattern->front() != '%';
+		predicate.anchored_end = pattern->empty() || pattern->back() != '%';
+		idx_t begin = 0;
+		while (begin <= pattern->size()) {
+			auto end = std::min(pattern->find('%', begin), pattern->size());
+			if (end > begin) {
+				predicate.values.push_back(pattern->substr(begin, end - begin));
+			}
+			begin = end + 1;
+		}
+	} else {
+		return false;
+	}
+	out.push_back(std::move(predicate));
+	return true;
+}
+
 bool CollectRawPredicates(const Expression &expr, bool string_column, vector<CsvRawPredicate> &out) {
 	switch (expr.GetExpressionClass()) {
 	case ExpressionClass::BOUND_CONJUNCTION: {
@@ -378,36 +441,42 @@ bool CollectRawPredicates(const Expression &expr, bool string_column, vector<Csv
 		auto &op = expr.Cast<BoundOperatorExpression>();
 		const auto type = op.GetExpressionType();
 		auto &children = op.GetChildren();
+		if (type == ExpressionType::OPERATOR_NOT) {
+			return string_column && children.size() == 1 && CollectRawPattern(*children[0], true, out);
+		}
 		if (children.empty() || !ExpressionFilter::IsSimpleFilterColumnRef(*children[0])) {
 			return false;
 		}
 		if (type == ExpressionType::OPERATOR_IS_NULL || type == ExpressionType::OPERATOR_IS_NOT_NULL) {
-			out.push_back({type, {}});
+			out.push_back({type == ExpressionType::OPERATOR_IS_NULL ? CsvRawKind::IS_NULL : CsvRawKind::IS_NOT_NULL});
 			return true;
 		}
 		if (type != ExpressionType::COMPARE_IN || !string_column) {
 			return false;
 		}
-		CsvRawPredicate predicate {type, {}};
+		CsvRawPredicate predicate {CsvRawKind::IN_LIST};
 		for (idx_t i = 1; i < children.size(); i++) {
-			if (children[i]->GetExpressionClass() != ExpressionClass::BOUND_CONSTANT) {
+			auto value = StringConstant(*children[i]);
+			if (!value) {
 				return false;
 			}
-			auto &value = children[i]->Cast<BoundConstantExpression>().GetValue();
-			if (value.IsNull() || value.type().id() != LogicalTypeId::VARCHAR) {
-				return false;
-			}
-			predicate.values.push_back(StringValue::Get(value));
+			predicate.values.push_back(*value);
 		}
 		std::sort(predicate.values.begin(), predicate.values.end());
 		out.push_back(std::move(predicate));
 		return true;
 	}
 	case ExpressionClass::BOUND_FUNCTION: {
+		if (!string_column) {
+			return false;
+		}
 		auto &function = expr.Cast<BoundFunctionExpression>();
 		auto type = function.GetExpressionType();
-		if (!string_column || !BoundComparisonExpression::IsComparison(type) ||
-		    type == ExpressionType::COMPARE_DISTINCT_FROM || type == ExpressionType::COMPARE_NOT_DISTINCT_FROM) {
+		if (type == ExpressionType::BOUND_FUNCTION) {
+			return CollectRawPattern(function, false, out);
+		}
+		if (!BoundComparisonExpression::IsComparison(type) || type == ExpressionType::COMPARE_DISTINCT_FROM ||
+		    type == ExpressionType::COMPARE_NOT_DISTINCT_FROM) {
 			return false;
 		}
 		auto constant = ExpressionFilter::TryGetColumnConstantComparison(function, type);
@@ -418,7 +487,7 @@ bool CollectRawPredicates(const Expression &expr, bool string_column, vector<Csv
 		if (value.IsNull() || value.type().id() != LogicalTypeId::VARCHAR) {
 			return false;
 		}
-		out.push_back({type, {StringValue::Get(value)}});
+		out.push_back({CsvRawKind::COMPARE, type, {StringValue::Get(value)}});
 		return true;
 	}
 	default:
@@ -426,9 +495,63 @@ bool CollectRawPredicates(const Expression &expr, bool string_column, vector<Csv
 	}
 }
 
+bool RawLike(const CsvRawPredicate &predicate, std::string_view field) {
+	auto &segments = predicate.values;
+	idx_t first = 0;
+	idx_t last = segments.size();
+	idx_t begin = 0;
+	idx_t end = field.size();
+	if (predicate.anchored_start && last > 0) {
+		if (!field.starts_with(segments[0])) {
+			return false;
+		}
+		begin = segments[0].size();
+		first = 1;
+	}
+	if (predicate.anchored_end) {
+		if (first == last) {
+			return begin == end;
+		}
+		auto &segment = segments[last - 1];
+		if (end - begin < segment.size() || !field.ends_with(segment)) {
+			return false;
+		}
+		end -= segment.size();
+		last--;
+	}
+	const auto window = field.substr(0, end);
+	for (idx_t i = first; i < last; i++) {
+		const auto position = window.find(segments[i], begin);
+		if (position == std::string_view::npos) {
+			return false;
+		}
+		begin = position + segments[i].size();
+	}
+	return true;
+}
+
+bool RawCompare(ExpressionType type, std::string_view field, const string &constant) {
+	const string_t left(field.data(), UnsafeNumericCast<uint32_t>(field.size()));
+	const string_t right(constant.data(), UnsafeNumericCast<uint32_t>(constant.size()));
+	switch (type) {
+	case ExpressionType::COMPARE_EQUAL:
+		return Equals::Operation(left, right);
+	case ExpressionType::COMPARE_NOTEQUAL:
+		return NotEquals::Operation(left, right);
+	case ExpressionType::COMPARE_LESSTHAN:
+		return LessThan::Operation(left, right);
+	case ExpressionType::COMPARE_LESSTHANOREQUALTO:
+		return LessThanEquals::Operation(left, right);
+	case ExpressionType::COMPARE_GREATERTHAN:
+		return GreaterThan::Operation(left, right);
+	default:
+		return GreaterThanEquals::Operation(left, right);
+	}
+}
+
 bool RawPasses(const vector<CsvRawPredicate> &predicates, const char *value, idx_t size, bool null) {
 	for (auto &predicate : predicates) {
-		if (predicate.type == ExpressionType::OPERATOR_IS_NULL) {
+		if (predicate.kind == CsvRawKind::IS_NULL) {
 			if (!null) {
 				return false;
 			}
@@ -437,41 +560,26 @@ bool RawPasses(const vector<CsvRawPredicate> &predicates, const char *value, idx
 		if (null) {
 			return false;
 		}
-		if (predicate.type == ExpressionType::OPERATOR_IS_NOT_NULL) {
-			continue;
-		}
 		const std::string_view field(value, size);
-		if (predicate.type == ExpressionType::COMPARE_IN) {
+		switch (predicate.kind) {
+		case CsvRawKind::IS_NOT_NULL:
+			break;
+		case CsvRawKind::IN_LIST:
 			if (!std::binary_search(predicate.values.begin(), predicate.values.end(), field)) {
 				return false;
 			}
-			continue;
-		}
-		const string_t left(value, UnsafeNumericCast<uint32_t>(size));
-		const string_t right(predicate.values[0].data(), UnsafeNumericCast<uint32_t>(predicate.values[0].size()));
-		bool passes;
-		switch (predicate.type) {
-		case ExpressionType::COMPARE_EQUAL:
-			passes = Equals::Operation(left, right);
 			break;
-		case ExpressionType::COMPARE_NOTEQUAL:
-			passes = NotEquals::Operation(left, right);
-			break;
-		case ExpressionType::COMPARE_LESSTHAN:
-			passes = LessThan::Operation(left, right);
-			break;
-		case ExpressionType::COMPARE_LESSTHANOREQUALTO:
-			passes = LessThanEquals::Operation(left, right);
-			break;
-		case ExpressionType::COMPARE_GREATERTHAN:
-			passes = GreaterThan::Operation(left, right);
+		case CsvRawKind::LIKE:
+		case CsvRawKind::NOT_LIKE:
+			if (RawLike(predicate, field) != (predicate.kind == CsvRawKind::LIKE)) {
+				return false;
+			}
 			break;
 		default:
-			passes = GreaterThanEquals::Operation(left, right);
+			if (!RawCompare(predicate.compare, field, predicate.values[0])) {
+				return false;
+			}
 			break;
-		}
-		if (!passes) {
-			return false;
 		}
 	}
 	return true;
@@ -2116,6 +2224,15 @@ bool CsvScan::NeedsFlushCast(const CsvScanColumn &column) {
 	auto &type = column.type;
 	return type.IsJSONType() ||
 	       (type.id() != LogicalTypeId::VARCHAR && column.parse_type.id() == LogicalTypeId::VARCHAR);
+}
+
+bool CsvScan::EvaluatesOnFieldBytes(const Expression &expr) {
+	vector<CsvRawPredicate> predicates;
+	if (expr.GetExpressionType() == ExpressionType::OPERATOR_NOT) {
+		auto &children = expr.Cast<BoundOperatorExpression>().GetChildren();
+		return children.size() == 1 && CollectRawPattern(*children[0], true, predicates);
+	}
+	return CollectRawPattern(expr, false, predicates);
 }
 
 void CsvScan::FlushCasts(idx_t count, DataChunk &output, bool late, bool filter_pass) {

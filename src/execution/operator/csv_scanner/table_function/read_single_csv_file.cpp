@@ -560,6 +560,10 @@ static void ReadSingleCSVFileLookup(ClientContext &context, TableFunctionInput &
 	lstate.scan->Lookup(input.pk_lookups, input.pk_survivors, output);
 }
 
+static bool ReadSingleCSVFilePushdownExpression(ClientContext &, const LogicalGet &, Expression &expr) {
+	return CsvScan::EvaluatesOnFieldBytes(expr);
+}
+
 TableFunction ReadCSVTableFunction::GetSingleFileFunction() {
 	TableFunction read_csv("read_single_csv_file", FunctionSignature().AddPositionalOnly("path", LogicalType::VARCHAR),
 	                       ReadSingleCSVFileFunction, ReadSingleCSVFileBind, ReadSingleCSVFileInitGlobal,
@@ -570,6 +574,7 @@ TableFunction ReadCSVTableFunction::GetSingleFileFunction() {
 	read_csv.projection_pushdown = true;
 	read_csv.filter_pushdown = true;
 	read_csv.filter_prune = true;
+	read_csv.pushdown_expression = ReadSingleCSVFilePushdownExpression;
 	ReadCSVAddNamedParameters(read_csv);
 	return read_csv;
 }

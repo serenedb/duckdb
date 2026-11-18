@@ -42,7 +42,7 @@ CREATE TABLE raw_nullstr AS FROM read_csv('{TEMP_DIR}/raw_nullstr.csv', header =
 statement ok
 CREATE TABLE raw_bad AS FROM read_csv('{TEMP_DIR}/raw_bad.csv', header = false, auto_detect = false, ignore_errors = true, columns = raw_columns());
 
-foreach predicate s='alpha' s<>'alpha' s<'beta' s>='gamma' (s)IN('alpha','zeta','NULL') (s)LIKE'alp%' (s)ISNULL (s)NOTNULL (n)ISNULL (n)NOTNULL s='alp"ha' s='' (s>'a'AND(s<'b'))
+foreach predicate s='alpha' s<>'alpha' s<'beta' s>='gamma' (s)IN('alpha','zeta','NULL') (s)LIKE'alp%' (s)ISNULL (s)NOTNULL (n)ISNULL (n)NOTNULL s='alp"ha' s='' (s>'a'AND(s<'b')) (s)LIKE'%ph%' NOT((s)LIKE'%ph%') (s)LIKE'%a' (s)LIKE'a%a' (s)LIKE'a%h%t' (s)LIKE'%l%h%' (s)LIKE'%' (s)LIKE'' NOT((s)LIKE'alp%') (s)LIKE'b_ta%' contains(s,',') suffix(s,'ha') prefix(s,'alp"') (s)LIKE'%"%' (s)LIKE'%a%'AND(s<>'alpha')
 
 foreach parallel true false
 
@@ -81,3 +81,18 @@ query II
 SELECT count(*), count(s) FROM read_csv('{TEMP_DIR}/raw_quoted.csv', header = false, auto_detect = false, columns = raw_columns()) WHERE s = 'alpha' OR s IS NULL
 ----
 1668	556
+
+query II
+EXPLAIN SELECT id FROM read_csv('{TEMP_DIR}/raw_quoted.csv', header = false, auto_detect = false, columns = raw_columns()) WHERE s LIKE '%ph%' AND s NOT LIKE '%bet'
+----
+physical_plan	<!REGEX>:.*FILTER.*
+
+query II
+EXPLAIN SELECT id FROM read_csv('{TEMP_DIR}/raw_quoted.csv', header = false, auto_detect = false, columns = raw_columns()) WHERE s LIKE '%p_a%'
+----
+physical_plan	<REGEX>:.*FILTER.*READ_CSV.*
+
+query II
+EXPLAIN SELECT id FROM read_csv('{TEMP_DIR}/raw_quoted.csv', header = false, auto_detect = false, columns = raw_columns()) WHERE upper(s) = 'ALPHA'
+----
+physical_plan	<REGEX>:.*FILTER.*READ_CSV.*

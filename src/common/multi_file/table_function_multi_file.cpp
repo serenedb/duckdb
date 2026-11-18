@@ -875,6 +875,7 @@ TableFunction TableFunctionMultiFileWrapper::CreateFunction(TableFunction single
 	result.filter_pushdown = single_file_function.filter_pushdown;
 	result.filter_prune = single_file_function.filter_prune;
 	result.supports_pushdown_type = single_file_function.supports_pushdown_type;
+	result.pushdown_expression = single_file_function.pushdown_expression;
 	result.late_materialization = single_file_function.late_materialization;
 	if (single_file_function.get_partition_stats) {
 		// the row groups of the scan are those of its files
