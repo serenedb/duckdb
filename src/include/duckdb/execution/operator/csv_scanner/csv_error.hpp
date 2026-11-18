@@ -153,6 +153,7 @@ private:
 	void ThrowError(const CSVError &csv_error);
 	//! If we processed all boundaries before the one that error-ed
 	bool CanGetLine(idx_t boundary_index);
+	idx_t EarliestError() const;
 	//! Return the 1-indexed line number
 	idx_t GetLineInternal(const LinesPerBoundary &error_info);
 	//! CSV Error Handler Mutex

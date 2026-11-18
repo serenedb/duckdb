@@ -1,0 +1,127 @@
+# name: test/sql/copy/csv/parallel/test_parallel_ranges.test
+# description: A scan split into many small ranges returns what one sequential scan returns, row identities and rejected rows included
+# group: [parallel]
+
+require skip_reload
+
+statement ok
+COPY (SELECT i AS id, CASE WHEN i % 4 = 0 THEN 'two' || chr(10) || 'lines' WHEN i % 4 = 1 THEN '' WHEN i % 4 = 2 THEN 'quote "' || i || '"' ELSE NULL END AS note, i * 0.5 AS half FROM range(300) t(i)) TO '{TEMP_DIR}/ranges.csv' (HEADER true);
+
+loop buffer_size 32 64
+
+query I
+SELECT count(*) FROM (
+	(SELECT file_row_number, * FROM read_csv('{TEMP_DIR}/ranges.csv', buffer_size = {buffer_size})
+	 EXCEPT ALL SELECT file_row_number, * FROM read_csv('{TEMP_DIR}/ranges.csv', buffer_size = {buffer_size}, parallel = false))
+	UNION ALL
+	(SELECT file_row_number, * FROM read_csv('{TEMP_DIR}/ranges.csv', buffer_size = {buffer_size}, parallel = false)
+	 EXCEPT ALL SELECT file_row_number, * FROM read_csv('{TEMP_DIR}/ranges.csv', buffer_size = {buffer_size}))
+)
+----
+0
+
+statement ok
+SELECT * FROM read_csv('{DATA_DIR}/csv/rejects/multiple_errors/cast_and_more_col.csv', columns = {'name': 'VARCHAR', 'age': 'INTEGER', 'current_day': 'DATE', 'barks': 'INTEGER'}, store_rejects = true, rejects_table = 'errors_ranges', rejects_scan = 'scans_ranges', auto_detect = false, header = 1, strict_mode = true, buffer_size = {buffer_size});
+
+statement ok
+SELECT * FROM read_csv('{DATA_DIR}/csv/rejects/multiple_errors/cast_and_more_col.csv', columns = {'name': 'VARCHAR', 'age': 'INTEGER', 'current_day': 'DATE', 'barks': 'INTEGER'}, store_rejects = true, rejects_table = 'errors_sequential', rejects_scan = 'scans_sequential', auto_detect = false, header = 1, strict_mode = true, buffer_size = {buffer_size}, parallel = false);
+
+query I
+SELECT count(*) FROM (
+	(SELECT * EXCLUDE (scan_id) FROM errors_ranges EXCEPT ALL SELECT * EXCLUDE (scan_id) FROM errors_sequential)
+	UNION ALL
+	(SELECT * EXCLUDE (scan_id) FROM errors_sequential EXCEPT ALL SELECT * EXCLUDE (scan_id) FROM errors_ranges)
+)
+----
+0
+
+query I
+SELECT count(*) >= 5 FROM errors_ranges
+----
+true
+
+statement ok
+DROP TABLE errors_ranges;
+
+statement ok
+DROP TABLE scans_ranges;
+
+statement ok
+DROP TABLE errors_sequential;
+
+statement ok
+DROP TABLE scans_sequential;
+
+endloop
+
+loop buffer_size 128 160
+
+query I
+SELECT count(*) FROM (
+	(SELECT file_row_number, * FROM read_csv('{TEMP_DIR}/ranges.csv', buffer_size = {buffer_size}, max_line_size = 32)
+	 EXCEPT ALL SELECT file_row_number, * FROM read_csv('{TEMP_DIR}/ranges.csv', buffer_size = {buffer_size}, max_line_size = 32, parallel = false))
+	UNION ALL
+	(SELECT file_row_number, * FROM read_csv('{TEMP_DIR}/ranges.csv', buffer_size = {buffer_size}, max_line_size = 32, parallel = false)
+	 EXCEPT ALL SELECT file_row_number, * FROM read_csv('{TEMP_DIR}/ranges.csv', buffer_size = {buffer_size}, max_line_size = 32))
+)
+----
+0
+
+query I
+SELECT count(*) FROM read_csv('{TEMP_DIR}/ranges.csv', buffer_size = {buffer_size}, max_line_size = 32)
+----
+300
+
+endloop
+
+loop buffer_size 28 50
+
+query I
+SELECT count(*) FROM (
+	(SELECT file_row_number, * FROM read_csv('{DATA_DIR}/csv/big_escape.csv', buffer_size = {buffer_size}, quote = '"', escape = '"', delim = ';', columns = {'a': 'INTEGER', 'b': 'INTEGER', 'c': 'VARCHAR'}, auto_detect = false)
+	 EXCEPT ALL SELECT file_row_number, * FROM read_csv('{DATA_DIR}/csv/big_escape.csv', buffer_size = {buffer_size}, quote = '"', escape = '"', delim = ';', columns = {'a': 'INTEGER', 'b': 'INTEGER', 'c': 'VARCHAR'}, auto_detect = false, parallel = false))
+	UNION ALL
+	(SELECT file_row_number, * FROM read_csv('{DATA_DIR}/csv/big_escape.csv', buffer_size = {buffer_size}, quote = '"', escape = '"', delim = ';', columns = {'a': 'INTEGER', 'b': 'INTEGER', 'c': 'VARCHAR'}, auto_detect = false, parallel = false)
+	 EXCEPT ALL SELECT file_row_number, * FROM read_csv('{DATA_DIR}/csv/big_escape.csv', buffer_size = {buffer_size}, quote = '"', escape = '"', delim = ';', columns = {'a': 'INTEGER', 'b': 'INTEGER', 'c': 'VARCHAR'}, auto_detect = false))
+)
+----
+0
+
+endloop
+
+loop buffer_size 10 16
+
+query I
+SELECT count(*) FROM (
+	(SELECT file_row_number, * FROM read_csv('{DATA_DIR}/csv/multidelimiter/aaaa_delim_rn.csv', delim = 'aaaa', header = false, buffer_size = {buffer_size})
+	 EXCEPT ALL SELECT file_row_number, * FROM read_csv('{DATA_DIR}/csv/multidelimiter/aaaa_delim_rn.csv', delim = 'aaaa', header = false, buffer_size = {buffer_size}, parallel = false))
+	UNION ALL
+	(SELECT file_row_number, * FROM read_csv('{DATA_DIR}/csv/multidelimiter/aaaa_delim_rn.csv', delim = 'aaaa', header = false, buffer_size = {buffer_size}, parallel = false)
+	 EXCEPT ALL SELECT file_row_number, * FROM read_csv('{DATA_DIR}/csv/multidelimiter/aaaa_delim_rn.csv', delim = 'aaaa', header = false, buffer_size = {buffer_size}))
+)
+----
+0
+
+query I
+SELECT count(*) FROM (
+	(SELECT file_row_number, * FROM read_csv('{DATA_DIR}/csv/blank_line.csv', buffer_size = {buffer_size})
+	 EXCEPT ALL SELECT file_row_number, * FROM read_csv('{DATA_DIR}/csv/blank_line.csv', buffer_size = {buffer_size}, parallel = false))
+	UNION ALL
+	(SELECT file_row_number, * FROM read_csv('{DATA_DIR}/csv/blank_line.csv', buffer_size = {buffer_size}, parallel = false)
+	 EXCEPT ALL SELECT file_row_number, * FROM read_csv('{DATA_DIR}/csv/blank_line.csv', buffer_size = {buffer_size}))
+)
+----
+0
+
+query I
+SELECT count(DISTINCT file_row_number) = count(*) FROM read_csv('{DATA_DIR}/csv/blank_line.csv', buffer_size = {buffer_size})
+----
+true
+
+endloop
+
+query I
+SELECT count(*) FROM read_csv('{TEMP_DIR}/ranges.csv', buffer_size = 40) r, read_text('{TEMP_DIR}/ranges.csv') f
+WHERE substr(f.content, r.file_row_number + 1, length(r.id::VARCHAR) + 1) <> r.id::VARCHAR || ','
+----
+0
