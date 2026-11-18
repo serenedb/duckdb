@@ -1,0 +1,77 @@
+# name: test/sql/copy/csv/parallel/test_parallel_error_lines.test
+# description: A malformed row after rows whose quoted fields span lines is reported on its own line, over any range split
+# group: [parallel]
+
+require skip_reload
+
+statement ok
+CREATE TABLE spanning AS SELECT i AS id, 'a "q" ' || i || chr(10) || 'b\' || i AS v FROM range(3000) r(i);
+
+statement ok
+COPY (SELECT line FROM (SELECT id, id || ',"' || replace(replace(v, '\', '\\'), '"', '\"') || '"' AS line FROM spanning UNION ALL SELECT id + 0.25, '' FROM spanning WHERE id % 100 = 99 UNION ALL SELECT 1499.5, '1499,"x",extra') ORDER BY id) TO '{TEMP_DIR}/error_lines_escape.csv' (HEADER false, DELIMITER '\t', QUOTE '');
+
+statement ok
+COPY (SELECT line FROM (SELECT id, id || ',"' || replace(replace(v, '"', '""'), chr(10), chr(13) || chr(10)) || '"' AS line FROM spanning UNION ALL SELECT id + 0.25, '' FROM spanning WHERE id % 100 = 99 UNION ALL SELECT 1499.5, '1499,"x",extra') ORDER BY id) TO '{TEMP_DIR}/error_lines_crlf.csv' (HEADER false, DELIMITER '\t', QUOTE '', NEW_LINE '\r\n');
+
+statement ok
+COPY (SELECT line FROM (SELECT i AS id, i || ',' || i AS line FROM range(3000) r(i) UNION ALL SELECT i + 0.5, 'x,y,z' FROM range(700, 3000, 700) r(i)) ORDER BY id) TO '{TEMP_DIR}/error_lines_many.csv' (HEADER false, DELIMITER '\t', QUOTE '');
+
+foreach buffer_size 128 1000 1000000
+
+foreach parallel true false
+
+statement error
+FROM read_csv('{TEMP_DIR}/error_lines_many.csv', header = false, auto_detect = false, columns = {'a': 'VARCHAR', 'b': 'VARCHAR'}, buffer_size = {buffer_size}, parallel = {parallel});
+----
+<REGEX>:.*CSV Error on Line: 702.*
+
+endloop
+
+endloop
+
+foreach buffer_size 128 1000 1000000
+
+foreach parallel true false
+
+statement ok
+FROM read_csv('{TEMP_DIR}/error_lines_escape.csv', header = false, auto_detect = false, escape = '\', columns = {'id': 'BIGINT', 'v': 'VARCHAR'}, store_rejects = true, buffer_size = {buffer_size}, parallel = {parallel});
+
+query III
+SELECT line, column_idx, error_type FROM reject_errors WHERE scan_id = (SELECT max(scan_id) FROM reject_errors);
+----
+1516	3	TOO MANY COLUMNS
+
+query II
+SELECT count(*), sum(id) FROM read_csv('{TEMP_DIR}/error_lines_escape.csv', header = false, auto_detect = false, escape = '\', columns = {'id': 'BIGINT', 'v': 'VARCHAR'}, ignore_errors = true, buffer_size = {buffer_size}, parallel = {parallel});
+----
+3000	4498500
+
+query I
+SELECT count(*) FROM (FROM read_csv('{TEMP_DIR}/error_lines_escape.csv', header = false, auto_detect = false, escape = '\', columns = {'id': 'BIGINT', 'v': 'VARCHAR'}, ignore_errors = true, buffer_size = {buffer_size}, parallel = {parallel}) EXCEPT ALL FROM spanning)
+----
+0
+
+statement ok
+FROM read_csv('{TEMP_DIR}/error_lines_crlf.csv', header = false, auto_detect = false, new_line = '\r\n', columns = {'id': 'BIGINT', 'v': 'VARCHAR'}, store_rejects = true, buffer_size = {buffer_size}, parallel = {parallel});
+
+query III
+SELECT line, column_idx, error_type FROM reject_errors WHERE scan_id = (SELECT max(scan_id) FROM reject_errors);
+----
+1516	3	TOO MANY COLUMNS
+
+query I
+SELECT count(*) FROM (FROM read_csv('{TEMP_DIR}/error_lines_crlf.csv', header = false, auto_detect = false, new_line = '\r\n', columns = {'id': 'BIGINT', 'v': 'VARCHAR'}, ignore_errors = true, buffer_size = {buffer_size}, parallel = {parallel}) EXCEPT ALL FROM (SELECT id, replace(v, chr(10), chr(13) || chr(10)) FROM spanning))
+----
+0
+
+statement ok
+FROM read_csv('{TEMP_DIR}/error_lines_crlf.csv', header = false, columns = {'id': 'BIGINT', 'v': 'VARCHAR'}, store_rejects = true, buffer_size = {buffer_size}, parallel = {parallel});
+
+query III
+SELECT line, column_idx, error_type FROM reject_errors WHERE scan_id = (SELECT max(scan_id) FROM reject_errors);
+----
+1516	3	TOO MANY COLUMNS
+
+endloop
+
+endloop

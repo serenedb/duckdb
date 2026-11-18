@@ -1,0 +1,122 @@
+# name: test/sql/copy/csv/test_csv_scan_paths.test
+# description: Counting, sniffing and decoding paths of the CSV scan that only some inputs take
+# group: [csv]
+
+require skip_reload
+
+statement error
+SELECT count(*) FROM read_csv('{DATA_DIR}/csv/invalid_utf8_first_column.csv', auto_detect = false, header = true, columns = {'a': 'VARCHAR', 'b': 'VARCHAR'});
+----
+Invalid unicode (byte sequence mismatch) detected
+
+query I
+SELECT count(*) FROM read_csv('{DATA_DIR}/csv/invalid_utf8_first_column.csv', auto_detect = false, header = true, columns = {'a': 'VARCHAR', 'b': 'VARCHAR'}, ignore_errors = true);
+----
+2
+
+query I
+SELECT count(*) FROM read_csv('{DATA_DIR}/csv/invalid_utf8_second_column.csv', auto_detect = false, header = true, columns = {'a': 'VARCHAR', 'b': 'VARCHAR'});
+----
+3
+
+query I
+SELECT count(b) FROM read_csv('{DATA_DIR}/csv/invalid_utf8_second_column.csv', auto_detect = false, header = true, columns = {'a': 'VARCHAR', 'b': 'VARCHAR'}, ignore_errors = true);
+----
+2
+
+statement ok
+COPY (FROM (VALUES ('1,234|5'), ('22,345|6'), ('3|7'))) TO '{TEMP_DIR}/thousands.csv' (HEADER false, DELIMITER '\t', QUOTE '');
+
+query II
+SELECT * FROM read_csv('{TEMP_DIR}/thousands.csv', delim = '|', thousands = ',', header = false);
+----
+1234	5
+22345	6
+3	7
+
+query I
+SELECT typeof(column0) FROM read_csv('{TEMP_DIR}/thousands.csv', delim = '|', thousands = ',', header = false) LIMIT 1;
+----
+BIGINT
+
+statement ok
+COPY (SELECT CASE WHEN x >= 1000 THEN (x // 1000)::VARCHAR || ',' || lpad((x % 1000)::VARCHAR, 3, '0') ELSE x::VARCHAR END || '|' || i FROM (SELECT i, i * 1000 + 7 AS x FROM range(3000) r(i)) ORDER BY i) TO '{TEMP_DIR}/thousands_long.csv' (HEADER false, DELIMITER '\t', QUOTE '');
+
+query III
+SELECT typeof(any_value(column0)), sum(column0), count(*) FROM read_csv('{TEMP_DIR}/thousands_long.csv', delim = '|', thousands = ',', header = false);
+----
+BIGNUM	4498521000	3000
+
+statement ok
+COPY (FROM (VALUES ('123456789012345678901234567890,1'), (' 42 ,2'), ('x,3'), ('-7,4'))) TO '{TEMP_DIR}/bignum.csv' (HEADER false, DELIMITER '\t', QUOTE '');
+
+statement error
+SELECT * FROM read_csv('{TEMP_DIR}/bignum.csv', auto_detect = false, header = false, columns = {'a': 'BIGNUM', 'b': 'INTEGER'});
+----
+Could not convert string "x" to 'BIGNUM'
+
+query II
+SELECT a + 1, b FROM read_csv('{TEMP_DIR}/bignum.csv', auto_detect = false, header = false, columns = {'a': 'BIGNUM', 'b': 'INTEGER'}, ignore_errors = true) ORDER BY b;
+----
+123456789012345678901234567891	1
+43	2
+-6	4
+
+statement ok
+CREATE TABLE copied (a BIGNUM, b INTEGER);
+
+statement ok
+COPY copied FROM '{TEMP_DIR}/bignum.csv' (HEADER false, STORE_REJECTS true);
+
+query II
+SELECT count(*), sum(b) FROM copied;
+----
+3	7
+
+query I
+SELECT user_arguments FROM reject_scans;
+----
+header=false, store_rejects=true
+
+statement ok
+COPY (FROM (VALUES ('-128,1'), ('-129,2'), ('127,3'), ('128,4'))) TO '{TEMP_DIR}/tinyint_bounds.csv' (HEADER false, DELIMITER '\t', QUOTE '');
+
+query II
+SELECT * FROM read_csv('{TEMP_DIR}/tinyint_bounds.csv', auto_detect = false, header = false, columns = {'a': 'TINYINT', 'b': 'INTEGER'}, ignore_errors = true) ORDER BY b;
+----
+-128	1
+127	3
+
+statement ok
+COPY (FROM (VALUES ('1,a'), (',b'), ('3,c'))) TO '{TEMP_DIR}/force_not_null_typed.csv' (HEADER false, DELIMITER '\t', QUOTE '');
+
+statement error
+SELECT * FROM read_csv('{TEMP_DIR}/force_not_null_typed.csv', auto_detect = false, header = false, columns = {'a': 'INTEGER', 'b': 'VARCHAR'}, force_not_null = ['a']);
+----
+Error when converting column "a"
+
+query II
+SELECT * FROM read_csv('{TEMP_DIR}/force_not_null_typed.csv', auto_detect = false, header = false, columns = {'a': 'INTEGER', 'b': 'VARCHAR'}, force_not_null = ['a'], ignore_errors = true) ORDER BY a;
+----
+1	a
+3	c
+
+statement ok
+CREATE TABLE filtered AS SELECT i AS a, i * 3 AS b, 'v' || i AS c FROM range(5000) r(i);
+
+statement ok
+COPY (SELECT line FROM (SELECT a, a || '|' || b || '|' || c AS line FROM filtered UNION ALL SELECT a + 0.5, 'bad|row' FROM filtered WHERE a % 1000 = 500) ORDER BY a) TO '{TEMP_DIR}/filtered_bad.csv' (HEADER false, DELIMITER '\t', QUOTE '');
+
+foreach parallel true false
+
+query III
+SELECT count(*), sum(b), count(DISTINCT c) FROM read_csv('{TEMP_DIR}/filtered_bad.csv', auto_detect = false, header = false, delim = '|', columns = {'a': 'BIGINT', 'b': 'BIGINT', 'c': 'VARCHAR'}, ignore_errors = true, parallel = {parallel}, buffer_size = 2048) WHERE a % 7 = 0;
+----
+715	5360355	715
+
+query III
+SELECT count(*), sum(b), count(DISTINCT c) FROM read_csv('{TEMP_DIR}/filtered_bad.csv', auto_detect = false, header = false, delim = '|', thousands = ',', columns = {'a': 'BIGINT', 'b': 'BIGINT', 'c': 'VARCHAR'}, ignore_errors = true, parallel = {parallel}, buffer_size = 2048) WHERE a % 7 = 0;
+----
+715	5360355	715
+
+endloop
