@@ -40,14 +40,8 @@ add_subdirectory(parallel)
 add_subdirectory(storage)
 add_subdirectory(transaction)
 
-set(DUCKDB_LINK_LIBS
-    duckdb_fsst
-    duckdb_utf8proc
-    duckdb_hyperloglog
-    duckdb_fastpforlib
-    duckdb_skiplistlib
-    duckdb_mbedtls
-    duckdb_yyjson)
+set(DUCKDB_LINK_LIBS duckdb_fsst duckdb_utf8proc duckdb_hyperloglog
+                     duckdb_fastpforlib duckdb_skiplistlib duckdb_mbedtls)
 
 foreach(LINK_LIB ${DUCKDB_LINK_LIBS})
   list(APPEND LINK_OBJECTS $<TARGET_OBJECTS:${LINK_LIB}>)
