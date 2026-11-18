@@ -168,9 +168,12 @@ public:
 	JSONTreeParser(JSONTreeParser &&other) noexcept;
 	JSONTreeParser &operator=(JSONTreeParser &&other) noexcept;
 
+	static constexpr idx_t PADDING = 64;
+
 	const JSONNode *Parse(const char *data, idx_t len, JSONParseError &error);
 	const JSONNode *Parse(const char *data, idx_t len);
 	optional_idx ParseAppend(const char *data, idx_t len, JSONParseError &error);
+	optional_idx ParseAppend(const char *data, idx_t len, idx_t readable, JSONParseError &error);
 	const JSONNode *ParsePrefix(const char *data, idx_t len, idx_t &consumed, JSONParseError &error);
 	void Clear();
 	const JSONNode *Node(idx_t index) const;

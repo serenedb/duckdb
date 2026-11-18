@@ -361,7 +361,7 @@ bool JSONReader::FetchRow(JSONReaderScanState &scan_state, idx_t file_offset) {
 		optional_idx root;
 		if (json_end && json_end != json_start) {
 			JSONParseError err;
-			root = scan_state.parser.ParseAppend(json_start, NumericCast<idx_t>(json_end - json_start), err);
+			root = scan_state.parser.ParseAppend(json_start, NumericCast<idx_t>(json_end - json_start), available, err);
 		}
 		if (root.IsValid()) {
 			JSONString unit(json_start, NumericCast<idx_t>(json_end - json_start));
@@ -872,7 +872,7 @@ static pair<JSONFormat, JSONRecordType> DetectFormatAndRecordType(char *const bu
 bool JSONReader::ParseJSON(JSONReaderScanState &scan_state, char *const json_start, const idx_t json_size,
                            const idx_t remaining) {
 	JSONParseError err;
-	auto root = scan_state.parser.ParseAppend(json_start, json_size, err);
+	auto root = scan_state.parser.ParseAppend(json_start, json_size, remaining, err);
 	if (!root.IsValid()) {
 		auto can_ignore_this_error = options.ignore_errors;
 		string extra;
