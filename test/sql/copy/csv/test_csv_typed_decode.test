@@ -1,0 +1,138 @@
+# name: test/sql/copy/csv/test_csv_typed_decode.test
+# description: Every type the CSV scan decodes itself reads the same through the lexer, the exact splitter and the per-value path
+# group: [csv]
+
+require skip_reload
+
+statement ok
+CREATE TABLE typed AS SELECT
+	i::INTEGER AS id,
+	(i % 200 - 100)::TINYINT AS t,
+	(i * 7 % 60000 - 30000)::SMALLINT AS s,
+	(i * 1000003 % 2000000000 - 1000000000)::INTEGER AS n,
+	(i * 1000000007 - 1500000000000)::BIGINT AS b,
+	(i::HUGEINT * 100000000000000000000 - 7) AS h,
+	(i % 256)::UTINYINT AS ut,
+	(i * 7 % 65536)::USMALLINT AS us,
+	(i * 1000003 % 4000000000)::UINTEGER AS ui,
+	(i::UBIGINT * 1000000007) AS ub,
+	(i::UHUGEINT * 100000000000000000000) AS uh,
+	((i % 2000 - 1000) / 10)::DECIMAL(4,1) AS d1,
+	((i * 37 % 10000000 - 5000000) / 100)::DECIMAL(9,2) AS d2,
+	((i * 1000003 - 1500000000) / 1000)::DECIMAL(18,3) AS d3,
+	((i::HUGEINT * 100000000000007 - 3) / 10000)::DECIMAL(30,4) AS d4,
+	(i / 8 - 100)::DOUBLE AS fd,
+	(i / 4 - 50)::FLOAT AS ff,
+	(DATE '1999-12-01' + i::INTEGER) AS dt,
+	(TIME '00:00:00' + INTERVAL (i * 13) SECOND) AS tm,
+	(TIMESTAMP '2020-02-28 23:00:00' + INTERVAL (i * 7) MINUTE) AS ts,
+	(i % 3 = 0) AS bo,
+	('v' || i || repeat('x', i % 20)) AS v
+FROM range(3000) r(i);
+
+statement ok
+COPY typed TO '{TEMP_DIR}/typed.csv' (HEADER false);
+
+statement ok
+COPY (SELECT * REPLACE (replace(d1::VARCHAR, '.', ',') AS d1, replace(d2::VARCHAR, '.', ',') AS d2, replace(d3::VARCHAR, '.', ',') AS d3, replace(d4::VARCHAR, '.', ',') AS d4, replace(fd::VARCHAR, '.', ',') AS fd, replace(ff::VARCHAR, '.', ',') AS ff) FROM typed) TO '{TEMP_DIR}/typed_comma.csv' (HEADER false, DELIMITER ';');
+
+statement ok
+COPY (SELECT line FROM (SELECT id, concat_ws(',', id, t, s, n, b, h, ut, us, ui, ub, uh, d1, d2, d3, d4, fd, ff, dt, tm, ts, bo, v) AS line FROM typed UNION ALL SELECT i * 500 + 1, 'bad,row,' || i FROM range(6) r(i)) ORDER BY id, line) TO '{TEMP_DIR}/typed_bad.csv' (HEADER false, DELIMITER '\t', QUOTE '');
+
+statement ok
+CREATE MACRO typed_columns() AS {'id': 'INTEGER', 't': 'TINYINT', 's': 'SMALLINT', 'n': 'INTEGER', 'b': 'BIGINT', 'h': 'HUGEINT', 'ut': 'UTINYINT', 'us': 'USMALLINT', 'ui': 'UINTEGER', 'ub': 'UBIGINT', 'uh': 'UHUGEINT', 'd1': 'DECIMAL(4,1)', 'd2': 'DECIMAL(9,2)', 'd3': 'DECIMAL(18,3)', 'd4': 'DECIMAL(30,4)', 'fd': 'DOUBLE', 'ff': 'FLOAT', 'dt': 'DATE', 'tm': 'TIME', 'ts': 'TIMESTAMP', 'bo': 'BOOLEAN', 'v': 'VARCHAR'};
+
+foreach parallel true false
+
+query I
+SELECT count(*) FROM (
+	(FROM read_csv('{TEMP_DIR}/typed.csv', header = false, auto_detect = false, columns = typed_columns(), parallel = {parallel}, buffer_size = 4096) EXCEPT ALL FROM typed)
+	UNION ALL
+	(FROM typed EXCEPT ALL FROM read_csv('{TEMP_DIR}/typed.csv', header = false, auto_detect = false, columns = typed_columns(), parallel = {parallel}, buffer_size = 4096))
+)
+----
+0
+
+query I
+SELECT count(*) FROM (
+	(FROM read_csv('{TEMP_DIR}/typed_comma.csv', header = false, auto_detect = false, delim = ';', decimal_separator = ',', columns = typed_columns(), parallel = {parallel}, buffer_size = 4096) EXCEPT ALL FROM typed)
+	UNION ALL
+	(FROM typed EXCEPT ALL FROM read_csv('{TEMP_DIR}/typed_comma.csv', header = false, auto_detect = false, delim = ';', decimal_separator = ',', columns = typed_columns(), parallel = {parallel}, buffer_size = 4096))
+)
+----
+0
+
+query I
+SELECT count(*) FROM (
+	(FROM read_csv('{TEMP_DIR}/typed_comma.csv', header = false, auto_detect = false, delim = ';', decimal_separator = ',', thousands = '.', columns = typed_columns(), parallel = {parallel}, buffer_size = 4096) EXCEPT ALL FROM typed)
+	UNION ALL
+	(FROM typed EXCEPT ALL FROM read_csv('{TEMP_DIR}/typed_comma.csv', header = false, auto_detect = false, delim = ';', decimal_separator = ',', thousands = '.', columns = typed_columns(), parallel = {parallel}, buffer_size = 4096))
+)
+----
+0
+
+query I
+SELECT count(*) FROM (
+	(FROM read_csv('{TEMP_DIR}/typed_bad.csv', header = false, auto_detect = false, columns = typed_columns(), ignore_errors = true, parallel = {parallel}, buffer_size = 4096) EXCEPT ALL FROM typed)
+	UNION ALL
+	(FROM typed EXCEPT ALL FROM read_csv('{TEMP_DIR}/typed_bad.csv', header = false, auto_detect = false, columns = typed_columns(), ignore_errors = true, parallel = {parallel}, buffer_size = 4096))
+)
+----
+0
+
+endloop
+
+statement ok
+COPY (FROM (VALUES
+	('1', '300', '1', '1', '1', '1', '1', '1', '1', '1', '1', '1.0', '1.00', '1.000', '1.0000', '1', '1', '2020-01-01', '00:00:01', '2020-01-01 00:00:00', 'true'),
+	('2', '1', '40000', '1', '1', '1', '1', '1', '1', '1', '1', '1.0', '1.00', '1.000', '1.0000', '1', '1', '2020-01-01', '00:00:01', '2020-01-01 00:00:00', 'true'),
+	('3', '1', '1', '3000000000', '1', '1', '1', '1', '1', '1', '1', '1.0', '1.00', '1.000', '1.0000', '1', '1', '2020-01-01', '00:00:01', '2020-01-01 00:00:00', 'true'),
+	('4', '1', '1', '1', '1x', '1', '1', '1', '1', '1', '1', '1.0', '1.00', '1.000', '1.0000', '1', '1', '2020-01-01', '00:00:01', '2020-01-01 00:00:00', 'true'),
+	('5', '1', '1', '1', '1', '9999999999999999999999999999999999999999', '1', '1', '1', '1', '1', '1.0', '1.00', '1.000', '1.0000', '1', '1', '2020-01-01', '00:00:01', '2020-01-01 00:00:00', 'true'),
+	('6', '1', '1', '1', '1', '1', '-1', '1', '1', '1', '1', '1.0', '1.00', '1.000', '1.0000', '1', '1', '2020-01-01', '00:00:01', '2020-01-01 00:00:00', 'true'),
+	('7', '1', '1', '1', '1', '1', '1', '70000', '1', '1', '1', '1.0', '1.00', '1.000', '1.0000', '1', '1', '2020-01-01', '00:00:01', '2020-01-01 00:00:00', 'true'),
+	('8', '1', '1', '1', '1', '1', '1', '1', '5000000000', '1', '1', '1.0', '1.00', '1.000', '1.0000', '1', '1', '2020-01-01', '00:00:01', '2020-01-01 00:00:00', 'true'),
+	('9', '1', '1', '1', '1', '1', '1', '1', '1', '-5', '1', '1.0', '1.00', '1.000', '1.0000', '1', '1', '2020-01-01', '00:00:01', '2020-01-01 00:00:00', 'true'),
+	('10', '1', '1', '1', '1', '1', '1', '1', '1', '1', 'x1', '1.0', '1.00', '1.000', '1.0000', '1', '1', '2020-01-01', '00:00:01', '2020-01-01 00:00:00', 'true'),
+	('11', '1', '1', '1', '1', '1', '1', '1', '1', '1', '1', '1000.0', '1.00', '1.000', '1.0000', '1', '1', '2020-01-01', '00:00:01', '2020-01-01 00:00:00', 'true'),
+	('12', '1', '1', '1', '1', '1', '1', '1', '1', '1', '1', '1.0', '12345678.00', '1.000', '1.0000', '1', '1', '2020-01-01', '00:00:01', '2020-01-01 00:00:00', 'true'),
+	('13', '1', '1', '1', '1', '1', '1', '1', '1', '1', '1', '1.0', '1.00', '1.0.0', '1.0000', '1', '1', '2020-01-01', '00:00:01', '2020-01-01 00:00:00', 'true'),
+	('14', '1', '1', '1', '1', '1', '1', '1', '1', '1', '1', '1.0', '1.00', '1.000', 'abc', '1', '1', '2020-01-01', '00:00:01', '2020-01-01 00:00:00', 'true'),
+	('15', '1', '1', '1', '1', '1', '1', '1', '1', '1', '1', '1.0', '1.00', '1.000', '1.0000', '1..5', '1', '2020-01-01', '00:00:01', '2020-01-01 00:00:00', 'true'),
+	('16', '1', '1', '1', '1', '1', '1', '1', '1', '1', '1', '1.0', '1.00', '1.000', '1.0000', '1', 'f', '2020-01-01', '00:00:01', '2020-01-01 00:00:00', 'true'),
+	('17', '1', '1', '1', '1', '1', '1', '1', '1', '1', '1', '1.0', '1.00', '1.000', '1.0000', '1', '1', '2020-02-30', '00:00:01', '2020-01-01 00:00:00', 'true'),
+	('18', '1', '1', '1', '1', '1', '1', '1', '1', '1', '1', '1.0', '1.00', '1.000', '1.0000', '1', '1', '2020-01-01', '25:00:01', '2020-01-01 00:00:00', 'true'),
+	('19', '1', '1', '1', '1', '1', '1', '1', '1', '1', '1', '1.0', '1.00', '1.000', '1.0000', '1', '1', '2020-01-01', '00:00:01', '2020-01-01 24:61:00', 'true'),
+	('20', '1', '1', '1', '1', '1', '1', '1', '1', '1', '1', '1.0', '1.00', '1.000', '1.0000', '1', '1', '2020-01-01', '00:00:01', '2020-01-01 00:00:00', 'maybe')
+)) TO '{TEMP_DIR}/typed_errors.csv' (HEADER false);
+
+statement ok
+CREATE MACRO error_columns() AS {'id': 'INTEGER', 't': 'TINYINT', 's': 'SMALLINT', 'n': 'INTEGER', 'b': 'BIGINT', 'h': 'HUGEINT', 'ut': 'UTINYINT', 'us': 'USMALLINT', 'ui': 'UINTEGER', 'ub': 'UBIGINT', 'uh': 'UHUGEINT', 'd1': 'DECIMAL(4,1)', 'd2': 'DECIMAL(9,2)', 'd3': 'DECIMAL(18,3)', 'd4': 'DECIMAL(30,4)', 'fd': 'DOUBLE', 'ff': 'FLOAT', 'dt': 'DATE', 'tm': 'TIME', 'ts': 'TIMESTAMP', 'bo': 'BOOLEAN'};
+
+query IIIIIIIIIIIIIIIIIIIII
+FROM read_csv('{TEMP_DIR}/typed_errors.csv', header = false, auto_detect = false, columns = error_columns(), store_rejects = true);
+----
+
+query IIII
+SELECT line, column_idx, column_name, error_message FROM reject_errors ORDER BY line;
+----
+1	2	t	Error when converting column "t". Could not convert string "300" to 'TINYINT'
+2	3	s	Error when converting column "s". Could not convert string "40000" to 'SMALLINT'
+3	4	n	Error when converting column "n". Could not convert string "3000000000" to 'INTEGER'
+4	5	b	Error when converting column "b". Could not convert string "1x" to 'BIGINT'
+5	6	h	Error when converting column "h". Could not convert string "9999999999999999999999999999999999999999" to 'HUGEINT'
+6	7	ut	Error when converting column "ut". Could not convert string "-1" to 'UTINYINT'
+7	8	us	Error when converting column "us". Could not convert string "70000" to 'USMALLINT'
+8	9	ui	Error when converting column "ui". Could not convert string "5000000000" to 'UINTEGER'
+9	10	ub	Error when converting column "ub". Could not convert string "-5" to 'UBIGINT'
+10	11	uh	Error when converting column "uh". Could not convert string "x1" to 'UHUGEINT'
+11	12	d1	Error when converting column "d1". Could not convert string "1000.0" to 'DECIMAL'
+12	13	d2	Error when converting column "d2". Could not convert string "12345678.00" to 'DECIMAL'
+13	14	d3	Error when converting column "d3". Could not convert string "1.0.0" to 'DECIMAL'
+14	15	d4	Error when converting column "d4". Could not convert string "abc" to 'DECIMAL'
+15	16	fd	Error when converting column "fd". Could not convert string "1..5" to 'DOUBLE'
+16	17	ff	Error when converting column "ff". Could not convert string "f" to 'FLOAT'
+17	18	dt	Error when converting column "dt". Could not convert string "2020-02-30" to 'DATE'
+18	19	tm	Error when converting column "tm". Could not convert string "25:00:01" to 'TIME'
+19	20	ts	Error when converting column "ts". Could not convert string "2020-01-01 24:61:00" to 'TIMESTAMP'
+20	21	bo	Error when converting column "bo". Could not convert string "maybe" to 'BOOLEAN'
