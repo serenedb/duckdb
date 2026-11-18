@@ -84,9 +84,14 @@ struct CsvScanSource {
 	bool placeholder = false;
 };
 
+enum class CsvRawKind : uint8_t { COMPARE, IN_LIST, IS_NULL, IS_NOT_NULL, LIKE, NOT_LIKE };
+
 struct CsvRawPredicate {
-	ExpressionType type;
+	CsvRawKind kind;
+	ExpressionType compare = ExpressionType::INVALID;
 	vector<string> values;
+	bool anchored_start = false;
+	bool anchored_end = false;
 };
 
 struct LeanSource {
@@ -236,6 +241,7 @@ public:
 	}
 
 	static bool NeedsFlushCast(const CsvScanColumn &column);
+	static bool EvaluatesOnFieldBytes(const Expression &expr);
 
 private:
 	bool ReadMore(idx_t keep);
