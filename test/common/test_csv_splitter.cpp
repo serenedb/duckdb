@@ -1,0 +1,1227 @@
+#include "catch.hpp"
+#include "duckdb/common/bit_utils.hpp"
+#include "duckdb/execution/operator/csv_scanner/csv_reader_options.hpp"
+#include "duckdb/formats/row_lexer.hpp"
+#include "duckdb/formats/csv_splitter.hpp"
+
+#include <random>
+
+using namespace duckdb;
+
+namespace {
+
+class ReferenceSplitter {
+public:
+	ReferenceSplitter(const CsvGrammar &grammar_p, idx_t columns_p, idx_t capacity_p)
+	    : grammar(grammar_p), columns(columns_p), capacity(capacity_p), fields(columns_p * capacity_p),
+	      rows(capacity_p) {
+	}
+
+	void Reset(idx_t position, idx_t lines, const CsvRangeStart &start = CsvRangeStart()) {
+		pos = position;
+		states[0] = start.states[0];
+		states[1] = start.states[1];
+		field_count = 0;
+		last_position = start.last_position == DConstants::INVALID_INDEX ? position : start.last_position;
+		quoted = false;
+		ever_quoted = false;
+		ever_escaped = false;
+		used_unstrictness = false;
+		escaped = false;
+		comment = false;
+		row_flags = 0;
+		line_end = start.line_end == DConstants::INVALID_INDEX ? position : start.line_end;
+		line_begin = line_end;
+		lines_read = lines;
+		finished = false;
+		SaveBoundary();
+	}
+
+	idx_t Split(const char *bytes_p, idx_t base_p, idx_t end_p, idx_t max_rows, bool last,
+	            idx_t stop_at = NumericLimits<idx_t>::Maximum()) {
+		bytes = bytes_p;
+		base = base_p;
+		end = end_p;
+		row_count = 0;
+		events.clear();
+		extras.clear();
+		if (finished) {
+			return row_count;
+		}
+		const bool has_escape = grammar.escape != '\0';
+		while (pos < end && row_count < max_rows) {
+			if (pos >= stop_at && pos == boundary.pos) {
+				finished = true;
+				return row_count;
+			}
+			scan_pos = pos;
+			states[0] = states[1];
+			states[1] =
+			    grammar.transitions->state_machine[static_cast<uint8_t>(At(pos))][static_cast<uint8_t>(states[1])];
+			switch (states[1]) {
+			case CSVState::INVALID:
+				Event(quoted ? CsvRowEventKind::UNTERMINATED_QUOTES : CsvRowEventKind::INVALID_STATE, field_count,
+				      last_position);
+				pos++;
+				break;
+			case CSVState::RECORD_SEPARATOR:
+				if (states[0] == CSVState::RECORD_SEPARATOR || states[0] == CSVState::NOT_SET) {
+					EmptyLine(pos);
+					lines_read++;
+				} else if (states[0] != CSVState::CARRIAGE_RETURN) {
+					if (comment) {
+						UnsetComment(pos);
+					} else {
+						AddRow(pos);
+					}
+					lines_read++;
+				}
+				pos++;
+				SaveBoundary();
+				break;
+			case CSVState::CARRIAGE_RETURN:
+				if (states[0] == CSVState::RECORD_SEPARATOR || states[0] == CSVState::NOT_SET) {
+					EmptyLine(pos);
+				} else if (states[0] != CSVState::CARRIAGE_RETURN) {
+					if (comment) {
+						UnsetComment(pos);
+					} else if (!grammar.only_crlf) {
+						AddRow(pos);
+					}
+				}
+				pos++;
+				lines_read++;
+				SaveBoundary();
+				break;
+			case CSVState::DELIMITER:
+				AddValue(pos);
+				pos++;
+				break;
+			case CSVState::QUOTED:
+				if ((states[0] == CSVState::UNQUOTED || states[0] == CSVState::MAYBE_QUOTED) && has_escape) {
+					escaped = true;
+					ever_escaped = true;
+				}
+				if ((states[0] == CSVState::ESCAPE || states[0] == CSVState::ESCAPED_RETURN ||
+				     states[0] == CSVState::UNQUOTED_ESCAPE) &&
+				    (At(pos) == grammar.quote || !grammar.strict_mode)) {
+					ever_escaped = true;
+					used_unstrictness = used_unstrictness || states[0] == CSVState::UNQUOTED_ESCAPE;
+				}
+				if (!quoted) {
+					quoted_position = pos;
+				}
+				quoted = true;
+				ever_quoted = true;
+				pos++;
+				break;
+			case CSVState::UNQUOTED:
+				if (states[0] == CSVState::MAYBE_QUOTED || (states[0] == CSVState::UNQUOTED && has_escape)) {
+					escaped = true;
+				}
+				ever_escaped = ever_escaped || states[0] == CSVState::MAYBE_QUOTED;
+				quoted = true;
+				pos++;
+				break;
+			case CSVState::ESCAPE:
+			case CSVState::ESCAPED_RETURN:
+				escaped = true;
+				pos++;
+				break;
+			case CSVState::UNQUOTED_ESCAPE:
+				escaped = true;
+				used_unstrictness = true;
+				pos++;
+				break;
+			case CSVState::QUOTED_NEW_LINE:
+				row_flags |= CSV_ROW_QUOTED_NEWLINE;
+				pos++;
+				break;
+			case CSVState::COMMENT:
+				if (!comment) {
+					position_before_comment = pos;
+					comment = true;
+				}
+				pos++;
+				break;
+			default:
+				pos++;
+				break;
+			}
+		}
+		if (pos >= stop_at && pos == boundary.pos) {
+			finished = true;
+			return row_count;
+		}
+		if (pos < end || row_count == max_rows) {
+			return row_count;
+		}
+		if (!last) {
+			RestoreBoundary();
+			return row_count;
+		}
+		Finish();
+		return row_count;
+	}
+
+	struct Boundary {
+		idx_t pos = 0;
+		CSVState states[2] = {CSVState::NOT_SET, CSVState::NOT_SET};
+		idx_t last_position = 0;
+		idx_t line_begin = 0;
+		idx_t line_end = 0;
+		idx_t lines_read = 0;
+		bool ever_quoted = false;
+	};
+
+	char At(idx_t position) const {
+		return bytes[position - base];
+	}
+
+	void SaveBoundary() {
+		boundary.pos = pos;
+		boundary.states[0] = states[0];
+		boundary.states[1] = states[1];
+		boundary.last_position = last_position;
+		boundary.line_begin = line_begin;
+		boundary.line_end = line_end;
+		boundary.lines_read = lines_read;
+		boundary.ever_quoted = ever_quoted;
+	}
+
+	void RestoreBoundary() {
+		pos = boundary.pos;
+		states[0] = boundary.states[0];
+		states[1] = boundary.states[1];
+		last_position = boundary.last_position;
+		line_begin = boundary.line_begin;
+		line_end = boundary.line_end;
+		lines_read = boundary.lines_read;
+		ever_quoted = boundary.ever_quoted;
+		field_count = 0;
+		quoted = false;
+		escaped = false;
+		comment = false;
+		row_flags = 0;
+		while (!events.empty() && events.back().row >= row_count) {
+			events.pop_back();
+		}
+		while (!extras.empty() && extras.back().row >= row_count) {
+			extras.pop_back();
+		}
+	}
+
+	void Event(CsvRowEventKind kind, idx_t column, idx_t position) {
+		events.push_back({row_count, column, position, kind});
+		row_flags |= CSV_ROW_EVENTS;
+	}
+
+	void AddField(idx_t offset, idx_t size, bool empty) {
+		CsvField field {static_cast<uint32_t>(last_position - base), static_cast<uint32_t>(offset - base),
+		                static_cast<uint32_t>(empty ? 0 : size), static_cast<uint8_t>(0)};
+		if (quoted) {
+			field.flags |= CSV_FIELD_QUOTED;
+		}
+		if (escaped) {
+			field.flags |= CSV_FIELD_ESCAPED;
+		}
+		if (field_count < columns) {
+			fields[field_count * capacity + row_count] = field;
+		} else {
+			extras.push_back({row_count, field_count, field});
+		}
+		field_count++;
+		escaped = false;
+	}
+
+	void AddQuotedValue(idx_t position) {
+		if (!ever_quoted) {
+			Event(CsvRowEventKind::UNTERMINATED_QUOTES, field_count, last_position);
+		}
+		if (position <= quoted_position + 1) {
+			AddField(quoted_position + 1, 0, position < last_position + 2);
+			quoted = false;
+			return;
+		}
+		idx_t length = position - quoted_position - 1;
+		while (length > 0 && grammar.trim_quoted_spaces && At(quoted_position + 1 + length - 1) == ' ') {
+			length--;
+		}
+		if (length == 0) {
+			AddField(quoted_position + 1, 0, true);
+			quoted = false;
+			return;
+		}
+		length--;
+		AddField(quoted_position + 1, length, position < last_position + 2);
+		quoted = false;
+	}
+
+	void AddValue(idx_t position) {
+		if (last_position > position) {
+			return;
+		}
+		if (quoted) {
+			AddQuotedValue(position - grammar.extra_delimiter_bytes);
+		} else if (escaped) {
+			AddField(last_position, position - last_position, false);
+		} else {
+			idx_t size = 0;
+			if (position >= last_position + grammar.extra_delimiter_bytes) {
+				size = position - last_position - grammar.extra_delimiter_bytes;
+			}
+			AddField(last_position, size, false);
+		}
+		last_position = position + 1;
+	}
+
+	void AddRow(idx_t position) {
+		if (last_position <= position) {
+			if (quoted) {
+				AddQuotedValue(position);
+			} else {
+				const idx_t size = position - last_position;
+				AddField(last_position, size, escaped && size == 0);
+			}
+			if (grammar.carry_on_newline && states[1] != CSVState::RECORD_SEPARATOR) {
+				last_position = position + 2;
+			} else {
+				last_position = position + 1;
+			}
+		}
+		line_begin = line_end;
+		line_end = scan_pos;
+		rows[row_count] = {boundary.pos,  line_begin, line_end,
+		                   last_position, lines_read, static_cast<uint32_t>(field_count),
+		                   row_flags};
+		row_count++;
+		field_count = 0;
+		row_flags = 0;
+	}
+
+	void EmptyLine(idx_t position) {
+		last_position = position + 1;
+		if (states[1] == CSVState::CARRIAGE_RETURN && grammar.carry_on_newline) {
+			last_position++;
+		}
+		if (columns != 1) {
+			return;
+		}
+		rows[row_count] = {boundary.pos, line_end, line_end, last_position, lines_read, 0, CSV_ROW_EMPTY_LINE};
+		row_count++;
+	}
+
+	void UnsetComment(idx_t position) {
+		if (last_position < position_before_comment) {
+			bool all_empty = true;
+			for (idx_t i = last_position; i < position_before_comment; i++) {
+				if (At(i) != ' ') {
+					all_empty = false;
+					break;
+				}
+			}
+			if (!all_empty) {
+				AddRow(position_before_comment);
+			}
+		} else if (field_count != 0) {
+			AddRow(position_before_comment);
+		}
+		comment = false;
+		last_position = grammar.carry_on_newline ? position + 2 : position + 1;
+		line_begin = line_end;
+		line_end = scan_pos;
+		field_count = 0;
+	}
+
+	void Finish() {
+		finished = true;
+		scan_pos = end;
+		if (states[1] == CSVState::CARRIAGE_RETURN || states[1] == CSVState::RECORD_SEPARATOR ||
+		    states[1] == CSVState::NOT_SET) {
+			field_count = 0;
+			return;
+		}
+		if (states[1] == CSVState::DELIMITER) {
+			AddValue(end);
+			if (comment) {
+				UnsetComment(end);
+			} else {
+				AddRow(end);
+			}
+			lines_read++;
+			return;
+		}
+		if ((states[1] == CSVState::QUOTED || states[1] == CSVState::QUOTED_NEW_LINE) && grammar.strict_mode) {
+			line_begin = line_end;
+			line_end = end;
+			Event(quoted ? CsvRowEventKind::UNTERMINATED_QUOTES : CsvRowEventKind::INVALID_STATE, field_count,
+			      last_position);
+			rows[row_count] = {boundary.pos,
+			                   line_begin,
+			                   line_end,
+			                   last_position,
+			                   lines_read,
+			                   static_cast<uint32_t>(field_count),
+			                   static_cast<uint8_t>(row_flags | CSV_ROW_UNFINISHED)};
+			row_count++;
+			field_count = 0;
+			row_flags = 0;
+			return;
+		}
+		if (states[1] == CSVState::QUOTED || states[1] == CSVState::QUOTED_NEW_LINE) {
+			used_unstrictness = true;
+		}
+		if (comment) {
+			UnsetComment(end);
+		} else {
+			if (quoted && grammar.strict_mode &&
+			    (states[0] == CSVState::DELIMITER_FIRST_BYTE || states[0] == CSVState::DELIMITER_SECOND_BYTE ||
+			     states[0] == CSVState::DELIMITER_THIRD_BYTE)) {
+				Event(CsvRowEventKind::UNTERMINATED_QUOTES, field_count, last_position);
+			}
+			AddRow(end);
+		}
+		lines_read++;
+	}
+
+	const CsvGrammar &grammar;
+	const idx_t columns;
+	const idx_t capacity;
+	vector<CsvField> fields;
+	vector<CsvExtraField> extras;
+	vector<CsvRow> rows;
+	vector<CsvRowEvent> events;
+	Boundary boundary;
+	const char *bytes = nullptr;
+	idx_t base = 0;
+	idx_t end = 0;
+	idx_t pos = 0;
+	idx_t scan_pos = 0;
+	idx_t row_count = 0;
+	idx_t lines_read = 0;
+	CSVState states[2] = {CSVState::NOT_SET, CSVState::NOT_SET};
+	idx_t field_count = 0;
+	idx_t last_position = 0;
+	idx_t quoted_position = 0;
+	bool quoted = false;
+	bool ever_quoted = false;
+	bool ever_escaped = false;
+	bool used_unstrictness = false;
+	bool escaped = false;
+	bool comment = false;
+	idx_t position_before_comment = 0;
+	uint8_t row_flags = 0;
+	idx_t line_begin = 0;
+	idx_t line_end = 0;
+	bool finished = false;
+};
+
+void ReferenceTransfer(const CsvGrammar &grammar, const char *bytes, idx_t base, idx_t begin, idx_t end,
+                       CsvRangeTransfer &transfer) {
+	struct Run {
+		CsvRangeStart start;
+		uint32_t origins;
+	};
+	constexpr idx_t STATES = StateMachine::NUM_STATES;
+	constexpr idx_t NONE = DConstants::INVALID_INDEX;
+	const auto &table = *grammar.transitions;
+	Run runs[STATES];
+	CsvRangeStart settled[STATES];
+	idx_t run_count = STATES;
+	uint32_t open = (1u << STATES) - 1;
+	for (idx_t state = 0; state < STATES; state++) {
+		runs[state].start.states[0] = static_cast<CSVState>(state);
+		runs[state].start.states[1] = static_cast<CSVState>(state);
+		runs[state].origins = 1u << state;
+		transfer[state] = CsvRangeEntry();
+	}
+	auto settle = [&](const Run &run) {
+		for (uint32_t origins = run.origins; origins; origins &= origins - 1) {
+			auto &origin = settled[CountZeros<uint32_t>::Trailing(origins)];
+			if (run.start.line_end != NONE) {
+				origin.line_end = run.start.line_end;
+			}
+			if (run.start.last_position != NONE) {
+				origin.last_position = run.start.last_position;
+			}
+		}
+	};
+	auto resolve = [&](const Run &run, idx_t origin) {
+		auto result = run.start;
+		result.Inherit(settled[origin]);
+		return result;
+	};
+	for (idx_t pos = begin; pos < end; pos++) {
+		const auto byte = static_cast<uint8_t>(bytes[pos - base]);
+		for (idx_t i = 0; i < run_count; i++) {
+			auto &run = runs[i];
+			const auto previous = run.start.states[1];
+			const auto next = table.state_machine[byte][static_cast<uint8_t>(previous)];
+			run.start.states[0] = previous;
+			run.start.states[1] = next;
+			if (next != CSVState::RECORD_SEPARATOR && next != CSVState::CARRIAGE_RETURN) {
+				continue;
+			}
+			const bool empty = previous == CSVState::RECORD_SEPARATOR || previous == CSVState::NOT_SET;
+			const bool comment = previous == CSVState::COMMENT;
+			const bool silent = previous == CSVState::CARRIAGE_RETURN ||
+			                    (!empty && !comment && next == CSVState::CARRIAGE_RETURN && grammar.only_crlf);
+			if (!silent) {
+				if (!empty) {
+					run.start.line_end = pos;
+				}
+				const bool skip_line_feed = next == CSVState::CARRIAGE_RETURN || (comment && grammar.carry_on_newline);
+				run.start.last_position = pos + 1 + skip_line_feed;
+			}
+			if (!(run.origins & open)) {
+				continue;
+			}
+			for (uint32_t origins = run.origins & open; origins; origins &= origins - 1) {
+				const auto origin = CountZeros<uint32_t>::Trailing(origins);
+				auto &entry = transfer[origin];
+				entry.first_boundary = pos + 1;
+				entry.boundary = resolve(run, origin);
+			}
+			open &= ~run.origins;
+		}
+		if (run_count > 1) {
+			idx_t kept = 0;
+			for (idx_t i = 0; i < run_count; i++) {
+				bool merged = false;
+				for (idx_t j = 0; j < kept; j++) {
+					auto &target = runs[j];
+					auto &source = runs[i];
+					if (target.start.states[0] != source.start.states[0] ||
+					    target.start.states[1] != source.start.states[1]) {
+						continue;
+					}
+					if (target.start.line_end != source.start.line_end ||
+					    target.start.last_position != source.start.last_position) {
+						settle(target);
+						settle(source);
+						target.start.line_end = NONE;
+						target.start.last_position = NONE;
+					}
+					target.origins |= source.origins;
+					merged = true;
+					break;
+				}
+				if (!merged) {
+					runs[kept++] = runs[i];
+				}
+			}
+			run_count = kept;
+		}
+	}
+	for (idx_t i = 0; i < run_count; i++) {
+		for (uint32_t origins = runs[i].origins; origins; origins &= origins - 1) {
+			const auto origin = CountZeros<uint32_t>::Trailing(origins);
+			transfer[origin].end = resolve(runs[i], origin);
+		}
+	}
+}
+
+class ReferenceSkip {
+public:
+	ReferenceSkip(const CsvGrammar &grammar_p, idx_t rows_p) : grammar(grammar_p), rows(rows_p) {
+	}
+
+	bool Feed(const char *data, idx_t base, idx_t end) {
+		auto &table = *grammar.transitions;
+		while (pos < end) {
+			states[0] = states[1];
+			states[1] = table.state_machine[static_cast<uint8_t>(data[pos - base])][static_cast<uint8_t>(states[1])];
+			bool done = false;
+			switch (states[1]) {
+			case CSVState::RECORD_SEPARATOR:
+				if (states[0] == CSVState::RECORD_SEPARATOR || states[0] == CSVState::NOT_SET) {
+					done = AddRow();
+					lines++;
+				} else if (states[0] != CSVState::CARRIAGE_RETURN) {
+					done = EndLine(true);
+					lines++;
+				}
+				break;
+			case CSVState::CARRIAGE_RETURN:
+				if (states[0] == CSVState::RECORD_SEPARATOR || states[0] == CSVState::NOT_SET) {
+					done = AddRow();
+				} else if (states[0] != CSVState::CARRIAGE_RETURN) {
+					done = EndLine(!grammar.only_crlf);
+				}
+				lines++;
+				break;
+			case CSVState::COMMENT:
+				if ((!comment || pos == base || pos + 1 == end) && states[0] != CSVState::STANDARD) {
+					starts_as_comment = true;
+				}
+				comment = true;
+				break;
+			default:
+				break;
+			}
+			pos++;
+			if (done) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	idx_t Start() const {
+		if (grammar.carry_on_newline && states[1] == CSVState::CARRIAGE_RETURN) {
+			return pos + 1;
+		}
+		return pos;
+	}
+
+	bool AddRow() {
+		skipped++;
+		return skipped >= rows;
+	}
+
+	bool EndLine(bool add) {
+		if (comment) {
+			const bool counted = !starts_as_comment;
+			comment = false;
+			starts_as_comment = false;
+			return counted && AddRow();
+		}
+		return add && AddRow();
+	}
+
+	const CsvGrammar &grammar;
+	const idx_t rows;
+	CSVState states[2] = {CSVState::NOT_SET, CSVState::NOT_SET};
+	idx_t skipped = 0;
+	idx_t lines = 0;
+	idx_t pos = 0;
+	bool comment = false;
+	bool starts_as_comment = false;
+};
+
+struct FuzzDialect {
+	string delimiter;
+	char quote;
+	char escape;
+	char comment;
+	NewLineIdentifier new_line;
+	bool strict;
+	idx_t columns;
+};
+
+string Describe(const FuzzDialect &dialect, const string &input) {
+	string result = "delimiter=" + dialect.delimiter + " quote=" + to_string(int(dialect.quote)) +
+	                " escape=" + to_string(int(dialect.escape)) + " comment=" + to_string(int(dialect.comment)) +
+	                " new_line=" + to_string(int(dialect.new_line)) + " strict=" + to_string(dialect.strict) +
+	                " columns=" + to_string(dialect.columns) + " input=";
+	for (auto c : input) {
+		if (c == '\n') {
+			result += "\\n";
+		} else if (c == '\r') {
+			result += "\\r";
+		} else {
+			result += c;
+		}
+	}
+	return result;
+}
+
+FuzzDialect RandomDialect(std::mt19937_64 &rng) {
+	static const char *delimiters[] = {",", "|", ";", "\t", "||", "ab", "\xc2\xa6", "a|", ", ", "|~|", "::"};
+	static const char quotes[] = {'"', '\'', '\0'};
+	FuzzDialect dialect;
+	dialect.delimiter = delimiters[rng() % (sizeof(delimiters) / sizeof(delimiters[0]))];
+	dialect.quote = quotes[rng() % 3];
+	if (dialect.quote == '\0') {
+		dialect.escape = '\0';
+	} else {
+		const char escapes[] = {dialect.quote, '\\', '\0', '\''};
+		dialect.escape = escapes[rng() % 4];
+		if (dialect.escape == '\'' && dialect.quote == '\'') {
+			dialect.escape = '\\';
+		}
+	}
+	const char comments[] = {'\0', '#', '\0', '!'};
+	dialect.comment = comments[rng() % 4];
+	const NewLineIdentifier new_lines[] = {NewLineIdentifier::NOT_SET, NewLineIdentifier::SINGLE_N,
+	                                       NewLineIdentifier::SINGLE_R, NewLineIdentifier::CARRY_ON};
+	dialect.new_line = new_lines[rng() % 4];
+	dialect.strict = rng() % 2;
+	const idx_t columns[] = {1, 2, 3, 5};
+	dialect.columns = columns[rng() % 4];
+	return dialect;
+}
+
+string RandomInput(std::mt19937_64 &rng, const FuzzDialect &dialect) {
+	string alphabet = dialect.delimiter + dialect.delimiter + "\n\n\r  aab";
+	if (dialect.quote) {
+		alphabet += string(3, dialect.quote);
+	}
+	if (dialect.escape) {
+		alphabet += string(2, dialect.escape);
+	}
+	if (dialect.comment) {
+		alphabet += dialect.comment;
+	}
+	const idx_t size = rng() % 4 == 0 ? rng() % 400 : rng() % 80;
+	string input;
+	for (idx_t i = 0; i < size; i++) {
+		input += alphabet[rng() % alphabet.size()];
+	}
+	return input;
+}
+
+string RegularInput(std::mt19937_64 &rng, const FuzzDialect &dialect) {
+	string newline = "\n";
+	if (dialect.new_line == NewLineIdentifier::CARRY_ON ||
+	    (dialect.new_line == NewLineIdentifier::NOT_SET && rng() % 2)) {
+		newline = "\r\n";
+	} else if (dialect.new_line == NewLineIdentifier::SINGLE_R) {
+		newline = "\r";
+	}
+	const string plain = "ab1. ";
+	string input;
+	const idx_t rows = rng() % 12;
+	for (idx_t row = 0; row < rows; row++) {
+		if (rng() % 10 == 0) {
+			input += newline;
+		}
+		for (idx_t column = 0; column < dialect.columns; column++) {
+			if (column > 0) {
+				input += dialect.delimiter;
+			}
+			const idx_t length = rng() % 6;
+			string token;
+			for (idx_t i = 0; i < length; i++) {
+				token += plain[rng() % plain.size()];
+			}
+			if (dialect.quote && rng() % 4 == 0) {
+				string quoted(1, dialect.quote);
+				quoted += token;
+				const auto extra = rng() % 5;
+				if (extra == 0) {
+					quoted += dialect.delimiter;
+				} else if (extra == 1) {
+					quoted += newline;
+				} else if (extra == 2 && dialect.escape == dialect.quote) {
+					quoted += string(2, dialect.quote);
+				} else if (extra == 2 && dialect.escape) {
+					quoted += dialect.escape;
+					quoted += rng() % 2 ? dialect.quote : dialect.escape;
+				}
+				quoted += dialect.quote;
+				token = quoted;
+			}
+			input += token;
+		}
+		if (row + 1 < rows || rng() % 2) {
+			input += newline;
+		}
+	}
+	return input;
+}
+
+struct SplitResult {
+	vector<string> rows;
+	idx_t lines = 0;
+	bool ever_quoted = false;
+	bool ever_escaped = false;
+	bool unstrict = false;
+};
+
+template <class SPLITTER>
+void Collect(SPLITTER &splitter, idx_t count, idx_t columns, const vector<CsvField> *, SplitResult &result,
+             const CsvField *(*column)(SPLITTER &, idx_t), const CsvRow &(*row_at)(SPLITTER &, idx_t),
+             const vector<CsvExtraField> &extras, const vector<CsvRowEvent> &events) {
+	for (idx_t row = 0; row < count; row++) {
+		auto &r = row_at(splitter, row);
+		string text = "row start=" + to_string(r.start) + " begin=" + to_string(r.begin) + " end=" + to_string(r.end) +
+		              " last=" + to_string(r.last_position) + " lines=" + to_string(r.lines) +
+		              " count=" + to_string(r.field_count) + " flags=" + to_string(r.flags) + " fields:";
+		for (idx_t c = 0; c < MinValue<idx_t>(r.field_count, columns); c++) {
+			auto &f = column(splitter, c)[row];
+			text += " [" + to_string(f.start) + "," + to_string(f.offset) + "," + to_string(f.size) + "," +
+			        to_string(f.flags) + "]";
+		}
+		for (auto &extra : extras) {
+			if (extra.row == row) {
+				text += " extra(" + to_string(extra.column) + ":" + to_string(extra.field.start) + "," +
+				        to_string(extra.field.offset) + "," + to_string(extra.field.size) + "," +
+				        to_string(extra.field.flags) + ")";
+			}
+		}
+		for (auto &event : events) {
+			if (event.row == row) {
+				text += " event(" + to_string(event.column) + ":" + to_string(event.position) + "," +
+				        to_string(int(event.kind)) + ")";
+			}
+		}
+		result.rows.push_back(std::move(text));
+	}
+}
+
+SplitResult RunNew(const CsvGrammar &grammar, const FuzzDialect &dialect, const string &input, idx_t max_rows,
+                   idx_t first_chunk) {
+	SplitResult result;
+	CsvSplitter splitter(grammar, dialect.columns, max_rows);
+	splitter.Reset(0, 0);
+	const char *data = input.data();
+	idx_t end = MinValue<idx_t>(first_chunk, input.size());
+	bool last = end == input.size();
+	for (idx_t guard = 0; guard < 100000; guard++) {
+		const idx_t count = splitter.Split(data, 0, end, max_rows, last);
+		Collect<CsvSplitter>(
+		    splitter, count, dialect.columns, nullptr, result, [](CsvSplitter &s, idx_t c) { return s.Column(c); },
+		    [](CsvSplitter &s, idx_t r) -> const CsvRow & { return s.Row(r); }, splitter.Extras(), splitter.Events());
+		if (count > 0) {
+			continue;
+		}
+		if (splitter.Finished() || last) {
+			break;
+		}
+		end = input.size();
+		last = true;
+	}
+	result.lines = splitter.LinesRead();
+	result.ever_quoted = splitter.EverQuoted();
+	result.ever_escaped = splitter.EverEscaped();
+	result.unstrict = splitter.UsedUnstrictness();
+	return result;
+}
+
+SplitResult RunReference(const CsvGrammar &grammar, const FuzzDialect &dialect, const string &input, idx_t max_rows,
+                         idx_t first_chunk) {
+	SplitResult result;
+	ReferenceSplitter splitter(grammar, dialect.columns, max_rows);
+	splitter.Reset(0, 0);
+	const char *data = input.data();
+	idx_t end = MinValue<idx_t>(first_chunk, input.size());
+	bool last = end == input.size();
+	for (idx_t guard = 0; guard < 100000; guard++) {
+		const idx_t count = splitter.Split(data, 0, end, max_rows, last);
+		Collect<ReferenceSplitter>(
+		    splitter, count, dialect.columns, nullptr, result,
+		    [](ReferenceSplitter &s, idx_t c) -> const CsvField * { return s.fields.data() + c * s.capacity; },
+		    [](ReferenceSplitter &s, idx_t r) -> const CsvRow & { return s.rows[r]; }, splitter.extras,
+		    splitter.events);
+		if (count > 0) {
+			continue;
+		}
+		if (splitter.finished || last) {
+			break;
+		}
+		end = input.size();
+		last = true;
+	}
+	result.lines = splitter.lines_read;
+	result.ever_quoted = splitter.ever_quoted;
+	result.ever_escaped = splitter.ever_escaped;
+	result.unstrict = splitter.used_unstrictness;
+	return result;
+}
+
+string DescribeStart(const CsvRangeStart &start) {
+	const auto state = start.states[1] == CSVState::QUOTED_NEW_LINE ? CSVState::QUOTED : start.states[1];
+	return to_string(int(state)) + " line_end=" + to_string(int64_t(start.line_end)) +
+	       " last=" + to_string(int64_t(start.last_position));
+}
+
+string RunLean(const CsvGrammar &grammar, const FuzzDialect &dialect, const string &input, idx_t piece_blocks,
+               idx_t max_line_size, SplitResult &exact, bool &accepted) {
+	accepted = false;
+	RowLexer lean(RowDialect::DuckDB(grammar), dialect.columns, max_line_size, true);
+	if (!lean.Eligible()) {
+		return string();
+	}
+	RowCursor cursor;
+	RowFields fields;
+	lean.Start(cursor, 0, true);
+	const char *data = input.data();
+	while (cursor.ok && cursor.pos < input.size()) {
+		const idx_t end = MinValue<idx_t>(cursor.pos + piece_blocks * 64, input.size());
+		const bool last = end == input.size();
+		if (!lean.Feed(cursor, data, 0, end, last, &fields)) {
+			return string();
+		}
+	}
+	CsvRangeEntry entry;
+	if (!lean.Finish(cursor, data, 0, input.size(), true, &fields, CSVState::NOT_SET, entry)) {
+		return string();
+	}
+	accepted = true;
+	const idx_t columns = dialect.columns;
+	string mismatch;
+	if (cursor.rows != exact.rows.size()) {
+		mismatch += "rows " + to_string(cursor.rows) + " != " + to_string(exact.rows.size()) + "\n";
+	}
+	if (cursor.lines != exact.lines) {
+		mismatch += "lines " + to_string(cursor.lines) + " != " + to_string(exact.lines) + "\n";
+	}
+	if (fields.end_count != cursor.rows * columns || fields.row_count < cursor.rows) {
+		mismatch += "field counts " + to_string(fields.end_count) + " " + to_string(fields.row_count) + "\n";
+		return mismatch;
+	}
+	for (idx_t row = 0; row < cursor.rows && row < exact.rows.size(); row++) {
+		string text = "row start=" + to_string(fields.rows[row]) + " fields:";
+		for (idx_t column = 0; column < columns; column++) {
+			idx_t begin =
+			    column == 0 ? fields.rows[row] : (fields.ends[row * columns + column - 1] & ROW_FIELD_MASK) + 1;
+			idx_t end = fields.ends[row * columns + column] & ROW_FIELD_MASK;
+			const bool quoted = grammar.quote && end > begin && input[begin] == grammar.quote;
+			if (quoted) {
+				begin++;
+				end--;
+			}
+			text += " [" + to_string(begin) + "," + to_string(end - begin) + "," + to_string(quoted) + "]";
+		}
+		const auto &expected = exact.rows[row];
+		string reduced =
+		    "row start=" + expected.substr(expected.find("start=") + 6,
+		                                   expected.find(' ', expected.find("start=")) - expected.find("start=") - 6);
+		reduced += " fields:";
+		auto at = expected.find("fields:");
+		at = at == string::npos ? expected.size() : at + 7;
+		while ((at = expected.find('[', at)) != string::npos) {
+			const auto close = expected.find(']', at);
+			const auto parts = StringUtil::Split(expected.substr(at + 1, close - at - 1), ',');
+			const auto flags = std::stoull(parts[3]);
+			reduced += " [" + parts[1] + "," + parts[2] + "," + to_string((flags & CSV_FIELD_QUOTED) != 0) + "]";
+			at = close;
+		}
+		if (text != reduced) {
+			mismatch += "lean " + text + "\nexact " + reduced + "\n";
+		}
+	}
+	auto transfer = CsvTransfer(grammar, data, 0, 0, input.size(), CSVState::NOT_SET);
+	if (!cursor.unterminated &&
+	    (DescribeStart(transfer.end) != DescribeStart(entry.end) || transfer.first_boundary != entry.first_boundary)) {
+		mismatch += "entry end " + DescribeStart(entry.end) + " first=" + to_string(int64_t(entry.first_boundary)) +
+		            " != " + DescribeStart(transfer.end) + " first=" + to_string(int64_t(transfer.first_boundary)) +
+		            "\n";
+	}
+	return mismatch;
+}
+
+string DescribeTransfer(const CsvRangeTransfer &transfer) {
+	string result;
+	for (idx_t state = 0; state < StateMachine::NUM_STATES; state++) {
+		auto &entry = transfer[state];
+		result += to_string(state) + ": first=" + to_string(int64_t(entry.first_boundary)) +
+		          " boundary=" + DescribeStart(entry.boundary) + " end=" + DescribeStart(entry.end) + "\n";
+	}
+	return result;
+}
+
+} // namespace
+
+TEST_CASE("CSV splitter, transfer and skip match the byte state machine", "[csv]") {
+	CSVStateMachineCache cache;
+	CSVReaderOptions options;
+	const char *seed = getenv("CSV_FUZZ_SEED");
+	const char *iterations = getenv("CSV_FUZZ_ITERATIONS");
+	std::mt19937_64 rng(seed ? std::stoull(seed) : 20261118);
+	const idx_t count = iterations ? std::stoull(iterations) : 20000;
+	idx_t lean_accepted = 0;
+	for (idx_t iteration = 0; iteration < count; iteration++) {
+		const auto dialect = RandomDialect(rng);
+		CSVStateMachineOptions machine_options(dialect.delimiter, dialect.quote, dialect.escape, dialect.comment,
+		                                       dialect.new_line, dialect.strict);
+		CSVStateMachine machine(options, machine_options, cache);
+		const auto grammar = CsvGrammar::For(machine);
+		const auto input = rng() % 2 ? RandomInput(rng, dialect) : RegularInput(rng, dialect);
+		const idx_t max_rows = 1 + rng() % 4;
+		const idx_t first_chunk = input.empty() ? 0 : rng() % (input.size() + 1);
+
+		const auto expected = RunReference(grammar, dialect, input, max_rows, first_chunk);
+		const auto actual = RunNew(grammar, dialect, input, max_rows, first_chunk);
+		bool same = expected.rows == actual.rows && expected.lines == actual.lines &&
+		            expected.ever_quoted == actual.ever_quoted && expected.ever_escaped == actual.ever_escaped &&
+		            expected.unstrict == actual.unstrict;
+		if (!same) {
+			string message = "split mismatch: " + Describe(dialect, input) + " max_rows=" + to_string(max_rows) +
+			                 " first_chunk=" + to_string(first_chunk) + "\nexpected:\n";
+			for (auto &row : expected.rows) {
+				message += row + "\n";
+			}
+			message += "lines=" + to_string(expected.lines) + " quoted=" + to_string(expected.ever_quoted) +
+			           " escaped=" + to_string(expected.ever_escaped) + " unstrict=" + to_string(expected.unstrict) +
+			           "\nactual:\n";
+			for (auto &row : actual.rows) {
+				message += row + "\n";
+			}
+			message += "lines=" + to_string(actual.lines) + " quoted=" + to_string(actual.ever_quoted) +
+			           " escaped=" + to_string(actual.ever_escaped) + " unstrict=" + to_string(actual.unstrict);
+			FAIL(message);
+		}
+
+		const idx_t max_line_sizes[] = {64, 1000, 1 << 20};
+		const idx_t max_line_size = max_line_sizes[rng() % 3];
+		const idx_t piece_blocks = 1 + rng() % 3;
+		bool accepted = false;
+		auto exact = actual;
+		const auto lean_mismatch = RunLean(grammar, dialect, input, piece_blocks, max_line_size, exact, accepted);
+		lean_accepted += accepted;
+		if (!lean_mismatch.empty()) {
+			FAIL("lean mismatch: " + Describe(dialect, input) + " pieces=" + to_string(piece_blocks) +
+			     " max_line_size=" + to_string(max_line_size) + "\n" + lean_mismatch);
+		}
+		if (dialect.quote && !grammar.carry_on_newline && !input.empty()) {
+			RowLexer quoted_lexer(RowDialect::DuckDB(grammar), dialect.columns, max_line_size, true);
+			RowCursor quoted_cursor;
+			quoted_lexer.Start(quoted_cursor, 0, true, false);
+			quoted_cursor.in_quotes = 1;
+			CsvRangeEntry quoted_entry;
+			if (quoted_lexer.Feed(quoted_cursor, input.data(), 0, input.size(), true, nullptr) &&
+			    quoted_lexer.Finish(quoted_cursor, input.data(), 0, input.size(), true, nullptr, CSVState::QUOTED,
+			                        quoted_entry) &&
+			    !quoted_cursor.unterminated) {
+				const auto exact = CsvTransfer(grammar, input.data(), 0, 0, input.size(), CSVState::QUOTED);
+				if (DescribeStart(exact.end) != DescribeStart(quoted_entry.end) ||
+				    exact.first_boundary != quoted_entry.first_boundary) {
+					FAIL("quoted lean mismatch: " + Describe(dialect, input) + "\nlean " +
+					     DescribeStart(quoted_entry.end) + " first=" + to_string(int64_t(quoted_entry.first_boundary)) +
+					     "\nexact " + DescribeStart(exact.end) + " first=" + to_string(int64_t(exact.first_boundary)));
+				}
+			}
+		}
+
+		if (!input.empty()) {
+			const idx_t begin = rng() % input.size();
+			const idx_t end = begin + 1 + rng() % (input.size() - begin);
+			CsvRangeTransfer reference_transfer;
+			CsvRangeTransfer new_transfer;
+			ReferenceTransfer(grammar, input.data(), 0, begin, end, reference_transfer);
+			for (idx_t state = 0; state < StateMachine::NUM_STATES; state++) {
+				new_transfer[state] = CsvTransfer(grammar, input.data(), 0, begin, end, static_cast<CSVState>(state));
+			}
+			const auto expected_transfer = DescribeTransfer(reference_transfer);
+			const auto actual_transfer = DescribeTransfer(new_transfer);
+			if (expected_transfer != actual_transfer) {
+				FAIL("transfer mismatch: " + Describe(dialect, input) + " begin=" + to_string(begin) +
+				     " end=" + to_string(end) + "\nexpected:\n" + expected_transfer + "actual:\n" + actual_transfer);
+			}
+		}
+
+		options.dialect_options.state_machine_options.new_line = CSVOption<NewLineIdentifier>(dialect.new_line);
+		const idx_t skip_rows = 1 + rng() % 3;
+		ReferenceSkip reference_skip(grammar, skip_rows);
+		CsvSkip new_skip(grammar, skip_rows);
+		idx_t offset = 0;
+		bool reference_done = false;
+		bool new_done = false;
+		while (offset < input.size() && !reference_done) {
+			const idx_t chunk = MinValue<idx_t>(1 + rng() % 70, input.size() - offset);
+			reference_done = reference_skip.Feed(input.data() + offset, offset, offset + chunk);
+			new_done = new_skip.Feed(input.data() + offset, offset, offset + chunk);
+			if (reference_done != new_done) {
+				break;
+			}
+			offset += chunk;
+		}
+		if (reference_done != new_done || reference_skip.Start() != new_skip.Start(options) ||
+		    reference_skip.lines != new_skip.Lines()) {
+			FAIL("skip mismatch: " + Describe(dialect, input) + " rows=" + to_string(skip_rows) +
+			     " expected start=" + to_string(reference_skip.Start()) + " lines=" + to_string(reference_skip.lines) +
+			     " done=" + to_string(reference_done) + " actual start=" + to_string(new_skip.Start(options)) +
+			     " lines=" + to_string(new_skip.Lines()) + " done=" + to_string(new_done));
+		}
+	}
+	REQUIRE(lean_accepted > count / 50);
+}
+
+namespace {
+
+struct ReferenceRow {
+	idx_t start = 0;
+	vector<std::tuple<idx_t, idx_t, bool>> fields;
+};
+
+bool ReferencePostgresRows(const RowDialect &dialect, const string &input, vector<ReferenceRow> &rows, idx_t &lines) {
+	rows.clear();
+	lines = 0;
+	const bool anywhere = dialect.quoting == RowQuoting::ANYWHERE;
+	bool in_quotes = false;
+	bool escaped_next = false;
+	bool open = false;
+	bool flagged = false;
+	idx_t field_begin = 0;
+	idx_t plain_cr = DConstants::INVALID_INDEX;
+	ReferenceRow row;
+	for (idx_t i = 0; i < input.size(); i++) {
+		const char ch = input[i];
+		if (!open) {
+			row = ReferenceRow();
+			row.start = i;
+			field_begin = i;
+			flagged = false;
+			open = true;
+		}
+		if ((dialect.backslash || (anywhere && dialect.escape_in_quotes)) && ch == dialect.escape) {
+			flagged = true;
+		}
+		if (anywhere && ch == dialect.quote) {
+			flagged = true;
+		}
+		if (escaped_next) {
+			escaped_next = false;
+			continue;
+		}
+		if (dialect.backslash && ch == dialect.escape) {
+			escaped_next = true;
+			continue;
+		}
+		if (anywhere) {
+			if (in_quotes && dialect.escape_in_quotes && ch == dialect.escape) {
+				escaped_next = true;
+				continue;
+			}
+			if (ch == dialect.quote) {
+				in_quotes = !in_quotes;
+				continue;
+			}
+		}
+		if (in_quotes) {
+			continue;
+		}
+		if (ch == dialect.delimiter) {
+			row.fields.emplace_back(field_begin, i, flagged);
+			field_begin = i + 1;
+			flagged = false;
+			continue;
+		}
+		if (ch == '\n') {
+			idx_t end = i;
+			if (plain_cr == i - 1 && i > 0) {
+				end--;
+			}
+			row.fields.emplace_back(field_begin, end, flagged);
+			rows.push_back(row);
+			lines++;
+			open = false;
+			continue;
+		}
+		if (ch == '\r') {
+			plain_cr = i;
+		}
+	}
+	if (escaped_next || in_quotes) {
+		return false;
+	}
+	if (open) {
+		const idx_t end = !input.empty() && plain_cr == input.size() - 1 ? input.size() - 1 : input.size();
+		row.fields.emplace_back(field_begin, end, flagged);
+		rows.push_back(row);
+		lines++;
+	}
+	return true;
+}
+
+string PostgresInput(std::mt19937_64 &rng, const RowDialect &dialect) {
+	string alphabet = string(2, dialect.delimiter) + "\n\n\r ab";
+	if (dialect.quote) {
+		alphabet += string(2, dialect.quote);
+	}
+	if (dialect.escape) {
+		alphabet += string(2, dialect.escape);
+	}
+	const idx_t size = rng() % 4 == 0 ? rng() % 300 : rng() % 70;
+	string input;
+	for (idx_t i = 0; i < size; i++) {
+		input += alphabet[rng() % alphabet.size()];
+	}
+	return input;
+}
+
+} // namespace
+
+TEST_CASE("Row lexer splits PostgreSQL csv and text like the scalar rules", "[csv]") {
+	const char *seed = getenv("CSV_FUZZ_SEED");
+	const char *iterations = getenv("CSV_FUZZ_ITERATIONS");
+	std::mt19937_64 rng(seed ? std::stoull(seed) : 20261119);
+	const idx_t count = iterations ? std::stoull(iterations) : 20000;
+	idx_t accepted = 0;
+	for (idx_t iteration = 0; iteration < count; iteration++) {
+		const char delimiters[] = {',', '|', '\t'};
+		const char delimiter = delimiters[rng() % 3];
+		RowDialect dialect;
+		if (rng() % 2) {
+			dialect = RowDialect::PostgresText(delimiter);
+		} else {
+			const char quote = rng() % 2 ? '"' : '\'';
+			dialect = RowDialect::PostgresCsv(delimiter, quote, rng() % 2 ? quote : '\\');
+		}
+		const auto input = PostgresInput(rng, dialect);
+		vector<ReferenceRow> expected;
+		idx_t expected_lines = 0;
+		const bool terminated = ReferencePostgresRows(dialect, input, expected, expected_lines);
+		const idx_t columns = 1 + rng() % 3;
+		const bool check_arity = rng() % 2;
+		RowLexer lexer(dialect, columns, idx_t(1) << 20, true);
+		RowCursor cursor;
+		RowFields fields;
+		lexer.Start(cursor, 0, true, check_arity);
+		const idx_t piece = 64 * (1 + rng() % 3);
+		bool ok = true;
+		while (ok && cursor.pos < input.size()) {
+			const idx_t end = MinValue<idx_t>(cursor.pos + piece, input.size());
+			ok = lexer.Feed(cursor, input.data(), 0, end, end == input.size(), &fields);
+		}
+		CsvRangeEntry entry;
+		ok = ok && lexer.Finish(cursor, input.data(), 0, input.size(), true, &fields, CSVState::NOT_SET, entry);
+		if (!ok) {
+			continue;
+		}
+		accepted++;
+		string shown;
+		for (auto ch : input) {
+			if (ch == '\n') {
+				shown += "<LF>";
+			} else if (ch == '\r') {
+				shown += "<CR>";
+			} else if (ch == '\t') {
+				shown += "<TAB>";
+			} else {
+				shown += ch;
+			}
+		}
+		const string description =
+		    string("dialect text=") + to_string(dialect.backslash) + " delimiter=" + to_string(int(dialect.delimiter)) +
+		    " quote=" + to_string(int(dialect.quote)) + " escape=" + to_string(int(dialect.escape)) +
+		    " columns=" + to_string(columns) + " arity=" + to_string(check_arity) + " piece=" + to_string(piece) +
+		    " input=" + shown;
+		if (!terminated) {
+			FAIL("lexer accepted an unterminated input: " + description);
+		}
+		if (cursor.rows != expected.size() || cursor.lines != expected_lines) {
+			FAIL("row count mismatch: " + description + " rows " + to_string(cursor.rows) + " vs " +
+			     to_string(expected.size()) + " lines " + to_string(cursor.lines) + " vs " + to_string(expected_lines));
+		}
+		idx_t field = 0;
+		for (idx_t row = 0; row < expected.size(); row++) {
+			if (fields.rows[row] != expected[row].start) {
+				FAIL("row start mismatch at row " + to_string(row) + ": " + description);
+			}
+			idx_t begin = expected[row].start;
+			for (auto &expected_field : expected[row].fields) {
+				if (field >= fields.end_count) {
+					FAIL("missing field: " + description);
+				}
+				const uint32_t end_bits = fields.ends[field++];
+				const idx_t end = end_bits & ROW_FIELD_MASK;
+				const bool flag = (end_bits & ROW_FIELD_FLAG) != 0;
+				if (begin != std::get<0>(expected_field) || end != std::get<1>(expected_field) ||
+				    flag != std::get<2>(expected_field)) {
+					FAIL("field mismatch at row " + to_string(row) + ": got [" + to_string(begin) + "," +
+					     to_string(end) + "," + to_string(flag) + "] expected [" +
+					     to_string(std::get<0>(expected_field)) + "," + to_string(std::get<1>(expected_field)) + "," +
+					     to_string(std::get<2>(expected_field)) + "]: " + description);
+				}
+				begin = end + 1;
+			}
+		}
+		if (field != fields.end_count) {
+			FAIL("extra fields: " + description);
+		}
+	}
+	REQUIRE(accepted > count / 10);
+}

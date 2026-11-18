@@ -11,10 +11,7 @@
 #include "duckdb/common/array.hpp"
 #include "duckdb/common/limits.hpp"
 #include "duckdb/common/vector.hpp"
-#include "duckdb/execution/operator/csv_scanner/csv_byte_skipper.hpp"
-#include "duckdb/execution/operator/csv_scanner/csv_state.hpp"
-#include "duckdb/execution/operator/csv_scanner/csv_state_machine.hpp"
-#include "duckdb/execution/operator/csv_scanner/csv_state_machine_cache.hpp"
+#include "duckdb/formats/csv_index.hpp"
 
 namespace duckdb {
 
@@ -84,22 +81,10 @@ struct CsvRangeEntry {
 	idx_t first_boundary = DConstants::INVALID_INDEX;
 	CsvRangeStart boundary;
 	CsvRangeStart end;
+	bool computed = false;
 };
 
 using CsvRangeTransfer = array<CsvRangeEntry, StateMachine::NUM_STATES>;
-
-struct CsvGrammar {
-	static CsvGrammar For(const CSVStateMachine &state_machine);
-
-	const StateMachine *transitions = nullptr;
-	idx_t extra_delimiter_bytes = 0;
-	char quote = '\0';
-	char escape = '\0';
-	bool strict_mode = false;
-	bool carry_on_newline = false;
-	bool only_crlf = false;
-	bool trim_quoted_spaces = false;
-};
 
 class CsvSkip {
 public:
@@ -118,16 +103,20 @@ private:
 private:
 	const CsvGrammar &grammar;
 	const idx_t rows;
-	CSVState states[2] = {CSVState::NOT_SET, CSVState::NOT_SET};
+	CsvIndexer indexer;
+	CSVState last_state = CSVState::NOT_SET;
+	idx_t last_term = 0;
 	idx_t skipped = 0;
 	idx_t lines = 0;
 	idx_t pos = 0;
 	bool comment = false;
 	bool starts_as_comment = false;
+	bool previous_standard = false;
 };
 
-void CsvTransfer(const CsvGrammar &grammar, const char *bytes, idx_t base, idx_t begin, idx_t end,
-                 CsvRangeTransfer &transfer);
+CsvRangeEntry CsvTransfer(const CsvGrammar &grammar, const char *bytes, idx_t base, idx_t begin, idx_t end,
+                          CSVState origin);
+idx_t CsvSync(const CsvGrammar &grammar, const char *bytes, idx_t base, idx_t begin, idx_t end, bool eof);
 
 string CsvStripSeparator(const char *value, idx_t size, char separator);
 
@@ -191,15 +180,7 @@ private:
 	char At(idx_t position) const {
 		return bytes[position - base];
 	}
-	void Skip(const bool (&skippable)[StateMachine::NUM_TRANSITIONS]) {
-		idx_t relative = pos - base;
-		skipper.SkipToStop(skippable, end - base, relative);
-		pos = base + relative;
-	}
-	void Transition(char byte) {
-		states[0] = states[1];
-		states[1] = grammar.transitions->state_machine[static_cast<uint8_t>(byte)][static_cast<uint8_t>(states[1])];
-	}
+	void Terminate(idx_t position, bool carriage_return);
 	void AddValue(idx_t position);
 	void AddQuotedValue(idx_t position);
 	void AddField(idx_t offset, idx_t size, bool empty);
@@ -215,7 +196,7 @@ private:
 	const CsvGrammar grammar;
 	const idx_t columns;
 	const idx_t capacity;
-	CSVByteSkipper skipper;
+	CsvIndexer indexer;
 	vector<CsvField> fields;
 	vector<CsvExtraField> extras;
 	vector<CsvRow> rows;
@@ -230,6 +211,7 @@ private:
 	idx_t row_count = 0;
 	idx_t lines_read = 0;
 	CSVState states[2] = {CSVState::NOT_SET, CSVState::NOT_SET};
+	idx_t last_term = 0;
 	idx_t field_count = 0;
 	idx_t last_position = 0;
 	idx_t quoted_position = 0;
