@@ -2093,6 +2093,8 @@ unique_ptr<ShellRenderer> ShellState::GetRenderer(RenderMode mode) {
 		return make_uniq<ModeDescribeRenderer>(*this);
 	case RenderMode::TRASH:
 		return make_uniq<ModeTrashRenderer>(*this);
+	case RenderMode::PSQL:
+		return CreatePsqlRenderer(*this);
 	default:
 		throw std::runtime_error("Unsupported mode for GetRenderer");
 	}

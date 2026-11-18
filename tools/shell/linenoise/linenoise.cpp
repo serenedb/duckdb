@@ -1686,7 +1686,8 @@ int Linenoise::Edit() {
 			if (Terminal::IsMultiline() && len > 0) {
 				// check if this forms a complete SQL statement or not
 				buf[len] = '\0';
-				if (buf[0] != '.' && !AllWhitespace(buf) && !duckdb_shell::ShellState::SQLIsComplete(buf)) {
+				if (buf[0] != '.' && !AllWhitespace(buf) && !duckdb_shell::ShellState::SQLIsComplete(buf) &&
+				    !duckdb_shell::ShellState::EndsWithBackslashCommand(buf)) {
 					// not a complete SQL statement yet! continuation
 					pos = len;
 					if (key_press.action != CTRL_G) {

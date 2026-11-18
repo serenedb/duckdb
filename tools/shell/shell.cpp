@@ -62,6 +62,7 @@
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/parser/statement/alter_statement.hpp"
 #include "duckdb/parser/statement/attach_statement.hpp"
+#include "duckdb/parser/statement/copy_statement.hpp"
 #include "duckdb/parser/statement/create_statement.hpp"
 #include "duckdb/parser/statement/drop_statement.hpp"
 #include "duckdb/common/local_file_system.hpp"
@@ -74,6 +75,8 @@
 #include "shell_extension.hpp"
 #include <ctype.h>
 #include <algorithm>
+#include <cerrno>
+#include <cmath>
 
 #if !defined(_WIN32) && !defined(WIN32)
 #include <signal.h>
@@ -188,6 +191,37 @@ static bool enableTimer = false;
 /* Number of decimals printed for the real time */
 static int timerDigits = 3;
 
+static bool PrintPsqlTiming(double elapsed_msec) {
+	if (ShellState::Get().subcommand != ShellSubcommand::PSQL) {
+		return false;
+	}
+	string text;
+	if (elapsed_msec < 1000.0) {
+		text = StringUtil::Format("Time: %.3f ms\n", elapsed_msec);
+	} else {
+		auto seconds = elapsed_msec / 1000.0;
+		auto minutes = std::floor(seconds / 60.0);
+		seconds -= 60.0 * minutes;
+		auto hours = std::floor(minutes / 60.0);
+		auto days = std::floor(hours / 24.0);
+		if (minutes < 60.0) {
+			text =
+			    StringUtil::Format("Time: %.3f ms (%02d:%06.3f)\n", elapsed_msec, static_cast<int>(minutes), seconds);
+		} else if (hours < 24.0) {
+			minutes -= 60.0 * hours;
+			text = StringUtil::Format("Time: %.3f ms (%02d:%02d:%06.3f)\n", elapsed_msec, static_cast<int>(hours),
+			                          static_cast<int>(minutes), seconds);
+		} else {
+			minutes -= 60.0 * hours;
+			hours -= 24.0 * days;
+			text = StringUtil::Format("Time: %.3f ms (%.0f d %02d:%02d:%06.3f)\n", elapsed_msec, days,
+			                          static_cast<int>(hours), static_cast<int>(minutes), seconds);
+		}
+	}
+	fputs(text.c_str(), stdout);
+	return true;
+}
+
 #if !defined(_WIN32) && !defined(WIN32) && !defined(__minux)
 #include <sys/time.h>
 #include <sys/resource.h>
@@ -225,6 +259,9 @@ static double timeDiff(struct timeval *pStart, struct timeval *pEnd) {
 */
 static void endTimer(void) {
 	if (enableTimer) {
+		if (PrintPsqlTiming(tBegin.ElapsedSeconds() * 1000.0)) {
+			return;
+		}
 		struct rusage sEnd;
 		getrusage(RUSAGE_SELF, &sEnd);
 		printf("Run Time (s): real %.*f user %f sys %f\n", timerDigits, tBegin.ElapsedSeconds(),
@@ -298,6 +335,9 @@ static double timeDiff(FILETIME *pStart, FILETIME *pEnd) {
 */
 static void endTimer(void) {
 	if (enableTimer && getProcessTimesAddr) {
+		if (PrintPsqlTiming(tBegin.ElapsedSeconds() * 1000.0)) {
+			return;
+		}
 		FILETIME ftCreation, ftExit, ftKernelEnd, ftUserEnd;
 		getProcessTimesAddr(hProcess, &ftCreation, &ftExit, &ftKernelEnd, &ftUserEnd);
 		printf("Run Time (s): real %.*f user %f sys %f\n", timerDigits, tBegin.ElapsedSeconds(),
@@ -494,6 +534,12 @@ int ShellState::RunInitialCommand(const char *sql, bool bail) {
 	int rc = 0;
 	if (sql[0] == '.') {
 		rc = DoMetaCommand(sql);
+		if (rc && bail) {
+			return rc == 2 ? false : rc;
+		}
+	} else if (sql[0] == '\\') {
+		bool query_consumed = false;
+		rc = DoBackslashCommand(sql, std::string_view(), query_consumed);
 		if (rc && bail) {
 			return rc == 2 ? false : rc;
 		}
@@ -717,6 +763,8 @@ string ShellState::ModeToString(RenderMode mode) {
 		return "jsonlines";
 	case RenderMode::DUCKBOX:
 		return "duckbox";
+	case RenderMode::PSQL:
+		return "psql";
 	}
 	return "invalid";
 }
@@ -1112,6 +1160,37 @@ void ShellState::SetupPrettyExplain(duckdb::SQLStatement &statement) {
 	explain.format = duckdb::ProfilerPrintFormat("shell_explain_printer");
 }
 
+namespace {
+
+class CopyStreamScope {
+public:
+	CopyStreamScope(ShellState &state_p, const duckdb::SQLStatement &statement) : state(state_p) {
+		if (statement.type != duckdb::StatementType::COPY_STATEMENT) {
+			return;
+		}
+		auto &info = *statement.Cast<duckdb::CopyStatement>().info;
+		if (info.is_from && info.file_path == "/dev/stdin") {
+			state.OpenCopyInput(info.format == "binary");
+			input = true;
+		} else if (!info.is_from && info.file_path == "/dev/stdout") {
+			pager = state.OpenCopyOutput();
+		}
+	}
+
+	~CopyStreamScope() {
+		if (input) {
+			state.CloseCopyInput();
+		}
+	}
+
+private:
+	ShellState &state;
+	bool input = false;
+	unique_ptr<PagerState> pager;
+};
+
+} // namespace
+
 SuccessState ShellState::ExecuteSQL(const string &zSql) {
 	auto &con = *conn;
 	try {
@@ -1157,6 +1236,7 @@ SuccessState ShellState::ExecuteSQL(const string &zSql) {
 				}
 				continue;
 			}
+			CopyStreamScope copy_streams(*this, *statement);
 			auto rc = ExecuteStatement(std::move(statement));
 			if (agent_mode_active) {
 				// keep stdout in step with the stderr progress/estimate lines when both go to the same pipe
@@ -1681,7 +1761,7 @@ void ShellState::ResetOutput() {
 	}
 	outfile = string();
 	out = stdout;
-	stdout_is_console = true;
+	stdout_is_console = stdout_is_terminal;
 }
 
 //! Render an error message as the JSON object the engine produces under errors_as_json
@@ -1888,10 +1968,12 @@ bool ShellState::SetOutputMode(const string &mode_name, const char *tbl_name) {
 		mode = RenderMode::TRASH;
 	} else if (c2 == 'j' && strncmp(mode_str, "jsonlines", n2) == 0) {
 		mode = RenderMode::JSONLINES;
+	} else if (c2 == 'p' && strncmp(mode_str, "psql", n2) == 0) {
+		mode = RenderMode::PSQL;
 	} else {
 		PrintF(PrintOutput::STDERR, "Error: mode should be one of: "
 		                            "ascii box column csv duckbox html insert json jsonlines latex line "
-		                            "list markdown quote table tabs tcl trash \n");
+		                            "list markdown psql quote table tabs tcl trash \n");
 		return false;
 	}
 	cMode = mode;
@@ -1900,6 +1982,7 @@ bool ShellState::SetOutputMode(const string &mode_name, const char *tbl_name) {
 
 MetadataResult ShellState::SetNullValue(ShellState &state, const vector<string> &args) {
 	state.nullValue = args[1];
+	state.null_value_set = true;
 	return MetadataResult::SUCCESS;
 }
 
@@ -2816,12 +2899,21 @@ MetadataResult ShellState::ToggleTimer(ShellState &state, const vector<string> &
 		}
 		timerDigits = static_cast<int>(digits);
 	}
-	enableTimer = state.StringToBool(args[1]);
-	if (enableTimer && !HAS_TIMER) {
-		state.PrintF(PrintOutput::STDERR, "Error: timer not available on this system.\n");
-		enableTimer = false;
-	}
+	state.SetTimer(state.StringToBool(args[1]));
 	return MetadataResult::SUCCESS;
+}
+
+bool ShellState::TimerEnabled() {
+	return enableTimer;
+}
+
+bool ShellState::SetTimer(bool enable) {
+	enableTimer = enable && HAS_TIMER;
+	if (enable && !enableTimer) {
+		PrintF(PrintOutput::STDERR, "Error: timer not available on this system.\n");
+		return false;
+	}
+	return true;
 }
 
 /*
@@ -2998,7 +3090,9 @@ static const char *skipDollarQuotedString(const char *zSql, const char *delimite
 	return nullptr;
 }
 
-bool ShellState::SQLIsComplete(const char *zSql) {
+enum class SQLScanResult { COMPLETE, INCOMPLETE, UNTERMINATED };
+
+static SQLScanResult ScanSQL(const char *zSql) {
 	auto state = SQLParseState::NORMAL;
 
 	for (; *zSql; zSql++) {
@@ -3026,7 +3120,7 @@ bool ShellState::SQLIsComplete(const char *zSql) {
 			}
 			if (zSql[0] == 0) {
 				// unterminated c-style string
-				return false;
+				return SQLScanResult::UNTERMINATED;
 			}
 			zSql++;
 			next_state = SQLParseState::WHITESPACE;
@@ -3042,7 +3136,7 @@ bool ShellState::SQLIsComplete(const char *zSql) {
 			}
 			if (*zSql == 0) {
 				// unterminated SQL-style comment - return whether or not we had a semicolon right before it
-				return state == SQLParseState::SEMICOLON;
+				return state == SQLParseState::SEMICOLON ? SQLScanResult::COMPLETE : SQLScanResult::INCOMPLETE;
 			}
 			next_state = SQLParseState::WHITESPACE;
 			break;
@@ -3090,7 +3184,7 @@ bool ShellState::SQLIsComplete(const char *zSql) {
 			zSql = skipDollarQuotedString(zSql, delimiterStart, delimiterLength);
 			if (!zSql) {
 				// unterminated dollar string
-				return false;
+				return SQLScanResult::UNTERMINATED;
 			}
 			next_state = SQLParseState::WHITESPACE;
 			break;
@@ -3105,7 +3199,7 @@ bool ShellState::SQLIsComplete(const char *zSql) {
 			}
 			if (*zSql == 0) {
 				// unterminated single or double quoted string
-				return 0;
+				return SQLScanResult::UNTERMINATED;
 			}
 			next_state = SQLParseState::WHITESPACE;
 			break;
@@ -3119,7 +3213,30 @@ bool ShellState::SQLIsComplete(const char *zSql) {
 		}
 	}
 	// the statement is complete only if we end in a semicolon
-	return state == SQLParseState::SEMICOLON;
+	return state == SQLParseState::SEMICOLON ? SQLScanResult::COMPLETE : SQLScanResult::INCOMPLETE;
+}
+
+bool ShellState::SQLIsComplete(const char *zSql) {
+	return ScanSQL(zSql) == SQLScanResult::COMPLETE;
+}
+
+bool ShellState::SQLEndsInsideLiteral(const char *zSql) {
+	return ScanSQL(zSql) == SQLScanResult::UNTERMINATED;
+}
+
+static const char *BackslashCommandStart(const char *line) {
+	while (ShellState::IsSpace(*line)) {
+		line++;
+	}
+	return *line == '\\' ? line : nullptr;
+}
+
+bool ShellState::EndsWithBackslashCommand(const char *zSql) {
+	auto last_newline = strrchr(zSql, '\n');
+	if (!BackslashCommandStart(last_newline ? last_newline + 1 : zSql)) {
+		return false;
+	}
+	return !last_newline || !SQLEndsInsideLiteral(string(zSql, last_newline).c_str());
 }
 
 void ShellState::ShellAddHistory(const char *history) {
@@ -3159,12 +3276,11 @@ int ShellState::ShellSetHistoryMaxLength(idx_t max_length) {
 /*
 ** Run a single line of SQL.  Return the number of errors.
 */
-int ShellState::RunOneSqlLine(InputMode mode, char *zSql) {
-	string zErrMsg;
-
-	if (mode == InputMode::STANDARD && zSql && *zSql && *zSql != '\3') {
-		ShellAddHistory(zSql);
+int ShellState::RunOneSqlLine(InputMode mode, const string &zSql) {
+	if (mode == InputMode::STANDARD && !zSql.empty() && zSql[0] != '\3') {
+		ShellAddHistory(zSql.c_str());
 	}
+	last_query = zSql;
 	BEGIN_TIMER;
 	auto success = ExecuteSQL(zSql);
 	END_TIMER;
@@ -3195,6 +3311,8 @@ bool ShellState::GetBailOnError(InputMode mode) {
 ** Return the number of errors.
 */
 int ShellState::ProcessInput(InputMode mode) {
+	char *zInput = nullptr;
+	char *zNextLine = nullptr;
 	char *zLine = nullptr; /* A single input line */
 	char *zSql = nullptr;  /* Accumulated SQL text */
 	idx_t nLine;           /* Length of current line */
@@ -3204,10 +3322,17 @@ int ShellState::ProcessInput(InputMode mode) {
 	int rc;                /* Error code */
 	idx_t errCnt = 0;      /* Number of errors seen */
 	idx_t numCtrlC = 0;
+	auto outer_executing_from_input = executing_from_input;
+	executing_from_input = true;
 	lineno = 0;
-	while (errCnt == 0 || !GetBailOnError(mode) || (!in && stdin_is_interactive)) {
+	while (!quit_requested && (errCnt == 0 || !GetBailOnError(mode) || (!in && stdin_is_interactive))) {
 		fflush(out);
-		zLine = OneInputLine(in, zLine, nSql > 0);
+		if (zNextLine) {
+			zLine = zNextLine;
+		} else {
+			zInput = OneInputLine(in, zInput, nSql > 0);
+			zLine = zInput;
+		}
 		if (!zLine) {
 			/* End of input */
 			if (!in && stdin_is_interactive && !started_as_client && conn && conn->context &&
@@ -3224,6 +3349,10 @@ int ShellState::ProcessInput(InputMode mode) {
 				printf("\n");
 			}
 			break;
+		}
+		zNextLine = strchr(zLine, '\n');
+		if (zNextLine) {
+			*zNextLine++ = '\0';
 		}
 		// if we are receiving input after a query was interrupted
 		// we need to clear the interrupt flag to be able to
@@ -3282,6 +3411,31 @@ int ShellState::ProcessInput(InputMode mode) {
 			}
 			continue;
 		}
+		auto backslash_command = BackslashCommandStart(zLine);
+		if (backslash_command && (nSql == 0 || !SQLEndsInsideLiteral(zSql))) {
+			if (ShellHasFlag(ShellFlags::SHFLG_Echo)) {
+				printf("%s\n", zLine);
+			}
+			if (mode == InputMode::STANDARD) {
+				ShellAddHistory(zLine);
+			}
+			bool query_consumed = false;
+			rc = DoBackslashCommand(backslash_command, nSql ? std::string_view(zSql, nSql) : std::string_view(),
+			                        query_consumed);
+			if (query_consumed) {
+				nSql = 0;
+				if (outCount) {
+					ResetOutput();
+					outCount = 0;
+				}
+			}
+			if (rc == 2) {
+				break;
+			} else if (rc) {
+				errCnt++;
+			}
+			continue;
+		}
 		nLine = StringLength(zLine);
 		if (nSql + nLine + 2 >= nAlloc) {
 			nAlloc = nSql + nLine + 100;
@@ -3319,12 +3473,196 @@ int ShellState::ProcessInput(InputMode mode) {
 			nSql = 0;
 		}
 	}
-	if (nSql && !_all_whitespace(zSql)) {
+	if (nSql && !quit_requested && !_all_whitespace(zSql)) {
 		errCnt += RunOneSqlLine(mode, zSql);
 	}
 	free(zSql);
-	free(zLine);
+	free(zInput);
+	executing_from_input = outer_executing_from_input;
 	return errCnt > 0;
+}
+
+static bool IsCopyEndMarker(const string &line) {
+	return line == "\\." || line == "\\.\n" || line == "\\.\r\n";
+}
+
+bool ShellState::ReadCopyLine() {
+	copy_in_line.clear();
+	copy_in_offset = 0;
+	if (in) {
+		char chunk[4096];
+		while (fgets(chunk, sizeof(chunk), in)) {
+			copy_in_line += chunk;
+			if (copy_in_line.back() == '\n') {
+				break;
+			}
+		}
+	}
+	if (copy_in_line.empty() || IsCopyEndMarker(copy_in_line)) {
+		copy_in_line.clear();
+		copy_in_done = true;
+		return false;
+	}
+	lineno++;
+	return true;
+}
+
+void ShellState::OpenCopyInput(bool binary) {
+	duckdb::lock_guard<duckdb::mutex> guard(copy_lock);
+	copy_in_line.clear();
+	copy_in_offset = 0;
+	copy_in_done = false;
+	if (copy_in_file) {
+		copy_in_source = CopyInSource::FILE;
+		return;
+	}
+	if (binary || !executing_from_input) {
+		copy_in_source = CopyInSource::PROCESS_STDIN;
+		return;
+	}
+	copy_in_source = CopyInSource::INLINE;
+	if (in) {
+		return;
+	}
+	if (!quiet) {
+		fputs("Enter data to be copied followed by a newline.\n"
+		      "End with a backslash and a period on a line by itself, or an EOF signal.\n",
+		      stdout);
+	}
+	char *line = nullptr;
+	while (true) {
+		fputs(">> ", stdout);
+		fflush(stdout);
+		line = local_getline(line, stdin);
+		if (!line || strcmp(line, "\\.") == 0) {
+			break;
+		}
+		copy_in_line += line;
+		copy_in_line += '\n';
+	}
+	free(line);
+	copy_in_done = true;
+}
+
+void ShellState::CloseCopyInput() {
+	duckdb::lock_guard<duckdb::mutex> guard(copy_lock);
+	if (copy_in_source == CopyInSource::INLINE) {
+		while (!copy_in_done && ReadCopyLine()) {
+		}
+	}
+	copy_in_source = CopyInSource::PROCESS_STDIN;
+	copy_in_line.clear();
+	copy_in_offset = 0;
+	copy_in_done = false;
+}
+
+bool ShellState::CopyInputIsFile() {
+	duckdb::lock_guard<duckdb::mutex> guard(copy_lock);
+	struct stat info;
+	const bool reads_stdin = executing_from_input && (!in || in == stdin);
+	return copy_in_source == CopyInSource::PROCESS_STDIN && !reads_stdin && fstat(fileno(stdin), &info) == 0 &&
+	       S_ISREG(info.st_mode);
+}
+
+idx_t ShellState::ReadCopyData(char *buffer, idx_t size) {
+	duckdb::lock_guard<duckdb::mutex> guard(copy_lock);
+	if (copy_in_source != CopyInSource::INLINE) {
+		auto stream = copy_in_source == CopyInSource::FILE ? copy_in_file : stdin;
+		auto read = fread(buffer, 1, size, stream);
+		if (read < size && ferror(stream)) {
+			throw duckdb::IOException("Failed to read the COPY data: %s", strerror(errno));
+		}
+		return read;
+	}
+	idx_t read = 0;
+	while (read < size) {
+		if (copy_in_offset == copy_in_line.size() && (copy_in_done || !ReadCopyLine())) {
+			break;
+		}
+		auto count = duckdb::MinValue<idx_t>(size - read, copy_in_line.size() - copy_in_offset);
+		memcpy(buffer + read, copy_in_line.data() + copy_in_offset, count);
+		copy_in_offset += count;
+		read += count;
+	}
+	return read;
+}
+
+void ShellState::WriteCopyData(const char *data, idx_t size) {
+	duckdb::lock_guard<duckdb::mutex> guard(copy_lock);
+	if (!copy_out_file) {
+		Print(PrintOutput::STDOUT, data, size);
+		return;
+	}
+	if (fwrite(data, 1, size, copy_out_file) != size) {
+		throw duckdb::IOException("Failed to write the COPY data: %s", strerror(errno));
+	}
+}
+
+unique_ptr<PagerState> ShellState::OpenCopyOutput() {
+	if (copy_out_file || pager_mode != PagerMode::PAGER_ON || !ShouldUsePager()) {
+		return nullptr;
+	}
+	return SetupPager();
+}
+
+SuccessState ShellState::RunQueryBuffer(const string &query, const string &target, bool expanded) {
+	FILE *target_file = nullptr;
+	bool target_pipe = !target.empty() && target[0] == '|';
+	if (!target.empty()) {
+		if (safe_mode) {
+			PrintF(PrintOutput::STDERR, "\\g cannot write to a file in -safe mode\n");
+			return SuccessState::FAILURE;
+		}
+#ifdef SQLITE_OMIT_POPEN
+		if (target_pipe) {
+			PrintF(PrintOutput::STDERR, "Error: pipes are not supported in this OS\n");
+			return SuccessState::FAILURE;
+		}
+#else
+		if (target_pipe) {
+			target_file = popen(target.c_str() + 1, "w");
+		}
+#endif
+		if (!target_pipe) {
+			target_file = fopen(duckdb::FileSystem::ExpandPath(target, nullptr).c_str(), "w");
+		}
+		if (!target_file) {
+			PrintF(PrintOutput::STDERR, "%s: %s\n", target, strerror(errno));
+			return SuccessState::FAILURE;
+		}
+	}
+	auto saved_out = out;
+	auto saved_outfile = outfile;
+	auto saved_console = stdout_is_console;
+	auto saved_mode = mode;
+	auto saved_expanded = psql_expanded;
+	if (target_file) {
+		out = target_file;
+		outfile = target;
+		stdout_is_console = false;
+	}
+	if (expanded) {
+		SetPrintOption("expanded", "on", true, "\\gx");
+	}
+	auto errors = RunOneSqlLine(InputMode::FILE, query);
+	mode = saved_mode;
+	cMode = saved_mode;
+	psql_expanded = saved_expanded;
+	if (target_file) {
+#ifndef SQLITE_OMIT_POPEN
+		if (target_pipe) {
+			pclose(target_file);
+		} else {
+			fclose(target_file);
+		}
+#else
+		fclose(target_file);
+#endif
+		out = saved_out;
+		outfile = saved_outfile;
+		stdout_is_console = saved_console;
+	}
+	return errors ? SuccessState::FAILURE : SuccessState::SUCCESS;
 }
 
 static string GetHomeDirectory() {
@@ -3452,7 +3790,7 @@ static char *linenoise_format(const char *zLine) {
 	if (!state.conn) {
 		return nullptr;
 	}
-	if (zLine[0] == '.' || zLine[0] == '#' || zLine[0] == '\3') {
+	if (zLine[0] == '.' || zLine[0] == '#' || zLine[0] == '\3' || BackslashCommandStart(zLine)) {
 		return nullptr;
 	}
 	try {
@@ -3503,7 +3841,7 @@ static void linenoise_completion(const char *zLine, linenoiseCompletions *lc) {
 			}
 			return;
 		}
-		if (zLine[0] == '#') {
+		if (zLine[0] == '#' || BackslashCommandStart(zLine)) {
 			return;
 		}
 		auto zSql = StringUtil::Format("CALL sql_auto_complete(%s)", SQLString(zLine));
@@ -3676,7 +4014,8 @@ void ShellState::DetectAgentMode() {
 		// auto-detect: an agent reads our output through a pipe, never from a terminal. An output mode on the command
 		// line (-csv, -json, ...) is a deliberate choice of format that the agent rendering would fight with, so it
 		// leaves the mode off; -agent still forces it
-		agent_mode_active = !output_mode_flag && !stdout_is_console && DetectAgentEnvironment(agent_name, agent_marker);
+		agent_mode_active = subcommand == ShellSubcommand::SHELL && !output_mode_flag && !stdout_is_console &&
+		                    DetectAgentEnvironment(agent_name, agent_marker);
 		break;
 	}
 	if (!agent_mode_active) {
@@ -3905,6 +4244,7 @@ int RunShell(int argc, char **argv, ShellSubcommand subcommand, ShellEngine engi
 	setvbuf(stderr, 0, _IONBF, 0); /* Make sure stderr is unbuffered */
 	data.stdin_is_interactive = IsStdStreamAConsole(0);
 	data.stdout_is_console = IsStdStreamAConsole(1);
+	data.stdout_is_terminal = data.stdout_is_console;
 	data.stderr_is_console = IsStdStreamAConsole(2);
 
 	data.Initialize();
@@ -3920,6 +4260,7 @@ int RunShell(int argc, char **argv, ShellSubcommand subcommand, ShellEngine engi
 	data.subcommand = subcommand;
 	data.engine = engine;
 	if (subcommand == duckdb_shell::ShellSubcommand::PSQL) {
+		data.normalMode = data.cMode = data.mode = RenderMode::PSQL;
 		// Seed psql connection params from PG* env vars. Explicit flags
 		// (-h/-p/-d/-U or positionals) parsed later overwrite these.
 		if (const char *v = std::getenv("PGHOST"); v && *v) {
@@ -4132,7 +4473,7 @@ int RunShell(int argc, char **argv, ShellSubcommand subcommand, ShellEngine engi
 		for (auto &call : command_line_calls) {
 			const string opt(call.option.option);
 			if (opt == "?" || opt == "V" || opt == "help" || opt == "version" || opt == "help=interactive" ||
-			    opt == "help=interactive-all") {
+			    opt == "help=interactive-all" || opt == "help=commands") {
 				psql_skip_attach = true;
 				break;
 			}
@@ -4212,16 +4553,28 @@ int RunShell(int argc, char **argv, ShellSubcommand subcommand, ShellEngine engi
 		if (result == MetadataResult::EXIT) {
 			return 0;
 		}
+		if (data.quit_requested) {
+			break;
+		}
 	}
 
-	if (!data.readStdin) {
+	if (!data.readStdin || data.quit_requested) {
 		/* Run all arguments that do not begin with '-' as if they were separate
 		** command-line inputs, except for the argToSkip argument which contains
 		** the database filename.
 		*/
 		for (auto &cmd : extra_commands) {
+			if (data.quit_requested) {
+				break;
+			}
 			if (cmd[0] == '.') {
 				rc = data.DoMetaCommand(cmd);
+				if (rc) {
+					return rc == 2 ? 0 : rc;
+				}
+			} else if (cmd[0] == '\\') {
+				bool query_consumed = false;
+				rc = data.DoBackslashCommand(cmd, std::string_view(), query_consumed);
 				if (rc) {
 					return rc == 2 ? 0 : rc;
 				}
@@ -4278,7 +4631,6 @@ int RunShell(int argc, char **argv, ShellSubcommand subcommand, ShellEngine engi
 #else
 	SetConsoleCtrlHandler(ConsoleCtrlHandler, FALSE);
 #endif
-	// before ResetOutput, which forgets that stdout was not a console
 	data.PrintExitHint(rc);
 	data.SetTableName(0);
 	data.last_result.reset();
