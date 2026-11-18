@@ -5,10 +5,12 @@
 # We need to do some precise byte math here
 require notwindows
 
-statement error
+query I
 FROM read_csv('{DATA_DIR}/csv/evil_nullpadding.csv', buffer_size=20, quote = '"')
 ----
-The Parallel CSV Reader currently does not support a full read on this file.
+mark;nl
+diego;"
+pedro;nl;"
 
 statement ok
 FROM read_csv('{DATA_DIR}/csv/evil_nullpadding.csv', buffer_size=20)

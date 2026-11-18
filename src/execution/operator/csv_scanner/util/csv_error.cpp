@@ -61,6 +61,19 @@ void CSVErrorHandler::ThrowError(const CSVError &csv_error) {
 	}
 }
 
+idx_t CSVErrorHandler::EarliestError() const {
+	idx_t earliest = 0;
+	for (idx_t i = 1; i < errors.size(); i++) {
+		auto &info = errors[i].error_info;
+		auto &best = errors[earliest].error_info;
+		if (info.boundary_idx < best.boundary_idx ||
+		    (info.boundary_idx == best.boundary_idx && info.lines_in_batch < best.lines_in_batch)) {
+			earliest = i;
+		}
+	}
+	return earliest;
+}
+
 void CSVErrorHandler::Error(const CSVError &csv_error, bool force_error) {
 	lock_guard<mutex> parallel_lock(main_mutex);
 	if (!force_error && (ignore_errors || (PrintLineNumber(csv_error) && !CanGetLine(csv_error.GetBoundaryIndex())))) {
@@ -68,7 +81,10 @@ void CSVErrorHandler::Error(const CSVError &csv_error, bool force_error) {
 		errors.push_back(csv_error);
 		return;
 	}
-	// Otherwise we can throw directly
+	if (!force_error && !errors.empty()) {
+		errors.push_back(csv_error);
+		ThrowError(errors[EarliestError()]);
+	}
 	ThrowError(csv_error);
 }
 
@@ -84,9 +100,9 @@ void CSVErrorHandler::ErrorIfNeeded() {
 		// Nothing to error
 		return;
 	}
-
-	if (CanGetLine(errors[0].error_info.boundary_idx)) {
-		ThrowError(errors[0]);
+	auto &earliest = errors[EarliestError()];
+	if (CanGetLine(earliest.error_info.boundary_idx)) {
+		ThrowError(earliest);
 	}
 }
 
@@ -96,10 +112,11 @@ void CSVErrorHandler::ErrorIfAny() {
 		// Nothing to error
 		return;
 	}
-	if (!CanGetLine(errors[0].error_info.boundary_idx)) {
+	auto &earliest = errors[EarliestError()];
+	if (!CanGetLine(earliest.error_info.boundary_idx)) {
 		throw InternalException("Failed to get error information for boundary index");
 	}
-	ThrowError(errors[0]);
+	ThrowError(earliest);
 }
 
 void CSVErrorHandler::ErrorIfTypeExists(CSVErrorType error_type) {
