@@ -641,16 +641,6 @@ void CsvIndexer::Walk(const char *data, idx_t size, CsvBlockBits &bits) {
 	CarryFromState(current);
 }
 
-bool CsvIndexer::SameAs(const CsvIndexer &other) const {
-	const auto &a = carry;
-	const auto &b = other.carry;
-	return State() == other.State() && a.in == b.in && a.parity == b.parity && a.hold == b.hold && a.entry == b.entry &&
-	       a.opened == b.opened && a.start == b.start && a.empty_space == b.empty_space && a.escaped == b.escaped &&
-	       a.unquoted == b.unquoted && a.carriage_return == b.carriage_return && a.comment == b.comment &&
-	       a.partial == b.partial && a.delimiter_run == b.delimiter_run && a.delimiter_phase == b.delimiter_phase &&
-	       a.prefix[0] == b.prefix[0] && a.prefix[1] == b.prefix[1] && a.prefix[2] == b.prefix[2] && a.exact == b.exact;
-}
-
 void CsvIndexer::Index(const char *data, idx_t size, CsvBlockBits &bits) {
 	D_ASSERT(size > 0 && size <= CSV_BLOCK_BYTES);
 	Masks masks;
