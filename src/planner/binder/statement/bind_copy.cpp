@@ -24,6 +24,8 @@
 #include "duckdb/parser/tableref/basetableref.hpp"
 #include "duckdb/parser/tableref/column_data_ref.hpp"
 #include "duckdb/planner/binder.hpp"
+#include "duckdb/planner/expression/bound_cast_expression.hpp"
+#include "duckdb/planner/expression/bound_columnref_expression.hpp"
 #include "duckdb/planner/expression/bound_reference_expression.hpp"
 #include "duckdb/planner/operator/logical_column_data_get.hpp"
 #include "duckdb/planner/operator/logical_copy_to_file.hpp"
@@ -525,6 +527,32 @@ BoundStatement Binder::BindCopyTo(CopyStatement &stmt, const CopyFunction &funct
 
 	ValidateCopyToOptionCombinations(parsed_options, function, stmt.info->format);
 	auto resolved_options = ResolveCopyToOptions(context, stmt.info->file_path, std::move(parsed_options));
+
+	auto written_type = DBConfig::GetConfig(context).copy_to_written_type;
+	if (function.writes_typed_columns && written_type) {
+		auto bindings = select_node.plan->GetColumnBindings();
+		vector<unique_ptr<Expression>> select_list;
+		select_list.reserve(bindings.size());
+		bool changed = false;
+		for (idx_t i = 0; i < bindings.size(); i++) {
+			auto &type = select_node.types[i];
+			unique_ptr<Expression> expr = make_uniq<BoundColumnRefExpression>(select_node.names[i], type, bindings[i]);
+			auto target = written_type(type);
+			if (target != type) {
+				expr = BoundCastExpression::AddCastToType(context, std::move(expr), target, false);
+				expr->SetAlias(select_node.names[i]);
+				changed = true;
+			}
+			select_list.push_back(std::move(expr));
+		}
+		if (changed) {
+			auto projection = make_uniq<LogicalProjection>(GenerateTableIndex(), std::move(select_list));
+			projection->children.push_back(std::move(select_node.plan));
+			projection->ResolveOperatorTypes();
+			select_node.types = projection->types;
+			select_node.plan = std::move(projection);
+		}
+	}
 
 	// Allow the copy function to intercept the select list and types and push a new projection on top of the plan
 	if (function.copy_to_select) {
