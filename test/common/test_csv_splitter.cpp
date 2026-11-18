@@ -1093,6 +1093,42 @@ string CountMismatch(const CsvGrammar &grammar, const string &input, std::mt1993
 	return mismatch;
 }
 
+string PerturbTable(StateMachine &table, char delimiter, std::mt19937_64 &rng) {
+	string changes;
+	const CSVState sources[] = {
+	    CSVState::NOT_SET,     CSVState::RECORD_SEPARATOR, CSVState::DELIMITER,       CSVState::STANDARD,
+	    CSVState::EMPTY_SPACE, CSVState::QUOTED,           CSVState::QUOTED_NEW_LINE, CSVState::QUOTED};
+	const CSVState targets[] = {CSVState::STANDARD,         CSVState::QUOTED,      CSVState::DELIMITER,
+	                            CSVState::RECORD_SEPARATOR, CSVState::EMPTY_SPACE, CSVState::INVALID,
+	                            CSVState::COMMENT,          CSVState::UNQUOTED};
+	const char bytes[] = {'a', 'b', '1', ' ', delimiter};
+	auto set = [&](char byte, CSVState from, CSVState to) {
+		table.state_machine[static_cast<uint8_t>(byte)][static_cast<uint8_t>(from)] = to;
+		changes +=
+		    string(1, byte) + ":" + to_string(static_cast<int>(from)) + "->" + to_string(static_cast<int>(to)) + " ";
+	};
+	switch (rng() % 5) {
+	case 0:
+		set(bytes[rng() % 5], sources[rng() % 8], targets[rng() % 8]);
+		break;
+	case 1:
+		set(' ', CSVState::STANDARD, rng() % 2 ? CSVState::EMPTY_SPACE : CSVState::QUOTED);
+		break;
+	case 2:
+		set(delimiter, sources[rng() % 5], CSVState::STANDARD);
+		break;
+	case 3:
+		for (char byte = 'a'; byte <= 'j'; byte++) {
+			set(byte, CSVState::STANDARD, CSVState::INVALID);
+		}
+		break;
+	default:
+		set('b', CSVState::QUOTED_NEW_LINE, CSVState::STANDARD);
+		break;
+	}
+	return changes;
+}
+
 string DescribeTransfer(const CsvRangeTransfer &transfer) {
 	string result;
 	for (idx_t state = 0; state < StateMachine::NUM_STATES; state++) {
@@ -1119,6 +1155,7 @@ TEST_CASE("CSV splitter, transfer and skip match the byte state machine", "[csv]
 	idx_t spaced_accepted = 0;
 	idx_t literal_accepted = 0;
 	CountCoverage coverage;
+	CountCoverage perturbed_coverage;
 	for (idx_t iteration = 0; iteration < count; iteration++) {
 		const auto dialect = RandomDialect(rng);
 		CSVStateMachineOptions machine_options(dialect.delimiter, dialect.quote, dialect.escape, dialect.comment,
@@ -1179,6 +1216,15 @@ TEST_CASE("CSV splitter, transfer and skip match the byte state machine", "[csv]
 		const auto count_mismatch = CountMismatch(grammar, input, rng, coverage);
 		if (!count_mismatch.empty()) {
 			FAIL("count mismatch: " + Describe(dialect, input) + "\n" + count_mismatch);
+		}
+		StateMachine perturbed = *grammar.transitions;
+		const auto changes = PerturbTable(perturbed, dialect.delimiter[0], rng);
+		auto perturbed_grammar = grammar;
+		perturbed_grammar.transitions = &perturbed;
+		const auto perturbed_mismatch = CountMismatch(perturbed_grammar, input, rng, perturbed_coverage);
+		if (!perturbed_mismatch.empty()) {
+			FAIL("count mismatch on a changed table (" + changes + "): " + Describe(dialect, input) + "\n" +
+			     perturbed_mismatch);
 		}
 		if (dialect.quote && !grammar.carry_on_newline && !input.empty()) {
 			RowLexer quoted_lexer(RowDialect::DuckDB(grammar), dialect.columns, max_line_size, true);
