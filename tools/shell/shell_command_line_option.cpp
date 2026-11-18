@@ -119,13 +119,23 @@ MetadataResult PsqlPasswordNoOp(ShellState &state, const vector<string> &args) {
 	return MetadataResult::SUCCESS;
 }
 
-// psql -t / --tuples-only: emit data rows only. duckdb's duckbox mode
-// renders headers regardless of `showHeader`, so we drop to the
-// unaligned `list` mode at the same time.
 MetadataResult PsqlTuplesOnly(ShellState &state, const vector<string> &args) {
-	state.cMode = state.mode = RenderMode::LIST;
-	state.showHeader = false;
-	state.ShellSetFlag(ShellFlags::SHFLG_HeaderSet);
+	state.SetPrintOption("tuples_only", "on", true, "-t");
+	return MetadataResult::SUCCESS;
+}
+
+MetadataResult PsqlNoAlign(ShellState &state, const vector<string> &args) {
+	state.SetPrintOption("format", "unaligned", true, "-A");
+	return MetadataResult::SUCCESS;
+}
+
+MetadataResult PsqlExpandedOutput(ShellState &state, const vector<string> &args) {
+	state.SetPrintOption("expanded", "on", true, "-x");
+	return MetadataResult::SUCCESS;
+}
+
+MetadataResult PsqlCsvOutput(ShellState &state, const vector<string> &args) {
+	state.SetPrintOption("format", "csv", true, "--csv");
 	return MetadataResult::SUCCESS;
 }
 
@@ -157,10 +167,11 @@ MetadataResult PrintHelpAndExit(ShellState &state, const vector<string> &args) {
 	return MetadataResult::EXIT;
 }
 
-// psql -q / --quiet: suppress the startup banner. (psql also suppresses
-// per-statement chatter; we don't print any so this is a no-op there.)
+// psql -q / --quiet: suppress the startup banner and the messages of the
+// backslash commands (\x, \pset, \timing, ...).
 MetadataResult PsqlQuiet(ShellState &state, const vector<string> &args) {
 	state.startup_text = StartupText::NONE;
+	state.quiet = true;
 	return MetadataResult::SUCCESS;
 }
 
@@ -191,145 +202,32 @@ MetadataResult PsqlSingleTransaction(ShellState &state, const vector<string> &ar
 }
 
 // psql flags that have no clean serened equivalent (-E echo-hidden,
-// -L log-file, -s single-step, -S single-line, -P pset, -T table-attr).
+// -L log-file, -s single-step, -S single-line, -T table-attr).
 // Accepted so psql-shaped scripts don't fail at argv parsing; behaviour
 // is documented in the per-entry description.
 MetadataResult PsqlAcceptIgnore(ShellState &state, const vector<string> &args) {
 	return MetadataResult::SUCCESS;
 }
 
-// psql -P VAR[=ARG] / --pset=VAR[=ARG]: apply a subset of psql's
-// `\pset` printing options. Recognised keys map directly to duckdb shell
-// state; unrecognised keys (and unrecognised values for recognised keys)
-// emit a warning to stderr but don't fail the invocation.
-//
-// Implemented keys:
-//   format = aligned | unaligned | csv | html | latex | wrapped
-//   expanded = on | off                  (toggles when no value)
-//   null = STRING
-//   tuples_only = on | off               (toggles when no value)
-//   pager = on | off | always
-// Synonyms accepted: `x` for `expanded`, `t` for `tuples_only`.
 MetadataResult PsqlPset(ShellState &state, const vector<string> &args) {
 	MarkOutputModeFlag(state, args);
-	const string &raw = args[1];
-	string key;
-	string value;
-	bool has_value = false;
-	if (auto eq = raw.find('='); eq != string::npos) {
-		key = raw.substr(0, eq);
-		value = raw.substr(eq + 1);
-		has_value = true;
-	} else {
-		key = raw;
+	auto &setting = args[1];
+	auto separator = setting.find('=');
+	if (separator == string::npos) {
+		state.SetPrintOption(setting, nullptr, true, "Warning: --pset");
+		return MetadataResult::SUCCESS;
 	}
-	const string keyl = StringUtil::Lower(key);
-	const string vall = has_value ? StringUtil::Lower(value) : string {};
-
-	auto warn = [&](const string &msg) {
-		state.PrintF(PrintOutput::STDERR, "Warning: --pset: %s\n", msg);
-	};
-	auto require_value = [&]() {
-		if (!has_value) {
-			warn(StringUtil::Format("'%s' requires a value", key));
-			return false;
-		}
-		return true;
-	};
-	auto parse_bool = [&](bool default_when_missing) -> bool {
-		if (!has_value) {
-			return default_when_missing;
-		}
-		if (vall == "on" || vall == "true" || vall == "1") {
-			return true;
-		}
-		if (vall == "off" || vall == "false" || vall == "0") {
-			return false;
-		}
-		warn(StringUtil::Format("unrecognised boolean value '%s' for '%s'; ignored", value, key));
-		return default_when_missing;
-	};
-
-	// Switch render mode via SetOutputMode so the separator/header
-	// side-effects (e.g. csv → ',' + CRLF) fire just like `.mode csv` would.
-	auto set_mode = [&](const char *mode_name) {
-		state.SetOutputMode(mode_name, nullptr);
-		state.cMode = state.mode;
-	};
-
-	if (keyl == "format") {
-		if (!require_value()) {
-			return MetadataResult::SUCCESS;
-		}
-		// Resolve psql-only aliases to a duckdb mode name; everything
-		// else passes through as a duckdb mode name directly. That way
-		// `--pset format=csv` (psql shape) and `--pset format=markdown`
-		// (duckdb shape) both work.
-		string target;
-		if (vall == "aligned" || vall == "wrapped") {
-			target = "duckbox";
-		} else if (vall == "unaligned") {
-			target = "list";
-		} else {
-			target = vall;
-		}
-		static const char *const duckdb_modes[] = {"ascii",    "box",   "column",    "csv",   "duckbox", "html",
-		                                           "insert",   "json",  "jsonlines", "latex", "line",    "list",
-		                                           "markdown", "quote", "table",     "tabs",  "tcl",     "trash"};
-		bool match = false;
-		for (auto *m : duckdb_modes) {
-			if (target == m) {
-				match = true;
-				break;
-			}
-		}
-		if (match) {
-			set_mode(target.c_str());
-		} else {
-			warn(StringUtil::Format("format '%s' is not supported; try one of: "
-			                        "aligned/unaligned/wrapped (psql), csv/html/latex (shared), or "
-			                        "box/duckbox/markdown/json/jsonlines/column/line/table/quote/insert/"
-			                        "ascii/tabs/tcl/trash (duckdb); ignored",
-			                        value));
-		}
-	} else if (keyl == "expanded" || keyl == "x") {
-		// toggle when no value: turn on if not already in LINE mode
-		bool on = parse_bool(/*default_when_missing=*/state.mode != RenderMode::LINE);
-		set_mode(on ? "line" : "duckbox");
-	} else if (keyl == "null") {
-		if (!require_value()) {
-			return MetadataResult::SUCCESS;
-		}
-		state.nullValue = value;
-	} else if (keyl == "tuples_only" || keyl == "t") {
-		// toggle when no value: turn on if headers currently shown
-		bool on = parse_bool(/*default_when_missing=*/state.showHeader);
-		if (on) {
-			set_mode("list");
-			state.showHeader = false;
-		} else {
-			set_mode("duckbox");
-			state.showHeader = true;
-		}
-		state.ShellSetFlag(ShellFlags::SHFLG_HeaderSet);
-	} else if (keyl == "pager") {
-		if (!has_value || vall == "on") {
-			state.pager_mode = PagerMode::PAGER_AUTOMATIC;
-		} else if (vall == "always") {
-			state.pager_mode = PagerMode::PAGER_ON;
-		} else if (vall == "off") {
-			state.pager_mode = PagerMode::PAGER_OFF;
-		} else {
-			warn(StringUtil::Format("pager value '%s' is not supported (try on/off/always); ignored", value));
-		}
-	} else {
-		warn(StringUtil::Format("'%s' is not implemented; ignored", key));
-	}
+	auto value = setting.substr(separator + 1);
+	state.SetPrintOption(setting.substr(0, separator), value.c_str(), true, "Warning: --pset");
 	return MetadataResult::SUCCESS;
 }
 
-// psql --help=interactive: list dot-commands (our equivalent of psql's
-// backslash commands) and exit.
+MetadataResult PsqlHelpCommands(ShellState &state, const vector<string> &args) {
+	state.PrintBackslashHelp();
+	return MetadataResult::EXIT;
+}
+
+// psql --help=interactive: list dot-commands and exit.
 MetadataResult PsqlHelpInteractive(ShellState &state, const vector<string> &args) {
 	state.DoMetaCommand(".help");
 	return MetadataResult::EXIT;
@@ -625,15 +523,15 @@ static const CommandLineOption psql_options[] = {
     {"e", 0, "", nullptr, EnableEcho, "(psql) echo commands sent to server"},
     {"echo-queries", 0, "", nullptr, EnableEcho, "(psql) echo commands sent to server"},
     // Output format.
-    {"A", 0, "", MarkOutputModeFlag, ToggleOutputMode<RenderMode::LIST>, "(psql) unaligned table output mode"},
-    {"no-align", 0, "", MarkOutputModeFlag, ToggleOutputMode<RenderMode::LIST>, "(psql) unaligned table output mode"},
-    {"csv", 0, "", MarkOutputModeFlag, ToggleCSVMode, "(psql) CSV output mode"},
+    {"A", 0, "", MarkOutputModeFlag, PsqlNoAlign, "(psql) unaligned table output mode"},
+    {"no-align", 0, "", MarkOutputModeFlag, PsqlNoAlign, "(psql) unaligned table output mode"},
+    {"csv", 0, "", MarkOutputModeFlag, PsqlCsvOutput, "(psql) CSV output mode"},
     {"H", 0, "", MarkOutputModeFlag, ToggleOutputMode<RenderMode::HTML>, "(psql) HTML output mode"},
     {"html", 0, "", MarkOutputModeFlag, ToggleOutputMode<RenderMode::HTML>, "(psql) HTML output mode"},
     {"t", 0, "", MarkOutputModeFlag, PsqlTuplesOnly, "(psql) print rows only (no column headers)"},
     {"tuples-only", 0, "", MarkOutputModeFlag, PsqlTuplesOnly, "(psql) print rows only (no column headers)"},
-    {"x", 0, "", MarkOutputModeFlag, ToggleOutputMode<RenderMode::LINE>, "(psql) one value per line (expanded)"},
-    {"expanded", 0, "", MarkOutputModeFlag, ToggleOutputMode<RenderMode::LINE>, "(psql) one value per line (expanded)"},
+    {"x", 0, "", MarkOutputModeFlag, PsqlExpandedOutput, "(psql) expanded table output"},
+    {"expanded", 0, "", MarkOutputModeFlag, PsqlExpandedOutput, "(psql) expanded table output"},
     {"F", 1, "STRING", MarkOutputModeFlag, ShellState::SetSeparator, "(psql) field separator for unaligned output"},
     {"field-separator", 1, "STRING", MarkOutputModeFlag, ShellState::SetSeparator,
      "(psql) field separator for unaligned output"},
@@ -674,18 +572,17 @@ static const CommandLineOption psql_options[] = {
     {"single-step", 0, "", PsqlAcceptIgnore, nullptr, "(psql) accepted, ignored (single-step mode not supported)"},
     {"S", 0, "", PsqlAcceptIgnore, nullptr, "(psql) accepted, ignored (single-line mode not supported)"},
     {"single-line", 0, "", PsqlAcceptIgnore, nullptr, "(psql) accepted, ignored (single-line mode not supported)"},
-    // -P / --pset: implemented for format/expanded/null/tuples_only/pager;
-    // unknown keys emit a warning to stderr but don't error out.
-    {"P", 1, "VAR", PsqlPset, nullptr, "(psql) set printing option (format/expanded/null/tuples_only/pager)"},
-    {"pset", 1, "VAR", PsqlPset, nullptr, "(psql) set printing option (format/expanded/null/tuples_only/pager)"},
+    // -P / --pset: the options of \pset; an unknown key or value emits a
+    // warning to stderr but doesn't error out.
+    {"P", 1, "VAR", PsqlPset, nullptr, "(psql) set printing option VAR[=ARG], as \\pset does"},
+    {"pset", 1, "VAR", PsqlPset, nullptr, "(psql) set printing option VAR[=ARG], as \\pset does"},
     {"T", 1, "TEXT", PsqlAcceptIgnore, nullptr, "(psql) accepted, ignored (HTML table attrs not modelled)"},
     {"table-attr", 1, "TEXT", PsqlAcceptIgnore, nullptr, "(psql) accepted, ignored (HTML table attrs not modelled)"},
     // Help targets: psql uses `--help=commands` and `--help=variables`
     // for backslash commands and special variables. We don't have psql
-    // variables; we expose `.help` / `.help --all` as the closest fit.
-    // Names: "interactive" (per dot-command's interactive use) and
-    // "interactive-all" (verbose listing). "commands" is psql's own
-    // namespace so we deliberately don't reuse it.
+    // variables; `--help=interactive` / `--help=interactive-all` list the
+    // dot commands (`.help` / `.help --all`).
+    {"help=commands", 0, "", EnableBatch, PsqlHelpCommands, "(psql) list backslash commands, then exit"},
     {"help=interactive", 0, "", EnableBatch, PsqlHelpInteractive, "(psql) list interactive (dot) commands, then exit"},
     {"help=interactive-all", 0, "", EnableBatch, PsqlHelpInteractiveAll,
      "(psql) list all interactive (dot) commands, then exit"},
@@ -952,7 +849,7 @@ static void PrintOutputFormatSection(ShellState &state, ShellHighlight &h) {
 	entry("  -F, --field-separator=<STRING>", "field separator for unaligned output (default: \"|\")");
 	entry("      --separator=<SEP>", "alias for --field-separator");
 	entry("  -H, --html", "HTML table output mode");
-	entry("  -P, --pset=<VAR>[=<ARG>]", "set printing option (format/expanded/null/tuples_only/pager)");
+	entry("  -P, --pset=<VAR>[=<ARG>]", "set printing option VAR to ARG (see \\pset)");
 	entry("  -R, --record-separator=<STRING>", "record separator for unaligned output (default: newline)");
 	entry("      --newline=<SEP>", "alias for --record-separator");
 	entry("  -t, --tuples-only / --noheader", "print rows only (no column headers)");
@@ -961,7 +858,7 @@ static void PrintOutputFormatSection(ShellState &state, ShellHighlight &h) {
 	entry("  -x, --expanded", "turn on expanded table output");
 	entry("  -z, --field-separator-zero", "set field separator for unaligned output to zero byte");
 	entry("  -0, --record-separator-zero", "set record separator for unaligned output to zero byte");
-	entry("      --nullvalue=<TEXT>", "text string for NULL values (default 'NULL')");
+	entry("      --nullvalue=<TEXT>", "text string for NULL values (default 'NULL',\nempty in psql output)");
 	entry("      --<MODE>", "set mode directly. MODE is one of:\nascii, box, column, csv, duckbox, html, json,\n"
 	                        "jsonlines, latex, line, list, markdown, quote,\ntable, tabs, tcl, trash");
 	state.PrintF("\n");
@@ -997,8 +894,10 @@ static void PrintShellSections(ShellState &state) {
 	entry("  -1 (\"one\"), --single-transaction", "wrap -c/-f batch in BEGIN/COMMIT (if non-interactive)");
 	entry("      --format", "format SQL from stdin, writing result to stdout");
 	entry("      --format-file=<FILENAME>", "format SQL in file, writing result to stdout");
+	entry("  -l", "list attached databases, then exit");
 	entry("  -V, --version", "output version information, then exit");
 	entry("  -?, --help[=<options>]", "show this help, then exit");
+	entry("      --help=commands", "list backslash commands, then exit");
 	entry("      --help=interactive", "list interactive (dot) commands, then exit");
 	entry("      --help=interactive-all", "list all interactive (dot) commands, then exit");
 	state.PrintF("\n");
@@ -1028,6 +927,7 @@ static void PrintPsqlSections(ShellState &state) {
 	entry("  -X, --no-psqlrc / --no-init", "do not read startup file ({RC})");
 	entry("  -1 (\"one\"), --single-transaction", "execute as a single transaction (if non-interactive)");
 	entry("  -?, --help[=<options>]", "show this help, then exit");
+	entry("      --help=commands", "list backslash commands, then exit");
 	entry("      --help=interactive", "list interactive (dot) commands, then exit");
 	entry("      --help=interactive-all", "list all interactive (dot) commands, then exit");
 	state.PrintF("\n");
@@ -1057,22 +957,25 @@ static void PrintNotes(ShellState &state, ShellHighlight &h) {
 		             "    `serenedb shell`.\n"
 		             "  * Accepts `serenedb shell` flags too -- --cmd, --init, --bail, --format,\n"
 		             "    --MODE, the whole Database options section, and more.\n"
-		             "  * In this mode: -h is host, -l lists databases, -s is single-step\n"
-		             "    (no-op). All three mean something different in `serenedb shell`.\n"
-		             "  * Default output is `duckbox` (Unicode + type row), not psql's aligned\n"
-		             "    ASCII. Switch with `--pset format=aligned`.\n"
+		             "  * In this mode: -h is host, -s is single-step (no-op) and --list\n"
+		             "    lists databases. All three mean something different in\n"
+		             "    `serenedb shell`.\n"
+		             "  * Default output is psql's aligned table; `.mode duckbox` (or any\n"
+		             "    `--MODE` flag) switches to DuckDB's rendering.\n"
+		             "  * Backslash commands: \\? lists them (\\copy, \\pset, \\x, \\o, \\i, ...).\n"
 		             "  * Not implemented yet: -v / --set / --variable (psql variables),\n"
-		             "    --help=commands, --help=variables, and backslash commands (\\d, \\c,\n"
-		             "    \\copy, \\timing, ...).\n");
+		             "    --help=variables, and the catalog backslash commands (\\d, ...).\n");
 	} else {
 		state.PrintF("  * Local shell -- no auto-connect. For a pg-wire client, use\n"
 		             "    `serenedb psql`.\n"
 		             "  * Accepts psql-style flags too -- -A, -x, -t, -P, -1, --no-align,\n"
 		             "    --expanded, --tuples-only, --pset, --single-transaction, and more.\n"
-		             "  * In this mode: -h is help, -l is `list output mode`, -s is alias for\n"
-		             "    -c. All three mean something different in `serenedb psql`.\n"
-		             "  * Default output is `duckbox` (Unicode + type row); change with\n"
-		             "    `--pset format=...` or any `--MODE` short flag.\n");
+		             "  * In this mode: -h is help, -s is alias for -c and --list is `list\n"
+		             "    output mode`. All three mean something different in `serenedb psql`.\n"
+		             "  * Default output is `duckbox` (Unicode + type row); `.mode psql` or\n"
+		             "    `--pset format=aligned` switch to psql's tables, any `--MODE` short\n"
+		             "    flag to another DuckDB mode.\n"
+		             "  * Backslash commands work too: \\? lists them.\n");
 	}
 	state.PrintF("\n");
 }
