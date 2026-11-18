@@ -701,7 +701,9 @@ string RegularInput(std::mt19937_64 &rng, const FuzzDialect &dialect) {
 			for (idx_t i = 0; i < length; i++) {
 				token += plain[rng() % plain.size()];
 			}
-			if (dialect.quote && rng() % 4 == 0) {
+			if (dialect.quote && !token.empty() && token[0] != ' ' && rng() % 8 == 0) {
+				token.insert(1 + rng() % token.size(), 1, dialect.quote);
+			} else if (dialect.quote && rng() % 4 == 0) {
 				string quoted(1, dialect.quote);
 				quoted += token;
 				const auto extra = rng() % 5;
@@ -717,6 +719,12 @@ string RegularInput(std::mt19937_64 &rng, const FuzzDialect &dialect) {
 				}
 				quoted += dialect.quote;
 				token = quoted;
+				if (rng() % 4 == 0) {
+					token = " " + token;
+				}
+				if (rng() % 4 == 0) {
+					token += string(1 + rng() % 3, ' ');
+				}
 			}
 			input += token;
 		}
@@ -888,10 +896,19 @@ string RunLean(const CsvGrammar &grammar, const FuzzDialect &dialect, const stri
 			if (pad) {
 				continue;
 			}
-			const bool quoted = grammar.quote && end > begin && input[begin] == grammar.quote;
+			const bool spaced = grammar.quote && grammar.trim_quoted_spaces;
+			idx_t open = begin;
+			if (spaced && end - open > 1 && input[open] == ' ' && input[open + 1] == grammar.quote) {
+				open++;
+			}
+			const bool quoted = grammar.quote && end > open && input[open] == grammar.quote;
 			if (quoted) {
-				begin++;
-				end--;
+				idx_t close = end;
+				while (spaced && close > open + 1 && input[close - 1] == ' ') {
+					close--;
+				}
+				begin = open + 1;
+				end = close - 1;
 			}
 			text += " [" + to_string(begin) + "," + to_string(end - begin) + "," + to_string(quoted) + "]";
 		}
@@ -1101,6 +1118,8 @@ TEST_CASE("CSV splitter, transfer and skip match the byte state machine", "[csv]
 	idx_t comment_accepted = 0;
 	idx_t wide_accepted = 0;
 	idx_t padded_accepted = 0;
+	idx_t spaced_accepted = 0;
+	idx_t literal_accepted = 0;
 	CountCoverage coverage;
 	for (idx_t iteration = 0; iteration < count; iteration++) {
 		const auto dialect = RandomDialect(rng);
@@ -1147,6 +1166,13 @@ TEST_CASE("CSV splitter, transfer and skip match the byte state machine", "[csv]
 		padded_accepted += padded;
 		comment_accepted += accepted && dialect.comment && input.find(dialect.comment) != string::npos;
 		wide_accepted += accepted && dialect.delimiter.size() > 1 && input.find(dialect.delimiter) != string::npos;
+		literal_accepted += accepted && dialect.quote &&
+		                    (input.find(string("a") + dialect.quote) != string::npos ||
+		                     input.find(string("b") + dialect.quote) != string::npos ||
+		                     input.find(string("1") + dialect.quote) != string::npos);
+		spaced_accepted += accepted && dialect.quote &&
+		                   (input.find(string(" ") + dialect.quote) != string::npos ||
+		                    input.find(string(1, dialect.quote) + " ") != string::npos);
 		if (!lean_mismatch.empty()) {
 			FAIL("lean mismatch: " + Describe(dialect, input) + " pieces=" + to_string(piece_blocks) +
 			     " max_line_size=" + to_string(max_line_size) + " pad_rows=" + to_string(pad_rows) + "\n" +
@@ -1221,6 +1247,8 @@ TEST_CASE("CSV splitter, transfer and skip match the byte state machine", "[csv]
 	REQUIRE(comment_accepted > count / 50);
 	REQUIRE(wide_accepted > count / 50);
 	REQUIRE(padded_accepted > count / 100);
+	REQUIRE(spaced_accepted > count / 50);
+	REQUIRE(literal_accepted > count / 100);
 	REQUIRE(coverage.rows > count);
 	REQUIRE(coverage.quoted > count / 10);
 	REQUIRE(coverage.comments > count / 10);
