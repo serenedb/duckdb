@@ -1,6 +1,7 @@
 #include "duckdb/common/helper.hpp"
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/common/multi_file/multi_file_reader.hpp"
+#include "json_engine.hpp"
 #include "json_functions.hpp"
 #include "json_scan.hpp"
 #include "json_structure.hpp"
@@ -40,15 +41,15 @@ static inline LogicalType RemoveDuplicateStructKeys(const LogicalType &type, con
 
 struct AutoDetectState {
 	AutoDetectState(ClientContext &context_p, JSONScanData &json_data_p, const vector<OpenFileInfo> &files,
-	                vector<shared_ptr<JSONReader>> &sampled_readers_p, MutableDateFormatMap &date_format_map)
-	    : context(context_p), json_data(json_data_p), files(files), sampled_readers(sampled_readers_p),
+	                vector<shared_ptr<JsonSource>> &sampled_sources_p, MutableDateFormatMap &date_format_map)
+	    : context(context_p), json_data(json_data_p), files(files), sampled_sources(sampled_sources_p),
 	      date_format_map(date_format_map), files_scanned(0), tuples_scanned(0), bytes_scanned(0), total_file_size(0) {
 	}
 
 	ClientContext &context;
 	JSONScanData &json_data;
 	const vector<OpenFileInfo> &files;
-	vector<shared_ptr<JSONReader>> &sampled_readers;
+	vector<shared_ptr<JsonSource>> &sampled_sources;
 	MutableDateFormatMap &date_format_map;
 	atomic<idx_t> files_scanned;
 	atomic<idx_t> tuples_scanned;
@@ -70,38 +71,33 @@ public:
 		auto &context = auto_detect_state.context;
 		auto &files = auto_detect_state.files;
 		auto &json_data = auto_detect_state.json_data;
-		auto json_reader = make_shared_ptr<JSONReader>(context, json_data.options, files[file_idx].path);
-		if (auto_detect_state.sampled_readers[file_idx]) {
-			throw InternalException("Reader for file %llu was already created", file_idx);
+		if (auto_detect_state.sampled_sources[file_idx]) {
+			throw InternalException("Source for file %llu was already created", file_idx);
 		}
-		auto &reader = *json_reader;
-		auto_detect_state.sampled_readers[file_idx] = std::move(json_reader);
-
-		auto &global_allocator = Allocator::Get(context);
-		idx_t buffer_capacity = json_data.options.maximum_object_size * 2;
-		JSONReaderScanState scan_state(context, global_allocator, buffer_capacity);
+		auto source = make_shared_ptr<JsonSource>(context, files[file_idx], json_data.options.compression);
+		auto_detect_state.sampled_sources[file_idx] = source;
 		auto &options = json_data.options;
-		// Read and detect schema
 		idx_t total_tuple_count = 0;
 		idx_t total_read_size = 0;
 
-		reader.Initialize(global_allocator, buffer_capacity);
-		reader.InitializeScan(scan_state, JSONFileReadType::SCAN_ENTIRE_FILE);
-
-		auto file_size = reader.GetFileHandle().GetHandle().GetFileSize();
+		JsonScanColumns columns;
+		JsonScanGlobal global(context, json_data, source, std::move(columns), false);
+		JsonScan scan(global);
+		const auto file_size = source->Size();
 		while (remaining != 0) {
 			allocator.Reset();
-			auto buffer_offset_before = scan_state.buffer_offset;
-			auto read_count = reader.Scan(scan_state);
+			const JSONNode **values = nullptr;
+			idx_t read_size = 0;
+			auto read_count = scan.Sample(values, read_size);
 			if (read_count == 0) {
 				break;
 			}
-			total_read_size += scan_state.buffer_offset - buffer_offset_before;
+			total_read_size += read_size;
 			total_tuple_count += read_count;
 
 			const auto next = MinValue<idx_t>(read_count, remaining);
 			for (idx_t i = 0; i < next; i++) {
-				const auto &val = scan_state.values[i];
+				const auto &val = values[i];
 				if (val) {
 					JSONStructure::ExtractStructure(*val, node, true, options.geojson.value_or(false));
 				}
@@ -115,8 +111,8 @@ public:
 			const bool user_specified_timestamp_format = !options.timestamp_format.empty();
 			node.InitializeCandidateTypes(options.max_depth, options.convert_strings_to_integers,
 			                              user_specified_timestamp_format);
-			node.RefineCandidateTypes(scan_state.values, next, string_vector, allocator,
-			                          auto_detect_state.date_format_map, user_specified_timestamp_format);
+			node.RefineCandidateTypes(values, next, string_vector, allocator, auto_detect_state.date_format_map,
+			                          user_specified_timestamp_format);
 		}
 		auto_detect_state.total_file_size += file_size;
 		auto_detect_state.bytes_scanned += total_read_size;
@@ -238,14 +234,14 @@ static void BindGeoJSONFeatureColumns(const LogicalType &type, const vector<Iden
 
 unique_ptr<JSONStructureNode> JSONScan::DetectStructure(ClientContext &context, JSONScanData &json_data,
                                                         const vector<OpenFileInfo> &files,
-                                                        vector<shared_ptr<JSONReader>> &sampled_readers) {
+                                                        vector<shared_ptr<JsonSource>> &sampled_sources) {
 	MutableDateFormatMap date_format_map(*json_data.date_format_map);
 	auto node = make_uniq<JSONStructureNode>();
 	auto &options = json_data.options;
 	auto file_count = MinValue<idx_t>(options.maximum_sample_files, files.size());
-	sampled_readers.resize(files.empty() ? 0 : files.size());
+	sampled_sources.resize(files.empty() ? 0 : files.size());
 
-	AutoDetectState auto_detect_state(context, json_data, files, sampled_readers, date_format_map);
+	AutoDetectState auto_detect_state(context, json_data, files, sampled_sources, date_format_map);
 	const auto num_threads = TaskScheduler::QueryThreads(context);
 	const auto files_per_task = (file_count + num_threads - 1) / num_threads;
 	const auto num_tasks = (file_count + files_per_task - 1) / files_per_task;
@@ -336,10 +332,10 @@ void JSONScan::StructureToColumns(ClientContext &context, JSONReaderOptions &opt
 }
 
 void JSONScan::AutoDetect(ClientContext &context, JSONScanData &json_data, const vector<OpenFileInfo> &files,
-                          vector<shared_ptr<JSONReader>> &sampled_readers, vector<LogicalType> &return_types,
+                          vector<shared_ptr<JsonSource>> &sampled_sources, vector<LogicalType> &return_types,
                           vector<Identifier> &names) {
 	json_data.record_type_auto_detected = json_data.options.record_type == JSONRecordType::AUTO_DETECT;
-	auto node = DetectStructure(context, json_data, files, sampled_readers);
+	auto node = DetectStructure(context, json_data, files, sampled_sources);
 	StructureToColumns(context, json_data.options, *node, json_data.feature_columns, return_types, names);
 	if (json_data.keep_structure) {
 		// keep the structure around so it can be combined with the structures of other files later on

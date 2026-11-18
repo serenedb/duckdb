@@ -18,7 +18,6 @@
 namespace duckdb {
 
 struct DateFormatMap;
-class JSONReader;
 
 //! Options for error handling while transforming JSON
 struct JSONTransformOptions {
@@ -83,6 +82,9 @@ struct JSONTransform {
 	                            bool error_unknown_key);
 	static bool GetStringVector(const JSONNode *vals[], const idx_t count, const LogicalType &target,
 	                            Vector &string_vector, JSONTransformOptions &options);
+	static bool TransformStrings(Vector &string_vector, Vector &result, const idx_t count,
+	                             JSONTransformOptions &options);
+	static bool ParsesFromString(const LogicalType &type);
 };
 
 } // namespace duckdb

@@ -10,7 +10,7 @@ include_directories(include)
 add_subdirectory(json_functions)
 
 set(JSON_EXTENSION_FILES
-    json_reader.cpp
+    json_engine.cpp
     json_extension.cpp
     json_common.cpp
     json_enums.cpp
