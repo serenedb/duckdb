@@ -66,22 +66,22 @@ CsvColumnCounter::CsvColumnCounter(shared_ptr<CSVBufferManager> buffer_manager_p
                                    shared_ptr<CSVErrorHandler> error_handler_p, idx_t result_size, idx_t start)
     : buffer_manager(std::move(buffer_manager_p)), state_machine(std::move(state_machine_p)),
       error_handler(std::move(error_handler_p)), result(*state_machine, result_size),
-      skipper(state_machine->transition_array.stop_patterns) {
+      lexer(RowDialect::DuckDB(CsvGrammar::For(*state_machine)), 1, state_machine->options.maximum_line_size.GetValue(),
+            false) {
 	if (start == DConstants::INVALID_INDEX) {
 		done = true;
 		start = 0;
 	}
 	const idx_t requested = buffer_manager->GetBufferSize();
 	buffer_idx = start / requested;
-	buffer_pos = start % requested;
+	buffer_start = buffer_idx * requested;
 	cur_buffer_handle = buffer_manager->GetBuffer(buffer_idx);
 	if (cur_buffer_handle) {
-		buffer_ptr = cur_buffer_handle->Ptr();
-		current_buffer_size = cur_buffer_handle->actual_size;
-		buffer_handles[0] = cur_buffer_handle;
+		buffer_handles[buffer_start] = cur_buffer_handle;
 	}
-	cur_buffer_idx = buffer_idx;
-	last_position = {buffer_idx, buffer_pos, current_buffer_size};
+	cursor.pos = start;
+	cursor.line_start = start;
+	rows.reserve(result_size + 1);
 }
 
 idx_t CsvColumnCounter::SkipRows(CSVBufferManager &buffer_manager, const CSVStateMachine &state_machine, idx_t rows) {
@@ -111,263 +111,118 @@ unique_ptr<CsvSniffScanner> CsvColumnCounter::UpgradeToStringValueScanner() cons
 }
 
 bool CsvColumnCounter::FinishedFile() const {
-	if (!cur_buffer_handle) {
-		return true;
-	}
-	if (!buffer_manager->Done()) {
-		return false;
-	}
-	if (buffer_idx != buffer_manager->BufferCount()) {
-		return false;
-	}
-	return buffer_pos + 1 == cur_buffer_handle->actual_size;
+	return finished || !cur_buffer_handle;
 }
 
-string CsvColumnCounter::LineText(const Position &begin, const Position &end) {
-	if (begin.buffer_pos == end.buffer_pos && begin.buffer_idx == end.buffer_idx &&
-	    begin.buffer_size == end.buffer_size) {
-		return string();
-	}
+string CsvColumnCounter::LineText(idx_t begin, idx_t end) const {
 	string line;
-	if (end.buffer_idx == begin.buffer_idx || begin.buffer_pos == begin.buffer_size) {
-		auto entry = buffer_handles.find(end.buffer_idx);
-		if (entry == buffer_handles.end()) {
-			return string();
+	for (auto &entry : buffer_handles) {
+		const idx_t start = entry.first;
+		const idx_t from = MaxValue(begin, start);
+		const idx_t to = MinValue(end, start + entry.second->actual_size);
+		if (from >= to) {
+			continue;
 		}
-		const idx_t start_pos = begin.buffer_pos == begin.buffer_size ? 0 : begin.buffer_pos;
-		auto data = entry->second->Ptr();
-		const bool first_nl = data[start_pos] == '\n' || data[start_pos] == '\r';
-		for (idx_t i = start_pos + first_nl; i < end.buffer_pos; i++) {
-			line += data[i];
+		const char *data = entry.second->Ptr();
+		idx_t position = from;
+		if (position == begin && (data[position - start] == '\n' || data[position - start] == '\r')) {
+			position++;
 		}
-	} else {
-		auto first = buffer_handles.find(begin.buffer_idx);
-		auto second = buffer_handles.find(end.buffer_idx);
-		if (first == buffer_handles.end() || second == buffer_handles.end()) {
-			return string();
-		}
-		if (begin.buffer_pos >= begin.buffer_size) {
-			throw InternalException("CSV reader: buffer pos out of range for buffer");
-		}
-		auto first_data = first->second->Ptr();
-		const bool first_nl = first_data[begin.buffer_pos] == '\n' || first_data[begin.buffer_pos] == '\r';
-		for (idx_t i = begin.buffer_pos + first_nl; i < first->second->actual_size; i++) {
-			line += first_data[i];
-		}
-		auto second_data = second->second->Ptr();
-		for (idx_t i = 0; i < end.buffer_pos; i++) {
-			line += second_data[i];
-		}
+		line.append(data + (position - start), to - position);
 	}
 	CsvSanitize(line);
 	return line;
 }
 
-bool CsvColumnCounter::LineTooLong(const Position &end) {
+bool CsvColumnCounter::LineTooLong(idx_t begin, idx_t end) {
 	auto &options = state_machine->options;
-	if (end - last_position <= options.maximum_line_size.GetValue()) {
+	if (end - begin <= options.maximum_line_size.GetValue()) {
 		return false;
 	}
-	auto line = LineText(last_position, end);
-	const idx_t position = options.buffer_size_option.GetValue() * last_position.buffer_idx + last_position.buffer_pos;
-	auto error = CSVError::LineSizeError(options, LinesPerBoundary(), line, position, options.file_path);
+	auto line = LineText(begin, end);
+	auto error = CSVError::LineSizeError(options, LinesPerBoundary(), line, begin, options.file_path);
 	error_handler->Error(error);
 	result.error = true;
 	return true;
 }
 
-bool CsvColumnCounter::AddRow(idx_t position) {
-	const Position current {cur_buffer_idx, position + 1, current_buffer_size};
-	if (position != NumericLimits<idx_t>::Maximum()) {
-		LineTooLong(current);
+void CsvColumnCounter::AddRow(const RowCount &row) {
+	if (row.end != DConstants::INVALID_INDEX) {
+		LineTooLong(row.begin, row.end);
 	}
-	const idx_t column_count = current_column_count + 1;
 	auto &count = result.column_counts[result.result_position];
-	count.number_of_columns = column_count;
-	count.empty_lines = empty_lines;
-	result.rows_per_column_count[column_count]++;
-	current_column_count = 0;
-	last_position = current;
-	const bool empty_last_value = (states[0] == CSVState::DELIMITER &&
-	                               (states[1] == CSVState::RECORD_SEPARATOR || states[1] == CSVState::CARRIAGE_RETURN ||
-	                                states[1] == CSVState::DELIMITER)) ||
-	                              (states[0] == CSVState::STANDARD && states[1] == CSVState::DELIMITER);
-	if (!empty_last_value) {
-		idx_t index = result.result_position;
-		for (idx_t i = 0; i < result.result_position + 1; i++) {
+	count.number_of_columns = row.columns;
+	count.empty_lines = row.empty_lines;
+	count.is_comment = (row.flags & ROW_COUNT_COMMENT) != 0;
+	count.is_mid_comment = (row.flags & ROW_COUNT_MID_COMMENT) != 0;
+	count.last_value_always_empty = true;
+	result.rows_per_column_count[row.columns]++;
+	if (!(row.flags & ROW_COUNT_EMPTY_LAST)) {
+		for (idx_t index = result.result_position + 1; index-- > 0;) {
 			if (!result.column_counts[index].last_value_always_empty) {
 				break;
 			}
-			result.column_counts[index--].last_value_always_empty = false;
+			result.column_counts[index].last_value_always_empty = false;
 		}
 	}
 	result.result_position++;
-	return result.result_position >= result.result_size;
 }
 
-void CsvColumnCounter::SetComment() {
-	if (states[0] != CSVState::STANDARD && states[0] != CSVState::DELIMITER) {
-		cur_line_starts_as_comment = true;
+bool CsvColumnCounter::NextBuffer() {
+	auto next = buffer_manager->GetBuffer(buffer_idx + 1);
+	if (!next) {
+		return false;
 	}
-	comment = true;
-}
-
-bool CsvColumnCounter::UnsetComment(idx_t position) {
-	const bool full = AddRow(position);
-	auto &count = result.column_counts[result.result_position - 1];
-	if (cur_line_starts_as_comment) {
-		count.is_comment = true;
-	} else {
-		count.is_mid_comment = true;
+	buffer_start += cur_buffer_handle->actual_size;
+	buffer_idx++;
+	cur_buffer_handle = std::move(next);
+	buffer_handles[buffer_start] = cur_buffer_handle;
+	if (buffer_handles.size() > 2) {
+		buffer_handles.erase(buffer_handles.begin());
 	}
-	comment = false;
-	cur_line_starts_as_comment = false;
-	return full;
-}
-
-void CsvColumnCounter::Process() {
-	auto &dialect = state_machine->dialect_options.state_machine_options;
-	auto &machine = state_machine->state_machine_options;
-	const bool has_escape = dialect.escape.GetValue() != '\0';
-	const char quote = dialect.quote.GetValue();
-	const bool strict = dialect.strict_mode.GetValue();
-	const bool only_rn_newlines = machine.strict_mode.GetValue() && machine.strict_mode.IsSetByUser() &&
-	                              machine.new_line.GetValue() == NewLineIdentifier::CARRY_ON &&
-	                              machine.new_line.IsSetByUser();
-	const auto &table = state_machine->transition_array;
-	const idx_t to_pos = cur_buffer_handle->actual_size;
-	skipper.SetBuffer(*cur_buffer_handle);
-	auto skip = [&](const bool(&skippable)[StateMachine::NUM_TRANSITIONS]) {
-		skipper.SkipToStop(skippable, to_pos, buffer_pos);
-	};
-	while (buffer_pos < to_pos) {
-		const char byte = buffer_ptr[buffer_pos];
-		states[0] = states[1];
-		states[1] = table.state_machine[static_cast<uint8_t>(byte)][static_cast<uint8_t>(states[1])];
-		switch (states[1]) {
-		case CSVState::INVALID:
-			result.result_position = 0;
-			result.error = true;
-			buffer_pos++;
-			return;
-		case CSVState::RECORD_SEPARATOR:
-		case CSVState::CARRIAGE_RETURN:
-			if (states[0] == CSVState::RECORD_SEPARATOR || states[0] == CSVState::NOT_SET) {
-				empty_lines++;
-			} else if (states[0] != CSVState::CARRIAGE_RETURN) {
-				bool full = false;
-				if (comment) {
-					full = UnsetComment(buffer_pos);
-				} else if (states[1] == CSVState::RECORD_SEPARATOR || !only_rn_newlines) {
-					full = AddRow(buffer_pos);
-				}
-				if (full) {
-					buffer_pos++;
-					return;
-				}
-			}
-			buffer_pos++;
-			break;
-		case CSVState::DELIMITER:
-			current_column_count++;
-			buffer_pos++;
-			break;
-		case CSVState::QUOTED:
-			if ((states[0] == CSVState::UNQUOTED || states[0] == CSVState::MAYBE_QUOTED) && has_escape) {
-				ever_escaped = true;
-			}
-			if ((states[0] == CSVState::ESCAPE || states[0] == CSVState::ESCAPED_RETURN ||
-			     states[0] == CSVState::UNQUOTED_ESCAPE) &&
-			    (byte == quote || !strict)) {
-				ever_escaped = true;
-				used_unstrictness = used_unstrictness || states[0] == CSVState::UNQUOTED_ESCAPE;
-			}
-			ever_quoted = true;
-			buffer_pos++;
-			skip(table.skip_quoted);
-			break;
-		case CSVState::UNQUOTED:
-			ever_escaped = ever_escaped || states[0] == CSVState::MAYBE_QUOTED;
-			buffer_pos++;
-			break;
-		case CSVState::UNQUOTED_ESCAPE:
-			used_unstrictness = true;
-			buffer_pos++;
-			break;
-		case CSVState::STANDARD:
-			buffer_pos++;
-			skip(table.skip_standard);
-			break;
-		case CSVState::COMMENT:
-			SetComment();
-			buffer_pos++;
-			skip(table.skip_comment);
-			break;
-		default:
-			buffer_pos++;
-			break;
-		}
-	}
-}
-
-void CsvColumnCounter::FinalizeChunkProcess() {
-	if (result.result_position == result.result_size || result.error) {
-		return;
-	}
-	while (!FinishedFile() && result.result_position < result.result_size && !result.error) {
-		if (buffer_pos == cur_buffer_handle->actual_size) {
-			cur_buffer_handle = buffer_manager->GetBuffer(++buffer_idx);
-			if (!cur_buffer_handle) {
-				buffer_ptr = nullptr;
-				const bool quoted = states[1] == CSVState::QUOTED || states[1] == CSVState::QUOTED_NEW_LINE;
-				if (quoted && states[0] != CSVState::UNQUOTED) {
-					result.error = true;
-					return;
-				}
-				const bool new_line = states[1] == CSVState::RECORD_SEPARATOR || states[1] == CSVState::CARRIAGE_RETURN;
-				if (new_line || states[1] == CSVState::NOT_SET) {
-					return;
-				}
-				if (comment) {
-					UnsetComment(NumericLimits<idx_t>::Maximum());
-				} else {
-					AddRow(NumericLimits<idx_t>::Maximum());
-				}
-				return;
-			}
-			buffer_handles[buffer_idx] = cur_buffer_handle;
-			cur_buffer_idx = buffer_idx;
-			current_buffer_size = cur_buffer_handle->actual_size;
-			if (LineTooLong({cur_buffer_idx, 0, current_buffer_size})) {
-				return;
-			}
-			if (buffer_handles.size() > 2) {
-				buffer_handles.erase(buffer_handles.begin());
-			}
-			buffer_pos = 0;
-			buffer_ptr = cur_buffer_handle->Ptr();
-		}
-		Process();
-	}
+	return true;
 }
 
 CsvColumnCounts &CsvColumnCounter::ParseChunk() {
 	result.result_position = 0;
-	if (cur_buffer_handle) {
-		current_buffer_size = cur_buffer_handle->actual_size;
-	}
-	if (done) {
+	if (done || FinishedFile()) {
 		return result;
 	}
-	if (!initialized) {
-		states[0] = CSVState::NOT_SET;
-		states[1] = CSVState::NOT_SET;
-		initialized = true;
+	rows.clear();
+	while (rows.size() < result.result_size && !cursor.invalid) {
+		const idx_t buffer_end = buffer_start + cur_buffer_handle->actual_size;
+		const idx_t first = rows.size();
+		if (cursor.pos >= buffer_end) {
+			if (result.error) {
+				break;
+			}
+			if (!NextBuffer()) {
+				lexer.FinishCount(cursor, rows);
+				finished = true;
+				for (idx_t i = first; i < rows.size(); i++) {
+					AddRow(rows[i]);
+				}
+				result.error = result.error || cursor.unterminated;
+				break;
+			}
+			if (LineTooLong(cursor.line_start, buffer_start)) {
+				break;
+			}
+			continue;
+		}
+		lexer.CountRows(cursor, cur_buffer_handle->Ptr(), buffer_start, buffer_end, result.result_size - rows.size(),
+		                rows);
+		for (idx_t i = first; i < rows.size(); i++) {
+			AddRow(rows[i]);
+		}
 	}
-	if (cur_buffer_handle) {
-		Process();
+	if (cursor.invalid) {
+		result.result_position = 0;
+		result.error = true;
 	}
-	FinalizeChunkProcess();
+	ever_quoted = cursor.ever_quoted;
+	ever_escaped = cursor.ever_escaped;
+	used_unstrictness = cursor.used_unstrictness;
 	return result;
 }
 

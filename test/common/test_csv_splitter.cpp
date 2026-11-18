@@ -926,6 +926,158 @@ string RunLean(const CsvGrammar &grammar, const FuzzDialect &dialect, const stri
 	return mismatch;
 }
 
+struct ReferenceCounts {
+	vector<RowCount> rows;
+	bool ever_quoted = false;
+	bool ever_escaped = false;
+	bool used_unstrictness = false;
+	bool invalid = false;
+	bool unterminated = false;
+};
+
+ReferenceCounts CountReference(const CsvGrammar &grammar, const string &input) {
+	ReferenceCounts result;
+	const auto &table = *grammar.transitions;
+	CSVState states[2] = {CSVState::NOT_SET, CSVState::NOT_SET};
+	idx_t delimiters = 0;
+	idx_t empty_lines = 0;
+	idx_t line_start = 0;
+	bool comment = false;
+	bool starts_as_comment = false;
+	auto add_row = [&](idx_t position, uint8_t flags) {
+		if ((states[0] == CSVState::DELIMITER &&
+		     (states[1] == CSVState::RECORD_SEPARATOR || states[1] == CSVState::CARRIAGE_RETURN ||
+		      states[1] == CSVState::DELIMITER)) ||
+		    (states[0] == CSVState::STANDARD && states[1] == CSVState::DELIMITER)) {
+			flags |= ROW_COUNT_EMPTY_LAST;
+		}
+		const idx_t end = position == DConstants::INVALID_INDEX ? position : position + 1;
+		result.rows.push_back({delimiters + 1, empty_lines, line_start, end, flags});
+		delimiters = 0;
+		line_start = end;
+	};
+	for (idx_t pos = 0; pos < input.size(); pos++) {
+		const char byte = input[pos];
+		states[0] = states[1];
+		states[1] = table.state_machine[static_cast<uint8_t>(byte)][static_cast<uint8_t>(states[1])];
+		switch (states[1]) {
+		case CSVState::INVALID:
+			result.invalid = true;
+			return result;
+		case CSVState::RECORD_SEPARATOR:
+		case CSVState::CARRIAGE_RETURN:
+			if (states[0] == CSVState::RECORD_SEPARATOR || states[0] == CSVState::NOT_SET) {
+				empty_lines++;
+				line_start = pos + 1;
+			} else if (states[0] != CSVState::CARRIAGE_RETURN) {
+				if (comment) {
+					add_row(pos, starts_as_comment ? ROW_COUNT_COMMENT : ROW_COUNT_MID_COMMENT);
+					comment = false;
+					starts_as_comment = false;
+				} else if (states[1] == CSVState::RECORD_SEPARATOR || !grammar.only_crlf) {
+					add_row(pos, 0);
+				}
+			}
+			break;
+		case CSVState::DELIMITER:
+			delimiters++;
+			break;
+		case CSVState::QUOTED:
+			if ((states[0] == CSVState::UNQUOTED || states[0] == CSVState::MAYBE_QUOTED) && grammar.escape != '\0') {
+				result.ever_escaped = true;
+			}
+			if ((states[0] == CSVState::ESCAPE || states[0] == CSVState::ESCAPED_RETURN ||
+			     states[0] == CSVState::UNQUOTED_ESCAPE) &&
+			    (byte == grammar.quote || !grammar.strict_mode)) {
+				result.ever_escaped = true;
+				result.used_unstrictness = result.used_unstrictness || states[0] == CSVState::UNQUOTED_ESCAPE;
+			}
+			result.ever_quoted = true;
+			break;
+		case CSVState::UNQUOTED:
+			result.ever_escaped = result.ever_escaped || states[0] == CSVState::MAYBE_QUOTED;
+			break;
+		case CSVState::UNQUOTED_ESCAPE:
+			result.used_unstrictness = true;
+			break;
+		case CSVState::COMMENT:
+			if (states[0] != CSVState::COMMENT) {
+				starts_as_comment = states[0] != CSVState::STANDARD && states[0] != CSVState::DELIMITER;
+				comment = true;
+			}
+			break;
+		default:
+			break;
+		}
+	}
+	if ((states[1] == CSVState::QUOTED || states[1] == CSVState::QUOTED_NEW_LINE) && states[0] != CSVState::UNQUOTED) {
+		result.unterminated = true;
+		return result;
+	}
+	if (states[1] == CSVState::RECORD_SEPARATOR || states[1] == CSVState::CARRIAGE_RETURN ||
+	    states[1] == CSVState::NOT_SET) {
+		return result;
+	}
+	add_row(DConstants::INVALID_INDEX, comment ? (starts_as_comment ? ROW_COUNT_COMMENT : ROW_COUNT_MID_COMMENT) : 0);
+	return result;
+}
+
+string DescribeCount(const RowCount &row) {
+	return "[" + to_string(row.columns) + "," + to_string(row.empty_lines) + "," + to_string(row.begin) + "," +
+	       to_string(int64_t(row.end)) + "," + to_string(row.flags) + "]";
+}
+
+struct CountCoverage {
+	idx_t rows = 0;
+	idx_t quoted = 0;
+	idx_t comments = 0;
+	idx_t invalid = 0;
+	idx_t unterminated = 0;
+};
+
+string CountMismatch(const CsvGrammar &grammar, const string &input, std::mt19937_64 &rng, CountCoverage &coverage) {
+	const auto expected = CountReference(grammar, input);
+	coverage.rows += expected.rows.size();
+	coverage.quoted += expected.ever_quoted;
+	coverage.invalid += expected.invalid;
+	coverage.unterminated += expected.unterminated;
+	for (auto &row : expected.rows) {
+		coverage.comments += (row.flags & (ROW_COUNT_COMMENT | ROW_COUNT_MID_COMMENT)) != 0;
+	}
+	RowLexer lexer(RowDialect::DuckDB(grammar), 1, idx_t(1) << 20, false);
+	RowCountCursor cursor;
+	vector<RowCount> rows;
+	while (cursor.pos < input.size() && !cursor.invalid) {
+		const idx_t end = MinValue<idx_t>(input.size(), cursor.pos + 1 + rng() % 150);
+		while (cursor.pos < end && !cursor.invalid) {
+			lexer.CountRows(cursor, input.data(), 0, end, 1 + rng() % 4, rows);
+		}
+	}
+	lexer.FinishCount(cursor, rows);
+	string mismatch;
+	if (cursor.invalid != expected.invalid || cursor.unterminated != expected.unterminated ||
+	    cursor.ever_quoted != expected.ever_quoted || cursor.ever_escaped != expected.ever_escaped ||
+	    cursor.used_unstrictness != expected.used_unstrictness) {
+		mismatch += "flags invalid " + to_string(cursor.invalid) + "/" + to_string(expected.invalid) +
+		            " unterminated " + to_string(cursor.unterminated) + "/" + to_string(expected.unterminated) +
+		            " quoted " + to_string(cursor.ever_quoted) + "/" + to_string(expected.ever_quoted) + " escaped " +
+		            to_string(cursor.ever_escaped) + "/" + to_string(expected.ever_escaped) + " unstrict " +
+		            to_string(cursor.used_unstrictness) + "/" + to_string(expected.used_unstrictness) + "\n";
+	}
+	string actual_rows;
+	string expected_rows;
+	for (auto &row : rows) {
+		actual_rows += DescribeCount(row);
+	}
+	for (auto &row : expected.rows) {
+		expected_rows += DescribeCount(row);
+	}
+	if (actual_rows != expected_rows) {
+		mismatch += "rows\n  lexer " + actual_rows + "\n  table " + expected_rows + "\n";
+	}
+	return mismatch;
+}
+
 string DescribeTransfer(const CsvRangeTransfer &transfer) {
 	string result;
 	for (idx_t state = 0; state < StateMachine::NUM_STATES; state++) {
@@ -949,6 +1101,7 @@ TEST_CASE("CSV splitter, transfer and skip match the byte state machine", "[csv]
 	idx_t comment_accepted = 0;
 	idx_t wide_accepted = 0;
 	idx_t padded_accepted = 0;
+	CountCoverage coverage;
 	for (idx_t iteration = 0; iteration < count; iteration++) {
 		const auto dialect = RandomDialect(rng);
 		CSVStateMachineOptions machine_options(dialect.delimiter, dialect.quote, dialect.escape, dialect.comment,
@@ -998,6 +1151,10 @@ TEST_CASE("CSV splitter, transfer and skip match the byte state machine", "[csv]
 			FAIL("lean mismatch: " + Describe(dialect, input) + " pieces=" + to_string(piece_blocks) +
 			     " max_line_size=" + to_string(max_line_size) + " pad_rows=" + to_string(pad_rows) + "\n" +
 			     lean_mismatch);
+		}
+		const auto count_mismatch = CountMismatch(grammar, input, rng, coverage);
+		if (!count_mismatch.empty()) {
+			FAIL("count mismatch: " + Describe(dialect, input) + "\n" + count_mismatch);
 		}
 		if (dialect.quote && !grammar.carry_on_newline && !input.empty()) {
 			RowLexer quoted_lexer(RowDialect::DuckDB(grammar), dialect.columns, max_line_size, true);
@@ -1064,6 +1221,11 @@ TEST_CASE("CSV splitter, transfer and skip match the byte state machine", "[csv]
 	REQUIRE(comment_accepted > count / 50);
 	REQUIRE(wide_accepted > count / 50);
 	REQUIRE(padded_accepted > count / 100);
+	REQUIRE(coverage.rows > count);
+	REQUIRE(coverage.quoted > count / 10);
+	REQUIRE(coverage.comments > count / 10);
+	REQUIRE(coverage.invalid > count / 10);
+	REQUIRE(coverage.unterminated > count / 100);
 }
 
 namespace {
