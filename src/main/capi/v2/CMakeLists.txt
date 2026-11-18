@@ -38,6 +38,9 @@ add_library_unity(
   capi_v2_utf8.cpp
   capi_v2_value.cpp
   capi_v2_vector.cpp)
+if(TARGET nanoarrow::nanoarrow)
+  target_link_libraries(duckdb_main_capi_v2 PRIVATE nanoarrow::nanoarrow)
+endif()
 
 set(ALL_OBJECT_FILES
     ${ALL_OBJECT_FILES} $<TARGET_OBJECTS:duckdb_main_capi_v2>

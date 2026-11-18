@@ -4,7 +4,7 @@
 #include "catch.hpp"
 
 #include "arrow/arrow_test_helper.hpp"
-#include "duckdb/common/adbc/single_batch_array_stream.hpp"
+#include "nanoarrow/nanoarrow.h"
 
 #include <string>
 #include <vector>
@@ -173,10 +173,10 @@ bool ScanMatches(ArrowSchema &col_schema, ArrowArray &col_array, const string &q
 	record_array.release = ReleaseArray;
 
 	ArrowArrayStream stream {};
-	AdbcError err {};
-	if (duckdb_adbc::BatchToArrayStream(&record_array, &record_schema, &stream, &err) != ADBC_STATUS_OK) {
+	if (ArrowBasicArrayStreamInit(&stream, &record_schema, 1) != NANOARROW_OK) {
 		return false;
 	}
+	ArrowBasicArrayStreamSetArray(&stream, 0, &record_array);
 	DuckDB db(nullptr);
 	Connection con(db);
 	return ArrowTestHelper::RunArrowComparison(con, query, stream);
