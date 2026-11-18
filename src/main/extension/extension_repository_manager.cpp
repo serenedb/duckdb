@@ -2,6 +2,7 @@
 
 #include "duckdb/common/exception/catalog_exception.hpp"
 #include "duckdb/common/file_system.hpp"
+#include "duckdb/common/json_document.hpp"
 #include "duckdb/common/types/blob.hpp"
 #include "duckdb/common/serializer/buffered_file_writer.hpp"
 #include "duckdb/common/string_util.hpp"
@@ -10,9 +11,6 @@
 #include "duckdb/main/extension_helper.hpp"
 #include "duckdb/main/settings.hpp"
 #include "mbedtls_wrapper.hpp"
-#include "yyjson.hpp"
-
-using namespace duckdb_yyjson; // NOLINT
 
 namespace duckdb {
 
@@ -22,16 +20,6 @@ static constexpr const char *PEM_FOOTER = "-----END PUBLIC KEY-----";
 static constexpr const idx_t PEM_LINE_LENGTH = 64;
 //! Sanity limit on the size of the metadata file that is fetched from a repository
 static constexpr const idx_t MAX_METADATA_FILE_SIZE = 65536;
-
-//! Wrapper that ensures the yyjson document is freed when an exception is thrown
-struct RepositoryJSONDocument {
-	explicit RepositoryJSONDocument(yyjson_doc *doc_p) : doc(doc_p) {
-	}
-	~RepositoryJSONDocument() {
-		yyjson_doc_free(doc);
-	}
-	yyjson_doc *doc;
-};
 
 //===--------------------------------------------------------------------===//
 // Public keys
@@ -161,33 +149,32 @@ vector<string> ExtensionRepositoryManager::FetchPublicKeys(DatabaseInstance &db,
 		                  metadata_path, error.RawMessage());
 	}
 
-	RepositoryJSONDocument document(yyjson_read(contents.c_str(), contents.size(), 0));
-	if (!document.doc) {
+	JSONTreeParser parser;
+	JSONParseError error;
+	auto root = parser.Parse(contents.data(), contents.size(), error);
+	if (!root) {
 		throw IOException("Failed to read extension repository metadata file '%s': the file is not valid json",
 		                  metadata_path);
 	}
-	auto root = yyjson_doc_get_root(document.doc);
-	if (!root || !yyjson_is_obj(root)) {
+	if (root->type != JSONValueType::OBJECT) {
 		throw IOException("Failed to read extension repository metadata file '%s': expected a json object",
 		                  metadata_path);
 	}
-	auto keys = yyjson_obj_get(root, "signature_keys");
-	if (!keys || !yyjson_is_arr(keys)) {
+	auto keys = root->Get("signature_keys");
+	if (!keys || keys->type != JSONValueType::ARRAY) {
 		throw IOException(
 		    "Failed to read extension repository metadata file '%s': missing or invalid field 'signature_keys'",
 		    metadata_path);
 	}
 
 	vector<string> result;
-	size_t idx, max;
-	yyjson_val *key;
-	yyjson_arr_foreach(keys, idx, max, key) {
-		if (!yyjson_is_str(key)) {
+	for (auto &key : keys->Elements()) {
+		if (key.type != JSONValueType::STRING) {
 			throw IOException(
 			    "Failed to read extension repository metadata file '%s': 'signature_keys' must be a list of strings",
 			    metadata_path);
 		}
-		result.push_back(ToCompactPublicKey(string(yyjson_get_str(key), yyjson_get_len(key))));
+		result.push_back(ToCompactPublicKey(string(key.GetString())));
 	}
 	if (result.empty()) {
 		throw IOException(
@@ -284,41 +271,28 @@ string ExtensionRepositoryManager::GetRepositoryPath(DatabaseInstance &db, FileS
 	return fs.JoinPath(GetRepositoryDirectory(db, fs), name + FILE_EXTENSION);
 }
 
-//! Wrapper that ensures the mutable yyjson document is freed when an exception is thrown
-struct RepositoryMutableJSONDocument {
-	RepositoryMutableJSONDocument() : doc(yyjson_mut_doc_new(nullptr)) {
-	}
-	~RepositoryMutableJSONDocument() {
-		yyjson_mut_doc_free(doc);
-	}
-	yyjson_mut_doc *doc;
-};
-
-static string ReadJSONString(yyjson_val *root, const char *field, const string &path) {
-	auto val = yyjson_obj_get(root, field);
-	if (!val || !yyjson_is_str(val)) {
+static string ReadJSONString(const JSONNode &root, const char *field, const string &path) {
+	auto val = root.Get(field);
+	if (!val || val->type != JSONValueType::STRING) {
 		throw IOException("Failed to read extension repository file '%s': missing or invalid field '%s'", path, field);
 	}
-	return string(yyjson_get_str(val), yyjson_get_len(val));
+	return string(val->GetString());
 }
 
 //! Read the trusted public keys of a repository. Keys are stored in the "public_keys" array
-static vector<string> ReadJSONKeys(yyjson_val *root, const string &path) {
+static vector<string> ReadJSONKeys(const JSONNode &root, const string &path) {
 	vector<string> result;
-	auto keys = yyjson_obj_get(root, "public_keys");
-	if (!keys || !yyjson_is_arr(keys)) {
+	auto keys = root.Get("public_keys");
+	if (!keys || keys->type != JSONValueType::ARRAY) {
 		throw IOException("Failed to read extension repository file '%s': missing or invalid field 'public_keys'",
 		                  path);
 	}
-	size_t idx, max;
-	yyjson_val *key;
-	yyjson_arr_foreach(keys, idx, max, key) {
-		if (!yyjson_is_str(key)) {
+	for (auto &key : keys->Elements()) {
+		if (key.type != JSONValueType::STRING) {
 			throw IOException("Failed to read extension repository file '%s': 'public_keys' must be a list of strings",
 			                  path);
 		}
-		result.push_back(
-		    ExtensionRepositoryManager::ToCompactPublicKey(string(yyjson_get_str(key), yyjson_get_len(key))));
+		result.push_back(ExtensionRepositoryManager::ToCompactPublicKey(string(key.GetString())));
 	}
 	if (result.empty()) {
 		throw IOException("Failed to read extension repository file '%s': 'public_keys' cannot be empty", path);
@@ -333,19 +307,20 @@ ExtensionRepository ExtensionRepositoryManager::ReadRepository(FileSystem &fs, c
 	handle->Read(buffer.get(), file_size, 0);
 	string contents(buffer.get(), file_size);
 
-	RepositoryJSONDocument document(yyjson_read(contents.c_str(), contents.size(), 0));
-	if (!document.doc) {
+	JSONTreeParser parser;
+	JSONParseError error;
+	auto root = parser.Parse(contents.data(), contents.size(), error);
+	if (!root) {
 		throw IOException("Failed to read extension repository file '%s': the file is not valid json", path);
 	}
-	auto root = yyjson_doc_get_root(document.doc);
-	if (!root || !yyjson_is_obj(root)) {
+	if (root->type != JSONValueType::OBJECT) {
 		throw IOException("Failed to read extension repository file '%s': expected a json object", path);
 	}
 
 	ExtensionRepository result;
-	result.name = ReadJSONString(root, "name", path);
-	result.path = ReadJSONString(root, "url", path);
-	result.public_keys = ReadJSONKeys(root, path);
+	result.name = ReadJSONString(*root, "name", path);
+	result.path = ReadJSONString(*root, "url", path);
+	result.public_keys = ReadJSONKeys(*root, path);
 	result.type = ExtensionRepositoryType::USER_PROVIDED;
 
 	auto expected_name = fs.ExtractBaseName(path);
@@ -404,25 +379,22 @@ ExtensionRepository ExtensionRepositoryManager::CreateRepository(DatabaseInstanc
 		fs.CreateDirectoriesRecursive(directory);
 	}
 
-	RepositoryMutableJSONDocument document;
-	auto root = yyjson_mut_obj(document.doc);
-	yyjson_mut_doc_set_root(document.doc, root);
-	yyjson_mut_obj_add_uint(document.doc, root, "version", FORMAT_VERSION);
-	yyjson_mut_obj_add_strcpy(document.doc, root, "name", name.c_str());
-	yyjson_mut_obj_add_strcpy(document.doc, root, "url", repository.path.c_str());
-	auto keys_array = yyjson_mut_arr(document.doc);
-	yyjson_mut_obj_add_val(document.doc, root, "public_keys", keys_array);
+	JSONStringWriter writer(JSONWriteFlags::PRETTY);
+	writer.StartObject();
+	writer.Key("version");
+	writer.UnsignedInteger(FORMAT_VERSION);
+	writer.Key("name");
+	writer.String(name);
+	writer.Key("url");
+	writer.String(repository.path);
+	writer.Key("public_keys");
+	writer.StartArray();
 	for (auto &public_key : public_keys) {
-		yyjson_mut_arr_add_strcpy(document.doc, keys_array, public_key.c_str());
+		writer.String(public_key);
 	}
-
-	size_t json_size;
-	auto json = yyjson_mut_write(document.doc, YYJSON_WRITE_PRETTY, &json_size);
-	if (!json) {
-		throw InternalException("Failed to serialize extension repository '%s'", name);
-	}
-	string contents(json, json_size);
-	free(json);
+	writer.EndArray();
+	writer.EndObject();
+	auto contents = writer.View();
 
 	// write to a temporary file first, then move it in place
 	auto temp_path = file_path + ".tmp-" + UUID::ToString(UUID::GenerateRandomUUID());
@@ -431,7 +403,7 @@ ExtensionRepository ExtensionRepositoryManager::CreateRepository(DatabaseInstanc
 		auto file_writer = BufferedFileWriter(fs, temp_path,
 		                                      FileFlags::FILE_FLAGS_WRITE | FileFlags::FILE_FLAGS_FILE_CREATE_NEW |
 		                                          FileFlags::FILE_FLAGS_ENABLE_EXTENSION_INSTALL);
-		file_writer.WriteData(const_data_ptr_cast(contents.c_str()), contents.size());
+		file_writer.WriteData(const_data_ptr_cast(contents.data()), contents.size());
 		file_writer.Close();
 	}
 	fs.TryRemoveFile(file_path);

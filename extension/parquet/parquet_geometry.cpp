@@ -1,8 +1,6 @@
 
 #include "parquet_geometry.hpp"
 
-#include <stdlib.h>
-#include <string.h>
 #include <unordered_set>
 #include <utility>
 #include <vector>
@@ -13,7 +11,7 @@
 #include "duckdb/planner/expression/bound_function_expression.hpp"
 #include "duckdb/planner/expression/bound_reference_expression.hpp"
 #include "reader/expression_column_reader.hpp"
-#include "yyjson.hpp"
+#include "duckdb/common/json_document.hpp"
 #include "duckdb/common/types/geometry_crs.hpp"
 #include "duckdb/planner/expression/bound_cast_expression.hpp"
 #include "reader/string_column_reader.hpp"
@@ -32,8 +30,6 @@
 
 namespace duckdb {
 
-using namespace duckdb_yyjson; // NOLINT
-
 //------------------------------------------------------------------------------
 // GeoParquetFileMetadata
 //------------------------------------------------------------------------------
@@ -46,124 +42,111 @@ unique_ptr<GeoParquetFileMetadata> GeoParquetFileMetadata::TryRead(const duckdb_
 
 	for (auto &kv : file_meta_data.key_value_metadata) {
 		if (kv.key == "geo") {
-			const auto geo_metadata = yyjson_read(kv.value.c_str(), kv.value.size(), 0);
-			if (!geo_metadata) {
+			JSONTreeParser parser;
+			JSONParseError error;
+			const auto root = parser.Parse(kv.value.c_str(), kv.value.size(), error);
+			if (!root) {
 				// Could not parse the JSON
 				return nullptr;
 			}
 
-			try {
-				// Check the root object
-				const auto root = yyjson_doc_get_root(geo_metadata);
-				if (!yyjson_is_obj(root)) {
-					throw InvalidInputException("Geoparquet metadata is not an object");
-				}
-
-				// We dont actually care about the version for now, as we only support V1+native
-				auto result = make_uniq<GeoParquetFileMetadata>(GeoParquetVersion::BOTH);
-
-				// Check and parse the version
-				const auto version_val = yyjson_obj_get(root, "version");
-				if (!yyjson_is_str(version_val)) {
-					throw InvalidInputException("Geoparquet metadata does not have a version");
-				}
-
-				auto version = yyjson_get_str(version_val);
-				if (StringUtil::StartsWith(version, "3")) {
-					// Guard against a breaking future 3.0 version
-					throw InvalidInputException("Geoparquet version %s is not supported", version);
-				}
-
-				// Check and parse the geometry columns
-				const auto columns_val = yyjson_obj_get(root, "columns");
-				if (!yyjson_is_obj(columns_val)) {
-					throw InvalidInputException("Geoparquet metadata does not have a columns object");
-				}
-
-				// Iterate over all geometry columns
-				yyjson_obj_iter iter = yyjson_obj_iter_with(columns_val);
-				yyjson_val *column_key;
-
-				while ((column_key = yyjson_obj_iter_next(&iter))) {
-					const auto column_val = yyjson_obj_iter_get_val(column_key);
-					const auto column_name = yyjson_get_str(column_key);
-
-					auto &column = result->geometry_columns[column_name];
-
-					if (!yyjson_is_obj(column_val)) {
-						throw InvalidInputException("Geoparquet column '%s' is not an object", column_name);
-					}
-
-					// Parse the encoding
-					const auto encoding_val = yyjson_obj_get(column_val, "encoding");
-					if (!yyjson_is_str(encoding_val)) {
-						throw InvalidInputException("Geoparquet column '%s' does not have an encoding", column_name);
-					}
-					const auto encoding_str = yyjson_get_str(encoding_val);
-					if (strcmp(encoding_str, "WKB") == 0) {
-						column.geometry_encoding = GeoParquetColumnEncoding::WKB;
-					} else if (strcmp(encoding_str, "point") == 0) {
-						column.geometry_encoding = GeoParquetColumnEncoding::POINT;
-					} else if (strcmp(encoding_str, "linestring") == 0) {
-						column.geometry_encoding = GeoParquetColumnEncoding::LINESTRING;
-					} else if (strcmp(encoding_str, "polygon") == 0) {
-						column.geometry_encoding = GeoParquetColumnEncoding::POLYGON;
-					} else if (strcmp(encoding_str, "multipoint") == 0) {
-						column.geometry_encoding = GeoParquetColumnEncoding::MULTIPOINT;
-					} else if (strcmp(encoding_str, "multilinestring") == 0) {
-						column.geometry_encoding = GeoParquetColumnEncoding::MULTILINESTRING;
-					} else if (strcmp(encoding_str, "multipolygon") == 0) {
-						column.geometry_encoding = GeoParquetColumnEncoding::MULTIPOLYGON;
-					} else {
-						throw InvalidInputException("Geoparquet column '%s' has an unsupported encoding", column_name);
-					}
-
-					// Parse the geometry types
-					const auto geometry_types_val = yyjson_obj_get(column_val, "geometry_types");
-					if (!yyjson_is_arr(geometry_types_val)) {
-						throw InvalidInputException("Geoparquet column '%s' does not have geometry types", column_name);
-					}
-
-					// Parse the CRS
-					const auto crs_val = yyjson_obj_get(column_val, "crs");
-					if (crs_val && !yyjson_is_null(crs_val)) {
-						// Parse the CRS
-						if (!yyjson_is_obj(crs_val)) {
-							throw InvalidInputException("Geoparquet column '%s' has invalid CRS", column_name);
-						}
-
-						// Move the CRS as a JSON string
-						size_t crs_json_len = 0;
-						const auto crs_json = yyjson_val_write(crs_val, 0, &crs_json_len);
-						column.projjson = string(crs_json, crs_json_len);
-
-						// Free the temporary CRS JSON string
-						free(crs_json);
-					} else if (crs_val && yyjson_is_null(crs_val)) {
-						// If CRS is null, do nothing
-					} else {
-						// Otherwise, if no CRS, default to OGC:CRS84
-						auto crs = CoordinateReferenceSystem::TryConvert(context, "OGC:CRS84",
-						                                                 CoordinateReferenceSystemType::PROJJSON);
-						if (crs) {
-							column.projjson = crs->GetDefinition();
-						}
-					}
-
-					// TODO: Parse the bounding box, other metadata that might be useful.
-					// (Only encoding and geometry types are required to be present)
-				}
-
-				// Return the result
-				// Make sure to free the JSON document
-				yyjson_doc_free(geo_metadata);
-				return result;
-
-			} catch (...) {
-				// Make sure to free the JSON document in case of an exception
-				yyjson_doc_free(geo_metadata);
-				throw;
+			// Check the root object
+			if (root->type != JSONValueType::OBJECT) {
+				throw InvalidInputException("Geoparquet metadata is not an object");
 			}
+
+			// We dont actually care about the version for now, as we only support V1+native
+			auto result = make_uniq<GeoParquetFileMetadata>(GeoParquetVersion::BOTH);
+
+			// Check and parse the version
+			const auto version_val = root->Get("version");
+			if (!version_val || version_val->type != JSONValueType::STRING) {
+				throw InvalidInputException("Geoparquet metadata does not have a version");
+			}
+
+			const auto version = version_val->GetString();
+			if (StringUtil::StartsWith(version, "3")) {
+				// Guard against a breaking future 3.0 version
+				throw InvalidInputException("Geoparquet version %s is not supported", version);
+			}
+
+			// Check and parse the geometry columns
+			const auto columns_val = root->Get("columns");
+			if (!columns_val || columns_val->type != JSONValueType::OBJECT) {
+				throw InvalidInputException("Geoparquet metadata does not have a columns object");
+			}
+
+			// Iterate over all geometry columns
+			JSONStringWriter crs_writer;
+			for (auto &column_key : columns_val->Keys()) {
+				const auto &column_val = *(&column_key + 1);
+				const auto column_name = string(column_key.GetString());
+
+				auto &column = result->geometry_columns[column_name];
+
+				if (column_val.type != JSONValueType::OBJECT) {
+					throw InvalidInputException("Geoparquet column '%s' is not an object", column_name);
+				}
+
+				// Parse the encoding
+				const auto encoding_val = column_val.Get("encoding");
+				if (!encoding_val || encoding_val->type != JSONValueType::STRING) {
+					throw InvalidInputException("Geoparquet column '%s' does not have an encoding", column_name);
+				}
+				const auto encoding_str = encoding_val->GetString();
+				if (encoding_str == "WKB") {
+					column.geometry_encoding = GeoParquetColumnEncoding::WKB;
+				} else if (encoding_str == "point") {
+					column.geometry_encoding = GeoParquetColumnEncoding::POINT;
+				} else if (encoding_str == "linestring") {
+					column.geometry_encoding = GeoParquetColumnEncoding::LINESTRING;
+				} else if (encoding_str == "polygon") {
+					column.geometry_encoding = GeoParquetColumnEncoding::POLYGON;
+				} else if (encoding_str == "multipoint") {
+					column.geometry_encoding = GeoParquetColumnEncoding::MULTIPOINT;
+				} else if (encoding_str == "multilinestring") {
+					column.geometry_encoding = GeoParquetColumnEncoding::MULTILINESTRING;
+				} else if (encoding_str == "multipolygon") {
+					column.geometry_encoding = GeoParquetColumnEncoding::MULTIPOLYGON;
+				} else {
+					throw InvalidInputException("Geoparquet column '%s' has an unsupported encoding", column_name);
+				}
+
+				// Parse the geometry types
+				const auto geometry_types_val = column_val.Get("geometry_types");
+				if (!geometry_types_val || geometry_types_val->type != JSONValueType::ARRAY) {
+					throw InvalidInputException("Geoparquet column '%s' does not have geometry types", column_name);
+				}
+
+				// Parse the CRS
+				const auto crs_val = column_val.Get("crs");
+				if (crs_val && crs_val->type != JSONValueType::JSON_NULL) {
+					// Parse the CRS
+					if (crs_val->type != JSONValueType::OBJECT) {
+						throw InvalidInputException("Geoparquet column '%s' has invalid CRS", column_name);
+					}
+
+					// Move the CRS as a JSON string
+					crs_writer.Clear();
+					crs_writer.Value(*crs_val);
+					column.projjson = crs_writer.ToString();
+				} else if (crs_val && crs_val->type == JSONValueType::JSON_NULL) {
+					// If CRS is null, do nothing
+				} else {
+					// Otherwise, if no CRS, default to OGC:CRS84
+					auto crs = CoordinateReferenceSystem::TryConvert(context, "OGC:CRS84",
+					                                                 CoordinateReferenceSystemType::PROJJSON);
+					if (crs) {
+						column.projjson = crs->GetDefinition();
+					}
+				}
+
+				// TODO: Parse the bounding box, other metadata that might be useful.
+				// (Only encoding and geometry types are required to be present)
+			}
+
+			// Return the result
+			return result;
 		}
 	}
 	return nullptr;
@@ -254,71 +237,78 @@ void GeoParquetFileMetadata::Write(duckdb_parquet::FileMetaData &file_meta_data)
 		}
 	}
 
-	yyjson_mut_doc *doc = yyjson_mut_doc_new(nullptr);
-	yyjson_mut_val *root = yyjson_mut_obj(doc);
-	yyjson_mut_doc_set_root(doc, root);
+	JSONStringWriter writer;
+	writer.StartObject();
 
 	// Add the version
 	switch (version) {
 	case GeoParquetVersion::V1:
 	case GeoParquetVersion::BOTH:
-		yyjson_mut_obj_add_strcpy(doc, root, "version", "1.0.0");
+		writer.Key("version");
+		writer.String("1.0.0");
 		break;
 	case GeoParquetVersion::V2:
-		yyjson_mut_obj_add_strcpy(doc, root, "version", "2.0.0");
+		writer.Key("version");
+		writer.String("2.0.0");
 		break;
 	case GeoParquetVersion::NONE:
 	default:
 		// Should never happen, we should not be writing anything
-		yyjson_mut_doc_free(doc);
 		throw InternalException("GeoParquetVersion::NONE should not write metadata");
 	}
 
 	// Add the primary column
-	yyjson_mut_obj_add_strncpy(doc, root, "primary_column", primary_geometry_column.c_str(),
-	                           primary_geometry_column.size());
+	writer.Key("primary_column");
+	writer.String(primary_geometry_column);
 
 	// Add the columns
-	const auto json_columns = yyjson_mut_obj_add_obj(doc, root, "columns");
+	writer.Key("columns");
+	writer.StartObject();
 
+	JSONTreeParser crs_parser;
+	JSONParseError crs_error;
 	for (auto &column : geometry_columns) {
-		const auto column_json = yyjson_mut_obj_add_obj(doc, json_columns, column.first.c_str());
-		yyjson_mut_obj_add_str(doc, column_json, "encoding", "WKB");
-		const auto geometry_types = yyjson_mut_obj_add_arr(doc, column_json, "geometry_types");
+		writer.Key(column.first);
+		writer.StartObject();
+		writer.Key("encoding");
+		writer.String("WKB");
+		writer.Key("geometry_types");
+		writer.StartArray();
 
 		for (auto &type_name : column.second.stats.types.ToString(false)) {
-			yyjson_mut_arr_add_strcpy(doc, geometry_types, type_name.c_str());
+			writer.String(type_name);
 		}
+		writer.EndArray();
 
 		const auto &bbox = column.second.stats.extent;
 
 		if (bbox.HasXY()) {
-			const auto bbox_arr = yyjson_mut_obj_add_arr(doc, column_json, "bbox");
+			writer.Key("bbox");
+			writer.StartArray();
 
 			if (!column.second.stats.extent.HasZ()) {
-				yyjson_mut_arr_add_real(doc, bbox_arr, bbox.x_min);
-				yyjson_mut_arr_add_real(doc, bbox_arr, bbox.y_min);
-				yyjson_mut_arr_add_real(doc, bbox_arr, bbox.x_max);
-				yyjson_mut_arr_add_real(doc, bbox_arr, bbox.y_max);
+				writer.Double(bbox.x_min);
+				writer.Double(bbox.y_min);
+				writer.Double(bbox.x_max);
+				writer.Double(bbox.y_max);
 			} else {
-				yyjson_mut_arr_add_real(doc, bbox_arr, bbox.x_min);
-				yyjson_mut_arr_add_real(doc, bbox_arr, bbox.y_min);
-				yyjson_mut_arr_add_real(doc, bbox_arr, bbox.z_min);
-				yyjson_mut_arr_add_real(doc, bbox_arr, bbox.x_max);
-				yyjson_mut_arr_add_real(doc, bbox_arr, bbox.y_max);
-				yyjson_mut_arr_add_real(doc, bbox_arr, bbox.z_max);
+				writer.Double(bbox.x_min);
+				writer.Double(bbox.y_min);
+				writer.Double(bbox.z_min);
+				writer.Double(bbox.x_max);
+				writer.Double(bbox.y_max);
+				writer.Double(bbox.z_max);
 			}
+			writer.EndArray();
 		}
 
 		// If the CRS is present, add it
 		if (!column.second.projjson.empty()) {
-			const auto crs_doc = yyjson_read(column.second.projjson.c_str(), column.second.projjson.size(), 0);
-			if (crs_doc) {
-				const auto crs_root = yyjson_doc_get_root(crs_doc);
-				const auto crs_val = yyjson_val_mut_copy(doc, crs_root);
-				const auto crs_key = yyjson_mut_strcpy(doc, "crs");
-				yyjson_mut_obj_add(column_json, crs_key, crs_val);
-				yyjson_doc_free(crs_doc);
+			const auto crs_root =
+			    crs_parser.Parse(column.second.projjson.c_str(), column.second.projjson.size(), crs_error);
+			if (crs_root) {
+				writer.Key("crs");
+				writer.Value(*crs_root);
 			} else {
 				// Failed to parse the CRS JSON. If this is geoparquet v2, we support other CRS formats
 				if (version != GeoParquetVersion::V2) {
@@ -327,24 +317,15 @@ void GeoParquetFileMetadata::Write(duckdb_parquet::FileMetaData &file_meta_data)
 				}
 			}
 		}
+		writer.EndObject();
 	}
-
-	yyjson_write_err err;
-	size_t len;
-	char *json = yyjson_mut_write_opts(doc, 0, nullptr, &len, &err);
-	if (!json) {
-		yyjson_mut_doc_free(doc);
-		throw SerializationException("Failed to write JSON string: %s", err.msg);
-	}
+	writer.EndObject();
+	writer.EndObject();
 
 	// Create a string from the JSON
 	duckdb_parquet::KeyValue kv;
 	kv.__set_key("geo");
-	kv.__set_value(string(json, len));
-
-	// Free the JSON and the document
-	free(json);
-	yyjson_mut_doc_free(doc);
+	kv.__set_value(writer.ToString());
 
 	file_meta_data.key_value_metadata.push_back(kv);
 	file_meta_data.__isset.key_value_metadata = true;
