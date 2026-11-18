@@ -58,7 +58,6 @@ public:
 
 	void Reset(CSVState state);
 	void Index(const char *data, idx_t size, CsvBlockBits &bits);
-	bool SameAs(const CsvIndexer &other) const;
 	CSVState State() const;
 	CSVState PreviousState() const;
 

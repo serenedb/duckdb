@@ -454,8 +454,7 @@ static void FinishFile(ReadSingleCSVFileGlobalState &gstate) {
 }
 
 static bool ClaimNextPart(ReadSingleCSVFileGlobalState &gstate, ReadSingleCSVFileLocalState &lstate) {
-	vector<shared_ptr<CsvBufferUse>> uses;
-	if (!gstate.scan->Claim(lstate.range, uses)) {
+	if (!gstate.scan->Claim(lstate.range)) {
 		if (gstate.scan->AllFinished()) {
 			FinishFile(gstate);
 		}
@@ -464,7 +463,7 @@ static bool ClaimNextPart(ReadSingleCSVFileGlobalState &gstate, ReadSingleCSVFil
 	if (!lstate.scan) {
 		lstate.scan = make_uniq<CsvScan>(*gstate.scan);
 	}
-	lstate.scan->Start(lstate.range, std::move(uses));
+	lstate.scan->Start(lstate.range);
 	lstate.scanning = true;
 	return true;
 }

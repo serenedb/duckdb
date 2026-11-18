@@ -29,7 +29,6 @@ namespace duckdb {
 bool CsvDecodesDirectly(const LogicalType &type, bool icu_loaded);
 string_t CsvRemoveEscape(const char *value, idx_t size, char escape, char quote, bool strict_mode, Vector &vector);
 void CsvSanitize(string &text);
-idx_t CsvRangeBytes(const CSVReaderOptions &options);
 
 struct CsvBytes {
 	shared_ptr<CSVBufferHandle> buffer;
@@ -52,17 +51,6 @@ public:
 
 private:
 	shared_ptr<CsvBytes> bytes;
-};
-
-struct CsvBufferUse {
-	CsvBufferUse(CSVBufferManager &manager_p, idx_t buffer_p) : manager(manager_p), buffer(buffer_p) {
-	}
-	~CsvBufferUse() {
-		manager.ResetBuffer(buffer);
-	}
-
-	CSVBufferManager &manager;
-	const idx_t buffer;
 };
 
 struct CsvScanColumn {
@@ -109,7 +97,7 @@ public:
 	idx_t MaxThreads() const {
 		return parallel && options.parallel ? MaxValue<idx_t>(range_count, 1) : 1;
 	}
-	bool Claim(idx_t &range, vector<shared_ptr<CsvBufferUse>> &uses);
+	bool Claim(idx_t &range);
 	bool FinishRange(idx_t range, idx_t lines);
 	bool AllFinished() const;
 	void Publish(idx_t range, CSVState origin, const CsvRangeEntry &entry);
@@ -186,7 +174,7 @@ class CsvScan {
 public:
 	explicit CsvScan(CsvScanGlobal &global);
 
-	void Start(idx_t range, vector<shared_ptr<CsvBufferUse>> uses);
+	void Start(idx_t range);
 	bool Scan(DataChunk &output, idx_t max_rows = STANDARD_VECTOR_SIZE);
 	idx_t Lookup(std::span<const int64_t> offsets, std::span<idx_t> survivors, DataChunk &output);
 	bool Done() const {
@@ -251,7 +239,6 @@ private:
 	const CsvGrammar &grammar;
 	unique_ptr<CsvSplitter> splitter;
 	shared_ptr<CsvBytes> bytes;
-	vector<shared_ptr<CsvBufferUse>> uses;
 	idx_t base = 0;
 	shared_ptr<CSVBufferHandle> pending;
 	idx_t pending_start = 0;
