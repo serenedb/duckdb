@@ -18,6 +18,8 @@
 #include "duckdb/formats/csv_splitter.hpp"
 #include "duckdb/function/scalar/strftime_format.hpp"
 #include "duckdb/parallel/async_result.hpp"
+#include "duckdb/planner/table_filter_set.hpp"
+#include "duckdb/planner/table_filter_state.hpp"
 
 #include <span>
 
@@ -81,13 +83,19 @@ struct CsvScanSource {
 	string path;
 	idx_t file_row_number = DConstants::INVALID_INDEX;
 	optional_ptr<atomic<idx_t>> bytes_read;
+	optional_ptr<TableFilterSet> filters;
 	bool sniffing = false;
+};
+
+struct CsvScanFilter {
+	idx_t output_column;
+	reference<const TableFilter> filter;
 };
 
 class CsvScanGlobal {
 public:
 	CsvScanGlobal(ClientContext &context, const CSVReaderOptions &options, CsvScanSource source);
-	CsvScanGlobal(ClientContext &context, CSVFileScan &file);
+	CsvScanGlobal(ClientContext &context, CSVFileScan &file, optional_ptr<TableFilterSet> filters);
 
 	idx_t MaxThreads() const {
 		return parallel ? MaxValue<idx_t>(range_count, 1) : 1;
@@ -124,6 +132,9 @@ public:
 	CsvScanSource source;
 	CsvGrammar grammar;
 	vector<CsvScanColumn> columns;
+	vector<CsvScanFilter> filters;
+	vector<bool> filtered;
+	bool late_materialization = false;
 	StrpTimeFormat date_format;
 	StrpTimeFormat timestamp_format;
 	char decimal_separator = '.';
@@ -189,12 +200,16 @@ private:
 	void SkipRows();
 	void View(shared_ptr<CSVBufferHandle> handle, idx_t position);
 	void Decode(idx_t count, DataChunk &output);
+	Vector &Target(idx_t column, DataChunk &output);
+	void DecodeColumn(idx_t column, idx_t count, DataChunk &output, bool selected_only);
+	void FillRowNumbers(idx_t count, DataChunk &output);
+	void Filter(idx_t count, DataChunk &output);
 	bool DecodeValue(const CsvScanColumn &column, const CsvField &field, Vector &vector, idx_t row, CsvRowError &error);
 	bool IsNull(const CsvField &field, const char *value, idx_t size) const;
 	void RowErrors(idx_t row, vector<CsvRowError> &value_errors, vector<CsvRowError> &errors);
 	void ReportRow(idx_t row, vector<CsvRowError> &errors);
 	void Report(idx_t row, CSVError &error, bool force);
-	void FlushCasts(idx_t count, DataChunk &output);
+	void FlushCasts(idx_t count, DataChunk &output, bool late, bool filter_pass);
 	string LineText(const CsvRow &row, bool &first_nl) const;
 
 private:
@@ -226,6 +241,11 @@ private:
 	vector<vector<CsvRowError>> value_errors;
 	vector<bool> failed;
 	vector<bool> dropped;
+	vector<bool> selected;
+	vector<unique_ptr<TableFilterState>> filter_states;
+	SelectionVector filter_selection;
+	SelectionVector keep;
+	vector<CsvRowError> row_errors;
 	idx_t event_cursor = 0;
 	idx_t extra_cursor = 0;
 	DataChunk parse_chunk;
