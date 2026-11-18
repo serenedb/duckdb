@@ -228,6 +228,9 @@ public:
 	}
 
 	JSONReaderOptions &GetOptions();
+	JSONReadFlags ReadFlags() const {
+		return options.strict ? JSONCommon::STRICT_READ_FLAG : JSONCommon::READ_FLAG;
+	}
 
 	JSONFormat GetFormat() const;
 	void SetFormat(JSONFormat format);

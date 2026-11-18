@@ -1,0 +1,66 @@
+# name: test/sql/json/table/read_json_strict.test
+# description: strict JSON refuses NaN, Infinity and trailing commas, which the readers accept by default
+# group: [table]
+
+require json
+
+statement ok
+COPY (SELECT '{"a": NaN, "b": [1, 2,], "c": -Infinity,}' AS line) TO '{TEST_DIR}/lenient.ndjson' (FORMAT csv, HEADER false, QUOTE '', ESCAPE '');
+
+query III
+SELECT isnan(a), b, c FROM read_ndjson('{TEST_DIR}/lenient.ndjson', columns := {a: 'DOUBLE', b: 'INTEGER[]', c: 'DOUBLE'});
+----
+true	[1, 2]	-inf
+
+query I
+SELECT json::VARCHAR FROM read_ndjson_objects('{TEST_DIR}/lenient.ndjson');
+----
+{"a": NaN, "b": [1, 2,], "c": -Infinity,}
+
+statement error
+SELECT * FROM read_ndjson('{TEST_DIR}/lenient.ndjson', columns := {a: 'DOUBLE', b: 'INTEGER[]', c: 'DOUBLE'}, strict := true);
+----
+<REGEX>:.*Malformed JSON.*
+
+statement error
+SELECT * FROM read_ndjson_objects('{TEST_DIR}/lenient.ndjson', strict := true);
+----
+<REGEX>:.*Malformed JSON.*
+
+statement error
+SELECT * FROM read_json('{TEST_DIR}/lenient.ndjson', strict := true);
+----
+<REGEX>:.*Malformed JSON.*
+
+query II
+SELECT count(*), count(json) FROM read_ndjson_objects('{TEST_DIR}/lenient.ndjson', strict := true, ignore_errors := true);
+----
+1	0
+
+statement ok
+COPY (SELECT '{"a": 1, "b": [1, 2], "c": 3}' AS line) TO '{TEST_DIR}/strict.ndjson' (FORMAT csv, HEADER false, QUOTE '', ESCAPE '');
+
+query III
+SELECT a, b, c FROM read_ndjson('{TEST_DIR}/strict.ndjson', strict := true);
+----
+1	[1, 2]	3
+
+statement ok
+CREATE TABLE t (a DOUBLE, b INTEGER[], c DOUBLE);
+
+statement ok
+COPY t FROM '{TEST_DIR}/lenient.ndjson' (FORMAT json);
+
+statement error
+COPY t FROM '{TEST_DIR}/lenient.ndjson' (FORMAT json, STRICT true);
+----
+<REGEX>:.*Malformed JSON.*
+
+statement ok
+COPY t FROM '{TEST_DIR}/strict.ndjson' (FORMAT json, STRICT true);
+
+query III
+SELECT isnan(a), b, c FROM t ORDER BY c;
+----
+true	[1, 2]	-inf
+false	[1, 2]	3.0

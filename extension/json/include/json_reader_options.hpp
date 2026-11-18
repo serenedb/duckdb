@@ -101,6 +101,7 @@ struct JSONReaderOptions {
 	FileCompressionType compression = FileCompressionType::AUTO_DETECT;
 	//! Whether or not we should ignore malformed JSON (default to NULL)
 	bool ignore_errors = false;
+	bool strict = false;
 	//! Maximum JSON object size (defaults to 16MB minimum)
 	idx_t maximum_object_size = 16777216;
 	//! Whether we auto-detect a schema
