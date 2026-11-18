@@ -47,9 +47,8 @@ public:
 struct ToVariantGlobalResultData {
 public:
 	ToVariantGlobalResultData(VariantVectorData &variant, DataChunk &offsets,
-	                          OrderedOwningStringMap<uint32_t> &dictionary, SelectionVector &keys_selvec,
-	                          Allocator &allocator)
-	    : variant(variant), offsets(offsets), dictionary(dictionary), keys_selvec(keys_selvec), allocator(allocator) {
+	                          OrderedOwningStringMap<uint32_t> &dictionary, SelectionVector &keys_selvec)
+	    : variant(variant), offsets(offsets), dictionary(dictionary), keys_selvec(keys_selvec) {
 	}
 
 public:
@@ -66,8 +65,6 @@ public:
 	OrderedOwningStringMap<uint32_t> &dictionary;
 	//! The selection vector to populate with mapping from keys index -> dictionary index
 	SelectionVector &keys_selvec;
-	//! Allocator for temporary conversion memory (e.g. JSON parsing), tracked by DuckDB's memory accounting
-	Allocator &allocator;
 };
 
 template <bool WRITE_DATA>

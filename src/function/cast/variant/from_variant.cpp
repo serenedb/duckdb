@@ -5,18 +5,15 @@
 #include "duckdb/common/vector/shredded_vector.hpp"
 #include "duckdb/common/vector/string_vector.hpp"
 #include "duckdb/common/vector/struct_vector.hpp"
-#include "yyjson_memory.hpp"
 #include "duckdb/function/cast/default_casts.hpp"
+#include "duckdb/function/cast/variant/variant_json_writer.hpp"
 #include "duckdb/common/types/variant.hpp"
 #include "duckdb/function/scalar/variant_utils.hpp"
 #include "duckdb/common/serializer/varint.hpp"
-#include "yyjson.hpp"
 
 #include "duckdb/common/algorithm.hpp"
 #include "duckdb/common/enum_util.hpp"
 #include "duckdb/common/exception/conversion_exception.hpp"
-
-using namespace duckdb_yyjson; // NOLINT
 
 namespace duckdb {
 
@@ -43,6 +40,7 @@ public:
 	optional_ptr<ClientContext> client;
 	//! If unsuccessful - the error of the conversion
 	string error;
+	VariantJSONWriter json_writer;
 };
 
 struct EmptyConversionPayloadFromVariant {};
@@ -517,8 +515,6 @@ static bool CastVariantToJSON(FromVariantConversionData &conversion_data, Vector
                               idx_t offset, idx_t count, optional_idx row) {
 	auto &error = conversion_data.error;
 
-	ConvertedJSONHolder holder(Allocator::DefaultAllocator());
-
 	auto &variant = conversion_data.variant;
 	auto result_data = FlatVector::Writer<string_t>(result, count, offset);
 	for (idx_t i = 0; i < count; i++) {
@@ -529,24 +525,15 @@ static bool CastVariantToJSON(FromVariantConversionData &conversion_data, Vector
 			result_data.WriteNull();
 			continue;
 		}
-		const auto json_val =
-		    VariantCasts::ConvertVariantToJSON(holder.GetDocument(), conversion_data.variant, row_index, sel[i]);
-		if (!json_val) {
-			error = StringUtil::Format("Failed to convert to JSON object");
+		const auto serialized = conversion_data.json_writer.Write(variant, row_index, sel[i], error);
+		if (!serialized) {
 			// same as the list path: a TRY_CAST returns false instead of throwing, so the writer must be
 			// told it is deliberately short of count
 			result_data.Truncate();
 			return false;
 		}
 
-		const auto serialized = holder.Serialize(json_val, error);
-		if (!serialized) {
-			result_data.Truncate();
-			return false;
-		}
-
 		result_data.WriteValue(*serialized);
-		holder.Reset();
 	}
 
 	return true;

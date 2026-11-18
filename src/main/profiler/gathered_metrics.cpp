@@ -7,10 +7,6 @@
 #include "duckdb/main/query_profiler.hpp"
 #include "duckdb/logging/log_manager.hpp"
 
-#include "yyjson.hpp"
-
-using namespace duckdb_yyjson; // NOLINT
-
 namespace duckdb {
 
 static bool IsPrefixPattern(std::string_view pattern) {

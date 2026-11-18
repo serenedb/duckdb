@@ -1,13 +1,12 @@
-#include "yyjson.hpp"
+#include "duckdb/function/cast/variant/variant_json_writer.hpp"
+
 #include "duckdb/common/typedefs.hpp"
 #include "duckdb/common/types/decimal.hpp"
 #include "duckdb/common/types/time.hpp"
 #include "duckdb/common/types/timestamp.hpp"
-#include "duckdb/common/types/variant.hpp"
-#include "duckdb/common/types/variant_iterator.hpp"
 #include "duckdb/common/types/variant_visitor.hpp"
 
-using namespace duckdb_yyjson; // NOLINT
+#include "simdutf.h"
 
 namespace duckdb {
 
@@ -15,125 +14,117 @@ namespace duckdb {
 
 namespace {
 
+template <bool TEXT>
 struct JSONConverterBase {
-	using result_type = yyjson_mut_val *;
+	using result_type = void;
 
-	static yyjson_mut_val *VisitNull(yyjson_mut_doc *doc) {
-		return yyjson_mut_null(doc);
-	}
-
-	static yyjson_mut_val *VisitBoolean(bool val, yyjson_mut_doc *doc) {
-		return val ? yyjson_mut_true(doc) : yyjson_mut_false(doc);
-	}
-
-	template <typename T>
-	static yyjson_mut_val *VisitInteger(T val, yyjson_mut_doc *doc) {
-		if constexpr (std::is_same_v<T, int8_t> || std::is_same_v<T, int16_t> || std::is_same_v<T, int32_t> ||
-		              std::is_same_v<T, int64_t> || std::is_same_v<T, uint8_t> || std::is_same_v<T, uint16_t> ||
-		              std::is_same_v<T, uint32_t>) {
-			return yyjson_mut_sint(doc, val);
-		} else if constexpr (std::is_same_v<T, uint64_t>) {
-			return yyjson_mut_uint(doc, val);
+	static void WriteString(std::string_view text, JSONStringWriter &writer) {
+		if constexpr (TEXT) {
+			writer.Raw(text);
 		} else {
-			auto val_str = val.ToString();
-			return yyjson_mut_rawncpy(doc, val_str.c_str(), val_str.size());
+			writer.String(text);
 		}
 	}
 
-	static yyjson_mut_val *VisitTime(dtime_t val, yyjson_mut_doc *doc) {
-		auto val_str = Time::ToString(val);
-		return yyjson_mut_strncpy(doc, val_str.c_str(), val_str.size());
+	static void VisitNull(JSONStringWriter &writer) {
+		writer.Null();
 	}
 
-	static yyjson_mut_val *VisitTimeNanos(dtime_ns_t val, yyjson_mut_doc *doc) {
-		auto val_str = Value::TIME_NS(val).ToString();
-		return yyjson_mut_strncpy(doc, val_str.c_str(), val_str.size());
-	}
-
-	static yyjson_mut_val *VisitTimeTZ(dtime_tz_t val, yyjson_mut_doc *doc) {
-		auto val_str = Value::TIMETZ(val).ToString();
-		return yyjson_mut_strncpy(doc, val_str.c_str(), val_str.size());
-	}
-
-	static yyjson_mut_val *VisitTimestampSec(timestamp_sec_t val, yyjson_mut_doc *doc) {
-		auto val_str = Value::TIMESTAMPSEC(val).ToString();
-		return yyjson_mut_strncpy(doc, val_str.c_str(), val_str.size());
-	}
-
-	static yyjson_mut_val *VisitTimestampMs(timestamp_ms_t val, yyjson_mut_doc *doc) {
-		auto val_str = Value::TIMESTAMPMS(val).ToString();
-		return yyjson_mut_strncpy(doc, val_str.c_str(), val_str.size());
-	}
-
-	static yyjson_mut_val *VisitTimestamp(timestamp_t val, yyjson_mut_doc *doc) {
-		auto val_str = Timestamp::ToString(val);
-		return yyjson_mut_strncpy(doc, val_str.c_str(), val_str.size());
-	}
-
-	static yyjson_mut_val *VisitTimestampNanos(timestamp_ns_t val, yyjson_mut_doc *doc) {
-		auto val_str = Value::TIMESTAMPNS(val).ToString();
-		return yyjson_mut_strncpy(doc, val_str.c_str(), val_str.size());
-	}
-
-	static yyjson_mut_val *VisitTimestampTZ(timestamp_tz_t val, yyjson_mut_doc *doc) {
-		auto val_str = Value::TIMESTAMPTZ(val).ToString();
-		return yyjson_mut_strncpy(doc, val_str.c_str(), val_str.size());
-	}
-
-	static yyjson_mut_val *VisitTimestampTZNanos(timestamp_tz_ns_t val, yyjson_mut_doc *doc) {
-		auto val_str = Value::TIMESTAMPTZNS(val).ToString();
-		return yyjson_mut_strncpy(doc, val_str.c_str(), val_str.size());
-	}
-
-	static yyjson_mut_val *VisitFloat(float val, yyjson_mut_doc *doc) {
-		return yyjson_mut_real(doc, val);
-	}
-
-	static yyjson_mut_val *VisitDouble(double val, yyjson_mut_doc *doc) {
-		return yyjson_mut_real(doc, val);
-	}
-
-	static yyjson_mut_val *VisitUUID(hugeint_t val, yyjson_mut_doc *doc) {
-		auto val_str = Value::UUID(val).ToString();
-		return yyjson_mut_strncpy(doc, val_str.c_str(), val_str.size());
-	}
-
-	static yyjson_mut_val *VisitDate(date_t val, yyjson_mut_doc *doc) {
-		auto val_str = Date::ToString(val);
-		return yyjson_mut_strncpy(doc, val_str.c_str(), val_str.size());
-	}
-
-	static yyjson_mut_val *VisitInterval(interval_t val, yyjson_mut_doc *doc) {
-		auto val_str = Value::INTERVAL(val).ToString();
-		return yyjson_mut_strncpy(doc, val_str.c_str(), val_str.size());
-	}
-
-	static yyjson_mut_val *VisitString(const string_t &str, yyjson_mut_doc *doc) {
-		return yyjson_mut_strncpy(doc, str.GetData(), str.GetSize());
-	}
-
-	static yyjson_mut_val *VisitBlob(const string_t &str, yyjson_mut_doc *doc) {
-		auto val_str = Value::BLOB(const_data_ptr_cast(str.GetData()), str.GetSize()).ToString();
-		return yyjson_mut_strncpy(doc, val_str.c_str(), val_str.size());
-	}
-
-	static yyjson_mut_val *VisitBignum(const string_t &str, yyjson_mut_doc *doc) {
-		auto val_str = Value::BIGNUM(const_data_ptr_cast(str.GetData()), str.GetSize()).ToString();
-		return yyjson_mut_rawncpy(doc, val_str.c_str(), val_str.size());
-	}
-
-	static yyjson_mut_val *VisitGeometry(const string_t &str, yyjson_mut_doc *doc) {
-		auto val_str = Value::GEOMETRY(const_data_ptr_cast(str.GetData()), str.GetSize()).ToString();
-		return yyjson_mut_strncpy(doc, val_str.c_str(), val_str.size());
-	}
-
-	static yyjson_mut_val *VisitBitstring(const string_t &str, yyjson_mut_doc *doc) {
-		auto val_str = Value::BIT(const_data_ptr_cast(str.GetData()), str.GetSize()).ToString();
-		return yyjson_mut_strncpy(doc, val_str.c_str(), val_str.size());
+	static void VisitBoolean(bool val, JSONStringWriter &writer) {
+		writer.Boolean(val);
 	}
 
 	template <typename T>
-	static yyjson_mut_val *VisitDecimal(T val, uint32_t width, uint32_t scale, yyjson_mut_doc *doc) {
+	static void VisitInteger(T val, JSONStringWriter &writer) {
+		if constexpr (std::is_same_v<T, int8_t> || std::is_same_v<T, int16_t> || std::is_same_v<T, int32_t> ||
+		              std::is_same_v<T, int64_t> || std::is_same_v<T, uint8_t> || std::is_same_v<T, uint16_t> ||
+		              std::is_same_v<T, uint32_t>) {
+			writer.SignedInteger(val);
+		} else if constexpr (std::is_same_v<T, uint64_t>) {
+			writer.UnsignedInteger(val);
+		} else {
+			writer.Raw(val.ToString());
+		}
+	}
+
+	static void VisitTime(dtime_t val, JSONStringWriter &writer) {
+		WriteString(Time::ToString(val), writer);
+	}
+
+	static void VisitTimeNanos(dtime_ns_t val, JSONStringWriter &writer) {
+		WriteString(Value::TIME_NS(val).ToString(), writer);
+	}
+
+	static void VisitTimeTZ(dtime_tz_t val, JSONStringWriter &writer) {
+		WriteString(Value::TIMETZ(val).ToString(), writer);
+	}
+
+	static void VisitTimestampSec(timestamp_sec_t val, JSONStringWriter &writer) {
+		WriteString(Value::TIMESTAMPSEC(val).ToString(), writer);
+	}
+
+	static void VisitTimestampMs(timestamp_ms_t val, JSONStringWriter &writer) {
+		WriteString(Value::TIMESTAMPMS(val).ToString(), writer);
+	}
+
+	static void VisitTimestamp(timestamp_t val, JSONStringWriter &writer) {
+		WriteString(Timestamp::ToString(val), writer);
+	}
+
+	static void VisitTimestampNanos(timestamp_ns_t val, JSONStringWriter &writer) {
+		WriteString(Value::TIMESTAMPNS(val).ToString(), writer);
+	}
+
+	static void VisitTimestampTZ(timestamp_tz_t val, JSONStringWriter &writer) {
+		WriteString(Value::TIMESTAMPTZ(val).ToString(), writer);
+	}
+
+	static void VisitTimestampTZNanos(timestamp_tz_ns_t val, JSONStringWriter &writer) {
+		WriteString(Value::TIMESTAMPTZNS(val).ToString(), writer);
+	}
+
+	static void VisitFloat(float val, JSONStringWriter &writer) {
+		writer.Double(val);
+	}
+
+	static void VisitDouble(double val, JSONStringWriter &writer) {
+		writer.Double(val);
+	}
+
+	static void VisitUUID(hugeint_t val, JSONStringWriter &writer) {
+		WriteString(Value::UUID(val).ToString(), writer);
+	}
+
+	static void VisitDate(date_t val, JSONStringWriter &writer) {
+		WriteString(Date::ToString(val), writer);
+	}
+
+	static void VisitInterval(interval_t val, JSONStringWriter &writer) {
+		WriteString(Value::INTERVAL(val).ToString(), writer);
+	}
+
+	static void VisitString(const string_t &str, JSONStringWriter &writer) {
+		WriteString(std::string_view(str.GetData(), str.GetSize()), writer);
+	}
+
+	static void VisitBlob(const string_t &str, JSONStringWriter &writer) {
+		WriteString(Value::BLOB(const_data_ptr_cast(str.GetData()), str.GetSize()).ToString(), writer);
+	}
+
+	static void VisitBignum(const string_t &str, JSONStringWriter &writer) {
+		writer.Raw(Value::BIGNUM(const_data_ptr_cast(str.GetData()), str.GetSize()).ToString());
+	}
+
+	static void VisitGeometry(const string_t &str, JSONStringWriter &writer) {
+		WriteString(Value::GEOMETRY(const_data_ptr_cast(str.GetData()), str.GetSize()).ToString(), writer);
+	}
+
+	static void VisitBitstring(const string_t &str, JSONStringWriter &writer) {
+		WriteString(Value::BIT(const_data_ptr_cast(str.GetData()), str.GetSize()).ToString(), writer);
+	}
+
+	template <typename T>
+	static void VisitDecimal(T val, uint32_t width, uint32_t scale, JSONStringWriter &writer) {
 		string val_str;
 		if constexpr (std::is_same_v<T, int16_t>) {
 			val_str = Decimal::ToString(val, static_cast<uint8_t>(width), static_cast<uint8_t>(scale));
@@ -146,27 +137,24 @@ struct JSONConverterBase {
 		} else {
 			throw InternalException("Unhandled decimal type");
 		}
-		return yyjson_mut_rawncpy(doc, val_str.c_str(), val_str.size());
+		writer.Raw(val_str);
 	}
 
-	static yyjson_mut_val *VisitDefault(VariantLogicalType type_id, const_data_ptr_t, yyjson_mut_doc *) {
+	static void VisitDefault(VariantLogicalType type_id, const_data_ptr_t, JSONStringWriter &) {
 		throw InternalException("VariantLogicalType(%s) not handled", EnumUtil::ToString(type_id));
 	}
 };
 
-struct JSONConverter : JSONConverterBase {
-	static yyjson_mut_val *VisitArray(const UnifiedVariantVectorData &variant, idx_t row,
-	                                  const VariantNestedData &nested_data, idx_t depth, yyjson_mut_doc *doc) {
-		auto arr = yyjson_mut_arr(doc);
-		auto array_items = VariantVisitor<JSONConverter>::VisitArrayItems(variant, row, nested_data, depth, doc);
-		for (auto &entry : array_items) {
-			yyjson_mut_arr_add_val(arr, entry);
-		}
-		return arr;
+struct JSONConverter : JSONConverterBase<false> {
+	static void VisitArray(const UnifiedVariantVectorData &variant, idx_t row, const VariantNestedData &nested_data,
+	                       idx_t depth, JSONStringWriter &writer) {
+		writer.StartArray();
+		VariantVisitor<JSONConverter>::VisitArrayItems(variant, row, nested_data, depth, writer);
+		writer.EndArray();
 	}
 
-	static yyjson_mut_val *VisitObject(const UnifiedVariantVectorData &variant, idx_t row,
-	                                   const VariantNestedData &nested_data, idx_t depth, yyjson_mut_doc *doc) {
+	static void VisitObject(const UnifiedVariantVectorData &variant, idx_t row, const VariantNestedData &nested_data,
+	                        idx_t depth, JSONStringWriter &writer) {
 		struct Child {
 			const string_t *key;
 			uint32_t values_idx;
@@ -188,58 +176,64 @@ struct JSONConverter : JSONConverterBase {
 		if (!std::is_sorted(children.begin(), children.end(), by_key)) {
 			std::stable_sort(children.begin(), children.end(), by_key);
 		}
-		auto obj = yyjson_mut_obj(doc);
+		writer.StartObject();
 		for (idx_t i = 0; i < children.size();) {
 			auto last = i;
 			while (last + 1 < children.size() && children[last + 1].Key() == children[i].Key()) {
 				last++;
 			}
-			const auto &key = *children[i].key;
-			auto value = VariantVisitor<JSONConverter>::Visit(variant, row, children[last].values_idx, depth + 1, doc);
-			yyjson_mut_obj_add(obj, yyjson_mut_strn(doc, key.GetData(), key.GetSize()), value);
+			writer.Key(children[i].Key());
+			VariantVisitor<JSONConverter>::Visit(variant, row, children[last].values_idx, depth + 1, writer);
 			i = last + 1;
 		}
-		return obj;
+		writer.EndObject();
 	}
 };
 
-template <VariantIterationOrder OBJECT_ORDER>
-struct NodeJSONConverter : JSONConverterBase {
-	static yyjson_mut_val *VisitArray(const VariantNode &variant, idx_t depth, yyjson_mut_doc *doc) {
-		const auto arr = yyjson_mut_arr(doc);
-		const auto array_items = VariantVisitor<NodeJSONConverter<OBJECT_ORDER>>::VisitArrayItems(variant, depth, doc);
-		for (const auto &entry : array_items) {
-			yyjson_mut_arr_add_val(arr, entry);
-		}
-		return arr;
+template <bool TEXT>
+struct NodeJSONConverter : JSONConverterBase<TEXT> {
+	static void VisitArray(const VariantNode &variant, idx_t depth, JSONStringWriter &writer) {
+		writer.StartArray();
+		VariantVisitor<NodeJSONConverter<false>>::VisitArrayItems(variant, depth, writer);
+		writer.EndArray();
 	}
 
-	static yyjson_mut_val *VisitObject(const VariantNode &variant, idx_t depth, yyjson_mut_doc *doc) {
-		const auto obj = yyjson_mut_obj(doc);
-		for (const auto &[key, value] : variant.GetObjectChildren(OBJECT_ORDER)) {
-			const auto key_value = yyjson_mut_strncpy(doc, key.GetData(), key.GetSize());
-			const auto json_value = VariantVisitor<NodeJSONConverter<OBJECT_ORDER>>::Visit(value, depth + 1, doc);
-			if (!yyjson_mut_obj_add(obj, key_value, json_value)) {
-				throw InternalException("Failed to append VARIANT object child to yyjson value");
-			}
+	static void VisitObject(const VariantNode &variant, idx_t depth, JSONStringWriter &writer) {
+		writer.StartObject();
+		for (const auto &[key, value] : variant.GetObjectChildren(VariantIterationOrder::LEXICOGRAPHIC)) {
+			writer.Key(std::string_view(key.GetData(), key.GetSize()));
+			VariantVisitor<NodeJSONConverter<false>>::Visit(value, depth + 1, writer);
 		}
-		return obj;
+		writer.EndObject();
 	}
 };
 
 } // namespace
 
-yyjson_mut_val *VariantCasts::ConvertVariantToJSON(yyjson_mut_doc *doc, const VariantNode &variant,
-                                                   bool sort_object_keys) {
-	if (sort_object_keys) {
-		return VariantVisitor<NodeJSONConverter<VariantIterationOrder::LEXICOGRAPHIC>>::Visit(variant, 0, doc);
-	}
-	return VariantVisitor<NodeJSONConverter<VariantIterationOrder::INTERNAL>>::Visit(variant, 0, doc);
+VariantJSONWriter::VariantJSONWriter()
+    : writer(JSONWriteFlags::ALLOW_INF_AND_NAN | JSONWriteFlags::ALLOW_INVALID_UNICODE) {
 }
 
-yyjson_mut_val *VariantCasts::ConvertVariantToJSON(yyjson_mut_doc *doc, const UnifiedVariantVectorData &variant,
-                                                   idx_t row, uint32_t values_idx) {
-	return VariantVisitor<JSONConverter>::Visit(variant, row, values_idx, 0, doc);
+optional<string_t> VariantJSONWriter::Write(const UnifiedVariantVectorData &variant, idx_t row, uint32_t values_idx,
+                                            string &error) {
+	writer.Clear();
+	VariantVisitor<JSONConverter>::Visit(variant, row, values_idx, 0, writer);
+	return Result(error);
+}
+
+optional<string_t> VariantJSONWriter::WriteText(const VariantNode &variant, string &error) {
+	writer.Clear();
+	VariantVisitor<NodeJSONConverter<true>>::Visit(variant, 0, writer);
+	return Result(error);
+}
+
+optional<string_t> VariantJSONWriter::Result(string &error) const {
+	const auto json = writer.View();
+	if (!simdutf::validate_utf8(json.data(), json.size())) {
+		error = "Failed to serialize JSON: invalid utf-8 encoding in string";
+		return {};
+	}
+	return string_t(json.data(), NumericCast<uint32_t>(json.size()));
 }
 
 } // namespace duckdb

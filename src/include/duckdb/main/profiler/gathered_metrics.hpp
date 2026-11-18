@@ -18,11 +18,6 @@
 #include "duckdb/common/set.hpp"
 #include "duckdb/main/profiler/metrics.hpp"
 
-namespace duckdb_yyjson {
-struct yyjson_mut_doc;
-struct yyjson_mut_val;
-} // namespace duckdb_yyjson
-
 namespace duckdb {
 
 struct QueryProfileResult;
