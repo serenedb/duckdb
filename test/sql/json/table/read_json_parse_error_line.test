@@ -1,0 +1,38 @@
+# name: test/sql/json/table/read_json_parse_error_line.test
+# description: a malformed document is reported with its own line or record number
+# group: [table]
+
+require json
+
+statement ok
+COPY (
+	SELECT line FROM (VALUES (1, '{"a": 1}'), (2, '{"a": tru}'), (3, '{"a": 3}')) t(i, line) ORDER BY i
+) TO '{TEST_DIR}/bad_second.ndjson' (FORMAT csv, HEADER false, QUOTE '', ESCAPE '');
+
+statement error
+SELECT * FROM read_ndjson('{TEST_DIR}/bad_second.ndjson', columns := {a: 'INTEGER'});
+----
+at byte 7 in line 2: invalid literal, expected 'true'
+
+query I
+SELECT a FROM read_ndjson('{TEST_DIR}/bad_second.ndjson', columns := {a: 'INTEGER'}, ignore_errors := true) ORDER BY a;
+----
+1
+3
+NULL
+
+statement ok
+COPY (SELECT '{"a": fals}' AS line) TO '{TEST_DIR}/bad_first.ndjson' (FORMAT csv, HEADER false, QUOTE '', ESCAPE '');
+
+statement error
+SELECT * FROM read_ndjson('{TEST_DIR}/bad_first.ndjson', columns := {a: 'BOOLEAN'});
+----
+at byte 7 in line 1: invalid literal, expected 'false'
+
+statement ok
+COPY (SELECT '[{"a": 1}, {"a": nul}]' AS line) TO '{TEST_DIR}/bad_element.json' (FORMAT csv, HEADER false, QUOTE '', ESCAPE '');
+
+statement error
+SELECT * FROM read_json('{TEST_DIR}/bad_element.json', format := 'array', columns := {a: 'INTEGER'});
+----
+at byte 7 in record/value 2: invalid literal, expected 'null'
