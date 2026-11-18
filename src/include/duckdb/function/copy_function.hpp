@@ -267,6 +267,7 @@ public:
 	TableFunction copy_from_function;
 
 	string extension;
+	bool writes_typed_columns = false;
 
 	//! Additional function info, passed to the bind
 	shared_ptr<CopyFunctionInfo> function_info;

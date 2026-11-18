@@ -866,6 +866,7 @@ void DatabaseInstance::Configure(DBConfig &new_config, const char *database_path
 	config.create_internal_catalog = new_config.create_internal_catalog;
 	config.create_client_context = new_config.create_client_context;
 	config.create_secret_storage = new_config.create_secret_storage;
+	config.copy_to_written_type = new_config.copy_to_written_type;
 }
 
 DBConfig &DBConfig::GetConfig(ClientContext &context) {
