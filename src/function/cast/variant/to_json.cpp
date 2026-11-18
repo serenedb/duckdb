@@ -167,10 +167,37 @@ struct JSONConverter : JSONConverterBase {
 
 	static yyjson_mut_val *VisitObject(const UnifiedVariantVectorData &variant, idx_t row,
 	                                   const VariantNestedData &nested_data, yyjson_mut_doc *doc) {
+		struct Child {
+			const string_t *key;
+			uint32_t values_idx;
+
+			std::string_view Key() const {
+				return std::string_view(key->GetData(), key->GetSize());
+			}
+		};
+		vector<Child> children;
+		children.reserve(nested_data.child_count);
+		for (idx_t i = 0; i < nested_data.child_count; i++) {
+			const auto child = nested_data.children_idx + i;
+			children.push_back(
+			    {&variant.GetKey(row, variant.GetKeysIndex(row, child)), variant.GetValuesIndex(row, child)});
+		}
+		const auto by_key = [](const Child &lhs, const Child &rhs) {
+			return lhs.Key() < rhs.Key();
+		};
+		if (!std::is_sorted(children.begin(), children.end(), by_key)) {
+			std::stable_sort(children.begin(), children.end(), by_key);
+		}
 		auto obj = yyjson_mut_obj(doc);
-		auto object_items = VariantVisitor<JSONConverter>::VisitObjectItems(variant, row, nested_data, doc);
-		for (auto &entry : object_items) {
-			yyjson_mut_obj_put(obj, yyjson_mut_strncpy(doc, entry.first.c_str(), entry.first.size()), entry.second);
+		for (idx_t i = 0; i < children.size();) {
+			auto last = i;
+			while (last + 1 < children.size() && children[last + 1].Key() == children[i].Key()) {
+				last++;
+			}
+			const auto &key = *children[i].key;
+			auto value = VariantVisitor<JSONConverter>::Visit(variant, row, children[last].values_idx, doc);
+			yyjson_mut_obj_add(obj, yyjson_mut_strn(doc, key.GetData(), key.GetSize()), value);
+			i = last + 1;
 		}
 		return obj;
 	}
