@@ -113,6 +113,7 @@ public:
 	//! Read/Write flags
 	static constexpr auto READ_FLAG =
 	    JSONReadFlags::ALLOW_INF_AND_NAN | JSONReadFlags::ALLOW_TRAILING_COMMAS | JSONReadFlags::BIGNUM_AS_RAW;
+	static constexpr auto STRICT_READ_FLAG = JSONReadFlags::BIGNUM_AS_RAW;
 	static constexpr auto WRITE_FLAG = JSONWriteFlags::ALLOW_INF_AND_NAN;
 	static constexpr auto WRITE_PRETTY_FLAG = JSONWriteFlags::ALLOW_INF_AND_NAN | JSONWriteFlags::PRETTY;
 
