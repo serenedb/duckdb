@@ -2,7 +2,7 @@
 
 namespace duckdb {
 
-static inline optional<bool> JSONExists(yyjson_val *val, yyjson_alc *, Vector &) {
+static inline optional<bool> JSONExists(const JSONNode *val, JSONFunctionLocalState &, Vector &) {
 	return val != nullptr;
 }
 

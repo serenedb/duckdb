@@ -336,7 +336,7 @@ bool JSONReader::FetchRow(JSONReaderScanState &scan_state, idx_t file_offset) {
 			scan_state.lines_or_objects_in_buffer = 0;
 
 			if (!PrepareBufferSeekAt(scan_state, file_offset, options.maximum_object_size) || scan_state.is_last) {
-				scan_state.values[0] = nullptr;
+				scan_state.roots[0] = DConstants::INVALID_INDEX;
 				return false;
 			}
 			scan_state.buffer_index = GetBufferIndex();
@@ -357,19 +357,22 @@ bool JSONReader::FetchRow(JSONReaderScanState &scan_state, idx_t file_offset) {
 		if (!json_end && read_at_offset) {
 			json_end = json_start + available;
 		}
-		yyjson_doc *doc = nullptr;
+		optional_idx root;
 		if (json_end && json_end != json_start) {
-			yyjson_read_err err;
-			doc = JSONCommon::ReadDocumentUnsafe(json_start, NumericCast<idx_t>(json_end - json_start),
-			                                     JSONCommon::READ_STOP_FLAG, scan_state.allocator.GetYYAlc(), &err);
+			JSONParseError err;
+			root = scan_state.parser.ParseAppend(json_start, NumericCast<idx_t>(json_end - json_start), err);
 		}
-		if (doc) {
-			scan_state.units[0] = JSONString(json_start, yyjson_doc_get_read_size(doc));
-			scan_state.values[0] = doc->root;
+		if (root.IsValid()) {
+			JSONString unit(json_start, NumericCast<idx_t>(json_end - json_start));
+			while (unit.size != 0 && StringUtil::CharacterIsSpace(unit.pointer[unit.size - 1])) {
+				unit.size--;
+			}
+			scan_state.units[0] = unit;
+			scan_state.roots[0] = root.GetIndex();
 			return true;
 		}
 		if (read_at_offset) {
-			scan_state.values[0] = nullptr;
+			scan_state.roots[0] = DConstants::INVALID_INDEX;
 			return false;
 		}
 		read_at_offset = true;
@@ -400,11 +403,11 @@ void JSONReader::SetBufferLineOrObjectCount(JSONBufferHandle &handle, idx_t coun
 	ThrowErrorsIfPossible();
 }
 
-void JSONReader::AddParseError(JSONReaderScanState &scan_state, idx_t line_or_object_in_buf, yyjson_read_err &err,
+void JSONReader::AddParseError(JSONReaderScanState &scan_state, idx_t line_or_object_in_buf, const JSONParseError &err,
                                const string &extra) {
 	string unit = options.format == JSONFormat::NEWLINE_DELIMITED ? "line" : "record/value";
 	auto error_msg = StringUtil::Format("Malformed JSON in file \"%s\", at byte %llu in %s {line}: %s. %s",
-	                                    GetFileName(), err.pos + 1, unit, err.msg, extra);
+	                                    GetFileName(), err.position + 1, unit, err.message, extra);
 	lock_guard<mutex> guard(lock);
 	AddError(scan_state.current_buffer_handle->buffer_index, line_or_object_in_buf + 1, error_msg);
 	ThrowErrorsIfPossible();
@@ -499,11 +502,19 @@ static inline void TrimWhitespace(JSONString &line) {
 
 JSONReaderScanState::JSONReaderScanState(ClientContext &context, Allocator &global_allocator, idx_t buffer_capacity)
     : fs(FileSystem::GetFileSystem(context)), global_allocator(global_allocator),
-      allocator(BufferAllocator::Get(context)), buffer_capacity(buffer_capacity) {
+      allocator(BufferAllocator::Get(context)), parser(JSONCommon::READ_FLAG), writer(JSONCommon::WRITE_FLAG),
+      buffer_capacity(buffer_capacity) {
+}
+
+void JSONReaderScanState::ResolveValues(idx_t count) {
+	for (idx_t i = 0; i < count; i++) {
+		values[i] = roots[i] == DConstants::INVALID_INDEX ? nullptr : parser.Node(roots[i]);
+	}
 }
 
 void JSONReaderScanState::ResetForNextParse() {
 	allocator.Reset();
+	parser.Clear();
 	scan_count = 0;
 }
 
@@ -772,26 +783,30 @@ void JSONReader::SkipOverArrayStart(JSONReaderScanState &scan_state) {
 	}
 }
 
+static bool IsEmptyOrRecordsArray(const JSONNode &array) {
+	return array.size == 0 || array.First()->type == JSONValueType::OBJECT;
+}
+
 static pair<JSONFormat, JSONRecordType> DetectFormatAndRecordType(char *const buffer_ptr, const idx_t buffer_size,
-                                                                  yyjson_alc *alc) {
+                                                                  JSONTreeParser &parser) {
 	// First we do the easy check whether it's NEWLINE_DELIMITED
 	auto line_end = NextNewline(buffer_ptr, buffer_size);
 	if (line_end != nullptr) {
 		idx_t line_size = line_end - buffer_ptr;
 		SkipWhitespace(buffer_ptr, line_size, buffer_size);
 
-		yyjson_read_err error;
-		auto doc = JSONCommon::ReadDocumentUnsafe(buffer_ptr, line_size, JSONCommon::READ_FLAG, alc, &error);
-		if (error.code == YYJSON_READ_SUCCESS) { // We successfully read the line
-			if (yyjson_is_arr(doc->root) && line_size == buffer_size) {
+		JSONParseError error;
+		auto root = parser.Parse(buffer_ptr, line_size, error);
+		if (root) { // We successfully read the line
+			if (root->type == JSONValueType::ARRAY && line_size == buffer_size) {
 				// It's just one array, let's actually assume ARRAY, not NEWLINE_DELIMITED
-				if (yyjson_arr_size(doc->root) == 0 || yyjson_is_obj(yyjson_arr_get(doc->root, 0))) {
+				if (IsEmptyOrRecordsArray(*root)) {
 					// Either an empty array (assume records), or an array of objects
 					return make_pair(JSONFormat::ARRAY, JSONRecordType::RECORDS);
 				} else {
 					return make_pair(JSONFormat::ARRAY, JSONRecordType::VALUES);
 				}
-			} else if (yyjson_is_obj(doc->root)) {
+			} else if (root->type == JSONValueType::OBJECT) {
 				return make_pair(JSONFormat::NEWLINE_DELIMITED, JSONRecordType::RECORDS);
 			} else {
 				return make_pair(JSONFormat::NEWLINE_DELIMITED, JSONRecordType::VALUES);
@@ -816,14 +831,14 @@ static pair<JSONFormat, JSONRecordType> DetectFormatAndRecordType(char *const bu
 	}
 
 	// It's definitely an ARRAY, but now we have to figure out if there's more than one top-level array
-	yyjson_read_err error;
-	auto doc =
-	    JSONCommon::ReadDocumentUnsafe(buffer_ptr + buffer_offset, remaining, JSONCommon::READ_STOP_FLAG, alc, &error);
-	if (error.code == YYJSON_READ_SUCCESS) {
-		D_ASSERT(yyjson_is_arr(doc->root));
+	JSONParseError error;
+	idx_t read_size = 0;
+	auto root = parser.ParsePrefix(buffer_ptr + buffer_offset, remaining, read_size, error);
+	if (root) {
+		D_ASSERT(root->type == JSONValueType::ARRAY);
 
 		// We successfully read something!
-		buffer_offset += yyjson_doc_get_read_size(doc);
+		buffer_offset += read_size;
 		SkipWhitespace(buffer_ptr, buffer_offset, buffer_size);
 		remaining = buffer_size - buffer_offset;
 
@@ -832,7 +847,7 @@ static pair<JSONFormat, JSONRecordType> DetectFormatAndRecordType(char *const bu
 		}
 
 		// Just one array, check what's in there
-		if (yyjson_arr_size(doc->root) == 0 || yyjson_is_obj(yyjson_arr_get(doc->root, 0))) {
+		if (IsEmptyOrRecordsArray(*root)) {
 			// Either an empty array (assume records), or an array of objects
 			return make_pair(JSONFormat::ARRAY, JSONRecordType::RECORDS);
 		} else {
@@ -855,16 +870,9 @@ static pair<JSONFormat, JSONRecordType> DetectFormatAndRecordType(char *const bu
 
 bool JSONReader::ParseJSON(JSONReaderScanState &scan_state, char *const json_start, const idx_t json_size,
                            const idx_t remaining) {
-	yyjson_doc *doc;
-	yyjson_read_err err;
-	if (options.type == JSONScanType::READ_JSON_OBJECTS) { // If we return strings, we cannot parse INSITU
-		doc = JSONCommon::ReadDocumentUnsafe(json_start, json_size, JSONCommon::READ_STOP_FLAG,
-		                                     scan_state.allocator.GetYYAlc(), &err);
-	} else {
-		doc = JSONCommon::ReadDocumentUnsafe(json_start, remaining, JSONCommon::READ_INSITU_FLAG,
-		                                     scan_state.allocator.GetYYAlc(), &err);
-	}
-	if (err.code != YYJSON_READ_SUCCESS) {
+	JSONParseError err;
+	auto root = scan_state.parser.ParseAppend(json_start, json_size, err);
+	if (!root.IsValid()) {
 		auto can_ignore_this_error = options.ignore_errors;
 		string extra;
 		if (GetFormat() != JSONFormat::NEWLINE_DELIMITED) {
@@ -874,48 +882,25 @@ bool JSONReader::ParseJSON(JSONReaderScanState &scan_state, char *const json_sta
 			            : "";
 		}
 		if (!can_ignore_this_error) {
+			if (extra.empty() &&
+			    (err.message == "unexpected end of data" || err.message == "unexpected content after document")) {
+				extra = "Try auto-detecting the JSON format";
+			}
 			AddParseError(scan_state, scan_state.lines_or_objects_in_buffer, err, extra);
 			return false;
 		}
 	}
 
-	// We parse with YYJSON_STOP_WHEN_DONE, so we need to check this by hand
-	const auto read_size = yyjson_doc_get_read_size(doc);
-	if (read_size > json_size) {
-		// Can't go past the boundary, even with ignore_errors
-		err.code = YYJSON_READ_ERROR_UNEXPECTED_END;
-		err.msg = "unexpected end of data";
-		err.pos = json_size;
-		AddParseError(scan_state, scan_state.lines_or_objects_in_buffer, err, "Try auto-detecting the JSON format");
-		return false;
-	}
-	if (read_size < json_size) {
-		idx_t off = read_size;
-		idx_t rem = json_size;
-		SkipWhitespace(json_start, off, rem);
-		if (off != rem) { // Between end of document and boundary should be whitespace only
-			if (!options.ignore_errors) {
-				err.code = YYJSON_READ_ERROR_UNEXPECTED_CONTENT;
-				err.msg = "unexpected content after document";
-				err.pos = read_size;
-				AddParseError(scan_state, scan_state.lines_or_objects_in_buffer, err,
-				              "Try auto-detecting the JSON format");
-				return false;
-			}
-			doc = nullptr;
-		}
-	}
-
 	scan_state.lines_or_objects_in_buffer++;
-	if (!doc) {
-		scan_state.values[scan_state.scan_count] = nullptr;
+	if (!root.IsValid()) {
+		scan_state.roots[scan_state.scan_count] = DConstants::INVALID_INDEX;
 		return true;
 	}
 
 	// Set the JSONLine and trim
 	scan_state.units[scan_state.scan_count] = JSONString(json_start, json_size);
 	TrimWhitespace(scan_state.units[scan_state.scan_count]);
-	scan_state.values[scan_state.scan_count] = doc->root;
+	scan_state.roots[scan_state.scan_count] = root.GetIndex();
 	return true;
 }
 
@@ -924,7 +909,7 @@ void JSONReader::AutoDetect(Allocator &allocator, idx_t buffer_capacity) {
 	auto read_buffer = allocator.Allocate(buffer_capacity);
 	idx_t read_size = 0;
 	auto buffer_ptr = char_ptr_cast(read_buffer.get());
-	if (!file_handle->Read(buffer_ptr, read_size, buffer_capacity - YYJSON_PADDING_SIZE)) {
+	if (!file_handle->Read(buffer_ptr, read_size, buffer_capacity)) {
 		// could not read anything
 		return;
 	}
@@ -933,7 +918,7 @@ void JSONReader::AutoDetect(Allocator &allocator, idx_t buffer_capacity) {
 		return;
 	}
 	// perform auto-detection over the data we just read
-	JSONAllocator json_allocator(allocator);
+	JSONTreeParser detect_parser(JSONCommon::READ_FLAG);
 	idx_t features_offset;
 	if (options.geojson.value_or(false) && GetFormat() == JSONFormat::AUTO_DETECT &&
 	    FindFeatureCollectionArray(buffer_ptr, read_size, features_offset)) {
@@ -944,7 +929,7 @@ void JSONReader::AutoDetect(Allocator &allocator, idx_t buffer_capacity) {
 			SetRecordType(JSONRecordType::RECORDS);
 		}
 	} else {
-		auto format_and_record_type = DetectFormatAndRecordType(buffer_ptr, read_size, json_allocator.GetYYAlc());
+		auto format_and_record_type = DetectFormatAndRecordType(buffer_ptr, read_size, detect_parser);
 		if (GetFormat() == JSONFormat::AUTO_DETECT) {
 			SetFormat(format_and_record_type.first);
 		}
@@ -1070,10 +1055,10 @@ bool JSONReader::ParseNextChunk(JSONReaderScanState &scan_state) {
 			if (buffer_ptr[buffer_offset] == ',' || buffer_ptr[buffer_offset] == ']') {
 				buffer_offset++;
 			} else { // We can't ignore this error, even with 'ignore_errors'
-				yyjson_read_err err;
-				err.code = YYJSON_READ_ERROR_UNEXPECTED_CHARACTER;
-				err.msg = "unexpected character";
-				err.pos = json_size;
+				JSONParseError err;
+				err.has_error = true;
+				err.message = "unexpected character";
+				err.position = json_size;
 				AddParseError(scan_state, scan_state.lines_or_objects_in_buffer, err);
 				return false;
 			}
@@ -1141,6 +1126,7 @@ idx_t JSONReader::Scan(JSONReaderScanState &scan_state) {
 			return 0;
 		}
 	}
+	scan_state.ResolveValues(scan_state.scan_count);
 	return scan_state.scan_count;
 }
 
@@ -1150,6 +1136,7 @@ void JSONReader::PrepareForScan(JSONReaderScanState &scan_state) {
 		scan_state.ResetForNextParse();
 		return;
 	}
+	scan_state.parser.Clear();
 	scan_state.is_first_scan = false;
 	if (scan_state.file_read_type == JSONFileReadType::SCAN_ENTIRE_FILE) {
 		// first time scanning from this reader while scanning the entire file
@@ -1232,9 +1219,6 @@ void JSONReader::FinalizeBufferInternal(JSONReaderScanState &scan_state, Allocat
 
 	scan_state.prev_buffer_remainder = 0;
 	scan_state.lines_or_objects_in_buffer = 0;
-
-	// YYJSON needs this
-	memset(scan_state.buffer_ptr + scan_state.buffer_size, 0, YYJSON_PADDING_SIZE);
 }
 
 void JSONReader::DecrementBufferUsage(JSONBufferHandle &handle, idx_t lines_or_object_in_buffer,
@@ -1295,7 +1279,7 @@ bool JSONReader::PrepareBufferForRead(JSONReaderScanState &scan_state) {
 }
 
 bool JSONReader::PrepareBufferSeek(JSONReaderScanState &scan_state) {
-	scan_state.request_size = scan_state.buffer_capacity / 2 - scan_state.prev_buffer_remainder - YYJSON_PADDING_SIZE;
+	scan_state.request_size = scan_state.buffer_capacity / 2 - scan_state.prev_buffer_remainder;
 	if (!IsOpen()) {
 		return false;
 	}
@@ -1372,7 +1356,7 @@ bool JSONReader::ReadNextBufferNoSeek(JSONReaderScanState &scan_state) {
 		// we start reading at "options.maximum_object_size" to leave space for data from the previous buffer
 		read_offset = options.maximum_object_size;
 	}
-	idx_t request_size = scan_state.buffer_capacity - read_offset - YYJSON_PADDING_SIZE;
+	idx_t request_size = scan_state.buffer_capacity - read_offset;
 	idx_t read_size;
 
 	if (!IsOpen()) {

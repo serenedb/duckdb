@@ -2,8 +2,8 @@
 
 namespace duckdb {
 
-static inline optional<list_entry_t> GetJSONKeys(yyjson_val *val, yyjson_alc *, Vector &result) {
-	auto num_keys = yyjson_obj_size(val);
+static inline optional<list_entry_t> GetJSONKeys(const JSONNode *val, JSONFunctionLocalState &, Vector &result) {
+	const idx_t num_keys = val->type == JSONValueType::OBJECT ? val->size : 0;
 	auto current_size = ListVector::GetListSize(result);
 	auto new_size = current_size + num_keys;
 
@@ -13,11 +13,13 @@ static inline optional<list_entry_t> GetJSONKeys(yyjson_val *val, yyjson_alc *, 
 	}
 
 	// Write the strings to the child vector
-	auto keys = FlatVector::GetDataMutable<string_t>(ListVector::GetChildMutable(result));
-	size_t idx, max;
-	yyjson_val *key, *child_val;
-	yyjson_obj_foreach(val, idx, max, key, child_val) {
-		keys[current_size + idx] = string_t(unsafe_yyjson_get_str(key), unsafe_yyjson_get_len(key));
+	auto &child = ListVector::GetChildMutable(result);
+	auto keys = FlatVector::GetDataMutable<string_t>(child);
+	if (num_keys != 0) {
+		idx_t idx = current_size;
+		for (auto &key : val->Keys()) {
+			keys[idx++] = StringVector::AddString(child, key.GetString());
+		}
 	}
 
 	// Update size

@@ -132,7 +132,8 @@ unique_ptr<FunctionData> JSONReadManyFunctionData::Bind(BindScalarFunctionInput 
 }
 
 JSONFunctionLocalState::JSONFunctionLocalState(Allocator &allocator)
-    : json_allocator(make_shared_ptr<JSONAllocator>(allocator)) {
+    : arena(allocator), parser(JSONCommon::READ_FLAG), second_parser(JSONCommon::READ_FLAG),
+      writer(JSONCommon::WRITE_FLAG) {
 }
 
 JSONFunctionLocalState::JSONFunctionLocalState(ClientContext &context)
@@ -151,7 +152,7 @@ unique_ptr<FunctionLocalState> JSONFunctionLocalState::InitCastLocalState(CastLo
 
 JSONFunctionLocalState &JSONFunctionLocalState::ResetAndGet(ExpressionState &state) {
 	auto &lstate = ExecuteFunctionState::GetFunctionState(state)->Cast<JSONFunctionLocalState>();
-	lstate.json_allocator->Reset();
+	lstate.arena.Reset();
 	return lstate;
 }
 
@@ -256,16 +257,14 @@ unique_ptr<TableRef> JSONFunctions::ReadJSONReplacement(ClientContext &context, 
 
 static bool CastVarcharToJSON(Vector &source, Vector &result, idx_t count, CastParameters &parameters) {
 	auto &lstate = parameters.local_state->Cast<JSONFunctionLocalState>();
-	lstate.json_allocator->Reset();
-	auto alc = lstate.json_allocator->GetYYAlc();
 
 	bool success = true;
 	UnaryExecutor::Execute<string_t, string_t>(source, result, count, [&](string_t input) -> optional<string_t> {
-		auto data = input.GetDataWriteable();
+		auto data = input.GetData();
 		const auto length = input.GetSize();
 
-		yyjson_read_err error;
-		auto doc = JSONCommon::ReadDocumentUnsafe(data, length, JSONCommon::READ_FLAG, alc, &error);
+		JSONParseError error;
+		auto doc = JSONCommon::ReadDocumentUnsafe(lstate.parser, input, error);
 
 		if (!doc) {
 			if (success) {
@@ -339,22 +338,19 @@ static bool CastJSONListToVarchar(Vector &source, Vector &result, idx_t count, C
 
 static bool CastVarcharToJSONList(Vector &source, Vector &result, idx_t count, CastParameters &parameters) {
 	auto &lstate = parameters.local_state->Cast<JSONFunctionLocalState>();
-	lstate.json_allocator->Reset();
-	auto alc = lstate.json_allocator->GetYYAlc();
 
 	bool success = true;
 	UnaryExecutor::Execute<string_t, list_entry_t>(
 	    source, result, count, [&](const string_t &input) -> optional<list_entry_t> {
 		    // Figure out if the cast can succeed
-		    yyjson_read_err error;
-		    const auto doc = JSONCommon::ReadDocumentUnsafe(input.GetDataWriteable(), input.GetSize(),
-		                                                    JSONCommon::READ_FLAG, alc, &error);
-		    if (!doc || !unsafe_yyjson_is_arr(doc->root)) {
+		    JSONParseError error;
+		    const auto doc = JSONCommon::ReadDocumentUnsafe(lstate.parser, input, error);
+		    if (!doc || doc->type != JSONValueType::ARRAY) {
 			    if (success) {
 				    if (!doc) {
 					    HandleCastError::AssignError(
-					        JSONCommon::FormatParseError(input.GetDataWriteable(), input.GetSize(), error), parameters);
-				    } else if (!unsafe_yyjson_is_arr(doc->root)) {
+					        JSONCommon::FormatParseError(input.GetData(), input.GetSize(), error), parameters);
+				    } else {
 					    auto truncated_input =
 					        input.GetSize() > 50 ? string(input.GetData(), 47) + "..." : input.GetString();
 					    HandleCastError::AssignError(
@@ -367,7 +363,7 @@ static bool CastVarcharToJSONList(Vector &source, Vector &result, idx_t count, C
 		    }
 
 		    auto current_size = ListVector::GetListSize(result);
-		    const auto arr_len = unsafe_yyjson_get_len(doc->root);
+		    const idx_t arr_len = doc->size;
 		    const auto new_size = current_size + arr_len;
 
 		    // Grow list if needed
@@ -376,11 +372,11 @@ static bool CastVarcharToJSONList(Vector &source, Vector &result, idx_t count, C
 		    }
 
 		    // Populate list
-		    const auto result_jsons = FlatVector::GetDataMutable<string_t>(ListVector::GetChildMutable(result));
-		    size_t arr_idx, max;
-		    yyjson_val *val;
-		    yyjson_arr_foreach(doc->root, arr_idx, max, val) {
-			    result_jsons[current_size + arr_idx] = JSONCommon::WriteVal(val, alc);
+		    auto &child = ListVector::GetChildMutable(result);
+		    const auto result_jsons = FlatVector::GetDataMutable<string_t>(child);
+		    idx_t arr_idx = 0;
+		    for (auto &val : doc->Elements()) {
+			    result_jsons[current_size + arr_idx++] = JSONCommon::WriteVal(val, lstate.writer, child);
 		    }
 
 		    // Update size
@@ -389,7 +385,6 @@ static bool CastVarcharToJSONList(Vector &source, Vector &result, idx_t count, C
 		    return list_entry_t {current_size, arr_len};
 	    });
 
-	JSONAllocator::AddBuffer(ListVector::GetChildMutable(result), alc);
 	return success;
 }
 

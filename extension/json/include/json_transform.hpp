@@ -12,6 +12,7 @@
 #include "duckdb/common/optional_ptr.hpp"
 #include "duckdb/function/cast/default_casts.hpp"
 #include "duckdb/function/scalar/strftime_format.hpp"
+#include "duckdb/storage/arena_allocator.hpp"
 #include "json_common.hpp"
 
 namespace duckdb {
@@ -67,14 +68,21 @@ struct TryParseTimeStamp {
 	}
 };
 
+//! The scratch memory and the writer a transform uses
+struct JSONTransformScratch {
+	ArenaAllocator &arena;
+	JSONStringWriter &writer;
+};
+
 struct JSONTransform {
-	static bool Transform(yyjson_val *vals[], yyjson_alc *alc, Vector &result, const idx_t count,
+	static bool Transform(const JSONNode *vals[], JSONTransformScratch &scratch, Vector &result, const idx_t count,
 	                      JSONTransformOptions &options, optional_ptr<const ColumnIndex> column_index);
-	static bool TransformObject(yyjson_val *objects[], yyjson_alc *alc, const idx_t count, const vector<string> &names,
-	                            const vector<Vector *> &result_vectors, JSONTransformOptions &options,
-	                            optional_ptr<const vector<ColumnIndex>> column_indices, bool error_unknown_key);
-	static bool GetStringVector(yyjson_val *vals[], const idx_t count, const LogicalType &target, Vector &string_vector,
-	                            JSONTransformOptions &options);
+	static bool TransformObject(const JSONNode *objects[], JSONTransformScratch &scratch, const idx_t count,
+	                            const vector<string> &names, const vector<Vector *> &result_vectors,
+	                            JSONTransformOptions &options, optional_ptr<const vector<ColumnIndex>> column_indices,
+	                            bool error_unknown_key);
+	static bool GetStringVector(const JSONNode *vals[], const idx_t count, const LogicalType &target,
+	                            Vector &string_vector, JSONTransformOptions &options);
 };
 
 } // namespace duckdb

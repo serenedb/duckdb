@@ -10,8 +10,8 @@
 
 #include "duckdb/main/extension/extension_loader.hpp"
 #include "duckdb/main/setting_info.hpp"
+#include "duckdb/storage/arena_allocator.hpp"
 #include "json_common.hpp"
-#include "yyjson_memory.hpp"
 
 namespace duckdb {
 
@@ -71,7 +71,14 @@ public:
 	static JSONFunctionLocalState &ResetAndGet(ExpressionState &state);
 
 public:
-	shared_ptr<JSONAllocator> json_allocator;
+	//! Scratch memory of the current chunk
+	ArenaAllocator arena;
+	//! Parses the documents of the function's input, one at a time
+	JSONTreeParser parser;
+	//! Parses a second document per row, for the functions that take two
+	JSONTreeParser second_parser;
+	//! Writes the JSON text of the function's results
+	JSONStringWriter writer;
 };
 
 class JSONFunctions {

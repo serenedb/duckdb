@@ -1,0 +1,65 @@
+# name: test/sql/json/scalar/test_json_document_edges.test
+# description: JSON documents: byte order marks, numbers past the double range and very deep nesting
+# group: [scalar]
+
+require json
+
+query II
+SELECT json_valid(chr(65279) || '{}'), json_valid(' {}');
+----
+false	true
+
+statement error
+SELECT (chr(65279) || '{}')::JSON;
+----
+<REGEX>:.*byte order mark.*
+
+query II
+SELECT json_extract('{"a": 1e400}', '$.a')::DOUBLE, json_extract('{"a": -1e400}', '$.a')::DOUBLE;
+----
+inf	-inf
+
+query I
+SELECT json_type('[1e400]', '$[0]');
+----
+DOUBLE
+
+query I
+SELECT json(' [' || repeat('[ ', 100000) || repeat(' ]', 100000) || '] ') = '[' || repeat('[', 100000) || repeat(']', 100000) || ']';
+----
+true
+
+query I
+SELECT json_valid(repeat('{"a":', 200000) || '[]' || repeat('}', 200000));
+----
+true
+
+query I
+SELECT json_array_length(repeat('[', 200000) || repeat(']', 200000));
+----
+1
+
+query I
+SELECT length(json_array((repeat('[', 200000) || repeat(']', 200000))::JSON));
+----
+400002
+
+query I
+SELECT length(json_object('k', (repeat('{"a":', 200000) || '1' || repeat('}', 200000))::JSON));
+----
+1200007
+
+statement error
+SELECT '{"a": tru}'::JSON;
+----
+Malformed JSON at byte 6 of input: invalid literal, expected 'true'
+
+statement error
+SELECT '[fals]'::JSON;
+----
+Malformed JSON at byte 1 of input: invalid literal, expected 'false'
+
+statement error
+SELECT '{"a": [1, nul]}'::JSON;
+----
+Malformed JSON at byte 10 of input: invalid literal, expected 'null'
