@@ -28,9 +28,6 @@ public:
 	CsvColumnCount &operator[](idx_t index) {
 		return column_counts[index];
 	}
-	const CsvColumnCount &operator[](idx_t index) const {
-		return column_counts[index];
-	}
 	idx_t GetMostFrequentColumnCount() const;
 
 public:
