@@ -101,7 +101,7 @@ SELECT sum(i), max(parse_filename(filename)) FROM parquet_scan('{TEMP_DIR}/test_
 
 # Same file twice
 query III
-SELECT i, j, parse_path(filename)[-2:] as file FROM parquet_scan(['{DATA_DIR}/parquet-testing/glob/t1.parquet', '{DATA_DIR}/parquet-testing/glob/t1.parquet', '{DATA_DIR}/parquet-testing/glob/t2.parquet'], FILENAME=1) where filename like '%t1%'
+SELECT i, j, parse_path(filename)[-2:] as file FROM parquet_scan(['{DATA_DIR}/parquet-testing/glob/t1.parquet', '{DATA_DIR}/parquet-testing/glob/t1.parquet', '{DATA_DIR}/parquet-testing/glob/t2.parquet'], FILENAME=1) where filename like '%/t1.parquet'
 ----
 1	a	[glob, t1.parquet]
 1	a	[glob, t1.parquet]
