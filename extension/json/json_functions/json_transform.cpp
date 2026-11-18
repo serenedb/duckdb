@@ -284,15 +284,8 @@ bool JSONTransform::GetStringVector(const JSONNode *vals[], const idx_t count, c
 	return success;
 }
 
-static bool TransformFromString(const JSONNode *vals[], Vector &result, const idx_t count,
-                                JSONTransformOptions &options) {
-	Vector string_vector(LogicalTypeId::VARCHAR, count);
-
-	bool success = true;
-	if (!JSONTransform::GetStringVector(vals, count, result.GetType(), string_vector, options)) {
-		success = false;
-	}
-
+static bool CastStringVector(Vector &string_vector, Vector &result, const idx_t count, JSONTransformOptions &options,
+                             bool success) {
 	if (!VectorOperations::DefaultTryCast(string_vector, result, count, &options.error_message) &&
 	    options.strict_cast) {
 		options.object_index = 0; // Can't get line number information here
@@ -301,6 +294,13 @@ static bool TransformFromString(const JSONNode *vals[], Vector &result, const id
 		success = false;
 	}
 	return success;
+}
+
+static bool TransformFromString(const JSONNode *vals[], Vector &result, const idx_t count,
+                                JSONTransformOptions &options) {
+	Vector string_vector(LogicalTypeId::VARCHAR, count);
+	const bool success = JSONTransform::GetStringVector(vals, count, result.GetType(), string_vector, options);
+	return CastStringVector(string_vector, result, count, options, success);
 }
 
 //! GEOMETRY accepts both WKT strings and GeoJSON geometry fragments. A JSON object is never valid WKT, so the two
@@ -402,14 +402,8 @@ static bool TransformStringWithFormat(const Vector &string_vector, const StrpTim
 	return success;
 }
 
-static bool TransformFromStringWithFormat(const JSONNode *vals[], Vector &result, const idx_t count,
-                                          JSONTransformOptions &options) {
-	Vector string_vector(LogicalTypeId::VARCHAR, count);
-	bool success = true;
-	if (!JSONTransform::GetStringVector(vals, count, result.GetType(), string_vector, options)) {
-		success = false;
-	}
-
+static bool FormatStringVector(const Vector &string_vector, Vector &result, const idx_t count,
+                               JSONTransformOptions &options, bool success) {
 	const auto result_type_id = result.GetType().id();
 	D_ASSERT(result_type_id == LogicalTypeId::DATE || result_type_id == LogicalTypeId::TIMESTAMP);
 	const auto &formats = options.date_format_map->GetFormats(result_type_id);
@@ -453,6 +447,51 @@ static bool TransformFromStringWithFormat(const JSONNode *vals[], Vector &result
 		}
 	}
 	return success;
+}
+
+static bool UsesDateFormats(const LogicalType &type, const JSONTransformOptions &options) {
+	return (type == LogicalTypeId::TIMESTAMP || type == LogicalTypeId::DATE) && options.date_format_map &&
+	       options.date_format_map->HasFormats(type.id());
+}
+
+static bool TransformFromStringWithFormat(const JSONNode *vals[], Vector &result, const idx_t count,
+                                          JSONTransformOptions &options) {
+	Vector string_vector(LogicalTypeId::VARCHAR, count);
+	const bool success = JSONTransform::GetStringVector(vals, count, result.GetType(), string_vector, options);
+	return FormatStringVector(string_vector, result, count, options, success);
+}
+
+bool JSONTransform::TransformStrings(Vector &string_vector, Vector &result, const idx_t count,
+                                     JSONTransformOptions &options) {
+	if (UsesDateFormats(result.GetType(), options)) {
+		return FormatStringVector(string_vector, result, count, options, true);
+	}
+	return CastStringVector(string_vector, result, count, options, true);
+}
+
+bool JSONTransform::ParsesFromString(const LogicalType &type) {
+	if (type.IsJSONType()) {
+		return false;
+	}
+	switch (type.id()) {
+	case LogicalTypeId::ENUM:
+	case LogicalTypeId::DATE:
+	case LogicalTypeId::INTERVAL:
+	case LogicalTypeId::TIME:
+	case LogicalTypeId::TIME_NS:
+	case LogicalTypeId::TIME_TZ:
+	case LogicalTypeId::TIMESTAMP:
+	case LogicalTypeId::TIMESTAMP_TZ:
+	case LogicalTypeId::TIMESTAMP_TZ_NS:
+	case LogicalTypeId::TIMESTAMP_NS:
+	case LogicalTypeId::TIMESTAMP_MS:
+	case LogicalTypeId::TIMESTAMP_SEC:
+	case LogicalTypeId::UUID:
+	case LogicalTypeId::BIT:
+		return true;
+	default:
+		return false;
+	}
 }
 
 static bool TransformToString(const JSONNode *vals[], JSONTransformScratch &scratch, Vector &result,
@@ -1038,9 +1077,7 @@ static bool TransformValueIntoUnion(const JSONNode **vals, JSONTransformScratch 
 bool JSONTransform::Transform(const JSONNode *vals[], JSONTransformScratch &scratch, Vector &result, const idx_t count,
                               JSONTransformOptions &options, optional_ptr<const ColumnIndex> column_index) {
 	auto result_type = result.GetType();
-	if ((result_type == LogicalTypeId::TIMESTAMP || result_type == LogicalTypeId::DATE) && options.date_format_map &&
-	    options.date_format_map->HasFormats(result_type.id())) {
-		// Auto-detected date/timestamp format during sampling
+	if (UsesDateFormats(result_type, options)) {
 		return TransformFromStringWithFormat(vals, result, count, options);
 	}
 

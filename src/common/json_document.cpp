@@ -159,6 +159,12 @@ struct JSONBuildFrame {
 	ondemand::object_iterator member;
 };
 
+struct JSONCheckFrame {
+	bool object;
+	ondemand::array_iterator element;
+	ondemand::object_iterator member;
+};
+
 static_assert(JSONTreeParser::PADDING >= simdjson::SIMDJSON_PADDING, "JSONTreeParser::PADDING covers simdjson's");
 
 template <class T>
@@ -222,6 +228,7 @@ struct JSONTreeParserState {
 	string cleaned;
 	JSONNodes nodes;
 	vector<JSONBuildFrame> frames;
+	vector<JSONCheckFrame> checks;
 	ArenaAllocator strings;
 };
 
@@ -634,6 +641,126 @@ optional_idx JSONTreeParser::ParseAppend(const char *data, idx_t len, JSONParseE
 
 optional_idx JSONTreeParser::ParseAppend(const char *data, idx_t len, idx_t readable, JSONParseError &error) {
 	return ParseInto(*state, flags, data, len, readable, true, error);
+}
+
+template <class VALUE>
+static bool StartJSONCheck(VALUE &value, vector<JSONCheckFrame> &frames) {
+	ondemand::json_type type;
+	if (value.type().get(type)) {
+		return false;
+	}
+	switch (type) {
+	case ondemand::json_type::object: {
+		ondemand::object object;
+		JSONCheckFrame frame {true, {}, {}};
+		if (value.get_object().get(object) || std::move(object).begin().get(frame.member)) {
+			return false;
+		}
+		frames.push_back(frame);
+		return true;
+	}
+	case ondemand::json_type::array: {
+		ondemand::array array;
+		JSONCheckFrame frame {false, {}, {}};
+		if (value.get_array().get(array) || std::move(array).begin().get(frame.element)) {
+			return false;
+		}
+		frames.push_back(frame);
+		return true;
+	}
+	case ondemand::json_type::string: {
+		std::string_view text;
+		return !value.get_string().get(text);
+	}
+	case ondemand::json_type::number: {
+		ondemand::number number;
+		return !value.get_number().get(number);
+	}
+	case ondemand::json_type::boolean: {
+		bool boolean;
+		return !value.get_bool().get(boolean);
+	}
+	case ondemand::json_type::null: {
+		bool is_null = false;
+		return !value.is_null().get(is_null) && is_null;
+	}
+	default:
+		return false;
+	}
+}
+
+static bool CheckJSONDocument(ondemand::document &document, vector<JSONCheckFrame> &frames) {
+	frames.clear();
+	ondemand::json_type type;
+	if (document.type().get(type) || (type != ondemand::json_type::object && type != ondemand::json_type::array)) {
+		return false;
+	}
+	if (!StartJSONCheck(document, frames)) {
+		return false;
+	}
+	while (!frames.empty()) {
+		auto &frame = frames.back();
+		const bool more =
+		    frame.object ? frame.member != ondemand::object_iterator {} : frame.element != ondemand::array_iterator {};
+		if (!more) {
+			frames.pop_back();
+			if (!frames.empty()) {
+				auto &parent = frames.back();
+				if (parent.object) {
+					++parent.member;
+				} else {
+					++parent.element;
+				}
+			}
+			continue;
+		}
+		const auto depth = frames.size();
+		if (frame.object) {
+			ondemand::field field;
+			std::string_view key;
+			if ((*frame.member).get(field) || field.unescaped_key().get(key) ||
+			    !StartJSONCheck(field.value(), frames)) {
+				return false;
+			}
+		} else {
+			ondemand::value child;
+			if ((*frame.element).get(child) || !StartJSONCheck(child, frames)) {
+				return false;
+			}
+		}
+		if (frames.size() == depth) {
+			auto &current = frames.back();
+			if (current.object) {
+				++current.member;
+			} else {
+				++current.element;
+			}
+		}
+	}
+	return document.at_end();
+}
+
+bool JSONTreeParser::Validate(const char *data, idx_t len, idx_t readable, JSONParseError &error) {
+	constexpr auto rewritten =
+	    static_cast<uint32_t>(JSONReadFlags::ALLOW_COMMENTS | JSONReadFlags::ALLOW_INVALID_UNICODE);
+	const bool plain = (static_cast<uint32_t>(flags) & rewritten) == 0 && readable >= len + PADDING &&
+	                   !(len >= 3 && memcmp(data, "\xEF\xBB\xBF", 3) == 0);
+	if (plain) {
+		ondemand::document document;
+		const auto code = state->parser.iterate(data, len, readable).get(document);
+		if (code == simdjson::MEMALLOC && state->buffers.error.HasError()) {
+			auto failure = std::move(state->buffers.error);
+			state->buffers.error = ErrorData();
+			failure.Throw();
+		}
+		if (!code && CheckJSONDocument(document, state->checks)) {
+			return true;
+		}
+	}
+	const idx_t mark = state->nodes.size();
+	const auto root = ParseInto(*state, flags, data, len, readable, false, error);
+	state->nodes.resize(mark);
+	return root.IsValid();
 }
 
 const JSONNode *JSONTreeParser::ParsePrefix(const char *data, idx_t len, idx_t &consumed, JSONParseError &error) {

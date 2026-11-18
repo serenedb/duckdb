@@ -1,0 +1,127 @@
+# name: test/sql/json/table/read_json_direct.test
+# description: newline-delimited records decoded straight from the parser give what the array reader's node path gives
+# group: [table]
+
+require json
+
+statement ok
+SET threads = 4;
+
+statement ok
+CREATE TABLE src AS SELECT i AS id,
+	CASE WHEN i % 7 = 0 THEN NULL ELSE i % 3 = 0 END AS b,
+	CASE WHEN i % 5 = 0 THEN NULL ELSE (i * 37) % 1000 - 500 END AS n,
+	CASE WHEN i % 6 = 0 THEN NULL ELSE i * 0.25 END AS d,
+	CASE WHEN i % 4 = 0 THEN NULL ELSE ((i * 13) % 10000)::DECIMAL(10, 2) / 100 END AS m,
+	CASE WHEN i % 9 = 0 THEN NULL WHEN i % 9 = 1 THEN 'quote"' || i WHEN i % 9 = 2 THEN 'tab' || chr(9) || i WHEN i % 9 = 3 THEN 'ünï' || i ELSE 's' || i END AS s,
+	CASE WHEN i % 8 = 0 THEN NULL ELSE DATE '2020-01-01' + (i % 1000)::INTEGER END AS dt,
+	CASE WHEN i % 10 = 0 THEN NULL ELSE TIMESTAMP '2020-01-01 00:00:00' + to_seconds(i * 3601) END AS ts,
+	CASE WHEN i % 11 = 0 THEN NULL ELSE {'a': i, 'b': [i, i + 1]} END AS st,
+	CASE WHEN i % 12 = 0 THEN NULL ELSE [i, NULL, i * 2] END AS l,
+	CASE WHEN i % 13 = 0 THEN NULL ELSE {'k': i}::JSON END AS j
+FROM range(5000) t(i);
+
+statement ok
+COPY src TO '{TEMP_DIR}/direct.ndjson' (FORMAT json);
+
+statement ok
+COPY src TO '{TEMP_DIR}/direct.json' (FORMAT json, ARRAY true);
+
+statement ok
+COPY src TO '{TEMP_DIR}/direct_dates.ndjson' (FORMAT json, DATEFORMAT '%d/%m/%Y', TIMESTAMPFORMAT '%d/%m/%Y %H.%M.%S');
+
+statement ok
+COPY src TO '{TEMP_DIR}/direct_dates.json' (FORMAT json, ARRAY true, DATEFORMAT '%d/%m/%Y', TIMESTAMPFORMAT '%d/%m/%Y %H.%M.%S');
+
+statement ok
+CREATE MACRO src_columns() AS {'id': 'BIGINT', 'b': 'BOOLEAN', 'n': 'INTEGER', 'd': 'DOUBLE', 'm': 'DECIMAL(10,2)', 's': 'VARCHAR', 'dt': 'DATE', 'ts': 'TIMESTAMP', 'st': 'STRUCT(a BIGINT, b BIGINT[])', 'l': 'BIGINT[]', 'j': 'JSON'};
+
+query I
+SELECT count(*) FROM (
+	(FROM read_ndjson('{TEMP_DIR}/direct.ndjson', columns = src_columns()) EXCEPT ALL FROM read_json('{TEMP_DIR}/direct.json', format = 'array', columns = src_columns()))
+	UNION ALL
+	(FROM read_json('{TEMP_DIR}/direct.json', format = 'array', columns = src_columns()) EXCEPT ALL FROM read_ndjson('{TEMP_DIR}/direct.ndjson', columns = src_columns()))
+)
+----
+0
+
+query I
+SELECT count(*) FROM (FROM read_ndjson('{TEMP_DIR}/direct.ndjson', columns = src_columns()) EXCEPT ALL FROM src)
+----
+0
+
+query I
+SELECT count(*) FROM (
+	(FROM read_ndjson('{TEMP_DIR}/direct.ndjson') EXCEPT ALL FROM read_json('{TEMP_DIR}/direct.json', format = 'array'))
+	UNION ALL
+	(FROM read_json('{TEMP_DIR}/direct.json', format = 'array') EXCEPT ALL FROM read_ndjson('{TEMP_DIR}/direct.ndjson'))
+)
+----
+0
+
+query I
+SELECT count(*) FROM (
+	(FROM read_ndjson('{TEMP_DIR}/direct_dates.ndjson', dateformat = '%d/%m/%Y', timestampformat = '%d/%m/%Y %H.%M.%S') EXCEPT ALL FROM read_json('{TEMP_DIR}/direct_dates.json', format = 'array', dateformat = '%d/%m/%Y', timestampformat = '%d/%m/%Y %H.%M.%S'))
+	UNION ALL
+	(FROM read_json('{TEMP_DIR}/direct_dates.json', format = 'array', dateformat = '%d/%m/%Y', timestampformat = '%d/%m/%Y %H.%M.%S') EXCEPT ALL FROM read_ndjson('{TEMP_DIR}/direct_dates.ndjson', dateformat = '%d/%m/%Y', timestampformat = '%d/%m/%Y %H.%M.%S'))
+)
+----
+0
+
+query II
+SELECT count(dt), count(ts) FROM read_ndjson('{TEMP_DIR}/direct_dates.ndjson', dateformat = '%d/%m/%Y', timestampformat = '%d/%m/%Y %H.%M.%S');
+----
+4375	4500
+
+foreach predicate n>100 (s)LIKE's1%' dt=DATE'2020-03-01' (j)ISNULL st.a=77 (b)AND(d<500) m<10 ts>TIMESTAMP'2020-06-01'
+
+query I
+SELECT count(*) FROM (
+	(FROM read_ndjson('{TEMP_DIR}/direct.ndjson', columns = src_columns()) WHERE {predicate} EXCEPT ALL FROM src WHERE {predicate})
+	UNION ALL
+	(FROM src WHERE {predicate} EXCEPT ALL FROM read_ndjson('{TEMP_DIR}/direct.ndjson', columns = src_columns()) WHERE {predicate})
+)
+----
+0
+
+endloop
+
+statement ok
+COPY (
+	SELECT line FROM (VALUES
+		(1, '{"ID": 1, "id": 2, "Name": "a"}'),
+		(2, '{"Id": 3, "name": "bé"}'),
+		(3, '{"name": "c", "extra": [1, 2]}'),
+		(4, '{"id": "5", "name": 6}'),
+		(5, '{"id": 7.0, "name": true}'),
+		(6, '{"id": null, "name": {"x": 1}}'),
+		(7, '{}')
+	) t(i, line) ORDER BY i
+) TO '{TEMP_DIR}/keys.ndjson' (FORMAT csv, HEADER false, QUOTE '', ESCAPE '');
+
+query II
+SELECT id, name FROM read_ndjson('{TEMP_DIR}/keys.ndjson', columns = {'id': 'BIGINT', 'name': 'VARCHAR'});
+----
+2	a
+3	bé
+NULL	c
+5	6
+7	true
+NULL	{"x":1}
+NULL	NULL
+
+statement ok
+COPY (
+	SELECT line FROM (VALUES (1, '{"id": 1, "id": 2}'), (2, '{"id": 3}')) t(i, line) ORDER BY i
+) TO '{TEMP_DIR}/duplicate.ndjson' (FORMAT csv, HEADER false, QUOTE '', ESCAPE '');
+
+statement error
+SELECT id FROM read_ndjson('{TEMP_DIR}/duplicate.ndjson', columns = {'id': 'BIGINT'});
+----
+has duplicate key "id"
+
+query I
+SELECT id FROM read_ndjson('{TEMP_DIR}/duplicate.ndjson', columns = {'id': 'BIGINT'}, ignore_errors = true);
+----
+1
+3

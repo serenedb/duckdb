@@ -81,7 +81,7 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
 		}
 		case 3: {
 			// JSON file reading via read_json_auto.
-			// Exercises: JSONReader, JSON scanning, auto schema detection.
+			// Exercises: the JSON reader, JSON scanning, auto schema detection.
 			FILE *f = fopen(TMPFILE, "wb");
 			if (!f)
 				return 0;
