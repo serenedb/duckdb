@@ -17,6 +17,7 @@
 #include "duckdb/common/unordered_map.hpp"
 #include "duckdb/function/built_in_functions.hpp"
 #include "duckdb/function/table/arrow/arrow_duck_schema.hpp"
+#include "duckdb/planner/table_filter_state.hpp"
 
 namespace duckdb {
 
@@ -64,6 +65,7 @@ public:
 	ArrowTableSchema arrow_table;
 	//! Whether projection pushdown is enabled on the scan
 	bool projection_pushdown_enabled = true;
+	bool evaluate_filters = false;
 };
 
 struct ArrowRunEndEncodingState {
@@ -121,6 +123,16 @@ public:
 	}
 };
 
+struct ArrowScanFilter {
+	idx_t column;
+	unique_ptr<TableFilterState> state;
+};
+
+struct ArrowScanExpression {
+	unique_ptr<ExpressionExecutor> executor;
+	DataChunk input;
+};
+
 struct ArrowScanLocalState : public LocalTableFunctionState {
 public:
 	explicit ArrowScanLocalState(unique_ptr<ArrowArrayWrapper> current_chunk, ClientContext &context)
@@ -137,6 +149,12 @@ public:
 	TableFilterSet *filters = nullptr;
 	//! The DataChunk containing all read columns (even filter columns that are immediately removed)
 	DataChunk all_columns;
+	vector<idx_t> arrow_columns;
+	vector<ArrowScanFilter> scan_filters;
+	vector<bool> filtered_columns;
+	unordered_map<idx_t, unique_ptr<ArrowScanExpression>> column_expressions;
+	SelectionVector filter_selection;
+	SelectionVector filter_rows;
 	ClientContext &context;
 
 public:
@@ -212,6 +230,9 @@ public:
 	static void ArrowToDuckDB(ArrowScanLocalState &scan_state, const arrow_column_map_t &arrow_convert_data,
 	                          DataChunk &output, bool arrow_scan_is_projected = true,
 	                          idx_t rowid_column_index = COLUMN_IDENTIFIER_ROW_ID);
+	static idx_t ArrowToDuckDBFiltered(ArrowScanLocalState &scan_state, const arrow_column_map_t &arrow_convert_data,
+	                                   DataChunk &output, idx_t size, optional_ptr<const SelectionVector> rows,
+	                                   idx_t count);
 
 	//! Get next scan state
 	static bool ArrowScanParallelStateNext(ClientContext &context, const FunctionData *bind_data_p,
@@ -221,6 +242,8 @@ public:
 	static unique_ptr<GlobalTableFunctionState> ArrowScanInitGlobal(ClientContext &context,
 	                                                                TableFunctionInitInput &input);
 
+	static unique_ptr<ArrowScanLocalState> ArrowScanCreateLocalState(ClientContext &context,
+	                                                                 TableFunctionInitInput &input);
 	//! Initialize Local State
 	static unique_ptr<LocalTableFunctionState> ArrowScanInitLocalInternal(ClientContext &context,
 	                                                                      TableFunctionInitInput &input,
