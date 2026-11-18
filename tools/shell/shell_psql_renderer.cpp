@@ -261,7 +261,6 @@ private:
 			cells[c].Start(name.c_str(), name.size());
 			has_line[c] = cells[c].Next(cell_lines[c]);
 		}
-		bool first_line = true;
 		bool more_lines = true;
 		while (more_lines) {
 			more_lines = false;
@@ -271,7 +270,7 @@ private:
 			}
 			for (idx_t c = 0; c < column_count; c++) {
 				if (border != 0) {
-					buffer += first_line ? ' ' : '+';
+					buffer += ' ';
 				}
 				if (has_line[c]) {
 					auto &line = cell_lines[c];
@@ -294,7 +293,6 @@ private:
 			}
 			buffer += '\n';
 			out.Print(buffer);
-			first_line = false;
 		}
 	}
 
@@ -438,7 +436,6 @@ private:
 		PsqlLine value_line;
 		bool header_complete = !header_lines.Next(header_line);
 		bool value_complete = !value_lines.Next(value_line);
-		bool first_header_line = true;
 		while (!header_complete || !value_complete) {
 			buffer.clear();
 			if (border == 2) {
@@ -446,7 +443,7 @@ private:
 			}
 			if (!header_complete) {
 				if (border == 2) {
-					buffer += first_header_line ? ' ' : '+';
+					buffer += ' ';
 				}
 				buffer.append(header_line.data, header_line.size);
 				if (header_width > header_line.width) {
@@ -456,7 +453,6 @@ private:
 				if (border > 0 || header_multiline) {
 					buffer += header_complete ? ' ' : '+';
 				}
-				first_header_line = false;
 			} else {
 				auto spaces = header_width + static_cast<idx_t>(border);
 				if (border == 0 && header_multiline) {
@@ -505,6 +501,12 @@ private:
 			buffer += '\n';
 			out.Print(buffer);
 			return true;
+		}
+		if (border == 2 && show_header) {
+			const idx_t label = std::to_string(row_count).size() + 11;
+			if (label > header_width + 3) {
+				data_width = duckdb::MaxValue(data_width, label - header_width - 3);
+			}
 		}
 		auto &names = result.metadata.column_names;
 		idx_t record = 0;
