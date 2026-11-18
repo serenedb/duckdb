@@ -1565,8 +1565,7 @@ void RemoveUnusedColumns::RemoveColumnsFromLogicalGet(LogicalGet &get, unique_pt
 				}
 			}
 		}
-		if (get.projection_ids.empty() && !get.GetColumnIds().empty() &&
-		    get.GetAnyColumn() == COLUMN_IDENTIFIER_EMPTY) {
+		if (get.projection_ids.empty() && !col_sel.empty() && get.GetAnyColumn() == COLUMN_IDENTIFIER_EMPTY) {
 			// every remaining column only feeds a table filter (e.g. count(*) with a pushed
 			// filter): an empty projection_ids means "no pruning", so express the empty output
 			// explicitly through the empty virtual column. The scan then reads the filter
