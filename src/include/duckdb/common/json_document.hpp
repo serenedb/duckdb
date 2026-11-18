@@ -8,198 +8,389 @@
 
 #pragma once
 
+#include "duckdb/common/optional_idx.hpp"
 #include "duckdb/common/typedefs.hpp"
 #include "duckdb/common/string.hpp"
 #include "duckdb/common/unique_ptr.hpp"
-#include <functional>
+#include "duckdb/common/vector.hpp"
+#include "duckdb/storage/arena_allocator.hpp"
 
-//! Forward declaration of the yyjson types - the actual definitions live in the yyjson headers, which are only
-//! included in the implementation. This keeps yyjson an internal detail of the wrapper.
-namespace duckdb_yyjson { // NOLINT
-struct yyjson_doc;
-struct yyjson_val;
-struct yyjson_mut_doc;
-struct yyjson_mut_val;
-} // namespace duckdb_yyjson
+#include <functional>
+#include <string_view>
 
 namespace duckdb {
 
-//! The type of a JSON value
-//! NOTE: no explicit storage type so that EnumUtil ToString/FromString code is not generated for it
-enum class JSONValueType {
-	INVALID,          //!< Not a valid value (e.g. the result of a failed lookup)
-	JSON_NULL,        //!< JSON null
-	BOOLEAN,          //!< true / false
-	UNSIGNED_INTEGER, //!< an integer that fits in a uint64_t
-	SIGNED_INTEGER,   //!< an integer that fits in an int64_t
-	DOUBLE,           //!< a floating point number
-	STRING,           //!< a string
-	ARRAY,            //!< a JSON array
-	OBJECT,           //!< a JSON object
-	RAW               //!< raw (unparsed) number, e.g. a bignum
+enum class JSONValueType : uint8_t {
+	INVALID,
+	JSON_NULL,
+	BOOLEAN,
+	UNSIGNED_INTEGER,
+	SIGNED_INTEGER,
+	DOUBLE,
+	STRING,
+	ARRAY,
+	OBJECT,
+	RAW
 };
 
-//! Flags controlling how JSON is parsed
-enum class JSONReadFlags {
+enum class JSONReadFlags : uint32_t {
 	NONE = 0,
 	ALLOW_INVALID_UNICODE = 1 << 0,
 	ALLOW_INF_AND_NAN = 1 << 1,
 	ALLOW_TRAILING_COMMAS = 1 << 2,
-	BIGNUM_AS_RAW = 1 << 3
+	BIGNUM_AS_RAW = 1 << 3,
+	NUMBER_AS_RAW = 1 << 4,
+	ALLOW_COMMENTS = 1 << 5
 };
 
 constexpr JSONReadFlags operator|(JSONReadFlags a, JSONReadFlags b) {
 	return static_cast<JSONReadFlags>(static_cast<uint32_t>(a) | static_cast<uint32_t>(b));
 }
 
-//! Flags controlling how JSON is written
-enum class JSONWriteFlags { NONE = 0, ALLOW_INVALID_UNICODE = 1 << 0, ALLOW_INF_AND_NAN = 1 << 1, PRETTY = 1 << 2 };
+constexpr bool HasFlag(JSONReadFlags flags, JSONReadFlags flag) {
+	return (static_cast<uint32_t>(flags) & static_cast<uint32_t>(flag)) != 0;
+}
+
+enum class JSONWriteFlags : uint32_t {
+	NONE = 0,
+	ALLOW_INVALID_UNICODE = 1 << 0,
+	ALLOW_INF_AND_NAN = 1 << 1,
+	PRETTY = 1 << 2
+};
 
 constexpr JSONWriteFlags operator|(JSONWriteFlags a, JSONWriteFlags b) {
 	return static_cast<JSONWriteFlags>(static_cast<uint32_t>(a) | static_cast<uint32_t>(b));
 }
 
-//! A read-only handle to a single value inside a JSONDocument.
-//! NOTE: a JSONValue is only valid for as long as the JSONDocument it originates from is alive.
-class JSONValue {
-	friend class JSONDocument;
-	friend class JSONWriter;
+constexpr bool HasFlag(JSONWriteFlags flags, JSONWriteFlags flag) {
+	return (static_cast<uint32_t>(flags) & static_cast<uint32_t>(flag)) != 0;
+}
 
-public:
-	//! Constructs an invalid value
-	JSONValue();
+struct JSONNode;
 
-	//! Whether or not this refers to an actual value
-	bool IsValid() const;
-	//! The type of this value
-	JSONValueType GetType() const;
+struct JSONNodeRange {
+	struct Iterator {
+		const JSONNode *node;
+		uint32_t remaining;
+		bool members;
 
-	bool IsNull() const;
-	bool IsString() const;
-	bool IsArray() const;
-	bool IsObject() const;
-	//! Whether or not this is an integer (signed or unsigned)
-	bool IsInteger() const;
-	//! Whether or not this is a number
-	bool IsNumber() const;
+		const JSONNode &operator*() const {
+			return *node;
+		}
+		Iterator &operator++();
+		bool operator!=(const Iterator &other) const {
+			return remaining != other.remaining;
+		}
+	};
 
-	//! Get the value as a string (only valid if IsString())
-	string GetString() const;
-	//! Get the value as a boolean
-	bool GetBoolean() const;
-	//! Get the value as an unsigned integer
-	uint64_t GetUnsignedInteger() const;
-	//! Get the value as a signed integer
-	int64_t GetSignedInteger() const;
-	//! Get the value as a double
-	double GetDouble() const;
-	//! Get any number as a double
-	double GetNumber() const;
+	Iterator begin() const {
+		return {first, size, members};
+	}
+	Iterator end() const {
+		return {nullptr, 0, members};
+	}
 
-	//! Look up a member of an object by key - returns an invalid value if this is not an object or the key is absent
-	JSONValue GetMember(const string &key) const;
-
-	//! Iterate over the elements of an array
-	void IterateArray(const std::function<void(JSONValue)> &callback) const;
-	//! Iterate over the key/value pairs of an object
-	void IterateObject(const std::function<void(const string &, JSONValue)> &callback) const;
-
-	//! Serialize this value to a string
-	string ToString(JSONWriteFlags flags = JSONWriteFlags::NONE) const;
-
-private:
-	explicit JSONValue(duckdb_yyjson::yyjson_val *val);
-
-private:
-	//! The wrapped yyjson value - owned by the originating JSONDocument
-	duckdb_yyjson::yyjson_val *val;
+	const JSONNode *first;
+	uint32_t size;
+	bool members;
 };
 
-//! Error information from parsing a JSON document
+struct JSONNode {
+	JSONValueType type;
+	bool boolean;
+	uint32_t size;
+	union {
+		uint64_t unsigned_integer;
+		int64_t signed_integer;
+		double real;
+		const char *str;
+		uint64_t nodes;
+	};
+
+	bool IsContainer() const {
+		return type == JSONValueType::ARRAY || type == JSONValueType::OBJECT;
+	}
+	bool IsInteger() const {
+		return type == JSONValueType::UNSIGNED_INTEGER || type == JSONValueType::SIGNED_INTEGER;
+	}
+	bool IsNumber() const {
+		return IsInteger() || type == JSONValueType::DOUBLE;
+	}
+	std::string_view GetString() const {
+		return {str, size};
+	}
+	double GetNumber() const;
+	const JSONNode *Next() const {
+		return this + (IsContainer() ? nodes : 1);
+	}
+	const JSONNode *First() const {
+		return this + 1;
+	}
+	const JSONNode *Get(std::string_view key) const;
+	const JSONNode *Get(idx_t index) const;
+	JSONNodeRange Elements() const {
+		return {First(), size, false};
+	}
+	JSONNodeRange Keys() const {
+		return {First(), size, true};
+	}
+};
+
+static_assert(sizeof(JSONNode) == 16, "JSONNode is two words");
+
+inline JSONNodeRange::Iterator &JSONNodeRange::Iterator::operator++() {
+	node = members ? (node + 1)->Next() : node->Next();
+	remaining--;
+	return *this;
+}
+
+bool JSONEquals(const JSONNode &left, const JSONNode &right);
+const char *JSONTypeDescription(const JSONNode &node);
+
 struct JSONParseError {
-	//! Whether or not an error occurred
 	bool HasError() const {
 		return has_error;
 	}
 
 	bool has_error = false;
-	//! Byte position of the error in the input
 	idx_t position = 0;
-	//! Human-readable error message
 	string message;
 };
 
-//! Owns an immutable, parsed JSON document. Values obtained from it are valid for as long as the document is alive.
+struct JSONTreeParserState;
+
+class JSONTreeParser {
+public:
+	explicit JSONTreeParser(JSONReadFlags flags = JSONReadFlags::NONE);
+	~JSONTreeParser();
+	JSONTreeParser(const JSONTreeParser &) = delete;
+	JSONTreeParser &operator=(const JSONTreeParser &) = delete;
+	JSONTreeParser(JSONTreeParser &&other) noexcept;
+	JSONTreeParser &operator=(JSONTreeParser &&other) noexcept;
+
+	const JSONNode *Parse(const char *data, idx_t len, JSONParseError &error);
+	const JSONNode *Parse(const char *data, idx_t len);
+	optional_idx ParseAppend(const char *data, idx_t len, JSONParseError &error);
+	const JSONNode *ParsePrefix(const char *data, idx_t len, idx_t &consumed, JSONParseError &error);
+	void Clear();
+	const JSONNode *Node(idx_t index) const;
+	idx_t NodeCount() const;
+	JSONReadFlags Flags() const {
+		return flags;
+	}
+	void SetFlags(JSONReadFlags flags);
+
+private:
+	JSONReadFlags flags;
+	unique_ptr<JSONTreeParserState> state;
+};
+
+struct JSONBuildValue {
+	JSONValueType type;
+	bool boolean;
+	uint32_t size;
+	uint32_t key_size;
+	union {
+		uint64_t unsigned_integer;
+		int64_t signed_integer;
+		double real;
+		const char *str;
+		JSONBuildValue *last;
+	};
+	JSONBuildValue *next;
+	const char *key;
+};
+
+class JSONStringWriter {
+public:
+	explicit JSONStringWriter(JSONWriteFlags flags = JSONWriteFlags::NONE);
+
+	void Clear();
+	void Null();
+	void Boolean(bool value);
+	void UnsignedInteger(uint64_t value);
+	void SignedInteger(int64_t value);
+	void Double(double value);
+	void Raw(std::string_view value);
+	void String(std::string_view value);
+	void StartObject();
+	void Key(std::string_view key);
+	void EndObject();
+	void StartArray();
+	void EndArray();
+	void Value(const JSONNode &node);
+	void Value(const JSONBuildValue &value);
+
+	std::string_view View() const {
+		return buffer;
+	}
+	string ToString() const {
+		return buffer;
+	}
+	static bool WriteDouble(string &out, double value, JSONWriteFlags flags);
+	static bool WriteString(string &out, std::string_view value, JSONWriteFlags flags);
+
+private:
+	struct NodeFrame {
+		bool object;
+		uint32_t remaining;
+		const JSONNode *next;
+	};
+	struct BuildFrame {
+		bool object;
+		uint32_t remaining;
+		const JSONBuildValue *next;
+	};
+
+	void BeforeValue();
+	void Indent(idx_t depth);
+	void EndContainer(bool object);
+
+private:
+	JSONWriteFlags flags;
+	bool pretty;
+	string buffer;
+	vector<uint32_t> counts;
+	vector<NodeFrame> node_frames;
+	vector<BuildFrame> build_frames;
+	bool after_key = false;
+};
+
+class JSONBuilder {
+public:
+	explicit JSONBuilder(ArenaAllocator &arena);
+
+	JSONBuildValue *Null();
+	JSONBuildValue *Boolean(bool value);
+	JSONBuildValue *UnsignedInteger(uint64_t value);
+	JSONBuildValue *SignedInteger(int64_t value);
+	JSONBuildValue *Double(double value);
+	JSONBuildValue *String(std::string_view value);
+	JSONBuildValue *Raw(std::string_view value);
+	JSONBuildValue *Object();
+	JSONBuildValue *Array();
+	JSONBuildValue *Copy(const JSONNode &node);
+	static void Add(JSONBuildValue &object, std::string_view key, JSONBuildValue *value);
+	static void Append(JSONBuildValue &array, JSONBuildValue *value);
+
+private:
+	struct CopyFrame {
+		JSONBuildValue *container;
+		uint32_t remaining;
+		const JSONNode *next;
+	};
+
+	JSONBuildValue *Make(JSONValueType type);
+	const char *CopyString(std::string_view value);
+
+private:
+	ArenaAllocator &arena;
+	vector<CopyFrame> frames;
+};
+
+class JSONValue {
+public:
+	JSONValue();
+	explicit JSONValue(const JSONNode *node);
+
+	bool IsValid() const;
+	JSONValueType GetType() const;
+	bool IsNull() const;
+	bool IsString() const;
+	bool IsArray() const;
+	bool IsObject() const;
+	bool IsInteger() const;
+	bool IsNumber() const;
+
+	string GetString() const;
+	bool GetBoolean() const;
+	uint64_t GetUnsignedInteger() const;
+	int64_t GetSignedInteger() const;
+	double GetDouble() const;
+	double GetNumber() const;
+
+	JSONValue GetMember(std::string_view key) const;
+	void IterateArray(const std::function<void(JSONValue)> &callback) const;
+	void IterateObject(const std::function<void(const string &, JSONValue)> &callback) const;
+
+	string ToString(JSONWriteFlags flags = JSONWriteFlags::NONE) const;
+
+	const JSONNode *GetNode() const {
+		return node;
+	}
+
+private:
+	const JSONNode *node;
+};
+
 class JSONDocument {
 public:
 	JSONDocument();
 	~JSONDocument();
-	// non-copyable, movable
 	JSONDocument(const JSONDocument &) = delete;
 	JSONDocument &operator=(const JSONDocument &) = delete;
 	JSONDocument(JSONDocument &&other) noexcept;
 	JSONDocument &operator=(JSONDocument &&other) noexcept;
 
-	//! Parse the given input. Throws an InvalidInputException on failure.
 	static unique_ptr<JSONDocument> Parse(const char *data, idx_t len, JSONReadFlags flags = JSONReadFlags::NONE);
-	//! Parse the given input. Returns nullptr on failure, in which case "error" is populated.
 	static unique_ptr<JSONDocument> TryParse(const char *data, idx_t len, JSONParseError &error,
 	                                         JSONReadFlags flags = JSONReadFlags::NONE);
 
-	//! The root value of the document
 	JSONValue GetRoot() const;
-
-	//! Serialize the (immutable) document to a string
 	string ToString(JSONWriteFlags flags = JSONWriteFlags::NONE) const;
 
 private:
-	//! The wrapped yyjson document
-	duckdb_yyjson::yyjson_doc *doc;
+	unique_ptr<JSONTreeParser> parser;
+	const JSONNode *root = nullptr;
 };
 
-//! A handle to a value being built inside a JSONWriter. The value is owned by the JSONWriter that created it - it must
-//! not outlive that writer.
+struct JSONMutableNode {
+	JSONValueType type = JSONValueType::JSON_NULL;
+	bool boolean = false;
+	uint64_t unsigned_integer = 0;
+	int64_t signed_integer = 0;
+	double real = 0;
+	string text;
+	vector<std::pair<string, idx_t>> children;
+};
+
+struct JSONMutableDocument {
+	vector<JSONMutableNode> nodes;
+	optional_idx root;
+
+	idx_t Add(JSONMutableNode node);
+	void Write(JSONStringWriter &out, idx_t index) const;
+};
+
 class JSONMutableValue {
 	friend class JSONWriter;
 
 public:
-	//! Constructs an invalid value
 	JSONMutableValue();
 
 	bool IsValid() const;
-
-	//! Add a key/value pair to this (object) value
 	void Add(std::string_view key, JSONMutableValue value);
-	//! Add a string key/value pair to this (object) value
 	void AddString(std::string_view key, std::string_view value);
-
-	//! Append a value to this (array) value
 	void Append(JSONMutableValue value);
-	//! Append a string value to this (array) value
 	void AppendString(std::string_view value);
 
 private:
-	JSONMutableValue(duckdb_yyjson::yyjson_mut_doc *doc, duckdb_yyjson::yyjson_mut_val *val);
+	JSONMutableValue(JSONMutableDocument *doc, idx_t index);
 
 private:
-	//! The document this value belongs to - not owned
-	duckdb_yyjson::yyjson_mut_doc *doc;
-	//! The wrapped mutable yyjson value - owned by "doc"
-	duckdb_yyjson::yyjson_mut_val *val;
+	JSONMutableDocument *doc;
+	idx_t index;
 };
 
-//! Builds a JSON document out of JSONMutableValues and serializes it to a string.
 class JSONWriter {
 public:
 	JSONWriter();
 	~JSONWriter();
-	// non-copyable, movable
 	JSONWriter(const JSONWriter &) = delete;
 	JSONWriter &operator=(const JSONWriter &) = delete;
 	JSONWriter(JSONWriter &&other) noexcept;
 	JSONWriter &operator=(JSONWriter &&other) noexcept;
 
-	//! Create values that belong to this document
 	JSONMutableValue CreateObject();
 	JSONMutableValue CreateArray();
 	JSONMutableValue CreateString(std::string_view value);
@@ -208,18 +399,16 @@ public:
 	JSONMutableValue CreateUnsignedInteger(uint64_t value);
 	JSONMutableValue CreateSignedInteger(int64_t value);
 	JSONMutableValue CreateDouble(double value);
-	//! Create a (deep) copy of an immutable value (e.g. from a parsed JSONDocument) belonging to this document
 	JSONMutableValue CreateCopy(const JSONValue &value);
 
-	//! Set the root value of the document
 	void SetRoot(JSONMutableValue value);
-
-	//! Serialize the document to a string
 	string ToString(JSONWriteFlags flags = JSONWriteFlags::NONE) const;
 
 private:
-	//! The wrapped mutable yyjson document
-	duckdb_yyjson::yyjson_mut_doc *doc;
+	JSONMutableValue Create(JSONMutableNode node);
+
+private:
+	unique_ptr<JSONMutableDocument> doc;
 };
 
 } // namespace duckdb
