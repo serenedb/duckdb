@@ -161,7 +161,8 @@ struct JSONTreeParserState;
 
 class JSONTreeParser {
 public:
-	explicit JSONTreeParser(JSONReadFlags flags = JSONReadFlags::NONE);
+	explicit JSONTreeParser(JSONReadFlags flags = JSONReadFlags::NONE,
+	                        Allocator &allocator = Allocator::DefaultAllocator());
 	~JSONTreeParser();
 	JSONTreeParser(const JSONTreeParser &) = delete;
 	JSONTreeParser &operator=(const JSONTreeParser &) = delete;
