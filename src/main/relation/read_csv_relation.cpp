@@ -59,8 +59,11 @@ CSVReaderOptions ReadCSVRelationBind(const shared_ptr<ClientContext> &context, c
 		for (auto &file : files) {
 			auto file_csv_options = csv_options;
 			file_csv_options.file_path = file.path;
-			CSVFileScan file_scan(*context, file, file_csv_options, file_options);
-			UnionByName::CombineUnionTypes(file_scan.GetNames(), file_scan.GetTypes(), types, names, union_names_map);
+			auto buffer_manager = CSVBufferManager::Open(*context, file_csv_options, file, false);
+			CSVSniffer sniffer(file_csv_options, file_options, buffer_manager, CSVStateMachineCache::Get(*context));
+			auto sniffed = sniffer.SniffCSV();
+			UnionByName::CombineUnionTypes(IdentifiersToStrings(sniffed.names), sniffed.return_types, types, names,
+			                               union_names_map);
 		}
 		if (!csv_options.sql_types_per_column.empty()) {
 			const auto exception = CSVError::ColumnTypesError(csv_options.sql_types_per_column, names);

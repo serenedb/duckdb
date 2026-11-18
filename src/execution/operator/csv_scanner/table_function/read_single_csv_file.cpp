@@ -2,14 +2,15 @@
 #include "duckdb/common/multi_file/multi_file_reader.hpp"
 #include "duckdb/common/multi_file/multi_file_states.hpp"
 #include "duckdb/common/multi_file/table_function_multi_file.hpp"
-#include "duckdb/execution/operator/csv_scanner/string_value_scanner.hpp"
 #include "duckdb/execution/operator/csv_scanner/csv_error.hpp"
 #include "duckdb/execution/operator/csv_scanner/csv_schema_discovery.hpp"
-#include "duckdb/execution/operator/csv_scanner/global_csv_state.hpp"
 #include "duckdb/execution/operator/csv_scanner/sniffer/csv_sniffer.hpp"
 #include "duckdb/execution/operator/persistent/csv_rejects_table.hpp"
 #include "duckdb/formats/csv_scan.hpp"
 #include "duckdb/function/table/read_csv.hpp"
+#include "duckdb/main/appender.hpp"
+#include "duckdb/main/client_context.hpp"
+#include "duckdb/parallel/task_scheduler.hpp"
 
 namespace duckdb {
 
@@ -23,9 +24,10 @@ struct ReadSingleCSVFileData : public ReadCSVData {
 
 struct ReadSingleCSVFileGlobalState : public GlobalTableFunctionState {
 public:
-	ReadSingleCSVFileGlobalState(ClientContext &context, ReadSingleCSVFileData &csv_data,
+	ReadSingleCSVFileGlobalState(ClientContext &context_p, const ReadSingleCSVFileData &csv_data_p,
 	                             const TableFunctionInitInput &input)
-	    : state(context, csv_data, csv_data.csv_names, TableFunctionFileInitInput::Get(input).file_count, input.op) {
+	    : context(context_p), csv_data(csv_data_p), scan_op(input.op),
+	      file_count(TableFunctionFileInitInput::Get(input).file_count) {
 	}
 
 public:
@@ -34,11 +36,14 @@ public:
 	}
 
 public:
+	ClientContext &context;
+	const ReadSingleCSVFileData &csv_data;
+	optional_ptr<const PhysicalOperator> scan_op;
+	idx_t file_count;
 	shared_ptr<CSVFileScan> file_scan;
-	CSVGlobalState state;
 	unique_ptr<CsvScanGlobal> scan;
 	mutable mutex lock;
-	bool finished_launching = false;
+	bool finished = false;
 	idx_t max_threads = 1;
 };
 
@@ -321,9 +326,10 @@ static unique_ptr<GlobalTableFunctionState> ReadSingleCSVFileInitGlobal(ClientCo
 	options.auto_detect = false;
 	MultiFileOptions file_options;
 	CSVSchema no_schema;
+	const bool many_files = result->file_count > 1 && result->file_count > TaskScheduler::QueryThreads(context) * 2;
 	result->file_scan = make_shared_ptr<CSVFileScan>(
 	    context, csv_data.file, std::move(options), file_options, csv_data.csv_names, csv_data.csv_types, no_schema,
-	    result->state.SingleThreadedRead(), csv_data.buffer_manager, false);
+	    many_files || !csv_data.options.parallel, csv_data.buffer_manager, false);
 
 	// perform projection pushdown - the scanner emits the columns in the order they are requested
 	auto &file_scan = *result->file_scan;
@@ -369,13 +375,82 @@ static unique_ptr<LocalTableFunctionState> ReadSingleCSVFileInitLocal(ExecutionC
 	return make_uniq<ReadSingleCSVFileLocalState>();
 }
 
-static void FinishFile(ReadSingleCSVFileGlobalState &gstate) {
-	lock_guard<mutex> guard(gstate.lock);
-	if (gstate.finished_launching) {
+static void FillScanErrorTable(InternalAppender &appender, idx_t scan_idx, idx_t file_idx, CSVFileScan &file) {
+	auto &options = file.options;
+	auto &dialect = options.dialect_options;
+	appender.BeginRow();
+	appender.Append(scan_idx);
+	appender.Append(file_idx);
+	appender.Append(string_t(file.GetFileName()));
+	appender.Append(string_t(dialect.state_machine_options.delimiter.FormatValue()));
+	appender.Append(string_t(dialect.state_machine_options.quote.FormatValue()));
+	appender.Append(string_t(dialect.state_machine_options.escape.FormatValue()));
+	appender.Append(string_t(options.NewLineIdentifierToString()));
+	appender.Append(Value::UINTEGER(NumericCast<uint32_t>(dialect.skip_rows.GetValue())));
+	appender.Append(Value::BOOLEAN(dialect.header.GetValue()));
+	auto &types = file.GetTypes();
+	auto &names = file.GetNames();
+	string columns = "{";
+	for (idx_t i = 0; i < types.size(); i++) {
+		columns += "'" + names[i] + "': '" + types[i].ToString() + "'";
+		if (i + 1 != types.size()) {
+			columns += ",";
+		}
+	}
+	columns += "}";
+	appender.Append(string_t(columns));
+	for (auto type : {LogicalTypeId::DATE, LogicalTypeId::TIMESTAMP}) {
+		auto format = dialect.date_format[type].GetValue();
+		if (format.Empty()) {
+			appender.Append(Value());
+		} else {
+			appender.Append(string_t(format.format_specifier));
+		}
+	}
+	if (options.user_defined_parameters.empty()) {
+		appender.Append(Value());
+	} else {
+		appender.Append(string_t(options.GetUserDefinedParameters()));
+	}
+	appender.EndRow();
+}
+
+static void FillRejectsTable(ReadSingleCSVFileGlobalState &gstate, CSVFileScan &file) {
+	auto &options = gstate.csv_data.options;
+	if (!options.store_rejects.GetValue()) {
 		return;
 	}
-	gstate.finished_launching = true;
-	gstate.state.FinishLaunchingTasks(*gstate.file_scan);
+	auto &context = gstate.context;
+	auto rejects = CSVRejectsTable::GetOrCreate(context, options.rejects_scan_name.GetValue(),
+	                                            options.rejects_table_name.GetValue());
+	const lock_guard<mutex> lock(rejects->write_lock);
+	auto &errors_table = rejects->GetErrorsTable(context);
+	auto &scans_table = rejects->GetScansTable(context);
+	InternalAppender errors_appender(context, errors_table);
+	InternalAppender scans_appender(context, scans_table);
+	const idx_t scan_idx = context.transaction.GetActiveQuery();
+	const idx_t file_idx =
+	    rejects->GetFileIndexBase(scan_idx, gstate.scan_op.get(), gstate.file_count) + file.GetFileIndex();
+	file.error_handler->FillRejectsTable(errors_appender, file_idx, scan_idx, file, *rejects, gstate.csv_data.csv_names,
+	                                     options.rejects_limit);
+	if (rejects->count != 0) {
+		rejects->count = 0;
+		FillScanErrorTable(scans_appender, scan_idx, file_idx, file);
+	}
+	errors_appender.Close();
+	scans_appender.Close();
+}
+
+static void FinishFile(ReadSingleCSVFileGlobalState &gstate) {
+	lock_guard<mutex> guard(gstate.lock);
+	if (gstate.finished) {
+		return;
+	}
+	gstate.finished = true;
+	auto &file = *gstate.file_scan;
+	file.Finish();
+	file.error_handler->ErrorIfAny();
+	FillRejectsTable(gstate, file);
 }
 
 static bool ClaimNextPart(ReadSingleCSVFileGlobalState &gstate, ReadSingleCSVFileLocalState &lstate) {

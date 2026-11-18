@@ -19,8 +19,6 @@
 #include "duckdb/common/csv_writer.hpp"
 
 namespace duckdb {
-class BaseScanner;
-class StringValueScanner;
 
 class ReadCSV {
 public:
