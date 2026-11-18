@@ -9,7 +9,6 @@
 #include "duckdb/common/serializer/serializer.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/common/multi_file/union_by_name.hpp"
-#include "duckdb/execution/operator/csv_scanner/global_csv_state.hpp"
 #include "duckdb/execution/operator/csv_scanner/csv_error.hpp"
 #include "duckdb/execution/operator/csv_scanner/sniffer/csv_sniffer.hpp"
 #include "duckdb/execution/operator/persistent/csv_rejects_table.hpp"
@@ -25,9 +24,6 @@
 #include "duckdb/planner/expression/bound_cast_expression.hpp"
 #include "duckdb/planner/operator/logical_get.hpp"
 #include "duckdb/execution/operator/csv_scanner/csv_file_scanner.hpp"
-#include "duckdb/execution/operator/csv_scanner/base_scanner.hpp"
-
-#include "duckdb/execution/operator/csv_scanner/string_value_scanner.hpp"
 
 #include <limits>
 #include "duckdb/execution/operator/csv_scanner/csv_schema.hpp"

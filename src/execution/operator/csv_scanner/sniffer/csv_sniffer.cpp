@@ -90,7 +90,7 @@ AdaptiveSnifferResult CSVSniffer::MinimalSniff() {
 
 	auto state_machine =
 	    make_shared_ptr<CSVStateMachine>(options, options.dialect_options.state_machine_options, state_machine_cache);
-	ColumnCountScanner count_scanner(buffer_manager, state_machine, error_handler, result_size);
+	CsvColumnCounter count_scanner(buffer_manager, state_machine, error_handler, result_size);
 	auto &sniffed_column_counts = count_scanner.ParseChunk();
 	if (sniffed_column_counts.result_position == 0) {
 		// The file is an empty file, we just return
@@ -126,7 +126,7 @@ AdaptiveSnifferResult CSVSniffer::MinimalSniff() {
 		const auto vector_data = FlatVector::GetData<string_t>(cur_vector);
 		auto &validity = FlatVector::ValidityMutable(cur_vector);
 		HeaderValue val;
-		if (validity.RowIsValid(0)) {
+		if (data_chunk.size() != 0 && validity.RowIsValid(0)) {
 			val = HeaderValue(vector_data[0]);
 		}
 		potential_header.emplace_back(val);

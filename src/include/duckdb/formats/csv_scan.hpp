@@ -23,6 +23,11 @@
 
 namespace duckdb {
 
+bool CsvDecodesDirectly(const LogicalType &type, bool icu_loaded);
+string_t CsvRemoveEscape(const char *value, idx_t size, char escape, char quote, bool strict_mode, Vector &vector);
+void CsvSanitize(string &text);
+idx_t CsvRangeBytes(const CSVReaderOptions &options);
+
 struct CsvBytes {
 	shared_ptr<CSVBufferHandle> buffer;
 	unsafe_unique_array<char> owned;
@@ -66,8 +71,22 @@ struct CsvRowError {
 	string message;
 };
 
+struct CsvScanSource {
+	shared_ptr<CSVStateMachine> state_machine;
+	shared_ptr<CSVBufferManager> buffer_manager;
+	shared_ptr<CSVErrorHandler> error_handler;
+	vector<std::pair<idx_t, idx_t>> projection;
+	vector<LogicalType> types;
+	vector<string> names;
+	string path;
+	idx_t file_row_number = DConstants::INVALID_INDEX;
+	optional_ptr<atomic<idx_t>> bytes_read;
+	bool sniffing = false;
+};
+
 class CsvScanGlobal {
 public:
+	CsvScanGlobal(ClientContext &context, const CSVReaderOptions &options, CsvScanSource source);
 	CsvScanGlobal(ClientContext &context, CSVFileScan &file);
 
 	idx_t MaxThreads() const {
@@ -95,14 +114,14 @@ public:
 		return range % parts == parts - 1;
 	}
 	shared_ptr<CSVBufferHandle> Buffer(idx_t buffer) const {
-		return file.buffer_manager->GetBuffer(buffer);
+		return source.buffer_manager->GetBuffer(buffer);
 	}
 	idx_t Read(char *data, idx_t count, idx_t offset) const;
 
 public:
 	ClientContext &context;
-	CSVFileScan &file;
 	const CSVReaderOptions &options;
+	CsvScanSource source;
 	CsvGrammar grammar;
 	vector<CsvScanColumn> columns;
 	StrpTimeFormat date_format;
@@ -113,6 +132,8 @@ public:
 	bool ignore_errors = false;
 	bool print_line = true;
 	bool parallel = false;
+	idx_t skip_rows = 0;
+	bool skip_bom = false;
 	idx_t start = 0;
 	idx_t start_lines = 0;
 	idx_t size = 0;
@@ -146,8 +167,20 @@ public:
 	explicit CsvScan(CsvScanGlobal &global);
 
 	void Start(idx_t range, vector<shared_ptr<CsvBufferUse>> uses);
-	bool Scan(DataChunk &output);
+	bool Scan(DataChunk &output, idx_t max_rows = STANDARD_VECTOR_SIZE);
 	idx_t Lookup(std::span<const int64_t> offsets, std::span<idx_t> survivors, DataChunk &output);
+	bool Done() const {
+		return done;
+	}
+	bool UsedUnstrictness() const {
+		return used_unstrictness || splitter->UsedUnstrictness();
+	}
+	bool EverQuoted() const {
+		return splitter->EverQuoted();
+	}
+	bool EverEscaped() const {
+		return splitter->EverEscaped();
+	}
 
 private:
 	static bool NeedsFlushCast(const CsvScanColumn &column);
@@ -155,7 +188,6 @@ private:
 	bool ReadRange();
 	void SkipRows();
 	void View(shared_ptr<CSVBufferHandle> handle, idx_t position);
-	idx_t LookupRow(idx_t offset, idx_t &window_begin, idx_t &window_end, idx_t &window_offset);
 	void Decode(idx_t count, DataChunk &output);
 	bool DecodeValue(const CsvScanColumn &column, const CsvField &field, Vector &vector, idx_t row, CsvRowError &error);
 	bool IsNull(const CsvField &field, const char *value, idx_t size) const;
@@ -167,7 +199,7 @@ private:
 
 private:
 	CsvScanGlobal &global;
-	CSVFileScan &file;
+	CsvScanSource &source;
 	const CSVReaderOptions &options;
 	const CsvGrammar &grammar;
 	unique_ptr<CsvSplitter> splitter;
@@ -185,6 +217,7 @@ private:
 	bool started = false;
 	bool reported = true;
 	bool no_rows = false;
+	bool used_unstrictness = false;
 	idx_t range = 0;
 	idx_t range_begin = 0;
 	idx_t range_end = 0;

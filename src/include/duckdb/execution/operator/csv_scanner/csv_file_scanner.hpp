@@ -9,11 +9,9 @@
 #pragma once
 
 #include "duckdb/execution/operator/csv_scanner/csv_buffer_manager.hpp"
-#include "duckdb/execution/operator/csv_scanner/scanner_boundary.hpp"
 #include "duckdb/execution/operator/csv_scanner/csv_state_machine.hpp"
 #include "duckdb/execution/operator/csv_scanner/csv_error.hpp"
 #include "duckdb/execution/operator/csv_scanner/csv_schema.hpp"
-#include "duckdb/execution/operator/csv_scanner/csv_validator.hpp"
 #include "duckdb/common/multi_file/multi_file_data.hpp"
 #include "duckdb/execution/progress_data.hpp"
 
@@ -31,11 +29,7 @@ public:
 	            CSVSchema &file_schema, bool per_file_single_threaded,
 	            shared_ptr<CSVBufferManager> buffer_manager = nullptr, bool fixed_schema = false);
 
-	CSVFileScan(ClientContext &context, const OpenFileInfo &file, const CSVReaderOptions &options,
-	            const MultiFileOptions &file_options);
-
 public:
-	void SetStart();
 	void SetNamesAndTypes(const vector<Identifier> &names, const vector<LogicalType> &types);
 
 public:
@@ -45,9 +39,6 @@ public:
 	const string &GetFileName() const {
 		return file.path;
 	}
-	//! Accepts file_row_number as a virtual column. The caller appends the virtual column's local id to
-	//! column_ids and then calls this; we record the local slot so Flush can fill the output with byte offsets
-	//! instead of parsed CSV fields.
 	void AddVirtualColumn(column_t virtual_column_id);
 
 	idx_t GetFileIndex() const {
@@ -55,7 +46,6 @@ public:
 	}
 	const vector<string> &GetNames();
 	const vector<LogicalType> &GetTypes();
-	void InitializeProjection();
 	void Finish();
 
 	//! Initialize the actual names and types to be scanned from the file
@@ -96,22 +86,6 @@ public:
 	//! Options for this CSV Reader
 	CSVReaderOptions options;
 
-	CSVIterator start_iterator;
-
-	CSVValidator validator;
-	idx_t skipped_rows = 0;
-
-	//! The started tasks and finished tasks allow us to track if all reads of the CSV file have completed
-	//! Note that the "started_tasks" starts at one - this is so we can track when the scheduling of all tasks for this
-	//! file has completed When the scheduling is finished we increment `finished_tasks` by one as well
-	atomic<idx_t> started_tasks {1};
-	atomic<idx_t> finished_tasks {0};
-
-	//! Local slot within column_ids that receives file_row_number values. Set by
-	//! AddVirtualColumn to the column_ids.size() at the moment the column mapper
-	//! registers the virtual column; DConstants::INVALID_INDEX when not projected.
-	//! StringValueScanner::Flush fills this output slot with the byte offset of each
-	//! row's start (taken from line_positions_per_row) rather than from parse_chunk.
 	idx_t file_row_number_idx = DConstants::INVALID_INDEX;
 
 private:

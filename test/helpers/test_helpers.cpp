@@ -11,8 +11,8 @@
 #include "test_helpers.hpp"
 #include "duckdb/parser/parsed_data/copy_info.hpp"
 #include "duckdb/main/client_context.hpp"
-#include "duckdb/execution/operator/csv_scanner/string_value_scanner.hpp"
 #include "duckdb/common/case_insensitive_map.hpp"
+#include "duckdb/parser/keyword_helper.hpp"
 #include "test_config.hpp"
 #include "pid.hpp"
 #include "duckdb/function/table/read_csv.hpp"
@@ -837,44 +837,21 @@ bool compare_result(string csv, ColumnDataCollection &collection, vector<Logical
 	f << csv;
 	f.close();
 
-	// set up the CSV reader
-	CSVReaderOptions options;
-	options.auto_detect = false;
-	options.dialect_options.state_machine_options.delimiter = {"|"};
-	options.dialect_options.header = has_header;
-	options.dialect_options.state_machine_options.quote = '\"';
-	options.dialect_options.state_machine_options.escape = '\"';
-	options.file_path = csv_path;
-	options.dialect_options.num_cols = sql_types.size();
-	// set up the intermediate result chunk
-	DataChunk parsed_result;
-	parsed_result.Initialize(Allocator::DefaultAllocator(), sql_types);
-
+	string columns;
+	for (idx_t i = 0; i < sql_types.size(); i++) {
+		columns += (i == 0 ? "" : ", ") + KeywordHelper::WriteQuoted("c" + to_string(i), '\'') + ": " +
+		           KeywordHelper::WriteQuoted(sql_types[i].ToString(), '\'');
+	}
 	DuckDB db;
 	Connection con(db);
-	MultiFileOptions file_options;
-	auto scanner_ptr = StringValueScanner::GetCSVScanner(*con.context, options, file_options);
-	auto &scanner = *scanner_ptr;
-	ColumnDataCollection csv_data_collection(*con.context, sql_types);
-	while (!scanner.FinishedIterator()) {
-		// parse a chunk from the CSV file
-		try {
-			parsed_result.Reset();
-			scanner.Flush(parsed_result);
-		} catch (std::exception &ex) {
-			error_message = "Could not parse CSV: " + string(ex.what());
-			return false;
-		}
-		if (parsed_result.size() == 0) {
-			break;
-		}
-		csv_data_collection.Append(parsed_result);
-	}
-	string error;
-	if (!ColumnDataCollection::ResultEquals(collection, csv_data_collection, error_message)) {
+	auto result = con.Query("SELECT * FROM read_csv(" + KeywordHelper::WriteQuoted(csv_path, '\'') +
+	                        ", delim = '|', quote = '\"', escape = '\"', auto_detect = false, header = " +
+	                        (has_header ? "true" : "false") + ", columns = {" + columns + "})");
+	if (result->HasError()) {
+		error_message = "Could not parse CSV: " + result->GetError();
 		return false;
 	}
-	return true;
+	return ColumnDataCollection::ResultEquals(collection, result->Collection(), error_message);
 }
 
 } // namespace duckdb

@@ -548,17 +548,6 @@ CSVError CSVError::SniffingError(const CSVReaderOptions &options, const string &
 	return CSVError(error.str(), SNIFFING, {});
 }
 
-CSVError CSVError::NullPaddingFail(const CSVReaderOptions &options, LinesPerBoundary error_info,
-                                   const String &current_path) {
-	std::ostringstream error;
-	error << " The parallel scanner does not support null_padding in conjunction with quoted new lines. Please "
-	         "disable the parallel csv reader with parallel=false"
-	      << '\n';
-	// What were the options
-	error << options.ToString(current_path);
-	return CSVError(error.str(), NULLPADDED_QUOTED_NEW_VALUE, error_info);
-}
-
 CSVError CSVError::UnterminatedQuotesError(const CSVReaderOptions &options, idx_t current_column,
                                            LinesPerBoundary error_info, string &csv_row, idx_t row_byte_position,
                                            optional_idx byte_position, const String &current_path) {

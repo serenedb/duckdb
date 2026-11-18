@@ -11,7 +11,9 @@
 #include "duckdb/common/array.hpp"
 #include "duckdb/common/limits.hpp"
 #include "duckdb/common/vector.hpp"
+#include "duckdb/execution/operator/csv_scanner/csv_byte_skipper.hpp"
 #include "duckdb/execution/operator/csv_scanner/csv_state.hpp"
+#include "duckdb/execution/operator/csv_scanner/csv_state_machine.hpp"
 #include "duckdb/execution/operator/csv_scanner/csv_state_machine_cache.hpp"
 
 namespace duckdb {
@@ -87,6 +89,8 @@ struct CsvRangeEntry {
 using CsvRangeTransfer = array<CsvRangeEntry, StateMachine::NUM_STATES>;
 
 struct CsvGrammar {
+	static CsvGrammar For(const CSVStateMachine &state_machine);
+
 	const StateMachine *transitions = nullptr;
 	idx_t extra_delimiter_bytes = 0;
 	char quote = '\0';
@@ -97,8 +101,35 @@ struct CsvGrammar {
 	bool trim_quoted_spaces = false;
 };
 
+class CsvSkip {
+public:
+	CsvSkip(const CsvGrammar &grammar, idx_t rows);
+
+	bool Feed(const char *data, idx_t base, idx_t end);
+	idx_t Start(const CSVReaderOptions &options) const;
+	idx_t Lines() const {
+		return lines;
+	}
+
+private:
+	bool AddRow();
+	bool EndLine(bool add);
+
+private:
+	const CsvGrammar &grammar;
+	const idx_t rows;
+	CSVState states[2] = {CSVState::NOT_SET, CSVState::NOT_SET};
+	idx_t skipped = 0;
+	idx_t lines = 0;
+	idx_t pos = 0;
+	bool comment = false;
+	bool starts_as_comment = false;
+};
+
 void CsvTransfer(const CsvGrammar &grammar, const char *bytes, idx_t base, idx_t begin, idx_t end,
                  CsvRangeTransfer &transfer);
+
+string CsvStripSeparator(const char *value, idx_t size, char separator);
 
 class CsvSplitter {
 public:
@@ -136,6 +167,15 @@ public:
 	idx_t LinesRead() const {
 		return lines_read;
 	}
+	bool EverQuoted() const {
+		return ever_quoted;
+	}
+	bool EverEscaped() const {
+		return ever_escaped;
+	}
+	bool UsedUnstrictness() const {
+		return used_unstrictness;
+	}
 
 private:
 	struct Boundary {
@@ -150,6 +190,11 @@ private:
 
 	char At(idx_t position) const {
 		return bytes[position - base];
+	}
+	void Skip(const bool (&skippable)[StateMachine::NUM_TRANSITIONS]) {
+		idx_t relative = pos - base;
+		skipper.SkipToStop(skippable, end - base, relative);
+		pos = base + relative;
 	}
 	void Transition(char byte) {
 		states[0] = states[1];
@@ -170,6 +215,7 @@ private:
 	const CsvGrammar grammar;
 	const idx_t columns;
 	const idx_t capacity;
+	CSVByteSkipper skipper;
 	vector<CsvField> fields;
 	vector<CsvExtraField> extras;
 	vector<CsvRow> rows;
@@ -189,6 +235,8 @@ private:
 	idx_t quoted_position = 0;
 	bool quoted = false;
 	bool ever_quoted = false;
+	bool ever_escaped = false;
+	bool used_unstrictness = false;
 	bool escaped = false;
 	bool comment = false;
 	idx_t position_before_comment = 0;

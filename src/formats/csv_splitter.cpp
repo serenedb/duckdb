@@ -4,8 +4,105 @@
 
 namespace duckdb {
 
+CsvGrammar CsvGrammar::For(const CSVStateMachine &state_machine) {
+	CsvGrammar grammar;
+	auto &dialect = state_machine.dialect_options.state_machine_options;
+	const auto delimiter = dialect.delimiter.GetValue();
+	grammar.transitions = &state_machine.transition_array;
+	grammar.extra_delimiter_bytes = delimiter.empty() ? 0 : delimiter.size() - 1;
+	grammar.quote = dialect.quote.GetValue();
+	grammar.escape = dialect.escape.GetValue();
+	grammar.strict_mode = dialect.strict_mode.GetValue();
+	grammar.carry_on_newline = dialect.new_line.GetValue() == NewLineIdentifier::CARRY_ON;
+	auto &machine = state_machine.state_machine_options;
+	grammar.only_crlf = machine.strict_mode.GetValue() && machine.strict_mode.IsSetByUser() &&
+	                    machine.new_line.GetValue() == NewLineIdentifier::CARRY_ON && machine.new_line.IsSetByUser();
+	grammar.trim_quoted_spaces = (delimiter.empty() || delimiter[0] != ' ') && dialect.quote.GetValue() != ' ' &&
+	                             dialect.escape.GetValue() != ' ' && dialect.comment.GetValue() != ' ';
+	return grammar;
+}
+
+string CsvStripSeparator(const char *value, idx_t size, char separator) {
+	string result;
+	result.reserve(size);
+	for (idx_t i = 0; i < size; i++) {
+		if (value[i] != separator) {
+			result.push_back(value[i]);
+		}
+	}
+	return result;
+}
+
+CsvSkip::CsvSkip(const CsvGrammar &grammar_p, idx_t rows_p) : grammar(grammar_p), rows(rows_p) {
+}
+
+bool CsvSkip::Feed(const char *data, idx_t base, idx_t end) {
+	auto &table = *grammar.transitions;
+	while (pos < end) {
+		states[0] = states[1];
+		states[1] = table.state_machine[static_cast<uint8_t>(data[pos - base])][static_cast<uint8_t>(states[1])];
+		bool done = false;
+		switch (states[1]) {
+		case CSVState::RECORD_SEPARATOR:
+			if (states[0] == CSVState::RECORD_SEPARATOR || states[0] == CSVState::NOT_SET) {
+				done = AddRow();
+				lines++;
+			} else if (states[0] != CSVState::CARRIAGE_RETURN) {
+				done = EndLine(true);
+				lines++;
+			}
+			break;
+		case CSVState::CARRIAGE_RETURN:
+			if (states[0] == CSVState::RECORD_SEPARATOR || states[0] == CSVState::NOT_SET) {
+				done = AddRow();
+			} else if (states[0] != CSVState::CARRIAGE_RETURN) {
+				done = EndLine(!grammar.only_crlf);
+			}
+			lines++;
+			break;
+		case CSVState::COMMENT:
+			if ((!comment || pos == base || pos + 1 == end) && states[0] != CSVState::STANDARD) {
+				starts_as_comment = true;
+			}
+			comment = true;
+			break;
+		default:
+			break;
+		}
+		pos++;
+		if (done) {
+			return true;
+		}
+	}
+	return false;
+}
+
+idx_t CsvSkip::Start(const CSVReaderOptions &options) const {
+	const bool carry_on = options.dialect_options.state_machine_options.new_line == NewLineIdentifier::CARRY_ON;
+	if (carry_on && states[1] == CSVState::CARRIAGE_RETURN) {
+		return pos + 1;
+	}
+	return pos;
+}
+
+bool CsvSkip::AddRow() {
+	skipped++;
+	return skipped >= rows;
+}
+
+bool CsvSkip::EndLine(bool add) {
+	if (comment) {
+		const bool counted = !starts_as_comment;
+		comment = false;
+		starts_as_comment = false;
+		return counted && AddRow();
+	}
+	return add && AddRow();
+}
+
 CsvSplitter::CsvSplitter(const CsvGrammar &grammar_p, idx_t columns_p, idx_t capacity_p)
-    : grammar(grammar_p), columns(columns_p), capacity(capacity_p), fields(columns_p * capacity_p), rows(capacity_p) {
+    : grammar(grammar_p), columns(columns_p), capacity(capacity_p), skipper(grammar_p.transitions->stop_patterns),
+      fields(columns_p * capacity_p), rows(capacity_p) {
 }
 
 void CsvTransfer(const CsvGrammar &grammar, const char *bytes, idx_t base, idx_t begin, idx_t end,
@@ -43,7 +140,29 @@ void CsvTransfer(const CsvGrammar &grammar, const char *bytes, idx_t base, idx_t
 		result.Inherit(settled[origin]);
 		return result;
 	};
+	auto self_loop = [](CSVState state) {
+		return state == CSVState::STANDARD || state == CSVState::QUOTED || state == CSVState::COMMENT;
+	};
+	CSVByteSkipper skipper(table.stop_patterns);
+	skipper.SetBuffer(bytes, end - base);
 	for (idx_t pos = begin; pos < end; pos++) {
+		bool skippable = run_count > 0;
+		for (idx_t i = 0; i < run_count; i++) {
+			skippable = skippable && self_loop(runs[i].start.states[1]);
+		}
+		if (skippable && pos > begin) {
+			idx_t relative = pos - base;
+			if (skipper.SkipToCandidate(end - base, relative) != CSVByteSkipper::SkippedTo::TAIL &&
+			    relative != pos - base) {
+				for (idx_t i = 0; i < run_count; i++) {
+					runs[i].start.states[0] = runs[i].start.states[1];
+				}
+				pos = base + relative;
+				if (pos >= end) {
+					break;
+				}
+			}
+		}
 		const auto byte = static_cast<uint8_t>(bytes[pos - base]);
 		for (idx_t i = 0; i < run_count; i++) {
 			auto &run = runs[i];
@@ -121,6 +240,8 @@ void CsvSplitter::Reset(idx_t position, idx_t lines, const CsvRangeStart &start)
 	last_position = start.last_position == DConstants::INVALID_INDEX ? position : start.last_position;
 	quoted = false;
 	ever_quoted = false;
+	ever_escaped = false;
+	used_unstrictness = false;
 	escaped = false;
 	comment = false;
 	row_flags = 0;
@@ -326,6 +447,9 @@ void CsvSplitter::Finish() {
 		row_flags = 0;
 		return;
 	}
+	if (states[1] == CSVState::QUOTED || states[1] == CSVState::QUOTED_NEW_LINE) {
+		used_unstrictness = true;
+	}
 	if (comment) {
 		UnsetComment(end);
 	} else {
@@ -352,6 +476,7 @@ idx_t CsvSplitter::Split(const char *bytes_p, idx_t base_p, idx_t end_p, idx_t m
 	}
 	const bool has_escape = grammar.escape != '\0';
 	const auto &table = *grammar.transitions;
+	skipper.SetBuffer(bytes, end - base);
 	while (pos < end && row_count < max_rows) {
 		if (pos >= stop_at && pos == boundary.pos) {
 			finished = true;
@@ -404,6 +529,13 @@ idx_t CsvSplitter::Split(const char *bytes_p, idx_t base_p, idx_t end_p, idx_t m
 		case CSVState::QUOTED:
 			if ((states[0] == CSVState::UNQUOTED || states[0] == CSVState::MAYBE_QUOTED) && has_escape) {
 				escaped = true;
+				ever_escaped = true;
+			}
+			if ((states[0] == CSVState::ESCAPE || states[0] == CSVState::ESCAPED_RETURN ||
+			     states[0] == CSVState::UNQUOTED_ESCAPE) &&
+			    (At(pos) == grammar.quote || !grammar.strict_mode)) {
+				ever_escaped = true;
+				used_unstrictness = used_unstrictness || states[0] == CSVState::UNQUOTED_ESCAPE;
 			}
 			if (!quoted) {
 				quoted_position = pos;
@@ -411,28 +543,29 @@ idx_t CsvSplitter::Split(const char *bytes_p, idx_t base_p, idx_t end_p, idx_t m
 			quoted = true;
 			ever_quoted = true;
 			pos++;
-			while (pos + 1 < end && table.skip_quoted[static_cast<uint8_t>(At(pos))]) {
-				pos++;
-			}
+			Skip(table.skip_quoted);
 			break;
 		case CSVState::UNQUOTED:
 			if (states[0] == CSVState::MAYBE_QUOTED || (states[0] == CSVState::UNQUOTED && has_escape)) {
 				escaped = true;
 			}
+			ever_escaped = ever_escaped || states[0] == CSVState::MAYBE_QUOTED;
 			quoted = true;
 			pos++;
 			break;
 		case CSVState::ESCAPE:
 		case CSVState::ESCAPED_RETURN:
+			escaped = true;
+			pos++;
+			break;
 		case CSVState::UNQUOTED_ESCAPE:
 			escaped = true;
+			used_unstrictness = true;
 			pos++;
 			break;
 		case CSVState::STANDARD:
 			pos++;
-			while (pos + 1 < end && table.skip_standard[static_cast<uint8_t>(At(pos))]) {
-				pos++;
-			}
+			Skip(table.skip_standard);
 			break;
 		case CSVState::QUOTED_NEW_LINE:
 			row_flags |= CSV_ROW_QUOTED_NEWLINE;
@@ -444,9 +577,7 @@ idx_t CsvSplitter::Split(const char *bytes_p, idx_t base_p, idx_t end_p, idx_t m
 				comment = true;
 			}
 			pos++;
-			while (pos + 1 < end && table.skip_comment[static_cast<uint8_t>(At(pos))]) {
-				pos++;
-			}
+			Skip(table.skip_comment);
 			break;
 		default:
 			pos++;
