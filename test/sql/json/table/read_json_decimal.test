@@ -1,0 +1,37 @@
+# name: test/sql/json/table/read_json_decimal.test
+# description: read_json reads unsigned, signed and fractional JSON numbers into DECIMAL columns
+# group: [table]
+
+require json
+
+statement ok
+COPY (SELECT line FROM (VALUES (1, '{"d": 12}'), (2, '{"d": -3}'), (3, '{"d": 2.5}'), (4, '{"d": "7.5"}')) t(i, line) ORDER BY i) TO '{TEST_DIR}/decimals.ndjson' (FORMAT CSV, HEADER false, QUOTE '', ESCAPE '');
+
+query I
+SELECT d FROM read_json('{TEST_DIR}/decimals.ndjson', columns={'d': 'DECIMAL(4,1)'}) ORDER BY d;
+----
+-3.0
+2.5
+7.5
+12.0
+
+query I
+SELECT d FROM read_json('{TEST_DIR}/decimals.ndjson', columns={'d': 'DECIMAL(18,3)'}) ORDER BY d;
+----
+-3.000
+2.500
+7.500
+12.000
+
+statement ok
+COPY (SELECT '{"d": 12345}' AS line) TO '{TEST_DIR}/decimal_overflow.ndjson' (FORMAT CSV, HEADER false, QUOTE '', ESCAPE '');
+
+statement error
+SELECT d FROM read_json('{TEST_DIR}/decimal_overflow.ndjson', columns={'d': 'DECIMAL(4,1)'});
+----
+<REGEX>:.*Failed to cast value to decimal.*
+
+query I
+SELECT d FROM read_json('{TEST_DIR}/decimal_overflow.ndjson', columns={'d': 'DECIMAL(4,1)'}, ignore_errors=true);
+----
+NULL
