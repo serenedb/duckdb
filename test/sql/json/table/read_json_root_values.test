@@ -1,0 +1,72 @@
+# name: test/sql/json/table/read_json_root_values.test
+# description: every kind of JSON value at the root of a document, read from inside the reader's buffers and at their end
+# group: [table]
+
+require json
+
+statement ok
+COPY (
+	SELECT line FROM (VALUES (1, '1'), (2, '-2.5'), (3, '"text"'), (4, 'true'), (5, 'false'), (6, 'null'), (7, 'NaN'),
+	                         (8, '-Infinity'), (9, '[1, 2,]'), (10, '{"a": 1}'), (11, '18446744073709551616'), (12, '7'))
+	    t(i, line)
+	ORDER BY i
+) TO '{TEST_DIR}/root_values.ndjson' (FORMAT csv, HEADER false, QUOTE '', ESCAPE '');
+
+query I
+SELECT json FROM read_json('{TEST_DIR}/root_values.ndjson', format := 'newline_delimited', records := false, columns := {json: 'JSON'});
+----
+1
+-2.5
+"text"
+true
+false
+NULL
+NaN
+-Infinity
+[1,2]
+{"a":1}
+18446744073709551616
+7
+
+query I
+SELECT json FROM read_ndjson_objects('{TEST_DIR}/root_values.ndjson');
+----
+1
+-2.5
+"text"
+true
+false
+null
+NaN
+-Infinity
+[1, 2,]
+{"a": 1}
+18446744073709551616
+7
+
+statement ok
+COPY (SELECT '[1, "a", null, [2], {"b": 3}, NaN, true]' AS line) TO '{TEST_DIR}/root_array.json' (FORMAT csv, HEADER false, QUOTE '', ESCAPE '');
+
+query I
+SELECT json FROM read_json('{TEST_DIR}/root_array.json', format := 'array', records := false, columns := {json: 'JSON'});
+----
+1
+"a"
+NULL
+[2]
+{"b":3}
+NaN
+true
+
+statement ok
+COPY (SELECT i AS a, repeat('x', i % 50) AS s FROM range(10000) t(i)) TO '{TEST_DIR}/many.ndjson' (FORMAT json);
+
+query III
+SELECT count(*), sum(a), sum(length(s)) FROM read_ndjson('{TEST_DIR}/many.ndjson', maximum_object_size := 100);
+----
+10000	49995000	245000
+
+query III
+SELECT count(*), sum(a), sum(length(s)) FROM read_ndjson('{TEST_DIR}/many.ndjson');
+----
+10000	49995000	245000

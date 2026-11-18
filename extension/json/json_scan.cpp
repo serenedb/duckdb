@@ -130,10 +130,6 @@ idx_t JSONScanLocalState::Read() {
 	return scan_state.current_reader->Scan(scan_state);
 }
 
-void JSONScanLocalState::ParseJSON(char *const json_start, const idx_t json_size, const idx_t remaining) {
-	scan_state.current_reader->ParseJSON(scan_state, json_start, json_size, remaining);
-}
-
 bool JSONScanLocalState::TryInitializeScan(JSONScanGlobalState &gstate, JSONReader &reader) {
 	// try to initialize a scan in the given reader
 	// three scenarios:
