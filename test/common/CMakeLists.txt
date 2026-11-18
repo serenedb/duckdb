@@ -11,6 +11,7 @@ add_library_unity(
   test_cast.cpp
   test_checked_integer.cpp
   test_checksum.cpp
+  test_csv_splitter.cpp
   test_column_data_allocator.cpp
   test_compression_type.cpp
   test_file_buffer_handle_group.cpp

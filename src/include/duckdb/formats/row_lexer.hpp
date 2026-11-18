@@ -1,0 +1,119 @@
+//===----------------------------------------------------------------------===//
+//                         DuckDB
+//
+// duckdb/formats/row_lexer.hpp
+//
+//
+//===----------------------------------------------------------------------===//
+
+#pragma once
+
+#include "duckdb/common/unique_ptr.hpp"
+#include "duckdb/common/vector.hpp"
+#include "duckdb/formats/csv_splitter.hpp"
+
+namespace duckdb {
+
+enum class RowQuoting : uint8_t { NONE, FIELD_START, ANYWHERE };
+
+struct RowDialect {
+	static RowDialect DuckDB(const CsvGrammar &grammar);
+	static RowDialect PostgresCsv(char delimiter, char quote, char escape);
+	static RowDialect PostgresText(char delimiter);
+
+	char delimiter = ',';
+	char quote = '\0';
+	char escape = '\0';
+	char comment = '\0';
+	RowQuoting quoting = RowQuoting::NONE;
+	bool backslash = false;
+	bool escape_in_quotes = false;
+	bool reject_escape = false;
+	bool carriage_terms = false;
+	bool strip_carriage = false;
+	bool merge_terms = false;
+	bool carry_on = false;
+	bool strict = false;
+	bool reopen = false;
+	NewLineIdentifier new_line = NewLineIdentifier::NOT_SET;
+	bool supported = true;
+};
+
+static constexpr uint32_t ROW_FIELD_FLAG = uint32_t(1) << 31;
+static constexpr uint32_t ROW_FIELD_MASK = ROW_FIELD_FLAG - 1;
+
+struct RowFields {
+	void Clear() {
+		row_count = 0;
+		end_count = 0;
+	}
+	void Reserve(idx_t more);
+	void Drop(idx_t rows, idx_t ends);
+
+	unsafe_unique_array<uint32_t> rows;
+	unsafe_unique_array<uint32_t> ends;
+	idx_t capacity = 0;
+	idx_t row_count = 0;
+	idx_t end_count = 0;
+};
+
+struct RowCursor {
+	idx_t origin = 0;
+	idx_t pos = 0;
+	uint64_t in_quotes = 0;
+	uint64_t after_separator = 1;
+	uint64_t after_term = 1;
+	uint64_t after_cr = 0;
+	uint64_t after_plain_cr = 0;
+	uint64_t after_closer = 0;
+	uint64_t after_opener = 0;
+	uint64_t escape_carry = 0;
+	uint64_t pending_flag = 0;
+	uint64_t non_ascii = 0;
+	idx_t phase = 0;
+	idx_t rows = 0;
+	idx_t lines = 0;
+	idx_t first_row_end = DConstants::INVALID_INDEX;
+	idx_t last_row_end = DConstants::INVALID_INDEX;
+	idx_t first_term = DConstants::INVALID_INDEX;
+	idx_t last_term = DConstants::INVALID_INDEX;
+	idx_t quoted_newline = DConstants::INVALID_INDEX;
+	bool quotes = false;
+	bool doubled = false;
+	bool settled = false;
+	bool unterminated = false;
+	bool check_arity = true;
+	bool ok = true;
+};
+
+class RowLexer {
+public:
+	RowLexer(const RowDialect &dialect, idx_t columns, idx_t max_line_size, bool error_mode);
+
+	bool Eligible() const {
+		return eligible;
+	}
+	const RowDialect &Dialect() const {
+		return dialect;
+	}
+	void Start(RowCursor &cursor, idx_t begin, bool settled, bool check_arity = true) const;
+	bool Feed(RowCursor &cursor, const char *data, idx_t base, idx_t end, bool last, RowFields *fields) const;
+	bool Finish(RowCursor &cursor, const char *data, idx_t base, idx_t end, bool eof, RowFields *fields,
+	            CSVState origin_state, CsvRangeEntry &entry) const;
+	idx_t CountLines(const char *data, idx_t base, idx_t begin, idx_t end) const;
+
+private:
+	template <bool EXTRACT>
+	bool FeedBlocks(RowCursor &cursor, const char *data, idx_t base, idx_t end, bool last, RowFields *fields) const;
+
+private:
+	const RowDialect dialect;
+	const idx_t columns;
+	const idx_t max_line_size;
+	bool eligible;
+	bool settle_strict;
+	bool settle_length;
+	vector<uint64_t> patterns;
+};
+
+} // namespace duckdb

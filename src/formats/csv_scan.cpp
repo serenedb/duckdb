@@ -1,5 +1,6 @@
 #include "duckdb/formats/csv_scan.hpp"
 
+#include "absl/cleanup/cleanup.h"
 #include "duckdb/common/operator/cast_operators.hpp"
 #include "duckdb/common/operator/decimal_cast_operators.hpp"
 #include "duckdb/common/operator/double_cast_operator.hpp"
@@ -13,7 +14,9 @@
 #include "duckdb/common/vector_operations/vector_operations.hpp"
 #include "duckdb/main/database.hpp"
 #include "duckdb/parallel/callback_async_task.hpp"
+#include "duckdb/parallel/task_scheduler.hpp"
 #include "duckdb/storage/table/column_segment.hpp"
+#include "simdutf.h"
 #include "utf8proc_wrapper.hpp"
 
 namespace duckdb {
@@ -22,6 +25,546 @@ namespace {
 
 constexpr idx_t STITCH_BYTES = 1 << 16;
 constexpr idx_t LOOKUP_BYTES = 1 << 13;
+constexpr idx_t RANGE_BYTES = 1 << 19;
+constexpr idx_t RANGE_OVERLAP = 1 << 12;
+constexpr idx_t LEAN_RANGE_MIN = 1 << 20;
+constexpr idx_t LEAN_RANGE_MAX = 1 << 23;
+constexpr idx_t LEAN_PIECE = 1 << 16;
+constexpr idx_t LEAN_WINDOW = 1 << 20;
+constexpr idx_t LEAN_UNSETTLED = 1 << 22;
+
+bool LeanDecodes(const LogicalType &type) {
+	switch (type.id()) {
+	case LogicalTypeId::BOOLEAN:
+	case LogicalTypeId::TINYINT:
+	case LogicalTypeId::SMALLINT:
+	case LogicalTypeId::INTEGER:
+	case LogicalTypeId::BIGINT:
+	case LogicalTypeId::HUGEINT:
+	case LogicalTypeId::UTINYINT:
+	case LogicalTypeId::USMALLINT:
+	case LogicalTypeId::UINTEGER:
+	case LogicalTypeId::UBIGINT:
+	case LogicalTypeId::UHUGEINT:
+	case LogicalTypeId::DOUBLE:
+	case LogicalTypeId::FLOAT:
+	case LogicalTypeId::DATE:
+	case LogicalTypeId::TIME:
+	case LogicalTypeId::TIMESTAMP:
+	case LogicalTypeId::TIMESTAMP_TZ:
+	case LogicalTypeId::DECIMAL:
+	case LogicalTypeId::VARCHAR:
+		return true;
+	default:
+		return false;
+	}
+}
+
+constexpr uint64_t POWERS_OF_TEN[] = {1,
+                                      10,
+                                      100,
+                                      1000,
+                                      10000,
+                                      100000,
+                                      1000000,
+                                      10000000,
+                                      100000000,
+                                      1000000000,
+                                      10000000000,
+                                      100000000000,
+                                      1000000000000,
+                                      10000000000000,
+                                      100000000000000,
+                                      1000000000000000,
+                                      10000000000000000,
+                                      100000000000000000,
+                                      1000000000000000000};
+
+inline bool DigitsAreValid(uint64_t chunk) {
+	const uint64_t high = chunk & 0xF0F0F0F0F0F0F0F0ULL;
+	const uint64_t carried = ((chunk + 0x0606060606060606ULL) & 0xF0F0F0F0F0F0F0F0ULL) >> 4;
+	return (high | carried) == 0x3333333333333333ULL;
+}
+
+inline uint64_t EightDigits(uint64_t chunk) {
+	chunk = (chunk & 0x0F0F0F0F0F0F0F0FULL) * 2561 >> 8;
+	chunk = (chunk & 0x00FF00FF00FF00FFULL) * 6553601 >> 16;
+	return (chunk & 0x0000FFFF0000FFFFULL) * 42949672960001ULL >> 32;
+}
+
+[[gnu::always_inline]] inline bool SwarDigits(const char *value, idx_t count, uint64_t &out) {
+	uint64_t chunk;
+	memcpy(&chunk, value, sizeof(chunk));
+	if (count < 8) {
+		chunk = (chunk << ((8 - count) * 8)) | (0x3030303030303030ULL >> (count * 8));
+	}
+	if (!DigitsAreValid(chunk)) {
+		return false;
+	}
+	out = EightDigits(chunk);
+	return true;
+}
+
+inline bool ScalarDigits(const char *value, idx_t count, uint64_t &out) {
+	uint64_t result = 0;
+	for (idx_t pos = 0; pos < count; pos++) {
+		const auto digit = static_cast<uint8_t>(value[pos] - '0');
+		if (digit > 9) {
+			return false;
+		}
+		result = result * 10 + digit;
+	}
+	out = result;
+	return true;
+}
+
+[[gnu::always_inline]] inline idx_t FindByte(const char *value, idx_t size, const char *limit, char byte) {
+	const uint64_t pattern = 0x0101010101010101ULL * static_cast<uint8_t>(byte);
+	for (idx_t pos = 0; pos < size; pos += 8) {
+		if (value + pos + 8 > limit) {
+			for (; pos < size; pos++) {
+				if (value[pos] == byte) {
+					return pos;
+				}
+			}
+			return size;
+		}
+		uint64_t chunk;
+		memcpy(&chunk, value + pos, sizeof(chunk));
+		const uint64_t matched = chunk ^ pattern;
+		const uint64_t found = (matched - 0x0101010101010101ULL) & ~matched & 0x8080808080808080ULL;
+		if (found) {
+			return MinValue<idx_t>(pos + (std::countr_zero(found) >> 3), size);
+		}
+	}
+	return size;
+}
+
+[[gnu::always_inline]] inline bool ParseDigits(const char *value, idx_t count, const char *limit, uint64_t &out) {
+	if (count == 0 || count > 16) {
+		return false;
+	}
+	if (count <= 8) {
+		return value + 8 <= limit ? SwarDigits(value, count, out) : ScalarDigits(value, count, out);
+	}
+	uint64_t high;
+	uint64_t low;
+	if (!SwarDigits(value, count - 8, high) || !SwarDigits(value + count - 8, 8, low)) {
+		return false;
+	}
+	out = high * 100000000ULL + low;
+	return true;
+}
+
+template <class T>
+[[gnu::always_inline]] inline bool FastInteger(const char *value, idx_t size, const char *limit, T &out) {
+	if (size == 0) {
+		return false;
+	}
+	idx_t pos = 0;
+	bool negative = false;
+	if (std::is_signed<T>::value && value[0] == '-') {
+		negative = true;
+		pos = 1;
+	}
+	uint64_t result;
+	if (!ParseDigits(value + pos, size - pos, limit, result)) {
+		return false;
+	}
+	if (negative) {
+		if (result > static_cast<uint64_t>(NumericLimits<T>::Maximum()) + 1) {
+			return false;
+		}
+		out = static_cast<T>(-static_cast<int64_t>(result));
+		return true;
+	}
+	if (result > static_cast<uint64_t>(NumericLimits<T>::Maximum())) {
+		return false;
+	}
+	out = static_cast<T>(result);
+	return true;
+}
+
+template <class T>
+[[gnu::always_inline]] inline bool FastDecimal(const char *value, idx_t size, const char *limit, T &out, char separator,
+                                               uint8_t width, uint8_t scale) {
+	if (size == 0 || width > 18) {
+		return false;
+	}
+	idx_t pos = 0;
+	bool negative = false;
+	if (value[0] == '-') {
+		negative = true;
+		pos = 1;
+	}
+	const char *digits = value + pos;
+	const idx_t remaining = size - pos;
+	const idx_t integer_digits = FindByte(digits, remaining, limit, separator);
+	const bool dot = integer_digits < remaining;
+	const idx_t fraction_digits = dot ? remaining - integer_digits - 1 : 0;
+	if (integer_digits == 0 || integer_digits > static_cast<idx_t>(width - scale) || fraction_digits > scale ||
+	    (dot && fraction_digits == 0)) {
+		return false;
+	}
+	uint64_t integer;
+	if (!ParseDigits(digits, integer_digits, limit, integer)) {
+		return false;
+	}
+	uint64_t fraction = 0;
+	if (fraction_digits && !ParseDigits(digits + integer_digits + 1, fraction_digits, limit, fraction)) {
+		return false;
+	}
+	const auto result =
+	    static_cast<int64_t>(integer * POWERS_OF_TEN[scale] + fraction * POWERS_OF_TEN[scale - fraction_digits]);
+	out = static_cast<T>(negative ? -result : result);
+	return true;
+}
+
+[[gnu::always_inline]] inline bool FastDate(const char *value, idx_t size, date_t &out) {
+	if (size != 10) {
+		return false;
+	}
+	uint64_t head;
+	uint64_t tail;
+	memcpy(&head, value, sizeof(head));
+	memcpy(&tail, value + 2, sizeof(tail));
+	if (((head >> 32) & 0xFF) != '-' || (head >> 56) != '-') {
+		return false;
+	}
+	const uint64_t digits =
+	    (head & 0x00000000FFFFFFFFULL) | ((head >> 8) & 0x0000FFFF00000000ULL) | (tail & 0xFFFF000000000000ULL);
+	if (!DigitsAreValid(digits)) {
+		return false;
+	}
+	const auto packed = static_cast<int32_t>(EightDigits(digits));
+	int32_t year = packed / 10000;
+	const auto month = static_cast<uint32_t>(packed / 100 % 100);
+	const auto day = static_cast<uint32_t>(packed % 100);
+	if (year == 0 || month == 0 || month > 12 || day == 0) {
+		return false;
+	}
+	const bool leap = (year % 4 == 0) && (year % 100 != 0 || year % 400 == 0);
+	static constexpr uint8_t DAYS[] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
+	if (day > DAYS[month - 1] + (month == 2 && leap)) {
+		return false;
+	}
+	year -= month <= 2;
+	const int32_t era = year / 400;
+	const auto year_of_era = static_cast<uint32_t>(year - era * 400);
+	const uint32_t day_of_year = (153 * (month > 2 ? month - 3 : month + 9) + 2) / 5 + day - 1;
+	const uint32_t day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
+	out = date_t(era * 146097 + static_cast<int32_t>(day_of_era) - 719468);
+	return true;
+}
+
+[[gnu::always_inline]] inline void MakeString(const char *value, idx_t size, const char *limit, string_t &out) {
+	if constexpr (string_t::INLINE_LENGTH == 12 && string_t::PREFIX_LENGTH == 4) {
+		uint64_t words[2];
+		if (size <= 12 && value + 12 <= limit) {
+			uint32_t head;
+			uint64_t tail;
+			memcpy(&head, value, sizeof(head));
+			memcpy(&tail, value + 4, sizeof(tail));
+			const idx_t head_bytes = MinValue<idx_t>(size, 4);
+			const idx_t tail_bytes = size > 4 ? size - 4 : 0;
+			head &= head_bytes == 4 ? ~uint32_t(0) : (uint32_t(1) << (head_bytes * 8)) - 1;
+			tail &= tail_bytes == 8 ? ~uint64_t(0) : (uint64_t(1) << (tail_bytes * 8)) - 1;
+			words[0] = size | (uint64_t(head) << 32);
+			words[1] = tail;
+			memcpy(&out, words, sizeof(words));
+			return;
+		}
+		if (size > 12) {
+			uint32_t prefix;
+			memcpy(&prefix, value, sizeof(prefix));
+			words[0] = size | (uint64_t(prefix) << 32);
+			words[1] = reinterpret_cast<uintptr_t>(value);
+			memcpy(&out, words, sizeof(words));
+			return;
+		}
+	}
+	out = string_t(value, UnsafeNumericCast<uint32_t>(size));
+}
+
+struct LeanSource {
+	bool IsNull(const char *value, idx_t size, bool quoted) const {
+		if (quoted && !allow_quoted_nulls) {
+			return false;
+		}
+		if (empty_only_null) {
+			return size == 0;
+		}
+		for (auto &null_string : *null_strings) {
+			if (size == null_string.size() && memcmp(null_string.c_str(), value, size) == 0) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	const uint32_t *begins;
+	idx_t begin_stride;
+	idx_t begin_bias;
+	const uint32_t *ends;
+	idx_t stride;
+	const char *data;
+	const char *limit;
+	idx_t shift;
+	char quote;
+	char escape_probe;
+	bool quotes;
+	bool doubled;
+	bool allow_quoted_nulls;
+	bool empty_only_null;
+	const vector<string> *null_strings;
+	const vector<bool> *selected;
+	idx_t first;
+};
+
+template <class T, class PARSE>
+bool LeanValues(const LeanSource &source, idx_t count, bool force_not_null, Vector &vector, PARSE parse) {
+	T *const out = FlatVector::GetDataMutable<T>(vector);
+	const uint32_t *const begins = source.begins;
+	const idx_t begin_stride = source.begin_stride;
+	const idx_t begin_bias = source.begin_bias;
+	const uint32_t *const ends = source.ends;
+	const idx_t stride = source.stride;
+	const char *const data = source.data;
+	const idx_t shift = source.shift;
+	const char quote = source.quote;
+	const bool quotes = source.quotes;
+	const bool doubled = source.doubled;
+	const bool empty_only_null = source.empty_only_null && source.allow_quoted_nulls;
+	const auto selected = source.selected;
+	const idx_t first = source.first;
+	for (idx_t row = first; row < first + count; row++) {
+		if (selected && !(*selected)[row]) {
+			FlatVector::SetNull(vector, row, true);
+			continue;
+		}
+		const uint32_t end_bits = ends[row * stride];
+		idx_t begin = (begins[row * begin_stride] & ROW_FIELD_MASK) + begin_bias + shift;
+		idx_t end = (end_bits & ROW_FIELD_MASK) + shift;
+		bool quoted = false;
+		if (quotes && (end_bits & ROW_FIELD_FLAG) && end > begin && data[begin] == quote) {
+			begin++;
+			end--;
+			quoted = true;
+		}
+		const char *value = data + begin;
+		const idx_t size = end - begin;
+		if (empty_only_null ? size == 0 : source.IsNull(value, size, quoted)) {
+			if (force_not_null) {
+				return false;
+			}
+			FlatVector::SetNull(vector, row, true);
+			continue;
+		}
+		if (quoted && doubled && memchr(value, source.escape_probe, size)) {
+			return false;
+		}
+		if (!parse(value, size, out[row])) {
+			return false;
+		}
+	}
+	return true;
+}
+
+bool LeanStrings(const LeanSource &source, idx_t count, const CsvScanColumn &column, bool validate,
+                 const CsvGrammar &grammar, Vector &vector) {
+	string_t *const out = FlatVector::GetDataMutable<string_t>(vector);
+	const uint32_t *const begins = source.begins;
+	const idx_t begin_stride = source.begin_stride;
+	const idx_t begin_bias = source.begin_bias;
+	const uint32_t *const ends = source.ends;
+	const idx_t stride = source.stride;
+	const char *const limit = source.limit;
+	const char *const data = source.data;
+	const idx_t shift = source.shift;
+	const char quote = source.quote;
+	const bool quotes = source.quotes;
+	const bool empty_only_null = source.empty_only_null && source.allow_quoted_nulls;
+	const auto selected = source.selected;
+	const idx_t first = source.first;
+	for (idx_t row = first; row < first + count; row++) {
+		if (selected && !(*selected)[row]) {
+			FlatVector::SetNull(vector, row, true);
+			continue;
+		}
+		const uint32_t end_bits = ends[row * stride];
+		idx_t begin = (begins[row * begin_stride] & ROW_FIELD_MASK) + begin_bias + shift;
+		idx_t end = (end_bits & ROW_FIELD_MASK) + shift;
+		bool quoted = false;
+		if (quotes && (end_bits & ROW_FIELD_FLAG) && end > begin && data[begin] == quote) {
+			begin++;
+			end--;
+			quoted = true;
+		}
+		const char *value = data + begin;
+		const idx_t size = end - begin;
+		if (empty_only_null ? size == 0 : source.IsNull(value, size, quoted)) {
+			if (column.force_not_null) {
+				out[row] = string_t();
+			} else {
+				FlatVector::SetNull(vector, row, true);
+			}
+			continue;
+		}
+		if (validate && !Utf8Proc::IsValid(value, UnsafeNumericCast<uint32_t>(size))) {
+			return false;
+		}
+		if (quoted && source.doubled && memchr(value, source.escape_probe, size)) {
+			out[row] = CsvRemoveEscape(value, size, grammar.escape, grammar.quote, grammar.strict_mode, vector);
+			continue;
+		}
+		MakeString(value, size, limit, out[row]);
+	}
+	return true;
+}
+
+template <class T>
+struct ParsedAs {
+	using type = T;
+};
+
+template <class T>
+struct SignedParser {
+	bool operator()(const char *value, idx_t size, T &out) const {
+		return FastInteger<T>(value, size, limit, out) || TrySimpleIntegerCast<T>(value, size, out, false);
+	}
+	const char *limit;
+};
+
+template <class T>
+struct UnsignedParser {
+	bool operator()(const char *value, idx_t size, T &out) const {
+		return FastInteger<T>(value, size, limit, out) || TrySimpleIntegerCast<T, false>(value, size, out, false);
+	}
+	const char *limit;
+};
+
+template <class T>
+struct DecimalParser {
+	bool operator()(const char *value, idx_t size, T &out) const {
+		if (FastDecimal<T>(value, size, limit, out, separator, width, scale)) {
+			return true;
+		}
+		if (separator == ',') {
+			return TryDecimalStringCast<T, ','>(value, size, out, width, scale);
+		}
+		return TryDecimalStringCast<T>(value, size, out, width, scale);
+	}
+	const char *limit;
+	char separator;
+	uint8_t width;
+	uint8_t scale;
+};
+
+struct ParseContext {
+	const StrpTimeFormat *date_format;
+	const StrpTimeFormat *timestamp_format;
+	const char *limit;
+	char separator;
+};
+
+template <class FN>
+bool WithParser(const LogicalType &type, const ParseContext &context, FN &&fn) {
+	const char separator = context.separator;
+	const char *limit = context.limit;
+	switch (type.id()) {
+	case LogicalTypeId::BOOLEAN:
+		return fn(ParsedAs<bool>(),
+		          [](const char *value, idx_t size, bool &out) { return TryCastStringBool(value, size, out, false); });
+	case LogicalTypeId::TINYINT:
+		return fn(ParsedAs<int8_t>(), SignedParser<int8_t> {limit});
+	case LogicalTypeId::SMALLINT:
+		return fn(ParsedAs<int16_t>(), SignedParser<int16_t> {limit});
+	case LogicalTypeId::INTEGER:
+		return fn(ParsedAs<int32_t>(), SignedParser<int32_t> {limit});
+	case LogicalTypeId::BIGINT:
+		return fn(ParsedAs<int64_t>(), SignedParser<int64_t> {limit});
+	case LogicalTypeId::UTINYINT:
+		return fn(ParsedAs<uint8_t>(), UnsignedParser<uint8_t> {limit});
+	case LogicalTypeId::USMALLINT:
+		return fn(ParsedAs<uint16_t>(), UnsignedParser<uint16_t> {limit});
+	case LogicalTypeId::UINTEGER:
+		return fn(ParsedAs<uint32_t>(), UnsignedParser<uint32_t> {limit});
+	case LogicalTypeId::UBIGINT:
+		return fn(ParsedAs<uint64_t>(), UnsignedParser<uint64_t> {limit});
+	case LogicalTypeId::HUGEINT:
+		return fn(ParsedAs<hugeint_t>(), [](const char *value, idx_t size, hugeint_t &out) {
+			return TryCast::Operation<string_t, hugeint_t>(string_t(value, NumericCast<uint32_t>(size)), out, false);
+		});
+	case LogicalTypeId::UHUGEINT:
+		return fn(ParsedAs<uhugeint_t>(), [](const char *value, idx_t size, uhugeint_t &out) {
+			return TryCast::Operation<string_t, uhugeint_t>(string_t(value, NumericCast<uint32_t>(size)), out, false);
+		});
+	case LogicalTypeId::DOUBLE:
+		return fn(ParsedAs<double>(), [separator](const char *value, idx_t size, double &out) {
+			return TryDoubleCast<double>(value, size, out, false, separator);
+		});
+	case LogicalTypeId::FLOAT:
+		return fn(ParsedAs<float>(), [separator](const char *value, idx_t size, float &out) {
+			return TryDoubleCast<float>(value, size, out, false, separator);
+		});
+	case LogicalTypeId::DATE: {
+		const auto format = context.date_format;
+		if (!format->Empty()) {
+			return fn(ParsedAs<date_t>(), [format](const char *value, idx_t size, date_t &out) {
+				return format->TryParseDate(value, size, out);
+			});
+		}
+		return fn(ParsedAs<date_t>(), [](const char *value, idx_t size, date_t &out) {
+			if (FastDate(value, size, out)) {
+				return true;
+			}
+			idx_t pos;
+			bool special;
+			return Date::TryConvertDate(value, size, pos, out, special, false) == DateCastResult::SUCCESS;
+		});
+	}
+	case LogicalTypeId::TIME:
+		return fn(ParsedAs<dtime_t>(), [](const char *value, idx_t size, dtime_t &out) {
+			idx_t pos;
+			return Time::TryConvertTime(value, size, pos, out, false);
+		});
+	case LogicalTypeId::TIMESTAMP:
+	case LogicalTypeId::TIMESTAMP_TZ: {
+		const bool tz = type.id() == LogicalTypeId::TIMESTAMP_TZ;
+		const auto format = context.timestamp_format;
+		if (!format->Empty()) {
+			return fn(ParsedAs<timestamp_t>(), [format](const char *value, idx_t size, timestamp_t &out) {
+				return format->TryParseTimestamp(value, size, out);
+			});
+		}
+		return fn(ParsedAs<timestamp_t>(), [tz](const char *value, idx_t size, timestamp_t &out) {
+			return Timestamp::TryConvertTimestamp(value, size, out, tz) == TimestampCastResult::SUCCESS;
+		});
+	}
+	case LogicalTypeId::DECIMAL: {
+		if (separator != '.' && separator != ',') {
+			throw InvalidInputException("Decimals can only have ',' and '.' as decimal separators");
+		}
+		uint8_t width;
+		uint8_t scale;
+		type.GetDecimalProperties(width, scale);
+		switch (type.InternalType()) {
+		case PhysicalType::INT16:
+			return fn(ParsedAs<int16_t>(), DecimalParser<int16_t> {limit, separator, width, scale});
+		case PhysicalType::INT32:
+			return fn(ParsedAs<int32_t>(), DecimalParser<int32_t> {limit, separator, width, scale});
+		case PhysicalType::INT64:
+			return fn(ParsedAs<int64_t>(), DecimalParser<int64_t> {limit, separator, width, scale});
+		case PhysicalType::INT128:
+			return fn(ParsedAs<hugeint_t>(), DecimalParser<hugeint_t> {limit, separator, width, scale});
+		default:
+			throw InternalException("Invalid physical type for a decimal");
+		}
+	}
+	default:
+		throw InternalException("No CSV value parser for %s", type.ToString());
+	}
+}
 
 string CastMessage(const char *value, idx_t size, const string &type) {
 	string message = "Could not convert string \"" + string(value, size) + "\" to '" + type + "'";
@@ -147,6 +690,7 @@ static CsvScanSource FileSource(CSVFileScan &file) {
 	source.path = file.GetFileName();
 	source.file_row_number = file.file_row_number_idx;
 	source.bytes_read = &file.bytes_read;
+	source.placeholder = file.column_ids.empty();
 	return source;
 }
 
@@ -212,29 +756,49 @@ CsvScanGlobal::CsvScanGlobal(ClientContext &context_p, const CSVReaderOptions &o
 
 	auto &manager = *source.buffer_manager;
 	size = manager.file_handle->FileSize();
-	buffer_size = manager.GetBufferSize();
-	parallel = !source.sniffing && options.parallel && manager.HasKnownBufferRanges() && !grammar.only_crlf;
+	if (source.sniffing || !manager.HasKnownBufferRanges() || grammar.only_crlf) {
+		return;
+	}
+	lean = make_uniq<RowLexer>(RowDialect::DuckDB(grammar), source.state_machine->dialect_options.num_cols,
+	                           options.maximum_line_size.GetValue(), !ignore_errors);
+	count_only = (columns.empty() || source.placeholder) && filters.empty() &&
+	             source.file_row_number == DConstants::INVALID_INDEX;
+	empty_only_null = null_strings.size() == 1 && null_strings[0].empty();
+	bool lean_decodes = options.thousands_separator == '\0';
+	for (auto &column : columns) {
+		lean_decodes = lean_decodes && LeanDecodes(column.parse_type);
+	}
+	lean_ranges =
+	    lean->Eligible() && options.maximum_line_size.GetValue() < (idx_t(1) << 30) && (count_only || lean_decodes);
+	lean_batches = lean_ranges && !count_only && !late_materialization;
+	for (auto &column : columns) {
+		lean_batches = lean_batches && !CsvScan::NeedsFlushCast(column);
+	}
+	parallel = options.parallel || lean_ranges;
 	if (!parallel) {
 		return;
 	}
-	buffer_count = manager.KnownBufferCount();
-	range_bytes = MaxValue<idx_t>(MinValue(buffer_size, CsvRangeBytes(options)), 1);
-	parts = (buffer_size + range_bytes - 1) / range_bytes;
-	range_count = buffer_count * parts;
 	FindStart();
-	first_range = MinValue((start / buffer_size) * parts + (start % buffer_size) / range_bytes, range_count);
-	resolved = first_range;
+	const idx_t data_size = size - MinValue(start, size);
+	idx_t wanted = RANGE_BYTES;
+	if (lean_ranges) {
+		const idx_t threads = MaxValue<idx_t>(TaskScheduler::QueryThreads(context), 1);
+		wanted = MinValue(MaxValue(data_size / (threads * 4), LEAN_RANGE_MIN), LEAN_RANGE_MAX);
+	}
+	range_bytes = MaxValue<idx_t>(MinValue<idx_t>(options.buffer_size_option.GetValue(), wanted), 1);
+	range_count = MaxValue<idx_t>((data_size + range_bytes - 1) / range_bytes, 1);
 	transfers.resize(range_count);
-	published.assign(range_count, false);
 	computing.assign(range_count, false);
 	starts.assign(range_count + 1, CsvRangeStart());
-	starts[first_range].line_end = start;
-	starts[first_range].last_position = start;
-	buffer_uses.resize(buffer_count);
+	starts[0].line_end = start;
+	starts[0].last_position = start;
 }
 
 void CsvScanGlobal::FindStart() {
 	auto handle = Buffer(0);
+	if (handle && handle->actual_size >= size) {
+		whole_file = handle;
+	}
 	if (skip_rows == 0) {
 		start = skip_bom ? SkipBom(handle->Ptr(), handle->actual_size) : 0;
 		start_lines = 0;
@@ -242,6 +806,7 @@ void CsvScanGlobal::FindStart() {
 	}
 	CsvSkip skip(grammar, skip_rows);
 	idx_t offset = 0;
+	const idx_t buffer_count = source.buffer_manager->KnownBufferCount();
 	for (idx_t buffer = 1; handle; buffer++) {
 		if (skip.Feed(handle->Ptr(), offset, offset + handle->actual_size) || handle->is_last_buffer) {
 			break;
@@ -278,12 +843,93 @@ idx_t CsvScanGlobal::Read(char *data, idx_t count, idx_t offset) const {
 	return read;
 }
 
-shared_ptr<CsvBufferUse> CsvScanGlobal::Use(idx_t buffer) {
-	auto &use = buffer_uses[buffer];
-	if (!use) {
-		use = make_shared_ptr<CsvBufferUse>(*source.buffer_manager, buffer);
+void CsvScanGlobal::ReadInto(CsvBytes &bytes, idx_t offset, idx_t count) const {
+	count = offset < size ? MinValue(count, size - offset) : 0;
+	if (whole_file) {
+		bytes.buffer = whole_file;
+		bytes.data = whole_file->Ptr() + offset;
+		bytes.offset = offset;
+		bytes.size = count;
+		return;
 	}
-	return use;
+	if (bytes.capacity < count || !bytes.owned) {
+		bytes.capacity = MaxValue<idx_t>(count, 1);
+		bytes.owned = make_unsafe_uniq_array_uninitialized<char>(bytes.capacity);
+	}
+	bytes.buffer.reset();
+	bytes.data = bytes.owned.get();
+	bytes.offset = offset;
+	bytes.size = count ? Read(bytes.owned.get(), count, offset) : 0;
+}
+
+CsvRangeBounds CsvScanGlobal::Bounds(idx_t range, CsvBytes &bytes) const {
+	const idx_t begin = RangeBegin(range);
+	const idx_t end = RangeEnd(range);
+	const idx_t from = begin >= 3 ? begin - 3 : 0;
+	idx_t want = end - from + RANGE_OVERLAP;
+	ReadInto(bytes, from, want);
+	const auto sync = [&](idx_t position) {
+		while (true) {
+			const idx_t available = bytes.offset + bytes.size;
+			const bool eof = available >= size;
+			const idx_t found = CsvSync(grammar, bytes.data, bytes.offset, position, available, eof);
+			if (found != DConstants::INVALID_INDEX) {
+				return found;
+			}
+			if (eof) {
+				return size;
+			}
+			want *= 2;
+			ReadInto(bytes, from, want);
+		}
+	};
+	CsvRangeBounds bounds;
+	bounds.begin = range == 0 ? start : sync(begin - 1);
+	bounds.end = range + 1 == range_count ? size : sync(end - 1);
+	bounds.end = MaxValue(bounds.end, bounds.begin);
+	return bounds;
+}
+
+CSVState CsvScanGlobal::Origin(const CsvBytes &bytes, idx_t begin) const {
+	if (begin == start) {
+		return CSVState::NOT_SET;
+	}
+	const char newline = bytes.data[begin - 1 - bytes.offset];
+	return newline == '\r' && grammar.carry_on_newline ? CSVState::CARRIAGE_RETURN : CSVState::RECORD_SEPARATOR;
+}
+
+CsvRangeEntry CsvScanGlobal::Transfer(idx_t range, CSVState origin) const {
+	CsvBytes bytes;
+	const auto bounds = Bounds(range, bytes);
+	return CsvTransfer(grammar, bytes.data, bytes.offset, bounds.begin, bounds.end, origin);
+}
+
+idx_t CsvScanGlobal::SyncAt(idx_t position) const {
+	const idx_t from = position >= 2 ? position - 2 : 0;
+	idx_t want = RANGE_OVERLAP;
+	CsvBytes bytes;
+	while (true) {
+		ReadInto(bytes, from, want);
+		const idx_t available = bytes.offset + bytes.size;
+		const bool eof = available >= size;
+		const idx_t found = CsvSync(grammar, bytes.data, bytes.offset, position, available, eof);
+		if (found != DConstants::INVALID_INDEX) {
+			return found;
+		}
+		if (eof) {
+			return size;
+		}
+		want *= 2;
+	}
+}
+
+void CsvScanGlobal::ViewWholeFile(CsvBytes &bytes) const {
+	bytes.owned.reset();
+	bytes.capacity = 0;
+	bytes.buffer = whole_file;
+	bytes.data = whole_file->Ptr();
+	bytes.offset = 0;
+	bytes.size = size;
 }
 
 bool CsvScanGlobal::Claim(idx_t &range, vector<shared_ptr<CsvBufferUse>> &uses) {
@@ -301,37 +947,16 @@ bool CsvScanGlobal::Claim(idx_t &range, vector<shared_ptr<CsvBufferUse>> &uses) 
 		return false;
 	}
 	range = next_range++;
-	const idx_t buffer = RangeBuffer(range);
-	uses.push_back(Use(buffer));
-	if (LastPart(range)) {
-		if (buffer + 1 < buffer_count) {
-			uses.push_back(Use(buffer + 1));
-		}
-		buffer_uses[buffer].reset();
-	}
 	return true;
 }
 
+void CsvScanGlobal::Computing(idx_t range, bool value) {
+	const absl::MutexLock guard(&lock);
+	computing[range] = value;
+}
+
 vector<unique_ptr<AsyncTask>> CsvScanGlobal::LoadTasks(idx_t range) const {
-	vector<unique_ptr<AsyncTask>> tasks;
-	if (!parallel || RangeBegin(range) >= RangeEnd(range)) {
-		return tasks;
-	}
-	auto manager = source.buffer_manager;
-	auto load = [&](idx_t buffer) {
-		shared_ptr<CSVBufferHandle> handle;
-		if (manager->GetBufferResidency(buffer, handle) != CSVBufferResidency::NEEDS_LOAD) {
-			return;
-		}
-		tasks.push_back(make_uniq<CallbackAsyncTask>([manager, buffer] { manager->GetBuffer(buffer); },
-		                                             manager->KnownBufferSize(buffer)));
-	};
-	const idx_t buffer = RangeBuffer(range);
-	load(buffer);
-	if (LastPart(range) && buffer + 1 < buffer_count) {
-		load(buffer + 1);
-	}
-	return tasks;
+	return vector<unique_ptr<AsyncTask>>();
 }
 
 bool CsvScanGlobal::FinishRange(idx_t range, idx_t lines) {
@@ -346,37 +971,35 @@ bool CsvScanGlobal::AllFinished() const {
 	return finished_ranges == (parallel ? range_count : 1);
 }
 
-void CsvScanGlobal::Publish(idx_t range, const CsvRangeTransfer &transfer) {
+void CsvScanGlobal::Publish(idx_t range, CSVState origin, const CsvRangeEntry &entry) {
 	const absl::MutexLock guard(&lock);
-	if (published[range]) {
-		return;
+	auto &slot = transfers[range][static_cast<uint8_t>(origin)];
+	if (!slot.computed) {
+		slot = entry;
 	}
-	transfers[range] = transfer;
-	published[range] = true;
-	while (resolved < range_count && published[resolved]) {
+	computing[range] = false;
+	while (resolved < range_count) {
 		auto &current = starts[resolved];
+		auto &found = transfers[resolved][static_cast<uint8_t>(current.states[1])];
+		if (!found.computed) {
+			break;
+		}
 		auto &next = starts[resolved + 1];
-		next = transfers[resolved][static_cast<uint8_t>(current.states[1])].end;
+		next = found.end;
 		next.Inherit(current);
 		resolved++;
 	}
 }
 
-void CsvScanGlobal::ComputeTransfer(idx_t range) {
-	const idx_t begin = RangeBegin(range);
-	const idx_t end = RangeEnd(range);
-	CsvRangeTransfer transfer;
-	if (begin < end) {
-		const idx_t buffer = RangeBuffer(range);
-		auto handle = Buffer(buffer);
-		CsvTransfer(grammar, handle->Ptr(), buffer * buffer_size, begin, end, transfer);
-	}
-	Publish(range, transfer);
+CsvRangeEntry CsvScanGlobal::Entry(idx_t range, CSVState origin) const {
+	const absl::MutexLock guard(&lock);
+	return transfers[range][static_cast<uint8_t>(origin)];
 }
 
 CsvRangeStart CsvScanGlobal::StartState(idx_t range) {
 	while (true) {
 		idx_t missing;
+		CSVState origin;
 		{
 			const absl::MutexLock guard(&lock);
 			auto ready = [&]() {
@@ -387,15 +1010,14 @@ CsvRangeStart CsvScanGlobal::StartState(idx_t range) {
 				return starts[range];
 			}
 			missing = resolved;
+			origin = starts[missing].states[1];
 			computing[missing] = true;
 		}
-		ComputeTransfer(missing);
+		absl::Cleanup stop = [&] {
+			Computing(missing, false);
+		};
+		Publish(missing, origin, Transfer(missing, origin));
 	}
-}
-
-void CsvScanGlobal::StartComputing(idx_t range) {
-	const absl::MutexLock guard(&lock);
-	computing[range] = true;
 }
 
 CsvScan::CsvScan(CsvScanGlobal &global_p)
@@ -417,6 +1039,75 @@ CsvScan::CsvScan(CsvScanGlobal &global_p)
 	scratch_chunk.Initialize(allocator, vector<LogicalType> {LogicalType::VARCHAR});
 }
 
+void CsvScan::PublishOwnTransfer() {
+	if (!global.parallel || range + 1 >= global.range_count) {
+		return;
+	}
+	global.Computing(range, true);
+	absl::Cleanup stop = [&] {
+		global.Computing(range, false);
+	};
+	CsvBytes span;
+	const auto bounds = global.Bounds(range, span);
+	const bool eof = bounds.end == global.size;
+	if (!grammar.quote) {
+		global.Publish(range, lean_origin,
+		               CsvTransfer(grammar, span.data, span.offset, bounds.begin, bounds.end, lean_origin));
+		return;
+	}
+	CsvRangeEntry quoted;
+	RowCursor probe;
+	global.lean->Start(probe, bounds.begin, true, false);
+	probe.in_quotes = 1;
+	const bool lean_quoted =
+	    !grammar.carry_on_newline && global.lean->Feed(probe, span.data, span.offset, bounds.end, true, nullptr) &&
+	    global.lean->Finish(probe, span.data, span.offset, bounds.end, eof, nullptr, CSVState::QUOTED, quoted);
+	if (!lean_quoted) {
+		quoted = CsvTransfer(grammar, span.data, span.offset, bounds.begin, bounds.end, CSVState::QUOTED);
+	}
+	global.Publish(range, CSVState::QUOTED, quoted);
+	if (quoted.first_boundary != DConstants::INVALID_INDEX) {
+		global.Publish(range, CSVState::QUOTED_NEW_LINE, quoted);
+		auto own = CsvTransfer(grammar, span.data, span.offset, bounds.begin, quoted.first_boundary, lean_origin);
+		if (own.end.states[1] == CSVState::RECORD_SEPARATOR && own.end.last_position == quoted.first_boundary) {
+			own.end = quoted.end;
+			global.Publish(range, lean_origin, own);
+			return;
+		}
+	}
+	global.Publish(range, lean_origin,
+	               CsvTransfer(grammar, span.data, span.offset, bounds.begin, bounds.end, lean_origin));
+}
+
+bool CsvScan::LeanFromChain() {
+	PublishOwnTransfer();
+	const auto start = global.StartState(range);
+	const auto state = start.states[1];
+	if (state == lean_origin) {
+		lean_line_end = start.line_end;
+		StartLean(true);
+		return true;
+	}
+	auto entry = global.Entry(range, state);
+	if (!entry.computed) {
+		entry = global.Transfer(range, state);
+		global.Publish(range, state, entry);
+	}
+	if (lean_stop == DConstants::INVALID_INDEX) {
+		lean_stop = MaxValue(global.SyncAt(global.RangeEnd(range) - 1), lean_start);
+	}
+	if (entry.first_boundary == DConstants::INVALID_INDEX || entry.first_boundary >= lean_stop) {
+		return false;
+	}
+	auto boundary = entry.boundary;
+	boundary.Inherit(start);
+	lean_start = entry.first_boundary;
+	lean_origin = boundary.states[1];
+	lean_line_end = boundary.line_end;
+	StartLean(true);
+	return true;
+}
+
 void CsvScan::Start(idx_t range_p, vector<shared_ptr<CsvBufferUse>> uses_p) {
 	range = range_p;
 	uses = std::move(uses_p);
@@ -424,7 +1115,12 @@ void CsvScan::Start(idx_t range_p, vector<shared_ptr<CsvBufferUse>> uses_p) {
 	started = false;
 	reported = false;
 	no_rows = false;
-	bytes.reset();
+	lean = false;
+	lean_rows = DConstants::INVALID_INDEX;
+	lean_lines = DConstants::INVALID_INDEX;
+	if (!global.parallel) {
+		bytes.reset();
+	}
 	base = 0;
 	pending.reset();
 	pending_start = 0;
@@ -448,22 +1144,31 @@ void CsvScan::View(shared_ptr<CSVBufferHandle> handle, idx_t position) {
 }
 
 bool CsvScan::ReadMore(idx_t keep) {
+	if (global.parallel) {
+		if (last_buffer) {
+			return false;
+		}
+		const idx_t span_end = base + bytes->size;
+		const idx_t from = MinValue(MaxValue(keep, base), span_end);
+		stitch_bytes = MaxValue(stitch_bytes * 2, STITCH_BYTES);
+		auto next = make_shared_ptr<CsvBytes>();
+		global.ReadInto(*next, from, span_end - from + stitch_bytes);
+		bytes = std::move(next);
+		base = bytes->offset;
+		last_buffer = base + bytes->size >= global.size;
+		return true;
+	}
 	if (!pending) {
 		if (last_buffer) {
 			return false;
 		}
 		auto &manager = *source.buffer_manager;
-		shared_ptr<CSVBufferHandle> handle;
-		if (!global.parallel) {
-			handle = manager.GetBuffer(next_buffer);
-		} else if (next_buffer < global.buffer_count) {
-			handle = global.Buffer(next_buffer);
-		}
+		auto handle = manager.GetBuffer(next_buffer);
 		if (!handle) {
 			last_buffer = true;
 			return false;
 		}
-		if (!global.parallel && !source.sniffing) {
+		if (!source.sniffing) {
 			*source.bytes_read += handle->actual_size;
 			if (next_buffer > 0) {
 				manager.ResetBuffer(next_buffer - 1);
@@ -533,32 +1238,38 @@ void CsvScan::SkipRows() {
 }
 
 bool CsvScan::ReadRange() {
-	range_begin = global.RangeBegin(range);
-	range_end = global.RangeEnd(range);
+	if (!bytes || bytes.use_count() > 1) {
+		bytes = make_shared_ptr<CsvBytes>();
+	}
+	CSVState origin;
+	{
+		global.Computing(range, true);
+		absl::Cleanup stop = [&] {
+			global.Computing(range, false);
+		};
+		const auto bounds = global.Bounds(range, *bytes);
+		base = bytes->offset;
+		stitch_bytes = 0;
+		last_buffer = base + bytes->size >= global.size;
+		range_begin = bounds.begin;
+		range_end = bounds.end;
+		origin = global.Origin(*bytes, range_begin);
+		global.Publish(range, origin, CsvTransfer(grammar, bytes->data, base, range_begin, range_end, origin));
+	}
+	const auto start = global.StartState(range);
 	if (range_begin >= range_end) {
 		return false;
 	}
-	global.StartComputing(range);
-	const idx_t buffer = global.RangeBuffer(range);
-	auto handle = global.Buffer(buffer);
-	last_buffer = handle->is_last_buffer;
-	View(std::move(handle), buffer * global.buffer_size);
-	next_buffer = buffer + 1;
-	next_buffer_start = next_buffer * global.buffer_size;
-	CsvRangeTransfer transfer;
-	CsvTransfer(grammar, bytes->data, base, range_begin, range_end, transfer);
-	global.Publish(range, transfer);
-	const auto start = global.StartState(range);
-	if (range_begin == global.start) {
+	if (range == 0) {
 		splitter->Reset(range_begin, global.start_lines);
 		return true;
 	}
 	const auto state = start.states[1];
-	if (state == CSVState::RECORD_SEPARATOR || state == CSVState::CARRIAGE_RETURN) {
+	if (state == origin) {
 		splitter->Reset(range_begin, 0, start);
 		return true;
 	}
-	auto &entry = transfer[static_cast<uint8_t>(state)];
+	const auto entry = CsvTransfer(grammar, bytes->data, base, range_begin, range_end, state);
 	if (entry.first_boundary == DConstants::INVALID_INDEX) {
 		return false;
 	}
@@ -566,6 +1277,431 @@ bool CsvScan::ReadRange() {
 	boundary.Inherit(start);
 	splitter->Reset(entry.first_boundary, 0, boundary);
 	return true;
+}
+
+void CsvScan::StartLean(bool second_pass) {
+	lean = true;
+	lean_extract = !global.count_only;
+	lean_probe_only = false;
+	lean_finished = false;
+	lean_verified = false;
+	lean_second_pass = second_pass;
+	lean_failed = false;
+	chunk_open = false;
+	chunk_rows = 0;
+	held = nullptr;
+	lean_rows = DConstants::INVALID_INDEX;
+	lean_lines = DConstants::INVALID_INDEX;
+	emitted_rows = 0;
+	last_emitted_end = DConstants::INVALID_INDEX;
+	fields.Clear();
+	if (!second_pass) {
+		lean_start = DConstants::INVALID_INDEX;
+		lean_stop = range + 1 == global.range_count ? global.size : DConstants::INVALID_INDEX;
+		lean_line_end = range == 0 ? global.start : DConstants::INVALID_INDEX;
+	}
+	const idx_t begin = global.RangeBegin(range);
+	const idx_t from = second_pass ? lean_start : (range == 0 ? global.start : begin - MinValue<idx_t>(begin, 3));
+	if (!bytes || bytes.use_count() > 1) {
+		bytes = make_shared_ptr<CsvBytes>();
+	}
+	if (global.WholeFile()) {
+		global.ViewWholeFile(*bytes);
+		read_to = global.size;
+	} else {
+		if (bytes->buffer) {
+			bytes = make_shared_ptr<CsvBytes>();
+		}
+		bytes->offset = from;
+		bytes->size = 0;
+		bytes->data = bytes->owned.get();
+		read_to = from;
+	}
+	if (second_pass) {
+		global.lean->Start(cursor, lean_start, true);
+		validated_to = lean_start;
+	}
+}
+
+idx_t CsvScan::KeepFrom() const {
+	if (lean_start == DConstants::INVALID_INDEX) {
+		return bytes->offset;
+	}
+	idx_t keep = cursor.pos;
+	const idx_t first_row = global.lean_batches && chunk_open ? chunk_rows : 0;
+	if (lean_extract && !lean_probe_only && fields.row_count > first_row) {
+		keep = MinValue<idx_t>(keep, lean_start + fields.rows[first_row]);
+	}
+	if (!lean_extract && !global.columns.empty()) {
+		keep = MinValue(keep, validated_to);
+	}
+	if (lean_stop == DConstants::INVALID_INDEX) {
+		const idx_t end = global.RangeEnd(range);
+		keep = MinValue(keep, end - MinValue<idx_t>(end, 3));
+	}
+	return MaxValue(keep, bytes->offset);
+}
+
+void CsvScan::PrepareWindow(idx_t keep_from, idx_t need) {
+	auto &window = *bytes;
+	const idx_t kept = read_to - keep_from;
+	const bool fits = window.owned && read_to - window.offset + need <= window.capacity;
+	if (bytes.use_count() == 1 && window.owned && window.capacity >= kept + need) {
+		if (keep_from > window.offset && (kept <= LEAN_PIECE || !fits)) {
+			memmove(window.owned.get(), window.owned.get() + (keep_from - window.offset), kept);
+			window.offset = keep_from;
+			window.size = kept;
+		}
+		window.data = window.owned.get();
+		return;
+	}
+	if (fits) {
+		return;
+	}
+	shared_ptr<CsvBytes> next;
+	if (spare && spare.use_count() == 1) {
+		next = std::move(spare);
+	} else {
+		next = make_shared_ptr<CsvBytes>();
+	}
+	if (!next->owned || next->capacity < kept + need) {
+		const idx_t capacity = MaxValue(kept + need, MaxValue(LEAN_WINDOW, window.capacity * 2));
+		next->owned = make_unsafe_uniq_array_uninitialized<char>(capacity);
+		next->capacity = capacity;
+	}
+	if (kept) {
+		memcpy(next->owned.get(), window.data + (keep_from - window.offset), kept);
+	}
+	next->buffer.reset();
+	next->data = next->owned.get();
+	next->offset = keep_from;
+	next->size = kept;
+	if (bytes.use_count() > 1) {
+		spare = std::move(bytes);
+	}
+	bytes = std::move(next);
+}
+
+void CsvScan::ReadLeanPiece() {
+	const idx_t want = MinValue<idx_t>(LEAN_PIECE, global.size - read_to);
+	PrepareWindow(KeepFrom(), want);
+	auto &window = *bytes;
+	const idx_t got = want ? global.Read(window.owned.get() + (read_to - window.offset), want, read_to) : 0;
+	window.size += got;
+	read_to += got;
+}
+
+bool CsvScan::CheckCountUtf8(idx_t end) {
+	if (global.columns.empty()) {
+		return true;
+	}
+	if (!cursor.non_ascii) {
+		validated_to = cursor.pos;
+		return true;
+	}
+	if (end <= validated_to) {
+		return true;
+	}
+	if (!simdutf::validate_utf8(bytes->data + (validated_to - bytes->offset), end - validated_to)) {
+		return false;
+	}
+	validated_to = end;
+	return true;
+}
+
+bool CsvScan::AdvanceLean() {
+	const bool eof = read_to >= global.size;
+	if (lean_start == DConstants::INVALID_INDEX) {
+		idx_t found = global.start;
+		if (range > 0) {
+			const idx_t from = global.RangeBegin(range) - 1;
+			found = read_to > from ? CsvSync(grammar, bytes->data, bytes->offset, from, read_to, eof)
+			                       : DConstants::INVALID_INDEX;
+			if (found == DConstants::INVALID_INDEX) {
+				if (!eof) {
+					ReadLeanPiece();
+					return true;
+				}
+				found = global.size;
+			}
+		}
+		if (lean_stop != DConstants::INVALID_INDEX) {
+			found = MinValue(found, lean_stop);
+		}
+		lean_start = found;
+		lean_origin = found == global.start ? CSVState::NOT_SET : global.Origin(*bytes, found);
+		if (found > global.start) {
+			idx_t run = found;
+			while (run > bytes->offset &&
+			       (bytes->data[run - 1 - bytes->offset] == '\n' || bytes->data[run - 1 - bytes->offset] == '\r')) {
+				run--;
+			}
+			lean_line_end = run > bytes->offset ? run : DConstants::INVALID_INDEX;
+		}
+		global.lean->Start(cursor, lean_start, range == 0);
+		validated_to = lean_start;
+		return true;
+	}
+	if (lean_stop == DConstants::INVALID_INDEX) {
+		const idx_t from = global.RangeEnd(range) - 1;
+		if (read_to > from) {
+			const idx_t found = CsvSync(grammar, bytes->data, bytes->offset, from, read_to, eof);
+			if (found != DConstants::INVALID_INDEX) {
+				lean_stop = MaxValue(found, lean_start);
+			} else if (eof) {
+				lean_stop = global.size;
+			}
+		}
+	}
+	const idx_t limit = lean_stop != DConstants::INVALID_INDEX ? lean_stop : global.RangeEnd(range);
+	const idx_t feed_end = MinValue(limit, read_to);
+	const bool last = lean_stop != DConstants::INVALID_INDEX && feed_end == lean_stop;
+	if (cursor.pos < feed_end && (last || feed_end - cursor.pos >= CSV_BLOCK_BYTES)) {
+		auto out = lean_extract && !lean_probe_only ? &fields : nullptr;
+		if (!global.lean->Feed(cursor, bytes->data, bytes->offset, feed_end, last, out)) {
+			return false;
+		}
+		if (!lean_extract &&
+		    !CheckCountUtf8(cursor.last_term == DConstants::INVALID_INDEX ? lean_start : cursor.last_term + 1)) {
+			return false;
+		}
+		if (out && !cursor.settled && read_to - KeepFrom() > LEAN_UNSETTLED) {
+			lean_probe_only = true;
+			fields.Clear();
+		}
+		return true;
+	}
+	if (lean_stop != DConstants::INVALID_INDEX && cursor.pos == lean_stop) {
+		return FinishLean();
+	}
+	ReadLeanPiece();
+	return true;
+}
+
+bool CsvScan::FinishLean() {
+	CsvRangeEntry entry;
+	auto out = lean_extract && !lean_probe_only ? &fields : nullptr;
+	if (!global.lean->Finish(cursor, bytes->data, bytes->offset, lean_stop, lean_stop == global.size, out, lean_origin,
+	                         entry)) {
+		return false;
+	}
+	if (!lean_extract && !CheckCountUtf8(lean_stop)) {
+		return false;
+	}
+	lean_finished = true;
+	if (!lean_second_pass) {
+		global.Publish(range, lean_origin, entry);
+	}
+	lean_lines = cursor.lines + (range == 0 ? global.start_lines : 0);
+	if (!lean_extract) {
+		lean_rows = cursor.rows;
+	}
+	return true;
+}
+
+void CsvScan::LeanToExact() {
+	lean = false;
+	lean_lines = DConstants::INVALID_INDEX;
+	lean_rows = DConstants::INVALID_INDEX;
+	const bool settled = cursor.settled || lean_verified;
+	if (!settled && !lean_second_pass) {
+		if (!LeanFromChain()) {
+			done = true;
+			no_rows = true;
+		}
+		return;
+	}
+	const idx_t line_end = emitted_rows > 0 ? last_emitted_end : lean_line_end;
+	if (lean_probe_only || line_end == DConstants::INVALID_INDEX) {
+		if (!ReadRange()) {
+			done = true;
+			no_rows = true;
+		}
+		return;
+	}
+	CsvRangeStart start;
+	idx_t restart;
+	idx_t lines = 0;
+	auto state = CSVState::RECORD_SEPARATOR;
+	if (!lean_extract) {
+		restart = lean_start;
+	} else if (fields.row_count > 0) {
+		restart = lean_start + fields.rows[0];
+	} else {
+		restart = cursor.pos;
+		if (grammar.carry_on_newline && cursor.after_cr) {
+			state = CSVState::CARRIAGE_RETURN;
+		}
+	}
+	if (restart == lean_start) {
+		state = lean_origin;
+	} else {
+		lines = cursor.lines - cursor.unterminated;
+		if (restart < cursor.pos) {
+			lines -= global.lean->CountLines(bytes->data, bytes->offset, restart, cursor.pos);
+		}
+	}
+	if (!lean_finished) {
+		PublishOwnTransfer();
+	}
+	start.states[0] = state;
+	start.states[1] = state;
+	start.line_end = line_end;
+	start.last_position = restart;
+	if (range == 0) {
+		lines += global.start_lines;
+	}
+	if (lean_stop == DConstants::INVALID_INDEX) {
+		lean_stop = MaxValue(global.SyncAt(global.RangeEnd(range) - 1), lean_start);
+	}
+	if (restart < bytes->offset) {
+		bytes = make_shared_ptr<CsvBytes>();
+		global.ReadInto(*bytes, restart, LEAN_WINDOW);
+		read_to = bytes->offset + bytes->size;
+	}
+	base = bytes->offset;
+	stitch_bytes = 0;
+	range_begin = lean_start;
+	range_end = lean_stop;
+	last_buffer = read_to >= global.size;
+	splitter->Reset(restart, lines, start);
+}
+
+bool CsvScan::ScanLean(DataChunk &output, idx_t max_rows) {
+	const idx_t columns = splitter->Columns();
+	while (lean) {
+		const bool settled = cursor.settled || lean_verified;
+		if (lean_finished && !settled) {
+			const auto start = global.StartState(range);
+			if (start.states[1] != lean_origin) {
+				lean = false;
+				lean_lines = DConstants::INVALID_INDEX;
+				lean_rows = DConstants::INVALID_INDEX;
+				if (!LeanFromChain()) {
+					done = true;
+					no_rows = true;
+					return false;
+				}
+				continue;
+			}
+			lean_verified = true;
+			continue;
+		}
+		if (lean_finished && lean_probe_only) {
+			StartLean(true);
+			continue;
+		}
+		if (!lean_extract) {
+			if (!lean_finished) {
+				if (!AdvanceLean()) {
+					LeanToExact();
+					if (lean) {
+						continue;
+					}
+					return false;
+				}
+				continue;
+			}
+			if (lean_rows == 0) {
+				lean = false;
+				done = true;
+				return false;
+			}
+			const idx_t count = MinValue(lean_rows, max_rows);
+			lean_rows -= count;
+			output.Reset();
+			for (auto &column : output.data) {
+				column.SetVectorType(VectorType::CONSTANT_VECTOR);
+				ConstantVector::SetNull(column, true);
+			}
+			output.SetChildCardinality(count);
+			return true;
+		}
+		const idx_t ready = fields.end_count / columns;
+		if (!global.lean_batches) {
+			if (settled && ready > 0 && (ready >= max_rows || lean_finished)) {
+				const idx_t count = MinValue(ready, max_rows);
+				if (!DecodeLean(count, output)) {
+					LeanToExact();
+					if (lean) {
+						continue;
+					}
+					return false;
+				}
+				last_emitted_end = lean_start + (fields.ends[count * columns - 1] & ROW_FIELD_MASK);
+				fields.Drop(count, count * columns);
+				emitted_rows += count;
+				if (output.size() > 0) {
+					return true;
+				}
+				continue;
+			}
+			if (lean_finished) {
+				lean = false;
+				done = true;
+				return false;
+			}
+			if (!AdvanceLean()) {
+				LeanToExact();
+				if (lean) {
+					continue;
+				}
+				return false;
+			}
+			continue;
+		}
+		if (lean_failed && !chunk_open) {
+			lean_failed = false;
+			LeanToExact();
+			if (lean) {
+				continue;
+			}
+			return false;
+		}
+		if (!chunk_open) {
+			output.Reset();
+			chunk_rows = 0;
+			held = nullptr;
+			chunk_open = true;
+		}
+		const idx_t limit = MinValue(ready, max_rows);
+		if (settled && !lean_failed && chunk_rows < limit) {
+			if (DecodeLeanBatch(chunk_rows, limit - chunk_rows, output)) {
+				chunk_rows = limit;
+				continue;
+			}
+			lean_failed = true;
+		}
+		if (chunk_rows > 0 && (lean_failed || chunk_rows == max_rows || (lean_finished && chunk_rows == ready))) {
+			LeanRowNumbers(chunk_rows, output);
+			if (!global.filters.empty()) {
+				Filter(chunk_rows, output);
+			}
+			FinishLeanChunk(chunk_rows, output);
+			last_emitted_end = lean_start + (fields.ends[chunk_rows * columns - 1] & ROW_FIELD_MASK);
+			fields.Drop(chunk_rows, chunk_rows * columns);
+			emitted_rows += chunk_rows;
+			chunk_open = false;
+			if (output.size() > 0) {
+				return true;
+			}
+			continue;
+		}
+		if (lean_failed) {
+			chunk_open = false;
+			continue;
+		}
+		if (lean_finished) {
+			chunk_open = false;
+			lean = false;
+			done = true;
+			return false;
+		}
+		if (!AdvanceLean()) {
+			lean_failed = true;
+		}
+	}
+	return false;
 }
 
 idx_t CsvScan::Lookup(std::span<const int64_t> offsets, std::span<idx_t> survivors, DataChunk &output) {
@@ -1080,41 +2216,131 @@ void CsvScan::DecodeColumn(idx_t column_idx, idx_t count, DataChunk &output, boo
 	if (vector.GetType().InternalType() == PhysicalType::VARCHAR) {
 		StringVector::AddAuxiliaryData(vector, make_uniq<CsvBytesHolder>(bytes));
 	}
-	const CsvField *fields = splitter->Column(column.file_column);
+	if (column.parse_type.id() == LogicalTypeId::VARCHAR) {
+		ExactStrings(column, vector, count, selected_only);
+		return;
+	}
+	if (options.thousands_separator == '\0' && LeanDecodes(column.parse_type)) {
+		const ParseContext context {&global.date_format, &global.timestamp_format, bytes->data + bytes->size,
+		                            global.decimal_separator};
+		WithParser(column.parse_type, context, [&](auto parsed, auto parse) {
+			using T = typename decltype(parsed)::type;
+			ExactValues<T>(column, vector, count, selected_only, parse);
+			return true;
+		});
+		return;
+	}
 	for (idx_t row = 0; row < count; row++) {
 		if (selected_only && !selected[row]) {
 			FlatVector::SetNull(vector, row, true);
 			continue;
 		}
-		auto &csv_row = splitter->Row(row);
-		if (csv_row.flags & CSV_ROW_EMPTY_LINE) {
-			if (!global.empty_is_null) {
-				dropped[row] = true;
-				FlatVector::SetNull(vector, row, true);
-			} else if (!options.force_not_null.empty() && options.force_not_null[0] &&
-			           vector.GetType().InternalType() == PhysicalType::VARCHAR) {
-				FlatVector::GetDataMutable<string_t>(vector)[row] = string_t();
-			} else {
-				FlatVector::SetNull(vector, row, true);
-			}
-			continue;
-		}
-		if (column.file_column >= csv_row.field_count) {
-			const bool padded_empty = options.null_padding && column.file_column < options.force_not_null.size() &&
-			                          options.force_not_null[column.file_column] &&
-			                          vector.GetType().InternalType() == PhysicalType::VARCHAR;
-			if (padded_empty) {
-				FlatVector::GetDataMutable<string_t>(vector)[row] = string_t();
-			} else {
-				FlatVector::SetNull(vector, row, true);
-			}
-			continue;
-		}
-		CsvRowError error;
-		if (!DecodeValue(column, fields[row], vector, row, error)) {
+		DecodeCell(column, vector, row);
+	}
+}
+
+void CsvScan::DecodeCell(const CsvScanColumn &column, Vector &vector, idx_t row) {
+	auto &csv_row = splitter->Row(row);
+	if (csv_row.flags & CSV_ROW_EMPTY_LINE) {
+		if (!global.empty_is_null) {
+			dropped[row] = true;
 			FlatVector::SetNull(vector, row, true);
-			value_errors[row].push_back(std::move(error));
+		} else if (!options.force_not_null.empty() && options.force_not_null[0] &&
+		           vector.GetType().InternalType() == PhysicalType::VARCHAR) {
+			FlatVector::GetDataMutable<string_t>(vector)[row] = string_t();
+		} else {
+			FlatVector::SetNull(vector, row, true);
 		}
+		return;
+	}
+	if (column.file_column >= csv_row.field_count) {
+		const bool padded_empty = options.null_padding && column.file_column < options.force_not_null.size() &&
+		                          options.force_not_null[column.file_column] &&
+		                          vector.GetType().InternalType() == PhysicalType::VARCHAR;
+		if (padded_empty) {
+			FlatVector::GetDataMutable<string_t>(vector)[row] = string_t();
+		} else {
+			FlatVector::SetNull(vector, row, true);
+		}
+		return;
+	}
+	CsvRowError error;
+	if (!DecodeValue(column, splitter->Column(column.file_column)[row], vector, row, error)) {
+		FlatVector::SetNull(vector, row, true);
+		value_errors[row].push_back(std::move(error));
+	}
+}
+
+template <class T, class PARSE>
+void CsvScan::ExactValues(const CsvScanColumn &column, Vector &vector, idx_t count, bool selected_only, PARSE parse) {
+	T *const out = FlatVector::GetDataMutable<T>(vector);
+	const CsvField *const fields = splitter->Column(column.file_column);
+	const char *const data = bytes->data;
+	const bool empty_only_null = global.empty_only_null;
+	const bool allow_quoted_nulls = options.allow_quoted_nulls;
+	const bool force_not_null = column.force_not_null;
+	const idx_t file_column = column.file_column;
+	for (idx_t row = 0; row < count; row++) {
+		if (selected_only && !selected[row]) {
+			FlatVector::SetNull(vector, row, true);
+			continue;
+		}
+		const auto &csv_row = splitter->Row(row);
+		const auto &field = fields[row];
+		if (!(csv_row.flags & CSV_ROW_EMPTY_LINE) && file_column < csv_row.field_count &&
+		    !(field.flags & CSV_FIELD_ESCAPED)) {
+			const char *value = data + field.offset;
+			const idx_t size = field.size;
+			if (empty_only_null) {
+				if (size != 0) {
+					if (parse(value, size, out[row])) {
+						continue;
+					}
+				} else if (!force_not_null && (!(field.flags & CSV_FIELD_QUOTED) || allow_quoted_nulls)) {
+					FlatVector::SetNull(vector, row, true);
+					continue;
+				}
+			} else if (!IsNull(field, value, size) && parse(value, size, out[row])) {
+				continue;
+			}
+		}
+		DecodeCell(column, vector, row);
+	}
+}
+
+void CsvScan::ExactStrings(const CsvScanColumn &column, Vector &vector, idx_t count, bool selected_only) {
+	string_t *const out = FlatVector::GetDataMutable<string_t>(vector);
+	const CsvField *const fields = splitter->Column(column.file_column);
+	const char *const data = bytes->data;
+	const char *const limit = bytes->data + bytes->size;
+	const bool empty_only_null = global.empty_only_null;
+	const bool allow_quoted_nulls = options.allow_quoted_nulls;
+	const bool validate = column.validate_utf8;
+	const idx_t file_column = column.file_column;
+	for (idx_t row = 0; row < count; row++) {
+		if (selected_only && !selected[row]) {
+			FlatVector::SetNull(vector, row, true);
+			continue;
+		}
+		const auto &csv_row = splitter->Row(row);
+		const auto &field = fields[row];
+		if (!(csv_row.flags & CSV_ROW_EMPTY_LINE) && file_column < csv_row.field_count &&
+		    !(field.flags & CSV_FIELD_ESCAPED)) {
+			const char *value = data + field.offset;
+			const idx_t size = field.size;
+			const bool null = empty_only_null ? size == 0 && (!(field.flags & CSV_FIELD_QUOTED) || allow_quoted_nulls)
+			                                  : IsNull(field, value, size);
+			if (!null) {
+				if (!validate || Utf8Proc::IsValid(value, UnsafeNumericCast<uint32_t>(size))) {
+					MakeString(value, size, limit, out[row]);
+					continue;
+				}
+			} else if (!column.force_not_null) {
+				FlatVector::SetNull(vector, row, true);
+				continue;
+			}
+		}
+		DecodeCell(column, vector, row);
 	}
 }
 
@@ -1216,18 +2442,174 @@ void CsvScan::Decode(idx_t count, DataChunk &output) {
 	output.SetChildCardinality(kept);
 }
 
+bool CsvScan::DecodeLeanColumn(idx_t column_idx, idx_t first, idx_t count, DataChunk &output, bool selected_only,
+                               bool utf8_valid, bool hold) {
+	auto &column = global.columns[column_idx];
+	auto &vector = Target(column_idx, output);
+	const idx_t columns = splitter->Columns();
+	LeanSource source;
+	source.first = first;
+	if (column.file_column == 0) {
+		source.begins = fields.rows.get();
+		source.begin_stride = 1;
+		source.begin_bias = 0;
+	} else {
+		source.begins = fields.ends.get() + column.file_column - 1;
+		source.begin_stride = columns;
+		source.begin_bias = 1;
+	}
+	source.ends = fields.ends.get() + column.file_column;
+	source.stride = columns;
+	source.data = bytes->data;
+	source.limit = bytes->data + bytes->size;
+	source.shift = lean_start - bytes->offset;
+	source.quote = grammar.quote;
+	source.escape_probe = grammar.escape && grammar.escape != grammar.quote ? grammar.escape : grammar.quote;
+	source.quotes = cursor.quotes;
+	source.doubled = cursor.doubled;
+	source.allow_quoted_nulls = options.allow_quoted_nulls;
+	source.empty_only_null = global.empty_only_null;
+	source.null_strings = &global.null_strings;
+	source.selected = selected_only ? &selected : nullptr;
+	const bool force = column.force_not_null;
+	if (column.parse_type.id() == LogicalTypeId::VARCHAR) {
+		if (hold) {
+			StringVector::AddAuxiliaryData(vector, make_uniq<CsvBytesHolder>(bytes));
+		}
+		return LeanStrings(source, count, column, column.validate_utf8 && !utf8_valid, grammar, vector);
+	}
+	if (!LeanDecodes(column.parse_type)) {
+		return false;
+	}
+	const ParseContext context {&global.date_format, &global.timestamp_format, source.limit, global.decimal_separator};
+	return WithParser(column.parse_type, context, [&](auto parsed, auto parse) {
+		using T = typename decltype(parsed)::type;
+		return LeanValues<T>(source, count, force, vector, parse);
+	});
+}
+
+bool CsvScan::LeanCasts(idx_t count, DataChunk &output, bool late, bool filter_pass) {
+	for (idx_t i = 0; i < global.columns.size(); i++) {
+		auto &column = global.columns[i];
+		if (!NeedsFlushCast(column) || column.output_column >= output.ColumnCount()) {
+			continue;
+		}
+		if (late && global.filtered[i] != filter_pass) {
+			continue;
+		}
+		string error_message;
+		if (!VectorOperations::TryCast(global.context, parse_chunk.data[i], output.data[column.output_column], count,
+		                               &error_message, false, true)) {
+			return false;
+		}
+	}
+	return true;
+}
+
+void CsvScan::LeanRowNumbers(idx_t count, DataChunk &output) {
+	if (source.file_row_number == DConstants::INVALID_INDEX || source.file_row_number >= output.ColumnCount()) {
+		return;
+	}
+	auto data = FlatVector::GetDataMutable<int64_t>(output.data[source.file_row_number]);
+	const idx_t columns = splitter->Columns();
+	for (idx_t row = 0; row < count; row++) {
+		data[row] = static_cast<int64_t>(lean_start + fields.rows[row]);
+	}
+}
+
+bool CsvScan::DecodeLean(idx_t count, DataChunk &output) {
+	output.Reset();
+	parse_chunk.Reset();
+	scratch_chunk.Reset();
+	const idx_t columns = splitter->Columns();
+	bool utf8_valid = !cursor.non_ascii;
+	if (!utf8_valid) {
+		const idx_t first = lean_start + fields.rows[0];
+		const idx_t last = lean_start + (fields.ends[count * columns - 1] & ROW_FIELD_MASK);
+		utf8_valid = simdutf::validate_utf8(bytes->data + (first - bytes->offset), last - first);
+	}
+	const bool late = global.late_materialization;
+	for (idx_t i = 0; i < global.columns.size(); i++) {
+		if ((!late || global.filtered[i]) && !DecodeLeanColumn(i, 0, count, output, false, utf8_valid, true)) {
+			return false;
+		}
+	}
+	if (late) {
+		if (!LeanCasts(count, output, true, true)) {
+			return false;
+		}
+		LeanRowNumbers(count, output);
+		Filter(count, output);
+		for (idx_t i = 0; i < global.columns.size(); i++) {
+			if (!global.filtered[i] && !DecodeLeanColumn(i, 0, count, output, true, utf8_valid, true)) {
+				return false;
+			}
+		}
+	}
+	if (!LeanCasts(count, output, late, false)) {
+		return false;
+	}
+	if (!late) {
+		LeanRowNumbers(count, output);
+		if (!global.filters.empty()) {
+			Filter(count, output);
+		}
+	}
+	FinishLeanChunk(count, output);
+	return true;
+}
+
+bool CsvScan::DecodeLeanBatch(idx_t first, idx_t count, DataChunk &output) {
+	const idx_t columns = splitter->Columns();
+	bool utf8_valid = !cursor.non_ascii;
+	if (!utf8_valid) {
+		const idx_t from = lean_start + fields.rows[first];
+		const idx_t to = lean_start + (fields.ends[(first + count) * columns - 1] & ROW_FIELD_MASK);
+		utf8_valid = simdutf::validate_utf8(bytes->data + (from - bytes->offset), to - from);
+	}
+	const bool hold = bytes.get() != held;
+	for (idx_t i = 0; i < global.columns.size(); i++) {
+		if (!DecodeLeanColumn(i, first, count, output, false, utf8_valid, hold)) {
+			return false;
+		}
+	}
+	held = bytes.get();
+	return true;
+}
+
+void CsvScan::FinishLeanChunk(idx_t count, DataChunk &output) {
+	output.SetChildCardinality(count);
+	if (!global.filters.empty()) {
+		idx_t kept = 0;
+		for (idx_t row = 0; row < count; row++) {
+			if (selected[row]) {
+				keep.set_index(kept++, row);
+			}
+		}
+		if (kept != count) {
+			output.Slice(keep, kept);
+		}
+		output.SetChildCardinality(kept);
+	}
+}
+
 bool CsvScan::Scan(DataChunk &output, idx_t max_rows) {
 	source.error_handler->ErrorIfNeeded();
 	if (!started) {
 		started = true;
 		if (global.parallel) {
-			if (!ReadRange()) {
+			if (global.lean_ranges) {
+				StartLean(false);
+			} else if (!ReadRange()) {
 				done = true;
 				no_rows = true;
 			}
 		} else {
 			SkipRows();
 		}
+	}
+	if (lean && ScanLean(output, max_rows)) {
+		return false;
 	}
 	while (!done) {
 		idx_t count = 0;
@@ -1252,16 +2634,18 @@ bool CsvScan::Scan(DataChunk &output, idx_t max_rows) {
 		return false;
 	}
 	reported = true;
-	if (global.parallel && range_begin < range_end) {
-		*source.bytes_read += range_end - range_begin;
+	if (global.parallel) {
+		*source.bytes_read += global.RangeEnd(range) - global.RangeBegin(range);
+	} else {
+		bytes.reset();
 	}
-	bytes.reset();
 	pending.reset();
 	uses.clear();
 	if (source.sniffing) {
 		return true;
 	}
-	return global.FinishRange(range, no_rows ? 0 : splitter->LinesRead());
+	const idx_t lines = no_rows ? 0 : (lean_lines != DConstants::INVALID_INDEX ? lean_lines : splitter->LinesRead());
+	return global.FinishRange(range, lines);
 }
 
 } // namespace duckdb

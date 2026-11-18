@@ -9,6 +9,7 @@
 #pragma once
 
 #include "duckdb/common/map.hpp"
+#include "duckdb/execution/operator/csv_scanner/csv_byte_skipper.hpp"
 #include "duckdb/formats/csv_scan.hpp"
 
 namespace duckdb {
