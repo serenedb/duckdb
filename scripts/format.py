@@ -98,8 +98,6 @@ ignored_files = [
     'visualizer_constants.hpp',
     'icu-collate.cpp',
     'icu-collate.hpp',
-    'yyjson.cpp',
-    'yyjson.hpp',
     'duckdb_pdqsort.hpp',
     'pdqsort.h',
     'stubdata.cpp',

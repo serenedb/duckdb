@@ -59,8 +59,7 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
 		}
 		case 2: {
 			// JSON validation and extraction functions.
-			// Exercises: yyjson parser, JSONCommon::ReadDocumentUnsafe,
-			// json_valid, json_type, json_extract.
+			// Exercises: the JSON document parser, json_valid, json_type, json_extract.
 			std::string str_payload(reinterpret_cast<const char *>(payload), payload_size);
 			// Escape single quotes for SQL safety.
 			std::string escaped;
