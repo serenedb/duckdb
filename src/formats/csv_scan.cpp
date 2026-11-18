@@ -572,9 +572,6 @@ bool WithParser(const LogicalType &type, const ParseContext &context, FN &&fn) {
 		});
 	}
 	case LogicalTypeId::DECIMAL: {
-		if (separator != '.' && separator != ',') {
-			throw InvalidInputException("Decimals can only have ',' and '.' as decimal separators");
-		}
 		uint8_t width;
 		uint8_t scale;
 		type.GetDecimalProperties(width, scale);
@@ -600,29 +597,6 @@ string CastMessage(const char *value, idx_t size, const string &type) {
 	string message = "Could not convert string \"" + string(value, size) + "\" to '" + type + "'";
 	CsvSanitize(message);
 	return message;
-}
-
-template <class T>
-bool CastInteger(const char *value, idx_t size, Vector &vector, idx_t row) {
-	return TrySimpleIntegerCast<T>(value, size, FlatVector::GetDataMutable<T>(vector)[row], false);
-}
-
-template <class T>
-bool CastUnsigned(const char *value, idx_t size, Vector &vector, idx_t row) {
-	return TrySimpleIntegerCast<T, false>(value, size, FlatVector::GetDataMutable<T>(vector)[row], false);
-}
-
-template <class T>
-bool CastDecimal(const char *value, idx_t size, Vector &vector, idx_t row, char separator, uint8_t width,
-                 uint8_t scale) {
-	auto &out = FlatVector::GetDataMutable<T>(vector)[row];
-	if (separator == ',') {
-		return TryDecimalStringCast<T, ','>(value, size, out, width, scale);
-	}
-	if (separator == '.') {
-		return TryDecimalStringCast<T>(value, size, out, width, scale);
-	}
-	throw InvalidInputException("Decimals can only have ',' and '.' as decimal separators");
 }
 
 idx_t SkipBom(const char *data, idx_t size) {
@@ -696,17 +670,6 @@ void CsvSanitize(string &text) {
 	text.push_back('\0');
 	Utf8Proc::MakeValid(&text[0], text.size());
 	text.pop_back();
-}
-
-idx_t CsvRangeBytes(const CSVReaderOptions &options) {
-	constexpr idx_t ROWS_PER_RANGE = 4;
-	const idx_t buffer_size = options.buffer_size_option.GetValue();
-	const idx_t max_line_size = options.maximum_line_size.GetValue();
-	const idx_t bytes = buffer_size / CSVBuffer::ROWS_PER_BUFFER * ROWS_PER_RANGE;
-	if (bytes < max_line_size) {
-		return max_line_size;
-	}
-	return MaxValue<idx_t>(bytes, 1);
 }
 
 static CsvScanSource FileSource(CSVFileScan &file) {
@@ -963,9 +926,8 @@ void CsvScanGlobal::ViewWholeFile(CsvBytes &bytes) const {
 	bytes.size = size;
 }
 
-bool CsvScanGlobal::Claim(idx_t &range, vector<shared_ptr<CsvBufferUse>> &uses) {
+bool CsvScanGlobal::Claim(idx_t &range) {
 	const absl::MutexLock guard(&lock);
-	uses.clear();
 	if (!parallel) {
 		if (sequential_claimed) {
 			return false;
@@ -1139,9 +1101,8 @@ bool CsvScan::LeanFromChain() {
 	return true;
 }
 
-void CsvScan::Start(idx_t range_p, vector<shared_ptr<CsvBufferUse>> uses_p) {
+void CsvScan::Start(idx_t range_p) {
 	range = range_p;
-	uses = std::move(uses_p);
 	done = false;
 	started = false;
 	reported = false;
@@ -1877,45 +1838,8 @@ bool CsvScan::DecodeValue(const CsvScanColumn &column, const CsvField &field, Ve
 		value = thousands.c_str();
 		size = thousands.size();
 	}
-	const char decimal_separator = global.decimal_separator;
 	bool success = true;
-	switch (parse_id) {
-	case LogicalTypeId::BOOLEAN:
-		success = TryCastStringBool(value, size, FlatVector::GetDataMutable<bool>(vector)[row], false);
-		break;
-	case LogicalTypeId::TINYINT:
-		success = CastInteger<int8_t>(value, size, vector, row);
-		break;
-	case LogicalTypeId::SMALLINT:
-		success = CastInteger<int16_t>(value, size, vector, row);
-		break;
-	case LogicalTypeId::INTEGER:
-		success = CastInteger<int32_t>(value, size, vector, row);
-		break;
-	case LogicalTypeId::BIGINT:
-		success = CastInteger<int64_t>(value, size, vector, row);
-		break;
-	case LogicalTypeId::UTINYINT:
-		success = CastUnsigned<uint8_t>(value, size, vector, row);
-		break;
-	case LogicalTypeId::USMALLINT:
-		success = CastUnsigned<uint16_t>(value, size, vector, row);
-		break;
-	case LogicalTypeId::UINTEGER:
-		success = CastUnsigned<uint32_t>(value, size, vector, row);
-		break;
-	case LogicalTypeId::UBIGINT:
-		success = CastUnsigned<uint64_t>(value, size, vector, row);
-		break;
-	case LogicalTypeId::HUGEINT:
-		success = TryCast::Operation<string_t, hugeint_t>(string_t(value, NumericCast<uint32_t>(size)),
-		                                                  FlatVector::GetDataMutable<hugeint_t>(vector)[row], false);
-		break;
-	case LogicalTypeId::UHUGEINT:
-		success = TryCast::Operation<string_t, uhugeint_t>(string_t(value, NumericCast<uint32_t>(size)),
-		                                                   FlatVector::GetDataMutable<uhugeint_t>(vector)[row], false);
-		break;
-	case LogicalTypeId::BIGNUM: {
+	if (parse_id == LogicalTypeId::BIGNUM) {
 		while (size > 0 && StringUtil::CharacterIsSpace(*value)) {
 			value++;
 			size--;
@@ -1930,67 +1854,14 @@ bool CsvScan::DecodeValue(const CsvScanColumn &column, const CsvField &field, Ve
 		} catch (const ConversionException &) {
 			success = false;
 		}
-		break;
-	}
-	case LogicalTypeId::DOUBLE:
-		success = TryDoubleCast<double>(value, size, FlatVector::GetDataMutable<double>(vector)[row], false,
-		                                decimal_separator);
-		break;
-	case LogicalTypeId::FLOAT:
-		success =
-		    TryDoubleCast<float>(value, size, FlatVector::GetDataMutable<float>(vector)[row], false, decimal_separator);
-		break;
-	case LogicalTypeId::DATE: {
-		auto &out = FlatVector::GetDataMutable<date_t>(vector)[row];
-		if (!global.date_format.Empty()) {
-			success = global.date_format.TryParseDate(value, size, out);
-		} else {
-			idx_t pos;
-			bool special;
-			success = Date::TryConvertDate(value, size, pos, out, special, false) == DateCastResult::SUCCESS;
-		}
-		break;
-	}
-	case LogicalTypeId::TIME: {
-		idx_t pos;
-		success = Time::TryConvertTime(value, size, pos, FlatVector::GetDataMutable<dtime_t>(vector)[row], false);
-		break;
-	}
-	case LogicalTypeId::TIMESTAMP:
-	case LogicalTypeId::TIMESTAMP_TZ: {
-		auto &out = FlatVector::GetDataMutable<timestamp_t>(vector)[row];
-		if (!global.timestamp_format.Empty()) {
-			success = global.timestamp_format.TryParseTimestamp(value, size, out);
-		} else {
-			success = Timestamp::TryConvertTimestamp(value, size, out, parse_id == LogicalTypeId::TIMESTAMP_TZ) ==
-			          TimestampCastResult::SUCCESS;
-		}
-		break;
-	}
-	case LogicalTypeId::DECIMAL: {
-		uint8_t width;
-		uint8_t scale;
-		column.parse_type.GetDecimalProperties(width, scale);
-		switch (column.parse_type.InternalType()) {
-		case PhysicalType::INT16:
-			success = CastDecimal<int16_t>(value, size, vector, row, decimal_separator, width, scale);
-			break;
-		case PhysicalType::INT32:
-			success = CastDecimal<int32_t>(value, size, vector, row, decimal_separator, width, scale);
-			break;
-		case PhysicalType::INT64:
-			success = CastDecimal<int64_t>(value, size, vector, row, decimal_separator, width, scale);
-			break;
-		case PhysicalType::INT128:
-			success = CastDecimal<hugeint_t>(value, size, vector, row, decimal_separator, width, scale);
-			break;
-		default:
-			throw InternalException("Invalid Physical Type for Decimal Value. Physical Type: " +
-			                        TypeIdToString(column.parse_type.InternalType()));
-		}
-		break;
-	}
-	default: {
+	} else if (parse_id != LogicalTypeId::VARCHAR) {
+		const ParseContext context {&global.date_format, &global.timestamp_format, value + size,
+		                            global.decimal_separator};
+		success = WithParser(column.parse_type, context, [&](auto parsed, auto parse) {
+			using T = typename decltype(parsed)::type;
+			return parse(value, size, FlatVector::GetDataMutable<T>(vector)[row]);
+		});
+	} else {
 		auto &out = FlatVector::GetDataMutable<string_t>(vector)[row];
 		if (column.validate_utf8 && !Utf8Proc::IsValid(value, UnsafeNumericCast<uint32_t>(size))) {
 			out = string_t();
@@ -2002,8 +1873,6 @@ bool CsvScan::DecodeValue(const CsvScanColumn &column, const CsvField &field, Ve
 		} else {
 			out = string_t(value, UnsafeNumericCast<uint32_t>(size));
 		}
-		break;
-	}
 	}
 	if (!success) {
 		error = {CSVErrorType::CAST_ERROR, column.file_column, base + field.start,
@@ -2673,7 +2542,6 @@ bool CsvScan::Scan(DataChunk &output, idx_t max_rows) {
 		bytes.reset();
 	}
 	pending.reset();
-	uses.clear();
 	if (source.sniffing) {
 		return true;
 	}

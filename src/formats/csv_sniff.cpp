@@ -40,7 +40,7 @@ CsvSniffScanner::CsvSniffScanner(shared_ptr<CSVBufferManager> buffer_manager,
 	source.buffer_manager = std::move(buffer_manager);
 	global = make_uniq<CsvScanGlobal>(context, state_machine->options, std::move(source));
 	scan = make_uniq<CsvScan>(*global);
-	scan->Start(0, {});
+	scan->Start(0);
 	auto &allocator = Allocator::Get(context);
 	chunk.Initialize(allocator, types);
 	part.Initialize(allocator, types);
