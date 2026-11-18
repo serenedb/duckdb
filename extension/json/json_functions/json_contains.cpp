@@ -2,105 +2,65 @@
 
 namespace duckdb {
 
-static inline bool JSONContains(yyjson_val *haystack, yyjson_val *needle);
-static inline bool JSONFuzzyEquals(yyjson_val *haystack, yyjson_val *needle);
-
-static inline bool JSONArrayFuzzyEquals(yyjson_val *haystack, yyjson_val *needle) {
-	D_ASSERT(yyjson_get_tag(haystack) == (YYJSON_TYPE_ARR | YYJSON_SUBTYPE_NONE) &&
-	         yyjson_get_tag(needle) == (YYJSON_TYPE_ARR | YYJSON_SUBTYPE_NONE));
-
-	size_t needle_idx, needle_max, haystack_idx, haystack_max;
-	yyjson_val *needle_child, *haystack_child;
-	yyjson_arr_foreach(needle, needle_idx, needle_max, needle_child) {
-		bool found = false;
-		yyjson_arr_foreach(haystack, haystack_idx, haystack_max, haystack_child) {
-			if (JSONFuzzyEquals(haystack_child, needle_child)) {
-				found = true;
-				break;
-			}
-		}
-		if (!found) {
-			return false;
-		}
-	}
-	return true;
-}
-
-static inline bool JSONObjectFuzzyEquals(yyjson_val *haystack, yyjson_val *needle) {
-	D_ASSERT(yyjson_get_tag(haystack) == (YYJSON_TYPE_OBJ | YYJSON_SUBTYPE_NONE) &&
-	         yyjson_get_tag(needle) == (YYJSON_TYPE_OBJ | YYJSON_SUBTYPE_NONE));
-
-	size_t idx, max;
-	yyjson_val *key, *needle_child;
-	yyjson_obj_foreach(needle, idx, max, key, needle_child) {
-		auto haystack_child = yyjson_obj_getn(haystack, unsafe_yyjson_get_str(key), unsafe_yyjson_get_len(key));
-		if (!haystack_child || !JSONFuzzyEquals(haystack_child, needle_child)) {
-			return false;
-		}
-	}
-	return true;
-}
-
-static inline bool JSONFuzzyEquals(yyjson_val *haystack, yyjson_val *needle) {
-	D_ASSERT(haystack && needle);
-
+static bool JSONFuzzyEquals(const JSONNode &haystack, const JSONNode &needle) {
 	// Strict equality
-	if (unsafe_yyjson_equals(haystack, needle)) {
+	if (JSONEquals(haystack, needle)) {
 		return true;
 	}
 
-	auto haystack_tag = yyjson_get_tag(needle);
-	if (haystack_tag != yyjson_get_tag(haystack)) {
+	if (needle.type != haystack.type) {
 		return false;
 	}
 
 	// Fuzzy equality (contained in)
-	switch (haystack_tag) {
-	case YYJSON_TYPE_ARR | YYJSON_SUBTYPE_NONE:
-		return JSONArrayFuzzyEquals(haystack, needle);
-	case YYJSON_TYPE_OBJ | YYJSON_SUBTYPE_NONE:
-		return JSONObjectFuzzyEquals(haystack, needle);
+	switch (needle.type) {
+	case JSONValueType::ARRAY:
+		for (auto &needle_child : needle.Elements()) {
+			bool found = false;
+			for (auto &haystack_child : haystack.Elements()) {
+				if (JSONFuzzyEquals(haystack_child, needle_child)) {
+					found = true;
+					break;
+				}
+			}
+			if (!found) {
+				return false;
+			}
+		}
+		return true;
+	case JSONValueType::OBJECT:
+		for (auto &key : needle.Keys()) {
+			auto haystack_child = haystack.Get(key.GetString());
+			if (!haystack_child || !JSONFuzzyEquals(*haystack_child, *(&key + 1))) {
+				return false;
+			}
+		}
+		return true;
 	default:
 		return false;
 	}
 }
 
-static inline bool JSONArrayContains(yyjson_val *haystack_array, yyjson_val *needle) {
-	D_ASSERT(yyjson_get_tag(haystack_array) == (YYJSON_TYPE_ARR | YYJSON_SUBTYPE_NONE));
-
-	size_t idx, max;
-	yyjson_val *child_haystack;
-	yyjson_arr_foreach(haystack_array, idx, max, child_haystack) {
-		if (JSONContains(child_haystack, needle)) {
-			return true;
-		}
-	}
-	return false;
-}
-
-static inline bool JSONObjectContains(yyjson_val *haystack_object, yyjson_val *needle) {
-	D_ASSERT(yyjson_get_tag(haystack_object) == (YYJSON_TYPE_OBJ | YYJSON_SUBTYPE_NONE));
-
-	size_t idx, max;
-	yyjson_val *key, *child_haystack;
-	yyjson_obj_foreach(haystack_object, idx, max, key, child_haystack) {
-		if (JSONContains(child_haystack, needle)) {
-			return true;
-		}
-	}
-	return false;
-}
-
-static inline bool JSONContains(yyjson_val *haystack, yyjson_val *needle) {
+static bool JSONContains(const JSONNode &haystack, const JSONNode &needle) {
 	if (JSONFuzzyEquals(haystack, needle)) {
 		return true;
 	}
 
-	switch (yyjson_get_tag(haystack)) {
-	case YYJSON_TYPE_ARR | YYJSON_SUBTYPE_NONE:
-		return JSONArrayContains(haystack, needle);
-	case YYJSON_TYPE_OBJ | YYJSON_SUBTYPE_NONE:
-		return JSONObjectContains(haystack, needle);
+	switch (haystack.type) {
+	case JSONValueType::ARRAY:
+		for (auto &child_haystack : haystack.Elements()) {
+			if (JSONContains(child_haystack, needle)) {
+				return true;
+			}
+		}
+		return false;
+	case JSONValueType::OBJECT:
+		for (auto &key : haystack.Keys()) {
+			if (JSONContains(*(&key + 1), needle)) {
+				return true;
+			}
+		}
+		return false;
 	default:
 		return false;
 	}
@@ -109,7 +69,6 @@ static inline bool JSONContains(yyjson_val *haystack, yyjson_val *needle) {
 static void JSONContainsFunction(DataChunk &args, ExpressionState &state, Vector &result) {
 	D_ASSERT(args.data.size() == 2);
 	auto &lstate = JSONFunctionLocalState::ResetAndGet(state);
-	auto alc = lstate.json_allocator->GetYYAlc();
 
 	const auto &haystacks = args.data[0];
 	const auto &needles = args.data[1];
@@ -119,17 +78,17 @@ static void JSONContainsFunction(DataChunk &args, ExpressionState &state, Vector
 			throw InternalException("JSON Contains called with constant NULL needles");
 		}
 		auto &needle_str = *ConstantVector::GetData<string_t>(needles);
-		auto needle_doc = JSONCommon::ReadDocument(needle_str, JSONCommon::READ_FLAG, alc);
+		auto &needle = JSONCommon::ReadDocument(lstate.second_parser, needle_str);
 		UnaryExecutor::Execute<string_t, bool>(haystacks, result, [&](string_t haystack_str) {
-			auto haystack_doc = JSONCommon::ReadDocument(haystack_str, JSONCommon::READ_FLAG, alc);
-			return JSONContains(haystack_doc->root, needle_doc->root);
+			auto &haystack = JSONCommon::ReadDocument(lstate.parser, haystack_str);
+			return JSONContains(haystack, needle);
 		});
 	} else {
 		BinaryExecutor::Execute<string_t, string_t, bool>(
 		    haystacks, needles, result, [&](string_t haystack_str, string_t needle_str) {
-			    auto needle_doc = JSONCommon::ReadDocument(needle_str, JSONCommon::READ_FLAG, alc);
-			    auto haystack_doc = JSONCommon::ReadDocument(haystack_str, JSONCommon::READ_FLAG, alc);
-			    return JSONContains(haystack_doc->root, needle_doc->root);
+			    auto &needle = JSONCommon::ReadDocument(lstate.second_parser, needle_str);
+			    auto &haystack = JSONCommon::ReadDocument(lstate.parser, haystack_str);
+			    return JSONContains(haystack, needle);
 		    });
 	}
 }

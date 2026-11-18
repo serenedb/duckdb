@@ -3,18 +3,16 @@
 namespace duckdb {
 
 //! Pretty Print a given JSON Document
-optional<string_t> PrettyPrint(yyjson_val *val, yyjson_alc *alc, Vector &) {
-	D_ASSERT(alc);
-	size_t len_size_t;
-	auto data = yyjson_val_write_opts(val, JSONCommon::WRITE_PRETTY_FLAG, alc, &len_size_t, nullptr);
-	return string_t::Safe({data, len_size_t});
-}
-
 static void PrettyPrintFunction(DataChunk &args, ExpressionState &state, Vector &result) {
 	auto json_type = args.data[0].GetType();
 	D_ASSERT(json_type == LogicalType::VARCHAR || json_type == LogicalType::JSON());
 
-	JSONExecutors::UnaryExecute<string_t>(args, state, result, PrettyPrint);
+	auto &lstate = JSONFunctionLocalState::ResetAndGet(state);
+	JSONStringWriter writer(JSONCommon::WRITE_PRETTY_FLAG);
+	UnaryExecutor::Execute<string_t, string_t>(args.data[0], result, args.size(), [&](string_t input) {
+		auto &root = JSONCommon::ReadDocument(lstate.parser, input);
+		return JSONCommon::WriteVal(root, writer, result);
+	});
 }
 
 static void GetPrettyPrintFunctionInternal(ScalarFunctionSet &set, const LogicalType &json) {

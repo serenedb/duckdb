@@ -16,9 +16,9 @@
 #include "json_reader_options.hpp"
 #include "duckdb/common/mutex.hpp"
 #include "duckdb/common/query_context.hpp"
+#include "duckdb/storage/arena_allocator.hpp"
 #include "json_common.hpp"
 #include "json_enums.hpp"
-#include "yyjson_memory.hpp"
 
 namespace duckdb {
 struct JSONScanGlobalState;
@@ -140,8 +140,12 @@ struct JSONReaderScanState {
 
 	FileSystem &fs;
 	Allocator &global_allocator;
-	//! Thread-local allocator
-	JSONAllocator allocator;
+	//! Thread-local scratch memory of the current chunk
+	ArenaAllocator allocator;
+	//! Parses the records of the current chunk, which stay valid until the next chunk
+	JSONTreeParser parser;
+	//! Writes the JSON text the transforms produce
+	JSONStringWriter writer;
 	idx_t buffer_capacity;
 	bool initialized = false;
 	// if we have a buffer already - this is our buffer index
@@ -159,7 +163,10 @@ struct JSONReaderScanState {
 	//! Current scan data
 	idx_t scan_count = 0;
 	JSONString units[STANDARD_VECTOR_SIZE];
-	yyjson_val *values[STANDARD_VECTOR_SIZE];
+	//! The root node of each record in the parser, or DConstants::INVALID_INDEX for a record that is NULL
+	idx_t roots[STANDARD_VECTOR_SIZE];
+	//! The values of the records, resolved from the roots once the chunk is parsed (see ResolveValues)
+	const JSONNode *values[STANDARD_VECTOR_SIZE];
 	optional_ptr<JSONBufferHandle> current_buffer_handle;
 	//! Current buffer read info
 	optional_ptr<JSONReader> current_reader;
@@ -189,6 +196,8 @@ struct JSONReaderScanState {
 	idx_t file_read_start = 0;
 
 public:
+	//! Points values at the parsed roots of the first count records
+	void ResolveValues(idx_t count);
 	//! Reset for parsing the next batch of JSON from the current buffer
 	void ResetForNextParse();
 	//! Reset state for reading the next buffer
@@ -235,7 +244,7 @@ public:
 	//! Set line count for a buffer that is done (grabs the lock)
 	void SetBufferLineOrObjectCount(JSONBufferHandle &handle, idx_t count);
 	//! Records a parse error in the specified buffer
-	void AddParseError(JSONReaderScanState &scan_state, idx_t line_or_object_in_buf, yyjson_read_err &err,
+	void AddParseError(JSONReaderScanState &scan_state, idx_t line_or_object_in_buf, const JSONParseError &err,
 	                   const string &extra = "");
 	//! Records a transform error in the specified buffer
 	void AddTransformError(JSONReaderScanState &scan_state, idx_t object_index, const string &error_message);
@@ -256,8 +265,8 @@ public:
 
 	void DecrementBufferUsage(JSONBufferHandle &handle, idx_t lines_or_object_in_buffer, AllocatedData &buffer);
 
-	//! Read ONE record at `file_offset` into scan_state.units[0] /
-	//! scan_state.values[0]. Caller must consume slot 0 before the next call.
+	//! Read ONE record at `file_offset` into scan_state.units[0] / scan_state.roots[0], appending it to the
+	//! records already fetched since the parser was last cleared. Caller must consume slot 0 before the next call.
 	//! Returns false on read/parse failure.
 	bool FetchRow(JSONReaderScanState &scan_state, idx_t file_offset);
 

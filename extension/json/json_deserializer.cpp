@@ -12,8 +12,8 @@ void JsonDeserializer::OnPropertyEnd() {
 }
 
 bool JsonDeserializer::OnOptionalPropertyBegin(const field_id_t, const char *tag) {
-	auto parent = Current();
-	auto present = yyjson_obj_get(parent.val, tag) != nullptr;
+	auto &parent = Current();
+	auto present = parent.val->Get(tag) != nullptr;
 	if (present) {
 		current_tag = tag;
 	}
@@ -25,27 +25,25 @@ void JsonDeserializer::OnOptionalPropertyEnd(bool) {
 
 // If inside an object, return the value associated by the current tag (property name)
 // If inside an array, return the next element in the sequence
-yyjson_val *JsonDeserializer::GetNextValue() {
+const JSONNode *JsonDeserializer::GetNextValue() {
 	auto &parent_val = Current();
-	yyjson_val *val;
-	if (yyjson_is_obj(parent_val.val)) {
-		val = yyjson_obj_get(parent_val.val, current_tag);
+	const JSONNode *val;
+	if (parent_val.val->type == JSONValueType::OBJECT) {
+		val = parent_val.val->Get(current_tag);
 		if (!val) {
-			const char *json = yyjson_val_write(Current().val, 0, nullptr);
-			auto msg =
-			    StringUtil::Format("Expected but did not find property '%s' in json object: '%s'", current_tag, json);
-			free((void *)json);
+			auto msg = StringUtil::Format("Expected but did not find property '%s' in json object: '%s'", current_tag,
+			                              JSONCommon::ValToString(*parent_val.val));
 			throw ParserException(msg);
 		}
-	} else if (yyjson_is_arr(parent_val.val)) {
-		val = yyjson_arr_iter_next(&parent_val.arr_iter);
-		if (!val) {
-			const char *json = yyjson_val_write(Current().val, 0, nullptr);
-			auto msg =
-			    StringUtil::Format("Expected but did not find another value after exhausting json array: '%s'", json);
-			free((void *)json);
+	} else if (parent_val.val->type == JSONValueType::ARRAY) {
+		if (parent_val.remaining_elements == 0) {
+			auto msg = StringUtil::Format("Expected but did not find another value after exhausting json array: '%s'",
+			                              JSONCommon::ValToString(*parent_val.val));
 			throw ParserException(msg);
 		}
+		val = parent_val.next_element;
+		parent_val.next_element = val->Next();
+		parent_val.remaining_elements--;
 	} else {
 		// unreachable?
 		throw InternalException("Cannot get value from non-array/object");
@@ -53,14 +51,14 @@ yyjson_val *JsonDeserializer::GetNextValue() {
 	return val;
 }
 
-void JsonDeserializer::ThrowTypeError(yyjson_val *val, const char *expected) {
-	auto actual = yyjson_get_type_desc(val);
+void JsonDeserializer::ThrowTypeError(const JSONNode *val, const char *expected) {
+	auto actual = JSONTypeDescription(*val);
 	auto &parent = Current();
-	if (yyjson_is_obj(parent.val)) {
+	if (parent.val->type == JSONValueType::OBJECT) {
 		auto msg =
 		    StringUtil::Format("property '%s' expected type '%s', but got type: '%s'", current_tag, expected, actual);
 		throw ParserException(msg);
-	} else if (yyjson_is_arr(parent.val)) {
+	} else if (parent.val->type == JSONValueType::ARRAY) {
 		auto msg = StringUtil::Format("Sequence expect child of type '%s', but got type: %s", expected, actual);
 		throw ParserException(msg);
 	} else {
@@ -69,37 +67,13 @@ void JsonDeserializer::ThrowTypeError(yyjson_val *val, const char *expected) {
 	}
 }
 
-void JsonDeserializer::DumpDoc() {
-	const char *json = yyjson_write(doc, 0, nullptr);
-	printf("json: %s\n", json);
-	free((void *)json);
-}
-
-void JsonDeserializer::DumpCurrent() {
-	const char *json = yyjson_val_write(Current().val, 0, nullptr);
-	printf("json: %s\n", json);
-	free((void *)json);
-}
-
-void JsonDeserializer::Dump(yyjson_mut_val *val) {
-	const char *json = yyjson_mut_val_write(val, 0, nullptr);
-	printf("json: %s\n", json);
-	free((void *)json);
-}
-
-void JsonDeserializer::Dump(yyjson_val *val) {
-	const char *json = yyjson_val_write(val, 0, nullptr);
-	printf("json: %s\n", json);
-	free((void *)json);
-}
-
 //===--------------------------------------------------------------------===//
 // Nested Types Hooks
 //===--------------------------------------------------------------------===//
 void JsonDeserializer::OnObjectBegin() {
 	StackDepth::Check();
 	auto val = GetNextValue();
-	if (!yyjson_is_obj(val)) {
+	if (val->type != JSONValueType::OBJECT) {
 		ThrowTypeError(val, "object");
 	}
 	Push(val);
@@ -111,11 +85,11 @@ void JsonDeserializer::OnObjectEnd() {
 
 idx_t JsonDeserializer::OnListBegin() {
 	auto val = GetNextValue();
-	if (!yyjson_is_arr(val)) {
+	if (val->type != JSONValueType::ARRAY) {
 		ThrowTypeError(val, "array");
 	}
 	Push(val);
-	return yyjson_arr_size(val);
+	return val->size;
 }
 
 void JsonDeserializer::OnListEnd() {
@@ -124,18 +98,15 @@ void JsonDeserializer::OnListEnd() {
 
 bool JsonDeserializer::OnNullableBegin() {
 	auto &parent_val = Current();
-	yyjson_arr_iter iter;
-	if (yyjson_is_arr(parent_val.val)) {
-		iter = parent_val.arr_iter;
-	}
+	const auto next_element = parent_val.next_element;
+	const auto remaining_elements = parent_val.remaining_elements;
 	auto val = GetNextValue();
 
 	// Recover the iterator if we are inside an array
-	if (yyjson_is_arr(parent_val.val)) {
-		parent_val.arr_iter = iter;
-	}
+	parent_val.next_element = next_element;
+	parent_val.remaining_elements = remaining_elements;
 
-	if (yyjson_is_null(val)) {
+	if (val->type == JSONValueType::JSON_NULL) {
 		return false;
 	}
 
@@ -146,8 +117,8 @@ void JsonDeserializer::OnNullableEnd() {
 }
 
 bool JsonDeserializer::CanDeserializeProperty(const field_id_t, const char *tag) {
-	auto parent = Current();
-	return yyjson_obj_get(parent.val, tag) != nullptr;
+	auto &parent = Current();
+	return parent.val->Get(tag) != nullptr;
 }
 
 //===--------------------------------------------------------------------===//
@@ -155,74 +126,74 @@ bool JsonDeserializer::CanDeserializeProperty(const field_id_t, const char *tag)
 //===--------------------------------------------------------------------===//
 bool JsonDeserializer::ReadBool() {
 	auto val = GetNextValue();
-	if (!yyjson_is_bool(val)) {
+	if (val->type != JSONValueType::BOOLEAN) {
 		ThrowTypeError(val, "bool");
 	}
-	return yyjson_get_bool(val);
+	return val->boolean;
 }
 
 int8_t JsonDeserializer::ReadSignedInt8() {
 	auto val = GetNextValue();
-	if (!yyjson_is_int(val)) {
+	if (!val->IsInteger()) {
 		ThrowTypeError(val, "int8_t");
 	}
-	return NumericCast<int8_t>(yyjson_get_sint(val));
+	return NumericCast<int8_t>(val->signed_integer);
 }
 
 uint8_t JsonDeserializer::ReadUnsignedInt8() {
 	auto val = GetNextValue();
-	if (!yyjson_is_uint(val)) {
+	if (val->type != JSONValueType::UNSIGNED_INTEGER) {
 		ThrowTypeError(val, "uint8_t");
 	}
-	return yyjson_get_uint(val);
+	return val->unsigned_integer;
 }
 
 int16_t JsonDeserializer::ReadSignedInt16() {
 	auto val = GetNextValue();
-	if (!yyjson_is_int(val)) {
+	if (!val->IsInteger()) {
 		ThrowTypeError(val, "int16_t");
 	}
-	return NumericCast<int16_t>(yyjson_get_sint(val));
+	return NumericCast<int16_t>(val->signed_integer);
 }
 
 uint16_t JsonDeserializer::ReadUnsignedInt16() {
 	auto val = GetNextValue();
-	if (!yyjson_is_uint(val)) {
+	if (val->type != JSONValueType::UNSIGNED_INTEGER) {
 		ThrowTypeError(val, "uint16_t");
 	}
-	return yyjson_get_uint(val);
+	return val->unsigned_integer;
 }
 
 int32_t JsonDeserializer::ReadSignedInt32() {
 	auto val = GetNextValue();
-	if (!yyjson_is_int(val)) {
+	if (!val->IsInteger()) {
 		ThrowTypeError(val, "int32_t");
 	}
-	return NumericCast<int32_t>(yyjson_get_sint(val));
+	return NumericCast<int32_t>(val->signed_integer);
 }
 
 uint32_t JsonDeserializer::ReadUnsignedInt32() {
 	auto val = GetNextValue();
-	if (!yyjson_is_uint(val)) {
+	if (val->type != JSONValueType::UNSIGNED_INTEGER) {
 		ThrowTypeError(val, "uint32_t");
 	}
-	return yyjson_get_uint(val);
+	return val->unsigned_integer;
 }
 
 int64_t JsonDeserializer::ReadSignedInt64() {
 	auto val = GetNextValue();
-	if (!yyjson_is_int(val)) {
+	if (!val->IsInteger()) {
 		ThrowTypeError(val, "int64_t");
 	}
-	return yyjson_get_sint(val);
+	return val->signed_integer;
 }
 
 uint64_t JsonDeserializer::ReadUnsignedInt64() {
 	auto val = GetNextValue();
-	if (!yyjson_is_uint(val)) {
+	if (val->type != JSONValueType::UNSIGNED_INTEGER) {
 		ThrowTypeError(val, "uint64_t");
 	}
-	return yyjson_get_uint(val);
+	return val->unsigned_integer;
 }
 
 float JsonDeserializer::ReadFloat() {
@@ -231,31 +202,31 @@ float JsonDeserializer::ReadFloat() {
 
 double JsonDeserializer::ReadDouble() {
 	auto val = GetNextValue();
-	if (yyjson_is_raw(val)) {
+	if (val->type == JSONValueType::RAW) {
 		double res;
-		string_t input(yyjson_get_raw(val));
+		string_t input(val->str, val->size);
 		if (!TryCast::Operation<string_t, double>(input, res)) {
 			throw InvalidInputException("Expected a floating point number, but got the string %s", input.GetString());
 		}
 		return res;
 	}
-	if (!yyjson_is_real(val)) {
+	if (val->type != JSONValueType::DOUBLE) {
 		ThrowTypeError(val, "double");
 	}
-	return yyjson_get_real(val);
+	return val->real;
 }
 
 string JsonDeserializer::ReadString() {
 	auto val = GetNextValue();
-	if (!yyjson_is_str(val)) {
+	if (val->type != JSONValueType::STRING) {
 		ThrowTypeError(val, "string");
 	}
-	return yyjson_get_str(val);
+	return string(val->GetString());
 }
 
 hugeint_t JsonDeserializer::ReadHugeInt() {
 	auto val = GetNextValue();
-	if (!yyjson_is_obj(val)) {
+	if (val->type != JSONValueType::OBJECT) {
 		ThrowTypeError(val, "object");
 	}
 	Push(val);
@@ -268,7 +239,7 @@ hugeint_t JsonDeserializer::ReadHugeInt() {
 
 uhugeint_t JsonDeserializer::ReadUhugeInt() {
 	auto val = GetNextValue();
-	if (!yyjson_is_obj(val)) {
+	if (val->type != JSONValueType::OBJECT) {
 		ThrowTypeError(val, "object");
 	}
 	Push(val);
@@ -281,13 +252,11 @@ uhugeint_t JsonDeserializer::ReadUhugeInt() {
 
 void JsonDeserializer::ReadDataPtr(data_ptr_t &ptr, idx_t count) {
 	auto val = GetNextValue();
-	if (!yyjson_is_str(val)) {
+	if (val->type != JSONValueType::STRING) {
 		ThrowTypeError(val, "string");
 	}
-	auto str = yyjson_get_str(val);
-	auto len = yyjson_get_len(val);
-	D_ASSERT(len == count);
-	auto blob = string_t(str, len);
+	D_ASSERT(val->size == count);
+	auto blob = string_t(val->str, val->size);
 	Blob::ToString(blob, char_ptr_cast(ptr));
 }
 

@@ -15,6 +15,8 @@
 #include "duckdb/common/types/type_map.hpp"
 #include "duckdb/function/scalar/strftime_format.hpp"
 #include "duckdb/function/table_function.hpp"
+#include "duckdb/planner/table_filter.hpp"
+#include "duckdb/planner/table_filter_state.hpp"
 #include "json_enums.hpp"
 #include "json_transform.hpp"
 #include "json_reader_options.hpp"
@@ -110,6 +112,16 @@ public:
 
 	bool file_is_assigned = false;
 	bool initialized = false;
+
+	struct Filter {
+		idx_t output_column;
+		optional_idx name;
+		reference<const TableFilter> filter;
+	};
+	vector<Filter> filters;
+
+public:
+	void InitializeFilters(optional_ptr<TableFilterSet> table_filters);
 };
 
 struct JSONScanLocalState {
@@ -119,6 +131,7 @@ public:
 public:
 	idx_t Read();
 	void AddTransformError(idx_t object_index, const string &error_message);
+	idx_t ApplyFilters(JSONScanGlobalState &gstate, DataChunk &output, idx_t count, bool filtered_columns_only);
 
 	JSONReaderScanState &GetScanState() {
 		return scan_state;
@@ -133,6 +146,8 @@ public:
 public:
 	//! Options when transforming the JSON to columnar data
 	JSONTransformOptions transform_options;
+	vector<unique_ptr<TableFilterState>> filter_states;
+	SelectionVector filter_selection;
 
 private:
 	void ParseJSON(char *const json_start, const idx_t json_size, const idx_t remaining);

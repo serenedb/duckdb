@@ -1,23 +1,21 @@
 #include "json_common.hpp"
-#include "yyjson_memory.hpp"
 #include "duckdb/common/exception/binder_exception.hpp"
 
 namespace duckdb {
 
 using JSONPathType = JSONCommon::JSONPathType;
 
-string JSONCommon::ValToString(yyjson_val *val, idx_t max_len) {
-	JSONAllocator json_allocator(Allocator::DefaultAllocator());
-	idx_t len;
-	auto data = JSONCommon::WriteVal<yyjson_val>(val, json_allocator.GetYYAlc(), len);
-	if (max_len < len) {
-		return string(data, max_len) + "...";
-	} else {
-		return string(data, len);
+string JSONCommon::ValToString(const JSONNode &val, idx_t max_len) {
+	JSONStringWriter writer(WRITE_FLAG);
+	writer.Value(val);
+	auto text = writer.View();
+	if (max_len < text.size()) {
+		return string(text.substr(0, max_len)) + "...";
 	}
+	return string(text);
 }
 
-void JSONCommon::ThrowValFormatError(string error_string, yyjson_val *val) {
+void JSONCommon::ThrowValFormatError(string error_string, const JSONNode &val) {
 	error_string = StringUtil::Format(error_string, JSONCommon::ValToString(val));
 	throw InvalidInputException(error_string);
 }
@@ -269,23 +267,20 @@ JSONPathType JSONCommon::ValidatePath(const char *ptr, const idx_t &len, const b
 }
 
 //! Resolve a single path element against a JSON value
-static inline yyjson_val *GetPathElement(yyjson_val *val, const JSONPathElement &element) {
+static inline const JSONNode *GetPathElement(const JSONNode *val, const JSONPathElement &element) {
 	switch (element.type) {
 	case JSONPathElementType::KEY:
-		if (!unsafe_yyjson_is_obj(val)) {
-			return nullptr;
-		}
-		return yyjson_obj_getn(val, element.key.c_str(), element.key.size());
+		return val->Get(std::string_view(element.key));
 	case JSONPathElementType::INDEX:
 	case JSONPathElementType::REVERSE_INDEX: {
-		if (!unsafe_yyjson_is_arr(val)) {
+		if (val->type != JSONValueType::ARRAY) {
 			return nullptr;
 		}
 		auto array_index = element.index;
 		if (element.type == JSONPathElementType::REVERSE_INDEX && array_index != 0) {
-			array_index = unsafe_yyjson_get_len(val) - array_index;
+			array_index = val->size - array_index;
 		}
-		return yyjson_arr_get(val, array_index);
+		return val->Get(array_index);
 	}
 	case JSONPathElementType::APPEND:
 		// [#] always returns NULL in SQLite
@@ -295,7 +290,7 @@ static inline yyjson_val *GetPathElement(yyjson_val *val, const JSONPathElement 
 	} // LCOV_EXCL_STOP
 }
 
-yyjson_val *JSONCommon::GetPath(yyjson_val *val, const char *ptr, const idx_t &len) {
+const JSONNode *JSONCommon::GetPath(const JSONNode *val, const char *ptr, const idx_t &len) {
 	// Path has been validated at this point
 	JSONPathIterator iterator(ptr, len, false);
 	JSONPathElement element;
@@ -315,14 +310,15 @@ vector<JSONPathElement> JSONCommon::ParsePathElements(const char *ptr, idx_t len
 	return elements;
 }
 
-yyjson_val *JSONCommon::GetPathElements(yyjson_val *val, const vector<JSONPathElement> &elements) {
+const JSONNode *JSONCommon::GetPathElements(const JSONNode *val, const vector<JSONPathElement> &elements) {
 	for (idx_t i = 0; val != nullptr && i < elements.size(); i++) {
 		val = GetPathElement(val, elements[i]);
 	}
 	return val;
 }
 
-void GetWildcardPathInternal(yyjson_val *val, const char *ptr, const char *const end, vector<yyjson_val *> &vals) {
+static void GetWildcardPathInternal(const JSONNode *val, const char *ptr, const char *const end,
+                                    vector<const JSONNode *> &vals) {
 	while (val != nullptr && ptr != end) {
 		const auto &c = *ptr++;
 		D_ASSERT(ptr != end);
@@ -334,21 +330,17 @@ void GetWildcardPathInternal(yyjson_val *val, const char *ptr, const char *const
 				if (key_result.IsWildCard()) {
 					ptr += key_result.chars_read;
 				}
-				vector<yyjson_val *> rec_vals;
+				vector<const JSONNode *> rec_vals;
 				rec_vals.emplace_back(val);
 				for (idx_t i = 0; i < rec_vals.size(); i++) {
-					yyjson_val *rec_val = rec_vals[i];
-					if (yyjson_is_arr(rec_val)) {
-						size_t idx, max;
-						yyjson_val *element;
-						yyjson_arr_foreach(rec_val, idx, max, element) {
-							rec_vals.emplace_back(element);
+					const JSONNode *rec_val = rec_vals[i];
+					if (rec_val->type == JSONValueType::ARRAY) {
+						for (auto &element : rec_val->Elements()) {
+							rec_vals.emplace_back(&element);
 						}
-					} else if (yyjson_is_obj(rec_val)) {
-						size_t idx, max;
-						yyjson_val *key, *element;
-						yyjson_obj_foreach(rec_val, idx, max, key, element) {
-							rec_vals.emplace_back(element);
+					} else if (rec_val->type == JSONValueType::OBJECT) {
+						for (auto &key : rec_val->Keys()) {
+							rec_vals.emplace_back(&key + 1);
 						}
 					}
 					if (i > 0 || ptr != end) {
@@ -358,22 +350,20 @@ void GetWildcardPathInternal(yyjson_val *val, const char *ptr, const char *const
 				return;
 			}
 			ptr += key_result.chars_read;
-			if (!unsafe_yyjson_is_obj(val)) {
+			if (val->type != JSONValueType::OBJECT) {
 				return;
 			}
 			if (key_result.IsWildCard()) { // Wildcard
-				size_t idx, max;
-				yyjson_val *key, *obj_val;
-				yyjson_obj_foreach(val, idx, max, key, obj_val) {
-					GetWildcardPathInternal(obj_val, ptr, end, vals);
+				for (auto &key : val->Keys()) {
+					GetWildcardPathInternal(&key + 1, ptr, end, vals);
 				}
 				return;
 			}
-			val = yyjson_obj_getn(val, key_result.key.c_str(), key_result.key.size());
+			val = val->Get(std::string_view(key_result.key));
 			break;
 		}
 		case '[': { // Array index
-			if (!unsafe_yyjson_is_arr(val)) {
+			if (val->type != JSONValueType::ARRAY) {
 				return;
 			}
 			JSONPathElement element;
@@ -386,10 +376,8 @@ void GetWildcardPathInternal(yyjson_val *val, const char *ptr, const char *const
 #endif
 
 			if (element.type == JSONPathElementType::WILDCARD) {
-				size_t idx, max;
-				yyjson_val *arr_val;
-				yyjson_arr_foreach(val, idx, max, arr_val) {
-					GetWildcardPathInternal(arr_val, ptr, end, vals);
+				for (auto &arr_val : val->Elements()) {
+					GetWildcardPathInternal(&arr_val, ptr, end, vals);
 				}
 				return;
 			}
@@ -399,9 +387,9 @@ void GetWildcardPathInternal(yyjson_val *val, const char *ptr, const char *const
 			}
 			auto array_index = element.index;
 			if (element.type == JSONPathElementType::REVERSE_INDEX && array_index != 0) {
-				array_index = unsafe_yyjson_get_len(val) - array_index;
+				array_index = val->size - array_index;
 			}
-			val = yyjson_arr_get(val, array_index);
+			val = val->Get(array_index);
 			break;
 		}
 		default: // LCOV_EXCL_START
@@ -415,11 +403,53 @@ void GetWildcardPathInternal(yyjson_val *val, const char *ptr, const char *const
 	return;
 }
 
-void JSONCommon::GetWildcardPath(yyjson_val *val, const char *ptr, const idx_t &len, vector<yyjson_val *> &vals) {
+void JSONCommon::GetWildcardPath(const JSONNode *val, const char *ptr, const idx_t &len,
+                                 vector<const JSONNode *> &vals) {
 	// Path has been validated at this point
 	const char *const end = ptr + len;
 	ptr++; // Skip past '$'
 	GetWildcardPathInternal(val, ptr, end, vals);
+}
+
+const JSONNode *JSONCommon::GetPointer(const JSONNode *val, const char *ptr, idx_t len) {
+	const char *const end = ptr + len;
+	string token;
+	while (val && ptr < end) {
+		if (*ptr != '/') {
+			return nullptr;
+		}
+		ptr++;
+		token.clear();
+		while (ptr < end && *ptr != '/') {
+			if (*ptr == '~') {
+				if (ptr + 1 >= end || (ptr[1] != '0' && ptr[1] != '1')) {
+					return nullptr;
+				}
+				token += ptr[1] == '0' ? '~' : '/';
+				ptr += 2;
+				continue;
+			}
+			token += *ptr++;
+		}
+		if (val->type == JSONValueType::OBJECT) {
+			val = val->Get(std::string_view(token));
+		} else if (val->type == JSONValueType::ARRAY) {
+			if (token.empty() || (token.size() > 1 && token[0] == '0')) {
+				return nullptr;
+			}
+			idx_t index = 0;
+			for (auto c : token) {
+				if (!StringUtil::CharacterIsDigit(c) || index > NumericLimits<uint32_t>::Maximum()) {
+					return nullptr;
+				}
+				index = index * 10 + static_cast<idx_t>(c - '0');
+			}
+			val = val->Get(index);
+		} else {
+			return nullptr;
+		}
+	}
+	return val;
 }
 
 } // namespace duckdb

@@ -14,12 +14,11 @@
 #include "duckdb/common/vector_operations/vector_operations.hpp"
 #include "duckdb/execution/expression_executor.hpp"
 #include "json_functions.hpp"
-#include "yyjson_memory.hpp"
 
 namespace duckdb {
 
 template <class T>
-using json_function_t = optional<T> (*)(yyjson_val *, yyjson_alc *, Vector &);
+using json_function_t = optional<T> (*)(const JSONNode *, JSONFunctionLocalState &, Vector &);
 
 struct JSONExecutors {
 public:
@@ -27,15 +26,11 @@ public:
 	template <class T>
 	static void UnaryExecute(DataChunk &args, ExpressionState &state, Vector &result, const json_function_t<T> fun) {
 		auto &lstate = JSONFunctionLocalState::ResetAndGet(state);
-		auto alc = lstate.json_allocator->GetYYAlc();
-
 		const auto &inputs = args.data[0];
 		UnaryExecutor::Execute<string_t, T>(inputs, result, [&](string_t input) -> optional<T> {
-			auto doc = JSONCommon::ReadDocument(input, JSONCommon::READ_FLAG, alc);
-			return fun(doc->root, alc, result);
+			auto &root = JSONCommon::ReadDocument(lstate.parser, input);
+			return fun(&root, lstate, result);
 		});
-
-		JSONAllocator::AddBuffer(result, alc);
 	}
 
 	//! Two-argument JSON read function (with path query), i.e. json_type('[1, 2, 3]', '$[0]')
@@ -44,7 +39,6 @@ public:
 		auto &func_expr = state.expr.Cast<BoundFunctionExpression>();
 		const auto &info = func_expr.BindInfo()->Cast<JSONReadFunctionData>();
 		auto &lstate = JSONFunctionLocalState::ResetAndGet(state);
-		auto alc = lstate.json_allocator->GetYYAlc();
 
 		const auto &inputs = args.data[0];
 		if (info.constant) { // Constant path
@@ -52,24 +46,24 @@ public:
 			const idx_t &len = info.len;
 			if (info.path_type == JSONCommon::JSONPathType::REGULAR) {
 				UnaryExecutor::Execute<string_t, T>(inputs, result, [&](string_t input) -> optional<T> {
-					auto doc = JSONCommon::ReadDocument(input, JSONCommon::READ_FLAG, alc);
+					auto &root = JSONCommon::ReadDocument(lstate.parser, input);
 					// Use the path elements parsed at bind time when available
-					auto val = info.use_elements ? JSONCommon::GetPathElements(doc->root, info.elements)
-					                             : JSONCommon::GetUnsafe(doc->root, ptr, len);
+					auto val = info.use_elements ? JSONCommon::GetPathElements(&root, info.elements)
+					                             : JSONCommon::GetUnsafe(&root, ptr, len);
 					if (SET_NULL_IF_NOT_FOUND && !val) {
 						return nullopt;
 					} else {
-						return fun(val, alc, result);
+						return fun(val, lstate, result);
 					}
 				});
 			} else {
 				D_ASSERT(info.path_type == JSONCommon::JSONPathType::WILDCARD);
-				vector<yyjson_val *> vals;
+				vector<const JSONNode *> vals;
 				UnaryExecutor::Execute<string_t, list_entry_t>(inputs, result, [&](string_t input) {
 					vals.clear();
 
-					auto doc = JSONCommon::ReadDocument(input, JSONCommon::READ_FLAG, alc);
-					JSONCommon::GetWildcardPath(doc->root, ptr, len, vals);
+					auto &root = JSONCommon::ReadDocument(lstate.parser, input);
+					JSONCommon::GetWildcardPath(&root, ptr, len, vals);
 
 					auto current_size = ListVector::GetListSize(result);
 					auto new_size = current_size + vals.size();
@@ -83,7 +77,7 @@ public:
 					for (idx_t i = 0; i < vals.size(); i++) {
 						auto &val = vals[i];
 						D_ASSERT(val != nullptr); // Wildcard extract shouldn't give back nullptrs
-						auto fun_result = fun(val, alc, child_entry);
+						auto fun_result = fun(val, lstate, child_entry);
 						if (fun_result.has_value()) {
 							child_vals[current_size + i] = fun_result.value();
 						} else {
@@ -106,27 +100,25 @@ public:
 				VectorOperations::DefaultCast(args.data[1], *casted_paths, args.size(), true);
 			}
 			const bool integral_path = args.data[1].GetType().IsIntegral();
-			auto extract = [&](yyjson_val *root, string_t path) -> optional<T> {
-				auto val = JSONCommon::Get(root, path, integral_path);
+			auto extract = [&](const JSONNode &root, string_t path) -> optional<T> {
+				auto val = JSONCommon::Get(&root, path, integral_path);
 				if (SET_NULL_IF_NOT_FOUND && !val) {
 					return nullopt;
 				}
-				return fun(val, alc, result);
+				return fun(val, lstate, result);
 			};
 			if (inputs.GetVectorType() == VectorType::CONSTANT_VECTOR && !ConstantVector::IsNull(inputs)) {
-				auto doc =
-				    JSONCommon::ReadDocument(ConstantVector::GetData<string_t>(inputs)[0], JSONCommon::READ_FLAG, alc);
+				auto &root = JSONCommon::ReadDocument(lstate.parser, ConstantVector::GetData<string_t>(inputs)[0]);
 				UnaryExecutor::Execute<string_t, T>(*casted_paths, result, args.size(),
-				                                    [&](string_t path) { return extract(doc->root, path); });
+				                                    [&](string_t path) { return extract(root, path); });
 			} else {
 				BinaryExecutor::Execute<string_t, string_t, T>(
 				    inputs, *casted_paths, result, args.size(), [&](string_t input, string_t path) {
-					    auto doc = JSONCommon::ReadDocument(input, JSONCommon::READ_FLAG, alc);
-					    return extract(doc->root, path);
+					    auto &root = JSONCommon::ReadDocument(lstate.parser, input);
+					    return extract(root, path);
 				    });
 			}
 		}
-		JSONAllocator::AddBuffer(result, alc);
 	}
 
 	//! JSON read function with list of path queries, i.e. json_type('[1, 2, 3]', ['$[0]', '$[1]'])
@@ -135,7 +127,6 @@ public:
 		auto &func_expr = state.expr.Cast<BoundFunctionExpression>();
 		const auto &info = func_expr.BindInfo()->Cast<JSONReadManyFunctionData>();
 		auto &lstate = JSONFunctionLocalState::ResetAndGet(state);
-		auto alc = lstate.json_allocator->GetYYAlc();
 		D_ASSERT(info.ptrs.size() == info.lens.size());
 
 		const auto count = args.size();
@@ -156,7 +147,7 @@ public:
 		auto &child_validity = FlatVector::ValidityMutable(child);
 
 		idx_t offset = 0;
-		yyjson_val *val;
+		const JSONNode *val;
 		for (idx_t i = 0; i < count; i++) {
 			auto idx = input_data.sel->get_index(i);
 			if (!input_data.validity.RowIsValid(idx)) {
@@ -164,16 +155,15 @@ public:
 				continue;
 			}
 
-			auto doc = JSONCommon::ReadDocument(inputs[idx], JSONCommon::READ_FLAG, alc);
+			auto &root = JSONCommon::ReadDocument(lstate.parser, inputs[idx]);
 			for (idx_t path_i = 0; path_i < num_paths; path_i++) {
 				auto child_idx = offset + path_i;
-				val = info.use_elements[path_i]
-				          ? JSONCommon::GetPathElements(doc->root, info.elements[path_i])
-				          : JSONCommon::GetUnsafe(doc->root, info.ptrs[path_i], info.lens[path_i]);
+				val = info.use_elements[path_i] ? JSONCommon::GetPathElements(&root, info.elements[path_i])
+				                                : JSONCommon::GetUnsafe(&root, info.ptrs[path_i], info.lens[path_i]);
 				if (SET_NULL_IF_NOT_FOUND && !val) {
 					child_validity.SetInvalid(child_idx);
 				} else {
-					auto fun_result = fun(val, alc, child);
+					auto fun_result = fun(val, lstate, child);
 					if (fun_result.has_value()) {
 						child_data[child_idx] = fun_result.value();
 					} else {
@@ -187,7 +177,6 @@ public:
 			offset += num_paths;
 		}
 		ListVector::SetListSize(result, offset);
-		JSONAllocator::AddBuffer(result, alc);
 	}
 };
 
