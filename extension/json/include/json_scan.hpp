@@ -8,18 +8,16 @@
 
 #pragma once
 
-#include "json_reader.hpp"
 #include "duckdb/common/multi_file/multi_file_reader.hpp"
 #include "duckdb/common/mutex.hpp"
 #include "duckdb/common/pair.hpp"
 #include "duckdb/common/types/type_map.hpp"
 #include "duckdb/function/scalar/strftime_format.hpp"
 #include "duckdb/function/table_function.hpp"
-#include "duckdb/planner/table_filter.hpp"
-#include "duckdb/planner/table_filter_state.hpp"
 #include "json_enums.hpp"
-#include "json_transform.hpp"
 #include "json_reader_options.hpp"
+#include "json_source.hpp"
+#include "json_transform.hpp"
 
 namespace duckdb {
 struct JSONStructureNode;
@@ -81,95 +79,6 @@ public:
 	bool auto_detect;
 };
 
-struct JSONScanGlobalState {
-public:
-	JSONScanGlobalState(ClientContext &context, const JSONScanData &json_data, idx_t total_file_count);
-
-public:
-	//! Bound data
-	const JSONScanData &json_data;
-	//! Options when transforming the JSON to columnar data
-	JSONTransformOptions transform_options;
-
-	//! Column names that we're actually reading (after projection pushdown)
-	vector<string> names;
-	vector<column_t> column_ids;
-	vector<ColumnIndex> column_indices;
-	//! For JSONRecordType::FEATURES: parallel to names, where each of them reads its value from
-	vector<JSONFeatureColumn> feature_columns;
-	//! The output slot of file_row_number, the byte offset of a record, if it is projected
-	idx_t file_row_number_idx = DConstants::INVALID_INDEX;
-
-	//! Buffer manager allocator
-	Allocator &allocator;
-	//! The current buffer capacity
-	idx_t buffer_capacity;
-
-	//! Current number of threads active
-	idx_t system_threads;
-	//! Whether we enable parallel scans (only if less files than threads)
-	bool enable_parallel_scans;
-
-	bool file_is_assigned = false;
-	bool initialized = false;
-
-	struct Filter {
-		idx_t output_column;
-		optional_idx name;
-		reference<const TableFilter> filter;
-	};
-	vector<Filter> filters;
-
-public:
-	void InitializeFilters(optional_ptr<TableFilterSet> table_filters);
-};
-
-struct JSONScanLocalState {
-public:
-	JSONScanLocalState(ClientContext &context, JSONScanGlobalState &gstate);
-
-public:
-	idx_t Read();
-	void AddTransformError(idx_t object_index, const string &error_message);
-	idx_t ApplyFilters(JSONScanGlobalState &gstate, DataChunk &output, idx_t count, bool filtered_columns_only);
-
-	JSONReaderScanState &GetScanState() {
-		return scan_state;
-	}
-
-	const JSONReaderScanState &GetScanState() const {
-		return scan_state;
-	}
-
-	bool TryInitializeScan(JSONScanGlobalState &gstate, JSONReader &reader);
-
-public:
-	//! Options when transforming the JSON to columnar data
-	JSONTransformOptions transform_options;
-	vector<unique_ptr<TableFilterState>> filter_states;
-	SelectionVector filter_selection;
-
-private:
-	//! Scan state
-	JSONReaderScanState scan_state;
-};
-
-struct JSONGlobalTableFunctionState : public GlobalTableFunctionState {
-public:
-	JSONGlobalTableFunctionState(ClientContext &context, const JSONScanData &json_data, idx_t total_file_count);
-
-public:
-	JSONScanGlobalState state;
-};
-
-struct JSONLocalTableFunctionState : public LocalTableFunctionState {
-public:
-	JSONLocalTableFunctionState(ClientContext &context, JSONScanGlobalState &gstate);
-
-public:
-	JSONScanLocalState state;
-};
-
 struct JSONScan {
 public:
 	//! Parse a single read_json option - returns false if the option is not a JSON reader option
@@ -177,9 +86,9 @@ public:
 	                        JSONReaderOptions &options);
 
 	//! Determine the names/types that are read from the given set of files - performing auto-detection if required.
-	//! Readers that were opened during auto-detection are stored in "union_readers" so they can be re-used
+	//! The files that were opened during auto-detection are stored in "sampled_sources" so they can be re-used
 	static void BindSchema(ClientContext &context, JSONScanData &json_data, MultiFileList &files,
-	                       vector<shared_ptr<JSONReader>> &sampled_readers, vector<LogicalType> &return_types,
+	                       vector<shared_ptr<JsonSource>> &sampled_sources, vector<LogicalType> &return_types,
 	                       vector<Identifier> &names);
 	//! Set up the transform options and de-duplicate the (case-insensitively) colliding column names
 	static void FinalizeBind(JSONScanData &json_data, vector<Identifier> &names);
@@ -188,12 +97,12 @@ public:
 	static void DeduplicateColumnNames(vector<Identifier> &names);
 
 	static void AutoDetect(ClientContext &context, JSONScanData &json_data, const vector<OpenFileInfo> &files,
-	                       vector<shared_ptr<JSONReader>> &sampled_readers, vector<LogicalType> &return_types,
+	                       vector<shared_ptr<JsonSource>> &sampled_sources, vector<LogicalType> &return_types,
 	                       vector<Identifier> &names);
 	//! Sample the given files and build the JSON structure that describes all of them
 	static unique_ptr<JSONStructureNode> DetectStructure(ClientContext &context, JSONScanData &json_data,
 	                                                     const vector<OpenFileInfo> &files,
-	                                                     vector<shared_ptr<JSONReader>> &sampled_readers);
+	                                                     vector<shared_ptr<JsonSource>> &sampled_sources);
 	//! Derive the columns that are read from a detected JSON structure
 	static void StructureToColumns(ClientContext &context, JSONReaderOptions &options, const JSONStructureNode &node,
 	                               vector<JSONFeatureColumn> &feature_columns, vector<LogicalType> &return_types,
@@ -209,12 +118,5 @@ public:
 	//! The named parameters that steer the schema auto-detection
 	static void AddAutoDetectParameters(TableFunction &table_function);
 };
-
-//! Read a chunk of rows from the given JSON reader (JSONScanType::READ_JSON)
-void ReadJSONFunction(ClientContext &context, JSONReader &json_reader, JSONScanGlobalState &gstate,
-                      JSONScanLocalState &lstate, DataChunk &output);
-//! Read a chunk of unparsed JSON objects from the given JSON reader (JSONScanType::READ_JSON_OBJECTS)
-void ReadJSONObjectsFunction(ClientContext &context, JSONReader &json_reader, JSONScanGlobalState &gstate,
-                             JSONScanLocalState &lstate, DataChunk &output);
 
 } // namespace duckdb
