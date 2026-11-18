@@ -478,9 +478,47 @@ Value NumericValueUnionToValue(const LogicalType &type, const NumericValueUnion 
 	return NumericValueUnionToValueInternal(type, val).WithType(type);
 }
 
+template <class T>
+static bool MinIsNotAboveMax(const BaseStatistics &stats) {
+	return LessThanEquals::Operation(NumericStats::GetMinUnsafe<T>(stats), NumericStats::GetMaxUnsafe<T>(stats));
+}
+
 bool NumericStats::HasMinMax(const BaseStatistics &stats) {
-	return NumericStats::HasMin(stats) && NumericStats::HasMax(stats) &&
-	       NumericStats::Min(stats) <= NumericStats::Max(stats);
+	if (!NumericStats::HasMin(stats) || !NumericStats::HasMax(stats)) {
+		return false;
+	}
+	switch (stats.GetType().InternalType()) {
+	case PhysicalType::BOOL:
+		return MinIsNotAboveMax<bool>(stats);
+	case PhysicalType::INT8:
+		return MinIsNotAboveMax<int8_t>(stats);
+	case PhysicalType::INT16:
+		return MinIsNotAboveMax<int16_t>(stats);
+	case PhysicalType::INT32:
+		return MinIsNotAboveMax<int32_t>(stats);
+	case PhysicalType::INT64:
+		return MinIsNotAboveMax<int64_t>(stats);
+	case PhysicalType::UINT8:
+		return MinIsNotAboveMax<uint8_t>(stats);
+	case PhysicalType::UINT16:
+		return MinIsNotAboveMax<uint16_t>(stats);
+	case PhysicalType::UINT32:
+		return MinIsNotAboveMax<uint32_t>(stats);
+	case PhysicalType::UINT64:
+		return MinIsNotAboveMax<uint64_t>(stats);
+	case PhysicalType::INT128:
+		return MinIsNotAboveMax<hugeint_t>(stats);
+	case PhysicalType::UINT128:
+		return MinIsNotAboveMax<uhugeint_t>(stats);
+	case PhysicalType::FLOAT:
+		return MinIsNotAboveMax<float>(stats);
+	case PhysicalType::DOUBLE:
+		return MinIsNotAboveMax<double>(stats);
+	case PhysicalType::INTERVAL:
+		return MinIsNotAboveMax<interval_t>(stats);
+	default:
+		return NumericStats::Min(stats) <= NumericStats::Max(stats);
+	}
 }
 
 bool NumericStats::HasMin(const BaseStatistics &stats) {
