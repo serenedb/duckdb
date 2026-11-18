@@ -286,6 +286,23 @@ template <class T>
 	out = string_t(value, UnsafeNumericCast<uint32_t>(size));
 }
 
+inline bool LeanUnquote(const char *data, char quote, bool spaced, idx_t &begin, idx_t &end) {
+	idx_t open = begin;
+	if (spaced && end - open > 1 && data[open] == ' ' && data[open + 1] == quote) {
+		open++;
+	}
+	if (end <= open || data[open] != quote) {
+		return false;
+	}
+	idx_t close = end;
+	while (spaced && close > open + 1 && data[close - 1] == ' ') {
+		close--;
+	}
+	begin = open + 1;
+	end = close - 1;
+	return true;
+}
+
 struct LeanSource {
 	bool IsNull(const char *value, idx_t size, bool quoted) const {
 		if (quoted && !allow_quoted_nulls) {
@@ -316,6 +333,7 @@ struct LeanSource {
 	bool doubled;
 	bool padded;
 	bool pad_empty;
+	bool spaced;
 	bool allow_quoted_nulls;
 	bool empty_only_null;
 	const vector<string> *null_strings;
@@ -354,11 +372,7 @@ bool LeanValues(const LeanSource &source, idx_t count, bool force_not_null, Vect
 				FlatVector::SetNull(vector, row, true);
 				continue;
 			}
-			if (quotes && end > begin && data[begin] == quote) {
-				begin++;
-				end--;
-				quoted = true;
-			}
+			quoted = quotes && LeanUnquote(data, quote, source.spaced, begin, end);
 		}
 		const char *value = data + begin;
 		const idx_t size = end - begin;
@@ -414,11 +428,7 @@ bool LeanStrings(const LeanSource &source, idx_t count, const CsvScanColumn &col
 				}
 				continue;
 			}
-			if (quotes && end > begin && data[begin] == quote) {
-				begin++;
-				end--;
-				quoted = true;
-			}
+			quoted = quotes && LeanUnquote(data, quote, source.spaced, begin, end);
 		}
 		const char *value = data + begin;
 		const idx_t size = end - begin;
@@ -2488,6 +2498,7 @@ bool CsvScan::DecodeLeanColumn(idx_t column_idx, idx_t first, idx_t count, DataC
 	source.quotes = cursor.quotes;
 	source.doubled = cursor.doubled;
 	source.padded = cursor.padded;
+	source.spaced = global.lean->Dialect().quoted_spaces;
 	source.pad_empty = column.force_not_null;
 	source.allow_quoted_nulls = options.allow_quoted_nulls;
 	source.empty_only_null = global.empty_only_null;

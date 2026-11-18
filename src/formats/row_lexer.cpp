@@ -81,6 +81,26 @@ void WalkQuotes(const char *block, idx_t size, char quote, char escape, uint64_t
 	pending = escape_next;
 }
 
+uint64_t KeepFieldQuotes(uint64_t quote, uint64_t in_carry, uint64_t delimiter, idx_t delimiter_size,
+                         uint64_t term_bits, uint64_t raw_spaces, uint64_t after_separator, uint64_t start_space,
+                         uint64_t after_closer, bool reopen, uint64_t valid) {
+	while (quote) {
+		const uint64_t in = CsvPrefixXor(quote) ^ in_carry;
+		const uint64_t terms = term_bits & ~in & valid;
+		const uint64_t delims = delimiter & ~in & valid;
+		const uint64_t field_starts = (delims << delimiter_size) | (terms << 1) | after_separator;
+		const uint64_t starts = field_starts | ((field_starts & raw_spaces & ~in) << 1) | start_space;
+		const uint64_t openers = quote & in;
+		const uint64_t allowed = reopen ? (((quote & ~in) << 1) | after_closer) : 0;
+		const uint64_t misplaced = openers & ~starts & ~allowed;
+		if (!misplaced) {
+			break;
+		}
+		quote &= ~(misplaced & (0 - misplaced));
+	}
+	return quote;
+}
+
 bool PlainCountState(CSVState state) {
 	return state == CSVState::NOT_SET || state == CSVState::RECORD_SEPARATOR || state == CSVState::DELIMITER ||
 	       state == CSVState::STANDARD || state == CSVState::EMPTY_SPACE;
@@ -185,6 +205,7 @@ RowDialect RowDialect::DuckDB(const CsvGrammar &grammar) {
 	result.carry_on = grammar.carry_on_newline;
 	result.strict = grammar.strict_mode;
 	result.reopen = grammar.quote == grammar.escape || (!grammar.strict_mode && grammar.escape != '\0');
+	result.quoted_spaces = grammar.quote != '\0' && grammar.trim_quoted_spaces;
 	result.new_line = grammar.new_line;
 	result.supported = !grammar.only_crlf && plain_delimiter;
 	result.only_crlf = grammar.only_crlf;
@@ -306,6 +327,10 @@ bool RowLexer::FeedBlocks(RowCursor &cursor, const char *data, idx_t base, idx_t
 		return false;
 	};
 	const idx_t delimiter_size = d.delimiter_size;
+	const bool literal_quotes =
+	    field_start_quotes && !escapes && !d.comment && (delimiter_size == 1 || d.distinct_delimiter);
+	uint64_t literals = 0;
+	idx_t literals_at = DConstants::INVALID_INDEX;
 	char padded[CSV_BLOCK_BYTES];
 	char lookahead[CSV_BLOCK_BYTES];
 	while (c.pos < end) {
@@ -357,6 +382,9 @@ bool RowLexer::FeedBlocks(RowCursor &cursor, const char *data, idx_t base, idx_t
 		}
 		const uint64_t raw_quote = d.quote ? vector.Equal(d.quote) & valid : 0;
 		uint64_t quote = d.escape_in_quotes ? raw_quote & ~escaped : raw_quote;
+		if (literals_at == c.pos) {
+			quote &= ~literals;
+		}
 		uint64_t in = (quote ? CsvPrefixXor(quote) : 0) ^ CsvSpread(c.in_quotes);
 		if (d.escape_in_quotes) {
 			if (raw_quote & escaped & ~in) {
@@ -439,25 +467,39 @@ bool RowLexer::FeedBlocks(RowCursor &cursor, const char *data, idx_t base, idx_t
 			}
 		}
 		const uint64_t field_starts = (delims << delimiter_size) | (terms << 1) | c.after_separator;
-		if (field_start_quotes && (quote | c.after_closer | c.after_opener)) {
+		const uint64_t spaces = d.quoted_spaces ? vector.Equal(' ') & ~hidden & valid : 0;
+		if (field_start_quotes && (quote | c.after_closer | c.after_opener | c.closer_spaces)) {
 			const uint64_t openers = quote & in;
 			const uint64_t closers = quote & ~in;
-			const uint64_t starts = field_starts;
+			const uint64_t starts = field_starts | ((field_starts & spaces) << 1) | c.start_space;
 			const uint64_t reopened = (closers << 1) | c.after_closer;
 			const uint64_t allowed = d.reopen ? reopened : 0;
 			if (openers & ~starts & ~allowed) {
+				if (!literal_quotes || literals_at == c.pos) {
+					return fail();
+				}
+				const uint64_t raw_spaces = d.quoted_spaces ? vector.Equal(' ') & valid : 0;
+				literals = quote & ~KeepFieldQuotes(quote, CsvSpread(c.in_quotes), delimiter, delimiter_size, term_bits,
+				                                    raw_spaces, c.after_separator, c.start_space, c.after_closer,
+				                                    d.reopen, valid);
+				literals_at = c.pos;
+				continue;
+			}
+			const uint64_t ends_field = delimiter | line_feed | carriage_return;
+			const uint64_t follow = ends_field | (quote & quote_follow_bit);
+			const uint64_t trailing = (reopened & spaces) | (c.closer_spaces & spaces & 1);
+			const uint64_t after_trailing = spaces + trailing;
+			const uint64_t trailed = (after_trailing & ~spaces) | (c.closer_spaces & ~spaces & 1);
+			if (((reopened & ~follow & ~spaces) | (trailed & ~ends_field)) & valid) {
 				return fail();
 			}
-			const uint64_t follow = delimiter | line_feed | carriage_return | (quote & quote_follow_bit);
-			if (reopened & ~follow & valid) {
-				return fail();
-			}
+			c.closer_spaces = trailing && after_trailing < spaces;
 			c.doubled = c.doubled || (reopened & quote) != 0;
 			if (!c.settled && c.quoted_newline == DConstants::INVALID_INDEX) {
 				const uint64_t quoted_newlines = (line_feed | carriage_return) & in & valid;
 				const idx_t limit =
 				    quoted_newlines ? c.pos + std::countr_zero(quoted_newlines) : NumericLimits<idx_t>::Maximum();
-				const uint64_t broken = ((openers << 1) | c.after_opener) & ~follow & valid;
+				const uint64_t broken = ((openers << 1) | c.after_opener) & ~follow & ~spaces & valid;
 				if (settle_strict && broken && c.pos + std::countr_zero(broken) < limit) {
 					c.settled = true;
 				} else if (quoted_newlines) {
@@ -471,6 +513,7 @@ bool RowLexer::FeedBlocks(RowCursor &cursor, const char *data, idx_t base, idx_t
 			c.after_closer = (closers >> (size - 1)) & 1;
 			c.after_opener = (openers >> (size - 1)) & 1;
 		}
+		c.start_space = ((field_starts & spaces) >> (size - 1)) & 1;
 		c.quotes = c.quotes || raw_quote != 0;
 		if (!c.settled && settle_length && c.quoted_newline == DConstants::INVALID_INDEX &&
 		    c.pos + size - c.origin > max_line_size) {
