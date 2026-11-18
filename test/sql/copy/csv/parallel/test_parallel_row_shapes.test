@@ -76,6 +76,17 @@ SELECT count(*) FROM (
 ----
 0
 
+query I
+SELECT count(*) FROM (
+	(SELECT c, a FROM read_csv('{TEMP_DIR}/row_shapes_ragged.csv', null_padding = true, force_not_null = ['c'], delim = ',', header = false, auto_detect = false, columns = {'a': 'BIGINT', 'b': 'BIGINT', 'c': 'VARCHAR'}, buffer_size = {buffer_size}, parallel = {parallel})
+	 EXCEPT ALL SELECT CASE WHEN i % 3 = 2 AND i % 5 <> 4 THEN 'v' || i ELSE '' END, i FROM range(2000) t(i))
+	UNION ALL
+	(SELECT CASE WHEN i % 3 = 2 AND i % 5 <> 4 THEN 'v' || i ELSE '' END, i FROM range(2000) t(i)
+	 EXCEPT ALL SELECT c, a FROM read_csv('{TEMP_DIR}/row_shapes_ragged.csv', null_padding = true, force_not_null = ['c'], delim = ',', header = false, auto_detect = false, columns = {'a': 'BIGINT', 'b': 'BIGINT', 'c': 'VARCHAR'}, buffer_size = {buffer_size}, parallel = {parallel}))
+)
+----
+0
+
 endloop
 
 endloop
