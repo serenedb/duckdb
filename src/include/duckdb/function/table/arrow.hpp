@@ -131,6 +131,7 @@ public:
 	shared_ptr<ArrowArrayWrapper> chunk;
 	idx_t chunk_offset = 0;
 	idx_t batch_index = 0;
+	idx_t row_number = 0;
 	vector<column_t> column_ids;
 	unordered_map<idx_t, unique_ptr<ArrowArrayScanState>> array_states;
 	TableFilterSet *filters = nullptr;
@@ -162,6 +163,7 @@ struct ArrowScanGlobalState : public GlobalTableFunctionState {
 	mutex main_mutex;
 	idx_t max_threads = 1;
 	idx_t batch_index = 0;
+	idx_t next_row_number = 0;
 	bool done = false;
 
 	vector<idx_t> projection_ids;

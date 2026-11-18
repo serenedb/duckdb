@@ -1510,14 +1510,29 @@ void ArrowToDuckDBConversion::ColumnArrowToDuckDBDictionary(Vector &vector, Arro
 	vector.Verify();
 }
 
+static void ArrowRowNumbers(const ArrowScanLocalState &scan_state, Vector &vector, idx_t count) {
+	auto first = NumericCast<int64_t>(scan_state.row_number + scan_state.chunk_offset);
+	auto numbers = FlatVector::Writer<int64_t>(vector, count);
+	for (idx_t row = 0; row < count; row++) {
+		numbers.WriteValue(first + static_cast<int64_t>(row));
+	}
+}
+
 void ArrowTableFunction::ArrowToDuckDB(ArrowScanLocalState &scan_state, const arrow_column_map_t &arrow_convert_data,
                                        DataChunk &output, bool arrow_scan_is_projected, idx_t rowid_column_index) {
+	idx_t projected_idx = 0;
 	for (idx_t idx = 0; idx < output.ColumnCount(); idx++) {
 		auto col_idx = scan_state.column_ids.empty() ? idx : scan_state.column_ids[idx];
+		if (rowid_column_index == COLUMN_IDENTIFIER_ROW_ID && IsVirtualColumn(col_idx)) {
+			if (col_idx == COLUMN_IDENTIFIER_ROW_NUMBER) {
+				ArrowRowNumbers(scan_state, output.data[idx], output.size());
+			}
+			continue;
+		}
 
 		// If projection was not pushed down into the arrow scanner, but projection pushdown is enabled on the
 		// table function, we need to use original column ids here.
-		auto arrow_array_idx = arrow_scan_is_projected ? idx : col_idx;
+		auto arrow_array_idx = arrow_scan_is_projected ? projected_idx++ : col_idx;
 
 		if (rowid_column_index != COLUMN_IDENTIFIER_ROW_ID) {
 			if (col_idx == COLUMN_IDENTIFIER_ROW_ID) {
@@ -1528,12 +1543,6 @@ void ArrowTableFunction::ArrowToDuckDB(ArrowScanLocalState &scan_state, const ar
 				// that DuckDB believes the Arrow array is in.
 				col_idx += 1;
 				arrow_array_idx += 1;
-			}
-		} else {
-			// If there isn't any defined row_id_index, and we're asked for it, skip the column.
-			// This is the incumbent behavior.
-			if (col_idx == COLUMN_IDENTIFIER_ROW_ID) {
-				continue;
 			}
 		}
 
