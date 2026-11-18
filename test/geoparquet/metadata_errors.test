@@ -1,0 +1,133 @@
+# name: test/geoparquet/metadata_errors.test
+# description: GeoParquet 'geo' metadata that is not JSON is ignored, metadata that breaks the GeoParquet schema is an error, and a null CRS leaves the column without one
+# group: [geoparquet]
+
+require parquet
+
+statement ok
+COPY (SELECT ST_AsWKB('POINT (1 2)'::GEOMETRY) AS g) TO '{TEST_DIR}/geo_not_json.parquet' (FORMAT parquet, KV_METADATA {geo: 'not json'});
+
+query I
+SELECT typeof(g) FROM '{TEST_DIR}/geo_not_json.parquet';
+----
+BLOB
+
+statement ok
+COPY (SELECT 1 AS i) TO '{TEST_DIR}/geo_array.parquet' (FORMAT parquet, KV_METADATA {geo: '[]'});
+
+statement error
+SELECT * FROM '{TEST_DIR}/geo_array.parquet';
+----
+Geoparquet metadata is not an object
+
+statement ok
+COPY (SELECT 1 AS i) TO '{TEST_DIR}/geo_no_version.parquet' (FORMAT parquet, KV_METADATA {geo: '{"columns": {}}'});
+
+statement error
+SELECT * FROM '{TEST_DIR}/geo_no_version.parquet';
+----
+Geoparquet metadata does not have a version
+
+statement ok
+COPY (SELECT 1 AS i) TO '{TEST_DIR}/geo_number_version.parquet' (FORMAT parquet, KV_METADATA {geo: '{"version": 1, "columns": {}}'});
+
+statement error
+SELECT * FROM '{TEST_DIR}/geo_number_version.parquet';
+----
+Geoparquet metadata does not have a version
+
+statement ok
+COPY (SELECT 1 AS i) TO '{TEST_DIR}/geo_version_3.parquet' (FORMAT parquet, KV_METADATA {geo: '{"version": "3.0.0", "columns": {}}'});
+
+statement error
+SELECT * FROM '{TEST_DIR}/geo_version_3.parquet';
+----
+Geoparquet version 3.0.0 is not supported
+
+statement ok
+COPY (SELECT 1 AS i) TO '{TEST_DIR}/geo_no_columns.parquet' (FORMAT parquet, KV_METADATA {geo: '{"version": "1.0.0"}'});
+
+statement error
+SELECT * FROM '{TEST_DIR}/geo_no_columns.parquet';
+----
+Geoparquet metadata does not have a columns object
+
+statement ok
+COPY (SELECT 1 AS i) TO '{TEST_DIR}/geo_array_columns.parquet' (FORMAT parquet, KV_METADATA {geo: '{"version": "1.0.0", "columns": ["g"]}'});
+
+statement error
+SELECT * FROM '{TEST_DIR}/geo_array_columns.parquet';
+----
+Geoparquet metadata does not have a columns object
+
+statement ok
+COPY (SELECT 1 AS i) TO '{TEST_DIR}/geo_string_column.parquet' (FORMAT parquet, KV_METADATA {geo: '{"version": "1.0.0", "columns": {"g": "WKB"}}'});
+
+statement error
+SELECT * FROM '{TEST_DIR}/geo_string_column.parquet';
+----
+Geoparquet column 'g' is not an object
+
+statement ok
+COPY (SELECT 1 AS i) TO '{TEST_DIR}/geo_no_encoding.parquet' (FORMAT parquet, KV_METADATA {geo: '{"version": "1.0.0", "columns": {"g": {"geometry_types": []}}}'});
+
+statement error
+SELECT * FROM '{TEST_DIR}/geo_no_encoding.parquet';
+----
+Geoparquet column 'g' does not have an encoding
+
+statement ok
+COPY (SELECT 1 AS i) TO '{TEST_DIR}/geo_number_encoding.parquet' (FORMAT parquet, KV_METADATA {geo: '{"version": "1.0.0", "columns": {"g": {"encoding": 1, "geometry_types": []}}}'});
+
+statement error
+SELECT * FROM '{TEST_DIR}/geo_number_encoding.parquet';
+----
+Geoparquet column 'g' does not have an encoding
+
+statement ok
+COPY (SELECT 1 AS i) TO '{TEST_DIR}/geo_unknown_encoding.parquet' (FORMAT parquet, KV_METADATA {geo: '{"version": "1.0.0", "columns": {"g": {"encoding": "geoarrow.point", "geometry_types": []}}}'});
+
+statement error
+SELECT * FROM '{TEST_DIR}/geo_unknown_encoding.parquet';
+----
+Geoparquet column 'g' has an unsupported encoding
+
+statement ok
+COPY (SELECT 1 AS i) TO '{TEST_DIR}/geo_no_types.parquet' (FORMAT parquet, KV_METADATA {geo: '{"version": "1.0.0", "columns": {"g": {"encoding": "WKB"}}}'});
+
+statement error
+SELECT * FROM '{TEST_DIR}/geo_no_types.parquet';
+----
+Geoparquet column 'g' does not have geometry types
+
+statement ok
+COPY (SELECT 1 AS i) TO '{TEST_DIR}/geo_string_types.parquet' (FORMAT parquet, KV_METADATA {geo: '{"version": "1.0.0", "columns": {"g": {"encoding": "WKB", "geometry_types": "Point"}}}'});
+
+statement error
+SELECT * FROM '{TEST_DIR}/geo_string_types.parquet';
+----
+Geoparquet column 'g' does not have geometry types
+
+statement ok
+COPY (SELECT 1 AS i) TO '{TEST_DIR}/geo_string_crs.parquet' (FORMAT parquet, KV_METADATA {geo: '{"version": "1.0.0", "columns": {"g": {"encoding": "WKB", "geometry_types": [], "crs": "OGC:CRS84"}}}'});
+
+statement error
+SELECT * FROM '{TEST_DIR}/geo_string_crs.parquet';
+----
+Geoparquet column 'g' has invalid CRS
+
+statement ok
+COPY (SELECT ST_AsWKB('POINT (1 2)'::GEOMETRY) AS g) TO '{TEST_DIR}/geo_null_crs.parquet' (FORMAT parquet, KV_METADATA {geo: '{"version": "1.1.0", "primary_column": "g", "columns": {"g": {"encoding": "WKB", "geometry_types": ["Point"], "crs": null}}}'});
+
+query II
+SELECT typeof(g), ST_AsText(g) FROM '{TEST_DIR}/geo_null_crs.parquet';
+----
+GEOMETRY	POINT (1 2)
+
+statement ok
+COPY (SELECT ST_AsWKB('POINT (1 2)'::GEOMETRY) AS g) TO '{TEST_DIR}/geo_default_crs.parquet' (FORMAT parquet, KV_METADATA {geo: '{"version": "1.1.0", "primary_column": "g", "columns": {"g": {"encoding": "WKB", "geometry_types": ["Point"]}}}'});
+
+query II
+SELECT typeof(g), ST_AsText(g) FROM '{TEST_DIR}/geo_default_crs.parquet';
+----
+GEOMETRY('OGC:CRS84')	POINT (1 2)
