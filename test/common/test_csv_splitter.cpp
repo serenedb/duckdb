@@ -686,7 +686,13 @@ string RegularInput(std::mt19937_64 &rng, const FuzzDialect &dialect) {
 		if (rng() % 10 == 0) {
 			input += newline;
 		}
-		for (idx_t column = 0; column < dialect.columns; column++) {
+		if (dialect.comment && rng() % 6 == 0) {
+			input += dialect.comment;
+			input += rng() % 2 ? "a b" : "a" + dialect.delimiter + "b";
+			input += newline;
+		}
+		const idx_t row_columns = rng() % 8 == 0 ? 1 + rng() % dialect.columns : dialect.columns;
+		for (idx_t column = 0; column < row_columns; column++) {
 			if (column > 0) {
 				input += dialect.delimiter;
 			}
@@ -827,9 +833,10 @@ string DescribeStart(const CsvRangeStart &start) {
 }
 
 string RunLean(const CsvGrammar &grammar, const FuzzDialect &dialect, const string &input, idx_t piece_blocks,
-               idx_t max_line_size, SplitResult &exact, bool &accepted) {
+               idx_t max_line_size, bool pad_rows, SplitResult &exact, bool &accepted, bool &padded) {
 	accepted = false;
-	RowLexer lean(RowDialect::DuckDB(grammar), dialect.columns, max_line_size, true);
+	padded = false;
+	RowLexer lean(RowDialect::DuckDB(grammar), dialect.columns, max_line_size, true, pad_rows);
 	if (!lean.Eligible()) {
 		return string();
 	}
@@ -838,7 +845,7 @@ string RunLean(const CsvGrammar &grammar, const FuzzDialect &dialect, const stri
 	lean.Start(cursor, 0, true);
 	const char *data = input.data();
 	while (cursor.ok && cursor.pos < input.size()) {
-		const idx_t end = MinValue<idx_t>(cursor.pos + piece_blocks * 64, input.size());
+		const idx_t end = MinValue<idx_t>(cursor.pos + piece_blocks * 64 + lean.Lookahead(), input.size());
 		const bool last = end == input.size();
 		if (!lean.Feed(cursor, data, 0, end, last, &fields)) {
 			return string();
@@ -849,6 +856,7 @@ string RunLean(const CsvGrammar &grammar, const FuzzDialect &dialect, const stri
 		return string();
 	}
 	accepted = true;
+	padded = cursor.padded;
 	const idx_t columns = dialect.columns;
 	string mismatch;
 	if (cursor.rows != exact.rows.size()) {
@@ -861,12 +869,25 @@ string RunLean(const CsvGrammar &grammar, const FuzzDialect &dialect, const stri
 		mismatch += "field counts " + to_string(fields.end_count) + " " + to_string(fields.row_count) + "\n";
 		return mismatch;
 	}
+	bool short_rows = false;
 	for (idx_t row = 0; row < cursor.rows && row < exact.rows.size(); row++) {
 		string text = "row start=" + to_string(fields.rows[row]) + " fields:";
+		bool padding = false;
 		for (idx_t column = 0; column < columns; column++) {
-			idx_t begin =
-			    column == 0 ? fields.rows[row] : (fields.ends[row * columns + column - 1] & ROW_FIELD_MASK) + 1;
-			idx_t end = fields.ends[row * columns + column] & ROW_FIELD_MASK;
+			idx_t begin = column == 0
+			                  ? fields.rows[row]
+			                  : (fields.ends[row * columns + column - 1] & ROW_FIELD_MASK) + grammar.delimiter_size;
+			const uint32_t end_bits = fields.ends[row * columns + column];
+			idx_t end = end_bits & ROW_FIELD_MASK;
+			const bool pad = column > 0 && (end_bits & ROW_FIELD_FLAG) && begin > end;
+			if (padding && !pad) {
+				text += " field after padding";
+			}
+			padding = padding || pad;
+			short_rows = short_rows || pad;
+			if (pad) {
+				continue;
+			}
 			const bool quoted = grammar.quote && end > begin && input[begin] == grammar.quote;
 			if (quoted) {
 				begin++;
@@ -891,6 +912,9 @@ string RunLean(const CsvGrammar &grammar, const FuzzDialect &dialect, const stri
 		if (text != reduced) {
 			mismatch += "lean " + text + "\nexact " + reduced + "\n";
 		}
+	}
+	if (short_rows != cursor.padded || (short_rows && !pad_rows)) {
+		mismatch += "padded " + to_string(cursor.padded) + " short rows " + to_string(short_rows) + "\n";
 	}
 	auto transfer = CsvTransfer(grammar, data, 0, 0, input.size(), CSVState::NOT_SET);
 	if (!cursor.unterminated &&
@@ -922,6 +946,9 @@ TEST_CASE("CSV splitter, transfer and skip match the byte state machine", "[csv]
 	std::mt19937_64 rng(seed ? std::stoull(seed) : 20261118);
 	const idx_t count = iterations ? std::stoull(iterations) : 20000;
 	idx_t lean_accepted = 0;
+	idx_t comment_accepted = 0;
+	idx_t wide_accepted = 0;
+	idx_t padded_accepted = 0;
 	for (idx_t iteration = 0; iteration < count; iteration++) {
 		const auto dialect = RandomDialect(rng);
 		CSVStateMachineOptions machine_options(dialect.delimiter, dialect.quote, dialect.escape, dialect.comment,
@@ -957,13 +984,20 @@ TEST_CASE("CSV splitter, transfer and skip match the byte state machine", "[csv]
 		const idx_t max_line_sizes[] = {64, 1000, 1 << 20};
 		const idx_t max_line_size = max_line_sizes[rng() % 3];
 		const idx_t piece_blocks = 1 + rng() % 3;
+		const bool pad_rows = rng() % 2;
 		bool accepted = false;
+		bool padded = false;
 		auto exact = actual;
-		const auto lean_mismatch = RunLean(grammar, dialect, input, piece_blocks, max_line_size, exact, accepted);
+		const auto lean_mismatch =
+		    RunLean(grammar, dialect, input, piece_blocks, max_line_size, pad_rows, exact, accepted, padded);
 		lean_accepted += accepted;
+		padded_accepted += padded;
+		comment_accepted += accepted && dialect.comment && input.find(dialect.comment) != string::npos;
+		wide_accepted += accepted && dialect.delimiter.size() > 1 && input.find(dialect.delimiter) != string::npos;
 		if (!lean_mismatch.empty()) {
 			FAIL("lean mismatch: " + Describe(dialect, input) + " pieces=" + to_string(piece_blocks) +
-			     " max_line_size=" + to_string(max_line_size) + "\n" + lean_mismatch);
+			     " max_line_size=" + to_string(max_line_size) + " pad_rows=" + to_string(pad_rows) + "\n" +
+			     lean_mismatch);
 		}
 		if (dialect.quote && !grammar.carry_on_newline && !input.empty()) {
 			RowLexer quoted_lexer(RowDialect::DuckDB(grammar), dialect.columns, max_line_size, true);
@@ -1027,6 +1061,9 @@ TEST_CASE("CSV splitter, transfer and skip match the byte state machine", "[csv]
 		}
 	}
 	REQUIRE(lean_accepted > count / 50);
+	REQUIRE(comment_accepted > count / 50);
+	REQUIRE(wide_accepted > count / 50);
+	REQUIRE(padded_accepted > count / 100);
 }
 
 namespace {
