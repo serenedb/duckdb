@@ -2,6 +2,7 @@
 
 #include "absl/cleanup/cleanup.h"
 #include "duckdb/common/operator/cast_operators.hpp"
+#include "duckdb/common/operator/comparison_operators.hpp"
 #include "duckdb/common/operator/decimal_cast_operators.hpp"
 #include "duckdb/common/operator/double_cast_operator.hpp"
 #include "duckdb/common/operator/integer_cast_operator.hpp"
@@ -15,6 +16,11 @@
 #include "duckdb/main/database.hpp"
 #include "duckdb/parallel/callback_async_task.hpp"
 #include "duckdb/parallel/task_scheduler.hpp"
+#include "duckdb/planner/expression/bound_conjunction_expression.hpp"
+#include "duckdb/planner/expression/bound_constant_expression.hpp"
+#include "duckdb/planner/expression/bound_function_expression.hpp"
+#include "duckdb/planner/expression/bound_operator_expression.hpp"
+#include "duckdb/planner/filter/expression_filter.hpp"
 #include "duckdb/storage/table/column_segment.hpp"
 #include "simdutf.h"
 #include "utf8proc_wrapper.hpp"
@@ -303,44 +309,6 @@ inline bool LeanUnquote(const char *data, char quote, bool spaced, idx_t &begin,
 	return true;
 }
 
-struct LeanSource {
-	bool IsNull(const char *value, idx_t size, bool quoted) const {
-		if (quoted && !allow_quoted_nulls) {
-			return false;
-		}
-		if (empty_only_null) {
-			return size == 0;
-		}
-		for (auto &null_string : *null_strings) {
-			if (size == null_string.size() && memcmp(null_string.c_str(), value, size) == 0) {
-				return true;
-			}
-		}
-		return false;
-	}
-
-	const uint32_t *begins;
-	idx_t begin_stride;
-	idx_t begin_bias;
-	const uint32_t *ends;
-	idx_t stride;
-	const char *data;
-	const char *limit;
-	idx_t shift;
-	char quote;
-	char escape_probe;
-	bool quotes;
-	bool doubled;
-	bool padded;
-	bool pad_empty;
-	bool spaced;
-	bool allow_quoted_nulls;
-	bool empty_only_null;
-	const vector<string> *null_strings;
-	const vector<bool> *selected;
-	idx_t first;
-};
-
 template <class T, class PARSE>
 bool LeanValues(const LeanSource &source, idx_t count, bool force_not_null, Vector &vector, PARSE parse) {
 	T *const out = FlatVector::GetDataMutable<T>(vector);
@@ -391,6 +359,151 @@ bool LeanValues(const LeanSource &source, idx_t count, bool force_not_null, Vect
 		}
 	}
 	return true;
+}
+
+bool CollectRawPredicates(const Expression &expr, bool string_column, vector<CsvRawPredicate> &out) {
+	switch (expr.GetExpressionClass()) {
+	case ExpressionClass::BOUND_CONJUNCTION: {
+		if (expr.GetExpressionType() != ExpressionType::CONJUNCTION_AND) {
+			return false;
+		}
+		for (auto &child : expr.Cast<BoundConjunctionExpression>().GetChildren()) {
+			if (!CollectRawPredicates(*child, string_column, out)) {
+				return false;
+			}
+		}
+		return true;
+	}
+	case ExpressionClass::BOUND_OPERATOR: {
+		auto &op = expr.Cast<BoundOperatorExpression>();
+		const auto type = op.GetExpressionType();
+		auto &children = op.GetChildren();
+		if (children.empty() || !ExpressionFilter::IsSimpleFilterColumnRef(*children[0])) {
+			return false;
+		}
+		if (type == ExpressionType::OPERATOR_IS_NULL || type == ExpressionType::OPERATOR_IS_NOT_NULL) {
+			out.push_back({type, {}});
+			return true;
+		}
+		if (type != ExpressionType::COMPARE_IN || !string_column) {
+			return false;
+		}
+		CsvRawPredicate predicate {type, {}};
+		for (idx_t i = 1; i < children.size(); i++) {
+			if (children[i]->GetExpressionClass() != ExpressionClass::BOUND_CONSTANT) {
+				return false;
+			}
+			auto &value = children[i]->Cast<BoundConstantExpression>().GetValue();
+			if (value.IsNull() || value.type().id() != LogicalTypeId::VARCHAR) {
+				return false;
+			}
+			predicate.values.push_back(StringValue::Get(value));
+		}
+		std::sort(predicate.values.begin(), predicate.values.end());
+		out.push_back(std::move(predicate));
+		return true;
+	}
+	case ExpressionClass::BOUND_FUNCTION: {
+		auto &function = expr.Cast<BoundFunctionExpression>();
+		auto type = function.GetExpressionType();
+		if (!string_column || !BoundComparisonExpression::IsComparison(type) ||
+		    type == ExpressionType::COMPARE_DISTINCT_FROM || type == ExpressionType::COMPARE_NOT_DISTINCT_FROM) {
+			return false;
+		}
+		auto constant = ExpressionFilter::TryGetColumnConstantComparison(function, type);
+		if (!constant) {
+			return false;
+		}
+		auto &value = constant->GetValue();
+		if (value.IsNull() || value.type().id() != LogicalTypeId::VARCHAR) {
+			return false;
+		}
+		out.push_back({type, {StringValue::Get(value)}});
+		return true;
+	}
+	default:
+		return false;
+	}
+}
+
+bool RawPasses(const vector<CsvRawPredicate> &predicates, const char *value, idx_t size, bool null) {
+	for (auto &predicate : predicates) {
+		if (predicate.type == ExpressionType::OPERATOR_IS_NULL) {
+			if (!null) {
+				return false;
+			}
+			continue;
+		}
+		if (null) {
+			return false;
+		}
+		if (predicate.type == ExpressionType::OPERATOR_IS_NOT_NULL) {
+			continue;
+		}
+		const std::string_view field(value, size);
+		if (predicate.type == ExpressionType::COMPARE_IN) {
+			if (!std::binary_search(predicate.values.begin(), predicate.values.end(), field)) {
+				return false;
+			}
+			continue;
+		}
+		const string_t left(value, UnsafeNumericCast<uint32_t>(size));
+		const string_t right(predicate.values[0].data(), UnsafeNumericCast<uint32_t>(predicate.values[0].size()));
+		bool passes;
+		switch (predicate.type) {
+		case ExpressionType::COMPARE_EQUAL:
+			passes = Equals::Operation(left, right);
+			break;
+		case ExpressionType::COMPARE_NOTEQUAL:
+			passes = NotEquals::Operation(left, right);
+			break;
+		case ExpressionType::COMPARE_LESSTHAN:
+			passes = LessThan::Operation(left, right);
+			break;
+		case ExpressionType::COMPARE_LESSTHANOREQUALTO:
+			passes = LessThanEquals::Operation(left, right);
+			break;
+		case ExpressionType::COMPARE_GREATERTHAN:
+			passes = GreaterThan::Operation(left, right);
+			break;
+		default:
+			passes = GreaterThanEquals::Operation(left, right);
+			break;
+		}
+		if (!passes) {
+			return false;
+		}
+	}
+	return true;
+}
+
+void LeanRawPredicates(const LeanSource &source, idx_t count, const vector<CsvRawPredicate> &predicates,
+                       vector<bool> &selected) {
+	const uint32_t flag_test = source.quotes || source.padded ? ROW_FIELD_FLAG : 0;
+	const bool empty_only_null = source.empty_only_null && source.allow_quoted_nulls;
+	for (idx_t row = 0; row < count; row++) {
+		if (!selected[row]) {
+			continue;
+		}
+		const uint32_t end_bits = source.ends[row * source.stride];
+		idx_t begin = (source.begins[row * source.begin_stride] & ROW_FIELD_MASK) + source.begin_bias + source.shift;
+		idx_t end = (end_bits & ROW_FIELD_MASK) + source.shift;
+		bool quoted = false;
+		if (end_bits & flag_test) {
+			if (begin > end) {
+				selected[row] = RawPasses(predicates, nullptr, 0, true);
+				continue;
+			}
+			quoted = source.quotes && LeanUnquote(source.data, source.quote, source.spaced, begin, end);
+		}
+		const char *value = source.data + begin;
+		const idx_t size = end - begin;
+		if (quoted && source.doubled && memchr(value, source.escape_probe, size)) {
+			continue;
+		}
+		const bool null = empty_only_null ? size == 0 : source.IsNull(value, size, quoted);
+		selected[row] = RawPasses(predicates, value, size, null);
+	}
 }
 
 bool LeanStrings(const LeanSource &source, idx_t count, const CsvScanColumn &column, bool validate,
@@ -723,11 +836,24 @@ CsvScanGlobal::CsvScanGlobal(ClientContext &context_p, const CSVReaderOptions &o
 	filtered.assign(columns.size(), false);
 	if (source.filters) {
 		for (auto &entry : *source.filters) {
-			const idx_t output_column = entry.GetIndex();
-			filters.push_back({output_column, entry.Filter()});
+			CsvScanFilter filter {entry.GetIndex(), entry.Filter()};
 			for (idx_t i = 0; i < columns.size(); i++) {
-				filtered[i] = filtered[i] || columns[i].output_column == output_column;
+				if (columns[i].output_column == filter.output_column) {
+					filtered[i] = true;
+					filter.column = i;
+				}
 			}
+			auto &expression_filter = ExpressionFilter::GetExpressionFilter(entry.Filter(), "read_csv");
+			if (filter.column != DConstants::INVALID_INDEX && expression_filter.column_indexes.empty() &&
+			    !columns[filter.column].force_not_null) {
+				auto &column = columns[filter.column];
+				const bool string_column = column.type.id() == LogicalTypeId::VARCHAR && !column.type.IsJSONType() &&
+				                           column.parse_type.id() == LogicalTypeId::VARCHAR;
+				if (!CollectRawPredicates(*expression_filter.expr, string_column, filter.raw)) {
+					filter.raw.clear();
+				}
+			}
+			filters.push_back(std::move(filter));
 		}
 	}
 	late_materialization = !filters.empty() && !options.store_rejects.GetValue();
@@ -1021,6 +1147,7 @@ CsvScan::CsvScan(CsvScanGlobal &global_p)
 	dropped.resize(STANDARD_VECTOR_SIZE);
 	selected.resize(STANDARD_VECTOR_SIZE);
 	keep.Initialize(STANDARD_VECTOR_SIZE);
+	filter_candidates.Initialize(STANDARD_VECTOR_SIZE);
 	for (auto &filter : global.filters) {
 		filter_states.push_back(TableFilterState::Initialize(global.context, filter.filter.get()));
 	}
@@ -1667,6 +1794,9 @@ bool CsvScan::ScanLean(DataChunk &output, idx_t max_rows) {
 		if (chunk_rows > 0 && (lean_failed || chunk_rows == max_rows || (lean_finished && chunk_rows == ready))) {
 			LeanRowNumbers(chunk_rows, output);
 			if (!global.filters.empty()) {
+				for (idx_t row = 0; row < chunk_rows; row++) {
+					selected[row] = true;
+				}
 				Filter(chunk_rows, output);
 			}
 			FinishLeanChunk(chunk_rows, output);
@@ -2255,8 +2385,13 @@ void CsvScan::FillRowNumbers(idx_t count, DataChunk &output) {
 }
 
 void CsvScan::Filter(idx_t count, DataChunk &output) {
-	idx_t approved = count;
-	filter_selection.Initialize(nullptr);
+	idx_t approved = 0;
+	for (idx_t row = 0; row < count; row++) {
+		if (selected[row]) {
+			filter_candidates.set_index(approved++, row);
+		}
+	}
+	filter_selection.Initialize(filter_candidates);
 	for (idx_t i = 0; i < global.filters.size() && approved > 0; i++) {
 		auto &vector = output.data[global.filters[i].output_column];
 		FlatVector::SetSize(vector, count_t(count));
@@ -2283,9 +2418,10 @@ void CsvScan::Decode(idx_t count, DataChunk &output) {
 		selected[row] = true;
 		value_errors[row].clear();
 	}
+	const bool raw = late && ExactRawFilter(count);
 	for (idx_t i = 0; i < global.columns.size(); i++) {
 		if (!late || global.filtered[i]) {
-			DecodeColumn(i, count, output, false);
+			DecodeColumn(i, count, output, raw);
 		}
 	}
 	if (late) {
@@ -2341,10 +2477,7 @@ void CsvScan::Decode(idx_t count, DataChunk &output) {
 	output.SetChildCardinality(kept);
 }
 
-bool CsvScan::DecodeLeanColumn(idx_t column_idx, idx_t first, idx_t count, DataChunk &output, bool selected_only,
-                               bool utf8_valid, bool hold) {
-	auto &column = global.columns[column_idx];
-	auto &vector = Target(column_idx, output);
+LeanSource CsvScan::LeanSourceFor(const CsvScanColumn &column, idx_t first, bool selected_only) const {
 	const idx_t columns = splitter->Columns();
 	LeanSource source;
 	source.first = first;
@@ -2373,6 +2506,55 @@ bool CsvScan::DecodeLeanColumn(idx_t column_idx, idx_t first, idx_t count, DataC
 	source.empty_only_null = global.empty_only_null;
 	source.null_strings = &global.null_strings;
 	source.selected = selected_only ? &selected : nullptr;
+	return source;
+}
+
+bool CsvScan::LeanRawFilter(idx_t count) {
+	bool applied = false;
+	for (auto &filter : global.filters) {
+		if (filter.raw.empty()) {
+			continue;
+		}
+		applied = true;
+		LeanRawPredicates(LeanSourceFor(global.columns[filter.column], 0, false), count, filter.raw, selected);
+	}
+	return applied;
+}
+
+bool CsvScan::ExactRawFilter(idx_t count) {
+	bool applied = false;
+	for (auto &filter : global.filters) {
+		if (filter.raw.empty()) {
+			continue;
+		}
+		applied = true;
+		auto &column = global.columns[filter.column];
+		const CsvField *const column_fields = splitter->Column(column.file_column);
+		for (idx_t row = 0; row < count; row++) {
+			if (!selected[row]) {
+				continue;
+			}
+			auto &csv_row = splitter->Row(row);
+			auto &field = column_fields[row];
+			if ((csv_row.flags & CSV_ROW_EMPTY_LINE) || column.file_column >= csv_row.field_count ||
+			    (field.flags & CSV_FIELD_ESCAPED)) {
+				continue;
+			}
+			const char *value = bytes->data + field.offset;
+			const bool null = global.empty_only_null
+			                      ? field.size == 0 && (!(field.flags & CSV_FIELD_QUOTED) || options.allow_quoted_nulls)
+			                      : IsNull(field, value, field.size);
+			selected[row] = RawPasses(filter.raw, value, field.size, null);
+		}
+	}
+	return applied;
+}
+
+bool CsvScan::DecodeLeanColumn(idx_t column_idx, idx_t first, idx_t count, DataChunk &output, bool selected_only,
+                               bool utf8_valid, bool hold) {
+	auto &column = global.columns[column_idx];
+	auto &vector = Target(column_idx, output);
+	const auto source = LeanSourceFor(column, first, selected_only);
 	const bool force = column.force_not_null;
 	if (column.parse_type.id() == LogicalTypeId::VARCHAR) {
 		if (hold) {
@@ -2431,8 +2613,12 @@ bool CsvScan::DecodeLean(idx_t count, DataChunk &output) {
 		utf8_valid = simdutf::validate_utf8(bytes->data + (first - bytes->offset), last - first);
 	}
 	const bool late = global.late_materialization;
+	for (idx_t row = 0; row < count; row++) {
+		selected[row] = true;
+	}
+	const bool raw = late && LeanRawFilter(count);
 	for (idx_t i = 0; i < global.columns.size(); i++) {
-		if ((!late || global.filtered[i]) && !DecodeLeanColumn(i, 0, count, output, false, utf8_valid, true)) {
+		if ((!late || global.filtered[i]) && !DecodeLeanColumn(i, 0, count, output, raw, utf8_valid, true)) {
 			return false;
 		}
 	}

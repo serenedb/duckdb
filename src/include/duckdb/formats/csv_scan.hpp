@@ -84,9 +84,54 @@ struct CsvScanSource {
 	bool placeholder = false;
 };
 
+struct CsvRawPredicate {
+	ExpressionType type;
+	vector<string> values;
+};
+
+struct LeanSource {
+	bool IsNull(const char *value, idx_t size, bool quoted) const {
+		if (quoted && !allow_quoted_nulls) {
+			return false;
+		}
+		if (empty_only_null) {
+			return size == 0;
+		}
+		for (auto &null_string : *null_strings) {
+			if (size == null_string.size() && memcmp(null_string.c_str(), value, size) == 0) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	const uint32_t *begins;
+	idx_t begin_stride;
+	idx_t begin_bias;
+	const uint32_t *ends;
+	idx_t stride;
+	const char *data;
+	const char *limit;
+	idx_t shift;
+	char quote;
+	char escape_probe;
+	bool quotes;
+	bool doubled;
+	bool padded;
+	bool pad_empty;
+	bool spaced;
+	bool allow_quoted_nulls;
+	bool empty_only_null;
+	const vector<string> *null_strings;
+	const vector<bool> *selected;
+	idx_t first;
+};
+
 struct CsvScanFilter {
 	idx_t output_column;
 	reference<const TableFilter> filter;
+	idx_t column = DConstants::INVALID_INDEX;
+	vector<CsvRawPredicate> raw;
 };
 
 class CsvScanGlobal {
@@ -211,6 +256,9 @@ private:
 	void FinishLeanChunk(idx_t count, DataChunk &output);
 	bool DecodeLeanColumn(idx_t column, idx_t first, idx_t count, DataChunk &output, bool selected_only,
 	                      bool utf8_valid, bool hold);
+	LeanSource LeanSourceFor(const CsvScanColumn &column, idx_t first, bool selected_only) const;
+	bool LeanRawFilter(idx_t count);
+	bool ExactRawFilter(idx_t count);
 	bool LeanCasts(idx_t count, DataChunk &output, bool late, bool filter_pass);
 	void LeanRowNumbers(idx_t count, DataChunk &output);
 	void SkipRows();
@@ -286,6 +334,7 @@ private:
 	vector<bool> selected;
 	vector<unique_ptr<TableFilterState>> filter_states;
 	SelectionVector filter_selection;
+	SelectionVector filter_candidates;
 	SelectionVector keep;
 	vector<CsvRowError> row_errors;
 	idx_t event_cursor = 0;
