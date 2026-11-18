@@ -102,3 +102,13 @@ query T
 select json_merge_patch('{"a":1}', '{"b":2}', NULL)
 ----
 NULL
+
+query T
+SELECT json_merge_patch('{"a":1,"b":2}', '{"a":{"c":3,"d":null}}')
+----
+{"b":2,"a":{"c":3}}
+
+query T
+SELECT json_merge_patch('{"a":1}', '{"b":{"c":{"d":1,"e":null}}}')
+----
+{"a":1,"b":{"c":{"d":1}}}

@@ -1,0 +1,102 @@
+# name: test/sql/json/scalar/test_json_modify_paths.test
+# description: JSON modification functions: JSON Pointer tokens, paths through scalars, paths from a column and duplicate keys
+# group: [scalar]
+
+require json
+
+query T
+SELECT json_set('[1,2]', '/', '9')
+----
+[1,2]
+
+query T
+SELECT json_set('[1,2]', '/01', '9')
+----
+[1,2]
+
+query T
+SELECT json_set('[1,2]', '/1a', '9')
+----
+[1,2]
+
+query T
+SELECT json_set('[1,2]', '/12345678901234567890', '9')
+----
+[1,2]
+
+query T
+SELECT json_set('[1,2]', '/2', '3')
+----
+[1,2,3]
+
+query T
+SELECT json_set('[1,2]', '/5', '9')
+----
+[1,2]
+
+query T
+SELECT json_set('{"a~":1}', '/a~', '9')
+----
+{"a~":1}
+
+query T
+SELECT json_set('{"a~2":1}', '/a~2', '9')
+----
+{"a~2":1}
+
+query T
+SELECT json_set('{"a":1}', '/a/b', '9')
+----
+{"a":1}
+
+query T
+SELECT json_set('{}', '/a/b/c', '1')
+----
+{"a":{"b":{"c":1}}}
+
+query T
+SELECT json_insert('{"a":1}', '/a', '2')
+----
+{"a":1}
+
+query T
+SELECT json_remove('{"a":1}', '/b')
+----
+{"a":1}
+
+query T
+SELECT json_set('{"a":1}', '$.a.b.c', '9')
+----
+{"a":1}
+
+query T
+SELECT json_set('{"a":1}', '$[0].b', '9')
+----
+{"a":1}
+
+query T
+SELECT json_set('[1]', '$[5].b', '9')
+----
+[1]
+
+query T
+SELECT json_set('{"a":1}', p, '2') FROM (VALUES (''), ('$.b'), ('/c')) t(p)
+----
+2
+{"a":1,"b":2}
+{"a":1,"c":2}
+
+query T
+SELECT json_set('{"a":1,"b":2,"a":3}', '$.a', '9')
+----
+{"a":9,"b":2}
+
+query T
+SELECT json_set('{"a":1,"b":2,"a":3}', '/a', '9')
+----
+{"a":9,"b":2}
+
+query T
+SELECT json_remove('{"a":1,"b":2,"a":3}', '$.a')
+----
+{"b":2}
