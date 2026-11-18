@@ -138,6 +138,8 @@ void ShellExtension::Load(ExtensionLoader &loader) {
 
 	// highlight the CLI profiler "query_tree" output
 	duckdb_shell::RegisterProfilerHighlighting(config);
+
+	duckdb_shell::RegisterCopyFileSystem(loader.GetDatabaseInstance());
 }
 
 std::string ShellExtension::Name() {
