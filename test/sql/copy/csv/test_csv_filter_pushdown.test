@@ -1,0 +1,78 @@
+# name: test/sql/copy/csv/test_csv_filter_pushdown.test
+# description: Filters pushed into read_csv return what the same filters return above the scan
+# group: [csv]
+
+require skip_reload
+
+statement ok
+COPY (SELECT i AS id, i % 7 AS grp, 'name' || i AS name, DATE '2024-01-01' + (i % 100)::INTEGER AS day, CASE WHEN i % 5 = 0 THEN NULL ELSE i * 1.5 END AS amount FROM range(5000) t(i)) TO '{TEMP_DIR}/pushdown.csv' (HEADER true);
+
+statement ok
+CREATE TABLE expected AS SELECT * FROM read_csv('{TEMP_DIR}/pushdown.csv');
+
+query II
+EXPLAIN SELECT id FROM read_csv('{TEMP_DIR}/pushdown.csv') WHERE grp = 3
+----
+physical_plan	<REGEX>:.*READ_CSV.*Column Filter: grp = 3.*
+
+loop buffer_size 4096 4100
+
+query I
+SELECT count(*) FROM (
+	(SELECT * FROM read_csv('{TEMP_DIR}/pushdown.csv', buffer_size = {buffer_size}) WHERE grp = 3 AND id > 1000 EXCEPT ALL SELECT * FROM expected WHERE grp = 3 AND id > 1000)
+	UNION ALL
+	(SELECT * FROM expected WHERE grp = 3 AND id > 1000 EXCEPT ALL SELECT * FROM read_csv('{TEMP_DIR}/pushdown.csv', buffer_size = {buffer_size}) WHERE grp = 3 AND id > 1000)
+)
+----
+0
+
+endloop
+
+query I
+SELECT count(*) FROM read_csv('{TEMP_DIR}/pushdown.csv') WHERE amount IS NULL
+----
+1000
+
+query I
+SELECT count(*) FROM (
+	(SELECT * FROM read_csv('{TEMP_DIR}/pushdown.csv') WHERE day BETWEEN DATE '2024-02-01' AND DATE '2024-02-10' AND name LIKE 'name1%' EXCEPT ALL SELECT * FROM expected WHERE day BETWEEN DATE '2024-02-01' AND DATE '2024-02-10' AND name LIKE 'name1%')
+	UNION ALL
+	(SELECT * FROM expected WHERE day BETWEEN DATE '2024-02-01' AND DATE '2024-02-10' AND name LIKE 'name1%' EXCEPT ALL SELECT * FROM read_csv('{TEMP_DIR}/pushdown.csv') WHERE day BETWEEN DATE '2024-02-01' AND DATE '2024-02-10' AND name LIKE 'name1%')
+)
+----
+0
+
+query II
+SELECT id, name FROM read_csv('{TEMP_DIR}/pushdown.csv') WHERE id IN (7, 4999, 12) ORDER BY id
+----
+7	name7
+12	name12
+4999	name4999
+
+query I
+SELECT (SELECT count(*) FROM read_csv('{TEMP_DIR}/pushdown.csv') WHERE file_row_number < 1000) = (WITH r AS MATERIALIZED (SELECT file_row_number FROM read_csv('{TEMP_DIR}/pushdown.csv')) SELECT count(*) FROM r WHERE file_row_number < 1000)
+----
+true
+
+statement ok
+COPY (SELECT * FROM (VALUES (1, 'a', '10'), (2, 'b', 'x'), (3, 'c', '30')) t(id, name, num)) TO '{TEMP_DIR}/pushdown_errors.csv' (HEADER true);
+
+query II
+SELECT id, num FROM read_csv('{TEMP_DIR}/pushdown_errors.csv', columns = {'id': 'INTEGER', 'name': 'VARCHAR', 'num': 'INTEGER'}, header = true, auto_detect = false) WHERE id = 3
+----
+3	30
+
+statement error
+SELECT id, num FROM read_csv('{TEMP_DIR}/pushdown_errors.csv', columns = {'id': 'INTEGER', 'name': 'VARCHAR', 'num': 'INTEGER'}, header = true, auto_detect = false) WHERE id = 2
+----
+Could not convert string "x" to 'INTEGER'
+
+query II
+SELECT id, num FROM read_csv('{TEMP_DIR}/pushdown_errors.csv', columns = {'id': 'INTEGER', 'name': 'VARCHAR', 'num': 'INTEGER'}, header = true, auto_detect = false, store_rejects = true) WHERE id = 3
+----
+3	30
+
+query II
+SELECT line, column_name FROM reject_errors
+----
+3	num
