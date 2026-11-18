@@ -364,7 +364,7 @@ static unique_ptr<GlobalTableFunctionState> ReadSingleCSVFileInitGlobal(ClientCo
 		}
 	}
 	file_scan.InitializeFileNamesTypes();
-	result->scan = make_uniq<CsvScanGlobal>(context, file_scan);
+	result->scan = make_uniq<CsvScanGlobal>(context, file_scan, input.filters);
 	result->max_threads = result->scan->MaxThreads();
 	return std::move(result);
 }
@@ -573,6 +573,8 @@ TableFunction ReadCSVTableFunction::GetSingleFileFunction() {
 	read_csv.table_scan_progress = ReadSingleCSVFileProgress;
 	read_csv.cardinality = ReadSingleCSVFileCardinality;
 	read_csv.projection_pushdown = true;
+	read_csv.filter_pushdown = true;
+	read_csv.filter_prune = true;
 	ReadCSVAddNamedParameters(read_csv);
 	return read_csv;
 }

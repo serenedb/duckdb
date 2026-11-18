@@ -13,6 +13,7 @@
 #include "duckdb/common/vector_operations/vector_operations.hpp"
 #include "duckdb/main/database.hpp"
 #include "duckdb/parallel/callback_async_task.hpp"
+#include "duckdb/storage/table/column_segment.hpp"
 #include "utf8proc_wrapper.hpp"
 
 namespace duckdb {
@@ -149,8 +150,14 @@ static CsvScanSource FileSource(CSVFileScan &file) {
 	return source;
 }
 
-CsvScanGlobal::CsvScanGlobal(ClientContext &context_p, CSVFileScan &file)
-    : CsvScanGlobal(context_p, file.options, FileSource(file)) {
+static CsvScanSource FileSource(CSVFileScan &file, optional_ptr<TableFilterSet> filters) {
+	auto source = FileSource(file);
+	source.filters = filters;
+	return source;
+}
+
+CsvScanGlobal::CsvScanGlobal(ClientContext &context_p, CSVFileScan &file, optional_ptr<TableFilterSet> filters_p)
+    : CsvScanGlobal(context_p, file.options, FileSource(file, filters_p)) {
 }
 
 CsvScanGlobal::CsvScanGlobal(ClientContext &context_p, const CSVReaderOptions &options_p, CsvScanSource source_p)
@@ -175,6 +182,17 @@ CsvScanGlobal::CsvScanGlobal(ClientContext &context_p, const CSVReaderOptions &o
 		column.force_not_null = i < options.force_not_null.size() && options.force_not_null[i];
 		columns.push_back(std::move(column));
 	}
+	filtered.assign(columns.size(), false);
+	if (source.filters) {
+		for (auto &entry : *source.filters) {
+			const idx_t output_column = entry.GetIndex();
+			filters.push_back({output_column, entry.Filter()});
+			for (idx_t i = 0; i < columns.size(); i++) {
+				filtered[i] = filtered[i] || columns[i].output_column == output_column;
+			}
+		}
+	}
+	late_materialization = !filters.empty() && !options.store_rejects.GetValue();
 	date_format = options.dialect_options.date_format.at(LogicalTypeId::DATE).GetValue();
 	timestamp_format = options.dialect_options.date_format.at(LogicalTypeId::TIMESTAMP).GetValue();
 	decimal_separator = options.decimal_separator[0];
@@ -386,6 +404,11 @@ CsvScan::CsvScan(CsvScanGlobal &global_p)
 	value_errors.resize(STANDARD_VECTOR_SIZE);
 	failed.resize(STANDARD_VECTOR_SIZE);
 	dropped.resize(STANDARD_VECTOR_SIZE);
+	selected.resize(STANDARD_VECTOR_SIZE);
+	keep.Initialize(STANDARD_VECTOR_SIZE);
+	for (auto &filter : global.filters) {
+		filter_states.push_back(TableFilterState::Initialize(global.context, filter.filter.get()));
+	}
 	auto &allocator = Allocator::Get(global.context);
 	vector<LogicalType> parse_types(global.columns.size(), LogicalType::VARCHAR);
 	if (!parse_types.empty()) {
@@ -623,7 +646,7 @@ idx_t CsvScan::Lookup(std::span<const int64_t> offsets, std::span<idx_t> survivo
 	if (count > 0) {
 		Decode(count, output);
 		for (idx_t row = 0; row < count; row++) {
-			if (!failed[row] && !dropped[row]) {
+			if (!failed[row] && !dropped[row] && selected[row]) {
 				survivors[found++] = lookup_rows[row];
 			}
 		}
@@ -929,12 +952,15 @@ bool CsvScan::NeedsFlushCast(const CsvScanColumn &column) {
 	       (type.id() != LogicalTypeId::VARCHAR && column.parse_type.id() == LogicalTypeId::VARCHAR);
 }
 
-void CsvScan::FlushCasts(idx_t count, DataChunk &output) {
+void CsvScan::FlushCasts(idx_t count, DataChunk &output, bool late, bool filter_pass) {
 	const auto &names = source.names;
 	const String path(source.path);
 	for (idx_t i = 0; i < global.columns.size(); i++) {
 		auto &column = global.columns[i];
 		if (!NeedsFlushCast(column) || column.output_column >= output.ColumnCount()) {
+			continue;
+		}
+		if (late && global.filtered[i] != filter_pass) {
 			continue;
 		}
 		auto &parse = parse_chunk.data[i];
@@ -1037,65 +1063,118 @@ void CsvScan::RowErrors(idx_t row_idx, vector<CsvRowError> &row_value_errors, ve
 	}
 }
 
+Vector &CsvScan::Target(idx_t column, DataChunk &output) {
+	auto &scan_column = global.columns[column];
+	if (NeedsFlushCast(scan_column)) {
+		return parse_chunk.data[column];
+	}
+	if (scan_column.output_column < output.ColumnCount()) {
+		return output.data[scan_column.output_column];
+	}
+	return scratch_chunk.data[0];
+}
+
+void CsvScan::DecodeColumn(idx_t column_idx, idx_t count, DataChunk &output, bool selected_only) {
+	auto &column = global.columns[column_idx];
+	auto &vector = Target(column_idx, output);
+	if (vector.GetType().InternalType() == PhysicalType::VARCHAR) {
+		StringVector::AddAuxiliaryData(vector, make_uniq<CsvBytesHolder>(bytes));
+	}
+	const CsvField *fields = splitter->Column(column.file_column);
+	for (idx_t row = 0; row < count; row++) {
+		if (selected_only && !selected[row]) {
+			FlatVector::SetNull(vector, row, true);
+			continue;
+		}
+		auto &csv_row = splitter->Row(row);
+		if (csv_row.flags & CSV_ROW_EMPTY_LINE) {
+			if (!global.empty_is_null) {
+				dropped[row] = true;
+				FlatVector::SetNull(vector, row, true);
+			} else if (!options.force_not_null.empty() && options.force_not_null[0] &&
+			           vector.GetType().InternalType() == PhysicalType::VARCHAR) {
+				FlatVector::GetDataMutable<string_t>(vector)[row] = string_t();
+			} else {
+				FlatVector::SetNull(vector, row, true);
+			}
+			continue;
+		}
+		if (column.file_column >= csv_row.field_count) {
+			const bool padded_empty = options.null_padding && column.file_column < options.force_not_null.size() &&
+			                          options.force_not_null[column.file_column] &&
+			                          vector.GetType().InternalType() == PhysicalType::VARCHAR;
+			if (padded_empty) {
+				FlatVector::GetDataMutable<string_t>(vector)[row] = string_t();
+			} else {
+				FlatVector::SetNull(vector, row, true);
+			}
+			continue;
+		}
+		CsvRowError error;
+		if (!DecodeValue(column, fields[row], vector, row, error)) {
+			FlatVector::SetNull(vector, row, true);
+			value_errors[row].push_back(std::move(error));
+		}
+	}
+}
+
+void CsvScan::FillRowNumbers(idx_t count, DataChunk &output) {
+	if (source.file_row_number == DConstants::INVALID_INDEX || source.file_row_number >= output.ColumnCount()) {
+		return;
+	}
+	auto data = FlatVector::GetDataMutable<int64_t>(output.data[source.file_row_number]);
+	for (idx_t row = 0; row < count; row++) {
+		data[row] =
+		    lookup_offsets.empty() ? static_cast<int64_t>(splitter->Row(row).start) : lookup_offsets[lookup_rows[row]];
+	}
+}
+
+void CsvScan::Filter(idx_t count, DataChunk &output) {
+	idx_t approved = count;
+	filter_selection.Initialize(nullptr);
+	for (idx_t i = 0; i < global.filters.size() && approved > 0; i++) {
+		auto &vector = output.data[global.filters[i].output_column];
+		FlatVector::SetSize(vector, count_t(count));
+		ColumnSegment::FilterSelection(filter_selection, vector, *filter_states[i], count, approved);
+	}
+	for (idx_t row = 0; row < count; row++) {
+		selected[row] = false;
+	}
+	for (idx_t i = 0; i < approved; i++) {
+		selected[filter_selection.get_index(i)] = true;
+	}
+}
+
 void CsvScan::Decode(idx_t count, DataChunk &output) {
 	output.Reset();
 	parse_chunk.Reset();
 	scratch_chunk.Reset();
 	const idx_t num_cols = splitter->Columns();
+	const bool filters = !global.filters.empty();
+	const bool late = global.late_materialization;
 	for (idx_t row = 0; row < count; row++) {
 		failed[row] = false;
 		dropped[row] = false;
+		selected[row] = true;
 		value_errors[row].clear();
 	}
 	for (idx_t i = 0; i < global.columns.size(); i++) {
-		auto &column = global.columns[i];
-		Vector *target;
-		if (NeedsFlushCast(column)) {
-			target = &parse_chunk.data[i];
-		} else if (column.output_column < output.ColumnCount()) {
-			target = &output.data[column.output_column];
-		} else {
-			target = &scratch_chunk.data[0];
+		if (!late || global.filtered[i]) {
+			DecodeColumn(i, count, output, false);
 		}
-		auto &vector = *target;
-		if (vector.GetType().InternalType() == PhysicalType::VARCHAR) {
-			StringVector::AddAuxiliaryData(vector, make_uniq<CsvBytesHolder>(bytes));
-		}
-		const CsvField *fields = splitter->Column(column.file_column);
-		for (idx_t row = 0; row < count; row++) {
-			auto &csv_row = splitter->Row(row);
-			if (csv_row.flags & CSV_ROW_EMPTY_LINE) {
-				if (!global.empty_is_null) {
-					dropped[row] = true;
-				} else if (!options.force_not_null.empty() && options.force_not_null[0] &&
-				           vector.GetType().InternalType() == PhysicalType::VARCHAR) {
-					FlatVector::GetDataMutable<string_t>(vector)[row] = string_t();
-				} else {
-					FlatVector::SetNull(vector, row, true);
-				}
-				continue;
-			}
-			if (column.file_column >= csv_row.field_count) {
-				const bool padded_empty = options.null_padding && column.file_column < options.force_not_null.size() &&
-				                          options.force_not_null[column.file_column] &&
-				                          vector.GetType().InternalType() == PhysicalType::VARCHAR;
-				if (padded_empty) {
-					FlatVector::GetDataMutable<string_t>(vector)[row] = string_t();
-				} else {
-					FlatVector::SetNull(vector, row, true);
-				}
-				continue;
-			}
-			CsvRowError error;
-			if (!DecodeValue(column, fields[row], vector, row, error)) {
-				FlatVector::SetNull(vector, row, true);
-				value_errors[row].push_back(std::move(error));
+	}
+	if (late) {
+		FlushCasts(count, output, true, true);
+		FillRowNumbers(count, output);
+		Filter(count, output);
+		for (idx_t i = 0; i < global.columns.size(); i++) {
+			if (!global.filtered[i]) {
+				DecodeColumn(i, count, output, true);
 			}
 		}
 	}
 	event_cursor = 0;
 	extra_cursor = 0;
-	vector<CsvRowError> errors;
 	for (idx_t row = 0; row < count; row++) {
 		auto &csv_row = splitter->Row(row);
 		if (dropped[row] || (csv_row.flags & CSV_ROW_EMPTY_LINE)) {
@@ -1107,28 +1186,26 @@ void CsvScan::Decode(idx_t count, DataChunk &output) {
 		if (!may_fail) {
 			continue;
 		}
-		errors.clear();
-		RowErrors(row, value_errors[row], errors);
-		if (errors.empty()) {
+		row_errors.clear();
+		RowErrors(row, value_errors[row], row_errors);
+		if (row_errors.empty()) {
 			continue;
 		}
 		failed[row] = true;
 		if (!global.ignore_errors) {
-			ReportRow(row, errors);
+			ReportRow(row, row_errors);
 		}
 	}
-	FlushCasts(count, output);
-	if (source.file_row_number != DConstants::INVALID_INDEX && source.file_row_number < output.ColumnCount()) {
-		auto data = FlatVector::GetDataMutable<int64_t>(output.data[source.file_row_number]);
-		for (idx_t row = 0; row < count; row++) {
-			data[row] = lookup_offsets.empty() ? static_cast<int64_t>(splitter->Row(row).start)
-			                                   : lookup_offsets[lookup_rows[row]];
+	FlushCasts(count, output, late, false);
+	if (!late) {
+		FillRowNumbers(count, output);
+		if (filters) {
+			Filter(count, output);
 		}
 	}
-	SelectionVector keep(count);
 	idx_t kept = 0;
 	for (idx_t row = 0; row < count; row++) {
-		if (!failed[row] && !dropped[row]) {
+		if (!failed[row] && !dropped[row] && selected[row]) {
 			keep.set_index(kept++, row);
 		}
 	}
