@@ -354,6 +354,9 @@ void CSVSniffer::AnalyzeDialectCandidate(unique_ptr<CsvColumnCounter> scanner, C
 	    scanner->ever_quoted &&
 	    sniffed_column_counts.state_machine.dialect_options.state_machine_options.quote.GetValue() != '\0';
 
+	const bool quoted_tie = quoted && !successful_candidates.empty() && !successful_candidates.front()->ever_quoted &&
+	                        consistent_rows == stats.best_consistent_rows && num_cols == max_columns_found;
+
 	// For our columns to match, we either don't have them manually set, or they match in value with the sniffed value
 	const bool columns_match_set =
 	    num_cols == set_columns.Size() ||
@@ -369,7 +372,7 @@ void CSVSniffer::AnalyzeDialectCandidate(unique_ptr<CsvColumnCounter> scanner, C
 	// - There's more than one column and less padding is required.
 	if (columns_match_set && (rows_consistent || (set_columns.IsSet() && ignore_errors)) &&
 	    (single_column_before || ((more_values || more_columns) && !require_more_padding) ||
-	     (more_than_one_column && require_less_padding) || (quoted && comment_rows == 0)) &&
+	     (more_than_one_column && require_less_padding) || (quoted && comment_rows == 0) || quoted_tie) &&
 	    !invalid_padding && comments_are_acceptable) {
 		if (!successful_candidates.empty() && set_columns.IsSet() && max_columns_found == set_columns.Size() &&
 		    consistent_rows <= stats.best_consistent_rows) {

@@ -417,43 +417,6 @@ void CSVStateMachineCache::Insert(const CSVStateMachineOptions &state_machine_op
 	} else {
 		transition_array[delimiter_first_byte][static_cast<uint8_t>(CSVState::MAYBE_QUOTED)] = CSVState::DELIMITER;
 	}
-
-	// Initialize characters we can skip during processing, for Standard and Quoted states
-	for (idx_t i = 0; i < StateMachine::NUM_TRANSITIONS; i++) {
-		transition_array.skip_standard[i] = true;
-		transition_array.skip_quoted[i] = true;
-		transition_array.skip_comment[i] = true;
-	}
-	// For standard states we only care for delimiters \r and \n
-	transition_array.skip_standard[delimiter_first_byte] = false;
-	transition_array.skip_standard[static_cast<uint8_t>('\n')] = false;
-	transition_array.skip_standard[static_cast<uint8_t>('\r')] = false;
-	transition_array.skip_standard[comment] = false;
-	if (enable_unquoted_escape) {
-		transition_array.skip_standard[escape] = false;
-	}
-
-	// For quoted we only care about quote, escape and for delimiters \r and \n
-	transition_array.skip_quoted[quote] = false;
-	transition_array.skip_quoted[escape] = false;
-	transition_array.skip_quoted[static_cast<uint8_t>('\n')] = false;
-	transition_array.skip_quoted[static_cast<uint8_t>('\r')] = false;
-
-	transition_array.skip_comment[static_cast<uint8_t>('\r')] = false;
-	transition_array.skip_comment[static_cast<uint8_t>('\n')] = false;
-
-	auto &stop_patterns = transition_array.stop_patterns;
-	stop_patterns.push_back(SwarBlock::BytePattern::Byte(delimiter_first_byte));
-	if (quote != '\0') {
-		stop_patterns.push_back(SwarBlock::BytePattern::Byte(quote));
-	}
-	stop_patterns.push_back(SwarBlock::BytePattern::Either('\n', '\r'));
-	if (comment != '\0') {
-		stop_patterns.push_back(SwarBlock::BytePattern::Byte(comment));
-	}
-	if (escape != '\0' && escape != quote) {
-		stop_patterns.push_back(SwarBlock::BytePattern::Byte(escape));
-	}
 }
 
 CSVStateMachineCache::CSVStateMachineCache() {

@@ -9,7 +9,6 @@
 #pragma once
 
 #include "duckdb/common/map.hpp"
-#include "duckdb/execution/operator/csv_scanner/csv_byte_skipper.hpp"
 #include "duckdb/formats/csv_scan.hpp"
 
 namespace duckdb {
@@ -100,45 +99,22 @@ public:
 	bool used_unstrictness = false;
 
 private:
-	struct Position {
-		idx_t buffer_idx = 0;
-		idx_t buffer_pos = 0;
-		idx_t buffer_size = 0;
-
-		idx_t operator-(const Position &other) const {
-			if (other.buffer_idx == buffer_idx) {
-				return buffer_pos - other.buffer_pos;
-			}
-			return other.buffer_size - other.buffer_pos + buffer_pos;
-		}
-	};
-
-	void Process();
-	void FinalizeChunkProcess();
-	bool AddRow(idx_t buffer_pos);
-	bool UnsetComment(idx_t buffer_pos);
-	void SetComment();
-	string LineText(const Position &begin, const Position &end);
-	bool LineTooLong(const Position &end);
+	bool NextBuffer();
+	void AddRow(const RowCount &row);
+	string LineText(idx_t begin, idx_t end) const;
+	bool LineTooLong(idx_t begin, idx_t end);
 
 private:
 	CsvColumnCounts result;
-	CSVByteSkipper skipper;
+	RowLexer lexer;
+	RowCountCursor cursor;
+	vector<RowCount> rows;
 	shared_ptr<CSVBufferHandle> cur_buffer_handle;
-	const char *buffer_ptr = nullptr;
-	idx_t buffer_idx = 0;
-	idx_t buffer_pos = 0;
-	idx_t cur_buffer_idx = 0;
-	idx_t current_buffer_size = 0;
-	bool done = false;
-	bool initialized = false;
-	CSVState states[2] = {CSVState::NOT_SET, CSVState::NOT_SET};
 	map<idx_t, shared_ptr<CSVBufferHandle>> buffer_handles;
-	Position last_position;
-	idx_t current_column_count = 0;
-	idx_t empty_lines = 0;
-	bool comment = false;
-	bool cur_line_starts_as_comment = false;
+	idx_t buffer_idx = 0;
+	idx_t buffer_start = 0;
+	bool done = false;
+	bool finished = false;
 };
 
 } // namespace duckdb

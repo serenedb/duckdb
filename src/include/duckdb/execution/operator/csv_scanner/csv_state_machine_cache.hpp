@@ -12,7 +12,6 @@
 #include "duckdb/common/types/hash.hpp"
 #include "duckdb/execution/operator/csv_scanner/state_machine_options.hpp"
 #include "duckdb/execution/operator/csv_scanner/csv_state.hpp"
-#include "duckdb/common/swar.hpp"
 
 namespace duckdb {
 
@@ -22,15 +21,6 @@ public:
 	static constexpr uint32_t NUM_STATES = 19;
 	static constexpr uint32_t NUM_TRANSITIONS = 256;
 	CSVState state_machine[NUM_TRANSITIONS][NUM_STATES];
-	//! Transitions where we might skip processing
-	//! For the Standard State
-	bool skip_standard[256];
-	//! For the Quoted State
-	bool skip_quoted[256];
-	//! For the Comment State
-	bool skip_comment[256];
-	//! The byte patterns that cover every byte the skip tables stop at, for the byte skipper
-	vector<SwarBlock::BytePattern> stop_patterns;
 
 	const CSVState *operator[](const idx_t i) const {
 		return state_machine[i];
