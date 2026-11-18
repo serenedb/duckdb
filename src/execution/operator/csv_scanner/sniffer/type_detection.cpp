@@ -156,7 +156,7 @@ bool CSVSniffer::CanYouCastIt(ClientContext &context, const string_t value, cons
 	string strip_thousands;
 	if ((type.IsNumeric() || type.id() == LogicalTypeId::BIGNUM) && thousands_separator != '\0') {
 		// If we have a thousands separator we should try to use that
-		strip_thousands = BaseScanner::RemoveSeparator(value_ptr, value_size, thousands_separator);
+		strip_thousands = CsvStripSeparator(value_ptr, value_size, thousands_separator);
 		value_ptr = strip_thousands.c_str();
 		value_size = strip_thousands.size();
 	}
