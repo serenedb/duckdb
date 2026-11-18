@@ -15,6 +15,8 @@
 #include "duckdb/common/types/timestamp.hpp"
 #include "duckdb/common/operator/cast_operators.hpp"
 
+#include <absl/container/flat_hash_map.h>
+
 namespace duckdb {
 namespace variant {
 
@@ -26,13 +28,57 @@ static inline string_t GetString(yyjson_val *val) {
 	return string_t(unsafe_yyjson_get_str(val), NumericCast<uint32_t>(unsafe_yyjson_get_len(val)));
 }
 
+struct JSONObjectMembers {
+public:
+	struct Member {
+		string_t key;
+		yyjson_val *value;
+	};
+
+	static constexpr idx_t MAX_SCANNED_SIZE = 16;
+
+public:
+	void Push(yyjson_val *obj) {
+		yyjson_obj_iter iter;
+		yyjson_obj_iter_init(obj, &iter);
+		const auto begin = members.size();
+		const auto scanned = iter.max <= MAX_SCANNED_SIZE;
+		if (!scanned) {
+			positions.clear();
+			positions.reserve(iter.max);
+		}
+		while (auto key = yyjson_obj_iter_next(&iter)) {
+			const Member member {GetString(key), yyjson_obj_iter_get_val(key)};
+			auto position = begin;
+			if (scanned) {
+				while (position < members.size() && members[position].key != member.key) {
+					position++;
+				}
+			} else {
+				position = positions.try_emplace(member.key, members.size()).first->second;
+			}
+			if (position == members.size()) {
+				members.push_back(member);
+			} else {
+				members[position].value = member.value;
+			}
+		}
+	}
+
+public:
+	vector<Member> members;
+	absl::flat_hash_map<string_t, idx_t, StringHash, StringEquality> positions;
+};
+
 } // namespace
 
 template <bool WRITE_DATA, bool IGNORE_NULLS>
-static bool ConvertJSON(yyjson_val *val, ToVariantGlobalResultData &result, idx_t result_index, bool is_root);
+static bool ConvertJSON(yyjson_val *val, ToVariantGlobalResultData &result, idx_t result_index, bool is_root,
+                        JSONObjectMembers &object_members);
 
 template <bool WRITE_DATA, bool IGNORE_NULLS>
-static bool ConvertJSONArray(yyjson_val *arr, ToVariantGlobalResultData &result, idx_t result_index, bool is_root) {
+static bool ConvertJSONArray(yyjson_val *arr, ToVariantGlobalResultData &result, idx_t result_index, bool is_root,
+                             JSONObjectMembers &object_members) {
 	yyjson_arr_iter iter;
 	yyjson_arr_iter_init(arr, &iter);
 
@@ -63,7 +109,7 @@ static bool ConvertJSONArray(yyjson_val *arr, ToVariantGlobalResultData &result,
 			variant.keys_index_validity.SetInvalid(start_child_index);
 			variant.values_index_data[start_child_index++] = values_offset_data[result_index];
 		}
-		if (!ConvertJSON<WRITE_DATA, IGNORE_NULLS>(val, result, result_index, false)) {
+		if (!ConvertJSON<WRITE_DATA, IGNORE_NULLS>(val, result, result_index, false, object_members)) {
 			return false;
 		}
 	}
@@ -71,31 +117,12 @@ static bool ConvertJSONArray(yyjson_val *arr, ToVariantGlobalResultData &result,
 }
 
 template <bool WRITE_DATA, bool IGNORE_NULLS>
-static bool ConvertJSONObject(yyjson_val *obj, ToVariantGlobalResultData &result, idx_t result_index, bool is_root) {
-	yyjson_obj_iter iter;
-	yyjson_obj_iter_init(obj, &iter);
-
-	struct JSONObjectEntry {
-		yyjson_val *key;
-		yyjson_val *value;
-	};
-
-	// Maps object keys to their entry index.
-	string_map_t<idx_t> key_to_entry;
-	vector<JSONObjectEntry> entries;
-	key_to_entry.reserve(iter.max);
-	entries.reserve(iter.max);
-
-	while (auto key = yyjson_obj_iter_next(&iter)) {
-		auto key_string = GetString(key);
-		auto inserted_entry = key_to_entry.emplace(key_string, entries.size());
-		auto val = yyjson_obj_iter_get_val(key);
-		if (inserted_entry.second) {
-			entries.push_back({key, val});
-		} else {
-			entries[inserted_entry.first->second].value = val;
-		}
-	}
+static bool ConvertJSONObject(yyjson_val *obj, ToVariantGlobalResultData &result, idx_t result_index, bool is_root,
+                              JSONObjectMembers &object_members) {
+	auto &members = object_members.members;
+	const auto begin = members.size();
+	object_members.Push(obj);
+	const auto end = members.size();
 
 	auto keys_offset_data = OffsetData::GetKeys(result.offsets);
 	auto children_offset_data = OffsetData::GetChildren(result.offsets);
@@ -108,7 +135,7 @@ static bool ConvertJSONObject(yyjson_val *obj, ToVariantGlobalResultData &result
 	auto &variant = result.variant;
 	auto &children_list_entry = variant.children_data[result_index];
 	auto &keys_list_entry = variant.keys_data[result_index];
-	uint32_t count = NumericCast<uint32_t>(entries.size());
+	uint32_t count = NumericCast<uint32_t>(end - begin);
 	auto start_child_index = children_list_entry.offset + children_offset_data[result_index];
 	WriteContainerData<WRITE_DATA>(result.variant, result_index, blob_offset_data[result_index], count,
 	                               children_offset_data[result_index]);
@@ -119,11 +146,11 @@ static bool ConvertJSONObject(yyjson_val *obj, ToVariantGlobalResultData &result
 	keys_offset_data[result_index] += count;
 
 	//! Iterate over all the children in the Object
-	for (const auto &entry : entries) {
+	for (auto member_index = begin; member_index < end; member_index++) {
+		const auto member = members[member_index];
 		if (WRITE_DATA) {
-			auto key_string = GetString(entry.key);
 			auto keys_index = start_key_index++;
-			auto dictionary_index = result.GetOrCreateIndex(key_string);
+			auto dictionary_index = result.GetOrCreateIndex(member.key);
 
 			//! Set the keys_index
 			variant.keys_index_data[start_child_index] = keys_index;
@@ -132,11 +159,11 @@ static bool ConvertJSONObject(yyjson_val *obj, ToVariantGlobalResultData &result
 			result.keys_selvec.set_index(keys_list_entry.offset + keys_index, dictionary_index);
 		}
 
-		auto val = entry.value;
-		if (!ConvertJSON<WRITE_DATA, IGNORE_NULLS>(val, result, result_index, false)) {
+		if (!ConvertJSON<WRITE_DATA, IGNORE_NULLS>(member.value, result, result_index, false, object_members)) {
 			return false;
 		}
 	}
+	members.resize(begin);
 	return true;
 }
 
@@ -221,7 +248,8 @@ static bool ConvertJSONPrimitive(yyjson_val *val, ToVariantGlobalResultData &res
 }
 
 template <bool WRITE_DATA, bool IGNORE_NULLS>
-static bool ConvertJSON(yyjson_val *val, ToVariantGlobalResultData &result, idx_t result_index, bool is_root) {
+static bool ConvertJSON(yyjson_val *val, ToVariantGlobalResultData &result, idx_t result_index, bool is_root,
+                        JSONObjectMembers &object_members) {
 	auto values_offset_data = OffsetData::GetValues(result.offsets);
 	auto blob_offset_data = OffsetData::GetBlob(result.offsets);
 
@@ -235,9 +263,9 @@ static bool ConvertJSON(yyjson_val *val, ToVariantGlobalResultData &result, idx_
 
 	auto json_tag = unsafe_yyjson_get_tag(val);
 	if (json_tag == (YYJSON_TYPE_ARR | YYJSON_SUBTYPE_NONE)) {
-		return ConvertJSONArray<WRITE_DATA, IGNORE_NULLS>(val, result, result_index, is_root);
+		return ConvertJSONArray<WRITE_DATA, IGNORE_NULLS>(val, result, result_index, is_root, object_members);
 	} else if (json_tag == (YYJSON_TYPE_OBJ | YYJSON_SUBTYPE_NONE)) {
-		return ConvertJSONObject<WRITE_DATA, IGNORE_NULLS>(val, result, result_index, is_root);
+		return ConvertJSONObject<WRITE_DATA, IGNORE_NULLS>(val, result, result_index, is_root, object_members);
 	} else {
 		return ConvertJSONPrimitive<WRITE_DATA>(val, result, result_index, is_root);
 	}
@@ -257,6 +285,7 @@ bool ConvertJSONToVariant(ToVariantSourceData &source, ToVariantGlobalResultData
 
 	auto &variant = result.variant;
 	JSONAllocator json_allocator(result.allocator);
+	JSONObjectMembers object_members;
 	for (idx_t i = 0; i < count; i++) {
 		auto source_index = source[i];
 		auto result_index = selvec ? selvec->get_index(i) : i;
@@ -289,7 +318,7 @@ bool ConvertJSONToVariant(ToVariantSourceData &source, ToVariantGlobalResultData
 		}
 		auto *root = yyjson_doc_get_root(doc);
 
-		if (!ConvertJSON<WRITE_DATA, IGNORE_NULLS>(root, result, result_index, is_root)) {
+		if (!ConvertJSON<WRITE_DATA, IGNORE_NULLS>(root, result, result_index, is_root, object_members)) {
 			return false;
 		}
 		json_allocator.Reset();
