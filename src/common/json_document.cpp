@@ -697,6 +697,30 @@ static optional_idx JSONParseFailure(JSONParseError &error, const char *message,
 	return optional_idx();
 }
 
+static optional_idx RootContainerEnd(const char *data, idx_t len) {
+	idx_t pos = 0;
+	while (pos < len && (data[pos] == ' ' || data[pos] == '\t' || data[pos] == '\n' || data[pos] == '\r')) {
+		pos++;
+	}
+	if (pos == len || (data[pos] != '[' && data[pos] != '{')) {
+		return optional_idx();
+	}
+	idx_t depth = 0;
+	for (; pos < len; pos++) {
+		const char c = data[pos];
+		if (c == '"') {
+			for (pos++; pos < len && data[pos] != '"'; pos++) {
+				pos += data[pos] == '\\';
+			}
+		} else if (c == '[' || c == '{') {
+			depth++;
+		} else if ((c == ']' || c == '}') && --depth == 0) {
+			return pos + 1;
+		}
+	}
+	return optional_idx();
+}
+
 static optional_idx ParseInto(JSONTreeParserState &st, JSONReadFlags flags, const char *data, idx_t len, idx_t readable,
                               bool append, JSONParseError &error, optional_ptr<idx_t> consumed) {
 	if (len >= 3 && memcmp(data, "\xEF\xBB\xBF", 3) == 0) {
@@ -755,17 +779,46 @@ static optional_idx ParseInto(JSONTreeParserState &st, JSONReadFlags flags, cons
 			end = document.at_end() || document.current_location().get(location) ? data + len : location;
 		}
 		*consumed = NumericCast<idx_t>(end - data);
-	} else if (!code) {
+	}
+	if (!code && !consumed) {
 		const bool trailing =
 		    st.nodes[root].IsContainer() ? !document.at_end() : root_token.data() + root_token.size() < data + len;
 		if (trailing) {
 			code = simdjson::TRAILING_CONTENT;
 		}
 	}
+	if (code == simdjson::INCOMPLETE_ARRAY_OR_OBJECT && !consumed) {
+		const auto root_end = RootContainerEnd(data, len);
+		if (root_end.IsValid() && root_end.GetIndex() < len) {
+			st.nodes.resize(root);
+			const auto cleaned =
+			    static_cast<uint32_t>(JSONReadFlags::ALLOW_COMMENTS | JSONReadFlags::ALLOW_INVALID_UNICODE);
+			const auto prefix_flags = static_cast<JSONReadFlags>(static_cast<uint32_t>(flags) & ~cleaned);
+			auto prefix = ParseInto(st, prefix_flags, data, root_end.GetIndex(), readable, append, error, nullptr);
+			if (!prefix.IsValid()) {
+				return prefix;
+			}
+			st.nodes.resize(root);
+			idx_t next = root_end.GetIndex();
+			while (next < len &&
+			       (data[next] == ' ' || data[next] == '\t' || data[next] == '\n' || data[next] == '\r')) {
+				next++;
+			}
+			return JSONParseFailure(error, JSONErrorMessage(simdjson::TRAILING_CONTENT), next);
+		}
+	}
 	if (code) {
 		idx_t position = 0;
 		const char *location;
-		if (started && !document.current_location().get(location)) {
+		const bool scalar_root = !root_token.empty() && root_token[0] != '[' && root_token[0] != '{';
+		if (code == simdjson::TRAILING_CONTENT && scalar_root) {
+			const char *after_root = root_token.data() + root_token.size();
+			while (after_root < data + len &&
+			       (*after_root == ' ' || *after_root == '\t' || *after_root == '\n' || *after_root == '\r')) {
+				after_root++;
+			}
+			position = NumericCast<idx_t>(after_root - data);
+		} else if (started && !document.current_location().get(location)) {
 			position = NumericCast<idx_t>(location - data);
 		}
 		code = DiagnoseJSONRoot(data, len, flags, code, position);
