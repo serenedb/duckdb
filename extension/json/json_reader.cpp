@@ -410,7 +410,7 @@ void JSONReader::AddParseError(JSONReaderScanState &scan_state, idx_t line_or_ob
 	auto error_msg = StringUtil::Format("Malformed JSON in file \"%s\", at byte %llu in %s {line}: %s. %s",
 	                                    GetFileName(), err.position + 1, unit, err.message, extra);
 	lock_guard<mutex> guard(lock);
-	AddError(scan_state.current_buffer_handle->buffer_index, line_or_object_in_buf + 1, error_msg);
+	AddError(scan_state.current_buffer_handle->buffer_index, line_or_object_in_buf, error_msg);
 	ThrowErrorsIfPossible();
 	// if we could not throw immediately - finish processing this buffer
 	scan_state.buffer_offset = 0;
