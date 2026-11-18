@@ -54,9 +54,6 @@ CsvGrammar CsvGrammar::For(const CSVStateMachine &state_machine) {
 	grammar.new_line = dialect.new_line.GetValue();
 	grammar.strict_mode = dialect.strict_mode.GetValue();
 	grammar.carry_on_newline = grammar.new_line == NewLineIdentifier::CARRY_ON;
-	auto &machine = state_machine.state_machine_options;
-	grammar.only_crlf = machine.strict_mode.GetValue() && machine.strict_mode.IsSetByUser() &&
-	                    machine.new_line.GetValue() == NewLineIdentifier::CARRY_ON && machine.new_line.IsSetByUser();
 	grammar.empty_space = grammar.delimiter[0] != ' ';
 	grammar.trim_quoted_spaces =
 	    grammar.empty_space && grammar.quote != ' ' && grammar.escape != ' ' && grammar.comment != ' ';

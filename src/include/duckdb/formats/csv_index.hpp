@@ -29,7 +29,6 @@ struct CsvGrammar {
 	NewLineIdentifier new_line = NewLineIdentifier::NOT_SET;
 	bool strict_mode = false;
 	bool carry_on_newline = false;
-	bool only_crlf = false;
 	bool trim_quoted_spaces = false;
 	bool empty_space = false;
 	bool quoted_escape = false;

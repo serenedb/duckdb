@@ -85,7 +85,7 @@ public:
 				} else if (states[0] != CSVState::CARRIAGE_RETURN) {
 					if (comment) {
 						UnsetComment(pos);
-					} else if (!grammar.only_crlf) {
+					} else {
 						AddRow(pos);
 					}
 				}
@@ -464,9 +464,7 @@ void ReferenceTransfer(const CsvGrammar &grammar, const char *bytes, idx_t base,
 			}
 			const bool empty = previous == CSVState::RECORD_SEPARATOR || previous == CSVState::NOT_SET;
 			const bool comment = previous == CSVState::COMMENT;
-			const bool silent = previous == CSVState::CARRIAGE_RETURN ||
-			                    (!empty && !comment && next == CSVState::CARRIAGE_RETURN && grammar.only_crlf);
-			if (!silent) {
+			if (previous != CSVState::CARRIAGE_RETURN) {
 				if (!empty) {
 					run.start.line_end = pos;
 				}
@@ -546,7 +544,7 @@ public:
 				if (states[0] == CSVState::RECORD_SEPARATOR || states[0] == CSVState::NOT_SET) {
 					done = AddRow();
 				} else if (states[0] != CSVState::CARRIAGE_RETURN) {
-					done = EndLine(!grammar.only_crlf);
+					done = EndLine(true);
 				}
 				lines++;
 				break;
@@ -991,7 +989,7 @@ ReferenceCounts CountReference(const CsvGrammar &grammar, const string &input) {
 					add_row(pos, starts_as_comment ? ROW_COUNT_COMMENT : ROW_COUNT_MID_COMMENT);
 					comment = false;
 					starts_as_comment = false;
-				} else if (states[1] == CSVState::RECORD_SEPARATOR || !grammar.only_crlf) {
+				} else {
 					add_row(pos, 0);
 				}
 			}

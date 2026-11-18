@@ -39,7 +39,6 @@ struct RowDialect {
 	bool strict = false;
 	bool reopen = false;
 	bool quoted_spaces = false;
-	bool only_crlf = false;
 	NewLineIdentifier new_line = NewLineIdentifier::NOT_SET;
 	bool supported = true;
 	const StateMachine *transitions = nullptr;
