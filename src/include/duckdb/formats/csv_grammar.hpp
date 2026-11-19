@@ -78,8 +78,6 @@ struct CsvRangeEntry {
 
 using CsvRangeTransfer = array<CsvRangeEntry, static_cast<idx_t>(CSVState::MAYBE_QUOTED) + 1>;
 
-idx_t CsvSync(const CsvGrammar &grammar, const char *bytes, idx_t base, idx_t begin, idx_t end, bool eof);
-
 string CsvStripSeparator(const char *value, idx_t size, char separator);
 
 } // namespace duckdb
