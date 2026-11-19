@@ -144,9 +144,7 @@ public:
 	CsvScanGlobal(ClientContext &context, const CSVReaderOptions &options, CsvScanSource source);
 	CsvScanGlobal(ClientContext &context, CSVFileScan &file, optional_ptr<TableFilterSet> filters);
 
-	idx_t MaxThreads() const {
-		return options.parallel ? MaxValue<idx_t>(ranges->range_count, 1) : 1;
-	}
+	idx_t MaxThreads() const;
 	bool Claim(idx_t &range) {
 		return ranges->Claim(range);
 	}

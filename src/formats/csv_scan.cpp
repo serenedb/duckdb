@@ -680,6 +680,8 @@ CsvScanGlobal::CsvScanGlobal(ClientContext &context_p, const CSVReaderOptions &o
 		const idx_t threads = MaxValue<idx_t>(TaskScheduler::QueryThreads(context), 1);
 		const idx_t wanted = MinValue(MaxValue(data_size / (threads * 4), RANGE_MIN), RANGE_MAX);
 		range_bytes = MaxValue<idx_t>(MinValue<idx_t>(options.buffer_size_option.GetValue(), wanted), 1);
+	} else if (stream && !source.sniffing && options.parallel) {
+		range_bytes = MaxValue<idx_t>(MinValue<idx_t>(options.buffer_size_option.GetValue(), RANGE_MAX), 1);
 	}
 	row_source = make_uniq<CsvRowSource>(manager, size, source.bytes_read);
 	ranges = make_uniq<RowRanges>(*lean, *row_source, start, size, range_bytes, skip_rows == 0);
@@ -760,6 +762,16 @@ void CsvScanGlobal::FindStart(idx_t size, shared_ptr<CSVBufferHandle> &whole_fil
 	}
 	start = MinValue(skip.Start() == DConstants::INVALID_INDEX ? offset : skip.Start(), size);
 	start_lines = skip.Lines();
+}
+
+idx_t CsvScanGlobal::MaxThreads() const {
+	if (!options.parallel) {
+		return 1;
+	}
+	if (ranges->Dynamic()) {
+		return MaxValue<idx_t>(TaskScheduler::QueryThreads(context), 1);
+	}
+	return MaxValue<idx_t>(ranges->RangeCount(), 1);
 }
 
 vector<unique_ptr<AsyncTask>> CsvScanGlobal::LoadTasks(idx_t range) const {
@@ -1705,16 +1717,19 @@ bool CsvScan::Scan(DataChunk &output, idx_t max_rows) {
 		return true;
 	}
 	auto &ranges = *global.ranges;
-	if (global.stream) {
-		const idx_t counted = global.row_source->released * source.buffer_manager->GetBufferSize();
-		*source.bytes_read += ranges.size > counted ? ranges.size - counted : 0;
-	} else {
+	if (!global.stream) {
 		*source.bytes_read += ranges.RangeEnd(range) - ranges.RangeBegin(range);
 	}
 	const idx_t range_lines = reader.RangeLines();
 	const idx_t lines =
 	    range_lines == DConstants::INVALID_INDEX ? 0 : range_lines + (range == 0 ? global.start_lines : 0);
-	return global.FinishRange(range, lines);
+	const bool finished = global.FinishRange(range, lines);
+	if (global.stream && finished) {
+		const idx_t counted = global.row_source->released * source.buffer_manager->GetBufferSize();
+		const idx_t size = ranges.Size();
+		*source.bytes_read += size > counted ? size - counted : 0;
+	}
+	return finished;
 }
 
 } // namespace duckdb
