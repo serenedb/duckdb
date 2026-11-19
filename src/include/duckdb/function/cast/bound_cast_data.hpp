@@ -17,13 +17,16 @@ struct ListBoundCastData : public BoundCastData {
 	}
 
 	BoundCastInfo child_cast_info;
+	vector<bool> own_text;
 	static unique_ptr<BoundCastData> BindListToListCast(BindCastInput &input, const LogicalType &source,
 	                                                    const LogicalType &target);
 	static unique_ptr<FunctionLocalState> InitListLocalState(CastLocalStateParameters &parameters);
 
 public:
 	unique_ptr<BoundCastData> Copy() const override {
-		return make_uniq<ListBoundCastData>(child_cast_info.Copy());
+		auto copy = make_uniq<ListBoundCastData>(child_cast_info.Copy());
+		copy->own_text = own_text;
+		return std::move(copy);
 	}
 };
 
@@ -69,6 +72,7 @@ struct StructBoundCastData : public BoundCastData {
 	vector<idx_t> source_indexes;
 	vector<idx_t> target_indexes;
 	vector<idx_t> target_null_indexes;
+	vector<bool> own_text;
 
 	static unique_ptr<BoundCastData> BindStructToStructCast(BindCastInput &input, const LogicalType &source,
 	                                                        const LogicalType &target);
@@ -82,8 +86,10 @@ public:
 		for (auto &info : child_cast_info) {
 			copy_info.push_back(info.Copy());
 		}
-		return make_uniq<StructBoundCastData>(std::move(copy_info), target, source_indexes, target_indexes,
-		                                      target_null_indexes);
+		auto copy = make_uniq<StructBoundCastData>(std::move(copy_info), target, source_indexes, target_indexes,
+		                                           target_null_indexes);
+		copy->own_text = own_text;
+		return std::move(copy);
 	}
 };
 
