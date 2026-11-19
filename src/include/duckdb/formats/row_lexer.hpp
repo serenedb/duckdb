@@ -35,6 +35,7 @@ struct RowDialect {
 	bool carriage_terms = false;
 	bool strip_carriage = false;
 	bool merge_terms = false;
+	bool empty_lines = false;
 	bool carry_on = false;
 	bool strict = false;
 	bool reopen = false;
