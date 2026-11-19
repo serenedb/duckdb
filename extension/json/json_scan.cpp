@@ -70,6 +70,7 @@ void JSONScan::TableFunctionDefaults(TableFunction &table_function) {
 		options.Add("maximum_object_size", LogicalType::UINTEGER)
 		    .Add("ignore_errors", LogicalType::BOOLEAN)
 		    .Add("strict", LogicalType::BOOLEAN)
+		    .Add("rendering", LogicalType::VARCHAR)
 		    .Add("format", LogicalType::VARCHAR)
 		    .Add("compression", LogicalType::VARCHAR);
 	});
@@ -119,6 +120,10 @@ bool JSONScan::ParseOption(ClientContext &context, const Identifier &key, const 
 	}
 	if (key == "strict") {
 		options.strict = BooleanValue::Get(value);
+		return true;
+	}
+	if (key == "rendering") {
+		options.rendering = ValueRenderingFromString(StringValue::Get(value), "rendering");
 		return true;
 	}
 	if (key == "maximum_object_size") {
@@ -363,6 +368,7 @@ void JSONScan::FinalizeBind(JSONScanData &json_data, vector<Identifier> &names) 
 	transform_options.error_unknown_key = options.auto_detect && !options.ignore_errors;
 	transform_options.date_format_map = json_data.date_format_map.get();
 	transform_options.delay_error = true;
+	transform_options.rendering = options.rendering;
 
 	if (!options.auto_detect) {
 		return;

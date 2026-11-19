@@ -758,7 +758,9 @@ void JsonScanGlobal::PlanDirect() {
 	const idx_t column_count = columns.names.size();
 	kinds.resize(column_count);
 	for (idx_t i = 0; i < column_count; i++) {
-		kinds[i] = DirectKind(columns.types[i], columns.column_indices[i]);
+		const auto &type = columns.types[i];
+		const bool rendered = options.rendering != ValueRendering::NATIVE && type.id() != LogicalTypeId::VARCHAR;
+		kinds[i] = rendered ? JsonDirectKind::TREE : DirectKind(type, columns.column_indices[i]);
 	}
 	filtered.assign(column_count, false);
 	for (auto &filter : columns.filters) {

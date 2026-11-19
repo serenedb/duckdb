@@ -10,6 +10,7 @@
 
 #include "duckdb/common/column_index.hpp"
 #include "duckdb/common/optional_ptr.hpp"
+#include "duckdb/formats/value_codecs.hpp"
 #include "duckdb/function/cast/default_casts.hpp"
 #include "duckdb/function/scalar/strftime_format.hpp"
 #include "duckdb/storage/arena_allocator.hpp"
@@ -39,6 +40,7 @@ public:
 
 	//! Whether to delay the error when transforming (e.g., when non-strict casting or reading from file)
 	bool delay_error = false;
+	ValueRendering rendering = ValueRendering::NATIVE;
 	//! Date format used for parsing (can be NULL)
 	optional_ptr<const DateFormatMap> date_format_map = nullptr;
 	//! String to store errors in
