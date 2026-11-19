@@ -1088,7 +1088,14 @@ void ClientContext::Block(const absl::Condition &ready) {
 }
 
 bool ClientContext::IsInterrupted() const {
-	return interrupt_state.load(std::memory_order_relaxed) == ClientInterruptState::INTERRUPTED;
+	switch (interrupt_state.load(std::memory_order_relaxed)) {
+	case ClientInterruptState::INTERRUPTED:
+		return true;
+	case ClientInterruptState::NOT_INTERRUPTED:
+		return caller && caller->IsInterrupted();
+	default:
+		return false;
+	}
 }
 
 void ClientContext::ClearInterrupt() {

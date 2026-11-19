@@ -106,6 +106,7 @@ public:
 	atomic<ClientInterruptState> interrupt_state {ClientInterruptState::NOT_INTERRUPTED};
 	//! The deadline for the current query (TimePoint ticks)
 	optional_idx query_deadline;
+	optional_ptr<const ClientContext> caller;
 	//! Set of optional states (e.g. Caches) that can be held by the ClientContext
 	unique_ptr<RegisteredStateManager> registered_state;
 	//! The logger to be used by this ClientContext
