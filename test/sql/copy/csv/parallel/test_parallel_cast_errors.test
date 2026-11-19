@@ -1,0 +1,55 @@
+# name: test/sql/copy/csv/parallel/test_parallel_cast_errors.test
+# description: values that do not convert are reported from the parallel ranges with the lines, positions and texts of their rows, and dropped with ignore_errors
+# group: [parallel]
+
+statement ok
+PRAGMA threads=4
+
+statement ok
+COPY (SELECT i AS id, CASE WHEN i % 1000 = 7 THEN 'x' || i ELSE i::VARCHAR END AS v, 'text' || i AS t FROM range(300000) t(i)) TO '{TEMP_DIR}/cast_errors.csv' (FORMAT csv, HEADER true);
+
+statement ok
+CREATE MACRO cast_columns() AS {'id': 'BIGINT', 'v': 'INTEGER', 't': 'VARCHAR'};
+
+query II
+SELECT count(*), sum(id) FROM read_csv('{TEMP_DIR}/cast_errors.csv', columns = cast_columns(), header = true, auto_detect = false, ignore_errors = true);
+----
+300000	44999850000
+
+query III
+SELECT count(*), sum(id), count(v) FROM read_csv('{TEMP_DIR}/cast_errors.csv', columns = cast_columns(), header = true, auto_detect = false, ignore_errors = true);
+----
+299700	44954997900	299700
+
+query III
+SELECT count(*), sum(id), count(v) FROM read_csv('{TEMP_DIR}/cast_errors.csv', columns = cast_columns(), header = true, auto_detect = false, ignore_errors = true) WHERE t LIKE 'text1%';
+----
+111000	15136362819	111000
+
+statement ok
+FROM read_csv('{TEMP_DIR}/cast_errors.csv', columns = cast_columns(), header = true, auto_detect = false, store_rejects = true);
+
+query IIII
+SELECT count(*), count(*) FILTER (WHERE line = CAST(split_part(csv_line, ',', 1) AS BIGINT) + 2), count(*) FILTER (WHERE column_name = 'v' AND error_type = 'CAST'), count(*) FILTER (WHERE csv_line = split_part(csv_line, ',', 1) || ',x' || split_part(csv_line, ',', 1) || ',text' || split_part(csv_line, ',', 1)) FROM reject_errors;
+----
+300	300	300	300
+
+query III
+SELECT line, column_idx, error_message FROM reject_errors ORDER BY line LIMIT 2;
+----
+9	2	Error when converting column "v". Could not convert string "x7" to 'INTEGER'
+1009	2	Error when converting column "v". Could not convert string "x1007" to 'INTEGER'
+
+statement ok
+DROP TABLE reject_errors;
+
+statement ok
+DROP TABLE reject_scans;
+
+statement ok
+PRAGMA threads=1
+
+statement error
+FROM read_csv('{TEMP_DIR}/cast_errors.csv', columns = cast_columns(), header = true, auto_detect = false);
+----
+CSV Error on Line: 9
