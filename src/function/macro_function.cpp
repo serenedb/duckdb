@@ -347,22 +347,22 @@ LogicalType MacroFunction::ResultType() const {
 	return return_types.size() == 1 ? return_types[0] : LogicalType::INVALID;
 }
 
-LogicalType MacroFunction::WithoutTypmod(const LogicalType &type) {
+LogicalType MacroFunction::WithoutTypmod(const LogicalType &type, optional_ptr<ClientContext> context) {
 	if (type.HasAlias()) {
 		return type;
 	}
 	if (type.id() == LogicalTypeId::DECIMAL) {
-		return DefaultTypeGenerator::TryDefaultBind("decimal", {});
+		return DefaultTypeGenerator::TryDefaultBind("decimal", {}, context);
 	}
 	if (type.id() == LogicalTypeId::TIMESTAMP_SEC || type.id() == LogicalTypeId::TIMESTAMP_MS ||
 	    type.id() == LogicalTypeId::TIMESTAMP_NS) {
 		return LogicalType::TIMESTAMP;
 	}
 	if (type.id() == LogicalTypeId::LIST) {
-		return LogicalType::LIST(WithoutTypmod(ListType::GetChildType(type)));
+		return LogicalType::LIST(WithoutTypmod(ListType::GetChildType(type), context));
 	}
 	if (type.id() == LogicalTypeId::ARRAY) {
-		return LogicalType::ARRAY(WithoutTypmod(ArrayType::GetChildType(type)), ArrayType::GetSize(type));
+		return LogicalType::ARRAY(WithoutTypmod(ArrayType::GetChildType(type), context), ArrayType::GetSize(type));
 	}
 	return type;
 }

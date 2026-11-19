@@ -685,7 +685,7 @@ SchemaCatalogEntry &Binder::BindCreateFunctionInfo(CreateInfo &info) {
 		};
 		for (auto &return_type : function->return_types) {
 			BindLogicalType(return_type);
-			return_type = MacroFunction::WithoutTypmod(return_type);
+			return_type = MacroFunction::WithoutTypmod(return_type, context);
 		}
 		if (info.type == CatalogType::MACRO_ENTRY) {
 			BoundSelectNode sel_node;
