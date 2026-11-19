@@ -1,0 +1,49 @@
+# name: test/sql/copy/csv/parallel/test_parallel_single_column.test
+# description: a file with one column is read in parallel ranges, where an empty line is a row with a NULL when '' is a null string and is dropped otherwise, for each kind of line break
+# group: [parallel]
+
+statement ok
+PRAGMA threads=4
+
+foreach name,new_line lf,\n crlf,\r\n cr,\r
+
+statement ok
+COPY (SELECT CASE WHEN i % 3 = 0 THEN '' ELSE 'v' || i END AS line FROM range(400000) t(i) ORDER BY i) TO '{TEMP_DIR}/single_${name}.csv' (FORMAT csv, HEADER false, QUOTE '', ESCAPE '', NEW_LINE '${new_line}');
+
+query IIII
+SELECT count(*), count(c), count(*) FILTER (WHERE c IS NULL), min(c) FROM read_csv('{TEMP_DIR}/single_${name}.csv', columns = {'c': 'VARCHAR'}, header = false, auto_detect = false, new_line = '${new_line}');
+----
+400000	266666	133334	v1
+
+query II
+SELECT count(*), count(c) FROM read_csv('{TEMP_DIR}/single_${name}.csv', columns = {'c': 'VARCHAR'}, header = false, auto_detect = false, new_line = '${new_line}', nullstr = 'NA');
+----
+266666	266666
+
+query II
+SELECT count(*), count(column0) FROM read_csv('{TEMP_DIR}/single_${name}.csv', header = false);
+----
+399999	266666
+
+query I
+SELECT count(*) FROM read_csv('{TEMP_DIR}/single_${name}.csv', columns = {'c': 'VARCHAR'}, header = false, auto_detect = false, new_line = '${new_line}', force_not_null = ['c']) WHERE c = '';
+----
+133334
+
+query II
+SELECT count(*), sum(length(c)) FROM read_csv('{TEMP_DIR}/single_${name}.csv', columns = {'c': 'VARCHAR'}, header = false, auto_detect = false, new_line = '${new_line}', parallel = false);
+----
+400000	1792592
+
+endloop
+
+statement ok
+COPY (SELECT line FROM (VALUES ('a'), (''), (''), ('b')) t(line)) TO '{TEMP_DIR}/single_blank_runs.csv' (FORMAT csv, HEADER false, QUOTE '', ESCAPE '');
+
+query I
+SELECT c FROM read_csv('{TEMP_DIR}/single_blank_runs.csv', columns = {'c': 'VARCHAR'}, header = false, auto_detect = false);
+----
+a
+NULL
+NULL
+b
