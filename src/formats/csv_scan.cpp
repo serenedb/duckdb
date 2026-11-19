@@ -167,7 +167,7 @@ bool LeanValues(const LeanSource &source, idx_t count, bool force_not_null, Vect
 
 bool IsStringColumnRef(const Expression &expr) {
 	return ExpressionFilter::IsSimpleFilterColumnRef(expr) && expr.GetReturnType().id() == LogicalTypeId::VARCHAR &&
-	       !expr.GetReturnType().IsJSONType();
+	       !expr.GetReturnType().HasAlias();
 }
 
 const string *StringConstant(const Expression &expr) {
