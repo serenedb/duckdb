@@ -125,12 +125,36 @@ struct VariantBuilder {
 		return NumericCast<uint32_t>(key_slots.size() - row_keys);
 	}
 
-	//! Emit a VARIANT_NULL value
-	void EmitNull() {
-		type_ids.push_back(static_cast<uint8_t>(VariantLogicalType::VARIANT_NULL));
+	//! Start a primitive value of 'type_id'; its payload, if any, is appended to 'blob' next
+	void BeginPrimitive(VariantLogicalType type_id) {
+		type_ids.push_back(static_cast<uint8_t>(type_id));
 		//! 'blob' may already exceed uint32_t mid-row; this offset is only read once the row is known to fit
 		//! (checked in BuildVariant once the row is fully emitted), so a narrowing wrap here is harmless.
 		byte_offsets.push_back(static_cast<uint32_t>(blob.size()));
+	}
+
+	//! Emit a VARIANT_NULL value
+	void EmitNull() {
+		BeginPrimitive(VariantLogicalType::VARIANT_NULL);
+	}
+
+	//! Emit a boolean value
+	void EmitBool(bool value) {
+		BeginPrimitive(value ? VariantLogicalType::BOOL_TRUE : VariantLogicalType::BOOL_FALSE);
+	}
+
+	//! Emit a fixed-width value of 'type_id', stored as 'T'
+	template <class T>
+	void EmitFixed(VariantLogicalType type_id, T value) {
+		BeginPrimitive(type_id);
+		VariantBuilderAppendFixed(blob, value);
+	}
+
+	//! Emit a string-like value of 'type_id' (VARCHAR, BLOB, BIGNUM, BITSTRING or GEOMETRY)
+	void EmitString(VariantLogicalType type_id, string_t value) {
+		BeginPrimitive(type_id);
+		VariantBuilderAppendVarint(blob, NumericCast<uint32_t>(value.GetSize()));
+		VariantBuilderAppendBytes(blob, const_data_ptr_cast(value.GetData()), value.GetSize());
 	}
 
 	//! Emit an OBJECT value with 'n' children (assumed to be in lexicographic key order). 'key_fn(i)'
@@ -349,11 +373,7 @@ struct VariantBuilder {
 	//! 'it.GetDecimalProperties()' followed by 'it.GetData<T>()' at the physical type implied by the width.
 	template <class NODE>
 	void EmitPrimitiveNode(const NODE &it, VariantLogicalType type_id) {
-		//! 'blob' may already exceed uint32_t mid-row; this offset is only read once the row is known to fit
-		//! (checked in BuildVariant once the row is fully emitted), so a narrowing wrap here is harmless.
-		auto byte_offset = static_cast<uint32_t>(blob.size());
-		type_ids.push_back(static_cast<uint8_t>(type_id));
-		byte_offsets.push_back(byte_offset);
+		BeginPrimitive(type_id);
 		switch (type_id) {
 		case VariantLogicalType::VARIANT_NULL:
 		case VariantLogicalType::BOOL_TRUE:
