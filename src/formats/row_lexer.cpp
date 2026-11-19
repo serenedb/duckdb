@@ -262,8 +262,7 @@ void RowFields::Drop(idx_t count, idx_t dropped_ends) {
 RowLexer::RowLexer(const RowDialect &dialect_p, idx_t columns_p, idx_t max_line_size_p, bool error_mode,
                    bool pad_rows_p)
     : dialect(dialect_p), columns(columns_p), max_line_size(max_line_size_p), pad_rows(pad_rows_p) {
-	const idx_t min_columns = dialect.merge_terms ? 2 : 1;
-	eligible = dialect.supported && columns >= min_columns && max_line_size >= CSV_BLOCK_BYTES;
+	eligible = dialect.supported && columns >= 1 && max_line_size >= CSV_BLOCK_BYTES;
 	settle_strict = error_mode && dialect.strict;
 	settle_length = error_mode;
 	if (eligible) {
@@ -518,8 +517,13 @@ bool RowLexer::FeedBlocks(RowCursor &cursor, const char *data, idx_t base, idx_t
 		    c.pos + size - c.origin > max_line_size) {
 			c.settled = true;
 		}
-		const uint64_t row_ends = (d.merge_terms ? terms & ~((terms << 1) | c.after_term) : terms) & ~comment_ends;
-		const uint64_t line_ends = row_ends | comment_ends;
+		const uint64_t after_terms = (terms << 1) | c.after_term;
+		uint64_t merged = 0;
+		if (d.merge_terms) {
+			merged = !d.empty_lines ? after_terms : d.carry_on ? (carriage << 1) | c.after_cr : 0;
+		}
+		const uint64_t row_ends = terms & ~merged & ~comment_ends;
+		const uint64_t line_ends = (d.empty_lines ? row_ends & ~after_terms : row_ends) | comment_ends;
 		const uint64_t boundaries = delims | row_ends;
 		idx_t pad_count = 0;
 		idx_t pad_total = 0;
@@ -575,7 +579,6 @@ bool RowLexer::FeedBlocks(RowCursor &cursor, const char *data, idx_t base, idx_t
 				return fail();
 			}
 			c.last_row_end = c.pos + 63 - std::countl_zero(line_ends);
-			c.rows += std::popcount(row_ends);
 		} else if (c.last_row_end == DConstants::INVALID_INDEX) {
 			if (c.pos + size - c.origin > first_limit) {
 				return fail();
@@ -583,6 +586,7 @@ bool RowLexer::FeedBlocks(RowCursor &cursor, const char *data, idx_t base, idx_t
 		} else if (c.pos + size - c.last_row_end > max_line_size) {
 			return fail();
 		}
+		c.rows += std::popcount(row_ends);
 		if (terms) {
 			c.last_term = c.pos + 63 - std::countl_zero(terms);
 			if (c.first_term == DConstants::INVALID_INDEX) {
@@ -596,7 +600,7 @@ bool RowLexer::FeedBlocks(RowCursor &cursor, const char *data, idx_t base, idx_t
 		if (EXTRACT) {
 			const uint32_t offset = static_cast<uint32_t>(c.pos - c.origin);
 			const uint64_t follows = (terms << 1) | c.after_term;
-			const uint64_t row_starts = (d.merge_terms ? follows & ~terms : follows) & ~region & valid;
+			const uint64_t row_starts = follows & ~(terms & merged) & ~region & valid;
 			rows_out = WritePositions(row_starts, offset, rows_out);
 			uint32_t *block_ends = ends_out;
 			if (d.strip_carriage) {

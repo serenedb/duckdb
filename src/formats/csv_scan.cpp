@@ -653,7 +653,9 @@ CsvScanGlobal::CsvScanGlobal(ClientContext &context_p, const CSVReaderOptions &o
 	if (source.sniffing || !manager.HasKnownBufferRanges()) {
 		return;
 	}
-	lean = make_uniq<RowLexer>(RowDialect::DuckDB(grammar), source.state_machine->dialect_options.num_cols,
+	auto dialect = RowDialect::DuckDB(grammar);
+	dialect.empty_lines = source.state_machine->dialect_options.num_cols == 1 && empty_is_null;
+	lean = make_uniq<RowLexer>(dialect, source.state_machine->dialect_options.num_cols,
 	                           options.maximum_line_size.GetValue(), !ignore_errors, options.null_padding);
 	count_only = (columns.empty() || source.placeholder) && filters.empty() &&
 	             source.file_row_number == DConstants::INVALID_INDEX;

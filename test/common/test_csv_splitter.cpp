@@ -839,11 +839,17 @@ string DescribeStart(const CsvRangeStart &start) {
 	       " last=" + to_string(int64_t(start.last_position));
 }
 
+RowDialect LeanDialect(const CsvGrammar &grammar, idx_t columns) {
+	auto dialect = RowDialect::DuckDB(grammar);
+	dialect.empty_lines = columns == 1;
+	return dialect;
+}
+
 string RunLean(const CsvGrammar &grammar, const FuzzDialect &dialect, const string &input, idx_t piece_blocks,
                idx_t max_line_size, bool pad_rows, SplitResult &exact, bool &accepted, bool &padded) {
 	accepted = false;
 	padded = false;
-	RowLexer lean(RowDialect::DuckDB(grammar), dialect.columns, max_line_size, true, pad_rows);
+	RowLexer lean(LeanDialect(grammar, dialect.columns), dialect.columns, max_line_size, true, pad_rows);
 	if (!lean.Eligible()) {
 		return string();
 	}
@@ -918,12 +924,16 @@ string RunLean(const CsvGrammar &grammar, const FuzzDialect &dialect, const stri
 		reduced += " fields:";
 		auto at = expected.find("fields:");
 		at = at == string::npos ? expected.size() : at + 7;
+		const auto reduced_size = reduced.size();
 		while ((at = expected.find('[', at)) != string::npos) {
 			const auto close = expected.find(']', at);
 			const auto parts = StringUtil::Split(expected.substr(at + 1, close - at - 1), ',');
 			const auto flags = std::stoull(parts[3]);
 			reduced += " [" + parts[1] + "," + parts[2] + "," + to_string((flags & CSV_FIELD_QUOTED) != 0) + "]";
 			at = close;
+		}
+		if (columns == 1 && reduced.size() == reduced_size) {
+			reduced += " [" + to_string(fields.rows[row]) + ",0,0]";
 		}
 		if (text != reduced) {
 			mismatch += "lean " + text + "\nexact " + reduced + "\n";
@@ -1228,7 +1238,7 @@ TEST_CASE("CSV splitter, transfer and skip match the byte state machine", "[csv]
 			     perturbed_mismatch);
 		}
 		if (dialect.quote && !grammar.carry_on_newline && !input.empty()) {
-			RowLexer quoted_lexer(RowDialect::DuckDB(grammar), dialect.columns, max_line_size, true);
+			RowLexer quoted_lexer(LeanDialect(grammar, dialect.columns), dialect.columns, max_line_size, true);
 			RowCursor quoted_cursor;
 			quoted_lexer.Start(quoted_cursor, 0, true, false);
 			quoted_cursor.in_quotes = 1;
