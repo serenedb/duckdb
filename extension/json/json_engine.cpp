@@ -5,6 +5,7 @@
 #include "duckdb/common/operator/decimal_cast_operators.hpp"
 #include "duckdb/common/operator/string_cast.hpp"
 #include "duckdb/common/string_util.hpp"
+#include "duckdb/common/type_visitor.hpp"
 #include "duckdb/common/vector/string_vector.hpp"
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/parallel/task_scheduler.hpp"
@@ -543,23 +544,10 @@ bool DirectDecimal(simdjson::ondemand::value &value, simdjson::ondemand::json_ty
 		return true;
 	}
 	case ondemand::json_type::number: {
-		ondemand::number number;
-		if (value.get_number().get(number)) {
-			return false;
-		}
-		switch (number.get_number_type()) {
-		case ondemand::number_type::signed_integer:
-			cast = TryCastToDecimal::Operation<int64_t, T>(number.get_int64(), result, parameters, width, scale);
-			return true;
-		case ondemand::number_type::unsigned_integer:
-			cast = TryCastToDecimal::Operation<uint64_t, T>(number.get_uint64(), result, parameters, width, scale);
-			return true;
-		case ondemand::number_type::floating_point_number:
-			cast = TryCastToDecimal::Operation<double, T>(number.get_double(), result, parameters, width, scale);
-			return true;
-		default:
-			return false;
-		}
+		const auto token = TrimToken(value.raw_json_token());
+		cast = TryCastToDecimal::Operation<string_t, T>(
+		    string_t(token.data(), UnsafeNumericCast<uint32_t>(token.size())), result, parameters, width, scale);
+		return true;
 	}
 	case ondemand::json_type::string: {
 		std::string_view text;
@@ -734,6 +722,12 @@ JsonScanGlobal::JsonScanGlobal(ClientContext &context_p, const JSONScanData &bin
     : context(context_p), bind(bind_p), options(bind_p.options), source(std::move(source_p)),
       columns(std::move(columns_p)),
       read_flags(bind_p.options.strict ? JSONCommon::STRICT_READ_FLAG : JSONCommon::READ_FLAG) {
+	for (auto &type : columns.types) {
+		if (TypeVisitor::Contains(type, LogicalTypeId::DECIMAL) || TypeVisitor::Contains(type, LogicalTypeId::BIGNUM)) {
+			read_flags = read_flags | JSONReadFlags::NUMBER_AS_RAW;
+			break;
+		}
+	}
 	format = options.format;
 	source->Rewind();
 	if (format == JSONFormat::AUTO_DETECT) {
