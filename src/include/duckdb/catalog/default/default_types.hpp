@@ -32,7 +32,8 @@ public:
 
 public:
 	DUCKDB_API static LogicalType GetDefaultType(const Identifier &name);
-	DUCKDB_API static LogicalType TryDefaultBind(const string &name, const vector<pair<string, Value>> &params);
+	DUCKDB_API static LogicalType TryDefaultBind(const string &name, const vector<pair<string, Value>> &params,
+	                                             optional_ptr<ClientContext> context = nullptr);
 
 	unique_ptr<CatalogEntry> CreateDefaultEntry(ClientContext &context, const Identifier &entry_name) override;
 	vector<Identifier> GetDefaultEntries() override;
