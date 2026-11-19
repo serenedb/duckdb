@@ -621,7 +621,7 @@ CsvScanGlobal::CsvScanGlobal(ClientContext &context_p, const CSVReaderOptions &o
 			if (filter.column != DConstants::INVALID_INDEX && expression_filter.column_indexes.empty() &&
 			    !columns[filter.column].force_not_null) {
 				auto &column = columns[filter.column];
-				const bool string_column = column.type.id() == LogicalTypeId::VARCHAR && !column.type.IsJSONType() &&
+				const bool string_column = column.type.id() == LogicalTypeId::VARCHAR && !column.type.HasAlias() &&
 				                           column.parse_type.id() == LogicalTypeId::VARCHAR;
 				if (!CollectRawPredicates(*expression_filter.expr, string_column, filter.raw)) {
 					filter.raw.clear();
