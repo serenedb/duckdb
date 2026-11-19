@@ -595,7 +595,7 @@ CsvScanGlobal::CsvScanGlobal(ClientContext &context_p, const CSVReaderOptions &o
 		column.file_column = source.projection[i].first;
 		column.output_column = source.projection[i].second;
 		column.type = source.types[i];
-		auto parse_type = column.type.IsJSONType() ? LogicalType::VARCHAR : column.type;
+		auto parse_type = column.type.HasAlias() ? LogicalType::VARCHAR : column.type;
 		if (CsvDecodesDirectly(parse_type, icu_loaded)) {
 			column.parse_type = parse_type;
 			column.validate_utf8 = true;
@@ -1888,8 +1888,7 @@ void CsvScan::Report(idx_t row, CSVError &error, bool force) {
 
 bool CsvScan::NeedsFlushCast(const CsvScanColumn &column) {
 	auto &type = column.type;
-	return type.IsJSONType() ||
-	       (type.id() != LogicalTypeId::VARCHAR && column.parse_type.id() == LogicalTypeId::VARCHAR);
+	return type.HasAlias() || (type.id() != LogicalTypeId::VARCHAR && column.parse_type.id() == LogicalTypeId::VARCHAR);
 }
 
 bool CsvScan::EvaluatesOnFieldBytes(const Expression &expr) {
