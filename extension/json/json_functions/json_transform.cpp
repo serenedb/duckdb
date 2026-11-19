@@ -306,10 +306,11 @@ bool JSONTransform::GetStringVector(const JSONNode *vals[], const idx_t count, c
 	return success;
 }
 
-static bool CastStringVector(Vector &string_vector, Vector &result, const idx_t count, JSONTransformOptions &options,
-                             bool success) {
-	if (!VectorOperations::DefaultTryCast(string_vector, result, count, &options.error_message) &&
-	    options.strict_cast) {
+static bool CastValues(Vector &source, Vector &result, const idx_t count, JSONTransformOptions &options, bool success) {
+	auto context = options.parameters.context;
+	const bool cast = context ? VectorOperations::TryCast(*context, source, result, count, &options.error_message)
+	                          : VectorOperations::DefaultTryCast(source, result, count, &options.error_message);
+	if (!cast && options.strict_cast) {
 		options.object_index = 0; // Can't get line number information here
 		options.error_message +=
 		    "\n If this error occurred during read_json, line/object number information is approximate";
@@ -322,7 +323,7 @@ static bool TransformFromString(const JSONNode *vals[], Vector &result, const id
                                 JSONTransformOptions &options) {
 	Vector string_vector(LogicalTypeId::VARCHAR, count);
 	const bool success = JSONTransform::GetStringVector(vals, count, result.GetType(), string_vector, options);
-	return CastStringVector(string_vector, result, count, options, success);
+	return CastValues(string_vector, result, count, options, success);
 }
 
 //! GEOMETRY accepts both WKT strings and GeoJSON geometry fragments. A JSON object is never valid WKT, so the two
@@ -488,7 +489,7 @@ bool JSONTransform::TransformStrings(Vector &string_vector, Vector &result, cons
 	if (UsesDateFormats(result.GetType(), options)) {
 		return FormatStringVector(string_vector, result, count, options, true);
 	}
-	return CastStringVector(string_vector, result, count, options, true);
+	return CastValues(string_vector, result, count, options, true);
 }
 
 bool JSONTransform::ParsesFromString(const LogicalType &type) {
@@ -535,6 +536,44 @@ static bool TransformToString(const JSONNode *vals[], JSONTransformScratch &scra
 template <class T>
 static T *AllocateScratch(JSONTransformScratch &scratch, idx_t count) {
 	return reinterpret_cast<T *>(scratch.arena.AllocateAligned(sizeof(T) * MaxValue<idx_t>(count, 1)));
+}
+
+static bool TransformAliased(const JSONNode *vals[], JSONTransformScratch &scratch, Vector &result, const idx_t count,
+                             JSONTransformOptions &options) {
+	idx_t strings = 0;
+	idx_t others = 0;
+	for (idx_t i = 0; i < count; i++) {
+		if (!IsNull(vals[i])) {
+			vals[i]->type == JSONValueType::STRING ? strings++ : others++;
+		}
+	}
+	if (others == 0) {
+		Vector string_vector(LogicalTypeId::VARCHAR, count);
+		TransformToString(vals, scratch, string_vector, count);
+		return CastValues(string_vector, result, count, options, true);
+	}
+	const auto storage_type = result.GetType().WithAlias("");
+	if (strings == 0) {
+		Vector storage(storage_type, count);
+		const bool success = JSONTransform::Transform(vals, scratch, storage, count, options, nullptr);
+		return CastValues(storage, result, count, options, success);
+	}
+	auto string_vals = AllocateScratch<const JSONNode *>(scratch, count);
+	auto other_vals = AllocateScratch<const JSONNode *>(scratch, count);
+	for (idx_t i = 0; i < count; i++) {
+		const bool string = !IsNull(vals[i]) && vals[i]->type == JSONValueType::STRING;
+		string_vals[i] = string ? vals[i] : nullptr;
+		other_vals[i] = string ? nullptr : vals[i];
+	}
+	Vector from_strings(result.GetType(), count);
+	bool success = TransformAliased(string_vals, scratch, from_strings, count, options);
+	success = TransformAliased(other_vals, scratch, result, count, options) && success;
+	for (idx_t i = 0; i < count; i++) {
+		if (string_vals[i]) {
+			result.SetValue(i, from_strings.GetValue(i));
+		}
+	}
+	return success;
 }
 
 bool JSONTransform::TransformObject(const JSONNode *objects[], JSONTransformScratch &scratch, const idx_t count,
@@ -1106,6 +1145,9 @@ bool JSONTransform::Transform(const JSONNode *vals[], JSONTransformScratch &scra
 	if (result_type.IsJSONType()) {
 		return TransformToJSON(vals, scratch, result, count);
 	}
+	if (result_type.HasAlias()) {
+		return TransformAliased(vals, scratch, result, count, options);
+	}
 
 	switch (result_type.id()) {
 	case LogicalTypeId::SQLNULL:
@@ -1234,6 +1276,7 @@ static void TransformFunction(DataChunk &args, ExpressionState &state, Vector &r
 	auto &lstate = JSONFunctionLocalState::ResetAndGet(state);
 
 	JSONTransformOptions options(strict, strict, strict, false);
+	options.parameters.context = &state.GetContext();
 	if (!TransformFunctionInternal(args.data[0], args.size(), result, lstate, options)) {
 		throw InvalidInputException(options.error_message);
 	}
@@ -1275,6 +1318,7 @@ static bool JSONToAnyCast(Vector &source, Vector &result, idx_t count, CastParam
 
 	JSONTransformOptions options(true, true, true, true);
 	options.delay_error = true;
+	options.parameters.context = parameters.context;
 
 	auto success = TransformFunctionInternal(source, count, result, lstate, options);
 	if (!success) {
