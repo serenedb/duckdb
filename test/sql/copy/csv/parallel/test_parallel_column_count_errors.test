@@ -1,0 +1,58 @@
+# name: test/sql/copy/csv/parallel/test_parallel_column_count_errors.test
+# description: rows with too few or too many fields are reported from the parallel ranges with their lines and positions, padded with null_padding, cut with strict_mode = false and dropped with ignore_errors, and one trailing empty field is a row of the right width
+# group: [parallel]
+
+statement ok
+PRAGMA threads=4
+
+statement ok
+COPY (SELECT CASE WHEN i % 997 = 3 THEN i || ',' || i WHEN i % 991 = 5 THEN i || ',' || i || ',t' || i || ',extra' || i || ',more' WHEN i % 983 = 7 THEN i || ',' || i || ',t' || i || ',' ELSE i || ',' || i || ',t' || i END AS line FROM range(300000) t(i) ORDER BY i) TO '{TEMP_DIR}/arity.csv' (FORMAT csv, HEADER false, QUOTE '', ESCAPE '', DELIMITER '|');
+
+statement ok
+CREATE MACRO arity_columns() AS {'a': 'BIGINT', 'b': 'BIGINT', 'c': 'VARCHAR'};
+
+query II
+SELECT count(*), sum(a) FROM read_csv('{TEMP_DIR}/arity.csv', columns = arity_columns(), header = false, auto_detect = false, ignore_errors = true);
+----
+299396	44909491809
+
+query III
+SELECT count(*), sum(a), count(c) FROM read_csv('{TEMP_DIR}/arity.csv', columns = arity_columns(), header = false, auto_detect = false, null_padding = true, ignore_errors = true);
+----
+299697	44954507262	299396
+
+query II
+SELECT count(*), sum(a) FROM read_csv('{TEMP_DIR}/arity.csv', columns = arity_columns(), header = false, auto_detect = false, strict_mode = false, ignore_errors = true);
+----
+299699	44954834547
+
+statement ok
+CREATE TABLE arity_rows AS FROM read_csv('{TEMP_DIR}/arity.csv', columns = arity_columns(), header = false, auto_detect = false, store_rejects = true);
+
+query III
+SELECT error_type, count(*), count(*) FILTER (WHERE line = CAST(split_part(csv_line, ',', 1) AS BIGINT) + 1) FROM reject_errors GROUP BY ALL ORDER BY ALL;
+----
+MISSING COLUMNS	301	301
+TOO MANY COLUMNS	606	606
+
+query IIIIII
+SELECT line, byte_position, column_idx, error_type, csv_line, error_message FROM reject_errors ORDER BY line, column_idx LIMIT 4;
+----
+4	25	2	MISSING COLUMNS	3,3	Expected Number of Columns: 3 Found: 2
+6	39	4	TOO MANY COLUMNS	5,5,t5,extra5,more	Expected Number of Columns: 3 Found: 4
+6	46	5	TOO MANY COLUMNS	5,5,t5,extra5,more	Expected Number of Columns: 3 Found: 5
+997	12642	4	TOO MANY COLUMNS	996,996,t996,extra996,more	Expected Number of Columns: 3 Found: 4
+
+statement ok
+DROP TABLE reject_errors;
+
+statement ok
+DROP TABLE reject_scans;
+
+statement ok
+PRAGMA threads=1
+
+statement error
+FROM read_csv('{TEMP_DIR}/arity.csv', columns = arity_columns(), header = false, auto_detect = false);
+----
+CSV Error on Line: 4
