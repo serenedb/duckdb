@@ -145,6 +145,9 @@ public:
 	idx_t Range() const {
 		return range;
 	}
+	idx_t Stop() const {
+		return lex_stop;
+	}
 
 public:
 	RowRanges &ranges;
