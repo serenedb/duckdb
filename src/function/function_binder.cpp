@@ -10,6 +10,7 @@
 #include "duckdb/function/aggregate_function.hpp"
 #include "duckdb/function/cast/cast_function_set.hpp"
 #include "duckdb/function/cast_rules.hpp"
+#include "duckdb/function/macro_function.hpp"
 #include "duckdb/function/type_constructor.hpp"
 #include "duckdb/planner/expression/bound_aggregate_expression.hpp"
 #include "duckdb/planner/expression/bound_cast_expression.hpp"
@@ -1598,6 +1599,15 @@ FunctionBinder::ResolveFunction(shared_ptr<const ScalarFunction> function_p, vec
 
 	// Reorder named args and expand the variadic arguments
 	auto argument_names = ResolveArguments(function, bound_function, arguments, named_arguments);
+	for (idx_t i = 0; i < arguments.size(); i++) {
+		auto &declared = bound_function.GetArguments()[i];
+		if (declared.id() == LogicalTypeId::DECIMAL &&
+		    arguments[i]->GetExpressionClass() == ExpressionClass::BOUND_PARAMETER &&
+		    arguments[i]->GetReturnType().IsUnknown()) {
+			arguments[i] = BoundCastExpression::AddCastToType(context, std::move(arguments[i]),
+			                                                  MacroFunction::WithoutTypmod(declared, context));
+		}
+	}
 
 	// Attempt to resolve template types, before we call the "Bind" callback.
 	ResolveTemplateTypes(bound_function, arguments);
