@@ -61,9 +61,19 @@ shared_ptr<CSVBufferHandle> CSVSequentialBufferManager::GetBuffer(const idx_t po
 			cached_buffers.emplace_back(std::move(next));
 		} else {
 			previous->last_buffer = true;
-			done = true;
+			MarkDone(*previous);
 		}
 	}
+}
+
+void CSVSequentialBufferManager::MarkDone(const CSVBuffer &last) {
+	done = true;
+	known_end = last.GlobalEnd();
+}
+
+optional_idx CSVSequentialBufferManager::KnownEnd() {
+	lock_guard<mutex> parallel_lock(main_mutex);
+	return known_end;
 }
 
 void CSVSequentialBufferManager::UnpinPrevious(const idx_t pos) {
@@ -89,7 +99,7 @@ CSVBufferResidency CSVSequentialBufferManager::GetBufferResidency(const idx_t po
 		return CSVBufferResidency::IN_MEMORY;
 	}
 	if (!cached_buffers.empty() && cached_buffers.back() && cached_buffers.back()->last_buffer) {
-		done = true;
+		MarkDone(*cached_buffers.back());
 	}
 	if (done) {
 		return CSVBufferResidency::END_OF_FILE;
@@ -146,6 +156,7 @@ void CSVSequentialBufferManager::ResetBufferManager() {
 		file_handle->Reset();
 		last_buffer = nullptr;
 		done = false;
+		known_end = optional_idx();
 		global_csv_pos = 0;
 		Initialize();
 	}

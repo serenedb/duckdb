@@ -45,6 +45,9 @@ public:
 
 	idx_t Read(char *data, idx_t count, idx_t offset) const override;
 	void Release(idx_t position) override;
+	optional_idx End() const override {
+		return manager.KnownEnd();
+	}
 
 public:
 	CSVBufferManager &manager;
