@@ -168,6 +168,7 @@ public:
 	CsvGrammar grammar;
 	unique_ptr<RowLexer> lean;
 	unique_ptr<CsvRowSource> row_source;
+	shared_ptr<RowSource> host_stream;
 	unique_ptr<RowRanges> ranges;
 	idx_t num_columns = 0;
 	bool count_only = false;
