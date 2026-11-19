@@ -473,7 +473,7 @@ bool RowLexer::FeedBlocks(RowCursor &cursor, const char *data, idx_t base, idx_t
 			const uint64_t reopened = (closers << 1) | c.after_closer;
 			const uint64_t allowed = d.reopen ? reopened : 0;
 			if (openers & ~starts & ~allowed) {
-				if (!literal_quotes || literals_at == c.pos) {
+				if (!literal_quotes || !c.settled || literals_at == c.pos) {
 					return fail();
 				}
 				const uint64_t raw_spaces = d.quoted_spaces ? vector.Equal(' ') & valid : 0;

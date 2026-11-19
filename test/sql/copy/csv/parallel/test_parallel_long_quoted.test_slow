@@ -30,4 +30,14 @@ SELECT count(*) FROM read_csv('{TEMP_DIR}/long_quoted.csv', auto_detect = false,
 ----
 5000
 
+query II
+SELECT count(*), count(*) FILTER (WHERE id = 'x') FROM read_csv('{TEMP_DIR}/long_quoted.csv', auto_detect = false, header = false, columns = {'id': 'VARCHAR', 'v': 'VARCHAR'}, max_line_size = 10000000, buffer_size = 40000000, parallel = {parallel});
+----
+5000	0
+
+query I
+SELECT count(*) FROM (FROM read_csv('{TEMP_DIR}/long_quoted.csv', auto_detect = false, header = false, columns = {'id': 'VARCHAR', 'v': 'VARCHAR'}, max_line_size = 10000000, buffer_size = 40000000, parallel = {parallel}) EXCEPT ALL SELECT id::VARCHAR, v FROM long_quoted);
+----
+0
+
 endloop
