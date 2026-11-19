@@ -130,7 +130,8 @@ struct FieldIdMapper : public ColumnMapper {
 		LogicalType target_type = column.type;
 		auto bound = constant_binder.Bind(expr, &target_type);
 		Value folded;
-		if (!bound->IsFoldable() || !ExpressionExecutor::TryEvaluateFoldable(context, *bound, folded)) {
+		if (!bound->IsFoldable() ||
+		    !ExpressionExecutor::TryEvaluateFoldable(context, *bound, folded, NumericLimits<idx_t>::Maximum())) {
 			return bound;
 		}
 		// a constant default is kept as a constant so filters on the missing column can be evaluated up front
