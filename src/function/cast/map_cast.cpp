@@ -55,17 +55,13 @@ static bool MapToVarcharCast(Vector &source, Vector &result, idx_t count, CastPa
 	auto &key_vec = MapVector::GetKeys(source);
 	auto &value_vec = MapVector::GetValues(source);
 
-	auto key_is_nested = key_vec.GetType().IsNested();
-	auto value_is_nested = value_vec.GetType().IsNested();
+	const auto key_text = VectorCastHelpers::ChildText(key_vec.GetType());
+	auto key_strlen_func = key_text.length;
+	auto key_write_func = key_text.write;
 
-	auto key_strlen_func = key_is_nested ? VectorCastHelpers::CalculateStringLength
-	                                     : VectorCastHelpers::CalculateEscapedStringLength<false>;
-	auto key_write_func = key_is_nested ? VectorCastHelpers::WriteString : VectorCastHelpers::WriteEscapedString<false>;
-
-	auto value_strlen_func = value_is_nested ? VectorCastHelpers::CalculateStringLength
-	                                         : VectorCastHelpers::CalculateEscapedStringLength<false>;
-	auto value_write_func =
-	    value_is_nested ? VectorCastHelpers::WriteString : VectorCastHelpers::WriteEscapedString<false>;
+	const auto value_text = VectorCastHelpers::ChildText(value_vec.GetType());
+	auto value_strlen_func = value_text.length;
+	auto value_write_func = value_text.write;
 
 	unsafe_unique_array<bool> key_needs_quotes;
 	unsafe_unique_array<bool> value_needs_quotes;
