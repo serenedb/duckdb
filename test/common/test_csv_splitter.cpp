@@ -1666,7 +1666,7 @@ bool ReferencePostgresRows(const RowDialect &dialect, const string &input, vecto
 			plain_cr = i;
 		}
 	}
-	if (escaped_next || in_quotes) {
+	if (in_quotes || (escaped_next && !dialect.backslash)) {
 		return false;
 	}
 	if (open) {
@@ -1751,8 +1751,11 @@ TEST_CASE("Row lexer splits PostgreSQL csv and text like the scalar rules", "[cs
 		    " quote=" + to_string(int(dialect.quote)) + " escape=" + to_string(int(dialect.escape)) +
 		    " columns=" + to_string(columns) + " arity=" + to_string(check_arity) + " piece=" + to_string(piece) +
 		    " input=" + shown;
+		if (terminated == cursor.unfinished) {
+			FAIL("unterminated input not marked as an unfinished row, or the other way around: " + description);
+		}
 		if (!terminated) {
-			FAIL("lexer accepted an unterminated input: " + description);
+			continue;
 		}
 		if (cursor.rows != expected.size() || cursor.lines != expected_lines) {
 			FAIL("row count mismatch: " + description + " rows " + to_string(cursor.rows) + " vs " +
