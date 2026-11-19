@@ -8,6 +8,7 @@
 
 #pragma once
 
+#include "duckdb/common/atomic.hpp"
 #include "duckdb/common/mutex.hpp"
 #include "duckdb/common/types/vector_buffer.hpp"
 #include "duckdb/formats/row_lexer.hpp"
@@ -65,21 +66,31 @@ public:
 	CsvRangeEntry Entry(idx_t range, CSVState origin) const;
 	void Computing(idx_t range, bool value);
 	CsvRangeStart StartState(idx_t range);
+	idx_t Size() const {
+		return size.load(std::memory_order_acquire);
+	}
+	idx_t RangeCount() const {
+		return range_count.load(std::memory_order_acquire);
+	}
+	bool Dynamic() const {
+		return dynamic;
+	}
+	void FoundEnd(idx_t end);
 	idx_t RangeBegin(idx_t range) const {
-		return MinValue(start + range * range_bytes, size);
+		return MinValue(start + range * range_bytes, Size());
 	}
 	idx_t RangeEnd(idx_t range) const {
-		return MinValue(start + (range + 1) * range_bytes, size);
+		return MinValue(start + (range + 1) * range_bytes, Size());
 	}
 	idx_t Read(char *data, idx_t count, idx_t offset) const {
 		return source.Read(data, count, offset);
 	}
-	void ReadInto(RowBytes &bytes, idx_t offset, idx_t count) const;
-	RowRangeBounds Bounds(idx_t range, RowBytes &bytes) const;
+	void ReadInto(RowBytes &bytes, idx_t offset, idx_t count);
+	RowRangeBounds Bounds(idx_t range, RowBytes &bytes);
 	CSVState Origin(const RowBytes &bytes, idx_t begin) const;
-	CsvRangeEntry Transfer(idx_t range, CSVState origin) const;
+	CsvRangeEntry Transfer(idx_t range, CSVState origin);
 	CsvRangeEntry LexTransfer(const RowBytes &bytes, idx_t begin, idx_t end, CSVState origin) const;
-	idx_t SyncAt(idx_t position) const;
+	idx_t SyncAt(idx_t position);
 	void SetWholeFile(shared_ptr<RowBuffer> buffer, const char *data);
 	bool WholeFile() const {
 		return whole_data != nullptr;
@@ -90,25 +101,32 @@ public:
 	const RowLexer &lexer;
 	RowSource &source;
 	const idx_t start;
-	idx_t size;
 	const bool stream;
 	const bool file_start;
 	idx_t range_bytes;
-	idx_t range_count;
 	string path;
 
 private:
 	void Layout(idx_t range_bytes);
+	void Grow(idx_t count);
+	bool Complete() const;
+	void ReleaseResolved();
 
 private:
 	mutable mutex lock;
+	atomic<idx_t> size;
+	atomic<idx_t> range_count;
+	bool dynamic = false;
 	shared_ptr<RowBuffer> whole_buffer;
 	const char *whole_data = nullptr;
 	idx_t next_range = 0;
 	idx_t finished_ranges = 0;
 	idx_t resolved = 0;
+	idx_t unfinished = 0;
+	idx_t released = 0;
 	vector<CsvRangeTransfer> transfers;
-	vector<bool> computing;
+	vector<uint32_t> computing;
+	vector<bool> done;
 	vector<CsvRangeStart> starts;
 };
 
@@ -190,6 +208,8 @@ private:
 	bool release = false;
 	bool validate_count_utf8 = false;
 	bool probe_only = false;
+	bool beyond = false;
+	bool exact_end = false;
 	bool finished = false;
 	bool verified = false;
 	bool second_pass = false;

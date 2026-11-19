@@ -1,0 +1,83 @@
+# name: test/sql/copy/csv/parallel/test_parallel_stream_ranges.test
+# description: A compressed file read in parallel ranges returns what the uncompressed file returns in one sequential scan, with the same row identities, errors and rejected rows
+# group: [parallel]
+
+require skip_reload
+
+statement ok
+COPY (SELECT i AS id, CASE WHEN i % 4 = 0 THEN 'two' || chr(10) || 'lines' WHEN i % 4 = 1 THEN '' WHEN i % 4 = 2 THEN 'quote "' || i || '"' ELSE NULL END AS note, i * 0.5 AS half FROM range(3000) t(i) ORDER BY i) TO '{TEMP_DIR}/stream_ranges.csv' (HEADER true);
+
+statement ok
+COPY (SELECT i AS id, CASE WHEN i % 4 = 0 THEN 'two' || chr(10) || 'lines' WHEN i % 4 = 1 THEN '' WHEN i % 4 = 2 THEN 'quote "' || i || '"' ELSE NULL END AS note, i * 0.5 AS half FROM range(3000) t(i) ORDER BY i) TO '{TEMP_DIR}/stream_ranges.csv.gz' (HEADER true, COMPRESSION gzip);
+
+foreach buffer_size 64 700 1048576
+
+query I
+SELECT count(*) FROM (
+	(SELECT file_row_number, * FROM read_csv('{TEMP_DIR}/stream_ranges.csv.gz', buffer_size = {buffer_size})
+	 EXCEPT ALL SELECT file_row_number, * FROM read_csv('{TEMP_DIR}/stream_ranges.csv', buffer_size = {buffer_size}, parallel = false))
+	UNION ALL
+	(SELECT file_row_number, * FROM read_csv('{TEMP_DIR}/stream_ranges.csv', buffer_size = {buffer_size}, parallel = false)
+	 EXCEPT ALL SELECT file_row_number, * FROM read_csv('{TEMP_DIR}/stream_ranges.csv.gz', buffer_size = {buffer_size}))
+)
+----
+0
+
+query II
+SELECT count(*), sum(half) FROM read_csv('{TEMP_DIR}/stream_ranges.csv.gz', buffer_size = {buffer_size})
+----
+3000	2249250.0
+
+query I
+SELECT count(*) FROM read_csv('{TEMP_DIR}/stream_ranges.csv.gz', buffer_size = {buffer_size})
+----
+3000
+
+endloop
+
+statement ok
+COPY (SELECT CASE WHEN i = 2000 THEN 'a,b,c,d' WHEN i % 7 = 0 THEN '"x' || chr(10) || 'y",b,c' ELSE 'a,' || i || ',c' END AS line FROM range(3000) t(i) ORDER BY i) TO '{TEMP_DIR}/stream_errors.csv' (HEADER false, QUOTE '', DELIMITER '|');
+
+statement ok
+COPY (SELECT CASE WHEN i = 2000 THEN 'a,b,c,d' WHEN i % 7 = 0 THEN '"x' || chr(10) || 'y",b,c' ELSE 'a,' || i || ',c' END AS line FROM range(3000) t(i) ORDER BY i) TO '{TEMP_DIR}/stream_errors.csv.gz' (HEADER false, QUOTE '', DELIMITER '|', COMPRESSION gzip);
+
+foreach buffer_size 64 1048576
+
+statement error
+SELECT * FROM read_csv('{TEMP_DIR}/stream_errors.csv.gz', columns = {'a': 'VARCHAR', 'b': 'VARCHAR', 'c': 'VARCHAR'}, header = false, auto_detect = false, quote = '"', delim = ',', strict_mode = true, buffer_size = {buffer_size})
+----
+<REGEX>:.*CSV Error on Line: 2001.*Expected Number of Columns: 3 Found: 4.*
+
+statement ok
+SELECT * FROM read_csv('{TEMP_DIR}/stream_errors.csv.gz', columns = {'a': 'VARCHAR', 'b': 'INTEGER', 'c': 'VARCHAR'}, header = false, auto_detect = false, quote = '"', delim = ',', strict_mode = true, store_rejects = true, rejects_table = 'errors_stream', rejects_scan = 'scans_stream', buffer_size = {buffer_size});
+
+statement ok
+SELECT * FROM read_csv('{TEMP_DIR}/stream_errors.csv', columns = {'a': 'VARCHAR', 'b': 'INTEGER', 'c': 'VARCHAR'}, header = false, auto_detect = false, quote = '"', delim = ',', strict_mode = true, store_rejects = true, rejects_table = 'errors_plain', rejects_scan = 'scans_plain', buffer_size = {buffer_size}, parallel = false);
+
+query I
+SELECT count(*) FROM (
+	(SELECT * EXCLUDE (scan_id) FROM errors_stream EXCEPT ALL SELECT * EXCLUDE (scan_id) FROM errors_plain)
+	UNION ALL
+	(SELECT * EXCLUDE (scan_id) FROM errors_plain EXCEPT ALL SELECT * EXCLUDE (scan_id) FROM errors_stream)
+)
+----
+0
+
+query III
+SELECT count(*), min(line), count(*) FILTER (WHERE line = 2001) FROM errors_stream
+----
+431	1	2
+
+statement ok
+DROP TABLE errors_stream;
+
+statement ok
+DROP TABLE scans_stream;
+
+statement ok
+DROP TABLE errors_plain;
+
+statement ok
+DROP TABLE scans_plain;
+
+endloop
