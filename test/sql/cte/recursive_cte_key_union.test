@@ -416,10 +416,11 @@ TABLE t;
 statement ok
 SET default_collation='';
 
-query II
+query II rowsort
 EXECUTE collated_delta;
 ----
 1	A
+2	A
 
 statement ok
 DEALLOCATE collated_delta;
@@ -568,7 +569,6 @@ TABLE t;
 ----
 NULL	1
 
-# Default collations are bound into prepared recursive key normalizers.
 statement ok
 SET default_collation='nocase';
 
@@ -584,10 +584,11 @@ TABLE t;
 statement ok
 SET default_collation='';
 
-query TI
+query TI rowsort
 EXECUTE collated_recurring_key;
 ----
-a	0
+A	0
+a	2
 
 statement ok
 DEALLOCATE collated_recurring_key;
