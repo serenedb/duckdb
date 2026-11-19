@@ -3932,6 +3932,21 @@ bool PhysicalCopyToFile::Rotate() const {
 	return file_size_bytes.IsValid() || batches_per_file.IsValid();
 }
 
+bool PhysicalCopyToFile::DirectSink() const {
+	return function.parallel_sink && !partition_output && !per_thread_output && !Rotate();
+}
+
+static GlobalFunctionData &SinkFileData(CopyToFileGlobalState &gstate, FileStateHandle &file_state,
+                                        const std::function<void(FileStateHandle &)> &create_file_state_fun) {
+	auto prepare_global_state = gstate.prepare_global_state.load(std::memory_order_acquire);
+	if (!prepare_global_state) {
+		gstate.EnsureFileStateReady(file_state, create_file_state_fun);
+		prepare_global_state = gstate.prepare_global_state.load(std::memory_order_acquire);
+		D_ASSERT(prepare_global_state);
+	}
+	return *prepare_global_state->data;
+}
+
 static bool PhysicalCopyRotateNow(const PhysicalCopyToFile &op, GlobalFileState &global_state)
     DUCKDB_REQUIRES(global_state.lock) {
 	if (op.file_size_bytes.IsValid()) {
@@ -4008,6 +4023,15 @@ SinkResultType PhysicalCopyToFile::Sink(ExecutionContext &context, DataChunk &ch
 	}
 	auto &file_state = per_thread_output ? lstate.global_file_state : gstate.global_state;
 
+	if (DirectSink()) {
+		auto &data = SinkFileData(gstate, file_state, gstate.create_file_state_fun);
+		if (!lstate.local_file_state) {
+			lstate.local_file_state = function.copy_to_initialize_local(context, *bind_data);
+		}
+		function.copy_to_sink(context, *bind_data, data, *lstate.local_file_state, chunk);
+		return SinkResultType::NEED_MORE_INPUT;
+	}
+
 	idx_t offset = 0;
 	while (offset < chunk.size()) {
 		if (!lstate.batch) {
@@ -4071,6 +4095,12 @@ SinkCombineResultType PhysicalCopyToFile::Combine(ExecutionContext &context, Ope
 		return SinkCombineResultType::FINISHED;
 	}
 	gstate.rows_copied += lstate.total_rows_copied;
+
+	if (lstate.local_file_state) {
+		auto &data = SinkFileData(gstate, gstate.global_state, gstate.create_file_state_fun);
+		function.copy_to_combine(context, *bind_data, data, *lstate.local_file_state);
+		return SinkCombineResultType::FINISHED;
+	}
 
 	if (per_thread_output) {
 		if (lstate.batch) {
@@ -4227,16 +4257,8 @@ PhysicalCopyToFile::PrepareBatch(ClientContext &context, GlobalSinkState &gstate
 		return {batch_analyzer, PrepareLegacyCopyBatch(std::move(batch))};
 	}
 
-	// Ensure we have a global state for prepares
-	auto prepare_global_state = gstate.prepare_global_state.load(std::memory_order_acquire);
-	if (!prepare_global_state) {
-		gstate.EnsureFileStateReady(file_state, create_file_state_fun);
-		prepare_global_state = gstate.prepare_global_state.load(std::memory_order_acquire);
-		D_ASSERT(prepare_global_state);
-	}
-
-	// Prepare the batch
-	return {batch_analyzer, function.prepare_batch(context, *bind_data, *prepare_global_state->data, std::move(batch))};
+	auto &data = SinkFileData(gstate, file_state, create_file_state_fun);
+	return {batch_analyzer, function.prepare_batch(context, *bind_data, data, std::move(batch))};
 }
 
 void PhysicalCopyToFile::FlushBatch(ClientContext &context, GlobalSinkState &gstate_p, FileStateHandle &file_state,

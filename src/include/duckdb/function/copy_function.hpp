@@ -268,6 +268,7 @@ public:
 
 	string extension;
 	bool writes_typed_columns = false;
+	bool parallel_sink = false;
 
 	//! Additional function info, passed to the bind
 	shared_ptr<CopyFunctionInfo> function_info;
