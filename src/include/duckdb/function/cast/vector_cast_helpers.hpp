@@ -263,15 +263,17 @@ struct VectorCastHelpers {
 		idx_t (*write)(void *dest, const string_t &string, bool needs_quotes);
 	};
 
-	static NestedChildText ChildText(const LogicalType &type) {
+	static NestedChildText ChildText(const LogicalType &type, bool own_text) {
 		if (!type.IsNested()) {
 			return {CalculateEscapedStringLength<false>, WriteEscapedString<false>};
 		}
-		if (type.HasAlias()) {
+		if (own_text) {
 			return {CalculateOwnTextLength, WriteEscapedString<false>};
 		}
 		return {CalculateStringLength, WriteString};
 	}
+
+	static bool WritesOwnText(BindCastInput &input, const LogicalType &type);
 
 	template <bool STRUCT_KEY>
 	static idx_t WriteEscapedString(void *dest, const string_t &string, bool needs_quotes) {
