@@ -10,6 +10,7 @@
 #include "duckdb/function/aggregate_function.hpp"
 #include "duckdb/function/cast/cast_function_set.hpp"
 #include "duckdb/function/cast_rules.hpp"
+#include "duckdb/function/macro_function.hpp"
 #include "duckdb/function/type_constructor.hpp"
 #include "duckdb/planner/expression/bound_aggregate_expression.hpp"
 #include "duckdb/planner/expression/bound_cast_expression.hpp"
@@ -1011,6 +1012,23 @@ unique_ptr<Expression> FunctionBinder::BindScalarFunction(const ScalarFunctionCa
 
 	// now that the overload is fixed, split the arguments into their final positional/named children
 	auto [regular_args, keyword_args] = SplitArguments(std::move(arguments));
+	auto &signature = bound_function.GetSignature();
+	for (idx_t i = 0; i < regular_args.size(); i++) {
+		auto &argument = regular_args[i];
+		if (argument->GetExpressionClass() != ExpressionClass::BOUND_PARAMETER ||
+		    !argument->GetReturnType().IsUnknown()) {
+			continue;
+		}
+		if (i >= signature.GetPositionalParameterCount() && !signature.GetArgs()) {
+			continue;
+		}
+		auto &declared = i < signature.GetPositionalParameterCount() ? signature.GetParameter(i).GetType()
+		                                                             : signature.GetArgs()->GetType();
+		if (declared.id() == LogicalTypeId::DECIMAL) {
+			argument = BoundCastExpression::AddCastToType(context, std::move(argument),
+			                                              MacroFunction::WithoutTypmod(declared, context));
+		}
+	}
 
 	// If any of the parameters are NULL, the function will just be replaced with a NULL constant.
 	// We try to give the NULL constant the correct type, but we have to do this without binding the function,
