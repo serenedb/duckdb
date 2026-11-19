@@ -690,7 +690,7 @@ string RegularInput(std::mt19937_64 &rng, const FuzzDialect &dialect) {
 			input += rng() % 2 ? "a b" : "a" + dialect.delimiter + "b";
 			input += newline;
 		}
-		const idx_t row_columns = rng() % 8 == 0 ? 1 + rng() % dialect.columns : dialect.columns;
+		const idx_t row_columns = rng() % 8 == 0 ? 1 + rng() % (dialect.columns + 2) : dialect.columns;
 		for (idx_t column = 0; column < row_columns; column++) {
 			if (column > 0) {
 				input += dialect.delimiter;
@@ -846,10 +846,11 @@ RowDialect LeanDialect(const CsvGrammar &grammar, idx_t columns) {
 }
 
 string RunLean(const CsvGrammar &grammar, const FuzzDialect &dialect, const string &input, idx_t piece_blocks,
-               idx_t max_line_size, bool pad_rows, SplitResult &exact, bool &accepted, bool &padded) {
+               idx_t max_line_size, bool pad_rows, SplitResult &exact, bool &accepted, bool &padded, bool &irregular) {
 	accepted = false;
 	padded = false;
-	RowLexer lean(LeanDialect(grammar, dialect.columns), dialect.columns, max_line_size, true, pad_rows);
+	irregular = false;
+	RowLexer lean(LeanDialect(grammar, dialect.columns), dialect.columns, max_line_size, true, pad_rows, true);
 	if (!lean.Eligible()) {
 		return string();
 	}
@@ -870,6 +871,7 @@ string RunLean(const CsvGrammar &grammar, const FuzzDialect &dialect, const stri
 	}
 	accepted = true;
 	padded = cursor.padded;
+	irregular = !fields.anomalies.empty() || cursor.extras_dropped;
 	const idx_t columns = dialect.columns;
 	string mismatch;
 	if (cursor.rows != exact.rows.size()) {
@@ -883,6 +885,7 @@ string RunLean(const CsvGrammar &grammar, const FuzzDialect &dialect, const stri
 		return mismatch;
 	}
 	bool short_rows = false;
+	bool unexplained_short = false;
 	for (idx_t row = 0; row < cursor.rows && row < exact.rows.size(); row++) {
 		string text = "row start=" + to_string(fields.rows[row]) + " fields:";
 		bool padding = false;
@@ -938,8 +941,21 @@ string RunLean(const CsvGrammar &grammar, const FuzzDialect &dialect, const stri
 		if (text != reduced) {
 			mismatch += "lean " + text + "\nexact " + reduced + "\n";
 		}
+		const auto count_at = expected.find(" count=") + 7;
+		idx_t exact_fields = std::stoull(expected.substr(count_at, expected.find(' ', count_at) - count_at));
+		if (columns == 1 && exact_fields == 0) {
+			exact_fields = 1;
+		}
+		const auto anomaly = fields.Anomaly(row);
+		const bool expect_anomaly =
+		    (exact_fields < columns && !pad_rows) || (exact_fields > columns && grammar.strict_mode);
+		if (expect_anomaly != (anomaly != nullptr) || (anomaly && anomaly->fields != exact_fields)) {
+			mismatch += "anomaly row " + to_string(row) + " exact fields " + to_string(exact_fields) + " lean " +
+			            (anomaly ? to_string(anomaly->fields) : string("none")) + "\n";
+		}
+		unexplained_short = unexplained_short || (padding && !pad_rows && !anomaly);
 	}
-	if (short_rows != cursor.padded || (short_rows && !pad_rows)) {
+	if (short_rows != cursor.padded || unexplained_short) {
 		mismatch += "padded " + to_string(cursor.padded) + " short rows " + to_string(short_rows) + "\n";
 	}
 	auto transfer = CsvTransfer(grammar, data, 0, 0, input.size(), CSVState::NOT_SET);
@@ -1163,6 +1179,7 @@ TEST_CASE("CSV splitter, transfer and skip match the byte state machine", "[csv]
 	idx_t comment_accepted = 0;
 	idx_t wide_accepted = 0;
 	idx_t padded_accepted = 0;
+	idx_t irregular_accepted = 0;
 	idx_t spaced_accepted = 0;
 	idx_t literal_accepted = 0;
 	CountCoverage coverage;
@@ -1205,11 +1222,13 @@ TEST_CASE("CSV splitter, transfer and skip match the byte state machine", "[csv]
 		const bool pad_rows = rng() % 2;
 		bool accepted = false;
 		bool padded = false;
+		bool irregular = false;
 		auto exact = actual;
 		const auto lean_mismatch =
-		    RunLean(grammar, dialect, input, piece_blocks, max_line_size, pad_rows, exact, accepted, padded);
+		    RunLean(grammar, dialect, input, piece_blocks, max_line_size, pad_rows, exact, accepted, padded, irregular);
 		lean_accepted += accepted;
 		padded_accepted += padded;
+		irregular_accepted += accepted && irregular;
 		comment_accepted += accepted && dialect.comment && input.find(dialect.comment) != string::npos;
 		wide_accepted += accepted && dialect.delimiter.size() > 1 && input.find(dialect.delimiter) != string::npos;
 		literal_accepted += accepted && dialect.quote &&
@@ -1302,6 +1321,7 @@ TEST_CASE("CSV splitter, transfer and skip match the byte state machine", "[csv]
 	REQUIRE(comment_accepted > count / 50);
 	REQUIRE(wide_accepted > count / 50);
 	REQUIRE(padded_accepted > count / 100);
+	REQUIRE(irregular_accepted > count / 100);
 	REQUIRE(spaced_accepted > count / 50);
 	REQUIRE(literal_accepted > count / 100);
 	REQUIRE(coverage.rows > count);

@@ -268,7 +268,10 @@ private:
 	void LeanRowNumbers(idx_t count, DataChunk &output);
 	void LeanRetry(const CsvScanColumn &column, Vector &vector);
 	CsvField LeanField(const CsvScanColumn &column, idx_t row) const;
+	idx_t LeanRowEnd(idx_t row) const;
 	CsvRow LeanRow(idx_t row) const;
+	bool LeanNullExtra(idx_t begin, idx_t end, uint32_t end_bits) const;
+	void AnomalyErrors(const RowAnomaly &anomaly, idx_t row, vector<CsvRowError> &errors) const;
 	idx_t LeanLinesAt(idx_t position);
 	void LeanReport(idx_t first, idx_t count);
 	void ClearRowState(idx_t first, idx_t count);

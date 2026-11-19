@@ -48,19 +48,31 @@ struct RowDialect {
 static constexpr uint32_t ROW_FIELD_FLAG = uint32_t(1) << 31;
 static constexpr uint32_t ROW_FIELD_MASK = ROW_FIELD_FLAG - 1;
 
+struct RowAnomaly {
+	uint32_t row;
+	uint32_t fields;
+	uint32_t end;
+	uint32_t extras;
+};
+
 struct RowFields {
 	void Clear() {
 		row_count = 0;
 		end_count = 0;
+		anomalies.clear();
+		extras.clear();
 	}
 	void Reserve(idx_t more);
 	void Drop(idx_t rows, idx_t ends);
+	const RowAnomaly *Anomaly(idx_t row) const;
 
 	unsafe_unique_array<uint32_t> rows;
 	unsafe_unique_array<uint32_t> ends;
 	idx_t capacity = 0;
 	idx_t row_count = 0;
 	idx_t end_count = 0;
+	vector<RowAnomaly> anomalies;
+	vector<uint32_t> extras;
 };
 
 struct RowCursor {
@@ -82,6 +94,8 @@ struct RowCursor {
 	uint64_t delimiter_tail = 0;
 	uint64_t non_ascii = 0;
 	idx_t phase = 0;
+	idx_t open_rows = 0;
+	idx_t extras_from = 0;
 	idx_t rows = 0;
 	idx_t lines = 0;
 	idx_t first_row_end = DConstants::INVALID_INDEX;
@@ -92,6 +106,7 @@ struct RowCursor {
 	bool quotes = false;
 	bool doubled = false;
 	bool padded = false;
+	bool extras_dropped = false;
 	bool settled = false;
 	bool unterminated = false;
 	bool check_arity = true;
@@ -127,7 +142,8 @@ struct RowCountCursor {
 
 class RowLexer {
 public:
-	RowLexer(const RowDialect &dialect, idx_t columns, idx_t max_line_size, bool error_mode, bool pad_rows = false);
+	RowLexer(const RowDialect &dialect, idx_t columns, idx_t max_line_size, bool error_mode, bool pad_rows = false,
+	         bool irregular_rows = false);
 
 	bool Eligible() const {
 		return eligible;
@@ -150,6 +166,7 @@ public:
 private:
 	template <bool EXTRACT>
 	bool FeedBlocks(RowCursor &cursor, const char *data, idx_t base, idx_t end, bool last, RowFields *fields) const;
+	void EndRow(RowCursor &cursor, RowFields &fields, uint32_t entry, idx_t rows_written, uint32_t *&out) const;
 	bool CountByte(RowCountCursor &cursor, char byte, idx_t position, vector<RowCount> &rows, idx_t limit) const;
 	bool CountPlain(RowCountCursor &cursor, const char *block, idx_t from, idx_t to, uint64_t delimiters,
 	                uint64_t terminators, uint64_t pairs, idx_t offset, vector<RowCount> &rows, idx_t limit) const;
@@ -161,6 +178,7 @@ private:
 	const idx_t columns;
 	const idx_t max_line_size;
 	const bool pad_rows;
+	const bool irregular_rows;
 	bool eligible;
 	bool settle_strict;
 	bool settle_length;

@@ -2,6 +2,7 @@
 
 #include "duckdb/formats/csv_simd.hpp"
 
+#include <algorithm>
 #include <bit>
 #include <cstring>
 
@@ -257,11 +258,32 @@ void RowFields::Drop(idx_t count, idx_t dropped_ends) {
 	memmove(ends.get(), ends.get() + dropped_ends, (end_count - dropped_ends) * sizeof(uint32_t));
 	row_count -= count;
 	end_count -= dropped_ends;
+	if (anomalies.empty()) {
+		return;
+	}
+	idx_t kept = 0;
+	for (auto &anomaly : anomalies) {
+		if (anomaly.row >= count) {
+			anomaly.row -= static_cast<uint32_t>(count);
+			anomalies[kept++] = anomaly;
+		}
+	}
+	anomalies.resize(kept);
+	if (anomalies.empty()) {
+		extras.clear();
+	}
+}
+
+const RowAnomaly *RowFields::Anomaly(idx_t row) const {
+	auto entry = std::lower_bound(anomalies.begin(), anomalies.end(), row,
+	                              [](const RowAnomaly &anomaly, idx_t value) { return anomaly.row < value; });
+	return entry != anomalies.end() && entry->row == row ? &*entry : nullptr;
 }
 
 RowLexer::RowLexer(const RowDialect &dialect_p, idx_t columns_p, idx_t max_line_size_p, bool error_mode,
-                   bool pad_rows_p)
-    : dialect(dialect_p), columns(columns_p), max_line_size(max_line_size_p), pad_rows(pad_rows_p) {
+                   bool pad_rows_p, bool irregular_rows_p)
+    : dialect(dialect_p), columns(columns_p), max_line_size(max_line_size_p), pad_rows(pad_rows_p),
+      irregular_rows(irregular_rows_p) {
 	eligible = dialect.supported && columns >= 1 && max_line_size >= CSV_BLOCK_BYTES;
 	settle_strict = error_mode && dialect.strict;
 	settle_length = error_mode;
@@ -529,6 +551,8 @@ bool RowLexer::FeedBlocks(RowCursor &cursor, const char *data, idx_t base, idx_t
 		idx_t pad_total = 0;
 		uint8_t pad_at[CSV_BLOCK_BYTES];
 		uint32_t pad_size[CSV_BLOCK_BYTES];
+		bool irregular = false;
+		uint64_t row_pattern = 0;
 		if (c.check_arity && boundaries) {
 			const idx_t count = std::popcount(boundaries);
 #if defined(__BMI2__)
@@ -540,8 +564,11 @@ bool RowLexer::FeedBlocks(RowCursor &cursor, const char *data, idx_t base, idx_t
 			}
 #endif
 			const uint64_t mask = count == 64 ? ~uint64_t(0) : (uint64_t(1) << count) - 1;
-			if (!((pattern ^ patterns[c.phase]) & mask)) {
+			if (c.phase < columns && !((pattern ^ patterns[c.phase]) & mask)) {
 				c.phase = pattern ? count + std::countl_zero(pattern) - 64 : c.phase + count;
+			} else if (EXTRACT && irregular_rows) {
+				irregular = true;
+				row_pattern = pattern;
 			} else if (pad_rows) {
 				idx_t index = 0;
 				for (uint64_t rest = pattern; rest; rest &= rest - 1) {
@@ -563,7 +590,7 @@ bool RowLexer::FeedBlocks(RowCursor &cursor, const char *data, idx_t base, idx_t
 			} else {
 				return fail();
 			}
-			if (c.phase >= columns) {
+			if (!irregular && c.phase >= columns) {
 				return fail();
 			}
 		}
@@ -602,6 +629,7 @@ bool RowLexer::FeedBlocks(RowCursor &cursor, const char *data, idx_t base, idx_t
 			const uint64_t follows = (terms << 1) | c.after_term;
 			const uint64_t row_starts = follows & ~(terms & merged) & ~region & valid;
 			rows_out = WritePositions(row_starts, offset, rows_out);
+			c.open_rows += std::popcount(row_starts);
 			uint32_t *block_ends = ends_out;
 			if (d.strip_carriage) {
 				const uint64_t plain_carriage = carriage_return & ~hidden & valid;
@@ -639,7 +667,37 @@ bool RowLexer::FeedBlocks(RowCursor &cursor, const char *data, idx_t base, idx_t
 					block_ends[index] |= ROW_FIELD_FLAG;
 				}
 			}
-			if (pad_count) {
+			if (irregular) {
+				const idx_t first_end = static_cast<idx_t>(block_ends - fields->ends.get());
+				const idx_t written = static_cast<idx_t>(ends_out - block_ends);
+				uint32_t raw[CSV_BLOCK_BYTES + 1];
+				memcpy(raw, block_ends, written * sizeof(uint32_t));
+				const idx_t rows_used = static_cast<idx_t>(rows_out - fields->rows.get());
+				const idx_t more = written * columns + (end - c.pos) + CSV_BLOCK_BYTES;
+				if (MaxValue(rows_used, first_end) + more + FIELD_SLACK > fields->capacity) {
+					fields->row_count = rows_used;
+					fields->end_count = first_end;
+					fields->Reserve(more);
+					rows_out = fields->rows.get() + rows_used;
+				}
+				uint32_t *out = fields->ends.get() + first_end;
+				for (idx_t i = 0; i < written; i++) {
+					if ((row_pattern >> i) & 1) {
+						EndRow(c, *fields, raw[i], rows_used, out);
+						continue;
+					}
+					if (c.phase < columns) {
+						*out++ = raw[i];
+					} else if (d.strict) {
+						fields->extras.push_back(raw[i]);
+					}
+					if (c.phase == columns - 1) {
+						c.extras_from = fields->extras.size();
+					}
+					c.phase++;
+				}
+				ends_out = out;
+			} else if (pad_count) {
 				const idx_t first_end = static_cast<idx_t>(block_ends - fields->ends.get());
 				const idx_t written = static_cast<idx_t>(ends_out - block_ends);
 				const idx_t rows_used = static_cast<idx_t>(rows_out - fields->rows.get());
@@ -662,6 +720,9 @@ bool RowLexer::FeedBlocks(RowCursor &cursor, const char *data, idx_t base, idx_t
 				}
 				ends_out = block_start + written + pad_total;
 			}
+			if (!irregular) {
+				c.open_rows -= std::popcount(row_ends);
+			}
 		}
 		c.in_quotes = (in >> (size - 1)) & 1;
 		c.after_separator = (delims >> (CSV_BLOCK_BYTES - delimiter_size)) | ((terms >> (size - 1)) & 1);
@@ -677,6 +738,34 @@ bool RowLexer::FeedBlocks(RowCursor &cursor, const char *data, idx_t base, idx_t
 	return true;
 }
 
+void RowLexer::EndRow(RowCursor &c, RowFields &fields, uint32_t entry, idx_t rows_written, uint32_t *&out) const {
+	const auto row = static_cast<uint32_t>(rows_written - c.open_rows);
+	c.open_rows--;
+	const idx_t field_count = c.phase + 1;
+	c.phase = 0;
+	if (field_count == columns) {
+		*out++ = entry;
+		return;
+	}
+	if (field_count < columns) {
+		*out++ = entry;
+		std::fill_n(out, columns - field_count, entry | ROW_FIELD_FLAG);
+		out += columns - field_count;
+		c.padded = true;
+		if (!pad_rows) {
+			fields.anomalies.push_back({row, static_cast<uint32_t>(field_count), entry & ROW_FIELD_MASK, 0});
+		}
+		return;
+	}
+	if (!dialect.strict) {
+		c.extras_dropped = true;
+		return;
+	}
+	fields.extras.push_back(entry);
+	fields.anomalies.push_back(
+	    {row, static_cast<uint32_t>(field_count), entry & ROW_FIELD_MASK, static_cast<uint32_t>(c.extras_from)});
+}
+
 bool RowLexer::Finish(RowCursor &cursor, const char *data, idx_t base, idx_t end, bool eof, RowFields *fields,
                       CSVState origin_state, CsvRangeEntry &entry) const {
 	auto &c = cursor;
@@ -690,17 +779,19 @@ bool RowLexer::Finish(RowCursor &cursor, const char *data, idx_t base, idx_t end
 			const idx_t limit = c.last_row_end == DConstants::INVALID_INDEX ? max_line_size / 2 : max_line_size;
 			const idx_t prior = c.last_row_end == DConstants::INVALID_INDEX ? c.origin : c.last_row_end;
 			const bool row = !c.in_comment;
-			if (!eof || (row && c.check_arity && !pad_rows && c.phase != columns - 1) || end - prior > limit) {
+			const bool irregular = row && fields && c.check_arity && irregular_rows;
+			if (!eof || (row && c.check_arity && !pad_rows && !irregular && c.phase != columns - 1) ||
+			    end - prior > limit) {
 				c.ok = false;
 				return false;
 			}
 			c.lines++;
 			c.unterminated = true;
 			c.rows += row;
-			const idx_t pads = row && c.check_arity && pad_rows ? columns - 1 - c.phase : 0;
+			const idx_t pads = row && c.check_arity && pad_rows && !irregular ? columns - 1 - c.phase : 0;
 			c.padded = c.padded || pads;
 			if (row && fields) {
-				fields->Reserve(1 + pads);
+				fields->Reserve(columns + pads);
 				auto position = static_cast<uint32_t>(end - c.origin);
 				if (dialect.strip_carriage && c.after_plain_cr) {
 					position--;
@@ -708,9 +799,15 @@ bool RowLexer::Finish(RowCursor &cursor, const char *data, idx_t base, idx_t end
 				if (c.pending_flag) {
 					position |= ROW_FIELD_FLAG;
 				}
-				fields->ends[fields->end_count++] = position;
-				for (idx_t i = 0; i < pads; i++) {
-					fields->ends[fields->end_count++] = position | ROW_FIELD_FLAG;
+				if (irregular) {
+					uint32_t *out = fields->ends.get() + fields->end_count;
+					EndRow(c, *fields, position, fields->row_count, out);
+					fields->end_count = static_cast<idx_t>(out - fields->ends.get());
+				} else {
+					fields->ends[fields->end_count++] = position;
+					for (idx_t i = 0; i < pads; i++) {
+						fields->ends[fields->end_count++] = position | ROW_FIELD_FLAG;
+					}
 				}
 			}
 		}
