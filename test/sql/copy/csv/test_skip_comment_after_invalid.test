@@ -1,0 +1,20 @@
+# name: test/sql/copy/csv/test_skip_comment_after_invalid.test
+# description: Skipped rows: a comment that follows an invalid byte makes its line a comment line, also when the invalid byte ends a 64-byte block
+# group: [csv]
+
+statement ok
+COPY (SELECT line FROM (VALUES (0, 'x,0'), (1, repeat('a', 58) || chr(10) || '#comment'), (2, 'b,1'), (3, 'c,2')) t(id, line) ORDER BY id) TO '{TEMP_DIR}/skip_event.csv' (HEADER false, DELIMITER '\t', QUOTE '', NEW_LINE '\r\n');
+
+query II
+SELECT a, b FROM read_csv('{TEMP_DIR}/skip_event.csv', columns = {'a': 'VARCHAR', 'b': 'INTEGER'}, header = false, auto_detect = false, delim = ',', quote = '', escape = '', comment = '#', strict_mode = true, skip = 2);
+----
+c	2
+
+statement ok
+COPY (SELECT line FROM (VALUES (0, 'x,0'), (1, repeat('a', 58) || 'z#comment'), (2, 'b,1'), (3, 'c,2')) t(id, line) ORDER BY id) TO '{TEMP_DIR}/skip_mid_comment.csv' (HEADER false, DELIMITER '\t', QUOTE '', NEW_LINE '\r\n');
+
+query II
+SELECT a, b FROM read_csv('{TEMP_DIR}/skip_mid_comment.csv', columns = {'a': 'VARCHAR', 'b': 'INTEGER'}, header = false, auto_detect = false, delim = ',', quote = '', escape = '', comment = '#', strict_mode = true, skip = 2);
+----
+b	1
+c	2

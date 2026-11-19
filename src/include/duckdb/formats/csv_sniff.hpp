@@ -97,6 +97,7 @@ public:
 
 private:
 	bool NextBuffer();
+	bool AddRows(idx_t first);
 	void AddRow(const RowCount &row);
 	string LineText(idx_t begin, idx_t end) const;
 	bool LineTooLong(idx_t begin, idx_t end);
@@ -104,13 +105,18 @@ private:
 private:
 	CsvColumnCounts result;
 	RowLexer lexer;
-	RowCountCursor cursor;
+	RowCursor cursor;
 	vector<RowCount> rows;
 	shared_ptr<CSVBufferHandle> cur_buffer_handle;
-	map<idx_t, shared_ptr<CSVBufferHandle>> buffer_handles;
+	vector<char> window;
+	vector<idx_t> boundaries;
+	idx_t next_boundary = 0;
+	idx_t window_start = 0;
 	idx_t buffer_idx = 0;
 	idx_t buffer_start = 0;
+	idx_t buffer_used = 0;
 	bool done = false;
+	bool eof = false;
 	bool finished = false;
 };
 

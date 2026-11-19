@@ -74,8 +74,7 @@ struct HasType {
 class CSVSniffer {
 public:
 	explicit CSVSniffer(CSVReaderOptions &options_p, const MultiFileOptions &file_options,
-	                    shared_ptr<CSVBufferManager> buffer_manager_p, CSVStateMachineCache &state_machine_cache,
-	                    bool default_null_to_varchar = true);
+	                    shared_ptr<CSVBufferManager> buffer_manager_p, bool default_null_to_varchar = true);
 
 	//! Main method that sniffs the CSV file, returns the types, names and options as a result
 	//! CSV Sniffing consists of five steps:
@@ -96,8 +95,7 @@ public:
 	//! Function that sniffs up to STANDARD_VECTOR_SIZE rows to detect a header and data types
 	AdaptiveSnifferResult MinimalSniff();
 
-	static NewLineIdentifier DetectNewLineDelimiter(CSVBufferManager &buffer_manager, CSVReaderOptions &options,
-	                                                CSVStateMachineCache &state_machine_cache);
+	static NewLineIdentifier DetectNewLineDelimiter(CSVBufferManager &buffer_manager, const CSVReaderOptions &options);
 
 	//! If a string_t value can be cast to a type
 	static bool CanYouCastIt(ClientContext &context, const string_t value, const LogicalType &type,
@@ -113,8 +111,6 @@ private:
 	//! If all our candidates failed due to lines being bigger than the max line size.
 	bool all_fail_max_line_size = true;
 	CSVError line_error;
-	//! CSV State Machine Cache
-	CSVStateMachineCache &state_machine_cache;
 	//! Highest number of columns found
 	idx_t max_columns_found = 0;
 	idx_t max_columns_found_error = 0;

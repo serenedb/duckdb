@@ -2,10 +2,9 @@ add_library_unity(
   duckdb_formats
   OBJECT
   csv_encoder.cpp
-  csv_index.cpp
+  csv_grammar.cpp
   csv_scan.cpp
   csv_sniff.cpp
-  csv_splitter.cpp
   row_lexer.cpp
   value_parsers.cpp)
 set(ALL_OBJECT_FILES

@@ -75,11 +75,11 @@ CsvColumnCounter::CsvColumnCounter(shared_ptr<CSVBufferManager> buffer_manager_p
 	const idx_t requested = buffer_manager->GetBufferSize();
 	buffer_idx = start / requested;
 	buffer_start = buffer_idx * requested;
+	buffer_used = start - buffer_start;
+	window_start = start;
 	cur_buffer_handle = buffer_manager->GetBuffer(buffer_idx);
-	if (cur_buffer_handle) {
-		buffer_handles[buffer_start] = cur_buffer_handle;
-	}
-	cursor.pos = start;
+	lexer.Start(cursor, start, true, false);
+	cursor.file_start = true;
 	cursor.line_start = start;
 	rows.reserve(result_size + 1);
 }
@@ -88,16 +88,15 @@ idx_t CsvColumnCounter::SkipRows(CSVBufferManager &buffer_manager, const CSVStat
 	if (rows == 0) {
 		return 0;
 	}
-	const auto grammar = CsvGrammar::For(state_machine);
-	CsvSkip skip(grammar, rows);
+	RowSkip skip(RowDialect::DuckDB(CsvGrammar::For(state_machine)), rows);
 	idx_t offset = 0;
 	for (idx_t index = 0;; index++) {
 		auto handle = buffer_manager.GetBuffer(index);
 		if (!handle) {
-			return DConstants::INVALID_INDEX;
+			return skip.Feed(nullptr, offset, offset, true) ? skip.Start() : DConstants::INVALID_INDEX;
 		}
-		if (skip.Feed(handle->Ptr(), offset, offset + handle->actual_size)) {
-			return skip.Start(state_machine.options);
+		if (skip.Feed(handle->Ptr(), offset, offset + handle->actual_size, handle->is_last_buffer)) {
+			return skip.Start();
 		}
 		offset += handle->actual_size;
 		if (handle->is_last_buffer) {
@@ -116,19 +115,15 @@ bool CsvColumnCounter::FinishedFile() const {
 
 string CsvColumnCounter::LineText(idx_t begin, idx_t end) const {
 	string line;
-	for (auto &entry : buffer_handles) {
-		const idx_t start = entry.first;
-		const idx_t from = MaxValue(begin, start);
-		const idx_t to = MinValue(end, start + entry.second->actual_size);
-		if (from >= to) {
-			continue;
-		}
-		const char *data = entry.second->Ptr();
+	const idx_t from = MaxValue(begin, window_start);
+	const idx_t to = MinValue(end, window_start + window.size());
+	if (from < to) {
 		idx_t position = from;
-		if (position == begin && (data[position - start] == '\n' || data[position - start] == '\r')) {
+		const char first = window[position - window_start];
+		if (position == begin && (first == '\n' || first == '\r')) {
 			position++;
 		}
-		line.append(data + (position - start), to - position);
+		line.append(window.data() + (position - window_start), to - position);
 	}
 	CsvSanitize(line);
 	return line;
@@ -143,6 +138,26 @@ bool CsvColumnCounter::LineTooLong(idx_t begin, idx_t end) {
 	auto error = CSVError::LineSizeError(options, LinesPerBoundary(), line, begin, options.file_path);
 	error_handler->Error(error);
 	result.error = true;
+	return true;
+}
+
+bool CsvColumnCounter::AddRows(idx_t first) {
+	for (idx_t i = first; i < rows.size(); i++) {
+		auto &row = rows[i];
+		while (next_boundary < boundaries.size() && boundaries[next_boundary] < row.end) {
+			const idx_t boundary = boundaries[next_boundary++];
+			if (row.begin < boundary && LineTooLong(row.begin, boundary)) {
+				return false;
+			}
+		}
+		AddRow(row);
+	}
+	while (next_boundary < boundaries.size() && boundaries[next_boundary] <= cursor.pos) {
+		const idx_t boundary = boundaries[next_boundary++];
+		if (cursor.line_start < boundary && LineTooLong(cursor.line_start, boundary)) {
+			return false;
+		}
+	}
 	return true;
 }
 
@@ -175,11 +190,8 @@ bool CsvColumnCounter::NextBuffer() {
 	}
 	buffer_start += cur_buffer_handle->actual_size;
 	buffer_idx++;
+	buffer_used = 0;
 	cur_buffer_handle = std::move(next);
-	buffer_handles[buffer_start] = cur_buffer_handle;
-	if (buffer_handles.size() > 2) {
-		buffer_handles.erase(buffer_handles.begin());
-	}
 	return true;
 }
 
@@ -189,31 +201,48 @@ CsvColumnCounts &CsvColumnCounter::ParseChunk() {
 		return result;
 	}
 	rows.clear();
+	RowShapes shapes {rows, result.result_size};
+	const idx_t need = CSV_BLOCK_BYTES + lexer.Lookahead();
 	while (rows.size() < result.result_size && !cursor.invalid) {
-		const idx_t buffer_end = buffer_start + cur_buffer_handle->actual_size;
-		const idx_t first = rows.size();
-		if (cursor.pos >= buffer_end) {
-			if (result.error) {
-				break;
-			}
-			if (!NextBuffer()) {
-				lexer.FinishCount(cursor, rows);
-				finished = true;
-				for (idx_t i = first; i < rows.size(); i++) {
-					AddRow(rows[i]);
+		const idx_t window_end = window_start + window.size();
+		const bool exhausted = buffer_used >= cur_buffer_handle->actual_size;
+		const bool at_end = exhausted && (eof || cur_buffer_handle->is_last_buffer);
+		if (window_end - cursor.pos < need && !at_end) {
+			if (exhausted) {
+				if (result.error) {
+					break;
 				}
-				result.error = result.error || cursor.unterminated;
-				break;
+				if (!NextBuffer()) {
+					eof = true;
+					continue;
+				}
+				boundaries.push_back(buffer_start);
 			}
-			if (LineTooLong(cursor.line_start, buffer_start)) {
-				break;
-			}
+			const idx_t keep = MinValue(MinValue(cursor.pos, cursor.line_start), window_end) - window_start;
+			window.erase(window.begin(), window.begin() + static_cast<std::ptrdiff_t>(keep));
+			window_start += keep;
+			const idx_t piece = MinValue<idx_t>(cur_buffer_handle->actual_size - buffer_used, 1 << 16);
+			const char *source = cur_buffer_handle->Ptr() + buffer_used;
+			window.insert(window.end(), source, source + piece);
+			buffer_used += piece;
 			continue;
 		}
-		lexer.CountRows(cursor, cur_buffer_handle->Ptr(), buffer_start, buffer_end, result.result_size - rows.size(),
-		                rows);
-		for (idx_t i = first; i < rows.size(); i++) {
-			AddRow(rows[i]);
+		if (!cursor.ok) {
+			result.error = true;
+			break;
+		}
+		const idx_t first = rows.size();
+		lexer.CountRows(cursor, window.data(), window_start, window_end, at_end, shapes);
+		if (!AddRows(first)) {
+			break;
+		}
+		if (at_end && cursor.pos >= window_end && !cursor.invalid && rows.size() < result.result_size) {
+			const idx_t before = rows.size();
+			lexer.FinishCount(cursor, rows);
+			AddRows(before);
+			finished = true;
+			result.error = result.error || cursor.unterminated;
+			break;
 		}
 	}
 	if (cursor.invalid) {
@@ -222,7 +251,7 @@ CsvColumnCounts &CsvColumnCounter::ParseChunk() {
 	}
 	ever_quoted = cursor.ever_quoted;
 	ever_escaped = cursor.ever_escaped;
-	used_unstrictness = cursor.used_unstrictness;
+	used_unstrictness = cursor.unstrict;
 	return result;
 }
 

@@ -1,0 +1,23 @@
+# name: test/sql/copy/csv/rejects/csv_rejects_batches.test
+# description: An error found while lexing a row is reported once, not again for the rows of later batches
+# group: [rejects]
+
+require skip_reload
+
+statement ok
+COPY (SELECT i::VARCHAR || CASE WHEN i = 10 THEN ',"x"y' ELSE ',"x"' END FROM range(1, 5001) r(i) ORDER BY i) TO '{TEMP_DIR}/event_batches.csv' (HEADER false, DELIMITER '\t', QUOTE '');
+
+query II
+SELECT count(*), sum(a) FROM read_csv('{TEMP_DIR}/event_batches.csv', columns = {'a': 'INTEGER', 'b': 'VARCHAR'}, header = false, auto_detect = false, delim = ',', quote = '"', escape = '"', strict_mode = true, store_rejects = true);
+----
+4999	12502490
+
+query III
+SELECT count(*), min(line), max(line) FROM reject_errors;
+----
+1	10	10
+
+statement error
+SELECT count(*) FROM read_csv('{TEMP_DIR}/event_batches.csv', columns = {'a': 'INTEGER', 'b': 'VARCHAR'}, header = false, auto_detect = false, delim = ',', quote = '"', escape = '"', strict_mode = true);
+----
+Line: 10

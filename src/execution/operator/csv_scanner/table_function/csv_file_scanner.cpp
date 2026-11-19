@@ -20,20 +20,17 @@ CSVFileScan::CSVFileScan(ClientContext &context, const OpenFileInfo &file_p, CSV
 	// Initialize On Disk and Size of file
 	on_disk_file = buffer_manager->file_handle->OnDiskFile();
 	file_size = buffer_manager->file_handle->FileSize();
-	// Initialize State Machine
-	auto &state_machine_cache = CSVStateMachineCache::Get(context);
-
 	SetNamesAndTypes(names, types);
 	if (options.auto_detect) {
 		if (fixed_schema) {
 			// schema of the file is fixed - only run the sniffer
-			CSVSniffer sniffer(options, file_options, buffer_manager, state_machine_cache);
+			CSVSniffer sniffer(options, file_options, buffer_manager);
 			sniffer.SniffCSV();
 		} else if (file_schema.Empty()) {
 			throw InternalException("CSV File Scanner cannot be created without a schema");
 		} else if (buffer_manager->file_handle->FileSize() > 0) {
 			options.file_path = file.path;
-			CSVSniffer sniffer(options, file_options, buffer_manager, state_machine_cache, false);
+			CSVSniffer sniffer(options, file_options, buffer_manager, false);
 			auto result = sniffer.AdaptiveSniff(file_schema);
 			SetNamesAndTypes(result.names, result.return_types);
 		}
@@ -44,10 +41,9 @@ CSVFileScan::CSVFileScan(ClientContext &context, const OpenFileInfo &file_p, CSV
 	}
 	if (options.dialect_options.state_machine_options.new_line == NewLineIdentifier::NOT_SET) {
 		options.dialect_options.state_machine_options.new_line =
-		    CSVSniffer::DetectNewLineDelimiter(*buffer_manager, options, state_machine_cache);
+		    CSVSniffer::DetectNewLineDelimiter(*buffer_manager, options);
 	}
-	state_machine = make_shared_ptr<CSVStateMachine>(
-	    state_machine_cache.Get(options.dialect_options.state_machine_options), options);
+	state_machine = make_shared_ptr<CSVStateMachine>(options);
 }
 
 void CSVFileScan::SetNamesAndTypes(const vector<Identifier> &names_p, const vector<LogicalType> &types_p) {
