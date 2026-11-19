@@ -1570,13 +1570,23 @@ string StrpTimeFormat::ParseResult::FormatError(string_t input, const string &fo
 	                          FormatStrpTimeError(input.GetString(), error_position), error_message);
 }
 
+static bool ConvertedOrError(bool converted, string_t input, const string &format_specifier, const char *type,
+                             string &error_message) {
+	if (!converted) {
+		error_message = StringUtil::Format("Could not convert string \"%s\" according to format specifier \"%s\" to a "
+		                                   "valid %s",
+		                                   input.GetString(), format_specifier, type);
+	}
+	return converted;
+}
+
 bool StrpTimeFormat::TryParseDate(string_t input, date_t &result, string &error_message) const {
 	ParseResult parse_result;
 	if (!Parse(input, parse_result)) {
 		error_message = parse_result.FormatError(input, format_specifier);
 		return false;
 	}
-	return parse_result.TryToDate(result);
+	return ConvertedOrError(parse_result.TryToDate(result), input, format_specifier, "date", error_message);
 }
 
 bool StrpTimeFormat::TryParseDate(const char *data, size_t size, date_t &result) const {
@@ -1593,7 +1603,7 @@ bool StrpTimeFormat::TryParseTime(string_t input, dtime_t &result, string &error
 		error_message = parse_result.FormatError(input, format_specifier);
 		return false;
 	}
-	return parse_result.TryToTime(result);
+	return ConvertedOrError(parse_result.TryToTime(result), input, format_specifier, "time", error_message);
 }
 
 bool StrpTimeFormat::TryParseTimestamp(string_t input, timestamp_t &result, string &error_message) const {
@@ -1602,7 +1612,7 @@ bool StrpTimeFormat::TryParseTimestamp(string_t input, timestamp_t &result, stri
 		error_message = parse_result.FormatError(input, format_specifier);
 		return false;
 	}
-	return parse_result.TryToTimestamp(result);
+	return ConvertedOrError(parse_result.TryToTimestamp(result), input, format_specifier, "timestamp", error_message);
 }
 
 bool StrpTimeFormat::TryParseTimestamp(const char *data, size_t size, timestamp_t &result) const {
@@ -1619,7 +1629,7 @@ bool StrpTimeFormat::TryParseTimestampNS(string_t input, timestamp_ns_t &result,
 		error_message = parse_result.FormatError(input, format_specifier);
 		return false;
 	}
-	return parse_result.TryToTimestampNS(result);
+	return ConvertedOrError(parse_result.TryToTimestampNS(result), input, format_specifier, "timestamp", error_message);
 }
 
 bool StrpTimeFormat::TryParseTimestampNS(const char *data, size_t size, timestamp_ns_t &result) const {
