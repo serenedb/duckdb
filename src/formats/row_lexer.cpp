@@ -107,6 +107,7 @@ RowDialect RowDialect::PostgresCsv(char delimiter, char quote, char escape) {
 	result.quoting = RowQuoting::ANYWHERE;
 	result.escape_in_quotes = escape != '\0' && escape != quote;
 	result.strip_carriage = true;
+	result.strict = true;
 	return result;
 }
 
@@ -116,6 +117,7 @@ RowDialect RowDialect::PostgresText(char delimiter) {
 	result.escape = '\\';
 	result.backslash = true;
 	result.strip_carriage = true;
+	result.strict = true;
 	return result;
 }
 
@@ -213,7 +215,7 @@ void RowLexer::Start(RowCursor &cursor, idx_t begin, bool settled, bool check_ar
 	cursor.anchor = begin;
 	cursor.pos = begin;
 	cursor.field_start = begin;
-	cursor.settled = settled || dialect.quoting != RowQuoting::FIELD_START;
+	cursor.settled = settled || dialect.quoting == RowQuoting::NONE;
 	cursor.check_arity = check_arity;
 }
 
@@ -1030,12 +1032,11 @@ bool RowLexer::Finish(RowCursor &cursor, const char *data, idx_t base, idx_t end
 	if (!eof) {
 		return true;
 	}
-	if ((c.in_quotes || c.escape_carry) && !dialect.duckdb) {
-		c.ok = false;
-		return false;
-	}
 	bool unfinished = false;
-	if (c.in_quotes && !c.escape_carry) {
+	if (!dialect.duckdb) {
+		c.escape_carry = 0;
+		unfinished = c.in_quotes != 0;
+	} else if (c.in_quotes && !c.escape_carry) {
 		if (!dialect.strict) {
 			c.unstrict = true;
 		} else if (fields || !c.check_arity) {
