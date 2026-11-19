@@ -254,7 +254,7 @@ string AlterPermissionsInfo::ToString() const {
 			result += "FOR ROLE " + SQLIdentifier::ToString(for_role) + " ";
 		}
 		if (!default_schema.empty()) {
-			result += "IN SCHEMA " + default_schema + " ";
+			result += "IN SCHEMA " + SQLIdentifier::ToString(default_schema) + " ";
 		}
 	}
 	result += revoke ? "REVOKE " : "GRANT ";
