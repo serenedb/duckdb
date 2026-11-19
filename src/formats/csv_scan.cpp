@@ -30,15 +30,16 @@ namespace duckdb {
 
 namespace {
 
-constexpr idx_t STITCH_BYTES = 1 << 16;
 constexpr idx_t LOOKUP_BYTES = 1 << 13;
-constexpr idx_t RANGE_BYTES = 1 << 19;
 constexpr idx_t RANGE_OVERLAP = 1 << 12;
 constexpr idx_t LEAN_RANGE_MIN = 1 << 20;
 constexpr idx_t LEAN_RANGE_MAX = 1 << 23;
 constexpr idx_t LEAN_PIECE = 1 << 16;
 constexpr idx_t LEAN_WINDOW = 1 << 20;
 constexpr idx_t LEAN_UNSETTLED = 1 << 22;
+constexpr idx_t LEAN_FEED = 1 << 20;
+constexpr idx_t LEAN_REBASE = 1 << 29;
+constexpr idx_t LEAN_ROW_LIMIT = idx_t(3) << 29;
 
 bool LeanDecodes(const LogicalType &type) {
 	switch (type.id()) {
@@ -109,7 +110,7 @@ inline bool LeanUnquote(const char *data, char quote, bool spaced, idx_t &begin,
 		close--;
 	}
 	begin = open + 1;
-	end = close - 1;
+	end = MaxValue(close - 1, begin);
 	return true;
 }
 
@@ -127,7 +128,7 @@ void LeanValues(const LeanSource &source, idx_t count, bool force_not_null, Vect
 	const char quote = source.quote;
 	const bool quotes = source.quotes;
 	const bool doubled = source.doubled;
-	const uint32_t flag_test = quotes || source.padded ? ROW_FIELD_FLAG : 0;
+	const uint32_t flag_test = quotes || source.padded || source.unquoted_escape ? ROW_FIELD_FLAG : 0;
 	const bool empty_only_null = source.empty_only_null && source.allow_quoted_nulls;
 	const auto selected = source.selected;
 	const idx_t first = source.first;
@@ -146,6 +147,11 @@ void LeanValues(const LeanSource &source, idx_t count, bool force_not_null, Vect
 				continue;
 			}
 			quoted = quotes && LeanUnquote(data, quote, source.spaced, begin, end);
+			if (!quoted && source.unquoted_escape && memchr(data + begin, source.unquoted_escape, end - begin)) {
+				retry.push_back(row);
+				FlatVector::SetNull(vector, row, true);
+				continue;
+			}
 		}
 		const char *value = data + begin;
 		const idx_t size = end - begin;
@@ -389,7 +395,7 @@ bool RawPasses(const vector<CsvRawPredicate> &predicates, const char *value, idx
 
 void LeanRawPredicates(const LeanSource &source, idx_t count, const vector<CsvRawPredicate> &predicates,
                        vector<bool> &selected) {
-	const uint32_t flag_test = source.quotes || source.padded ? ROW_FIELD_FLAG : 0;
+	const uint32_t flag_test = source.quotes || source.padded || source.unquoted_escape ? ROW_FIELD_FLAG : 0;
 	const bool empty_only_null = source.empty_only_null && source.allow_quoted_nulls;
 	for (idx_t row = 0; row < count; row++) {
 		if (!selected[row]) {
@@ -405,6 +411,9 @@ void LeanRawPredicates(const LeanSource &source, idx_t count, const vector<CsvRa
 				continue;
 			}
 			quoted = source.quotes && LeanUnquote(source.data, source.quote, source.spaced, begin, end);
+			if (!quoted && source.unquoted_escape && memchr(source.data + begin, source.unquoted_escape, end - begin)) {
+				continue;
+			}
 		}
 		const char *value = source.data + begin;
 		const idx_t size = end - begin;
@@ -429,7 +438,7 @@ void LeanStrings(const LeanSource &source, idx_t count, const CsvScanColumn &col
 	const idx_t shift = source.shift;
 	const char quote = source.quote;
 	const bool quotes = source.quotes;
-	const uint32_t flag_test = quotes || source.padded ? ROW_FIELD_FLAG : 0;
+	const uint32_t flag_test = quotes || source.padded || source.unquoted_escape ? ROW_FIELD_FLAG : 0;
 	const bool empty_only_null = source.empty_only_null && source.allow_quoted_nulls;
 	const auto selected = source.selected;
 	const idx_t first = source.first;
@@ -452,6 +461,11 @@ void LeanStrings(const LeanSource &source, idx_t count, const CsvScanColumn &col
 				continue;
 			}
 			quoted = quotes && LeanUnquote(data, quote, source.spaced, begin, end);
+			if (!quoted && source.unquoted_escape && memchr(data + begin, source.unquoted_escape, end - begin)) {
+				retry.push_back(row);
+				out[row] = string_t();
+				continue;
+			}
 		}
 		const char *value = data + begin;
 		const idx_t size = end - begin;
@@ -649,37 +663,39 @@ CsvScanGlobal::CsvScanGlobal(ClientContext &context_p, const CSVReaderOptions &o
 
 	auto &manager = *source.buffer_manager;
 	size = manager.file_handle->FileSize();
-	if (source.sniffing || !manager.HasKnownBufferRanges()) {
-		return;
+	stream = !manager.HasKnownBufferRanges();
+	if (stream) {
+		size = NumericLimits<idx_t>::Maximum();
+	}
+	num_columns = source.state_machine->dialect_options.num_cols;
+	if (num_columns == 0) {
+		throw InternalException("CSV scan of \"%s\" without columns", source.path);
 	}
 	auto dialect = RowDialect::DuckDB(grammar);
-	dialect.empty_lines = source.state_machine->dialect_options.num_cols == 1 && empty_is_null;
-	lean = make_uniq<RowLexer>(dialect, source.state_machine->dialect_options.num_cols,
-	                           options.maximum_line_size.GetValue(), !ignore_errors, options.null_padding, true);
+	dialect.empty_lines = num_columns == 1 && empty_is_null;
+	lean = make_uniq<RowLexer>(dialect, num_columns, options.maximum_line_size.GetValue(), !ignore_errors,
+	                           options.null_padding, true);
 	count_only = (columns.empty() || source.placeholder) && filters.empty() &&
 	             source.file_row_number == DConstants::INVALID_INDEX;
 	empty_only_null = null_strings.size() == 1 && null_strings[0].empty();
-	bool lean_decodes = options.thousands_separator == '\0';
-	for (auto &column : columns) {
-		lean_decodes = lean_decodes && LeanDecodes(column.parse_type);
-	}
-	lean_ranges =
-	    lean->Eligible() && options.maximum_line_size.GetValue() < (idx_t(1) << 30) && (count_only || lean_decodes);
-	lean_batches = lean_ranges && !count_only && !late_materialization;
+	lean_batches = !count_only && !late_materialization;
 	for (auto &column : columns) {
 		lean_batches = lean_batches && !CsvScan::NeedsFlushCast(column);
 	}
-	parallel = options.parallel || lean_ranges;
-	if (!parallel) {
+	FindStart();
+	if (stream || source.sniffing) {
+		range_bytes = size - start;
+		range_count = 1;
+		transfers.resize(1);
+		computing.assign(1, false);
+		starts.assign(2, CsvRangeStart());
+		starts[0].line_end = start;
+		starts[0].last_position = start;
 		return;
 	}
-	FindStart();
 	const idx_t data_size = size - MinValue(start, size);
-	idx_t wanted = RANGE_BYTES;
-	if (lean_ranges) {
-		const idx_t threads = MaxValue<idx_t>(TaskScheduler::QueryThreads(context), 1);
-		wanted = MinValue(MaxValue(data_size / (threads * 4), LEAN_RANGE_MIN), LEAN_RANGE_MAX);
-	}
+	const idx_t threads = MaxValue<idx_t>(TaskScheduler::QueryThreads(context), 1);
+	const idx_t wanted = MinValue(MaxValue(data_size / (threads * 4), LEAN_RANGE_MIN), LEAN_RANGE_MAX);
 	range_bytes = MaxValue<idx_t>(MinValue<idx_t>(options.buffer_size_option.GetValue(), wanted), 1);
 	range_count = MaxValue<idx_t>((data_size + range_bytes - 1) / range_bytes, 1);
 	transfers.resize(range_count);
@@ -699,18 +715,39 @@ void CsvScanGlobal::FindStart() {
 		start_lines = 0;
 		return;
 	}
-	CsvSkip skip(grammar, skip_rows);
+	RowSkip skip(RowDialect::DuckDB(grammar), skip_rows);
 	idx_t offset = 0;
-	const idx_t buffer_count = source.buffer_manager->KnownBufferCount();
+	const idx_t buffer_count = stream ? NumericLimits<idx_t>::Maximum() : source.buffer_manager->KnownBufferCount();
 	for (idx_t buffer = 1; handle; buffer++) {
-		if (skip.Feed(handle->Ptr(), offset, offset + handle->actual_size) || handle->is_last_buffer) {
+		const bool last = handle->is_last_buffer || buffer >= buffer_count;
+		if (skip.Feed(handle->Ptr(), offset, offset + handle->actual_size, last)) {
 			break;
 		}
 		offset += handle->actual_size;
-		handle = buffer < buffer_count ? Buffer(buffer) : nullptr;
+		if (last) {
+			break;
+		}
+		handle = Buffer(buffer);
+		if (!handle) {
+			skip.Feed(nullptr, offset, offset, true);
+		}
 	}
-	start = MinValue(skip.Start(options), size);
+	if (skip.Start() == DConstants::INVALID_INDEX && source.sniffing) {
+		start = 0;
+		start_lines = 0;
+		return;
+	}
+	start = MinValue(skip.Start() == DConstants::INVALID_INDEX ? offset : skip.Start(), size);
 	start_lines = skip.Lines();
+}
+
+void CsvScanGlobal::Release(idx_t position) {
+	auto &manager = *source.buffer_manager;
+	const idx_t buffer_bytes = manager.GetBufferSize();
+	for (; released < position / buffer_bytes; released++) {
+		*source.bytes_read += buffer_bytes;
+		manager.ResetBuffer(released);
+	}
 }
 
 idx_t CsvScanGlobal::Read(char *data, idx_t count, idx_t offset) const {
@@ -796,7 +833,31 @@ CSVState CsvScanGlobal::Origin(const CsvBytes &bytes, idx_t begin) const {
 CsvRangeEntry CsvScanGlobal::Transfer(idx_t range, CSVState origin) const {
 	CsvBytes bytes;
 	const auto bounds = Bounds(range, bytes);
-	return CsvTransfer(grammar, bytes.data, bytes.offset, bounds.begin, bounds.end, origin);
+	return LexTransfer(bytes, bounds.begin, bounds.end, origin);
+}
+
+CsvRangeEntry CsvScanGlobal::LexTransfer(const CsvBytes &bytes, idx_t begin, idx_t end, CSVState origin) const {
+	RowCursor cursor;
+	lean->Start(cursor, begin, true, false);
+	switch (origin) {
+	case CSVState::QUOTED:
+	case CSVState::QUOTED_NEW_LINE:
+		cursor.in_quotes = 1;
+		break;
+	case CSVState::STANDARD:
+		cursor.after_term = 0;
+		break;
+	case CSVState::CARRIAGE_RETURN:
+		cursor.after_cr = 1;
+		break;
+	default:
+		cursor.file_start = begin == start && skip_rows == 0;
+		break;
+	}
+	lean->Feed(cursor, bytes.data, bytes.offset, end, true, nullptr);
+	CsvRangeEntry entry;
+	lean->Finish(cursor, bytes.data, bytes.offset, end, end >= size, nullptr, origin, entry);
+	return entry;
 }
 
 idx_t CsvScanGlobal::SyncAt(idx_t position) const {
@@ -829,14 +890,6 @@ void CsvScanGlobal::ViewWholeFile(CsvBytes &bytes) const {
 
 bool CsvScanGlobal::Claim(idx_t &range) {
 	const absl::MutexLock guard(&lock);
-	if (!parallel) {
-		if (sequential_claimed) {
-			return false;
-		}
-		sequential_claimed = true;
-		range = 0;
-		return true;
-	}
 	if (next_range >= range_count) {
 		return false;
 	}
@@ -857,12 +910,12 @@ bool CsvScanGlobal::FinishRange(idx_t range, idx_t lines) {
 	source.error_handler->Insert(range, lines);
 	const absl::MutexLock guard(&lock);
 	finished_ranges++;
-	return finished_ranges == MaxValue<idx_t>(parallel ? range_count : 1, 1);
+	return finished_ranges == range_count;
 }
 
 bool CsvScanGlobal::AllFinished() const {
 	const absl::MutexLock guard(&lock);
-	return finished_ranges == (parallel ? range_count : 1);
+	return finished_ranges == range_count;
 }
 
 void CsvScanGlobal::Publish(idx_t range, CSVState origin, const CsvRangeEntry &entry) {
@@ -916,10 +969,8 @@ CsvRangeStart CsvScanGlobal::StartState(idx_t range) {
 
 CsvScan::CsvScan(CsvScanGlobal &global_p)
     : global(global_p), source(global_p.source), options(global_p.options), grammar(global_p.grammar) {
-	splitter = make_uniq<CsvSplitter>(grammar, source.state_machine->dialect_options.num_cols, STANDARD_VECTOR_SIZE);
 	value_errors.resize(STANDARD_VECTOR_SIZE);
 	failed.resize(STANDARD_VECTOR_SIZE);
-	dropped.resize(STANDARD_VECTOR_SIZE);
 	selected.resize(STANDARD_VECTOR_SIZE);
 	keep.Initialize(STANDARD_VECTOR_SIZE);
 	filter_candidates.Initialize(STANDARD_VECTOR_SIZE);
@@ -935,7 +986,7 @@ CsvScan::CsvScan(CsvScanGlobal &global_p)
 }
 
 void CsvScan::PublishOwnTransfer() {
-	if (!global.parallel || range + 1 >= global.range_count) {
+	if (range + 1 >= global.range_count) {
 		return;
 	}
 	global.Computing(range, true);
@@ -944,34 +995,12 @@ void CsvScan::PublishOwnTransfer() {
 	};
 	CsvBytes span;
 	const auto bounds = global.Bounds(range, span);
-	const bool eof = bounds.end == global.size;
-	if (!grammar.quote) {
-		global.Publish(range, lean_origin,
-		               CsvTransfer(grammar, span.data, span.offset, bounds.begin, bounds.end, lean_origin));
-		return;
-	}
-	CsvRangeEntry quoted;
-	RowCursor probe;
-	global.lean->Start(probe, bounds.begin, true, false);
-	probe.in_quotes = 1;
-	const bool lean_quoted =
-	    !grammar.carry_on_newline && global.lean->Feed(probe, span.data, span.offset, bounds.end, true, nullptr) &&
-	    global.lean->Finish(probe, span.data, span.offset, bounds.end, eof, nullptr, CSVState::QUOTED, quoted);
-	if (!lean_quoted) {
-		quoted = CsvTransfer(grammar, span.data, span.offset, bounds.begin, bounds.end, CSVState::QUOTED);
-	}
-	global.Publish(range, CSVState::QUOTED, quoted);
-	if (quoted.first_boundary != DConstants::INVALID_INDEX) {
+	if (grammar.quote) {
+		const auto quoted = global.LexTransfer(span, bounds.begin, bounds.end, CSVState::QUOTED);
+		global.Publish(range, CSVState::QUOTED, quoted);
 		global.Publish(range, CSVState::QUOTED_NEW_LINE, quoted);
-		auto own = CsvTransfer(grammar, span.data, span.offset, bounds.begin, quoted.first_boundary, lean_origin);
-		if (own.end.states[1] == CSVState::RECORD_SEPARATOR && own.end.last_position == quoted.first_boundary) {
-			own.end = quoted.end;
-			global.Publish(range, lean_origin, own);
-			return;
-		}
 	}
-	global.Publish(range, lean_origin,
-	               CsvTransfer(grammar, span.data, span.offset, bounds.begin, bounds.end, lean_origin));
+	global.Publish(range, lean_origin, global.LexTransfer(span, bounds.begin, bounds.end, lean_origin));
 }
 
 bool CsvScan::LeanFromChain() {
@@ -1010,175 +1039,20 @@ void CsvScan::Start(idx_t range_p) {
 	reported = false;
 	no_rows = false;
 	lean = false;
+	force_extract = false;
 	lean_rows = DConstants::INVALID_INDEX;
 	lean_lines = DConstants::INVALID_INDEX;
-	if (!global.parallel) {
-		bytes.reset();
-	}
 	base = 0;
-	pending.reset();
-	pending_start = 0;
-	pending_used = 0;
-	next_buffer = 0;
-	next_buffer_start = 0;
-	stitch_bytes = 0;
-	last_buffer = false;
-	range_begin = 0;
-	range_end = NumericLimits<idx_t>::Maximum();
-}
-
-void CsvScan::View(shared_ptr<CSVBufferHandle> handle, idx_t position) {
-	auto view = make_shared_ptr<CsvBytes>();
-	view->data = handle->Ptr();
-	view->size = handle->actual_size;
-	view->buffer = std::move(handle);
-	bytes = std::move(view);
-	base = position;
-	stitch_bytes = 0;
-}
-
-bool CsvScan::ReadMore(idx_t keep) {
-	if (global.parallel) {
-		if (last_buffer) {
-			return false;
-		}
-		const idx_t span_end = base + bytes->size;
-		const idx_t from = MinValue(MaxValue(keep, base), span_end);
-		stitch_bytes = MaxValue(stitch_bytes * 2, STITCH_BYTES);
-		auto next = make_shared_ptr<CsvBytes>();
-		global.ReadInto(*next, from, span_end - from + stitch_bytes);
-		bytes = std::move(next);
-		base = bytes->offset;
-		last_buffer = base + bytes->size >= global.size;
-		return true;
-	}
-	if (!pending) {
-		if (last_buffer) {
-			return false;
-		}
-		auto &manager = *source.buffer_manager;
-		auto handle = manager.GetBuffer(next_buffer);
-		if (!handle) {
-			last_buffer = true;
-			return false;
-		}
-		if (!source.sniffing) {
-			*source.bytes_read += handle->actual_size;
-			if (next_buffer > 0) {
-				manager.ResetBuffer(next_buffer - 1);
-			}
-			if (handle->is_last_buffer) {
-				manager.ResetBuffer(next_buffer);
-			}
-		}
-		pending = std::move(handle);
-		pending_start = next_buffer_start;
-		pending_used = 0;
-		next_buffer++;
-		next_buffer_start += pending->actual_size;
-	}
-	const idx_t span_end = bytes ? base + bytes->size : pending_start;
-	keep = bytes ? MinValue(MaxValue(keep, base), span_end) : pending_start;
-	if (keep >= pending_start) {
-		const bool is_last = pending->is_last_buffer;
-		View(std::move(pending), pending_start);
-		last_buffer = is_last;
-		return true;
-	}
-	stitch_bytes = MaxValue(stitch_bytes * 2, STITCH_BYTES);
-	const idx_t piece = MinValue(stitch_bytes, pending->actual_size - pending_used);
-	const idx_t kept = span_end - keep;
-	auto stitched = make_shared_ptr<CsvBytes>();
-	stitched->owned = make_unsafe_uniq_array_uninitialized<char>(MaxValue<idx_t>(kept + piece, 1));
-	memcpy(stitched->owned.get(), bytes->data + (keep - base), kept);
-	memcpy(stitched->owned.get() + kept, pending->Ptr() + pending_used, piece);
-	stitched->data = stitched->owned.get();
-	stitched->size = kept + piece;
-	bytes = std::move(stitched);
-	base = keep;
-	pending_used += piece;
-	if (pending_used == pending->actual_size) {
-		last_buffer = pending->is_last_buffer;
-		pending.reset();
-	}
-	return true;
-}
-
-void CsvScan::SkipRows() {
-	ReadMore(0);
-	if (global.skip_rows == 0) {
-		splitter->Reset(bytes && global.skip_bom ? SkipBom(bytes->data, bytes->size) : 0, 0);
-		return;
-	}
-	CsvSkip skip(grammar, global.skip_rows);
-	bool skipped = false;
-	while (bytes) {
-		skipped = skip.Feed(bytes->data, base, base + bytes->size);
-		if (skipped || !ReadMore(base + bytes->size)) {
-			break;
-		}
-	}
-	if (!skipped && source.sniffing) {
-		bytes.reset();
-		pending.reset();
-		next_buffer = 0;
-		next_buffer_start = 0;
-		last_buffer = false;
-		ReadMore(0);
-		splitter->Reset(0, 0);
-		return;
-	}
-	splitter->Reset(skip.Start(options), skip.Lines());
-}
-
-bool CsvScan::ReadRange() {
-	if (!bytes || bytes.use_count() > 1) {
-		bytes = make_shared_ptr<CsvBytes>();
-	}
-	CSVState origin;
-	{
-		global.Computing(range, true);
-		absl::Cleanup stop = [&] {
-			global.Computing(range, false);
-		};
-		const auto bounds = global.Bounds(range, *bytes);
-		base = bytes->offset;
-		stitch_bytes = 0;
-		last_buffer = base + bytes->size >= global.size;
-		range_begin = bounds.begin;
-		range_end = bounds.end;
-		origin = global.Origin(*bytes, range_begin);
-		global.Publish(range, origin, CsvTransfer(grammar, bytes->data, base, range_begin, range_end, origin));
-	}
-	const auto start = global.StartState(range);
-	if (range_begin >= range_end) {
-		return false;
-	}
-	if (range == 0) {
-		splitter->Reset(range_begin, global.start_lines);
-		return true;
-	}
-	const auto state = start.states[1];
-	if (state == origin) {
-		splitter->Reset(range_begin, 0, start);
-		return true;
-	}
-	const auto entry = CsvTransfer(grammar, bytes->data, base, range_begin, range_end, state);
-	if (entry.first_boundary == DConstants::INVALID_INDEX) {
-		return false;
-	}
-	auto boundary = entry.boundary;
-	boundary.Inherit(start);
-	splitter->Reset(entry.first_boundary, 0, boundary);
-	return true;
 }
 
 void CsvScan::StartLean(bool second_pass) {
 	lean = true;
-	lean_extract = !global.count_only;
+	lean_extract = force_extract || !global.count_only;
 	lean_probe_only = false;
 	lean_finished = false;
 	lean_verified = false;
+	lean_extending = false;
+	lean_open_end = false;
 	lean_second_pass = second_pass;
 	lean_failed = false;
 	chunk_open = false;
@@ -1213,6 +1087,8 @@ void CsvScan::StartLean(bool second_pass) {
 	}
 	if (second_pass) {
 		global.lean->Start(cursor, lean_start, true);
+		cursor.file_start = lean_origin == CSVState::NOT_SET && global.skip_rows == 0;
+		cursor.after_cr = lean_origin == CSVState::CARRIAGE_RETURN;
 		validated_to = lean_start;
 	}
 }
@@ -1224,7 +1100,11 @@ idx_t CsvScan::KeepFrom() const {
 	idx_t keep = cursor.pos;
 	const idx_t first_row = global.lean_batches && chunk_open ? chunk_rows : 0;
 	if (lean_extract && !lean_probe_only && fields.row_count > first_row) {
-		keep = MinValue<idx_t>(keep, lean_start + fields.rows[first_row]);
+		keep = MinValue<idx_t>(keep, cursor.anchor + fields.rows[first_row]);
+		const idx_t begin = LeanRowBegin(first_row);
+		if (begin != DConstants::INVALID_INDEX) {
+			keep = MinValue(keep, begin);
+		}
 	}
 	if (!lean_extract && !global.columns.empty()) {
 		keep = MinValue(keep, validated_to);
@@ -1283,6 +1163,15 @@ void CsvScan::ReadLeanPiece() {
 	const idx_t got = want ? global.Read(window.owned.get() + (read_to - window.offset), want, read_to) : 0;
 	window.size += got;
 	read_to += got;
+	if (global.stream) {
+		if (!source.sniffing) {
+			global.Release(read_to);
+		}
+		if (got < want) {
+			global.size = read_to;
+			lean_stop = MinValue(lean_stop, read_to);
+		}
+	}
 }
 
 bool CsvScan::CheckCountUtf8(idx_t end) {
@@ -1333,6 +1222,8 @@ bool CsvScan::AdvanceLean() {
 			lean_line_end = run > bytes->offset ? run : DConstants::INVALID_INDEX;
 		}
 		global.lean->Start(cursor, lean_start, range == 0);
+		cursor.file_start = lean_origin == CSVState::NOT_SET && global.skip_rows == 0;
+		cursor.after_cr = lean_origin == CSVState::CARRIAGE_RETURN;
 		validated_to = lean_start;
 		return true;
 	}
@@ -1348,8 +1239,12 @@ bool CsvScan::AdvanceLean() {
 		}
 	}
 	const idx_t limit = lean_stop != DConstants::INVALID_INDEX ? lean_stop : global.RangeEnd(range);
-	const idx_t feed_end = MinValue(limit, read_to);
-	const bool last = lean_stop != DConstants::INVALID_INDEX && feed_end == lean_stop;
+	idx_t feed_end = MinValue(limit, read_to);
+	bool last = lean_stop != DConstants::INVALID_INDEX && feed_end == lean_stop;
+	if (feed_end > cursor.pos + LEAN_FEED) {
+		feed_end = cursor.pos + LEAN_FEED;
+		last = false;
+	}
 	if (cursor.pos < feed_end && (last || feed_end - cursor.pos >= CSV_BLOCK_BYTES + global.lean->Lookahead())) {
 		auto out = lean_extract && !lean_probe_only ? &fields : nullptr;
 		if (!global.lean->Feed(cursor, bytes->data, bytes->offset, feed_end, last, out)) {
@@ -1375,16 +1270,21 @@ bool CsvScan::AdvanceLean() {
 bool CsvScan::FinishLean() {
 	CsvRangeEntry entry;
 	auto out = lean_extract && !lean_probe_only ? &fields : nullptr;
-	if (!global.lean->Finish(cursor, bytes->data, bytes->offset, lean_stop, lean_stop == global.size, out, lean_origin,
-	                         entry)) {
+	const bool eof = lean_stop == global.size;
+	if (!global.lean->Finish(cursor, bytes->data, bytes->offset, lean_stop, eof, out, lean_origin, entry)) {
 		return false;
 	}
 	if (!lean_extract && !CheckCountUtf8(lean_stop)) {
 		return false;
 	}
-	lean_finished = true;
-	if (!lean_second_pass) {
+	if (!lean_second_pass && !lean_extending) {
 		global.Publish(range, lean_origin, entry);
+	}
+	const auto state = entry.end.states[1];
+	lean_open_end = !eof && state != CSVState::RECORD_SEPARATOR && state != CSVState::CARRIAGE_RETURN;
+	lean_finished = true;
+	if ((cursor.settled || lean_verified) && lean_open_end) {
+		return ExtendLean();
 	}
 	lean_lines = cursor.lines + (range == 0 ? global.start_lines : 0);
 	if (!lean_extract) {
@@ -1393,76 +1293,84 @@ bool CsvScan::FinishLean() {
 	return true;
 }
 
-void CsvScan::LeanToExact() {
-	lean = false;
+void CsvScan::RebaseLean() {
+	if (cursor.pos - cursor.anchor < LEAN_REBASE) {
+		return;
+	}
+	const auto delta = fields.row_count ? fields.rows[0] : static_cast<uint32_t>(cursor.pos - cursor.anchor);
+	if (delta > 0) {
+		fields.Rebase(delta);
+		cursor.anchor += delta;
+	}
+}
+
+void CsvScan::LeanOpenRowFits() {
+	RebaseLean();
+	if (cursor.pos - cursor.anchor >= LEAN_ROW_LIMIT) {
+		throw InvalidInputException("CSV Error: the row at byte %llu of \"%s\" is longer than %llu bytes, the longest "
+		                            "row the CSV reader holds",
+		                            cursor.anchor, source.path, LEAN_ROW_LIMIT);
+	}
+}
+
+bool CsvScan::ExtendLean() {
+	RowCursor probe = cursor;
+	probe.first_term = DConstants::INVALID_INDEX;
+	probe.first_term_cr = false;
+	probe.check_arity = false;
+	while (true) {
+		const bool eof = read_to >= global.size;
+		if (probe.pos < read_to && (eof || read_to - probe.pos >= CSV_BLOCK_BYTES + global.lean->Lookahead())) {
+			global.lean->Feed(probe, bytes->data, bytes->offset, read_to, eof, nullptr);
+			if (probe.first_term != DConstants::INVALID_INDEX) {
+				break;
+			}
+			continue;
+		}
+		if (eof) {
+			break;
+		}
+		ReadLeanPiece();
+	}
+	idx_t stop = global.size;
+	if (probe.first_term != DConstants::INVALID_INDEX) {
+		const idx_t first = probe.first_term;
+		const auto at = [&](idx_t position) {
+			return bytes->data[position - bytes->offset];
+		};
+		stop = first + 1;
+		if (grammar.carry_on_newline && at(first) == '\r' && stop < read_to && at(stop) == '\n') {
+			stop++;
+		}
+	}
+	lean_stop = stop;
+	lean_extending = true;
+	lean_open_end = false;
+	lean_finished = false;
+	return true;
+}
+
+void CsvScan::LeanRecover() {
 	lean_lines = DConstants::INVALID_INDEX;
 	lean_rows = DConstants::INVALID_INDEX;
 	const bool settled = cursor.settled || lean_verified;
 	if (!settled && !lean_second_pass) {
+		lean = false;
 		if (!LeanFromChain()) {
 			done = true;
 			no_rows = true;
 		}
 		return;
 	}
-	const idx_t line_end = emitted_rows > 0 ? last_emitted_end : lean_line_end;
-	if (lean_probe_only || line_end == DConstants::INVALID_INDEX) {
-		if (!ReadRange()) {
-			done = true;
-			no_rows = true;
-		}
-		return;
+	if (lean_extract) {
+		throw InternalException("CSV row lexer refused a verified range of \"%s\"", source.path);
 	}
-	CsvRangeStart start;
-	idx_t restart;
-	idx_t lines = 0;
-	auto state = CSVState::RECORD_SEPARATOR;
-	if (!lean_extract) {
-		restart = lean_start;
-	} else if (fields.row_count > 0) {
-		restart = lean_start + fields.rows[0];
-	} else {
-		restart = cursor.pos;
-		if (grammar.carry_on_newline && cursor.after_cr) {
-			state = CSVState::CARRIAGE_RETURN;
-		}
-	}
-	if (restart == lean_start) {
-		state = lean_origin;
-	} else {
-		lines = cursor.lines - cursor.unterminated;
-		if (restart < cursor.pos) {
-			lines -= global.lean->CountLines(bytes->data, bytes->offset, restart, cursor.pos);
-		}
-	}
-	if (!lean_finished) {
-		PublishOwnTransfer();
-	}
-	start.states[0] = state;
-	start.states[1] = state;
-	start.line_end = line_end;
-	start.last_position = restart;
-	if (range == 0) {
-		lines += global.start_lines;
-	}
-	if (lean_stop == DConstants::INVALID_INDEX) {
-		lean_stop = MaxValue(global.SyncAt(global.RangeEnd(range) - 1), lean_start);
-	}
-	if (restart < bytes->offset) {
-		bytes = make_shared_ptr<CsvBytes>();
-		global.ReadInto(*bytes, restart, LEAN_WINDOW);
-		read_to = bytes->offset + bytes->size;
-	}
-	base = bytes->offset;
-	stitch_bytes = 0;
-	range_begin = lean_start;
-	range_end = lean_stop;
-	last_buffer = read_to >= global.size;
-	splitter->Reset(restart, lines, start);
+	force_extract = true;
+	StartLean(true);
 }
 
 bool CsvScan::ScanLean(DataChunk &output, idx_t max_rows) {
-	const idx_t columns = splitter->Columns();
+	const idx_t columns = global.num_columns;
 	while (lean) {
 		const bool settled = cursor.settled || lean_verified;
 		if (lean_finished && !settled) {
@@ -1479,6 +1387,9 @@ bool CsvScan::ScanLean(DataChunk &output, idx_t max_rows) {
 				continue;
 			}
 			lean_verified = true;
+			if (lean_open_end && !lean_probe_only) {
+				ExtendLean();
+			}
 			continue;
 		}
 		if (lean_finished && lean_probe_only) {
@@ -1488,7 +1399,7 @@ bool CsvScan::ScanLean(DataChunk &output, idx_t max_rows) {
 		if (!lean_extract) {
 			if (!lean_finished) {
 				if (!AdvanceLean()) {
-					LeanToExact();
+					LeanRecover();
 					if (lean) {
 						continue;
 					}
@@ -1512,18 +1423,14 @@ bool CsvScan::ScanLean(DataChunk &output, idx_t max_rows) {
 			return true;
 		}
 		const idx_t ready = fields.end_count / columns - (cursor.phase >= columns ? 1 : 0);
+		const bool full_span = cursor.pos - cursor.anchor >= LEAN_REBASE;
 		if (!global.lean_batches) {
-			if (settled && ready > 0 && (ready >= max_rows || lean_finished)) {
+			if (settled && ready > 0 && (ready >= max_rows || lean_finished || full_span)) {
 				const idx_t count = MinValue(ready, max_rows);
-				if (!DecodeLean(count, output)) {
-					LeanToExact();
-					if (lean) {
-						continue;
-					}
-					return false;
-				}
+				DecodeLean(count, output);
 				last_emitted_end = LeanRowEnd(count - 1);
 				fields.Drop(count, count * columns);
+				RebaseLean();
 				emitted_rows += count;
 				if (output.size() > 0) {
 					return true;
@@ -1535,8 +1442,9 @@ bool CsvScan::ScanLean(DataChunk &output, idx_t max_rows) {
 				done = true;
 				return false;
 			}
+			LeanOpenRowFits();
 			if (!AdvanceLean()) {
-				LeanToExact();
+				LeanRecover();
 				if (lean) {
 					continue;
 				}
@@ -1546,7 +1454,7 @@ bool CsvScan::ScanLean(DataChunk &output, idx_t max_rows) {
 		}
 		if (lean_failed && !chunk_open) {
 			lean_failed = false;
-			LeanToExact();
+			LeanRecover();
 			if (lean) {
 				continue;
 			}
@@ -1560,13 +1468,12 @@ bool CsvScan::ScanLean(DataChunk &output, idx_t max_rows) {
 		}
 		const idx_t limit = MinValue(ready, max_rows);
 		if (settled && !lean_failed && chunk_rows < limit) {
-			if (DecodeLeanBatch(chunk_rows, limit - chunk_rows, output)) {
-				chunk_rows = limit;
-				continue;
-			}
-			lean_failed = true;
+			DecodeLeanBatch(chunk_rows, limit - chunk_rows, output);
+			chunk_rows = limit;
+			continue;
 		}
-		if (chunk_rows > 0 && (lean_failed || chunk_rows == max_rows || (lean_finished && chunk_rows == ready))) {
+		if (chunk_rows > 0 &&
+		    (lean_failed || chunk_rows == max_rows || ((lean_finished || full_span) && chunk_rows == ready))) {
 			LeanRowNumbers(chunk_rows, output);
 			if (!global.filters.empty()) {
 				for (idx_t row = 0; row < chunk_rows; row++) {
@@ -1577,6 +1484,7 @@ bool CsvScan::ScanLean(DataChunk &output, idx_t max_rows) {
 			FinishLeanChunk(chunk_rows, output);
 			last_emitted_end = LeanRowEnd(chunk_rows - 1);
 			fields.Drop(chunk_rows, chunk_rows * columns);
+			RebaseLean();
 			emitted_rows += chunk_rows;
 			chunk_open = false;
 			if (output.size() > 0) {
@@ -1594,6 +1502,7 @@ bool CsvScan::ScanLean(DataChunk &output, idx_t max_rows) {
 			done = true;
 			return false;
 		}
+		LeanOpenRowFits();
 		if (!AdvanceLean()) {
 			lean_failed = true;
 		}
@@ -1602,7 +1511,7 @@ bool CsvScan::ScanLean(DataChunk &output, idx_t max_rows) {
 }
 
 idx_t CsvScan::Lookup(std::span<const int64_t> offsets, std::span<idx_t> survivors, DataChunk &output) {
-	D_ASSERT(offsets.size() <= splitter->Capacity());
+	D_ASSERT(offsets.size() <= STANDARD_VECTOR_SIZE);
 	auto arena = make_shared_ptr<CsvBytes>();
 	idx_t capacity = 0;
 	idx_t window_begin = 0;
@@ -1624,10 +1533,12 @@ idx_t CsvScan::Lookup(std::span<const int64_t> offsets, std::span<idx_t> survivo
 		window_end = from + got;
 		window_eof = got < want;
 	};
-	splitter->ClearRows();
+	fields.Clear();
 	lookup_offsets = offsets;
 	lookup_rows.clear();
-	idx_t count = 0;
+	RowCursor merged;
+	bool unfinished = false;
+	const auto &lexer = *global.lean;
 	for (idx_t i = 0; i < offsets.size(); i++) {
 		const auto offset = static_cast<idx_t>(offsets[i]);
 		if (offsets[i] < 0 || offset < global.start) {
@@ -1647,39 +1558,70 @@ idx_t CsvScan::Lookup(std::span<const int64_t> offsets, std::span<idx_t> survivo
 			}
 		}
 		const idx_t position = window_offset + (offset - window_begin);
-		CsvRangeStart start;
-		start.line_end = position;
-		start.last_position = position;
-		if (offset > global.start) {
-			const bool carriage_return = arena->data[position - 1] == '\r' && grammar.carry_on_newline;
-			start.states[1] = carriage_return ? CSVState::CARRIAGE_RETURN : CSVState::RECORD_SEPARATOR;
-			start.line_end = position - 1;
-			start.last_position = position + carriage_return;
-		}
-		splitter->Reset(position, 0, start);
+		const bool file_start = offset == global.start && global.skip_rows == 0;
+		const bool after_cr = offset > global.start && grammar.carry_on_newline && arena->data[position - 1] == '\r';
+		RowCursor probe;
+		lexer.Start(probe, position, true, false);
+		probe.file_start = file_start;
+		probe.after_cr = after_cr;
+		idx_t stop;
 		idx_t grow = LOOKUP_BYTES;
 		while (true) {
 			const idx_t arena_end = window_offset + (window_end - window_begin);
-			const auto rows = splitter->Split(arena->data, 0, arena_end, count + 1, window_eof,
-			                                  NumericLimits<idx_t>::Maximum(), true);
-			if (rows > count || splitter->Finished() || window_eof) {
-				count = rows;
+			lexer.Feed(probe, arena->data, 0, arena_end, window_eof, nullptr);
+			if (probe.first_term != DConstants::INVALID_INDEX) {
+				stop = probe.first_term + 1;
+				if (grammar.carry_on_newline && arena->data[probe.first_term] == '\r' && stop < arena_end &&
+				    arena->data[stop] == '\n') {
+					stop++;
+				}
+				break;
+			}
+			if (window_eof) {
+				stop = arena_end;
 				break;
 			}
 			read(window_end, grow);
 			grow *= 2;
 		}
-		while (lookup_rows.size() < count) {
+		const bool eof = window_eof && stop == window_offset + (window_end - window_begin);
+		RowCursor row_cursor;
+		lexer.Start(row_cursor, position, true);
+		row_cursor.anchor = 0;
+		row_cursor.file_start = file_start;
+		row_cursor.after_cr = after_cr;
+		const idx_t rows_before = fields.row_count;
+		CsvRangeEntry entry;
+		if (!lexer.Feed(row_cursor, arena->data, 0, stop, true, &fields) ||
+		    !lexer.Finish(row_cursor, arena->data, 0, stop, eof, &fields, CSVState::RECORD_SEPARATOR, entry)) {
+			throw InternalException("CSV row lexer refused the row at byte %llu of \"%s\"", offset, source.path);
+		}
+		merged.quotes = merged.quotes || row_cursor.quotes;
+		merged.doubled = merged.doubled || row_cursor.doubled;
+		merged.padded = merged.padded || row_cursor.padded;
+		merged.non_ascii |= row_cursor.non_ascii;
+		merged.long_rows = merged.long_rows || row_cursor.long_rows;
+		merged.unstrict = merged.unstrict || row_cursor.unstrict;
+		merged.extras_dropped = merged.extras_dropped || row_cursor.extras_dropped;
+		unfinished = unfinished || row_cursor.unfinished;
+		for (idx_t row = rows_before; row < fields.row_count; row++) {
 			lookup_rows.push_back(i);
 		}
 	}
+	const idx_t count = fields.row_count;
 	bytes = arena;
-	base = 0;
+	lean_start = 0;
+	cursor = merged;
+	cursor.unfinished = unfinished;
+	lean_finished = true;
+	emitted_rows = 0;
+	lean_line_end = DConstants::INVALID_INDEX;
 	idx_t found = 0;
 	if (count > 0) {
-		Decode(count, output);
+		DecodeLean(count, output);
+		const bool filters = !global.filters.empty();
 		for (idx_t row = 0; row < count; row++) {
-			if (!failed[row] && !dropped[row] && selected[row]) {
+			if ((!filters || selected[row]) && !failed[row]) {
 				survivors[found++] = lookup_rows[row];
 			}
 		}
@@ -1687,6 +1629,7 @@ idx_t CsvScan::Lookup(std::span<const int64_t> offsets, std::span<idx_t> survivo
 	output.SetCardinality(found);
 	lookup_offsets = {};
 	bytes.reset();
+	fields.Clear();
 	return found;
 }
 
@@ -1922,16 +1865,16 @@ void CsvScan::FlushCasts(idx_t count, DataChunk &output, bool late, bool filter_
 		bool first = true;
 		idx_t lines_now = DConstants::INVALID_INDEX;
 		for (idx_t row = 0; row < count; row++) {
-			if (dropped[row] || result_validity.RowIsValid(row) || !parse_validity.RowIsValid(row)) {
+			if (result_validity.RowIsValid(row) || !parse_validity.RowIsValid(row)) {
 				continue;
 			}
 			failed[row] = true;
 			rows_failed = true;
 			if (!global.ignore_errors) {
 				if (lines_now == DConstants::INVALID_INDEX) {
-					lines_now = lean ? LeanLinesAt(LeanRow(count - 1).end + 1) : splitter->LinesRead();
+					lines_now = LeanLinesAt(LeanRow(count - 1).end + 1);
 				}
-				const auto csv_row = lean ? LeanRow(row) : splitter->Row(row);
+				const auto csv_row = LeanRow(row);
 				bool first_nl = false;
 				auto line = LineText(csv_row, first_nl);
 				auto value = FlatVector::GetData<string_t>(parse)[row];
@@ -1952,69 +1895,6 @@ void CsvScan::FlushCasts(idx_t count, DataChunk &output, bool late, bool filter_
 	}
 }
 
-void CsvScan::RowErrors(idx_t row_idx, vector<CsvRowError> &row_value_errors, vector<CsvRowError> &errors) {
-	auto &row = splitter->Row(row_idx);
-	const idx_t num_cols = splitter->Columns();
-	auto &events = splitter->Events();
-	auto &extras = splitter->Extras();
-	idx_t event = event_cursor;
-	while (event < events.size() && events[event].row < row_idx) {
-		event++;
-	}
-	idx_t value = 0;
-	auto add_events_until = [&](idx_t column) {
-		while (event < events.size() && events[event].row == row_idx && events[event].column <= column) {
-			auto &e = events[event];
-			errors.push_back({e.kind == CsvRowEventKind::UNTERMINATED_QUOTES ? CSVErrorType::UNTERMINATED_QUOTES
-			                                                                 : CSVErrorType::INVALID_STATE,
-			                  e.column, e.position, string()});
-			event++;
-		}
-	};
-	for (idx_t column = 0; column < MinValue<idx_t>(row.field_count, num_cols); column++) {
-		add_events_until(column);
-		while (value < row_value_errors.size() && row_value_errors[value].column == column) {
-			errors.push_back(std::move(row_value_errors[value++]));
-		}
-	}
-	if (row.field_count > num_cols && !grammar.strict_mode) {
-		used_unstrictness = true;
-	}
-	if (row.field_count > num_cols && grammar.strict_mode) {
-		while (extra_cursor < extras.size() && extras[extra_cursor].row < row_idx) {
-			extra_cursor++;
-		}
-		for (idx_t extra = extra_cursor; extra < extras.size() && extras[extra].row == row_idx; extra++) {
-			auto &field = extras[extra].field;
-			add_events_until(extras[extra].column);
-			if (extras[extra].column == num_cols && (!(field.flags & CSV_FIELD_QUOTED) || options.allow_quoted_nulls)) {
-				const char *data = bytes->data + field.offset;
-				bool is_null = false;
-				for (auto &null_string : global.null_strings) {
-					is_null = is_null ||
-					          (field.size == null_string.size() && memcmp(null_string.c_str(), data, field.size) == 0);
-				}
-				if (is_null) {
-					continue;
-				}
-			}
-			errors.push_back({CSVErrorType::TOO_MANY_COLUMNS, extras[extra].column, base + field.start, string()});
-		}
-	}
-	add_events_until(NumericLimits<idx_t>::Maximum());
-	if (row.flags & CSV_ROW_UNFINISHED) {
-		return;
-	}
-	if (row.end - row.begin > options.maximum_line_size.GetValue()) {
-		errors.push_back({CSVErrorType::MAXIMUM_LINE_SIZE, 1, row.last_position, string()});
-	}
-	if (!options.null_padding) {
-		for (idx_t column = row.field_count; column < num_cols; column++) {
-			errors.push_back({CSVErrorType::TOO_FEW_COLUMNS, column - 1, row.last_position, string()});
-		}
-	}
-}
-
 Vector &CsvScan::Target(idx_t column, DataChunk &output) {
 	auto &scan_column = global.columns[column];
 	if (NeedsFlushCast(scan_column)) {
@@ -2024,150 +1904,6 @@ Vector &CsvScan::Target(idx_t column, DataChunk &output) {
 		return output.data[scan_column.output_column];
 	}
 	return scratch_chunk.data[0];
-}
-
-void CsvScan::DecodeColumn(idx_t column_idx, idx_t count, DataChunk &output, bool selected_only) {
-	auto &column = global.columns[column_idx];
-	auto &vector = Target(column_idx, output);
-	if (vector.GetType().InternalType() == PhysicalType::VARCHAR) {
-		StringVector::AddAuxiliaryData(vector, make_uniq<CsvBytesHolder>(bytes));
-	}
-	if (column.parse_type.id() == LogicalTypeId::VARCHAR) {
-		ExactStrings(column, vector, count, selected_only);
-		return;
-	}
-	if (options.thousands_separator == '\0' && LeanDecodes(column.parse_type)) {
-		const ValueParseContext context {&global.date_format, &global.timestamp_format, bytes->data + bytes->size,
-		                                 global.decimal_separator};
-		WithValueParser(column.parse_type, context, [&](auto parsed, auto parse) {
-			using T = typename decltype(parsed)::type;
-			ExactValues<T>(column, vector, count, selected_only, parse);
-			return true;
-		});
-		return;
-	}
-	for (idx_t row = 0; row < count; row++) {
-		if (selected_only && !selected[row]) {
-			FlatVector::SetNull(vector, row, true);
-			continue;
-		}
-		DecodeCell(column, vector, row);
-	}
-}
-
-void CsvScan::DecodeCell(const CsvScanColumn &column, Vector &vector, idx_t row) {
-	auto &csv_row = splitter->Row(row);
-	if (csv_row.flags & CSV_ROW_EMPTY_LINE) {
-		if (!global.empty_is_null) {
-			dropped[row] = true;
-			FlatVector::SetNull(vector, row, true);
-		} else if (!options.force_not_null.empty() && options.force_not_null[0] &&
-		           vector.GetType().InternalType() == PhysicalType::VARCHAR) {
-			FlatVector::GetDataMutable<string_t>(vector)[row] = string_t();
-		} else {
-			FlatVector::SetNull(vector, row, true);
-		}
-		return;
-	}
-	if (column.file_column >= csv_row.field_count) {
-		const bool padded_empty =
-		    options.null_padding && column.force_not_null && vector.GetType().InternalType() == PhysicalType::VARCHAR;
-		if (padded_empty) {
-			FlatVector::GetDataMutable<string_t>(vector)[row] = string_t();
-		} else {
-			FlatVector::SetNull(vector, row, true);
-		}
-		return;
-	}
-	CsvRowError error;
-	if (!DecodeValue(column, splitter->Column(column.file_column)[row], vector, row, error)) {
-		FlatVector::SetNull(vector, row, true);
-		value_errors[row].push_back(std::move(error));
-	}
-}
-
-template <class T, class PARSE>
-void CsvScan::ExactValues(const CsvScanColumn &column, Vector &vector, idx_t count, bool selected_only, PARSE parse) {
-	T *const out = FlatVector::GetDataMutable<T>(vector);
-	const CsvField *const fields = splitter->Column(column.file_column);
-	const char *const data = bytes->data;
-	const bool empty_only_null = global.empty_only_null;
-	const bool allow_quoted_nulls = options.allow_quoted_nulls;
-	const bool force_not_null = column.force_not_null;
-	const idx_t file_column = column.file_column;
-	for (idx_t row = 0; row < count; row++) {
-		if (selected_only && !selected[row]) {
-			FlatVector::SetNull(vector, row, true);
-			continue;
-		}
-		const auto &csv_row = splitter->Row(row);
-		const auto &field = fields[row];
-		if (!(csv_row.flags & CSV_ROW_EMPTY_LINE) && file_column < csv_row.field_count &&
-		    !(field.flags & CSV_FIELD_ESCAPED)) {
-			const char *value = data + field.offset;
-			const idx_t size = field.size;
-			if (empty_only_null) {
-				if (size != 0) {
-					if (parse(value, size, out[row])) {
-						continue;
-					}
-				} else if (!force_not_null && (!(field.flags & CSV_FIELD_QUOTED) || allow_quoted_nulls)) {
-					FlatVector::SetNull(vector, row, true);
-					continue;
-				}
-			} else if (!IsNull(field, value, size) && parse(value, size, out[row])) {
-				continue;
-			}
-		}
-		DecodeCell(column, vector, row);
-	}
-}
-
-void CsvScan::ExactStrings(const CsvScanColumn &column, Vector &vector, idx_t count, bool selected_only) {
-	string_t *const out = FlatVector::GetDataMutable<string_t>(vector);
-	const CsvField *const fields = splitter->Column(column.file_column);
-	const char *const data = bytes->data;
-	const char *const limit = bytes->data + bytes->size;
-	const bool empty_only_null = global.empty_only_null;
-	const bool allow_quoted_nulls = options.allow_quoted_nulls;
-	const bool validate = column.validate_utf8;
-	const idx_t file_column = column.file_column;
-	for (idx_t row = 0; row < count; row++) {
-		if (selected_only && !selected[row]) {
-			FlatVector::SetNull(vector, row, true);
-			continue;
-		}
-		const auto &csv_row = splitter->Row(row);
-		const auto &field = fields[row];
-		if (!(csv_row.flags & CSV_ROW_EMPTY_LINE) && file_column < csv_row.field_count &&
-		    !(field.flags & CSV_FIELD_ESCAPED)) {
-			const char *value = data + field.offset;
-			const idx_t size = field.size;
-			const bool null = empty_only_null ? size == 0 && (!(field.flags & CSV_FIELD_QUOTED) || allow_quoted_nulls)
-			                                  : IsNull(field, value, size);
-			if (!null) {
-				if (!validate || Utf8Proc::IsValid(value, UnsafeNumericCast<uint32_t>(size))) {
-					MakeString(value, size, limit, out[row]);
-					continue;
-				}
-			} else if (!column.force_not_null) {
-				FlatVector::SetNull(vector, row, true);
-				continue;
-			}
-		}
-		DecodeCell(column, vector, row);
-	}
-}
-
-void CsvScan::FillRowNumbers(idx_t count, DataChunk &output) {
-	if (source.file_row_number == DConstants::INVALID_INDEX || source.file_row_number >= output.ColumnCount()) {
-		return;
-	}
-	auto data = FlatVector::GetDataMutable<int64_t>(output.data[source.file_row_number]);
-	for (idx_t row = 0; row < count; row++) {
-		data[row] =
-		    lookup_offsets.empty() ? static_cast<int64_t>(splitter->Row(row).start) : lookup_offsets[lookup_rows[row]];
-	}
 }
 
 void CsvScan::Filter(idx_t count, DataChunk &output) {
@@ -2191,80 +1927,8 @@ void CsvScan::Filter(idx_t count, DataChunk &output) {
 	}
 }
 
-void CsvScan::Decode(idx_t count, DataChunk &output) {
-	output.Reset();
-	parse_chunk.Reset();
-	scratch_chunk.Reset();
-	const idx_t num_cols = splitter->Columns();
-	const bool filters = !global.filters.empty();
-	const bool late = global.late_materialization;
-	for (idx_t row = 0; row < count; row++) {
-		failed[row] = false;
-		dropped[row] = false;
-		selected[row] = true;
-		value_errors[row].clear();
-	}
-	const bool raw = late && ExactRawFilter(count);
-	for (idx_t i = 0; i < global.columns.size(); i++) {
-		if (!late || global.filtered[i]) {
-			DecodeColumn(i, count, output, raw);
-		}
-	}
-	if (late) {
-		FlushCasts(count, output, true, true);
-		FillRowNumbers(count, output);
-		Filter(count, output);
-		for (idx_t i = 0; i < global.columns.size(); i++) {
-			if (!global.filtered[i]) {
-				DecodeColumn(i, count, output, true);
-			}
-		}
-	}
-	event_cursor = 0;
-	extra_cursor = 0;
-	for (idx_t row = 0; row < count; row++) {
-		auto &csv_row = splitter->Row(row);
-		if (dropped[row] || (csv_row.flags & CSV_ROW_EMPTY_LINE)) {
-			continue;
-		}
-		const bool may_fail = !value_errors[row].empty() || (csv_row.flags & CSV_ROW_EVENTS) ||
-		                      csv_row.field_count != num_cols ||
-		                      csv_row.end - csv_row.begin > options.maximum_line_size.GetValue();
-		if (!may_fail) {
-			continue;
-		}
-		row_errors.clear();
-		RowErrors(row, value_errors[row], row_errors);
-		if (row_errors.empty()) {
-			continue;
-		}
-		failed[row] = true;
-		if (!global.ignore_errors) {
-			ReportRow(row, csv_row, row_errors);
-		}
-	}
-	FlushCasts(count, output, late, false);
-	if (!late) {
-		FillRowNumbers(count, output);
-		if (filters) {
-			Filter(count, output);
-		}
-	}
-	idx_t kept = 0;
-	for (idx_t row = 0; row < count; row++) {
-		if (!failed[row] && !dropped[row] && selected[row]) {
-			keep.set_index(kept++, row);
-		}
-	}
-	output.SetChildCardinality(count);
-	if (kept != count) {
-		output.Slice(keep, kept);
-	}
-	output.SetChildCardinality(kept);
-}
-
 LeanSource CsvScan::LeanSourceFor(const CsvScanColumn &column, idx_t first, bool selected_only) const {
-	const idx_t columns = splitter->Columns();
+	const idx_t columns = global.num_columns;
 	LeanSource source;
 	source.first = first;
 	if (column.file_column == 0) {
@@ -2280,9 +1944,10 @@ LeanSource CsvScan::LeanSourceFor(const CsvScanColumn &column, idx_t first, bool
 	source.stride = columns;
 	source.data = bytes->data;
 	source.limit = bytes->data + bytes->size;
-	source.shift = lean_start - bytes->offset;
+	source.shift = cursor.anchor - bytes->offset;
 	source.quote = grammar.quote;
 	source.escape_probe = grammar.escape && grammar.escape != grammar.quote ? grammar.escape : grammar.quote;
+	source.unquoted_escape = grammar.unquoted_escape ? grammar.escape : '\0';
 	source.quotes = cursor.quotes;
 	source.doubled = cursor.doubled;
 	source.padded = cursor.padded;
@@ -2307,35 +1972,6 @@ bool CsvScan::LeanRawFilter(idx_t count) {
 	return applied;
 }
 
-bool CsvScan::ExactRawFilter(idx_t count) {
-	bool applied = false;
-	for (auto &filter : global.filters) {
-		if (filter.raw.empty()) {
-			continue;
-		}
-		applied = true;
-		auto &column = global.columns[filter.column];
-		const CsvField *const column_fields = splitter->Column(column.file_column);
-		for (idx_t row = 0; row < count; row++) {
-			if (!selected[row]) {
-				continue;
-			}
-			auto &csv_row = splitter->Row(row);
-			auto &field = column_fields[row];
-			if ((csv_row.flags & CSV_ROW_EMPTY_LINE) || column.file_column >= csv_row.field_count ||
-			    (field.flags & CSV_FIELD_ESCAPED)) {
-				continue;
-			}
-			const char *value = bytes->data + field.offset;
-			const bool null = global.empty_only_null
-			                      ? field.size == 0 && (!(field.flags & CSV_FIELD_QUOTED) || options.allow_quoted_nulls)
-			                      : IsNull(field, value, field.size);
-			selected[row] = RawPasses(filter.raw, value, field.size, null);
-		}
-	}
-	return applied;
-}
-
 bool CsvScan::DecodeLeanColumn(idx_t column_idx, idx_t first, idx_t count, DataChunk &output, bool selected_only,
                                bool utf8_valid, bool hold) {
 	auto &column = global.columns[column_idx];
@@ -2348,10 +1984,25 @@ bool CsvScan::DecodeLeanColumn(idx_t column_idx, idx_t first, idx_t count, DataC
 			StringVector::AddAuxiliaryData(vector, make_uniq<CsvBytesHolder>(bytes));
 		}
 		LeanStrings(source, count, column, column.validate_utf8 && !utf8_valid, grammar, vector, retry);
-	} else {
-		if (!LeanDecodes(column.parse_type)) {
-			return false;
+	} else if (!LeanDecodes(column.parse_type) || options.thousands_separator != '\0') {
+		const idx_t columns = global.num_columns;
+		for (idx_t row = first; row < first + count; row++) {
+			if (selected_only && !selected[row]) {
+				FlatVector::SetNull(vector, row, true);
+				continue;
+			}
+			const idx_t index = row * columns + column.file_column;
+			const uint32_t end_bits = fields.ends[index];
+			const idx_t begin = column.file_column == 0
+			                        ? fields.rows[row]
+			                        : (fields.ends[index - 1] & ROW_FIELD_MASK) + grammar.delimiter_size;
+			if ((end_bits & ROW_FIELD_FLAG) && begin > (end_bits & ROW_FIELD_MASK)) {
+				FlatVector::SetNull(vector, row, true);
+				continue;
+			}
+			retry.push_back(row);
 		}
+	} else {
 		const ValueParseContext context {&global.date_format, &global.timestamp_format, source.limit,
 		                                 global.decimal_separator};
 		WithValueParser(column.parse_type, context, [&](auto parsed, auto parse) {
@@ -2367,8 +2018,8 @@ bool CsvScan::DecodeLeanColumn(idx_t column_idx, idx_t first, idx_t count, DataC
 }
 
 CsvField CsvScan::LeanField(const CsvScanColumn &column, idx_t row) const {
-	const idx_t columns = splitter->Columns();
-	const idx_t shift = lean_start - bytes->offset;
+	const idx_t columns = global.num_columns;
+	const idx_t shift = cursor.anchor - bytes->offset;
 	const idx_t index = row * columns + column.file_column;
 	const uint32_t end_bits = fields.ends[index];
 	idx_t begin =
@@ -2383,6 +2034,9 @@ CsvField CsvScan::LeanField(const CsvScanColumn &column, idx_t row) const {
 		if (cursor.doubled && memchr(bytes->data + begin, probe, end - begin)) {
 			field.flags |= CSV_FIELD_ESCAPED;
 		}
+	} else if ((end_bits & ROW_FIELD_FLAG) && grammar.unquoted_escape && end > begin &&
+	           memchr(bytes->data + begin, grammar.escape, end - begin)) {
+		field.flags |= CSV_FIELD_ESCAPED;
 	}
 	field.offset = static_cast<uint32_t>(begin);
 	field.size = static_cast<uint32_t>(end - begin);
@@ -2404,39 +2058,47 @@ void CsvScan::LeanRetry(const CsvScanColumn &column, Vector &vector) {
 }
 
 idx_t CsvScan::LeanRowEnd(idx_t row) const {
-	const idx_t columns = splitter->Columns();
+	const idx_t columns = global.num_columns;
 	const auto anomaly = fields.anomalies.empty() ? nullptr : fields.Anomaly(row);
 	if (anomaly && anomaly->fields > columns) {
-		return lean_start + anomaly->end;
+		return cursor.anchor + anomaly->end;
 	}
-	return lean_start + (fields.ends[(row + 1) * columns - 1] & ROW_FIELD_MASK);
+	return cursor.anchor + (fields.ends[(row + 1) * columns - 1] & ROW_FIELD_MASK);
+}
+
+idx_t CsvScan::LeanRowBegin(idx_t row) const {
+	if (row > 0) {
+		return LeanRowEnd(row - 1);
+	}
+	return emitted_rows > 0 ? last_emitted_end : lean_line_end;
 }
 
 CsvRow CsvScan::LeanRow(idx_t row) const {
-	const idx_t columns = splitter->Columns();
 	CsvRow result;
-	result.start = lean_start + fields.rows[row];
+	result.start = cursor.anchor + fields.rows[row];
 	result.end = LeanRowEnd(row);
-	if (row > 0) {
-		result.begin = LeanRowEnd(row - 1);
-	} else {
-		result.begin = emitted_rows > 0 ? last_emitted_end : lean_line_end;
-	}
+	result.begin = LeanRowBegin(row);
 	if (result.begin == DConstants::INVALID_INDEX || result.begin >= result.start) {
 		result.begin = result.start > 0 ? result.start - 1 : 0;
+	} else if (grammar.comment) {
+		idx_t content = result.start - 1;
+		while (content > result.begin && content >= bytes->offset &&
+		       (bytes->data[content - bytes->offset] == '\n' || bytes->data[content - bytes->offset] == '\r')) {
+			content--;
+		}
+		if (content > result.begin && content >= bytes->offset) {
+			result.begin = content + 1;
+		}
 	}
 	const bool crlf = grammar.carry_on_newline && result.end >= bytes->offset &&
 	                  result.end < bytes->offset + bytes->size && bytes->data[result.end - bytes->offset] == '\r';
 	result.last_position = result.end + 1 + crlf;
 	result.lines = 0;
-	const auto anomaly = fields.anomalies.empty() ? nullptr : fields.Anomaly(row);
-	result.field_count = static_cast<uint32_t>(anomaly ? anomaly->fields : columns);
-	result.flags = 0;
 	return result;
 }
 
 bool CsvScan::LeanNullExtra(idx_t begin, idx_t end, uint32_t end_bits) const {
-	const idx_t shift = lean_start - bytes->offset;
+	const idx_t shift = cursor.anchor - bytes->offset;
 	begin += shift;
 	end += shift;
 	bool quoted = false;
@@ -2454,36 +2116,16 @@ bool CsvScan::LeanNullExtra(idx_t begin, idx_t end, uint32_t end_bits) const {
 	return false;
 }
 
-void CsvScan::AnomalyErrors(const RowAnomaly &anomaly, idx_t row, vector<CsvRowError> &errors) const {
-	const idx_t columns = splitter->Columns();
-	if (anomaly.fields > columns) {
-		idx_t begin = (fields.ends[(row + 1) * columns - 1] & ROW_FIELD_MASK) + grammar.delimiter_size;
-		for (idx_t extra = 0; extra < anomaly.fields - columns; extra++) {
-			const uint32_t end_bits = fields.extras[anomaly.extras + extra];
-			const idx_t end = end_bits & ROW_FIELD_MASK;
-			if (extra > 0 || !LeanNullExtra(begin, end, end_bits)) {
-				errors.push_back({CSVErrorType::TOO_MANY_COLUMNS, columns + extra, lean_start + begin, string()});
-			}
-			begin = end + grammar.delimiter_size;
-		}
-		return;
-	}
-	if (options.null_padding) {
-		return;
-	}
-	const idx_t last_position = LeanRow(row).last_position;
-	for (idx_t column = anomaly.fields; column < columns; column++) {
-		errors.push_back({CSVErrorType::TOO_FEW_COLUMNS, column - 1, last_position, string()});
-	}
-}
-
 idx_t CsvScan::LeanLinesAt(idx_t position) {
+	if (!lookup_offsets.empty()) {
+		return 0;
+	}
 	const idx_t start = range == 0 ? global.start_lines : 0;
 	if (position > cursor.pos) {
 		return start + cursor.lines;
 	}
 	if (lines_at == DConstants::INVALID_INDEX || position < lines_at) {
-		const idx_t lexed = cursor.lines - (cursor.unterminated ? 1 : 0);
+		const idx_t lexed = cursor.lines - (cursor.unterminated && !cursor.unfinished ? 1 : 0);
 		lines_counted = lexed - global.lean->CountLines(bytes->data, bytes->offset, position, cursor.pos) + start;
 	} else {
 		lines_counted += global.lean->CountLines(bytes->data, bytes->offset, lines_at, position);
@@ -2495,7 +2137,6 @@ idx_t CsvScan::LeanLinesAt(idx_t position) {
 void CsvScan::ClearRowState(idx_t first, idx_t count) {
 	for (idx_t row = first; row < first + count; row++) {
 		failed[row] = false;
-		dropped[row] = false;
 	}
 	lean_errors = false;
 	lines_at = DConstants::INVALID_INDEX;
@@ -2503,29 +2144,43 @@ void CsvScan::ClearRowState(idx_t first, idx_t count) {
 }
 
 void CsvScan::LeanReport(idx_t first, idx_t count) {
-	if (cursor.extras_dropped) {
+	if (cursor.extras_dropped || cursor.unstrict) {
 		used_unstrictness = true;
 	}
+	const idx_t end_row = first + count;
 	auto anomaly = std::lower_bound(fields.anomalies.begin(), fields.anomalies.end(), first,
 	                                [](const RowAnomaly &entry, idx_t row) { return entry.row < row; });
-	const bool anomalies = anomaly != fields.anomalies.end() && anomaly->row < first + count;
-	if (!lean_errors && !anomalies) {
+	auto event = std::lower_bound(fields.events.cbegin(), fields.events.cend(), first,
+	                              [](const RowEvent &entry, idx_t row) { return entry.row < row; });
+	const idx_t unfinished_row = cursor.unfinished && lean_finished ? fields.row_count - 1 : DConstants::INVALID_INDEX;
+	const bool anomalies = anomaly != fields.anomalies.end() && anomaly->row < end_row;
+	const bool events = event != fields.events.cend() && event->row < end_row;
+	if (!lean_errors && !anomalies && !events && !cursor.long_rows) {
 		return;
 	}
 	lean_errors = false;
-	for (idx_t row = first; row < first + count; row++) {
-		auto &errors = value_errors[row];
-		const bool row_anomaly = anomaly != fields.anomalies.end() && anomaly->row == row;
-		if (errors.empty() && !row_anomaly) {
-			continue;
-		}
-		std::stable_sort(errors.begin(), errors.end(),
-		                 [](const CsvRowError &a, const CsvRowError &b) { return a.column < b.column; });
-		if (row_anomaly) {
-			AnomalyErrors(*anomaly, row, errors);
+	const idx_t max_line_size = options.maximum_line_size.GetValue();
+	for (idx_t row = first; row < end_row; row++) {
+		auto &values = value_errors[row];
+		const RowAnomaly *row_anomaly = nullptr;
+		if (anomaly != fields.anomalies.end() && anomaly->row == row) {
+			row_anomaly = &*anomaly;
 			++anomaly;
 		}
-		if (errors.empty()) {
+		const bool row_events = event != fields.events.cend() && event->row == row;
+		const bool unfinished = row == unfinished_row;
+		bool long_row = false;
+		if (cursor.long_rows && !unfinished) {
+			const auto csv_row = LeanRow(row);
+			long_row = csv_row.end - csv_row.begin > max_line_size;
+		}
+		if (values.empty() && !row_anomaly && !row_events && !long_row) {
+			continue;
+		}
+		row_errors.clear();
+		LeanRowErrors(row, row_anomaly, event, unfinished, long_row, values, row_errors);
+		values.clear();
+		if (row_errors.empty()) {
 			continue;
 		}
 		failed[row] = true;
@@ -2533,9 +2188,72 @@ void CsvScan::LeanReport(idx_t first, idx_t count) {
 		if (!global.ignore_errors) {
 			auto csv_row = LeanRow(row);
 			csv_row.lines = LeanLinesAt(csv_row.start);
-			ReportRow(row, csv_row, errors);
+			ReportRow(row, csv_row, row_errors);
 		}
-		errors.clear();
+	}
+}
+
+CSVErrorType CsvScan::EventType(const RowEvent &event) const {
+	const idx_t position = cursor.anchor + event.position;
+	const auto at = [&](idx_t offset) {
+		return bytes->data[offset - bytes->offset];
+	};
+	const idx_t limit = bytes->offset + bytes->size;
+	const bool quoted = grammar.quote && position < limit &&
+	                    (at(position) == grammar.quote || (grammar.empty_space && at(position) == ' ' &&
+	                                                       position + 1 < limit && at(position + 1) == grammar.quote));
+	return quoted ? CSVErrorType::UNTERMINATED_QUOTES : CSVErrorType::INVALID_STATE;
+}
+
+void CsvScan::LeanRowErrors(idx_t row, const RowAnomaly *anomaly, vector<RowEvent>::const_iterator &event,
+                            bool unfinished, bool long_row, vector<CsvRowError> &values, vector<CsvRowError> &errors) {
+	const idx_t columns = global.num_columns;
+	const auto events_end = fields.events.cend();
+	idx_t field_count = anomaly ? anomaly->fields : columns;
+	if (unfinished) {
+		for (auto it = event; it != events_end && it->row == row; ++it) {
+			field_count = it->column;
+		}
+	}
+	std::stable_sort(values.begin(), values.end(),
+	                 [](const CsvRowError &a, const CsvRowError &b) { return a.column < b.column; });
+	idx_t value = 0;
+	const auto add_events_until = [&](idx_t column) {
+		while (event != events_end && event->row == row && event->column <= column) {
+			errors.push_back({EventType(*event), event->column, cursor.anchor + event->position, string()});
+			++event;
+		}
+	};
+	for (idx_t column = 0; column < MinValue(field_count, columns); column++) {
+		add_events_until(column);
+		while (value < values.size() && values[value].column == column) {
+			errors.push_back(std::move(values[value++]));
+		}
+	}
+	if (anomaly && anomaly->fields > columns) {
+		idx_t begin = (fields.ends[(row + 1) * columns - 1] & ROW_FIELD_MASK) + grammar.delimiter_size;
+		for (idx_t extra = 0; extra < anomaly->fields - columns; extra++) {
+			add_events_until(columns + extra);
+			const uint32_t end_bits = fields.extras[anomaly->extras + extra];
+			const idx_t end = end_bits & ROW_FIELD_MASK;
+			if (extra > 0 || !LeanNullExtra(begin, end, end_bits)) {
+				errors.push_back({CSVErrorType::TOO_MANY_COLUMNS, columns + extra, cursor.anchor + begin, string()});
+			}
+			begin = end + grammar.delimiter_size;
+		}
+	}
+	add_events_until(NumericLimits<idx_t>::Maximum());
+	if (unfinished) {
+		return;
+	}
+	if (long_row) {
+		errors.push_back({CSVErrorType::MAXIMUM_LINE_SIZE, 1, LeanRow(row).last_position, string()});
+	}
+	if (anomaly && anomaly->fields < columns && !options.null_padding) {
+		const idx_t last_position = LeanRow(row).last_position;
+		for (idx_t column = anomaly->fields; column < columns; column++) {
+			errors.push_back({CSVErrorType::TOO_FEW_COLUMNS, column - 1, last_position, string()});
+		}
 	}
 }
 
@@ -2544,9 +2262,9 @@ void CsvScan::LeanRowNumbers(idx_t count, DataChunk &output) {
 		return;
 	}
 	auto data = FlatVector::GetDataMutable<int64_t>(output.data[source.file_row_number]);
-	const idx_t columns = splitter->Columns();
 	for (idx_t row = 0; row < count; row++) {
-		data[row] = static_cast<int64_t>(lean_start + fields.rows[row]);
+		data[row] = lookup_offsets.empty() ? static_cast<int64_t>(cursor.anchor + fields.rows[row])
+		                                   : lookup_offsets[lookup_rows[row]];
 	}
 }
 
@@ -2554,11 +2272,11 @@ bool CsvScan::DecodeLean(idx_t count, DataChunk &output) {
 	output.Reset();
 	parse_chunk.Reset();
 	scratch_chunk.Reset();
-	const idx_t columns = splitter->Columns();
+	const idx_t columns = global.num_columns;
 	bool utf8_valid = !cursor.non_ascii;
 	if (!utf8_valid) {
-		const idx_t first = lean_start + fields.rows[0];
-		const idx_t last = lean_start + (fields.ends[count * columns - 1] & ROW_FIELD_MASK);
+		const idx_t first = cursor.anchor + fields.rows[0];
+		const idx_t last = cursor.anchor + (fields.ends[count * columns - 1] & ROW_FIELD_MASK);
 		utf8_valid = simdutf::validate_utf8(bytes->data + (first - bytes->offset), last - first);
 	}
 	const bool late = global.late_materialization;
@@ -2595,11 +2313,11 @@ bool CsvScan::DecodeLean(idx_t count, DataChunk &output) {
 }
 
 bool CsvScan::DecodeLeanBatch(idx_t first, idx_t count, DataChunk &output) {
-	const idx_t columns = splitter->Columns();
+	const idx_t columns = global.num_columns;
 	bool utf8_valid = !cursor.non_ascii;
 	if (!utf8_valid) {
-		const idx_t from = lean_start + fields.rows[first];
-		const idx_t to = lean_start + (fields.ends[(first + count) * columns - 1] & ROW_FIELD_MASK);
+		const idx_t from = cursor.anchor + fields.rows[first];
+		const idx_t to = cursor.anchor + (fields.ends[(first + count) * columns - 1] & ROW_FIELD_MASK);
 		utf8_valid = simdutf::validate_utf8(bytes->data + (from - bytes->offset), to - from);
 	}
 	const bool hold = bytes.get() != held;
@@ -2636,53 +2354,27 @@ bool CsvScan::Scan(DataChunk &output, idx_t max_rows) {
 	source.error_handler->ErrorIfNeeded();
 	if (!started) {
 		started = true;
-		if (global.parallel) {
-			if (global.lean_ranges) {
-				StartLean(false);
-			} else if (!ReadRange()) {
-				done = true;
-				no_rows = true;
-			}
-		} else {
-			SkipRows();
-		}
+		StartLean(false);
 	}
 	if (lean && ScanLean(output, max_rows)) {
 		return false;
 	}
-	while (!done) {
-		idx_t count = 0;
-		if (bytes) {
-			count = splitter->Split(bytes->data, base, base + bytes->size, max_rows, last_buffer, range_end);
-		}
-		if (count > 0) {
-			Decode(count, output);
-			if (output.size() > 0) {
-				return false;
-			}
-			continue;
-		}
-		if (splitter->Finished() || last_buffer) {
-			done = true;
-			break;
-		}
-		ReadMore(splitter->KeepFrom());
-	}
+	done = true;
 	output.Reset();
 	if (reported) {
 		return false;
 	}
 	reported = true;
-	if (global.parallel) {
-		*source.bytes_read += global.RangeEnd(range) - global.RangeBegin(range);
-	} else {
-		bytes.reset();
-	}
-	pending.reset();
 	if (source.sniffing) {
 		return true;
 	}
-	const idx_t lines = no_rows ? 0 : (lean_lines != DConstants::INVALID_INDEX ? lean_lines : splitter->LinesRead());
+	if (global.stream) {
+		const idx_t counted = global.released * source.buffer_manager->GetBufferSize();
+		*source.bytes_read += global.size > counted ? global.size - counted : 0;
+	} else {
+		*source.bytes_read += global.RangeEnd(range) - global.RangeBegin(range);
+	}
+	const idx_t lines = no_rows || lean_lines == DConstants::INVALID_INDEX ? 0 : lean_lines;
 	return global.FinishRange(range, lines);
 }
 
