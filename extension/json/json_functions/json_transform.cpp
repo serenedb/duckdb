@@ -36,8 +36,8 @@ JSONTransformOptions::JSONTransformOptions(bool strict_cast_p, bool error_duplic
 JSONTransformOptions::JSONTransformOptions(const JSONTransformOptions &other)
     : strict_cast(other.strict_cast), error_duplicate_key(other.error_duplicate_key),
       error_missing_key(other.error_missing_key), error_unknown_key(other.error_unknown_key),
-      delay_error(other.delay_error), date_format_map(other.date_format_map), error_message(other.error_message),
-      object_index(other.object_index), parameters(other.parameters) {
+      delay_error(other.delay_error), rendering(other.rendering), date_format_map(other.date_format_map),
+      error_message(other.error_message), object_index(other.object_index), parameters(other.parameters) {
 	parameters.error_message = &error_message;
 }
 
@@ -47,6 +47,7 @@ JSONTransformOptions &JSONTransformOptions::operator=(const JSONTransformOptions
 	error_missing_key = other.error_missing_key;
 	error_unknown_key = other.error_unknown_key;
 	delay_error = other.delay_error;
+	rendering = other.rendering;
 	date_format_map = other.date_format_map;
 	error_message = other.error_message;
 	object_index = other.object_index;
@@ -308,8 +309,15 @@ bool JSONTransform::GetStringVector(const JSONNode *vals[], const idx_t count, c
 
 static bool CastValues(Vector &source, Vector &result, const idx_t count, JSONTransformOptions &options, bool success) {
 	auto context = options.parameters.context;
-	const bool cast = context ? VectorOperations::TryCast(*context, source, result, count, &options.error_message)
-	                          : VectorOperations::DefaultTryCast(source, result, count, &options.error_message);
+	bool cast;
+	if (context && options.rendering != ValueRendering::NATIVE && source.GetType().id() == LogicalTypeId::VARCHAR) {
+		cast = MakeValueDecoder(*context, result.GetType(), options.rendering)
+		           ->Decode(source, result, count, options.error_message);
+	} else if (context) {
+		cast = VectorOperations::TryCast(*context, source, result, count, &options.error_message);
+	} else {
+		cast = VectorOperations::DefaultTryCast(source, result, count, &options.error_message);
+	}
 	if (!cast && options.strict_cast) {
 		options.object_index = 0; // Can't get line number information here
 		options.error_message +=
@@ -1144,6 +1152,12 @@ bool JSONTransform::Transform(const JSONNode *vals[], JSONTransformScratch &scra
 
 	if (result_type.IsJSONType()) {
 		return TransformToJSON(vals, scratch, result, count);
+	}
+	if (options.rendering != ValueRendering::NATIVE && options.parameters.context &&
+	    result_type.id() != LogicalTypeId::VARCHAR && !result_type.IsNested()) {
+		Vector text(LogicalTypeId::VARCHAR, count);
+		TransformToString(vals, scratch, text, count);
+		return CastValues(text, result, count, options, true);
 	}
 	if (result_type.HasAlias()) {
 		return TransformAliased(vals, scratch, result, count, options);

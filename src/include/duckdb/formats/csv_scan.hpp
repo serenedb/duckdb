@@ -16,6 +16,7 @@
 #include "duckdb/execution/operator/csv_scanner/csv_error.hpp"
 #include "duckdb/execution/operator/csv_scanner/csv_file_scanner.hpp"
 #include "duckdb/formats/row_ranges.hpp"
+#include "duckdb/formats/value_codecs.hpp"
 #include "duckdb/function/scalar/strftime_format.hpp"
 #include "duckdb/parallel/async_result.hpp"
 #include "duckdb/planner/table_filter_set.hpp"
@@ -277,6 +278,7 @@ private:
 	vector<CsvRowError> row_errors;
 	DataChunk parse_chunk;
 	DataChunk scratch_chunk;
+	vector<unique_ptr<ValueDecoder>> decoders;
 };
 
 } // namespace duckdb

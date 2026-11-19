@@ -601,13 +601,15 @@ CsvScanGlobal::CsvScanGlobal(ClientContext &context_p, const CSVReaderOptions &o
 		column.file_column = source.projection[i].first;
 		column.output_column = source.projection[i].second;
 		column.type = source.types[i];
-		auto parse_type = column.type.HasAlias() ? LogicalType::VARCHAR : column.type;
+		const bool rendered = options.rendering == ValueRendering::POSTGRES && !source.sniffing &&
+		                      column.type.id() != LogicalTypeId::VARCHAR;
+		auto parse_type = column.type.HasAlias() || rendered ? LogicalType::VARCHAR : column.type;
 		if (CsvDecodesDirectly(parse_type, icu_loaded)) {
 			column.parse_type = parse_type;
 			column.validate_utf8 = true;
 		} else {
 			column.parse_type = LogicalType::VARCHAR;
-			column.validate_utf8 = column.type.id() == LogicalTypeId::VARCHAR || column.type.IsNested();
+			column.validate_utf8 = rendered || column.type.id() == LogicalTypeId::VARCHAR || column.type.IsNested();
 		}
 		column.force_not_null =
 		    column.file_column < options.force_not_null.size() && options.force_not_null[column.file_column];
@@ -800,6 +802,13 @@ CsvScan::CsvScan(CsvScanGlobal &global_p)
 		parse_chunk.Initialize(allocator, parse_types);
 	}
 	scratch_chunk.Initialize(allocator, vector<LogicalType> {LogicalType::VARCHAR});
+	decoders.resize(global.columns.size());
+	for (idx_t i = 0; i < global.columns.size(); i++) {
+		auto &column = global.columns[i];
+		if (NeedsFlushCast(column)) {
+			decoders[i] = MakeValueDecoder(global.context, column.type, options.rendering);
+		}
+	}
 }
 
 void CsvScan::Start(idx_t range_p) {
@@ -1231,7 +1240,7 @@ void CsvScan::FlushCasts(idx_t count, DataChunk &output, bool late, bool filter_
 		auto &parse = parse_chunk.data[i];
 		auto &result = output.data[column.output_column];
 		string error_message;
-		if (VectorOperations::TryCast(global.context, parse, result, count, &error_message, false, true)) {
+		if (decoders[i]->Decode(parse, result, count, error_message)) {
 			continue;
 		}
 		auto &result_validity = FlatVector::Validity(result);

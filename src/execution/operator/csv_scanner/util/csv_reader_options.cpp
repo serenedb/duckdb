@@ -325,6 +325,8 @@ void CSVReaderOptions::SetReadOption(const Identifier &loption, const Value &val
 		null_padding = ParseBoolean(value, loption);
 	} else if (loption == "parallel") {
 		parallel = ParseBoolean(value, loption);
+	} else if (loption == "rendering") {
+		rendering = ValueRenderingFromString(ParseString(value, loption), "rendering");
 	} else if (loption == "allow_quoted_nulls") {
 		allow_quoted_nulls = ParseBoolean(value, loption);
 	} else if (loption == "store_rejects") {

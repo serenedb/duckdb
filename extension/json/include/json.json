@@ -29,6 +29,12 @@
         "id": 104,
         "name": "delay_error",
         "type": "bool"
+      },
+      {
+        "id": 16489,
+        "name": "rendering",
+        "type": "ValueRendering",
+        "default": "ValueRendering::NATIVE"
       }
     ],
     "pointer_type": "none"

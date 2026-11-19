@@ -7,6 +7,7 @@ add_library_unity(
   csv_sniff.cpp
   row_lexer.cpp
   row_ranges.cpp
+  value_codecs.cpp
   value_parsers.cpp)
 set(ALL_OBJECT_FILES
     ${ALL_OBJECT_FILES} $<TARGET_OBJECTS:duckdb_formats>
