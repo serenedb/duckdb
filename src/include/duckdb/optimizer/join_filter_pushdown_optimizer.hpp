@@ -17,6 +17,8 @@ class Optimizer;
 struct JoinFilterPushdownColumn;
 struct PushdownFilterTarget;
 
+enum class PushdownTargetUse : uint8_t { JOIN_FILTER, BOUND, SCAN_ORDER_BOUND };
+
 //! The JoinFilterPushdownOptimizer links comparison joins to data sources to enable dynamic execution-time filter
 //! pushdown
 class JoinFilterPushdownOptimizer : public LogicalOperatorVisitor {
@@ -26,7 +28,8 @@ public:
 public:
 	void VisitOperator(LogicalOperator &op) override;
 	static void GetPushdownFilterTargets(LogicalOperator &op, vector<JoinFilterPushdownColumn> columns,
-	                                     vector<PushdownFilterTarget> &targets, bool for_scan_order = false);
+	                                     vector<PushdownFilterTarget> &targets,
+	                                     PushdownTargetUse use = PushdownTargetUse::JOIN_FILTER);
 
 	static bool IsFiltering(const LogicalOperator &op, reference_map_t<const LogicalOperator, bool> &filtering);
 
