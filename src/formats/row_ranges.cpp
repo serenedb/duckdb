@@ -95,7 +95,22 @@ bool OpensRecord(const RowDialect &dialect, const char *bytes, idx_t base, idx_t
 } // namespace
 
 idx_t RowSync(const RowDialect &dialect, const char *bytes, idx_t base, idx_t begin, idx_t end, bool eof) {
-	const idx_t first = FirstNewline(dialect, bytes, base, begin, end, eof);
+	idx_t first = FirstNewline(dialect, bytes, base, begin, end, eof);
+	if (first != DConstants::INVALID_INDEX && dialect.backslash) {
+		while (first < end) {
+			const char byte = bytes[first - base];
+			if (byte == '\n') {
+				first++;
+			} else if (byte == '\r' && first + 1 < end && bytes[first + 1 - base] == '\n') {
+				first += 2;
+			} else if (byte == '\r' && first + 1 == end && !eof) {
+				return DConstants::INVALID_INDEX;
+			} else {
+				break;
+			}
+		}
+		return first == end && !eof ? DConstants::INVALID_INDEX : first;
+	}
 	if (first == DConstants::INVALID_INDEX || !dialect.quote) {
 		return first;
 	}
