@@ -143,6 +143,20 @@ bool JoinFilterPushdownUtil::JoinTypeIsSupported(JoinType join_type) {
 	}
 }
 
+static bool PreservesLeftInput(JoinType join_type) {
+	switch (join_type) {
+	case JoinType::INNER:
+	case JoinType::LEFT:
+	case JoinType::SEMI:
+	case JoinType::ANTI:
+	case JoinType::MARK:
+	case JoinType::SINGLE:
+		return true;
+	default:
+		return false;
+	}
+}
+
 static void PushdownProjectionColumns(LogicalProjection &proj, const vector<JoinFilterPushdownColumn> &columns,
                                       vector<JoinFilterPushdownColumn> &projected_columns) {
 	for (auto &filter : columns) {
@@ -160,7 +174,9 @@ static void PushdownProjectionColumns(LogicalProjection &proj, const vector<Join
 
 void JoinFilterPushdownOptimizer::GetPushdownFilterTargets(LogicalOperator &op,
                                                            vector<JoinFilterPushdownColumn> columns,
-                                                           vector<PushdownFilterTarget> &targets, bool for_scan_order) {
+                                                           vector<PushdownFilterTarget> &targets,
+                                                           PushdownTargetUse use) {
+	const auto unordered_use = use == PushdownTargetUse::SCAN_ORDER_BOUND ? PushdownTargetUse::BOUND : use;
 	auto &probe_child = op;
 	switch (probe_child.type) {
 	case LogicalOperatorType::LOGICAL_LIMIT:
@@ -173,11 +189,16 @@ void JoinFilterPushdownOptimizer::GetPushdownFilterTargets(LogicalOperator &op,
 	case LogicalOperatorType::LOGICAL_CROSS_PRODUCT:
 		// does not affect probe side - recurse into left child
 		// FIXME: we can probably recurse into more operators here (e.g. window, unnest)
-		GetPushdownFilterTargets(*probe_child.children[0], std::move(columns), targets, for_scan_order);
+		GetPushdownFilterTargets(*probe_child.children[0], std::move(columns), targets, use);
 		break;
 	case LogicalOperatorType::LOGICAL_FILTER:
+		GetPushdownFilterTargets(*probe_child.children[0], std::move(columns), targets, unordered_use);
+		break;
 	case LogicalOperatorType::LOGICAL_COMPARISON_JOIN:
-		GetPushdownFilterTargets(*probe_child.children[0], std::move(columns), targets);
+		if (use == PushdownTargetUse::JOIN_FILTER ||
+		    PreservesLeftInput(probe_child.Cast<LogicalComparisonJoin>().join_type)) {
+			GetPushdownFilterTargets(*probe_child.children[0], std::move(columns), targets, unordered_use);
+		}
 		break;
 	case LogicalOperatorType::LOGICAL_UNNEST: {
 		auto &unnest = probe_child.Cast<LogicalUnnest>();
@@ -188,7 +209,7 @@ void JoinFilterPushdownOptimizer::GetPushdownFilterTargets(LogicalOperator &op,
 				return;
 			}
 		}
-		GetPushdownFilterTargets(*probe_child.children[0], std::move(columns), targets, for_scan_order);
+		GetPushdownFilterTargets(*probe_child.children[0], std::move(columns), targets, use);
 		break;
 	}
 	case LogicalOperatorType::LOGICAL_EXCEPT:
@@ -215,7 +236,7 @@ void JoinFilterPushdownOptimizer::GetPushdownFilterTargets(LogicalOperator &op,
 				continue;
 			}
 			// then recurse into the child
-			GetPushdownFilterTargets(*child, std::move(child_columns), targets, for_scan_order);
+			GetPushdownFilterTargets(*child, std::move(child_columns), targets, use);
 
 			// for EXCEPT we can only recurse into the first (left) child
 			if (probe_child.type == LogicalOperatorType::LOGICAL_EXCEPT) {
@@ -227,7 +248,7 @@ void JoinFilterPushdownOptimizer::GetPushdownFilterTargets(LogicalOperator &op,
 	case LogicalOperatorType::LOGICAL_GET: {
 		// found LogicalGet
 		auto &get = probe_child.Cast<LogicalGet>();
-		if (for_scan_order ? !get.function.set_scan_order : !get.function.filter_pushdown) {
+		if (use == PushdownTargetUse::SCAN_ORDER_BOUND ? !get.function.set_scan_order : !get.function.filter_pushdown) {
 			// the required scan capability is not supported - no need to consider this node
 			return;
 		}
@@ -266,7 +287,7 @@ void JoinFilterPushdownOptimizer::GetPushdownFilterTargets(LogicalOperator &op,
 		if (projected_columns.empty()) {
 			return;
 		}
-		GetPushdownFilterTargets(*probe_child.children[0], std::move(projected_columns), targets, for_scan_order);
+		GetPushdownFilterTargets(*probe_child.children[0], std::move(projected_columns), targets, use);
 		break;
 	}
 	case LogicalOperatorType::LOGICAL_AGGREGATE_AND_GROUP_BY: {
@@ -283,7 +304,7 @@ void JoinFilterPushdownOptimizer::GetPushdownFilterTargets(LogicalOperator &op,
 				return;
 			}
 		}
-		GetPushdownFilterTargets(*probe_child.children[0], std::move(columns), targets, for_scan_order);
+		GetPushdownFilterTargets(*probe_child.children[0], std::move(columns), targets, use);
 		break;
 	}
 	default:

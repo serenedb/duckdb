@@ -269,7 +269,8 @@ shared_ptr<DynamicFilterData> TopN::PushDynamicFilterIntoScans(ClientContext &co
 	column.probe_column_index = binding;
 	columns.emplace_back(column);
 	vector<PushdownFilterTarget> pushdown_targets;
-	JoinFilterPushdownOptimizer::GetPushdownFilterTargets(child, std::move(columns), pushdown_targets);
+	JoinFilterPushdownOptimizer::GetPushdownFilterTargets(child, std::move(columns), pushdown_targets,
+	                                                      PushdownTargetUse::BOUND);
 	if (pushdown_targets.empty()) {
 		// no pushdown targets
 		return nullptr;
