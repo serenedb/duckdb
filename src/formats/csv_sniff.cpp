@@ -1,5 +1,7 @@
 #include "duckdb/formats/csv_sniff.hpp"
 
+#include "duckdb/formats/csv_simd.hpp"
+
 namespace duckdb {
 
 CsvColumnCounts::CsvColumnCounts(CSVStateMachine &state_machine_p, idx_t result_size_p)

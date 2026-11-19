@@ -172,6 +172,9 @@ public:
 	const RowDialect &Dialect() const {
 		return dialect;
 	}
+	idx_t Columns() const {
+		return columns;
+	}
 	idx_t Lookahead() const {
 		return dialect.delimiter_size - 1;
 	}
