@@ -33,6 +33,28 @@ JSONTransformOptions::JSONTransformOptions(bool strict_cast_p, bool error_duplic
       error_unknown_key(error_unknown_key_p), parameters(false, &error_message) {
 }
 
+JSONTransformOptions::JSONTransformOptions(const JSONTransformOptions &other)
+    : strict_cast(other.strict_cast), error_duplicate_key(other.error_duplicate_key),
+      error_missing_key(other.error_missing_key), error_unknown_key(other.error_unknown_key),
+      delay_error(other.delay_error), date_format_map(other.date_format_map), error_message(other.error_message),
+      object_index(other.object_index), parameters(other.parameters) {
+	parameters.error_message = &error_message;
+}
+
+JSONTransformOptions &JSONTransformOptions::operator=(const JSONTransformOptions &other) {
+	strict_cast = other.strict_cast;
+	error_duplicate_key = other.error_duplicate_key;
+	error_missing_key = other.error_missing_key;
+	error_unknown_key = other.error_unknown_key;
+	delay_error = other.delay_error;
+	date_format_map = other.date_format_map;
+	error_message = other.error_message;
+	object_index = other.object_index;
+	parameters = other.parameters;
+	parameters.error_message = &error_message;
+	return *this;
+}
+
 //! Forward declaration for recursion
 static LogicalType StructureStringToType(const JSONNode &val, ClientContext &context);
 
