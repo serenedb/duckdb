@@ -261,6 +261,9 @@ QualifiedName Binder::ResolveCatalog(CatalogEntryRetriever &retriever, const Qua
 }
 
 QualifiedName Binder::BindTableName(CatalogEntryRetriever &retriever, const QualifiedName &name) {
+	if (name.Path().empty()) {
+		throw ParserException("invalid name syntax");
+	}
 	auto resolved = ResolveCatalog(retriever, name, false);
 	auto &path = resolved.Path();
 	vector<Identifier> schema_path(path.begin() + 1, path.end() - 1);
