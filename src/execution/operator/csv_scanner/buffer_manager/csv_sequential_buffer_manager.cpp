@@ -18,44 +18,52 @@ void CSVSequentialBufferManager::Initialize() {
 	}
 }
 
-bool CSVSequentialBufferManager::ReadNextAndCacheIt() {
-	D_ASSERT(last_buffer);
-	for (idx_t i = 0; i < 2; i++) {
-		if (!last_buffer->IsCSVFileLastBuffer()) {
-			auto maybe_last_buffer = last_buffer->Next(*file_handle, buffer_size, has_seeked);
-			if (!maybe_last_buffer) {
-				last_buffer->last_buffer = true;
-				return false;
-			}
-			last_buffer = std::move(maybe_last_buffer);
-			cached_buffers.emplace_back(last_buffer);
-			return true;
-		}
-	}
-	return false;
-}
-
 shared_ptr<CSVBufferHandle> CSVSequentialBufferManager::GetBuffer(const idx_t pos) {
-	lock_guard<mutex> parallel_lock(main_mutex);
-	if (pos == 0 && done && cached_buffers.empty()) {
-		if (is_pipe) {
-			throw InvalidInputException("Recursive CTEs are not allowed when using piped csv files");
+	{
+		lock_guard<mutex> parallel_lock(main_mutex);
+		if (pos < cached_buffers.size() && cached_buffers[pos]) {
+			shared_ptr<CSVBufferHandle> pinned;
+			if (cached_buffers[pos]->TryPin(pinned)) {
+				UnpinPrevious(pos);
+				return pinned;
+			}
 		}
-		// This is a recursive CTE, we have to reset out whole buffer
-		done = false;
-		file_handle->Reset();
-		Initialize();
 	}
-	while (pos >= cached_buffers.size()) {
-		if (done) {
-			return nullptr;
+	lock_guard<mutex> read_guard(read_lock);
+	while (true) {
+		shared_ptr<CSVBuffer> previous;
+		{
+			lock_guard<mutex> parallel_lock(main_mutex);
+			if (pos == 0 && done && cached_buffers.empty()) {
+				if (is_pipe) {
+					throw InvalidInputException("Recursive CTEs are not allowed when using piped csv files");
+				}
+				done = false;
+				file_handle->Reset();
+				Initialize();
+			}
+			if (pos < cached_buffers.size()) {
+				UnpinPrevious(pos);
+				return cached_buffers[pos]->Pin(*file_handle, has_seeked);
+			}
+			if (done) {
+				return nullptr;
+			}
+			previous = last_buffer;
 		}
-		if (!ReadNextAndCacheIt()) {
+		shared_ptr<CSVBuffer> next;
+		if (!previous->IsCSVFileLastBuffer()) {
+			next = previous->Next(*file_handle, buffer_size, has_seeked);
+		}
+		lock_guard<mutex> parallel_lock(main_mutex);
+		if (next) {
+			last_buffer = next;
+			cached_buffers.emplace_back(std::move(next));
+		} else {
+			previous->last_buffer = true;
 			done = true;
 		}
 	}
-	UnpinPrevious(pos);
-	return cached_buffers[pos]->Pin(*file_handle, has_seeked);
 }
 
 void CSVSequentialBufferManager::UnpinPrevious(const idx_t pos) {
