@@ -101,10 +101,9 @@ static void SniffCSVFile(ClientContext &context, ReadSingleCSVFileData &result, 
                          vector<Identifier> &names) {
 	auto &options = result.options;
 	result.buffer_manager = CSVBufferManager::Open(context, options, options.file_path, false);
-	auto &state_machine_cache = CSVStateMachineCache::Get(context);
 	if (file_schema.Empty()) {
 		// the columns of this file are fixed - only its dialect is sniffed
-		CSVSniffer sniffer(options, file_options, result.buffer_manager, state_machine_cache);
+		CSVSniffer sniffer(options, file_options, result.buffer_manager);
 		sniffer.SniffCSV();
 		return;
 	}
@@ -112,7 +111,7 @@ static void SniffCSVFile(ClientContext &context, ReadSingleCSVFileData &result, 
 		// an empty file has no dialect for us to reconcile with the schema of the scan
 		return;
 	}
-	CSVSniffer sniffer(options, file_options, result.buffer_manager, state_machine_cache, false);
+	CSVSniffer sniffer(options, file_options, result.buffer_manager, false);
 	auto sniff_result = sniffer.AdaptiveSniff(file_schema);
 	names = std::move(sniff_result.names);
 	return_types = std::move(sniff_result.return_types);

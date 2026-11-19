@@ -55,129 +55,20 @@ inline uint64_t FindEscaped(uint64_t escapes, uint64_t &carry) {
 	return escaped;
 }
 
-void WalkQuotes(const char *block, idx_t size, char quote, char escape, uint64_t &in_quotes, uint64_t &pending,
-                uint64_t &quotes, uint64_t &inside, uint64_t &escaped) {
-	bool open = in_quotes != 0;
-	bool escape_next = pending != 0;
-	quotes = 0;
-	inside = 0;
-	escaped = 0;
-	for (idx_t i = 0; i < size; i++) {
-		const uint64_t bit = uint64_t(1) << i;
-		const char ch = block[i];
-		if (escape_next) {
-			escaped |= bit;
-			escape_next = false;
-		} else if (ch == quote) {
-			open = !open;
-			quotes |= bit;
-		} else if (open && ch == escape) {
-			escape_next = true;
-		}
-		if (open) {
-			inside |= bit;
-		}
-	}
-	in_quotes = open;
-	pending = escape_next;
+inline uint64_t Lowest(uint64_t bits) {
+	return bits & (0 - bits);
 }
 
-uint64_t KeepFieldQuotes(uint64_t quote, uint64_t in_carry, uint64_t delimiter, idx_t delimiter_size,
-                         uint64_t term_bits, uint64_t raw_spaces, uint64_t after_separator, uint64_t start_space,
-                         uint64_t after_closer, bool reopen, uint64_t valid) {
-	while (quote) {
-		const uint64_t in = CsvPrefixXor(quote) ^ in_carry;
-		const uint64_t terms = term_bits & ~in & valid;
-		const uint64_t delims = delimiter & ~in & valid;
-		const uint64_t field_starts = (delims << delimiter_size) | (terms << 1) | after_separator;
-		const uint64_t starts = field_starts | ((field_starts & raw_spaces & ~in) << 1) | start_space;
-		const uint64_t openers = quote & in;
-		const uint64_t allowed = reopen ? (((quote & ~in) << 1) | after_closer) : 0;
-		const uint64_t misplaced = openers & ~starts & ~allowed;
-		if (!misplaced) {
-			break;
-		}
-		quote &= ~(misplaced & (0 - misplaced));
-	}
-	return quote;
+inline uint64_t AtOrAbove(uint64_t bit) {
+	return ~(bit - 1);
 }
 
-bool PlainCountState(CSVState state) {
-	return state == CSVState::NOT_SET || state == CSVState::RECORD_SEPARATOR || state == CSVState::DELIMITER ||
-	       state == CSVState::STANDARD || state == CSVState::EMPTY_SPACE;
+inline uint64_t Above(uint64_t bit) {
+	return ~((bit << 1) - 1);
 }
 
-bool PlainCountTransitions(const StateMachine &table, const RowDialect &d, char (&specials)[4], idx_t &count,
-                           bool &line_feeds, bool &carriage_pairs) {
-	count = 0;
-	line_feeds = true;
-	carriage_pairs = true;
-	if (d.delimiter_size != 1) {
-		return false;
-	}
-	bool special[StateMachine::NUM_TRANSITIONS] = {};
-	special[static_cast<uint8_t>('\r')] = true;
-	for (const char byte : {d.quote, d.escape, d.comment}) {
-		if (byte != '\0' && !special[static_cast<uint8_t>(byte)]) {
-			special[static_cast<uint8_t>(byte)] = true;
-			specials[count++] = byte;
-		}
-	}
-	const auto delimiter = static_cast<uint8_t>(d.delimiter);
-	if (special[delimiter] || delimiter == '\n' || special[static_cast<uint8_t>('\n')]) {
-		return false;
-	}
-	const CSVState states[] = {CSVState::NOT_SET, CSVState::RECORD_SEPARATOR, CSVState::DELIMITER, CSVState::STANDARD,
-	                           CSVState::EMPTY_SPACE};
-	carriage_pairs = table[static_cast<uint8_t>('\n')][static_cast<uint8_t>(CSVState::CARRIAGE_RETURN)] ==
-	                 CSVState::RECORD_SEPARATOR;
-	for (const auto state : states) {
-		const auto from = static_cast<uint8_t>(state);
-		if (table[delimiter][from] != CSVState::DELIMITER) {
-			return false;
-		}
-		line_feeds = line_feeds && table[static_cast<uint8_t>('\n')][from] == CSVState::RECORD_SEPARATOR;
-		carriage_pairs = carriage_pairs && table[static_cast<uint8_t>('\r')][from] == CSVState::CARRIAGE_RETURN;
-		for (idx_t byte = 0; byte < StateMachine::NUM_TRANSITIONS; byte++) {
-			if (byte == delimiter || byte == '\n' || byte == ' ' || special[byte]) {
-				continue;
-			}
-			if (table[byte][from] != CSVState::STANDARD) {
-				return false;
-			}
-		}
-		if (delimiter != ' ') {
-			const auto space = table[static_cast<uint8_t>(' ')][from];
-			if (space != CSVState::STANDARD && space != CSVState::EMPTY_SPACE) {
-				return false;
-			}
-			if ((state == CSVState::STANDARD || state == CSVState::EMPTY_SPACE) && space != CSVState::STANDARD) {
-				return false;
-			}
-		}
-	}
-	return true;
-}
-
-idx_t RunStops(const StateMachine &table, CSVState first, CSVState second, char (&stops)[8]) {
-	idx_t count = 0;
-	for (idx_t byte = 0; byte < StateMachine::NUM_TRANSITIONS; byte++) {
-		const auto from_first = table[byte][static_cast<uint8_t>(first)];
-		const auto from_second = table[byte][static_cast<uint8_t>(second)];
-		const bool stays_first = from_first == first || from_first == second;
-		const bool stays_second = from_second == first || from_second == second;
-		if (stays_first != stays_second || (!stays_first && from_first != from_second)) {
-			return DConstants::INVALID_INDEX;
-		}
-		if (stays_first) {
-			continue;
-		}
-		if (count == 8) {
-			return DConstants::INVALID_INDEX;
-		}
-		stops[count++] = static_cast<char>(byte);
-	}
-	return count;
+inline uint64_t Highest(uint64_t bits) {
+	return bits ? uint64_t(1) << (63 - std::countl_zero(bits)) : 0;
 }
 
 } // namespace
@@ -186,30 +77,25 @@ RowDialect RowDialect::DuckDB(const CsvGrammar &grammar) {
 	RowDialect result;
 	result.delimiter = grammar.delimiter[0];
 	result.delimiter_size = grammar.delimiter_size;
-	bool plain_delimiter = true;
-	for (idx_t i = 0; i < grammar.delimiter_size; i++) {
-		const char byte = grammar.delimiter[i];
-		plain_delimiter = plain_delimiter && byte != '\n' && byte != '\r' && (i == 0 || byte != '\0');
-		if (i > 0) {
-			result.delimiter_tail[i - 1] = byte;
-		}
+	for (idx_t i = 1; i < grammar.delimiter_size; i++) {
+		result.delimiter_tail[i - 1] = grammar.delimiter[i];
 	}
 	result.distinct_delimiter = grammar.distinct_delimiter;
 	result.quote = grammar.quote;
 	result.escape = grammar.escape;
 	result.comment = grammar.comment;
 	result.quoting = grammar.quote ? RowQuoting::FIELD_START : RowQuoting::NONE;
+	result.duckdb = true;
 	result.escape_in_quotes = grammar.quoted_escape && grammar.strict_mode;
-	result.reject_escape = grammar.quoted_escape && !grammar.strict_mode;
+	result.unquoted_escape = grammar.quoted_escape && !grammar.strict_mode;
 	result.carriage_terms = true;
 	result.merge_terms = true;
 	result.carry_on = grammar.carry_on_newline;
 	result.strict = grammar.strict_mode;
 	result.reopen = grammar.quote == grammar.escape || (!grammar.strict_mode && grammar.escape != '\0');
+	result.empty_space = grammar.empty_space;
 	result.quoted_spaces = grammar.quote != '\0' && grammar.trim_quoted_spaces;
 	result.new_line = grammar.new_line;
-	result.supported = plain_delimiter;
-	result.transitions = grammar.transitions;
 	return result;
 }
 
@@ -258,6 +144,16 @@ void RowFields::Drop(idx_t count, idx_t dropped_ends) {
 	memmove(ends.get(), ends.get() + dropped_ends, (end_count - dropped_ends) * sizeof(uint32_t));
 	row_count -= count;
 	end_count -= dropped_ends;
+	if (!events.empty()) {
+		idx_t kept_events = 0;
+		for (auto &event : events) {
+			if (event.row >= count) {
+				event.row -= static_cast<uint32_t>(count);
+				events[kept_events++] = event;
+			}
+		}
+		events.resize(kept_events);
+	}
 	if (anomalies.empty()) {
 		return;
 	}
@@ -274,6 +170,24 @@ void RowFields::Drop(idx_t count, idx_t dropped_ends) {
 	}
 }
 
+void RowFields::Rebase(uint32_t delta) {
+	for (idx_t i = 0; i < row_count; i++) {
+		rows[i] -= delta;
+	}
+	for (idx_t i = 0; i < end_count; i++) {
+		ends[i] = ((ends[i] & ROW_FIELD_MASK) - delta) | (ends[i] & ROW_FIELD_FLAG);
+	}
+	for (auto &extra : extras) {
+		extra = ((extra & ROW_FIELD_MASK) - delta) | (extra & ROW_FIELD_FLAG);
+	}
+	for (auto &anomaly : anomalies) {
+		anomaly.end -= delta;
+	}
+	for (auto &event : events) {
+		event.position -= delta;
+	}
+}
+
 const RowAnomaly *RowFields::Anomaly(idx_t row) const {
 	auto entry = std::lower_bound(anomalies.begin(), anomalies.end(), row,
 	                              [](const RowAnomaly &anomaly, idx_t value) { return anomaly.row < value; });
@@ -284,32 +198,23 @@ RowLexer::RowLexer(const RowDialect &dialect_p, idx_t columns_p, idx_t max_line_
                    bool pad_rows_p, bool irregular_rows_p)
     : dialect(dialect_p), columns(columns_p), max_line_size(max_line_size_p), pad_rows(pad_rows_p),
       irregular_rows(irregular_rows_p) {
-	eligible = dialect.supported && columns >= 1 && max_line_size >= CSV_BLOCK_BYTES;
+	D_ASSERT(columns >= 1);
 	settle_strict = error_mode && dialect.strict;
 	settle_length = error_mode;
-	if (eligible) {
-		patterns.resize(columns);
-		for (idx_t phase = 0; phase < columns; phase++) {
-			patterns[phase] = ExpectedPattern(columns, phase);
-		}
-	}
-	if (dialect.transitions) {
-		const auto &table = *dialect.transitions;
-		count_plain = PlainCountTransitions(table, dialect, count_specials, count_special_count, count_line_feeds,
-		                                    count_carriage_pairs);
-		standard_stop_count = RunStops(table, CSVState::STANDARD, CSVState::STANDARD, standard_stops);
-		quoted_stop_count = RunStops(table, CSVState::QUOTED, CSVState::QUOTED_NEW_LINE, quoted_stops);
-		comment_stop_count = RunStops(table, CSVState::COMMENT, CSVState::COMMENT, comment_stops);
+	patterns.resize(columns);
+	for (idx_t phase = 0; phase < columns; phase++) {
+		patterns[phase] = ExpectedPattern(columns, phase);
 	}
 }
 
 void RowLexer::Start(RowCursor &cursor, idx_t begin, bool settled, bool check_arity) const {
 	cursor = RowCursor();
 	cursor.origin = begin;
+	cursor.anchor = begin;
 	cursor.pos = begin;
+	cursor.field_start = begin;
 	cursor.settled = settled || dialect.quoting != RowQuoting::FIELD_START;
 	cursor.check_arity = check_arity;
-	cursor.ok = eligible;
 }
 
 bool RowLexer::Feed(RowCursor &cursor, const char *data, idx_t base, idx_t end, bool last, RowFields *fields) const {
@@ -319,15 +224,20 @@ bool RowLexer::Feed(RowCursor &cursor, const char *data, idx_t base, idx_t end, 
 	return FeedBlocks<false>(cursor, data, base, end, last, nullptr);
 }
 
-template <bool EXTRACT>
-bool RowLexer::FeedBlocks(RowCursor &cursor, const char *data, idx_t base, idx_t end, bool last,
-                          RowFields *fields) const {
+template <bool EXTRACT, bool SHAPE>
+bool RowLexer::FeedBlocks(RowCursor &cursor, const char *data, idx_t base, idx_t end, bool last, RowFields *fields,
+                          RowShapes *shapes) const {
 	const auto &d = dialect;
 	if (!cursor.ok) {
 		return false;
 	}
 	const bool field_start_quotes = d.quoting == RowQuoting::FIELD_START;
-	const bool escapes = d.backslash || d.escape_in_quotes;
+	const bool escapes = d.backslash || d.escape_in_quotes || d.unquoted_escape;
+	const bool maybe_quotes = field_start_quotes && !d.strict && d.escape == '\0';
+	const bool strict_quotes = field_start_quotes && d.strict;
+	const bool strict_lines = d.duckdb && d.strict && d.new_line != NewLineIdentifier::NOT_SET;
+	const bool track_fields = d.duckdb && (d.comment || d.strict);
+	const bool count_errors = !EXTRACT && cursor.check_arity;
 	const uint64_t quote_follow_bit = d.reopen ? ~uint64_t(0) : 0;
 	auto c = cursor;
 	uint32_t *rows_out = nullptr;
@@ -347,10 +257,6 @@ bool RowLexer::FeedBlocks(RowCursor &cursor, const char *data, idx_t base, idx_t
 		return false;
 	};
 	const idx_t delimiter_size = d.delimiter_size;
-	const bool literal_quotes =
-	    field_start_quotes && !escapes && !d.comment && (delimiter_size == 1 || d.distinct_delimiter);
-	uint64_t literals = 0;
-	idx_t literals_at = DConstants::INVALID_INDEX;
 	char padded[CSV_BLOCK_BYTES];
 	char lookahead[CSV_BLOCK_BYTES];
 	while (c.pos < end) {
@@ -369,12 +275,13 @@ bool RowLexer::FeedBlocks(RowCursor &cursor, const char *data, idx_t base, idx_t
 			block = padded;
 			valid = (uint64_t(1) << size) - 1;
 		}
+		const uint64_t last_bit = uint64_t(1) << (size - 1);
 		const CsvVector vector(block);
 		c.non_ascii |= vector.NonAscii();
-		if (d.reject_escape && (vector.Equal(d.escape) & valid)) {
-			return fail();
-		}
-		uint64_t delimiter = vector.Equal(d.delimiter);
+		const uint64_t escaped_cr_in = c.escaped_cr;
+		const uint64_t delimiter_first = vector.Equal(d.delimiter) & valid;
+		uint64_t delimiter = delimiter_first;
+		uint64_t partial_starts[3] = {};
 		if (delimiter_size > 1) {
 			memset(lookahead, 0, sizeof(lookahead));
 			if (size == CSV_BLOCK_BYTES) {
@@ -384,137 +291,263 @@ bool RowLexer::FeedBlocks(RowCursor &cursor, const char *data, idx_t base, idx_t
 			const CsvVector next(lookahead);
 			for (idx_t i = 1; i < delimiter_size; i++) {
 				const char byte = d.delimiter_tail[i - 1];
-				delimiter &= (vector.Equal(byte) >> i) | (next.Equal(byte) << (CSV_BLOCK_BYTES - i));
+				const uint64_t longer =
+				    delimiter & ((vector.Equal(byte) >> i) | (next.Equal(byte) << (CSV_BLOCK_BYTES - i)));
+				partial_starts[i - 1] = delimiter & ~longer & valid;
+				delimiter = longer;
 			}
 			delimiter &= valid;
 		}
-		const uint64_t line_feed = vector.Equal('\n');
-		const uint64_t carriage_return = vector.Equal('\r');
-		uint64_t escape_bits = 0;
-		uint64_t escaped = 0;
-		const uint64_t carried_escape = c.escape_carry;
-		if (escapes) {
-			escape_bits = vector.Equal(d.escape) & valid;
-			escaped = FindEscaped(escape_bits, c.escape_carry);
-			if (size < CSV_BLOCK_BYTES) {
-				c.escape_carry = ((escape_bits & ~escaped) >> (size - 1)) & 1;
-			}
-		}
+		const uint64_t line_feed = vector.Equal('\n') & valid;
+		const uint64_t carriage_return = vector.Equal('\r') & valid;
+		const uint64_t newline_bits = line_feed | carriage_return;
+		const uint64_t term_bits = d.carriage_terms ? newline_bits : line_feed;
+		const uint64_t escape_bits = escapes ? vector.Equal(d.escape) & valid : 0;
 		const uint64_t raw_quote = d.quote ? vector.Equal(d.quote) & valid : 0;
-		uint64_t quote = d.escape_in_quotes ? raw_quote & ~escaped : raw_quote;
-		if (literals_at == c.pos) {
-			quote &= ~literals;
-		}
-		uint64_t in = (quote ? CsvPrefixXor(quote) : 0) ^ CsvSpread(c.in_quotes);
-		if (d.escape_in_quotes) {
-			if (raw_quote & escaped & ~in) {
-				uint64_t in_quotes = c.in_quotes;
-				uint64_t pending = carried_escape;
-				WalkQuotes(block, size, d.quote, d.escape, in_quotes, pending, quote, in, escaped);
-				in &= valid;
-				c.escape_carry = pending;
+		const uint64_t comment_bits = d.comment ? vector.Equal(d.comment) & valid : 0;
+		const uint64_t raw_spaces = d.duckdb ? vector.Equal(' ') & valid : 0;
+		const uint64_t spaces = d.quoted_spaces ? raw_spaces : 0;
+		uint64_t drop_q = 0;
+		uint64_t drop_e = 0;
+		uint64_t drop_d = 0;
+		uint64_t drop_t = 0;
+		uint64_t drop_c = 0;
+		uint64_t opens = 0;
+		uint64_t events = 0;
+		uint64_t next_maybe = 0;
+		uint64_t maybe_stops = 0;
+		const auto resolve_maybe = [&](uint64_t at) {
+			const uint64_t rest = valid & AtOrAbove(at);
+			const uint64_t others = rest & ~raw_quote;
+			if (!others) {
+				drop_q |= raw_quote & rest;
+				next_maybe = 1;
+				return;
+			}
+			const uint64_t stop = Lowest(others);
+			drop_q |= raw_quote & rest & (stop - 1);
+			if (stop & (delimiter_first | newline_bits)) {
+				maybe_stops |= stop;
 			} else {
-				c.escape_carry &= (in >> (size - 1)) & 1;
+				opens |= stop;
 			}
-			if (field_start_quotes) {
-				if (escaped & in & ~(raw_quote | escape_bits)) {
-					return fail();
-				}
-				c.doubled = c.doubled || (escape_bits & in) != 0;
-			}
+		};
+		if (c.maybe) {
+			resolve_maybe(1);
 		}
-		const uint64_t hidden = d.backslash ? (in | escaped) : in;
-		const uint64_t term_bits = d.carriage_terms ? (line_feed | carriage_return) : line_feed;
-		const uint64_t terms = term_bits & ~hidden & valid;
-		uint64_t delims = delimiter & ~hidden & valid;
-		if (delimiter_size > 1 && !d.distinct_delimiter) {
-			uint64_t covered = c.delimiter_tail;
-			uint64_t next_covered = 0;
-			for (idx_t i = 1; i < delimiter_size; i++) {
-				covered |= delims << i;
-				next_covered |= delims >> (CSV_BLOCK_BYTES - i);
+		uint64_t escape_carry;
+		uint64_t escaped;
+		uint64_t quote;
+		uint64_t in;
+		uint64_t region;
+		uint64_t comment_starts;
+		uint64_t hidden;
+		uint64_t terms;
+		uint64_t delims;
+		uint64_t delimiter_tail;
+		uint64_t partial;
+		uint64_t partial_tail;
+		uint64_t from_delims;
+		uint64_t field_starts;
+		uint64_t space_starts;
+		uint64_t openers;
+		uint64_t closers;
+		uint64_t uq_skip;
+		uint64_t uq_before;
+		uint64_t uq_landing;
+		while (true) {
+			escape_carry = c.escape_carry;
+			const uint64_t active_escapes = escape_bits & ~drop_e;
+			escaped = escapes ? FindEscaped(active_escapes, escape_carry) : 0;
+			if (escapes && size < CSV_BLOCK_BYTES) {
+				escape_carry = ((active_escapes & ~escaped) >> (size - 1)) & 1;
 			}
-			if (delims & covered) {
-				return fail();
+			if (d.carry_on && d.unquoted_escape) {
+				escaped |= (((escaped & carriage_return) << 1) | c.escaped_cr) & line_feed;
 			}
-			c.delimiter_tail = next_covered;
-		}
-		uint64_t comment_ends = 0;
-		uint64_t region = 0;
-		if (d.comment) {
-			const uint64_t comments = vector.Equal(d.comment) & ~hidden & valid;
-			if (comments | c.in_comment) {
-				const uint64_t line_starts = ((terms << 1) | c.after_term) & valid;
+			quote = raw_quote & ~drop_q & ~escaped;
+			const uint64_t toggles = quote ^ opens;
+			in = ((toggles ? CsvPrefixXor(toggles) : 0) ^ CsvSpread(c.in_quotes)) & valid;
+			region = 0;
+			comment_starts = 0;
+			if (comment_bits | c.in_comment) {
 				if (c.in_comment) {
-					const uint64_t stop = terms & (0 - terms);
+					const uint64_t stop = Lowest(newline_bits);
 					region = stop ? stop - 1 : valid;
-					c.in_comment = stop ? 0 : 1;
 				}
-				for (uint64_t pending = comments & ~region & line_starts; pending; pending &= ~region) {
-					const uint64_t start = pending & (0 - pending);
-					const uint64_t after = terms & ~((start << 1) - 1);
-					const uint64_t stop = after & (0 - after);
-					region |= stop ? stop - start : valid & ~(start - 1);
-					if (!stop) {
-						c.in_comment = 1;
+				for (uint64_t pending = comment_bits & ~drop_c & ~in & ~escaped & ~region; pending;
+				     pending &= ~region) {
+					const uint64_t start = Lowest(pending);
+					const uint64_t stop = Lowest(newline_bits & Above(start));
+					region |= stop ? stop - start : valid & AtOrAbove(start);
+					comment_starts |= start;
+				}
+			}
+			hidden = in | escaped | region;
+			terms = term_bits & ~hidden & ~drop_t;
+			delims = delimiter & ~hidden & ~drop_d;
+			delimiter_tail = 0;
+			if (delimiter_size > 1 && !d.distinct_delimiter) {
+				uint64_t covered = c.delimiter_tail;
+				for (idx_t i = 1; i < delimiter_size; i++) {
+					covered |= delims << i;
+				}
+				if (delims & covered) {
+					uint64_t kept = 0;
+					covered = c.delimiter_tail;
+					for (uint64_t rest = delims; rest; rest &= rest - 1) {
+						const uint64_t bit = Lowest(rest);
+						if (bit & covered) {
+							continue;
+						}
+						kept |= bit;
+						for (idx_t i = 1; i < delimiter_size; i++) {
+							covered |= bit << i;
+						}
+					}
+					delims = kept;
+				}
+				for (idx_t i = 1; i < delimiter_size; i++) {
+					delimiter_tail |= delims >> (CSV_BLOCK_BYTES - i);
+				}
+			}
+			const uint64_t lone_next =
+			    d.duckdb && d.carry_on ? (((carriage_return & terms) << 1) | c.after_cr) & ~line_feed & valid : 0;
+			partial = 0;
+			partial_tail = 0;
+			if (delimiter_size > 1 && d.duckdb) {
+				uint64_t covered = c.delimiter_tail;
+				for (idx_t i = 0; i < delimiter_size; i++) {
+					covered |= delims << i;
+				}
+				partial = c.partial_tail;
+				const uint64_t start_ok = ~in & ~escaped & ~region & ~covered & ~lone_next;
+				for (idx_t i = 1; i < delimiter_size; i++) {
+					const uint64_t starts = partial_starts[i - 1] & start_ok;
+					for (idx_t j = 0; j < i; j++) {
+						partial |= starts << j;
+						partial_tail |= j ? starts >> (CSV_BLOCK_BYTES - j) : 0;
 					}
 				}
-				if ((comments & ~region) || (raw_quote & region)) {
-					return fail();
+				partial &= valid;
+			}
+			const uint64_t after_partial = (partial << 1) | c.after_partial;
+			from_delims = ((delims << delimiter_size) | c.after_delimiter) & valid;
+			field_starts = from_delims | (((terms << 1) | c.after_term) & valid);
+			space_starts = d.empty_space ? (((field_starts & raw_spaces) << 1) | c.start_space) & valid : 0;
+			openers = quote & in;
+			closers = quote & ~in;
+			uq_skip = 0;
+			uq_before = 0;
+			uq_landing = 0;
+			if (field_start_quotes && (quote | c.after_closer)) {
+				uq_skip = d.strict ? spaces : valid & ~(delimiter_first | newline_bits | raw_quote | comment_bits);
+				const uint64_t uq_starts = ((closers << 1) | c.after_closer) & valid;
+				const uint64_t uq_runs = (uq_starts & uq_skip) + uq_skip;
+				uq_landing = ((uq_starts & ~uq_skip) | (uq_runs & ~uq_skip)) & valid;
+				uq_before = (uq_skip & ~uq_runs) | uq_landing;
+			}
+			uint64_t violation = 0;
+			int kind = 0;
+			const auto consider = [&](uint64_t bits, int candidate) {
+				bits &= valid;
+				if (bits && (!violation || Lowest(bits) < violation)) {
+					violation = Lowest(bits);
+					kind = candidate;
 				}
-				delims &= ~region;
-				comment_ends = terms & ((region << 1) | c.comment_tail);
-				if (d.carry_on && (comment_ends & line_feed)) {
-					return fail();
+			};
+			if (escapes && !d.backslash) {
+				const uint64_t escapers = active_escapes & ~escaped;
+				consider(escapers & (d.escape_in_quotes ? ~in : (uq_before | region | (after_partial & ~in))), 1);
+			}
+			if (region) {
+				consider(quote & region, 2);
+				consider(comment_starts & after_partial, 8);
+			}
+			if (field_start_quotes) {
+				consider(openers & ~(field_starts | space_starts | uq_landing), 2);
+				if (strict_quotes) {
+					const uint64_t follows =
+					    delimiter_first | newline_bits | comment_bits | (raw_quote & quote_follow_bit);
+					consider(uq_landing & ~follows & ~events, 3);
+				} else if (maybe_quotes) {
+					consider(uq_landing & quote, 4);
 				}
 			}
-			c.comment_tail = (region >> (size - 1)) & 1;
+			if (strict_lines) {
+				uint64_t wrong = line_feed;
+				if (d.carry_on) {
+					wrong = line_feed & ~(((carriage_return & terms) << 1) | c.after_cr);
+				} else if (d.new_line == NewLineIdentifier::SINGLE_N) {
+					wrong = carriage_return;
+				}
+				const uint64_t before_ok = from_delims | space_starts | (region << 1) | c.in_comment | after_partial |
+				                           (c.file_start && c.pos == c.origin ? 1 : 0);
+				consider(wrong & ~hidden & ~drop_t & ~before_ok & ~events, 5);
+			}
+			if (lone_next) {
+				if (d.strict) {
+					const uint64_t fine = raw_quote | comment_bits | (d.empty_space ? raw_spaces : 0);
+					consider(lone_next & ~fine & ~events, 6);
+				} else {
+					consider(lone_next & delims, 7);
+				}
+			}
+			if (!violation) {
+				break;
+			}
+			if (!c.settled || (count_errors && (kind == 3 || kind == 5 || kind == 6))) {
+				return fail();
+			}
+			switch (kind) {
+			case 1:
+				drop_e |= violation;
+				break;
+			case 2:
+				drop_q |= violation;
+				break;
+			case 3: {
+				events |= violation;
+				const uint64_t stop = Lowest((delimiter | newline_bits | comment_bits) & Above(violation));
+				drop_q |= raw_quote & (stop ? stop - violation : valid & AtOrAbove(violation));
+				break;
+			}
+			case 4:
+				resolve_maybe(violation);
+				break;
+			case 5:
+				events |= violation;
+				drop_t |= violation;
+				break;
+			case 6:
+				events |= violation;
+				drop_t |= violation & carriage_return;
+				drop_d |= violation & delims;
+				break;
+			case 7:
+				drop_d |= violation;
+				break;
+			default:
+				drop_c |= violation;
+				break;
+			}
 		}
+		c.escape_carry = escape_carry;
+		if (d.carry_on && d.unquoted_escape) {
+			c.escaped_cr = ((escaped & carriage_return) >> (size - 1)) & 1;
+		}
+		c.maybe = next_maybe;
+		const uint64_t comment_ends = terms & ((region << 1) | c.in_comment);
+		c.in_comment = (region >> (size - 1)) & 1;
 		const uint64_t carriage = carriage_return & terms;
 		const uint64_t feeds = line_feed & terms;
-		if (d.carry_on) {
-			const uint64_t last_bit = uint64_t(1) << (size - 1);
-			if ((carriage & ~(line_feed >> 1) & ~last_bit) || (c.after_cr && !(line_feed & 1))) {
-				return fail();
-			}
-			if (d.strict && (feeds & ~((carriage_return << 1) | c.after_cr))) {
-				return fail();
-			}
-		} else if (d.strict && d.carriage_terms) {
-			if ((d.new_line == NewLineIdentifier::SINGLE_N && carriage) ||
-			    (d.new_line == NewLineIdentifier::SINGLE_R && feeds)) {
-				return fail();
-			}
+		if (d.escape_in_quotes || d.unquoted_escape) {
+			c.doubled = c.doubled || (escape_bits & ~drop_e & in) != 0;
 		}
-		const uint64_t field_starts = (delims << delimiter_size) | (terms << 1) | c.after_separator;
-		const uint64_t spaces = d.quoted_spaces ? vector.Equal(' ') & ~hidden & valid : 0;
-		if (field_start_quotes && (quote | c.after_closer | c.after_opener | c.closer_spaces)) {
-			const uint64_t openers = quote & in;
-			const uint64_t closers = quote & ~in;
-			const uint64_t starts = field_starts | ((field_starts & spaces) << 1) | c.start_space;
-			const uint64_t reopened = (closers << 1) | c.after_closer;
-			const uint64_t allowed = d.reopen ? reopened : 0;
-			if (openers & ~starts & ~allowed) {
-				if (!literal_quotes || !c.settled || literals_at == c.pos) {
-					return fail();
-				}
-				const uint64_t raw_spaces = d.quoted_spaces ? vector.Equal(' ') & valid : 0;
-				literals = quote & ~KeepFieldQuotes(quote, CsvSpread(c.in_quotes), delimiter, delimiter_size, term_bits,
-				                                    raw_spaces, c.after_separator, c.start_space, c.after_closer,
-				                                    d.reopen, valid);
-				literals_at = c.pos;
-				continue;
-			}
+		if (field_start_quotes && (quote | c.after_closer | c.after_opener)) {
 			const uint64_t ends_field = delimiter | line_feed | carriage_return;
 			const uint64_t follow = ends_field | (quote & quote_follow_bit);
-			const uint64_t trailing = (reopened & spaces) | (c.closer_spaces & spaces & 1);
-			const uint64_t after_trailing = spaces + trailing;
-			const uint64_t trailed = (after_trailing & ~spaces) | (c.closer_spaces & ~spaces & 1);
-			if (((reopened & ~follow & ~spaces) | (trailed & ~ends_field)) & valid) {
-				return fail();
-			}
-			c.closer_spaces = trailing && after_trailing < spaces;
-			c.doubled = c.doubled || (reopened & quote) != 0;
+			c.doubled = c.doubled || (uq_landing & quote) != 0 || (d.escape != '\0' && (uq_before & uq_skip) != 0);
 			if (!c.settled && c.quoted_newline == DConstants::INVALID_INDEX) {
 				const uint64_t quoted_newlines = (line_feed | carriage_return) & in & valid;
 				const idx_t limit =
@@ -530,10 +563,10 @@ bool RowLexer::FeedBlocks(RowCursor &cursor, const char *data, idx_t base, idx_t
 					}
 				}
 			}
-			c.after_closer = (closers >> (size - 1)) & 1;
+			c.after_closer = ((closers | (uq_before & uq_skip)) >> (size - 1)) & 1;
 			c.after_opener = (openers >> (size - 1)) & 1;
 		}
-		c.start_space = ((field_starts & spaces) >> (size - 1)) & 1;
+		c.start_space = ((field_starts & raw_spaces) >> (size - 1)) & 1;
 		c.quotes = c.quotes || raw_quote != 0;
 		if (!c.settled && settle_length && c.quoted_newline == DConstants::INVALID_INDEX &&
 		    c.pos + size - c.origin > max_line_size) {
@@ -544,8 +577,186 @@ bool RowLexer::FeedBlocks(RowCursor &cursor, const char *data, idx_t base, idx_t
 		if (d.merge_terms) {
 			merged = !d.empty_lines ? after_terms : d.carry_on ? (carriage << 1) | c.after_cr : 0;
 		}
-		const uint64_t row_ends = terms & ~merged & ~comment_ends;
+		uint64_t row_ends = terms & ~merged & ~comment_ends;
 		const uint64_t line_ends = (d.empty_lines ? row_ends & ~after_terms : row_ends) | comment_ends;
+		uint64_t row_starts = after_terms & ~(terms & merged) & ~region & valid;
+		const idx_t events_from = EXTRACT ? fields->events.size() : 0;
+		const idx_t rows_before = EXTRACT ? static_cast<idx_t>(rows_out - fields->rows.get()) : 0;
+		if (EXTRACT && events) {
+			for (uint64_t pending = events; pending; pending &= pending - 1) {
+				const uint64_t at = Lowest(pending);
+				const uint64_t upto = (at - 1) | at;
+				const uint64_t row_bits = row_starts & upto;
+				const idx_t row = rows_before + std::popcount(row_bits);
+				if (row == 0) {
+					continue;
+				}
+				const idx_t column = row_bits ? std::popcount(delims & (at - 1) & AtOrAbove(Highest(row_bits)))
+				                              : c.phase + std::popcount(delims & (at - 1));
+				const uint64_t field_bits = (from_delims | row_starts) & upto;
+				const idx_t position = field_bits ? c.pos + std::countr_zero(Highest(field_bits)) : c.field_start;
+				fields->events.push_back({static_cast<uint32_t>(row - 1), static_cast<uint32_t>(column),
+				                          static_cast<uint32_t>(position - c.anchor)});
+			}
+		}
+		const uint64_t first_event = SHAPE && !shapes->skip ? Lowest(events) : 0;
+		const uint64_t before_event = first_event ? first_event - 1 : valid;
+		if (d.duckdb) {
+			c.ever_quoted = c.ever_quoted || (in & before_event) != 0;
+			if (d.escape != '\0') {
+				c.ever_escaped = c.ever_escaped || (uq_landing & quote & before_event) != 0 ||
+				                 (escaped & in & before_event & (d.strict ? raw_quote : valid)) != 0;
+			}
+			if (d.unquoted_escape) {
+				c.unstrict = c.unstrict || (escape_bits & ~drop_e & ~escaped & ~in & before_event) != 0;
+			}
+		}
+		if (SHAPE) {
+			const bool skip = shapes->skip;
+			const uint64_t escaped_returns =
+			    d.carry_on ? ((escaped & carriage_return & ~in) << 1) | escaped_cr_in : uint64_t(0);
+			uint64_t line_comments = after_terms | space_starts | uq_before | escaped_returns;
+			if (skip) {
+				line_comments |= from_delims | (((events << 1) | c.after_event) & valid);
+			}
+			uint64_t from = valid;
+			for (uint64_t todo = (terms | comment_starts) & before_event; todo; todo &= todo - 1) {
+				const uint64_t bit = Lowest(todo);
+				const idx_t at = std::countr_zero(bit);
+				const uint64_t span = from & (bit - 1);
+				if (bit & comment_starts) {
+					c.delimiters += std::popcount(delims & span);
+					from = AtOrAbove(bit);
+					c.comment = true;
+					c.comment_line = (line_comments & bit) != 0;
+					continue;
+				}
+				from = Above(bit);
+				const bool after_carriage = d.carry_on && (((carriage << 1) | c.after_cr) & bit);
+				if (skip && !(after_carriage && (line_feed & bit))) {
+					c.lines++;
+				}
+				if (after_terms & bit) {
+					if (after_carriage) {
+						continue;
+					}
+					c.empty_lines++;
+					c.line_start = c.pos + at + 1;
+					if (!skip) {
+						continue;
+					}
+					ShapeRow(c, c.pos + at, 0, shapes->rows);
+				} else {
+					c.delimiters += std::popcount(delims & span);
+					uint8_t flags = 0;
+					if (c.comment) {
+						flags = c.comment_line ? ROW_COUNT_COMMENT : ROW_COUNT_MID_COMMENT;
+					} else if (from_delims & bit) {
+						flags = ROW_COUNT_EMPTY_LAST;
+					}
+					if (skip && c.comment && c.comment_line) {
+						c.comment = false;
+						c.comment_line = false;
+						c.delimiters = 0;
+						c.line_start = c.pos + at + 1;
+						continue;
+					}
+					ShapeRow(c, c.pos + at, flags, shapes->rows);
+				}
+				if (shapes->rows.size() >= shapes->limit) {
+					const bool carriage_end = (carriage & bit) != 0;
+					const idx_t stop = c.pos + at + 1;
+					const bool quotes = c.quotes;
+					const bool ever_quoted = c.ever_quoted;
+					const bool ever_escaped = c.ever_escaped;
+					const bool unstrict = c.unstrict;
+					const idx_t empty_lines = c.empty_lines;
+					const idx_t line_start = c.line_start;
+					const idx_t lines = c.lines;
+					Start(c, stop, true, false);
+					c.after_cr = carriage_end;
+					c.quotes = quotes;
+					c.ever_quoted = ever_quoted;
+					c.ever_escaped = ever_escaped;
+					c.unstrict = unstrict;
+					c.empty_lines = empty_lines;
+					c.line_start = line_start;
+					c.lines = lines;
+					cursor = c;
+					return true;
+				}
+			}
+			if (first_event) {
+				c.invalid = true;
+				cursor = c;
+				return true;
+			}
+			c.delimiters += std::popcount(delims & from & valid);
+			const uint64_t special_before = after_terms | uq_before | space_starts | maybe_stops | escaped_returns;
+			c.trailing_empty = delimiter_size == 1 && (delims & last_bit) &&
+			                   ((from_delims & last_bit) || !(special_before & last_bit));
+			c.reopen_last = (uq_landing & quote & last_bit) != 0;
+		}
+		const uint64_t mid_comments = SHAPE ? 0 : comment_starts & ~after_terms;
+		if (mid_comments) {
+			uint64_t dropped = 0;
+			const uint64_t all_starts = row_starts;
+			idx_t dropped_rows = 0;
+			for (uint64_t pending = mid_comments; pending; pending &= pending - 1) {
+				const uint64_t start = Lowest(pending);
+				const uint64_t below = start - 1;
+				const uint64_t row_bits = row_starts & below;
+				const uint64_t field_bits = (from_delims | row_starts) & (below | start);
+				const idx_t phase = row_bits ? std::popcount(delims & below & AtOrAbove(Highest(row_bits)))
+				                             : c.phase + std::popcount(delims & below);
+				const bool empty = (field_bits & start) != 0;
+				const uint64_t field = field_bits ? below & AtOrAbove(Highest(field_bits)) : below;
+				const bool blank = !empty && !(field & ~raw_spaces) && (field_bits || c.field_blank);
+				if (!blank) {
+					if (!empty || phase > 0) {
+						row_ends |= start;
+					}
+					continue;
+				}
+				idx_t row_index = rows_before + std::popcount(all_starts & below) - dropped_rows;
+				if (row_bits) {
+					const uint64_t row_start = Highest(row_bits);
+					dropped |= below & AtOrAbove(row_start);
+					row_starts &= ~row_start;
+				} else {
+					dropped |= below;
+					if (EXTRACT) {
+						rows_out--;
+						ends_out -= MinValue(c.phase, columns);
+						if (c.phase >= columns && d.strict) {
+							fields->extras.resize(c.extras_from);
+						}
+						c.open_rows--;
+					}
+					c.phase = 0;
+				}
+				row_index--;
+				dropped_rows++;
+				if (EXTRACT) {
+					for (idx_t i = events_from; i < fields->events.size(); i++) {
+						if (fields->events[i].row > row_index) {
+							fields->events[i].row--;
+						}
+					}
+				}
+			}
+			delims &= ~dropped;
+		}
+		if (track_fields) {
+			const uint64_t field_bits = (from_delims | row_starts) & valid;
+			if (field_bits) {
+				const uint64_t top = Highest(field_bits);
+				c.field_start = c.pos + std::countr_zero(top);
+				c.field_blank = !(valid & AtOrAbove(top) & ~raw_spaces);
+			} else {
+				c.field_blank = c.field_blank && !(valid & ~raw_spaces);
+			}
+		}
 		const uint64_t boundaries = delims | row_ends;
 		idx_t pad_count = 0;
 		idx_t pad_total = 0;
@@ -594,40 +805,52 @@ bool RowLexer::FeedBlocks(RowCursor &cursor, const char *data, idx_t base, idx_t
 				return fail();
 			}
 		}
-		const idx_t first_limit = max_line_size / 2;
-		if (line_ends) {
-			const idx_t first = c.pos + std::countr_zero(line_ends);
-			if (c.last_row_end == DConstants::INVALID_INDEX) {
-				if (first - c.origin > first_limit) {
-					return fail();
-				}
-				c.first_row_end = first;
-			} else if (first - c.last_row_end > max_line_size) {
+		const idx_t prior = c.last_row_end == DConstants::INVALID_INDEX ? c.origin : c.last_row_end;
+		const idx_t limit =
+		    c.last_row_end == DConstants::INVALID_INDEX && !c.settled ? max_line_size / 2 : max_line_size;
+		const idx_t reach = line_ends ? c.pos + std::countr_zero(line_ends) : c.pos + size;
+		if (reach - prior > limit || max_line_size < CSV_BLOCK_BYTES) {
+			if (!c.settled || count_errors) {
 				return fail();
+			}
+			c.long_rows = true;
+		}
+		if (line_ends) {
+			if (c.last_row_end == DConstants::INVALID_INDEX) {
+				c.first_row_end = reach;
 			}
 			c.last_row_end = c.pos + 63 - std::countl_zero(line_ends);
-		} else if (c.last_row_end == DConstants::INVALID_INDEX) {
-			if (c.pos + size - c.origin > first_limit) {
-				return fail();
-			}
-		} else if (c.pos + size - c.last_row_end > max_line_size) {
-			return fail();
 		}
 		c.rows += std::popcount(row_ends);
+		if (c.first_term_cr) {
+			c.first_term_cr = false;
+			c.first_boundary += line_feed & 1;
+		}
 		if (terms) {
-			c.last_term = c.pos + 63 - std::countl_zero(terms);
+			const idx_t last = 63 - std::countl_zero(terms);
+			c.last_term = c.pos + last;
+			c.last_term_cr = (carriage_return >> last) & 1;
 			if (c.first_term == DConstants::INVALID_INDEX) {
-				c.first_term = c.pos + std::countr_zero(terms);
+				const idx_t first = std::countr_zero(terms);
+				c.first_term = c.pos + first;
+				c.first_boundary = c.first_term + 1;
+				if (d.carry_on && ((carriage_return >> first) & 1)) {
+					if (first + 1 < size) {
+						c.first_boundary += (line_feed >> (first + 1)) & 1;
+					} else {
+						c.first_term_cr = true;
+					}
+				}
 			}
 		}
-		c.lines += std::popcount(terms);
-		if (d.carry_on) {
-			c.lines -= std::popcount(feeds & ((carriage << 1) | c.after_cr));
+		if (!SHAPE) {
+			c.lines += std::popcount(terms);
+			if (d.carry_on) {
+				c.lines -= std::popcount(feeds & ((carriage << 1) | c.after_cr));
+			}
 		}
 		if (EXTRACT) {
-			const uint32_t offset = static_cast<uint32_t>(c.pos - c.origin);
-			const uint64_t follows = (terms << 1) | c.after_term;
-			const uint64_t row_starts = follows & ~(terms & merged) & ~region & valid;
+			const uint32_t offset = static_cast<uint32_t>(c.pos - c.anchor);
 			rows_out = WritePositions(row_starts, offset, rows_out);
 			c.open_rows += std::popcount(row_starts);
 			uint32_t *block_ends = ends_out;
@@ -725,9 +948,18 @@ bool RowLexer::FeedBlocks(RowCursor &cursor, const char *data, idx_t base, idx_t
 			}
 		}
 		c.in_quotes = (in >> (size - 1)) & 1;
-		c.after_separator = (delims >> (CSV_BLOCK_BYTES - delimiter_size)) | ((terms >> (size - 1)) & 1);
+		c.after_delimiter = delims >> (CSV_BLOCK_BYTES - delimiter_size);
 		c.after_term = (terms >> (size - 1)) & 1;
 		c.after_cr = (carriage >> (size - 1)) & 1;
+		c.delimiter_tail = delimiter_tail;
+		c.partial_tail = partial_tail;
+		c.partial_before_last = size > 1 ? (partial >> (size - 2)) & 1 : c.after_partial;
+		c.after_partial = (partial >> (size - 1)) & 1;
+		c.after_event = (events >> (size - 1)) & 1;
+		if (track_fields && (c.after_term | c.after_delimiter)) {
+			c.field_start = c.pos + size + (c.after_term ? 0 : std::countr_zero(c.after_delimiter));
+			c.field_blank = true;
+		}
 		c.pos += size;
 	}
 	if (EXTRACT) {
@@ -769,30 +1001,93 @@ void RowLexer::EndRow(RowCursor &c, RowFields &fields, uint32_t entry, idx_t row
 bool RowLexer::Finish(RowCursor &cursor, const char *data, idx_t base, idx_t end, bool eof, RowFields *fields,
                       CSVState origin_state, CsvRangeEntry &entry) const {
 	auto &c = cursor;
-	if (!c.ok || c.pos != end || c.in_quotes || c.escape_carry) {
+	if (!c.ok || c.pos != end) {
 		c.ok = false;
 		return false;
 	}
-	const bool ends_with_term = end > c.origin && c.last_term == end - 1;
+	const bool ends_with_term = end > c.origin && c.last_term == end - 1 && !c.in_quotes;
+	entry = CsvRangeEntry();
+	entry.computed = true;
+	entry.end.states[0] = origin_state;
+	entry.end.states[1] = origin_state;
+	if (c.in_quotes) {
+		entry.end.states[1] = CSVState::QUOTED;
+	} else if (ends_with_term) {
+		const bool carriage_end = dialect.carry_on && c.last_term_cr;
+		entry.end.states[1] = carriage_end ? CSVState::CARRIAGE_RETURN : CSVState::RECORD_SEPARATOR;
+	} else if (end != c.origin) {
+		entry.end.states[1] = CSVState::STANDARD;
+	}
+	if (c.last_term != DConstants::INVALID_INDEX) {
+		entry.end.last_position = c.last_term + 1;
+	}
+	entry.end.line_end = c.last_row_end;
+	if (c.first_term != DConstants::INVALID_INDEX) {
+		entry.first_boundary = c.first_boundary;
+		entry.boundary.states[1] = CSVState::RECORD_SEPARATOR;
+		entry.boundary.last_position = entry.first_boundary;
+	}
+	if (!eof) {
+		return true;
+	}
+	if ((c.in_quotes || c.escape_carry) && !dialect.duckdb) {
+		c.ok = false;
+		return false;
+	}
+	bool unfinished = false;
+	if (c.in_quotes && !c.escape_carry) {
+		if (!dialect.strict) {
+			c.unstrict = true;
+		} else if (fields || !c.check_arity) {
+			unfinished = true;
+		} else {
+			c.ok = false;
+			return false;
+		}
+	}
 	if (!ends_with_term) {
 		if (end != c.origin) {
-			const idx_t limit = c.last_row_end == DConstants::INVALID_INDEX ? max_line_size / 2 : max_line_size;
+			const idx_t limit =
+			    c.last_row_end == DConstants::INVALID_INDEX && !c.settled ? max_line_size / 2 : max_line_size;
 			const idx_t prior = c.last_row_end == DConstants::INVALID_INDEX ? c.origin : c.last_row_end;
 			const bool row = !c.in_comment;
 			const bool irregular = row && fields && c.check_arity && irregular_rows;
-			if (!eof || (row && c.check_arity && !pad_rows && !irregular && c.phase != columns - 1) ||
-			    end - prior > limit) {
+			if (row && c.check_arity && !pad_rows && !irregular && c.phase != columns - 1 && !unfinished) {
 				c.ok = false;
 				return false;
 			}
-			c.lines++;
+			if (end - prior > limit) {
+				if (!c.settled || (!fields && c.check_arity)) {
+					c.ok = false;
+					return false;
+				}
+				c.long_rows = true;
+			}
+			bool event = unfinished;
+			if (!unfinished && row && dialect.duckdb && dialect.strict && dialect.quote && c.partial_before_last &&
+			    c.field_start >= base && c.field_start < end) {
+				const char *field = data + (c.field_start - base);
+				event = field[0] == dialect.quote || (dialect.empty_space && field[0] == ' ' &&
+				                                      c.field_start + 1 < end && field[1] == dialect.quote);
+				if (event && !fields && c.check_arity) {
+					c.ok = false;
+					return false;
+				}
+			}
+			if (event && fields) {
+				fields->events.push_back({static_cast<uint32_t>(fields->row_count - c.open_rows),
+				                          static_cast<uint32_t>(c.phase),
+				                          static_cast<uint32_t>(c.field_start - c.anchor)});
+			}
+			c.unfinished = unfinished;
+			c.lines += !unfinished;
 			c.unterminated = true;
 			c.rows += row;
 			const idx_t pads = row && c.check_arity && pad_rows && !irregular ? columns - 1 - c.phase : 0;
 			c.padded = c.padded || pads;
 			if (row && fields) {
 				fields->Reserve(columns + pads);
-				auto position = static_cast<uint32_t>(end - c.origin);
+				auto position = static_cast<uint32_t>(end - c.anchor);
 				if (dialect.strip_carriage && c.after_plain_cr) {
 					position--;
 				}
@@ -815,331 +1110,92 @@ bool RowLexer::Finish(RowCursor &cursor, const char *data, idx_t base, idx_t end
 		c.ok = false;
 		return false;
 	}
-	entry = CsvRangeEntry();
-	entry.computed = true;
-	entry.end.states[0] = origin_state;
-	entry.end.states[1] = origin_state;
-	if (c.last_term != DConstants::INVALID_INDEX) {
-		const bool carriage_end = dialect.carry_on && data[c.last_term - base] == '\r';
-		entry.end.last_position = c.last_term + 1 + carriage_end;
-		entry.end.states[1] = carriage_end ? CSVState::CARRIAGE_RETURN : CSVState::RECORD_SEPARATOR;
-	}
-	entry.end.line_end = c.last_row_end;
-	if (c.first_term != DConstants::INVALID_INDEX) {
-		entry.first_boundary = c.first_term + 1;
-		entry.boundary.states[1] = CSVState::RECORD_SEPARATOR;
-		entry.boundary.last_position = entry.first_boundary;
-	}
 	return true;
 }
 
 idx_t RowLexer::CountLines(const char *data, idx_t base, idx_t begin, idx_t end) const {
-	const auto &d = dialect;
-	const bool escapes = d.backslash || d.escape_in_quotes;
-	idx_t lines = 0;
-	uint64_t in_quotes = 0;
-	uint64_t after_cr = 0;
-	uint64_t escape_carry = 0;
-	char padded[CSV_BLOCK_BYTES];
-	for (idx_t pos = begin; pos < end; pos += CSV_BLOCK_BYTES) {
-		const idx_t size = MinValue<idx_t>(CSV_BLOCK_BYTES, end - pos);
-		const char *block = data + (pos - base);
-		uint64_t valid = ~uint64_t(0);
-		if (size < CSV_BLOCK_BYTES) {
-			memset(padded, 0, sizeof(padded));
-			memcpy(padded, block, size);
-			block = padded;
-			valid = (uint64_t(1) << size) - 1;
-		}
-		const CsvVector vector(block);
-		uint64_t escaped = 0;
-		if (escapes) {
-			escaped = FindEscaped(vector.Equal(d.escape) & valid, escape_carry);
-		}
-		uint64_t quote = d.quote ? vector.Equal(d.quote) & valid : 0;
-		if (d.escape_in_quotes) {
-			quote &= ~escaped;
-		}
-		const uint64_t in = (quote ? CsvPrefixXor(quote) : 0) ^ CsvSpread(in_quotes);
-		const uint64_t hidden = d.backslash ? (in | escaped) : in;
-		const uint64_t line_feed = vector.Equal('\n');
-		const uint64_t carriage_return = vector.Equal('\r');
-		const uint64_t term_bits = d.carriage_terms ? (line_feed | carriage_return) : line_feed;
-		const uint64_t terms = term_bits & ~hidden & valid;
-		const uint64_t carriage = carriage_return & terms;
-		lines += std::popcount(terms);
-		if (d.carry_on) {
-			lines -= std::popcount(line_feed & terms & ((carriage << 1) | after_cr));
-		}
-		in_quotes = (in >> (size - 1)) & 1;
-		after_cr = (carriage >> (size - 1)) & 1;
-	}
-	return lines;
+	RowCursor counter;
+	Start(counter, begin, true, false);
+	counter.ok = true;
+	FeedBlocks<false>(counter, data, base, end, true, nullptr);
+	return counter.lines;
 }
 
-void RowLexer::CountRow(RowCountCursor &cursor, idx_t position, uint8_t flags, vector<RowCount> &rows) const {
-	const CSVState before = cursor.states[0];
-	const CSVState current = cursor.states[1];
-	if ((before == CSVState::DELIMITER && (current == CSVState::RECORD_SEPARATOR ||
-	                                       current == CSVState::CARRIAGE_RETURN || current == CSVState::DELIMITER)) ||
-	    (before == CSVState::STANDARD && current == CSVState::DELIMITER)) {
-		flags |= ROW_COUNT_EMPTY_LAST;
-	}
-	const idx_t end = position == DConstants::INVALID_INDEX ? position : position + 1;
-	rows.push_back({cursor.delimiters + 1, cursor.empty_lines, cursor.line_start, end, flags});
+void RowLexer::ShapeRow(RowCursor &cursor, idx_t end, uint8_t flags, vector<RowCount> &rows) const {
+	const idx_t stop = end == DConstants::INVALID_INDEX ? end : end + 1;
+	rows.push_back({cursor.delimiters + 1, cursor.empty_lines, cursor.line_start, stop, flags});
 	cursor.delimiters = 0;
-	if (position != DConstants::INVALID_INDEX) {
-		cursor.line_start = end;
+	cursor.comment = false;
+	cursor.comment_line = false;
+	if (end != DConstants::INVALID_INDEX) {
+		cursor.line_start = stop;
 	}
 }
 
-bool RowLexer::CountByte(RowCountCursor &cursor, char byte, idx_t position, vector<RowCount> &rows, idx_t limit) const {
-	auto &c = cursor;
-	const CSVState previous = c.states[1];
-	const CSVState next = (*dialect.transitions)[static_cast<uint8_t>(byte)][static_cast<uint8_t>(previous)];
-	c.states[0] = previous;
-	c.states[1] = next;
-	switch (next) {
-	case CSVState::INVALID:
-		c.invalid = true;
+RowSkip::RowSkip(const RowDialect &dialect, idx_t rows_p, idx_t start_p)
+    : lexer(dialect, 1, NumericLimits<idx_t>::Maximum(), false), window_start(start_p), rows(rows_p) {
+	lexer.Start(cursor, start_p, true, false);
+	cursor.ok = true;
+	cursor.file_start = true;
+	if (rows == 0) {
+		start = start_p;
+	}
+}
+
+bool RowSkip::Feed(const char *data, idx_t base, idx_t end, bool last) {
+	if (start != DConstants::INVALID_INDEX) {
 		return true;
-	case CSVState::RECORD_SEPARATOR:
-	case CSVState::CARRIAGE_RETURN:
-		if (previous == CSVState::RECORD_SEPARATOR || previous == CSVState::NOT_SET) {
-			c.empty_lines++;
-			c.line_start = position + 1;
-			return false;
-		}
-		if (previous == CSVState::CARRIAGE_RETURN) {
-			return false;
-		}
-		if (c.comment) {
-			CountRow(c, position, c.starts_as_comment ? ROW_COUNT_COMMENT : ROW_COUNT_MID_COMMENT, rows);
-			c.comment = false;
-			c.starts_as_comment = false;
-		} else {
-			CountRow(c, position, 0, rows);
-		}
-		return rows.size() >= limit;
-	case CSVState::DELIMITER:
-		c.delimiters++;
+	}
+	const idx_t window_end = window_start + window.size();
+	if (end > window_end) {
+		const idx_t from = MaxValue(base, window_end);
+		window.insert(window.end(), data + (from - base), data + (end - base));
+	}
+	const idx_t available = window_start + window.size();
+	RowShapes shapes {skipped, rows, true};
+	lexer.CountRows(cursor, window.data(), window_start, available, last, shapes);
+	if (skipped.size() < rows) {
+		window.erase(window.begin(), window.begin() + static_cast<std::ptrdiff_t>(cursor.pos - window_start));
+		window_start = cursor.pos;
 		return false;
-	case CSVState::QUOTED:
-		if ((previous == CSVState::UNQUOTED || previous == CSVState::MAYBE_QUOTED) && dialect.escape != '\0') {
-			c.ever_escaped = true;
-		}
-		if ((previous == CSVState::ESCAPE || previous == CSVState::ESCAPED_RETURN ||
-		     previous == CSVState::UNQUOTED_ESCAPE) &&
-		    (byte == dialect.quote || !dialect.strict)) {
-			c.ever_escaped = true;
-			c.used_unstrictness = c.used_unstrictness || previous == CSVState::UNQUOTED_ESCAPE;
-		}
-		c.ever_quoted = true;
+	}
+	const bool pair = lexer.Dialect().carry_on && cursor.after_cr;
+	if (pair && cursor.pos == available && !last) {
 		return false;
-	case CSVState::UNQUOTED:
-		c.ever_escaped = c.ever_escaped || previous == CSVState::MAYBE_QUOTED;
-		return false;
-	case CSVState::UNQUOTED_ESCAPE:
-		c.used_unstrictness = true;
-		return false;
-	case CSVState::COMMENT:
-		if (previous != CSVState::COMMENT) {
-			c.starts_as_comment = previous != CSVState::STANDARD && previous != CSVState::DELIMITER;
-			c.comment = true;
-		}
-		return false;
-	default:
-		return false;
+	}
+	start = cursor.pos;
+	if (pair && start < available && window[start - window_start] == '\n') {
+		start++;
+	}
+	return true;
+}
+
+void RowLexer::CountRows(RowCursor &cursor, const char *data, idx_t base, idx_t end, bool last,
+                         RowShapes &shapes) const {
+	if (!cursor.invalid && shapes.rows.size() < shapes.limit) {
+		FeedBlocks<false, true>(cursor, data, base, end, last, nullptr, &shapes);
 	}
 }
 
-CSVState RowLexer::PlainState(const char *block, idx_t position, idx_t first, CSVState incoming) const {
-	const char byte = block[position];
-	if (byte == dialect.delimiter) {
-		return CSVState::DELIMITER;
-	}
-	if (byte == '\n') {
-		return CSVState::RECORD_SEPARATOR;
-	}
-	if (byte == '\r') {
-		return CSVState::CARRIAGE_RETURN;
-	}
-	if (byte != ' ') {
-		return CSVState::STANDARD;
-	}
-	CSVState before = incoming;
-	if (position > first) {
-		const char previous = block[position - 1];
-		before = previous == dialect.delimiter ? CSVState::DELIMITER
-		         : previous == '\n'            ? CSVState::RECORD_SEPARATOR
-		                                       : CSVState::STANDARD;
-	}
-	return (*dialect.transitions)[static_cast<uint8_t>(' ')][static_cast<uint8_t>(before)];
-}
-
-bool RowLexer::CountPlain(RowCountCursor &cursor, const char *block, idx_t from, idx_t to, uint64_t delimiters,
-                          uint64_t terminators, uint64_t pairs, idx_t offset, vector<RowCount> &rows,
-                          idx_t limit) const {
-	auto &c = cursor;
-	const uint64_t below_to = to == CSV_BLOCK_BYTES ? ~uint64_t(0) : (uint64_t(1) << to) - 1;
-	const uint64_t range = below_to & (~uint64_t(0) << from);
-	const CSVState incoming = c.states[1];
-	uint64_t done = (uint64_t(1) << from) - 1;
-	for (uint64_t rest = terminators & range; rest; rest &= rest - 1) {
-		const auto at = static_cast<idx_t>(std::countr_zero(rest));
-		const bool pair = (pairs >> at) & 1;
-		const idx_t last = at + pair;
-		const uint64_t through = last == CSV_BLOCK_BYTES - 1 ? ~uint64_t(0) : (uint64_t(2) << last) - 1;
-		c.delimiters += static_cast<idx_t>(std::popcount(delimiters & through & ~done));
-		const CSVState before = at == from ? incoming : PlainState(block, at - 1, from, incoming);
-		done = through;
-		if (before == CSVState::RECORD_SEPARATOR || before == CSVState::NOT_SET) {
-			c.empty_lines++;
-			c.line_start = offset + at + 1;
-			continue;
-		}
-		c.states[0] = before;
-		c.states[1] = pair ? CSVState::CARRIAGE_RETURN : CSVState::RECORD_SEPARATOR;
-		CountRow(c, offset + at, 0, rows);
-		if (rows.size() >= limit) {
-			c.pos = offset + at + 1;
-			return true;
-		}
-	}
-	c.delimiters += static_cast<idx_t>(std::popcount(delimiters & range & ~done));
-	c.states[0] = to - from >= 2 ? PlainState(block, to - 2, from, incoming) : incoming;
-	c.states[1] = PlainState(block, to - 1, from, incoming);
-	return false;
-}
-
-void RowLexer::CountRows(RowCountCursor &cursor, const char *data, idx_t base, idx_t end, idx_t max_rows,
-                         vector<RowCount> &rows) const {
-	auto &c = cursor;
-	const idx_t limit = rows.size() + max_rows;
-	char padded[CSV_BLOCK_BYTES];
-	while (c.pos < end && !c.invalid && rows.size() < limit) {
-		const idx_t size = MinValue<idx_t>(CSV_BLOCK_BYTES, end - c.pos);
-		const char *block = data + (c.pos - base);
-		uint64_t valid = ~uint64_t(0);
-		if (size < CSV_BLOCK_BYTES) {
-			memset(padded, 0, sizeof(padded));
-			memcpy(padded, block, size);
-			block = padded;
-			valid = (uint64_t(1) << size) - 1;
-		}
-		const CsvVector vector(block);
-		uint64_t delimiters = 0;
-		uint64_t terminators = 0;
-		uint64_t pairs = 0;
-		uint64_t specials = valid;
-		if (count_plain) {
-			delimiters = vector.Equal(dialect.delimiter) & valid;
-			const uint64_t line_feeds = vector.Equal('\n') & valid;
-			const uint64_t carriages = vector.Equal('\r') & valid;
-			pairs = count_carriage_pairs ? carriages & (line_feeds >> 1) : 0;
-			const uint64_t lone_feeds = line_feeds & ~(pairs << 1);
-			terminators = pairs | (count_line_feeds ? lone_feeds : 0);
-			specials = (carriages & ~pairs) | (count_line_feeds ? 0 : lone_feeds);
-			for (idx_t i = 0; i < count_special_count; i++) {
-				specials |= vector.Equal(count_specials[i]);
-			}
-			specials &= valid;
-		}
-		uint64_t standard_ends = 0;
-		uint64_t quoted_ends = 0;
-		uint64_t comment_ends = 0;
-		bool standard_ready = false;
-		bool quoted_ready = false;
-		bool comment_ready = false;
-		idx_t at = 0;
-		while (at < size) {
-			const CSVState state = c.states[1];
-			const uint64_t ahead = ~uint64_t(0) << at;
-			idx_t next = at;
-			if (count_plain && PlainCountState(state)) {
-				const uint64_t pending = specials & ahead;
-				next = pending ? static_cast<idx_t>(std::countr_zero(pending)) : size;
-				if (next > at && CountPlain(c, block, at, next, delimiters, terminators, pairs, c.pos, rows, limit)) {
-					return;
-				}
-			} else if (standard_stop_count != DConstants::INVALID_INDEX && state == CSVState::STANDARD) {
-				if (!standard_ready) {
-					for (idx_t i = 0; i < standard_stop_count; i++) {
-						standard_ends |= vector.Equal(standard_stops[i]);
-					}
-					standard_ends &= valid;
-					standard_ready = true;
-				}
-				const uint64_t pending = standard_ends & ahead;
-				next = pending ? static_cast<idx_t>(std::countr_zero(pending)) : size;
-				if (next > at) {
-					c.states[0] = CSVState::STANDARD;
-					c.states[1] = CSVState::STANDARD;
-				}
-			} else if (quoted_stop_count != DConstants::INVALID_INDEX &&
-			           (state == CSVState::QUOTED || state == CSVState::QUOTED_NEW_LINE)) {
-				if (!quoted_ready) {
-					for (idx_t i = 0; i < quoted_stop_count; i++) {
-						quoted_ends |= vector.Equal(quoted_stops[i]);
-					}
-					quoted_ends &= valid;
-					quoted_ready = true;
-				}
-				const uint64_t pending = quoted_ends & ahead;
-				next = pending ? static_cast<idx_t>(std::countr_zero(pending)) : size;
-				if (next > at) {
-					c.states[0] = next - at >= 2 ? CSVState::QUOTED : state;
-					c.states[1] = CSVState::QUOTED;
-				}
-			} else if (comment_stop_count != DConstants::INVALID_INDEX && state == CSVState::COMMENT) {
-				if (!comment_ready) {
-					for (idx_t i = 0; i < comment_stop_count; i++) {
-						comment_ends |= vector.Equal(comment_stops[i]);
-					}
-					comment_ends &= valid;
-					comment_ready = true;
-				}
-				const uint64_t pending = comment_ends & ahead;
-				next = pending ? static_cast<idx_t>(std::countr_zero(pending)) : size;
-				if (next > at) {
-					c.states[0] = next - at >= 2 ? CSVState::COMMENT : state;
-					c.states[1] = CSVState::COMMENT;
-				}
-			}
-			at = next;
-			if (at == size) {
-				break;
-			}
-			if (CountByte(c, block[at], c.pos + at, rows, limit)) {
-				c.pos += at + 1;
-				return;
-			}
-			at++;
-		}
-		c.pos += size;
-	}
-}
-
-void RowLexer::FinishCount(RowCountCursor &cursor, vector<RowCount> &rows) const {
+void RowLexer::FinishCount(RowCursor &cursor, vector<RowCount> &rows) const {
 	auto &c = cursor;
 	if (c.invalid) {
 		return;
 	}
-	const CSVState current = c.states[1];
-	if ((current == CSVState::QUOTED || current == CSVState::QUOTED_NEW_LINE) && c.states[0] != CSVState::UNQUOTED) {
+	if (c.in_quotes && !c.reopen_last && !c.escape_carry) {
 		c.unterminated = true;
 		return;
 	}
-	if (current == CSVState::RECORD_SEPARATOR || current == CSVState::CARRIAGE_RETURN || current == CSVState::NOT_SET) {
+	if (c.pos == c.origin || c.after_term) {
 		return;
 	}
+	uint8_t flags = 0;
 	if (c.comment) {
-		CountRow(c, DConstants::INVALID_INDEX, c.starts_as_comment ? ROW_COUNT_COMMENT : ROW_COUNT_MID_COMMENT, rows);
-		c.comment = false;
-		c.starts_as_comment = false;
-		return;
+		flags = c.comment_line ? ROW_COUNT_COMMENT : ROW_COUNT_MID_COMMENT;
+	} else if (c.trailing_empty) {
+		flags = ROW_COUNT_EMPTY_LAST;
 	}
-	CountRow(c, DConstants::INVALID_INDEX, 0, rows);
+	ShapeRow(c, DConstants::INVALID_INDEX, flags, rows);
 }
 
 } // namespace duckdb

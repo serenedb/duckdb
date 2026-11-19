@@ -139,7 +139,7 @@ void CSVSniffer::GenerateStateMachineSearchSpace(vector<unique_ptr<CsvColumnCoun
 	if (options.dialect_options.state_machine_options.new_line.IsSetByUser()) {
 		new_line_id = options.dialect_options.state_machine_options.new_line.GetValue();
 	} else {
-		new_line_id = DetectNewLineDelimiter(*buffer_manager, options, state_machine_cache);
+		new_line_id = DetectNewLineDelimiter(*buffer_manager, options);
 	}
 	idx_t first_start = 0;
 	bool iterator_set = false;
@@ -150,8 +150,7 @@ void CSVSniffer::GenerateStateMachineSearchSpace(vector<unique_ptr<CsvColumnCoun
 				CSVStateMachineOptions state_machine_options(
 				    delimiter, quote_escape_candidate.quote, quote_escape_candidate.escape, comment, new_line_id,
 				    options.dialect_options.state_machine_options.strict_mode.GetValue());
-				auto sniffing_state_machine =
-				    make_shared_ptr<CSVStateMachine>(options, state_machine_options, state_machine_cache);
+				auto sniffing_state_machine = make_shared_ptr<CSVStateMachine>(options, state_machine_options);
 				if (options.dialect_options.skip_rows.IsSetByUser()) {
 					if (!iterator_set) {
 						first_start = CsvColumnCounter::SkipRows(*buffer_manager, *sniffing_state_machine,
@@ -575,30 +574,30 @@ void CSVSniffer::RefineCandidates() {
 	}
 }
 
-NewLineIdentifier CSVSniffer::DetectNewLineDelimiter(CSVBufferManager &buffer_manager, CSVReaderOptions &options,
-                                                     CSVStateMachineCache &state_machine_cache) {
+NewLineIdentifier CSVSniffer::DetectNewLineDelimiter(CSVBufferManager &buffer_manager,
+                                                     const CSVReaderOptions &options) {
 	auto &dialect = options.dialect_options.state_machine_options;
 	const CSVStateMachine state_machine(options,
 	                                    CSVStateMachineOptions(dialect.delimiter.GetValue(), dialect.quote.GetValue(),
 	                                                           dialect.escape.GetValue(), dialect.comment.GetValue(),
-	                                                           NewLineIdentifier::CARRY_ON, false),
-	                                    state_machine_cache);
-	// Get first buffer
+	                                                           NewLineIdentifier::CARRY_ON, false));
+	const RowLexer lexer(RowDialect::DuckDB(CsvGrammar::For(state_machine)), 1, NumericLimits<idx_t>::Maximum(), false);
 	auto buffer = buffer_manager.GetBuffer(0);
-	auto buffer_ptr = buffer->Ptr();
-	CSVStates states;
-	states.Initialize();
-	for (idx_t i = 0; i < buffer->actual_size; i++) {
-		state_machine.Transition(states, buffer_ptr[i]);
-		if (states.states[0] == CSVState::CARRIAGE_RETURN && states.states[1] != CSVState::CARRIAGE_RETURN) {
-			return states.states[1] == CSVState::RECORD_SEPARATOR ? NewLineIdentifier::CARRY_ON
-			                                                      : NewLineIdentifier::SINGLE_R;
-		}
-		if (states.states[1] == CSVState::RECORD_SEPARATOR) {
-			return NewLineIdentifier::SINGLE_N;
-		}
+	const char *data = buffer->Ptr();
+	const idx_t size = buffer->actual_size;
+	RowCursor cursor;
+	lexer.Start(cursor, 0, true, false);
+	cursor.file_start = true;
+	lexer.Feed(cursor, data, 0, size, true, nullptr);
+	const idx_t first = cursor.first_term;
+	if (first == DConstants::INVALID_INDEX || data[first] == '\n') {
+		return NewLineIdentifier::SINGLE_N;
 	}
-	return states.IsCarriageReturn() ? NewLineIdentifier::SINGLE_R : NewLineIdentifier::SINGLE_N;
+	idx_t next = first + 1;
+	while (next < size && data[next] == '\r') {
+		next++;
+	}
+	return next < size && data[next] == '\n' ? NewLineIdentifier::CARRY_ON : NewLineIdentifier::SINGLE_R;
 }
 
 // Dialect Detection consists of five steps:

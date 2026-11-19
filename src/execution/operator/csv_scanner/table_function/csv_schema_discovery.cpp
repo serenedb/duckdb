@@ -27,7 +27,7 @@ CSVSchema CSVSchemaDiscovery::SchemaDiscovery(ClientContext &context, shared_ptr
 	idx_t only_header_or_empty_files = 0;
 
 	{
-		CSVSniffer sniffer(options, file_options, buffer_manager, CSVStateMachineCache::Get(context));
+		CSVSniffer sniffer(options, file_options, buffer_manager);
 		auto sniffer_result = sniffer.SniffCSV();
 		idx_t rows_read = sniffer.LinesSniffed() -
 		                  (options.dialect_options.skip_rows.GetValue() + options.dialect_options.header.GetValue());
@@ -52,7 +52,7 @@ CSVSchema CSVSchemaDiscovery::SchemaDiscovery(ClientContext &context, shared_ptr
 		auto file_buffer_manager = CSVBufferManager::Open(context, option_copy, option_copy.file_path, false);
 		// TODO: We could cache the sniffer to be reused during scanning. Currently that's an exercise left to the
 		// reader
-		CSVSniffer sniffer(option_copy, file_options, file_buffer_manager, CSVStateMachineCache::Get(context));
+		CSVSniffer sniffer(option_copy, file_options, file_buffer_manager);
 		auto sniffer_result = sniffer.SniffCSV();
 		idx_t rows_read = sniffer.LinesSniffed() - (option_copy.dialect_options.skip_rows.GetValue() +
 		                                            option_copy.dialect_options.header.GetValue());

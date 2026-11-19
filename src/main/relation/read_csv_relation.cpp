@@ -60,7 +60,7 @@ CSVReaderOptions ReadCSVRelationBind(const shared_ptr<ClientContext> &context, c
 			auto file_csv_options = csv_options;
 			file_csv_options.file_path = file.path;
 			auto buffer_manager = CSVBufferManager::Open(*context, file_csv_options, file, false);
-			CSVSniffer sniffer(file_csv_options, file_options, buffer_manager, CSVStateMachineCache::Get(*context));
+			CSVSniffer sniffer(file_csv_options, file_options, buffer_manager);
 			auto sniffed = sniffer.SniffCSV();
 			UnionByName::CombineUnionTypes(IdentifiersToStrings(sniffed.names), sniffed.return_types, types, names,
 			                               union_names_map);
