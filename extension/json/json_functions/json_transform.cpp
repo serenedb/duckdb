@@ -19,6 +19,7 @@
 #include "duckdb/function/cast/cast_function_set.hpp"
 #include "duckdb/function/cast/default_casts.hpp"
 #include "duckdb/function/scalar/nested_functions.hpp"
+#include "duckdb/formats/value_parsers.hpp"
 #include "json_functions.hpp"
 #include "json_scan.hpp"
 
@@ -391,11 +392,12 @@ static bool TransformGeometry(const JSONNode *vals[], Vector &result, const idx_
 	return success;
 }
 
-static bool TryOneFormat(const StrpTimeFormat &fmt, LogicalTypeId type_id, const string_t &input, Vector &result,
-                         idx_t i, string &error_message) {
+static bool TryOneFormat(const StrpTimeFormat &fmt, bool iso_date, LogicalTypeId type_id, const string_t &input,
+                         Vector &result, idx_t i, string &error_message) {
 	if (type_id == LogicalTypeId::DATE) {
 		date_t val;
-		if (!TryParseDate::Operation<date_t>(fmt, input, val, error_message)) {
+		if (!(iso_date && FastDate(input.GetData(), input.GetSize(), val)) &&
+		    !TryParseDate::Operation<date_t>(fmt, input, val, error_message)) {
 			return false;
 		}
 		FlatVector::GetDataMutable<date_t>(result)[i] = val;
@@ -441,6 +443,10 @@ static bool FormatStringVector(const Vector &string_vector, Vector &result, cons
 	const auto source_strings = FlatVector::GetData<string_t>(string_vector);
 	const auto &source_validity = FlatVector::Validity(string_vector);
 	auto &target_validity = FlatVector::ValidityMutable(result);
+	vector<bool> iso_dates;
+	for (auto &format : formats) {
+		iso_dates.push_back(result_type_id == LogicalTypeId::DATE && format.format_specifier == "%Y-%m-%d");
+	}
 
 	// Probe first non-null value to find the most-specific matching format for this vector
 	idx_t matched_idx = DConstants::INVALID_INDEX;
@@ -450,7 +456,8 @@ static bool FormatStringVector(const Vector &string_vector, Vector &result, cons
 		}
 		string error_message;
 		for (idx_t j = formats.size(); j > 0; j--) {
-			if (TryOneFormat(formats[j - 1], result_type_id, source_strings[i], result, i, error_message)) {
+			if (TryOneFormat(formats[j - 1], iso_dates[j - 1], result_type_id, source_strings[i], result, i,
+			                 error_message)) {
 				matched_idx = j - 1;
 				break;
 			}
@@ -467,7 +474,8 @@ static bool FormatStringVector(const Vector &string_vector, Vector &result, cons
 		string error_message;
 		// Reverse iter formats, beginning at matched_idx until one parses
 		for (idx_t j = parse_limit; j > 0 && !parsed; j--) {
-			parsed = TryOneFormat(formats[j - 1], result_type_id, source_strings[i], result, i, error_message);
+			parsed = TryOneFormat(formats[j - 1], iso_dates[j - 1], result_type_id, source_strings[i], result, i,
+			                      error_message);
 		}
 		if (!parsed) {
 			target_validity.SetInvalid(i);
