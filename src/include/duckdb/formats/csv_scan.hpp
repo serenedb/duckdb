@@ -265,8 +265,13 @@ private:
 	LeanSource LeanSourceFor(const CsvScanColumn &column, idx_t first, bool selected_only) const;
 	bool LeanRawFilter(idx_t count);
 	bool ExactRawFilter(idx_t count);
-	bool LeanCasts(idx_t count, DataChunk &output, bool late, bool filter_pass);
 	void LeanRowNumbers(idx_t count, DataChunk &output);
+	void LeanRetry(const CsvScanColumn &column, Vector &vector);
+	CsvField LeanField(const CsvScanColumn &column, idx_t row) const;
+	CsvRow LeanRow(idx_t row) const;
+	idx_t LeanLinesAt(idx_t position);
+	void LeanReport(idx_t first, idx_t count);
+	void ClearRowState(idx_t first, idx_t count);
 	void SkipRows();
 	void View(shared_ptr<CSVBufferHandle> handle, idx_t position);
 	void Decode(idx_t count, DataChunk &output);
@@ -281,7 +286,7 @@ private:
 	bool DecodeValue(const CsvScanColumn &column, const CsvField &field, Vector &vector, idx_t row, CsvRowError &error);
 	bool IsNull(const CsvField &field, const char *value, idx_t size) const;
 	void RowErrors(idx_t row, vector<CsvRowError> &value_errors, vector<CsvRowError> &errors);
-	void ReportRow(idx_t row, vector<CsvRowError> &errors);
+	void ReportRow(idx_t row_idx, const CsvRow &row, vector<CsvRowError> &errors);
 	void Report(idx_t row, CSVError &error, bool force);
 	void FlushCasts(idx_t count, DataChunk &output, bool late, bool filter_pass);
 	string LineText(const CsvRow &row, bool &first_nl) const;
@@ -338,6 +343,11 @@ private:
 	vector<bool> failed;
 	vector<bool> dropped;
 	vector<bool> selected;
+	vector<idx_t> retry;
+	bool lean_errors = false;
+	bool rows_failed = false;
+	idx_t lines_at = DConstants::INVALID_INDEX;
+	idx_t lines_counted = 0;
 	vector<unique_ptr<TableFilterState>> filter_states;
 	SelectionVector filter_selection;
 	SelectionVector filter_candidates;
