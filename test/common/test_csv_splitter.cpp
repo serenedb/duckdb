@@ -1060,6 +1060,75 @@ string RegularInput(std::mt19937_64 &rng, const FuzzDialect &dialect) {
 	return input;
 }
 
+FuzzDialect BlockDialect(std::mt19937_64 &rng) {
+	static const char *delimiters[] = {",", "|", ";", "\t"};
+	static const char quotes[] = {'"', '\'', '\0'};
+	FuzzDialect dialect;
+	dialect.delimiter = delimiters[rng() % 4];
+	dialect.quote = quotes[rng() % 3];
+	dialect.escape = rng() % 2 ? dialect.quote : '\0';
+	dialect.comment = '\0';
+	dialect.new_line = rng() % 2 ? NewLineIdentifier::NOT_SET : NewLineIdentifier::SINGLE_N;
+	dialect.strict = rng() % 2;
+	const idx_t columns[] = {1, 2, 3, 5, 16};
+	dialect.columns = columns[rng() % 5];
+	return dialect;
+}
+
+string BlockInput(std::mt19937_64 &rng, const FuzzDialect &dialect) {
+	const string plain = "ab1. -x";
+	const idx_t rarity = 20 + rng() % 400;
+	const auto rare = [&]() {
+		return rng() % rarity == 0;
+	};
+	string input;
+	const idx_t rows = 20 + rng() % 300;
+	for (idx_t row = 0; row < rows; row++) {
+		if (rare()) {
+			input += "\n";
+		}
+		const idx_t row_columns = rare() ? 1 + rng() % (dialect.columns + 2) : dialect.columns;
+		for (idx_t column = 0; column < row_columns; column++) {
+			if (column > 0) {
+				input += dialect.delimiter;
+			}
+			string token;
+			const idx_t length = rng() % 14;
+			for (idx_t i = 0; i < length; i++) {
+				token += plain[rng() % plain.size()];
+			}
+			if (dialect.quote && rng() % 3 == 0) {
+				string quoted(1, dialect.quote);
+				quoted += token;
+				if (rare()) {
+					quoted += dialect.delimiter;
+				}
+				if (rare()) {
+					quoted += "\n";
+				}
+				if (rare()) {
+					quoted += string(2, dialect.quote);
+				}
+				quoted += dialect.quote;
+				token = quoted;
+				if (rare()) {
+					token = " " + token;
+				}
+				if (rare()) {
+					token += " ";
+				}
+			} else if (dialect.quote && !token.empty() && rare()) {
+				token.insert(rng() % token.size() + 1, 1, dialect.quote);
+			}
+			input += token;
+		}
+		if (row + 1 < rows || rng() % 2) {
+			input += rare() ? "\r\n" : "\n";
+		}
+	}
+	return input;
+}
+
 struct SplitResult {
 	vector<string> rows;
 	idx_t lines = 0;
@@ -1150,7 +1219,7 @@ RowDialect LeanDialect(const CsvGrammar &grammar, idx_t columns) {
 }
 
 string RunLean(const ReferenceGrammar &grammar, const FuzzDialect &dialect, const string &input, idx_t piece_blocks,
-               idx_t max_line_size, bool pad_rows, bool &accepted, bool &padded, bool &irregular) {
+               idx_t max_line_size, bool pad_rows, bool &accepted, bool &padded, bool &irregular, bool settled = true) {
 	accepted = false;
 	padded = false;
 	irregular = false;
@@ -1158,7 +1227,7 @@ string RunLean(const ReferenceGrammar &grammar, const FuzzDialect &dialect, cons
 	auto exact = RunReference(grammar, dialect, input, input.size() + 2, input.size(), true);
 	RowCursor cursor;
 	RowFields fields;
-	lean.Start(cursor, 0, true);
+	lean.Start(cursor, 0, settled);
 	cursor.file_start = true;
 	const char *data = input.data();
 	while (cursor.ok && cursor.pos < input.size()) {
@@ -1206,6 +1275,12 @@ string RunLean(const ReferenceGrammar &grammar, const FuzzDialect &dialect, cons
 			short_rows = short_rows || pad;
 			if (pad) {
 				continue;
+			}
+			for (idx_t at = begin; at < end && !(end_bits & ROW_FIELD_FLAG); at++) {
+				if ((grammar.quote && input[at] == grammar.quote) || (grammar.escape && input[at] == grammar.escape)) {
+					text += " unflagged";
+					break;
+				}
 			}
 			const bool spaced = grammar.quote && grammar.trim_quoted_spaces;
 			idx_t open = begin;
@@ -1695,6 +1770,78 @@ string PostgresInput(std::mt19937_64 &rng, const RowDialect &dialect) {
 }
 
 } // namespace
+
+TEST_CASE("Row lexer reads long regular inputs like the byte state machine", "[csv]") {
+	CSVReaderOptions options;
+	const char *seed = getenv("CSV_FUZZ_SEED");
+	const char *iterations = getenv("CSV_FUZZ_ITERATIONS");
+	std::mt19937_64 rng(seed ? std::stoull(seed) : 20261119);
+	const idx_t count = iterations ? std::stoull(iterations) / 10 : 10000;
+	idx_t accepted_count = 0;
+	idx_t counted = 0;
+	idx_t unsettled = 0;
+	for (idx_t iteration = 0; iteration < count; iteration++) {
+		const auto dialect = BlockDialect(rng);
+		CSVStateMachineOptions machine_options(dialect.delimiter, dialect.quote, dialect.escape, dialect.comment,
+		                                       dialect.new_line, dialect.strict);
+		CSVStateMachine machine(options, machine_options);
+		const auto grammar = MakeReferenceGrammar(machine);
+		const auto input = BlockInput(rng, dialect);
+		const idx_t max_line_sizes[] = {64, 1000, 1 << 20};
+		const idx_t max_line_size = max_line_sizes[rng() % 3];
+		const idx_t piece_blocks = 1 + rng() % 16;
+		const bool pad_rows = rng() % 2;
+		const auto fail = [&](const string &what, const string &text, const string &mismatch) {
+			if (const char *dump = getenv("CSV_FUZZ_DUMP")) {
+				std::ofstream(dump, std::ios::binary) << text;
+			}
+			FAIL(what + ": " + Describe(dialect, text) + " pieces=" + to_string(piece_blocks) +
+			     " max_line_size=" + to_string(max_line_size) + " pad_rows=" + to_string(pad_rows) + "\n" + mismatch);
+		};
+		bool accepted = false;
+		bool padded = false;
+		bool irregular = false;
+		const auto mismatch =
+		    RunLean(grammar, dialect, input, piece_blocks, max_line_size, pad_rows, accepted, padded, irregular);
+		if (!mismatch.empty()) {
+			fail("block mismatch", input, mismatch);
+		}
+		accepted_count += accepted;
+		const auto exact = RunReference(grammar, dialect, input, input.size() + 2, input.size(), true);
+		RowLexer counter(LeanDialect(grammar, dialect.columns), dialect.columns, max_line_size, true, pad_rows);
+		RowCursor cursor;
+		counter.Start(cursor, 0, true);
+		cursor.file_start = true;
+		bool ok = true;
+		while (ok && cursor.pos < input.size()) {
+			const idx_t end = MinValue<idx_t>(cursor.pos + piece_blocks * 64 + counter.Lookahead(), input.size());
+			ok = counter.Feed(cursor, input.data(), 0, end, end == input.size(), nullptr);
+		}
+		CsvRangeEntry entry;
+		if (ok && counter.Finish(cursor, input.data(), 0, input.size(), true, nullptr, CSVState::NOT_SET, entry)) {
+			if (cursor.rows != exact.rows.size() || cursor.lines != exact.lines) {
+				fail("count mismatch", input,
+				     "rows " + to_string(cursor.rows) + " != " + to_string(exact.rows.size()) + ", lines " +
+				         to_string(cursor.lines) + " != " + to_string(exact.lines));
+			}
+			counted++;
+		}
+		if (exact.rows.size() < 2) {
+			continue;
+		}
+		const auto &row = exact.rows[1 + rng() % (exact.rows.size() - 1)];
+		const auto suffix = input.substr(std::stoull(row.substr(row.find("start=") + 6)));
+		const auto unsettled_mismatch = RunLean(grammar, dialect, suffix, piece_blocks, max_line_size, pad_rows,
+		                                        accepted, padded, irregular, false);
+		if (accepted && !unsettled_mismatch.empty()) {
+			fail("unsettled mismatch", suffix, unsettled_mismatch);
+		}
+		unsettled += accepted;
+	}
+	REQUIRE(accepted_count > count / 2);
+	REQUIRE(counted > count / 20);
+	REQUIRE(unsettled > count / 20);
+}
 
 TEST_CASE("Row lexer splits PostgreSQL csv and text like the scalar rules", "[csv]") {
 	const char *seed = getenv("CSV_FUZZ_SEED");

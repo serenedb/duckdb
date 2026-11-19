@@ -190,6 +190,9 @@ private:
 	template <bool EXTRACT, bool SHAPE = false>
 	bool FeedBlocks(RowCursor &cursor, const char *data, idx_t base, idx_t end, bool last, RowFields *fields,
 	                RowShapes *shapes = nullptr) const;
+	template <bool EXTRACT>
+	void LeanBlocks(RowCursor &cursor, const char *data, idx_t base, idx_t end, uint32_t *&rows_out,
+	                uint32_t *&ends_out) const;
 	void EndRow(RowCursor &cursor, RowFields &fields, uint32_t entry, idx_t rows_written, uint32_t *&out) const;
 	void ShapeRow(RowCursor &cursor, idx_t end, uint8_t flags, vector<RowCount> &rows) const;
 
@@ -201,6 +204,7 @@ private:
 	const bool irregular_rows;
 	bool settle_strict;
 	bool settle_length;
+	bool lean;
 	vector<uint64_t> patterns;
 };
 
