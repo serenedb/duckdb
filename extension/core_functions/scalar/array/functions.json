@@ -116,6 +116,14 @@
         "aliases": ["<#>"]
     },
     {
+        "name": "maxsim",
+        "parameters": "document,query",
+        "description": "Computes the late-interaction (MaxSim) score of a set of query vectors against a set of document vectors, both given as lists of arrays of `FLOAT` or `DOUBLE` of the same size: the sum, over the query vectors, of each one's largest inner product with a document vector. Returns `NULL` when either list is `NULL` or empty; the vectors and their elements can not be `NULL`.",
+        "example": "maxsim([[1.0, 0.0], [0.0, 1.0]]::FLOAT[2][], [[1.0, 1.0], [2.0, 0.0]]::FLOAT[2][])",
+        "categories": ["array", "list"],
+        "type": "scalar_function_set"
+    },
+    {
         "name": "l1_norm",
         "parameters": "vector",
         "description": "Computes the Manhattan norm of a vector given as a list or array of `FLOAT` or `DOUBLE`. The elements can not be `NULL`.",

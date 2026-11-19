@@ -3,6 +3,7 @@
 #include "core_functions/scalar/array_functions.hpp"
 #include "core_functions/scalar/list_functions.hpp"
 #include "core_functions/array_kernels.hpp"
+#include "duckdb/common/likely.hpp"
 #include "duckdb/planner/expression/bound_function_expression.hpp"
 #include "duckdb/planner/expression_binder.hpp"
 #include "duckdb/storage/statistics/array_stats.hpp"
@@ -378,6 +379,177 @@ static ScalarFunctionSet NormalizeSet() {
 		set.AddFunction(array_fun);
 	}
 	return set;
+}
+
+template <class TYPE>
+static void MaxSimAccumulateImpl(const TYPE *query, idx_t query_count, const TYPE *doc, idx_t doc_count, idx_t dim,
+                                 TYPE *best) {
+	for (idx_t j = 0; j < doc_count; j++) {
+		const auto vector = doc + j * dim;
+		for (idx_t i = 0; i < query_count; i++) {
+			const auto score = InnerProductOp::Operation(query + i * dim, vector, dim);
+			if (score > best[i]) {
+				best[i] = score;
+			}
+		}
+	}
+}
+
+template <class TYPE>
+static TYPE MaxSimSumImpl(const TYPE *best, idx_t count) {
+	TYPE sum = 0;
+	for (idx_t i = 0; i < count; i++) {
+		sum += best[i];
+	}
+	return sum;
+}
+
+DUCKDB_NOINLINE void MaxSimAccumulate(const float *query, idx_t query_count, const float *doc, idx_t doc_count,
+                                      idx_t dim, float *best) {
+	MaxSimAccumulateImpl(query, query_count, doc, doc_count, dim, best);
+}
+
+DUCKDB_NOINLINE void MaxSimAccumulate(const double *query, idx_t query_count, const double *doc, idx_t doc_count,
+                                      idx_t dim, double *best) {
+	MaxSimAccumulateImpl(query, query_count, doc, doc_count, dim, best);
+}
+
+DUCKDB_NOINLINE float MaxSimSum(const float *best, idx_t count) {
+	return MaxSimSumImpl(best, count);
+}
+
+DUCKDB_NOINLINE double MaxSimSum(const double *best, idx_t count) {
+	return MaxSimSumImpl(best, count);
+}
+
+template <class TYPE>
+static void ListOfArraysMaxSim(DataChunk &args, ExpressionState &state, Vector &result) {
+	const auto &func_name = BoundFunctionName(state);
+
+	auto &doc_vec = args.data[0];
+	auto &query_vec = args.data[1];
+	auto &doc_arrays = ListVector::GetChildMutable(doc_vec);
+	auto &query_arrays = ListVector::GetChildMutable(query_vec);
+	doc_arrays.Flatten();
+	query_arrays.Flatten();
+
+	const auto dim = ArrayType::GetSize(doc_arrays.GetType());
+	D_ASSERT(dim == ArrayType::GetSize(query_arrays.GetType()));
+	auto &doc_values = ArrayVector::GetChildMutable(doc_arrays);
+	auto &query_values = ArrayVector::GetChildMutable(query_arrays);
+	const auto &doc_array_validity = FlatVector::Validity(doc_arrays);
+	const auto &query_array_validity = FlatVector::Validity(query_arrays);
+	const auto &doc_value_validity = FlatVector::Validity(doc_values);
+	const auto &query_value_validity = FlatVector::Validity(query_values);
+	const auto doc_data = FlatVector::GetData<TYPE>(doc_values);
+	const auto query_data = FlatVector::GetData<TYPE>(query_values);
+
+	const auto all_valid = [dim](const ValidityMask &arrays, const ValidityMask &values, const list_entry_t &entry) {
+		return arrays.CheckAllValid(entry.offset + entry.length, entry.offset) &&
+		       values.CheckAllValid((entry.offset + entry.length) * dim, entry.offset * dim);
+	};
+
+	vector<TYPE> best;
+	BinaryExecutor::Execute<list_entry_t, list_entry_t, TYPE>(
+	    doc_vec, query_vec, result, [&](const list_entry_t &doc, const list_entry_t &query) -> optional<TYPE> {
+		    if (doc.length == 0 || query.length == 0) {
+			    return nullopt;
+		    }
+		    if (!all_valid(doc_array_validity, doc_value_validity, doc)) {
+			    ThrowNullElements(func_name, "left argument");
+		    }
+		    if (!all_valid(query_array_validity, query_value_validity, query)) {
+			    ThrowNullElements(func_name, "right argument");
+		    }
+		    best.assign(query.length, NumericLimits<TYPE>::Minimum());
+		    MaxSimAccumulate(query_data + query.offset * dim, query.length, doc_data + doc.offset * dim, doc.length,
+		                     dim, best.data());
+		    return MaxSimSum(best.data(), query.length);
+	    });
+}
+
+static bool IsListOfVectors(const LogicalType &type) {
+	if (type.id() != LogicalTypeId::LIST) {
+		return false;
+	}
+	const auto &vector = ListType::GetChildType(type);
+	return vector.id() == LogicalTypeId::ARRAY || vector.id() == LogicalTypeId::LIST;
+}
+
+static const LogicalType &VectorElementType(const LogicalType &type) {
+	const auto &vector = ListType::GetChildType(type);
+	return vector.id() == LogicalTypeId::ARRAY ? ArrayType::GetChildType(vector) : ListType::GetChildType(vector);
+}
+
+static optional_idx VectorSize(const LogicalType &type) {
+	const auto &vector = ListType::GetChildType(type);
+	return vector.id() == LogicalTypeId::ARRAY ? optional_idx(ArrayType::GetSize(vector)) : optional_idx();
+}
+
+static unique_ptr<FunctionData> MaxSimBind(BindScalarFunctionInput &input) {
+	auto &context = input.GetClientContext();
+	auto &bound_function = input.GetBoundFunction();
+	auto &arguments = input.GetArguments();
+	const auto &lhs_type = arguments[0]->GetReturnType();
+	const auto &rhs_type = arguments[1]->GetReturnType();
+
+	if (lhs_type.IsUnknown() && rhs_type.IsUnknown()) {
+		bound_function.GetArguments()[0] = rhs_type;
+		bound_function.GetArguments()[1] = lhs_type;
+		bound_function.SetReturnType(LogicalType::UNKNOWN);
+		return nullptr;
+	}
+
+	const auto takes_other = [](const Expression &argument) {
+		const auto &type = argument.GetReturnType();
+		return TakesOtherArgumentType(argument) || type.id() == LogicalTypeId::SQLNULL ||
+		       (type.id() == LogicalTypeId::LIST && ListType::GetChildType(type).id() == LogicalTypeId::SQLNULL);
+	};
+	auto &types = bound_function.GetArguments();
+	types[0] = takes_other(*arguments[0]) ? rhs_type : lhs_type;
+	types[1] = takes_other(*arguments[1]) ? lhs_type : rhs_type;
+
+	if (!IsListOfVectors(types[0]) || !IsListOfVectors(types[1])) {
+		throw InvalidInputException(StringUtil::Format("%s: Arguments must be lists of arrays of FLOAT or DOUBLE",
+		                                               SQLIdentifier(bound_function.GetName())));
+	}
+
+	const auto lhs_size = VectorSize(types[0]);
+	const auto rhs_size = VectorSize(types[1]);
+	if (!lhs_size.IsValid() && !rhs_size.IsValid()) {
+		throw InvalidInputException(StringUtil::Format("%s: Arguments must be lists of arrays of FLOAT or DOUBLE",
+		                                               SQLIdentifier(bound_function.GetName())));
+	}
+	if (lhs_size.IsValid() && rhs_size.IsValid() && lhs_size.GetIndex() != rhs_size.GetIndex()) {
+		throw BinderException("%s: Array arguments must be of the same size", SQLIdentifier(bound_function.GetName()));
+	}
+	const auto size = lhs_size.IsValid() ? lhs_size.GetIndex() : rhs_size.GetIndex();
+
+	LogicalType common_type;
+	if (!LogicalType::TryGetMaxLogicalType(context, VectorElementType(types[0]), VectorElementType(types[1]),
+	                                       common_type)) {
+		throw BinderException("%s: Cannot infer common element type (left = '%s', right = '%s')",
+		                      SQLIdentifier(bound_function.GetName()), types[0].ToString(), types[1].ToString());
+	}
+	if (common_type.id() != LogicalTypeId::FLOAT && common_type.id() != LogicalTypeId::DOUBLE) {
+		throw BinderException("%s: Arguments must be lists of arrays of FLOAT or DOUBLE",
+		                      SQLIdentifier(bound_function.GetName()));
+	}
+
+	types[0] = LogicalType::LIST(LogicalType::ARRAY(common_type, size));
+	types[1] = LogicalType::LIST(LogicalType::ARRAY(common_type, size));
+	bound_function.SetReturnType(common_type);
+	bound_function.SetFunctionCallback(common_type.id() == LogicalTypeId::FLOAT ? ListOfArraysMaxSim<float>
+	                                                                            : ListOfArraysMaxSim<double>);
+	return nullptr;
+}
+
+ScalarFunctionSet MaxsimFun::GetFunctions() {
+	const auto vectors = LogicalType::LIST(LogicalType::ANY);
+	ScalarFunction fun({}, LogicalType::FLOAT, ListOfArraysMaxSim<float>, MaxSimBind);
+	fun.SetFallible();
+	fun.GetSignature().AddParameter("document", vectors).AddParameter("query", vectors);
+	return ScalarFunctionSet(fun);
 }
 
 ScalarFunctionSet L2DistanceFun::GetFunctions() {

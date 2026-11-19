@@ -184,6 +184,7 @@ BoundStatement Binder::BindNearestJoin(JoinRef &ref) {
 	lateral_join->right = make_uniq<SubqueryRef>(std::move(select_statement), std::move(target_alias));
 	lateral_join->condition = ConstantExpression::Boolean(true);
 	lateral_join->query_location = ref.query_location;
+	lateral_join->exact_nearest = !ref.nearest_approx && !ref.nearest_default;
 	return Bind(*lateral_join);
 }
 
@@ -235,6 +236,7 @@ BoundStatement Binder::Bind(JoinRef &ref) {
 			}
 		}
 		result->lateral = is_lateral;
+		result->exact_nearest = ref.exact_nearest;
 		if (result->lateral) {
 			// lateral join: can only be an INNER or LEFT join
 			if (result->type != JoinType::INNER && result->type != JoinType::LEFT) {

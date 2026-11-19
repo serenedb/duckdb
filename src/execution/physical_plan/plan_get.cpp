@@ -97,6 +97,7 @@ PhysicalOperator &PhysicalPlanGenerator::CreatePlan(LogicalGet &op) {
 		table_in_out.children.push_back(child);
 		auto &cast_table_in_out = table_in_out.Cast<PhysicalTableInOutFunction>();
 		cast_table_in_out.ordinality_idx = ordinality_idx;
+		cast_table_in_out.arguments = std::move(op.expressions);
 		return table_in_out;
 	}
 

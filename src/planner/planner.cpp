@@ -106,6 +106,35 @@ static void RewriteTriggersToDependent(Binder &binder, LogicalOperator &op) {
 	}
 }
 
+// Pre-decorrelation pass: a planner extension may plan a dependent join as a whole.
+static void PlanDependentJoins(ClientContext &context, Binder &binder, unique_ptr<LogicalOperator> &op) {
+	for (auto &child : op->children) {
+		if (child) {
+			PlanDependentJoins(context, binder, child);
+		}
+	}
+	if (op->type != LogicalOperatorType::LOGICAL_DEPENDENT_JOIN) {
+		return;
+	}
+	auto &join = op->Cast<LogicalDependentJoin>();
+	if (!join.left_projection_map.empty() || !join.right_projection_map.empty()) {
+		return;
+	}
+	for (auto &extension : PlannerExtension::Iterate(context)) {
+		if (!extension.plan_lateral_join_function) {
+			continue;
+		}
+		PlannerExtensionInput input {context, binder, extension.planner_info.get()};
+		LateralJoinInput lateral {join.children[0], join.children[1],     join.correlated_columns,
+		                          join.join_type,   join.condition.get(), join.exact_nearest};
+		auto plan = extension.plan_lateral_join_function(input, lateral);
+		if (plan) {
+			op = std::move(plan);
+			return;
+		}
+	}
+}
+
 #ifdef D_ASSERT_IS_ENABLED
 static bool ContainsDependentJoin(const LogicalOperator &op) {
 	if (op.type == LogicalOperatorType::LOGICAL_DEPENDENT_JOIN) {
@@ -229,6 +258,7 @@ void Planner::CreatePlan(SQLStatement &statement) {
 	}
 	if (this->plan) {
 		RewriteTriggersToDependent(*this->binder, *this->plan);
+		PlanDependentJoins(context, *this->binder, this->plan);
 		RecursiveDependentJoinPlanner::Plan(*this->binder, this->plan);
 		this->plan = FlattenDependentJoins::DecorrelateIndependent(*this->binder, std::move(this->plan));
 		D_ASSERT_V(!ContainsDependentJoin(*this->plan));

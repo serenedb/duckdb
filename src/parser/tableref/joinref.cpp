@@ -59,7 +59,9 @@ string JoinRef::ToString() const {
 	}
 	result += right->ToString();
 	if (ref_type == JoinRefType::NEAREST) {
-		result += nearest_approx ? " APPROX" : " EXACT";
+		if (!nearest_default) {
+			result += nearest_approx ? " APPROX" : " EXACT";
+		}
 		result += " NEAREST " + to_string(nearest_count);
 		result += nearest_order_type == OrderType::DESCENDING ? " BY SIMILARITY " : " BY DISTANCE ";
 		result += ranking_expression->ToString();
@@ -103,7 +105,8 @@ bool JoinRef::Equals(const TableRef &other_p) const {
 		}
 	}
 	if (nearest_count != other.nearest_count || nearest_order_type != other.nearest_order_type ||
-	    nearest_approx != other.nearest_approx) {
+	    nearest_approx != other.nearest_approx || nearest_default != other.nearest_default ||
+	    exact_nearest != other.exact_nearest) {
 		return false;
 	}
 	return left->Equals(*other.left) && right->Equals(*other.right) &&
@@ -134,6 +137,8 @@ unique_ptr<TableRef> JoinRef::Copy() {
 	copy->nearest_count = nearest_count;
 	copy->nearest_order_type = nearest_order_type;
 	copy->nearest_approx = nearest_approx;
+	copy->nearest_default = nearest_default;
+	copy->exact_nearest = exact_nearest;
 	return std::move(copy);
 }
 
