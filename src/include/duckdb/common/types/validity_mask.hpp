@@ -13,6 +13,8 @@
 #include "duckdb/common/types.hpp"
 #include "duckdb/common/vector_size.hpp"
 
+#include <bit>
+
 namespace duckdb {
 struct SelectionVector;
 struct ValidityMask;
@@ -128,11 +130,8 @@ public:
 				continue;
 			}
 
-			// Count partial entry (Kernighan's algorithm)
-			while (entry) {
-				entry &= (entry - 1);
-				++valid;
-			}
+			// Count partial entry
+			valid += static_cast<idx_t>(std::popcount(entry));
 		}
 
 		return valid;
