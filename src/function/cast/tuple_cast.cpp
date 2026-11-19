@@ -39,9 +39,7 @@ static bool TupleToVarcharCast(Vector &source, Vector &result, idx_t count, Cast
 			if (c > 0) {
 				string_length += SEP_LENGTH;
 			}
-			auto add_escapes = !base_children[c].GetType().IsNested();
-			auto string_length_func = add_escapes ? VectorCastHelpers::CalculateEscapedStringLength<false>
-			                                      : VectorCastHelpers::CalculateStringLength;
+			auto string_length_func = VectorCastHelpers::ChildText(base_children[c].GetType()).length;
 			auto child_entry = child_iterators[c][r];
 			if (child_entry.IsValid()) {
 				//! Skip the `\`, not a special character outside quotes
@@ -66,9 +64,7 @@ static bool TupleToVarcharCast(Vector &source, Vector &result, idx_t count, Cast
 				memcpy(dataptr + offset, ", ", SEP_LENGTH);
 				offset += SEP_LENGTH;
 			}
-			auto add_escapes = !base_children[c].GetType().IsNested();
-			auto write_string_func =
-			    add_escapes ? VectorCastHelpers::WriteEscapedString<false> : VectorCastHelpers::WriteString;
+			auto write_string_func = VectorCastHelpers::ChildText(base_children[c].GetType()).write;
 			auto child_entry = child_iterators[c][r];
 			if (child_entry.IsValid()) {
 				//! Skip the `\`, not a special character outside quotes
