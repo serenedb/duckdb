@@ -10,6 +10,7 @@
 
 #include "duckdb/common/atomic.hpp"
 #include "duckdb/common/mutex.hpp"
+#include "duckdb/common/optional_idx.hpp"
 #include "duckdb/common/types/vector_buffer.hpp"
 #include "duckdb/formats/row_lexer.hpp"
 
@@ -45,6 +46,9 @@ public:
 	virtual idx_t Read(char *data, idx_t count, idx_t offset) const = 0;
 	virtual void Release(idx_t position) {
 	}
+	virtual optional_idx End() const {
+		return optional_idx();
+	}
 };
 
 struct RowRangeBounds {
@@ -76,11 +80,17 @@ public:
 		return dynamic;
 	}
 	void FoundEnd(idx_t end);
+	idx_t RangeBegin(idx_t range, idx_t size_p) const {
+		return MinValue(start + range * range_bytes, size_p);
+	}
+	idx_t RangeEnd(idx_t range, idx_t size_p) const {
+		return MinValue(start + (range + 1) * range_bytes, size_p);
+	}
 	idx_t RangeBegin(idx_t range) const {
-		return MinValue(start + range * range_bytes, Size());
+		return RangeBegin(range, Size());
 	}
 	idx_t RangeEnd(idx_t range) const {
-		return MinValue(start + (range + 1) * range_bytes, Size());
+		return RangeEnd(range, Size());
 	}
 	idx_t Read(char *data, idx_t count, idx_t offset) const {
 		return source.Read(data, count, offset);
