@@ -551,7 +551,8 @@ LogicalType DefaultTypeGenerator::GetDefaultType(const Identifier &name) {
 	return LogicalType::INVALID;
 }
 
-LogicalType DefaultTypeGenerator::TryDefaultBind(const string &name, const vector<pair<string, Value>> &params) {
+LogicalType DefaultTypeGenerator::TryDefaultBind(const string &name, const vector<pair<string, Value>> &params,
+                                                 optional_ptr<ClientContext> context) {
 	auto entry = TryGetDefaultTypeEntry(Identifier(name));
 	if (!entry) {
 		return LogicalTypeId::INVALID;
@@ -562,8 +563,7 @@ LogicalType DefaultTypeGenerator::TryDefaultBind(const string &name, const vecto
 		args.emplace_back(param.first, param.second);
 	}
 
-	// no context is available here, so only the built-in types are reachable
-	return GetConstructors(*entry, Identifier(name)).Bind(nullptr, entry->type, args);
+	return GetConstructors(*entry, Identifier(name)).Bind(context, entry->type, args);
 }
 
 DefaultTypeGenerator::DefaultTypeGenerator(Catalog &catalog, SchemaCatalogEntry &schema)
