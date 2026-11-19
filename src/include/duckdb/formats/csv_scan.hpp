@@ -15,7 +15,7 @@
 #include "duckdb/execution/operator/csv_scanner/csv_buffer.hpp"
 #include "duckdb/execution/operator/csv_scanner/csv_error.hpp"
 #include "duckdb/execution/operator/csv_scanner/csv_file_scanner.hpp"
-#include "duckdb/formats/row_lexer.hpp"
+#include "duckdb/formats/row_ranges.hpp"
 #include "duckdb/function/scalar/strftime_format.hpp"
 #include "duckdb/parallel/async_result.hpp"
 #include "duckdb/planner/table_filter_set.hpp"
@@ -29,27 +29,27 @@ bool CsvDecodesDirectly(const LogicalType &type, bool icu_loaded);
 string_t CsvRemoveEscape(const char *value, idx_t size, char escape, char quote, bool strict_mode, Vector &vector);
 void CsvSanitize(string &text);
 
-struct CsvBytes {
-	shared_ptr<CSVBufferHandle> buffer;
-	unsafe_unique_array<char> owned;
-	idx_t capacity = 0;
-	const char *data = nullptr;
-	idx_t offset = 0;
-	idx_t size = 0;
-};
-
-struct CsvRangeBounds {
-	idx_t begin = 0;
-	idx_t end = 0;
-};
-
-class CsvBytesHolder : public AuxiliaryDataHolder {
+class CsvBufferView : public RowBuffer {
 public:
-	explicit CsvBytesHolder(shared_ptr<CsvBytes> bytes_p) : bytes(std::move(bytes_p)) {
+	explicit CsvBufferView(shared_ptr<CSVBufferHandle> handle_p) : handle(std::move(handle_p)) {
 	}
 
 private:
-	shared_ptr<CsvBytes> bytes;
+	shared_ptr<CSVBufferHandle> handle;
+};
+
+class CsvRowSource : public RowSource {
+public:
+	CsvRowSource(CSVBufferManager &manager, idx_t size, optional_ptr<atomic<idx_t>> bytes_read);
+
+	idx_t Read(char *data, idx_t count, idx_t offset) const override;
+	void Release(idx_t position) override;
+
+public:
+	CSVBufferManager &manager;
+	const idx_t size;
+	optional_ptr<atomic<idx_t>> bytes_read;
+	idx_t released = 0;
 };
 
 struct CsvScanColumn {
@@ -145,37 +145,19 @@ public:
 	CsvScanGlobal(ClientContext &context, CSVFileScan &file, optional_ptr<TableFilterSet> filters);
 
 	idx_t MaxThreads() const {
-		return options.parallel ? MaxValue<idx_t>(range_count, 1) : 1;
+		return options.parallel ? MaxValue<idx_t>(ranges->range_count, 1) : 1;
 	}
-	bool Claim(idx_t &range);
+	bool Claim(idx_t &range) {
+		return ranges->Claim(range);
+	}
 	bool FinishRange(idx_t range, idx_t lines);
-	bool AllFinished() const;
-	void Publish(idx_t range, CSVState origin, const CsvRangeEntry &entry);
-	CsvRangeEntry Entry(idx_t range, CSVState origin) const;
-	void Computing(idx_t range, bool value);
-	CsvRangeStart StartState(idx_t range);
+	bool AllFinished() const {
+		return ranges->AllFinished();
+	}
 	vector<unique_ptr<AsyncTask>> LoadTasks(idx_t range) const;
-	idx_t RangeBegin(idx_t range) const {
-		return MinValue(start + range * range_bytes, size);
-	}
-	idx_t RangeEnd(idx_t range) const {
-		return MinValue(start + (range + 1) * range_bytes, size);
-	}
 	shared_ptr<CSVBufferHandle> Buffer(idx_t buffer) const {
 		return source.buffer_manager->GetBuffer(buffer);
 	}
-	idx_t Read(char *data, idx_t count, idx_t offset) const;
-	void Release(idx_t position);
-	void ReadInto(CsvBytes &bytes, idx_t offset, idx_t count) const;
-	CsvRangeBounds Bounds(idx_t range, CsvBytes &bytes) const;
-	CSVState Origin(const CsvBytes &bytes, idx_t begin) const;
-	CsvRangeEntry Transfer(idx_t range, CSVState origin) const;
-	CsvRangeEntry LexTransfer(const CsvBytes &bytes, idx_t begin, idx_t end, CSVState origin) const;
-	idx_t SyncAt(idx_t position) const;
-	bool WholeFile() const {
-		return whole_file != nullptr;
-	}
-	void ViewWholeFile(CsvBytes &bytes) const;
 
 public:
 	ClientContext &context;
@@ -183,6 +165,8 @@ public:
 	CsvScanSource source;
 	CsvGrammar grammar;
 	unique_ptr<RowLexer> lean;
+	unique_ptr<CsvRowSource> row_source;
+	unique_ptr<RowRanges> ranges;
 	idx_t num_columns = 0;
 	bool count_only = false;
 	bool lean_batches = false;
@@ -199,27 +183,13 @@ public:
 	bool ignore_errors = false;
 	bool print_line = true;
 	bool stream = false;
-	idx_t released = 0;
 	idx_t skip_rows = 0;
 	bool skip_bom = false;
 	idx_t start = 0;
 	idx_t start_lines = 0;
-	idx_t size = 0;
-	idx_t range_bytes = 0;
-	idx_t range_count = 0;
 
 private:
-	void FindStart();
-
-private:
-	mutable mutex lock;
-	shared_ptr<CSVBufferHandle> whole_file;
-	idx_t next_range = 0;
-	idx_t finished_ranges = 0;
-	idx_t resolved = 0;
-	vector<CsvRangeTransfer> transfers;
-	vector<bool> computing;
-	vector<CsvRangeStart> starts;
+	void FindStart(idx_t size, shared_ptr<CSVBufferHandle> &whole_file);
 };
 
 class CsvScan {
@@ -246,20 +216,7 @@ public:
 	static bool EvaluatesOnFieldBytes(const Expression &expr);
 
 private:
-	void PublishOwnTransfer();
-	bool LeanFromChain();
-	void StartLean(bool second_pass);
 	bool ScanLean(DataChunk &output, idx_t max_rows);
-	bool AdvanceLean();
-	bool FinishLean();
-	bool ExtendLean();
-	void RebaseLean();
-	void LeanOpenRowFits();
-	void ReadLeanPiece();
-	void PrepareWindow(idx_t keep_from, idx_t need);
-	idx_t KeepFrom() const;
-	bool CheckCountUtf8(idx_t end);
-	void LeanRecover();
 	bool DecodeLean(idx_t count, DataChunk &output);
 	bool DecodeLeanBatch(idx_t first, idx_t count, DataChunk &output);
 	void FinishLeanChunk(idx_t count, DataChunk &output);
@@ -270,8 +227,6 @@ private:
 	void LeanRowNumbers(idx_t count, DataChunk &output);
 	void LeanRetry(const CsvScanColumn &column, Vector &vector);
 	CsvField LeanField(const CsvScanColumn &column, idx_t row) const;
-	idx_t LeanRowEnd(idx_t row) const;
-	idx_t LeanRowBegin(idx_t row) const;
 	CsvRow LeanRow(idx_t row) const;
 	bool LeanNullExtra(idx_t begin, idx_t end, uint32_t end_bits) const;
 	CSVErrorType EventType(const RowEvent &event) const;
@@ -294,38 +249,19 @@ private:
 	CsvScanSource &source;
 	const CSVReaderOptions &options;
 	const CsvGrammar &grammar;
-	shared_ptr<CsvBytes> bytes;
+	RowRangeReader reader;
+	shared_ptr<RowBytes> &bytes;
+	RowCursor &cursor;
+	RowFields &fields;
 	idx_t base = 0;
 	bool done = true;
 	bool started = false;
 	bool reported = true;
-	bool no_rows = false;
 	idx_t lean_rows = DConstants::INVALID_INDEX;
-	idx_t lean_lines = DConstants::INVALID_INDEX;
-	RowCursor cursor;
-	RowFields fields;
-	shared_ptr<CsvBytes> spare;
-	bool lean = false;
-	bool lean_extract = false;
-	bool lean_probe_only = false;
-	bool lean_finished = false;
-	bool lean_verified = false;
-	bool lean_second_pass = false;
-	bool lean_extending = false;
-	bool lean_open_end = false;
-	bool force_extract = false;
-	bool lean_failed = false;
+	bool counting = false;
 	bool chunk_open = false;
 	idx_t chunk_rows = 0;
-	const CsvBytes *held = nullptr;
-	CSVState lean_origin = CSVState::NOT_SET;
-	idx_t lean_start = 0;
-	idx_t lean_stop = 0;
-	idx_t lean_line_end = DConstants::INVALID_INDEX;
-	idx_t read_to = 0;
-	idx_t validated_to = 0;
-	idx_t emitted_rows = 0;
-	idx_t last_emitted_end = DConstants::INVALID_INDEX;
+	const RowBytes *held = nullptr;
 	bool used_unstrictness = false;
 	idx_t range = 0;
 	std::span<const int64_t> lookup_offsets;
@@ -336,8 +272,6 @@ private:
 	vector<idx_t> retry;
 	bool lean_errors = false;
 	bool rows_failed = false;
-	idx_t lines_at = DConstants::INVALID_INDEX;
-	idx_t lines_counted = 0;
 	vector<unique_ptr<TableFilterState>> filter_states;
 	SelectionVector filter_selection;
 	SelectionVector filter_candidates;
