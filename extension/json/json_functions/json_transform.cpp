@@ -473,6 +473,7 @@ static bool FormatStringVector(const Vector &string_vector, Vector &result, cons
 			target_validity.SetInvalid(i);
 			if (success && options.strict_cast) {
 				options.object_index = i;
+				options.error_message = std::move(error_message);
 				success = false;
 			}
 		}

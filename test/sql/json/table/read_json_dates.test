@@ -551,3 +551,11 @@ statement error
 SELECT * FROM read_json('{DATA_DIR}/json/simple_timestamp.json', timestampformat='%Q')
 ----
 Unrecognized format for strftime/strptime: %Q
+
+statement ok
+COPY (SELECT '{"d": "2023-02-29"}' AS line) TO '{TEMP_DIR}/bad_iso_date.ndjson' (FORMAT csv, HEADER false, QUOTE '', ESCAPE '');
+
+statement error
+SELECT d FROM read_ndjson('{TEMP_DIR}/bad_iso_date.ndjson', columns := {d: 'DATE'}, dateformat := '%Y-%m-%d');
+----
+<REGEX>:.*2023-02-29.*
