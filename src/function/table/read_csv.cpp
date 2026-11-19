@@ -90,6 +90,7 @@ void ReadCSVTableFunction::ReadCSVAddNamedParameters(TableFunction &table_functi
 		    .Add("buffer_size", LogicalType::BIGINT)
 		    .Add("decimal_separator", LogicalType::VARCHAR)
 		    .Add("parallel", LogicalType::BOOLEAN)
+		    .Add("rendering", LogicalType::VARCHAR)
 		    .Add("null_padding", LogicalType::BOOLEAN)
 		    .Add("allow_quoted_nulls", LogicalType::BOOLEAN)
 		    .Add("column_types", LogicalType::ANY)

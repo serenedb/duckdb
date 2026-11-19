@@ -612,6 +612,7 @@ void DatabaseInstance::Configure(DBConfig &new_config, const char *database_path
 	config.create_client_context = new_config.create_client_context;
 	config.create_secret_storage = new_config.create_secret_storage;
 	config.copy_to_written_type = new_config.copy_to_written_type;
+	config.create_postgres_decoder = new_config.create_postgres_decoder;
 }
 
 DBConfig &DBConfig::GetConfig(ClientContext &context) {
