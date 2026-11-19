@@ -18,6 +18,19 @@
 namespace duckdb {
 class ClientContext;
 
+class ExpressionFilter;
+
+//! A filter pushed into a GET, as an expression of the GET's columns - the expressions of the plan read them the same
+//! way, so a filter is collected and replaced as they are
+struct GetFilter {
+	//! The filter, which refers to its i-th column with BoundReferenceExpression(i)
+	ExpressionFilter &filter;
+	//! The column of the GET each of those references is
+	vector<ProjectionIndex> columns;
+	//! The filter with a BoundColumnRefExpression of the GET in place of each reference
+	unique_ptr<Expression> expr;
+};
+
 struct GetAnalysis {
 	LogicalGet &get;
 	/**
@@ -26,6 +39,8 @@ struct GetAnalysis {
 	 * or without expression in the query plan.
 	 */
 	unordered_map<ProjectionIndex, const Expression *> col_to_expr;
+	//! The filters pushed into the GET
+	vector<GetFilter> filters;
 
 	idx_t StorageIndex(ProjectionIndex idx) const;
 };
@@ -104,6 +119,46 @@ struct GetBinding {
  */
 optional<GetBinding> Resolve(ColumnBinding binding, Analyses &analyses, const Projections &projections);
 
+//! The filters of the GET as expressions of its columns (GetAnalysis::filters)
+void BuildGetFilters(GetAnalysis &analysis);
+//! Whether the GET reads the column for its filters only - it does not produce it
+bool OnlyFiltersRead(const LogicalGet &get, ProjectionIndex column_index);
+//! Whether the filter reads a column the GET now reads as an expression
+bool ReadsPushedColumn(const GetAnalysis &analysis, const GetFilter &filter);
+//! Put the filter back into the GET, its expression referring to its columns again
+void WriteBackGetFilter(GetFilter &filter, const LogicalGet &get);
+
+//! Collect the uses of the GET's columns in its filters. A column the GET produces may be read as it is by a projection
+//! the collection does not visit (see CastCollect::VisitOperator), so the filters of such a column only confirm or
+//! conflict with the uses the plan has - a pushdown starts from the filters only for a column read by them alone
+template <class Collect>
+void CollectGetFilters(Collect &collect, GetAnalysis &analysis) {
+	BuildGetFilters(analysis);
+	unordered_set<ProjectionIndex> plan_columns;
+	for (auto &[column_index, _] : analysis.col_to_expr) {
+		plan_columns.insert(column_index);
+	}
+	for (auto &filter : analysis.filters) {
+		collect.VisitExpression(&filter.expr);
+	}
+	for (auto &[column_index, expr] : analysis.col_to_expr) {
+		if (!plan_columns.count(column_index) && !OnlyFiltersRead(analysis.get, column_index)) {
+			expr = nullptr;
+		}
+	}
+}
+
+//! Rewrite the filters of the pushed columns onto what the GET now reads, as the plan is rewritten
+template <class Replace>
+void ReplaceGetFilters(Replace &replace, GetAnalysis &analysis) {
+	for (auto &filter : analysis.filters) {
+		if (ReadsPushedColumn(analysis, filter)) {
+			replace.VisitExpression(&filter.expr);
+			WriteBackGetFilter(filter, analysis.get);
+		}
+	}
+}
+
 template <class Collect, class Replace>
 unique_ptr<LogicalOperator> PushdownOptimize(ClientContext &context, unique_ptr<LogicalOperator> op) {
 	Analyses analyses;
@@ -112,7 +167,11 @@ unique_ptr<LogicalOperator> PushdownOptimize(ClientContext &context, unique_ptr<
 	if (analyses.empty()) {
 		return op;
 	}
-	Collect(analyses, projections).VisitOperator(*op);
+	Collect collect(analyses, projections);
+	collect.VisitOperator(*op);
+	for (auto &[_, analysis] : analyses) {
+		CollectGetFilters(collect, analysis);
+	}
 
 	bool any_pushed = false;
 	for (auto &[_, analysis] : analyses) {
@@ -138,7 +197,11 @@ unique_ptr<LogicalOperator> PushdownOptimize(ClientContext &context, unique_ptr<
 	}
 
 	if (any_pushed) {
-		Replace(analyses, projections).VisitOperator(*op);
+		Replace replace(analyses, projections);
+		for (auto &[_, analysis] : analyses) {
+			ReplaceGetFilters(replace, analysis);
+		}
+		replace.VisitOperator(*op);
 	}
 	return op;
 }

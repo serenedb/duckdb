@@ -16,6 +16,9 @@
 #include "duckdb/planner/operator/logical_projection.hpp"
 #include "duckdb/planner/expression/bound_columnref_expression.hpp"
 #include "duckdb/planner/expression/bound_cast_expression.hpp"
+#include "duckdb/planner/expression/bound_reference_expression.hpp"
+#include "duckdb/planner/expression_iterator.hpp"
+#include "duckdb/planner/filter/expression_filter.hpp"
 
 /*
  * This pass implements type pushdown for file readers. If a LOGICAL_PROJECTION
@@ -290,6 +293,73 @@ CastReplace::CastReplace(Analyses &analyses, const Projections &projections)
 bool CanPushdownColumn(const GetAnalysis &analysis, ProjectionIndex idx) {
 	const auto it = analysis.col_to_expr.find(idx);
 	return it != analysis.col_to_expr.end() && it->second != nullptr;
+}
+
+static void ReferencesToColumns(unique_ptr<Expression> &expr, const vector<ProjectionIndex> &columns,
+                                TableIndex table_index) {
+	if (expr->GetExpressionClass() == ExpressionClass::BOUND_REF) {
+		auto &reference = expr->Cast<BoundReferenceExpression>();
+		D_ASSERT(reference.Index() < columns.size());
+		expr = make_uniq<BoundColumnRefExpression>(reference.GetReturnType(),
+		                                           ColumnBinding(table_index, columns[reference.Index()]));
+		return;
+	}
+	ExpressionIterator::EnumerateChildren(
+	    *expr, [&](unique_ptr<Expression> &child) { ReferencesToColumns(child, columns, table_index); });
+}
+
+static void ColumnsToReferences(unique_ptr<Expression> &expr, const vector<ProjectionIndex> &columns,
+                                TableIndex table_index) {
+	if (expr->GetExpressionClass() == ExpressionClass::BOUND_COLUMN_REF) {
+		auto &column = expr->Cast<BoundColumnRefExpression>();
+		const auto binding = column.Binding();
+		D_ASSERT(binding.table_index == table_index);
+		const auto position = std::find(columns.begin(), columns.end(), binding.column_index);
+		D_ASSERT(position != columns.end());
+		expr =
+		    make_uniq<BoundReferenceExpression>(column.GetReturnType(), NumericCast<idx_t>(position - columns.begin()));
+		return;
+	}
+	ExpressionIterator::EnumerateChildren(
+	    *expr, [&](unique_ptr<Expression> &child) { ColumnsToReferences(child, columns, table_index); });
+}
+
+static GetFilter MakeGetFilter(ExpressionFilter &filter, vector<ProjectionIndex> columns, TableIndex table_index) {
+	auto expr = filter.expr->Copy();
+	ReferencesToColumns(expr, columns, table_index);
+	return GetFilter {filter, std::move(columns), std::move(expr)};
+}
+
+void BuildGetFilters(GetAnalysis &analysis) {
+	auto &get = analysis.get;
+	for (auto &entry : get.table_filters) {
+		auto &filter = ExpressionFilter::GetExpressionFilter(entry.Filter(), "BuildGetFilters");
+		analysis.filters.push_back(MakeGetFilter(filter, {entry.GetIndex()}, get.table_index));
+	}
+	for (auto &multi_column_filter : get.table_filters.GetMultiColumnFilters()) {
+		auto &filter = ExpressionFilter::GetExpressionFilter(*multi_column_filter, "BuildGetFilters");
+		analysis.filters.push_back(MakeGetFilter(filter, filter.column_indexes, get.table_index));
+	}
+}
+
+bool OnlyFiltersRead(const LogicalGet &get, ProjectionIndex column_index) {
+	auto &projection_ids = get.projection_ids;
+	return !projection_ids.empty() &&
+	       std::find(projection_ids.begin(), projection_ids.end(), column_index) == projection_ids.end();
+}
+
+bool ReadsPushedColumn(const GetAnalysis &analysis, const GetFilter &filter) {
+	for (auto &column : filter.columns) {
+		if (CanPushdownColumn(analysis, column)) {
+			return true;
+		}
+	}
+	return false;
+}
+
+void WriteBackGetFilter(GetFilter &filter, const LogicalGet &get) {
+	ColumnsToReferences(filter.expr, filter.columns, get.table_index);
+	filter.filter.expr = std::move(filter.expr);
 }
 
 idx_t GetAnalysis::StorageIndex(ProjectionIndex idx) const {

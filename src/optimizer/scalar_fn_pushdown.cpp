@@ -3,9 +3,22 @@
 #include "duckdb/planner/expression/bound_cast_expression.hpp"
 #include "duckdb/planner/expression/bound_columnref_expression.hpp"
 #include "duckdb/planner/expression/bound_function_expression.hpp"
+#include "duckdb/planner/expression/bound_operator_expression.hpp"
+#include "duckdb/planner/filter/expression_filter.hpp"
 #include "duckdb/planner/operator/logical_projection.hpp"
 
 namespace duckdb {
+
+namespace {
+
+//! Whether fn(col) is NULL exactly when col is - so checking col for NULL checks fn(col): the length of a string or a
+//! blob in bytes is
+bool KeepsNull(const Expression &fn) {
+	return ExpressionFilter::GetByteLengthInput(fn) != nullptr;
+}
+
+} // namespace
+
 void ScalarFnCollect::VisitOperator(LogicalOperator &op) {
 	/*
 	 * Logical projection expressions are columns which reference underlying
@@ -55,13 +68,38 @@ unique_ptr<Expression> ScalarFnCollect::VisitReplace(BoundFunctionExpression &ex
 
 	if (auto it = col_to_expr.find(binding->column_index); it == col_to_expr.end()) {
 		// This is the first time we see the column used by a single function.
-		col_to_expr.emplace(binding->column_index, &expr);
+		const auto checked = null_checked.find(&binding->analysis);
+		const bool null_checked_column =
+		    checked != null_checked.end() && checked->second.count(binding->column_index) != 0;
+		col_to_expr.emplace(binding->column_index, null_checked_column && !KeepsNull(expr) ? nullptr : &expr);
 	} else if (it->second == nullptr || !it->second->Equals(expr)) {
 		// Either column is used with different function in "expr" or
 		// there already is a conflict.
 		it->second = nullptr;
 	}
 
+	return std::move(*ptr);
+}
+
+unique_ptr<Expression> ScalarFnCollect::VisitReplace(BoundOperatorExpression &expr, unique_ptr<Expression> *ptr) {
+	if ((expr.GetExpressionType() != ExpressionType::OPERATOR_IS_NULL &&
+	     expr.GetExpressionType() != ExpressionType::OPERATOR_IS_NOT_NULL) ||
+	    expr.GetChildren().size() != 1 ||
+	    expr.GetChildren()[0]->GetExpressionType() != ExpressionType::BOUND_COLUMN_REF) {
+		return nullptr;
+	}
+	const auto binding =
+	    Resolve(expr.GetChildren()[0]->Cast<BoundColumnRefExpression>().Binding(), analyses, projections);
+	if (!binding) {
+		return nullptr;
+	}
+	auto &col_to_expr = binding->analysis.col_to_expr;
+	if (auto it = col_to_expr.find(binding->column_index); it == col_to_expr.end()) {
+		// decided by the function the column is read through, when it is seen
+		null_checked[&binding->analysis].insert(binding->column_index);
+	} else if (it->second && !KeepsNull(*it->second)) {
+		it->second = nullptr;
+	}
 	return std::move(*ptr);
 }
 

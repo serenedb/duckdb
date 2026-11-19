@@ -4,7 +4,11 @@
 #include "duckdb/common/enum_util.hpp"
 #include "parquet_reader.hpp"
 #include "duckdb/common/mutex.hpp"
-#include "duckdb/planner/expression/bound_function_expression.hpp"
+#include "duckdb/function/builtin_function_lookup.hpp"
+#include "duckdb/function/scalar/string_functions.hpp"
+#include "duckdb/planner/expression/bound_cast_expression.hpp"
+#include "duckdb/planner/expression/bound_reference_expression.hpp"
+#include "duckdb/planner/filter/expression_filter.hpp"
 #include "duckdb/planner/operator/logical_get.hpp"
 
 #include <numeric>
@@ -24,18 +28,27 @@ struct ReadSingleParquetFileData : public TableFunctionData {
 	shared_ptr<ParquetFileMetadataCache> metadata;
 	//! The number of rows of the file, if it was read during binding
 	optional_idx cardinality;
-	//! The expressions the reader evaluates on columns instead of reading them (e.g. their length for strlen)
+	//! The expressions the reader evaluates on columns instead of reading them (e.g. their length for octet_length)
 	unordered_map<idx_t, ParquetReaderProjectionExpression> projection_expressions;
+	//! The types these columns are read as without their expression
+	unordered_map<idx_t, LogicalType> projection_input_types;
+	//! Columns read as the length in bytes of their values converted to the given type: their file holds no strings
+	//! or blobs in them whose lengths could be read
+	unordered_map<idx_t, LogicalType> converted_lengths;
 
 	//! Read the given column as the result of an expression on it - the column then has the type of that result
 	void AddProjectionExpression(idx_t column_idx, const ParquetReaderProjectionExpression &expression) {
 		projection_expressions[column_idx] = expression;
 		if (column_idx < parquet_types.size()) {
-			parquet_types[column_idx] = expression.return_type;
+			projection_input_types.emplace(column_idx, parquet_types[column_idx]);
 		}
-		if (column_idx < columns.size()) {
-			columns[column_idx].type = expression.return_type;
-		}
+		SetColumnType(column_idx, expression.return_type);
+	}
+
+	//! Read the given column as the length in bytes of its values converted to the given type
+	void AddConvertedLength(idx_t column_idx, const LogicalType &input_type, const LogicalType &return_type) {
+		converted_lengths[column_idx] = input_type;
+		SetColumnType(column_idx, return_type);
 	}
 
 	//! The reader the bind opened for this file, handed to the first scan of this bind data so that the file does
@@ -59,6 +72,15 @@ struct ReadSingleParquetFileData : public TableFunctionData {
 	}
 
 private:
+	void SetColumnType(idx_t column_idx, const LogicalType &type) {
+		if (column_idx < parquet_types.size()) {
+			parquet_types[column_idx] = type;
+		}
+		if (column_idx < columns.size()) {
+			columns[column_idx].type = type;
+		}
+	}
+
 	//! Guards the readers below
 	mutable mutex bind_reader_lock;
 	mutable shared_ptr<ParquetReader> bind_reader;
@@ -134,14 +156,26 @@ static unique_ptr<FunctionData> ReadSingleParquetFileBind(ClientContext &context
 	result->parquet_names = names;
 	result->parquet_types = return_types;
 	if (file_input.expected_bind_data) {
-		// expressions pushed into the scan after the schema was bound are read from this file in the same way
+		// expressions pushed into the scan after the schema was bound are read from every file in the same way - from
+		// the column of the same name, which may be at another position in this file
 		auto &expected = file_input.expected_bind_data->Cast<ReadSingleParquetFileData>();
-		if (expected.file.path == result->file.path) {
-			for (auto &entry : expected.projection_expressions) {
-				result->AddProjectionExpression(entry.first, entry.second);
-				if (entry.first < return_types.size()) {
-					return_types[entry.first] = entry.second.return_type;
+		for (auto &entry : expected.projection_expressions) {
+			auto &name = expected.parquet_names[entry.first];
+			for (idx_t i = 0; i < names.size(); i++) {
+				if (names[i] != name) {
+					continue;
 				}
+				const auto type_id = return_types[i].id();
+				if (type_id == LogicalTypeId::VARCHAR || type_id == LogicalTypeId::BLOB) {
+					result->AddProjectionExpression(i, entry.second);
+				} else {
+					// a file storing other values gives the lengths of its values converted to the type of the scan, as
+					// reading the values would
+					result->AddConvertedLength(i, expected.projection_input_types.at(entry.first),
+					                           entry.second.return_type);
+				}
+				return_types[i] = entry.second.return_type;
+				break;
 			}
 		}
 	}
@@ -216,6 +250,19 @@ static unique_ptr<GlobalTableFunctionState> ReadSingleParquetFileInitGlobal(Clie
 		reader.AddVirtualColumn(virtual_id);
 	}
 	reader.column_indexes = std::move(column_indexes);
+	for (idx_t i = 0; i < reader.column_indexes.size(); i++) {
+		auto entry = parquet_data.converted_lengths.find(reader.column_indexes[i].GetPrimaryIndex());
+		if (entry == parquet_data.converted_lengths.end()) {
+			continue;
+		}
+		auto value = make_uniq<BoundReferenceExpression>(reader.columns[entry->first].type, 0ULL);
+		vector<unique_ptr<Expression>> arguments;
+		arguments.push_back(BoundCastExpression::AddCastToType(context, std::move(value), entry->second));
+		reader.expression_map.emplace(
+		    ProjectionIndex(i),
+		    BaseFileReaderExpression(BindBuiltinScalarFunction(context, OctetLengthFun::Name, std::move(arguments)),
+		                             {reader.column_indexes[i]}));
+	}
 	if (input.filters) {
 		// the filters are evaluated by the reader itself, so that row groups can be pruned on them
 		reader.filters = input.filters->Copy();
@@ -461,11 +508,7 @@ static vector<PartitionStatistics> ReadSingleParquetFilePartitionStats(ClientCon
 
 bool ParquetScanFunction::ProjectionExpressionPushdown(ClientContext &context,
                                                        const TableFunctionProjectionExpressionInput &input) {
-	if (input.expr.GetExpressionClass() != ExpressionClass::BOUND_FUNCTION) {
-		return false;
-	}
-	const auto &fn = input.expr.Cast<BoundFunctionExpression>();
-	if (const Identifier &name = fn.Function().GetName(); name != "strlen" && name != "octet_length") {
+	if (!ExpressionFilter::GetByteLengthInput(input.expr)) {
 		return false;
 	}
 	auto &bind_data = input.get.bind_data->CastNoConst<MultiFileBindData>();
@@ -473,9 +516,7 @@ bool ParquetScanFunction::ProjectionExpressionPushdown(ClientContext &context,
 	if (!bind_data.reader_bind.schema.empty() || !bind_data.union_readers.empty()) {
 		return false;
 	}
-	// Don't do pushdown with multiple files - the metadata of all but the first file is not available upfront, and
-	// the files may have their columns in a different order
-	if (bind_data.file_list->GetExpandResult() == FileExpandResult::MULTIPLE_FILES || !bind_data.initial_reader) {
+	if (!bind_data.initial_reader) {
 		return false;
 	}
 	const auto &column_id = input.get.GetColumnIds()[input.column_index];
@@ -484,7 +525,7 @@ bool ParquetScanFunction::ProjectionExpressionPushdown(ClientContext &context,
 		return false;
 	}
 	const idx_t idx = column_id.GetPrimaryIndex();
-	// Don't do pushdown of strlen to hive and filename columns
+	// Don't do pushdown of octet_length to hive and filename columns
 	for (const auto &partition : bind_data.reader_bind.hive_partitioning_indexes) {
 		if (partition.index == idx) {
 			return false;
@@ -493,28 +534,20 @@ bool ParquetScanFunction::ProjectionExpressionPushdown(ClientContext &context,
 	if (bind_data.reader_bind.filename_idx.IsValid() && bind_data.reader_bind.filename_idx.GetIndex() == idx) {
 		return false;
 	}
-	// We run scalar function pushdown after filter pushdown - a filter pushed into the scan needs the column itself
-	if (input.get.table_filters.HasFilter(input.column_index)) {
-		return false;
-	}
+	// the filters of the column are rewritten onto its length by the optimizer that pushes the expression
 	auto &reader = bind_data.initial_reader->Cast<TableFunctionFileReader>();
 	if (!reader.bind_data) {
 		return false;
 	}
-	auto &parquet_data = reader.bind_data->Cast<ReadSingleParquetFileData>();
-	auto &metadata_reader = parquet_data.GetMetadataReader(context);
-	auto &children = metadata_reader.root_schema->children;
-	if (idx >= children.size() || idx >= bind_data.types.size() || idx >= reader.types.size()) {
+	auto &data = bind_data.bind_data->Cast<TableFunctionMultiFileData>();
+	if (bind_data.file_list->GetExpandResult() == FileExpandResult::MULTIPLE_FILES &&
+	    data.options.schema_bind_data.get() != reader.bind_data.get()) {
+		// the other files are bound against the bind data of this file, which is where they find the expression
 		return false;
 	}
-	const idx_t column_flat_idx = children[idx].column_index;
-	for (const auto &group : metadata_reader.GetFileMetadata()->row_groups) {
-		D_ASSERT(column_flat_idx < group.columns.size());
-		for (const Encoding::type type : group.columns[column_flat_idx].meta_data.encodings) {
-			if (type == duckdb_parquet::Encoding::DELTA_LENGTH_BYTE_ARRAY) {
-				return false;
-			}
-		}
+	auto &parquet_data = reader.bind_data->Cast<ReadSingleParquetFileData>();
+	if (idx >= parquet_data.parquet_types.size() || idx >= bind_data.types.size() || idx >= reader.types.size()) {
+		return false;
 	}
 
 	const LogicalType type = LogicalType::BIGINT;
@@ -528,7 +561,6 @@ bool ParquetScanFunction::ProjectionExpressionPushdown(ClientContext &context,
 	if (idx < reader.columns.size()) {
 		reader.columns[idx].type = type;
 	}
-	auto &data = bind_data.bind_data->Cast<TableFunctionMultiFileData>();
 	if (idx < data.options.expected_types.size()) {
 		data.options.expected_types[idx] = type;
 	}

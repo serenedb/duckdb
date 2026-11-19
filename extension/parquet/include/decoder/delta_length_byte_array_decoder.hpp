@@ -33,9 +33,13 @@ public:
 	void Skip(uint8_t *defines, idx_t skip_count);
 
 private:
+	//! Whether the reader reads the lengths of the byte arrays rather than their contents
+	bool ReadsLengths() const;
 	template <bool HAS_DEFINES>
 	void ReadInternal(shared_ptr<ResizeableBuffer> &block, uint8_t *defines, idx_t read_count, Vector &result,
 	                  idx_t result_offset);
+	template <bool HAS_DEFINES>
+	void ReadLengthsInternal(uint8_t *defines, idx_t read_count, Vector &result, idx_t result_offset);
 	template <bool HAS_DEFINES>
 	void SkipInternal(uint8_t *defines, idx_t skip_count);
 
