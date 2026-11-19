@@ -1,6 +1,7 @@
 #include "duckdb/formats/csv_scan.hpp"
 
 #include "absl/cleanup/cleanup.h"
+#include "duckdb/formats/row_stream.hpp"
 #include "duckdb/formats/value_parsers.hpp"
 #include "duckdb/common/operator/cast_operators.hpp"
 #include "duckdb/common/operator/comparison_operators.hpp"
@@ -33,6 +34,7 @@ namespace {
 constexpr idx_t LOOKUP_BYTES = 1 << 13;
 constexpr idx_t RANGE_MIN = 1 << 20;
 constexpr idx_t RANGE_MAX = 1 << 23;
+constexpr idx_t HOST_STREAM_RANGE = 1 << 21;
 
 bool LeanDecodes(const LogicalType &type) {
 	switch (type.id()) {
@@ -657,7 +659,10 @@ CsvScanGlobal::CsvScanGlobal(ClientContext &context_p, const CSVReaderOptions &o
 	}
 
 	auto &manager = *source.buffer_manager;
-	stream = !manager.HasKnownBufferRanges();
+	if (manager.file_handle->compression_type == FileCompressionType::UNCOMPRESSED && options.encoding == "utf-8") {
+		host_stream = FindRowStream(context, source.path);
+	}
+	stream = host_stream || !manager.HasKnownBufferRanges();
 	const idx_t size = stream ? NumericLimits<idx_t>::Maximum() : manager.file_handle->FileSize();
 	num_columns = source.state_machine->dialect_options.num_cols;
 	if (num_columns == 0) {
@@ -683,10 +688,15 @@ CsvScanGlobal::CsvScanGlobal(ClientContext &context_p, const CSVReaderOptions &o
 		const idx_t wanted = MinValue(MaxValue(data_size / (threads * 4), RANGE_MIN), RANGE_MAX);
 		range_bytes = MaxValue<idx_t>(MinValue<idx_t>(options.buffer_size_option.GetValue(), wanted), 1);
 	} else if (stream && !source.sniffing && options.parallel) {
-		range_bytes = MaxValue<idx_t>(MinValue<idx_t>(options.buffer_size_option.GetValue(), RANGE_MAX), 1);
+		const idx_t limit = host_stream ? HOST_STREAM_RANGE : RANGE_MAX;
+		range_bytes = MaxValue<idx_t>(MinValue<idx_t>(options.buffer_size_option.GetValue(), limit), 1);
 	}
-	row_source = make_uniq<CsvRowSource>(manager, size, source.bytes_read);
-	ranges = make_uniq<RowRanges>(*lean, *row_source, start, size, range_bytes, skip_rows == 0);
+	RowSource *rows = host_stream.get();
+	if (!rows) {
+		row_source = make_uniq<CsvRowSource>(manager, size, source.bytes_read);
+		rows = row_source.get();
+	}
+	ranges = make_uniq<RowRanges>(*lean, *rows, start, size, range_bytes, skip_rows == 0);
 	ranges->path = source.path;
 	if (whole_file) {
 		const char *data = whole_file->Ptr();
@@ -1726,14 +1736,14 @@ bool CsvScan::Scan(DataChunk &output, idx_t max_rows) {
 		return true;
 	}
 	auto &ranges = *global.ranges;
-	if (!global.stream) {
+	if (!global.row_source || !global.stream) {
 		*source.bytes_read += ranges.RangeEnd(range) - ranges.RangeBegin(range);
 	}
 	const idx_t range_lines = reader.RangeLines();
 	const idx_t lines =
 	    range_lines == DConstants::INVALID_INDEX ? 0 : range_lines + (range == 0 ? global.start_lines : 0);
 	const bool finished = global.FinishRange(range, lines);
-	if (global.stream && finished) {
+	if (global.row_source && global.stream && finished) {
 		const idx_t counted = global.row_source->released * source.buffer_manager->GetBufferSize();
 		const idx_t size = ranges.Size();
 		*source.bytes_read += size > counted ? size - counted : 0;

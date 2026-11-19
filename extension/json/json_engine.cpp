@@ -7,6 +7,7 @@
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/common/type_visitor.hpp"
 #include "duckdb/common/vector/string_vector.hpp"
+#include "duckdb/formats/row_stream.hpp"
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/parallel/task_scheduler.hpp"
 #include "duckdb/planner/expression/bound_comparison_expression.hpp"
@@ -634,6 +635,13 @@ JsonSource::JsonSource(ClientContext &context_p, OpenFileInfo file_p, FileCompre
 	handle = fs.OpenFile(file, flags);
 	pipe = handle->IsPipe();
 	compressed = handle->GetFileCompressionType() != FileCompressionType::UNCOMPRESSED;
+	if (!compressed) {
+		stream = FindRowStream(context, file.path);
+	}
+	if (stream) {
+		pipe = false;
+		return;
+	}
 	positional = !pipe && !compressed && handle->CanSeek();
 	remote = !handle->OnDiskFile();
 	size = handle->GetFileSize();
@@ -655,6 +663,12 @@ idx_t JsonSource::ReadAt(char *data, idx_t count, idx_t offset, optional_ptr<Fil
 }
 
 idx_t JsonSource::Read(char *data, idx_t count) {
+	if (stream) {
+		const auto read = stream->Read(data, count, position);
+		position += read;
+		consumed += read;
+		return read;
+	}
 	if (positional) {
 		const auto read = ReadAt(data, count, position);
 		position += read;
@@ -690,6 +704,12 @@ idx_t JsonSource::Read(char *data, idx_t count) {
 	return total;
 }
 
+void JsonSource::Release(idx_t offset) {
+	if (stream) {
+		stream->Release(offset);
+	}
+}
+
 void JsonSource::Rewind() {
 	consumed = 0;
 	position = 0;
@@ -697,7 +717,7 @@ void JsonSource::Rewind() {
 		replayed = 0;
 		return;
 	}
-	if (!positional) {
+	if (!positional && !stream) {
 		handle->Reset();
 	}
 }
@@ -910,6 +930,7 @@ bool JsonScanGlobal::ClaimChunk(idx_t &unit, AllocatedData &buffer, idx_t &size,
 		want = filled;
 	}
 	memset(char_ptr_cast(buffer.get()) + size, 0, MinValue<idx_t>(JSON_PADDING, buffer.GetSize() - size));
+	source->Release(source->Position());
 	file_offset = stream_offset;
 	stream_offset += size;
 	unit = next_unit++;
@@ -1111,6 +1132,7 @@ bool JsonScan::ReadMore() {
 		size -= keep;
 		cursor -= keep;
 		line_start = line_start > keep ? line_start - keep : 0;
+		source.Release(file_offset);
 	}
 	idx_t want = global.BufferCapacity() > size ? global.BufferCapacity() - size : 0;
 	if (want == 0) {
