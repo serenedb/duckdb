@@ -18,7 +18,8 @@ CREATE TABLE src AS SELECT i AS id,
 	CASE WHEN i % 10 = 0 THEN NULL ELSE TIMESTAMP '2020-01-01 00:00:00' + to_seconds(i * 3601) END AS ts,
 	CASE WHEN i % 11 = 0 THEN NULL ELSE {'a': i, 'b': [i, i + 1]} END AS st,
 	CASE WHEN i % 12 = 0 THEN NULL ELSE [i, NULL, i * 2] END AS l,
-	CASE WHEN i % 13 = 0 THEN NULL ELSE {'k': i}::JSON END AS j
+	CASE WHEN i % 13 = 0 THEN NULL ELSE {'k': i}::JSON END AS j,
+	CASE WHEN i % 14 = 0 THEN NULL WHEN i % 14 = 1 THEN '{"other":1}'::JSON WHEN i % 14 = 2 THEN '[1,2]'::JSON ELSE {'name': 'n' || i, 'nested': {'deep': 'd' || (i % 10)}, 'num': i % 7}::JSON END AS j2
 FROM range(5000) t(i);
 
 statement ok
@@ -34,7 +35,7 @@ statement ok
 COPY src TO '{TEMP_DIR}/direct_dates.json' (FORMAT json, ARRAY true, DATEFORMAT '%d/%m/%Y', TIMESTAMPFORMAT '%d/%m/%Y %H.%M.%S');
 
 statement ok
-CREATE MACRO src_columns() AS {'id': 'BIGINT', 'b': 'BOOLEAN', 'n': 'INTEGER', 'd': 'DOUBLE', 'm': 'DECIMAL(10,2)', 's': 'VARCHAR', 'dt': 'DATE', 'ts': 'TIMESTAMP', 'st': 'STRUCT(a BIGINT, b BIGINT[])', 'l': 'BIGINT[]', 'j': 'JSON'};
+CREATE MACRO src_columns() AS {'id': 'BIGINT', 'b': 'BOOLEAN', 'n': 'INTEGER', 'd': 'DOUBLE', 'm': 'DECIMAL(10,2)', 's': 'VARCHAR', 'dt': 'DATE', 'ts': 'TIMESTAMP', 'st': 'STRUCT(a BIGINT, b BIGINT[])', 'l': 'BIGINT[]', 'j': 'JSON', 'j2': 'JSON'};
 
 query I
 SELECT count(*) FROM (
@@ -73,7 +74,7 @@ SELECT count(dt), count(ts) FROM read_ndjson('{TEMP_DIR}/direct_dates.ndjson', d
 ----
 4375	4500
 
-foreach predicate n>100 (s)LIKE's1%' dt=DATE'2020-03-01' (j)ISNULL st.a=77 (b)AND(d<500) m<10 ts>TIMESTAMP'2020-06-01'
+foreach predicate n>100 (s)LIKE's1%' dt=DATE'2020-03-01' (j)ISNULL st.a=77 (b)AND(d<500) m<10 ts>TIMESTAMP'2020-06-01' st.a>4990 (st.a)IN(1,2,3,4999) (st.a)ISNULL (st.a)NOTNULL j2->>'name'='n5' j2->>'$.nested.deep'='d3' (j2->>'missing')ISNULL (j2->>'$.nested.deep')IN('d1','d2') (j2->>'name')NOTNULL j2->>'num'='3' (j2->>'name'>'n4')AND(st.a<4000)
 
 query I
 SELECT count(*) FROM (
@@ -85,6 +86,11 @@ SELECT count(*) FROM (
 0
 
 endloop
+
+query II
+EXPLAIN SELECT id FROM read_ndjson('{TEMP_DIR}/direct.ndjson', columns = src_columns()) WHERE j2->>'name' = 'n5' AND st.a = 5
+----
+physical_plan	<!REGEX>:.*FILTER.*
 
 statement ok
 COPY (

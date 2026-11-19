@@ -8,6 +8,12 @@
 #include "duckdb/common/vector/string_vector.hpp"
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/parallel/task_scheduler.hpp"
+#include "duckdb/planner/expression/bound_comparison_expression.hpp"
+#include "duckdb/planner/expression/bound_conjunction_expression.hpp"
+#include "duckdb/planner/expression/bound_constant_expression.hpp"
+#include "duckdb/planner/expression/bound_function_expression.hpp"
+#include "duckdb/planner/expression/bound_operator_expression.hpp"
+#include "duckdb/planner/filter/expression_filter.hpp"
 #include "duckdb/storage/buffer_manager.hpp"
 #include "duckdb/storage/caching_mode.hpp"
 #include "duckdb/storage/table/column_segment.hpp"
@@ -294,6 +300,235 @@ bool DirectNumber(simdjson::ondemand::value &value, simdjson::ondemand::json_typ
 	}
 }
 
+bool ParseJsonPath(const string &text, vector<string> &path) {
+	if (text.empty() || text[0] == '/') {
+		return false;
+	}
+	if (text[0] != '$') {
+		if (text.find('"') != string::npos) {
+			return false;
+		}
+		path.push_back(text);
+		return true;
+	}
+	idx_t pos = 1;
+	while (pos < text.size()) {
+		if (text[pos] != '.' || pos + 1 >= text.size()) {
+			return false;
+		}
+		pos++;
+		string key;
+		if (text[pos] == '"') {
+			const auto close = text.find('"', pos + 1);
+			if (close == string::npos || text.find('\\', pos + 1) < close) {
+				return false;
+			}
+			key = text.substr(pos + 1, close - pos - 1);
+			pos = close + 1;
+		} else {
+			const auto start = pos;
+			while (pos < text.size() && text[pos] != '.' && text[pos] != '[' && text[pos] != '*' && text[pos] != '"') {
+				pos++;
+			}
+			if (pos < text.size() && text[pos] != '.') {
+				return false;
+			}
+			key = text.substr(start, pos - start);
+		}
+		if (key.empty()) {
+			return false;
+		}
+		path.push_back(std::move(key));
+	}
+	return !path.empty();
+}
+
+bool PathOf(const Expression &expr, vector<string> &path, bool &text) {
+	if (ExpressionFilter::IsSimpleFilterColumnRef(expr)) {
+		return expr.GetReturnType().id() == LogicalTypeId::STRUCT;
+	}
+	if (expr.GetExpressionClass() != ExpressionClass::BOUND_FUNCTION) {
+		return false;
+	}
+	auto &function = expr.Cast<BoundFunctionExpression>();
+	auto &children = function.GetChildren();
+	if (children.size() != 2 || children[1]->GetExpressionClass() != ExpressionClass::BOUND_CONSTANT) {
+		return false;
+	}
+	auto &key = children[1]->Cast<BoundConstantExpression>().GetValue();
+	if (key.IsNull() || key.type().id() != LogicalTypeId::VARCHAR) {
+		return false;
+	}
+	auto &name = function.Function().GetName();
+	if (name == "struct_extract") {
+		if (!PathOf(*children[0], path, text) || text) {
+			return false;
+		}
+		path.push_back(StringValue::Get(key));
+		return true;
+	}
+	if (name == "json_extract_string" || name == "->>" || name == "json_extract_path_text") {
+		if (!ExpressionFilter::IsSimpleFilterColumnRef(*children[0]) || !children[0]->GetReturnType().IsJSONType()) {
+			return false;
+		}
+		text = true;
+		return ParseJsonPath(StringValue::Get(key), path);
+	}
+	return false;
+}
+
+LogicalTypeId WalkLeaf(const LogicalType &type) {
+	if (type.IsJSONType()) {
+		return LogicalTypeId::INVALID;
+	}
+	switch (type.id()) {
+	case LogicalTypeId::TINYINT:
+	case LogicalTypeId::SMALLINT:
+	case LogicalTypeId::INTEGER:
+	case LogicalTypeId::BIGINT:
+	case LogicalTypeId::UTINYINT:
+	case LogicalTypeId::USMALLINT:
+	case LogicalTypeId::UINTEGER:
+		return LogicalTypeId::BIGINT;
+	case LogicalTypeId::BOOLEAN:
+	case LogicalTypeId::DOUBLE:
+	case LogicalTypeId::VARCHAR:
+		return type.id();
+	default:
+		return LogicalTypeId::INVALID;
+	}
+}
+
+bool WalkLeafType(const LogicalType &type) {
+	return WalkLeaf(type) != LogicalTypeId::INVALID;
+}
+
+bool FinishWalk(JsonPathPredicate &predicate, const LogicalType &leaf_type) {
+	predicate.leaf = WalkLeaf(leaf_type);
+	if (predicate.leaf == LogicalTypeId::INVALID) {
+		return false;
+	}
+	if (predicate.leaf == LogicalTypeId::BIGINT) {
+		predicate.lower = Value::MinimumValue(leaf_type).GetValue<int64_t>();
+		predicate.upper = Value::MaximumValue(leaf_type).GetValue<int64_t>();
+	}
+	for (auto &constant : predicate.constants) {
+		if (constant.IsNull()) {
+			continue;
+		}
+		string error;
+		auto converted = constant.DefaultTryCastAs(LogicalType(predicate.leaf), &error);
+		if (!converted) {
+			return false;
+		}
+		constant = std::move(*converted);
+	}
+	return true;
+}
+
+bool CollectWalk(const Expression &expr, idx_t column, vector<JsonPathPredicate> &out) {
+	switch (expr.GetExpressionClass()) {
+	case ExpressionClass::BOUND_CONJUNCTION: {
+		if (expr.GetExpressionType() != ExpressionType::CONJUNCTION_AND) {
+			return false;
+		}
+		bool any = false;
+		for (auto &child : expr.Cast<BoundConjunctionExpression>().GetChildren()) {
+			any = CollectWalk(*child, column, out) || any;
+		}
+		return any;
+	}
+	case ExpressionClass::BOUND_OPERATOR: {
+		auto &op = expr.Cast<BoundOperatorExpression>();
+		auto &children = op.GetChildren();
+		const auto type = op.GetExpressionType();
+		JsonPathPredicate predicate {column, {}, false, JsonPathCheck::IS_NULL};
+		if (children.empty() || !PathOf(*children[0], predicate.path, predicate.text) || predicate.path.empty() ||
+		    !WalkLeafType(children[0]->GetReturnType())) {
+			return false;
+		}
+		if (type == ExpressionType::OPERATOR_IS_NULL || type == ExpressionType::OPERATOR_IS_NOT_NULL) {
+			predicate.check =
+			    type == ExpressionType::OPERATOR_IS_NULL ? JsonPathCheck::IS_NULL : JsonPathCheck::IS_NOT_NULL;
+		} else if (type == ExpressionType::COMPARE_IN) {
+			predicate.check = JsonPathCheck::IN_LIST;
+			for (idx_t i = 1; i < children.size(); i++) {
+				if (children[i]->GetExpressionClass() != ExpressionClass::BOUND_CONSTANT) {
+					return false;
+				}
+				predicate.constants.push_back(children[i]->Cast<BoundConstantExpression>().GetValue());
+			}
+		} else {
+			return false;
+		}
+		if (!FinishWalk(predicate, children[0]->GetReturnType())) {
+			return false;
+		}
+		out.push_back(std::move(predicate));
+		return true;
+	}
+	case ExpressionClass::BOUND_FUNCTION: {
+		auto &function = expr.Cast<BoundFunctionExpression>();
+		auto type = function.GetExpressionType();
+		if (!BoundComparisonExpression::IsComparison(type) || type == ExpressionType::COMPARE_DISTINCT_FROM ||
+		    type == ExpressionType::COMPARE_NOT_DISTINCT_FROM) {
+			return false;
+		}
+		auto &children = function.GetChildren();
+		idx_t side = 0;
+		if (children[0]->GetExpressionClass() == ExpressionClass::BOUND_CONSTANT) {
+			side = 1;
+			type = FlipComparisonExpression(type);
+		}
+		if (children[1 - side]->GetExpressionClass() != ExpressionClass::BOUND_CONSTANT ||
+		    !WalkLeafType(children[side]->GetReturnType())) {
+			return false;
+		}
+		JsonPathPredicate predicate {column, {}, false, JsonPathCheck::COMPARE, type};
+		if (!PathOf(*children[side], predicate.path, predicate.text) || predicate.path.empty()) {
+			return false;
+		}
+		predicate.constants.push_back(children[1 - side]->Cast<BoundConstantExpression>().GetValue());
+		if (!FinishWalk(predicate, children[side]->GetReturnType())) {
+			return false;
+		}
+		out.push_back(std::move(predicate));
+		return true;
+	}
+	default:
+		return false;
+	}
+}
+
+bool CompareLeaf(const Value &leaf, const JsonPathPredicate &predicate) {
+	if (predicate.check == JsonPathCheck::IN_LIST) {
+		for (auto &constant : predicate.constants) {
+			if (!constant.IsNull() && leaf == constant) {
+				return true;
+			}
+		}
+		return false;
+	}
+	auto &constant = predicate.constants[0];
+	if (constant.IsNull()) {
+		return false;
+	}
+	switch (predicate.compare) {
+	case ExpressionType::COMPARE_EQUAL:
+		return leaf == constant;
+	case ExpressionType::COMPARE_NOTEQUAL:
+		return leaf != constant;
+	case ExpressionType::COMPARE_LESSTHAN:
+		return leaf < constant;
+	case ExpressionType::COMPARE_LESSTHANOREQUALTO:
+		return leaf <= constant;
+	case ExpressionType::COMPARE_GREATERTHAN:
+		return leaf > constant;
+	default:
+		return leaf >= constant;
+	}
+}
+
 template <class T>
 bool DirectDecimal(simdjson::ondemand::value &value, simdjson::ondemand::json_type type, CastParameters &parameters,
                    uint8_t width, uint8_t scale, T &result, bool &cast) {
@@ -541,6 +776,29 @@ void JsonScanGlobal::PlanDirect() {
 		keys.emplace(columns.names[i], i);
 		folded_keys.emplace(columns.names[i], i);
 	}
+	walked.assign(column_count, false);
+	for (auto &filter : columns.filters) {
+		if (!filter.name.IsValid() || kinds[filter.name.GetIndex()] != JsonDirectKind::TREE) {
+			continue;
+		}
+		auto &expression_filter = ExpressionFilter::GetExpressionFilter(filter.filter.get(), "read_json");
+		if (CollectWalk(*expression_filter.expr, filter.name.GetIndex(), walk)) {
+			walked[filter.name.GetIndex()] = true;
+		}
+	}
+}
+
+bool JsonWalkPushdown(const Expression &expr) {
+	vector<JsonPathPredicate> predicates;
+	if (!CollectWalk(expr, 0, predicates)) {
+		return false;
+	}
+	for (auto &predicate : predicates) {
+		if (!predicate.text) {
+			return false;
+		}
+	}
+	return expr.GetExpressionClass() != ExpressionClass::BOUND_CONJUNCTION;
 }
 
 void JsonScanGlobal::Detect() {
@@ -723,6 +981,9 @@ JsonScan::JsonScan(JsonScanGlobal &global_p)
 	if (global.direct) {
 		direct_parser.allocator = &direct_memory.callbacks;
 		direct_parser.allow_trailing_commas = HasFlag(global.read_flags, JSONReadFlags::ALLOW_TRAILING_COMMAS);
+		walk_parser.allocator = &direct_memory.callbacks;
+		walk_parser.allow_trailing_commas = direct_parser.allow_trailing_commas;
+		candidates.Initialize(STANDARD_VECTOR_SIZE);
 		const idx_t column_count = global.columns.names.size();
 		direct_raw.resize(column_count);
 		direct_found.resize(column_count);
@@ -1128,10 +1389,15 @@ void JsonScan::FillRowNumbers(DataChunk &output, idx_t rows) {
 	}
 }
 
-idx_t JsonScan::ApplyFilters(DataChunk &output, idx_t rows, bool filtered_columns_only) {
+idx_t JsonScan::ApplyFilters(DataChunk &output, idx_t rows, bool filtered_columns_only, optional_idx candidate_count) {
 	auto &filters = global.columns.filters;
 	idx_t approved = rows;
-	filter_selection.Initialize(nullptr);
+	if (candidate_count.IsValid() && candidate_count.GetIndex() != rows) {
+		filter_selection.Initialize(candidates);
+		approved = candidate_count.GetIndex();
+	} else {
+		filter_selection.Initialize(nullptr);
+	}
 	for (idx_t i = 0; i < filters.size() && approved > 0; i++) {
 		auto &vector = output.data[filters[i].output_column];
 		FlatVector::SetSize(vector, count_t(rows));
@@ -1359,8 +1625,181 @@ bool JsonScan::DirectValue(idx_t column, simdjson::ondemand::value &value, Vecto
 	return true;
 }
 
-bool JsonScan::DirectRecord(idx_t record, idx_t row, JsonDirectPass pass, const vector<Vector *> &vectors) {
+void JsonScan::NullRow(idx_t row, JsonDirectPass pass, const vector<Vector *> &vectors) {
+	for (idx_t column = 0; column < vectors.size(); column++) {
+		const bool filtered = global.filtered[column];
+		if (!vectors[column] || (pass == JsonDirectPass::FILTERS && !filtered) ||
+		    (pass == JsonDirectPass::OTHERS && filtered)) {
+			continue;
+		}
+		const auto kind = global.kinds[column];
+		if (kind == JsonDirectKind::TREE) {
+			direct_raw[column][row] = std::string_view();
+		} else {
+			FlatVector::ValidityMutable(kind == JsonDirectKind::STRING ? direct_strings[column] : *vectors[column])
+			    .SetInvalid(row);
+		}
+	}
+}
+
+bool JsonScan::WalkRejects(idx_t column, std::string_view raw) {
 	namespace ondemand = simdjson::ondemand;
+	const char *const end = data + size + JSON_PADDING;
+	for (auto &predicate : global.walk) {
+		if (predicate.column != column) {
+			continue;
+		}
+		std::string_view current = raw;
+		bool null = false;
+		for (auto &key : predicate.path) {
+			ondemand::document document;
+			if (walk_parser.iterate(current.data(), current.size(), NumericCast<idx_t>(end - current.data()))
+			        .get(document)) {
+				return false;
+			}
+			ondemand::json_type type;
+			if (document.type().get(type)) {
+				return false;
+			}
+			if (type == ondemand::json_type::null) {
+				null = true;
+				break;
+			}
+			if (type != ondemand::json_type::object) {
+				if (!predicate.text) {
+					return false;
+				}
+				null = true;
+				break;
+			}
+			ondemand::object object;
+			if (document.get_object().get(object)) {
+				return false;
+			}
+			idx_t exact = 0;
+			idx_t folded = 0;
+			std::string_view exact_raw;
+			std::string_view folded_raw;
+			for (auto field_result : object) {
+				ondemand::field field;
+				if (std::move(field_result).get(field)) {
+					return false;
+				}
+				const auto name = field.escaped_key();
+				if (memchr(name.data(), '\\', name.size())) {
+					return false;
+				}
+				const bool is_exact = name == key;
+				const bool is_folded = !is_exact && !predicate.text && StringUtil::CIEquals(name, key);
+				if (!is_exact && !is_folded) {
+					continue;
+				}
+				std::string_view value_raw;
+				auto value = std::move(field).value();
+				if (value.raw_json().get(value_raw)) {
+					return false;
+				}
+				if (is_exact) {
+					exact++;
+					exact_raw = TrimToken(value_raw);
+				} else {
+					folded++;
+					folded_raw = TrimToken(value_raw);
+				}
+			}
+			if (exact > 1 || (exact == 0 && folded > 1)) {
+				return false;
+			}
+			if (exact == 0 && folded == 0) {
+				null = true;
+				break;
+			}
+			current = exact == 1 ? exact_raw : folded_raw;
+		}
+		Value leaf;
+		if (!null) {
+			ondemand::document document;
+			if (walk_parser.iterate(current.data(), current.size(), NumericCast<idx_t>(end - current.data()))
+			        .get(document)) {
+				return false;
+			}
+			ondemand::json_type type;
+			if (document.type().get(type)) {
+				return false;
+			}
+			switch (type) {
+			case ondemand::json_type::null: {
+				bool is_null = false;
+				if (document.is_null().get(is_null) || !is_null) {
+					return false;
+				}
+				null = true;
+				break;
+			}
+			case ondemand::json_type::string: {
+				std::string_view text;
+				if (predicate.leaf != LogicalTypeId::VARCHAR || document.get_string().get(text)) {
+					return false;
+				}
+				leaf = Value(string(text));
+				break;
+			}
+			case ondemand::json_type::boolean: {
+				bool boolean;
+				if (predicate.leaf != LogicalTypeId::BOOLEAN || document.get_bool().get(boolean)) {
+					return false;
+				}
+				leaf = Value::BOOLEAN(boolean);
+				break;
+			}
+			case ondemand::json_type::number: {
+				ondemand::number number;
+				if (document.get_number().get(number)) {
+					return false;
+				}
+				const auto number_type = number.get_number_type();
+				if (predicate.leaf == LogicalTypeId::DOUBLE) {
+					leaf = Value::DOUBLE(number.as_double());
+				} else if (predicate.leaf == LogicalTypeId::BIGINT &&
+				           number_type == ondemand::number_type::signed_integer) {
+					const auto integer = number.get_int64();
+					if (integer < predicate.lower || integer > predicate.upper) {
+						return false;
+					}
+					leaf = Value::BIGINT(integer);
+				} else {
+					return false;
+				}
+				break;
+			}
+			default:
+				return false;
+			}
+		}
+		switch (predicate.check) {
+		case JsonPathCheck::IS_NULL:
+			if (!null) {
+				return true;
+			}
+			break;
+		case JsonPathCheck::IS_NOT_NULL:
+			if (null) {
+				return true;
+			}
+			break;
+		default:
+			if (null || !CompareLeaf(leaf, predicate)) {
+				return true;
+			}
+			break;
+		}
+	}
+	return false;
+}
+
+JsonRecordResult JsonScan::DirectRecord(idx_t record, idx_t row, JsonDirectPass pass, const vector<Vector *> &vectors) {
+	namespace ondemand = simdjson::ondemand;
+	constexpr auto FALLBACK = JsonRecordResult::FALLBACK;
 	const idx_t column_count = vectors.size();
 	const idx_t begin = starts[record];
 	ondemand::document document;
@@ -1371,20 +1810,22 @@ bool JsonScan::DirectRecord(idx_t record, idx_t row, JsonDirectPass pass, const 
 		error.Throw();
 	}
 	if (code) {
-		return false;
+		return FALLBACK;
 	}
 	ondemand::object object;
 	if (document.get_object().get(object)) {
-		return false;
+		return FALLBACK;
 	}
 	memset(direct_found.data(), 0, column_count);
 	const bool unknown_error = pass != JsonDirectPass::OTHERS && direct_unknown_error;
 	const bool duplicate_error = pass != JsonDirectPass::OTHERS && direct_duplicate_error;
+	const bool walking = pass == JsonDirectPass::FILTERS && !global.walk.empty();
+	bool rejected = false;
 	idx_t position = 0;
 	for (auto field_result : object) {
 		ondemand::field field;
 		if (std::move(field_result).get(field)) {
-			return false;
+			return FALLBACK;
 		}
 		const auto key = field.escaped_key();
 		if (position == key_hints.size()) {
@@ -1394,7 +1835,7 @@ bool JsonScan::DirectRecord(idx_t record, idx_t row, JsonDirectPass pass, const 
 		if (hint.strength == 0 || hint.key.size() != key.size() ||
 		    memcmp(hint.key.data(), key.data(), key.size()) != 0) {
 			if (memchr(key.data(), '\\', key.size())) {
-				return false;
+				return FALLBACK;
 			}
 			hint.key.assign(key.data(), key.size());
 			hint.column = DConstants::INVALID_INDEX;
@@ -1413,7 +1854,7 @@ bool JsonScan::DirectRecord(idx_t record, idx_t row, JsonDirectPass pass, const 
 		}
 		if (hint.column == DConstants::INVALID_INDEX) {
 			if (unknown_error) {
-				return false;
+				return FALLBACK;
 			}
 			continue;
 		}
@@ -1421,7 +1862,7 @@ bool JsonScan::DirectRecord(idx_t record, idx_t row, JsonDirectPass pass, const 
 		const uint8_t strength = hint.strength;
 		if (direct_found[column] == strength) {
 			if (duplicate_error) {
-				return false;
+				return FALLBACK;
 			}
 			continue;
 		}
@@ -1430,19 +1871,31 @@ bool JsonScan::DirectRecord(idx_t record, idx_t row, JsonDirectPass pass, const 
 		}
 		direct_found[column] = strength;
 		const bool filtered = global.filtered[column];
-		if (!vectors[column] || (pass == JsonDirectPass::FILTERS && !filtered) ||
+		if (rejected || !vectors[column] || (pass == JsonDirectPass::FILTERS && !filtered) ||
 		    (pass == JsonDirectPass::OTHERS && filtered)) {
 			continue;
 		}
 		auto value = std::move(field).value();
+		if (walking && global.walked[column]) {
+			std::string_view raw;
+			if (value.raw_json().get(raw)) {
+				return FALLBACK;
+			}
+			if (WalkRejects(column, TrimToken(raw))) {
+				rejected = true;
+			} else {
+				direct_raw[column][row] = raw;
+			}
+			continue;
+		}
 		auto &target = global.kinds[column] == JsonDirectKind::STRING ? direct_strings[column] : *vectors[column];
 		FlatVector::ValidityMutable(target).SetValid(row);
 		if (!DirectValue(column, value, *vectors[column], row)) {
-			return false;
+			return FALLBACK;
 		}
 	}
 	if (!document.at_end()) {
-		return false;
+		return FALLBACK;
 	}
 	for (idx_t column = 0; column < column_count; column++) {
 		const bool filtered = global.filtered[column];
@@ -1451,7 +1904,7 @@ bool JsonScan::DirectRecord(idx_t record, idx_t row, JsonDirectPass pass, const 
 			continue;
 		}
 		if (direct_missing_error && pass != JsonDirectPass::OTHERS) {
-			return false;
+			return FALLBACK;
 		}
 		const auto kind = global.kinds[column];
 		if (kind == JsonDirectKind::TREE) {
@@ -1461,7 +1914,11 @@ bool JsonScan::DirectRecord(idx_t record, idx_t row, JsonDirectPass pass, const 
 			FlatVector::ValidityMutable(target).SetInvalid(row);
 		}
 	}
-	return true;
+	if (rejected) {
+		NullRow(row, pass, vectors);
+		return JsonRecordResult::REJECTED;
+	}
+	return JsonRecordResult::DECODED;
 }
 
 bool JsonScan::FinishDirect(idx_t rows, JsonDirectPass pass, const vector<Vector *> &vectors) {
@@ -1531,7 +1988,7 @@ bool JsonScan::DecodeDirect(DataChunk &output, idx_t &rows) {
 	}
 	if (!late) {
 		for (idx_t row = 0; row < rows; row++) {
-			if (!DirectRecord(row, row, JsonDirectPass::ALL, vectors)) {
+			if (DirectRecord(row, row, JsonDirectPass::ALL, vectors) != JsonRecordResult::DECODED) {
 				return false;
 			}
 		}
@@ -1545,18 +2002,23 @@ bool JsonScan::DecodeDirect(DataChunk &output, idx_t &rows) {
 		output.SetChildCardinality(rows);
 		return true;
 	}
+	idx_t candidate_count = 0;
 	for (idx_t row = 0; row < rows; row++) {
-		if (!DirectRecord(row, row, JsonDirectPass::FILTERS, vectors)) {
+		const auto result = DirectRecord(row, row, JsonDirectPass::FILTERS, vectors);
+		if (result == JsonRecordResult::FALLBACK) {
 			return false;
+		}
+		if (result == JsonRecordResult::DECODED) {
+			candidates.set_index(candidate_count++, row);
 		}
 	}
 	if (!FinishDirect(rows, JsonDirectPass::FILTERS, vectors)) {
 		return false;
 	}
-	const auto approved = ApplyFilters(output, rows, true);
+	const auto approved = ApplyFilters(output, rows, true, candidate_count);
 	for (idx_t i = 0; i < approved; i++) {
 		const auto record = approved == rows ? i : filter_selection.get_index(i);
-		if (!DirectRecord(record, i, JsonDirectPass::OTHERS, vectors)) {
+		if (DirectRecord(record, i, JsonDirectPass::OTHERS, vectors) != JsonRecordResult::DECODED) {
 			return false;
 		}
 	}

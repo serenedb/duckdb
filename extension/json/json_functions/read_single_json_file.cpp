@@ -323,6 +323,10 @@ static virtual_column_map_t ReadSingleJSONFileGetVirtualColumns(ClientContext &,
 
 namespace {
 
+bool ReadSingleJSONFilePushdownExpression(ClientContext &, const LogicalGet &, Expression &expr) {
+	return JsonWalkPushdown(expr);
+}
+
 void ReadSingleJSONFileLookup(ClientContext &context, TableFunctionInput &input, DataChunk &output) {
 	auto &lstate = input.local_state->Cast<ReadSingleJSONFileLocalState>();
 	D_ASSERT(input.pk_lookups.size() <= STANDARD_VECTOR_SIZE);
@@ -357,6 +361,7 @@ TableFunction JSONFunctions::GetReadSingleJSONFileTableFunction(shared_ptr<JSONS
 	}
 	table_function.get_virtual_columns = ReadSingleJSONFileGetVirtualColumns;
 	table_function.table_scan_progress = ReadSingleJSONFileProgress;
+	table_function.pushdown_expression = ReadSingleJSONFilePushdownExpression;
 	table_function.cardinality = ReadSingleJSONFileCardinality;
 	table_function.function_info = std::move(function_info);
 	return table_function;

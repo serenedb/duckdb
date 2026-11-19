@@ -33,6 +33,22 @@ struct JsonKeyHint {
 	uint8_t strength = 0;
 };
 
+enum class JsonPathCheck : uint8_t { COMPARE, IN_LIST, IS_NULL, IS_NOT_NULL };
+
+struct JsonPathPredicate {
+	idx_t column;
+	vector<string> path;
+	bool text;
+	JsonPathCheck check;
+	ExpressionType compare = ExpressionType::INVALID;
+	vector<Value> constants;
+	LogicalTypeId leaf = LogicalTypeId::INVALID;
+	int64_t lower = 0;
+	int64_t upper = 0;
+};
+
+enum class JsonRecordResult : uint8_t { DECODED, REJECTED, FALLBACK };
+
 struct JsonParserMemory {
 	explicit JsonParserMemory(Allocator &allocator_p) : allocator(allocator_p), callbacks {Allocate, Deallocate, this} {
 	}
@@ -102,6 +118,8 @@ public:
 	bool direct = false;
 	vector<JsonDirectKind> kinds;
 	vector<bool> filtered;
+	vector<JsonPathPredicate> walk;
+	vector<bool> walked;
 	unordered_map<string, idx_t> keys;
 	case_insensitive_map_t<idx_t> folded_keys;
 
@@ -148,12 +166,15 @@ private:
 	bool Parse(idx_t index, idx_t record, const char *data, idx_t size, idx_t readable);
 	bool ParseBatch();
 	bool DecodeDirect(DataChunk &output, idx_t &rows);
-	bool DirectRecord(idx_t record, idx_t row, JsonDirectPass pass, const vector<Vector *> &vectors);
+	JsonRecordResult DirectRecord(idx_t record, idx_t row, JsonDirectPass pass, const vector<Vector *> &vectors);
+	bool WalkRejects(idx_t column, std::string_view raw);
+	void NullRow(idx_t row, JsonDirectPass pass, const vector<Vector *> &vectors);
 	bool DirectValue(idx_t column, simdjson::ondemand::value &value, Vector &vector, idx_t row);
 	bool FinishDirect(idx_t rows, JsonDirectPass pass, const vector<Vector *> &vectors);
 	idx_t Decode(DataChunk &output, idx_t count);
 	idx_t DecodeObjects(DataChunk &output, idx_t count);
-	idx_t ApplyFilters(DataChunk &output, idx_t count, bool filtered_columns_only);
+	idx_t ApplyFilters(DataChunk &output, idx_t count, bool filtered_columns_only,
+	                   optional_idx candidate_count = optional_idx());
 	void FillRowNumbers(DataChunk &output, idx_t count);
 	void ParseError(idx_t record, const JSONParseError &error, const string &extra);
 	void TransformError(idx_t record, const string &message);
@@ -197,6 +218,8 @@ private:
 	const char *found_records[STANDARD_VECTOR_SIZE];
 	JsonParserMemory direct_memory;
 	simdjson::ondemand::parser direct_parser;
+	simdjson::ondemand::parser walk_parser;
+	SelectionVector candidates;
 	vector<Vector> direct_strings;
 	vector<vector<std::string_view>> direct_raw;
 	vector<uint8_t> direct_found;
@@ -207,5 +230,6 @@ private:
 };
 
 JSONFormat JsonDetectFormat(const char *data, idx_t size, JSONTreeParser &parser, JSONRecordType &record_type);
+bool JsonWalkPushdown(const Expression &expr);
 
 } // namespace duckdb
