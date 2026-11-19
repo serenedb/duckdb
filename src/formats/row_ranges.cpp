@@ -136,6 +136,20 @@ RowRanges::RowRanges(const RowLexer &lexer_p, RowSource &source_p, idx_t start_p
                      bool file_start_p)
     : lexer(lexer_p), source(source_p), start(start_p), size(size_p), stream(size_p == NumericLimits<idx_t>::Maximum()),
       file_start(file_start_p) {
+	Layout(range_bytes_p);
+}
+
+void RowRanges::Reset(idx_t size_p, idx_t range_bytes_p) {
+	D_ASSERT(!stream && size_p != NumericLimits<idx_t>::Maximum());
+	const absl::MutexLock guard(&lock);
+	size = size_p;
+	next_range = 0;
+	finished_ranges = 0;
+	resolved = 0;
+	Layout(range_bytes_p);
+}
+
+void RowRanges::Layout(idx_t range_bytes_p) {
 	if (stream || range_bytes_p == DConstants::INVALID_INDEX) {
 		range_bytes = size - MinValue(start, size);
 		range_count = 1;
@@ -144,7 +158,7 @@ RowRanges::RowRanges(const RowLexer &lexer_p, RowSource &source_p, idx_t start_p
 		const idx_t data_size = size - MinValue(start, size);
 		range_count = MaxValue<idx_t>((data_size + range_bytes - 1) / range_bytes, 1);
 	}
-	transfers.resize(range_count);
+	transfers.assign(range_count, CsvRangeTransfer());
 	computing.assign(range_count, false);
 	starts.assign(range_count + 1, CsvRangeStart());
 	starts[0].line_end = start;
