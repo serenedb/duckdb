@@ -598,6 +598,22 @@ bool StoreUserDefinedParameter(const Identifier &option) {
 }
 
 void CSVReaderOptions::Verify(MultiFileOptions &file_options) {
+	const auto &dialect = dialect_options.state_machine_options;
+	if (dialect.delimiter.GetValue().find_first_of("\r\n") != string::npos) {
+		throw InvalidInputException("The delimiter option cannot contain a newline character.");
+	}
+	const auto newline = [](char value) {
+		return value == '\n' || value == '\r';
+	};
+	if (newline(dialect.quote.GetValue())) {
+		throw InvalidInputException("The quote option cannot be a newline character.");
+	}
+	if (newline(dialect.escape.GetValue())) {
+		throw InvalidInputException("The escape option cannot be a newline character.");
+	}
+	if (newline(dialect.comment.GetValue())) {
+		throw InvalidInputException("The comment option cannot be a newline character.");
+	}
 	if (rejects_table_name.IsSetByUser() && !store_rejects.GetValue() && store_rejects.IsSetByUser()) {
 		throw BinderException("REJECTS_TABLE option is only supported when store_rejects is not manually set to false");
 	}
