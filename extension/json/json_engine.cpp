@@ -1060,7 +1060,7 @@ void JsonScan::Load() {
 		const idx_t begin = global.RangeBegin(unit);
 		const idx_t end = global.RangeEnd(unit);
 		const idx_t read_begin = begin == 0 ? 0 : begin - 1;
-		EnsureCapacity(end - read_begin);
+		EnsureCapacity(end - read_begin + JSON_LOOKUP_BYTES);
 		size = source.ReadAt(data, end - read_begin, read_begin, thread_handle);
 		memset(data + size, 0, JSON_PADDING);
 		file_offset = read_begin;

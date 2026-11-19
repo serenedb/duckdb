@@ -643,6 +643,61 @@ optional_idx JSONTreeParser::ParseAppend(const char *data, idx_t len, idx_t read
 	return ParseInto(*state, flags, data, len, readable, true, error);
 }
 
+static bool IsJSONDigit(char c) {
+	return c >= '0' && c <= '9';
+}
+
+static bool JSONNumberToken(std::string_view token) {
+	idx_t end = token.size();
+	while (end > 0 &&
+	       (token[end - 1] == ' ' || token[end - 1] == '\t' || token[end - 1] == '\n' || token[end - 1] == '\r')) {
+		end--;
+	}
+	idx_t pos = 0;
+	if (pos < end && token[pos] == '-') {
+		pos++;
+	}
+	if (pos == end) {
+		return false;
+	}
+	if (token[pos] == '0') {
+		pos++;
+	} else if (token[pos] >= '1' && token[pos] <= '9') {
+		while (pos < end && IsJSONDigit(token[pos])) {
+			pos++;
+		}
+	} else {
+		return false;
+	}
+	if (pos < end && token[pos] == '.') {
+		const idx_t digits = ++pos;
+		while (pos < end && IsJSONDigit(token[pos])) {
+			pos++;
+		}
+		if (pos == digits) {
+			return false;
+		}
+	}
+	if (pos < end && (token[pos] == 'e' || token[pos] == 'E')) {
+		pos++;
+		if (pos < end && (token[pos] == '+' || token[pos] == '-')) {
+			pos++;
+		}
+		const idx_t digits = pos;
+		while (pos < end && IsJSONDigit(token[pos])) {
+			pos++;
+		}
+		if (pos == digits) {
+			return false;
+		}
+	}
+	return pos == end;
+}
+
+static bool HasBackslash(std::string_view text) {
+	return memchr(text.data(), '\\', text.size()) != nullptr;
+}
+
 template <class VALUE>
 static bool StartJSONCheck(VALUE &value, vector<JSONCheckFrame> &frames) {
 	ondemand::json_type type;
@@ -669,10 +724,20 @@ static bool StartJSONCheck(VALUE &value, vector<JSONCheckFrame> &frames) {
 		return true;
 	}
 	case ondemand::json_type::string: {
+		if constexpr (std::is_same_v<VALUE, ondemand::value>) {
+			if (!HasBackslash(value.raw_json_token())) {
+				return true;
+			}
+		}
 		std::string_view text;
 		return !value.get_string().get(text);
 	}
 	case ondemand::json_type::number: {
+		if constexpr (std::is_same_v<VALUE, ondemand::value>) {
+			if (JSONNumberToken(value.raw_json_token())) {
+				return true;
+			}
+		}
 		ondemand::number number;
 		return !value.get_number().get(number);
 	}
@@ -718,7 +783,7 @@ static bool CheckJSONDocument(ondemand::document &document, vector<JSONCheckFram
 		if (frame.object) {
 			ondemand::field field;
 			std::string_view key;
-			if ((*frame.member).get(field) || field.unescaped_key().get(key) ||
+			if ((*frame.member).get(field) || (HasBackslash(field.escaped_key()) && field.unescaped_key().get(key)) ||
 			    !StartJSONCheck(field.value(), frames)) {
 				return false;
 			}

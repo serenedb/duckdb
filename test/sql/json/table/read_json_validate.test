@@ -1,0 +1,45 @@
+# name: test/sql/json/table/read_json_validate.test
+# description: counting records validates every key, string and number, from their raw text where it settles them and through the parser otherwise
+# group: [table]
+
+require json
+
+statement ok
+COPY (
+	SELECT line FROM (VALUES
+		(1, '{"s": "plain", "e": "a\"b", "u": "é", "k\"ey": 1, "b": "x\\y"}'),
+		(2, '{"n": [-0, 0, 7, 1.5e-3, 1E+2, -12.75, 0.0e0, 123456789012345678901234567890, 1e999]}'),
+		(3, '{"nan": NaN, "inf": Infinity, "ninf": -Infinity, "list": [1, 2,]}'),
+		(4, '{"t": true, "f": false, "z": null, "o": {"a": [1, "x"]}}')) t(i, line)
+	ORDER BY i
+) TO '{TEST_DIR}/validate_tokens.ndjson' (FORMAT csv, HEADER false, QUOTE '', ESCAPE '');
+
+query I
+SELECT count(*) FROM read_ndjson('{TEST_DIR}/validate_tokens.ndjson', columns := {s: 'VARCHAR'});
+----
+4
+
+query I
+SELECT count(*) FROM read_json_objects('{TEST_DIR}/validate_tokens.ndjson', format := 'newline_delimited');
+----
+4
+
+statement error
+SELECT count(*) FROM read_ndjson('{TEST_DIR}/validate_tokens.ndjson', columns := {s: 'VARCHAR'}, strict := true);
+----
+<REGEX>:.*Malformed JSON.*
+
+foreach bad {"a":"\x"} {"a\q":1} {"a":01} {"a":1.} {"a":-} {"a":.5} {"a":1e} {"a":1e+} {"a":"x"1}
+
+statement ok
+COPY (
+	SELECT line FROM (VALUES (1, '{"a": 1}'), (2, '${bad}'), (3, '{"a": 2}')) t(i, line)
+	ORDER BY i
+) TO '{TEST_DIR}/validate_bad.ndjson' (FORMAT csv, HEADER false, QUOTE '', ESCAPE '');
+
+statement error
+SELECT count(*) FROM read_ndjson('{TEST_DIR}/validate_bad.ndjson', columns := {a: 'VARCHAR'});
+----
+<REGEX>:.*Malformed JSON.*line 2.*
+
+endloop
