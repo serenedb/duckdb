@@ -209,7 +209,7 @@ const char *UnitName(JSONFormat format) {
 }
 
 JsonDirectKind DirectKind(const LogicalType &type, const ColumnIndex &index) {
-	if (index.ChildIndexCount() != 0 || type.IsJSONType()) {
+	if (index.ChildIndexCount() != 0 || type.HasAlias()) {
 		return JsonDirectKind::TREE;
 	}
 	if (JSONTransform::ParsesFromString(type)) {
@@ -971,6 +971,7 @@ JsonScan::JsonScan(JsonScanGlobal &global_p)
     : global(global_p), options(global_p.options), arena(BufferAllocator::Get(global_p.context)),
       parser(global_p.read_flags, BufferAllocator::Get(global_p.context)), writer(JSONCommon::WRITE_FLAG),
       transform_options(global_p.columns.transform_options), direct_memory(BufferAllocator::Get(global_p.context)) {
+	transform_options.parameters.context = &global.context;
 	for (auto &filter : global.columns.filters) {
 		filter_states.push_back(TableFilterState::Initialize(global.context, filter.filter.get()));
 	}
@@ -2046,6 +2047,8 @@ idx_t JsonScan::Decode(DataChunk &output, idx_t rows) {
 			return direct_rows;
 		}
 		output.Reset();
+		transform_options.error_message.clear();
+		transform_options.object_index = DConstants::INVALID_INDEX;
 		if (!ParseBatch()) {
 			return 0;
 		}
