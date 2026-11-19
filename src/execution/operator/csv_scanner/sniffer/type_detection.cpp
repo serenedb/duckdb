@@ -8,6 +8,7 @@
 #include "duckdb/common/types/bignum.hpp"
 #include "duckdb/common/types/time.hpp"
 #include "duckdb/execution/operator/csv_scanner/sniffer/csv_sniffer.hpp"
+#include "duckdb/formats/value_parsers.hpp"
 
 namespace duckdb {
 struct TryCastFloatingOperator {
@@ -160,151 +161,19 @@ bool CSVSniffer::CanYouCastIt(ClientContext &context, const string_t value, cons
 		value_ptr = strip_thousands.c_str();
 		value_size = strip_thousands.size();
 	}
-	switch (type.id()) {
-	case LogicalTypeId::BOOLEAN: {
-		bool dummy_value;
-		return TryCastStringBool(value_ptr, value_size, dummy_value, true);
-	}
-	case LogicalTypeId::TINYINT: {
-		int8_t dummy_value;
-		return TrySimpleIntegerCast(value_ptr, value_size, dummy_value, false);
-	}
-	case LogicalTypeId::SMALLINT: {
-		int16_t dummy_value;
-		return TrySimpleIntegerCast(value_ptr, value_size, dummy_value, true);
-	}
-	case LogicalTypeId::INTEGER: {
-		int32_t dummy_value;
-		return TrySimpleIntegerCast(value_ptr, value_size, dummy_value, true);
-	}
-	case LogicalTypeId::BIGINT: {
-		int64_t dummy_value;
-		return TrySimpleIntegerCast(value_ptr, value_size, dummy_value, true);
-	}
-	case LogicalTypeId::HUGEINT: {
-		hugeint_t dummy_value;
-		return TryCast::Operation<string_t, hugeint_t>(string_t(value_ptr, NumericCast<uint32_t>(value_size)),
-		                                               dummy_value, true);
-	}
-	case LogicalTypeId::UTINYINT: {
-		uint8_t dummy_value;
-		return TrySimpleIntegerCast(value_ptr, value_size, dummy_value, true);
-	}
-	case LogicalTypeId::USMALLINT: {
-		uint16_t dummy_value;
-		return TrySimpleIntegerCast(value_ptr, value_size, dummy_value, true);
-	}
-	case LogicalTypeId::UINTEGER: {
-		uint32_t dummy_value;
-		return TrySimpleIntegerCast(value_ptr, value_size, dummy_value, true);
-	}
-	case LogicalTypeId::UBIGINT: {
-		uint64_t dummy_value;
-		return TrySimpleIntegerCast(value_ptr, value_size, dummy_value, true);
-	}
-	case LogicalTypeId::UHUGEINT: {
-		uhugeint_t dummy_value;
-		return TryCast::Operation<string_t, uhugeint_t>(string_t(value_ptr, NumericCast<uint32_t>(value_size)),
-		                                                dummy_value, true);
-	}
-	case LogicalTypeId::BIGNUM:
-		return CanYouCastBignum(value_ptr, value_size);
-	case LogicalTypeId::DOUBLE: {
-		double dummy_value;
-		return TryDoubleCast<double>(value_ptr, value_size, dummy_value, true, decimal_separator);
-	}
-	case LogicalTypeId::FLOAT: {
-		float dummy_value;
-		return TryDoubleCast<float>(value_ptr, value_size, dummy_value, true, decimal_separator);
-	}
-	case LogicalTypeId::DATE: {
-		if (!dialect_options.date_format.find(LogicalTypeId::DATE)->second.GetValue().Empty()) {
-			date_t result;
-			string error_message;
-			return dialect_options.date_format.find(LogicalTypeId::DATE)
-			    ->second.GetValue()
-			    .TryParseDate(value, result, error_message);
-		}
-		idx_t pos;
-		bool special;
-		date_t dummy_value;
-		return Date::TryConvertDate(value_ptr, value_size, pos, dummy_value, special, true) == DateCastResult::SUCCESS;
-	}
-	case LogicalTypeId::TIMESTAMP: {
-		timestamp_t dummy_value;
-		if (!dialect_options.date_format.find(LogicalTypeId::TIMESTAMP)->second.GetValue().Empty()) {
-			string error_message;
-			return dialect_options.date_format.find(LogicalTypeId::TIMESTAMP)
-			    ->second.GetValue()
-			    .TryParseTimestamp(value, dummy_value, error_message);
-		}
-		return Timestamp::TryConvertTimestamp(value_ptr, value_size, dummy_value, false, nullptr, true) ==
-		       TimestampCastResult::SUCCESS;
-	}
-	case LogicalTypeId::TIME: {
-		idx_t pos;
-		dtime_t dummy_value;
-		return Time::TryConvertTime(value_ptr, value_size, pos, dummy_value, true);
-	}
-	case LogicalTypeId::DECIMAL: {
-		uint8_t width, scale;
-		type.GetDecimalProperties(width, scale);
-		if (decimal_separator == ',') {
-			switch (type.InternalType()) {
-			case PhysicalType::INT16: {
-				int16_t dummy_value;
-				return TryDecimalStringCast<int16_t, ','>(value_ptr, value_size, dummy_value, width, scale);
-			}
-
-			case PhysicalType::INT32: {
-				int32_t dummy_value;
-				return TryDecimalStringCast<int32_t, ','>(value_ptr, value_size, dummy_value, width, scale);
-			}
-
-			case PhysicalType::INT64: {
-				int64_t dummy_value;
-				return TryDecimalStringCast<int64_t, ','>(value_ptr, value_size, dummy_value, width, scale);
-			}
-
-			case PhysicalType::INT128: {
-				hugeint_t dummy_value;
-				return TryDecimalStringCast<hugeint_t, ','>(value_ptr, value_size, dummy_value, width, scale);
-			}
-
-			default:
-				throw InternalException("Invalid Physical Type for Decimal Value. Physical Type: " +
-				                        TypeIdToString(type.InternalType()));
-			}
-
-		} else if (decimal_separator == '.') {
-			switch (type.InternalType()) {
-			case PhysicalType::INT16: {
-				int16_t dummy_value;
-				return TryDecimalStringCast(value_ptr, value_size, dummy_value, width, scale);
-			}
-
-			case PhysicalType::INT32: {
-				int32_t dummy_value;
-				return TryDecimalStringCast(value_ptr, value_size, dummy_value, width, scale);
-			}
-
-			case PhysicalType::INT64: {
-				int64_t dummy_value;
-				return TryDecimalStringCast(value_ptr, value_size, dummy_value, width, scale);
-			}
-
-			case PhysicalType::INT128: {
-				hugeint_t dummy_value;
-				return TryDecimalStringCast(value_ptr, value_size, dummy_value, width, scale);
-			}
-
-			default:
-				throw InternalException("Invalid Physical Type for Decimal Value. Physical Type: " +
-				                        TypeIdToString(type.InternalType()));
-			}
-		}
+	if (type.id() == LogicalTypeId::DECIMAL && decimal_separator != ',' && decimal_separator != '.') {
 		throw InvalidInputException("Decimals can only have ',' and '.' as decimal separators");
 	}
+	if (type.id() != LogicalTypeId::TIMESTAMP_TZ && HasValueParser(type)) {
+		const ValueParseContext parse_context {
+		    &dialect_options.date_format.find(LogicalTypeId::DATE)->second.GetValue(),
+		    &dialect_options.date_format.find(LogicalTypeId::TIMESTAMP)->second.GetValue(), value_ptr + value_size,
+		    decimal_separator, true};
+		return ValueParses(type, value_ptr, value_size, parse_context);
+	}
+	switch (type.id()) {
+	case LogicalTypeId::BIGNUM:
+		return CanYouCastBignum(value_ptr, value_size);
 	case LogicalTypeId::VARCHAR:
 		return true;
 	default: {
