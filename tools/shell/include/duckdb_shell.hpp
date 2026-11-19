@@ -19,7 +19,7 @@ enum class ShellSubcommand : uint8_t {
 };
 
 struct ShellEngine {
-	duckdb::shared_ptr<duckdb::DatabaseInstance> (*open)(const std::string &path);
+	duckdb::shared_ptr<duckdb::DatabaseInstance> (*open)(const std::string &path, bool read_only);
 	void (*close)();
 	std::string name = "duckdb";
 };
