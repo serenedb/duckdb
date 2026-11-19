@@ -81,6 +81,10 @@ struct StringStats {
 	DUCKDB_API static optional_idx MinStringLength(const BaseStatistics &stats);
 	//! Returns the total string length if known
 	DUCKDB_API static optional_idx TotalStringLength(const BaseStatistics &stats);
+	//! The range of the lengths of the strings in bytes, narrowed by every bound the statistics give: the stored
+	//! lengths, the total length, and the smallest and largest strings, which tell whether some or all strings are
+	//! empty. Returns false when they give none
+	DUCKDB_API static bool TryGetLengthRange(const BaseStatistics &stats, idx_t &min_length, idx_t &max_length);
 	//! Whether or not the strings can contain unicode
 	DUCKDB_API static bool CanContainUnicode(const BaseStatistics &stats);
 	//! Returns the min value

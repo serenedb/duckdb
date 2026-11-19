@@ -126,6 +126,39 @@ optional_idx StringStats::TotalStringLength(const BaseStatistics &stats) {
 	return string_stats.has_total_string_length ? string_stats.total_string_length : optional_idx();
 }
 
+bool StringStats::TryGetLengthRange(const BaseStatistics &stats, idx_t &min_length, idx_t &max_length) {
+	if (stats.GetType().id() == LogicalTypeId::SQLNULL) {
+		return false;
+	}
+	bool known = false;
+	min_length = 0;
+	max_length = NumericLimits<uint32_t>::Maximum();
+	if (HasMaxStringLength(stats)) {
+		max_length = MaxStringLength(stats);
+		known = true;
+	}
+	if (const auto min_string_length = MinStringLength(stats); min_string_length.IsValid()) {
+		min_length = min_string_length.GetIndex();
+		known = true;
+	}
+	if (const auto total = TotalStringLength(stats); total.IsValid()) {
+		// no string is longer than all of them together
+		max_length = MinValue<idx_t>(max_length, total.GetIndex());
+		known = true;
+	}
+	if (HasMinMax(stats)) {
+		// the empty string sorts first: no string is empty when the smallest is not, and all are when the largest is
+		if (!GetMinUnsafe(stats).empty()) {
+			min_length = MaxValue<idx_t>(min_length, 1);
+		}
+		if (GetMaxUnsafe(stats).empty()) {
+			max_length = 0;
+		}
+		known = true;
+	}
+	return known;
+}
+
 bool StringStats::CanContainUnicode(const BaseStatistics &stats) {
 	if (stats.GetType().id() == LogicalTypeId::SQLNULL) {
 		return true;

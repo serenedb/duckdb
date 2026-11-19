@@ -6,6 +6,7 @@
 #include "duckdb/planner/table_filter_state.hpp"
 #include "duckdb/function/scalar_function.hpp"
 #include "duckdb/function/scalar/generic_functions.hpp"
+#include "duckdb/function/scalar/string_functions.hpp"
 #include "duckdb/function/cast/cast_statistics.hpp"
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/planner/expression_iterator.hpp"
@@ -86,6 +87,22 @@ unique_ptr<ExpressionFilter> ExpressionFilter::CreateComparisonFilter(Expression
 bool ExpressionFilter::IsSimpleFilterColumnRef(const Expression &expr) {
 	return expr.GetExpressionClass() == ExpressionClass::BOUND_REF ||
 	       expr.GetExpressionClass() == ExpressionClass::BOUND_COLUMN_REF;
+}
+
+optional_ptr<const Expression> ExpressionFilter::GetByteLengthInput(const Expression &expr) {
+	if (expr.GetExpressionClass() != ExpressionClass::BOUND_FUNCTION) {
+		return nullptr;
+	}
+	auto &function = expr.Cast<BoundFunctionExpression>();
+	if (function.Function().GetName() != OctetLengthFun::Name || function.GetChildren().size() != 1) {
+		return nullptr;
+	}
+	auto &input = *function.GetChildren()[0];
+	const auto type = input.GetReturnType().id();
+	if (type != LogicalTypeId::VARCHAR && type != LogicalTypeId::BLOB) {
+		return nullptr;
+	}
+	return &input;
 }
 
 optional_ptr<const BoundConstantExpression>

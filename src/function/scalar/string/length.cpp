@@ -104,19 +104,14 @@ unique_ptr<BaseStatistics> StringSizePropagateStats(FunctionStatisticsInput &inp
 	auto &child_stats = input.child_stats;
 	auto &expr = input.expr;
 	D_ASSERT(child_stats.size() == 1);
-	if (!StringStats::HasMaxStringLength(child_stats[0])) {
+	idx_t min_length;
+	idx_t max_length;
+	if (!StringStats::TryGetLengthRange(child_stats[0], min_length, max_length)) {
 		return nullptr;
 	}
-
-	int64_t min_length = 0;
-	const auto min_string_length = StringStats::MinStringLength(child_stats[0]);
-	if (min_string_length.IsValid()) {
-		min_length = NumericCast<int64_t>(min_string_length.GetIndex()) * multiplier;
-	}
-	const auto max_length = NumericCast<int64_t>(StringStats::MaxStringLength(child_stats[0])) * multiplier;
 	auto result = NumericStats::CreateEmpty(expr.GetReturnType());
-	NumericStats::SetMin(result, Value::BIGINT(min_length));
-	NumericStats::SetMax(result, Value::BIGINT(max_length));
+	NumericStats::SetMin(result, Value::BIGINT(NumericCast<int64_t>(min_length) * multiplier));
+	NumericStats::SetMax(result, Value::BIGINT(NumericCast<int64_t>(max_length) * multiplier));
 	result.CopyValidity(child_stats[0]);
 	return result.ToUnique();
 }
@@ -394,8 +389,13 @@ ScalarFunctionSet BitLengthFun::GetFunctions() {
 }
 
 ScalarFunctionSet OctetLengthFun::GetFunctions() {
-	// length for BLOB type
 	ScalarFunctionSet octet_length("octet_length");
+
+	// the length in bytes of a string is what strlen computes - the optimizer writes strlen as octet_length
+	ScalarFunction string_fun({}, LogicalType::BIGINT, ScalarFunction::UnaryFunction<string_t, int64_t, StrLenOperator>,
+	                          nullptr, ByteLengthPropagateStats);
+	string_fun.GetSignature().AddParameter("string", LogicalType::VARCHAR);
+	octet_length.AddFunction(string_fun);
 
 	ScalarFunction blob_fun({}, LogicalType::BIGINT, ScalarFunction::UnaryFunction<string_t, int64_t, StrLenOperator>,
 	                        nullptr, ByteLengthPropagateStats);
