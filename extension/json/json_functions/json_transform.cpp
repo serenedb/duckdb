@@ -1212,6 +1212,11 @@ bool JSONTransform::Transform(const JSONNode *vals[], JSONTransformScratch &scra
 		return TransformFromString(vals, result, count, options);
 	case LogicalTypeId::GEOMETRY:
 		return TransformGeometry(vals, result, count, options);
+	case LogicalTypeId::BIGNUM: {
+		Vector strings(LogicalTypeId::VARCHAR, count);
+		TransformToString(vals, scratch, strings, count);
+		return CastValues(strings, result, count, options, true);
+	}
 	case LogicalTypeId::VARCHAR:
 	case LogicalTypeId::BLOB:
 		return TransformToString(vals, scratch, result, count);
@@ -1244,7 +1249,8 @@ static bool TransformFunctionInternal(const Vector &input, const idx_t count, Ve
 	auto vals = AllocateScratch<const JSONNode *>(scratch, count);
 	auto &result_validity = FlatVector::ValidityMutable(result);
 	auto &parser = lstate.parser;
-	if (TypeVisitor::Contains(result.GetType(), LogicalTypeId::DECIMAL)) {
+	if (TypeVisitor::Contains(result.GetType(), LogicalTypeId::DECIMAL) ||
+	    TypeVisitor::Contains(result.GetType(), LogicalTypeId::BIGNUM)) {
 		parser.SetFlags(JSONReadFlags::ALLOW_INF_AND_NAN | JSONReadFlags::ALLOW_TRAILING_COMMAS |
 		                JSONReadFlags::NUMBER_AS_RAW);
 	} else {

@@ -8,11 +8,10 @@ SELECT '1010'::BIT(4)::JSON::BIT(4)
 ----
 1010
 
-# Types that cannot roundtrip through JSON
-statement error
-SELECT 1::BIGNUM::JSON::BIGNUM
+query I
+SELECT 123456789012345678901234567890123456789012345678901234567890::BIGNUM::JSON::BIGNUM
 ----
-Not implemented Error: Cannot read a value of type BIGNUM from a json file
+123456789012345678901234567890123456789012345678901234567890
 
 # Regular types
 query I
