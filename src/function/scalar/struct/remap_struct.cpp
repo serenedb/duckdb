@@ -331,7 +331,7 @@ struct RemapEntry {
 		auto &target_type = target_entry->second.type;
 
 		bool source_is_nested = IsRemappable(source_type);
-		bool target_is_nested = IsRemappable(target_type);
+		bool target_is_nested = IsRemappable(target_type) && (source_is_nested || !target_type.HasAlias());
 		RemapEntry remap;
 		remap.index = entry->second.index;
 		remap.target_type = target_entry->second.type;
