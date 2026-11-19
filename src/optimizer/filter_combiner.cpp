@@ -855,7 +855,8 @@ static bool IsLessThan(ExpressionType type) {
 
 //! Returns the relaxation margin in native units of the source type for a temporal cast.
 //! Returns -1 if the cast pair is not supported for relaxed pushdown.
-//! Margins: 2h for DST ambiguity (TIMESTAMP<->TIMESTAMPTZ), 24h for time-of-day loss, 1s for rounding loss.
+//! Margins: 2h for DST ambiguity (TIMESTAMP<->TIMESTAMPTZ), 24h for time-of-day loss (26h from TIMESTAMPTZ, whose
+//! local day can be 2h longer), 1s for rounding loss.
 static int64_t GetTemporalCastMargin(LogicalTypeId source, LogicalTypeId target) {
 	if (source == target) {
 		switch (source) {
@@ -881,7 +882,8 @@ static int64_t GetTemporalCastMargin(LogicalTypeId source, LogicalTypeId target)
 		case LogicalTypeId::TIMESTAMP_TZ:
 			return 2LL * Interval::MICROS_PER_HOUR;
 		case LogicalTypeId::DATE:
-			return Interval::MICROS_PER_DAY;
+			return source == LogicalTypeId::TIMESTAMP_TZ ? Interval::MICROS_PER_DAY + 2LL * Interval::MICROS_PER_HOUR
+			                                             : Interval::MICROS_PER_DAY;
 		case LogicalTypeId::TIMESTAMP_MS:
 		case LogicalTypeId::TIMESTAMP_SEC:
 			return Interval::MICROS_PER_SEC;
@@ -897,7 +899,10 @@ static int64_t GetTemporalCastMargin(LogicalTypeId source, LogicalTypeId target)
 		case LogicalTypeId::TIMESTAMP_SEC:
 			return Interval::MICROS_PER_SEC * 1000LL;
 		case LogicalTypeId::DATE:
-			return Interval::MICROS_PER_DAY * 1000LL;
+			return (source == LogicalTypeId::TIMESTAMP_TZ_NS
+			            ? Interval::MICROS_PER_DAY + 2LL * Interval::MICROS_PER_HOUR
+			            : Interval::MICROS_PER_DAY) *
+			       1000LL;
 		default:
 			return -1;
 		}
