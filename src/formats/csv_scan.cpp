@@ -655,7 +655,7 @@ CsvScanGlobal::CsvScanGlobal(ClientContext &context_p, const CSVReaderOptions &o
 	auto dialect = RowDialect::DuckDB(grammar);
 	dialect.empty_lines = source.state_machine->dialect_options.num_cols == 1 && empty_is_null;
 	lean = make_uniq<RowLexer>(dialect, source.state_machine->dialect_options.num_cols,
-	                           options.maximum_line_size.GetValue(), !ignore_errors, options.null_padding);
+	                           options.maximum_line_size.GetValue(), !ignore_errors, options.null_padding, true);
 	count_only = (columns.empty() || source.placeholder) && filters.empty() &&
 	             source.file_row_number == DConstants::INVALID_INDEX;
 	empty_only_null = null_strings.size() == 1 && null_strings[0].empty();
@@ -1511,7 +1511,7 @@ bool CsvScan::ScanLean(DataChunk &output, idx_t max_rows) {
 			output.SetChildCardinality(count);
 			return true;
 		}
-		const idx_t ready = fields.end_count / columns;
+		const idx_t ready = fields.end_count / columns - (cursor.phase >= columns ? 1 : 0);
 		if (!global.lean_batches) {
 			if (settled && ready > 0 && (ready >= max_rows || lean_finished)) {
 				const idx_t count = MinValue(ready, max_rows);
@@ -1522,7 +1522,7 @@ bool CsvScan::ScanLean(DataChunk &output, idx_t max_rows) {
 					}
 					return false;
 				}
-				last_emitted_end = lean_start + (fields.ends[count * columns - 1] & ROW_FIELD_MASK);
+				last_emitted_end = LeanRowEnd(count - 1);
 				fields.Drop(count, count * columns);
 				emitted_rows += count;
 				if (output.size() > 0) {
@@ -1575,7 +1575,7 @@ bool CsvScan::ScanLean(DataChunk &output, idx_t max_rows) {
 				Filter(chunk_rows, output);
 			}
 			FinishLeanChunk(chunk_rows, output);
-			last_emitted_end = lean_start + (fields.ends[chunk_rows * columns - 1] & ROW_FIELD_MASK);
+			last_emitted_end = LeanRowEnd(chunk_rows - 1);
 			fields.Drop(chunk_rows, chunk_rows * columns);
 			emitted_rows += chunk_rows;
 			chunk_open = false;
@@ -2403,32 +2403,88 @@ void CsvScan::LeanRetry(const CsvScanColumn &column, Vector &vector) {
 	}
 }
 
+idx_t CsvScan::LeanRowEnd(idx_t row) const {
+	const idx_t columns = splitter->Columns();
+	const auto anomaly = fields.anomalies.empty() ? nullptr : fields.Anomaly(row);
+	if (anomaly && anomaly->fields > columns) {
+		return lean_start + anomaly->end;
+	}
+	return lean_start + (fields.ends[(row + 1) * columns - 1] & ROW_FIELD_MASK);
+}
+
 CsvRow CsvScan::LeanRow(idx_t row) const {
 	const idx_t columns = splitter->Columns();
 	CsvRow result;
 	result.start = lean_start + fields.rows[row];
-	result.end = lean_start + (fields.ends[(row + 1) * columns - 1] & ROW_FIELD_MASK);
+	result.end = LeanRowEnd(row);
 	if (row > 0) {
-		result.begin = lean_start + (fields.ends[row * columns - 1] & ROW_FIELD_MASK);
+		result.begin = LeanRowEnd(row - 1);
 	} else {
 		result.begin = emitted_rows > 0 ? last_emitted_end : lean_line_end;
 	}
 	if (result.begin == DConstants::INVALID_INDEX || result.begin >= result.start) {
 		result.begin = result.start > 0 ? result.start - 1 : 0;
 	}
-	result.last_position = result.end + 1;
+	const bool crlf = grammar.carry_on_newline && result.end >= bytes->offset &&
+	                  result.end < bytes->offset + bytes->size && bytes->data[result.end - bytes->offset] == '\r';
+	result.last_position = result.end + 1 + crlf;
 	result.lines = 0;
-	result.field_count = static_cast<uint32_t>(columns);
+	const auto anomaly = fields.anomalies.empty() ? nullptr : fields.Anomaly(row);
+	result.field_count = static_cast<uint32_t>(anomaly ? anomaly->fields : columns);
 	result.flags = 0;
 	return result;
 }
 
+bool CsvScan::LeanNullExtra(idx_t begin, idx_t end, uint32_t end_bits) const {
+	const idx_t shift = lean_start - bytes->offset;
+	begin += shift;
+	end += shift;
+	bool quoted = false;
+	if ((end_bits & ROW_FIELD_FLAG) && cursor.quotes) {
+		quoted = LeanUnquote(bytes->data, grammar.quote, global.lean->Dialect().quoted_spaces, begin, end);
+	}
+	if (quoted && !options.allow_quoted_nulls) {
+		return false;
+	}
+	for (auto &null_string : global.null_strings) {
+		if (end - begin == null_string.size() && memcmp(null_string.c_str(), bytes->data + begin, end - begin) == 0) {
+			return true;
+		}
+	}
+	return false;
+}
+
+void CsvScan::AnomalyErrors(const RowAnomaly &anomaly, idx_t row, vector<CsvRowError> &errors) const {
+	const idx_t columns = splitter->Columns();
+	if (anomaly.fields > columns) {
+		idx_t begin = (fields.ends[(row + 1) * columns - 1] & ROW_FIELD_MASK) + grammar.delimiter_size;
+		for (idx_t extra = 0; extra < anomaly.fields - columns; extra++) {
+			const uint32_t end_bits = fields.extras[anomaly.extras + extra];
+			const idx_t end = end_bits & ROW_FIELD_MASK;
+			if (extra > 0 || !LeanNullExtra(begin, end, end_bits)) {
+				errors.push_back({CSVErrorType::TOO_MANY_COLUMNS, columns + extra, lean_start + begin, string()});
+			}
+			begin = end + grammar.delimiter_size;
+		}
+		return;
+	}
+	if (options.null_padding) {
+		return;
+	}
+	const idx_t last_position = LeanRow(row).last_position;
+	for (idx_t column = anomaly.fields; column < columns; column++) {
+		errors.push_back({CSVErrorType::TOO_FEW_COLUMNS, column - 1, last_position, string()});
+	}
+}
+
 idx_t CsvScan::LeanLinesAt(idx_t position) {
+	const idx_t start = range == 0 ? global.start_lines : 0;
+	if (position > cursor.pos) {
+		return start + cursor.lines;
+	}
 	if (lines_at == DConstants::INVALID_INDEX || position < lines_at) {
-		const idx_t lexed = cursor.lines - (cursor.unterminated && position <= cursor.pos ? 1 : 0);
-		const idx_t after =
-		    position < cursor.pos ? global.lean->CountLines(bytes->data, bytes->offset, position, cursor.pos) : 0;
-		lines_counted = lexed - after + (range == 0 ? global.start_lines : 0);
+		const idx_t lexed = cursor.lines - (cursor.unterminated ? 1 : 0);
+		lines_counted = lexed - global.lean->CountLines(bytes->data, bytes->offset, position, cursor.pos) + start;
 	} else {
 		lines_counted += global.lean->CountLines(bytes->data, bytes->offset, lines_at, position);
 	}
@@ -2447,20 +2503,34 @@ void CsvScan::ClearRowState(idx_t first, idx_t count) {
 }
 
 void CsvScan::LeanReport(idx_t first, idx_t count) {
-	if (!lean_errors) {
+	if (cursor.extras_dropped) {
+		used_unstrictness = true;
+	}
+	auto anomaly = std::lower_bound(fields.anomalies.begin(), fields.anomalies.end(), first,
+	                                [](const RowAnomaly &entry, idx_t row) { return entry.row < row; });
+	const bool anomalies = anomaly != fields.anomalies.end() && anomaly->row < first + count;
+	if (!lean_errors && !anomalies) {
 		return;
 	}
 	lean_errors = false;
 	for (idx_t row = first; row < first + count; row++) {
 		auto &errors = value_errors[row];
+		const bool row_anomaly = anomaly != fields.anomalies.end() && anomaly->row == row;
+		if (errors.empty() && !row_anomaly) {
+			continue;
+		}
+		std::stable_sort(errors.begin(), errors.end(),
+		                 [](const CsvRowError &a, const CsvRowError &b) { return a.column < b.column; });
+		if (row_anomaly) {
+			AnomalyErrors(*anomaly, row, errors);
+			++anomaly;
+		}
 		if (errors.empty()) {
 			continue;
 		}
 		failed[row] = true;
 		rows_failed = true;
 		if (!global.ignore_errors) {
-			std::stable_sort(errors.begin(), errors.end(),
-			                 [](const CsvRowError &a, const CsvRowError &b) { return a.column < b.column; });
 			auto csv_row = LeanRow(row);
 			csv_row.lines = LeanLinesAt(csv_row.start);
 			ReportRow(row, csv_row, errors);
