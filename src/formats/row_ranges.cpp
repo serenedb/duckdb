@@ -3,6 +3,7 @@
 #include "absl/cleanup/cleanup.h"
 #include "duckdb/common/bit_utils.hpp"
 #include "duckdb/common/exception.hpp"
+#include "duckdb/common/fault_points.hpp"
 #include "duckdb/formats/csv_simd.hpp"
 #include "simdutf.h"
 
@@ -239,8 +240,13 @@ void RowRanges::ReadInto(RowBytes &bytes, idx_t offset, idx_t count) {
 	bytes.data = bytes.owned.get();
 	bytes.offset = offset;
 	bytes.size = count ? Read(bytes.owned.get(), count, offset) : 0;
-	if (stream && bytes.size < count && bytes.size > 0) {
-		FoundEnd(offset + bytes.size);
+	if (stream && bytes.size < count) {
+		const auto known = source.End();
+		if (known.IsValid()) {
+			FoundEnd(known.GetIndex());
+		} else if (bytes.size > 0) {
+			FoundEnd(offset + bytes.size);
+		}
 	}
 }
 
@@ -632,7 +638,10 @@ void RowRangeReader::ReadPiece() {
 		return;
 	}
 	if (got < want) {
-		if (got > 0 || exact_end) {
+		const auto known = ranges.source.End();
+		if (known.IsValid()) {
+			ranges.FoundEnd(known.GetIndex());
+		} else if (got > 0 || exact_end) {
 			ranges.FoundEnd(read_to);
 		} else {
 			beyond = true;
@@ -666,11 +675,18 @@ bool RowRangeReader::CheckCountUtf8(idx_t end) {
 }
 
 bool RowRangeReader::Lex() {
-	const bool eof = read_to >= ranges.Size();
+	SDB_PARK_ONCE_ON_FAILURE("row_range_lex");
+	const idx_t size = ranges.Size();
+	const bool eof = read_to >= size;
 	if (lex_start == DConstants::INVALID_INDEX) {
 		idx_t found = ranges.start;
 		if (range > 0) {
-			const idx_t from = ranges.RangeBegin(range) - 1;
+			const idx_t begin = ranges.RangeBegin(range, size);
+			if (begin >= size) {
+				beyond = true;
+				return true;
+			}
+			const idx_t from = begin - 1;
 			found = read_to > from ? RowSync(dialect, bytes->data, bytes->offset, from, read_to, eof)
 			                       : DConstants::INVALID_INDEX;
 			if (found == DConstants::INVALID_INDEX) {
@@ -678,7 +694,7 @@ bool RowRangeReader::Lex() {
 					ReadPiece();
 					return true;
 				}
-				found = ranges.Size();
+				found = size;
 			}
 		}
 		if (lex_stop != DConstants::INVALID_INDEX) {
@@ -701,17 +717,19 @@ bool RowRangeReader::Lex() {
 		return true;
 	}
 	if (lex_stop == DConstants::INVALID_INDEX) {
-		const idx_t from = ranges.RangeEnd(range) - 1;
-		if (read_to > from) {
-			const idx_t found = RowSync(dialect, bytes->data, bytes->offset, from, read_to, eof);
+		const idx_t end = ranges.RangeEnd(range, size);
+		if (end >= size) {
+			lex_stop = size;
+		} else if (read_to >= end) {
+			const idx_t found = RowSync(dialect, bytes->data, bytes->offset, end - 1, read_to, eof);
 			if (found != DConstants::INVALID_INDEX) {
 				lex_stop = MaxValue(found, lex_start);
 			} else if (eof) {
-				lex_stop = ranges.Size();
+				lex_stop = size;
 			}
 		}
 	}
-	const idx_t limit = lex_stop != DConstants::INVALID_INDEX ? lex_stop : ranges.RangeEnd(range);
+	const idx_t limit = lex_stop != DConstants::INVALID_INDEX ? lex_stop : ranges.RangeEnd(range, size);
 	idx_t feed_end = MinValue(limit, read_to);
 	bool last = lex_stop != DConstants::INVALID_INDEX && feed_end == lex_stop;
 	if (feed_end > cursor.pos + FEED_BYTES) {

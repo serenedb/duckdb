@@ -22,10 +22,12 @@ public:
 	CSVBufferResidency GetBufferResidency(const idx_t buffer_idx, shared_ptr<CSVBufferHandle> &handle) override;
 	void ResetBuffer(const idx_t buffer_idx) override;
 	bool Done() const override;
+	optional_idx KnownEnd() override;
 	void ResetBufferManager() override;
 
 private:
 	void Initialize();
+	void MarkDone(const CSVBuffer &last);
 	//! Releases the chain's own pin on the predecessor of an accessed buffer
 	void UnpinPrevious(const idx_t pos);
 
@@ -36,6 +38,7 @@ private:
 	idx_t global_csv_pos = 0;
 	//! If this buffer manager is done (i.e., no more buffers to read beyond the ones that were cached
 	bool done = false;
+	optional_idx known_end;
 	//! If the file_handle used seek
 	bool has_seeked = false;
 	unordered_set<idx_t> reset_when_possible;

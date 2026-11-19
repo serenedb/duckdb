@@ -46,6 +46,9 @@ public:
 	//! If this buffer manager is done. In the context of a buffer manager it means that it read all buffers at least
 	//! once.
 	virtual bool Done() const = 0;
+	virtual optional_idx KnownEnd() {
+		return optional_idx();
+	}
 	//! Resets the buffer manager so the file can be scanned again from the top (e.g., a recursive CTE rescan)
 	virtual void ResetBufferManager() = 0;
 
