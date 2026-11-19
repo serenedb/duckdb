@@ -57,6 +57,7 @@ class RowRanges {
 public:
 	RowRanges(const RowLexer &lexer, RowSource &source, idx_t start, idx_t size, idx_t range_bytes, bool file_start);
 
+	void Reset(idx_t size, idx_t range_bytes);
 	bool Claim(idx_t &range);
 	bool Finish(idx_t range);
 	bool AllFinished() const;
@@ -95,6 +96,9 @@ public:
 	idx_t range_bytes;
 	idx_t range_count;
 	string path;
+
+private:
+	void Layout(idx_t range_bytes);
 
 private:
 	mutable mutex lock;
