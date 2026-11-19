@@ -3,6 +3,7 @@
 #include "duckdb/common/enum_util.hpp"
 #include "duckdb/common/logical_type_info.hpp"
 #include "duckdb/common/stack_depth.hpp"
+#include "duckdb/formats/value_parsers.hpp"
 #include "json_executors.hpp"
 #include "json_geojson.hpp"
 #include "json_scan.hpp"
@@ -355,6 +356,27 @@ static void UpdateTimestampOffsetState(JSONStructureDescription &description, co
 	}
 }
 
+static bool StringsParse(const LogicalType &type, Vector &string_vector, Vector &result_vector, const idx_t count) {
+	if (!HasValueParser(type)) {
+		string error_message;
+		return VectorOperations::DefaultTryCast(string_vector, result_vector, count, &error_message, true);
+	}
+	static const StrpTimeFormat NO_FORMAT;
+	const auto strings = FlatVector::GetData<string_t>(string_vector);
+	const auto &validity = FlatVector::Validity(string_vector);
+	for (idx_t i = 0; i < count; i++) {
+		if (!validity.RowIsValid(i)) {
+			continue;
+		}
+		const auto &value = strings[i];
+		const ValueParseContext context {&NO_FORMAT, &NO_FORMAT, value.GetData() + value.GetSize(), '.', true};
+		if (!ValueParses(type, value.GetData(), value.GetSize(), context)) {
+			return false;
+		}
+	}
+	return true;
+}
+
 void JSONStructureNode::EliminateCandidateTypes(const idx_t vec_count, Vector &string_vector,
                                                 MutableDateFormatMap &date_format_map,
                                                 const bool user_specified_timestamp_format) {
@@ -401,13 +423,10 @@ void JSONStructureNode::EliminateCandidateTypes(const idx_t vec_count, Vector &s
 			} else {
 				candidate_types.pop_back();
 			}
+		} else if (!StringsParse(type, string_vector, result_vector, vec_count)) {
+			candidate_types.pop_back();
 		} else {
-			string error_message;
-			if (!VectorOperations::DefaultTryCast(string_vector, result_vector, vec_count, &error_message, true)) {
-				candidate_types.pop_back();
-			} else {
-				return;
-			}
+			return;
 		}
 	}
 }
