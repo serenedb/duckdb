@@ -141,6 +141,7 @@ struct StatementProperties {
 	idx_t parameter_count;
 	//! Whether or not the statement ALWAYS requires a rebind
 	bool always_require_rebind;
+	bool executes_prepared_statement = false;
 	idx_t binding_generation = 0;
 
 	bool IsReadOnly() {
