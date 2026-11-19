@@ -51,6 +51,7 @@ public:
 	static void ReturnStatistics(DataChunk &chunk, CopyToFileInfo &written_file_info);
 
 	bool Rotate() const;
+	bool DirectSink() const;
 
 	void PrepareAndFlushBatch(ClientContext &context, GlobalSinkState &gstate_p, FileStateHandle &file_state,
 	                          const std::function<void(FileStateHandle &)> &create_file_state_fun,
