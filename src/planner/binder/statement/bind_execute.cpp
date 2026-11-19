@@ -129,7 +129,7 @@ BoundStatement Binder::Bind(ExecuteStatement &stmt) {
 			rebind = RebindQueryInfo::ATTEMPT_TO_REBIND;
 		}
 	}
-	shared_ptr<PreparedStatementEntry> replaces;
+	bool replaces_plan = false;
 	if (rebind != RebindQueryInfo::ATTEMPT_TO_REBIND && !prepared->IsCurrent(context)) {
 		Planner generic_planner(context);
 		generic_planner.parameter_type_hints = prepared->parameter_type_hints;
@@ -139,7 +139,7 @@ BoundStatement Binder::Bind(ExecuteStatement &stmt) {
 			replanned->parameter_type_hints = prepared->parameter_type_hints;
 			prepared = std::move(replanned);
 			rebound_plan = std::move(generic_planner.plan);
-			replaces = entry->second;
+			replaces_plan = true;
 			global_binder_state->bound_tables = generic_planner.binder->global_binder_state->bound_tables;
 		} else {
 			rebind = RebindQueryInfo::ATTEMPT_TO_REBIND;
@@ -160,21 +160,21 @@ BoundStatement Binder::Bind(ExecuteStatement &stmt) {
 	auto &properties = GetStatementProperties();
 	properties = prepared->properties;
 	properties.parameter_count = parameter_count;
+	properties.executes_prepared_statement = true;
 
 	BoundStatement result;
 	result.names = prepared->names;
 	result.types = prepared->types;
 
 	prepared->Bind(context, bind_values);
-	entry->second->CountExecution(rebound_plan != nullptr);
+	auto execute_plan = make_uniq<LogicalExecute>(std::move(prepared));
+	execute_plan->statement = entry->second;
+	execute_plan->custom_plan = rebound_plan != nullptr;
+	execute_plan->replaces_plan = replaces_plan;
 	if (rebound_plan) {
-		auto execute_plan = make_uniq<LogicalExecute>(std::move(prepared));
-		execute_plan->replaces = std::move(replaces);
 		execute_plan->children.push_back(std::move(rebound_plan));
-		result.plan = std::move(execute_plan);
-	} else {
-		result.plan = make_uniq<LogicalExecute>(std::move(prepared));
 	}
+	result.plan = std::move(execute_plan);
 	return result;
 }
 
