@@ -223,6 +223,56 @@ struct VectorCastHelpers {
 		return string.GetSize();
 	}
 
+	static idx_t CalculateOwnTextLength(const string_t &string, bool &needs_quotes) {
+		const auto base_length = string.GetSize();
+		const auto string_data = string.GetData();
+		needs_quotes = base_length == 0 || StringUtil::CharacterIsSpace(string_data[0]) ||
+		               StringUtil::CharacterIsSpace(string_data[base_length - 1]) ||
+		               StringUtil::CIEquals(string_data, base_length, "null", 4);
+		for (idx_t i = 0; i < base_length && !needs_quotes; i++) {
+			switch (string_data[i]) {
+			case ',':
+			case '\'':
+			case '"':
+			case '\\':
+			case '(':
+			case ')':
+			case '[':
+			case ']':
+			case '{':
+			case '}':
+			case '=':
+				needs_quotes = true;
+				break;
+			default:
+				break;
+			}
+		}
+		if (!needs_quotes) {
+			return base_length;
+		}
+		idx_t length = 2;
+		for (idx_t i = 0; i < base_length; i++) {
+			length += 1 + (string_data[i] == '\'' || string_data[i] == '\\');
+		}
+		return length;
+	}
+
+	struct NestedChildText {
+		idx_t (*length)(const string_t &string, bool &needs_quotes);
+		idx_t (*write)(void *dest, const string_t &string, bool needs_quotes);
+	};
+
+	static NestedChildText ChildText(const LogicalType &type) {
+		if (!type.IsNested()) {
+			return {CalculateEscapedStringLength<false>, WriteEscapedString<false>};
+		}
+		if (type.HasAlias()) {
+			return {CalculateOwnTextLength, WriteEscapedString<false>};
+		}
+		return {CalculateStringLength, WriteString};
+	}
+
 	template <bool STRUCT_KEY>
 	static idx_t WriteEscapedString(void *dest, const string_t &string, bool needs_quotes) {
 		auto base_length = string.GetSize();
