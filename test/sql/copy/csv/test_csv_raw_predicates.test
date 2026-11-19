@@ -48,27 +48,27 @@ foreach parallel true false
 
 query I
 SELECT count(*) FROM (
-	(FROM read_csv('{TEMP_DIR}/raw_quoted.csv', header = false, auto_detect = false, columns = raw_columns(), parallel = {parallel}, buffer_size = 1024) WHERE ${predicate} EXCEPT ALL FROM raw_quoted WHERE ${predicate})
+	(FROM read_csv('{TEMP_DIR}/raw_quoted.csv', header = false, auto_detect = false, columns = raw_columns(), parallel = {parallel}, buffer_size = 1024) WHERE {predicate} EXCEPT ALL FROM raw_quoted WHERE {predicate})
 	UNION ALL
-	(FROM raw_quoted WHERE ${predicate} EXCEPT ALL FROM read_csv('{TEMP_DIR}/raw_quoted.csv', header = false, auto_detect = false, columns = raw_columns(), parallel = {parallel}, buffer_size = 1024) WHERE ${predicate})
+	(FROM raw_quoted WHERE {predicate} EXCEPT ALL FROM read_csv('{TEMP_DIR}/raw_quoted.csv', header = false, auto_detect = false, columns = raw_columns(), parallel = {parallel}, buffer_size = 1024) WHERE {predicate})
 )
 ----
 0
 
 query I
 SELECT count(*) FROM (
-	(FROM read_csv('{TEMP_DIR}/raw_nullstr.csv', header = false, auto_detect = false, nullstr = 'NULL', columns = raw_columns(), parallel = {parallel}, buffer_size = 1024) WHERE ${predicate} EXCEPT ALL FROM raw_nullstr WHERE ${predicate})
+	(FROM read_csv('{TEMP_DIR}/raw_nullstr.csv', header = false, auto_detect = false, nullstr = 'NULL', columns = raw_columns(), parallel = {parallel}, buffer_size = 1024) WHERE {predicate} EXCEPT ALL FROM raw_nullstr WHERE {predicate})
 	UNION ALL
-	(FROM raw_nullstr WHERE ${predicate} EXCEPT ALL FROM read_csv('{TEMP_DIR}/raw_nullstr.csv', header = false, auto_detect = false, nullstr = 'NULL', columns = raw_columns(), parallel = {parallel}, buffer_size = 1024) WHERE ${predicate})
+	(FROM raw_nullstr WHERE {predicate} EXCEPT ALL FROM read_csv('{TEMP_DIR}/raw_nullstr.csv', header = false, auto_detect = false, nullstr = 'NULL', columns = raw_columns(), parallel = {parallel}, buffer_size = 1024) WHERE {predicate})
 )
 ----
 0
 
 query I
 SELECT count(*) FROM (
-	(FROM read_csv('{TEMP_DIR}/raw_bad.csv', header = false, auto_detect = false, ignore_errors = true, columns = raw_columns(), parallel = {parallel}, buffer_size = 1024) WHERE ${predicate} EXCEPT ALL FROM raw_bad WHERE ${predicate})
+	(FROM read_csv('{TEMP_DIR}/raw_bad.csv', header = false, auto_detect = false, ignore_errors = true, columns = raw_columns(), parallel = {parallel}, buffer_size = 1024) WHERE {predicate} EXCEPT ALL FROM raw_bad WHERE {predicate})
 	UNION ALL
-	(FROM raw_bad WHERE ${predicate} EXCEPT ALL FROM read_csv('{TEMP_DIR}/raw_bad.csv', header = false, auto_detect = false, ignore_errors = true, columns = raw_columns(), parallel = {parallel}, buffer_size = 1024) WHERE ${predicate})
+	(FROM raw_bad WHERE {predicate} EXCEPT ALL FROM read_csv('{TEMP_DIR}/raw_bad.csv', header = false, auto_detect = false, ignore_errors = true, columns = raw_columns(), parallel = {parallel}, buffer_size = 1024) WHERE {predicate})
 )
 ----
 0
