@@ -493,6 +493,9 @@ idx_t SkipBom(const char *data, idx_t size) {
 } // namespace
 
 bool CsvDecodesDirectly(const LogicalType &type, bool icu_loaded) {
+	if (type.HasAlias()) {
+		return false;
+	}
 	switch (type.id()) {
 	case LogicalTypeId::TINYINT:
 	case LogicalTypeId::SMALLINT:
@@ -516,7 +519,7 @@ bool CsvDecodesDirectly(const LogicalType &type, bool icu_loaded) {
 	case LogicalTypeId::TIMESTAMP_TZ:
 		return !icu_loaded;
 	case LogicalTypeId::VARCHAR:
-		return !type.IsJSONType();
+		return true;
 	default:
 		return false;
 	}
