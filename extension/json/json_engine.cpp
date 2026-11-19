@@ -378,7 +378,7 @@ bool PathOf(const Expression &expr, vector<string> &path, bool &text) {
 }
 
 LogicalTypeId WalkLeaf(const LogicalType &type) {
-	if (type.IsJSONType()) {
+	if (type.HasAlias()) {
 		return LogicalTypeId::INVALID;
 	}
 	switch (type.id()) {
