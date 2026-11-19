@@ -25,7 +25,9 @@ public:
 	}
 
 	shared_ptr<PreparedStatementData> prepared;
-	shared_ptr<PreparedStatementEntry> replaces;
+	shared_ptr<PreparedStatementEntry> statement;
+	bool custom_plan = false;
+	bool replaces_plan = false;
 
 public:
 	//! Skips the serialization check in VerifyPlan
