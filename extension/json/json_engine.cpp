@@ -20,6 +20,9 @@
 #include "duckdb/storage/caching_mode.hpp"
 #include "duckdb/storage/table/column_segment.hpp"
 
+#include <cmath>
+#include <type_traits>
+
 namespace duckdb {
 
 namespace {
@@ -247,12 +250,24 @@ std::string_view TrimToken(std::string_view token) {
 }
 
 bool PlainString(std::string_view content) {
-	for (const char c : content) {
-		if (c == '\\' || static_cast<unsigned char>(c) < 0x20) {
+	constexpr uint64_t ONES = 0x0101010101010101ULL;
+	constexpr uint64_t HIGHS = 0x8080808080808080ULL;
+	const char *bytes = content.data();
+	idx_t remaining = content.size();
+	while (true) {
+		uint64_t word;
+		memcpy(&word, bytes, sizeof(word));
+		const uint64_t backslashes = word ^ (ONES * '\\');
+		const uint64_t found = (((backslashes - ONES) & ~backslashes) | ((word - ONES * 0x20) & ~word)) & HIGHS;
+		if (remaining <= sizeof(word)) {
+			return (found & (remaining == sizeof(word) ? ~uint64_t(0) : (uint64_t(1) << (8 * remaining)) - 1)) == 0;
+		}
+		if (found) {
 			return false;
 		}
+		bytes += sizeof(word);
+		remaining -= sizeof(word);
 	}
-	return true;
 }
 
 void KeyWords(std::string_view key, uint64_t words[2]) {
@@ -288,6 +303,22 @@ bool DirectNumber(simdjson::ondemand::value &value, simdjson::ondemand::json_typ
 		return true;
 	}
 	case ondemand::json_type::number: {
+		if constexpr (std::is_same_v<T, int64_t>) {
+			if (!value.get_int64().get(result)) {
+				cast = true;
+				return true;
+			}
+		} else if constexpr (std::is_same_v<T, double>) {
+			const auto token = value.raw_json_token();
+			if (!value.get_double().get(result)) {
+				if (result == 0 && std::signbit(result) &&
+				    TrimToken(token).find_first_of(".eE") == std::string_view::npos) {
+					result = 0;
+				}
+				cast = true;
+				return true;
+			}
+		}
 		ondemand::number number;
 		if (value.get_number().get(number)) {
 			return false;
