@@ -10,6 +10,7 @@
 #include "duckdb/common/operator/decimal_cast_operators.hpp"
 #include "duckdb/common/operator/double_cast_operator.hpp"
 #include "duckdb/common/operator/integer_cast_operator.hpp"
+#include "duckdb/common/type_visitor.hpp"
 #include "duckdb/common/types/bignum.hpp"
 #include "duckdb/common/types/date.hpp"
 #include "duckdb/common/types/time.hpp"
@@ -951,6 +952,10 @@ CsvScan::CsvScan(CsvScanGlobal &global_p)
 		auto &column = global.columns[i];
 		if (NeedsFlushCast(column)) {
 			decoders[i] = MakeValueDecoder(global.context, column.type, options.rendering);
+			decoded_text_shared =
+			    decoded_text_shared || TypeVisitor::Contains(column.type, [](const LogicalType &type) {
+				    return type.InternalType() == PhysicalType::VARCHAR;
+			    });
 		}
 	}
 	if (global.copy) {
@@ -2033,8 +2038,15 @@ void CsvScan::LeanRowNumbers(idx_t count, DataChunk &output) {
 
 bool CsvScan::DecodeLean(idx_t count, DataChunk &output) {
 	output.Reset();
-	parse_chunk.Reset();
-	scratch_chunk.Reset();
+	if (decoded_text_shared) {
+		parse_chunk.Reset();
+	}
+	absl::Cleanup release_window = [&] {
+		if (!decoded_text_shared) {
+			parse_chunk.Reset();
+		}
+		scratch_chunk.Reset();
+	};
 	const idx_t columns = global.num_columns;
 	bool utf8_valid = !cursor.non_ascii;
 	if (!utf8_valid) {
