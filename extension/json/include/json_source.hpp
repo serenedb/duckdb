@@ -25,9 +25,6 @@ public:
 	const string &Path() const {
 		return file.path;
 	}
-	const OpenFileInfo &File() const {
-		return file;
-	}
 	bool Positional() const {
 		return positional;
 	}

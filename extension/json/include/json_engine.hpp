@@ -92,7 +92,6 @@ public:
 	bool ClaimChunk(idx_t &unit, AllocatedData &buffer, idx_t &size, idx_t &file_offset, bool &last);
 	void Finish(idx_t unit, idx_t records);
 	void AddError(idx_t unit, idx_t record, string message);
-	bool Failed() const;
 	[[noreturn]] void ThrowObjectSizeError(idx_t object_size) const;
 	idx_t RangeBegin(idx_t unit) const {
 		return MinValue(unit * range_bytes, source->Size());
@@ -109,7 +108,6 @@ public:
 	shared_ptr<JsonSource> source;
 	JsonScanColumns columns;
 	JSONFormat format = JSONFormat::AUTO_DETECT;
-	JSONRecordType detected_record_type = JSONRecordType::AUTO_DETECT;
 	bool features_prefix = false;
 	JsonUnitMode mode = JsonUnitMode::SEQUENTIAL;
 	idx_t range_bytes = 0;
