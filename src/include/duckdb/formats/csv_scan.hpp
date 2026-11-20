@@ -306,6 +306,7 @@ private:
 	DataChunk parse_chunk;
 	DataChunk scratch_chunk;
 	vector<unique_ptr<ValueDecoder>> decoders;
+	bool decoded_text_shared = false;
 	vector<vector<idx_t>> copy_defaulted;
 	vector<unique_ptr<ExpressionExecutor>> copy_defaults;
 	string copy_buffer;
