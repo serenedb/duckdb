@@ -77,6 +77,9 @@ unique_ptr<LogicalOperator> LogicalOperator::Deserialize(Deserializer &deseriali
 	case LogicalOperatorType::LOGICAL_CREATE_SEQUENCE:
 		result = LogicalCreate::Deserialize(deserializer);
 		break;
+	case LogicalOperatorType::LOGICAL_CREATE_SUBSCRIPTION:
+		result = LogicalCreate::Deserialize(deserializer);
+		break;
 	case LogicalOperatorType::LOGICAL_CREATE_TABLE:
 		result = LogicalCreateTable::Deserialize(deserializer);
 		break;
@@ -313,17 +316,6 @@ unique_ptr<LogicalOperator> LogicalAggregate::Deserialize(Deserializer &deserial
 	return std::move(result);
 }
 
-void LogicalAlter::Serialize(Serializer &serializer) const {
-	LogicalOperator::Serialize(serializer);
-	serializer.WritePropertyWithDefault<unique_ptr<AlterInfo>>(200, "info", info);
-}
-
-unique_ptr<LogicalOperator> LogicalAlter::Deserialize(Deserializer &deserializer) {
-	auto info = deserializer.ReadPropertyWithDefault<unique_ptr<ParseInfo>>(200, "info");
-	auto result = duckdb::unique_ptr<LogicalAlter>(new LogicalAlter(std::move(info)));
-	return std::move(result);
-}
-
 void LogicalAnyJoin::Serialize(Serializer &serializer) const {
 	LogicalOperator::Serialize(serializer);
 	serializer.WriteProperty<JoinType>(200, "join_type", join_type);
@@ -544,17 +536,6 @@ unique_ptr<LogicalOperator> LogicalDistinct::Deserialize(Deserializer &deseriali
 	auto distinct_targets = deserializer.ReadPropertyWithDefault<vector<unique_ptr<Expression>>>(201, "distinct_targets");
 	auto result = duckdb::unique_ptr<LogicalDistinct>(new LogicalDistinct(std::move(distinct_targets), distinct_type));
 	deserializer.ReadPropertyWithDefault<unique_ptr<BoundOrderModifier>>(202, "order_by", result->order_by);
-	return std::move(result);
-}
-
-void LogicalDrop::Serialize(Serializer &serializer) const {
-	LogicalOperator::Serialize(serializer);
-	serializer.WritePropertyWithDefault<unique_ptr<DropInfo>>(200, "info", info);
-}
-
-unique_ptr<LogicalOperator> LogicalDrop::Deserialize(Deserializer &deserializer) {
-	auto info = deserializer.ReadPropertyWithDefault<unique_ptr<ParseInfo>>(200, "info");
-	auto result = duckdb::unique_ptr<LogicalDrop>(new LogicalDrop(std::move(info)));
 	return std::move(result);
 }
 
