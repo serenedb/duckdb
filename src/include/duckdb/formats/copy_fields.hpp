@@ -43,6 +43,8 @@ private:
 
 string CopyPrintout(std::string_view value);
 
+idx_t Utf8SequenceLength(uint8_t lead);
+
 string CopyInvalidUtf8(std::string_view bytes);
 
 string CopyContext(const string &table, idx_t line, const string &column, bool has_value, const string &value);

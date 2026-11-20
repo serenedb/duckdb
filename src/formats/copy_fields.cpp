@@ -223,18 +223,20 @@ string CopyPrintout(std::string_view value) {
 	return string(value.substr(0, size)) + "...";
 }
 
+idx_t Utf8SequenceLength(uint8_t lead) {
+	if (lead >= 0xF0 && lead < 0xF8) {
+		return 4;
+	}
+	if (lead >= 0xE0 && lead < 0xF0) {
+		return 3;
+	}
+	return lead >= 0xC0 && lead < 0xE0 ? 2 : 1;
+}
+
 string CopyInvalidUtf8(std::string_view bytes) {
 	const auto checked = simdutf::validate_utf8_with_errors(bytes.data(), bytes.size());
 	const idx_t offset = checked.error == simdutf::error_code::SUCCESS ? 0 : checked.count;
-	const auto lead = offset < bytes.size() ? static_cast<uint8_t>(bytes[offset]) : 0;
-	idx_t length = 1;
-	if (lead >= 0xF0 && lead < 0xF8) {
-		length = 4;
-	} else if (lead >= 0xE0 && lead < 0xF0) {
-		length = 3;
-	} else if (lead >= 0xC0 && lead < 0xE0) {
-		length = 2;
-	}
+	const idx_t length = offset < bytes.size() ? Utf8SequenceLength(static_cast<uint8_t>(bytes[offset])) : 1;
 	string message = "invalid byte sequence for encoding \"UTF8\":";
 	for (idx_t at = offset; at < MinValue<idx_t>(offset + length, bytes.size()); at++) {
 		message += StringUtil::Format(" 0x%02x", static_cast<uint8_t>(bytes[at]));

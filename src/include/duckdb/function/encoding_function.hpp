@@ -121,6 +121,5 @@ struct Utf8DecodeResult {
 };
 
 Utf8DecodeResult DecodeToUtf8(TextEncoding encoding, const char *input, idx_t size, char *output, idx_t capacity);
-Utf8DecodeResult DecodeToUtf8(TextEncoding encoding, const char *input, idx_t size, string &output);
 
 } // namespace duckdb
