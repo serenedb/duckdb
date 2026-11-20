@@ -79,7 +79,7 @@ static bool IsSystemError(const std::exception &ex) {
 
 bool ExecuteFunctionState::TryExecuteDictionaryExpression(const BoundFunctionExpression &expr, DataChunk &args,
                                                           ExpressionState &state, Vector &result) {
-	static constexpr idx_t MAX_DICTIONARY_SIZE_THRESHOLD = 20000;
+	static constexpr idx_t MAX_DICTIONARY_SIZE_THRESHOLD = 200000;
 	static constexpr double CHUNK_FILL_RATIO_THRESHOLD = 0.5;
 
 	D_ASSERT(dictionary_input_resolved && input_col_idx.IsValid());

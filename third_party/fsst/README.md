@@ -1,6 +1,8 @@
 # DUCKDB NOTE
 Taken from https://github.com/cwida/fsst @ commit 0f0f9057048412da1ee48e35d516155cb7edd155
 
+fsst12.h, libfsst12.hpp and libfsst12.cpp (the 12-bit code variant) are taken from https://github.com/cwida/fsst @ commit e638d4cf8c26129d73c242a4127b42b975de5b63, with the API renamed to `duckdb_fsst12_*`, the internals moved to namespace `libfsst12` so both variants link into one binary, and the decoder helpers taking the symbol table as `unsigned long long *`.
+
 # FSST
 Fast Static Symbol Table (FSST): fast text compression that allows random access 
 
