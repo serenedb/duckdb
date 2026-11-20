@@ -341,6 +341,43 @@ SELECT d FROM read_csv('{TEMP_DIR}/short_decimals.csv', auto_detect = false, hea
 12.3
 
 statement ok
+COPY (FROM (VALUES ('0.01|0.01'), ('-0.5|-0.5'), ('7.25|7.25'), ('1234567.8|1234567.8'), ('-123456.78|-123456.78'), ('99999.99|99999.99'), ('12345678.9|12345678.9'), ('1.2.3|1.2.3'), ('12a4.56|12a4.56'), ('1234.567|1234.567'), ('0000001.10|0000001.10'))) TO '{TEMP_DIR}/joined_decimals.csv' (HEADER false, DELIMITER '\t', QUOTE '');
+
+query II
+SELECT count(*) = (SELECT count(TRY_CAST(s AS DECIMAL(15, 2))) FROM read_csv('{TEMP_DIR}/joined_decimals.csv', auto_detect = false, header = false, delim = '|', columns = {'r': 'VARCHAR', 's': 'VARCHAR'})), bool_and(d = TRY_CAST(s AS DECIMAL(15, 2))) FROM read_csv('{TEMP_DIR}/joined_decimals.csv', auto_detect = false, header = false, delim = '|', ignore_errors = true, columns = {'d': 'DECIMAL(15,2)', 's': 'VARCHAR'});
+----
+true	true
+
+query I
+SELECT d FROM read_csv('{TEMP_DIR}/joined_decimals.csv', auto_detect = false, header = false, delim = '|', ignore_errors = true, columns = {'d': 'DECIMAL(15,2)', 's': 'VARCHAR'}) ORDER BY d;
+----
+-123456.78
+-0.50
+0.01
+1.10
+7.25
+1234.57
+99999.99
+1234567.80
+12345678.90
+
+statement ok
+COPY (FROM (VALUES ('0001-01-01,0001-01-01'), ('9999-12-31,9999-12-31'), ('2000-02-29,2000-02-29'), ('1900-02-29,1900-02-29'), ('2023-02-29,2023-02-29'), ('1999-12-31,1999-12-31'))) TO '{TEMP_DIR}/edge_dates.csv' (HEADER false, DELIMITER '\t', QUOTE '');
+
+query II
+SELECT count(*) = (SELECT count(TRY_CAST(s AS DATE)) FROM read_csv('{TEMP_DIR}/edge_dates.csv', auto_detect = false, header = false, columns = {'r': 'VARCHAR', 's': 'VARCHAR'})), bool_and(d = TRY_CAST(s AS DATE)) FROM read_csv('{TEMP_DIR}/edge_dates.csv', auto_detect = false, header = false, ignore_errors = true, columns = {'d': 'DATE', 's': 'VARCHAR'});
+----
+true	true
+
+query I
+SELECT d FROM read_csv('{TEMP_DIR}/edge_dates.csv', auto_detect = false, header = false, ignore_errors = true, columns = {'d': 'DATE', 's': 'VARCHAR'}) ORDER BY d;
+----
+0001-01-01
+1999-12-31
+2000-02-29
+9999-12-31
+
+statement ok
 COPY (SELECT 'r' || lpad(i::VARCHAR, 6, '0') || ',v' || lpad(i::VARCHAR, 6, '0') FROM range(128) r(i) ORDER BY i) TO '{TEMP_DIR}/exact_buffers.csv.gz' (HEADER false, DELIMITER '\t', QUOTE '', COMPRESSION gzip);
 
 query II

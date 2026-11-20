@@ -53,9 +53,7 @@ inline uint64_t EightDigits(uint64_t chunk) {
 	return (chunk & 0x0000FFFF0000FFFFULL) * 42949672960001ULL >> 32;
 }
 
-[[gnu::always_inline]] inline bool SwarDigits(const char *value, idx_t count, uint64_t &out) {
-	uint64_t chunk;
-	memcpy(&chunk, value, sizeof(chunk));
+[[gnu::always_inline]] inline bool ChunkDigits(uint64_t chunk, idx_t count, uint64_t &out) {
 	if (count < 8) {
 		chunk = (chunk << ((8 - count) * 8)) | (0x3030303030303030ULL >> (count * 8));
 	}
@@ -64,6 +62,12 @@ inline uint64_t EightDigits(uint64_t chunk) {
 	}
 	out = EightDigits(chunk);
 	return true;
+}
+
+[[gnu::always_inline]] inline bool SwarDigits(const char *value, idx_t count, uint64_t &out) {
+	uint64_t chunk;
+	memcpy(&chunk, value, sizeof(chunk));
+	return ChunkDigits(chunk, count, out);
 }
 
 inline bool ScalarDigits(const char *value, idx_t count, uint64_t &out) {
@@ -167,6 +171,22 @@ template <class T>
 	    (dot && fraction_digits == 0)) {
 		return false;
 	}
+	if (dot && remaining <= 9 && digits + 8 <= limit) {
+		uint64_t chunk;
+		memcpy(&chunk, digits, sizeof(chunk));
+		const uint64_t integer_bytes = ~uint64_t(0) >> (64 - 8 * integer_digits);
+		chunk = (chunk & integer_bytes) | ((chunk >> 8) & ~integer_bytes);
+		if (remaining == 9) {
+			chunk = (chunk & 0x00FFFFFFFFFFFFFFULL) | (static_cast<uint64_t>(static_cast<uint8_t>(digits[8])) << 56);
+		}
+		uint64_t joined;
+		if (!ChunkDigits(chunk, remaining - 1, joined)) {
+			return false;
+		}
+		const auto result = static_cast<int64_t>(joined * VALUE_POWERS_OF_TEN[scale - fraction_digits]);
+		out = static_cast<T>(negative ? -result : result);
+		return true;
+	}
 	uint64_t integer;
 	if (!ParseDigits(digits, integer_digits, limit, integer)) {
 		return false;
@@ -197,10 +217,11 @@ template <class T>
 	if (!DigitsAreValid(digits)) {
 		return false;
 	}
-	const auto packed = static_cast<int32_t>(EightDigits(digits));
-	int32_t year = packed / 10000;
-	const auto month = static_cast<uint32_t>(packed / 100 % 100);
-	const auto day = static_cast<uint32_t>(packed % 100);
+	const uint64_t numbers = digits & 0x0F0F0F0F0F0F0F0FULL;
+	const uint64_t pairs = (numbers * 10 + (numbers >> 8)) & 0x00FF00FF00FF00FFULL;
+	int32_t year = static_cast<int32_t>((pairs & 0xFF) * 100 + ((pairs >> 16) & 0xFF));
+	const auto month = static_cast<uint32_t>((pairs >> 32) & 0xFF);
+	const auto day = static_cast<uint32_t>(pairs >> 48);
 	if (year == 0 || month == 0 || month > 12 || day == 0) {
 		return false;
 	}
@@ -225,9 +246,11 @@ struct ParsedAs {
 
 template <class T>
 struct SignedParser {
-	bool operator()(const char *value, idx_t size, T &out) const {
-		return (!strict && FastInteger<T>(value, size, limit, out)) ||
-		       TrySimpleIntegerCast<T>(value, size, out, strict);
+	[[gnu::always_inline]] bool operator()(const char *value, idx_t size, T &out) const {
+		return (!strict && FastInteger<T>(value, size, limit, out)) || Slow(value, size, out);
+	}
+	[[gnu::noinline]] bool Slow(const char *value, idx_t size, T &out) const {
+		return TrySimpleIntegerCast<T>(value, size, out, strict);
 	}
 	const char *limit;
 	bool strict;
@@ -235,9 +258,11 @@ struct SignedParser {
 
 template <class T>
 struct UnsignedParser {
-	bool operator()(const char *value, idx_t size, T &out) const {
-		return (!strict && FastInteger<T>(value, size, limit, out)) ||
-		       TrySimpleIntegerCast<T, false>(value, size, out, strict);
+	[[gnu::always_inline]] bool operator()(const char *value, idx_t size, T &out) const {
+		return (!strict && FastInteger<T>(value, size, limit, out)) || Slow(value, size, out);
+	}
+	[[gnu::noinline]] bool Slow(const char *value, idx_t size, T &out) const {
+		return TrySimpleIntegerCast<T, false>(value, size, out, strict);
 	}
 	const char *limit;
 	bool strict;
@@ -245,10 +270,10 @@ struct UnsignedParser {
 
 template <class T>
 struct DecimalParser {
-	bool operator()(const char *value, idx_t size, T &out) const {
-		if (!strict && FastDecimal<T>(value, size, limit, out, separator, width, scale)) {
-			return true;
-		}
+	[[gnu::always_inline]] bool operator()(const char *value, idx_t size, T &out) const {
+		return (!strict && FastDecimal<T>(value, size, limit, out, separator, width, scale)) || Slow(value, size, out);
+	}
+	[[gnu::noinline]] bool Slow(const char *value, idx_t size, T &out) const {
 		if (separator == ',') {
 			return TryDecimalStringCast<T, ','>(value, size, out, width, scale);
 		}
