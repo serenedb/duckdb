@@ -195,6 +195,19 @@ TEST_CASE("GZIP rejects truncated member boundaries", "[file_system][gzip]") {
 	}
 }
 
+TEST_CASE("GZIP rejects a header whose extra field is cut short", "[file_system][gzip]") {
+	auto compressed_data = ReadGZipTestFile("bgzf.gz");
+	REQUIRE((compressed_data[3] & GZIP_FLAG_EXTRA) != 0);
+	auto header_end = FindGZipHeaderEnd(compressed_data, 0);
+	for (idx_t end : {idx_t(GZIP_HEADER_MINSIZE + 1), header_end - 1}) {
+		vector<data_t> truncated(compressed_data.begin(), compressed_data.begin() + end);
+		for (idx_t read_size : {idx_t(1), NumericCast<idx_t>(truncated.size())}) {
+			CAPTURE(end, read_size);
+			REQUIRE_THROWS_AS(ReadCompressedData(truncated, read_size), IOException);
+		}
+	}
+}
+
 TEST_CASE("GZIP string decompression rejects a header-only stream with FNAME", "[file_system][gzip]") {
 	const char header[] = {'\x1f', '\x8b', '\x08', '\x08', '\x00', '\x00', '\x00', '\x00', '\x00', '\x00'};
 	REQUIRE_THROWS_AS(GZipFileSystem::UncompressGZIPString(header, sizeof(header)), IOException);
