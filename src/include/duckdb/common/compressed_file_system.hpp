@@ -73,6 +73,7 @@ public:
 	DUCKDB_API ~CompressedFile() override;
 
 	DUCKDB_API idx_t GetProgress() override;
+	DUCKDB_API bool IsPipe() override;
 
 	CompressedFileSystem &compressed_fs;
 	unique_ptr<FileHandle> child_handle;
