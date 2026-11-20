@@ -120,6 +120,8 @@ void Binder::BindDrop(DropInfo &info, StatementProperties &properties) {
 		BindDropRole(info);
 		break;
 	case CatalogType::TABLESPACE_ENTRY:
+		ClusterEntry(context, CheckAs(), CatalogType::TABLESPACE_ENTRY, info.GetQualifiedName().Name(), EntryUse::DROP,
+		             OnEntryNotFound::RETURN_NULL);
 		break;
 	case CatalogType::DATABASE_ENTRY:
 		ClusterEntry(context, CheckAs(), CatalogType::DATABASE_ENTRY, info.GetQualifiedName().Name(), EntryUse::DROP,

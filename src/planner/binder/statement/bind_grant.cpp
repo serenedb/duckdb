@@ -108,6 +108,15 @@ static CatalogEntry &ResolvePermissionsTarget(Binder &binder, AlterPermissionsIn
 	return *entry;
 }
 
+static void RefuseSystemTablespace(const CatalogEntry &entry) {
+	if (entry.type == CatalogType::TABLESPACE_ENTRY && entry.internal) {
+		throw NotImplementedException(
+		    unordered_map<string, string> {
+		        {"detail", "A system tablespace cannot be renamed, given to another owner or granted on."}},
+		    StringUtil::Format("tablespace \"%s\" is a system tablespace", entry.name.GetIdentifierName()));
+	}
+}
+
 static void RefuseOwnedSequence(ClientContext &context, CatalogEntry &sequence) {
 	auto &catalog = sequence.ParentCatalog();
 	auto table = catalog.OwnerOf(catalog.GetCatalogTransaction(context), sequence);
@@ -186,6 +195,7 @@ static void ResolveGrant(Binder &binder, AlterPermissionsInfo &info) {
 		return;
 	}
 	auto &target = ResolvePermissionsTarget(binder, info);
+	RefuseSystemTablespace(target);
 	if (target.internal) {
 		throw PermissionException("Cannot alter entry \"%s\" because it is an internal system entry",
 		                          target.name.GetIdentifierName());
@@ -218,6 +228,7 @@ static void ResolveGrant(Binder &binder, AlterPermissionsInfo &info) {
 static void ResolveOwner(Binder &binder, AlterPermissionsInfo &info) {
 	auto &context = binder.context;
 	auto &entry = ResolvePermissionsTarget(binder, info);
+	RefuseSystemTablespace(entry);
 	auto &permissions = TargetPermissions(info, entry);
 	info.new_owner_id = RoleSpecId(context, info.new_owner);
 	auto &role = binder.CheckAs();
@@ -252,7 +263,7 @@ static void ResolveOwner(Binder &binder, AlterPermissionsInfo &info) {
 		                               entry.GetInfo()->Cast<CreateForeignServerInfo>().fdw_name);
 	} else if (ObjectKindOf(entry.type).container == ObjectContainer::DATABASE) {
 		RequireDatabasePrivilege(context, role, entry.ParentCatalog().GetName(), AclMode::Create);
-	} else {
+	} else if (entry.type != CatalogType::TABLESPACE_ENTRY) {
 		auto &schema = entry.ParentSchema(context);
 		if (!context.AccessOf(info.new_owner_id).Can(CatalogType::SCHEMA_ENTRY, schema.permissions, AclMode::Create)) {
 			ThrowPermissionDenied(schema);

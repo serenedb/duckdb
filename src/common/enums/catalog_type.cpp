@@ -120,6 +120,8 @@ string CatalogTypeToNoun(CatalogType type) {
 		return "trigger";
 	case CatalogType::JOB_ENTRY:
 		return "job";
+	case CatalogType::TABLESPACE_ENTRY:
+		return "tablespace";
 	case CatalogType::COORDINATE_SYSTEM_ENTRY:
 		return "coordinate system";
 	default:
