@@ -2033,8 +2033,10 @@ void CsvScan::LeanRowNumbers(idx_t count, DataChunk &output) {
 
 bool CsvScan::DecodeLean(idx_t count, DataChunk &output) {
 	output.Reset();
-	parse_chunk.Reset();
-	scratch_chunk.Reset();
+	absl::Cleanup release_window = [&] {
+		parse_chunk.Reset();
+		scratch_chunk.Reset();
+	};
 	const idx_t columns = global.num_columns;
 	bool utf8_valid = !cursor.non_ascii;
 	if (!utf8_valid) {
