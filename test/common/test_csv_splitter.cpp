@@ -1726,9 +1726,9 @@ bool ReferencePostgresRows(const RowDialect &dialect, const string &input, vecto
 			flagged = false;
 			continue;
 		}
-		if (ch == '\n') {
+		if (ch == dialect.line_break) {
 			idx_t end = i;
-			if (plain_cr == i - 1 && i > 0) {
+			if (dialect.line_break == '\n' && plain_cr == i - 1 && i > 0) {
 				end--;
 			}
 			row.fields.emplace_back(field_begin, end, flagged);
@@ -1745,7 +1745,8 @@ bool ReferencePostgresRows(const RowDialect &dialect, const string &input, vecto
 		return false;
 	}
 	if (open) {
-		const idx_t end = !input.empty() && plain_cr == input.size() - 1 ? input.size() - 1 : input.size();
+		const bool stripped = dialect.line_break == '\n' && !input.empty() && plain_cr == input.size() - 1;
+		const idx_t end = stripped ? input.size() - 1 : input.size();
 		row.fields.emplace_back(field_begin, end, flagged);
 		rows.push_back(row);
 		lines++;
@@ -1754,7 +1755,7 @@ bool ReferencePostgresRows(const RowDialect &dialect, const string &input, vecto
 }
 
 string PostgresInput(std::mt19937_64 &rng, const RowDialect &dialect) {
-	string alphabet = string(2, dialect.delimiter) + "\n\n\r ab";
+	string alphabet = string(2, dialect.delimiter) + string(2, dialect.line_break) + "\n\r ab";
 	if (dialect.quote) {
 		alphabet += string(2, dialect.quote);
 	}
@@ -1852,12 +1853,13 @@ TEST_CASE("Row lexer splits PostgreSQL csv and text like the scalar rules", "[cs
 	for (idx_t iteration = 0; iteration < count; iteration++) {
 		const char delimiters[] = {',', '|', '\t'};
 		const char delimiter = delimiters[rng() % 3];
+		const char line_break = rng() % 2 ? '\n' : '\r';
 		RowDialect dialect;
 		if (rng() % 2) {
-			dialect = RowDialect::PostgresText(delimiter);
+			dialect = RowDialect::PostgresText(delimiter, line_break);
 		} else {
 			const char quote = rng() % 2 ? '"' : '\'';
-			dialect = RowDialect::PostgresCsv(delimiter, quote, rng() % 2 ? quote : '\\');
+			dialect = RowDialect::PostgresCsv(delimiter, quote, rng() % 2 ? quote : '\\', line_break);
 		}
 		const auto input = PostgresInput(rng, dialect);
 		vector<ReferenceRow> expected;

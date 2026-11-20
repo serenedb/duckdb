@@ -122,24 +122,26 @@ RowDialect RowDialect::DuckDB(const CsvGrammar &grammar) {
 	return result;
 }
 
-RowDialect RowDialect::PostgresCsv(char delimiter, char quote, char escape) {
+RowDialect RowDialect::PostgresCsv(char delimiter, char quote, char escape, char line_break) {
 	RowDialect result;
 	result.delimiter = delimiter;
 	result.quote = quote;
 	result.escape = escape;
 	result.quoting = RowQuoting::ANYWHERE;
 	result.escape_in_quotes = escape != '\0' && escape != quote;
-	result.strip_carriage = true;
+	result.line_break = line_break;
+	result.strip_carriage = line_break == '\n';
 	result.strict = true;
 	return result;
 }
 
-RowDialect RowDialect::PostgresText(char delimiter) {
+RowDialect RowDialect::PostgresText(char delimiter, char line_break) {
 	RowDialect result;
 	result.delimiter = delimiter;
 	result.escape = '\\';
 	result.backslash = true;
-	result.strip_carriage = true;
+	result.line_break = line_break;
+	result.strip_carriage = line_break == '\n';
 	result.strict = true;
 	return result;
 }
@@ -520,7 +522,7 @@ bool RowLexer::FeedBlocks(RowCursor &cursor, const char *data, idx_t base, idx_t
 		const uint64_t line_feed = vector.Equal('\n') & valid;
 		const uint64_t carriage_return = vector.Equal('\r') & valid;
 		const uint64_t newline_bits = line_feed | carriage_return;
-		const uint64_t term_bits = d.carriage_terms ? newline_bits : line_feed;
+		const uint64_t term_bits = d.carriage_terms ? newline_bits : d.line_break == '\n' ? line_feed : carriage_return;
 		const uint64_t escape_bits = escapes ? vector.Equal(d.escape) & valid : 0;
 		const uint64_t raw_quote = d.quote ? vector.Equal(d.quote) & valid : 0;
 		const uint64_t comment_bits = d.comment ? vector.Equal(d.comment) & valid : 0;

@@ -18,8 +18,8 @@ enum class RowQuoting : uint8_t { NONE, FIELD_START, ANYWHERE };
 
 struct RowDialect {
 	static RowDialect DuckDB(const CsvGrammar &grammar);
-	static RowDialect PostgresCsv(char delimiter, char quote, char escape);
-	static RowDialect PostgresText(char delimiter);
+	static RowDialect PostgresCsv(char delimiter, char quote, char escape, char line_break = '\n');
+	static RowDialect PostgresText(char delimiter, char line_break = '\n');
 
 	char delimiter = ',';
 	char delimiter_tail[3] = {};
@@ -42,6 +42,7 @@ struct RowDialect {
 	bool reopen = false;
 	bool empty_space = false;
 	bool quoted_spaces = false;
+	char line_break = '\n';
 	NewLineIdentifier new_line = NewLineIdentifier::NOT_SET;
 };
 
