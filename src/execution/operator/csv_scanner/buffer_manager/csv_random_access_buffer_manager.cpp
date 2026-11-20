@@ -11,10 +11,7 @@ CSVRandomAccessBufferManager::CSVRandomAccessBufferManager(ClientContext &contex
 }
 
 void CSVRandomAccessBufferManager::Initialize() {
-	const idx_t buffer_count = KnownBufferCount();
-	cached_buffers.resize(buffer_count);
-	cached_buffers[0] = make_shared_ptr<CSVBuffer>(context, buffer_size, KnownBufferSize(0), 0, 0, buffer_count == 1);
-	cached_buffers[0]->LoadRandomAccess(*file_handle);
+	cached_buffers.resize(KnownBufferCount());
 }
 
 shared_ptr<CSVBufferHandle> CSVRandomAccessBufferManager::GetBuffer(const idx_t pos) {
