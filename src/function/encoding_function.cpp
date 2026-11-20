@@ -213,18 +213,6 @@ Utf8DecodeResult DecodeToUtf8(TextEncoding encoding, const char *input, idx_t si
 	                    [&]<typename DECODER>() { return DecodeUnits<DECODER>(input, size, output, capacity); });
 }
 
-Utf8DecodeResult DecodeToUtf8(TextEncoding encoding, const char *input, idx_t size, string &output) {
-	const auto max_size = VisitDecoder(
-	    encoding, [&]<typename DECODER>() { return size / sizeof(typename DECODER::UNIT) * DECODER::UTF8_PER_UNIT; });
-	const auto offset = output.size();
-	Utf8DecodeResult result {};
-	output.resize_and_overwrite(offset + max_size, [&](char *data, size_t capacity) {
-		result = DecodeToUtf8(encoding, input, size, data + offset, capacity - offset);
-		return offset + result.written;
-	});
-	return result;
-}
-
 void DecodeUTF8(CSVEncoderBuffer &encoded_buffer, char *target_buffer, idx_t &target_buffer_current_position,
                 const idx_t target_buffer_size, char *remaining_bytes_buffer, idx_t &remaining_bytes_size,
                 EncodingFunction *encoding_function) {
