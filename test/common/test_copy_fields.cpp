@@ -366,6 +366,77 @@ TEST_CASE("COPY takes the line break of its first line, however its input is spl
 	}
 }
 
+namespace {
+
+string BeforeEndMarker(const string &input) {
+	bool line_start = true;
+	for (idx_t i = 0; i < input.size(); i++) {
+		if (input[i] != '\\') {
+			line_start = input[i] == '\n';
+			continue;
+		}
+		if (line_start && i + 1 < input.size() && input[i + 1] == '.') {
+			if (i + 2 == input.size() || input[i + 2] == '\n' ||
+			    (input[i + 2] == '\r' && i + 3 < input.size() && input[i + 3] == '\n')) {
+				return input.substr(0, i);
+			}
+		}
+		line_start = false;
+		i++;
+	}
+	return input;
+}
+
+string ScanForEndMarker(const string &input, const vector<idx_t> &cuts) {
+	CopyEndMarkerScanner scanner;
+	string result;
+	idx_t from = 0;
+	for (const idx_t cut : cuts) {
+		const auto scanned = scanner.Scan(std::string_view(input).substr(from, cut - from));
+		result += scanned.carry;
+		result += scanned.data;
+		from = cut;
+	}
+	const auto scanned = scanner.Scan(std::string_view(input).substr(from));
+	result += scanned.carry;
+	result += scanned.data;
+	result += scanner.Finish();
+	return result;
+}
+
+} // namespace
+
+TEST_CASE("COPY's text stream ends at a line of only the end marker, however it is split", "[copy]") {
+	const vector<string> cases = {"a\n\\.\nb",   "a\\\n\\.\nb", "\\.\r\nb",     "\\.",       "a\n\\.\r",
+	                              "\\\\.\nb",    "a\\.\nb",     "x\\\\\n\\.\n", "\\\\\\.\n", "a\n\\.x\n\\.\n",
+	                              "a\r\\.\nb\n", "\\",          "\\.\rb\n\\.\n"};
+	const vector<string> expected = {"a\n",         "a\\\n\\.\nb", "",        "",          "a\n\\.\r",
+	                                 "\\\\.\nb",    "a\\.\nb",     "x\\\\\n", "\\\\\\.\n", "a\n\\.x\n",
+	                                 "a\r\\.\nb\n", "\\",          "\\.\rb\n"};
+	for (idx_t c = 0; c < cases.size(); c++) {
+		const auto &input = cases[c];
+		REQUIRE(BeforeEndMarker(input) == expected[c]);
+		for (idx_t split = 0; split <= input.size(); split++) {
+			INFO("input " << Escaped(input) << " split " << split);
+			REQUIRE(ScanForEndMarker(input, {split}) == expected[c]);
+		}
+	}
+	std::mt19937_64 rng(23);
+	const string alphabet = "\\\\\\.\n\r a";
+	for (idx_t round = 0; round < 20000; round++) {
+		string input(rng() % 300, ' ');
+		for (auto &c : input) {
+			c = alphabet[rng() % alphabet.size()];
+		}
+		vector<idx_t> cuts;
+		for (idx_t at = rng() % 80; at < input.size(); at += 1 + rng() % 80) {
+			cuts.push_back(at);
+		}
+		INFO("input " << Escaped(input));
+		REQUIRE(ScanForEndMarker(input, cuts) == BeforeEndMarker(input));
+	}
+}
+
 TEST_CASE("COPY reads null and default markers only where PostgreSQL does", "[copy]") {
 	CopyFromRules rules;
 	rules.options.format = CopyFormat::CSV;

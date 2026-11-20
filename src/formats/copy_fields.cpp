@@ -1,7 +1,10 @@
 #include "duckdb/formats/copy_fields.hpp"
 
 #include "duckdb/common/string_util.hpp"
+#include "duckdb/formats/csv_simd.hpp"
 #include "simdutf.h"
+
+#include <bit>
 
 namespace duckdb {
 
@@ -25,6 +28,10 @@ int HexDigit(char c) {
 
 bool OctalDigit(char c) {
 	return c >= '0' && c <= '7';
+}
+
+bool IsEndMarkerPrefix(std::string_view bytes) {
+	return bytes == "\\" || bytes == "\\." || bytes == "\\.\r";
 }
 
 } // namespace
@@ -210,6 +217,103 @@ char CopyLineBreakFinder::Feed(std::string_view bytes) {
 
 char CopyLineBreakFinder::Finish() const {
 	return after_cr ? '\r' : '\n';
+}
+
+CopyEndScan CopyEndMarkerScanner::Scan(std::string_view chunk) {
+	CopyEndScan result;
+	if (ended) {
+		return result;
+	}
+	while (!pending.empty() && !chunk.empty()) {
+		pending.push_back(chunk.front());
+		if (pending == "\\.\n" || pending == "\\.\r\n") {
+			ended = true;
+			pending.clear();
+			return result;
+		}
+		if (IsEndMarkerPrefix(pending)) {
+			chunk.remove_prefix(1);
+			continue;
+		}
+		pending.pop_back();
+		escape_carry = pending == "\\" ? 1 : 0;
+		at_line_start = false;
+		carry = std::move(pending);
+		pending.clear();
+		result.carry = carry;
+		break;
+	}
+	if (!pending.empty()) {
+		return result;
+	}
+	result.data = ScanChunk(chunk);
+	return result;
+}
+
+std::string_view CopyEndMarkerScanner::Finish() {
+	if (ended || pending == "\\.") {
+		ended = true;
+		pending.clear();
+		return std::string_view();
+	}
+	carry = std::move(pending);
+	pending.clear();
+	return carry;
+}
+
+std::string_view CopyEndMarkerScanner::Hold(std::string_view chunk, idx_t at) {
+	pending = string(chunk.substr(at));
+	return chunk.substr(0, at);
+}
+
+std::string_view CopyEndMarkerScanner::ScanChunk(std::string_view chunk) {
+	const char *data = chunk.data();
+	const idx_t size = chunk.size();
+	char padded[CSV_BLOCK_BYTES];
+	for (idx_t block = 0; block < size; block += CSV_BLOCK_BYTES) {
+		const idx_t available = MinValue<idx_t>(size - block, CSV_BLOCK_BYTES);
+		const char *bytes = data + block;
+		if (available < CSV_BLOCK_BYTES) {
+			memset(padded, 0, sizeof(padded));
+			memcpy(padded, bytes, available);
+			bytes = padded;
+		}
+		const CsvVector vector(bytes);
+		const uint64_t backslashes = vector.Equal('\\');
+		const uint64_t escaped = CsvFindEscaped(backslashes, escape_carry);
+		uint64_t candidates = backslashes & ~escaped;
+		if (available < CSV_BLOCK_BYTES) {
+			escape_carry = (candidates >> (available - 1)) & 1;
+		}
+		const bool line_start = at_line_start;
+		at_line_start = bytes[available - 1] == '\n' && !((escaped >> (available - 1)) & 1);
+		if (!candidates) {
+			continue;
+		}
+		candidates &= ((vector.Equal('\n') & ~escaped) << 1) | uint64_t(line_start);
+		for (; candidates; candidates &= candidates - 1) {
+			const idx_t at = block + NumericCast<idx_t>(std::countr_zero(candidates));
+			if (at + 1 == size || (data[at + 1] == '.' && at + 2 == size)) {
+				return Hold(chunk, at);
+			}
+			if (data[at + 1] != '.') {
+				continue;
+			}
+			if (data[at + 2] == '\r') {
+				if (at + 3 == size) {
+					return Hold(chunk, at);
+				}
+				if (data[at + 3] != '\n') {
+					continue;
+				}
+			} else if (data[at + 2] != '\n') {
+				continue;
+			}
+			ended = true;
+			return chunk.substr(0, at);
+		}
+	}
+	return chunk;
 }
 
 string CopyPrintout(std::string_view value) {
