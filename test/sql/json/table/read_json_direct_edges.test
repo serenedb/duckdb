@@ -1,0 +1,186 @@
+# name: test/sql/json/table/read_json_direct_edges.test
+# description: newline-delimited records decoded straight from the parser: text of numbers and booleans, decimals from booleans, lenient casts, and every value or key the decoder hands to the node tree, which gives the value or the error
+# group: [table]
+
+require json
+
+statement ok
+COPY (SELECT line FROM (VALUES
+	(1, '{"s": -5}'),
+	(2, '{"s": 18446744073709551615}'),
+	(3, '{"s": 1.5}'),
+	(4, '{"s": true}'),
+	(5, '{"s": "plain" }')
+) t(i, line) ORDER BY i) TO '{TEMP_DIR}/text_values.ndjson' (FORMAT csv, HEADER false, QUOTE '', ESCAPE '');
+
+query I
+SELECT s FROM read_ndjson('{TEMP_DIR}/text_values.ndjson', columns := {s: 'VARCHAR'}, records := true);
+----
+-5
+18446744073709551615
+1.5
+true
+plain
+
+statement ok
+COPY (SELECT line FROM (VALUES
+	(1, '{"m": true}'),
+	(2, '{"m": false}'),
+	(3, '{"m": 2.50 }')
+) t(i, line) ORDER BY i) TO '{TEMP_DIR}/decimal_values.ndjson' (FORMAT csv, HEADER false, QUOTE '', ESCAPE '');
+
+query I
+SELECT m FROM read_ndjson('{TEMP_DIR}/decimal_values.ndjson', columns := {m: 'DECIMAL(10,2)'}, records := true);
+----
+1.00
+0.00
+2.50
+
+statement ok
+COPY (SELECT line FROM (VALUES
+	(1, '{"m": [1], "d": 5}'),
+	(2, '{"m": 3, "d": "2020-01-02"}'),
+	(3, '{"x": 1}')
+) t(i, line) ORDER BY i) TO '{TEMP_DIR}/lenient_values.ndjson' (FORMAT csv, HEADER false, QUOTE '', ESCAPE '');
+
+query II
+SELECT m, d FROM read_ndjson('{TEMP_DIR}/lenient_values.ndjson', columns := {m: 'DECIMAL(10,2)', d: 'DATE'}, ignore_errors := true);
+----
+NULL	NULL
+3.00	2020-01-02
+NULL	NULL
+
+statement error
+SELECT m FROM read_ndjson('{TEMP_DIR}/lenient_values.ndjson', columns := {m: 'DECIMAL(10,2)'}, records := true);
+----
+<REGEX>:.*in line 1: Failed to cast value to decimal.*
+
+statement ok
+COPY (SELECT line FROM (VALUES
+	(1, '{"s": "a\qb", "n": "\q", "m": "\q", "b": "\q"}')
+) t(i, line) ORDER BY i) TO '{TEMP_DIR}/bad_escapes.ndjson' (FORMAT csv, HEADER false, QUOTE '', ESCAPE '');
+
+foreach name,type s,VARCHAR n,INTEGER m,DECIMAL b,BOOLEAN
+
+statement error
+SELECT * FROM read_ndjson('{TEMP_DIR}/bad_escapes.ndjson', columns := {{name}: '{type}'}, records := true);
+----
+<REGEX>:.*Malformed JSON in file.*in line 1: invalid escaped sequence in string.*
+
+endloop
+
+statement ok
+COPY (SELECT '{"s": tru, "m": tru, "n": nul, "v": 123456789012345678901234567890}' AS line) TO '{TEMP_DIR}/bad_literals.ndjson' (FORMAT csv, HEADER false, QUOTE '', ESCAPE '');
+
+statement error
+SELECT s FROM read_ndjson('{TEMP_DIR}/bad_literals.ndjson', columns := {s: 'VARCHAR'}, records := true);
+----
+at byte 7 in line 1: invalid literal, expected 'true'
+
+statement error
+SELECT m FROM read_ndjson('{TEMP_DIR}/bad_literals.ndjson', columns := {m: 'DECIMAL(10,2)'}, records := true);
+----
+at byte 7 in line 1: invalid literal, expected 'true'
+
+statement error
+SELECT n FROM read_ndjson('{TEMP_DIR}/bad_literals.ndjson', columns := {n: 'INTEGER'}, records := true);
+----
+at byte 7 in line 1: invalid literal, expected 'true'
+
+query I
+SELECT n FROM read_ndjson('{TEMP_DIR}/bad_literals.ndjson', columns := {n: 'INTEGER'}, records := true, ignore_errors := true);
+----
+NULL
+
+statement ok
+COPY (SELECT '{"v": 123456789012345678901234567890}' AS line) TO '{TEMP_DIR}/big_text.ndjson' (FORMAT csv, HEADER false, QUOTE '', ESCAPE '');
+
+query I
+SELECT v FROM read_ndjson('{TEMP_DIR}/big_text.ndjson', columns := {v: 'VARCHAR'}, records := true);
+----
+123456789012345678901234567890
+
+statement ok
+COPY (SELECT '{"j": {"a": {"b": 1}' AS line) TO '{TEMP_DIR}/unclosed_value.ndjson' (FORMAT csv, HEADER false, QUOTE '', ESCAPE '');
+
+statement error
+SELECT j FROM read_ndjson('{TEMP_DIR}/unclosed_value.ndjson', columns := {j: 'JSON'}, records := true);
+----
+<REGEX>:.*Malformed JSON in file.*in line 1: .*
+
+query I
+SELECT j FROM read_ndjson('{TEMP_DIR}/unclosed_value.ndjson', columns := {j: 'JSON'}, records := true, ignore_errors := true);
+----
+NULL
+
+statement ok
+COPY (SELECT '{"a": 1} {}' AS line) TO '{TEMP_DIR}/trailing_object.ndjson' (FORMAT csv, HEADER false, QUOTE '', ESCAPE '');
+
+statement error
+SELECT a FROM read_ndjson('{TEMP_DIR}/trailing_object.ndjson', columns := {a: 'INTEGER'}, records := true);
+----
+<REGEX>:.*in line 1: unexpected content after document.*
+
+statement ok
+COPY (SELECT line FROM (VALUES
+	(1, '{"id": 2, "ID": 3, "a": 4}'),
+	(2, '{"a": 1}')
+) t(i, line) ORDER BY i) TO '{TEMP_DIR}/keys.ndjson' (FORMAT csv, HEADER false, QUOTE '', ESCAPE '');
+
+query II
+SELECT a, id FROM read_ndjson('{TEMP_DIR}/keys.ndjson', columns := {a: 'INTEGER', id: 'INTEGER'});
+----
+4	2
+1	NULL
+
+statement ok
+COPY (SELECT '{"id": 5, "ID": 6}' AS line) TO '{TEMP_DIR}/exact_then_folded.ndjson' (FORMAT csv, HEADER false, QUOTE '', ESCAPE '');
+
+query I
+SELECT id FROM read_ndjson('{TEMP_DIR}/exact_then_folded.ndjson', columns := {id: 'INTEGER'}, records := true);
+----
+5
+
+statement ok
+COPY (SELECT line FROM (VALUES (1, '{"a": 1}'), (2, '{"a": 2, "b": 3}')) t(i, line) ORDER BY i) TO '{TEMP_DIR}/unsampled_key.ndjson' (FORMAT csv, HEADER false, QUOTE '', ESCAPE '');
+
+statement error
+SELECT * FROM read_ndjson('{TEMP_DIR}/unsampled_key.ndjson', sample_size := 1);
+----
+<REGEX>:.*in line 2: Object .* has unknown key "b".*
+
+statement ok
+COPY (SELECT line FROM (VALUES (1, '{"a": 1, "b": nul}'), (2, '{"a": 2, "b": 3}')) t(i, line) ORDER BY i) TO '{TEMP_DIR}/unread_bad.ndjson' (FORMAT csv, HEADER false, QUOTE '', ESCAPE '');
+
+statement error
+SELECT count(*) FROM read_ndjson('{TEMP_DIR}/unread_bad.ndjson', columns := {a: 'INTEGER', b: 'INTEGER'});
+----
+<REGEX>:.*Malformed JSON in file.*in line 1: invalid literal, expected 'null'.*
+
+statement error
+SELECT a, b FROM read_ndjson('{TEMP_DIR}/unread_bad.ndjson', columns := {a: 'INTEGER', b: 'INTEGER'});
+----
+<REGEX>:.*Malformed JSON in file.*in line 1: invalid literal, expected 'null'.*
+
+query I
+SELECT a FROM read_ndjson('{TEMP_DIR}/unread_bad.ndjson', columns := {a: 'INTEGER', b: 'INTEGER'}) ORDER BY a;
+----
+1
+2
+
+statement ok
+COPY (SELECT line FROM (VALUES (1, '{"d": NaN}'), (2, '{"d": Infinity}'), (3, '{"d": 1.5}')) t(i, line) ORDER BY i) TO '{TEMP_DIR}/specials.ndjson' (FORMAT csv, HEADER false, QUOTE '', ESCAPE '');
+
+query I
+SELECT d FROM read_ndjson('{TEMP_DIR}/specials.ndjson', columns := {d: 'DOUBLE'}, records := true);
+----
+nan
+inf
+1.5
+
+query I
+SELECT d FROM read_ndjson('{TEMP_DIR}/specials.ndjson', columns := {d: 'DOUBLE'}, records := true, ignore_errors := true);
+----
+nan
+inf
+1.5
