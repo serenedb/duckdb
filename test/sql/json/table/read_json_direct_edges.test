@@ -184,3 +184,17 @@ SELECT d FROM read_ndjson('{TEMP_DIR}/specials.ndjson', columns := {d: 'DOUBLE'}
 nan
 inf
 1.5
+
+statement ok
+COPY (SELECT line FROM (VALUES (1, '{"n": 1}'), (2, '{"n": +2}')) t(i, line) ORDER BY i) TO '{TEMP_DIR}/untyped_value.ndjson' (FORMAT csv, HEADER false, QUOTE '', ESCAPE '');
+
+statement error
+SELECT n FROM read_ndjson('{TEMP_DIR}/untyped_value.ndjson', columns := {n: 'INTEGER'}, records := true);
+----
+<REGEX>:.*Malformed JSON in file.*in line 2: .*
+
+query I
+SELECT n FROM read_ndjson('{TEMP_DIR}/untyped_value.ndjson', columns := {n: 'INTEGER'}, records := true, ignore_errors := true);
+----
+1
+NULL
