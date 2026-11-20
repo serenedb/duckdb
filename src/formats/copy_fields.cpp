@@ -151,7 +151,7 @@ CopyFieldKind ReadCopyField(const CopyFromRules &rules, idx_t column, std::strin
 }
 
 CopyLineBreakFinder::CopyLineBreakFinder(const CopyFormatOptions &options)
-    : csv(options.format == CopyTextFormat::CSV), quote(options.quote), escape(options.escape),
+    : csv(options.format == CopyFormat::CSV), quote(options.quote), escape(options.escape),
       quoted_escape(options.escape != options.quote) {
 }
 

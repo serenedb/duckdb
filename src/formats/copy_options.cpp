@@ -161,9 +161,46 @@ void ApplyDuckDBWriteOption(CopyFormatOptions &out, const Identifier &key, const
 	}
 }
 
+void ApplyBinaryOption(CopyFormatOptions &out, const Identifier &key, const vector<Value> &values, bool from) {
+	if (key == "log_verbosity") {
+		out.log_verbosity = ParseCopyLogVerbosity(values);
+	} else if (key == "freeze") {
+		if (!from) {
+			ThrowInvalid("COPY FREEZE cannot be used with COPY TO");
+		}
+		out.freeze = ParseBoolOption(values, "freeze");
+	} else if (key == "ignore_errors") {
+		if (!from) {
+			ThrowInvalid("COPY ON_ERROR cannot be used with COPY TO");
+		}
+		if (ParseBoolOption(values, "ON_ERROR")) {
+			ThrowCopyError(SQLSTATE_SYNTAX_ERROR, "only ON_ERROR STOP is allowed in BINARY mode");
+		}
+	} else if (key == "rejects_limit") {
+		ThrowInvalid("COPY REJECT_LIMIT requires ON_ERROR to be set to IGNORE");
+	} else if (key == "delimiter" || key == "delim" || key == "sep" || key == "separator") {
+		ThrowCopyError(SQLSTATE_SYNTAX_ERROR, "cannot specify DELIMITER in BINARY mode");
+	} else if (key == "null" || key == "nullstr") {
+		ThrowCopyError(SQLSTATE_SYNTAX_ERROR, "cannot specify NULL in BINARY mode");
+	} else if (key == "default") {
+		ThrowCopyError(SQLSTATE_SYNTAX_ERROR, "cannot specify DEFAULT in BINARY mode");
+	} else if (key == "header") {
+		ThrowCopyError(SQLSTATE_FEATURE_NOT_SUPPORTED, "cannot specify HEADER in BINARY mode");
+	} else if (key == "quote" || key == "escape" || key == "force_quote" || key == "force_not_null" ||
+	           key == "force_null") {
+		ThrowRequiresCsv(StringUtil::Upper(key.GetIdentifierName()));
+	} else {
+		ThrowNotRecognized(key.GetIdentifierName());
+	}
+}
+
 void ApplyOption(CopyFormatOptions &out, const Identifier &key, const vector<Value> &values, bool from) {
-	const bool csv = out.format == CopyTextFormat::CSV;
+	const bool csv = out.format == CopyFormat::CSV;
 	if (key == "format") {
+		return;
+	}
+	if (out.format == CopyFormat::BINARY) {
+		ApplyBinaryOption(out, key, values, from);
 		return;
 	}
 	if (csv && !from && IsDuckDBWriteOption(key)) {
@@ -191,7 +228,7 @@ void ApplyOption(CopyFormatOptions &out, const Identifier &key, const vector<Val
 		out.default_str = values[0].ToString();
 	} else if (key == "ignore_errors") {
 		out.ignore_errors = ParseBoolOption(values, "ON_ERROR");
-	} else if (key == "rejects_limit" || key == "reject_limit") {
+	} else if (key == "rejects_limit") {
 		out.reject_limit = ParseRejectLimit(values);
 	} else if (key == "log_verbosity") {
 		out.log_verbosity = ParseCopyLogVerbosity(values);
@@ -274,11 +311,10 @@ bool ParsePostgresBool(const string &text, bool &result) {
 	return false;
 }
 
-CopyFormatOptions ParseCopyFormatOptions(CopyTextFormat format, bool from,
-                                         const identifier_map_t<vector<Value>> &options) {
+CopyFormatOptions ParseCopyFormatOptions(CopyFormat format, bool from, const identifier_map_t<vector<Value>> &options) {
 	CopyFormatOptions result;
 	result.format = format;
-	if (format == CopyTextFormat::CSV) {
+	if (format == CopyFormat::CSV) {
 		result.delimiter = ',';
 		result.null_str.clear();
 	}
@@ -287,14 +323,17 @@ CopyFormatOptions ParseCopyFormatOptions(CopyTextFormat format, bool from,
 		ApplyOption(result, entry.first, entry.second, from);
 		escape_set |= entry.first == "escape";
 	}
-	if (format == CopyTextFormat::CSV && !escape_set) {
+	if (format == CopyFormat::CSV && !escape_set) {
 		result.escape = result.quote;
 	}
 	return result;
 }
 
 void CheckCopyFormatOptions(const CopyFormatOptions &options, bool from) {
-	const bool csv = options.format == CopyTextFormat::CSV;
+	if (options.format == CopyFormat::BINARY) {
+		return;
+	}
+	const bool csv = options.format == CopyFormat::CSV;
 	const auto delimiter = string(1, options.delimiter);
 	if (from && (options.delimiter == '\r' || options.delimiter == '\n')) {
 		ThrowInvalid("COPY delimiter cannot be newline or carriage return");
@@ -359,6 +398,28 @@ void CheckCopyFormatOptions(const CopyFormatOptions &options, bool from) {
 	}
 	if (!from && !options.foreign.empty()) {
 		ThrowNotRecognized(options.foreign.front());
+	}
+}
+
+void NormalizeCopyErrorOptions(identifier_map_t<vector<Value>> &options) {
+	auto on_error = options.find("on_error");
+	if (on_error != options.end()) {
+		const auto value = OptionText(on_error->second);
+		const bool ignore = StringUtil::CIEquals(value, "ignore");
+		if (!ignore && !StringUtil::CIEquals(value, "stop")) {
+			ThrowInvalid("invalid value for parameter \"on_error\": \"" + value + "\"");
+		}
+		options.erase(on_error);
+		if (ignore) {
+			options["ignore_errors"] = {Value::BOOLEAN(true)};
+		}
+	}
+	auto reject_limit = options.find("reject_limit");
+	if (reject_limit != options.end()) {
+		auto values = std::move(reject_limit->second);
+		ParseRejectLimit(values);
+		options.erase(reject_limit);
+		options["rejects_limit"] = std::move(values);
 	}
 }
 

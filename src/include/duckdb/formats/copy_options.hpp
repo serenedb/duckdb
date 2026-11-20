@@ -15,7 +15,7 @@
 
 namespace duckdb {
 
-enum class CopyTextFormat : uint8_t { TEXT, CSV };
+enum class CopyFormat : uint8_t { TEXT, CSV, BINARY };
 
 enum class CopyLogVerbosity : uint8_t { DEFAULT, VERBOSE, SILENT };
 
@@ -25,7 +25,7 @@ struct CopyColumns {
 };
 
 struct CopyFormatOptions {
-	CopyTextFormat format = CopyTextFormat::TEXT;
+	CopyFormat format = CopyFormat::TEXT;
 	char delimiter = '\t';
 	char quote = '"';
 	char escape = '"';
@@ -57,10 +57,11 @@ struct CopyFormatOptions {
 [[noreturn]] void ThrowCopyError(const char *sqlstate, const string &message, const string &context,
                                  const string &detail = string(), const string &hint = string());
 
-CopyFormatOptions ParseCopyFormatOptions(CopyTextFormat format, bool from,
-                                         const identifier_map_t<vector<Value>> &options);
+CopyFormatOptions ParseCopyFormatOptions(CopyFormat format, bool from, const identifier_map_t<vector<Value>> &options);
 
 void CheckCopyFormatOptions(const CopyFormatOptions &options, bool from);
+
+void NormalizeCopyErrorOptions(identifier_map_t<vector<Value>> &options);
 
 bool IsCopyFormatOption(const Identifier &key);
 

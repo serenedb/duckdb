@@ -165,7 +165,7 @@ PostgresCsvReference ParseCsv(std::string_view input, char delimiter, char quote
 
 CopyFromRules CsvRules(char delimiter, char quote, char escape) {
 	CopyFromRules rules;
-	rules.options.format = CopyTextFormat::CSV;
+	rules.options.format = CopyFormat::CSV;
 	rules.options.delimiter = delimiter;
 	rules.options.quote = quote;
 	rules.options.escape = escape;
@@ -317,17 +317,17 @@ TEST_CASE("COPY's text format unescapes like PostgreSQL", "[copy]") {
 
 TEST_CASE("COPY takes the line break of its first line, however its input is split", "[copy]") {
 	struct Case {
-		CopyTextFormat format;
+		CopyFormat format;
 		string input;
 		char expected;
 	};
 	const vector<Case> cases = {
-	    {CopyTextFormat::TEXT, "a\tb\nc", '\n'},    {CopyTextFormat::TEXT, "a\tb\r\nc", '\n'},
-	    {CopyTextFormat::TEXT, "a\tb\rc", '\r'},    {CopyTextFormat::TEXT, "a\\\nb\rc\n", '\r'},
-	    {CopyTextFormat::TEXT, "a\\\rb\r\n", '\n'}, {CopyTextFormat::TEXT, "ab\r", '\r'},
-	    {CopyTextFormat::TEXT, "ab\\", '\n'},       {CopyTextFormat::TEXT, "", '\n'},
-	    {CopyTextFormat::CSV, "\"a\nb\"\rc", '\r'}, {CopyTextFormat::CSV, "\"a\"\"\r\"\r\n", '\n'},
-	    {CopyTextFormat::CSV, "a,b", '\n'},
+	    {CopyFormat::TEXT, "a\tb\nc", '\n'},    {CopyFormat::TEXT, "a\tb\r\nc", '\n'},
+	    {CopyFormat::TEXT, "a\tb\rc", '\r'},    {CopyFormat::TEXT, "a\\\nb\rc\n", '\r'},
+	    {CopyFormat::TEXT, "a\\\rb\r\n", '\n'}, {CopyFormat::TEXT, "ab\r", '\r'},
+	    {CopyFormat::TEXT, "ab\\", '\n'},       {CopyFormat::TEXT, "", '\n'},
+	    {CopyFormat::CSV, "\"a\nb\"\rc", '\r'}, {CopyFormat::CSV, "\"a\"\"\r\"\r\n", '\n'},
+	    {CopyFormat::CSV, "a,b", '\n'},
 	};
 	for (const auto &test : cases) {
 		for (const char escape : {'"', '\\'}) {
@@ -349,7 +349,7 @@ TEST_CASE("COPY takes the line break of its first line, however its input is spl
 		}
 	}
 	CopyFormatOptions options;
-	options.format = CopyTextFormat::CSV;
+	options.format = CopyFormat::CSV;
 	options.escape = '\\';
 	const string escaped_quote = "\"a\\\"\nb\"\r";
 	for (idx_t split = 0; split <= escaped_quote.size(); split++) {
@@ -365,7 +365,7 @@ TEST_CASE("COPY takes the line break of its first line, however its input is spl
 
 TEST_CASE("COPY reads null and default markers only where PostgreSQL does", "[copy]") {
 	CopyFromRules rules;
-	rules.options.format = CopyTextFormat::CSV;
+	rules.options.format = CopyFormat::CSV;
 	rules.options.delimiter = ',';
 	rules.options.null_str = "";
 	rules.options.has_default = true;
@@ -381,7 +381,7 @@ TEST_CASE("COPY reads null and default markers only where PostgreSQL does", "[co
 	REQUIRE(ReadCopyField(rules, 1, "D", &out[0], value) == CopyFieldKind::DEFAULT_VALUE);
 	REQUIRE(ReadCopyField(rules, 1, "\"D\"", &out[0], value) == CopyFieldKind::VALUE);
 	REQUIRE(value == "D");
-	rules.options.format = CopyTextFormat::TEXT;
+	rules.options.format = CopyFormat::TEXT;
 	rules.options.null_str = "\\N";
 	REQUIRE(ReadCopyField(rules, 0, "\\N", &out[0], value) == CopyFieldKind::NULL_VALUE);
 	REQUIRE(ReadCopyField(rules, 0, "\\\\N", &out[0], value) == CopyFieldKind::VALUE);
