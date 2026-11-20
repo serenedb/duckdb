@@ -122,13 +122,9 @@ enum class CTEExecutionMode : uint8_t;
 
 enum class CTEMaterialize : uint8_t;
 
-enum class CacheBlockState : uint8_t;
-
 enum class CacheValidationMode : uint8_t;
 
 enum class CachingMode : uint8_t;
-
-enum class CanUnloadResult : uint8_t;
 
 enum class CatalogLookupBehavior : uint8_t;
 
@@ -524,8 +520,6 @@ enum class RenderMode : uint8_t;
 
 enum class ReplicationRole : uint8_t;
 
-enum class RequestSizing : uint8_t;
-
 enum class RequestType : uint8_t;
 
 enum class ResultEagerness : uint8_t;
@@ -848,16 +842,10 @@ template<>
 const char* EnumUtil::ToChars<CTEMaterialize>(CTEMaterialize value);
 
 template<>
-const char* EnumUtil::ToChars<CacheBlockState>(CacheBlockState value);
-
-template<>
 const char* EnumUtil::ToChars<CacheValidationMode>(CacheValidationMode value);
 
 template<>
 const char* EnumUtil::ToChars<CachingMode>(CachingMode value);
-
-template<>
-const char* EnumUtil::ToChars<CanUnloadResult>(CanUnloadResult value);
 
 template<>
 const char* EnumUtil::ToChars<CatalogLookupBehavior>(CatalogLookupBehavior value);
@@ -1451,9 +1439,6 @@ template<>
 const char* EnumUtil::ToChars<ReplicationRole>(ReplicationRole value);
 
 template<>
-const char* EnumUtil::ToChars<RequestSizing>(RequestSizing value);
-
-template<>
 const char* EnumUtil::ToChars<RequestType>(RequestType value);
 
 template<>
@@ -1866,16 +1851,10 @@ template<>
 CTEMaterialize EnumUtil::FromString<CTEMaterialize>(std::string_view value);
 
 template<>
-CacheBlockState EnumUtil::FromString<CacheBlockState>(std::string_view value);
-
-template<>
 CacheValidationMode EnumUtil::FromString<CacheValidationMode>(std::string_view value);
 
 template<>
 CachingMode EnumUtil::FromString<CachingMode>(std::string_view value);
-
-template<>
-CanUnloadResult EnumUtil::FromString<CanUnloadResult>(std::string_view value);
 
 template<>
 CatalogLookupBehavior EnumUtil::FromString<CatalogLookupBehavior>(std::string_view value);
@@ -2467,9 +2446,6 @@ RenderMode EnumUtil::FromString<RenderMode>(std::string_view value);
 
 template<>
 ReplicationRole EnumUtil::FromString<ReplicationRole>(std::string_view value);
-
-template<>
-RequestSizing EnumUtil::FromString<RequestSizing>(std::string_view value);
 
 template<>
 RequestType EnumUtil::FromString<RequestType>(std::string_view value);
