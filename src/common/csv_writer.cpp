@@ -34,15 +34,14 @@ CSVWriterState::~CSVWriterState() {
 
 CSVWriterOptions::CSVWriterOptions(const string &delim, const char &quote, const string &write_newline,
                                    char comment_char) {
-	requires_quotes = vector<bool>(256, false);
-	requires_quotes['\n'] = true;
-	requires_quotes['\r'] = true;
+	specials.Add('\n');
+	specials.Add('\r');
 	// quote values containing the comment char so they are not read back as comments (see #17744)
 	if (comment_char != '\0') {
-		requires_quotes[NumericCast<idx_t>(comment_char)] = true;
+		specials.Add(comment_char);
 	}
-	requires_quotes[NumericCast<idx_t>(delim[0])] = true;
-	requires_quotes[NumericCast<idx_t>(quote)] = true;
+	specials.Add(delim[0]);
+	specials.Add(quote);
 
 	if (!write_newline.empty()) {
 		newline = TransformNewLine(write_newline);
@@ -124,7 +123,7 @@ CsvEncoding CSVWriter::Encoding() const {
 	        dialect.escape.GetValue(),
 	        options.null_str[0],
 	        options.force_quote,
-	        writer_options.requires_quotes,
+	        writer_options.specials,
 	        writer_options.newline,
 	        writer_options.newline_writing_mode == CSVNewLineMode::WRITE_BEFORE};
 }
