@@ -501,10 +501,30 @@ static bool TransformFromStringWithFormat(const JSONNode *vals[], Vector &result
 	return FormatStringVector(string_vector, result, count, options, success);
 }
 
+static bool FastDates(const Vector &string_vector, Vector &result, const idx_t count) {
+	const auto strings = FlatVector::GetData<string_t>(string_vector);
+	const auto &string_validity = FlatVector::Validity(string_vector);
+	auto dates = FlatVector::GetDataMutable<date_t>(result);
+	auto &validity = FlatVector::ValidityMutable(result);
+	for (idx_t i = 0; i < count; i++) {
+		if (!string_validity.RowIsValid(i)) {
+			validity.SetInvalid(i);
+			continue;
+		}
+		if (!FastDate(strings[i].GetData(), strings[i].GetSize(), dates[i])) {
+			return false;
+		}
+	}
+	return true;
+}
+
 bool JSONTransform::TransformStrings(Vector &string_vector, Vector &result, const idx_t count,
                                      JSONTransformOptions &options) {
 	if (UsesDateFormats(result.GetType(), options)) {
 		return FormatStringVector(string_vector, result, count, options, true);
+	}
+	if (result.GetType() == LogicalType::DATE && FastDates(string_vector, result, count)) {
+		return true;
 	}
 	return CastValues(string_vector, result, count, options, true);
 }
