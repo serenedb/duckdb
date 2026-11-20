@@ -832,11 +832,27 @@ void JsonScanGlobal::PlanDirect() {
 		const bool rendered = options.rendering != ValueRendering::NATIVE && type.id() != LogicalTypeId::VARCHAR;
 		kinds[i] = rendered ? JsonDirectKind::TREE : DirectKind(type, columns.column_indices[i]);
 	}
+	fast.assign(column_count, JsonDirectFast::NONE);
+	for (idx_t i = 0; i < column_count; i++) {
+		const auto id = columns.types[i].id();
+		if (kinds[i] == JsonDirectKind::STRING || (kinds[i] == JsonDirectKind::VALUE && id == LogicalTypeId::VARCHAR)) {
+			fast[i] = JsonDirectFast::STRING;
+		} else if (kinds[i] == JsonDirectKind::VALUE && id == LogicalTypeId::BIGINT) {
+			fast[i] = JsonDirectFast::BIGINT;
+		} else if (kinds[i] == JsonDirectKind::VALUE && id == LogicalTypeId::DOUBLE) {
+			fast[i] = JsonDirectFast::DOUBLE;
+		}
+	}
 	filtered.assign(column_count, false);
 	for (auto &filter : columns.filters) {
 		if (filter.name.IsValid()) {
 			filtered[filter.name.GetIndex()] = true;
 		}
+	}
+	pass_skips.assign(3 * column_count, false);
+	for (idx_t i = 0; i < column_count; i++) {
+		pass_skips[static_cast<idx_t>(JsonDirectPass::FILTERS) * column_count + i] = !filtered[i];
+		pass_skips[static_cast<idx_t>(JsonDirectPass::OTHERS) * column_count + i] = filtered[i];
 	}
 	for (idx_t i = 0; i < column_count; i++) {
 		keys.emplace(columns.names[i], i);
@@ -1867,6 +1883,7 @@ JsonRecordResult JsonScan::DirectRecord(idx_t record, idx_t row, JsonDirectPass 
 	namespace ondemand = simdjson::ondemand;
 	constexpr auto FALLBACK = JsonRecordResult::FALLBACK;
 	const idx_t column_count = vectors.size();
+	const uint8_t *skips = global.pass_skips.data() + static_cast<idx_t>(pass) * column_count;
 	const idx_t begin = starts[record];
 	ondemand::document document;
 	auto code = direct_parser.iterate(data + begin, lengths[record], size + JSON_PADDING - begin).get(document);
@@ -1936,9 +1953,7 @@ JsonRecordResult JsonScan::DirectRecord(idx_t record, idx_t row, JsonDirectPass 
 			continue;
 		}
 		direct_found[column] = strength;
-		const bool filtered = global.filtered[column];
-		if (rejected || !vectors[column] || (pass == JsonDirectPass::FILTERS && !filtered) ||
-		    (pass == JsonDirectPass::OTHERS && filtered)) {
+		if (rejected || skips[column] || !vectors[column]) {
 			continue;
 		}
 		auto value = std::move(field).value();
@@ -1955,6 +1970,39 @@ JsonRecordResult JsonScan::DirectRecord(idx_t record, idx_t row, JsonDirectPass 
 			continue;
 		}
 		direct_validity[column]->SetValid(row);
+		switch (global.fast[column]) {
+		case JsonDirectFast::BIGINT:
+			if (!value.get_int64().get(reinterpret_cast<int64_t *>(direct_data[column])[row])) {
+				continue;
+			}
+			break;
+		case JsonDirectFast::DOUBLE: {
+			const auto token = value.raw_json_token();
+			auto &result = reinterpret_cast<double *>(direct_data[column])[row];
+			if (!value.get_double().get(result)) {
+				if (result == 0 && std::signbit(result) &&
+				    TrimToken(token).find_first_of(".eE") == std::string_view::npos) {
+					result = 0;
+				}
+				continue;
+			}
+			break;
+		}
+		case JsonDirectFast::STRING: {
+			const auto token = TrimToken(value.raw_json_token());
+			if (token.size() >= 2 && token.front() == '"' && token.back() == '"') {
+				const auto content = token.substr(1, token.size() - 2);
+				if (PlainString(content)) {
+					reinterpret_cast<string_t *>(direct_data[column])[row] =
+					    string_t(content.data(), UnsafeNumericCast<uint32_t>(content.size()));
+					continue;
+				}
+			}
+			break;
+		}
+		default:
+			break;
+		}
 		if (!DirectValue(column, value, *vectors[column], row)) {
 			return FALLBACK;
 		}
@@ -1963,9 +2011,7 @@ JsonRecordResult JsonScan::DirectRecord(idx_t record, idx_t row, JsonDirectPass 
 		return FALLBACK;
 	}
 	for (idx_t column = 0; column < column_count; column++) {
-		const bool filtered = global.filtered[column];
-		if (direct_found[column] || !vectors[column] || (pass == JsonDirectPass::FILTERS && !filtered) ||
-		    (pass == JsonDirectPass::OTHERS && filtered)) {
+		if (direct_found[column] || skips[column] || !vectors[column]) {
 			continue;
 		}
 		if (direct_missing_error && pass != JsonDirectPass::OTHERS) {

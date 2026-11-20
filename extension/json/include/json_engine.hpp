@@ -27,6 +27,8 @@ enum class JsonDirectKind : uint8_t { VALUE, STRING, TREE };
 
 enum class JsonDirectPass : uint8_t { ALL, FILTERS, OTHERS };
 
+enum class JsonDirectFast : uint8_t { NONE, BIGINT, DOUBLE, STRING };
+
 struct JsonKeyHint {
 	string key;
 	uint64_t words[2] = {};
@@ -116,7 +118,9 @@ public:
 	bool validate_only = false;
 	bool direct = false;
 	vector<JsonDirectKind> kinds;
+	vector<JsonDirectFast> fast;
 	vector<bool> filtered;
+	vector<uint8_t> pass_skips;
 	vector<JsonPathPredicate> walk;
 	vector<bool> walked;
 	unordered_map<string, idx_t> keys;
