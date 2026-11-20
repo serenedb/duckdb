@@ -41,6 +41,31 @@ private:
 	bool after_cr = false;
 };
 
+struct CopyEndScan {
+	std::string_view carry;
+	std::string_view data;
+};
+
+class CopyEndMarkerScanner {
+public:
+	CopyEndScan Scan(std::string_view chunk);
+	std::string_view Finish();
+	bool Ended() const {
+		return ended;
+	}
+
+private:
+	std::string_view Hold(std::string_view chunk, idx_t at);
+	std::string_view ScanChunk(std::string_view chunk);
+
+private:
+	string pending;
+	string carry;
+	uint64_t escape_carry = 0;
+	bool at_line_start = true;
+	bool ended = false;
+};
+
 string CopyPrintout(std::string_view value);
 
 idx_t Utf8SequenceLength(uint8_t lead);
