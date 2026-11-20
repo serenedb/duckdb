@@ -7,6 +7,7 @@
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/common/type_visitor.hpp"
 #include "duckdb/common/vector/string_vector.hpp"
+#include "duckdb/formats/csv_simd.hpp"
 #include "duckdb/formats/row_stream.hpp"
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/parallel/task_scheduler.hpp"
@@ -20,6 +21,7 @@
 #include "duckdb/storage/caching_mode.hpp"
 #include "duckdb/storage/table/column_segment.hpp"
 
+#include <bit>
 #include <cmath>
 
 namespace duckdb {
@@ -42,7 +44,45 @@ const char *NextNewline(const char *ptr, idx_t size) {
 	return const_char_ptr_cast(memchr(ptr, '\n', size));
 }
 
+const char *NextJSONContainer(const char *ptr, const char *const end) {
+	constexpr uint64_t EVEN_BITS = 0x5555555555555555ULL;
+	uint64_t prev_escaped = 0;
+	uint64_t in_string = 0;
+	int64_t depth = 0;
+	char tail[CSV_BLOCK_BYTES];
+	for (const char *start = ptr; start < end; start += CSV_BLOCK_BYTES) {
+		const auto available = NumericCast<idx_t>(end - start);
+		const char *block = start;
+		if (available < CSV_BLOCK_BYTES) {
+			memset(tail, 0, sizeof(tail));
+			memcpy(tail, start, available);
+			block = tail;
+		}
+		const CsvVector vector(block);
+		const uint64_t backslash = vector.Equal('\\') & ~prev_escaped;
+		const uint64_t follows_escape = backslash << 1 | prev_escaped;
+		const uint64_t odd_starts = backslash & ~EVEN_BITS & ~follows_escape;
+		uint64_t even_starts;
+		prev_escaped = __builtin_add_overflow(odd_starts, backslash, &even_starts);
+		const uint64_t escaped = (EVEN_BITS ^ (even_starts << 1)) & follows_escape;
+		const uint64_t strings = CsvPrefixXor(vector.Equal('"') & ~escaped) ^ in_string;
+		in_string = CsvSpread(strings >> 63);
+		const uint64_t opens = (vector.Equal('{') | vector.Equal('[')) & ~strings;
+		for (uint64_t marks = opens | ((vector.Equal('}') | vector.Equal(']')) & ~strings); marks; marks &= marks - 1) {
+			const auto bit = std::countr_zero(marks);
+			depth += (opens >> bit) & 1 ? 1 : -1;
+			if (depth == 0) {
+				return start + bit + 1;
+			}
+		}
+	}
+	return end;
+}
+
 const char *NextJSONDefault(const char *ptr, const char *const end) {
+	if (*ptr == '{' || *ptr == '[') {
+		return NextJSONContainer(ptr, end);
+	}
 	idx_t parents = 0;
 	while (ptr != end) {
 		switch (*ptr++) {
@@ -804,7 +844,7 @@ JsonScanGlobal::JsonScanGlobal(ClientContext &context_p, const JSONScanData &bin
 
 void JsonScanGlobal::PlanDirect() {
 	direct = options.type == JSONScanType::READ_JSON && options.record_type == JSONRecordType::RECORDS &&
-	         format == JSONFormat::NEWLINE_DELIMITED && !columns.names.empty() && columns.feature_columns.empty();
+	         format != JSONFormat::AUTO_DETECT && !columns.names.empty() && columns.feature_columns.empty();
 	if (!direct) {
 		return;
 	}
