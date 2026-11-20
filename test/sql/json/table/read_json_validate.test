@@ -43,3 +43,50 @@ SELECT count(*) FROM read_ndjson('{TEST_DIR}/validate_bad.ndjson', columns := {a
 <REGEX>:.*Malformed JSON.*line 2.*
 
 endloop
+
+statement ok
+COPY (
+	SELECT line FROM (VALUES
+		(1, '{"t": 1' || chr(9) || '}'),
+		(2, '{"r": 2' || chr(13) || '}'),
+		(3, '{"e": [1e5, 2E+3, -0.5e-3]}'))
+	t(i, line) ORDER BY i
+) TO '{TEST_DIR}/validate_spaces.ndjson' (FORMAT csv, HEADER false, QUOTE '', ESCAPE '');
+
+query I
+SELECT count(*) FROM read_ndjson_objects('{TEST_DIR}/validate_spaces.ndjson');
+----
+3
+
+foreach bad {"a":-} {"a":-.5} {"a":1.} {"a":1x} {"a":1e} {"a":1e5x} {"a":nul} {"a"1} {"a\q":1} [1,2 [1"x"] [tru]
+
+statement ok
+COPY (
+	SELECT line FROM (VALUES (1, '{"a": 1}'), (2, '{bad}'), (3, '{"a": 2}')) t(i, line)
+	ORDER BY i
+) TO '{TEST_DIR}/validate_raw.ndjson' (FORMAT csv, HEADER false, QUOTE '', ESCAPE '');
+
+statement error
+SELECT count(*) FROM read_ndjson_objects('{TEST_DIR}/validate_raw.ndjson');
+----
+<REGEX>:.*Malformed JSON.*line 2.*
+
+endloop
+
+statement ok
+COPY (
+	SELECT line FROM (VALUES (1, '{"a": 1}'), (2, chr(65279) || '{"a": 2}'), (3, '{"a": 3}')) t(i, line)
+	ORDER BY i
+) TO '{TEST_DIR}/validate_bom.ndjson' (FORMAT csv, HEADER false, QUOTE '', ESCAPE '');
+
+statement error
+SELECT count(*) FROM read_ndjson_objects('{TEST_DIR}/validate_bom.ndjson');
+----
+at byte 1 in line 2: byte order mark (BOM) is not supported
+
+query I
+SELECT json FROM read_ndjson_objects('{TEST_DIR}/validate_bom.ndjson', ignore_errors := true);
+----
+{"a": 1}
+NULL
+{"a": 3}
