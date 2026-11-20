@@ -157,6 +157,7 @@ public:
 	hugeint_t ReadHugeInt() final;
 	uhugeint_t ReadUhugeInt() final;
 	void ReadDataPtr(data_ptr_t &ptr, idx_t count) final;
+	void ReadDataPtr(data_ptr_t ptr, idx_t count, absl::FunctionRef<void(idx_t offset, idx_t size)> check) final;
 };
 
 } // namespace duckdb

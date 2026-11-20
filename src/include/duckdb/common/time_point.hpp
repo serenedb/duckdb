@@ -10,8 +10,10 @@
 
 #include "duckdb/common/chrono.hpp"
 #include "duckdb/common/common.hpp"
+#include "duckdb/common/optional_idx.hpp"
 
 #include <absl/base/internal/cycleclock.h>
+#include <absl/time/time.h>
 
 namespace duckdb {
 
@@ -26,6 +28,8 @@ public:
 	}
 	static int64_t FromNanos(int64_t nanos);
 	static int64_t ToNanos(int64_t ticks);
+	//! The time left until `deadline` (ticks): infinite without one, negative once it passed
+	static absl::Duration Until(const optional_idx &deadline);
 
 	// Get current monotonic clock time in milliseconds.
 	static int64_t GetTickMs();

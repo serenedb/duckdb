@@ -12,6 +12,7 @@
 #include "duckdb/common/case_insensitive_map.hpp"
 #include "duckdb/common/encryption_state.hpp"
 #include "duckdb/common/enums/http_status_code.hpp"
+#include "duckdb/common/optional_idx.hpp"
 #include "duckdb/common/types/timestamp.hpp"
 #include "duckdb/common/time_point.hpp"
 #include <functional>
@@ -39,6 +40,8 @@ struct HTTPParams {
 
 	uint64_t timeout = DEFAULT_TIMEOUT_SECONDS; // seconds component of a timeout
 	uint64_t timeout_usec = 0;                  // usec component of a timeout
+	//! The TimePoint::Now() tick, as ClientContext::query_deadline, by which a request must be done
+	optional_idx deadline;
 	uint64_t retries = DEFAULT_RETRIES;
 	uint64_t retry_wait_ms = DEFAULT_RETRY_WAIT_MS;
 	float retry_backoff = DEFAULT_RETRY_BACKOFF;
@@ -58,6 +61,14 @@ struct HTTPParams {
 public:
 	void Initialize(optional_ptr<FileOpener> opener);
 	DUCKDB_API idx_t GetTransportReuseDomain() const;
+	//! Trust the one server certificate whose SHA-256 is `sha256`, as 64 upper-case hex digits, in place of the CA
+	//! chain and the host name: a self-signed server is reached by its fingerprint. A connection is reused only with
+	//! the same pin, so the parameters' reuse domain is captured again.
+	DUCKDB_API void PinCertificate(string sha256);
+	//! Empty for the usual verification
+	const string &PinnedCertificate() const {
+		return pinned_certificate_sha256;
+	}
 
 	template <class TARGET>
 	TARGET &Cast() {
@@ -86,6 +97,7 @@ private:
 	idx_t transport_session_id = DConstants::INVALID_INDEX;
 	//! Provider-issued identity for transport-compatible parameters.
 	idx_t transport_reuse_domain = 0;
+	string pinned_certificate_sha256;
 };
 
 struct SignatureV4Params {
@@ -296,7 +308,6 @@ struct PostRequestInfo : public BaseRequest {
 
 	const_data_ptr_t buffer_in;
 	idx_t buffer_in_len;
-	string buffer_out;
 	//! Used to send a GET request with a body (non-standard but supported by some servers)
 	bool send_post_as_get_request = false;
 };

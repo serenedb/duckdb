@@ -67,6 +67,9 @@ struct ClientConfig {
 
 	//! Force parallelism of small tables, used for testing
 	bool verify_parallelism = false;
+	//! A system object this context names under DEFAULT_SYSTEM_OBJECT_PREFIX is also found under the database's own
+	//! prefix: the context serves a DuckDB client
+	bool default_system_object_names = false;
 	//! If this context should also try to use the available replacement scans
 	//! True by default
 	bool use_replacement_scans = true;

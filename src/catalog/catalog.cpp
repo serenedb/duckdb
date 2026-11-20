@@ -1539,6 +1539,24 @@ optional_ptr<CatalogEntry> Catalog::GetEntry(CatalogEntryRetriever &retriever, c
 			result = TryLookupEntryAcrossCatalogs(retriever, lookup_info, if_not_found);
 		}
 	}
+	if (!result.Found()) {
+		auto &context = retriever.GetContext();
+		auto &config = DBConfig::GetConfig(context);
+		auto &name = lookup_info.GetEntryName();
+		if (ClientConfig::GetConfig(context).default_system_object_names &&
+		    config.options.system_object_prefix != DEFAULT_SYSTEM_OBJECT_PREFIX &&
+		    name.starts_with(DEFAULT_SYSTEM_OBJECT_PREFIX)) {
+			auto path = lookup_info.GetQualifiedName().Path();
+			path.back() =
+			    Identifier(config.SystemObjectName(std::string_view(name).substr(DEFAULT_SYSTEM_OBJECT_PREFIX.size())));
+			auto renamed = TryLookupEntryAcrossCatalogs(
+			    retriever, EntryLookupInfo(lookup_info, QualifiedName::FromPath(std::move(path))),
+			    OnEntryNotFound::RETURN_NULL);
+			if (renamed.Found()) {
+				result = std::move(renamed);
+			}
+		}
+	}
 
 	if (result.error.HasError()) {
 		result.error.Throw();

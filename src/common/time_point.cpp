@@ -15,6 +15,13 @@ int64_t TimePoint::ToNanos(int64_t ticks) {
 	return static_cast<int64_t>(static_cast<double>(ticks) / TicksPerNano());
 }
 
+absl::Duration TimePoint::Until(const optional_idx &deadline) {
+	if (!deadline.IsValid()) {
+		return absl::InfiniteDuration();
+	}
+	return absl::Nanoseconds(ToNanos(static_cast<int64_t>(deadline.GetIndex()) - Now()));
+}
+
 TimePoint::TimePoint() : ticks(0) {
 }
 

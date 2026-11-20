@@ -27,6 +27,11 @@ void HTTPParams::SetTransportReuseDomain(idx_t transport_reuse_domain_p) {
 	transport_reuse_domain = transport_reuse_domain_p;
 }
 
+void HTTPParams::PinCertificate(string sha256) {
+	pinned_certificate_sha256 = std::move(sha256);
+	transport_reuse_domain = 0;
+}
+
 HTTPHeaders::HTTPHeaders(DatabaseInstance &db) {
 	headers.insert({"User-Agent", StringUtil::Format("%s %s", db.config.UserAgent(), DuckDB::SourceID())});
 }
