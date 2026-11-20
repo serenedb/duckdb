@@ -21,7 +21,6 @@
 #include "duckdb/storage/table/column_segment.hpp"
 
 #include <cmath>
-#include <type_traits>
 
 namespace duckdb {
 
@@ -303,22 +302,6 @@ bool DirectNumber(simdjson::ondemand::value &value, simdjson::ondemand::json_typ
 		return true;
 	}
 	case ondemand::json_type::number: {
-		if constexpr (std::is_same_v<T, int64_t>) {
-			if (!value.get_int64().get(result)) {
-				cast = true;
-				return true;
-			}
-		} else if constexpr (std::is_same_v<T, double>) {
-			const auto token = value.raw_json_token();
-			if (!value.get_double().get(result)) {
-				if (result == 0 && std::signbit(result) &&
-				    TrimToken(token).find_first_of(".eE") == std::string_view::npos) {
-					result = 0;
-				}
-				cast = true;
-				return true;
-			}
-		}
 		ondemand::number number;
 		if (value.get_number().get(number)) {
 			return false;
@@ -1564,15 +1547,6 @@ bool JsonScan::DirectValue(idx_t column, simdjson::ondemand::value &value, Vecto
 		auto &target = kind == JsonDirectKind::STRING ? direct_strings[column] : vector;
 		auto strings = reinterpret_cast<string_t *>(direct_data[column]);
 		if (type == ondemand::json_type::string) {
-			const auto token = TrimToken(value.raw_json_token());
-			if (token.size() < 2 || token.front() != '"' || token.back() != '"') {
-				return false;
-			}
-			const auto content = token.substr(1, token.size() - 2);
-			if (PlainString(content)) {
-				strings[row] = string_t(content.data(), UnsafeNumericCast<uint32_t>(content.size()));
-				return true;
-			}
 			std::string_view text;
 			if (value.get_string().get(text)) {
 				return false;
@@ -1990,7 +1964,7 @@ JsonRecordResult JsonScan::DirectRecord(idx_t record, idx_t row, JsonDirectPass 
 		}
 		case JsonDirectFast::STRING: {
 			const auto token = TrimToken(value.raw_json_token());
-			if (token.size() >= 2 && token.front() == '"' && token.back() == '"') {
+			if (token.size() >= 2 && token.front() == '"') {
 				const auto content = token.substr(1, token.size() - 2);
 				if (PlainString(content)) {
 					reinterpret_cast<string_t *>(direct_data[column])[row] =
