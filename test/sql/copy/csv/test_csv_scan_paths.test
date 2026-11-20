@@ -120,3 +120,283 @@ SELECT count(*), sum(b), count(DISTINCT c) FROM read_csv('{TEMP_DIR}/filtered_ba
 715	5360355	715
 
 endloop
+
+statement ok
+COPY (FROM (VALUES ('true,"x"'), ('fa\lse,y'), ('false,z'))) TO '{TEMP_DIR}/bool_escape.csv' (HEADER false, DELIMITER '\t', QUOTE '');
+
+statement ok
+COPY (FROM (VALUES ('true,x'), ('fa\lse,y'), ('false,z'))) TO '{TEMP_DIR}/bool_escape_unquoted.csv' (HEADER false, DELIMITER '\t', QUOTE '');
+
+statement error
+SELECT * FROM read_csv('{TEMP_DIR}/bool_escape.csv', auto_detect = false, header = false, escape = '\', strict_mode = false, columns = {'b': 'BOOLEAN', 's': 'VARCHAR'});
+----
+Could not convert string "fa\lse" to 'BOOLEAN'
+
+foreach file bool_escape bool_escape_unquoted
+
+query II
+SELECT * FROM read_csv('{TEMP_DIR}/{file}.csv', auto_detect = false, header = false, escape = '\', strict_mode = false, ignore_errors = true, columns = {'b': 'BOOLEAN', 's': 'VARCHAR'}) ORDER BY s;
+----
+true	x
+false	z
+
+endloop
+
+statement ok
+COPY (FROM (VALUES ('0,\X'), ('1,X'), ('2,\N'), ('3,plain'))) TO '{TEMP_DIR}/escaped_nulls.csv' (HEADER false, DELIMITER '\t', QUOTE '');
+
+query II
+SELECT * FROM read_csv('{TEMP_DIR}/escaped_nulls.csv', auto_detect = false, header = false, escape = '\', strict_mode = false, nullstr = ['X', '\N'], columns = {'i': 'INTEGER', 's': 'VARCHAR'}) ORDER BY i;
+----
+0	X
+1	NULL
+2	NULL
+3	plain
+
+query II
+SELECT i, length(s) FROM read_csv('{TEMP_DIR}/escaped_nulls.csv', auto_detect = false, header = false, escape = '\', strict_mode = false, nullstr = ['X', '\N'], force_not_null = ['s'], columns = {'i': 'INTEGER', 's': 'VARCHAR'}) ORDER BY i;
+----
+0	1
+1	0
+2	0
+3	5
+
+statement ok
+COPY (FROM (VALUES ('0,a\bc'), ('1,plain'))) TO '{TEMP_DIR}/blob_escape.csv' (HEADER false, DELIMITER '\t', QUOTE '');
+
+query II
+SELECT i, b::VARCHAR FROM read_csv('{TEMP_DIR}/blob_escape.csv', auto_detect = false, header = false, escape = '\', strict_mode = false, columns = {'i': 'INTEGER', 'b': 'BLOB'}) ORDER BY i;
+----
+0	abc
+1	plain
+
+statement ok
+COPY (FROM (VALUES ('   ,1'), ('5,2'))) TO '{TEMP_DIR}/bignum_blank.csv' (HEADER false, DELIMITER '\t', QUOTE '');
+
+query II
+SELECT a = 5::BIGNUM, b FROM read_csv('{TEMP_DIR}/bignum_blank.csv', auto_detect = false, header = false, columns = {'a': 'BIGNUM', 'b': 'INTEGER'}, ignore_errors = true);
+----
+true	2
+
+statement ok
+COPY (FROM (VALUES ('1,000|x'), ('NA|y'), ('NB|z'), ('2,500|w'))) TO '{TEMP_DIR}/thousands_null.csv' (HEADER false, DELIMITER '\t', QUOTE '');
+
+statement error
+SELECT * FROM read_csv('{TEMP_DIR}/thousands_null.csv', auto_detect = false, header = false, delim = '|', thousands = ',', nullstr = 'NA', columns = {'a': 'INTEGER', 'b': 'VARCHAR'});
+----
+Could not convert string "NB" to 'INTEGER'
+
+query III
+SELECT count(*), count(a), sum(a) FROM read_csv('{TEMP_DIR}/thousands_null.csv', auto_detect = false, header = false, delim = '|', thousands = ',', nullstr = 'NA', columns = {'a': 'INTEGER', 'b': 'VARCHAR'}, ignore_errors = true);
+----
+3	2	3500
+
+statement ok
+COPY (FROM (VALUES ('1,a'), ('"",b'), ('3,c'))) TO '{TEMP_DIR}/quoted_empty_int.csv' (HEADER false, DELIMITER '\t', QUOTE '');
+
+query II
+SELECT * FROM read_csv('{TEMP_DIR}/quoted_empty_int.csv', auto_detect = false, header = false, allow_quoted_nulls = false, ignore_errors = true, columns = {'a': 'INTEGER', 'b': 'VARCHAR'}) ORDER BY b;
+----
+1	a
+3	c
+
+query II
+SELECT * FROM read_csv('{TEMP_DIR}/quoted_empty_int.csv', auto_detect = false, header = false, columns = {'a': 'INTEGER', 'b': 'VARCHAR'}) ORDER BY b;
+----
+1	a
+NULL	b
+3	c
+
+statement ok
+COPY (FROM (VALUES ('1,000|x|2'), ('2,000|y'), ('3,000|x|4,000'), ('4,000|x'))) TO '{TEMP_DIR}/thousands_padded.csv' (HEADER false, DELIMITER '\t', QUOTE '');
+
+query III
+SELECT a, s, b FROM read_csv('{TEMP_DIR}/thousands_padded.csv', auto_detect = false, header = false, delim = '|', thousands = ',', null_padding = true, columns = {'a': 'INTEGER', 's': 'VARCHAR', 'b': 'INTEGER'}) WHERE s = 'x' ORDER BY a;
+----
+1000	x	2
+3000	x	4000
+4000	x	NULL
+
+statement ok
+COPY (SELECT i || ',00000000-0000-0000-0000-' || lpad(i::VARCHAR, 12, '0') FROM range(100) r(i) ORDER BY i) TO '{TEMP_DIR}/uuid_rows.csv' (HEADER false, DELIMITER '\t', QUOTE '');
+
+query II
+SELECT count(*), max(u)::VARCHAR FROM read_csv('{TEMP_DIR}/uuid_rows.csv', auto_detect = false, header = false, columns = {'a': 'INTEGER', 'u': 'UUID'}) WHERE a >= 90;
+----
+10	00000000-0000-0000-0000-000000000099
+
+query I
+SELECT a FROM read_csv('{TEMP_DIR}/uuid_rows.csv', auto_detect = false, header = false, columns = {'a': 'INTEGER', 'u': 'UUID'}) WHERE u = '00000000-0000-0000-0000-000000000042';
+----
+42
+
+query II
+SELECT count(*), max(u)::VARCHAR FROM read_csv('{TEMP_DIR}/uuid_rows.csv', auto_detect = false, header = false, store_rejects = true, columns = {'a': 'INTEGER', 'u': 'UUID'}) WHERE a >= 90;
+----
+10	00000000-0000-0000-0000-000000000099
+
+statement ok
+COPY (SELECT encode('1,a' || chr(10) || '2,b' || chr(10) || '3,"abc')) TO '{TEMP_DIR}/unterminated_tail.csv' (FORMAT blob);
+
+statement error
+SELECT * FROM read_csv('{TEMP_DIR}/unterminated_tail.csv', auto_detect = false, header = false, max_line_size = 32, columns = {'i': 'INTEGER', 's': 'VARCHAR'});
+----
+Value with unterminated quote found.
+
+query II
+SELECT * FROM read_csv('{TEMP_DIR}/unterminated_tail.csv', auto_detect = false, header = false, max_line_size = 32, ignore_errors = true, columns = {'i': 'INTEGER', 's': 'VARCHAR'}) ORDER BY i;
+----
+1	a
+2	b
+
+statement ok
+COPY (SELECT encode('1,a' || chr(10) || '2, "abc')) TO '{TEMP_DIR}/space_quote_tail.csv' (FORMAT blob);
+
+statement error
+SELECT * FROM read_csv('{TEMP_DIR}/space_quote_tail.csv', auto_detect = false, header = false, columns = {'i': 'INTEGER', 's': 'VARCHAR'});
+----
+Value with unterminated quote found.
+
+query I
+SELECT count(*) FROM read_csv('{TEMP_DIR}/unterminated_tail.csv', auto_detect = false, header = false, ignore_errors = true, columns = {'i': 'INTEGER', 's': 'VARCHAR'});
+----
+2
+
+statement error
+SELECT count(*) FROM read_csv('{TEMP_DIR}/unterminated_tail.csv', auto_detect = false, header = false, columns = {'i': 'INTEGER', 's': 'VARCHAR'});
+----
+Value with unterminated quote found.
+
+statement ok
+COPY (SELECT encode('a,b' || chr(10) || '1,x') || '\xFF'::BLOB) TO '{TEMP_DIR}/invalid_utf8_tail.csv' (FORMAT blob);
+
+query I
+SELECT count(*) FROM read_csv('{TEMP_DIR}/invalid_utf8_tail.csv', auto_detect = false, header = true, columns = {'a': 'VARCHAR', 'b': 'VARCHAR'});
+----
+1
+
+statement error
+SELECT count(b) FROM read_csv('{TEMP_DIR}/invalid_utf8_tail.csv', auto_detect = false, header = true, columns = {'a': 'VARCHAR', 'b': 'VARCHAR'});
+----
+Invalid unicode (byte sequence mismatch) detected
+
+statement ok
+COPY (FROM (VALUES ('a,b'), ('1,2'))) TO '{TEMP_DIR}/space_dialect.csv' (HEADER false, DELIMITER '\t', QUOTE '');
+
+foreach option quote escape comment
+
+query II
+SELECT * FROM read_csv('{TEMP_DIR}/space_dialect.csv', auto_detect = false, header = true, {option} = ' ', columns = {'a': 'INTEGER', 'b': 'INTEGER'});
+----
+1	2
+
+endloop
+
+statement ok
+COPY (FROM (VALUES ('a,b,c,d,e'), ('1,2,3,4,1.5'), ('200,70000,5000000000,20000000000000000000,2.5'))) TO '{TEMP_DIR}/candidates.csv' (HEADER false, DELIMITER '\t', QUOTE '');
+
+query I
+SELECT count(*) FROM read_csv('{TEMP_DIR}/candidates.csv', types = {'a': 'UTINYINT', 'b': 'UINTEGER', 'c': 'UBIGINT', 'd': 'UHUGEINT', 'e': 'DECIMAL(4,1)'});
+----
+2
+
+query I
+SELECT count(*) FROM read_csv('{TEMP_DIR}/candidates.csv', auto_type_candidates = ['DECIMAL(4,1)', 'VARCHAR']);
+----
+2
+
+statement ok
+COPY (FROM (VALUES ('1,a'), (',b'), ('-,c'), ('NA,d'))) TO '{TEMP_DIR}/tinyint_empty.csv' (HEADER false, DELIMITER '\t', QUOTE '');
+
+query II
+SELECT * FROM read_csv('{TEMP_DIR}/tinyint_empty.csv', auto_detect = false, header = false, nullstr = 'NA', ignore_errors = true, columns = {'t': 'TINYINT', 's': 'VARCHAR'}) ORDER BY s;
+----
+1	a
+NULL	d
+
+statement ok
+COPY (FROM (VALUES ('2024-01+05,2024-01+05'), ('2024-0a-05,2024-0a-05'), ('0000-01-05,0000-01-05'), ('2024-00-05,2024-00-05'), ('2024-13-05,2024-13-05'), ('2024-01-00,2024-01-00'), ('2024-02-29,2024-02-29'))) TO '{TEMP_DIR}/fast_dates.csv' (HEADER false, DELIMITER '\t', QUOTE '');
+
+query II
+SELECT count(*) = (SELECT count(TRY_CAST(s AS DATE)) FROM read_csv('{TEMP_DIR}/fast_dates.csv', auto_detect = false, header = false, columns = {'r': 'VARCHAR', 's': 'VARCHAR'})), bool_and(d = TRY_CAST(s AS DATE)) FROM read_csv('{TEMP_DIR}/fast_dates.csv', auto_detect = false, header = false, ignore_errors = true, columns = {'d': 'DATE', 's': 'VARCHAR'});
+----
+true	true
+
+query I
+SELECT d FROM read_csv('{TEMP_DIR}/fast_dates.csv', auto_detect = false, header = false, ignore_errors = true, columns = {'d': 'DATE', 's': 'VARCHAR'}) WHERE d > DATE '2000-01-01';
+----
+2024-02-29
+
+statement ok
+COPY (FROM (VALUES ('.5|.5'), ('5.|5.'), ('|'), ('12.3|12.3'), ('-|-'))) TO '{TEMP_DIR}/short_decimals.csv' (HEADER false, DELIMITER '\t', QUOTE '');
+
+query II
+SELECT count(*) = (SELECT count(TRY_CAST(s AS DECIMAL(4, 1))) FROM read_csv('{TEMP_DIR}/short_decimals.csv', auto_detect = false, header = false, delim = '|', nullstr = 'NA', columns = {'r': 'VARCHAR', 's': 'VARCHAR'})), bool_and(d = TRY_CAST(s AS DECIMAL(4, 1))) FROM read_csv('{TEMP_DIR}/short_decimals.csv', auto_detect = false, header = false, delim = '|', nullstr = 'NA', ignore_errors = true, columns = {'d': 'DECIMAL(4,1)', 's': 'VARCHAR'});
+----
+true	true
+
+query I
+SELECT d FROM read_csv('{TEMP_DIR}/short_decimals.csv', auto_detect = false, header = false, delim = '|', nullstr = 'NA', ignore_errors = true, columns = {'d': 'DECIMAL(4,1)', 's': 'VARCHAR'}) WHERE s = '12.3';
+----
+12.3
+
+statement ok
+COPY (SELECT 'r' || lpad(i::VARCHAR, 6, '0') || ',v' || lpad(i::VARCHAR, 6, '0') FROM range(128) r(i) ORDER BY i) TO '{TEMP_DIR}/exact_buffers.csv.gz' (HEADER false, DELIMITER '\t', QUOTE '', COMPRESSION gzip);
+
+query II
+WITH RECURSIVE t(i, c) AS (
+	SELECT 1, 0
+	UNION ALL
+	(SELECT t.i + 1, r.c FROM t, (SELECT count(*) AS c FROM read_csv('{TEMP_DIR}/exact_buffers.csv.gz', header = false, buffer_size = 1024, parallel = false)) r WHERE t.i < 3)
+)
+SELECT i, c FROM t ORDER BY i;
+----
+1	0
+2	128
+3	128
+
+query I
+SELECT count(*) FROM read_csv('{TEMP_DIR}/exact_buffers.csv.gz', auto_detect = false, header = false, skip = 200, buffer_size = 1024, columns = {'a': 'VARCHAR', 'b': 'VARCHAR'});
+----
+0
+
+statement ok
+COPY (FROM (VALUES ('1,2,""'), ('3,4'), ('5,6,NB'), ('7,8,NA'))) TO '{TEMP_DIR}/null_extras.csv' (HEADER false, DELIMITER '\t', QUOTE '');
+
+query I
+SELECT count(*) FROM read_csv('{TEMP_DIR}/null_extras.csv', auto_detect = false, header = false, ignore_errors = true, columns = {'a': 'INTEGER', 'b': 'INTEGER'}) WHERE a < 5;
+----
+2
+
+query I
+SELECT count(*) FROM read_csv('{TEMP_DIR}/null_extras.csv', auto_detect = false, header = false, ignore_errors = true, allow_quoted_nulls = false, columns = {'a': 'INTEGER', 'b': 'INTEGER'}) WHERE a < 5;
+----
+1
+
+query I
+SELECT sum(a) FROM read_csv('{TEMP_DIR}/null_extras.csv', auto_detect = false, header = false, ignore_errors = true, nullstr = 'NA', columns = {'a': 'INTEGER', 'b': 'INTEGER'}) WHERE a > 4;
+----
+7
+
+statement ok
+COPY (SELECT encode('1,a' || chr(10) || '2,b' || chr(13) || chr(10))) TO '{TEMP_DIR}/lf_in_crlf.csv' (FORMAT blob);
+
+statement error
+SELECT * FROM read_csv('{TEMP_DIR}/lf_in_crlf.csv', auto_detect = false, header = false, quote = '', new_line = '\r\n', columns = {'a': 'INTEGER', 'b': 'VARCHAR'});
+----
+invalid state
+
+statement ok
+COPY (SELECT '\xEF\xBB'::BLOB || encode('x,y' || chr(10) || '1,2' || chr(10))) TO '{TEMP_DIR}/half_bom.csv' (FORMAT blob);
+
+statement ok
+COPY (SELECT '\xEF'::BLOB || encode('x,y' || chr(10) || '1,2' || chr(10))) TO '{TEMP_DIR}/third_bom.csv' (FORMAT blob);
+
+foreach file half_bom third_bom
+
+query II
+SELECT count(a), max(b) FROM read_csv('{TEMP_DIR}/{file}.csv', auto_detect = false, header = false, ignore_errors = true, columns = {'a': 'VARCHAR', 'b': 'VARCHAR'});
+----
+1	2
+
+endloop
