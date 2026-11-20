@@ -249,6 +249,7 @@ public:
 	//! Database configuration variables as controlled by SET
 	GlobalUserSettings user_settings;
 	identifier_set_t builtin_relations;
+	identifier_set_t hidden_settings;
 	unordered_map<string, ForeignDataWrapper> foreign_data_wrappers;
 	case_insensitive_map_t<Language> languages;
 	idx_t bootstrap_role = 0;
