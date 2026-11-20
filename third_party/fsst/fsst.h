@@ -264,6 +264,33 @@ duckdb_fsst_decompress(
    return posOut; /* full size of decompressed string (could be >size, then the actually decompressed part) */
 }
 
+/* Decompress the start of a single string: stops once size bytes are written or the input ends. */
+/* Returns DUCKDB_FSST_DECOMPRESS_INVALID_INPUT if an escape is not followed by its literal byte. */
+inline size_t /* OUT: bytes written: at least size, unless the string is shorter; at most size + 7. */
+duckdb_fsst_decompress_prefix(
+   duckdb_fsst_decoder_t *decoder,  /* IN: use this symbol table for compression. */
+   size_t lenIn,             /* IN: byte-length of compressed string. */
+   const unsigned char *strIn,     /* IN: compressed string. */
+   size_t size,              /* IN: bytes wanted. */
+   unsigned char *output     /* OUT: memory buffer of at least size + 7 bytes. */
+) {
+   unsigned char*__restrict__ len = (unsigned char* __restrict__) decoder->len;
+   unsigned char*__restrict__ strOut = (unsigned char* __restrict__) output;
+   unsigned long long*__restrict__ symbol = (unsigned long long* __restrict__) decoder->symbol;
+   size_t code, posOut = 0, posIn = 0;
+   while (posOut < size && posIn < lenIn)
+      if ((code = strIn[posIn++]) < FSST_ESC) {
+         memcpy((void*) (strOut+posOut), &symbol[code], sizeof(unsigned long long));
+         posOut += len[code];
+      } else {
+         if (posIn == lenIn) {
+            return DUCKDB_FSST_DECOMPRESS_INVALID_INPUT;
+         }
+         strOut[posOut++] = strIn[posIn++];
+      }
+   return posOut;
+}
+
 #ifdef __cplusplus
 }
 #endif
