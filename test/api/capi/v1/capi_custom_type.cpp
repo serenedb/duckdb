@@ -257,3 +257,55 @@ TEST_CASE("Test Custom Type Function", "[capi]") {
 	REQUIRE(result->row_count() == 1);
 	REQUIRE(result->Fetch<bool>(0, 0) == true);
 }
+
+static bool TextBoxToVarcharCastFunction(duckdb_function_info info, idx_t count, duckdb_vector input,
+                                         duckdb_vector output) {
+	auto texts = static_cast<duckdb_string_t *>(duckdb_vector_get_data(duckdb_struct_vector_get_child(input, 0)));
+	for (idx_t i = 0; i < count; i++) {
+		duckdb_vector_assign_string_element_len(output, i, duckdb_string_t_data(&texts[i]),
+		                                        duckdb_string_t_length(texts[i]));
+	}
+	return true;
+}
+
+TEST_CASE("Test the text of nested values whose elements write their own text", "[capi]") {
+	CAPITester tester;
+	duckdb::unique_ptr<CAPIResult> result;
+
+	REQUIRE(tester.OpenDatabase(nullptr));
+
+	auto varchar_type = duckdb_create_logical_type(DUCKDB_TYPE_VARCHAR);
+	const char *member_names[] = {"v"};
+	auto text_box_type = duckdb_create_struct_type(&varchar_type, member_names, 1);
+	duckdb_logical_type_set_alias(text_box_type, "TEXTBOX");
+	REQUIRE(duckdb_register_logical_type(tester.connection, text_box_type, nullptr) == DuckDBSuccess);
+
+	auto to_varchar = duckdb_create_cast_function();
+	duckdb_cast_function_set_source_type(to_varchar, text_box_type);
+	duckdb_cast_function_set_target_type(to_varchar, varchar_type);
+	duckdb_cast_function_set_function(to_varchar, TextBoxToVarcharCastFunction);
+	REQUIRE(duckdb_register_cast_function(tester.connection, to_varchar) == DuckDBSuccess);
+	duckdb_destroy_cast_function(&to_varchar);
+	duckdb_destroy_logical_type(&text_box_type);
+	duckdb_destroy_logical_type(&varchar_type);
+
+	result = tester.Query("SELECT [{'v': ' lead'}::TEXTBOX, {'v': 'trail '}::TEXTBOX, {'v': 'Null'}::TEXTBOX, "
+	                      "{'v': 'a,b'}::TEXTBOX, {'v': 'it''s'}::TEXTBOX, {'v': 'a\"b'}::TEXTBOX, "
+	                      "{'v': 'a\\b'}::TEXTBOX, {'v': 'a)'}::TEXTBOX, {'v': 'a]'}::TEXTBOX, {'v': 'a}'}::TEXTBOX, "
+	                      "{'v': 'a=b'}::TEXTBOX, {'v': 'plain'}::TEXTBOX]::VARCHAR");
+	REQUIRE_NO_FAIL(*result);
+	REQUIRE(result->Fetch<string>(0, 0) ==
+	        "[' lead', 'trail ', 'Null', 'a,b', 'it\\'s', 'a\"b', 'a\\\\b', 'a)', 'a]', 'a}', 'a=b', plain]");
+
+	result = tester.Query("SELECT map([{'v': 'k,1'}::TEXTBOX], [{'v': 'x=y'}::TEXTBOX])::VARCHAR");
+	REQUIRE_NO_FAIL(*result);
+	REQUIRE(result->Fetch<string>(0, 0) == "{'k,1'='x=y'}");
+
+	result = tester.Query("SELECT row({'v': 'a,b'}::TEXTBOX, 1)::VARCHAR");
+	REQUIRE_NO_FAIL(*result);
+	REQUIRE(result->Fetch<string>(0, 0) == "('a,b', 1)");
+
+	result = tester.Query("SELECT {'k': {'v': 'a,b'}::TEXTBOX}::VARCHAR");
+	REQUIRE_NO_FAIL(*result);
+	REQUIRE(result->Fetch<string>(0, 0) == "{'k': 'a,b'}");
+}
