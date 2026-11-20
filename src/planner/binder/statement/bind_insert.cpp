@@ -827,11 +827,15 @@ BoundStatement Binder::BindNode(InsertQueryNode &node) {
 				    absl::c_all_of(node.returning_list, [&](const unique_ptr<ParsedExpression> &expr) {
 					    return ReadsOnly(*expr, table, stored);
 				    })) {
-					vector<LogicalIndex> updated;
-					for (auto &column : replaced.columns) {
-						updated.push_back(table.GetColumns().GetColumn(column).Logical());
+					if (need) {
+						need->modes |= AclMode::Update;
+						for (auto &index : replaced.columns) {
+							auto &column = table.GetColumns().GetColumn(index);
+							if (column.Category() != TableColumnType::GENERATED_STORED) {
+								need->updated.push_back(column.Logical().index);
+							}
+						}
 					}
-					RequirePrivilege(table, AclMode::Update, std::move(updated), false);
 					merge = false;
 					action_type = OnConflictAction::REPLACE;
 					on_conflict_filter = std::move(key);
