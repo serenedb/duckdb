@@ -18,6 +18,7 @@
 #include "duckdb/common/types.hpp"
 #include "duckdb/common/multi_file/multi_file_options.hpp"
 #include "duckdb/execution/operator/csv_scanner/set_columns.hpp"
+#include "duckdb/formats/copy_from.hpp"
 #include "duckdb/formats/value_codecs.hpp"
 
 namespace duckdb {
@@ -58,6 +59,7 @@ struct CSVReaderOptions {
 	//! Rejects line size limit (0 = no limit)
 	idx_t rejects_line_size_limit = 10000;
 	ValueRendering rendering = ValueRendering::NATIVE;
+	shared_ptr<const CopyFromRules> copy_rules;
 	//! Number of samples to buffer
 	idx_t buffer_sample_size = static_cast<idx_t>(STANDARD_VECTOR_SIZE * 50);
 	//! Specifies the strings that represents a null value

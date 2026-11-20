@@ -13,8 +13,13 @@ public:
 	explicit CastDecoder(ClientContext &context_p) : context(context_p) {
 	}
 
-	bool Decode(Vector &text, Vector &out, idx_t count, string &error) final {
-		return VectorOperations::TryCast(context, text, out, count, &error, false, true);
+	bool Decode(Vector &text, Vector &out, idx_t count, ErrorData &error) final {
+		string message;
+		if (VectorOperations::TryCast(context, text, out, count, &message, false, true)) {
+			return true;
+		}
+		error = ErrorData(ExceptionType::CONVERSION, message);
+		return false;
 	}
 
 private:

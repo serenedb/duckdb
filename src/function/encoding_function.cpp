@@ -192,7 +192,11 @@ void DecodeEncodedBuffer(CSVEncoderBuffer &encoded_buffer, char *target_buffer, 
 		break;
 	}
 	constexpr bool UTF32 = ENCODING == TextEncoding::UTF32_LE || ENCODING == TextEncoding::UTF32_BE;
-	throw InvalidInputException("File is not %s encoded", UTF32 ? "utf-32" : "utf-16");
+	const char *reason = result.status != Utf8DecodeStatus::INVALID ? "incomplete character at the end of the input"
+	                     : UTF32                                    ? "invalid UTF-32 code point"
+	                                                                : "invalid UTF-16 code unit";
+	throw InvalidInputException(unordered_map<string, string> {{"encoding_error", reason}},
+	                            UTF32 ? "File is not utf-32 encoded" : "File is not utf-16 encoded");
 }
 
 } // namespace

@@ -111,6 +111,13 @@ public:
 	idx_t row_byte_position {};
 	//! Byte Position where error occurred.
 	optional_idx byte_position;
+	string sqlstate;
+	string detail;
+	string hint;
+	string copy_table;
+	string copy_column;
+	string copy_value;
+	bool copy_has_value = false;
 };
 
 class CSVErrorHandler {
@@ -153,6 +160,9 @@ private:
 	idx_t EarliestError() const;
 	//! Return the 1-indexed line number
 	idx_t GetLineInternal(const LinesPerBoundary &error_info);
+	void ThrowEarliestFailure(bool any);
+	void ThrowOverRejectLimit();
+	[[noreturn]] void ThrowCopyError(const CSVError &csv_error);
 	//! CSV Error Handler Mutex
 	mutex main_mutex;
 	//! Map of <boundary indexes> -> lines read
@@ -163,6 +173,10 @@ private:
 	bool print_line = true;
 	//! Set of errors
 	vector<CSVError> errors;
+	vector<CSVError> failures;
+
+public:
+	vector<string> CopySkippedRows();
 };
 
 } // namespace duckdb

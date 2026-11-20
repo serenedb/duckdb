@@ -69,6 +69,7 @@ private:
 	unique_ptr<FileHandle> file_handle;
 	CSVEncoder encoder;
 	const OpenFileInfo file;
+	const bool postgres_errors;
 	bool can_seek = false;
 	bool on_disk_file = false;
 	bool is_pipe = false;

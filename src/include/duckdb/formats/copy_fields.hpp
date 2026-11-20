@@ -1,0 +1,50 @@
+//===----------------------------------------------------------------------===//
+//                         DuckDB
+//
+// duckdb/formats/copy_fields.hpp
+//
+//
+//===----------------------------------------------------------------------===//
+
+#pragma once
+
+#include "duckdb/formats/copy_from.hpp"
+
+#include <string_view>
+
+namespace duckdb {
+
+enum class CopyFieldKind : uint8_t { VALUE, NULL_VALUE, DEFAULT_VALUE };
+
+CopyFieldKind ReadCopyField(const CopyFromRules &rules, idx_t column, std::string_view raw, char *out,
+                            std::string_view &value);
+
+std::string_view UnescapePostgresText(std::string_view field, char *out);
+
+std::string_view UnquotePostgresCsv(std::string_view field, char quote, char escape, char *out);
+
+class CopyLineBreakFinder {
+public:
+	explicit CopyLineBreakFinder(const CopyFormatOptions &options);
+
+	char Feed(std::string_view bytes);
+	char Finish() const;
+
+private:
+	const bool csv;
+	const char quote;
+	const char escape;
+	const bool quoted_escape;
+	bool in_quote = false;
+	bool after_escape = false;
+	bool after_backslash = false;
+	bool after_cr = false;
+};
+
+string CopyPrintout(std::string_view value);
+
+string CopyInvalidUtf8(std::string_view bytes);
+
+string CopyContext(const string &table, idx_t line, const string &column, bool has_value, const string &value);
+
+} // namespace duckdb
