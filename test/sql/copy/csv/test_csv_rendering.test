@@ -46,3 +46,11 @@ statement error
 SELECT d FROM read_json('{TEMP_DIR}/rendering.json', columns = {'d': 'DATE'}, rendering = 'sql')
 ----
 rendering must be 'duckdb' or 'postgres', got 'sql'
+
+statement ok
+COPY (SELECT 'a' AS s, ['x', 'y'] AS l) TO '{TEMP_DIR}/rendering_text.json' (FORMAT json);
+
+query II
+SELECT s, l FROM read_json('{TEMP_DIR}/rendering_text.json', columns = {'s': 'VARCHAR', 'l': 'VARCHAR[]'}, rendering = 'postgres')
+----
+a	[x, y]
