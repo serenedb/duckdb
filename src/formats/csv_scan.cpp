@@ -36,6 +36,7 @@ namespace {
 constexpr idx_t LOOKUP_BYTES = 1 << 13;
 constexpr idx_t RANGE_MIN = 1 << 20;
 constexpr idx_t RANGE_MAX = 1 << 23;
+constexpr idx_t QUOTED_RANGE_MAX = 1 << 21;
 constexpr idx_t HOST_STREAM_RANGE = 1 << 21;
 constexpr idx_t HEAD_READ_BYTES = 1 << 16;
 
@@ -757,7 +758,8 @@ CsvScanGlobal::CsvScanGlobal(ClientContext &context_p, const CSVReaderOptions &o
 	if (!stream && !source.sniffing) {
 		const idx_t data_size = size - MinValue(start, size);
 		const idx_t threads = MaxValue<idx_t>(TaskScheduler::QueryThreads(context), 1);
-		const idx_t wanted = MinValue(MaxValue(data_size / (threads * 4), RANGE_MIN), RANGE_MAX);
+		const idx_t range_max = lean->Dialect().quoting == RowQuoting::ANYWHERE ? QUOTED_RANGE_MAX : RANGE_MAX;
+		const idx_t wanted = MinValue(MaxValue(data_size / (threads * 4), RANGE_MIN), range_max);
 		range_bytes = MaxValue<idx_t>(MinValue<idx_t>(options.buffer_size_option.GetValue(), wanted), 1);
 	} else if (stream && !source.sniffing && options.parallel) {
 		const idx_t limit = host_stream ? HOST_STREAM_RANGE : RANGE_MAX;
