@@ -25,12 +25,11 @@ namespace duckdb {
 
 unique_ptr<LogicalOperator> Binder::BindCopyDatabaseSchema(Catalog &from_database,
                                                            const Identifier &target_database_name) {
-	catalog_entry_vector_t catalog_entries;
-	catalog_entries = PhysicalExport::GetNaiveExportOrder(context, from_database);
-
 	auto info = make_uniq<CopyDatabaseInfo>(target_database_name);
 	auto dependency_manager = from_database.GetDependencyManager();
 	auto transaction = from_database.GetCatalogTransaction(context);
+	auto catalog_entries = PhysicalExport::GetNaiveExportOrder(context, from_database);
+	PhysicalExport::OrderEntries(from_database, transaction, catalog_entries);
 	unordered_map<idx_t, QualifiedName> user_types;
 	for (auto &entry : catalog_entries) {
 		if (entry.get().type == CatalogType::TYPE_ENTRY && !entry.get().internal) {
