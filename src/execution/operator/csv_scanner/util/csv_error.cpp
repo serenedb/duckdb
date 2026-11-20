@@ -8,6 +8,7 @@
 #include "duckdb/execution/operator/csv_scanner/csv_file_scanner.hpp"
 #include "duckdb/main/appender.hpp"
 #include "duckdb/common/multi_file/multi_file_function.hpp"
+#include "duckdb/formats/copy_fields.hpp"
 #include <sstream>
 
 namespace duckdb {
@@ -20,6 +21,64 @@ LinesPerBoundary::LinesPerBoundary(idx_t boundary_idx_p, idx_t lines_in_batch_p)
 
 CSVErrorHandler::CSVErrorHandler(bool ignore_errors_p, idx_t reject_tolerance_p)
     : ignore_errors(ignore_errors_p), reject_tolerance(reject_tolerance_p) {
+}
+
+void CSVErrorHandler::ThrowCopyError(const CSVError &csv_error) {
+	const auto context = CopyContext(csv_error.copy_table, GetLineInternal(csv_error.error_info), csv_error.copy_column,
+	                                 csv_error.copy_has_value, csv_error.copy_value);
+	duckdb::ThrowCopyError(csv_error.sqlstate.c_str(), csv_error.error_message, context, csv_error.detail,
+	                       csv_error.hint);
+}
+
+void CSVErrorHandler::ThrowOverRejectLimit() {
+	if (reject_tolerance == 0 || errors.size() <= reject_tolerance) {
+		return;
+	}
+	if (!errors.back().sqlstate.empty()) {
+		duckdb::ThrowCopyError("22P02", "skipped more than REJECT_LIMIT (" + std::to_string(reject_tolerance) +
+		                                    ") rows due to data type incompatibility");
+	}
+	throw InvalidInputException("skipped more than REJECT_LIMIT (%llu) rows due to data type incompatibility\n%s",
+	                            reject_tolerance, errors.back().error_message);
+}
+
+void CSVErrorHandler::ThrowEarliestFailure(bool any) {
+	if (failures.empty()) {
+		return;
+	}
+	idx_t earliest = 0;
+	for (idx_t i = 1; i < failures.size(); i++) {
+		auto &info = failures[i].error_info;
+		auto &best = failures[earliest].error_info;
+		if (info.boundary_idx < best.boundary_idx ||
+		    (info.boundary_idx == best.boundary_idx && info.lines_in_batch < best.lines_in_batch)) {
+			earliest = i;
+		}
+	}
+	if (any || CanGetLine(failures[earliest].GetBoundaryIndex())) {
+		ThrowCopyError(failures[earliest]);
+	}
+}
+
+vector<string> CSVErrorHandler::CopySkippedRows() {
+	lock_guard<mutex> parallel_lock(main_mutex);
+	vector<pair<idx_t, string>> rows;
+	for (auto &error : errors) {
+		if (error.sqlstate.empty()) {
+			continue;
+		}
+		const auto line = GetLineInternal(error.error_info);
+		rows.emplace_back(line, "skipping row due to data type incompatibility at line " + std::to_string(line) +
+		                            " for column \"" + error.copy_column + "\": \"" + error.copy_value + "\"");
+	}
+	std::stable_sort(rows.begin(), rows.end(),
+	                 [](const pair<idx_t, string> &a, const pair<idx_t, string> &b) { return a.first < b.first; });
+	vector<string> result;
+	result.reserve(rows.size());
+	for (auto &row : rows) {
+		result.push_back(std::move(row.second));
+	}
+	return result;
 }
 
 void CSVErrorHandler::ThrowError(const CSVError &csv_error) {
@@ -36,6 +95,9 @@ void CSVErrorHandler::ThrowError(const CSVError &csv_error) {
 				}
 			}
 		}
+	}
+	if (!error_to_throw.sqlstate.empty()) {
+		ThrowCopyError(error_to_throw);
 	}
 	std::ostringstream error;
 	if (PrintLineNumber(error_to_throw)) {
@@ -76,9 +138,17 @@ idx_t CSVErrorHandler::EarliestError() const {
 
 void CSVErrorHandler::Error(const CSVError &csv_error, bool force_error) {
 	lock_guard<mutex> parallel_lock(main_mutex);
+	if (ignore_errors && !csv_error.sqlstate.empty() && csv_error.type != CSVErrorType::CAST_ERROR) {
+		failures.push_back(csv_error);
+		ThrowEarliestFailure(false);
+		return;
+	}
 	if (!force_error && (ignore_errors || (PrintLineNumber(csv_error) && !CanGetLine(csv_error.GetBoundaryIndex())))) {
 		// We store this error, we can't throw it now, or we are ignoring it
 		errors.push_back(csv_error);
+		if (ignore_errors) {
+			ThrowOverRejectLimit();
+		}
 		return;
 	}
 	if (!force_error && !errors.empty()) {
@@ -90,12 +160,8 @@ void CSVErrorHandler::Error(const CSVError &csv_error, bool force_error) {
 
 void CSVErrorHandler::ErrorIfNeeded() {
 	lock_guard<mutex> parallel_lock(main_mutex);
-	// PG's REJECT_LIMIT is a tolerance, not a cap on what we record: fail once the batch
-	// accumulated more skipped rows than the caller is willing to accept.
-	if (reject_tolerance > 0 && errors.size() > reject_tolerance) {
-		throw InvalidInputException("skipped more than REJECT_LIMIT (%llu) rows due to data type incompatibility\n%s",
-		                            reject_tolerance, errors.back().error_message);
-	}
+	ThrowEarliestFailure(false);
+	ThrowOverRejectLimit();
 	if (ignore_errors || errors.empty()) {
 		// Nothing to error
 		return;
@@ -108,6 +174,7 @@ void CSVErrorHandler::ErrorIfNeeded() {
 
 void CSVErrorHandler::ErrorIfAny() {
 	lock_guard<mutex> parallel_lock(main_mutex);
+	ThrowEarliestFailure(true);
 	if (ignore_errors || errors.empty()) {
 		// Nothing to error
 		return;

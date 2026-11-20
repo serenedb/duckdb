@@ -63,6 +63,7 @@ struct CsvScanColumn {
 	LogicalType parse_type;
 	bool validate_utf8;
 	bool force_not_null;
+	bool match_null = true;
 };
 
 struct CsvRowError {
@@ -70,6 +71,13 @@ struct CsvRowError {
 	idx_t column;
 	idx_t position;
 	string message;
+	string sqlstate;
+	string detail;
+	string hint;
+	string value;
+	bool has_value = false;
+	bool line_value = false;
+	bool line_error = false;
 };
 
 struct CsvScanSource {
@@ -131,7 +139,9 @@ struct LeanSource {
 	bool spaced;
 	bool allow_quoted_nulls;
 	bool empty_only_null;
+	bool retry_flagged = false;
 	const vector<string> *null_strings;
+	const string *default_marker = nullptr;
 	const vector<bool> *selected;
 	idx_t first;
 };
@@ -190,9 +200,15 @@ public:
 	bool skip_bom = false;
 	idx_t start = 0;
 	idx_t start_lines = 0;
+	optional_ptr<const CopyFromRules> copy;
+	vector<string> no_null_strings;
+	atomic<idx_t> copy_marker_range {DConstants::INVALID_INDEX};
+	atomic<idx_t> copy_data_range {0};
 
 private:
 	void FindStart(idx_t size, shared_ptr<CSVBufferHandle> &whole_file);
+	char CopyInputLineBreak() const;
+	void MatchCopyHeader() const;
 };
 
 class CsvScan {
@@ -241,7 +257,14 @@ private:
 	Vector &Target(idx_t column, DataChunk &output);
 	void Filter(idx_t count, DataChunk &output);
 	bool DecodeValue(const CsvScanColumn &column, const CsvField &field, Vector &vector, idx_t row, CsvRowError &error);
+	bool DecodeCopyValue(const CsvScanColumn &column, idx_t row, Vector &vector, CsvRowError &error);
+	bool ParseField(const CsvScanColumn &column, const char *value, idx_t size, bool owned, idx_t position,
+	                Vector &vector, idx_t row, CsvRowError &error);
 	bool IsNull(const CsvField &field, const char *value, idx_t size) const;
+	std::string_view RawField(idx_t file_column, idx_t row) const;
+	idx_t CopyEndMarker(idx_t count);
+	void ApplyCopyDefaults(DataChunk &output);
+	CSVError CopyRowError(const CsvRow &row, const CsvRowError &error);
 	void ReportRow(idx_t row_idx, const CsvRow &row, vector<CsvRowError> &errors);
 	void Report(idx_t row, CSVError &error, bool force);
 	void FlushCasts(idx_t count, DataChunk &output, bool late, bool filter_pass);
@@ -283,6 +306,10 @@ private:
 	DataChunk parse_chunk;
 	DataChunk scratch_chunk;
 	vector<unique_ptr<ValueDecoder>> decoders;
+	vector<vector<idx_t>> copy_defaulted;
+	vector<unique_ptr<ExpressionExecutor>> copy_defaults;
+	string copy_buffer;
+	bool copy_ended = false;
 };
 
 } // namespace duckdb

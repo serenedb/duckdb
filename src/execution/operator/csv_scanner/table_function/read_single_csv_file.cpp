@@ -117,6 +117,25 @@ static void SniffCSVFile(ClientContext &context, ReadSingleCSVFileData &result, 
 	return_types = std::move(sniff_result.return_types);
 }
 
+static void ApplyCopyRules(CSVReaderOptions &options, shared_ptr<const CopyFromRules> rules) {
+	auto &copy = rules->options;
+	const bool csv = copy.format == CopyTextFormat::CSV;
+	options.auto_detect = false;
+	options.SetDelimiter(string(1, copy.delimiter));
+	options.SetQuote(csv ? string(1, copy.quote) : string());
+	options.SetEscape(csv ? string(1, copy.escape) : string());
+	options.SetComment(string());
+	options.SetHeader(copy.header);
+	options.null_str = {copy.null_str};
+	options.allow_quoted_nulls = false;
+	options.ignore_errors.Set(copy.ignore_errors);
+	options.rejects_limit = copy.reject_limit;
+	options.encoding = copy.encoding;
+	options.compression = copy.compression;
+	options.rendering = copy.rendering;
+	options.copy_rules = std::move(rules);
+}
+
 static unique_ptr<FunctionData> ReadSingleCSVFileBind(ClientContext &context, TableFunctionBindInput &input,
                                                       vector<LogicalType> &return_types, vector<Identifier> &names) {
 	auto &file_input = TableFunctionFileBindInput::Get(input);
@@ -124,6 +143,9 @@ static unique_ptr<FunctionData> ReadSingleCSVFileBind(ClientContext &context, Ta
 	auto &options = result->options;
 	for (auto &kv : input.named_parameters) {
 		options.ParseOption(context, kv.first, kv.second);
+	}
+	if (file_input.copy_rules) {
+		ApplyCopyRules(options, file_input.copy_rules);
 	}
 	if (input.inputs[0].IsNull()) {
 		throw BinderException("read_single_csv_file requires a non-NULL file name");
@@ -436,6 +458,28 @@ static void FillRejectsTable(ReadSingleCSVFileGlobalState &gstate, CSVFileScan &
 	scans_appender.Close();
 }
 
+static void NoticeSkippedRows(ClientContext &context, const CSVReaderOptions &options, CSVErrorHandler &handler) {
+	auto &rules = options.copy_rules;
+	if (!rules || !rules->options.ignore_errors) {
+		return;
+	}
+	auto notices = context.registered_state->Get<CopyNotices>(CopyNotices::NAME);
+	if (!notices) {
+		return;
+	}
+	const auto rows = handler.CopySkippedRows();
+	const auto verbosity = rules->options.log_verbosity;
+	if (verbosity == CopyLogVerbosity::VERBOSE) {
+		for (auto &row : rows) {
+			notices->Notice(row);
+		}
+	}
+	if (!rows.empty() && verbosity != CopyLogVerbosity::SILENT) {
+		notices->Notice(std::to_string(rows.size()) + (rows.size() == 1 ? " row was" : " rows were") +
+		                " skipped due to data type incompatibility");
+	}
+}
+
 static void FinishFile(ReadSingleCSVFileGlobalState &gstate) {
 	lock_guard<mutex> guard(gstate.lock);
 	if (gstate.finished) {
@@ -445,6 +489,7 @@ static void FinishFile(ReadSingleCSVFileGlobalState &gstate) {
 	auto &file = *gstate.file_scan;
 	file.Finish();
 	file.error_handler->ErrorIfAny();
+	NoticeSkippedRows(gstate.context, gstate.csv_data.options, *file.error_handler);
 	FillRejectsTable(gstate, file);
 }
 

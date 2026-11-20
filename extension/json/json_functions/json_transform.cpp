@@ -308,8 +308,11 @@ static bool CastValues(Vector &source, Vector &result, const idx_t count, JSONTr
 	auto context = options.parameters.context;
 	bool cast;
 	if (context && options.rendering != ValueRendering::NATIVE && source.GetType().id() == LogicalTypeId::VARCHAR) {
-		cast = MakeValueDecoder(*context, result.GetType(), options.rendering)
-		           ->Decode(source, result, count, options.error_message);
+		ErrorData error;
+		cast = MakeValueDecoder(*context, result.GetType(), options.rendering)->Decode(source, result, count, error);
+		if (!cast) {
+			options.error_message = error.RawMessage();
+		}
 	} else if (context) {
 		cast = VectorOperations::TryCast(*context, source, result, count, &options.error_message);
 	} else {

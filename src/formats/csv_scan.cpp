@@ -1,6 +1,8 @@
 #include "duckdb/formats/csv_scan.hpp"
 
 #include "absl/cleanup/cleanup.h"
+#include "duckdb/execution/expression_executor.hpp"
+#include "duckdb/formats/copy_fields.hpp"
 #include "duckdb/formats/row_stream.hpp"
 #include "duckdb/formats/value_parsers.hpp"
 #include "duckdb/common/operator/cast_operators.hpp"
@@ -123,8 +125,10 @@ void LeanValues(const LeanSource &source, idx_t count, bool force_not_null, Vect
 	const char quote = source.quote;
 	const bool quotes = source.quotes;
 	const bool doubled = source.doubled;
-	const uint32_t flag_test = quotes || source.padded || source.unquoted_escape ? ROW_FIELD_FLAG : 0;
+	const uint32_t flag_test =
+	    quotes || source.padded || source.unquoted_escape || source.retry_flagged ? ROW_FIELD_FLAG : 0;
 	const bool empty_only_null = source.empty_only_null && source.allow_quoted_nulls;
+	const auto default_marker = source.default_marker;
 	const auto selected = source.selected;
 	const idx_t first = source.first;
 	for (idx_t row = first; row < first + count; row++) {
@@ -141,6 +145,11 @@ void LeanValues(const LeanSource &source, idx_t count, bool force_not_null, Vect
 				FlatVector::SetNull(vector, row, true);
 				continue;
 			}
+			if (source.retry_flagged) {
+				retry.push_back(row);
+				FlatVector::SetNull(vector, row, true);
+				continue;
+			}
 			quoted = quotes && LeanUnquote(data, quote, source.spaced, begin, end);
 			if (!quoted && source.unquoted_escape && memchr(data + begin, source.unquoted_escape, end - begin)) {
 				retry.push_back(row);
@@ -154,6 +163,11 @@ void LeanValues(const LeanSource &source, idx_t count, bool force_not_null, Vect
 			if (force_not_null) {
 				retry.push_back(row);
 			}
+			FlatVector::SetNull(vector, row, true);
+			continue;
+		}
+		if (default_marker && size == default_marker->size() && memcmp(value, default_marker->data(), size) == 0) {
+			retry.push_back(row);
 			FlatVector::SetNull(vector, row, true);
 			continue;
 		}
@@ -433,8 +447,10 @@ void LeanStrings(const LeanSource &source, idx_t count, const CsvScanColumn &col
 	const idx_t shift = source.shift;
 	const char quote = source.quote;
 	const bool quotes = source.quotes;
-	const uint32_t flag_test = quotes || source.padded || source.unquoted_escape ? ROW_FIELD_FLAG : 0;
+	const uint32_t flag_test =
+	    quotes || source.padded || source.unquoted_escape || source.retry_flagged ? ROW_FIELD_FLAG : 0;
 	const bool empty_only_null = source.empty_only_null && source.allow_quoted_nulls;
+	const auto default_marker = source.default_marker;
 	const auto selected = source.selected;
 	const idx_t first = source.first;
 	for (idx_t row = first; row < first + count; row++) {
@@ -455,6 +471,11 @@ void LeanStrings(const LeanSource &source, idx_t count, const CsvScanColumn &col
 				}
 				continue;
 			}
+			if (source.retry_flagged) {
+				retry.push_back(row);
+				out[row] = string_t();
+				continue;
+			}
 			quoted = quotes && LeanUnquote(data, quote, source.spaced, begin, end);
 			if (!quoted && source.unquoted_escape && memchr(data + begin, source.unquoted_escape, end - begin)) {
 				retry.push_back(row);
@@ -470,6 +491,11 @@ void LeanStrings(const LeanSource &source, idx_t count, const CsvScanColumn &col
 			} else {
 				FlatVector::SetNull(vector, row, true);
 			}
+			continue;
+		}
+		if (default_marker && size == default_marker->size() && memcmp(value, default_marker->data(), size) == 0) {
+			retry.push_back(row);
+			out[row] = string_t();
 			continue;
 		}
 		if (validate && !Utf8Proc::IsValid(value, UnsafeNumericCast<uint32_t>(size))) {
@@ -596,6 +622,7 @@ CsvScanGlobal::CsvScanGlobal(ClientContext &context_p, const CSVReaderOptions &o
     : context(context_p), options(options_p), source(std::move(source_p)) {
 	auto &state_machine = *source.state_machine;
 	grammar = CsvGrammar::For(state_machine);
+	copy = options.copy_rules.get();
 
 	const bool icu_loaded = context.db->ExtensionIsLoaded("icu");
 	for (idx_t i = 0; i < source.projection.size(); i++) {
@@ -615,6 +642,7 @@ CsvScanGlobal::CsvScanGlobal(ClientContext &context_p, const CSVReaderOptions &o
 		}
 		column.force_not_null =
 		    column.file_column < options.force_not_null.size() && options.force_not_null[column.file_column];
+		column.match_null = !copy || copy->force_not_null.empty() || !copy->force_not_null[column.file_column];
 		columns.push_back(std::move(column));
 	}
 	filtered.assign(columns.size(), false);
@@ -655,7 +683,7 @@ CsvScanGlobal::CsvScanGlobal(ClientContext &context_p, const CSVReaderOptions &o
 		skip_bom = skip_rows + state_machine.dialect_options.header.GetValue() == 0;
 	} else {
 		skip_rows = options.GetSkipRows() + options.dialect_options.header.GetValue();
-		skip_bom = skip_rows == 0;
+		skip_bom = skip_rows == 0 && !copy;
 	}
 
 	auto &manager = *source.buffer_manager;
@@ -668,19 +696,31 @@ CsvScanGlobal::CsvScanGlobal(ClientContext &context_p, const CSVReaderOptions &o
 	if (num_columns == 0) {
 		throw InternalException("CSV scan of \"%s\" without columns", source.path);
 	}
-	auto dialect = RowDialect::DuckDB(grammar);
-	dialect.empty_lines = num_columns == 1 && empty_is_null;
-	lean = make_uniq<RowLexer>(dialect, num_columns, options.maximum_line_size.GetValue(), !ignore_errors,
-	                           options.null_padding, true);
+	if (copy) {
+		auto &copy_options = copy->options;
+		const char line_break = CopyInputLineBreak();
+		const auto dialect = copy->Text() ? RowDialect::PostgresText(copy_options.delimiter, line_break)
+		                                  : RowDialect::PostgresCsv(copy_options.delimiter, copy_options.quote,
+		                                                            copy_options.escape, line_break);
+		lean = make_uniq<RowLexer>(dialect, num_columns, NumericLimits<idx_t>::Maximum(), true, false, true);
+	} else {
+		auto dialect = RowDialect::DuckDB(grammar);
+		dialect.empty_lines = num_columns == 1 && empty_is_null;
+		lean = make_uniq<RowLexer>(dialect, num_columns, options.maximum_line_size.GetValue(), !ignore_errors,
+		                           options.null_padding, true);
+	}
 	count_only = (columns.empty() || source.placeholder) && filters.empty() &&
 	             source.file_row_number == DConstants::INVALID_INDEX;
 	empty_only_null = null_strings.size() == 1 && null_strings[0].empty();
-	lean_batches = !count_only && !late_materialization;
+	lean_batches = !count_only && !late_materialization && !(copy && copy->Text());
 	for (auto &column : columns) {
 		lean_batches = lean_batches && !CsvScan::NeedsFlushCast(column);
 	}
 	shared_ptr<CSVBufferHandle> whole_file;
 	FindStart(size, whole_file);
+	if (copy && copy->options.header_match) {
+		MatchCopyHeader();
+	}
 	idx_t range_bytes = DConstants::INVALID_INDEX;
 	if (!stream && !source.sniffing) {
 		const idx_t data_size = size - MinValue(start, size);
@@ -750,7 +790,7 @@ void CsvScanGlobal::FindStart(idx_t size, shared_ptr<CSVBufferHandle> &whole_fil
 		start_lines = 0;
 		return;
 	}
-	RowSkip skip(RowDialect::DuckDB(grammar), skip_rows);
+	RowSkip skip(copy ? lean->Dialect() : RowDialect::DuckDB(grammar), skip_rows);
 	idx_t offset = 0;
 	const idx_t buffer_count = stream ? NumericLimits<idx_t>::Maximum() : source.buffer_manager->KnownBufferCount();
 	for (idx_t buffer = 1; handle; buffer++) {
@@ -774,6 +814,83 @@ void CsvScanGlobal::FindStart(idx_t size, shared_ptr<CSVBufferHandle> &whole_fil
 	}
 	start = MinValue(skip.Start() == DConstants::INVALID_INDEX ? offset : skip.Start(), size);
 	start_lines = skip.Lines();
+}
+
+char CsvScanGlobal::CopyInputLineBreak() const {
+	CopyLineBreakFinder finder(copy->options);
+	for (idx_t buffer = 0;; buffer++) {
+		auto handle = Buffer(buffer);
+		if (!handle) {
+			return finder.Finish();
+		}
+		const char found = finder.Feed(std::string_view(handle->Ptr(), handle->actual_size));
+		if (found != '\0') {
+			return found;
+		}
+		if (handle->is_last_buffer) {
+			return finder.Finish();
+		}
+	}
+}
+
+void CsvScanGlobal::MatchCopyHeader() const {
+	if (start == 0) {
+		return;
+	}
+	CsvRowSource head_source(*source.buffer_manager, start, nullptr);
+	RowLexer lexer(lean->Dialect(), num_columns, NumericLimits<idx_t>::Maximum(), true, false, true);
+	RowRanges head_ranges(lexer, head_source, 0, start, DConstants::INVALID_INDEX, true);
+	RowRangeReader reader(head_ranges);
+	reader.Start(0, true, false, false);
+	const auto result = reader.Advance(1);
+	if ((result != RowReadResult::ROWS && result != RowReadResult::FLUSH) || reader.Ready() == 0) {
+		return;
+	}
+	auto &fields = reader.fields;
+	auto &window = *reader.bytes;
+	const idx_t shift = reader.cursor.anchor - window.offset;
+	const idx_t row_begin = fields.rows[0] + shift;
+	const std::string_view line(window.data + row_begin, reader.RowEnd(0) - window.offset - row_begin);
+	const auto context = CopyContext(copy->table, 1, string(), true, CopyPrintout(line));
+	if (reader.cursor.unfinished) {
+		ThrowCopyError("22P04", "unterminated CSV quoted field", context);
+	}
+	const auto *anomaly = fields.anomalies.empty() ? nullptr : fields.Anomaly(0);
+	const idx_t count = anomaly ? anomaly->fields : num_columns;
+	auto &names = copy->names;
+	if (count != names.size()) {
+		ThrowCopyError("22P04",
+		               "wrong number of fields in header line: got " + std::to_string(count) + ", expected " +
+		                   std::to_string(names.size()),
+		               context);
+	}
+	const idx_t delimiter_size = lexer.Dialect().delimiter_size;
+	string buffer;
+	for (idx_t column = 0; column < count; column++) {
+		const idx_t begin =
+		    column == 0 ? row_begin : (fields.ends[column - 1] & ROW_FIELD_MASK) + shift + delimiter_size;
+		const idx_t end = (fields.ends[column] & ROW_FIELD_MASK) + shift;
+		const std::string_view raw(window.data + begin, end - begin);
+		buffer.resize(raw.size());
+		std::string_view value = raw;
+		const auto kind = ReadCopyField(*copy, column, raw, buffer.data(), value);
+		const auto field = std::to_string(column + 1);
+		if (kind == CopyFieldKind::NULL_VALUE) {
+			ThrowCopyError("22P04",
+			               "column name mismatch in header line field " + field + ": got null value (\"" +
+			                   copy->options.null_str + "\"), expected \"" + names[column] + "\"",
+			               context);
+		}
+		if (kind == CopyFieldKind::DEFAULT_VALUE) {
+			value = raw;
+		}
+		if (value != names[column]) {
+			ThrowCopyError("22P04",
+			               "column name mismatch in header line field " + field + ": got \"" + string(value) +
+			                   "\", expected \"" + names[column] + "\"",
+			               context);
+		}
+	}
 }
 
 idx_t CsvScanGlobal::MaxThreads() const {
@@ -819,6 +936,17 @@ CsvScan::CsvScan(CsvScanGlobal &global_p)
 			decoders[i] = MakeValueDecoder(global.context, column.type, options.rendering);
 		}
 	}
+	if (global.copy) {
+		copy_defaulted.resize(global.columns.size());
+		copy_defaults.resize(global.columns.size());
+		auto &defaults = global.copy->defaults;
+		for (idx_t i = 0; i < global.columns.size(); i++) {
+			const auto file_column = global.columns[i].file_column;
+			if (file_column < defaults.size() && defaults[file_column]) {
+				copy_defaults[i] = make_uniq<ExpressionExecutor>(global.context, *defaults[file_column]);
+			}
+		}
+	}
 }
 
 void CsvScan::Start(idx_t range_p) {
@@ -832,6 +960,7 @@ void CsvScan::Start(idx_t range_p) {
 	held = nullptr;
 	lean_rows = DConstants::INVALID_INDEX;
 	base = 0;
+	copy_ended = false;
 }
 
 bool CsvScan::ScanLean(DataChunk &output, idx_t max_rows) {
@@ -861,7 +990,12 @@ bool CsvScan::ScanLean(DataChunk &output, idx_t max_rows) {
 				return false;
 			}
 			const idx_t count = MinValue(reader.Ready(), max_rows);
-			DecodeLean(count, output);
+			const idx_t rows = global.copy && global.copy->Text() ? CopyEndMarker(count) : count;
+			if (rows > 0) {
+				DecodeLean(rows, output);
+			} else {
+				output.Reset();
+			}
 			reader.Emit(count);
 			if (output.size() > 0) {
 				return true;
@@ -1072,6 +1206,60 @@ bool CsvScan::DecodeValue(const CsvScanColumn &column, const CsvField &field, Ve
 		}
 		return true;
 	}
+	return ParseField(column, value, size, field.flags & CSV_FIELD_ESCAPED, base + field.start, vector, row, error);
+}
+
+std::string_view CsvScan::RawField(idx_t file_column, idx_t row) const {
+	const idx_t index = row * global.num_columns + file_column;
+	const idx_t shift = cursor.anchor - bytes->offset;
+	const idx_t begin =
+	    (file_column == 0 ? fields.rows[row] : (fields.ends[index - 1] & ROW_FIELD_MASK) + grammar.delimiter_size) +
+	    shift;
+	const idx_t end = (fields.ends[index] & ROW_FIELD_MASK) + shift;
+	return {bytes->data + begin, end - begin};
+}
+
+bool CsvScan::DecodeCopyValue(const CsvScanColumn &column, idx_t row, Vector &vector, CsvRowError &error) {
+	const auto raw = RawField(column.file_column, row);
+	const idx_t position = static_cast<idx_t>(raw.data() - bytes->data) + bytes->offset;
+	copy_buffer.resize(raw.size());
+	std::string_view value = raw;
+	CopyFieldKind kind;
+	try {
+		kind = ReadCopyField(*global.copy, column.file_column, raw, copy_buffer.data(), value);
+	} catch (const Exception &ex) {
+		const ErrorData data(ex);
+		error = {CSVErrorType::INVALID_STATE, column.file_column, position, data.RawMessage()};
+		error.sqlstate = data.ExtraInfo().at("sqlstate");
+		error.value = CopyPrintout(raw);
+		error.has_value = true;
+		error.line_error = true;
+		return false;
+	}
+	if (kind == CopyFieldKind::NULL_VALUE) {
+		FlatVector::SetNull(vector, row, true);
+		return true;
+	}
+	if (kind == CopyFieldKind::DEFAULT_VALUE) {
+		const auto column_idx = static_cast<idx_t>(&column - global.columns.data());
+		FlatVector::SetNull(vector, row, true);
+		if (!copy_defaults[column_idx]) {
+			error = {CSVErrorType::INVALID_STATE, column.file_column, position,
+			         "unexpected default marker in COPY data"};
+			error.sqlstate = "22P04";
+			error.detail = "Column \"" + global.copy->names[column.file_column] + "\" has no default value.";
+			error.line_value = true;
+			return false;
+		}
+		copy_defaulted[column_idx].push_back(row);
+		return true;
+	}
+	return ParseField(column, value.data(), value.size(), value.data() != raw.data(), position, vector, row, error);
+}
+
+bool CsvScan::ParseField(const CsvScanColumn &column, const char *value, idx_t size, bool owned, idx_t position,
+                         Vector &vector, idx_t row, CsvRowError &error) {
+	const auto parse_id = column.parse_type.id();
 	string thousands;
 	if ((LogicalType::IsNumeric(parse_id) || parse_id == LogicalTypeId::BIGNUM) &&
 	    options.thousands_separator != '\0') {
@@ -1106,17 +1294,20 @@ bool CsvScan::DecodeValue(const CsvScanColumn &column, const CsvField &field, Ve
 		auto &out = FlatVector::GetDataMutable<string_t>(vector)[row];
 		if (column.validate_utf8 && !Utf8Proc::IsValid(value, UnsafeNumericCast<uint32_t>(size))) {
 			out = string_t();
-			error = {CSVErrorType::INVALID_ENCODING, column.file_column, base + field.start, string()};
+			error = {CSVErrorType::INVALID_ENCODING, column.file_column, position, string()};
+			if (owned) {
+				error.value = string(value, size);
+			}
 			return false;
 		}
-		if ((field.flags & CSV_FIELD_ESCAPED) || !thousands.empty()) {
+		if (owned || !thousands.empty()) {
 			out = StringVector::AddStringOrBlob(vector, value, size);
 		} else {
 			out = string_t(value, UnsafeNumericCast<uint32_t>(size));
 		}
 	}
 	if (!success) {
-		error = {CSVErrorType::CAST_ERROR, column.file_column, base + field.start,
+		error = {CSVErrorType::CAST_ERROR, column.file_column, position,
 		         global.ignore_errors ? string() : CastMessage(value, size, LogicalTypeIdToString(parse_id))};
 		return false;
 	}
@@ -1146,7 +1337,95 @@ string CsvScan::LineText(const CsvRow &row, bool &first_nl) const {
 	return line;
 }
 
+CSVError CsvScan::CopyRowError(const CsvRow &row, const CsvRowError &error) {
+	auto &copy = *global.copy;
+	CSVError result(error.message, error.type, LinesPerBoundary(range, LeanLinesAt(row.end)));
+	result.sqlstate = error.sqlstate;
+	result.detail = error.detail;
+	result.hint = error.hint;
+	result.copy_table = copy.table;
+	bool line_value = error.line_value;
+	switch (error.type) {
+	case CSVErrorType::TOO_MANY_COLUMNS:
+		result.error_message = "extra data after last expected column";
+		result.sqlstate = "22P04";
+		line_value = true;
+		break;
+	case CSVErrorType::TOO_FEW_COLUMNS:
+		result.error_message = "missing data for column \"" + copy.names[error.column + 1] + "\"";
+		result.sqlstate = "22P04";
+		line_value = true;
+		break;
+	case CSVErrorType::UNTERMINATED_QUOTES:
+		result.error_message = "unterminated CSV quoted field";
+		result.sqlstate = "22P04";
+		line_value = true;
+		break;
+	case CSVErrorType::INVALID_ENCODING: {
+		const idx_t at = error.position - bytes->offset;
+		result.error_message = CopyInvalidUtf8(
+		    error.value.empty() ? std::string_view(bytes->data + at, bytes->size - at) : std::string_view(error.value));
+		result.sqlstate = "22021";
+		break;
+	}
+	case CSVErrorType::CAST_ERROR:
+		if (result.sqlstate.empty()) {
+			result.sqlstate = "22P02";
+		}
+		result.copy_column = copy.names[error.column];
+		result.copy_has_value = true;
+		result.copy_value = error.value;
+		break;
+	default:
+		if (result.sqlstate.empty()) {
+			result.error_message = "unterminated CSV quoted field";
+			result.sqlstate = "22P04";
+			line_value = true;
+			break;
+		}
+		if (error.has_value) {
+			result.copy_column = copy.names[error.column];
+			result.copy_has_value = true;
+			result.copy_value = error.value;
+		}
+		break;
+	}
+	if (line_value) {
+		const idx_t begin = row.start - bytes->offset;
+		const idx_t end = MinValue(row.end - bytes->offset, bytes->size);
+		result.copy_has_value = true;
+		result.copy_value = CopyPrintout(std::string_view(bytes->data + begin, end > begin ? end - begin : 0));
+	}
+	return result;
+}
+
 void CsvScan::ReportRow(idx_t row_idx, const CsvRow &row, vector<CsvRowError> &errors) {
+	if (global.copy) {
+		const auto rank = [](const CsvRowError &error) {
+			switch (error.type) {
+			case CSVErrorType::INVALID_ENCODING:
+				return 0;
+			case CSVErrorType::UNTERMINATED_QUOTES:
+				return 1;
+			case CSVErrorType::TOO_MANY_COLUMNS:
+			case CSVErrorType::TOO_FEW_COLUMNS:
+				return 2;
+			case CSVErrorType::CAST_ERROR:
+				return 4;
+			default:
+				return error.sqlstate.empty() || error.line_error ? 1 : 3;
+			}
+		};
+		auto chosen = &errors[0];
+		for (auto &error : errors) {
+			if (rank(error) < rank(*chosen)) {
+				chosen = &error;
+			}
+		}
+		auto csv_error = CopyRowError(row, *chosen);
+		Report(row_idx, csv_error, false);
+		return;
+	}
 	if (source.sniffing) {
 		for (auto &error : errors) {
 			if (error.type != CSVErrorType::INVALID_ENCODING) {
@@ -1249,8 +1528,8 @@ void CsvScan::FlushCasts(idx_t count, DataChunk &output, bool late, bool filter_
 		}
 		auto &parse = parse_chunk.data[i];
 		auto &result = output.data[column.output_column];
-		string error_message;
-		if (decoders[i]->Decode(parse, result, count, error_message)) {
+		ErrorData decode_error;
+		if (decoders[i]->Decode(parse, result, count, decode_error)) {
 			continue;
 		}
 		auto &result_validity = FlatVector::Validity(result);
@@ -1259,6 +1538,27 @@ void CsvScan::FlushCasts(idx_t count, DataChunk &output, bool late, bool filter_
 		idx_t lines_now = DConstants::INVALID_INDEX;
 		for (idx_t row = 0; row < count; row++) {
 			if (result_validity.RowIsValid(row) || !parse_validity.RowIsValid(row)) {
+				continue;
+			}
+			if (global.copy) {
+				if (!failed[row]) {
+					const auto value = FlatVector::GetData<string_t>(parse)[row];
+					CsvRowError row_error {CSVErrorType::CAST_ERROR, column.file_column, 0, decode_error.RawMessage()};
+					auto &extra_info = decode_error.ExtraInfo();
+					const auto extra = [&](const char *key) {
+						const auto entry = extra_info.find(key);
+						return entry == extra_info.end() ? string() : entry->second;
+					};
+					row_error.sqlstate = extra("sqlstate");
+					row_error.detail = extra("detail");
+					row_error.hint = extra("hint");
+					row_error.value = CopyPrintout(std::string_view(value.GetData(), value.GetSize()));
+					row_error.has_value = true;
+					auto csv_error = CopyRowError(LeanRow(row), row_error);
+					Report(row, csv_error, false);
+				}
+				failed[row] = true;
+				rows_failed = true;
 				continue;
 			}
 			failed[row] = true;
@@ -1350,6 +1650,19 @@ LeanSource CsvScan::LeanSourceFor(const CsvScanColumn &column, idx_t first, bool
 	source.empty_only_null = global.empty_only_null;
 	source.null_strings = &global.null_strings;
 	source.selected = selected_only ? &selected : nullptr;
+	if (global.copy) {
+		auto &copy_options = global.copy->options;
+		source.quotes = false;
+		source.doubled = false;
+		source.unquoted_escape = '\0';
+		source.spaced = false;
+		source.pad_empty = false;
+		source.retry_flagged = true;
+		source.allow_quoted_nulls = false;
+		source.empty_only_null = global.empty_only_null && column.match_null;
+		source.null_strings = column.match_null ? &global.null_strings : &global.no_null_strings;
+		source.default_marker = copy_options.has_default ? &copy_options.default_str : nullptr;
+	}
 	return source;
 }
 
@@ -1442,7 +1755,9 @@ void CsvScan::LeanRetry(const CsvScanColumn &column, Vector &vector) {
 	for (const auto row : retry) {
 		validity.SetValid(row);
 		CsvRowError error;
-		if (!DecodeValue(column, LeanField(column, row), vector, row, error)) {
+		const bool decoded = global.copy ? DecodeCopyValue(column, row, vector, error)
+		                                 : DecodeValue(column, LeanField(column, row), vector, row, error);
+		if (!decoded) {
 			FlatVector::SetNull(vector, row, true);
 			value_errors[row].push_back(std::move(error));
 			lean_errors = true;
@@ -1500,9 +1815,73 @@ idx_t CsvScan::LeanLinesAt(idx_t position) {
 	return reader.LinesAt(position, range == 0 ? global.start_lines : 0);
 }
 
+idx_t CsvScan::CopyEndMarker(idx_t count) {
+	const idx_t shift = cursor.anchor - bytes->offset;
+	idx_t rows = copy_ended ? 0 : count;
+	bool data = false;
+	for (idx_t row = 0; row < count; row++) {
+		const bool empty = reader.RowEnd(row) - bytes->offset == fields.rows[row] + shift;
+		if (copy_ended) {
+			if (!empty) {
+				ThrowCopyError("22P04", "end-of-copy marker is followed by data");
+			}
+			continue;
+		}
+		data = data || !empty;
+		if (RawField(0, row) != "\\.") {
+			continue;
+		}
+		const auto *anomaly = fields.anomalies.empty() ? nullptr : fields.Anomaly(row);
+		if ((anomaly ? anomaly->fields : global.num_columns) != 1) {
+			continue;
+		}
+		copy_ended = true;
+		rows = row;
+		auto marker = global.copy_marker_range.load();
+		while (range < marker && !global.copy_marker_range.compare_exchange_weak(marker, range)) {
+		}
+		if (global.copy_data_range.load() > range) {
+			ThrowCopyError("22P04", "end-of-copy marker is followed by data");
+		}
+	}
+	if (data) {
+		auto latest = global.copy_data_range.load();
+		while (latest < range && !global.copy_data_range.compare_exchange_weak(latest, range)) {
+		}
+		if (global.copy_marker_range.load() < range) {
+			ThrowCopyError("22P04", "end-of-copy marker is followed by data");
+		}
+	}
+	return rows;
+}
+
+void CsvScan::ApplyCopyDefaults(DataChunk &output) {
+	for (idx_t i = 0; i < copy_defaulted.size(); i++) {
+		auto &rows = copy_defaulted[i];
+		if (rows.empty()) {
+			continue;
+		}
+		auto &column = global.columns[i];
+		if (column.output_column < output.ColumnCount()) {
+			auto &target = output.data[column.output_column];
+			DataChunk input;
+			input.SetCardinality(rows.size());
+			Vector values(target.GetType(), rows.size());
+			copy_defaults[i]->ExecuteExpression(input, values);
+			for (idx_t j = 0; j < rows.size(); j++) {
+				VectorOperations::Copy(values, target, j + 1, j, rows[j]);
+			}
+		}
+		rows.clear();
+	}
+}
+
 void CsvScan::ClearRowState(idx_t first, idx_t count) {
 	for (idx_t row = first; row < first + count; row++) {
 		failed[row] = false;
+	}
+	for (auto &rows : copy_defaulted) {
+		rows.clear();
 	}
 	lean_errors = false;
 	reader.ResetLines();
@@ -1552,7 +1931,7 @@ void CsvScan::LeanReport(idx_t first, idx_t count) {
 		}
 		failed[row] = true;
 		rows_failed = true;
-		if (!global.ignore_errors) {
+		if (!global.ignore_errors || global.copy) {
 			auto csv_row = LeanRow(row);
 			csv_row.lines = LeanLinesAt(csv_row.start);
 			ReportRow(row, csv_row, row_errors);
@@ -1669,6 +2048,9 @@ bool CsvScan::DecodeLean(idx_t count, DataChunk &output) {
 	}
 	LeanReport(0, count);
 	FlushCasts(count, output, late, false);
+	if (global.copy) {
+		ApplyCopyDefaults(output);
+	}
 	if (!late) {
 		LeanRowNumbers(count, output);
 		if (!global.filters.empty()) {
@@ -1696,6 +2078,9 @@ bool CsvScan::DecodeLeanBatch(idx_t first, idx_t count, DataChunk &output) {
 	}
 	held = bytes.get();
 	LeanReport(first, count);
+	if (global.copy) {
+		ApplyCopyDefaults(output);
+	}
 	return true;
 }
 

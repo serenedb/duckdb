@@ -89,6 +89,7 @@ void TableFunctionFileReader::BindFunction(ClientContext &context, const TableFu
 	file_input.multi_file_scan = options.multi_file_scan;
 	file_input.schema_only = schema_only;
 	file_input.file_bind_data = file_bind_data;
+	file_input.copy_rules = options.copy_rules;
 	if (!options.expected_names.empty()) {
 		// the schema of the scan is known upfront - bind this file against that schema
 		file_input.expected_names = options.expected_names;
@@ -419,7 +420,9 @@ unique_ptr<MultiFileReaderInterface> TableFunctionMultiFileWrapper::CreateInterf
 }
 
 unique_ptr<MultiFileReaderInterface> TableFunctionMultiFileWrapper::Copy() {
-	return make_uniq<TableFunctionMultiFileWrapper>(function, settings);
+	auto result = make_uniq<TableFunctionMultiFileWrapper>(function, settings);
+	result->copy_rules = copy_rules;
+	return std::move(result);
 }
 
 FileGlobInput TableFunctionMultiFileWrapper::GetGlobInput() {
@@ -516,6 +519,7 @@ void TableFunctionMultiFileWrapper::FinalizeCopyBind(ClientContext &context, Bas
 	auto &options = options_p.Cast<TableFunctionFileReaderOptions>();
 	options.expected_names = expected_names;
 	options.expected_types = expected_types;
+	options.copy_rules = copy_rules;
 }
 
 unique_ptr<TableFunctionData>
@@ -785,6 +789,21 @@ unique_ptr<FunctionData> TableFunctionMultiFileWrapper::MultiFileBindCopyWith(
 	return TableFunctionMultiFileFunction::MultiFileBindCopyInterface(
 	    context, input, expected_names, expected_types,
 	    make_uniq<TableFunctionMultiFileWrapper>(std::move(single_file_function), std::move(settings)));
+}
+
+unique_ptr<FunctionData> TableFunctionMultiFileWrapper::MultiFileBindCopyRules(ClientContext &context,
+                                                                               CopyFromFunctionBindInput &input,
+                                                                               vector<Identifier> &expected_names,
+                                                                               vector<LogicalType> &expected_types,
+                                                                               shared_ptr<const CopyFromRules> rules) {
+	auto &info = input.tf.function_info->Cast<TableFunctionMultiFileInfo>();
+	auto interface = make_uniq<TableFunctionMultiFileWrapper>(info.function, info.settings);
+	interface->copy_rules = std::move(rules);
+	auto parsed = input.info.Copy();
+	parsed->options.clear();
+	CopyFromFunctionBindInput parsed_input(*parsed, input.tf);
+	return TableFunctionMultiFileFunction::MultiFileBindCopyInterface(context, parsed_input, expected_names,
+	                                                                  expected_types, std::move(interface));
 }
 
 //! Report the metrics of the scan: the shared multi-file ones, plus those the wrapped function keeps for each of
