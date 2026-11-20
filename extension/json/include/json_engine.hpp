@@ -29,6 +29,7 @@ enum class JsonDirectPass : uint8_t { ALL, FILTERS, OTHERS };
 
 struct JsonKeyHint {
 	string key;
+	uint64_t words[2] = {};
 	idx_t column = DConstants::INVALID_INDEX;
 	uint8_t strength = 0;
 };
@@ -221,6 +222,8 @@ private:
 	simdjson::ondemand::parser walk_parser;
 	SelectionVector candidates;
 	vector<Vector> direct_strings;
+	vector<data_ptr_t> direct_data;
+	vector<ValidityMask *> direct_validity;
 	vector<vector<std::string_view>> direct_raw;
 	vector<uint8_t> direct_found;
 	vector<JsonKeyHint> key_hints;
