@@ -32,9 +32,13 @@ public:
 
 	idx_t fixed_width_string_length;
 
-	unique_ptr<BaseStatistics> Stats(idx_t, const vector<ColumnChunk> &) override {
-		return {};
-	}
+	unique_ptr<BaseStatistics> Stats(idx_t row_group_idx, const vector<ColumnChunk> &columns) override;
+	unique_ptr<BaseStatistics> PageStats(const duckdb_parquet::Statistics &page_stats) const override;
+
+private:
+	//! The statistics of the lengths of byte arrays, from the statistics of the byte arrays of a column chunk or a page
+	unique_ptr<BaseStatistics> LengthStats(const duckdb_parquet::Statistics &statistics,
+	                                       optional_ptr<const ColumnChunk> column) const;
 
 protected:
 	void Plain(ByteBuffer &plain_data, uint8_t *defines, idx_t num_values, idx_t result_offset,

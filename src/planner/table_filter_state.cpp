@@ -282,6 +282,80 @@ private:
 	compare_value_t compare_value;
 };
 
+//! `octet_length(s) <op> constant` for any comparison and constant, compared on the sizes of the strings or blobs
+//! without reading their bytes
+class StringLengthFilterExecutor final : public ExpressionFilterExecutor {
+public:
+	StringLengthFilterExecutor(ExpressionType comparison_type_p, int64_t constant_p)
+	    : comparison_type(comparison_type_p), constant(constant_p) {
+	}
+
+	bool FiltersValues() const override {
+		return true;
+	}
+
+	bool FilterValue(const_data_ptr_t value, bool valid) override {
+		if (!valid) {
+			return false;
+		}
+		auto compare = [&]<class T, class OP>() {
+			return OP::Operation(Length(Load<string_t>(value)), constant);
+		};
+		return DispatchComparison<int64_t>(comparison_type, compare);
+	}
+
+	idx_t FilterSelection(SelectionVector &sel, Vector &vector, idx_t scan_count,
+	                      idx_t &approved_tuple_count) override {
+		if (approved_tuple_count == 0) {
+			return 0;
+		}
+		if (result_capacity < approved_tuple_count) {
+			result_sel.Initialize(approved_tuple_count);
+			result_capacity = approved_tuple_count;
+		}
+		const auto before_count = approved_tuple_count;
+		UnifiedVectorFormat vdata;
+		vector.ToUnifiedFormat(vdata);
+		auto &current_sel = sel.IsSet() ? sel : *FlatVector::IncrementalSelectionVector();
+		auto select = [&]<class T, class OP>() {
+			if (vdata.validity.CannotHaveNull()) {
+				return Select<OP, false>(vdata, current_sel, approved_tuple_count);
+			}
+			return Select<OP, true>(vdata, current_sel, approved_tuple_count);
+		};
+		approved_tuple_count = DispatchComparison<int64_t>(comparison_type, select);
+		if (approved_tuple_count != before_count) {
+			sel.Initialize(result_sel);
+		}
+		return approved_tuple_count;
+	}
+
+private:
+	static int64_t Length(const string_t &value) {
+		return UnsafeNumericCast<int64_t>(value.GetSize());
+	}
+
+	template <class OP, bool CAN_HAVE_NULL>
+	idx_t Select(const UnifiedVectorFormat &vdata, const SelectionVector &sel, idx_t count) {
+		const auto data = UnifiedVectorFormat::GetData<string_t>(vdata);
+		idx_t result_count = 0;
+		for (idx_t i = 0; i < count; i++) {
+			const auto idx = sel.get_index(i);
+			const auto vector_idx = vdata.sel->get_index(idx);
+			const bool keep = (!CAN_HAVE_NULL || vdata.validity.RowIsValid(vector_idx)) &&
+			                  OP::Operation(Length(data[vector_idx]), constant);
+			result_sel.set_index(result_count, idx);
+			result_count += keep;
+		}
+		return result_count;
+	}
+
+	ExpressionType comparison_type;
+	int64_t constant;
+	SelectionVector result_sel;
+	idx_t result_capacity = 0;
+};
+
 class DynamicFilterExecutor final : public ExpressionFilterExecutor {
 public:
 	DynamicFilterExecutor(shared_ptr<DynamicFilterData> filter_data_p, LogicalType column_type_p)
@@ -696,6 +770,20 @@ static bool IsSupportedComparisonType(PhysicalType type) {
 	}
 }
 
+static bool IsByteLengthOfColumn(const Expression &expr) {
+	auto input = ExpressionFilter::GetByteLengthInput(expr);
+	return input && IsColumnReferenceExpression(*input);
+}
+
+static unique_ptr<ExpressionFilterExecutor> TryCreateStringLengthExecutor(ExpressionType comparison_type,
+                                                                          const BoundConstantExpression &constant) {
+	auto &value = constant.GetValue();
+	if (value.IsNull() || value.type().id() != LogicalTypeId::BIGINT) {
+		return nullptr;
+	}
+	return make_uniq<StringLengthFilterExecutor>(comparison_type, value.GetValue<int64_t>());
+}
+
 static unique_ptr<ExpressionFilterExecutor> TryCreateComparisonExecutor(const BoundFunctionExpression &func) {
 	auto comparison_type = func.GetExpressionType();
 	switch (comparison_type) {
@@ -714,6 +802,12 @@ static unique_ptr<ExpressionFilterExecutor> TryCreateComparisonExecutor(const Bo
 	auto &right = BoundComparisonExpression::Right(func);
 	optional_ptr<const BoundConstantExpression> constant;
 	optional_ptr<const Expression> column;
+	if (IsByteLengthOfColumn(left) && right.GetExpressionClass() == ExpressionClass::BOUND_CONSTANT) {
+		return TryCreateStringLengthExecutor(comparison_type, right.Cast<BoundConstantExpression>());
+	} else if (IsByteLengthOfColumn(right) && left.GetExpressionClass() == ExpressionClass::BOUND_CONSTANT) {
+		return TryCreateStringLengthExecutor(FlipComparisonExpression(comparison_type),
+		                                     left.Cast<BoundConstantExpression>());
+	}
 	if (IsColumnReferenceExpression(left) && right.GetExpressionClass() == ExpressionClass::BOUND_CONSTANT) {
 		column = &left;
 		constant = &right.Cast<BoundConstantExpression>();

@@ -54,6 +54,9 @@ public:
 	//! Build a single-column filter comparing against a constant.
 	static unique_ptr<ExpressionFilter> CreateComparisonFilter(ExpressionType comparison_type, Value constant);
 	static bool IsSimpleFilterColumnRef(const Expression &expr);
+	//! The string or blob the expression takes the length in bytes of - octet_length, which the optimizer writes strlen
+	//! and every test of emptiness as - if it is such a length
+	static optional_ptr<const Expression> GetByteLengthInput(const Expression &expr);
 	//! Flips comparison_type for a constant on the left
 	static optional_ptr<const BoundConstantExpression>
 	TryGetColumnConstantComparison(const BoundFunctionExpression &comparison, ExpressionType &comparison_type);

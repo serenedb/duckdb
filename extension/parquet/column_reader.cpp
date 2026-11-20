@@ -161,6 +161,10 @@ unique_ptr<BaseStatistics> ColumnReader::Stats(idx_t row_group_idx_p, const vect
 	return Schema().Stats(*reader.GetFileMetadata(), reader.parquet_options, row_group_idx_p, columns);
 }
 
+unique_ptr<BaseStatistics> ColumnReader::PageStats(const duckdb_parquet::Statistics &page_stats) const {
+	return ParquetStatisticsUtils::TransformParquetStatistics(Type(), Schema(), page_stats, /*can_have_nan=*/true);
+}
+
 void ColumnReader::ValidateColumnMetadata(idx_t row_group_num_rows, const ColumnChunk &column) {
 	Schema().ValidateColumnMetadata(column, NumericCast<int64_t>(row_group_num_rows), IsRoot(),
 	                                Reader().GetFileName().c_str());
@@ -303,8 +307,7 @@ bool ColumnReader::PageIsFilteredOut(PageHeader &page_hdr, optional_ptr<const Ta
 		                     (page_stats->__isset.max_value || page_stats->__isset.max))) {
 			return false;
 		}
-		auto stats =
-		    ParquetStatisticsUtils::TransformParquetStatistics(Type(), Schema(), *page_stats, /*can_have_nan=*/true);
+		auto stats = PageStats(*page_stats);
 		auto &expr_filter = filter->Cast<ExpressionFilter>();
 		if (stats && filter_state) {
 			auto prune_result = expr_filter.CheckStatistics(*stats, *filter_state);

@@ -16,6 +16,7 @@ add_library_unity(
   in_clause_simplification_rule.cpp
   join_dependent_filter.cpp
   least_greatest_simplification.cpp
+  octet_length.cpp
   string_prefix.cpp
   like_optimizations.cpp
   list_comprehension_rewrite.cpp

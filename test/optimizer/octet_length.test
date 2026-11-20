@@ -1,0 +1,224 @@
+# name: test/optimizer/octet_length.test
+# description: The length in bytes of a string or a blob, and every test of one being empty, become octet_length
+# group: [optimizer]
+
+statement ok
+CREATE TABLE lc(s VARCHAR, b BLOB);
+
+statement ok
+INSERT INTO lc VALUES ('', ''::BLOB), ('a', 'a'::BLOB), ('abcd', 'abcd'::BLOB), ('🦆', 'xy'::BLOB), (NULL, NULL);
+
+# strlen is the length in bytes octet_length takes of strings as well as of blobs
+query IIII
+SELECT strlen('🦆'), octet_length('🦆'), length('🦆'), octet_length('xy'::BLOB);
+----
+4	4	1	2
+
+query II
+EXPLAIN SELECT strlen(s) FROM lc;
+----
+physical_plan	<REGEX>:.*octet_length\(s\).*
+
+query II
+EXPLAIN SELECT strlen(s) FROM lc;
+----
+physical_plan	<!REGEX>:.*strlen.*
+
+query I
+SELECT strlen(s) FROM lc ORDER BY 1 NULLS LAST;
+----
+0
+1
+4
+4
+NULL
+
+query II
+EXPLAIN SELECT count(*) FROM lc WHERE strlen(s) > 1;
+----
+physical_plan	<REGEX>:.*octet_length\(s\) > 1.*
+
+query I
+SELECT count(*) FROM lc WHERE strlen(s) > 1;
+----
+2
+
+# comparisons with the empty string, either way around
+query II
+EXPLAIN SELECT count(*) FROM lc WHERE s <> '';
+----
+physical_plan	<REGEX>:.*octet_length\(s\) > 0.*
+
+query I
+SELECT count(*) FROM lc WHERE s <> '';
+----
+3
+
+query II
+EXPLAIN SELECT count(*) FROM lc WHERE '' < s;
+----
+physical_plan	<REGEX>:.*octet_length\(s\) > 0.*
+
+query I
+SELECT count(*) FROM lc WHERE '' < s;
+----
+3
+
+query II
+EXPLAIN SELECT count(*) FROM lc WHERE s <= '';
+----
+physical_plan	<REGEX>:.*octet_length\(s\) = 0.*
+
+query I
+SELECT count(*) FROM lc WHERE s = '';
+----
+1
+
+query I
+SELECT count(*) FROM lc WHERE s <= '';
+----
+1
+
+# s >= '' and s < '' say nothing about the length: they stay
+query II
+EXPLAIN SELECT count(*) FROM lc WHERE s < '';
+----
+physical_plan	<!REGEX>:.*octet_length.*
+
+query I
+SELECT count(*) FROM lc WHERE s >= '';
+----
+4
+
+# the same for blobs: the empty blob sorts first
+query II
+EXPLAIN SELECT count(*) FROM lc WHERE b <> ''::BLOB;
+----
+physical_plan	<REGEX>:.*octet_length\(b\) > 0.*
+
+query I
+SELECT count(*) FROM lc WHERE b <> ''::BLOB;
+----
+3
+
+query I
+SELECT count(*) FROM lc WHERE b = ''::BLOB;
+----
+1
+
+query I
+SELECT count(*) FROM lc WHERE octet_length(b) > 1;
+----
+2
+
+# a length in characters compared with 0 or 1 tests emptiness too
+query II
+EXPLAIN SELECT count(*) FROM lc WHERE length(s) >= 1;
+----
+physical_plan	<REGEX>:.*octet_length\(s\) > 0.*
+
+query I
+SELECT count(*) FROM lc WHERE length(s) >= 1;
+----
+3
+
+query II
+EXPLAIN SELECT count(*) FROM lc WHERE 0 = character_length(s);
+----
+physical_plan	<REGEX>:.*octet_length\(s\) = 0.*
+
+query III
+SELECT count(*) FILTER (WHERE char_length(s) < 1), count(*) FILTER (WHERE len(s) <> 0),
+       count(*) FILTER (WHERE 0 = character_length(s))
+FROM lc;
+----
+1	3	1
+
+query II
+EXPLAIN SELECT count(*) FROM lc WHERE length(s) <= 0;
+----
+physical_plan	<REGEX>:.*octet_length\(s\) = 0.*
+
+query II
+SELECT count(*) FILTER (WHERE length(s) <= 0), count(*) FILTER (WHERE length(s) > 0) FROM lc;
+----
+1	3
+
+# a comparison with NULL tests nothing
+query I
+SELECT count(*) FROM lc WHERE s <> NULL;
+----
+0
+
+# other lengths in characters are not lengths in bytes: they stay
+query II
+EXPLAIN SELECT count(*) FROM lc WHERE length(s) > 1;
+----
+physical_plan	<!REGEX>:.*octet_length.*
+
+query I
+SELECT count(*) FROM lc WHERE length(s) > 1;
+----
+1
+
+# the bytes of a bit string are not the bytes it is stored in: it is left as it is
+query II
+EXPLAIN SELECT count(*) FROM (SELECT '101'::BIT AS x) WHERE octet_length(x) > 0;
+----
+physical_plan	<!REGEX>:.*octet_length\(x\) > 0.*
+
+query I
+SELECT octet_length('101101101'::BIT);
+----
+2
+
+statement ok
+CREATE TABLE lbit AS SELECT '101'::BIT AS x FROM range(3);
+
+query I
+SELECT count(*) FROM lbit WHERE octet_length(x) > 0;
+----
+3
+
+# A filter on a length is checked on the length range the statistics of each row group give: a row group of NULLs
+# only has no length, and one of strings of one size has that length only
+statement ok
+CREATE TABLE lrg AS SELECT CASE WHEN i < 122880 THEN NULL ELSE repeat('x', (i // 122880)::INT) END AS s FROM range(368640) t(i);
+
+query IIIIII
+SELECT count(*) FILTER (WHERE octet_length(s) > 0), count(*) FILTER (WHERE octet_length(s) <> 1),
+       count(*) FILTER (WHERE octet_length(s) <= 1), count(*) FILTER (WHERE octet_length(s) >= 2),
+       count(*) FILTER (WHERE octet_length(s) IS DISTINCT FROM 1), count(*) FILTER (WHERE 1 < octet_length(s))
+FROM lrg;
+----
+245760	122880	122880	122880	245760	122880
+
+query I
+SELECT count(*) FROM lrg WHERE octet_length(s) > 0;
+----
+245760
+
+query I
+SELECT count(*) FROM lrg WHERE octet_length(s) <> 1;
+----
+122880
+
+query I
+SELECT count(*) FROM lrg WHERE octet_length(s) <= 1;
+----
+122880
+
+query I
+SELECT count(*) FROM lrg WHERE octet_length(s) >= 2;
+----
+122880
+
+query I
+SELECT count(*) FROM lrg WHERE octet_length(s) IS DISTINCT FROM 1;
+----
+245760
+
+query I
+SELECT count(*) FROM lrg WHERE 1 < octet_length(s);
+----
+122880

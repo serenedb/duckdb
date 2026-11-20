@@ -19,11 +19,14 @@ namespace duckdb {
 struct ScalarFnCollect final : LogicalOperatorVisitor {
 	Analyses &analyses;
 	const Projections &projections;
+	//! Columns checked for NULL as they are - which checks fn(col) for NULL when fn is NULL exactly when col is
+	unordered_map<const GetAnalysis *, unordered_set<ProjectionIndex>> null_checked;
 
 	ScalarFnCollect(Analyses &analyses, const Projections &projections);
 	void VisitOperator(LogicalOperator &op) override;
 	unique_ptr<Expression> VisitReplace(BoundColumnRefExpression &expr, unique_ptr<Expression> *ptr) override;
 	unique_ptr<Expression> VisitReplace(BoundFunctionExpression &expr, unique_ptr<Expression> *ptr) override;
+	unique_ptr<Expression> VisitReplace(BoundOperatorExpression &expr, unique_ptr<Expression> *ptr) override;
 };
 
 /*

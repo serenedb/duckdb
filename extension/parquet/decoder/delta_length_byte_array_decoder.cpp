@@ -21,8 +21,13 @@ DeltaLengthByteArrayDecoder::DeltaLengthByteArrayDecoder(ColumnReader &reader)
     : reader(reader), length_buffer(reader.encoding_buffers[0]), length_idx(0) {
 }
 
+bool DeltaLengthByteArrayDecoder::ReadsLengths() const {
+	// the encoding only stores byte arrays - a reader of 64-bit integers reads their lengths
+	return reader.Type().InternalType() == PhysicalType::INT64;
+}
+
 void DeltaLengthByteArrayDecoder::InitializePage() {
-	if (reader.Type().InternalType() != PhysicalType::VARCHAR) {
+	if (reader.Type().InternalType() != PhysicalType::VARCHAR && !ReadsLengths()) {
 		throw std::runtime_error("Delta Length Byte Array encoding is only supported for string/blob data");
 	}
 	// read the binary packed lengths
@@ -56,11 +61,43 @@ bool TouchesUtf8Boundary(const char *data, uint32_t len) {
 
 void DeltaLengthByteArrayDecoder::Read(shared_ptr<ResizeableBuffer> &block_ref, uint8_t *defines, idx_t read_count,
                                        Vector &result, idx_t result_offset) {
+	if (ReadsLengths()) {
+		if (defines) {
+			ReadLengthsInternal<true>(defines, read_count, result, result_offset);
+		} else {
+			ReadLengthsInternal<false>(defines, read_count, result, result_offset);
+		}
+		return;
+	}
 	if (defines) {
 		ReadInternal<true>(block_ref, defines, read_count, result, result_offset);
 	} else {
 		ReadInternal<false>(block_ref, defines, read_count, result, result_offset);
 	}
+}
+
+template <bool HAS_DEFINES>
+void DeltaLengthByteArrayDecoder::ReadLengthsInternal(uint8_t *const defines, const idx_t read_count, Vector &result,
+                                                      const idx_t result_offset) {
+	auto &block = *reader.block;
+	const auto length_data = reinterpret_cast<uint32_t *>(length_buffer.ptr);
+	auto result_data = FlatVector::Writer<int64_t>(result, read_count, result_offset);
+	idx_t skip_bytes = 0;
+	for (idx_t row_idx = 0; row_idx < read_count; row_idx++) {
+		if (HAS_DEFINES && defines[result_offset + row_idx] != reader.MaxDefine()) {
+			result_data.WriteNull();
+			continue;
+		}
+		if (length_idx >= byte_array_count) {
+			throw IOException("DELTA_LENGTH_BYTE_ARRAY - length mismatch between values and byte array lengths "
+			                  "(attempted read of %d from %d entries) - corrupt file?",
+			                  length_idx, byte_array_count);
+		}
+		const auto str_len = length_data[length_idx++];
+		result_data.WriteValue(static_cast<int64_t>(str_len));
+		skip_bytes += str_len;
+	}
+	block.inc(skip_bytes);
 }
 
 template <bool HAS_DEFINES>

@@ -189,6 +189,14 @@
         "variants": [
             {
                 "parameters": [
+                    {"name": "string", "type": "VARCHAR"}
+                ],
+                "description": "Number of bytes in `string`.",
+                "example": "octet_length('🦆')",
+                "categories": ["string"]
+            },
+            {
+                "parameters": [
                     {"name": "blob", "type": "BLOB"}
                 ],
                 "description": "Number of bytes in `blob`.",

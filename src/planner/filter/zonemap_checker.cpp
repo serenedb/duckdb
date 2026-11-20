@@ -504,6 +504,33 @@ private:
 	FilterPropagateResult result;
 };
 
+//! `octet_length(s) <op> constant` for any comparison and constant, checked on the range of lengths the statistics of
+//! the strings or blobs give
+class StringLengthZonemapChecker final : public ZonemapChecker {
+public:
+	StringLengthZonemapChecker(ExpressionType comparison_p, int64_t constant_p)
+	    : comparison(comparison_p), constant(constant_p) {
+	}
+
+	FilterPropagateResult Check(const BaseStatistics &stats, optional_ptr<ClientContext> context) const final {
+		if (!stats.CanHaveNoNull()) {
+			return AllNullComparisonVerdict(comparison);
+		}
+		auto result = FilterPropagateResult::NO_PRUNING_POSSIBLE;
+		idx_t min_length;
+		idx_t max_length;
+		if (StringStats::TryGetLengthRange(stats, min_length, max_length)) {
+			result = NumericStats::CheckRange<int64_t>(comparison, NumericCast<int64_t>(min_length),
+			                                           NumericCast<int64_t>(max_length), constant);
+		}
+		return ComparisonVerdict(stats, comparison, result);
+	}
+
+private:
+	ExpressionType comparison;
+	int64_t constant;
+};
+
 //! Everything else: delegate the subtree to the expression walk.
 class FallbackZonemapChecker final : public ZonemapChecker {
 public:
@@ -675,10 +702,25 @@ static CompileResult CompileComparison(const BoundFunctionExpression &func) {
 		}
 		return FilterPropagateResult::NO_PRUNING_POSSIBLE;
 	}
+	auto &value = constant_expr->GetValue();
+	auto byte_length_input = ExpressionFilter::GetByteLengthInput(*input);
+	if (byte_length_input && IsColumnRef(*byte_length_input) && !value.IsNull() &&
+	    value.type().id() == LogicalTypeId::BIGINT) {
+		switch (comparison) {
+		case ExpressionType::COMPARE_EQUAL:
+		case ExpressionType::COMPARE_NOTEQUAL:
+		case ExpressionType::COMPARE_LESSTHAN:
+		case ExpressionType::COMPARE_LESSTHANOREQUALTO:
+		case ExpressionType::COMPARE_GREATERTHAN:
+		case ExpressionType::COMPARE_GREATERTHANOREQUALTO:
+			return make_uniq<StringLengthZonemapChecker>(comparison, value.GetValue<int64_t>());
+		default:
+			break;
+		}
+	}
 	if (!IsColumnRef(*input)) {
 		return CompileRemappedInput(*input);
 	}
-	auto &value = constant_expr->GetValue();
 	if (value.IsNull()) {
 		return FilterPropagateResult::NO_PRUNING_POSSIBLE;
 	}

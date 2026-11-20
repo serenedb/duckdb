@@ -174,6 +174,8 @@ public:
 	virtual void RegisterPrefetch(ThriftFileTransport &transport, bool allow_merge);
 
 	virtual unique_ptr<BaseStatistics> Stats(idx_t row_group_idx_p, const vector<ColumnChunk> &columns);
+	//! The statistics of the values of a page, as the reader reads them, from the statistics in its header
+	virtual unique_ptr<BaseStatistics> PageStats(const duckdb_parquet::Statistics &page_stats) const;
 	void ValidateColumnMetadata(idx_t row_group_num_rows, const ColumnChunk &column);
 
 	template <class VALUE_TYPE, class CONVERSION, bool HAS_DEFINES>
