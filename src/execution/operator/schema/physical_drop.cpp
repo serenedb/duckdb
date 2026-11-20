@@ -101,6 +101,7 @@ static optional_ptr<CatalogEntry> DropTarget(ClientContext &context, const DropI
 		    .get();
 	}
 	case CatalogType::DATABASE_ENTRY:
+	case CatalogType::TABLESPACE_ENTRY:
 	case CatalogType::FOREIGN_SERVER_ENTRY:
 	case CatalogType::SUBSCRIPTION_ENTRY:
 		return nullptr;
