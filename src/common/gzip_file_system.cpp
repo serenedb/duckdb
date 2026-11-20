@@ -157,25 +157,28 @@ void MiniZStreamWrapper::Initialize(QueryContext context, CompressedFile &file, 
 			throw InternalException("Failed to initialize miniz");
 		}
 	} else {
-		idx_t data_start = GZIP_HEADER_MINSIZE;
 		auto read_count = GZipReadExact(context, *file.child_handle, gzip_hdr, GZIP_HEADER_MINSIZE);
 		GZipFileSystem::VerifyGZIPHeader(gzip_hdr, read_count, &file);
 		// Skip over the extra field if necessary
 		if (gzip_hdr[3] & GZIP_FLAG_EXTRA) {
 			uint8_t gzip_xlen[2];
-			file.child_handle->Seek(data_start);
 			if (GZipReadExact(context, *file.child_handle, gzip_xlen, 2) != 2) {
 				throw IOException("Input is not a GZIP stream: %s", file.path);
 			}
 			auto xlen = NumericCast<idx_t>((uint8_t)gzip_xlen[0] | (uint8_t)gzip_xlen[1] << 8);
-			data_start += xlen + 2;
+			uint8_t skipped[512];
+			while (xlen > 0) {
+				const auto chunk = MinValue<idx_t>(xlen, sizeof(skipped));
+				if (GZipReadExact(context, *file.child_handle, skipped, chunk) != chunk) {
+					throw IOException("Input is not a GZIP stream: %s", file.path);
+				}
+				xlen -= chunk;
+			}
 		}
 		// Skip over the file name if necessary
 		if (gzip_hdr[3] & GZIP_FLAG_NAME) {
-			file.child_handle->Seek(data_start);
-			data_start += GZipConsumeString(context, *file.child_handle);
+			GZipConsumeString(context, *file.child_handle);
 		}
-		file.child_handle->Seek(data_start);
 		// stream is now set to beginning of payload data
 		InitializeInflator();
 	}
