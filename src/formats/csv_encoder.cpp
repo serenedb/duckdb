@@ -3,6 +3,8 @@
 #include "duckdb/common/vector/vector_iterator.hpp"
 #include "duckdb/formats/csv_simd.hpp"
 
+#include <bit>
+
 namespace duckdb {
 
 namespace {
@@ -65,36 +67,35 @@ bool ForceQuote(const CsvEncoding &encoding, idx_t column) {
 } // namespace
 
 void CsvSpecials::Add(char byte) {
-	D_ASSERT(count < sizeof(bytes));
-	for (idx_t i = 0; i < count; i++) {
-		if (bytes[i] == byte) {
-			return;
+	const auto value = static_cast<uint8_t>(byte);
+	auto &group = high[value >> 4];
+	if (!group) {
+		if (groups == 8) {
+			throw InternalException("CsvSpecials holds bytes of at most eight different high nibbles");
 		}
+		group = static_cast<uint8_t>(1U << groups++);
 	}
-	bytes[count++] = byte;
+	low[value & 0x0F] |= group;
 }
 
 bool CsvSpecials::In(std::string_view field) const {
-	const auto special = [&](const CsvVector &block) {
-		uint64_t bits = 0;
-		for (idx_t i = 0; i < count; i++) {
-			bits |= block.Equal(bytes[i]);
-		}
-		return bits;
-	};
-	idx_t i = 0;
+	return Find(field, 0) < field.size();
+}
+
+idx_t CsvSpecials::Find(std::string_view field, idx_t from) const {
+	idx_t i = from;
 	for (; i + CSV_BLOCK_BYTES <= field.size(); i += CSV_BLOCK_BYTES) {
-		if (special(CsvVector(field.data() + i))) {
-			return true;
+		if (const uint64_t bits = CsvVector(field.data() + i).Lookup(low, high)) {
+			return i + NumericCast<idx_t>(std::countr_zero(bits));
 		}
 	}
-	if (i == field.size()) {
-		return false;
+	if (i >= field.size()) {
+		return field.size();
 	}
 	char padded[CSV_BLOCK_BYTES] = {};
 	memcpy(padded, field.data() + i, field.size() - i);
-	const uint64_t valid = (uint64_t(1) << (field.size() - i)) - 1;
-	return (special(CsvVector(padded)) & valid) != 0;
+	const uint64_t bits = CsvVector(padded).Lookup(low, high) & ((uint64_t(1) << (field.size() - i)) - 1);
+	return bits ? i + NumericCast<idx_t>(std::countr_zero(bits)) : field.size();
 }
 
 idx_t CsvEscapes(std::string_view field, char quote, char escape) {
