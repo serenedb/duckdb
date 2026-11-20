@@ -123,14 +123,13 @@ string SequenceText(const QualifiedName &name) {
 	return result;
 }
 
-//! A function, a sequence or a type that a table expression names, as one scope resolves it
-struct TableExpressionName {
+//! A function, a sequence or a type that a table expression names
+struct NameSite {
 	optional_ptr<FunctionExpression> function;
 	//! The string constant naming the sequence, as in nextval('seq'); null for a function
 	optional_ptr<unique_ptr<ParsedExpression>> sequence_name;
 	optional_ptr<TypeExpression> type;
 	QualifiedName name;
-	CatalogEntry &entry;
 
 	const char *Kind() const {
 		return sequence_name ? "sequence" : type ? "type" : "function";
@@ -145,6 +144,10 @@ struct TableExpressionName {
 			function->SetQualifiedName(qualified);
 		}
 	}
+};
+
+struct TableExpressionName : NameSite {
+	CatalogEntry &entry;
 };
 
 } // namespace
@@ -207,39 +210,52 @@ static optional_ptr<CatalogEntry> ResolveFunction(CatalogEntryRetriever &scope, 
 	return entry;
 }
 
+template <class CALLBACK>
+static void ForEachNameSite(ParsedExpression &expression, IdentifierCaseMode mode, bool types, CALLBACK &&callback) {
+	if (expression.GetExpressionClass() == ExpressionClass::FUNCTION) {
+		auto &function = expression.Cast<FunctionExpression>();
+		if (!function.IsOperator()) {
+			callback(NameSite {&function, nullptr, nullptr, function.GetQualifiedName()});
+			if (auto sequence_name = TakesSequenceName(function) ? SequenceName(function) : nullptr) {
+				callback(NameSite {&function, sequence_name, nullptr,
+				                   QualifiedName::Parse(SequenceNameText(*sequence_name), mode)});
+			}
+		}
+	}
+	if (types && expression.GetExpressionClass() == ExpressionClass::TYPE) {
+		auto &type = expression.Cast<TypeExpression>();
+		callback(NameSite {nullptr, nullptr, &type, type.GetQualifiedName()});
+	}
+	if (types && expression.GetExpressionClass() == ExpressionClass::CAST) {
+		ForEachNameSite(expression.Cast<CastExpression>().TargetTypeMutable(), mode, types, callback);
+	}
+	ParsedExpressionIterator::EnumerateChildren(
+	    expression, [&](ParsedExpression &child) { ForEachNameSite(child, mode, types, callback); });
+}
+
 //! Calls the callback for every function and sequence the expression names that the scope resolves; a copy also gets
 //! the built-ins it calls as methods and the user types it names
 template <class CALLBACK>
 static void ForEachName(CatalogEntryRetriever &scope, ParsedExpression &expression, CALLBACK &&callback,
                         bool copy = false) {
-	if (expression.GetExpressionClass() == ExpressionClass::FUNCTION) {
-		auto &function = expression.Cast<FunctionExpression>();
-		if (!function.IsOperator()) {
-			if (auto entry = ResolveFunction(scope, function, copy)) {
-				callback(TableExpressionName {&function, nullptr, nullptr, function.GetQualifiedName(), *entry});
+	const auto mode = Settings::Get<PreserveIdentifierCaseSetting>(scope.GetContext());
+	ForEachNameSite(expression, mode, copy, [&](NameSite site) {
+		optional_ptr<CatalogEntry> entry;
+		if (site.sequence_name) {
+			entry = LookupName(scope, CatalogType::SEQUENCE_ENTRY, site.name);
+		} else if (site.type) {
+			entry = LookupName(scope, CatalogType::TYPE_ENTRY, site.name);
+			if (entry && entry->internal) {
+				entry = nullptr;
 			}
-			auto sequence_name = TakesSequenceName(function) ? SequenceName(function) : nullptr;
-			if (sequence_name) {
-				auto name = QualifiedName::Parse(SequenceNameText(*sequence_name),
-				                                 Settings::Get<PreserveIdentifierCaseSetting>(scope.GetContext()));
-				if (auto entry = LookupName(scope, CatalogType::SEQUENCE_ENTRY, name)) {
-					callback(TableExpressionName {&function, sequence_name, nullptr, std::move(name), *entry});
-				}
-			}
+		} else {
+			entry = ResolveFunction(scope, *site.function, copy);
+			site.name = site.function->GetQualifiedName();
 		}
-	}
-	if (copy && expression.GetExpressionClass() == ExpressionClass::TYPE) {
-		auto &type = expression.Cast<TypeExpression>();
-		auto entry = LookupName(scope, CatalogType::TYPE_ENTRY, type.GetQualifiedName());
-		if (entry && !entry->internal) {
-			callback(TableExpressionName {nullptr, nullptr, &type, type.GetQualifiedName(), *entry});
+		if (entry) {
+			callback(TableExpressionName {std::move(site), *entry});
 		}
-	}
-	if (copy && expression.GetExpressionClass() == ExpressionClass::CAST) {
-		ForEachName(scope, expression.Cast<CastExpression>().TargetTypeMutable(), callback, copy);
-	}
-	ParsedExpressionIterator::EnumerateChildren(
-	    expression, [&](ParsedExpression &child) { ForEachName(scope, child, callback, copy); });
+	});
 }
 
 static void VerifyNotTemporary(const TableExpressionName &use, const Catalog &home) {
@@ -305,6 +321,34 @@ unique_ptr<ParsedExpression> Binder::QualifyTableExpression(ClientContext &conte
 	    table_scope, *expression,
 	    [&](TableExpressionName use) { use.Rename(FullName(use.entry, table.ParentCatalog())); }, true);
 	return expression;
+}
+
+static void RerootNames(ParsedExpression &expression, const Identifier &source, const Identifier &target,
+                        IdentifierCaseMode mode) {
+	ForEachNameSite(expression, mode, true, [&](NameSite site) {
+		if (site.name.Catalog() == source) {
+			site.Rename(site.name.WithCatalog(target));
+		}
+	});
+}
+
+void Binder::RerootTableExpressions(ClientContext &context, CreateTableInfo &info, const Identifier &source,
+                                    const Identifier &target) {
+	const auto mode = Settings::Get<PreserveIdentifierCaseSetting>(context);
+	for (idx_t i = 0; i < info.columns.LogicalColumnCount(); i++) {
+		auto &column = info.columns.GetColumnMutable(LogicalIndex(i));
+		if (column.HasDefaultValue()) {
+			RerootNames(column.DefaultValueMutable(), source, target, mode);
+		}
+		if (column.Generated()) {
+			RerootNames(column.GeneratedExpressionMutable(), source, target, mode);
+		}
+	}
+	for (auto &constraint : info.constraints) {
+		if (constraint->type == ConstraintType::CHECK) {
+			RerootNames(*constraint->Cast<CheckConstraint>().expression, source, target, mode);
+		}
+	}
 }
 
 unique_ptr<ParsedExpression> Binder::QualifiedGeneratedExpression(ClientContext &context,
