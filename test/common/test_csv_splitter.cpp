@@ -1751,6 +1751,9 @@ bool ReferencePostgresRows(const RowDialect &dialect, const string &input, vecto
 		rows.push_back(row);
 		lines++;
 	}
+	if (dialect.physical_lines) {
+		lines = NumericCast<idx_t>(std::count(input.begin(), input.end(), dialect.line_break)) + (open ? 1 : 0);
+	}
 	return true;
 }
 
