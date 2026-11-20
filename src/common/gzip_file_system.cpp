@@ -293,8 +293,9 @@ bool MiniZStreamWrapper::Read(StreamData &sd) {
 			return false;
 		}
 		sd.refresh = false;
-		inflateEnd(mz_stream_ptr.get());
-		InitializeInflator();
+		if (inflateReset(mz_stream_ptr.get()) != Z_OK) {
+			throw InternalException("Failed to initialize miniz");
+		}
 	}
 	if (sd.in_buff_start == sd.in_buff_end) {
 		return false;
