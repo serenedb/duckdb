@@ -2,6 +2,7 @@
 #include "duckdb/optimizer/rule/conjunction_simplification.hpp"
 
 #include "duckdb/execution/expression_executor.hpp"
+#include "duckdb/optimizer/expression_rewriter.hpp"
 #include "duckdb/planner/expression/bound_conjunction_expression.hpp"
 #include "duckdb/planner/expression/bound_constant_expression.hpp"
 
@@ -67,10 +68,11 @@ unique_ptr<Expression> ConjunctionSimplificationRule::Apply(LogicalOperator &op,
 		if (!BooleanValue::Get(constant_value)) {
 			// FALSE in OR, remove the expression from the set
 			return RemoveExpression(conjunction, constant_expr);
-		} else {
+		} else if (!rewriter.Scored()) {
 			// TRUE in OR, result of expression is true
 			return make_uniq<BoundConstantExpression>(Value::BOOLEAN(true));
 		}
+		return nullptr;
 	}
 }
 

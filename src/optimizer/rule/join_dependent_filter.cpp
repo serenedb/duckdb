@@ -1,5 +1,6 @@
 #include "duckdb/optimizer/rule/join_dependent_filter.hpp"
 
+#include "duckdb/optimizer/expression_rewriter.hpp"
 #include "duckdb/planner/expression/bound_columnref_expression.hpp"
 #include "duckdb/planner/expression/bound_conjunction_expression.hpp"
 #include "duckdb/planner/expression_iterator.hpp"
@@ -52,7 +53,7 @@ static inline void ExtractConjunctedExpressions(Expression &expression,
 unique_ptr<Expression> JoinDependentFilterRule::Apply(LogicalOperator &op, vector<reference<Expression>> &bindings,
                                                       bool &changes_made, bool is_root) {
 	// Only applies to top-level expressions
-	if (!is_root) {
+	if (!is_root || rewriter.Scored()) {
 		return nullptr;
 	}
 
