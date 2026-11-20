@@ -239,16 +239,24 @@ bool DictionaryBuffer::TrySerialize(Serializer &serializer, const LogicalType &t
 buffer_ptr<VectorBuffer> DictionaryBuffer::Deserialize(Deserializer &deserializer, const LogicalType &type,
                                                        idx_t count) {
 	SelectionVector sel(count);
-	deserializer.ReadProperty(91, "sel_vector", reinterpret_cast<data_ptr_t>(sel.data()), sizeof(sel_t) * count);
+	const auto sel_data = reinterpret_cast<data_ptr_t>(sel.data());
+	const auto check = deserializer.GetChecks() != DeserializationChecks::NONE;
+	sel_t max_index = 0;
+	if (check) {
+		deserializer.ReadProperty(91, "sel_vector", sel_data, sizeof(sel_t) * count, [&](idx_t offset, idx_t size) {
+			const auto indexes = sel.data() + offset / sizeof(sel_t);
+			for (idx_t i = 0; i < size / sizeof(sel_t); i++) {
+				max_index = MaxValue(max_index, indexes[i]);
+			}
+		});
+	} else {
+		deserializer.ReadProperty(91, "sel_vector", sel_data, sizeof(sel_t) * count);
+	}
 	const auto dict_count = deserializer.ReadProperty<idx_t>(92, "dict_count");
-	if (dict_count > count) {
+	if (check && dict_count > count) {
 		throw SerializationException("Dictionary of %llu entries for %llu rows", dict_count, count);
 	}
-	sel_t max_index = 0;
-	for (idx_t i = 0; i < count; i++) {
-		max_index = MaxValue(max_index, sel.data()[i]);
-	}
-	if (count > 0 && max_index >= dict_count) {
+	if (check && count > 0 && max_index >= dict_count) {
 		throw SerializationException("Dictionary index %llu is outside its %llu entries", max_index, dict_count);
 	}
 	Vector dict(type, MaxValue<idx_t>(dict_count, STANDARD_VECTOR_SIZE));
