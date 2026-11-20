@@ -251,11 +251,7 @@ unique_ptr<SQLStatement> AlterStatementOf(unique_ptr<AlterInfo> info) {
 } // namespace
 
 string PEGTransformerFactory::OwnerRoleName(PEGTransformer &transformer, ParseResult &spec) {
-	auto &chosen = spec.Cast<ListParseResult>().Child<ChoiceParseResult>(0).GetResult();
-	if (chosen.type == ParseResultType::KEYWORD) {
-		return StringUtil::Upper(chosen.Cast<KeywordParseResult>().keyword);
-	}
-	return transformer.Transform<string>(chosen);
+	return TransformOwnerRoleSpec(transformer, spec).GetIdentifierName();
 }
 
 pair<string, Value> PEGTransformerFactory::TransformDatabaseConnectionLimit(PEGTransformer &transformer,
