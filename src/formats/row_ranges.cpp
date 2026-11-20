@@ -96,6 +96,18 @@ bool OpensRecord(const RowDialect &dialect, const char *bytes, idx_t base, idx_t
 
 } // namespace
 
+idx_t RowSource::ReadFully(char *data, idx_t count, idx_t offset) const {
+	idx_t total = Read(data, count, offset);
+	while (total < count && Live()) {
+		const idx_t more = Read(data + total, count - total, offset + total);
+		if (more == 0) {
+			break;
+		}
+		total += more;
+	}
+	return total;
+}
+
 idx_t RowSync(const RowDialect &dialect, const char *bytes, idx_t base, idx_t begin, idx_t end, bool eof) {
 	idx_t first = FirstNewline(dialect, bytes, base, begin, end, eof);
 	if (first != DConstants::INVALID_INDEX && dialect.backslash) {
@@ -246,7 +258,7 @@ void RowRanges::ReadInto(RowBytes &bytes, idx_t offset, idx_t count) {
 		const auto known = source.End();
 		if (known.IsValid()) {
 			FoundEnd(known.GetIndex());
-		} else if (bytes.size > 0) {
+		} else if (bytes.size > 0 && !source.Live()) {
 			FoundEnd(offset + bytes.size);
 		}
 	}
@@ -643,10 +655,12 @@ void RowRangeReader::ReadPiece() {
 		const auto known = ranges.source.End();
 		if (known.IsValid()) {
 			ranges.FoundEnd(known.GetIndex());
-		} else if (got > 0 || exact_end) {
-			ranges.FoundEnd(read_to);
-		} else {
-			beyond = true;
+		} else if (!ranges.source.Live()) {
+			if (got > 0 || exact_end) {
+				ranges.FoundEnd(read_to);
+			} else {
+				beyond = true;
+			}
 		}
 	}
 	exact_end = exact_end || got > 0;
@@ -656,6 +670,10 @@ void RowRangeReader::ReadPiece() {
 		}
 		lex_stop = MinValue(lex_stop, ranges.Size());
 	}
+}
+
+bool RowRangeReader::Waits() const {
+	return ranges.stream && lexer.Lookahead() == 0 && ranges.source.Live() && !ranges.source.Available(read_to);
 }
 
 bool RowRangeReader::CheckCountUtf8(idx_t end) {
@@ -738,9 +756,11 @@ bool RowRangeReader::Lex() {
 		feed_end = cursor.pos + FEED_BYTES;
 		last = false;
 	}
-	if (cursor.pos < feed_end && (last || feed_end - cursor.pos >= CSV_BLOCK_BYTES + lexer.Lookahead())) {
+	const bool whole = cursor.pos < feed_end && (last || feed_end - cursor.pos >= CSV_BLOCK_BYTES + lexer.Lookahead());
+	const bool waits = !whole && cursor.pos < feed_end && feed_end == read_to && Waits();
+	if (whole || waits) {
 		auto out = extract && !probe_only ? &fields : nullptr;
-		if (!lexer.Feed(cursor, bytes->data, bytes->offset, feed_end, last, out)) {
+		if (!lexer.Feed(cursor, bytes->data, bytes->offset, feed_end, last || waits, out)) {
 			return false;
 		}
 		if (!extract &&
@@ -911,10 +931,12 @@ RowReadResult RowRangeReader::Advance(idx_t want) {
 		}
 		const idx_t ready = Ready();
 		const bool full_span = cursor.pos - cursor.anchor >= REBASE_BYTES;
-		if (settled && ready > held_rows && (ready >= want || finished || full_span)) {
+		if (settled && ready > held_rows &&
+		    (ready >= want || finished || full_span || (cursor.pos == read_to && Waits()))) {
 			return RowReadResult::ROWS;
 		}
-		if (settled && held_rows > 0 && ready == held_rows && (finished || full_span || recover_pending)) {
+		if (settled && held_rows > 0 && ready == held_rows &&
+		    (finished || full_span || recover_pending || (cursor.pos == read_to && Waits()))) {
 			return RowReadResult::FLUSH;
 		}
 		if (finished) {
