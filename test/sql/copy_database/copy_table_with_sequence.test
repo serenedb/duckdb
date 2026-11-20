@@ -78,7 +78,7 @@ Ambiguous reference to catalog or schema "backup"
 statement ok
 drop schema backup cascade;
 
-## Explicitly specifying the catalog + schema (results in an error)
+## Explicitly specifying the catalog + schema
 
 statement ok
 create schema backup;
@@ -91,13 +91,31 @@ create table tbl (
 	id int default nextval('memory.backup.seq')
 );
 
-statement error
+statement ok
+insert into tbl values (DEFAULT);
+
+statement ok
 copy from database memory to backup;
-----
-<REGEX>:TransactionContext Error: Attempting to write to database .* in a transaction that has already modified database .*
 
 statement ok
 drop sequence memory.backup.seq cascade;
+
+statement ok
+insert into backup.main.tbl values (DEFAULT);
+
+query I
+select * from backup.main.tbl order by all;
+----
+1
+2
+
+query I
+select currval('backup.backup.seq');
+----
+2
+
+statement ok
+drop sequence backup.backup.seq cascade;
 
 query IIIIIIIIIIIIIIII
 from duckdb_sequences()

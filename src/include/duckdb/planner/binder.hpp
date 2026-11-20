@@ -834,6 +834,8 @@ private:
 	shared_ptr<Binder> CreateBinderWithSearchPath(const Identifier &catalog_name, const Identifier &schema_name);
 	static unique_ptr<ParsedExpression> QualifyTableExpression(ClientContext &context, const TableCatalogEntry &table,
 	                                                           unique_ptr<ParsedExpression> expression);
+	static void RerootTableExpressions(ClientContext &context, CreateTableInfo &info, const Identifier &source,
+	                                   const Identifier &target);
 
 	bool DebugAggregateStateExportVerify(BoundSelectNode &statement, unique_ptr<LogicalOperator> &root);
 

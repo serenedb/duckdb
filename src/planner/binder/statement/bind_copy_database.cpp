@@ -54,6 +54,8 @@ unique_ptr<LogicalOperator> Binder::BindCopyDatabaseSchema(Catalog &from_databas
 					column.SetType(type);
 				}
 			}
+			RerootTableExpressions(context, create_info->Cast<CreateTableInfo>(), from_database.GetName(),
+			                       target_database_name);
 		}
 		// re-root the entry (keeping its possibly nested schema path) in the target database
 		create_info->SetQualifiedName(create_info->GetQualifiedName().WithCatalog(target_database_name));
