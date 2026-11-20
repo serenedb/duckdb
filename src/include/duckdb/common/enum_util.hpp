@@ -62,6 +62,8 @@ enum class AggregateType : uint8_t;
 
 enum class AlterDatabaseType : uint8_t;
 
+enum class AlterDomainType : uint8_t;
+
 enum class AlterForeignKeyType : uint8_t;
 
 enum class AlterIndexType : uint8_t;
@@ -756,6 +758,9 @@ const char* EnumUtil::ToChars<AggregateType>(AggregateType value);
 
 template<>
 const char* EnumUtil::ToChars<AlterDatabaseType>(AlterDatabaseType value);
+
+template<>
+const char* EnumUtil::ToChars<AlterDomainType>(AlterDomainType value);
 
 template<>
 const char* EnumUtil::ToChars<AlterForeignKeyType>(AlterForeignKeyType value);
@@ -1774,6 +1779,9 @@ AggregateType EnumUtil::FromString<AggregateType>(std::string_view value);
 
 template<>
 AlterDatabaseType EnumUtil::FromString<AlterDatabaseType>(std::string_view value);
+
+template<>
+AlterDomainType EnumUtil::FromString<AlterDomainType>(std::string_view value);
 
 template<>
 AlterForeignKeyType EnumUtil::FromString<AlterForeignKeyType>(std::string_view value);

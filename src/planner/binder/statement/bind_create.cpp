@@ -65,6 +65,7 @@
 #include "duckdb/main/settings.hpp"
 #include "duckdb/parser/expression/type_expression.hpp"
 #include "duckdb/planner/expression/bound_constant_expression.hpp"
+#include "duckdb/planner/expression_binder/check_binder.hpp"
 
 namespace duckdb {
 
@@ -1303,6 +1304,95 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 			SetCatalogLookupCallback(dependency_callback);
 			// Bind the underlying type
 			BindLogicalType(create_type_info.type);
+			if (create_type_info.domain_info) {
+				auto &domain_info = *create_type_info.domain_info;
+				auto domain_binder = CreateBinderWithSearchPath(schema.ParentCatalog().GetName(), schema.name);
+				domain_binder->SetCatalogLookupCallback(dependency_callback);
+				if (!domain_info.collation.empty()) {
+					if (create_type_info.type.id() != LogicalTypeId::VARCHAR) {
+						throw BinderException("collations are not supported by type %s",
+						                      create_type_info.type.ToString());
+					}
+					ExpressionBinder::TestCollation(context, domain_info.collation);
+
+					auto collated = LogicalType::VARCHAR_COLLATION(domain_info.collation);
+					if (create_type_info.type.HasAlias()) {
+						collated = collated.WithAlias(create_type_info.type.GetAlias());
+					}
+					if (create_type_info.type.HasExtensionInfo()) {
+						collated = collated.WithExtensionInfo(
+						    make_uniq<ExtensionTypeInfo>(*create_type_info.type.GetExtensionInfo()));
+					}
+					create_type_info.type = collated;
+				}
+				domain_info.base_type = create_type_info.type;
+				if (!domain_info.default_value) {
+					if (auto base_domain = TypeCatalogEntry::TryGetDomain(context, create_type_info.type);
+					    base_domain && base_domain->domain_info->default_value) {
+						domain_info.default_value = base_domain->domain_info->default_value->Copy();
+					}
+				}
+				if (domain_info.default_value) {
+					auto default_copy = domain_info.default_value->Copy();
+					if (default_copy->HasParameter()) {
+						throw BinderException("DEFAULT values cannot contain parameters");
+					}
+					ConstantBinder default_value_binder(*domain_binder, context, "DEFAULT value");
+					default_value_binder.target_type = create_type_info.type;
+					auto bound = default_value_binder.Bind(default_copy);
+					if (bound->IsFoldable()) {
+						ExpressionExecutor::EvaluateScalar(context, *bound);
+					}
+				}
+				if (!domain_info.constraints.empty()) {
+					ColumnList columns;
+					columns.AddColumn(ColumnDefinition(Identifier("value"), create_type_info.type));
+					physical_index_set_t bound_columns;
+					CheckBinder check_binder(*domain_binder, context, create_type_info.GetTypeName(), columns,
+					                         bound_columns);
+
+					unordered_set<string> constraint_names;
+					for (auto &constraint : domain_info.constraints) {
+						if (!constraint.name.empty() && !constraint_names.insert(constraint.name).second) {
+							throw BinderException("constraint \"%s\" for domain \"%s\" already exists", constraint.name,
+							                      create_type_info.GetTypeName().GetIdentifierName());
+						}
+					}
+
+					check_binder.target_type = LogicalType();
+					for (auto &constraint : domain_info.constraints) {
+						if (constraint.type != ConstraintType::CHECK) {
+							D_ASSERT(constraint.type == ConstraintType::NOT_NULL);
+							continue;
+						}
+						auto constraint_copy = constraint.expression->Copy();
+						if (constraint_copy->HasParameter()) {
+							throw BinderException("CHECK expression cannot contain parameters");
+						}
+						auto bound = check_binder.Bind(constraint_copy);
+						if (bound->GetReturnType().id() != LogicalTypeId::BOOLEAN) {
+							throw BinderException("argument of CHECK must be type boolean");
+						}
+					}
+
+					auto &domain_name = create_type_info.GetTypeName().GetIdentifierName();
+					auto choose_name = [&](const string &suffix) {
+						auto base = domain_name + "_" + suffix;
+						auto candidate = base;
+						for (idx_t i = 1; constraint_names.contains(candidate); i++) {
+							candidate = base + to_string(i);
+						}
+						constraint_names.insert(candidate);
+						return candidate;
+					};
+					for (auto &constraint : domain_info.constraints) {
+						if (constraint.name.empty()) {
+							constraint.name =
+							    choose_name(constraint.type == ConstraintType::CHECK ? "check" : "not_null");
+						}
+					}
+				}
+			}
 		}
 		break;
 	}

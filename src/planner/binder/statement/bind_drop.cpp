@@ -5,6 +5,7 @@
 #include "duckdb/catalog/standard_entry.hpp"
 #include "duckdb/catalog/catalog_entry/macro_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/schema_catalog_entry.hpp"
+#include "duckdb/catalog/catalog_entry/type_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/parser/parsed_data/drop_info.hpp"
 #include "duckdb/parser/parsed_data/extra_drop_info.hpp"
@@ -114,6 +115,12 @@ BoundStatement Binder::Bind(DropStatement &stmt) {
 				throw BinderException("%s(%s) is not a %s", entry->name.GetIdentifierName(),
 				                      MacroFunction::ParameterTypesToString(stmt.info->func_parameters),
 				                      stmt.info->is_procedure ? "procedure" : "function");
+			}
+		}
+		if (entry->type == CatalogType::TYPE_ENTRY) {
+			auto &type = entry->Cast<TypeCatalogEntry>();
+			if (!type.domain_info && stmt.info->is_domain) {
+				throw BinderException("\"%s\" is not a domain", entry->name.GetIdentifierName());
 			}
 		}
 		// keep the entry's full (possibly nested) schema path so execution navigates the same schema

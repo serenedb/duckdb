@@ -845,6 +845,9 @@ public:
 	                                                    GeneratedTransformProcess &process);
 	static arena_ptr<TransformResultValue> FinalizeSetSchemaDictionaryTrampoline(PEGTransformer &transformer,
 	                                                                             GeneratedTransformProcess &process);
+	static void InitializeSetSchemaDomainTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
+	static arena_ptr<TransformResultValue> FinalizeSetSchemaDomainTrampoline(PEGTransformer &transformer,
+	                                                                         GeneratedTransformProcess &process);
 	static void InitializeAlterJobStmtTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
 	static arena_ptr<TransformResultValue> FinalizeAlterJobStmtTrampoline(PEGTransformer &transformer,
 	                                                                      GeneratedTransformProcess &process);
@@ -1024,6 +1027,45 @@ public:
 	static void InitializeAlterDatabaseStmtTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
 	static arena_ptr<TransformResultValue> FinalizeAlterDatabaseStmtTrampoline(PEGTransformer &transformer,
 	                                                                           GeneratedTransformProcess &process);
+	static void InitializeAlterDomainStmtTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
+	static arena_ptr<TransformResultValue> FinalizeAlterDomainStmtTrampoline(PEGTransformer &transformer,
+	                                                                         GeneratedTransformProcess &process);
+	static void InitializeAlterDomainActionTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
+	static arena_ptr<TransformResultValue> FinalizeAlterDomainActionTrampoline(PEGTransformer &transformer,
+	                                                                           GeneratedTransformProcess &process);
+	static void InitializeDomainSetDefaultTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
+	static arena_ptr<TransformResultValue> FinalizeDomainSetDefaultTrampoline(PEGTransformer &transformer,
+	                                                                          GeneratedTransformProcess &process);
+	static void InitializeDomainDropDefaultTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
+	static arena_ptr<TransformResultValue> FinalizeDomainDropDefaultTrampoline(PEGTransformer &transformer,
+	                                                                           GeneratedTransformProcess &process);
+	static void InitializeDomainSetNotNullTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
+	static arena_ptr<TransformResultValue> FinalizeDomainSetNotNullTrampoline(PEGTransformer &transformer,
+	                                                                          GeneratedTransformProcess &process);
+	static void InitializeDomainDropNotNullTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
+	static arena_ptr<TransformResultValue> FinalizeDomainDropNotNullTrampoline(PEGTransformer &transformer,
+	                                                                           GeneratedTransformProcess &process);
+	static void InitializeDomainDropConstraintTrampoline(PEGTransformer &transformer,
+	                                                     GeneratedTransformProcess &process);
+	static arena_ptr<TransformResultValue> FinalizeDomainDropConstraintTrampoline(PEGTransformer &transformer,
+	                                                                              GeneratedTransformProcess &process);
+	static void InitializeDomainRenameConstraintTrampoline(PEGTransformer &transformer,
+	                                                       GeneratedTransformProcess &process);
+	static arena_ptr<TransformResultValue> FinalizeDomainRenameConstraintTrampoline(PEGTransformer &transformer,
+	                                                                                GeneratedTransformProcess &process);
+	static void InitializeDomainRenameTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
+	static arena_ptr<TransformResultValue> FinalizeDomainRenameTrampoline(PEGTransformer &transformer,
+	                                                                      GeneratedTransformProcess &process);
+	static void InitializeAddDomainConstraintTrampoline(PEGTransformer &transformer,
+	                                                    GeneratedTransformProcess &process);
+	static arena_ptr<TransformResultValue> FinalizeAddDomainConstraintTrampoline(PEGTransformer &transformer,
+	                                                                             GeneratedTransformProcess &process);
+	static void InitializeNotValidTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
+	static arena_ptr<TransformResultValue> FinalizeNotValidTrampoline(PEGTransformer &transformer,
+	                                                                  GeneratedTransformProcess &process);
+	static void InitializeValidateConstraintTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
+	static arena_ptr<TransformResultValue> FinalizeValidateConstraintTrampoline(PEGTransformer &transformer,
+	                                                                            GeneratedTransformProcess &process);
 	static void InitializeAnalyzeStatementTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
 	static arena_ptr<TransformResultValue> FinalizeAnalyzeStatementTrampoline(PEGTransformer &transformer,
 	                                                                          GeneratedTransformProcess &process);
@@ -1603,6 +1645,23 @@ public:
 	static void InitializeDropDatabaseForceTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
 	static arena_ptr<TransformResultValue> FinalizeDropDatabaseForceTrampoline(PEGTransformer &transformer,
 	                                                                           GeneratedTransformProcess &process);
+	static void InitializeCreateDomainStmtTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
+	static arena_ptr<TransformResultValue> FinalizeCreateDomainStmtTrampoline(PEGTransformer &transformer,
+	                                                                          GeneratedTransformProcess &process);
+	static void InitializeDomainClauseTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
+	static arena_ptr<TransformResultValue> FinalizeDomainClauseTrampoline(PEGTransformer &transformer,
+	                                                                      GeneratedTransformProcess &process);
+	static void InitializeDomainConstraintTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
+	static arena_ptr<TransformResultValue> FinalizeDomainConstraintTrampoline(PEGTransformer &transformer,
+	                                                                          GeneratedTransformProcess &process);
+	static void InitializeNamedDomainConstraintTrampoline(PEGTransformer &transformer,
+	                                                      GeneratedTransformProcess &process);
+	static arena_ptr<TransformResultValue> FinalizeNamedDomainConstraintTrampoline(PEGTransformer &transformer,
+	                                                                               GeneratedTransformProcess &process);
+	static void InitializeDomainConstraintElementTrampoline(PEGTransformer &transformer,
+	                                                        GeneratedTransformProcess &process);
+	static arena_ptr<TransformResultValue>
+	FinalizeDomainConstraintElementTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
 	static void InitializeCreateIndexStmtTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
 	static arena_ptr<TransformResultValue> FinalizeCreateIndexStmtTrampoline(PEGTransformer &transformer,
 	                                                                         GeneratedTransformProcess &process);
@@ -2492,6 +2551,9 @@ public:
 	static void InitializeDropTypeTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
 	static arena_ptr<TransformResultValue> FinalizeDropTypeTrampoline(PEGTransformer &transformer,
 	                                                                  GeneratedTransformProcess &process);
+	static void InitializeDropDomainTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
+	static arena_ptr<TransformResultValue> FinalizeDropDomainTrampoline(PEGTransformer &transformer,
+	                                                                    GeneratedTransformProcess &process);
 	static void InitializeDropSecretTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
 	static arena_ptr<TransformResultValue> FinalizeDropSecretTrampoline(PEGTransformer &transformer,
 	                                                                    GeneratedTransformProcess &process);
@@ -4959,6 +5021,7 @@ public:
 	                                                         const Identifier &col_id);
 	static CatalogType TransformSetSchemaProcedure(PEGTransformer &transformer);
 	static CatalogType TransformSetSchemaDictionary(PEGTransformer &transformer);
+	static CatalogType TransformSetSchemaDomain(PEGTransformer &transformer);
 	static unique_ptr<AlterInfo> TransformAlterJobStmt(PEGTransformer &transformer, const optional<bool> &if_exists,
 	                                                   const QualifiedName &qualified_name,
 	                                                   unique_ptr<AlterInfo> alter_job_action);
@@ -5070,6 +5133,28 @@ public:
 	                                                        const optional<bool> &if_exists,
 	                                                        const Identifier &identifier,
 	                                                        const Identifier &identifier_1);
+	static unique_ptr<AlterInfo> TransformAlterDomainStmt(PEGTransformer &transformer,
+	                                                      const QualifiedName &qualified_name,
+	                                                      unique_ptr<AlterInfo> alter_domain_action);
+	static unique_ptr<AlterInfo> TransformDomainSetDefault(PEGTransformer &transformer,
+	                                                       unique_ptr<ParsedExpression> expression);
+	static unique_ptr<AlterInfo> TransformDomainDropDefault(PEGTransformer &transformer);
+	static unique_ptr<AlterInfo> TransformDomainSetNotNull(PEGTransformer &transformer);
+	static unique_ptr<AlterInfo> TransformDomainDropNotNull(PEGTransformer &transformer);
+	static unique_ptr<AlterInfo> TransformDomainDropConstraint(PEGTransformer &transformer,
+	                                                           const optional<bool> &if_exists,
+	                                                           const Identifier &identifier,
+	                                                           const optional<bool> &drop_behavior);
+	static unique_ptr<AlterInfo> TransformDomainRenameConstraint(PEGTransformer &transformer,
+	                                                             const Identifier &identifier,
+	                                                             const Identifier &identifier_1);
+	static unique_ptr<AlterInfo> TransformDomainRename(PEGTransformer &transformer, const Identifier &identifier);
+	static unique_ptr<AlterInfo> TransformAddDomainConstraint(PEGTransformer &transformer,
+	                                                          ColumnConstraintEntry domain_constraint,
+	                                                          const optional<bool> &not_valid);
+	static bool TransformNotValid(PEGTransformer &transformer);
+	static unique_ptr<AlterInfo> TransformValidateConstraint(PEGTransformer &transformer,
+	                                                         const Identifier &constraint_name);
 	static unique_ptr<SQLStatement> TransformAnalyzeStatement(PEGTransformer &transformer,
 	                                                          const Identifier &analyze_keyword,
 	                                                          const optional<bool> &analyze_verbose,
@@ -5326,6 +5411,13 @@ public:
 	                                                               const optional<bool> &drop_database_force,
 	                                                               const optional<bool> &drop_behavior);
 	static bool TransformDropDatabaseForce(PEGTransformer &transformer);
+	static unique_ptr<CreateStatement> TransformCreateDomainStmt(PEGTransformer &transformer,
+	                                                             const QualifiedName &qualified_name,
+	                                                             const bool &has_as, const LogicalType &type,
+	                                                             optional<vector<ColumnConstraintEntry>> domain_clause);
+	static ColumnConstraintEntry TransformNamedDomainConstraint(PEGTransformer &transformer,
+	                                                            const Identifier &constraint_name_clause,
+	                                                            ColumnConstraintEntry column_constraint_element);
 	static unique_ptr<CreateStatement>
 	TransformCreateIndexStmt(PEGTransformer &transformer, const optional<bool> &unique_index,
 	                         const optional<bool> &if_not_exists, const optional<Identifier> &index_name,
@@ -5757,6 +5849,8 @@ public:
 	                                                        const vector<Identifier> &collation_name);
 	static unique_ptr<DropStatement> TransformDropType(PEGTransformer &transformer, const optional<bool> &if_exists,
 	                                                   const vector<QualifiedName> &qualified_type_name);
+	static unique_ptr<DropStatement> TransformDropDomain(PEGTransformer &transformer, const optional<bool> &if_exists,
+	                                                     const vector<QualifiedName> &qualified_type_name);
 	static unique_ptr<DropStatement> TransformDropSecret(PEGTransformer &transformer,
 	                                                     const optional<SecretPersistType> &temporary,
 	                                                     const optional<bool> &if_exists, const Identifier &secret_name,

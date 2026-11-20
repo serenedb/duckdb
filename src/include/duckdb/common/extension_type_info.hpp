@@ -26,6 +26,8 @@ public:
 
 struct ExtensionTypeInfo {
 	static constexpr const char *CATALOG_OID_PROPERTY = "catalog_oid";
+	static constexpr const char *DOMAIN_PROPERTY = "is_domain";
+	static constexpr const char *BASE_OID_PROPERTY = "base_oid";
 
 	vector<LogicalTypeModifier> modifiers;
 	unordered_map<string, Value> properties;
@@ -34,6 +36,7 @@ public:
 	void Serialize(Serializer &serializer) const;
 	static unique_ptr<ExtensionTypeInfo> Deserialize(Deserializer &source);
 	static bool Equals(optional_ptr<ExtensionTypeInfo> rhs, optional_ptr<ExtensionTypeInfo> lhs);
+	static bool IsDomain(optional_ptr<const ExtensionTypeInfo> type_info);
 };
 
 } // namespace duckdb

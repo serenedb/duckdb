@@ -2,12 +2,14 @@
 #include "duckdb/parser/expression/cast_expression.hpp"
 #include "duckdb/planner/binder.hpp"
 #include "duckdb/planner/constraints/list.hpp"
+#include "duckdb/planner/expression/bound_cast_expression.hpp"
 #include "duckdb/planner/expression/bound_constant_expression.hpp"
 #include "duckdb/planner/expression/bound_function_expression.hpp"
 #include "duckdb/planner/expression_binder/check_binder.hpp"
 #include "duckdb/planner/expression_binder/constant_binder.hpp"
 #include "duckdb/planner/parsed_data/bound_create_table_info.hpp"
 #include "duckdb/catalog/catalog_entry/type_catalog_entry.hpp"
+#include "duckdb/common/extension_type_info.hpp"
 #include "duckdb/catalog/dependency_manager.hpp"
 #include "duckdb/catalog/standard_entry.hpp"
 #include "duckdb/function/table/table_scan.hpp"
@@ -282,6 +284,12 @@ unique_ptr<ParsedExpression> Binder::QualifiedGeneratedExpression(ClientContext 
 unique_ptr<ParsedExpression> Binder::QualifiedDefaultValue(ClientContext &context, const TableCatalogEntry &table,
                                                            const ColumnDefinition &column) {
 	if (!column.HasDefaultValue()) {
+		if (auto domain_entry = TypeCatalogEntry::TryGetDomain(context, column.Type())) {
+			if (domain_entry->domain_info->default_value) {
+				return domain_entry->domain_info->default_value->Copy();
+			}
+			return make_uniq<CastExpression>(column.Type(), ConstantExpression::Null());
+		}
 		return ConstantExpression::FromValue(Value(column.Type()));
 	}
 	return QualifyTableExpression(context, table, column.DefaultValue().Copy());
@@ -678,9 +686,22 @@ void Binder::BindDefaultValues(const ColumnList &columns, vector<unique_ptr<Expr
 			ConstantBinder default_value_binder(*default_binder, context, "DEFAULT value");
 			default_value_binder.target_type = column.Type();
 			bound_default = default_value_binder.Bind(default_copy);
+		} else if (auto domain_entry = TypeCatalogEntry::TryGetDomain(context, column.GetType());
+		           domain_entry && domain_entry->domain_info->default_value) {
+			auto default_copy = domain_entry->domain_info->default_value->Copy();
+			auto domain_binder =
+			    CreateBinderWithSearchPath(domain_entry->ParentCatalog().GetName(), domain_entry->ParentSchemaName());
+			ConstantBinder default_value_binder(*domain_binder, context, "DEFAULT value");
+			default_value_binder.target_type = column.Type();
+			bound_default = default_value_binder.Bind(default_copy);
 		} else {
-			// no default value specified: push a default value of constant null
-			bound_default = make_uniq<BoundConstantExpression>(Value(column.Type()));
+			if (ExtensionTypeInfo::IsDomain(column.Type().GetExtensionInfo())) {
+				bound_default = BoundCastExpression::AddCastToType(
+				    context, make_uniq<BoundConstantExpression>(Value(LogicalType::SQLNULL)), column.Type());
+			} else {
+				// no default value specified: push a default value of constant null
+				bound_default = make_uniq<BoundConstantExpression>(Value(column.Type()));
+			}
 		}
 		bound_defaults.push_back(std::move(bound_default));
 	}

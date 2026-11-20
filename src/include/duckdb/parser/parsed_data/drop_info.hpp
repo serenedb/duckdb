@@ -42,6 +42,8 @@ public:
 	bool has_func_args = false;
 	//! Whether this is DROP PROCEDURE (vs DROP FUNCTION)
 	bool is_procedure = false;
+	//! Whether this is DROP DOMAIN
+	bool is_domain = false;
 
 	//! Extra info related to this drop
 	unique_ptr<ExtraDropInfo> extra_drop_info;

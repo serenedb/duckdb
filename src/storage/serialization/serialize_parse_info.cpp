@@ -27,6 +27,7 @@
 #include "duckdb/parser/parsed_data/vacuum_info.hpp"
 #include "duckdb/parser/parsed_data/exported_table_data.hpp"
 #include "duckdb/parser/parsed_data/alter_job_info.hpp"
+#include "duckdb/parser/parsed_data/alter_domain_info.hpp"
 
 namespace duckdb {
 
@@ -115,6 +116,9 @@ unique_ptr<ParseInfo> AlterInfo::Deserialize(Deserializer &deserializer) {
 	switch (type) {
 	case AlterType::ALTER_DATABASE:
 		result = AlterDatabaseInfo::Deserialize(deserializer);
+		break;
+	case AlterType::ALTER_DOMAIN:
+		result = AlterDomainInfo::Deserialize(deserializer);
 		break;
 	case AlterType::ALTER_INDEX:
 		result = AlterIndexInfo::Deserialize(deserializer);
@@ -411,6 +415,31 @@ unique_ptr<AlterTableInfo> AddFieldInfo::Deserialize(Deserializer &deserializer)
 	auto result = duckdb::unique_ptr<AddFieldInfo>(new AddFieldInfo(std::move(new_field)));
 	deserializer.ReadPropertyWithDefault<bool>(401, "if_field_not_exists", result->if_field_not_exists);
 	deserializer.ReadPropertyWithDefault<vector<Identifier>>(402, "column_path", result->column_path);
+	return std::move(result);
+}
+
+void AlterDomainInfo::Serialize(Serializer &serializer) const {
+	AlterInfo::Serialize(serializer);
+	serializer.WriteProperty<AlterDomainType>(300, "alter_domain_type", alter_domain_type);
+	serializer.WritePropertyWithDefault<unique_ptr<ParsedExpression>>(301, "default_value", default_value, nullptr);
+	serializer.WriteProperty<DomainConstraint>(302, "constraint", constraint);
+	serializer.WritePropertyWithDefault<string>(303, "constraint_name", constraint_name, string());
+	serializer.WritePropertyWithDefault<string>(304, "new_constraint_name", new_constraint_name, string());
+	serializer.WritePropertyWithDefault<bool>(305, "constraint_if_exists", constraint_if_exists, false);
+	serializer.WritePropertyWithDefault<bool>(306, "cascade", cascade, false);
+	serializer.WritePropertyWithDefault<Identifier>(307, "new_name", new_name, Identifier());
+}
+
+unique_ptr<AlterInfo> AlterDomainInfo::Deserialize(Deserializer &deserializer) {
+	auto result = duckdb::unique_ptr<AlterDomainInfo>(new AlterDomainInfo());
+	deserializer.ReadProperty<AlterDomainType>(300, "alter_domain_type", result->alter_domain_type);
+	deserializer.ReadPropertyWithExplicitDefault<unique_ptr<ParsedExpression>>(301, "default_value", result->default_value, nullptr);
+	deserializer.ReadProperty<DomainConstraint>(302, "constraint", result->constraint);
+	deserializer.ReadPropertyWithExplicitDefault<string>(303, "constraint_name", result->constraint_name, string());
+	deserializer.ReadPropertyWithExplicitDefault<string>(304, "new_constraint_name", result->new_constraint_name, string());
+	deserializer.ReadPropertyWithExplicitDefault<bool>(305, "constraint_if_exists", result->constraint_if_exists, false);
+	deserializer.ReadPropertyWithExplicitDefault<bool>(306, "cascade", result->cascade, false);
+	deserializer.ReadPropertyWithExplicitDefault<Identifier>(307, "new_name", result->new_name, Identifier());
 	return std::move(result);
 }
 

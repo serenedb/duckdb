@@ -347,6 +347,68 @@
     }
   },
   {
+    "class": "DomainInfo",
+    "includes": [
+      "duckdb/parser/parsed_data/domain_info.hpp"
+    ],
+    "members": [
+      {
+        "id": 100,
+        "name": "default_value",
+        "type": "unique_ptr<ParsedExpression>",
+        "default": "nullptr"
+      },
+      {
+        "id": 101,
+        "name": "collation",
+        "type": "string"
+      },
+      {
+        "id": 102,
+        "name": "constraints",
+        "type": "vector<DomainConstraint>"
+      },
+      {
+        "id": 103,
+        "name": "base_type",
+        "type": "LogicalType",
+        "default": "LogicalType::INVALID"
+      }
+    ]
+  },
+  {
+    "class": "DomainConstraint",
+    "pointer_type": "none",
+    "includes": [
+      "duckdb/parser/parsed_data/domain_info.hpp"
+    ],
+    "members": [
+      {
+        "id": 100,
+        "name": "name",
+        "type": "string"
+      },
+      {
+        "id": 101,
+        "name": "type",
+        "type": "ConstraintType",
+        "default": "ConstraintType::INVALID"
+      },
+      {
+        "id": 102,
+        "name": "expression",
+        "type": "unique_ptr<ParsedExpression>",
+        "default": "nullptr"
+      },
+      {
+        "id": 103,
+        "name": "validated",
+        "type": "bool",
+        "default": "true"
+      }
+    ]
+  },
+  {
     "class": "CreateTypeInfo",
     "base": "CreateInfo",
     "enum": "TYPE_ENTRY",
@@ -365,6 +427,13 @@
         "name": "logical_type",
         "property": "type",
         "type": "LogicalType"
+      },
+      {
+        "id": 16586,
+        "name": "domain_info",
+        "type": "unique_ptr<DomainInfo>",
+        "default": "nullptr",
+        "version": "sdb_v1"
       }
     ],
     "methods": {

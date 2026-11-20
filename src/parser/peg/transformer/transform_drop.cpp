@@ -206,6 +206,22 @@ unique_ptr<DropStatement> PEGTransformerFactory::TransformDropType(PEGTransforme
 	return result;
 }
 
+unique_ptr<DropStatement> PEGTransformerFactory::TransformDropDomain(PEGTransformer &transformer,
+                                                                     const optional<bool> &if_exists,
+                                                                     const vector<QualifiedName> &qualified_type_name) {
+	auto result = make_uniq<DropStatement>();
+	auto info = make_uniq<DropInfo>();
+	if (qualified_type_name.size() > 1) {
+		throw NotImplementedException("Can only drop one object at a time");
+	}
+	info->SetQualifiedName(qualified_type_name[0]);
+	info->if_not_found = if_exists ? OnEntryNotFound::RETURN_NULL : OnEntryNotFound::THROW_EXCEPTION;
+	info->type = CatalogType::TYPE_ENTRY;
+	info->is_domain = true;
+	result->info = std::move(info);
+	return result;
+}
+
 bool PEGTransformerFactory::TransformCascadeDropBehavior(PEGTransformer &transformer) {
 	return true;
 }

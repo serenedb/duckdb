@@ -275,6 +275,8 @@ unique_ptr<TypeExpression> TypeExpression::FromLogicalType(const LogicalType &ty
 	if (type.HasExtensionInfo() && type.GetExtensionInfo()->properties.count(ExtensionTypeInfo::CATALOG_OID_PROPERTY)) {
 		auto extension_info = make_uniq<ExtensionTypeInfo>(*type.GetExtensionInfo());
 		extension_info->properties.erase(ExtensionTypeInfo::CATALOG_OID_PROPERTY);
+		extension_info->properties.erase(ExtensionTypeInfo::DOMAIN_PROPERTY);
+		extension_info->properties.erase(ExtensionTypeInfo::BASE_OID_PROPERTY);
 		auto result = FromLogicalType(type.WithExtensionInfo(std::move(extension_info)));
 		result->bound_type = type;
 		return result;

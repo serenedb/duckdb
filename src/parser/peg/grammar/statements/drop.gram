@@ -9,6 +9,7 @@ DropEntries <-
 	DropSequence /
 	DropCollation /
 	DropType /
+	DropDomain /
 	DropSecret /
 	DropTrigger /
 	DropJob
@@ -30,6 +31,7 @@ CatalogReservedSchemaIndex <- CatalogQualification ReservedSchemaQualification R
 DropSequence <- 'SEQUENCE' IfExists? List(QualifiedSequenceName)
 DropCollation <- 'COLLATION' IfExists? List(CollationName)
 DropType <- 'TYPE' IfExists? List(QualifiedTypeName)
+DropDomain <- 'DOMAIN' IfExists? List(QualifiedTypeName)
 DropSecret <- Temporary? 'SECRET' IfExists? SecretName DropSecretStorage?
 
 TableOrView <- CommentTable / CommentView / MaterializedViewEntry

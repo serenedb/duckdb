@@ -1,4 +1,5 @@
 #include "duckdb/function/cast/cast_function_set.hpp"
+#include "duckdb/common/extension_type_info.hpp"
 #include "duckdb/function/cast/cast_statistics.hpp"
 
 #include "duckdb/main/settings.hpp"
@@ -85,6 +86,7 @@ BoundCastInfo CastFunctionSet::GetCastFunction(const LogicalType &source, const 
 		}
 	}
 
+	D_ASSERT(!config || !ExtensionTypeInfo::IsDomain(target.GetExtensionInfo()));
 	// Built-in casts inherit generic propagation unless they provide a more specific callback.
 	auto result = bind_cast(default_bind_function);
 	if (result.HasFunction()) {
@@ -386,6 +388,10 @@ void CastFunctionSet::RegisterCastFunction(const LogicalType &source, const Logi
 void CastFunctionSet::RegisterCastFunction(const LogicalType &source, const LogicalType &target,
                                            bind_cast_function_t bind_function, int64_t implicit_cast_cost) {
 	RegisterCastFunction(source, target, MapCastNode(bind_function, implicit_cast_cost));
+}
+
+void CastFunctionSet::RegisterBindCastFunction(BindCastFunction function) {
+	registered_bind_functions.push_back(std::move(function));
 }
 
 void CastFunctionSet::RegisterCastFunction(const LogicalType &source, const LogicalType &target, MapCastNode node) {

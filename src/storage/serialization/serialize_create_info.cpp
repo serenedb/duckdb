@@ -10,6 +10,7 @@
 #include "duckdb/parser/parsed_data/create_table_info.hpp"
 #include "duckdb/parser/parsed_data/create_schema_info.hpp"
 #include "duckdb/parser/parsed_data/create_view_info.hpp"
+#include "duckdb/parser/parsed_data/domain_info.hpp"
 #include "duckdb/parser/parsed_data/create_type_info.hpp"
 #include "duckdb/parser/parsed_data/create_macro_info.hpp"
 #include "duckdb/parser/parsed_data/create_sequence_info.hpp"
@@ -475,12 +476,16 @@ void CreateTypeInfo::Serialize(Serializer &serializer) const {
 	CreateInfo::Serialize(serializer);
 	serializer.WritePropertyWithDefault<Identifier>(200, "name", qualified_name.Name());
 	serializer.WriteProperty<LogicalType>(201, "logical_type", type);
+	if (serializer.ShouldSerialize(StorageVersion::SDB_V1)) {
+		serializer.WritePropertyWithDefault<unique_ptr<DomainInfo>>(16586, "domain_info", domain_info, nullptr);
+	}
 }
 
 unique_ptr<CreateInfo> CreateTypeInfo::Deserialize(Deserializer &deserializer) {
 	auto result = duckdb::unique_ptr<CreateTypeInfo>(new CreateTypeInfo());
 	auto name = deserializer.ReadPropertyWithDefault<Identifier>(200, "name");
 	deserializer.ReadProperty<LogicalType>(201, "logical_type", result->type);
+	deserializer.ReadPropertyWithExplicitDefault<unique_ptr<DomainInfo>>(16586, "domain_info", result->domain_info, nullptr);
 	result->SetName(std::move(name));
 	return std::move(result);
 }
@@ -520,6 +525,38 @@ unique_ptr<CreateInfo> CreateViewInfo::Deserialize(Deserializer &deserializer) {
 	deserializer.ReadPropertyWithDefault<bool>(16584, "security_invoker", result->security_invoker);
 	result->SetName(std::move(view_name));
 	return std::move(result);
+}
+
+void DomainConstraint::Serialize(Serializer &serializer) const {
+	serializer.WritePropertyWithDefault<string>(100, "name", name);
+	serializer.WritePropertyWithDefault<ConstraintType>(101, "type", type, ConstraintType::INVALID);
+	serializer.WritePropertyWithDefault<unique_ptr<ParsedExpression>>(102, "expression", expression, nullptr);
+	serializer.WritePropertyWithDefault<bool>(103, "validated", validated, true);
+}
+
+DomainConstraint DomainConstraint::Deserialize(Deserializer &deserializer) {
+	DomainConstraint result;
+	deserializer.ReadPropertyWithDefault<string>(100, "name", result.name);
+	deserializer.ReadPropertyWithExplicitDefault<ConstraintType>(101, "type", result.type, ConstraintType::INVALID);
+	deserializer.ReadPropertyWithExplicitDefault<unique_ptr<ParsedExpression>>(102, "expression", result.expression, nullptr);
+	deserializer.ReadPropertyWithExplicitDefault<bool>(103, "validated", result.validated, true);
+	return result;
+}
+
+void DomainInfo::Serialize(Serializer &serializer) const {
+	serializer.WritePropertyWithDefault<unique_ptr<ParsedExpression>>(100, "default_value", default_value, nullptr);
+	serializer.WritePropertyWithDefault<string>(101, "collation", collation);
+	serializer.WritePropertyWithDefault<vector<DomainConstraint>>(102, "constraints", constraints);
+	serializer.WritePropertyWithDefault<LogicalType>(103, "base_type", base_type, LogicalType::INVALID);
+}
+
+unique_ptr<DomainInfo> DomainInfo::Deserialize(Deserializer &deserializer) {
+	auto result = duckdb::unique_ptr<DomainInfo>(new DomainInfo());
+	deserializer.ReadPropertyWithExplicitDefault<unique_ptr<ParsedExpression>>(100, "default_value", result->default_value, nullptr);
+	deserializer.ReadPropertyWithDefault<string>(101, "collation", result->collation);
+	deserializer.ReadPropertyWithDefault<vector<DomainConstraint>>(102, "constraints", result->constraints);
+	deserializer.ReadPropertyWithExplicitDefault<LogicalType>(103, "base_type", result->base_type, LogicalType::INVALID);
+	return result;
 }
 
 void SubscriptionRelation::Serialize(Serializer &serializer) const {

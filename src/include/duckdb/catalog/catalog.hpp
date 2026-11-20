@@ -190,6 +190,7 @@ public:
 	//! Returns the catalog name - based on how the catalog was attached
 	DUCKDB_API const Identifier &GetName() const;
 	DUCKDB_API idx_t GetOid();
+	DUCKDB_API virtual optional_ptr<CatalogEntry> LookupOid(CatalogTransaction transaction, idx_t oid);
 	DUCKDB_API virtual string GetCatalogType() = 0;
 
 	DUCKDB_API CatalogTransaction GetCatalogTransaction(ClientContext &context);

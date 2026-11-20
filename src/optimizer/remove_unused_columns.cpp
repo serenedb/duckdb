@@ -1907,10 +1907,10 @@ void BaseColumnPruner::AddBinding(BoundColumnRefExpression &col) {
 }
 
 static bool TryGetCastChild(unique_ptr<Expression> &expr, optional_ptr<unique_ptr<Expression>> &child) {
-	if (expr->GetExpressionType() != ExpressionType::OPERATOR_CAST) {
+	if (!BoundCastExpression::IsCast(*expr)) {
 		return false;
 	}
-	D_ASSERT(BoundCastExpression::IsCast(*expr));
+
 	auto &cast = expr->Cast<BoundFunctionExpression>();
 	if (BoundCastExpression::IsTryCast(cast)) {
 		return false;

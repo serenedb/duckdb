@@ -1061,6 +1061,12 @@ void DependencyManager::AlterObject(CatalogTransaction transaction, CatalogEntry
 			}
 			break;
 		}
+		case AlterType::ALTER_DOMAIN: {
+			// ALTER DOMAIN changes only the domain's default and constraints; the type of its values and its oid stay
+			// the same, so columns of the domain, which refer to it by oid, keep working without being rebuilt
+			disallow_alter = false;
+			break;
+		}
 		default:
 			break;
 		}

@@ -56,6 +56,9 @@ static const TransformFrameOps SET_SCHEMA_PROCEDURE_OPS = {
 static const TransformFrameOps SET_SCHEMA_DICTIONARY_OPS = {
     "SetSchemaDictionary", &PEGTransformerFactory::InitializeSetSchemaDictionaryTrampoline,
     &PEGTransformerFactory::FinalizeSetSchemaDictionaryTrampoline};
+static const TransformFrameOps SET_SCHEMA_DOMAIN_OPS = {"SetSchemaDomain",
+                                                        &PEGTransformerFactory::InitializeSetSchemaDomainTrampoline,
+                                                        &PEGTransformerFactory::FinalizeSetSchemaDomainTrampoline};
 static const TransformFrameOps ALTER_JOB_STMT_OPS = {"AlterJobStmt",
                                                      &PEGTransformerFactory::InitializeAlterJobStmtTrampoline,
                                                      &PEGTransformerFactory::FinalizeAlterJobStmtTrampoline};
@@ -223,6 +226,41 @@ static const TransformFrameOps SEQ_RESTART_VALUE_OPS = {"SeqRestartValue",
 static const TransformFrameOps ALTER_DATABASE_STMT_OPS = {"AlterDatabaseStmt",
                                                           &PEGTransformerFactory::InitializeAlterDatabaseStmtTrampoline,
                                                           &PEGTransformerFactory::FinalizeAlterDatabaseStmtTrampoline};
+static const TransformFrameOps ALTER_DOMAIN_STMT_OPS = {"AlterDomainStmt",
+                                                        &PEGTransformerFactory::InitializeAlterDomainStmtTrampoline,
+                                                        &PEGTransformerFactory::FinalizeAlterDomainStmtTrampoline};
+static const TransformFrameOps ALTER_DOMAIN_ACTION_OPS = {
+    "AlterDomainAction", &PEGTransformerFactory::InitializeAlterDomainActionTrampoline,
+    &PEGTransformerFactory::FinalizeAlterDomainActionTrampoline, true};
+static const TransformFrameOps DOMAIN_SET_DEFAULT_OPS = {"DomainSetDefault",
+                                                         &PEGTransformerFactory::InitializeDomainSetDefaultTrampoline,
+                                                         &PEGTransformerFactory::FinalizeDomainSetDefaultTrampoline};
+static const TransformFrameOps DOMAIN_DROP_DEFAULT_OPS = {"DomainDropDefault",
+                                                          &PEGTransformerFactory::InitializeDomainDropDefaultTrampoline,
+                                                          &PEGTransformerFactory::FinalizeDomainDropDefaultTrampoline};
+static const TransformFrameOps DOMAIN_SET_NOT_NULL_OPS = {"DomainSetNotNull",
+                                                          &PEGTransformerFactory::InitializeDomainSetNotNullTrampoline,
+                                                          &PEGTransformerFactory::FinalizeDomainSetNotNullTrampoline};
+static const TransformFrameOps DOMAIN_DROP_NOT_NULL_OPS = {
+    "DomainDropNotNull", &PEGTransformerFactory::InitializeDomainDropNotNullTrampoline,
+    &PEGTransformerFactory::FinalizeDomainDropNotNullTrampoline};
+static const TransformFrameOps DOMAIN_DROP_CONSTRAINT_OPS = {
+    "DomainDropConstraint", &PEGTransformerFactory::InitializeDomainDropConstraintTrampoline,
+    &PEGTransformerFactory::FinalizeDomainDropConstraintTrampoline};
+static const TransformFrameOps DOMAIN_RENAME_CONSTRAINT_OPS = {
+    "DomainRenameConstraint", &PEGTransformerFactory::InitializeDomainRenameConstraintTrampoline,
+    &PEGTransformerFactory::FinalizeDomainRenameConstraintTrampoline};
+static const TransformFrameOps DOMAIN_RENAME_OPS = {"DomainRename",
+                                                    &PEGTransformerFactory::InitializeDomainRenameTrampoline,
+                                                    &PEGTransformerFactory::FinalizeDomainRenameTrampoline};
+static const TransformFrameOps ADD_DOMAIN_CONSTRAINT_OPS = {
+    "AddDomainConstraint", &PEGTransformerFactory::InitializeAddDomainConstraintTrampoline,
+    &PEGTransformerFactory::FinalizeAddDomainConstraintTrampoline};
+static const TransformFrameOps NOT_VALID_OPS = {"NotValid", &PEGTransformerFactory::InitializeNotValidTrampoline,
+                                                &PEGTransformerFactory::FinalizeNotValidTrampoline};
+static const TransformFrameOps VALIDATE_CONSTRAINT_OPS = {
+    "ValidateConstraint", &PEGTransformerFactory::InitializeValidateConstraintTrampoline,
+    &PEGTransformerFactory::FinalizeValidateConstraintTrampoline};
 static const TransformFrameOps ANALYZE_STATEMENT_OPS = {"AnalyzeStatement",
                                                         &PEGTransformerFactory::InitializeAnalyzeStatementTrampoline,
                                                         &PEGTransformerFactory::FinalizeAnalyzeStatementTrampoline};
@@ -729,6 +767,21 @@ static const TransformFrameOps DROP_DATABASE_STATEMENT_OPS = {
 static const TransformFrameOps DROP_DATABASE_FORCE_OPS = {"DropDatabaseForce",
                                                           &PEGTransformerFactory::InitializeDropDatabaseForceTrampoline,
                                                           &PEGTransformerFactory::FinalizeDropDatabaseForceTrampoline};
+static const TransformFrameOps CREATE_DOMAIN_STMT_OPS = {"CreateDomainStmt",
+                                                         &PEGTransformerFactory::InitializeCreateDomainStmtTrampoline,
+                                                         &PEGTransformerFactory::FinalizeCreateDomainStmtTrampoline};
+static const TransformFrameOps DOMAIN_CLAUSE_OPS = {"DomainClause",
+                                                    &PEGTransformerFactory::InitializeDomainClauseTrampoline,
+                                                    &PEGTransformerFactory::FinalizeDomainClauseTrampoline, true};
+static const TransformFrameOps DOMAIN_CONSTRAINT_OPS = {
+    "DomainConstraint", &PEGTransformerFactory::InitializeDomainConstraintTrampoline,
+    &PEGTransformerFactory::FinalizeDomainConstraintTrampoline, true};
+static const TransformFrameOps NAMED_DOMAIN_CONSTRAINT_OPS = {
+    "NamedDomainConstraint", &PEGTransformerFactory::InitializeNamedDomainConstraintTrampoline,
+    &PEGTransformerFactory::FinalizeNamedDomainConstraintTrampoline};
+static const TransformFrameOps DOMAIN_CONSTRAINT_ELEMENT_OPS = {
+    "DomainConstraintElement", &PEGTransformerFactory::InitializeDomainConstraintElementTrampoline,
+    &PEGTransformerFactory::FinalizeDomainConstraintElementTrampoline, true};
 static const TransformFrameOps CREATE_INDEX_STMT_OPS = {"CreateIndexStmt",
                                                         &PEGTransformerFactory::InitializeCreateIndexStmtTrampoline,
                                                         &PEGTransformerFactory::FinalizeCreateIndexStmtTrampoline};
@@ -1502,6 +1555,8 @@ static const TransformFrameOps DROP_COLLATION_OPS = {"DropCollation",
                                                      &PEGTransformerFactory::FinalizeDropCollationTrampoline};
 static const TransformFrameOps DROP_TYPE_OPS = {"DropType", &PEGTransformerFactory::InitializeDropTypeTrampoline,
                                                 &PEGTransformerFactory::FinalizeDropTypeTrampoline};
+static const TransformFrameOps DROP_DOMAIN_OPS = {"DropDomain", &PEGTransformerFactory::InitializeDropDomainTrampoline,
+                                                  &PEGTransformerFactory::FinalizeDropDomainTrampoline};
 static const TransformFrameOps DROP_SECRET_OPS = {"DropSecret", &PEGTransformerFactory::InitializeDropSecretTrampoline,
                                                   &PEGTransformerFactory::FinalizeDropSecretTrampoline};
 static const TransformFrameOps TABLE_OR_VIEW_OPS = {"TableOrView",
@@ -3701,6 +3756,7 @@ PEGTransformerFactory::GeneratedTransformFrameOps() {
 	    {"SetSchemaEntryType", &SET_SCHEMA_ENTRY_TYPE_OPS},
 	    {"SetSchemaProcedure", &SET_SCHEMA_PROCEDURE_OPS},
 	    {"SetSchemaDictionary", &SET_SCHEMA_DICTIONARY_OPS},
+	    {"SetSchemaDomain", &SET_SCHEMA_DOMAIN_OPS},
 	    {"AlterJobStmt", &ALTER_JOB_STMT_OPS},
 	    {"AlterJobAction", &ALTER_JOB_ACTION_OPS},
 	    {"AlterJobRename", &ALTER_JOB_RENAME_OPS},
@@ -3759,6 +3815,18 @@ PEGTransformerFactory::GeneratedTransformFrameOps() {
 	    {"SeqRestart", &SEQ_RESTART_OPS},
 	    {"SeqRestartValue", &SEQ_RESTART_VALUE_OPS},
 	    {"AlterDatabaseStmt", &ALTER_DATABASE_STMT_OPS},
+	    {"AlterDomainStmt", &ALTER_DOMAIN_STMT_OPS},
+	    {"AlterDomainAction", &ALTER_DOMAIN_ACTION_OPS},
+	    {"DomainSetDefault", &DOMAIN_SET_DEFAULT_OPS},
+	    {"DomainDropDefault", &DOMAIN_DROP_DEFAULT_OPS},
+	    {"DomainSetNotNull", &DOMAIN_SET_NOT_NULL_OPS},
+	    {"DomainDropNotNull", &DOMAIN_DROP_NOT_NULL_OPS},
+	    {"DomainDropConstraint", &DOMAIN_DROP_CONSTRAINT_OPS},
+	    {"DomainRenameConstraint", &DOMAIN_RENAME_CONSTRAINT_OPS},
+	    {"DomainRename", &DOMAIN_RENAME_OPS},
+	    {"AddDomainConstraint", &ADD_DOMAIN_CONSTRAINT_OPS},
+	    {"NotValid", &NOT_VALID_OPS},
+	    {"ValidateConstraint", &VALIDATE_CONSTRAINT_OPS},
 	    {"AnalyzeStatement", &ANALYZE_STATEMENT_OPS},
 	    {"AnalyzeTarget", &ANALYZE_TARGET_OPS},
 	    {"AnalyzeVerbose", &ANALYZE_VERBOSE_OPS},
@@ -3938,6 +4006,11 @@ PEGTransformerFactory::GeneratedTransformFrameOps() {
 	    {"CreateDatabaseStatement", &CREATE_DATABASE_STATEMENT_OPS},
 	    {"DropDatabaseStatement", &DROP_DATABASE_STATEMENT_OPS},
 	    {"DropDatabaseForce", &DROP_DATABASE_FORCE_OPS},
+	    {"CreateDomainStmt", &CREATE_DOMAIN_STMT_OPS},
+	    {"DomainClause", &DOMAIN_CLAUSE_OPS},
+	    {"DomainConstraint", &DOMAIN_CONSTRAINT_OPS},
+	    {"NamedDomainConstraint", &NAMED_DOMAIN_CONSTRAINT_OPS},
+	    {"DomainConstraintElement", &DOMAIN_CONSTRAINT_ELEMENT_OPS},
 	    {"CreateIndexStmt", &CREATE_INDEX_STMT_OPS},
 	    {"IndexColumns", &INDEX_COLUMNS_OPS},
 	    {"IndexKeyColumns", &INDEX_KEY_COLUMNS_OPS},
@@ -4211,6 +4284,7 @@ PEGTransformerFactory::GeneratedTransformFrameOps() {
 	    {"DropSequence", &DROP_SEQUENCE_OPS},
 	    {"DropCollation", &DROP_COLLATION_OPS},
 	    {"DropType", &DROP_TYPE_OPS},
+	    {"DropDomain", &DROP_DOMAIN_OPS},
 	    {"DropSecret", &DROP_SECRET_OPS},
 	    {"TableOrView", &TABLE_OR_VIEW_OPS},
 	    {"MaterializedViewEntry", &MATERIALIZED_VIEW_ENTRY_OPS},
@@ -5117,6 +5191,18 @@ arena_ptr<TransformResultValue>
 PEGTransformerFactory::FinalizeSetSchemaDictionaryTrampoline(PEGTransformer &transformer,
                                                              GeneratedTransformProcess &process) {
 	auto result = TransformSetSchemaDictionary(transformer);
+	return transformer.MakeResult<CatalogType>(result);
+}
+
+void PEGTransformerFactory::InitializeSetSchemaDomainTrampoline(PEGTransformer &transformer,
+                                                                GeneratedTransformProcess &process) {
+	process.ReserveChildSlots(0);
+}
+
+arena_ptr<TransformResultValue>
+PEGTransformerFactory::FinalizeSetSchemaDomainTrampoline(PEGTransformer &transformer,
+                                                         GeneratedTransformProcess &process) {
+	auto result = TransformSetSchemaDomain(transformer);
 	return transformer.MakeResult<CatalogType>(result);
 }
 
@@ -6383,6 +6469,206 @@ PEGTransformerFactory::FinalizeAlterDatabaseStmtTrampoline(PEGTransformer &trans
 	auto identifier = list_pr.GetChild(2).Cast<IdentifierParseResult>().identifier;
 	auto identifier_1 = list_pr.GetChild(6).Cast<IdentifierParseResult>().identifier;
 	auto result = TransformAlterDatabaseStmt(transformer, if_exists, identifier, identifier_1);
+	return transformer.MakeResult<unique_ptr<AlterInfo>>(std::move(result));
+}
+
+void PEGTransformerFactory::InitializeAlterDomainStmtTrampoline(PEGTransformer &transformer,
+                                                                GeneratedTransformProcess &process) {
+	auto &list_pr = process.parse_result.Cast<ListParseResult>();
+	process.ReserveChildSlots(2);
+	process.PushChild({list_pr.GetChild(2)}, 1);
+	process.PushChild({list_pr.GetChild(1)}, 0);
+}
+
+arena_ptr<TransformResultValue>
+PEGTransformerFactory::FinalizeAlterDomainStmtTrampoline(PEGTransformer &transformer,
+                                                         GeneratedTransformProcess &process) {
+	auto qualified_name = process.TakeResult<QualifiedName>(0);
+	auto alter_domain_action = process.TakeResult<unique_ptr<AlterInfo>>(1);
+	auto result = TransformAlterDomainStmt(transformer, qualified_name, std::move(alter_domain_action));
+	return transformer.MakeResult<unique_ptr<AlterInfo>>(std::move(result));
+}
+
+void PEGTransformerFactory::InitializeAlterDomainActionTrampoline(PEGTransformer &transformer,
+                                                                  GeneratedTransformProcess &process) {
+	auto &list_pr = process.parse_result.Cast<ListParseResult>();
+	auto &choice_pr = list_pr.Child<ChoiceParseResult>(0);
+	auto &choice_result = choice_pr.GetResult();
+	process.ReserveChildSlots(1);
+	auto child_rule = choice_result.GetRule();
+	auto has_transform_process = child_rule && child_rule->transform_process;
+	if (!has_transform_process) {
+		throw InternalException("No transform process registered for rule '%s'", choice_result.Name());
+	}
+	process.PushChild({*child_rule, choice_result}, 0);
+}
+
+arena_ptr<TransformResultValue>
+PEGTransformerFactory::FinalizeAlterDomainActionTrampoline(PEGTransformer &transformer,
+                                                           GeneratedTransformProcess &process) {
+	auto result = process.TakeResult<unique_ptr<AlterInfo>>(0);
+	return transformer.MakeResult<unique_ptr<AlterInfo>>(std::move(result));
+}
+
+void PEGTransformerFactory::InitializeDomainSetDefaultTrampoline(PEGTransformer &transformer,
+                                                                 GeneratedTransformProcess &process) {
+	auto &list_pr = process.parse_result.Cast<ListParseResult>();
+	process.ReserveChildSlots(1);
+	process.PushChild({list_pr.GetChild(2)}, 0);
+}
+
+arena_ptr<TransformResultValue>
+PEGTransformerFactory::FinalizeDomainSetDefaultTrampoline(PEGTransformer &transformer,
+                                                          GeneratedTransformProcess &process) {
+	auto expression = process.TakeResult<unique_ptr<ParsedExpression>>(0);
+	auto result = TransformDomainSetDefault(transformer, std::move(expression));
+	return transformer.MakeResult<unique_ptr<AlterInfo>>(std::move(result));
+}
+
+void PEGTransformerFactory::InitializeDomainDropDefaultTrampoline(PEGTransformer &transformer,
+                                                                  GeneratedTransformProcess &process) {
+	process.ReserveChildSlots(0);
+}
+
+arena_ptr<TransformResultValue>
+PEGTransformerFactory::FinalizeDomainDropDefaultTrampoline(PEGTransformer &transformer,
+                                                           GeneratedTransformProcess &process) {
+	auto result = TransformDomainDropDefault(transformer);
+	return transformer.MakeResult<unique_ptr<AlterInfo>>(std::move(result));
+}
+
+void PEGTransformerFactory::InitializeDomainSetNotNullTrampoline(PEGTransformer &transformer,
+                                                                 GeneratedTransformProcess &process) {
+	process.ReserveChildSlots(0);
+}
+
+arena_ptr<TransformResultValue>
+PEGTransformerFactory::FinalizeDomainSetNotNullTrampoline(PEGTransformer &transformer,
+                                                          GeneratedTransformProcess &process) {
+	auto result = TransformDomainSetNotNull(transformer);
+	return transformer.MakeResult<unique_ptr<AlterInfo>>(std::move(result));
+}
+
+void PEGTransformerFactory::InitializeDomainDropNotNullTrampoline(PEGTransformer &transformer,
+                                                                  GeneratedTransformProcess &process) {
+	process.ReserveChildSlots(0);
+}
+
+arena_ptr<TransformResultValue>
+PEGTransformerFactory::FinalizeDomainDropNotNullTrampoline(PEGTransformer &transformer,
+                                                           GeneratedTransformProcess &process) {
+	auto result = TransformDomainDropNotNull(transformer);
+	return transformer.MakeResult<unique_ptr<AlterInfo>>(std::move(result));
+}
+
+void PEGTransformerFactory::InitializeDomainDropConstraintTrampoline(PEGTransformer &transformer,
+                                                                     GeneratedTransformProcess &process) {
+	auto &list_pr = process.parse_result.Cast<ListParseResult>();
+	process.ReserveChildSlots(3);
+	auto &drop_behavior_opt = list_pr.GetChild(4).Cast<OptionalParseResult>();
+	if (drop_behavior_opt.HasResult()) {
+		process.PushChild({drop_behavior_opt.GetResult()}, 2);
+	}
+	process.PushChild({list_pr.GetChild(3)}, 1);
+	auto &if_exists_opt = list_pr.GetChild(2).Cast<OptionalParseResult>();
+	if (if_exists_opt.HasResult()) {
+		process.PushChild({if_exists_opt.GetResult()}, 0);
+	}
+}
+
+arena_ptr<TransformResultValue>
+PEGTransformerFactory::FinalizeDomainDropConstraintTrampoline(PEGTransformer &transformer,
+                                                              GeneratedTransformProcess &process) {
+	optional<bool> if_exists {};
+	if (process.child_results[0]) {
+		if_exists = process.TakeResult<bool>(0);
+	}
+	auto constraint_name = process.TakeResult<Identifier>(1);
+	optional<bool> drop_behavior {};
+	if (process.child_results[2]) {
+		drop_behavior = process.TakeResult<bool>(2);
+	}
+	auto result = TransformDomainDropConstraint(transformer, if_exists, constraint_name, drop_behavior);
+	return transformer.MakeResult<unique_ptr<AlterInfo>>(std::move(result));
+}
+
+void PEGTransformerFactory::InitializeDomainRenameConstraintTrampoline(PEGTransformer &transformer,
+                                                                       GeneratedTransformProcess &process) {
+	auto &list_pr = process.parse_result.Cast<ListParseResult>();
+	process.ReserveChildSlots(2);
+	process.PushChild({list_pr.GetChild(4)}, 1);
+	process.PushChild({list_pr.GetChild(2)}, 0);
+}
+
+arena_ptr<TransformResultValue>
+PEGTransformerFactory::FinalizeDomainRenameConstraintTrampoline(PEGTransformer &transformer,
+                                                                GeneratedTransformProcess &process) {
+	auto constraint_name = process.TakeResult<Identifier>(0);
+	auto constraint_name_1 = process.TakeResult<Identifier>(1);
+	auto result = TransformDomainRenameConstraint(transformer, constraint_name, constraint_name_1);
+	return transformer.MakeResult<unique_ptr<AlterInfo>>(std::move(result));
+}
+
+void PEGTransformerFactory::InitializeDomainRenameTrampoline(PEGTransformer &transformer,
+                                                             GeneratedTransformProcess &process) {
+	auto &list_pr = process.parse_result.Cast<ListParseResult>();
+	process.ReserveChildSlots(1);
+	process.PushChild({list_pr.GetChild(2)}, 0);
+}
+
+arena_ptr<TransformResultValue>
+PEGTransformerFactory::FinalizeDomainRenameTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process) {
+	auto col_id_or_string = process.TakeResult<Identifier>(0);
+	auto result = TransformDomainRename(transformer, col_id_or_string);
+	return transformer.MakeResult<unique_ptr<AlterInfo>>(std::move(result));
+}
+
+void PEGTransformerFactory::InitializeAddDomainConstraintTrampoline(PEGTransformer &transformer,
+                                                                    GeneratedTransformProcess &process) {
+	auto &list_pr = process.parse_result.Cast<ListParseResult>();
+	process.ReserveChildSlots(2);
+	auto &not_valid_opt = list_pr.GetChild(2).Cast<OptionalParseResult>();
+	if (not_valid_opt.HasResult()) {
+		process.PushChild({not_valid_opt.GetResult()}, 1);
+	}
+	process.PushChild({list_pr.GetChild(1)}, 0);
+}
+
+arena_ptr<TransformResultValue>
+PEGTransformerFactory::FinalizeAddDomainConstraintTrampoline(PEGTransformer &transformer,
+                                                             GeneratedTransformProcess &process) {
+	auto domain_constraint = process.TakeResult<ColumnConstraintEntry>(0);
+	optional<bool> not_valid {};
+	if (process.child_results[1]) {
+		not_valid = process.TakeResult<bool>(1);
+	}
+	auto result = TransformAddDomainConstraint(transformer, std::move(domain_constraint), not_valid);
+	return transformer.MakeResult<unique_ptr<AlterInfo>>(std::move(result));
+}
+
+void PEGTransformerFactory::InitializeNotValidTrampoline(PEGTransformer &transformer,
+                                                         GeneratedTransformProcess &process) {
+	process.ReserveChildSlots(0);
+}
+
+arena_ptr<TransformResultValue> PEGTransformerFactory::FinalizeNotValidTrampoline(PEGTransformer &transformer,
+                                                                                  GeneratedTransformProcess &process) {
+	auto result = TransformNotValid(transformer);
+	return transformer.MakeResult<bool>(result);
+}
+
+void PEGTransformerFactory::InitializeValidateConstraintTrampoline(PEGTransformer &transformer,
+                                                                   GeneratedTransformProcess &process) {
+	auto &list_pr = process.parse_result.Cast<ListParseResult>();
+	process.ReserveChildSlots(1);
+	process.PushChild({list_pr.GetChild(2)}, 0);
+}
+
+arena_ptr<TransformResultValue>
+PEGTransformerFactory::FinalizeValidateConstraintTrampoline(PEGTransformer &transformer,
+                                                            GeneratedTransformProcess &process) {
+	auto constraint_name = process.TakeResult<Identifier>(0);
+	auto result = TransformValidateConstraint(transformer, constraint_name);
 	return transformer.MakeResult<unique_ptr<AlterInfo>>(std::move(result));
 }
 
@@ -9583,6 +9869,135 @@ PEGTransformerFactory::FinalizeDropDatabaseForceTrampoline(PEGTransformer &trans
                                                            GeneratedTransformProcess &process) {
 	auto result = TransformDropDatabaseForce(transformer);
 	return transformer.MakeResult<bool>(result);
+}
+
+void PEGTransformerFactory::InitializeCreateDomainStmtTrampoline(PEGTransformer &transformer,
+                                                                 GeneratedTransformProcess &process) {
+	auto &list_pr = process.parse_result.Cast<ListParseResult>();
+	auto &repeat_opt = list_pr.GetChild(4).Cast<OptionalParseResult>();
+	idx_t dynamic_child_count = 0;
+	if (repeat_opt.HasResult()) {
+		auto &repeat_pr = repeat_opt.GetResult().Cast<RepeatParseResult>();
+		auto repeat_children = repeat_pr.GetChildren();
+		dynamic_child_count = repeat_children.size();
+		process.ReserveChildSlots(3 + dynamic_child_count - 1);
+		for (idx_t i = repeat_children.size(); i > 0; i--) {
+			auto child_idx = i - 1;
+			process.PushChild({repeat_children[child_idx].get()}, 2 + child_idx);
+		}
+	} else {
+		process.ReserveChildSlots(3 - 1);
+	}
+	process.PushChild({list_pr.GetChild(3)}, 1);
+	process.PushChild({list_pr.GetChild(1)}, 0);
+}
+
+arena_ptr<TransformResultValue>
+PEGTransformerFactory::FinalizeCreateDomainStmtTrampoline(PEGTransformer &transformer,
+                                                          GeneratedTransformProcess &process) {
+	auto &list_pr = process.parse_result.Cast<ListParseResult>();
+	idx_t dynamic_child_count = 0;
+	auto &dynamic_repeat_opt = list_pr.GetChild(4).Cast<OptionalParseResult>();
+	if (dynamic_repeat_opt.HasResult()) {
+		auto &dynamic_repeat_pr = dynamic_repeat_opt.GetResult().Cast<RepeatParseResult>();
+		auto dynamic_repeat_children = dynamic_repeat_pr.GetChildren();
+		dynamic_child_count = dynamic_repeat_children.size();
+	}
+	auto qualified_name = process.TakeResult<QualifiedName>(0);
+	bool has_result {};
+	auto &has_result_opt = list_pr.GetChild(2).Cast<OptionalParseResult>();
+	has_result = has_result_opt.HasResult();
+	auto type = process.TakeResult<LogicalType>(1);
+	optional<vector<ColumnConstraintEntry>> domain_clause {};
+	if (dynamic_child_count > 0) {
+		vector<ColumnConstraintEntry> domain_clause_value;
+		for (idx_t i = 2; i < 2 + dynamic_child_count; i++) {
+			domain_clause_value.push_back(process.TakeResult<ColumnConstraintEntry>(i));
+		}
+		domain_clause = std::move(domain_clause_value);
+	}
+	auto result = TransformCreateDomainStmt(transformer, qualified_name, has_result, type, std::move(domain_clause));
+	return transformer.MakeResult<unique_ptr<CreateStatement>>(std::move(result));
+}
+
+void PEGTransformerFactory::InitializeDomainClauseTrampoline(PEGTransformer &transformer,
+                                                             GeneratedTransformProcess &process) {
+	auto &list_pr = process.parse_result.Cast<ListParseResult>();
+	auto &choice_pr = list_pr.Child<ChoiceParseResult>(0);
+	auto &choice_result = choice_pr.GetResult();
+	process.ReserveChildSlots(1);
+	auto child_rule = choice_result.GetRule();
+	auto has_transform_process = child_rule && child_rule->transform_process;
+	if (!has_transform_process) {
+		throw InternalException("No transform process registered for rule '%s'", choice_result.Name());
+	}
+	process.PushChild({*child_rule, choice_result}, 0);
+}
+
+arena_ptr<TransformResultValue>
+PEGTransformerFactory::FinalizeDomainClauseTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process) {
+	auto result = process.TakeResult<ColumnConstraintEntry>(0);
+	return transformer.MakeResult<ColumnConstraintEntry>(std::move(result));
+}
+
+void PEGTransformerFactory::InitializeDomainConstraintTrampoline(PEGTransformer &transformer,
+                                                                 GeneratedTransformProcess &process) {
+	auto &list_pr = process.parse_result.Cast<ListParseResult>();
+	auto &choice_pr = list_pr.Child<ChoiceParseResult>(0);
+	auto &choice_result = choice_pr.GetResult();
+	process.ReserveChildSlots(1);
+	auto child_rule = choice_result.GetRule();
+	auto has_transform_process = child_rule && child_rule->transform_process;
+	if (!has_transform_process) {
+		throw InternalException("No transform process registered for rule '%s'", choice_result.Name());
+	}
+	process.PushChild({*child_rule, choice_result}, 0);
+}
+
+arena_ptr<TransformResultValue>
+PEGTransformerFactory::FinalizeDomainConstraintTrampoline(PEGTransformer &transformer,
+                                                          GeneratedTransformProcess &process) {
+	auto result = process.TakeResult<ColumnConstraintEntry>(0);
+	return transformer.MakeResult<ColumnConstraintEntry>(std::move(result));
+}
+
+void PEGTransformerFactory::InitializeNamedDomainConstraintTrampoline(PEGTransformer &transformer,
+                                                                      GeneratedTransformProcess &process) {
+	auto &list_pr = process.parse_result.Cast<ListParseResult>();
+	process.ReserveChildSlots(2);
+	process.PushChild({list_pr.GetChild(1)}, 1);
+	process.PushChild({list_pr.GetChild(0)}, 0);
+}
+
+arena_ptr<TransformResultValue>
+PEGTransformerFactory::FinalizeNamedDomainConstraintTrampoline(PEGTransformer &transformer,
+                                                               GeneratedTransformProcess &process) {
+	auto constraint_name_clause = process.TakeResult<Identifier>(0);
+	auto domain_constraint_element = process.TakeResult<ColumnConstraintEntry>(1);
+	auto result =
+	    TransformNamedDomainConstraint(transformer, constraint_name_clause, std::move(domain_constraint_element));
+	return transformer.MakeResult<ColumnConstraintEntry>(std::move(result));
+}
+
+void PEGTransformerFactory::InitializeDomainConstraintElementTrampoline(PEGTransformer &transformer,
+                                                                        GeneratedTransformProcess &process) {
+	auto &list_pr = process.parse_result.Cast<ListParseResult>();
+	auto &choice_pr = list_pr.Child<ChoiceParseResult>(0);
+	auto &choice_result = choice_pr.GetResult();
+	process.ReserveChildSlots(1);
+	auto child_rule = choice_result.GetRule();
+	auto has_transform_process = child_rule && child_rule->transform_process;
+	if (!has_transform_process) {
+		throw InternalException("No transform process registered for rule '%s'", choice_result.Name());
+	}
+	process.PushChild({*child_rule, choice_result}, 0);
+}
+
+arena_ptr<TransformResultValue>
+PEGTransformerFactory::FinalizeDomainConstraintElementTrampoline(PEGTransformer &transformer,
+                                                                 GeneratedTransformProcess &process) {
+	auto result = process.TakeResult<ColumnConstraintEntry>(0);
+	return transformer.MakeResult<ColumnConstraintEntry>(std::move(result));
 }
 
 void PEGTransformerFactory::InitializeCreateIndexStmtTrampoline(PEGTransformer &transformer,
@@ -15198,6 +15613,39 @@ arena_ptr<TransformResultValue> PEGTransformerFactory::FinalizeDropTypeTrampolin
 		qualified_type_name.push_back(process.TakeResult<QualifiedName>(i));
 	}
 	auto result = TransformDropType(transformer, if_exists, qualified_type_name);
+	return transformer.MakeResult<unique_ptr<DropStatement>>(std::move(result));
+}
+
+void PEGTransformerFactory::InitializeDropDomainTrampoline(PEGTransformer &transformer,
+                                                           GeneratedTransformProcess &process) {
+	auto &list_pr = process.parse_result.Cast<ListParseResult>();
+	auto list_items = ExtractParseResultsFromList(list_pr.GetChild(2));
+	auto dynamic_child_count = list_items.size();
+	process.ReserveChildSlots(2 + dynamic_child_count - 1);
+	for (idx_t i = list_items.size(); i > 0; i--) {
+		auto child_idx = i - 1;
+		process.PushChild({list_items[child_idx].get()}, 1 + child_idx);
+	}
+	auto &if_exists_opt = list_pr.GetChild(1).Cast<OptionalParseResult>();
+	if (if_exists_opt.HasResult()) {
+		process.PushChild({if_exists_opt.GetResult()}, 0);
+	}
+}
+
+arena_ptr<TransformResultValue>
+PEGTransformerFactory::FinalizeDropDomainTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process) {
+	auto &list_pr = process.parse_result.Cast<ListParseResult>();
+	auto dynamic_list_items = ExtractParseResultsFromList(list_pr.GetChild(2));
+	auto dynamic_child_count = dynamic_list_items.size();
+	optional<bool> if_exists {};
+	if (process.child_results[0]) {
+		if_exists = process.TakeResult<bool>(0);
+	}
+	vector<QualifiedName> qualified_type_name;
+	for (idx_t i = 1; i < 1 + dynamic_child_count; i++) {
+		qualified_type_name.push_back(process.TakeResult<QualifiedName>(i));
+	}
+	auto result = TransformDropDomain(transformer, if_exists, qualified_type_name);
 	return transformer.MakeResult<unique_ptr<DropStatement>>(std::move(result));
 }
 

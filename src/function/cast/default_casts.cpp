@@ -52,6 +52,7 @@ BoundCastInfo BoundCastInfo::Copy() const {
 	auto result = BoundCastInfo(function, cast_data ? cast_data->Copy() : nullptr, init_local_state);
 	result.statistics = statistics;
 	result.bucket_rewrite = bucket_rewrite;
+	result.checks_domain = checks_domain;
 	return result;
 }
 

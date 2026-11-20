@@ -1,0 +1,5 @@
+CreateDomainStmt <- 'DOMAIN' QualifiedName 'AS'? Type DomainClause*
+DomainClause <- DomainConstraint / DefaultValue / ColumnCollation
+DomainConstraint <- NamedDomainConstraint / DomainConstraintElement
+NamedDomainConstraint <- ConstraintNameClause DomainConstraintElement
+DomainConstraintElement <- NotNullConstraint / CheckConstraint

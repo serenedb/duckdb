@@ -82,6 +82,10 @@ idx_t Catalog::GetOid() {
 	return GetAttached().oid;
 }
 
+optional_ptr<CatalogEntry> Catalog::LookupOid(CatalogTransaction transaction, idx_t oid) {
+	return nullptr;
+}
+
 Catalog &Catalog::GetSystemCatalog(ClientContext &context) {
 	return Catalog::GetSystemCatalog(*context.db);
 }

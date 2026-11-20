@@ -5,6 +5,7 @@
 #include "duckdb/parser/peg/transformer/peg_transformer.hpp"
 #include "duckdb/parser/statement/alter_statement.hpp"
 #include "duckdb/parser/parsed_data/alter_info.hpp"
+#include "duckdb/parser/parsed_data/alter_domain_info.hpp"
 #include "duckdb/parser/parsed_data/alter_job_info.hpp"
 #include "duckdb/parser/parsed_data/alter_table_info.hpp"
 #include "duckdb/parser/parsed_data/alter_scalar_function_info.hpp"
@@ -158,6 +159,75 @@ CatalogType PEGTransformerFactory::TransformSetSchemaProcedure(PEGTransformer &t
 
 CatalogType PEGTransformerFactory::TransformSetSchemaDictionary(PEGTransformer &transformer) {
 	return CatalogType::TOKENIZER_ENTRY;
+}
+
+CatalogType PEGTransformerFactory::TransformSetSchemaDomain(PEGTransformer &transformer) {
+	throw NotImplementedException("ALTER DOMAIN ... SET SCHEMA is not supported");
+}
+
+unique_ptr<AlterInfo> PEGTransformerFactory::TransformAlterDomainStmt(PEGTransformer &transformer,
+                                                                      const QualifiedName &qualified_name,
+                                                                      unique_ptr<AlterInfo> alter_domain_action) {
+	alter_domain_action->SetQualifiedName(qualified_name);
+	alter_domain_action->if_not_found = OnEntryNotFound::THROW_EXCEPTION;
+	return alter_domain_action;
+}
+
+unique_ptr<AlterInfo> PEGTransformerFactory::TransformDomainSetDefault(PEGTransformer &transformer,
+                                                                       unique_ptr<ParsedExpression> expression) {
+	auto result = make_uniq<AlterDomainInfo>(AlterDomainType::SET_DEFAULT, AlterEntryData());
+	result->default_value = std::move(expression);
+	return std::move(result);
+}
+
+unique_ptr<AlterInfo> PEGTransformerFactory::TransformDomainDropDefault(PEGTransformer &transformer) {
+	return make_uniq_base<AlterInfo, AlterDomainInfo>(AlterDomainType::DROP_DEFAULT, AlterEntryData());
+}
+
+unique_ptr<AlterInfo> PEGTransformerFactory::TransformDomainSetNotNull(PEGTransformer &transformer) {
+	return make_uniq_base<AlterInfo, AlterDomainInfo>(AlterDomainType::SET_NOT_NULL, AlterEntryData());
+}
+
+unique_ptr<AlterInfo> PEGTransformerFactory::TransformDomainDropNotNull(PEGTransformer &transformer) {
+	return make_uniq_base<AlterInfo, AlterDomainInfo>(AlterDomainType::DROP_NOT_NULL, AlterEntryData());
+}
+
+unique_ptr<AlterInfo> PEGTransformerFactory::TransformDomainDropConstraint(PEGTransformer &transformer,
+                                                                           const optional<bool> &if_exists,
+                                                                           const Identifier &identifier,
+                                                                           const optional<bool> &drop_behavior) {
+	auto result = make_uniq<AlterDomainInfo>(AlterDomainType::DROP_CONSTRAINT, AlterEntryData());
+	result->constraint_name = identifier.GetIdentifierName();
+	result->constraint_if_exists = if_exists && *if_exists;
+	result->cascade = drop_behavior && *drop_behavior;
+	return std::move(result);
+}
+
+unique_ptr<AlterInfo> PEGTransformerFactory::TransformDomainRenameConstraint(PEGTransformer &transformer,
+                                                                             const Identifier &identifier,
+                                                                             const Identifier &identifier_1) {
+	auto result = make_uniq<AlterDomainInfo>(AlterDomainType::RENAME_CONSTRAINT, AlterEntryData());
+	result->constraint_name = identifier.GetIdentifierName();
+	result->new_constraint_name = identifier_1.GetIdentifierName();
+	return std::move(result);
+}
+
+unique_ptr<AlterInfo> PEGTransformerFactory::TransformValidateConstraint(PEGTransformer &transformer,
+                                                                         const Identifier &constraint_name) {
+	auto result = make_uniq<AlterDomainInfo>(AlterDomainType::VALIDATE_CONSTRAINT, AlterEntryData());
+	result->constraint_name = constraint_name.GetIdentifierName();
+	return std::move(result);
+}
+
+bool PEGTransformerFactory::TransformNotValid(PEGTransformer &transformer) {
+	return true;
+}
+
+unique_ptr<AlterInfo> PEGTransformerFactory::TransformDomainRename(PEGTransformer &transformer,
+                                                                   const Identifier &identifier) {
+	auto result = make_uniq<AlterDomainInfo>(AlterDomainType::RENAME, AlterEntryData());
+	result->new_name = identifier;
+	return std::move(result);
 }
 
 unique_ptr<AlterInfo> PEGTransformerFactory::TransformAlterDatabaseStmt(PEGTransformer &transformer,

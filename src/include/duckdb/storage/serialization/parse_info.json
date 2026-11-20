@@ -1591,5 +1591,61 @@
         "default": "Identifier()"
       }
     ]
+  },
+  {
+    "class": "AlterDomainInfo",
+    "base": "AlterInfo",
+    "enum": "ALTER_DOMAIN",
+    "includes": [
+      "duckdb/parser/parsed_data/alter_domain_info.hpp"
+    ],
+    "members": [
+      {
+        "id": 300,
+        "name": "alter_domain_type",
+        "type": "AlterDomainType"
+      },
+      {
+        "id": 301,
+        "name": "default_value",
+        "type": "unique_ptr<ParsedExpression>",
+        "default": "nullptr"
+      },
+      {
+        "id": 302,
+        "name": "constraint",
+        "type": "DomainConstraint"
+      },
+      {
+        "id": 303,
+        "name": "constraint_name",
+        "type": "string",
+        "default": "string()"
+      },
+      {
+        "id": 304,
+        "name": "new_constraint_name",
+        "type": "string",
+        "default": "string()"
+      },
+      {
+        "id": 305,
+        "name": "constraint_if_exists",
+        "type": "bool",
+        "default": "false"
+      },
+      {
+        "id": 306,
+        "name": "cascade",
+        "type": "bool",
+        "default": "false"
+      },
+      {
+        "id": 307,
+        "name": "new_name",
+        "type": "Identifier",
+        "default": "Identifier()"
+      }
+    ]
   }
 ]

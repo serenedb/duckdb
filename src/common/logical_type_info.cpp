@@ -15,10 +15,18 @@ namespace duckdb {
 // Extension Type Info
 //===--------------------------------------------------------------------===//
 
+bool ExtensionTypeInfo::IsDomain(optional_ptr<const ExtensionTypeInfo> type_info) {
+	return type_info && type_info->properties.contains(ExtensionTypeInfo::DOMAIN_PROPERTY);
+}
+
 bool ExtensionTypeInfo::Equals(optional_ptr<ExtensionTypeInfo> lhs, optional_ptr<ExtensionTypeInfo> rhs) {
 	// Either both are null, or both are the same, so they are equal
 	if (lhs.get() == rhs.get()) {
 		return true;
+	}
+	// A domain never equals its base type, even when the other side has no extension info
+	if (IsDomain(lhs.get()) != IsDomain(rhs.get())) {
+		return false;
 	}
 	// If one is null, then we cant compare them
 	if (lhs == nullptr || rhs == nullptr) {

@@ -763,13 +763,14 @@ UnreservedKeyword <- 'ABORT' /
 'ZONE'
 AlterStatement <- 'ALTER' AlterOptions
 
-AlterOptions <- AlterSetSchemaStmt / AlterTableStmt / AlterViewStmt / AlterIndexStmt / AlterFunctionStmt / AlterSequenceStmt / AlterDatabaseStmt / AlterSchemaStmt / AlterJobStmt
+AlterOptions <- AlterSetSchemaStmt / AlterTableStmt / AlterViewStmt / AlterIndexStmt / AlterFunctionStmt / AlterSequenceStmt / AlterDatabaseStmt / AlterSchemaStmt / AlterJobStmt / AlterDomainStmt
 
 AlterSetSchemaStmt <- SetSchemaEntryType IfExists? BaseTableName 'SET' 'SCHEMA' ColId
 SetSchemaEntryType <- CommentTable / CommentView / CommentSequence / CommentType / CommentFunction / SetSchemaProcedure /
-        CommentMacroTable / CommentMacro / SetSchemaDictionary
+        CommentMacroTable / CommentMacro / SetSchemaDictionary / SetSchemaDomain
 SetSchemaProcedure <- 'PROCEDURE'
 SetSchemaDictionary <- 'TEXT' 'SEARCH' 'DICTIONARY'
+SetSchemaDomain <- 'DOMAIN'
 
 AlterJobStmt <- 'JOB' IfExists? QualifiedName AlterJobAction
 AlterJobAction <- AlterJobRename / AlterJobSuspend / AlterJobResume / AlterJobSetSchedule
@@ -845,6 +846,20 @@ SeqRestart <- 'RESTART' SeqRestartValue?
 SeqRestartValue <- 'WITH'? Expression
 
 AlterDatabaseStmt <- 'DATABASE' IfExists? Identifier 'SET' 'ALIAS' 'TO' Identifier
+
+AlterDomainStmt <- 'DOMAIN' QualifiedName AlterDomainAction
+AlterDomainAction <- DomainSetDefault / DomainDropDefault / DomainSetNotNull / DomainDropNotNull /
+        AddDomainConstraint / DomainDropConstraint / DomainRenameConstraint / ValidateConstraint / DomainRename
+DomainSetDefault <- 'SET' 'DEFAULT' Expression
+DomainDropDefault <- 'DROP' 'DEFAULT'
+DomainSetNotNull <- 'SET' 'NOT' 'NULL'
+DomainDropNotNull <- 'DROP' 'NOT' 'NULL'
+DomainDropConstraint <- 'DROP' 'CONSTRAINT' IfExists? ConstraintName DropBehavior?
+DomainRenameConstraint <- 'RENAME' 'CONSTRAINT' ConstraintName 'TO' ConstraintName
+DomainRename <- 'RENAME' 'TO' ColIdOrString
+AddDomainConstraint <- 'ADD' DomainConstraint NotValid?
+NotValid <- 'NOT' 'VALID'
+ValidateConstraint <- 'VALIDATE' 'CONSTRAINT' ConstraintName
 
 AnalyzeStatement <- AnalyzeKeyword AnalyzeVerbose? AnalyzeTarget?
 AnalyzeTarget <- BaseTableName NameList?
@@ -969,6 +984,12 @@ CopyData <- 'DATA'
 CreateDatabaseStatement <- 'CREATE' 'DATABASE' IfNotExists? CatalogName WithList?
 DropDatabaseStatement <- 'DROP' 'DATABASE' IfExists? CatalogName DropDatabaseForce? DropBehavior?
 DropDatabaseForce <- '(' 'FORCE' ')'
+
+CreateDomainStmt <- 'DOMAIN' QualifiedName 'AS'? Type DomainClause*
+DomainClause <- DomainConstraint / DefaultValue / ColumnCollation
+DomainConstraint <- NamedDomainConstraint / DomainConstraintElement
+NamedDomainConstraint <- ConstraintNameClause DomainConstraintElement
+DomainConstraintElement <- NotNullConstraint / CheckConstraint
 
 CreateIndexStmt <- UniqueIndex? 'INDEX' IfNotExists? IndexName? 'ON' BaseTableName IndexType? IndexColumns WithList? WhereClause?
 
@@ -1127,7 +1148,7 @@ SubscriptionOwnerAction <- 'OWNER' 'TO' OwnerRoleSpec
 SubscriptionSetOptions <- 'SET' Parens(List(SubscriptionOption))
 
 CreateStatement <- 'CREATE' OrReplace? Temporary? CreateStatementVariation
-CreateStatementVariation <- CreateTableStmt / CreateMacroStmt / CreateSequenceStmt / CreateTypeStmt / CreateSchemaStmt / CreateViewStmt / CreateIndexStmt / CreateSecretStmt / CreateTriggerStmt / CreateJobStmt
+CreateStatementVariation <- CreateTableStmt / CreateMacroStmt / CreateSequenceStmt / CreateTypeStmt / CreateSchemaStmt / CreateViewStmt / CreateIndexStmt / CreateSecretStmt / CreateTriggerStmt / CreateJobStmt / CreateDomainStmt
 OrReplace <- 'OR' 'REPLACE'
 Temporary <- Persistent / TempPersistent / TemporaryPersistent
 Persistent <- 'PERSISTENT'
@@ -1363,6 +1384,7 @@ DropEntries <-
 	DropSequence /
 	DropCollation /
 	DropType /
+	DropDomain /
 	DropSecret /
 	DropTrigger /
 	DropJob
@@ -1384,6 +1406,7 @@ CatalogReservedSchemaIndex <- CatalogQualification ReservedSchemaQualification R
 DropSequence <- 'SEQUENCE' IfExists? List(QualifiedSequenceName)
 DropCollation <- 'COLLATION' IfExists? List(CollationName)
 DropType <- 'TYPE' IfExists? List(QualifiedTypeName)
+DropDomain <- 'DOMAIN' IfExists? List(QualifiedTypeName)
 DropSecret <- Temporary? 'SECRET' IfExists? SecretName DropSecretStorage?
 
 TableOrView <- CommentTable / CommentView / MaterializedViewEntry
@@ -2080,7 +2103,7 @@ PasswordNullOption  <- 'PASSWORD' 'NULL'
 # before the native AlterStatement so OWNER TO is intercepted (DuckDB's alter
 # binder does not support ownership changes).
 AlterOwnerStatement <- 'ALTER' OwnerObjectType QualifiedName 'OWNER' 'TO' OwnerRoleSpec
-OwnerObjectType <- 'TABLE' / 'VIEW' / 'SEQUENCE' / 'SCHEMA' / 'TYPE' / 'JOB'
+OwnerObjectType <- 'TABLE' / 'VIEW' / 'SEQUENCE' / 'SCHEMA' / 'TYPE' / 'DOMAIN' / 'JOB'
 OwnerRoleSpec <- 'CURRENT_USER' / 'SESSION_USER' / 'CURRENT_ROLE' / ColId
 
 # ALTER DEFAULT PRIVILEGES [FOR ROLE r,...] [IN SCHEMA s,...] (GRANT|REVOKE) ...

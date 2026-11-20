@@ -1,5 +1,6 @@
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/catalog/catalog_entry/duck_table_entry.hpp"
+#include "duckdb/catalog/catalog_entry/type_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/view_catalog_entry.hpp"
 #include "duckdb/catalog/duck_catalog.hpp"
 #include "duckdb/execution/index/art/art.hpp"
@@ -21,6 +22,10 @@
 #include "duckdb/planner/operator/logical_create_index.hpp"
 #include "duckdb/planner/operator/logical_get.hpp"
 #include "duckdb/planner/operator/logical_alter.hpp"
+#include "duckdb/planner/expression_binder/constant_binder.hpp"
+#include "duckdb/planner/expression_binder/check_binder.hpp"
+#include "duckdb/parser/parsed_data/alter_domain_info.hpp"
+#include "duckdb/execution/expression_executor.hpp"
 
 namespace duckdb {
 
@@ -322,6 +327,53 @@ BoundStatement Binder::Bind(AlterStatement &stmt) {
 	}
 
 	D_ASSERT(!entry->deleted);
+	if (stmt.info->type == AlterType::ALTER_DOMAIN) {
+		auto &type_entry = entry->Cast<TypeCatalogEntry>();
+		if (!type_entry.domain_info) {
+			throw BinderException("\"%s\" is not a domain", type_entry.name.GetIdentifierName());
+		}
+		auto &alter = stmt.info->Cast<AlterDomainInfo>();
+		if (alter.alter_domain_type == AlterDomainType::ADD_CONSTRAINT && alter.constraint.validated) {
+			throw NotImplementedException("ALTER DOMAIN ... ADD CONSTRAINT without NOT VALID is not supported");
+		}
+		if (alter.alter_domain_type == AlterDomainType::SET_NOT_NULL) {
+			throw NotImplementedException("ALTER DOMAIN ... SET NOT NULL is not supported");
+		}
+		if (alter.alter_domain_type == AlterDomainType::VALIDATE_CONSTRAINT) {
+			throw NotImplementedException("ALTER DOMAIN ... VALIDATE CONSTRAINT is not supported");
+		}
+		const auto &base_type = type_entry.domain_info->base_type;
+		auto domain_binder =
+		    CreateBinderWithSearchPath(type_entry.ParentCatalog().GetName(), type_entry.ParentSchemaName());
+		if (alter.alter_domain_type == AlterDomainType::SET_DEFAULT) {
+			auto default_copy = alter.default_value->Copy();
+			if (default_copy->HasParameter()) {
+				throw BinderException("DEFAULT values cannot contain parameters");
+			}
+			ConstantBinder default_value_binder(*domain_binder, context, "DEFAULT value");
+			default_value_binder.target_type = base_type;
+			auto bound = default_value_binder.Bind(default_copy);
+			if (bound->IsFoldable()) {
+				ExpressionExecutor::EvaluateScalar(context, *bound);
+			}
+		} else if (alter.alter_domain_type == AlterDomainType::ADD_CONSTRAINT &&
+		           alter.constraint.type == ConstraintType::CHECK) {
+			auto check_copy = alter.constraint.expression->Copy();
+			if (check_copy->HasParameter()) {
+				throw BinderException("CHECK expression cannot contain parameters");
+			}
+			ColumnList columns;
+			columns.AddColumn(ColumnDefinition(Identifier("value"), base_type));
+			physical_index_set_t bound_columns;
+			CheckBinder check_binder(*domain_binder, context, type_entry.name, columns, bound_columns);
+			check_binder.target_type = LogicalType();
+			auto bound = check_binder.Bind(check_copy);
+			if (bound->GetReturnType().id() != LogicalTypeId::BOOLEAN) {
+				throw BinderException("argument of CHECK must be type boolean");
+			}
+		}
+	}
+
 	auto &catalog = entry->ParentCatalog();
 
 	// Bind types in the same catalog as the entry

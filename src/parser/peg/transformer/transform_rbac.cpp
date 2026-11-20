@@ -636,6 +636,9 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformAlterOwnerStatement(PEG
 	// LIST is the CHOICE (mirrors LoginOption handling above).
 	auto &obj_kw =
 	    list_pr.GetChild(1).Cast<ListParseResult>().Child<ChoiceParseResult>(0).GetResult().Cast<KeywordParseResult>();
+	if (StringUtil::Upper(obj_kw.keyword) == "DOMAIN") {
+		throw NotImplementedException("ALTER DOMAIN ... OWNER TO is not supported");
+	}
 	auto info = make_uniq<AlterPermissionsInfo>(GrantObjectType(StringUtil::Upper(obj_kw.keyword)),
 	                                            transformer.Transform<QualifiedName>(list_pr.GetChild(2)));
 

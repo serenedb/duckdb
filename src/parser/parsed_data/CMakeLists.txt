@@ -31,6 +31,7 @@ add_library_unity(
   create_subscription_info.cpp
   create_tokenizer_info.cpp
   create_job_info.cpp
+  alter_domain_info.cpp
   alter_job_info.cpp
   create_trigger_info.cpp
   create_schema_info.cpp
@@ -42,6 +43,7 @@ add_library_unity(
   create_window_function_info.cpp
   detach_info.cpp
   disconnect_info.cpp
+  domain_info.cpp
   drop_info.cpp
   exported_table_data.cpp
   extra_drop_info.cpp

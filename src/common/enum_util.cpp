@@ -201,6 +201,7 @@
 #include "duckdb/parser/expression/window_expression.hpp"
 #include "duckdb/parser/literal.hpp"
 #include "duckdb/parser/parsed_data/alter_database_info.hpp"
+#include "duckdb/parser/parsed_data/alter_domain_info.hpp"
 #include "duckdb/parser/parsed_data/alter_info.hpp"
 #include "duckdb/parser/parsed_data/alter_scalar_function_info.hpp"
 #include "duckdb/parser/parsed_data/alter_schema_info.hpp"
@@ -565,6 +566,31 @@ AlterDatabaseType EnumUtil::FromString<AlterDatabaseType>(std::string_view value
 	return static_cast<AlterDatabaseType>(StringUtil::StringToEnum(GetAlterDatabaseTypeValues(), 1, "AlterDatabaseType", value));
 }
 
+const StringUtil::EnumStringLiteral *GetAlterDomainTypeValues() {
+	static constexpr StringUtil::EnumStringLiteral values[] {
+		{ static_cast<uint32_t>(AlterDomainType::SET_DEFAULT), "SET_DEFAULT" },
+		{ static_cast<uint32_t>(AlterDomainType::DROP_DEFAULT), "DROP_DEFAULT" },
+		{ static_cast<uint32_t>(AlterDomainType::SET_NOT_NULL), "SET_NOT_NULL" },
+		{ static_cast<uint32_t>(AlterDomainType::DROP_NOT_NULL), "DROP_NOT_NULL" },
+		{ static_cast<uint32_t>(AlterDomainType::ADD_CONSTRAINT), "ADD_CONSTRAINT" },
+		{ static_cast<uint32_t>(AlterDomainType::DROP_CONSTRAINT), "DROP_CONSTRAINT" },
+		{ static_cast<uint32_t>(AlterDomainType::RENAME_CONSTRAINT), "RENAME_CONSTRAINT" },
+		{ static_cast<uint32_t>(AlterDomainType::VALIDATE_CONSTRAINT), "VALIDATE_CONSTRAINT" },
+		{ static_cast<uint32_t>(AlterDomainType::RENAME), "RENAME" }
+	};
+	return values;
+}
+
+template<>
+const char* EnumUtil::ToChars<AlterDomainType>(AlterDomainType value) {
+	return StringUtil::EnumToString(GetAlterDomainTypeValues(), 9, "AlterDomainType", static_cast<uint32_t>(value));
+}
+
+template<>
+AlterDomainType EnumUtil::FromString<AlterDomainType>(std::string_view value) {
+	return static_cast<AlterDomainType>(StringUtil::StringToEnum(GetAlterDomainTypeValues(), 9, "AlterDomainType", value));
+}
+
 const StringUtil::EnumStringLiteral *GetAlterForeignKeyTypeValues() {
 	static constexpr StringUtil::EnumStringLiteral values[] {
 		{ static_cast<uint32_t>(AlterForeignKeyType::AFT_ADD), "AFT_ADD" },
@@ -755,19 +781,20 @@ const StringUtil::EnumStringLiteral *GetAlterTypeValues() {
 		{ static_cast<uint32_t>(AlterType::ALTER_INDEX), "ALTER_INDEX" },
 		{ static_cast<uint32_t>(AlterType::REPLACE_DEFINITION), "REPLACE_DEFINITION" },
 		{ static_cast<uint32_t>(AlterType::ALTER_JOB), "ALTER_JOB" },
-		{ static_cast<uint32_t>(AlterType::SET_SCHEMA), "SET_SCHEMA" }
+		{ static_cast<uint32_t>(AlterType::SET_SCHEMA), "SET_SCHEMA" },
+		{ static_cast<uint32_t>(AlterType::ALTER_DOMAIN), "ALTER_DOMAIN" }
 	};
 	return values;
 }
 
 template<>
 const char* EnumUtil::ToChars<AlterType>(AlterType value) {
-	return StringUtil::EnumToString(GetAlterTypeValues(), 17, "AlterType", static_cast<uint32_t>(value));
+	return StringUtil::EnumToString(GetAlterTypeValues(), 18, "AlterType", static_cast<uint32_t>(value));
 }
 
 template<>
 AlterType EnumUtil::FromString<AlterType>(std::string_view value) {
-	return static_cast<AlterType>(StringUtil::StringToEnum(GetAlterTypeValues(), 17, "AlterType", value));
+	return static_cast<AlterType>(StringUtil::StringToEnum(GetAlterTypeValues(), 18, "AlterType", value));
 }
 
 const StringUtil::EnumStringLiteral *GetAlterViewTypeValues() {

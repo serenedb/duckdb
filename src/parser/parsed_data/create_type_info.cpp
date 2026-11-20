@@ -29,6 +29,7 @@ unique_ptr<CreateInfo> CreateTypeInfo::Copy() const {
 		result->query = query->Copy();
 	}
 	result->constructors = constructors;
+	result->domain_info = domain_info ? domain_info->Copy() : nullptr;
 	return std::move(result);
 }
 

@@ -9,6 +9,7 @@
 #include "duckdb/function/cast/cast_function_set.hpp"
 #include "duckdb/main/config.hpp"
 #include "duckdb/storage/statistics/base_statistics.hpp"
+#include "duckdb/common/extension_type_info.hpp"
 
 namespace duckdb {
 
@@ -25,12 +26,12 @@ static BoundCastInfo BindDefaultCastScalarFunction(const LogicalType &source, co
 	return cast_functions.GetCastFunction(source, target, input);
 }
 
-//! Casts to UNION types must run even for constant NULL inputs (the union member tag is set even for NULL values),
-//! so we disable the executor's constant-NULL short-circuit for those. For all other targets casts propagate NULLs
-//! normally, and using default NULL handling keeps Expression::PropagatesNullValues() accurate for the optimizer.
+//! Casts to UNION types and DOMAIN must run even for constant NULL inputs (the union member tag is set even for NULL
+//! values), so we disable the executor's constant-NULL short-circuit for those. For all other targets casts propagate
+//! NULLs normally, and using default NULL handling keeps Expression::PropagatesNullValues() accurate for the optimizer.
 template <class FUNC>
 static void SetCastNullHandling(FUNC &function, const LogicalType &target_type) {
-	if (target_type.id() == LogicalTypeId::UNION) {
+	if (target_type.id() == LogicalTypeId::UNION || ExtensionTypeInfo::IsDomain(target_type.GetExtensionInfo())) {
 		function.SetNullHandling(FunctionNullHandling::SPECIAL_HANDLING);
 	}
 }
@@ -39,6 +40,9 @@ static void SetCastNullHandling(FUNC &function, const LogicalType &target_type) 
 //! between the types at all, in which case the cast throws for every non-NULL value
 static bool BoundCastCanThrow(const BoundCastInfo &bound_cast, const LogicalType &source_type,
                               const LogicalType &target_type, bool try_cast) {
+	if (bound_cast.checks_domain) {
+		return !try_cast;
+	}
 	if (bound_cast.IsNopCast()) {
 		return false; // The cast does not do anything
 	}
@@ -203,8 +207,12 @@ unique_ptr<Expression> BoundCastExpression::CreateDefault(unique_ptr<Expression>
 }
 
 bool BoundCastExpression::IsCast(const Expression &expr) {
-	return expr.GetExpressionClass() == ExpressionClass::BOUND_FUNCTION &&
-	       expr.GetExpressionType() == ExpressionType::OPERATOR_CAST;
+	if (expr.GetExpressionClass() != ExpressionClass::BOUND_FUNCTION ||
+	    expr.GetExpressionType() != ExpressionType::OPERATOR_CAST) {
+		return false;
+	}
+	auto &cast = expr.Cast<BoundFunctionExpression>();
+	return !cast.BindInfo() || !GetBoundCast(cast).checks_domain;
 }
 
 const Expression &BoundCastExpression::Child(const BoundFunctionExpression &cast_expr) {

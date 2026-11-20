@@ -9,6 +9,7 @@
 #pragma once
 
 #include "duckdb/parser/parsed_data/create_info.hpp"
+#include "duckdb/parser/parsed_data/domain_info.hpp"
 #include "duckdb/parser/statement/select_statement.hpp"
 
 #include "duckdb/common/identifier.hpp"
@@ -34,6 +35,8 @@ struct CreateTypeInfo : public CreateInfo {
 	unique_ptr<SQLStatement> query;
 	//! The constructors used to bind type modifiers to the type
 	TypeConstructorSet constructors;
+	//! Used by create domain
+	unique_ptr<DomainInfo> domain_info;
 
 public:
 	unique_ptr<CreateInfo> Copy() const override;

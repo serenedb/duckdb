@@ -81,6 +81,10 @@ LogicalType ExpressionBinder::BindTypeExpression(TypeExpression &type_expr) {
 	D_ASSERT(entry != nullptr);
 	auto &type_entry = entry->Cast<TypeCatalogEntry>();
 
+	if (type_entry.domain_info) {
+		Binder::RegisterEntryRead(&binder, context, type_entry);
+	}
+
 	// Now handle type parameters
 	auto &unbound_parameters = type_expr.GetChildren();
 
