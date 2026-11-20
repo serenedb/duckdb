@@ -1,0 +1,35 @@
+# name: test/sql/json/table/read_json_array_framing.test
+# description: records of JSON arrays and unstructured files are framed past strings that hold brackets, quotes and backslash runs, wherever they fall in a 64-byte block
+# group: [table]
+
+require json
+
+statement ok
+CREATE TABLE framing AS SELECT i, repeat(chr(92), i % 7) || '"' || repeat('}', i % 3) || '{[' || repeat('x', i % 64) || ']' || repeat(chr(92), i % 5) AS s, {'a': [i, i % 3], 'b': {'c': repeat('[', i % 4)}} AS n FROM range(3000) t(i);
+
+statement ok
+COPY (FROM framing ORDER BY i) TO '{TEMP_DIR}/framing_lines.json' (FORMAT json, ARRAY true);
+
+statement ok
+COPY (SELECT '[' || string_agg(to_json(framing)::VARCHAR, ',' ORDER BY i) || ']' FROM framing) TO '{TEMP_DIR}/framing_one_line.json' (FORMAT csv, HEADER false, QUOTE '', ESCAPE '');
+
+statement ok
+COPY (SELECT string_agg(to_json(framing)::VARCHAR, ' ' ORDER BY i) FROM framing) TO '{TEMP_DIR}/framing_values.json' (FORMAT csv, HEADER false, QUOTE '', ESCAPE '');
+
+foreach file,format framing_lines,array framing_one_line,array framing_values,unstructured
+
+query I
+SELECT count(*) FROM read_json('{TEMP_DIR}/{file}.json', format = '{format}', columns = {i: 'BIGINT', s: 'VARCHAR', n: 'STRUCT(a BIGINT[], b STRUCT(c VARCHAR))'});
+----
+3000
+
+query I
+SELECT count(*) FROM (
+	(FROM read_json('{TEMP_DIR}/{file}.json', format = '{format}', columns = {i: 'BIGINT', s: 'VARCHAR', n: 'STRUCT(a BIGINT[], b STRUCT(c VARCHAR))'}) EXCEPT ALL FROM framing)
+	UNION ALL
+	(FROM framing EXCEPT ALL FROM read_json('{TEMP_DIR}/{file}.json', format = '{format}', columns = {i: 'BIGINT', s: 'VARCHAR', n: 'STRUCT(a BIGINT[], b STRUCT(c VARCHAR))'}))
+);
+----
+0
+
+endloop
