@@ -37,6 +37,22 @@ constexpr idx_t LOOKUP_BYTES = 1 << 13;
 constexpr idx_t RANGE_MIN = 1 << 20;
 constexpr idx_t RANGE_MAX = 1 << 23;
 constexpr idx_t HOST_STREAM_RANGE = 1 << 21;
+constexpr idx_t HEAD_READ_BYTES = 1 << 16;
+
+class WholeFileSource final : public RowSource {
+public:
+	explicit WholeFileSource(const CSVBufferHandle &handle_p) : handle(handle_p) {
+	}
+
+	idx_t Read(char *data, idx_t count, idx_t offset) const override {
+		const idx_t available = offset < handle.actual_size ? MinValue(count, handle.actual_size - offset) : 0;
+		memcpy(data, handle.Ptr() + offset, available);
+		return available;
+	}
+
+private:
+	const CSVBufferHandle &handle;
+};
 
 bool LeanDecodes(const LogicalType &type) {
 	switch (type.id()) {
@@ -696,9 +712,26 @@ CsvScanGlobal::CsvScanGlobal(ClientContext &context_p, const CSVReaderOptions &o
 	if (num_columns == 0) {
 		throw InternalException("CSV scan of \"%s\" without columns", source.path);
 	}
+	RowSource *rows = host_stream.get();
+	if (!rows) {
+		row_source = make_uniq<CsvRowSource>(manager, size, source.bytes_read);
+		rows = row_source.get();
+	}
+	shared_ptr<CSVBufferHandle> whole_file;
+	if (!stream && size <= manager.GetBufferSize()) {
+		auto handle = Buffer(0);
+		if (handle && handle->actual_size >= size) {
+			whole_file = std::move(handle);
+		}
+	}
+	unique_ptr<WholeFileSource> whole_source;
+	if (whole_file) {
+		whole_source = make_uniq<WholeFileSource>(*whole_file);
+	}
+	RowSource &head = whole_source ? *whole_source : *rows;
 	if (copy) {
 		auto &copy_options = copy->options;
-		const char line_break = CopyInputLineBreak();
+		const char line_break = CopyInputLineBreak(head);
 		const auto dialect = copy->Text() ? RowDialect::PostgresText(copy_options.delimiter, line_break)
 		                                  : RowDialect::PostgresCsv(copy_options.delimiter, copy_options.quote,
 		                                                            copy_options.escape, line_break);
@@ -716,10 +749,9 @@ CsvScanGlobal::CsvScanGlobal(ClientContext &context_p, const CSVReaderOptions &o
 	for (auto &column : columns) {
 		lean_batches = lean_batches && !CsvScan::NeedsFlushCast(column);
 	}
-	shared_ptr<CSVBufferHandle> whole_file;
-	FindStart(size, whole_file);
+	FindStart(size, head);
 	if (copy && copy->options.header_match) {
-		MatchCopyHeader();
+		MatchCopyHeader(head);
 	}
 	idx_t range_bytes = DConstants::INVALID_INDEX;
 	if (!stream && !source.sniffing) {
@@ -730,11 +762,6 @@ CsvScanGlobal::CsvScanGlobal(ClientContext &context_p, const CSVReaderOptions &o
 	} else if (stream && !source.sniffing && options.parallel) {
 		const idx_t limit = host_stream ? HOST_STREAM_RANGE : RANGE_MAX;
 		range_bytes = MaxValue<idx_t>(MinValue<idx_t>(options.buffer_size_option.GetValue(), limit), 1);
-	}
-	RowSource *rows = host_stream.get();
-	if (!rows) {
-		row_source = make_uniq<CsvRowSource>(manager, size, source.bytes_read);
-		rows = row_source.get();
 	}
 	ranges = make_uniq<RowRanges>(*lean, *rows, start, size, range_bytes, skip_rows == 0);
 	ranges->path = source.path;
@@ -780,31 +807,23 @@ void CsvRowSource::Release(idx_t position) {
 	}
 }
 
-void CsvScanGlobal::FindStart(idx_t size, shared_ptr<CSVBufferHandle> &whole_file) {
-	auto handle = Buffer(0);
-	if (handle && handle->actual_size >= size) {
-		whole_file = handle;
-	}
+void CsvScanGlobal::FindStart(idx_t size, const RowSource &rows) {
 	if (skip_rows == 0) {
-		start = skip_bom ? SkipBom(handle->Ptr(), handle->actual_size) : 0;
+		char head[3];
+		start = skip_bom ? SkipBom(head, rows.Read(head, sizeof(head), 0)) : 0;
 		start_lines = 0;
 		return;
 	}
 	RowSkip skip(copy ? lean->Dialect() : RowDialect::DuckDB(grammar), skip_rows);
+	string chunk(HEAD_READ_BYTES, '\0');
 	idx_t offset = 0;
-	const idx_t buffer_count = stream ? NumericLimits<idx_t>::Maximum() : source.buffer_manager->KnownBufferCount();
-	for (idx_t buffer = 1; handle; buffer++) {
-		const bool last = handle->is_last_buffer || buffer >= buffer_count;
-		if (skip.Feed(handle->Ptr(), offset, offset + handle->actual_size, last)) {
+	while (true) {
+		const idx_t got = rows.Read(&chunk[0], chunk.size(), offset);
+		const bool last = got < chunk.size();
+		const bool found = skip.Feed(chunk.data(), offset, offset + got, last);
+		offset += got;
+		if (found || last) {
 			break;
-		}
-		offset += handle->actual_size;
-		if (last) {
-			break;
-		}
-		handle = Buffer(buffer);
-		if (!handle) {
-			skip.Feed(nullptr, offset, offset, true);
 		}
 	}
 	if (skip.Start() == DConstants::INVALID_INDEX && source.sniffing) {
@@ -816,30 +835,28 @@ void CsvScanGlobal::FindStart(idx_t size, shared_ptr<CSVBufferHandle> &whole_fil
 	start_lines = skip.Lines();
 }
 
-char CsvScanGlobal::CopyInputLineBreak() const {
+char CsvScanGlobal::CopyInputLineBreak(const RowSource &rows) const {
 	CopyLineBreakFinder finder(copy->options);
-	for (idx_t buffer = 0;; buffer++) {
-		auto handle = Buffer(buffer);
-		if (!handle) {
-			return finder.Finish();
-		}
-		const char found = finder.Feed(std::string_view(handle->Ptr(), handle->actual_size));
+	string chunk(HEAD_READ_BYTES, '\0');
+	for (idx_t offset = 0;;) {
+		const idx_t got = rows.Read(&chunk[0], chunk.size(), offset);
+		const char found = finder.Feed(std::string_view(chunk.data(), got));
 		if (found != '\0') {
 			return found;
 		}
-		if (handle->is_last_buffer) {
+		if (got < chunk.size()) {
 			return finder.Finish();
 		}
+		offset += got;
 	}
 }
 
-void CsvScanGlobal::MatchCopyHeader() const {
+void CsvScanGlobal::MatchCopyHeader(RowSource &rows) const {
 	if (start == 0) {
 		return;
 	}
-	CsvRowSource head_source(*source.buffer_manager, start, nullptr);
 	RowLexer lexer(lean->Dialect(), num_columns, NumericLimits<idx_t>::Maximum(), true, false, true);
-	RowRanges head_ranges(lexer, head_source, 0, start, DConstants::INVALID_INDEX, true);
+	RowRanges head_ranges(lexer, rows, 0, start, DConstants::INVALID_INDEX, true);
 	RowRangeReader reader(head_ranges);
 	reader.Start(0, true, false, false);
 	const auto result = reader.Advance(1);
