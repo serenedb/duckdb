@@ -813,7 +813,7 @@ void CsvRowSource::Release(idx_t position) {
 void CsvScanGlobal::FindStart(idx_t size, const RowSource &rows) {
 	if (skip_rows == 0) {
 		char head[3];
-		start = skip_bom ? SkipBom(head, rows.Read(head, sizeof(head), 0)) : 0;
+		start = skip_bom ? SkipBom(head, rows.ReadFully(head, sizeof(head), 0)) : 0;
 		start_lines = 0;
 		return;
 	}
@@ -822,7 +822,7 @@ void CsvScanGlobal::FindStart(idx_t size, const RowSource &rows) {
 	idx_t offset = 0;
 	while (true) {
 		const idx_t got = rows.Read(&chunk[0], chunk.size(), offset);
-		const bool last = got < chunk.size();
+		const bool last = got == 0 || (got < chunk.size() && !rows.Live());
 		const bool found = skip.Feed(chunk.data(), offset, offset + got, last);
 		offset += got;
 		if (found || last) {
@@ -847,7 +847,7 @@ char CsvScanGlobal::CopyInputLineBreak(const RowSource &rows) const {
 		if (found != '\0') {
 			return found;
 		}
-		if (got < chunk.size()) {
+		if (got == 0 || (got < chunk.size() && !rows.Live())) {
 			return finder.Finish();
 		}
 		offset += got;

@@ -49,6 +49,13 @@ public:
 	virtual optional_idx End() const {
 		return optional_idx();
 	}
+	virtual bool Live() const {
+		return false;
+	}
+	virtual bool Available(idx_t offset) const {
+		return true;
+	}
+	idx_t ReadFully(char *data, idx_t count, idx_t offset) const;
 };
 
 struct RowRangeBounds {
@@ -203,6 +210,7 @@ private:
 	void Rebase();
 	void OpenRowFits();
 	void ReadPiece();
+	bool Waits() const;
 	void PrepareWindow(idx_t keep_from, idx_t need);
 	idx_t KeepFrom() const;
 	bool CheckCountUtf8(idx_t end);

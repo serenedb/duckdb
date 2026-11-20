@@ -1133,7 +1133,7 @@ bool RowLexer::FeedBlocks(RowCursor &cursor, const char *data, idx_t base, idx_t
 			}
 		}
 		c.in_quotes = (in >> (size - 1)) & 1;
-		c.after_delimiter = delims >> (CSV_BLOCK_BYTES - delimiter_size);
+		c.after_delimiter = size < delimiter_size ? 0 : delims >> (size - delimiter_size);
 		c.after_term = (terms >> (size - 1)) & 1;
 		c.after_cr = (carriage >> (size - 1)) & 1;
 		c.delimiter_tail = delimiter_tail;
