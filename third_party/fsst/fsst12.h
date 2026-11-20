@@ -206,6 +206,44 @@ duckdb_fsst12_decompress(
    return posOut; /* full size of decompressed string (could be >size, then the actually decompressed part) */
 }
 
+/* Decompress the start of a single string: stops once size bytes are written or the input ends. */
+/* Returns DUCKDB_FSST12_DECOMPRESS_INVALID_INPUT for a compressed length no sequence of 12-bit codes has. */
+inline unsigned long        /* OUT: bytes written: at least size, unless the string is shorter; at most size + 15. */
+duckdb_fsst12_decompress_prefix(
+   const duckdb_fsst12_decoder_t *decoder,  /* IN: use this dictionary for compression. */
+   unsigned long lenIn,     /* IN: byte-length of compressed string. */
+   const unsigned char *strIn,    /* IN: compressed string. */
+   unsigned long size,      /* IN: bytes wanted. */
+   unsigned char *output    /* OUT: memory buffer of at least size + 15 bytes. */
+) {
+   unsigned char*__restrict__ len = (unsigned char* __restrict__) decoder->len;
+   unsigned long long*__restrict__ symbol = (unsigned long long* __restrict__) decoder->symbol;
+   unsigned char*__restrict__ strOut = (unsigned char* __restrict__) output;
+   unsigned long posOut = 0, posIn = 0;
+   while (posOut < size && posIn+3 <= lenIn) {
+      unsigned int code = 0, code0, code1;
+      memcpy(&code, strIn+posIn, 3);
+      code0 = code & 4095;
+      code1 = (code >> 12) & 4095;
+      posIn += 3;
+      memcpy((void*) (strOut+posOut), &symbol[code0], sizeof(unsigned long long));
+      posOut += len[code0];
+      memcpy((void*) (strOut+posOut), &symbol[code1], sizeof(unsigned long long));
+      posOut += len[code1];
+   }
+   if (posOut < size && posIn != lenIn) {
+      unsigned short code;
+      if (lenIn - posIn != 2) {
+         return DUCKDB_FSST12_DECOMPRESS_INVALID_INPUT; /* corrupted input */
+      }
+      memcpy(&code, strIn+posIn, sizeof(unsigned short));
+      code &= 4095;
+      memcpy((void*) (strOut+posOut), &symbol[code], sizeof(unsigned long long));
+      posOut += len[code];
+   }
+   return posOut;
+}
+
 #ifdef __cplusplus
 }
 #endif
