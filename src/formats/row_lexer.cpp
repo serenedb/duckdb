@@ -166,7 +166,7 @@ void RowFields::Reserve(idx_t more) {
 }
 
 void RowFields::Drop(idx_t count, idx_t dropped_ends) {
-	D_ASSERT(count <= row_count && dropped_ends <= end_count);
+	D_ASSERT(count <= row_count && dropped_ends <= end_count && open_extras <= extras.size());
 	memmove(rows.get(), rows.get() + count, (row_count - count) * sizeof(uint32_t));
 	memmove(ends.get(), ends.get() + dropped_ends, (end_count - dropped_ends) * sizeof(uint32_t));
 	row_count -= count;
@@ -193,7 +193,7 @@ void RowFields::Drop(idx_t count, idx_t dropped_ends) {
 	}
 	anomalies.resize(kept);
 	if (anomalies.empty()) {
-		extras.clear();
+		extras.erase(extras.begin(), extras.end() - NumericCast<int64_t>(open_extras));
 	}
 }
 
@@ -1114,6 +1114,7 @@ bool RowLexer::FeedBlocks(RowCursor &cursor, const char *data, idx_t base, idx_t
 						*out++ = raw[i];
 					} else if (d.strict) {
 						fields->extras.push_back(raw[i]);
+						fields->open_extras++;
 					}
 					if (c.phase == columns - 1) {
 						c.extras_from = fields->extras.size();
@@ -1194,9 +1195,10 @@ void RowLexer::EndRow(RowCursor &c, RowFields &fields, uint32_t entry, idx_t row
 		c.extras_dropped = true;
 		return;
 	}
+	const auto first_extra = static_cast<uint32_t>(fields.extras.size() - fields.open_extras);
 	fields.extras.push_back(entry);
-	fields.anomalies.push_back(
-	    {row, static_cast<uint32_t>(field_count), entry & ROW_FIELD_MASK, static_cast<uint32_t>(c.extras_from)});
+	fields.open_extras = 0;
+	fields.anomalies.push_back({row, static_cast<uint32_t>(field_count), entry & ROW_FIELD_MASK, first_extra});
 }
 
 bool RowLexer::Finish(RowCursor &cursor, const char *data, idx_t base, idx_t end, bool eof, RowFields *fields,

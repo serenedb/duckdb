@@ -68,6 +68,7 @@ struct RowFields {
 		end_count = 0;
 		anomalies.clear();
 		extras.clear();
+		open_extras = 0;
 		events.clear();
 	}
 	void Reserve(idx_t more);
@@ -82,6 +83,7 @@ struct RowFields {
 	idx_t end_count = 0;
 	vector<RowAnomaly> anomalies;
 	vector<uint32_t> extras;
+	idx_t open_extras = 0;
 	vector<RowEvent> events;
 };
 
