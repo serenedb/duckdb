@@ -21,15 +21,38 @@
 #include "duckdb/storage/table/per_column_metadata_blocks.hpp"
 #include "duckdb/storage/table/per_column_metadata_blocks.hpp"
 
+#include <absl/functional/function_ref.h>
+
 namespace duckdb {
+
+//! How far a deserializer distrusts its input
+enum class DeserializationChecks : uint8_t {
+	//! The database's own input, as its files and spills are: nothing is checked
+	NONE,
+	//! A peer's input: every index, offset and length is checked against what it points into
+	STRUCTURE,
+	//! As STRUCTURE, and every value is one its type allows
+	VALUES
+};
 
 class Deserializer {
 protected:
 	bool deserialize_enum_from_string = false;
 	SerializationData data;
+	DeserializationChecks checks = DeserializationChecks::NONE;
 
 public:
+	//! The bytes a checked read takes per block: a multiple of every fixed value size, small enough for the cache
+	static constexpr idx_t CHECK_BLOCK_SIZE = 4096;
+
 	virtual ~Deserializer() {
+	}
+
+	DeserializationChecks GetChecks() const {
+		return checks;
+	}
+	void SetChecks(DeserializationChecks checks_p) {
+		checks = checks_p;
 	}
 
 	class List {
@@ -167,6 +190,15 @@ public:
 		self.OnPropertyBegin(field_id, tag);
 		self.ReadDataPtr(ret, count);
 		self.OnPropertyEnd();
+	}
+
+	//! Read into an existing data_ptr_t block by block, calling `check(offset, size)` on each block as soon as it is
+	//! read: a check of the bytes takes no pass of its own
+	void ReadProperty(const field_id_t field_id, const char *tag, data_ptr_t ret, idx_t count,
+	                  absl::FunctionRef<void(idx_t offset, idx_t size)> check) {
+		OnPropertyBegin(field_id, tag);
+		ReadDataPtr(ret, count, check);
+		OnPropertyEnd();
 	}
 
 	inline bool ReadOptionalProperty(this auto &self, const field_id_t field_id, const char *tag, data_ptr_t ret,
@@ -656,6 +688,10 @@ public:
 	virtual double ReadDouble() = 0;
 	virtual string ReadString() = 0;
 	virtual void ReadDataPtr(data_ptr_t &ptr, idx_t count) = 0;
+	virtual void ReadDataPtr(data_ptr_t ptr, idx_t count, absl::FunctionRef<void(idx_t offset, idx_t size)> check) {
+		ReadDataPtr(ptr, count);
+		check(0, count);
+	}
 };
 
 template <class FUNC>

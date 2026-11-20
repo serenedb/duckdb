@@ -824,19 +824,110 @@ static void ReadListOfSize(Deserializer &deserializer, const field_id_t field_id
 	}
 }
 
+//! Throw unless a value checked deserializer can check the values of `type`
+static void CheckValuesCheckable(const LogicalType &type) {
+	switch (type.id()) {
+	case LogicalTypeId::SQLNULL:
+	case LogicalTypeId::BOOLEAN:
+	case LogicalTypeId::TINYINT:
+	case LogicalTypeId::SMALLINT:
+	case LogicalTypeId::INTEGER:
+	case LogicalTypeId::BIGINT:
+	case LogicalTypeId::HUGEINT:
+	case LogicalTypeId::UTINYINT:
+	case LogicalTypeId::USMALLINT:
+	case LogicalTypeId::UINTEGER:
+	case LogicalTypeId::UBIGINT:
+	case LogicalTypeId::UHUGEINT:
+	case LogicalTypeId::FLOAT:
+	case LogicalTypeId::DOUBLE:
+	case LogicalTypeId::DECIMAL:
+	case LogicalTypeId::DATE:
+	case LogicalTypeId::TIME:
+	case LogicalTypeId::TIME_NS:
+	case LogicalTypeId::TIME_TZ:
+	case LogicalTypeId::TIMESTAMP_SEC:
+	case LogicalTypeId::TIMESTAMP_MS:
+	case LogicalTypeId::TIMESTAMP:
+	case LogicalTypeId::TIMESTAMP_NS:
+	case LogicalTypeId::TIMESTAMP_TZ:
+	case LogicalTypeId::TIMESTAMP_TZ_NS:
+	case LogicalTypeId::INTERVAL:
+	case LogicalTypeId::UUID:
+	case LogicalTypeId::BLOB:
+	case LogicalTypeId::VARCHAR:
+	case LogicalTypeId::ENUM:
+	case LogicalTypeId::UNION:
+	case LogicalTypeId::STRUCT:
+	case LogicalTypeId::LIST:
+	case LogicalTypeId::MAP:
+	case LogicalTypeId::ARRAY:
+		return;
+	default:
+		throw NotImplementedException("Values of type %s from an untrusted peer are not supported", type.ToString());
+	}
+}
+
+//! Call `fail(value)` for the first valid row in [begin, end) whose value is `limit` or more
+template <class T, class FAIL>
+static void CheckBelow(const T *values, const ValidityMask &validity, idx_t begin, idx_t end, idx_t limit, FAIL fail) {
+	bool outside = false;
+	if (validity.AllValid()) {
+		for (idx_t i = begin; i < end; i++) {
+			outside |= values[i] >= limit;
+		}
+	} else {
+		for (idx_t i = begin; i < end; i++) {
+			outside |= validity.RowIsValidUnsafe(i) && values[i] >= limit;
+		}
+	}
+	if (!outside) {
+		return;
+	}
+	for (idx_t i = begin; i < end; i++) {
+		if (validity.RowIsValid(i) && values[i] >= limit) {
+			fail(values[i]);
+		}
+	}
+}
+
+template <class T>
+static void CheckEnumIndexes(const_data_ptr_t data, const ValidityMask &validity, idx_t begin, idx_t end,
+                             idx_t value_count) {
+	CheckBelow(reinterpret_cast<const T *>(data), validity, begin, end, value_count, [&](T index) {
+		throw InvalidInputException("ENUM index %llu is outside its %llu values", static_cast<idx_t>(index),
+		                            value_count);
+	});
+}
+
 void Vector::Deserialize(Deserializer &deserializer, idx_t count) {
+	Deserialize(deserializer, count, 0, nullptr);
+}
+
+void Vector::Deserialize(Deserializer &deserializer, idx_t count, idx_t member_count,
+                         optional_ptr<const ValidityMask> union_validity) {
 	StackDepth::Check();
 	auto &logical_type = GetType();
+	const auto checks = deserializer.GetChecks();
+	if (checks == DeserializationChecks::VALUES) {
+		CheckValuesCheckable(logical_type);
+	}
 
 	const auto vtype = // older versions that only supported flat vectors did not serialize vector_type,
 	    deserializer.ReadPropertyWithExplicitDefault<VectorType>(90, "vector_type", VectorType::FLAT_VECTOR);
 
 	// first handle deserialization of compressed vector types
 	if (vtype == VectorType::CONSTANT_VECTOR) {
-		Vector::Deserialize(deserializer, 1); // read a vector of size 1
+		Vector::Deserialize(deserializer, 1, member_count, nullptr); // read a vector of size 1
+		if (union_validity && !FlatVector::Validity(*this).RowIsValid(0) && !union_validity->CheckAllInvalid(count)) {
+			throw InvalidInputException("A UNION value has a NULL tag");
+		}
 		Vector::SetVectorType(VectorType::CONSTANT_VECTOR);
 		return;
 	} else if (vtype != VectorType::FLAT_VECTOR) {
+		if (member_count != 0) {
+			throw SerializationException("The tags of a UNION in a %s", EnumUtil::ToString(vtype));
+		}
 		buffer = VectorBuffer::Deserialize(deserializer, vtype, logical_type, count);
 		return;
 	}
@@ -860,9 +951,47 @@ void Vector::Deserialize(Deserializer &deserializer, idx_t count) {
 
 	if (TypeIsConstantSize(logical_type.InternalType())) {
 		// constant size type: read fixed amount of data
-		auto column_size = GetTypeIdSize(logical_type.InternalType()) * count;
+		const auto value_size = GetTypeIdSize(logical_type.InternalType());
+		auto column_size = value_size * count;
 		FlatVector::SetSize(*this, count);
-		deserializer.ReadProperty(102, "data", FlatVector::GetDataMutable(*this), column_size);
+		auto data = FlatVector::GetDataMutable(*this);
+		if (member_count != 0) {
+			deserializer.ReadProperty(102, "data", data, column_size, [&](idx_t offset, idx_t size) {
+				CheckBelow(reinterpret_cast<const union_tag_t *>(data), validity, offset, offset + size, member_count,
+				           [&](union_tag_t) {
+					           throw InvalidInputException("A UNION tag is outside its %llu members", member_count);
+				           });
+				if (!union_validity) {
+					return;
+				}
+				for (idx_t i = offset; i < offset + size; i++) {
+					if (union_validity->RowIsValid(i) && !validity.RowIsValid(i)) {
+						throw InvalidInputException("A UNION value has a NULL tag");
+					}
+				}
+			});
+		} else if (checks == DeserializationChecks::VALUES && logical_type.id() == LogicalTypeId::BOOLEAN) {
+			deserializer.ReadProperty(102, "data", data, column_size, [&](idx_t offset, idx_t size) {
+				CheckBelow(reinterpret_cast<const uint8_t *>(data), validity, offset, offset + size, 2,
+				           [](uint8_t value) { throw InvalidInputException("Invalid BOOLEAN value %d", value); });
+			});
+		} else if (checks == DeserializationChecks::VALUES && logical_type.id() == LogicalTypeId::ENUM) {
+			const auto value_count = EnumType::GetSize(logical_type);
+			deserializer.ReadProperty(102, "data", data, column_size, [&](idx_t offset, idx_t size) {
+				const auto begin = offset / value_size;
+				const auto end = (offset + size) / value_size;
+				switch (logical_type.InternalType()) {
+				case PhysicalType::UINT8:
+					return CheckEnumIndexes<uint8_t>(data, validity, begin, end, value_count);
+				case PhysicalType::UINT16:
+					return CheckEnumIndexes<uint16_t>(data, validity, begin, end, value_count);
+				default:
+					return CheckEnumIndexes<uint32_t>(data, validity, begin, end, value_count);
+				}
+			});
+		} else {
+			deserializer.ReadProperty(102, "data", data, column_size);
+		}
 	} else if (logical_type.id() == LogicalTypeId::GEOMETRY) {
 		auto blobs = FlatVector::GetDataMutable<string_t>(*this);
 
@@ -897,28 +1026,54 @@ void Vector::Deserialize(Deserializer &deserializer, idx_t count) {
 				deserializer.ReadProperty(108, "length_data", length_data.get(), length_data_length);
 
 				auto byte_data_buffer = make_uniq<StringDeserializeHolder>(byte_data_length.GetIndex());
-				// directly read into a string buffer we can glue to the vector
-				deserializer.ReadProperty(109, "byte_data", byte_data_buffer->data.get(), byte_data_length.GetIndex());
 				auto lengths_read_ptr = reinterpret_cast<uint32_t *>(length_data.get());
-				auto byte_read_ptr = reinterpret_cast<const char *>(byte_data_buffer->data.get());
-				StringVector::AddAuxiliaryData(*this, std::move(byte_data_buffer));
-
-				const auto byte_end = byte_read_ptr + byte_data_length.GetIndex();
-				for (idx_t i = 0; i < count; ++i) {
-					if (!validity.RowIsValid(i)) {
-						continue;
+				const auto byte_begin = reinterpret_cast<const char *>(byte_data_buffer->data.get());
+				const auto byte_end = byte_begin + byte_data_length.GetIndex();
+				auto byte_read_ptr = byte_begin;
+				const auto check_utf8 =
+				    checks == DeserializationChecks::VALUES && logical_type.id() == LogicalTypeId::VARCHAR;
+				idx_t row = 0;
+				// point the rows at their strings, up to the strings that end within the first `read` bytes
+				auto point_rows = [&](idx_t read) {
+					for (; row < count; ++row) {
+						if (!validity.RowIsValid(row)) {
+							continue;
+						}
+						const auto length = lengths_read_ptr[row];
+						if (length > static_cast<idx_t>(byte_end - byte_read_ptr)) {
+							throw SerializationException("String vector lengths exceed its %llu bytes of data",
+							                             byte_data_length.GetIndex());
+						}
+						if (byte_read_ptr + length > byte_begin + read) {
+							return;
+						}
+						if (check_utf8 && !Utf8Proc::IsValid(byte_read_ptr, length)) {
+							throw InvalidInputException("Invalid UTF-8 in a VARCHAR value");
+						}
+						strings[row] = string_t(byte_read_ptr, length);
+						byte_read_ptr += length;
 					}
-					if (lengths_read_ptr[i] > static_cast<idx_t>(byte_end - byte_read_ptr)) {
-						throw SerializationException("String vector lengths exceed its %llu bytes of data",
-						                             byte_data_length.GetIndex());
-					}
-					strings[i] = string_t(byte_read_ptr, lengths_read_ptr[i]);
-					byte_read_ptr += lengths_read_ptr[i];
+				};
+				// directly read into a string buffer we can glue to the vector
+				if (check_utf8) {
+					deserializer.ReadProperty(109, "byte_data", byte_data_buffer->data.get(),
+					                          byte_data_length.GetIndex(),
+					                          [&](idx_t offset, idx_t size) { point_rows(offset + size); });
+				} else {
+					deserializer.ReadProperty(109, "byte_data", byte_data_buffer->data.get(),
+					                          byte_data_length.GetIndex());
 				}
+				StringVector::AddAuxiliaryData(*this, std::move(byte_data_buffer));
+				point_rows(byte_data_length.GetIndex());
 			} else { // this is ye olde way of string serialization
+				const auto check_utf8 =
+				    checks == DeserializationChecks::VALUES && logical_type.id() == LogicalTypeId::VARCHAR;
 				ReadListOfSize(deserializer, 102, "data", count, [&](Deserializer::List &list, idx_t i) {
 					auto str = list.ReadElement<string>();
 					if (validity.RowIsValid(i)) {
+						if (check_utf8 && !Utf8Proc::IsValid(str.data(), str.size())) {
+							throw InvalidInputException("Invalid UTF-8 in a VARCHAR value");
+						}
 						strings[i] = StringVector::AddStringOrBlob(*this, str);
 					}
 				});
@@ -927,9 +1082,20 @@ void Vector::Deserialize(Deserializer &deserializer, idx_t count) {
 		}
 		case PhysicalType::STRUCT: {
 			auto &entries = StructVector::GetEntries(*this);
+			// a value checked UNION checks its tags, the first entry, as they are read
+			const auto union_member_count =
+			    checks == DeserializationChecks::VALUES && logical_type.id() == LogicalTypeId::UNION
+			        ? UnionType::GetMemberCount(logical_type)
+			        : 0;
 			// Deserialize entries as a list
 			ReadListOfSize(deserializer, 103, "children", entries.size(), [&](Deserializer::List &list, idx_t i) {
-				list.ReadObject([&](Deserializer &obj) { entries[i].Deserialize(obj, count); });
+				list.ReadObject([&](Deserializer &obj) {
+					if (i == 0 && union_member_count != 0) {
+						entries[i].Deserialize(obj, count, union_member_count, &validity);
+					} else {
+						entries[i].Deserialize(obj, count);
+					}
+				});
 			});
 			break;
 		}
@@ -941,20 +1107,17 @@ void Vector::Deserialize(Deserializer &deserializer, idx_t count) {
 
 			// Read the entries
 			auto list_entries = FlatVector::GetDataMutable<list_entry_t>(*this);
+			const auto check_entries = checks != DeserializationChecks::NONE;
 			ReadListOfSize(deserializer, 105, "entries", count, [&](Deserializer::List &list, idx_t i) {
 				list.ReadObject([&](Deserializer &obj) {
 					list_entries[i].offset = obj.ReadProperty<uint64_t>(100, "offset");
 					list_entries[i].length = obj.ReadProperty<uint64_t>(101, "length");
 				});
+				if (check_entries && (list_entries[i].offset > list_size ||
+				                      list_entries[i].length > list_size - list_entries[i].offset)) {
+					throw SerializationException("A list entry is outside its %llu child rows", list_size);
+				}
 			});
-			bool outside = false;
-			for (idx_t i = 0; i < count; i++) {
-				outside |=
-				    list_entries[i].offset > list_size || list_entries[i].length > list_size - list_entries[i].offset;
-			}
-			if (outside) {
-				throw SerializationException("A list entry is outside its %llu child rows", list_size);
-			}
 
 			// Read the child vector
 			deserializer.ReadObject(106, "child", [&](Deserializer &obj) {
@@ -1001,115 +1164,6 @@ void Vector::FlattenAndSetConstant() {
 		BufferMutable().Cast<VectorStructBuffer>().PrepareChildrenForSetConstant();
 	}
 	SetVectorType(VectorType::CONSTANT_VECTOR);
-}
-
-template <class T>
-static void ValidateIndexes(const Vector &vector, idx_t limit, const char *name) {
-	for (auto entry : vector.ValidValues<T>()) {
-		if (entry.GetValue() >= limit) {
-			throw InvalidInputException("%s %llu is outside its %llu values", name,
-			                            static_cast<idx_t>(entry.GetValue()), limit);
-		}
-	}
-}
-
-static void ValidateEnum(const Vector &vector) {
-	auto value_count = EnumType::GetSize(vector.GetType());
-	switch (vector.GetType().InternalType()) {
-	case PhysicalType::UINT8:
-		return ValidateIndexes<uint8_t>(vector, value_count, "ENUM index");
-	case PhysicalType::UINT16:
-		return ValidateIndexes<uint16_t>(vector, value_count, "ENUM index");
-	default:
-		return ValidateIndexes<uint32_t>(vector, value_count, "ENUM index");
-	}
-}
-
-static void ValidateUnion(const Vector &vector) {
-	switch (UnionVector::CheckUnionValidity(vector, vector.size())) {
-	case UnionInvalidReason::VALID:
-	case UnionInvalidReason::NO_MEMBERS:
-		return;
-	case UnionInvalidReason::TAG_OUT_OF_RANGE:
-		throw InvalidInputException("A UNION tag is outside its %llu members",
-		                            UnionType::GetMemberCount(vector.GetType()));
-	case UnionInvalidReason::NULL_TAG:
-		throw InvalidInputException("A UNION value has a NULL tag");
-	case UnionInvalidReason::VALIDITY_OVERLAP:
-		throw InvalidInputException("A UNION value has more than one member set");
-	case UnionInvalidReason::TAG_MISMATCH:
-		throw InvalidInputException("A UNION tag names a member other than the one set");
-	}
-}
-
-void Vector::Validate() const {
-	if (GetVectorType() == VectorType::DICTIONARY_VECTOR) {
-		DictionaryVector::Child(*this).Validate();
-		return;
-	}
-	auto &type = GetType();
-	switch (type.id()) {
-	case LogicalTypeId::SQLNULL:
-	case LogicalTypeId::TINYINT:
-	case LogicalTypeId::SMALLINT:
-	case LogicalTypeId::INTEGER:
-	case LogicalTypeId::BIGINT:
-	case LogicalTypeId::HUGEINT:
-	case LogicalTypeId::UTINYINT:
-	case LogicalTypeId::USMALLINT:
-	case LogicalTypeId::UINTEGER:
-	case LogicalTypeId::UBIGINT:
-	case LogicalTypeId::UHUGEINT:
-	case LogicalTypeId::FLOAT:
-	case LogicalTypeId::DOUBLE:
-	case LogicalTypeId::DECIMAL:
-	case LogicalTypeId::DATE:
-	case LogicalTypeId::TIME:
-	case LogicalTypeId::TIME_NS:
-	case LogicalTypeId::TIME_TZ:
-	case LogicalTypeId::TIMESTAMP_SEC:
-	case LogicalTypeId::TIMESTAMP_MS:
-	case LogicalTypeId::TIMESTAMP:
-	case LogicalTypeId::TIMESTAMP_NS:
-	case LogicalTypeId::TIMESTAMP_TZ:
-	case LogicalTypeId::TIMESTAMP_TZ_NS:
-	case LogicalTypeId::INTERVAL:
-	case LogicalTypeId::UUID:
-	case LogicalTypeId::BLOB:
-		// every bit pattern is a value
-		return;
-	case LogicalTypeId::BOOLEAN:
-		for (auto entry : ValidValues<uint8_t>()) {
-			if (entry.GetValue() > 1) {
-				throw InvalidInputException("Invalid BOOLEAN value %d", entry.GetValue());
-			}
-		}
-		return;
-	case LogicalTypeId::VARCHAR:
-		for (auto entry : ValidValues<string_t>()) {
-			if (!Utf8Proc::IsValid(entry.GetValue().GetData(), entry.GetValue().GetSize())) {
-				throw InvalidInputException("Invalid UTF-8 in a VARCHAR value");
-			}
-		}
-		return;
-	case LogicalTypeId::ENUM:
-		return ValidateEnum(*this);
-	case LogicalTypeId::UNION:
-		ValidateUnion(*this);
-		DUCKDB_EXPLICIT_FALLTHROUGH;
-	case LogicalTypeId::STRUCT:
-		for (auto &entry : StructVector::GetEntries(*this)) {
-			entry.Validate();
-		}
-		return;
-	case LogicalTypeId::LIST:
-	case LogicalTypeId::MAP:
-		return ListVector::GetChild(*this).Validate();
-	case LogicalTypeId::ARRAY:
-		return ArrayVector::GetChild(*this).Validate();
-	default:
-		throw NotImplementedException("Values of type %s from an untrusted peer are not supported", type.ToString());
-	}
 }
 
 void Vector::Verify(idx_t) const {
