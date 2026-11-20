@@ -1,0 +1,37 @@
+# name: test/optimizer/comparison_simplification_decimal_constants.test
+# description: A DECIMAL column widened for a comparison compares against the constant cast back when it survives the round trip
+# group: [optimizer]
+
+statement ok
+CREATE TABLE prices AS SELECT * FROM (VALUES (1.25::DECIMAL(10,2)), (5.00::DECIMAL(10,2)), (7.50::DECIMAL(10,2))) v(price);
+
+query II
+EXPLAIN SELECT price FROM prices WHERE price < 5;
+----
+physical_plan	<!REGEX>:.*CAST.*
+
+query I
+SELECT price FROM prices WHERE price < 5 ORDER BY price;
+----
+1.25
+
+query I
+SELECT price FROM prices WHERE 5 <= price ORDER BY price;
+----
+5.00
+7.50
+
+query II
+EXPLAIN SELECT price FROM prices WHERE price < 5.005;
+----
+physical_plan	<REGEX>:.*CAST\(price AS DECIMAL\(11,3\)\) < 5\.005.*
+
+query I
+SELECT price FROM prices WHERE price < 5.005 ORDER BY price;
+----
+1.25
+5.00
+
+query I
+SELECT price FROM prices WHERE price > 123456789 ORDER BY price;
+----
