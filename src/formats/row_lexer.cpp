@@ -949,9 +949,8 @@ bool RowLexer::FeedBlocks(RowCursor &cursor, const char *data, idx_t base, idx_t
 					if (EXTRACT) {
 						rows_out--;
 						ends_out -= MinValue(c.phase, columns);
-						if (c.phase >= columns && d.strict) {
-							fields->extras.resize(c.extras_from);
-						}
+						fields->extras.resize(fields->extras.size() - fields->open_extras);
+						fields->open_extras = 0;
 						c.open_rows--;
 					}
 					c.phase = 0;
@@ -1115,9 +1114,6 @@ bool RowLexer::FeedBlocks(RowCursor &cursor, const char *data, idx_t base, idx_t
 					} else if (d.strict) {
 						fields->extras.push_back(raw[i]);
 						fields->open_extras++;
-					}
-					if (c.phase == columns - 1) {
-						c.extras_from = fields->extras.size();
 					}
 					c.phase++;
 				}

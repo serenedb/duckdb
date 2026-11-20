@@ -112,7 +112,6 @@ struct RowCursor {
 	uint64_t non_ascii = 0;
 	idx_t phase = 0;
 	idx_t open_rows = 0;
-	idx_t extras_from = 0;
 	idx_t rows = 0;
 	idx_t lines = 0;
 	idx_t first_row_end = DConstants::INVALID_INDEX;
