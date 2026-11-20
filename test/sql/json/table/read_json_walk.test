@@ -1,0 +1,76 @@
+# name: test/sql/json/table/read_json_walk.test
+# description: a predicate on a struct field or a JSON path gives what it gives above the scan, for every leaf type the walk evaluates and every path and expression shape it leaves to the scan
+# group: [table]
+
+require json
+
+statement ok
+SET threads = 2;
+
+statement ok
+CREATE TABLE src AS SELECT i AS id,
+	CASE WHEN i % 11 = 0 THEN NULL ELSE {'ti': (i % 100 - 50)::TINYINT, 'si': ((i * 7) % 1000 - 500)::SMALLINT, 'ii': ((i * 13) % 100000)::INTEGER, 'ut': (i % 200)::UTINYINT, 'us': ((i * 3) % 60000)::USMALLINT, 'ui': ((i * 1000003) % 4000000000)::UINTEGER, 'h': i::HUGEINT, 'b': i % 3 = 0, 'd': (i * 0.5)::DOUBLE, 'v': 'v' || (i % 10), 'n': {'x': i % 5}} END AS st,
+	[{'a': i % 4}] AS ls,
+	CASE WHEN i % 13 = 0 THEN NULL WHEN i % 13 = 1 THEN '{"other":1}'::JSON WHEN i % 13 = 2 THEN '[1,2]'::JSON WHEN i % 13 = 3 THEN '"str"'::JSON ELSE {'name': 'n' || (i % 10), 'na.me': 'q' || (i % 4), 'nested': {'deep': 'd' || (i % 10)}}::JSON END AS j,
+	'{"a":' || (i % 7) || '}' AS js
+FROM range(2100) t(i);
+
+statement ok
+COPY src TO '{TEMP_DIR}/walk.ndjson' (FORMAT json);
+
+statement ok
+COPY src TO '{TEMP_DIR}/walk.json' (FORMAT json, ARRAY true);
+
+statement ok
+CREATE MACRO walk_columns() AS {'id': 'BIGINT', 'st': 'STRUCT(ti TINYINT, si SMALLINT, ii INTEGER, ut UTINYINT, us USMALLINT, ui UINTEGER, h HUGEINT, b BOOLEAN, d DOUBLE, v VARCHAR, n STRUCT(x BIGINT))', 'ls': 'STRUCT(a BIGINT)[]', 'j': 'JSON', 'js': 'VARCHAR'};
+
+foreach predicate st.ti=-3::TINYINT st.si<>5::SMALLINT st.ii<=500 st.ut>=150::UTINYINT st.us<100::USMALLINT st.ui>2000000000::UINTEGER st.b=true st.d>=1000.5 st.v='v3' st.n.x=2 st.h=7 (st.ii=26)AND(st.h=2) (st.h=2)AND(st.ii=26) j->>'name'<>'n4' json_extract_string(j,'$.nested.deep')='d3' json_extract_path_text(j,'name')='n5' j->>'$."na.me"'='q1' (j->>'name')ISNULL j->>'name'<='n2' j->>'name'>='n8' j->>'/name'='n5' j->>''='x' j->>'na"me'='x' j->>'$[0]'='1' j->>'$."na\"me"'='x' j->>'$.name[0]'='x' j->>'$.na*'='x' j->>'$.na"me'='x' (j->>'$..name')ISNULL COALESCE(st.ii,0)=13 concat(st.v,st.v)='v1v1' j->>(NULL::VARCHAR)='x' j->>0='1' ls[1].a=2 json_extract_string(j->'nested','$.deep')='d3' js->>'a'='3' (j->'name')=to_json('n5') (st)ISNULL (st.h)ISNULL NOT(st.b) (st.ii)IN(13,st.si) (st.ii)IN(13,NULL) (st.ii)IN(13,26,39) (st.ii)NOTNULL
+
+query I
+SELECT count(*) FROM (
+	(FROM read_ndjson('{TEMP_DIR}/walk.ndjson', columns = walk_columns()) WHERE {predicate} EXCEPT ALL FROM src WHERE {predicate})
+	UNION ALL
+	(FROM src WHERE {predicate} EXCEPT ALL FROM read_ndjson('{TEMP_DIR}/walk.ndjson', columns = walk_columns()) WHERE {predicate})
+)
+----
+0
+
+endloop
+
+query I
+SELECT count(*) FROM (
+	(FROM read_ndjson('{TEMP_DIR}/walk.ndjson', columns = walk_columns()) WHERE st.ii IS DISTINCT FROM 13 EXCEPT ALL FROM src WHERE st.ii IS DISTINCT FROM 13)
+	UNION ALL
+	(FROM src WHERE st.ii IS DISTINCT FROM 13 EXCEPT ALL FROM read_ndjson('{TEMP_DIR}/walk.ndjson', columns = walk_columns()) WHERE st.ii IS DISTINCT FROM 13)
+)
+----
+0
+
+query I
+SELECT count(*) FROM (
+	(FROM read_ndjson('{TEMP_DIR}/walk.ndjson', columns = walk_columns()) WHERE st.ii IS NOT DISTINCT FROM 13 EXCEPT ALL FROM src WHERE st.ii IS NOT DISTINCT FROM 13)
+	UNION ALL
+	(FROM src WHERE st.ii IS NOT DISTINCT FROM 13 EXCEPT ALL FROM read_ndjson('{TEMP_DIR}/walk.ndjson', columns = walk_columns()) WHERE st.ii IS NOT DISTINCT FROM 13)
+)
+----
+0
+
+query I
+SELECT count(*) FROM read_ndjson('{TEMP_DIR}/walk.ndjson', columns = walk_columns()) WHERE file_row_number >= 0 AND id < 3;
+----
+3
+
+query I
+SELECT count(*) FROM read_ndjson('{TEMP_DIR}/walk.ndjson', columns = walk_columns()) WHERE id < 3 AND file_row_number >= 0;
+----
+3
+
+query I
+SELECT count(*) FROM read_json('{TEMP_DIR}/walk.json', format = 'array', columns = walk_columns()) WHERE file_row_number >= 0 AND id < 3;
+----
+3
+
+query I
+SELECT count(*) FROM read_json('{TEMP_DIR}/walk.json', format = 'array', columns = walk_columns()) WHERE id < 3 AND file_row_number >= 0;
+----
+3
