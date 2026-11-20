@@ -119,7 +119,7 @@ static void SniffCSVFile(ClientContext &context, ReadSingleCSVFileData &result, 
 
 static void ApplyCopyRules(CSVReaderOptions &options, shared_ptr<const CopyFromRules> rules) {
 	auto &copy = rules->options;
-	const bool csv = copy.format == CopyTextFormat::CSV;
+	const bool csv = copy.format == CopyFormat::CSV;
 	options.auto_detect = false;
 	options.SetDelimiter(string(1, copy.delimiter));
 	options.SetQuote(csv ? string(1, copy.quote) : string());

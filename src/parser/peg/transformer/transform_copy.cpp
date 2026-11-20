@@ -55,29 +55,7 @@ void SetCopyOptions(unique_ptr<CopyInfo> &info, vector<GenericCopyOption> &optio
 			if (option.expression) {
 				info->parsed_options[option.name] = std::move(option.expression);
 			} else {
-				// PG-compat aliases for value-form COPY options. Binder::BindCopyOptions
-				// performs the same translations when these arrive via parsed_options,
-				// but the value form (REJECT_LIMIT 1, ON_ERROR IGNORE, ...) lands
-				// directly in info->options and bypasses that path.
-				if (option.name == "reject_limit") {
-					if (!option.children.empty() && option.children[0].GetValue<int64_t>() <= 0) {
-						throw ParserException("REJECT_LIMIT (%lld) must be greater than zero",
-						                      option.children[0].GetValue<int64_t>());
-					}
-					info->options["rejects_limit"] = option.children;
-				} else if (option.name == "on_error") {
-					auto val = option.children.empty() ? string() : option.children[0].ToString();
-					if (StringUtil::CIEquals(val, "ignore")) {
-						info->options["ignore_errors"] = {Value::BOOLEAN(true)};
-					} else if (StringUtil::CIEquals(val, "stop")) {
-						// STOP is the default -- drop the option.
-					} else {
-						throw ParserException("invalid value for parameter \"%s\": \"%s\"",
-						                      option.name.GetIdentifierName(), val);
-					}
-				} else {
-					info->options[option.name] = option.children;
-				}
+				info->options[option.name] = option.children;
 			}
 		}
 	}

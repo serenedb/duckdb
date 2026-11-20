@@ -55,13 +55,13 @@ void DuckDBDefaults(CopyInfo &info) {
 
 unique_ptr<FunctionData> PostgresCopyFromBind(ClientContext &context, CopyFromFunctionBindInput &input,
                                               vector<Identifier> &expected_names, vector<LogicalType> &expected_types,
-                                              CopyTextFormat format) {
+                                              CopyFormat format) {
 	auto options = ParseCopyFormatOptions(format, true, input.info.options);
 	if (!CopyFromKeepsOrder(context, input.info)) {
 		input.tf.get_partition_data = nullptr;
 		input.tf.order_preservation_type = OrderPreservationType::NO_ORDER;
 	}
-	if (!options.foreign.empty() || (format == CopyTextFormat::CSV && input.info.is_format_auto_detected)) {
+	if (!options.foreign.empty() || (format == CopyFormat::CSV && input.info.is_format_auto_detected)) {
 		auto info = input.info.Copy();
 		DuckDBDefaults(*info);
 		CopyFromFunctionBindInput duckdb_input(*info, input.tf);
