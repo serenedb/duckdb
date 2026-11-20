@@ -8,6 +8,7 @@
 #include "duckdb/common/index_vector.hpp"
 #include "duckdb/common/local_file_system.hpp"
 #include "duckdb/common/exception/parser_exception.hpp"
+#include "duckdb/formats/copy_options.hpp"
 #include "duckdb/function/table/read_csv.hpp"
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/main/database.hpp"
@@ -852,31 +853,9 @@ void Binder::BindCopyOptions(CopyInfo &info) {
 			info.is_format_auto_detected = false;
 			continue;
 		}
-		// PG compat aliases: ON_ERROR 'ignore' -> ignore_errors true,
-		// REJECT_LIMIT N -> rejects_limit N.
-		if (option_name == "on_error") {
-			auto val = inputs.empty() ? "" : inputs[0].ToString();
-			if (StringUtil::CIEquals(val, "ignore")) {
-				info.options["ignore_errors"] = {Value::BOOLEAN(true)};
-			} else if (StringUtil::CIEquals(val, "stop")) {
-				// STOP is the default — do nothing.
-			} else {
-				throw ParserException("invalid value for parameter %s: \"%s\"", option_name, val);
-			}
-			continue;
-		}
-		if (option_name == "reject_limit") {
-			if (!inputs.empty()) {
-				auto limit = inputs[0].GetValue<int64_t>();
-				if (limit <= 0) {
-					throw ParserException("REJECT_LIMIT (%lld) must be greater than zero", limit);
-				}
-			}
-			info.options["rejects_limit"] = std::move(inputs);
-			continue;
-		}
 		info.options[option_name] = std::move(inputs);
 	}
+	NormalizeCopyErrorOptions(info.options);
 	// An expression source (e.g. getvariable()) only resolves to a path here, so the
 	// parse-time format guess can be wrong (it defaults to "text" for an unknown path).
 	// Re-derive from the resolved extension when the user didn't specify a format. Limit
