@@ -479,6 +479,11 @@ static bool ReadSingleCSVFileSupportsRandomAccess(optional_ptr<const FunctionDat
 	       csv_data.buffer_manager->file_handle->HasKnownBufferRanges();
 }
 
+static bool ReadSingleCSVFileSupportsLookup(optional_ptr<const FunctionData> bind_data) {
+	return ReadSingleCSVFileSupportsRandomAccess(bind_data) &&
+	       !bind_data->Cast<ReadSingleCSVFileData>().options.ignore_errors.GetValue();
+}
+
 static AsyncResult ReadSingleCSVFileScheduleIO(ClientContext &context, TableFunctionInput &input) {
 	auto &gstate = input.global_state->Cast<ReadSingleCSVFileGlobalState>();
 	auto &lstate = input.local_state->Cast<ReadSingleCSVFileLocalState>();
@@ -594,7 +599,7 @@ TableFunction ReadCSVTableFunction::GetMultiFileFunction(Identifier name) {
 	settings.supports_read_ahead = ReadSingleCSVFileSupportsRandomAccess;
 	settings.schedule_io = ReadSingleCSVFileScheduleIO;
 	settings.lookup = ReadSingleCSVFileLookup;
-	settings.supports_lookup = ReadSingleCSVFileSupportsRandomAccess;
+	settings.supports_lookup = ReadSingleCSVFileSupportsLookup;
 	settings.row_storage = true;
 	settings.row_id_names = {"file_index", "file_offset"};
 	// the scanner converts to the types the scan asks for while parsing, rather than casting its output
