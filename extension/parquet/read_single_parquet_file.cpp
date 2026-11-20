@@ -73,6 +73,9 @@ public:
 	idx_t MaxThreads() const override {
 		return max_threads;
 	}
+	bool CanRemoveFilterColumns() const {
+		return !projection_ids.empty();
+	}
 
 public:
 	//! The file that is read - declared before the state below, which refers to it
@@ -81,9 +84,12 @@ public:
 	//! Handing out the next row group is done single-threadedly
 	mutex lock;
 	idx_t max_threads = 1;
+	vector<idx_t> projection_ids;
+	vector<LogicalType> scanned_types;
 };
 
 struct ReadSingleParquetFileLocalState : public LocalTableFunctionState {
+	DataChunk all_columns;
 	ParquetReadLocalState state;
 	unique_ptr<ParquetLookupCursor> lookup;
 	//! Whether our caller claims the row groups we read - see table_function_claim_batch_t
@@ -216,6 +222,13 @@ static unique_ptr<GlobalTableFunctionState> ReadSingleParquetFileInitGlobal(Clie
 		reader.AddVirtualColumn(virtual_id);
 	}
 	reader.column_indexes = std::move(column_indexes);
+	if (input.CanRemoveFilterColumns()) {
+		result->projection_ids = input.projection_ids;
+		for (auto &index : reader.column_indexes) {
+			auto &column = reader.columns[index.GetPrimaryIndex()];
+			result->scanned_types.push_back(index.HasType() ? index.GetScanType() : column.type);
+		}
+	}
 	if (input.filters) {
 		// the filters are evaluated by the reader itself, so that row groups can be pruned on them
 		reader.filters = input.filters->Copy();
@@ -261,7 +274,12 @@ static unique_ptr<GlobalTableFunctionState> ReadSingleParquetFileInitGlobal(Clie
 static unique_ptr<LocalTableFunctionState> ReadSingleParquetFileInitLocal(ExecutionContext &context,
                                                                           TableFunctionInitInput &input,
                                                                           GlobalTableFunctionState *global_state) {
-	return make_uniq<ReadSingleParquetFileLocalState>();
+	auto result = make_uniq<ReadSingleParquetFileLocalState>();
+	auto &gstate = global_state->Cast<ReadSingleParquetFileGlobalState>();
+	if (gstate.CanRemoveFilterColumns()) {
+		result->all_columns.Initialize(context.client, gstate.scanned_types);
+	}
+	return std::move(result);
 }
 
 //! Assign the next row group of the file to this thread
@@ -327,6 +345,7 @@ static void ReadSingleParquetFileFinishBatch(ClientContext &context, TableFuncti
 static void ReadSingleParquetFileFunction(ClientContext &context, TableFunctionInput &input, DataChunk &output) {
 	auto &gstate = input.global_state->Cast<ReadSingleParquetFileGlobalState>();
 	auto &lstate = input.local_state->Cast<ReadSingleParquetFileLocalState>();
+	auto &scanned = gstate.CanRemoveFilterColumns() ? lstate.all_columns : output;
 
 	bool resuming_blocked_scan = false;
 	while (true) {
@@ -344,9 +363,9 @@ static void ReadSingleParquetFileFunction(ClientContext &context, TableFunctionI
 		if (!resuming_blocked_scan) {
 			// a blocked scan left partial data in the chunk that resuming it completes - everything else starts
 			// from an empty chunk
-			output.Reset();
+			scanned.Reset();
 		}
-		auto scan_result = gstate.reader->Scan(context, gstate.state, lstate.state, output);
+		auto scan_result = gstate.reader->Scan(context, gstate.state, lstate.state, scanned);
 		resuming_blocked_scan = scan_result.GetResultType() == AsyncResultType::BLOCKED;
 		switch (scan_result.GetResultType()) {
 		case AsyncResultType::BLOCKED:
@@ -355,22 +374,26 @@ static void ReadSingleParquetFileFunction(ClientContext &context, TableFunctionI
 			scan_result.ExecuteTasksSynchronously();
 			continue;
 		case AsyncResultType::HAVE_MORE_OUTPUT:
-			if (output.size() == 0) {
+			if (scanned.size() == 0) {
 				// every row of this chunk was filtered out - there is more to read in this row group
 				continue;
 			}
-			return;
+			break;
 		case AsyncResultType::FINISHED:
 			// this row group is done - the next one is claimed above
 			lstate.has_row_group = false;
-			if (output.size() != 0) {
-				return;
+			if (scanned.size() == 0) {
+				continue;
 			}
-			continue;
+			break;
 		default:
 			throw InternalException("Unexpected result type %s scanning a parquet file",
 			                        EnumUtil::ToChars(scan_result.GetResultType()));
 		}
+		if (gstate.CanRemoveFilterColumns()) {
+			output.ReferenceColumns(scanned, gstate.projection_ids);
+		}
+		return;
 	}
 }
 
