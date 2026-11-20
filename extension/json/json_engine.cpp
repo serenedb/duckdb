@@ -999,8 +999,10 @@ JsonScan::JsonScan(JsonScanGlobal &global_p)
 	if (global.direct) {
 		direct_parser.allocator = &direct_memory.callbacks;
 		direct_parser.allow_trailing_commas = HasFlag(global.read_flags, JSONReadFlags::ALLOW_TRAILING_COMMAS);
+		direct_parser.allow_inf_and_nan = HasFlag(global.read_flags, JSONReadFlags::ALLOW_INF_AND_NAN);
 		walk_parser.allocator = &direct_memory.callbacks;
 		walk_parser.allow_trailing_commas = direct_parser.allow_trailing_commas;
+		walk_parser.allow_inf_and_nan = direct_parser.allow_inf_and_nan;
 		candidates.Initialize(STANDARD_VECTOR_SIZE);
 		const idx_t column_count = global.columns.names.size();
 		direct_raw.resize(column_count);
@@ -1485,7 +1487,7 @@ bool JsonScan::DirectValue(idx_t column, simdjson::ondemand::value &value, Vecto
 		return true;
 	}
 	ondemand::json_type type;
-	if (value.type().get(type)) {
+	if (value.type().get(type) || type == ondemand::json_type::unknown) {
 		return false;
 	}
 	if (type == ondemand::json_type::null) {
