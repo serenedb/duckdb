@@ -281,7 +281,7 @@ public:
 
 	DUCKDB_API virtual bool CanSeek();
 	DUCKDB_API FileWriteMode GetWriteMode();
-	DUCKDB_API bool IsPipe();
+	DUCKDB_API virtual bool IsPipe();
 	DUCKDB_API bool OnDiskFile();
 	//! Try to obtain a network throughput estimate (Local files return false).
 	DUCKDB_API bool TryGetNetworkThroughput(NetworkThroughputEstimate &result);
