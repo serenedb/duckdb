@@ -125,6 +125,7 @@ static void ApplyCopyRules(CSVReaderOptions &options, shared_ptr<const CopyFromR
 	options.SetQuote(csv ? string(1, copy.quote) : string());
 	options.SetEscape(csv ? string(1, copy.escape) : string());
 	options.SetComment(string());
+	options.dialect_options.state_machine_options.new_line = NewLineIdentifier::SINGLE_N;
 	options.SetHeader(copy.header);
 	options.null_str = {copy.null_str};
 	options.allow_quoted_nulls = false;
