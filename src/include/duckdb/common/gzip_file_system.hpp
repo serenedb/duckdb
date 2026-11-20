@@ -13,8 +13,8 @@
 namespace duckdb {
 
 class GZipFileSystem : public CompressedFileSystem {
-	// 32 KB
-	static constexpr const idx_t BUFFER_SIZE = 1u << 15;
+	// 256 KB
+	static constexpr const idx_t BUFFER_SIZE = 1u << 18;
 
 public:
 	unique_ptr<FileHandle> OpenCompressedFile(QueryContext context, unique_ptr<FileHandle> handle, bool write) override;
@@ -54,7 +54,6 @@ static constexpr const uint8_t GZIP_FLAG_COMMENT = 0x10;
 static constexpr const uint8_t GZIP_FLAG_ENCRYPT = 0x20;
 
 static constexpr const uint8_t GZIP_HEADER_MINSIZE = 10;
-// MAXSIZE should be the same as input buffer size
 static constexpr const idx_t GZIP_HEADER_MAXSIZE = 1u << 15;
 static constexpr const uint8_t GZIP_FOOTER_SIZE = 8;
 
