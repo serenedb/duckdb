@@ -854,10 +854,10 @@ void JsonScanGlobal::Detect() {
 	if (options.geojson.value_or(false) && FindFeatureCollectionArray(data, read, features_offset)) {
 		features_prefix = true;
 		format = JSONFormat::ARRAY;
-		detected_record_type = JSONRecordType::RECORDS;
 		return;
 	}
-	format = JsonDetectFormat(data, read, parser, detected_record_type);
+	JSONRecordType record_type;
+	format = JsonDetectFormat(data, read, parser, record_type);
 }
 
 idx_t JsonScanGlobal::MaxThreads() const {
@@ -975,11 +975,6 @@ void JsonScanGlobal::AddError(idx_t unit, idx_t record, string message) {
 		error_message = std::move(message);
 	}
 	ThrowIfPossible();
-}
-
-bool JsonScanGlobal::Failed() const {
-	lock_guard<mutex> guard(lock);
-	return error_unit.IsValid();
 }
 
 void JsonScanGlobal::ThrowIfPossible() {
