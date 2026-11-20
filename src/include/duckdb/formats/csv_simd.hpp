@@ -47,6 +47,21 @@ struct CsvVector {
 		return low_bits | (static_cast<uint64_t>(high_bits) << 32);
 	}
 
+	uint64_t Lookup(const uint8_t *low_nibbles, const uint8_t *high_nibbles) const {
+		const auto low_table =
+		    _mm256_broadcastsi128_si256(_mm_loadu_si128(reinterpret_cast<const __m128i *>(low_nibbles)));
+		const auto high_table =
+		    _mm256_broadcastsi128_si256(_mm_loadu_si128(reinterpret_cast<const __m128i *>(high_nibbles)));
+		const auto nibble = _mm256_set1_epi8(0x0F);
+		const auto hits = [&](__m256i half) {
+			const auto by_low = _mm256_shuffle_epi8(low_table, _mm256_and_si256(half, nibble));
+			const auto by_high = _mm256_shuffle_epi8(high_table, _mm256_and_si256(_mm256_srli_epi16(half, 4), nibble));
+			const auto none = _mm256_cmpeq_epi8(_mm256_and_si256(by_low, by_high), _mm256_setzero_si256());
+			return ~static_cast<uint32_t>(_mm256_movemask_epi8(none));
+		};
+		return hits(low) | (static_cast<uint64_t>(hits(high)) << 32);
+	}
+
 	__m256i low;
 	__m256i high;
 };
@@ -67,20 +82,34 @@ struct CsvVector {
 	}
 
 	uint64_t Equal(char byte) const {
-		const uint8x16_t bits = {0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80,
-		                         0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80};
 		const auto pattern = vdupq_n_u8(static_cast<uint8_t>(byte));
-		auto sum0 = vpaddq_u8(vandq_u8(vceqq_u8(parts[0], pattern), bits), vandq_u8(vceqq_u8(parts[1], pattern), bits));
-		const auto sum1 =
-		    vpaddq_u8(vandq_u8(vceqq_u8(parts[2], pattern), bits), vandq_u8(vceqq_u8(parts[3], pattern), bits));
-		sum0 = vpaddq_u8(sum0, sum1);
-		sum0 = vpaddq_u8(sum0, sum0);
-		return vgetq_lane_u64(vreinterpretq_u64_u8(sum0), 0);
+		return Bits(vceqq_u8(parts[0], pattern), vceqq_u8(parts[1], pattern), vceqq_u8(parts[2], pattern),
+		            vceqq_u8(parts[3], pattern));
 	}
 
 	uint64_t NonAscii() const {
 		const auto any = vorrq_u8(vorrq_u8(parts[0], parts[1]), vorrq_u8(parts[2], parts[3]));
 		return vmaxvq_u8(any) >= 0x80 ? ~uint64_t(0) : 0;
+	}
+
+	uint64_t Lookup(const uint8_t *low_nibbles, const uint8_t *high_nibbles) const {
+		const auto low_table = vld1q_u8(low_nibbles);
+		const auto high_table = vld1q_u8(high_nibbles);
+		const auto nibble = vdupq_n_u8(0x0F);
+		const auto hits = [&](uint8x16_t part) {
+			return vtstq_u8(vqtbl1q_u8(low_table, vandq_u8(part, nibble)), vqtbl1q_u8(high_table, vshrq_n_u8(part, 4)));
+		};
+		return Bits(hits(parts[0]), hits(parts[1]), hits(parts[2]), hits(parts[3]));
+	}
+
+	static uint64_t Bits(uint8x16_t first, uint8x16_t second, uint8x16_t third, uint8x16_t fourth) {
+		const uint8x16_t bits = {0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80,
+		                         0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80};
+		auto sum0 = vpaddq_u8(vandq_u8(first, bits), vandq_u8(second, bits));
+		const auto sum1 = vpaddq_u8(vandq_u8(third, bits), vandq_u8(fourth, bits));
+		sum0 = vpaddq_u8(sum0, sum1);
+		sum0 = vpaddq_u8(sum0, sum0);
+		return vgetq_lane_u64(vreinterpretq_u64_u8(sum0), 0);
 	}
 
 	uint8x16_t parts[4];
@@ -109,6 +138,15 @@ struct CsvVector {
 		uint64_t result = 0;
 		for (idx_t i = 0; i < CSV_BLOCK_BYTES; i++) {
 			result |= static_cast<uint64_t>(static_cast<uint8_t>(bytes[i]) >> 7) << i;
+		}
+		return result;
+	}
+
+	uint64_t Lookup(const uint8_t *low_nibbles, const uint8_t *high_nibbles) const {
+		uint64_t result = 0;
+		for (idx_t i = 0; i < CSV_BLOCK_BYTES; i++) {
+			const auto value = static_cast<uint8_t>(bytes[i]);
+			result |= static_cast<uint64_t>((low_nibbles[value & 0x0F] & high_nibbles[value >> 4]) != 0) << i;
 		}
 		return result;
 	}
