@@ -31,13 +31,13 @@ struct CopyFromRules {
 	vector<unique_ptr<Expression>> defaults;
 
 	bool Text() const {
-		return options.format == CopyTextFormat::TEXT;
+		return options.format == CopyFormat::TEXT;
 	}
 };
 
 unique_ptr<FunctionData> PostgresCopyFromBind(ClientContext &context, CopyFromFunctionBindInput &input,
                                               vector<Identifier> &expected_names, vector<LogicalType> &expected_types,
-                                              CopyTextFormat format);
+                                              CopyFormat format);
 
 bool CopyFromKeepsOrder(ClientContext &context, const CopyInfo &info);
 
