@@ -255,6 +255,25 @@ bool PlainString(std::string_view content) {
 	return true;
 }
 
+void KeyWords(std::string_view key, uint64_t words[2]) {
+	memcpy(words, key.data(), 2 * sizeof(uint64_t));
+	const idx_t size = key.size();
+	words[0] &= size >= 8 ? ~uint64_t(0) : (uint64_t(1) << (8 * size)) - 1;
+	words[1] &= size >= 16 ? ~uint64_t(0) : size <= 8 ? 0 : (uint64_t(1) << (8 * (size - 8))) - 1;
+}
+
+bool SameKey(const JsonKeyHint &hint, std::string_view key) {
+	if (hint.key.size() != key.size()) {
+		return false;
+	}
+	if (key.size() > 16) {
+		return memcmp(hint.key.data(), key.data(), key.size()) == 0;
+	}
+	uint64_t words[2];
+	KeyWords(key, words);
+	return words[0] == hint.words[0] && words[1] == hint.words[1];
+}
+
 template <class T>
 bool DirectNumber(simdjson::ondemand::value &value, simdjson::ondemand::json_type type, bool strict, T &result,
                   bool &cast) {
@@ -1495,12 +1514,13 @@ bool JsonScan::DirectValue(idx_t column, simdjson::ondemand::value &value, Vecto
 		if (value.is_null().get(is_null) || !is_null) {
 			return false;
 		}
-		FlatVector::ValidityMutable(kind == JsonDirectKind::STRING ? direct_strings[column] : vector).SetInvalid(row);
+		direct_validity[column]->SetInvalid(row);
 		return true;
 	}
 	const bool strict = transform_options.strict_cast;
 	if (kind == JsonDirectKind::STRING || vector.GetType().id() == LogicalTypeId::VARCHAR) {
 		auto &target = kind == JsonDirectKind::STRING ? direct_strings[column] : vector;
+		auto strings = reinterpret_cast<string_t *>(direct_data[column]);
 		if (type == ondemand::json_type::string) {
 			const auto token = TrimToken(value.raw_json_token());
 			if (token.size() < 2 || token.front() != '"' || token.back() != '"') {
@@ -1508,26 +1528,25 @@ bool JsonScan::DirectValue(idx_t column, simdjson::ondemand::value &value, Vecto
 			}
 			const auto content = token.substr(1, token.size() - 2);
 			if (PlainString(content)) {
-				FlatVector::GetDataMutable<string_t>(target)[row] =
-				    string_t(content.data(), UnsafeNumericCast<uint32_t>(content.size()));
+				strings[row] = string_t(content.data(), UnsafeNumericCast<uint32_t>(content.size()));
 				return true;
 			}
 			std::string_view text;
 			if (value.get_string().get(text)) {
 				return false;
 			}
-			FlatVector::GetDataMutable<string_t>(target)[row] = StringVector::AddString(target, text);
+			strings[row] = StringVector::AddString(target, text);
 			return true;
 		}
 		if (kind == JsonDirectKind::STRING) {
 			if (strict) {
 				return false;
 			}
-			FlatVector::ValidityMutable(target).SetInvalid(row);
+			direct_validity[column]->SetInvalid(row);
 			return true;
 		}
 		auto &heap = StringVector::GetStringHeap(vector);
-		auto &result = FlatVector::GetDataMutable<string_t>(vector)[row];
+		auto &result = strings[row];
 		switch (type) {
 		case ondemand::json_type::boolean: {
 			bool boolean;
@@ -1566,46 +1585,46 @@ bool JsonScan::DirectValue(idx_t column, simdjson::ondemand::value &value, Vecto
 	bool cast = false;
 	bool parsed;
 	const auto &column_type = vector.GetType();
+	const data_ptr_t data = direct_data[column];
 	switch (column_type.id()) {
 	case LogicalTypeId::BOOLEAN:
-		parsed = DirectNumber<bool>(value, type, strict, FlatVector::GetDataMutable<bool>(vector)[row], cast);
+		parsed = DirectNumber<bool>(value, type, strict, reinterpret_cast<bool *>(data)[row], cast);
 		break;
 	case LogicalTypeId::TINYINT:
-		parsed = DirectNumber<int8_t>(value, type, strict, FlatVector::GetDataMutable<int8_t>(vector)[row], cast);
+		parsed = DirectNumber<int8_t>(value, type, strict, reinterpret_cast<int8_t *>(data)[row], cast);
 		break;
 	case LogicalTypeId::SMALLINT:
-		parsed = DirectNumber<int16_t>(value, type, strict, FlatVector::GetDataMutable<int16_t>(vector)[row], cast);
+		parsed = DirectNumber<int16_t>(value, type, strict, reinterpret_cast<int16_t *>(data)[row], cast);
 		break;
 	case LogicalTypeId::INTEGER:
-		parsed = DirectNumber<int32_t>(value, type, strict, FlatVector::GetDataMutable<int32_t>(vector)[row], cast);
+		parsed = DirectNumber<int32_t>(value, type, strict, reinterpret_cast<int32_t *>(data)[row], cast);
 		break;
 	case LogicalTypeId::BIGINT:
-		parsed = DirectNumber<int64_t>(value, type, strict, FlatVector::GetDataMutable<int64_t>(vector)[row], cast);
+		parsed = DirectNumber<int64_t>(value, type, strict, reinterpret_cast<int64_t *>(data)[row], cast);
 		break;
 	case LogicalTypeId::UTINYINT:
-		parsed = DirectNumber<uint8_t>(value, type, strict, FlatVector::GetDataMutable<uint8_t>(vector)[row], cast);
+		parsed = DirectNumber<uint8_t>(value, type, strict, reinterpret_cast<uint8_t *>(data)[row], cast);
 		break;
 	case LogicalTypeId::USMALLINT:
-		parsed = DirectNumber<uint16_t>(value, type, strict, FlatVector::GetDataMutable<uint16_t>(vector)[row], cast);
+		parsed = DirectNumber<uint16_t>(value, type, strict, reinterpret_cast<uint16_t *>(data)[row], cast);
 		break;
 	case LogicalTypeId::UINTEGER:
-		parsed = DirectNumber<uint32_t>(value, type, strict, FlatVector::GetDataMutable<uint32_t>(vector)[row], cast);
+		parsed = DirectNumber<uint32_t>(value, type, strict, reinterpret_cast<uint32_t *>(data)[row], cast);
 		break;
 	case LogicalTypeId::UBIGINT:
-		parsed = DirectNumber<uint64_t>(value, type, strict, FlatVector::GetDataMutable<uint64_t>(vector)[row], cast);
+		parsed = DirectNumber<uint64_t>(value, type, strict, reinterpret_cast<uint64_t *>(data)[row], cast);
 		break;
 	case LogicalTypeId::HUGEINT:
-		parsed = DirectNumber<hugeint_t>(value, type, strict, FlatVector::GetDataMutable<hugeint_t>(vector)[row], cast);
+		parsed = DirectNumber<hugeint_t>(value, type, strict, reinterpret_cast<hugeint_t *>(data)[row], cast);
 		break;
 	case LogicalTypeId::UHUGEINT:
-		parsed =
-		    DirectNumber<uhugeint_t>(value, type, strict, FlatVector::GetDataMutable<uhugeint_t>(vector)[row], cast);
+		parsed = DirectNumber<uhugeint_t>(value, type, strict, reinterpret_cast<uhugeint_t *>(data)[row], cast);
 		break;
 	case LogicalTypeId::FLOAT:
-		parsed = DirectNumber<float>(value, type, strict, FlatVector::GetDataMutable<float>(vector)[row], cast);
+		parsed = DirectNumber<float>(value, type, strict, reinterpret_cast<float *>(data)[row], cast);
 		break;
 	case LogicalTypeId::DOUBLE:
-		parsed = DirectNumber<double>(value, type, strict, FlatVector::GetDataMutable<double>(vector)[row], cast);
+		parsed = DirectNumber<double>(value, type, strict, reinterpret_cast<double *>(data)[row], cast);
 		break;
 	case LogicalTypeId::DECIMAL: {
 		const auto width = DecimalType::GetWidth(column_type);
@@ -1614,19 +1633,19 @@ bool JsonScan::DirectValue(idx_t column, simdjson::ondemand::value &value, Vecto
 		switch (column_type.InternalType()) {
 		case PhysicalType::INT16:
 			parsed = DirectDecimal<int16_t>(value, type, parameters, width, scale,
-			                                FlatVector::GetDataMutable<int16_t>(vector)[row], cast);
+			                                reinterpret_cast<int16_t *>(data)[row], cast);
 			break;
 		case PhysicalType::INT32:
 			parsed = DirectDecimal<int32_t>(value, type, parameters, width, scale,
-			                                FlatVector::GetDataMutable<int32_t>(vector)[row], cast);
+			                                reinterpret_cast<int32_t *>(data)[row], cast);
 			break;
 		case PhysicalType::INT64:
 			parsed = DirectDecimal<int64_t>(value, type, parameters, width, scale,
-			                                FlatVector::GetDataMutable<int64_t>(vector)[row], cast);
+			                                reinterpret_cast<int64_t *>(data)[row], cast);
 			break;
 		default:
 			parsed = DirectDecimal<hugeint_t>(value, type, parameters, width, scale,
-			                                  FlatVector::GetDataMutable<hugeint_t>(vector)[row], cast);
+			                                  reinterpret_cast<hugeint_t *>(data)[row], cast);
 			break;
 		}
 		break;
@@ -1641,7 +1660,7 @@ bool JsonScan::DirectValue(idx_t column, simdjson::ondemand::value &value, Vecto
 		if (strict) {
 			return false;
 		}
-		FlatVector::ValidityMutable(vector).SetInvalid(row);
+		direct_validity[column]->SetInvalid(row);
 	}
 	return true;
 }
@@ -1853,12 +1872,12 @@ JsonRecordResult JsonScan::DirectRecord(idx_t record, idx_t row, JsonDirectPass 
 			key_hints.emplace_back();
 		}
 		auto &hint = key_hints[position++];
-		if (hint.strength == 0 || hint.key.size() != key.size() ||
-		    memcmp(hint.key.data(), key.data(), key.size()) != 0) {
+		if (hint.strength == 0 || !SameKey(hint, key)) {
 			if (memchr(key.data(), '\\', key.size())) {
 				return FALLBACK;
 			}
 			hint.key.assign(key.data(), key.size());
+			KeyWords(key, hint.words);
 			hint.column = DConstants::INVALID_INDEX;
 			hint.strength = 3;
 			auto exact = global.keys.find(key);
@@ -1909,8 +1928,7 @@ JsonRecordResult JsonScan::DirectRecord(idx_t record, idx_t row, JsonDirectPass 
 			}
 			continue;
 		}
-		auto &target = global.kinds[column] == JsonDirectKind::STRING ? direct_strings[column] : *vectors[column];
-		FlatVector::ValidityMutable(target).SetValid(row);
+		direct_validity[column]->SetValid(row);
 		if (!DirectValue(column, value, *vectors[column], row)) {
 			return FALLBACK;
 		}
@@ -1927,12 +1945,10 @@ JsonRecordResult JsonScan::DirectRecord(idx_t record, idx_t row, JsonDirectPass 
 		if (direct_missing_error && pass != JsonDirectPass::OTHERS) {
 			return FALLBACK;
 		}
-		const auto kind = global.kinds[column];
-		if (kind == JsonDirectKind::TREE) {
+		if (global.kinds[column] == JsonDirectKind::TREE) {
 			direct_raw[column][row] = std::string_view();
 		} else {
-			auto &target = kind == JsonDirectKind::STRING ? direct_strings[column] : *vectors[column];
-			FlatVector::ValidityMutable(target).SetInvalid(row);
+			direct_validity[column]->SetInvalid(row);
 		}
 	}
 	if (rejected) {
@@ -1995,10 +2011,16 @@ bool JsonScan::DecodeDirect(DataChunk &output, idx_t &rows) {
 	for (auto i : columns.column_ids) {
 		vectors.push_back(&output.data[i]);
 	}
+	direct_data.resize(vectors.size());
+	direct_validity.resize(vectors.size());
 	for (idx_t column = 0; column < vectors.size(); column++) {
-		if (global.kinds[column] == JsonDirectKind::STRING) {
+		const bool strings = global.kinds[column] == JsonDirectKind::STRING;
+		if (strings) {
 			direct_strings[column].Initialize(VectorDataInitialization::UNINITIALIZED, STANDARD_VECTOR_SIZE);
 		}
+		auto &target = strings ? direct_strings[column] : *vectors[column];
+		direct_data[column] = FlatVector::GetDataMutable(target);
+		direct_validity[column] = &FlatVector::ValidityMutable(target);
 	}
 	direct_unknown_error = transform_options.error_unknown_key;
 	direct_duplicate_error = transform_options.error_duplicate_key;
