@@ -188,7 +188,7 @@ void ConstantFillFunction(ColumnSegment &segment, Vector &result, idx_t start_id
 	const auto &nstats = segment.GetStats();
 
 	auto data = FlatVector::GetDataMutable<T>(result);
-	auto constant_value = NumericStats::GetMin<T>(nstats);
+	auto constant_value = NumericStats::GetMinUnsafe<T>(nstats);
 	for (idx_t i = 0; i < count; i++) {
 		data[start_idx + i] = constant_value;
 	}
@@ -226,7 +226,7 @@ void ConstantScanFunction(ColumnSegment &segment, ColumnScanState &state, idx_t 
 	const auto &nstats = segment.GetStats();
 
 	auto data = FlatVector::GetDataMutable<T>(result);
-	data[0] = NumericStats::GetMin<T>(nstats);
+	data[0] = NumericStats::GetMinUnsafe<T>(nstats);
 	result.SetVectorType(VectorType::CONSTANT_VECTOR);
 	FlatVector::SetSize(result, count_t(scan_count));
 }

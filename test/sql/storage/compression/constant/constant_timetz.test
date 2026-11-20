@@ -1,0 +1,34 @@
+# name: test/sql/storage/compression/constant/constant_timetz.test
+# description: Test that constant compression stores and scans TIMETZ columns
+# group: [constant]
+
+require no_alternative_verify
+
+load {TEST_DIR}/constant_timetz.db
+
+statement ok
+CREATE TABLE constant_timetz AS SELECT '04:00:00-05'::TIMETZ AS t FROM range(3);
+
+statement ok
+CHECKPOINT
+
+query I
+SELECT DISTINCT compression FROM pragma_storage_info('constant_timetz') WHERE segment_type = 'TIME WITH TIME ZONE';
+----
+Constant
+
+loop i 0 2
+
+query II
+SELECT t, count(*) FROM constant_timetz GROUP BY t;
+----
+04:00:00-05	3
+
+query II
+SELECT min(t), max(t) FROM constant_timetz;
+----
+04:00:00-05	04:00:00-05
+
+restart
+
+endloop
