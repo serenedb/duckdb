@@ -200,6 +200,16 @@ SELECT d, n FROM read_ndjson('{TEMP_DIR}/number_forms.ndjson', columns := {d: 'D
 ----
 <REGEX>:.*in line 5: Failed to cast value to numerical: 9223372036854775808\n.*
 
+query III
+SELECT d, signbit(d), n FROM read_ndjson('{TEMP_DIR}/number_forms.ndjson', columns := {d: 'DOUBLE', n: 'BIGINT'}, records := true, ignore_errors := true);
+----
+0.0	false	0
+-0.0	true	2
+-0.0	true	9223372036854775807
+7.0	false	-9223372036854775808
+2.5	false	NULL
+1.8446744073709552e+19	false	NULL
+
 statement ok
 COPY (SELECT line FROM (VALUES (1, '{"m": 1.5}'), (2, '{"m": 123456}'), (3, '{"m": 999999}')) t(i, line) ORDER BY i) TO '{TEMP_DIR}/decimal_range.ndjson' (FORMAT csv, HEADER false, QUOTE '', ESCAPE '');
 
