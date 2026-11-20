@@ -9,6 +9,7 @@ add_library_unity(
   test_checked_integer.cpp
   test_checksum.cpp
   test_copy_fields.cpp
+  test_csv_encoder.cpp
   test_csv_splitter.cpp
   test_row_ranges.cpp
   test_column_data_allocator.cpp
