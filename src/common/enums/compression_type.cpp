@@ -143,14 +143,10 @@ string CompressionTypeToString(CompressionType type) {
 		return "DICT_FSST12";
 	case CompressionType::COMPRESSION_COL_FSST12:
 		return "FSST12";
-	case CompressionType::COMPRESSION_COL_FFOR:
-		return "FFOR";
-	case CompressionType::COMPRESSION_COL_DELTA_FFOR:
-		return "DELTA_FFOR";
-	case CompressionType::COMPRESSION_COL_RLE_FFOR:
-		return "RLE_FFOR";
-	case CompressionType::COMPRESSION_COL_DICT_FFOR:
-		return "DICT_FFOR";
+	case CompressionType::COMPRESSION_COL_DELTA:
+		return "DELTA";
+	case CompressionType::COMPRESSION_COL_DICT:
+		return "DICT";
 	case CompressionType::COMPRESSION_COL_DELTA_LZ4:
 		return "DELTA_LZ4";
 	case CompressionType::COMPRESSION_COL_RLE_LZ4:
