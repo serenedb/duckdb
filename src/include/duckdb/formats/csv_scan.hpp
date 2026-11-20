@@ -206,9 +206,9 @@ public:
 	atomic<idx_t> copy_data_range {0};
 
 private:
-	void FindStart(idx_t size, shared_ptr<CSVBufferHandle> &whole_file);
-	char CopyInputLineBreak() const;
-	void MatchCopyHeader() const;
+	void FindStart(idx_t size, const RowSource &rows);
+	char CopyInputLineBreak(const RowSource &rows) const;
+	void MatchCopyHeader(RowSource &rows) const;
 };
 
 class CsvScan {
