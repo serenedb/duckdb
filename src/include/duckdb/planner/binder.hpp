@@ -371,6 +371,8 @@ public:
 	void QualifyUserFunctions(const SchemaCatalogEntry &home, ParsedExpression &expression);
 	void QualifyUserFunctions(const SchemaCatalogEntry &home, ColumnDefinition &column);
 	void QualifyUserFunctions(const SchemaCatalogEntry &home, CreateTableInfo &info);
+	void LookupBodyNames(ParsedExpression &expression);
+	void LookupBodyNames(QueryNode &node);
 	unique_ptr<BoundConstraint> BindConstraint(const Constraint &constraint, const Identifier &table,
 	                                           const ColumnList &columns);
 	unique_ptr<BoundConstraint> BindUniqueConstraint(const Constraint &constraint, const Identifier &table,
