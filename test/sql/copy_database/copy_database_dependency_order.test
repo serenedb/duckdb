@@ -1,0 +1,43 @@
+# name: test/sql/copy_database/copy_database_dependency_order.test
+# group: [copy_database]
+
+statement ok
+ATTACH ':memory:' AS dep_src;
+
+statement ok
+ATTACH ':memory:' AS dep_dst;
+
+statement ok
+USE dep_src;
+
+statement ok
+CREATE MACRO positive(x) AS x > 0;
+
+statement ok
+CREATE TABLE t (a INT CHECK (positive(a)));
+
+statement ok
+INSERT INTO t VALUES (1);
+
+statement ok
+USE memory;
+
+statement ok
+COPY FROM DATABASE dep_src TO dep_dst;
+
+statement ok
+DETACH dep_src;
+
+statement ok
+INSERT INTO dep_dst.t VALUES (2);
+
+statement error
+INSERT INTO dep_dst.t VALUES (-1);
+----
+CHECK constraint failed
+
+query I
+SELECT a FROM dep_dst.t ORDER BY a;
+----
+1
+2
