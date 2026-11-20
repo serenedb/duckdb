@@ -110,6 +110,8 @@ constexpr ObjectKind MakeObjectKind(CatalogType type) {
 		return {CatalogType::SUBSCRIPTION_ENTRY, ObjectContainer::DATABASE, AclMode::NoRights, AclMode::NoRights, 6100, true};
 	case CatalogType::DATABASE_ENTRY:
 		return {CatalogType::DATABASE_ENTRY, ObjectContainer::CLUSTER, AclMode::Create | AclMode::CreateTemp | AclMode::Connect, AclMode::CreateTemp | AclMode::Connect, 1262, true};
+	case CatalogType::TABLESPACE_ENTRY:
+		return {CatalogType::TABLESPACE_ENTRY, ObjectContainer::CLUSTER, AclMode::Create, AclMode::NoRights, 1213, true};
 	case CatalogType::ROLE_ENTRY:
 		return {CatalogType::ROLE_ENTRY, ObjectContainer::CLUSTER, AclMode::NoRights, AclMode::NoRights, 1260, true};
 	case CatalogType::FOREIGN_DATA_WRAPPER_ENTRY:
@@ -184,6 +186,8 @@ constexpr std::string_view ObjectNoun(CatalogType type) {
 		return "subscription";
 	case CatalogType::DATABASE_ENTRY:
 		return "database";
+	case CatalogType::TABLESPACE_ENTRY:
+		return "tablespace";
 	case CatalogType::FOREIGN_DATA_WRAPPER_ENTRY:
 		return "foreign-data wrapper";
 	case CatalogType::LANGUAGE_ENTRY:

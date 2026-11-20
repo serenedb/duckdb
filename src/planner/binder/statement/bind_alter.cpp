@@ -364,6 +364,8 @@ unique_ptr<LogicalOperator> Binder::BindAlter(unique_ptr<AlterInfo> &info) {
 	}
 
 	if (info->type == AlterType::ALTER_TABLESPACE) {
+		ClusterEntry(context, CheckAs(), CatalogType::TABLESPACE_ENTRY, info->GetQualifiedName().Name(),
+		             EntryUse::RENAME, OnEntryNotFound::RETURN_NULL);
 		return nullptr;
 	}
 	if (info->type == AlterType::ALTER_ROLE) {

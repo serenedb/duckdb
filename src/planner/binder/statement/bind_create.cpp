@@ -32,6 +32,7 @@
 #include "duckdb/parser/expression/operator_expression.hpp"
 #include "duckdb/parser/expression/subquery_expression.hpp"
 #include "duckdb/parser/parsed_data/create_database_info.hpp"
+#include "duckdb/parser/parsed_data/create_tablespace_info.hpp"
 #include "duckdb/parser/parsed_data/create_foreign_server_info.hpp"
 #include "duckdb/parser/parsed_data/create_index_info.hpp"
 #include "duckdb/parser/parsed_data/create_sequence_info.hpp"
@@ -1545,9 +1546,19 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 		BindCreateRole(stmt.info->Cast<CreateRoleInfo>());
 		result.plan = make_uniq<LogicalCreate>(LogicalOperatorType::LOGICAL_CREATE_ROLE, std::move(stmt.info));
 		break;
-	case CatalogType::TABLESPACE_ENTRY:
+	case CatalogType::TABLESPACE_ENTRY: {
+		auto &info = stmt.info->Cast<CreateTablespaceInfo>();
+		auto &role = CheckAs();
+		if (!role.is_superuser) {
+			throw PermissionException(
+			    unordered_map<string, string> {{"hint", "Must be superuser to create a tablespace."}},
+			    StringUtil::Format("permission denied to create tablespace \"%s\"",
+			                       info.GetQualifiedName().Name().GetIdentifierName()));
+		}
+		info.permissions.owner = info.owner.empty() ? role.role : RoleSpecId(context, info.owner.GetIdentifierName());
 		result.plan = make_uniq<LogicalCreate>(LogicalOperatorType::LOGICAL_CREATE_TABLESPACE, std::move(stmt.info));
 		break;
+	}
 	case CatalogType::DATABASE_ENTRY: {
 		auto &info = stmt.info->Cast<CreateDatabaseInfo>();
 		auto &role = CheckAs();
