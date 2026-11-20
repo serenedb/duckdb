@@ -129,6 +129,7 @@ RowDialect RowDialect::PostgresCsv(char delimiter, char quote, char escape, char
 	result.escape = escape;
 	result.quoting = RowQuoting::ANYWHERE;
 	result.escape_in_quotes = escape != '\0' && escape != quote;
+	result.physical_lines = true;
 	result.line_break = line_break;
 	result.strip_carriage = line_break == '\n';
 	result.strict = true;
@@ -1064,7 +1065,7 @@ bool RowLexer::FeedBlocks(RowCursor &cursor, const char *data, idx_t base, idx_t
 			}
 		}
 		if (!SHAPE) {
-			c.lines += std::popcount(terms);
+			c.lines += std::popcount(d.physical_lines ? (d.line_break == '\n' ? line_feed : carriage_return) : terms);
 			if (d.carry_on) {
 				c.lines -= std::popcount(feeds & ((carriage << 1) | c.after_cr));
 			}

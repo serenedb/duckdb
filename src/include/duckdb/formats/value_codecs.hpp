@@ -8,6 +8,7 @@
 
 #pragma once
 
+#include "duckdb/common/error_data.hpp"
 #include "duckdb/common/types/vector.hpp"
 #include "duckdb/main/client_context.hpp"
 
@@ -19,7 +20,7 @@ class ValueDecoder {
 public:
 	virtual ~ValueDecoder() = default;
 
-	virtual bool Decode(Vector &text, Vector &out, idx_t count, string &error) = 0;
+	virtual bool Decode(Vector &text, Vector &out, idx_t count, ErrorData &error) = 0;
 };
 
 ValueRendering ValueRenderingFromString(const string &name, const string &option);

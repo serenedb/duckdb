@@ -42,6 +42,7 @@ struct RowDialect {
 	bool reopen = false;
 	bool empty_space = false;
 	bool quoted_spaces = false;
+	bool physical_lines = false;
 	char line_break = '\n';
 	NewLineIdentifier new_line = NewLineIdentifier::NOT_SET;
 };

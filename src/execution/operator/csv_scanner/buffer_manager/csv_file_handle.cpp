@@ -4,13 +4,15 @@
 #include "duckdb/common/compressed_file_system.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/execution/operator/csv_scanner/csv_reader_options.hpp"
+#include "duckdb/formats/copy_options.hpp"
 
 namespace duckdb {
 
 CSVFileHandle::CSVFileHandle(ClientContext &context_p, unique_ptr<FileHandle> file_handle_p, const OpenFileInfo &file_p,
                              const CSVReaderOptions &options)
     : compression_type(options.compression), context(context_p), file_handle(std::move(file_handle_p)),
-      encoder(context_p, options.encoding, options.buffer_size_option.GetValue()), file(file_p) {
+      encoder(context_p, options.encoding, options.buffer_size_option.GetValue()), file(file_p),
+      postgres_errors(options.copy_rules != nullptr) {
 	can_seek = file_handle->CanSeek();
 	on_disk_file = file_handle->OnDiskFile();
 	file_size = file_handle->GetFileSize();
@@ -97,8 +99,20 @@ idx_t CSVFileHandle::Read(void *buffer, idx_t nr_bytes) {
 	idx_t bytes_read = 0;
 	if (encoder.encoding_name == "utf-8") {
 		bytes_read = static_cast<idx_t>(file_handle->Read(context, buffer, nr_bytes));
-	} else {
+	} else if (!postgres_errors) {
 		bytes_read = encoder.Encode(*file_handle, static_cast<char *>(buffer), nr_bytes);
+	} else {
+		try {
+			bytes_read = encoder.Encode(*file_handle, static_cast<char *>(buffer), nr_bytes);
+		} catch (const InvalidInputException &ex) {
+			const ErrorData error(ex);
+			const auto reason = error.ExtraInfo().find("encoding_error");
+			if (reason == error.ExtraInfo().end()) {
+				throw;
+			}
+			ThrowCopyError("22021", "invalid byte sequence for encoding \"" + CopyEncodingTitle(encoder.encoding_name) +
+			                            "\": " + reason->second);
+		}
 	}
 	if (!finished) {
 		finished = bytes_read == 0;
