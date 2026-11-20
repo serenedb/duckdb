@@ -41,20 +41,6 @@ inline uint32_t *WritePositions(uint64_t bits, uint32_t offset, uint32_t *out) {
 	return out + count;
 }
 
-inline uint64_t FindEscaped(uint64_t escapes, uint64_t &carry) {
-	if (!escapes) {
-		const uint64_t escaped = carry;
-		carry = 0;
-		return escaped;
-	}
-	constexpr uint64_t ODD_BITS = 0xAAAAAAAAAAAAAAAAULL;
-	const uint64_t potential = escapes & ~carry;
-	const uint64_t codes = (((potential << 1) | ODD_BITS) - potential) ^ ODD_BITS;
-	const uint64_t escaped = codes ^ (escapes | carry);
-	carry = (codes & escapes) >> 63;
-	return escaped;
-}
-
 inline uint64_t Lowest(uint64_t bits) {
 	return bits & (0 - bits);
 }
@@ -580,7 +566,7 @@ bool RowLexer::FeedBlocks(RowCursor &cursor, const char *data, idx_t base, idx_t
 		while (true) {
 			escape_carry = c.escape_carry;
 			const uint64_t active_escapes = escape_bits & ~drop_e;
-			escaped = escapes ? FindEscaped(active_escapes, escape_carry) : 0;
+			escaped = escapes ? CsvFindEscaped(active_escapes, escape_carry) : 0;
 			if (escapes && size < CSV_BLOCK_BYTES) {
 				escape_carry = ((active_escapes & ~escaped) >> (size - 1)) & 1;
 			}

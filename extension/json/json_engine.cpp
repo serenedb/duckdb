@@ -45,8 +45,7 @@ const char *NextNewline(const char *ptr, idx_t size) {
 }
 
 const char *NextJSONContainer(const char *ptr, const char *const end) {
-	constexpr uint64_t EVEN_BITS = 0x5555555555555555ULL;
-	uint64_t prev_escaped = 0;
+	uint64_t escape_carry = 0;
 	uint64_t in_string = 0;
 	int64_t depth = 0;
 	char tail[CSV_BLOCK_BYTES];
@@ -59,12 +58,7 @@ const char *NextJSONContainer(const char *ptr, const char *const end) {
 			block = tail;
 		}
 		const CsvVector vector(block);
-		const uint64_t backslash = vector.Equal('\\') & ~prev_escaped;
-		const uint64_t follows_escape = backslash << 1 | prev_escaped;
-		const uint64_t odd_starts = backslash & ~EVEN_BITS & ~follows_escape;
-		uint64_t even_starts;
-		prev_escaped = __builtin_add_overflow(odd_starts, backslash, &even_starts);
-		const uint64_t escaped = (EVEN_BITS ^ (even_starts << 1)) & follows_escape;
+		const uint64_t escaped = CsvFindEscaped(vector.Equal('\\'), escape_carry);
 		const uint64_t strings = CsvPrefixXor(vector.Equal('"') & ~escaped) ^ in_string;
 		in_string = CsvSpread(strings >> 63);
 		const uint64_t opens = (vector.Equal('{') | vector.Equal('[')) & ~strings;
