@@ -48,8 +48,8 @@ bool CSVSniffer::TryCastVector(Vector &parse_chunk_col, idx_t size, const Logica
 				auto value_ptr = vector_data[row_idx].GetData();
 				auto value_size = vector_data[row_idx].GetSize();
 				if (sniffing_state_machine.options.thousands_separator != '\0') {
-					strip_thousands = BaseScanner::RemoveSeparator(value_ptr, value_size,
-					                                               sniffing_state_machine.options.thousands_separator);
+					strip_thousands =
+					    CsvStripSeparator(value_ptr, value_size, sniffing_state_machine.options.thousands_separator);
 					value_ptr = strip_thousands.c_str();
 					value_size = strip_thousands.size();
 				}

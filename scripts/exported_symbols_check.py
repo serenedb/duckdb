@@ -16,7 +16,6 @@ WHITELIST = [
     'duckdb_fmt::',
     'duckdb_hll::',
     'duckdb_moodycamel::',
-    'duckdb_yyjson::',
     'duckdb_',
     'RefCounter',
     'registerTMCloneTable',
@@ -31,9 +30,6 @@ WHITELIST = [
     '__bss_start',
     '__udivti3',
     '__popcount',
-    'Adbc',
-    'ErrorArrayStream',
-    'ErrorFromArrayStream',
     'CreateAPIv1()',
 ]
 

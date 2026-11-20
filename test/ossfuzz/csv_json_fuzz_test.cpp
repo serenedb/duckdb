@@ -59,8 +59,7 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
 		}
 		case 2: {
 			// JSON validation and extraction functions.
-			// Exercises: yyjson parser, JSONCommon::ReadDocumentUnsafe,
-			// json_valid, json_type, json_extract.
+			// Exercises: the JSON document parser, json_valid, json_type, json_extract.
 			std::string str_payload(reinterpret_cast<const char *>(payload), payload_size);
 			// Escape single quotes for SQL safety.
 			std::string escaped;
@@ -82,7 +81,7 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
 		}
 		case 3: {
 			// JSON file reading via read_json_auto.
-			// Exercises: JSONReader, JSON scanning, auto schema detection.
+			// Exercises: the JSON reader, JSON scanning, auto schema detection.
 			FILE *f = fopen(TMPFILE, "wb");
 			if (!f)
 				return 0;

@@ -72,8 +72,7 @@ public:
 };
 
 //! Resolve an array path element to a position, returns false if it is out of range
-static bool ResolveArrayPosition(yyjson_mut_val *arr, const JSONPathElement &element, idx_t &pos) {
-	idx_t arr_len = yyjson_mut_arr_size(arr);
+static bool ResolveArrayPosition(idx_t arr_len, const JSONPathElement &element, idx_t &pos) {
 	switch (element.type) {
 	case JSONPathElementType::INDEX:
 		pos = element.index;
@@ -93,230 +92,319 @@ static bool ResolveArrayPosition(yyjson_mut_val *arr, const JSONPathElement &ele
 	return pos <= arr_len;
 }
 
-//! Attach a child container to a parent at the given path element
-static void AttachChild(yyjson_mut_doc *doc, yyjson_mut_val *parent, const JSONPathElement &element,
-                        yyjson_mut_val *child) {
-	if (element.type == JSONPathElementType::KEY) {
-		yyjson_mut_obj_put(parent, yyjson_mut_strncpy(doc, element.key.c_str(), element.key.size()), child);
-	} else {
-		yyjson_mut_arr_append(parent, child);
+static bool ParsePointerIndex(const string &token, idx_t &index) {
+	if (token.empty() || token.size() > 19) {
+		return false;
 	}
+	if (token == "-") {
+		index = NumericLimits<idx_t>::Maximum();
+		return true;
+	}
+	if (token[0] == '0' && token.size() > 1) {
+		return false;
+	}
+	index = 0;
+	for (auto c : token) {
+		if (!StringUtil::CharacterIsDigit(c)) {
+			return false;
+		}
+		index = index * 10 + static_cast<idx_t>(c - '0');
+	}
+	return true;
 }
 
-struct JSONModifyTarget {
-	//! Container holding the final path element (existing, or freshly created and not yet attached)
-	yyjson_mut_val *parent = nullptr;
-	//! Existing container to attach a freshly created chain to (nullptr if nothing was created)
-	yyjson_mut_val *attach_to = nullptr;
-	//! First created container of the chain
-	yyjson_mut_val *created = nullptr;
-	//! Path element at which the created chain attaches
-	const JSONPathElement *attach_element = nullptr;
+struct JSONModifyContainer {
+	bool object;
+	std::string_view key;
 };
 
-//! Resolve the parent of the final path element. When create is set, missing containers are created
-//! like SQLite does, but only attached to the document once the modification succeeds.
-static bool ResolveParent(yyjson_mut_doc *doc, const vector<JSONPathElement> &elements, bool create,
-                          JSONModifyTarget &target) {
-	auto val = yyjson_mut_doc_get_root(doc);
-	for (idx_t i = 0; i + 1 < elements.size(); i++) {
-		auto &element = elements[i];
-		auto &next = elements[i + 1];
-		yyjson_mut_val *child;
-		if (element.type == JSONPathElementType::KEY) {
-			if (!yyjson_mut_is_obj(val)) {
-				return false;
-			}
-			child = yyjson_mut_obj_getn(val, element.key.c_str(), element.key.size());
-		} else {
-			if (!yyjson_mut_is_arr(val)) {
-				return false;
-			}
-			idx_t pos;
-			if (!ResolveArrayPosition(val, element, pos)) {
-				return false;
-			}
-			child = yyjson_mut_arr_get(val, pos); // NULL when pos equals the length
-		}
-		if (!child) {
-			if (!create) {
-				return false;
-			}
-			// Create the missing container based on the next path element
-			child = next.type == JSONPathElementType::KEY ? yyjson_mut_obj(doc) : yyjson_mut_arr(doc);
-			if (!target.created) {
-				// Attach to the document only once the modification succeeds
-				target.created = child;
-				target.attach_to = val;
-				target.attach_element = &element;
-			} else {
-				// val is part of the detached chain, safe to link immediately
-				AttachChild(doc, val, element, child);
-			}
-		}
-		val = child;
+class JSONModifier {
+public:
+	JSONModifier(JSONModifyType type_p, const JSONModifyFunctionData &info_p) : type(type_p), info(info_p) {
 	}
-	target.parent = val;
-	return val != nullptr;
-}
 
-//! Apply the modification at the final path element, returns true if the document was modified
-static bool ApplyModify(yyjson_mut_doc *doc, yyjson_mut_val *parent, const JSONPathElement &element,
-                        JSONModifyType type, yyjson_mut_val *new_val) {
-	if (element.type == JSONPathElementType::KEY) {
-		if (!yyjson_mut_is_obj(parent)) {
-			return false;
+	//! Apply a modification at a JSONPath or JSON Pointer, using the bind data's path elements when available
+	bool Write(JSONStringWriter &writer, const JSONNode &root, const string_t &path_str, const JSONNode *new_val) {
+		if (info.use_elements) {
+			return WriteAtElements(writer, root, info.elements, new_val);
 		}
-		auto existing = yyjson_mut_obj_getn(parent, element.key.c_str(), element.key.size());
-		if (type == JSONModifyType::INSERT && existing) {
-			return false; // Existing values are never overwritten
+		if (info.constant && !info.path.empty() && info.path[0] == '/') {
+			WriteAtPointer(writer, root, info.path.c_str(), info.path.size(), new_val);
+			return true;
 		}
-		if ((type == JSONModifyType::REPLACE || type == JSONModifyType::REMOVE) && !existing) {
-			return false; // Missing paths are never created
-		}
-		if (type == JSONModifyType::REMOVE) {
-			yyjson_mut_obj_remove_keyn(parent, element.key.c_str(), element.key.size());
-		} else {
-			yyjson_mut_obj_put(parent, yyjson_mut_strncpy(doc, element.key.c_str(), element.key.size()), new_val);
-		}
-		return true;
-	}
-	if (!yyjson_mut_is_arr(parent)) {
-		return false;
-	}
-	idx_t pos;
-	if (!ResolveArrayPosition(parent, element, pos)) {
-		return false;
-	}
-	const auto exists = pos < yyjson_mut_arr_size(parent);
-	switch (type) {
-	case JSONModifyType::SET:
-		if (exists) {
-			yyjson_mut_arr_replace(parent, pos, new_val);
-		} else {
-			yyjson_mut_arr_append(parent, new_val);
-		}
-		return true;
-	case JSONModifyType::INSERT:
-		if (exists) {
-			return false; // Existing elements are never overwritten
-		}
-		yyjson_mut_arr_append(parent, new_val);
-		return true;
-	case JSONModifyType::REPLACE:
-		if (!exists) {
-			return false;
-		}
-		yyjson_mut_arr_replace(parent, pos, new_val);
-		return true;
-	case JSONModifyType::REMOVE:
-		if (!exists) {
-			return false;
-		}
-		yyjson_mut_arr_remove(parent, pos);
-		return true;
-	}
-	return false;
-}
-
-//! Modify at the document root
-static void ModifyRoot(yyjson_mut_doc *doc, JSONModifyType type, yyjson_mut_val *new_val) {
-	switch (type) {
-	case JSONModifyType::SET:
-	case JSONModifyType::REPLACE:
-		yyjson_mut_doc_set_root(doc, new_val);
-		break;
-	case JSONModifyType::INSERT:
-		break; // The root always exists, never overwritten
-	case JSONModifyType::REMOVE:
-		yyjson_mut_doc_set_root(doc, nullptr);
-		break;
-	}
-}
-
-//! Apply a modification at a JSON Pointer (paths starting with '/')
-static void ModifyAtPointer(yyjson_mut_doc *doc, const string_t &path_str, yyjson_mut_val *new_val,
-                            JSONModifyType type) {
-	auto ptr = path_str.GetData();
-	auto len = path_str.GetSize();
-	switch (type) {
-	case JSONModifyType::SET:
-		// Try set first (overwrites existing, creates missing).
-		// Fall back to add for cases set cannot handle (e.g. appending with /-).
-		if (!yyjson_mut_doc_ptr_setx(doc, ptr, len, new_val, true, nullptr, nullptr)) {
-			yyjson_mut_doc_ptr_addx(doc, ptr, len, new_val, true, nullptr, nullptr);
-		}
-		break;
-	case JSONModifyType::INSERT:
-		// Only insert if there is no value at the pointer yet
-		if (!yyjson_mut_doc_ptr_getx(doc, ptr, len, nullptr, nullptr)) {
-			yyjson_mut_doc_ptr_addx(doc, ptr, len, new_val, true, nullptr, nullptr);
-		}
-		break;
-	case JSONModifyType::REPLACE:
-		yyjson_mut_doc_ptr_replacex(doc, ptr, len, new_val, nullptr, nullptr);
-		break;
-	case JSONModifyType::REMOVE:
-		yyjson_mut_doc_ptr_removex(doc, ptr, len, nullptr, nullptr);
-		break;
-	}
-}
-
-//! Apply a modification at pre-parsed path elements
-static void ModifyDocumentElements(yyjson_mut_doc *doc, const vector<JSONPathElement> &elements,
-                                   yyjson_mut_val *new_val, JSONModifyType type) {
-	if (elements.empty()) {
-		ModifyRoot(doc, type, new_val);
-		return;
-	}
-	const auto create = type == JSONModifyType::SET || type == JSONModifyType::INSERT;
-	JSONModifyTarget target;
-	if (ResolveParent(doc, elements, create, target) &&
-	    ApplyModify(doc, target.parent, elements.back(), type, new_val) && target.created) {
-		AttachChild(doc, target.attach_to, *target.attach_element, target.created);
-	}
-}
-
-//! Apply a modification at a JSONPath or JSON Pointer, using the bind data's path elements when available
-static bool ModifyDocument(yyjson_mut_doc *doc, const JSONModifyFunctionData &info, const string_t &path_str,
-                           yyjson_mut_val *new_val, JSONModifyType type) {
-	if (info.use_elements) {
-		ModifyDocumentElements(doc, info.elements, new_val, type);
-	} else if (info.constant && !info.path.empty() && info.path[0] == '/') {
-		ModifyAtPointer(doc, string_t(info.path.c_str(), UnsafeNumericCast<uint32_t>(info.path.size())), new_val, type);
-	} else {
 		// Non constant path, or a constant path that did not parse at bind time (the error surfaces here)
 		auto ptr = path_str.GetData();
 		auto len = path_str.GetSize();
 		if (len != 0 && *ptr == '/') {
-			ModifyAtPointer(doc, path_str, new_val, type);
+			WriteAtPointer(writer, root, ptr, len, new_val);
+			return true;
+		}
+		return WriteAtElements(writer, root, ParseModifyPath(ptr, len, false), new_val);
+	}
+
+private:
+	bool WriteAtElements(JSONStringWriter &writer, const JSONNode &root, const vector<JSONPathElement> &elements,
+	                     const JSONNode *new_val) {
+		if (elements.empty()) {
+			// Modify at the document root
+			if (type == JSONModifyType::REMOVE) {
+				return false;
+			}
+			// The root always exists, never overwritten by an insert
+			writer.Value(type == JSONModifyType::INSERT ? root : *new_val);
+			return true;
+		}
+		Reset(root);
+		if (ResolveElements(elements)) {
+			WriteModified(writer, 0, new_val);
 		} else {
-			ModifyDocumentElements(doc, ParseModifyPath(ptr, len, false), new_val, type);
+			writer.Value(root);
+		}
+		return true;
+	}
+
+	void WriteAtPointer(JSONStringWriter &writer, const JSONNode &root, const char *ptr, idx_t len,
+	                    const JSONNode *new_val) {
+		Reset(root);
+		if (ParsePointer(ptr, len) && ResolvePointer()) {
+			WriteModified(writer, 0, new_val);
+		} else {
+			writer.Value(root);
 		}
 	}
-	return yyjson_mut_doc_get_root(doc) != nullptr;
-}
+
+	void Reset(const JSONNode &root) {
+		path.clear();
+		path.push_back(&root);
+		created.clear();
+		remove = false;
+	}
+
+	//! Resolve the parent of the final path element. When creating, missing containers are created like SQLite does
+	bool ResolveElements(const vector<JSONPathElement> &elements) {
+		const auto create = type == JSONModifyType::SET || type == JSONModifyType::INSERT;
+		for (idx_t i = 0; i + 1 < elements.size(); i++) {
+			auto &val = *path.back();
+			auto &element = elements[i];
+			const JSONNode *child;
+			if (element.type == JSONPathElementType::KEY) {
+				if (val.type != JSONValueType::OBJECT) {
+					return false;
+				}
+				key = element.key;
+				child = val.Get(key);
+			} else {
+				if (val.type != JSONValueType::ARRAY || !ResolveArrayPosition(val.size, element, position)) {
+					return false;
+				}
+				child = val.Get(position);
+			}
+			if (child) {
+				path.push_back(child);
+				continue;
+			}
+			if (!create) {
+				return false;
+			}
+			// Create the missing containers based on the next path elements
+			for (idx_t j = i + 1; j < elements.size(); j++) {
+				auto &next = elements[j];
+				idx_t next_position;
+				if (next.type == JSONPathElementType::KEY) {
+					created.push_back({true, next.key});
+				} else if (ResolveArrayPosition(0, next, next_position)) {
+					created.push_back({false, std::string_view()});
+				} else {
+					return false;
+				}
+			}
+			return true;
+		}
+		auto &val = *path.back();
+		auto &element = elements.back();
+		bool exists;
+		if (element.type == JSONPathElementType::KEY) {
+			if (val.type != JSONValueType::OBJECT) {
+				return false;
+			}
+			key = element.key;
+			exists = val.Get(key) != nullptr;
+		} else {
+			if (val.type != JSONValueType::ARRAY || !ResolveArrayPosition(val.size, element, position)) {
+				return false;
+			}
+			exists = position < val.size;
+		}
+		if (type == JSONModifyType::INSERT && exists) {
+			return false; // Existing values are never overwritten
+		}
+		if ((type == JSONModifyType::REPLACE || type == JSONModifyType::REMOVE) && !exists) {
+			return false; // Missing paths are never created
+		}
+		remove = type == JSONModifyType::REMOVE;
+		return true;
+	}
+
+	bool ParsePointer(const char *ptr, idx_t len) {
+		tokens.clear();
+		const auto end = ptr + len;
+		while (ptr < end) {
+			ptr++;
+			tokens.emplace_back();
+			auto &token = tokens.back();
+			while (ptr < end && *ptr != '/') {
+				if (*ptr == '~') {
+					if (ptr + 1 == end || (ptr[1] != '0' && ptr[1] != '1')) {
+						return false;
+					}
+					token += ptr[1] == '0' ? '~' : '/';
+					ptr += 2;
+					continue;
+				}
+				token += *ptr++;
+			}
+		}
+		return true;
+	}
+
+	bool ResolvePointer() {
+		for (idx_t i = 0; i < tokens.size(); i++) {
+			auto &val = *path.back();
+			const JSONNode *child = nullptr;
+			bool append = false;
+			if (val.type == JSONValueType::OBJECT) {
+				key = tokens[i];
+				child = val.Get(key);
+			} else if (val.type == JSONValueType::ARRAY) {
+				idx_t index;
+				if (ParsePointerIndex(tokens[i], index)) {
+					append = index == val.size || index == NumericLimits<idx_t>::Maximum();
+					position = append ? val.size : index;
+					child = val.Get(index);
+				}
+			} else {
+				return false;
+			}
+			if (child && i + 1 < tokens.size()) {
+				path.push_back(child);
+				continue;
+			}
+			if (child) {
+				if (type == JSONModifyType::INSERT) {
+					return false;
+				}
+				remove = type == JSONModifyType::REMOVE;
+				return true;
+			}
+			if (type == JSONModifyType::REPLACE || type == JSONModifyType::REMOVE ||
+			    (val.type == JSONValueType::ARRAY && !append)) {
+				return false;
+			}
+			for (idx_t j = i + 1; j < tokens.size(); j++) {
+				created.push_back({true, tokens[j]});
+			}
+			return true;
+		}
+		return false;
+	}
+
+	void WriteNewValue(JSONStringWriter &writer, const JSONNode &new_val) {
+		for (auto &container : created) {
+			if (container.object) {
+				writer.StartObject();
+				writer.Key(container.key);
+			} else {
+				writer.StartArray();
+			}
+		}
+		writer.Value(new_val);
+		for (idx_t i = created.size(); i > 0; i--) {
+			if (created[i - 1].object) {
+				writer.EndObject();
+			} else {
+				writer.EndArray();
+			}
+		}
+	}
+
+	void WriteModified(JSONStringWriter &writer, idx_t depth, const JSONNode *new_val) {
+		auto &val = *path[depth];
+		const auto modified = depth + 1 == path.size();
+		const auto next = modified ? nullptr : path[depth + 1];
+		if (val.type == JSONValueType::OBJECT) {
+			writer.StartObject();
+			bool written = false;
+			for (auto &member_key : val.Keys()) {
+				auto &member = *(&member_key + 1);
+				if (modified && member_key.GetString() == key) {
+					if (!remove && !written) {
+						writer.Key(member_key.GetString());
+						WriteNewValue(writer, *new_val);
+						written = true;
+					}
+					continue;
+				}
+				writer.Key(member_key.GetString());
+				if (&member == next) {
+					WriteModified(writer, depth + 1, new_val);
+				} else {
+					writer.Value(member);
+				}
+			}
+			if (modified && !remove && !written) {
+				writer.Key(key);
+				WriteNewValue(writer, *new_val);
+			}
+			writer.EndObject();
+			return;
+		}
+		writer.StartArray();
+		idx_t index = 0;
+		for (auto &element : val.Elements()) {
+			if (modified && index == position) {
+				if (!remove) {
+					WriteNewValue(writer, *new_val);
+				}
+			} else if (&element == next) {
+				WriteModified(writer, depth + 1, new_val);
+			} else {
+				writer.Value(element);
+			}
+			index++;
+		}
+		if (modified && !remove && position == val.size) {
+			WriteNewValue(writer, *new_val);
+		}
+		writer.EndArray();
+	}
+
+private:
+	const JSONModifyType type;
+	const JSONModifyFunctionData &info;
+	vector<const JSONNode *> path;
+	std::string_view key;
+	idx_t position = 0;
+	bool remove = false;
+	vector<JSONModifyContainer> created;
+	vector<string> tokens;
+};
 
 //! Shared implementation of json_set, json_insert, and json_replace
 static void ModifyFunction(JSONModifyType type, DataChunk &args, ExpressionState &state, Vector &result) {
 	auto &func_expr = state.expr.Cast<BoundFunctionExpression>();
 	const auto &info = func_expr.BindInfo()->Cast<JSONModifyFunctionData>();
 	auto &lstate = JSONFunctionLocalState::ResetAndGet(state);
-	auto alc = lstate.json_allocator->GetYYAlc();
+	JSONModifier modifier(type, info);
 
 	TernaryExecutor::Execute<string_t, string_t, string_t, string_t>(
 	    args.data[0], args.data[1], args.data[2], result, [&](string_t doc_str, string_t path_str, string_t val_str) {
-		    auto doc = JSONCommon::ReadDocument(doc_str, JSONCommon::READ_FLAG, alc);
-		    auto mut_doc = yyjson_doc_mut_copy(doc, alc);
+		    auto &root = JSONCommon::ReadDocument(lstate.parser, doc_str);
+		    auto &new_val = JSONCommon::ReadDocument(lstate.second_parser, val_str);
 
-		    auto val_doc = JSONCommon::ReadDocument(val_str, JSONCommon::READ_FLAG, alc);
-		    auto new_val = yyjson_val_mut_copy(mut_doc, val_doc->root);
-
-		    ModifyDocument(mut_doc, info, path_str, new_val, type);
-		    return JSONCommon::WriteVal<yyjson_mut_val>(yyjson_mut_doc_get_root(mut_doc), alc);
+		    lstate.writer.Clear();
+		    modifier.Write(lstate.writer, root, path_str, &new_val);
+		    return StringVector::AddString(result, lstate.writer.View());
 	    });
-
-	JSONAllocator::AddBuffer(result, alc);
 }
 
 //! Set a value at a path in a JSON document (create if missing, overwrite if exists)
@@ -339,20 +427,18 @@ static void JsonRemoveFunction(DataChunk &args, ExpressionState &state, Vector &
 	auto &func_expr = state.expr.Cast<BoundFunctionExpression>();
 	const auto &info = func_expr.BindInfo()->Cast<JSONModifyFunctionData>();
 	auto &lstate = JSONFunctionLocalState::ResetAndGet(state);
-	auto alc = lstate.json_allocator->GetYYAlc();
+	JSONModifier modifier(JSONModifyType::REMOVE, info);
 
 	BinaryExecutor::Execute<string_t, string_t, string_t>(
 	    args.data[0], args.data[1], result, [&](string_t doc_str, string_t path_str) -> optional<string_t> {
-		    auto doc = JSONCommon::ReadDocument(doc_str, JSONCommon::READ_FLAG, alc);
-		    auto mut_doc = yyjson_doc_mut_copy(doc, alc);
+		    auto &root = JSONCommon::ReadDocument(lstate.parser, doc_str);
 
-		    if (!ModifyDocument(mut_doc, info, path_str, nullptr, JSONModifyType::REMOVE)) {
+		    lstate.writer.Clear();
+		    if (!modifier.Write(lstate.writer, root, path_str, nullptr)) {
 			    return nullopt; // Removing the root leaves no document behind
 		    }
-		    return JSONCommon::WriteVal<yyjson_mut_val>(yyjson_mut_doc_get_root(mut_doc), alc);
+		    return StringVector::AddString(result, lstate.writer.View());
 	    });
-
-	JSONAllocator::AddBuffer(result, alc);
 }
 
 ScalarFunctionSet JSONFunctions::GetSetFunction() {

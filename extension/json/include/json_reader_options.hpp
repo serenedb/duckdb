@@ -13,6 +13,7 @@
 #include "duckdb/common/enums/file_compression_type.hpp"
 #include "json_enums.hpp"
 #include "duckdb/common/types/type_map.hpp"
+#include "duckdb/formats/value_codecs.hpp"
 #include "duckdb/function/scalar/strftime_format.hpp"
 
 namespace duckdb {
@@ -101,6 +102,8 @@ struct JSONReaderOptions {
 	FileCompressionType compression = FileCompressionType::AUTO_DETECT;
 	//! Whether or not we should ignore malformed JSON (default to NULL)
 	bool ignore_errors = false;
+	bool strict = false;
+	ValueRendering rendering = ValueRendering::NATIVE;
 	//! Maximum JSON object size (defaults to 16MB minimum)
 	idx_t maximum_object_size = 16777216;
 	//! Whether we auto-detect a schema

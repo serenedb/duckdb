@@ -171,6 +171,8 @@ public:
 	bool ShouldUsePager(RenderingQueryResult &result, PagerMode global_mode) override;
 };
 
+unique_ptr<ShellRenderer> CreatePsqlRenderer(ShellState &state);
+
 class ShellLogStorage : public duckdb::LogStorage {
 public:
 	explicit ShellLogStorage(ShellState &state);

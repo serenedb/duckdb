@@ -3,8 +3,7 @@
 #include "duckdb/function/cast/variant/to_variant_fwd.hpp"
 #include "duckdb/function/scalar/variant_utils.hpp"
 #include "duckdb/function/cast/default_casts.hpp"
-#include "yyjson.hpp"
-#include "yyjson_memory.hpp"
+#include "duckdb/common/json_document.hpp"
 #include "duckdb/common/serializer/memory_stream.hpp"
 #include "duckdb/common/serializer/varint.hpp"
 #include "duckdb/common/typedefs.hpp"
@@ -18,24 +17,11 @@
 namespace duckdb {
 namespace variant {
 
-using namespace duckdb_yyjson; // NOLINT
-
-namespace {
-
-static inline string_t GetString(yyjson_val *val) {
-	return string_t(unsafe_yyjson_get_str(val), NumericCast<uint32_t>(unsafe_yyjson_get_len(val)));
-}
-
-} // namespace
-
 template <bool WRITE_DATA, bool IGNORE_NULLS>
-static bool ConvertJSON(yyjson_val *val, ToVariantGlobalResultData &result, idx_t result_index, bool is_root);
+static bool ConvertJSON(const JSONNode &val, ToVariantGlobalResultData &result, idx_t result_index, bool is_root);
 
-template <bool WRITE_DATA, bool IGNORE_NULLS>
-static bool ConvertJSONArray(yyjson_val *arr, ToVariantGlobalResultData &result, idx_t result_index, bool is_root) {
-	yyjson_arr_iter iter;
-	yyjson_arr_iter_init(arr, &iter);
-
+template <bool WRITE_DATA>
+static bool ConvertJSONArray(const JSONNode &arr, ToVariantGlobalResultData &result, idx_t result_index, bool is_root) {
 	auto &variant = result.variant;
 
 	auto children_offset_data = OffsetData::GetChildren(result.offsets);
@@ -46,7 +32,7 @@ static bool ConvertJSONArray(yyjson_val *arr, ToVariantGlobalResultData &result,
 	                                 0, VariantLogicalType::ARRAY);
 
 	auto &children_list_entry = variant.children_data[result_index];
-	uint32_t count = NumericCast<uint32_t>(iter.max);
+	uint32_t count = arr.size;
 	auto start_child_index = children_list_entry.offset + children_offset_data[result_index];
 	WriteContainerData<WRITE_DATA>(result.variant, result_index, blob_offset_data[result_index], count,
 	                               children_offset_data[result_index]);
@@ -55,43 +41,39 @@ static bool ConvertJSONArray(yyjson_val *arr, ToVariantGlobalResultData &result,
 	children_offset_data[result_index] += count;
 
 	//! Iterate over all the children in the Array
-	while (yyjson_arr_iter_has_next(&iter)) {
-		auto val = yyjson_arr_iter_next(&iter);
-
+	for (auto &val : arr.Elements()) {
 		if (WRITE_DATA) {
 			//! Set the child index
 			variant.keys_index_validity.SetInvalid(start_child_index);
 			variant.values_index_data[start_child_index++] = values_offset_data[result_index];
 		}
-		if (!ConvertJSON<WRITE_DATA, IGNORE_NULLS>(val, result, result_index, false)) {
+		if (!ConvertJSON<WRITE_DATA, false>(val, result, result_index, false)) {
 			return false;
 		}
 	}
 	return true;
 }
 
-template <bool WRITE_DATA, bool IGNORE_NULLS>
-static bool ConvertJSONObject(yyjson_val *obj, ToVariantGlobalResultData &result, idx_t result_index, bool is_root) {
-	yyjson_obj_iter iter;
-	yyjson_obj_iter_init(obj, &iter);
-
+template <bool WRITE_DATA>
+static bool ConvertJSONObject(const JSONNode &obj, ToVariantGlobalResultData &result, idx_t result_index,
+                              bool is_root) {
 	struct JSONObjectEntry {
-		yyjson_val *key;
-		yyjson_val *value;
+		const JSONNode *key;
+		const JSONNode *value;
 	};
 
 	// Maps object keys to their entry index.
 	string_map_t<idx_t> key_to_entry;
 	vector<JSONObjectEntry> entries;
-	key_to_entry.reserve(iter.max);
-	entries.reserve(iter.max);
+	key_to_entry.reserve(obj.size);
+	entries.reserve(obj.size);
 
-	while (auto key = yyjson_obj_iter_next(&iter)) {
-		auto key_string = GetString(key);
+	for (auto &key : obj.Keys()) {
+		auto key_string = string_t(key.GetString());
 		auto inserted_entry = key_to_entry.emplace(key_string, entries.size());
-		auto val = yyjson_obj_iter_get_val(key);
+		auto val = &key + 1;
 		if (inserted_entry.second) {
-			entries.push_back({key, val});
+			entries.push_back({&key, val});
 		} else {
 			entries[inserted_entry.first->second].value = val;
 		}
@@ -121,7 +103,7 @@ static bool ConvertJSONObject(yyjson_val *obj, ToVariantGlobalResultData &result
 	//! Iterate over all the children in the Object
 	for (const auto &entry : entries) {
 		if (WRITE_DATA) {
-			auto key_string = GetString(entry.key);
+			auto key_string = string_t(entry.key->GetString());
 			auto keys_index = start_key_index++;
 			auto dictionary_index = result.GetOrCreateIndex(key_string);
 
@@ -132,8 +114,7 @@ static bool ConvertJSONObject(yyjson_val *obj, ToVariantGlobalResultData &result
 			result.keys_selvec.set_index(keys_list_entry.offset + keys_index, dictionary_index);
 		}
 
-		auto val = entry.value;
-		if (!ConvertJSON<WRITE_DATA, IGNORE_NULLS>(val, result, result_index, false)) {
+		if (!ConvertJSON<WRITE_DATA, false>(*entry.value, result, result_index, false)) {
 			return false;
 		}
 	}
@@ -141,73 +122,66 @@ static bool ConvertJSONObject(yyjson_val *obj, ToVariantGlobalResultData &result
 }
 
 template <bool WRITE_DATA>
-static bool ConvertJSONPrimitive(yyjson_val *val, ToVariantGlobalResultData &result, idx_t result_index, bool is_root) {
-	auto json_tag = unsafe_yyjson_get_tag(val);
-
+static bool ConvertJSONPrimitive(const JSONNode &val, ToVariantGlobalResultData &result, idx_t result_index,
+                                 bool is_root) {
 	auto &variant = result.variant;
 	auto values_offset_data = OffsetData::GetValues(result.offsets);
 	auto blob_offset_data = OffsetData::GetBlob(result.offsets);
 	auto blob_data = data_ptr_cast(variant.blob_data[result_index].GetDataWriteable());
 
-	switch (json_tag) {
-	case YYJSON_TYPE_STR | YYJSON_SUBTYPE_NOESC:
-	case YYJSON_TYPE_STR | YYJSON_SUBTYPE_NONE: {
+	switch (val.type) {
+	case JSONValueType::STRING: {
 		WriteVariantMetadata<WRITE_DATA>(result, result_index, values_offset_data, blob_offset_data[result_index],
 		                                 nullptr, 0, VariantLogicalType::VARCHAR);
-		uint32_t length = NumericCast<uint32_t>(unsafe_yyjson_get_len(val));
+		uint32_t length = val.size;
 		auto length_varint_size = GetVarintSize(length);
 		if (WRITE_DATA) {
-			auto str = unsafe_yyjson_get_str(val);
 			auto str_blob_data = blob_data + blob_offset_data[result_index];
 			VarintEncode(length, str_blob_data);
-			memcpy(str_blob_data + length_varint_size, const_data_ptr_cast(str), length);
+			memcpy(str_blob_data + length_varint_size, const_data_ptr_cast(val.str), length);
 		}
 		blob_offset_data[result_index] += length_varint_size + length;
 		break;
 	}
-	case YYJSON_TYPE_BOOL | YYJSON_SUBTYPE_TRUE: {
+	case JSONValueType::BOOLEAN: {
 		WriteVariantMetadata<WRITE_DATA>(result, result_index, values_offset_data, blob_offset_data[result_index],
-		                                 nullptr, 0, VariantLogicalType::BOOL_TRUE);
+		                                 nullptr, 0,
+		                                 val.boolean ? VariantLogicalType::BOOL_TRUE : VariantLogicalType::BOOL_FALSE);
 		break;
 	}
-	case YYJSON_TYPE_BOOL | YYJSON_SUBTYPE_FALSE: {
-		WriteVariantMetadata<WRITE_DATA>(result, result_index, values_offset_data, blob_offset_data[result_index],
-		                                 nullptr, 0, VariantLogicalType::BOOL_FALSE);
-		break;
-	}
-	case YYJSON_TYPE_NUM | YYJSON_SUBTYPE_UINT: {
+	case JSONValueType::UNSIGNED_INTEGER: {
 		WriteVariantMetadata<WRITE_DATA>(result, result_index, values_offset_data, blob_offset_data[result_index],
 		                                 nullptr, 0, VariantLogicalType::UINT64);
 		if (WRITE_DATA) {
-			auto value = unsafe_yyjson_get_uint(val);
+			auto value = val.unsigned_integer;
 			memcpy(blob_data + blob_offset_data[result_index], const_data_ptr_cast(&value), sizeof(uint64_t));
 		}
 		blob_offset_data[result_index] += sizeof(uint64_t);
 		break;
 	}
-	case YYJSON_TYPE_NUM | YYJSON_SUBTYPE_SINT: {
+	case JSONValueType::SIGNED_INTEGER: {
 		WriteVariantMetadata<WRITE_DATA>(result, result_index, values_offset_data, blob_offset_data[result_index],
 		                                 nullptr, 0, VariantLogicalType::INT64);
 		if (WRITE_DATA) {
-			auto value = unsafe_yyjson_get_sint(val);
+			auto value = val.signed_integer;
 			memcpy(blob_data + blob_offset_data[result_index], const_data_ptr_cast(&value), sizeof(int64_t));
 		}
 		blob_offset_data[result_index] += sizeof(int64_t);
 		break;
 	}
-	case YYJSON_TYPE_RAW | YYJSON_SUBTYPE_NONE:
-	case YYJSON_TYPE_NUM | YYJSON_SUBTYPE_REAL: {
+	case JSONValueType::RAW:
+	case JSONValueType::DOUBLE: {
 		WriteVariantMetadata<WRITE_DATA>(result, result_index, values_offset_data, blob_offset_data[result_index],
 		                                 nullptr, 0, VariantLogicalType::DOUBLE);
 		double value;
 		if (WRITE_DATA) {
-			if (json_tag == (YYJSON_TYPE_RAW | YYJSON_SUBTYPE_NONE)) {
-				auto success = TryCast::Operation<string_t, double>(GetString(val), value, true);
+			if (val.type == JSONValueType::RAW) {
+				auto success = TryCast::Operation<string_t, double>(string_t(val.GetString()), value, true);
 				if (!success) {
 					return false;
 				}
 			} else {
-				value = unsafe_yyjson_get_real(val);
+				value = val.real;
 			}
 			memcpy(blob_data + blob_offset_data[result_index], const_data_ptr_cast(&value), sizeof(double));
 		}
@@ -215,17 +189,17 @@ static bool ConvertJSONPrimitive(yyjson_val *val, ToVariantGlobalResultData &res
 		break;
 	}
 	default:
-		throw InternalException("Unknown yyjson tag in ConvertJSON");
+		throw InternalException("Unknown JSON value type in ConvertJSON");
 	}
 	return true;
 }
 
 template <bool WRITE_DATA, bool IGNORE_NULLS>
-static bool ConvertJSON(yyjson_val *val, ToVariantGlobalResultData &result, idx_t result_index, bool is_root) {
+static bool ConvertJSON(const JSONNode &val, ToVariantGlobalResultData &result, idx_t result_index, bool is_root) {
 	auto values_offset_data = OffsetData::GetValues(result.offsets);
 	auto blob_offset_data = OffsetData::GetBlob(result.offsets);
 
-	if (unsafe_yyjson_is_null(val)) {
+	if (val.type == JSONValueType::JSON_NULL) {
 		if (!IGNORE_NULLS) {
 			HandleVariantNull<WRITE_DATA>(result, result_index, values_offset_data, blob_offset_data[result_index],
 			                              nullptr, 0, is_root);
@@ -233,11 +207,10 @@ static bool ConvertJSON(yyjson_val *val, ToVariantGlobalResultData &result, idx_
 		return true;
 	}
 
-	auto json_tag = unsafe_yyjson_get_tag(val);
-	if (json_tag == (YYJSON_TYPE_ARR | YYJSON_SUBTYPE_NONE)) {
-		return ConvertJSONArray<WRITE_DATA, IGNORE_NULLS>(val, result, result_index, is_root);
-	} else if (json_tag == (YYJSON_TYPE_OBJ | YYJSON_SUBTYPE_NONE)) {
-		return ConvertJSONObject<WRITE_DATA, IGNORE_NULLS>(val, result, result_index, is_root);
+	if (val.type == JSONValueType::ARRAY) {
+		return ConvertJSONArray<WRITE_DATA>(val, result, result_index, is_root);
+	} else if (val.type == JSONValueType::OBJECT) {
+		return ConvertJSONObject<WRITE_DATA>(val, result, result_index, is_root);
 	} else {
 		return ConvertJSONPrimitive<WRITE_DATA>(val, result, result_index, is_root);
 	}
@@ -256,7 +229,8 @@ bool ConvertJSONToVariant(ToVariantSourceData &source, ToVariantGlobalResultData
 	auto blob_offset_data = OffsetData::GetBlob(result.offsets);
 
 	auto &variant = result.variant;
-	JSONAllocator json_allocator(result.allocator);
+	auto &parser = result.json_parser;
+	JSONParseError error;
 	for (idx_t i = 0; i < count; i++) {
 		auto source_index = source[i];
 		auto result_index = selvec ? selvec->get_index(i) : i;
@@ -275,24 +249,18 @@ bool ConvertJSONToVariant(ToVariantSourceData &source, ToVariantGlobalResultData
 		}
 
 		auto &val = source_data[source_index];
-		auto doc = yyjson_read_opts(val.GetDataWriteable(), val.GetSize(),
-		                            YYJSON_READ_ALLOW_INF_AND_NAN | YYJSON_READ_ALLOW_TRAILING_COMMAS |
-		                                YYJSON_READ_BIGNUM_AS_RAW,
-		                            json_allocator.GetYYAlc(), nullptr);
-		if (!doc) {
-			json_allocator.Reset();
+		auto root = parser.Parse(val.GetData(), val.GetSize(), error);
+		if (!root) {
 			if (!IGNORE_NULLS) {
 				HandleVariantNull<WRITE_DATA>(result, result_index, values_offset_data, blob_offset_data[result_index],
 				                              values_index_selvec, i, is_root);
 			}
 			continue;
 		}
-		auto *root = yyjson_doc_get_root(doc);
 
-		if (!ConvertJSON<WRITE_DATA, IGNORE_NULLS>(root, result, result_index, is_root)) {
+		if (!ConvertJSON<WRITE_DATA, IGNORE_NULLS>(*root, result, result_index, is_root)) {
 			return false;
 		}
-		json_allocator.Reset();
 	}
 	return true;
 }

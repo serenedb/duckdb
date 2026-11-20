@@ -176,6 +176,8 @@ enum class CopyToType : uint8_t;
 
 enum class CryptoHashFunction : uint8_t;
 
+enum class CsvRawKind : uint8_t;
+
 enum class DataFileType : uint8_t;
 
 enum class DateCastResult : uint8_t;
@@ -542,6 +544,10 @@ enum class RowGroupAppendMode : uint8_t;
 
 enum class RowIdHandling : uint8_t;
 
+enum class RowQuoting : uint8_t;
+
+enum class RowReadResult : uint8_t;
+
 enum class SampleMethod : uint8_t;
 
 enum class SampleType : uint8_t;
@@ -675,6 +681,8 @@ enum class UndoFlags : uint32_t;
 enum class UnionInvalidReason : uint8_t;
 
 enum class VacuumIndexStrategy : uint8_t;
+
+enum class ValueRendering : uint8_t;
 
 enum class VariantChildLookupMode : uint8_t;
 
@@ -927,6 +935,9 @@ const char* EnumUtil::ToChars<CopyToType>(CopyToType value);
 
 template<>
 const char* EnumUtil::ToChars<CryptoHashFunction>(CryptoHashFunction value);
+
+template<>
+const char* EnumUtil::ToChars<CsvRawKind>(CsvRawKind value);
 
 template<>
 const char* EnumUtil::ToChars<DataFileType>(DataFileType value);
@@ -1478,6 +1489,12 @@ template<>
 const char* EnumUtil::ToChars<RowIdHandling>(RowIdHandling value);
 
 template<>
+const char* EnumUtil::ToChars<RowQuoting>(RowQuoting value);
+
+template<>
+const char* EnumUtil::ToChars<RowReadResult>(RowReadResult value);
+
+template<>
 const char* EnumUtil::ToChars<SampleMethod>(SampleMethod value);
 
 template<>
@@ -1677,6 +1694,9 @@ const char* EnumUtil::ToChars<UnionInvalidReason>(UnionInvalidReason value);
 
 template<>
 const char* EnumUtil::ToChars<VacuumIndexStrategy>(VacuumIndexStrategy value);
+
+template<>
+const char* EnumUtil::ToChars<ValueRendering>(ValueRendering value);
 
 template<>
 const char* EnumUtil::ToChars<VariantChildLookupMode>(VariantChildLookupMode value);
@@ -1945,6 +1965,9 @@ CopyToType EnumUtil::FromString<CopyToType>(std::string_view value);
 
 template<>
 CryptoHashFunction EnumUtil::FromString<CryptoHashFunction>(std::string_view value);
+
+template<>
+CsvRawKind EnumUtil::FromString<CsvRawKind>(std::string_view value);
 
 template<>
 DataFileType EnumUtil::FromString<DataFileType>(std::string_view value);
@@ -2496,6 +2519,12 @@ template<>
 RowIdHandling EnumUtil::FromString<RowIdHandling>(std::string_view value);
 
 template<>
+RowQuoting EnumUtil::FromString<RowQuoting>(std::string_view value);
+
+template<>
+RowReadResult EnumUtil::FromString<RowReadResult>(std::string_view value);
+
+template<>
 SampleMethod EnumUtil::FromString<SampleMethod>(std::string_view value);
 
 template<>
@@ -2695,6 +2724,9 @@ UnionInvalidReason EnumUtil::FromString<UnionInvalidReason>(std::string_view val
 
 template<>
 VacuumIndexStrategy EnumUtil::FromString<VacuumIndexStrategy>(std::string_view value);
+
+template<>
+ValueRendering EnumUtil::FromString<ValueRendering>(std::string_view value);
 
 template<>
 VariantChildLookupMode EnumUtil::FromString<VariantChildLookupMode>(std::string_view value);

@@ -1,7 +1,6 @@
 #include "duckdb/main/capi_v2/capi_v2_result_internal.hpp"
 
 #include "duckdb/common/arrow/arrow_format.hpp"
-#include "duckdb/common/arrow/nanoarrow/nanoarrow.hpp"
 #include "duckdb/common/box_renderer.hpp"
 #include "duckdb/common/box_renderer_context.hpp"
 #include "duckdb/common/column_data_collection_render_interface.hpp"
@@ -9,6 +8,8 @@
 
 #include "duckdb/common/enums/query_result_state.hpp"
 #include "duckdb/parser/statement/transaction_statement.hpp"
+
+#include "nanoarrow/nanoarrow.h"
 
 namespace duckdb::capiv2 {
 namespace {
@@ -388,7 +389,7 @@ template idx_t ResultWrapperV2::Drain<ArrowFormat>();
 
 void CopyArrowSchema(const ArrowSchema &source, ArrowSchema &out) {
 	out.release = nullptr;
-	if (duckdb_nanoarrow::ArrowSchemaDeepCopy(&source, &out) != NANOARROW_OK) {
+	if (ArrowSchemaDeepCopy(&source, &out) != NANOARROW_OK) {
 		throw OutOfMemoryException("failed to copy the Arrow schema");
 	}
 }

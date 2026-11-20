@@ -478,6 +478,22 @@ static unique_ptr<FunctionData> JSONCopyToJSONBind(BindScalarFunctionInput &) {
 	throw BinderException("%s is for internal use only", JSON_COPY_TO_JSON_INTERNAL_NAME);
 }
 
+//! The values of a chunk are built in its arena; JSON-typed inputs are parsed first
+struct JSONCreateDocument {
+	JSONCreateDocument(ArenaAllocator &arena_p, JSONTreeParser &parser_p)
+	    : arena(arena_p), builder(arena_p), parser(parser_p) {
+	}
+
+	template <class T>
+	T *Allocate(idx_t count) {
+		return reinterpret_cast<T *>(arena.AllocateAligned(sizeof(T) * MaxValue<idx_t>(count, 1)));
+	}
+
+	ArenaAllocator &arena;
+	JSONBuilder builder;
+	JSONTreeParser &parser;
+};
+
 template <class INPUT_TYPE, class RESULT_TYPE>
 struct CreateJSONValue {
 	static inline RESULT_TYPE Operation(const INPUT_TYPE &input) {
@@ -487,99 +503,101 @@ struct CreateJSONValue {
 
 template <class INPUT_TYPE>
 struct CreateJSONValue<INPUT_TYPE, bool> {
-	static inline yyjson_mut_val *Operation(yyjson_mut_doc *doc, const INPUT_TYPE &input) {
-		return yyjson_mut_bool(doc, input);
+	static inline JSONBuildValue *Operation(JSONCreateDocument &doc, const INPUT_TYPE &input) {
+		return doc.builder.Boolean(input);
 	}
 };
 
 template <class INPUT_TYPE>
 struct CreateJSONValue<INPUT_TYPE, uint64_t> {
-	static inline yyjson_mut_val *Operation(yyjson_mut_doc *doc, const INPUT_TYPE &input) {
-		return yyjson_mut_uint(doc, input);
+	static inline JSONBuildValue *Operation(JSONCreateDocument &doc, const INPUT_TYPE &input) {
+		return doc.builder.UnsignedInteger(input);
 	}
 };
 
 template <class INPUT_TYPE>
 struct CreateJSONValue<INPUT_TYPE, int64_t> {
-	static inline yyjson_mut_val *Operation(yyjson_mut_doc *doc, const INPUT_TYPE &input) {
-		return yyjson_mut_sint(doc, input);
+	static inline JSONBuildValue *Operation(JSONCreateDocument &doc, const INPUT_TYPE &input) {
+		return doc.builder.SignedInteger(input);
 	}
 };
 
 template <class INPUT_TYPE>
 struct CreateJSONValue<INPUT_TYPE, double> {
-	static inline yyjson_mut_val *Operation(yyjson_mut_doc *doc, const INPUT_TYPE &input) {
-		return yyjson_mut_real(doc, input);
+	static inline JSONBuildValue *Operation(JSONCreateDocument &doc, const INPUT_TYPE &input) {
+		return doc.builder.Double(input);
 	}
 };
 
 template <>
 struct CreateJSONValue<string_t, string_t> {
-	static inline yyjson_mut_val *Operation(yyjson_mut_doc *doc, const string_t &input) {
-		return yyjson_mut_strncpy(doc, input.GetData(), input.GetSize());
+	static inline JSONBuildValue *Operation(JSONCreateDocument &doc, const string_t &input) {
+		return doc.builder.String(std::string_view(input.GetData(), input.GetSize()));
 	}
 };
 
 template <>
 struct CreateJSONValue<hugeint_t, string_t> {
-	static inline yyjson_mut_val *Operation(yyjson_mut_doc *doc, const hugeint_t &input) {
-		const auto input_string = input.ToString();
-		return yyjson_mut_rawncpy(doc, input_string.c_str(), input_string.length());
+	static inline JSONBuildValue *Operation(JSONCreateDocument &doc, const hugeint_t &input) {
+		return doc.builder.Raw(input.ToString());
 	}
 };
 
 template <>
 struct CreateJSONValue<uhugeint_t, string_t> {
-	static inline yyjson_mut_val *Operation(yyjson_mut_doc *doc, const uhugeint_t &input) {
-		const auto input_string = input.ToString();
-		return yyjson_mut_rawncpy(doc, input_string.c_str(), input_string.length());
+	static inline JSONBuildValue *Operation(JSONCreateDocument &doc, const uhugeint_t &input) {
+		return doc.builder.Raw(input.ToString());
 	}
 };
 
 template <class T>
-static inline yyjson_mut_val *CreateJSONValueFromJSON(yyjson_mut_doc *doc, const T &value) {
+static inline JSONBuildValue *CreateJSONValueFromJSON(JSONCreateDocument &doc, const T &value) {
 	return nullptr; // This function should only be called with string_t as template
 }
 
 template <>
-inline yyjson_mut_val *CreateJSONValueFromJSON(yyjson_mut_doc *doc, const string_t &value) {
-	auto value_doc = JSONCommon::ReadDocument(value, JSONCommon::READ_FLAG, &doc->alc);
-	auto result = yyjson_val_mut_copy(doc, value_doc->root);
-	return result;
+inline JSONBuildValue *CreateJSONValueFromJSON(JSONCreateDocument &doc, const string_t &value) {
+	auto &root = JSONCommon::ReadDocument(doc.parser, value);
+	return doc.builder.Copy(root);
 }
 
 // Forward declaration so we can recurse for nested types
-static void CreateValues(const StructNames &names, yyjson_mut_doc *doc, yyjson_mut_val *vals[], Vector &value_v,
+static void CreateValues(const StructNames &names, JSONCreateDocument &doc, JSONBuildValue *vals[], Vector &value_v,
                          idx_t count, const JSONCopyFormatOptions &options = JSONCopyFormatOptions());
 
-static void AddKeyValuePairs(yyjson_mut_doc *doc, yyjson_mut_val *objs[], const Vector &key_v, yyjson_mut_val *vals[],
-                             idx_t count) {
+static std::string_view CopyJSONKey(JSONCreateDocument &doc, const string_t &key) {
+	auto copy = doc.arena.Allocate(MaxValue<idx_t>(key.GetSize(), 1));
+	memcpy(copy, key.GetData(), key.GetSize());
+	return std::string_view(const_char_ptr_cast(copy), key.GetSize());
+}
+
+static void AddKeyValuePairs(JSONCreateDocument &doc, JSONBuildValue *objs[], const Vector &key_v,
+                             JSONBuildValue *vals[], idx_t count) {
 	auto keys = key_v.Values<string_t>();
 	for (idx_t i = 0; i < count; i++) {
 		auto key_entry = keys[i];
 		if (!key_entry.IsValid()) {
 			throw InvalidInputException("JSON key cannot be NULL");
 		}
-		auto key = CreateJSONValue<string_t, string_t>::Operation(doc, key_entry.GetValue());
-		yyjson_mut_obj_add(objs[i], key, vals[i]);
+		JSONBuilder::Add(*objs[i], CopyJSONKey(doc, key_entry.GetValue()), vals[i]);
 	}
 }
 
-static void CreateKeyValuePairs(const StructNames &names, yyjson_mut_doc *doc, yyjson_mut_val *objs[],
-                                yyjson_mut_val *vals[], const Vector &key_v, Vector &value_v, idx_t count,
+static void CreateKeyValuePairs(const StructNames &names, JSONCreateDocument &doc, JSONBuildValue *objs[],
+                                JSONBuildValue *vals[], const Vector &key_v, Vector &value_v, idx_t count,
                                 const JSONCopyFormatOptions &options = JSONCopyFormatOptions()) {
 	CreateValues(names, doc, vals, value_v, count, options);
 	AddKeyValuePairs(doc, objs, key_v, vals, count);
 }
 
-static void CreateValuesNull(yyjson_mut_doc *doc, yyjson_mut_val *vals[], idx_t count) {
+static void CreateValuesNull(JSONCreateDocument &doc, JSONBuildValue *vals[], idx_t count) {
 	for (idx_t i = 0; i < count; i++) {
-		vals[i] = yyjson_mut_null(doc);
+		vals[i] = doc.builder.Null();
 	}
 }
 
 template <class INPUT_TYPE, class TARGET_TYPE>
-static void TemplatedCreateValues(yyjson_mut_doc *doc, yyjson_mut_val *vals[], const Vector &value_v, idx_t count) {
+static void TemplatedCreateValues(JSONCreateDocument &doc, JSONBuildValue *vals[], const Vector &value_v, idx_t count) {
 	UnifiedVectorFormat value_data;
 	value_v.ToUnifiedFormat(value_data);
 	auto values = UnifiedVectorFormat::GetData<INPUT_TYPE>(value_data);
@@ -588,7 +606,7 @@ static void TemplatedCreateValues(yyjson_mut_doc *doc, yyjson_mut_val *vals[], c
 	for (idx_t i = 0; i < count; i++) {
 		idx_t val_idx = value_data.sel->get_index(i);
 		if (!value_data.validity.RowIsValid(val_idx)) {
-			vals[i] = yyjson_mut_null(doc);
+			vals[i] = doc.builder.Null();
 		} else if (type_is_json) {
 			vals[i] = CreateJSONValueFromJSON(doc, values[val_idx]);
 		} else {
@@ -598,30 +616,30 @@ static void TemplatedCreateValues(yyjson_mut_doc *doc, yyjson_mut_val *vals[], c
 	}
 }
 
-static void CreateRawValues(yyjson_mut_doc *doc, yyjson_mut_val *vals[], const Vector &value_v, idx_t count) {
+static void CreateRawValues(JSONCreateDocument &doc, JSONBuildValue *vals[], const Vector &value_v, idx_t count) {
 	UnifiedVectorFormat value_data;
 	value_v.ToUnifiedFormat(value_data);
 	auto values = UnifiedVectorFormat::GetData<string_t>(value_data);
 	for (idx_t i = 0; i < count; i++) {
 		idx_t val_idx = value_data.sel->get_index(i);
 		if (!value_data.validity.RowIsValid(val_idx)) {
-			vals[i] = yyjson_mut_null(doc);
+			vals[i] = doc.builder.Null();
 		} else {
 			const auto &str = values[val_idx];
-			vals[i] = yyjson_mut_rawncpy(doc, str.GetData(), str.GetSize());
+			vals[i] = doc.builder.Raw(std::string_view(str.GetData(), str.GetSize()));
 		}
 		D_ASSERT(vals[i] != nullptr);
 	}
 }
 
-static void CreateValuesStruct(const StructNames &names, yyjson_mut_doc *doc, yyjson_mut_val *vals[], Vector &value_v,
-                               idx_t count, const JSONCopyFormatOptions &options) {
+static void CreateValuesStruct(const StructNames &names, JSONCreateDocument &doc, JSONBuildValue *vals[],
+                               Vector &value_v, idx_t count, const JSONCopyFormatOptions &options) {
 	// Structs become values, therefore we initialize vals to JSON values
 	for (idx_t i = 0; i < count; i++) {
-		vals[i] = yyjson_mut_obj(doc);
+		vals[i] = doc.builder.Object();
 	}
 	// Initialize re-usable array for the nested values
-	auto nested_vals = JSONCommon::AllocateArray<yyjson_mut_val *>(doc, count);
+	auto nested_vals = doc.Allocate<JSONBuildValue *>(count);
 
 	// Add the key/value pairs to the values
 	auto &entries = StructVector::GetEntries(value_v);
@@ -637,23 +655,23 @@ static void CreateValuesStruct(const StructNames &names, yyjson_mut_doc *doc, yy
 	for (idx_t i = 0; i < count; i++) {
 		idx_t idx = struct_data.sel->get_index(i);
 		if (!struct_data.validity.RowIsValid(idx)) {
-			vals[i] = yyjson_mut_null(doc);
+			vals[i] = doc.builder.Null();
 		}
 	}
 }
 
-static void CreateValuesTuple(const StructNames &names, yyjson_mut_doc *doc, yyjson_mut_val *vals[], Vector &value_v,
-                              idx_t count) {
+static void CreateValuesTuple(const StructNames &names, JSONCreateDocument &doc, JSONBuildValue *vals[],
+                              Vector &value_v, idx_t count) {
 	// a TUPLE becomes a JSON array (matching how Python serializes tuples)
 	for (idx_t i = 0; i < count; i++) {
-		vals[i] = yyjson_mut_arr(doc);
+		vals[i] = doc.builder.Array();
 	}
-	auto nested_vals = JSONCommon::AllocateArray<yyjson_mut_val *>(doc, count);
+	auto nested_vals = doc.Allocate<JSONBuildValue *>(count);
 	auto &entries = StructVector::GetEntries(value_v);
 	for (idx_t entry_i = 0; entry_i < entries.size(); entry_i++) {
 		CreateValues(names, doc, nested_vals, entries[entry_i], count);
 		for (idx_t i = 0; i < count; i++) {
-			yyjson_mut_arr_append(vals[i], nested_vals[i]);
+			JSONBuilder::Append(*vals[i], nested_vals[i]);
 		}
 	}
 	// Whole tuple can be NULL
@@ -662,24 +680,24 @@ static void CreateValuesTuple(const StructNames &names, yyjson_mut_doc *doc, yyj
 	for (idx_t i = 0; i < count; i++) {
 		idx_t idx = tuple_data.sel->get_index(i);
 		if (!tuple_data.validity.RowIsValid(idx)) {
-			vals[i] = yyjson_mut_null(doc);
+			vals[i] = doc.builder.Null();
 		}
 	}
 }
-static void CreateValuesMapKeys(yyjson_mut_doc *doc, yyjson_mut_val *vals[], Vector &value_v, idx_t count,
+static void CreateValuesMapKeys(JSONCreateDocument &doc, JSONBuildValue *vals[], Vector &value_v, idx_t count,
                                 const JSONCopyFormatOptions &options);
 
-static void CreateValuesMap(const StructNames &names, yyjson_mut_doc *doc, yyjson_mut_val *vals[], Vector &value_v,
+static void CreateValuesMap(const StructNames &names, JSONCreateDocument &doc, JSONBuildValue *vals[], Vector &value_v,
                             idx_t count, const JSONCopyFormatOptions &options) {
 	// Create nested keys
 	auto &map_key_v = MapVector::GetKeys(value_v);
 	auto map_key_count = ListVector::GetListSize(value_v);
-	auto nested_keys = JSONCommon::AllocateArray<yyjson_mut_val *>(doc, map_key_count);
+	auto nested_keys = doc.Allocate<JSONBuildValue *>(map_key_count);
 	CreateValuesMapKeys(doc, nested_keys, map_key_v, map_key_count, options);
 	// Create nested values
 	auto &map_val_v = MapVector::GetValues(value_v);
 	auto map_val_count = ListVector::GetListSize(value_v);
-	auto nested_vals = JSONCommon::AllocateArray<yyjson_mut_val *>(doc, map_val_count);
+	auto nested_vals = doc.Allocate<JSONBuildValue *>(map_val_count);
 	CreateValues(names, doc, nested_vals, map_val_v, map_val_count, options);
 	// Add the key/value pairs to the values
 	UnifiedVectorFormat map_data;
@@ -689,43 +707,44 @@ static void CreateValuesMap(const StructNames &names, yyjson_mut_doc *doc, yyjso
 		idx_t idx = map_data.sel->get_index(i);
 		if (!map_data.validity.RowIsValid(idx)) {
 			// Whole map can be NULL
-			vals[i] = yyjson_mut_null(doc);
+			vals[i] = doc.builder.Null();
 		} else {
-			vals[i] = yyjson_mut_obj(doc);
+			vals[i] = doc.builder.Object();
 			const auto &key_list_entry = map_key_list_entries[idx];
 			for (idx_t child_i = key_list_entry.offset; child_i < key_list_entry.offset + key_list_entry.length;
 			     child_i++) {
-				if (!unsafe_yyjson_is_null(nested_keys[child_i])) {
-					yyjson_mut_obj_add(vals[i], nested_keys[child_i], nested_vals[child_i]);
+				const auto &key = *nested_keys[child_i];
+				if (key.type != JSONValueType::JSON_NULL) {
+					JSONBuilder::Add(*vals[i], std::string_view(key.str, key.size), nested_vals[child_i]);
 				}
 			}
 		}
 	}
 }
 
-static void CreateValuesUnion(const StructNames &names, yyjson_mut_doc *doc, yyjson_mut_val *vals[], Vector &value_v,
-                              idx_t count, const JSONCopyFormatOptions &options) {
+static void CreateValuesUnion(const StructNames &names, JSONCreateDocument &doc, JSONBuildValue *vals[],
+                              Vector &value_v, idx_t count, const JSONCopyFormatOptions &options) {
 	// Structs become values, therefore we initialize vals to JSON values
 	UnifiedVectorFormat value_data;
 	value_v.ToUnifiedFormat(value_data);
 	if (value_data.validity.CannotHaveNull()) {
 		for (idx_t i = 0; i < count; i++) {
-			vals[i] = yyjson_mut_obj(doc);
+			vals[i] = doc.builder.Object();
 		}
 	} else {
 		for (idx_t i = 0; i < count; i++) {
 			auto index = value_data.sel->get_index(i);
 			if (!value_data.validity.RowIsValid(index)) {
 				// Make the entry NULL if the Union value is NULL
-				vals[i] = yyjson_mut_null(doc);
+				vals[i] = doc.builder.Null();
 			} else {
-				vals[i] = yyjson_mut_obj(doc);
+				vals[i] = doc.builder.Object();
 			}
 		}
 	}
 
 	// Initialize re-usable array for the nested values
-	auto nested_vals = JSONCommon::AllocateArray<yyjson_mut_val *>(doc, count);
+	auto nested_vals = doc.Allocate<JSONBuildValue *>(count);
 
 	auto &tag_v = UnionVector::GetTags(value_v);
 	UnifiedVectorFormat tag_data;
@@ -766,18 +785,17 @@ static void CreateValuesUnion(const StructNames &names, yyjson_mut_doc *doc, yyj
 			if (!key_data.validity.RowIsValid(key_idx)) {
 				continue;
 			}
-			auto key = CreateJSONValue<string_t, string_t>::Operation(doc, keys[key_idx]);
-			yyjson_mut_obj_add(vals[i], key, nested_vals[i]);
+			JSONBuilder::Add(*vals[i], CopyJSONKey(doc, keys[key_idx]), nested_vals[i]);
 		}
 	}
 }
 
-static void CreateValuesList(const StructNames &names, yyjson_mut_doc *doc, yyjson_mut_val *vals[], Vector &value_v,
+static void CreateValuesList(const StructNames &names, JSONCreateDocument &doc, JSONBuildValue *vals[], Vector &value_v,
                              idx_t count, const JSONCopyFormatOptions &options) {
 	// Initialize array for the nested values
 	auto &child_v = ListVector::GetChildMutable(value_v);
 	auto child_count = ListVector::GetListSize(value_v);
-	auto nested_vals = JSONCommon::AllocateArray<yyjson_mut_val *>(doc, child_count);
+	auto nested_vals = doc.Allocate<JSONBuildValue *>(child_count);
 	// Fill nested_vals with list values
 	CreateValues(names, doc, nested_vals, child_v, child_count, options);
 	// Now we add the values to the appropriate JSON arrays
@@ -787,19 +805,19 @@ static void CreateValuesList(const StructNames &names, yyjson_mut_doc *doc, yyjs
 	for (idx_t i = 0; i < count; i++) {
 		idx_t idx = list_data.sel->get_index(i);
 		if (!list_data.validity.RowIsValid(idx)) {
-			vals[i] = yyjson_mut_null(doc);
+			vals[i] = doc.builder.Null();
 		} else {
-			vals[i] = yyjson_mut_arr(doc);
+			vals[i] = doc.builder.Array();
 			const auto &entry = list_entries[idx];
 			for (idx_t child_i = entry.offset; child_i < entry.offset + entry.length; child_i++) {
-				yyjson_mut_arr_append(vals[i], nested_vals[child_i]);
+				JSONBuilder::Append(*vals[i], nested_vals[child_i]);
 			}
 		}
 	}
 }
 
-static void CreateValuesArray(const StructNames &names, yyjson_mut_doc *doc, yyjson_mut_val *vals[], Vector &value_v,
-                              idx_t count, const JSONCopyFormatOptions &options) {
+static void CreateValuesArray(const StructNames &names, JSONCreateDocument &doc, JSONBuildValue *vals[],
+                              Vector &value_v, idx_t count, const JSONCopyFormatOptions &options) {
 	value_v.Flatten();
 
 	// Initialize array for the nested values
@@ -807,7 +825,7 @@ static void CreateValuesArray(const StructNames &names, yyjson_mut_doc *doc, yyj
 	auto array_size = ArrayType::GetSize(value_v.GetType());
 	auto child_count = count * array_size;
 
-	auto nested_vals = JSONCommon::AllocateArray<yyjson_mut_val *>(doc, child_count);
+	auto nested_vals = doc.Allocate<JSONBuildValue *>(child_count);
 	// Fill nested_vals with list values
 	CreateValues(names, doc, nested_vals, child_v, child_count, options);
 	// Now we add the values to the appropriate JSON arrays
@@ -816,39 +834,39 @@ static void CreateValuesArray(const StructNames &names, yyjson_mut_doc *doc, yyj
 	for (idx_t i = 0; i < count; i++) {
 		idx_t idx = list_data.sel->get_index(i);
 		if (!list_data.validity.RowIsValid(idx)) {
-			vals[i] = yyjson_mut_null(doc);
+			vals[i] = doc.builder.Null();
 		} else {
-			vals[i] = yyjson_mut_arr(doc);
+			vals[i] = doc.builder.Array();
 			auto offset = idx * array_size;
 			for (idx_t child_i = offset; child_i < offset + array_size; child_i++) {
-				yyjson_mut_arr_append(vals[i], nested_vals[child_i]);
+				JSONBuilder::Append(*vals[i], nested_vals[child_i]);
 			}
 		}
 	}
 }
 
-static void CreateValuesFromDefaultCast(yyjson_mut_doc *doc, yyjson_mut_val *vals[], Vector &value_v, idx_t count) {
+static void CreateValuesFromDefaultCast(JSONCreateDocument &doc, JSONBuildValue *vals[], Vector &value_v, idx_t count) {
 	Vector string_vector(LogicalTypeId::VARCHAR, count);
 	VectorOperations::DefaultCast(value_v, string_vector, count);
 	TemplatedCreateValues<string_t, string_t>(doc, vals, string_vector, count);
 }
 
-static void CreateValuesGeometry(yyjson_mut_doc *doc, yyjson_mut_val *vals[], Vector &value_v, idx_t count) {
+static void CreateValuesGeometry(JSONCreateDocument &doc, JSONBuildValue *vals[], Vector &value_v, idx_t count) {
 	UnifiedVectorFormat value_data;
 	value_v.ToUnifiedFormat(value_data);
 	auto values = UnifiedVectorFormat::GetData<string_t>(value_data);
 	for (idx_t i = 0; i < count; i++) {
 		const auto idx = value_data.sel->get_index(i);
 		if (!value_data.validity.RowIsValid(idx)) {
-			vals[i] = yyjson_mut_null(doc);
+			vals[i] = doc.builder.Null();
 		} else {
-			vals[i] = JSONGeometry::ToGeoJSON(values[idx], doc);
+			vals[i] = JSONGeometry::ToGeoJSON(values[idx], doc.builder);
 		}
 	}
 }
 
 template <class FILL>
-static void CreateValuesFormatted(yyjson_mut_doc *doc, yyjson_mut_val *vals[], Vector &value_v, idx_t count,
+static void CreateValuesFormatted(JSONCreateDocument &doc, JSONBuildValue *vals[], Vector &value_v, idx_t count,
                                   bool has_format, FILL &&fill_strings) {
 	if (!has_format) {
 		CreateValuesFromDefaultCast(doc, vals, value_v, count);
@@ -859,14 +877,14 @@ static void CreateValuesFormatted(yyjson_mut_doc *doc, yyjson_mut_val *vals[], V
 	TemplatedCreateValues<string_t, string_t>(doc, vals, string_vector, count);
 }
 
-static void CreateValuesDate(yyjson_mut_doc *doc, yyjson_mut_val *vals[], Vector &value_v, idx_t count,
+static void CreateValuesDate(JSONCreateDocument &doc, JSONBuildValue *vals[], Vector &value_v, idx_t count,
                              const JSONCopyFormatOptions &options) {
 	CreateValuesFormatted(doc, vals, value_v, count, bool(options.date_format), [&](Vector &string_vector) {
 		options.date_format.get_mutable()->ConvertDateVector(value_v, string_vector);
 	});
 }
 
-static void CreateValuesTimestamp(yyjson_mut_doc *doc, yyjson_mut_val *vals[], Vector &value_v, idx_t count,
+static void CreateValuesTimestamp(JSONCreateDocument &doc, JSONBuildValue *vals[], Vector &value_v, idx_t count,
                                   const JSONCopyFormatOptions &options) {
 	if (options.timestamp_format && value_v.GetType().id() != LogicalTypeId::TIMESTAMP) {
 		Vector timestamp_vector(LogicalType::TIMESTAMP, count);
@@ -879,14 +897,14 @@ static void CreateValuesTimestamp(yyjson_mut_doc *doc, yyjson_mut_val *vals[], V
 	});
 }
 
-static void CreateValuesTimestampNS(yyjson_mut_doc *doc, yyjson_mut_val *vals[], Vector &value_v, idx_t count,
+static void CreateValuesTimestampNS(JSONCreateDocument &doc, JSONBuildValue *vals[], Vector &value_v, idx_t count,
                                     const JSONCopyFormatOptions &options) {
 	CreateValuesFormatted(doc, vals, value_v, count, bool(options.timestamp_format), [&](Vector &string_vector) {
 		options.timestamp_format.get_mutable()->ConvertTimestampNSVector(value_v, string_vector);
 	});
 }
 
-static void CreateValuesTimestampTZ(yyjson_mut_doc *doc, yyjson_mut_val *vals[], Vector &value_v, idx_t count,
+static void CreateValuesTimestampTZ(JSONCreateDocument &doc, JSONBuildValue *vals[], Vector &value_v, idx_t count,
                                     const JSONCopyFormatOptions &options) {
 	if (!options.timestamp_format) {
 		// no COPY format was given - use the full cast set so that the session time zone is applied
@@ -915,7 +933,7 @@ static void CreateValuesTimestampTZ(yyjson_mut_doc *doc, yyjson_mut_val *vals[],
 	});
 }
 
-static void CreateValuesMapKeys(yyjson_mut_doc *doc, yyjson_mut_val *vals[], Vector &value_v, idx_t count,
+static void CreateValuesMapKeys(JSONCreateDocument &doc, JSONBuildValue *vals[], Vector &value_v, idx_t count,
                                 const JSONCopyFormatOptions &options) {
 	switch (value_v.GetType().id()) {
 	case LogicalTypeId::DATE:
@@ -939,7 +957,7 @@ static void CreateValuesMapKeys(yyjson_mut_doc *doc, yyjson_mut_val *vals[], Vec
 	}
 }
 
-static void CreateValues(const StructNames &names, yyjson_mut_doc *doc, yyjson_mut_val *vals[], Vector &value_v,
+static void CreateValues(const StructNames &names, JSONCreateDocument &doc, JSONBuildValue *vals[], Vector &value_v,
                          idx_t count, const JSONCopyFormatOptions &options) {
 	const auto &type = value_v.GetType();
 	switch (type.id()) {
@@ -1082,22 +1100,27 @@ static void CreateValues(const StructNames &names, yyjson_mut_doc *doc, yyjson_m
 	}
 }
 
+static string_t WriteBuildValue(const JSONBuildValue &value, JSONStringWriter &writer, Vector &result) {
+	writer.Clear();
+	writer.Value(value);
+	return StringVector::AddString(result, writer.View().data(), writer.View().size());
+}
+
 static void ObjectFunction(DataChunk &args, ExpressionState &state, Vector &result) {
 	auto &func_expr = state.expr.Cast<BoundFunctionExpression>();
 	const auto &info = func_expr.BindInfo()->Cast<JSONCreateFunctionData>();
 	auto &lstate = JSONFunctionLocalState::ResetAndGet(state);
-	auto alc = lstate.json_allocator->GetYYAlc();
 	auto options = ClientFormatOptions(state.GetContext());
 
 	// Initialize values
 	const idx_t count = args.size();
-	auto doc = JSONCommon::CreateDocument(alc);
-	auto objs = JSONCommon::AllocateArray<yyjson_mut_val *>(doc, count);
+	JSONCreateDocument doc(lstate.arena, lstate.parser);
+	auto objs = doc.Allocate<JSONBuildValue *>(count);
 	for (idx_t i = 0; i < count; i++) {
-		objs[i] = yyjson_mut_obj(doc);
+		objs[i] = doc.builder.Object();
 	}
 	// Initialize a re-usable value array
-	auto vals = JSONCommon::AllocateArray<yyjson_mut_val *>(doc, count);
+	auto vals = doc.Allocate<JSONBuildValue *>(count);
 	// Loop through key/value pairs
 	for (idx_t pair_idx = 0; pair_idx < args.data.size() / 2; pair_idx++) {
 		Vector &key_v = args.data[pair_idx * 2];
@@ -1107,47 +1130,45 @@ static void ObjectFunction(DataChunk &args, ExpressionState &state, Vector &resu
 	// Write JSON values to string
 	auto objects = FlatVector::GetDataMutable<string_t>(result);
 	for (idx_t i = 0; i < count; i++) {
-		objects[i] = JSONCommon::WriteVal<yyjson_mut_val>(objs[i], alc);
+		objects[i] = WriteBuildValue(*objs[i], lstate.writer, result);
 	}
-	JSONAllocator::AddBuffer(result, alc);
 }
 
 static void ArrayFunction(DataChunk &args, ExpressionState &state, Vector &result) {
 	auto &func_expr = state.expr.Cast<BoundFunctionExpression>();
 	const auto &info = func_expr.BindInfo()->Cast<JSONCreateFunctionData>();
 	auto &lstate = JSONFunctionLocalState::ResetAndGet(state);
-	auto alc = lstate.json_allocator->GetYYAlc();
 	auto options = ClientFormatOptions(state.GetContext());
 
 	// Initialize arrays
 	const idx_t count = args.size();
-	auto doc = JSONCommon::CreateDocument(alc);
-	auto arrs = JSONCommon::AllocateArray<yyjson_mut_val *>(doc, count);
+	JSONCreateDocument doc(lstate.arena, lstate.parser);
+	auto arrs = doc.Allocate<JSONBuildValue *>(count);
 	for (idx_t i = 0; i < count; i++) {
-		arrs[i] = yyjson_mut_arr(doc);
+		arrs[i] = doc.builder.Array();
 	}
 	// Initialize a re-usable value array
-	auto vals = JSONCommon::AllocateArray<yyjson_mut_val *>(doc, count);
+	auto vals = doc.Allocate<JSONBuildValue *>(count);
 	// Loop through args
 	for (auto &v : args.data) {
 		CreateValues(info.const_struct_names, doc, vals, v, count, options);
 		for (idx_t i = 0; i < count; i++) {
-			yyjson_mut_arr_append(arrs[i], vals[i]);
+			JSONBuilder::Append(*arrs[i], vals[i]);
 		}
 	}
 	// Write JSON arrays to string
 	auto objects = FlatVector::GetDataMutable<string_t>(result);
 	for (idx_t i = 0; i < count; i++) {
-		objects[i] = JSONCommon::WriteVal<yyjson_mut_val>(arrs[i], alc);
+		objects[i] = WriteBuildValue(*arrs[i], lstate.writer, result);
 	}
-	JSONAllocator::AddBuffer(result, alc);
 }
 
 static void ToJSONFunctionInternal(const StructNames &names, Vector &input, const idx_t count, Vector &result,
-                                   yyjson_alc *alc, const JSONCopyFormatOptions &options = JSONCopyFormatOptions()) {
+                                   JSONFunctionLocalState &lstate,
+                                   const JSONCopyFormatOptions &options = JSONCopyFormatOptions()) {
 	// Initialize array for values
-	auto doc = JSONCommon::CreateDocument(alc);
-	auto vals = JSONCommon::AllocateArray<yyjson_mut_val *>(doc, count);
+	JSONCreateDocument doc(lstate.arena, lstate.parser);
+	auto vals = doc.Allocate<JSONBuildValue *>(count);
 	CreateValues(names, doc, vals, input, count, options);
 
 	// Write JSON values to string
@@ -1158,7 +1179,7 @@ static void ToJSONFunctionInternal(const StructNames &names, Vector &input, cons
 	for (idx_t i = 0; i < count; i++) {
 		idx_t idx = input_data.sel->get_index(i);
 		if (input_data.validity.RowIsValid(idx)) {
-			objects[i] = JSONCommon::WriteVal<yyjson_mut_val>(vals[i], alc);
+			objects[i] = WriteBuildValue(*vals[i], lstate.writer, result);
 		} else {
 			result_validity.SetInvalid(i);
 		}
@@ -1167,28 +1188,24 @@ static void ToJSONFunctionInternal(const StructNames &names, Vector &input, cons
 	if (input.GetVectorType() == VectorType::CONSTANT_VECTOR || count == 1) {
 		result.SetVectorType(VectorType::CONSTANT_VECTOR);
 	}
-
-	JSONAllocator::AddBuffer(result, alc);
 }
 
 static void ToJSONFunction(DataChunk &args, ExpressionState &state, Vector &result) {
 	auto &func_expr = state.expr.Cast<BoundFunctionExpression>();
 	const auto &info = func_expr.BindInfo()->Cast<JSONCreateFunctionData>();
 	auto &lstate = JSONFunctionLocalState::ResetAndGet(state);
-	auto alc = lstate.json_allocator->GetYYAlc();
 	auto options = ClientFormatOptions(state.GetContext());
 
-	ToJSONFunctionInternal(info.const_struct_names, args.data[0], args.size(), result, alc, options);
+	ToJSONFunctionInternal(info.const_struct_names, args.data[0], args.size(), result, lstate, options);
 }
 
 static void JSONCopyToJSONFunction(DataChunk &args, ExpressionState &state, Vector &result) {
 	auto &func_expr = state.expr.Cast<BoundFunctionExpression>();
 	auto &info = func_expr.BindInfo()->Cast<JSONCopyToJSONFunctionData>();
 	auto &lstate = JSONFunctionLocalState::ResetAndGet(state);
-	auto alc = lstate.json_allocator->GetYYAlc();
 	auto options = info.GetFormatOptions(state.GetContext());
 
-	ToJSONFunctionInternal(info.const_struct_names, args.data[0], args.size(), result, alc, options);
+	ToJSONFunctionInternal(info.const_struct_names, args.data[0], args.size(), result, lstate, options);
 }
 
 //===--------------------------------------------------------------------===//
@@ -1196,7 +1213,7 @@ static void JSONCopyToJSONFunction(DataChunk &args, ExpressionState &state, Vect
 //===--------------------------------------------------------------------===//
 //! Generate a "bbox" from each geometry. GeoJSON orders it as all the minimums followed by all the maximums, and
 //! includes Z when the geometry has it. Geometries without a finite extent (NULL or empty) get no bbox at all.
-static void AddGeoJSONBoundingBoxes(yyjson_mut_doc *doc, yyjson_mut_val *features[], Vector &geometry_v,
+static void AddGeoJSONBoundingBoxes(JSONCreateDocument &doc, JSONBuildValue *features[], Vector &geometry_v,
                                     const idx_t count) {
 	UnifiedVectorFormat geometry_data;
 	geometry_v.ToUnifiedFormat(geometry_data);
@@ -1211,19 +1228,19 @@ static void AddGeoJSONBoundingBoxes(yyjson_mut_doc *doc, yyjson_mut_val *feature
 		if (!extent.HasXY()) {
 			continue;
 		}
-		auto bbox = yyjson_mut_arr(doc);
+		auto bbox = doc.builder.Array();
 		const auto has_z = extent.HasZ();
-		yyjson_mut_arr_add_real(doc, bbox, extent.x_min);
-		yyjson_mut_arr_add_real(doc, bbox, extent.y_min);
+		JSONBuilder::Append(*bbox, doc.builder.Double(extent.x_min));
+		JSONBuilder::Append(*bbox, doc.builder.Double(extent.y_min));
 		if (has_z) {
-			yyjson_mut_arr_add_real(doc, bbox, extent.z_min);
+			JSONBuilder::Append(*bbox, doc.builder.Double(extent.z_min));
 		}
-		yyjson_mut_arr_add_real(doc, bbox, extent.x_max);
-		yyjson_mut_arr_add_real(doc, bbox, extent.y_max);
+		JSONBuilder::Append(*bbox, doc.builder.Double(extent.x_max));
+		JSONBuilder::Append(*bbox, doc.builder.Double(extent.y_max));
 		if (has_z) {
-			yyjson_mut_arr_add_real(doc, bbox, extent.z_max);
+			JSONBuilder::Append(*bbox, doc.builder.Double(extent.z_max));
 		}
-		yyjson_mut_obj_add_val(doc, features[i], "bbox", bbox);
+		JSONBuilder::Add(*features[i], "bbox", bbox);
 	}
 }
 
@@ -1233,7 +1250,6 @@ static void JSONCopyToGeoJSONFunction(DataChunk &args, ExpressionState &state, V
 	auto &func_expr = state.expr.Cast<BoundFunctionExpression>();
 	auto &info = func_expr.BindInfo()->Cast<JSONCopyToGeoJSONFunctionData>();
 	auto &lstate = JSONFunctionLocalState::ResetAndGet(state);
-	auto alc = lstate.json_allocator->GetYYAlc();
 	auto options = info.formats->GetFormatOptions(state.GetContext());
 	options.geometry_format = JSONGeometryFormat::GEOJSON;
 
@@ -1243,21 +1259,21 @@ static void JSONCopyToGeoJSONFunction(DataChunk &args, ExpressionState &state, V
 	auto &entries = StructVector::GetEntries(payload);
 	auto &names = info.formats->const_struct_names;
 
-	auto doc = JSONCommon::CreateDocument(alc);
-	auto features = JSONCommon::AllocateArray<yyjson_mut_val *>(doc, count);
-	auto properties = JSONCommon::AllocateArray<yyjson_mut_val *>(doc, count);
+	JSONCreateDocument doc(lstate.arena, lstate.parser);
+	auto features = doc.Allocate<JSONBuildValue *>(count);
+	auto properties = doc.Allocate<JSONBuildValue *>(count);
 	for (idx_t i = 0; i < count; i++) {
-		features[i] = yyjson_mut_obj(doc);
-		yyjson_mut_obj_add_str(doc, features[i], "type", "Feature");
-		properties[i] = yyjson_mut_obj(doc);
+		features[i] = doc.builder.Object();
+		JSONBuilder::Add(*features[i], "type", doc.builder.String("Feature"));
+		properties[i] = doc.builder.Object();
 	}
 
-	auto nested_vals = JSONCommon::AllocateArray<yyjson_mut_val *>(doc, count);
+	auto nested_vals = doc.Allocate<JSONBuildValue *>(count);
 
 	if (info.id_index.IsValid()) {
 		CreateValues(names, doc, nested_vals, entries[info.id_index.GetIndex()], count, options);
 		for (idx_t i = 0; i < count; i++) {
-			yyjson_mut_obj_add_val(doc, features[i], "id", nested_vals[i]);
+			JSONBuilder::Add(*features[i], "id", nested_vals[i]);
 		}
 	}
 
@@ -1265,7 +1281,7 @@ static void JSONCopyToGeoJSONFunction(DataChunk &args, ExpressionState &state, V
 		auto &geometry_v = entries[info.geometry_index.GetIndex()];
 		CreateValues(names, doc, nested_vals, geometry_v, count, options);
 		for (idx_t i = 0; i < count; i++) {
-			yyjson_mut_obj_add_val(doc, features[i], "geometry", nested_vals[i]);
+			JSONBuilder::Add(*features[i], "geometry", nested_vals[i]);
 		}
 		if (info.write_bbox) {
 			AddGeoJSONBoundingBoxes(doc, features, geometry_v, count);
@@ -1273,7 +1289,7 @@ static void JSONCopyToGeoJSONFunction(DataChunk &args, ExpressionState &state, V
 	} else {
 		// A Feature without a geometry is still valid GeoJSON, it is simply unlocated
 		for (idx_t i = 0; i < count; i++) {
-			yyjson_mut_obj_add_null(doc, features[i], "geometry");
+			JSONBuilder::Add(*features[i], "geometry", doc.builder.Null());
 		}
 	}
 
@@ -1282,7 +1298,7 @@ static void JSONCopyToGeoJSONFunction(DataChunk &args, ExpressionState &state, V
 		CreateKeyValuePairs(names, doc, properties, nested_vals, key_v, entries[property_index], count, options);
 	}
 	for (idx_t i = 0; i < count; i++) {
-		yyjson_mut_obj_add_val(doc, features[i], "properties", properties[i]);
+		JSONBuilder::Add(*features[i], "properties", properties[i]);
 	}
 
 	auto objects = FlatVector::GetDataMutable<string_t>(result);
@@ -1292,7 +1308,7 @@ static void JSONCopyToGeoJSONFunction(DataChunk &args, ExpressionState &state, V
 	for (idx_t i = 0; i < count; i++) {
 		const auto idx = payload_data.sel->get_index(i);
 		if (payload_data.validity.RowIsValid(idx)) {
-			objects[i] = JSONCommon::WriteVal<yyjson_mut_val>(features[i], alc);
+			objects[i] = WriteBuildValue(*features[i], lstate.writer, result);
 		} else {
 			result_validity.SetInvalid(i);
 		}
@@ -1300,8 +1316,6 @@ static void JSONCopyToGeoJSONFunction(DataChunk &args, ExpressionState &state, V
 	if (payload.GetVectorType() == VectorType::CONSTANT_VECTOR || count == 1) {
 		result.SetVectorType(VectorType::CONSTANT_VECTOR);
 	}
-
-	JSONAllocator::AddBuffer(result, alc);
 }
 
 //! The column-selecting options are three-state: a NULL argument means the option was not given (use the default
@@ -1586,8 +1600,7 @@ static unique_ptr<FunctionLocalState> InitNestedToJSONLocalState(CastLocalStateP
 
 static bool AnyToJSONCast(Vector &source, Vector &result, idx_t count, CastParameters &parameters) {
 	auto &lstate = parameters.local_state->Cast<NestedToJSONLocalState>();
-	lstate.json_allocator->Reset();
-	auto alc = lstate.json_allocator->GetYYAlc();
+	lstate.arena.Reset();
 	auto &cast_data = parameters.cast_data->Cast<NestedToJSONCastData>();
 	const auto &names = cast_data.const_struct_names;
 
@@ -1597,14 +1610,14 @@ static bool AnyToJSONCast(Vector &source, Vector &result, idx_t count, CastParam
 		options.geometry_format = ClientGeometryFormat(*cast_data.client);
 	}
 	if (!cast_data.json_type_cast.HasFunction()) {
-		ToJSONFunctionInternal(names, source, count, result, alc, options);
+		ToJSONFunctionInternal(names, source, count, result, lstate, options);
 		return true;
 	}
 	Vector json_typed(cast_data.json_type, count);
 	CastParameters json_type_parameters(parameters, cast_data.json_type_cast.GetCastData(),
 	                                    lstate.json_type_cast_state);
 	const auto success = cast_data.json_type_cast.Cast(source, json_typed, count, json_type_parameters);
-	ToJSONFunctionInternal(names, json_typed, count, result, alc, options);
+	ToJSONFunctionInternal(names, json_typed, count, result, lstate, options);
 	return success;
 }
 

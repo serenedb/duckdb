@@ -1569,6 +1569,9 @@ public:
 	static void InitializeCopyBooleanKeywordTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
 	static arena_ptr<TransformResultValue> FinalizeCopyBooleanKeywordTrampoline(PEGTransformer &transformer,
 	                                                                            GeneratedTransformProcess &process);
+	static void InitializeCopyVerboseKeywordTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
+	static arena_ptr<TransformResultValue> FinalizeCopyVerboseKeywordTrampoline(PEGTransformer &transformer,
+	                                                                            GeneratedTransformProcess &process);
 	static void InitializeCopyFromDatabaseTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
 	static arena_ptr<TransformResultValue> FinalizeCopyFromDatabaseTrampoline(PEGTransformer &transformer,
 	                                                                          GeneratedTransformProcess &process);
@@ -5305,6 +5308,7 @@ public:
 	                                                      vector<OrderByNode> order_by_expression_list);
 	static GenericCopyOptionValue TransformCopyFormatKeyword(PEGTransformer &transformer);
 	static GenericCopyOptionValue TransformCopyBooleanKeyword(PEGTransformer &transformer);
+	static GenericCopyOptionValue TransformCopyVerboseKeyword(PEGTransformer &transformer);
 	static unique_ptr<SQLStatement> TransformCopyFromDatabaseWithFlag(PEGTransformer &transformer,
 	                                                                  const Identifier &col_id,
 	                                                                  const Identifier &col_id_1,

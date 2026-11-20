@@ -86,6 +86,10 @@ idx_t CompressedFile::GetProgress() {
 	return compressed_bytes_consumed.load(std::memory_order_relaxed);
 }
 
+bool CompressedFile::IsPipe() {
+	return child_handle->IsPipe();
+}
+
 int64_t CompressedFile::ReadData(void *buffer, int64_t remaining) {
 	idx_t total_read = 0;
 	while (true) {

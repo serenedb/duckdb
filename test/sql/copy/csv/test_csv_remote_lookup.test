@@ -1,0 +1,87 @@
+# name: test/sql/copy/csv/test_csv_remote_lookup.test
+# description: A Top-N over a CSV file read over HTTP looks the rows it keeps up by their byte offset
+# group: [csv]
+
+require httpfs
+
+require-env PYTHON_HTTP_SERVER_URL
+
+require-env PYTHON_HTTP_SERVER_DIR
+
+statement ok
+SET profiling_renderer_settings = MAP {'operator_casing': 'upper'};
+
+statement ok
+COPY (SELECT i AS id, 'v' || i AS s, CASE WHEN i = 150 THEN 'oops' ELSE (i * 3)::VARCHAR END AS n FROM range(200) r(i)) TO '{PYTHON_HTTP_SERVER_DIR}/lookup_bad.csv' (HEADER false);
+
+query II
+EXPLAIN SELECT * FROM read_csv('{PYTHON_HTTP_SERVER_URL}/lookup_bad.csv', auto_detect = true, delim = ',', header = false, columns = {'id': 'INTEGER', 's': 'VARCHAR', 'n': 'INTEGER'}) ORDER BY id DESC LIMIT 3
+----
+physical_plan	<REGEX>:.*LOOKUP_JOIN.*
+
+query III
+SELECT * FROM read_csv('{PYTHON_HTTP_SERVER_URL}/lookup_bad.csv', auto_detect = true, delim = ',', header = false, columns = {'id': 'INTEGER', 's': 'VARCHAR', 'n': 'INTEGER'}) ORDER BY id DESC LIMIT 3
+----
+199	v199	597
+198	v198	594
+197	v197	591
+
+statement error
+SELECT * FROM read_csv('{PYTHON_HTTP_SERVER_URL}/lookup_bad.csv', auto_detect = true, delim = ',', header = false, columns = {'id': 'INTEGER', 's': 'VARCHAR', 'n': 'INTEGER'}) ORDER BY id DESC LIMIT 60
+----
+Could not convert string "oops" to 'INTEGER'
+
+query III
+SELECT count(s), min(id), sum(n) FROM (SELECT * FROM read_csv('{PYTHON_HTTP_SERVER_URL}/lookup_bad.csv', auto_detect = true, delim = ',', header = false, ignore_errors = true, columns = {'id': 'INTEGER', 's': 'VARCHAR', 'n': 'INTEGER'}) ORDER BY id DESC LIMIT 60)
+----
+60	139	30477
+
+statement ok
+COPY (SELECT encode(string_agg(i || ',v' || i || chr(13) || chr(10), '' ORDER BY i)) FROM range(100) r(i)) TO '{PYTHON_HTTP_SERVER_DIR}/lookup_crlf.csv' (FORMAT blob);
+
+query II
+SELECT id, s FROM read_csv('{PYTHON_HTTP_SERVER_URL}/lookup_crlf.csv', auto_detect = true, delim = ',', header = false, new_line = '\r\n', columns = {'id': 'INTEGER', 's': 'VARCHAR'}) ORDER BY id DESC LIMIT 3
+----
+99	v99
+98	v98
+97	v97
+
+statement ok
+COPY (SELECT encode(string_agg(i || ',w' || i || CASE WHEN i % 2 = 0 THEN chr(13) ELSE chr(13) || chr(10) END, '' ORDER BY i)) FROM range(100) r(i)) TO '{PYTHON_HTTP_SERVER_DIR}/lookup_mixed.csv' (FORMAT blob);
+
+query II
+SELECT id, s FROM read_csv('{PYTHON_HTTP_SERVER_URL}/lookup_mixed.csv', auto_detect = true, delim = ',', header = false, new_line = '\r\n', strict_mode = false, columns = {'id': 'INTEGER', 's': 'VARCHAR'}) ORDER BY id DESC LIMIT 4
+----
+99	w99
+98	w98
+97	w97
+96	w96
+
+statement ok
+COPY (SELECT CASE WHEN i % 3 = 0 THEN i::VARCHAR ELSE i || ',p' || i END FROM range(60) r(i) ORDER BY i) TO '{PYTHON_HTTP_SERVER_DIR}/lookup_padded.csv' (HEADER false, DELIMITER '\t', QUOTE '');
+
+query II
+EXPLAIN SELECT * FROM read_csv('{PYTHON_HTTP_SERVER_URL}/lookup_padded.csv', delim = ',', header = false, null_padding = true) ORDER BY column0 DESC LIMIT 3
+----
+physical_plan	<REGEX>:.*LOOKUP_JOIN.*
+
+query II
+SELECT * FROM read_csv('{PYTHON_HTTP_SERVER_URL}/lookup_padded.csv', delim = ',', header = false, null_padding = true) ORDER BY column0 DESC LIMIT 3
+----
+59	p59
+58	p58
+57	NULL
+
+statement ok
+COPY (SELECT encode(string_agg(i || ',t' || i || chr(10), '' ORDER BY i) || '10,' || repeat('x', 8189)) FROM range(10) r(i)) TO '{PYTHON_HTTP_SERVER_DIR}/lookup_tail.csv' (FORMAT blob);
+
+query II
+SELECT id, length(s) FROM read_csv('{PYTHON_HTTP_SERVER_URL}/lookup_tail.csv', auto_detect = true, delim = ',', header = false, columns = {'id': 'INTEGER', 's': 'VARCHAR'}) ORDER BY id DESC LIMIT 1
+----
+10	8189
+
+query II
+SELECT id, length(s) FROM read_csv('{PYTHON_HTTP_SERVER_URL}/lookup_tail.csv', auto_detect = true, delim = ',', header = false, columns = {'id': 'INTEGER', 's': 'VARCHAR'}) ORDER BY id DESC LIMIT 2
+----
+10	8189
+9	2

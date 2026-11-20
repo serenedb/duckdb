@@ -39,9 +39,10 @@ static bool TupleToVarcharCast(Vector &source, Vector &result, idx_t count, Cast
 			if (c > 0) {
 				string_length += SEP_LENGTH;
 			}
-			auto add_escapes = !base_children[c].GetType().IsNested();
-			auto string_length_func = add_escapes ? VectorCastHelpers::CalculateEscapedStringLength<false>
-			                                      : VectorCastHelpers::CalculateStringLength;
+			auto string_length_func =
+			    VectorCastHelpers::ChildText(base_children[c].GetType(),
+			                                 c < cast_data.own_text.size() && cast_data.own_text[c])
+			        .length;
 			auto child_entry = child_iterators[c][r];
 			if (child_entry.IsValid()) {
 				//! Skip the `\`, not a special character outside quotes
@@ -66,9 +67,10 @@ static bool TupleToVarcharCast(Vector &source, Vector &result, idx_t count, Cast
 				memcpy(dataptr + offset, ", ", SEP_LENGTH);
 				offset += SEP_LENGTH;
 			}
-			auto add_escapes = !base_children[c].GetType().IsNested();
 			auto write_string_func =
-			    add_escapes ? VectorCastHelpers::WriteEscapedString<false> : VectorCastHelpers::WriteString;
+			    VectorCastHelpers::ChildText(base_children[c].GetType(),
+			                                 c < cast_data.own_text.size() && cast_data.own_text[c])
+			        .write;
 			auto child_entry = child_iterators[c][r];
 			if (child_entry.IsValid()) {
 				//! Skip the `\`, not a special character outside quotes
@@ -104,9 +106,12 @@ BoundCastInfo DefaultCasts::TupleCastSwitch(BindCastInput &input, const LogicalT
 			varchar_children.push_back(make_pair(child_entry.first, LogicalType::VARCHAR));
 		}
 		auto varchar_type = LogicalType::TUPLE(std::move(varchar_children));
-		return BoundCastInfo(TupleToVarcharCast,
-		                     StructBoundCastData::BindStructToStructCast(input, source, varchar_type),
-		                     StructBoundCastData::InitStructCastLocalState);
+		auto data = StructBoundCastData::BindStructToStructCast(input, source, varchar_type);
+		auto &own_text = data->Cast<StructBoundCastData>().own_text;
+		for (auto &child_entry : tuple_children) {
+			own_text.push_back(VectorCastHelpers::WritesOwnText(input, child_entry.second));
+		}
+		return BoundCastInfo(TupleToVarcharCast, std::move(data), StructBoundCastData::InitStructCastLocalState);
 	}
 	case LogicalTypeId::MAP:
 		// a TUPLE is unnamed, so (unlike a named STRUCT) it cannot be cast to a MAP

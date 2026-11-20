@@ -89,6 +89,9 @@ typedef std::function<InternalCatalog(AttachedDatabase &db)> create_internal_cat
 typedef shared_ptr<ClientContext> (*create_client_context_t)(DatabaseInstance &db);
 
 typedef unique_ptr<SecretStorage> (*create_secret_storage_t)(DatabaseInstance &db, const string &name, bool persistent);
+typedef LogicalType (*copy_to_written_type_t)(const LogicalType &type);
+class ValueDecoder;
+typedef unique_ptr<ValueDecoder> (*create_postgres_decoder_t)(ClientContext &context, const LogicalType &type);
 
 //! NOTE: DBConfigOptions is mostly deprecated.
 //! If you want to add a setting that can be set by the user, add it as a generic setting to `settings.json`.
@@ -234,6 +237,8 @@ public:
 	create_internal_catalog_t create_internal_catalog;
 	create_client_context_t create_client_context = nullptr;
 	create_secret_storage_t create_secret_storage = nullptr;
+	copy_to_written_type_t copy_to_written_type = nullptr;
+	create_postgres_decoder_t create_postgres_decoder = nullptr;
 	//! Database configuration variables as controlled by SET
 	GlobalUserSettings user_settings;
 

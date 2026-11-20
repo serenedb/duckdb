@@ -1,84 +1,74 @@
 #include "json_common.hpp"
 #include "json_functions.hpp"
-#include "json_stack.hpp"
 
 namespace duckdb {
 
-//! RFC 7396 merge patch; a missing or non-object orig is treated as an empty object
-static inline yyjson_mut_val *MergePatch(yyjson_mut_doc *doc, yyjson_mut_val *orig, yyjson_mut_val *patch) {
-	if ((yyjson_mut_get_tag(orig) != (YYJSON_TYPE_OBJ | YYJSON_SUBTYPE_NONE)) ||
-	    (yyjson_mut_get_tag(patch) != (YYJSON_TYPE_OBJ | YYJSON_SUBTYPE_NONE))) {
-		// If either is not an object, we just return the second argument
-		return patch;
+struct MergePatchFrame {
+	const JSONNode *orig;
+	uint32_t remaining;
+	const JSONNode *next;
+};
+
+static void StartMergePatch(JSONStringWriter &writer, const JSONNode *orig, const JSONNode &patch,
+                            vector<MergePatchFrame> &frames) {
+	if (orig && orig->type != JSONValueType::OBJECT) {
+		orig = nullptr;
 	}
-
-	// Both are object, do the merge
-	auto root_builder = yyjson_mut_obj(doc);
-
-	struct stack_item {
-		yyjson_mut_val *key;
-		yyjson_mut_val *orig;
-		yyjson_mut_val *patch;
-		yyjson_mut_val *builder;
-	};
-	Stack<stack_item> stack;
-	stack.Push(stack_item {nullptr, orig, patch, root_builder});
-
-	while (!stack.Empty()) {
-		auto nodes = stack.Pop();
-
-		if (!yyjson_mut_is_obj(nodes.orig)) {
-			// yyjson_mut_obj_getn on a non-object returns nullptr, so lookups below need no special case
-			nodes.orig = nullptr;
-		}
-
-		// Copy orig keys that the patch does not touch
-		if (nodes.orig) {
-			idx_t idx, max;
-			yyjson_mut_val *key, *orig_val;
-			yyjson_mut_obj_foreach(nodes.orig, idx, max, key, orig_val) {
-				auto patch_val =
-				    yyjson_mut_obj_getn(nodes.patch, unsafe_yyjson_get_str(key), unsafe_yyjson_get_len(key));
-				if (!patch_val) {
-					yyjson_mut_obj_add(nodes.builder, yyjson_mut_val_mut_copy(doc, key),
-					                   yyjson_mut_val_mut_copy(doc, orig_val));
-				}
+	writer.StartObject();
+	if (orig) {
+		for (auto &key : orig->Keys()) {
+			if (!patch.Get(key.GetString())) {
+				writer.Key(key.GetString());
+				writer.Value(*(&key + 1));
 			}
-		}
-
-		// Merge patch keys; null removes the key
-		idx_t idx, max;
-		yyjson_mut_val *key, *patch_val;
-		yyjson_mut_obj_foreach(nodes.patch, idx, max, key, patch_val) {
-			if (unsafe_yyjson_is_null(patch_val)) {
-				continue;
-			}
-			auto mut_key = yyjson_mut_val_mut_copy(doc, key);
-			if (!yyjson_mut_is_obj(patch_val)) {
-				yyjson_mut_obj_add(nodes.builder, mut_key, yyjson_mut_val_mut_copy(doc, patch_val));
-				continue;
-			}
-			auto orig_val = yyjson_mut_obj_getn(nodes.orig, unsafe_yyjson_get_str(key), unsafe_yyjson_get_len(key));
-			auto child_builder = yyjson_mut_obj(doc);
-			yyjson_mut_obj_add(nodes.builder, mut_key, child_builder);
-			stack.Push(stack_item {mut_key, orig_val, patch_val, child_builder});
 		}
 	}
-
-	return root_builder;
+	frames.push_back({orig, patch.size, patch.First()});
 }
 
-static inline void ReadObjects(yyjson_mut_doc *doc, const Vector &input, yyjson_mut_val *objs[]) {
+//! RFC 7396 merge patch; a missing or non-object orig is treated as an empty object
+static void WriteMergePatch(JSONStringWriter &writer, const JSONNode *orig, const JSONNode &patch,
+                            vector<MergePatchFrame> &frames) {
+	StartMergePatch(writer, orig, patch, frames);
+	while (!frames.empty()) {
+		auto &frame = frames.back();
+		if (frame.remaining == 0) {
+			writer.EndObject();
+			frames.pop_back();
+			continue;
+		}
+		frame.remaining--;
+		auto &key = *frame.next;
+		auto &patch_val = *(&key + 1);
+		frame.next = patch_val.Next();
+		if (patch_val.type == JSONValueType::JSON_NULL) {
+			continue;
+		}
+		writer.Key(key.GetString());
+		if (patch_val.type == JSONValueType::OBJECT) {
+			auto orig_val = frame.orig ? frame.orig->Get(key.GetString()) : nullptr;
+			StartMergePatch(writer, orig_val, patch_val, frames);
+		} else {
+			writer.Value(patch_val);
+		}
+	}
+}
+
+static inline void ReadObjects(JSONTreeParser &parser, const Vector &input, optional_idx roots[]) {
 	auto entries = input.Values<string_t>();
 
 	// Read the documents
+	JSONParseError error;
 	for (idx_t i = 0; i < input.size(); i++) {
 		auto entry = entries[i];
 		if (!entry.IsValid()) {
-			objs[i] = nullptr;
-		} else {
-			objs[i] = yyjson_val_mut_copy(
-			    doc, JSONCommon::ReadDocument(entry.GetValue(), JSONCommon::READ_FLAG, &doc->alc)->root);
+			roots[i] = optional_idx();
+			continue;
+		}
+		const auto &str = entry.GetValue();
+		roots[i] = parser.ParseAppend(str.GetData(), str.GetSize(), error);
+		if (!roots[i].IsValid()) {
+			JSONCommon::ThrowParseError(str.GetData(), str.GetSize(), error);
 		}
 	}
 }
@@ -86,43 +76,59 @@ static inline void ReadObjects(yyjson_mut_doc *doc, const Vector &input, yyjson_
 //! Follows MySQL behaviour
 static void MergePatchFunction(DataChunk &args, ExpressionState &state, Vector &result) {
 	auto &lstate = JSONFunctionLocalState::ResetAndGet(state);
-	auto alc = lstate.json_allocator->GetYYAlc();
-
-	auto doc = JSONCommon::CreateDocument(alc);
 	const auto count = args.size();
+	const auto arg_count = args.data.size();
 
-	// Read the first json arg
-	auto origs = JSONCommon::AllocateArray<yyjson_mut_val *>(alc, count);
-	ReadObjects(doc, args.data[0], origs);
-
-	// Read the next json args one by one and merge them into the first json arg
-	auto patches = JSONCommon::AllocateArray<yyjson_mut_val *>(alc, count);
-	for (idx_t arg_idx = 1; arg_idx < args.data.size(); arg_idx++) {
-		ReadObjects(doc, args.data[arg_idx], patches);
-		for (idx_t i = 0; i < count; i++) {
-			if (patches[i] == nullptr) {
-				// Next json arg is NULL, obj becomes NULL
-				origs[i] = nullptr;
-			} else if (origs[i] == nullptr) {
-				// Current obj is NULL, obj becomes next json arg
-				origs[i] = patches[i];
-			} else {
-				// Neither is NULL, merge them
-				origs[i] = MergePatch(doc, origs[i], patches[i]);
-			}
-		}
+	auto roots =
+	    reinterpret_cast<optional_idx *>(lstate.arena.AllocateAligned(sizeof(optional_idx) * count * arg_count));
+	lstate.parser.Clear();
+	for (idx_t arg_idx = 0; arg_idx < arg_count; arg_idx++) {
+		ReadObjects(lstate.parser, args.data[arg_idx], roots + arg_idx * count);
 	}
 
 	// Write to result vector
+	auto &writer = lstate.writer;
+	vector<MergePatchFrame> frames;
 	auto result_data = FlatVector::Writer<string_t>(result, count);
 	for (idx_t i = 0; i < count; i++) {
-		if (origs[i] == nullptr) {
-			result_data.WriteNull();
-		} else {
-			result_data.WriteStringRef(JSONCommon::WriteVal<yyjson_mut_val>(origs[i], alc));
+		idx_t first = 0;
+		for (idx_t arg_idx = 0; arg_idx < arg_count; arg_idx++) {
+			if (!roots[arg_idx * count + i].IsValid()) {
+				first = arg_idx + 1;
+			}
 		}
+		if (first == arg_count) {
+			result_data.WriteNull();
+			continue;
+		}
+
+		auto orig = lstate.parser.Node(roots[first * count + i].GetIndex());
+		bool merged = false;
+		for (idx_t arg_idx = first + 1; arg_idx < arg_count; arg_idx++) {
+			auto patch = lstate.parser.Node(roots[arg_idx * count + i].GetIndex());
+			if (patch->type != JSONValueType::OBJECT) {
+				orig = patch;
+				merged = false;
+				continue;
+			}
+			if (merged) {
+				orig = &JSONCommon::ReadDocument(lstate.second_parser, writer.View().data(), writer.View().size());
+				merged = false;
+			}
+			if (orig->type != JSONValueType::OBJECT) {
+				orig = patch;
+				continue;
+			}
+			writer.Clear();
+			WriteMergePatch(writer, orig, *patch, frames);
+			merged = true;
+		}
+		if (!merged) {
+			writer.Clear();
+			writer.Value(*orig);
+		}
+		result_data.WriteStringRef(StringVector::AddString(result, writer.View()));
 	}
-	JSONAllocator::AddBuffer(result, alc);
 }
 
 ScalarFunctionSet JSONFunctions::GetMergePatchFunction() {

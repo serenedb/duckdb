@@ -1,5 +1,7 @@
 #include "duckdb/execution/operator/csv_scanner/sniffer/csv_sniffer.hpp"
 
+#include "duckdb/common/exception/binder_exception.hpp"
+
 namespace duckdb {
 void CSVSniffer::ReplaceTypes() {
 	auto &sniffing_state_machine = best_candidate->GetStateMachine();

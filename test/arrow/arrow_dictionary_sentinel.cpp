@@ -1,7 +1,7 @@
 #include "catch.hpp"
 
 #include "arrow/arrow_test_helper.hpp"
-#include "duckdb/common/adbc/single_batch_array_stream.hpp"
+#include "nanoarrow/nanoarrow.h"
 
 using namespace duckdb;
 
@@ -80,8 +80,8 @@ TEST_CASE("Arrow scan of dict-encoded int32 column with NULL sentinel", "[arrow]
 	// Wrap (schema, array) as an ArrowArrayStream and compare with a SQL
 	// SELECT that produces the same materialized result.
 	ArrowArrayStream stream {};
-	AdbcError err {};
-	REQUIRE(duckdb_adbc::BatchToArrayStream(&record_array, &record_schema, &stream, &err) == ADBC_STATUS_OK);
+	REQUIRE(ArrowBasicArrayStreamInit(&stream, &record_schema, 1) == NANOARROW_OK);
+	ArrowBasicArrayStreamSetArray(&stream, 0, &record_array);
 
 	DuckDB db(nullptr);
 	Connection con(db);

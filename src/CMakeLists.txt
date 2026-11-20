@@ -34,19 +34,14 @@ add_subdirectory(catalog)
 add_subdirectory(common)
 add_subdirectory(logging)
 add_subdirectory(execution)
+add_subdirectory(formats)
 add_subdirectory(main)
 add_subdirectory(parallel)
 add_subdirectory(storage)
 add_subdirectory(transaction)
 
-set(DUCKDB_LINK_LIBS
-    duckdb_fsst
-    duckdb_utf8proc
-    duckdb_hyperloglog
-    duckdb_fastpforlib
-    duckdb_skiplistlib
-    duckdb_mbedtls
-    duckdb_yyjson)
+set(DUCKDB_LINK_LIBS duckdb_fsst duckdb_utf8proc duckdb_hyperloglog
+                     duckdb_fastpforlib duckdb_skiplistlib duckdb_mbedtls)
 
 foreach(LINK_LIB ${DUCKDB_LINK_LIBS})
   list(APPEND LINK_OBJECTS $<TARGET_OBJECTS:${LINK_LIB}>)
@@ -75,6 +70,11 @@ target_link_libraries(duckdb PUBLIC ${DUCKDB_SYSTEM_LIBS})
 link_extension_libraries(duckdb PRIVATE)
 
 link_threads(duckdb PUBLIC)
+
+if(TARGET nanoarrow::nanoarrow)
+  target_link_libraries(duckdb_static PRIVATE nanoarrow::nanoarrow)
+  target_link_libraries(duckdb PRIVATE nanoarrow::nanoarrow)
+endif()
 
 if(SET_DUCKDB_LIBRARY_VERSION)
   set_target_properties(

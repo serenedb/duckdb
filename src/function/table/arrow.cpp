@@ -3,6 +3,7 @@
 #include "duckdb.hpp"
 #include "duckdb/common/arrow/arrow_wrapper.hpp"
 #include "duckdb/common/limits.hpp"
+#include "duckdb/common/multi_file/table_function_multi_file.hpp"
 #include "duckdb/common/to_string.hpp"
 #include "duckdb/common/types/date.hpp"
 #include "duckdb/common/types/vector_buffer.hpp"
@@ -84,7 +85,7 @@ unique_ptr<ArrowArrayStreamWrapper> ProduceArrowScan(const ArrowScanFunctionData
 	auto &arrow_types = function.arrow_table.GetColumns();
 	for (idx_t idx = 0; idx < column_ids.size(); idx++) {
 		auto col_idx = column_ids[idx];
-		if (col_idx != COLUMN_IDENTIFIER_ROW_ID) {
+		if (!IsVirtualColumn(col_idx)) {
 			auto &schema = *function.schema_root.arrow_schema.children[col_idx];
 			arrow_types.at(col_idx)->ThrowIfInvalid();
 			parameters.projected_columns.projection_map[idx] = schema.name;
@@ -92,7 +93,7 @@ unique_ptr<ArrowArrayStreamWrapper> ProduceArrowScan(const ArrowScanFunctionData
 			parameters.projected_columns.filter_to_col[idx] = col_idx;
 		}
 	}
-	parameters.filters = filters;
+	parameters.filters = function.evaluate_filters ? nullptr : filters;
 	return function.factory->ProduceStream(parameters);
 }
 
@@ -119,6 +120,8 @@ bool ArrowTableFunction::ArrowScanParallelStateNext(ClientContext &context, cons
 		parallel_state.done = true;
 		return false;
 	}
+	state.row_number = parallel_state.next_row_number;
+	parallel_state.next_row_number += NumericCast<idx_t>(state.chunk->arrow_array.length);
 	return true;
 }
 
@@ -141,20 +144,64 @@ unique_ptr<GlobalTableFunctionState> ArrowTableFunction::ArrowScanInitGlobal(Cli
 	return std::move(result);
 }
 
-unique_ptr<LocalTableFunctionState>
-ArrowTableFunction::ArrowScanInitLocalInternal(ClientContext &context, TableFunctionInitInput &input,
-                                               GlobalTableFunctionState *global_state_p) {
-	auto &global_state = global_state_p->Cast<ArrowScanGlobalState>();
-	auto current_chunk = make_uniq<ArrowArrayWrapper>();
-	auto result = make_uniq<ArrowScanLocalState>(std::move(current_chunk), context);
+static void InitializeScanFilters(ClientContext &context, TableFunctionInitInput &input,
+                                  const ArrowScanFunctionData &bind_data, ArrowScanLocalState &state) {
+	idx_t arrow_column = 0;
+	for (auto column_id : state.column_ids) {
+		state.arrow_columns.push_back(IsVirtualColumn(column_id) ? DConstants::INVALID_INDEX : arrow_column++);
+	}
+	state.filtered_columns.assign(state.column_ids.size(), false);
+	if (!input.filters) {
+		return;
+	}
+	for (auto &entry : *input.filters) {
+		auto column = entry.GetIndex().GetIndex();
+		state.scan_filters.push_back(ArrowScanFilter {column, TableFilterState::Initialize(context, entry.Filter())});
+		state.filtered_columns[column] = true;
+	}
+	if (state.scan_filters.empty()) {
+		return;
+	}
+	state.filter_rows.Initialize(STANDARD_VECTOR_SIZE);
+	auto &file_input = TableFunctionFileInitInput::Get(input);
+	if (!file_input.expression_map) {
+		return;
+	}
+	auto &arrow_types = bind_data.arrow_table.GetColumns();
+	for (auto &entry : *file_input.expression_map) {
+		auto expression = make_uniq<ArrowScanExpression>();
+		expression->executor = make_uniq<ExpressionExecutor>(context, *entry.second.expression);
+		vector<LogicalType> input_types;
+		for (auto &column_index : entry.second.column_indexes) {
+			input_types.push_back(arrow_types.at(column_index.GetPrimaryIndex())->GetDuckType(true));
+		}
+		expression->input.Initialize(context, input_types);
+		state.column_expressions.emplace(entry.first.GetIndex(), std::move(expression));
+	}
+}
+
+unique_ptr<ArrowScanLocalState> ArrowTableFunction::ArrowScanCreateLocalState(ClientContext &context,
+                                                                              TableFunctionInitInput &input) {
+	auto result = make_uniq<ArrowScanLocalState>(make_uniq<ArrowArrayWrapper>(), context);
 	result->column_ids = input.column_ids;
 	result->filters = input.filters.get();
 	auto &bind_data = input.bind_data->Cast<ArrowScanFunctionData>();
 	if (!bind_data.projection_pushdown_enabled) {
 		result->column_ids.clear();
-	} else if (!input.projection_ids.empty()) {
-		auto &asgs = global_state_p->Cast<ArrowScanGlobalState>();
-		result->all_columns.Initialize(context, asgs.scanned_types);
+	} else if (bind_data.evaluate_filters) {
+		InitializeScanFilters(context, input, bind_data, *result);
+	}
+	return result;
+}
+
+unique_ptr<LocalTableFunctionState>
+ArrowTableFunction::ArrowScanInitLocalInternal(ClientContext &context, TableFunctionInitInput &input,
+                                               GlobalTableFunctionState *global_state_p) {
+	auto &global_state = global_state_p->Cast<ArrowScanGlobalState>();
+	auto result = ArrowScanCreateLocalState(context, input);
+	auto &bind_data = input.bind_data->Cast<ArrowScanFunctionData>();
+	if (bind_data.projection_pushdown_enabled && !input.projection_ids.empty()) {
+		result->all_columns.Initialize(context, global_state.scanned_types);
 	}
 	if (!ArrowScanParallelStateNext(context, input.bind_data.get(), *result, global_state)) {
 		return nullptr;
@@ -175,28 +222,37 @@ void ArrowTableFunction::ArrowScanFunction(ClientContext &context, TableFunction
 	auto &data = data_p.bind_data->CastNoConst<ArrowScanFunctionData>(); // FIXME
 	auto &state = data_p.local_state->Cast<ArrowScanLocalState>();
 	auto &global_state = data_p.global_state->Cast<ArrowScanGlobalState>();
+	auto &result = global_state.CanRemoveFilterColumns() ? state.all_columns : output;
 
-	//! Out of tuples in this chunk
-	if (state.chunk_offset >= static_cast<idx_t>(state.chunk->arrow_array.length)) {
-		if (!ArrowScanParallelStateNext(context, data_p.bind_data.get(), state, global_state)) {
-			return;
+	while (true) {
+		//! Out of tuples in this chunk
+		if (state.chunk_offset >= static_cast<idx_t>(state.chunk->arrow_array.length)) {
+			if (!ArrowScanParallelStateNext(context, data_p.bind_data.get(), state, global_state)) {
+				return;
+			}
 		}
+		auto output_size = MinValue<idx_t>(STANDARD_VECTOR_SIZE,
+		                                   NumericCast<idx_t>(state.chunk->arrow_array.length) - state.chunk_offset);
+		data.lines_read += output_size;
+		if (global_state.CanRemoveFilterColumns()) {
+			state.all_columns.Reset();
+		}
+		if (state.scan_filters.empty()) {
+			result.SetChildCardinality(output_size);
+			ArrowToDuckDB(state, data.arrow_table.GetColumns(), result);
+		} else if (ArrowToDuckDBFiltered(state, data.arrow_table.GetColumns(), result, output_size, nullptr,
+		                                 output_size) == 0) {
+			state.chunk_offset += output_size;
+			result.Reset();
+			continue;
+		}
+		state.chunk_offset += output_size;
+		break;
 	}
-	auto output_size =
-	    MinValue<idx_t>(STANDARD_VECTOR_SIZE, NumericCast<idx_t>(state.chunk->arrow_array.length) - state.chunk_offset);
-	data.lines_read += output_size;
 	if (global_state.CanRemoveFilterColumns()) {
-		state.all_columns.Reset();
-		state.all_columns.SetChildCardinality(output_size);
-		ArrowToDuckDB(state, data.arrow_table.GetColumns(), state.all_columns);
 		output.ReferenceColumns(state.all_columns, global_state.projection_ids);
-	} else {
-		output.SetChildCardinality(output_size);
-		ArrowToDuckDB(state, data.arrow_table.GetColumns(), output);
 	}
-
 	output.Verify(context);
-	state.chunk_offset += output.size();
 }
 
 unique_ptr<NodeStatistics> ArrowTableFunction::ArrowScanCardinality(ClientContext &context, const FunctionData *data) {

@@ -94,12 +94,12 @@ query III
 SELECT file_row_number, w, v FROM read_csv('{TEMP_DIR}/frn_wide.csv') ORDER BY v
 ----
 4	w0	0
-8	w1	1
-13	w2	2
+9	w1	1
+14	w2	2
 
 query II
 SELECT file_row_number, v FROM read_csv('{TEMP_DIR}/frn_wide.csv', types={'v': 'VARCHAR'}) ORDER BY v
 ----
 4	0
-8	1
-13	2
+9	1
+14	2

@@ -10,8 +10,10 @@
 
 #include <vector>
 #include <string>
+#include <string_view>
 #include <cstdint>
 #include <memory>
+#include "duckdb/common/mutex.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/common/unique_ptr.hpp"
 #include "duckdb/common/optional_ptr.hpp"
@@ -74,8 +76,15 @@ enum class RenderMode : uint32_t {
 	LATEX,     /* Latex tabular formatting */
 	TRASH,     /* Discard output */
 	JSONLINES, /* Output JSON Lines */
-	DUCKBOX    /* Unicode box drawing - using DuckDB's own renderer */
+	DUCKBOX,   /* Unicode box drawing - using DuckDB's own renderer */
+	PSQL
 };
+
+enum class PsqlFormat : uint8_t { ALIGNED, UNALIGNED, CSV };
+
+enum class PsqlExpanded : uint8_t { OFF, ON, AUTO };
+
+enum class CopyInSource : uint8_t { PROCESS_STDIN, FILE, INLINE };
 
 enum class PrintOutput { STDOUT, STDERR };
 
@@ -248,6 +257,7 @@ public:
 	** true if translation is required.
 	*/
 	bool stdout_is_console = true;
+	bool stdout_is_terminal = true;
 	bool stderr_is_console = true;
 
 	//! Whether to render for an AI coding agent: forced on/off from the command line, or auto-detected (DEFAULT)
@@ -286,6 +296,23 @@ public:
 	//! psql `-1`/`--single-transaction`: when a -c/-f is queued, wrap the
 	//! whole batch in BEGIN/COMMIT.
 	bool psql_single_transaction = false;
+	PsqlFormat psql_format = PsqlFormat::ALIGNED;
+	PsqlExpanded psql_expanded = PsqlExpanded::OFF;
+	int64_t psql_border = 1;
+	char psql_csv_separator = ',';
+	bool psql_footer = true;
+	bool null_value_set = false;
+	bool quiet = false;
+	bool quit_requested = false;
+	string last_query;
+	bool executing_from_input = false;
+	CopyInSource copy_in_source = CopyInSource::PROCESS_STDIN;
+	FILE *copy_in_file = nullptr;
+	FILE *copy_out_file = nullptr;
+	string copy_in_line;
+	idx_t copy_in_offset = 0;
+	bool copy_in_done = false;
+	duckdb::mutex copy_lock;
 
 	//! Whether or not syntax highlighting is enabled
 	bool highlighting_enabled = true;
@@ -450,6 +477,22 @@ public:
 	void ClearTempFile();
 	void NewTempFile(const char *zSuffix);
 	int DoMetaCommand(const string &zLine);
+	int DoBackslashCommand(std::string_view line, std::string_view query_buffer, bool &query_consumed);
+	bool SetPrintOption(const string &option, const char *value, bool silent, const char *context);
+	void PrintPrintOptions();
+	void PrintBackslashHelp();
+	const char *PsqlNullValue() const;
+	SuccessState RunQueryBuffer(const string &query, const string &target, bool expanded);
+	SuccessState CopyClientSide(const string &arguments);
+	idx_t ReadCopyData(char *buffer, idx_t size);
+	bool CopyInputIsFile();
+	void WriteCopyData(const char *data, idx_t size);
+	void OpenCopyInput(bool binary);
+	void CloseCopyInput();
+	bool ReadCopyLine();
+	unique_ptr<PagerState> OpenCopyOutput();
+	static bool TimerEnabled();
+	bool SetTimer(bool enable);
 	idx_t PrintHelp(const char *zPattern);
 
 	void ShellAddHistory(const char *line);
@@ -458,13 +501,15 @@ public:
 	int ShellSetHistoryMaxLength(idx_t max_length);
 	char *OneInputLine(FILE *in, char *zPrior, int isContinuation);
 
-	int RunOneSqlLine(InputMode mode, char *zSql);
+	int RunOneSqlLine(InputMode mode, const string &zSql);
 	string GetDefaultDuckDBRC();
 	bool ProcessDuckDBRC(const char *file);
 	bool ProcessFile(const string &file, InputMode input_mode = InputMode::FILE, bool default_duckdb_rc = false);
 	int ProcessInput(InputMode mode);
 	bool GetBailOnError(InputMode mode);
 	static bool SQLIsComplete(const char *zSql);
+	static bool SQLEndsInsideLiteral(const char *zSql);
+	static bool EndsWithBackslashCommand(const char *zSql);
 	static bool IsSpace(char c);
 	static bool IsDigit(char c);
 	static int64_t StringToInt(const string &arg);
@@ -544,5 +589,7 @@ struct PagerState {
 	optional_ptr<ShellState> state;
 	uint32_t win_console_cp_before_pager = 0;
 };
+
+void RegisterCopyFileSystem(duckdb::DatabaseInstance &db);
 
 } // namespace duckdb_shell

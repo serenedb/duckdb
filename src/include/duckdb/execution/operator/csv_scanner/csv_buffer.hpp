@@ -66,6 +66,9 @@ public:
 
 	//! Gets the buffer actual size
 	idx_t GetBufferSize() const;
+	idx_t GlobalEnd() const {
+		return global_csv_start + actual_buffer_size;
+	}
 
 	//! If this buffer is the last buffer of the CSV File
 	bool IsCSVFileLastBuffer() const;

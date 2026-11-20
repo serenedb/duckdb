@@ -1,0 +1,262 @@
+# name: test/sql/copy/csv/test_csv_raw_predicates.test
+# description: String comparisons, IN lists and NULL checks pushed into read_csv give the rows the same filters give above the scan
+# group: [csv]
+
+require skip_reload
+
+statement ok
+CREATE TABLE raw_source AS SELECT
+	i AS id,
+	CASE i % 9
+		WHEN 0 THEN NULL
+		WHEN 1 THEN ''
+		WHEN 2 THEN 'alpha'
+		WHEN 3 THEN 'alp"ha'
+		WHEN 4 THEN 'beta,' || (i % 5)
+		WHEN 5 THEN 'NULL'
+		WHEN 6 THEN 'gamma ' || (i % 3)
+		WHEN 7 THEN 'alphabet'
+		ELSE 'zeta'
+	END AS s,
+	CASE WHEN i % 4 = 0 THEN NULL ELSE i * 3 END AS n
+FROM range(5000) r(i);
+
+statement ok
+COPY raw_source TO '{TEMP_DIR}/raw_quoted.csv' (HEADER false);
+
+statement ok
+COPY raw_source TO '{TEMP_DIR}/raw_nullstr.csv' (HEADER false, NULL 'NULL', FORCE_QUOTE (s));
+
+statement ok
+COPY (SELECT line FROM (SELECT id, concat_ws(',', id, coalesce(replace(s, ',', ';'), ''), coalesce(n::VARCHAR, '')) AS line FROM raw_source UNION ALL SELECT i + 0.5, 'bad,row,x,y' FROM range(0, 5000, 700) r(i)) ORDER BY id) TO '{TEMP_DIR}/raw_bad.csv' (HEADER false, DELIMITER '\t', QUOTE '');
+
+statement ok
+CREATE MACRO raw_columns() AS {'id': 'BIGINT', 's': 'VARCHAR', 'n': 'BIGINT'};
+
+statement ok
+CREATE TABLE raw_quoted AS FROM read_csv('{TEMP_DIR}/raw_quoted.csv', header = false, auto_detect = false, columns = raw_columns());
+
+statement ok
+CREATE TABLE raw_nullstr AS FROM read_csv('{TEMP_DIR}/raw_nullstr.csv', header = false, auto_detect = false, nullstr = 'NULL', columns = raw_columns());
+
+statement ok
+CREATE TABLE raw_bad AS FROM read_csv('{TEMP_DIR}/raw_bad.csv', header = false, auto_detect = false, ignore_errors = true, columns = raw_columns());
+
+foreach predicate s='alpha' s<>'alpha' s<'beta' s>='gamma' (s)IN('alpha','zeta','NULL') (s)LIKE'alp%' (s)ISNULL (s)NOTNULL (n)ISNULL (n)NOTNULL s='alp"ha' s='' (s>'a'AND(s<'b')) (s)LIKE'%ph%' NOT((s)LIKE'%ph%') (s)LIKE'%a' (s)LIKE'a%a' (s)LIKE'a%h%t' (s)LIKE'%l%h%' (s)LIKE'%' (s)LIKE'' NOT((s)LIKE'alp%') (s)LIKE'b_ta%' contains(s,',') suffix(s,'ha') prefix(s,'alp"') (s)LIKE'%"%' (s)LIKE'%a%'AND(s<>'alpha')
+
+foreach parallel true false
+
+query I
+SELECT count(*) FROM (
+	(FROM read_csv('{TEMP_DIR}/raw_quoted.csv', header = false, auto_detect = false, columns = raw_columns(), parallel = {parallel}, buffer_size = 1024) WHERE {predicate} EXCEPT ALL FROM raw_quoted WHERE {predicate})
+	UNION ALL
+	(FROM raw_quoted WHERE {predicate} EXCEPT ALL FROM read_csv('{TEMP_DIR}/raw_quoted.csv', header = false, auto_detect = false, columns = raw_columns(), parallel = {parallel}, buffer_size = 1024) WHERE {predicate})
+)
+----
+0
+
+query I
+SELECT count(*) FROM (
+	(FROM read_csv('{TEMP_DIR}/raw_nullstr.csv', header = false, auto_detect = false, nullstr = 'NULL', columns = raw_columns(), parallel = {parallel}, buffer_size = 1024) WHERE {predicate} EXCEPT ALL FROM raw_nullstr WHERE {predicate})
+	UNION ALL
+	(FROM raw_nullstr WHERE {predicate} EXCEPT ALL FROM read_csv('{TEMP_DIR}/raw_nullstr.csv', header = false, auto_detect = false, nullstr = 'NULL', columns = raw_columns(), parallel = {parallel}, buffer_size = 1024) WHERE {predicate})
+)
+----
+0
+
+query I
+SELECT count(*) FROM (
+	(FROM read_csv('{TEMP_DIR}/raw_bad.csv', header = false, auto_detect = false, ignore_errors = true, columns = raw_columns(), parallel = {parallel}, buffer_size = 1024) WHERE {predicate} EXCEPT ALL FROM raw_bad WHERE {predicate})
+	UNION ALL
+	(FROM raw_bad WHERE {predicate} EXCEPT ALL FROM read_csv('{TEMP_DIR}/raw_bad.csv', header = false, auto_detect = false, ignore_errors = true, columns = raw_columns(), parallel = {parallel}, buffer_size = 1024) WHERE {predicate})
+)
+----
+0
+
+endloop
+
+endloop
+
+query II
+SELECT count(*), count(s) FROM read_csv('{TEMP_DIR}/raw_quoted.csv', header = false, auto_detect = false, columns = raw_columns()) WHERE s = 'alpha' OR s IS NULL
+----
+1668	556
+
+query II
+EXPLAIN SELECT id FROM read_csv('{TEMP_DIR}/raw_quoted.csv', header = false, auto_detect = false, columns = raw_columns()) WHERE s LIKE '%ph%' AND s NOT LIKE '%bet'
+----
+physical_plan	<!REGEX>:.*FILTER.*
+
+query II
+EXPLAIN SELECT id FROM read_csv('{TEMP_DIR}/raw_quoted.csv', header = false, auto_detect = false, columns = raw_columns()) WHERE s LIKE '%p_a%'
+----
+physical_plan	<REGEX>:.*FILTER.*READ_CSV.*
+
+query II
+EXPLAIN SELECT id FROM read_csv('{TEMP_DIR}/raw_quoted.csv', header = false, auto_detect = false, columns = raw_columns()) WHERE upper(s) = 'ALPHA'
+----
+physical_plan	<REGEX>:.*FILTER.*READ_CSV.*
+
+foreach predicate s<='beta' NOT(starts_with(s,'alp')) NOT((s)^@'alp') ends_with(s,'ha') (s)ILIKE'%PH%' contains(s,s)
+
+foreach parallel true false
+
+query I
+SELECT count(*) FROM (
+	(FROM read_csv('{TEMP_DIR}/raw_quoted.csv', header = false, auto_detect = false, columns = raw_columns(), parallel = {parallel}, buffer_size = 1024) WHERE {predicate} EXCEPT ALL FROM raw_quoted WHERE {predicate})
+	UNION ALL
+	(FROM raw_quoted WHERE {predicate} EXCEPT ALL FROM read_csv('{TEMP_DIR}/raw_quoted.csv', header = false, auto_detect = false, columns = raw_columns(), parallel = {parallel}, buffer_size = 1024) WHERE {predicate})
+)
+----
+0
+
+query I
+SELECT count(*) FROM (
+	(FROM read_csv('{TEMP_DIR}/raw_nullstr.csv', header = false, auto_detect = false, nullstr = 'NULL', columns = raw_columns(), parallel = {parallel}, buffer_size = 1024) WHERE {predicate} EXCEPT ALL FROM raw_nullstr WHERE {predicate})
+	UNION ALL
+	(FROM raw_nullstr WHERE {predicate} EXCEPT ALL FROM read_csv('{TEMP_DIR}/raw_nullstr.csv', header = false, auto_detect = false, nullstr = 'NULL', columns = raw_columns(), parallel = {parallel}, buffer_size = 1024) WHERE {predicate})
+)
+----
+0
+
+query I
+SELECT count(*) FROM (
+	(FROM read_csv('{TEMP_DIR}/raw_bad.csv', header = false, auto_detect = false, ignore_errors = true, columns = raw_columns(), parallel = {parallel}, buffer_size = 1024) WHERE {predicate} EXCEPT ALL FROM raw_bad WHERE {predicate})
+	UNION ALL
+	(FROM raw_bad WHERE {predicate} EXCEPT ALL FROM read_csv('{TEMP_DIR}/raw_bad.csv', header = false, auto_detect = false, ignore_errors = true, columns = raw_columns(), parallel = {parallel}, buffer_size = 1024) WHERE {predicate})
+)
+----
+0
+
+endloop
+
+endloop
+
+query I
+SELECT count(*) FROM (
+	(FROM read_csv('{TEMP_DIR}/raw_quoted.csv', header = false, auto_detect = false, columns = raw_columns(), buffer_size = 1024) WHERE NOT (s NOT LIKE '%l%h%') EXCEPT ALL FROM raw_quoted WHERE NOT (s NOT LIKE '%l%h%'))
+	UNION ALL
+	(FROM raw_quoted WHERE NOT (s NOT LIKE '%l%h%') EXCEPT ALL FROM read_csv('{TEMP_DIR}/raw_quoted.csv', header = false, auto_detect = false, columns = raw_columns(), buffer_size = 1024) WHERE NOT (s NOT LIKE '%l%h%'))
+)
+----
+0
+
+query I
+SELECT count(*) FROM (
+	(FROM read_csv('{TEMP_DIR}/raw_quoted.csv', header = false, auto_detect = false, columns = raw_columns(), buffer_size = 1024) WHERE s NOT LIKE 'a%a' EXCEPT ALL FROM raw_quoted WHERE s NOT LIKE 'a%a')
+	UNION ALL
+	(FROM raw_quoted WHERE s NOT LIKE 'a%a' EXCEPT ALL FROM read_csv('{TEMP_DIR}/raw_quoted.csv', header = false, auto_detect = false, columns = raw_columns(), buffer_size = 1024) WHERE s NOT LIKE 'a%a')
+)
+----
+0
+
+query I
+SELECT count(*) FROM read_csv('{TEMP_DIR}/raw_quoted.csv', header = false, auto_detect = false, columns = raw_columns()) WHERE s NOT LIKE 'a%a'
+----
+2776
+
+statement ok
+SET disabled_optimizers = 'expression_rewriter';
+
+query I
+SELECT count(*) FROM (
+	(FROM read_csv('{TEMP_DIR}/raw_quoted.csv', header = false, auto_detect = false, columns = raw_columns(), buffer_size = 1024) WHERE s NOT LIKE '' EXCEPT ALL FROM raw_quoted WHERE s NOT LIKE '')
+	UNION ALL
+	(FROM raw_quoted WHERE s NOT LIKE '' EXCEPT ALL FROM read_csv('{TEMP_DIR}/raw_quoted.csv', header = false, auto_detect = false, columns = raw_columns(), buffer_size = 1024) WHERE s NOT LIKE '')
+)
+----
+0
+
+query I
+SELECT count(*) FROM read_csv('{TEMP_DIR}/raw_quoted.csv', header = false, auto_detect = false, columns = raw_columns()) WHERE s NOT LIKE ''
+----
+3888
+
+statement ok
+RESET disabled_optimizers;
+
+statement ok
+COPY (SELECT CASE WHEN i % 5 = 0 THEN i::VARCHAR WHEN i % 5 = 1 THEN i || ',' || (['alpha', 'beta', 'gamma'])[i % 3 + 1] ELSE i || ',' || (['alpha', 'beta', 'gamma', 'alphabet'])[i % 4 + 1] || ',' || (i * 3) END FROM range(3000) r(i) ORDER BY i) TO '{TEMP_DIR}/raw_padded.csv' (HEADER false, DELIMITER '\t', QUOTE '');
+
+statement ok
+COPY (SELECT i || ',' || (['al\pha', 'beta', 'x\y', 'alpha'])[i % 4 + 1] || ',' || (i * 3) FROM range(3000) r(i) ORDER BY i) TO '{TEMP_DIR}/raw_escaped.csv' (HEADER false, DELIMITER '\t', QUOTE '');
+
+statement ok
+COPY (SELECT i || ',' || (['""', '', 'alpha', '"beta"'])[i % 4 + 1] || ',' || (i * 3) FROM range(3000) r(i) ORDER BY i) TO '{TEMP_DIR}/raw_quoted_empty.csv' (HEADER false, DELIMITER '\t', QUOTE '');
+
+statement ok
+CREATE TABLE raw_padded AS FROM read_csv('{TEMP_DIR}/raw_padded.csv', header = false, auto_detect = false, null_padding = true, columns = raw_columns());
+
+statement ok
+CREATE TABLE raw_escaped AS FROM read_csv('{TEMP_DIR}/raw_escaped.csv', header = false, auto_detect = false, escape = '\', strict_mode = false, columns = raw_columns());
+
+statement ok
+CREATE TABLE raw_quoted_empty AS FROM read_csv('{TEMP_DIR}/raw_quoted_empty.csv', header = false, auto_detect = false, allow_quoted_nulls = false, columns = raw_columns());
+
+query IIII
+SELECT count(*), count(s), count(n), count(*) FILTER (WHERE s = 'alpha') FROM raw_padded
+----
+3000	2400	1800	650
+
+query III
+SELECT count(*) FILTER (WHERE s = 'alpha'), count(*) FILTER (WHERE s = 'xy'), count(*) FILTER (WHERE contains(s, '\')) FROM raw_escaped
+----
+1500	750	0
+
+query III
+SELECT count(*) FILTER (WHERE s = ''), count(*) FILTER (WHERE s IS NULL), count(*) FILTER (WHERE s = 'beta') FROM raw_quoted_empty
+----
+750	750	750
+
+foreach predicate s='alpha' s='' s>='b' (s)LIKE'%ph%' NOT((s)LIKE'%ph%') s<>'beta'
+
+foreach parallel true false
+
+query I
+SELECT count(*) FROM (
+	(FROM read_csv('{TEMP_DIR}/raw_padded.csv', header = false, auto_detect = false, null_padding = true, columns = raw_columns(), parallel = {parallel}, buffer_size = 1024) WHERE {predicate} EXCEPT ALL FROM raw_padded WHERE {predicate})
+	UNION ALL
+	(FROM raw_padded WHERE {predicate} EXCEPT ALL FROM read_csv('{TEMP_DIR}/raw_padded.csv', header = false, auto_detect = false, null_padding = true, columns = raw_columns(), parallel = {parallel}, buffer_size = 1024) WHERE {predicate})
+)
+----
+0
+
+query I
+SELECT count(*) FROM (
+	(FROM read_csv('{TEMP_DIR}/raw_escaped.csv', header = false, auto_detect = false, escape = '\', strict_mode = false, columns = raw_columns(), parallel = {parallel}, buffer_size = 1024) WHERE {predicate} EXCEPT ALL FROM raw_escaped WHERE {predicate})
+	UNION ALL
+	(FROM raw_escaped WHERE {predicate} EXCEPT ALL FROM read_csv('{TEMP_DIR}/raw_escaped.csv', header = false, auto_detect = false, escape = '\', strict_mode = false, columns = raw_columns(), parallel = {parallel}, buffer_size = 1024) WHERE {predicate})
+)
+----
+0
+
+query I
+SELECT count(*) FROM (
+	(FROM read_csv('{TEMP_DIR}/raw_quoted_empty.csv', header = false, auto_detect = false, allow_quoted_nulls = false, columns = raw_columns(), parallel = {parallel}, buffer_size = 1024) WHERE {predicate} EXCEPT ALL FROM raw_quoted_empty WHERE {predicate})
+	UNION ALL
+	(FROM raw_quoted_empty WHERE {predicate} EXCEPT ALL FROM read_csv('{TEMP_DIR}/raw_quoted_empty.csv', header = false, auto_detect = false, allow_quoted_nulls = false, columns = raw_columns(), parallel = {parallel}, buffer_size = 1024) WHERE {predicate})
+)
+----
+0
+
+endloop
+
+endloop
+
+statement ok
+CREATE TYPE raw_tag AS VARCHAR;
+
+query II
+SELECT count(*), count(DISTINCT s) FROM read_csv('{TEMP_DIR}/raw_quoted.csv', header = false, auto_detect = false, columns = {'id': 'BIGINT', 's': 'raw_tag', 'n': 'BIGINT'}) WHERE s = 'alpha'::raw_tag
+----
+556	1
+
+query II
+SELECT count(*), count(DISTINCT s) FROM read_csv('{TEMP_DIR}/raw_quoted.csv', header = false, auto_detect = false, columns = {'id': 'BIGINT', 's': 'raw_tag', 'n': 'BIGINT'}) WHERE contains(s, 'lph')
+----
+1111	2
+
+query I
+SELECT count(*) FROM read_csv('{TEMP_DIR}/raw_quoted.csv', header = false, auto_detect = false, columns = {'id': 'BIGINT', 's': 'VARCHAR[]', 'n': 'BIGINT'}, ignore_errors = true) WHERE contains(s, 'x')
+----
+0

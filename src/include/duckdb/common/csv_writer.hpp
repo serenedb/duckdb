@@ -12,6 +12,7 @@
 #include "duckdb/execution/operator/csv_scanner/csv_reader_options.hpp"
 #include "duckdb/common/serializer/memory_stream.hpp"
 #include "duckdb/common/query_context.hpp"
+#include "duckdb/formats/csv_encoder.hpp"
 
 namespace duckdb {
 class AsyncFileWriter;
@@ -56,6 +57,7 @@ struct CSVWriterState {
 	bool written_anything = false;
 
 	bool require_manual_flush = false;
+	CsvEncodeScratch scratch;
 };
 
 class CSVWriter {
@@ -141,17 +143,7 @@ protected:
 
 	unique_ptr<CSVWriterState> global_write_state;
 
-	static void WriteQuoteOrEscape(WriteStream &writer, char quote_or_escape);
-	static string AddEscapes(char to_be_escaped, char escape, const string &val);
-	static bool RequiresQuotes(const char *str, idx_t len, const string &null_str, const vector<bool> &requires_quotes);
-	static void WriteQuotedString(WriteStream &writer, const char *str, idx_t len, bool force_quote,
-	                              const string &null_str, const vector<bool> &requires_quotes, char quote, char escape);
-	static void WriteQuotedString(WriteStream &writer, const char *str, idx_t len, idx_t col_idx,
-	                              CSVReaderOptions &options, CSVWriterOptions &writer_options);
-
-	static void WriteChunk(DataChunk &input, MemoryStream &writer, CSVReaderOptions &options, bool &written_anything,
-	                       CSVWriterOptions &writer_options);
-	static void WriteHeader(MemoryStream &stream, CSVReaderOptions &options, CSVWriterOptions &writer_options);
+	CsvEncoding Encoding() const;
 };
 
 } // namespace duckdb

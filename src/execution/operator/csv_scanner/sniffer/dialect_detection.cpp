@@ -132,16 +132,16 @@ DialectCandidates::DialectCandidates(const CSVStateMachineOptions &options) {
 	}
 }
 
-void CSVSniffer::GenerateStateMachineSearchSpace(vector<unique_ptr<ColumnCountScanner>> &column_count_scanners,
+void CSVSniffer::GenerateStateMachineSearchSpace(vector<unique_ptr<CsvColumnCounter>> &column_count_scanners,
                                                  const DialectCandidates &dialect_candidates) {
 	// Generate state machines for all option combinations
 	NewLineIdentifier new_line_id;
 	if (options.dialect_options.state_machine_options.new_line.IsSetByUser()) {
 		new_line_id = options.dialect_options.state_machine_options.new_line.GetValue();
 	} else {
-		new_line_id = DetectNewLineDelimiter(*buffer_manager, options, state_machine_cache);
+		new_line_id = DetectNewLineDelimiter(*buffer_manager, options);
 	}
-	CSVIterator first_iterator;
+	idx_t first_start = 0;
 	bool iterator_set = false;
 	for (const auto &comment : dialect_candidates.comment_candidates) {
 		for (const auto quote_escape_candidate : dialect_candidates.quote_escape_candidates) {
@@ -150,29 +150,28 @@ void CSVSniffer::GenerateStateMachineSearchSpace(vector<unique_ptr<ColumnCountSc
 				CSVStateMachineOptions state_machine_options(
 				    delimiter, quote_escape_candidate.quote, quote_escape_candidate.escape, comment, new_line_id,
 				    options.dialect_options.state_machine_options.strict_mode.GetValue());
-				auto sniffing_state_machine =
-				    make_shared_ptr<CSVStateMachine>(options, state_machine_options, state_machine_cache);
+				auto sniffing_state_machine = make_shared_ptr<CSVStateMachine>(options, state_machine_options);
 				if (options.dialect_options.skip_rows.IsSetByUser()) {
 					if (!iterator_set) {
-						first_iterator = BaseScanner::SkipCSVRows(buffer_manager, sniffing_state_machine,
-						                                          options.dialect_options.skip_rows.GetValue());
+						first_start = CsvColumnCounter::SkipRows(*buffer_manager, *sniffing_state_machine,
+						                                         options.dialect_options.skip_rows.GetValue());
 						iterator_set = true;
 					}
-					column_count_scanners.emplace_back(make_uniq<ColumnCountScanner>(
+					column_count_scanners.emplace_back(make_uniq<CsvColumnCounter>(
 					    buffer_manager, std::move(sniffing_state_machine), detection_error_handler,
-					    CSVReaderOptions::sniff_size, first_iterator));
+					    CSVReaderOptions::sniff_size, first_start));
 					continue;
 				}
 				column_count_scanners.emplace_back(
-				    make_uniq<ColumnCountScanner>(buffer_manager, std::move(sniffing_state_machine),
-				                                  detection_error_handler, CSVReaderOptions::sniff_size));
+				    make_uniq<CsvColumnCounter>(buffer_manager, std::move(sniffing_state_machine),
+				                                detection_error_handler, CSVReaderOptions::sniff_size));
 			}
 		}
 	}
 }
 
 // Returns true if a comment is acceptable
-bool AreCommentsAcceptable(const ColumnCountResult &result, idx_t num_cols, const CSVReaderOptions &options) {
+bool AreCommentsAcceptable(const CsvColumnCounts &result, idx_t num_cols, const CSVReaderOptions &options) {
 	if (options.dialect_options.state_machine_options.comment.IsSetByUser()) {
 		return true;
 	}
@@ -213,8 +212,8 @@ bool AreCommentsAcceptable(const ColumnCountResult &result, idx_t num_cols, cons
 	return valid_comments / detected_comments >= min_majority;
 }
 
-void CSVSniffer::AnalyzeDialectCandidate(unique_ptr<ColumnCountScanner> scanner, CandidateStats &stats,
-                                         vector<unique_ptr<ColumnCountScanner>> &successful_candidates) {
+void CSVSniffer::AnalyzeDialectCandidate(unique_ptr<CsvColumnCounter> scanner, CandidateStats &stats,
+                                         vector<unique_ptr<CsvColumnCounter>> &successful_candidates) {
 	// The sniffed_column_counts variable keeps track of the number of columns found for each row
 	auto &sniffed_column_counts = scanner->ParseChunk();
 	idx_t dirty_notes = 0;
@@ -354,6 +353,9 @@ void CSVSniffer::AnalyzeDialectCandidate(unique_ptr<ColumnCountScanner> scanner,
 	    scanner->ever_quoted &&
 	    sniffed_column_counts.state_machine.dialect_options.state_machine_options.quote.GetValue() != '\0';
 
+	const bool quoted_tie = quoted && !successful_candidates.empty() && !successful_candidates.front()->ever_quoted &&
+	                        consistent_rows == stats.best_consistent_rows && num_cols == max_columns_found;
+
 	// For our columns to match, we either don't have them manually set, or they match in value with the sniffed value
 	const bool columns_match_set =
 	    num_cols == set_columns.Size() ||
@@ -369,7 +371,7 @@ void CSVSniffer::AnalyzeDialectCandidate(unique_ptr<ColumnCountScanner> scanner,
 	// - There's more than one column and less padding is required.
 	if (columns_match_set && (rows_consistent || (set_columns.IsSet() && ignore_errors)) &&
 	    (single_column_before || ((more_values || more_columns) && !require_more_padding) ||
-	     (more_than_one_column && require_less_padding) || (quoted && comment_rows == 0)) &&
+	     (more_than_one_column && require_less_padding) || (quoted && comment_rows == 0) || quoted_tie) &&
 	    !invalid_padding && comments_are_acceptable) {
 		if (!successful_candidates.empty() && set_columns.IsSet() && max_columns_found == set_columns.Size() &&
 		    consistent_rows <= stats.best_consistent_rows) {
@@ -482,7 +484,7 @@ void CSVSniffer::AnalyzeDialectCandidate(unique_ptr<ColumnCountScanner> scanner,
 	}
 }
 
-bool CSVSniffer::RefineCandidateNextChunk(ColumnCountScanner &candidate) const {
+bool CSVSniffer::RefineCandidateNextChunk(CsvColumnCounter &candidate) const {
 	auto &sniffed_column_counts = candidate.ParseChunk();
 	for (idx_t i = 0; i < sniffed_column_counts.result_position; i++) {
 		if (set_columns.IsSet()) {
@@ -511,7 +513,7 @@ void CSVSniffer::RefineCandidates() {
 	}
 
 	for (idx_t i = 1; i <= options.sample_size_chunks; i++) {
-		vector<unique_ptr<ColumnCountScanner>> successful_candidates;
+		vector<unique_ptr<CsvColumnCounter>> successful_candidates;
 		bool done = candidates.empty();
 		for (auto &cur_candidate : candidates) {
 			const bool finished_file = cur_candidate->FinishedFile();
@@ -537,11 +539,11 @@ void CSVSniffer::RefineCandidates() {
 	}
 	// If we have multiple candidates with quotes set, we will give the preference to ones
 	// that have actually quoted values, otherwise we will choose quotes = \0
-	vector<unique_ptr<ColumnCountScanner>> successful_candidates = std::move(candidates);
+	vector<unique_ptr<CsvColumnCounter>> successful_candidates = std::move(candidates);
 	if (!successful_candidates.empty()) {
 		bool ever_quoted = false;
 		for (idx_t i = 0; i < successful_candidates.size(); i++) {
-			unique_ptr<ColumnCountScanner> cc_best_candidate = std::move(successful_candidates[i]);
+			unique_ptr<CsvColumnCounter> cc_best_candidate = std::move(successful_candidates[i]);
 			if (cc_best_candidate->ever_quoted) {
 				if (cc_best_candidate->ever_escaped) {
 					// It can't be better than this
@@ -572,30 +574,30 @@ void CSVSniffer::RefineCandidates() {
 	}
 }
 
-NewLineIdentifier CSVSniffer::DetectNewLineDelimiter(CSVBufferManager &buffer_manager, CSVReaderOptions &options,
-                                                     CSVStateMachineCache &state_machine_cache) {
+NewLineIdentifier CSVSniffer::DetectNewLineDelimiter(CSVBufferManager &buffer_manager,
+                                                     const CSVReaderOptions &options) {
 	auto &dialect = options.dialect_options.state_machine_options;
 	const CSVStateMachine state_machine(options,
 	                                    CSVStateMachineOptions(dialect.delimiter.GetValue(), dialect.quote.GetValue(),
 	                                                           dialect.escape.GetValue(), dialect.comment.GetValue(),
-	                                                           NewLineIdentifier::CARRY_ON, false),
-	                                    state_machine_cache);
-	// Get first buffer
+	                                                           NewLineIdentifier::CARRY_ON, false));
+	const RowLexer lexer(RowDialect::DuckDB(CsvGrammar::For(state_machine)), 1, NumericLimits<idx_t>::Maximum(), false);
 	auto buffer = buffer_manager.GetBuffer(0);
-	auto buffer_ptr = buffer->Ptr();
-	CSVStates states;
-	states.Initialize();
-	for (idx_t i = 0; i < buffer->actual_size; i++) {
-		state_machine.Transition(states, buffer_ptr[i]);
-		if (states.states[0] == CSVState::CARRIAGE_RETURN && states.states[1] != CSVState::CARRIAGE_RETURN) {
-			return states.states[1] == CSVState::RECORD_SEPARATOR ? NewLineIdentifier::CARRY_ON
-			                                                      : NewLineIdentifier::SINGLE_R;
-		}
-		if (states.states[1] == CSVState::RECORD_SEPARATOR) {
-			return NewLineIdentifier::SINGLE_N;
-		}
+	const char *data = buffer->Ptr();
+	const idx_t size = buffer->actual_size;
+	RowCursor cursor;
+	lexer.Start(cursor, 0, true, false);
+	cursor.file_start = true;
+	lexer.Feed(cursor, data, 0, size, true, nullptr);
+	const idx_t first = cursor.first_term;
+	if (first == DConstants::INVALID_INDEX || data[first] == '\n') {
+		return NewLineIdentifier::SINGLE_N;
 	}
-	return states.IsCarriageReturn() ? NewLineIdentifier::SINGLE_R : NewLineIdentifier::SINGLE_N;
+	idx_t next = first + 1;
+	while (next < size && data[next] == '\r') {
+		next++;
+	}
+	return next < size && data[next] == '\n' ? NewLineIdentifier::CARRY_ON : NewLineIdentifier::SINGLE_R;
 }
 
 // Dialect Detection consists of five steps:
@@ -608,7 +610,7 @@ void CSVSniffer::DetectDialect() {
 	DialectCandidates dialect_candidates(options.dialect_options.state_machine_options);
 	CandidateStats stats;
 	// Vector of CSV State Machines
-	vector<unique_ptr<ColumnCountScanner>> csv_state_machines;
+	vector<unique_ptr<CsvColumnCounter>> csv_state_machines;
 	// Step 1: Generate state machines
 	GenerateStateMachineSearchSpace(csv_state_machines, dialect_candidates);
 	// Step 2: Analyze all candidates on the first chunk

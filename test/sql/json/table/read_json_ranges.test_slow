@@ -1,0 +1,125 @@
+# name: test/sql/json/table/read_json_ranges.test_slow
+# description: newline-delimited JSON read in parallel ranges or streamed chunks gives what one sequential read gives
+# group: [table]
+
+require json
+
+statement ok
+SET threads = 8;
+
+statement ok
+CREATE TABLE src AS SELECT i AS id, repeat('x', (i * 7919) % 400) AS s, CASE WHEN i % 5 = 0 THEN NULL ELSE i * 1.5 END AS d FROM range(60000) t(i);
+
+statement ok
+COPY src TO '{TEMP_DIR}/ranges.ndjson' (FORMAT json);
+
+statement ok
+COPY src TO '{TEMP_DIR}/ranges.ndjson.gz' (FORMAT json, COMPRESSION gzip);
+
+statement ok
+COPY (
+	SELECT CASE i % 7
+		WHEN 0 THEN '   ' || to_json({'id': i, 's': repeat('y', i % 300), 'd': i})
+		WHEN 1 THEN to_json({'id': i, 's': repeat('y', i % 300), 'd': i}) || chr(13)
+		WHEN 2 THEN chr(10) || chr(10) || to_json({'id': i, 's': repeat('y', i % 300), 'd': i})
+		WHEN 3 THEN to_json({'id': i, 's': repeat('y', i % 300), 'd': i}) || '   ' || chr(10) || '  '
+		ELSE to_json({'id': i, 's': repeat('y', i % 300), 'd': i})
+	END AS line
+	FROM range(60000) t(i) ORDER BY i
+) TO '{TEMP_DIR}/spaced.ndjson' (FORMAT csv, HEADER false, QUOTE '', ESCAPE '');
+
+statement ok
+CREATE MACRO json_columns() AS {'id': 'BIGINT', 's': 'VARCHAR', 'd': 'DOUBLE'};
+
+foreach file ranges.ndjson ranges.ndjson.gz
+
+query I
+SELECT count(*) FROM (
+	(FROM read_ndjson('{TEMP_DIR}/{file}', columns = json_columns()) EXCEPT ALL FROM src)
+	UNION ALL
+	(FROM src EXCEPT ALL FROM read_ndjson('{TEMP_DIR}/{file}', columns = json_columns()))
+)
+----
+0
+
+query I
+SELECT count(*) FROM (
+	(FROM read_ndjson('{TEMP_DIR}/{file}') EXCEPT ALL FROM src)
+	UNION ALL
+	(FROM src EXCEPT ALL FROM read_ndjson('{TEMP_DIR}/{file}'))
+)
+----
+0
+
+query II
+SELECT count(*), count(DISTINCT json) FROM read_ndjson_objects('{TEMP_DIR}/{file}');
+----
+60000	60000
+
+endloop
+
+query I
+SELECT count(*) FROM (
+	SELECT file_row_number, id, sum(length(to_json({'id': id, 's': s, 'd': d})) + 1) OVER (ORDER BY id ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) AS expected
+	FROM read_ndjson('{TEMP_DIR}/ranges.ndjson', columns = json_columns())
+) WHERE file_row_number <> coalesce(expected, 0);
+----
+0
+
+query IIII
+SELECT count(*), count(DISTINCT id), sum(id), sum(length(s)) FROM read_ndjson('{TEMP_DIR}/spaced.ndjson', columns = json_columns());
+----
+60000	60000	1799970000	8970000
+
+statement ok
+SET threads = 1;
+
+query IIII
+SELECT count(*), count(DISTINCT id), sum(id), sum(length(s)) FROM read_ndjson('{TEMP_DIR}/spaced.ndjson', columns = json_columns());
+----
+60000	60000	1799970000	8970000
+
+statement ok
+CREATE TABLE sequential AS SELECT id, file_row_number FROM read_ndjson('{TEMP_DIR}/spaced.ndjson', columns = json_columns());
+
+statement ok
+SET threads = 8;
+
+query I
+SELECT count(*) FROM (
+	(SELECT id, file_row_number FROM read_ndjson('{TEMP_DIR}/spaced.ndjson', columns = json_columns()) EXCEPT ALL FROM sequential)
+	UNION ALL
+	(FROM sequential EXCEPT ALL SELECT id, file_row_number FROM read_ndjson('{TEMP_DIR}/spaced.ndjson', columns = json_columns()))
+)
+----
+0
+
+query I
+SELECT count(*) FROM read_ndjson('{TEMP_DIR}/spaced.ndjson', columns = json_columns()) r JOIN read_ndjson_objects('{TEMP_DIR}/spaced.ndjson') o USING (file_row_number) WHERE (o.json::JSON->>'id')::BIGINT <> r.id;
+----
+0
+
+statement ok
+COPY (
+	SELECT CASE WHEN i = 45000 THEN '{"id": tru}' ELSE to_json({'id': i})::VARCHAR END AS line FROM range(60000) t(i) ORDER BY i
+) TO '{TEMP_DIR}/bad_late.ndjson' (FORMAT csv, HEADER false, QUOTE '', ESCAPE '');
+
+statement error
+SELECT count(*) FROM read_ndjson('{TEMP_DIR}/bad_late.ndjson', columns = {'id': 'BIGINT'});
+----
+in line 45001: invalid literal, expected 'true'
+
+query II
+SELECT count(*), count(id) FROM read_ndjson('{TEMP_DIR}/bad_late.ndjson', columns = {'id': 'BIGINT'}, ignore_errors = true);
+----
+60000	59999
+
+statement ok
+COPY (
+	SELECT CASE WHEN i = 45000 THEN '{"id": "x"}' ELSE to_json({'id': i})::VARCHAR END AS line FROM range(60000) t(i) ORDER BY i
+) TO '{TEMP_DIR}/bad_value.ndjson' (FORMAT csv, HEADER false, QUOTE '', ESCAPE '');
+
+statement error
+SELECT sum(id) FROM read_ndjson('{TEMP_DIR}/bad_value.ndjson', columns = {'id': 'BIGINT'});
+----
+in line 45001: Failed to cast value to numerical

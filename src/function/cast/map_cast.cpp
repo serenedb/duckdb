@@ -55,17 +55,14 @@ static bool MapToVarcharCast(Vector &source, Vector &result, idx_t count, CastPa
 	auto &key_vec = MapVector::GetKeys(source);
 	auto &value_vec = MapVector::GetValues(source);
 
-	auto key_is_nested = key_vec.GetType().IsNested();
-	auto value_is_nested = value_vec.GetType().IsNested();
+	const auto &own_text = parameters.cast_data->Cast<ListBoundCastData>().own_text;
+	const auto key_text = VectorCastHelpers::ChildText(key_vec.GetType(), own_text.size() == 2 && own_text[0]);
+	auto key_strlen_func = key_text.length;
+	auto key_write_func = key_text.write;
 
-	auto key_strlen_func = key_is_nested ? VectorCastHelpers::CalculateStringLength
-	                                     : VectorCastHelpers::CalculateEscapedStringLength<false>;
-	auto key_write_func = key_is_nested ? VectorCastHelpers::WriteString : VectorCastHelpers::WriteEscapedString<false>;
-
-	auto value_strlen_func = value_is_nested ? VectorCastHelpers::CalculateStringLength
-	                                         : VectorCastHelpers::CalculateEscapedStringLength<false>;
-	auto value_write_func =
-	    value_is_nested ? VectorCastHelpers::WriteString : VectorCastHelpers::WriteEscapedString<false>;
+	const auto value_text = VectorCastHelpers::ChildText(value_vec.GetType(), own_text.size() == 2 && own_text[1]);
+	auto value_strlen_func = value_text.length;
+	auto value_write_func = value_text.write;
 
 	unsafe_unique_array<bool> key_needs_quotes;
 	unsafe_unique_array<bool> value_needs_quotes;
@@ -206,8 +203,11 @@ BoundCastInfo DefaultCasts::MapCastSwitch(BindCastInput &input, const LogicalTyp
 		                     ListBoundCastData::InitListLocalState);
 	case LogicalTypeId::VARCHAR: {
 		auto varchar_type = LogicalType::MAP(LogicalType::VARCHAR, LogicalType::VARCHAR);
-		return BoundCastInfo(MapToVarcharCast, ListBoundCastData::BindListToListCast(input, source, varchar_type),
-		                     ListBoundCastData::InitListLocalState);
+		auto data = ListBoundCastData::BindListToListCast(input, source, varchar_type);
+		data->Cast<ListBoundCastData>().own_text = {
+		    VectorCastHelpers::WritesOwnText(input, MapType::KeyType(source)),
+		    VectorCastHelpers::WritesOwnText(input, MapType::ValueType(source))};
+		return BoundCastInfo(MapToVarcharCast, std::move(data), ListBoundCastData::InitListLocalState);
 	}
 	default:
 		return TryVectorNullCast;

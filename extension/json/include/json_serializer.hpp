@@ -2,15 +2,21 @@
 
 #include "json_common.hpp"
 #include "duckdb/common/serializer/serializer.hpp"
+#include "duckdb/storage/arena_allocator.hpp"
 
 namespace duckdb {
 
 struct JsonSerializer final : Serializer {
 private:
-	yyjson_mut_doc *doc;
-	yyjson_mut_val *current_tag;
-	vector<yyjson_mut_val *> stack;
-	vector<bool> stack_can_be_omitted;
+	struct StackFrame {
+		JSONBuildValue *val;
+		const char *tag;
+		bool can_be_omitted;
+	};
+
+	JSONBuilder &builder;
+	const char *current_tag = nullptr;
+	vector<StackFrame> stack;
 	vector<bool> property_can_be_omitted;
 
 	// Skip writing property if null
@@ -19,23 +25,24 @@ private:
 	bool skip_if_empty = false;
 
 	// Get the current json value
-	inline yyjson_mut_val *Current() {
-		return stack.back();
+	inline JSONBuildValue *Current() {
+		return stack.back().val;
 	};
 	inline bool CurrentPropertyCanBeOmitted() {
 		return !property_can_be_omitted.empty() && property_can_be_omitted.back();
 	}
 
+	void AddValue(JSONBuildValue *val, const char *tag);
 	// Either adds a value to the current object with the current tag, or appends it to the current array
-	void PushValue(yyjson_mut_val *val);
+	void PushValue(JSONBuildValue *val);
 
 public:
 	using List = TypedList<JsonSerializer>;
 	using Serializer::WriteValue;
 
-	explicit JsonSerializer(yyjson_mut_doc *doc, bool skip_if_null, bool skip_if_empty, bool skip_if_default,
+	explicit JsonSerializer(JSONBuilder &builder, bool skip_if_null, bool skip_if_empty, bool skip_if_default,
 	                        SerializationOptions options_p = SerializationOptions())
-	    : doc(doc), stack({yyjson_mut_obj(doc)}), stack_can_be_omitted({false}), skip_if_null(skip_if_null),
+	    : builder(builder), stack({StackFrame {builder.Object(), nullptr, false}}), skip_if_null(skip_if_null),
 	      skip_if_empty(skip_if_empty) {
 		options = std::move(options_p);
 		options.serialize_enum_as_string = true;
@@ -43,28 +50,27 @@ public:
 	}
 
 	template <class T>
-	static yyjson_mut_val *Serialize(T &value, yyjson_mut_doc *doc, bool skip_if_null, bool skip_if_empty,
+	static JSONBuildValue *Serialize(T &value, JSONBuilder &builder, bool skip_if_null, bool skip_if_empty,
 	                                 bool skip_if_default, SerializationOptions options_p = SerializationOptions()) {
-		JsonSerializer serializer(doc, skip_if_null, skip_if_empty, skip_if_default, options_p);
+		JsonSerializer serializer(builder, skip_if_null, skip_if_empty, skip_if_default, options_p);
 		value.Serialize(serializer);
 		return serializer.GetRootObject();
 	}
 
 	template <class T>
 	static string SerializeToString(T &value) {
-		auto doc = yyjson_mut_doc_new(nullptr);
-		JsonSerializer serializer(doc, false, false, false);
+		ArenaAllocator arena(Allocator::DefaultAllocator());
+		JSONBuilder builder(arena);
+		JsonSerializer serializer(builder, false, false, false);
 		value.Serialize(serializer);
-		auto result_obj = serializer.GetRootObject();
-		idx_t len = 0;
-		auto data = yyjson_mut_val_write_opts(result_obj, JSONCommon::WRITE_PRETTY_FLAG, nullptr,
-		                                      reinterpret_cast<size_t *>(&len), nullptr);
-		return string(data, len);
+		JSONStringWriter writer(JSONCommon::WRITE_PRETTY_FLAG);
+		writer.Value(*serializer.GetRootObject());
+		return writer.ToString();
 	}
 
-	yyjson_mut_val *GetRootObject() {
+	JSONBuildValue *GetRootObject() {
 		D_ASSERT(stack.size() == 1); // or we forgot to pop somewhere
-		return stack.front();
+		return stack.front().val;
 	};
 
 	//===--------------------------------------------------------------------===//

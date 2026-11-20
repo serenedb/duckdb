@@ -83,6 +83,15 @@ FROM (DESCRIBE SELECT * FROM read_json('{TEST_DIR}/badcoords.geojsonl'));
 ----
 g	STRUCT("type" VARCHAR, coordinates VARCHAR)
 
+statement ok
+COPY (SELECT '{"g":{"type":1,"coordinates":[1,2]}}' AS c) TO '{TEST_DIR}/numtype.geojsonl' (FORMAT CSV, HEADER false, QUOTE '', ESCAPE '');
+
+query II
+SELECT column_name, column_type
+FROM (DESCRIBE SELECT * FROM read_json('{TEST_DIR}/numtype.geojsonl'));
+----
+g	STRUCT("type" BIGINT, coordinates BIGINT[])
+
 # GeoJSON type names are case-sensitive
 statement ok
 COPY (SELECT '{"g":{"type":"point","coordinates":[1,2]}}' AS c) TO '{TEST_DIR}/lowercase.geojsonl' (FORMAT CSV, HEADER false, QUOTE '', ESCAPE '');

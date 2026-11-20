@@ -14,11 +14,6 @@
 #include "duckdb/main/profiler/profiling_node.hpp"
 #include "duckdb/common/profiler.hpp"
 
-namespace duckdb_yyjson {
-struct yyjson_mut_doc;
-struct yyjson_mut_val;
-} // namespace duckdb_yyjson
-
 namespace duckdb {
 
 struct MetricsTimer;

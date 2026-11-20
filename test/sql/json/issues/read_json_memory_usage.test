@@ -22,7 +22,21 @@ SELECT * FROM read_json_objects('{DATA_DIR}/json/example_rn.ndjson', format='nd'
 statement ok
 SET memory_limit='50MiB';
 
+query I
+SELECT count(*) FROM read_json_objects('{DATA_DIR}/json/example_rn.ndjson', format='nd');
+----
+5
+
+statement ok
+RESET memory_limit;
+
+statement ok
+COPY (SELECT repeat('x', 60000000) AS s) TO '{TEMP_DIR}/big_record.ndjson' (FORMAT json);
+
+statement ok
+SET memory_limit='50MiB';
+
 statement error
-SELECT * FROM read_json_objects('{DATA_DIR}/json/example_rn.ndjson', format='nd');
+SELECT length(json) FROM read_json_objects('{TEMP_DIR}/big_record.ndjson', format='nd', maximum_object_size=100000000);
 ----
 Out of Memory Error

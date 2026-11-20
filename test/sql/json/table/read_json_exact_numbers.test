@@ -1,0 +1,35 @@
+# name: test/sql/json/table/read_json_exact_numbers.test
+# description: DECIMAL and BIGNUM columns keep every digit of a JSON number, on the direct path and on the node path
+# group: [table]
+
+require json
+
+statement ok
+COPY (SELECT line FROM (VALUES
+	('{"id":1,"d":1234567890123456.78,"s":{"d":123456789012345678901234567890123456.78},"b":123456789012345678901234567890123456789012345678901234567890}'),
+	('{"id":2,"d":-0.01,"s":{"d":1e2},"b":-1}'),
+	('{"id":3,"d":"12.5","s":null,"b":"42"}')
+) t(line)) TO '{TEMP_DIR}/numbers.ndjson' (FORMAT csv, HEADER false, QUOTE '', ESCAPE '', DELIMITER '|');
+
+statement ok
+CREATE MACRO number_columns() AS {'id': 'INTEGER', 'd': 'DECIMAL(18,2)', 's': 'STRUCT(d DECIMAL(38,2))', 'b': 'BIGNUM'};
+
+query IIII
+SELECT id, d, s, b FROM read_ndjson('{TEMP_DIR}/numbers.ndjson', columns = number_columns()) ORDER BY id;
+----
+1	1234567890123456.78	{'d': 123456789012345678901234567890123456.78}	123456789012345678901234567890123456789012345678901234567890
+2	-0.01	{'d': 100.00}	-1
+3	12.50	NULL	42
+
+query IIII
+SELECT id, d, s, b FROM read_json('{TEMP_DIR}/numbers.ndjson', columns = number_columns(), format = 'unstructured') ORDER BY id;
+----
+1	1234567890123456.78	{'d': 123456789012345678901234567890123456.78}	123456789012345678901234567890123456789012345678901234567890
+2	-0.01	{'d': 100.00}	-1
+3	12.50	NULL	42
+
+query I
+SELECT d FROM read_ndjson('{TEMP_DIR}/numbers.ndjson', columns = number_columns()) WHERE b > 0 ORDER BY id;
+----
+1234567890123456.78
+12.50

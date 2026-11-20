@@ -1059,6 +1059,7 @@ GenericCopyOptionValue:
     - GenericCopyOptionOrderList
     - CopyFormatKeyword
     - CopyBooleanKeyword
+    - CopyVerboseKeyword
     - GenericCopyOptionExpression
 
 MacroParameter:

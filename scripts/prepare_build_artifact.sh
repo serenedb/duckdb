@@ -84,7 +84,7 @@ if [[ -z "$runner_path" ]]; then
 	exit 1
 fi
 
-# Required by ADBC and other tests that need the shared library.
+# Required by tests that need the shared library.
 # Shared runtime libraries retain the conventional src/ location. DLLs emitted
 # beside an executable are normalized into src/ as well.
 copy_by_basename src "$BUILD_DIR"/src/*.so* "$BUILD_DIR"/src/*.dylib "$BUILD_DIR"/src/*.dll

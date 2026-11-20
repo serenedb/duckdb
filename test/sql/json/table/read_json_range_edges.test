@@ -1,0 +1,49 @@
+# name: test/sql/json/table/read_json_range_edges.test
+# description: a newline-delimited range finishes a last record or a run of spaces that ends the file without a line break past its end, and a parallel scan reports the first bad line of the file
+# group: [table]
+
+require json
+
+statement ok
+SET threads = 2;
+
+statement ok
+COPY (SELECT encode('{"s":"' || repeat('x', 1114104) || '"}')) TO '{TEMP_DIR}/tail_record.ndjson' (FORMAT BLOB);
+
+query I
+SELECT length(s) FROM read_ndjson('{TEMP_DIR}/tail_record.ndjson', columns := {s: 'VARCHAR'}, records := true);
+----
+1114104
+
+statement ok
+COPY (SELECT encode('{"a":1}' || chr(10) || repeat(' ', 1114104))) TO '{TEMP_DIR}/tail_spaces.ndjson' (FORMAT BLOB);
+
+query I
+SELECT a FROM read_ndjson('{TEMP_DIR}/tail_spaces.ndjson', columns := {a: 'INTEGER'}, records := true);
+----
+1
+
+statement ok
+SET threads = 4;
+
+statement ok
+COPY (
+	SELECT '{"id":' || v || ',"pad":"' || repeat('p', 40 - length(v)) || '"}' AS line
+	FROM (SELECT i, CASE WHEN i IN (18390, 36793) THEN 'tru' ELSE i::VARCHAR END AS v FROM range(60000) t(i))
+	ORDER BY i
+) TO '{TEMP_DIR}/two_bad.ndjson' (FORMAT csv, HEADER false, QUOTE '', ESCAPE '');
+
+statement error
+SELECT sum(id) FROM read_ndjson('{TEMP_DIR}/two_bad.ndjson', columns := {id: 'BIGINT', pad: 'VARCHAR'});
+----
+at byte 7 in line 18391: invalid literal, expected 'true'
+
+statement error
+SELECT count(*) FROM read_ndjson_objects('{TEMP_DIR}/two_bad.ndjson');
+----
+at byte 7 in line 18391: invalid literal, expected 'true'
+
+query III
+SELECT count(*), count(id), sum(length(pad)) FROM read_ndjson('{TEMP_DIR}/two_bad.ndjson', columns := {id: 'BIGINT', pad: 'VARCHAR'}, ignore_errors := true);
+----
+60000	59998	2111040

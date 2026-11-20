@@ -1023,6 +1023,7 @@ static const MetadataCommand metadata_commands[] = {
      "with extensive features\n\thtml\tHTML <table> code\n\tinsert\tSQL insert statements for TABLE\n\t"
      "json\tResults in a JSON array\n\tjsonlines\tResults in a NDJSON\n\tlatex\tLaTeX tabular environment code\n\t"
      "line\tOne value per line\n\tlist\tValues delimited by \"|\"\n\tmarkdown\tMarkdown table format\n\t"
+     "psql\tpsql's output, tuned by \\pset, \\a, \\x and \\t\n\t"
      "quote\tEscape answers as for SQL\n\ttable\tASCII-art table\n\ttabs\tTab-separated values\n\ttcl\tTCL list "
      "elements\n\ttrash\tNo output"},
 #ifdef HAVE_LINENOISE
@@ -1228,6 +1229,7 @@ idx_t ShellState::PrintHelp(const char *pattern) {
 #ifdef HAVE_LINENOISE
 		PrintF("Run .help shortcuts for keyboard shortcuts\n");
 #endif
+		PrintF("Run \\? for the psql backslash commands\n");
 	}
 	return print_info_list.size();
 }

@@ -2,7 +2,6 @@
 
 #include "duckdb/common/multi_file/multi_file_reader.hpp"
 #include "duckdb/execution/operator/csv_scanner/sniffer/csv_sniffer.hpp"
-#include "duckdb/execution/operator/csv_scanner/skip_scanner.hpp"
 #include "duckdb/function/table/read_csv.hpp"
 
 namespace duckdb {
@@ -21,20 +20,17 @@ CSVFileScan::CSVFileScan(ClientContext &context, const OpenFileInfo &file_p, CSV
 	// Initialize On Disk and Size of file
 	on_disk_file = buffer_manager->file_handle->OnDiskFile();
 	file_size = buffer_manager->file_handle->FileSize();
-	// Initialize State Machine
-	auto &state_machine_cache = CSVStateMachineCache::Get(context);
-
 	SetNamesAndTypes(names, types);
 	if (options.auto_detect) {
 		if (fixed_schema) {
 			// schema of the file is fixed - only run the sniffer
-			CSVSniffer sniffer(options, file_options, buffer_manager, state_machine_cache);
+			CSVSniffer sniffer(options, file_options, buffer_manager);
 			sniffer.SniffCSV();
 		} else if (file_schema.Empty()) {
 			throw InternalException("CSV File Scanner cannot be created without a schema");
 		} else if (buffer_manager->file_handle->FileSize() > 0) {
 			options.file_path = file.path;
-			CSVSniffer sniffer(options, file_options, buffer_manager, state_machine_cache, false);
+			CSVSniffer sniffer(options, file_options, buffer_manager, false);
 			auto result = sniffer.AdaptiveSniff(file_schema);
 			SetNamesAndTypes(result.names, result.return_types);
 		}
@@ -45,53 +41,9 @@ CSVFileScan::CSVFileScan(ClientContext &context, const OpenFileInfo &file_p, CSV
 	}
 	if (options.dialect_options.state_machine_options.new_line == NewLineIdentifier::NOT_SET) {
 		options.dialect_options.state_machine_options.new_line =
-		    CSVSniffer::DetectNewLineDelimiter(*buffer_manager, options, state_machine_cache);
+		    CSVSniffer::DetectNewLineDelimiter(*buffer_manager, options);
 	}
-	state_machine = make_shared_ptr<CSVStateMachine>(
-	    state_machine_cache.Get(options.dialect_options.state_machine_options), options);
-}
-
-CSVFileScan::CSVFileScan(ClientContext &context, const OpenFileInfo &file_p, const CSVReaderOptions &options_p,
-                         const MultiFileOptions &file_options)
-    : file(file_p),
-      error_handler(make_shared_ptr<CSVErrorHandler>(options_p.ignore_errors.GetValue(), options_p.RejectTolerance())),
-      options(options_p) {
-	buffer_manager = CSVBufferManager::Open(context, options, file);
-	// Initialize On Disk and Size of file
-	on_disk_file = buffer_manager->file_handle->OnDiskFile();
-	file_size = buffer_manager->file_handle->FileSize();
-	// Sniff it (We only really care about dialect detection, if types or number of columns are different this will
-	// error out during scanning)
-	auto &state_machine_cache = CSVStateMachineCache::Get(context);
-	// We sniff file if it has not been sniffed yet and either auto-detect is on, or union by name is on
-	if ((options.auto_detect || file_options.union_by_name) && options.dialect_options.num_cols == 0) {
-		CSVSniffer sniffer(options, file_options, buffer_manager, state_machine_cache);
-		auto sniffer_result = sniffer.SniffCSV();
-		if (names.empty()) {
-			SetNamesAndTypes(sniffer_result.names, sniffer_result.return_types);
-		}
-	}
-	if (options.dialect_options.num_cols == 0) {
-		// We need to define the number of columns, if the sniffer is not running this must be in the sql_type_list
-		options.dialect_options.num_cols = options.sql_type_list.size();
-	}
-	// Initialize State Machine
-	state_machine = make_shared_ptr<CSVStateMachine>(
-	    state_machine_cache.Get(options.dialect_options.state_machine_options), options);
-	SetStart();
-}
-
-void CSVFileScan::SetStart() {
-	idx_t rows_to_skip = options.GetSkipRows() + state_machine->dialect_options.header.GetValue();
-
-	if (rows_to_skip == 0) {
-		start_iterator.first_one = true;
-		return;
-	}
-	SkipScanner skip_scanner(buffer_manager, state_machine, error_handler, rows_to_skip);
-	skip_scanner.ParseChunk();
-	skipped_rows = skip_scanner.GetLinesRead() - rows_to_skip;
-	start_iterator = skip_scanner.GetIterator();
+	state_machine = make_shared_ptr<CSVStateMachine>(options);
 }
 
 void CSVFileScan::SetNamesAndTypes(const vector<Identifier> &names_p, const vector<LogicalType> &types_p) {
@@ -156,20 +108,11 @@ const vector<LogicalType> &CSVFileScan::GetTypes() {
 	return types;
 }
 
-void CSVFileScan::InitializeProjection() {
-	for (idx_t i = 0; i < options.dialect_options.num_cols; i++) {
-		column_ids.push_back(MultiFileLocalColumnId(i));
-	}
-}
-
 void CSVFileScan::AddVirtualColumn(column_t virtual_column_id) {
 	if (virtual_column_id != MultiFileReader::COLUMN_IDENTIFIER_FILE_ROW_NUMBER) {
 		throw InternalException("CSV reader only supports file_row_number as a virtual column (got id %d)",
 		                        virtual_column_id);
 	}
-	// The column mapper appends the virtual column's local id to column_ids and then calls
-	// AddVirtualColumn, so column_ids.size() - 1 is the slot this virtual column occupies.
-	// StringValueScanner::Flush later writes byte offsets into this slot.
 	file_row_number_idx = column_ids.size() - 1;
 }
 

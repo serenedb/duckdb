@@ -1,0 +1,45 @@
+# name: test/sql/json/scalar/test_json_pointer.test
+# description: JSON Pointer (RFC 6901) lookups: escaped reference tokens and array index tokens
+# group: [scalar]
+
+require json
+
+query II
+SELECT json_extract('{"a/b": 1, "a~b": 2}', '/a~1b'), json_extract('{"a/b": 1, "a~b": 2}', '/a~0b');
+----
+1	2
+
+query I
+SELECT json_extract('{"~1": 1, "/": 2}', '/~01');
+----
+1
+
+query II
+SELECT json_extract('{"a~": 1}', '/a~'), json_extract('{"a~2": 1}', '/a~2');
+----
+NULL	NULL
+
+query I
+SELECT json_extract('{"a": [{"b~/c": [5, 6]}]}', '/a/0/b~0~1c/1');
+----
+6
+
+query IIII
+SELECT json_extract('[10, 11, 12]', '/0'), json_extract('[10, 11, 12]', '/2'), json_extract('[10, 11, 12]', '/3'), json_extract('[10, 11, 12]', '/02');
+----
+10	12	NULL	NULL
+
+query I
+SELECT json_extract('[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]', '/10');
+----
+10
+
+query III
+SELECT json_extract('[1]', '/'), json_extract('[1]', '/-'), json_extract('[1]', '/1a');
+----
+NULL	NULL	NULL
+
+query I
+SELECT json_extract('[1]', '/4294967296000');
+----
+NULL

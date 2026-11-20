@@ -1,3 +1,4 @@
+#include "duckdb/common/exception.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/common/types/value.hpp"
 #include "duckdb/common/to_string.hpp"
@@ -560,6 +561,17 @@ TEST_CASE("Test JSON Parsing", "[string_util]") {
 		"bool_f": false
 	}
 	)JSON_LITERAL");
+}
+
+TEST_CASE("Test JSON map parsing replaces each invalid UTF-8 sequence with one replacement character",
+          "[string_util]") {
+	auto json_map = StringUtil::ParseJSONMap("{\"message\": \"bad \xE9\x80 bytes \x80\x80\x80 end\", "
+	                                         "\"code\": 18446744073709551616}");
+	REQUIRE(json_map["message"] == "bad \xEF\xBF\xBD bytes \xEF\xBF\xBD end");
+	REQUIRE(json_map["code"] == "18446744073709551616.000000");
+
+	REQUIRE_THROWS_AS(StringUtil::ParseJSONMap("{\"message\": \"cut \xE9"), SerializationException);
+	REQUIRE(StringUtil::ParseJSONMap("{\"message\": \"cut \xE9", true).empty());
 }
 
 TEST_CASE("Test CIHash is independent of char signedness", "[string_util]") {

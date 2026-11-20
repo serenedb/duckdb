@@ -145,7 +145,7 @@ static void CSVSniffFunction(ClientContext &context, TableFunctionInput &data_p,
 
 	auto buffer_manager = CSVBufferManager::Open(context, sniffer_options, sniffer_options.file_path, false);
 	MultiFileOptions file_options;
-	CSVSniffer sniffer(sniffer_options, file_options, buffer_manager, CSVStateMachineCache::Get(context));
+	CSVSniffer sniffer(sniffer_options, file_options, buffer_manager);
 	auto sniffer_result = sniffer.SniffCSV(data.force_match);
 	if (sniffer.EmptyOrOnlyHeader()) {
 		for (idx_t i = 0; i < sniffer_result.return_types.size(); i++) {

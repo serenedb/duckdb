@@ -77,9 +77,6 @@ public:
 	static CSVError UnterminatedQuotesError(const CSVReaderOptions &options, idx_t current_column,
 	                                        LinesPerBoundary error_info, string &csv_row, idx_t row_byte_position,
 	                                        optional_idx byte_position, const String &current_path);
-	//! Produces error messages for null_padding option is set, and we have quoted new values in parallel
-	static CSVError NullPaddingFail(const CSVReaderOptions &options, LinesPerBoundary error_info,
-	                                const String &current_path);
 	//! Produces error for incorrect (e.g., smaller and lower than the predefined) number of columns in a CSV Line
 	static CSVError IncorrectColumnAmountError(const CSVReaderOptions &state_machine, idx_t actual_columns,
 	                                           LinesPerBoundary error_info, string &csv_row, idx_t row_byte_position,
@@ -153,6 +150,7 @@ private:
 	void ThrowError(const CSVError &csv_error);
 	//! If we processed all boundaries before the one that error-ed
 	bool CanGetLine(idx_t boundary_index);
+	idx_t EarliestError() const;
 	//! Return the 1-indexed line number
 	idx_t GetLineInternal(const LinesPerBoundary &error_info);
 	//! CSV Error Handler Mutex
