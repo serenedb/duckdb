@@ -1,3 +1,4 @@
+#include "absl/synchronization/mutex.h"
 #include "catch.hpp"
 #include "duckdb.hpp"
 #include "duckdb/common/fault_points.hpp"
@@ -10,6 +11,7 @@
 #include <chrono>
 #include <cstring>
 #include <fstream>
+#include <random>
 #include <thread>
 
 using namespace duckdb;
@@ -69,7 +71,370 @@ private:
 	string data;
 };
 
+class LiveRowStream : public RowSource {
+public:
+	void Append(std::string_view bytes) {
+		const absl::MutexLock guard(&lock);
+		data.append(bytes);
+	}
+
+	void Close() {
+		const absl::MutexLock guard(&lock);
+		closed = true;
+	}
+
+	void AwaitReader() {
+		const auto drained = [&]() {
+			return waiting_at != DConstants::INVALID_INDEX && waiting_at >= data.size();
+		};
+		lock.LockWhen(absl::Condition(&drained));
+		lock.Unlock();
+	}
+
+	void Release(idx_t position) override {
+		const absl::MutexLock guard(&lock);
+		released = MaxValue(released, position);
+	}
+
+	idx_t Read(char *out, idx_t count, idx_t offset) const override {
+		const absl::MutexLock guard(&lock);
+		if (offset < released) {
+			read_released = true;
+		}
+		waiting_at = offset;
+		const auto ready = [&]() {
+			return offset < data.size() || closed;
+		};
+		lock.Await(absl::Condition(&ready));
+		waiting_at = DConstants::INVALID_INDEX;
+		if (offset >= data.size()) {
+			return 0;
+		}
+		const idx_t size = MinValue<idx_t>(count, data.size() - offset);
+		memcpy(out, data.data() + offset, size);
+		return size;
+	}
+
+	optional_idx End() const override {
+		const absl::MutexLock guard(&lock);
+		return closed ? optional_idx(data.size()) : optional_idx();
+	}
+
+	bool Live() const override {
+		return true;
+	}
+
+	bool Available(idx_t offset) const override {
+		const absl::MutexLock guard(&lock);
+		return offset < data.size() || closed;
+	}
+
+	bool ReadReleased() const {
+		const absl::MutexLock guard(&lock);
+		return read_released;
+	}
+
+private:
+	mutable absl::Mutex lock;
+	mutable idx_t waiting_at = DConstants::INVALID_INDEX;
+	mutable bool read_released = false;
+	string data;
+	idx_t released = 0;
+	bool closed = false;
+};
+
+struct LexedRow {
+	idx_t begin;
+	vector<uint32_t> ends;
+
+	bool operator==(const LexedRow &other) const {
+		return begin == other.begin && ends == other.ends;
+	}
+};
+
+void TakeRows(RowRangeReader &reader, vector<LexedRow> &rows) {
+	const idx_t ready = reader.Ready();
+	const idx_t columns = reader.columns;
+	for (idx_t row = 0; row < ready; row++) {
+		LexedRow lexed {reader.RowBegin(row), {}};
+		for (idx_t column = 0; column < columns; column++) {
+			const uint32_t end = reader.fields.ends[row * columns + column];
+			lexed.ends.push_back(static_cast<uint32_t>(reader.cursor.anchor + (end & ROW_FIELD_MASK)) |
+			                     (end & ROW_FIELD_FLAG));
+		}
+		rows.push_back(std::move(lexed));
+	}
+	reader.Emit(ready);
+}
+
+vector<LexedRow> ReadRows(const RowLexer &lexer, RowSource &source) {
+	RowRanges ranges(lexer, source, 0, NumericLimits<idx_t>::Maximum(), DConstants::INVALID_INDEX, true);
+	idx_t range = 0;
+	REQUIRE(ranges.Claim(range));
+	RowRangeReader reader(ranges);
+	reader.Start(range, true, false, false);
+	vector<LexedRow> rows;
+	while (true) {
+		const auto result = reader.Advance(STANDARD_VECTOR_SIZE);
+		if (result == RowReadResult::DONE) {
+			return rows;
+		}
+		REQUIRE(result == RowReadResult::ROWS);
+		TakeRows(reader, rows);
+	}
+}
+
+vector<LexedRow> ReadRanges(const RowLexer &lexer, RowSource &source, idx_t range_bytes) {
+	RowRanges ranges(lexer, source, 0, NumericLimits<idx_t>::Maximum(), range_bytes, true);
+	RowRangeReader reader(ranges);
+	vector<LexedRow> rows;
+	idx_t range = 0;
+	while (ranges.Claim(range)) {
+		reader.Start(range, true, true, false);
+		while (true) {
+			const auto result = reader.Advance(STANDARD_VECTOR_SIZE);
+			if (result == RowReadResult::DONE) {
+				break;
+			}
+			REQUIRE(result == RowReadResult::ROWS);
+			TakeRows(reader, rows);
+		}
+		ranges.Finish(range);
+	}
+	return rows;
+}
+
+string LineitemRow(std::mt19937_64 &rng, char delimiter) {
+	const char *words[] = {"ironic", "deposits", "a,b", "slyly \"bold\"", "final", "x"};
+	string comment;
+	for (idx_t i = 0; i < 1 + rng() % 6; i++) {
+		comment += words[rng() % 6];
+		comment += ' ';
+	}
+	if (delimiter == '\t') {
+		for (auto &c : comment) {
+			c = c == ',' || c == '"' ? ';' : c;
+		}
+	} else if (comment.find_first_of(",\"") != string::npos) {
+		string quoted = "\"";
+		for (const char c : comment) {
+			quoted += c;
+			if (c == '"') {
+				quoted += '"';
+			}
+		}
+		comment = quoted + "\"";
+	}
+	string row;
+	for (idx_t column = 0; column < 15; column++) {
+		row += to_string(rng() % 100000);
+		row += column == 10 ? "-01-02" : "";
+		row += delimiter;
+	}
+	return row + comment + "\n";
+}
+
+string RandomField(std::mt19937_64 &rng, const RowDialect &dialect) {
+	string field;
+	const idx_t size = rng() % 6;
+	if (dialect.backslash) {
+		const char *tokens[] = {"a", "b", " ", "\\\\", "\\\t", "\\\n", "\\N", "\\x41"};
+		for (idx_t i = 0; i < size; i++) {
+			field += tokens[rng() % 8];
+		}
+		return field;
+	}
+	const char plain[] = {'a', 'b', ' '};
+	const char special[] = {'a', ',', '\n', '"', ' '};
+	if (rng() % 2) {
+		for (idx_t i = 0; i < size; i++) {
+			field += plain[rng() % 3];
+		}
+		return field;
+	}
+	field += '"';
+	for (idx_t i = 0; i < size; i++) {
+		const char c = special[rng() % 5];
+		if (c == '"') {
+			field += dialect.escape;
+		}
+		field += c;
+	}
+	field += '"';
+	return field;
+}
+
 } // namespace
+
+TEST_CASE("A range reader hands over the rows of a live stream before the stream ends", "[csv]") {
+	RowLexer lexer(RowDialect::PostgresText('\t'), 2, NumericLimits<idx_t>::Maximum(), true, false, true);
+	LiveRowStream source;
+	RowRanges ranges(lexer, source, 0, NumericLimits<idx_t>::Maximum(), 1 << 21, true);
+	idx_t range = 0;
+	REQUIRE(ranges.Claim(range));
+	RowRangeReader reader(ranges);
+	reader.Start(range, true, false, false);
+	vector<LexedRow> rows;
+	source.Append("1\t2\n3\t4\n5\t");
+	REQUIRE(reader.Advance(STANDARD_VECTOR_SIZE) == RowReadResult::ROWS);
+	REQUIRE(reader.Ready() == 2);
+	TakeRows(reader, rows);
+	source.Append("6\n7\t8");
+	REQUIRE(reader.Advance(STANDARD_VECTOR_SIZE) == RowReadResult::ROWS);
+	REQUIRE(reader.Ready() == 1);
+	TakeRows(reader, rows);
+	source.Close();
+	REQUIRE(reader.Advance(STANDARD_VECTOR_SIZE) == RowReadResult::ROWS);
+	REQUIRE(reader.Ready() == 1);
+	TakeRows(reader, rows);
+	REQUIRE(reader.Advance(STANDARD_VECTOR_SIZE) == RowReadResult::DONE);
+	REQUIRE(rows.size() == 4);
+	REQUIRE(rows[2].ends == vector<uint32_t> {9, 11});
+	REQUIRE(rows[3].ends == vector<uint32_t> {13, 15});
+}
+
+TEST_CASE("Rows of a live stream read in ranges match the rows of the whole input", "[csv]") {
+	std::mt19937_64 rng(43);
+	for (idx_t round = 0; round < 40; round++) {
+		const bool text = round % 2;
+		const auto dialect = text ? RowDialect::PostgresText('\t') : RowDialect::PostgresCsv(',', '"', '"');
+		string input;
+		for (idx_t row = 0; row < 200 + rng() % 400; row++) {
+			input += LineitemRow(rng, text ? '\t' : ',');
+		}
+		RowLexer lexer(dialect, 16, NumericLimits<idx_t>::Maximum(), true, false, true);
+		RowRangesTestStream whole(input);
+		const auto expected = ReadRows(lexer, whole);
+
+		LiveRowStream live;
+		vector<LexedRow> rows;
+		const idx_t range_bytes = 256 << (rng() % 6);
+		std::thread reader_thread([&]() { rows = ReadRanges(lexer, live, range_bytes); });
+		for (idx_t at = 0; at < input.size();) {
+			const idx_t piece = MinValue<idx_t>(1 + rng() % 3000, input.size() - at);
+			live.AwaitReader();
+			live.Append(std::string_view(input).substr(at, piece));
+			at += piece;
+		}
+		live.AwaitReader();
+		live.Close();
+		reader_thread.join();
+		INFO("round " << round << " range bytes " << range_bytes);
+		REQUIRE(!live.ReadReleased());
+		REQUIRE(rows.size() == expected.size());
+		for (idx_t row = 0; row < rows.size(); row++) {
+			INFO("row " << row);
+			REQUIRE(rows[row].ends == expected[row].ends);
+		}
+	}
+}
+
+TEST_CASE("Rows of a live stream read in ranges by many threads match the rows of the whole input", "[csv]") {
+	std::mt19937_64 rng(47);
+	for (idx_t round = 0; round < 12; round++) {
+		const bool text = round % 2;
+		const auto dialect = text ? RowDialect::PostgresText('\t') : RowDialect::PostgresCsv(',', '"', '"');
+		string input;
+		for (idx_t row = 0; row < 3000 + rng() % 3000; row++) {
+			input += LineitemRow(rng, text ? '\t' : ',');
+		}
+		RowLexer lexer(dialect, 16, NumericLimits<idx_t>::Maximum(), true, false, true);
+		RowRangesTestStream whole(input);
+		auto expected = ReadRows(lexer, whole);
+
+		LiveRowStream live;
+		RowRanges ranges(lexer, live, 0, NumericLimits<idx_t>::Maximum(), 1024 << (rng() % 4), true);
+		absl::Mutex rows_lock;
+		vector<LexedRow> rows;
+		vector<std::thread> readers;
+		for (idx_t thread = 0; thread < 8; thread++) {
+			readers.emplace_back([&]() {
+				RowRangeReader reader(ranges);
+				vector<LexedRow> mine;
+				idx_t range = 0;
+				while (ranges.Claim(range)) {
+					reader.Start(range, true, true, false);
+					while (true) {
+						const auto result = reader.Advance(STANDARD_VECTOR_SIZE);
+						if (result == RowReadResult::DONE) {
+							break;
+						}
+						TakeRows(reader, mine);
+					}
+					ranges.Finish(range);
+				}
+				const absl::MutexLock guard(&rows_lock);
+				rows.insert(rows.end(), mine.begin(), mine.end());
+			});
+		}
+		std::mt19937_64 writer_rng(round);
+		for (idx_t at = 0; at < input.size();) {
+			const idx_t piece = MinValue<idx_t>(1 + writer_rng() % 5000, input.size() - at);
+			live.Append(std::string_view(input).substr(at, piece));
+			at += piece;
+			std::this_thread::sleep_for(std::chrono::microseconds(writer_rng() % 300));
+		}
+		live.Close();
+		for (auto &reader : readers) {
+			reader.join();
+		}
+		const auto by_end = [](const LexedRow &left, const LexedRow &right) {
+			return left.ends.back() < right.ends.back();
+		};
+		std::sort(rows.begin(), rows.end(), by_end);
+		std::sort(expected.begin(), expected.end(), by_end);
+		INFO("round " << round);
+		REQUIRE(!live.ReadReleased());
+		REQUIRE(rows.size() == expected.size());
+		for (idx_t row = 0; row < rows.size(); row++) {
+			INFO("row " << row);
+			REQUIRE(rows[row].ends == expected[row].ends);
+		}
+	}
+}
+
+TEST_CASE("Rows of a live stream read piece by piece match the rows of the whole input", "[csv]") {
+	const vector<RowDialect> dialects = {RowDialect::PostgresText('\t'), RowDialect::PostgresCsv(',', '"', '"'),
+	                                     RowDialect::PostgresCsv(',', '"', '\\'),
+	                                     RowDialect::DuckDB(TestGrammar(',', false, NewLineIdentifier::CARRY_ON))};
+	std::mt19937_64 rng(41);
+	for (idx_t round = 0; round < 600; round++) {
+		const auto &dialect = dialects[round % dialects.size()];
+		const idx_t columns = 1 + rng() % 4;
+		string input;
+		const idx_t row_count = rng() % 40;
+		for (idx_t row = 0; row < row_count; row++) {
+			for (idx_t column = 0; column < columns; column++) {
+				if (column > 0) {
+					input += dialect.delimiter;
+				}
+				input += RandomField(rng, dialect);
+			}
+			input += dialect.duckdb && rng() % 2 ? "\r\n" : "\n";
+		}
+		if (!input.empty() && rng() % 3 == 0) {
+			input.resize(input.size() - 1);
+		}
+		RowLexer lexer(dialect, columns, NumericLimits<idx_t>::Maximum(), true, false, true);
+		RowRangesTestStream whole(input);
+		const auto expected = ReadRows(lexer, whole);
+
+		LiveRowStream live;
+		vector<LexedRow> rows;
+		std::thread reader_thread([&]() { rows = ReadRows(lexer, live); });
+		for (idx_t at = 0; at < input.size();) {
+			const idx_t piece = MinValue<idx_t>(1 + rng() % 150, input.size() - at);
+			live.AwaitReader();
+			live.Append(std::string_view(input).substr(at, piece));
+			at += piece;
+		}
+		live.AwaitReader();
+		live.Close();
+		reader_thread.join();
+		INFO("round " << round << " input " << input);
+		REQUIRE(rows == expected);
+	}
+}
 
 #ifdef SDB_FAULT_INJECTION
 TEST_CASE("A stream range is empty when another reader finds the stream ends before it", "[csv]") {
@@ -397,6 +762,48 @@ TEST_CASE("The lean step reads quoted rows without trimmed spaces and with every
 	REQUIRE(postgres_fields.row_count == 1);
 	REQUIRE(postgres_fields.ends[0] == 1);
 	REQUIRE(postgres_fields.ends[1] == (5 | ROW_FIELD_FLAG));
+}
+
+TEST_CASE("read_csv reads a live host stream in parallel as it arrives", "[csv]") {
+	DuckDB db(nullptr);
+	Connection con(db);
+	REQUIRE_NO_FAIL(con.Query("SET threads = 16"));
+	std::mt19937_64 rng(53);
+	string data;
+	idx_t sum = 0;
+	for (idx_t row = 0; row < 200000; row++) {
+		const idx_t value = rng() % 1000000;
+		sum += value;
+		data += to_string(value) + ",\"" + string(rng() % 40, 'x') + ",y\"\n";
+	}
+	const auto path = TestCreatePath("live_row_stream.csv");
+	{
+		std::ofstream out(path, std::ios::binary);
+		out << "0,a\n";
+	}
+	for (idx_t round = 0; round < 4; round++) {
+		auto live = make_shared_ptr<LiveRowStream>();
+		con.context->registered_state->Insert(RowStreamKey(path), make_shared_ptr<RowStreamState>(live));
+		std::thread writer([&]() {
+			std::mt19937_64 writer_rng(round);
+			for (idx_t at = 0; at < data.size();) {
+				const idx_t piece = MinValue<idx_t>(1 + writer_rng() % 200000, data.size() - at);
+				live->Append(std::string_view(data).substr(at, piece));
+				at += piece;
+				std::this_thread::sleep_for(std::chrono::microseconds(writer_rng() % 500));
+			}
+			live->Close();
+		});
+		auto result = con.Query("SELECT count(*), sum(a), count(DISTINCT b) FROM read_csv('" + path +
+		                        "', auto_detect = false, header = false, columns = {'a': 'BIGINT', 'b': 'VARCHAR'})");
+		writer.join();
+		con.context->registered_state->Remove(RowStreamKey(path));
+		INFO("round " << round);
+		REQUIRE(CHECK_COLUMN(result, 0, {200000}));
+		REQUIRE(CHECK_COLUMN(result, 1, {Value::BIGINT(NumericCast<int64_t>(sum))}));
+		REQUIRE(CHECK_COLUMN(result, 2, {40}));
+		REQUIRE(!live->ReadReleased());
+	}
 }
 
 TEST_CASE("read_csv reads the stream the host registers for its path", "[csv]") {

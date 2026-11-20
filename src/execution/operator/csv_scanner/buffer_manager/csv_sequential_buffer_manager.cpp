@@ -13,8 +13,7 @@ CSVSequentialBufferManager::CSVSequentialBufferManager(ClientContext &context_p,
 
 void CSVSequentialBufferManager::Initialize() {
 	if (cached_buffers.empty()) {
-		cached_buffers.emplace_back(make_shared_ptr<CSVBuffer>(context, buffer_size, *file_handle, global_csv_pos));
-		last_buffer = cached_buffers.front();
+		last_buffer = nullptr;
 	}
 }
 
@@ -52,7 +51,9 @@ shared_ptr<CSVBufferHandle> CSVSequentialBufferManager::GetBuffer(const idx_t po
 			previous = last_buffer;
 		}
 		shared_ptr<CSVBuffer> next;
-		if (!previous->IsCSVFileLastBuffer()) {
+		if (!previous) {
+			next = make_shared_ptr<CSVBuffer>(context, buffer_size, *file_handle, global_csv_pos);
+		} else if (!previous->IsCSVFileLastBuffer()) {
 			next = previous->Next(*file_handle, buffer_size, has_seeked);
 		}
 		lock_guard<mutex> parallel_lock(main_mutex);
