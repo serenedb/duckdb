@@ -159,10 +159,6 @@ static inline bool GetValueNumerical(const JSONNode &val, T &result, JSONTransfo
 	default:
 		throw InternalException("Unknown JSON value type in GetValueNumerical");
 	}
-	if (!success && options.strict_cast) {
-		options.error_message =
-		    StringUtil::Format("Failed to cast value to numerical: %s", JSONCommon::ValToString(val, 50));
-	}
 	return success;
 }
 
@@ -194,10 +190,6 @@ static inline bool GetValueDecimal(const JSONNode &val, T &result, uint8_t w, ui
 		break;
 	default:
 		throw InternalException("Unknown JSON value type in GetValueDecimal");
-	}
-	if (!success && options.strict_cast) {
-		options.error_message =
-		    StringUtil::Format("Failed to cast value to decimal: %s", JSONCommon::ValToString(val, 50));
 	}
 	return success;
 }
@@ -245,6 +237,8 @@ static bool TransformNumerical(const JSONNode *vals[], Vector &result, const idx
 		} else if (!GetValueNumerical<T>(*val, data[i], options)) {
 			validity.SetInvalid(i);
 			if (success && options.strict_cast) {
+				options.error_message =
+				    StringUtil::Format("Failed to cast value to numerical: %s", JSONCommon::ValToString(*val, 50));
 				options.object_index = i;
 				success = false;
 			}
@@ -267,6 +261,8 @@ static bool TransformDecimal(const JSONNode *vals[], Vector &result, const idx_t
 		} else if (!GetValueDecimal<T>(*val, data[i], width, scale, options)) {
 			validity.SetInvalid(i);
 			if (success && options.strict_cast) {
+				options.error_message =
+				    StringUtil::Format("Failed to cast value to decimal: %s", JSONCommon::ValToString(*val, 50));
 				options.object_index = i;
 				success = false;
 			}
