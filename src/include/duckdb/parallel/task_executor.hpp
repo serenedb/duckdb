@@ -86,6 +86,9 @@ public:
 	//! works on the executor's queued tasks itself, so the limit holds whatever the number of worker threads. Threads
 	//! that schedule at once can overshoot it by one task each
 	void ScheduleTask(unique_ptr<BaseExecutorTask> task, idx_t limit);
+	//! Runs [task], which a caller waits for, at once on a thread the scheduler starts for it outside the CPU slots.
+	//! False, leaving [task] with the caller, when the scheduler has no thread for it
+	bool StartTask(unique_ptr<BaseExecutorTask> &task);
 	//! Schedule [function] as a task, held inside the task; with a [limit], as the overload above
 	template <class F>
 	void ScheduleTask(F function, const char *task_type, idx_t limit = 0) {

@@ -17,6 +17,11 @@ SET {thread_type} TO 'blabla'
 ----
 <REGEX>:Invalid Input Error.*Failed to cast value.*
 
+statement error
+SET GLOBAL {thread_type} TO '1025'
+----
+<REGEX>:Invalid Input Error.*Number of threads can't be larger than 1024.*
+
 endloop
 
 statement error

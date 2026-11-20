@@ -71,17 +71,20 @@ static int64_t MinSliceTicks() {
 	return ticks;
 }
 
-TaskScheduler::BlockingScope::BlockingScope() : worker(current_worker) {
+TaskScheduler::BlockingScope::BlockingScope() : BlockingScope(true) {
+}
+
+TaskScheduler::BlockingScope::BlockingScope(bool wake) : worker(current_worker) {
 	if (!worker || worker->blocking_depth++ > 0) {
 		return;
 	}
 	worker->blocked_since = TimePoint::Now();
-	worker->scheduler.ReleaseClaims(*worker);
+	worker->scheduler.ReleaseClaims(*worker, wake);
 	if (worker->account) {
 		worker->scheduler.queue.Detach(*worker->account);
 	}
 	if (worker->holds_slot) {
-		worker->scheduler.ReleaseSlot(*worker);
+		worker->scheduler.ReleaseSlot(*worker, wake);
 	}
 }
 
@@ -174,6 +177,43 @@ void TaskScheduler::ScheduleConcurrentTasks(ProducerToken &producer, std::span<s
 	Enqueue(producer, tasks.data(), tasks.size(), TaskSchedulerType::REGULAR, false);
 }
 
+bool TaskScheduler::StartBlockingTask(shared_ptr<Task> task) {
+#ifndef DUCKDB_NO_THREADS
+	if (!HasWorkers()) {
+		return false;
+	}
+	task->blocking = true;
+	const auto started = task.get();
+	blocked.fetch_add(1, std::memory_order_seq_cst);
+	{
+		const annotated_lock_guard<annotated_mutex> guard(started_lock);
+		started_tasks.push_back(std::move(task));
+		started_count.fetch_add(1, std::memory_order_seq_cst);
+	}
+	idx_t index;
+	if (idle_count.load(std::memory_order_seq_cst) != 0 && ClaimIdle(index)) {
+		idle_count.fetch_sub(1, std::memory_order_relaxed);
+		workers[index].load(std::memory_order_acquire)->semaphore.signal();
+		return true;
+	}
+	if (SpawnSpare()) {
+		return true;
+	}
+	{
+		const annotated_lock_guard<annotated_mutex> guard(started_lock);
+		const auto entry = std::find_if(started_tasks.begin(), started_tasks.end(),
+		                                [&](const shared_ptr<Task> &candidate) { return candidate.get() == started; });
+		if (entry == started_tasks.end()) {
+			return true;
+		}
+		started_tasks.erase(entry);
+		started_count.fetch_sub(1, std::memory_order_relaxed);
+	}
+	Unblock();
+#endif
+	return false;
+}
+
 void TaskScheduler::Enqueue(ProducerToken &producer, shared_ptr<Task> *tasks, idx_t count, TaskSchedulerType pool_type,
                             bool keep_in_task) {
 	if (count == 0) {
@@ -251,7 +291,8 @@ void TaskScheduler::ReleaseHandoff(SchedulerWorker &worker) {
 
 bool TaskScheduler::SpawnSpare() {
 	auto current = spares.load(std::memory_order_relaxed);
-	while (current < blocked.load(std::memory_order_relaxed)) {
+	while (current < blocked.load(std::memory_order_relaxed) &&
+	       current + target.load(std::memory_order_relaxed) < MAX_WORKERS) {
 		if (spares.compare_exchange_weak(current, current + 1, std::memory_order_relaxed)) {
 			if (!pool->SpawnSpare(*this)) {
 				spares.fetch_sub(1, std::memory_order_relaxed);
@@ -265,13 +306,41 @@ bool TaskScheduler::SpawnSpare() {
 
 bool TaskScheduler::RetireSpare(SchedulerWorker &worker, bool force) {
 	auto current = spares.load(std::memory_order_relaxed);
-	while (force || current > blocked.load(std::memory_order_relaxed)) {
+	while (force || current > blocked.load(std::memory_order_relaxed) + target.load(std::memory_order_relaxed)) {
 		if (spares.compare_exchange_weak(current, current - 1, std::memory_order_relaxed)) {
 			worker.retired = true;
 			return true;
 		}
 	}
 	return false;
+}
+
+void TaskScheduler::RetireIdleSpare() {
+#ifndef DUCKDB_NO_THREADS
+	for (idx_t word = 0; word < WORKER_WORDS; word++) {
+		auto bits = idle_bits[word].load(std::memory_order_seq_cst) & spare_bits[word].load(std::memory_order_relaxed);
+		while (bits) {
+			const auto bit = static_cast<idx_t>(__builtin_ctzll(bits));
+			const auto mask = uint64_t(1) << bit;
+			bits &= bits - 1;
+			if (!(idle_bits[word].fetch_and(~mask, std::memory_order_seq_cst) & mask)) {
+				continue;
+			}
+			idle_count.fetch_sub(1, std::memory_order_relaxed);
+			auto &worker = *workers[word * 64 + bit].load(std::memory_order_acquire);
+			if (!worker.spare) {
+				RestoreIdle(word * 64 + bit);
+				continue;
+			}
+			if (!RetireSpare(worker, false)) {
+				RestoreIdle(word * 64 + bit);
+				return;
+			}
+			worker.semaphore.signal();
+			return;
+		}
+	}
+#endif
 }
 
 void TaskScheduler::WakeAll() {
@@ -389,8 +458,8 @@ void TaskScheduler::RestoreIdle(idx_t index) {
 	idle_count.fetch_add(1, std::memory_order_seq_cst);
 }
 
-void TaskScheduler::ReleaseClaims(SchedulerWorker &worker) {
-	if (worker.account && queue.Unclaim(*worker.account)) {
+void TaskScheduler::ReleaseClaims(SchedulerWorker &worker, bool wake) {
+	if (worker.account && queue.Unclaim(*worker.account) && wake) {
 		Wake(1, worker.account.get());
 	}
 }
@@ -408,8 +477,16 @@ void TaskScheduler::Unbind(SchedulerWorker &worker) {
 	}
 }
 
+void TaskScheduler::Arrive(SchedulerWorker &worker) {
+	if (worker.woken.load(std::memory_order_relaxed)) {
+		worker.woken.store(false, std::memory_order_relaxed);
+		waking.fetch_sub(1, std::memory_order_relaxed);
+	}
+}
+
 bool TaskScheduler::TakeTask(SchedulerWorker &worker, shared_ptr<Task> &task) {
 	if (worker.spare && RetireSpare(worker, false)) {
+		Arrive(worker);
 		Unbind(worker);
 		return false;
 	}
@@ -422,16 +499,21 @@ bool TaskScheduler::TakeTask(SchedulerWorker &worker, shared_ptr<Task> &task) {
 		}
 		ReleaseHandoff(worker);
 	}
-	if (worker.rotate && !Rebind(worker)) {
-		return false;
+	if (worker.rotate) {
+		Arrive(worker);
+		if (!Rebind(worker)) {
+			return false;
+		}
 	}
 	while (true) {
 		if (running.load(std::memory_order_relaxed) >= target.load(std::memory_order_relaxed)) {
+			Arrive(worker);
 			Unbind(worker);
 			return false;
 		}
 		if (worker.account && queue.Dequeue(*worker.account, task)) {
 			const auto busy = running.fetch_add(1, std::memory_order_relaxed) + 1;
+			Arrive(worker);
 			worker.holds_slot = true;
 			worker.idle_phase = 0;
 			if (queue.GetTasksInQueue() > 0 && waking.load(std::memory_order_relaxed) == 0 &&
@@ -440,10 +522,41 @@ bool TaskScheduler::TakeTask(SchedulerWorker &worker, shared_ptr<Task> &task) {
 			}
 			return true;
 		}
+		Arrive(worker);
 		if (!Rebind(worker)) {
 			return false;
 		}
 	}
+}
+
+bool TaskScheduler::TakeStarted(shared_ptr<Task> &task) {
+	if (started_count.load(std::memory_order_relaxed) == 0) {
+		return false;
+	}
+	const annotated_lock_guard<annotated_mutex> guard(started_lock);
+	if (started_tasks.empty()) {
+		return false;
+	}
+	task = std::move(started_tasks.back());
+	started_tasks.pop_back();
+	started_count.fetch_sub(1, std::memory_order_relaxed);
+	return true;
+}
+
+void TaskScheduler::RunStarted(SchedulerWorker &worker, shared_ptr<Task> &task) {
+	const auto account = worker.account;
+	if (account) {
+		ReleaseClaims(worker);
+		queue.Detach(*account);
+	}
+	worker.blocking_depth++;
+	std::ignore = task->Execute(TaskExecutionMode::PROCESS_ALL);
+	worker.blocking_depth--;
+	if (account) {
+		queue.Attach(*account);
+	}
+	task.reset();
+	Unblock();
 }
 
 void TaskScheduler::RunTask(SchedulerWorker &worker, shared_ptr<Task> &task) {
@@ -461,7 +574,7 @@ void TaskScheduler::RunTask(SchedulerWorker &worker, shared_ptr<Task> &task) {
 		worker.blocking_depth--;
 		queue.Attach(*worker.account);
 		worker.released_slot = false;
-		blocked.fetch_sub(1, std::memory_order_relaxed);
+		Unblock();
 	} else {
 		worker.slice_start = TimePoint::Now();
 		result = task->Execute(TaskExecutionMode::PROCESS_PARTIAL);
@@ -517,12 +630,12 @@ bool TaskScheduler::CheckLeave(SchedulerWorker &worker, int64_t slice) {
 	return false;
 }
 
-void TaskScheduler::ReleaseSlot(SchedulerWorker &worker) {
+void TaskScheduler::ReleaseSlot(SchedulerWorker &worker, bool wake) {
 	running.fetch_sub(1, std::memory_order_relaxed);
 	worker.holds_slot = false;
 	worker.released_slot = true;
 	blocked.fetch_add(1, std::memory_order_relaxed);
-	if (queue.GetTasksInQueue() > 0) {
+	if (wake && queue.GetTasksInQueue() > 0) {
 		Wake(1, worker.account.get());
 	}
 }
@@ -531,7 +644,14 @@ void TaskScheduler::ReacquireSlot(SchedulerWorker &worker) {
 	worker.must_yield = running.fetch_add(1, std::memory_order_relaxed) >= target.load(std::memory_order_relaxed);
 	worker.holds_slot = true;
 	worker.released_slot = false;
-	blocked.fetch_sub(1, std::memory_order_relaxed);
+	Unblock();
+}
+
+void TaskScheduler::Unblock() {
+	const auto still_blocked = blocked.fetch_sub(1, std::memory_order_seq_cst) - 1;
+	if (spares.load(std::memory_order_seq_cst) > still_blocked + target.load(std::memory_order_relaxed)) {
+		RetireIdleSpare();
+	}
 }
 
 bool TaskScheduler::Register(SchedulerWorker &worker) {
@@ -544,6 +664,9 @@ bool TaskScheduler::Register(SchedulerWorker &worker) {
 			if (!(bits & mask)) {
 				worker.index = word * 64 + bit;
 				workers[worker.index].store(&worker, std::memory_order_release);
+				if (worker.spare) {
+					spare_bits[word].fetch_or(mask, std::memory_order_relaxed);
+				}
 				return true;
 			}
 		}
@@ -554,6 +677,9 @@ bool TaskScheduler::Register(SchedulerWorker &worker) {
 void TaskScheduler::Unregister(SchedulerWorker &worker) {
 	if (worker.index == DConstants::INVALID_INDEX) {
 		return;
+	}
+	if (worker.spare) {
+		spare_bits[worker.index / 64].fetch_and(~(uint64_t(1) << (worker.index % 64)), std::memory_order_relaxed);
 	}
 	workers[worker.index].store(nullptr, std::memory_order_relaxed);
 	registered[worker.index / 64].fetch_and(~(uint64_t(1) << (worker.index % 64)), std::memory_order_release);
@@ -584,35 +710,38 @@ bool TaskScheduler::ClaimIdle(idx_t &index) {
 
 bool TaskScheduler::Park(SchedulerWorker &worker) {
 #ifndef DUCKDB_NO_THREADS
-	static constexpr int64_t SPARE_IDLE_WAIT = 5000000;
 	if (worker.retired) {
 		return false;
 	}
 	idle_bits[worker.index / 64].fetch_or(uint64_t(1) << (worker.index % 64), std::memory_order_seq_cst);
 	idle_count.fetch_add(1, std::memory_order_seq_cst);
 	const auto busy = running.load(std::memory_order_relaxed) + waking.load(std::memory_order_relaxed);
-	if (queue.HasQueuedTasks() && busy < target.load(std::memory_order_relaxed) && queue.HasListed() &&
-	    !queue.Selecting() && !lock_waiter.load(std::memory_order_seq_cst)) {
+	if (worker.spare && spares.load(std::memory_order_seq_cst) >
+	                        blocked.load(std::memory_order_seq_cst) + target.load(std::memory_order_relaxed)) {
+		if (ClearIdle(worker.index)) {
+			idle_count.fetch_sub(1, std::memory_order_relaxed);
+			return !RetireSpare(worker, false);
+		}
+		worker.semaphore.wait();
+	} else if (queue.HasQueuedTasks() && busy < target.load(std::memory_order_relaxed) && queue.HasListed() &&
+	           !queue.Selecting() && !lock_waiter.load(std::memory_order_seq_cst)) {
 		if (ClearIdle(worker.index)) {
 			idle_count.fetch_sub(1, std::memory_order_relaxed);
 			return true;
 		}
 		worker.semaphore.wait();
-	} else if (!worker.semaphore.wait(worker.spare ? SPARE_IDLE_WAIT : IdleWaitMicros(worker))) {
+	} else if (!worker.semaphore.wait(IdleWaitMicros(worker))) {
 		if (ClearIdle(worker.index)) {
 			idle_count.fetch_sub(1, std::memory_order_relaxed);
-			if (worker.spare) {
-				RetireSpare(worker, true);
-				return false;
-			}
 			IdleTimeout(worker);
 			return true;
 		}
 		worker.semaphore.wait();
 	}
+	if (worker.retired) {
+		return false;
+	}
 	SDB_PARK_ONCE_ON_FAILURE("scheduler_woken_worker_pauses");
-	worker.woken.store(false, std::memory_order_relaxed);
-	waking.fetch_sub(1, std::memory_order_relaxed);
 	return true;
 #else
 	return false;
@@ -663,11 +792,6 @@ bool TaskScheduler::ShouldYield() {
 		return true;
 	}
 	auto &scheduler = worker->scheduler;
-	if (worker->spare &&
-	    scheduler.spares.load(std::memory_order_relaxed) > scheduler.blocked.load(std::memory_order_relaxed)) {
-		worker->rotate = true;
-		return true;
-	}
 	const auto slice = TimePoint::Now() - worker->slice_start - worker->blocked_ticks;
 	if (worker->scheduler.CheckLeave(*worker, slice)) {
 		worker->rotate = true;
@@ -686,16 +810,23 @@ bool TaskScheduler::ShouldYield() {
 void TaskScheduler::WorkerLoop(atomic<bool> *marker, bool spare) {
 #ifndef DUCKDB_NO_THREADS
 	SchedulerWorker worker(*this, spare);
+	shared_ptr<Task> task;
 	if (!Register(worker)) {
 		if (spare) {
 			spares.fetch_sub(1, std::memory_order_relaxed);
 		}
+		while (TakeStarted(task)) {
+			RunStarted(worker, task);
+		}
 		return;
 	}
 	current_worker = &worker;
-	shared_ptr<Task> task;
 	// loop until the marker is set to false
 	while (*marker) {
+		if (TakeStarted(task)) {
+			RunStarted(worker, task);
+			continue;
+		}
 		if (TakeTask(worker, task)) {
 			RunTask(worker, task);
 			continue;
@@ -704,6 +835,10 @@ void TaskScheduler::WorkerLoop(atomic<bool> *marker, bool spare) {
 			break;
 		}
 	}
+	while (TakeStarted(task)) {
+		RunStarted(worker, task);
+	}
+	Arrive(worker);
 	Unbind(worker);
 	if (spare && !worker.retired) {
 		spares.fetch_sub(1, std::memory_order_relaxed);
@@ -829,6 +964,9 @@ void TaskScheduler::SetThreads(idx_t total_threads, idx_t external_threads) {
 #ifndef DUCKDB_NO_THREADS
 	if (total_threads < external_threads) {
 		throw SyntaxException("Number of threads can't be smaller than number of external threads!");
+	}
+	if (total_threads > MAX_WORKERS) {
+		throw InvalidInputException("Number of threads can't be larger than %d!", MAX_WORKERS);
 	}
 #else
 	if (total_threads != external_threads) {

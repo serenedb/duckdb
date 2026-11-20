@@ -59,6 +59,11 @@ public:
 		RunGuarded([&]() { task->Cancel(); }, "Unknown exception while cancelling a task");
 	}
 
+	//! Hands the task back to a caller that could not start it
+	unique_ptr<BaseExecutorTask> Release() {
+		return std::move(task);
+	}
+
 private:
 	//! Settles the executor's task counter on every exit path, so that a drain always terminates
 	class FinishGuard {
@@ -183,6 +188,24 @@ void TaskExecutor::ScheduleTask(unique_ptr<BaseExecutorTask> task) {
 		scheduled_task->Retire();
 		throw;
 	}
+}
+
+bool TaskExecutor::StartTask(unique_ptr<BaseExecutorTask> &task) {
+	auto started = make_shared_ptr<TaskExecutorTask>(*this, std::move(task));
+	{
+		const annotated_lock_guard<annotated_mutex> lock(token->producer_lock);
+		++total_tasks;
+	}
+	if (scheduler.StartBlockingTask(started)) {
+		return true;
+	}
+	{
+		const annotated_lock_guard<annotated_mutex> lock(token->producer_lock);
+		--total_tasks;
+		token->producer_cv.SignalAll();
+	}
+	task = started->Release();
+	return false;
 }
 
 void TaskExecutor::ScheduleTask(unique_ptr<BaseExecutorTask> task, idx_t limit) {

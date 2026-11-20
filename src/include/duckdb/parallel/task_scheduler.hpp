@@ -32,6 +32,8 @@ struct SchedulerWorker;
 //! The TaskScheduler is responsible for managing tasks and threads
 class TaskScheduler {
 public:
+	static constexpr idx_t MAX_WORKERS = 1024;
+
 	explicit TaskScheduler(DatabaseInstance &db);
 	~TaskScheduler();
 
@@ -42,6 +44,7 @@ public:
 	class BlockingScope {
 	public:
 		BlockingScope();
+		explicit BlockingScope(bool wake);
 		~BlockingScope();
 		BlockingScope(const BlockingScope &) = delete;
 		BlockingScope &operator=(const BlockingScope &) = delete;
@@ -90,6 +93,9 @@ public:
 	void ScheduleTasks(ProducerToken &producer, std::span<shared_ptr<Task>> tasks);
 	void ScheduleConcurrentTask(ProducerToken &producer, shared_ptr<Task> task);
 	void ScheduleConcurrentTasks(ProducerToken &producer, std::span<shared_ptr<Task>> tasks);
+	//! Runs [task], which waits rather than computes, at once on a parked thread or a new spare, outside the CPU
+	//! slots: a caller waiting for it then waits for no worker. False when no thread is parked and no spare may start
+	bool StartBlockingTask(shared_ptr<Task> task);
 	//! Fetches a task from a specific producer, returns true if successful or false if no tasks were available
 	bool GetTaskFromProducer(ProducerToken &token, shared_ptr<Task> &task);
 	//! Fetches a task from a specific producer, returns whether a task was found and assigned to `task`.
@@ -136,15 +142,19 @@ private:
 	             bool keep_in_task);
 	void WorkerLoop(atomic<bool> *marker, bool spare);
 	bool TakeTask(SchedulerWorker &worker, shared_ptr<Task> &task);
+	bool TakeStarted(shared_ptr<Task> &task);
+	void RunStarted(SchedulerWorker &worker, shared_ptr<Task> &task);
+	void Arrive(SchedulerWorker &worker);
 	void Leave(SchedulerWorker &worker);
 	bool Rebind(SchedulerWorker &worker);
 	void Unbind(SchedulerWorker &worker);
-	void ReleaseClaims(SchedulerWorker &worker);
+	void ReleaseClaims(SchedulerWorker &worker, bool wake = true);
 	bool Park(SchedulerWorker &worker);
 	void RunTask(SchedulerWorker &worker, shared_ptr<Task> &task);
 	bool CheckLeave(SchedulerWorker &worker, int64_t slice);
-	void ReleaseSlot(SchedulerWorker &worker);
+	void ReleaseSlot(SchedulerWorker &worker, bool wake = true);
 	void ReacquireSlot(SchedulerWorker &worker);
+	void Unblock();
 	void Wake(idx_t count, optional_ptr<SchedulerAccount> account);
 	void ReleaseHandoff(SchedulerWorker &worker);
 	bool LockToDispatch() DUCKDB_TRY_ACQUIRE(true, queue.lock);
@@ -157,6 +167,7 @@ private:
 	bool ClaimIdle(idx_t &index);
 	bool SpawnSpare();
 	bool RetireSpare(SchedulerWorker &worker, bool force);
+	void RetireIdleSpare();
 	void WakeAll();
 	void SetTargetThreads(idx_t count);
 	int64_t IdleWaitMicros(SchedulerWorker &worker);
@@ -168,11 +179,11 @@ private:
 	mutex thread_lock;
 	unique_ptr<TaskSchedulerPool> pool;
 	TaskSchedulerQueue queue;
-	static constexpr idx_t MAX_WORKERS = 2048;
 	static constexpr idx_t WORKER_WORDS = MAX_WORKERS / 64;
 	array<atomic<SchedulerWorker *>, MAX_WORKERS> workers {};
 	array<atomic<uint64_t>, WORKER_WORDS> registered {};
 	array<atomic<uint64_t>, WORKER_WORDS> idle_bits {};
+	array<atomic<uint64_t>, WORKER_WORDS> spare_bits {};
 	atomic<idx_t> idle_count {0};
 	atomic<bool> lock_waiter {false};
 	atomic<idx_t> waking {0};
@@ -181,6 +192,9 @@ private:
 	atomic<idx_t> running {0};
 	atomic<idx_t> target {0};
 	atomic<idx_t> async_threads {0};
+	annotated_mutex started_lock;
+	vector<shared_ptr<Task>> started_tasks DUCKDB_GUARDED_BY(started_lock);
+	atomic<idx_t> started_count {0};
 	shared_ptr<SchedulerAccount> background_account;
 };
 

@@ -2,12 +2,19 @@
 #include "test_helpers.hpp"
 #include "duckdb/execution/operator/scan/physical_column_data_scan.hpp"
 #include "duckdb/execution/physical_plan_generator.hpp"
+#include "duckdb/parallel/task_executor.hpp"
 #include "duckdb/parallel/task_scheduler.hpp"
+#include "duckdb/common/mutex.hpp"
 #include "duckdb/common/virtual_file_system.hpp"
 #include "duckdb/main/settings.hpp"
 #include "duckdb/storage/storage_info.hpp"
 
+#include <chrono>
+#include <fstream>
 #include <thread>
+#ifdef __linux__
+#include <dirent.h>
+#endif
 
 using namespace duckdb;
 
@@ -217,5 +224,192 @@ TEST_CASE("Test scheduling with no threads", "[api]") {
 	REQUIRE((query_1_pipelines == 0));
 	query_1->Complete();
 	REQUIRE_NO_FAIL(*query_1);
+}
+#endif
+
+#ifdef __linux__
+static idx_t CountProcessThreads() {
+	idx_t count = 0;
+	auto dir = opendir("/proc/self/task");
+	if (!dir) {
+		return 0;
+	}
+	while (auto entry = readdir(dir)) {
+		if (entry->d_name[0] == '.') {
+			continue;
+		}
+		std::ifstream comm(string("/proc/self/task/") + entry->d_name + "/comm");
+		string name;
+		std::getline(comm, name);
+		if (name != "jemalloc_bg_thd") {
+			count++;
+		}
+	}
+	closedir(dir);
+	return count;
+}
+
+static bool AwaitThreadsAtMost(idx_t threads) {
+	for (idx_t i = 0; i < 3000; i++) {
+		if (CountProcessThreads() <= threads) {
+			return true;
+		}
+		std::this_thread::sleep_for(std::chrono::milliseconds(10));
+	}
+	return false;
+}
+
+static idx_t ThreadsWhileCallsWait(TaskScheduler &scheduler, idx_t calls) {
+	mutex lock;
+	bool release = false;
+	atomic<idx_t> waiting {0};
+	TaskExecutor executor(scheduler, scheduler.CreateAccount(SchedulerClass::FOREGROUND));
+	for (idx_t i = 0; i < calls; i++) {
+		executor.ScheduleTask(
+		    [&]() {
+			    TaskScheduler::BlockingScope blocking;
+			    waiting++;
+			    lock.Lock();
+			    lock.Await(absl::Condition(&release));
+			    lock.Unlock();
+		    },
+		    "WaitingCall");
+	}
+	for (idx_t i = 0; i < 3000 && waiting.load() < calls; i++) {
+		std::this_thread::sleep_for(std::chrono::milliseconds(10));
+	}
+	REQUIRE(waiting.load() == calls);
+	const auto threads = CountProcessThreads();
+	{
+		lock_guard<mutex> guard(lock);
+		release = true;
+	}
+	executor.WorkOnTasks();
+	return threads;
+}
+
+TEST_CASE("Waiting calls reuse parked spares and the spares beyond the pool size exit", "[api]") {
+	DBConfig config;
+	config.options.maximum_threads = 3;
+	DuckDB db(nullptr, &config);
+	auto &scheduler = TaskScheduler::GetScheduler(*db.instance);
+	constexpr idx_t pool = 2;
+	const auto before = CountProcessThreads();
+
+	REQUIRE(ThreadsWhileCallsWait(scheduler, 8) >= before + 8 - pool);
+	REQUIRE(AwaitThreadsAtMost(before + pool));
+
+	REQUIRE(ThreadsWhileCallsWait(scheduler, 2 * pool) < before + 2 * pool);
+	REQUIRE(AwaitThreadsAtMost(before + pool));
+}
+
+TEST_CASE("Waiting calls that wake no worker start no thread and leave their slots to new work", "[api]") {
+	DBConfig config;
+	config.options.maximum_threads = 3;
+	DuckDB db(nullptr, &config);
+	auto &scheduler = TaskScheduler::GetScheduler(*db.instance);
+	constexpr idx_t pool = 2;
+	const auto before = CountProcessThreads();
+	mutex lock;
+	bool release = false;
+	atomic<idx_t> waiting {0};
+	atomic<bool> ran {false};
+	TaskExecutor executor(scheduler, scheduler.CreateAccount(SchedulerClass::FOREGROUND));
+	for (idx_t i = 0; i < pool; i++) {
+		executor.ScheduleTask(
+		    [&]() {
+			    TaskScheduler::BlockingScope blocking {false};
+			    waiting++;
+			    lock.Lock();
+			    lock.Await(absl::Condition(&release));
+			    lock.Unlock();
+		    },
+		    "SilentWait");
+	}
+	for (idx_t i = 0; i < 3000 && waiting.load() < pool; i++) {
+		std::this_thread::sleep_for(std::chrono::milliseconds(10));
+	}
+	REQUIRE(waiting.load() == pool);
+	REQUIRE(CountProcessThreads() == before);
+
+	executor.ScheduleTask([&]() { ran = true; }, "NewWork");
+	for (idx_t i = 0; i < 3000 && !ran.load(); i++) {
+		std::this_thread::sleep_for(std::chrono::milliseconds(10));
+	}
+	REQUIRE(ran.load());
+	REQUIRE(waiting.load() == pool);
+	{
+		lock_guard<mutex> guard(lock);
+		release = true;
+	}
+	executor.WorkOnTasks();
+}
+#endif
+
+#ifndef DUCKDB_NO_THREADS
+class SetFlagTask : public BaseExecutorTask {
+public:
+	SetFlagTask(TaskExecutor &executor, atomic<bool> &flag_p) : BaseExecutorTask(executor), flag(flag_p) {
+	}
+	void ExecuteTask() override {
+		flag = true;
+	}
+
+private:
+	atomic<bool> &flag;
+};
+
+TEST_CASE("A started task runs at once while every worker waits on a lock", "[api]") {
+	DBConfig config;
+	config.options.maximum_threads = 2;
+	DuckDB db(nullptr, &config);
+	auto &scheduler = TaskScheduler::GetScheduler(*db.instance);
+	mutex lock;
+	bool release = false;
+	atomic<bool> occupied {false};
+	TaskExecutor busy(scheduler, scheduler.CreateAccount(SchedulerClass::FOREGROUND));
+	busy.ScheduleTask(
+	    [&]() {
+		    occupied = true;
+		    lock.Lock();
+		    lock.Await(absl::Condition(&release));
+		    lock.Unlock();
+	    },
+	    "OccupyWorker");
+	for (idx_t i = 0; i < 3000 && !occupied.load(); i++) {
+		std::this_thread::sleep_for(std::chrono::milliseconds(10));
+	}
+	REQUIRE(occupied.load());
+
+	atomic<bool> ran {false};
+	TaskExecutor waited(scheduler);
+	unique_ptr<BaseExecutorTask> task = make_uniq<SetFlagTask>(waited, ran);
+	REQUIRE(waited.StartTask(task));
+	REQUIRE(!task);
+	for (idx_t i = 0; i < 3000 && !ran.load(); i++) {
+		std::this_thread::sleep_for(std::chrono::milliseconds(10));
+	}
+	const bool in_time = ran.load();
+	{
+		lock_guard<mutex> guard(lock);
+		release = true;
+	}
+	busy.WorkOnTasks();
+	waited.WorkOnTasks();
+	REQUIRE(in_time);
+}
+
+TEST_CASE("Without workers a task does not start and stays with its caller", "[api]") {
+	DBConfig config;
+	config.options.maximum_threads = 1;
+	DuckDB db(nullptr, &config);
+	auto &scheduler = TaskScheduler::GetScheduler(*db.instance);
+	atomic<bool> ran {false};
+	TaskExecutor executor(scheduler);
+	unique_ptr<BaseExecutorTask> task = make_uniq<SetFlagTask>(executor, ran);
+	REQUIRE(!executor.StartTask(task));
+	REQUIRE(task);
+	executor.WorkOnTasks();
+	REQUIRE(!ran.load());
 }
 #endif
