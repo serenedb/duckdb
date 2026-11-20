@@ -186,6 +186,29 @@ inf
 1.5
 
 statement ok
+COPY (SELECT line FROM (VALUES
+	(1, '{"d": -0, "n": -0}'),
+	(2, '{"d": -0.0, "n": 2.0}'),
+	(3, '{"d": -0e0, "n": 9223372036854775807}'),
+	(4, '{"d": 7, "n": -9223372036854775808}'),
+	(5, '{"d": 2.5, "n": 9223372036854775808}'),
+	(6, '{"d": 18446744073709551616, "n": 18446744073709551615}')
+) t(i, line) ORDER BY i) TO '{TEMP_DIR}/number_forms.ndjson' (FORMAT csv, HEADER false, QUOTE '', ESCAPE '');
+
+statement error
+SELECT d, n FROM read_ndjson('{TEMP_DIR}/number_forms.ndjson', columns := {d: 'DOUBLE', n: 'BIGINT'}, records := true);
+----
+<REGEX>:.*in line 5: Failed to cast value to numerical: 9223372036854775808\n.*
+
+statement ok
+COPY (SELECT line FROM (VALUES (1, '{"m": 1.5}'), (2, '{"m": 123456}'), (3, '{"m": 999999}')) t(i, line) ORDER BY i) TO '{TEMP_DIR}/decimal_range.ndjson' (FORMAT csv, HEADER false, QUOTE '', ESCAPE '');
+
+statement error
+SELECT m FROM read_ndjson('{TEMP_DIR}/decimal_range.ndjson', columns := {m: 'DECIMAL(4,1)'}, records := true);
+----
+<REGEX>:.*in line 2: Failed to cast value to decimal: 123456\n.*
+
+statement ok
 COPY (SELECT line FROM (VALUES (1, '{"n": 1}'), (2, '{"n": +2}')) t(i, line) ORDER BY i) TO '{TEMP_DIR}/untyped_value.ndjson' (FORMAT csv, HEADER false, QUOTE '', ESCAPE '');
 
 statement error
