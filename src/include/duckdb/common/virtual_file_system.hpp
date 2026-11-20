@@ -8,17 +8,21 @@
 
 #pragma once
 
+#include "duckdb/common/array.hpp"
+#include "duckdb/common/atomic.hpp"
 #include "duckdb/common/file_system.hpp"
 #include "duckdb/common/map.hpp"
 #include "duckdb/common/unordered_set.hpp"
 #include "duckdb/common/mutex.hpp"
 
 namespace duckdb {
-struct FileSystemRegistry;
 
 // bunch of wrappers to allow registering protocol handlers
 class VirtualFileSystem : public FileSystem {
 public:
+	static constexpr idx_t MAX_SUB_SYSTEMS = 64;
+	static constexpr idx_t MAX_COMPRESSION_SYSTEMS = 16;
+
 	VirtualFileSystem();
 	explicit VirtualFileSystem(unique_ptr<FileSystem> &&inner_file_system);
 	~VirtualFileSystem() override;
@@ -115,19 +119,41 @@ protected:
 	}
 
 private:
+	struct SubSystem {
+		atomic<FileSystem *> file_system {nullptr};
+		atomic<bool> disabled {false};
+		string name;
+		unique_ptr<FileSystem> owner;
+	};
+
+	struct CompressionSystem {
+		atomic<CompressedFileSystem *> file_system {nullptr};
+		string compression;
+		unique_ptr<CompressedFileSystem> owner;
+	};
+
+	struct SubSystemMatch {
+		reference<SubSystem> sub_system;
+		reference<FileSystem> file_system;
+	};
+
 	FileSystem &FindFileSystem(const string &path, optional_ptr<FileOpener> file_opener);
-	FileSystem &FindFileSystem(shared_ptr<FileSystemRegistry> &registry, const string &path,
-	                           optional_ptr<FileOpener> file_opener);
-	optional_ptr<FileSystem> FindFileSystemInternal(FileSystemRegistry &registry, const string &path);
+	SubSystemMatch FindSubSystem(const string &path);
+	optional_ptr<SubSystem> FindRegistered(const string &name);
+	optional_ptr<SubSystem> FindRemovable(const string &name) DUCKDB_REQUIRES(registry_lock);
 	// Return nullptr if compression is not involved, throw exception if compression is requested but no usable
 	// filesystem gets registered.
-	optional_ptr<FileSystem> FindCompressionFileSystem(FileSystemRegistry &registry,
-	                                                   const FileCompressionType &compression, const string &path);
+	optional_ptr<FileSystem> FindCompressionFileSystem(const FileCompressionType &compression, const string &path);
 
 private:
-	mutex registry_lock;
-	shared_ptr<FileSystemRegistry> file_system_registry;
-	vector<unique_ptr<FileSystem>> unregistered_file_systems;
+	annotated_mutex registry_lock;
+	unordered_set<string> disabled_file_systems DUCKDB_GUARDED_BY(registry_lock);
+	atomic<bool> any_disabled {false};
+	SubSystem default_file_system;
+	array<SubSystem, MAX_SUB_SYSTEMS> sub_systems;
+	atomic<idx_t> sub_system_count {0};
+	array<CompressionSystem, MAX_COMPRESSION_SYSTEMS> compression_systems;
+	atomic<idx_t> compression_system_count {0};
 };
 
 } // namespace duckdb

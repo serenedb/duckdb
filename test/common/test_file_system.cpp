@@ -4,6 +4,7 @@
 #include "duckdb/common/file_buffer.hpp"
 #include "duckdb/common/file_system.hpp"
 #include "duckdb/common/fstream.hpp"
+#include "duckdb/common/gzip_file_system.hpp"
 #include "duckdb/common/local_file_system.hpp"
 #include "duckdb/common/memory_mapped_file.hpp"
 #include "duckdb/common/opener_file_system.hpp"
@@ -594,6 +595,129 @@ TEST_CASE("Combined open flags keep the caching mode", "[file_system]") {
 	REQUIRE((cached | FileFlags::FILE_FLAGS_PARALLEL_ACCESS).GetCachingMode() == CachingMode::ALWAYS_CACHE);
 	REQUIRE((FileOpenFlags(FileFlags::FILE_FLAGS_PARALLEL_ACCESS) | cached).GetCachingMode() ==
 	        CachingMode::ALWAYS_CACHE);
+}
+
+namespace {
+
+class PrefixFileSystem : public LocalFileSystem {
+public:
+	explicit PrefixFileSystem(string name_p) : name(std::move(name_p)) {
+	}
+
+	string GetName() const override {
+		return name;
+	}
+
+	bool CanHandleFile(const string &fpath) override {
+		return StringUtil::StartsWith(fpath, name + "://");
+	}
+
+private:
+	string name;
+};
+
+class CountingGZipFileSystem : public GZipFileSystem {
+public:
+	explicit CountingGZipFileSystem(idx_t &opens_p) : opens(opens_p) {
+	}
+
+	unique_ptr<FileHandle> OpenCompressedFile(QueryContext context, unique_ptr<FileHandle> handle,
+	                                          bool write) override {
+		opens++;
+		return GZipFileSystem::OpenCompressedFile(context, std::move(handle), write);
+	}
+
+private:
+	idx_t &opens;
+};
+
+} // namespace
+
+TEST_CASE("Path calls run while filesystems are registered and disabled", "[file_system]") {
+	DBConfig config;
+	config.options.maximum_threads = 5;
+	DuckDB db(nullptr, &config);
+	VirtualFileSystem vfs;
+	constexpr idx_t file_systems = 16;
+	atomic<bool> done {false};
+	atomic<idx_t> shrunk {0};
+	TaskExecutor executor(TaskScheduler::GetScheduler(*db.instance));
+	for (idx_t t = 0; t < 4; t++) {
+		executor.ScheduleTask(
+		    [&]() {
+			    idx_t seen = 0;
+			    while (!done.load()) {
+				    auto names = vfs.ListSubSystems();
+				    if (names.size() < seen) {
+					    shrunk++;
+				    }
+				    seen = names.size();
+				    vfs.IsDisabledForPath("fs3://file");
+				    vfs.SubSystemIsDisabled("fs7");
+			    }
+		    },
+		    "FileSystemTestTask");
+	}
+	for (idx_t i = 0; i < file_systems; i++) {
+		vfs.RegisterSubSystem(make_uniq<PrefixFileSystem>("fs" + std::to_string(i)));
+	}
+	vfs.SetDisabledFileSystems({"fs3"});
+	vfs.SetDisabledFileSystems({"fs3", "fs7"});
+	done = true;
+	executor.WorkOnTasks();
+	REQUIRE(shrunk == 0);
+	REQUIRE(vfs.ListSubSystems().size() == file_systems);
+	REQUIRE(vfs.IsDisabledForPath("fs3://file"));
+	REQUIRE(vfs.SubSystemIsDisabled("fs7"));
+}
+
+TEST_CASE("A filesystem disabled before it registers is disabled, and an unregistered one gives its paths back",
+          "[file_system]") {
+	VirtualFileSystem vfs;
+	vfs.SetDisabledFileSystems({"fs1"});
+	REQUIRE(vfs.SubSystemIsDisabled("fs1"));
+	REQUIRE(!vfs.SubSystemIsDisabled("fs2"));
+	vfs.RegisterSubSystem(make_uniq<PrefixFileSystem>("fs1"));
+	vfs.RegisterSubSystem(make_uniq<PrefixFileSystem>("fs2"));
+	REQUIRE(vfs.SubSystemIsDisabled("fs1"));
+	REQUIRE(vfs.IsDisabledForPath("fs1://file"));
+	REQUIRE_THROWS_AS(vfs.PathSeparator("fs1://file"), PermissionException);
+	REQUIRE(!vfs.IsDisabledForPath("fs2://file"));
+
+	vfs.UnregisterSubSystem("fs1");
+	vfs.UnregisterSubSystem("fs2");
+	REQUIRE(vfs.ListSubSystems() == vector<string> {"fs1"});
+	vfs.SetDisabledFileSystems({"fs1", "fs2"});
+	REQUIRE(vfs.SubSystemIsDisabled("fs2"));
+	REQUIRE(!vfs.IsDisabledForPath("fs2://file"));
+
+	vfs.RegisterSubSystem(make_uniq<PrefixFileSystem>("fs2"));
+	REQUIRE(vfs.ListSubSystems() == vector<string> {"fs1", "fs2"});
+	REQUIRE(vfs.IsDisabledForPath("fs2://file"));
+}
+
+TEST_CASE("A virtual filesystem refuses filesystems beyond its slots", "[file_system]") {
+	VirtualFileSystem vfs;
+	for (idx_t i = 0; i < VirtualFileSystem::MAX_SUB_SYSTEMS; i++) {
+		vfs.RegisterSubSystem(make_uniq<PrefixFileSystem>("fs" + std::to_string(i)));
+	}
+	REQUIRE_THROWS_AS(vfs.RegisterSubSystem(make_uniq<PrefixFileSystem>("one_more")), InvalidInputException);
+	REQUIRE(vfs.ListSubSystems().size() == VirtualFileSystem::MAX_SUB_SYSTEMS);
+}
+
+TEST_CASE("The newest compression filesystem of a type opens its files", "[file_system]") {
+	VirtualFileSystem vfs;
+	idx_t first = 0;
+	idx_t second = 0;
+	vfs.RegisterCompressionFilesystem(make_uniq<CountingGZipFileSystem>(first));
+	vfs.RegisterCompressionFilesystem(make_uniq<CountingGZipFileSystem>(second));
+	auto path = TestCreatePath("newest_compression.csv.gz");
+	vfs.OpenFile(path, FileFlags::FILE_FLAGS_WRITE | FileFlags::FILE_FLAGS_FILE_CREATE_NEW | FileCompressionType::GZIP)
+	    ->Close();
+	vfs.OpenFile(path, FileFlags::FILE_FLAGS_READ | FileCompressionType::AUTO_DETECT)->Close();
+	REQUIRE(first == 0);
+	REQUIRE(second == 2);
+	vfs.RemoveFile(path, nullptr);
 }
 
 TEST_CASE("Mapped files take read-ahead hints", "[file_system]") {
