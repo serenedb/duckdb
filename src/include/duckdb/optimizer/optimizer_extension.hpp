@@ -32,7 +32,13 @@ struct OptimizerExtensionInput {
 
 typedef void (*optimize_function_t)(OptimizerExtensionInput &input, unique_ptr<LogicalOperator> &plan);
 typedef void (*pre_optimize_function_t)(OptimizerExtensionInput &input, unique_ptr<LogicalOperator> &plan);
-typedef bool (*rewrite_barrier_t)(const Expression &parent, bool parent_frozen);
+struct RewriteBarrier {
+	bool frozen = false;
+	bool scored = false;
+};
+
+typedef RewriteBarrier (*rewrite_barrier_t)(const Expression &expr, optional_ptr<const Expression> parent,
+                                            bool parent_frozen);
 
 //! Position of an anchored rule relative to the built-in pass it targets.
 enum class OptimizerHookPosition : uint8_t { Before, After };
