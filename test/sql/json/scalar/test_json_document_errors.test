@@ -80,3 +80,53 @@ statement error
 SELECT '+1'::JSON;
 ----
 Malformed JSON at byte 0 of input: unexpected character
+
+statement error
+SELECT 'tru'::JSON;
+----
+Malformed JSON at byte 0 of input: invalid literal, expected 'true'
+
+statement error
+SELECT ' [1] 2'::JSON;
+----
+Malformed JSON at byte 5 of input: unexpected content after document
+
+statement error
+SELECT (chr(9) || '[1] 2')::JSON;
+----
+Malformed JSON at byte 5 of input: unexpected content after document
+
+statement error
+SELECT (chr(10) || '[1] 2')::JSON;
+----
+Malformed JSON at byte 5 of input: unexpected content after document
+
+statement error
+SELECT (chr(13) || '[1] 2')::JSON;
+----
+Malformed JSON at byte 5 of input: unexpected content after document
+
+statement error
+SELECT ('[1]' || chr(9) || '2')::JSON;
+----
+Malformed JSON at byte 4 of input: unexpected content after document
+
+statement error
+SELECT ('[1]' || chr(10) || '2')::JSON;
+----
+Malformed JSON at byte 4 of input: unexpected content after document
+
+statement error
+SELECT ('[1]' || chr(13) || '2')::JSON;
+----
+Malformed JSON at byte 4 of input: unexpected content after document
+
+statement error
+SELECT '{"a":1]'::JSON;
+----
+<REGEX>:.*Malformed JSON at byte \d+ of input: unexpected end of data.*
+
+statement error
+SELECT '{"a" 1} 2'::JSON;
+----
+<REGEX>:.*Malformed JSON at byte \d+ of input: unexpected character.*
