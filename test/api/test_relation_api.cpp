@@ -959,6 +959,19 @@ TEST_CASE("Test CSV Relation with union by name", "[relation_api]") {
 	REQUIRE(!result->HasError());
 }
 
+TEST_CASE("Test reading several CSV files sniffs the files after a short first one", "[relation_api]") {
+	DuckDB db(nullptr);
+	Connection con(db);
+	duckdb::vector<string> paths {"data/csv/sample-0.csv", "data/csv/sample-0.csv"};
+	auto csv_scan = con.ReadCSV(paths, named_parameter_map_t());
+	auto result = csv_scan->Execute();
+	REQUIRE(!result->HasError());
+	REQUIRE(result->RowCount() == 6);
+	REQUIRE(CHECK_COLUMN(result, 0,
+	                     {Value::DATE(2024, 1, 2), Value::DATE(2024, 1, 2), Value::DATE(2024, 1, 2),
+	                      Value::DATE(2024, 1, 2), Value::DATE(2024, 1, 2), Value::DATE(2024, 1, 2)}));
+}
+
 TEST_CASE("Test CSV reading/writing from relations", "[relation_api]") {
 	DuckDB db(nullptr);
 	Connection con(db);
