@@ -1,5 +1,7 @@
 #include "duckdb/execution/operator/aggregate/physical_ungrouped_aggregate.hpp"
 
+#include <absl/algorithm/container.h>
+
 #include "duckdb/catalog/catalog_entry/aggregate_function_catalog_entry.hpp"
 #include "duckdb/common/algorithm.hpp"
 #include "duckdb/common/clustered_aggregate.hpp"
@@ -345,6 +347,15 @@ public:
 //===--------------------------------------------------------------------===//
 // Sink
 //===--------------------------------------------------------------------===//
+bool PhysicalUngroupedAggregate::ReadsRowCountOnly() const {
+	return !aggregates.empty() && !distinct_data && absl::c_all_of(aggregates, [](const unique_ptr<Expression> &expr) {
+		auto &aggr = expr->Cast<BoundAggregateExpression>();
+		return aggr.GetChildren().empty() && !aggr.GetFilter() && !aggr.IsDistinct() && !aggr.GetOrderBys() &&
+		       aggr.StateExportMode() == AggregateStateExportMode::NONE &&
+		       aggr.Function().GetStateClusterUpdateCallback();
+	});
+}
+
 bool PhysicalUngroupedAggregate::SinkOrderDependent() const {
 	for (auto &expr : aggregates) {
 		auto &aggr = expr->Cast<BoundAggregateExpression>();
