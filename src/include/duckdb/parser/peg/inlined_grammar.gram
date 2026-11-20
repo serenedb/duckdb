@@ -945,7 +945,7 @@ OrderByCopyOption <- 'ORDER' 'BY' GenericCopyOptionValue?
 PartitionedByCopyOption <- ('PARTITION' / 'PARTITIONED') 'BY' GenericCopyOptionValue?
 GenericCopyOptionList <- Parens(List(GenericCopyOption))
 GenericCopyOption <- CopyOptionName GenericCopyOptionValue?
-GenericCopyOptionValue <- GenericCopyOptionOrderList / CopyFormatKeyword / CopyBooleanKeyword / GenericCopyOptionExpression
+GenericCopyOptionValue <- GenericCopyOptionOrderList / CopyFormatKeyword / CopyBooleanKeyword / CopyVerboseKeyword / GenericCopyOptionExpression
 GenericCopyOptionOrderList <- GenericCopyOptionParenthesizedExpressionList
 GenericCopyOptionExpression <- Expression
 GenericCopyOptionParenthesizedExpressionList <- Parens(OrderByExpressionList)
@@ -956,6 +956,7 @@ CopyFormatKeyword <- 'BINARY'
 # accept it explicitly (the transform maps it to "on", which the binder casts to
 # boolean true). OFF/TRUE/FALSE are not reserved and already parse as Expression.
 CopyBooleanKeyword <- 'ON'
+CopyVerboseKeyword <- 'VERBOSE'
 
 CopyFromDatabase <- CopyFromDatabaseWithFlag / CopyFromDatabaseWithoutFlag
 CopyFromDatabaseWithFlag <- 'FROM' 'DATABASE' ColId 'TO' ColId CopyDatabaseFlag
