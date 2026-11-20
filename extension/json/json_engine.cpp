@@ -731,7 +731,7 @@ idx_t JsonSource::ReadAt(char *data, idx_t count, idx_t offset, optional_ptr<Fil
 
 idx_t JsonSource::Read(char *data, idx_t count) {
 	if (stream) {
-		const auto read = stream->Read(data, count, position);
+		const auto read = stream->ReadFully(data, count, position);
 		position += read;
 		consumed += read;
 		return read;
