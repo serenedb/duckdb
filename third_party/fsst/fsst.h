@@ -264,6 +264,61 @@ duckdb_fsst_decompress(
    return posOut; /* full size of decompressed string (could be >size, then the actually decompressed part) */
 }
 
+/* Decompress the start of a single string: stops once size bytes are written or the input ends. */
+/* Returns DUCKDB_FSST_DECOMPRESS_INVALID_INPUT if an escape is not followed by its literal byte. */
+inline size_t /* OUT: bytes written: at least size, unless the string is shorter; at most size + 31. */
+duckdb_fsst_decompress_prefix(
+   duckdb_fsst_decoder_t *decoder,  /* IN: use this symbol table for compression. */
+   size_t lenIn,             /* IN: byte-length of compressed string. */
+   const unsigned char *strIn,     /* IN: compressed string. */
+   size_t size,              /* IN: bytes wanted. */
+   unsigned char *output     /* OUT: memory buffer of at least size + 31 bytes. */
+) {
+   unsigned char*__restrict__ len = (unsigned char* __restrict__) decoder->len;
+   unsigned char*__restrict__ strOut = (unsigned char* __restrict__) output;
+   unsigned long long*__restrict__ symbol = (unsigned long long* __restrict__) decoder->symbol;
+   size_t code, posOut = 0, posIn = 0;
+#if defined(__BYTE_ORDER__) && defined(__ORDER_LITTLE_ENDIAN__) && (__BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__)
+   while (posOut < size && posIn+4 <= lenIn) { /* four codes per step, up to the first escape among them */
+      unsigned int nextBlock, escapeMask;
+      memcpy(&nextBlock, strIn+posIn, sizeof(unsigned int));
+      escapeMask = (nextBlock&0x80808080u)&((((~nextBlock)&0x7F7F7F7Fu)+0x7F7F7F7Fu)^0x80808080u);
+      if (escapeMask == 0) {
+         code = strIn[posIn++]; memcpy((void*) (strOut+posOut), &symbol[code], sizeof(unsigned long long)); posOut += len[code];
+         code = strIn[posIn++]; memcpy((void*) (strOut+posOut), &symbol[code], sizeof(unsigned long long)); posOut += len[code];
+         code = strIn[posIn++]; memcpy((void*) (strOut+posOut), &symbol[code], sizeof(unsigned long long)); posOut += len[code];
+         code = strIn[posIn++]; memcpy((void*) (strOut+posOut), &symbol[code], sizeof(unsigned long long)); posOut += len[code];
+      } else {
+         unsigned long firstEscapePos=static_cast<unsigned long>(__builtin_ctzll((unsigned long long) escapeMask)>>3);
+         switch(firstEscapePos) {
+         case 3: code = strIn[posIn++]; memcpy((void*) (strOut+posOut), &symbol[code], sizeof(unsigned long long)); posOut += len[code];
+            DUCKDB_FSST_EXPLICIT_FALLTHROUGH;
+         case 2: code = strIn[posIn++]; memcpy((void*) (strOut+posOut), &symbol[code], sizeof(unsigned long long)); posOut += len[code];
+            DUCKDB_FSST_EXPLICIT_FALLTHROUGH;
+         case 1: code = strIn[posIn++]; memcpy((void*) (strOut+posOut), &symbol[code], sizeof(unsigned long long)); posOut += len[code];
+            DUCKDB_FSST_EXPLICIT_FALLTHROUGH;
+         case 0:
+            if (posIn+1 >= lenIn) {
+               return DUCKDB_FSST_DECOMPRESS_INVALID_INPUT;
+            }
+            posIn+=2; strOut[posOut++] = strIn[posIn-1];
+         }
+      }
+   }
+#endif
+   while (posOut < size && posIn < lenIn)
+      if ((code = strIn[posIn++]) < FSST_ESC) {
+         memcpy((void*) (strOut+posOut), &symbol[code], sizeof(unsigned long long));
+         posOut += len[code];
+      } else {
+         if (posIn == lenIn) {
+            return DUCKDB_FSST_DECOMPRESS_INVALID_INPUT;
+         }
+         strOut[posOut++] = strIn[posIn++];
+      }
+   return posOut;
+}
+
 #ifdef __cplusplus
 }
 #endif
