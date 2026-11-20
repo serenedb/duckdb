@@ -128,4 +128,18 @@ inline uint64_t CsvPrefixXor(uint64_t bits) {
 
 #endif
 
+inline uint64_t CsvFindEscaped(uint64_t escapes, uint64_t &carry) {
+	if (!escapes) {
+		const uint64_t escaped = carry;
+		carry = 0;
+		return escaped;
+	}
+	constexpr uint64_t ODD_BITS = 0xAAAAAAAAAAAAAAAAULL;
+	const uint64_t potential = escapes & ~carry;
+	const uint64_t codes = (((potential << 1) | ODD_BITS) - potential) ^ ODD_BITS;
+	const uint64_t escaped = codes ^ (escapes | carry);
+	carry = (codes & escapes) >> 63;
+	return escaped;
+}
+
 } // namespace duckdb
