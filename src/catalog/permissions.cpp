@@ -406,14 +406,16 @@ void RequireUse(ClientContext &context, const RoleAccess &role, CatalogEntry &en
 			    "password_required=false is superuser-only");
 		}
 		return;
-	case EntryUse::RENAME:
+	case EntryUse::RENAME: {
 		RequireOwner(context, role, entry, overload);
-		if (ObjectKindOf(entry.type).container == ObjectContainer::DATABASE) {
+		const auto container = ObjectKindOf(entry.type).container;
+		if (container == ObjectContainer::DATABASE) {
 			RequireDatabasePrivilege(context, role, entry.ParentCatalog().GetName(), AclMode::Create);
-		} else {
+		} else if (container != ObjectContainer::CLUSTER) {
 			RequireSchemaCreate(context, role, entry.ParentSchema(context));
 		}
 		return;
+	}
 	case EntryUse::DROP: {
 		const auto container = ObjectKindOf(entry.type).container;
 		if (container == ObjectContainer::DATABASE || container == ObjectContainer::CLUSTER) {
