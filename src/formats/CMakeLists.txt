@@ -1,6 +1,7 @@
 add_library_unity(
   duckdb_formats
   OBJECT
+  copy_encoding.cpp
   copy_fields.cpp
   copy_from.cpp
   copy_options.cpp

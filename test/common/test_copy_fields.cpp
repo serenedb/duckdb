@@ -1,5 +1,8 @@
 #include "catch.hpp"
+#include "duckdb/common/error_data.hpp"
+#include "duckdb/formats/copy_encoding.hpp"
 #include "duckdb/formats/copy_fields.hpp"
+#include "duckdb/formats/copy_options.hpp"
 #include "duckdb/formats/row_ranges.hpp"
 
 #include <random>
@@ -386,4 +389,84 @@ TEST_CASE("COPY reads null and default markers only where PostgreSQL does", "[co
 	REQUIRE(ReadCopyField(rules, 0, "\\N", &out[0], value) == CopyFieldKind::NULL_VALUE);
 	REQUIRE(ReadCopyField(rules, 0, "\\\\N", &out[0], value) == CopyFieldKind::VALUE);
 	REQUIRE(value == "\\N");
+}
+
+namespace {
+
+string EncodeInChunks(TextEncoding encoding, std::string_view utf8, idx_t chunk) {
+	CopyEncoder encoder(encoding);
+	string out;
+	for (idx_t at = 0; at < utf8.size(); at += chunk) {
+		encoder.Encode(utf8.substr(at, chunk), out);
+	}
+	return out;
+}
+
+template <class F>
+string ErrorOf(F &&f) {
+	try {
+		f();
+	} catch (const std::exception &ex) {
+		return ErrorData(ex).RawMessage();
+	}
+	return "no error";
+}
+
+} // namespace
+
+TEST_CASE("COPY encodes its output in every encoding, however the output is split", "[copy]") {
+	const std::string_view text("a\xC3\xA9\xE2\x82\xAC\xF0\x9F\x98\x80z");
+	const vector<std::pair<TextEncoding, std::string_view>> encoded = {
+	    {TextEncoding::UTF16_LE, std::string_view("\x61\x00\xE9\x00\xAC\x20\x3D\xD8\x00\xDE\x7A\x00", 12)},
+	    {TextEncoding::UTF16_BE, std::string_view("\x00\x61\x00\xE9\x20\xAC\xD8\x3D\xDE\x00\x00\x7A", 12)},
+	    {TextEncoding::UTF32_LE,
+	     std::string_view("\x61\x00\x00\x00\xE9\x00\x00\x00\xAC\x20\x00\x00\x00\xF6\x01\x00\x7A\x00\x00\x00", 20)},
+	    {TextEncoding::UTF32_BE,
+	     std::string_view("\x00\x00\x00\x61\x00\x00\x00\xE9\x00\x00\x20\xAC\x00\x01\xF6\x00\x00\x00\x00\x7A", 20)},
+	};
+	for (auto &entry : encoded) {
+		for (idx_t chunk = 1; chunk <= text.size(); chunk++) {
+			INFO("encoding " << static_cast<int>(entry.first) << " chunk " << chunk);
+			REQUIRE(EncodeInChunks(entry.first, text, chunk) == string(entry.second));
+		}
+	}
+	const std::string_view utf8("caf\xC3\xA9 na\xC3\xAFve \xC3\xBF");
+	for (idx_t chunk = 1; chunk <= utf8.size(); chunk++) {
+		REQUIRE(EncodeInChunks(TextEncoding::LATIN1, utf8, chunk) == "caf\xE9 na\xEFve \xFF");
+	}
+}
+
+TEST_CASE("COPY names the character its encoding cannot hold, and invalid UTF-8, as PostgreSQL does", "[copy]") {
+	const auto latin1 = [](std::string_view utf8, idx_t chunk) {
+		return ErrorOf([&] { EncodeInChunks(TextEncoding::LATIN1, utf8, chunk); });
+	};
+	REQUIRE(
+	    latin1("a\xC3\xA9\xE2\x82\xAC", 64) ==
+	    "character with byte sequence 0xe2 0x82 0xac in encoding \"UTF8\" has no equivalent in encoding \"LATIN1\"");
+	REQUIRE(latin1("\xC3\xBF\xC4\x80", 64) ==
+	        "character with byte sequence 0xc4 0x80 in encoding \"UTF8\" has no equivalent in encoding \"LATIN1\"");
+	REQUIRE(latin1("\xF0\x9F\x98\x80", 1) == "character with byte sequence 0xf0 0x9f 0x98 0x80 in encoding \"UTF8\" "
+	                                         "has no equivalent in encoding \"LATIN1\"");
+	REQUIRE(latin1("ab\x80", 64) == "invalid byte sequence for encoding \"UTF8\": 0x80");
+	REQUIRE(ErrorOf([] { EncodeInChunks(TextEncoding::UTF16_LE, "ab\x80", 64); }) ==
+	        "invalid byte sequence for encoding \"UTF8\": 0x80");
+}
+
+TEST_CASE("COPY reads PostgreSQL's encoding names", "[copy]") {
+	const vector<std::pair<string, string>> names = {
+	    {"UTF8", "utf-8"},        {"utf-8", "utf-8"},        {"Unicode", "utf-8"},    {"SQL_ASCII", "utf-8"},
+	    {"LATIN1", "latin-1"},    {"ISO_8859_1", "latin-1"}, {"UTF16", "utf-16le"},   {"utf-16le", "utf-16le"},
+	    {"UTF-16BE", "utf-16be"}, {"utf32", "utf-32le"},     {"UTF32LE", "utf-32le"}, {"utf_32_be", "utf-32be"},
+	};
+	for (auto &name : names) {
+		REQUIRE(CopyEncodingName(name.first) == name.second);
+		REQUIRE(CopyEncodingTitle(name.second) == StringUtil::Upper(StringUtil::Replace(name.second, "-", "")));
+	}
+	REQUIRE(ErrorOf([] { CopyEncodingName("WIN1252"); }) == "COPY ENCODING \"WIN1252\" is not supported");
+	REQUIRE(ErrorOf([] { CopyEncodingName("nope"); }) ==
+	        "argument to option \"encoding\" must be a valid encoding name");
+	REQUIRE(!CopyOutputEncoding("utf-8"));
+	REQUIRE(*CopyOutputEncoding("latin-1") == TextEncoding::LATIN1);
+	REQUIRE(*CopyOutputEncoding("utf-16be") == TextEncoding::UTF16_BE);
+	REQUIRE(*CopyOutputEncoding("utf-32le") == TextEncoding::UTF32_LE);
 }
