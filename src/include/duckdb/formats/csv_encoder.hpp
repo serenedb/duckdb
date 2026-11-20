@@ -17,10 +17,12 @@ class CsvSpecials {
 public:
 	void Add(char byte);
 	bool In(std::string_view field) const;
+	idx_t Find(std::string_view field, idx_t from) const;
 
 private:
-	char bytes[8] = {};
-	idx_t count = 0;
+	uint8_t low[16] = {};
+	uint8_t high[16] = {};
+	idx_t groups = 0;
 };
 
 idx_t CsvEscapes(std::string_view field, char quote, char escape);
