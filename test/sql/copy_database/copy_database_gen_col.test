@@ -22,3 +22,27 @@ query II
 select * from myotherdb.test;
 ----
 42	142
+
+statement ok
+ATTACH ':memory:' AS mem_src;
+
+statement ok
+ATTACH ':memory:' AS mem_dst;
+
+statement ok
+CREATE TABLE mem_src.stored_test (x INT, y AS (x + 100) STORED, z VARCHAR);
+
+statement ok
+insert into mem_src.stored_test (x, z) VALUES (42, 'a');
+
+statement ok
+COPY FROM DATABASE mem_src TO mem_dst;
+
+statement ok
+insert into mem_dst.stored_test (x, z) VALUES (1, 'b');
+
+query III
+select * from mem_dst.stored_test order by x;
+----
+1	101	b
+42	142	a

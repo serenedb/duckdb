@@ -111,7 +111,11 @@ unique_ptr<LogicalOperator> Binder::BindCopyDatabaseData(Catalog &source_catalog
 		auto select_node = make_uniq<SelectNode>();
 		auto &select_list = select_node->select_list;
 		for (auto &col : table.GetColumns().Physical()) {
+			if (col.Generated()) {
+				continue;
+			}
 			select_list.push_back(make_uniq<ColumnRefExpression>(col.Name(), table.name));
+			insert_node.columns.push_back(col.Name());
 		}
 
 		select_node->from_table = std::move(from_tbl);
