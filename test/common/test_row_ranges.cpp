@@ -116,10 +116,18 @@ TEST_CASE("Row sync finds the first row after a position in text and csv input",
 	data = "a\n\rb";
 	REQUIRE(RowSync(text, data.data(), 0, 0, data.size(), true) == 2);
 
+	const auto text_carriage = RowDialect::PostgresText('\t', '\r');
+	data = "a\r\rb\nc";
+	REQUIRE(RowSync(text_carriage, data.data(), 0, 0, data.size(), true) == 3);
+
 	const auto csv = RowDialect::PostgresCsv(',', '"', '\\');
 	data = "a\r";
 	REQUIRE(RowSync(csv, data.data(), 0, 0, data.size(), false) == DConstants::INVALID_INDEX);
-	REQUIRE(RowSync(csv, data.data(), 0, 0, data.size(), true) == 2);
+	REQUIRE(RowSync(csv, data.data(), 0, 0, data.size(), true) == DConstants::INVALID_INDEX);
+	const auto csv_carriage = RowDialect::PostgresCsv(',', '"', '\\', '\r');
+	REQUIRE(RowSync(csv_carriage, data.data(), 0, 0, data.size(), true) == 2);
+	data = "a\r\nb\rc";
+	REQUIRE(RowSync(csv_carriage, data.data(), 0, 0, data.size(), true) == 2);
 	data = "\nab";
 	REQUIRE(RowSync(csv, data.data(), 0, 0, data.size(), true) == 1);
 	data = "\\\r\nx\ny";

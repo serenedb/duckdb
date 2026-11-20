@@ -43,14 +43,15 @@ idx_t FirstNewline(const RowDialect &dialect, const char *bytes, idx_t base, idx
 			data = padded;
 		}
 		const CsvVector vector(data);
-		uint64_t candidates = vector.Equal('\n') | vector.Equal('\r');
+		uint64_t candidates =
+		    dialect.carriage_terms ? vector.Equal('\n') | vector.Equal('\r') : vector.Equal(dialect.line_break);
 		if (size < CSV_BLOCK_BYTES) {
 			candidates &= (uint64_t(1) << size) - 1;
 		}
 		while (candidates) {
 			const idx_t position = block + CountZeros<uint64_t>::Trailing(candidates);
 			candidates &= candidates - 1;
-			if (at(position) == '\r') {
+			if (dialect.carriage_terms && at(position) == '\r') {
 				if (position + 1 >= end) {
 					if (!eof) {
 						return DConstants::INVALID_INDEX;
@@ -98,13 +99,14 @@ bool OpensRecord(const RowDialect &dialect, const char *bytes, idx_t base, idx_t
 idx_t RowSync(const RowDialect &dialect, const char *bytes, idx_t base, idx_t begin, idx_t end, bool eof) {
 	idx_t first = FirstNewline(dialect, bytes, base, begin, end, eof);
 	if (first != DConstants::INVALID_INDEX && dialect.backslash) {
+		const bool pairs = dialect.line_break == '\n';
 		while (first < end) {
 			const char byte = bytes[first - base];
-			if (byte == '\n') {
+			if (byte == dialect.line_break) {
 				first++;
-			} else if (byte == '\r' && first + 1 < end && bytes[first + 1 - base] == '\n') {
+			} else if (pairs && byte == '\r' && first + 1 < end && bytes[first + 1 - base] == '\n') {
 				first += 2;
-			} else if (byte == '\r' && first + 1 == end && !eof) {
+			} else if (pairs && byte == '\r' && first + 1 == end && !eof) {
 				return DConstants::INVALID_INDEX;
 			} else {
 				break;
