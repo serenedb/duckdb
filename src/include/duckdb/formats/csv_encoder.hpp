@@ -13,13 +13,27 @@
 
 namespace duckdb {
 
+class CsvSpecials {
+public:
+	void Add(char byte);
+	bool In(std::string_view field) const;
+
+private:
+	char bytes[8] = {};
+	idx_t count = 0;
+};
+
+idx_t CsvEscapes(std::string_view field, char quote, char escape);
+idx_t CsvWriteQuoted(char *out, std::string_view field, char quote, char escape);
+idx_t CsvQuoteInPlace(char *data, idx_t size, char quote, char escape);
+
 struct CsvEncoding {
 	char delimiter;
 	char quote;
 	char escape;
 	const string &null_str;
 	const vector<bool> &force_quote;
-	const vector<bool> &requires_quotes;
+	const CsvSpecials &specials;
 	const string &newline;
 	bool newline_before;
 };

@@ -1,10 +1,15 @@
 #include "duckdb/formats/csv_encoder.hpp"
 
 #include "duckdb/common/vector/vector_iterator.hpp"
+#include "duckdb/formats/csv_simd.hpp"
 
 namespace duckdb {
 
 namespace {
+
+bool Escaped(char c, char quote, char escape) {
+	return escape != '\0' && (c == quote || c == escape);
+}
 
 enum CsvFieldQuoting : uint8_t {
 	FIELD_RAW = 0,
@@ -16,22 +21,15 @@ enum CsvFieldQuoting : uint8_t {
 class CsvClassifier {
 public:
 	explicit CsvClassifier(const CsvEncoding &encoding_p) : encoding(encoding_p) {
-		for (idx_t byte = 0; byte < 256; byte++) {
-			requires_quotes[byte] = byte < encoding.requires_quotes.size() && encoding.requires_quotes[byte];
-		}
 	}
 
 	CsvFieldQuoting Classify(const char *data, idx_t size, bool force, uint32_t &field_size) const {
-		if (encoding.quote == '\0' || (!force && !RequiresQuotes(data, size))) {
+		const std::string_view field(data, size);
+		if (encoding.quote == '\0' || (!force && field != encoding.null_str && !encoding.specials.In(field))) {
 			field_size = NumericCast<uint32_t>(size);
 			return FIELD_RAW;
 		}
-		idx_t escapes = 0;
-		if (encoding.escape != '\0') {
-			for (idx_t i = 0; i < size; i++) {
-				escapes += data[i] == encoding.quote || data[i] == encoding.escape;
-			}
-		}
+		const idx_t escapes = CsvEscapes(field, encoding.quote, encoding.escape);
 		field_size = NumericCast<uint32_t>(size + 2 + escapes);
 		return escapes ? FIELD_ESCAPED : FIELD_QUOTED;
 	}
@@ -51,36 +49,13 @@ public:
 			*out++ = encoding.quote;
 			return out;
 		case FIELD_ESCAPED:
-			*out++ = encoding.quote;
-			for (idx_t i = 0; i < size; i++) {
-				if (data[i] == encoding.quote || data[i] == encoding.escape) {
-					*out++ = encoding.escape;
-				}
-				*out++ = data[i];
-			}
-			*out++ = encoding.quote;
-			return out;
+			return out + CsvWriteQuoted(out, std::string_view(data, size), encoding.quote, encoding.escape);
 		}
 		return out;
 	}
 
 private:
-	bool RequiresQuotes(const char *data, idx_t size) const {
-		auto &null_str = encoding.null_str;
-		if (size == null_str.size() && memcmp(data, null_str.data(), size) == 0) {
-			return true;
-		}
-		const auto bytes = const_data_ptr_cast(data);
-		for (idx_t i = 0; i < size; i++) {
-			if (requires_quotes[bytes[i]]) {
-				return true;
-			}
-		}
-		return false;
-	}
-
 	const CsvEncoding &encoding;
-	bool requires_quotes[256];
 };
 
 bool ForceQuote(const CsvEncoding &encoding, idx_t column) {
@@ -88,6 +63,81 @@ bool ForceQuote(const CsvEncoding &encoding, idx_t column) {
 }
 
 } // namespace
+
+void CsvSpecials::Add(char byte) {
+	D_ASSERT(count < sizeof(bytes));
+	for (idx_t i = 0; i < count; i++) {
+		if (bytes[i] == byte) {
+			return;
+		}
+	}
+	bytes[count++] = byte;
+}
+
+bool CsvSpecials::In(std::string_view field) const {
+	const auto special = [&](const CsvVector &block) {
+		uint64_t bits = 0;
+		for (idx_t i = 0; i < count; i++) {
+			bits |= block.Equal(bytes[i]);
+		}
+		return bits;
+	};
+	idx_t i = 0;
+	for (; i + CSV_BLOCK_BYTES <= field.size(); i += CSV_BLOCK_BYTES) {
+		if (special(CsvVector(field.data() + i))) {
+			return true;
+		}
+	}
+	if (i == field.size()) {
+		return false;
+	}
+	char padded[CSV_BLOCK_BYTES] = {};
+	memcpy(padded, field.data() + i, field.size() - i);
+	const uint64_t valid = (uint64_t(1) << (field.size() - i)) - 1;
+	return (special(CsvVector(padded)) & valid) != 0;
+}
+
+idx_t CsvEscapes(std::string_view field, char quote, char escape) {
+	idx_t escapes = 0;
+	for (const char c : field) {
+		escapes += Escaped(c, quote, escape);
+	}
+	return escapes;
+}
+
+idx_t CsvWriteQuoted(char *out, std::string_view field, char quote, char escape) {
+	char *begin = out;
+	*out++ = quote;
+	idx_t from = 0;
+	for (idx_t i = 0; i < field.size(); i++) {
+		if (Escaped(field[i], quote, escape)) {
+			memcpy(out, field.data() + from, i - from);
+			out += i - from;
+			*out++ = escape;
+			from = i;
+		}
+	}
+	memcpy(out, field.data() + from, field.size() - from);
+	out += field.size() - from;
+	*out++ = quote;
+	return NumericCast<idx_t>(out - begin);
+}
+
+idx_t CsvQuoteInPlace(char *data, idx_t size, char quote, char escape) {
+	const idx_t escapes = CsvEscapes(std::string_view(data, size), quote, escape);
+	char *in = data + size;
+	char *out = in + escapes + 1;
+	*out = quote;
+	while (in != data) {
+		const char c = *--in;
+		*--out = c;
+		if (Escaped(c, quote, escape)) {
+			*--out = escape;
+		}
+	}
+	*--out = quote;
+	return size + escapes + 2;
+}
 
 void CsvEncodeChunk(const CsvEncoding &encoding, DataChunk &input, MemoryStream &out, bool &written_anything,
                     CsvEncodeScratch &scratch) {
