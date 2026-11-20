@@ -1,0 +1,30 @@
+# name: test/optimizer/statistics/statistics_timetz.test
+# description: TIMETZ min and max follow the UTC order of the values, not the order of the stored bits
+# group: [statistics]
+
+load {TEST_DIR}/statistics_timetz.db
+
+statement ok
+CREATE TABLE timetz_values (t TIMETZ);
+
+statement ok
+INSERT INTO timetz_values VALUES ('04:00:00-05'), ('06:00:00+00'), ('10:00:00+05');
+
+loop i 0 2
+
+query II
+SELECT min(t), max(t) FROM timetz_values;
+----
+10:00:00+05	04:00:00-05
+
+query III
+SELECT t, min(t) OVER (), max(t) OVER () FROM timetz_values ORDER BY t;
+----
+10:00:00+05	10:00:00+05	04:00:00-05
+06:00:00+00	10:00:00+05	04:00:00-05
+04:00:00-05	10:00:00+05	04:00:00-05
+
+statement ok
+CHECKPOINT
+
+endloop

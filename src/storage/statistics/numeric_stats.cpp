@@ -18,6 +18,10 @@ namespace duckdb {
 
 namespace {
 
+bool BoundsOrderValues(const LogicalType &type) {
+	return type.id() != LogicalTypeId::SQLNULL && type.id() != LogicalTypeId::TIME_TZ;
+}
+
 template <class T>
 void InitializeEmptyFloatingPointStats(BaseStatistics &result) {
 	NumericStats::SetMin(result, std::numeric_limits<T>::quiet_NaN());
@@ -108,21 +112,21 @@ void NumericStats::Merge(BaseStatistics &stats, const BaseStatistics &other) {
 	const auto &other_data = GetDataUnsafe(other);
 	VisitPhysicalType(stats.GetType().InternalType(), [&]<class T>() {
 		// If the min and max of the stats are not valid, we need to merge the min and max of the other stats.
-		if (HasMin(stats) && HasMax(stats) && GreaterThan::Operation(GetMinUnsafe<T>(stats), GetMaxUnsafe<T>(stats))) {
-			data.has_min = HasMin(other);
-			data.has_max = HasMax(other);
+		if (data.has_min && data.has_max && GreaterThan::Operation(GetMinUnsafe<T>(stats), GetMaxUnsafe<T>(stats))) {
+			data.has_min = other_data.has_min;
+			data.has_max = other_data.has_max;
 			data.min = other_data.min;
 			data.max = other_data.max;
 			return;
 		}
-		if (HasMin(other) && HasMin(stats)) {
+		if (other_data.has_min && data.has_min) {
 			if (LessThan::Operation(GetMinUnsafe<T>(other), GetMinUnsafe<T>(stats))) {
 				data.min = other_data.min;
 			}
 		} else {
 			data.has_min = false;
 		}
-		if (HasMax(other) && HasMax(stats)) {
+		if (other_data.has_max && data.has_max) {
 			if (GreaterThan::Operation(GetMaxUnsafe<T>(other), GetMaxUnsafe<T>(stats))) {
 				data.max = other_data.max;
 			}
@@ -217,7 +221,8 @@ bool NumericStats::ConstantsCoverRange(const BaseStatistics &stats, array_ptr<co
 }
 
 bool NumericStats::IsConstant(const BaseStatistics &stats) {
-	if (!HasMin(stats) || !HasMax(stats)) {
+	const auto &data = GetDataUnsafe(stats);
+	if (!data.has_min || !data.has_max) {
 		throw InternalException("IsConstant() called on statistics that does not have min and max");
 	}
 	return VisitPhysicalType(stats.GetType().InternalType(), [&]<class T>() {
@@ -356,17 +361,11 @@ bool NumericStats::TryCastRange(const BaseStatistics &stats, hugeint_t &min, hug
 }
 
 bool NumericStats::HasMin(const BaseStatistics &stats) {
-	if (stats.GetType().id() == LogicalTypeId::SQLNULL) {
-		return false;
-	}
-	return NumericStats::GetDataUnsafe(stats).has_min;
+	return BoundsOrderValues(stats.GetType()) && NumericStats::GetDataUnsafe(stats).has_min;
 }
 
 bool NumericStats::HasMax(const BaseStatistics &stats) {
-	if (stats.GetType().id() == LogicalTypeId::SQLNULL) {
-		return false;
-	}
-	return NumericStats::GetDataUnsafe(stats).has_max;
+	return BoundsOrderValues(stats.GetType()) && NumericStats::GetDataUnsafe(stats).has_max;
 }
 
 Value NumericStats::Min(const BaseStatistics &stats) {
