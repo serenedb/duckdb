@@ -1,0 +1,19 @@
+# name: test/sql/copy/csv/read_csv_verified_range.test
+# description: a range lexed before the ranges ahead of it confirm its start finishes its last row once they do, even when that row breaks a quoting rule an unconfirmed range refuses
+# group: [csv]
+
+statement ok
+SET threads = 4
+
+statement ok
+COPY (SELECT encode(repeat('aaaa,bbbb,c' || chr(10), 174760) || 'aaaa,"' || repeat('x', 40) || chr(10) || repeat('y', 20) || '",ab"cd' || chr(10) || repeat('aaaa,bbbb,c' || chr(10), 5000))) TO '{TEMP_DIR}/verified_range.csv' (FORMAT BLOB);
+
+query I
+SELECT count(*) FROM read_csv('{TEMP_DIR}/verified_range.csv', header = false, strict_mode = false, auto_detect = false, columns = {'a': 'VARCHAR', 'b': 'VARCHAR', 'c': 'VARCHAR'}, delim = ',', quote = '"', escape = '"', new_line = '\n')
+----
+179761
+
+query III
+SELECT count(*), length(max(b)), max(c) FILTER (WHERE c <> 'c') FROM read_csv('{TEMP_DIR}/verified_range.csv', header = false, strict_mode = false, auto_detect = false, columns = {'a': 'VARCHAR', 'b': 'VARCHAR', 'c': 'VARCHAR'}, delim = ',', quote = '"', escape = '"', new_line = '\n')
+----
+179761	61	ab"cd
