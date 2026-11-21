@@ -31,8 +31,10 @@ private:
 	void MarkDone(const CSVBuffer &last);
 	//! Releases the chain's own pin on the predecessor of an accessed buffer
 	void UnpinPrevious(const idx_t pos);
+	void Recycle(shared_ptr<CSVBuffer> &buffer);
 
 	mutex read_lock;
+	shared_ptr<CSVBuffer> spare;
 	optional_idx direct_position;
 
 	//! The last buffer it was accessed

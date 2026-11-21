@@ -31,6 +31,7 @@ shared_ptr<CSVBufferHandle> CSVSequentialBufferManager::GetBuffer(const idx_t po
 	lock_guard<mutex> read_guard(read_lock);
 	while (true) {
 		shared_ptr<CSVBuffer> previous;
+		shared_ptr<CSVBuffer> recycled;
 		{
 			lock_guard<mutex> parallel_lock(main_mutex);
 			if (pos == 0 && done && cached_buffers.empty()) {
@@ -49,12 +50,15 @@ shared_ptr<CSVBufferHandle> CSVSequentialBufferManager::GetBuffer(const idx_t po
 				return nullptr;
 			}
 			previous = last_buffer;
+			if (previous && !previous->IsCSVFileLastBuffer()) {
+				recycled = std::move(spare);
+			}
 		}
 		shared_ptr<CSVBuffer> next;
 		if (!previous) {
 			next = make_shared_ptr<CSVBuffer>(context, buffer_size, *file_handle, global_csv_pos);
 		} else if (!previous->IsCSVFileLastBuffer()) {
-			next = previous->Next(*file_handle, buffer_size, has_seeked);
+			next = previous->Next(*file_handle, buffer_size, has_seeked, std::move(recycled));
 		}
 		lock_guard<mutex> parallel_lock(main_mutex);
 		if (next) {
@@ -170,10 +174,10 @@ void CSVSequentialBufferManager::ResetBuffer(const idx_t buffer_idx) {
 	}
 	D_ASSERT(cached_buffers[buffer_idx]);
 	if (buffer_idx == 0 && cached_buffers.size() > 1) {
-		cached_buffers[buffer_idx].reset();
+		Recycle(cached_buffers[buffer_idx]);
 		idx_t cur_buffer = buffer_idx + 1;
 		while (reset_when_possible.find(cur_buffer) != reset_when_possible.end()) {
-			cached_buffers[cur_buffer].reset();
+			Recycle(cached_buffers[cur_buffer]);
 			reset_when_possible.erase(cur_buffer);
 			cur_buffer++;
 		}
@@ -190,13 +194,20 @@ void CSVSequentialBufferManager::ResetBuffer(const idx_t buffer_idx) {
 		reset_when_possible.clear();
 		return;
 	}
-	cached_buffers[buffer_idx].reset();
+	Recycle(cached_buffers[buffer_idx]);
 	idx_t cur_buffer = buffer_idx + 1;
 	while (reset_when_possible.find(cur_buffer) != reset_when_possible.end()) {
-		cached_buffers[cur_buffer].reset();
+		Recycle(cached_buffers[cur_buffer]);
 		reset_when_possible.erase(cur_buffer);
 		cur_buffer++;
 	}
+}
+
+void CSVSequentialBufferManager::Recycle(shared_ptr<CSVBuffer> &buffer) {
+	if (!spare && buffer.use_count() == 1 && buffer->Reusable()) {
+		spare = std::move(buffer);
+	}
+	buffer.reset();
 }
 
 bool CSVSequentialBufferManager::Done() const {
