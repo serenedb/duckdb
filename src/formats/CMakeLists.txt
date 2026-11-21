@@ -9,6 +9,7 @@ add_library_unity(
   csv_grammar.cpp
   csv_scan.cpp
   csv_sniff.cpp
+  row_input.cpp
   row_lexer.cpp
   row_ranges.cpp
   value_codecs.cpp
