@@ -776,6 +776,7 @@ public:
 		bool opened = false;
 		vector<PartitionStatistics> partitions;
 		vector<optionally_owned_ptr<const BaseStatistics>> statistics;
+		vector<bool> exact;
 	};
 
 	//! Open a file of a planned scan, unless the filters skip it, and list its partitions
@@ -816,10 +817,12 @@ public:
 		                              : optional_idx();
 		for (auto &partition : result.partitions) {
 			if (order_column.IsValid() && partition.partition_row_group) {
-				result.statistics.emplace_back(
-				    partition.partition_row_group->GetColumnStatistics(StorageIndex(order_column.GetIndex())));
+				const StorageIndex storage_index(order_column.GetIndex());
+				result.statistics.emplace_back(partition.partition_row_group->GetColumnStatistics(storage_index));
+				result.exact.push_back(partition.partition_row_group->MinMaxIsExact(storage_index));
 			} else {
 				result.statistics.emplace_back();
+				result.exact.push_back(false);
 			}
 		}
 	}
@@ -863,11 +866,13 @@ public:
 				return;
 			}
 		}
+		vector<bool> exact;
 		for (auto &file : listed) {
 			file_starts.push_back(partitions.size());
 			for (idx_t i = 0; i < file.partitions.size(); i++) {
 				partitions.push_back(std::move(file.partitions[i]));
 				statistics.push_back(std::move(file.statistics[i]));
+				exact.push_back(file.exact[i]);
 			}
 		}
 		file_starts.push_back(partitions.size());
@@ -878,10 +883,13 @@ public:
 			for (auto &entry : statistics) {
 				order_statistics.emplace_back(entry.get());
 			}
-			order = RowGroupReorderer::OrderPartitions(*bind_data.scan_order, order_statistics, [&](idx_t partition) {
-				auto &stats = partitions[partition];
-				return stats.count_type == CountType::COUNT_EXACT ? stats.count : 0;
-			});
+			order = RowGroupReorderer::OrderPartitions(
+			    *bind_data.scan_order, order_statistics,
+			    [&](idx_t partition) {
+				    auto &stats = partitions[partition];
+				    return stats.count_type == CountType::COUNT_EXACT ? stats.count : 0;
+			    },
+			    [&](idx_t partition) { return exact[partition]; });
 		} else {
 			for (idx_t i = 0; i < partitions.size(); i++) {
 				order.push_back(i);
