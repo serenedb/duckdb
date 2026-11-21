@@ -49,17 +49,21 @@ public:
 
 	//! Constructor for `Next()` Buffers
 	CSVBuffer(CSVFileHandle &file_handle, ClientContext &context, idx_t buffer_size, idx_t global_csv_current_position,
-	          idx_t buffer_idx);
+	          idx_t buffer_idx, shared_ptr<CSVBuffer> recycled);
 
 	//! Constructor for random-access buffers with known byte ranges
 	CSVBuffer(ClientContext &context, idx_t requested_size, idx_t actual_size, idx_t global_csv_start, idx_t buffer_idx,
 	          bool last_buffer);
 
 	//! Creates a new buffer with the next part of the CSV File
-	shared_ptr<CSVBuffer> Next(CSVFileHandle &file_handle, idx_t buffer_size, bool &has_seeked) const;
+	shared_ptr<CSVBuffer> Next(CSVFileHandle &file_handle, idx_t buffer_size, bool &has_seeked,
+	                           shared_ptr<CSVBuffer> recycled) const;
 
 	//! Allocates the buffer and fills it sequentially from the file handle's current position
-	void Load(CSVFileHandle &file_handle);
+	void Load(CSVFileHandle &file_handle, shared_ptr<CSVBuffer> recycled);
+	bool Reusable() const {
+		return handle.IsValid() && block && block->GetMemory().GetReaders() == 1;
+	}
 
 	//! Allocates the buffer and fills it with a random-access read of its known byte range
 	void LoadRandomAccess(CSVFileHandle &file_handle);
