@@ -832,7 +832,14 @@ vector<PartitionStatistics> TableFunctionMultiFileWrapper::GetPartitionStats(Cli
 	}
 	BoundTableFunction bound_function(function);
 	GetPartitionStatsInput file_input(bound_function, reader.bind_data.get());
-	return function.get_partition_stats(context, file_input);
+	result = function.get_partition_stats(context, file_input);
+	for (auto &partition : result) {
+		if (partition.partition_row_group) {
+			partition.partition_row_group =
+			    make_shared_ptr<ScannedFilePartition>(bind_data, std::move(partition.partition_row_group));
+		}
+	}
+	return result;
 }
 
 static vector<column_t> TableFunctionMultiFileGetRowIdColumns(ClientContext &, optional_ptr<FunctionData>) {
