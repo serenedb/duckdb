@@ -322,7 +322,7 @@ unique_ptr<ParsedExpression> Binder::QualifyTableExpression(ClientContext &conte
 	    table.ParentCatalog().IsTemporaryCatalog()) {
 		return expression;
 	}
-	CatalogEntryRetriever table_scope(context);
+	auto table_scope = CatalogEntryRetriever::Internal(context);
 	table_scope.SetTableSearchPath(table.ParentSchema(context));
 	ForEachName(
 	    table_scope, *expression,
