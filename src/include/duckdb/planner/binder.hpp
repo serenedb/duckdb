@@ -470,6 +470,7 @@ public:
 	const RoleAccess &CurrentRole() const;
 	optional_idx CallerRole() const;
 	const RoleAccess &AccessOf(idx_t role);
+	vector<pair<idx_t, uint64_t>> CheckedRoleFingerprints() const;
 	const RoleAccess &FunctionBodyRole(optional_idx owner);
 	void BindAsFunctionBody(const RoleAccess &role);
 	void BindUnchecked();

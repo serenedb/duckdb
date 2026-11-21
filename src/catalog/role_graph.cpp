@@ -241,6 +241,15 @@ SecuritySnapshot::SecuritySnapshot(unordered_map<idx_t, Node> nodes_p, unordered
 		const auto settable_begin = arena.size();
 		arena.insert(arena.end(), role.settable.begin(), role.settable.end());
 		access.settable = std::span<const idx_t>(arena.data() + settable_begin, role.settable.size());
+		auto fingerprint = CombineHash(Hash(uint64_t(role.role)), Hash(uint64_t(role.options)));
+		fingerprint = CombineHash(fingerprint, Hash(uint64_t(role.capabilities)));
+		for (auto list : {&role.closure, &role.settable}) {
+			fingerprint = CombineHash(fingerprint, Hash(uint64_t(list->size())));
+			for (auto member : *list) {
+				fingerprint = CombineHash(fingerprint, Hash(uint64_t(member)));
+			}
+		}
+		access.fingerprint = fingerprint;
 		roles.push_back(access);
 	}
 }

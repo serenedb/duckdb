@@ -76,6 +76,7 @@ struct RoleAccess {
 	std::span<const uint64_t> closure_filter;
 	std::span<const idx_t> closure;
 	std::span<const idx_t> settable;
+	uint64_t fingerprint = 0;
 
 	DUCKDB_API static const RoleAccess &System();
 	bool IsSystem() const {
