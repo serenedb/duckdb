@@ -91,7 +91,7 @@ public:
 	double Progress() const {
 		return source->Progress();
 	}
-	bool Claim(idx_t &unit, idx_t &begin, shared_ptr<RowBytes> &carry, idx_t &carry_to);
+	bool Claim(idx_t &unit, idx_t &begin);
 	void Finish(idx_t unit, idx_t records);
 	void AddError(idx_t unit, idx_t record, string message);
 	[[noreturn]] void ThrowObjectSizeError(idx_t object_size) const;
@@ -139,6 +139,7 @@ private:
 class JsonScan {
 public:
 	explicit JsonScan(JsonScanGlobal &global);
+	~JsonScan();
 
 	bool Claim();
 	bool Claimed() const {
@@ -150,6 +151,7 @@ public:
 	idx_t Lookup(std::span<const int64_t> offsets, std::span<idx_t> survivors, DataChunk &output);
 
 private:
+	idx_t ScanUnit(DataChunk &output);
 	void Load();
 	void LoadValueRange();
 	idx_t CutRecords();
@@ -196,8 +198,6 @@ private:
 	idx_t file_offset = 0;
 	idx_t unit = 0;
 	idx_t begin = 0;
-	shared_ptr<RowBytes> carry;
-	idx_t carry_to = 0;
 	idx_t unit_records = 0;
 	bool claimed = false;
 	bool loaded = false;

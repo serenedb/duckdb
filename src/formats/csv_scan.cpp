@@ -875,7 +875,7 @@ idx_t CsvScanGlobal::MaxThreads() const {
 	if (!options.parallel) {
 		return 1;
 	}
-	if (ranges->Dynamic()) {
+	if (ranges->Intake()) {
 		return MaxValue<idx_t>(TaskScheduler::QueryThreads(context), 1);
 	}
 	return MaxValue<idx_t>(ranges->RangeCount(), 1);
@@ -926,10 +926,17 @@ CsvScan::CsvScan(CsvScanGlobal &global_p)
 	}
 }
 
+CsvScan::~CsvScan() {
+	if (reserved) {
+		global.ranges->FailIntake();
+	}
+}
+
 void CsvScan::Start(idx_t range_p) {
 	range = range_p;
 	done = false;
 	started = false;
+	reserved = global.ranges->Intake();
 	reported = false;
 	counting = false;
 	chunk_open = false;
@@ -2072,11 +2079,30 @@ void CsvScan::FinishLeanChunk(idx_t count, DataChunk &output) {
 }
 
 bool CsvScan::Scan(DataChunk &output, idx_t max_rows) {
-	source.error_handler->ErrorIfNeeded();
+	absl::Cleanup fail = [&] {
+		global.ranges->FailIntake();
+	};
+	const bool finished = ScanRange(output, max_rows);
+	std::move(fail).Cancel();
+	return finished;
+}
+
+bool CsvScan::ScanRange(DataChunk &output, idx_t max_rows) {
 	if (!started) {
 		started = true;
-		reader.Start(range, !global.count_only, !source.sniffing, !global.columns.empty());
+		if (!reserved) {
+			reader.Start(range, !global.count_only, !source.sniffing, !global.columns.empty());
+		} else {
+			reserved = false;
+			if (!reader.StartIntake(range, !global.count_only, !source.sniffing, !global.columns.empty())) {
+				done = true;
+				reported = true;
+				output.Reset();
+				return global.AllFinished();
+			}
+		}
 	}
+	source.error_handler->ErrorIfNeeded();
 	if (ScanLean(output, max_rows)) {
 		return false;
 	}
@@ -2091,8 +2117,10 @@ bool CsvScan::Scan(DataChunk &output, idx_t max_rows) {
 	}
 	auto &ranges = *global.ranges;
 	auto &input = *global.input;
-	if (!input.file || !input.stream) {
+	if (!input.stream) {
 		*source.bytes_read += ranges.RangeEnd(range) - ranges.RangeBegin(range);
+	} else if (!input.file) {
+		*source.bytes_read += reader.Stop() - reader.Begin();
 	}
 	const idx_t range_lines = reader.RangeLines();
 	const idx_t lines =
