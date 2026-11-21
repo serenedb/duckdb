@@ -50,6 +50,8 @@ public:
 	//! WITH (security_invoker=true) -> the view runs with the caller's privileges;
 	//! false (default) is definer rights (the view owner's), matching PostgreSQL.
 	bool security_invoker = false;
+	idx_t rule_oid = 0;
+	idx_t row_type_oid = 0;
 
 public:
 	unique_ptr<CreateInfo> Copy() const override;

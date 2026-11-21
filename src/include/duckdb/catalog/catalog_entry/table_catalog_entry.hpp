@@ -96,6 +96,8 @@ public:
 
 	vector<idx_t> GetSubObjectOids() const;
 
+	idx_t row_type_oid = 0;
+
 	//! Returns the underlying storage of the table
 	virtual DataTable &GetStorage();
 	//! Appends rows within the current transaction, checking the table's constraints

@@ -43,6 +43,7 @@ struct CreateTableInfo : public CreateInfo {
 	//! Extra Table options if any
 	case_insensitive_map_t<unique_ptr<ParsedExpression>> options;
 	vector<Identifier> serial_columns;
+	idx_t row_type_oid = 0;
 
 public:
 	DUCKDB_API unique_ptr<CreateInfo> Copy() const override;
