@@ -677,7 +677,6 @@ void RowRangeReader::StartPass(bool second_pass_p) {
 	extract = force_extract || extract_rows;
 	probe_only = false;
 	finished = false;
-	verified = false;
 	extending = false;
 	open_end = false;
 	second_pass = second_pass_p;
@@ -907,7 +906,7 @@ bool RowRangeReader::FinishRange() {
 	const auto state = entry.end.states[1];
 	open_end = !eof && state != CSVState::RECORD_SEPARATOR && state != CSVState::CARRIAGE_RETURN;
 	finished = true;
-	if ((cursor.settled || verified) && open_end) {
+	if (cursor.settled && open_end) {
 		return Extend();
 	}
 	range_lines = cursor.lines;
@@ -948,7 +947,8 @@ bool RowRangeReader::Extend() {
 	while (true) {
 		const bool eof = read_to >= ranges.Size();
 		if (probe.pos < read_to && (eof || read_to - probe.pos >= CSV_BLOCK_BYTES + lexer.Lookahead())) {
-			lexer.Feed(probe, bytes->data, bytes->offset, read_to, eof, nullptr);
+			[[maybe_unused]] const bool fed = lexer.Feed(probe, bytes->data, bytes->offset, read_to, eof, nullptr);
+			D_ASSERT(fed);
 			if (probe.first_term != DConstants::INVALID_INDEX) {
 				break;
 			}
@@ -980,8 +980,7 @@ bool RowRangeReader::Extend() {
 bool RowRangeReader::Recover() {
 	range_lines = DConstants::INVALID_INDEX;
 	counted_rows = DConstants::INVALID_INDEX;
-	const bool settled = cursor.settled || verified;
-	if (!settled && !second_pass) {
+	if (!cursor.settled && !second_pass) {
 		active = false;
 		return FromChain();
 	}
@@ -1003,7 +1002,7 @@ RowReadResult RowRangeReader::Advance(idx_t want) {
 			counted_rows = 0;
 			return extract ? RowReadResult::DONE : RowReadResult::COUNTED;
 		}
-		const bool settled = cursor.settled || verified;
+		const bool settled = cursor.settled;
 		if (recover_pending && held_rows == 0) {
 			recover_pending = false;
 			if (!Recover()) {
@@ -1022,7 +1021,7 @@ RowReadResult RowRangeReader::Advance(idx_t want) {
 				}
 				continue;
 			}
-			verified = true;
+			cursor.settled = true;
 			if (open_end && !probe_only) {
 				Extend();
 			}
