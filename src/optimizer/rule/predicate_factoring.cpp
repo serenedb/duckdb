@@ -1,5 +1,6 @@
 #include "duckdb/optimizer/rule/predicate_factoring.hpp"
 
+#include "duckdb/optimizer/expression_rewriter.hpp"
 #include "duckdb/parser/expression_map.hpp"
 #include "duckdb/planner/expression/bound_conjunction_expression.hpp"
 #include "duckdb/planner/expression/bound_columnref_expression.hpp"
@@ -131,7 +132,7 @@ unique_ptr<Expression> PredicateFactoringRule::Apply(LogicalOperator &op, vector
                                                      bool &changes_made, bool is_root) {
 	// Only applies to top-level FILTER expressions
 	if ((op.type != LogicalOperatorType::LOGICAL_FILTER && op.type != LogicalOperatorType::LOGICAL_ANY_JOIN) ||
-	    !is_root) {
+	    !is_root || rewriter.Scored()) {
 		return nullptr;
 	}
 

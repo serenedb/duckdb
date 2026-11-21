@@ -136,28 +136,6 @@ struct FunctionDecoratorInfo {
 	bool returns_set = false;
 };
 
-static bool IsSetofType(ParseResult &type_pr) {
-	reference<ParseResult> current = type_pr;
-	while (true) {
-		auto &node = current.get();
-		if (node.Name() == "SetofType") {
-			return true;
-		}
-		if (node.type == ParseResultType::CHOICE) {
-			current = node.Cast<ChoiceParseResult>().GetResult();
-			continue;
-		}
-		if (node.type != ParseResultType::LIST || (node.Name() != "Type" && node.Name() != "TypeVariations")) {
-			return false;
-		}
-		auto &list = node.Cast<ListParseResult>();
-		if (list.GetChildren().empty()) {
-			return false;
-		}
-		current = list.GetChild(0);
-	}
-}
-
 // Process the FunctionDecorator* repeat block of a MacroDefinition and apply it to the macro function. The decorators
 // are PG-compat extras (RETURNS, ...). Most semantics are dropped, but RETURNS TABLE/Type populates
 // return_types/return_names which the catalog uses to expose schema.
@@ -187,7 +165,7 @@ static void ApplyFunctionDecorators(PEGTransformer &transformer, RepeatParseResu
 			} else if (returns_name == "ReturnsNull") {
 				macro_function.strict = true;
 			} else {
-				info.returns_set = IsSetofType(returns_choice);
+				info.returns_set = returns_name == "SetofType";
 				macro_function.return_types.push_back(transformer.Transform<LogicalType>(returns_choice));
 			}
 		} else if (decorator_name == "LanguageClause") {

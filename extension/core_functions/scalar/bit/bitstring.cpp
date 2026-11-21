@@ -87,9 +87,9 @@ namespace {
 struct GetBitOperator {
 	template <class TA, class TB, class TR>
 	static inline TR Operation(TA input, TB n) {
-		if (n < 0 || (idx_t)n > Bit::BitLength(input) - 1) {
+		if (n < 0 || (idx_t)n >= Bit::BitLength(input)) {
 			throw OutOfRangeException("bit index %s out of valid range (0..%s)", NumericHelper::ToString(n),
-			                          NumericHelper::ToString(Bit::BitLength(input) - 1));
+			                          NumericHelper::ToString(static_cast<int64_t>(Bit::BitLength(input)) - 1));
 		}
 		return UnsafeNumericCast<TR>(Bit::GetBit(input, UnsafeNumericCast<idx_t>(n)));
 	}
@@ -113,9 +113,9 @@ static void SetBitOperation(DataChunk &args, ExpressionState &state, Vector &res
 		    if (new_value != 0 && new_value != 1) {
 			    throw InvalidInputException("The new bit must be 1 or 0");
 		    }
-		    if (n < 0 || (idx_t)n > Bit::BitLength(input) - 1) {
+		    if (n < 0 || (idx_t)n >= Bit::BitLength(input)) {
 			    throw OutOfRangeException("bit index %s out of valid range (0..%s)", NumericHelper::ToString(n),
-			                              NumericHelper::ToString(Bit::BitLength(input) - 1));
+			                              NumericHelper::ToString(static_cast<int64_t>(Bit::BitLength(input)) - 1));
 		    }
 		    string_t target = StringVector::EmptyString(result, input.GetSize());
 		    memcpy(target.GetDataWriteable(), input.GetData(), input.GetSize());

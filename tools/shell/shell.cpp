@@ -1327,13 +1327,14 @@ void ShellState::OpenDB(ShellOpenFlags flags) {
 
 	if (!db) {
 		try {
-			db = make_uniq<duckdb::DuckDB>(*engine.open(zDbFilename));
+			db = make_uniq<duckdb::DuckDB>(
+			    *engine.open(zDbFilename, config.options.access_mode == duckdb::AccessMode::READ_ONLY));
 			RegisterShellLogger(*db, storage_ptr);
 			conn = make_uniq<duckdb::Connection>(*db);
 		} catch (std::exception &ex) {
 			PrintDatabaseError(duckdb::ErrorData(ex));
 			if (flags == ShellOpenFlags::KEEP_ALIVE_ON_FAILURE) {
-				db = make_uniq<duckdb::DuckDB>(*engine.open(IN_MEMORY_PATH));
+				db = make_uniq<duckdb::DuckDB>(*engine.open(IN_MEMORY_PATH, false));
 				RegisterShellLogger(*db, storage_ptr);
 				conn = make_uniq<duckdb::Connection>(*db);
 			} else {

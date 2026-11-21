@@ -88,6 +88,7 @@ struct TableFunctionFileInitInput {
 	//! TableFunctionInitInput::op is the operator all those files are read for
 	optional_idx file_index;
 	idx_t file_count = 1;
+	mutable optional_ptr<atomic<idx_t>> sampled_rows;
 	//! (Optional) The only partitions of the file the function reads - indexes into what its get_partition_stats lists
 	//! - in the order it reads them in. Only set for functions whose settings declare "scans_partitions"
 	optional_ptr<const vector<idx_t>> partitions;
@@ -319,6 +320,7 @@ public:
 	//! The operator this file is scanned for, and the number of files that scan reads
 	optional_ptr<const PhysicalOperator> scan_op;
 	idx_t scan_file_count = 1;
+	optional_ptr<atomic<idx_t>> sampled_rows;
 
 public:
 	//! The state of the wrapped function for this file, if it has been initialized

@@ -53,10 +53,10 @@ SELECT bitstring('0101011'::{cast}, 3);
 # cast
 endloop
 
-statement error
-SELECT bitstring('', 0);
+query II
+SELECT bitstring('', 0), bitstring('', 3);
 ----
-<REGEX>:Conversion Error.*Cannot cast empty string to BIT.*
+(empty)	000
 
 statement error
 SELECT bitstring('5', 10);
@@ -122,7 +122,7 @@ NULL
 query I
 SELECT ''::BIT
 ----
-0
+(empty)
 
 statement ok
 DELETE FROM bits
@@ -137,7 +137,7 @@ query I
 SELECT * FROM bits
 ----
 NULL
-0
+(empty)
 
 # try cast
 query I

@@ -371,6 +371,8 @@ public:
 	void QualifyUserFunctions(const SchemaCatalogEntry &home, ParsedExpression &expression);
 	void QualifyUserFunctions(const SchemaCatalogEntry &home, ColumnDefinition &column);
 	void QualifyUserFunctions(const SchemaCatalogEntry &home, CreateTableInfo &info);
+	void LookupBodyNames(ParsedExpression &expression);
+	void LookupBodyNames(QueryNode &node);
 	unique_ptr<BoundConstraint> BindConstraint(const Constraint &constraint, const Identifier &table,
 	                                           const ColumnList &columns);
 	unique_ptr<BoundConstraint> BindUniqueConstraint(const Constraint &constraint, const Identifier &table,
@@ -834,6 +836,8 @@ private:
 	shared_ptr<Binder> CreateBinderWithSearchPath(const Identifier &catalog_name, const Identifier &schema_name);
 	static unique_ptr<ParsedExpression> QualifyTableExpression(ClientContext &context, const TableCatalogEntry &table,
 	                                                           unique_ptr<ParsedExpression> expression);
+	static void RerootTableExpressions(ClientContext &context, CreateTableInfo &info, const Identifier &source,
+	                                   const Identifier &target);
 
 	bool DebugAggregateStateExportVerify(BoundSelectNode &statement, unique_ptr<LogicalOperator> &root);
 

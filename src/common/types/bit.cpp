@@ -109,6 +109,9 @@ void Bit::SetEmptyBitString(bitstring_t &target, idx_t len) {
 void Bit::ToString(bitstring_t bits, char *output) {
 	auto data = const_data_ptr_cast(bits.GetData());
 	auto len = bits.GetSize();
+	if (len < 2) {
+		return;
+	}
 
 	idx_t padding = GetBitPadding(bits);
 	idx_t output_idx = 0;
@@ -131,26 +134,8 @@ string Bit::ToString(bitstring_t str) {
 
 bool Bit::TryGetBitStringSize(string_t str, idx_t &str_len, string *error_message) {
 	auto len = str.GetSize();
-	if (len == 0) {
-		str_len = ComputeBitstringLen(1);
-		return true;
-	}
-
 	auto data = const_data_ptr_cast(str.GetData());
-	idx_t bit_count = 0;
-
-	if (data[0] == 'x') {
-		// Get Bit String Size from hex string
-		bit_count = 4 * (len - 1);
-	} else {
-		bit_count = len;
-	}
-
-	if (bit_count == 0) {
-		string error = "Cannot cast empty string to BIT";
-		HandleCastError::AssignError(error, error_message);
-		return false;
-	}
+	idx_t bit_count = len != 0 && data[0] == 'x' ? 4 * (len - 1) : len;
 	str_len = ComputeBitstringLen(bit_count);
 	return true;
 }
@@ -159,7 +144,7 @@ bool Bit::ToBit(string_t str, bitstring_t &output_str, string *error_message) {
 	auto data = str.GetData();
 	auto len = str.GetSize();
 	if (len == 0) {
-		Bit::SetEmptyBitString(output_str, 1);
+		Bit::SetEmptyBitString(output_str, 0);
 		return true;
 	}
 	if (data[0] == 'x') {
@@ -258,6 +243,9 @@ void Bit::BitToBlob(bitstring_t bit, string_t &output_blob) {
 	auto data = const_data_ptr_cast(bit.GetData());
 	auto output = output_blob.GetDataWriteable();
 	idx_t size = output_blob.GetSize();
+	if (size == 0) {
+		return;
+	}
 
 	output[0] = static_cast<char>(GetFirstByte(bit));
 	if (size >= 2) {
@@ -270,8 +258,6 @@ void Bit::BitToBlob(bitstring_t bit, string_t &output_blob) {
 }
 
 string Bit::BitToBlob(bitstring_t bit) {
-	D_ASSERT(bit.GetSize() > 1);
-
 	auto buffer = make_unsafe_uniq_array_uninitialized<char>(bit.GetSize() - 1);
 	string_t output_str(buffer.get(), UnsafeNumericCast<uint32_t>(bit.GetSize() - 1));
 	Bit::BitToBlob(bit, output_str);
@@ -322,12 +308,6 @@ bool Bit::ValidateInputBitString(const string_t &input, string *error_message) {
 	const char *data = input.GetData();
 	auto len = input.GetSize();
 
-	if (len == 0) {
-		string error = "Cannot cast empty string to BIT";
-		HandleCastError::AssignError(error, error_message);
-		return false;
-	}
-
 	for (idx_t i = 0; i < len; i++) {
 		if (data[i] != '0' && data[i] != '1') {
 			AssignInvalidCharacterError(data[i], error_message);
@@ -362,6 +342,13 @@ idx_t Bit::BitPosition(bitstring_t substring, bitstring_t bits) {
 	auto len = bits.GetSize();
 	auto substr_len = BitLength(substring);
 	idx_t substr_idx = 0;
+	const auto bits_len = BitLength(bits);
+	if (bits_len == 0 || substr_len > bits_len) {
+		return 0;
+	}
+	if (substr_len == 0) {
+		return 1;
+	}
 
 	for (idx_t bit_idx = GetBitPadding(bits); bit_idx < 8; bit_idx++) {
 		idx_t bit = buf[1] & (1 << (7 - bit_idx)) ? 1 : 0;

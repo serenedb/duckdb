@@ -29,6 +29,25 @@ SELECT count(*) FROM read_single_parquet_file('data/parquet-testing/lineitem-top
 ----
 105
 
+statement ok
+COPY (SELECT 'abc' AS s, 1 AS k UNION ALL SELECT 'de', 2) TO '{TEST_DIR}/filter_order.parquet' (FORMAT parquet)
+
+query I
+SELECT k FROM read_single_parquet_file('{TEST_DIR}/filter_order.parquet') WHERE s = 'de'
+----
+2
+
+query II
+SELECT k, s FROM read_single_parquet_file('{TEST_DIR}/filter_order.parquet') WHERE s = 'de'
+----
+2	de
+
+query I
+SELECT count(*) FROM read_single_parquet_file('{TEST_DIR}/filter_order.parquet') t1
+WHERE t1.k IN (SELECT t2.k FROM read_single_parquet_file('{TEST_DIR}/filter_order.parquet') t2 WHERE t2.s = t1.s)
+----
+2
+
 # a file with several row groups is read completely, and its rows come out in order
 statement ok
 COPY (SELECT i AS id, 'value_' || i AS s FROM range(200000) t(i)) TO '{TEST_DIR}/single_rg.parquet' (FORMAT parquet, ROW_GROUP_SIZE 20000)

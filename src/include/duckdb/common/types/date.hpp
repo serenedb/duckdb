@@ -148,7 +148,7 @@ public:
 	//! Try to convert text in a buffer to a date; returns true if parsing was successful
 	//! If the date was a "special" value, the special flag will be set.
 	DUCKDB_API static DateCastResult TryConvertDate(const char *buf, idx_t len, idx_t &pos, date_t &result,
-	                                                bool &special, bool strict = false);
+	                                                bool &special, bool strict = false, bool canonical = false);
 
 	//! Create a string "YYYY-MM-DD" from a specified (year, month, day)
 	//! combination

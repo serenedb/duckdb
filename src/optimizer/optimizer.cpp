@@ -314,7 +314,7 @@ static void VisitPreparedStatements(LogicalOperator &plan, VISIT &&visit) {
 	for (optional_ptr<LogicalOperator> op = &plan; op; op = op->children.empty() ? nullptr : op->children[0].get()) {
 		if (op->type == LogicalOperatorType::LOGICAL_PREPARE) {
 			visit(plan, *op->Cast<LogicalPrepare>().prepared);
-		} else if (op->type == LogicalOperatorType::LOGICAL_EXECUTE && op->Cast<LogicalExecute>().replaces) {
+		} else if (op->type == LogicalOperatorType::LOGICAL_EXECUTE && op->Cast<LogicalExecute>().replaces_plan) {
 			visit(*op->children[0], *op->Cast<LogicalExecute>().prepared);
 		} else {
 			break;

@@ -37,12 +37,8 @@ SET TIME ZONE DEFAULT;
 statement ok
 SET TIME ZONE LOCAL;
 
-statement error
+statement ok
 SET TIME ZONE INTERVAL '01:30' HOUR TO MINUTE;
-----
-<REGEX>:.*HOUR TO MINUTE is not supported.*
 
-statement error
+statement ok
 SET TIME ZONE INTERVAL '01:30';
-----
-Not implemented Error: Unknown TimeZone

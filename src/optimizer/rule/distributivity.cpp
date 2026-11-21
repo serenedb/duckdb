@@ -1,5 +1,6 @@
 #include "duckdb/optimizer/rule/distributivity.hpp"
 
+#include "duckdb/optimizer/expression_rewriter.hpp"
 #include "duckdb/optimizer/matcher/expression_matcher.hpp"
 #include "duckdb/planner/expression/bound_conjunction_expression.hpp"
 #include "duckdb/planner/expression/bound_constant_expression.hpp"
@@ -56,6 +57,9 @@ unique_ptr<Expression> DistributivityRule::ExtractExpression(BoundConjunctionExp
 
 unique_ptr<Expression> DistributivityRule::Apply(LogicalOperator &op, vector<reference<Expression>> &bindings,
                                                  bool &changes_made, bool is_root) {
+	if (rewriter.Scored()) {
+		return nullptr;
+	}
 	auto &initial_or = bindings[0].get().Cast<BoundConjunctionExpression>();
 
 	// we want to find expressions that occur in each of the children of the OR

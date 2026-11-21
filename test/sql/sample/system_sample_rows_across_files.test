@@ -1,0 +1,18 @@
+# name: test/sql/sample/system_sample_rows_across_files.test
+# description: A row-count system sample of many small files counts the rows of all of them
+# group: [sample]
+
+require parquet
+
+statement ok
+COPY (SELECT i AS v, i // 100 AS f FROM range(10000) t(i)) TO '{TEST_DIR}/system_sample_rows_files' (FORMAT parquet, PARTITION_BY (f))
+
+query I
+SELECT count(*) FROM read_parquet('{TEST_DIR}/system_sample_rows_files/*/*.parquet') USING SAMPLE 10 ROWS (system, 1)
+----
+10
+
+query I
+SELECT count(*) FROM read_parquet('{TEST_DIR}/system_sample_rows_files/*/*.parquet') USING SAMPLE 1 ROWS (system, 3)
+----
+1

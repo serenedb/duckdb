@@ -490,6 +490,8 @@ enum class ProgressInvariant : uint8_t;
 
 enum class PushdownExtractSupport : uint8_t;
 
+enum class PushdownTargetUse : uint8_t;
+
 enum class QualifiedNameToStringMode : uint8_t;
 
 enum class QuantileSerializationType : uint8_t;
@@ -1392,6 +1394,9 @@ const char* EnumUtil::ToChars<ProgressInvariant>(ProgressInvariant value);
 
 template<>
 const char* EnumUtil::ToChars<PushdownExtractSupport>(PushdownExtractSupport value);
+
+template<>
+const char* EnumUtil::ToChars<PushdownTargetUse>(PushdownTargetUse value);
 
 template<>
 const char* EnumUtil::ToChars<QualifiedNameToStringMode>(QualifiedNameToStringMode value);
@@ -2401,6 +2406,9 @@ ProgressInvariant EnumUtil::FromString<ProgressInvariant>(std::string_view value
 
 template<>
 PushdownExtractSupport EnumUtil::FromString<PushdownExtractSupport>(std::string_view value);
+
+template<>
+PushdownTargetUse EnumUtil::FromString<PushdownTargetUse>(std::string_view value);
 
 template<>
 QualifiedNameToStringMode EnumUtil::FromString<QualifiedNameToStringMode>(std::string_view value);

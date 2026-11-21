@@ -261,6 +261,9 @@ QualifiedName Binder::ResolveCatalog(CatalogEntryRetriever &retriever, const Qua
 }
 
 QualifiedName Binder::BindTableName(CatalogEntryRetriever &retriever, const QualifiedName &name) {
+	if (name.Path().empty()) {
+		throw ParserException("invalid name syntax");
+	}
 	auto resolved = ResolveCatalog(retriever, name, false);
 	auto &path = resolved.Path();
 	vector<Identifier> schema_path(path.begin() + 1, path.end() - 1);
@@ -679,7 +682,7 @@ SchemaCatalogEntry &Binder::BindCreateFunctionInfo(CreateInfo &info) {
 		};
 		for (auto &return_type : function->return_types) {
 			BindLogicalType(return_type);
-			return_type = MacroFunction::WithoutTypmod(return_type);
+			return_type = MacroFunction::WithoutTypmod(return_type, context);
 		}
 		if (info.type == CatalogType::MACRO_ENTRY) {
 			BoundSelectNode sel_node;
@@ -797,6 +800,10 @@ SchemaCatalogEntry &Binder::BindCreateFunctionInfo(CreateInfo &info) {
 			} catch (const std::exception &ex) {
 				error = ErrorData(ex);
 			}
+			if (should_create_dependencies && error.HasError() &&
+			    error.Type() == ExceptionType::PARAMETER_NOT_RESOLVED) {
+				LookupBodyNames(*function->Cast<ScalarMacroFunction>().expression->Copy());
+			}
 		} else {
 			D_ASSERT(info.type == CatalogType::TABLE_MACRO_ENTRY);
 			auto dummy_binder = CreateBinder(context, this);
@@ -863,6 +870,10 @@ SchemaCatalogEntry &Binder::BindCreateFunctionInfo(CreateInfo &info) {
 				}
 			} catch (const std::exception &ex) {
 				error = ErrorData(ex);
+			}
+			if (should_create_dependencies && error.HasError() &&
+			    error.Type() == ExceptionType::PARAMETER_NOT_RESOLVED) {
+				LookupBodyNames(*function->Cast<TableMacroFunction>().query_node->Copy());
 			}
 		}
 

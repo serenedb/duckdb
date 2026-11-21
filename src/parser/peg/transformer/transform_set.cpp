@@ -1,11 +1,13 @@
 #include "duckdb/parser/peg/transformer/peg_transformer.hpp"
 #include "duckdb/parser/expression/columnref_expression.hpp"
-#include "duckdb/parser/expression/cast_expression.hpp"
 #include "duckdb/parser/expression/default_expression.hpp"
 #include "duckdb/parser/expression/columnref_expression.hpp"
 #include "duckdb/parser/expression/constant_expression.hpp"
 #include "duckdb/common/enum_util.hpp"
+#include "duckdb/common/exception.hpp"
 #include "duckdb/common/string_util.hpp"
+#include "duckdb/common/types/interval.hpp"
+#include "duckdb/common/types/time.hpp"
 
 namespace duckdb {
 
@@ -302,21 +304,31 @@ SetScope PEGTransformerFactory::TransformGlobalScope(PEGTransformer &transformer
 	return SetScope::GLOBAL;
 }
 
-// ZoneIntervalWithInterval <- 'INTERVAL' StringLiteral Interval?
+static unique_ptr<ParsedExpression> TimeZoneFromInterval(const string &literal) {
+	interval_t offset;
+	if (!Interval::FromString(literal, offset)) {
+		throw InvalidInputException("invalid input syntax for type interval: \"%s\"", literal);
+	}
+	if (offset.months != 0 || offset.days != 0) {
+		throw InvalidInputException("invalid interval value for time zone: %s not allowed",
+		                            offset.months != 0 ? "month" : "day");
+	}
+	const auto minutes = offset.micros / Interval::MICROS_PER_MINUTE;
+	return ConstantExpression::String("GMT" + Time::ToUTCOffset(static_cast<int>(minutes / Interval::MINS_PER_HOUR),
+	                                                            static_cast<int>(minutes % Interval::MINS_PER_HOUR)));
+}
+
+// ZoneIntervalWithInterval <- 'INTERVAL' StringLiteral ZoneIntervalField?
 unique_ptr<ParsedExpression>
 PEGTransformerFactory::TransformZoneIntervalWithInterval(PEGTransformer &transformer, const string &string_literal,
-                                                         const optional<DatePartSpecifier> &interval) {
-	auto expr = ConstantExpression::String(string_literal);
-	transformer.AddDepth(1);
-	return make_uniq<CastExpression>(LogicalType::INTERVAL, std::move(expr));
+                                                         const optional<DatePartSpecifier> &zone_interval_field) {
+	return TimeZoneFromInterval(string_literal);
 }
 
 // ZoneIntervalWithPrecision <- 'INTERVAL' Parens(NumberLiteral) StringLiteral
 unique_ptr<ParsedExpression> PEGTransformerFactory::TransformZoneIntervalWithPrecision(
     PEGTransformer &transformer, unique_ptr<ParsedExpression> number_literal, const string &string_literal) {
-	auto expr = ConstantExpression::String(string_literal);
-	transformer.AddDepth(1);
-	return make_uniq<CastExpression>(LogicalType::INTERVAL, std::move(expr));
+	return TimeZoneFromInterval(string_literal);
 }
 
 } // namespace duckdb

@@ -245,6 +245,18 @@ unique_ptr<TimeZone> GetNormalizedTimeZone(std::string_view tz_str, string *reso
 		return tz;
 	}
 
+	if (!tz_str.empty() && (tz_str[0] == '+' || tz_str[0] == '-')) {
+		string mapped = tz_str[0] == '+' ? "GMT-" : "GMT+";
+		mapped.append(tz_str.substr(1));
+		tz = GetKnownTimeZone(mapped);
+		if (tz) {
+			if (resolved) {
+				*resolved = std::move(mapped);
+			}
+			return tz;
+		}
+	}
+
 	//	Map UTC±NN00 to Etc/UTC±N
 	do {
 		if (tz_str.size() <= 4) {
@@ -465,7 +477,7 @@ static void LoadInternal(ExtensionLoader &loader) {
 	// If the host time zone is unknown, fall back to UTC
 	string tz_string = tz ? tz->GetId() : "UTC";
 	config.AddExtensionOption("TimeZone", "The current time zone", LogicalType::VARCHAR, Value(tz_string),
-	                          SetICUTimeZone);
+	                          SetICUTimeZone, nullptr, SetScope::SESSION, false, true);
 
 	RegisterICUCurrentFunctions(loader);
 	RegisterICUDateAddFunctions(loader);
@@ -482,7 +494,7 @@ static void LoadInternal(ExtensionLoader &loader) {
 
 	// Calendars
 	config.AddExtensionOption("Calendar", "The current calendar", LogicalType::VARCHAR, Value("gregorian"),
-	                          SetICUCalendar);
+	                          SetICUCalendar, nullptr, SetScope::SESSION, false, true);
 
 	TableFunction cal_names("icu_calendar_names", {}, ICUCalendarFunction, ICUCalendarBind, ICUCalendarInit);
 	loader.RegisterFunction(cal_names);

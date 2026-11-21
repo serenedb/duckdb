@@ -642,14 +642,17 @@ Identifier PEGTransformerFactory::TransformOwnerRoleSpec(PEGTransformer &transfo
 unique_ptr<SQLStatement> PEGTransformerFactory::TransformAlterOwnerStatement(PEGTransformer &transformer,
                                                                              ParseResult &parse_result) {
 	auto &list_pr = parse_result.Cast<ListParseResult>();
-	// 0:'ALTER' 1:OwnerObjectType 2:QualifiedName 3:'OWNER' 4:'TO' 5:OwnerRoleSpec
+	// 0:'ALTER' 1:OwnerObjectType 2:IfExists? 3:QualifiedName 4:'OWNER' 5:'TO' 6:OwnerRoleSpec
 	// OwnerObjectType is a rule wrapping a CHOICE of keywords; child 0 of its
 	// LIST is the CHOICE (mirrors LoginOption handling above).
 	auto &obj_kw =
 	    list_pr.GetChild(1).Cast<ListParseResult>().Child<ChoiceParseResult>(0).GetResult().Cast<KeywordParseResult>();
 	auto info = make_uniq<AlterPermissionsInfo>(GrantObjectType(StringUtil::Upper(obj_kw.keyword)),
-	                                            transformer.Transform<QualifiedName>(list_pr.GetChild(2)));
-	info->new_owner = TransformOwnerRoleSpec(transformer, list_pr.GetChild(5)).GetIdentifierName();
+	                                            transformer.Transform<QualifiedName>(list_pr.GetChild(3)));
+	if (list_pr.Child<OptionalParseResult>(2).HasResult()) {
+		info->if_not_found = OnEntryNotFound::RETURN_NULL;
+	}
+	info->new_owner = TransformOwnerRoleSpec(transformer, list_pr.GetChild(6)).GetIdentifierName();
 
 	auto result = make_uniq<AlterStatement>();
 	result->info = std::move(info);
