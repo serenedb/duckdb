@@ -166,9 +166,15 @@ enum class ConstraintType : uint8_t;
 
 enum class CoordinateReferenceSystemType : uint8_t;
 
+enum class CopyFieldKind : uint8_t;
+
+enum class CopyFormat : uint8_t;
+
 enum class CopyFunctionFlushBatchReason : uint8_t;
 
 enum class CopyFunctionReturnType : uint8_t;
+
+enum class CopyLogVerbosity : uint8_t;
 
 enum class CopyOverwriteMode : uint8_t;
 
@@ -922,10 +928,19 @@ template<>
 const char* EnumUtil::ToChars<CoordinateReferenceSystemType>(CoordinateReferenceSystemType value);
 
 template<>
+const char* EnumUtil::ToChars<CopyFieldKind>(CopyFieldKind value);
+
+template<>
+const char* EnumUtil::ToChars<CopyFormat>(CopyFormat value);
+
+template<>
 const char* EnumUtil::ToChars<CopyFunctionFlushBatchReason>(CopyFunctionFlushBatchReason value);
 
 template<>
 const char* EnumUtil::ToChars<CopyFunctionReturnType>(CopyFunctionReturnType value);
+
+template<>
+const char* EnumUtil::ToChars<CopyLogVerbosity>(CopyLogVerbosity value);
 
 template<>
 const char* EnumUtil::ToChars<CopyOverwriteMode>(CopyOverwriteMode value);
@@ -1952,10 +1967,19 @@ template<>
 CoordinateReferenceSystemType EnumUtil::FromString<CoordinateReferenceSystemType>(std::string_view value);
 
 template<>
+CopyFieldKind EnumUtil::FromString<CopyFieldKind>(std::string_view value);
+
+template<>
+CopyFormat EnumUtil::FromString<CopyFormat>(std::string_view value);
+
+template<>
 CopyFunctionFlushBatchReason EnumUtil::FromString<CopyFunctionFlushBatchReason>(std::string_view value);
 
 template<>
 CopyFunctionReturnType EnumUtil::FromString<CopyFunctionReturnType>(std::string_view value);
+
+template<>
+CopyLogVerbosity EnumUtil::FromString<CopyLogVerbosity>(std::string_view value);
 
 template<>
 CopyOverwriteMode EnumUtil::FromString<CopyOverwriteMode>(std::string_view value);

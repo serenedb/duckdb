@@ -143,6 +143,8 @@
 #include "duckdb/execution/physical_operator.hpp"
 #include "duckdb/execution/physical_table_scan_enum.hpp"
 #include "duckdb/execution/reservoir_sample.hpp"
+#include "duckdb/formats/copy_fields.hpp"
+#include "duckdb/formats/copy_options.hpp"
 #include "duckdb/formats/csv_scan.hpp"
 #include "duckdb/formats/row_lexer.hpp"
 #include "duckdb/formats/row_ranges.hpp"
@@ -1670,6 +1672,44 @@ CoordinateReferenceSystemType EnumUtil::FromString<CoordinateReferenceSystemType
 	return static_cast<CoordinateReferenceSystemType>(StringUtil::StringToEnum(GetCoordinateReferenceSystemTypeValues(), 5, "CoordinateReferenceSystemType", value));
 }
 
+const StringUtil::EnumStringLiteral *GetCopyFieldKindValues() {
+	static constexpr StringUtil::EnumStringLiteral values[] {
+		{ static_cast<uint32_t>(CopyFieldKind::VALUE), "VALUE" },
+		{ static_cast<uint32_t>(CopyFieldKind::NULL_VALUE), "NULL_VALUE" },
+		{ static_cast<uint32_t>(CopyFieldKind::DEFAULT_VALUE), "DEFAULT_VALUE" }
+	};
+	return values;
+}
+
+template<>
+const char* EnumUtil::ToChars<CopyFieldKind>(CopyFieldKind value) {
+	return StringUtil::EnumToString(GetCopyFieldKindValues(), 3, "CopyFieldKind", static_cast<uint32_t>(value));
+}
+
+template<>
+CopyFieldKind EnumUtil::FromString<CopyFieldKind>(std::string_view value) {
+	return static_cast<CopyFieldKind>(StringUtil::StringToEnum(GetCopyFieldKindValues(), 3, "CopyFieldKind", value));
+}
+
+const StringUtil::EnumStringLiteral *GetCopyFormatValues() {
+	static constexpr StringUtil::EnumStringLiteral values[] {
+		{ static_cast<uint32_t>(CopyFormat::TEXT), "TEXT" },
+		{ static_cast<uint32_t>(CopyFormat::CSV), "CSV" },
+		{ static_cast<uint32_t>(CopyFormat::BINARY), "BINARY" }
+	};
+	return values;
+}
+
+template<>
+const char* EnumUtil::ToChars<CopyFormat>(CopyFormat value) {
+	return StringUtil::EnumToString(GetCopyFormatValues(), 3, "CopyFormat", static_cast<uint32_t>(value));
+}
+
+template<>
+CopyFormat EnumUtil::FromString<CopyFormat>(std::string_view value) {
+	return static_cast<CopyFormat>(StringUtil::StringToEnum(GetCopyFormatValues(), 3, "CopyFormat", value));
+}
+
 const StringUtil::EnumStringLiteral *GetCopyFunctionFlushBatchReasonValues() {
 	static constexpr StringUtil::EnumStringLiteral values[] {
 		{ static_cast<uint32_t>(CopyFunctionFlushBatchReason::BATCH_SIZE), "BATCH_SIZE" },
@@ -1706,6 +1746,25 @@ const char* EnumUtil::ToChars<CopyFunctionReturnType>(CopyFunctionReturnType val
 template<>
 CopyFunctionReturnType EnumUtil::FromString<CopyFunctionReturnType>(std::string_view value) {
 	return static_cast<CopyFunctionReturnType>(StringUtil::StringToEnum(GetCopyFunctionReturnTypeValues(), 3, "CopyFunctionReturnType", value));
+}
+
+const StringUtil::EnumStringLiteral *GetCopyLogVerbosityValues() {
+	static constexpr StringUtil::EnumStringLiteral values[] {
+		{ static_cast<uint32_t>(CopyLogVerbosity::DEFAULT), "DEFAULT" },
+		{ static_cast<uint32_t>(CopyLogVerbosity::VERBOSE), "VERBOSE" },
+		{ static_cast<uint32_t>(CopyLogVerbosity::SILENT), "SILENT" }
+	};
+	return values;
+}
+
+template<>
+const char* EnumUtil::ToChars<CopyLogVerbosity>(CopyLogVerbosity value) {
+	return StringUtil::EnumToString(GetCopyLogVerbosityValues(), 3, "CopyLogVerbosity", static_cast<uint32_t>(value));
+}
+
+template<>
+CopyLogVerbosity EnumUtil::FromString<CopyLogVerbosity>(std::string_view value) {
+	return static_cast<CopyLogVerbosity>(StringUtil::StringToEnum(GetCopyLogVerbosityValues(), 3, "CopyLogVerbosity", value));
 }
 
 const StringUtil::EnumStringLiteral *GetCopyOverwriteModeValues() {
