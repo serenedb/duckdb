@@ -840,7 +840,7 @@ void JsonScanGlobal::Detect() {
 }
 
 idx_t JsonScanGlobal::MaxThreads() const {
-	if (ranges->Dynamic()) {
+	if (ranges->Intake()) {
 		return bind.max_threads.IsValid() ? bind.max_threads.GetIndex() : GlobalTableFunctionState::MAX_THREADS;
 	}
 	return ranges->RangeCount();
@@ -878,15 +878,12 @@ JsonRangeStart JsonScanGlobal::StartState(idx_t range) {
 	    });
 }
 
-bool JsonScanGlobal::Claim(idx_t &unit, idx_t &begin, shared_ptr<RowBytes> &carry, idx_t &carry_to) {
+bool JsonScanGlobal::Claim(idx_t &unit, idx_t &begin) {
 	{
 		lock_guard<mutex> guard(lock);
 		if (error_unit.IsValid()) {
 			return false;
 		}
-	}
-	if (ranges->Intake()) {
-		return ranges->ClaimIntake(unit, begin, carry, carry_to);
 	}
 	if (!ranges->Claim(unit)) {
 		return false;
@@ -958,12 +955,18 @@ JsonScan::JsonScan(JsonScanGlobal &global_p)
 	}
 }
 
+JsonScan::~JsonScan() {
+	if (claimed && !loaded && global.ranges->Intake()) {
+		global.ranges->FailIntake();
+	}
+}
+
 bool JsonScan::Claim() {
 	claimed = false;
 	done = false;
 	stopped = false;
 	unit_records = 0;
-	if (!global.Claim(unit, begin, carry, carry_to)) {
+	if (!global.Claim(unit, begin)) {
 		return false;
 	}
 	loaded = false;
@@ -973,31 +976,53 @@ bool JsonScan::Claim() {
 
 void JsonScan::Load() {
 	auto &ranges = *global.ranges;
-	first = begin == 0;
 	if (ranges.Intake()) {
+		idx_t from;
+		if (!ranges.ClaimRead(unit, from)) {
+			claimed = false;
+			return;
+		}
 		bool cut = false;
 		absl::Cleanup abandon = [&] {
 			if (!cut) {
-				ranges.Cut(DConstants::INVALID_INDEX, nullptr, 0);
+				ranges.FailIntake();
 			}
 		};
-		window.Start(begin, false, true);
-		if (carry && carry_to > begin) {
-			window.Seed(*carry, carry_to);
+		window.StartAhead(from);
+		while (window.read_to - from < JSON_STREAM_BYTES && !Last()) {
+			window.Read(window.bytes->offset, JSON_STREAM_BYTES - (window.read_to - from));
 		}
-		carry.reset();
+		ranges.PassRead(window.read_to);
+		RowClaim claim;
+		if (!ranges.ClaimCut(unit, claim)) {
+			cut = true;
+			claimed = false;
+			return;
+		}
+		begin = claim.begin;
+		first = begin == 0;
+		window.Prepend(std::move(claim.carry), claim.begin, from);
 		data = window.bytes->data;
 		size = window.bytes->size;
-		file_offset = begin;
-		cursor = 0;
+		file_offset = window.bytes->offset;
+		cursor = begin - file_offset;
 		count = 0;
-		limit = NumericLimits<idx_t>::Maximum();
-		limit = CutRecords();
+		RowSearch search;
+		search.searched_to = claim.resumed ? claim.search.searched_to : begin;
+		limit = CutRecords(search.searched_to);
 		cut = true;
-		ranges.Cut(limit, window.bytes, window.read_to);
+		if (limit == DConstants::INVALID_INDEX) {
+			ranges.CarryOn(std::move(window.bytes), window.read_to, search, false);
+			window.read_to = begin;
+			global.Finish(unit, 0);
+			claimed = false;
+			return;
+		}
+		ranges.Cut(limit, window.Tail(limit), window.read_to, CSVState::RECORD_SEPARATOR, DConstants::INVALID_INDEX);
 		Begin();
 		return;
 	}
+	first = begin == 0;
 	limit = ranges.RangeEnd(unit, NumericLimits<idx_t>::Maximum());
 	if (global.parallel_values) {
 		LoadValueRange();
@@ -1005,7 +1030,7 @@ void JsonScan::Load() {
 		return;
 	}
 	const idx_t from = first ? 0 : begin - 1;
-	window.Start(from, !sampling, first);
+	window.Start(from, !sampling);
 	file_offset = from;
 	cursor = 0;
 	count = 0;
@@ -1031,7 +1056,7 @@ void JsonScan::LoadValueRange() {
 	auto &ranges = *global.ranges;
 	const bool array = global.format == JSONFormat::ARRAY;
 	const bool publish = unit + 1 < ranges.RangeCount();
-	window.Start(begin, !sampling, first);
+	window.Start(begin, !sampling);
 	file_offset = begin;
 	cursor = 0;
 	count = 0;
@@ -1122,21 +1147,21 @@ bool JsonScan::ReadWindow(idx_t keep, idx_t piece) {
 	return window.read_to != before;
 }
 
-idx_t JsonScan::CutRecords() {
-	while (true) {
-		ReadWindow(begin, size < JSON_STREAM_BYTES ? JSON_STREAM_BYTES - size : size);
-		const auto last = std::string_view(data, size).rfind('\n');
-		const bool found = last != std::string_view::npos;
-		if (found && (size >= JSON_STREAM_BYTES || Last())) {
-			return file_offset + last + 1;
-		}
-		if (Last()) {
-			return file_offset + size;
-		}
-		if (!found && size > options.maximum_object_size) {
-			global.ThrowObjectSizeError(size);
-		}
+idx_t JsonScan::CutRecords(idx_t &searched_to) {
+	const idx_t from = MaxValue(searched_to, begin) - file_offset;
+	const auto last = std::string_view(data + from, size - from).rfind('\n');
+	if (last != std::string_view::npos) {
+		return file_offset + from + last + 1;
 	}
+	if (Last()) {
+		return file_offset + size;
+	}
+	const idx_t record = file_offset + size - begin;
+	if (record > options.maximum_object_size) {
+		global.ThrowObjectSizeError(record);
+	}
+	searched_to = file_offset + size;
+	return DConstants::INVALID_INDEX;
 }
 
 void JsonScan::Fill(idx_t bytes) {
@@ -1375,6 +1400,15 @@ void JsonScan::TransformError(idx_t record, const string &message) {
 }
 
 idx_t JsonScan::Scan(DataChunk &output) {
+	absl::Cleanup fail = [&] {
+		global.ranges->FailIntake();
+	};
+	const idx_t rows = ScanUnit(output);
+	std::move(fail).Cancel();
+	return rows;
+}
+
+idx_t JsonScan::ScanUnit(DataChunk &output) {
 	output.Reset();
 	if (claimed && !loaded) {
 		Load();
@@ -1412,7 +1446,7 @@ idx_t JsonScan::Sample(const JSONNode **&sample, idx_t &bytes) {
 	if (!loaded) {
 		Load();
 	}
-	if (stopped || !NextRecords()) {
+	if (!claimed || stopped || !NextRecords()) {
 		return 0;
 	}
 	for (idx_t i = 0; i < count; i++) {

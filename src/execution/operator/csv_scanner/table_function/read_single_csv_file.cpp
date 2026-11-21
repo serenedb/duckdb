@@ -509,6 +509,9 @@ static void FinishFile(ReadSingleCSVFileGlobalState &gstate) {
 }
 
 static bool ClaimNextPart(ReadSingleCSVFileGlobalState &gstate, ReadSingleCSVFileLocalState &lstate) {
+	if (!lstate.scan && gstate.scan->ranges->Intake()) {
+		lstate.scan = make_uniq<CsvScan>(*gstate.scan);
+	}
 	if (!gstate.scan->Claim(lstate.range)) {
 		if (gstate.scan->AllFinished()) {
 			FinishFile(gstate);
