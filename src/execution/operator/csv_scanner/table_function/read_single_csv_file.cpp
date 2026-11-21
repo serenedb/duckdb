@@ -282,8 +282,8 @@ static unique_ptr<FunctionData> ReadSingleCSVFileCombineSchema(ClientContext &co
 		// the files have different columns - every file is read the way it was bound
 		return nullptr;
 	}
-	if (!input.bind_data.empty() && !input.bind_data[0].get().Cast<ReadSingleCSVFileData>().options.auto_detect) {
-		auto &first = input.bind_data[0].get().Cast<ReadSingleCSVFileData>();
+	auto &first = input.bind_data[0].get().Cast<ReadSingleCSVFileData>();
+	if (!first.options.auto_detect) {
 		VerifyForceNotNull(first.options, names);
 		auto result = make_uniq<ReadSingleCSVFileData>();
 		result->options = first.options;
