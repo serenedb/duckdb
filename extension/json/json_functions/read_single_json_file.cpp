@@ -67,7 +67,8 @@ static unique_ptr<FunctionData> ReadSingleJSONFileBind(ClientContext &context, T
 	auto &file_input = TableFunctionFileBindInput::Get(input);
 	auto result = make_uniq<ReadSingleJSONFileData>();
 	auto &options = result->options;
-	const bool scan_bound = file_input.expected_bind_data && file_input.HasExpectedSchema();
+	const bool scan_bound = file_input.expected_bind_data;
+	D_ASSERT(!scan_bound || file_input.HasExpectedSchema());
 	if (scan_bound) {
 		options = file_input.expected_bind_data->Cast<ReadSingleJSONFileData>().parsed_options;
 	} else {
@@ -260,19 +261,18 @@ static unique_ptr<FunctionData> ReadSingleJSONFileCombineSchema(ClientContext &c
                                                                 TableFunctionCombineSchemaInput &input,
                                                                 vector<LogicalType> &return_types,
                                                                 vector<Identifier> &names) {
-	if (!input.bind_data.empty()) {
-		auto &first = input.bind_data[0].get().Cast<ReadSingleJSONFileData>();
-		if (!first.structure && !first.parsed_options.name_list.empty()) {
-			auto result = make_uniq<ReadSingleJSONFileData>();
-			result->options = first.options;
-			result->parsed_options = first.parsed_options;
-			result->key_names = first.key_names;
-			result->feature_columns = first.feature_columns;
-			result->date_format_map = make_uniq<DateFormatMap>(*first.date_format_map);
-			JSONScan::FinalizeBind(*result, names);
-			result->types = return_types;
-			return std::move(result);
-		}
+	auto &first = input.bind_data[0].get().Cast<ReadSingleJSONFileData>();
+	if (!first.structure) {
+		D_ASSERT(!first.parsed_options.name_list.empty());
+		auto result = make_uniq<ReadSingleJSONFileData>();
+		result->options = first.options;
+		result->parsed_options = first.parsed_options;
+		result->key_names = first.key_names;
+		result->feature_columns = first.feature_columns;
+		result->date_format_map = make_uniq<DateFormatMap>(*first.date_format_map);
+		JSONScan::FinalizeBind(*result, names);
+		result->types = return_types;
+		return std::move(result);
 	}
 	JSONStructureNode merged;
 	optional_ptr<const ReadSingleJSONFileData> first_file;
