@@ -85,3 +85,22 @@ SELECT id, length(s) FROM read_csv('{PYTHON_HTTP_SERVER_URL}/lookup_tail.csv', a
 ----
 10	8189
 9	2
+
+statement ok
+COPY (SELECT encode(string_agg(i || ',n' || i || CASE WHEN i % 2 = 0 THEN chr(10) ELSE chr(13) || chr(10) END, '' ORDER BY i)) FROM range(100) r(i)) TO '{PYTHON_HTTP_SERVER_DIR}/lookup_line_feeds.csv' (FORMAT blob);
+
+query II
+SELECT id, s FROM read_csv('{PYTHON_HTTP_SERVER_URL}/lookup_line_feeds.csv', auto_detect = true, delim = ',', header = false, new_line = '\r\n', strict_mode = false, columns = {'id': 'INTEGER', 's': 'VARCHAR'}) ORDER BY id DESC LIMIT 4
+----
+99	n99
+98	n98
+97	n97
+96	n96
+
+statement ok
+COPY (SELECT encode(string_agg(i || ',r' || i || chr(13) || chr(10), '' ORDER BY i) || '999,' || repeat('x', 8187) || chr(13) || chr(10) || '5,z' || chr(13) || chr(10)) FROM range(10) r(i)) TO '{PYTHON_HTTP_SERVER_DIR}/lookup_window_end.csv' (FORMAT blob);
+
+query II
+SELECT id, length(s) FROM read_csv('{PYTHON_HTTP_SERVER_URL}/lookup_window_end.csv', auto_detect = true, delim = ',', header = false, new_line = '\r\n', columns = {'id': 'INTEGER', 's': 'VARCHAR'}) ORDER BY id DESC LIMIT 1
+----
+999	8187
