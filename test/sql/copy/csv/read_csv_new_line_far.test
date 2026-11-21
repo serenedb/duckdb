@@ -1,0 +1,29 @@
+# name: test/sql/copy/csv/read_csv_new_line_far.test
+# description: read_csv without auto-detection finds the line break of a file whose first row is longer than the piece the detection reads at a time
+# group: [csv]
+
+statement ok
+COPY (SELECT encode('"' || repeat('a', 100000) || '",1' || chr(13) || chr(10) || '"b",2' || chr(13) || chr(10))) TO '{TEMP_DIR}/far_crlf.csv' (FORMAT BLOB);
+
+query II
+SELECT length(c0), c1 FROM read_csv('{TEMP_DIR}/far_crlf.csv', auto_detect = false, header = false, columns = {'c0': 'VARCHAR', 'c1': 'INTEGER'}) ORDER BY c1;
+----
+100000	1
+1	2
+
+statement ok
+COPY (SELECT encode('"' || repeat('a', 100000) || '",1' || chr(13) || '"b",2' || chr(13))) TO '{TEMP_DIR}/far_cr.csv' (FORMAT BLOB);
+
+query II
+SELECT length(c0), c1 FROM read_csv('{TEMP_DIR}/far_cr.csv', auto_detect = false, header = false, columns = {'c0': 'VARCHAR', 'c1': 'INTEGER'}) ORDER BY c1;
+----
+100000	1
+1	2
+
+statement ok
+COPY (SELECT encode('"' || repeat('a', 100000) || '",1')) TO '{TEMP_DIR}/far_none.csv' (FORMAT BLOB);
+
+query II
+SELECT length(c0), c1 FROM read_csv('{TEMP_DIR}/far_none.csv', auto_detect = false, header = false, columns = {'c0': 'VARCHAR', 'c1': 'INTEGER'});
+----
+100000	1

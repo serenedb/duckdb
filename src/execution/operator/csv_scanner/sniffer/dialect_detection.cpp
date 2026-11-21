@@ -7,6 +7,12 @@ namespace duckdb {
 
 constexpr idx_t CSVReaderOptions::sniff_size;
 
+namespace {
+
+constexpr idx_t NEW_LINE_PIECE = 1 << 16;
+
+} // namespace
+
 bool IsQuoteDefault(char quote) {
 	if (quote == '\"' || quote == '\'' || quote == '\0') {
 		return true;
@@ -588,7 +594,10 @@ NewLineIdentifier CSVSniffer::DetectNewLineDelimiter(CSVBufferManager &buffer_ma
 	RowCursor cursor;
 	lexer.Start(cursor, 0, true, false);
 	cursor.file_start = true;
-	lexer.Feed(cursor, data, 0, size, true, nullptr);
+	for (idx_t end = 0; end < size && cursor.first_term == DConstants::INVALID_INDEX;) {
+		end = MinValue<idx_t>(size, end + NEW_LINE_PIECE);
+		lexer.Feed(cursor, data, 0, end, end == size, nullptr);
+	}
 	const idx_t first = cursor.first_term;
 	if (first == DConstants::INVALID_INDEX || data[first] == '\n') {
 		return NewLineIdentifier::SINGLE_N;
