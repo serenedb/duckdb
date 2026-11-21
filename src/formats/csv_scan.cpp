@@ -889,7 +889,6 @@ bool CsvScanGlobal::FinishRange(idx_t range, idx_t lines) {
 CsvScan::CsvScan(CsvScanGlobal &global_p)
     : global(global_p), source(global_p.source), options(global_p.options), grammar(global_p.grammar),
       reader(*global_p.ranges), bytes(reader.window.bytes), cursor(reader.cursor), fields(reader.fields) {
-	value_errors.resize(STANDARD_VECTOR_SIZE);
 	failed.resize(STANDARD_VECTOR_SIZE);
 	selected.resize(STANDARD_VECTOR_SIZE);
 	keep.Initialize(STANDARD_VECTOR_SIZE);
@@ -1716,6 +1715,9 @@ void CsvScan::LeanRetry(const CsvScanColumn &column, Vector &vector, bool utf8_v
 		                                 : DecodeValue(column, LeanField(column, row), vector, row, error);
 		if (!decoded) {
 			FlatVector::SetNull(vector, row, true);
+			if (value_errors.empty()) {
+				value_errors.resize(STANDARD_VECTOR_SIZE);
+			}
 			value_errors[row].push_back(std::move(error));
 			lean_errors = true;
 		}
@@ -1862,6 +1864,9 @@ void CsvScan::LeanReport(idx_t first, idx_t count) {
 		return;
 	}
 	lean_errors = false;
+	if (value_errors.empty()) {
+		value_errors.resize(STANDARD_VECTOR_SIZE);
+	}
 	const idx_t max_line_size = options.maximum_line_size.GetValue();
 	for (idx_t row = first; row < end_row; row++) {
 		auto &values = value_errors[row];
