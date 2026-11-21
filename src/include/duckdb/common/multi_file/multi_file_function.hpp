@@ -937,7 +937,8 @@ public:
 	static MultiFileClaimResult ClaimPlannedJob(ClientContext &context, const MultiFileBindData &bind_data,
 	                                            MultiFileGlobalState &gstate,
 	                                            ScanReadAheadJobWrapper<MultiFileScanJobState> &job,
-	                                            unique_lock<mutex> &parallel_lock) {
+	                                            unique_lock<mutex> &parallel_lock,
+	                                            vector<shared_ptr<BaseFileReader>> &retired) {
 		while (gstate.planned_claim < gstate.planned_files.size()) {
 			const auto file_index = gstate.planned_files[gstate.planned_claim++];
 			auto &reader_data = *gstate.readers[file_index];
@@ -948,7 +949,7 @@ public:
 				reader_data.file_state = MultiFileFileState::CLOSED;
 				reader->FinishFile(context, *gstate.global_state);
 				reader_data.closed_reader = reader;
-				reader_data.reader = nullptr;
+				retired.push_back(std::move(reader_data.reader));
 			}
 			if (!claimed) {
 				continue;
@@ -968,9 +969,11 @@ public:
 	static MultiFileClaimResult ClaimNextJobInternal(ClientContext &context, const MultiFileBindData &bind_data,
 	                                                 MultiFileGlobalState &gstate,
 	                                                 ScanReadAheadJobWrapper<MultiFileScanJobState> &job) {
+		const auto previous = std::move(job.reader);
+		vector<shared_ptr<BaseFileReader>> retired;
 		unique_lock<mutex> parallel_lock(gstate.lock);
 		if (gstate.planned) {
-			return ClaimPlannedJob(context, bind_data, gstate, job, parallel_lock);
+			return ClaimPlannedJob(context, bind_data, gstate, job, parallel_lock, retired);
 		}
 
 		while (true) {
@@ -1012,7 +1015,7 @@ public:
 					//! Finish processing the file
 					current_reader_data.reader->FinishFile(context, *gstate.global_state);
 					current_reader_data.closed_reader = current_reader_data.reader;
-					current_reader_data.reader = nullptr;
+					retired.push_back(std::move(current_reader_data.reader));
 					continue;
 				}
 			} else if (current_reader_data.file_state == MultiFileFileState::SKIPPED) {
