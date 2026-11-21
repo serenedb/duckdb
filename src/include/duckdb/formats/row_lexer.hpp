@@ -65,6 +65,8 @@ struct RowEvent {
 
 struct RowFields {
 	void Clear() {
+		rows = row_store.get();
+		ends = end_store.get();
 		row_count = 0;
 		end_count = 0;
 		anomalies.clear();
@@ -73,12 +75,15 @@ struct RowFields {
 		events.clear();
 	}
 	void Reserve(idx_t more);
+	bool Fits(idx_t rows_used, idx_t ends_used, idx_t more) const;
 	void Drop(idx_t rows, idx_t ends);
 	void Rebase(uint32_t delta);
 	const RowAnomaly *Anomaly(idx_t row) const;
 
-	unsafe_unique_array<uint32_t> rows;
-	unsafe_unique_array<uint32_t> ends;
+	uint32_t *rows = nullptr;
+	uint32_t *ends = nullptr;
+	unsafe_unique_array<uint32_t> row_store;
+	unsafe_unique_array<uint32_t> end_store;
 	idx_t capacity = 0;
 	idx_t row_count = 0;
 	idx_t end_count = 0;
