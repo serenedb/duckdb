@@ -1,0 +1,11 @@
+# name: test/sql/copy/csv/test_csv_decoded_buffers.test
+# description: A CSV read through a decoder gives every row when its reads end on the last byte of the newest buffer, which the scan then releases
+# group: [csv]
+
+statement ok
+COPY (SELECT i AS a, repeat('x', 20) AS b FROM range(100000) t(i)) TO '{TEMP_DIR}/decoded_buffers.csv' (HEADER false);
+
+query II
+SELECT count(b), sum(a) FROM read_csv('{TEMP_DIR}/decoded_buffers.csv', encoding = 'latin-1', buffer_size = 98304, parallel = false, auto_detect = false, header = false, columns = {'a': 'BIGINT', 'b': 'VARCHAR'})
+----
+100000	4999950000
