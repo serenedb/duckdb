@@ -8,6 +8,7 @@
 
 #pragma once
 
+#include "duckdb/common/allocator.hpp"
 #include "duckdb/common/atomic.hpp"
 #include "duckdb/common/mutex.hpp"
 #include "duckdb/common/optional_idx.hpp"
@@ -23,7 +24,7 @@ public:
 
 struct RowBytes {
 	shared_ptr<RowBuffer> buffer;
-	unsafe_unique_array<char> owned;
+	AllocatedData owned;
 	idx_t capacity = 0;
 	const char *data = nullptr;
 	idx_t offset = 0;
@@ -67,7 +68,9 @@ idx_t RowSync(const RowDialect &dialect, const char *bytes, idx_t base, idx_t be
 
 class RowRanges {
 public:
-	RowRanges(const RowLexer &lexer, RowSource &source, idx_t start, idx_t size, idx_t range_bytes, bool file_start);
+	RowRanges(Allocator &allocator, const RowLexer &lexer, RowSource &source, idx_t start, idx_t size,
+	          idx_t range_bytes, bool file_start);
+	RowRanges(Allocator &allocator, RowSource &source, idx_t start, idx_t size, idx_t range_bytes);
 
 	void Reset(idx_t size, idx_t range_bytes);
 	bool Claim(idx_t &range);
@@ -115,7 +118,8 @@ public:
 	void ViewWholeFile(RowBytes &bytes) const;
 
 public:
-	const RowLexer &lexer;
+	Allocator &allocator;
+	optional_ptr<const RowLexer> lexer;
 	RowSource &source;
 	const idx_t start;
 	const bool stream;
@@ -148,6 +152,59 @@ private:
 };
 
 enum class RowReadResult : uint8_t { ROWS, FLUSH, COUNTED, DONE };
+
+class RowWindow {
+public:
+	static constexpr idx_t PADDING = 64;
+	static constexpr idx_t PIECE = 1 << 16;
+
+	explicit RowWindow(RowRanges &ranges);
+
+	void Start(idx_t from, bool release, bool exact_end);
+	void Read(idx_t keep_from, idx_t piece = PIECE);
+	bool Waits() const;
+
+public:
+	RowRanges &ranges;
+	shared_ptr<RowBytes> bytes;
+	idx_t read_to = 0;
+	bool beyond = false;
+	bool exact_end = false;
+
+private:
+	void Prepare(idx_t keep_from, idx_t need);
+
+private:
+	shared_ptr<RowBytes> spare;
+	bool release = false;
+};
+
+class RowLookup {
+public:
+	explicit RowLookup(RowRanges &ranges);
+
+	optional_idx Find(idx_t from, idx_t offset, idx_t want);
+	void Extend(idx_t want);
+	idx_t End() const {
+		return window_offset + (window_end - window_begin);
+	}
+	bool Eof() const {
+		return window_eof;
+	}
+
+public:
+	shared_ptr<RowBytes> bytes;
+
+private:
+	void Read(idx_t from, idx_t want);
+
+private:
+	RowRanges &ranges;
+	idx_t window_begin = 0;
+	idx_t window_end = 0;
+	idx_t window_offset = 0;
+	bool window_eof = false;
+};
 
 class RowRangeReader {
 public:
@@ -193,7 +250,7 @@ public:
 	const RowLexer &lexer;
 	const RowDialect &dialect;
 	const idx_t columns;
-	shared_ptr<RowBytes> bytes;
+	RowWindow window;
 	RowCursor cursor;
 	RowFields fields;
 	idx_t emitted_rows = 0;
@@ -211,13 +268,11 @@ private:
 	void OpenRowFits();
 	void ReadPiece();
 	bool Waits() const;
-	void PrepareWindow(idx_t keep_from, idx_t need);
 	idx_t KeepFrom() const;
 	bool CheckCountUtf8(idx_t end);
 	bool Recover();
 
 private:
-	shared_ptr<RowBytes> spare;
 	idx_t range = 0;
 	bool active = false;
 	bool extract = false;
@@ -226,8 +281,6 @@ private:
 	bool release = false;
 	bool validate_count_utf8 = false;
 	bool probe_only = false;
-	bool beyond = false;
-	bool exact_end = false;
 	bool finished = false;
 	bool verified = false;
 	bool second_pass = false;
@@ -237,7 +290,6 @@ private:
 	CSVState origin = CSVState::NOT_SET;
 	idx_t lex_start = 0;
 	idx_t lex_stop = 0;
-	idx_t read_to = 0;
 	idx_t validated_to = 0;
 	idx_t held_rows = 0;
 	idx_t counted_rows = DConstants::INVALID_INDEX;

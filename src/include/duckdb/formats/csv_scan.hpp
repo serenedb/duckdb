@@ -15,6 +15,7 @@
 #include "duckdb/execution/operator/csv_scanner/csv_buffer.hpp"
 #include "duckdb/execution/operator/csv_scanner/csv_error.hpp"
 #include "duckdb/execution/operator/csv_scanner/csv_file_scanner.hpp"
+#include "duckdb/formats/row_input.hpp"
 #include "duckdb/formats/row_ranges.hpp"
 #include "duckdb/formats/value_codecs.hpp"
 #include "duckdb/function/scalar/strftime_format.hpp"
@@ -37,23 +38,6 @@ public:
 
 private:
 	shared_ptr<CSVBufferHandle> handle;
-};
-
-class CsvRowSource : public RowSource {
-public:
-	CsvRowSource(CSVBufferManager &manager, idx_t size, optional_ptr<atomic<idx_t>> bytes_read);
-
-	idx_t Read(char *data, idx_t count, idx_t offset) const override;
-	void Release(idx_t position) override;
-	optional_idx End() const override {
-		return manager.KnownEnd();
-	}
-
-public:
-	CSVBufferManager &manager;
-	const idx_t size;
-	optional_ptr<atomic<idx_t>> bytes_read;
-	idx_t released = 0;
 };
 
 struct CsvScanColumn {
@@ -177,8 +161,7 @@ public:
 	CsvScanSource source;
 	CsvGrammar grammar;
 	unique_ptr<RowLexer> lean;
-	unique_ptr<CsvRowSource> row_source;
-	shared_ptr<RowSource> host_stream;
+	unique_ptr<RowInput> input;
 	unique_ptr<RowRanges> ranges;
 	idx_t num_columns = 0;
 	bool count_only = false;
@@ -195,7 +178,6 @@ public:
 	bool empty_is_null = false;
 	bool ignore_errors = false;
 	bool print_line = true;
-	bool stream = false;
 	idx_t skip_rows = 0;
 	bool skip_bom = false;
 	idx_t start = 0;
