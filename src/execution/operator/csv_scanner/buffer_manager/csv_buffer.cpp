@@ -8,14 +8,14 @@ CSVBuffer::CSVBuffer(ClientContext &context, idx_t buffer_size_p, CSVFileHandle 
                      const idx_t &global_csv_current_position)
     : context(context), requested_size(buffer_size_p), is_pipe(file_handle.IsPipe()) {
 	global_csv_start = global_csv_current_position;
-	Load(file_handle);
+	Load(file_handle, nullptr);
 }
 
 CSVBuffer::CSVBuffer(CSVFileHandle &file_handle, ClientContext &context, idx_t buffer_size,
-                     idx_t global_csv_current_position, idx_t buffer_idx_p)
+                     idx_t global_csv_current_position, idx_t buffer_idx_p, shared_ptr<CSVBuffer> recycled)
     : context(context), requested_size(buffer_size), global_csv_start(global_csv_current_position),
       is_pipe(file_handle.IsPipe()), buffer_idx(buffer_idx_p) {
-	Load(file_handle);
+	Load(file_handle, std::move(recycled));
 }
 
 CSVBuffer::CSVBuffer(ClientContext &context, idx_t requested_size_p, idx_t actual_size, idx_t global_csv_start_p,
@@ -24,8 +24,13 @@ CSVBuffer::CSVBuffer(ClientContext &context, idx_t requested_size_p, idx_t actua
       global_csv_start(global_csv_start_p), is_pipe(false), random_access(true), buffer_idx(buffer_idx_p) {
 }
 
-void CSVBuffer::Load(CSVFileHandle &file_handle) {
-	AllocateBuffer(requested_size);
+void CSVBuffer::Load(CSVFileHandle &file_handle, shared_ptr<CSVBuffer> recycled) {
+	if (recycled && recycled->requested_size >= requested_size && recycled->Reusable()) {
+		handle = std::move(recycled->handle);
+		block = std::move(recycled->block);
+	} else {
+		AllocateBuffer(requested_size);
+	}
 	auto buffer = char_ptr_cast(handle.GetDataMutable());
 	actual_buffer_size = file_handle.Read(buffer, requested_size);
 	while (actual_buffer_size < requested_size && !file_handle.FinishedReading()) {
@@ -35,15 +40,16 @@ void CSVBuffer::Load(CSVFileHandle &file_handle) {
 	last_buffer = file_handle.FinishedReading();
 }
 
-shared_ptr<CSVBuffer> CSVBuffer::Next(CSVFileHandle &file_handle, idx_t buffer_size, bool &has_seeked) const {
+shared_ptr<CSVBuffer> CSVBuffer::Next(CSVFileHandle &file_handle, idx_t buffer_size, bool &has_seeked,
+                                      shared_ptr<CSVBuffer> recycled) const {
 	if (has_seeked) {
 		// This means that at some point a reload was done, and we are currently on the incorrect position in our file
 		// handle
 		file_handle.Seek(global_csv_start + actual_buffer_size);
 		has_seeked = false;
 	}
-	auto next_csv_buffer = make_shared_ptr<CSVBuffer>(file_handle, context, buffer_size,
-	                                                  global_csv_start + actual_buffer_size, buffer_idx + 1);
+	auto next_csv_buffer = make_shared_ptr<CSVBuffer>(
+	    file_handle, context, buffer_size, global_csv_start + actual_buffer_size, buffer_idx + 1, std::move(recycled));
 	if (next_csv_buffer->GetBufferSize() == 0) {
 		// We are done reading
 		return nullptr;
