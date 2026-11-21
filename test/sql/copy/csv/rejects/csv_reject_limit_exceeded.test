@@ -1,0 +1,16 @@
+# name: test/sql/copy/csv/rejects/csv_reject_limit_exceeded.test
+# description: read_csv without a rejects table skips at most rejects_limit rows, and names the row that goes over it
+# group: [rejects]
+
+statement ok
+COPY (SELECT a FROM (VALUES ('1'), ('x'), ('3'), ('y'), ('5')) t(a)) TO '{TEMP_DIR}/reject_limit_exceeded.csv' (HEADER false);
+
+query II
+SELECT count(*), sum(a) FROM read_csv('{TEMP_DIR}/reject_limit_exceeded.csv', header = false, auto_detect = false, columns = {'a': 'INTEGER'}, ignore_errors = true, rejects_limit = 2)
+----
+3	9
+
+statement error
+SELECT count(*), sum(a) FROM read_csv('{TEMP_DIR}/reject_limit_exceeded.csv', header = false, auto_detect = false, columns = {'a': 'INTEGER'}, ignore_errors = true, rejects_limit = 1)
+----
+<REGEX>:.*skipped more than REJECT_LIMIT \(1\) rows due to data type incompatibility\n.*Could not convert string "y" to 'INTEGER'.*

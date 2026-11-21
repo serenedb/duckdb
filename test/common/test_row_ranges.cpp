@@ -944,3 +944,73 @@ TEST_CASE("A single-threaded scan of a compressed CSV holds only the buffers it 
 	REQUIRE(rows == 1000000);
 	REQUIRE(held <= 8 * 1048576);
 }
+
+TEST_CASE("A range reader never writes into the windows that rows it handed out still hold", "[csv]") {
+	string data;
+	for (idx_t row = 0; row < 3000; row++) {
+		data += to_string(row) + "," + string(200, static_cast<char>('a' + row % 26)) + "\n";
+	}
+	RowLexer lexer(RowDialect::PostgresCsv(',', '"', '"'), 2, 1 << 20, true);
+	RowRangesTestStream source(data);
+	RowRanges ranges(Allocator::DefaultAllocator(), lexer, source, 0, data.size(), (data.size() + 1) / 2, true);
+	REQUIRE(ranges.RangeCount() == 2);
+	RowRangeReader reader(ranges);
+	reader.Start(0, true, false, false);
+	REQUIRE(reader.Advance(1) == RowReadResult::ROWS);
+	const auto first = reader.window.bytes;
+	const string first_bytes(first->data, first->size);
+	idx_t rows = reader.Ready();
+	reader.Emit(reader.Ready());
+	while (reader.Advance(STANDARD_VECTOR_SIZE) == RowReadResult::ROWS) {
+		rows += reader.Ready();
+		reader.Emit(reader.Ready());
+	}
+	ranges.Finish(0);
+	const auto last = reader.window.bytes;
+	REQUIRE(last != first);
+	const string last_bytes(last->data, last->size);
+	reader.Start(1, true, false, false);
+	REQUIRE(reader.window.bytes != first);
+	REQUIRE(reader.window.bytes != last);
+	while (reader.Advance(STANDARD_VECTOR_SIZE) == RowReadResult::ROWS) {
+		rows += reader.Ready();
+		reader.Emit(reader.Ready());
+	}
+	REQUIRE(rows == 3000);
+	REQUIRE(string(first->data, first_bytes.size()) == first_bytes);
+	REQUIRE(string(last->data, last_bytes.size()) == last_bytes);
+}
+
+TEST_CASE("Row ranges read nothing at the end of the input into a buffer that still has memory", "[csv]") {
+	const string data = "a,b\nc,d\n";
+	RowLexer lexer(RowDialect::PostgresCsv(',', '"', '"'), 2, 1 << 20, true);
+	RowRangesTestStream source(data);
+	RowRanges ranges(Allocator::DefaultAllocator(), lexer, source, 0, data.size(), DConstants::INVALID_INDEX, true);
+	RowBytes bytes;
+	ranges.ReadInto(bytes, data.size(), 16);
+	REQUIRE(bytes.size == 0);
+	REQUIRE(bytes.offset == data.size());
+	REQUIRE(bytes.capacity == 1);
+	REQUIRE(bytes.data != nullptr);
+}
+
+TEST_CASE("Intake ranges are not all finished while a reader cuts the next one", "[csv]") {
+	const string data = "{\"a\":1}\n{\"a\":2}\n";
+	PlainRowStream source(data);
+	RowRanges ranges(Allocator::DefaultAllocator(), source, 0, NumericLimits<idx_t>::Maximum(), 1 << 20);
+	REQUIRE(ranges.Intake());
+	idx_t range = DConstants::INVALID_INDEX;
+	idx_t begin = DConstants::INVALID_INDEX;
+	shared_ptr<RowBytes> carry;
+	idx_t carry_to = 0;
+	REQUIRE(ranges.ClaimIntake(range, begin, carry, carry_to));
+	REQUIRE(range == 0);
+	REQUIRE(begin == 0);
+	REQUIRE(!ranges.AllFinished());
+	ranges.FoundEnd(data.size());
+	ranges.Cut(data.size(), nullptr, data.size());
+	REQUIRE(!ranges.AllFinished());
+	REQUIRE(ranges.Finish(range));
+	REQUIRE(ranges.AllFinished());
+	REQUIRE(!ranges.ClaimIntake(range, begin, carry, carry_to));
+}
