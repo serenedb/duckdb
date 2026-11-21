@@ -389,6 +389,7 @@ struct ScanSamplingInfo {
 	}
 	//! Whether a row-count based sample keeps the row at row_idx; a rate of 1 keeps every row, which callers skip
 	bool KeepsRow(idx_t row_idx) const;
+	void SkipRows(idx_t skipped);
 	//! Select the rows a row-count based sample keeps of the count rows from start_row on - returns how many
 	idx_t SelectRows(idx_t start_row, idx_t count, SelectionVector &sel) const;
 };
