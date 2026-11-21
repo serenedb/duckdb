@@ -17,6 +17,7 @@ namespace duckdb {
 struct ReadSingleJSONFileData : public JSONScanData {
 	OpenFileInfo file;
 	vector<LogicalType> types;
+	JSONReaderOptions parsed_options;
 
 	shared_ptr<JsonSource> TakeBindSource() const {
 		lock_guard<mutex> guard(bind_source_lock);
@@ -66,32 +67,38 @@ static unique_ptr<FunctionData> ReadSingleJSONFileBind(ClientContext &context, T
 	auto &file_input = TableFunctionFileBindInput::Get(input);
 	auto result = make_uniq<ReadSingleJSONFileData>();
 	auto &options = result->options;
-	if (input.info) {
-		auto &scan_info = input.info->Cast<JSONScanInfo>();
-		options.type = scan_info.type;
-		options.format = scan_info.format;
-		options.record_type = scan_info.record_type;
-		options.auto_detect = scan_info.auto_detect;
-		if (scan_info.type == JSONScanType::READ_JSON_OBJECTS) {
-			// read_json_objects always emits a single JSON column called "json"
-			options.sql_type_list.push_back(LogicalType::JSON());
-			options.name_list.emplace_back("json");
+	const bool scan_bound = file_input.expected_bind_data && file_input.HasExpectedSchema();
+	if (scan_bound) {
+		options = file_input.expected_bind_data->Cast<ReadSingleJSONFileData>().parsed_options;
+	} else {
+		if (input.info) {
+			auto &scan_info = input.info->Cast<JSONScanInfo>();
+			options.type = scan_info.type;
+			options.format = scan_info.format;
+			options.record_type = scan_info.record_type;
+			options.auto_detect = scan_info.auto_detect;
+			if (scan_info.type == JSONScanType::READ_JSON_OBJECTS) {
+				// read_json_objects always emits a single JSON column called "json"
+				options.sql_type_list.push_back(LogicalType::JSON());
+				options.name_list.emplace_back("json");
+			}
+		}
+		for (auto &kv : input.named_parameters) {
+			if (JSONScan::ParseOption(context, kv.first, kv.second, options)) {
+				continue;
+			}
+			throw NotImplementedException("Unimplemented option %s", kv.first);
+		}
+		if (options.auto_detect_specified && !options.auto_detect && !options.format_specified) {
+			// auto-detection was explicitly turned off - we do not detect the format either
+			options.format = JSONFormat::NEWLINE_DELIMITED;
 		}
 	}
-	for (auto &kv : input.named_parameters) {
-		if (JSONScan::ParseOption(context, kv.first, kv.second, options)) {
-			continue;
-		}
-		throw NotImplementedException("Unimplemented option %s", kv.first);
-	}
-	if (options.auto_detect_specified && !options.auto_detect && !options.format_specified) {
-		// auto-detection was explicitly turned off - we do not detect the format either
-		options.format = JSONFormat::NEWLINE_DELIMITED;
-	}
+	result->parsed_options = options;
 	if (input.inputs[0].IsNull()) {
 		throw BinderException("read_single_json_file requires a non-NULL file name");
 	}
-	if (file_input.expected_bind_data && file_input.HasExpectedSchema()) {
+	if (scan_bound) {
 		// the schema of the scan was already determined - read this file exactly the way it was determined, so that
 		// every file of the scan produces the same columns from the same JSON keys
 		auto &source = file_input.expected_bind_data->Cast<ReadSingleJSONFileData>();
@@ -253,6 +260,20 @@ static unique_ptr<FunctionData> ReadSingleJSONFileCombineSchema(ClientContext &c
                                                                 TableFunctionCombineSchemaInput &input,
                                                                 vector<LogicalType> &return_types,
                                                                 vector<Identifier> &names) {
+	if (!input.bind_data.empty()) {
+		auto &first = input.bind_data[0].get().Cast<ReadSingleJSONFileData>();
+		if (!first.structure && !first.parsed_options.name_list.empty()) {
+			auto result = make_uniq<ReadSingleJSONFileData>();
+			result->options = first.options;
+			result->parsed_options = first.parsed_options;
+			result->key_names = first.key_names;
+			result->feature_columns = first.feature_columns;
+			result->date_format_map = make_uniq<DateFormatMap>(*first.date_format_map);
+			JSONScan::FinalizeBind(*result, names);
+			result->types = return_types;
+			return std::move(result);
+		}
+	}
 	JSONStructureNode merged;
 	optional_ptr<const ReadSingleJSONFileData> first_file;
 	for (auto &bind_data : input.bind_data) {
@@ -273,6 +294,7 @@ static unique_ptr<FunctionData> ReadSingleJSONFileCombineSchema(ClientContext &c
 	// produced if it had run over all of the sampled files at once
 	auto result = make_uniq<ReadSingleJSONFileData>();
 	result->options = first_file->options;
+	result->parsed_options = first_file->parsed_options;
 	if (first_file->record_type_auto_detected) {
 		// the record type is re-detected on the combined structure
 		result->options.record_type = JSONRecordType::AUTO_DETECT;
