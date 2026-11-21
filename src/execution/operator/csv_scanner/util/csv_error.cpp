@@ -198,11 +198,7 @@ void CSVErrorHandler::ErrorIfTypeExists(CSVErrorType error_type) {
 
 void CSVErrorHandler::Insert(idx_t boundary_idx, idx_t rows) {
 	lock_guard<mutex> parallel_lock(main_mutex);
-	if (lines_per_batch_map.find(boundary_idx) == lines_per_batch_map.end()) {
-		lines_per_batch_map[boundary_idx] = {boundary_idx, rows};
-	} else {
-		lines_per_batch_map[boundary_idx].lines_in_batch += rows;
-	}
+	lines.Add(boundary_idx, rows);
 }
 
 void CSVErrorHandler::NewMaxLineSize(idx_t scan_line_size) {
@@ -698,12 +694,7 @@ bool CSVErrorHandler::PrintLineNumber(const CSVError &error) const {
 }
 
 bool CSVErrorHandler::CanGetLine(idx_t boundary_index) {
-	for (idx_t i = 0; i < boundary_index; i++) {
-		if (lines_per_batch_map.find(i) == lines_per_batch_map.end()) {
-			return false;
-		}
-	}
-	return true;
+	return lines.Known(boundary_index);
 }
 
 idx_t CSVErrorHandler::GetLine(const LinesPerBoundary &error_info) {
@@ -711,12 +702,7 @@ idx_t CSVErrorHandler::GetLine(const LinesPerBoundary &error_info) {
 	return GetLineInternal(error_info);
 }
 idx_t CSVErrorHandler::GetLineInternal(const LinesPerBoundary &error_info) {
-	// We start from one, since the lines are 1-indexed
-	idx_t current_line = 1 + error_info.lines_in_batch;
-	for (idx_t boundary_idx = 0; boundary_idx < error_info.boundary_idx; boundary_idx++) {
-		current_line += lines_per_batch_map[boundary_idx].lines_in_batch;
-	}
-	return current_line;
+	return 1 + error_info.lines_in_batch + lines.Before(error_info.boundary_idx);
 }
 
 } // namespace duckdb
