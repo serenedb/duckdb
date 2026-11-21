@@ -98,6 +98,50 @@ struct MultiFileReaderInterface {
 	virtual FileGlobInput GetGlobInput();
 };
 
+class ScannedFilePartition final : public PartitionRowGroup {
+public:
+	ScannedFilePartition(const MultiFileBindData &bind_data_p, shared_ptr<PartitionRowGroup> file_p)
+	    : bind_data(bind_data_p), file(std::move(file_p)) {
+	}
+
+	optionally_owned_ptr<const BaseStatistics> GetColumnStatistics(const StorageIndex &storage_index) final {
+		if (!ReadAsStored(storage_index)) {
+			return {};
+		}
+		auto result = file->GetColumnStatistics(storage_index);
+		if (result && !storage_index.IsPushdownExtract() &&
+		    result->GetType() != bind_data.types[storage_index.GetPrimaryIndex()]) {
+			return {};
+		}
+		return result;
+	}
+
+	bool MinMaxIsExact(const StorageIndex &storage_index) final {
+		return ReadAsStored(storage_index) && file->MinMaxIsExact(storage_index);
+	}
+
+	bool HasPendingWrites() final {
+		return file->HasPendingWrites();
+	}
+
+private:
+	bool ReadAsStored(const StorageIndex &storage_index) const {
+		const auto primary_index = storage_index.GetPrimaryIndex();
+		if (!bind_data.reader_bind.schema.empty() || primary_index >= bind_data.types.size()) {
+			return false;
+		}
+		for (auto &hive : bind_data.reader_bind.hive_partitioning_indexes) {
+			if (hive.index == primary_index) {
+				return false;
+			}
+		}
+		return true;
+	}
+
+	const MultiFileBindData &bind_data;
+	const shared_ptr<PartitionRowGroup> file;
+};
+
 template <class OP>
 class MultiFileFunction : public TableFunction {
 public:
@@ -812,11 +856,19 @@ public:
 		}
 		result.listed = true;
 		// a file the filters skip has no rows to order - its partitions stay unordered, and are not read
-		const auto order_column = bind_data.scan_order && reader_data.file_state == MultiFileFileState::OPEN
-		                              ? OrderColumnOf(bind_data, gstate, reader_data)
-		                              : optional_idx();
+		const bool ordered = bind_data.scan_order && reader_data.file_state == MultiFileFileState::OPEN;
+		const bool single_file = bind_data.file_list->GetExpandResult() == FileExpandResult::SINGLE_FILE;
+		const auto order_column =
+		    ordered && !single_file ? OrderColumnOf(bind_data, gstate, reader_data) : optional_idx();
 		for (auto &partition : result.partitions) {
-			if (order_column.IsValid() && partition.partition_row_group) {
+			if (!partition.partition_row_group) {
+				result.statistics.emplace_back();
+				result.exact.push_back(false);
+			} else if (ordered && single_file) {
+				ScannedFilePartition scanned(bind_data, partition.partition_row_group);
+				result.statistics.emplace_back(scanned.GetColumnStatistics(bind_data.scan_order->column_idx));
+				result.exact.push_back(scanned.MinMaxIsExact(bind_data.scan_order->column_idx));
+			} else if (order_column.IsValid()) {
 				const StorageIndex storage_index(order_column.GetIndex());
 				result.statistics.emplace_back(partition.partition_row_group->GetColumnStatistics(storage_index));
 				result.exact.push_back(partition.partition_row_group->MinMaxIsExact(storage_index));
