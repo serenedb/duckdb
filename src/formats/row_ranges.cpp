@@ -812,14 +812,8 @@ bool RowRangeReader::StartIntake(idx_t range_p, bool extract_p, bool release_p, 
 	}
 	D_ASSERT(lex_stop > lex_start);
 	const auto &bytes = *window.bytes;
-	idx_t next_line_end = lex_stop;
-	while (next_line_end > lex_start && (bytes.data[next_line_end - 1 - bytes.offset] == '\n' ||
-	                                     bytes.data[next_line_end - 1 - bytes.offset] == '\r')) {
-		next_line_end--;
-	}
-	const CSVState next_origin = ranges.Origin(bytes, lex_stop);
-	ranges.Cut(lex_stop, window.Tail(lex_stop), window.read_to, next_origin,
-	           next_line_end > lex_start ? next_line_end : DConstants::INVALID_INDEX);
+	ranges.Cut(lex_stop, window.Tail(lex_stop), window.read_to, ranges.Origin(bytes, lex_stop),
+	           LineEndBefore(bytes, lex_stop, lex_start));
 	cut = true;
 	StartPass(true);
 	return true;
@@ -872,7 +866,7 @@ idx_t RowRangeReader::CutIntake(RowSearch &search, bool idle) const {
 		limit = idle ? read_to : read_to - 1;
 		QuoteParityTerm(bytes, search.searched_to, limit, search.quoted, last);
 	} else if (dialect.backslash) {
-		limit = idle ? read_to : LineBreaksFrom(bytes, read_to);
+		limit = idle ? read_to : read_to - 1;
 		EscapeParityTerm(bytes, search.searched_to, limit, last);
 	} else if (search.plain) {
 		limit = idle ? read_to : read_to - 1;
@@ -918,13 +912,26 @@ void RowRangeReader::QuoteParityTerm(const RowBytes &bytes, idx_t from, idx_t li
 	}
 }
 
-idx_t RowRangeReader::LineBreaksFrom(const RowBytes &bytes, idx_t read_to) const {
-	idx_t from = read_to;
-	while (from > lex_start &&
-	       (bytes.data[from - 1 - bytes.offset] == '\n' || bytes.data[from - 1 - bytes.offset] == '\r')) {
-		from--;
+idx_t RowRangeReader::LineEndBefore(const RowBytes &bytes, idx_t position, idx_t floor) const {
+	const auto line_break = [&](idx_t at) {
+		const char byte = bytes.data[at - bytes.offset];
+		return byte == '\n' || byte == '\r';
+	};
+	idx_t end = position;
+	if (dialect.merge_terms && !dialect.empty_lines) {
+		while (end > floor && line_break(end - 1)) {
+			end--;
+		}
+		return end > floor ? end : DConstants::INVALID_INDEX;
 	}
-	return from;
+	if (end == floor || !line_break(end - 1)) {
+		return DConstants::INVALID_INDEX;
+	}
+	end--;
+	if (end > floor && bytes.data[end - bytes.offset] == '\n' && bytes.data[end - 1 - bytes.offset] == '\r') {
+		end--;
+	}
+	return end;
 }
 
 void RowRangeReader::EscapeParityTerm(const RowBytes &bytes, idx_t from, idx_t limit, RowCursor &last) const {
@@ -1148,12 +1155,7 @@ bool RowRangeReader::Lex() {
 		lex_start = found;
 		origin = found == ranges.start ? CSVState::NOT_SET : ranges.Origin(*bytes, found);
 		if (found > ranges.start) {
-			idx_t run = found;
-			while (run > bytes->offset &&
-			       (bytes->data[run - 1 - bytes->offset] == '\n' || bytes->data[run - 1 - bytes->offset] == '\r')) {
-				run--;
-			}
-			line_end = run > bytes->offset ? run : DConstants::INVALID_INDEX;
+			line_end = LineEndBefore(*bytes, found, bytes->offset);
 		}
 		lexer.Start(cursor, lex_start, range == 0);
 		cursor.file_start = origin == CSVState::NOT_SET && ranges.file_start;
