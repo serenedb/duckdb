@@ -956,6 +956,9 @@ public:
 	static void InitializeResetSortedByTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
 	static arena_ptr<TransformResultValue> FinalizeResetSortedByTrampoline(PEGTransformer &transformer,
 	                                                                       GeneratedTransformProcess &process);
+	static void InitializeSetTablespaceTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
+	static arena_ptr<TransformResultValue> FinalizeSetTablespaceTrampoline(PEGTransformer &transformer,
+	                                                                       GeneratedTransformProcess &process);
 	static void InitializeSetOptionsTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
 	static arena_ptr<TransformResultValue> FinalizeSetOptionsTrampoline(PEGTransformer &transformer,
 	                                                                    GeneratedTransformProcess &process);
@@ -4781,6 +4784,9 @@ public:
 	                                                         GeneratedTransformProcess &process);
 	static arena_ptr<TransformResultValue>
 	FinalizeZoneIntervalWithIntervalTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
+	static void InitializeZoneIntervalFieldTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
+	static arena_ptr<TransformResultValue> FinalizeZoneIntervalFieldTrampoline(PEGTransformer &transformer,
+	                                                                           GeneratedTransformProcess &process);
 	static void InitializeZoneIntervalWithPrecisionTrampoline(PEGTransformer &transformer,
 	                                                          GeneratedTransformProcess &process);
 	static arena_ptr<TransformResultValue>
@@ -5047,6 +5053,7 @@ public:
 	static unique_ptr<AlterTableInfo> TransformSetSortedBy(PEGTransformer &transformer,
 	                                                       vector<OrderByNode> order_by_expressions);
 	static unique_ptr<AlterTableInfo> TransformResetSortedBy(PEGTransformer &transformer);
+	static unique_ptr<AlterTableInfo> TransformSetTablespace(PEGTransformer &transformer, const Identifier &col_id);
 	static unique_ptr<AlterTableInfo>
 	TransformSetOptions(PEGTransformer &transformer,
 	                    case_insensitive_map_t<unique_ptr<ParsedExpression>> rel_option_list);
@@ -5215,7 +5222,7 @@ public:
 	TransformTypeModifiers(PEGTransformer &transformer, optional<vector<unique_ptr<ParsedExpression>>> expression);
 	static unique_ptr<ParsedExpression> TransformRowType(PEGTransformer &transformer,
 	                                                     const optional<child_list_t<LogicalType>> &col_id_type_list);
-	static unique_ptr<ParsedExpression> TransformSetofType(PEGTransformer &transformer, const LogicalType &type);
+	static LogicalType TransformSetofType(PEGTransformer &transformer, const LogicalType &type);
 	static unique_ptr<ParsedExpression> TransformUnionType(PEGTransformer &transformer,
 	                                                       const child_list_t<LogicalType> &col_id_type_list);
 	static child_list_t<LogicalType> TransformColIdTypeList(PEGTransformer &transformer,
@@ -6924,9 +6931,9 @@ public:
 	                                                               const string &string_literal);
 	static unique_ptr<ParsedExpression> TransformZoneIdentifier(PEGTransformer &transformer,
 	                                                            const Identifier &identifier);
-	static unique_ptr<ParsedExpression> TransformZoneIntervalWithInterval(PEGTransformer &transformer,
-	                                                                      const string &string_literal,
-	                                                                      const optional<DatePartSpecifier> &interval);
+	static unique_ptr<ParsedExpression>
+	TransformZoneIntervalWithInterval(PEGTransformer &transformer, const string &string_literal,
+	                                  const optional<DatePartSpecifier> &zone_interval_field);
 	static unique_ptr<ParsedExpression> TransformZoneIntervalWithPrecision(PEGTransformer &transformer,
 	                                                                       unique_ptr<ParsedExpression> number_literal,
 	                                                                       const string &string_literal);
