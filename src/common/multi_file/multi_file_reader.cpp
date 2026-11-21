@@ -75,6 +75,7 @@ unique_ptr<FunctionData> MultiFileBindData::Copy() const {
 	}
 	result->scan_order = scan_order;
 	result->partitions_to_scan = partitions_to_scan;
+	result->stable_file_indexes = stable_file_indexes;
 	return std::move(result);
 }
 

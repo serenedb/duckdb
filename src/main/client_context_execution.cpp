@@ -58,6 +58,10 @@ void ClientContext::BeginQueryInternal(ClientContextLock &lock, const SQLStateme
 	} else {
 		query_deadline.SetInvalid();
 	}
+	if (caller && caller->query_deadline.IsValid() &&
+	    (!query_deadline.IsValid() || caller->query_deadline.GetIndex() < query_deadline.GetIndex())) {
+		query_deadline = caller->query_deadline;
+	}
 	// Notify any registered state of query begin
 	for (auto &state : registered_state->States()) {
 		state->QueryBegin(*this);

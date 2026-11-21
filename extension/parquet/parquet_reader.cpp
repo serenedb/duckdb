@@ -2006,14 +2006,26 @@ struct ParquetPartitionRowGroup : public PartitionRowGroup {
 		}
 		D_ASSERT(metadata.row_groups.size() > row_group_idx);
 
+		auto column_schema = &root_schema->children[primary_index];
+		if (storage_index.IsPushdownExtract()) {
+			for (auto index = &storage_index; index->HasChildren();) {
+				index = &index->GetChildIndex(0);
+				if (!index->HasPrimaryIndex() || index->GetPrimaryIndex() >= column_schema->children.size()) {
+					return false;
+				}
+				column_schema = &column_schema->children[index->GetPrimaryIndex()];
+			}
+		}
 		// Special handle generated columns.
-		const auto &column_schema = root_schema->children[primary_index];
-		if (column_schema.schema_type == ParquetColumnSchemaType::FILE_ROW_NUMBER) {
+		if (column_schema->schema_type == ParquetColumnSchemaType::FILE_ROW_NUMBER) {
 			return true;
 		}
-
 		const auto &row_group = metadata.row_groups[row_group_idx];
-		const auto &column_chunk = row_group.columns[primary_index];
+		if (column_schema->schema_type != ParquetColumnSchemaType::COLUMN || !column_schema->children.empty() ||
+		    column_schema->column_index >= row_group.columns.size()) {
+			return false;
+		}
+		const auto &column_chunk = row_group.columns[column_schema->column_index];
 
 		if (column_chunk.__isset.meta_data && column_chunk.meta_data.__isset.statistics &&
 		    column_chunk.meta_data.statistics.__isset.is_min_value_exact &&

@@ -136,6 +136,9 @@ void Bit::BitToNumeric(bitstring_t bit, T &output_num) {
 	D_ASSERT(bit.GetSize() <= sizeof(T) + 1);
 
 	output_num = 0;
+	if (bit.GetSize() < 2) {
+		return;
+	}
 	auto data = const_data_ptr_cast(bit.GetData());
 	auto output = data_ptr_cast(&output_num);
 

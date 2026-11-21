@@ -21,8 +21,7 @@ class ClientContext;
 //! The ExpressionRewriter performs a set of fixed rewrite rules on the expressions that occur in a SQL statement
 class ExpressionRewriter : public LogicalOperatorVisitor {
 public:
-	explicit ExpressionRewriter(ClientContext &context) : context(context) {
-	}
+	explicit ExpressionRewriter(ClientContext &context);
 
 public:
 	//! The set of rules as known by the Expression Rewriter
@@ -54,6 +53,9 @@ public:
 	void MarkNotFoldable() {
 		not_foldable = true;
 	}
+	bool Scored() const {
+		return scored;
+	}
 
 private:
 	struct RuleSet {
@@ -62,9 +64,10 @@ private:
 	};
 
 	//! Apply a set of rules to a specific expression
-	unique_ptr<Expression> ApplyRules(LogicalOperator &op, const vector<rewrite_barrier_t> &barriers,
-	                                  unique_ptr<Expression> expr, bool &changes_made, bool is_root = false);
-	bool RewriteLambdaBody(LogicalOperator &op, const vector<rewrite_barrier_t> &barriers, Expression &expr);
+	unique_ptr<Expression> ApplyRules(LogicalOperator &op, unique_ptr<Expression> expr, bool &changes_made,
+	                                  bool is_root = false);
+	bool RewriteLambdaBody(LogicalOperator &op, Expression &expr);
+	RewriteBarrier Barrier(const Expression &expr, optional_ptr<const Expression> parent, bool parent_frozen) const;
 	const vector<reference<Rule>> &RulesFor(const Expression &expr);
 	vector<reference<Rule>> SelectRules(ExpressionClass expression_class, ExpressionType expression_type,
 	                                    optional_ptr<const Identifier> function_name) const;
@@ -75,7 +78,8 @@ private:
 	bool throws = false;
 	bool child_not_foldable = false;
 	bool not_foldable = false;
-	vector<rewrite_barrier_t> to_apply_barriers;
+	bool scored = false;
+	vector<rewrite_barrier_t> barriers;
 	unordered_map<uint16_t, RuleSet> rule_sets;
 	idx_t rule_sets_rule_count = 0;
 };

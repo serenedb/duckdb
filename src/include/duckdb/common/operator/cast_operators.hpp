@@ -26,6 +26,7 @@
 #include "duckdb/common/string_util.hpp"
 
 #include <absl/strings/ascii.h>
+#include <absl/strings/match.h>
 
 namespace duckdb {
 struct CastParameters;
@@ -508,71 +509,52 @@ DUCKDB_API bool TryCast::Operation(double input, double &result, bool strict);
 // String -> Numeric Casts
 //===--------------------------------------------------------------------===//
 static inline bool TryCastStringBool(const char *input_data, idx_t input_size, bool &result, bool strict) {
-	switch (input_size) {
-	case 1: {
-		unsigned char c = absl::ascii_tolower(static_cast<unsigned char>(*input_data));
-		if (c == 't' || (!strict && c == 'y') || (!strict && c == '1')) {
-			result = true;
-			return true;
-		} else if (c == 'f' || (!strict && c == 'n') || (!strict && c == '0')) {
-			result = false;
-			return true;
-		}
+	std::string_view value(input_data, input_size);
+	if (!strict) {
+		value = absl::StripAsciiWhitespace(value);
+	}
+	if (value.empty()) {
 		return false;
 	}
-	case 2: {
-		unsigned char c0 = absl::ascii_tolower(static_cast<unsigned char>(input_data[0]));
-		unsigned char c1 = absl::ascii_tolower(static_cast<unsigned char>(input_data[1]));
-		if (c0 == 'n' && c1 == 'o') {
-			result = false;
-			return true;
+	std::string_view word;
+	bool strict_letter = false;
+	switch (absl::ascii_tolower(static_cast<unsigned char>(value[0]))) {
+	case 't':
+		result = true;
+		word = "true";
+		strict_letter = true;
+		break;
+	case 'f':
+		result = false;
+		word = "false";
+		strict_letter = true;
+		break;
+	case 'y':
+		result = true;
+		word = "yes";
+		break;
+	case 'n':
+		result = false;
+		word = "no";
+		break;
+	case 'o':
+		if (strict || value.size() < 2) {
+			return false;
 		}
-		if (!strict && c0 == 'o' && c1 == 'n') {
-			result = true;
-			return true;
-		}
-		return false;
-	}
-	case 3: {
-		unsigned char c0 = absl::ascii_tolower(static_cast<unsigned char>(input_data[0]));
-		unsigned char c1 = absl::ascii_tolower(static_cast<unsigned char>(input_data[1]));
-		unsigned char c2 = absl::ascii_tolower(static_cast<unsigned char>(input_data[2]));
-		if (c0 == 'y' && c1 == 'e' && c2 == 's') {
-			result = true;
-			return true;
-		}
-		if (!strict && c0 == 'o' && c1 == 'f' && c2 == 'f') {
-			result = false;
-			return true;
-		}
-		return false;
-	}
-	case 4: {
-		unsigned char t = absl::ascii_tolower(static_cast<unsigned char>(input_data[0]));
-		unsigned char r = absl::ascii_tolower(static_cast<unsigned char>(input_data[1]));
-		unsigned char u = absl::ascii_tolower(static_cast<unsigned char>(input_data[2]));
-		unsigned char e = absl::ascii_tolower(static_cast<unsigned char>(input_data[3]));
-		if (t == 't' && r == 'r' && u == 'u' && e == 'e') {
-			result = true;
-			return true;
-		}
-		return false;
-	}
-	case 5: {
-		unsigned char f = absl::ascii_tolower(static_cast<unsigned char>(input_data[0]));
-		unsigned char a = absl::ascii_tolower(static_cast<unsigned char>(input_data[1]));
-		unsigned char l = absl::ascii_tolower(static_cast<unsigned char>(input_data[2]));
-		unsigned char s = absl::ascii_tolower(static_cast<unsigned char>(input_data[3]));
-		unsigned char e = absl::ascii_tolower(static_cast<unsigned char>(input_data[4]));
-		if (f == 'f' && a == 'a' && l == 'l' && s == 's' && e == 'e') {
-			result = false;
-			return true;
-		}
-		return false;
-	}
+		result = absl::ascii_tolower(static_cast<unsigned char>(value[1])) == 'n';
+		word = result ? "on" : "off";
+		break;
+	case '0':
+	case '1':
+		result = value[0] == '1';
+		return !strict && value.size() == 1;
 	default:
 		return false;
 	}
+	if (strict && value.size() != word.size() && !(strict_letter && value.size() == 1)) {
+		return false;
+	}
+	return value.size() <= word.size() && absl::EqualsIgnoreCase(value, word.substr(0, value.size()));
 }
 
 template <>
@@ -987,8 +969,6 @@ duckdb::string_t CastFromBitToString::Operation(duckdb::string_t input, StringHe
 struct CastFromBitToNumeric {
 	template <class SRC = string_t, class DST>
 	static inline bool Operation(SRC input, DST &result, CastParameters &parameters) {
-		D_ASSERT(input.GetSize() > 1);
-
 		// TODO: Allow conversion if the significant bytes of the bitstring can be cast to the target type
 		// Currently only allows bitstring -> numeric if the full bitstring fits inside the numeric type
 		if (input.GetSize() - 1 > sizeof(DST)) {
@@ -1010,7 +990,6 @@ bool CastFromBitToNumeric::Operation(string_t input, uhugeint_t &result, CastPar
 struct CastFromBitToBlob {
 	template <class SRC>
 	static inline string_t Operation(SRC input, StringHeap &heap) {
-		D_ASSERT(input.GetSize() > 1);
 		return heap.AddBlob(Bit::BitToBlob(input));
 	}
 };

@@ -42,6 +42,8 @@ void ViewCatalogEntry::Initialize(CreateViewInfo &info) {
 	this->permissions = info.permissions;
 	this->column_comments = info.column_comments_map;
 	this->security_invoker = info.security_invoker;
+	this->rule_oid = AssignPostgresOid(catalog, info.internal, info.rule_oid, 1);
+	this->row_type_oid = AssignPostgresOid(catalog, info.internal, info.row_type_oid, 2);
 }
 
 ViewCatalogEntry::ViewCatalogEntry(Catalog &catalog, SchemaCatalogEntry &schema, CreateViewInfo &info)
@@ -69,7 +71,19 @@ unique_ptr<CreateInfo> ViewCatalogEntry::GetInfo() const {
 	result->permissions = permissions;
 	result->column_comments_map = column_comments;
 	result->security_invoker = security_invoker;
+	result->rule_oid = rule_oid;
+	result->row_type_oid = row_type_oid;
 	return std::move(result);
+}
+
+vector<idx_t> ViewCatalogEntry::GetSubObjectOids() const {
+	vector<idx_t> oids;
+	for (auto oid : {rule_oid, row_type_oid}) {
+		if (oid) {
+			oids.push_back(oid);
+		}
+	}
+	return oids;
 }
 
 unique_ptr<CatalogEntry> ViewCatalogEntry::AlterEntry(ClientContext &context, AlterInfo &info) {
@@ -106,6 +120,8 @@ unique_ptr<CatalogEntry> ViewCatalogEntry::AlterEntry(ClientContext &context, Al
 		replaced_view.comment = comment;
 		replaced_view.tags = tags;
 		replaced_view.column_comments_map = column_comments;
+		replaced_view.rule_oid = rule_oid;
+		replaced_view.row_type_oid = row_type_oid;
 		return make_uniq<ViewCatalogEntry>(catalog, ParentSchema(context), replaced_view);
 	}
 

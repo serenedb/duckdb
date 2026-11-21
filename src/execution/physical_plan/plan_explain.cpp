@@ -1,5 +1,6 @@
 #include "duckdb/common/tree_renderer.hpp"
 #include "duckdb/common/types/column/column_data_collection.hpp"
+#include "duckdb/execution/operator/helper/physical_execute.hpp"
 #include "duckdb/execution/operator/helper/physical_explain_analyze.hpp"
 #include "duckdb/execution/operator/scan/physical_column_data_scan.hpp"
 #include "duckdb/execution/physical_plan_generator.hpp"
@@ -26,6 +27,9 @@ PhysicalOperator &PhysicalPlanGenerator::CreatePlan(LogicalExplain &op) {
 		auto &explain = Make<PhysicalExplainAnalyze>(op.types, op.format);
 		explain.children.push_back(plan);
 		return explain;
+	}
+	if (plan.type == PhysicalOperatorType::EXECUTE) {
+		plan.Cast<PhysicalExecute>().CountExecution();
 	}
 
 	// Format the plan and set the output of the EXPLAIN.

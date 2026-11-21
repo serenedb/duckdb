@@ -10,6 +10,7 @@
 #include "duckdb/parser/parsed_data/alter_scalar_function_info.hpp"
 #include "duckdb/parser/expression/cast_expression.hpp"
 #include "duckdb/parser/expression/constant_expression.hpp"
+#include "duckdb/parser/expression/default_expression.hpp"
 #include "duckdb/parser/expression/function_expression.hpp"
 #include "duckdb/parser/parsed_data/alter_database_info.hpp"
 #include "duckdb/parser/parsed_data/create_sequence_info.hpp"
@@ -422,14 +423,14 @@ unique_ptr<MultiStatement> PEGTransformerFactory::TransformAndMaterializeAlter(
 	auto multi_statement = make_uniq<MultiStatement>();
 	/* Here we do a workaround that consists of the following statements:
 	 *	 1. `ALTER TABLE t ADD COLUMN col <type> DEFAULT NULL;`
-	 *	 2. `UPDATE t SET col = <expression>;`
-	 *	 3. `ALTER TABLE t ALTER col SET DEFAULT <expression>;`
+	 *	 2. `ALTER TABLE t ALTER col SET DEFAULT <expression>;`
+	 *	 3. `UPDATE t SET col = DEFAULT;`
 
 	 *
 	 * This workaround exists because, when statements like this were executed:
 	 *	`ALTER TABLE ... ADD COLUMN ... DEFAULT <expression>`
 	 * the WAL replay would re-run the default expression, and with expressions such as RANDOM or CURRENT_TIMESTAMP, the
-	 * value would be different from that of the original run. By now doing an UPDATE in statement 2, we force
+	 * value would be different from that of the original run. By now doing an UPDATE in statement 3, we force
 	 * materialization of these values for all existing rows, which makes WAL replays consistent.
 	 */
 
@@ -439,13 +440,12 @@ unique_ptr<MultiStatement> PEGTransformerFactory::TransformAndMaterializeAlter(
 		multi_statement->statements.push_back(std::move(before_update));
 	}
 
-	// 2. `UPDATE t SET u = <expression>;`
-	AddUpdateToMultiStatement(multi_statement, column_name, data, expression);
-
-	// 3. `ALTER TABLE t ALTER u SET DEFAULT <expression>;`
-	// Reinstate the original default expression.
+	// 2. `ALTER TABLE t ALTER u SET DEFAULT <expression>;`
 	AddToMultiStatement(multi_statement, make_uniq<SetDefaultInfo>(data, vector<Identifier> {Identifier(column_name)},
 	                                                               std::move(expression)));
+
+	// 3. `UPDATE t SET u = DEFAULT;`
+	AddUpdateToMultiStatement(multi_statement, column_name, data, make_uniq<DefaultExpression>());
 
 	return multi_statement;
 }
@@ -693,6 +693,11 @@ unique_ptr<AlterTableInfo> PEGTransformerFactory::TransformResetSortedBy(PEGTran
 	vector<OrderByNode> order_by_exprs;
 	auto result = make_uniq<SetSortedByInfo>(AlterEntryData(), std::move(order_by_exprs));
 	return std::move(result);
+}
+
+unique_ptr<AlterTableInfo> PEGTransformerFactory::TransformSetTablespace(PEGTransformer &transformer,
+                                                                         const Identifier &col_id) {
+	throw NotImplementedException("SET TABLESPACE is not supported");
 }
 
 unique_ptr<AlterTableInfo>

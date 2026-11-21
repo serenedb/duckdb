@@ -37,10 +37,10 @@ select cast (null as main.u ARRAY);
 ----
 NULL
 
-query I 
+statement error
 select cast (null as SETOF main.u ARRAY);
 ----
-NULL
+syntax error
 
 query I 
 select cast (null as main.u ARRAY[1]);

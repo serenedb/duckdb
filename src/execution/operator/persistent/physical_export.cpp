@@ -309,7 +309,7 @@ static void OrderEntry(Catalog &catalog, CatalogTransaction transaction, const c
 	order.push_back(entry);
 }
 
-static void OrderEntries(Catalog &catalog, CatalogTransaction transaction, catalog_entry_vector_t &entries) {
+void PhysicalExport::OrderEntries(Catalog &catalog, CatalogTransaction transaction, catalog_entry_vector_t &entries) {
 	catalog_entry_set_t exported(entries.begin(), entries.end());
 	catalog_entry_set_t visited;
 	catalog_entry_vector_t order;

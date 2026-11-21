@@ -593,7 +593,8 @@
         "default_value": "",
         "on_callbacks": [
             "set"
-        ]
+        ],
+        "rebind": true
     },
     {
         "name": "default_null_order",
@@ -606,7 +607,8 @@
         ],
         "aliases": [
             "null_order"
-        ]
+        ],
+        "rebind": true
     },
     {
         "name": "default_order",
@@ -616,7 +618,8 @@
         "default_scope": "global",
         "custom_implementation": [
             "set"
-        ]
+        ],
+        "rebind": true
     },
     {
         "name": "default_secret_storage",

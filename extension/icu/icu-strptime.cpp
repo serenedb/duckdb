@@ -393,7 +393,7 @@ struct ICUStrptime : public ICUDateFunc {
 		const auto len = input.GetSize();
 		string_t tz(nullptr, 0);
 		bool has_offset = false;
-		auto success = Timestamp::TryConvertTimestampTZ(str, len, us, true, has_offset, tz, nanos);
+		auto success = Timestamp::TryConvertTimestampTZ(str, len, us, true, has_offset, tz, nanos, parameters.strict);
 		if (success != TimestampCastResult::SUCCESS) {
 			string msg;
 			if (success == TimestampCastResult::ERROR_RANGE) {

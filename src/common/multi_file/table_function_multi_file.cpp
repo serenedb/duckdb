@@ -27,6 +27,7 @@ public:
 	mutex metrics_lock;
 	idx_t collected_scanned = 0;
 	idx_t collected_total = 0;
+	atomic<idx_t> sampled_rows {0};
 };
 
 class TableFunctionMultiFileLocalState : public LocalTableFunctionState {
@@ -224,6 +225,7 @@ TableFunctionInitInput TableFunctionFileReader::GetInitInput(TableFunctionFileIn
 	}
 	file_input.file_index = file_list_idx;
 	file_input.file_count = scan_file_count;
+	file_input.sampled_rows = sampled_rows;
 	if (!cast_map.empty()) {
 		file_input.cast_map = cast_map;
 	}
@@ -248,6 +250,7 @@ void TableFunctionFileReader::SetScanState(GlobalTableFunctionState &gstate) {
 	auto &scan_state = gstate.Cast<TableFunctionMultiFileGlobalState>();
 	scan_op = scan_state.op;
 	scan_file_count = scan_state.file_count;
+	sampled_rows = &scan_state.sampled_rows;
 }
 
 void TableFunctionFileReader::InitializeFunctionState(ClientContext &context) {
@@ -832,7 +835,14 @@ vector<PartitionStatistics> TableFunctionMultiFileWrapper::GetPartitionStats(Cli
 	}
 	BoundTableFunction bound_function(function);
 	GetPartitionStatsInput file_input(bound_function, reader.bind_data.get());
-	return function.get_partition_stats(context, file_input);
+	result = function.get_partition_stats(context, file_input);
+	for (auto &partition : result) {
+		if (partition.partition_row_group) {
+			partition.partition_row_group =
+			    make_shared_ptr<ScannedFilePartition>(bind_data, std::move(partition.partition_row_group));
+		}
+	}
+	return result;
 }
 
 static vector<column_t> TableFunctionMultiFileGetRowIdColumns(ClientContext &, optional_ptr<FunctionData>) {

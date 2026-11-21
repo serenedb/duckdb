@@ -129,7 +129,7 @@ bool PreparedStatementData::RequireRebind(ClientContext &context,
 	const bool allow_user_variables = HasNamedParameters(*this);
 	auto verification_context = allow_user_variables ? &context : nullptr;
 	PreparedStatement::VerifyParameters(parameter_values, expected_parameters, verification_context);
-	if (properties.always_require_rebind) {
+	if (properties.always_require_rebind || properties.executes_prepared_statement) {
 		// this statement must always be re-bound
 		return true;
 	}
