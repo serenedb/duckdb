@@ -23,6 +23,7 @@ public:
 	void ResetBuffer(const idx_t buffer_idx) override;
 	bool Done() const override;
 	optional_idx KnownEnd() override;
+	idx_t ReadInOrder(char *data, idx_t count, idx_t offset) override;
 	void ResetBufferManager() override;
 
 private:
@@ -32,6 +33,7 @@ private:
 	void UnpinPrevious(const idx_t pos);
 
 	mutex read_lock;
+	optional_idx direct_position;
 
 	//! The last buffer it was accessed
 	shared_ptr<CSVBuffer> last_buffer;

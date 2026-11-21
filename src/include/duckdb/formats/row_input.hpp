@@ -29,6 +29,7 @@ public:
 	const idx_t size;
 	optional_ptr<atomic<idx_t>> bytes_read;
 	idx_t released = 0;
+	bool in_order = false;
 };
 
 class RowInput {

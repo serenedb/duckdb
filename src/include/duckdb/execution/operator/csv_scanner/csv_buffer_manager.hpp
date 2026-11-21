@@ -49,6 +49,10 @@ public:
 	virtual optional_idx KnownEnd() {
 		return optional_idx();
 	}
+	idx_t ReadBuffered(char *data, idx_t count, idx_t offset);
+	virtual idx_t ReadInOrder(char *data, idx_t count, idx_t offset) {
+		return ReadBuffered(data, count, offset);
+	}
 	//! Resets the buffer manager so the file can be scanned again from the top (e.g., a recursive CTE rescan)
 	virtual void ResetBufferManager() = 0;
 
