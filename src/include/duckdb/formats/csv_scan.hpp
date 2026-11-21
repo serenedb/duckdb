@@ -194,6 +194,7 @@ private:
 class CsvScan {
 public:
 	explicit CsvScan(CsvScanGlobal &global);
+	~CsvScan();
 
 	void Start(idx_t range);
 	bool Scan(DataChunk &output, idx_t max_rows = STANDARD_VECTOR_SIZE);
@@ -215,6 +216,7 @@ public:
 	static bool EvaluatesOnFieldBytes(const Expression &expr);
 
 private:
+	bool ScanRange(DataChunk &output, idx_t max_rows);
 	bool ScanLean(DataChunk &output, idx_t max_rows);
 	bool DecodeLean(idx_t count, DataChunk &output);
 	bool DecodeLeanBatch(idx_t first, idx_t count, DataChunk &output);
@@ -262,6 +264,7 @@ private:
 	idx_t base = 0;
 	bool done = true;
 	bool started = false;
+	bool reserved = false;
 	bool reported = true;
 	idx_t lean_rows = DConstants::INVALID_INDEX;
 	bool counting = false;
