@@ -1,0 +1,22 @@
+# name: test/sql/copy/csv/read_csv_files_without_detection.test
+# description: every file of a read_csv without auto-detection is read with the options and the columns the scan was bound with
+# group: [csv]
+
+statement ok
+COPY (SELECT i AS a, 'x' || i AS b FROM range(3) t(i)) TO '{TEMP_DIR}/no_detect_1.csv' (HEADER true);
+
+statement ok
+COPY (SELECT i AS a, NULL AS b FROM range(3, 5) t(i)) TO '{TEMP_DIR}/no_detect_2.csv' (HEADER true);
+
+statement ok
+COPY (SELECT i AS a, 'z' AS b FROM range(5, 9) t(i)) TO '{TEMP_DIR}/no_detect_3.csv' (HEADER true);
+
+query IIII
+SELECT count(*), sum(a), count(b), max(b) FROM read_csv('{TEMP_DIR}/no_detect_*.csv', auto_detect = false, header = true, delim = ',', columns = {'a': 'INTEGER', 'b': 'VARCHAR'})
+----
+9	36	7	z
+
+query II
+SELECT count(*), sum(a) FROM read_csv('{TEMP_DIR}/no_detect_*.csv', auto_detect = false, header = true, delim = ',', force_not_null = ['b'], columns = {'a': 'INTEGER', 'b': 'VARCHAR'}) WHERE b = ''
+----
+2	7
