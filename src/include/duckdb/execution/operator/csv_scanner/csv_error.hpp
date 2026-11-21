@@ -16,6 +16,7 @@
 #include "duckdb/execution/operator/csv_scanner/csv_reader_options.hpp"
 #include "duckdb/execution/operator/csv_scanner/header_value.hpp"
 #include "duckdb/execution/operator/csv_scanner/set_columns.hpp"
+#include "duckdb/formats/range_lines.hpp"
 
 namespace duckdb {
 class InternalAppender;
@@ -165,8 +166,7 @@ private:
 	[[noreturn]] void ThrowCopyError(const CSVError &csv_error);
 	//! CSV Error Handler Mutex
 	mutex main_mutex;
-	//! Map of <boundary indexes> -> lines read
-	unordered_map<idx_t, LinesPerBoundary> lines_per_batch_map;
+	RangeLines lines;
 	idx_t max_line_length = 0;
 	bool ignore_errors = false;
 	idx_t reject_tolerance = 0;
