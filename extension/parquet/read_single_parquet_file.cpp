@@ -242,6 +242,9 @@ static unique_ptr<GlobalTableFunctionState> ReadSingleParquetFileInitGlobal(Clie
 	if (input.sample_options) {
 		reader.sampling = ScanSamplingInfo::FromOptions(*input.sample_options, reader.NumRows());
 		reader.sample_seed = input.sample_options->seed;
+		if (file_input.sampled_rows && !reader.sampling.is_percentage) {
+			reader.sampling.SkipRows(file_input.sampled_rows->fetch_add(reader.NumRows()));
+		}
 	}
 	if (file_input.partitions) {
 		// our caller planned which row groups of the file are read, and in which order
