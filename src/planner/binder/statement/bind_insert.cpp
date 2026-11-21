@@ -804,6 +804,13 @@ BoundStatement Binder::BindNode(InsertQueryNode &node) {
 			auto arbiters = ConflictArbiters(on_conflict_info, table, table.GetStorageInfo(context));
 			if (on_conflict_info.action_type == OnConflictAction::NOTHING) {
 				merge = false;
+				if (need) {
+					for (auto &name : on_conflict_info.indexed_columns) {
+						if (table.ColumnExists(name)) {
+							need->Select(table.GetColumn(name).Logical().index);
+						}
+					}
+				}
 				if (!arbiters.empty()) {
 					action_type = OnConflictAction::NOTHING;
 					if (!on_conflict_info.indexed_columns.empty()) {
@@ -828,6 +835,9 @@ BoundStatement Binder::BindNode(InsertQueryNode &node) {
 					    return ReadsOnly(*expr, table, stored);
 				    })) {
 					if (need) {
+						for (auto index : key) {
+							need->Select(table.GetColumns().GetColumn(PhysicalIndex(index)).Logical().index);
+						}
 						need->modes |= AclMode::Update;
 						for (auto &index : replaced.columns) {
 							auto &column = table.GetColumns().GetColumn(index);
