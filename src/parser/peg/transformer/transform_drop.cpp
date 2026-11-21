@@ -13,21 +13,28 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformDropStatement(PEGTransf
 	return std::move(drop_entries);
 }
 
+unique_ptr<DropStatement> PEGTransformerFactory::MakeDropStatement(unique_ptr<DropInfo> info,
+                                                                   vector<QualifiedName> names) {
+	for (auto &name : names) {
+		info->objects.push_back(ObjectReference {std::move(name)});
+	}
+	auto result = make_uniq<DropStatement>();
+	result->info = std::move(info);
+	return result;
+}
+
 unique_ptr<DropStatement> PEGTransformerFactory::TransformDropTable(PEGTransformer &transformer,
                                                                     const CatalogType &table_or_view,
                                                                     const optional<bool> &if_exists,
                                                                     vector<unique_ptr<BaseTableRef>> base_table_name) {
-	auto result = make_uniq<DropStatement>();
 	auto info = make_uniq<DropInfo>();
-	if (base_table_name.size() > 1) {
-		throw NotImplementedException("Can only drop one object at a time");
-	}
-	auto base_table = std::move(base_table_name[0]);
-	info->SetQualifiedName(base_table->GetQualifiedName());
 	info->type = table_or_view;
 	info->if_not_found = if_exists ? OnEntryNotFound::RETURN_NULL : OnEntryNotFound::THROW_EXCEPTION;
-	result->info = std::move(info);
-	return result;
+	vector<QualifiedName> names;
+	for (auto &base_table : base_table_name) {
+		names.push_back(base_table->GetQualifiedName());
+	}
+	return MakeDropStatement(std::move(info), std::move(names));
 }
 
 CatalogType PEGTransformerFactory::TransformMaterializedViewEntry(PEGTransformer &transformer) {
@@ -49,86 +56,54 @@ bool PEGTransformerFactory::TransformFunctionTypeProcedure(PEGTransformer &trans
 unique_ptr<DropStatement>
 PEGTransformerFactory::TransformDropTableFunction(PEGTransformer &transformer, const CatalogType &comment_macro_table,
                                                   const optional<bool> &if_exists,
-                                                  const vector<Identifier> &table_function_name) {
-	auto result = make_uniq<DropStatement>();
+                                                  const vector<QualifiedName> &qualified_name) {
 	auto info = make_uniq<DropInfo>();
-	if (table_function_name.size() > 1) {
-		throw NotImplementedException("Can only drop one object at a time");
-	}
-	info->SetQualifiedName(QualifiedName(table_function_name[0]));
 	info->type = comment_macro_table;
+	info->is_macro = true;
 	info->if_not_found = if_exists ? OnEntryNotFound::RETURN_NULL : OnEntryNotFound::THROW_EXCEPTION;
-	result->info = std::move(info);
-	return result;
+	return MakeDropStatement(std::move(info), qualified_name);
 }
 
 // DropFunction <- FunctionTypeMacro IfExists? List(DropFunctionItem)
-// DropFunctionItem <- FunctionIdentifier DropFunctionArgs?
-// DropFunctionArgs <- '(' List(Type)? ')'
+// DropFunctionItem <- FunctionIdentifier FuncArgSignature?
 unique_ptr<DropStatement> PEGTransformerFactory::TransformDropFunction(PEGTransformer &transformer,
                                                                        ParseResult &parse_result) {
 	auto &list_pr = parse_result.Cast<ListParseResult>();
 	auto result = make_uniq<DropStatement>();
-	auto info = make_uniq<DropInfo>();
-	info->type = CatalogType::MACRO_ENTRY;
+	auto &info = *result->info;
+	info.type = CatalogType::MACRO_ENTRY;
 	// FunctionTypeMacro forwards a bool meaning is_procedure (PROCEDURE vs FUNCTION/MACRO).
-	info->is_procedure = transformer.Transform<bool>(list_pr.Child<ListParseResult>(0));
-	bool if_exists = list_pr.Child<OptionalParseResult>(1).HasResult();
-	auto function_list = ExtractParseResultsFromList(list_pr.Child<ListParseResult>(2));
-	if (function_list.size() > 1) {
-		throw NotImplementedException("Can only drop one object at a time");
+	auto &kind = list_pr.Child<ListParseResult>(0);
+	info.is_procedure = transformer.Transform<bool>(kind);
+	info.is_macro = kind.Child<ChoiceParseResult>(0).GetResult().Name() == "FunctionTypeMacroKeyword";
+	info.if_not_found = list_pr.Child<OptionalParseResult>(1).HasResult() ? OnEntryNotFound::RETURN_NULL
+	                                                                      : OnEntryNotFound::THROW_EXCEPTION;
+	for (auto &item : ExtractParseResultsFromList(list_pr.Child<ListParseResult>(2))) {
+		auto &item_pr = item.get().Cast<ListParseResult>();
+		ObjectReference function {transformer.Transform<QualifiedName>(item_pr.Child<ListParseResult>(0))};
+		function.has_func_args = TransformFunctionArgumentTypes(transformer, item_pr.Child<OptionalParseResult>(1),
+		                                                        function.func_parameters);
+		info.objects.push_back(std::move(function));
 	}
-	auto &item_pr = function_list[0].get().Cast<ListParseResult>();
-	auto function = transformer.Transform<QualifiedName>(item_pr.Child<ListParseResult>(0));
-	info->SetQualifiedName(function);
-	auto &args_opt = item_pr.Child<OptionalParseResult>(1);
-	if (args_opt.HasResult()) {
-		info->has_func_args = true;
-		auto &args_list = args_opt.GetResult().Cast<ListParseResult>();
-		// args_list children: '(', List(Type)?, ')'
-		auto &inner_opt = args_list.Child<OptionalParseResult>(1);
-		if (inner_opt.HasResult()) {
-			auto type_results = ExtractParseResultsFromList(inner_opt.GetResult());
-			for (auto type_ref : type_results) {
-				info->func_parameters.push_back(transformer.Transform<LogicalType>(type_ref));
-			}
-		}
-	}
-	info->if_not_found = if_exists ? OnEntryNotFound::RETURN_NULL : OnEntryNotFound::THROW_EXCEPTION;
-	result->info = std::move(info);
 	return result;
 }
 
 unique_ptr<DropStatement> PEGTransformerFactory::TransformDropSchema(PEGTransformer &transformer,
                                                                      const optional<bool> &if_exists,
                                                                      const vector<QualifiedName> &qualified_name) {
-	auto result = make_uniq<DropStatement>();
 	auto info = make_uniq<DropInfo>();
-	if (qualified_name.size() > 1) {
-		throw NotImplementedException("Can only drop one object at a time");
-	}
-	// store the full dotted path (e.g. [schema] / [parent, schema] / [catalog, parent, schema]); the leading
-	// component is resolved into a catalog + parent-schema chain during binding (see Binder::Bind(DropStatement))
-	info->SetQualifiedName(qualified_name[0]);
 	info->if_not_found = if_exists ? OnEntryNotFound::RETURN_NULL : OnEntryNotFound::THROW_EXCEPTION;
 	info->type = CatalogType::SCHEMA_ENTRY;
-	result->info = std::move(info);
-	return result;
+	return MakeDropStatement(std::move(info), qualified_name);
 }
 
 unique_ptr<DropStatement> PEGTransformerFactory::TransformDropIndex(PEGTransformer &transformer,
                                                                     const optional<bool> &if_exists,
                                                                     const vector<QualifiedName> &qualified_index_name) {
-	auto result = make_uniq<DropStatement>();
 	auto info = make_uniq<DropInfo>();
-	if (qualified_index_name.size() > 1) {
-		throw NotImplementedException("Can only drop one object at a time");
-	}
-	info->SetQualifiedName(qualified_index_name[0]);
 	info->type = CatalogType::INDEX_ENTRY;
 	info->if_not_found = if_exists ? OnEntryNotFound::RETURN_NULL : OnEntryNotFound::THROW_EXCEPTION;
-	result->info = std::move(info);
-	return result;
+	return MakeDropStatement(std::move(info), qualified_index_name);
 }
 
 QualifiedName PEGTransformerFactory::TransformQualifiedIndexNameString(PEGTransformer &transformer,
@@ -154,16 +129,10 @@ QualifiedName PEGTransformerFactory::TransformCatalogReservedSchemaIndex(
 unique_ptr<DropStatement>
 PEGTransformerFactory::TransformDropSequence(PEGTransformer &transformer, const optional<bool> &if_exists,
                                              const vector<QualifiedName> &qualified_sequence_name) {
-	auto result = make_uniq<DropStatement>();
 	auto info = make_uniq<DropInfo>();
-	if (qualified_sequence_name.size() > 1) {
-		throw NotImplementedException("Can only drop one object at a time");
-	}
-	info->SetQualifiedName(qualified_sequence_name[0]);
 	info->if_not_found = if_exists ? OnEntryNotFound::RETURN_NULL : OnEntryNotFound::THROW_EXCEPTION;
 	info->type = CatalogType::SEQUENCE_ENTRY;
-	result->info = std::move(info);
-	return result;
+	return MakeDropStatement(std::move(info), qualified_sequence_name);
 }
 
 Identifier PEGTransformerFactory::TransformCollationName(PEGTransformer &transformer, const Identifier &identifier) {
@@ -194,16 +163,10 @@ unique_ptr<DropStatement> PEGTransformerFactory::TransformDropCollation(PEGTrans
 unique_ptr<DropStatement> PEGTransformerFactory::TransformDropType(PEGTransformer &transformer,
                                                                    const optional<bool> &if_exists,
                                                                    const vector<QualifiedName> &qualified_type_name) {
-	auto result = make_uniq<DropStatement>();
 	auto info = make_uniq<DropInfo>();
-	if (qualified_type_name.size() > 1) {
-		throw NotImplementedException("Can only drop one object at a time");
-	}
-	info->SetQualifiedName(qualified_type_name[0]);
 	info->if_not_found = if_exists ? OnEntryNotFound::RETURN_NULL : OnEntryNotFound::THROW_EXCEPTION;
 	info->type = CatalogType::TYPE_ENTRY;
-	result->info = std::move(info);
-	return result;
+	return MakeDropStatement(std::move(info), qualified_type_name);
 }
 
 bool PEGTransformerFactory::TransformCascadeDropBehavior(PEGTransformer &transformer) {
@@ -268,16 +231,10 @@ unique_ptr<DropStatement> PEGTransformerFactory::TransformDropTrigger(PEGTransfo
 unique_ptr<DropStatement> PEGTransformerFactory::TransformDropJob(PEGTransformer &transformer,
                                                                   const optional<bool> &if_exists,
                                                                   const vector<QualifiedName> &qualified_name) {
-	if (qualified_name.size() > 1) {
-		throw NotImplementedException("Can only drop one object at a time");
-	}
-	auto result = make_uniq<DropStatement>();
 	auto info = make_uniq<DropInfo>();
 	info->type = CatalogType::JOB_ENTRY;
 	info->if_not_found = if_exists ? OnEntryNotFound::RETURN_NULL : OnEntryNotFound::THROW_EXCEPTION;
-	info->SetQualifiedName(qualified_name[0]);
-	result->info = std::move(info);
-	return result;
+	return MakeDropStatement(std::move(info), qualified_name);
 }
 
 } // namespace duckdb

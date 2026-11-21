@@ -58,6 +58,7 @@ void ClientContext::BeginQueryInternal(ClientContextLock &lock, const SQLStateme
 	} else {
 		query_deadline.SetInvalid();
 	}
+	RefreshSecurity();
 	// Notify any registered state of query begin
 	for (auto &state : registered_state->States()) {
 		state->QueryBegin(*this);
@@ -200,6 +201,13 @@ void ClientContext::SetSchedulerAccount(shared_ptr<SchedulerAccount> account) {
 const string &ClientContext::GetCurrentQuery() {
 	D_ASSERT(active_query);
 	return active_query->query;
+}
+
+optional_ptr<const StatementProperties> ClientContext::ActiveStatementProperties() const {
+	if (!active_query || !active_query->prepared) {
+		return planned_properties;
+	}
+	return &active_query->prepared->properties;
 }
 
 void BindPreparedStatementParameters(ClientContext &context, PreparedStatementData &statement,

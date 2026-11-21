@@ -9,6 +9,7 @@
 #pragma once
 
 #include "duckdb/transaction/undo_buffer.hpp"
+#include "duckdb/main/attached_database.hpp"
 #include "duckdb/common/vector_size.hpp"
 #include "duckdb/common/enums/index_removal_type.hpp"
 #include "duckdb/common/optional_ptr.hpp"
@@ -56,6 +57,7 @@ public:
 	const vector<reference<CatalogEntry>> &DroppedEntries() const {
 		return dropped_entries;
 	}
+	void CommitAttach(AttachedDatabase &db, shared_ptr<ClientContext> context);
 	//! Finalize accumulated block marks and index removals.
 	void FinalizeCommit();
 	//! True if no work has been queued.
@@ -66,6 +68,8 @@ private:
 	vector<block_id_t> dropped_block_ids;
 	vector<PendingIndexRemoval> pending_index_removals;
 	vector<reference<CatalogEntry>> dropped_entries;
+	vector<reference<AttachedDatabase>> attached_databases;
+	shared_ptr<ClientContext> attach_context;
 };
 
 struct IndexDataRemover {

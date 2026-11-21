@@ -75,6 +75,15 @@ struct SettingCallbackInfo {
 	bool is_reset = false;
 };
 
+enum class SettingContext : uint8_t { USER, SUPERUSER, INTERNAL };
+
+struct SettingAccess {
+	SettingContext context = SettingContext::SUPERUSER;
+	bool superuser_read = false;
+	bool no_show_all = false;
+	bool session_identity = false;
+};
+
 typedef void (*set_callback_t)(SettingCallbackInfo &info, Value &parameter);
 typedef void (*set_global_function_t)(DatabaseInstance *db, DBConfig &config, const Value &parameter);
 typedef void (*set_local_function_t)(ClientContext &context, const Value &parameter);
@@ -100,6 +109,7 @@ struct ConfigurationOption {
 	bool is_deprecated = false;
 	bool no_reset_all = false;
 	bool rebind = false;
+	SettingAccess access;
 };
 
 struct ConfigurationAlias {
@@ -133,6 +143,7 @@ struct ExtensionOption {
 	bool is_deprecated = false;
 	bool no_reset_all = false;
 	bool rebind = false;
+	SettingAccess access {SettingContext::SUPERUSER, true, false};
 };
 
 } // namespace duckdb

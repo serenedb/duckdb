@@ -1,5 +1,6 @@
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/parser/expression/columnref_expression.hpp"
+#include "duckdb/main/client_context.hpp"
 #include "duckdb/parser/expression/comparison_expression.hpp"
 #include "duckdb/parser/expression/conjunction_expression.hpp"
 #include "duckdb/parser/expression/constant_expression.hpp"
@@ -128,6 +129,7 @@ void Binder::ComputeStoredGeneratedColumns(TableCatalogEntry &table, vector<uniq
 	}
 	auto column_index = GenerateTableIndex();
 	auto generated_binder = Binder::CreateBinder(context, this);
+	generated_binder->BindStoredDefinition();
 	generated_binder->bind_context.AddGenericBinding(column_index, table.name, names, types, columns.IsCaseSensitive());
 	ExpressionBinder generated_expr_binder(*generated_binder, context);
 	idx_t pos = 0;
@@ -357,6 +359,9 @@ void Binder::BindInsertColumnList(TableCatalogEntry &table, vector<Identifier> &
 			auto entry = column_name_map.insert(make_pair(columns[i], i));
 			if (!entry.second) {
 				throw BinderException("Duplicate column name %s in INSERT", columns[i]);
+			}
+			if (!table.ColumnExists(columns[i])) {
+				context.CheckEntryReference(CheckAs(), table);
 			}
 			auto column_index = table.GetColumnIndex(columns[i]);
 			if (column_index.index == COLUMN_IDENTIFIER_ROW_ID) {
@@ -754,6 +759,19 @@ BoundStatement Binder::BindNode(InsertQueryNode &node) {
 		return std::move(*expanded);
 	}
 
+	auto need = NeedOf(table);
+	if (need) {
+		need->modes |= AclMode::Insert;
+	}
+	if (node.on_conflict_info) {
+		if (need && !node.default_values) {
+			auto values_list = node.GetValuesList();
+			AddColumns(need->inserted, table, node.columns,
+			           values_list && !values_list->values.empty() ? values_list->values[0].size()
+			                                                       : table.GetColumns().LogicalColumnCount());
+		}
+	}
+
 	auto values_list = node.GetValuesList();
 	BoundStatement root_select;
 	shared_ptr<Binder> select_by_name;
@@ -786,6 +804,13 @@ BoundStatement Binder::BindNode(InsertQueryNode &node) {
 			auto arbiters = ConflictArbiters(on_conflict_info, table, table.GetStorageInfo(context));
 			if (on_conflict_info.action_type == OnConflictAction::NOTHING) {
 				merge = false;
+				if (need) {
+					for (auto &name : on_conflict_info.indexed_columns) {
+						if (table.ColumnExists(name)) {
+							need->Select(table.GetColumn(name).Logical().index);
+						}
+					}
+				}
 				if (!arbiters.empty()) {
 					action_type = OnConflictAction::NOTHING;
 					if (!on_conflict_info.indexed_columns.empty()) {
@@ -809,6 +834,18 @@ BoundStatement Binder::BindNode(InsertQueryNode &node) {
 				    absl::c_all_of(node.returning_list, [&](const unique_ptr<ParsedExpression> &expr) {
 					    return ReadsOnly(*expr, table, stored);
 				    })) {
+					if (need) {
+						for (auto index : key) {
+							need->Select(table.GetColumns().GetColumn(PhysicalIndex(index)).Logical().index);
+						}
+						need->modes |= AclMode::Update;
+						for (auto &index : replaced.columns) {
+							auto &column = table.GetColumns().GetColumn(index);
+							if (column.Category() != TableColumnType::GENERATED_STORED) {
+								need->updated.push_back(column.Logical().index);
+							}
+						}
+					}
 					merge = false;
 					action_type = OnConflictAction::REPLACE;
 					on_conflict_filter = std::move(key);
@@ -820,6 +857,7 @@ BoundStatement Binder::BindNode(InsertQueryNode &node) {
 		if (merge) {
 			// generate a MERGE INTO statement and bind it instead
 			auto merge_into = GenerateMergeInto(node, table);
+			on_conflict_merge = merge_into->node.get();
 			return Bind(*merge_into);
 		}
 	}
@@ -845,6 +883,11 @@ BoundStatement Binder::BindNode(InsertQueryNode &node) {
 	vector<LogicalIndex> named_column_map;
 	BindInsertColumnList(table, node.columns, node.default_values, named_column_map, insert->expected_types,
 	                     column_index_map);
+	const auto check_insert = [&](idx_t source_columns) {
+		for (idx_t i = 0; need && i < source_columns && i < named_column_map.size(); i++) {
+			need->inserted.push_back(named_column_map[i].index);
+		}
+	};
 
 	// An INSERT ... SELECT supplies a value for every targeted column, so naming a
 	// generated column there is not allowed -- a generated column only accepts
@@ -860,9 +903,13 @@ BoundStatement Binder::BindNode(InsertQueryNode &node) {
 	}
 
 	// bind the default values
-	BindDefaultValues(table.GetColumns(), insert->bound_defaults, table.ParentSchema(context));
+	BindDefaultValues(table, insert->bound_defaults, [&](const ColumnDefinition &column) {
+		return column_index_map.empty() || column_index_map[column.Physical()] == DConstants::INVALID_INDEX;
+	});
 	insert->bound_constraints = BindConstraints(table);
+	RequireIndexCalls(table, nullptr);
 	if (!node.select_statement && !node.default_values) {
+		check_insert(named_column_map.size());
 		result.plan = std::move(insert);
 		return result;
 	}
@@ -880,6 +927,7 @@ BoundStatement Binder::BindNode(InsertQueryNode &node) {
 		}
 		// inserting from a select - check if the column count matches
 		CheckInsertColumnCountMismatch(expected_columns, root_select.types.size(), !node.columns.empty(), table.name);
+		check_insert(root_select.types.size());
 
 		auto source_types = root_select.types;
 		auto target_types = insert->expected_types;
@@ -894,6 +942,7 @@ BoundStatement Binder::BindNode(InsertQueryNode &node) {
 		}
 		root = CastLogicalOperatorToTypes(source_types, target_types, std::move(root_select.plan));
 	} else {
+		check_insert(0);
 		root = make_uniq<LogicalDummyScan>(GenerateTableIndex());
 		if (node.default_values) {
 			root = ResolveInputProjection(*insert, column_index_map, std::move(root), {});
@@ -907,7 +956,7 @@ BoundStatement Binder::BindNode(InsertQueryNode &node) {
 		insert->table_index = insert_table_index;
 		unique_ptr<LogicalOperator> index_as_logicaloperator = std::move(insert);
 
-		return BindReturning(std::move(node.returning_list), table,
+		return BindReturning(node, std::move(node.returning_list), table,
 		                     node.table_ref ? node.table_ref->alias : Identifier(), insert_table_index,
 		                     std::move(index_as_logicaloperator));
 	}

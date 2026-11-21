@@ -139,6 +139,10 @@ void Binder::SetSearchPath(Catalog &catalog, const Identifier &schema) {
 	entry_retriever.SetSearchPath(std::move(search_path));
 }
 
+void Binder::SetSearchPath(Catalog &catalog, const Identifier &schema, const vector<NameBinding> &bindings) {
+	entry_retriever.SetSearchPath(GetSearchPath(catalog, schema, true), catalog.GetName(), bindings);
+}
+
 BoundStatement Binder::Bind(BaseTableRef &ref) {
 	QueryErrorContext error_context(ref.query_location);
 	// CTEs and views are also referred to using BaseTableRefs, hence need to distinguish here
@@ -256,6 +260,9 @@ BoundStatement Binder::Bind(BaseTableRef &ref) {
 		GetStatementProperties().RegisterDataRead(table, context, table_index);
 
 		unique_ptr<FunctionData> bind_data;
+		ClientContext::AccessScope access_scope;
+		access_scope.catalog = true;
+		ClientContext::AccessScopeGuard access_guard(context, access_scope);
 		auto scan_function = table.GetScanFunction(context, bind_data, table_lookup);
 		if (bind_data && !bind_data->SupportStatementCache()) {
 			SetAlwaysRequireRebind();
@@ -304,13 +311,21 @@ BoundStatement Binder::Bind(BaseTableRef &ref) {
 	case CatalogType::VIEW_ENTRY: {
 		// the node is a view: get the query that the view represents
 		auto &view_catalog_entry = table_or_view->Cast<ViewCatalogEntry>();
-		const auto scope_begin = global_binder_state->bound_tables;
-		const auto resolved_begin = GetStatementProperties().resolved_entries.size();
+		auto &role = CheckAs();
+		auto need = ReadNeed(view_catalog_entry);
+		if (need && !role.CanColumns(view_catalog_entry, AclMode::Select, {})) {
+			ThrowPermissionDenied(view_catalog_entry);
+		}
 		// We need to use a new binder for the view that doesn't reference any CTEs
 		// defined for this binder so there are no collisions between the CTEs defined
 		// for the view and for the current query
 		auto view_binder = Binder::CreateBinder(context, this, BinderType::VIEW_BINDER);
 		view_binder->SetCanContainNulls(true);
+		if (!role.IsSystem() && view_catalog_entry.security_invoker) {
+			view_binder->acting.privileges = &CurrentRole();
+		} else if (!role.IsSystem() && !IsUnowned(view_catalog_entry)) {
+			view_binder->acting.privileges = &AccessOf(view_catalog_entry.permissions.owner);
+		}
 
 		// The view may contain CTEs, but maybe only in the cte_map, so we need create CTE nodes for them
 		auto query = view_catalog_entry.GetQuery().Copy();
@@ -329,10 +344,13 @@ BoundStatement Binder::Bind(BaseTableRef &ref) {
 			}
 		}
 
-		// when binding a view, we always look into the catalog/schema where the view is stored first
-		auto view_search_path =
-		    GetSearchPath(view_catalog_entry.ParentCatalog(), view_catalog_entry.ParentSchema(context).name, true);
-		view_binder->entry_retriever.SetSearchPath(std::move(view_search_path));
+		auto &view_catalog = view_catalog_entry.ParentCatalog();
+		auto &view_schema = view_catalog_entry.ParentSchema(context).name;
+		if (!IsUnowned(view_catalog_entry) && !view_catalog.IsTemporaryCatalog()) {
+			view_binder->SetSearchPath(view_catalog, view_schema, view_catalog_entry.name_bindings);
+		} else {
+			view_binder->entry_retriever.SetSearchPath(GetSearchPath(view_catalog, view_schema, true));
+		}
 		// propagate the AT clause through the view
 		view_binder->entry_retriever.SetAtClause(entry_at_clause);
 
@@ -352,10 +370,7 @@ BoundStatement Binder::Bind(BaseTableRef &ref) {
 			    view_catalog_entry.ParentSchema(context).GetQualifiedName(view_catalog_entry.name), bound_child.types,
 			    entry_at_clause, std::move(bound_child.plan));
 		}
-		bind_context.AddView(root_index, subquery.alias, subquery, bound_child, view_catalog_entry);
-		GetStatementProperties().view_scopes.push_back({&view_catalog_entry, scope_begin,
-		                                                global_binder_state->bound_tables, resolved_begin,
-		                                                GetStatementProperties().resolved_entries.size()});
+		bind_context.AddView(root_index, subquery.alias, subquery, bound_child, view_catalog_entry).need = need;
 		return bound_child;
 	}
 	default:

@@ -10,9 +10,11 @@
 
 #include "duckdb/common/constants.hpp"
 #include "duckdb/common/enums/result_eagerness.hpp"
+#include "duckdb/common/enums/role_capability.hpp"
 #include "duckdb/common/identifier.hpp"
 #include "duckdb/common/optional_idx.hpp"
 #include "duckdb/common/table_index.hpp"
+#include "duckdb/common/string.hpp"
 #include "duckdb/common/unordered_set.hpp"
 #include "duckdb/common/vector.hpp"
 #include "duckdb/common/enums/database_modification_type.hpp"
@@ -76,7 +78,11 @@ std::string_view StatementReturnTypeToString(StatementReturnType type);
 class Catalog;
 class CatalogEntry;
 class ClientContext;
-class ViewCatalogEntry;
+
+struct FileGrant {
+	string path;
+	RoleCapability capability = RoleCapability::None;
+};
 
 //! A struct containing various properties of a SQL statement
 struct StatementProperties {
@@ -103,14 +109,6 @@ struct StatementProperties {
 		DatabaseModificationType modifications;
 	};
 
-	struct ViewScope {
-		const ViewCatalogEntry *view = nullptr;
-		idx_t begin = 0;
-		idx_t end = 0;
-		idx_t resolved_begin = 0;
-		idx_t resolved_end = 0;
-	};
-
 	struct DataRead {
 		const CatalogEntry *entry = nullptr;
 		idx_t version = 0;
@@ -122,7 +120,6 @@ struct StatementProperties {
 	identifier_map_t<CatalogIdentity> read_databases;
 	//! The set of databases this statement will modify
 	identifier_map_t<ModificationInfo> modified_databases;
-	vector<ViewScope> view_scopes;
 	vector<const CatalogEntry *> resolved_entries;
 	vector<DataRead> data_reads;
 	bool point_reads_only = false;
@@ -142,6 +139,9 @@ struct StatementProperties {
 	//! Whether or not the statement ALWAYS requires a rebind
 	bool always_require_rebind;
 	idx_t binding_generation = 0;
+	optional<ReplicationRole> replication_role;
+	vector<FileGrant> file_grants;
+	bool catalog_file_access = false;
 
 	bool IsReadOnly() {
 		return modified_databases.empty();

@@ -6,6 +6,7 @@
 #include "duckdb/parser/expression/constant_expression.hpp"
 #include "duckdb/common/enum_util.hpp"
 #include "duckdb/common/string_util.hpp"
+#include "duckdb/main/settings.hpp"
 
 namespace duckdb {
 
@@ -26,7 +27,11 @@ unique_ptr<SetStatement> TransformSetSearchPath(const Identifier &name, SetScope
 			return expr.ToString();
 		}
 		if (expr.GetExpressionType() == ExpressionType::VALUE_CONSTANT) {
-			return expr.Cast<ConstantExpression>().GetLiteral().ToValue().ToString();
+			auto &literal = expr.Cast<ConstantExpression>().GetLiteral();
+			if (literal.kind == LiteralKind::STRING && !literal.text.empty()) {
+				return "\"" + StringUtil::Replace(literal.text, "\"", "\"\"") + "\"";
+			}
+			return literal.ToValue().ToString();
 		}
 		throw ParserException("SET search_path: expected identifier or string literal");
 	};
@@ -38,18 +43,9 @@ unique_ptr<SetStatement> TransformSetSearchPath(const Identifier &name, SetScope
 		if (expr.GetExpressionType() == ExpressionType::VALUE_DEFAULT) {
 			return make_uniq<ResetVariableStatement>(name, scope);
 		}
-		// Single string literal: wrap in double quotes so commas in the literal
-		// are not treated as separators by ParseList. Empty literal stays empty.
-		if (expr.GetExpressionType() == ExpressionType::VALUE_CONSTANT) {
-			auto &literal = expr.Cast<ConstantExpression>().GetLiteral();
-			if (literal.kind == LiteralKind::STRING) {
-				const auto &raw = literal.text;
-				if (raw.empty()) {
-					return make_set(raw);
-				}
-				string wrapped = "\"" + StringUtil::Replace(raw, "\"", "\"\"") + "\"";
-				return make_set(std::move(wrapped));
-			}
+		if (expr.GetExpressionType() == ExpressionType::VALUE_CONSTANT &&
+		    expr.Cast<ConstantExpression>().GetLiteral().kind == LiteralKind::STRING) {
+			return make_set(serialize(expr));
 		}
 		if (expr.GetExpressionType() != ExpressionType::COLUMN_REF) {
 			// on top of PG's grammar, DuckDB allows any expression here and evaluates it: pass it on,
@@ -144,6 +140,16 @@ PEGTransformerFactory::TransformSetAssignment(PEGTransformer &transformer,
 	return variable_list;
 }
 
+Identifier PEGTransformerFactory::TransformSettingPath(PEGTransformer &transformer, const Identifier &setting_name,
+                                                       const optional<vector<Identifier>> &dot_identifier) {
+	if (!dot_identifier) {
+		return setting_name;
+	}
+	vector<Identifier> path {setting_name};
+	path.insert(path.end(), dot_identifier->begin(), dot_identifier->end());
+	return Settings::PathName(path);
+}
+
 // SetSetting <- SettingScope? SettingName
 SettingInfo PEGTransformerFactory::TransformSetSetting(PEGTransformer &transformer,
                                                        const optional<SetScope> &setting_scope,
@@ -201,16 +207,15 @@ unique_ptr<SetStatement> PEGTransformerFactory::TransformSetTimeZone(PEGTransfor
 	return make_uniq<SetVariableStatement>("timezone", std::move(zone_value), SetScope::AUTOMATIC);
 }
 
-// SetRole <- 'ROLE' RoleSpec
-// Routes to the `role` extension setting (registered in serenedb's
-// server/query/config_variables.cpp with a NoOverwrite callback so the
-// value flows into session state but doesn't perform real role-switch).
+// SetRole <- RoleScope? 'ROLE' RoleSpec
 unique_ptr<SetStatement> PEGTransformerFactory::TransformSetRole(PEGTransformer &transformer,
+                                                                 const optional<SetScope> &role_scope,
                                                                  unique_ptr<ParsedExpression> role_spec) {
+	const auto scope = role_scope ? *role_scope : SetScope::AUTOMATIC;
 	if (role_spec->GetExpressionClass() == ExpressionClass::DEFAULT) {
-		return make_uniq<ResetVariableStatement>("role", SetScope::AUTOMATIC);
+		return make_uniq<ResetVariableStatement>("role", scope);
 	}
-	return make_uniq<SetVariableStatement>("role", std::move(role_spec), SetScope::AUTOMATIC);
+	return make_uniq<SetVariableStatement>("role", std::move(role_spec), scope);
 }
 
 // SetSessionAuthorization <- 'SESSION' 'AUTHORIZATION' RoleSpec
@@ -251,7 +256,7 @@ PEGTransformerFactory::TransformStandardAssignment(PEGTransformer &transformer,
 		                              std::move(set_assignment));
 	}
 	if (set_assignment.size() > 1) {
-		throw ParserException("SET can only contain a single value");
+		throw ParserException("SET %s takes only one argument", set_variable_or_setting.name.GetIdentifierName());
 	}
 	auto value = std::move(set_assignment[0]);
 	if (value->GetExpressionClass() == ExpressionClass::COLUMN_REF) {

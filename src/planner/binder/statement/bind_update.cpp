@@ -1,4 +1,5 @@
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
+#include "duckdb/main/client_context.hpp"
 #include "duckdb/parser/expression/columnref_expression.hpp"
 #include "duckdb/parser/expression/constant_expression.hpp"
 #include "duckdb/parser/parsed_expression_iterator.hpp"
@@ -110,6 +111,7 @@ void Binder::BindUpdateSet(TableIndex proj_index, unique_ptr<LogicalOperator> &r
 		auto &colname = set_info.columns[i];
 		auto &expr = set_info.expressions[i];
 		if (!table.ColumnExists(colname)) {
+			context.CheckEntryReference(CheckAs(), table);
 			vector<string> column_names;
 			for (auto &col : all_columns.Physical()) {
 				column_names.emplace_back(col.Name().GetIdentifierName());
@@ -132,6 +134,8 @@ void Binder::BindUpdateSet(TableIndex proj_index, unique_ptr<LogicalOperator> &r
 	if (!has_stored_generated) {
 		return;
 	}
+	BinderScope definition(*expr_binder_ptr);
+	expr_binder_ptr->BindStoredDefinition();
 	// Recompute each stored generated column whose value depends on an assigned
 	// column. Generated-column references are expanded inline -- the same
 	// recursion the binder uses for INSERT defaults and SELECT -- and assigned
@@ -244,7 +248,7 @@ BoundStatement Binder::BindNode(UpdateQueryNode &node) {
 	unique_ptr<LogicalOperator> root;
 
 	// visit the table reference
-	auto bound_table = Bind(*node.table);
+	auto bound_table = BindTarget(*node.table, TableRefUse::DML_TARGET);
 	if (bound_table.plan->type != LogicalOperatorType::LOGICAL_GET) {
 		throw BinderException("Can only update base table");
 	}
@@ -273,7 +277,6 @@ BoundStatement Binder::BindNode(UpdateQueryNode &node) {
 			return std::move(*expanded);
 		}
 	}
-
 	optional_ptr<LogicalGet> get;
 	if (node.from_table) {
 		auto from_binder = Binder::CreateBinder(context, this);
@@ -308,7 +311,7 @@ BoundStatement Binder::BindNode(UpdateQueryNode &node) {
 	// a plain UPDATE cannot produce duplicate row-ids, so it keeps the lock-free path.
 	update->row_id_handling = node.from_table ? RowIdHandling::KEEP_FIRST : RowIdHandling::ASSUME_UNIQUE;
 	// bind the default values
-	BindDefaultValues(table.GetColumns(), update->bound_defaults, table.ParentSchema(context));
+	BindDefaultValues(table, update->bound_defaults);
 	update->bound_constraints = BindConstraints(table);
 
 	// project any additional columns required for the condition/expressions
@@ -329,6 +332,19 @@ BoundStatement Binder::BindNode(UpdateQueryNode &node) {
 	                              update->columns, node.prioritize_table_when_binding);
 	D_ASSERT(proj_tmp->type == LogicalOperatorType::LOGICAL_PROJECTION);
 	auto proj = unique_ptr_cast<LogicalOperator, LogicalProjection>(std::move(proj_tmp));
+	auto need = NeedOf(table);
+	if (need) {
+		need->modes |= AclMode::Update;
+	}
+	vector<LogicalIndex> changed;
+	for (auto index : update->columns) {
+		auto &column = table.GetColumns().GetColumn(index);
+		changed.push_back(column.Logical());
+		if (need && column.Category() != TableColumnType::GENERATED_STORED) {
+			need->updated.push_back(column.Logical().index);
+		}
+	}
+	RequireIndexCalls(table, changed);
 
 	// bind any extra columns necessary for CHECK constraints or indexes;
 	// storage-derived decisions (index updates force delete+insert) come
@@ -357,7 +373,7 @@ BoundStatement Binder::BindNode(UpdateQueryNode &node) {
 		bool capture_old = update->capture_old_rows;
 		unique_ptr<LogicalOperator> update_as_logicaloperator = std::move(update);
 
-		auto returning_result = BindReturning(std::move(node.returning_list), table, node.table->alias,
+		auto returning_result = BindReturning(node, std::move(node.returning_list), table, node.table->alias,
 		                                      update_table_index, std::move(update_as_logicaloperator));
 		if (capture_old) {
 			// Expose the captured OLD physical columns as extra output columns of the base CTE, under the reserved

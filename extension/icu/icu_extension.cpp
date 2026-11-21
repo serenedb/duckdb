@@ -465,7 +465,7 @@ static void LoadInternal(ExtensionLoader &loader) {
 	// If the host time zone is unknown, fall back to UTC
 	string tz_string = tz ? tz->GetId() : "UTC";
 	config.AddExtensionOption("TimeZone", "The current time zone", LogicalType::VARCHAR, Value(tz_string),
-	                          SetICUTimeZone);
+	                          SetICUTimeZone, SetScope::SESSION, false, false, SettingAccess {SettingContext::USER});
 
 	RegisterICUCurrentFunctions(loader);
 	RegisterICUDateAddFunctions(loader);

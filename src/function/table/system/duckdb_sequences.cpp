@@ -3,6 +3,7 @@
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/catalog/catalog_entry/schema_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/sequence_catalog_entry.hpp"
+#include "duckdb/catalog/permissions.hpp"
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/numeric_utils.hpp"
 #include "duckdb/main/client_context.hpp"
@@ -148,7 +149,10 @@ void DuckDBSequencesFunction(ClientContext &context, TableFunctionInput &data_p,
 		max_value.Append(Value::BIGINT(seq_data.max_value));
 		increment_by.Append(Value::BIGINT(seq_data.increment));
 		cycle.Append(Value::BOOLEAN(seq_data.cycle));
-		if (seq_data.usage_count == 0 || !seq_data.last_value) {
+		const bool readable =
+		    IsUnowned(seq) || context.CurrentRole().CanAny(CatalogType::SEQUENCE_ENTRY, seq.permissions,
+		                                                   AclMode::Usage | AclMode::Select);
+		if (seq_data.usage_count == 0 || !seq_data.last_value || !readable) {
 			last_value.Append(Value());
 		} else {
 			last_value.Append(Value::BIGINT(seq_data.last_value.value()));

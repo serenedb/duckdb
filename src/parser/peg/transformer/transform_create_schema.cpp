@@ -28,6 +28,10 @@ unique_ptr<CreateStatement> PEGTransformerFactory::TransformCreateSchemaStmt(
 	return result;
 }
 
+Identifier PEGTransformerFactory::TransformSchemaAuthorization(PEGTransformer &transformer, ParseResult &parse_result) {
+	return Identifier(OwnerRoleName(transformer, parse_result.Cast<ListParseResult>().GetChild(1)));
+}
+
 case_insensitive_map_t<unique_ptr<ParsedExpression>>
 PEGTransformerFactory::TransformWithOptionList(PEGTransformer &transformer,
                                                case_insensitive_map_t<unique_ptr<ParsedExpression>> rel_option_list) {

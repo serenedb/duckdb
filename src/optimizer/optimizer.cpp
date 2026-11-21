@@ -314,12 +314,22 @@ static void VisitPreparedStatements(LogicalOperator &plan, VISIT &&visit) {
 	for (optional_ptr<LogicalOperator> op = &plan; op; op = op->children.empty() ? nullptr : op->children[0].get()) {
 		if (op->type == LogicalOperatorType::LOGICAL_PREPARE) {
 			visit(plan, *op->Cast<LogicalPrepare>().prepared);
-		} else if (op->type == LogicalOperatorType::LOGICAL_EXECUTE && op->Cast<LogicalExecute>().replaces) {
-			visit(*op->children[0], *op->Cast<LogicalExecute>().prepared);
-		} else {
+		} else if (op->type == LogicalOperatorType::LOGICAL_EXECUTE) {
+			if (op->Cast<LogicalExecute>().replaces) {
+				visit(*op->children[0], *op->Cast<LogicalExecute>().prepared);
+			}
+		} else if (op->type != LogicalOperatorType::LOGICAL_EXPLAIN) {
 			break;
 		}
 	}
+}
+
+void Optimizer::TrackDataVersions(ClientContext &context, LogicalOperator &plan) {
+	VisitPreparedStatements(plan, [&](const LogicalOperator &planned, PreparedStatementData &prepared) {
+		if (!prepared.properties.read_databases.empty() && ContainsUnversionedData(planned)) {
+			prepared.properties.always_require_rebind = true;
+		}
+	});
 }
 
 // Returns true if the plan contains a DML statement inside a CTE body. A top-level
@@ -699,11 +709,6 @@ unique_ptr<LogicalOperator> Optimizer::Optimize(unique_ptr<LogicalOperator> plan
 	Verify(*plan_p);
 
 	this->plan = std::move(plan_p);
-	VisitPreparedStatements(*plan, [](const LogicalOperator &planned, PreparedStatementData &prepared) {
-		if (!prepared.properties.read_databases.empty() && ContainsUnversionedData(planned)) {
-			prepared.properties.always_require_rebind = true;
-		}
-	});
 
 	for (auto &pre_optimizer_extension : optimizer_extensions) {
 		if (pre_optimizer_extension.anchor != OptimizerType::INVALID) {

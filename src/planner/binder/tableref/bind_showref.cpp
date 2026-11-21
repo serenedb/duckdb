@@ -256,15 +256,15 @@ bool Binder::TryBindShowSetting(ShowRef &ref, BoundStatement &result) {
 		Catalog::AutoloadExtensionByConfigName(context, setting_name);
 		context.TryGetCurrentSetting(setting_name, setting_value);
 	}
-	result = BindShowSetting(ref);
+	result = BindShowSetting(setting_name);
 	return true;
 }
 
-BoundStatement Binder::BindShowSetting(ShowRef &ref) {
+BoundStatement Binder::BindShowSetting(const Identifier &setting_name) {
 	vector<unique_ptr<ParsedExpression>> children;
-	children.push_back(ConstantExpression::String(ref.GetTableName().GetIdentifierName()));
+	children.push_back(ConstantExpression::String(setting_name.GetIdentifierName()));
 	auto setting = make_uniq<FunctionExpression>("current_setting", std::move(children));
-	setting->SetAlias(CanonicalSettingName(context, ref.GetTableName()));
+	setting->SetAlias(CanonicalSettingName(context, setting_name));
 	auto node = make_uniq<SelectNode>();
 	node->select_list.push_back(std::move(setting));
 	node->from_table = make_uniq<EmptyTableRef>();
@@ -306,10 +306,7 @@ BoundStatement Binder::BindShow(ShowRef &ref) {
 	switch (behavior) {
 	case ShowBehaviorType::SETTING:
 		// "SHOW name" only ever resolves a setting.
-		if (can_be_setting) {
-			return BindShowSetting(ref);
-		}
-		throw CatalogException("Setting with name \"%s\" does not exist", name);
+		return BindShowSetting(Settings::PathName(ref.qualified_name.Path()));
 	case ShowBehaviorType::TABLE:
 		// "SHOW name" only ever describes a table (the historical behavior). Describing a table via SHOW is
 		// deprecated, so warn whenever one is shown.

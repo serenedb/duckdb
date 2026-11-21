@@ -10,6 +10,7 @@
 
 #include "duckdb/catalog/catalog_entry/schema_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_set.hpp"
+#include "duckdb/catalog/permissions.hpp"
 #include "duckdb/common/atomic.hpp"
 #include "duckdb/common/deque.hpp"
 #include "duckdb/common/optional_idx.hpp"
@@ -129,9 +130,6 @@ public:
 	virtual bool EmitWarning(const char *message) {
 		return false;
 	}
-	virtual bool IsSettingVisible(const string &name) {
-		return true;
-	}
 	virtual void OnSettingChange(const string &name, SetScope scope, const Value &previous) {
 	}
 	virtual void OnQueryBegin() {
@@ -157,6 +155,44 @@ public:
 		binding_generation.fetch_add(1, std::memory_order_relaxed);
 	}
 
+	struct AccessScope {
+		optional_ptr<const RoleAccess> role;
+		bool catalog = false;
+		optional_ptr<vector<FileGrant>> grants;
+	};
+	optional_ptr<const AccessScope> access_scope;
+	optional_ptr<const StatementProperties> planned_properties;
+
+	shared_ptr<const SecuritySnapshot> security;
+	idx_t current_role_id = DConstants::INVALID_INDEX;
+	idx_t session_role = DConstants::INVALID_INDEX;
+
+	class AccessScopeGuard {
+	public:
+		AccessScopeGuard(optional_ptr<ClientContext> context_p, const AccessScope &scope)
+		    : context(context_p && !context_p->ActiveStatementProperties() ? context_p : nullptr),
+		      previous(context ? context->access_scope : nullptr) {
+			if (context) {
+				context->access_scope = &scope;
+			}
+		}
+		~AccessScopeGuard() {
+			if (context) {
+				context->access_scope = previous;
+			}
+		}
+		AccessScopeGuard(const AccessScopeGuard &) = delete;
+		AccessScopeGuard &operator=(const AccessScopeGuard &) = delete;
+
+	private:
+		optional_ptr<ClientContext> context;
+		optional_ptr<const AccessScope> previous;
+	};
+
+	bool SecretsVisible() const {
+		return !access_scope || !access_scope->role || access_scope->role->is_superuser;
+	}
+
 public:
 	//! Connect this client to a remote-style AttachedDatabase. Subsequent non-control SQL routes via
 	//! Catalog::GetConnectFunctionName. Use DisconnectFromCatalog() to revert to LOCAL.
@@ -179,7 +215,22 @@ public:
 		return transaction.ActiveTransaction();
 	}
 
+	DUCKDB_API bool CanSee(CatalogEntry &entry);
+	DUCKDB_API bool CanSeeDatabase(AttachedDatabase &database);
+	DUCKDB_API void CheckEntryReference(const RoleAccess &role, CatalogEntry &entry);
+	DUCKDB_API void CheckDatabaseReference(const RoleAccess &role, Catalog &catalog);
+	DUCKDB_API optional_ptr<const StatementProperties> ActiveStatementProperties() const;
 	DUCKDB_API void WarnUser(const string &message);
+
+	const RoleAccess &CurrentRole() const {
+		return *current_role;
+	}
+	DUCKDB_API RoleAccess AccessOf(idx_t role) const;
+	DUCKDB_API RoleAccess CallerAccess(optional_idx caller) const;
+	DUCKDB_API void SetCurrentRole(idx_t role);
+	DUCKDB_API void InstallSecurity(shared_ptr<const SecuritySnapshot> snapshot);
+	DUCKDB_API void RefreshSecurity();
+	DUCKDB_API void CheckFileAccess(const string &path, RoleCapability sufficient);
 
 	//! Interrupts the running query. Async-signal-safe: sets a flag and nothing else
 	DUCKDB_API void InterruptFromSignal();
@@ -461,6 +512,8 @@ private:
 
 	bool ErrorInvalidatesTransaction(ExceptionType type);
 
+	void ResolveCurrentRole();
+
 private:
 	//! Lock on using the ClientContext in parallel
 	mutex context_lock;
@@ -478,6 +531,12 @@ private:
 	weak_ptr<AttachedDatabase> connected_to_database;
 	bool is_connected = false;
 	shared_ptr<SchedulerAccount> scheduler_account;
+	optional_ptr<const RoleAccess> current_role = &RoleAccess::System();
+	RoleAccess unknown_role;
+	shared_ptr<const SecuritySnapshot> local_security;
+	idx_t local_security_version = 0;
+	shared_ptr<const SecuritySnapshot> security_base;
+	Identifier security_database;
 };
 
 class ClientContextLock {

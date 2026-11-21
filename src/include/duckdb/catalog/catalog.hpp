@@ -53,6 +53,7 @@ struct CreateRoleInfo;
 struct CreateDatabaseInfo;
 struct CreateForeignServerInfo;
 struct CreateTablespaceInfo;
+struct CreateSubscriptionInfo;
 struct CreateCollationInfo;
 struct CreateCoordinateSystemInfo;
 struct CreateIndexInfo;
@@ -237,10 +238,18 @@ public:
 	                                                                  CreateForeignServerInfo &info);
 	DUCKDB_API virtual optional_ptr<CatalogEntry> CreateTablespace(CatalogTransaction transaction,
 	                                                               CreateTablespaceInfo &info);
-	DUCKDB_API virtual void DropRole(CatalogTransaction transaction, DropInfo &info);
+	DUCKDB_API virtual optional_ptr<CatalogEntry> CreateSubscription(CatalogTransaction transaction,
+	                                                                 CreateSubscriptionInfo &info);
+	DUCKDB_API virtual void DropRole(CatalogTransaction transaction, const vector<reference<DropInfo>> &infos);
 	DUCKDB_API virtual void DropDatabase(CatalogTransaction transaction, DropInfo &info);
+	DUCKDB_API virtual void ScanTopLevelEntries(CatalogTransaction transaction, CatalogType type,
+	                                            const std::function<void(CatalogEntry &)> &callback);
+	DUCKDB_API virtual optional_ptr<CatalogEntry> LookupOwner(CatalogTransaction transaction, idx_t oid);
+	DUCKDB_API virtual optional_ptr<CatalogEntry> LookupTopLevelEntry(CatalogTransaction transaction, CatalogType type,
+	                                                                  const Identifier &name);
 	DUCKDB_API virtual void DropForeignServer(CatalogTransaction transaction, DropInfo &info);
 	DUCKDB_API virtual void DropTablespace(CatalogTransaction transaction, DropInfo &info);
+	DUCKDB_API virtual void DropSubscription(CatalogTransaction transaction, DropInfo &info);
 	//! Creates a Enum in the catalog.
 	DUCKDB_API optional_ptr<CatalogEntry> CreateType(CatalogTransaction transaction, CreateTypeInfo &info);
 	DUCKDB_API optional_ptr<CatalogEntry> CreateType(ClientContext &context, CreateTypeInfo &info);
@@ -300,6 +309,9 @@ public:
 	virtual bool SupportsNestedSchemas() const {
 		return false;
 	}
+	virtual bool SupportsSubscriptions() const {
+		return false;
+	}
 	//! Resolve a string schema argument, preferring an existing nested entry over a literal dotted schema.
 	DUCKDB_API QualifiedName ResolveEntryName(ClientContext &context, const string &schema_arg,
 	                                          const string &entry_name, CatalogType type = CatalogType::TABLE_ENTRY,
@@ -344,6 +356,10 @@ public:
 	//! Look up a (possibly nested) schema by its path (outermost first). A single-element path is the normal top-level
 	//! lookup; deeper paths navigate the nested-schema chain.
 	DUCKDB_API static optional_ptr<SchemaCatalogEntry> GetSchema(ClientContext &context, const Identifier &catalog_name,
+	                                                             const vector<Identifier> &schema_path,
+	                                                             OnEntryNotFound if_not_found);
+	DUCKDB_API static optional_ptr<SchemaCatalogEntry> GetSchema(CatalogEntryRetriever &retriever,
+	                                                             const Identifier &catalog_name,
 	                                                             const vector<Identifier> &schema_path,
 	                                                             OnEntryNotFound if_not_found);
 	[[deprecated("Fold the catalog into the EntryLookupInfo and use GetSchema(retriever, "
@@ -543,6 +559,8 @@ public:
 	                          const std::function<void(CatalogEntry &)> &callback);
 	virtual catalog_entry_vector_t OwnedEntries(CatalogTransaction transaction, const CatalogEntry &owner);
 	virtual optional_ptr<CatalogEntry> OwnerOf(CatalogTransaction transaction, CatalogEntry &owned);
+	virtual catalog_entry_vector_t DropOrder(CatalogTransaction transaction, const catalog_entry_vector_t &entries);
+	virtual void RefuseDroppingTogether(CatalogTransaction transaction, const catalog_entry_vector_t &entries);
 
 	//! Whether attaching a catalog with the given path and attach options would be considered a conflict
 	virtual bool HasConflictingAttachOptions(const string &path, const AttachOptions &options);

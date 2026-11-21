@@ -401,8 +401,13 @@ void MacroFunction::CopyProperties(MacroFunction &other) const {
 	other.parameter_modes = parameter_modes;
 	other.is_procedure = is_procedure;
 	other.strict = strict;
+	other.security_definer = security_definer;
 	other.stability = stability;
+	other.config = config;
 	other.source = source;
+	other.oid = oid;
+	other.permissions = permissions;
+	other.comment = comment;
 }
 
 vector<unique_ptr<ParsedExpression>>

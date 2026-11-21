@@ -44,7 +44,9 @@ public:
 	static void SetExtensionVariable(ClientContext &context, ExtensionOption &extension_option, const Identifier &name,
 	                                 SetScope scope, const Value &value);
 
-	static void SetVariable(ClientContext &context, const Identifier &name, SetScope scope, const Value &value);
+	static void SetVariable(ClientContext &context, const Identifier &name, SetScope scope, const Value &value,
+	                        bool check_access = true);
+	static void SetCustomVariable(ClientContext &context, const Identifier &name, SetScope scope, const Value &value);
 	static void SetGenericVariable(ClientContext &context, idx_t setting_index, SetScope scope, Value target_value);
 	static Value SessionValue(ClientContext &context, const Identifier &name, optional_idx setting_index);
 	static void Rebind(ClientContext &context, SetScope scope);

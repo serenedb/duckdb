@@ -22,7 +22,9 @@
 #include "duckdb/parser/tableref/pivotref.hpp"
 #include "duckdb/planner/tableref/bound_pivotref.hpp"
 #include "duckdb/parser/column_definition.hpp"
-#include "duckdb/catalog/permissions.hpp"
+#include "duckdb/catalog/acl.hpp"
+#include "duckdb/catalog/role_graph.hpp"
+#include "duckdb/parser/parsed_data/create_database_info.hpp"
 #include "duckdb/parser/column_list.hpp"
 #include "duckdb/planner/column_binding.hpp"
 #include "duckdb/planner/expression/bound_parameter_data.hpp"
@@ -237,6 +239,18 @@ CaseCheck CaseCheck::Deserialize(Deserializer &deserializer) {
 	return result;
 }
 
+void ColumnAcl::Serialize(Serializer &serializer) const {
+	serializer.WritePropertyWithDefault<Identifier>(100, "column", column);
+	serializer.WritePropertyWithDefault<vector<AclItem>>(101, "acl", acl);
+}
+
+ColumnAcl ColumnAcl::Deserialize(Deserializer &deserializer) {
+	ColumnAcl result;
+	deserializer.ReadPropertyWithDefault<Identifier>(100, "column", result.column);
+	deserializer.ReadPropertyWithDefault<vector<AclItem>>(101, "acl", result.acl);
+	return result;
+}
+
 void ColumnBinding::Serialize(Serializer &serializer) const {
 	serializer.WritePropertyWithDefault<TableIndex>(100, "table_index", table_index);
 	serializer.WritePropertyWithDefault<ProjectionIndex>(101, "column_index", column_index);
@@ -377,6 +391,18 @@ CommonTableExpressionMap CommonTableExpressionMap::Deserialize(Deserializer &des
 	return result;
 }
 
+void DatabaseSetting::Serialize(Serializer &serializer) const {
+	serializer.WritePropertyWithDefault<idx_t>(100, "role", role);
+	serializer.WritePropertyWithDefault<vector<string>>(101, "config", config);
+}
+
+DatabaseSetting DatabaseSetting::Deserialize(Deserializer &deserializer) {
+	DatabaseSetting result;
+	deserializer.ReadPropertyWithDefault<idx_t>(100, "role", result.role);
+	deserializer.ReadPropertyWithDefault<vector<string>>(101, "config", result.config);
+	return result;
+}
+
 void DefaultAcl::Serialize(Serializer &serializer) const {
 	serializer.WritePropertyWithDefault<idx_t>(100, "role", role);
 	serializer.WriteProperty<CatalogType>(101, "objtype", objtype);
@@ -454,6 +480,32 @@ FunctionArgument FunctionArgument::Deserialize(Deserializer &deserializer) {
 	auto name = deserializer.ReadPropertyWithDefault<Identifier>(100, "name");
 	auto expression = deserializer.ReadPropertyWithDefault<unique_ptr<ParsedExpression>>(101, "expression");
 	FunctionArgument result(std::move(name), std::move(expression));
+	return result;
+}
+
+void GrantRow::Serialize(Serializer &serializer) const {
+	serializer.WriteProperty<CatalogType>(100, "kind", kind);
+	serializer.WritePropertyWithDefault<idx_t>(101, "oid", oid);
+	serializer.WritePropertyWithDefault<string>(102, "name", name);
+	serializer.WritePropertyWithDefault<vector<AclItem>>(103, "acl", acl);
+}
+
+GrantRow GrantRow::Deserialize(Deserializer &deserializer) {
+	GrantRow result;
+	deserializer.ReadProperty<CatalogType>(100, "kind", result.kind);
+	deserializer.ReadPropertyWithDefault<idx_t>(101, "oid", result.oid);
+	deserializer.ReadPropertyWithDefault<string>(102, "name", result.name);
+	deserializer.ReadPropertyWithDefault<vector<AclItem>>(103, "acl", result.acl);
+	return result;
+}
+
+void GrantRows::Serialize(Serializer &serializer) const {
+	serializer.WritePropertyWithDefault<vector<GrantRow>>(100, "rows", rows);
+}
+
+shared_ptr<GrantRows> GrantRows::Deserialize(Deserializer &deserializer) {
+	auto result = duckdb::shared_ptr<GrantRows>(new GrantRows());
+	deserializer.ReadPropertyWithDefault<vector<GrantRow>>(100, "rows", result->rows);
 	return result;
 }
 
@@ -653,6 +705,7 @@ void Permissions::Serialize(Serializer &serializer) const {
 	serializer.WritePropertyWithDefault<idx_t>(100, "owner", owner);
 	serializer.WritePropertyWithDefault<vector<AclItem>>(101, "acl", acl);
 	serializer.WritePropertyWithDefault<vector<DefaultAcl>>(102, "defaults", defaults);
+	serializer.WritePropertyWithDefault<shared_ptr<GrantRows>>(110, "rows", rows);
 }
 
 Permissions Permissions::Deserialize(Deserializer &deserializer) {
@@ -660,6 +713,7 @@ Permissions Permissions::Deserialize(Deserializer &deserializer) {
 	deserializer.ReadPropertyWithDefault<idx_t>(100, "owner", result.owner);
 	deserializer.ReadPropertyWithDefault<vector<AclItem>>(101, "acl", result.acl);
 	deserializer.ReadPropertyWithDefault<vector<DefaultAcl>>(102, "defaults", result.defaults);
+	deserializer.ReadPropertyWithDefault<shared_ptr<GrantRows>>(110, "rows", result.rows);
 	return result;
 }
 

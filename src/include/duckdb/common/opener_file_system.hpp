@@ -8,6 +8,7 @@
 
 #pragma once
 
+#include "duckdb/common/enums/role_capability.hpp"
 #include "duckdb/common/file_system.hpp"
 
 namespace duckdb {
@@ -24,8 +25,8 @@ public:
 	}
 
 	void VerifyNoOpener(optional_ptr<FileOpener> opener);
-	void VerifyCanAccessDirectory(const string &path);
-	void VerifyCanAccessFile(const string &path);
+	void VerifyCanAccessDirectory(const string &path, RoleCapability sufficient);
+	void VerifyCanAccessFile(const string &path, RoleCapability sufficient);
 	void VerifyCanAccessExtension(const string &path, const FileOpenFlags &flags) {
 		if (flags.OpenForWriting() && !flags.EnableExtensionInstall()) {
 			throw PermissionException(
@@ -99,13 +100,13 @@ public:
 
 	void SyncDirectory(const string &directory, optional_ptr<FileOpener> opener) override {
 		VerifyNoOpener(opener);
-		VerifyCanAccessDirectory(directory);
+		VerifyCanAccessDirectory(directory, RoleCapability::WriteServerFiles);
 		GetFileSystem().SyncDirectory(directory, GetOpener());
 	}
 	void SyncFiles(const vector<string> &paths, optional_ptr<FileOpener> opener) override {
 		VerifyNoOpener(opener);
 		for (auto &path : paths) {
-			VerifyCanAccessFile(path);
+			VerifyCanAccessFile(path, RoleCapability::WriteServerFiles);
 		}
 		GetFileSystem().SyncFiles(paths, GetOpener());
 	}
@@ -114,7 +115,7 @@ public:
 	                                 optional_ptr<ErrorData> error) override {
 		VerifyNoOpener(opener);
 		try {
-			VerifyCanAccessDirectory(directory);
+			VerifyCanAccessDirectory(directory, RoleCapability::ReadServerFiles | RoleCapability::WriteServerFiles);
 		} catch (std::exception &ex) {
 			return ClassifyExistenceFailure(ex, error);
 		}
@@ -129,7 +130,7 @@ public:
 			return FileSystem::CreateDirectoryExtended(directory, options, opener);
 		}
 		VerifyNoOpener(opener);
-		VerifyCanAccessDirectory(directory);
+		VerifyCanAccessDirectory(directory, RoleCapability::WriteServerFiles);
 		return GetFileSystem().CreateDirectoryExtended(directory, options, GetOpener());
 	}
 	void CreateDirectoriesRecursive(const string &path, optional_ptr<FileOpener> opener = nullptr) override {
@@ -142,14 +143,14 @@ public:
 	bool RemoveDirectoryExtended(const string &directory, const RemoveDirectoryOptions &options,
 	                             optional_ptr<FileOpener> opener) override {
 		VerifyNoOpener(opener);
-		VerifyCanAccessDirectory(directory);
+		VerifyCanAccessDirectory(directory, RoleCapability::WriteServerFiles);
 		return GetFileSystem().RemoveDirectoryExtended(directory, options, GetOpener());
 	}
 
 	void MoveFile(const string &source, const string &target, optional_ptr<FileOpener> opener) override {
 		VerifyNoOpener(opener);
-		VerifyCanAccessFile(source);
-		VerifyCanAccessFile(target);
+		VerifyCanAccessFile(source, RoleCapability::WriteServerFiles);
+		VerifyCanAccessFile(target, RoleCapability::WriteServerFiles);
 		if (IsDuckDBExtensionName(target) && !IsDuckDBExtensionName(source)) {
 			throw PermissionException(
 			    "File '%s' cannot be moved to '%s', files ending with '.duckdb_extension' are reserved for DuckDB "
@@ -209,7 +210,7 @@ public:
 	                            optional_ptr<ErrorData> error) override {
 		VerifyNoOpener(opener);
 		try {
-			VerifyCanAccessFile(filename);
+			VerifyCanAccessFile(filename, RoleCapability::ReadServerFiles | RoleCapability::WriteServerFiles);
 		} catch (std::exception &ex) {
 			return ClassifyExistenceFailure(ex, error);
 		}
@@ -218,7 +219,7 @@ public:
 
 	optional<FileMetadata> GetStatsIfExists(const OpenFileInfo &file, optional_ptr<FileOpener> opener) override {
 		VerifyNoOpener(opener);
-		VerifyCanAccessFile(file.path);
+		VerifyCanAccessFile(file.path, RoleCapability::ReadServerFiles | RoleCapability::WriteServerFiles);
 		return GetFileSystem().GetStatsIfExists(file, GetOpener());
 	}
 
@@ -228,20 +229,20 @@ public:
 	}
 	void RemoveFile(const string &filename, optional_ptr<FileOpener> opener) override {
 		VerifyNoOpener(opener);
-		VerifyCanAccessFile(filename);
+		VerifyCanAccessFile(filename, RoleCapability::WriteServerFiles);
 		GetFileSystem().RemoveFile(filename, GetOpener());
 	}
 
 	bool TryRemoveFile(const string &filename, optional_ptr<FileOpener> opener) override {
 		VerifyNoOpener(opener);
-		VerifyCanAccessFile(filename);
+		VerifyCanAccessFile(filename, RoleCapability::WriteServerFiles);
 		return GetFileSystem().TryRemoveFile(filename, GetOpener());
 	}
 
 	void RemoveFiles(const vector<string> &filenames, optional_ptr<FileOpener> opener) override {
 		VerifyNoOpener(opener);
 		for (const auto &filename : filenames) {
-			VerifyCanAccessFile(filename);
+			VerifyCanAccessFile(filename, RoleCapability::WriteServerFiles);
 		}
 		GetFileSystem().RemoveFiles(filenames, GetOpener());
 	}
@@ -252,7 +253,7 @@ public:
 
 	vector<OpenFileInfo> Glob(const string &path, FileOpener *opener = nullptr) override {
 		VerifyNoOpener(opener);
-		VerifyCanAccessFile(path);
+		VerifyCanAccessFile(path, RoleCapability::ReadServerFiles);
 		return GetFileSystem().Glob(path, GetOpener().get());
 	}
 
@@ -294,7 +295,8 @@ protected:
 	unique_ptr<FileHandle> OpenFileExtended(const OpenFileInfo &file, FileOpenFlags flags,
 	                                        optional_ptr<FileOpener> opener = nullptr) override {
 		VerifyNoOpener(opener);
-		VerifyCanAccessFile(file.path);
+		VerifyCanAccessFile(file.path, flags.OpenForWriting() ? RoleCapability::WriteServerFiles
+		                                                      : RoleCapability::ReadServerFiles);
 		if (IsDuckDBExtensionName(file.path)) {
 			VerifyCanAccessExtension(file.path, flags);
 		}
@@ -317,7 +319,7 @@ protected:
 	bool ListFilesExtended(const string &directory, const std::function<void(OpenFileInfo &info)> &callback,
 	                       optional_ptr<FileOpener> opener, const ListFilesOptions &options) override {
 		VerifyNoOpener(opener);
-		VerifyCanAccessDirectory(directory);
+		VerifyCanAccessDirectory(directory, RoleCapability::ReadServerFiles);
 		return GetFileSystem().ListFiles(directory, callback, GetOpener().get(), options);
 	}
 
@@ -338,7 +340,7 @@ protected:
 	}
 
 private:
-	void VerifyCanAccessFileInternal(const string &path, FileType type);
+	void VerifyCanAccessFileInternal(const string &path, FileType type, RoleCapability sufficient);
 };
 
 } // namespace duckdb

@@ -42,6 +42,9 @@ public:
 	bool has_func_args = false;
 	//! Whether this is DROP PROCEDURE (vs DROP FUNCTION)
 	bool is_procedure = false;
+	bool is_macro = false;
+	vector<ObjectReference> objects;
+	vector<idx_t> dropped_together;
 
 	//! Extra info related to this drop
 	unique_ptr<ExtraDropInfo> extra_drop_info;
@@ -71,6 +74,7 @@ public:
 
 public:
 	virtual unique_ptr<DropInfo> Copy() const;
+	vector<unique_ptr<DropInfo>> SplitObjects();
 	string ToString() const;
 
 	void Serialize(Serializer &serializer) const override;

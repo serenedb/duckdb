@@ -59,6 +59,12 @@ string CatalogTypeToString(CatalogType type) {
 		return "Job";
 	case CatalogType::TABLESPACE_ENTRY:
 		return "Tablespace";
+	case CatalogType::FOREIGN_DATA_WRAPPER_ENTRY:
+		return "Foreign Data Wrapper";
+	case CatalogType::PARAMETER_ENTRY:
+		return "Parameter";
+	case CatalogType::LANGUAGE_ENTRY:
+		return "Language";
 	case CatalogType::SECRET_ENTRY:
 		return "Secret";
 	case CatalogType::SECRET_TYPE_ENTRY:
@@ -72,6 +78,55 @@ string CatalogTypeToString(CatalogType type) {
 		break;
 	}
 	return "INVALID";
+}
+
+string CatalogTypeToNoun(CatalogType type) {
+	switch (type) {
+	case CatalogType::TABLE_ENTRY:
+	case CatalogType::VIEW_ENTRY:
+	case CatalogType::INDEX_ENTRY:
+	case CatalogType::SEQUENCE_ENTRY:
+		return "relation";
+	case CatalogType::SCHEMA_ENTRY:
+		return "schema";
+	case CatalogType::DATABASE_ENTRY:
+		return "database";
+	case CatalogType::TABLE_FUNCTION_ENTRY:
+	case CatalogType::SCALAR_FUNCTION_ENTRY:
+	case CatalogType::AGGREGATE_FUNCTION_ENTRY:
+	case CatalogType::WINDOW_FUNCTION_ENTRY:
+	case CatalogType::COPY_FUNCTION_ENTRY:
+	case CatalogType::PRAGMA_FUNCTION_ENTRY:
+	case CatalogType::MACRO_ENTRY:
+	case CatalogType::TABLE_MACRO_ENTRY:
+		return "function";
+	case CatalogType::TYPE_ENTRY:
+		return "type";
+	case CatalogType::COLLATION_ENTRY:
+		return "collation";
+	case CatalogType::TOKENIZER_ENTRY:
+		return "text search dictionary";
+	case CatalogType::ROLE_ENTRY:
+		return "role";
+	case CatalogType::FOREIGN_SERVER_ENTRY:
+		return "server";
+	case CatalogType::FOREIGN_DATA_WRAPPER_ENTRY:
+		return "foreign-data wrapper";
+	case CatalogType::LANGUAGE_ENTRY:
+		return "language";
+	case CatalogType::SUBSCRIPTION_ENTRY:
+		return "subscription";
+	case CatalogType::TRIGGER_ENTRY:
+		return "trigger";
+	case CatalogType::JOB_ENTRY:
+		return "job";
+	case CatalogType::TABLESPACE_ENTRY:
+		return "tablespace";
+	case CatalogType::COORDINATE_SYSTEM_ENTRY:
+		return "coordinate system";
+	default:
+		return "object";
+	}
 }
 
 CatalogType CatalogTypeFromString(const string &type) {
@@ -149,6 +204,15 @@ CatalogType CatalogTypeFromString(const string &type) {
 	}
 	if (type == "Tablespace") {
 		return CatalogType::TABLESPACE_ENTRY;
+	}
+	if (type == "Foreign Data Wrapper") {
+		return CatalogType::FOREIGN_DATA_WRAPPER_ENTRY;
+	}
+	if (type == "Parameter") {
+		return CatalogType::PARAMETER_ENTRY;
+	}
+	if (type == "Language") {
+		return CatalogType::LANGUAGE_ENTRY;
 	}
 	if (type == "INVALID") {
 		return CatalogType::INVALID;

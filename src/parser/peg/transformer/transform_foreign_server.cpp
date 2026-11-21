@@ -59,19 +59,16 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformCreateServerStatement(P
 unique_ptr<SQLStatement> PEGTransformerFactory::TransformDropServerStatement(PEGTransformer &transformer,
                                                                              ParseResult &parse_result) {
 	auto &list_pr = parse_result.Cast<ListParseResult>();
-	// Children:
-	//   0: 'DROP', 1: 'SERVER'
-	//   2: IfExists?
-	//   3: ColId (server name)
-	//   4: DropBehavior? (CASCADE / RESTRICT; RESTRICT/absent = false)
-	auto result = make_uniq<DropStatement>();
-	result->info->type = CatalogType::FOREIGN_SERVER_ENTRY;
-	result->info->SetQualifiedName(Identifier(), Identifier(),
-	                               Identifier(transformer.Transform<string>(list_pr.GetChild(3))));
-	result->info->if_not_found = list_pr.Child<OptionalParseResult>(2).HasResult() ? OnEntryNotFound::RETURN_NULL
-	                                                                               : OnEntryNotFound::THROW_EXCEPTION;
-	transformer.TransformOptional<bool>(list_pr, 4, result->info->cascade);
-	return std::move(result);
+	auto info = make_uniq<DropInfo>();
+	info->type = CatalogType::FOREIGN_SERVER_ENTRY;
+	info->if_not_found = list_pr.Child<OptionalParseResult>(2).HasResult() ? OnEntryNotFound::RETURN_NULL
+	                                                                       : OnEntryNotFound::THROW_EXCEPTION;
+	transformer.TransformOptional<bool>(list_pr, 4, info->cascade);
+	vector<QualifiedName> names;
+	for (auto &name : ExtractParseResultsFromList(list_pr.GetChild(3))) {
+		names.emplace_back(Identifier(), Identifier(), Identifier(transformer.Transform<string>(name.get())));
+	}
+	return MakeDropStatement(std::move(info), std::move(names));
 }
 
 } // namespace duckdb

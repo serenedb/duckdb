@@ -36,6 +36,9 @@ enum class CatalogType : uint8_t {
 	REPLICATION_ORIGIN_ENTRY = 232,
 	JOB_ENTRY = 233,
 	TABLESPACE_ENTRY = 234,
+	FOREIGN_DATA_WRAPPER_ENTRY = 235,
+	PARAMETER_ENTRY = 236,
+	LANGUAGE_ENTRY = 237,
 
 	// functions
 	TABLE_FUNCTION_ENTRY = 25,
@@ -62,6 +65,7 @@ enum class CatalogType : uint8_t {
 };
 
 DUCKDB_API string CatalogTypeToString(CatalogType type);
+DUCKDB_API string CatalogTypeToNoun(CatalogType type);
 CatalogType CatalogTypeFromString(const string &type);
 
 } // namespace duckdb

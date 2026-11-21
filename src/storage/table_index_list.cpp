@@ -491,6 +491,7 @@ void TableIndexList::Bind(ClientContext &context, TableCatalogEntry &table, cons
 
 		// Create a binder to bind this index.
 		auto binder = Binder::CreateBinder(context);
+		binder->BindSharedDefinition();
 
 		// Add the table to the binder.
 		vector<ColumnIndex> dummy_column_ids;

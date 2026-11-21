@@ -39,7 +39,7 @@ public:
 		return true;
 	}
 
-	static void ResetAll(ExecutionContext &context, SetScope scope);
+	static void ResetAll(ExecutionContext &context, SetScope scope, bool discard);
 	static void ResetVariable(ExecutionContext &context, const Identifier &name, SetScope scope);
 
 public:

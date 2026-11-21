@@ -57,38 +57,58 @@ void PhysicalSet::SetExtensionVariable(ClientContext &context, ExtensionOption &
 	SetGenericVariable(context, extension_option.setting_index.GetIndex(), effective_scope, std::move(target_value));
 }
 
-void PhysicalSet::SetVariable(ClientContext &context, const Identifier &name, SetScope scope, const Value &value) {
+void PhysicalSet::SetCustomVariable(ClientContext &context, const Identifier &name, SetScope scope,
+                                    const Value &value) {
+	if (scope == SetScope::GLOBAL) {
+		throw CatalogException("option %s cannot be set globally", name);
+	}
+	Value text(value.IsNull() ? string() : value.ToString());
+	auto &custom_settings = ClientConfig::GetConfig(context).custom_settings;
+	auto previous = custom_settings.find(name.GetIdentifierName());
+	context.OnSettingChange(name.GetIdentifierName(), scope,
+	                        previous == custom_settings.end() ? Value() : previous->second);
+	custom_settings[name.GetIdentifierName()] = std::move(text);
+}
+
+void PhysicalSet::SetVariable(ClientContext &context, const Identifier &name, SetScope scope, const Value &value,
+                              bool check_access) {
 	auto &config = DBConfig::GetConfig(context);
 	config.CheckLock(name);
-	// SET LOCAL is only meaningful inside an explicit transaction; PG rejects
-	// it outside with an error.
-	if (scope == SetScope::LOCAL && context.transaction.IsAutoCommit()) {
-		throw InvalidInputException("SET LOCAL can only be used in transaction blocks");
-	}
 	auto option = DBConfig::GetOptionByName(name);
 	if (!option) {
 		ExtensionOption extension_option;
 		if (!config.TryGetExtensionOption(name, extension_option)) {
+			if (Settings::IsCustomName(name)) {
+				SetCustomVariable(context, name, scope, value);
+				return;
+			}
 			Catalog::AutoloadExtensionByConfigName(context, name);
 			if (!config.TryGetExtensionOption(name, extension_option)) {
 				throw InvalidInputException("Extension parameter %s was not found after autoloading", name);
 			}
 		}
+		const auto variable_scope = GetSettingScope(extension_option, scope);
+		if (check_access) {
+			Settings::CheckChange(context, name, extension_option.access, variable_scope);
+		}
 		// Invoke the pre-SET observer after resolution so the handler only sees
 		// valid option names and can safely snapshot the current value.
 		Value casted_value = value.CastAs(context, extension_option.type);
-		context.OnSettingChange(name.GetIdentifierName(), scope,
+		context.OnSettingChange(name.GetIdentifierName(), variable_scope,
 		                        SessionValue(context, name, extension_option.setting_index));
 		SetExtensionVariable(context, extension_option, name, scope, casted_value);
 		if (extension_option.rebind) {
-			Rebind(context, GetSettingScope(extension_option, scope));
+			Rebind(context, variable_scope);
 		}
 		return;
 	}
 	SetScope variable_scope = GetSettingScope(*option, scope);
+	if (check_access) {
+		Settings::CheckChange(context, name, option->access, variable_scope);
+	}
 	Value input_val = value.CastAs(context, DBConfig::ParseLogicalType(option->parameter_type));
 	context.OnSettingChange(
-	    name.GetIdentifierName(), scope,
+	    name.GetIdentifierName(), variable_scope,
 	    option->get_local ? option->get_local(context)
 	                      : SessionValue(context, name, option->default_value ? option->setting_idx : optional_idx()));
 	if (option->default_value) {
@@ -165,6 +185,12 @@ SetScope PhysicalSet::GetSettingScope(const ConfigurationOption &option, SetScop
 
 SourceResultType PhysicalSet::GetDataInternal(ExecutionContext &context, DataChunk &chunk,
                                               OperatorSourceInput &input) const {
+	if (scope == SetScope::LOCAL && context.client.transaction.IsAutoCommit()) {
+		const char *msg = "SET LOCAL can only be used in transaction blocks";
+		if (!context.client.EmitWarning(msg)) {
+			throw InvalidInputException(msg);
+		}
+	}
 	SetVariable(context.client, Identifier(std::string_view(name.data(), name.size())), scope, value);
 	return SourceResultType::FINISHED;
 }

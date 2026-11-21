@@ -14,6 +14,7 @@
 #include "duckdb/common/identifier.hpp"
 #include "duckdb/common/types/value.hpp"
 #include "duckdb/common/unordered_map.hpp"
+#include "duckdb/parser/qualified_name.hpp"
 
 namespace duckdb {
 class ParsedExpression;
@@ -23,6 +24,7 @@ class Value;
 //! alike. Empty string when there is nothing to render, so callers can append it unconditionally.
 string RenderOptionList(const case_insensitive_map_t<unique_ptr<ParsedExpression>> &parsed_options,
                         const unordered_map<string, Value> &options);
+string RenderSubscriptionOptions(const case_insensitive_map_t<Value> &options);
 
 enum class CatalogType : uint8_t;
 
@@ -46,6 +48,12 @@ enum class ParseInfoType : uint8_t {
 	UPDATE_EXTENSIONS_INFO,
 	CONNECT_INFO,
 	DISCONNECT_INFO
+};
+
+struct ObjectReference {
+	QualifiedName name;
+	vector<LogicalType> func_parameters;
+	bool has_func_args = false;
 };
 
 struct ParseInfo {
@@ -72,6 +80,8 @@ public:
 	virtual void Serialize(Serializer &serializer) const;
 	static unique_ptr<ParseInfo> Deserialize(Deserializer &deserializer);
 	static string TypeToString(CatalogType type);
+	static string RoutineKeyword(bool include_functions, bool include_procedures);
+	static string RoleSpecToString(const string &role);
 };
 
 } // namespace duckdb

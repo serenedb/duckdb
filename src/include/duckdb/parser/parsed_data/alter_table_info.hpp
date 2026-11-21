@@ -59,6 +59,11 @@ struct SetCommentInfo : public AlterInfo {
 
 	CatalogType entry_catalog_type;
 	Value comment_value;
+	idx_t overload_oid = 0;
+	vector<LogicalType> func_parameters;
+	bool has_func_args = false;
+	bool include_functions = true;
+	bool include_procedures = true;
 
 public:
 	CatalogType GetCatalogType() const override;
@@ -79,6 +84,11 @@ struct SetSchemaInfo : public AlterInfo {
 
 	CatalogType entry_catalog_type;
 	Identifier new_schema;
+	idx_t overload_oid = 0;
+	vector<LogicalType> func_parameters;
+	bool has_func_args = false;
+	bool include_functions = true;
+	bool include_procedures = true;
 
 public:
 	CatalogType GetCatalogType() const override;
@@ -116,12 +126,26 @@ struct AlterPermissionsInfo : public AlterInfo {
 	idx_t target_role = 0;
 	idx_t default_scope = 0;
 	bool all_in_schema = false;
+	bool include_functions = true;
+	bool include_procedures = true;
+	idx_t object_owner_id = 0;
+	idx_t drop_owned_role_id = 0;
+	idx_t overload_oid = 0;
+	vector<GrantRow> database_rows;
+	vector<LogicalType> func_parameters;
+	bool has_func_args = false;
+	vector<ObjectReference> objects;
+	vector<string> grantees;
+	vector<string> for_roles;
+	vector<string> default_schemas;
 
 public:
 	CatalogType GetCatalogType() const override;
 	unique_ptr<AlterInfo> Copy() const override;
 	string ToString() const override;
-	void ApplyTo(Permissions &permissions, CatalogType entry_type, optional_ptr<ColumnList> columns) const;
+	vector<unique_ptr<AlterInfo>> SplitObjects() override;
+	void ApplyTo(Permissions &permissions, CatalogType entry_type, optional_ptr<vector<ColumnAcl>> columns) const;
+	void ApplyTo(Permissions &permissions, CatalogType entry_type, ColumnList &columns) const;
 
 	void Serialize(Serializer &serializer) const override;
 	static unique_ptr<AlterInfo> Deserialize(Deserializer &deserializer);
@@ -161,6 +185,8 @@ struct AlterRoleInfo : public AlterInfo {
 	vector<string> reset_config;
 	vector<string> set_config;
 	string grant_role;
+	vector<string> granted_roles;
+	vector<string> members;
 	bool revoke = false;
 	bool option_only = false;
 	int8_t admin_option = -1;
@@ -168,6 +194,36 @@ struct AlterRoleInfo : public AlterInfo {
 	int8_t set_option = -1;
 	idx_t grant_role_id = 0;
 	idx_t grantor_id = 0;
+	string granted_by;
+	bool cascade = false;
+	bool all_roles = false;
+	bool alter_group = false;
+
+public:
+	CatalogType GetCatalogType() const override;
+	unique_ptr<AlterInfo> Copy() const override;
+	string ToString() const override;
+	vector<unique_ptr<AlterInfo>> SplitObjects() override;
+
+	void Serialize(Serializer &serializer) const override;
+	static unique_ptr<AlterInfo> Deserialize(Deserializer &deserializer);
+
+	explicit AlterRoleInfo();
+};
+
+struct AlterDatabaseSettingsInfo : public AlterInfo {
+	explicit AlterDatabaseSettingsInfo(Identifier database);
+
+	string role;
+	idx_t role_id = 0;
+	bool all_roles = false;
+	bool reset_all_config = false;
+	vector<string> reset_config;
+	vector<string> set_config;
+	bool set_connection_limit = false;
+	int32_t connection_limit = -1;
+	bool set_allow_connections = false;
+	bool allow_connections = true;
 
 public:
 	CatalogType GetCatalogType() const override;
@@ -177,7 +233,41 @@ public:
 	void Serialize(Serializer &serializer) const override;
 	static unique_ptr<AlterInfo> Deserialize(Deserializer &deserializer);
 
-	explicit AlterRoleInfo();
+	explicit AlterDatabaseSettingsInfo();
+};
+
+struct ReassignOwnedInfo : public AlterInfo {
+	ReassignOwnedInfo();
+
+	vector<string> roles;
+	string new_owner;
+	vector<idx_t> role_ids;
+	idx_t new_owner_id = 0;
+
+public:
+	CatalogType GetCatalogType() const override;
+	unique_ptr<AlterInfo> Copy() const override;
+	string ToString() const override;
+
+	void Serialize(Serializer &serializer) const override;
+	static unique_ptr<AlterInfo> Deserialize(Deserializer &deserializer);
+};
+
+struct DropOwnedInfo : public AlterInfo {
+	DropOwnedInfo();
+
+	vector<string> roles;
+	bool cascade = false;
+	vector<idx_t> role_ids;
+	vector<idx_t> grantors;
+
+public:
+	CatalogType GetCatalogType() const override;
+	unique_ptr<AlterInfo> Copy() const override;
+	string ToString() const override;
+
+	void Serialize(Serializer &serializer) const override;
+	static unique_ptr<AlterInfo> Deserialize(Deserializer &deserializer);
 };
 
 //===--------------------------------------------------------------------===//

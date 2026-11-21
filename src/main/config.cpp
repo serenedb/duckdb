@@ -12,6 +12,7 @@
 #include "duckdb/main/extension_helper.hpp"
 #include "duckdb/storage/storage_extension.hpp"
 #include "duckdb/common/serializer/serializer.hpp"
+#include "duckdb/common/exception/catalog_exception.hpp"
 #include "duckdb/common/exception/parser_exception.hpp"
 #include "duckdb/common/path.hpp"
 
@@ -34,37 +35,37 @@ DebugVerificationMode DBConfigOptions::global_verification_mode = DebugVerificat
 	{                                                                                                                  \
 		_PARAM::Name, _PARAM::Description, _PARAM::InputType, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,    \
 		    _PARAM::Scope, _PARAM::DefaultValue, nullptr, _PARAM::SettingIndex, _PARAM::IsDebug, _PARAM::IsDeprecated, \
-		    _PARAM::NoResetAll, _PARAM::Rebind                                                                         \
+		    _PARAM::NoResetAll, _PARAM::Rebind, _PARAM::Access                                                         \
 	}
 #define DUCKDB_SETTING_CALLBACK(_PARAM)                                                                                \
 	{                                                                                                                  \
 		_PARAM::Name, _PARAM::Description, _PARAM::InputType, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,    \
 		    _PARAM::Scope, _PARAM::DefaultValue, _PARAM::OnSet, _PARAM::SettingIndex, _PARAM::IsDebug,                 \
-		    _PARAM::IsDeprecated, _PARAM::NoResetAll, _PARAM::Rebind                                                   \
+		    _PARAM::IsDeprecated, _PARAM::NoResetAll, _PARAM::Rebind, _PARAM::Access                                   \
 	}
 #define DUCKDB_GLOBAL(_PARAM)                                                                                          \
 	{                                                                                                                  \
 		_PARAM::Name, _PARAM::Description, _PARAM::InputType, _PARAM::SetGlobal, nullptr, _PARAM::ResetGlobal,         \
 		    nullptr, _PARAM::GetSetting, nullptr, SettingScopeTarget::INVALID, nullptr, nullptr, optional_idx(),       \
-		    _PARAM::IsDebug, _PARAM::IsDeprecated, _PARAM::NoResetAll, _PARAM::Rebind                                  \
+		    _PARAM::IsDebug, _PARAM::IsDeprecated, _PARAM::NoResetAll, _PARAM::Rebind, _PARAM::Access                  \
 	}
 #define DUCKDB_LOCAL(_PARAM)                                                                                           \
 	{                                                                                                                  \
 		_PARAM::Name, _PARAM::Description, _PARAM::InputType, nullptr, _PARAM::SetLocal, nullptr, _PARAM::ResetLocal,  \
 		    _PARAM::GetSetting, nullptr, SettingScopeTarget::INVALID, nullptr, nullptr, optional_idx(),                \
-		    _PARAM::IsDebug, _PARAM::IsDeprecated, _PARAM::NoResetAll, _PARAM::Rebind                                  \
+		    _PARAM::IsDebug, _PARAM::IsDeprecated, _PARAM::NoResetAll, _PARAM::Rebind, _PARAM::Access                  \
 	}
 #define DUCKDB_GLOBAL_LOCAL(_PARAM)                                                                                    \
 	{                                                                                                                  \
 		_PARAM::Name, _PARAM::Description, _PARAM::InputType, _PARAM::SetGlobal, _PARAM::SetLocal,                     \
 		    _PARAM::ResetGlobal, _PARAM::ResetLocal, _PARAM::GetSetting, _PARAM::GetLocal,                             \
 		    SettingScopeTarget::INVALID, nullptr, nullptr, optional_idx(), _PARAM::IsDebug, _PARAM::IsDeprecated,      \
-		    _PARAM::NoResetAll, _PARAM::Rebind                                                                         \
+		    _PARAM::NoResetAll, _PARAM::Rebind, _PARAM::Access                                                         \
 	}
 #define FINAL_SETTING                                                                                                  \
 	{                                                                                                                  \
 		nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, SettingScopeTarget::INVALID,  \
-		    nullptr, nullptr, optional_idx(), false, false, false                                                      \
+		    nullptr, nullptr, optional_idx(), false, false, false, false, SettingAccess()                              \
 	}
 
 #define DUCKDB_SETTING_ALIAS(_ALIAS, _PARAM)                                                                           \
@@ -573,12 +574,13 @@ bool DBConfig::TryGetExtensionOption(const Identifier &name, ExtensionOption &re
 void DBConfig::AddExtensionOption(const Identifier &name, string description, LogicalType parameter,
                                   const Value &default_value, set_option_callback_t function,
                                   reset_option_callback_t reset_function, SetScope default_scope, bool no_reset_all,
-                                  bool rebind) {
+                                  bool rebind, SettingAccess access) {
 	ExtensionOption extension_option(std::move(description), std::move(parameter), function, default_value,
 	                                 default_scope, false, false);
 	extension_option.reset_function = reset_function;
 	extension_option.no_reset_all = no_reset_all;
 	extension_option.rebind = rebind;
+	extension_option.access = access;
 	auto setting_index = user_settings.AddExtensionOption(name, std::move(extension_option));
 	// copy over unrecognized options, if they match the new extension option
 	auto iter = options.unrecognized_options.find(name);
@@ -594,9 +596,10 @@ void DBConfig::AddExtensionOption(const Identifier &name, string description, Lo
 
 void DBConfig::AddExtensionOption(const Identifier &name, string description, LogicalType parameter,
                                   const Value &default_value, set_option_callback_t function, SetScope default_scope,
-                                  bool is_debug, bool is_deprecated) {
+                                  bool is_debug, bool is_deprecated, SettingAccess access) {
 	ExtensionOption extension_option(std::move(description), std::move(parameter), function, default_value,
 	                                 default_scope, is_debug, is_deprecated);
+	extension_option.access = access;
 	auto setting_index = user_settings.AddExtensionOption(name, std::move(extension_option));
 	// copy over unrecognized options, if they match the new extension option
 	auto iter = options.unrecognized_options.find(name);
@@ -631,6 +634,22 @@ bool DBConfig::IsInMemoryDatabase(const char *database_path) {
 
 string DBConfig::SystemObjectName(std::string_view name) const {
 	return absl::StrCat(options.system_object_prefix, name);
+}
+
+const ForeignDataWrapper &DBConfig::GetForeignDataWrapper(std::string_view name) const {
+	auto wrapper = foreign_data_wrappers.find(name);
+	if (wrapper == foreign_data_wrappers.end()) {
+		throw CatalogException::MissingObject(CatalogType::FOREIGN_DATA_WRAPPER_ENTRY, Identifier(name));
+	}
+	return wrapper->second;
+}
+
+const Language &DBConfig::GetLanguage(std::string_view name) const {
+	auto language = languages.find(name);
+	if (language == languages.end()) {
+		throw CatalogException::MissingObject(CatalogType::LANGUAGE_ENTRY, Identifier(name));
+	}
+	return language->second;
 }
 
 CastFunctionSet &DBConfig::GetCastFunctions() {

@@ -94,6 +94,7 @@ vector<unique_ptr<BoundConstraint>> Binder::BindConstraints(ClientContext &conte
 
 vector<unique_ptr<BoundConstraint>> Binder::BindConstraints(const TableCatalogEntry &table) {
 	auto binder = CreateTableBinder(context, table.ParentSchema(context), this);
+	binder->BindStoredDefinition();
 	return binder->BindConstraints(table.GetConstraints(), table.name, table.GetColumns());
 }
 
@@ -266,7 +267,7 @@ unique_ptr<ParsedExpression> Binder::QualifyTableExpression(ClientContext &conte
 	if (table.ParentCatalog().Compatibility() != SqlCompatibility::POSTGRES) {
 		return expression;
 	}
-	CatalogEntryRetriever table_scope(context);
+	auto table_scope = CatalogEntryRetriever::Internal(context);
 	table_scope.SetTableSearchPath(table.ParentSchema(context));
 	ForEachName(table_scope, *expression,
 	            [&](TableExpressionName use) { use.Rename(FullName(use.entry, table.ParentCatalog())); });
@@ -662,9 +663,18 @@ void Binder::BindDefaultValue(const ColumnDefinition &column, vector<unique_ptr<
 	BindDefaultValues(col_list, bound_defaults, schema);
 }
 
+void Binder::BindDefaultValues(const TableCatalogEntry &table, vector<unique_ptr<Expression>> &bound_defaults,
+                               const std::function<bool(const ColumnDefinition &)> &evaluated) {
+	BinderScope definition(*this);
+	BindStoredDefinition();
+	BindDefaultValues(table.GetColumns(), bound_defaults, table.ParentSchema(context), evaluated);
+}
+
 void Binder::BindDefaultValues(const ColumnList &columns, vector<unique_ptr<Expression>> &bound_defaults,
-                               const SchemaCatalogEntry &schema) {
+                               const SchemaCatalogEntry &schema,
+                               const std::function<bool(const ColumnDefinition &)> &evaluated) {
 	auto default_binder = CreateTableBinder(context, schema, this);
+	shared_ptr<Binder> unused_binder;
 
 	for (auto &column : columns.Physical()) {
 		unique_ptr<Expression> bound_default;
@@ -675,7 +685,15 @@ void Binder::BindDefaultValues(const ColumnList &columns, vector<unique_ptr<Expr
 			if (default_copy->HasParameter()) {
 				throw BinderException("DEFAULT values cannot contain parameters");
 			}
-			ConstantBinder default_value_binder(*default_binder, context, "DEFAULT value");
+			auto binder = default_binder;
+			if (evaluated && !evaluated(column)) {
+				if (!unused_binder) {
+					unused_binder = CreateTableBinder(context, schema, this);
+					unused_binder->BindUnchecked();
+				}
+				binder = unused_binder;
+			}
+			ConstantBinder default_value_binder(*binder, context, "DEFAULT value");
 			default_value_binder.target_type = column.Type();
 			bound_default = default_value_binder.Bind(default_copy);
 		} else {
@@ -896,6 +914,23 @@ static EntryLookupInfo ReferencedTableLookup(SchemaCatalogEntry &schema, const F
 	return EntryLookupInfo(table_lookup, fk_name);
 }
 
+static void RequireReferences(CatalogEntryRetriever &entry_retriever, CatalogEntry &entry,
+                              const ForeignKeyConstraint &fk) {
+	auto &role = entry_retriever.CheckAs();
+	if (role.is_superuser || entry.type != CatalogType::TABLE_ENTRY) {
+		return;
+	}
+	auto &table = entry.Cast<TableCatalogEntry>();
+	vector<idx_t> columns;
+	for (auto &column : fk.pk_columns) {
+		Identifier name(column);
+		columns.push_back(table.GetColumnIndex(name).index);
+	}
+	if (!role.CanColumns(table, AclMode::References, columns)) {
+		ThrowPermissionDenied(table);
+	}
+}
+
 static void BindCreateTableConstraints(BoundCreateTableInfo &info, CatalogEntryRetriever &entry_retriever,
                                        SchemaCatalogEntry &schema) {
 	auto &create_info = info.Base();
@@ -912,7 +947,9 @@ static void BindCreateTableConstraints(BoundCreateTableInfo &info, CatalogEntryR
 		}
 		info.AddSubDependency(AlterTableType::DROP_CONSTRAINT, Identifier(cond->constraint_name));
 		if (!fk.info.pk_keys.empty() && !fk.info.fk_keys.empty()) {
-			entry_retriever.GetEntry(ReferencedTableLookup(schema, fk));
+			if (auto parent = entry_retriever.GetEntry(ReferencedTableLookup(schema, fk))) {
+				RequireReferences(entry_retriever, *parent, fk);
+			}
 			continue;
 		}
 		D_ASSERT(fk.info.pk_keys.empty());
@@ -939,6 +976,7 @@ static void BindCreateTableConstraints(BoundCreateTableInfo &info, CatalogEntryR
 			throw BinderException("Creating foreign keys across different schemas or catalogs is not supported");
 		}
 		FindMatchingPrimaryKeyColumns(pk_table_entry_ptr.GetColumns(), pk_table_entry_ptr.GetConstraints(), fk);
+		RequireReferences(entry_retriever, pk_table_entry_ptr, fk);
 		FindForeignKeyIndexes(pk_table_entry_ptr.GetColumns(), fk.pk_columns, fk.info.pk_keys);
 		CheckForeignKeyTypes(pk_table_entry_ptr.GetColumns(), create_info.columns, fk);
 		if (pk_table_entry_ptr.IsDuckTable()) {

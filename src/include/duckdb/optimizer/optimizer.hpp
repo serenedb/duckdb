@@ -40,6 +40,7 @@ public:
 	static void OptimizeStatement(Binder &binder, ClientContext &context, unique_ptr<SQLStatement> &statement);
 	static void AddExpressionRules(ExpressionRewriter &rewriter);
 	static unique_ptr<Expression> OptimizeExpression(ClientContext &context, unique_ptr<Expression> expr);
+	static void TrackDataVersions(ClientContext &context, LogicalOperator &plan);
 
 public:
 	ClientContext &context;

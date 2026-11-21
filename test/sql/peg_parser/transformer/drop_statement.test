@@ -21,7 +21,7 @@ Catalog Error: Index with name test_index does not exist!
 statement error
 DROP MACRO plus1;
 ----
-Catalog Error: Macro Function with name plus1 does not exist!
+Catalog Error: could not find a function named "plus1"
 
 statement error
 DROP SEQUENCE temp.t1;

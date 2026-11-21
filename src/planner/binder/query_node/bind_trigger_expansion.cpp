@@ -469,7 +469,10 @@ BoundStatement Binder::ExpandTriggers(QueryNode &node, TableCatalogEntry &table,
 		global_binder_state->trigger_old_capture.insert(*capture_base);
 		global_binder_state->trigger_old_capture_cte_names[*capture_base] = old_capture_names;
 	}
+	auto &base_node = *outer->cte_map.map[base_cte_name]->query_node;
+	global_binder_state->trigger_base_nodes.insert(base_node);
 	auto chain = Bind(*outer);
+	global_binder_state->trigger_base_nodes.erase(base_node);
 	if (capture_base) {
 		global_binder_state->trigger_old_capture.erase(*capture_base);
 		global_binder_state->trigger_old_capture_cte_names.erase(*capture_base);
@@ -503,6 +506,8 @@ BoundStatement Binder::ExpandTriggers(QueryNode &node, TableCatalogEntry &table,
 		bound_columns.emplace_back(logical_count);
 		logical_count++;
 	}
+	returning_binder_owner->acting = acting;
+	returning_binder_owner->table_ref_use = TableRefUse::DML_TARGET;
 	returning_binder_owner->bind_context.AddBaseTable(base_index, GetReturningAlias(node), col_names, col_types,
 	                                                  bound_columns, table, std::move(virtual_columns));
 	ReturningBinder returning_binder(*returning_binder_owner, context);
@@ -552,6 +557,7 @@ BoundStatement Binder::ExpandTriggers(QueryNode &node, TableCatalogEntry &table,
 	auto &properties = GetStatementProperties();
 	properties.result_eagerness = ResultEagerness::FORCED;
 	properties.return_type = StatementReturnType::QUERY_RESULT;
+	AdoptPrivilegeChecks(*returning_binder_owner);
 	return result;
 }
 

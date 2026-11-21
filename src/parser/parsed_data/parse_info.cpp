@@ -1,4 +1,7 @@
 #include "duckdb/parser/parsed_data/parse_info.hpp"
+
+#include <algorithm>
+
 #include "duckdb/parser/parsed_expression.hpp"
 #include "duckdb/common/sql_identifier.hpp"
 #include "duckdb/common/string_util.hpp"
@@ -44,10 +47,32 @@ string ParseInfo::TypeToString(CatalogType type) {
 		return "SERVER";
 	case CatalogType::TABLESPACE_ENTRY:
 		return "TABLESPACE";
+	case CatalogType::SUBSCRIPTION_ENTRY:
+		return "SUBSCRIPTION";
+	case CatalogType::FOREIGN_DATA_WRAPPER_ENTRY:
+		return "FOREIGN DATA WRAPPER";
+	case CatalogType::PARAMETER_ENTRY:
+		return "PARAMETER";
+	case CatalogType::LANGUAGE_ENTRY:
+		return "LANGUAGE";
 	default:
 		throw InternalException("ParseInfo::TypeToString for CatalogType with type: %s not implemented",
 		                        EnumUtil::ToString(type));
 	}
+}
+
+string ParseInfo::RoutineKeyword(bool include_functions, bool include_procedures) {
+	return !include_procedures ? "FUNCTION" : !include_functions ? "PROCEDURE" : "ROUTINE";
+}
+
+string ParseInfo::RoleSpecToString(const string &role) {
+	if (role == "public") {
+		return "PUBLIC";
+	}
+	if (role == "CURRENT_USER" || role == "SESSION_USER" || role == "CURRENT_ROLE") {
+		return role;
+	}
+	return SQLIdentifier::ToString(role);
 }
 
 string RenderOptionList(const case_insensitive_map_t<unique_ptr<ParsedExpression>> &parsed_options,
@@ -64,6 +89,15 @@ string RenderOptionList(const case_insensitive_map_t<unique_ptr<ParsedExpression
 		    StringUtil::Format("%s %s", SQLIdentifier::ToString(opt.first), opt.second.ToSQLString()));
 	}
 	return " (" + StringUtil::Join(stringified, ", ") + ")";
+}
+
+string RenderSubscriptionOptions(const case_insensitive_map_t<Value> &options) {
+	vector<string> items;
+	for (auto &option : options) {
+		items.push_back(option.first + " = " + option.second.ToSQLString());
+	}
+	std::sort(items.begin(), items.end());
+	return "(" + StringUtil::Join(items, ", ") + ")";
 }
 
 } // namespace duckdb

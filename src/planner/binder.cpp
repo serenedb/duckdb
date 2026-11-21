@@ -1,8 +1,13 @@
 #include "duckdb/planner/binder.hpp"
 
 #include "duckdb/catalog/catalog_entry/aggregate_function_catalog_entry.hpp"
+#include "duckdb/catalog/catalog_entry/index_catalog_entry.hpp"
+#include "duckdb/catalog/catalog_entry/macro_catalog_entry.hpp"
+#include "duckdb/catalog/catalog_entry/schema_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/view_catalog_entry.hpp"
+#include "duckdb/catalog/catalog_search_path.hpp"
+#include "duckdb/catalog/dependency_manager.hpp"
 #include "duckdb/common/enums/cte_materialize.hpp"
 #include "duckdb/parser/common_table_expression_info.hpp"
 #include "duckdb/parser/expression/star_expression.hpp"
@@ -12,6 +17,7 @@
 #include "duckdb/common/stack_depth.hpp"
 #include "duckdb/main/config.hpp"
 #include "duckdb/main/database.hpp"
+#include "duckdb/main/database_manager.hpp"
 #include "duckdb/main/settings.hpp"
 #include "duckdb/optimizer/optimizer.hpp"
 #include "duckdb/parser/expression/function_expression.hpp"
@@ -46,27 +52,80 @@ shared_ptr<Binder> Binder::CreateBinder(ClientContext &context, optional_ptr<Bin
 Binder::Binder(ClientContext &context, shared_ptr<Binder> parent_p, BinderType binder_type)
     : context(context), bind_context(*this), parent(std::move(parent_p)), binder_type(binder_type),
       global_binder_state(parent ? parent->global_binder_state : make_shared_ptr<GlobalBinderState>()),
-      entry_retriever(context) {
+      entry_retriever(context, acting) {
 	if (parent) {
 		entry_retriever.Inherit(parent->entry_retriever);
 		inside_subquery = parent->inside_subquery;
 		macro_binding = parent->macro_binding;
+		acting = parent->acting;
 		if (binder_type != BinderType::VIEW_BINDER) {
 			// inherit expression binders from parent
 			active_binders = parent->active_binders;
+		} else {
+			BindStoredDefinition();
 		}
 	} else {
 		entry_retriever.SetCallback([this](CatalogEntry &entry) {
 			auto &properties = GetStatementProperties();
 			properties.resolved_entries.push_back(&entry);
-			if (auto &catalog = entry.ParentCatalog(); !catalog.IsSystemCatalog()) {
-				properties.RegisterDBRead(catalog, this->context);
+			auto &catalog = entry.ParentCatalog();
+			if (catalog.IsSystemCatalog() || properties.read_databases.count(catalog.GetName())) {
+				return;
 			}
+			properties.RegisterDBRead(catalog, this->context);
 		});
 	}
 }
 
+static void CheckStatementKind(ClientContext &context, const RoleAccess &role, SQLStatement &statement) {
+	if (role.is_superuser) {
+		return;
+	}
+	switch (statement.type) {
+	case StatementType::EXPORT_STATEMENT:
+	case StatementType::LOAD_STATEMENT:
+	case StatementType::UPDATE_EXTENSIONS_STATEMENT:
+	case StatementType::COPY_DATABASE_STATEMENT:
+	case StatementType::CONNECT_STATEMENT:
+	case StatementType::EXTERNAL_RESOURCE_STATEMENT:
+	case StatementType::DETACH_STATEMENT:
+	case StatementType::ATTACH_STATEMENT:
+		RequireSuperuser(role);
+		break;
+	case StatementType::INVALID_STATEMENT:
+	case StatementType::SELECT_STATEMENT:
+	case StatementType::INSERT_STATEMENT:
+	case StatementType::UPDATE_STATEMENT:
+	case StatementType::CREATE_STATEMENT:
+	case StatementType::DELETE_STATEMENT:
+	case StatementType::PREPARE_STATEMENT:
+	case StatementType::EXECUTE_STATEMENT:
+	case StatementType::ALTER_STATEMENT:
+	case StatementType::TRANSACTION_STATEMENT:
+	case StatementType::COPY_STATEMENT:
+	case StatementType::ANALYZE_STATEMENT:
+	case StatementType::VARIABLE_SET_STATEMENT:
+	case StatementType::CREATE_FUNC_STATEMENT:
+	case StatementType::EXPLAIN_STATEMENT:
+	case StatementType::DROP_STATEMENT:
+	case StatementType::PRAGMA_STATEMENT:
+	case StatementType::VACUUM_STATEMENT:
+	case StatementType::CALL_STATEMENT:
+	case StatementType::SET_STATEMENT:
+	case StatementType::RELATION_STATEMENT:
+	case StatementType::EXTENSION_STATEMENT:
+	case StatementType::LOGICAL_PLAN_STATEMENT:
+	case StatementType::MULTI_STATEMENT:
+	case StatementType::MERGE_INTO_STATEMENT:
+	case StatementType::DISCONNECT_STATEMENT:
+	case StatementType::PASSTHROUGH_STATEMENT:
+	case StatementType::ENUM_SIZE:
+		break;
+	}
+}
+
 BoundStatement Binder::Bind(SQLStatement &statement) {
+	CheckStatementKind(context, CheckAs(), statement);
 	switch (statement.type) {
 	case StatementType::SELECT_STATEMENT:
 		return Bind(statement.Cast<SelectStatement>());
@@ -265,6 +324,282 @@ void Binder::AddBoundView(ViewCatalogEntry &view) {
 		current = current->parent.get();
 	}
 	bound_views.insert(view);
+}
+
+bool Binder::InViewBody() const {
+	for (auto binder = this; binder; binder = binder->parent.get()) {
+		if (!binder->bound_views.empty()) {
+			return true;
+		}
+	}
+	return false;
+}
+
+const RoleAccess &Binder::CheckAs() const {
+	return acting.privileges ? *acting.privileges : context.CurrentRole();
+}
+
+const RoleAccess &Binder::CurrentRole() const {
+	return acting.current_user ? *acting.current_user : context.CurrentRole();
+}
+
+optional_idx Binder::CallerRole() const {
+	auto &caller = CurrentRole();
+	return &caller != &context.CurrentRole() ? optional_idx(caller.role) : optional_idx();
+}
+
+const RoleAccess &Binder::AccessOf(idx_t role) {
+	auto entry = global_binder_state->role_access.try_emplace(role);
+	if (entry.second) {
+		entry.first->second = context.AccessOf(role);
+	}
+	return entry.first->second;
+}
+
+vector<pair<idx_t, uint64_t>> Binder::CheckedRoleFingerprints() const {
+	vector<pair<idx_t, uint64_t>> result;
+	for (auto &entry : global_binder_state->role_access) {
+		result.emplace_back(entry.first, entry.second.fingerprint);
+	}
+	return result;
+}
+
+const RoleAccess &Binder::FunctionBodyRole(optional_idx owner) {
+	return owner.IsValid() ? AccessOf(owner.GetIndex()) : CurrentRole();
+}
+
+void Binder::BindAsFunctionBody(const RoleAccess &role) {
+	acting.lookups = &role;
+	acting.privileges = &role;
+	acting.current_user = &role;
+}
+
+void Binder::BindUnchecked() {
+	acting.privileges = &RoleAccess::System();
+	acting.current_user = &RoleAccess::System();
+}
+
+void Binder::BindStoredDefinition() {
+	acting.lookups = &RoleAccess::System();
+}
+
+void Binder::BindSharedDefinition() {
+	BindUnchecked();
+	BindStoredDefinition();
+}
+
+void Binder::RecordCalls(optional_ptr<vector<FunctionCall>> calls) {
+	global_binder_state->recorded_calls = calls;
+}
+
+void Binder::Execute(const CatalogEntry &function, optional_ptr<const MacroFunction> overload) {
+	auto &role = CurrentRole();
+	const bool owned_overload = overload && !IsUnowned(function);
+	if (!owned_overload) {
+		CheckBuiltinCall(context, role, function);
+	} else if (!role.Can(function.type, function.Cast<MacroCatalogEntry>().OverloadPermissions(*overload),
+	                     AclMode::Execute)) {
+		ThrowPermissionDenied(function, overload);
+	}
+	auto calls = global_binder_state->recorded_calls;
+	if (!calls) {
+		return;
+	}
+	FunctionCall call {function.type, function.name.GetIdentifierName()};
+	if (owned_overload) {
+		call.catalog = function.ParentCatalog().GetName();
+		call.macro_overload = function.Cast<MacroCatalogEntry>().OverloadOid(*overload);
+	} else {
+		call.capability = function.Cast<FunctionEntry>().required_capability;
+	}
+	calls->push_back(std::move(call));
+}
+
+void Binder::RequireIndexCalls(TableCatalogEntry &table, optional_ptr<const vector<LogicalIndex>> changed) {
+	auto &role = CurrentRole();
+	if (role.is_superuser) {
+		return;
+	}
+	global_binder_state->index_writes.push_back({table, role, changed ? *changed : vector<LogicalIndex>(), !changed});
+}
+
+void Binder::BindAsFunctionBody(const SelectStatement &statement) {
+	if (!statement.function_body) {
+		return;
+	}
+	if (!CheckAs().IsSystem()) {
+		BindAsFunctionBody(FunctionBodyRole(statement.function_owner));
+	}
+	acting.security_definer |= statement.function_owner.IsValid();
+	if (statement.function_config) {
+		UseFunctionSearchPath(*statement.function_config);
+	}
+}
+
+BinderScope::BinderScope(Binder &binder_p) : binder(binder_p), acting(binder.acting) {
+}
+
+BinderScope::~BinderScope() {
+	if (caller_path) {
+		binder.EntryRetriever().SwapSearchPath(*caller_path);
+	}
+	binder.acting = acting;
+}
+
+void BinderScope::UseFunctionSearchPath(const vector<string> &config) {
+	caller_path = make_uniq<CatalogEntryRetriever>(binder.context);
+	binder.EntryRetriever().SwapSearchPath(*caller_path);
+	binder.UseFunctionSearchPath(config);
+}
+
+void Binder::UseFunctionSearchPath(const vector<string> &config) {
+	for (auto &entry : config) {
+		auto paths = CatalogSearchEntry::ParseList(string(Settings::ConfigValue(entry)));
+		const auto database = DatabaseManager::TryGetDefaultDatabase(context);
+		for (auto &path : paths) {
+			if (path.GetCatalog().empty()) {
+				path.SetCatalog(database);
+			}
+		}
+		entry_retriever.ReplaceSearchPath(std::move(paths));
+	}
+}
+
+BoundStatement Binder::BindTarget(TableRef &ref, TableRefUse use) {
+	table_ref_use = use;
+	auto result = Bind(ref);
+	table_ref_use = TableRefUse::READ;
+	return result;
+}
+
+optional_ptr<RelationNeed> Binder::NeedOf(const StandardEntry &relation) {
+	auto &role = CheckAs();
+	if (role.is_superuser) {
+		return nullptr;
+	}
+	auto &needs = global_binder_state->relation_needs;
+	for (auto &need : needs) {
+		if (&need->relation == &relation && need->role.role == role.role) {
+			return need.get();
+		}
+	}
+	needs.push_back(make_uniq<RelationNeed>(relation, role));
+	return needs.back().get();
+}
+
+optional_ptr<RelationNeed> Binder::ReadNeed(const StandardEntry &relation) {
+	const bool system_view = relation.type == CatalogType::VIEW_ENTRY && relation.ParentCatalog().IsSystemCatalog();
+	if (table_ref_use == TableRefUse::UTILITY_TARGET || (IsUnowned(relation) && !system_view)) {
+		return nullptr;
+	}
+	if (table_ref_use == TableRefUse::DML_TARGET) {
+		return NeedOf(relation);
+	}
+	if (CheckAs().Can(CatalogType::TABLE_ENTRY, relation.permissions, AclMode::Select)) {
+		return nullptr;
+	}
+	auto need = NeedOf(relation);
+	need->modes |= AclMode::Select;
+	return need;
+}
+
+void Binder::AddColumns(vector<idx_t> &columns, const TableCatalogEntry &table, const vector<Identifier> &names,
+                        idx_t leading) {
+	if (names.empty()) {
+		for (auto &column : table.GetColumns().Logical()) {
+			if (column.Logical().index == leading) {
+				break;
+			}
+			columns.push_back(column.Logical().index);
+		}
+	}
+	for (auto &name : names) {
+		if (table.ColumnExists(name)) {
+			columns.push_back(table.GetColumn(name).Logical().index);
+		}
+	}
+}
+
+void Binder::AdoptPrivilegeChecks(Binder &other) {
+	auto &state = *global_binder_state;
+	auto &source = *other.global_binder_state;
+	D_ASSERT(&state != &source);
+	for (auto &need : source.relation_needs) {
+		state.relation_needs.push_back(std::move(need));
+	}
+	state.index_writes.insert(state.index_writes.end(), source.index_writes.begin(), source.index_writes.end());
+	source.relation_needs.clear();
+	source.index_writes.clear();
+}
+
+Catalog &Binder::SubscriptionCatalog(const Identifier &catalog_name) {
+	auto &catalog = Catalog::GetCatalog(context, BindCatalog(catalog_name));
+	if (!catalog.SupportsSubscriptions()) {
+		throw NotImplementedException("subscriptions are not supported by database \"%s\"",
+		                              catalog.GetName().GetIdentifierName());
+	}
+	return catalog;
+}
+
+void Binder::RequireResolvedTypeUsage(optional_ptr<const LogicalDependencyList> dependencies) {
+	auto &role = CheckAs();
+	if (role.is_superuser) {
+		return;
+	}
+	reference_set_t<const CatalogEntry> checked;
+	auto check = [&](const CatalogEntry &entry) {
+		if (entry.type != CatalogType::TYPE_ENTRY || IsUnowned(entry) || !checked.insert(entry).second) {
+			return;
+		}
+		RequireEntryPrivilege(role, entry, AclMode::Usage);
+	};
+	if (dependencies) {
+		for (auto &dependency : dependencies->Set()) {
+			if (dependency.entry.type != CatalogType::TYPE_ENTRY) {
+				continue;
+			}
+			auto &catalog = Catalog::GetCatalog(context, dependency.catalog);
+			auto dependency_manager = catalog.GetDependencyManager();
+			auto entry = dependency_manager
+			                 ? dependency_manager->LookupEntry(catalog.GetCatalogTransaction(context), dependency)
+			                 : Catalog::GetEntry(context,
+			                                     EntryLookupInfo(CatalogType::TYPE_ENTRY,
+			                                                     QualifiedName::FromCatalogSchema(
+			                                                         dependency.catalog, dependency.entry.schema_path,
+			                                                         dependency.entry.name)),
+			                                     OnEntryNotFound::RETURN_NULL);
+			if (entry) {
+				check(*entry);
+			}
+		}
+	}
+	for (auto entry : GetStatementProperties().resolved_entries) {
+		check(*entry);
+	}
+}
+
+void Binder::CheckPrivileges() {
+	for (auto &need : global_binder_state->relation_needs) {
+		Require(*need);
+	}
+	for (auto &write : global_binder_state->index_writes) {
+		auto &table = write.table.get();
+		table.ParentSchema(context).Scan(context, CatalogType::INDEX_ENTRY, [&](CatalogEntry &entry) {
+			auto &index = entry.Cast<IndexCatalogEntry>();
+			if (index.table_oid != table.oid) {
+				return;
+			}
+			const auto calls = index.GetFunctionCalls();
+			const auto changes = write.all_columns ||
+			                     std::any_of(index.column_ids.begin(), index.column_ids.end(), [&](column_t column) {
+				                     return std::find(write.changed.begin(), write.changed.end(),
+				                                      LogicalIndex(column)) != write.changed.end();
+			                     });
+			if (!calls.empty() && changes) {
+				CheckFunctionCalls(context, write.role, calls);
+			}
+		});
+	}
 }
 
 TableIndex Binder::GenerateTableIndex() {
@@ -598,8 +933,8 @@ void Binder::BindDeleteIndexColumns(TableCatalogEntry &table, LogicalGet &get, v
 	}
 }
 
-BoundStatement Binder::BindReturning(vector<unique_ptr<ParsedExpression>> returning_list, TableCatalogEntry &table,
-                                     const Identifier &alias, TableIndex update_table_index,
+BoundStatement Binder::BindReturning(QueryNode &node, vector<unique_ptr<ParsedExpression>> returning_list,
+                                     TableCatalogEntry &table, const Identifier &alias, TableIndex update_table_index,
                                      unique_ptr<LogicalOperator> child_operator, virtual_column_map_t virtual_columns,
                                      optional_ptr<vector<column_t>> bound_virtual_columns) {
 	vector<LogicalType> types;
@@ -619,6 +954,9 @@ BoundStatement Binder::BindReturning(vector<unique_ptr<ParsedExpression>> return
 	}
 	const auto table_column_count = bound_columns.size();
 
+	binder->acting = acting;
+	binder->table_ref_use =
+	    global_binder_state->trigger_base_nodes.count(node) ? TableRefUse::UTILITY_TARGET : TableRefUse::DML_TARGET;
 	binder->bind_context.AddBaseTable(update_table_index, alias, names, types, bound_columns, table,
 	                                  std::move(virtual_columns));
 	ReturningBinder returning_binder(*binder, context);
@@ -654,6 +992,7 @@ BoundStatement Binder::BindReturning(vector<unique_ptr<ParsedExpression>> return
 	auto &properties = GetStatementProperties();
 	properties.result_eagerness = ResultEagerness::FORCED;
 	properties.return_type = StatementReturnType::QUERY_RESULT;
+	AdoptPrivilegeChecks(*binder);
 	return result;
 }
 

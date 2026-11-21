@@ -6,6 +6,7 @@
 #include "duckdb/execution/operator/schema/physical_create_schema.hpp"
 #include "duckdb/execution/operator/schema/physical_create_sequence.hpp"
 #include "duckdb/execution/operator/schema/physical_create_tablespace.hpp"
+#include "duckdb/execution/operator/schema/physical_create_subscription.hpp"
 #include "duckdb/execution/operator/schema/physical_create_tokenizer.hpp"
 #include "duckdb/execution/operator/schema/physical_create_trigger.hpp"
 #include "duckdb/execution/operator/schema/physical_create_type.hpp"
@@ -44,6 +45,9 @@ PhysicalOperator &PhysicalPlanGenerator::CreatePlan(LogicalCreate &op) {
 	case LogicalOperatorType::LOGICAL_CREATE_TABLESPACE:
 		return Make<PhysicalCreateTablespace>(unique_ptr_cast<CreateInfo, CreateTablespaceInfo>(std::move(op.info)),
 		                                      op.estimated_cardinality);
+	case LogicalOperatorType::LOGICAL_CREATE_SUBSCRIPTION:
+		return Make<PhysicalCreateSubscription>(unique_ptr_cast<CreateInfo, CreateSubscriptionInfo>(std::move(op.info)),
+		                                        op.estimated_cardinality);
 	case LogicalOperatorType::LOGICAL_CREATE_VIEW:
 		return Make<PhysicalCreateView>(unique_ptr_cast<CreateInfo, CreateViewInfo>(std::move(op.info)),
 		                                op.estimated_cardinality);

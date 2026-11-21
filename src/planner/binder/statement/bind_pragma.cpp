@@ -4,6 +4,7 @@
 #include "duckdb/catalog/catalog_entry/pragma_function_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/table_function_catalog_entry.hpp"
 #include "duckdb/catalog/catalog.hpp"
+#include "duckdb/catalog/permissions.hpp"
 #include "duckdb/function/function_binder.hpp"
 #include "duckdb/planner/expression_binder/constant_binder.hpp"
 #include "duckdb/execution/expression_executor.hpp"
@@ -39,6 +40,9 @@ unique_ptr<BoundPragmaInfo> Binder::BindPragma(PragmaInfo &info, QueryErrorConte
 		// rebind to throw exception
 		entry =
 		    Catalog::GetBuiltinEntry<PragmaFunctionCatalogEntry>(context, info.name, OnEntryNotFound::THROW_EXCEPTION);
+	}
+	if (!MayCallFunction(context, CurrentRole(), *entry)) {
+		RequireSuperuser(CurrentRole());
 	}
 
 	FunctionBinder function_binder(*this);

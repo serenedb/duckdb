@@ -8,6 +8,7 @@
 
 #pragma once
 
+#include "duckdb/catalog/permissions.hpp"
 #include "duckdb/common/enums/sql_compatibility.hpp"
 #include "duckdb/function/function.hpp"
 #include "duckdb/parser/expression/constant_expression.hpp"
@@ -56,8 +57,13 @@ public:
 	//! Whether this overload is a procedure (CALL only, not usable in SELECT/FROM)
 	bool is_procedure = false;
 	bool strict = false;
+	bool security_definer = false;
 	FunctionStability stability = FunctionStability::VOLATILE;
+	vector<string> config;
 	string source;
+	idx_t oid = 0;
+	Permissions permissions;
+	Value comment;
 
 public:
 	virtual ~MacroFunction() {

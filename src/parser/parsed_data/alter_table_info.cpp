@@ -3,12 +3,52 @@
 #include "duckdb/catalog/permissions.hpp"
 #include "duckdb/common/enum_util.hpp"
 #include "duckdb/common/sql_identifier.hpp"
+#include "duckdb/common/string_util.hpp"
 #include "duckdb/parser/parsed_data/create_role_info.hpp"
 #include "duckdb/common/logical_type_info.hpp"
+#include "duckdb/function/macro_function.hpp"
+#include "duckdb/main/settings.hpp"
 #include "duckdb/parser/constraint.hpp"
-#include "duckdb/parser/keyword_helper.hpp"
 
 namespace duckdb {
+
+static string DottedNameToSQL(const string &name) {
+	return StringUtil::Join(StringUtil::Split(name, '.'), ".",
+	                        [](const string &part) { return SQLIdentifier::ToString(part); });
+}
+
+static string PrivilegesToSQL(AclMode privileges, const vector<ColumnPrivilege> &columns) {
+	vector<string> items;
+	for (auto &named : ACL_PRIVILEGES) {
+		if ((privileges & named.mode) != AclMode::NoRights) {
+			items.emplace_back(named.keyword);
+		}
+		vector<string> names;
+		for (auto &column : columns) {
+			if ((column.privileges & named.mode) != AclMode::NoRights) {
+				names.push_back(SQLIdentifier::ToString(column.column));
+			}
+		}
+		if (!names.empty()) {
+			items.push_back(string(named.keyword) + " (" + StringUtil::Join(names, ", ") + ")");
+		}
+	}
+	return StringUtil::Join(items, ", ");
+}
+
+static string ConfigClauseToSQL(const vector<string> &set_config, const vector<string> &reset_config,
+                                bool reset_all_config) {
+	if (reset_all_config) {
+		return " RESET ALL";
+	}
+	if (!reset_config.empty()) {
+		return " RESET " + Settings::ConfigNameToSQL(reset_config[0]);
+	}
+	if (set_config.empty()) {
+		return string();
+	}
+	return " SET " + Settings::ConfigToSQL(set_config[0]);
+}
 
 //===--------------------------------------------------------------------===//
 // ChangeOwnershipInfo
@@ -77,18 +117,29 @@ CatalogType SetCommentInfo::GetCatalogType() const {
 }
 
 unique_ptr<AlterInfo> SetCommentInfo::Copy() const {
-	return make_uniq_base<AlterInfo, SetCommentInfo>(entry_catalog_type, GetQualifiedName().Catalog(),
-	                                                 GetQualifiedName().Schema(), GetQualifiedName().Name(),
-	                                                 comment_value, if_not_found);
+	auto result =
+	    make_uniq<SetCommentInfo>(entry_catalog_type, GetQualifiedName().Catalog(), GetQualifiedName().Schema(),
+	                              GetQualifiedName().Name(), comment_value, if_not_found);
+	result->overload_oid = overload_oid;
+	result->func_parameters = func_parameters;
+	result->has_func_args = has_func_args;
+	result->include_functions = include_functions;
+	result->include_procedures = include_procedures;
+	return std::move(result);
 }
 
 string SetCommentInfo::ToString() const {
 	string result = "";
 
 	result += "COMMENT ON ";
-	result += ParseInfo::TypeToString(entry_catalog_type);
+	result += entry_catalog_type == CatalogType::MACRO_ENTRY
+	              ? ParseInfo::RoutineKeyword(include_functions, include_procedures)
+	              : ParseInfo::TypeToString(entry_catalog_type);
 	result += " ";
 	result += GetQualifiedName().ToString(QualifiedNameToStringMode::HIDE_DEFAULT_SCHEMA);
+	if (has_func_args) {
+		result += "(" + MacroFunction::ParameterTypesToString(func_parameters) + ")";
+	}
 	result += " IS ";
 	result += comment_value.ToSQLString();
 
@@ -112,17 +163,28 @@ CatalogType SetSchemaInfo::GetCatalogType() const {
 }
 
 unique_ptr<AlterInfo> SetSchemaInfo::Copy() const {
-	return make_uniq_base<AlterInfo, SetSchemaInfo>(entry_catalog_type, GetAlterEntryData(), new_schema);
+	auto result = make_uniq<SetSchemaInfo>(entry_catalog_type, GetAlterEntryData(), new_schema);
+	result->overload_oid = overload_oid;
+	result->func_parameters = func_parameters;
+	result->has_func_args = has_func_args;
+	result->include_functions = include_functions;
+	result->include_procedures = include_procedures;
+	return std::move(result);
 }
 
 string SetSchemaInfo::ToString() const {
 	string result = "ALTER ";
-	result += ParseInfo::TypeToString(entry_catalog_type);
+	result += entry_catalog_type == CatalogType::MACRO_ENTRY
+	              ? ParseInfo::RoutineKeyword(include_functions, include_procedures)
+	              : ParseInfo::TypeToString(entry_catalog_type);
 	result += " ";
 	if (if_not_found == OnEntryNotFound::RETURN_NULL) {
 		result += "IF EXISTS ";
 	}
 	result += GetQualifiedName().ToString(QualifiedNameToStringMode::HIDE_DEFAULT_SCHEMA);
+	if (has_func_args) {
+		result += "(" + MacroFunction::ParameterTypesToString(func_parameters) + ")";
+	}
 	result += " SET SCHEMA ";
 	result += SQLIdentifier(new_schema);
 	result += ";";
@@ -165,123 +227,164 @@ unique_ptr<AlterInfo> AlterPermissionsInfo::Copy() const {
 	result->target_role = target_role;
 	result->default_scope = default_scope;
 	result->all_in_schema = all_in_schema;
+	result->include_functions = include_functions;
+	result->include_procedures = include_procedures;
+	result->object_owner_id = object_owner_id;
+	result->drop_owned_role_id = drop_owned_role_id;
+	result->overload_oid = overload_oid;
+	result->database_rows = database_rows;
+	result->func_parameters = func_parameters;
+	result->has_func_args = has_func_args;
+	result->objects = objects;
+	result->grantees = grantees;
+	result->for_roles = for_roles;
+	result->default_schemas = default_schemas;
 	return std::move(result);
 }
 
-static string GrantedObjectKeyword(CatalogType type) {
-	switch (type) {
-	case CatalogType::MACRO_ENTRY:
-		return "FUNCTION";
+vector<unique_ptr<AlterInfo>> AlterPermissionsInfo::SplitObjects() {
+	if (objects.empty() && grantees.empty() && for_roles.empty() && default_schemas.empty()) {
+		return {};
+	}
+	auto listed = std::move(objects);
+	auto roles = std::move(for_roles);
+	auto schemas = std::move(default_schemas);
+	auto names = std::move(grantees);
+	objects.clear();
+	for_roles.clear();
+	default_schemas.clear();
+	grantees.clear();
+	if (listed.empty()) {
+		listed.push_back(ObjectReference {GetQualifiedName(), func_parameters, has_func_args});
+	}
+	if (roles.empty()) {
+		roles.push_back(for_role);
+	}
+	if (schemas.empty()) {
+		schemas.push_back(default_schema);
+	}
+	if (names.empty()) {
+		names.push_back(grantee);
+	}
+	vector<unique_ptr<AlterInfo>> result;
+	for (auto &object : listed) {
+		for (auto &role : roles) {
+			for (auto &schema : schemas) {
+				for (auto &name : names) {
+					auto info = Copy();
+					auto &permissions = info->Cast<AlterPermissionsInfo>();
+					permissions.SetQualifiedName(object.name);
+					permissions.func_parameters = object.func_parameters;
+					permissions.has_func_args = object.has_func_args;
+					permissions.for_role = role;
+					permissions.default_schema = schema;
+					permissions.grantee = name;
+					result.push_back(std::move(info));
+				}
+			}
+		}
+	}
+	return result;
+}
+
+static string TargetKeywordToSQL(const AlterPermissionsInfo &info) {
+	if (info.entry_catalog_type == CatalogType::MACRO_ENTRY) {
+		return ParseInfo::RoutineKeyword(info.include_functions, info.include_procedures);
+	}
+	return ParseInfo::TypeToString(info.entry_catalog_type);
+}
+
+static string GrantTargetToSQL(const AlterPermissionsInfo &info) {
+	switch (info.entry_catalog_type) {
+	case CatalogType::VIEW_ENTRY:
+		return "TABLE";
 	case CatalogType::FOREIGN_SERVER_ENTRY:
 		return "FOREIGN SERVER";
 	default:
-		return ParseInfo::TypeToString(type);
+		return TargetKeywordToSQL(info);
 	}
 }
 
-static string GrantedObjectsKeyword(CatalogType type) {
-	switch (type) {
-	case CatalogType::TABLE_ENTRY:
-		return "TABLES";
-	case CatalogType::SEQUENCE_ENTRY:
-		return "SEQUENCES";
-	case CatalogType::MACRO_ENTRY:
-		return "FUNCTIONS";
-	case CatalogType::TYPE_ENTRY:
-		return "TYPES";
-	case CatalogType::SCHEMA_ENTRY:
-		return "SCHEMAS";
-	default:
-		throw InternalException("privileges cannot be granted on all objects of type %s", EnumUtil::ToString(type));
+static string GrantObjectsToSQL(CatalogType type, bool include_functions, bool include_procedures) {
+	if (type == CatalogType::MACRO_ENTRY) {
+		return ParseInfo::RoutineKeyword(include_functions, include_procedures) + "S";
 	}
+	return ParseInfo::TypeToString(type) + "S";
 }
 
-static string PrivilegesToString(const AlterPermissionsInfo &info, CatalogType acl_class) {
-	static constexpr std::pair<AclMode, const char *> KEYWORDS[] = {
-	    {AclMode::Select, "SELECT"},   {AclMode::Insert, "INSERT"},     {AclMode::Update, "UPDATE"},
-	    {AclMode::Delete, "DELETE"},   {AclMode::Truncate, "TRUNCATE"}, {AclMode::References, "REFERENCES"},
-	    {AclMode::Trigger, "TRIGGER"}, {AclMode::Maintain, "MAINTAIN"}, {AclMode::Execute, "EXECUTE"},
-	    {AclMode::Usage, "USAGE"},     {AclMode::Create, "CREATE"},     {AclMode::CreateTemp, "TEMPORARY"},
-	    {AclMode::Connect, "CONNECT"},
-	};
-	const auto all = Permissions::AllPrivileges(acl_class);
-	auto columns_with = [&](AclMode mode) {
-		vector<string> columns;
-		for (auto &column : info.column_privileges) {
-			if ((column.privileges & mode) == mode) {
-				columns.push_back(SQLIdentifier::ToString(column.column));
-			}
-		}
-		return columns;
-	};
-	if (info.privileges == all && info.column_privileges.empty()) {
-		return "ALL PRIVILEGES";
+static string PermissionsTargetToSQL(const AlterPermissionsInfo &info, const QualifiedName &name,
+                                     const vector<LogicalType> &func_parameters, bool has_func_args) {
+	if (info.entry_catalog_type == CatalogType::PARAMETER_ENTRY) {
+		return Settings::ConfigNameToSQL(name.Name().GetIdentifierName());
 	}
-	if (info.privileges == AclMode::NoRights && !info.column_privileges.empty() &&
-	    columns_with(all).size() == info.column_privileges.size()) {
-		return "ALL PRIVILEGES (" + StringUtil::Join(columns_with(all), ", ") + ")";
+	if (info.all_in_schema) {
+		return name.Catalog().empty()
+		           ? SQLIdentifier::ToString(name.Schema())
+		           : SQLIdentifier::ToString(name.Catalog()) + "." + SQLIdentifier::ToString(name.Schema());
 	}
-	vector<string> result;
-	for (auto &[mode, keyword] : KEYWORDS) {
-		if ((info.privileges & mode) == mode) {
-			result.emplace_back(keyword);
-		}
-		auto columns = columns_with(mode);
-		if (!columns.empty()) {
-			result.push_back(keyword + (" (" + StringUtil::Join(columns, ", ") + ")"));
-		}
+	auto target = name.ToString(QualifiedNameToStringMode::HIDE_DEFAULT_SCHEMA);
+	if (has_func_args) {
+		target += "(" + MacroFunction::ParameterTypesToString(func_parameters) + ")";
 	}
-	return StringUtil::Join(result, ", ");
+	return target;
 }
 
-static string GranteeToString(const string &grantee) {
-	return grantee == "public" ? "PUBLIC" : SQLIdentifier::ToString(grantee);
+static vector<string> ListedOr(const vector<string> &listed, const string &single) {
+	if (listed.empty() && !single.empty()) {
+		return {single};
+	}
+	return listed;
 }
 
 string AlterPermissionsInfo::ToString() const {
-	auto &name = GetQualifiedName();
-	if (!new_owner.empty()) {
-		const bool keyword = new_owner == "CURRENT_USER" || new_owner == "SESSION_USER" || new_owner == "CURRENT_ROLE";
-		return "ALTER " + ParseInfo::TypeToString(entry_catalog_type) + " " +
-		       name.ToString(QualifiedNameToStringMode::HIDE_DEFAULT_SCHEMA) + " OWNER TO " +
-		       (keyword ? new_owner : SQLIdentifier::ToString(new_owner)) + ";";
+	vector<string> objects_sql;
+	for (auto &object : objects) {
+		objects_sql.push_back(PermissionsTargetToSQL(*this, object.name, object.func_parameters, object.has_func_args));
 	}
-	const bool default_privileges = default_objtype != CatalogType::INVALID;
+	if (objects.empty()) {
+		objects_sql.push_back(PermissionsTargetToSQL(*this, GetQualifiedName(), func_parameters, has_func_args));
+	}
+	auto targets = StringUtil::Join(objects_sql, ", ");
+	if (!new_owner.empty()) {
+		return "ALTER " + TargetKeywordToSQL(*this) + " " + targets + " OWNER TO " +
+		       ParseInfo::RoleSpecToString(new_owner) + ";";
+	}
 	string result;
-	if (default_privileges) {
-		result += "ALTER DEFAULT PRIVILEGES ";
-		if (!for_role.empty()) {
-			result += "FOR ROLE " + SQLIdentifier::ToString(for_role) + " ";
+	if (default_objtype != CatalogType::INVALID) {
+		result = "ALTER DEFAULT PRIVILEGES ";
+		auto roles = ListedOr(for_roles, for_role);
+		if (!roles.empty()) {
+			result += "FOR ROLE " +
+			          StringUtil::Join(roles, ", ", [](const string &role) { return SQLIdentifier::ToString(role); }) +
+			          " ";
 		}
-		if (!default_schema.empty()) {
-			result += "IN SCHEMA " + default_schema + " ";
+		auto schemas = ListedOr(default_schemas, default_schema);
+		if (!schemas.empty()) {
+			result += "IN SCHEMA " + StringUtil::Join(schemas, ", ", DottedNameToSQL) + " ";
 		}
 	}
 	result += revoke ? "REVOKE " : "GRANT ";
 	if (revoke && option_only) {
 		result += "GRANT OPTION FOR ";
 	}
-	result += PrivilegesToString(*this, default_privileges ? default_objtype : entry_catalog_type) + " ON ";
-	if (default_privileges) {
-		result += GrantedObjectsKeyword(default_objtype);
+	result += PrivilegesToSQL(privileges, column_privileges) + " ON ";
+	if (default_objtype != CatalogType::INVALID) {
+		result += GrantObjectsToSQL(default_objtype, true, false);
 	} else if (all_in_schema) {
-		result += "ALL " + GrantedObjectsKeyword(entry_catalog_type) + " IN SCHEMA ";
-		if (!name.Catalog().empty()) {
-			result += SQLIdentifier::ToString(name.Catalog()) + ".";
-		}
-		result += SQLIdentifier::ToString(name.Schema());
+		result += "ALL " + GrantObjectsToSQL(entry_catalog_type, include_functions, include_procedures) +
+		          " IN SCHEMA " + targets;
 	} else {
-		result += GrantedObjectKeyword(entry_catalog_type) + " " +
-		          name.ToString(QualifiedNameToStringMode::HIDE_DEFAULT_SCHEMA);
+		result += GrantTargetToSQL(*this) + " " + targets;
 	}
-	result += (revoke ? " FROM " : " TO ") + GranteeToString(grantee);
-	if (with_grant_option) {
+	result += revoke ? " FROM " : " TO ";
+	result += StringUtil::Join(ListedOr(grantees, grantee), ", ", ParseInfo::RoleSpecToString);
+	if (!revoke && with_grant_option) {
 		result += " WITH GRANT OPTION";
 	}
 	if (!granted_by.empty()) {
-		result += " GRANTED BY " + SQLIdentifier::ToString(granted_by);
+		result += " GRANTED BY " + ParseInfo::RoleSpecToString(granted_by);
 	}
-	if (cascade) {
+	if (revoke && cascade) {
 		result += " CASCADE";
 	}
 	return result + ";";
@@ -346,6 +449,8 @@ unique_ptr<AlterInfo> AlterRoleInfo::Copy() const {
 	result->reset_config = reset_config;
 	result->set_config = set_config;
 	result->grant_role = grant_role;
+	result->granted_roles = granted_roles;
+	result->members = members;
 	result->revoke = revoke;
 	result->option_only = option_only;
 	result->admin_option = admin_option;
@@ -353,57 +458,194 @@ unique_ptr<AlterInfo> AlterRoleInfo::Copy() const {
 	result->set_option = set_option;
 	result->grant_role_id = grant_role_id;
 	result->grantor_id = grantor_id;
+	result->granted_by = granted_by;
+	result->cascade = cascade;
+	result->all_roles = all_roles;
+	result->alter_group = alter_group;
 	return std::move(result);
 }
 
-string AlterRoleInfo::ToString() const {
-	auto role = SQLIdentifier::ToString(GetQualifiedName().Name());
-	if (!grant_role.empty()) {
-		auto granted = SQLIdentifier::ToString(grant_role);
-		if (revoke) {
-			return string("REVOKE ") + (option_only ? "ADMIN OPTION FOR " : "") + granted + " FROM " + role + ";";
+vector<unique_ptr<AlterInfo>> AlterRoleInfo::SplitObjects() {
+	auto roles = std::move(granted_roles);
+	auto listed = std::move(members);
+	granted_roles.clear();
+	members.clear();
+	vector<unique_ptr<AlterInfo>> result;
+	for (auto &role : roles) {
+		for (auto &member : listed) {
+			auto info = Copy();
+			auto &membership = info->Cast<AlterRoleInfo>();
+			membership.grant_role = role;
+			membership.SetName(Identifier(member));
+			result.push_back(std::move(info));
 		}
-		vector<string> options;
-		for (auto [keyword, value] : {std::pair<const char *, int8_t> {"ADMIN", admin_option},
-		                              std::pair<const char *, int8_t> {"INHERIT", inherit_option},
-		                              std::pair<const char *, int8_t> {"SET", set_option}}) {
-			if (value != -1) {
-				options.push_back(keyword + string(value ? " TRUE" : " FALSE"));
-			}
-		}
-		return "GRANT " + granted + " TO " + role +
-		       (options.empty() ? "" : " WITH " + StringUtil::Join(options, ", ")) + ";";
 	}
-	auto result = "ALTER ROLE " + role;
+	return result;
+}
+
+static string MembershipToSQL(const AlterRoleInfo &info) {
+	auto roles = info.granted_roles.empty() ? SQLIdentifier::ToString(info.grant_role)
+	                                        : StringUtil::Join(info.granted_roles, ", ", [](const string &role) {
+		                                          return SQLIdentifier::ToString(role);
+	                                          });
+	auto members = info.members.empty()
+	                   ? ParseInfo::RoleSpecToString(info.GetQualifiedName().Name().GetIdentifierName())
+	                   : StringUtil::Join(info.members, ", ", ParseInfo::RoleSpecToString);
+	if (info.alter_group) {
+		return "ALTER GROUP " + roles + (info.revoke ? " DROP USER " : " ADD USER ") + members + ";";
+	}
+	string result = info.revoke ? "REVOKE " : "GRANT ";
+	if (info.revoke && info.option_only) {
+		result += info.admin_option == 0 ? "ADMIN" : info.inherit_option == 0 ? "INHERIT" : "SET";
+		result += " OPTION FOR ";
+	}
+	result += roles + (info.revoke ? " FROM " : " TO ") + members;
+	if (!info.revoke) {
+		vector<string> options;
+		auto option = [&](const char *name, int8_t value) {
+			if (value >= 0) {
+				options.push_back(string(name) + (value ? " TRUE" : " FALSE"));
+			}
+		};
+		option("ADMIN", info.admin_option);
+		option("INHERIT", info.inherit_option);
+		option("SET", info.set_option);
+		if (!options.empty()) {
+			result += " WITH " + StringUtil::Join(options, ", ");
+		}
+	}
+	if (!info.granted_by.empty()) {
+		result += " GRANTED BY " + ParseInfo::RoleSpecToString(info.granted_by);
+	}
+	if (info.revoke && info.cascade) {
+		result += " CASCADE";
+	}
+	return result + ";";
+}
+
+string AlterRoleInfo::ToString() const {
+	if (!grant_role.empty() || !granted_roles.empty()) {
+		return MembershipToSQL(*this);
+	}
+	string result =
+	    "ALTER ROLE " +
+	    (all_roles ? string("ALL") : ParseInfo::RoleSpecToString(GetQualifiedName().Name().GetIdentifierName()));
 	if (!new_name.empty()) {
 		return result + " RENAME TO " + SQLIdentifier::ToString(new_name) + ";";
 	}
-	if (reset_all_config) {
-		return result + " RESET ALL;";
+	auto config = ConfigClauseToSQL(set_config, reset_config, reset_all_config);
+	if (!config.empty()) {
+		return result + config + ";";
 	}
-	if (!reset_config.empty()) {
-		D_ASSERT(reset_config.size() == 1);
-		return result + " RESET " + SQLIdentifier::ToString(reset_config[0]) + ";";
-	}
-	if (!set_config.empty()) {
-		D_ASSERT(set_config.size() == 1);
-		auto &setting = set_config[0];
-		auto separator = setting.find('=');
-		return result + " SET " + SQLIdentifier::ToString(setting.substr(0, separator)) + " = " +
-		       SQLString::ToString(setting.substr(separator + 1)) + ";";
-	}
-	vector<string> options;
-	AppendRoleOptions(options, set_options, clear_options);
+	result += " WITH" + RoleOptionsToSQL(set_options, clear_options);
 	if (set_conn_limit) {
-		options.push_back("CONNECTION LIMIT " + std::to_string(conn_limit));
+		result += " CONNECTION LIMIT " + std::to_string(conn_limit);
 	}
 	if (set_valid_until) {
-		options.push_back("VALID UNTIL " + RoleValidUntilToString(valid_until));
+		result += " VALID UNTIL " + ValidUntilToSQL(valid_until);
 	}
 	if (set_password) {
-		options.push_back(null_password ? "PASSWORD NULL" : "PASSWORD " + SQLString::ToString(password));
+		result += null_password ? " PASSWORD NULL" : " PASSWORD " + SQLString::ToString(password);
 	}
-	return result + " WITH " + StringUtil::Join(options, " ") + ";";
+	return result + ";";
+}
+
+//===--------------------------------------------------------------------===//
+// AlterDatabaseSettingsInfo
+//===--------------------------------------------------------------------===//
+AlterDatabaseSettingsInfo::AlterDatabaseSettingsInfo(Identifier database)
+    : AlterInfo(AlterType::ALTER_DATABASE_SETTINGS, QualifiedName(Identifier(), Identifier(), std::move(database)),
+                OnEntryNotFound::THROW_EXCEPTION) {
+}
+
+AlterDatabaseSettingsInfo::AlterDatabaseSettingsInfo() : AlterInfo(AlterType::ALTER_DATABASE_SETTINGS) {
+}
+
+CatalogType AlterDatabaseSettingsInfo::GetCatalogType() const {
+	return CatalogType::DATABASE_ENTRY;
+}
+
+unique_ptr<AlterInfo> AlterDatabaseSettingsInfo::Copy() const {
+	auto result = make_uniq<AlterDatabaseSettingsInfo>();
+	result->SetQualifiedName(GetQualifiedName());
+	result->if_not_found = if_not_found;
+	result->role = role;
+	result->role_id = role_id;
+	result->all_roles = all_roles;
+	result->reset_all_config = reset_all_config;
+	result->reset_config = reset_config;
+	result->set_config = set_config;
+	result->set_connection_limit = set_connection_limit;
+	result->connection_limit = connection_limit;
+	result->set_allow_connections = set_allow_connections;
+	result->allow_connections = allow_connections;
+	return std::move(result);
+}
+
+string AlterDatabaseSettingsInfo::ToString() const {
+	auto database = SQLIdentifier::ToString(GetQualifiedName().Name());
+	auto config = ConfigClauseToSQL(set_config, reset_config, reset_all_config);
+	if (all_roles) {
+		return "ALTER ROLE ALL IN DATABASE " + database + config + ";";
+	}
+	if (!role.empty()) {
+		return "ALTER ROLE " + ParseInfo::RoleSpecToString(role) + " IN DATABASE " + database + config + ";";
+	}
+	if (!config.empty()) {
+		return "ALTER DATABASE " + database + config + ";";
+	}
+	string options;
+	if (set_allow_connections) {
+		options += allow_connections ? " ALLOW_CONNECTIONS TRUE" : " ALLOW_CONNECTIONS FALSE";
+	}
+	if (set_connection_limit) {
+		options += " CONNECTION LIMIT " + std::to_string(connection_limit);
+	}
+	return "ALTER DATABASE " + database + options + ";";
+}
+
+ReassignOwnedInfo::ReassignOwnedInfo() : AlterInfo(AlterType::REASSIGN_OWNED) {
+}
+
+CatalogType ReassignOwnedInfo::GetCatalogType() const {
+	return CatalogType::INVALID;
+}
+
+unique_ptr<AlterInfo> ReassignOwnedInfo::Copy() const {
+	auto result = make_uniq<ReassignOwnedInfo>();
+	result->SetQualifiedName(GetQualifiedName());
+	result->roles = roles;
+	result->new_owner = new_owner;
+	result->role_ids = role_ids;
+	result->new_owner_id = new_owner_id;
+	return std::move(result);
+}
+
+string ReassignOwnedInfo::ToString() const {
+	return "REASSIGN OWNED BY " + StringUtil::Join(roles, ", ", ParseInfo::RoleSpecToString) + " TO " +
+	       ParseInfo::RoleSpecToString(new_owner) + ";";
+}
+
+DropOwnedInfo::DropOwnedInfo() : AlterInfo(AlterType::DROP_OWNED) {
+}
+
+CatalogType DropOwnedInfo::GetCatalogType() const {
+	return CatalogType::INVALID;
+}
+
+unique_ptr<AlterInfo> DropOwnedInfo::Copy() const {
+	auto result = make_uniq<DropOwnedInfo>();
+	result->SetQualifiedName(GetQualifiedName());
+	result->roles = roles;
+	result->cascade = cascade;
+	result->role_ids = role_ids;
+	result->grantors = grantors;
+	return std::move(result);
+}
+
+string DropOwnedInfo::ToString() const {
+	return "DROP OWNED BY " + StringUtil::Join(roles, ", ", ParseInfo::RoleSpecToString) +
+	       (cascade ? " CASCADE;" : ";");
 }
 
 //===--------------------------------------------------------------------===//

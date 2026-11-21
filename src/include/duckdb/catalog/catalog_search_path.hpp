@@ -63,7 +63,8 @@ enum class CatalogSetPathType { SET_SCHEMA, SET_SCHEMAS, SET_DIRECTLY };
 class CatalogSearchPath {
 public:
 	DUCKDB_API explicit CatalogSearchPath(ClientContext &client_p);
-	DUCKDB_API CatalogSearchPath(ClientContext &client_p, vector<CatalogSearchEntry> entries);
+	DUCKDB_API CatalogSearchPath(ClientContext &client_p, vector<CatalogSearchEntry> entries,
+	                             bool session_objects = true);
 	CatalogSearchPath(const CatalogSearchPath &other) = delete;
 
 	//! The path the expressions of a table in this schema of a PostgreSQL-compatible catalog are bound with
@@ -78,7 +79,7 @@ public:
 	//! RESET ALL).
 	DUCKDB_API void SetDefaultPaths(vector<CatalogSearchEntry> new_defaults);
 
-	DUCKDB_API vector<CatalogSearchEntry> Get() const;
+	DUCKDB_API vector<CatalogSearchEntry> Get(bool builtins_first = true) const;
 	const vector<CatalogSearchEntry> &GetSetPaths() const {
 		return set_paths;
 	}
@@ -104,7 +105,8 @@ public:
 
 	DUCKDB_API vector<CatalogSearchEntry> GetImplicitSearchCatalogs() const;
 
-	DUCKDB_API vector<CatalogSearchEntry> GetWithPrecedenceSchemas(ClientContext &context) const;
+	DUCKDB_API vector<CatalogSearchEntry> GetWithPrecedenceSchemas(ClientContext &context,
+	                                                               bool builtins_first = true) const;
 
 	DUCKDB_API bool SchemaInSearchPath(ClientContext &context, const Identifier &catalog_name,
 	                                   const Identifier &schema_name) const;
@@ -117,6 +119,9 @@ private:
 private:
 	ClientContext &context;
 	vector<CatalogSearchEntry> paths;
+	bool session_objects = true;
+	bool builtins_first_order = false;
+	bool postgres_mode = false;
 	//! Only the paths that were explicitly set (minus the always included paths)
 	vector<CatalogSearchEntry> set_paths;
 	//! Connection-level defaults restored by Reset() (RESET search_path / RESET ALL).

@@ -639,7 +639,7 @@
   {
     "class": "AclItem",
     "includes": [
-      "duckdb/catalog/permissions.hpp"
+      "duckdb/catalog/acl.hpp"
     ],
     "members": [
       {
@@ -668,7 +668,7 @@
   {
     "class": "Membership",
     "includes": [
-      "duckdb/catalog/permissions.hpp"
+      "duckdb/catalog/role_graph.hpp"
     ],
     "members": [
       {
@@ -702,7 +702,7 @@
   {
     "class": "ColumnPrivilege",
     "includes": [
-      "duckdb/catalog/permissions.hpp"
+      "duckdb/catalog/acl.hpp"
     ],
     "members": [
       {
@@ -721,7 +721,7 @@
   {
     "class": "DefaultAcl",
     "includes": [
-      "duckdb/catalog/permissions.hpp"
+      "duckdb/catalog/acl.hpp"
     ],
     "members": [
       {
@@ -750,7 +750,7 @@
   {
     "class": "Permissions",
     "includes": [
-      "duckdb/catalog/permissions.hpp"
+      "duckdb/catalog/acl.hpp"
     ],
     "members": [
       {
@@ -767,6 +767,92 @@
         "id": 102,
         "name": "defaults",
         "type": "vector<DefaultAcl>"
+      },
+      {
+        "id": 110,
+        "name": "rows",
+        "type": "shared_ptr<GrantRows>"
+      }
+    ],
+    "pointer_type": "none"
+  },
+  {
+    "class": "GrantRows",
+    "includes": [
+      "duckdb/catalog/acl.hpp"
+    ],
+    "members": [
+      {
+        "id": 100,
+        "name": "rows",
+        "type": "vector<GrantRow>"
+      }
+    ],
+    "pointer_type": "shared_ptr"
+  },
+  {
+    "class": "GrantRow",
+    "includes": [
+      "duckdb/catalog/acl.hpp"
+    ],
+    "members": [
+      {
+        "id": 100,
+        "name": "kind",
+        "type": "CatalogType"
+      },
+      {
+        "id": 101,
+        "name": "oid",
+        "type": "idx_t"
+      },
+      {
+        "id": 102,
+        "name": "name",
+        "type": "string"
+      },
+      {
+        "id": 103,
+        "name": "acl",
+        "type": "vector<AclItem>"
+      }
+    ],
+    "pointer_type": "none"
+  },
+  {
+    "class": "ColumnAcl",
+    "includes": [
+      "duckdb/catalog/acl.hpp"
+    ],
+    "members": [
+      {
+        "id": 100,
+        "name": "column",
+        "type": "Identifier"
+      },
+      {
+        "id": 101,
+        "name": "acl",
+        "type": "vector<AclItem>"
+      }
+    ],
+    "pointer_type": "none"
+  },
+  {
+    "class": "DatabaseSetting",
+    "includes": [
+      "duckdb/parser/parsed_data/create_database_info.hpp"
+    ],
+    "members": [
+      {
+        "id": 100,
+        "name": "role",
+        "type": "idx_t"
+      },
+      {
+        "id": 101,
+        "name": "config",
+        "type": "vector<string>"
       }
     ],
     "pointer_type": "none"

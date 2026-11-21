@@ -42,6 +42,8 @@ void ViewCatalogEntry::Initialize(CreateViewInfo &info) {
 	this->permissions = info.permissions;
 	this->column_comments = info.column_comments_map;
 	this->security_invoker = info.security_invoker;
+	this->column_acls = info.column_acls;
+	this->name_bindings = info.name_bindings;
 }
 
 ViewCatalogEntry::ViewCatalogEntry(Catalog &catalog, SchemaCatalogEntry &schema, CreateViewInfo &info)
@@ -69,6 +71,8 @@ unique_ptr<CreateInfo> ViewCatalogEntry::GetInfo() const {
 	result->permissions = permissions;
 	result->column_comments_map = column_comments;
 	result->security_invoker = security_invoker;
+	result->column_acls = column_acls;
+	result->name_bindings = name_bindings;
 	return std::move(result);
 }
 
@@ -106,7 +110,15 @@ unique_ptr<CatalogEntry> ViewCatalogEntry::AlterEntry(ClientContext &context, Al
 		replaced_view.comment = comment;
 		replaced_view.tags = tags;
 		replaced_view.column_comments_map = column_comments;
+		replaced_view.column_acls = column_acls;
 		return make_uniq<ViewCatalogEntry>(catalog, ParentSchema(context), replaced_view);
+	}
+
+	if (info.type == AlterType::ALTER_PERMISSIONS) {
+		auto result = Copy(context);
+		auto &view = result->Cast<ViewCatalogEntry>();
+		info.Cast<AlterPermissionsInfo>().ApplyTo(view.permissions, type, &view.column_acls);
+		return result;
 	}
 
 	// Column comments have a special alter type
@@ -144,6 +156,14 @@ Value ViewCatalogEntry::GetColumnComment(idx_t column_index) {
 	return Value();
 }
 
+std::span<const AclItem> ViewCatalogEntry::ColumnAcl(idx_t column_index) const {
+	if (column_acls.empty()) {
+		return {};
+	}
+	return FindColumnAcl(column_acls,
+	                     column_index < aliases.size() ? aliases[column_index] : GetColumnInfo()->names[column_index]);
+}
+
 Identifier ViewCatalogEntry::ResolveColumnName(const Identifier &column_name) const {
 	auto view_columns = GetColumnInfo();
 	if (!view_columns) {
@@ -175,8 +195,8 @@ void ViewCatalogEntry::BindView(ClientContext &context, BindViewAction action) {
 	bind_thread = ThreadUtil::GetThreadId();
 	try {
 		auto columns = make_shared_ptr<ViewColumnInfo>();
-		Binder::BindView(context, GetQuery(), ParentCatalog().GetName(), ParentSchema(context).name, nullptr, aliases,
-		                 columns->types, columns->names);
+		Binder::BindView(context, RoleAccess::System(), GetQuery(), ParentCatalog().GetName(),
+		                 ParentSchema(context).name, nullptr, nullptr, aliases, columns->types, columns->names);
 		view_columns.atomic_store(columns);
 	} catch (...) {
 		bind_state = prev_bind_state;

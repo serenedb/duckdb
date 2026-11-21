@@ -74,7 +74,10 @@ SQLStatement:
     - UnlistenStatement
     - CreateRoleStatement
     - DropRoleStatement
+    - ReassignOwnedStatement
+    - DropOwnedStatement
     - AlterRoleStatement
+    - AlterGroupStatement
     - AlterOwnerStatement
     - AlterDefaultPrivilegesStatement
     - GrantStatement
@@ -91,6 +94,7 @@ SQLStatement:
     - CallStatement
     - CheckpointStatement
     - CommentStatement
+    - CommentRoutineStatement
     - ConnectStatement
     - CopyStatement
     - CopyVariations
@@ -252,11 +256,15 @@ AlterInfo:
   rules:
     - AlterOptions
     - AlterSetSchemaStmt
+    - AlterRoutineSetSchemaStmt
     - AlterTableStmt
     - AlterDatabaseStmt
+    - AlterDatabaseConfigStmt
+    - AlterDatabaseOptionsStmt
     - AlterViewStmt
     - AlterIndexStmt
     - AlterFunctionStmt
+    - AlterFunctionAttributesStmt
     - AlterSchemaStmt
     - AlterSequenceStmt
     - AlterSequenceOptions
@@ -401,6 +409,7 @@ SetScope:
     - SessionScope
     - VariableScope
     - SettingScope
+    - RoleScope
 
 SampleOptions:
   type: "unique_ptr<SampleOptions>"
@@ -1171,6 +1180,7 @@ String:
   rules:
     - StringLiteral
     - DropOrSet
+    - DatabaseOwnerName
     - TriggerFireMode
     - ReplicaFireMode
     - AlwaysFireMode
@@ -1467,6 +1477,7 @@ CatalogType:
     - CommentSchema
     - CommentType
     - CommentColumn
+    - CommentRole
     - TableOrView
     - SetSchemaEntryType
     - SetSchemaProcedure
@@ -1805,6 +1816,15 @@ overrides:
   # common.gram
   ColIdType: "pair<Identifier, LogicalType>"
   ColIdTypeList: "child_list_t<LogicalType>"
+  # create_database.gram
+  CreateDatabaseOptions:
+    type: "case_insensitive_map_t<Value>"
+    by_value: true
+  CreateDatabaseOption: "pair<string, Value>"
+  CreateDatabaseOwner: "pair<string, Value>"
+  DatabaseOption: "pair<string, Value>"
+  DatabaseConnectionLimit: "pair<string, Value>"
+  DatabaseAllowConnections: "pair<string, Value>"
   # create_index.gram
   RelOption:
     type: "pair<Identifier, unique_ptr<ParsedExpression>>"
@@ -1970,6 +1990,7 @@ IdentifierType:
     - TableAliasColon
     - SecretStorageSpecifier
     - SchemaAuthorization
+    - SettingPath
     - SecretName
     - TriggerName
     - DropSecretStorage
@@ -2131,13 +2152,22 @@ excluded_rules:
   - AlterRoleRename
   - AlterRoleConfig
   - AlterRoleSet
-  - AlterRoleSetTo
   - AlterRoleReset
   - AlterRoleOptionList
   - AlterRoleOption
+  - AlterGroupAction
   - ConnLimitOption
   - ValidUntilOption
+  - OwnerTarget
+  - GrantRoutineKind
+  - OwnerRoutineTarget
+  - OwnerNamedTarget
   - OwnerRoleSpec
+  - GroupGrantee
+  - MemberOptionName
+  - AlterRoleTarget
+  - AlterRoleAll
+  - AlterRoleInDatabase
   - DefaultPrivForRole
   - DefaultPrivInSchema
   - DefaultPrivAction
@@ -2152,8 +2182,10 @@ excluded_rules:
   - GrantTarget
   - GrantAllInSchema
   - GrantFunctionTarget
+  - RoutineSignature
   - FuncArgSignature
   - FuncArg
+  - GrantParameterTarget
   - GrantNamedTarget
   - GrantedBy
   - MemberOptionList
@@ -2165,6 +2197,7 @@ excluded_rules:
   - PolicyRename
   - PolicyAlterClauses
   - PolicyToRoles
+  - PolicyRole
   - PolicyUsing
   - PolicyCheck
   - PrivilegeList

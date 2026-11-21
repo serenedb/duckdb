@@ -1,10 +1,12 @@
 CommentStatement <- 'COMMENT' 'ON' CommentOnType CommentTarget 'IS' CommentValue
+CommentRoutineStatement <- 'COMMENT' 'ON' GrantRoutineKind RoutineSignature 'IS' CommentValue
 
 CommentTarget <- DottedIdentifier / CommentStringLiteralIdentifier
 CommentStringLiteralIdentifier <- StringLiteralIdentifier
 
-CommentOnType <-    CommentTable / CommentSequence / CommentFunction / CommentMacroTable / CommentMacro /
-                    CommentView / CommentDatabase / CommentIndex / CommentSchema / CommentType / CommentColumn
+CommentOnType <-    CommentTable / CommentSequence / CommentMacroTable / CommentMacro /
+                    CommentView / CommentDatabase / CommentIndex / CommentSchema / CommentType / CommentColumn /
+                    CommentRole
 
 CommentTable <- 'TABLE'
 CommentSequence <- 'SEQUENCE'
@@ -17,6 +19,7 @@ CommentIndex <- 'INDEX'
 CommentSchema <- 'SCHEMA'
 CommentType <- 'TYPE'
 CommentColumn <- 'COLUMN'
+CommentRole <- 'ROLE'
 
 CommentValue <- NullLiteral / StringLiteralValue
 StringLiteralValue <- StringLiteral

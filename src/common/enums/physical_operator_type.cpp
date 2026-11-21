@@ -173,6 +173,8 @@ string PhysicalOperatorToString(PhysicalOperatorType type) {
 		return "CREATE_TABLESPACE";
 	case PhysicalOperatorType::CREATE_DATABASE:
 		return "CREATE_DATABASE";
+	case PhysicalOperatorType::CREATE_SUBSCRIPTION:
+		return "CREATE_SUBSCRIPTION";
 	case PhysicalOperatorType::ATTACH:
 		return "ATTACH";
 	case PhysicalOperatorType::DETACH:

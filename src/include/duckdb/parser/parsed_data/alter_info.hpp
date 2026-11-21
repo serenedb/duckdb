@@ -36,7 +36,11 @@ enum class AlterType : uint8_t {
 	REPLACE_DEFINITION = 203,
 	ALTER_JOB = 204,
 	SET_SCHEMA = 205,
-	ALTER_TABLESPACE = 206
+	ALTER_TABLESPACE = 206,
+	REASSIGN_OWNED = 207,
+	DROP_OWNED = 208,
+	ALTER_SUBSCRIPTION = 209,
+	ALTER_DATABASE_SETTINGS = 210
 };
 
 enum class AlterBindMode { BIND_ON_ALTER, SKIP_BINDING };
@@ -66,9 +70,9 @@ public:
 
 	AlterType type;
 	//! if exists
-	OnEntryNotFound if_not_found;
+	OnEntryNotFound if_not_found = OnEntryNotFound::THROW_EXCEPTION;
 	//! Allow altering internal entries
-	bool allow_internal;
+	bool allow_internal = false;
 	idx_t oid = 0;
 	//! Determine whether to skip Bind
 	AlterBindMode bind_mode = AlterBindMode::BIND_ON_ALTER;
@@ -96,6 +100,7 @@ public:
 	virtual CatalogType GetCatalogType() const = 0;
 	virtual unique_ptr<AlterInfo> Copy() const = 0;
 	virtual string ToString() const = 0;
+	virtual vector<unique_ptr<AlterInfo>> SplitObjects();
 
 	void Serialize(Serializer &serializer) const override;
 	static unique_ptr<ParseInfo> Deserialize(Deserializer &deserializer);
