@@ -254,3 +254,22 @@ TEST_CASE("COPY with ON_ERROR IGNORE notices only the rows it skips, and needs n
 	REQUIRE(CHECK_COLUMN(result, 0, {13}));
 	REQUIRE(CHECK_COLUMN(result, 1, {6}));
 }
+
+TEST_CASE("COPY refuses bytes that are not UTF-8 even where unescaping its text would join them into UTF-8", "[copy]") {
+	DuckDB db(nullptr);
+	RegisterPostgresCopy(db);
+	Connection con(db);
+	REQUIRE_NO_FAIL(con.Query("CREATE TABLE words (a INTEGER, b VARCHAR)"));
+	const auto text = WriteInput("copy_from_split_text.txt", "1\t\xC3\\\xA9\n");
+	auto failure = FailedCopy(con, "COPY words FROM '" + text + "' (FORMAT text, RENDERING duckdb)");
+	REQUIRE(failure.message == "invalid byte sequence for encoding \"UTF8\": 0xc3 0x5c");
+	REQUIRE(failure.sqlstate == "22021");
+	const auto number = WriteInput("copy_from_split_number.txt", "1\xC3\\\xA9\tx\n");
+	failure = FailedCopy(con, "COPY words FROM '" + number + "' (FORMAT text, RENDERING duckdb)");
+	REQUIRE(failure.message == "invalid byte sequence for encoding \"UTF8\": 0xc3 0x5c");
+	REQUIRE(failure.sqlstate == "22021");
+	const auto escaped = WriteInput("copy_from_escaped_bytes.txt", "2\t\\xc3\\xa9\n");
+	REQUIRE_NO_FAIL(con.Query("COPY words FROM '" + escaped + "' (FORMAT text, RENDERING duckdb)"));
+	auto result = con.Query("SELECT b FROM words");
+	REQUIRE(CHECK_COLUMN(result, 0, {"\xC3\xA9"}));
+}

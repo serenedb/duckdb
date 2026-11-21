@@ -224,7 +224,7 @@ private:
 	LeanSource LeanSourceFor(const CsvScanColumn &column, idx_t first, bool selected_only) const;
 	bool LeanRawFilter(idx_t count);
 	void LeanRowNumbers(idx_t count, DataChunk &output);
-	void LeanRetry(const CsvScanColumn &column, Vector &vector);
+	void LeanRetry(const CsvScanColumn &column, Vector &vector, bool utf8_valid);
 	CsvField LeanField(const CsvScanColumn &column, idx_t row) const;
 	CsvRow LeanRow(idx_t row) const;
 	bool LeanNullExtra(idx_t begin, idx_t end, uint32_t end_bits) const;
@@ -237,7 +237,7 @@ private:
 	Vector &Target(idx_t column, DataChunk &output);
 	void Filter(idx_t count, DataChunk &output);
 	bool DecodeValue(const CsvScanColumn &column, const CsvField &field, Vector &vector, idx_t row, CsvRowError &error);
-	bool DecodeCopyValue(const CsvScanColumn &column, idx_t row, Vector &vector, CsvRowError &error);
+	bool DecodeCopyValue(const CsvScanColumn &column, idx_t row, Vector &vector, bool utf8_valid, CsvRowError &error);
 	bool ParseField(const CsvScanColumn &column, const char *value, idx_t size, bool owned, idx_t position,
 	                Vector &vector, idx_t row, CsvRowError &error);
 	bool IsNull(const CsvField &field, const char *value, idx_t size) const;

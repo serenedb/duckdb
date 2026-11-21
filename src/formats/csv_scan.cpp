@@ -1171,9 +1171,14 @@ std::string_view CsvScan::RawField(idx_t file_column, idx_t row) const {
 	return {bytes->data + begin, end - begin};
 }
 
-bool CsvScan::DecodeCopyValue(const CsvScanColumn &column, idx_t row, Vector &vector, CsvRowError &error) {
+bool CsvScan::DecodeCopyValue(const CsvScanColumn &column, idx_t row, Vector &vector, bool utf8_valid,
+                              CsvRowError &error) {
 	const auto raw = RawField(column.file_column, row);
 	const idx_t position = static_cast<idx_t>(raw.data() - bytes->data) + bytes->offset;
+	if (!utf8_valid && !Utf8Proc::IsValid(raw.data(), UnsafeNumericCast<uint32_t>(raw.size()))) {
+		error = {CSVErrorType::INVALID_ENCODING, column.file_column, position, string()};
+		return false;
+	}
 	copy_buffer.resize(raw.size());
 	std::string_view value = raw;
 	CopyFieldKind kind;
@@ -1670,7 +1675,7 @@ bool CsvScan::DecodeLeanColumn(idx_t column_idx, idx_t first, idx_t count, DataC
 		});
 	}
 	if (!retry.empty()) {
-		LeanRetry(column, vector);
+		LeanRetry(column, vector, utf8_valid);
 	}
 	return true;
 }
@@ -1701,13 +1706,13 @@ CsvField CsvScan::LeanField(const CsvScanColumn &column, idx_t row) const {
 	return field;
 }
 
-void CsvScan::LeanRetry(const CsvScanColumn &column, Vector &vector) {
+void CsvScan::LeanRetry(const CsvScanColumn &column, Vector &vector, bool utf8_valid) {
 	base = bytes->offset;
 	auto &validity = FlatVector::ValidityMutable(vector);
 	for (const auto row : retry) {
 		validity.SetValid(row);
 		CsvRowError error;
-		const bool decoded = global.copy ? DecodeCopyValue(column, row, vector, error)
+		const bool decoded = global.copy ? DecodeCopyValue(column, row, vector, utf8_valid, error)
 		                                 : DecodeValue(column, LeanField(column, row), vector, row, error);
 		if (!decoded) {
 			FlatVector::SetNull(vector, row, true);
