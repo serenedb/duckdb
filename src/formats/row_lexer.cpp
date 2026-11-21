@@ -133,29 +133,44 @@ RowDialect RowDialect::PostgresText(char delimiter, char line_break) {
 	return result;
 }
 
+bool RowFields::Fits(idx_t rows_used, idx_t ends_used, idx_t more) const {
+	const idx_t row_head = NumericCast<idx_t>(rows - row_store.get());
+	const idx_t end_head = NumericCast<idx_t>(ends - end_store.get());
+	return MaxValue(row_head + rows_used, end_head + ends_used) + more + FIELD_SLACK <= capacity;
+}
+
 void RowFields::Reserve(idx_t more) {
+	if (Fits(row_count, end_count, more)) {
+		return;
+	}
 	const idx_t needed = MaxValue(row_count, end_count) + more + FIELD_SLACK;
 	if (needed <= capacity) {
+		memmove(row_store.get(), rows, row_count * sizeof(uint32_t));
+		memmove(end_store.get(), ends, end_count * sizeof(uint32_t));
+		rows = row_store.get();
+		ends = end_store.get();
 		return;
 	}
 	const idx_t grown = MaxValue(needed, capacity * 2);
 	auto new_rows = make_unsafe_uniq_array_uninitialized<uint32_t>(grown);
 	auto new_ends = make_unsafe_uniq_array_uninitialized<uint32_t>(grown);
 	if (row_count) {
-		memcpy(new_rows.get(), rows.get(), row_count * sizeof(uint32_t));
+		memcpy(new_rows.get(), rows, row_count * sizeof(uint32_t));
 	}
 	if (end_count) {
-		memcpy(new_ends.get(), ends.get(), end_count * sizeof(uint32_t));
+		memcpy(new_ends.get(), ends, end_count * sizeof(uint32_t));
 	}
-	rows = std::move(new_rows);
-	ends = std::move(new_ends);
+	row_store = std::move(new_rows);
+	end_store = std::move(new_ends);
+	rows = row_store.get();
+	ends = end_store.get();
 	capacity = grown;
 }
 
 void RowFields::Drop(idx_t count, idx_t dropped_ends) {
 	D_ASSERT(count <= row_count && dropped_ends <= end_count && open_extras <= extras.size());
-	memmove(rows.get(), rows.get() + count, (row_count - count) * sizeof(uint32_t));
-	memmove(ends.get(), ends.get() + dropped_ends, (end_count - dropped_ends) * sizeof(uint32_t));
+	rows += count;
+	ends += dropped_ends;
 	row_count -= count;
 	end_count -= dropped_ends;
 	if (!events.empty()) {
@@ -446,14 +461,14 @@ bool RowLexer::FeedBlocks(RowCursor &cursor, const char *data, idx_t base, idx_t
 	uint32_t *ends_out = nullptr;
 	if (EXTRACT) {
 		fields->Reserve(end - c.pos + CSV_BLOCK_BYTES + 1);
-		rows_out = fields->rows.get() + fields->row_count;
-		ends_out = fields->ends.get() + fields->end_count;
+		rows_out = fields->rows + fields->row_count;
+		ends_out = fields->ends + fields->end_count;
 	}
 	auto fail = [&]() {
 		c.ok = false;
 		if (EXTRACT) {
-			fields->row_count = static_cast<idx_t>(rows_out - fields->rows.get());
-			fields->end_count = static_cast<idx_t>(ends_out - fields->ends.get());
+			fields->row_count = static_cast<idx_t>(rows_out - fields->rows);
+			fields->end_count = static_cast<idx_t>(ends_out - fields->ends);
 		}
 		cursor = c;
 		return false;
@@ -789,7 +804,7 @@ bool RowLexer::FeedBlocks(RowCursor &cursor, const char *data, idx_t base, idx_t
 		const uint64_t line_ends = (d.empty_lines ? row_ends & ~after_terms : row_ends) | comment_ends;
 		uint64_t row_starts = after_terms & ~(terms & merged) & ~region & valid;
 		const idx_t events_from = EXTRACT ? fields->events.size() : 0;
-		const idx_t rows_before = EXTRACT ? static_cast<idx_t>(rows_out - fields->rows.get()) : 0;
+		const idx_t rows_before = EXTRACT ? static_cast<idx_t>(rows_out - fields->rows) : 0;
 		if (EXTRACT && events) {
 			for (uint64_t pending = events; pending; pending &= pending - 1) {
 				const uint64_t at = Lowest(pending);
@@ -1078,19 +1093,19 @@ bool RowLexer::FeedBlocks(RowCursor &cursor, const char *data, idx_t base, idx_t
 				FlagFields(specials, boundaries, c.pending_flag, block_ends);
 			}
 			if (irregular) {
-				const idx_t first_end = static_cast<idx_t>(block_ends - fields->ends.get());
+				const idx_t first_end = static_cast<idx_t>(block_ends - fields->ends);
 				const idx_t written = static_cast<idx_t>(ends_out - block_ends);
 				uint32_t raw[CSV_BLOCK_BYTES + 1];
 				memcpy(raw, block_ends, written * sizeof(uint32_t));
-				const idx_t rows_used = static_cast<idx_t>(rows_out - fields->rows.get());
+				const idx_t rows_used = static_cast<idx_t>(rows_out - fields->rows);
 				const idx_t more = written * columns + (end - c.pos) + CSV_BLOCK_BYTES;
-				if (MaxValue(rows_used, first_end) + more + FIELD_SLACK > fields->capacity) {
+				if (!fields->Fits(rows_used, first_end, more)) {
 					fields->row_count = rows_used;
 					fields->end_count = first_end;
 					fields->Reserve(more);
-					rows_out = fields->rows.get() + rows_used;
+					rows_out = fields->rows + rows_used;
 				}
-				uint32_t *out = fields->ends.get() + first_end;
+				uint32_t *out = fields->ends + first_end;
 				for (idx_t i = 0; i < written; i++) {
 					if ((row_pattern >> i) & 1) {
 						EndRow(c, *fields, raw[i], rows_used, out);
@@ -1106,17 +1121,17 @@ bool RowLexer::FeedBlocks(RowCursor &cursor, const char *data, idx_t base, idx_t
 				}
 				ends_out = out;
 			} else if (pad_count) {
-				const idx_t first_end = static_cast<idx_t>(block_ends - fields->ends.get());
+				const idx_t first_end = static_cast<idx_t>(block_ends - fields->ends);
 				const idx_t written = static_cast<idx_t>(ends_out - block_ends);
-				const idx_t rows_used = static_cast<idx_t>(rows_out - fields->rows.get());
+				const idx_t rows_used = static_cast<idx_t>(rows_out - fields->rows);
 				const idx_t more = pad_total + (end - c.pos) + CSV_BLOCK_BYTES;
-				if (MaxValue(rows_used, first_end + written) + more + FIELD_SLACK > fields->capacity) {
+				if (!fields->Fits(rows_used, first_end + written, more)) {
 					fields->row_count = rows_used;
 					fields->end_count = first_end + written;
 					fields->Reserve(more);
-					rows_out = fields->rows.get() + rows_used;
+					rows_out = fields->rows + rows_used;
 				}
-				uint32_t *const block_start = fields->ends.get() + first_end;
+				uint32_t *const block_start = fields->ends + first_end;
 				idx_t shift = pad_total;
 				idx_t tail = written;
 				for (idx_t k = pad_count; k-- > 0;) {
@@ -1148,8 +1163,8 @@ bool RowLexer::FeedBlocks(RowCursor &cursor, const char *data, idx_t base, idx_t
 		c.pos += size;
 	}
 	if (EXTRACT) {
-		fields->row_count = static_cast<idx_t>(rows_out - fields->rows.get());
-		fields->end_count = static_cast<idx_t>(ends_out - fields->ends.get());
+		fields->row_count = static_cast<idx_t>(rows_out - fields->rows);
+		fields->end_count = static_cast<idx_t>(ends_out - fields->ends);
 	}
 	cursor = c;
 	return true;
@@ -1280,9 +1295,9 @@ bool RowLexer::Finish(RowCursor &cursor, const char *data, idx_t base, idx_t end
 					position |= ROW_FIELD_FLAG;
 				}
 				if (irregular) {
-					uint32_t *out = fields->ends.get() + fields->end_count;
+					uint32_t *out = fields->ends + fields->end_count;
 					EndRow(c, *fields, position, fields->row_count, out);
-					fields->end_count = static_cast<idx_t>(out - fields->ends.get());
+					fields->end_count = static_cast<idx_t>(out - fields->ends);
 				} else {
 					fields->ends[fields->end_count++] = position;
 					for (idx_t i = 0; i < pads; i++) {
