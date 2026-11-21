@@ -142,11 +142,20 @@ static unique_ptr<FunctionData> ReadSingleCSVFileBind(ClientContext &context, Ta
 	auto &file_input = TableFunctionFileBindInput::Get(input);
 	auto result = make_uniq<ReadSingleCSVFileData>();
 	auto &options = result->options;
-	for (auto &kv : input.named_parameters) {
-		options.ParseOption(context, kv.first, kv.second);
-	}
-	if (file_input.copy_rules) {
-		ApplyCopyRules(options, file_input.copy_rules);
+	optional_ptr<const ReadSingleCSVFileData> schema_source;
+	if (file_input.HasExpectedSchema() && file_input.expected_bind_data) {
+		// the schema of the scan was determined on (other) files of this scan - start from the options it was
+		// determined with, so that this file is read with the same dialect
+		schema_source = file_input.expected_bind_data->Cast<ReadSingleCSVFileData>();
+		options = schema_source->options;
+		options.force_not_null.clear();
+	} else {
+		for (auto &kv : input.named_parameters) {
+			options.ParseOption(context, kv.first, kv.second);
+		}
+		if (file_input.copy_rules) {
+			ApplyCopyRules(options, file_input.copy_rules);
+		}
 	}
 	if (input.inputs[0].IsNull()) {
 		throw BinderException("read_single_csv_file requires a non-NULL file name");
@@ -163,14 +172,8 @@ static unique_ptr<FunctionData> ReadSingleCSVFileBind(ClientContext &context, Ta
 	//! Whether the options that name columns are verified against the columns of this file, which is the schema of
 	//! the scan only when this file is the whole scan
 	bool verify_against_file = false;
-	optional_ptr<const ReadSingleCSVFileData> schema_source;
 	if (file_input.HasExpectedSchema()) {
-		if (file_input.expected_bind_data) {
-			// the schema of the scan was determined on (other) files of this scan - start from the options it was
-			// determined with, so that this file is read with the same dialect
-			schema_source = file_input.expected_bind_data->Cast<ReadSingleCSVFileData>();
-			options = schema_source->options;
-			options.force_not_null.clear();
+		if (schema_source) {
 			names = *file_input.expected_names;
 			return_types = *file_input.expected_types;
 		} else {
@@ -278,6 +281,17 @@ static unique_ptr<FunctionData> ReadSingleCSVFileCombineSchema(ClientContext &co
 		}
 		// the files have different columns - every file is read the way it was bound
 		return nullptr;
+	}
+	if (!input.bind_data.empty() && !input.bind_data[0].get().Cast<ReadSingleCSVFileData>().options.auto_detect) {
+		auto &first = input.bind_data[0].get().Cast<ReadSingleCSVFileData>();
+		VerifyForceNotNull(first.options, names);
+		auto result = make_uniq<ReadSingleCSVFileData>();
+		result->options = first.options;
+		result->buffer_manager = first.buffer_manager;
+		result->csv_names = names;
+		result->csv_types = return_types;
+		result->Finalize();
+		return std::move(result);
 	}
 	optional_ptr<const ReadSingleCSVFileData> first_file;
 	CSVSchema best_schema;
