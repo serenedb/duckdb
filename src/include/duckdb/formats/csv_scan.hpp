@@ -19,7 +19,6 @@
 #include "duckdb/formats/row_ranges.hpp"
 #include "duckdb/formats/value_codecs.hpp"
 #include "duckdb/function/scalar/strftime_format.hpp"
-#include "duckdb/parallel/async_result.hpp"
 #include "duckdb/planner/table_filter_set.hpp"
 #include "duckdb/planner/table_filter_state.hpp"
 
@@ -150,7 +149,6 @@ public:
 	bool AllFinished() const {
 		return ranges->AllFinished();
 	}
-	vector<unique_ptr<AsyncTask>> LoadTasks(idx_t range) const;
 	shared_ptr<CSVBufferHandle> Buffer(idx_t buffer) const {
 		return source.buffer_manager->GetBuffer(buffer);
 	}
