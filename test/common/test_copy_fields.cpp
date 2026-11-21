@@ -541,3 +541,57 @@ TEST_CASE("COPY reads PostgreSQL's encoding names", "[copy]") {
 	REQUIRE(*CopyOutputEncoding("utf-16be") == TextEncoding::UTF16_BE);
 	REQUIRE(*CopyOutputEncoding("utf-32le") == TextEncoding::UTF32_LE);
 }
+
+TEST_CASE("COPY's text format reads hex escapes of either case and stops at the first byte that is no digit",
+          "[copy]") {
+	string out(64, '\0');
+	REQUIRE(UnescapePostgresText("\\x!\\xab\\xAB\\xfg\\x4", &out[0]) == string("x!\xAB\xAB\x0F") + "g\x04");
+	REQUIRE(UnescapePostgresText("\\1!", &out[0]) == "\x01!");
+}
+
+TEST_CASE("COPY's line break finder steps over the byte an escape at the end of a piece escapes", "[copy]") {
+	CopyFormatOptions options;
+	options.format = CopyFormat::CSV;
+	options.escape = '\\';
+	for (const string second : {"\\b\"\r", "nb\"\r"}) {
+		INFO("second piece " << Escaped(second));
+		CopyLineBreakFinder finder(options);
+		REQUIRE(finder.Feed("\"a\\") == '\0');
+		REQUIRE(finder.Feed(second) == '\0');
+		REQUIRE(finder.Finish() == '\r');
+	}
+}
+
+TEST_CASE("COPY's printout of a long value ends at a character start, even with none in its first bytes", "[copy]") {
+	REQUIRE(CopyPrintout("a" + string(150, '\x80')) == "...");
+	REQUIRE(CopyPrintout(string(99, 'a') + "\xC3\xA9z") == string(99, 'a') + "...");
+}
+
+TEST_CASE("COPY's encoder names invalid UTF-8 however many continuation bytes end its input", "[copy]") {
+	CopyEncoder encoder(TextEncoding::LATIN1);
+	string out;
+	encoder.Encode("", out);
+	REQUIRE(out.empty());
+	REQUIRE(ErrorOf([] { EncodeInChunks(TextEncoding::LATIN1, "\x80", 1); }) ==
+	        "invalid byte sequence for encoding \"UTF8\": 0x80");
+	REQUIRE(ErrorOf([] { EncodeInChunks(TextEncoding::UTF16_LE, "a\x80\x80\x80\x80", 64); }) ==
+	        "invalid byte sequence for encoding \"UTF8\": 0x80");
+	REQUIRE(ErrorOf([] { EncodeInChunks(TextEncoding::UTF32_LE, "ab\x80", 64); }) ==
+	        "invalid byte sequence for encoding \"UTF8\": 0x80");
+}
+
+TEST_CASE("COPY in binary mode refuses the options of the text formats under every spelling", "[copy]") {
+	const auto refused = [](const char *key) {
+		identifier_map_t<vector<Value>> options;
+		options[key] = {Value("x")};
+		return ErrorOf([&] { ParseCopyFormatOptions(CopyFormat::BINARY, true, options); });
+	};
+	for (const auto key : {"delim", "sep", "separator"}) {
+		REQUIRE(refused(key) == "cannot specify DELIMITER in BINARY mode");
+	}
+	REQUIRE(refused("nullstr") == "cannot specify NULL in BINARY mode");
+	REQUIRE(refused("escape") == "COPY ESCAPE requires CSV mode");
+	REQUIRE(refused("force_quote") == "COPY FORCE_QUOTE requires CSV mode");
+	REQUIRE(refused("force_not_null") == "COPY FORCE_NOT_NULL requires CSV mode");
+	REQUIRE(refused("force_null") == "COPY FORCE_NULL requires CSV mode");
+}
