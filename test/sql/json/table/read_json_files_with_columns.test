@@ -1,0 +1,28 @@
+# name: test/sql/json/table/read_json_files_with_columns.test
+# description: every file of a read_json with columns is read with the options of the scan, each in the format it is written in
+# group: [table]
+
+require json
+
+statement ok
+COPY (SELECT 1 AS id, 'a' AS name UNION ALL SELECT 2, 'b') TO '{TEMP_DIR}/with_columns_1.json' (FORMAT json);
+
+statement ok
+COPY (SELECT 3 AS id, 'c' AS name UNION ALL SELECT 4, NULL) TO '{TEMP_DIR}/with_columns_2.json' (FORMAT json, ARRAY true);
+
+statement ok
+COPY (SELECT 5 AS id, 'e' AS name) TO '{TEMP_DIR}/with_columns_3.json' (FORMAT json);
+
+query IIII
+SELECT count(*), sum(id), count(name), max(name) FROM read_json('{TEMP_DIR}/with_columns_*.json', columns = {id: 'INTEGER', name: 'VARCHAR'})
+----
+5	15	4	e
+
+query II
+SELECT id, name FROM read_json('{TEMP_DIR}/with_columns_*.json', columns = {id: 'INTEGER', name: 'VARCHAR'}) ORDER BY id
+----
+1	a
+2	b
+3	c
+4	NULL
+5	e
