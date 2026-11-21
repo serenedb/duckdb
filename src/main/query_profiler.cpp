@@ -79,7 +79,7 @@ QueryProfiler::QueryProfiler(ClientContext &context_p)
 }
 
 bool QueryProfiler::IsEnabled() const {
-	return is_explain_analyze || ClientConfig::GetConfig(context).enable_profiler;
+	return is_explain_analyze || (query_running ? profiles_query : ClientConfig::GetConfig(context).enable_profiler);
 }
 
 unique_ptr<TreeRenderer> QueryProfiler::CreateProfiler(const string &name) const {
@@ -138,6 +138,8 @@ void QueryProfiler::Reset() {
 
 void QueryProfiler::StartQuery(std::string_view query, bool is_explain_analyze_p, bool start_at_optimizer) {
 	lock_guard<mutex> guard(lock);
+	query_running = true;
+	profiles_query = ClientConfig::GetConfig(context).enable_profiler;
 	// Always reset byte counters at the start of each query so the progress bar shows per-query values
 	query_metrics.bytes_read = 0;
 	query_metrics.bytes_written = 0;
@@ -224,6 +226,7 @@ void QueryProfiler::StartExplainAnalyze() {
 
 void QueryProfiler::EndQuery() {
 	unique_lock<mutex> guard(lock);
+	query_running = false;
 	if (!running) {
 		return;
 	}
