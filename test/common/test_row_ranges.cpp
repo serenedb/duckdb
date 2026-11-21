@@ -814,6 +814,58 @@ TEST_CASE("read_csv reads a live host stream in parallel as it arrives", "[csv]"
 	}
 }
 
+TEST_CASE("read_json reads a live host stream as it arrives, however it is split", "[csv]") {
+	DuckDB db(nullptr);
+	Connection con(db);
+	REQUIRE_NO_FAIL(con.Query("SET threads = 8"));
+	std::mt19937_64 rng(71);
+	string lines;
+	string array = "\xEF\xBB\xBF \n[ \n";
+	idx_t sum = 0;
+	for (idx_t row = 0; row < 30000; row++) {
+		const idx_t value = rng() % 1000000;
+		sum += value;
+		const string record = "{\"a\": " + to_string(value) + ", \"b\": \"" + string(rng() % 40, 'x') + "\"}";
+		lines += record + "\n";
+		array += (row ? " ,\n " : "") + record;
+	}
+	array += " \n]\n";
+	const auto path = TestCreatePath("live_row_stream.json");
+	{
+		std::ofstream out(path, std::ios::binary);
+		out << "{}\n";
+	}
+	const vector<std::pair<string, string>> inputs = {{lines, "newline_delimited"}, {array, "array"}};
+	for (auto &[data, format] : inputs) {
+		for (idx_t round = 0; round < 3; round++) {
+			auto live = make_shared_ptr<LiveRowStream>();
+			con.context->registered_state->Insert(RowStreamKey(path), make_shared_ptr<RowStreamState>(live));
+			std::thread writer([&]() {
+				std::mt19937_64 writer_rng(round);
+				const idx_t largest = round == 0 ? 3 : 100000;
+				for (idx_t at = 0; at < data.size();) {
+					const idx_t piece = MinValue<idx_t>(1 + writer_rng() % largest, data.size() - at);
+					live->Append(std::string_view(data).substr(at, piece));
+					at += piece;
+					if (writer_rng() % 64 == 0) {
+						std::this_thread::sleep_for(std::chrono::microseconds(writer_rng() % 200));
+					}
+				}
+				live->Close();
+			});
+			auto result = con.Query("SELECT count(*), sum(a), count(DISTINCT b) FROM read_json('" + path +
+			                        "', format = '" + format + "', columns = {'a': 'BIGINT', 'b': 'VARCHAR'})");
+			writer.join();
+			con.context->registered_state->Remove(RowStreamKey(path));
+			INFO(format << " round " << round);
+			REQUIRE(CHECK_COLUMN(result, 0, {30000}));
+			REQUIRE(CHECK_COLUMN(result, 1, {Value::BIGINT(NumericCast<int64_t>(sum))}));
+			REQUIRE(CHECK_COLUMN(result, 2, {40}));
+			REQUIRE(!live->ReadReleased());
+		}
+	}
+}
+
 TEST_CASE("read_csv reads the stream the host registers for its path", "[csv]") {
 	DuckDB db(nullptr);
 	Connection con(db);

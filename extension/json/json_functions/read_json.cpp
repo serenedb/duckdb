@@ -83,7 +83,7 @@ public:
 		JsonScanColumns columns;
 		JsonScanGlobal global(context, json_data, source, std::move(columns), false);
 		JsonScan scan(global);
-		const auto file_size = source->Size();
+		const auto file_size = source->FileSize();
 		while (remaining != 0) {
 			allocator.Reset();
 			const JSONNode **values = nullptr;
