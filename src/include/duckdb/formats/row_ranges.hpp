@@ -311,7 +311,7 @@ private:
 	bool Extend();
 	void Rebase();
 	void OpenRowFits();
-	void ReadPiece();
+	void ReadPiece(idx_t piece);
 	bool Waits() const;
 	idx_t KeepFrom() const;
 	bool CheckCountUtf8(idx_t end);

@@ -1118,8 +1118,8 @@ idx_t RowRangeReader::KeepFrom() const {
 	return MaxValue(keep, window.bytes->offset);
 }
 
-void RowRangeReader::ReadPiece() {
-	window.Read(KeepFrom());
+void RowRangeReader::ReadPiece(idx_t piece) {
+	window.Read(KeepFrom(), piece);
 	if (ranges.stream && !ranges.Intake()) {
 		lex_stop = MinValue(lex_stop, ranges.Size());
 	}
@@ -1161,7 +1161,7 @@ bool RowRangeReader::Lex() {
 			                       : DConstants::INVALID_INDEX;
 			if (found == DConstants::INVALID_INDEX) {
 				if (!eof) {
-					ReadPiece();
+					ReadPiece(MaxValue<idx_t>(RowWindow::PIECE, read_to - MinValue(read_to, from)));
 					return true;
 				}
 				found = size;
@@ -1226,7 +1226,9 @@ bool RowRangeReader::Lex() {
 	if (lex_stop != DConstants::INVALID_INDEX && cursor.pos == lex_stop) {
 		return FinishRange();
 	}
-	ReadPiece();
+	const idx_t sync_from = limit - MinValue<idx_t>(limit, 1);
+	const bool syncing = lex_stop == DConstants::INVALID_INDEX && read_to > sync_from;
+	ReadPiece(syncing ? MaxValue<idx_t>(RowWindow::PIECE, read_to - sync_from) : RowWindow::PIECE);
 	return true;
 }
 
@@ -1298,7 +1300,7 @@ bool RowRangeReader::Extend() {
 		if (eof) {
 			break;
 		}
-		ReadPiece();
+		ReadPiece(RowWindow::PIECE);
 	}
 	idx_t stop = ranges.Size();
 	if (probe.first_term != DConstants::INVALID_INDEX) {
