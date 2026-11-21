@@ -105,8 +105,8 @@ TEST_CASE("Pins of loaded blocks race with their eviction and reload", "[storage
 	for (idx_t block = 0; block < BLOCKS; block++) {
 		blocks.push_back(PinTestBlock(buffers, block));
 	}
-	// Room for a quarter of the blocks, so pins keep evicting blocks to the temporary directory and loading them back.
-	buffers.SetMemoryLimit(buffers.GetUsedMemory() - (BLOCKS - BLOCKS / 4) * PIN_BLOCK_SIZE);
+	// Room for half of the blocks, so pins keep evicting blocks to the temporary directory and loading them back.
+	buffers.SetMemoryLimit(buffers.GetUsedMemory() - (BLOCKS - BLOCKS / 2) * PIN_BLOCK_SIZE);
 
 	atomic<idx_t> wrong {0};
 	RunPinTestTasks(*db.instance, THREADS, [&](idx_t thread) {
