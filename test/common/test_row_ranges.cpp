@@ -1083,6 +1083,7 @@ TEST_CASE("A stream of short rows is cut into pieces of about the range size", "
 		idx_t range_bytes;
 	};
 	const vector<Case> cases = {{RowDialect::PostgresText('\t'), "1\n", 64},
+	                            {RowDialect::PostgresText('\t'), "\n", 64},
 	                            {RowDialect::PostgresText('\t'), "1\r\n", 64},
 	                            {RowDialect::DuckDB(TestGrammar(',', false, NewLineIdentifier::CARRY_ON)), "1\r\n", 65},
 	                            {RowDialect::DuckDB(TestGrammar(',', false, NewLineIdentifier::CARRY_ON)), "1\r", 65},
@@ -1117,14 +1118,25 @@ TEST_CASE("A stream of short rows is cut into pieces of about the range size", "
 	}
 }
 
-TEST_CASE("A text stream of empty lines is read as one empty row per line", "[csv]") {
-	const string input(5000, '\n');
-	RowLexer lexer(RowDialect::PostgresText('\t'), 1, NumericLimits<idx_t>::Maximum(), true, false, true);
-	RowRangesTestStream whole(input);
-	const auto expected = ReadRows(lexer, whole);
-	REQUIRE(expected.size() == 5000);
-	RowRangesTestStream stream(input);
-	REQUIRE(ReadRanges(lexer, stream, 64) == expected);
+TEST_CASE("A text stream with runs of empty lines is cut inside them at the rows the whole input has", "[csv]") {
+	std::mt19937_64 rng(7);
+	for (const bool crlf : {false, true}) {
+		string input;
+		for (idx_t row = 0; row < 5000; row++) {
+			input += rng() % 4 ? "" : "x\\\\y";
+			input += crlf ? "\r\n" : "\n";
+		}
+		input += string(3000, '\n');
+		RowLexer lexer(RowDialect::PostgresText('\t'), 1, NumericLimits<idx_t>::Maximum(), true, false, true);
+		RowRangesTestStream whole(input);
+		const auto expected = ReadRows(lexer, whole);
+		REQUIRE(expected.size() == 8000);
+		for (const idx_t range_bytes : {idx_t(1), idx_t(7), idx_t(64), idx_t(1) << 12}) {
+			INFO("crlf " << crlf << ", range " << range_bytes);
+			RowRangesTestStream stream(input);
+			REQUIRE(ReadRanges(lexer, stream, range_bytes) == expected);
+		}
+	}
 }
 
 TEST_CASE("A stream whose unquoted escapes start mid-way is cut at the rows the whole input has", "[csv]") {

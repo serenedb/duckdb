@@ -300,7 +300,7 @@ private:
 	void StartSearch(RowSearch &search) const;
 	idx_t CutIntake(RowSearch &search, bool idle) const;
 	void QuoteParityTerm(const RowBytes &bytes, idx_t from, idx_t read_to, bool quoted, RowCursor &last) const;
-	idx_t LineBreaksFrom(const RowBytes &bytes, idx_t read_to) const;
+	idx_t LineEndBefore(const RowBytes &bytes, idx_t position, idx_t floor) const;
 	void EscapeParityTerm(const RowBytes &bytes, idx_t from, idx_t limit, RowCursor &last) const;
 	void PlainTerm(const RowBytes &bytes, idx_t from, idx_t limit, RowCursor &last) const;
 	idx_t IntakeCut(const RowCursor &probe) const;
