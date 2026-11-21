@@ -201,7 +201,7 @@ static unique_ptr<GlobalTableFunctionState> ReadSingleJSONFileInitGlobal(ClientC
 	}
 	const bool parallel = TaskScheduler::QueryThreads(context) > 1;
 	result->global = make_uniq<JsonScanGlobal>(context, json_data, source, std::move(gstate), parallel);
-	source->StopRecording();
+	source->ReadInOrder();
 	return std::move(result);
 }
 

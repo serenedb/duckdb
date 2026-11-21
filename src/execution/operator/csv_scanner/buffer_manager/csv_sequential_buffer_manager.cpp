@@ -67,6 +67,60 @@ shared_ptr<CSVBufferHandle> CSVSequentialBufferManager::GetBuffer(const idx_t po
 	}
 }
 
+idx_t CSVSequentialBufferManager::ReadInOrder(char *data, idx_t count, idx_t offset) {
+	idx_t read = 0;
+	while (read < count) {
+		const idx_t position = offset + read;
+		shared_ptr<CSVBufferHandle> pinned;
+		{
+			lock_guard<mutex> parallel_lock(main_mutex);
+			const idx_t index = position / buffer_size;
+			if (index >= cached_buffers.size() || !cached_buffers[index]) {
+				break;
+			}
+			pinned = cached_buffers[index]->Pin(*file_handle, has_seeked);
+		}
+		const idx_t within = position % buffer_size;
+		if (within >= pinned->actual_size) {
+			break;
+		}
+		const idx_t piece = MinValue(count - read, pinned->actual_size - within);
+		memcpy(data + read, pinned->Ptr() + within, piece);
+		read += piece;
+	}
+	if (read == count) {
+		return read;
+	}
+	lock_guard<mutex> read_guard(read_lock);
+	{
+		lock_guard<mutex> parallel_lock(main_mutex);
+		if (last_buffer && last_buffer->IsCSVFileLastBuffer()) {
+			MarkDone(*last_buffer);
+		}
+		if (done) {
+			return read;
+		}
+		if (!direct_position.IsValid()) {
+			direct_position = last_buffer ? last_buffer->GlobalEnd() : global_csv_pos;
+		}
+	}
+	D_ASSERT(offset + read == direct_position.GetIndex());
+	idx_t position = direct_position.GetIndex();
+	while (read < count) {
+		const idx_t got = file_handle->Read(data + read, count - read);
+		if (got == 0) {
+			lock_guard<mutex> parallel_lock(main_mutex);
+			done = true;
+			known_end = position;
+			break;
+		}
+		read += got;
+		position += got;
+	}
+	direct_position = position;
+	return read;
+}
+
 void CSVSequentialBufferManager::MarkDone(const CSVBuffer &last) {
 	done = true;
 	known_end = last.GlobalEnd();

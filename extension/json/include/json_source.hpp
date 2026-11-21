@@ -8,12 +8,10 @@
 
 #pragma once
 
-#include "duckdb/common/allocator.hpp"
 #include "duckdb/common/atomic.hpp"
 #include "duckdb/common/enums/file_compression_type.hpp"
-#include "duckdb/common/file_system.hpp"
 #include "duckdb/common/open_file_info.hpp"
-#include "duckdb/formats/row_ranges.hpp"
+#include "duckdb/formats/row_input.hpp"
 #include "duckdb/main/client_context.hpp"
 
 namespace duckdb {
@@ -25,43 +23,33 @@ public:
 	const string &Path() const {
 		return file.path;
 	}
-	bool Positional() const {
-		return positional;
+	RowSource &Rows() const {
+		return input->Rows();
 	}
-	bool Remote() const {
-		return remote;
+	bool Stream() const {
+		return input->stream;
 	}
 	idx_t Size() const {
-		return size;
+		return input->size;
 	}
-	idx_t ReadAt(char *data, idx_t count, idx_t offset, optional_ptr<FileHandle> thread_handle = nullptr);
-	idx_t Read(char *data, idx_t count);
-	void Release(idx_t offset);
-	idx_t Position() const {
-		return position;
+	idx_t FileSize() const;
+	void Rewind() {
+		consumed = 0;
 	}
-	void Rewind();
-	void StopRecording() {
-		recording = false;
+	void ReadInOrder() {
+		if (input->file) {
+			input->file->in_order = true;
+		}
+	}
+	void Consume(idx_t bytes) {
+		consumed += bytes;
 	}
 	double Progress() const;
-	unique_ptr<FileHandle> OpenThreadHandle() const;
 
 private:
-	ClientContext &context;
 	OpenFileInfo file;
-	unique_ptr<FileHandle> handle;
-	shared_ptr<RowSource> stream;
-	bool positional = false;
-	bool remote = false;
-	bool pipe = false;
-	bool compressed = false;
-	idx_t size = 0;
-	idx_t position = 0;
-	bool recording = true;
-	vector<AllocatedData> recorded;
-	idx_t recorded_size = 0;
-	idx_t replayed = 0;
+	shared_ptr<CSVBufferManager> manager;
+	unique_ptr<RowInput> input;
 	atomic<idx_t> consumed {0};
 };
 
