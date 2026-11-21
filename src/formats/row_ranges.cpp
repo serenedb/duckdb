@@ -170,7 +170,6 @@ void RowRanges::Reset(idx_t size_p, idx_t range_bytes_p) {
 	size.store(size_p, std::memory_order_release);
 	next_range = 0;
 	finished_ranges = 0;
-	resolved = 0;
 	Layout(range_bytes_p);
 }
 
@@ -191,12 +190,11 @@ void RowRanges::Layout(idx_t range_bytes_p) {
 	}
 	range_count.store(count, std::memory_order_release);
 	const idx_t slots = dynamic ? 1 : count;
-	transfers.assign(slots, CsvRangeTransfer());
-	computing.assign(slots, 0);
+	CsvRangeStart first;
+	first.line_end = start;
+	first.last_position = start;
+	chain.Assign(slots, first);
 	done.assign(dynamic ? slots : 0, false);
-	starts.assign(slots + 1, CsvRangeStart());
-	starts[0].line_end = start;
-	starts[0].last_position = start;
 	unfinished = 0;
 	released = 0;
 	intake_begin = start;
@@ -208,13 +206,11 @@ void RowRanges::Layout(idx_t range_bytes_p) {
 }
 
 void RowRanges::Grow(idx_t count) {
-	if (transfers.size() >= count) {
+	if (chain.transfers.size() >= count) {
 		return;
 	}
-	transfers.resize(count);
-	computing.resize(count, 0);
+	chain.Grow(count);
 	done.resize(count, false);
-	starts.resize(count + 1);
 }
 
 void RowRanges::FoundEnd(idx_t end) {
@@ -230,9 +226,9 @@ void RowRanges::FoundEnd(idx_t end) {
 }
 
 void RowRanges::ReleaseResolved() {
-	idx_t mark = lexer ? MinValue(unfinished, resolved) : unfinished;
+	idx_t mark = lexer ? MinValue(unfinished, chain.resolved) : unfinished;
 	for (idx_t range = released; range < mark; range++) {
-		if (computing[range] != 0) {
+		if (chain.computing[range] != 0) {
 			mark = range;
 			break;
 		}
@@ -460,11 +456,11 @@ bool RowRanges::AllFinished() const {
 void RowRanges::Computing(idx_t range, bool value) {
 	const absl::MutexLock guard(&lock);
 	if (value) {
-		computing[range]++;
+		chain.computing[range]++;
 		return;
 	}
-	D_ASSERT(computing[range] > 0);
-	computing[range]--;
+	D_ASSERT(chain.computing[range] > 0);
+	chain.computing[range]--;
 	if (dynamic) {
 		ReleaseResolved();
 	}
@@ -472,55 +468,26 @@ void RowRanges::Computing(idx_t range, bool value) {
 
 void RowRanges::Publish(idx_t range, CSVState origin, const CsvRangeEntry &entry) {
 	const absl::MutexLock guard(&lock);
-	auto &slot = transfers[range][static_cast<uint8_t>(origin)];
-	if (!slot.computed) {
-		slot = entry;
-	}
-	const idx_t known = MinValue<idx_t>(range_count.load(std::memory_order_relaxed), transfers.size());
-	const idx_t before = resolved;
-	while (resolved < known) {
-		auto &current = starts[resolved];
-		auto &found = transfers[resolved][static_cast<uint8_t>(current.states[1])];
-		if (!found.computed) {
-			break;
-		}
-		auto &next = starts[resolved + 1];
-		next = found.end;
-		next.Inherit(current);
-		resolved++;
-	}
-	if (dynamic && resolved != before) {
+	if (chain.Publish(range, static_cast<uint8_t>(origin), entry, range_count.load(std::memory_order_relaxed)) &&
+	    dynamic) {
 		ReleaseResolved();
 	}
 }
 
 CsvRangeEntry RowRanges::Entry(idx_t range, CSVState origin) const {
 	const absl::MutexLock guard(&lock);
-	return transfers[range][static_cast<uint8_t>(origin)];
+	return chain.transfers[range][static_cast<uint8_t>(origin)];
 }
 
 CsvRangeStart RowRanges::StartState(idx_t range) {
-	while (true) {
-		idx_t missing;
-		CSVState origin;
-		{
-			const absl::MutexLock guard(&lock);
-			auto ready = [&]() {
-				return resolved >= range || computing[resolved] == 0;
-			};
-			lock.Await(absl::Condition(&ready));
-			if (resolved >= range) {
-				return starts[range];
-			}
-			missing = resolved;
-			origin = starts[missing].states[1];
-			computing[missing]++;
-		}
-		absl::Cleanup stop = [&] {
-			Computing(missing, false);
-		};
-		Publish(missing, origin, Transfer(missing, origin));
-	}
+	return chain.StartState(
+	    lock, range, [&](idx_t missing, uint8_t origin) { return Transfer(missing, static_cast<CSVState>(origin)); },
+	    [&](idx_t missing, uint8_t origin, const CsvRangeEntry &entry) {
+		    chain.Publish(missing, origin, entry, range_count.load(std::memory_order_relaxed));
+		    if (dynamic) {
+			    ReleaseResolved();
+		    }
+	    });
 }
 
 RowWindow::RowWindow(RowRanges &ranges_p) : ranges(ranges_p) {

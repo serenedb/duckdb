@@ -890,3 +890,30 @@ TEST_CASE("read_csv reads the stream the host registers for its path", "[csv]") 
 	result = con.Query("SELECT count(*) FROM " + read);
 	REQUIRE(CHECK_COLUMN(result, 0, {1000}));
 }
+
+TEST_CASE("A range waiting on the chain computes the transfers no reader published", "[csv]") {
+	string data;
+	for (idx_t row = 0; row < 40; row++) {
+		data += to_string(row) + ",\"text with , and\nlines and \"\"quotes\"\" " + string(row % 7, 'x') + "\"\n";
+	}
+	const RowDialect dialects[] = {RowDialect::PostgresCsv(',', '"', '"'),
+	                               RowDialect::DuckDB(TestGrammar(',', false, NewLineIdentifier::SINGLE_N))};
+	for (auto &dialect : dialects) {
+		RowLexer lexer(dialect, 2, NumericLimits<idx_t>::Maximum(), true);
+		RowRangesTestStream source(data);
+		RowRanges lazy(Allocator::DefaultAllocator(), lexer, source, 0, data.size(), 13, true);
+		RowRanges published(Allocator::DefaultAllocator(), lexer, source, 0, data.size(), 13, true);
+		const idx_t count = lazy.RangeCount();
+		REQUIRE(count > 100);
+		lazy.StartState(count - 1);
+		for (idx_t range = 0; range < count; range++) {
+			const auto start = published.StartState(range);
+			published.Publish(range, start.states[1], published.Transfer(range, start.states[1]));
+			const auto resolved = lazy.StartState(range);
+			REQUIRE(resolved.states[0] == start.states[0]);
+			REQUIRE(resolved.states[1] == start.states[1]);
+			REQUIRE(resolved.line_end == start.line_end);
+			REQUIRE(resolved.last_position == start.last_position);
+		}
+	}
+}

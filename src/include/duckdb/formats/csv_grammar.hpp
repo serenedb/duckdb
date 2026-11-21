@@ -54,6 +54,8 @@ struct CsvRow {
 	idx_t lines;
 };
 
+struct CsvRangeEntry;
+
 struct CsvRangeStart {
 	CSVState states[2] = {CSVState::NOT_SET, CSVState::NOT_SET};
 	idx_t line_end = DConstants::INVALID_INDEX;
@@ -67,6 +69,10 @@ struct CsvRangeStart {
 			last_position = previous.last_position;
 		}
 	}
+	uint8_t Origin() const {
+		return static_cast<uint8_t>(states[1]);
+	}
+	CsvRangeStart Next(const CsvRangeEntry &entry) const;
 };
 
 struct CsvRangeEntry {
@@ -76,7 +82,15 @@ struct CsvRangeEntry {
 	bool computed = false;
 };
 
-using CsvRangeTransfer = array<CsvRangeEntry, static_cast<idx_t>(CSVState::MAYBE_QUOTED) + 1>;
+inline CsvRangeStart CsvRangeStart::Next(const CsvRangeEntry &entry) const {
+	auto next = entry.end;
+	next.Inherit(*this);
+	return next;
+}
+
+constexpr idx_t CSV_RANGE_ORIGINS = static_cast<idx_t>(CSVState::MAYBE_QUOTED) + 1;
+
+using CsvRangeTransfer = array<CsvRangeEntry, CSV_RANGE_ORIGINS>;
 
 string CsvStripSeparator(const char *value, idx_t size, char separator);
 

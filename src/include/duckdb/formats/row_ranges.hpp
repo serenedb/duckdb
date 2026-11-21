@@ -13,6 +13,7 @@
 #include "duckdb/common/mutex.hpp"
 #include "duckdb/common/optional_idx.hpp"
 #include "duckdb/common/types/vector_buffer.hpp"
+#include "duckdb/formats/row_chain.hpp"
 #include "duckdb/formats/row_lexer.hpp"
 
 namespace duckdb {
@@ -148,7 +149,6 @@ private:
 	const char *whole_data = nullptr;
 	idx_t next_range = 0;
 	idx_t finished_ranges = 0;
-	idx_t resolved = 0;
 	idx_t unfinished = 0;
 	idx_t released = 0;
 	idx_t intake_begin = 0;
@@ -157,10 +157,8 @@ private:
 	idx_t tickets = 0;
 	idx_t serving = 0;
 	bool cutting = false;
-	vector<CsvRangeTransfer> transfers;
-	vector<uint32_t> computing;
 	vector<bool> done;
-	vector<CsvRangeStart> starts;
+	RowChain<CsvRangeStart, CsvRangeEntry, CSV_RANGE_ORIGINS> chain;
 };
 
 enum class RowReadResult : uint8_t { ROWS, FLUSH, COUNTED, DONE };
