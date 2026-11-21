@@ -2,6 +2,7 @@
 #include "catch.hpp"
 #include "duckdb.hpp"
 #include "duckdb/common/fault_points.hpp"
+#include "duckdb/execution/operator/csv_scanner/csv_buffer_manager.hpp"
 #include "duckdb/formats/row_lexer.hpp"
 #include "duckdb/formats/row_ranges.hpp"
 #include "duckdb/formats/row_stream.hpp"
@@ -943,6 +944,36 @@ TEST_CASE("A single-threaded scan of a compressed CSV holds only the buffers it 
 	}
 	REQUIRE(rows == 1000000);
 	REQUIRE(held <= 8 * 1048576);
+}
+
+TEST_CASE("A sequential CSV buffer manager releases a buffer handed back before the one ahead of it", "[csv]") {
+	DuckDB db(nullptr);
+	Connection con(db);
+	const auto path = TestCreatePath("release_out_of_order.csv.gz");
+	REQUIRE_NO_FAIL(con.Query("COPY (SELECT i AS a, 'value number ' || i AS b FROM range(1000000) t(i)) TO '" + path +
+	                          "' (HEADER false)"));
+	CSVReaderOptions options;
+	options.buffer_size_option.Set(1048576);
+	auto manager = CSVBufferManager::Open(*con.context, options, OpenFileInfo(path), false, nullptr);
+	REQUIRE(!manager->HasKnownBufferRanges());
+	auto &buffer_manager = BufferManager::GetBufferManager(*con.context);
+	const auto held = [&]() {
+		idx_t size = 0;
+		for (auto &info : buffer_manager.GetMemoryUsageInfo()) {
+			if (info.tag == MemoryTag::CSV_READER) {
+				size = info.size;
+			}
+		}
+		return size;
+	};
+	for (idx_t buffer = 0; buffer < 3; buffer++) {
+		REQUIRE(manager->GetBuffer(buffer));
+	}
+	const idx_t loaded = held();
+	manager->ResetBuffer(1);
+	REQUIRE(held() == loaded);
+	manager->ResetBuffer(0);
+	REQUIRE(held() + 1048576 <= loaded);
 }
 
 TEST_CASE("A range reader never writes into the windows that rows it handed out still hold", "[csv]") {
