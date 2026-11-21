@@ -530,18 +530,6 @@ static bool ReadSingleCSVFileSupportsLookup(optional_ptr<const FunctionData> bin
 	       !bind_data->Cast<ReadSingleCSVFileData>().options.ignore_errors.GetValue();
 }
 
-static AsyncResult ReadSingleCSVFileScheduleIO(ClientContext &context, TableFunctionInput &input) {
-	auto &gstate = input.global_state->Cast<ReadSingleCSVFileGlobalState>();
-	auto &lstate = input.local_state->Cast<ReadSingleCSVFileLocalState>();
-	if (!lstate.scanning) {
-		return SourceResultType::HAVE_MORE_OUTPUT;
-	}
-	return AsyncResult::FromTasks(gstate.scan->LoadTasks(lstate.range), TaskSchedulerType::ASYNC);
-}
-
-static void ReadSingleCSVFileFinishBatch(ClientContext &context, TableFunctionInput &input) {
-}
-
 static void ReadSingleCSVFileFunction(ClientContext &context, TableFunctionInput &input, DataChunk &output) {
 	auto &gstate = input.global_state->Cast<ReadSingleCSVFileGlobalState>();
 	auto &lstate = input.local_state->Cast<ReadSingleCSVFileLocalState>();
@@ -641,9 +629,6 @@ TableFunction ReadCSVTableFunction::GetMultiFileFunction(Identifier name) {
 	settings.sampled_schema_is_union = false;
 	settings.combine_schema = ReadSingleCSVFileCombineSchema;
 	settings.claim_batch = ReadSingleCSVFileClaimBatch;
-	settings.finish_batch = ReadSingleCSVFileFinishBatch;
-	settings.supports_read_ahead = ReadSingleCSVFileSupportsRandomAccess;
-	settings.schedule_io = ReadSingleCSVFileScheduleIO;
 	settings.lookup = ReadSingleCSVFileLookup;
 	settings.supports_lookup = ReadSingleCSVFileSupportsLookup;
 	settings.row_storage = true;
