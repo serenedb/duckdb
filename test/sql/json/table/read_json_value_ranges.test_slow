@@ -1,0 +1,237 @@
+# name: test/sql/json/table/read_json_value_ranges.test_slow
+# description: a JSON array or an unstructured file of top-level values read in parallel ranges gives what one sequential read gives, wherever a range starts: in a string, right after a backslash, deep inside a value, before the array opens or after it closes
+# group: [table]
+
+require json
+
+statement ok
+CREATE TABLE src AS SELECT i, repeat(chr(92), i % 7) || '"' || repeat('}', i % 3) || '{[' || repeat('x', (i * 37) % 300) || ']' || repeat(chr(92), i % 5) AS s, {'a': [i, i % 3], 'b': {'c': repeat('[', i % 4)}} AS n FROM range(30000) t(i);
+
+statement ok
+COPY (FROM src ORDER BY i) TO '{TEMP_DIR}/array_lines.json' (FORMAT json, ARRAY true);
+
+statement ok
+COPY (SELECT '[' || string_agg(to_json(src)::VARCHAR, ',' ORDER BY i) || ']' FROM src) TO '{TEMP_DIR}/array_one_line.json' (FORMAT csv, HEADER false, QUOTE '', ESCAPE '');
+
+statement ok
+CREATE MACRO src_columns() AS {i: 'BIGINT', s: 'VARCHAR', n: 'STRUCT(a BIGINT[], b STRUCT(c VARCHAR))'};
+
+statement ok
+SET threads = 1;
+
+statement ok
+CREATE TABLE sequential AS SELECT i, file_row_number FROM read_json('{TEMP_DIR}/array_one_line.json', format = 'array', columns = src_columns());
+
+statement ok
+SET threads = 8;
+
+foreach file array_lines array_one_line
+
+query I
+SELECT count(*) FROM (
+	(FROM read_json('{TEMP_DIR}/{file}.json', format = 'array', columns = src_columns()) EXCEPT ALL FROM src)
+	UNION ALL
+	(FROM src EXCEPT ALL FROM read_json('{TEMP_DIR}/{file}.json', format = 'array', columns = src_columns()))
+);
+----
+0
+
+query II
+SELECT count(*), count(DISTINCT json) FROM read_json_objects('{TEMP_DIR}/{file}.json', format = 'array');
+----
+30000	30000
+
+endloop
+
+query I
+SELECT count(*) FROM (
+	(SELECT i, file_row_number FROM read_json('{TEMP_DIR}/array_one_line.json', format = 'array', columns = src_columns()) EXCEPT ALL FROM sequential)
+	UNION ALL
+	(FROM sequential EXCEPT ALL SELECT i, file_row_number FROM read_json('{TEMP_DIR}/array_one_line.json', format = 'array', columns = src_columns()))
+);
+----
+0
+
+# the second range starts on a quote escaped by the last byte of the first
+statement ok
+COPY (SELECT encode('[{"s":"' || repeat('a', 1048568) || chr(92) || '"b"}' || repeat(',{"s":"' || repeat('c', 100) || '"}', 20000) || ']')) TO '{TEMP_DIR}/escaped_quote.json' (FORMAT BLOB);
+
+query III
+SELECT count(*), sum(length(s)), count(*) FILTER (WHERE s = repeat('a', 1048568) || '"b') FROM read_json('{TEMP_DIR}/escaped_quote.json', format = 'array', columns = {s: 'VARCHAR'});
+----
+20001	3048570	1
+
+# the second range starts on a backslash escaped by the last byte of the first
+statement ok
+COPY (SELECT encode('[{"s":"' || repeat('a', 1048568) || chr(92) || chr(92) || '"}' || repeat(',{"s":"' || repeat('c', 100) || '"}', 20000) || ']')) TO '{TEMP_DIR}/escaped_backslash.json' (FORMAT BLOB);
+
+query III
+SELECT count(*), sum(length(s)), count(*) FILTER (WHERE s = repeat('a', 1048568) || chr(92)) FROM read_json('{TEMP_DIR}/escaped_backslash.json', format = 'array', columns = {s: 'VARCHAR'});
+----
+20001	3048569	1
+
+# the second range starts inside a string longer than a range, which holds brackets, commas and escaped quotes
+statement ok
+COPY (SELECT encode('[{"s":"' || repeat('a,[{' || chr(92) || '"]', 300000) || '"}' || repeat(',{"s":"' || repeat('c', 100) || '"}', 20000) || ']')) TO '{TEMP_DIR}/in_string.json' (FORMAT BLOB);
+
+query III
+SELECT count(*), sum(length(s)), max(length(s)) FROM read_json('{TEMP_DIR}/in_string.json', format = 'array', columns = {s: 'VARCHAR'});
+----
+20001	3800000	1800000
+
+# the second range starts deep inside the first element, among commas of a nested array
+statement ok
+COPY (SELECT encode('[{"a":[[' || repeat('1,', 600000) || '1]]}' || repeat(',{"a":[[2]]}', 100000) || ']')) TO '{TEMP_DIR}/deep.json' (FORMAT BLOB);
+
+query II
+SELECT count(*), sum(len(a[1])) FROM read_json('{TEMP_DIR}/deep.json', format = 'array', columns = {a: 'BIGINT[][]'});
+----
+100001	700001
+
+# the array opens after the first range, and closes before the last ones
+statement ok
+COPY (SELECT encode(repeat(' ', 1500000) || '[' || repeat('{"s":"' || repeat('c', 100) || '"},', 20000) || '{"s":"last"}]' || repeat(chr(10), 1500000))) TO '{TEMP_DIR}/spaced.json' (FORMAT BLOB);
+
+query II
+SELECT count(*), count(*) FILTER (WHERE s = 'last') FROM read_json('{TEMP_DIR}/spaced.json', format = 'array', columns = {s: 'VARCHAR'});
+----
+20001	1
+
+statement ok
+COPY (SELECT encode('[]' || repeat(' ', 3000000))) TO '{TEMP_DIR}/empty.json' (FORMAT BLOB);
+
+query I
+SELECT count(*) FROM read_json('{TEMP_DIR}/empty.json', format = 'array', columns = {s: 'VARCHAR'});
+----
+0
+
+# errors name the record a sequential read names
+statement ok
+COPY (SELECT encode('[' || string_agg('{"id":' || CASE WHEN i IN (18390, 26000) THEN 'tru' ELSE i::VARCHAR END || ',"pad":"' || repeat('p', 40) || '"}', ',' ORDER BY i) || ']') FROM range(60000) t(i)) TO '{TEMP_DIR}/bad.json' (FORMAT BLOB);
+
+statement error
+SELECT sum(id) FROM read_json('{TEMP_DIR}/bad.json', format = 'array', columns = {id: 'BIGINT', pad: 'VARCHAR'});
+----
+at byte 7 in record/value 18391: invalid literal, expected 'true'
+
+statement error
+SELECT count(*) FROM read_json('{TEMP_DIR}/bad.json', format = 'array', columns = {id: 'BIGINT', pad: 'VARCHAR'}, ignore_errors = true);
+----
+at byte 7 in record/value 18391: invalid literal, expected 'true'
+
+statement ok
+COPY (SELECT encode('[' || string_agg('{"id":' || CASE WHEN i IN (18390, 26000) THEN '"x"' ELSE i::VARCHAR END || ',"pad":"' || repeat('p', 40) || '"}', ',' ORDER BY i) || ']') FROM range(60000) t(i)) TO '{TEMP_DIR}/uncastable.json' (FORMAT BLOB);
+
+statement ok
+SET threads = 1;
+
+statement ok
+CREATE TABLE uncastable AS SELECT id, file_row_number FROM read_json('{TEMP_DIR}/uncastable.json', format = 'array', columns = {id: 'BIGINT', pad: 'VARCHAR'}, ignore_errors = true);
+
+statement ok
+SET threads = 8;
+
+query I
+SELECT count(*) FROM (
+	(SELECT id, file_row_number FROM read_json('{TEMP_DIR}/uncastable.json', format = 'array', columns = {id: 'BIGINT', pad: 'VARCHAR'}, ignore_errors = true) EXCEPT ALL FROM uncastable)
+	UNION ALL
+	(FROM uncastable EXCEPT ALL SELECT id, file_row_number FROM read_json('{TEMP_DIR}/uncastable.json', format = 'array', columns = {id: 'BIGINT', pad: 'VARCHAR'}, ignore_errors = true))
+);
+----
+0
+
+query II
+SELECT count(*), count(id) FROM uncastable;
+----
+60000	59998
+
+statement ok
+COPY (SELECT encode('[' || repeat('{"s":"' || repeat('c', 100) || '"},', 15000) || '{"s":"last"}]' || repeat(' ', 1500000) || 'x')) TO '{TEMP_DIR}/junk.json' (FORMAT BLOB);
+
+statement error
+SELECT count(*) FROM read_json('{TEMP_DIR}/junk.json', format = 'array', columns = {s: 'VARCHAR'});
+----
+at byte 1 in record/value 15002: unexpected character, expected a JSON value
+
+# unstructured files: top-level values one after another, objects spread over lines
+statement ok
+COPY (SELECT encode(string_agg(replace(to_json(src)::VARCHAR, ',"', ',' || chr(10) || '  "'), chr(10) ORDER BY i)) FROM src) TO '{TEMP_DIR}/values_lines.json' (FORMAT BLOB);
+
+statement ok
+COPY (SELECT encode(string_agg(to_json(src)::VARCHAR, ' ' ORDER BY i)) FROM src) TO '{TEMP_DIR}/values_one_line.json' (FORMAT BLOB);
+
+foreach file values_lines values_one_line
+
+query I
+SELECT count(*) FROM (
+	(FROM read_json('{TEMP_DIR}/{file}.json', format = 'unstructured', columns = src_columns()) EXCEPT ALL FROM src)
+	UNION ALL
+	(FROM src EXCEPT ALL FROM read_json('{TEMP_DIR}/{file}.json', format = 'unstructured', columns = src_columns()))
+);
+----
+0
+
+query II
+SELECT count(*), count(DISTINCT json) FROM read_json_objects('{TEMP_DIR}/{file}.json', format = 'unstructured');
+----
+30000	30000
+
+endloop
+
+statement ok
+SET threads = 1;
+
+statement ok
+CREATE TABLE sequential_values AS SELECT i, file_row_number FROM read_json('{TEMP_DIR}/values_lines.json', format = 'unstructured', columns = src_columns());
+
+statement ok
+SET threads = 8;
+
+query I
+SELECT count(*) FROM (
+	(SELECT i, file_row_number FROM read_json('{TEMP_DIR}/values_lines.json', format = 'unstructured', columns = src_columns()) EXCEPT ALL FROM sequential_values)
+	UNION ALL
+	(FROM sequential_values EXCEPT ALL SELECT i, file_row_number FROM read_json('{TEMP_DIR}/values_lines.json', format = 'unstructured', columns = src_columns()))
+);
+----
+0
+
+statement ok
+COPY (SELECT encode('{"s":"' || repeat('a', 1048569) || chr(92) || '"b"}' || repeat(chr(10) || '{"s":"' || repeat('c', 100) || '"}', 20000))) TO '{TEMP_DIR}/values_escaped_quote.json' (FORMAT BLOB);
+
+query III
+SELECT count(*), sum(length(s)), count(*) FILTER (WHERE s = repeat('a', 1048569) || '"b') FROM read_json('{TEMP_DIR}/values_escaped_quote.json', format = 'unstructured', columns = {s: 'VARCHAR'});
+----
+20001	3048571	1
+
+statement ok
+COPY (SELECT encode('"' || repeat('a', 1048574) || chr(92) || '"b"' || repeat(' "' || repeat('c', 100) || '"', 20000))) TO '{TEMP_DIR}/values_strings.json' (FORMAT BLOB);
+
+query II
+SELECT count(*), sum(length(json)) FROM read_json_objects('{TEMP_DIR}/values_strings.json', format = 'unstructured');
+----
+20001	3088579
+
+statement ok
+COPY (SELECT encode('{"a":[[' || repeat('1,', 600000) || '1]]}' || repeat(' {"a":[[2]]}', 100000))) TO '{TEMP_DIR}/values_deep.json' (FORMAT BLOB);
+
+query II
+SELECT count(*), sum(len(a[1])) FROM read_json('{TEMP_DIR}/values_deep.json', format = 'unstructured', columns = {a: 'BIGINT[][]'});
+----
+100001	700001
+
+statement ok
+COPY (SELECT encode(repeat(' ', 1500000) || repeat('{"s":"' || repeat('c', 100) || '"}' || chr(10), 20000) || '{"s":"last"}' || repeat(chr(10), 1500000))) TO '{TEMP_DIR}/values_spaced.json' (FORMAT BLOB);
+
+query II
+SELECT count(*), count(*) FILTER (WHERE s = 'last') FROM read_json('{TEMP_DIR}/values_spaced.json', format = 'unstructured', columns = {s: 'VARCHAR'});
+----
+20001	1
+
+statement ok
+COPY (SELECT encode(string_agg('{"id":' || CASE WHEN i IN (18390, 26000) THEN 'tru' ELSE i::VARCHAR END || ',' || chr(10) || ' "pad":"' || repeat('p', 40) || '"}', chr(10) ORDER BY i)) FROM range(60000) t(i)) TO '{TEMP_DIR}/bad_values.json' (FORMAT BLOB);
+
+statement error
+SELECT sum(id) FROM read_json('{TEMP_DIR}/bad_values.json', format = 'unstructured', columns = {id: 'BIGINT', pad: 'VARCHAR'});
+----
+at byte 7 in record/value 18391: invalid literal, expected 'true'
