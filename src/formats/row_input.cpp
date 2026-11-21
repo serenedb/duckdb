@@ -17,20 +17,7 @@ idx_t FileRowSource::Read(char *data, idx_t count, idx_t offset) const {
 		}
 		return available;
 	}
-	const idx_t buffer_bytes = manager.GetBufferSize();
-	idx_t read = 0;
-	while (read < count) {
-		const idx_t position = offset + read;
-		auto handle = manager.GetBuffer(position / buffer_bytes);
-		const idx_t within = position % buffer_bytes;
-		if (!handle || within >= handle->actual_size) {
-			break;
-		}
-		const idx_t piece = MinValue(count - read, handle->actual_size - within);
-		memcpy(data + read, handle->Ptr() + within, piece);
-		read += piece;
-	}
-	return read;
+	return in_order ? manager.ReadInOrder(data, count, offset) : manager.ReadBuffered(data, count, offset);
 }
 
 void FileRowSource::Release(idx_t position) {

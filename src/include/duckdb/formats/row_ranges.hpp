@@ -74,6 +74,8 @@ public:
 
 	void Reset(idx_t size, idx_t range_bytes);
 	bool Claim(idx_t &range);
+	bool ClaimIntake(idx_t &range, idx_t &begin, shared_ptr<RowBytes> &carry, idx_t &carry_to);
+	void Cut(idx_t end, shared_ptr<RowBytes> rest, idx_t read_to);
 	bool Finish(idx_t range);
 	bool AllFinished() const;
 	void Publish(idx_t range, CSVState origin, const CsvRangeEntry &entry);
@@ -88,6 +90,9 @@ public:
 	}
 	bool Dynamic() const {
 		return dynamic;
+	}
+	bool Intake() const {
+		return dynamic && !lexer;
 	}
 	void FoundEnd(idx_t end);
 	idx_t RangeBegin(idx_t range, idx_t size_p) const {
@@ -132,6 +137,7 @@ private:
 	void Grow(idx_t count);
 	bool Complete() const;
 	void ReleaseResolved();
+	bool TakeIntake(idx_t &range, idx_t &begin, shared_ptr<RowBytes> &carry, idx_t &carry_to);
 
 private:
 	mutable mutex lock;
@@ -145,6 +151,12 @@ private:
 	idx_t resolved = 0;
 	idx_t unfinished = 0;
 	idx_t released = 0;
+	idx_t intake_begin = 0;
+	shared_ptr<RowBytes> intake_carry;
+	idx_t intake_carry_to = 0;
+	idx_t tickets = 0;
+	idx_t serving = 0;
+	bool cutting = false;
 	vector<CsvRangeTransfer> transfers;
 	vector<uint32_t> computing;
 	vector<bool> done;
@@ -161,6 +173,7 @@ public:
 	explicit RowWindow(RowRanges &ranges);
 
 	void Start(idx_t from, bool release, bool exact_end);
+	void Seed(const RowBytes &from, idx_t end);
 	void Read(idx_t keep_from, idx_t piece = PIECE);
 	bool Waits() const;
 

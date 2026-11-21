@@ -53,6 +53,22 @@ idx_t CSVBufferManager::GetBufferSize() const {
 	return buffer_size;
 }
 
+idx_t CSVBufferManager::ReadBuffered(char *data, idx_t count, idx_t offset) {
+	idx_t read = 0;
+	while (read < count) {
+		const idx_t position = offset + read;
+		auto handle = GetBuffer(position / buffer_size);
+		const idx_t within = position % buffer_size;
+		if (!handle || within >= handle->actual_size) {
+			break;
+		}
+		const idx_t piece = MinValue(count - read, handle->actual_size - within);
+		memcpy(data + read, handle->Ptr() + within, piece);
+		read += piece;
+	}
+	return read;
+}
+
 idx_t CSVBufferManager::BufferCount() const {
 	return cached_buffers.size();
 }

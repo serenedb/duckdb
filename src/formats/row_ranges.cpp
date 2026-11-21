@@ -5,6 +5,7 @@
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/fault_points.hpp"
 #include "duckdb/formats/csv_simd.hpp"
+#include "duckdb/parallel/task_scheduler.hpp"
 #include "simdutf.h"
 
 namespace duckdb {
@@ -198,6 +199,12 @@ void RowRanges::Layout(idx_t range_bytes_p) {
 	starts[0].last_position = start;
 	unfinished = 0;
 	released = 0;
+	intake_begin = start;
+	intake_carry.reset();
+	intake_carry_to = start;
+	cutting = false;
+	tickets = 0;
+	serving = 0;
 }
 
 void RowRanges::Grow(idx_t count) {
@@ -379,7 +386,54 @@ bool RowRanges::Claim(idx_t &range) {
 	return true;
 }
 
+bool RowRanges::ClaimIntake(idx_t &range, idx_t &begin, shared_ptr<RowBytes> &carry, idx_t &carry_to) {
+	idx_t ticket;
+	const auto turn = [&]() {
+		return !cutting && serving == ticket;
+	};
+	{
+		const absl::MutexLock guard(&lock);
+		ticket = tickets++;
+		if (turn()) {
+			return TakeIntake(range, begin, carry, carry_to);
+		}
+	}
+	TaskScheduler::BlockingScope blocking;
+	const absl::MutexLock guard(&lock);
+	lock.Await(absl::Condition(&turn));
+	return TakeIntake(range, begin, carry, carry_to);
+}
+
+bool RowRanges::TakeIntake(idx_t &range, idx_t &begin, shared_ptr<RowBytes> &carry, idx_t &carry_to) {
+	serving++;
+	if (intake_begin >= size.load(std::memory_order_relaxed)) {
+		return false;
+	}
+	cutting = true;
+	range = next_range++;
+	Grow(next_range);
+	begin = intake_begin;
+	carry = std::move(intake_carry);
+	carry_to = intake_carry_to;
+	return true;
+}
+
+void RowRanges::Cut(idx_t end, shared_ptr<RowBytes> rest, idx_t read_to) {
+	const absl::MutexLock guard(&lock);
+	intake_begin = end;
+	cutting = false;
+	if (end == DConstants::INVALID_INDEX) {
+		return;
+	}
+	intake_carry = read_to > end ? std::move(rest) : nullptr;
+	intake_carry_to = MaxValue(end, read_to);
+	source.Release(intake_carry_to);
+}
+
 bool RowRanges::Complete() const {
+	if (Intake()) {
+		return !cutting && intake_begin >= size.load(std::memory_order_relaxed) && finished_ranges == next_range;
+	}
 	return finished_ranges == MaxValue(range_count.load(std::memory_order_relaxed), next_range);
 }
 
@@ -391,7 +445,9 @@ bool RowRanges::Finish(idx_t range) {
 		while (unfinished < next_range && done[unfinished]) {
 			unfinished++;
 		}
-		ReleaseResolved();
+		if (!Intake()) {
+			ReleaseResolved();
+		}
 	}
 	return Complete();
 }
@@ -534,6 +590,16 @@ void RowWindow::Prepare(idx_t keep_from, idx_t need) {
 		spare = std::move(bytes);
 	}
 	bytes = std::move(next);
+}
+
+void RowWindow::Seed(const RowBytes &from, idx_t end) {
+	const idx_t count = end - read_to;
+	Prepare(bytes->offset, count);
+	auto &window = *bytes;
+	memcpy(OwnedData(window) + (read_to - window.offset), from.data + (read_to - from.offset), count);
+	window.size += count;
+	read_to += count;
+	memset(OwnedData(window) + (read_to - window.offset), 0, PADDING);
 }
 
 void RowWindow::Read(idx_t keep_from, idx_t piece) {

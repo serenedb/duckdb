@@ -11,6 +11,7 @@
 #include "duckdb/common/error_data.hpp"
 #include "duckdb/common/json_document.hpp"
 #include "duckdb/common/mutex.hpp"
+#include "duckdb/formats/range_lines.hpp"
 #include "duckdb/planner/table_filter.hpp"
 #include "duckdb/planner/table_filter_state.hpp"
 #include "duckdb/storage/arena_allocator.hpp"
@@ -20,8 +21,6 @@
 #include "simdjson.h"
 
 namespace duckdb {
-
-enum class JsonUnitMode : uint8_t { RANGES, STREAM, SEQUENTIAL };
 
 enum class JsonDirectKind : uint8_t { VALUE, STRING, TREE };
 
@@ -90,17 +89,10 @@ public:
 	double Progress() const {
 		return source->Progress();
 	}
-	bool Claim(idx_t &unit);
-	bool ClaimChunk(idx_t &unit, AllocatedData &buffer, idx_t &size, idx_t &file_offset, bool &last);
+	bool Claim(idx_t &unit, idx_t &begin, shared_ptr<RowBytes> &carry, idx_t &carry_to);
 	void Finish(idx_t unit, idx_t records);
 	void AddError(idx_t unit, idx_t record, string message);
 	[[noreturn]] void ThrowObjectSizeError(idx_t object_size) const;
-	idx_t RangeBegin(idx_t unit) const {
-		return MinValue(unit * range_bytes, source->Size());
-	}
-	idx_t RangeEnd(idx_t unit) const {
-		return MinValue((unit + 1) * range_bytes, source->Size());
-	}
 	idx_t BufferCapacity() const;
 
 public:
@@ -111,9 +103,7 @@ public:
 	JsonScanColumns columns;
 	JSONFormat format = JSONFormat::AUTO_DETECT;
 	bool features_prefix = false;
-	JsonUnitMode mode = JsonUnitMode::SEQUENTIAL;
-	idx_t range_bytes = 0;
-	idx_t range_count = 0;
+	unique_ptr<RowRanges> ranges;
 	JSONReadFlags read_flags;
 	bool validate_only = false;
 	bool direct = false;
@@ -133,12 +123,7 @@ private:
 
 private:
 	mutable mutex lock;
-	idx_t next_unit = 0;
-	bool stream_done = false;
-	AllocatedData carry;
-	idx_t carry_size = 0;
-	idx_t stream_offset = 0;
-	vector<int64_t> unit_records;
+	RangeLines lines;
 	optional_idx error_unit;
 	idx_t error_record = 0;
 	string error_message;
@@ -159,11 +144,19 @@ public:
 
 private:
 	void Load();
+	idx_t CutRecords();
 	void Begin();
-	bool ReadMore();
+	bool Last() const {
+		return window.read_to >= global.ranges->Size();
+	}
+	bool ReadMore(bool may_idle = false);
+	bool ReadWindow(idx_t keep, idx_t piece);
+	void Fill(idx_t bytes);
+	void SkipBlank();
+	void HoldWindow(Vector &vector);
 	bool NextRecords();
-	void SkipSpace();
-	bool FrameRecord(idx_t &record_end);
+	void SkipSpace(bool may_idle = false);
+	bool FrameRecord(idx_t &record_end, bool may_idle);
 	bool AfterArrayRecord(idx_t record_size);
 	void SkipArrayStart();
 	bool Parse(idx_t index, idx_t record, const char *data, idx_t size, idx_t readable);
@@ -182,29 +175,29 @@ private:
 	void ParseError(idx_t record, const JSONParseError &error, const string &extra);
 	void TransformError(idx_t record, const string &message);
 	void ResetBatch();
-	void EnsureCapacity(idx_t capacity);
 
 private:
 	JsonScanGlobal &global;
 	const JSONReaderOptions &options;
-	AllocatedData buffer;
-	char *data = nullptr;
-	idx_t capacity = 0;
+	RowWindow window;
+	const char *data = nullptr;
 	idx_t size = 0;
 	idx_t cursor = 0;
 	idx_t line_start = 0;
 	idx_t limit = 0;
 	idx_t file_offset = 0;
 	idx_t unit = 0;
+	idx_t begin = 0;
+	shared_ptr<RowBytes> carry;
+	idx_t carry_to = 0;
 	idx_t unit_records = 0;
 	bool claimed = false;
 	bool loaded = false;
 	bool sampling = false;
 	bool first = false;
-	bool last = false;
 	bool done = false;
 	bool stopped = false;
-	unique_ptr<FileHandle> thread_handle;
+	bool idle = false;
 	ArenaAllocator arena;
 	JSONTreeParser parser;
 	JSONStringWriter writer;
@@ -218,7 +211,6 @@ private:
 	idx_t lengths[STANDARD_VECTOR_SIZE];
 	idx_t roots[STANDARD_VECTOR_SIZE];
 	const JSONNode *values[STANDARD_VECTOR_SIZE];
-	const char *found_records[STANDARD_VECTOR_SIZE];
 	JsonParserMemory direct_memory;
 	simdjson::ondemand::parser direct_parser;
 	simdjson::ondemand::parser walk_parser;

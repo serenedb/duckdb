@@ -1,14 +1,14 @@
 #include "json_engine.hpp"
 
-#include "duckdb/common/file_open_flags.hpp"
+#include "absl/cleanup/cleanup.h"
 #include "duckdb/common/operator/cast_operators.hpp"
 #include "duckdb/common/operator/decimal_cast_operators.hpp"
 #include "duckdb/common/operator/string_cast.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/common/type_visitor.hpp"
 #include "duckdb/common/vector/string_vector.hpp"
+#include "duckdb/execution/operator/csv_scanner/csv_reader_options.hpp"
 #include "duckdb/formats/csv_simd.hpp"
-#include "duckdb/formats/row_stream.hpp"
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/parallel/task_scheduler.hpp"
 #include "duckdb/planner/expression/bound_comparison_expression.hpp"
@@ -18,7 +18,6 @@
 #include "duckdb/planner/expression/bound_operator_expression.hpp"
 #include "duckdb/planner/filter/expression_filter.hpp"
 #include "duckdb/storage/buffer_manager.hpp"
-#include "duckdb/storage/caching_mode.hpp"
 #include "duckdb/storage/table/column_segment.hpp"
 
 #include <bit>
@@ -31,8 +30,10 @@ namespace {
 constexpr idx_t JSON_MIN_RANGE_BYTES = 1024 * 1024;
 constexpr idx_t JSON_MAX_RANGE_BYTES = 8 * 1024 * 1024;
 constexpr idx_t JSON_STREAM_BYTES = 8 * 1024 * 1024;
+constexpr idx_t JSON_READ_BYTES = 8 * 1024 * 1024;
 constexpr idx_t JSON_LOOKUP_BYTES = 64 * 1024;
-constexpr idx_t JSON_PADDING = JSONTreeParser::PADDING;
+constexpr idx_t JSON_PADDING = RowWindow::PADDING;
+static_assert(JSON_PADDING >= JSONTreeParser::PADDING);
 
 void SkipWhitespace(const char *data, idx_t &offset, idx_t size) {
 	while (offset < size && StringUtil::CharacterIsSpace(data[offset])) {
@@ -694,114 +695,25 @@ void JsonParserMemory::Deallocate(void *context, void *pointer, size_t size) noe
 	static_cast<JsonParserMemory *>(context)->allocator.FreeData(static_cast<data_ptr_t>(pointer), size);
 }
 
-JsonSource::JsonSource(ClientContext &context_p, OpenFileInfo file_p, FileCompressionType compression)
-    : context(context_p), file(std::move(file_p)) {
-	auto &fs = FileSystem::GetFileSystem(context);
-	FileOpenFlags flags = FileFlags::FILE_FLAGS_READ | compression;
-	flags.SetCachingMode(CachingMode::CACHE_REMOTE_ONLY);
-	handle = fs.OpenFile(file, flags);
-	pipe = handle->IsPipe();
-	compressed = handle->GetFileCompressionType() != FileCompressionType::UNCOMPRESSED;
-	if (!compressed) {
-		stream = FindRowStream(context, file.path);
-	}
-	if (stream) {
-		pipe = false;
-		return;
-	}
-	positional = !pipe && !compressed && handle->CanSeek();
-	remote = !handle->OnDiskFile();
-	size = handle->GetFileSize();
+JsonSource::JsonSource(ClientContext &context, OpenFileInfo file_p, FileCompressionType compression)
+    : file(std::move(file_p)) {
+	CSVReaderOptions options;
+	options.compression = compression;
+	manager = CSVBufferManager::Open(context, options, file);
+	input = make_uniq<RowInput>(context, *manager, file.path, true, &consumed);
 }
 
-idx_t JsonSource::ReadAt(char *data, idx_t count, idx_t offset, optional_ptr<FileHandle> thread_handle) {
-	D_ASSERT(positional);
-	if (offset >= size) {
-		return 0;
-	}
-	count = MinValue(count, size - offset);
-	if (count == 0) {
-		return 0;
-	}
-	auto &target = thread_handle ? *thread_handle : *handle;
-	target.Read(QueryContext(context), data, count, offset);
-	consumed += count;
-	return count;
-}
-
-idx_t JsonSource::Read(char *data, idx_t count) {
-	if (stream) {
-		const auto read = stream->ReadFully(data, count, position);
-		position += read;
-		consumed += read;
-		return read;
-	}
-	if (positional) {
-		const auto read = ReadAt(data, count, position);
-		position += read;
-		return read;
-	}
-	idx_t total = 0;
-	for (idx_t i = 0, start = 0; total < count && replayed < recorded_size && i < recorded.size(); i++) {
-		auto &piece = recorded[i];
-		const idx_t end = start + piece.GetSize();
-		if (replayed < end) {
-			const idx_t within = replayed - start;
-			const idx_t take = MinValue(count - total, piece.GetSize() - within);
-			memcpy(data + total, piece.get() + within, take);
-			total += take;
-			replayed += take;
-		}
-		start = end;
-	}
-	while (total < count) {
-		const auto read = handle->Read(QueryContext(context), data + total, count - total);
-		if (read == 0) {
-			break;
-		}
-		if (pipe && recording) {
-			recorded.emplace_back(BufferAllocator::Get(context).Allocate(read));
-			memcpy(recorded.back().get(), data + total, read);
-			recorded_size += read;
-			replayed += read;
-		}
-		total += read;
-	}
-	consumed += total;
-	return total;
-}
-
-void JsonSource::Release(idx_t offset) {
-	if (stream) {
-		stream->Release(offset);
-	}
-}
-
-void JsonSource::Rewind() {
-	consumed = 0;
-	position = 0;
-	if (pipe) {
-		replayed = 0;
-		return;
-	}
-	if (!positional && !stream) {
-		handle->Reset();
-	}
+idx_t JsonSource::FileSize() const {
+	return input->host_stream ? 0 : manager->file_handle->FileSize();
 }
 
 double JsonSource::Progress() const {
+	const idx_t size = FileSize();
 	if (size == 0) {
 		return 0;
 	}
-	const idx_t position = compressed ? handle->GetProgress() : consumed.load();
-	return MinValue<double>(static_cast<double>(position) / static_cast<double>(size), 1.0);
-}
-
-unique_ptr<FileHandle> JsonSource::OpenThreadHandle() const {
-	auto &fs = FileSystem::GetFileSystem(context);
-	FileOpenFlags flags = FileFlags::FILE_FLAGS_READ | FileFlags::FILE_FLAGS_DIRECT_IO;
-	flags.SetCachingMode(CachingMode::CACHE_REMOTE_ONLY);
-	return fs.OpenFile(file, flags);
+	const double position = Stream() ? manager->file_handle->GetProgress() : static_cast<double>(consumed.load());
+	return MinValue<double>(position / static_cast<double>(size), 1.0);
 }
 
 JsonScanGlobal::JsonScanGlobal(ClientContext &context_p, const JSONScanData &bind_p, shared_ptr<JsonSource> source_p,
@@ -820,17 +732,15 @@ JsonScanGlobal::JsonScanGlobal(ClientContext &context_p, const JSONScanData &bin
 	if (format == JSONFormat::AUTO_DETECT) {
 		Detect();
 	}
-	if (format == JSONFormat::NEWLINE_DELIMITED && parallel && source->Positional()) {
-		mode = JsonUnitMode::RANGES;
+	idx_t range_bytes = DConstants::INVALID_INDEX;
+	if (format == JSONFormat::NEWLINE_DELIMITED && parallel && source->Stream()) {
+		range_bytes = JSON_STREAM_BYTES;
+	} else if (format == JSONFormat::NEWLINE_DELIMITED && parallel) {
 		const idx_t threads = MaxValue<idx_t>(TaskScheduler::QueryThreads(context), 1);
 		range_bytes = MinValue(JSON_MAX_RANGE_BYTES, MaxValue(JSON_MIN_RANGE_BYTES, source->Size() / threads));
-		range_count = MaxValue<idx_t>((source->Size() + range_bytes - 1) / range_bytes, 1);
-		unit_records.assign(range_count, -1);
-	} else if (format == JSONFormat::NEWLINE_DELIMITED && parallel) {
-		mode = JsonUnitMode::STREAM;
-	} else {
-		mode = JsonUnitMode::SEQUENTIAL;
 	}
+	ranges = make_uniq<RowRanges>(BufferAllocator::Get(context), source->Rows(), 0, source->Size(), range_bytes);
+	ranges->path = source->Path();
 	validate_only = options.type == JSONScanType::READ_JSON_OBJECTS ||
 	                (columns.names.empty() && options.type == JSONScanType::READ_JSON);
 	PlanDirect();
@@ -901,14 +811,10 @@ bool JsonWalkPushdown(const Expression &expr) {
 }
 
 void JsonScanGlobal::Detect() {
-	idx_t want = options.maximum_object_size * 2;
-	if (source->Positional()) {
-		want = MinValue(want, source->Size());
-	}
+	const idx_t want = MinValue(options.maximum_object_size * 2, source->Size());
 	auto detect = BufferAllocator::Get(context).Allocate(want + JSON_PADDING);
 	auto data = char_ptr_cast(detect.get());
-	const idx_t read = source->Positional() ? source->ReadAt(data, want, 0) : source->Read(data, want);
-	source->Rewind();
+	const idx_t read = source->Rows().ReadFully(data, want, 0);
 	if (read == 0) {
 		format = JSONFormat::NEWLINE_DELIMITED;
 		return;
@@ -925,108 +831,37 @@ void JsonScanGlobal::Detect() {
 }
 
 idx_t JsonScanGlobal::MaxThreads() const {
-	switch (mode) {
-	case JsonUnitMode::RANGES:
-		return range_count;
-	case JsonUnitMode::STREAM:
+	if (ranges->Dynamic()) {
 		return bind.max_threads.IsValid() ? bind.max_threads.GetIndex() : GlobalTableFunctionState::MAX_THREADS;
-	default:
-		return 1;
 	}
+	return ranges->RangeCount();
 }
 
 idx_t JsonScanGlobal::BufferCapacity() const {
 	return options.maximum_object_size * 2;
 }
 
-bool JsonScanGlobal::Claim(idx_t &unit) {
-	lock_guard<mutex> guard(lock);
-	if (error_unit.IsValid()) {
-		return false;
-	}
-	if (mode == JsonUnitMode::RANGES) {
-		if (next_unit >= range_count) {
+bool JsonScanGlobal::Claim(idx_t &unit, idx_t &begin, shared_ptr<RowBytes> &carry, idx_t &carry_to) {
+	{
+		lock_guard<mutex> guard(lock);
+		if (error_unit.IsValid()) {
 			return false;
 		}
-		unit = next_unit++;
-		return true;
 	}
-	D_ASSERT(mode == JsonUnitMode::SEQUENTIAL);
-	if (next_unit != 0) {
+	if (ranges->Intake()) {
+		return ranges->ClaimIntake(unit, begin, carry, carry_to);
+	}
+	if (!ranges->Claim(unit)) {
 		return false;
 	}
-	unit = next_unit++;
-	unit_records.push_back(-1);
-	return true;
-}
-
-bool JsonScanGlobal::ClaimChunk(idx_t &unit, AllocatedData &buffer, idx_t &size, idx_t &file_offset, bool &last) {
-	lock_guard<mutex> guard(lock);
-	if (error_unit.IsValid() || stream_done) {
-		return false;
-	}
-	auto &allocator = BufferAllocator::Get(context);
-	idx_t filled = carry_size;
-	idx_t want = JSON_STREAM_BYTES;
-	while (true) {
-		const idx_t capacity = filled + want + JSON_PADDING;
-		if (buffer.GetSize() < capacity) {
-			auto grown = allocator.Allocate(capacity);
-			if (filled > carry_size) {
-				memcpy(grown.get(), buffer.get(), filled);
-			}
-			buffer = std::move(grown);
-		}
-		auto data = char_ptr_cast(buffer.get());
-		if (filled == carry_size && carry_size != 0) {
-			memcpy(data, carry.get(), carry_size);
-		}
-		const idx_t read = source->Read(data + filled, want);
-		filled += read;
-		if (read < want) {
-			last = true;
-			stream_done = true;
-			size = filled;
-			carry_size = 0;
-			break;
-		}
-		const char *newline = nullptr;
-		for (idx_t i = filled; i > 0; i--) {
-			if (data[i - 1] == '\n') {
-				newline = data + i - 1;
-				break;
-			}
-		}
-		if (newline) {
-			last = false;
-			size = NumericCast<idx_t>(newline - data) + 1;
-			carry_size = filled - size;
-			if (carry.GetSize() < carry_size) {
-				carry = allocator.Allocate(MaxValue<idx_t>(carry_size, carry.GetSize() * 2));
-			}
-			memcpy(carry.get(), data + size, carry_size);
-			break;
-		}
-		if (filled > options.maximum_object_size) {
-			ThrowObjectSizeError(filled);
-		}
-		want = filled;
-	}
-	memset(char_ptr_cast(buffer.get()) + size, 0, MinValue<idx_t>(JSON_PADDING, buffer.GetSize() - size));
-	source->Release(source->Position());
-	file_offset = stream_offset;
-	stream_offset += size;
-	unit = next_unit++;
-	unit_records.push_back(-1);
+	begin = ranges->RangeBegin(unit, NumericLimits<idx_t>::Maximum());
 	return true;
 }
 
 void JsonScanGlobal::Finish(idx_t unit, idx_t records) {
+	ranges->Finish(unit);
 	lock_guard<mutex> guard(lock);
-	if (unit >= unit_records.size()) {
-		unit_records.resize(unit + 1, -1);
-	}
-	unit_records[unit] = NumericCast<int64_t>(records);
+	lines.Add(unit, records);
 	ThrowIfPossible();
 }
 
@@ -1042,17 +877,11 @@ void JsonScanGlobal::AddError(idx_t unit, idx_t record, string message) {
 }
 
 void JsonScanGlobal::ThrowIfPossible() {
-	if (!error_unit.IsValid()) {
+	if (!error_unit.IsValid() || !lines.Known(error_unit.GetIndex())) {
 		return;
 	}
-	idx_t line = error_record;
-	for (idx_t unit = 0; unit < error_unit.GetIndex(); unit++) {
-		if (unit >= unit_records.size() || unit_records[unit] < 0) {
-			return;
-		}
-		line += NumericCast<idx_t>(unit_records[unit]);
-	}
-	throw InvalidInputException(StringUtil::Replace(error_message, "{line}", to_string(line + 1)));
+	const idx_t line = 1 + error_record + lines.Before(error_unit.GetIndex());
+	throw InvalidInputException(StringUtil::Replace(error_message, "{line}", to_string(line)));
 }
 
 void JsonScanGlobal::ThrowObjectSizeError(idx_t object_size) const {
@@ -1063,7 +892,8 @@ void JsonScanGlobal::ThrowObjectSizeError(idx_t object_size) const {
 }
 
 JsonScan::JsonScan(JsonScanGlobal &global_p)
-    : global(global_p), options(global_p.options), arena(BufferAllocator::Get(global_p.context)),
+    : global(global_p), options(global_p.options), window(*global_p.ranges),
+      arena(BufferAllocator::Get(global_p.context)),
       parser(global_p.read_flags, BufferAllocator::Get(global_p.context)), writer(JSONCommon::WRITE_FLAG),
       transform_options(global_p.columns.transform_options), direct_memory(BufferAllocator::Get(global_p.context)) {
 	transform_options.parameters.context = &global.context;
@@ -1071,9 +901,6 @@ JsonScan::JsonScan(JsonScanGlobal &global_p)
 		filter_states.push_back(TableFilterState::Initialize(global.context, filter.filter.get()));
 	}
 	filter_selection.Initialize(STANDARD_VECTOR_SIZE);
-	if (global.mode == JsonUnitMode::RANGES && global.source->Remote()) {
-		thread_handle = global.source->OpenThreadHandle();
-	}
 	if (global.direct) {
 		direct_parser.allocator = &direct_memory.callbacks;
 		direct_parser.allow_trailing_commas = HasFlag(global.read_flags, JSONReadFlags::ALLOW_TRAILING_COMMAS);
@@ -1094,88 +921,79 @@ JsonScan::JsonScan(JsonScanGlobal &global_p)
 	}
 }
 
-void JsonScan::EnsureCapacity(idx_t needed) {
-	needed += JSON_PADDING;
-	if (buffer.GetSize() >= needed) {
-		return;
-	}
-	auto grown = BufferAllocator::Get(global.context).Allocate(MaxValue(needed, buffer.GetSize() * 2));
-	if (size != 0) {
-		memcpy(grown.get(), buffer.get(), size);
-	}
-	buffer = std::move(grown);
-	data = char_ptr_cast(buffer.get());
-}
-
 bool JsonScan::Claim() {
 	claimed = false;
 	done = false;
 	stopped = false;
 	unit_records = 0;
-	size = 0;
-	cursor = 0;
-	file_offset = 0;
-	if (global.mode == JsonUnitMode::STREAM) {
-		if (!global.ClaimChunk(unit, buffer, size, file_offset, last)) {
-			return false;
-		}
-		data = char_ptr_cast(buffer.get());
-		limit = size;
-		first = unit == 0;
-		Begin();
-	} else {
-		if (!global.Claim(unit)) {
-			return false;
-		}
-		loaded = false;
+	if (!global.Claim(unit, begin, carry, carry_to)) {
+		return false;
 	}
+	loaded = false;
 	claimed = true;
 	return true;
 }
 
 void JsonScan::Load() {
-	auto &source = *global.source;
-	switch (global.mode) {
-	case JsonUnitMode::RANGES: {
-		const idx_t begin = global.RangeBegin(unit);
-		const idx_t end = global.RangeEnd(unit);
-		const idx_t read_begin = begin == 0 ? 0 : begin - 1;
-		EnsureCapacity(end - read_begin + JSON_LOOKUP_BYTES);
-		size = source.ReadAt(data, end - read_begin, read_begin, thread_handle);
-		memset(data + size, 0, JSON_PADDING);
-		file_offset = read_begin;
-		limit = end - read_begin;
-		last = end == source.Size();
-		first = begin == 0;
-		if (!first) {
-			auto newline = NextNewline(data, size);
-			cursor = newline ? NumericCast<idx_t>(newline - data) + 1 : size;
-			if (!newline) {
+	auto &ranges = *global.ranges;
+	first = begin == 0;
+	if (ranges.Intake()) {
+		bool cut = false;
+		absl::Cleanup abandon = [&] {
+			if (!cut) {
+				ranges.Cut(DConstants::INVALID_INDEX, nullptr, 0);
+			}
+		};
+		window.Start(begin, false, true);
+		if (carry && carry_to > begin) {
+			window.Seed(*carry, carry_to);
+		}
+		carry.reset();
+		data = window.bytes->data;
+		size = window.bytes->size;
+		file_offset = begin;
+		cursor = 0;
+		count = 0;
+		limit = NumericLimits<idx_t>::Maximum();
+		limit = CutRecords();
+		cut = true;
+		ranges.Cut(limit, window.bytes, window.read_to);
+		Begin();
+		return;
+	}
+	limit = ranges.RangeEnd(unit, NumericLimits<idx_t>::Maximum());
+	const idx_t from = first ? 0 : begin - 1;
+	window.Start(from, !sampling, first);
+	file_offset = from;
+	cursor = 0;
+	count = 0;
+	ReadWindow(from, MinValue(limit - from, JSON_READ_BYTES));
+	if (!first) {
+		while (true) {
+			auto newline = NextNewline(data + cursor, size - cursor);
+			if (newline) {
+				cursor = NumericCast<idx_t>(newline - data) + 1;
+				break;
+			}
+			cursor = size;
+			if (file_offset + size >= limit || !ReadMore()) {
 				done = true;
+				break;
 			}
 		}
-		break;
-	}
-	default: {
-		EnsureCapacity(global.BufferCapacity());
-		first = true;
-		last = false;
-		limit = NumericLimits<idx_t>::Maximum();
-		ReadMore();
-		break;
-	}
 	}
 	Begin();
 }
 
 void JsonScan::Begin() {
 	if (first) {
+		Fill(3);
 		StringUtil::SkipBOM(data, size, cursor);
 		if (global.format == JSONFormat::ARRAY) {
 			SkipArrayStart();
 		}
 	}
-	line_start = cursor;
+	line_start = file_offset + cursor;
 	loaded = true;
 }
 
@@ -1183,57 +1001,77 @@ void JsonScan::Release() {
 	claimed = false;
 }
 
-bool JsonScan::ReadMore() {
-	if (last) {
+bool JsonScan::ReadMore(bool may_idle) {
+	if (Last()) {
 		return false;
 	}
-	auto &source = *global.source;
-	if (global.mode == JsonUnitMode::RANGES) {
-		const idx_t extra = MaxValue<idx_t>(JSON_LOOKUP_BYTES, size > limit ? size - limit : 0);
-		EnsureCapacity(size + extra);
-		const idx_t read = source.ReadAt(data + size, extra, file_offset + size, thread_handle);
-		size += read;
-		memset(data + size, 0, JSON_PADDING);
-		if (read < extra) {
-			last = true;
-		}
-		return read != 0;
-	}
-	if (global.mode == JsonUnitMode::STREAM) {
+	if (may_idle && window.Waits()) {
+		idle = true;
 		return false;
 	}
 	const idx_t keep = count != 0 ? MinValue(starts[0], cursor) : cursor;
-	if (keep != 0) {
-		memmove(data, data + keep, size - keep);
+	const idx_t rest = limit > window.read_to ? MinValue(limit - window.read_to, JSON_READ_BYTES) : JSON_LOOKUP_BYTES;
+	return ReadWindow(file_offset + keep, MaxValue(rest, size - cursor));
+}
+
+bool JsonScan::ReadWindow(idx_t keep, idx_t piece) {
+	const idx_t before = window.read_to;
+	window.Read(keep, piece);
+	auto &bytes = *window.bytes;
+	const idx_t shift = bytes.offset - file_offset;
+	data = bytes.data;
+	size = bytes.size;
+	file_offset = bytes.offset;
+	if (shift != 0) {
+		cursor -= shift;
 		for (idx_t i = 0; i < count; i++) {
-			starts[i] -= keep;
+			starts[i] -= shift;
 		}
-		file_offset += keep;
-		size -= keep;
-		cursor -= keep;
-		line_start = line_start > keep ? line_start - keep : 0;
-		source.Release(file_offset);
 	}
-	idx_t want = global.BufferCapacity() > size ? global.BufferCapacity() - size : 0;
-	if (want == 0) {
-		want = size;
+	if (!global.source->Stream()) {
+		global.source->Consume(window.read_to - before);
 	}
-	EnsureCapacity(size + want);
-	const idx_t read = source.Read(data + size, want);
-	size += read;
-	memset(data + size, 0, JSON_PADDING);
-	if (read < want) {
-		last = true;
+	return window.read_to != before;
+}
+
+idx_t JsonScan::CutRecords() {
+	while (true) {
+		ReadWindow(begin, size < JSON_STREAM_BYTES ? JSON_STREAM_BYTES - size : size);
+		const auto last = std::string_view(data, size).rfind('\n');
+		const bool found = last != std::string_view::npos;
+		if (found && (size >= JSON_STREAM_BYTES || Last())) {
+			return file_offset + last + 1;
+		}
+		if (Last()) {
+			return file_offset + size;
+		}
+		if (!found && size > options.maximum_object_size) {
+			global.ThrowObjectSizeError(size);
+		}
 	}
-	return read != 0;
+}
+
+void JsonScan::Fill(idx_t bytes) {
+	while (size - cursor < bytes && ReadMore()) {
+	}
+}
+
+void JsonScan::SkipBlank() {
+	while (true) {
+		SkipWhitespace(data, cursor, size);
+		if (cursor < size || !ReadMore()) {
+			return;
+		}
+	}
 }
 
 void JsonScan::SkipArrayStart() {
-	SkipWhitespace(data, cursor, size);
+	SkipBlank();
 	if (cursor == size) {
 		return;
 	}
 	if (global.features_prefix) {
+		Fill(global.BufferCapacity());
 		idx_t features_offset;
 		if (!FindFeatureCollectionArray(data + cursor, size - cursor, features_offset)) {
 			throw InvalidInputException("Expected a GeoJSON FeatureCollection in file \"%s\"", global.source->Path());
@@ -1247,14 +1085,14 @@ void JsonScan::SkipArrayStart() {
 		    data[cursor], global.source->Path());
 	}
 	cursor++;
-	SkipWhitespace(data, cursor, size);
+	SkipBlank();
 	if (cursor >= size) {
 		throw InvalidInputException("Missing closing brace ']' in JSON array with format='array' in file \"%s\"",
 		                            global.source->Path());
 	}
 	if (data[cursor] == ']') {
 		cursor++;
-		SkipWhitespace(data, cursor, size);
+		SkipBlank();
 		if (cursor != size && !global.features_prefix) {
 			throw InvalidInputException(
 			    "Empty array with trailing data when parsing JSON array with format='array' in file \"%s\"",
@@ -1265,7 +1103,7 @@ void JsonScan::SkipArrayStart() {
 	}
 }
 
-bool JsonScan::FrameRecord(idx_t &record_end) {
+bool JsonScan::FrameRecord(idx_t &record_end, bool may_idle) {
 	while (true) {
 		const idx_t remaining = size - cursor;
 		const char *start = data + cursor;
@@ -1276,31 +1114,34 @@ bool JsonScan::FrameRecord(idx_t &record_end) {
 			record_end = NumericCast<idx_t>(end - data);
 			return true;
 		}
-		if (last) {
+		if (Last()) {
 			record_end = size;
 			return remaining != 0;
 		}
 		if (remaining > options.maximum_object_size) {
 			global.ThrowObjectSizeError(remaining);
 		}
-		if (!ReadMore()) {
+		if (!ReadMore(may_idle)) {
+			if (idle) {
+				return false;
+			}
 			record_end = size;
 			return remaining != 0;
 		}
 	}
 }
 
-void JsonScan::SkipSpace() {
+void JsonScan::SkipSpace(bool may_idle) {
 	while (true) {
 		while (cursor < size && StringUtil::CharacterIsSpace(data[cursor])) {
 			if (data[cursor++] == '\n') {
-				line_start = cursor;
+				line_start = file_offset + cursor;
 				if (line_start >= limit) {
 					return;
 				}
 			}
 		}
-		if (cursor < size || last || !ReadMore()) {
+		if (cursor < size || !ReadMore(may_idle)) {
 			return;
 		}
 	}
@@ -1334,16 +1175,20 @@ void JsonScan::ResetBatch() {
 
 bool JsonScan::NextRecords() {
 	ResetBatch();
+	idle = false;
 	const idx_t batch_start = file_offset + cursor;
 	while (count < STANDARD_VECTOR_SIZE && !done) {
-		SkipSpace();
+		SkipSpace(count != 0);
+		if (idle) {
+			break;
+		}
 		if (line_start >= limit || cursor == size) {
 			done = true;
 			break;
 		}
 		idx_t record_end;
-		if (!FrameRecord(record_end)) {
-			done = true;
+		if (!FrameRecord(record_end, count != 0)) {
+			done = !idle;
 			break;
 		}
 		const idx_t begin = cursor;
@@ -1369,7 +1214,7 @@ bool JsonScan::NextRecords() {
 		}
 	}
 	if (sampling && count != 0) {
-		SkipSpace();
+		SkipSpace(true);
 	}
 	batch_bytes = file_offset + cursor - batch_start;
 	return count != 0;
@@ -1435,6 +1280,7 @@ void JsonScan::TransformError(idx_t record, const string &message) {
 }
 
 idx_t JsonScan::Scan(DataChunk &output) {
+	output.Reset();
 	if (claimed && !loaded) {
 		Load();
 	}
@@ -1446,7 +1292,6 @@ idx_t JsonScan::Scan(DataChunk &output) {
 			}
 			return 0;
 		}
-		output.Reset();
 		const auto rows =
 		    options.type == JSONScanType::READ_JSON_OBJECTS ? DecodeObjects(output, count) : Decode(output, count);
 		if (stopped) {
@@ -1455,8 +1300,13 @@ idx_t JsonScan::Scan(DataChunk &output) {
 		if (rows != 0) {
 			return rows;
 		}
+		output.Reset();
 	}
 	return 0;
+}
+
+void JsonScan::HoldWindow(Vector &vector) {
+	StringVector::AddAuxiliaryData(vector, make_uniq<RowBytesHolder>(window.bytes));
 }
 
 idx_t JsonScan::Sample(const JSONNode **&sample, idx_t &bytes) {
@@ -2101,6 +1951,9 @@ bool JsonScan::DecodeDirect(DataChunk &output, idx_t &rows) {
 		auto &target = strings ? direct_strings[column] : *vectors[column];
 		direct_data[column] = FlatVector::GetDataMutable(target);
 		direct_validity[column] = &FlatVector::ValidityMutable(target);
+		if (!strings && global.fast[column] == JsonDirectFast::STRING) {
+			HoldWindow(target);
+		}
 	}
 	direct_unknown_error = transform_options.error_unknown_key;
 	direct_duplicate_error = transform_options.error_duplicate_key;
@@ -2262,6 +2115,7 @@ idx_t JsonScan::Decode(DataChunk &output, idx_t rows) {
 idx_t JsonScan::DecodeObjects(DataChunk &output, idx_t rows) {
 	auto &columns = global.columns;
 	if (!columns.names.empty()) {
+		HoldWindow(output.data[columns.column_ids[0]]);
 		auto strings = FlatVector::Writer<string_t>(output.data[columns.column_ids[0]], rows);
 		for (idx_t i = 0; i < rows; i++) {
 			if (roots[i] != DConstants::INVALID_INDEX) {
@@ -2281,59 +2135,52 @@ idx_t JsonScan::DecodeObjects(DataChunk &output, idx_t rows) {
 
 idx_t JsonScan::Lookup(std::span<const int64_t> offsets, std::span<idx_t> survivors, DataChunk &output) {
 	auto &columns = global.columns;
-	auto &source = *global.source;
 	ResetBatch();
-	if (!thread_handle && source.Remote()) {
-		thread_handle = source.OpenThreadHandle();
-	}
+	RowLookup lookup(*global.ranges);
 	idx_t found = 0;
-	idx_t window_begin = 0;
-	idx_t window_size = 0;
-	char *window = nullptr;
 	for (idx_t i = 0; i < offsets.size(); i++) {
-		const auto offset = UnsafeNumericCast<idx_t>(offsets[i]);
-		idx_t want = JSON_LOOKUP_BYTES;
-		const char *start = nullptr;
-		const char *end = nullptr;
-		idx_t available = 0;
-		while (true) {
-			if (!window || offset < window_begin || offset >= window_begin + window_size) {
-				window = char_ptr_cast(arena.AllocateAligned(want + JSON_PADDING));
-				window_size = source.ReadAt(window, want, offset, thread_handle);
-				memset(window + window_size, 0, JSON_PADDING);
-				window_begin = offset;
-			}
-			start = window + (offset - window_begin);
-			available = window_size - (offset - window_begin);
-			if (available == 0) {
-				break;
-			}
-			end = global.format == JSONFormat::NEWLINE_DELIMITED ? NextNewline(start, available)
-			                                                     : NextJSON(start, available);
-			const bool eof = window_begin + window_size >= source.Size();
-			if (end || eof || want > options.maximum_object_size) {
-				if (!end) {
-					end = start + available;
-				}
-				break;
-			}
-			want *= 2;
-			window = nullptr;
-		}
-		if (!end || end == start) {
+		if (offsets[i] < 0) {
 			continue;
 		}
+		const auto offset = UnsafeNumericCast<idx_t>(offsets[i]);
+		const auto position = lookup.Find(offset, offset, JSON_LOOKUP_BYTES);
+		if (!position.IsValid()) {
+			continue;
+		}
+		const idx_t begin = position.GetIndex();
+		idx_t record_end;
+		idx_t grow = JSON_LOOKUP_BYTES;
+		while (true) {
+			const char *start = lookup.bytes->data + begin;
+			const idx_t available = lookup.End() - begin;
+			const char *end = global.format == JSONFormat::NEWLINE_DELIMITED ? NextNewline(start, available)
+			                                                                 : NextJSON(start, available);
+			if (end) {
+				record_end = begin + NumericCast<idx_t>(end - start);
+				break;
+			}
+			if (lookup.Eof() || available > options.maximum_object_size) {
+				record_end = lookup.End();
+				break;
+			}
+			lookup.Extend(grow);
+			grow *= 2;
+		}
+		if (record_end == begin) {
+			continue;
+		}
+		const char *start = lookup.bytes->data + begin;
 		JSONParseError error;
-		auto root = parser.ParseAppend(start, NumericCast<idx_t>(end - start), available + JSON_PADDING, error);
+		auto root = parser.ParseAppend(start, record_end - begin, lookup.bytes->size - begin + JSON_PADDING, error);
 		if (!root.IsValid()) {
 			continue;
 		}
-		idx_t trimmed = NumericCast<idx_t>(end - start);
+		idx_t trimmed = record_end - begin;
 		while (trimmed != 0 && StringUtil::CharacterIsSpace(start[trimmed - 1])) {
 			trimmed--;
 		}
 		roots[found] = root.GetIndex();
-		found_records[found] = start;
+		starts[found] = begin;
 		sizes[found] = trimmed;
 		survivors[found] = i;
 		found++;
@@ -2349,9 +2196,11 @@ idx_t JsonScan::Lookup(std::span<const int64_t> offsets, std::span<idx_t> surviv
 	}
 	if (!columns.column_ids.empty() && found != 0) {
 		if (options.type == JSONScanType::READ_JSON_OBJECTS) {
-			auto strings = FlatVector::Writer<string_t>(output.data[columns.column_ids[0]], found);
+			auto &vector = output.data[columns.column_ids[0]];
+			StringVector::AddAuxiliaryData(vector, make_uniq<RowBytesHolder>(lookup.bytes));
+			auto strings = FlatVector::Writer<string_t>(vector, found);
 			for (idx_t r = 0; r < found; r++) {
-				strings.WriteStringRef(string_t(found_records[r], UnsafeNumericCast<uint32_t>(sizes[r])));
+				strings.WriteStringRef(string_t(lookup.bytes->data + starts[r], UnsafeNumericCast<uint32_t>(sizes[r])));
 			}
 		} else {
 			vector<Vector *> result_vectors(columns.column_ids.size());
