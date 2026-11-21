@@ -1053,9 +1053,11 @@ TEST_CASE("A stream of short rows is cut into pieces of about the range size", "
 		string row;
 		idx_t range_bytes;
 	};
-	const vector<Case> cases = {
-	    {RowDialect::PostgresText('\t'), "1\n", 64},
-	    {RowDialect::DuckDB(TestGrammar(',', false, NewLineIdentifier::CARRY_ON)), "1\r\n", 65}};
+	const vector<Case> cases = {{RowDialect::PostgresText('\t'), "1\n", 64},
+	                            {RowDialect::PostgresText('\t'), "1\r\n", 64},
+	                            {RowDialect::DuckDB(TestGrammar(',', false, NewLineIdentifier::CARRY_ON)), "1\r\n", 65},
+	                            {RowDialect::DuckDB(TestGrammar(',', false, NewLineIdentifier::CARRY_ON)), "1\r", 65},
+	                            {RowDialect::DuckDB(TestGrammar(',', true, NewLineIdentifier::NOT_SET)), "1\n", 64}};
 	for (const auto &test : cases) {
 		string input;
 		for (idx_t i = 0; i < 5000; i++) {
@@ -1083,6 +1085,36 @@ TEST_CASE("A stream of short rows is cut into pieces of about the range size", "
 		INFO("row " << test.row.size() << " bytes");
 		REQUIRE(rows == 5000);
 		REQUIRE(longest <= test.range_bytes + 2 * test.row.size());
+	}
+}
+
+TEST_CASE("A text stream of empty lines is read as one empty row per line", "[csv]") {
+	const string input(5000, '\n');
+	RowLexer lexer(RowDialect::PostgresText('\t'), 1, NumericLimits<idx_t>::Maximum(), true, false, true);
+	RowRangesTestStream whole(input);
+	const auto expected = ReadRows(lexer, whole);
+	REQUIRE(expected.size() == 5000);
+	RowRangesTestStream stream(input);
+	REQUIRE(ReadRanges(lexer, stream, 64) == expected);
+}
+
+TEST_CASE("A stream whose unquoted escapes start mid-way is cut at the rows the whole input has", "[csv]") {
+	auto grammar = TestGrammar(',', false, NewLineIdentifier::SINGLE_N);
+	grammar.escape = '\\';
+	grammar.quoted_escape = true;
+	const auto dialect = RowDialect::DuckDB(grammar);
+	REQUIRE(dialect.unquoted_escape);
+	string input;
+	for (idx_t row = 0; row < 400; row++) {
+		input += to_string(row) + (row < 200 ? ",plain\n" : ",x\\,y\n");
+	}
+	RowLexer lexer(dialect, 2, NumericLimits<idx_t>::Maximum(), true, false, true);
+	RowRangesTestStream whole(input);
+	const auto expected = ReadRows(lexer, whole);
+	REQUIRE(expected.size() == 400);
+	for (const idx_t range_bytes : {idx_t(64), idx_t(1) << 10}) {
+		RowRangesTestStream stream(input);
+		REQUIRE(ReadRanges(lexer, stream, range_bytes) == expected);
 	}
 }
 

@@ -303,7 +303,7 @@ private:
 	idx_t LineBreaksFrom(const RowBytes &bytes, idx_t read_to) const;
 	void EscapeParityTerm(const RowBytes &bytes, idx_t from, idx_t limit, RowCursor &last) const;
 	void PlainTerm(const RowBytes &bytes, idx_t from, idx_t limit, RowCursor &last) const;
-	idx_t IntakeCut(const RowCursor &probe, bool idle) const;
+	idx_t IntakeCut(const RowCursor &probe) const;
 	void PublishOwnTransfer();
 	bool FromChain();
 	bool Lex();

@@ -31,3 +31,11 @@ statement error
 SELECT * FROM read_ndjson('/dev/zero', columns := {a: 'INTEGER', b: 'INTEGER'});
 ----
 "maximum_object_size" of 16777216 bytes exceeded while reading file "/dev/zero" (>25165824 bytes).
+
+statement ok
+SET threads = 8;
+
+statement error
+SELECT * FROM read_ndjson('/dev/zero', columns := {a: 'INTEGER', b: 'INTEGER'});
+----
+"maximum_object_size" of 16777216 bytes exceeded while reading file "/dev/zero" (>25165824 bytes).
