@@ -267,7 +267,7 @@ unique_ptr<ParsedExpression> Binder::QualifyTableExpression(ClientContext &conte
 	if (table.ParentCatalog().Compatibility() != SqlCompatibility::POSTGRES) {
 		return expression;
 	}
-	CatalogEntryRetriever table_scope(context);
+	auto table_scope = CatalogEntryRetriever::Internal(context);
 	table_scope.SetTableSearchPath(table.ParentSchema(context));
 	ForEachName(table_scope, *expression,
 	            [&](TableExpressionName use) { use.Rename(FullName(use.entry, table.ParentCatalog())); });
