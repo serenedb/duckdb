@@ -2138,6 +2138,17 @@ PartitionStatistics RowGroup::GetPartitionStats(SegmentNode<RowGroup> &row_group
 	return result;
 }
 
+bool RowGroup::MinMaxIsExact(TransactionData transaction, const StorageIndex &column_idx) {
+	if (HasUnloadedDeletes()) {
+		return false;
+	}
+	auto vinfo = GetVersionInfoIfLoaded();
+	if (vinfo && (vinfo->HasDeletes() || GetVisibleRowCount(transaction) != count)) {
+		return false;
+	}
+	return !GetColumn(column_idx).HasUpdates();
+}
+
 //===--------------------------------------------------------------------===//
 // GetColumnSegmentInfo
 //===--------------------------------------------------------------------===//
