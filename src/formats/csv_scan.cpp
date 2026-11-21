@@ -1588,15 +1588,15 @@ LeanSource CsvScan::LeanSourceFor(const CsvScanColumn &column, idx_t first, bool
 	LeanSource source;
 	source.first = first;
 	if (column.file_column == 0) {
-		source.begins = fields.rows.get();
+		source.begins = fields.rows;
 		source.begin_stride = 1;
 		source.begin_bias = 0;
 	} else {
-		source.begins = fields.ends.get() + column.file_column - 1;
+		source.begins = fields.ends + column.file_column - 1;
 		source.begin_stride = columns;
 		source.begin_bias = grammar.delimiter_size;
 	}
-	source.ends = fields.ends.get() + column.file_column;
+	source.ends = fields.ends + column.file_column;
 	source.stride = columns;
 	source.data = bytes->data;
 	source.limit = bytes->data + bytes->size;
