@@ -1,0 +1,29 @@
+# name: test/sql/pragma/profiling/enable_profiling_parallel_pipelines.test
+# description: enable_profiling() and disable_profiling() run beside the other pipelines of their query
+# group: [profiling]
+
+statement ok
+PRAGMA profiling_output = '{TEST_DIR}/enable_profiling_parallel_pipelines.txt'
+
+statement ok
+SET threads = 4
+
+query I
+SELECT count(*) FROM (SELECT * FROM enable_profiling() UNION ALL SELECT true FROM range(1000000) UNION ALL SELECT true FROM range(1000000))
+----
+2000000
+
+query I
+SELECT current_setting('enable_profiling')
+----
+query_tree
+
+query I
+SELECT count(*) FROM (SELECT * FROM disable_profiling() UNION ALL SELECT true FROM range(1000000) UNION ALL SELECT true FROM range(1000000))
+----
+2000000
+
+query I
+SELECT current_setting('enable_profiling')
+----
+NULL
