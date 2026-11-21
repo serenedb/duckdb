@@ -517,3 +517,11 @@ query I
 SELECT count(*) FROM read_json_objects('data/json/example_n.ndjson') WHERE file_row_number > 1000
 ----
 0
+
+statement ok
+COPY (SELECT i AS a FROM range(100) t(i)) TO '{TEMP_DIR}/read_single_json_file_sampled.json.gz' (FORMAT json, COMPRESSION gzip);
+
+query II
+SELECT count(a), sum(a) FROM read_single_json_file('{TEMP_DIR}/read_single_json_file_sampled.json.gz')
+----
+100	4950

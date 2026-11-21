@@ -1,0 +1,27 @@
+# name: test/sql/json/table/read_json_read_pieces.test_slow
+# description: read_ndjson finds the end of a stream that ends on a read piece, and a range whose first piece lies inside one record
+# group: [table]
+
+require json
+
+statement ok
+SET threads = 1;
+
+statement ok
+COPY (SELECT encode(repeat('{"a":1}' || chr(10), 1048575) || '{"a":12}')) TO '{TEMP_DIR}/read_pieces_end.ndjson.gz' (FORMAT BLOB, COMPRESSION 'GZIP');
+
+query II
+SELECT count(*), sum(a) FROM read_ndjson('{TEMP_DIR}/read_pieces_end.ndjson.gz', columns = {'a': 'BIGINT'})
+----
+1048576	1048587
+
+statement ok
+SET threads = 2;
+
+statement ok
+COPY (SELECT encode(repeat('{"a":1}' || chr(10), 1048451) || '{"a":2,"s":"' || repeat('x', 8390000) || '"}' || chr(10) || repeat('{"a":3}' || chr(10), 100))) TO '{TEMP_DIR}/read_pieces_long.ndjson' (FORMAT BLOB);
+
+query III
+SELECT count(*), sum(a), max(length(s)) FROM read_ndjson('{TEMP_DIR}/read_pieces_long.ndjson', columns = {'a': 'BIGINT', 's': 'VARCHAR'})
+----
+1048552	1048753	8390000
