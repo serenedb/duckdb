@@ -1,11 +1,9 @@
 #include "catch.hpp"
-#include "duckdb/parser/expression/constant_expression.hpp"
 #include "duckdb/parser/parsed_data/alter_table_info.hpp"
 #include "duckdb/parser/parsed_data/create_tablespace_info.hpp"
 #include "duckdb/parser/parser.hpp"
 #include "duckdb/parser/statement/alter_statement.hpp"
 #include "duckdb/parser/statement/create_statement.hpp"
-#include "duckdb/parser/statement/pragma_statement.hpp"
 
 namespace duckdb {
 
@@ -20,7 +18,7 @@ unique_ptr<SQLStatement> ParseOwnerStatement(const string &query) {
 
 string SubscriptionOwner(const string &role) {
 	auto statement = ParseOwnerStatement("ALTER SUBSCRIPTION sub OWNER TO " + role);
-	return statement->Cast<PragmaStatement>().info->parameters[2]->Cast<ConstantExpression>().GetLiteral().text;
+	return statement->Cast<AlterStatement>().info->Cast<AlterPermissionsInfo>().new_owner;
 }
 
 string TablespaceOwner(const string &role) {
