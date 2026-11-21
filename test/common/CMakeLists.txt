@@ -11,6 +11,7 @@ add_library_unity(
   test_copy_fields.cpp
   test_csv_encoder.cpp
   test_csv_splitter.cpp
+  test_json_ranges.cpp
   test_row_ranges.cpp
   test_column_data_allocator.cpp
   test_file_buffer_handle_group.cpp

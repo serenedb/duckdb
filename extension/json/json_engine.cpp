@@ -733,14 +733,23 @@ JsonScanGlobal::JsonScanGlobal(ClientContext &context_p, const JSONScanData &bin
 		Detect();
 	}
 	idx_t range_bytes = DConstants::INVALID_INDEX;
+	const bool split_values = (format == JSONFormat::ARRAY && !features_prefix) || format == JSONFormat::UNSTRUCTURED;
 	if (format == JSONFormat::NEWLINE_DELIMITED && parallel && source->Stream()) {
 		range_bytes = JSON_STREAM_BYTES;
-	} else if (format == JSONFormat::NEWLINE_DELIMITED && parallel) {
+	} else if ((format == JSONFormat::NEWLINE_DELIMITED || split_values) && parallel && !source->Stream()) {
 		const idx_t threads = MaxValue<idx_t>(TaskScheduler::QueryThreads(context), 1);
 		range_bytes = MinValue(JSON_MAX_RANGE_BYTES, MaxValue(JSON_MIN_RANGE_BYTES, source->Size() / threads));
 	}
 	ranges = make_uniq<RowRanges>(BufferAllocator::Get(context), source->Rows(), 0, source->Size(), range_bytes);
 	ranges->path = source->Path();
+	parallel_values = split_values && ranges->RangeCount() > 1;
+	if (parallel_values) {
+		JsonRangeStart first;
+		if (format == JSONFormat::UNSTRUCTURED) {
+			first.origin = JsonRangeOrigin::OUTSIDE;
+		}
+		chain.Assign(ranges->RangeCount(), first);
+	}
 	validate_only = options.type == JSONScanType::READ_JSON_OBJECTS ||
 	                (columns.names.empty() && options.type == JSONScanType::READ_JSON);
 	PlanDirect();
@@ -839,6 +848,34 @@ idx_t JsonScanGlobal::MaxThreads() const {
 
 idx_t JsonScanGlobal::BufferCapacity() const {
 	return options.maximum_object_size * 2;
+}
+
+void JsonScanGlobal::Computing(idx_t range, bool value) {
+	lock_guard<mutex> guard(lock);
+	if (value) {
+		chain.computing[range]++;
+	} else {
+		chain.computing[range]--;
+	}
+}
+
+void JsonScanGlobal::Publish(idx_t range, JsonRangeOrigin origin, const JsonRangeEntry &entry) {
+	lock_guard<mutex> guard(lock);
+	chain.Publish(range, static_cast<uint8_t>(origin), entry, ranges->RangeCount());
+}
+
+JsonRangeStart JsonScanGlobal::StartState(idx_t range) {
+	return chain.StartState(
+	    lock, range,
+	    [&](idx_t missing, uint8_t origin) {
+		    RowBytes bytes;
+		    const idx_t begin = ranges->RangeBegin(missing);
+		    ranges->ReadInto(bytes, begin, ranges->RangeEnd(missing) - begin);
+		    return JsonRangeTransfer(bytes.data, bytes.size, static_cast<JsonRangeOrigin>(origin), missing == 0);
+	    },
+	    [&](idx_t missing, uint8_t origin, const JsonRangeEntry &entry) {
+		    chain.Publish(missing, origin, entry, ranges->RangeCount());
+	    });
 }
 
 bool JsonScanGlobal::Claim(idx_t &unit, idx_t &begin, shared_ptr<RowBytes> &carry, idx_t &carry_to) {
@@ -962,6 +999,11 @@ void JsonScan::Load() {
 		return;
 	}
 	limit = ranges.RangeEnd(unit, NumericLimits<idx_t>::Maximum());
+	if (global.parallel_values) {
+		LoadValueRange();
+		Begin();
+		return;
+	}
 	const idx_t from = first ? 0 : begin - 1;
 	window.Start(from, !sampling, first);
 	file_offset = from;
@@ -983,6 +1025,52 @@ void JsonScan::Load() {
 		}
 	}
 	Begin();
+}
+
+void JsonScan::LoadValueRange() {
+	auto &ranges = *global.ranges;
+	const bool array = global.format == JSONFormat::ARRAY;
+	const bool publish = unit + 1 < ranges.RangeCount();
+	window.Start(begin, !sampling, first);
+	file_offset = begin;
+	cursor = 0;
+	count = 0;
+	if (publish) {
+		global.Computing(unit, true);
+	}
+	idx_t span;
+	{
+		absl::Cleanup stop = [&] {
+			if (publish) {
+				global.Computing(unit, false);
+			}
+		};
+		ReadWindow(begin, limit - begin);
+		while (file_offset + size < limit && ReadMore()) {
+		}
+		span = MinValue(size, limit - file_offset);
+		if (publish && first && array) {
+			global.Publish(unit, JsonRangeOrigin::BEFORE_ARRAY,
+			               JsonRangeTransfer(data, span, JsonRangeOrigin::BEFORE_ARRAY, true));
+		} else if (publish) {
+			JsonRangeEntry outside;
+			JsonRangeEntry string;
+			JsonRangeTransfers(data, span, outside, string);
+			global.Publish(unit, JsonRangeOrigin::OUTSIDE, outside);
+			global.Publish(unit, JsonRangeOrigin::STRING, string);
+		}
+	}
+	if (first) {
+		return;
+	}
+	const auto start = global.StartState(unit);
+	const idx_t found = array ? JsonArraySeparator(data, span, start) : JsonValueStart(data, span, start);
+	if (found == DConstants::INVALID_INDEX) {
+		cursor = span;
+		done = true;
+	} else {
+		cursor = array ? found + 1 : found;
+	}
 }
 
 void JsonScan::Begin() {
@@ -1136,7 +1224,7 @@ void JsonScan::SkipSpace(bool may_idle) {
 		while (cursor < size && StringUtil::CharacterIsSpace(data[cursor])) {
 			if (data[cursor++] == '\n') {
 				line_start = file_offset + cursor;
-				if (line_start >= limit) {
+				if (line_start >= limit && global.format == JSONFormat::NEWLINE_DELIMITED) {
 					return;
 				}
 			}
@@ -1155,6 +1243,12 @@ bool JsonScan::AfterArrayRecord(idx_t record_size) {
 		return true;
 	}
 	if (cursor < size && (data[cursor] == ',' || data[cursor] == ']')) {
+		if (global.parallel_values && data[cursor] == ']') {
+			limit = NumericLimits<idx_t>::Maximum();
+		} else if (global.parallel_values && file_offset + cursor >= limit) {
+			done = true;
+			return true;
+		}
 		cursor++;
 		return true;
 	}
@@ -1182,7 +1276,8 @@ bool JsonScan::NextRecords() {
 		if (idle) {
 			break;
 		}
-		if (line_start >= limit || cursor == size) {
+		if ((line_start >= limit && global.format == JSONFormat::NEWLINE_DELIMITED) || cursor == size ||
+		    (global.parallel_values && global.format == JSONFormat::UNSTRUCTURED && file_offset + cursor >= limit)) {
 			done = true;
 			break;
 		}
