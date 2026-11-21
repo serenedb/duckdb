@@ -53,9 +53,9 @@ public:
 	string GetFilePath();
 
 	static unique_ptr<FileHandle> OpenFileHandle(FileSystem &fs, Allocator &allocator, const OpenFileInfo &file,
-	                                             FileCompressionType compression);
+	                                             FileCompressionType compression, CachingMode caching_mode);
 	static unique_ptr<CSVFileHandle> OpenFile(ClientContext &context, const OpenFileInfo &file,
-	                                          const CSVReaderOptions &options);
+	                                          const CSVReaderOptions &options, CachingMode caching_mode);
 	FileCompressionType compression_type;
 
 	double GetProgress() const;

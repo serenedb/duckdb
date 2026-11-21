@@ -43,7 +43,7 @@ SerializedCSVReaderOptions::SerializedCSVReaderOptions(CSVOption<char> single_by
 
 unique_ptr<CSVFileHandle> ReadCSV::OpenCSV(const OpenFileInfo &file, const CSVReaderOptions &options,
                                            ClientContext &context) {
-	return CSVFileHandle::OpenFile(context, file, options);
+	return CSVFileHandle::OpenFile(context, file, options, CachingMode::CACHE_REMOTE_ONLY);
 }
 
 ReadCSVData::ReadCSVData() {
