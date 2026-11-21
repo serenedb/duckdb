@@ -123,13 +123,12 @@ public:
 		return bind_data.file_options.allow_empty && bind_data.file_list->IsEmpty();
 	}
 
-	static unique_ptr<FunctionData> MultiFileBindInternal(ClientContext &context,
-	                                                      unique_ptr<MultiFileReader> multi_file_reader_p,
-	                                                      shared_ptr<MultiFileList> multi_file_list_p,
-	                                                      vector<LogicalType> &return_types, vector<Identifier> &names,
-	                                                      MultiFileOptions file_options_p,
-	                                                      unique_ptr<BaseFileReaderOptions> options_p,
-	                                                      unique_ptr<MultiFileReaderInterface> interface_p) {
+	static unique_ptr<FunctionData>
+	MultiFileBindInternal(ClientContext &context, unique_ptr<MultiFileReader> multi_file_reader_p,
+	                      shared_ptr<MultiFileList> multi_file_list_p, vector<LogicalType> &return_types,
+	                      vector<Identifier> &names, MultiFileOptions file_options_p,
+	                      unique_ptr<BaseFileReaderOptions> options_p, unique_ptr<MultiFileReaderInterface> interface_p,
+	                      const Identifier &function_name) {
 		auto &interface = *interface_p;
 
 		auto result = make_uniq<MultiFileBindData>();
@@ -213,7 +212,7 @@ public:
 					}
 					extended_error += names[col_idx] + " " + return_types[col_idx].ToString();
 				}
-				extended_error += "\nParquet schema: ";
+				extended_error += "\nFile schema: ";
 				for (idx_t col_idx = 0; col_idx < result->types.size(); col_idx++) {
 					if (col_idx > 0) {
 						extended_error += ", ";
@@ -222,7 +221,8 @@ public:
 				}
 				extended_error += "\n\nPossible solutions:";
 				extended_error += "\n* Manually specify which columns to insert using \"INSERT INTO tbl SELECT ... "
-				                  "FROM read_parquet(...)\"";
+				                  "FROM " +
+				                  function_name.GetIdentifierName() + "(...)\"";
 				throw ConversionException(
 				    "Failed to read file(s) \"%s\" - column count mismatch: expected %d columns but found %d\n%s",
 				    file_string, return_types.size(), result->types.size(), extended_error);
@@ -276,7 +276,8 @@ public:
 			throw NotImplementedException("Unimplemented option %s", kv.first);
 		}
 		return MultiFileBindInternal(context, std::move(multi_file_reader), std::move(file_list), return_types, names,
-		                             std::move(file_options), std::move(options), std::move(interface));
+		                             std::move(file_options), std::move(options), std::move(interface),
+		                             input.table_function.GetName());
 	}
 
 	static unique_ptr<FunctionData> MultiFileBindCopy(ClientContext &context, CopyFromFunctionBindInput &input,
@@ -316,7 +317,8 @@ public:
 		interface->FinalizeCopyBind(context, *options, expected_names, expected_types);
 
 		return MultiFileBindInternal(context, std::move(multi_file_reader), std::move(file_list), expected_types,
-		                             expected_names, std::move(file_options), std::move(options), std::move(interface));
+		                             expected_names, std::move(file_options), std::move(options), std::move(interface),
+		                             input.tf.name);
 	}
 
 	static unique_ptr<MultiFileList> MultiFileFilterPushdown(ClientContext &context, const MultiFileBindData &data,

@@ -21,9 +21,9 @@ CSVFileHandle::CSVFileHandle(ClientContext &context_p, unique_ptr<FileHandle> fi
 }
 
 unique_ptr<FileHandle> CSVFileHandle::OpenFileHandle(FileSystem &fs, Allocator &allocator, const OpenFileInfo &file,
-                                                     FileCompressionType compression) {
+                                                     FileCompressionType compression, CachingMode caching_mode) {
 	FileOpenFlags flags = FileFlags::FILE_FLAGS_READ | FileFlags::FILE_FLAGS_PARALLEL_ACCESS | std::move(compression);
-	flags.SetCachingMode(CachingMode::CACHE_REMOTE_ONLY);
+	flags.SetCachingMode(caching_mode);
 	auto file_handle = fs.OpenFile(file, flags);
 	if (file_handle->CanSeek()) {
 		file_handle->Reset();
@@ -32,10 +32,10 @@ unique_ptr<FileHandle> CSVFileHandle::OpenFileHandle(FileSystem &fs, Allocator &
 }
 
 unique_ptr<CSVFileHandle> CSVFileHandle::OpenFile(ClientContext &context, const OpenFileInfo &file,
-                                                  const CSVReaderOptions &options) {
+                                                  const CSVReaderOptions &options, CachingMode caching_mode) {
 	auto &fs = FileSystem::GetFileSystem(context);
 	auto &allocator = BufferAllocator::Get(context);
-	auto file_handle = OpenFileHandle(fs, allocator, file, options.compression);
+	auto file_handle = OpenFileHandle(fs, allocator, file, options.compression, caching_mode);
 	return make_uniq<CSVFileHandle>(context, std::move(file_handle), file, options);
 }
 
