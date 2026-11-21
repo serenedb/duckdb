@@ -64,6 +64,9 @@ shared_ptr<CSVBufferHandle> CSVSequentialBufferManager::GetBuffer(const idx_t po
 		if (next) {
 			last_buffer = next;
 			cached_buffers.emplace_back(std::move(next));
+			if (cached_buffers.size() == 2 && reset_when_possible.erase(0)) {
+				ResetFrom(0);
+			}
 		} else {
 			previous->last_buffer = true;
 			MarkDone(*previous);
@@ -174,13 +177,7 @@ void CSVSequentialBufferManager::ResetBuffer(const idx_t buffer_idx) {
 	}
 	D_ASSERT(cached_buffers[buffer_idx]);
 	if (buffer_idx == 0 && cached_buffers.size() > 1) {
-		Recycle(cached_buffers[buffer_idx]);
-		idx_t cur_buffer = buffer_idx + 1;
-		while (reset_when_possible.find(cur_buffer) != reset_when_possible.end()) {
-			Recycle(cached_buffers[cur_buffer]);
-			reset_when_possible.erase(cur_buffer);
-			cur_buffer++;
-		}
+		ResetFrom(0);
 		return;
 	}
 	// We only reset if previous one was also already reset
@@ -194,12 +191,13 @@ void CSVSequentialBufferManager::ResetBuffer(const idx_t buffer_idx) {
 		reset_when_possible.clear();
 		return;
 	}
+	ResetFrom(buffer_idx);
+}
+
+void CSVSequentialBufferManager::ResetFrom(idx_t buffer_idx) {
 	Recycle(cached_buffers[buffer_idx]);
-	idx_t cur_buffer = buffer_idx + 1;
-	while (reset_when_possible.find(cur_buffer) != reset_when_possible.end()) {
+	for (idx_t cur_buffer = buffer_idx + 1; reset_when_possible.erase(cur_buffer); cur_buffer++) {
 		Recycle(cached_buffers[cur_buffer]);
-		reset_when_possible.erase(cur_buffer);
-		cur_buffer++;
 	}
 }
 

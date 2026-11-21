@@ -32,6 +32,7 @@ private:
 	//! Releases the chain's own pin on the predecessor of an accessed buffer
 	void UnpinPrevious(const idx_t pos);
 	void Recycle(shared_ptr<CSVBuffer> &buffer);
+	void ResetFrom(idx_t buffer_idx);
 
 	mutex read_lock;
 	shared_ptr<CSVBuffer> spare;

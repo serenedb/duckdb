@@ -6,6 +6,7 @@
 #include "duckdb/formats/row_ranges.hpp"
 #include "duckdb/formats/row_stream.hpp"
 #include "duckdb/main/client_context.hpp"
+#include "duckdb/storage/buffer_manager.hpp"
 #include "test_helpers.hpp"
 
 #include <chrono>
@@ -916,4 +917,30 @@ TEST_CASE("A range waiting on the chain computes the transfers no reader publish
 			REQUIRE(resolved.last_position == start.last_position);
 		}
 	}
+}
+
+TEST_CASE("A single-threaded scan of a compressed CSV holds only the buffers it still reads", "[csv]") {
+	DuckDB db(nullptr);
+	Connection con(db);
+	const auto path = TestCreatePath("release_buffers.csv.gz");
+	REQUIRE_NO_FAIL(con.Query("COPY (SELECT i AS a, 'value number ' || i AS b FROM range(1000000) t(i)) TO '" + path +
+	                          "' (HEADER false)"));
+	REQUIRE_NO_FAIL(con.Query("SET threads = 1"));
+	auto stream =
+	    OpenStream(con, "SELECT a, b FROM read_csv('" + path +
+	                        "', parallel = false, buffer_size = 1048576, header = false, auto_detect = false, "
+	                        "columns = {'a': 'BIGINT', 'b': 'VARCHAR'})");
+	auto &buffer_manager = BufferManager::GetBufferManager(*con.context);
+	idx_t rows = 0;
+	idx_t held = 0;
+	while (auto chunk = stream->Fetch()) {
+		rows += chunk->size();
+		for (auto &info : buffer_manager.GetMemoryUsageInfo()) {
+			if (info.tag == MemoryTag::CSV_READER) {
+				held = MaxValue(held, info.size);
+			}
+		}
+	}
+	REQUIRE(rows == 1000000);
+	REQUIRE(held <= 8 * 1048576);
 }
