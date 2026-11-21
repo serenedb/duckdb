@@ -31,7 +31,7 @@ Catalog Error: Sequence with name t1 does not exist!
 statement error
 DROP MACRO test.test_macro2;
 ----
-Catalog Error: Macro Function with name test_macro2 does not exist!
+Catalog Error: could not find a function named "test_macro2"
 
 statement ok
 attach ':memory:' as my_ducklake;
