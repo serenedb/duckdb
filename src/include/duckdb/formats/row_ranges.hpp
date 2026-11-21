@@ -293,7 +293,6 @@ private:
 	bool validate_count_utf8 = false;
 	bool probe_only = false;
 	bool finished = false;
-	bool verified = false;
 	bool second_pass = false;
 	bool extending = false;
 	bool open_end = false;
