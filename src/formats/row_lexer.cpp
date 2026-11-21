@@ -15,6 +15,7 @@ namespace duckdb {
 namespace {
 
 constexpr idx_t FIELD_SLACK = 8;
+constexpr idx_t ROW_BASE_LIMIT = idx_t(1) << 20;
 
 uint64_t ExpectedPattern(idx_t columns, idx_t phase) {
 	uint64_t result = 0;
@@ -173,30 +174,36 @@ void RowFields::Drop(idx_t count, idx_t dropped_ends) {
 	ends += dropped_ends;
 	row_count -= count;
 	end_count -= dropped_ends;
-	if (!events.empty()) {
-		idx_t kept_events = 0;
-		for (auto &event : events) {
-			if (event.row >= count) {
-				event.row -= static_cast<uint32_t>(count);
-				events[kept_events++] = event;
-			}
-		}
-		events.resize(kept_events);
+	base += count;
+	while (event_head < events.size() && events[event_head].row < base) {
+		event_head++;
 	}
-	if (anomalies.empty()) {
-		return;
+	while (anomaly_head < anomalies.size() && anomalies[anomaly_head].row < base) {
+		anomaly_head++;
 	}
-	idx_t kept = 0;
-	for (auto &anomaly : anomalies) {
-		if (anomaly.row >= count) {
-			anomaly.row -= static_cast<uint32_t>(count);
-			anomalies[kept++] = anomaly;
-		}
+	if (event_head == events.size()) {
+		events.clear();
+		event_head = 0;
 	}
-	anomalies.resize(kept);
-	if (anomalies.empty()) {
+	if (anomaly_head == anomalies.size() && !anomalies.empty()) {
+		anomalies.clear();
+		anomaly_head = 0;
 		extras.erase(extras.begin(), extras.end() - NumericCast<int64_t>(open_extras));
 	}
+	if (events.empty() && anomalies.empty()) {
+		base = 0;
+		return;
+	}
+	if (base < ROW_BASE_LIMIT) {
+		return;
+	}
+	for (idx_t i = event_head; i < events.size(); i++) {
+		events[i].row -= static_cast<uint32_t>(base);
+	}
+	for (idx_t i = anomaly_head; i < anomalies.size(); i++) {
+		anomalies[i].row -= static_cast<uint32_t>(base);
+	}
+	base = 0;
 }
 
 void RowFields::Rebase(uint32_t delta) {
@@ -209,18 +216,19 @@ void RowFields::Rebase(uint32_t delta) {
 	for (auto &extra : extras) {
 		extra = ((extra & ROW_FIELD_MASK) - delta) | (extra & ROW_FIELD_FLAG);
 	}
-	for (auto &anomaly : anomalies) {
-		anomaly.end -= delta;
+	for (idx_t i = anomaly_head; i < anomalies.size(); i++) {
+		anomalies[i].end -= delta;
 	}
-	for (auto &event : events) {
-		event.position -= delta;
+	for (idx_t i = event_head; i < events.size(); i++) {
+		events[i].position -= delta;
 	}
 }
 
 const RowAnomaly *RowFields::Anomaly(idx_t row) const {
-	auto entry = std::lower_bound(anomalies.begin(), anomalies.end(), row,
+	const idx_t target = row + base;
+	auto entry = std::lower_bound(anomalies.begin() + NumericCast<int64_t>(anomaly_head), anomalies.end(), target,
 	                              [](const RowAnomaly &anomaly, idx_t value) { return anomaly.row < value; });
-	return entry != anomalies.end() && entry->row == row ? &*entry : nullptr;
+	return entry != anomalies.end() && entry->row == target ? &*entry : nullptr;
 }
 
 RowLexer::RowLexer(const RowDialect &dialect_p, idx_t columns_p, idx_t max_line_size_p, bool error_mode,
@@ -818,7 +826,7 @@ bool RowLexer::FeedBlocks(RowCursor &cursor, const char *data, idx_t base, idx_t
 				                              : c.phase + std::popcount(delims & (at - 1));
 				const uint64_t field_bits = (from_delims | row_starts) & upto;
 				const idx_t position = field_bits ? c.pos + std::countr_zero(Highest(field_bits)) : c.field_start;
-				fields->events.push_back({static_cast<uint32_t>(row - 1), static_cast<uint32_t>(column),
+				fields->events.push_back({static_cast<uint32_t>(row - 1 + fields->base), static_cast<uint32_t>(column),
 				                          static_cast<uint32_t>(position - c.anchor)});
 			}
 		}
@@ -961,7 +969,7 @@ bool RowLexer::FeedBlocks(RowCursor &cursor, const char *data, idx_t base, idx_t
 				dropped_rows++;
 				if (EXTRACT) {
 					for (idx_t i = events_from; i < fields->events.size(); i++) {
-						if (fields->events[i].row > row_index) {
+						if (fields->events[i].row > row_index + fields->base) {
 							fields->events[i].row--;
 						}
 					}
@@ -1171,7 +1179,7 @@ bool RowLexer::FeedBlocks(RowCursor &cursor, const char *data, idx_t base, idx_t
 }
 
 void RowLexer::EndRow(RowCursor &c, RowFields &fields, uint32_t entry, idx_t rows_written, uint32_t *&out) const {
-	const auto row = static_cast<uint32_t>(rows_written - c.open_rows);
+	const auto row = static_cast<uint32_t>(rows_written - c.open_rows + fields.base);
 	c.open_rows--;
 	const idx_t field_count = c.phase + 1;
 	c.phase = 0;
@@ -1275,7 +1283,7 @@ bool RowLexer::Finish(RowCursor &cursor, const char *data, idx_t base, idx_t end
 				}
 			}
 			if (event && fields) {
-				fields->events.push_back({static_cast<uint32_t>(fields->row_count - c.open_rows),
+				fields->events.push_back({static_cast<uint32_t>(fields->row_count - c.open_rows + fields->base),
 				                          static_cast<uint32_t>(c.phase),
 				                          static_cast<uint32_t>(c.field_start - c.anchor)});
 			}

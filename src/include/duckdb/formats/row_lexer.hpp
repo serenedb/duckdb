@@ -69,16 +69,22 @@ struct RowFields {
 		ends = end_store.get();
 		row_count = 0;
 		end_count = 0;
+		base = 0;
 		anomalies.clear();
+		anomaly_head = 0;
 		extras.clear();
 		open_extras = 0;
 		events.clear();
+		event_head = 0;
 	}
 	void Reserve(idx_t more);
 	bool Fits(idx_t rows_used, idx_t ends_used, idx_t more) const;
 	void Drop(idx_t rows, idx_t ends);
 	void Rebase(uint32_t delta);
 	const RowAnomaly *Anomaly(idx_t row) const;
+	bool HasAnomalies() const {
+		return anomaly_head < anomalies.size();
+	}
 
 	uint32_t *rows = nullptr;
 	uint32_t *ends = nullptr;
@@ -87,10 +93,13 @@ struct RowFields {
 	idx_t capacity = 0;
 	idx_t row_count = 0;
 	idx_t end_count = 0;
+	idx_t base = 0;
 	vector<RowAnomaly> anomalies;
+	idx_t anomaly_head = 0;
 	vector<uint32_t> extras;
 	idx_t open_extras = 0;
 	vector<RowEvent> events;
+	idx_t event_head = 0;
 };
 
 struct RowCursor {

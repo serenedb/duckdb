@@ -613,11 +613,40 @@ TEST_CASE("Row fields keep their events, anomalies and extras when dropped and r
 	fields.Drop(2, 4);
 	REQUIRE(fields.row_count == 2);
 	REQUIRE(fields.end_count == 4);
-	REQUIRE(fields.events.size() == 1);
-	REQUIRE(fields.events[0].row == 1);
-	REQUIRE(fields.anomalies.size() == 1);
-	REQUIRE(fields.anomalies[0].row == 1);
+	REQUIRE(fields.events.size() - fields.event_head == 1);
+	REQUIRE(fields.events[fields.event_head].row - fields.base == 1);
+	REQUIRE(fields.HasAnomalies());
+	REQUIRE(!fields.Anomaly(0));
+	REQUIRE(fields.Anomaly(1)->fields == 1);
 	REQUIRE(fields.extras.size() == 1);
+	fields.Drop(2, 4);
+	REQUIRE(!fields.HasAnomalies());
+	REQUIRE(fields.events.empty());
+	REQUIRE(fields.extras.empty());
+}
+
+TEST_CASE("Row fields count the rows they drop without rewriting what they still hold", "[csv]") {
+	constexpr idx_t ROWS = (idx_t(1) << 20) + 4096;
+	RowFields fields;
+	fields.Reserve(ROWS);
+	for (idx_t i = 0; i < ROWS; i++) {
+		fields.rows[i] = static_cast<uint32_t>(i);
+		fields.ends[i] = static_cast<uint32_t>(i);
+	}
+	fields.row_count = ROWS;
+	fields.end_count = ROWS;
+	for (uint32_t row = 0; row < ROWS; row += 2) {
+		fields.anomalies.push_back({row, 0, row, 0});
+	}
+	for (idx_t dropped = 0; dropped + 2048 <= ROWS - 4096; dropped += 2048) {
+		REQUIRE(fields.Anomaly(0));
+		REQUIRE(!fields.Anomaly(1));
+		REQUIRE(fields.Anomaly(0)->end == dropped);
+		fields.Drop(2048, 2048);
+	}
+	REQUIRE(fields.base < (idx_t(1) << 20));
+	REQUIRE(fields.rows[0] == (idx_t(1) << 20));
+	REQUIRE(fields.Anomaly(2)->end == (idx_t(1) << 20) + 2);
 }
 
 TEST_CASE("Row skip waits for the line feed of a carriage return at the end of its input", "[csv]") {
