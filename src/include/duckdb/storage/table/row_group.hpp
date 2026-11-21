@@ -259,6 +259,7 @@ public:
 	void GetColumnSegmentInfo(const QueryContext &context, idx_t row_group_index, vector<ColumnSegmentInfo> &result,
 	                          const ColumnSegmentInfoScanOptions &options = ColumnSegmentInfoScanOptions {});
 	static PartitionStatistics GetPartitionStats(SegmentNode<RowGroup> &row_group, TransactionData transaction);
+	bool MinMaxIsExact(TransactionData transaction, const StorageIndex &column_idx);
 
 	idx_t GetAllocationSize() const {
 		return allocation_size;

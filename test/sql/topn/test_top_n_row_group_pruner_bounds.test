@@ -1,0 +1,62 @@
+# name: test/sql/topn/test_top_n_row_group_pruner_bounds.test
+# description: Top N row group pruning with tied minimums and with bounds of deleted or updated rows
+# group: [topn]
+
+statement ok
+ATTACH '{TEST_DIR}/top_n_row_group_pruner_bounds.duckdb' AS db (ROW_GROUP_SIZE 2048)
+
+statement ok
+USE db
+
+statement ok
+CREATE TABLE ties(a INTEGER)
+
+statement ok
+INSERT INTO ties SELECT CASE WHEN range = 0 THEN 1 END FROM range(2048)
+
+statement ok
+INSERT INTO ties SELECT CASE WHEN range = 0 THEN 1 WHEN range = 1 THEN 3 END FROM range(2048)
+
+statement ok
+INSERT INTO ties SELECT CASE WHEN range = 0 THEN 2 END FROM range(2048)
+
+query I
+SELECT a FROM ties ORDER BY a LIMIT 3
+----
+1
+1
+2
+
+statement ok
+CREATE TABLE deleted(id INTEGER, a INTEGER)
+
+statement ok
+INSERT INTO deleted SELECT range, CASE WHEN range = 0 THEN 1 WHEN range = 1 THEN 1000 END FROM range(2048)
+
+statement ok
+INSERT INTO deleted SELECT 2048 + range, CASE WHEN range = 0 THEN 5 WHEN range = 1 THEN 6 END FROM range(2048)
+
+statement ok
+DELETE FROM deleted WHERE id = 0
+
+query I
+SELECT a FROM deleted ORDER BY a LIMIT 1
+----
+5
+
+statement ok
+CREATE TABLE updated(id INTEGER, a INTEGER)
+
+statement ok
+INSERT INTO updated SELECT range, CASE WHEN range = 0 THEN 1 WHEN range = 1 THEN 1000 END FROM range(2048)
+
+statement ok
+INSERT INTO updated SELECT 2048 + range, CASE WHEN range = 0 THEN 5 WHEN range = 1 THEN 6 END FROM range(2048)
+
+statement ok
+UPDATE updated SET a = 2000 WHERE id = 0
+
+query I
+SELECT a FROM updated ORDER BY a LIMIT 1
+----
+5
