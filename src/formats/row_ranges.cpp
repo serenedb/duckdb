@@ -13,8 +13,7 @@ namespace {
 
 constexpr idx_t RANGE_OVERLAP = 1 << 12;
 constexpr idx_t SYNC_WINDOW = 1 << 14;
-constexpr idx_t READ_PIECE = 1 << 16;
-constexpr idx_t WINDOW_BYTES = 1 << 20;
+constexpr idx_t WINDOW_BYTES = 1 << 18;
 constexpr idx_t UNSETTLED_BYTES = 1 << 22;
 constexpr idx_t FEED_BYTES = 1 << 20;
 constexpr idx_t REBASE_BYTES = 1 << 29;
@@ -22,6 +21,10 @@ constexpr idx_t ROW_LIMIT = idx_t(3) << 29;
 
 char LastDelimiterByte(const RowDialect &dialect) {
 	return dialect.delimiter_size > 1 ? dialect.delimiter_tail[dialect.delimiter_size - 2] : dialect.delimiter;
+}
+
+char *OwnedData(RowBytes &bytes) {
+	return char_ptr_cast(bytes.owned.get());
 }
 
 bool QuotedEscape(const RowDialect &dialect) {
@@ -147,10 +150,16 @@ idx_t RowSync(const RowDialect &dialect, const char *bytes, idx_t base, idx_t be
 	return first;
 }
 
-RowRanges::RowRanges(const RowLexer &lexer_p, RowSource &source_p, idx_t start_p, idx_t size_p, idx_t range_bytes_p,
-                     bool file_start_p)
-    : lexer(lexer_p), source(source_p), start(start_p), stream(size_p == NumericLimits<idx_t>::Maximum()),
-      file_start(file_start_p), size(size_p) {
+RowRanges::RowRanges(Allocator &allocator_p, const RowLexer &lexer_p, RowSource &source_p, idx_t start_p, idx_t size_p,
+                     idx_t range_bytes_p, bool file_start_p)
+    : allocator(allocator_p), lexer(&lexer_p), source(source_p), start(start_p),
+      stream(size_p == NumericLimits<idx_t>::Maximum()), file_start(file_start_p), size(size_p) {
+	Layout(range_bytes_p);
+}
+
+RowRanges::RowRanges(Allocator &allocator_p, RowSource &source_p, idx_t start_p, idx_t size_p, idx_t range_bytes_p)
+    : allocator(allocator_p), source(source_p), start(start_p), stream(size_p == NumericLimits<idx_t>::Maximum()),
+      file_start(true), size(size_p) {
 	Layout(range_bytes_p);
 }
 
@@ -214,7 +223,7 @@ void RowRanges::FoundEnd(idx_t end) {
 }
 
 void RowRanges::ReleaseResolved() {
-	idx_t mark = MinValue(unfinished, resolved);
+	idx_t mark = lexer ? MinValue(unfinished, resolved) : unfinished;
 	for (idx_t range = released; range < mark; range++) {
 		if (computing[range] != 0) {
 			mark = range;
@@ -246,14 +255,14 @@ void RowRanges::ReadInto(RowBytes &bytes, idx_t offset, idx_t count) {
 		bytes.size = count;
 		return;
 	}
-	if (bytes.capacity < count || !bytes.owned) {
+	if (bytes.capacity < count || !bytes.owned.IsSet()) {
 		bytes.capacity = MaxValue<idx_t>(count, 1);
-		bytes.owned = make_unsafe_uniq_array_uninitialized<char>(bytes.capacity);
+		bytes.owned = allocator.Allocate(bytes.capacity);
 	}
 	bytes.buffer.reset();
-	bytes.data = bytes.owned.get();
+	bytes.data = OwnedData(bytes);
 	bytes.offset = offset;
-	bytes.size = count ? Read(bytes.owned.get(), count, offset) : 0;
+	bytes.size = count ? Read(OwnedData(bytes), count, offset) : 0;
 	if (stream && bytes.size < count) {
 		const auto known = source.End();
 		if (known.IsValid()) {
@@ -265,7 +274,7 @@ void RowRanges::ReadInto(RowBytes &bytes, idx_t offset, idx_t count) {
 }
 
 void RowRanges::ViewWholeFile(RowBytes &bytes) const {
-	bytes.owned.reset();
+	bytes.owned.Reset();
 	bytes.capacity = 0;
 	bytes.buffer = whole_buffer;
 	bytes.data = whole_data;
@@ -283,7 +292,7 @@ RowRangeBounds RowRanges::Bounds(idx_t range, RowBytes &bytes) {
 		while (true) {
 			const idx_t available = bytes.offset + bytes.size;
 			const bool eof = available >= Size();
-			const idx_t found = RowSync(lexer.Dialect(), bytes.data, bytes.offset, position, available, eof);
+			const idx_t found = RowSync(lexer->Dialect(), bytes.data, bytes.offset, position, available, eof);
 			if (found != DConstants::INVALID_INDEX) {
 				return found;
 			}
@@ -306,7 +315,7 @@ CSVState RowRanges::Origin(const RowBytes &bytes, idx_t begin) const {
 		return CSVState::NOT_SET;
 	}
 	const char newline = bytes.data[begin - 1 - bytes.offset];
-	return newline == '\r' && lexer.Dialect().carry_on ? CSVState::CARRIAGE_RETURN : CSVState::RECORD_SEPARATOR;
+	return newline == '\r' && lexer->Dialect().carry_on ? CSVState::CARRIAGE_RETURN : CSVState::RECORD_SEPARATOR;
 }
 
 CsvRangeEntry RowRanges::Transfer(idx_t range, CSVState origin) {
@@ -317,7 +326,7 @@ CsvRangeEntry RowRanges::Transfer(idx_t range, CSVState origin) {
 
 CsvRangeEntry RowRanges::LexTransfer(const RowBytes &bytes, idx_t begin, idx_t end, CSVState origin) const {
 	RowCursor cursor;
-	lexer.Start(cursor, begin, true, false);
+	lexer->Start(cursor, begin, true, false);
 	switch (origin) {
 	case CSVState::QUOTED:
 	case CSVState::QUOTED_NEW_LINE:
@@ -333,9 +342,9 @@ CsvRangeEntry RowRanges::LexTransfer(const RowBytes &bytes, idx_t begin, idx_t e
 		cursor.file_start = begin == start && file_start;
 		break;
 	}
-	lexer.Feed(cursor, bytes.data, bytes.offset, end, true, nullptr);
+	lexer->Feed(cursor, bytes.data, bytes.offset, end, true, nullptr);
 	CsvRangeEntry entry;
-	lexer.Finish(cursor, bytes.data, bytes.offset, end, end >= Size(), nullptr, origin, entry);
+	lexer->Finish(cursor, bytes.data, bytes.offset, end, end >= Size(), nullptr, origin, entry);
 	return entry;
 }
 
@@ -347,7 +356,7 @@ idx_t RowRanges::SyncAt(idx_t position) {
 		ReadInto(bytes, from, want);
 		const idx_t available = bytes.offset + bytes.size;
 		const bool eof = available >= Size();
-		const idx_t found = RowSync(lexer.Dialect(), bytes.data, bytes.offset, position, available, eof);
+		const idx_t found = RowSync(lexer->Dialect(), bytes.data, bytes.offset, position, available, eof);
 		if (found != DConstants::INVALID_INDEX) {
 			return found;
 		}
@@ -458,8 +467,154 @@ CsvRangeStart RowRanges::StartState(idx_t range) {
 	}
 }
 
+RowWindow::RowWindow(RowRanges &ranges_p) : ranges(ranges_p) {
+}
+
+void RowWindow::Start(idx_t from, bool release_p, bool exact_end_p) {
+	release = release_p;
+	exact_end = exact_end_p;
+	beyond = false;
+	if (bytes && bytes.use_count() > 1) {
+		std::swap(bytes, spare);
+	}
+	if (!bytes || bytes.use_count() > 1) {
+		bytes = make_shared_ptr<RowBytes>();
+	}
+	if (ranges.WholeFile()) {
+		ranges.ViewWholeFile(*bytes);
+		read_to = ranges.Size();
+		return;
+	}
+	if (bytes->buffer) {
+		bytes = make_shared_ptr<RowBytes>();
+	}
+	bytes->offset = from;
+	bytes->size = 0;
+	bytes->data = OwnedData(*bytes);
+	read_to = from;
+}
+
+void RowWindow::Prepare(idx_t keep_from, idx_t need) {
+	auto &window = *bytes;
+	const idx_t kept = read_to - keep_from;
+	const bool owned = window.owned.IsSet();
+	const bool fits = owned && read_to - window.offset + need <= window.capacity;
+	if (bytes.use_count() == 1 && owned && window.capacity >= kept + need) {
+		if (keep_from > window.offset && (kept <= PIECE || !fits)) {
+			memmove(OwnedData(window), OwnedData(window) + (keep_from - window.offset), kept);
+			window.offset = keep_from;
+			window.size = kept;
+		}
+		window.data = OwnedData(window);
+		return;
+	}
+	if (fits) {
+		return;
+	}
+	shared_ptr<RowBytes> next;
+	if (spare && spare.use_count() == 1) {
+		next = std::move(spare);
+	} else {
+		next = make_shared_ptr<RowBytes>();
+	}
+	if (!next->owned.IsSet() || next->capacity < kept + need) {
+		const idx_t capacity = MaxValue(WINDOW_BYTES, kept * 2 + need);
+		next->owned.Reset();
+		next->owned = ranges.allocator.Allocate(capacity + RowWindow::PADDING);
+		next->capacity = capacity;
+	}
+	if (kept) {
+		memcpy(OwnedData(*next), window.data + (keep_from - window.offset), kept);
+	}
+	next->buffer.reset();
+	next->data = OwnedData(*next);
+	next->offset = keep_from;
+	next->size = kept;
+	if (bytes.use_count() > 1) {
+		spare = std::move(bytes);
+	}
+	bytes = std::move(next);
+}
+
+void RowWindow::Read(idx_t keep_from, idx_t piece) {
+	const idx_t end = ranges.Size();
+	const idx_t want = end > read_to ? MinValue<idx_t>(piece, end - read_to) : 0;
+	Prepare(keep_from, want);
+	auto &window = *bytes;
+	const idx_t got = want ? ranges.Read(OwnedData(window) + (read_to - window.offset), want, read_to) : 0;
+	window.size += got;
+	read_to += got;
+	memset(OwnedData(window) + (read_to - window.offset), 0, PADDING);
+	if (!ranges.stream) {
+		return;
+	}
+	if (got < want) {
+		const auto known = ranges.source.End();
+		if (known.IsValid()) {
+			ranges.FoundEnd(known.GetIndex());
+		} else if (!ranges.source.Live()) {
+			if (got > 0 || exact_end) {
+				ranges.FoundEnd(read_to);
+			} else {
+				beyond = true;
+			}
+		}
+	}
+	exact_end = exact_end || got > 0;
+	if (release && !ranges.Dynamic()) {
+		ranges.source.Release(read_to);
+	}
+}
+
+bool RowWindow::Waits() const {
+	return ranges.stream && ranges.source.Live() && !ranges.source.Available(read_to);
+}
+
+RowLookup::RowLookup(RowRanges &ranges_p) : bytes(make_shared_ptr<RowBytes>()), ranges(ranges_p) {
+}
+
+void RowLookup::Read(idx_t from, idx_t want) {
+	auto &arena = *bytes;
+	if (arena.size + want > arena.capacity) {
+		const idx_t capacity = MaxValue(arena.size + want, arena.capacity * 2);
+		auto grown = ranges.allocator.Allocate(capacity + RowWindow::PADDING);
+		if (arena.size) {
+			memcpy(grown.get(), arena.owned.get(), arena.size);
+		}
+		arena.owned = std::move(grown);
+		arena.capacity = capacity;
+		arena.data = OwnedData(arena);
+	}
+	const idx_t got = ranges.Read(OwnedData(arena) + arena.size, want, from);
+	arena.size += got;
+	memset(OwnedData(arena) + arena.size, 0, RowWindow::PADDING);
+	window_end = from + got;
+	window_eof = got < want;
+}
+
+optional_idx RowLookup::Find(idx_t from, idx_t offset, idx_t want) {
+	if (from < window_begin || offset >= window_end) {
+		if (window_end > window_begin && !window_eof && from >= window_end && from - window_end < want) {
+			Read(window_end, offset + want - window_end);
+		} else {
+			window_offset = bytes->size;
+			window_begin = from;
+			Read(from, offset + want - from);
+		}
+		if (offset >= window_end) {
+			return optional_idx();
+		}
+	}
+	return window_offset + (offset - window_begin);
+}
+
+void RowLookup::Extend(idx_t want) {
+	Read(window_end, want);
+}
+
 RowRangeReader::RowRangeReader(RowRanges &ranges_p)
-    : ranges(ranges_p), lexer(ranges_p.lexer), dialect(ranges_p.lexer.Dialect()), columns(ranges_p.lexer.Columns()) {
+    : ranges(ranges_p), lexer(*ranges_p.lexer), dialect(ranges_p.lexer->Dialect()), columns(ranges_p.lexer->Columns()),
+      window(ranges_p) {
 }
 
 void RowRangeReader::Start(idx_t range_p, bool extract_p, bool release_p, bool validate_count_utf8_p) {
@@ -473,7 +628,7 @@ void RowRangeReader::Start(idx_t range_p, bool extract_p, bool release_p, bool v
 }
 
 void RowRangeReader::Adopt(shared_ptr<RowBytes> bytes_p, const RowCursor &cursor_p) {
-	bytes = std::move(bytes_p);
+	window.bytes = std::move(bytes_p);
 	cursor = cursor_p;
 	active = false;
 	finished = true;
@@ -488,8 +643,6 @@ void RowRangeReader::StartPass(bool second_pass_p) {
 	active = true;
 	extract = force_extract || extract_rows;
 	probe_only = false;
-	beyond = false;
-	exact_end = second_pass_p || range == 0;
 	finished = false;
 	verified = false;
 	extending = false;
@@ -508,21 +661,7 @@ void RowRangeReader::StartPass(bool second_pass_p) {
 	}
 	const idx_t begin = ranges.RangeBegin(range);
 	const idx_t from = second_pass ? lex_start : (range == 0 ? ranges.start : begin - MinValue<idx_t>(begin, 3));
-	if (!bytes || bytes.use_count() > 1) {
-		bytes = make_shared_ptr<RowBytes>();
-	}
-	if (ranges.WholeFile()) {
-		ranges.ViewWholeFile(*bytes);
-		read_to = ranges.Size();
-	} else {
-		if (bytes->buffer) {
-			bytes = make_shared_ptr<RowBytes>();
-		}
-		bytes->offset = from;
-		bytes->size = 0;
-		bytes->data = bytes->owned.get();
-		read_to = from;
-	}
+	window.Start(from, release, second_pass_p || range == 0);
 	if (second_pass) {
 		lexer.Start(cursor, lex_start, true);
 		cursor.file_start = origin == CSVState::NOT_SET && ranges.file_start;
@@ -580,7 +719,7 @@ bool RowRangeReader::FromChain() {
 
 idx_t RowRangeReader::KeepFrom() const {
 	if (lex_start == DConstants::INVALID_INDEX) {
-		return bytes->offset;
+		return window.bytes->offset;
 	}
 	idx_t keep = cursor.pos;
 	if (extract && !probe_only && fields.row_count > held_rows) {
@@ -597,83 +736,18 @@ idx_t RowRangeReader::KeepFrom() const {
 		const idx_t end = ranges.RangeEnd(range);
 		keep = MinValue(keep, end - MinValue<idx_t>(end, 3));
 	}
-	return MaxValue(keep, bytes->offset);
-}
-
-void RowRangeReader::PrepareWindow(idx_t keep_from, idx_t need) {
-	auto &window = *bytes;
-	const idx_t kept = read_to - keep_from;
-	const bool fits = window.owned && read_to - window.offset + need <= window.capacity;
-	if (bytes.use_count() == 1 && window.owned && window.capacity >= kept + need) {
-		if (keep_from > window.offset && (kept <= READ_PIECE || !fits)) {
-			memmove(window.owned.get(), window.owned.get() + (keep_from - window.offset), kept);
-			window.offset = keep_from;
-			window.size = kept;
-		}
-		window.data = window.owned.get();
-		return;
-	}
-	if (fits) {
-		return;
-	}
-	shared_ptr<RowBytes> next;
-	if (spare && spare.use_count() == 1) {
-		next = std::move(spare);
-	} else {
-		next = make_shared_ptr<RowBytes>();
-	}
-	if (!next->owned || next->capacity < kept + need) {
-		const idx_t capacity = MaxValue(kept + need, MaxValue(WINDOW_BYTES, window.capacity * 2));
-		next->owned = make_unsafe_uniq_array_uninitialized<char>(capacity);
-		next->capacity = capacity;
-	}
-	if (kept) {
-		memcpy(next->owned.get(), window.data + (keep_from - window.offset), kept);
-	}
-	next->buffer.reset();
-	next->data = next->owned.get();
-	next->offset = keep_from;
-	next->size = kept;
-	if (bytes.use_count() > 1) {
-		spare = std::move(bytes);
-	}
-	bytes = std::move(next);
+	return MaxValue(keep, window.bytes->offset);
 }
 
 void RowRangeReader::ReadPiece() {
-	const idx_t end = ranges.Size();
-	const idx_t want = end > read_to ? MinValue<idx_t>(READ_PIECE, end - read_to) : 0;
-	PrepareWindow(KeepFrom(), want);
-	auto &window = *bytes;
-	const idx_t got = want ? ranges.Read(window.owned.get() + (read_to - window.offset), want, read_to) : 0;
-	window.size += got;
-	read_to += got;
-	if (!ranges.stream) {
-		return;
-	}
-	if (got < want) {
-		const auto known = ranges.source.End();
-		if (known.IsValid()) {
-			ranges.FoundEnd(known.GetIndex());
-		} else if (!ranges.source.Live()) {
-			if (got > 0 || exact_end) {
-				ranges.FoundEnd(read_to);
-			} else {
-				beyond = true;
-			}
-		}
-	}
-	exact_end = exact_end || got > 0;
-	if (!ranges.Dynamic()) {
-		if (release) {
-			ranges.source.Release(read_to);
-		}
+	window.Read(KeepFrom());
+	if (ranges.stream && !ranges.Dynamic()) {
 		lex_stop = MinValue(lex_stop, ranges.Size());
 	}
 }
 
 bool RowRangeReader::Waits() const {
-	return ranges.stream && lexer.Lookahead() == 0 && ranges.source.Live() && !ranges.source.Available(read_to);
+	return lexer.Lookahead() == 0 && window.Waits();
 }
 
 bool RowRangeReader::CheckCountUtf8(idx_t end) {
@@ -687,6 +761,7 @@ bool RowRangeReader::CheckCountUtf8(idx_t end) {
 	if (end <= validated_to) {
 		return true;
 	}
+	const auto &bytes = window.bytes;
 	if (!simdutf::validate_utf8(bytes->data + (validated_to - bytes->offset), end - validated_to)) {
 		return false;
 	}
@@ -696,6 +771,8 @@ bool RowRangeReader::CheckCountUtf8(idx_t end) {
 
 bool RowRangeReader::Lex() {
 	SDB_PARK_ONCE_ON_FAILURE("row_range_lex");
+	const auto &bytes = window.bytes;
+	const idx_t &read_to = window.read_to;
 	const idx_t size = ranges.Size();
 	const bool eof = read_to >= size;
 	if (lex_start == DConstants::INVALID_INDEX) {
@@ -703,7 +780,7 @@ bool RowRangeReader::Lex() {
 		if (range > 0) {
 			const idx_t begin = ranges.RangeBegin(range, size);
 			if (begin >= size) {
-				beyond = true;
+				window.beyond = true;
 				return true;
 			}
 			const idx_t from = begin - 1;
@@ -784,6 +861,7 @@ bool RowRangeReader::FinishRange() {
 	CsvRangeEntry entry;
 	auto out = extract && !probe_only ? &fields : nullptr;
 	const bool eof = lex_stop == ranges.Size();
+	const auto &bytes = window.bytes;
 	if (!lexer.Finish(cursor, bytes->data, bytes->offset, lex_stop, eof, out, origin, entry)) {
 		return false;
 	}
@@ -828,6 +906,8 @@ void RowRangeReader::OpenRowFits() {
 }
 
 bool RowRangeReader::Extend() {
+	const auto &bytes = window.bytes;
+	const idx_t &read_to = window.read_to;
 	RowCursor probe = cursor;
 	probe.first_term = DConstants::INVALID_INDEX;
 	probe.first_term_cr = false;
@@ -883,7 +963,7 @@ bool RowRangeReader::Recover() {
 RowReadResult RowRangeReader::Advance(idx_t want) {
 	while (active) {
 		if (lex_start == DConstants::INVALID_INDEX && range > 0 &&
-		    (beyond || ranges.RangeBegin(range) >= ranges.Size())) {
+		    (window.beyond || ranges.RangeBegin(range) >= ranges.Size())) {
 			active = false;
 			finished = true;
 			range_lines = 0;
@@ -932,11 +1012,11 @@ RowReadResult RowRangeReader::Advance(idx_t want) {
 		const idx_t ready = Ready();
 		const bool full_span = cursor.pos - cursor.anchor >= REBASE_BYTES;
 		if (settled && ready > held_rows &&
-		    (ready >= want || finished || full_span || (cursor.pos == read_to && Waits()))) {
+		    (ready >= want || finished || full_span || (cursor.pos == window.read_to && Waits()))) {
 			return RowReadResult::ROWS;
 		}
 		if (settled && held_rows > 0 && ready == held_rows &&
-		    (finished || full_span || recover_pending || (cursor.pos == read_to && Waits()))) {
+		    (finished || full_span || recover_pending || (cursor.pos == window.read_to && Waits()))) {
 			return RowReadResult::FLUSH;
 		}
 		if (finished) {
@@ -984,6 +1064,7 @@ idx_t RowRangeReader::LinesAt(idx_t position, idx_t start_lines) {
 	if (position > cursor.pos) {
 		return start_lines + cursor.lines;
 	}
+	const auto &bytes = window.bytes;
 	if (lines_at == DConstants::INVALID_INDEX || position < lines_at) {
 		const idx_t lexed = cursor.lines - (cursor.unterminated && !cursor.unfinished ? 1 : 0);
 		lines_counted = lexed - lexer.CountLines(bytes->data, bytes->offset, position, cursor.pos) + start_lines;

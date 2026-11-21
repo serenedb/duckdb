@@ -34,7 +34,7 @@ struct Lexed {
 Lexed Lex(const RowDialect &dialect, idx_t columns, const string &input, idx_t max_rows) {
 	RowLexer lexer(dialect, columns, NumericLimits<idx_t>::Maximum(), true, false, true);
 	SpanSource source(input);
-	RowRanges ranges(lexer, source, 0, input.size(), DConstants::INVALID_INDEX, true);
+	RowRanges ranges(Allocator::DefaultAllocator(), lexer, source, 0, input.size(), DConstants::INVALID_INDEX, true);
 	ranges.SetWholeFile(nullptr, input.data());
 	RowRangeReader reader(ranges);
 	reader.Start(0, true, false, false);
@@ -46,7 +46,7 @@ Lexed Lex(const RowDialect &dialect, idx_t columns, const string &input, idx_t m
 		}
 		const idx_t count = MinValue<idx_t>(reader.Ready(), max_rows);
 		auto &fields = reader.fields;
-		auto &window = *reader.bytes;
+		auto &window = *reader.window.bytes;
 		const idx_t shift = reader.cursor.anchor - window.offset;
 		for (idx_t row = 0; row < count; row++) {
 			const auto *anomaly = fields.anomalies.empty() ? nullptr : fields.Anomaly(row);

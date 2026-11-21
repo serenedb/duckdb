@@ -168,7 +168,8 @@ void TakeRows(RowRangeReader &reader, vector<LexedRow> &rows) {
 }
 
 vector<LexedRow> ReadRows(const RowLexer &lexer, RowSource &source) {
-	RowRanges ranges(lexer, source, 0, NumericLimits<idx_t>::Maximum(), DConstants::INVALID_INDEX, true);
+	RowRanges ranges(Allocator::DefaultAllocator(), lexer, source, 0, NumericLimits<idx_t>::Maximum(),
+	                 DConstants::INVALID_INDEX, true);
 	idx_t range = 0;
 	REQUIRE(ranges.Claim(range));
 	RowRangeReader reader(ranges);
@@ -185,7 +186,8 @@ vector<LexedRow> ReadRows(const RowLexer &lexer, RowSource &source) {
 }
 
 vector<LexedRow> ReadRanges(const RowLexer &lexer, RowSource &source, idx_t range_bytes) {
-	RowRanges ranges(lexer, source, 0, NumericLimits<idx_t>::Maximum(), range_bytes, true);
+	RowRanges ranges(Allocator::DefaultAllocator(), lexer, source, 0, NumericLimits<idx_t>::Maximum(), range_bytes,
+	                 true);
 	RowRangeReader reader(ranges);
 	vector<LexedRow> rows;
 	idx_t range = 0;
@@ -269,7 +271,7 @@ string RandomField(std::mt19937_64 &rng, const RowDialect &dialect) {
 TEST_CASE("A range reader hands over the rows of a live stream before the stream ends", "[csv]") {
 	RowLexer lexer(RowDialect::PostgresText('\t'), 2, NumericLimits<idx_t>::Maximum(), true, false, true);
 	LiveRowStream source;
-	RowRanges ranges(lexer, source, 0, NumericLimits<idx_t>::Maximum(), 1 << 21, true);
+	RowRanges ranges(Allocator::DefaultAllocator(), lexer, source, 0, NumericLimits<idx_t>::Maximum(), 1 << 21, true);
 	idx_t range = 0;
 	REQUIRE(ranges.Claim(range));
 	RowRangeReader reader(ranges);
@@ -343,7 +345,8 @@ TEST_CASE("Rows of a live stream read in ranges by many threads match the rows o
 		auto expected = ReadRows(lexer, whole);
 
 		LiveRowStream live;
-		RowRanges ranges(lexer, live, 0, NumericLimits<idx_t>::Maximum(), 1024 << (rng() % 4), true);
+		RowRanges ranges(Allocator::DefaultAllocator(), lexer, live, 0, NumericLimits<idx_t>::Maximum(),
+		                 1024 << (rng() % 4), true);
 		absl::Mutex rows_lock;
 		vector<LexedRow> rows;
 		vector<std::thread> readers;
@@ -445,7 +448,7 @@ TEST_CASE("A stream range is empty when another reader finds the stream ends bef
 	const auto dialect = RowDialect::PostgresCsv(',', '"', '"');
 	RowLexer lexer(dialect, 2, 1 << 20, true);
 	RowRangesTestStream source(data);
-	RowRanges ranges(lexer, source, 0, NumericLimits<idx_t>::Maximum(), 64, true);
+	RowRanges ranges(Allocator::DefaultAllocator(), lexer, source, 0, NumericLimits<idx_t>::Maximum(), 64, true);
 	idx_t range = 0;
 	for (idx_t claimed = 0; claimed <= 10; claimed++) {
 		REQUIRE(ranges.Claim(range));
@@ -506,7 +509,8 @@ TEST_CASE("Row ranges of a stream find its end from what its source reads", "[cs
 	RowLexer lexer(RowDialect::PostgresCsv(',', '"', '"'), 2, 1 << 20, true);
 
 	PlainRowStream plain(data);
-	RowRanges unknown_end(lexer, plain, 0, NumericLimits<idx_t>::Maximum(), DConstants::INVALID_INDEX, true);
+	auto &allocator = Allocator::DefaultAllocator();
+	RowRanges unknown_end(allocator, lexer, plain, 0, NumericLimits<idx_t>::Maximum(), DConstants::INVALID_INDEX, true);
 	RowBytes bytes;
 	unknown_end.ReadInto(bytes, 0, 100);
 	REQUIRE(bytes.size == data.size());
@@ -514,14 +518,14 @@ TEST_CASE("Row ranges of a stream find its end from what its source reads", "[cs
 	unknown_end.ReadInto(bytes, data.size(), 10);
 	REQUIRE(bytes.size == 0);
 
-	RowRanges beyond(lexer, plain, 0, NumericLimits<idx_t>::Maximum(), DConstants::INVALID_INDEX, true);
+	RowRanges beyond(allocator, lexer, plain, 0, NumericLimits<idx_t>::Maximum(), DConstants::INVALID_INDEX, true);
 	RowBytes empty;
 	beyond.ReadInto(empty, 100, 10);
 	REQUIRE(empty.size == 0);
 	REQUIRE(beyond.Size() == NumericLimits<idx_t>::Maximum());
 
 	RowRangesTestStream known(data);
-	RowRanges known_end(lexer, known, 0, NumericLimits<idx_t>::Maximum(), DConstants::INVALID_INDEX, true);
+	RowRanges known_end(allocator, lexer, known, 0, NumericLimits<idx_t>::Maximum(), DConstants::INVALID_INDEX, true);
 	RowBytes known_bytes;
 	known_end.ReadInto(known_bytes, 4, 100);
 	REQUIRE(known_bytes.size == 4);
@@ -533,7 +537,8 @@ TEST_CASE("A range reader reads and counts the rows of a stream", "[csv]") {
 	RowLexer lexer(RowDialect::PostgresCsv(',', '"', '"'), 2, 1 << 20, true);
 	PlainRowStream source(data);
 
-	RowRanges ranges(lexer, source, 0, NumericLimits<idx_t>::Maximum(), DConstants::INVALID_INDEX, true);
+	RowRanges ranges(Allocator::DefaultAllocator(), lexer, source, 0, NumericLimits<idx_t>::Maximum(),
+	                 DConstants::INVALID_INDEX, true);
 	idx_t range = DConstants::INVALID_INDEX;
 	REQUIRE(ranges.Claim(range));
 	RowRangeReader reader(ranges);
@@ -556,7 +561,8 @@ TEST_CASE("A range reader reads and counts the rows of a stream", "[csv]") {
 	REQUIRE(reader.Finished());
 	REQUIRE(reader.Stop() == data.size());
 
-	RowRanges counted(lexer, source, 0, NumericLimits<idx_t>::Maximum(), DConstants::INVALID_INDEX, true);
+	RowRanges counted(Allocator::DefaultAllocator(), lexer, source, 0, NumericLimits<idx_t>::Maximum(),
+	                  DConstants::INVALID_INDEX, true);
 	REQUIRE(counted.Claim(range));
 	RowRangeReader counter(counted);
 	counter.Start(range, false, false, false);
@@ -568,7 +574,7 @@ TEST_CASE("Range origins, transfers and syncs at the edges of the input", "[csv]
 	const string data = "x\",y\nz,w\n";
 	RowLexer lexer(RowDialect::PostgresCsv(',', '"', '"'), 2, 1 << 20, true);
 	RowRangesTestStream source(data);
-	RowRanges ranges(lexer, source, 0, data.size(), DConstants::INVALID_INDEX, true);
+	RowRanges ranges(Allocator::DefaultAllocator(), lexer, source, 0, data.size(), DConstants::INVALID_INDEX, true);
 	RowBytes bytes;
 	ranges.ReadInto(bytes, 0, data.size());
 	REQUIRE(ranges.Origin(bytes, 0) == CSVState::NOT_SET);
@@ -581,7 +587,8 @@ TEST_CASE("Range origins, transfers and syncs at the edges of the input", "[csv]
 	const string crlf = "\nz,w\r\n";
 	RowLexer crlf_lexer(RowDialect::DuckDB(TestGrammar(',', true, NewLineIdentifier::CARRY_ON)), 2, 1 << 20, true);
 	RowRangesTestStream crlf_source(crlf);
-	RowRanges crlf_ranges(crlf_lexer, crlf_source, 0, crlf.size(), DConstants::INVALID_INDEX, true);
+	RowRanges crlf_ranges(Allocator::DefaultAllocator(), crlf_lexer, crlf_source, 0, crlf.size(),
+	                      DConstants::INVALID_INDEX, true);
 	RowBytes crlf_bytes;
 	crlf_ranges.ReadInto(crlf_bytes, 0, crlf.size());
 	const auto after_cr = crlf_ranges.LexTransfer(crlf_bytes, 0, crlf.size(), CSVState::CARRIAGE_RETURN);
@@ -590,7 +597,8 @@ TEST_CASE("Range origins, transfers and syncs at the edges of the input", "[csv]
 
 	const string unterminated = "abc";
 	RowRangesTestStream unterminated_source(unterminated);
-	RowRanges unterminated_ranges(lexer, unterminated_source, 0, unterminated.size(), DConstants::INVALID_INDEX, true);
+	RowRanges unterminated_ranges(Allocator::DefaultAllocator(), lexer, unterminated_source, 0, unterminated.size(),
+	                              DConstants::INVALID_INDEX, true);
 	REQUIRE(unterminated_ranges.SyncAt(0) == unterminated.size());
 }
 
