@@ -30,4 +30,4 @@ SELECT count(*) FROM read_ndjson('/dev/null', columns := {a: 'INTEGER', b: 'INTE
 statement error
 SELECT * FROM read_ndjson('/dev/zero', columns := {a: 'INTEGER', b: 'INTEGER'});
 ----
-"maximum_object_size" of 16777216 bytes exceeded while reading file "/dev/zero" (>33554432 bytes).
+"maximum_object_size" of 16777216 bytes exceeded while reading file "/dev/zero" (>25165824 bytes).

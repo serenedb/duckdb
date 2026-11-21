@@ -1,7 +1,6 @@
 #include "absl/synchronization/mutex.h"
 #include "catch.hpp"
 #include "duckdb.hpp"
-#include "duckdb/common/fault_points.hpp"
 #include "duckdb/execution/operator/csv_scanner/csv_buffer_manager.hpp"
 #include "duckdb/formats/row_lexer.hpp"
 #include "duckdb/formats/row_ranges.hpp"
@@ -194,7 +193,9 @@ vector<LexedRow> ReadRanges(const RowLexer &lexer, RowSource &source, idx_t rang
 	vector<LexedRow> rows;
 	idx_t range = 0;
 	while (ranges.Claim(range)) {
-		reader.Start(range, true, true, false);
+		if (!reader.StartIntake(range, true, true, false)) {
+			continue;
+		}
 		while (true) {
 			const auto result = reader.Advance(STANDARD_VECTOR_SIZE);
 			if (result == RowReadResult::DONE) {
@@ -206,6 +207,17 @@ vector<LexedRow> ReadRanges(const RowLexer &lexer, RowSource &source, idx_t rang
 		ranges.Finish(range);
 	}
 	return rows;
+}
+
+void ReadPiece(RowRanges &ranges, RowRangeReader &reader, vector<LexedRow> &rows, idx_t expected) {
+	idx_t range = 0;
+	REQUIRE(ranges.Claim(range));
+	REQUIRE(reader.StartIntake(range, true, false, false));
+	REQUIRE(reader.Advance(STANDARD_VECTOR_SIZE) == RowReadResult::ROWS);
+	REQUIRE(reader.Ready() == expected);
+	TakeRows(reader, rows);
+	REQUIRE(reader.Advance(STANDARD_VECTOR_SIZE) == RowReadResult::DONE);
+	ranges.Finish(range);
 }
 
 string LineitemRow(std::mt19937_64 &rng, char delimiter) {
@@ -274,24 +286,17 @@ TEST_CASE("A range reader hands over the rows of a live stream before the stream
 	RowLexer lexer(RowDialect::PostgresText('\t'), 2, NumericLimits<idx_t>::Maximum(), true, false, true);
 	LiveRowStream source;
 	RowRanges ranges(Allocator::DefaultAllocator(), lexer, source, 0, NumericLimits<idx_t>::Maximum(), 1 << 21, true);
-	idx_t range = 0;
-	REQUIRE(ranges.Claim(range));
 	RowRangeReader reader(ranges);
-	reader.Start(range, true, false, false);
 	vector<LexedRow> rows;
 	source.Append("1\t2\n3\t4\n5\t");
-	REQUIRE(reader.Advance(STANDARD_VECTOR_SIZE) == RowReadResult::ROWS);
-	REQUIRE(reader.Ready() == 2);
-	TakeRows(reader, rows);
+	ReadPiece(ranges, reader, rows, 2);
 	source.Append("6\n7\t8");
-	REQUIRE(reader.Advance(STANDARD_VECTOR_SIZE) == RowReadResult::ROWS);
-	REQUIRE(reader.Ready() == 1);
-	TakeRows(reader, rows);
+	ReadPiece(ranges, reader, rows, 1);
 	source.Close();
-	REQUIRE(reader.Advance(STANDARD_VECTOR_SIZE) == RowReadResult::ROWS);
-	REQUIRE(reader.Ready() == 1);
-	TakeRows(reader, rows);
-	REQUIRE(reader.Advance(STANDARD_VECTOR_SIZE) == RowReadResult::DONE);
+	ReadPiece(ranges, reader, rows, 1);
+	idx_t range = 0;
+	REQUIRE(!ranges.Claim(range));
+	REQUIRE(ranges.AllFinished());
 	REQUIRE(rows.size() == 4);
 	REQUIRE(rows[2].ends == vector<uint32_t> {9, 11});
 	REQUIRE(rows[3].ends == vector<uint32_t> {13, 15});
@@ -358,7 +363,9 @@ TEST_CASE("Rows of a live stream read in ranges by many threads match the rows o
 				vector<LexedRow> mine;
 				idx_t range = 0;
 				while (ranges.Claim(range)) {
-					reader.Start(range, true, true, false);
+					if (!reader.StartIntake(range, true, true, false)) {
+						continue;
+					}
 					while (true) {
 						const auto result = reader.Advance(STANDARD_VECTOR_SIZE);
 						if (result == RowReadResult::DONE) {
@@ -401,7 +408,8 @@ TEST_CASE("Rows of a live stream read in ranges by many threads match the rows o
 TEST_CASE("Rows of a live stream read piece by piece match the rows of the whole input", "[csv]") {
 	const vector<RowDialect> dialects = {RowDialect::PostgresText('\t'), RowDialect::PostgresCsv(',', '"', '"'),
 	                                     RowDialect::PostgresCsv(',', '"', '\\'),
-	                                     RowDialect::DuckDB(TestGrammar(',', false, NewLineIdentifier::CARRY_ON))};
+	                                     RowDialect::DuckDB(TestGrammar(',', false, NewLineIdentifier::CARRY_ON)),
+	                                     RowDialect::DuckDB(TestGrammar(',', true, NewLineIdentifier::SINGLE_N))};
 	std::mt19937_64 rng(41);
 	for (idx_t round = 0; round < 600; round++) {
 		const auto &dialect = dialects[round % dialects.size()];
@@ -426,7 +434,9 @@ TEST_CASE("Rows of a live stream read piece by piece match the rows of the whole
 
 		LiveRowStream live;
 		vector<LexedRow> rows;
-		std::thread reader_thread([&]() { rows = ReadRows(lexer, live); });
+		const bool pieces = (round / dialects.size()) % 2;
+		std::thread reader_thread(
+		    [&]() { rows = pieces ? ReadRanges(lexer, live, idx_t(64) << (round % 3)) : ReadRows(lexer, live); });
 		for (idx_t at = 0; at < input.size();) {
 			const idx_t piece = MinValue<idx_t>(1 + rng() % 150, input.size() - at);
 			live.AwaitReader();
@@ -437,44 +447,18 @@ TEST_CASE("Rows of a live stream read piece by piece match the rows of the whole
 		live.Close();
 		reader_thread.join();
 		INFO("round " << round << " input " << input);
-		REQUIRE(rows == expected);
+		if (!pieces) {
+			REQUIRE(rows == expected);
+			continue;
+		}
+		REQUIRE(!live.ReadReleased());
+		REQUIRE(rows.size() == expected.size());
+		for (idx_t row = 0; row < rows.size(); row++) {
+			INFO("row " << row);
+			REQUIRE(rows[row].ends == expected[row].ends);
+		}
 	}
 }
-
-#ifdef SDB_FAULT_INJECTION
-TEST_CASE("A stream range is empty when another reader finds the stream ends before it", "[csv]") {
-	string data;
-	for (idx_t row = 0; row < 50; row++) {
-		data += "a,b\n";
-	}
-	const auto dialect = RowDialect::PostgresCsv(',', '"', '"');
-	RowLexer lexer(dialect, 2, 1 << 20, true);
-	RowRangesTestStream source(data);
-	RowRanges ranges(Allocator::DefaultAllocator(), lexer, source, 0, NumericLimits<idx_t>::Maximum(), 64, true);
-	idx_t range = 0;
-	for (idx_t claimed = 0; claimed <= 10; claimed++) {
-		REQUIRE(ranges.Claim(range));
-	}
-	REQUIRE(range == 10);
-
-	RowRangeReader reader(ranges);
-	reader.Start(range, true, false, false);
-	FaultPoints::Arm("row_range_lex");
-	auto result = RowReadResult::ROWS;
-	std::thread worker([&]() { result = reader.Advance(STANDARD_VECTOR_SIZE); });
-	auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
-	while (!FaultPoints::Armed("row_range_lex:parked") && std::chrono::steady_clock::now() < deadline) {
-		std::this_thread::sleep_for(std::chrono::milliseconds(1));
-	}
-	const bool parked = FaultPoints::Armed("row_range_lex:parked");
-	ranges.FoundEnd(data.size());
-	FaultPoints::Arm("row_range_lex:release");
-	worker.join();
-	FaultPoints::Clear();
-	REQUIRE(parked);
-	REQUIRE(result == RowReadResult::DONE);
-}
-#endif
 
 TEST_CASE("Row sync finds the first row after a position in text and csv input", "[csv]") {
 	const auto text = RowDialect::PostgresText('\t');
@@ -985,6 +969,9 @@ TEST_CASE("A range reader never writes into the windows that rows it handed out 
 	RowRangesTestStream source(data);
 	RowRanges ranges(Allocator::DefaultAllocator(), lexer, source, 0, data.size(), (data.size() + 1) / 2, true);
 	REQUIRE(ranges.RangeCount() == 2);
+	idx_t range = DConstants::INVALID_INDEX;
+	REQUIRE(ranges.Claim(range));
+	REQUIRE(range == 0);
 	RowRangeReader reader(ranges);
 	reader.Start(0, true, false, false);
 	REQUIRE(reader.Advance(1) == RowReadResult::ROWS);
@@ -1000,6 +987,8 @@ TEST_CASE("A range reader never writes into the windows that rows it handed out 
 	const auto last = reader.window.bytes;
 	REQUIRE(last != first);
 	const string last_bytes(last->data, last->size);
+	REQUIRE(ranges.Claim(range));
+	REQUIRE(range == 1);
 	reader.Start(1, true, false, false);
 	REQUIRE(reader.window.bytes != first);
 	REQUIRE(reader.window.bytes != last);
@@ -1030,18 +1019,156 @@ TEST_CASE("Intake ranges are not all finished while a reader cuts the next one",
 	PlainRowStream source(data);
 	RowRanges ranges(Allocator::DefaultAllocator(), source, 0, NumericLimits<idx_t>::Maximum(), 1 << 20);
 	REQUIRE(ranges.Intake());
-	idx_t range = DConstants::INVALID_INDEX;
-	idx_t begin = DConstants::INVALID_INDEX;
-	shared_ptr<RowBytes> carry;
-	idx_t carry_to = 0;
-	REQUIRE(ranges.ClaimIntake(range, begin, carry, carry_to));
-	REQUIRE(range == 0);
-	REQUIRE(begin == 0);
-	REQUIRE(!ranges.AllFinished());
+	idx_t first = DConstants::INVALID_INDEX;
+	idx_t second = DConstants::INVALID_INDEX;
+	REQUIRE(ranges.Claim(first));
+	REQUIRE(ranges.Claim(second));
+	REQUIRE(first == 0);
+	REQUIRE(second == 1);
+	idx_t from = DConstants::INVALID_INDEX;
+	REQUIRE(ranges.ClaimRead(first, from));
+	REQUIRE(from == 0);
 	ranges.FoundEnd(data.size());
-	ranges.Cut(data.size(), nullptr, data.size());
+	ranges.PassRead(data.size());
+	RowClaim claim;
+	REQUIRE(ranges.ClaimCut(first, claim));
+	REQUIRE(claim.begin == 0);
 	REQUIRE(!ranges.AllFinished());
-	REQUIRE(ranges.Finish(range));
+	ranges.Cut(data.size(), nullptr, data.size(), CSVState::RECORD_SEPARATOR, DConstants::INVALID_INDEX);
+	REQUIRE(!ranges.AllFinished());
+	idx_t third = DConstants::INVALID_INDEX;
+	REQUIRE(!ranges.Claim(third));
+	REQUIRE(ranges.ClaimRead(second, from));
+	REQUIRE(from == data.size());
+	ranges.PassRead(from);
+	REQUIRE(!ranges.ClaimCut(second, claim));
+	REQUIRE(!ranges.AllFinished());
+	REQUIRE(ranges.Finish(first));
 	REQUIRE(ranges.AllFinished());
-	REQUIRE(!ranges.ClaimIntake(range, begin, carry, carry_to));
+}
+
+TEST_CASE("A stream of short rows is cut into pieces of about the range size", "[csv]") {
+	struct Case {
+		RowDialect dialect;
+		string row;
+		idx_t range_bytes;
+	};
+	const vector<Case> cases = {
+	    {RowDialect::PostgresText('\t'), "1\n", 64},
+	    {RowDialect::DuckDB(TestGrammar(',', false, NewLineIdentifier::CARRY_ON)), "1\r\n", 65}};
+	for (const auto &test : cases) {
+		string input;
+		for (idx_t i = 0; i < 5000; i++) {
+			input += test.row;
+		}
+		RowLexer lexer(test.dialect, 1, NumericLimits<idx_t>::Maximum(), true, false, true);
+		RowRangesTestStream source(input);
+		RowRanges ranges(Allocator::DefaultAllocator(), lexer, source, 0, NumericLimits<idx_t>::Maximum(),
+		                 test.range_bytes, true);
+		RowRangeReader reader(ranges);
+		idx_t range = 0;
+		idx_t rows = 0;
+		idx_t longest = 0;
+		while (ranges.Claim(range)) {
+			if (!reader.StartIntake(range, true, true, false)) {
+				continue;
+			}
+			longest = MaxValue(longest, reader.Stop() - reader.Begin());
+			while (reader.Advance(STANDARD_VECTOR_SIZE) == RowReadResult::ROWS) {
+				rows += reader.Ready();
+				reader.Emit(reader.Ready());
+			}
+			ranges.Finish(range);
+		}
+		INFO("row " << test.row.size() << " bytes");
+		REQUIRE(rows == 5000);
+		REQUIRE(longest <= test.range_bytes + 2 * test.row.size());
+	}
+}
+
+TEST_CASE("Rows longer than a piece are carried whole to the pieces after them", "[csv]") {
+	struct Case {
+		RowDialect dialect;
+		string long_value;
+	};
+	string escaped;
+	string quoted = "\"";
+	string unquoted;
+	for (idx_t i = 0; i < 20000; i++) {
+		escaped += i % 7 ? "abcdefghi" : "abcdefg\\\n";
+		quoted += i % 5 ? "abcdefghi" : i % 2 ? "abcdefg\"\"" : "abcdefgh\n";
+		unquoted += "abcdefghi";
+	}
+	quoted += "\"";
+	const vector<Case> cases = {{RowDialect::PostgresText('\t'), escaped},
+	                            {RowDialect::PostgresCsv(',', '"', '"'), quoted},
+	                            {RowDialect::DuckDB(TestGrammar(',', true, NewLineIdentifier::SINGLE_N)), unquoted},
+	                            {RowDialect::DuckDB(TestGrammar(',', true, NewLineIdentifier::SINGLE_N)), quoted}};
+	for (const auto &test : cases) {
+		const char delimiter = test.dialect.backslash ? '\t' : ',';
+		string input;
+		for (idx_t row = 0; row < 300; row++) {
+			input += to_string(row) + delimiter + (row % 100 == 50 ? test.long_value : "short") + "\n";
+		}
+		input += "end" + string(1, delimiter) + test.long_value;
+		RowLexer lexer(test.dialect, 2, NumericLimits<idx_t>::Maximum(), true, false, true);
+		RowRangesTestStream whole(input);
+		const auto expected = ReadRows(lexer, whole);
+		REQUIRE(expected.size() == 301);
+		for (const idx_t range_bytes : {idx_t(1) << 10, idx_t(1) << 17}) {
+			INFO("dialect backslash " << test.dialect.backslash << ", range " << range_bytes);
+			RowRangesTestStream complete(input);
+			REQUIRE(ReadRanges(lexer, complete, range_bytes) == expected);
+			LiveRowStream live;
+			vector<LexedRow> rows;
+			std::thread reader_thread([&]() { rows = ReadRanges(lexer, live, range_bytes); });
+			for (idx_t at = 0; at < input.size();) {
+				const idx_t piece = MinValue<idx_t>(range_bytes / 3 + at % 97, input.size() - at);
+				live.AwaitReader();
+				live.Append(std::string_view(input).substr(at, piece));
+				at += piece;
+			}
+			live.AwaitReader();
+			live.Close();
+			reader_thread.join();
+			REQUIRE(rows == expected);
+		}
+	}
+}
+
+TEST_CASE("A failed intake releases the readers waiting for their turn", "[csv]") {
+	const string data = "{\"a\":1}\n{\"a\":2}\n";
+	PlainRowStream source(data);
+	RowRanges ranges(Allocator::DefaultAllocator(), source, 0, NumericLimits<idx_t>::Maximum(), 1 << 20);
+	idx_t pieces[4];
+	for (auto &piece : pieces) {
+		REQUIRE(ranges.Claim(piece));
+	}
+	idx_t from = DConstants::INVALID_INDEX;
+	REQUIRE(ranges.ClaimRead(pieces[0], from));
+	ranges.PassRead(from);
+	bool cut = true;
+	std::thread cutter([&]() {
+		idx_t at;
+		RowClaim claim;
+		cut = ranges.ClaimRead(pieces[1], at);
+		if (cut) {
+			ranges.PassRead(at);
+			cut = ranges.ClaimCut(pieces[1], claim);
+		}
+	});
+	bool read = true;
+	std::thread reader([&]() {
+		idx_t at;
+		read = ranges.ClaimRead(pieces[3], at);
+	});
+	ranges.FailIntake();
+	cutter.join();
+	reader.join();
+	REQUIRE(!cut);
+	REQUIRE(!read);
+	RowClaim claim;
+	REQUIRE(!ranges.ClaimCut(pieces[0], claim));
+	idx_t next = DConstants::INVALID_INDEX;
+	REQUIRE(!ranges.Claim(next));
 }

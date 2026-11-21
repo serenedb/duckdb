@@ -57,12 +57,32 @@ public:
 	virtual bool Available(idx_t offset) const {
 		return true;
 	}
+	virtual void Nudge() {
+	}
 	idx_t ReadFully(char *data, idx_t count, idx_t offset) const;
 };
 
 struct RowRangeBounds {
 	idx_t begin = 0;
 	idx_t end = 0;
+};
+
+struct RowSearch {
+	idx_t searched_to = 0;
+	idx_t scanned_to = 0;
+	bool quoted = false;
+	bool plain = true;
+	RowCursor probe;
+};
+
+struct RowClaim {
+	idx_t begin = 0;
+	shared_ptr<RowBytes> carry;
+	idx_t carry_to = 0;
+	CSVState origin = CSVState::NOT_SET;
+	idx_t line_end = DConstants::INVALID_INDEX;
+	bool resumed = false;
+	RowSearch search;
 };
 
 idx_t RowSync(const RowDialect &dialect, const char *bytes, idx_t base, idx_t begin, idx_t end, bool eof);
@@ -75,8 +95,13 @@ public:
 
 	void Reset(idx_t size, idx_t range_bytes);
 	bool Claim(idx_t &range);
-	bool ClaimIntake(idx_t &range, idx_t &begin, shared_ptr<RowBytes> &carry, idx_t &carry_to);
-	void Cut(idx_t end, shared_ptr<RowBytes> rest, idx_t read_to);
+	bool ClaimRead(idx_t range, idx_t &from);
+	void PassRead(idx_t to);
+	bool Idle(idx_t range, idx_t read_to) const;
+	bool ClaimCut(idx_t range, RowClaim &claim);
+	void Cut(idx_t end, shared_ptr<RowBytes> rest, idx_t read_to, CSVState origin, idx_t line_end);
+	void CarryOn(shared_ptr<RowBytes> rest, idx_t read_to, const RowSearch &search, bool idle);
+	void FailIntake();
 	bool Finish(idx_t range);
 	bool AllFinished() const;
 	void Publish(idx_t range, CSVState origin, const CsvRangeEntry &entry);
@@ -89,11 +114,8 @@ public:
 	idx_t RangeCount() const {
 		return range_count.load(std::memory_order_acquire);
 	}
-	bool Dynamic() const {
-		return dynamic;
-	}
 	bool Intake() const {
-		return dynamic && !lexer;
+		return intake;
 	}
 	void FoundEnd(idx_t end);
 	idx_t RangeBegin(idx_t range, idx_t size_p) const {
@@ -135,29 +157,29 @@ public:
 
 private:
 	void Layout(idx_t range_bytes);
-	void Grow(idx_t count);
 	bool Complete() const;
-	void ReleaseResolved();
-	bool TakeIntake(idx_t &range, idx_t &begin, shared_ptr<RowBytes> &carry, idx_t &carry_to);
 
 private:
 	mutable mutex lock;
 	atomic<idx_t> size;
 	atomic<idx_t> range_count;
-	bool dynamic = false;
+	bool intake = false;
 	shared_ptr<RowBuffer> whole_buffer;
 	const char *whole_data = nullptr;
 	idx_t next_range = 0;
 	idx_t finished_ranges = 0;
-	idx_t unfinished = 0;
-	idx_t released = 0;
 	idx_t intake_begin = 0;
 	shared_ptr<RowBytes> intake_carry;
 	idx_t intake_carry_to = 0;
-	idx_t tickets = 0;
+	CSVState intake_origin = CSVState::NOT_SET;
+	idx_t intake_line_end = DConstants::INVALID_INDEX;
+	bool intake_resumed = false;
+	RowSearch intake_search;
+	idx_t idle_from = 0;
+	idx_t reading = 0;
+	idx_t read_pos = 0;
 	idx_t serving = 0;
-	bool cutting = false;
-	vector<bool> done;
+	bool failed = false;
 	RowChain<CsvRangeStart, CsvRangeEntry, CSV_RANGE_ORIGINS> chain;
 };
 
@@ -170,8 +192,10 @@ public:
 
 	explicit RowWindow(RowRanges &ranges);
 
-	void Start(idx_t from, bool release, bool exact_end);
-	void Seed(const RowBytes &from, idx_t end);
+	void Start(idx_t from, bool release);
+	void StartAhead(idx_t from);
+	shared_ptr<RowBytes> Tail(idx_t from) const;
+	void Prepend(shared_ptr<RowBytes> carry, idx_t begin, idx_t from);
 	void Read(idx_t keep_from, idx_t piece = PIECE);
 	bool Waits() const;
 
@@ -179,8 +203,6 @@ public:
 	RowRanges &ranges;
 	shared_ptr<RowBytes> bytes;
 	idx_t read_to = 0;
-	bool beyond = false;
-	bool exact_end = false;
 
 private:
 	void Prepare(idx_t keep_from, idx_t need);
@@ -222,6 +244,7 @@ public:
 	explicit RowRangeReader(RowRanges &ranges);
 
 	void Start(idx_t range, bool extract, bool release, bool validate_count_utf8);
+	bool StartIntake(idx_t range, bool extract, bool release, bool validate_count_utf8);
 	void Adopt(shared_ptr<RowBytes> bytes, const RowCursor &cursor);
 	RowReadResult Advance(idx_t want);
 	idx_t Ready() const {
@@ -252,6 +275,9 @@ public:
 	idx_t Range() const {
 		return range;
 	}
+	idx_t Begin() const {
+		return lex_start;
+	}
 	idx_t Stop() const {
 		return lex_stop;
 	}
@@ -270,6 +296,14 @@ public:
 
 private:
 	void StartPass(bool second_pass);
+	bool ReadChunk(idx_t from);
+	void StartSearch(RowSearch &search) const;
+	idx_t CutIntake(RowSearch &search, bool idle) const;
+	void QuoteParityTerm(const RowBytes &bytes, idx_t from, idx_t read_to, bool quoted, RowCursor &last) const;
+	idx_t LineBreaksFrom(const RowBytes &bytes, idx_t read_to) const;
+	void EscapeParityTerm(const RowBytes &bytes, idx_t from, idx_t limit, RowCursor &last) const;
+	void PlainTerm(const RowBytes &bytes, idx_t from, idx_t limit, RowCursor &last) const;
+	idx_t IntakeCut(const RowCursor &probe, bool idle) const;
 	void PublishOwnTransfer();
 	bool FromChain();
 	bool Lex();
@@ -285,6 +319,7 @@ private:
 
 private:
 	idx_t range = 0;
+	bool intake = false;
 	bool active = false;
 	bool extract = false;
 	bool extract_rows = false;
