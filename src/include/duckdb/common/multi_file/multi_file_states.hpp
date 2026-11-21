@@ -99,6 +99,7 @@ struct MultiFileBindData : public TableFunctionData {
 	//! (Optional) The only partitions that are read, as indexes into what get_partition_stats lists - see
 	//! set_partitions_to_scan
 	shared_ptr<const vector<idx_t>> partitions_to_scan;
+	bool stable_file_indexes = false;
 
 	//! Whether the scan reads a planned set of partitions, or the partitions in a planned order - see PlanPartitions
 	bool PlansPartitions() const {

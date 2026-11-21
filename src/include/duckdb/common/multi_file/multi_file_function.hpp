@@ -1099,7 +1099,7 @@ public:
 
 		// before instantiating a scan trigger a dynamic filter pushdown if possible - unless the plan pinned the
 		// partitions to read, which are numbered over the files of the bind
-		auto new_list = PinsPartitions(bind_data)
+		auto new_list = PinsPartitions(bind_data) || bind_data.stable_file_indexes
 		                    ? nullptr
 		                    : MultiFileFilterPushdown(context, bind_data, input.column_indexes, input.filters);
 		if (new_list) {
@@ -1781,6 +1781,9 @@ public:
 	static void MultiFileComplexFilterPushdown(ClientContext &context, LogicalGet &get, FunctionData *bind_data_p,
 	                                           vector<unique_ptr<Expression>> &filters) {
 		auto &data = bind_data_p->Cast<MultiFileBindData>();
+		if (data.stable_file_indexes) {
+			return;
+		}
 
 		MultiFilePushdownInfo info(get.table_index, data.names, get.GetColumnIds(), get.extra_info);
 		auto new_list =
