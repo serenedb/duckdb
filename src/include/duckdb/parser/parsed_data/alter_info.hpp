@@ -70,9 +70,9 @@ public:
 
 	AlterType type;
 	//! if exists
-	OnEntryNotFound if_not_found;
+	OnEntryNotFound if_not_found = OnEntryNotFound::THROW_EXCEPTION;
 	//! Allow altering internal entries
-	bool allow_internal;
+	bool allow_internal = false;
 	idx_t oid = 0;
 	//! Determine whether to skip Bind
 	AlterBindMode bind_mode = AlterBindMode::BIND_ON_ALTER;
