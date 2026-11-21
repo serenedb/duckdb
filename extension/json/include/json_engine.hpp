@@ -11,7 +11,9 @@
 #include "duckdb/common/error_data.hpp"
 #include "duckdb/common/json_document.hpp"
 #include "duckdb/common/mutex.hpp"
+#include "duckdb/formats/json_ranges.hpp"
 #include "duckdb/formats/range_lines.hpp"
+#include "duckdb/formats/row_chain.hpp"
 #include "duckdb/planner/table_filter.hpp"
 #include "duckdb/planner/table_filter_state.hpp"
 #include "duckdb/storage/arena_allocator.hpp"
@@ -94,6 +96,9 @@ public:
 	void AddError(idx_t unit, idx_t record, string message);
 	[[noreturn]] void ThrowObjectSizeError(idx_t object_size) const;
 	idx_t BufferCapacity() const;
+	void Computing(idx_t range, bool value);
+	void Publish(idx_t range, JsonRangeOrigin origin, const JsonRangeEntry &entry);
+	JsonRangeStart StartState(idx_t range);
 
 public:
 	ClientContext &context;
@@ -103,6 +108,7 @@ public:
 	JsonScanColumns columns;
 	JSONFormat format = JSONFormat::AUTO_DETECT;
 	bool features_prefix = false;
+	bool parallel_values = false;
 	unique_ptr<RowRanges> ranges;
 	JSONReadFlags read_flags;
 	bool validate_only = false;
@@ -123,6 +129,7 @@ private:
 
 private:
 	mutable mutex lock;
+	RowChain<JsonRangeStart, JsonRangeEntry, JSON_RANGE_ORIGINS> chain;
 	RangeLines lines;
 	optional_idx error_unit;
 	idx_t error_record = 0;
@@ -144,6 +151,7 @@ public:
 
 private:
 	void Load();
+	void LoadValueRange();
 	idx_t CutRecords();
 	void Begin();
 	bool Last() const {
