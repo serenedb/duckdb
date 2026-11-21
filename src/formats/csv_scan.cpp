@@ -833,7 +833,7 @@ void CsvScanGlobal::MatchCopyHeader(RowSource &rows) const {
 	if (reader.cursor.unfinished) {
 		ThrowCopyError("22P04", "unterminated CSV quoted field", context);
 	}
-	const auto *anomaly = fields.anomalies.empty() ? nullptr : fields.Anomaly(0);
+	const auto *anomaly = fields.HasAnomalies() ? fields.Anomaly(0) : nullptr;
 	const idx_t count = anomaly ? anomaly->fields : num_columns;
 	auto &names = copy->names;
 	if (count != names.size()) {
@@ -1797,7 +1797,7 @@ idx_t CsvScan::CopyEndMarker(idx_t count) {
 		if (RawField(0, row) != "\\.") {
 			continue;
 		}
-		const auto *anomaly = fields.anomalies.empty() ? nullptr : fields.Anomaly(row);
+		const auto *anomaly = fields.HasAnomalies() ? fields.Anomaly(row) : nullptr;
 		if ((anomaly ? anomaly->fields : global.num_columns) != 1) {
 			continue;
 		}
@@ -1859,14 +1859,17 @@ void CsvScan::LeanReport(idx_t first, idx_t count) {
 		used_unstrictness = true;
 	}
 	const idx_t end_row = first + count;
-	auto anomaly = std::lower_bound(fields.anomalies.begin(), fields.anomalies.end(), first,
-	                                [](const RowAnomaly &entry, idx_t row) { return entry.row < row; });
-	auto event = std::lower_bound(fields.events.cbegin(), fields.events.cend(), first,
-	                              [](const RowEvent &entry, idx_t row) { return entry.row < row; });
+	const idx_t base = fields.base;
+	auto anomaly =
+	    std::lower_bound(fields.anomalies.begin() + NumericCast<int64_t>(fields.anomaly_head), fields.anomalies.end(),
+	                     first + base, [](const RowAnomaly &entry, idx_t row) { return entry.row < row; });
+	auto event =
+	    std::lower_bound(fields.events.cbegin() + NumericCast<int64_t>(fields.event_head), fields.events.cend(),
+	                     first + base, [](const RowEvent &entry, idx_t row) { return entry.row < row; });
 	const idx_t unfinished_row =
 	    cursor.unfinished && reader.Finished() ? fields.row_count - 1 : DConstants::INVALID_INDEX;
-	const bool anomalies = anomaly != fields.anomalies.end() && anomaly->row < end_row;
-	const bool events = event != fields.events.cend() && event->row < end_row;
+	const bool anomalies = anomaly != fields.anomalies.end() && anomaly->row < end_row + base;
+	const bool events = event != fields.events.cend() && event->row < end_row + base;
 	if (!lean_errors && !anomalies && !events && !cursor.long_rows) {
 		return;
 	}
@@ -1878,11 +1881,11 @@ void CsvScan::LeanReport(idx_t first, idx_t count) {
 	for (idx_t row = first; row < end_row; row++) {
 		auto &values = value_errors[row];
 		const RowAnomaly *row_anomaly = nullptr;
-		if (anomaly != fields.anomalies.end() && anomaly->row == row) {
+		if (anomaly != fields.anomalies.end() && anomaly->row == row + base) {
 			row_anomaly = &*anomaly;
 			++anomaly;
 		}
-		const bool row_events = event != fields.events.cend() && event->row == row;
+		const bool row_events = event != fields.events.cend() && event->row == row + base;
 		const bool unfinished = row == unfinished_row;
 		bool long_row = false;
 		if (cursor.long_rows && !unfinished) {
@@ -1924,9 +1927,10 @@ void CsvScan::LeanRowErrors(idx_t row, const RowAnomaly *anomaly, vector<RowEven
                             bool unfinished, bool long_row, vector<CsvRowError> &values, vector<CsvRowError> &errors) {
 	const idx_t columns = global.num_columns;
 	const auto events_end = fields.events.cend();
+	const idx_t event_row = row + fields.base;
 	idx_t field_count = anomaly ? anomaly->fields : columns;
 	if (unfinished) {
-		for (auto it = event; it != events_end && it->row == row; ++it) {
+		for (auto it = event; it != events_end && it->row == event_row; ++it) {
 			field_count = it->column;
 		}
 	}
@@ -1934,7 +1938,7 @@ void CsvScan::LeanRowErrors(idx_t row, const RowAnomaly *anomaly, vector<RowEven
 	                 [](const CsvRowError &a, const CsvRowError &b) { return a.column < b.column; });
 	idx_t value = 0;
 	const auto add_events_until = [&](idx_t column) {
-		while (event != events_end && event->row == row && event->column <= column) {
+		while (event != events_end && event->row == event_row && event->column <= column) {
 			errors.push_back({EventType(*event), event->column, cursor.anchor + event->position, string()});
 			++event;
 		}

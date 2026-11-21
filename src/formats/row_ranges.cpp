@@ -1388,7 +1388,7 @@ void RowRangeReader::Emit(idx_t count) {
 }
 
 idx_t RowRangeReader::RowEnd(idx_t row) const {
-	const auto anomaly = fields.anomalies.empty() ? nullptr : fields.Anomaly(row);
+	const auto anomaly = fields.HasAnomalies() ? fields.Anomaly(row) : nullptr;
 	if (anomaly && anomaly->fields > columns) {
 		return cursor.anchor + anomaly->end;
 	}
