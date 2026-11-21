@@ -58,7 +58,7 @@ bool Contains(std::string_view bytes, char byte) {
 }
 
 bool QuoteParity(const RowDialect &dialect) {
-	return dialect.quoting == RowQuoting::ANYWHERE && (!dialect.escape || dialect.escape == dialect.quote);
+	return dialect.quoting == RowQuoting::ANYWHERE && dialect.escape == dialect.quote;
 }
 
 idx_t FirstNewline(const RowDialect &dialect, const char *bytes, idx_t base, idx_t begin, idx_t end, bool eof) {
@@ -602,9 +602,9 @@ void RowWindow::Prepare(idx_t keep_from, idx_t need) {
 
 void RowWindow::StartAhead(idx_t from) {
 	release = false;
-	if (!bytes || bytes.use_count() > 1 || bytes->buffer) {
+	if (!bytes || bytes.use_count() > 1) {
 		std::swap(bytes, spare);
-		if (!bytes || bytes.use_count() > 1 || bytes->buffer) {
+		if (!bytes || bytes.use_count() > 1) {
 			bytes = make_shared_ptr<RowBytes>();
 		}
 	}
@@ -695,7 +695,7 @@ void RowWindow::Read(idx_t keep_from, idx_t piece) {
 			ranges.FoundEnd(read_to);
 		}
 	}
-	if (release && !ranges.Intake()) {
+	if (release) {
 		ranges.source.Release(read_to);
 	}
 }
@@ -810,13 +810,14 @@ bool RowRangeReader::StartIntake(idx_t range_p, bool extract_p, bool release_p, 
 		counted_rows = 0;
 		return true;
 	}
+	D_ASSERT(lex_stop > lex_start);
 	const auto &bytes = *window.bytes;
 	idx_t next_line_end = lex_stop;
 	while (next_line_end > lex_start && (bytes.data[next_line_end - 1 - bytes.offset] == '\n' ||
 	                                     bytes.data[next_line_end - 1 - bytes.offset] == '\r')) {
 		next_line_end--;
 	}
-	const CSVState next_origin = lex_stop == lex_start ? origin : ranges.Origin(bytes, lex_stop);
+	const CSVState next_origin = ranges.Origin(bytes, lex_stop);
 	ranges.Cut(lex_stop, window.Tail(lex_stop), window.read_to, next_origin,
 	           next_line_end > lex_start ? next_line_end : DConstants::INVALID_INDEX);
 	cut = true;
@@ -883,21 +884,21 @@ idx_t RowRangeReader::CutIntake(RowSearch &search, bool idle) const {
 			D_ASSERT(fed);
 		}
 		last = probe;
-		if (idle && last.pos < read_to) {
+		if (idle) {
+			D_ASSERT(last.pos < read_to);
 			[[maybe_unused]] const bool fed = lexer.Feed(last, bytes.data, bytes.offset, read_to, true, nullptr);
 			D_ASSERT(fed);
 		}
 	}
-	const idx_t cut = IntakeCut(last, idle);
+	const idx_t cut = IntakeCut(last);
 	if (cut != DConstants::INVALID_INDEX) {
 		return cut;
 	}
-	const bool found = last.last_term != DConstants::INVALID_INDEX;
-	search.searched_to = MaxValue(search.searched_to, found ? last.last_term : limit);
+	search.searched_to = MaxValue(search.searched_to, limit);
 	if (read_to - lex_start >= ROW_LIMIT) {
 		throw InvalidInputException(
-		    "The row at byte %llu of \"%s\" is longer than %llu bytes, the longest row that can be read",
-		    found ? last.last_term + 1 : lex_start, ranges.path, ROW_LIMIT);
+		    "The row at byte %llu of \"%s\" is longer than %llu bytes, the longest row that can be read", lex_start,
+		    ranges.path, ROW_LIMIT);
 	}
 	return DConstants::INVALID_INDEX;
 }
@@ -967,42 +968,16 @@ void RowRangeReader::PlainTerm(const RowBytes &bytes, idx_t from, idx_t limit, R
 	last.last_term_cr = piece[found] == '\r';
 }
 
-idx_t RowRangeReader::IntakeCut(const RowCursor &probe, bool idle) const {
+idx_t RowRangeReader::IntakeCut(const RowCursor &probe) const {
 	if (probe.last_term == DConstants::INVALID_INDEX) {
 		return DConstants::INVALID_INDEX;
 	}
 	const auto &bytes = *window.bytes;
-	const idx_t read_to = window.read_to;
-	const auto at = [&](idx_t position) {
-		return bytes.data[position - bytes.offset];
-	};
-	const idx_t undecided = idle ? read_to : DConstants::INVALID_INDEX;
 	idx_t cut = probe.last_term + 1;
-	if (dialect.carry_on && probe.last_term_cr) {
-		if (cut == read_to) {
-			return undecided;
-		}
-		if (at(cut) == '\n') {
-			cut++;
-		}
+	if (dialect.carry_on && probe.last_term_cr && cut < window.read_to && bytes.data[cut - bytes.offset] == '\n') {
+		cut++;
 	}
-	if (!dialect.backslash) {
-		return cut;
-	}
-	const bool pairs = dialect.line_break == '\n';
-	while (cut < read_to) {
-		const char byte = at(cut);
-		if (byte == dialect.line_break) {
-			cut++;
-		} else if (pairs && byte == '\r' && cut + 1 < read_to && at(cut + 1) == '\n') {
-			cut += 2;
-		} else if (pairs && byte == '\r' && cut + 1 == read_to) {
-			return idle ? cut : DConstants::INVALID_INDEX;
-		} else {
-			return cut;
-		}
-	}
-	return undecided;
+	return cut;
 }
 
 void RowRangeReader::Adopt(shared_ptr<RowBytes> bytes_p, const RowCursor &cursor_p) {
@@ -1120,7 +1095,7 @@ idx_t RowRangeReader::KeepFrom() const {
 
 void RowRangeReader::ReadPiece(idx_t piece) {
 	window.Read(KeepFrom(), piece);
-	if (ranges.stream && !ranges.Intake()) {
+	if (ranges.stream) {
 		lex_stop = MinValue(lex_stop, ranges.Size());
 	}
 }
