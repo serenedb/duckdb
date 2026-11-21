@@ -257,6 +257,13 @@
         "id": 206,
         "name": "options",
         "type": "case_insensitive_map_t<ParsedExpression*>"
+      },
+      {
+        "id": 16584,
+        "name": "row_type_oid",
+        "type": "idx_t",
+        "default": 0,
+        "version": "sdb_v1"
       }
     ],
     "methods": {
@@ -340,6 +347,20 @@
         "id": 16584,
         "name": "security_invoker",
         "type": "bool"
+      },
+      {
+        "id": 16585,
+        "name": "rule_oid",
+        "type": "idx_t",
+        "default": 0,
+        "version": "sdb_v1"
+      },
+      {
+        "id": 16586,
+        "name": "row_type_oid",
+        "type": "idx_t",
+        "default": 0,
+        "version": "sdb_v1"
       }
     ],
     "constructor": [
