@@ -49,6 +49,10 @@ public:
 	ViewSecurityType security_type = ViewSecurityType::REGULAR_VIEW;
 
 	bool security_invoker = false;
+	idx_t rule_oid = 0;
+	idx_t row_type_oid = 0;
+
+	vector<idx_t> GetSubObjectOids() const;
 
 	//! Returns the view column info, if the view is bound. Otherwise returns `nullptr`
 	virtual shared_ptr<ViewColumnInfo> GetColumnInfo() const;

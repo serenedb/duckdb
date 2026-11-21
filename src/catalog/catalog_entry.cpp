@@ -24,6 +24,17 @@ static idx_t AssignOid(Catalog &catalog, idx_t oid) {
 	return catalog.IsSystemCatalog() ? manager.NextSystemOid() : manager.NextOid();
 }
 
+idx_t CatalogEntry::AssignPostgresOid(Catalog &catalog, bool internal, idx_t oid, idx_t count) {
+	auto &manager = catalog.GetDatabase().GetDatabaseManager();
+	if (oid) {
+		return manager.ClaimOid(oid);
+	}
+	if (internal || catalog.Compatibility() != SqlCompatibility::POSTGRES) {
+		return 0;
+	}
+	return manager.NextOid(count) + count - 1;
+}
+
 CatalogEntry::CatalogEntry(CatalogType type, Catalog &catalog, Identifier name_p, idx_t oid)
     : CatalogEntry(type, std::move(name_p), AssignOid(catalog, oid)) {
 }

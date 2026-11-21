@@ -34,6 +34,7 @@ constexpr const char *TableCatalogEntry::Name;
 TableCatalogEntry::TableCatalogEntry(Catalog &catalog, SchemaCatalogEntry &schema, CreateTableInfo &info,
                                      shared_ptr<CatalogSet> inherited_triggers)
     : StandardEntry(CatalogType::TABLE_ENTRY, schema, catalog, info.GetTableName(), info.oid),
+      row_type_oid(AssignPostgresOid(catalog, info.internal, info.row_type_oid, 2)),
       constraints(std::move(info.constraints)), triggers(std::move(inherited_triggers)) {
 	if (catalog.IsDuckCatalog() && !triggers) {
 		triggers = make_shared_ptr<CatalogSet>(catalog);
@@ -118,6 +119,7 @@ unique_ptr<CreateInfo> TableCatalogEntry::GetInfo() const {
 	result->internal = internal;
 	result->comment = comment;
 	result->tags = tags;
+	result->row_type_oid = row_type_oid;
 	return std::move(result);
 }
 
@@ -521,6 +523,9 @@ void TableCatalogEntry::AddPostgresSystemColumns(virtual_column_map_t &virtual_c
 
 vector<idx_t> TableCatalogEntry::GetSubObjectOids() const {
 	vector<idx_t> oids;
+	if (row_type_oid) {
+		oids.push_back(row_type_oid);
+	}
 	for (auto &column : GetColumns().Logical()) {
 		if (column.CatalogOid()) {
 			oids.push_back(column.CatalogOid());
