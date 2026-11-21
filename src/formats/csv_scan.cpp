@@ -18,7 +18,6 @@
 #include "duckdb/common/vector/string_vector.hpp"
 #include "duckdb/common/vector_operations/vector_operations.hpp"
 #include "duckdb/main/database.hpp"
-#include "duckdb/parallel/callback_async_task.hpp"
 #include "duckdb/parallel/task_scheduler.hpp"
 #include "duckdb/planner/expression/bound_conjunction_expression.hpp"
 #include "duckdb/planner/expression/bound_constant_expression.hpp"
@@ -880,10 +879,6 @@ idx_t CsvScanGlobal::MaxThreads() const {
 		return MaxValue<idx_t>(TaskScheduler::QueryThreads(context), 1);
 	}
 	return MaxValue<idx_t>(ranges->RangeCount(), 1);
-}
-
-vector<unique_ptr<AsyncTask>> CsvScanGlobal::LoadTasks(idx_t range) const {
-	return vector<unique_ptr<AsyncTask>>();
 }
 
 bool CsvScanGlobal::FinishRange(idx_t range, idx_t lines) {
