@@ -44,56 +44,6 @@ vector<AclItem> Permissions::AclDefault(CatalogType acl_class, idx_t owner) {
 	return acl;
 }
 
-bool Permissions::operator==(const Permissions &rhs) const {
-	return owner == rhs.owner && acl == rhs.acl && defaults == rhs.defaults && Rows() == rhs.Rows();
-}
-
-const GrantRows &Permissions::Rows() const {
-	static const GrantRows empty;
-	return rows ? *rows : empty;
-}
-
-GrantRows &Permissions::MutableRows() {
-	if (!rows) {
-		rows = make_shared_ptr<GrantRows>();
-	} else if (rows.use_count() > 1) {
-		rows = make_shared_ptr<GrantRows>(*rows);
-	}
-	return *rows;
-}
-
-bool GrantRow::Is(CatalogType kind_p, idx_t oid_p) const {
-	return kind == kind_p && oid == oid_p;
-}
-
-template <class ROWS>
-static auto KindRange(ROWS &rows, CatalogType kind) {
-	auto lower = std::lower_bound(rows.begin(), rows.end(), kind,
-	                              [](const GrantRow &row, CatalogType value) { return row.kind < value; });
-	auto upper = std::upper_bound(lower, rows.end(), kind,
-	                              [](CatalogType value, const GrantRow &row) { return value < row.kind; });
-	return std::make_pair(lower, upper);
-}
-
-std::span<const GrantRow> GrantRows::OfKind(CatalogType kind) const {
-	auto range = KindRange(rows, kind);
-	return std::span<const GrantRow>(range.first, range.second);
-}
-
-optional_ptr<const GrantRow> Permissions::FindRow(CatalogType kind, idx_t oid) const {
-	for (auto &row : Rows().OfKind(kind)) {
-		if (row.Is(kind, oid)) {
-			return row;
-		}
-	}
-	return nullptr;
-}
-
-std::span<const AclItem> Permissions::RowAcl(CatalogType kind, idx_t oid) const {
-	auto row = FindRow(kind, oid);
-	return row ? std::span<const AclItem>(row->acl) : std::span<const AclItem>();
-}
-
 static AclMode HeldBy(const vector<AclItem> &acl, idx_t role, AclMode AclItem::*field) {
 	AclMode held = AclMode::NoRights;
 	for (auto &item : acl) {
@@ -299,23 +249,6 @@ void AlterPermissionsInfo::ApplyTo(Permissions &permissions, CatalogType entry_t
 		} else {
 			row->acl = std::move(row_acl);
 		}
-		return;
-	}
-
-	for (auto &target : info.database_rows) {
-		auto &stored = permissions.MutableRows().rows;
-		auto range = KindRange(stored, target.kind);
-		auto row = std::find_if(range.first, range.second,
-		                        [&](const GrantRow &candidate) { return candidate.Is(target.kind, target.oid); });
-		auto row_acl = row != range.second ? row->acl : target.acl;
-		ApplyGrant(info, info.object_owner_id, row_acl, target.kind, nullptr);
-		if (row != range.second) {
-			row->acl = std::move(row_acl);
-		} else {
-			stored.insert(range.second, GrantRow {target.kind, target.oid, std::move(row_acl)});
-		}
-	}
-	if (!info.database_rows.empty()) {
 		return;
 	}
 

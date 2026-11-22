@@ -16,7 +16,6 @@
 #include "duckdb/common/optional_ptr.hpp"
 #include "duckdb/common/serializer/deserializer.hpp"
 #include "duckdb/common/serializer/serializer.hpp"
-#include "duckdb/common/shared_ptr.hpp"
 #include "duckdb/common/vector.hpp"
 
 #include <span>
@@ -75,44 +74,16 @@ struct ColumnAcl {
 	static ColumnAcl Deserialize(Deserializer &deserializer);
 };
 
-struct GrantRow {
-	CatalogType kind = CatalogType::INVALID;
-	idx_t oid = 0;
-	vector<AclItem> acl;
-
-	bool operator==(const GrantRow &rhs) const = default;
-	bool Is(CatalogType kind, idx_t oid) const;
-
-	void Serialize(Serializer &serializer) const;
-	static GrantRow Deserialize(Deserializer &deserializer);
-};
-
-struct GrantRows {
-	vector<GrantRow> rows;
-
-	bool operator==(const GrantRows &rhs) const = default;
-	std::span<const GrantRow> OfKind(CatalogType kind) const;
-
-	void Serialize(Serializer &serializer) const;
-	static shared_ptr<GrantRows> Deserialize(Deserializer &deserializer);
-};
-
 struct Permissions {
 	idx_t owner = 0;
 	vector<AclItem> acl;
 	vector<DefaultAcl> defaults;
-	shared_ptr<GrantRows> rows;
 
-	bool operator==(const Permissions &rhs) const;
-
-	const GrantRows &Rows() const;
-	GrantRows &MutableRows();
+	bool operator==(const Permissions &rhs) const = default;
 
 	static bool TryParsePrivilege(std::string_view keyword, CatalogType acl_class, AclMode &result);
 	static vector<AclItem> AclDefault(CatalogType acl_class, idx_t owner);
 
-	optional_ptr<const GrantRow> FindRow(CatalogType kind, idx_t oid) const;
-	std::span<const AclItem> RowAcl(CatalogType kind, idx_t oid) const;
 	void AssignOwner(idx_t new_owner, CatalogType objtype, optional_ptr<const Permissions> database,
 	                 optional_idx schema);
 

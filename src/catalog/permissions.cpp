@@ -231,11 +231,6 @@ static bool AnyRoleReference(const CatalogEntry &entry, F &&named) {
 			return true;
 		}
 	}
-	for (auto &row : permissions.Rows().rows) {
-		if (any_acl(row.acl)) {
-			return true;
-		}
-	}
 	if (entry.type == CatalogType::ROLE_ENTRY) {
 		auto &member_of = entry.Cast<RoleEntry>().MemberOf();
 		return std::any_of(member_of.begin(), member_of.end(),
@@ -553,17 +548,15 @@ void RequireDatabasePrivilege(ClientContext &context, const RoleAccess &role, co
 	}
 }
 
-void RequireForeignDataWrapperUsage(ClientContext &context, const RoleAccess &role, const Identifier &database,
+void RequireForeignDataWrapperUsage(ClientContext &context, const RoleAccess &role, Catalog &catalog,
                                     std::string_view wrapper) {
 	auto &config = DBConfig::GetConfig(context);
-	auto &found = config.GetForeignDataWrapper(wrapper);
-	if (role.Owns(config.bootstrap_role)) {
-		return;
-	}
-	auto entry = ClusterEntry(context, CatalogType::DATABASE_ENTRY, database);
-	if (!entry ||
-	    !role.Can(CatalogType::FOREIGN_DATA_WRAPPER_ENTRY,
-	              entry->permissions.RowAcl(CatalogType::FOREIGN_DATA_WRAPPER_ENTRY, found.oid), AclMode::Usage)) {
+	config.GetForeignDataWrapper(wrapper);
+	auto entry = catalog.LookupTopLevelEntry(catalog.GetCatalogTransaction(context),
+	                                         CatalogType::FOREIGN_DATA_WRAPPER_ENTRY, Identifier(wrapper));
+	const bool allowed = entry ? role.Can(CatalogType::FOREIGN_DATA_WRAPPER_ENTRY, entry->permissions, AclMode::Usage)
+	                           : role.Owns(config.bootstrap_role);
+	if (!allowed) {
 		ThrowPermissionDenied(CatalogType::FOREIGN_DATA_WRAPPER_ENTRY, wrapper);
 	}
 }

@@ -83,8 +83,8 @@ DUCKDB_API void RequireUse(ClientContext &context, const RoleAccess &role, Catal
                            optional_ptr<MacroFunction> overload = nullptr);
 DUCKDB_API void RequireDatabasePrivilege(ClientContext &context, const RoleAccess &role, const Identifier &database,
                                          AclMode need);
-DUCKDB_API void RequireForeignDataWrapperUsage(ClientContext &context, const RoleAccess &role,
-                                               const Identifier &database, std::string_view wrapper);
+DUCKDB_API void RequireForeignDataWrapperUsage(ClientContext &context, const RoleAccess &role, Catalog &catalog,
+                                               std::string_view wrapper);
 DUCKDB_API void RequireUserSchema(const SchemaCatalogEntry &schema, const Identifier &name);
 DUCKDB_API void RequireTypeUsage(ClientContext &context, const RoleAccess &role, const LogicalType &type,
                                  Catalog &catalog);

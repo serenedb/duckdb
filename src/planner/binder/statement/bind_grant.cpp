@@ -25,12 +25,6 @@ static void RequireGrantableAcl(const RoleAccess &role, idx_t owner, std::span<c
 	}
 }
 
-static void TargetDatabaseRow(AlterPermissionsInfo &info, idx_t owner, const Identifier &database) {
-	info.object_owner_id = owner;
-	info.entry_catalog_type = CatalogType::DATABASE_ENTRY;
-	info.SetQualifiedName(Identifier(), Identifier(), database);
-}
-
 static const Permissions &TargetPermissions(const AlterPermissionsInfo &info, CatalogEntry &target) {
 	if (info.overload_oid) {
 		auto &macro = target.Cast<MacroCatalogEntry>();
@@ -154,16 +148,21 @@ static void ResolveGrant(Binder &binder, AlterPermissionsInfo &info) {
 		info.grantors = CallerGrantors(binder);
 	}
 	if (info.entry_catalog_type == CatalogType::FOREIGN_DATA_WRAPPER_ENTRY) {
-		auto &name = info.GetQualifiedName().Name().GetIdentifierName();
+		const auto wrapper = info.GetQualifiedName().Name();
 		auto &config = DBConfig::GetConfig(context);
-		auto &wrapper = config.GetForeignDataWrapper(name);
+		config.GetForeignDataWrapper(wrapper.GetIdentifierName());
 		const auto database_name = DatabaseManager::GetDefaultDatabase(context);
-		auto &database = ClusterDatabase(context, database_name);
-		RequireGrantableAcl(role, config.bootstrap_role,
-		                    database.permissions.RowAcl(CatalogType::FOREIGN_DATA_WRAPPER_ENTRY, wrapper.oid),
-		                    CatalogType::FOREIGN_DATA_WRAPPER_ENTRY, name);
-		info.database_rows = {GrantRow {CatalogType::FOREIGN_DATA_WRAPPER_ENTRY, wrapper.oid, {}}};
-		TargetDatabaseRow(info, config.bootstrap_role, database_name);
+		ClusterDatabase(context, database_name);
+		auto &catalog = Catalog::GetCatalog(context, database_name);
+		std::span<const AclItem> acl;
+		if (auto entry = catalog.LookupTopLevelEntry(catalog.GetCatalogTransaction(context),
+		                                             CatalogType::FOREIGN_DATA_WRAPPER_ENTRY, wrapper)) {
+			acl = entry->permissions.acl;
+		}
+		RequireGrantableAcl(role, config.bootstrap_role, acl, CatalogType::FOREIGN_DATA_WRAPPER_ENTRY,
+		                    wrapper.GetIdentifierName());
+		info.object_owner_id = config.bootstrap_role;
+		info.SetQualifiedName(database_name, Identifier(), wrapper);
 		return;
 	}
 	if (info.entry_catalog_type == CatalogType::LANGUAGE_ENTRY) {
@@ -260,7 +259,7 @@ static void ResolveOwner(Binder &binder, AlterPermissionsInfo &info) {
 			throw PermissionException("permission denied to change owner of database");
 		}
 	} else if (entry.type == CatalogType::FOREIGN_SERVER_ENTRY) {
-		RequireForeignDataWrapperUsage(context, context.AccessOf(info.new_owner_id), entry.ParentCatalog().GetName(),
+		RequireForeignDataWrapperUsage(context, context.AccessOf(info.new_owner_id), entry.ParentCatalog(),
 		                               entry.GetInfo()->Cast<CreateForeignServerInfo>().fdw_name);
 	} else if (ObjectKindOf(entry.type).container == ObjectContainer::DATABASE) {
 		RequireDatabasePrivilege(context, role, entry.ParentCatalog().GetName(), AclMode::Create);

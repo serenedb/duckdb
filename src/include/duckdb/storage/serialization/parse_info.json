@@ -653,11 +653,6 @@
         "id": 330,
         "name": "overload_oid",
         "type": "idx_t"
-      },
-      {
-        "id": 334,
-        "name": "database_rows",
-        "type": "vector<GrantRow>"
       }
     ]
   },

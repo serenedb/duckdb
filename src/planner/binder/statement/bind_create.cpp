@@ -1610,9 +1610,11 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 	case CatalogType::FOREIGN_SERVER_ENTRY: {
 		auto catalog = BindCatalog(stmt.info->GetQualifiedName().Catalog());
 		if (auto &role = CheckAs(); !role.IsSystem()) {
-			RequireForeignDataWrapperUsage(context, role, catalog, stmt.info->Cast<CreateForeignServerInfo>().fdw_name);
-			AssignOwner(context, stmt.info->permissions, Catalog::GetCatalog(context, catalog),
-			            CatalogType::FOREIGN_SERVER_ENTRY, nullptr, role.role);
+			auto &server_catalog = Catalog::GetCatalog(context, catalog);
+			RequireForeignDataWrapperUsage(context, role, server_catalog,
+			                               stmt.info->Cast<CreateForeignServerInfo>().fdw_name);
+			AssignOwner(context, stmt.info->permissions, server_catalog, CatalogType::FOREIGN_SERVER_ENTRY, nullptr,
+			            role.role);
 		}
 		properties.RegisterDBModify(Catalog::GetCatalog(context, catalog), context,
 		                            DatabaseModificationType::CREATE_CATALOG_ENTRY);

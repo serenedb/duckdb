@@ -774,49 +774,6 @@
         "id": 102,
         "name": "defaults",
         "type": "vector<DefaultAcl>"
-      },
-      {
-        "id": 110,
-        "name": "rows",
-        "type": "shared_ptr<GrantRows>"
-      }
-    ],
-    "pointer_type": "none"
-  },
-  {
-    "class": "GrantRows",
-    "includes": [
-      "duckdb/catalog/acl.hpp"
-    ],
-    "members": [
-      {
-        "id": 100,
-        "name": "rows",
-        "type": "vector<GrantRow>"
-      }
-    ],
-    "pointer_type": "shared_ptr"
-  },
-  {
-    "class": "GrantRow",
-    "includes": [
-      "duckdb/catalog/acl.hpp"
-    ],
-    "members": [
-      {
-        "id": 100,
-        "name": "kind",
-        "type": "CatalogType"
-      },
-      {
-        "id": 101,
-        "name": "oid",
-        "type": "idx_t"
-      },
-      {
-        "id": 103,
-        "name": "acl",
-        "type": "vector<AclItem>"
       }
     ],
     "pointer_type": "none"
