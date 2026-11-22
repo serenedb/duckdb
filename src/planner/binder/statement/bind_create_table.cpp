@@ -49,19 +49,7 @@ static void VerifyCompressionType(ClientContext &context, optional_ptr<StorageMa
 	auto &catalog = info.schema.ParentCatalog();
 	for (auto &col : base.columns.Logical()) {
 		auto compression_type = col.CompressionType();
-		auto logical_type = col.GetType();
-		if (logical_type.id() == LogicalTypeId::UNBOUND && logical_type.HasAlias()) {
-			// Resolve user type if possible
-			const auto type_entry = Catalog::GetEntry<TypeCatalogEntry>(
-			    context,
-			    QualifiedName(Identifier::InvalidCatalog(), Identifier::InvalidSchema(),
-			                  Identifier(logical_type.GetAlias())),
-			    OnEntryNotFound::RETURN_NULL);
-			if (type_entry) {
-				logical_type = type_entry->user_type;
-			}
-		}
-		if (catalog.VerifyColumnCompression(context, storage_manager, base, col, logical_type)) {
+		if (catalog.VerifyColumnCompression(context, storage_manager, base, col, col.GetType())) {
 			continue;
 		}
 		auto compression_availability_result = CompressionTypeIsAvailable(compression_type, storage_manager);
@@ -75,6 +63,18 @@ static void VerifyCompressionType(ClientContext &context, optional_ptr<StorageMa
 				throw BinderException(
 				    "Can't compress using user-provided compression type '%s', that type is not available yet",
 				    CompressionTypeToString(compression_type));
+			}
+		}
+		auto logical_type = col.GetType();
+		if (logical_type.id() == LogicalTypeId::UNBOUND && logical_type.HasAlias()) {
+			// Resolve user type if possible
+			const auto type_entry = Catalog::GetEntry<TypeCatalogEntry>(
+			    context,
+			    QualifiedName(Identifier::InvalidCatalog(), Identifier::InvalidSchema(),
+			                  Identifier(logical_type.GetAlias())),
+			    OnEntryNotFound::RETURN_NULL);
+			if (type_entry) {
+				logical_type = type_entry->user_type;
 			}
 		}
 		auto physical_type = logical_type.InternalType();
