@@ -1,0 +1,32 @@
+# name: test/sql/copy/csv/test_rows_longer_than_ranges.test
+# description: Rows that span many ranges are read once, with every row after them
+# group: [csv]
+
+statement ok
+SET threads=8
+
+statement ok
+CREATE TABLE rows_and_long_rows AS SELECT i, CASE WHEN i % 400 = 0 THEN repeat('x', 3000000) || i ELSE 'v' || i END AS s FROM range(1000) r(i);
+
+statement ok
+COPY rows_and_long_rows TO '{TEST_DIR}/long_rows_quoted.csv' (FORCE_QUOTE (s), HEADER false);
+
+statement ok
+COPY rows_and_long_rows TO '{TEST_DIR}/long_rows_plain.csv' (HEADER false);
+
+statement ok
+COPY (SELECT i, replace(s, 'xx', 'x' || chr(10)) AS s FROM rows_and_long_rows) TO '{TEST_DIR}/long_rows_lines.csv' (HEADER false);
+
+foreach file quoted plain lines
+
+query III
+SELECT count(*), sum(i), sum(length(s)) FROM read_csv('{TEST_DIR}/long_rows_{file}.csv', columns={'i': 'BIGINT', 's': 'VARCHAR'}, header=false, auto_detect=false, delim=',', quote='"', escape='"', max_line_size=4000000);
+----
+1000	499500	9003887
+
+query I
+SELECT count(*) FROM read_csv('{TEST_DIR}/long_rows_{file}.csv', columns={'i': 'BIGINT', 's': 'VARCHAR'}, header=false, auto_detect=false, delim=',', quote='"', escape='"', max_line_size=4000000);
+----
+1000
+
+endloop

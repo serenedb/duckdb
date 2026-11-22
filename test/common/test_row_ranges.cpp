@@ -72,6 +72,19 @@ private:
 	string data;
 };
 
+class CountingRowSource : public RowRangesTestStream {
+public:
+	using RowRangesTestStream::RowRangesTestStream;
+
+	idx_t Read(char *out, idx_t count, idx_t offset) const override {
+		const idx_t got = RowRangesTestStream::Read(out, count, offset);
+		read += got;
+		return got;
+	}
+
+	mutable idx_t read = 0;
+};
+
 class LiveRowStream : public RowSource {
 public:
 	void Append(std::string_view bytes) {
@@ -933,6 +946,70 @@ TEST_CASE("A range waiting on the chain computes the transfers no reader publish
 			REQUIRE(resolved.states[1] == start.states[1]);
 			REQUIRE(resolved.line_end == start.line_end);
 			REQUIRE(resolved.last_position == start.last_position);
+		}
+	}
+}
+
+TEST_CASE("Ranges inside a row longer than many ranges read only their own bytes", "[csv]") {
+	const string field(idx_t(1) << 20, 'a');
+	string rest;
+	for (idx_t row = 0; row < 100; row++) {
+		rest += "r" + to_string(row) + "," + to_string(row) + "\n";
+	}
+	const vector<std::pair<RowDialect, string>> cases = {
+	    {RowDialect::PostgresCsv(',', '"', '"'), "\"" + field + "\",1\n" + rest},
+	    {RowDialect::DuckDB(TestGrammar(',', true, NewLineIdentifier::SINGLE_N)), "\"" + field + "\",1\n" + rest},
+	    {RowDialect::DuckDB(TestGrammar(',', false, NewLineIdentifier::CARRY_ON)), field + ",1\r\n" + rest},
+	    {RowDialect::PostgresText(','), field + ",1\n" + rest}};
+	const CSVState origins[] = {CSVState::NOT_SET, CSVState::RECORD_SEPARATOR, CSVState::CARRIAGE_RETURN,
+	                            CSVState::QUOTED,  CSVState::QUOTED_NEW_LINE,  CSVState::STANDARD};
+	for (auto &[dialect, data] : cases) {
+		RowLexer lexer(dialect, 2, NumericLimits<idx_t>::Maximum(), true);
+		CountingRowSource source(data);
+		RowRanges ranges(Allocator::DefaultAllocator(), lexer, source, 0, data.size(), RowWindow::PIECE, true);
+		const idx_t count = ranges.RangeCount();
+		REQUIRE(count > 16);
+		RowRangeReader reader(ranges);
+		vector<LexedRow> rows;
+		idx_t range = 0;
+		while (ranges.Claim(range)) {
+			reader.Start(range, true, false, false);
+			while (true) {
+				const auto result = reader.Advance(STANDARD_VECTOR_SIZE);
+				if (result == RowReadResult::DONE) {
+					break;
+				}
+				REQUIRE(result == RowReadResult::ROWS);
+				TakeRows(reader, rows);
+			}
+			ranges.Finish(range);
+		}
+		REQUIRE(source.read < 3 * data.size());
+		RowRangesTestStream whole(data);
+		REQUIRE(rows.size() == 101);
+		REQUIRE(rows == ReadRows(lexer, whole));
+
+		RowBytes all;
+		ranges.ReadInto(all, 0, data.size());
+		const auto same = [](const CsvRangeEntry &left, const CsvRangeEntry &right) {
+			const auto same_start = [](const CsvRangeStart &a, const CsvRangeStart &b) {
+				return a.states[0] == b.states[0] && a.states[1] == b.states[1] && a.line_end == b.line_end &&
+				       a.last_position == b.last_position;
+			};
+			return left.computed == right.computed && left.first_boundary == right.first_boundary &&
+			       same_start(left.boundary, right.boundary) && same_start(left.end, right.end);
+		};
+		for (range = 0; range < count; range++) {
+			const idx_t begin = range == 0 ? 0 : ranges.SyncAt(ranges.RangeBegin(range) - 1);
+			const idx_t end =
+			    range + 1 == count ? data.size() : MaxValue(ranges.SyncAt(ranges.RangeEnd(range) - 1), begin);
+			for (const auto origin : origins) {
+				const auto expected = ranges.LexTransfer(all, begin, end, origin);
+				REQUIRE(same(ranges.Transfer(range, origin), expected));
+				if (begin == end) {
+					REQUIRE(same(ranges.Entry(range, origin), expected));
+				}
+			}
 		}
 	}
 }
