@@ -233,6 +233,36 @@ void ReadPiece(RowRanges &ranges, RowRangeReader &reader, vector<LexedRow> &rows
 	ranges.Finish(range);
 }
 
+idx_t ScanLineBreak(const RowDialect &dialect, const string &data, idx_t base, idx_t begin, idx_t end, bool eof) {
+	const auto at = [&](idx_t position) {
+		return data[position - base];
+	};
+	const bool escapes = dialect.escape != '\0' && dialect.escape != dialect.quote;
+	for (idx_t position = begin; position < end; position++) {
+		const char byte = at(position);
+		if (dialect.carriage_terms ? byte != '\n' && byte != '\r' : byte != dialect.line_break) {
+			continue;
+		}
+		if (dialect.carriage_terms && byte == '\r') {
+			if (position + 1 >= end) {
+				if (!eof) {
+					return DConstants::INVALID_INDEX;
+				}
+			} else if (at(position + 1) == '\n') {
+				continue;
+			}
+		}
+		if (escapes && position > base && at(position - 1) == dialect.escape) {
+			continue;
+		}
+		if (escapes && position > base + 1 && at(position - 1) == '\r' && at(position - 2) == dialect.escape) {
+			continue;
+		}
+		return position + 1;
+	}
+	return DConstants::INVALID_INDEX;
+}
+
 string LineitemRow(std::mt19937_64 &rng, char delimiter) {
 	const char *words[] = {"ironic", "deposits", "a,b", "slyly \"bold\"", "final", "x"};
 	string comment;
@@ -501,6 +531,33 @@ TEST_CASE("Row sync finds the first row after a position in text and csv input",
 	REQUIRE(RowSync(csv, data.data(), 0, 0, data.size(), true) == 5);
 	data = "a\nb\r\"c";
 	REQUIRE(RowSync(csv, data.data(), 0, 0, data.size(), true) == 2);
+}
+
+TEST_CASE("Row sync finds the first line break like a byte-by-byte scan", "[csv]") {
+	CsvGrammar plain;
+	plain.delimiter[0] = ',';
+	CsvGrammar escaped = plain;
+	escaped.escape = '\\';
+	const RowDialect dialects[] = {RowDialect::PostgresCsv(',', '\0', '\0'), RowDialect::PostgresCsv(',', '\0', '\\'),
+	                               RowDialect::PostgresCsv(',', '\0', '\\', '\r'), RowDialect::DuckDB(plain),
+	                               RowDialect::DuckDB(escaped)};
+	const char breaks[] = {'\n', '\r', '\\'};
+	std::mt19937_64 rng(42);
+	for (idx_t round = 0; round < 20000; round++) {
+		const auto &dialect = dialects[round % 5];
+		const idx_t sparsity = idx_t(1) << (rng() % 10);
+		string data;
+		const idx_t size = rng() % 300;
+		for (idx_t i = 0; i < size; i++) {
+			data += rng() % sparsity == 0 ? breaks[rng() % 3] : 'a';
+		}
+		const idx_t base = rng() % 100;
+		const idx_t begin = base + rng() % (size + 1);
+		const idx_t end = begin + rng() % (base + size - begin + 1);
+		const bool eof = rng() % 2;
+		REQUIRE(RowSync(dialect, data.data(), base, begin, end, eof) ==
+		        ScanLineBreak(dialect, data, base, begin, end, eof));
+	}
 }
 
 TEST_CASE("Row ranges of a stream find its end from what its source reads", "[csv]") {
