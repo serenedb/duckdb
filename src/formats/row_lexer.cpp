@@ -302,6 +302,15 @@ bool RowLexer::LeanBlocks(RowCursor &cursor, const char *data, idx_t base, idx_t
 	idx_t empty_lines = cursor.empty_lines;
 	idx_t line_start = cursor.line_start;
 	bool trailing_empty = cursor.trailing_empty;
+	const auto settles = [&](bool block_settled) {
+		return block_settled || (settle_length && no_quoted_newline && pos + CSV_BLOCK_BYTES - origin > max_line_size);
+	};
+	const auto too_long = [&](idx_t reach, bool block_settled) {
+		const idx_t prior = last_row_end == DConstants::INVALID_INDEX ? origin : last_row_end;
+		const idx_t limit =
+		    last_row_end == DConstants::INVALID_INDEX && !block_settled ? max_line_size / 2 : max_line_size;
+		return reach - prior > limit;
+	};
 	while (pos + CSV_BLOCK_BYTES <= end) {
 		const char *block = data + (pos - base);
 		const CsvVector vector(block);
@@ -309,6 +318,17 @@ bool RowLexer::LeanBlocks(RowCursor &cursor, const char *data, idx_t base, idx_t
 			break;
 		}
 		const uint64_t raw_quote = d.quote ? vector.Equal(d.quote) : 0;
+		if (in_quotes && !(raw_quote | after_opener)) {
+			const bool block_settled = settles(settled);
+			if (too_long(pos + CSV_BLOCK_BYTES, block_settled)) {
+				break;
+			}
+			non_ascii |= vector.NonAscii();
+			settled = block_settled;
+			ever_quoted = true;
+			pos += CSV_BLOCK_BYTES;
+			continue;
+		}
 		const uint64_t line_feed = vector.Equal('\n');
 		const uint64_t delimiter = vector.Equal(d.delimiter);
 		const uint64_t in = (raw_quote ? CsvPrefixXor(raw_quote) : 0) ^ CsvSpread(in_quotes);
@@ -339,9 +359,7 @@ bool RowLexer::LeanBlocks(RowCursor &cursor, const char *data, idx_t base, idx_t
 			next_closer = closers >> (CSV_BLOCK_BYTES - 1);
 			next_opener = openers >> (CSV_BLOCK_BYTES - 1);
 		}
-		if (!block_settled && settle_length && no_quoted_newline && pos + CSV_BLOCK_BYTES - origin > max_line_size) {
-			block_settled = true;
-		}
+		block_settled = settles(block_settled);
 		const uint64_t merged = d.merge_terms && !d.empty_lines ? after_terms : 0;
 		const uint64_t row_ends = terms & ~merged;
 		const uint64_t line_ends = d.empty_lines ? row_ends & ~after_terms : row_ends;
@@ -367,11 +385,8 @@ bool RowLexer::LeanBlocks(RowCursor &cursor, const char *data, idx_t base, idx_t
 				break;
 			}
 		}
-		const idx_t prior = last_row_end == DConstants::INVALID_INDEX ? origin : last_row_end;
-		const idx_t limit =
-		    last_row_end == DConstants::INVALID_INDEX && !block_settled ? max_line_size / 2 : max_line_size;
 		const idx_t reach = line_ends ? pos + std::countr_zero(line_ends) : pos + CSV_BLOCK_BYTES;
-		if (reach - prior > limit) {
+		if (too_long(reach, block_settled)) {
 			break;
 		}
 		uint64_t special_before = 0;
