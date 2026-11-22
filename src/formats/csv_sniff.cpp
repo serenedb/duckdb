@@ -117,15 +117,18 @@ bool CsvColumnCounter::FinishedFile() const {
 
 string CsvColumnCounter::LineText(idx_t begin, idx_t end) const {
 	string line;
-	const idx_t from = MaxValue(begin, window_start);
-	const idx_t to = MinValue(end, window_start + window.size());
+	const bool direct = !stitching;
+	const char *data = direct ? cur_buffer_handle->Ptr() : window.data();
+	const idx_t base = direct ? buffer_start : window_start;
+	const idx_t from = MaxValue(begin, base);
+	const idx_t to = MinValue(end, base + (direct ? cur_buffer_handle->actual_size : window.size()));
 	if (from < to) {
 		idx_t position = from;
-		const char first = window[position - window_start];
+		const char first = data[position - base];
 		if (position == begin && (first == '\n' || first == '\r')) {
 			position++;
 		}
-		line.append(window.data() + (position - window_start), to - position);
+		line.append(data + (position - base), to - position);
 	}
 	CsvSanitize(line);
 	return line;
@@ -206,10 +209,27 @@ CsvColumnCounts &CsvColumnCounter::ParseChunk() {
 	RowShapes shapes {rows, result.result_size};
 	const idx_t need = CSV_BLOCK_BYTES + lexer.Lookahead();
 	while (rows.size() < result.result_size && !cursor.invalid) {
-		const idx_t window_end = window_start + window.size();
-		const bool exhausted = buffer_used >= cur_buffer_handle->actual_size;
+		if (stitching && buffer_used < cur_buffer_handle->actual_size &&
+		    MinValue(cursor.pos, cursor.line_start) >= buffer_start) {
+			window.clear();
+			stitching = false;
+		}
+		const bool direct = !stitching;
+		const char *data = direct ? cur_buffer_handle->Ptr() : window.data();
+		const idx_t base = direct ? buffer_start : window_start;
+		const idx_t window_end = direct ? buffer_start + cur_buffer_handle->actual_size : window_start + window.size();
+		const bool exhausted = direct || buffer_used >= cur_buffer_handle->actual_size;
 		const bool at_end = exhausted && (eof || cur_buffer_handle->is_last_buffer);
 		if (window_end - cursor.pos < need && !at_end) {
+			if (direct) {
+				const idx_t keep = MinValue(cursor.pos, cursor.line_start);
+				const char *buffer = cur_buffer_handle->Ptr();
+				window.assign(buffer + (keep - buffer_start), buffer + cur_buffer_handle->actual_size);
+				window_start = keep;
+				buffer_used = cur_buffer_handle->actual_size;
+				stitching = true;
+				continue;
+			}
 			if (exhausted) {
 				if (result.error) {
 					break;
@@ -234,7 +254,7 @@ CsvColumnCounts &CsvColumnCounter::ParseChunk() {
 			break;
 		}
 		const idx_t first = rows.size();
-		lexer.CountRows(cursor, window.data(), window_start, window_end, at_end, shapes);
+		lexer.CountRows(cursor, data, base, window_end, at_end, shapes);
 		if (!AddRows(first)) {
 			break;
 		}

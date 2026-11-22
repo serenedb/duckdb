@@ -116,6 +116,7 @@ private:
 	idx_t buffer_start = 0;
 	idx_t buffer_used = 0;
 	bool done = false;
+	bool stitching = false;
 	bool eof = false;
 	bool finished = false;
 };
