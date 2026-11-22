@@ -1,5 +1,6 @@
 #include "catch.hpp"
 #include "duckdb/common/helper.hpp"
+#include "fsst.h"
 #include "fsst12.h"
 
 #include <cstring>
@@ -46,6 +47,41 @@ struct FsstInputs {
 
 } // namespace
 
+TEST_CASE("FSST decompresses the start of every string", "[fsst]") {
+	const auto strings = FsstCorpus();
+	FsstInputs in(strings);
+	auto *encoder =
+	    duckdb_fsst_create(strings.size(), in.lengths.data(), const_cast<unsigned char **>(in.pointers.data()), 0);
+	REQUIRE(encoder);
+	vector<unsigned char> out(1 << 20);
+	vector<size_t> out_lengths(strings.size());
+	vector<unsigned char *> out_strings(strings.size());
+	REQUIRE(duckdb_fsst_compress(encoder, strings.size(), in.lengths.data(),
+	                             const_cast<unsigned char **>(in.pointers.data()), out.size(), out.data(),
+	                             out_lengths.data(), out_strings.data()) == strings.size());
+	unsigned char table[FSST_MAXHEADER];
+	const auto table_size = duckdb_fsst_export(encoder, table);
+	duckdb_fsst_decoder_t decoder;
+	REQUIRE(duckdb_fsst_import(&decoder, table, table_size) == table_size);
+	vector<unsigned char> buffer(1024);
+	for (size_t i = 0; i < strings.size(); i++) {
+		const auto &expected = strings[i];
+		for (size_t want : {size_t(0), size_t(1), size_t(3), size_t(8), size_t(9), size_t(33), expected.size(),
+		                    expected.size() + 5}) {
+			const auto written =
+			    duckdb_fsst_decompress_prefix(&decoder, out_lengths[i], out_strings[i], want, buffer.data());
+			REQUIRE(written <= want + 31);
+			const auto have = MinValue(written, expected.size());
+			REQUIRE(have >= MinValue(want, expected.size()));
+			REQUIRE(string(reinterpret_cast<const char *>(buffer.data()), have) == expected.substr(0, have));
+		}
+	}
+	const unsigned char escape_without_literal[] = {255};
+	REQUIRE(duckdb_fsst_decompress_prefix(&decoder, 1, escape_without_literal, 8, buffer.data()) ==
+	        DUCKDB_FSST_DECOMPRESS_INVALID_INPUT);
+	duckdb_fsst_destroy(encoder);
+}
+
 TEST_CASE("FSST12 round trips through copies of its encoder and decoder", "[fsst]") {
 	const auto strings = FsstCorpus();
 	FsstInputs in(strings);
@@ -70,10 +106,20 @@ TEST_CASE("FSST12 round trips through copies of its encoder and decoder", "[fsst
 			const auto size =
 			    duckdb_fsst12_decompress(decoder, out_lengths[i], out_strings[i], buffer.size(), buffer.data());
 			REQUIRE(string(reinterpret_cast<const char *>(buffer.data()), size) == expected);
+			for (size_t want : {size_t(1), size_t(7), size_t(16), expected.size(), expected.size() + 3}) {
+				const auto written =
+				    duckdb_fsst12_decompress_prefix(decoder, out_lengths[i], out_strings[i], want, buffer.data());
+				REQUIRE(written <= want + 15);
+				const auto have = MinValue(written, expected.size());
+				REQUIRE(have >= MinValue(want, expected.size()));
+				REQUIRE(string(reinterpret_cast<const char *>(buffer.data()), have) == expected.substr(0, have));
+			}
 		}
 	}
 	const unsigned char one_byte[] = {1};
 	REQUIRE(duckdb_fsst12_decompress(&imported, 1, one_byte, buffer.size(), buffer.data()) ==
+	        DUCKDB_FSST12_DECOMPRESS_INVALID_INPUT);
+	REQUIRE(duckdb_fsst12_decompress_prefix(&imported, 1, one_byte, 8, buffer.data()) ==
 	        DUCKDB_FSST12_DECOMPRESS_INVALID_INPUT);
 	duckdb_fsst12_destroy(copy);
 	duckdb_fsst12_destroy(encoder);
