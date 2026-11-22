@@ -173,7 +173,7 @@ SnifferResult CSVSniffer::SniffCSV(const bool force_match) {
 	// 1. Dialect Detection
 	DetectDialect();
 	if (buffer_manager->file_handle->compression_type != FileCompressionType::UNCOMPRESSED &&
-	    buffer_manager->IsBlockUnloaded(0)) {
+	    buffer_manager->AnyBufferUnloaded()) {
 		buffer_manager->ResetBufferManager();
 	}
 	// 2. Type Detection

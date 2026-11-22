@@ -136,6 +136,17 @@ idx_t CSVErrorHandler::EarliestError() const {
 	return earliest;
 }
 
+void CSVErrorHandler::Absorb(CSVErrorHandler &other) {
+	vector<CSVError> taken;
+	{
+		lock_guard<mutex> other_lock(other.main_mutex);
+		std::swap(taken, other.errors);
+	}
+	for (auto &error : taken) {
+		Error(error);
+	}
+}
+
 void CSVErrorHandler::Error(const CSVError &csv_error, bool force_error) {
 	lock_guard<mutex> parallel_lock(main_mutex);
 	if (ignore_errors && !csv_error.sqlstate.empty() && csv_error.type != CSVErrorType::CAST_ERROR) {

@@ -73,7 +73,7 @@ public:
 
 	string GetFilePath() const;
 
-	bool IsBlockUnloaded(idx_t block_idx);
+	bool AnyBufferUnloaded() const;
 
 	ClientContext &context;
 	bool sniffing = false;
