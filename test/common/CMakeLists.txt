@@ -14,6 +14,7 @@ add_library_unity(
   test_column_data_allocator.cpp
   test_file_buffer_handle_group.cpp
   test_file_system.cpp
+  test_fsst.cpp
   test_gzip_file_system.cpp
   test_caching_file_system_wrapper.cpp
   test_external_file_cache.cpp
@@ -56,6 +57,8 @@ add_library_unity(
   test_vector_borrowed_data.cpp
   test_vector_copy.cpp
   test_musl_stack_size.cpp)
+target_include_directories(
+  test_common PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../../third_party/fsst)
 
 set(UNITTEST_OBJECT_FILES
     ${UNITTEST_OBJECT_FILES} $<TARGET_OBJECTS:test_common>
