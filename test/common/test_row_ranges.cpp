@@ -637,16 +637,20 @@ TEST_CASE("Row fields count the rows they drop without rewriting what they still
 	fields.end_count = ROWS;
 	for (uint32_t row = 0; row < ROWS; row += 2) {
 		fields.anomalies.push_back({row, 0, row, 0});
+		fields.events.push_back({row + 1, 0, row + 1});
 	}
 	for (idx_t dropped = 0; dropped + 2048 <= ROWS - 4096; dropped += 2048) {
 		REQUIRE(fields.Anomaly(0));
 		REQUIRE(!fields.Anomaly(1));
 		REQUIRE(fields.Anomaly(0)->end == dropped);
+		REQUIRE(fields.events[fields.event_head].row - fields.base == 1);
 		fields.Drop(2048, 2048);
 	}
 	REQUIRE(fields.base < (idx_t(1) << 20));
 	REQUIRE(fields.rows[0] == (idx_t(1) << 20));
 	REQUIRE(fields.Anomaly(2)->end == (idx_t(1) << 20) + 2);
+	REQUIRE(fields.events[fields.event_head].row - fields.base == 1);
+	REQUIRE(fields.events[fields.event_head].position == (idx_t(1) << 20) + 1);
 }
 
 TEST_CASE("Row skip waits for the line feed of a carriage return at the end of its input", "[csv]") {
