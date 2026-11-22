@@ -2,6 +2,7 @@
 #include "duckdb/execution/operator/csv_scanner/sniffer/csv_sniffer.hpp"
 #include "duckdb/main/client_data.hpp"
 #include "duckdb/execution/operator/csv_scanner/csv_reader_options.hpp"
+#include "duckdb/parallel/task_executor.hpp"
 
 namespace duckdb {
 
@@ -10,6 +11,57 @@ constexpr idx_t CSVReaderOptions::sniff_size;
 namespace {
 
 constexpr idx_t NEW_LINE_PIECE = 1 << 16;
+
+class CandidateTask : public BaseExecutorTask {
+public:
+	CandidateTask(TaskExecutor &executor, atomic<idx_t> &next, idx_t count, const std::function<void(idx_t)> &work)
+	    : BaseExecutorTask(executor), next(next), count(count), work(work) {
+	}
+
+	void ExecuteTask() override {
+		for (idx_t index = next++; index < count; index = next++) {
+			work(index);
+		}
+	}
+
+private:
+	atomic<idx_t> &next;
+	const idx_t count;
+	const std::function<void(idx_t)> &work;
+};
+
+vector<ErrorData> ForEachCandidate(ClientContext &context, idx_t count, const std::function<void(idx_t)> &work) {
+	vector<ErrorData> errors(count);
+	const std::function<void(idx_t)> guarded = [&](idx_t index) {
+		try {
+			work(index);
+		} catch (std::exception &ex) {
+			errors[index] = ErrorData(ex);
+		}
+	};
+	atomic<idx_t> next {0};
+	const idx_t tasks = MinValue<idx_t>(count, TaskScheduler::QueryThreads(context));
+	if (tasks <= 1) {
+		for (idx_t index = 0; index < count; index++) {
+			guarded(index);
+		}
+		return errors;
+	}
+	TaskExecutor executor(context);
+	for (idx_t task = 0; task < tasks; task++) {
+		executor.ScheduleTask(make_uniq<CandidateTask>(executor, next, count, guarded));
+	}
+	executor.WorkOnTasks();
+	return errors;
+}
+
+void Rejoin(CsvColumnCounter &candidate, const ErrorData &error, const shared_ptr<CSVErrorHandler> &shared) {
+	shared->Absorb(*candidate.error_handler);
+	candidate.error_handler = shared;
+	if (error.HasError()) {
+		error.Throw();
+	}
+}
 
 } // namespace
 
@@ -164,13 +216,13 @@ void CSVSniffer::GenerateStateMachineSearchSpace(vector<unique_ptr<CsvColumnCoun
 						iterator_set = true;
 					}
 					column_count_scanners.emplace_back(make_uniq<CsvColumnCounter>(
-					    buffer_manager, std::move(sniffing_state_machine), detection_error_handler,
+					    buffer_manager, std::move(sniffing_state_machine), make_shared_ptr<CSVErrorHandler>(true),
 					    CSVReaderOptions::sniff_size, first_start));
 					continue;
 				}
 				column_count_scanners.emplace_back(
 				    make_uniq<CsvColumnCounter>(buffer_manager, std::move(sniffing_state_machine),
-				                                detection_error_handler, CSVReaderOptions::sniff_size));
+				                                make_shared_ptr<CSVErrorHandler>(true), CSVReaderOptions::sniff_size));
 			}
 		}
 	}
@@ -221,7 +273,7 @@ bool AreCommentsAcceptable(const CsvColumnCounts &result, idx_t num_cols, const 
 void CSVSniffer::AnalyzeDialectCandidate(unique_ptr<CsvColumnCounter> scanner, CandidateStats &stats,
                                          vector<unique_ptr<CsvColumnCounter>> &successful_candidates) {
 	// The sniffed_column_counts variable keeps track of the number of columns found for each row
-	auto &sniffed_column_counts = scanner->ParseChunk();
+	auto &sniffed_column_counts = scanner->GetResult();
 	idx_t dirty_notes = 0;
 	idx_t dirty_notes_minus_comments = 0;
 	idx_t empty_lines = 0;
@@ -521,12 +573,27 @@ void CSVSniffer::RefineCandidates() {
 	for (idx_t i = 1; i <= options.sample_size_chunks; i++) {
 		vector<unique_ptr<CsvColumnCounter>> successful_candidates;
 		bool done = candidates.empty();
-		for (auto &cur_candidate : candidates) {
-			const bool finished_file = cur_candidate->FinishedFile();
-			if (successful_candidates.empty()) {
-				lines_sniffed += cur_candidate->GetResult().result_position;
+		vector<idx_t> sniffed_rows;
+		vector<idx_t> refined;
+		for (idx_t index = 0; index < candidates.size(); index++) {
+			auto &candidate = *candidates[index];
+			sniffed_rows.push_back(candidate.GetResult().result_position);
+			if (!candidate.FinishedFile() && i != options.sample_size_chunks) {
+				candidate.error_handler = make_shared_ptr<CSVErrorHandler>(true);
+				refined.push_back(index);
 			}
-			if (finished_file || i == options.sample_size_chunks) {
+		}
+		vector<uint8_t> passed(refined.size());
+		const auto errors = ForEachCandidate(buffer_manager->context, refined.size(), [&](idx_t task) {
+			passed[task] = RefineCandidateNextChunk(*candidates[refined[task]]);
+		});
+		idx_t task = 0;
+		for (idx_t index = 0; index < candidates.size(); index++) {
+			auto &cur_candidate = candidates[index];
+			if (successful_candidates.empty()) {
+				lines_sniffed += sniffed_rows[index];
+			}
+			if (task == refined.size() || refined[task] != index) {
 				// we finished the file or our chunk sample successfully
 				if (!cur_candidate->GetResult().error) {
 					successful_candidates.push_back(std::move(cur_candidate));
@@ -534,7 +601,8 @@ void CSVSniffer::RefineCandidates() {
 				done = true;
 				continue;
 			}
-			if (RefineCandidateNextChunk(*cur_candidate) && !cur_candidate->GetResult().error) {
+			Rejoin(*cur_candidate, errors[task], detection_error_handler);
+			if (passed[task++] && !cur_candidate->GetResult().error) {
 				successful_candidates.push_back(std::move(cur_candidate));
 			}
 		}
@@ -623,8 +691,11 @@ void CSVSniffer::DetectDialect() {
 	// Step 1: Generate state machines
 	GenerateStateMachineSearchSpace(csv_state_machines, dialect_candidates);
 	// Step 2: Analyze all candidates on the first chunk
-	for (auto &state_machine : csv_state_machines) {
-		AnalyzeDialectCandidate(std::move(state_machine), stats, candidates);
+	const auto errors = ForEachCandidate(buffer_manager->context, csv_state_machines.size(),
+	                                     [&](idx_t index) { csv_state_machines[index]->ParseChunk(); });
+	for (idx_t index = 0; index < csv_state_machines.size(); index++) {
+		Rejoin(*csv_state_machines[index], errors[index], detection_error_handler);
+		AnalyzeDialectCandidate(std::move(csv_state_machines[index]), stats, candidates);
 	}
 	// Step 3: Loop over candidates and find if they can still produce good results for the remaining chunks
 	RefineCandidates();
