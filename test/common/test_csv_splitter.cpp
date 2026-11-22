@@ -1130,6 +1130,36 @@ string BlockInput(std::mt19937_64 &rng, const FuzzDialect &dialect) {
 	return input;
 }
 
+string LongFieldInput(std::mt19937_64 &rng, const FuzzDialect &dialect) {
+	const string plain = "ab1. -x";
+	string input;
+	const idx_t rows = 4 + rng() % 30;
+	for (idx_t row = 0; row < rows; row++) {
+		const idx_t long_column = rng() % dialect.columns;
+		for (idx_t column = 0; column < dialect.columns; column++) {
+			if (column > 0) {
+				input += dialect.delimiter;
+			}
+			const bool long_field = column == long_column && rng() % 2;
+			const idx_t length = long_field ? CSV_BLOCK_BYTES + rng() % 600 : rng() % 8;
+			string token;
+			for (idx_t i = 0; i < length; i++) {
+				token += plain[rng() % plain.size()];
+			}
+			if (dialect.quote && (long_field || rng() % 3 == 0)) {
+				const string specials[] = {"\n", dialect.delimiter, string(2, dialect.quote), "\r\n"};
+				for (idx_t inserted = rng() % 3; inserted > 0; inserted--) {
+					token.insert(rng() % (token.size() + 1), specials[rng() % 4]);
+				}
+				token = dialect.quote + token + dialect.quote;
+			}
+			input += token;
+		}
+		input += "\n";
+	}
+	return input;
+}
+
 struct SplitResult {
 	vector<string> rows;
 	idx_t lines = 0;
@@ -1864,7 +1894,7 @@ TEST_CASE("Row counts of inputs that end at a block boundary match the byte stat
 	REQUIRE(trailing_empty > 0);
 }
 
-TEST_CASE("Row lexer reads long regular inputs like the byte state machine", "[csv]") {
+static void LexLikeTheByteStateMachine(string (*generate)(std::mt19937_64 &, const FuzzDialect &)) {
 	CSVReaderOptions options;
 	const char *seed = getenv("CSV_FUZZ_SEED");
 	const char *iterations = getenv("CSV_FUZZ_ITERATIONS");
@@ -1879,7 +1909,7 @@ TEST_CASE("Row lexer reads long regular inputs like the byte state machine", "[c
 		                                       dialect.new_line, dialect.strict);
 		CSVStateMachine machine(options, machine_options);
 		const auto grammar = MakeReferenceGrammar(machine);
-		const auto input = BlockInput(rng, dialect);
+		const auto input = generate(rng, dialect);
 		const idx_t max_line_sizes[] = {64, 1000, 1 << 20};
 		const idx_t max_line_size = max_line_sizes[rng() % 3];
 		const idx_t piece_blocks = 1 + rng() % 16;
@@ -1898,6 +1928,11 @@ TEST_CASE("Row lexer reads long regular inputs like the byte state machine", "[c
 		    RunLean(grammar, dialect, input, piece_blocks, max_line_size, pad_rows, accepted, padded, irregular);
 		if (!mismatch.empty()) {
 			fail("block mismatch", input, mismatch);
+		}
+		CountCoverage coverage;
+		const auto count_mismatch = CountMismatch(grammar, input, rng, coverage);
+		if (!count_mismatch.empty()) {
+			fail("count mismatch", input, count_mismatch);
 		}
 		accepted_count += accepted;
 		const auto exact = RunReference(grammar, dialect, input, input.size() + 2, input.size(), true);
@@ -1934,6 +1969,14 @@ TEST_CASE("Row lexer reads long regular inputs like the byte state machine", "[c
 	REQUIRE(accepted_count > count / 2);
 	REQUIRE(counted > count / 20);
 	REQUIRE(unsettled > count / 20);
+}
+
+TEST_CASE("Row lexer reads long regular inputs like the byte state machine", "[csv]") {
+	LexLikeTheByteStateMachine(BlockInput);
+}
+
+TEST_CASE("Row lexer reads quoted fields longer than a block like the byte state machine", "[csv]") {
+	LexLikeTheByteStateMachine(LongFieldInput);
 }
 
 TEST_CASE("Row lexer splits PostgreSQL csv and text like the scalar rules", "[csv]") {

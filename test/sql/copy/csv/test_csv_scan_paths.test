@@ -281,6 +281,14 @@ SELECT count(b) FROM read_csv('{TEMP_DIR}/invalid_utf8_tail.csv', auto_detect = 
 Invalid unicode (byte sequence mismatch) detected
 
 statement ok
+COPY (SELECT encode('a,b' || chr(10) || '"' || repeat('x', 200)) || '\xFF'::BLOB || encode(repeat('y', 200) || '",1' || chr(10) || '2,z' || chr(10))) TO '{TEMP_DIR}/invalid_utf8_quoted.csv' (FORMAT blob);
+
+statement error
+SELECT count(*) FROM read_csv('{TEMP_DIR}/invalid_utf8_quoted.csv', auto_detect = false, header = true, columns = {'a': 'VARCHAR', 'b': 'VARCHAR'});
+----
+Invalid unicode (byte sequence mismatch) detected
+
+statement ok
 COPY (FROM (VALUES ('a,b'), ('1,2'))) TO '{TEMP_DIR}/space_dialect.csv' (HEADER false, DELIMITER '\t', QUOTE '');
 
 foreach option quote escape comment
