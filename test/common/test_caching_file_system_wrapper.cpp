@@ -393,8 +393,10 @@ TEST_CASE("CachingFileSystemWrapper read elsewhere starts the read-ahead window 
 	handle->Read(QueryContext(), &buffer[0], STEP, STEP);
 	handle->Read(QueryContext(), &buffer[0], STEP, 32 * BLOCK);
 	handle->Read(QueryContext(), &buffer[0], STEP, 32 * BLOCK + STEP);
-	// a read of the blocks asked for ahead, which waits for them
+	// reads of the blocks asked for ahead, which wait for them
 	handle->Read(QueryContext(), &buffer[0], 2 * BLOCK, 33 * BLOCK);
+	REQUIRE(buffer == string(2 * BLOCK, 'x'));
+	handle->Read(QueryContext(), &buffer[0], 2 * BLOCK, BLOCK);
 	REQUIRE(buffer == string(2 * BLOCK, 'x'));
 	REQUIRE(tracking_fs->TakeReads() ==
 	        vector<pair<idx_t, idx_t>> {{0, BLOCK}, {BLOCK, 2 * BLOCK}, {32 * BLOCK, BLOCK}, {33 * BLOCK, 2 * BLOCK}});
