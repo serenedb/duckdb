@@ -126,6 +126,7 @@ public:
 	explicit CSVErrorHandler(bool ignore_errors = false, idx_t reject_tolerance = 0);
 	//! Throws the error
 	void Error(const CSVError &csv_error, bool force_error = false);
+	void Absorb(CSVErrorHandler &other);
 	//! If we have a cached error, and we can now error, we error.
 	void ErrorIfNeeded();
 	//! Throw an error if there are any
