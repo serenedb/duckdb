@@ -98,6 +98,10 @@ public:
 	JSONPathIterator(const char *ptr, idx_t len, bool binder);
 	//! Get the next path element, returns false when the path is exhausted. Throws on a malformed path.
 	bool Next(JSONPathElement &element);
+	//! The rest of the path
+	const char *Position() const {
+		return ptr;
+	}
 
 private:
 	const char *ptr;
@@ -215,6 +219,16 @@ public:
 	static void ThrowParseError(const char *data, idx_t length, const JSONParseError &error, const string &extra = "") {
 		throw InvalidInputException(FormatParseError(data, length, error, extra));
 	}
+	//! Parse a document and write it with the given writer, adding the text to the string heap of the vector -
+	//! throws on malformed JSON
+	static inline string_t WriteDocument(JSONTreeParser &parser, const string_t &input, JSONStringWriter &writer,
+	                                     Vector &vector) {
+		JSONParseError error;
+		if (!parser.Write(input.GetData(), input.GetSize(), writer, error)) {
+			ThrowParseError(input.GetData(), input.GetSize(), error);
+		}
+		return StringVector::AddString(vector, writer.View().data(), writer.View().size());
+	}
 	//! Write a value with the given writer and add the text to the string heap of the vector
 	static inline string_t WriteVal(const JSONNode &val, JSONStringWriter &writer, Vector &vector) {
 		writer.Clear();
@@ -291,6 +305,18 @@ public:
 	//! Validate JSON Path ($.field[index]... syntax), returns true if there are wildcards in the path
 	static JSONPathType ValidatePath(const char *ptr, const idx_t &len, const bool binder);
 
+	//! Convert path elements into steps for JSONTreeParser::ParsePaths; false if they have a reverse index
+	static bool PathSteps(const vector<JSONPathElement> &elements, vector<JSONPathStep> &steps);
+	//! Parse a document and return the value at the path - throws on malformed JSON
+	static inline const JSONNode *ReadPath(JSONTreeParser &parser, const string_t &input,
+	                                       const vector<JSONPathStep> &steps) {
+		JSONParseError error;
+		const JSONNode *value;
+		if (!parser.ParsePaths(input.GetData(), input.GetSize(), &steps, 1, &value, error)) {
+			ThrowParseError(input.GetData(), input.GetSize(), error);
+		}
+		return value;
+	}
 	//! Parse a JSON path ($.field[index]... syntax, no wildcards) into path elements
 	static vector<JSONPathElement> ParsePathElements(const char *ptr, idx_t len, bool binder);
 

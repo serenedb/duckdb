@@ -64,3 +64,38 @@ SELECT isnan(a), b, c FROM t ORDER BY c;
 ----
 true	[1, 2]	-inf
 false	[1, 2]	3.0
+
+# commas before a closing bracket, NaN and Infinity inside strings are not lenient syntax
+statement ok
+COPY (SELECT '{"a": "NaN,]", "b": ["Infinity", "inf,}"], "c": null, "d": "nan"}' AS line) TO '{TEST_DIR}/strings.ndjson' (FORMAT csv, HEADER false, QUOTE '', ESCAPE '');
+
+query IIII
+SELECT a, b, c, d FROM read_ndjson('{TEST_DIR}/strings.ndjson', strict := true);
+----
+NaN,]	[Infinity, 'inf,}']	NULL	nan
+
+statement ok
+COPY (SELECT '{"a": inf}' AS line) TO '{TEST_DIR}/inf.ndjson' (FORMAT csv, HEADER false, QUOTE '', ESCAPE '');
+
+statement error
+SELECT * FROM read_ndjson_objects('{TEST_DIR}/inf.ndjson', strict := true);
+----
+<REGEX>:.*Malformed JSON.*
+
+query I
+SELECT a FROM read_ndjson('{TEST_DIR}/inf.ndjson', columns := {a: 'DOUBLE'});
+----
+inf
+
+statement ok
+COPY (SELECT '[1, 2 ,	]' AS line) TO '{TEST_DIR}/comma_space.ndjson' (FORMAT csv, HEADER false, QUOTE '', ESCAPE '');
+
+statement error
+SELECT * FROM read_ndjson_objects('{TEST_DIR}/comma_space.ndjson', strict := true);
+----
+<REGEX>:.*Malformed JSON.*
+
+query I
+SELECT count(json) FROM read_ndjson_objects('{TEST_DIR}/strings.ndjson', strict := true);
+----
+1

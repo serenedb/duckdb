@@ -644,10 +644,15 @@ static void CreateValuesStruct(const StructNames &names, JSONCreateDocument &doc
 	// Add the key/value pairs to the values
 	auto &entries = StructVector::GetEntries(value_v);
 	for (idx_t entry_i = 0; entry_i < entries.size(); entry_i++) {
-		Vector struct_key_v(Value(StructType::GetChildName(value_v.GetType(), entry_i).GetIdentifierName()),
-		                    count_t(count));
+		// the key is the same in every row: copy it, and find whether it needs escaping, once
+		const auto &name = StructType::GetChildName(value_v.GetType(), entry_i).GetIdentifierName();
+		const auto key = CopyJSONKey(doc, string_t(name.c_str(), NumericCast<uint32_t>(name.size())));
+		const bool verbatim = JSONStringWriter::IsVerbatim(key);
 		auto &struct_val_v = entries[entry_i];
-		CreateKeyValuePairs(names, doc, vals, nested_vals, struct_key_v, struct_val_v, count, options);
+		CreateValues(names, doc, nested_vals, struct_val_v, count, options);
+		for (idx_t i = 0; i < count; i++) {
+			JSONBuilder::Add(*vals[i], key, nested_vals[i], verbatim);
+		}
 	}
 	// Whole struct can be NULL
 	UnifiedVectorFormat struct_data;

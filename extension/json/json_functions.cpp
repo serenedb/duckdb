@@ -2,6 +2,7 @@
 #include "duckdb/common/vector/list_vector.hpp"
 #include "duckdb/common/vector/string_vector.hpp"
 #include "json_functions.hpp"
+#include "duckdb/main/client_context.hpp"
 
 #include "duckdb/common/file_system.hpp"
 #include "duckdb/execution/expression_executor.hpp"
@@ -51,6 +52,25 @@ JSONReadFunctionData::JSONReadFunctionData(bool constant, string path_p, idx_t l
 		// The path was validated in CheckPath, parse it once so execution can skip tokenizing it per row
 		elements = JSONCommon::ParsePathElements(ptr, len, false);
 		use_elements = true;
+		use_steps = JSONCommon::PathSteps(elements, steps);
+		// the root path, or one that ParsePaths follows, can be written as the parser reads it
+		writable = elements.empty() || use_steps;
+	} else if (constant && len != 0 && path[0] == '$' && path_type == JSONPathType::WILDCARD) {
+		// The parser follows the keys and indexes before the first wildcard and builds only the value there
+		JSONPathIterator iterator(ptr, len, false);
+		JSONPathElement element;
+		const char *rest = iterator.Position();
+		while (iterator.Next(element)) {
+			if (element.type != JSONPathElementType::KEY && element.type != JSONPathElementType::INDEX) {
+				break;
+			}
+			elements.push_back(std::move(element));
+			rest = iterator.Position();
+		}
+		use_wildcard_steps = !elements.empty() && JSONCommon::PathSteps(elements, steps);
+		if (use_wildcard_steps) {
+			wildcard_rest = "$" + string(rest, ptr + len - rest);
+		}
 	}
 }
 
@@ -102,6 +122,12 @@ JSONReadManyFunctionData::JSONReadManyFunctionData(vector<string> paths_p, vecto
 			use_elements.push_back(false);
 		}
 	}
+	// after the loop: the steps point into the keys of elements
+	steps.resize(paths.size());
+	use_steps = !paths.empty();
+	for (idx_t i = 0; i < paths.size(); i++) {
+		use_steps = use_steps && use_elements[i] && JSONCommon::PathSteps(elements[i], steps[i]);
+	}
 }
 
 unique_ptr<FunctionData> JSONReadManyFunctionData::Copy() const {
@@ -131,13 +157,21 @@ unique_ptr<FunctionData> JSONReadManyFunctionData::Bind(BindScalarFunctionInput 
 	return make_uniq<JSONReadManyFunctionData>(std::move(paths), std::move(lens));
 }
 
-JSONFunctionLocalState::JSONFunctionLocalState(Allocator &allocator)
-    : arena(allocator), parser(JSONCommon::READ_FLAG, allocator), second_parser(JSONCommon::READ_FLAG, allocator),
+JSONFunctionLocalState::JSONFunctionLocalState(Allocator &allocator, JSONReadFlags read_flags)
+    : arena(allocator), parser(read_flags, allocator), second_parser(read_flags, allocator),
       writer(JSONCommon::WRITE_FLAG) {
 }
 
+static JSONReadFlags ClientReadFlags(ClientContext &context) {
+	Value strict;
+	if (context.TryGetCurrentSetting("json_strict_paths", strict) && !strict.IsNull() && strict.GetValue<bool>()) {
+		return JSONCommon::READ_FLAG | JSONReadFlags::VALIDATE_PATHS;
+	}
+	return JSONCommon::READ_FLAG;
+}
+
 JSONFunctionLocalState::JSONFunctionLocalState(ClientContext &context)
-    : JSONFunctionLocalState(BufferAllocator::Get(context)) {
+    : JSONFunctionLocalState(BufferAllocator::Get(context), ClientReadFlags(context)) {
 }
 
 unique_ptr<FunctionLocalState> JSONFunctionLocalState::Init(ExpressionState &state, const BoundFunctionExpression &expr,
@@ -264,9 +298,7 @@ static bool CastVarcharToJSON(Vector &source, Vector &result, idx_t count, CastP
 		const auto length = input.GetSize();
 
 		JSONParseError error;
-		auto doc = JSONCommon::ReadDocumentUnsafe(lstate.parser, input, error);
-
-		if (!doc) {
+		if (!lstate.parser.IsValid(data, length, error)) {
 			if (success) {
 				HandleCastError::AssignError(JSONCommon::FormatParseError(data, length, error), parameters);
 				success = false;
