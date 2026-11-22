@@ -924,7 +924,8 @@ idx_t RowRangeReader::LineEndBefore(const RowBytes &bytes, idx_t position, idx_t
 		}
 		return end > floor ? end : DConstants::INVALID_INDEX;
 	}
-	if (end == floor || !line_break(end - 1)) {
+	D_ASSERT(end > floor);
+	if (!line_break(end - 1)) {
 		return DConstants::INVALID_INDEX;
 	}
 	end--;
