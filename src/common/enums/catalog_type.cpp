@@ -65,6 +65,8 @@ string CatalogTypeToString(CatalogType type) {
 		return "Parameter";
 	case CatalogType::LANGUAGE_ENTRY:
 		return "Language";
+	case CatalogType::DB_ROLE_SETTING_ENTRY:
+		return "Database Role Setting";
 	case CatalogType::SECRET_ENTRY:
 		return "Secret";
 	case CatalogType::SECRET_TYPE_ENTRY:
@@ -213,6 +215,9 @@ CatalogType CatalogTypeFromString(const string &type) {
 	}
 	if (type == "Language") {
 		return CatalogType::LANGUAGE_ENTRY;
+	}
+	if (type == "Database Role Setting") {
+		return CatalogType::DB_ROLE_SETTING_ENTRY;
 	}
 	if (type == "INVALID") {
 		return CatalogType::INVALID;

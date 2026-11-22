@@ -196,7 +196,6 @@ struct AlterRoleInfo : public AlterInfo {
 	idx_t grantor_id = 0;
 	string granted_by;
 	bool cascade = false;
-	bool all_roles = false;
 	bool alter_group = false;
 
 public:
@@ -216,6 +215,7 @@ struct AlterDatabaseSettingsInfo : public AlterInfo {
 
 	string role;
 	idx_t role_id = 0;
+	idx_t database_id = 0;
 	bool all_roles = false;
 	bool reset_all_config = false;
 	vector<string> reset_config;

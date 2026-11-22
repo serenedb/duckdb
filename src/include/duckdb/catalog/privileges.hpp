@@ -122,6 +122,8 @@ constexpr ObjectKind MakeObjectKind(CatalogType type) {
 		return {CatalogType::PARAMETER_ENTRY, ObjectContainer::CLUSTER, AclMode::Set | AclMode::AlterSystem, AclMode::NoRights, 0, false};
 	case CatalogType::JOB_ENTRY:
 		return {CatalogType::JOB_ENTRY, ObjectContainer::SCHEMA, AclMode::NoRights, AclMode::NoRights, 0, false};
+	case CatalogType::DB_ROLE_SETTING_ENTRY:
+		return {CatalogType::DB_ROLE_SETTING_ENTRY, ObjectContainer::CLUSTER, AclMode::NoRights, AclMode::NoRights, 0, false};
 	case CatalogType::INVALID:
 	case CatalogType::PREPARED_STATEMENT:
 	case CatalogType::COLLATION_ENTRY:
@@ -198,6 +200,7 @@ constexpr std::string_view ObjectNoun(CatalogType type) {
 		return "aggregate";
 	case CatalogType::ROLE_ENTRY:
 	case CatalogType::JOB_ENTRY:
+	case CatalogType::DB_ROLE_SETTING_ENTRY:
 	case CatalogType::INVALID:
 	case CatalogType::PREPARED_STATEMENT:
 	case CatalogType::COLLATION_ENTRY:

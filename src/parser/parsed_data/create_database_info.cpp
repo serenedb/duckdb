@@ -14,7 +14,6 @@ unique_ptr<CreateInfo> CreateDatabaseInfo::Copy() const {
 	auto result = make_uniq<CreateDatabaseInfo>();
 	CopyProperties(*result);
 	result->options = options;
-	result->settings = settings;
 	result->connection_limit = connection_limit;
 	result->allow_connections = allow_connections;
 	result->owner = owner;

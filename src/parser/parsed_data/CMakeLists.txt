@@ -22,6 +22,7 @@ add_library_unity(
   create_coordinate_system_info.cpp
   create_copy_function_info.cpp
   create_database_info.cpp
+  create_db_role_setting_info.cpp
   create_foreign_data_wrapper_info.cpp
   create_foreign_server_info.cpp
   create_macro_info.cpp

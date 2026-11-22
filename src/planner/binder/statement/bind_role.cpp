@@ -6,7 +6,7 @@
 #include "duckdb/main/config.hpp"
 #include "duckdb/main/settings.hpp"
 #include "duckdb/parser/parsed_data/alter_table_info.hpp"
-#include "duckdb/parser/parsed_data/create_database_info.hpp"
+#include "duckdb/parser/parsed_data/create_db_role_setting_info.hpp"
 #include "duckdb/parser/parsed_data/create_role_info.hpp"
 #include "duckdb/parser/parsed_data/drop_info.hpp"
 #include "duckdb/planner/binder.hpp"
@@ -262,17 +262,8 @@ void Binder::BindCreateRole(CreateRoleInfo &info) {
 
 void Binder::BindAlterRole(AlterRoleInfo &info) {
 	auto &caller = CheckAs();
-	optional_ptr<RoleEntry> role;
-	if (info.all_roles && !caller.is_superuser) {
-		throw PermissionException({{"detail", "Only roles with the SUPERUSER attribute may alter settings globally."}},
-		                          "permission denied to alter setting");
-	}
-	if (info.all_roles) {
-		info.SetQualifiedName(Identifier(), Identifier(),
-		                      Identifier(RoleName(context, DBConfig::GetConfig(context).bootstrap_role)));
-	} else {
-		role = RoleSpecEntry(context, info.GetQualifiedName().Name().GetIdentifierName(), OnEntryNotFound::RETURN_NULL);
-	}
+	auto role =
+	    RoleSpecEntry(context, info.GetQualifiedName().Name().GetIdentifierName(), OnEntryNotFound::RETURN_NULL);
 	if (role) {
 		info.SetQualifiedName(Identifier(), Identifier(), role->name);
 	}
@@ -294,7 +285,7 @@ void Binder::BindAlterRole(AlterRoleInfo &info) {
 }
 
 static void CheckDatabaseSettings(ClientContext &context, const RoleAccess &caller, optional_ptr<RoleEntry> role,
-                                  AlterDatabaseSettingsInfo &info) {
+                                  optional_ptr<CatalogEntry> database, AlterDatabaseSettingsInfo &info) {
 	if (role && role->IsPredefined()) {
 		throw Exception({{"error_subtype", "RESERVED_NAME"}, {"detail", "Cannot alter reserved roles."}},
 		                ExceptionType::INVALID_INPUT,
@@ -313,20 +304,19 @@ static void CheckDatabaseSettings(ClientContext &context, const RoleAccess &call
 		                                   role->name.GetIdentifierName())}},
 		    "permission denied to alter role");
 	}
-	auto &name = info.GetQualifiedName().Name();
-	auto &database = ClusterDatabase(context, name);
-	if (!role && !caller.is_superuser && !caller.MemberOf(database.permissions.owner)) {
-		throw PermissionException("must be owner of database %s", name.GetIdentifierName());
+	if (!role && !caller.is_superuser && !caller.MemberOf(database->permissions.owner)) {
+		throw PermissionException("must be owner of database %s", database->name.GetIdentifierName());
 	}
 	CheckConfigNames(info.set_config, info.reset_config);
 	if (caller.is_superuser) {
 		return;
 	}
+	auto &system = Catalog::GetSystemCatalog(context);
 	vector<string> current;
-	for (auto &setting : database.GetInfo()->Cast<CreateDatabaseInfo>().settings) {
-		if (setting.role == info.role_id) {
-			current = setting.config;
-		}
+	if (auto setting =
+	        system.LookupTopLevelEntry(system.GetCatalogTransaction(context), CatalogType::DB_ROLE_SETTING_ENTRY,
+	                                   CreateDbRoleSettingInfo::NameOf(info.database_id, info.role_id))) {
+		current = setting->GetInfo()->Cast<CreateDbRoleSettingInfo>().config;
 	}
 	CheckConfigChange(context, info.set_config, info.reset_config, info.reset_all_config, current);
 }
@@ -338,8 +328,16 @@ void Binder::BindAlterDatabaseSettings(AlterDatabaseSettingsInfo &info) {
 		role = RoleSpecEntry(context, info.role, OnEntryNotFound::THROW_EXCEPTION);
 		info.role_id = role->oid;
 	}
+	optional_ptr<CatalogEntry> database;
+	if (!info.GetQualifiedName().Name().empty()) {
+		database = &ClusterDatabase(context, info.GetQualifiedName().Name());
+		info.database_id = database->oid;
+	} else if (!caller.is_superuser) {
+		throw PermissionException({{"detail", "Only roles with the SUPERUSER attribute may alter settings globally."}},
+		                          "permission denied to alter setting");
+	}
 	if (!caller.IsSystem()) {
-		CheckDatabaseSettings(context, caller, role, info);
+		CheckDatabaseSettings(context, caller, role, database, info);
 	}
 	Settings::ResolveCurrentValues(context, info.set_config);
 	info.SetQualifiedName(ClusterName(context, info.GetQualifiedName()));

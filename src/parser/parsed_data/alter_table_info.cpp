@@ -460,7 +460,6 @@ unique_ptr<AlterInfo> AlterRoleInfo::Copy() const {
 	result->grantor_id = grantor_id;
 	result->granted_by = granted_by;
 	result->cascade = cascade;
-	result->all_roles = all_roles;
 	result->alter_group = alter_group;
 	return std::move(result);
 }
@@ -527,9 +526,7 @@ string AlterRoleInfo::ToString() const {
 	if (!grant_role.empty() || !granted_roles.empty()) {
 		return MembershipToSQL(*this);
 	}
-	string result =
-	    "ALTER ROLE " +
-	    (all_roles ? string("ALL") : ParseInfo::RoleSpecToString(GetQualifiedName().Name().GetIdentifierName()));
+	string result = "ALTER ROLE " + ParseInfo::RoleSpecToString(GetQualifiedName().Name().GetIdentifierName());
 	if (!new_name.empty()) {
 		return result + " RENAME TO " + SQLIdentifier::ToString(new_name) + ";";
 	}
@@ -562,7 +559,8 @@ AlterDatabaseSettingsInfo::AlterDatabaseSettingsInfo() : AlterInfo(AlterType::AL
 }
 
 CatalogType AlterDatabaseSettingsInfo::GetCatalogType() const {
-	return CatalogType::DATABASE_ENTRY;
+	return set_connection_limit || set_allow_connections ? CatalogType::DATABASE_ENTRY
+	                                                     : CatalogType::DB_ROLE_SETTING_ENTRY;
 }
 
 unique_ptr<AlterInfo> AlterDatabaseSettingsInfo::Copy() const {
@@ -571,6 +569,7 @@ unique_ptr<AlterInfo> AlterDatabaseSettingsInfo::Copy() const {
 	result->if_not_found = if_not_found;
 	result->role = role;
 	result->role_id = role_id;
+	result->database_id = database_id;
 	result->all_roles = all_roles;
 	result->reset_all_config = reset_all_config;
 	result->reset_config = reset_config;
@@ -585,6 +584,9 @@ unique_ptr<AlterInfo> AlterDatabaseSettingsInfo::Copy() const {
 string AlterDatabaseSettingsInfo::ToString() const {
 	auto database = SQLIdentifier::ToString(GetQualifiedName().Name());
 	auto config = ConfigClauseToSQL(set_config, reset_config, reset_all_config);
+	if (all_roles && GetQualifiedName().Name().empty()) {
+		return "ALTER ROLE ALL" + config + ";";
+	}
 	if (all_roles) {
 		return "ALTER ROLE ALL IN DATABASE " + database + config + ";";
 	}
