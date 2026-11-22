@@ -41,6 +41,16 @@ struct CsvVector {
 		return low_bits | (static_cast<uint64_t>(high_bits) << 32);
 	}
 
+	template <class... BYTES>
+	uint64_t EqualAny(BYTES... bytes) const {
+		const auto hits = [&](__m256i half) {
+			__m256i any = _mm256_setzero_si256();
+			((any = _mm256_or_si256(any, _mm256_cmpeq_epi8(half, _mm256_set1_epi8(bytes)))), ...);
+			return static_cast<uint32_t>(_mm256_movemask_epi8(any));
+		};
+		return hits(low) | (static_cast<uint64_t>(hits(high)) << 32);
+	}
+
 	uint64_t NonAscii() const {
 		const auto low_bits = static_cast<uint32_t>(_mm256_movemask_epi8(low));
 		const auto high_bits = static_cast<uint32_t>(_mm256_movemask_epi8(high));
@@ -87,6 +97,16 @@ struct CsvVector {
 		            vceqq_u8(parts[3], pattern));
 	}
 
+	template <class... BYTES>
+	uint64_t EqualAny(BYTES... bytes) const {
+		const auto hits = [&](uint8x16_t part) {
+			uint8x16_t any = vdupq_n_u8(0);
+			((any = vorrq_u8(any, vceqq_u8(part, vdupq_n_u8(static_cast<uint8_t>(bytes))))), ...);
+			return any;
+		};
+		return Bits(hits(parts[0]), hits(parts[1]), hits(parts[2]), hits(parts[3]));
+	}
+
 	uint64_t NonAscii() const {
 		const auto any = vorrq_u8(vorrq_u8(parts[0], parts[1]), vorrq_u8(parts[2], parts[3]));
 		return vmaxvq_u8(any) >= 0x80 ? ~uint64_t(0) : 0;
@@ -130,6 +150,15 @@ struct CsvVector {
 		uint64_t result = 0;
 		for (idx_t i = 0; i < CSV_BLOCK_BYTES; i++) {
 			result |= static_cast<uint64_t>(bytes[i] == byte) << i;
+		}
+		return result;
+	}
+
+	template <class... BYTES>
+	uint64_t EqualAny(BYTES... needles) const {
+		uint64_t result = 0;
+		for (idx_t i = 0; i < CSV_BLOCK_BYTES; i++) {
+			result |= static_cast<uint64_t>(((bytes[i] == needles) || ...)) << i;
 		}
 		return result;
 	}
