@@ -183,3 +183,27 @@ TEST_CASE("Test ObjectCache memory reads without the lock", "[api][object_cache]
 	writer.join();
 	REQUIRE(cache.GetCurrentMemoryRacy() == cache.GetCurrentMemory());
 }
+
+TEST_CASE("Test ObjectCache budget follows the memory limit until it is set", "[api][object_cache]") {
+	DuckDB db;
+	Connection con(db);
+	auto &cache = ObjectCache::GetObjectCache(*con.context);
+	constexpr idx_t GIB = 1024ULL * 1024 * 1024;
+
+	REQUIRE_NO_FAIL(con.Query("SET memory_limit = '16GiB'"));
+	REQUIRE(cache.GetMaxMemory() == 2 * GIB);
+	REQUIRE_NO_FAIL(con.Query("SET memory_limit = '1GiB'"));
+	REQUIRE(cache.GetMaxMemory() == ObjectCache::MIN_AUTOMATIC_MAX_MEMORY);
+
+	constexpr idx_t pinned = 64ULL * 1024 * 1024;
+	cache.SetMaxMemory(pinned);
+	REQUIRE_NO_FAIL(con.Query("SET memory_limit = '16GiB'"));
+	REQUIRE(cache.GetMaxMemory() == pinned);
+	REQUIRE_NO_FAIL(con.Query("RESET memory_limit"));
+	REQUIRE(cache.GetMaxMemory() == pinned);
+
+	cache.SetAutomaticMaxMemory(8 * GIB);
+	REQUIRE(cache.GetMaxMemory() == GIB);
+	REQUIRE_NO_FAIL(con.Query("SET memory_limit = '16GiB'"));
+	REQUIRE(cache.GetMaxMemory() == 2 * GIB);
+}
