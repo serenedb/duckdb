@@ -66,42 +66,47 @@ idx_t FirstNewline(const RowDialect &dialect, const char *bytes, idx_t base, idx
 		return bytes[position - base];
 	};
 	const bool escapes = QuotedEscape(dialect);
-	for (idx_t block = begin; block < end; block += CSV_BLOCK_BYTES) {
-		const idx_t size = MinValue<idx_t>(CSV_BLOCK_BYTES, end - block);
-		char padded[CSV_BLOCK_BYTES];
-		const char *data = bytes + (block - base);
-		if (size < CSV_BLOCK_BYTES) {
-			memset(padded, 0, sizeof(padded));
-			memcpy(padded, data, size);
-			data = padded;
+	const auto ends = [&](idx_t position, idx_t &found) {
+		if (dialect.carriage_terms && at(position) == '\r') {
+			if (position + 1 >= end) {
+				if (!eof) {
+					found = DConstants::INVALID_INDEX;
+					return true;
+				}
+			} else if (at(position + 1) == '\n') {
+				return false;
+			}
 		}
-		const CsvVector vector(data);
+		if (escapes) {
+			if (position > base && at(position - 1) == dialect.escape) {
+				return false;
+			}
+			if (position > base + 1 && at(position - 1) == '\r' && at(position - 2) == dialect.escape) {
+				return false;
+			}
+		}
+		found = position + 1;
+		return true;
+	};
+	idx_t found;
+	idx_t block = begin;
+	for (; block + CSV_BLOCK_BYTES <= end; block += CSV_BLOCK_BYTES) {
+		const CsvVector vector(bytes + (block - base));
 		uint64_t candidates =
 		    dialect.carriage_terms ? vector.Equal('\n') | vector.Equal('\r') : vector.Equal(dialect.line_break);
-		if (size < CSV_BLOCK_BYTES) {
-			candidates &= (uint64_t(1) << size) - 1;
-		}
 		while (candidates) {
 			const idx_t position = block + CountZeros<uint64_t>::Trailing(candidates);
 			candidates &= candidates - 1;
-			if (dialect.carriage_terms && at(position) == '\r') {
-				if (position + 1 >= end) {
-					if (!eof) {
-						return DConstants::INVALID_INDEX;
-					}
-				} else if (at(position + 1) == '\n') {
-					continue;
-				}
+			if (ends(position, found)) {
+				return found;
 			}
-			if (escapes) {
-				if (position > base && at(position - 1) == dialect.escape) {
-					continue;
-				}
-				if (position > base + 1 && at(position - 1) == '\r' && at(position - 2) == dialect.escape) {
-					continue;
-				}
-			}
-			return position + 1;
+		}
+	}
+	for (; block < end; block++) {
+		const char byte = at(block);
+		const bool candidate = dialect.carriage_terms ? byte == '\n' || byte == '\r' : byte == dialect.line_break;
+		if (candidate && ends(block, found)) {
+			return found;
 		}
 	}
 	return DConstants::INVALID_INDEX;
