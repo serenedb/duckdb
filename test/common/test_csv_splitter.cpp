@@ -2,6 +2,7 @@
 #include "duckdb/common/bit_utils.hpp"
 #include "duckdb/execution/operator/csv_scanner/csv_reader_options.hpp"
 #include "duckdb/execution/operator/csv_scanner/csv_state_machine.hpp"
+#include "duckdb/formats/csv_simd.hpp"
 #include "duckdb/formats/row_lexer.hpp"
 
 #include <fstream>
@@ -1773,7 +1774,95 @@ string PostgresInput(std::mt19937_64 &rng, const RowDialect &dialect) {
 	return input;
 }
 
+string BlockAlignedInput(std::mt19937_64 &rng, const FuzzDialect &dialect, idx_t size, const string &ending) {
+	const string fields[] = {"a", "ab", "", " ", "1"};
+	string input;
+	while (input.size() + ending.size() < size) {
+		const auto &field = fields[rng() % 5];
+		if (dialect.quote && rng() % 3 == 0) {
+			input += dialect.quote + field + dialect.quote;
+		} else {
+			input += field;
+		}
+		input += rng() % 3 ? dialect.delimiter : "\n";
+	}
+	input.resize(size - ending.size());
+	return input + ending;
+}
+
 } // namespace
+
+TEST_CASE("Row counts of inputs that end at a block boundary match the byte state machine", "[csv]") {
+	CSVReaderOptions options;
+	std::mt19937_64 rng(20261122);
+	idx_t trailing_empty = 0;
+	for (const char *delimiter : {",", "|", "\t"}) {
+		for (const char quote : {'"', '\'', '\0'}) {
+			for (const char escape : {'\0', quote, '\\'}) {
+				for (const bool strict : {false, true}) {
+					for (const auto new_line : {NewLineIdentifier::NOT_SET, NewLineIdentifier::SINGLE_N}) {
+						for (const char comment : {'\0', '#'}) {
+							if (!quote && escape) {
+								continue;
+							}
+							const FuzzDialect dialect {delimiter, quote, escape, comment, new_line, strict, 1};
+							CSVStateMachineOptions machine_options(dialect.delimiter, dialect.quote, dialect.escape,
+							                                       dialect.comment, dialect.new_line, dialect.strict);
+							CSVStateMachine machine(options, machine_options);
+							const auto grammar = MakeReferenceGrammar(machine);
+							const string quoted = quote ? string(1, quote) + "a" + string(1, quote) : string("a");
+							const string endings[] = {"",
+							                          delimiter,
+							                          string(delimiter) + delimiter,
+							                          quoted + delimiter,
+							                          string(" ") + delimiter,
+							                          string("a") + delimiter};
+							for (const auto &ending : endings) {
+								for (idx_t blocks = 1; blocks <= 3; blocks++) {
+									const auto input =
+									    BlockAlignedInput(rng, dialect, blocks * CSV_BLOCK_BYTES, ending);
+									const auto expected = CountReference(FixedGrammar(grammar), input);
+									for (const idx_t piece : {CSV_BLOCK_BYTES, input.size()}) {
+										RowLexer lexer(RowDialect::DuckDB(grammar), 1, idx_t(1) << 20, false);
+										RowCursor cursor;
+										lexer.Start(cursor, 0, true, false);
+										cursor.file_start = true;
+										vector<RowCount> rows;
+										for (idx_t end = piece; !cursor.invalid;
+										     end = MinValue(end + piece, input.size())) {
+											RowShapes shapes {rows, NumericLimits<idx_t>::Maximum()};
+											lexer.CountRows(cursor, input.data(), 0, end, end == input.size(), shapes);
+											if (end == input.size()) {
+												break;
+											}
+										}
+										trailing_empty += cursor.trailing_empty;
+										lexer.FinishCount(cursor, rows);
+										string actual_rows;
+										string expected_rows;
+										for (auto &row : rows) {
+											actual_rows += DescribeCount(row);
+										}
+										for (auto &row : expected.rows) {
+											expected_rows += DescribeCount(row);
+										}
+										INFO(Describe(dialect, input) << " piece=" << piece);
+										REQUIRE(actual_rows == expected_rows);
+										REQUIRE(cursor.invalid == expected.invalid);
+										REQUIRE(cursor.unterminated == expected.unterminated);
+										REQUIRE(cursor.ever_quoted == expected.ever_quoted);
+										REQUIRE(cursor.ever_escaped == expected.ever_escaped);
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+	REQUIRE(trailing_empty > 0);
+}
 
 TEST_CASE("Row lexer reads long regular inputs like the byte state machine", "[csv]") {
 	CSVReaderOptions options;
