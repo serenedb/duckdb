@@ -656,7 +656,10 @@ NewLineIdentifier CSVSniffer::DetectNewLineDelimiter(CSVBufferManager &buffer_ma
 	                                                           dialect.escape.GetValue(), dialect.comment.GetValue(),
 	                                                           NewLineIdentifier::CARRY_ON, false));
 	const RowLexer lexer(RowDialect::DuckDB(CsvGrammar::For(state_machine)), 1, NumericLimits<idx_t>::Maximum(), false);
+	const bool sniffing = buffer_manager.sniffing;
+	buffer_manager.sniffing = true;
 	auto buffer = buffer_manager.GetBuffer(0);
+	buffer_manager.sniffing = sniffing;
 	const char *data = buffer->Ptr();
 	const idx_t size = buffer->actual_size;
 	RowCursor cursor;

@@ -1,8 +1,33 @@
 #include "duckdb/execution/operator/csv_scanner/csv_buffer.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/main/client_context.hpp"
+#include "duckdb/parallel/task_executor.hpp"
 
 namespace duckdb {
+
+namespace {
+
+constexpr idx_t LOAD_PIECE = 1 << 20;
+constexpr idx_t LOAD_ALIGNMENT = 1 << 12;
+
+class LoadPieceTask : public BaseExecutorTask {
+public:
+	LoadPieceTask(TaskExecutor &executor, CSVFileHandle &file_handle, data_ptr_t data, idx_t size, idx_t position)
+	    : BaseExecutorTask(executor), file_handle(file_handle), data(data), size(size), position(position) {
+	}
+
+	void ExecuteTask() override {
+		file_handle.ReadAt(data, size, position);
+	}
+
+private:
+	CSVFileHandle &file_handle;
+	const data_ptr_t data;
+	const idx_t size;
+	const idx_t position;
+};
+
+} // namespace
 
 CSVBuffer::CSVBuffer(ClientContext &context, idx_t buffer_size_p, CSVFileHandle &file_handle,
                      const idx_t &global_csv_current_position)
@@ -76,21 +101,35 @@ void CSVBuffer::Reload(CSVFileHandle &file_handle) {
 	file_handle.Read(handle.GetDataMutable(), actual_buffer_size);
 }
 
-void CSVBuffer::LoadRandomAccess(CSVFileHandle &file_handle) {
+void CSVBuffer::LoadRandomAccess(CSVFileHandle &file_handle, bool parallel) {
 	D_ASSERT(random_access);
 	AllocateBuffer(actual_buffer_size);
-	if (actual_buffer_size > 0) {
-		file_handle.ReadAt(handle.GetDataMutable(), actual_buffer_size, global_csv_start);
+	const auto data = handle.GetDataMutable();
+	const idx_t pieces =
+	    parallel ? MinValue<idx_t>(TaskScheduler::QueryThreads(context), actual_buffer_size / LOAD_PIECE) : 1;
+	if (pieces <= 1) {
+		if (actual_buffer_size > 0) {
+			file_handle.ReadAt(data, actual_buffer_size, global_csv_start);
+		}
+		return;
 	}
+	const idx_t piece = AlignValue<idx_t, LOAD_ALIGNMENT>((actual_buffer_size + pieces - 1) / pieces);
+	TaskExecutor executor(context);
+	for (idx_t begin = 0; begin < actual_buffer_size; begin += piece) {
+		executor.ScheduleTask(make_uniq<LoadPieceTask>(executor, file_handle, data + begin,
+		                                               MinValue(piece, actual_buffer_size - begin),
+		                                               global_csv_start + begin));
+	}
+	executor.WorkOnTasks();
 }
 
-shared_ptr<CSVBufferHandle> CSVBuffer::Pin(CSVFileHandle &file_handle, bool &has_seeked) {
+shared_ptr<CSVBufferHandle> CSVBuffer::Pin(CSVFileHandle &file_handle, bool &has_seeked, bool parallel) {
 	lock_guard<mutex> guard(load_lock);
 	if (!IsInMemory()) {
 		// We have to reload it from disk
 		block = nullptr;
 		if (random_access) {
-			LoadRandomAccess(file_handle);
+			LoadRandomAccess(file_handle, parallel);
 		} else {
 			Reload(file_handle);
 			has_seeked = true;
