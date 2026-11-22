@@ -66,7 +66,7 @@ public:
 	}
 
 	//! Allocates the buffer and fills it with a random-access read of its known byte range
-	void LoadRandomAccess(CSVFileHandle &file_handle);
+	void LoadRandomAccess(CSVFileHandle &file_handle, bool parallel);
 
 	//! Gets the buffer actual size
 	idx_t GetBufferSize() const;
@@ -83,7 +83,7 @@ public:
 	void Reload(CSVFileHandle &file_handle);
 	//! Wrapper for the Pin Function, if it can seek, it means that the buffer might have been destroyed, hence we must
 	//! Scan it from the disk file again.
-	shared_ptr<CSVBufferHandle> Pin(CSVFileHandle &file_handle, bool &has_seeked);
+	shared_ptr<CSVBufferHandle> Pin(CSVFileHandle &file_handle, bool &has_seeked, bool parallel = false);
 	//! Pins the buffer only if it is in memory and no load is in flight; never performs I/O and never blocks
 	bool TryPin(shared_ptr<CSVBufferHandle> &pinned);
 	//! Wrapper for unpin
