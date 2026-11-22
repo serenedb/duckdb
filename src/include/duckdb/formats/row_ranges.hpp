@@ -134,6 +134,8 @@ public:
 		return source.Read(data, count, offset);
 	}
 	void ReadInto(RowBytes &bytes, idx_t offset, idx_t count);
+	bool Empty(idx_t range, const RowBytes &bytes) const;
+	void PublishEmpty(idx_t range, const RowBytes &bytes);
 	RowRangeBounds Bounds(idx_t range, RowBytes &bytes);
 	CSVState Origin(const RowBytes &bytes, idx_t begin) const;
 	CsvRangeEntry Transfer(idx_t range, CSVState origin);
@@ -306,6 +308,7 @@ private:
 	idx_t IntakeCut(const RowCursor &probe) const;
 	void PublishOwnTransfer();
 	bool FromChain();
+	void FinishEmpty();
 	bool Lex();
 	bool FinishRange();
 	bool Extend();

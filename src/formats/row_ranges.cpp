@@ -284,12 +284,38 @@ void RowRanges::ViewWholeFile(RowBytes &bytes) const {
 	bytes.size = Size();
 }
 
+bool RowRanges::Empty(idx_t range, const RowBytes &bytes) const {
+	D_ASSERT(range > 0);
+	const idx_t end = RangeEnd(range);
+	const idx_t first = FirstNewline(lexer->Dialect(), bytes.data, bytes.offset, RangeBegin(range) - 1, end, false);
+	return first == DConstants::INVALID_INDEX || first == end;
+}
+
+void RowRanges::PublishEmpty(idx_t range, const RowBytes &bytes) {
+	const idx_t end = RangeEnd(range);
+	CsvRangeTransfer transfer;
+	for (idx_t origin = 0; origin < CSV_RANGE_ORIGINS; origin++) {
+		transfer[origin] = LexTransfer(bytes, end, end, static_cast<CSVState>(origin));
+	}
+	const absl::MutexLock guard(&lock);
+	for (idx_t origin = 0; origin < CSV_RANGE_ORIGINS; origin++) {
+		chain.Publish(range, static_cast<uint8_t>(origin), transfer[origin],
+		              range_count.load(std::memory_order_relaxed));
+	}
+}
+
 RowRangeBounds RowRanges::Bounds(idx_t range, RowBytes &bytes) {
 	const idx_t begin = RangeBegin(range);
 	const idx_t end = RangeEnd(range);
 	const idx_t from = begin >= 3 ? begin - 3 : 0;
 	idx_t want = end - from + RANGE_OVERLAP;
 	ReadInto(bytes, from, want);
+	RowRangeBounds bounds;
+	if (range > 0 && Empty(range, bytes)) {
+		bounds.begin = end;
+		bounds.end = end;
+		return bounds;
+	}
 	const auto sync = [&](idx_t position) {
 		while (true) {
 			const idx_t available = bytes.offset + bytes.size;
@@ -305,7 +331,6 @@ RowRangeBounds RowRanges::Bounds(idx_t range, RowBytes &bytes) {
 			ReadInto(bytes, from, want);
 		}
 	};
-	RowRangeBounds bounds;
 	bounds.begin = range == 0 ? start : sync(begin - 1);
 	bounds.end = range + 1 == RangeCount() ? Size() : sync(end - 1);
 	bounds.end = MaxValue(bounds.end, bounds.begin);
@@ -802,12 +827,7 @@ bool RowRangeReader::StartIntake(idx_t range_p, bool extract_p, bool release_p, 
 		ranges.CarryOn(std::move(window.bytes), read_to, search, idle);
 		cut = true;
 		window.read_to = lex_start;
-		lex_stop = lex_start;
-		StartPass(true);
-		active = false;
-		finished = true;
-		range_lines = 0;
-		counted_rows = 0;
+		FinishEmpty();
 		return true;
 	}
 	D_ASSERT(lex_stop > lex_start);
@@ -1079,6 +1099,15 @@ bool RowRangeReader::FromChain() {
 	return true;
 }
 
+void RowRangeReader::FinishEmpty() {
+	lex_stop = lex_start;
+	StartPass(true);
+	active = false;
+	finished = true;
+	range_lines = 0;
+	counted_rows = 0;
+}
+
 idx_t RowRangeReader::KeepFrom() const {
 	if (lex_start == DConstants::INVALID_INDEX) {
 		return window.bytes->offset;
@@ -1140,11 +1169,19 @@ bool RowRangeReader::Lex() {
 		idx_t found = ranges.start;
 		if (range > 0) {
 			const idx_t from = ranges.RangeBegin(range, size) - 1;
+			const idx_t end = ranges.RangeEnd(range, size);
+			if (read_to >= end && ranges.Empty(range, *bytes)) {
+				ranges.PublishEmpty(range, *bytes);
+				lex_start = end;
+				FinishEmpty();
+				return true;
+			}
 			found = read_to > from ? RowSync(dialect, bytes->data, bytes->offset, from, read_to, eof)
 			                       : DConstants::INVALID_INDEX;
 			if (found == DConstants::INVALID_INDEX) {
 				if (!eof) {
-					ReadPiece(MaxValue<idx_t>(RowWindow::PIECE, read_to - MinValue(read_to, from)));
+					const idx_t piece = MaxValue<idx_t>(RowWindow::PIECE, read_to - MinValue(read_to, from));
+					ReadPiece(read_to < end ? MinValue(piece, end - read_to) : piece);
 					return true;
 				}
 				found = size;
