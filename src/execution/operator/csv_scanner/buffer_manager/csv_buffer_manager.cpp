@@ -79,7 +79,7 @@ string CSVBufferManager::GetFilePath() const {
 
 bool CSVBufferManager::AnyBlockUnloaded() {
 	for (auto &buffer : cached_buffers) {
-		if (buffer && buffer->IsUnloaded()) {
+		if (buffer->IsUnloaded()) {
 			return true;
 		}
 	}
