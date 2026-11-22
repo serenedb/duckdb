@@ -92,11 +92,13 @@ public:
 	}
 
 	//! The next block to evict, or nothing once the budget is spent: each block and each stripe passed costs one. A
-	//! budget of INVALID_INDEX starts at two rounds of the clock: one clears the marks of used blocks, the next evicts
-	//! them.
+	//! budget of INVALID_INDEX starts at three rounds of the clock: the first clears the marks of used blocks, the
+	//! second evicts them, and the third takes unpinned blocks marked again since, so pins that keep marking blocks
+	//! cannot leave the eviction without a victim while unpinned blocks are loaded.
 	shared_ptr<BlockMemory> NextVictim(idx_t &budget) {
+		const idx_t round = GetApproximateSize() + STRIPES;
 		if (budget == DConstants::INVALID_INDEX) {
-			budget = 2 * (GetApproximateSize() + STRIPES);
+			budget = 3 * round;
 		}
 		while (budget > 0) {
 			auto &stripe = stripes[next_stripe.load(std::memory_order_relaxed) % STRIPES];
@@ -110,7 +112,7 @@ public:
 						continue;
 					}
 					budget--;
-					if (!memory->IsUnpinnedAndLoaded() || memory->TakeReferenced()) {
+					if (!memory->IsUnpinnedAndLoaded() || (budget >= round && memory->TakeReferenced())) {
 						continue;
 					}
 					// A block being destroyed waits for the lock to leave the queue, and cannot be locked anymore.
