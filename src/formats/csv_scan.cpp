@@ -1930,7 +1930,8 @@ void CsvScan::LeanRowErrors(idx_t row, const RowAnomaly *anomaly, vector<RowEven
 	const idx_t event_row = row + fields.base;
 	idx_t field_count = anomaly ? anomaly->fields : columns;
 	if (unfinished) {
-		for (auto it = event; it != events_end && it->row == event_row; ++it) {
+		for (auto it = event; it != events_end; ++it) {
+			D_ASSERT(it->row == event_row);
 			field_count = it->column;
 		}
 	}
