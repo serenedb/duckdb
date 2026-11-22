@@ -1184,12 +1184,10 @@ bool RowRangeReader::Lex() {
 			found = read_to > from ? RowSync(dialect, bytes->data, bytes->offset, from, read_to, eof)
 			                       : DConstants::INVALID_INDEX;
 			if (found == DConstants::INVALID_INDEX) {
-				if (!eof) {
-					const idx_t piece = MaxValue<idx_t>(RowWindow::PIECE, read_to - MinValue(read_to, from));
-					ReadPiece(read_to < end ? MinValue(piece, end - read_to) : piece);
-					return true;
-				}
-				found = size;
+				D_ASSERT(!eof);
+				const idx_t piece = MaxValue<idx_t>(RowWindow::PIECE, read_to - MinValue(read_to, from));
+				ReadPiece(read_to < end ? MinValue(piece, end - read_to) : piece);
+				return true;
 			}
 		}
 		if (lex_stop != DConstants::INVALID_INDEX) {
