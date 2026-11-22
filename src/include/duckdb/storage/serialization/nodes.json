@@ -750,6 +750,11 @@
         "id": 103,
         "name": "scope",
         "type": "idx_t"
+      },
+      {
+        "id": 104,
+        "name": "oid",
+        "type": "idx_t"
       }
     ],
     "pointer_type": "none"

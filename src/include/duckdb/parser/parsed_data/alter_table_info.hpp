@@ -125,6 +125,7 @@ struct AlterPermissionsInfo : public AlterInfo {
 	string default_schema;
 	idx_t target_role = 0;
 	idx_t default_scope = 0;
+	idx_t default_acl_oid = 0;
 	bool all_in_schema = false;
 	bool include_functions = true;
 	bool include_procedures = true;

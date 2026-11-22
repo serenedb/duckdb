@@ -243,8 +243,8 @@ void AlterPermissionsInfo::ApplyTo(Permissions &permissions, CatalogType entry_t
 				defaults.erase(row);
 			}
 		} else if (row == defaults.end()) {
-			defaults.push_back(
-			    DefaultAcl {info.target_role, info.default_scope, info.default_objtype, std::move(row_acl)});
+			defaults.push_back(DefaultAcl {info.target_role, info.default_scope, info.default_objtype,
+			                               std::move(row_acl), info.default_acl_oid});
 		} else {
 			row->acl = std::move(row_acl);
 		}

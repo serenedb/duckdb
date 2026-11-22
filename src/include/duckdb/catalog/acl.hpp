@@ -47,6 +47,7 @@ struct DefaultAcl {
 	idx_t scope = 0;
 	CatalogType objtype = CatalogType::INVALID;
 	vector<AclItem> acl;
+	idx_t oid = 0;
 
 	bool operator==(const DefaultAcl &rhs) const = default;
 

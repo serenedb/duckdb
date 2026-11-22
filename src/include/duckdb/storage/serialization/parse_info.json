@@ -653,6 +653,11 @@
         "id": 330,
         "name": "overload_oid",
         "type": "idx_t"
+      },
+      {
+        "id": 331,
+        "name": "default_acl_oid",
+        "type": "idx_t"
       }
     ]
   },

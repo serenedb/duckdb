@@ -226,6 +226,7 @@ unique_ptr<AlterInfo> AlterPermissionsInfo::Copy() const {
 	result->default_schema = default_schema;
 	result->target_role = target_role;
 	result->default_scope = default_scope;
+	result->default_acl_oid = default_acl_oid;
 	result->all_in_schema = all_in_schema;
 	result->include_functions = include_functions;
 	result->include_procedures = include_procedures;

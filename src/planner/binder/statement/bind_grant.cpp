@@ -278,6 +278,7 @@ static void ResolveDefaultPrivileges(Binder &binder, AlterPermissionsInfo &info)
 		throw PermissionException("permission denied to change default privileges");
 	}
 	info.grantee_id = GranteeId(binder, info.grantee);
+	info.default_acl_oid = DatabaseManager::Get(context).NextOid();
 	const auto database = DatabaseManager::GetDefaultDatabase(context);
 	if (!info.default_schema.empty()) {
 		info.default_scope = binder.EntryRetriever()
