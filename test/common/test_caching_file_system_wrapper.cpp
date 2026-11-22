@@ -342,8 +342,7 @@ TEST_CASE("CachingFileSystemWrapper sequential reads", "[file_system][caching]")
 	}
 }
 
-TEST_CASE("CachingFileSystemWrapper reads in order ask for the bytes behind them in windows that grow",
-          "[file_system][caching]") {
+TEST_CASE("CachingFileSystemWrapper reads in order read ahead in growing windows", "[file_system][caching]") {
 	auto tracking_fs = make_uniq<TrackingFileSystem>();
 	DuckDB db = MakeCacheLocalFilesDB();
 	auto caching_wrapper =
@@ -375,8 +374,7 @@ TEST_CASE("CachingFileSystemWrapper reads in order ask for the bytes behind them
 	                                                                {63 * BLOCK, BLOCK + 50}});
 }
 
-TEST_CASE("CachingFileSystemWrapper read elsewhere starts the window of the reads in order over",
-          "[file_system][caching]") {
+TEST_CASE("CachingFileSystemWrapper read elsewhere starts the read-ahead window over", "[file_system][caching]") {
 	auto tracking_fs = make_uniq<TrackingFileSystem>();
 	DuckDB db = MakeCacheLocalFilesDB();
 	auto caching_wrapper =
