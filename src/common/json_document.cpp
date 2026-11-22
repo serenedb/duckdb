@@ -3,16 +3,19 @@
 #include "duckdb/common/error_data.hpp"
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/helper.hpp"
+#include "duckdb/common/likely.hpp"
 #include "duckdb/common/numeric_utils.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/storage/arena_allocator.hpp"
 #include "fast_float/fast_float.h"
 #include "simdutf.h"
 
+#include <bit>
 #include <charconv>
 #include <cmath>
 #include <cstring>
 #include <simdjson.h>
+#include <simdjson/internal/json_escape.h>
 
 namespace duckdb {
 
@@ -159,12 +162,6 @@ struct JSONBuildFrame {
 	ondemand::object_iterator member;
 };
 
-struct JSONCheckFrame {
-	bool object;
-	ondemand::array_iterator element;
-	ondemand::object_iterator member;
-};
-
 static_assert(JSONTreeParser::PADDING >= simdjson::SIMDJSON_PADDING, "JSONTreeParser::PADDING covers simdjson's");
 
 template <class T>
@@ -186,6 +183,15 @@ struct JSONStateAllocator {
 	template <class U>
 	bool operator==(const JSONStateAllocator<U> &other) const {
 		return allocator == other.allocator;
+	}
+	//! Leaves the nodes that resize() adds uninitialized: the builders write every node they keep
+	template <class U>
+	void construct(U *pointer) {
+		::new (static_cast<void *>(pointer)) U;
+	}
+	template <class U, class... ARGS>
+	void construct(U *pointer, ARGS &&... args) {
+		::new (static_cast<void *>(pointer)) U(std::forward<ARGS>(args)...);
 	}
 
 	Allocator *allocator;
@@ -219,16 +225,21 @@ struct JSONParserBuffers {
 struct JSONTreeParserState {
 	explicit JSONTreeParserState(Allocator &allocator)
 	    : buffers(allocator), nodes(JSONStateAllocator<JSONNode>(allocator)), strings(allocator) {
-		parser.allocator = &buffers.callbacks;
+		parser.set_allocator(&buffers.callbacks);
 	}
 
 	JSONParserBuffers buffers;
 	ondemand::parser parser;
 	AllocatedData input;
 	string cleaned;
+	//! A document that simdjson rejected, without its trailing commas
+	string uncommaed;
 	JSONNodes nodes;
 	vector<JSONBuildFrame> frames;
-	vector<JSONCheckFrame> checks;
+	//! The open containers of the visitors' JSONNodeWriter
+	vector<idx_t> open;
+	//! The node of each value that ParsePaths finds
+	vector<optional_idx> path_roots;
 	ArenaAllocator strings;
 };
 
@@ -279,17 +290,274 @@ struct JSONBuildContext {
 	JSONNodes &nodes;
 	vector<JSONBuildFrame> &frames;
 	optional_ptr<ArenaAllocator> keep;
+	//! The document that simdjson reads
+	const char *input;
+	const char *input_end;
 
-	JSONNode MakeString(JSONValueType type, std::string_view text) {
+	simdjson_inline JSONNode MakeString(JSONValueType type, std::string_view text) {
 		auto node = MakeJSONNode(type);
 		node.size = NumericCast<uint32_t>(text.size());
-		node.str = text.data();
-		if (keep && !text.empty()) {
-			auto copy = keep->Allocate(text.size());
-			memcpy(copy, text.data(), text.size());
-			node.str = const_char_ptr_cast(copy);
-		}
+		// A string that simdjson leaves in the document had no escape: it holds no character that JSON escapes, and it
+		// is valid UTF-8, so it is written as it is (see JSONStringWriter::Value)
+		node.boolean = type == JSONValueType::STRING && text.data() >= input && text.data() < input_end;
+		node.str = keep && !text.empty() ? Keep(text) : text.data();
 		return node;
+	}
+	DUCKDB_NOINLINE const char *Keep(std::string_view text) {
+		auto copy = keep->Allocate(text.size());
+		memcpy(copy, text.data(), text.size());
+		return const_char_ptr_cast(copy);
+	}
+};
+
+//! Appends nodes to a JSONBuildContext, for the visitors of ondemand::document::visit
+class JSONNodeWriter {
+public:
+	JSONNodeWriter(JSONBuildContext &context_p, vector<idx_t> &open_p, idx_t reserve)
+	    : context(context_p), open(open_p), first(nullptr), out(nullptr), end(nullptr) {
+		open.clear();
+		Grow(context.nodes.size(), reserve);
+	}
+
+	//! Drops the nodes reserved but not written
+	simdjson_inline void Finish() {
+		context.nodes.resize(Size());
+	}
+	simdjson_inline idx_t Size() const {
+		return NumericCast<idx_t>(out - first);
+	}
+
+	simdjson_inline void Open(JSONValueType type) {
+		open.push_back(Size());
+		Add() = MakeJSONNode(type);
+	}
+	simdjson_inline void Close(uint32_t count) {
+		auto &node = first[open.back()];
+		open.pop_back();
+		node.size = count;
+		node.nodes = NumericCast<uint64_t>(out - &node);
+	}
+	simdjson_inline void String(std::string_view value) {
+		Add() = context.MakeString(JSONValueType::STRING, value);
+	}
+	simdjson_inline void SignedInteger(int64_t value, const char *raw) {
+		// as the On-Demand builder: -0 is signed
+		auto &node = Add();
+		node =
+		    MakeJSONNode(value >= 0 && raw[0] != '-' ? JSONValueType::UNSIGNED_INTEGER : JSONValueType::SIGNED_INTEGER);
+		node.signed_integer = value;
+	}
+	simdjson_inline void UnsignedInteger(uint64_t value) {
+		auto &node = Add();
+		node = MakeJSONNode(JSONValueType::UNSIGNED_INTEGER);
+		node.unsigned_integer = value;
+	}
+	simdjson_inline void Double(double value) {
+		auto &node = Add();
+		node = MakeJSONNode(JSONValueType::DOUBLE);
+		node.real = value;
+	}
+	simdjson_inline void Boolean(bool value) {
+		auto &node = Add();
+		node = MakeJSONNode(JSONValueType::BOOLEAN);
+		node.boolean = value;
+	}
+	simdjson_inline void Null() {
+		Add() = MakeJSONNode(JSONValueType::JSON_NULL);
+	}
+
+private:
+	simdjson_inline JSONNode &Add() {
+		if (simdjson_unlikely(out == end)) {
+			GrowFull();
+		}
+		return *out++;
+	}
+	DUCKDB_NOINLINE void GrowFull() {
+		const auto used = Size();
+		Grow(used, MaxValue<idx_t>(used, 16));
+	}
+	//! Makes room for extra nodes after the used ones
+	void Grow(idx_t used, idx_t extra) {
+		context.nodes.resize(used + extra);
+		first = context.nodes.data();
+		out = first + used;
+		end = first + context.nodes.size();
+	}
+
+	JSONBuildContext &context;
+	vector<idx_t> &open;
+	JSONNode *first;
+	JSONNode *out;
+	JSONNode *end;
+};
+
+//! Appends the nodes of a document as ondemand::document::visit walks it. simdjson reads strict JSON: for anything
+//! else, visit() fails and the On-Demand builder reads the document.
+class JSONNodeVisitor {
+public:
+	JSONNodeVisitor(JSONBuildContext &context, vector<idx_t> &open, idx_t len) : writer(context, open, len / 8 + 16) {
+	}
+
+	void Finish() {
+		writer.Finish();
+	}
+
+	simdjson_inline simdjson::error_code on_object_start() {
+		writer.Open(JSONValueType::OBJECT);
+		return simdjson::SUCCESS;
+	}
+	simdjson_inline simdjson::error_code on_object_end(uint32_t count) {
+		writer.Close(count);
+		return simdjson::SUCCESS;
+	}
+	simdjson_inline simdjson::error_code on_array_start() {
+		writer.Open(JSONValueType::ARRAY);
+		return simdjson::SUCCESS;
+	}
+	simdjson_inline simdjson::error_code on_array_end(uint32_t count) {
+		writer.Close(count);
+		return simdjson::SUCCESS;
+	}
+	simdjson_inline simdjson::error_code on_key(std::string_view key) {
+		writer.String(key);
+		return simdjson::SUCCESS;
+	}
+	simdjson_inline simdjson::error_code on_string(std::string_view value) {
+		writer.String(value);
+		return simdjson::SUCCESS;
+	}
+	simdjson_inline simdjson::error_code on_int64(int64_t value, const char *raw) {
+		writer.SignedInteger(value, raw);
+		return simdjson::SUCCESS;
+	}
+	simdjson_inline simdjson::error_code on_uint64(uint64_t value, const char *) {
+		writer.UnsignedInteger(value);
+		return simdjson::SUCCESS;
+	}
+	simdjson_inline simdjson::error_code on_double(double value, const char *) {
+		writer.Double(value);
+		return simdjson::SUCCESS;
+	}
+	simdjson_inline simdjson::error_code on_bool(bool value) {
+		writer.Boolean(value);
+		return simdjson::SUCCESS;
+	}
+	simdjson_inline simdjson::error_code on_null() {
+		writer.Null();
+		return simdjson::SUCCESS;
+	}
+
+private:
+	JSONNodeWriter writer;
+};
+
+//! Writes a document as ondemand::document::visit walks it: the same text as building its nodes and writing them
+class JSONWriteVisitor {
+public:
+	JSONWriteVisitor(JSONStringWriter &writer_p, const char *input_p, idx_t len)
+	    : writer(writer_p), input(input_p), input_end(input_p + len) {
+	}
+
+	simdjson::error_code on_object_start() {
+		writer.StartObject();
+		return simdjson::SUCCESS;
+	}
+	simdjson::error_code on_object_end(uint32_t) {
+		writer.EndObject();
+		return simdjson::SUCCESS;
+	}
+	simdjson::error_code on_array_start() {
+		writer.StartArray();
+		return simdjson::SUCCESS;
+	}
+	simdjson::error_code on_array_end(uint32_t) {
+		writer.EndArray();
+		return simdjson::SUCCESS;
+	}
+	simdjson::error_code on_key(std::string_view key) {
+		writer.Key(key, InDocument(key));
+		return simdjson::SUCCESS;
+	}
+	simdjson::error_code on_string(std::string_view value) {
+		if (InDocument(value)) {
+			writer.VerbatimString(value);
+		} else {
+			writer.String(value);
+		}
+		return simdjson::SUCCESS;
+	}
+	simdjson::error_code on_int64(int64_t value, const char *raw) {
+		// as JSONNodeWriter: -0 is a signed integer, written as 0
+		if (value >= 0 && raw[0] != '-') {
+			writer.UnsignedInteger(static_cast<uint64_t>(value));
+		} else {
+			writer.SignedInteger(value);
+		}
+		return simdjson::SUCCESS;
+	}
+	simdjson::error_code on_uint64(uint64_t value, const char *) {
+		writer.UnsignedInteger(value);
+		return simdjson::SUCCESS;
+	}
+	simdjson::error_code on_double(double value, const char *) {
+		writer.Double(value);
+		return simdjson::SUCCESS;
+	}
+	simdjson::error_code on_bool(bool value) {
+		writer.Boolean(value);
+		return simdjson::SUCCESS;
+	}
+	simdjson::error_code on_null() {
+		writer.Null();
+		return simdjson::SUCCESS;
+	}
+
+private:
+	//! A string that simdjson leaves in the document had no escape (see JSONBuildContext::MakeString)
+	bool InDocument(std::string_view text) const {
+		return text.data() >= input && text.data() < input_end;
+	}
+
+	JSONStringWriter &writer;
+	const char *input;
+	const char *input_end;
+};
+
+//! Writes nothing: visit() with it checks the document
+struct JSONCheckVisitor {
+	simdjson::error_code on_object_start() {
+		return simdjson::SUCCESS;
+	}
+	simdjson::error_code on_object_end(uint32_t) {
+		return simdjson::SUCCESS;
+	}
+	simdjson::error_code on_array_start() {
+		return simdjson::SUCCESS;
+	}
+	simdjson::error_code on_array_end(uint32_t) {
+		return simdjson::SUCCESS;
+	}
+	simdjson::error_code on_key(std::string_view) {
+		return simdjson::SUCCESS;
+	}
+	simdjson::error_code on_string(std::string_view) {
+		return simdjson::SUCCESS;
+	}
+	simdjson::error_code on_int64(int64_t, const char *) {
+		return simdjson::SUCCESS;
+	}
+	simdjson::error_code on_uint64(uint64_t, const char *) {
+		return simdjson::SUCCESS;
+	}
+	simdjson::error_code on_double(double, const char *) {
+		return simdjson::SUCCESS;
+	}
+	simdjson::error_code on_bool(bool) {
+		return simdjson::SUCCESS;
+	}
+	simdjson::error_code on_null() {
+		return simdjson::SUCCESS;
 	}
 };
 
@@ -366,6 +634,25 @@ static simdjson::error_code BuildJSONNumber(VALUE &value, JSONBuildContext &cont
 	}
 }
 
+//! simdjson reads NaN and Infinity only when built with SIMDJSON_ENABLE_NAN_INF, which would apply to every parser in
+//! the binary: the builder reads the token itself
+template <class VALUE>
+static simdjson::error_code BuildJSONInfOrNan(VALUE &value, JSONBuildContext &context, simdjson::error_code error) {
+	std::string_view token;
+	double special;
+	if (!HasFlag(context.flags, JSONReadFlags::ALLOW_INF_AND_NAN) || JSONRawToken(value, token)) {
+		return error;
+	}
+	token = TrimJSONToken(token);
+	if (token.empty() || token[0] == '+' || !ParseJSONInfOrNan(token, special)) {
+		return error;
+	}
+	auto node = MakeJSONNode(JSONValueType::DOUBLE);
+	node.real = special;
+	context.nodes.push_back(node);
+	return simdjson::SUCCESS;
+}
+
 template <class VALUE>
 static simdjson::error_code StartJSONValue(VALUE &value, JSONBuildContext &context) {
 	auto &nodes = context.nodes;
@@ -432,13 +719,13 @@ static simdjson::error_code StartJSONValue(VALUE &value, JSONBuildContext &conte
 			return error;
 		}
 		if (!is_null) {
-			return simdjson::N_ATOM_ERROR;
+			return BuildJSONInfOrNan(value, context, simdjson::N_ATOM_ERROR);
 		}
 		nodes.push_back(MakeJSONNode(JSONValueType::JSON_NULL));
 		return simdjson::SUCCESS;
 	}
 	default:
-		return simdjson::TAPE_ERROR;
+		return BuildJSONInfOrNan(value, context, simdjson::TAPE_ERROR);
 	}
 }
 
@@ -601,6 +888,13 @@ static void ReplaceInvalidJSONUnicode(const char *data, idx_t len, string &out) 
 static optional_idx ParseInto(JSONTreeParserState &st, JSONReadFlags flags, const char *data, idx_t len, idx_t readable,
                               bool append, JSONParseError &error, optional_ptr<idx_t> consumed = nullptr);
 
+//! Whether simdjson accepts trailing commas or NaN and Infinity that the flags do not allow: it does when built with
+//! SIMDJSON_ALLOW_TRAILING_COMMAS or SIMDJSON_ENABLE_NAN_INF, which apply to every parser in the binary
+static bool JSONNeedsStrictScan(JSONReadFlags flags) {
+	return (SIMDJSON_ALLOW_TRAILING_COMMAS && !HasFlag(flags, JSONReadFlags::ALLOW_TRAILING_COMMAS)) ||
+	       (SIMDJSON_ENABLE_NAN_INF && !HasFlag(flags, JSONReadFlags::ALLOW_INF_AND_NAN));
+}
+
 JSONTreeParser::JSONTreeParser(JSONReadFlags flags_p, Allocator &allocator)
     : flags(flags_p), state(make_uniq<JSONTreeParserState>(allocator)) {
 	SetFlags(flags_p);
@@ -612,8 +906,6 @@ JSONTreeParser &JSONTreeParser::operator=(JSONTreeParser &&other) noexcept = def
 
 void JSONTreeParser::SetFlags(JSONReadFlags flags_p) {
 	flags = flags_p;
-	state->parser.allow_trailing_commas = HasFlag(flags, JSONReadFlags::ALLOW_TRAILING_COMMAS);
-	state->parser.allow_inf_and_nan = HasFlag(flags, JSONReadFlags::ALLOW_INF_AND_NAN);
 }
 
 idx_t JSONTreeParser::NodeCount() const {
@@ -643,182 +935,20 @@ optional_idx JSONTreeParser::ParseAppend(const char *data, idx_t len, idx_t read
 	return ParseInto(*state, flags, data, len, readable, true, error);
 }
 
-static bool IsJSONDigit(char c) {
-	return c >= '0' && c <= '9';
-}
-
-static bool JSONNumberToken(std::string_view token) {
-	idx_t end = token.size();
-	while (end > 0 &&
-	       (token[end - 1] == ' ' || token[end - 1] == '\t' || token[end - 1] == '\n' || token[end - 1] == '\r')) {
-		end--;
-	}
-	idx_t pos = 0;
-	if (pos < end && token[pos] == '-') {
-		pos++;
-	}
-	if (pos == end) {
-		return false;
-	}
-	if (token[pos] == '0') {
-		pos++;
-	} else if (token[pos] >= '1' && token[pos] <= '9') {
-		while (pos < end && IsJSONDigit(token[pos])) {
-			pos++;
-		}
-	} else {
-		return false;
-	}
-	if (pos < end && token[pos] == '.') {
-		const idx_t digits = ++pos;
-		while (pos < end && IsJSONDigit(token[pos])) {
-			pos++;
-		}
-		if (pos == digits) {
-			return false;
-		}
-	}
-	if (pos < end && (token[pos] == 'e' || token[pos] == 'E')) {
-		pos++;
-		if (pos < end && (token[pos] == '+' || token[pos] == '-')) {
-			pos++;
-		}
-		const idx_t digits = pos;
-		while (pos < end && IsJSONDigit(token[pos])) {
-			pos++;
-		}
-		if (pos == digits) {
-			return false;
-		}
-	}
-	return pos == end;
-}
-
-static bool HasBackslash(std::string_view text) {
-	return memchr(text.data(), '\\', text.size()) != nullptr;
-}
-
-template <class VALUE>
-static bool StartJSONCheck(VALUE &value, vector<JSONCheckFrame> &frames) {
-	ondemand::json_type type;
-	if (value.type().get(type)) {
-		return false;
-	}
-	switch (type) {
-	case ondemand::json_type::object: {
-		ondemand::object object;
-		JSONCheckFrame frame {true, {}, {}};
-		if (value.get_object().get(object) || std::move(object).begin().get(frame.member)) {
-			return false;
-		}
-		frames.push_back(frame);
-		return true;
-	}
-	case ondemand::json_type::array: {
-		ondemand::array array;
-		JSONCheckFrame frame {false, {}, {}};
-		if (value.get_array().get(array) || std::move(array).begin().get(frame.element)) {
-			return false;
-		}
-		frames.push_back(frame);
-		return true;
-	}
-	case ondemand::json_type::string: {
-		if constexpr (std::is_same_v<VALUE, ondemand::value>) {
-			if (!HasBackslash(value.raw_json_token())) {
-				return true;
-			}
-		}
-		std::string_view text;
-		return !value.get_string().get(text);
-	}
-	case ondemand::json_type::number: {
-		if constexpr (std::is_same_v<VALUE, ondemand::value>) {
-			if (JSONNumberToken(value.raw_json_token())) {
-				return true;
-			}
-		}
-		ondemand::number number;
-		return !value.get_number().get(number);
-	}
-	case ondemand::json_type::boolean: {
-		bool boolean;
-		return !value.get_bool().get(boolean);
-	}
-	case ondemand::json_type::null: {
-		bool is_null = false;
-		return !value.is_null().get(is_null) && is_null;
-	}
-	default:
-		return false;
-	}
-}
-
-static bool CheckJSONDocument(ondemand::document &document, vector<JSONCheckFrame> &frames) {
-	frames.clear();
-	ondemand::json_type type;
-	if (document.type().get(type) || (type != ondemand::json_type::object && type != ondemand::json_type::array)) {
-		return false;
-	}
-	if (!StartJSONCheck(document, frames)) {
-		return false;
-	}
-	while (!frames.empty()) {
-		auto &frame = frames.back();
-		const bool more =
-		    frame.object ? frame.member != ondemand::object_iterator {} : frame.element != ondemand::array_iterator {};
-		if (!more) {
-			frames.pop_back();
-			if (!frames.empty()) {
-				auto &parent = frames.back();
-				if (parent.object) {
-					++parent.member;
-				} else {
-					++parent.element;
-				}
-			}
-			continue;
-		}
-		const auto depth = frames.size();
-		if (frame.object) {
-			ondemand::field field;
-			std::string_view key;
-			if ((*frame.member).get(field) || (HasBackslash(field.escaped_key()) && field.unescaped_key().get(key)) ||
-			    !StartJSONCheck(field.value(), frames)) {
-				return false;
-			}
-		} else {
-			ondemand::value child;
-			if ((*frame.element).get(child) || !StartJSONCheck(child, frames)) {
-				return false;
-			}
-		}
-		if (frames.size() == depth) {
-			auto &current = frames.back();
-			if (current.object) {
-				++current.member;
-			} else {
-				++current.element;
-			}
-		}
-	}
-	return document.at_end();
-}
-
 bool JSONTreeParser::Validate(const char *data, idx_t len, idx_t readable, JSONParseError &error) {
 	constexpr auto rewritten =
 	    static_cast<uint32_t>(JSONReadFlags::ALLOW_COMMENTS | JSONReadFlags::ALLOW_INVALID_UNICODE);
-	const bool plain = (static_cast<uint32_t>(flags) & rewritten) == 0 && readable >= len + PADDING &&
-	                   !(len >= 3 && memcmp(data, "\xEF\xBB\xBF", 3) == 0);
+	const bool plain = (static_cast<uint32_t>(flags) & rewritten) == 0 && !JSONNeedsStrictScan(flags) &&
+	                   readable >= len + PADDING && !(len >= 3 && memcmp(data, "\xEF\xBB\xBF", 3) == 0);
 	if (plain) {
-		ondemand::document document;
-		const auto code = state->parser.iterate(data, len, readable).get(document);
+		JSONCheckVisitor checker;
+		const auto code = state->parser.visit(simdjson::padded_string_view(data, len, readable), checker);
 		if (code == simdjson::MEMALLOC && state->buffers.error.HasError()) {
 			auto failure = std::move(state->buffers.error);
 			state->buffers.error = ErrorData();
 			failure.Throw();
 		}
-		if (!code && CheckJSONDocument(document, state->checks)) {
+		if (!code) {
 			return true;
 		}
 	}
@@ -913,6 +1043,78 @@ static optional_idx RootContainerEnd(const char *data, idx_t len) {
 	return optional_idx();
 }
 
+static bool IsJSONSpace(char c) {
+	return c == ' ' || c == '\t' || c == '\n' || c == '\r';
+}
+
+//! The first trailing comma, NaN or Infinity that the flags do not allow, in a document that simdjson accepted
+static optional_idx FindDisallowedJSON(JSONReadFlags flags, const char *data, idx_t len, const char *&message) {
+	const bool commas = !HasFlag(flags, JSONReadFlags::ALLOW_TRAILING_COMMAS);
+	const bool special = !HasFlag(flags, JSONReadFlags::ALLOW_INF_AND_NAN);
+	char previous = '[';
+	for (idx_t i = 0; i < len; i++) {
+		const char c = data[i];
+		if (IsJSONSpace(c)) {
+			continue;
+		}
+		if (c == '"') {
+			for (i++; i < len && data[i] != '"'; i++) {
+				i += data[i] == '\\';
+			}
+		} else if (c == ',' && commas && previous != '[' && previous != '{' && previous != ',' && previous != ':') {
+			idx_t next = i + 1;
+			while (next < len && IsJSONSpace(data[next])) {
+				next++;
+			}
+			if (next < len && (data[next] == ']' || data[next] == '}')) {
+				message = "trailing comma is not allowed";
+				return i;
+			}
+		} else if (special &&
+		           (c == 'N' || c == 'I' || c == 'i' || (c == 'n' && i + 1 < len && (data[i + 1] | 0x20) == 'a'))) {
+			message = "NaN and Infinity are not allowed";
+			return i;
+		}
+		previous = c;
+	}
+	return optional_idx();
+}
+
+//! Copies a document without its trailing commas (a comma after a value and before a closing bracket); false when it
+//! has none
+static bool RemoveTrailingCommas(const char *data, idx_t len, string &out) {
+	bool found = false;
+	char previous = '[';
+	for (idx_t i = 0; i < len; i++) {
+		const char c = data[i];
+		if (IsJSONSpace(c)) {
+			continue;
+		}
+		if (c == '"') {
+			for (i++; i < len && data[i] != '"'; i++) {
+				i += data[i] == '\\';
+			}
+		} else if (c == ',' && previous != '[' && previous != '{' && previous != ',' && previous != ':') {
+			idx_t next = i + 1;
+			while (next < len && IsJSONSpace(data[next])) {
+				next++;
+			}
+			if (next < len && (data[next] == ']' || data[next] == '}')) {
+				if (!found) {
+					out.assign(data, len);
+					found = true;
+				}
+				out[i] = ' ';
+			}
+		}
+		previous = c;
+	}
+	return found;
+}
+
+static optional_idx ParseCleanJSON(JSONTreeParserState &st, JSONReadFlags flags, const char *data, idx_t len,
+                                   idx_t readable, bool append, JSONParseError &error, optional_ptr<idx_t> consumed);
+
 static optional_idx ParseInto(JSONTreeParserState &st, JSONReadFlags flags, const char *data, idx_t len, idx_t readable,
                               bool append, JSONParseError &error, optional_ptr<idx_t> consumed) {
 	if (len >= 3 && memcmp(data, "\xEF\xBB\xBF", 3) == 0) {
@@ -935,6 +1137,28 @@ static optional_idx ParseInto(JSONTreeParserState &st, JSONReadFlags flags, cons
 		len = st.cleaned.size();
 		readable = len;
 	}
+	auto root = ParseCleanJSON(st, flags, data, len, readable, append, error, consumed);
+	// simdjson accepts trailing commas only when built with SIMDJSON_ALLOW_TRAILING_COMMAS, which would apply to every
+	// parser in the binary: a rejected document is parsed again without them
+	if (!root.IsValid() && HasFlag(flags, JSONReadFlags::ALLOW_TRAILING_COMMAS) &&
+	    RemoveTrailingCommas(data, len, st.uncommaed)) {
+		JSONParseError retry;
+		root = ParseCleanJSON(st, flags, st.uncommaed.data(), len, len, append, retry, consumed);
+		error = retry;
+	}
+	if (root.IsValid() && JSONNeedsStrictScan(flags)) {
+		const char *message;
+		const auto position = FindDisallowedJSON(flags, data, consumed ? *consumed : len, message);
+		if (position.IsValid()) {
+			st.nodes.resize(root.GetIndex());
+			return JSONParseFailure(error, message, position.GetIndex());
+		}
+	}
+	return root;
+}
+
+static optional_idx ParseCleanJSON(JSONTreeParserState &st, JSONReadFlags flags, const char *data, idx_t len,
+                                   idx_t readable, bool append, JSONParseError &error, optional_ptr<idx_t> consumed) {
 	if (readable < len + JSONTreeParser::PADDING) {
 		readable = len + JSONTreeParser::PADDING;
 		if (readable > st.input.GetSize()) {
@@ -948,13 +1172,39 @@ static optional_idx ParseInto(JSONTreeParserState &st, JSONReadFlags flags, cons
 
 	const idx_t root = st.nodes.size();
 	st.frames.clear();
-	JSONBuildContext context {flags, st.nodes, st.frames, append ? &st.strings : nullptr};
+	JSONBuildContext context {flags, st.nodes, st.frames, append ? &st.strings : nullptr, data, data + len};
+	const bool visitable = !consumed && !HasFlag(flags, JSONReadFlags::NUMBER_AS_RAW);
+	if (visitable && len <= ondemand::parser::MAX_ONE_PASS_VISIT) {
+		// simdjson reads a small document in one pass, without stage 1
+		JSONNodeVisitor visitor(context, st.open, len);
+		const auto code = st.parser.visit(simdjson::padded_string_view(data, len, readable), visitor);
+		if (code == simdjson::MEMALLOC && st.buffers.error.HasError()) {
+			auto error = std::move(st.buffers.error);
+			st.buffers.error = ErrorData();
+			error.Throw();
+		}
+		if (!code) {
+			visitor.Finish();
+			return root;
+		}
+		st.nodes.resize(root);
+		st.frames.clear();
+	}
 	ondemand::document document;
 	auto code = st.parser.iterate(data, len, readable).get(document);
 	if (code == simdjson::MEMALLOC && st.buffers.error.HasError()) {
 		auto error = std::move(st.buffers.error);
 		st.buffers.error = ErrorData();
 		error.Throw();
+	}
+	if (!code && visitable && len > ondemand::parser::MAX_ONE_PASS_VISIT) {
+		JSONNodeVisitor visitor(context, st.open, len);
+		if (!document.visit(visitor)) {
+			visitor.Finish();
+			return root;
+		}
+		// visit() rewinds the document
+		st.nodes.resize(root);
 	}
 	const bool started = !code;
 	std::string_view root_token;
@@ -1020,6 +1270,284 @@ static optional_idx ParseInto(JSONTreeParserState &st, JSONReadFlags flags, cons
 	return root;
 }
 
+//! Whether visit() may read the document: the inputs that ParseInto rewrites, reads as raw numbers, or scans, go to it
+static bool JSONVisitable(JSONReadFlags flags, const char *data, idx_t len) {
+	constexpr auto rewritten = static_cast<uint32_t>(
+	    JSONReadFlags::ALLOW_COMMENTS | JSONReadFlags::ALLOW_INVALID_UNICODE | JSONReadFlags::NUMBER_AS_RAW);
+	return (static_cast<uint32_t>(flags) & rewritten) == 0 && !JSONNeedsStrictScan(flags) &&
+	       !(len >= 3 && memcmp(data, "\xEF\xBB\xBF", 3) == 0);
+}
+
+//! Copies the document into the input buffer, followed by simdjson's padding
+static const char *PadJSONInput(JSONTreeParserState &st, const char *data, idx_t len) {
+	const idx_t readable = len + JSONTreeParser::PADDING;
+	if (readable > st.input.GetSize()) {
+		st.input = st.buffers.allocator.Allocate(MaxValue<idx_t>(readable, st.input.GetSize() * 2));
+	}
+	auto input = char_ptr_cast(st.input.get());
+	memcpy(input, data, len);
+	memset(input + len, 0, JSONTreeParser::PADDING);
+	return input;
+}
+
+//! Starts simdjson on a padded document; rethrows the allocation failures of the buffer allocator
+static simdjson::error_code IterateJSON(JSONTreeParserState &st, const char *input, idx_t len,
+                                        ondemand::document &document) {
+	const auto code = st.parser.iterate(input, len, len + JSONTreeParser::PADDING).get(document);
+	if (code == simdjson::MEMALLOC && st.buffers.error.HasError()) {
+		auto error = std::move(st.buffers.error);
+		st.buffers.error = ErrorData();
+		error.Throw();
+	}
+	return code;
+}
+
+//! Visits a padded document; simdjson reads documents of at most 32 bytes in one pass, without stage 1
+template <class V>
+static simdjson::error_code VisitJSON(JSONTreeParserState &st, const char *input, idx_t len, V &visitor) {
+	const auto code = st.parser.visit(simdjson::padded_string_view(input, len, len + JSONTreeParser::PADDING), visitor);
+	if (code == simdjson::MEMALLOC && st.buffers.error.HasError()) {
+		auto error = std::move(st.buffers.error);
+		st.buffers.error = ErrorData();
+		error.Throw();
+	}
+	return code;
+}
+
+//! Starts On-Demand on a padded document. With VALIDATE_PATHS (the json_strict_paths setting), the whole document is
+//! checked first; otherwise, as with On-Demand, only what the path functions read on the way to the values is.
+static simdjson::error_code CheckAndIterateJSON(JSONTreeParserState &st, JSONReadFlags flags, const char *input,
+                                                idx_t len, ondemand::document &document) {
+	if (!HasFlag(flags, JSONReadFlags::VALIDATE_PATHS)) {
+		return IterateJSON(st, input, len, document);
+	}
+	JSONCheckVisitor checker;
+	if (len <= ondemand::parser::MAX_ONE_PASS_VISIT) {
+		if (auto error = VisitJSON(st, input, len, checker)) {
+			return error;
+		}
+		return IterateJSON(st, input, len, document);
+	}
+	if (auto error = IterateJSON(st, input, len, document)) {
+		return error;
+	}
+	return document.visit(checker);
+}
+
+template <class VALUE>
+static simdjson::error_code StepJSONPath(VALUE &value, const JSONPathStep &step, ondemand::value &child, bool &found) {
+	found = false;
+	ondemand::json_type type;
+	if (auto error = value.type().get(type)) {
+		return error;
+	}
+	if (step.is_key) {
+		if (type != ondemand::json_type::object) {
+			return simdjson::SUCCESS;
+		}
+		ondemand::object object;
+		if (auto error = value.get_object().get(object)) {
+			return error;
+		}
+		for (auto member : object) {
+			ondemand::field field;
+			if (auto error = std::move(member).get(field)) {
+				return error;
+			}
+			// Unescaping shortens a key: a raw key of the same length matches only as it is, and a shorter one never
+			const auto raw = field.escaped_key();
+			bool equal = raw.size() == step.key.size() && raw == step.key && !step.escaped;
+			if (raw.size() > step.key.size() && memchr(raw.data(), '\\', raw.size())) {
+				std::string_view key;
+				if (auto error = field.unescaped_key().get(key)) {
+					return error;
+				}
+				equal = key == step.key;
+			}
+			if (equal) {
+				child = field.value();
+				found = true;
+				return simdjson::SUCCESS;
+			}
+		}
+		return simdjson::SUCCESS;
+	}
+	if (type != ondemand::json_type::array) {
+		return simdjson::SUCCESS;
+	}
+	ondemand::array array;
+	if (auto error = value.get_array().get(array)) {
+		return error;
+	}
+	idx_t index = 0;
+	for (auto element : array) {
+		if (index++ == step.index) {
+			found = true;
+			return std::move(element).get(child);
+		}
+	}
+	return simdjson::SUCCESS;
+}
+
+//! Builds the nodes of the value a path leads to, with the visitor that builds whole documents
+static simdjson::error_code BuildJSONPathValue(ondemand::value &value, JSONBuildContext &context, vector<idx_t> &open) {
+	JSONNodeVisitor visitor(context, open, 0);
+	const auto error = value.visit(visitor);
+	visitor.Finish();
+	return error;
+}
+
+//! Moves through a document along a path that has steps; the On-Demand iterators skip the values that it does not go
+//! through
+static simdjson::error_code FindJSONPath(ondemand::document &document, const vector<JSONPathStep> &steps,
+                                         ondemand::value &value, bool &found) {
+	if (auto error = StepJSONPath(document, steps[0], value, found)) {
+		return error;
+	}
+	for (idx_t i = 1; found && i < steps.size(); i++) {
+		ondemand::value child;
+		if (auto error = StepJSONPath(value, steps[i], child, found)) {
+			return error;
+		}
+		value = child;
+	}
+	return simdjson::SUCCESS;
+}
+
+static const JSONNode *FollowJSONPath(const JSONNode *node, const vector<JSONPathStep> &steps) {
+	for (idx_t i = 0; node && i < steps.size(); i++) {
+		const auto &step = steps[i];
+		if (step.is_key) {
+			node = node->Get(step.key);
+		} else {
+			node = node->type == JSONValueType::ARRAY ? node->Get(step.index) : nullptr;
+		}
+	}
+	return node;
+}
+
+bool JSONTreeParser::ParsePaths(const char *data, idx_t len, const vector<JSONPathStep> *paths, idx_t count,
+                                const JSONNode **values, JSONParseError &error) {
+	auto &st = *state;
+	st.nodes.clear();
+	if (JSONVisitable(flags, data, len)) {
+		// On-Demand skips to the values and builds only them; with VALIDATE_PATHS, visit() first checks the whole
+		// document. On any error, the document goes to Parse, for the exact result or error.
+		const char *input = PadJSONInput(st, data, len);
+		ondemand::document document;
+		if (!CheckAndIterateJSON(st, flags, input, len, document)) {
+			// rewinding resets the string buffer: the strings of earlier paths are copied
+			const bool copy = count > 1;
+			if (copy) {
+				st.strings.Reset();
+			}
+			st.frames.clear();
+			st.path_roots.resize(count);
+			JSONBuildContext context {flags, st.nodes, st.frames, copy ? &st.strings : nullptr, input, input + len};
+			bool built = true;
+			for (idx_t i = 0; built && i < count; i++) {
+				if (i > 0) {
+					document.rewind();
+				}
+				ondemand::value value;
+				bool found;
+				st.path_roots[i] = optional_idx();
+				if (FindJSONPath(document, paths[i], value, found)) {
+					built = false;
+				} else if (found) {
+					st.path_roots[i] = st.nodes.size();
+					built = !BuildJSONPathValue(value, context, st.open);
+				}
+			}
+			if (built) {
+				for (idx_t i = 0; i < count; i++) {
+					const auto root = st.path_roots[i];
+					values[i] = root.IsValid() ? st.nodes.data() + root.GetIndex() : nullptr;
+				}
+				return true;
+			}
+			st.nodes.clear();
+		}
+	}
+	auto root = Parse(data, len, error);
+	if (!root) {
+		return false;
+	}
+	for (idx_t i = 0; i < count; i++) {
+		values[i] = FollowJSONPath(root, paths[i]);
+	}
+	return true;
+}
+
+bool JSONTreeParser::Write(const char *data, idx_t len, JSONStringWriter &writer, JSONParseError &error) {
+	auto &st = *state;
+	writer.Clear();
+	if (JSONVisitable(flags, data, len)) {
+		const char *input = PadJSONInput(st, data, len);
+		JSONWriteVisitor visitor(writer, input, len);
+		if (!VisitJSON(st, input, len, visitor)) {
+			return true;
+		}
+		writer.Clear();
+	}
+	auto root = Parse(data, len, error);
+	if (!root) {
+		return false;
+	}
+	writer.Value(*root);
+	return true;
+}
+
+bool JSONTreeParser::WritePath(const char *data, idx_t len, const vector<JSONPathStep> &path, JSONStringWriter &writer,
+                               bool &found, JSONParseError &error) {
+	found = true;
+	if (path.empty()) {
+		return Write(data, len, writer, error);
+	}
+	auto &st = *state;
+	writer.Clear();
+	if (JSONVisitable(flags, data, len)) {
+		// as ParsePaths, but the value goes to the writer instead of nodes
+		const char *input = PadJSONInput(st, data, len);
+		ondemand::document document;
+		if (!CheckAndIterateJSON(st, flags, input, len, document)) {
+			ondemand::value value;
+			if (!FindJSONPath(document, path, value, found)) {
+				if (!found) {
+					return true;
+				}
+				JSONWriteVisitor visitor(writer, input, len);
+				if (!value.visit(visitor)) {
+					return true;
+				}
+			}
+			writer.Clear();
+		}
+	}
+	auto root = Parse(data, len, error);
+	if (!root) {
+		return false;
+	}
+	auto node = FollowJSONPath(root, path);
+	found = node != nullptr;
+	if (found) {
+		writer.Value(*node);
+	}
+	return true;
+}
+
+bool JSONTreeParser::IsValid(const char *data, idx_t len, JSONParseError &error) {
+	auto &st = *state;
+	if (JSONVisitable(flags, data, len)) {
+		const char *input = PadJSONInput(st, data, len);
+		JSONCheckVisitor checker;
+		if (!VisitJSON(st, input, len, checker)) {
+			return true;
+		}
+	}
+	return Parse(data, len, error) != nullptr;
+}
+
 const JSONNode *JSONTreeParser::Parse(const char *data, idx_t len) {
 	JSONParseError error;
 	auto root = Parse(data, len, error);
@@ -1034,16 +1562,28 @@ JSONStringWriter::JSONStringWriter(JSONWriteFlags flags_p)
 }
 
 void JSONStringWriter::Clear() {
-	buffer.clear();
+	used = 0;
 	counts.clear();
 	node_frames.clear();
 	build_frames.clear();
 	after_key = false;
 }
 
+void JSONStringWriter::Grow(idx_t n) {
+	buffer.resize(MaxValue<idx_t>(MaxValue<idx_t>(buffer.size() * 2, used + n), 1024));
+}
+
 void JSONStringWriter::Indent(idx_t depth) {
-	buffer += '\n';
-	buffer.append(depth * 4, ' ');
+	static constexpr char SPACES[] = "                                                                ";
+	const idx_t spaces = depth * 4;
+	auto out = Reserve(1 + spaces);
+	*out = '\n';
+	if (spaces <= sizeof(SPACES) - 1) {
+		CopyShort(out + 1, SPACES, spaces);
+	} else {
+		memset(out + 1, ' ', spaces);
+	}
+	used += 1 + spaces;
 }
 
 void JSONStringWriter::BeforeValue() {
@@ -1055,73 +1595,137 @@ void JSONStringWriter::BeforeValue() {
 		return;
 	}
 	if (counts.back()++ > 0) {
-		buffer += ',';
+		Put(',');
 	}
 	if (pretty) {
 		Indent(counts.size());
 	}
+}
+
+void JSONStringWriter::PutUnsignedInteger(uint64_t value) {
+	auto out = Reserve(20);
+	used += NumericCast<idx_t>(std::to_chars(out, out + 20, value).ptr - out);
+}
+
+void JSONStringWriter::PutSignedInteger(int64_t value) {
+	auto out = Reserve(21);
+	used += NumericCast<idx_t>(std::to_chars(out, out + 21, value).ptr - out);
+}
+
+void JSONStringWriter::PutDouble(double value) {
+	auto out = Reserve(MAX_DOUBLE_LENGTH);
+	auto end = WriteDouble(out, value, flags);
+	if (!end) {
+		throw SerializationException("Failed to write JSON: NaN and Infinity are not allowed");
+	}
+	used += NumericCast<idx_t>(end - out);
+}
+
+void JSONStringWriter::PutString(std::string_view value, bool verbatim) {
+	if (verbatim) {
+		PutQuoted(value);
+		return;
+	}
+	auto out = Reserve(MaxStringLength(value.size()));
+	auto end = WriteString(out, value, flags);
+	if (!end) {
+		throw SerializationException("Failed to write JSON: a string is not valid UTF-8");
+	}
+	used += NumericCast<idx_t>(end - out);
+}
+
+void JSONStringWriter::PutKey(std::string_view key, bool verbatim) {
+	auto out = Reserve(MaxStringLength(key.size()) + 2);
+	char *end;
+	if (verbatim) {
+		end = WriteQuoted(out, key);
+	} else {
+		end = WriteString(out, key, flags);
+		if (!end) {
+			throw SerializationException("Failed to write JSON: a key is not valid UTF-8");
+		}
+	}
+	*end++ = ':';
+	if (pretty) {
+		*end++ = ' ';
+	}
+	used += NumericCast<idx_t>(end - out);
+}
+
+void JSONStringWriter::PutSeparator(bool first, idx_t depth) {
+	if (!first) {
+		Put(',');
+	}
+	if (pretty) {
+		Indent(counts.size() + depth);
+	}
+}
+
+void JSONStringWriter::PutClose(bool object, bool empty, idx_t depth) {
+	if (pretty && !empty) {
+		Indent(counts.size() + depth);
+	}
+	Put(object ? '}' : ']');
 }
 
 void JSONStringWriter::Null() {
 	BeforeValue();
-	buffer += "null";
+	Put("null", 4);
 }
 
 void JSONStringWriter::Boolean(bool value) {
 	BeforeValue();
-	buffer += value ? "true" : "false";
+	if (value) {
+		Put("true", 4);
+	} else {
+		Put("false", 5);
+	}
 }
 
 void JSONStringWriter::UnsignedInteger(uint64_t value) {
 	BeforeValue();
-	char digits[20];
-	auto end = std::to_chars(digits, digits + sizeof(digits), value).ptr;
-	buffer.append(digits, NumericCast<idx_t>(end - digits));
+	PutUnsignedInteger(value);
 }
 
 void JSONStringWriter::SignedInteger(int64_t value) {
 	BeforeValue();
-	char digits[21];
-	auto end = std::to_chars(digits, digits + sizeof(digits), value).ptr;
-	buffer.append(digits, NumericCast<idx_t>(end - digits));
+	PutSignedInteger(value);
 }
 
 void JSONStringWriter::Double(double value) {
 	BeforeValue();
-	if (!WriteDouble(buffer, value, flags)) {
-		throw SerializationException("Failed to write JSON: NaN and Infinity are not allowed");
-	}
+	PutDouble(value);
 }
 
 void JSONStringWriter::Raw(std::string_view value) {
 	BeforeValue();
-	buffer.append(value);
+	Put(value.data(), value.size());
 }
 
 void JSONStringWriter::String(std::string_view value) {
 	BeforeValue();
-	if (!WriteString(buffer, value, flags)) {
-		throw SerializationException("Failed to write JSON: a string is not valid UTF-8");
-	}
+	PutString(value, false);
+}
+
+void JSONStringWriter::VerbatimString(std::string_view value) {
+	BeforeValue();
+	PutQuoted(value);
 }
 
 void JSONStringWriter::StartObject() {
 	BeforeValue();
-	buffer += '{';
+	Put('{');
 	counts.push_back(0);
 }
 
-void JSONStringWriter::Key(std::string_view key) {
+void JSONStringWriter::Key(std::string_view key, bool verbatim) {
 	if (counts.back()++ > 0) {
-		buffer += ',';
+		Put(',');
 	}
 	if (pretty) {
 		Indent(counts.size());
 	}
-	if (!WriteString(buffer, key, flags)) {
-		throw SerializationException("Failed to write JSON: a key is not valid UTF-8");
-	}
-	buffer += pretty ? ": " : ":";
+	PutKey(key, verbatim);
 	after_key = true;
 }
 
@@ -1131,12 +1735,12 @@ void JSONStringWriter::EndObject() {
 	if (pretty && count > 0) {
 		Indent(counts.size());
 	}
-	buffer += '}';
+	Put('}');
 }
 
 void JSONStringWriter::StartArray() {
 	BeforeValue();
-	buffer += '[';
+	Put('[');
 	counts.push_back(0);
 }
 
@@ -1146,52 +1750,47 @@ void JSONStringWriter::EndArray() {
 	if (pretty && count > 0) {
 		Indent(counts.size());
 	}
-	buffer += ']';
-}
-
-void JSONStringWriter::EndContainer(bool object) {
-	if (object) {
-		EndObject();
-	} else {
-		EndArray();
-	}
+	Put(']');
 }
 
 void JSONStringWriter::Value(const JSONNode &root) {
+	// The containers of the tree keep their own frames: the separators and indentation follow the depth below the
+	// root, on top of the containers that the writer already has open
+	BeforeValue();
 	const auto base = node_frames.size();
 	auto node = &root;
 	while (true) {
 		switch (node->type) {
 		case JSONValueType::JSON_NULL:
-			Null();
+			Put("null", 4);
 			break;
 		case JSONValueType::BOOLEAN:
-			Boolean(node->boolean);
+			if (node->boolean) {
+				Put("true", 4);
+			} else {
+				Put("false", 5);
+			}
 			break;
 		case JSONValueType::UNSIGNED_INTEGER:
-			UnsignedInteger(node->unsigned_integer);
+			PutUnsignedInteger(node->unsigned_integer);
 			break;
 		case JSONValueType::SIGNED_INTEGER:
-			SignedInteger(node->signed_integer);
+			PutSignedInteger(node->signed_integer);
 			break;
 		case JSONValueType::DOUBLE:
-			Double(node->real);
+			PutDouble(node->real);
 			break;
 		case JSONValueType::RAW:
-			Raw(node->GetString());
+			Put(node->str, node->size);
 			break;
 		case JSONValueType::STRING:
-			String(node->GetString());
+			PutString(node->GetString(), node->boolean);
 			break;
 		case JSONValueType::ARRAY:
 		case JSONValueType::OBJECT: {
 			const bool object = node->type == JSONValueType::OBJECT;
-			if (object) {
-				StartObject();
-			} else {
-				StartArray();
-			}
-			node_frames.push_back({object, node->size, node->First()});
+			Put(object ? '{' : '[');
+			node_frames.push_back({object, true, node->size, node->First()});
 			break;
 		}
 		default:
@@ -1203,14 +1802,18 @@ void JSONStringWriter::Value(const JSONNode &root) {
 			}
 			auto &frame = node_frames.back();
 			if (frame.remaining == 0) {
-				EndContainer(frame.object);
+				const bool object = frame.object;
+				const bool empty = frame.first;
 				node_frames.pop_back();
+				PutClose(object, empty, node_frames.size() - base);
 				continue;
 			}
 			frame.remaining--;
+			PutSeparator(frame.first, node_frames.size() - base);
+			frame.first = false;
 			node = frame.next;
 			if (frame.object) {
-				Key(node->GetString());
+				PutKey(node->GetString(), node->boolean);
 				node++;
 			}
 			frame.next = node->Next();
@@ -1220,40 +1823,42 @@ void JSONStringWriter::Value(const JSONNode &root) {
 }
 
 void JSONStringWriter::Value(const JSONBuildValue &root) {
+	// as Value(const JSONNode &)
+	BeforeValue();
 	const auto base = build_frames.size();
 	auto value = &root;
 	while (true) {
 		switch (value->type) {
 		case JSONValueType::JSON_NULL:
-			Null();
+			Put("null", 4);
 			break;
 		case JSONValueType::BOOLEAN:
-			Boolean(value->boolean);
+			if (value->boolean) {
+				Put("true", 4);
+			} else {
+				Put("false", 5);
+			}
 			break;
 		case JSONValueType::UNSIGNED_INTEGER:
-			UnsignedInteger(value->unsigned_integer);
+			PutUnsignedInteger(value->unsigned_integer);
 			break;
 		case JSONValueType::SIGNED_INTEGER:
-			SignedInteger(value->signed_integer);
+			PutSignedInteger(value->signed_integer);
 			break;
 		case JSONValueType::DOUBLE:
-			Double(value->real);
+			PutDouble(value->real);
 			break;
 		case JSONValueType::STRING:
-			String(std::string_view(value->str, value->size));
+			PutString(std::string_view(value->str, value->size), false);
 			break;
 		case JSONValueType::RAW:
-			Raw(std::string_view(value->str, value->size));
+			Put(value->str, value->size);
 			break;
 		case JSONValueType::ARRAY:
 		case JSONValueType::OBJECT: {
 			const bool object = value->type == JSONValueType::OBJECT;
-			if (object) {
-				StartObject();
-			} else {
-				StartArray();
-			}
-			build_frames.push_back({object, value->size, value->last ? value->last->next : nullptr});
+			Put(object ? '{' : '[');
+			build_frames.push_back({object, true, value->size, value->last ? value->last->next : nullptr});
 			break;
 		}
 		default:
@@ -1265,130 +1870,306 @@ void JSONStringWriter::Value(const JSONBuildValue &root) {
 			}
 			auto &frame = build_frames.back();
 			if (frame.remaining == 0) {
-				EndContainer(frame.object);
+				const bool object = frame.object;
+				const bool empty = frame.first;
 				build_frames.pop_back();
+				PutClose(object, empty, build_frames.size() - base);
 				continue;
 			}
 			frame.remaining--;
+			PutSeparator(frame.first, build_frames.size() - base);
+			frame.first = false;
 			value = frame.next;
 			frame.next = value->next;
 			if (frame.object) {
-				Key(std::string_view(value->key, value->key_size));
+				PutKey(std::string_view(value->key, value->key_size), value->key_verbatim);
 			}
 			break;
 		}
 	}
 }
 
-bool JSONStringWriter::WriteDouble(string &out, double value, JSONWriteFlags flags) {
+char *JSONStringWriter::WriteDouble(char *out, double value, JSONWriteFlags flags) {
 	if (std::isnan(value) || std::isinf(value)) {
 		if (!HasFlag(flags, JSONWriteFlags::ALLOW_INF_AND_NAN)) {
-			return false;
+			return nullptr;
 		}
-		if (std::isnan(value)) {
-			out += "NaN";
-		} else {
-			out += value < 0 ? "-Infinity" : "Infinity";
-		}
-		return true;
+		const std::string_view text = std::isnan(value) ? "NaN" : value < 0 ? "-Infinity" : "Infinity";
+		memcpy(out, text.data(), text.size());
+		return out + text.size();
 	}
 	if (std::signbit(value)) {
-		out += '-';
+		*out++ = '-';
 		value = -value;
 	}
 	if (value == 0) {
-		out += "0.0";
-		return true;
+		memcpy(out, "0.0", 3);
+		return out + 3;
 	}
-	char text[32];
-	auto end = std::to_chars(text, text + sizeof(text), value, std::chars_format::scientific).ptr;
-	char digits[20];
+	// simdjson's to_chars writes the shortest digits that round-trip (as Ryu). In fixed notation, from 1e-4 to 1e15,
+	// its text is ours: digits, a decimal point, and at least one digit after it
+	if (value >= 1e-4 && value < 1e15) {
+		return simdjson::internal::to_chars(out, out + simdjson::internal::to_chars_buffer_size, value);
+	}
+	// elsewhere, take the digits and the position of the decimal point, then lay them out as JavaScript does
+	char text[simdjson::internal::to_chars_buffer_size];
+	const char *end = simdjson::internal::to_chars(text, text + sizeof(text), value);
+	char digits[24];
 	idx_t digit_count = 0;
-	auto pos = text;
+	int before_point = -1;
+	const char *pos = text;
 	for (; pos < end && *pos != 'e'; pos++) {
-		if (*pos != '.') {
+		if (*pos == '.') {
+			before_point = static_cast<int>(digit_count);
+		} else {
 			digits[digit_count++] = *pos;
 		}
 	}
+	if (before_point < 0) {
+		before_point = static_cast<int>(digit_count);
+	}
 	int exponent = 0;
-	std::from_chars(pos + 1 + (pos[1] == '+'), end, exponent);
-	const int dot = exponent + 1;
+	if (pos < end) {
+		pos++;
+		const bool negative_exponent = *pos == '-';
+		pos += *pos == '-' || *pos == '+';
+		for (; pos < end; pos++) {
+			exponent = exponent * 10 + (*pos - '0');
+		}
+		exponent = negative_exponent ? -exponent : exponent;
+	}
+	idx_t first = 0;
+	while (first < digit_count && digits[first] == '0') {
+		first++;
+		before_point--;
+	}
+	while (digit_count > first && digits[digit_count - 1] == '0') {
+		digit_count--;
+	}
+	const char *significant = digits + first;
+	digit_count -= first;
+	const int dot = before_point + exponent;
 	if (-6 < dot && dot <= 21) {
 		if (dot > 0) {
 			const auto whole = static_cast<idx_t>(dot);
 			if (digit_count <= whole) {
-				out.append(digits, digit_count);
-				out.append(whole - digit_count, '0');
-				out += ".0";
-			} else {
-				out.append(digits, whole);
-				out += '.';
-				out.append(digits + whole, digit_count - whole);
+				memcpy(out, significant, digit_count);
+				out += digit_count;
+				memset(out, '0', whole - digit_count);
+				out += whole - digit_count;
+				memcpy(out, ".0", 2);
+				return out + 2;
 			}
-		} else {
-			out += "0.";
-			out.append(static_cast<idx_t>(-dot), '0');
-			out.append(digits, digit_count);
+			memcpy(out, significant, whole);
+			out += whole;
+			*out++ = '.';
+			memcpy(out, significant + whole, digit_count - whole);
+			return out + (digit_count - whole);
 		}
-		return true;
+		memcpy(out, "0.", 2);
+		out += 2;
+		memset(out, '0', static_cast<idx_t>(-dot));
+		out += -dot;
+		memcpy(out, significant, digit_count);
+		return out + digit_count;
 	}
-	out += digits[0];
+	*out++ = significant[0];
 	if (digit_count > 1) {
-		out += '.';
-		out.append(digits + 1, digit_count - 1);
+		*out++ = '.';
+		memcpy(out, significant + 1, digit_count - 1);
+		out += digit_count - 1;
 	}
-	out += 'e';
-	char exponent_text[8];
-	auto exponent_end = std::to_chars(exponent_text, exponent_text + sizeof(exponent_text), dot - 1).ptr;
-	out.append(exponent_text, NumericCast<idx_t>(exponent_end - exponent_text));
+	*out++ = 'e';
+	return std::to_chars(out, out + 8, dot - 1).ptr;
+}
+
+bool JSONStringWriter::WriteDouble(string &out, double value, JSONWriteFlags flags) {
+	char text[MAX_DOUBLE_LENGTH];
+	auto end = WriteDouble(text, value, flags);
+	if (!end) {
+		return false;
+	}
+	out.append(text, NumericCast<idx_t>(end - text));
 	return true;
 }
 
-bool JSONStringWriter::WriteString(string &out, std::string_view value, JSONWriteFlags flags) {
-	if (!HasFlag(flags, JSONWriteFlags::ALLOW_INVALID_UNICODE) && !simdutf::validate_utf8(value.data(), value.size())) {
-		return false;
-	}
+//! Writes one byte of a string, escaped as JSON needs: \u00XX in uppercase where there is no short escape
+static inline char *EscapeJSONByte(char *out, uint8_t c) {
 	static constexpr char HEX[] = "0123456789ABCDEF";
-	out += '"';
-	idx_t start = 0;
-	for (idx_t i = 0; i < value.size(); i++) {
-		const auto c = static_cast<uint8_t>(value[i]);
-		if (c >= 0x20 && c != '"' && c != '\\') {
+	if (c >= 0x20 && c != '"' && c != '\\') {
+		*out++ = static_cast<char>(c);
+		return out;
+	}
+	*out++ = '\\';
+	switch (c) {
+	case '"':
+		*out++ = '"';
+		break;
+	case '\\':
+		*out++ = '\\';
+		break;
+	case '\b':
+		*out++ = 'b';
+		break;
+	case '\f':
+		*out++ = 'f';
+		break;
+	case '\n':
+		*out++ = 'n';
+		break;
+	case '\r':
+		*out++ = 'r';
+		break;
+	case '\t':
+		*out++ = 't';
+		break;
+	default:
+		memcpy(out, "u00", 3);
+		out[3] = HEX[c >> 4];
+		out[4] = HEX[c & 0xF];
+		out += 5;
+		break;
+	}
+	return out;
+}
+
+static constexpr uint64_t JSON_ONES = 0x0101010101010101ULL;
+static constexpr uint64_t JSON_HIGH_BITS = 0x8080808080808080ULL;
+
+//! The high bit of each byte of the word that is below 0x20, a quote or a backslash (and maybe of a byte after one)
+static inline uint64_t SpecialJSONBytes(uint64_t word) {
+	const uint64_t quote = word ^ (JSON_ONES * '"');
+	const uint64_t backslash = word ^ (JSON_ONES * '\\');
+	return (((word - JSON_ONES * 0x20) & ~word) | ((quote - JSON_ONES) & ~quote) |
+	        ((backslash - JSON_ONES) & ~backslash)) &
+	       JSON_HIGH_BITS;
+}
+
+//! Escapes a short string eight bytes at a time, and tells whether it holds bytes beyond ASCII. Writes up to eight
+//! bytes past its end.
+static char *EscapeShortJSONString(char *out, std::string_view value, bool &ascii) {
+	const auto data = reinterpret_cast<const uint8_t *>(value.data());
+	const idx_t size = value.size();
+	if (size < 8 && std::endian::native == std::endian::little) {
+		// padded with a letter, which needs no escape; fixed-size loads, as a memcpy of a variable length is a call
+		uint64_t word = JSON_ONES * 'a';
+		if (size >= 4) {
+			uint32_t low;
+			uint32_t high;
+			memcpy(&low, data, 4);
+			memcpy(&high, data + size - 4, 4);
+			word = (word << (8 * size)) | (uint64_t(high) << (8 * (size - 4))) | low;
+		} else if (size > 0) {
+			const uint64_t bytes = uint64_t(data[0]) | uint64_t(data[size >> 1]) << (8 * (size >> 1)) |
+			                       uint64_t(data[size - 1]) << (8 * (size - 1));
+			word = (word << (8 * size)) | bytes;
+		}
+		ascii = (word & JSON_HIGH_BITS) == 0;
+		if (!SpecialJSONBytes(word)) {
+			memcpy(out, &word, 8);
+			return out + size;
+		}
+		for (idx_t i = 0; i < size; i++) {
+			out = EscapeJSONByte(out, data[i]);
+		}
+		return out;
+	}
+	uint64_t high = 0;
+	idx_t i = 0;
+	for (; i + 8 <= size; i += 8) {
+		uint64_t word;
+		memcpy(&word, data + i, 8);
+		memcpy(out, &word, 8);
+		high |= word;
+		if (!SpecialJSONBytes(word)) {
+			out += 8;
 			continue;
 		}
-		out.append(value.data() + start, i - start);
-		start = i + 1;
-		switch (c) {
-		case '"':
-			out += "\\\"";
-			break;
-		case '\\':
-			out += "\\\\";
-			break;
-		case '\b':
-			out += "\\b";
-			break;
-		case '\f':
-			out += "\\f";
-			break;
-		case '\n':
-			out += "\\n";
-			break;
-		case '\r':
-			out += "\\r";
-			break;
-		case '\t':
-			out += "\\t";
-			break;
-		default:
-			out += "\\u00";
-			out += HEX[c >> 4];
-			out += HEX[c & 0xF];
-			break;
+		for (idx_t k = i; k < i + 8; k++) {
+			out = EscapeJSONByte(out, data[k]);
 		}
 	}
-	out.append(value.data() + start, value.size() - start);
-	out += '"';
+	if (i < size && size >= 8) {
+		// the last eight bytes overlap the ones written: when none needs an escape, those were copied as they are
+		const idx_t rest = size - i;
+		uint64_t word;
+		memcpy(&word, data + size - 8, 8);
+		high |= word;
+		if (!SpecialJSONBytes(word)) {
+			memcpy(out + rest - 8, &word, 8);
+			out += rest;
+		} else {
+			for (; i < size; i++) {
+				out = EscapeJSONByte(out, data[i]);
+			}
+		}
+	}
+	for (; i < size && size < 8; i++) {
+		high |= data[i];
+		out = EscapeJSONByte(out, data[i]);
+	}
+	ascii = (high & JSON_HIGH_BITS) == 0;
+	return out;
+}
+
+bool JSONStringWriter::IsVerbatim(std::string_view value) {
+	for (auto c : value) {
+		const auto byte = static_cast<uint8_t>(c);
+		if (byte < 0x20 || byte >= 0x80 || byte == '"' || byte == '\\') {
+			return false;
+		}
+	}
+	return true;
+}
+
+char *JSONStringWriter::WriteString(char *out, std::string_view value, JSONWriteFlags flags) {
+	const bool validate = !HasFlag(flags, JSONWriteFlags::ALLOW_INVALID_UNICODE);
+	*out++ = '"';
+	if (value.size() < 64) {
+		bool ascii;
+		out = EscapeShortJSONString(out, value, ascii);
+		if (validate && !ascii && !simdutf::validate_utf8(value.data(), value.size())) {
+			return nullptr;
+		}
+		*out++ = '"';
+		return out;
+	}
+	if (validate && !simdutf::validate_utf8(value.data(), value.size())) {
+		return nullptr;
+	}
+	const auto written = simdjson::internal::escape_best::write_string_escaped(value, out);
+	if (written != value.size()) {
+		// simdjson writes the \u00XX escapes of control characters in lowercase, DuckDB in uppercase
+		for (idx_t i = 0; i < written; i++) {
+			if (out[i] != '\\') {
+				continue;
+			}
+			if (out[i + 1] == 'u') {
+				for (idx_t h = i + 2; h < i + 6; h++) {
+					if (out[h] >= 'a' && out[h] <= 'f') {
+						out[h] = static_cast<char>(out[h] - 'a' + 'A');
+					}
+				}
+				i += 5;
+			} else {
+				i++;
+			}
+		}
+	}
+	out += written;
+	*out++ = '"';
+	return out;
+}
+
+bool JSONStringWriter::WriteString(string &out, std::string_view value, JSONWriteFlags flags) {
+	const auto start = out.size();
+	out.resize(start + MaxStringLength(value.size()));
+	auto end = WriteString(&out[start], value, flags);
+	if (!end) {
+		out.resize(start);
+		return false;
+	}
+	out.resize(NumericCast<idx_t>(end - out.data()));
 	return true;
 }
 
@@ -1399,6 +2180,7 @@ JSONBuildValue *JSONBuilder::Make(JSONValueType type) {
 	auto value = reinterpret_cast<JSONBuildValue *>(arena.AllocateAligned(sizeof(JSONBuildValue)));
 	value->type = type;
 	value->boolean = false;
+	value->key_verbatim = false;
 	value->size = 0;
 	value->key_size = 0;
 	value->unsigned_integer = 0;
@@ -1481,10 +2263,11 @@ static void AppendJSONChild(JSONBuildValue &container, JSONBuildValue *value) {
 	container.size++;
 }
 
-void JSONBuilder::Add(JSONBuildValue &object, std::string_view key, JSONBuildValue *value) {
+void JSONBuilder::Add(JSONBuildValue &object, std::string_view key, JSONBuildValue *value, bool verbatim) {
 	D_ASSERT(object.type == JSONValueType::OBJECT);
 	value->key = key.data();
 	value->key_size = NumericCast<uint32_t>(key.size());
+	value->key_verbatim = verbatim;
 	AppendJSONChild(object, value);
 }
 

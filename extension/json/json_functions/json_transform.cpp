@@ -640,6 +640,9 @@ bool JSONTransform::TransformObject(const JSONNode *objects[], JSONTransformScra
 	auto found_keys = AllocateScratch<uint8_t>(scratch, column_count);
 
 	bool success = true;
+	// The column of the exact match of the key at each position in the previous object: the objects of a column
+	// mostly list their keys in the same order, so one comparison often replaces the hash lookups
+	vector<optional_idx> predicted;
 
 	for (idx_t i = 0; i < count; i++) {
 		const auto &obj = objects[i];
@@ -668,22 +671,34 @@ bool JSONTransform::TransformObject(const JSONNode *objects[], JSONTransformScra
 
 		found_key_count = 0;
 		memset(found_keys, 0, column_count);
+		idx_t position = 0;
 		for (auto &key : obj->Keys()) {
 			auto val = &key + 1;
 			auto key_ptr = key.str;
 			auto key_len = key.size;
 			optional_idx found_col;
 			uint8_t match_strength = 2;
-			auto it = key_map.find({key_ptr, key_len});
-			if (it != key_map.end()) {
-				found_col = it->second;
+			if (position < predicted.size() && predicted[position].IsValid() &&
+			    names[predicted[position].GetIndex()].size() == key_len &&
+			    memcmp(names[predicted[position].GetIndex()].data(), key_ptr, key_len) == 0) {
+				found_col = predicted[position];
 			} else {
-				auto ci_it = ci_key_map.find({key_ptr, key_len});
-				if (ci_it != ci_key_map.end()) {
-					found_col = ci_it->second;
-					match_strength = 1;
+				auto it = key_map.find({key_ptr, key_len});
+				if (it != key_map.end()) {
+					found_col = it->second;
+				} else {
+					auto ci_it = ci_key_map.find({key_ptr, key_len});
+					if (ci_it != ci_key_map.end()) {
+						found_col = ci_it->second;
+						match_strength = 1;
+					}
 				}
+				if (position >= predicted.size()) {
+					predicted.resize(position + 1);
+				}
+				predicted[position] = match_strength == 2 ? found_col : optional_idx();
 			}
+			position++;
 			if (found_col.IsValid()) {
 				const auto col_idx = found_col.GetIndex();
 				if (found_keys[col_idx] == match_strength) {
