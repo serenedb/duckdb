@@ -238,8 +238,7 @@ RowLexer::RowLexer(const RowDialect &dialect_p, idx_t columns_p, idx_t max_line_
 	D_ASSERT(columns >= 1);
 	settle_strict = error_mode && dialect.strict;
 	settle_length = error_mode;
-	lean_shapes = dialect.duckdb && dialect.delimiter_size == 1 && !dialect.carry_on && !dialect.backslash &&
-	              !dialect.strip_carriage && dialect.quoting != RowQuoting::ANYWHERE &&
+	lean_shapes = dialect.duckdb && dialect.delimiter_size == 1 && !dialect.carry_on &&
 	              (dialect.new_line == NewLineIdentifier::NOT_SET || dialect.new_line == NewLineIdentifier::SINGLE_N) &&
 	              max_line_size >= CSV_BLOCK_BYTES;
 	lean = lean_shapes && !dialect.comment && !dialect.escape_in_quotes && !dialect.unquoted_escape;
