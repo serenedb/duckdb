@@ -310,6 +310,30 @@ vector<JSONPathElement> JSONCommon::ParsePathElements(const char *ptr, idx_t len
 	return elements;
 }
 
+bool JSONCommon::PathSteps(const vector<JSONPathElement> &elements, vector<JSONPathStep> &steps) {
+	steps.clear();
+	if (elements.empty()) {
+		return false;
+	}
+	for (auto &element : elements) {
+		switch (element.type) {
+		case JSONPathElementType::KEY:
+			steps.push_back({true, element.key.find('\\') != string::npos, std::string_view(element.key), 0});
+			break;
+		case JSONPathElementType::INDEX:
+			steps.push_back({false, false, std::string_view(), element.index});
+			break;
+		case JSONPathElementType::APPEND:
+			// [#] leads nowhere: no array has this index
+			steps.push_back({false, false, std::string_view(), NumericLimits<idx_t>::Maximum()});
+			break;
+		default:
+			return false;
+		}
+	}
+	return true;
+}
+
 const JSONNode *JSONCommon::GetPathElements(const JSONNode *val, const vector<JSONPathElement> &elements) {
 	for (idx_t i = 0; val != nullptr && i < elements.size(); i++) {
 		val = GetPathElement(val, elements[i]);
