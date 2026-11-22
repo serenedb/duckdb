@@ -177,7 +177,17 @@ char CopyLineBreakFinder::Feed(std::string_view bytes) {
 		after_escape = false;
 		i = bytes[0] == quote || bytes[0] == escape ? 1 : 0;
 	}
+	const char opener = csv ? quote : '\\';
+	const char escaper = csv && quoted_escape ? escape : opener;
 	for (; i < bytes.size(); i++) {
+		if (i + CSV_BLOCK_BYTES <= bytes.size()) {
+			const uint64_t found = CsvVector(bytes.data() + i).EqualAny('\n', '\r', opener, escaper);
+			if (!found) {
+				i += CSV_BLOCK_BYTES - 1;
+				continue;
+			}
+			i += std::countr_zero(found);
+		}
 		const char c = bytes[i];
 		if (csv && in_quote) {
 			if (quoted_escape && c == escape) {
