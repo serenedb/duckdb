@@ -366,6 +366,38 @@ TEST_CASE("COPY takes the line break of its first line, however its input is spl
 	}
 }
 
+TEST_CASE("COPY finds the line break of a long first line as it does byte by byte", "[copy]") {
+	std::mt19937_64 rng(20261122);
+	const char specials[] = {'\n', '\r', '"', '\\'};
+	for (idx_t round = 0; round < 5000; round++) {
+		CopyFormatOptions options;
+		options.format = rng() % 2 ? CopyFormat::CSV : CopyFormat::TEXT;
+		options.escape = rng() % 2 ? '"' : '\\';
+		const idx_t sparsity = idx_t(1) << (2 + rng() % 8);
+		string input;
+		const idx_t size = rng() % 600;
+		for (idx_t i = 0; i < size; i++) {
+			input += rng() % sparsity == 0 ? specials[rng() % 4] : 'a';
+		}
+		INFO("input " << Escaped(input) << " csv " << (options.format == CopyFormat::CSV) << " escape "
+		              << options.escape);
+		CopyLineBreakFinder whole(options);
+		char at_once = whole.Feed(input);
+		if (at_once == '\0') {
+			at_once = whole.Finish();
+		}
+		CopyLineBreakFinder bytes(options);
+		char byte_by_byte = '\0';
+		for (idx_t i = 0; i < input.size() && byte_by_byte == '\0'; i++) {
+			byte_by_byte = bytes.Feed(std::string_view(input).substr(i, 1));
+		}
+		if (byte_by_byte == '\0') {
+			byte_by_byte = bytes.Finish();
+		}
+		REQUIRE(at_once == byte_by_byte);
+	}
+}
+
 namespace {
 
 string BeforeEndMarker(const string &input) {
