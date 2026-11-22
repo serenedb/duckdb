@@ -76,6 +76,7 @@ struct RoleAccess {
 	std::span<const uint64_t> closure_filter;
 	std::span<const idx_t> closure;
 	std::span<const idx_t> settable;
+	std::span<const idx_t> administered;
 	uint64_t fingerprint = 0;
 
 	DUCKDB_API static const RoleAccess &System();
@@ -96,6 +97,9 @@ struct RoleAccess {
 		return MemberOf(owner);
 	}
 	bool CanSet(idx_t other) const;
+	bool AdminOf(idx_t other) const {
+		return std::binary_search(administered.begin(), administered.end(), other);
+	}
 	bool Can(CatalogType type, std::span<const AclItem> acl, AclMode need) const;
 	bool Can(CatalogType type, const Permissions &permissions, AclMode need) const;
 	bool CanAny(CatalogType type, const Permissions &permissions, AclMode need) const;
@@ -124,6 +128,7 @@ public:
 		RoleCapability capabilities = RoleCapability::None;
 		vector<idx_t> closure;
 		vector<idx_t> settable;
+		vector<idx_t> administered;
 	};
 	struct Node {
 		string name;

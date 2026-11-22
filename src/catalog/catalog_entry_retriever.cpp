@@ -94,7 +94,7 @@ optional_ptr<SchemaCatalogEntry> CatalogEntryRetriever::GetSchema(const EntryLoo
 }
 
 optional_ptr<SchemaCatalogEntry> CatalogEntryRetriever::GetSchema(const Identifier &catalog,
-                                                                  const vector<Identifier> &schema_path, EntryUse use,
+                                                                  const vector<Identifier> &schema_path, AclMode use,
                                                                   OnEntryNotFound on_entry_not_found) {
 	auto result = Catalog::GetSchema(*this, catalog, schema_path, on_entry_not_found);
 	if (!result) {

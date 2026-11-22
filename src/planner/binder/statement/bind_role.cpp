@@ -67,7 +67,7 @@ static void CheckMembershipAuthorization(ClientContext &context, const RoleAcces
 		                         verb)}},
 		    StringUtil::Format("permission denied to %s role \"%s\"", verb, name));
 	}
-	if (!IsAdminOf(context, caller, granted.oid)) {
+	if (!caller.AdminOf(granted.oid)) {
 		throw PermissionException(
 		    {{"detail",
 		      StringUtil::Format("Only roles with the ADMIN option on role \"%s\" may %s this role.", name, verb)}},
@@ -138,7 +138,7 @@ static void BindMembership(ClientContext &context, const RoleAccess &caller, con
 			    {{"detail", "Only roles with the SUPERUSER attribute may alter roles with the SUPERUSER attribute."}},
 			    "permission denied to alter role");
 		}
-		if (!caller.is_superuser && !IsAdminOf(context, caller, granted->oid)) {
+		if (!caller.is_superuser && !caller.AdminOf(granted->oid)) {
 			throw PermissionException(
 			    {{"detail", StringUtil::Format(
 			                    "Only roles with the ADMIN option on role \"%s\" may add or drop members.", name)}},
@@ -166,7 +166,7 @@ static void CheckAlterRole(ClientContext &context, const RoleAccess &caller, con
 	if (caller.is_superuser) {
 		return;
 	}
-	const bool admin = caller.Has(RoleOption::CreateRole) && IsAdminOf(context, caller, role.oid);
+	const bool admin = caller.Has(RoleOption::CreateRole) && caller.AdminOf(role.oid);
 	if (rename && role.IsSuperuser()) {
 		throw PermissionException(
 		    {{"detail", "Only roles with the SUPERUSER attribute may rename roles with the SUPERUSER attribute."}},
@@ -297,7 +297,7 @@ static void CheckDatabaseSettings(ClientContext &context, const RoleAccess &call
 		    "permission denied to alter role");
 	}
 	if (role && !caller.is_superuser && role->oid != caller.role &&
-	    (!caller.Has(RoleOption::CreateRole) || !IsAdminOf(context, caller, role->oid))) {
+	    (!caller.Has(RoleOption::CreateRole) || !caller.AdminOf(role->oid))) {
 		throw PermissionException(
 		    {{"detail", StringUtil::Format("Only roles with the CREATEROLE attribute and the ADMIN option on role "
 		                                   "\"%s\" may alter this role.",
@@ -359,7 +359,7 @@ void Binder::BindDropRole(DropInfo &info) {
 		    {{"detail", "Only roles with the SUPERUSER attribute may drop roles with the SUPERUSER attribute."}},
 		    "permission denied to drop role");
 	}
-	if (role && !caller.is_superuser && !IsAdminOf(context, caller, role->oid)) {
+	if (role && !caller.is_superuser && !caller.AdminOf(role->oid)) {
 		throw PermissionException(
 		    {{"detail", StringUtil::Format("Only roles with the CREATEROLE attribute and the ADMIN option on role "
 		                                   "\"%s\" may drop this role.",

@@ -41,7 +41,6 @@
 #include "duckdb/catalog/catalog_entry/function_entry.hpp"
 #include "duckdb/catalog/catalog_entry/trigger_catalog_entry.hpp"
 #include "duckdb/common/enums/copy_option_mode.hpp"
-#include "duckdb/common/enums/entry_use.hpp"
 #include "duckdb/common/enums/trigger_type.hpp"
 
 #include <absl/container/flat_hash_map.h>
@@ -440,7 +439,7 @@ public:
 	QualifiedName BindTableName(const QualifiedName &name);
 	//! Resolve the (possibly nested) name of a CREATE SCHEMA statement into a canonical [catalog, parents..., schema]
 	void BindCreateSchema(CreateSchemaInfo &info);
-	SchemaCatalogEntry &BindSchema(CreateInfo &info, EntryUse use);
+	SchemaCatalogEntry &BindSchema(CreateInfo &info, AclMode use);
 	SchemaCatalogEntry &BindCreateFunctionInfo(CreateInfo &info);
 	SchemaCatalogEntry &BindCreateTriggerInfo(CreateTriggerInfo &info);
 	SchemaCatalogEntry &BindCreateJobInfo(CreateJobInfo &info);
@@ -492,8 +491,8 @@ public:
 	void AdoptPrivilegeChecks(Binder &other);
 	void CheckPrivileges();
 	Catalog &SubscriptionCatalog(const Identifier &catalog_name);
-	BoundRoutine BindRoutine(const RoutineReference &routine, EntryUse use, OnEntryNotFound if_not_found);
-	CatalogEntry &ResolveDatabaseEntry(CatalogType type, AlterInfo &info, EntryUse use);
+	BoundRoutine BindRoutine(const RoutineReference &routine, AclMode use, OnEntryNotFound if_not_found);
+	CatalogEntry &ResolveDatabaseEntry(CatalogType type, AlterInfo &info, AclMode use);
 	void RequireResolvedTypeUsage(optional_ptr<const LogicalDependencyList> dependencies);
 	void BindCreateRole(CreateRoleInfo &info);
 	void BindAlterRole(AlterRoleInfo &info);

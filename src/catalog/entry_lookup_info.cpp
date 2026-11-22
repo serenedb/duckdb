@@ -11,7 +11,7 @@ EntryLookupInfo::EntryLookupInfo(CatalogType catalog_type_p, QualifiedName name_
     : catalog_type(catalog_type_p), name(std::move(name_p)), at_clause(at_clause_p), error_context(error_context_p) {
 }
 
-EntryLookupInfo::EntryLookupInfo(CatalogType catalog_type_p, QualifiedName name_p, EntryUse use_p)
+EntryLookupInfo::EntryLookupInfo(CatalogType catalog_type_p, QualifiedName name_p, AclMode use_p)
     : catalog_type(catalog_type_p), name(std::move(name_p)), use(use_p) {
 }
 
@@ -81,7 +81,7 @@ idx_t EntryLookupInfo::GetArgumentCount() const {
 	return argument_count;
 }
 
-EntryUse EntryLookupInfo::GetUse() const {
+AclMode EntryLookupInfo::GetUse() const {
 	return use;
 }
 

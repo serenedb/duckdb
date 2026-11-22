@@ -53,7 +53,7 @@ public:
 	optional_ptr<CatalogEntry> GetEntry(const EntryLookupInfo &lookup_info,
 	                                    OnEntryNotFound on_entry_not_found = OnEntryNotFound::THROW_EXCEPTION);
 	template <class T>
-	T &GetEntry(const QualifiedName &name, EntryUse use = EntryUse::REFERENCE) {
+	T &GetEntry(const QualifiedName &name, AclMode use = AclMode::NoRights) {
 		auto entry = GetEntry(EntryLookupInfo(T::Type, name), OnEntryNotFound::THROW_EXCEPTION);
 		if (entry->type != T::Type) {
 			throw CatalogException("%s is not an %s", name.Name().GetIdentifierName(), T::Name);
@@ -67,7 +67,7 @@ public:
 	optional_ptr<SchemaCatalogEntry> GetSchema(const EntryLookupInfo &schema_lookup,
 	                                           OnEntryNotFound on_entry_not_found = OnEntryNotFound::THROW_EXCEPTION);
 	optional_ptr<SchemaCatalogEntry> GetSchema(const Identifier &catalog, const vector<Identifier> &schema_path,
-	                                           EntryUse use, OnEntryNotFound on_entry_not_found);
+	                                           AclMode use, OnEntryNotFound on_entry_not_found);
 
 	//! Deprecated: the catalog/schema qualification is now carried inside the EntryLookupInfo / QualifiedName - fold it
 	//! in there instead of passing it separately.
@@ -114,9 +114,9 @@ private:
 	optional_ptr<CatalogEntry> ReturnAndCallback(optional_ptr<CatalogEntry> result);
 	optional_ptr<CatalogEntry> GetBoundEntry(const EntryLookupInfo &lookup_info);
 	void RecordBinding(const EntryLookupInfo &lookup_info, CatalogEntry &entry);
-	void CheckUse(CatalogEntry &entry, EntryUse use) {
-		if (use != EntryUse::REFERENCE) {
-			RequireUse(context, CheckAs(), entry, use);
+	void CheckUse(CatalogEntry &entry, AclMode use) {
+		if (use != AclMode::NoRights) {
+			Require(context, CheckAs(), entry, use);
 		}
 	}
 

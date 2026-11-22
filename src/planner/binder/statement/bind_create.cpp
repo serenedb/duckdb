@@ -345,7 +345,7 @@ void Binder::BindCreateSchema(CreateSchemaInfo &info) {
 	}
 }
 
-SchemaCatalogEntry &Binder::BindSchema(CreateInfo &info, EntryUse use) {
+SchemaCatalogEntry &Binder::BindSchema(CreateInfo &info, AclMode use) {
 	// resolve the target into [catalog, schema_path..., name] and fetch the (possibly nested) schema it lives in
 	SearchSchema(info);
 	auto &path = info.GetQualifiedName().Path();
@@ -386,13 +386,13 @@ static void RequireReplacedOwner(ClientContext &context, const RoleAccess &role,
 		return;
 	}
 	if (auto existing = schema.GetEntry(schema.catalog.GetCatalogTransaction(context), info.type, name)) {
-		RequireOwner(context, role, *existing);
+		Require(context, role, *existing, AclMode::Own);
 	}
 }
 
 SchemaCatalogEntry &Binder::BindCreateSchema(CreateInfo &info) {
 	const bool trigger = info.type == CatalogType::TRIGGER_ENTRY;
-	auto &schema = BindSchema(info, trigger ? EntryUse::REFERENCE : EntryUse::CREATE);
+	auto &schema = BindSchema(info, trigger ? AclMode::NoRights : AclMode::Create);
 	if (schema.catalog.IsSystemCatalog()) {
 		throw BinderException("Cannot create entry in system catalog");
 	}
@@ -572,8 +572,8 @@ idx_t Binder::MergeMacroOverloads(CreateInfo &info) {
 		} else if (!replace) {
 			throw CatalogException("function \"%s\" already exists with same argument types",
 			                       macro_info.GetFunctionName().GetIdentifierName());
-		} else if (!CheckAs().is_superuser) {
-			RequireOwner(CheckAs(), *existing, existing_macro.OverloadPermissions(*overload).owner);
+		} else if (!Allowed(CheckAs(), *existing, AclMode::Own, overload.get())) {
+			throw PermissionException("must be owner of function %s", existing->name.GetIdentifierName());
 		}
 	}
 	info.on_conflict = OnCreateConflict::ALTER_ON_CONFLICT;
@@ -1061,7 +1061,7 @@ SchemaCatalogEntry &Binder::BindCreateTriggerInfo(CreateTriggerInfo &create_trig
 		throw BinderException("CREATE TRIGGER requires a base table");
 	}
 	auto &table = *table_ptr;
-	RequireEntryPrivilege(CheckAs(), table, AclMode::Trigger);
+	Require(context, CheckAs(), table, AclMode::Trigger);
 	// Dropping the trigger's own table must not require CASCADE. If the trigger body also references this table,
 	// the body-reference dependency below merges in ALTER-blocking flags.
 	create_trigger_info.dependencies.AddDependency(table, DependencyDependentFlags());
@@ -1365,9 +1365,9 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 		}
 		if (table_ptr) {
 			auto &table = *table_ptr;
-			RequireOwner(context, CheckAs(), table);
+			Require(context, CheckAs(), table, AclMode::Own);
 			auto &schema = table.ParentSchema(context);
-			RequireUse(context, CheckAs(), schema, EntryUse::CREATE);
+			Require(context, CheckAs(), schema, AclMode::Create);
 			RequireReplacedOwner(context, CheckAs(), schema, create_index_info, create_index_info.GetIndexName());
 			if (table.temporary) {
 				stmt.info->temporary = true;
@@ -1379,9 +1379,9 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 			    CatalogType::VIEW_ENTRY,
 			    BindTableName(create_index_info.GetQualifiedName().WithName(create_index_info.table)));
 			auto &view = EntryRetriever().GetEntry(view_lookup)->Cast<ViewCatalogEntry>();
-			RequireOwner(context, CheckAs(), view);
+			Require(context, CheckAs(), view, AclMode::Own);
 			auto &schema = view.ParentSchema(context);
-			RequireUse(context, CheckAs(), schema, EntryUse::CREATE);
+			Require(context, CheckAs(), schema, AclMode::Create);
 			RequireReplacedOwner(context, CheckAs(), schema, create_index_info, create_index_info.GetIndexName());
 			properties.RegisterDBModify(view.catalog, context, DatabaseModificationType::CREATE_INDEX);
 			result.plan = view.catalog.BindCreateViewIndex(*this, stmt, view, std::move(plan));

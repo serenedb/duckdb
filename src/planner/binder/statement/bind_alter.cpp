@@ -210,7 +210,7 @@ static optional_ptr<CatalogEntry> BindSetSchemaEntry(SetSchemaInfo &info, const 
 	return lookup(declared, info.if_not_found);
 }
 
-BoundRoutine Binder::BindRoutine(const RoutineReference &routine, EntryUse use, OnEntryNotFound if_not_found) {
+BoundRoutine Binder::BindRoutine(const RoutineReference &routine, AclMode use, OnEntryNotFound if_not_found) {
 	for (auto &type : routine.func_parameters) {
 		BindLogicalType(type);
 	}
@@ -272,11 +272,11 @@ BoundRoutine Binder::BindRoutine(const RoutineReference &routine, EntryUse use, 
 		                                                                             : routine.func_parameters),
 		                       procedure ? "function" : "procedure"));
 	}
-	RequireUse(context, CheckAs(), *result.entry, use, result.overload);
+	Require(context, CheckAs(), *result.entry, use, result.overload.get());
 	return result;
 }
 
-CatalogEntry &Binder::ResolveDatabaseEntry(CatalogType type, AlterInfo &info, EntryUse use) {
+CatalogEntry &Binder::ResolveDatabaseEntry(CatalogType type, AlterInfo &info, AclMode use) {
 	auto &catalog = type == CatalogType::SUBSCRIPTION_ENTRY
 	                    ? SubscriptionCatalog(Identifier())
 	                    : Catalog::GetCatalog(context, DatabaseManager::GetDefaultDatabase(context));
@@ -324,8 +324,8 @@ unique_ptr<LogicalOperator> Binder::BindAlter(unique_ptr<AlterInfo> &info) {
 		auto &catalog = Catalog::GetCatalog(context, schema_info.SchemaCatalog());
 		properties.RegisterDBModify(catalog, context, DatabaseModificationType::ALTER_TABLE);
 		entry_retriever.GetSchema(schema_info.SchemaCatalog(), schema_info.SchemaPath(),
-		                          schema_info.alter_schema_type == AlterSchemaType::RENAME_SCHEMA ? EntryUse::RENAME
-		                                                                                          : EntryUse::OWN,
+		                          schema_info.alter_schema_type == AlterSchemaType::RENAME_SCHEMA ? AclMode::Rename
+		                                                                                          : AclMode::Own,
 		                          OnEntryNotFound::RETURN_NULL);
 		return nullptr;
 	}
@@ -338,7 +338,7 @@ unique_ptr<LogicalOperator> Binder::BindAlter(unique_ptr<AlterInfo> &info) {
 			                              type == CatalogType::DATABASE_ENTRY ? "database" : "role");
 		}
 		auto &name = info->GetQualifiedName().Name();
-		if (!ClusterEntry(context, CheckAs(), type, name, EntryUse::OWN,
+		if (!ClusterEntry(context, CheckAs(), type, name, AclMode::Own,
 		                  type == CatalogType::DATABASE_ENTRY ? OnEntryNotFound::RETURN_NULL
 		                                                      : OnEntryNotFound::THROW_EXCEPTION)) {
 			context.WarnUser(StringUtil::Format("database \"%s\" does not exist", name.GetIdentifierName()));
@@ -349,7 +349,7 @@ unique_ptr<LogicalOperator> Binder::BindAlter(unique_ptr<AlterInfo> &info) {
 	}
 
 	if (info->type == AlterType::ALTER_SUBSCRIPTION) {
-		auto &subscription = ResolveDatabaseEntry(CatalogType::SUBSCRIPTION_ENTRY, *info, EntryUse::OWN);
+		auto &subscription = ResolveDatabaseEntry(CatalogType::SUBSCRIPTION_ENTRY, *info, AclMode::Own);
 		properties.RegisterDBModify(subscription.ParentCatalog(), context, DatabaseModificationType::ALTER_TABLE);
 		return nullptr;
 	}
@@ -365,7 +365,7 @@ unique_ptr<LogicalOperator> Binder::BindAlter(unique_ptr<AlterInfo> &info) {
 
 	if (info->type == AlterType::ALTER_TABLESPACE) {
 		ClusterEntry(context, CheckAs(), CatalogType::TABLESPACE_ENTRY, info->GetQualifiedName().Name(),
-		             EntryUse::RENAME, OnEntryNotFound::RETURN_NULL);
+		             AclMode::Rename, OnEntryNotFound::RETURN_NULL);
 		return nullptr;
 	}
 	if (info->type == AlterType::ALTER_ROLE) {
@@ -390,7 +390,7 @@ unique_ptr<LogicalOperator> Binder::BindAlter(unique_ptr<AlterInfo> &info) {
 		auto &attributes = info->Cast<AlterFunctionAttributesInfo>();
 		auto bound = BindRoutine({attributes.GetQualifiedName(), attributes.func_parameters, attributes.has_func_args,
 		                          attributes.include_functions, attributes.include_procedures},
-		                         EntryUse::OWN, OnEntryNotFound::THROW_EXCEPTION);
+		                         AclMode::Own, OnEntryNotFound::THROW_EXCEPTION);
 		auto &function = *bound.entry;
 		if (function.internal) {
 			ThrowPermissionDenied(function);
@@ -431,7 +431,7 @@ unique_ptr<LogicalOperator> Binder::BindAlter(unique_ptr<AlterInfo> &info) {
 		const bool unqualified = rename.GetQualifiedName().Schema().empty();
 		auto bound = BindRoutine({rename.GetQualifiedName(), rename.func_parameters, rename.has_func_args,
 		                          rename.include_functions, rename.include_procedures},
-		                         EntryUse::RENAME, rename.if_not_found);
+		                         AclMode::Rename, rename.if_not_found);
 		if (bound.entry && unqualified) {
 			rename.SetQualifiedName(bound.entry->Cast<StandardEntry>().GetQualifiedName(bound.entry->name));
 		}
@@ -444,9 +444,9 @@ unique_ptr<LogicalOperator> Binder::BindAlter(unique_ptr<AlterInfo> &info) {
 	}
 
 	optional_ptr<CatalogEntry> entry;
-	auto use = EntryUse::OWN;
+	auto use = AclMode::Own;
 	if (info->type != AlterType::SET_COLUMN_COMMENT && info->GetNewName()) {
-		use = EntryUse::RENAME;
+		use = AclMode::Rename;
 	}
 	auto lookup = [&](CatalogType type, OnEntryNotFound if_not_found) {
 		return entry_retriever.GetEntry(EntryLookupInfo(type, info->GetQualifiedName(), use), if_not_found);
@@ -456,7 +456,7 @@ unique_ptr<LogicalOperator> Binder::BindAlter(unique_ptr<AlterInfo> &info) {
 		auto &column_comment = info->Cast<SetColumnCommentInfo>();
 		entry = column_comment.TryResolveCatalogEntry(entry_retriever);
 		if (entry) {
-			RequireUse(context, CheckAs(), *entry, EntryUse::OWN);
+			Require(context, CheckAs(), *entry, AclMode::Own);
 		}
 		if (entry && column_comment.catalog_entry_type == CatalogType::VIEW_ENTRY) {
 			// when running SET COLUMN on a VIEW - ensure the view is bound
@@ -495,7 +495,7 @@ unique_ptr<LogicalOperator> Binder::BindAlter(unique_ptr<AlterInfo> &info) {
 		auto bound =
 		    BindRoutine({set_schema.GetQualifiedName(), set_schema.func_parameters, set_schema.has_func_args,
 		                 set_schema.include_functions, set_schema.include_procedures, set_schema.entry_catalog_type},
-		                EntryUse::OWN, set_schema.if_not_found);
+		                AclMode::Own, set_schema.if_not_found);
 		entry = bound.entry;
 		if (bound.overload) {
 			set_schema.overload_oid = entry->Cast<MacroCatalogEntry>().OverloadOid(*bound.overload);
@@ -508,7 +508,7 @@ unique_ptr<LogicalOperator> Binder::BindAlter(unique_ptr<AlterInfo> &info) {
 		auto &comment = info->Cast<SetCommentInfo>();
 		auto bound = BindRoutine({comment.GetQualifiedName(), comment.func_parameters, comment.has_func_args,
 		                          comment.include_functions, comment.include_procedures, comment.entry_catalog_type},
-		                         EntryUse::OWN, comment.if_not_found);
+		                         AclMode::Own, comment.if_not_found);
 		entry = bound.entry;
 		if (bound.overload) {
 			comment.overload_oid = entry->Cast<MacroCatalogEntry>().OverloadOid(*bound.overload);
@@ -532,7 +532,7 @@ unique_ptr<LogicalOperator> Binder::BindAlter(unique_ptr<AlterInfo> &info) {
 	if (auto new_schema = info->GetNewSchema()) {
 		EntryLookupInfo schema_lookup(CatalogType::SCHEMA_ENTRY,
 		                              QualifiedName(entry->ParentCatalog().GetName(), Identifier(), *new_schema),
-		                              EntryUse::CREATE);
+		                              AclMode::Create);
 		if (auto target = entry_retriever.GetSchema(schema_lookup, OnEntryNotFound::RETURN_NULL)) {
 			RequireUserSchema(*target, entry->name);
 		}

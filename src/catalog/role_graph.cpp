@@ -197,14 +197,22 @@ SecuritySnapshot::SecuritySnapshot(unordered_map<idx_t, Node> nodes_p, unordered
 		for (auto member : closure) {
 			capabilities |= nodes.find(member)->second.capabilities;
 		}
-		roles_p.push_back(
-		    Role {oid, node.options, capabilities, std::move(closure), Reachable(nodes, oid, &Membership::set_option)});
+		vector<idx_t> administered;
+		for (auto member : Reachable(nodes, oid, nullptr)) {
+			for (auto &edge : nodes.find(member)->second.member_of) {
+				if (edge.admin_option) {
+					administered.push_back(edge.role);
+				}
+			}
+		}
+		roles_p.push_back(Role {oid, node.options, capabilities, std::move(closure),
+		                        Reachable(nodes, oid, &Membership::set_option), std::move(administered)});
 	}
 	std::sort(roles_p.begin(), roles_p.end(), [](const Role &lhs, const Role &rhs) { return lhs.role < rhs.role; });
 	idx_t total = 0;
 	for (auto &role : roles_p) {
 		role.closure.erase(std::remove(role.closure.begin(), role.closure.end(), role.role), role.closure.end());
-		for (auto list : {&role.closure, &role.settable}) {
+		for (auto list : {&role.closure, &role.settable, &role.administered}) {
 			std::sort(list->begin(), list->end());
 			list->erase(std::unique(list->begin(), list->end()), list->end());
 			total += list->size();
@@ -241,9 +249,12 @@ SecuritySnapshot::SecuritySnapshot(unordered_map<idx_t, Node> nodes_p, unordered
 		const auto settable_begin = arena.size();
 		arena.insert(arena.end(), role.settable.begin(), role.settable.end());
 		access.settable = std::span<const idx_t>(arena.data() + settable_begin, role.settable.size());
+		const auto administered_begin = arena.size();
+		arena.insert(arena.end(), role.administered.begin(), role.administered.end());
+		access.administered = std::span<const idx_t>(arena.data() + administered_begin, role.administered.size());
 		auto fingerprint = CombineHash(Hash(uint64_t(role.role)), Hash(uint64_t(role.options)));
 		fingerprint = CombineHash(fingerprint, Hash(uint64_t(role.capabilities)));
-		for (auto list : {&role.closure, &role.settable}) {
+		for (auto list : {&role.closure, &role.settable, &role.administered}) {
 			fingerprint = CombineHash(fingerprint, Hash(uint64_t(list->size())));
 			for (auto member : *list) {
 				fingerprint = CombineHash(fingerprint, Hash(uint64_t(member)));

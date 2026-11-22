@@ -63,24 +63,24 @@ static CatalogEntry &ResolvePermissionsTarget(Binder &binder, AlterPermissionsIn
 	auto &context = binder.context;
 	auto &name = info.GetQualifiedName();
 	if (info.entry_catalog_type == CatalogType::SCHEMA_ENTRY) {
-		auto &schema = *binder.EntryRetriever().GetSchema(name.Catalog(), {name.Name()}, EntryUse::REFERENCE,
+		auto &schema = *binder.EntryRetriever().GetSchema(name.Catalog(), {name.Name()}, AclMode::NoRights,
 		                                                  OnEntryNotFound::THROW_EXCEPTION);
 		info.SetQualifiedName(schema.ParentCatalog().GetName(), Identifier(), schema.name);
 		return schema;
 	}
 	const auto container = ObjectKindOf(info.entry_catalog_type).container;
 	if (container == ObjectContainer::DATABASE) {
-		return binder.ResolveDatabaseEntry(info.entry_catalog_type, info, EntryUse::REFERENCE);
+		return binder.ResolveDatabaseEntry(info.entry_catalog_type, info, AclMode::NoRights);
 	}
 	if (container == ObjectContainer::CLUSTER) {
-		return *ClusterEntry(context, RoleAccess::System(), info.entry_catalog_type, name.Name(), EntryUse::REFERENCE,
+		return *ClusterEntry(context, RoleAccess::System(), info.entry_catalog_type, name.Name(), AclMode::NoRights,
 		                     OnEntryNotFound::THROW_EXCEPTION);
 	}
 	optional_ptr<CatalogEntry> entry;
 	if (info.entry_catalog_type == CatalogType::MACRO_ENTRY) {
 		auto routine = binder.BindRoutine(
 		    {name, info.func_parameters, info.has_func_args, info.include_functions, info.include_procedures},
-		    EntryUse::REFERENCE, OnEntryNotFound::THROW_EXCEPTION);
+		    AclMode::NoRights, OnEntryNotFound::THROW_EXCEPTION);
 		entry = routine.entry;
 		if (routine.overload && !IsUnowned(*entry)) {
 			info.overload_oid = entry->Cast<MacroCatalogEntry>().OverloadOid(*routine.overload);
@@ -235,7 +235,7 @@ static void ResolveOwner(Binder &binder, AlterPermissionsInfo &info) {
 	const bool enforce = !role.is_superuser;
 	const bool relation = Catalog::InRelationNamespace(entry.type);
 	if (enforce && relation) {
-		RequireOwner(context, role, entry);
+		Require(context, role, entry, AclMode::Own);
 	}
 	if (info.new_owner_id == permissions.owner) {
 		return;
@@ -246,10 +246,11 @@ static void ResolveOwner(Binder &binder, AlterPermissionsInfo &info) {
 	if (!enforce) {
 		return;
 	}
-	if (entry.type == CatalogType::SUBSCRIPTION_ENTRY) {
-		RequireUse(context, role, entry, EntryUse::OWN);
-	} else if (!relation) {
-		RequireOwner(role, entry, permissions.owner);
+	if (!relation && !info.overload_oid) {
+		Require(context, role, entry, AclMode::Own);
+	} else if (!relation && !Allowed(role, entry, AclMode::Own,
+	                                 entry.Cast<MacroCatalogEntry>().FindOverload(info.overload_oid).get())) {
+		throw PermissionException("must be owner of function %s", entry.name.GetIdentifierName());
 	}
 	if (!role.CanSet(info.new_owner_id)) {
 		throw PermissionException("must be able to SET ROLE \"%s\"", RoleName(context, info.new_owner_id));
@@ -265,7 +266,7 @@ static void ResolveOwner(Binder &binder, AlterPermissionsInfo &info) {
 		RequireDatabasePrivilege(context, role, entry.ParentCatalog().GetName(), AclMode::Create);
 	} else if (entry.type != CatalogType::TABLESPACE_ENTRY) {
 		auto &schema = entry.ParentSchema(context);
-		if (!context.AccessOf(info.new_owner_id).Can(CatalogType::SCHEMA_ENTRY, schema.permissions, AclMode::Create)) {
+		if (!Allowed(context.AccessOf(info.new_owner_id), schema, AclMode::Create)) {
 			ThrowPermissionDenied(schema);
 		}
 	}
@@ -282,7 +283,7 @@ static void ResolveDefaultPrivileges(Binder &binder, AlterPermissionsInfo &info)
 	const auto database = DatabaseManager::GetDefaultDatabase(context);
 	if (!info.default_schema.empty()) {
 		info.default_scope = binder.EntryRetriever()
-		                         .GetSchema(database, {Identifier(info.default_schema)}, EntryUse::REFERENCE,
+		                         .GetSchema(database, {Identifier(info.default_schema)}, AclMode::NoRights,
 		                                    OnEntryNotFound::THROW_EXCEPTION)
 		                         ->oid;
 	}

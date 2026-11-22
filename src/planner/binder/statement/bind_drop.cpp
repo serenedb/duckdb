@@ -26,7 +26,7 @@ void Binder::BindDropTrigger(DropInfo &info, StatementProperties &properties) {
 	// resolve the (possibly nested) catalog/schema qualification of the base table
 	base_table_ref.SetQualifiedName(BindTableName(base_table_ref.GetQualifiedName()));
 	// IF EXISTS only guards the trigger, not the table (PostgreSQL-compatible behavior).
-	auto &table_entry = entry_retriever.GetEntry<TableCatalogEntry>(base_table_ref.GetQualifiedName(), EntryUse::OWN);
+	auto &table_entry = entry_retriever.GetEntry<TableCatalogEntry>(base_table_ref.GetQualifiedName(), AclMode::Own);
 	// the trigger lives in the same (possibly nested) schema as its base table
 	info.SetQualifiedName(table_entry.GetQualifiedName(info.GetQualifiedName().Name()));
 	properties.RegisterDBModify(table_entry.ParentCatalog(), context, DatabaseModificationType::DROP_CATALOG_ENTRY);
@@ -48,7 +48,7 @@ void Binder::BindDrop(DropInfo &info, StatementProperties &properties) {
 		auto &path = info.GetQualifiedName().Path();
 		auto &catalog = Catalog::GetCatalog(context, path.front());
 		properties.RegisterDBModify(catalog, context, DatabaseModificationType::DROP_CATALOG_ENTRY);
-		entry_retriever.GetSchema(path.front(), vector<Identifier>(path.begin() + 1, path.end()), EntryUse::DROP,
+		entry_retriever.GetSchema(path.front(), vector<Identifier>(path.begin() + 1, path.end()), AclMode::Drop,
 		                          OnEntryNotFound::RETURN_NULL);
 		break;
 	}
@@ -75,14 +75,14 @@ void Binder::BindDrop(DropInfo &info, StatementProperties &properties) {
 			// We also support "DROP MACRO" (instead of "DROP MACRO TABLE") for table macros
 			entry = BindRoutine({info.GetQualifiedName(), info.func_parameters, info.has_func_args, !info.is_procedure,
 			                     info.is_procedure, info.type, info.is_macro && !info.has_func_args},
-			                    EntryUse::DROP, info.if_not_found)
+			                    AclMode::Drop, info.if_not_found)
 			            .entry;
 			if (entry && entry->type == CatalogType::TABLE_MACRO_ENTRY) {
 				// Change type to table macro so future lookups get the correct one
 				info.type = CatalogType::TABLE_MACRO_ENTRY;
 			}
 		} else {
-			EntryLookupInfo entry_lookup(info.type, info.GetQualifiedName(), EntryUse::DROP);
+			EntryLookupInfo entry_lookup(info.type, info.GetQualifiedName(), AclMode::Drop);
 			auto if_not_found = info.if_not_found;
 			if (catalog && catalog->Compatibility() == SqlCompatibility::POSTGRES &&
 			    Catalog::InRelationNamespace(info.type)) {
@@ -120,11 +120,11 @@ void Binder::BindDrop(DropInfo &info, StatementProperties &properties) {
 		BindDropRole(info);
 		break;
 	case CatalogType::TABLESPACE_ENTRY:
-		ClusterEntry(context, CheckAs(), CatalogType::TABLESPACE_ENTRY, info.GetQualifiedName().Name(), EntryUse::DROP,
+		ClusterEntry(context, CheckAs(), CatalogType::TABLESPACE_ENTRY, info.GetQualifiedName().Name(), AclMode::Drop,
 		             OnEntryNotFound::RETURN_NULL);
 		break;
 	case CatalogType::DATABASE_ENTRY:
-		ClusterEntry(context, CheckAs(), CatalogType::DATABASE_ENTRY, info.GetQualifiedName().Name(), EntryUse::DROP,
+		ClusterEntry(context, CheckAs(), CatalogType::DATABASE_ENTRY, info.GetQualifiedName().Name(), AclMode::Drop,
 		             OnEntryNotFound::RETURN_NULL);
 		info.SetQualifiedName(ClusterName(context, info.GetQualifiedName()));
 		break;
@@ -134,7 +134,7 @@ void Binder::BindDrop(DropInfo &info, StatementProperties &properties) {
 		auto &server_catalog = Catalog::GetCatalog(context, catalog);
 		properties.RegisterDBModify(server_catalog, context, DatabaseModificationType::DROP_CATALOG_ENTRY);
 		TopLevelEntry(context, CheckAs(), server_catalog, CatalogType::FOREIGN_SERVER_ENTRY,
-		              info.GetQualifiedName().Name(), EntryUse::DROP, OnEntryNotFound::RETURN_NULL);
+		              info.GetQualifiedName().Name(), AclMode::Drop, OnEntryNotFound::RETURN_NULL);
 		break;
 	}
 	case CatalogType::SUBSCRIPTION_ENTRY: {
@@ -142,7 +142,7 @@ void Binder::BindDrop(DropInfo &info, StatementProperties &properties) {
 		auto name = info.GetQualifiedName().Name();
 		info.SetQualifiedName(QualifiedName(subscription_catalog.GetName(), Identifier(), name));
 		properties.RegisterDBModify(subscription_catalog, context, DatabaseModificationType::DROP_CATALOG_ENTRY);
-		TopLevelEntry(context, CheckAs(), subscription_catalog, CatalogType::SUBSCRIPTION_ENTRY, name, EntryUse::DROP,
+		TopLevelEntry(context, CheckAs(), subscription_catalog, CatalogType::SUBSCRIPTION_ENTRY, name, AclMode::Drop,
 		              info.if_not_found);
 		break;
 	}

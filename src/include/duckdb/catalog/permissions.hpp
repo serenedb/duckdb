@@ -10,7 +10,6 @@
 
 #include "duckdb/catalog/acl.hpp"
 #include "duckdb/catalog/role_graph.hpp"
-#include "duckdb/common/enums/entry_use.hpp"
 #include "duckdb/common/enums/on_entry_not_found.hpp"
 #include "duckdb/common/types.hpp"
 #include "duckdb/parser/qualified_name.hpp"
@@ -71,16 +70,12 @@ DUCKDB_API string ValidUntilToSQL(int64_t valid_until);
                                                    optional_ptr<const MacroFunction> overload = nullptr);
 [[noreturn]] DUCKDB_API void ThrowPermissionDenied(const CatalogEntry &entry,
                                                    optional_ptr<const MacroFunction> overload = nullptr);
-DUCKDB_API void RequireEntryPrivilege(const RoleAccess &role, const CatalogEntry &entry, AclMode any);
+DUCKDB_API bool Allowed(const RoleAccess &role, const CatalogEntry &entry, AclMode use,
+                        optional_ptr<const MacroFunction> overload = nullptr);
+DUCKDB_API void Require(ClientContext &context, const RoleAccess &role, CatalogEntry &entry, AclMode use,
+                        optional_ptr<const MacroFunction> overload = nullptr);
 DUCKDB_API void Require(const RelationNeed &need);
 DUCKDB_API void RequireSuperuser(const RoleAccess &role);
-DUCKDB_API bool IsAdminOf(ClientContext &context, const RoleAccess &role, idx_t target);
-DUCKDB_API void RequireOwner(const RoleAccess &role, const CatalogEntry &entry, idx_t owner,
-                             optional_ptr<const MacroFunction> overload = nullptr);
-DUCKDB_API void RequireOwner(ClientContext &context, const RoleAccess &role, CatalogEntry &entry,
-                             optional_ptr<MacroFunction> overload = nullptr);
-DUCKDB_API void RequireUse(ClientContext &context, const RoleAccess &role, CatalogEntry &entry, EntryUse use,
-                           optional_ptr<MacroFunction> overload = nullptr);
 DUCKDB_API void RequireDatabasePrivilege(ClientContext &context, const RoleAccess &role, const Identifier &database,
                                          AclMode need);
 DUCKDB_API void RequireForeignDataWrapperUsage(ClientContext &context, const RoleAccess &role, Catalog &catalog,
@@ -93,10 +88,10 @@ DUCKDB_API void AssignOwner(ClientContext &context, Permissions &permissions, Ca
                             optional_ptr<SchemaCatalogEntry> schema, idx_t owner);
 DUCKDB_API optional_ptr<CatalogEntry> ClusterEntry(ClientContext &context, CatalogType type, const Identifier &name);
 DUCKDB_API optional_ptr<CatalogEntry> TopLevelEntry(ClientContext &context, const RoleAccess &role, Catalog &catalog,
-                                                    CatalogType type, const Identifier &name, EntryUse use,
+                                                    CatalogType type, const Identifier &name, AclMode use,
                                                     OnEntryNotFound if_not_found);
 DUCKDB_API optional_ptr<CatalogEntry> ClusterEntry(ClientContext &context, const RoleAccess &role, CatalogType type,
-                                                   const Identifier &name, EntryUse use, OnEntryNotFound if_not_found);
+                                                   const Identifier &name, AclMode use, OnEntryNotFound if_not_found);
 DUCKDB_API CatalogEntry &ClusterDatabase(ClientContext &context, const Identifier &name);
 DUCKDB_API QualifiedName ClusterName(ClientContext &context, const QualifiedName &name);
 DUCKDB_API idx_t RoleId(ClientContext &context, const Identifier &name);

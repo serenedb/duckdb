@@ -29,6 +29,13 @@ enum class AclMode : uint64_t {
 	Set = 0x1000,
 	AlterSystem = 0x2000,
 	Maintain = 0x4000,
+	See = 0x100000000,
+	Own = 0x200000000,
+	Drop = 0x400000000,
+	Rename = 0x800000000,
+	Admin = 0x1000000000,
+	SetRole = 0x2000000000,
+	GrantOption = 0x10000000000,
 };
 
 constexpr AclMode operator|(AclMode a, AclMode b) {
@@ -74,6 +81,7 @@ inline constexpr AclPrivilege ACL_PRIVILEGES[] = {
 };
 
 inline constexpr AclMode ACL_COLUMN_PRIVILEGES = AclMode::Insert | AclMode::Select | AclMode::Update | AclMode::References;
+inline constexpr AclMode ACL_GRANTABLE = AclMode::Insert | AclMode::Select | AclMode::Update | AclMode::Delete | AclMode::Truncate | AclMode::References | AclMode::Trigger | AclMode::Execute | AclMode::Usage | AclMode::Create | AclMode::CreateTemp | AclMode::Connect | AclMode::Set | AclMode::AlterSystem | AclMode::Maintain;
 
 enum class ObjectContainer : uint8_t { NONE, CLUSTER, DATABASE, SCHEMA, RELATION, REGISTRY };
 
