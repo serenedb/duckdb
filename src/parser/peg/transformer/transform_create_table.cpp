@@ -529,7 +529,7 @@ static uint8_t TransformCompressionLevel(optional<vector<unique_ptr<ParsedExpres
 		if (compression_level != 0) {
 			throw ParserException("Compression option compression_level is specified more than once");
 		}
-		if (!value.type().IsIntegral() || value.IsNull()) {
+		if (!value.type().IsIntegral()) {
 			throw ParserException("compression_level must be an integer, got '%s'", value.ToString());
 		}
 		auto level = value.GetValue<int64_t>();
