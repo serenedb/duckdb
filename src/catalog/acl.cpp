@@ -137,9 +137,10 @@ static vector<AclItem> &ColumnRow(vector<ColumnAcl> &columns, const Identifier &
 	return columns.back().acl;
 }
 
-static void ApplyGrant(const AlterPermissionsInfo &info, idx_t owner, vector<AclItem> &acl, CatalogType acl_class,
+static void ApplyGrant(const AlterPermissionsInfo &info, Permissions &permissions, CatalogType acl_class,
                        optional_ptr<vector<ColumnAcl>> columns) {
-	auto stored = acl.empty() ? Permissions::AclDefault(acl_class, owner) : acl;
+	const auto owner = permissions.owner;
+	auto stored = permissions.UsesDefaultAcl() ? Permissions::AclDefault(acl_class, owner) : permissions.acl;
 	idx_t grantor = owner;
 	bool is_owner = true;
 	AclMode grantable = ObjectKindOf(acl_class).privileges;
@@ -164,10 +165,8 @@ static void ApplyGrant(const AlterPermissionsInfo &info, idx_t owner, vector<Acl
 
 	if (info.privileges != AclMode::NoRights) {
 		Apply(stored, grantor, grantable, info.privileges, info);
-		acl = std::move(stored);
-		if (acl.empty() && !Permissions::AclDefault(acl_class, owner).empty()) {
-			acl.push_back(AclItem {owner, owner, AclMode::NoRights, AclMode::NoRights});
-		}
+		permissions.acl = std::move(stored);
+		permissions.acl_emptied = permissions.acl.empty();
 		if (info.revoke && columns && (info.privileges & ACL_COLUMN_PRIVILEGES) != AclMode::NoRights) {
 			for (auto &column : *columns) {
 				Revoke(column.acl, info.grantee_id, grantor, info.privileges & ACL_COLUMN_PRIVILEGES, info.option_only,
@@ -252,7 +251,7 @@ void AlterPermissionsInfo::ApplyTo(Permissions &permissions, CatalogType entry_t
 		return;
 	}
 
-	ApplyGrant(info, owner, acl, ObjectKindOf(entry_type).acl_class, columns);
+	ApplyGrant(info, permissions, ObjectKindOf(entry_type).acl_class, columns);
 }
 
 void AlterPermissionsInfo::ApplyTo(Permissions &permissions, CatalogType entry_type, ColumnList &columns) const {
@@ -292,11 +291,15 @@ void Permissions::AssignOwner(idx_t new_owner, CatalogType objtype, optional_ptr
 	if (!global && !in_schema) {
 		return;
 	}
-	auto granted = global ? global->acl : AclDefault(objtype, new_owner);
+	const auto builtin = AclDefault(objtype, new_owner);
+	auto granted = global ? global->acl : builtin;
 	if (in_schema) {
 		for (auto &item : in_schema->acl) {
 			Grant(granted, item.grantee, item.grantor, item.privs, item.grant_option);
 		}
+	}
+	if (std::is_permutation(granted.begin(), granted.end(), builtin.begin(), builtin.end())) {
+		granted.clear();
 	}
 	acl = std::move(granted);
 }

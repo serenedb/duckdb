@@ -774,6 +774,12 @@
         "id": 102,
         "name": "defaults",
         "type": "vector<DefaultAcl>"
+      },
+      {
+        "id": 103,
+        "name": "acl_emptied",
+        "type": "bool",
+        "default": "false"
       }
     ],
     "pointer_type": "none"

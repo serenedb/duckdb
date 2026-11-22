@@ -88,8 +88,8 @@ static AclMode CapabilityModes(const RoleAccess &access, CatalogType type) {
 	return modes;
 }
 
-static bool Allows(const RoleAccess &access, std::span<const AclItem> stored, CatalogType type, AclMode need,
-                   bool any) {
+static bool Allows(const RoleAccess &access, std::span<const AclItem> stored, bool uses_default, CatalogType type,
+                   AclMode need, bool any) {
 	if (need == AclMode::NoRights) {
 		return false;
 	}
@@ -97,7 +97,7 @@ static bool Allows(const RoleAccess &access, std::span<const AclItem> stored, Ca
 		return any ? (have & need) != AclMode::NoRights : (have & need) == need;
 	};
 	AclMode have = CapabilityModes(access, type);
-	if (stored.empty()) {
+	if (uses_default) {
 		return done(have | ObjectKindOf(type).public_privileges);
 	}
 	if (done(have)) {
@@ -115,15 +115,15 @@ static bool Allows(const RoleAccess &access, std::span<const AclItem> stored, Ca
 }
 
 bool RoleAccess::Can(CatalogType type, std::span<const AclItem> acl, AclMode need) const {
-	return Allows(*this, acl, type, need, false);
+	return Allows(*this, acl, acl.empty(), type, need, false);
 }
 
 bool RoleAccess::Can(CatalogType type, const Permissions &permissions, AclMode need) const {
-	return Owns(permissions.owner) || Can(type, permissions.acl, need);
+	return Owns(permissions.owner) || Allows(*this, permissions.acl, permissions.UsesDefaultAcl(), type, need, false);
 }
 
 bool RoleAccess::CanAny(CatalogType type, const Permissions &permissions, AclMode need) const {
-	return Owns(permissions.owner) || Allows(*this, permissions.acl, type, need, true);
+	return Owns(permissions.owner) || Allows(*this, permissions.acl, permissions.UsesDefaultAcl(), type, need, true);
 }
 
 bool RoleAccess::CanColumns(const StandardEntry &relation, AclMode need, std::span<const idx_t> columns) const {

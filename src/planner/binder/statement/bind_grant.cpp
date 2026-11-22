@@ -40,7 +40,7 @@ static void RequireGrantable(Binder &binder, CatalogEntry &entry, const Permissi
 	}
 	vector<AclItem> defaults;
 	std::span<const AclItem> stored = permissions.acl;
-	if (stored.empty()) {
+	if (permissions.UsesDefaultAcl()) {
 		defaults = Permissions::AclDefault(ObjectKindOf(entry.type).acl_class, permissions.owner);
 		stored = defaults;
 	}

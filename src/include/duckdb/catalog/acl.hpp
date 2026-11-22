@@ -78,8 +78,12 @@ struct Permissions {
 	idx_t owner = 0;
 	vector<AclItem> acl;
 	vector<DefaultAcl> defaults;
+	bool acl_emptied = false;
 
 	bool operator==(const Permissions &rhs) const = default;
+	bool UsesDefaultAcl() const {
+		return acl.empty() && !acl_emptied;
+	}
 
 	static bool TryParsePrivilege(std::string_view keyword, CatalogType acl_class, AclMode &result);
 	static vector<AclItem> AclDefault(CatalogType acl_class, idx_t owner);
