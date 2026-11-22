@@ -162,7 +162,7 @@ static void ResolveGrant(Binder &binder, AlterPermissionsInfo &info) {
 		RequireGrantableAcl(role, config.bootstrap_role,
 		                    database.permissions.RowAcl(CatalogType::FOREIGN_DATA_WRAPPER_ENTRY, wrapper.oid),
 		                    CatalogType::FOREIGN_DATA_WRAPPER_ENTRY, name);
-		info.database_rows = {GrantRow {CatalogType::FOREIGN_DATA_WRAPPER_ENTRY, wrapper.oid, string(), {}}};
+		info.database_rows = {GrantRow {CatalogType::FOREIGN_DATA_WRAPPER_ENTRY, wrapper.oid, {}}};
 		TargetDatabaseRow(info, config.bootstrap_role, database_name);
 		return;
 	}
@@ -177,18 +177,19 @@ static void ResolveGrant(Binder &binder, AlterPermissionsInfo &info) {
 			Catalog::AutoloadExtensionByConfigName(context, setting);
 		}
 		const auto &name = setting.GetIdentifierName();
-		const auto owner = DBConfig::GetConfig(context).bootstrap_role;
 		auto &system = Catalog::GetSystemCatalog(context);
-		auto holder = system.LookupOwner(system.GetCatalogTransaction(context), owner);
-		if (!holder) {
+		if (system.IsDuckCatalog()) {
 			throw NotImplementedException("parameter privileges are not supported by this catalog");
 		}
-		RequireGrantableAcl(role, owner, holder->permissions.RowAcl(CatalogType::PARAMETER_ENTRY, 0, name),
-		                    CatalogType::PARAMETER_ENTRY, name);
-		info.database_rows = {GrantRow {CatalogType::PARAMETER_ENTRY, 0, StringUtil::Lower(name), {}}};
+		const auto owner = DBConfig::GetConfig(context).bootstrap_role;
+		std::span<const AclItem> acl;
+		if (auto parameter = system.LookupTopLevelEntry(system.GetCatalogTransaction(context),
+		                                                CatalogType::PARAMETER_ENTRY, setting)) {
+			acl = parameter->permissions.acl;
+		}
+		RequireGrantableAcl(role, owner, acl, CatalogType::PARAMETER_ENTRY, name);
 		info.object_owner_id = owner;
-		info.entry_catalog_type = CatalogType::ROLE_ENTRY;
-		info.SetQualifiedName(Identifier(), Identifier(), holder->name);
+		info.SetQualifiedName(Identifier(), Identifier(), Identifier(StringUtil::Lower(name)));
 		return;
 	}
 	if (info.all_in_schema) {

@@ -119,7 +119,7 @@ constexpr ObjectKind MakeObjectKind(CatalogType type) {
 	case CatalogType::LANGUAGE_ENTRY:
 		return {CatalogType::LANGUAGE_ENTRY, ObjectContainer::REGISTRY, AclMode::Usage, AclMode::Usage, 2612, false};
 	case CatalogType::PARAMETER_ENTRY:
-		return {CatalogType::PARAMETER_ENTRY, ObjectContainer::REGISTRY, AclMode::Set | AclMode::AlterSystem, AclMode::NoRights, 0, false};
+		return {CatalogType::PARAMETER_ENTRY, ObjectContainer::CLUSTER, AclMode::Set | AclMode::AlterSystem, AclMode::NoRights, 0, false};
 	case CatalogType::JOB_ENTRY:
 		return {CatalogType::JOB_ENTRY, ObjectContainer::SCHEMA, AclMode::NoRights, AclMode::NoRights, 0, false};
 	case CatalogType::INVALID:

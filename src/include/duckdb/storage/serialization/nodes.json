@@ -814,11 +814,6 @@
         "type": "idx_t"
       },
       {
-        "id": 102,
-        "name": "name",
-        "type": "string"
-      },
-      {
         "id": 103,
         "name": "acl",
         "type": "vector<AclItem>"

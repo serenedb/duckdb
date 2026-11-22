@@ -136,7 +136,8 @@ Catalog &Catalog::GetCatalog(ClientContext &context, const Identifier &catalog_n
 Catalog &Catalog::GetDDLCatalog(ClientContext &context, CatalogType type, const Identifier &catalog_name) {
 	auto &system = GetSystemCatalog(context);
 	if (type == CatalogType::ROLE_ENTRY || type == CatalogType::DATABASE_ENTRY ||
-	    type == CatalogType::TABLESPACE_ENTRY || catalog_name == system.GetName()) {
+	    type == CatalogType::TABLESPACE_ENTRY || type == CatalogType::PARAMETER_ENTRY ||
+	    catalog_name == system.GetName()) {
 		return system;
 	}
 	return GetCatalog(context, catalog_name);

@@ -1,6 +1,7 @@
 #include "duckdb/main/settings.hpp"
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/catalog/catalog_search_path.hpp"
+#include "duckdb/catalog/permissions.hpp"
 #include "duckdb/common/sql_identifier.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/main/client_context.hpp"
@@ -142,14 +143,11 @@ optional<SettingAccess> Settings::GetAccess(ClientContext &context, const Identi
 }
 
 static AclMode HeldParameterPrivileges(ClientContext &context, const Identifier &name) {
-	auto &cluster = Catalog::GetSystemCatalog(context);
-	auto holder =
-	    cluster.LookupOwner(cluster.GetCatalogTransaction(context), DBConfig::GetConfig(context).bootstrap_role);
-	if (!holder) {
+	auto parameter = ClusterEntry(context, CatalogType::PARAMETER_ENTRY, name);
+	if (!parameter) {
 		return AclMode::NoRights;
 	}
-	return context.CurrentRole().HeldModes(
-	    holder->permissions.RowAcl(CatalogType::PARAMETER_ENTRY, 0, name.GetIdentifierName()));
+	return context.CurrentRole().HeldModes(parameter->permissions.acl);
 }
 
 bool Settings::MayChange(ClientContext &context, const Identifier &name, const SettingAccess &access, SetScope scope) {

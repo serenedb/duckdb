@@ -62,11 +62,8 @@ GrantRows &Permissions::MutableRows() {
 	return *rows;
 }
 
-bool GrantRow::Is(CatalogType kind_p, idx_t oid_p, std::string_view name_p) const {
-	if (kind != kind_p) {
-		return false;
-	}
-	return kind == CatalogType::PARAMETER_ENTRY ? StringUtil::CIEquals(name, name_p) : oid == oid_p;
+bool GrantRow::Is(CatalogType kind_p, idx_t oid_p) const {
+	return kind == kind_p && oid == oid_p;
 }
 
 template <class ROWS>
@@ -83,17 +80,17 @@ std::span<const GrantRow> GrantRows::OfKind(CatalogType kind) const {
 	return std::span<const GrantRow>(range.first, range.second);
 }
 
-optional_ptr<const GrantRow> Permissions::FindRow(CatalogType kind, idx_t oid, std::string_view name) const {
+optional_ptr<const GrantRow> Permissions::FindRow(CatalogType kind, idx_t oid) const {
 	for (auto &row : Rows().OfKind(kind)) {
-		if (row.Is(kind, oid, name)) {
+		if (row.Is(kind, oid)) {
 			return row;
 		}
 	}
 	return nullptr;
 }
 
-std::span<const AclItem> Permissions::RowAcl(CatalogType kind, idx_t oid, std::string_view name) const {
-	auto row = FindRow(kind, oid, name);
+std::span<const AclItem> Permissions::RowAcl(CatalogType kind, idx_t oid) const {
+	auto row = FindRow(kind, oid);
 	return row ? std::span<const AclItem>(row->acl) : std::span<const AclItem>();
 }
 
@@ -308,20 +305,14 @@ void AlterPermissionsInfo::ApplyTo(Permissions &permissions, CatalogType entry_t
 	for (auto &target : info.database_rows) {
 		auto &stored = permissions.MutableRows().rows;
 		auto range = KindRange(stored, target.kind);
-		auto row = std::find_if(range.first, range.second, [&](const GrantRow &candidate) {
-			return candidate.Is(target.kind, target.oid, target.name);
-		});
+		auto row = std::find_if(range.first, range.second,
+		                        [&](const GrantRow &candidate) { return candidate.Is(target.kind, target.oid); });
 		auto row_acl = row != range.second ? row->acl : target.acl;
 		ApplyGrant(info, info.object_owner_id, row_acl, target.kind, nullptr);
-		const bool restates_default =
-		    target.kind == CatalogType::PARAMETER_ENTRY &&
-		    (row_acl.empty() || row_acl == Permissions::AclDefault(target.kind, info.object_owner_id));
-		if (restates_default && row != range.second) {
-			stored.erase(row);
-		} else if (row != range.second) {
+		if (row != range.second) {
 			row->acl = std::move(row_acl);
-		} else if (!restates_default) {
-			stored.insert(range.second, GrantRow {target.kind, target.oid, target.name, std::move(row_acl)});
+		} else {
+			stored.insert(range.second, GrantRow {target.kind, target.oid, std::move(row_acl)});
 		}
 	}
 	if (!info.database_rows.empty()) {
