@@ -1,0 +1,63 @@
+# name: test/sql/json/scalar/test_json_lenient.test
+# description: trailing commas, NaN and Infinity, which simdjson rejects by default and the JSON functions accept
+# group: [scalar]
+
+require json
+
+query IIII
+SELECT json_valid('[1, 2,]'), json_valid('{"a": 1 ,	}'), json_valid('{"a": nan}'), json_valid('[Infinity, -Infinity, inf, NaN]');
+----
+true	true	true	true
+
+# a sign other than '-' is not accepted, as with yyjson
+query IIII
+SELECT json_valid('[+inf]'), json_valid('+inf'), json_valid('{"a": +NaN}'), json_valid('[-nan, -inf]');
+----
+false	false	false	true
+
+query III
+SELECT json_extract('{"a": [1,], "b": NaN,}', '$.a'), json_extract('{"a": -Infinity}', '$.a')::DOUBLE, isnan(json_extract('[NaN]', '$[0]')::DOUBLE);
+----
+[1]	-inf	true
+
+# commas and atoms inside strings stay as they are
+query II
+SELECT json_extract_string('{"a": "x,]", "b": "NaN,}",}', '$.a'), json_extract_string('{"a": "x,]", "b": "NaN,}",}', '$.b');
+----
+x,]	NaN,}
+
+query II
+SELECT '{"a": [1, {"b": 2,},], "c": inf,}'::JSON, json('{"a": [1, {"b": 2,},], "c": inf,}');
+----
+{"a": [1, {"b": 2,},], "c": inf,}	{"a":[1,{"b":2}],"c":Infinity}
+
+# a document with a trailing comma and another error reports the other error
+statement error
+SELECT '{"a": [1,], "b": tru}'::JSON;
+----
+<REGEX>:.*Malformed JSON.*
+
+statement error
+SELECT '[1,,]'::JSON;
+----
+<REGEX>:.*Malformed JSON.*
+
+statement error
+SELECT '[,]'::JSON;
+----
+<REGEX>:.*Malformed JSON.*
+
+statement error
+SELECT '{,}'::JSON;
+----
+<REGEX>:.*Malformed JSON.*
+
+statement error
+SELECT '{"a":,}'::JSON;
+----
+<REGEX>:.*Malformed JSON.*
+
+query II
+SELECT json('[[],]'), json('[{},"",]');
+----
+[[]]	[{},""]

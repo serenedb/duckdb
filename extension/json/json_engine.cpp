@@ -803,8 +803,12 @@ JsonScanGlobal::JsonScanGlobal(ClientContext &context_p, const JSONScanData &bin
 }
 
 void JsonScanGlobal::PlanDirect() {
+	// simdjson built with SIMDJSON_ALLOW_TRAILING_COMMAS or SIMDJSON_ENABLE_NAN_INF accepts them: strict reads then go
+	// through JSONTreeParser, which looks for them
+	const bool lenient_simdjson = SIMDJSON_ALLOW_TRAILING_COMMAS || SIMDJSON_ENABLE_NAN_INF;
 	direct = options.type == JSONScanType::READ_JSON && options.record_type == JSONRecordType::RECORDS &&
-	         format == JSONFormat::NEWLINE_DELIMITED && !columns.names.empty() && columns.feature_columns.empty();
+	         format == JSONFormat::NEWLINE_DELIMITED && !columns.names.empty() && columns.feature_columns.empty() &&
+	         !(options.strict && lenient_simdjson);
 	if (!direct) {
 		return;
 	}
@@ -1041,12 +1045,8 @@ JsonScan::JsonScan(JsonScanGlobal &global_p)
 		thread_handle = global.source->OpenThreadHandle();
 	}
 	if (global.direct) {
-		direct_parser.allocator = &direct_memory.callbacks;
-		direct_parser.allow_trailing_commas = HasFlag(global.read_flags, JSONReadFlags::ALLOW_TRAILING_COMMAS);
-		direct_parser.allow_inf_and_nan = HasFlag(global.read_flags, JSONReadFlags::ALLOW_INF_AND_NAN);
-		walk_parser.allocator = &direct_memory.callbacks;
-		walk_parser.allow_trailing_commas = direct_parser.allow_trailing_commas;
-		walk_parser.allow_inf_and_nan = direct_parser.allow_inf_and_nan;
+		direct_parser.set_allocator(&direct_memory.callbacks);
+		walk_parser.set_allocator(&direct_memory.callbacks);
 		candidates.Initialize(STANDARD_VECTOR_SIZE);
 		const idx_t column_count = global.columns.names.size();
 		direct_raw.resize(column_count);

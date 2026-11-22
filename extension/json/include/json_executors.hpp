@@ -44,7 +44,17 @@ public:
 		if (info.constant) { // Constant path
 			const char *ptr = info.ptr;
 			const idx_t &len = info.len;
-			if (info.path_type == JSONCommon::JSONPathType::REGULAR) {
+			if (info.use_steps) {
+				// Only the value at the path becomes nodes
+				UnaryExecutor::Execute<string_t, T>(inputs, result, [&](string_t input) -> optional<T> {
+					auto val = JSONCommon::ReadPath(lstate.parser, input, info.steps);
+					if (SET_NULL_IF_NOT_FOUND && !val) {
+						return nullopt;
+					} else {
+						return fun(val, lstate, result);
+					}
+				});
+			} else if (info.path_type == JSONCommon::JSONPathType::REGULAR) {
 				UnaryExecutor::Execute<string_t, T>(inputs, result, [&](string_t input) -> optional<T> {
 					auto &root = JSONCommon::ReadDocument(lstate.parser, input);
 					// Use the path elements parsed at bind time when available
@@ -62,8 +72,16 @@ public:
 				UnaryExecutor::Execute<string_t, list_entry_t>(inputs, result, [&](string_t input) {
 					vals.clear();
 
-					auto &root = JSONCommon::ReadDocument(lstate.parser, input);
-					JSONCommon::GetWildcardPath(&root, ptr, len, vals);
+					if (info.use_wildcard_steps) {
+						auto val = JSONCommon::ReadPath(lstate.parser, input, info.steps);
+						if (val) {
+							JSONCommon::GetWildcardPath(val, info.wildcard_rest.c_str(), info.wildcard_rest.size(),
+							                            vals);
+						}
+					} else {
+						auto &root = JSONCommon::ReadDocument(lstate.parser, input);
+						JSONCommon::GetWildcardPath(&root, ptr, len, vals);
+					}
 
 					auto current_size = ListVector::GetListSize(result);
 					auto new_size = current_size + vals.size();
@@ -148,6 +166,8 @@ public:
 
 		idx_t offset = 0;
 		const JSONNode *val;
+		vector<const JSONNode *> vals(info.use_steps ? num_paths : 0);
+		JSONParseError error;
 		for (idx_t i = 0; i < count; i++) {
 			auto idx = input_data.sel->get_index(i);
 			if (!input_data.validity.RowIsValid(idx)) {
@@ -155,11 +175,25 @@ public:
 				continue;
 			}
 
-			auto &root = JSONCommon::ReadDocument(lstate.parser, inputs[idx]);
+			const JSONNode *root = nullptr;
+			if (info.use_steps) {
+				// Only the values at the paths become nodes
+				const auto &input = inputs[idx];
+				if (!lstate.parser.ParsePaths(input.GetData(), input.GetSize(), info.steps.data(), num_paths,
+				                              vals.data(), error)) {
+					JSONCommon::ThrowParseError(input.GetData(), input.GetSize(), error);
+				}
+			} else {
+				root = &JSONCommon::ReadDocument(lstate.parser, inputs[idx]);
+			}
 			for (idx_t path_i = 0; path_i < num_paths; path_i++) {
 				auto child_idx = offset + path_i;
-				val = info.use_elements[path_i] ? JSONCommon::GetPathElements(&root, info.elements[path_i])
-				                                : JSONCommon::GetUnsafe(&root, info.ptrs[path_i], info.lens[path_i]);
+				if (info.use_steps) {
+					val = vals[path_i];
+				} else {
+					val = info.use_elements[path_i] ? JSONCommon::GetPathElements(root, info.elements[path_i])
+					                                : JSONCommon::GetUnsafe(root, info.ptrs[path_i], info.lens[path_i]);
+				}
 				if (SET_NULL_IF_NOT_FOUND && !val) {
 					child_validity.SetInvalid(child_idx);
 				} else {

@@ -10,8 +10,7 @@ static void PrettyPrintFunction(DataChunk &args, ExpressionState &state, Vector 
 	auto &lstate = JSONFunctionLocalState::ResetAndGet(state);
 	JSONStringWriter writer(JSONCommon::WRITE_PRETTY_FLAG);
 	UnaryExecutor::Execute<string_t, string_t>(args.data[0], result, args.size(), [&](string_t input) {
-		auto &root = JSONCommon::ReadDocument(lstate.parser, input);
-		return JSONCommon::WriteVal(root, writer, result);
+		return JSONCommon::WriteDocument(lstate.parser, input, writer, result);
 	});
 }
 
