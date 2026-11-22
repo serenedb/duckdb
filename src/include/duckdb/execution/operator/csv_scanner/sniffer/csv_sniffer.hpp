@@ -20,7 +20,9 @@ struct DateTimestampSniffing {
 	bool initialized = false;
 	bool had_match = false;
 	vector<string> format;
-	idx_t initial_size;
+	idx_t initial_size = 0;
+	string generated_separator;
+	vector<string> generated;
 };
 
 struct QuoteEscapeCombination {
@@ -159,14 +161,13 @@ private:
 	void DetectTypes();
 	//! Change the date format for the type to the string
 	//! Try to cast a string value to the specified sql type
-	static void SetDateFormat(CSVStateMachine &candidate, const string &format_specifier,
-	                          const LogicalTypeId &sql_type);
+	void SetDateFormat(CSVStateMachine &candidate, const string &format_specifier, const LogicalTypeId &sql_type);
+	const StrpTimeFormat &ParsedDateFormat(const string &format_specifier);
 
 	//! Function that initialized the necessary variables used for date and timestamp detection
-	void InitializeDateAndTimeStampDetection(CSVStateMachine &candidate, const string &separator,
-	                                         const LogicalType &sql_type);
+	void InitializeDateAndTimeStampDetection(const string &separator, const LogicalType &sql_type);
 	//! Sets user defined date and time formats (if any)
-	void SetUserDefinedDateTimeFormat(CSVStateMachine &candidate) const;
+	void SetUserDefinedDateTimeFormat(CSVStateMachine &candidate);
 	//! Functions that performs detection for date and timestamp formats
 	void DetectDateAndTimeStampFormats(CSVStateMachine &candidate, const LogicalType &sql_type, const string &separator,
 	                                   const string_t &dummy_val);
@@ -188,7 +189,7 @@ private:
 	vector<HeaderValue> best_header_row;
 	//! Variable used for sniffing date and timestamp
 	map<LogicalTypeId, DateTimestampSniffing> format_candidates;
-	map<LogicalTypeId, DateTimestampSniffing> original_format_candidates;
+	unordered_map<string, StrpTimeFormat> parsed_date_formats;
 
 	//! ------------------------------------------------------//
 	//! ------------------ Type Refinement ------------------ //

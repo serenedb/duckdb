@@ -1,0 +1,25 @@
+# name: test/sql/copy/csv/test_date_sniffer_restore.test
+# description: Date format candidates the sniffer gives back or generates again match the ones it tried first
+# group: [csv]
+
+statement ok
+COPY (SELECT * FROM (VALUES ('01/02/2020', '03/04/2021'), ('13/13/2020', '05/06/2021')) t(a, b)) TO '{TEMP_DIR}/restore_order.csv' (HEADER true);
+
+query II
+SELECT Columns, DateFormat FROM sniff_csv('{TEMP_DIR}/restore_order.csv');
+----
+[{'name': a, 'type': VARCHAR}, {'name': b, 'type': DATE}]	%d/%m/%Y
+
+query II
+SELECT a, b FROM read_csv('{TEMP_DIR}/restore_order.csv') ORDER BY a;
+----
+01/02/2020	2021-04-03
+13/13/2020	2021-06-05
+
+statement ok
+COPY (SELECT * FROM (VALUES ('2020-01-02', 'x'), ('01.02.2020', 'y'), ('03.04.2020', 'z')) t(a, b)) TO '{TEMP_DIR}/separator_change.csv' (HEADER true);
+
+query II
+SELECT Columns, DateFormat FROM sniff_csv('{TEMP_DIR}/separator_change.csv');
+----
+[{'name': a, 'type': DATE}, {'name': b, 'type': VARCHAR}]	%d.%m.%Y
