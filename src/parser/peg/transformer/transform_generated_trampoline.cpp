@@ -710,6 +710,9 @@ static const TransformFrameOps COPY_FORMAT_KEYWORD_OPS = {"CopyFormatKeyword",
 static const TransformFrameOps COPY_BOOLEAN_KEYWORD_OPS = {
     "CopyBooleanKeyword", &PEGTransformerFactory::InitializeCopyBooleanKeywordTrampoline,
     &PEGTransformerFactory::FinalizeCopyBooleanKeywordTrampoline};
+static const TransformFrameOps COPY_VERBOSE_KEYWORD_OPS = {
+    "CopyVerboseKeyword", &PEGTransformerFactory::InitializeCopyVerboseKeywordTrampoline,
+    &PEGTransformerFactory::FinalizeCopyVerboseKeywordTrampoline};
 static const TransformFrameOps COPY_FROM_DATABASE_OPS = {
     "CopyFromDatabase", &PEGTransformerFactory::InitializeCopyFromDatabaseTrampoline,
     &PEGTransformerFactory::FinalizeCopyFromDatabaseTrampoline, true};
@@ -3958,6 +3961,7 @@ PEGTransformerFactory::GeneratedTransformFrameOps() {
 	    {"GenericCopyOptionParenthesizedExpressionList", &GENERIC_COPY_OPTION_PARENTHESIZED_EXPRESSION_LIST_OPS},
 	    {"CopyFormatKeyword", &COPY_FORMAT_KEYWORD_OPS},
 	    {"CopyBooleanKeyword", &COPY_BOOLEAN_KEYWORD_OPS},
+	    {"CopyVerboseKeyword", &COPY_VERBOSE_KEYWORD_OPS},
 	    {"CopyFromDatabase", &COPY_FROM_DATABASE_OPS},
 	    {"CopyFromDatabaseWithFlag", &COPY_FROM_DATABASE_WITH_FLAG_OPS},
 	    {"CopyFromDatabaseWithoutFlag", &COPY_FROM_DATABASE_WITHOUT_FLAG_OPS},
@@ -9491,6 +9495,18 @@ arena_ptr<TransformResultValue>
 PEGTransformerFactory::FinalizeCopyBooleanKeywordTrampoline(PEGTransformer &transformer,
                                                             GeneratedTransformProcess &process) {
 	auto result = TransformCopyBooleanKeyword(transformer);
+	return transformer.MakeResult<GenericCopyOptionValue>(std::move(result));
+}
+
+void PEGTransformerFactory::InitializeCopyVerboseKeywordTrampoline(PEGTransformer &transformer,
+                                                                   GeneratedTransformProcess &process) {
+	process.ReserveChildSlots(0);
+}
+
+arena_ptr<TransformResultValue>
+PEGTransformerFactory::FinalizeCopyVerboseKeywordTrampoline(PEGTransformer &transformer,
+                                                            GeneratedTransformProcess &process) {
+	auto result = TransformCopyVerboseKeyword(transformer);
 	return transformer.MakeResult<GenericCopyOptionValue>(std::move(result));
 }
 
