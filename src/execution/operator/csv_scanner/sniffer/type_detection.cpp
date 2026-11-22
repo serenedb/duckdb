@@ -92,11 +92,23 @@ string GenerateDateFormat(const string &separator, const char *format_template) 
 	return result;
 }
 
+const StrpTimeFormat &CSVSniffer::ParsedDateFormat(const string &format_specifier) {
+	auto entry = parsed_date_formats.find(format_specifier);
+	if (entry == parsed_date_formats.end()) {
+		StrpTimeFormat format;
+		StrTimeFormat::ParseFormatSpecifier(format_specifier, format);
+		entry = parsed_date_formats.emplace(format_specifier, std::move(format)).first;
+	}
+	return entry->second;
+}
+
 void CSVSniffer::SetDateFormat(CSVStateMachine &candidate, const string &format_specifier,
                                const LogicalTypeId &sql_type) {
-	StrpTimeFormat strpformat;
-	StrTimeFormat::ParseFormatSpecifier(format_specifier, strpformat);
-	candidate.dialect_options.date_format[sql_type].Set(strpformat, false);
+	auto &date_format = candidate.dialect_options.date_format[sql_type];
+	if (date_format.IsSetByUser() || date_format.GetValue().format_specifier == format_specifier) {
+		return;
+	}
+	date_format.Set(ParsedDateFormat(format_specifier), false);
 }
 
 idx_t CSVSniffer::LinesSniffed() const {
@@ -186,34 +198,39 @@ bool CSVSniffer::CanYouCastIt(ClientContext &context, const string_t value, cons
 	}
 }
 
-void CSVSniffer::InitializeDateAndTimeStampDetection(CSVStateMachine &candidate, const string &separator,
-                                                     const LogicalType &sql_type) {
+void CSVSniffer::InitializeDateAndTimeStampDetection(const string &separator, const LogicalType &sql_type) {
 	auto &format_candidate = format_candidates[sql_type.id()];
-	if (!format_candidate.initialized) {
-		format_candidate.initialized = true;
-		// if user set a format, we add that as well
-		auto user_format = options.dialect_options.date_format.find(sql_type.id());
-		if (user_format->second.IsSetByUser()) {
-			format_candidate.format.emplace_back(user_format->second.GetValue().format_specifier);
-		} else {
+	if (format_candidate.initialized) {
+		return;
+	}
+	format_candidate.initialized = true;
+	// if user set a format, we add that as well
+	auto user_format = options.dialect_options.date_format.find(sql_type.id());
+	if (user_format->second.IsSetByUser()) {
+		format_candidate.format.emplace_back(user_format->second.GetValue().format_specifier);
+	} else {
+		if (format_candidate.generated.empty() || format_candidate.generated_separator != separator) {
+			format_candidate.generated.clear();
+			format_candidate.generated_separator = separator;
 			auto entry = format_template_candidates.find(sql_type.id());
 			if (entry != format_template_candidates.end()) {
 				const auto &format_template_list = entry->second;
 				for (const auto &t : format_template_list) {
-					const auto format_string = GenerateDateFormat(separator, t);
+					auto format_string = GenerateDateFormat(separator, t);
 					// don't parse ISO 8601
 					if (format_string.find("%Y-%m-%d") == string::npos) {
-						format_candidate.format.emplace_back(format_string);
+						format_candidate.generated.push_back(std::move(format_string));
 					}
 				}
 			}
 		}
-		// order by preference
-		original_format_candidates = format_candidates;
+		format_candidate.format.insert(format_candidate.format.end(), format_candidate.generated.begin(),
+		                               format_candidate.generated.end());
 	}
-	//	initialise the first candidate
-	//	all formats are constructed to be valid
-	SetDateFormat(candidate, format_candidate.format.back(), sql_type.id());
+	// order by preference
+	for (auto &entry : format_candidates) {
+		entry.second.initial_size = entry.second.format.size();
+	}
 }
 
 bool ValidSeparator(const string &separator) {
@@ -226,45 +243,40 @@ void CSVSniffer::DetectDateAndTimeStampFormats(CSVStateMachine &candidate, const
 		return;
 	}
 	// If it is the first time running date/timestamp detection we must initialize the format variables
-	InitializeDateAndTimeStampDetection(candidate, separator, sql_type);
+	InitializeDateAndTimeStampDetection(separator, sql_type);
 	// generate date format candidates the first time through
-	auto &type_format_candidates = format_candidates[sql_type.id()].format;
+	auto &format_candidate = format_candidates[sql_type.id()];
+	auto &type_format_candidates = format_candidate.format;
 	// check all formats and keep the first one that works
 	StrpTimeFormat::ParseResult result;
-	auto save_format_candidates = type_format_candidates;
-	const bool had_format_candidates = !save_format_candidates.empty();
-	const bool initial_format_candidates =
-	    save_format_candidates.size() == original_format_candidates.at(sql_type.id()).format.size();
+	vector<string> popped_format_candidates;
+	const bool had_format_candidates = !type_format_candidates.empty();
+	const bool initial_format_candidates = type_format_candidates.size() == format_candidate.initial_size;
 	const bool is_set_by_user = options.dialect_options.date_format.find(sql_type.id())->second.IsSetByUser();
 	while (!type_format_candidates.empty() && !is_set_by_user) {
 		//	avoid using exceptions for flow control...
-		auto &current_format = candidate.dialect_options.date_format[sql_type.id()].GetValue();
-		if (current_format.Parse(dummy_val, result, true)) {
-			format_candidates[sql_type.id()].had_match = true;
+		if (ParsedDateFormat(type_format_candidates.back()).Parse(dummy_val, result, true)) {
+			format_candidate.had_match = true;
 			break;
 		}
 		//	doesn't work - move to the next one
+		popped_format_candidates.push_back(std::move(type_format_candidates.back()));
 		type_format_candidates.pop_back();
-		if (!type_format_candidates.empty()) {
-			SetDateFormat(candidate, type_format_candidates.back(), sql_type.id());
-		}
 	}
 	//	if none match, then this is not a value of type sql_type,
-	if (type_format_candidates.empty()) {
+	if (type_format_candidates.empty() && had_format_candidates) {
 		//	so restore the candidates that did work.
 		//	or throw them out if they were generated by this value.
-		if (had_format_candidates) {
-			if (initial_format_candidates && !format_candidates[sql_type.id()].had_match) {
-				// we reset the whole thing because we tried to sniff the wrong type.
-				format_candidates[sql_type.id()].initialized = false;
-				format_candidates[sql_type.id()].format.clear();
-				SetDateFormat(candidate, "", sql_type.id());
-				return;
-			}
-			type_format_candidates.swap(save_format_candidates);
-			SetDateFormat(candidate, type_format_candidates.back(), sql_type.id());
+		if (initial_format_candidates && !format_candidate.had_match) {
+			// we reset the whole thing because we tried to sniff the wrong type.
+			format_candidate.initialized = false;
+			SetDateFormat(candidate, "", sql_type.id());
+			return;
 		}
+		type_format_candidates.assign(std::make_move_iterator(popped_format_candidates.rbegin()),
+		                              std::make_move_iterator(popped_format_candidates.rend()));
 	}
+	SetDateFormat(candidate, type_format_candidates.back(), sql_type.id());
 }
 
 void CSVSniffer::SniffTypes(DataChunk &data_chunk, CSVStateMachine &state_machine,
@@ -334,7 +346,7 @@ void CSVSniffer::SniffTypes(DataChunk &data_chunk, CSVStateMachine &state_machin
 }
 
 // If we have a predefined date/timestamp format we set it
-void CSVSniffer::SetUserDefinedDateTimeFormat(CSVStateMachine &candidate) const {
+void CSVSniffer::SetUserDefinedDateTimeFormat(CSVStateMachine &candidate) {
 	const vector<LogicalTypeId> data_time_formats {LogicalTypeId::DATE, LogicalTypeId::TIMESTAMP};
 	for (auto &date_time_format : data_time_formats) {
 		auto &user_option = options.dialect_options.date_format.at(date_time_format);
