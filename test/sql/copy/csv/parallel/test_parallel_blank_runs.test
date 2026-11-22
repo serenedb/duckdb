@@ -1,0 +1,35 @@
+# name: test/sql/copy/csv/parallel/test_parallel_blank_runs.test
+# description: Rows after runs of empty lines that cross range ends read and report their errors in parallel ranges as in one sequential scan
+# group: [parallel]
+
+statement ok
+COPY (SELECT i || ',' || CASE WHEN i % 5 = 0 THEN 'bad' ELSE '1' END || repeat(chr(10), i % 4) AS line FROM range(3000) t(i) ORDER BY i) TO '{TEMP_DIR}/blank_runs.csv' (HEADER false, QUOTE '', DELIMITER '|');
+
+foreach buffer_size 16 64 1048576
+
+statement ok
+SELECT * FROM read_csv('{TEMP_DIR}/blank_runs.csv', columns = {'a': 'INTEGER', 'b': 'INTEGER'}, header = false, auto_detect = false, delim = ',', store_rejects = true, rejects_table = 'errors_parallel_{buffer_size}', rejects_scan = 'scans_parallel_{buffer_size}', buffer_size = {buffer_size});
+
+statement ok
+SELECT * FROM read_csv('{TEMP_DIR}/blank_runs.csv', columns = {'a': 'INTEGER', 'b': 'INTEGER'}, header = false, auto_detect = false, delim = ',', store_rejects = true, rejects_table = 'errors_plain_{buffer_size}', rejects_scan = 'scans_plain_{buffer_size}', buffer_size = {buffer_size}, parallel = false);
+
+query I
+SELECT count(*) FROM (
+	(SELECT * EXCLUDE (scan_id) FROM errors_parallel_{buffer_size} EXCEPT ALL SELECT * EXCLUDE (scan_id) FROM errors_plain_{buffer_size})
+	UNION ALL
+	(SELECT * EXCLUDE (scan_id) FROM errors_plain_{buffer_size} EXCEPT ALL SELECT * EXCLUDE (scan_id) FROM errors_parallel_{buffer_size})
+)
+----
+0
+
+query II
+SELECT count(*), count(*) FILTER (WHERE csv_line LIKE '%,bad') FROM errors_parallel_{buffer_size}
+----
+600	600
+
+query II
+SELECT count(*), sum(a) FROM read_csv('{TEMP_DIR}/blank_runs.csv', columns = {'a': 'INTEGER', 'b': 'INTEGER'}, header = false, auto_detect = false, delim = ',', ignore_errors = true, buffer_size = {buffer_size})
+----
+3000	4498500
+
+endloop
