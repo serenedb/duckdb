@@ -311,6 +311,7 @@ struct Encoder {
 };
 
 // C++ fsst-compress function with some more control of how the compression happens (algorithm flavor, simd unroll degree)
-ulong compressImpl(Encoder *encoder, ulong n, ulong lenIn[], u8 *strIn[], ulong size, u8 * output, ulong *lenOut, u8 *strOut[], bool noSuffixOpt, bool avoidBranch, int simd);
-ulong compressAuto(Encoder *encoder, ulong n, ulong lenIn[], u8 *strIn[], ulong size, u8 * output, ulong *lenOut, u8 *strOut[], int simd);
+ulong compressImpl(Encoder *encoder, ulong n, const ulong lenIn[], const u8 *strIn[], ulong size, u8 * output, ulong *lenOut, u8 *strOut[], bool noSuffixOpt, bool avoidBranch, int simd);
+ulong compressAuto(Encoder *encoder, ulong n, const ulong lenIn[], const u8 *strIn[], ulong size, u8 * output, ulong *lenOut, u8 *strOut[], int simd);
+std::ostream& operator<<(std::ostream& out, const Symbol& s);
 }  // namespace libfsst12
