@@ -21,6 +21,8 @@ struct RowDialect {
 	static RowDialect PostgresCsv(char delimiter, char quote, char escape, char line_break = '\n');
 	static RowDialect PostgresText(char delimiter, char line_break = '\n');
 
+	bool operator==(const RowDialect &other) const = default;
+
 	char delimiter = ',';
 	char delimiter_tail[3] = {};
 	idx_t delimiter_size = 1;
