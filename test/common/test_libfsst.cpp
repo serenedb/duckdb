@@ -147,3 +147,42 @@ TEST_CASE("FSST encodes SIMD batches as each string alone, at any kernel unroll"
 	}
 	duckdb_fsst_destroy(encoder);
 }
+
+TEST_CASE("FSST's C++ entry points encode as its C API, whatever their flags", "[fsst]") {
+	auto strings = KernelCorpus();
+	strings.emplace_back(2000, 'q');
+	Batch in(strings);
+	auto *encoder = duckdb_fsst_create(strings.size(), in.lengths.data(), in.pointers.data(), 0);
+	REQUIRE(encoder);
+	auto &e = *reinterpret_cast<libfsst::Encoder *>(encoder);
+	for (size_t size : {2 * in.total + 7, size_t(5000)}) {
+		vector<libfsst::u8> out(size);
+		vector<size_t> out_lengths(strings.size());
+		vector<libfsst::u8 *> out_strings(strings.size());
+		const auto compressed = [&](size_t count) {
+			vector<string> result;
+			for (size_t i = 0; i < count; i++) {
+				result.emplace_back(reinterpret_cast<const char *>(out_strings[i]), out_lengths[i]);
+			}
+			return result;
+		};
+		const auto count = duckdb_fsst_compress(encoder, strings.size(), in.lengths.data(), in.pointers.data(), size,
+		                                        out.data(), out_lengths.data(), out_strings.data());
+		CHECK((size == 5000 ? count < strings.size() : count == strings.size()));
+		const auto expected = compressed(count);
+		for (int simd : {0, 1, 2, 3}) {
+			for (bool no_suffix_opt : {false, true}) {
+				for (bool avoid_branch : {false, true}) {
+					REQUIRE(libfsst::compressImpl(&e, strings.size(), in.lengths.data(), in.pointers.data(), size,
+					                              out.data(), out_lengths.data(), out_strings.data(), no_suffix_opt,
+					                              avoid_branch, simd) == count);
+					CHECK(compressed(count) == expected);
+				}
+			}
+			REQUIRE(libfsst::compressAuto(&e, strings.size(), in.lengths.data(), in.pointers.data(), size, out.data(),
+			                              out_lengths.data(), out_strings.data(), simd) == count);
+			CHECK(compressed(count) == expected);
+		}
+	}
+	duckdb_fsst_destroy(encoder);
+}
