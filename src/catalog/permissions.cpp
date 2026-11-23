@@ -104,14 +104,19 @@ static optional_ptr<CatalogEntry> ClusterDatabaseOf(ClientContext &context, Atta
 	return database.IsReadOnly() ? nullptr : ClusterEntry(context, CatalogType::DATABASE_ENTRY, database.GetName());
 }
 
-static optional_ptr<CatalogEntry> FindForeignServer(ClientContext &context, const Identifier &name) {
+static optional_ptr<CatalogEntry> ServerOf(ClientContext &context, AttachedDatabase &database) {
+	const auto server_oid = database.ForeignServer();
+	if (!server_oid.IsValid()) {
+		return nullptr;
+	}
 	for (auto &db : DatabaseManager::Get(*context.db).GetDatabases()) {
 		if (db->IsSystem() || db->IsTemporary() || db->IsReadOnly()) {
 			continue;
 		}
 		auto &catalog = db->GetCatalog();
-		if (auto server = catalog.LookupTopLevelEntry(catalog.GetCatalogTransaction(context),
-		                                              CatalogType::FOREIGN_SERVER_ENTRY, name)) {
+		auto server = catalog.LookupTopLevelEntry(catalog.GetCatalogTransaction(context),
+		                                          CatalogType::FOREIGN_SERVER_ENTRY, database.GetName());
+		if (server && server->oid == server_oid.GetIndex()) {
 			return server;
 		}
 	}
@@ -131,7 +136,7 @@ bool DatabaseVisible(ClientContext &context, const RoleAccess &role, AttachedDat
 	if (auto entry = ClusterDatabaseOf(context, database)) {
 		return CanConnect(context, role, database.GetName(), entry);
 	}
-	auto server = FindForeignServer(context, database.GetName());
+	auto server = ServerOf(context, database);
 	return server && role.Can(CatalogType::FOREIGN_SERVER_ENTRY, server->permissions, AclMode::Usage);
 }
 
@@ -196,7 +201,7 @@ void CheckReference(ClientContext &context, const RoleAccess &role, CatalogEntry
 			throw PermissionException({{"detail", "User does not have CONNECT privilege."}},
 			                          StringUtil::Format("permission denied for database \"%s\"", name));
 		}
-		if (auto server = FindForeignServer(context, database.GetName())) {
+		if (auto server = ServerOf(context, database)) {
 			ThrowPermissionDenied(*server);
 		}
 		throw PermissionException(

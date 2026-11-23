@@ -336,6 +336,7 @@ shared_ptr<AttachedDatabase> DatabaseManager::ReattachDatabase(ClientContext &co
 	}
 	VerifyReattachOptions(*database, info, options);
 	database->SetAccessMode(options.access_mode);
+	database->SetForeignServer(options.foreign_server);
 	auto attached_db = FinalizeAttach(context, info, database, info.name);
 	if (attached_db != database) {
 		// IF NOT EXISTS, and another attach claimed the name while we got here: it wins, and the file

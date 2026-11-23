@@ -100,6 +100,7 @@ struct AttachOptions {
 	shared_ptr<AttachedDatabase> reused_database;
 	bool borrow_open_database = false;
 	optional_idx owner;
+	optional_idx foreign_server;
 	//! Per-database override of vacuum_rebuild_indexes. If not set, the global setting value is used.
 	optional_idx vacuum_rebuild_indexes_threshold;
 	//! Deleter binding (from ATTACH/CONNECT TO EXTERNAL RESOURCE): on detach, `<deleter_function>(<deleter_payload>)`
@@ -189,6 +190,12 @@ public:
 	optional_idx Owner() const {
 		return owner;
 	}
+	optional_idx ForeignServer() const {
+		return foreign_server;
+	}
+	void SetForeignServer(optional_idx server) {
+		foreign_server = server;
+	}
 	//! True for attachments created implicitly by `CONNECT '<uri>'`; DISCONNECT detaches them.
 	bool IsEphemeral() const {
 		return ephemeral;
@@ -234,6 +241,7 @@ private:
 	RecoveryMode recovery_mode = RecoveryMode::DEFAULT;
 	AttachVisibility visibility = AttachVisibility::SHOWN;
 	optional_idx owner;
+	optional_idx foreign_server;
 	bool ephemeral = false;
 	bool is_initial_database = false;
 	bool is_closed = false;
