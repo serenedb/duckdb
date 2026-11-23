@@ -109,6 +109,7 @@ struct Settings {
 	DUCKDB_API static void CheckCustomName(const Identifier &name);
 	DUCKDB_API static bool IsCustomName(const Identifier &name);
 	DUCKDB_API static optional<SettingAccess> GetAccess(ClientContext &context, const Identifier &name);
+	DUCKDB_API static void CheckValue(ClientContext &context, const Identifier &name, const Value &value);
 	DUCKDB_API static bool MayChange(ClientContext &context, const Identifier &name, const SettingAccess &access,
 	                                 SetScope scope);
 	DUCKDB_API static void CheckChange(ClientContext &context, const Identifier &name, const SettingAccess &access,

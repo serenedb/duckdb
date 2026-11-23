@@ -142,6 +142,25 @@ optional<SettingAccess> Settings::GetAccess(ClientContext &context, const Identi
 	return optional<SettingAccess>();
 }
 
+void Settings::CheckValue(ClientContext &context, const Identifier &name, const Value &value) {
+	if (auto option = DBConfig::GetOptionByName(name)) {
+		value.CastAs(context, DBConfig::ParseLogicalType(option->parameter_type));
+		return;
+	}
+	auto &config = DBConfig::GetConfig(context);
+	ExtensionOption extension_option;
+	if (!config.TryGetExtensionOption(name, extension_option)) {
+		if (IsCustomName(name)) {
+			return;
+		}
+		Catalog::AutoloadExtensionByConfigName(context, name);
+		if (!config.TryGetExtensionOption(name, extension_option)) {
+			throw InvalidInputException("Extension parameter %s was not found after autoloading", name);
+		}
+	}
+	value.CastAs(context, extension_option.type);
+}
+
 static AclMode HeldParameterPrivileges(ClientContext &context, const Identifier &name) {
 	auto parameter = ClusterEntry(context, CatalogType::PARAMETER_ENTRY, name);
 	if (!parameter) {

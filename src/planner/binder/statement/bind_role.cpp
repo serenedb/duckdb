@@ -18,9 +18,10 @@ static SettingAccess AccessOf(ClientContext &context, const Identifier &name) {
 	return access ? *access : SettingAccess();
 }
 
-static void CheckConfigNames(const vector<string> &set_config, const vector<string> &reset_config) {
+static void CheckConfig(ClientContext &context, const vector<string> &set_config, const vector<string> &reset_config) {
 	for (auto &entry : set_config) {
-		Settings::CheckCustomName(Identifier(string(Settings::ConfigKey(entry))));
+		Settings::CheckValue(context, Identifier(string(Settings::ConfigKey(entry))),
+		                     entry.find('=') == string::npos ? Value() : Value(string(Settings::ConfigValue(entry))));
 	}
 	for (auto &key : reset_config) {
 		Settings::CheckCustomName(Identifier(key));
@@ -274,7 +275,7 @@ void Binder::BindAlterRole(AlterRoleInfo &info) {
 	}
 	const bool settings = !info.set_config.empty() || !info.reset_config.empty() || info.reset_all_config;
 	if (settings && !caller.IsSystem()) {
-		CheckConfigNames(info.set_config, info.reset_config);
+		CheckConfig(context, info.set_config, info.reset_config);
 	}
 	if (settings && role && !caller.IsSystem() && !caller.is_superuser) {
 		CheckConfigChange(context, info.set_config, info.reset_config, info.reset_all_config,
@@ -307,7 +308,7 @@ static void CheckDatabaseSettings(ClientContext &context, const RoleAccess &call
 	if (!role && !caller.is_superuser && !caller.MemberOf(database->permissions.owner)) {
 		throw PermissionException("must be owner of database %s", database->name.GetIdentifierName());
 	}
-	CheckConfigNames(info.set_config, info.reset_config);
+	CheckConfig(context, info.set_config, info.reset_config);
 	if (caller.is_superuser) {
 		return;
 	}
