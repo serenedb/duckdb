@@ -1122,9 +1122,6 @@ unique_ptr<CatalogEntry> DuckTableEntry::SetDefault(ClientContext &context, SetD
 unique_ptr<CatalogEntry> DuckTableEntry::SetColumnCompression(ClientContext &context, SetColumnCompressionInfo &info) {
 	auto &schema = ParentSchema(context);
 	auto column_idx = GetColumnIndex(info.column_name);
-	if (column_idx.index == COLUMN_IDENTIFIER_ROW_ID) {
-		throw CatalogException("Cannot SET COMPRESSION for rowid column");
-	}
 
 	auto create_info = GetInfo();
 	auto &table_info = create_info->Cast<CreateTableInfo>();
