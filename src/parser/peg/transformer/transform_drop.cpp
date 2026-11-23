@@ -53,6 +53,10 @@ bool PEGTransformerFactory::TransformFunctionTypeProcedure(PEGTransformer &trans
 	return true;
 }
 
+bool PEGTransformerFactory::TransformFunctionTypeRoutine(PEGTransformer &transformer) {
+	return false;
+}
+
 unique_ptr<DropStatement>
 PEGTransformerFactory::TransformDropTableFunction(PEGTransformer &transformer, const CatalogType &comment_macro_table,
                                                   const optional<bool> &if_exists,
@@ -75,7 +79,9 @@ unique_ptr<DropStatement> PEGTransformerFactory::TransformDropFunction(PEGTransf
 	// FunctionTypeMacro forwards a bool meaning is_procedure (PROCEDURE vs FUNCTION/MACRO).
 	auto &kind = list_pr.Child<ListParseResult>(0);
 	info.is_procedure = transformer.Transform<bool>(kind);
-	info.is_macro = kind.Child<ChoiceParseResult>(0).GetResult().Name() == "FunctionTypeMacroKeyword";
+	const auto &keyword = kind.Child<ChoiceParseResult>(0).GetResult().Name();
+	info.is_macro = keyword == "FunctionTypeMacroKeyword";
+	info.is_routine = keyword == "FunctionTypeRoutine";
 	info.if_not_found = list_pr.Child<OptionalParseResult>(1).HasResult() ? OnEntryNotFound::RETURN_NULL
 	                                                                      : OnEntryNotFound::THROW_EXCEPTION;
 	for (auto &item : ExtractParseResultsFromList(list_pr.Child<ListParseResult>(2))) {

@@ -210,7 +210,8 @@ static optional_ptr<CatalogEntry> BindSetSchemaEntry(SetSchemaInfo &info, const 
 	return lookup(declared, info.if_not_found);
 }
 
-BoundRoutine Binder::BindRoutine(const RoutineReference &routine, AclMode use, OnEntryNotFound if_not_found) {
+BoundRoutine Binder::BindRoutine(const RoutineReference &routine, AclMode use, OnEntryNotFound if_not_found,
+                                 bool named_by_statement) {
 	for (auto &type : routine.func_parameters) {
 		BindLogicalType(type);
 	}
@@ -272,7 +273,11 @@ BoundRoutine Binder::BindRoutine(const RoutineReference &routine, AclMode use, O
 		                                                                             : routine.func_parameters),
 		                       procedure ? "function" : "procedure"));
 	}
-	Require(context, CheckAs(), *result.entry, use, result.overload.get());
+	const StatementNaming naming {!routine.include_procedures  ? "function"
+	                              : !routine.include_functions ? "procedure"
+	                                                           : "routine",
+	                              routine.name};
+	Require(context, CheckAs(), *result.entry, use, result.overload.get(), named_by_statement ? &naming : nullptr);
 	return result;
 }
 
@@ -442,7 +447,7 @@ unique_ptr<LogicalOperator> Binder::BindAlter(unique_ptr<AlterInfo> &info) {
 		auto &attributes = info->Cast<AlterFunctionAttributesInfo>();
 		auto bound = BindRoutine({attributes.GetQualifiedName(), attributes.func_parameters, attributes.has_func_args,
 		                          attributes.include_functions, attributes.include_procedures},
-		                         AclMode::Own, OnEntryNotFound::THROW_EXCEPTION);
+		                         AclMode::Own, OnEntryNotFound::THROW_EXCEPTION, true);
 		auto &function = *bound.entry;
 		if (function.internal) {
 			ThrowPermissionDenied(function);
@@ -560,7 +565,7 @@ unique_ptr<LogicalOperator> Binder::BindAlter(unique_ptr<AlterInfo> &info) {
 		auto &comment = info->Cast<SetCommentInfo>();
 		auto bound = BindRoutine({comment.GetQualifiedName(), comment.func_parameters, comment.has_func_args,
 		                          comment.include_functions, comment.include_procedures, comment.entry_catalog_type},
-		                         AclMode::Own, comment.if_not_found);
+		                         AclMode::Own, comment.if_not_found, true);
 		entry = bound.entry;
 		if (bound.overload) {
 			comment.overload_oid = entry->Cast<MacroCatalogEntry>().OverloadOid(*bound.overload);

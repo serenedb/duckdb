@@ -358,13 +358,18 @@ bool Allowed(const RoleAccess &role, const CatalogEntry &entry, AclMode use,
 	return role.Can(ObjectKindOf(entry.type).acl_class, permissions, modes);
 }
 
-[[noreturn]] static void ThrowNotOwner(const CatalogEntry &entry, optional_ptr<const MacroFunction> overload) {
-	throw PermissionException("must be owner of %s %s", ObjectNounOf(entry.type, overload),
+[[noreturn]] static void ThrowNotOwner(const CatalogEntry &entry, optional_ptr<const StatementNaming> naming) {
+	if (naming) {
+		throw PermissionException("must be owner of %s %s", naming->noun,
+		                          StringUtil::Join(naming->name.Path(), ".",
+		                                           [](const Identifier &part) { return part.GetIdentifierName(); }));
+	}
+	throw PermissionException("must be owner of %s %s", ObjectNounOf(entry.type, nullptr),
 	                          entry.name.GetIdentifierName());
 }
 
 static void RequireOwnership(ClientContext &context, const RoleAccess &role, CatalogEntry &entry,
-                             optional_ptr<const MacroFunction> overload) {
+                             optional_ptr<const MacroFunction> overload, optional_ptr<const StatementNaming> naming) {
 	if (entry.type == CatalogType::ROLE_ENTRY) {
 		auto &target = entry.Cast<RoleEntry>();
 		string detail;
@@ -384,7 +389,7 @@ static void RequireOwnership(ClientContext &context, const RoleAccess &role, Cat
 		auto &macro = entry.Cast<MacroCatalogEntry>();
 		for (auto &function : macro.macros) {
 			if (!role.Owns(macro.OverloadPermissions(*function).owner)) {
-				ThrowNotOwner(entry, function.get());
+				ThrowNotOwner(entry, naming);
 			}
 		}
 		return;
@@ -393,12 +398,12 @@ static void RequireOwnership(ClientContext &context, const RoleAccess &role, Cat
 		auto relation =
 		    entry.Cast<IndexCatalogEntry>().GetRelation(entry.ParentCatalog().GetCatalogTransaction(context));
 		if (relation && !role.Owns(relation->permissions.owner)) {
-			ThrowNotOwner(entry, nullptr);
+			ThrowNotOwner(entry, naming);
 		}
 		return;
 	}
 	if (!OwnsEntry(role, entry, overload)) {
-		ThrowNotOwner(entry, overload);
+		ThrowNotOwner(entry, naming);
 	}
 }
 
@@ -418,13 +423,13 @@ static void RequireCreateIn(ClientContext &context, const RoleAccess &role, Cata
 }
 
 void Require(ClientContext &context, const RoleAccess &role, CatalogEntry &entry, AclMode use,
-             optional_ptr<const MacroFunction> overload) {
+             optional_ptr<const MacroFunction> overload, optional_ptr<const StatementNaming> naming) {
 	D_ASSERT(!Uses(use, AclMode::Admin | AclMode::SetRole | AclMode::See));
 	if (role.is_superuser) {
 		return;
 	}
 	if (Uses(use, AclMode::Own | AclMode::Rename)) {
-		RequireOwnership(context, role, entry, overload);
+		RequireOwnership(context, role, entry, overload, naming);
 	}
 	if (Uses(use, AclMode::Own) && entry.type == CatalogType::SUBSCRIPTION_ENTRY &&
 	    !entry.GetInfo()->Cast<CreateSubscriptionInfo>().password_required) {
@@ -445,7 +450,7 @@ void Require(ClientContext &context, const RoleAccess &role, CatalogEntry &entry
 		const auto container = ObjectKindOf(entry.type).container;
 		const bool in_schema = container != ObjectContainer::DATABASE && container != ObjectContainer::CLUSTER;
 		if (!in_schema || !role.Owns(entry.ParentSchema(context).permissions.owner)) {
-			RequireOwnership(context, role, entry, overload);
+			RequireOwnership(context, role, entry, overload, naming);
 		}
 	}
 	if (entry.type == CatalogType::SCHEMA_ENTRY && Uses(use, AclMode::Create)) {

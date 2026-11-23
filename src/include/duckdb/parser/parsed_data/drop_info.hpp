@@ -42,6 +42,7 @@ public:
 	bool has_func_args = false;
 	//! Whether this is DROP PROCEDURE (vs DROP FUNCTION)
 	bool is_procedure = false;
+	bool is_routine = false;
 	bool is_macro = false;
 	vector<ObjectReference> objects;
 	vector<idx_t> dropped_together;

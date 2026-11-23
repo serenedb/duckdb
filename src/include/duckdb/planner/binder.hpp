@@ -491,7 +491,8 @@ public:
 	void AdoptPrivilegeChecks(Binder &other);
 	void CheckPrivileges();
 	Catalog &SubscriptionCatalog(const Identifier &catalog_name);
-	BoundRoutine BindRoutine(const RoutineReference &routine, AclMode use, OnEntryNotFound if_not_found);
+	BoundRoutine BindRoutine(const RoutineReference &routine, AclMode use, OnEntryNotFound if_not_found,
+	                         bool named_by_statement = false);
 	CatalogEntry &ResolveDatabaseEntry(CatalogType type, AlterInfo &info, AclMode use);
 	void RequireResolvedTypeUsage(optional_ptr<const LogicalDependencyList> dependencies);
 	void BindCreateRole(CreateRoleInfo &info);

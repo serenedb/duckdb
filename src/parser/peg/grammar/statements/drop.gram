@@ -33,10 +33,11 @@ DropSecret <- Temporary? 'SECRET' IfExists? SecretName DropSecretStorage?
 
 TableOrView <- CommentTable / CommentView / MaterializedViewEntry
 MaterializedViewEntry <- 'MATERIALIZED' 'VIEW'
-FunctionTypeMacro <- FunctionTypeMacroKeyword / FunctionTypeFunction / FunctionTypeProcedure
+FunctionTypeMacro <- FunctionTypeMacroKeyword / FunctionTypeFunction / FunctionTypeProcedure / FunctionTypeRoutine
 FunctionTypeMacroKeyword <- 'MACRO'
 FunctionTypeFunction <- 'FUNCTION'
 FunctionTypeProcedure <- 'PROCEDURE'
+FunctionTypeRoutine <- 'ROUTINE'
 
 DropBehavior <- CascadeDropBehavior / RestrictDropBehavior
 CascadeDropBehavior <- 'CASCADE'

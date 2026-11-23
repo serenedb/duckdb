@@ -1366,6 +1366,7 @@ Bool:
     - FunctionKeyword
     - ProcedureKeyword
     - FunctionTypeProcedure
+    - FunctionTypeRoutine
     - DeallocatePrepare
     - CreateRecursive
     - CreateSecure

@@ -34,6 +34,11 @@ struct ActingRoles {
 	bool security_definer = false;
 };
 
+struct StatementNaming {
+	std::string_view noun;
+	const QualifiedName &name;
+};
+
 struct RelationNeed {
 	RelationNeed(const StandardEntry &relation_p, const RoleAccess &role_p) : relation(relation_p), role(role_p) {
 	}
@@ -74,7 +79,8 @@ DUCKDB_API string ValidUntilToSQL(int64_t valid_until);
 DUCKDB_API bool Allowed(const RoleAccess &role, const CatalogEntry &entry, AclMode use,
                         optional_ptr<const MacroFunction> overload = nullptr);
 DUCKDB_API void Require(ClientContext &context, const RoleAccess &role, CatalogEntry &entry, AclMode use,
-                        optional_ptr<const MacroFunction> overload = nullptr);
+                        optional_ptr<const MacroFunction> overload = nullptr,
+                        optional_ptr<const StatementNaming> naming = nullptr);
 DUCKDB_API void Require(const RelationNeed &need);
 DUCKDB_API void RequireSuperuser(const RoleAccess &role);
 DUCKDB_API void RequireDatabasePrivilege(ClientContext &context, const RoleAccess &role, const Identifier &database,

@@ -73,9 +73,10 @@ void Binder::BindDrop(DropInfo &info, StatementProperties &properties) {
 		optional_ptr<CatalogEntry> entry;
 		if (info.type == CatalogType::MACRO_ENTRY || info.type == CatalogType::TABLE_MACRO_ENTRY) {
 			// We also support "DROP MACRO" (instead of "DROP MACRO TABLE") for table macros
-			entry = BindRoutine({info.GetQualifiedName(), info.func_parameters, info.has_func_args, !info.is_procedure,
-			                     info.is_procedure, info.type, info.is_macro && !info.has_func_args},
-			                    AclMode::Drop, info.if_not_found)
+			entry = BindRoutine({info.GetQualifiedName(), info.func_parameters, info.has_func_args,
+			                     info.is_routine || !info.is_procedure, info.is_routine || info.is_procedure, info.type,
+			                     info.is_macro && !info.has_func_args},
+			                    AclMode::Drop, info.if_not_found, true)
 			            .entry;
 			if (entry && entry->type == CatalogType::TABLE_MACRO_ENTRY) {
 				// Change type to table macro so future lookups get the correct one
