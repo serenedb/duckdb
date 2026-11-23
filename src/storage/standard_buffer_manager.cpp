@@ -815,10 +815,16 @@ data_ptr_t StandardBufferManager::BufferAllocatorRealloc(PrivateAllocatorData *p
 		return pointer;
 	}
 	auto &data = private_data->Cast<BufferAllocatorData>();
-	BufferPoolReservation r(MemoryTag::ALLOCATOR, data.manager.GetBufferPool());
-	r.size = old_size;
-	r.Resize(size);
-	r.size = 0;
+	if (size > old_size) {
+		auto reservation = data.manager.EvictBlocksOrThrow(QueryContext(), MemoryTag::ALLOCATOR, size - old_size,
+		                                                   nullptr, "failed to allocate data of size %s%s");
+		reservation.size = 0;
+	} else {
+		BufferPoolReservation r(MemoryTag::ALLOCATOR, data.manager.GetBufferPool());
+		r.size = old_size;
+		r.Resize(size);
+		r.size = 0;
+	}
 	return BlockAllocator::Get(data.manager.db).ReallocateData(pointer, old_size, size);
 }
 

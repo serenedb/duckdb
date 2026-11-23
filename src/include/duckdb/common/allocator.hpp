@@ -81,6 +81,7 @@ public:
 		return allocator;
 	}
 	void Reset();
+	DUCKDB_API void Reallocate(idx_t size);
 
 private:
 	optional_ptr<Allocator> allocator;

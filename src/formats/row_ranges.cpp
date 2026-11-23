@@ -604,6 +604,20 @@ void RowWindow::Prepare(idx_t keep_from, idx_t need) {
 	if (fits) {
 		return;
 	}
+	if (bytes.use_count() == 1 && owned) {
+		if (keep_from > window.offset) {
+			memmove(OwnedData(window), window.data + (keep_from - window.offset), kept);
+			window.data = OwnedData(window);
+			window.offset = keep_from;
+			window.size = kept;
+		}
+		const idx_t lead = Lead(window);
+		const idx_t capacity = MaxValue(WINDOW_BYTES, lead + kept * 2 + need);
+		window.owned.Reallocate(capacity + RowWindow::PADDING);
+		window.capacity = capacity;
+		window.data = OwnedData(window) + lead;
+		return;
+	}
 	shared_ptr<RowBytes> next;
 	if (spare && spare.use_count() == 1) {
 		next = std::move(spare);
