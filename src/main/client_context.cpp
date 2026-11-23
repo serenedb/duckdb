@@ -1140,6 +1140,14 @@ void ClientContext::RefreshSecurity() {
 	}
 }
 
+bool ClientContext::FileSecretsVisible() const {
+	if (access_scope) {
+		return SecretsVisible();
+	}
+	auto properties = ActiveStatementProperties();
+	return !properties || !properties->hide_secrets;
+}
+
 void ClientContext::CheckFileAccess(const string &requested, RoleCapability sufficient) {
 	if (requested == "/dev/stdin" || requested == "/dev/stdout") {
 		return;
@@ -1151,31 +1159,40 @@ void ClientContext::CheckFileAccess(const string &requested, RoleCapability suff
 		return;
 	}
 	const auto path = DBConfig::GetConfig(*this).SanitizeAllowedPath(requested);
-	const auto covers = [&](const FileGrant &grant) {
-		if ((grant.capability & sufficient) == RoleCapability::None) {
-			return false;
-		}
-		if (grant.path == path) {
+	const auto covers = [&](const string &granted) {
+		if (granted == path) {
 			return true;
 		}
-		if (!grant.path.empty() && StringUtil::StartsWith(path, grant.path) &&
-		    (StringUtil::EndsWith(grant.path, "/") || path[grant.path.size()] == '/')) {
+		if (!granted.empty() && StringUtil::StartsWith(path, granted) &&
+		    (StringUtil::EndsWith(granted, "/") || path[granted.size()] == '/')) {
 			return true;
 		}
-		return FileSystem::HasGlob(grant.path) &&
-		       Glob(path.c_str(), path.size(), grant.path.c_str(), grant.path.size());
+		return FileSystem::HasGlob(granted) && Glob(path.c_str(), path.size(), granted.c_str(), granted.size());
+	};
+	const auto granted = [&](const FileGrant &grant) {
+		return (grant.capability & sufficient) != RoleCapability::None && covers(grant.path);
+	};
+	const auto stored = [&](const StatementProperties &properties) {
+		return std::any_of(properties.storage_locations.begin(), properties.storage_locations.end(), covers);
 	};
 	bool allowed;
 	if (access_scope) {
-		allowed = access_scope->catalog || holds(access_scope->role ? *access_scope->role : CurrentRole());
-		if (allowed && access_scope->grants &&
-		    std::none_of(access_scope->grants->begin(), access_scope->grants->end(), covers)) {
-			access_scope->grants.get_mutable()->push_back(FileGrant {path, sufficient});
+		auto properties = access_scope->properties.get_mutable();
+		auto &role = access_scope->role ? *access_scope->role : CurrentRole();
+		allowed = access_scope->catalog || (properties && stored(*properties));
+		if (!allowed && holds(role)) {
+			allowed = true;
+			if (properties) {
+				properties->hide_secrets |= !role.is_superuser;
+				if (std::none_of(properties->file_grants.begin(), properties->file_grants.end(), granted)) {
+					properties->file_grants.push_back(FileGrant {path, sufficient});
+				}
+			}
 		}
 	} else {
 		auto properties = ActiveStatementProperties();
-		allowed = properties && (properties->catalog_file_access ||
-		                         std::any_of(properties->file_grants.begin(), properties->file_grants.end(), covers));
+		allowed = properties && (stored(*properties) ||
+		                         std::any_of(properties->file_grants.begin(), properties->file_grants.end(), granted));
 	}
 	if (!allowed) {
 		throw PermissionException(

@@ -897,6 +897,10 @@ void Binder::BindCopyOptions(CopyInfo &info) {
 BoundStatement Binder::Bind(CopyStatement &stmt, CopyToType copy_to_type) {
 	// bind the copy options
 	BindCopyOptions(*stmt.info);
+	ClientContext::AccessScope access_scope;
+	access_scope.role = &CheckAs();
+	access_scope.properties = &GetStatementProperties();
+	ClientContext::AccessScopeGuard access_guard(context, access_scope);
 	context.CheckFileAccess(stmt.info->file_path,
 	                        stmt.info->is_from ? RoleCapability::ReadServerFiles : RoleCapability::WriteServerFiles);
 	if (stmt.info->is_from && stmt.info->parsed_options.find("partition_path") != stmt.info->parsed_options.end()) {

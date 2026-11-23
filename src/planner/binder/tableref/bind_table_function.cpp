@@ -261,7 +261,7 @@ BoundStatement Binder::BindTableFunctionInternal(BoundTableFunction &table_funct
 	table_function.SetCallArguments(parameters, named_parameters);
 	ClientContext::AccessScope access_scope;
 	access_scope.role = &CheckAs();
-	access_scope.grants = &GetStatementProperties().file_grants;
+	access_scope.properties = &GetStatementProperties();
 	ClientContext::AccessScopeGuard access_guard(context, access_scope);
 	if (table_function.bind || table_function.bind_replace || table_function.bind_operator) {
 		TableFunctionBindInput bind_input(parameters, named_parameters, input_table_types, input_table_names,

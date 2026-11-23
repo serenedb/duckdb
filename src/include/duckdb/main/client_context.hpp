@@ -162,7 +162,7 @@ public:
 	struct AccessScope {
 		optional_ptr<const RoleAccess> role;
 		bool catalog = false;
-		optional_ptr<vector<FileGrant>> grants;
+		optional_ptr<StatementProperties> properties;
 	};
 	optional_ptr<const AccessScope> access_scope;
 	optional_ptr<const StatementProperties> planned_properties;
@@ -196,6 +196,7 @@ public:
 	bool SecretsVisible() const {
 		return !access_scope || !access_scope->role || access_scope->role->is_superuser;
 	}
+	DUCKDB_API bool FileSecretsVisible() const;
 
 public:
 	//! Connect this client to a remote-style AttachedDatabase. Subsequent non-control SQL routes via

@@ -545,6 +545,10 @@ vector<idx_t> TableCatalogEntry::GetSubObjectOids() const {
 	return oids;
 }
 
+std::string_view TableCatalogEntry::GetStorageLocation() const {
+	return {};
+}
+
 vector<column_t> TableCatalogEntry::GetRowIdColumns() const {
 	vector<column_t> result;
 	result.push_back(COLUMN_IDENTIFIER_ROW_ID);

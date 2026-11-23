@@ -333,7 +333,7 @@ BoundStatement SecretManager::BindCreateSecret(CatalogTransaction transaction, C
 }
 
 SecretMatch SecretManager::LookupSecret(CatalogTransaction transaction, const string &path, const string &type) {
-	if (transaction.HasContext() && !transaction.GetContext().SecretsVisible()) {
+	if (transaction.HasContext() && !transaction.GetContext().FileSecretsVisible()) {
 		return SecretMatch();
 	}
 	InitializeSecrets(transaction);

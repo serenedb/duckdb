@@ -68,6 +68,16 @@ Binder::Binder(ClientContext &context, shared_ptr<Binder> parent_p, BinderType b
 		entry_retriever.SetCallback([this](CatalogEntry &entry) {
 			auto &properties = GetStatementProperties();
 			properties.resolved_entries.push_back(&entry);
+			if (entry.type == CatalogType::TABLE_ENTRY) {
+				const auto location = entry.Cast<TableCatalogEntry>().GetStorageLocation();
+				if (!location.empty()) {
+					auto path = DBConfig::GetConfig(this->context).SanitizeAllowedPath(string(location));
+					auto &locations = properties.storage_locations;
+					if (std::find(locations.begin(), locations.end(), path) == locations.end()) {
+						locations.push_back(std::move(path));
+					}
+				}
+			}
 			auto &catalog = entry.ParentCatalog();
 			if (catalog.IsSystemCatalog() || properties.read_databases.count(catalog.GetName())) {
 				return;

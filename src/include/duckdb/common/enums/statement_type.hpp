@@ -143,7 +143,8 @@ struct StatementProperties {
 	idx_t binding_generation = 0;
 	optional<ReplicationRole> replication_role;
 	vector<FileGrant> file_grants;
-	bool catalog_file_access = false;
+	vector<string> storage_locations;
+	bool hide_secrets = false;
 
 	bool IsReadOnly() {
 		return modified_databases.empty();
