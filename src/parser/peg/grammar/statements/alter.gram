@@ -54,9 +54,8 @@ SetTablespace <- 'SET' 'TABLESPACE' ColId
 SetOptions <- 'SET' RelOptionList
 ResetOptions <- 'RESET' RelOptionList
 
-AlterColumnEntry <- AddOrDropDefault / ChangeNullability / AlterType / SetCompression
+AlterColumnEntry <- AddOrDropDefault / ChangeNullability / AlterType / SetCompressionDefault / SetCompressionCodec
 
-SetCompression <- SetCompressionDefault / SetCompressionCodec
 SetCompressionDefault <- 'SET' 'COMPRESSION' 'DEFAULT'
 SetCompressionCodec <- 'SET' 'COMPRESSION' ColIdOrString Parens(List(Expression))?
 
