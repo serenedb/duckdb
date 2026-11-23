@@ -83,6 +83,7 @@ public:
 	const vector<CatalogSearchEntry> &GetSetPaths() const {
 		return set_paths;
 	}
+	DUCKDB_API string SettingValue() const;
 	//! Like GetSetPaths() but with the "$user" placeholder resolved via the
 	//! session_user. Entries that fail to resolve are dropped.
 	DUCKDB_API vector<CatalogSearchEntry> GetResolvedSetPaths() const;

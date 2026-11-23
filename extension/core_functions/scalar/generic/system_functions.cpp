@@ -11,6 +11,7 @@
 #include "duckdb/transaction/duck_transaction.hpp"
 #include "duckdb/main/database_manager.hpp"
 #include "duckdb/execution/expression_executor.hpp"
+#include "duckdb/planner/binder.hpp"
 
 namespace duckdb {
 
@@ -23,21 +24,47 @@ void CurrentQueryFunction(DataChunk &input, ExpressionState &state, Vector &resu
 }
 
 template <class VISIT>
-bool VisitUsableSearchPath(ClientContext &context, VISIT &&visit) {
+bool VisitUsableSearchPath(ClientContext &context, const CatalogSearchPath &search_path, const RoleAccess &role,
+                           VISIT &&visit) {
 	auto current_catalog = DatabaseManager::GetDefaultDatabase(context);
 	bool searched_current_catalog = false;
-	for (auto &entry : ClientData::Get(context).catalog_search_path->GetResolvedSetPaths()) {
+	for (auto &entry : search_path.GetResolvedSetPaths()) {
 		if (!entry.GetCatalog().empty() && entry.GetCatalog() != current_catalog) {
 			continue;
 		}
 		searched_current_catalog = true;
 		auto schema_entry =
 		    Catalog::GetSchema(context, entry.GetCatalog(), entry.GetSchema(), OnEntryNotFound::RETURN_NULL);
-		if (schema_entry && CanUseSchema(context.CurrentRole(), *schema_entry) && !visit(entry.GetSchema())) {
+		if (schema_entry && CanUseSchema(role, *schema_entry) && !visit(entry.GetSchema())) {
 			break;
 		}
 	}
 	return searched_current_catalog;
+}
+
+const CatalogSearchPath &SearchPathOf(ClientContext &context, const shared_ptr<CatalogSearchPath> &function_path) {
+	return function_path ? *function_path : *ClientData::Get(context).catalog_search_path;
+}
+
+struct CurrentSchemaBindData : public FunctionData {
+	explicit CurrentSchemaBindData(shared_ptr<CatalogSearchPath> function_path_p)
+	    : function_path(std::move(function_path_p)) {
+	}
+
+	shared_ptr<CatalogSearchPath> function_path;
+
+public:
+	unique_ptr<FunctionData> Copy() const override {
+		return make_uniq<CurrentSchemaBindData>(function_path);
+	}
+	bool Equals(const FunctionData &other_p) const override {
+		return function_path == other_p.Cast<CurrentSchemaBindData>().function_path;
+	}
+};
+
+unique_ptr<FunctionData> CurrentSchemaBind(BindScalarFunctionInput &input) {
+	return make_uniq<CurrentSchemaBindData>(input.HasBinder() ? input.GetBinder().EntryRetriever().FunctionSearchPath()
+	                                                          : nullptr);
 }
 
 // current_schema
@@ -45,13 +72,16 @@ bool VisitUsableSearchPath(ClientContext &context, VISIT &&visit) {
 // exists, or NULL if none of them do.
 void CurrentSchemaFunction(DataChunk &input, ExpressionState &state, Vector &result) {
 	auto &context = state.GetContext();
+	auto &func_expr = state.expr.Cast<BoundFunctionExpression>();
+	auto &search_path = SearchPathOf(context, func_expr.BindInfo()->Cast<CurrentSchemaBindData>().function_path);
 	auto current_catalog = DatabaseManager::GetDefaultDatabase(context);
 	bool found = false;
-	const bool searched_current_catalog = VisitUsableSearchPath(context, [&](const Identifier &schema) {
-		result.Reference(Value(schema), count_t(input.size()));
-		found = true;
-		return false;
-	});
+	const bool searched_current_catalog = VisitUsableSearchPath(
+	    context, search_path, context.CallerAccess(func_expr.CallerRole()), [&](const Identifier &schema) {
+		    result.Reference(Value(schema), count_t(input.size()));
+		    found = true;
+		    return false;
+	    });
 	if (found) {
 		return;
 	}
@@ -61,7 +91,7 @@ void CurrentSchemaFunction(DataChunk &input, ExpressionState &state, Vector &res
 	// PostgreSQL does (`SET search_path = nonexistent` -> current_schema() IS NULL),
 	// so the fallback must not swallow that case.
 	if (!searched_current_catalog) {
-		auto default_schema = ClientData::Get(context).catalog_search_path->GetDefaultSchema(context, current_catalog);
+		auto default_schema = search_path.GetDefaultSchema(context, current_catalog);
 		if (default_schema &&
 		    Catalog::GetSchema(context, current_catalog, *default_schema, OnEntryNotFound::RETURN_NULL)) {
 			result.Reference(Value(*default_schema), count_t(input.size()));
@@ -108,7 +138,8 @@ unique_ptr<FunctionData> CurrentSchemasBind(BindScalarFunctionInput &input) {
 	} else {
 		auto implicit_schemas = BooleanValue::Get(schema_value);
 		vector<Value> schema_list;
-		auto &catalog_search_path = ClientData::Get(context).catalog_search_path;
+		auto &search_path = SearchPathOf(
+		    context, input.HasBinder() ? input.GetBinder().EntryRetriever().FunctionSearchPath() : nullptr);
 		// PG-compliant implicit prefix: pg_temp (if the session has any temp
 		// objects), then pg_catalog. Then user-set schemas in the current DB.
 		if (implicit_schemas) {
@@ -133,16 +164,18 @@ unique_ptr<FunctionData> CurrentSchemasBind(BindScalarFunctionInput &input) {
 					schema_list.emplace_back("pg_temp");
 				}
 			}
-			auto &set_paths = catalog_search_path->GetSetPaths();
+			auto &set_paths = search_path.GetSetPaths();
 			if (std::none_of(set_paths.begin(), set_paths.end(),
 			                 [](const CatalogSearchEntry &entry) { return entry.GetSchema() == "pg_catalog"; })) {
 				schema_list.emplace_back("pg_catalog");
 			}
 		}
-		VisitUsableSearchPath(context, [&](const Identifier &schema) {
-			schema_list.emplace_back(schema);
-			return true;
-		});
+		VisitUsableSearchPath(context, search_path,
+		                      input.HasBinder() ? input.GetBinder().CurrentRole() : context.CurrentRole(),
+		                      [&](const Identifier &schema) {
+			                      schema_list.emplace_back(schema);
+			                      return true;
+		                      });
 		result_val = Value::LIST(LogicalType::VARCHAR, schema_list);
 	}
 	return make_uniq<CurrentSchemasBindData>(std::move(result_val));
@@ -191,7 +224,7 @@ ScalarFunction CurrentQueryFun::GetFunction() {
 }
 
 ScalarFunction CurrentSchemaFun::GetFunction() {
-	ScalarFunction current_schema({}, LogicalType::VARCHAR, CurrentSchemaFunction);
+	ScalarFunction current_schema({}, LogicalType::VARCHAR, CurrentSchemaFunction, CurrentSchemaBind);
 	current_schema.SetStability(FunctionStability::CONSISTENT_WITHIN_QUERY);
 	return current_schema;
 }

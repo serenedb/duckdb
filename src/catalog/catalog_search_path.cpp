@@ -387,6 +387,19 @@ vector<CatalogSearchEntry> CatalogSearchPath::GetResolvedSetPaths() const {
 	return res;
 }
 
+string CatalogSearchPath::SettingValue() const {
+	auto current_catalog = DatabaseManager::TryGetDefaultDatabase(context);
+	vector<CatalogSearchEntry> shown;
+	shown.reserve(set_paths.size());
+	for (auto &entry : set_paths) {
+		if (!entry.GetCatalog().empty() && entry.GetCatalog() != current_catalog) {
+			continue;
+		}
+		shown.emplace_back(Identifier(), entry.GetSchema());
+	}
+	return CatalogSearchEntry::ListToString(shown);
+}
+
 Identifier CatalogSearchPath::GetDefaultSchema(const Identifier &catalog) const {
 	for (auto &path : paths) {
 		if (path.GetCatalog() == TEMP_CATALOG) {

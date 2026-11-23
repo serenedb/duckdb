@@ -91,6 +91,9 @@ public:
 	          OnEntryNotFound on_entry_not_found = OnEntryNotFound::THROW_EXCEPTION);
 
 	const CatalogSearchPath &GetSearchPath() const;
+	const shared_ptr<CatalogSearchPath> &FunctionSearchPath() const {
+		return function_search_path;
+	}
 	void SetSearchPath(vector<CatalogSearchEntry> entries);
 	//! A table's expressions store names, so they are bound with a path that doesn't depend on the session:
 	//! a temporary object, a search_path or an object created later can't change what a stored name means.
@@ -125,6 +128,7 @@ private:
 	catalog_entry_callback_t callback = nullptr;
 	ClientContext &context;
 	shared_ptr<CatalogSearchPath> search_path;
+	shared_ptr<CatalogSearchPath> function_search_path;
 	optional_ptr<BoundAtClause> at_clause;
 	optional_ptr<const ActingRoles> acting;
 	optional_ptr<const vector<NameBinding>> bindings;

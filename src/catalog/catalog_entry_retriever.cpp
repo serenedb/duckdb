@@ -159,6 +159,7 @@ optional_ptr<CatalogEntry> CatalogEntryRetriever::ReturnAndCallback(optional_ptr
 void CatalogEntryRetriever::Inherit(const CatalogEntryRetriever &parent) {
 	this->callback = parent.callback;
 	this->search_path = parent.search_path;
+	this->function_search_path = parent.function_search_path;
 	this->at_clause = parent.at_clause;
 	this->bindings = parent.bindings;
 	this->recorded_bindings = parent.recorded_bindings;
@@ -194,12 +195,14 @@ void CatalogEntryRetriever::SetSearchPath(vector<CatalogSearchEntry> entries, co
 
 void CatalogEntryRetriever::ReplaceSearchPath(vector<CatalogSearchEntry> entries) {
 	search_path = make_shared_ptr<CatalogSearchPath>(context, std::move(entries));
+	function_search_path = search_path;
 	bindings = nullptr;
 	recorded_bindings = nullptr;
 }
 
 void CatalogEntryRetriever::SwapSearchPath(CatalogEntryRetriever &other) {
 	std::swap(search_path, other.search_path);
+	std::swap(function_search_path, other.function_search_path);
 	std::swap(bindings, other.bindings);
 	std::swap(recorded_bindings, other.recorded_bindings);
 	std::swap(bindings_catalog, other.bindings_catalog);
