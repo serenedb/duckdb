@@ -116,7 +116,7 @@ struct Settings {
 	                                   SetScope scope);
 	DUCKDB_API static bool CanRead(const RoleAccess &role, const SettingAccess &access);
 	DUCKDB_API static void CheckRead(ClientContext &context, const Identifier &name, const RoleAccess &role);
-	DUCKDB_API static bool IsVisible(ClientContext &context, const Identifier &name);
+	DUCKDB_API static bool IsVisible(ClientContext &context, const RoleAccess &role, const Identifier &name);
 
 private:
 	static bool TryGetSettingInternal(const DatabaseInstance &db, idx_t setting_index, Value &result);

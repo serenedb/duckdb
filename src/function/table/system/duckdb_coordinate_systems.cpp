@@ -63,9 +63,10 @@ static unique_ptr<FunctionData> DuckDBCoordinateSystemsBind(ClientContext &conte
 static unique_ptr<GlobalTableFunctionState> DuckDBCoordinateSystemsInit(ClientContext &context,
                                                                         TableFunctionInitInput &input) {
 	auto result = make_uniq<DuckDBCoordinateSystemsData>();
-	auto schemas = Catalog::GetAllSchemas(context);
+	const auto role = context.CallerAccess(input.caller_role);
+	auto schemas = Catalog::GetAllSchemas(context, role);
 	for (auto &schema : schemas) {
-		Catalog::ScanListedEntries(context, schema.get(), CatalogType::COORDINATE_SYSTEM_ENTRY,
+		Catalog::ScanListedEntries(context, role, schema.get(), CatalogType::COORDINATE_SYSTEM_ENTRY,
 		                           [&](CatalogEntry &entry) {
 			                           result->entries.push_back(DuckDBCoordinateSystemsData::ListedCoordinateSystem {
 			                               schema, entry.Cast<CoordinateSystemCatalogEntry>()});

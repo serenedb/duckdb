@@ -108,14 +108,14 @@ static unique_ptr<FunctionData> DuckDBFunctionsBind(ClientContext &context, Tabl
 	return std::move(result);
 }
 
-static void ExtractFunctionsFromSchema(ClientContext &context, SchemaCatalogEntry &schema,
+static void ExtractFunctionsFromSchema(ClientContext &context, const RoleAccess &role, SchemaCatalogEntry &schema,
                                        DuckDBFunctionsData &result) {
 	auto add = [&](CatalogEntry &entry) {
 		result.entries.push_back(ListedFunction {schema, entry});
 	};
-	Catalog::ScanListedEntries(context, schema, CatalogType::SCALAR_FUNCTION_ENTRY, add);
-	Catalog::ScanListedEntries(context, schema, CatalogType::TABLE_FUNCTION_ENTRY, add);
-	Catalog::ScanListedEntries(context, schema, CatalogType::PRAGMA_FUNCTION_ENTRY, add);
+	Catalog::ScanListedEntries(context, role, schema, CatalogType::SCALAR_FUNCTION_ENTRY, add);
+	Catalog::ScanListedEntries(context, role, schema, CatalogType::TABLE_FUNCTION_ENTRY, add);
+	Catalog::ScanListedEntries(context, role, schema, CatalogType::PRAGMA_FUNCTION_ENTRY, add);
 }
 
 unique_ptr<GlobalTableFunctionState> DuckDBFunctionsInit(ClientContext &context, TableFunctionInitInput &input) {
@@ -123,9 +123,10 @@ unique_ptr<GlobalTableFunctionState> DuckDBFunctionsInit(ClientContext &context,
 
 	// scan all the schemas for tables and collect them and collect them
 	auto &bind_data = input.bind_data->Cast<DuckDBSystemIncludeHiddenBindData>();
-	auto schemas = Catalog::GetAllSchemas(context, bind_data.include_hidden, bind_data.DatabaseFilter(context));
+	const auto role = context.CallerAccess(input.caller_role);
+	auto schemas = Catalog::GetAllSchemas(context, role, bind_data.include_hidden, bind_data.DatabaseFilter(context));
 	for (auto &schema : schemas) {
-		ExtractFunctionsFromSchema(context, schema.get(), *result);
+		ExtractFunctionsFromSchema(context, role, schema.get(), *result);
 	};
 
 	std::sort(result->entries.begin(), result->entries.end(), [&](const ListedFunction &a, const ListedFunction &b) {

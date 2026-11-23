@@ -220,8 +220,8 @@ public:
 		return transaction.ActiveTransaction();
 	}
 
-	DUCKDB_API bool CanSee(CatalogEntry &entry);
-	DUCKDB_API bool CanSeeDatabase(AttachedDatabase &database);
+	DUCKDB_API bool CanSee(const RoleAccess &role, CatalogEntry &entry);
+	DUCKDB_API bool CanSeeDatabase(const RoleAccess &role, AttachedDatabase &database);
 	DUCKDB_API void CheckEntryReference(const RoleAccess &role, CatalogEntry &entry);
 	DUCKDB_API void CheckDatabaseReference(const RoleAccess &role, Catalog &catalog);
 	DUCKDB_API optional_ptr<const StatementProperties> ActiveStatementProperties() const;

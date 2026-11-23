@@ -216,12 +216,12 @@ void Settings::CheckRead(ClientContext &context, const Identifier &name, const R
 	}
 }
 
-bool Settings::IsVisible(ClientContext &context, const Identifier &name) {
+bool Settings::IsVisible(ClientContext &context, const RoleAccess &role, const Identifier &name) {
 	if (DBConfig::GetConfig(context).hidden_settings.count(name)) {
 		return false;
 	}
 	auto access = GetAccess(context, name);
-	return !access || (!access->no_show_all && CanRead(context.CurrentRole(), *access));
+	return !access || (!access->no_show_all && CanRead(role, *access));
 }
 
 } // namespace duckdb

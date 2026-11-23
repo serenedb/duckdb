@@ -11,6 +11,7 @@
 #include "duckdb/catalog/catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry_map.hpp"
 #include "duckdb/catalog/catalog_transaction.hpp"
+#include "duckdb/catalog/role_graph.hpp"
 #include "duckdb/common/atomic.hpp"
 #include "duckdb/common/enums/catalog_lookup_behavior.hpp"
 #include "duckdb/common/enums/on_entry_not_found.hpp"
@@ -611,12 +612,13 @@ public:
 	DUCKDB_API static vector<reference<SchemaCatalogEntry>> GetSchemas(CatalogEntryRetriever &retriever,
 	                                                                   const string &catalog_name);
 	DUCKDB_API static vector<reference<SchemaCatalogEntry>>
-	GetAllSchemas(ClientContext &context, bool include_hidden = false,
+	GetAllSchemas(ClientContext &context, const RoleAccess &role, bool include_hidden = false,
 	              const std::function<bool(AttachedDatabase &)> &needs_database = nullptr);
-	DUCKDB_API static void ScanListedEntries(ClientContext &context, SchemaCatalogEntry &schema, CatalogType type,
-	                                         const std::function<void(CatalogEntry &)> &callback);
+	DUCKDB_API static void ScanListedEntries(ClientContext &context, const RoleAccess &role, SchemaCatalogEntry &schema,
+	                                         CatalogType type, const std::function<void(CatalogEntry &)> &callback);
 
-	static vector<reference<CatalogEntry>> GetAllEntries(ClientContext &context, CatalogType catalog_type);
+	static vector<reference<CatalogEntry>> GetAllEntries(ClientContext &context, const RoleAccess &role,
+	                                                     CatalogType catalog_type);
 
 	virtual void Verify();
 

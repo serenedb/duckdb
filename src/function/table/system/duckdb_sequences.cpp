@@ -17,6 +17,7 @@ struct DuckDBSequencesData : public GlobalTableFunctionState {
 
 	vector<reference<SequenceCatalogEntry>> entries;
 	idx_t offset;
+	RoleAccess role;
 };
 
 static unique_ptr<FunctionData> DuckDBSequencesBind(ClientContext &context, TableFunctionBindInput &input,
@@ -79,9 +80,11 @@ unique_ptr<GlobalTableFunctionState> DuckDBSequencesInit(ClientContext &context,
 
 	// scan all the schemas for tables and collect themand collect them
 	auto &bind_data = input.bind_data->Cast<DuckDBSystemIncludeHiddenBindData>();
-	auto schemas = Catalog::GetAllSchemas(context, bind_data.include_hidden, bind_data.DatabaseFilter(context));
+	result->role = context.CallerAccess(input.caller_role);
+	auto &role = result->role;
+	auto schemas = Catalog::GetAllSchemas(context, role, bind_data.include_hidden, bind_data.DatabaseFilter(context));
 	for (auto &schema : schemas) {
-		Catalog::ScanListedEntries(context, schema.get(), CatalogType::SEQUENCE_ENTRY, [&](CatalogEntry &entry) {
+		Catalog::ScanListedEntries(context, role, schema.get(), CatalogType::SEQUENCE_ENTRY, [&](CatalogEntry &entry) {
 			result->entries.push_back(entry.Cast<SequenceCatalogEntry>());
 		});
 	};
@@ -149,9 +152,8 @@ void DuckDBSequencesFunction(ClientContext &context, TableFunctionInput &data_p,
 		max_value.Append(Value::BIGINT(seq_data.max_value));
 		increment_by.Append(Value::BIGINT(seq_data.increment));
 		cycle.Append(Value::BOOLEAN(seq_data.cycle));
-		const bool readable =
-		    IsUnowned(seq) || context.CurrentRole().CanAny(CatalogType::SEQUENCE_ENTRY, seq.permissions,
-		                                                   AclMode::Usage | AclMode::Select);
+		const bool readable = IsUnowned(seq) || data.role.CanAny(CatalogType::SEQUENCE_ENTRY, seq.permissions,
+		                                                         AclMode::Usage | AclMode::Select);
 		if (seq_data.usage_count == 0 || !seq_data.last_value || !readable) {
 			last_value.Append(Value());
 		} else {

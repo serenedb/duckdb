@@ -295,6 +295,7 @@ BoundStatement Binder::Bind(BaseTableRef &ref) {
 		if (entry_at_clause) {
 			logical_get->at_clause = make_uniq<BoundAtClause>(entry_at_clause->Unit(), entry_at_clause->GetValue());
 		}
+		logical_get->caller_role = CallerRole();
 		auto &col_ids = logical_get->GetMutableColumnIds();
 		// The binding carries this entry, and column binding reads the table's
 		// column model from it (star-expansion, generated-column expansion,

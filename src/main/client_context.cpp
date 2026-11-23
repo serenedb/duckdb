@@ -1062,13 +1062,11 @@ static absl::Duration TimeLeft(const optional_idx &deadline) {
 	return absl::Nanoseconds(TimePoint::ToNanos(left));
 }
 
-bool ClientContext::CanSee(CatalogEntry &entry) {
-	auto &role = CurrentRole();
+bool ClientContext::CanSee(const RoleAccess &role, CatalogEntry &entry) {
 	return role.is_superuser || EntryVisible(*this, role, entry);
 }
 
-bool ClientContext::CanSeeDatabase(AttachedDatabase &database) {
-	auto &role = CurrentRole();
+bool ClientContext::CanSeeDatabase(const RoleAccess &role, AttachedDatabase &database) {
 	return role.is_superuser || DatabaseVisible(*this, role, database);
 }
 

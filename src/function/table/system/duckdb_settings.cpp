@@ -84,8 +84,9 @@ unique_ptr<GlobalTableFunctionState> DuckDBSettingsInit(ClientContext &context, 
 	}
 
 	auto &config = DBConfig::GetConfig(context);
+	const auto role = context.CallerAccess(input.caller_role);
 	auto visible = [&](const string &name) {
-		return Settings::IsVisible(context, Identifier(name));
+		return Settings::IsVisible(context, role, Identifier(name));
 	};
 	auto options_count = DBConfig::GetOptionCount();
 	for (idx_t i = 0; i < options_count; i++) {

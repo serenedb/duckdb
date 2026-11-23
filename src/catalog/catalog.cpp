@@ -855,7 +855,7 @@ vector<SimilarCatalogEntry> Catalog::SimilarEntriesInSchemas(ClientContext &cont
 	vector<SimilarCatalogEntry> results;
 	for (auto schema_ref : schemas) {
 		auto &schema = schema_ref.get();
-		if (!context.CanSeeDatabase(schema.catalog.GetAttached())) {
+		if (!context.CanSeeDatabase(context.CurrentRole(), schema.catalog.GetAttached())) {
 			continue;
 		}
 		SimilarCatalogEntry entry;
@@ -1097,7 +1097,7 @@ CatalogException Catalog::UnrecognizedConfigurationError(ClientContext &context,
 	// the setting is not in an extension
 	// get a list of all options
 	const auto visible = [&](const Identifier &setting) {
-		return Settings::IsVisible(context, setting);
+		return Settings::IsVisible(context, context.CurrentRole(), setting);
 	};
 	vector<Identifier> potential_names;
 	for (auto &option : DBConfig::GetOptionNames()) {
@@ -1139,7 +1139,7 @@ CatalogException Catalog::CreateMissingEntryException(CatalogEntryRetriever &ret
 		}
 		if (database->GetVisibility() == AttachVisibility::HIDDEN ||
 		    (ListingRank(database->GetCatalog()) != 1 && !search_path_catalogs.count(database->GetName())) ||
-		    !context.CanSeeDatabase(*database)) {
+		    !context.CanSeeDatabase(context.CurrentRole(), *database)) {
 			continue;
 		}
 		vector<reference<SchemaCatalogEntry>> current_schemas;
@@ -1900,7 +1900,7 @@ vector<reference<SchemaCatalogEntry>> Catalog::GetSchemas(ClientContext &context
 }
 
 vector<reference<SchemaCatalogEntry>>
-Catalog::GetAllSchemas(ClientContext &context, bool include_hidden,
+Catalog::GetAllSchemas(ClientContext &context, const RoleAccess &role, bool include_hidden,
                        const std::function<bool(AttachedDatabase &)> &needs_database) {
 	vector<reference<SchemaCatalogEntry>> result;
 
@@ -1913,7 +1913,7 @@ Catalog::GetAllSchemas(ClientContext &context, bool include_hidden,
 		if (needs_database && !needs_database(*database)) {
 			continue;
 		}
-		if (!context.CanSeeDatabase(*database)) {
+		if (!context.CanSeeDatabase(role, *database)) {
 			continue;
 		}
 		// Pin the database for the meta transaction: the returned schema (and downstream entry) references
@@ -1930,7 +1930,7 @@ Catalog::GetAllSchemas(ClientContext &context, bool include_hidden,
 			continue;
 		}
 		for (auto &schema : new_schemas) {
-			if (context.CanSee(schema.get())) {
+			if (context.CanSee(role, schema.get())) {
 				result.push_back(schema);
 			}
 		}
@@ -1957,8 +1957,8 @@ Catalog::GetAllSchemas(ClientContext &context, bool include_hidden,
 	return result;
 }
 
-void Catalog::ScanListedEntries(ClientContext &context, SchemaCatalogEntry &schema, CatalogType type,
-                                const std::function<void(CatalogEntry &)> &callback) {
+void Catalog::ScanListedEntries(ClientContext &context, const RoleAccess &role, SchemaCatalogEntry &schema,
+                                CatalogType type, const std::function<void(CatalogEntry &)> &callback) {
 	vector<reference<CatalogEntry>> entries;
 	try {
 		schema.Scan(context, type, [&](CatalogEntry &entry) { entries.push_back(entry); });
@@ -1970,7 +1970,7 @@ void Catalog::ScanListedEntries(ClientContext &context, SchemaCatalogEntry &sche
 		return;
 	}
 	for (auto &entry : entries) {
-		if (!context.CanSee(entry.get())) {
+		if (!context.CanSee(role, entry.get())) {
 			continue;
 		}
 		try {
@@ -1986,11 +1986,12 @@ void Catalog::ScanListedEntries(ClientContext &context, SchemaCatalogEntry &sche
 	}
 }
 
-vector<reference<CatalogEntry>> Catalog::GetAllEntries(ClientContext &context, CatalogType catalog_type) {
+vector<reference<CatalogEntry>> Catalog::GetAllEntries(ClientContext &context, const RoleAccess &role,
+                                                       CatalogType catalog_type) {
 	vector<reference<CatalogEntry>> result;
-	auto schemas = GetAllSchemas(context);
+	auto schemas = GetAllSchemas(context, role);
 	for (const auto &schema_ref : schemas) {
-		ScanListedEntries(context, schema_ref.get(), catalog_type,
+		ScanListedEntries(context, role, schema_ref.get(), catalog_type,
 		                  [&](CatalogEntry &entry) { result.push_back(entry); });
 	}
 	return result;

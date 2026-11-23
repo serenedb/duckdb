@@ -355,7 +355,7 @@ const RoleAccess &Binder::CurrentRole() const {
 
 optional_idx Binder::CallerRole() const {
 	auto &caller = CurrentRole();
-	return &caller != &context.CurrentRole() ? optional_idx(caller.role) : optional_idx();
+	return &caller != &context.CurrentRole() && !caller.IsSystem() ? optional_idx(caller.role) : optional_idx();
 }
 
 const RoleAccess &Binder::AccessOf(idx_t role) {

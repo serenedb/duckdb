@@ -58,7 +58,7 @@ SimilarCatalogEntry SchemaCatalogEntry::GetSimilarEntry(CatalogTransaction trans
 	SimilarCatalogEntry result;
 	for (auto &entry_ref : entries) {
 		auto &entry = entry_ref.get();
-		if (transaction.context && !transaction.context->CanSee(entry)) {
+		if (transaction.context && !transaction.context->CanSee(transaction.context->CurrentRole(), entry)) {
 			continue;
 		}
 		auto entry_score = StringUtil::SimilarityRating(entry.name.GetIdentifierName(), lookup_info.GetEntryName());
