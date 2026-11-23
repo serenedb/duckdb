@@ -74,7 +74,8 @@ static int64_t MinSliceTicks() {
 TaskScheduler::BlockingScope::BlockingScope() : BlockingScope(true) {
 }
 
-TaskScheduler::BlockingScope::BlockingScope(bool wake) : worker(current_worker) {
+TaskScheduler::BlockingScope::BlockingScope(bool wake)
+    : worker(current_worker && current_worker->in_task ? current_worker : nullptr) {
 	if (!worker || worker->blocking_depth++ > 0) {
 		return;
 	}
