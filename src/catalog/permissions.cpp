@@ -157,6 +157,78 @@ bool EntryVisible(ClientContext &context, const RoleAccess &role, CatalogEntry &
 	}
 }
 
+static constexpr uint64_t PUBLIC_BIT = uint64_t(1) << 63;
+
+static uint64_t RoleBit(idx_t role) {
+	return role == ACL_ID_PUBLIC ? PUBLIC_BIT : uint64_t(1) << (Hash(uint64_t(role)) % 63);
+}
+
+static uint64_t GranteeBits(std::span<const AclItem> acl, AclMode privileges) {
+	uint64_t bits = 0;
+	for (auto &item : acl) {
+		if ((item.privs & privileges) != AclMode::NoRights) {
+			bits |= RoleBit(item.grantee);
+		}
+	}
+	return bits;
+}
+
+static uint64_t HolderBits(const ObjectKind &kind, const Permissions &permissions) {
+	if (permissions.owner == 0) {
+		return VISIBLE_TO_ALL;
+	}
+	auto bits = RoleBit(permissions.owner);
+	if (!permissions.UsesDefaultAcl()) {
+		return bits | GranteeBits(permissions.acl, kind.privileges);
+	}
+	return (kind.public_privileges & kind.privileges) != AclMode::NoRights ? bits | PUBLIC_BIT : bits;
+}
+
+uint64_t VisibilityBits(const CatalogEntry &entry) {
+	if (entry.internal) {
+		return VISIBLE_TO_ALL;
+	}
+	const auto kind = ObjectKindOf(entry.type);
+	switch (entry.type) {
+	case CatalogType::SCHEMA_ENTRY:
+	case CatalogType::SEQUENCE_ENTRY:
+	case CatalogType::TYPE_ENTRY:
+	case CatalogType::JOB_ENTRY:
+		return HolderBits(kind, entry.permissions);
+	case CatalogType::TABLE_ENTRY:
+	case CatalogType::VIEW_ENTRY: {
+		auto bits = HolderBits(kind, entry.permissions);
+		AnyColumnAcl(entry.Cast<StandardEntry>(), [&](std::span<const AclItem> acl) {
+			bits |= GranteeBits(acl, ACL_COLUMN_PRIVILEGES);
+			return false;
+		});
+		return bits;
+	}
+	case CatalogType::MACRO_ENTRY:
+	case CatalogType::TABLE_MACRO_ENTRY: {
+		auto &macro = entry.Cast<MacroCatalogEntry>();
+		uint64_t bits = 0;
+		for (auto &overload : macro.macros) {
+			bits |= HolderBits(kind, macro.OverloadPermissions(*overload));
+		}
+		return bits;
+	}
+	default:
+		return VISIBLE_TO_ALL;
+	}
+}
+
+uint64_t ViewerBits(const RoleAccess &role) {
+	if (role.is_superuser || role.capabilities != RoleCapability::None) {
+		return VISIBLE_TO_ALL;
+	}
+	auto bits = PUBLIC_BIT | RoleBit(role.role);
+	for (auto member : role.closure) {
+		bits |= RoleBit(member);
+	}
+	return bits;
+}
+
 void CheckReference(ClientContext &context, const RoleAccess &role, CatalogEntry &entry) {
 	auto &database = entry.type == CatalogType::DATABASE_ENTRY ? entry.Cast<AttachedDatabase>()
 	                                                           : entry.ParentCatalog().GetAttached();
