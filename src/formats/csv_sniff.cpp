@@ -121,7 +121,7 @@ bool CsvColumnCounter::FinishedFile() const {
 }
 
 idx_t CsvColumnCounter::CountedTo() const {
-	if (buffer_idx != 0 || stitching || !cur_buffer_handle) {
+	if (buffer_idx != 0 || !cur_buffer_handle) {
 		return DConstants::INVALID_INDEX;
 	}
 	return MinValue(cursor.pos + CSV_BLOCK_BYTES + lexer.Lookahead(), cur_buffer_handle->actual_size);
@@ -183,9 +183,10 @@ CsvCandidateBytes::CsvCandidateBytes(CSVBufferManager &buffer_manager,
 }
 
 bool CsvCandidateBytes::Covers(idx_t end) {
-	if (!first || end == DConstants::INVALID_INDEX || end > first->actual_size) {
+	if (!first || end == DConstants::INVALID_INDEX) {
 		return false;
 	}
+	D_ASSERT(end <= first->actual_size);
 	if (end <= covered) {
 		return true;
 	}
