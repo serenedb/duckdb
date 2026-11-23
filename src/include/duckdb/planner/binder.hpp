@@ -302,14 +302,7 @@ struct GlobalBinderState {
 	optional_ptr<BoundParameterMap> parameters;
 	//! Tables whose triggers have already been expanded in this query (recursion detection)
 	reference_set_t<TableCatalogEntry> trigger_expanded_tables;
-	//! Generated base-UPDATE nodes that must capture the pre-update (OLD) row image (the capture request),
-	//! keyed by node identity. Internal trigger-expansion state; never set by SQL parsing and never serialized.
-	reference_set_t<QueryNode> trigger_old_capture;
-	//! Optional presentation detail for the statement-trigger CTE consumer: the reserved column names, in physical
-	//! table order, under which the captured OLD image is exposed via SQL aliases. Only populated for capture
-	//! requests presented through a CTE; a consumer that reads the OLD image directly leaves it absent.
-	reference_map_t<QueryNode, vector<Identifier>> trigger_old_capture_cte_names;
-	reference_set_t<QueryNode> trigger_base_nodes;
+	reference_map_t<QueryNode, vector<Identifier>> trigger_bases;
 	//! Set during CREATE TRIGGER body validation to detect self-recursive writes
 	optional_ptr<TableCatalogEntry> trigger_creation_table;
 	//! Name of the trigger being created (for error messages)
@@ -739,6 +732,7 @@ private:
 	                                 const TableCatalogEntry &table,
 	                                 const vector<const_reference<TriggerCatalogEntry>> &triggers,
 	                                 TriggerEventType event_type);
+	BoundStatement BindTriggerChain(QueryNode &chain, QueryNode &base, vector<Identifier> old_capture_names);
 	//! Registers a row scope binding (named "new" for INSERT, "old" for DELETE) so child binders resolve
 	//! NEW.col / OLD.col at depth=1. The returned binder is pushed as an enclosing scope.
 	//! The caller must keep it alive until the matching pop_back().

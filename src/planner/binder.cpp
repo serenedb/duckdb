@@ -970,7 +970,7 @@ BoundStatement Binder::BindReturning(QueryNode &node, vector<unique_ptr<ParsedEx
 	binder->acting = acting;
 	binder->bind_context
 	    .AddBaseTable(update_table_index, alias, names, types, bound_columns, table, std::move(virtual_columns))
-	    .checks = global_binder_state->trigger_base_nodes.count(node) ? RelationChecks() : ReadChecks(table, target);
+	    .checks = global_binder_state->trigger_bases.count(node) ? RelationChecks() : ReadChecks(table, target);
 	ReturningBinder returning_binder(*binder, context);
 
 	vector<unique_ptr<Expression>> projection_expressions;
