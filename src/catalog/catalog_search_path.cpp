@@ -241,6 +241,11 @@ void CatalogSearchPath::Set(vector<CatalogSearchEntry> new_paths, CatalogSetPath
 		}
 		auto schema_entry =
 		    Catalog::GetSchema(context, path.GetCatalog(), path.GetSchema(), OnEntryNotFound::RETURN_NULL);
+		auto &role = context.CurrentRole();
+		if (schema_entry && (!context.CanSeeDatabase(role, schema_entry->ParentCatalog().GetAttached()) ||
+		                     !LookupVisible(context, role, *schema_entry))) {
+			schema_entry = nullptr;
+		}
 		if (schema_entry) {
 			// we are setting a schema - update the catalog and schema
 			if (path.GetCatalog().empty()) {
@@ -251,7 +256,7 @@ void CatalogSearchPath::Set(vector<CatalogSearchEntry> new_paths, CatalogSetPath
 		// only schema supplied - check if this is a catalog instead
 		if (path.GetCatalog().empty()) {
 			auto catalog = Catalog::GetCatalogEntry(context, path.GetSchema());
-			if (catalog) {
+			if (catalog && context.CanSeeDatabase(context.CurrentRole(), catalog->GetAttached())) {
 				auto default_schema = catalog->GetDefaultSchema();
 				if (default_schema) {
 					auto schema = catalog->GetSchema(context, *default_schema, OnEntryNotFound::RETURN_NULL);
@@ -276,8 +281,11 @@ void CatalogSearchPath::Set(vector<CatalogSearchEntry> new_paths, CatalogSetPath
 		// Explicit catalog.schema. A valid catalog with an unknown schema is
 		// PG-compliant (the entry is just skipped at lookup). Only reject when
 		// the catalog itself doesn't exist.
-		if (set_type != CatalogSetPathType::SET_SCHEMA && Catalog::GetCatalogEntry(context, path.GetCatalog())) {
-			continue;
+		if (set_type != CatalogSetPathType::SET_SCHEMA) {
+			auto catalog = Catalog::GetCatalogEntry(context, path.GetCatalog());
+			if (catalog && context.CanSeeDatabase(context.CurrentRole(), catalog->GetAttached())) {
+				continue;
+			}
 		}
 		if (!path.GetCatalog().empty()) {
 			// "a.b" can also name a nested schema - give a clearer error in that case

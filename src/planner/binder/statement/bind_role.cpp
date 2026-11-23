@@ -341,7 +341,8 @@ void Binder::BindAlterDatabaseSettings(AlterDatabaseSettingsInfo &info) {
 	}
 	optional_ptr<CatalogEntry> database;
 	if (!info.GetQualifiedName().Name().empty()) {
-		database = &ClusterDatabase(context, info.GetQualifiedName().Name());
+		database = ClusterEntry(context, caller, CatalogType::DATABASE_ENTRY, info.GetQualifiedName().Name(),
+		                        AclMode::NoRights, OnEntryNotFound::THROW_EXCEPTION);
 		info.database_id = database->oid;
 	} else if (!caller.is_superuser) {
 		throw PermissionException({{"detail", "Only roles with the SUPERUSER attribute may alter settings globally."}},

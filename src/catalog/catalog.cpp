@@ -110,6 +110,14 @@ optional_ptr<Catalog> Catalog::GetCatalogEntry(CatalogEntryRetriever &retriever,
 	return &entry->GetCatalog();
 }
 
+static optional_ptr<Catalog> VisibleCatalog(CatalogEntryRetriever &retriever, const Identifier &catalog_name) {
+	auto catalog = Catalog::GetCatalogEntry(retriever, catalog_name);
+	if (catalog && !retriever.GetContext().CanSeeDatabase(retriever.CheckAs(), catalog->GetAttached())) {
+		return nullptr;
+	}
+	return catalog;
+}
+
 optional_ptr<Catalog> Catalog::GetCatalogEntry(ClientContext &context, const Identifier &catalog_name) {
 	CatalogEntryRetriever entry_retriever(context);
 	return GetCatalogEntry(entry_retriever, catalog_name);
@@ -1286,6 +1294,7 @@ CatalogEntryLookup Catalog::TryLookupEntry(CatalogEntryRetriever &retriever, con
 	// resolve the catalog by name, so it is safe to use in contexts where the catalog is not yet registered (e.g. WAL
 	// replay).
 	auto &context = retriever.GetContext();
+	auto &role = retriever.CheckAs();
 	auto &schema = lookup_info.GetSchema();
 	reference_set_t<SchemaCatalogEntry> schemas;
 	if (IsInvalidSchema(schema)) {
@@ -1297,10 +1306,11 @@ CatalogEntryLookup Catalog::TryLookupEntry(CatalogEntryRetriever &retriever, con
 			auto result = TryLookupEntryInternal(
 			    transaction, EntryLookupInfo(lookup_info, QualifiedName(GetName(), candidate_schema,
 			                                                            lookup_info.GetEntryIdentifier())));
-			if (result.schema && !CanUseSchema(retriever.CheckAs(), *result.schema)) {
+			if (result.schema &&
+			    (!LookupVisible(context, role, *result.schema) || !CanUseSchema(role, *result.schema))) {
 				continue;
 			}
-			if (result.Found()) {
+			if (result.Found() && LookupVisible(context, role, *result.entry)) {
 				return result;
 			}
 			if (result.schema) {
@@ -1310,10 +1320,13 @@ CatalogEntryLookup Catalog::TryLookupEntry(CatalogEntryRetriever &retriever, con
 	} else {
 		auto transaction = GetCatalogTransaction(context);
 		auto result = TryLookupEntryInternal(transaction, lookup_info);
-		if (result.schema && !CanUseSchema(retriever.CheckAs(), *result.schema)) {
+		if (result.schema && !LookupVisible(context, role, *result.schema)) {
+			result = CatalogEntryLookup();
+		}
+		if (result.schema && !CanUseSchema(role, *result.schema)) {
 			ThrowPermissionDenied(*result.schema);
 		}
-		if (result.Found()) {
+		if (result.Found() && LookupVisible(context, role, *result.entry)) {
 			return result;
 		}
 		if (result.schema) {
@@ -1346,16 +1359,13 @@ CatalogEntryLookup Catalog::TryLookupEntryAcrossCatalogs(CatalogEntryRetriever &
 	if (lookup_path.size() > 3) {
 		// the entry is qualified with a nested schema path ([catalog, schema path..., name]) - this is unambiguous,
 		// so we look it up directly in the given catalog instead of expanding the search path
-		optional_ptr<Catalog> catalog_entry;
-		if (if_not_found == OnEntryNotFound::RETURN_NULL) {
-			catalog_entry = Catalog::GetCatalogEntry(retriever, lookup_path.front());
-		} else {
-			catalog_entry = &Catalog::GetCatalog(retriever, lookup_path.front());
-		}
+		auto catalog_entry = VisibleCatalog(retriever, lookup_path.front());
 		if (!catalog_entry) {
+			if (if_not_found == OnEntryNotFound::THROW_EXCEPTION) {
+				throw BinderException("Catalog %s does not exist!", lookup_path.front());
+			}
 			return {nullptr, nullptr, ErrorData()};
 		}
-		retriever.GetContext().CheckDatabaseReference(retriever.CheckAs(), *catalog_entry);
 		lookups.emplace_back(*catalog_entry, lookup_info);
 		return TryLookupEntry(retriever, lookups, lookup_info, if_not_found, false);
 	}
@@ -1364,22 +1374,17 @@ CatalogEntryLookup Catalog::TryLookupEntryAcrossCatalogs(CatalogEntryRetriever &
 	vector<CatalogLookup> final_lookups;
 	lookups.reserve(entries.size());
 	for (auto &entry : entries) {
-		optional_ptr<Catalog> catalog_entry;
-		if (if_not_found == OnEntryNotFound::RETURN_NULL || IsInvalidCatalog(entry.GetCatalog())) {
-			catalog_entry = Catalog::GetCatalogEntry(retriever, entry.GetCatalog());
-		} else {
-			catalog_entry = &Catalog::GetCatalog(retriever, entry.GetCatalog());
-		}
+		auto catalog_entry = IsInvalidCatalog(catalog) ? Catalog::GetCatalogEntry(retriever, entry.GetCatalog())
+		                                               : VisibleCatalog(retriever, entry.GetCatalog());
 		if (!catalog_entry) {
 			if (IsInvalidCatalog(entry.GetCatalog())) {
 				// the search path's default-database entry, with no database attached: nothing to search there
 				continue;
 			}
+			if (if_not_found == OnEntryNotFound::THROW_EXCEPTION) {
+				throw BinderException("Catalog %s does not exist!", entry.GetCatalog());
+			}
 			return {nullptr, nullptr, ErrorData()};
-		}
-		D_ASSERT(catalog_entry);
-		if (!IsInvalidCatalog(catalog)) {
-			retriever.GetContext().CheckDatabaseReference(retriever.CheckAs(), *catalog_entry);
 		}
 		auto lookup_behavior = catalog_entry->CatalogTypeLookupRule(lookup_info.GetCatalogType());
 		if (lookup_behavior == CatalogLookupBehavior::STANDARD) {
@@ -1486,6 +1491,7 @@ CatalogEntryLookup Catalog::TryLookupEntry(CatalogEntryRetriever &retriever, con
                                            const EntryLookupInfo &lookup_info, OnEntryNotFound if_not_found,
                                            bool allow_default_lookup) {
 	auto &context = retriever.GetContext();
+	auto &role = retriever.CheckAs();
 	reference_set_t<SchemaCatalogEntry> schemas;
 	bool all_errors = true;
 	ErrorData error_data;
@@ -1495,13 +1501,21 @@ CatalogEntryLookup Catalog::TryLookupEntry(CatalogEntryRetriever &retriever, con
 		auto transaction = lookup.catalog.GetCatalogTransaction(context);
 		result = lookup.catalog.TryLookupEntryInternal(transaction, lookup.lookup_info);
 		const bool named = !IsInvalidSchema(lookup_info.GetSchema());
-		if (result.schema && !CanUseSchema(retriever.CheckAs(), *result.schema)) {
+		if (result.schema && !LookupVisible(context, role, *result.schema)) {
+			result = {nullptr, nullptr, ErrorData()};
+			all_errors = false;
+			continue;
+		}
+		if (result.schema && !CanUseSchema(role, *result.schema)) {
 			if (named) {
 				ThrowPermissionDenied(*result.schema);
 			}
 			result = {nullptr, nullptr, ErrorData()};
 			all_errors = false;
 			continue;
+		}
+		if (result.Found() && !LookupVisible(context, role, *result.entry)) {
+			result.entry = nullptr;
 		}
 		if (result.Found() && !TakesPositionalArguments(*result.entry, lookup_info.GetArgumentCount())) {
 			if (!other_arguments.Found()) {
@@ -1517,11 +1531,13 @@ CatalogEntryLookup Catalog::TryLookupEntry(CatalogEntryRetriever &retriever, con
 		if (result.schema) {
 			schemas.insert(*result.schema);
 			if (lookup_info.GetCatalogType() == CatalogType::TABLE_ENTRY &&
-			    lookup.catalog.Compatibility() == SqlCompatibility::POSTGRES &&
-			    result.schema->LookupEntry(
-			        transaction,
-			        EntryLookupInfo(CatalogType::INDEX_ENTRY, QualifiedName(lookup_info.GetEntryIdentifier())))) {
-				break;
+			    lookup.catalog.Compatibility() == SqlCompatibility::POSTGRES) {
+				auto index = result.schema->LookupEntry(
+				    transaction,
+				    EntryLookupInfo(CatalogType::INDEX_ENTRY, QualifiedName(lookup_info.GetEntryIdentifier())));
+				if (index && LookupVisible(context, role, *index)) {
+					break;
+				}
 			}
 		}
 		if (!result.error.HasError()) {
@@ -1633,7 +1649,12 @@ CatalogEntryLookup Catalog::TryLookupDefaultTable(CatalogEntryRetriever &retriev
 		EntryLookupInfo info(CatalogType::TABLE_ENTRY,
 		                     QualifiedName(catalog_by_name->GetName(), table_schema, table_name), at_clause, context);
 		auto result = catalog_by_name->TryLookupEntryInternal(transaction, info);
-		if (result.schema && !CanUseSchema(retriever.CheckAs(), *result.schema)) {
+		auto &role = retriever.CheckAs();
+		if (result.schema &&
+		    (!LookupVisible(retriever.GetContext(), role, *result.schema) || !CanUseSchema(role, *result.schema))) {
+			return {nullptr, nullptr, ErrorData()};
+		}
+		if (result.Found() && !LookupVisible(retriever.GetContext(), role, *result.entry)) {
 			return {nullptr, nullptr, ErrorData()};
 		}
 		return result;
@@ -1659,7 +1680,12 @@ CatalogEntryLookup Catalog::TryLookupDefaultSchema(CatalogEntryRetriever &retrie
 		EntryLookupInfo default_schema_lookup(
 		    lookup_info, QualifiedName(catalog_entry->GetName(), *default_schema, lookup_info.GetEntryIdentifier()));
 		auto result = catalog_entry->TryLookupEntryInternal(transaction, default_schema_lookup);
-		if (result.schema && !CanUseSchema(retriever.CheckAs(), *result.schema)) {
+		auto &role = retriever.CheckAs();
+		if (result.schema &&
+		    (!LookupVisible(retriever.GetContext(), role, *result.schema) || !CanUseSchema(role, *result.schema))) {
+			continue;
+		}
+		if (result.Found() && !LookupVisible(retriever.GetContext(), role, *result.entry)) {
 			continue;
 		}
 		if (result.Found() || result.error.HasError()) {
@@ -1814,16 +1840,20 @@ optional_ptr<SchemaCatalogEntry> Catalog::GetSchema(CatalogEntryRetriever &retri
 	auto &catalog_name = schema_lookup.GetCatalog();
 	auto entries = GetCatalogEntries(retriever, catalog_name, schema_lookup.GetEntryIdentifier());
 	for (idx_t i = 0; i < entries.size(); i++) {
-		auto catalog = Catalog::GetCatalogEntry(retriever, entries[i].GetCatalog());
+		auto catalog = IsInvalidCatalog(catalog_name) ? Catalog::GetCatalogEntry(retriever, entries[i].GetCatalog())
+		                                              : VisibleCatalog(retriever, entries[i].GetCatalog());
 		if (!catalog) {
 			// skip if it is not an attached database
 			continue;
 		}
-		if (!IsInvalidCatalog(catalog_name)) {
-			retriever.GetContext().CheckDatabaseReference(retriever.CheckAs(), *catalog);
-		}
 		const auto on_not_found = i + 1 == entries.size() ? if_not_found : OnEntryNotFound::RETURN_NULL;
 		auto result = catalog->GetSchema(retriever.GetContext(), schema_lookup, on_not_found);
+		if (result && !LookupVisible(retriever.GetContext(), retriever.CheckAs(), *result)) {
+			if (on_not_found == OnEntryNotFound::THROW_EXCEPTION) {
+				throw CatalogException::MissingEntry(schema_lookup, string());
+			}
+			continue;
+		}
 		if (result) {
 			return result;
 		}

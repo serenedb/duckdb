@@ -467,6 +467,7 @@ public:
 	void Execute(const CatalogEntry &function, optional_ptr<const MacroFunction> overload = nullptr);
 	void RequireIndexCalls(TableCatalogEntry &table, optional_ptr<const vector<PhysicalIndex>> changed);
 	void RequirePlacement(Catalog &catalog, const CreateInfo &info, optional_ptr<const CatalogEntry> indexed);
+	bool ActsOnVisibleTarget(CatalogType type, const QualifiedName &name, OnEntryNotFound if_not_found);
 	void BindAsFunctionBody(const SelectStatement &statement);
 	void UseFunctionSearchPath(const vector<string> &config);
 	BoundStatement BindTarget(TableRef &ref, TableRefUse use);

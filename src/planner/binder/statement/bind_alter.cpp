@@ -352,14 +352,18 @@ BoundStatement Binder::Bind(AlterStatement &stmt) {
 			infos.push_back(std::move(info));
 		}
 	}
+	vector<unique_ptr<AlterInfo>> altered;
 	for (auto &info : infos) {
 		if (auto plan = BindAlter(info)) {
 			D_ASSERT(infos.size() == 1);
 			result.plan = std::move(plan);
 			return result;
 		}
+		if (ActsOnVisibleTarget(info->GetCatalogType(), info->GetQualifiedName(), info->if_not_found)) {
+			altered.push_back(std::move(info));
+		}
 	}
-	result.plan = make_uniq<LogicalAlter>(std::move(infos));
+	result.plan = make_uniq<LogicalAlter>(std::move(altered));
 	return result;
 }
 

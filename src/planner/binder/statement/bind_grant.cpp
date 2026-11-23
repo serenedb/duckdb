@@ -157,7 +157,7 @@ static CatalogEntry &ResolvePermissionsTarget(Binder &binder, AlterPermissionsIn
 		return binder.ResolveDatabaseEntry(info.entry_catalog_type, info, AclMode::NoRights);
 	}
 	if (container == ObjectContainer::CLUSTER) {
-		return *ClusterEntry(context, RoleAccess::System(), info.entry_catalog_type, name.Name(), AclMode::NoRights,
+		return *ClusterEntry(context, binder.CheckAs(), info.entry_catalog_type, name.Name(), AclMode::NoRights,
 		                     OnEntryNotFound::THROW_EXCEPTION);
 	}
 	optional_ptr<CatalogEntry> entry;

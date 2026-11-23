@@ -404,6 +404,84 @@ void Binder::RequirePlacement(Catalog &catalog, const CreateInfo &info, optional
 	}
 }
 
+bool Binder::ActsOnVisibleTarget(CatalogType type, const QualifiedName &name, OnEntryNotFound if_not_found) {
+	auto &role = CheckAs();
+	if (role.is_superuser) {
+		return true;
+	}
+	auto internal = CatalogEntryRetriever::Internal(context);
+	const auto relation = type == CatalogType::TABLE_ENTRY || type == CatalogType::VIEW_ENTRY ||
+	                      type == CatalogType::SEQUENCE_ENTRY || type == CatalogType::INDEX_ENTRY;
+	const auto routine = type == CatalogType::MACRO_ENTRY || type == CatalogType::TABLE_MACRO_ENTRY;
+	auto &path = name.Path();
+	optional_ptr<CatalogEntry> entry;
+	switch (type) {
+	case CatalogType::SCHEMA_ENTRY:
+		if (path.size() < 2) {
+			return true;
+		}
+		entry = internal
+		            .GetSchema(path.front(), vector<Identifier>(path.begin() + 1, path.end()), AclMode::NoRights,
+		                       OnEntryNotFound::RETURN_NULL)
+		            .get();
+		break;
+	case CatalogType::DATABASE_ENTRY:
+	case CatalogType::TABLESPACE_ENTRY:
+		entry = ClusterEntry(context, type, name.Name());
+		break;
+	case CatalogType::FOREIGN_SERVER_ENTRY:
+	case CatalogType::SUBSCRIPTION_ENTRY:
+		if (auto catalog = Catalog::GetCatalogEntry(context, name.Catalog())) {
+			entry = catalog->LookupTopLevelEntry(catalog->GetCatalogTransaction(context), type, name.Name());
+		}
+		break;
+	case CatalogType::TABLE_ENTRY:
+	case CatalogType::VIEW_ENTRY:
+	case CatalogType::SEQUENCE_ENTRY:
+	case CatalogType::INDEX_ENTRY:
+	case CatalogType::TYPE_ENTRY:
+	case CatalogType::MACRO_ENTRY:
+	case CatalogType::TABLE_MACRO_ENTRY:
+	case CatalogType::JOB_ENTRY:
+	case CatalogType::TOKENIZER_ENTRY:
+		for (auto kind : {type, CatalogType::TABLE_ENTRY, CatalogType::SEQUENCE_ENTRY, CatalogType::INDEX_ENTRY,
+		                  CatalogType::MACRO_ENTRY, CatalogType::TABLE_MACRO_ENTRY}) {
+			const auto same_namespace =
+			    kind == type ||
+			    (relation && (kind == CatalogType::TABLE_ENTRY || kind == CatalogType::SEQUENCE_ENTRY ||
+			                  kind == CatalogType::INDEX_ENTRY)) ||
+			    (routine && (kind == CatalogType::MACRO_ENTRY || kind == CatalogType::TABLE_MACRO_ENTRY));
+			if (!entry && same_namespace) {
+				entry = internal.GetEntry(EntryLookupInfo(kind, name), OnEntryNotFound::RETURN_NULL);
+			}
+		}
+		break;
+	default:
+		return true;
+	}
+	if (!entry || LookupVisible(context, role, *entry)) {
+		return true;
+	}
+	if (if_not_found == OnEntryNotFound::RETURN_NULL) {
+		return false;
+	}
+	switch (type) {
+	case CatalogType::SCHEMA_ENTRY:
+		entry_retriever.GetSchema(path.front(), vector<Identifier>(path.begin() + 1, path.end()), AclMode::NoRights,
+		                          OnEntryNotFound::THROW_EXCEPTION);
+		break;
+	case CatalogType::DATABASE_ENTRY:
+	case CatalogType::TABLESPACE_ENTRY:
+	case CatalogType::FOREIGN_SERVER_ENTRY:
+	case CatalogType::SUBSCRIPTION_ENTRY:
+		throw CatalogException::MissingObject(type, name.Name());
+	default:
+		entry_retriever.GetEntry(EntryLookupInfo(type, name), OnEntryNotFound::THROW_EXCEPTION);
+		break;
+	}
+	throw CatalogException::MissingEntry(EntryLookupInfo(type, name), string());
+}
+
 void Binder::BindAsFunctionBody(const SelectStatement &statement) {
 	if (!statement.function_body) {
 		return;

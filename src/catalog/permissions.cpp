@@ -11,12 +11,14 @@
 #include "duckdb/catalog/catalog_entry/scalar_function_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/schema_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/table_function_catalog_entry.hpp"
+#include "duckdb/catalog/catalog_entry/trigger_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/type_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/window_function_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/view_catalog_entry.hpp"
 #include "duckdb/catalog/column_acls.hpp"
 #include "duckdb/catalog/default/default_schemas.hpp"
+#include "duckdb/catalog/schema_info.hpp"
 #include "duckdb/common/case_insensitive_map.hpp"
 #include "duckdb/common/extension_type_info.hpp"
 #include "duckdb/main/attached_database.hpp"
@@ -115,6 +117,17 @@ static bool HoldsAny(const RoleAccess &role, const ObjectKind &kind, const Permi
 	return role.CanAny(kind.acl_class, permissions, kind.privileges);
 }
 
+static optional_ptr<CatalogEntry> ContainingSchema(ClientContext &context, CatalogEntry &entry) {
+	if (!entry.ParentSchemaOid()) {
+		return nullptr;
+	}
+	if (entry.type != CatalogType::SCHEMA_ENTRY) {
+		return entry.ParentSchema(context);
+	}
+	auto &parent = *entry.Cast<SchemaCatalogEntry>().GetSchemaInfo()->parent;
+	return parent.versions->GetVisible(entry.ParentCatalog().GetCatalogTransaction(context).view);
+}
+
 bool EntryVisible(ClientContext &context, const RoleAccess &role, CatalogEntry &entry) {
 	if (entry.type == CatalogType::DATABASE_ENTRY) {
 		return CanConnect(context, role, entry.name, ClusterEntry(context, CatalogType::DATABASE_ENTRY, entry.name));
@@ -126,13 +139,24 @@ bool EntryVisible(ClientContext &context, const RoleAccess &role, CatalogEntry &
 	if (entry.internal || IsUnowned(entry)) {
 		return true;
 	}
+	if (auto schema = ContainingSchema(context, entry)) {
+		if (!EntryVisible(context, role, *schema)) {
+			return false;
+		}
+		if (role.Owns(schema->permissions.owner)) {
+			return true;
+		}
+	}
 	const auto kind = ObjectKindOf(entry.type);
 	switch (entry.type) {
 	case CatalogType::SCHEMA_ENTRY:
 	case CatalogType::SEQUENCE_ENTRY:
 	case CatalogType::TYPE_ENTRY:
 	case CatalogType::JOB_ENTRY:
+	case CatalogType::FOREIGN_SERVER_ENTRY:
 		return HoldsAny(role, kind, entry.permissions);
+	case CatalogType::SUBSCRIPTION_ENTRY:
+		return role.Owns(entry.permissions.owner);
 	case CatalogType::TABLE_ENTRY:
 	case CatalogType::VIEW_ENTRY:
 		return HoldsAny(role, kind, entry.permissions) ||
@@ -152,9 +176,21 @@ bool EntryVisible(ClientContext &context, const RoleAccess &role, CatalogEntry &
 		auto relation = index.GetRelation(index.ParentCatalog().GetCatalogTransaction(context));
 		return !relation || EntryVisible(context, role, *relation);
 	}
+	case CatalogType::TRIGGER_ENTRY: {
+		auto &trigger = entry.Cast<TriggerCatalogEntry>();
+		auto transaction = trigger.ParentCatalog().GetCatalogTransaction(context);
+		auto relation = trigger.ParentSchema(transaction)
+		                    .GetEntry(transaction, CatalogType::TABLE_ENTRY, trigger.base_table->Table());
+		return relation && EntryVisible(context, role, *relation);
+	}
 	default:
 		return true;
 	}
+}
+
+bool LookupVisible(ClientContext &context, const RoleAccess &role, CatalogEntry &entry) {
+	return role.is_superuser || entry.type == CatalogType::TABLE_FUNCTION_ENTRY ||
+	       entry.type == CatalogType::SCALAR_FUNCTION_ENTRY || EntryVisible(context, role, entry);
 }
 
 static constexpr uint64_t PUBLIC_BIT = uint64_t(1) << 63;
@@ -184,7 +220,7 @@ static uint64_t HolderBits(const ObjectKind &kind, const Permissions &permission
 	return (kind.public_privileges & kind.privileges) != AclMode::NoRights ? bits | PUBLIC_BIT : bits;
 }
 
-uint64_t VisibilityBits(const CatalogEntry &entry) {
+static uint64_t OwnBits(const CatalogEntry &entry) {
 	if (entry.internal) {
 		return VISIBLE_TO_ALL;
 	}
@@ -216,6 +252,18 @@ uint64_t VisibilityBits(const CatalogEntry &entry) {
 	default:
 		return VISIBLE_TO_ALL;
 	}
+}
+
+uint64_t VisibilityBits(const CatalogEntry &entry) {
+	const auto bits = OwnBits(entry);
+	if (bits == VISIBLE_TO_ALL || !entry.ParentSchemaOid()) {
+		return bits;
+	}
+	auto &schema_info = entry.type == CatalogType::SCHEMA_ENTRY
+	                        ? *entry.Cast<SchemaCatalogEntry>().GetSchemaInfo()->parent
+	                        : *entry.Cast<StandardEntry>().schema_info;
+	auto schema = schema_info.versions->GetCommitted();
+	return schema ? bits | RoleBit(schema->permissions.owner) : bits;
 }
 
 uint64_t ViewerBits(const RoleAccess &role) {
@@ -516,7 +564,7 @@ optional_ptr<CatalogEntry> TopLevelEntry(ClientContext &context, const RoleAcces
                                          CatalogType type, const Identifier &name, AclMode use,
                                          OnEntryNotFound if_not_found) {
 	auto entry = catalog.LookupTopLevelEntry(catalog.GetCatalogTransaction(context), type, name);
-	if (!entry) {
+	if (!entry || !LookupVisible(context, role, *entry)) {
 		if (if_not_found == OnEntryNotFound::THROW_EXCEPTION) {
 			throw CatalogException::MissingObject(type, name);
 		}

@@ -160,10 +160,14 @@ BoundStatement Binder::Bind(DropStatement &stmt) {
 	if (infos.empty()) {
 		infos.push_back(std::move(stmt.info));
 	}
+	vector<unique_ptr<DropInfo>> dropped;
 	for (auto &info : infos) {
 		BindDrop(*info, properties);
+		if (ActsOnVisibleTarget(info->type, info->GetQualifiedName(), info->if_not_found)) {
+			dropped.push_back(std::move(info));
+		}
 	}
-	result.plan = make_uniq<LogicalDrop>(std::move(infos));
+	result.plan = make_uniq<LogicalDrop>(std::move(dropped));
 	result.names = {"Success"};
 	result.types = {LogicalType::BOOLEAN};
 

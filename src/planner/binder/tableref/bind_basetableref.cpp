@@ -49,7 +49,7 @@ BoundStatement Binder::BindWithReplacementScan(ClientContext &context, BaseTable
 	if (!context.config.use_replacement_scans) {
 		return BoundStatement();
 	}
-	ReplacementScanInput input(ref.GetQualifiedName());
+	ReplacementScanInput input(ref.GetQualifiedName(), entry_retriever);
 	unique_ptr<TableRef> replacement_function;
 
 	// Connection-scoped replacement scans are consulted first
@@ -228,7 +228,7 @@ BoundStatement Binder::Bind(BaseTableRef &ref, TableRefUse use) {
 		}
 		auto &config = DBConfig::GetConfig(context);
 		if (context.config.use_replacement_scans && Settings::Get<EnableExternalAccessSetting>(config) &&
-		    ExtensionHelper::IsFullPath(full_path)) {
+		    ExtensionHelper::IsFullPath(full_path) && CheckAs().Has(RoleCapability::ReadServerFiles)) {
 			auto &fs = FileSystem::GetFileSystem(context);
 			if (!fs.IsDisabledForPath(full_path) && fs.FileExists(full_path)) {
 				throw BinderException(
