@@ -1807,6 +1807,20 @@ string PostgresInput(std::mt19937_64 &rng, const RowDialect &dialect) {
 	return input;
 }
 
+string PostgresLongFieldInput(std::mt19937_64 &rng, const RowDialect &dialect) {
+	const string plain = "ab1. -x";
+	auto input = PostgresInput(rng, dialect);
+	for (idx_t runs = 1 + rng() % 3; runs > 0; runs--) {
+		const idx_t length = CSV_BLOCK_BYTES + rng() % 300;
+		string run;
+		for (idx_t i = 0; i < length; i++) {
+			run += plain[rng() % plain.size()];
+		}
+		input.insert(rng() % (input.size() + 1), run);
+	}
+	return input;
+}
+
 string BlockAlignedInput(std::mt19937_64 &rng, const FuzzDialect &dialect, idx_t size, const string &ending) {
 	const string fields[] = {"a", "ab", "", " ", "1"};
 	string input;
@@ -1982,7 +1996,7 @@ TEST_CASE("Row lexer reads quoted fields longer than a block like the byte state
 	LexLikeTheByteStateMachine(LongFieldInput);
 }
 
-TEST_CASE("Row lexer splits PostgreSQL csv and text like the scalar rules", "[csv]") {
+static void SplitLikeThePostgresRules(string (*generate)(std::mt19937_64 &, const RowDialect &)) {
 	const char *seed = getenv("CSV_FUZZ_SEED");
 	const char *iterations = getenv("CSV_FUZZ_ITERATIONS");
 	std::mt19937_64 rng(seed ? std::stoull(seed) : 20261119);
@@ -1999,7 +2013,7 @@ TEST_CASE("Row lexer splits PostgreSQL csv and text like the scalar rules", "[cs
 			const char quote = rng() % 2 ? '"' : '\'';
 			dialect = RowDialect::PostgresCsv(delimiter, quote, rng() % 2 ? quote : '\\', line_break);
 		}
-		const auto input = PostgresInput(rng, dialect);
+		const auto input = generate(rng, dialect);
 		vector<ReferenceRow> expected;
 		idx_t expected_lines = 0;
 		const bool terminated = ReferencePostgresRows(dialect, input, expected, expected_lines);
@@ -2076,6 +2090,14 @@ TEST_CASE("Row lexer splits PostgreSQL csv and text like the scalar rules", "[cs
 		}
 	}
 	REQUIRE(accepted > count / 10);
+}
+
+TEST_CASE("Row lexer splits PostgreSQL csv and text like the scalar rules", "[csv]") {
+	SplitLikeThePostgresRules(PostgresInput);
+}
+
+TEST_CASE("Row lexer splits PostgreSQL fields longer than a block like the scalar rules", "[csv]") {
+	SplitLikeThePostgresRules(PostgresLongFieldInput);
 }
 
 TEST_CASE("Candidate dialects the sniffer counts alike count on from each other's cursors", "[csv]") {
