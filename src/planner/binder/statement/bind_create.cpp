@@ -303,7 +303,7 @@ QualifiedName Binder::BindTableName(const QualifiedName &name) {
 
 void Binder::RegisterEntryRead(optional_ptr<Binder> binder, ClientContext &context, CatalogEntry &entry) {
 	if (binder) {
-		binder->GetStatementProperties().RegisterDBRead(entry.ParentCatalog(), context);
+		binder->GetStatementProperties().RegisterDBRead(entry.ParentCatalog(), context, binder->CheckAs());
 	}
 	if (!binder || !binder->InViewBody()) {
 		context.CheckEntryReference(binder ? binder->CheckAs() : context.CurrentRole(), entry);

@@ -96,12 +96,12 @@ std::string_view StatementReturnTypeToString(StatementReturnType type) {
 }
 // LCOV_EXCL_STOP
 
-void StatementProperties::RegisterDBRead(Catalog &catalog, ClientContext &context) {
+void StatementProperties::RegisterDBRead(Catalog &catalog, ClientContext &context, const RoleAccess &role) {
 	auto catalog_identity = CatalogIdentity {catalog.GetOid(), catalog.GetCatalogVersion(context)};
 	auto entry = read_databases.emplace(catalog.GetName(), catalog_identity);
 	D_ASSERT(entry.first->second == catalog_identity);
 	if (entry.second) {
-		context.CheckDatabaseReference(context.CurrentRole(), catalog);
+		context.CheckDatabaseReference(role, catalog);
 		catalog_file_access |= !catalog.IsDuckCatalog();
 	}
 }

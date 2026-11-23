@@ -68,7 +68,7 @@ void Binder::BindDrop(DropInfo &info, StatementProperties &properties) {
 		auto catalog = Catalog::GetCatalogEntry(context, info.GetQualifiedName().Catalog());
 		if (catalog) {
 			// mark catalog as accessed
-			properties.RegisterDBRead(*catalog, context);
+			properties.RegisterDBRead(*catalog, context, CheckAs());
 		}
 		optional_ptr<CatalogEntry> entry;
 		if (info.type == CatalogType::MACRO_ENTRY || info.type == CatalogType::TABLE_MACRO_ENTRY) {

@@ -388,7 +388,7 @@ BoundStatement Binder::BindTableFunctionInternal(BoundTableFunction &table_funct
 	                              get->GetMutableColumnIds(), table.get(), std::move(virtual_columns),
 	                              std::move(row_id_columns));
 	if (table) {
-		GetStatementProperties().RegisterDBRead(table->ParentCatalog(), context);
+		GetStatementProperties().RegisterDBRead(table->ParentCatalog(), context, CheckAs());
 		auto &schema = table->ParentSchema(context);
 		if (!CanUseSchema(CheckAs(), schema)) {
 			ThrowPermissionDenied(schema);

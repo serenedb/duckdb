@@ -8,6 +8,7 @@
 
 #pragma once
 
+#include "duckdb/catalog/role_graph.hpp"
 #include "duckdb/common/constants.hpp"
 #include "duckdb/common/enums/result_eagerness.hpp"
 #include "duckdb/common/enums/role_capability.hpp"
@@ -148,7 +149,7 @@ struct StatementProperties {
 		return modified_databases.empty();
 	}
 
-	void RegisterDBRead(Catalog &catalog, ClientContext &context);
+	void RegisterDBRead(Catalog &catalog, ClientContext &context, const RoleAccess &role);
 	void RegisterDBModify(Catalog &catalog, ClientContext &context, DatabaseModificationType modification);
 	void RegisterDataRead(const CatalogEntry &entry, ClientContext &context, TableIndex table_index = TableIndex());
 };
