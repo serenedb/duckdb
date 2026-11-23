@@ -286,14 +286,65 @@ CatalogEntry &Binder::ResolveDatabaseEntry(CatalogType type, AlterInfo &info, Ac
 	return entry;
 }
 
+static void ExpandAllInSchema(Binder &binder, unique_ptr<AlterInfo> info, vector<unique_ptr<AlterInfo>> &objects) {
+	auto &grant = info->Cast<AlterPermissionsInfo>();
+	auto &name = grant.GetQualifiedName();
+	auto &schema = *binder.EntryRetriever().GetSchema(name.Catalog(), {name.Schema()}, AclMode::NoRights,
+	                                                  OnEntryNotFound::THROW_EXCEPTION);
+	const auto add = [&](const CatalogEntry &entry, optional_ptr<const MacroFunction> overload) {
+		auto object = grant.Copy();
+		auto &target = object->Cast<AlterPermissionsInfo>();
+		target.all_in_schema = false;
+		target.SetQualifiedName(schema.GetQualifiedName(entry.name));
+		if (overload) {
+			target.func_parameters = overload->ParameterTypes();
+			target.has_func_args = true;
+			target.include_functions = !overload->is_procedure;
+			target.include_procedures = overload->is_procedure;
+		}
+		objects.push_back(std::move(object));
+	};
+	const auto kind = grant.entry_catalog_type;
+	const auto scan = [&](CatalogType type) {
+		schema.Scan(binder.context, type, [&](CatalogEntry &entry) {
+			if (entry.internal) {
+				return;
+			}
+			if (kind != CatalogType::MACRO_ENTRY) {
+				if (entry.type == kind || (kind == CatalogType::TABLE_ENTRY && entry.type == CatalogType::VIEW_ENTRY)) {
+					add(entry, nullptr);
+				}
+				return;
+			}
+			for (auto &overload : entry.Cast<MacroCatalogEntry>().macros) {
+				if (overload->is_procedure ? grant.include_procedures : grant.include_functions) {
+					add(entry, overload.get());
+				}
+			}
+		});
+	};
+	scan(kind);
+	if (kind == CatalogType::MACRO_ENTRY) {
+		scan(CatalogType::TABLE_MACRO_ENTRY);
+	}
+}
+
 BoundStatement Binder::Bind(AlterStatement &stmt) {
 	BoundStatement result;
 	result.names = {"Success"};
 	result.types = {LogicalType::BOOLEAN};
 	GetStatementProperties().return_type = StatementReturnType::NOTHING;
-	auto infos = stmt.info->SplitObjects();
-	if (infos.empty()) {
-		infos.push_back(std::move(stmt.info));
+	auto split = stmt.info->SplitObjects();
+	if (split.empty()) {
+		split.push_back(std::move(stmt.info));
+	}
+	vector<unique_ptr<AlterInfo>> infos;
+	for (auto &info : split) {
+		if (info->type == AlterType::ALTER_PERMISSIONS && info->Cast<AlterPermissionsInfo>().all_in_schema) {
+			ExpandAllInSchema(*this, std::move(info), infos);
+		} else {
+			infos.push_back(std::move(info));
+		}
 	}
 	for (auto &info : infos) {
 		if (auto plan = BindAlter(info)) {

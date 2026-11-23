@@ -191,9 +191,6 @@ static void ResolveGrant(Binder &binder, AlterPermissionsInfo &info) {
 		info.SetQualifiedName(Identifier(), Identifier(), Identifier(StringUtil::Lower(name)));
 		return;
 	}
-	if (info.all_in_schema) {
-		return;
-	}
 	auto &target = ResolvePermissionsTarget(binder, info);
 	RefuseSystemTablespace(target);
 	if (target.internal) {
