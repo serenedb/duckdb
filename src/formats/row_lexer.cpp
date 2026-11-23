@@ -557,6 +557,19 @@ bool RowLexer::FeedBlocks(RowCursor &cursor, const char *data, idx_t base, idx_t
 		return false;
 	};
 	const idx_t delimiter_size = d.delimiter_size;
+	const char delimiter_byte = d.delimiter;
+	const char escape_byte = escapes ? d.escape : '\n';
+	const char quote_byte = d.quote ? d.quote : '\n';
+	const char comment_byte = d.comment ? d.comment : '\n';
+	const auto plain = [&](const CsvVector &vector) {
+		if (c.escape_carry | c.maybe | c.in_comment | c.after_delimiter | c.after_term | c.after_cr | c.escaped_cr |
+		    c.after_closer | c.after_opener | c.start_space | c.delimiter_tail | c.partial_tail | c.after_partial |
+		    c.after_event) {
+			return false;
+		}
+		return !(c.in_quotes ? vector.EqualAny(quote_byte, escape_byte, '\n', '\r')
+		                     : vector.EqualAny(delimiter_byte, '\n', '\r', escape_byte, quote_byte, comment_byte));
+	};
 	char padded[CSV_BLOCK_BYTES];
 	char lookahead[CSV_BLOCK_BYTES];
 	while (c.pos < end) {
@@ -587,6 +600,33 @@ bool RowLexer::FeedBlocks(RowCursor &cursor, const char *data, idx_t base, idx_t
 		const uint64_t last_bit = uint64_t(1) << (size - 1);
 		const CsvVector vector(block);
 		c.non_ascii |= vector.NonAscii();
+		if (size == CSV_BLOCK_BYTES && plain(vector)) {
+			const bool settled = c.settled || (settle_length && c.quoted_newline == DConstants::INVALID_INDEX &&
+			                                   c.pos + CSV_BLOCK_BYTES - c.origin > max_line_size);
+			const idx_t prior = c.last_row_end == DConstants::INVALID_INDEX ? c.origin : c.last_row_end;
+			const idx_t limit =
+			    c.last_row_end == DConstants::INVALID_INDEX && !settled ? max_line_size / 2 : max_line_size;
+			const bool too_long = c.pos + CSV_BLOCK_BYTES - prior > limit || max_line_size < CSV_BLOCK_BYTES;
+			if (!too_long || (settled && !count_errors)) {
+				c.settled = settled;
+				c.long_rows = c.long_rows || too_long;
+				c.ever_quoted = c.ever_quoted || (d.duckdb && c.in_quotes);
+				c.first_term_cr = false;
+				c.partial_before_last = 0;
+				if (track_fields && c.field_blank) {
+					c.field_blank = d.duckdb && vector.Equal(' ') == ~uint64_t(0);
+				}
+				if (EXTRACT && d.strip_carriage) {
+					c.after_plain_cr = 0;
+				}
+				if (SHAPE) {
+					c.trailing_empty = false;
+					c.reopen_last = false;
+				}
+				c.pos += CSV_BLOCK_BYTES;
+				continue;
+			}
+		}
 		const uint64_t escaped_cr_in = c.escaped_cr;
 		const uint64_t delimiter_first = vector.Equal(d.delimiter) & valid;
 		uint64_t delimiter = delimiter_first;
