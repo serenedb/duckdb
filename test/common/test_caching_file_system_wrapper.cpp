@@ -390,14 +390,14 @@ TEST_CASE("CachingFileSystemWrapper read elsewhere starts the window of the read
 	file_info.extended_info->options["validate_external_file_cache"] = Value::BOOLEAN(false);
 
 	auto handle = caching_wrapper->OpenFile(file_info, FileFlags::FILE_FLAGS_READ);
-	string buffer(2 * BLOCK, '\0');
+	string buffer(STEP, '\0');
 	handle->Read(QueryContext(), &buffer[0], STEP, 0);
 	handle->Read(QueryContext(), &buffer[0], STEP, STEP);
+	handle->Read(QueryContext(), &buffer[0], STEP, BLOCK);
 	handle->Read(QueryContext(), &buffer[0], STEP, 32 * BLOCK);
 	handle->Read(QueryContext(), &buffer[0], STEP, 32 * BLOCK + STEP);
-	// a read of the blocks asked for ahead, which waits for them
-	handle->Read(QueryContext(), &buffer[0], 2 * BLOCK, 33 * BLOCK);
-	REQUIRE(buffer == string(2 * BLOCK, 'x'));
+	handle->Read(QueryContext(), &buffer[0], STEP, 33 * BLOCK);
+	REQUIRE(buffer == string(STEP, 'x'));
 	REQUIRE(tracking_fs->TakeReads() ==
 	        vector<pair<idx_t, idx_t>> {{0, BLOCK}, {BLOCK, 2 * BLOCK}, {32 * BLOCK, BLOCK}, {33 * BLOCK, 2 * BLOCK}});
 }
