@@ -1,9 +1,11 @@
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/catalog/catalog_entry/macro_catalog_entry.hpp"
+#include "duckdb/catalog/catalog_entry/schema_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/view_catalog_entry.hpp"
 #include "duckdb/catalog/permissions.hpp"
 #include "duckdb/common/string_util.hpp"
+#include "duckdb/common/unordered_set.hpp"
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/main/config.hpp"
 #include "duckdb/main/database_manager.hpp"
@@ -379,20 +381,73 @@ void Binder::ResolveOwned(AlterInfo &info) {
 		throw PermissionException("must be able to SET ROLE \"%s\"", RoleName(context, reassign.new_owner_id));
 	}
 	RefuseBootstrapRole(*this, reassign.role_ids, "reassign ownership of objects");
-	if (role.is_superuser || role.Has(RoleOption::CreateDb)) {
+	if (role.is_superuser) {
 		return;
 	}
-	bool database = false;
-	auto &cluster = Catalog::GetSystemCatalog(context);
-	cluster.ScanTopLevelEntries(
-	    cluster.GetCatalogTransaction(context), CatalogType::DATABASE_ENTRY, [&](CatalogEntry &entry) {
-		    const auto owner = entry.permissions.owner;
-		    database = database ||
-		               (owner != reassign.new_owner_id && std::find(reassign.role_ids.begin(), reassign.role_ids.end(),
-		                                                            owner) != reassign.role_ids.end());
-	    });
-	if (database) {
-		throw PermissionException("permission denied to change owner of database");
+	const auto owned = [&](idx_t owner) {
+		return owner != reassign.new_owner_id &&
+		       std::find(reassign.role_ids.begin(), reassign.role_ids.end(), owner) != reassign.role_ids.end();
+	};
+	if (!role.Has(RoleOption::CreateDb)) {
+		bool database = false;
+		auto &cluster = Catalog::GetSystemCatalog(context);
+		cluster.ScanTopLevelEntries(
+		    cluster.GetCatalogTransaction(context), CatalogType::DATABASE_ENTRY,
+		    [&](CatalogEntry &entry) { database = database || owned(entry.permissions.owner); });
+		if (database) {
+			throw PermissionException("permission denied to change owner of database");
+		}
+	}
+	auto &catalog = Catalog::GetCatalog(context, DatabaseManager::GetDefaultDatabase(context));
+	if (catalog.Compatibility() != SqlCompatibility::POSTGRES) {
+		return;
+	}
+	struct Reassigned {
+		idx_t oid;
+		reference<CatalogEntry> entry;
+	};
+	vector<Reassigned> objects;
+	const auto transaction = catalog.GetCatalogTransaction(context);
+	catalog.ScanSchemas(context, [&](SchemaCatalogEntry &schema) {
+		if (owned(schema.permissions.owner)) {
+			objects.push_back({schema.oid, schema});
+		}
+		for (const auto type : {CatalogType::MACRO_ENTRY, CatalogType::TABLE_MACRO_ENTRY, CatalogType::TOKENIZER_ENTRY,
+		                        CatalogType::JOB_ENTRY}) {
+			schema.Scan(transaction, type, [&](CatalogEntry &entry) {
+				if (entry.type != CatalogType::MACRO_ENTRY && entry.type != CatalogType::TABLE_MACRO_ENTRY) {
+					if (owned(entry.permissions.owner)) {
+						objects.push_back({entry.oid, entry});
+					}
+					return;
+				}
+				auto &macro = entry.Cast<MacroCatalogEntry>();
+				for (auto &overload : macro.macros) {
+					if (owned(macro.OverloadPermissions(*overload).owner)) {
+						objects.push_back({macro.OverloadOid(*overload), entry});
+					}
+				}
+			});
+		}
+	});
+	std::sort(objects.begin(), objects.end(),
+	          [](const Reassigned &left, const Reassigned &right) { return left.oid < right.oid; });
+	auto &new_owner = AccessOf(reassign.new_owner_id);
+	unordered_set<idx_t> given;
+	for (auto &object : objects) {
+		auto &entry = object.entry.get();
+		if (entry.type == CatalogType::SCHEMA_ENTRY) {
+			auto &database = ClusterDatabase(context, catalog.GetName());
+			if (!Allowed(role, database, AclMode::Create)) {
+				ThrowPermissionDenied(database);
+			}
+			given.insert(entry.oid);
+			continue;
+		}
+		auto &schema = entry.ParentSchema(transaction);
+		if (!given.count(schema.oid) && !Allowed(new_owner, schema, AclMode::Create)) {
+			ThrowPermissionDenied(schema);
+		}
 	}
 }
 
