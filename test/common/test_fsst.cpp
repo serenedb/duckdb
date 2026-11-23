@@ -46,6 +46,85 @@ struct FsstInputs {
 	vector<const unsigned char *> pointers;
 };
 
+vector<string> FsstCompress(duckdb_fsst_encoder_t *encoder, vector<string> &strings, size_t size) {
+	vector<size_t> lengths;
+	vector<unsigned char *> pointers;
+	for (auto &s : strings) {
+		lengths.push_back(s.size());
+		pointers.push_back(reinterpret_cast<unsigned char *>(s.data()));
+	}
+	vector<unsigned char> out(size);
+	vector<size_t> out_lengths(strings.size());
+	vector<unsigned char *> out_strings(strings.size());
+	const auto count = duckdb_fsst_compress(encoder, strings.size(), lengths.data(), pointers.data(), out.size(),
+	                                        out.data(), out_lengths.data(), out_strings.data());
+	REQUIRE(count <= strings.size());
+	vector<string> compressed;
+	auto *next = out.data();
+	for (size_t i = 0; i < count; i++) {
+		REQUIRE(out_strings[i] == next);
+		next += out_lengths[i];
+		compressed.emplace_back(reinterpret_cast<const char *>(out_strings[i]), out_lengths[i]);
+	}
+	REQUIRE(next <= out.data() + out.size());
+	return compressed;
+}
+
+vector<string> FsstCompressEachAlone(duckdb_fsst_encoder_t *encoder, const vector<string> &strings) {
+	vector<string> compressed;
+	for (auto &s : strings) {
+		vector<string> one {s};
+		auto alone = FsstCompress(encoder, one, 2 * s.size() + 7);
+		REQUIRE(alone.size() == 1);
+		compressed.push_back(std::move(alone[0]));
+	}
+	return compressed;
+}
+
+size_t FsstStringsThatFit(const vector<string> &strings, const vector<string> &compressed, size_t size) {
+	size_t used = 0;
+	for (size_t i = 0; i < strings.size(); i++) {
+		if (2 * strings[i].size() + 7 > size - used) {
+			return i;
+		}
+		used += compressed[i].size();
+	}
+	return strings.size();
+}
+
+size_t FsstRoomBefore(const vector<string> &strings, const vector<string> &compressed, size_t stop) {
+	size_t size = 2 * strings[stop].size() + 6;
+	for (size_t i = 0; i < stop; i++) {
+		size += compressed[i].size();
+	}
+	return size;
+}
+
+vector<string> FsstRunsOfShortAndLongStrings() {
+	const auto corpus = FsstCorpus();
+	uint64_t state = 0x6A09E667F3BCC909ULL;
+	const auto long_string = [&](size_t length) {
+		string s;
+		while (s.size() < length) {
+			state ^= state << 13;
+			state ^= state >> 7;
+			state ^= state << 17;
+			s += "/item-" + std::to_string(state % 1000);
+		}
+		s.resize(length);
+		return s;
+	};
+	vector<string> strings(corpus.begin(), corpus.begin() + 100);
+	strings.push_back(long_string(512));
+	strings.push_back(long_string(511));
+	strings.insert(strings.end(), corpus.begin() + 100, corpus.begin() + 180);
+	for (size_t length : {600, 2000, 5000}) {
+		strings.push_back(long_string(length));
+	}
+	strings.insert(strings.end(), corpus.begin() + 180, corpus.end());
+	return strings;
+}
+
 } // namespace
 
 TEST_CASE("FSST decompresses the start of every string", "[fsst]") {
@@ -209,6 +288,53 @@ TEST_CASE("FSST refuses an escape that ends a block of four codes", "[fsst]") {
 	const unsigned char escape_ending_a_block[] = {1, 2, 3, 255};
 	REQUIRE(duckdb_fsst_decompress_prefix(&decoder, sizeof(escape_ending_a_block), escape_ending_a_block, 8,
 	                                      buffer.data()) == DUCKDB_FSST_DECOMPRESS_INVALID_INPUT);
+}
+
+TEST_CASE("FSST encodes runs of short and long strings as it encodes each string alone", "[fsst]") {
+	auto strings = FsstRunsOfShortAndLongStrings();
+	FsstInputs in(strings);
+	auto *encoder =
+	    duckdb_fsst_create(strings.size(), in.lengths.data(), const_cast<unsigned char **>(in.pointers.data()), 0);
+	REQUIRE(encoder);
+	const auto expected = FsstCompressEachAlone(encoder, strings);
+	size_t total = 0;
+	for (auto &s : strings) {
+		total += s.size();
+	}
+	const auto compressed = FsstCompress(encoder, strings, 2 * total + 7);
+	REQUIRE(compressed.size() == strings.size());
+	auto decoder = duckdb_fsst_decoder(encoder);
+	duckdb_fsst_destroy(encoder);
+	vector<unsigned char> buffer(5000 + 32);
+	for (size_t i = 0; i < strings.size(); i++) {
+		REQUIRE(compressed[i] == expected[i]);
+		const auto size = duckdb_fsst_decompress(&decoder, compressed[i].size(),
+		                                         reinterpret_cast<const unsigned char *>(compressed[i].data()),
+		                                         buffer.size(), buffer.data());
+		REQUIRE(string(reinterpret_cast<const char *>(buffer.data()), size) == strings[i]);
+	}
+}
+
+TEST_CASE("FSST stops at the first string its output buffer may not hold", "[fsst]") {
+	auto strings = FsstRunsOfShortAndLongStrings();
+	FsstInputs in(strings);
+	auto *encoder =
+	    duckdb_fsst_create(strings.size(), in.lengths.data(), const_cast<unsigned char **>(in.pointers.data()), 0);
+	REQUIRE(encoder);
+	const auto expected = FsstCompressEachAlone(encoder, strings);
+	for (size_t stop : {size_t(50), size_t(101), size_t(183)}) {
+		const auto room = FsstRoomBefore(strings, expected, stop);
+		REQUIRE(FsstStringsThatFit(strings, expected, room) == stop);
+		REQUIRE(FsstStringsThatFit(strings, expected, room + 1) > stop);
+		for (auto size : {room, room + 1}) {
+			const auto compressed = FsstCompress(encoder, strings, size);
+			REQUIRE(compressed.size() == FsstStringsThatFit(strings, expected, size));
+			for (size_t i = 0; i < compressed.size(); i++) {
+				REQUIRE(compressed[i] == expected[i]);
+			}
+		}
+	}
+	duckdb_fsst_destroy(encoder);
 }
 
 TEST_CASE("FSST compresses more long strings than one SIMD buffer holds", "[fsst]") {
