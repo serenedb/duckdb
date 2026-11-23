@@ -11,7 +11,6 @@
 #include "duckdb/catalog/acl.hpp"
 #include "duckdb/catalog/catalog_transaction.hpp"
 #include "duckdb/common/enums/role_capability.hpp"
-#include "duckdb/common/mutex.hpp"
 #include "duckdb/common/unordered_map.hpp"
 
 #include <algorithm>
@@ -162,8 +161,7 @@ private:
 	unordered_map<string, idx_t> by_name;
 	unordered_map<string, idx_t> database_owners;
 	idx_t database_owner_role;
-	mutable mutex derived_lock;
-	mutable unordered_map<idx_t, shared_ptr<const SecuritySnapshot>> derived;
+	unordered_map<idx_t, shared_ptr<const SecuritySnapshot>> derived;
 };
 
 } // namespace duckdb

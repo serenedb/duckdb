@@ -271,6 +271,19 @@ SecuritySnapshot::SecuritySnapshot(unordered_map<idx_t, Node> nodes_p, unordered
 		access.fingerprint = fingerprint;
 		roles.push_back(access);
 	}
+	if (!nodes.count(database_owner_role)) {
+		return;
+	}
+	for (auto &database : database_owners) {
+		const auto owner = database.second;
+		if (derived.count(owner) || !nodes.count(owner)) {
+			continue;
+		}
+		auto implied = nodes;
+		implied[owner].member_of.push_back(Membership {database_owner_role, database_owner_role, false, true, true});
+		derived.emplace(owner,
+		                make_shared_ptr<const SecuritySnapshot>(std::move(implied), unordered_map<string, idx_t>(), 0));
+	}
 }
 
 SecuritySnapshot::~SecuritySnapshot() {
@@ -291,22 +304,12 @@ shared_ptr<const SecuritySnapshot> SecuritySnapshot::Build(Catalog &cluster, Cat
 }
 
 shared_ptr<const SecuritySnapshot> SecuritySnapshot::ForDatabase(const Identifier &database) const {
-	if (!nodes.count(database_owner_role)) {
-		return nullptr;
-	}
 	auto owner = database_owners.find(database.GetIdentifierName());
-	if (owner == database_owners.end() || !nodes.count(owner->second)) {
+	if (owner == database_owners.end()) {
 		return nullptr;
 	}
-	lock_guard<mutex> guard(derived_lock);
-	auto &result = derived[owner->second];
-	if (!result) {
-		auto implied = nodes;
-		implied[owner->second].member_of.push_back(
-		    Membership {database_owner_role, database_owner_role, false, true, true});
-		result = make_shared_ptr<const SecuritySnapshot>(std::move(implied), unordered_map<string, idx_t>(), 0);
-	}
-	return result;
+	auto result = derived.find(owner->second);
+	return result == derived.end() ? nullptr : result->second;
 }
 
 optional_ptr<const RoleAccess> SecuritySnapshot::Access(idx_t role) const {
