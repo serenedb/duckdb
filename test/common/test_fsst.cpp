@@ -193,3 +193,20 @@ TEST_CASE("FSST12 refuses a symbol table that ends after its header", "[fsst]") 
 	duckdb_fsst12_decoder_t decoder;
 	REQUIRE(duckdb_fsst12_import(&decoder, table.data(), 24) == DUCKDB_FSST12_IMPORT_OUT_OF_BOUNDS);
 }
+
+TEST_CASE("FSST refuses an escape that ends a block of four codes", "[fsst]") {
+	const auto strings = FsstCorpus();
+	FsstInputs in(strings);
+	auto *encoder =
+	    duckdb_fsst_create(strings.size(), in.lengths.data(), const_cast<unsigned char **>(in.pointers.data()), 0);
+	REQUIRE(encoder);
+	unsigned char table[FSST_MAXHEADER];
+	const auto table_size = duckdb_fsst_export(encoder, table);
+	duckdb_fsst_destroy(encoder);
+	duckdb_fsst_decoder_t decoder;
+	REQUIRE(duckdb_fsst_import(&decoder, table, table_size) == table_size);
+	vector<unsigned char> buffer(64);
+	const unsigned char escape_ending_a_block[] = {1, 2, 3, 255};
+	REQUIRE(duckdb_fsst_decompress_prefix(&decoder, sizeof(escape_ending_a_block), escape_ending_a_block, 8,
+	                                      buffer.data()) == DUCKDB_FSST_DECOMPRESS_INVALID_INPUT);
+}
