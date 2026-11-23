@@ -20,7 +20,6 @@ struct DateTimestampSniffing {
 	bool initialized = false;
 	bool had_match = false;
 	vector<string> format;
-	idx_t initial_size = 0;
 	string generated_separator;
 	vector<string> generated;
 	vector<const StrpTimeFormat *> generated_formats;
