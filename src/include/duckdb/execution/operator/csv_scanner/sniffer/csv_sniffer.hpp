@@ -23,6 +23,7 @@ struct DateTimestampSniffing {
 	idx_t initial_size = 0;
 	string generated_separator;
 	vector<string> generated;
+	vector<const StrpTimeFormat *> generated_formats;
 };
 
 struct QuoteEscapeCombination {
@@ -163,6 +164,7 @@ private:
 	//! Try to cast a string value to the specified sql type
 	void SetDateFormat(CSVStateMachine &candidate, const string &format_specifier, const LogicalTypeId &sql_type);
 	const StrpTimeFormat &ParsedDateFormat(const string &format_specifier);
+	void GenerateDateFormats(DateTimestampSniffing &format_candidate, const string &separator, LogicalTypeId sql_type);
 
 	//! Function that initialized the necessary variables used for date and timestamp detection
 	void InitializeDateAndTimeStampDetection(const string &separator, const LogicalType &sql_type);
