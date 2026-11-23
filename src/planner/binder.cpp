@@ -406,6 +406,12 @@ void Binder::RequireIndexCalls(TableCatalogEntry &table, optional_ptr<const vect
 	});
 }
 
+void Binder::RequirePlacement(Catalog &catalog, const CreateInfo &info, optional_ptr<const CatalogEntry> indexed) {
+	if (auto tablespace = catalog.PlacementTablespace(context, info, indexed)) {
+		Require(context, CheckAs(), *tablespace, AclMode::Create);
+	}
+}
+
 void Binder::BindAsFunctionBody(const SelectStatement &statement) {
 	if (!statement.function_body) {
 		return;

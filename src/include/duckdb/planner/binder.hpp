@@ -467,6 +467,7 @@ public:
 	void RecordCalls(optional_ptr<vector<FunctionCall>> calls);
 	void Execute(const CatalogEntry &function, optional_ptr<const MacroFunction> overload = nullptr);
 	void RequireIndexCalls(TableCatalogEntry &table, optional_ptr<const vector<PhysicalIndex>> changed);
+	void RequirePlacement(Catalog &catalog, const CreateInfo &info, optional_ptr<const CatalogEntry> indexed);
 	void BindAsFunctionBody(const SelectStatement &statement);
 	void UseFunctionSearchPath(const vector<string> &config);
 	BoundStatement BindTarget(TableRef &ref, TableRefUse use);

@@ -407,6 +407,8 @@ unique_ptr<LogicalOperator> Binder::BindAlter(unique_ptr<AlterInfo> &info) {
 
 	if (info->type == AlterType::ALTER_SUBSCRIPTION) {
 		auto &subscription = ResolveDatabaseEntry(CatalogType::SUBSCRIPTION_ENTRY, *info, AclMode::Own);
+		subscription.ParentCatalog().RequireSubscription(context, CheckAs(), subscription,
+		                                                 info->Cast<AlterSubscriptionInfo>());
 		properties.RegisterDBModify(subscription.ParentCatalog(), context, DatabaseModificationType::ALTER_TABLE);
 		return nullptr;
 	}

@@ -1369,6 +1369,7 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 			auto &schema = table.ParentSchema(context);
 			Require(context, CheckAs(), schema, AclMode::Create);
 			RequireReplacedOwner(context, CheckAs(), schema, create_index_info, create_index_info.GetIndexName());
+			RequirePlacement(table.catalog, create_index_info, table);
 			if (table.temporary) {
 				stmt.info->temporary = true;
 			}
@@ -1383,6 +1384,7 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 			auto &schema = view.ParentSchema(context);
 			Require(context, CheckAs(), schema, AclMode::Create);
 			RequireReplacedOwner(context, CheckAs(), schema, create_index_info, create_index_info.GetIndexName());
+			RequirePlacement(view.catalog, create_index_info, view);
 			properties.RegisterDBModify(view.catalog, context, DatabaseModificationType::CREATE_INDEX);
 			result.plan = view.catalog.BindCreateViewIndex(*this, stmt, view, std::move(plan));
 		}
@@ -1414,6 +1416,12 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 		RequireResolvedTypeUsage(bound_info->Base().dependencies);
 		for (auto &column : bound_info->Base().columns.Logical()) {
 			RequireTypeUsage(context, CheckAs(), column.Type(), bound_info->schema.ParentCatalog());
+		}
+		auto &base = bound_info->Base();
+		if (base.on_conflict != OnCreateConflict::IGNORE_ON_CONFLICT ||
+		    !table_schema.GetEntry(table_catalog.GetCatalogTransaction(context), CatalogType::TABLE_ENTRY,
+		                           base.GetQualifiedName().Name())) {
+			RequirePlacement(table_catalog, base, nullptr);
 		}
 		if (!CheckAs().IsSystem()) {
 			for (auto &serial : bound_info->serial_sequences) {
@@ -1643,6 +1651,7 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 			RequireDatabasePrivilege(context, role, catalog, AclMode::Create);
 			AssignOwner(context, stmt.info->permissions, subscription_catalog, CatalogType::SUBSCRIPTION_ENTRY, nullptr,
 			            role.role);
+			subscription_catalog.RequireSubscription(context, role, stmt.info->Cast<CreateSubscriptionInfo>());
 		}
 		properties.RegisterDBModify(subscription_catalog, context, DatabaseModificationType::CREATE_CATALOG_ENTRY);
 		result.plan = make_uniq<LogicalCreate>(LogicalOperatorType::LOGICAL_CREATE_SUBSCRIPTION, std::move(stmt.info));

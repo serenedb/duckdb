@@ -28,6 +28,9 @@
 #include "duckdb/parser/qualified_name.hpp"
 #include "duckdb/catalog/entry_lookup_info.hpp"
 #include "duckdb/common/types/string.hpp"
+#include "duckdb/parser/parsed_data/alter_subscription_info.hpp"
+#include "duckdb/parser/parsed_data/create_info.hpp"
+#include "duckdb/parser/parsed_data/create_subscription_info.hpp"
 #include "duckdb/storage/storage_index.hpp"
 #include "duckdb/storage/table/row_group_collection.hpp"
 #include "duckdb/storage/table/table_index_list.hpp"
@@ -56,7 +59,6 @@ struct CreateRoleInfo;
 struct CreateDatabaseInfo;
 struct CreateForeignServerInfo;
 struct CreateTablespaceInfo;
-struct CreateSubscriptionInfo;
 struct CreateCollationInfo;
 struct CreateCoordinateSystemInfo;
 struct CreateIndexInfo;
@@ -567,6 +569,12 @@ public:
 	                          const std::function<void(CatalogEntry &)> &callback);
 	virtual void ScanIndexes(ClientContext &context, const TableCatalogEntry &table,
 	                         absl::FunctionRef<void(IndexCatalogEntry &)> callback);
+	virtual optional_ptr<CatalogEntry> PlacementTablespace(ClientContext &context, const CreateInfo &info,
+	                                                       optional_ptr<const CatalogEntry> indexed);
+	virtual void RequireSubscription(ClientContext &context, const RoleAccess &role,
+	                                 const CreateSubscriptionInfo &info);
+	virtual void RequireSubscription(ClientContext &context, const RoleAccess &role, CatalogEntry &subscription,
+	                                 const AlterSubscriptionInfo &info);
 	virtual catalog_entry_vector_t OwnedEntries(CatalogTransaction transaction, const CatalogEntry &owner);
 	virtual optional_ptr<CatalogEntry> OwnerOf(CatalogTransaction transaction, CatalogEntry &owned);
 	virtual catalog_entry_vector_t DropOrder(CatalogTransaction transaction, const catalog_entry_vector_t &entries);

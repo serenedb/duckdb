@@ -2081,6 +2081,18 @@ void Catalog::ScanIndexes(ClientContext &context, const TableCatalogEntry &table
 	});
 }
 
+optional_ptr<CatalogEntry> Catalog::PlacementTablespace(ClientContext &context, const CreateInfo &info,
+                                                        optional_ptr<const CatalogEntry> indexed) {
+	return nullptr;
+}
+
+void Catalog::RequireSubscription(ClientContext &context, const RoleAccess &role, const CreateSubscriptionInfo &info) {
+}
+
+void Catalog::RequireSubscription(ClientContext &context, const RoleAccess &role, CatalogEntry &subscription,
+                                  const AlterSubscriptionInfo &info) {
+}
+
 catalog_entry_vector_t Catalog::OwnedEntries(CatalogTransaction transaction, const CatalogEntry &owner) {
 	return catalog_entry_vector_t();
 }
