@@ -18,11 +18,32 @@ static idx_t GranteeId(Binder &binder, const string &name) {
 	return name == "public" ? ACL_ID_PUBLIC : RoleSpecId(binder.context, name);
 }
 
-static void RequireGrantableAcl(const RoleAccess &role, idx_t owner, std::span<const AclItem> acl, CatalogType type,
-                                std::string_view name) {
-	if (!role.Owns(owner) && (role.HeldModes(acl) | role.GrantableModes(acl)) == AclMode::NoRights) {
+static void WarnUngranted(ClientContext &context, const AlterPermissionsInfo &info, AclMode requested,
+                          AclMode grantable, bool all, const string &object) {
+	const auto applied = requested & grantable;
+	if (requested == AclMode::NoRights || applied == requested || (all && applied != AclMode::NoRights)) {
+		return;
+	}
+	const auto amount = applied == AclMode::NoRights ? "no" : "not all";
+	if (info.revoke) {
+		context.WarnUser(StringUtil::Format("%s privileges could be revoked for %s", amount, object),
+		                 "PRIVILEGE_NOT_REVOKED");
+	} else {
+		context.WarnUser(StringUtil::Format("%s privileges were granted for %s", amount, object),
+		                 "PRIVILEGE_NOT_GRANTED");
+	}
+}
+
+static void RequireGrantableAcl(ClientContext &context, const AlterPermissionsInfo &info, const RoleAccess &role,
+                                idx_t owner, std::span<const AclItem> acl, CatalogType type, std::string_view name) {
+	if (role.Owns(owner)) {
+		return;
+	}
+	if ((role.HeldModes(acl) | role.GrantableModes(acl)) == AclMode::NoRights) {
 		ThrowPermissionDenied(type, name);
 	}
+	WarnUngranted(context, info, info.privileges, role.GrantableModes(acl),
+	              info.privileges == ObjectKindOf(type).privileges, StringUtil::Format("\"%s\"", name));
 }
 
 static const Permissions &TargetPermissions(const AlterPermissionsInfo &info, CatalogEntry &target) {
@@ -33,7 +54,8 @@ static const Permissions &TargetPermissions(const AlterPermissionsInfo &info, Ca
 	return target.permissions;
 }
 
-static void RequireGrantable(Binder &binder, CatalogEntry &entry, const Permissions &permissions) {
+static void RequireGrantable(Binder &binder, const AlterPermissionsInfo &info, CatalogEntry &entry,
+                             const Permissions &permissions) {
 	auto &role = binder.CheckAs();
 	if (role.Owns(permissions.owner)) {
 		return;
@@ -56,6 +78,30 @@ static void RequireGrantable(Binder &binder, CatalogEntry &entry, const Permissi
 	}
 	if (held == AclMode::NoRights) {
 		ThrowPermissionDenied(entry);
+	}
+	auto &context = binder.context;
+	const auto grantable = role.GrantableModes(stored);
+	const auto all = ObjectKindOf(info.entry_catalog_type).privileges;
+	WarnUngranted(context, info, info.privileges, grantable, info.privileges == all,
+	              StringUtil::Format("\"%s\"", entry.name.GetIdentifierName()));
+	for (auto &privilege : info.column_privileges) {
+		auto column_grantable = grantable;
+		if (entry.type == CatalogType::TABLE_ENTRY) {
+			auto &table = entry.Cast<TableCatalogEntry>();
+			if (table.ColumnExists(privilege.column)) {
+				column_grantable |= role.GrantableModes(table.GetColumn(privilege.column).Acl());
+			}
+		} else if (entry.type == CatalogType::VIEW_ENTRY) {
+			for (auto &column : entry.Cast<ViewCatalogEntry>().column_acls) {
+				if (column.column == privilege.column) {
+					column_grantable |= role.GrantableModes(column.acl);
+				}
+			}
+		}
+		WarnUngranted(context, info, privilege.privileges & ACL_COLUMN_PRIVILEGES, column_grantable,
+		              privilege.privileges == all,
+		              StringUtil::Format("column \"%s\" of relation \"%s\"", privilege.column.GetIdentifierName(),
+		                                 entry.name.GetIdentifierName()));
 	}
 }
 
@@ -162,7 +208,7 @@ static void ResolveGrant(Binder &binder, AlterPermissionsInfo &info) {
 		                                             CatalogType::FOREIGN_DATA_WRAPPER_ENTRY, wrapper)) {
 			acl = entry->permissions.acl;
 		}
-		RequireGrantableAcl(role, config.bootstrap_role, acl, CatalogType::FOREIGN_DATA_WRAPPER_ENTRY,
+		RequireGrantableAcl(context, info, role, config.bootstrap_role, acl, CatalogType::FOREIGN_DATA_WRAPPER_ENTRY,
 		                    wrapper.GetIdentifierName());
 		info.object_owner_id = config.bootstrap_role;
 		info.SetQualifiedName(database_name, Identifier(), wrapper);
@@ -189,7 +235,7 @@ static void ResolveGrant(Binder &binder, AlterPermissionsInfo &info) {
 		                                                CatalogType::PARAMETER_ENTRY, setting)) {
 			acl = parameter->permissions.acl;
 		}
-		RequireGrantableAcl(role, owner, acl, CatalogType::PARAMETER_ENTRY, name);
+		RequireGrantableAcl(context, info, role, owner, acl, CatalogType::PARAMETER_ENTRY, name);
 		info.object_owner_id = owner;
 		info.SetQualifiedName(Identifier(), Identifier(), Identifier(StringUtil::Lower(name)));
 		return;
@@ -200,7 +246,7 @@ static void ResolveGrant(Binder &binder, AlterPermissionsInfo &info) {
 		throw PermissionException("Cannot alter entry \"%s\" because it is an internal system entry",
 		                          target.name.GetIdentifierName());
 	}
-	RequireGrantable(binder, target, TargetPermissions(info, target));
+	RequireGrantable(binder, info, target, TargetPermissions(info, target));
 	const bool relation = target.type == CatalogType::TABLE_ENTRY || target.type == CatalogType::VIEW_ENTRY;
 	if (relation && !info.column_privileges.empty()) {
 		vector<Identifier> view_columns;
