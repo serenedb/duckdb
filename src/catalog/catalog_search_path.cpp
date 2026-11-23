@@ -609,18 +609,6 @@ static Identifier TemporarySchema(ClientContext &context) {
 
 void CatalogSearchPath::SetPathsInternal(vector<CatalogSearchEntry> new_paths) {
 	this->set_paths = std::move(new_paths);
-	if (context.client_data) {
-		auto &session_path = *context.client_data->catalog_search_path;
-		if (&session_path == this) {
-			auto database = DatabaseManager::Get(context).GetDatabase(DatabaseManager::TryGetDefaultDatabase(context));
-			postgres_mode = database && database->GetCatalog().Compatibility() == SqlCompatibility::POSTGRES;
-		}
-		const bool pg_catalog_named =
-		    std::any_of(set_paths.begin(), set_paths.end(),
-		                [](const CatalogSearchEntry &path) { return path.GetSchema() == "pg_catalog"; });
-		builtins_first_order = session_path.postgres_mode && !pg_catalog_named;
-	}
-
 	paths.clear();
 	paths.reserve(set_paths.size() + 5);
 	if (session_objects) {
@@ -631,15 +619,26 @@ void CatalogSearchPath::SetPathsInternal(vector<CatalogSearchEntry> new_paths) {
 	}
 	if (!Catalog::GetSystemCatalog(context).IsDuckCatalog()) {
 		paths.emplace_back(INVALID_CATALOG, "pg_catalog");
-		return;
+	} else {
+		paths.emplace_back(INVALID_CATALOG, DEFAULT_SCHEMA);
+		paths.emplace_back(SYSTEM_CATALOG, DEFAULT_SCHEMA);
+		paths.emplace_back(INVALID_CATALOG, "pg_catalog");
+		paths.emplace_back(SYSTEM_CATALOG, "pg_catalog");
+		// set extension schemas on the search path, if any
+		for (auto &schema : ExtensionCallbackManager::Get(context).GetExtensionSchemas()) {
+			paths.emplace_back(Identifier(SYSTEM_CATALOG), Identifier(schema));
+		}
 	}
-	paths.emplace_back(INVALID_CATALOG, DEFAULT_SCHEMA);
-	paths.emplace_back(SYSTEM_CATALOG, DEFAULT_SCHEMA);
-	paths.emplace_back(INVALID_CATALOG, "pg_catalog");
-	paths.emplace_back(SYSTEM_CATALOG, "pg_catalog");
-	// set extension schemas on the search path, if any
-	for (auto &schema : ExtensionCallbackManager::Get(context).GetExtensionSchemas()) {
-		paths.emplace_back(Identifier(SYSTEM_CATALOG), Identifier(schema));
+	if (context.client_data) {
+		auto &session_path = *context.client_data->catalog_search_path;
+		if (&session_path == this) {
+			auto database = DatabaseManager::Get(context).GetDatabase(DatabaseManager::TryGetDefaultDatabase(context));
+			postgres_mode = database && database->GetCatalog().Compatibility() == SqlCompatibility::POSTGRES;
+		}
+		const bool pg_catalog_named =
+		    std::any_of(set_paths.begin(), set_paths.end(),
+		                [](const CatalogSearchEntry &path) { return path.GetSchema() == "pg_catalog"; });
+		builtins_first_order = session_path.postgres_mode && !pg_catalog_named;
 	}
 }
 
