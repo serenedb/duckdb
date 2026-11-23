@@ -4784,6 +4784,9 @@ public:
 	                                                         GeneratedTransformProcess &process);
 	static arena_ptr<TransformResultValue>
 	FinalizeZoneIntervalWithIntervalTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
+	static void InitializeZoneIntervalFieldTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
+	static arena_ptr<TransformResultValue> FinalizeZoneIntervalFieldTrampoline(PEGTransformer &transformer,
+	                                                                           GeneratedTransformProcess &process);
 	static void InitializeZoneIntervalWithPrecisionTrampoline(PEGTransformer &transformer,
 	                                                          GeneratedTransformProcess &process);
 	static arena_ptr<TransformResultValue>
@@ -6928,9 +6931,9 @@ public:
 	                                                               const string &string_literal);
 	static unique_ptr<ParsedExpression> TransformZoneIdentifier(PEGTransformer &transformer,
 	                                                            const Identifier &identifier);
-	static unique_ptr<ParsedExpression> TransformZoneIntervalWithInterval(PEGTransformer &transformer,
-	                                                                      const string &string_literal,
-	                                                                      const optional<DatePartSpecifier> &interval);
+	static unique_ptr<ParsedExpression>
+	TransformZoneIntervalWithInterval(PEGTransformer &transformer, const string &string_literal,
+	                                  const optional<DatePartSpecifier> &zone_interval_field);
 	static unique_ptr<ParsedExpression> TransformZoneIntervalWithPrecision(PEGTransformer &transformer,
 	                                                                       unique_ptr<ParsedExpression> number_literal,
 	                                                                       const string &string_literal);
