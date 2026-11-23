@@ -290,8 +290,7 @@ shared_ptr<PreparedStatementData> Planner::PrepareSQLStatement(unique_ptr<SQLSta
 	prepared_data->value_map = std::move(value_map);
 	prepared_data->properties = properties;
 	prepared_data->principal_role = context.current_role_id;
-	prepared_data->principal_fingerprint = context.CurrentRole().fingerprint;
-	prepared_data->role_fingerprints = binder->CheckedRoleFingerprints();
+	prepared_data->security_version = context.security ? context.security->version : 0;
 	return prepared_data;
 }
 

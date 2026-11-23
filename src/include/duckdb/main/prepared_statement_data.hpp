@@ -49,8 +49,7 @@ public:
 
 	case_insensitive_map_t<LogicalType> parameter_type_hints;
 	idx_t principal_role = DConstants::INVALID_INDEX;
-	uint64_t principal_fingerprint = 0;
-	vector<pair<idx_t, uint64_t>> role_fingerprints;
+	idx_t security_version = 0;
 
 public:
 	void CheckParameterCount(idx_t parameter_count);

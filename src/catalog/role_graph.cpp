@@ -3,6 +3,7 @@
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/catalog/catalog_entry/role_entry.hpp"
 #include "duckdb/catalog/column_acls.hpp"
+#include "duckdb/common/atomic.hpp"
 #include "duckdb/common/types/hash.hpp"
 #include "duckdb/common/unordered_set.hpp"
 #include "duckdb/main/config.hpp"
@@ -176,9 +177,14 @@ static vector<idx_t> Reachable(const unordered_map<idx_t, SecuritySnapshot::Node
 	return result;
 }
 
+static idx_t NextSnapshotVersion() {
+	static atomic<idx_t> versions {0};
+	return ++versions;
+}
+
 SecuritySnapshot::SecuritySnapshot(unordered_map<idx_t, Node> nodes_p, unordered_map<string, idx_t> database_owners_p,
                                    idx_t database_owner_role_p, idx_t bootstrap_role_p)
-    : nodes(std::move(nodes_p)), database_owners(std::move(database_owners_p)),
+    : version(NextSnapshotVersion()), nodes(std::move(nodes_p)), database_owners(std::move(database_owners_p)),
       database_owner_role(database_owner_role_p), bootstrap_role(bootstrap_role_p) {
 	vector<Role> roles_p;
 	roles_p.reserve(nodes.size());
@@ -245,15 +251,6 @@ SecuritySnapshot::SecuritySnapshot(unordered_map<idx_t, Node> nodes_p, unordered
 		const auto administered_begin = arena.size();
 		arena.insert(arena.end(), role.administered.begin(), role.administered.end());
 		access.administered = std::span<const idx_t>(arena.data() + administered_begin, role.administered.size());
-		auto fingerprint = CombineHash(Hash(uint64_t(role.role)), Hash(uint64_t(role.options)));
-		fingerprint = CombineHash(fingerprint, Hash(uint64_t(role.capabilities)));
-		for (auto list : {&role.closure, &role.settable, &role.administered}) {
-			fingerprint = CombineHash(fingerprint, Hash(uint64_t(list->size())));
-			for (auto member : *list) {
-				fingerprint = CombineHash(fingerprint, Hash(uint64_t(member)));
-			}
-		}
-		access.fingerprint = fingerprint;
 		roles.push_back(access);
 	}
 	if (!nodes.count(database_owner_role)) {

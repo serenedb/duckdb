@@ -77,7 +77,6 @@ struct RoleAccess {
 	std::span<const idx_t> closure;
 	std::span<const idx_t> settable;
 	std::span<const idx_t> administered;
-	uint64_t fingerprint = 0;
 
 	DUCKDB_API static const RoleAccess &System();
 	bool IsSystem() const {
@@ -155,6 +154,8 @@ public:
 	RoleMemberships MembershipsOf(idx_t role) const;
 	vector<idx_t> InheritedRoles(idx_t role) const;
 	optional_idx BestAdmin(idx_t member, idx_t role) const;
+
+	const idx_t version;
 
 private:
 	vector<idx_t> arena;

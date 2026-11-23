@@ -151,14 +151,10 @@ bool PreparedStatementData::RequireRebind(ClientContext &context,
 }
 
 bool PreparedStatementData::IsCurrent(ClientContext &context) const {
+	const auto version = context.security ? context.security->version : 0;
 	if (properties.binding_generation != context.BindingGeneration() || context.current_role_id != principal_role ||
-	    context.CurrentRole().fingerprint != principal_fingerprint) {
+	    version != security_version) {
 		return false;
-	}
-	for (auto &role : role_fingerprints) {
-		if (context.AccessOf(role.first).fingerprint != role.second) {
-			return false;
-		}
 	}
 	for (auto &it : properties.read_databases) {
 		if (!CheckCatalogIdentity(context, it.first, it.second)) {

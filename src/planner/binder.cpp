@@ -332,14 +332,6 @@ const RoleAccess &Binder::AccessOf(idx_t role) {
 	return entry.first->second;
 }
 
-vector<pair<idx_t, uint64_t>> Binder::CheckedRoleFingerprints() const {
-	vector<pair<idx_t, uint64_t>> result;
-	for (auto &entry : global_binder_state->role_access) {
-		result.emplace_back(entry.first, entry.second.fingerprint);
-	}
-	return result;
-}
-
 const RoleAccess &Binder::FunctionBodyRole(optional_idx owner) {
 	return owner.IsValid() ? AccessOf(owner.GetIndex()) : CurrentRole();
 }
