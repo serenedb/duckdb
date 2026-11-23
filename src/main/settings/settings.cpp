@@ -184,13 +184,13 @@ void Settings::CheckChange(ClientContext &context, const Identifier &name, const
 	    StringUtil::Format("permission denied to set parameter \"%s\"", name.GetIdentifierName()));
 }
 
-bool Settings::CanRead(ClientContext &context, const SettingAccess &access) {
-	return !access.superuser_read || context.CurrentRole().Has(RoleCapability::ReadAllSettings);
+bool Settings::CanRead(const RoleAccess &role, const SettingAccess &access) {
+	return !access.superuser_read || role.Has(RoleCapability::ReadAllSettings);
 }
 
-void Settings::CheckRead(ClientContext &context, const Identifier &name) {
+void Settings::CheckRead(ClientContext &context, const Identifier &name, const RoleAccess &role) {
 	auto access = GetAccess(context, name);
-	if (access && !CanRead(context, *access)) {
+	if (access && !CanRead(role, *access)) {
 		throw PermissionException(
 		    {{"detail", "Only roles with privileges of the \"pg_read_all_settings\" role may examine this parameter."}},
 		    StringUtil::Format("permission denied to examine \"%s\"", name.GetIdentifierName()));
@@ -202,7 +202,7 @@ bool Settings::IsVisible(ClientContext &context, const Identifier &name) {
 		return false;
 	}
 	auto access = GetAccess(context, name);
-	return !access || (!access->no_show_all && CanRead(context, *access));
+	return !access || (!access->no_show_all && CanRead(context.CurrentRole(), *access));
 }
 
 } // namespace duckdb

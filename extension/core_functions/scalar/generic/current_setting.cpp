@@ -2,6 +2,7 @@
 
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/main/settings.hpp"
+#include "duckdb/planner/binder.hpp"
 #include "duckdb/planner/expression/bound_function_expression.hpp"
 #include "duckdb/execution/expression_executor.hpp"
 #include "duckdb/catalog/catalog.hpp"
@@ -37,6 +38,7 @@ void CurrentSettingFunction(DataChunk &args, ExpressionState &state, Vector &res
 
 void CurrentSettingDynamic(DataChunk &args, ExpressionState &state, Vector &result) {
 	auto &context = state.GetContext();
+	const auto role = context.CallerAccess(state.expr.Cast<BoundFunctionExpression>().CallerRole());
 	auto names = args.data[0].Values<string_t>();
 	auto writer = FlatVector::Writer<string_t>(result, args.size());
 	for (auto entry : names) {
@@ -45,7 +47,7 @@ void CurrentSettingDynamic(DataChunk &args, ExpressionState &state, Vector &resu
 			continue;
 		}
 		Identifier key(entry.GetValue().GetString());
-		Settings::CheckRead(context, key);
+		Settings::CheckRead(context, key, role);
 		Value val;
 		if (!context.TryGetCurrentSetting(key, val)) {
 			Catalog::AutoloadExtensionByConfigName(context, key);
@@ -78,7 +80,7 @@ unique_ptr<FunctionData> CurrentSettingBind(BindScalarFunctionInput &input) {
 	if (key.empty()) {
 		throw ParserException("Key name for current_setting must not be empty");
 	}
-	Settings::CheckRead(context, key);
+	Settings::CheckRead(context, key, input.HasBinder() ? input.GetBinder().CurrentRole() : context.CurrentRole());
 
 	Value val;
 	if (!context.TryGetCurrentSetting(key, val)) {
