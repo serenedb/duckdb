@@ -1,0 +1,75 @@
+# name: test/sql/copy/csv/test_sniff_type_runs.test
+# description: Type detection keeps a column's candidate type over a run of values that parse as it and reacts to the first one that does not
+# group: [csv]
+
+statement ok
+COPY (SELECT
+    CASE WHEN i = 2046 THEN '1.5' ELSE i::VARCHAR END AS last_sniffed,
+    CASE WHEN i = 2047 THEN 'x' ELSE i::VARCHAR END AS after_first_chunk,
+    CASE WHEN i = 1000 THEN 'maybe' ELSE (i % 2 = 0)::VARCHAR END AS flag,
+    CASE WHEN i % 7 = 0 THEN NULL ELSE i END AS sparse,
+    CASE WHEN i = 1500 THEN '12345678901234567890' ELSE i::VARCHAR END AS widening,
+    strftime(DATE '1998-01-01' + i::INTEGER, '%d.%m.%Y') AS dotted,
+    (DATE '1998-01-01' + i::INTEGER)::VARCHAR AS iso_after_dotted,
+    (TIMESTAMP '1998-01-01 10:00:00' + INTERVAL (i) MINUTE)::VARCHAR AS stamp
+  FROM range(3000) t(i)) TO '{TEMP_DIR}/type_runs.csv' (HEADER);
+
+query II
+SELECT column_name, column_type FROM (DESCRIBE SELECT * FROM read_csv('{TEMP_DIR}/type_runs.csv'));
+----
+last_sniffed	DOUBLE
+after_first_chunk	VARCHAR
+flag	VARCHAR
+sparse	BIGINT
+widening	HUGEINT
+dotted	DATE
+iso_after_dotted	TIMESTAMP
+stamp	TIMESTAMP
+
+query II
+SELECT DateFormat, TimestampFormat FROM sniff_csv('{TEMP_DIR}/type_runs.csv');
+----
+%d.%m.%Y	NULL
+
+statement ok
+COPY (SELECT (DATE '1998-01-01' + i::INTEGER)::VARCHAR AS iso, strftime(DATE '1998-01-01' + i::INTEGER, '%m/%d/%Y') AS slashed
+  FROM range(3000) t(i)) TO '{TEMP_DIR}/type_runs_dates.csv' (HEADER);
+
+query II
+SELECT column_name, column_type FROM (DESCRIBE SELECT * FROM read_csv('{TEMP_DIR}/type_runs_dates.csv'));
+----
+iso	DATE
+slashed	VARCHAR
+
+query I
+SELECT DateFormat FROM sniff_csv('{TEMP_DIR}/type_runs_dates.csv');
+----
+%Y-%m-%d
+
+query II
+SELECT column_name, column_type FROM (DESCRIBE SELECT * FROM read_csv(['{TEMP_DIR}/type_runs_dates.csv', '{TEMP_DIR}/type_runs_dates.csv']));
+----
+iso	DATE
+slashed	VARCHAR
+
+statement ok
+COPY (SELECT printf('%,d', i * 1000) AS thousands, replace(printf('%.2f', i / 4.0), '.', ',') AS comma_decimal
+  FROM range(3000) t(i)) TO '{TEMP_DIR}/type_runs_separators.csv' (HEADER, DELIMITER ';');
+
+query II
+SELECT column_name, column_type FROM (DESCRIBE SELECT * FROM read_csv('{TEMP_DIR}/type_runs_separators.csv', delim=';', thousands=','));
+----
+thousands	BIGNUM
+comma_decimal	VARCHAR
+
+query II
+SELECT column_name, column_type FROM (DESCRIBE SELECT * FROM read_csv('{TEMP_DIR}/type_runs_separators.csv', delim=';', decimal_separator=','));
+----
+thousands	VARCHAR
+comma_decimal	DOUBLE
+
+query II
+SELECT column_name, column_type FROM (DESCRIBE SELECT * FROM read_csv('{TEMP_DIR}/type_runs_separators.csv', delim=';'));
+----
+thousands	VARCHAR
+comma_decimal	VARCHAR
