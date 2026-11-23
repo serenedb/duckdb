@@ -393,6 +393,7 @@ TEST_CASE("CachingFileSystemWrapper read elsewhere starts the window of the read
 	string buffer(2 * BLOCK, '\0');
 	handle->Read(QueryContext(), &buffer[0], STEP, 0);
 	handle->Read(QueryContext(), &buffer[0], STEP, STEP);
+	handle->Read(QueryContext(), &buffer[0], 2 * BLOCK, BLOCK);
 	handle->Read(QueryContext(), &buffer[0], STEP, 32 * BLOCK);
 	handle->Read(QueryContext(), &buffer[0], STEP, 32 * BLOCK + STEP);
 	// a read of the blocks asked for ahead, which waits for them
