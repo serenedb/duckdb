@@ -633,16 +633,18 @@ void CheckFunctionCalls(ClientContext &context, const RoleAccess &role, std::spa
 			continue;
 		}
 		auto catalog = Catalog::GetCatalogEntry(context, call.catalog);
-		if (!catalog) {
-			continue;
-		}
-		auto entry = catalog->LookupOwner(catalog->GetCatalogTransaction(context), call.macro_overload.GetIndex());
+		auto entry = catalog
+		                 ? catalog->LookupOwner(catalog->GetCatalogTransaction(context), call.macro_overload.GetIndex())
+		                 : nullptr;
 		if (!entry || (entry->type != CatalogType::MACRO_ENTRY && entry->type != CatalogType::TABLE_MACRO_ENTRY)) {
-			continue;
+			ThrowPermissionDenied(call.type, call.name);
 		}
 		auto &macro = entry->Cast<MacroCatalogEntry>();
 		auto overload = macro.FindOverload(call.macro_overload.GetIndex());
-		if (overload && !role.Can(macro.type, macro.OverloadPermissions(*overload), AclMode::Execute)) {
+		if (!overload) {
+			ThrowPermissionDenied(call.type, call.name);
+		}
+		if (!role.Can(macro.type, macro.OverloadPermissions(*overload), AclMode::Execute)) {
 			ThrowPermissionDenied(macro, overload.get());
 		}
 	}
