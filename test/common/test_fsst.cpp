@@ -210,3 +210,39 @@ TEST_CASE("FSST refuses an escape that ends a block of four codes", "[fsst]") {
 	REQUIRE(duckdb_fsst_decompress_prefix(&decoder, sizeof(escape_ending_a_block), escape_ending_a_block, 8,
 	                                      buffer.data()) == DUCKDB_FSST_DECOMPRESS_INVALID_INPUT);
 }
+
+TEST_CASE("FSST compresses more long strings than one SIMD buffer holds", "[fsst]") {
+	vector<string> strings;
+	uint64_t state = 0x2545F4914F6CDD1DULL;
+	for (uint64_t i = 0; i < 600; i++) {
+		string s = "row-" + std::to_string(i) + "-";
+		while (s.size() < 511) {
+			state ^= state << 13;
+			state ^= state >> 7;
+			state ^= state << 17;
+			s += static_cast<char>('a' + state % 8);
+		}
+		strings.push_back(std::move(s));
+	}
+	FsstInputs in(strings);
+	auto *encoder =
+	    duckdb_fsst_create(strings.size(), in.lengths.data(), const_cast<unsigned char **>(in.pointers.data()), 0);
+	REQUIRE(encoder);
+	vector<unsigned char> out(2 * 600 * 512);
+	vector<size_t> out_lengths(strings.size());
+	vector<unsigned char *> out_strings(strings.size());
+	REQUIRE(duckdb_fsst_compress(encoder, strings.size(), in.lengths.data(),
+	                             const_cast<unsigned char **>(in.pointers.data()), out.size(), out.data(),
+	                             out_lengths.data(), out_strings.data()) == strings.size());
+	unsigned char table[FSST_MAXHEADER];
+	const auto table_size = duckdb_fsst_export(encoder, table);
+	duckdb_fsst_destroy(encoder);
+	duckdb_fsst_decoder_t decoder;
+	REQUIRE(duckdb_fsst_import(&decoder, table, table_size) == table_size);
+	vector<unsigned char> buffer(1024);
+	for (size_t i = 0; i < strings.size(); i++) {
+		const auto size =
+		    duckdb_fsst_decompress(&decoder, out_lengths[i], out_strings[i], buffer.size(), buffer.data());
+		REQUIRE(string(reinterpret_cast<const char *>(buffer.data()), size) == strings[i]);
+	}
+}
