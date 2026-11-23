@@ -170,9 +170,6 @@ static const TransformFrameOps RESET_OPTIONS_OPS = {"ResetOptions",
 static const TransformFrameOps ALTER_COLUMN_ENTRY_OPS = {
     "AlterColumnEntry", &PEGTransformerFactory::InitializeAlterColumnEntryTrampoline,
     &PEGTransformerFactory::FinalizeAlterColumnEntryTrampoline, true};
-static const TransformFrameOps SET_COMPRESSION_OPS = {"SetCompression",
-                                                      &PEGTransformerFactory::InitializeSetCompressionTrampoline,
-                                                      &PEGTransformerFactory::FinalizeSetCompressionTrampoline, true};
 static const TransformFrameOps SET_COMPRESSION_DEFAULT_OPS = {
     "SetCompressionDefault", &PEGTransformerFactory::InitializeSetCompressionDefaultTrampoline,
     &PEGTransformerFactory::FinalizeSetCompressionDefaultTrampoline};
@@ -3764,7 +3761,6 @@ PEGTransformerFactory::GeneratedTransformFrameOps() {
 	    {"SetOptions", &SET_OPTIONS_OPS},
 	    {"ResetOptions", &RESET_OPTIONS_OPS},
 	    {"AlterColumnEntry", &ALTER_COLUMN_ENTRY_OPS},
-	    {"SetCompression", &SET_COMPRESSION_OPS},
 	    {"SetCompressionDefault", &SET_COMPRESSION_DEFAULT_OPS},
 	    {"SetCompressionCodec", &SET_COMPRESSION_CODEC_OPS},
 	    {"AddOrDropDefault", &ADD_OR_DROP_DEFAULT_OPS},
@@ -6001,27 +5997,6 @@ void PEGTransformerFactory::InitializeAlterColumnEntryTrampoline(PEGTransformer 
 arena_ptr<TransformResultValue>
 PEGTransformerFactory::FinalizeAlterColumnEntryTrampoline(PEGTransformer &transformer,
                                                           GeneratedTransformProcess &process) {
-	auto result = process.TakeResult<unique_ptr<AlterTableInfo>>(0);
-	return transformer.MakeResult<unique_ptr<AlterTableInfo>>(std::move(result));
-}
-
-void PEGTransformerFactory::InitializeSetCompressionTrampoline(PEGTransformer &transformer,
-                                                               GeneratedTransformProcess &process) {
-	auto &list_pr = process.parse_result.Cast<ListParseResult>();
-	auto &choice_pr = list_pr.Child<ChoiceParseResult>(0);
-	auto &choice_result = choice_pr.GetResult();
-	process.ReserveChildSlots(1);
-	auto child_rule = choice_result.GetRule();
-	auto has_transform_process = child_rule && child_rule->transform_process;
-	if (!has_transform_process) {
-		throw InternalException("No transform process registered for rule '%s'", choice_result.Name());
-	}
-	process.PushChild({*child_rule, choice_result}, 0);
-}
-
-arena_ptr<TransformResultValue>
-PEGTransformerFactory::FinalizeSetCompressionTrampoline(PEGTransformer &transformer,
-                                                        GeneratedTransformProcess &process) {
 	auto result = process.TakeResult<unique_ptr<AlterTableInfo>>(0);
 	return transformer.MakeResult<unique_ptr<AlterTableInfo>>(std::move(result));
 }

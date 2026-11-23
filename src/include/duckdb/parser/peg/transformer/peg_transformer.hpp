@@ -965,9 +965,6 @@ public:
 	static void InitializeAlterColumnEntryTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
 	static arena_ptr<TransformResultValue> FinalizeAlterColumnEntryTrampoline(PEGTransformer &transformer,
 	                                                                          GeneratedTransformProcess &process);
-	static void InitializeSetCompressionTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
-	static arena_ptr<TransformResultValue> FinalizeSetCompressionTrampoline(PEGTransformer &transformer,
-	                                                                        GeneratedTransformProcess &process);
 	static void InitializeSetCompressionDefaultTrampoline(PEGTransformer &transformer,
 	                                                      GeneratedTransformProcess &process);
 	static arena_ptr<TransformResultValue> FinalizeSetCompressionDefaultTrampoline(PEGTransformer &transformer,
