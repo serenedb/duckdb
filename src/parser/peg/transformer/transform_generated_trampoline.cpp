@@ -162,6 +162,9 @@ static const TransformFrameOps SET_SORTED_BY_OPS = {"SetSortedBy",
 static const TransformFrameOps RESET_SORTED_BY_OPS = {"ResetSortedBy",
                                                       &PEGTransformerFactory::InitializeResetSortedByTrampoline,
                                                       &PEGTransformerFactory::FinalizeResetSortedByTrampoline};
+static const TransformFrameOps SET_TABLESPACE_OPS = {"SetTablespace",
+                                                     &PEGTransformerFactory::InitializeSetTablespaceTrampoline,
+                                                     &PEGTransformerFactory::FinalizeSetTablespaceTrampoline};
 static const TransformFrameOps SET_OPTIONS_OPS = {"SetOptions", &PEGTransformerFactory::InitializeSetOptionsTrampoline,
                                                   &PEGTransformerFactory::FinalizeSetOptionsTrampoline};
 static const TransformFrameOps RESET_OPTIONS_OPS = {"ResetOptions",
@@ -3752,6 +3755,7 @@ PEGTransformerFactory::GeneratedTransformFrameOps() {
 	    {"ResetPartitionedBy", &RESET_PARTITIONED_BY_OPS},
 	    {"SetSortedBy", &SET_SORTED_BY_OPS},
 	    {"ResetSortedBy", &RESET_SORTED_BY_OPS},
+	    {"SetTablespace", &SET_TABLESPACE_OPS},
 	    {"SetOptions", &SET_OPTIONS_OPS},
 	    {"ResetOptions", &RESET_OPTIONS_OPS},
 	    {"AlterColumnEntry", &ALTER_COLUMN_ENTRY_OPS},
@@ -5944,6 +5948,21 @@ PEGTransformerFactory::FinalizeResetSortedByTrampoline(PEGTransformer &transform
 	return transformer.MakeResult<unique_ptr<AlterTableInfo>>(std::move(result));
 }
 
+void PEGTransformerFactory::InitializeSetTablespaceTrampoline(PEGTransformer &transformer,
+                                                              GeneratedTransformProcess &process) {
+	auto &list_pr = process.parse_result.Cast<ListParseResult>();
+	process.ReserveChildSlots(1);
+	process.PushChild({list_pr.GetChild(2)}, 0);
+}
+
+arena_ptr<TransformResultValue>
+PEGTransformerFactory::FinalizeSetTablespaceTrampoline(PEGTransformer &transformer,
+                                                       GeneratedTransformProcess &process) {
+	auto col_id = process.TakeResult<Identifier>(0);
+	auto result = TransformSetTablespace(transformer, col_id);
+	return transformer.MakeResult<unique_ptr<AlterTableInfo>>(std::move(result));
+}
+
 void PEGTransformerFactory::InitializeSetOptionsTrampoline(PEGTransformer &transformer,
                                                            GeneratedTransformProcess &process) {
 	auto &list_pr = process.parse_result.Cast<ListParseResult>();
@@ -8029,7 +8048,7 @@ arena_ptr<TransformResultValue> PEGTransformerFactory::FinalizeSetofTypeTrampoli
                                                                                    GeneratedTransformProcess &process) {
 	auto type = process.TakeResult<LogicalType>(0);
 	auto result = TransformSetofType(transformer, type);
-	return transformer.MakeResult<unique_ptr<ParsedExpression>>(std::move(result));
+	return transformer.MakeResult<LogicalType>(result);
 }
 
 void PEGTransformerFactory::InitializeUnionTypeTrampoline(PEGTransformer &transformer,
