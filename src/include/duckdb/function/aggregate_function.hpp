@@ -18,6 +18,7 @@
 
 namespace duckdb {
 
+class Binder;
 class BufferManager;
 class FunctionBinder;
 class InterruptState;
@@ -63,7 +64,8 @@ class BindAggregateFunctionInput : public BindFunctionInput {
 public:
 	// Defined out-of-line: converting to the BindFunctionInput base requires the complete BoundAggregateFunction.
 	BindAggregateFunctionInput(ClientContext &context_p, BoundAggregateFunction &bound_function_p,
-	                           vector<unique_ptr<Expression>> &arguments_p, const vector<Identifier> &argument_names_p);
+	                           vector<unique_ptr<Expression>> &arguments_p, const vector<Identifier> &argument_names_p,
+	                           optional_ptr<Binder> binder_p = nullptr);
 
 	//! Construct without argument names - looking arguments up by name is not available in this case.
 	BindAggregateFunctionInput(ClientContext &context_p, BoundAggregateFunction &bound_function_p,
@@ -72,9 +74,14 @@ public:
 	BoundAggregateFunction &GetBoundFunction() const {
 		return bound_function;
 	}
+	bool HasBinder() const {
+		return binder != nullptr;
+	}
+	Binder &GetBinder();
 
 private:
 	BoundAggregateFunction &bound_function;
+	optional_ptr<Binder> binder;
 };
 
 class FunctionExpression;

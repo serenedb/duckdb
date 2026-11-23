@@ -184,8 +184,17 @@ void BoundAggregateFunction::ReplaceImplementation(const AggregateFunction &func
 BindAggregateFunctionInput::BindAggregateFunctionInput(ClientContext &context_p,
                                                        BoundAggregateFunction &bound_function_p,
                                                        vector<unique_ptr<Expression>> &arguments_p,
-                                                       const vector<Identifier> &argument_names_p)
-    : BindFunctionInput(context_p, bound_function_p, arguments_p, &argument_names_p), bound_function(bound_function_p) {
+                                                       const vector<Identifier> &argument_names_p,
+                                                       optional_ptr<Binder> binder_p)
+    : BindFunctionInput(context_p, bound_function_p, arguments_p, &argument_names_p), bound_function(bound_function_p),
+      binder(binder_p) {
+}
+
+Binder &BindAggregateFunctionInput::GetBinder() {
+	if (!binder) {
+		throw InternalException("Function %s cannot be bound without a Binder!", bound_function.GetName());
+	}
+	return *binder;
 }
 
 BindAggregateFunctionInput::BindAggregateFunctionInput(ClientContext &context_p,

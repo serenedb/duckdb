@@ -1719,7 +1719,7 @@ FunctionBinder::ResolveFunction(shared_ptr<const AggregateFunction> function_p,
 	unique_ptr<FunctionData> bind_info;
 
 	if (bound_function.GetCallbacks().HasBindCallback()) {
-		BindAggregateFunctionInput input(context, bound_function, children, argument_names);
+		BindAggregateFunctionInput input(context, bound_function, children, argument_names, binder);
 		bind_info = bound_function.GetCallbacks().GetBindCallback()(input);
 
 		// we may have lost some arguments in the bind
