@@ -76,7 +76,7 @@ unique_ptr<GlobalTableFunctionState> PragmaDatabaseSizeInit(ClientContext &conte
 		} catch (const std::exception &ex) {
 			auto message = StringUtil::Format("catalog listing skipped database \"%s\": %s", db.GetName(),
 			                                  ErrorData(ex).Message());
-			if (!context.EmitWarning(message.c_str())) {
+			if (!context.EmitWarning(message.c_str(), {})) {
 				DUCKDB_LOG_DEBUG(context, message);
 			}
 		}

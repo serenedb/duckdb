@@ -128,7 +128,7 @@ public:
 public:
 	virtual void ValidateIsolationLevel(TransactionIsolationLevel level) {
 	}
-	virtual bool EmitWarning(const char *message) {
+	virtual bool EmitWarning(const char *message, std::string_view subtype) {
 		return false;
 	}
 	virtual void OnSettingChange(const string &name, SetScope scope, const Value &previous) {
@@ -225,7 +225,7 @@ public:
 	DUCKDB_API void CheckEntryReference(const RoleAccess &role, CatalogEntry &entry);
 	DUCKDB_API void CheckDatabaseReference(const RoleAccess &role, Catalog &catalog);
 	DUCKDB_API optional_ptr<const StatementProperties> ActiveStatementProperties() const;
-	DUCKDB_API void WarnUser(const string &message);
+	DUCKDB_API void WarnUser(const string &message, std::string_view subtype = {});
 
 	const RoleAccess &CurrentRole() const {
 		return *current_role;

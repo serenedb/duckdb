@@ -1046,8 +1046,8 @@ unique_ptr<QueryResult> ClientContext::SubmitInternal(ClientContextLock &lock, u
 	return SubmitStatement(lock, std::move(statement), parameters);
 }
 
-void ClientContext::WarnUser(const string &message) {
-	if (!EmitWarning(message.c_str())) {
+void ClientContext::WarnUser(const string &message, std::string_view subtype) {
+	if (!EmitWarning(message.c_str(), subtype)) {
 		DUCKDB_LOG_WARNING(*this, message);
 	}
 }
@@ -1304,11 +1304,10 @@ void ClientContext::RunTransactionStatementInternal(const TransactionInfo &info)
 	switch (type) {
 	case TransactionType::BEGIN_TRANSACTION: {
 		if (!transaction.IsAutoCommit()) {
-			const char *msg = "cannot start a transaction within a transaction";
-			if (EmitWarning(msg)) {
+			if (EmitWarning("there is already a transaction in progress", "ACTIVE_SQL_TRANSACTION")) {
 				break;
 			}
-			throw TransactionException(msg);
+			throw TransactionException("cannot start a transaction within a transaction");
 		}
 		// Resolve effective isolation level and read-only mode from defaults,
 		// then override with explicit BEGIN options if specified.
@@ -1342,11 +1341,10 @@ void ClientContext::RunTransactionStatementInternal(const TransactionInfo &info)
 	}
 	case TransactionType::COMMIT:
 		if (transaction.IsAutoCommit()) {
-			const char *msg = "cannot commit - no transaction is active";
-			if (EmitWarning(msg)) {
+			if (EmitWarning("there is no transaction in progress", "NO_ACTIVE_SQL_TRANSACTION")) {
 				break;
 			}
-			throw TransactionException(msg);
+			throw TransactionException("cannot commit - no transaction is active");
 		}
 		transaction.Commit();
 		// The commit is irreversible, so ignore interrupts until the next query.
@@ -1354,11 +1352,10 @@ void ClientContext::RunTransactionStatementInternal(const TransactionInfo &info)
 		break;
 	case TransactionType::ROLLBACK: {
 		if (transaction.IsAutoCommit()) {
-			const char *msg = "cannot rollback - no transaction is active";
-			if (EmitWarning(msg)) {
+			if (EmitWarning("there is no transaction in progress", "NO_ACTIVE_SQL_TRANSACTION")) {
 				break;
 			}
-			throw TransactionException(msg);
+			throw TransactionException("cannot rollback - no transaction is active");
 		}
 		auto &valid_checker = ValidChecker::Get(transaction.ActiveTransaction());
 		if (valid_checker.IsInvalidated()) {

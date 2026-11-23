@@ -2013,7 +2013,7 @@ void TransactionIsolationSetting::SetLocal(ClientContext &context, const Value &
 	if (context.transaction.IsAutoCommit()) {
 		// SET transaction_isolation outside a transaction has no effect;
 		// emit a PG-style warning if a handler is installed.
-		context.EmitWarning("SET TRANSACTION can only be used in transaction blocks");
+		context.EmitWarning("SET TRANSACTION can only be used in transaction blocks", "NO_ACTIVE_SQL_TRANSACTION");
 		return;
 	}
 	auto level = EnumUtil::FromString<TransactionIsolationLevel>(StringValue::Get(input));

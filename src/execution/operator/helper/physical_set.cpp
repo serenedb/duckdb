@@ -187,7 +187,7 @@ SourceResultType PhysicalSet::GetDataInternal(ExecutionContext &context, DataChu
                                               OperatorSourceInput &input) const {
 	if (scope == SetScope::LOCAL && context.client.transaction.IsAutoCommit()) {
 		const char *msg = "SET LOCAL can only be used in transaction blocks";
-		if (!context.client.EmitWarning(msg)) {
+		if (!context.client.EmitWarning(msg, "NO_ACTIVE_SQL_TRANSACTION")) {
 			throw InvalidInputException(msg);
 		}
 	}
