@@ -6,6 +6,7 @@
 #include "duckdb/parser/parsed_data/alter_table_info.hpp"
 
 #include <algorithm>
+#include <bit>
 
 namespace duckdb {
 
@@ -44,7 +45,7 @@ vector<AclItem> Permissions::AclDefault(CatalogType acl_class, idx_t owner) {
 	return acl;
 }
 
-static AclMode HeldBy(const vector<AclItem> &acl, idx_t role, AclMode AclItem::*field) {
+static AclMode HeldBy(std::span<const AclItem> acl, idx_t role, AclMode AclItem::*field) {
 	AclMode held = AclMode::NoRights;
 	for (auto &item : acl) {
 		if (item.grantee == role) {
@@ -52,6 +53,31 @@ static AclMode HeldBy(const vector<AclItem> &acl, idx_t role, AclMode AclItem::*
 		}
 	}
 	return held;
+}
+
+Grantor BestGrantor(std::span<const idx_t> roles, idx_t owner, AclMode needed, std::span<const AclItem> acl,
+                    std::span<const AclItem> column_acl) {
+	if (roles.empty() || roles.front() == owner) {
+		return {owner, needed};
+	}
+	Grantor best {roles.front(), AclMode::NoRights};
+	int best_count = 0;
+	for (auto role : roles) {
+		const auto options =
+		    role == owner
+		        ? needed
+		        : (HeldBy(acl, role, &AclItem::grant_option) | HeldBy(column_acl, role, &AclItem::grant_option)) &
+		              needed;
+		if (options == needed) {
+			return {role, options};
+		}
+		const auto count = std::popcount(static_cast<uint64_t>(options));
+		if (count > best_count) {
+			best = {role, options};
+			best_count = count;
+		}
+	}
+	return best;
 }
 
 static void Grant(vector<AclItem> &acl, idx_t grantee, idx_t grantor, AclMode privs, AclMode options) {
@@ -142,12 +168,9 @@ static void ApplyGrant(const AlterPermissionsInfo &info, Permissions &permission
 	const auto owner = permissions.owner;
 	auto stored = permissions.UsesDefaultAcl() ? Permissions::AclDefault(acl_class, owner) : permissions.acl;
 	idx_t grantor = owner;
-	bool is_owner = true;
-	AclMode grantable = ObjectKindOf(acl_class).privileges;
-	if (!info.grantors.empty() && std::find(info.grantors.begin(), info.grantors.end(), owner) == info.grantors.end()) {
+	if (!info.best_grantor && !info.grantors.empty() &&
+	    std::find(info.grantors.begin(), info.grantors.end(), owner) == info.grantors.end()) {
 		grantor = info.grantors[0];
-		is_owner = false;
-		grantable = AclMode::NoRights;
 		for (auto role : info.grantors) {
 			auto held = HeldBy(stored, role, &AclItem::grant_option);
 			if (columns) {
@@ -157,38 +180,44 @@ static void ApplyGrant(const AlterPermissionsInfo &info, Permissions &permission
 			}
 			if (held != AclMode::NoRights) {
 				grantor = role;
-				grantable = HeldBy(stored, role, &AclItem::grant_option);
 				break;
 			}
 		}
 	}
-
-	if (info.privileges != AclMode::NoRights) {
-		Apply(stored, grantor, grantable, info.privileges, info);
-		permissions.acl = std::move(stored);
-		permissions.acl_emptied = permissions.acl.empty();
-		if (info.revoke && columns && (info.privileges & ACL_COLUMN_PRIVILEGES) != AclMode::NoRights) {
-			for (auto &column : *columns) {
-				Revoke(column.acl, info.grantee_id, grantor, info.privileges & ACL_COLUMN_PRIVILEGES, info.option_only,
-				       info.cascade);
-			}
-		}
-	}
+	const auto choose = [&](AclMode needed, std::span<const AclItem> column_acl) {
+		return BestGrantor(info.best_grantor ? std::span<const idx_t>(info.grantors)
+		                                     : std::span<const idx_t>(&grantor, 1),
+		                   owner, needed, stored, column_acl);
+	};
 
 	if (!info.column_privileges.empty() && !columns) {
 		throw InvalidInputException("column privileges are only valid for relations");
 	}
-	for (auto &column_privilege : info.column_privileges) {
-		auto &column_acl = ColumnRow(*columns, column_privilege.column);
-		const auto column_grantable =
-		    is_owner ? ACL_COLUMN_PRIVILEGES
-		             : (grantable | HeldBy(column_acl, grantor, &AclItem::grant_option)) & ACL_COLUMN_PRIVILEGES;
-		Apply(column_acl, grantor, column_grantable, column_privilege.privileges & ACL_COLUMN_PRIVILEGES, info);
-	}
 	if (columns) {
-		columns->erase(std::remove_if(columns->begin(), columns->end(),
-		                              [](const ColumnAcl &column) { return column.acl.empty(); }),
-		               columns->end());
+		for (auto &column_privilege : info.column_privileges) {
+			ColumnRow(*columns, column_privilege.column);
+		}
+		const auto implied = info.revoke ? info.privileges & ACL_COLUMN_PRIVILEGES : AclMode::NoRights;
+		for (auto &column : *columns) {
+			auto privileges = implied;
+			for (auto &column_privilege : info.column_privileges) {
+				if (column_privilege.column == column.column) {
+					privileges |= column_privilege.privileges & ACL_COLUMN_PRIVILEGES;
+				}
+			}
+			if (privileges != AclMode::NoRights) {
+				const auto chosen = choose(privileges, column.acl);
+				Apply(column.acl, chosen.role, chosen.options, privileges, info);
+			}
+		}
+		std::erase_if(*columns, [](const ColumnAcl &column) { return column.acl.empty(); });
+	}
+
+	if (info.privileges != AclMode::NoRights) {
+		const auto chosen = choose(info.privileges, {});
+		Apply(stored, chosen.role, chosen.options, info.privileges, info);
+		permissions.acl = std::move(stored);
+		permissions.acl_emptied = permissions.acl.empty();
 	}
 }
 

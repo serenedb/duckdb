@@ -293,7 +293,12 @@ shared_ptr<const SecuritySnapshot> SecuritySnapshot::Build(Catalog &cluster, Cat
 	unordered_map<idx_t, Node> nodes;
 	cluster.ScanTopLevelEntries(transaction, CatalogType::ROLE_ENTRY, [&](CatalogEntry &entry) {
 		auto &role = entry.Cast<RoleEntry>();
-		nodes[role.oid] = Node {role.name.GetIdentifierName(), role.Options(), role.Capabilities(), role.MemberOf()};
+		auto member_of = role.MemberOf();
+		std::sort(member_of.begin(), member_of.end(), [](const Membership &left, const Membership &right) {
+			return left.role != right.role ? left.role < right.role : left.grantor < right.grantor;
+		});
+		nodes[role.oid] =
+		    Node {role.name.GetIdentifierName(), role.Options(), role.Capabilities(), std::move(member_of)};
 	});
 	unordered_map<string, idx_t> database_owners;
 	cluster.ScanTopLevelEntries(transaction, CatalogType::DATABASE_ENTRY, [&](CatalogEntry &entry) {
@@ -362,31 +367,32 @@ RoleMemberships SecuritySnapshot::MembershipsOf(idx_t role) const {
 	return result;
 }
 
+vector<idx_t> SecuritySnapshot::InheritedRoles(idx_t role) const {
+	vector<idx_t> result {role};
+	for (idx_t i = 0; i < result.size(); i++) {
+		auto node = Find(result[i]);
+		if (!node) {
+			continue;
+		}
+		for (auto &edge : node->member_of) {
+			if (edge.inherit_option && std::find(result.begin(), result.end(), edge.role) == result.end()) {
+				result.push_back(edge.role);
+			}
+		}
+	}
+	return result;
+}
+
 optional_idx SecuritySnapshot::BestAdmin(idx_t member, idx_t role) const {
 	if (member == role) {
 		return optional_idx();
 	}
-	unordered_set<idx_t> seen {member};
-	vector<idx_t> level {member};
-	while (!level.empty()) {
-		vector<idx_t> next;
-		for (auto current : level) {
-			auto node = Find(current);
-			if (!node) {
-				continue;
-			}
-			for (auto &edge : node->member_of) {
-				if (edge.role == role && edge.admin_option) {
-					return current;
-				}
-			}
-			for (auto &edge : node->member_of) {
-				if (edge.inherit_option && seen.insert(edge.role).second) {
-					next.push_back(edge.role);
-				}
-			}
+	for (auto current : InheritedRoles(member)) {
+		auto node = Find(current);
+		if (node && std::any_of(node->member_of.begin(), node->member_of.end(),
+		                        [&](const Membership &edge) { return edge.role == role && edge.admin_option; })) {
+			return current;
 		}
-		level = std::move(next);
 	}
 	return optional_idx();
 }

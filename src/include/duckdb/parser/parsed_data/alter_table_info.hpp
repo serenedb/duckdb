@@ -117,6 +117,7 @@ struct AlterPermissionsInfo : public AlterInfo {
 	idx_t grantee_id = ACL_ID_PUBLIC;
 	RoleSpec granted_by;
 	vector<idx_t> grantors;
+	bool best_grantor = false;
 	bool revoke = false;
 	bool with_grant_option = false;
 	bool option_only = false;
@@ -135,6 +136,7 @@ struct AlterPermissionsInfo : public AlterInfo {
 	idx_t overload_oid = 0;
 	vector<LogicalType> func_parameters;
 	bool has_func_args = false;
+	bool repeats_object = false;
 	vector<ObjectReference> objects;
 	vector<RoleSpec> grantees;
 	vector<RoleSpec> for_roles;

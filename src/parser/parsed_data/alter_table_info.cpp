@@ -217,6 +217,7 @@ unique_ptr<AlterInfo> AlterPermissionsInfo::Copy() const {
 	result->grantee_id = grantee_id;
 	result->granted_by = granted_by;
 	result->grantors = grantors;
+	result->best_grantor = best_grantor;
 	result->revoke = revoke;
 	result->with_grant_option = with_grant_option;
 	result->option_only = option_only;
@@ -235,6 +236,7 @@ unique_ptr<AlterInfo> AlterPermissionsInfo::Copy() const {
 	result->overload_oid = overload_oid;
 	result->func_parameters = func_parameters;
 	result->has_func_args = has_func_args;
+	result->repeats_object = repeats_object;
 	result->objects = objects;
 	result->grantees = grantees;
 	result->for_roles = for_roles;
@@ -279,6 +281,7 @@ vector<unique_ptr<AlterInfo>> AlterPermissionsInfo::SplitObjects() {
 					permissions.for_role = role;
 					permissions.default_schema = schema;
 					permissions.grantee = name;
+					permissions.repeats_object = &name != &names.front();
 					result.push_back(std::move(info));
 				}
 			}

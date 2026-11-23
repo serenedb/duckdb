@@ -98,4 +98,12 @@ struct Permissions {
 
 DUCKDB_API std::span<const AclItem> FindColumnAcl(const vector<ColumnAcl> &columns, const Identifier &column);
 
+struct Grantor {
+	idx_t role = 0;
+	AclMode options = AclMode::NoRights;
+};
+
+DUCKDB_API Grantor BestGrantor(std::span<const idx_t> roles, idx_t owner, AclMode needed, std::span<const AclItem> acl,
+                               std::span<const AclItem> column_acl = {});
+
 } // namespace duckdb

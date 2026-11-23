@@ -4,6 +4,8 @@
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/view_catalog_entry.hpp"
 #include "duckdb/catalog/permissions.hpp"
+#include "duckdb/catalog/role_graph.hpp"
+#include "duckdb/common/fault_points.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/common/unordered_set.hpp"
 #include "duckdb/main/client_context.hpp"
@@ -38,14 +40,15 @@ static void WarnUngranted(ClientContext &context, const AlterPermissionsInfo &in
 
 static void RequireGrantableAcl(ClientContext &context, const AlterPermissionsInfo &info, const RoleAccess &role,
                                 idx_t owner, std::span<const AclItem> acl, CatalogType type, std::string_view name) {
-	if (role.Owns(owner)) {
+	if (info.repeats_object || role.Owns(owner)) {
 		return;
 	}
-	if ((role.HeldModes(acl) | role.GrantableModes(acl)) == AclMode::NoRights) {
+	const auto options = BestGrantor(info.grantors, owner, info.privileges, acl).options;
+	if (options == AclMode::NoRights && role.HeldModes(acl) == AclMode::NoRights) {
 		ThrowPermissionDenied(type, name);
 	}
-	WarnUngranted(context, info, info.privileges, role.GrantableModes(acl),
-	              info.privileges == ObjectKindOf(type).privileges, StringUtil::Format("\"%s\"", name));
+	WarnUngranted(context, info, info.privileges, options, info.privileges == ObjectKindOf(type).privileges,
+	              StringUtil::Format("\"%s\"", name));
 }
 
 static const Permissions &TargetPermissions(const AlterPermissionsInfo &info, CatalogEntry &target) {
@@ -56,54 +59,84 @@ static const Permissions &TargetPermissions(const AlterPermissionsInfo &info, Ca
 	return target.permissions;
 }
 
-static void RequireGrantable(Binder &binder, const AlterPermissionsInfo &info, CatalogEntry &entry,
-                             const Permissions &permissions) {
-	auto &role = binder.CheckAs();
-	if (role.Owns(permissions.owner)) {
+struct RelationColumn {
+	reference<const Identifier> name;
+	std::span<const AclItem> acl;
+};
+
+static void RequireGrantable(Binder &binder, const AlterPermissionsInfo &info, const RoleAccess &role,
+                             CatalogEntry &entry) {
+	if (info.repeats_object) {
 		return;
 	}
+	auto &context = binder.context;
+	auto &permissions = TargetPermissions(info, entry);
+	const auto owner = permissions.owner;
+	const bool checked = !role.Owns(owner);
 	vector<AclItem> defaults;
 	std::span<const AclItem> stored = permissions.acl;
-	if (permissions.UsesDefaultAcl()) {
-		defaults = Permissions::AclDefault(ObjectKindOf(entry.type).acl_class, permissions.owner);
+	if (checked && permissions.UsesDefaultAcl()) {
+		defaults = Permissions::AclDefault(ObjectKindOf(info.entry_catalog_type).acl_class, owner);
 		stored = defaults;
 	}
-	auto held = role.HeldModes(stored) | role.GrantableModes(stored);
-	if (entry.type == CatalogType::VIEW_ENTRY) {
-		for (auto &column : entry.Cast<ViewCatalogEntry>().column_acls) {
-			held |= role.HeldModes(column.acl) | role.GrantableModes(column.acl);
+	auto &name = entry.name.GetIdentifierName();
+	if (checked && info.privileges != AclMode::NoRights) {
+		const auto options = BestGrantor(info.grantors, owner, info.privileges, stored).options;
+		if (options == AclMode::NoRights &&
+		    !role.CanAny(info.entry_catalog_type, permissions, ObjectKindOf(info.entry_catalog_type).privileges)) {
+			ThrowPermissionDenied(info.entry_catalog_type, name);
 		}
-	} else if (entry.type == CatalogType::TABLE_ENTRY) {
+		WarnUngranted(context, info, info.privileges, options,
+		              info.privileges == ObjectKindOf(info.entry_catalog_type).privileges,
+		              StringUtil::Format("\"%s\"", name));
+	}
+	const auto implied = info.revoke ? info.privileges & ACL_COLUMN_PRIVILEGES : AclMode::NoRights;
+	if ((entry.type != CatalogType::TABLE_ENTRY && entry.type != CatalogType::VIEW_ENTRY) ||
+	    (info.column_privileges.empty() && (!checked || implied == AclMode::NoRights))) {
+		return;
+	}
+	vector<RelationColumn> columns;
+	if (entry.type == CatalogType::TABLE_ENTRY) {
 		for (auto &column : entry.Cast<TableCatalogEntry>().GetColumns().Logical()) {
-			held |= role.HeldModes(column.Acl()) | role.GrantableModes(column.Acl());
+			columns.push_back({column.Name(), column.Acl()});
+		}
+	} else {
+		auto &view = entry.Cast<ViewCatalogEntry>();
+		view.BindView(context);
+		auto column_info = view.GetColumnInfo();
+		for (idx_t i = 0; i < column_info->names.size(); i++) {
+			auto &column = i < view.aliases.size() ? view.aliases[i] : column_info->names[i];
+			columns.push_back({column, FindColumnAcl(view.column_acls, column)});
 		}
 	}
-	if (held == AclMode::NoRights) {
-		ThrowPermissionDenied(entry);
-	}
-	auto &context = binder.context;
-	const auto grantable = role.GrantableModes(stored);
-	const auto all = ObjectKindOf(info.entry_catalog_type).privileges;
-	WarnUngranted(context, info, info.privileges, grantable, info.privileges == all,
-	              StringUtil::Format("\"%s\"", entry.name.GetIdentifierName()));
 	for (auto &privilege : info.column_privileges) {
-		auto column_grantable = grantable;
-		if (entry.type == CatalogType::TABLE_ENTRY) {
-			auto &table = entry.Cast<TableCatalogEntry>();
-			if (table.ColumnExists(privilege.column)) {
-				column_grantable |= role.GrantableModes(table.GetColumn(privilege.column).Acl());
-			}
-		} else if (entry.type == CatalogType::VIEW_ENTRY) {
-			for (auto &column : entry.Cast<ViewCatalogEntry>().column_acls) {
-				if (column.column == privilege.column) {
-					column_grantable |= role.GrantableModes(column.acl);
-				}
+		if (std::none_of(columns.begin(), columns.end(),
+		                 [&](const RelationColumn &column) { return column.name.get() == privilege.column; })) {
+			throw CatalogException("column \"%s\" of relation \"%s\" does not exist",
+			                       privilege.column.GetIdentifierName(), name);
+		}
+	}
+	if (!checked) {
+		return;
+	}
+	for (auto &column : columns) {
+		auto requested = implied;
+		for (auto &privilege : info.column_privileges) {
+			if (privilege.column == column.name.get()) {
+				requested |= privilege.privileges & ACL_COLUMN_PRIVILEGES;
 			}
 		}
-		WarnUngranted(context, info, privilege.privileges & ACL_COLUMN_PRIVILEGES, column_grantable,
-		              privilege.privileges == all,
-		              StringUtil::Format("column \"%s\" of relation \"%s\"", privilege.column.GetIdentifierName(),
-		                                 entry.name.GetIdentifierName()));
+		if (requested == AclMode::NoRights) {
+			continue;
+		}
+		auto &column_name = column.name.get().GetIdentifierName();
+		const auto options = BestGrantor(info.grantors, owner, requested, stored, column.acl).options;
+		if (options == AclMode::NoRights && !role.CanAny(info.entry_catalog_type, permissions, ACL_COLUMN_PRIVILEGES) &&
+		    (role.HeldModes(column.acl) & ACL_COLUMN_PRIVILEGES) == AclMode::NoRights) {
+			throw PermissionException("permission denied for column \"%s\" of relation \"%s\"", column_name, name);
+		}
+		WarnUngranted(context, info, requested, options, requested == ACL_COLUMN_PRIVILEGES,
+		              StringUtil::Format("column \"%s\" of relation \"%s\"", column_name, name));
 	}
 }
 
@@ -175,28 +208,37 @@ static void RefuseOwnedSequence(ClientContext &context, CatalogEntry &sequence) 
 	    StringUtil::Format("cannot change owner of sequence \"%s\"", name));
 }
 
-static vector<idx_t> CallerGrantors(Binder &binder) {
-	vector<idx_t> grantors;
-	auto &role = binder.CheckAs();
-	if (!role.is_superuser) {
-		grantors.push_back(role.role);
-		grantors.insert(grantors.end(), role.closure.begin(), role.closure.end());
+static vector<idx_t> GrantorRoles(ClientContext &context, const RoleAccess &role) {
+	if (role.is_superuser) {
+		return {};
 	}
-	return grantors;
+	return context.security ? context.security->InheritedRoles(role.role) : vector<idx_t> {role.role};
+}
+
+static const RoleAccess &GrantingRole(Binder &binder, const AlterPermissionsInfo &info) {
+	auto &role = binder.CheckAs();
+	if (info.granted_by.empty()) {
+		return role;
+	}
+	auto granted_by = RoleSpecId(binder.context, info.granted_by);
+	if (!role.MemberOf(granted_by)) {
+		throw PermissionException("must be member of role \"%s\"", RoleName(binder.context, granted_by));
+	}
+	return binder.AccessOf(granted_by);
 }
 
 static void ResolveGrant(Binder &binder, AlterPermissionsInfo &info) {
 	auto &context = binder.context;
-	auto &role = binder.CheckAs();
 	info.grantee_id = GranteeId(binder, info.grantee);
-	if (!info.granted_by.empty()) {
-		auto granted_by = RoleSpecId(context, info.granted_by);
-		if (!role.MemberOf(granted_by)) {
-			throw PermissionException("must be member of role \"%s\"", RoleName(context, granted_by));
+	auto &role = GrantingRole(binder, info);
+	info.grantors = GrantorRoles(context, role);
+	info.best_grantor = true;
+	SDB_IF_FAILURE("grant_first_grantor_with_an_option") {
+		info.best_grantor = false;
+		if (!role.is_superuser) {
+			info.grantors.assign(1, role.role);
+			info.grantors.insert(info.grantors.end(), role.closure.begin(), role.closure.end());
 		}
-		info.grantors = {granted_by};
-	} else {
-		info.grantors = CallerGrantors(binder);
 	}
 	if (info.entry_catalog_type == CatalogType::FOREIGN_DATA_WRAPPER_ENTRY) {
 		const auto wrapper = info.GetQualifiedName().Name();
@@ -248,29 +290,7 @@ static void ResolveGrant(Binder &binder, AlterPermissionsInfo &info) {
 		throw PermissionException("Cannot alter entry \"%s\" because it is an internal system entry",
 		                          target.name.GetIdentifierName());
 	}
-	RequireGrantable(binder, info, target, TargetPermissions(info, target));
-	const bool relation = target.type == CatalogType::TABLE_ENTRY || target.type == CatalogType::VIEW_ENTRY;
-	if (relation && !info.column_privileges.empty()) {
-		vector<Identifier> view_columns;
-		if (target.type == CatalogType::VIEW_ENTRY) {
-			auto &view = target.Cast<ViewCatalogEntry>();
-			view.BindView(context);
-			auto names = view.GetColumnInfo()->names;
-			for (idx_t i = 0; i < names.size(); i++) {
-				view_columns.push_back(i < view.aliases.size() ? view.aliases[i] : names[i]);
-			}
-		}
-		for (auto &privilege : info.column_privileges) {
-			const bool exists =
-			    target.type == CatalogType::TABLE_ENTRY
-			        ? target.Cast<TableCatalogEntry>().ColumnExists(privilege.column)
-			        : std::find(view_columns.begin(), view_columns.end(), privilege.column) != view_columns.end();
-			if (!exists) {
-				throw CatalogException("column \"%s\" of relation \"%s\" does not exist",
-				                       privilege.column.GetIdentifierName(), target.name.GetIdentifierName());
-			}
-		}
-	}
+	RequireGrantable(binder, info, role, target);
 }
 
 static void ResolveOwner(Binder &binder, AlterPermissionsInfo &info) {
@@ -369,7 +389,7 @@ void Binder::ResolveOwned(AlterInfo &info) {
 	if (info.type == AlterType::DROP_OWNED) {
 		auto &drop = info.Cast<DropOwnedInfo>();
 		drop.role_ids = ResolveOwnedRoles(*this, drop.roles, "drop");
-		drop.grantors = CallerGrantors(*this);
+		drop.grantors = GrantorRoles(context, CheckAs());
 		RefuseBootstrapRole(*this, drop.role_ids, "drop objects");
 		return;
 	}

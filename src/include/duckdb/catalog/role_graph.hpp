@@ -152,6 +152,7 @@ public:
 	optional_idx FindByName(std::string_view name) const;
 	std::string_view NameOf(idx_t role) const;
 	RoleMemberships MembershipsOf(idx_t role) const;
+	vector<idx_t> InheritedRoles(idx_t role) const;
 	optional_idx BestAdmin(idx_t member, idx_t role) const;
 
 private:
