@@ -507,9 +507,10 @@ BoundStatement Binder::ExpandTriggers(QueryNode &node, TableCatalogEntry &table,
 		logical_count++;
 	}
 	returning_binder_owner->acting = acting;
-	returning_binder_owner->table_ref_use = TableRefUse::DML_TARGET;
-	returning_binder_owner->bind_context.AddBaseTable(base_index, GetReturningAlias(node), col_names, col_types,
-	                                                  bound_columns, table, std::move(virtual_columns));
+	returning_binder_owner->bind_context
+	    .AddBaseTable(base_index, GetReturningAlias(node), col_names, col_types, bound_columns, table,
+	                  std::move(virtual_columns))
+	    .checks = ReadChecks(table, ChecksOf(table));
 	ReturningBinder returning_binder(*returning_binder_owner, context);
 
 	vector<unique_ptr<ParsedExpression>> expanded_returning;

@@ -69,8 +69,10 @@ BoundStatement Binder::BindNode(DeleteQueryNode &node) {
 		get.function.verify_dml_target(context, get.bind_data.get());
 	}
 	auto &table = *table_ptr;
-	if (auto need = NeedOf(table)) {
-		need->modes |= node.is_truncate ? AclMode::Truncate : AclMode::Delete;
+	const auto target = ChecksOf(table);
+	if (target.role && !target.role->Can(CatalogType::TABLE_ENTRY, table.permissions,
+	                                     node.is_truncate ? AclMode::Truncate : AclMode::Delete)) {
+		Deny(table, target);
 	}
 
 	if (auto expanded = TryExpandTriggers(node, table, TriggerEventType::DELETE_EVENT)) {
@@ -168,7 +170,7 @@ BoundStatement Binder::BindNode(DeleteQueryNode &node) {
 		unique_ptr<LogicalOperator> del_as_logicaloperator = std::move(del);
 		// Include virtual columns (like rowid) so they can be referenced in RETURNING
 		auto virtual_columns = table.GetVirtualColumns();
-		return BindReturning(node, std::move(node.returning_list), table, node.table->alias, update_table_index,
+		return BindReturning(node, std::move(node.returning_list), table, target, node.table->alias, update_table_index,
 		                     std::move(del_as_logicaloperator), std::move(virtual_columns), &returned_virtual_columns);
 	}
 	BoundStatement result;

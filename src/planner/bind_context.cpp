@@ -486,7 +486,11 @@ BindResult BindContext::BindColumn(ColumnRefExpression &colref, idx_t depth) {
 	if (!binding) {
 		return BindResult(std::move(error));
 	}
-	return binding->Bind(colref, depth);
+	auto result = binding->Bind(colref, depth);
+	if (!result.HasError()) {
+		binder.CheckColumnRead(*binding, colref.GetColumnName());
+	}
+	return result;
 }
 
 string BindContext::BindColumn(PositionalReferenceExpression &ref, Identifier &table_name, Identifier &column_name) {
@@ -792,23 +796,24 @@ static BindingAlias GetEntryAlias(ClientContext &context, const Identifier &alia
 	return Binding::GetAlias(alias, entry);
 }
 
-void BindContext::AddBaseTable(TableIndex index, const Identifier &alias, const vector<Identifier> &names,
-                               const vector<LogicalType> &types, vector<ColumnIndex> &bound_column_ids,
-                               TableCatalogEntry &entry, virtual_column_map_t virtual_columns) {
+TableBinding &BindContext::AddBaseTable(TableIndex index, const Identifier &alias, const vector<Identifier> &names,
+                                        const vector<LogicalType> &types, vector<ColumnIndex> &bound_column_ids,
+                                        TableCatalogEntry &entry, virtual_column_map_t virtual_columns) {
 	auto binding = make_uniq<TableBinding>(GetEntryAlias(binder.context, alias, &entry), types, names, bound_column_ids,
 	                                       &entry, index, std::move(virtual_columns));
-	binding->need = binder.ReadNeed(entry);
+	auto &result = *binding;
 	AddBinding(std::move(binding));
+	return result;
 }
 
-void BindContext::AddBaseTable(TableIndex index, const Identifier &alias, const vector<Identifier> &names,
-                               const vector<LogicalType> &types, vector<ColumnIndex> &bound_column_ids,
-                               TableCatalogEntry &entry, bool add_virtual_columns) {
+TableBinding &BindContext::AddBaseTable(TableIndex index, const Identifier &alias, const vector<Identifier> &names,
+                                        const vector<LogicalType> &types, vector<ColumnIndex> &bound_column_ids,
+                                        TableCatalogEntry &entry, bool add_virtual_columns) {
 	virtual_column_map_t virtual_columns;
 	if (add_virtual_columns) {
 		virtual_columns = entry.GetVirtualColumns();
 	}
-	AddBaseTable(index, alias, names, types, bound_column_ids, entry, std::move(virtual_columns));
+	return AddBaseTable(index, alias, names, types, bound_column_ids, entry, std::move(virtual_columns));
 }
 
 void BindContext::AddBaseTable(TableIndex index, const Identifier &alias, const vector<Identifier> &names,
@@ -826,7 +831,7 @@ void BindContext::AddTableFunction(TableIndex index, const Identifier &alias, co
 	auto binding = make_uniq<TableBinding>(GetEntryAlias(binder.context, alias, entry), types, names, bound_column_ids,
 	                                       entry, index, std::move(virtual_columns), std::move(row_id_columns));
 	if (entry && entry->type == CatalogType::TABLE_ENTRY) {
-		binding->need = binder.ReadNeed(*entry);
+		binding->checks = binder.ReadChecks(*entry, TableRefUse::READ);
 	}
 	AddBinding(std::move(binding));
 }

@@ -7,6 +7,7 @@
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/view_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_search_path.hpp"
+#include "duckdb/catalog/column_acls.hpp"
 #include "duckdb/catalog/dependency_manager.hpp"
 #include "duckdb/common/enums/cte_materialize.hpp"
 #include "duckdb/parser/common_table_expression_info.hpp"
@@ -425,12 +426,24 @@ void Binder::Execute(const CatalogEntry &function, optional_ptr<const MacroFunct
 	calls->push_back(std::move(call));
 }
 
-void Binder::RequireIndexCalls(TableCatalogEntry &table, optional_ptr<const vector<LogicalIndex>> changed) {
+void Binder::RequireIndexCalls(TableCatalogEntry &table, optional_ptr<const vector<PhysicalIndex>> changed) {
 	auto &role = CurrentRole();
-	if (role.is_superuser) {
+	auto &state = *global_binder_state;
+	if (role.is_superuser || state.denied_relation || state.denied_call) {
 		return;
 	}
-	global_binder_state->index_writes.push_back({table, role, changed ? *changed : vector<LogicalIndex>(), !changed});
+	auto &columns = table.GetColumns();
+	const auto changes = [&](column_t column) {
+		return std::any_of(changed->begin(), changed->end(), [&](PhysicalIndex index) {
+			return columns.GetColumn(index).Logical() == LogicalIndex(column);
+		});
+	};
+	table.ParentCatalog().ScanIndexes(context, table, [&](IndexCatalogEntry &index) {
+		if (!state.denied_call &&
+		    (!changed || std::any_of(index.column_ids.begin(), index.column_ids.end(), changes))) {
+			state.denied_call = DeniedCall(context, role, index.GetFunctionCalls());
+		}
+	});
 }
 
 void Binder::BindAsFunctionBody(const SelectStatement &statement) {
@@ -476,10 +489,7 @@ void Binder::UseFunctionSearchPath(const vector<string> &config) {
 }
 
 BoundStatement Binder::BindTarget(TableRef &ref, TableRefUse use) {
-	table_ref_use = use;
-	auto result = Bind(ref);
-	table_ref_use = TableRefUse::READ;
-	return result;
+	return ref.type == TableReferenceType::BASE_TABLE ? Bind(ref.Cast<BaseTableRef>(), use) : Bind(ref);
 }
 
 static bool Unchecked(const StandardEntry &relation) {
@@ -487,63 +497,103 @@ static bool Unchecked(const StandardEntry &relation) {
 	return IsUnowned(relation) && !system_view;
 }
 
-optional_ptr<RelationNeed> Binder::NeedOf(const StandardEntry &relation) {
+RelationChecks Binder::ChecksOf(const StandardEntry &relation) {
 	auto &role = CheckAs();
 	if (role.is_superuser || Unchecked(relation)) {
-		return nullptr;
+		return {};
 	}
-	auto &needs = global_binder_state->relation_needs;
-	for (auto &need : needs) {
-		if (&need->relation == &relation && need->role.role == role.role) {
-			return need.get();
-		}
-	}
-	needs.push_back(make_uniq<RelationNeed>(relation, role));
-	return needs.back().get();
+	return {&role, global_binder_state->relation_references++};
 }
 
-optional_ptr<RelationNeed> Binder::ReadNeed(const StandardEntry &relation) {
-	if (table_ref_use == TableRefUse::UTILITY_TARGET || Unchecked(relation)) {
-		return nullptr;
+RelationChecks Binder::ReadChecks(const StandardEntry &relation, RelationChecks checks) {
+	if (!checks.role || checks.role->Can(CatalogType::TABLE_ENTRY, relation.permissions, AclMode::Select)) {
+		return {};
 	}
-	if (table_ref_use == TableRefUse::DML_TARGET) {
-		return NeedOf(relation);
-	}
-	if (CheckAs().Can(CatalogType::TABLE_ENTRY, relation.permissions, AclMode::Select)) {
-		return nullptr;
-	}
-	auto need = NeedOf(relation);
-	need->modes |= AclMode::Select;
-	return need;
+	return checks;
 }
 
-void Binder::AddColumns(vector<idx_t> &columns, const TableCatalogEntry &table, const vector<Identifier> &names,
-                        idx_t leading) {
-	if (names.empty()) {
-		for (auto &column : table.GetColumns().Logical()) {
-			if (column.Logical().index == leading) {
-				break;
-			}
-			columns.push_back(column.Logical().index);
-		}
+RelationChecks Binder::ReadChecks(const StandardEntry &relation, TableRefUse use) {
+	if (use == TableRefUse::UTILITY_TARGET) {
+		return {};
 	}
-	for (auto &name : names) {
-		if (table.ColumnExists(name)) {
-			columns.push_back(table.GetColumn(name).Logical().index);
-		}
+	auto checks = ReadChecks(relation, ChecksOf(relation));
+	if (checks.role && use == TableRefUse::READ && !checks.role->CanColumns(relation, AclMode::Select, {})) {
+		Deny(relation, checks);
+		return {};
+	}
+	return checks;
+}
+
+void Binder::Deny(const StandardEntry &relation, const RelationChecks &checks) {
+	auto &state = *global_binder_state;
+	if (!state.denied_relation || checks.reference < state.denied_reference) {
+		state.denied_relation = &relation;
+		state.denied_reference = checks.reference;
+	}
+}
+
+void Binder::RequireColumns(const TableCatalogEntry &table, const RelationChecks &checks, AclMode use,
+                            std::span<const LogicalIndex> columns) {
+	if (!checks.role || checks.role->Can(CatalogType::TABLE_ENTRY, table.permissions, use)) {
+		return;
+	}
+	const bool granted =
+	    columns.empty() ? checks.role->CanColumns(table, use, {})
+	                    : std::all_of(columns.begin(), columns.end(), [&](LogicalIndex column) {
+		                      return checks.role->Can(CatalogType::TABLE_ENTRY, table.GetColumn(column).Acl(), use);
+	                      });
+	if (!granted) {
+		Deny(table, checks);
+	}
+}
+
+void Binder::RequireColumns(const TableCatalogEntry &table, const RelationChecks &checks, AclMode use,
+                            std::span<const Identifier> columns) {
+	if (!checks.role || checks.role->Can(CatalogType::TABLE_ENTRY, table.permissions, use)) {
+		return;
+	}
+	const bool granted = columns.empty()
+	                         ? checks.role->CanColumns(table, use, {})
+	                         : std::all_of(columns.begin(), columns.end(), [&](const Identifier &name) {
+		                           return !table.ColumnExists(name) ||
+		                                  checks.role->Can(CatalogType::TABLE_ENTRY, table.GetColumn(name).Acl(), use);
+	                           });
+	if (!granted) {
+		Deny(table, checks);
+	}
+}
+
+void Binder::RequireColumn(const TableCatalogEntry &table, const RelationChecks &checks, AclMode use,
+                           const ColumnDefinition &column) {
+	if (checks.role && !checks.role->Can(CatalogType::TABLE_ENTRY, table.permissions, use) &&
+	    !checks.role->Can(CatalogType::TABLE_ENTRY, column.Acl(), use)) {
+		Deny(table, checks);
+	}
+}
+
+void Binder::CheckColumnRead(Binding &binding, const Identifier &column) {
+	column_t index;
+	if (!binding.checks.role || !binding.TryGetBindingIndex(column, index) || index >= VIRTUAL_COLUMN_START) {
+		return;
+	}
+	auto &relation = *binding.GetStandardEntry();
+	if (!binding.checks.role->Can(CatalogType::TABLE_ENTRY, ColumnAclOf(relation, index), AclMode::Select)) {
+		Deny(relation, binding.checks);
 	}
 }
 
 void Binder::AdoptPrivilegeChecks(Binder &other) {
-	auto &state = *global_binder_state;
 	auto &source = *other.global_binder_state;
-	D_ASSERT(&state != &source);
-	for (auto &need : source.relation_needs) {
-		state.relation_needs.push_back(std::move(need));
+	D_ASSERT(&source != global_binder_state.get());
+	if (source.denied_relation) {
+		Deny(*source.denied_relation, {nullptr, source.denied_reference});
 	}
-	state.index_writes.insert(state.index_writes.end(), source.index_writes.begin(), source.index_writes.end());
-	source.relation_needs.clear();
-	source.index_writes.clear();
+	auto &state = *global_binder_state;
+	if (!state.denied_call) {
+		state.denied_call = source.denied_call;
+	}
+	source.denied_relation = nullptr;
+	source.denied_call = nullptr;
 }
 
 Catalog &Binder::SubscriptionCatalog(const Identifier &catalog_name) {
@@ -595,26 +645,12 @@ void Binder::RequireResolvedTypeUsage(optional_ptr<const LogicalDependencyList> 
 }
 
 void Binder::CheckPrivileges() {
-	for (auto &need : global_binder_state->relation_needs) {
-		Require(*need);
+	auto &state = *global_binder_state;
+	if (state.denied_relation) {
+		ThrowPermissionDenied(*state.denied_relation);
 	}
-	for (auto &write : global_binder_state->index_writes) {
-		auto &table = write.table.get();
-		table.ParentSchema(context).Scan(context, CatalogType::INDEX_ENTRY, [&](CatalogEntry &entry) {
-			auto &index = entry.Cast<IndexCatalogEntry>();
-			if (index.table_oid != table.oid) {
-				return;
-			}
-			const auto calls = index.GetFunctionCalls();
-			const auto changes = write.all_columns ||
-			                     std::any_of(index.column_ids.begin(), index.column_ids.end(), [&](column_t column) {
-				                     return std::find(write.changed.begin(), write.changed.end(),
-				                                      LogicalIndex(column)) != write.changed.end();
-			                     });
-			if (!calls.empty() && changes) {
-				CheckFunctionCalls(context, write.role, calls);
-			}
-		});
+	if (state.denied_call) {
+		ThrowPermissionDenied(context, *state.denied_call);
 	}
 }
 
@@ -950,8 +986,9 @@ void Binder::BindDeleteIndexColumns(TableCatalogEntry &table, LogicalGet &get, v
 }
 
 BoundStatement Binder::BindReturning(QueryNode &node, vector<unique_ptr<ParsedExpression>> returning_list,
-                                     TableCatalogEntry &table, const Identifier &alias, TableIndex update_table_index,
-                                     unique_ptr<LogicalOperator> child_operator, virtual_column_map_t virtual_columns,
+                                     TableCatalogEntry &table, const RelationChecks &target, const Identifier &alias,
+                                     TableIndex update_table_index, unique_ptr<LogicalOperator> child_operator,
+                                     virtual_column_map_t virtual_columns,
                                      optional_ptr<vector<column_t>> bound_virtual_columns) {
 	vector<LogicalType> types;
 	vector<Identifier> names;
@@ -971,10 +1008,9 @@ BoundStatement Binder::BindReturning(QueryNode &node, vector<unique_ptr<ParsedEx
 	const auto table_column_count = bound_columns.size();
 
 	binder->acting = acting;
-	binder->table_ref_use =
-	    global_binder_state->trigger_base_nodes.count(node) ? TableRefUse::UTILITY_TARGET : TableRefUse::DML_TARGET;
-	binder->bind_context.AddBaseTable(update_table_index, alias, names, types, bound_columns, table,
-	                                  std::move(virtual_columns));
+	binder->bind_context
+	    .AddBaseTable(update_table_index, alias, names, types, bound_columns, table, std::move(virtual_columns))
+	    .checks = global_binder_state->trigger_base_nodes.count(node) ? RelationChecks() : ReadChecks(table, target);
 	ReturningBinder returning_binder(*binder, context);
 
 	vector<unique_ptr<Expression>> projection_expressions;

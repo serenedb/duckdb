@@ -39,7 +39,8 @@ vector<unique_ptr<ParsedExpression>> GenerateColumnReferences(Binder &binder, co
 unique_ptr<BoundMergeIntoAction>
 Binder::BindMergeAction(LogicalMergeInto &merge_into, TableCatalogEntry &table, LogicalGet &get, TableIndex proj_index,
                         vector<unique_ptr<Expression>> &expressions, MergeIntoAction &action,
-                        const vector<BindingAlias> &source_aliases, const vector<Identifier> &source_names) {
+                        const vector<BindingAlias> &source_aliases, const vector<Identifier> &source_names,
+                        const RelationChecks &target, bool inserts_checked) {
 	auto result = make_uniq<BoundMergeIntoAction>();
 	result->action_type = action.action_type;
 	result->on_conflict_update = action.on_conflict_update;
@@ -79,11 +80,8 @@ Binder::BindMergeAction(LogicalMergeInto &merge_into, TableCatalogEntry &table, 
 		unique_ptr<LogicalOperator> fake_root;
 		BindUpdateSet(proj_index, fake_root, *action.update_info, table, result->columns, merge_into.bound_defaults,
 		              result->expressions, expressions);
-		vector<LogicalIndex> updated;
-		for (auto index : result->columns) {
-			updated.push_back(table.GetColumns().GetColumn(index).Logical());
-		}
-		RequireIndexCalls(table, updated);
+		RequireColumns(table, target, AclMode::Update, action.update_info->columns);
+		RequireIndexCalls(table, result->columns);
 
 		// bind any additional columns that need to be bound for update constraints
 		// FIXME: this is pretty hacky
@@ -145,6 +143,11 @@ Binder::BindMergeAction(LogicalMergeInto &merge_into, TableCatalogEntry &table, 
 		}
 		CheckInsertColumnCountMismatch(expected_types.size(), action.expressions.size(), !action.insert_columns.empty(),
 		                               table.name);
+		if (!inserts_checked) {
+			RequireColumns(table, target, AclMode::Insert,
+			               std::span<const LogicalIndex>(named_column_map)
+			                   .first(MinValue<idx_t>(action.expressions.size(), named_column_map.size())));
+		}
 		// explicit expressions - plan them
 		for (idx_t i = 0; i < action.expressions.size(); i++) {
 			auto &column = table.GetColumns().GetColumn(named_column_map[i]);
@@ -192,8 +195,11 @@ Binder::BindMergeAction(LogicalMergeInto &merge_into, TableCatalogEntry &table, 
 		break;
 	}
 	case MergeActionType::MERGE_DELETE:
+		if (target.role && !target.role->Can(CatalogType::TABLE_ENTRY, table.permissions, AclMode::Delete)) {
+			Deny(table, target);
+		}
+		break;
 	case MergeActionType::MERGE_DO_NOTHING:
-		// DELETE / DO NOTHING have nothing extra to bind
 		break;
 	default:
 		throw InternalException("Unsupported merge action type");
@@ -238,7 +244,7 @@ BoundStatement Binder::Bind(MergeIntoStatement &stmt) {
 	return Bind(*stmt.node);
 }
 
-BoundStatement Binder::BindNode(MergeQueryNode &node) {
+BoundStatement Binder::BindNode(MergeQueryNode &node, bool inserts_checked) {
 	// bind the target table
 	auto target_binder = Binder::CreateBinder(context, this);
 	auto table_alias = node.target->alias;
@@ -265,38 +271,7 @@ BoundStatement Binder::BindNode(MergeQueryNode &node) {
 		}
 	}
 	auto &table = *table_ptr;
-	if (auto need = NeedOf(table)) {
-		const auto all_columns = table.GetColumns().LogicalColumnCount();
-		const vector<Identifier> all_names;
-		for (auto &entry : node.actions) {
-			for (auto &action : entry.second) {
-				switch (action->action_type) {
-				case MergeActionType::MERGE_UPDATE:
-					need->modes |= AclMode::Update;
-					AddColumns(need->updated, table, action->update_info ? action->update_info->columns : all_names,
-					           all_columns);
-					break;
-				case MergeActionType::MERGE_DELETE:
-					need->modes |= AclMode::Delete;
-					break;
-				case MergeActionType::MERGE_INSERT:
-					if (on_conflict_merge.get() == &node) {
-						break;
-					}
-					need->modes |= AclMode::Insert;
-					if (!action->default_values) {
-						AddColumns(need->inserted, table, action->insert_columns,
-						           action->column_order == InsertColumnOrder::INSERT_BY_POSITION
-						               ? action->expressions.size()
-						               : all_columns);
-					}
-					break;
-				default:
-					break;
-				}
-			}
-		}
-	}
+	const auto target = ChecksOf(table);
 
 	bool has_triggers = false;
 	auto transaction = table.ParentCatalog().GetCatalogTransaction(context);
@@ -374,8 +349,9 @@ BoundStatement Binder::BindNode(MergeQueryNode &node) {
 		vector<unique_ptr<BoundMergeIntoAction>> bound_actions;
 		for (auto &action : entry.second) {
 			CheckMergeAction(entry.first, action->action_type);
-			bound_actions.push_back(action_binder.BindMergeAction(
-			    *merge_into, table, get, proj_index, projection_expressions, *action, source_aliases, source_names));
+			bound_actions.push_back(action_binder.BindMergeAction(*merge_into, table, get, proj_index,
+			                                                      projection_expressions, *action, source_aliases,
+			                                                      source_names, target, inserts_checked));
 		}
 		merge_into->actions.emplace(entry.first, std::move(bound_actions));
 	}
@@ -429,7 +405,7 @@ BoundStatement Binder::BindNode(MergeQueryNode &node) {
 		for (auto &action : entry.second) {
 			CheckMergeAction(entry.first, action->action_type);
 			bound_actions.push_back(BindMergeAction(*merge_into, table, get, proj_index, projection_expressions,
-			                                        *action, source_aliases, source_names));
+			                                        *action, source_aliases, source_names, target, inserts_checked));
 		}
 		merge_into->actions.emplace(entry.first, std::move(bound_actions));
 	}
@@ -521,7 +497,7 @@ BoundStatement Binder::BindNode(MergeQueryNode &node) {
 		// add the merge_action virtual column
 		virtual_column_map_t virtual_columns;
 		virtual_columns.insert(make_pair(VIRTUAL_COLUMN_START, TableColumn("merge_action", LogicalType::VARCHAR)));
-		return BindReturning(node, std::move(node.returning_list), table, table_alias, merge_table_index,
+		return BindReturning(node, std::move(node.returning_list), table, target, table_alias, merge_table_index,
 		                     std::move(index_as_logicaloperator), std::move(virtual_columns));
 	}
 

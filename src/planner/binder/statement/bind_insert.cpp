@@ -759,18 +759,7 @@ BoundStatement Binder::BindNode(InsertQueryNode &node) {
 		return std::move(*expanded);
 	}
 
-	auto need = NeedOf(table);
-	if (need) {
-		need->modes |= AclMode::Insert;
-	}
-	if (node.on_conflict_info) {
-		if (need && !node.default_values) {
-			auto values_list = node.GetValuesList();
-			AddColumns(need->inserted, table, node.columns,
-			           values_list && !values_list->values.empty() ? values_list->values[0].size()
-			                                                       : table.GetColumns().LogicalColumnCount());
-		}
-	}
+	const auto target = ChecksOf(table);
 
 	auto values_list = node.GetValuesList();
 	BoundStatement root_select;
@@ -804,12 +793,8 @@ BoundStatement Binder::BindNode(InsertQueryNode &node) {
 			auto arbiters = ConflictArbiters(on_conflict_info, table, table.GetStorageInfo(context));
 			if (on_conflict_info.action_type == OnConflictAction::NOTHING) {
 				merge = false;
-				if (need) {
-					for (auto &name : on_conflict_info.indexed_columns) {
-						if (table.ColumnExists(name)) {
-							need->Select(table.GetColumn(name).Logical().index);
-						}
-					}
+				if (!on_conflict_info.indexed_columns.empty()) {
+					RequireColumns(table, target, AclMode::Select, on_conflict_info.indexed_columns);
 				}
 				if (!arbiters.empty()) {
 					action_type = OnConflictAction::NOTHING;
@@ -834,17 +819,20 @@ BoundStatement Binder::BindNode(InsertQueryNode &node) {
 				    absl::c_all_of(node.returning_list, [&](const unique_ptr<ParsedExpression> &expr) {
 					    return ReadsOnly(*expr, table, stored);
 				    })) {
-					if (need) {
-						for (auto index : key) {
-							need->Select(table.GetColumns().GetColumn(PhysicalIndex(index)).Logical().index);
+					for (auto index : key) {
+						RequireColumn(table, target, AclMode::Select,
+						              table.GetColumns().GetColumn(PhysicalIndex(index)));
+					}
+					bool updates = false;
+					for (auto &index : replaced.columns) {
+						auto &column = table.GetColumns().GetColumn(index);
+						if (column.Category() != TableColumnType::GENERATED_STORED) {
+							RequireColumn(table, target, AclMode::Update, column);
+							updates = true;
 						}
-						need->modes |= AclMode::Update;
-						for (auto &index : replaced.columns) {
-							auto &column = table.GetColumns().GetColumn(index);
-							if (column.Category() != TableColumnType::GENERATED_STORED) {
-								need->updated.push_back(column.Logical().index);
-							}
-						}
+					}
+					if (!updates) {
+						RequireColumns(table, target, AclMode::Update, std::span<const LogicalIndex>());
 					}
 					merge = false;
 					action_type = OnConflictAction::REPLACE;
@@ -856,9 +844,12 @@ BoundStatement Binder::BindNode(InsertQueryNode &node) {
 		}
 		if (merge) {
 			// generate a MERGE INTO statement and bind it instead
+			const bool inserts_named = !node.columns.empty() || node.default_values;
+			if (inserts_named) {
+				RequireColumns(table, target, AclMode::Insert, node.columns);
+			}
 			auto merge_into = GenerateMergeInto(node, table);
-			on_conflict_merge = merge_into->node.get();
-			return Bind(*merge_into);
+			return BindNode(*merge_into->node, inserts_named);
 		}
 	}
 	if (!table.temporary) {
@@ -884,9 +875,9 @@ BoundStatement Binder::BindNode(InsertQueryNode &node) {
 	BindInsertColumnList(table, node.columns, node.default_values, named_column_map, insert->expected_types,
 	                     column_index_map);
 	const auto check_insert = [&](idx_t source_columns) {
-		for (idx_t i = 0; need && i < source_columns && i < named_column_map.size(); i++) {
-			need->inserted.push_back(named_column_map[i].index);
-		}
+		RequireColumns(table, target, AclMode::Insert,
+		               std::span<const LogicalIndex>(named_column_map)
+		                   .first(MinValue<idx_t>(source_columns, named_column_map.size())));
 	};
 
 	// An INSERT ... SELECT supplies a value for every targeted column, so naming a
@@ -956,7 +947,7 @@ BoundStatement Binder::BindNode(InsertQueryNode &node) {
 		insert->table_index = insert_table_index;
 		unique_ptr<LogicalOperator> index_as_logicaloperator = std::move(insert);
 
-		return BindReturning(node, std::move(node.returning_list), table,
+		return BindReturning(node, std::move(node.returning_list), table, target,
 		                     node.table_ref ? node.table_ref->alias : Identifier(), insert_table_index,
 		                     std::move(index_as_logicaloperator));
 	}

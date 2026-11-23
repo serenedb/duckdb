@@ -39,30 +39,6 @@
 
 namespace duckdb {
 
-void RelationNeed::Select(idx_t column) {
-	modes |= AclMode::Select;
-	if (std::find(selected.begin(), selected.end(), column) == selected.end()) {
-		selected.push_back(column);
-	}
-}
-
-void Require(const RelationNeed &need) {
-	auto &role = need.role;
-	auto &permissions = need.relation.permissions;
-	if (role.Can(CatalogType::TABLE_ENTRY, permissions, need.modes)) {
-		return;
-	}
-	const auto relation_only = need.modes & ~(AclMode::Select | AclMode::Insert | AclMode::Update);
-	const auto columns_granted = [&](AclMode mode, const vector<idx_t> &columns) {
-		return (need.modes & mode) == AclMode::NoRights || role.CanColumns(need.relation, mode, columns);
-	};
-	if ((relation_only != AclMode::NoRights && !role.Can(CatalogType::TABLE_ENTRY, permissions, relation_only)) ||
-	    !columns_granted(AclMode::Select, need.selected) || !columns_granted(AclMode::Insert, need.inserted) ||
-	    !columns_granted(AclMode::Update, need.updated)) {
-		ThrowPermissionDenied(need.relation);
-	}
-}
-
 bool IsUnowned(const CatalogEntry &entry) {
 	auto &catalog = entry.ParentCatalog();
 	if (!entry.internal && catalog.GetAttached().IsReadOnly()) {
@@ -596,33 +572,44 @@ void RequireTypeUsage(ClientContext &context, const RoleAccess &role, const Logi
 	}
 }
 
-void CheckFunctionCalls(ClientContext &context, const RoleAccess &role, std::span<const FunctionCall> calls) {
+static optional_ptr<MacroCatalogEntry> CalledMacro(ClientContext &context, const FunctionCall &call) {
+	auto catalog = Catalog::GetCatalogEntry(context, call.catalog);
+	auto entry = catalog ? catalog->LookupOwner(catalog->GetCatalogTransaction(context), call.macro_overload.GetIndex())
+	                     : nullptr;
+	if (!entry || !IsMacro(*entry)) {
+		return nullptr;
+	}
+	return &entry->Cast<MacroCatalogEntry>();
+}
+
+optional_ptr<const FunctionCall> DeniedCall(ClientContext &context, const RoleAccess &role,
+                                            std::span<const FunctionCall> calls) {
 	if (role.is_superuser) {
-		return;
+		return nullptr;
 	}
 	for (auto &call : calls) {
 		if (!call.macro_overload.IsValid()) {
 			if (!MayCall(context, role, call.capability)) {
-				ThrowPermissionDenied(call.type, call.name);
+				return &call;
 			}
 			continue;
 		}
-		auto catalog = Catalog::GetCatalogEntry(context, call.catalog);
-		auto entry = catalog
-		                 ? catalog->LookupOwner(catalog->GetCatalogTransaction(context), call.macro_overload.GetIndex())
-		                 : nullptr;
-		if (!entry || (entry->type != CatalogType::MACRO_ENTRY && entry->type != CatalogType::TABLE_MACRO_ENTRY)) {
-			ThrowPermissionDenied(call.type, call.name);
-		}
-		auto &macro = entry->Cast<MacroCatalogEntry>();
-		auto overload = macro.FindOverload(call.macro_overload.GetIndex());
-		if (!overload) {
-			ThrowPermissionDenied(call.type, call.name);
-		}
-		if (!role.Can(macro.type, macro.OverloadPermissions(*overload), AclMode::Execute)) {
-			ThrowPermissionDenied(macro, overload.get());
+		auto macro = CalledMacro(context, call);
+		auto overload = macro ? macro->FindOverload(call.macro_overload.GetIndex()) : nullptr;
+		if (!overload || !role.Can(macro->type, macro->OverloadPermissions(*overload), AclMode::Execute)) {
+			return &call;
 		}
 	}
+	return nullptr;
+}
+
+void ThrowPermissionDenied(ClientContext &context, const FunctionCall &call) {
+	if (auto macro = call.macro_overload.IsValid() ? CalledMacro(context, call) : nullptr) {
+		if (auto overload = macro->FindOverload(call.macro_overload.GetIndex())) {
+			ThrowPermissionDenied(*macro, overload.get());
+		}
+	}
+	ThrowPermissionDenied(call.type, call.name);
 }
 
 } // namespace duckdb

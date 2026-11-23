@@ -277,6 +277,7 @@ BoundStatement Binder::BindNode(UpdateQueryNode &node) {
 			return std::move(*expanded);
 		}
 	}
+	const auto target = ChecksOf(table);
 	optional_ptr<LogicalGet> get;
 	if (node.from_table) {
 		auto from_binder = Binder::CreateBinder(context, this);
@@ -332,19 +333,8 @@ BoundStatement Binder::BindNode(UpdateQueryNode &node) {
 	                              update->columns, node.prioritize_table_when_binding);
 	D_ASSERT(proj_tmp->type == LogicalOperatorType::LOGICAL_PROJECTION);
 	auto proj = unique_ptr_cast<LogicalOperator, LogicalProjection>(std::move(proj_tmp));
-	auto need = NeedOf(table);
-	if (need) {
-		need->modes |= AclMode::Update;
-	}
-	vector<LogicalIndex> changed;
-	for (auto index : update->columns) {
-		auto &column = table.GetColumns().GetColumn(index);
-		changed.push_back(column.Logical());
-		if (need && column.Category() != TableColumnType::GENERATED_STORED) {
-			need->updated.push_back(column.Logical().index);
-		}
-	}
-	RequireIndexCalls(table, changed);
+	RequireColumns(table, target, AclMode::Update, node.set_info->columns);
+	RequireIndexCalls(table, update->columns);
 
 	// bind any extra columns necessary for CHECK constraints or indexes;
 	// storage-derived decisions (index updates force delete+insert) come
@@ -373,7 +363,7 @@ BoundStatement Binder::BindNode(UpdateQueryNode &node) {
 		bool capture_old = update->capture_old_rows;
 		unique_ptr<LogicalOperator> update_as_logicaloperator = std::move(update);
 
-		auto returning_result = BindReturning(node, std::move(node.returning_list), table, node.table->alias,
+		auto returning_result = BindReturning(node, std::move(node.returning_list), table, target, node.table->alias,
 		                                      update_table_index, std::move(update_as_logicaloperator));
 		if (capture_old) {
 			// Expose the captured OLD physical columns as extra output columns of the base CTE, under the reserved

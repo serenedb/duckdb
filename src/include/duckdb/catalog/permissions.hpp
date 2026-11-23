@@ -39,18 +39,9 @@ struct StatementNaming {
 	const QualifiedName &name;
 };
 
-struct RelationNeed {
-	RelationNeed(const StandardEntry &relation_p, const RoleAccess &role_p) : relation(relation_p), role(role_p) {
-	}
-
-	void Select(idx_t column);
-
-	const StandardEntry &relation;
-	RoleAccess role;
-	AclMode modes = AclMode::NoRights;
-	vector<idx_t> selected;
-	vector<idx_t> inserted;
-	vector<idx_t> updated;
+struct RelationChecks {
+	optional_ptr<const RoleAccess> role;
+	idx_t reference = 0;
 };
 
 struct FunctionCall {
@@ -81,7 +72,6 @@ DUCKDB_API bool Allowed(const RoleAccess &role, const CatalogEntry &entry, AclMo
 DUCKDB_API void Require(ClientContext &context, const RoleAccess &role, CatalogEntry &entry, AclMode use,
                         optional_ptr<const MacroFunction> overload = nullptr,
                         optional_ptr<const StatementNaming> naming = nullptr);
-DUCKDB_API void Require(const RelationNeed &need);
 DUCKDB_API void RequireSuperuser(const RoleAccess &role);
 DUCKDB_API void RequireDatabasePrivilege(ClientContext &context, const RoleAccess &role, const Identifier &database,
                                          AclMode need);
@@ -90,7 +80,9 @@ DUCKDB_API void RequireForeignDataWrapperUsage(ClientContext &context, const Rol
 DUCKDB_API void RequireUserSchema(const SchemaCatalogEntry &schema, const Identifier &name);
 DUCKDB_API void RequireTypeUsage(ClientContext &context, const RoleAccess &role, const LogicalType &type,
                                  Catalog &catalog);
-DUCKDB_API void CheckFunctionCalls(ClientContext &context, const RoleAccess &role, std::span<const FunctionCall> calls);
+DUCKDB_API optional_ptr<const FunctionCall> DeniedCall(ClientContext &context, const RoleAccess &role,
+                                                       std::span<const FunctionCall> calls);
+[[noreturn]] DUCKDB_API void ThrowPermissionDenied(ClientContext &context, const FunctionCall &call);
 DUCKDB_API void AssignOwner(ClientContext &context, Permissions &permissions, Catalog &catalog, CatalogType objtype,
                             optional_ptr<SchemaCatalogEntry> schema, idx_t owner);
 DUCKDB_API optional_ptr<CatalogEntry> ClusterEntry(ClientContext &context, CatalogType type, const Identifier &name);

@@ -143,7 +143,7 @@ void Binder::SetSearchPath(Catalog &catalog, const Identifier &schema, const vec
 	entry_retriever.SetSearchPath(GetSearchPath(catalog, schema, true), catalog.GetName(), bindings);
 }
 
-BoundStatement Binder::Bind(BaseTableRef &ref) {
+BoundStatement Binder::Bind(BaseTableRef &ref, TableRefUse use) {
 	QueryErrorContext error_context(ref.query_location);
 	// CTEs and views are also referred to using BaseTableRefs, hence need to distinguish here
 	// check if the table name refers to a CTE
@@ -302,7 +302,8 @@ BoundStatement Binder::Bind(BaseTableRef &ref) {
 		// column validation). A facade catalog delegates the scan to a storage
 		// table in another catalog, so bind the alias to the catalog-resolved
 		// entry the user named -- not the storage table inside the LogicalGet.
-		bind_context.AddBaseTable(table_index, ref.alias, table_names, table_types, col_ids, table);
+		bind_context.AddBaseTable(table_index, ref.alias, table_names, table_types, col_ids, table).checks =
+		    ReadChecks(table, use);
 		BoundStatement result;
 		result.types = table_types;
 		result.names = table_names;
@@ -313,8 +314,9 @@ BoundStatement Binder::Bind(BaseTableRef &ref) {
 		// the node is a view: get the query that the view represents
 		auto &view_catalog_entry = table_or_view->Cast<ViewCatalogEntry>();
 		auto &role = CheckAs();
-		auto need = ReadNeed(view_catalog_entry);
-		if (need && !role.CanColumns(view_catalog_entry, AclMode::Select, {})) {
+		auto checks = use == TableRefUse::UTILITY_TARGET ? RelationChecks()
+		                                                 : ReadChecks(view_catalog_entry, ChecksOf(view_catalog_entry));
+		if (checks.role && !role.CanColumns(view_catalog_entry, AclMode::Select, {})) {
 			ThrowPermissionDenied(view_catalog_entry);
 		}
 		// We need to use a new binder for the view that doesn't reference any CTEs
@@ -371,7 +373,7 @@ BoundStatement Binder::Bind(BaseTableRef &ref) {
 			    view_catalog_entry.ParentSchema(context).GetQualifiedName(view_catalog_entry.name), bound_child.types,
 			    entry_at_clause, std::move(bound_child.plan));
 		}
-		bind_context.AddView(root_index, subquery.alias, subquery, bound_child, view_catalog_entry).need = need;
+		bind_context.AddView(root_index, subquery.alias, subquery, bound_child, view_catalog_entry).checks = checks;
 		return bound_child;
 	}
 	default:

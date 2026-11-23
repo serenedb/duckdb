@@ -104,6 +104,9 @@ protected:
 	identifier_map_t<column_t> name_map;
 	//! Whether rows of this binding can be NULL-extended by an outer join
 	bool null_extended = false;
+
+public:
+	RelationChecks checks;
 };
 
 struct EntryBinding : public Binding {
@@ -114,10 +117,8 @@ public:
 	EntryBinding(BindingAlias alias, vector<LogicalType> types, vector<Identifier> names, TableIndex index,
 	             StandardEntry &entry);
 	StandardEntry &entry;
-	optional_ptr<RelationNeed> need;
 
 public:
-	BindResult Bind(ColumnRefExpression &colref, idx_t depth) override;
 	optional_ptr<StandardEntry> GetStandardEntry() override;
 };
 
@@ -139,7 +140,6 @@ public:
 	//! Virtual columns
 	virtual_column_map_t virtual_columns;
 	vector<column_t> row_id_columns;
-	optional_ptr<RelationNeed> need;
 
 public:
 	unique_ptr<ParsedExpression> ExpandGeneratedColumn(ClientContext &context, const Identifier &column_name);

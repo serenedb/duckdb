@@ -271,13 +271,6 @@ struct MacroFunctionLookup {
 	optional_ptr<ScalarMacroCatalogEntry> macro;
 };
 
-struct IndexWrite {
-	reference<TableCatalogEntry> table;
-	RoleAccess role;
-	vector<LogicalIndex> changed;
-	bool all_columns;
-};
-
 struct GlobalBinderState {
 	//! The count of bound_tables
 	idx_t bound_tables = 0;
@@ -290,8 +283,10 @@ struct GlobalBinderState {
 	idx_t macro_type_probing = 0;
 	unordered_map<idx_t, RoleAccess> role_access;
 	optional_ptr<vector<FunctionCall>> recorded_calls;
-	vector<unique_ptr<RelationNeed>> relation_needs;
-	vector<IndexWrite> index_writes;
+	idx_t relation_references = 0;
+	optional_ptr<const StandardEntry> denied_relation;
+	idx_t denied_reference = 0;
+	optional_ptr<const FunctionCall> denied_call;
 	//! Statement properties
 	StatementProperties prop;
 	//! Binding mode
@@ -478,16 +473,21 @@ public:
 	void BindSharedDefinition();
 	void RecordCalls(optional_ptr<vector<FunctionCall>> calls);
 	void Execute(const CatalogEntry &function, optional_ptr<const MacroFunction> overload = nullptr);
-	void RequireIndexCalls(TableCatalogEntry &table, optional_ptr<const vector<LogicalIndex>> changed);
+	void RequireIndexCalls(TableCatalogEntry &table, optional_ptr<const vector<PhysicalIndex>> changed);
 	void BindAsFunctionBody(const SelectStatement &statement);
 	void UseFunctionSearchPath(const vector<string> &config);
-	TableRefUse table_ref_use = TableRefUse::READ;
-	optional_ptr<const MergeQueryNode> on_conflict_merge;
 	BoundStatement BindTarget(TableRef &ref, TableRefUse use);
-	optional_ptr<RelationNeed> NeedOf(const StandardEntry &relation);
-	optional_ptr<RelationNeed> ReadNeed(const StandardEntry &relation);
-	static void AddColumns(vector<idx_t> &columns, const TableCatalogEntry &table, const vector<Identifier> &names,
-	                       idx_t leading);
+	RelationChecks ChecksOf(const StandardEntry &relation);
+	RelationChecks ReadChecks(const StandardEntry &relation, RelationChecks checks);
+	RelationChecks ReadChecks(const StandardEntry &relation, TableRefUse use);
+	void Deny(const StandardEntry &relation, const RelationChecks &checks);
+	void RequireColumns(const TableCatalogEntry &table, const RelationChecks &checks, AclMode use,
+	                    std::span<const LogicalIndex> columns);
+	void RequireColumns(const TableCatalogEntry &table, const RelationChecks &checks, AclMode use,
+	                    std::span<const Identifier> columns);
+	void RequireColumn(const TableCatalogEntry &table, const RelationChecks &checks, AclMode use,
+	                   const ColumnDefinition &column);
+	void CheckColumnRead(Binding &binding, const Identifier &column);
 	void AdoptPrivilegeChecks(Binder &other);
 	void CheckPrivileges();
 	Catalog &SubscriptionCatalog(const Identifier &catalog_name);
@@ -709,8 +709,8 @@ private:
 	                            vector<unique_ptr<Expression>> &projection_expressions,
 	                            LogicalOperator &target_binding);
 	BoundStatement BindReturning(QueryNode &node, vector<unique_ptr<ParsedExpression>> returning_list,
-	                             TableCatalogEntry &table, const Identifier &alias, TableIndex update_table_index,
-	                             unique_ptr<LogicalOperator> child_operator,
+	                             TableCatalogEntry &table, const RelationChecks &target, const Identifier &alias,
+	                             TableIndex update_table_index, unique_ptr<LogicalOperator> child_operator,
 	                             virtual_column_map_t virtual_columns = virtual_column_map_t(),
 	                             optional_ptr<vector<column_t>> bound_virtual_columns = nullptr);
 
@@ -747,7 +747,7 @@ private:
 	BoundStatement BindNode(UpdateQueryNode &node);
 	BoundStatement BindNode(DeleteQueryNode &node);
 	vector<idx_t> BindTruncateGroup(DeleteQueryNode &node, TableCatalogEntry &table);
-	BoundStatement BindNode(MergeQueryNode &node);
+	BoundStatement BindNode(MergeQueryNode &node, bool inserts_checked = false);
 	BoundStatement BindNode(CopyQueryNode &node);
 
 	unique_ptr<LogicalOperator> VisitQueryNode(BoundQueryNode &node, unique_ptr<LogicalOperator> root);
@@ -759,7 +759,7 @@ private:
 	void BuildUnionByNameInfo(BoundSetOperationNode &result);
 
 	BoundStatement BindJoin(Binder &parent, TableRef &ref);
-	BoundStatement Bind(BaseTableRef &ref);
+	BoundStatement Bind(BaseTableRef &ref, TableRefUse use = TableRefUse::READ);
 	BoundStatement Bind(BoundRefWrapper &ref);
 	BoundStatement Bind(JoinRef &ref);
 	BoundStatement Bind(MatchRecognizeRef &ref);
@@ -899,7 +899,8 @@ private:
 	unique_ptr<BoundMergeIntoAction>
 	BindMergeAction(LogicalMergeInto &merge_into, TableCatalogEntry &table, LogicalGet &get, TableIndex proj_index,
 	                vector<unique_ptr<Expression>> &expressions, MergeIntoAction &action,
-	                const vector<BindingAlias> &source_aliases, const vector<Identifier> &source_names);
+	                const vector<BindingAlias> &source_aliases, const vector<Identifier> &source_names,
+	                const RelationChecks &target, bool inserts_checked);
 
 	unique_ptr<MergeIntoStatement> GenerateMergeInto(InsertQueryNode &node, TableCatalogEntry &table);
 

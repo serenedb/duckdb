@@ -178,14 +178,6 @@ EntryBinding::EntryBinding(BindingAlias alias, vector<LogicalType> types_p, vect
       entry(entry) {
 }
 
-BindResult EntryBinding::Bind(ColumnRefExpression &colref, idx_t depth) {
-	column_t column_index;
-	if (need && TryGetBindingIndex(colref.GetColumnName(), column_index)) {
-		need->Select(column_index);
-	}
-	return Binding::Bind(colref, depth);
-}
-
 optional_ptr<StandardEntry> EntryBinding::GetStandardEntry() {
 	return &entry;
 }
@@ -366,9 +358,6 @@ BindResult TableBinding::Bind(ColumnRefExpression &colref, idx_t depth) {
 		// normal column: fetch type from base column
 		col_type = types[column_index];
 		SetBoundColumnAlias(colref);
-		if (need) {
-			need->Select(column_index);
-		}
 	}
 	ColumnBinding binding = GetColumnBinding(column_index);
 	return BindResult(make_uniq<BoundColumnRefExpression>(Identifier(colref.GetName()), col_type, binding, depth));

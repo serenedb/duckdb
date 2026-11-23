@@ -34,6 +34,7 @@
 #include "duckdb/storage/write_ahead_log.hpp"
 #include "duckdb/transaction/duck_transaction.hpp"
 
+#include <absl/functional/function_ref.h>
 #include <functional>
 
 namespace duckdb {
@@ -72,6 +73,7 @@ class Transaction;
 
 class AggregateFunctionCatalogEntry;
 class CollateCatalogEntry;
+class IndexCatalogEntry;
 class SchemaCatalogEntry;
 class TableCatalogEntry;
 class ViewCatalogEntry;
@@ -563,6 +565,8 @@ public:
 	virtual optional_ptr<DependencyManager> GetDependencyManager();
 	virtual void ScanSubjects(CatalogTransaction transaction, CatalogEntry &entry,
 	                          const std::function<void(CatalogEntry &)> &callback);
+	virtual void ScanIndexes(ClientContext &context, const TableCatalogEntry &table,
+	                         absl::FunctionRef<void(IndexCatalogEntry &)> callback);
 	virtual catalog_entry_vector_t OwnedEntries(CatalogTransaction transaction, const CatalogEntry &owner);
 	virtual optional_ptr<CatalogEntry> OwnerOf(CatalogTransaction transaction, CatalogEntry &owned);
 	virtual catalog_entry_vector_t DropOrder(CatalogTransaction transaction, const catalog_entry_vector_t &entries);

@@ -2071,6 +2071,16 @@ void Catalog::ScanSubjects(CatalogTransaction transaction, CatalogEntry &entry,
                            const std::function<void(CatalogEntry &)> &callback) {
 }
 
+void Catalog::ScanIndexes(ClientContext &context, const TableCatalogEntry &table,
+                          absl::FunctionRef<void(IndexCatalogEntry &)> callback) {
+	table.ParentSchema(context).Scan(context, CatalogType::INDEX_ENTRY, [&](CatalogEntry &entry) {
+		auto &index = entry.Cast<IndexCatalogEntry>();
+		if (index.table_oid == table.oid) {
+			callback(index);
+		}
+	});
+}
+
 catalog_entry_vector_t Catalog::OwnedEntries(CatalogTransaction transaction, const CatalogEntry &owner) {
 	return catalog_entry_vector_t();
 }
