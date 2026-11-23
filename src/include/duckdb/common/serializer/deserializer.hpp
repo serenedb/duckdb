@@ -12,6 +12,7 @@
 #include "duckdb/common/serializer/serialization_data.hpp"
 #include "duckdb/common/serializer/serialization_traits.hpp"
 #include "duckdb/common/identifier.hpp"
+#include "duckdb/parser/role_spec.hpp"
 #include "duckdb/common/types/string_type.hpp"
 #include "duckdb/common/uhugeint.hpp"
 #include "duckdb/common/unordered_map.hpp"
@@ -562,6 +563,11 @@ private:
 	template <typename T = void>
 	inline typename std::enable_if<std::is_same<T, Identifier>::value, T>::type Read(this auto &self) {
 		return Identifier(self.ReadString());
+	}
+
+	template <typename T = void>
+	inline typename std::enable_if<std::is_same<T, RoleSpec>::value, T>::type Read(this auto &self) {
+		return RoleSpec(Identifier(self.ReadString()));
 	}
 
 	// Deserialize a Enum

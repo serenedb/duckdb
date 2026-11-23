@@ -196,6 +196,7 @@ DESERIALIZE_ELEMENT_CLASS_BASE_FORMAT = '\tauto {property_name} = deserializer.R
 MOVE_LIST = [
     "string",
     "Identifier",
+    "RoleSpec",
     "ParsedExpression*",
     "CommonTableExpressionMap",
     "LogicalType",
@@ -394,7 +395,7 @@ def has_default_by_default(type):
         return True
     if type == "string":
         return True
-    if type in ("Identifier", "duckdb::Identifier"):
+    if type in ("Identifier", "duckdb::Identifier", "RoleSpec"):
         # Identifier behaves like string: the empty identifier is its default
         return True
     if is_zeroable(type):

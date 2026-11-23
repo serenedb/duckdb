@@ -510,37 +510,29 @@ idx_t RoleId(ClientContext &context, const Identifier &name) {
 	    ->oid;
 }
 
-optional_idx RoleSpecKeyword(ClientContext &context, std::string_view name) {
-	if (name == "CURRENT_USER" || name == "CURRENT_ROLE") {
-		return context.current_role_id;
-	}
-	if (name == "SESSION_USER") {
-		return context.session_role;
-	}
-	return optional_idx();
+static idx_t KeywordRole(ClientContext &context, RoleSpecType type) {
+	return type == RoleSpecType::SESSION_USER ? context.session_role : context.current_role_id;
 }
 
-idx_t RoleSpecId(ClientContext &context, std::string_view name) {
-	const auto keyword = RoleSpecKeyword(context, name);
-	return keyword.IsValid() ? keyword.GetIndex() : RoleId(context, Identifier(name));
+idx_t RoleSpecId(ClientContext &context, const RoleSpec &role) {
+	return role.type == RoleSpecType::NAME ? RoleId(context, role.name) : KeywordRole(context, role.type);
 }
 
-optional_ptr<RoleEntry> RoleSpecEntry(ClientContext &context, std::string_view name, OnEntryNotFound if_not_found) {
-	const auto keyword = RoleSpecKeyword(context, name);
-	if (!keyword.IsValid()) {
-		auto entry = ClusterEntry(context, RoleAccess::System(), CatalogType::ROLE_ENTRY, Identifier(name),
-		                          AclMode::NoRights, if_not_found);
+optional_ptr<RoleEntry> RoleSpecEntry(ClientContext &context, const RoleSpec &role, OnEntryNotFound if_not_found) {
+	if (role.type == RoleSpecType::NAME) {
+		auto entry = ClusterEntry(context, RoleAccess::System(), CatalogType::ROLE_ENTRY, role.name, AclMode::NoRights,
+		                          if_not_found);
 		return entry ? &entry->Cast<RoleEntry>() : nullptr;
 	}
 	optional_ptr<CatalogEntry> entry;
 	if (auto cluster = RoleCatalog(context)) {
-		entry = cluster->LookupOwner(cluster->GetCatalogTransaction(context), keyword.GetIndex());
+		entry = cluster->LookupOwner(cluster->GetCatalogTransaction(context), KeywordRole(context, role.type));
 	}
 	if (entry && entry->type == CatalogType::ROLE_ENTRY) {
 		return &entry->Cast<RoleEntry>();
 	}
 	if (if_not_found == OnEntryNotFound::THROW_EXCEPTION) {
-		throw CatalogException::MissingObject(CatalogType::ROLE_ENTRY, Identifier(name));
+		throw CatalogException::MissingObject(CatalogType::ROLE_ENTRY, Identifier(role.ToString()));
 	}
 	return nullptr;
 }

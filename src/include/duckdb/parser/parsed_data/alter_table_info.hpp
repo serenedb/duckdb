@@ -17,6 +17,7 @@
 #include "duckdb/parser/column_list.hpp"
 #include "duckdb/parser/constraint.hpp"
 #include "duckdb/parser/result_modifier.hpp"
+#include "duckdb/parser/role_spec.hpp"
 
 #include "duckdb/common/identifier.hpp"
 namespace duckdb {
@@ -108,20 +109,20 @@ struct AlterPermissionsInfo : public AlterInfo {
 	AlterPermissionsInfo(CatalogType entry_catalog_type, QualifiedName entry_name);
 
 	CatalogType entry_catalog_type;
-	string new_owner;
+	RoleSpec new_owner;
 	idx_t new_owner_id = 0;
 	AclMode privileges = AclMode::NoRights;
 	vector<ColumnPrivilege> column_privileges;
-	string grantee;
+	RoleSpec grantee;
 	idx_t grantee_id = ACL_ID_PUBLIC;
-	string granted_by;
+	RoleSpec granted_by;
 	vector<idx_t> grantors;
 	bool revoke = false;
 	bool with_grant_option = false;
 	bool option_only = false;
 	bool cascade = false;
 	CatalogType default_objtype = CatalogType::INVALID;
-	string for_role;
+	RoleSpec for_role;
 	string default_schema;
 	idx_t target_role = 0;
 	idx_t default_scope = 0;
@@ -135,8 +136,8 @@ struct AlterPermissionsInfo : public AlterInfo {
 	vector<LogicalType> func_parameters;
 	bool has_func_args = false;
 	vector<ObjectReference> objects;
-	vector<string> grantees;
-	vector<string> for_roles;
+	vector<RoleSpec> grantees;
+	vector<RoleSpec> for_roles;
 	vector<string> default_schemas;
 
 public:
@@ -184,9 +185,9 @@ struct AlterRoleInfo : public AlterInfo {
 	bool reset_all_config = false;
 	vector<string> reset_config;
 	vector<string> set_config;
-	string grant_role;
-	vector<string> granted_roles;
-	vector<string> members;
+	RoleSpec grant_role;
+	vector<RoleSpec> granted_roles;
+	vector<RoleSpec> members;
 	bool revoke = false;
 	bool option_only = false;
 	int8_t admin_option = -1;
@@ -194,11 +195,13 @@ struct AlterRoleInfo : public AlterInfo {
 	int8_t set_option = -1;
 	idx_t grant_role_id = 0;
 	idx_t grantor_id = 0;
-	string granted_by;
+	RoleSpec granted_by;
 	bool cascade = false;
 	bool alter_group = false;
+	RoleSpecType role_type = RoleSpecType::NAME;
 
 public:
+	RoleSpec Target() const;
 	CatalogType GetCatalogType() const override;
 	unique_ptr<AlterInfo> Copy() const override;
 	string ToString() const override;
@@ -213,7 +216,7 @@ public:
 struct AlterDatabaseSettingsInfo : public AlterInfo {
 	explicit AlterDatabaseSettingsInfo(Identifier database);
 
-	string role;
+	RoleSpec role;
 	idx_t role_id = 0;
 	idx_t database_id = 0;
 	bool all_roles = false;
@@ -239,8 +242,8 @@ public:
 struct ReassignOwnedInfo : public AlterInfo {
 	ReassignOwnedInfo();
 
-	vector<string> roles;
-	string new_owner;
+	vector<RoleSpec> roles;
+	RoleSpec new_owner;
 	vector<idx_t> role_ids;
 	idx_t new_owner_id = 0;
 
@@ -256,7 +259,7 @@ public:
 struct DropOwnedInfo : public AlterInfo {
 	DropOwnedInfo();
 
-	vector<string> roles;
+	vector<RoleSpec> roles;
 	bool cascade = false;
 	vector<idx_t> role_ids;
 	vector<idx_t> grantors;

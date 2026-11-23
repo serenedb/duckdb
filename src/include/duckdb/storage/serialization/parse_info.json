@@ -540,7 +540,7 @@
       {
         "id": 303,
         "name": "new_owner",
-        "type": "string"
+        "type": "RoleSpec"
       },
       {
         "id": 304,
@@ -560,7 +560,7 @@
       {
         "id": 307,
         "name": "grantee",
-        "type": "string"
+        "type": "RoleSpec"
       },
       {
         "id": 308,
@@ -570,7 +570,7 @@
       {
         "id": 309,
         "name": "granted_by",
-        "type": "string"
+        "type": "RoleSpec"
       },
       {
         "id": 310,
@@ -605,7 +605,7 @@
       {
         "id": 316,
         "name": "for_role",
-        "type": "string"
+        "type": "RoleSpec"
       },
       {
         "id": 317,
@@ -669,7 +669,7 @@
       {
         "id": 300,
         "name": "role",
-        "type": "string"
+        "type": "RoleSpec"
       },
       {
         "id": 301,
@@ -733,12 +733,12 @@
       {
         "id": 300,
         "name": "roles",
-        "type": "vector<string>"
+        "type": "vector<RoleSpec>"
       },
       {
         "id": 301,
         "name": "new_owner",
-        "type": "string"
+        "type": "RoleSpec"
       },
       {
         "id": 302,
@@ -760,7 +760,7 @@
       {
         "id": 300,
         "name": "roles",
-        "type": "vector<string>"
+        "type": "vector<RoleSpec>"
       },
       {
         "id": 301,
@@ -852,7 +852,7 @@
       {
         "id": 313,
         "name": "grant_role",
-        "type": "string"
+        "type": "RoleSpec"
       },
       {
         "id": 314,

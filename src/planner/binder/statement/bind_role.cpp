@@ -128,6 +128,9 @@ static void BindMembership(ClientContext &context, const RoleAccess &caller, con
 	if (!granted) {
 		return;
 	}
+	if (info.grant_role.type != RoleSpecType::NAME) {
+		info.grant_role = RoleSpec(granted->name);
+	}
 	if (info.alter_group) {
 		auto &name = granted->name.GetIdentifierName();
 		if (granted->IsPredefined()) {
@@ -243,15 +246,22 @@ void Binder::BindCreateRole(CreateRoleInfo &info) {
 			    "permission denied to create role");
 		}
 	}
-	for (auto &name : info.in_roles) {
-		if (auto granted = RoleSpecEntry(context, name.GetIdentifierName(), OnEntryNotFound::RETURN_NULL)) {
+	const auto resolve = [&](RoleSpec &spec) {
+		auto role = RoleSpecEntry(context, spec, OnEntryNotFound::RETURN_NULL);
+		if (role && spec.type != RoleSpecType::NAME) {
+			spec = RoleSpec(role->name);
+		}
+		return role;
+	};
+	for (auto &spec : info.in_roles) {
+		if (auto granted = resolve(spec)) {
 			CheckMembershipAuthorization(context, caller, *granted, false);
 		}
 	}
 	const auto database_owner = DBConfig::GetConfig(context).database_owner_role;
 	for (auto members : {&info.role_members, &info.admin_members}) {
-		for (auto &name : *members) {
-			auto member = RoleSpecEntry(context, name.GetIdentifierName(), OnEntryNotFound::RETURN_NULL);
+		for (auto &spec : *members) {
+			auto member = resolve(spec);
 			if (member && member->oid == database_owner) {
 				throw NotImplementedException("role \"%s\" cannot be a member of any role",
 				                              member->name.GetIdentifierName());
@@ -263,10 +273,10 @@ void Binder::BindCreateRole(CreateRoleInfo &info) {
 
 void Binder::BindAlterRole(AlterRoleInfo &info) {
 	auto &caller = CheckAs();
-	auto role =
-	    RoleSpecEntry(context, info.GetQualifiedName().Name().GetIdentifierName(), OnEntryNotFound::RETURN_NULL);
+	auto role = RoleSpecEntry(context, info.Target(), OnEntryNotFound::RETURN_NULL);
 	if (role) {
 		info.SetQualifiedName(Identifier(), Identifier(), role->name);
+		info.role_type = RoleSpecType::NAME;
 	}
 	if (role && !caller.IsSystem() && !info.grant_role.empty()) {
 		BindMembership(context, caller, *role, info);
@@ -353,7 +363,7 @@ void Binder::BindDropRole(DropInfo &info) {
 	}
 	optional_ptr<RoleEntry> role;
 	if (!caller.IsSystem()) {
-		role = RoleSpecEntry(context, info.GetQualifiedName().Name().GetIdentifierName(), OnEntryNotFound::RETURN_NULL);
+		role = RoleSpecEntry(context, RoleSpec(info.GetQualifiedName().Name()), OnEntryNotFound::RETURN_NULL);
 	}
 	if (role && !caller.is_superuser && role->IsSuperuser()) {
 		throw PermissionException(

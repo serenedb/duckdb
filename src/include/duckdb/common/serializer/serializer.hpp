@@ -14,6 +14,7 @@
 #include "duckdb/common/serializer/serialization_data.hpp"
 #include "duckdb/common/serializer/write_stream.hpp"
 #include "duckdb/common/identifier.hpp"
+#include "duckdb/parser/role_spec.hpp"
 #include "duckdb/common/types/interval.hpp"
 #include "duckdb/common/types/string_type.hpp"
 #include "duckdb/common/types/uhugeint.hpp"
@@ -510,6 +511,13 @@ public:
 	//! Identifiers are serialized identically to a plain string (preserving the original casing)
 	void WriteValue(this auto &self, const Identifier &value) {
 		self.WriteValue(value.GetIdentifierName());
+	}
+	void WriteValue(this auto &self, const RoleSpec &value) {
+		if (value.type == RoleSpecType::NAME) {
+			self.WriteValue(value.name);
+		} else {
+			self.WriteValue(value.ToString());
+		}
 	}
 	void WriteValue(this auto &self, LogicalIndex value) {
 		self.WriteValue(value.index);

@@ -13,6 +13,7 @@
 #include "duckdb/common/enums/on_entry_not_found.hpp"
 #include "duckdb/common/types.hpp"
 #include "duckdb/parser/qualified_name.hpp"
+#include "duckdb/parser/role_spec.hpp"
 
 #include <functional>
 
@@ -95,9 +96,8 @@ DUCKDB_API optional_ptr<CatalogEntry> ClusterEntry(ClientContext &context, const
 DUCKDB_API CatalogEntry &ClusterDatabase(ClientContext &context, const Identifier &name);
 DUCKDB_API QualifiedName ClusterName(ClientContext &context, const QualifiedName &name);
 DUCKDB_API idx_t RoleId(ClientContext &context, const Identifier &name);
-DUCKDB_API optional_idx RoleSpecKeyword(ClientContext &context, std::string_view name);
-DUCKDB_API idx_t RoleSpecId(ClientContext &context, std::string_view name);
-DUCKDB_API optional_ptr<RoleEntry> RoleSpecEntry(ClientContext &context, std::string_view name,
+DUCKDB_API idx_t RoleSpecId(ClientContext &context, const RoleSpec &role);
+DUCKDB_API optional_ptr<RoleEntry> RoleSpecEntry(ClientContext &context, const RoleSpec &role,
                                                  OnEntryNotFound if_not_found);
 DUCKDB_API string RoleName(ClientContext &context, idx_t role);
 

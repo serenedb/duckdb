@@ -16,7 +16,7 @@ struct CreateTablespaceInfo : public CreateInfo {
 	CreateTablespaceInfo();
 
 	string location;
-	Identifier owner;
+	RoleSpec owner;
 
 public:
 	DUCKDB_API void Serialize(Serializer &serializer) const override;

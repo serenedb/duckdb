@@ -1242,15 +1242,14 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 		auto &info = stmt.info->Cast<CreateSchemaInfo>();
 		optional_ptr<RoleEntry> authorization;
 		if (!info.authorization.empty()) {
-			auto &written = info.authorization.GetIdentifierName();
-			authorization = RoleSpecEntry(context, written, OnEntryNotFound::THROW_EXCEPTION);
-			auto path = info.GetQualifiedName().Path();
-			if (RoleSpecKeyword(context, written).IsValid()) {
-				if (path.size() == 2 && path[0].GetIdentifierName() == written) {
+			authorization = RoleSpecEntry(context, info.authorization, OnEntryNotFound::THROW_EXCEPTION);
+			if (info.authorization.type != RoleSpecType::NAME) {
+				auto path = info.GetQualifiedName().Path();
+				if (path.size() == 2 && path[0].empty()) {
 					path[0] = authorization->name;
 					info.SetQualifiedName(QualifiedName::FromPath(std::move(path)));
 				}
-				info.authorization = authorization->name;
+				info.authorization = RoleSpec(authorization->name);
 			}
 		}
 		BindCreateSchema(info);
@@ -1259,7 +1258,8 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 		RequireDatabasePrivilege(context, role, info.SchemaCatalog(), AclMode::Create);
 		if (!role.IsSystem()) {
 			if (!role.CanSet(owner)) {
-				throw PermissionException("must be able to SET ROLE \"%s\"", info.authorization.GetIdentifierName());
+				throw PermissionException("must be able to SET ROLE \"%s\"",
+				                          info.authorization.name.GetIdentifierName());
 			}
 			AssignOwner(context, info.permissions, Catalog::GetCatalog(context, info.SchemaCatalog()),
 			            CatalogType::SCHEMA_ENTRY, nullptr, owner);
@@ -1586,7 +1586,7 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 			    StringUtil::Format("permission denied to create tablespace \"%s\"",
 			                       info.GetQualifiedName().Name().GetIdentifierName()));
 		}
-		info.permissions.owner = info.owner.empty() ? role.role : RoleSpecId(context, info.owner.GetIdentifierName());
+		info.permissions.owner = info.owner.empty() ? role.role : RoleSpecId(context, info.owner);
 		result.plan = make_uniq<LogicalCreate>(LogicalOperatorType::LOGICAL_CREATE_TABLESPACE, std::move(stmt.info));
 		break;
 	}

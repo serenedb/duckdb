@@ -35,10 +35,9 @@ string CreateRoleInfo::ToString() const {
 	if (!password.empty()) {
 		result += " PASSWORD " + SQLString::ToString(password);
 	}
-	auto members = [&](const char *clause, const vector<Identifier> &roles) {
+	auto members = [&](const char *clause, const vector<RoleSpec> &roles) {
 		if (!roles.empty()) {
-			result += clause + StringUtil::Join(roles, ", ",
-			                                    [](const Identifier &role) { return SQLIdentifier::ToString(role); });
+			result += clause + RoleSpec::ToString(roles);
 		}
 	};
 	members(" IN ROLE ", in_roles);

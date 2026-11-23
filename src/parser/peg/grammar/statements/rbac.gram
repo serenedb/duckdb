@@ -2,22 +2,22 @@
 # USER is an alias for ROLE. Names use ColId/QualifiedName directly: Transform
 # dispatches by rule name, so a wrapper rule would need its own transformer.
 
-CreateRoleStatement <- 'CREATE' RoleOrUser ColId 'WITH'? CreateRoleClause*
+CreateRoleStatement <- 'CREATE' RoleOrUser OwnerRoleSpec 'WITH'? CreateRoleClause*
 CreateRoleClause <- RoleOption / RoleMembershipClause
 RoleMembershipClause <- InRoleClause / RoleMembersClause / AdminClause
-InRoleClause      <- 'IN' ('ROLE' / 'GROUP') List(ColId)
-RoleMembersClause <- ('ROLE' / 'USER') List(ColId)
-AdminClause       <- 'ADMIN' List(ColId)
-DropRoleStatement   <- 'DROP' RoleOrUser IfExists? List(ColId)
+InRoleClause      <- 'IN' ('ROLE' / 'GROUP') List(OwnerRoleSpec)
+RoleMembersClause <- ('ROLE' / 'USER') List(OwnerRoleSpec)
+AdminClause       <- 'ADMIN' List(OwnerRoleSpec)
+DropRoleStatement   <- 'DROP' RoleOrUser IfExists? List(OwnerRoleSpec)
 # RENAME TO is tried before the per-role GUC and attribute-option lists so
 # 'RENAME'/'SET'/'RESET' are not eaten by the wrong alternative.
 AlterRoleStatement  <- 'ALTER' RoleOrUser AlterRoleTarget (AlterRoleRename / AlterRoleInDatabase / AlterRoleConfig / AlterRoleOptionList)
-AlterGroupStatement <- 'ALTER' 'GROUP' ColId AlterGroupAction 'USER' List(ColId)
+AlterGroupStatement <- 'ALTER' 'GROUP' OwnerRoleSpec AlterGroupAction 'USER' List(OwnerRoleSpec)
 AlterGroupAction    <- 'ADD' / 'DROP'
 AlterRoleTarget     <- AlterRoleAll / OwnerRoleSpec
 AlterRoleAll        <- 'ALL'
 AlterRoleInDatabase <- 'IN' 'DATABASE' ColId AlterRoleConfig
-AlterRoleRename     <- 'RENAME' 'TO' ColId
+AlterRoleRename     <- 'RENAME' 'TO' OwnerRoleSpec
 # ALTER ROLE name SET guc (= | TO) value ... | SET guc FROM CURRENT | RESET guc
 # | RESET ALL  -> per-role GUC settings (pg_db_role_setting / rolconfig).
 AlterRoleConfig     <- AlterRoleSet / AlterRoleReset

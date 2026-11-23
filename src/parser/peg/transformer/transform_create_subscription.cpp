@@ -134,7 +134,7 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformAlterSubscriptionStatem
 	auto &action_list = action.Cast<ListParseResult>();
 	if (action_list.Name() == "SubscriptionOwnerAction") {
 		auto info = make_uniq<AlterPermissionsInfo>(CatalogType::SUBSCRIPTION_ENTRY, QualifiedName(name));
-		info->new_owner = TransformOwnerRoleSpec(transformer, action_list.GetChild(2)).GetIdentifierName();
+		info->new_owner = TransformOwnerRoleSpec(transformer, action_list.GetChild(2));
 		result->info = std::move(info);
 		return std::move(result);
 	}

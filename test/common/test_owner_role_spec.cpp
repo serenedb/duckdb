@@ -18,29 +18,31 @@ unique_ptr<SQLStatement> ParseOwnerStatement(const string &query) {
 
 string SubscriptionOwner(const string &role) {
 	auto statement = ParseOwnerStatement("ALTER SUBSCRIPTION sub OWNER TO " + role);
-	return statement->Cast<AlterStatement>().info->Cast<AlterPermissionsInfo>().new_owner;
+	return statement->Cast<AlterStatement>().info->Cast<AlterPermissionsInfo>().new_owner.ToString();
 }
 
 string TablespaceOwner(const string &role) {
 	auto statement = ParseOwnerStatement("CREATE TABLESPACE ts OWNER " + role + " LOCATION '/tmp'");
-	return statement->Cast<CreateStatement>().info->Cast<CreateTablespaceInfo>().owner.GetIdentifierName();
+	return statement->Cast<CreateStatement>().info->Cast<CreateTablespaceInfo>().owner.ToString();
 }
 
 string TableOwner(const string &role) {
 	auto statement = ParseOwnerStatement("ALTER TABLE tbl OWNER TO " + role);
-	return statement->Cast<AlterStatement>().info->Cast<AlterPermissionsInfo>().new_owner;
+	return statement->Cast<AlterStatement>().info->Cast<AlterPermissionsInfo>().new_owner.ToString();
 }
 
 } // namespace
 
-TEST_CASE("An owner is the role named as written, or the session role in upper case", "[parser]") {
+TEST_CASE("An owner is the role named as written, or a role keyword", "[parser]") {
 	for (auto owner : {SubscriptionOwner, TablespaceOwner, TableOwner}) {
 		REQUIRE(owner("reporter") == "reporter");
 		REQUIRE(owner("\"Reporter\"") == "Reporter");
-		REQUIRE(owner("admin") == "admin");
+		REQUIRE(owner("admin") == "\"admin\"");
 		REQUIRE(owner("current_user") == "CURRENT_USER");
 		REQUIRE(owner("SESSION_USER") == "SESSION_USER");
 		REQUIRE(owner("current_role") == "CURRENT_ROLE");
+		REQUIRE(owner("\"CURRENT_USER\"") == "\"CURRENT_USER\"");
+		REQUIRE(owner("\"session_user\"") == "\"session_user\"");
 	}
 }
 

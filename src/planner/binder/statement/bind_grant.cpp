@@ -16,8 +16,8 @@
 
 namespace duckdb {
 
-static idx_t GranteeId(Binder &binder, const string &name) {
-	return name == "public" ? ACL_ID_PUBLIC : RoleSpecId(binder.context, name);
+static idx_t GranteeId(Binder &binder, const RoleSpec &grantee) {
+	return grantee.IsPublic() ? ACL_ID_PUBLIC : RoleSpecId(binder.context, grantee);
 }
 
 static void WarnUngranted(ClientContext &context, const AlterPermissionsInfo &info, AclMode requested,
@@ -339,7 +339,7 @@ static void ResolveDefaultPrivileges(Binder &binder, AlterPermissionsInfo &info)
 	info.SetQualifiedName(Identifier(), Identifier(), database);
 }
 
-static vector<idx_t> ResolveOwnedRoles(Binder &binder, const vector<string> &names, const string &action) {
+static vector<idx_t> ResolveOwnedRoles(Binder &binder, const vector<RoleSpec> &names, const string &action) {
 	auto &context = binder.context;
 	vector<idx_t> result;
 	for (auto &name : names) {

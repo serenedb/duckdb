@@ -65,14 +65,21 @@ string ParseInfo::RoutineKeyword(bool include_functions, bool include_procedures
 	return !include_procedures ? "FUNCTION" : !include_functions ? "PROCEDURE" : "ROUTINE";
 }
 
-string ParseInfo::RoleSpecToString(const string &role) {
-	if (role == "public") {
+string RoleSpec::ToString() const {
+	if (type != RoleSpecType::NAME) {
+		return EnumUtil::ToString(type);
+	}
+	if (IsPublic()) {
 		return "PUBLIC";
 	}
-	if (role == "CURRENT_USER" || role == "SESSION_USER" || role == "CURRENT_ROLE") {
-		return role;
-	}
-	return SQLIdentifier::ToString(role);
+	auto &text = name.GetIdentifierName();
+	const bool keyword = StringUtil::CIEquals(text, "public") || StringUtil::CIEquals(text, "current_user") ||
+	                     StringUtil::CIEquals(text, "session_user") || StringUtil::CIEquals(text, "current_role");
+	return keyword ? SQLQuotedIdentifier::ToString(name) : SQLIdentifier::ToString(name);
+}
+
+string RoleSpec::ToString(const vector<RoleSpec> &roles) {
+	return StringUtil::Join(roles, ", ", [](const RoleSpec &role) { return role.ToString(); });
 }
 
 string RenderOptionList(const case_insensitive_map_t<unique_ptr<ParsedExpression>> &parsed_options,

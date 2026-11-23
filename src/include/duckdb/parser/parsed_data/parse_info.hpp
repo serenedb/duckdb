@@ -10,6 +10,7 @@
 
 #include "duckdb/common/common.hpp"
 #include "duckdb/common/enums/catalog_type.hpp"
+#include "duckdb/parser/role_spec.hpp"
 #include "duckdb/common/case_insensitive_map.hpp"
 #include "duckdb/common/identifier.hpp"
 #include "duckdb/common/types/value.hpp"
@@ -81,7 +82,6 @@ public:
 	static unique_ptr<ParseInfo> Deserialize(Deserializer &deserializer);
 	static string TypeToString(CatalogType type);
 	static string RoutineKeyword(bool include_functions, bool include_procedures);
-	static string RoleSpecToString(const string &role);
 };
 
 } // namespace duckdb

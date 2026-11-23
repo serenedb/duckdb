@@ -1855,6 +1855,8 @@ overrides:
   IncludedColumn:
     type: "IncludedColumnDefinition"
     by_value: true
+  # create_schema.gram
+  SchemaAuthorization: "RoleSpec"
   # create_table.gram
   ColumnDefinition:
     type: "ConstraintColumnDefinition"
@@ -1993,7 +1995,6 @@ IdentifierType:
     - UpdateAlias
     - TableAliasColon
     - SecretStorageSpecifier
-    - SchemaAuthorization
     - SettingPath
     - SecretName
     - TriggerName
