@@ -6,7 +6,10 @@
 #include "duckdb/common/operator/string_cast.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/common/type_visitor.hpp"
+#include "duckdb/common/vector/constant_vector.hpp"
+#include "duckdb/common/vector/list_vector.hpp"
 #include "duckdb/common/vector/string_vector.hpp"
+#include "duckdb/common/vector/struct_vector.hpp"
 #include "duckdb/formats/row_stream.hpp"
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/parallel/task_scheduler.hpp"
@@ -212,8 +215,8 @@ const char *UnitName(JSONFormat format) {
 	return format == JSONFormat::NEWLINE_DELIMITED ? "line" : "record/value";
 }
 
-JsonDirectKind DirectKind(const LogicalType &type, const ColumnIndex &index) {
-	if (index.ChildIndexCount() != 0 || type.HasAlias()) {
+JsonDirectKind DirectKind(const LogicalType &type) {
+	if (type.HasAlias()) {
 		return JsonDirectKind::TREE;
 	}
 	if (JSONTransform::ParsesFromString(type)) {
@@ -239,6 +242,26 @@ JsonDirectKind DirectKind(const LogicalType &type, const ColumnIndex &index) {
 	default:
 		return JsonDirectKind::TREE;
 	}
+}
+
+JsonDirectKind DirectKind(const LogicalType &type, const ColumnIndex &index) {
+	if (index.ChildIndexCount() != 0) {
+		return JsonDirectKind::TREE;
+	}
+	return DirectKind(type);
+}
+
+JsonDirectFast DirectFast(JsonDirectKind kind, LogicalTypeId id) {
+	if (kind == JsonDirectKind::STRING || (kind == JsonDirectKind::VALUE && id == LogicalTypeId::VARCHAR)) {
+		return JsonDirectFast::STRING;
+	}
+	if (kind == JsonDirectKind::VALUE && id == LogicalTypeId::BIGINT) {
+		return JsonDirectFast::BIGINT;
+	}
+	if (kind == JsonDirectKind::VALUE && id == LogicalTypeId::DOUBLE) {
+		return JsonDirectFast::DOUBLE;
+	}
+	return JsonDirectFast::NONE;
 }
 
 std::string_view TrimToken(std::string_view token) {
@@ -803,8 +826,12 @@ JsonScanGlobal::JsonScanGlobal(ClientContext &context_p, const JSONScanData &bin
 }
 
 void JsonScanGlobal::PlanDirect() {
+	// simdjson built with SIMDJSON_ALLOW_TRAILING_COMMAS or SIMDJSON_ENABLE_NAN_INF accepts them: strict reads then go
+	// through JSONTreeParser, which looks for them
+	const bool lenient_simdjson = SIMDJSON_ALLOW_TRAILING_COMMAS || SIMDJSON_ENABLE_NAN_INF;
 	direct = options.type == JSONScanType::READ_JSON && options.record_type == JSONRecordType::RECORDS &&
-	         format == JSONFormat::NEWLINE_DELIMITED && !columns.names.empty() && columns.feature_columns.empty();
+	         format == JSONFormat::NEWLINE_DELIMITED && !columns.names.empty() && columns.feature_columns.empty() &&
+	         !(options.strict && lenient_simdjson);
 	if (!direct) {
 		return;
 	}
@@ -817,14 +844,7 @@ void JsonScanGlobal::PlanDirect() {
 	}
 	fast.assign(column_count, JsonDirectFast::NONE);
 	for (idx_t i = 0; i < column_count; i++) {
-		const auto id = columns.types[i].id();
-		if (kinds[i] == JsonDirectKind::STRING || (kinds[i] == JsonDirectKind::VALUE && id == LogicalTypeId::VARCHAR)) {
-			fast[i] = JsonDirectFast::STRING;
-		} else if (kinds[i] == JsonDirectKind::VALUE && id == LogicalTypeId::BIGINT) {
-			fast[i] = JsonDirectFast::BIGINT;
-		} else if (kinds[i] == JsonDirectKind::VALUE && id == LogicalTypeId::DOUBLE) {
-			fast[i] = JsonDirectFast::DOUBLE;
-		}
+		fast[i] = DirectFast(kinds[i], columns.types[i].id());
 	}
 	filtered.assign(column_count, false);
 	for (auto &filter : columns.filters) {
@@ -851,6 +871,60 @@ void JsonScanGlobal::PlanDirect() {
 			walked[filter.name.GetIndex()] = true;
 		}
 	}
+	column_nodes.assign(column_count, DConstants::INVALID_INDEX);
+	if (options.rendering != ValueRendering::NATIVE) {
+		return;
+	}
+	for (idx_t i = 0; i < column_count; i++) {
+		const auto &type = columns.types[i];
+		const auto id = type.id();
+		if (kinds[i] != JsonDirectKind::TREE || walked[i] || type.HasAlias() ||
+		    (id != LogicalTypeId::STRUCT && id != LogicalTypeId::LIST)) {
+			continue;
+		}
+		column_nodes[i] = PlanNode(type, columns.column_indices.empty() ? nullptr : &columns.column_indices[i]);
+		kinds[i] = nodes[column_nodes[i]].kind;
+	}
+}
+
+idx_t JsonScanGlobal::PlanNode(const LogicalType &type, optional_ptr<const ColumnIndex> index) {
+	if (index && index->ChildIndexCount() == 0) {
+		index = nullptr;
+	}
+	JsonDirectNode node;
+	node.column_index = index;
+	if (type.HasAlias()) {
+		node.kind = JsonDirectKind::TREE;
+	} else if (type.id() == LogicalTypeId::STRUCT && StructType::GetChildCount(type) != 0) {
+		node.kind = JsonDirectKind::STRUCT;
+		const idx_t child_count = StructType::GetChildCount(type);
+		const idx_t projected = index ? index->ChildIndexCount() : child_count;
+		vector<bool> kept(child_count, false);
+		for (idx_t i = 0; i < projected; i++) {
+			const idx_t slot = index ? index->GetChildIndex(i).GetPrimaryIndex() : i;
+			const auto &name = StructType::GetChildName(type, slot);
+			kept[slot] = true;
+			node.slots.push_back(slot);
+			node.keys.emplace(name, i);
+			node.folded_keys.emplace(name, i);
+			node.children.push_back(
+			    PlanNode(StructType::GetChildType(type, slot), index ? &index->GetChildIndex(i) : nullptr));
+		}
+		for (idx_t slot = 0; slot < child_count; slot++) {
+			if (!kept[slot]) {
+				node.unprojected.push_back(slot);
+			}
+		}
+		node.unknown_key_error = projected == child_count;
+	} else if (type.id() == LogicalTypeId::LIST) {
+		node.kind = JsonDirectKind::LIST;
+		node.child = PlanNode(ListType::GetChildType(type), nullptr);
+	} else {
+		node.kind = DirectKind(type);
+		node.fast = DirectFast(node.kind, type.id());
+	}
+	nodes.push_back(std::move(node));
+	return nodes.size() - 1;
 }
 
 bool JsonWalkPushdown(const Expression &expr) {
@@ -1041,12 +1115,8 @@ JsonScan::JsonScan(JsonScanGlobal &global_p)
 		thread_handle = global.source->OpenThreadHandle();
 	}
 	if (global.direct) {
-		direct_parser.allocator = &direct_memory.callbacks;
-		direct_parser.allow_trailing_commas = HasFlag(global.read_flags, JSONReadFlags::ALLOW_TRAILING_COMMAS);
-		direct_parser.allow_inf_and_nan = HasFlag(global.read_flags, JSONReadFlags::ALLOW_INF_AND_NAN);
-		walk_parser.allocator = &direct_memory.callbacks;
-		walk_parser.allow_trailing_commas = direct_parser.allow_trailing_commas;
-		walk_parser.allow_inf_and_nan = direct_parser.allow_inf_and_nan;
+		direct_parser.set_allocator(&direct_memory.callbacks);
+		walk_parser.set_allocator(&direct_memory.callbacks);
 		candidates.Initialize(STANDARD_VECTOR_SIZE);
 		const idx_t column_count = global.columns.names.size();
 		direct_raw.resize(column_count);
@@ -1057,6 +1127,7 @@ JsonScan::JsonScan(JsonScanGlobal &global_p)
 				direct_raw[i].resize(STANDARD_VECTOR_SIZE);
 			}
 		}
+		node_states.resize(global.nodes.size());
 	}
 }
 
@@ -1519,17 +1590,9 @@ static bool TransformGeoJSONFeatures(const JSONNode *values[], JSONTransformScra
 	return success;
 }
 
-bool JsonScan::DirectValue(idx_t column, simdjson::ondemand::value &value, Vector &vector, idx_t row) {
+bool JsonScan::DirectValue(JsonDirectKind kind, data_ptr_t data, ValidityMask &validity, Vector &string_vector,
+                           Vector &vector, simdjson::ondemand::value &value, idx_t row) {
 	namespace ondemand = simdjson::ondemand;
-	const auto kind = global.kinds[column];
-	if (kind == JsonDirectKind::TREE) {
-		std::string_view raw;
-		if (value.raw_json().get(raw)) {
-			return false;
-		}
-		direct_raw[column][row] = raw;
-		return true;
-	}
 	ondemand::json_type type;
 	if (value.type().get(type) || type == ondemand::json_type::unknown) {
 		return false;
@@ -1539,13 +1602,13 @@ bool JsonScan::DirectValue(idx_t column, simdjson::ondemand::value &value, Vecto
 		if (value.is_null().get(is_null) || !is_null) {
 			return false;
 		}
-		direct_validity[column]->SetInvalid(row);
+		validity.SetInvalid(row);
 		return true;
 	}
 	const bool strict = transform_options.strict_cast;
 	if (kind == JsonDirectKind::STRING || vector.GetType().id() == LogicalTypeId::VARCHAR) {
-		auto &target = kind == JsonDirectKind::STRING ? direct_strings[column] : vector;
-		auto strings = reinterpret_cast<string_t *>(direct_data[column]);
+		auto &target = kind == JsonDirectKind::STRING ? string_vector : vector;
+		auto strings = reinterpret_cast<string_t *>(data);
 		if (type == ondemand::json_type::string) {
 			std::string_view text;
 			if (value.get_string().get(text)) {
@@ -1558,7 +1621,7 @@ bool JsonScan::DirectValue(idx_t column, simdjson::ondemand::value &value, Vecto
 			if (strict) {
 				return false;
 			}
-			direct_validity[column]->SetInvalid(row);
+			validity.SetInvalid(row);
 			return true;
 		}
 		auto &heap = StringVector::GetStringHeap(vector);
@@ -1601,7 +1664,6 @@ bool JsonScan::DirectValue(idx_t column, simdjson::ondemand::value &value, Vecto
 	bool cast = false;
 	bool parsed;
 	const auto &column_type = vector.GetType();
-	const data_ptr_t data = direct_data[column];
 	switch (column_type.id()) {
 	case LogicalTypeId::BOOLEAN:
 		parsed = DirectNumber<bool>(value, type, strict, reinterpret_cast<bool *>(data)[row], cast);
@@ -1676,9 +1738,338 @@ bool JsonScan::DirectValue(idx_t column, simdjson::ondemand::value &value, Vecto
 		if (strict) {
 			return false;
 		}
-		direct_validity[column]->SetInvalid(row);
+		validity.SetInvalid(row);
 	}
 	return true;
+}
+
+static void InvalidateRows(ValidityMask &validity, idx_t from, idx_t capacity) {
+	const idx_t aligned = MinValue(AlignValue<idx_t, ValidityMask::BITS_PER_VALUE>(from), capacity);
+	for (idx_t row = from; row < aligned; row++) {
+		validity.SetInvalid(row);
+	}
+	if (aligned < capacity) {
+		validity.SetRangeInvalid(capacity, aligned / ValidityMask::BITS_PER_VALUE, ValidityMask::EntryCount(capacity));
+	}
+}
+
+void JsonScan::BindNode(idx_t id, Vector &vector, idx_t capacity) {
+	auto &node = global.nodes[id];
+	auto &state = node_states[id];
+	state.target = &vector;
+	switch (node.kind) {
+	case JsonDirectKind::STRING:
+		if (!state.strings) {
+			state.strings = make_uniq<Vector>(LogicalType::VARCHAR, capacity);
+		} else {
+			state.strings->Initialize(VectorDataInitialization::UNINITIALIZED, capacity);
+		}
+		break;
+	case JsonDirectKind::STRUCT: {
+		auto &entries = StructVector::GetEntries(vector);
+		state.found.resize(node.children.size());
+		for (idx_t i = 0; i < node.children.size(); i++) {
+			BindNode(node.children[i], entries[node.slots[i]], capacity);
+		}
+		state.validity = &FlatVector::ValidityMutable(vector);
+		InvalidateRows(*state.validity, 0, capacity);
+		return;
+	}
+	case JsonDirectKind::LIST:
+		state.list_size = 0;
+		state.list_capacity = ListVector::GetListCapacity(vector);
+		BindNode(node.child, ListVector::GetChildMutable(vector), state.list_capacity);
+		break;
+	default:
+		break;
+	}
+	RefreshNode(id, 0, capacity);
+}
+
+// Rows from 'from' to 'capacity' start out NULL, so a missing value costs nothing. A LIST reserves room for its
+// elements as it fills: the vectors below it move.
+void JsonScan::RefreshNode(idx_t id, idx_t from, idx_t capacity) {
+	auto &node = global.nodes[id];
+	auto &state = node_states[id];
+	switch (node.kind) {
+	case JsonDirectKind::TREE:
+		state.raw.resize(MaxValue<idx_t>(state.raw.size(), capacity));
+		std::fill(state.raw.begin() + NumericCast<int64_t>(from), state.raw.begin() + NumericCast<int64_t>(capacity),
+		          std::string_view());
+		return;
+	case JsonDirectKind::STRING:
+		state.strings->Reserve(capacity);
+		state.data = FlatVector::GetDataMutable(*state.strings);
+		state.validity = &FlatVector::ValidityMutable(*state.strings);
+		break;
+	case JsonDirectKind::STRUCT:
+		state.validity = &FlatVector::ValidityMutable(*state.target);
+		for (auto child : node.children) {
+			RefreshNode(child, from, capacity);
+		}
+		break;
+	default:
+		state.data = FlatVector::GetDataMutable(*state.target);
+		state.validity = &FlatVector::ValidityMutable(*state.target);
+		break;
+	}
+	InvalidateRows(*state.validity, from, capacity);
+}
+
+bool JsonScan::DirectNode(idx_t id, simdjson::ondemand::value &value, idx_t row) {
+	switch (global.nodes[id].kind) {
+	case JsonDirectKind::STRUCT:
+		return DirectStruct(id, value, row);
+	case JsonDirectKind::LIST:
+		return DirectList(id, value, row);
+	default:
+		return DirectLeaf(id, value, row);
+	}
+}
+
+bool JsonScan::DirectStruct(idx_t id, simdjson::ondemand::value &value, idx_t row) {
+	namespace ondemand = simdjson::ondemand;
+	auto &node = global.nodes[id];
+	auto &state = node_states[id];
+	ondemand::json_type type;
+	if (value.type().get(type)) {
+		return false;
+	}
+	if (type == ondemand::json_type::null) {
+		bool is_null = false;
+		return !value.is_null().get(is_null) && is_null;
+	}
+	ondemand::object object;
+	if (type != ondemand::json_type::object || value.get_object().get(object)) {
+		return false;
+	}
+	state.validity->SetValid(row);
+	auto found = state.found.data();
+	memset(found, 0, state.found.size());
+	idx_t position = 0;
+	for (auto field_result : object) {
+		ondemand::field field;
+		if (std::move(field_result).get(field)) {
+			return false;
+		}
+		const auto key = field.escaped_key();
+		if (position == state.hints.size()) {
+			state.hints.emplace_back();
+		}
+		auto &hint = state.hints[position++];
+		if (hint.strength == 0 || !SameKey(hint, key)) {
+			if (memchr(key.data(), '\\', key.size())) {
+				return false;
+			}
+			hint.key.assign(key.data(), key.size());
+			KeyWords(key, hint.words);
+			hint.column = DConstants::INVALID_INDEX;
+			hint.strength = 3;
+			auto exact = node.keys.find(key);
+			if (exact != node.keys.end()) {
+				hint.column = exact->second;
+				hint.strength = 2;
+			} else if (node.folded_keys.find(key) != node.folded_keys.end()) {
+				hint.strength = 1;
+			}
+		}
+		if (hint.strength == 1) {
+			return false;
+		}
+		if (hint.column == DConstants::INVALID_INDEX) {
+			if (node.unknown_key_error && transform_options.error_unknown_key) {
+				return false;
+			}
+			continue;
+		}
+		if (found[hint.column]) {
+			if (transform_options.error_duplicate_key) {
+				return false;
+			}
+			continue;
+		}
+		found[hint.column] = 1;
+		auto child = std::move(field).value();
+		if (!DirectNode(node.children[hint.column], child, row)) {
+			return false;
+		}
+	}
+	if (transform_options.error_missing_key) {
+		for (idx_t i = 0; i < node.children.size(); i++) {
+			if (!found[i]) {
+				return false;
+			}
+		}
+	}
+	return true;
+}
+
+bool JsonScan::DirectList(idx_t id, simdjson::ondemand::value &value, idx_t row) {
+	namespace ondemand = simdjson::ondemand;
+	auto &node = global.nodes[id];
+	auto &state = node_states[id];
+	ondemand::json_type type;
+	if (value.type().get(type)) {
+		return false;
+	}
+	if (type == ondemand::json_type::null) {
+		bool is_null = false;
+		if (value.is_null().get(is_null) || !is_null) {
+			return false;
+		}
+		state.validity->SetInvalid(row);
+		return true;
+	}
+	if (type != ondemand::json_type::array) {
+		if (transform_options.strict_cast) {
+			return false;
+		}
+		state.validity->SetInvalid(row);
+		return true;
+	}
+	ondemand::array array;
+	if (value.get_array().get(array)) {
+		return false;
+	}
+	state.validity->SetValid(row);
+	const idx_t offset = state.list_size;
+	for (auto element_result : array) {
+		ondemand::value element;
+		if (std::move(element_result).get(element)) {
+			return false;
+		}
+		if (state.list_size == state.list_capacity) {
+			ListVector::Reserve(*state.target, MaxValue<idx_t>(2 * state.list_capacity, STANDARD_VECTOR_SIZE));
+			const idx_t from = state.list_capacity;
+			state.list_capacity = ListVector::GetListCapacity(*state.target);
+			RefreshNode(node.child, from, state.list_capacity);
+		}
+		if (!DirectNode(node.child, element, state.list_size)) {
+			return false;
+		}
+		state.list_size++;
+	}
+	auto &entry = reinterpret_cast<list_entry_t *>(state.data)[row];
+	entry.offset = offset;
+	entry.length = state.list_size - offset;
+	return true;
+}
+
+bool JsonScan::DirectLeaf(idx_t id, simdjson::ondemand::value &value, idx_t row) {
+	auto &node = global.nodes[id];
+	auto &state = node_states[id];
+	if (node.kind == JsonDirectKind::TREE) {
+		std::string_view raw;
+		if (value.raw_json().get(raw)) {
+			return false;
+		}
+		state.raw[row] = raw;
+		return true;
+	}
+	state.validity->SetValid(row);
+	switch (node.fast) {
+	case JsonDirectFast::BIGINT:
+		if (!value.get_int64().get(reinterpret_cast<int64_t *>(state.data)[row])) {
+			return true;
+		}
+		break;
+	case JsonDirectFast::DOUBLE: {
+		const auto token = value.raw_json_token();
+		auto &result = reinterpret_cast<double *>(state.data)[row];
+		if (!value.get_double().get(result)) {
+			if (result == 0 && std::signbit(result) &&
+			    TrimToken(token).find_first_of(".eE") == std::string_view::npos) {
+				result = 0;
+			}
+			return true;
+		}
+		break;
+	}
+	case JsonDirectFast::STRING: {
+		const auto token = TrimToken(value.raw_json_token());
+		if (token.size() >= 2 && token.front() == '"') {
+			const auto content = token.substr(1, token.size() - 2);
+			if (PlainString(content)) {
+				reinterpret_cast<string_t *>(state.data)[row] =
+				    string_t(content.data(), UnsafeNumericCast<uint32_t>(content.size()));
+				return true;
+			}
+		}
+		break;
+	}
+	default:
+		break;
+	}
+	auto &strings = state.strings ? *state.strings : *state.target;
+	return DirectValue(node.kind, state.data, *state.validity, strings, *state.target, value, row);
+}
+
+void JsonScan::NullNode(idx_t id, idx_t row) {
+	auto &node = global.nodes[id];
+	auto &state = node_states[id];
+	switch (node.kind) {
+	case JsonDirectKind::TREE:
+		state.raw[row] = std::string_view();
+		return;
+	case JsonDirectKind::STRUCT:
+		state.validity->SetInvalid(row);
+		for (auto child : node.children) {
+			NullNode(child, row);
+		}
+		return;
+	default:
+		state.validity->SetInvalid(row);
+		return;
+	}
+}
+
+bool JsonScan::FinishNode(idx_t id, idx_t count, JSONTransformScratch &scratch) {
+	auto &node = global.nodes[id];
+	auto &state = node_states[id];
+	switch (node.kind) {
+	case JsonDirectKind::STRING:
+		return JSONTransform::TransformStrings(*state.strings, *state.target, count, transform_options);
+	case JsonDirectKind::TREE: {
+		node_roots.resize(MaxValue<idx_t>(node_roots.size(), count));
+		node_values.resize(MaxValue<idx_t>(node_values.size(), count));
+		for (idx_t row = 0; row < count; row++) {
+			auto raw = state.raw[row];
+			if (raw.empty()) {
+				node_roots[row] = DConstants::INVALID_INDEX;
+				continue;
+			}
+			JSONParseError error;
+			const idx_t readable = NumericCast<idx_t>(data + size + JSON_PADDING - raw.data());
+			auto root = parser.ParseAppend(raw.data(), raw.size(), readable, error);
+			if (!root.IsValid()) {
+				return false;
+			}
+			node_roots[row] = root.GetIndex();
+		}
+		for (idx_t row = 0; row < count; row++) {
+			node_values[row] = node_roots[row] == DConstants::INVALID_INDEX ? nullptr : parser.Node(node_roots[row]);
+		}
+		return JSONTransform::Transform(node_values.data(), scratch, *state.target, count, transform_options,
+		                                node.column_index);
+	}
+	case JsonDirectKind::STRUCT: {
+		auto &entries = StructVector::GetEntries(*state.target);
+		for (auto slot : node.unprojected) {
+			ConstantVector::SetNull(entries[slot], count_t(count));
+		}
+		for (auto child : node.children) {
+			if (!FinishNode(child, count, scratch)) {
+				return false;
+			}
+		}
+		return true;
+	}
+	case JsonDirectKind::LIST:
+		ListVector::SetListSize(*state.target, state.list_size);
+		return FinishNode(node.child, state.list_size, scratch);
+	default:
+		return true;
+	}
 }
 
 void JsonScan::NullRow(idx_t row, JsonDirectPass pass, const vector<Vector *> &vectors) {
@@ -1689,7 +2080,9 @@ void JsonScan::NullRow(idx_t row, JsonDirectPass pass, const vector<Vector *> &v
 			continue;
 		}
 		const auto kind = global.kinds[column];
-		if (kind == JsonDirectKind::TREE) {
+		if (global.column_nodes[column] != DConstants::INVALID_INDEX) {
+			NullNode(global.column_nodes[column], row);
+		} else if (kind == JsonDirectKind::TREE) {
 			direct_raw[column][row] = std::string_view();
 		} else {
 			FlatVector::ValidityMutable(kind == JsonDirectKind::STRING ? direct_strings[column] : *vectors[column])
@@ -1943,6 +2336,21 @@ JsonRecordResult JsonScan::DirectRecord(idx_t record, idx_t row, JsonDirectPass 
 			}
 			continue;
 		}
+		const auto kind = global.kinds[column];
+		if (kind == JsonDirectKind::STRUCT || kind == JsonDirectKind::LIST) {
+			if (!DirectNode(global.column_nodes[column], value, row)) {
+				return FALLBACK;
+			}
+			continue;
+		}
+		if (kind == JsonDirectKind::TREE) {
+			std::string_view raw;
+			if (value.raw_json().get(raw)) {
+				return FALLBACK;
+			}
+			direct_raw[column][row] = raw;
+			continue;
+		}
 		direct_validity[column]->SetValid(row);
 		switch (global.fast[column]) {
 		case JsonDirectFast::BIGINT:
@@ -1977,7 +2385,8 @@ JsonRecordResult JsonScan::DirectRecord(idx_t record, idx_t row, JsonDirectPass 
 		default:
 			break;
 		}
-		if (!DirectValue(column, value, *vectors[column], row)) {
+		if (!DirectValue(kind, direct_data[column], *direct_validity[column], direct_strings[column], *vectors[column],
+		                 value, row)) {
 			return FALLBACK;
 		}
 	}
@@ -1990,6 +2399,9 @@ JsonRecordResult JsonScan::DirectRecord(idx_t record, idx_t row, JsonDirectPass 
 		}
 		if (direct_missing_error && pass != JsonDirectPass::OTHERS) {
 			return FALLBACK;
+		}
+		if (global.column_nodes[column] != DConstants::INVALID_INDEX) {
+			continue;
 		}
 		if (global.kinds[column] == JsonDirectKind::TREE) {
 			direct_raw[column][row] = std::string_view();
@@ -2043,6 +2455,12 @@ bool JsonScan::FinishDirect(idx_t rows, JsonDirectPass pass, const vector<Vector
 			}
 			break;
 		}
+		case JsonDirectKind::STRUCT:
+		case JsonDirectKind::LIST:
+			if (!FinishNode(global.column_nodes[column], rows, scratch)) {
+				return false;
+			}
+			break;
 		default:
 			break;
 		}
@@ -2060,6 +2478,10 @@ bool JsonScan::DecodeDirect(DataChunk &output, idx_t &rows) {
 	direct_data.resize(vectors.size());
 	direct_validity.resize(vectors.size());
 	for (idx_t column = 0; column < vectors.size(); column++) {
+		if (global.column_nodes[column] != DConstants::INVALID_INDEX) {
+			BindNode(global.column_nodes[column], *vectors[column], STANDARD_VECTOR_SIZE);
+			continue;
+		}
 		const bool strings = global.kinds[column] == JsonDirectKind::STRING;
 		if (strings) {
 			direct_strings[column].Initialize(VectorDataInitialization::UNINITIALIZED, STANDARD_VECTOR_SIZE);

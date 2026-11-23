@@ -37,6 +37,11 @@ static void LoadInternal(ExtensionLoader &loader) {
 	    "How GEOMETRY values are written to JSON: 'wkt' for Well-Known Text, or 'geojson' for GeoJSON geometry "
 	    "objects. COPY ... TO ... (FORMAT GEOJSON) always writes GeoJSON regardless of this setting.",
 	    LogicalType::VARCHAR, Value("wkt"), JSONFunctions::ValidateGeometryFormat);
+	config.AddExtensionOption(
+	    "json_strict_paths",
+	    "Whether the JSON path functions (->, ->>, json_extract, json_value, ...) reject a malformed "
+	    "document even when the error is outside the part they read",
+	    LogicalType::BOOLEAN, Value::BOOLEAN(false));
 
 	// JSON type
 	auto json_type = LogicalType::JSON();

@@ -23,7 +23,7 @@ namespace duckdb {
 
 enum class JsonUnitMode : uint8_t { RANGES, STREAM, SEQUENTIAL };
 
-enum class JsonDirectKind : uint8_t { VALUE, STRING, TREE };
+enum class JsonDirectKind : uint8_t { VALUE, STRING, TREE, STRUCT, LIST };
 
 enum class JsonDirectPass : uint8_t { ALL, FILTERS, OTHERS };
 
@@ -51,6 +51,35 @@ struct JsonPathPredicate {
 };
 
 enum class JsonRecordResult : uint8_t { DECODED, REJECTED, FALLBACK };
+
+//! A STRUCT or LIST column, or a value inside one, decoded straight into its vector
+struct JsonDirectNode {
+	JsonDirectKind kind = JsonDirectKind::TREE;
+	JsonDirectFast fast = JsonDirectFast::NONE;
+	//! TREE: the projection passed to JSONTransform
+	optional_ptr<const ColumnIndex> column_index;
+	//! STRUCT: the projected children, their entries in the struct vector and the entries projected out
+	vector<idx_t> children;
+	vector<idx_t> slots;
+	vector<idx_t> unprojected;
+	unordered_map<string, idx_t> keys;
+	case_insensitive_map_t<idx_t> folded_keys;
+	bool unknown_key_error = false;
+	//! LIST: the element
+	idx_t child = DConstants::INVALID_INDEX;
+};
+
+struct JsonDirectNodeState {
+	Vector *target = nullptr;
+	data_ptr_t data = nullptr;
+	ValidityMask *validity = nullptr;
+	unique_ptr<Vector> strings;
+	vector<std::string_view> raw;
+	idx_t list_size = 0;
+	idx_t list_capacity = 0;
+	vector<uint8_t> found;
+	vector<JsonKeyHint> hints;
+};
 
 struct JsonParserMemory {
 	explicit JsonParserMemory(Allocator &allocator_p) : allocator(allocator_p), callbacks {Allocate, Deallocate, this} {
@@ -125,10 +154,13 @@ public:
 	vector<bool> walked;
 	unordered_map<string, idx_t> keys;
 	case_insensitive_map_t<idx_t> folded_keys;
+	vector<JsonDirectNode> nodes;
+	vector<idx_t> column_nodes;
 
 private:
 	void Detect();
 	void PlanDirect();
+	idx_t PlanNode(const LogicalType &type, optional_ptr<const ColumnIndex> index);
 	void ThrowIfPossible();
 
 private:
@@ -172,8 +204,17 @@ private:
 	JsonRecordResult DirectRecord(idx_t record, idx_t row, JsonDirectPass pass, const vector<Vector *> &vectors);
 	bool WalkRejects(idx_t column, std::string_view raw);
 	void NullRow(idx_t row, JsonDirectPass pass, const vector<Vector *> &vectors);
-	bool DirectValue(idx_t column, simdjson::ondemand::value &value, Vector &vector, idx_t row);
+	bool DirectValue(JsonDirectKind kind, data_ptr_t data, ValidityMask &validity, Vector &strings, Vector &vector,
+	                 simdjson::ondemand::value &value, idx_t row);
 	bool FinishDirect(idx_t rows, JsonDirectPass pass, const vector<Vector *> &vectors);
+	void BindNode(idx_t id, Vector &vector, idx_t capacity);
+	void RefreshNode(idx_t id, idx_t from, idx_t capacity);
+	bool DirectNode(idx_t id, simdjson::ondemand::value &value, idx_t row);
+	bool DirectStruct(idx_t id, simdjson::ondemand::value &value, idx_t row);
+	bool DirectList(idx_t id, simdjson::ondemand::value &value, idx_t row);
+	bool DirectLeaf(idx_t id, simdjson::ondemand::value &value, idx_t row);
+	void NullNode(idx_t id, idx_t row);
+	bool FinishNode(idx_t id, idx_t count, JSONTransformScratch &scratch);
 	idx_t Decode(DataChunk &output, idx_t count);
 	idx_t DecodeObjects(DataChunk &output, idx_t count);
 	idx_t ApplyFilters(DataChunk &output, idx_t count, bool filtered_columns_only,
@@ -229,6 +270,9 @@ private:
 	vector<vector<std::string_view>> direct_raw;
 	vector<uint8_t> direct_found;
 	vector<JsonKeyHint> key_hints;
+	vector<JsonDirectNodeState> node_states;
+	vector<idx_t> node_roots;
+	vector<const JSONNode *> node_values;
 	bool direct_unknown_error = false;
 	bool direct_duplicate_error = false;
 	bool direct_missing_error = false;

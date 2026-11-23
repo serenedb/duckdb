@@ -6,9 +6,8 @@ static void ValidFunction(DataChunk &args, ExpressionState &state, Vector &resul
 	auto &lstate = JSONFunctionLocalState::ResetAndGet(state);
 	const auto &inputs = args.data[0];
 	JSONParseError error;
-	UnaryExecutor::Execute<string_t, bool>(inputs, result, [&](string_t input) {
-		return JSONCommon::ReadDocumentUnsafe(lstate.parser, input, error) != nullptr;
-	});
+	UnaryExecutor::Execute<string_t, bool>(
+	    inputs, result, [&](string_t input) { return lstate.parser.IsValid(input.GetData(), input.GetSize(), error); });
 }
 
 static void GetValidFunctionInternal(ScalarFunctionSet &set, const LogicalType &input_type) {
