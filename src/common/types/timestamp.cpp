@@ -40,7 +40,8 @@ static idx_t TimestampTimeLength(const char *str, idx_t len) {
 // ISO 8601
 
 TimestampCastResult Timestamp::TryConvertTimestampTZ(const char *str, idx_t len, timestamp_t &result, bool use_offset,
-                                                     bool &has_offset, string_t &tz, optional_ptr<int32_t> nanos) {
+                                                     bool &has_offset, string_t &tz, optional_ptr<int32_t> nanos,
+                                                     bool strict) {
 	idx_t pos;
 	date_t date;
 	dtime_t time;
@@ -48,7 +49,7 @@ TimestampCastResult Timestamp::TryConvertTimestampTZ(const char *str, idx_t len,
 	if (nanos) {
 		*nanos = 0;
 	}
-	switch (Date::TryConvertDate(str, len, pos, date, has_offset)) {
+	switch (Date::TryConvertDate(str, len, pos, date, has_offset, false, strict)) {
 	case DateCastResult::ERROR_INCORRECT_FORMAT:
 		return TimestampCastResult::ERROR_INCORRECT_FORMAT;
 	case DateCastResult::ERROR_RANGE:
@@ -72,28 +73,40 @@ TimestampCastResult Timestamp::TryConvertTimestampTZ(const char *str, idx_t len,
 	if (str[pos] == ' ' || str[pos] == 'T') {
 		pos++;
 	}
-	idx_t time_pos = 0;
-	// TryConvertTime may recursively call us, so we use TryConvertInterval.
-	// Note that we can't pass strict== true here because we want to process any suffix.
 	auto time_len = TimestampTimeLength(str + pos, len - pos);
-	if (!Time::TryConvertInterval(str + pos, time_len, time_pos, time, false, nanos) || time_pos != time_len) {
-		return TimestampCastResult::ERROR_INCORRECT_FORMAT;
+	if (time_len == 0 && pos < len && (str[pos] == '+' || str[pos] == '-')) {
+		time = dtime_t(0);
+	} else {
+		idx_t time_pos = 0;
+		// TryConvertTime may recursively call us, so we use TryConvertInterval.
+		// Note that we can't pass strict== true here because we want to process any suffix.
+		if (!Time::TryConvertInterval(str + pos, time_len, time_pos, time, false, nanos) || time_pos != time_len) {
+			return TimestampCastResult::ERROR_INCORRECT_FORMAT;
+		}
+		//	We parsed an interval, so make sure it is in range.
+		if (time.value > Interval::MICROS_PER_DAY) {
+			return TimestampCastResult::ERROR_RANGE;
+		}
+		pos += time_pos;
 	}
-	//	We parsed an interval, so make sure it is in range.
-	if (time.value > Interval::MICROS_PER_DAY) {
-		return TimestampCastResult::ERROR_RANGE;
-	}
-	pos += time_pos;
 	if (!Timestamp::TryFromDatetime(date, time, result)) {
 		return TimestampCastResult::ERROR_RANGE;
 	}
 	if (pos < len) {
-		// skip a "Z" at the end (as per the ISO8601 specs)
 		int hh, mm, ss;
-		if (str[pos] == 'Z') {
-			pos++;
+		auto zone_pos = pos;
+		while (zone_pos < len && str[zone_pos] == ' ') {
+			zone_pos++;
+		}
+		const bool spaced = zone_pos > pos;
+		if (zone_pos < len && str[zone_pos] == 'Z' &&
+		    (!spaced || zone_pos + 1 == len || StringUtil::CharacterIsSpace(str[zone_pos + 1]))) {
+			// skip a "Z" at the end (as per the ISO8601 specs)
+			pos = zone_pos + 1;
 			has_offset = true;
-		} else if (Timestamp::TryParseUTCOffset(str, pos, len, hh, mm, ss)) {
+		} else if ((!spaced || (zone_pos < len && (str[zone_pos] == '+' || str[zone_pos] == '-'))) &&
+		           Timestamp::TryParseUTCOffset(str, zone_pos, len, hh, mm, ss)) {
+			pos = zone_pos;
 			const int64_t delta =
 			    hh * Interval::MICROS_PER_HOUR + mm * Interval::MICROS_PER_MINUTE + ss * Interval::MICROS_PER_SEC;
 			if (use_offset && !TrySubtractOperator::Operation(result.value, delta, result.value)) {
@@ -131,7 +144,7 @@ TimestampCastResult Timestamp::TryConvertTimestamp(const char *str, idx_t len, t
                                                    optional_ptr<int32_t> nanos, bool strict) {
 	string_t tz(nullptr, 0);
 	bool has_offset = false;
-	auto success = TryConvertTimestampTZ(str, len, result, use_offset, has_offset, tz, nanos);
+	auto success = TryConvertTimestampTZ(str, len, result, use_offset, has_offset, tz, nanos, strict);
 	if (success != TimestampCastResult::SUCCESS) {
 		return success;
 	}
@@ -177,13 +190,13 @@ TimestampCastResult Timestamp::TryConvertTimestamp(const char *str, idx_t len, t
 	int32_t nanos = 0;
 	timestamp_t micros;
 	auto success = TryConvertTimestamp(str, len, micros, use_offset, &nanos, strict);
-	if (success != TimestampCastResult::SUCCESS) {
+	if (success != TimestampCastResult::SUCCESS && success != TimestampCastResult::STRICT_UTC) {
 		return success;
 	}
 	if (!TryFromTimestampNanos(micros, nanos, result)) {
 		return TimestampCastResult::ERROR_INCORRECT_FORMAT;
 	}
-	return TimestampCastResult::SUCCESS;
+	return success;
 }
 
 string Timestamp::FormatError(const string &str) {

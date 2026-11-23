@@ -149,17 +149,22 @@ SELECT 7.4e-323::BIT;
 query I
 SELECT ''::BIT;
 ----
-0
+(empty)
 
 query I
 SELECT bit_length(''::BIT);
 ----
-1
+0
 
 query I
 SELECT TRY_CAST('' AS BIT);
 ----
-0
+(empty)
+
+query III
+SELECT ''::BIT::BOOL, ''::BIT::INTEGER, ''::BIT::HUGEINT;
+----
+false	0	0
 
 #  bitstrings that are too large for casted-to type
 # ---------------------------------------------------
@@ -232,10 +237,10 @@ SELECT 'AAAA'::BLOB::BIT;
 ----
 01000001010000010100000101000001
 
-statement error
-SELECT ''::BLOB::BIT;
+query II
+SELECT ''::BLOB::BIT, ''::BIT::BLOB;
 ----
-Conversion Error: Cannot cast empty BLOB to BIT
+(empty)	(empty)
 
 #               negative numbers
 # ---------------------------------------------------

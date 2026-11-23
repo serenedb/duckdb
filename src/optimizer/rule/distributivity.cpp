@@ -1,5 +1,6 @@
 #include "duckdb/optimizer/rule/distributivity.hpp"
 
+#include "duckdb/optimizer/expression_rewriter.hpp"
 #include "duckdb/optimizer/matcher/expression_matcher.hpp"
 #include "duckdb/planner/expression/bound_conjunction_expression.hpp"
 #include "duckdb/planner/expression/bound_constant_expression.hpp"
@@ -64,12 +65,14 @@ unique_ptr<Expression> DistributivityRule::Apply(LogicalOperator &op, vector<ref
 	// this is our initial candidate set (in the example: [X, A])
 	hashed_expression_set_t<Expression> candidate_set;
 	AddExpressionSet(*initial_or.GetChildrenMutable()[0], candidate_set);
+	idx_t largest = candidate_set.size();
 	// now for each of the remaining children, we create a set again and intersect them
 	// in our example: the second set would be [X, B]
 	// the intersection would leave [X]
 	for (idx_t i = 1; i < initial_or.GetChildrenMutable().size(); i++) {
 		hashed_expression_set_t<Expression> next_set;
 		AddExpressionSet(*initial_or.GetChildrenMutable()[i], next_set);
+		largest = MaxValue(largest, next_set.size());
 		hashed_expression_set_t<Expression> intersect_result;
 		for (auto &expr : candidate_set) {
 			if (next_set.find(expr) != next_set.end()) {
@@ -80,6 +83,9 @@ unique_ptr<Expression> DistributivityRule::Apply(LogicalOperator &op, vector<ref
 	}
 	if (candidate_set.empty()) {
 		// nothing found: abort
+		return nullptr;
+	}
+	if (rewriter.Scored() && largest != candidate_set.size()) {
 		return nullptr;
 	}
 	// now for each of the remaining expressions in the candidate set we know that it is contained in all branches of

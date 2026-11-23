@@ -179,6 +179,7 @@
 #include "duckdb/optimizer/aggregate_rewrite.hpp"
 #include "duckdb/optimizer/build_probe_side_optimizer.hpp"
 #include "duckdb/optimizer/compressed_materialization.hpp"
+#include "duckdb/optimizer/join_filter_pushdown_optimizer.hpp"
 #include "duckdb/optimizer/join_order/join_order_operator.hpp"
 #include "duckdb/optimizer/optimizer_extension.hpp"
 #include "duckdb/optimizer/relation_statistics/relation_statistics.hpp"
@@ -5445,6 +5446,25 @@ const char* EnumUtil::ToChars<PushdownExtractSupport>(PushdownExtractSupport val
 template<>
 PushdownExtractSupport EnumUtil::FromString<PushdownExtractSupport>(std::string_view value) {
 	return static_cast<PushdownExtractSupport>(StringUtil::StringToEnum(GetPushdownExtractSupportValues(), 3, "PushdownExtractSupport", value));
+}
+
+const StringUtil::EnumStringLiteral *GetPushdownTargetUseValues() {
+	static constexpr StringUtil::EnumStringLiteral values[] {
+		{ static_cast<uint32_t>(PushdownTargetUse::JOIN_FILTER), "JOIN_FILTER" },
+		{ static_cast<uint32_t>(PushdownTargetUse::BOUND), "BOUND" },
+		{ static_cast<uint32_t>(PushdownTargetUse::SCAN_ORDER_BOUND), "SCAN_ORDER_BOUND" }
+	};
+	return values;
+}
+
+template<>
+const char* EnumUtil::ToChars<PushdownTargetUse>(PushdownTargetUse value) {
+	return StringUtil::EnumToString(GetPushdownTargetUseValues(), 3, "PushdownTargetUse", static_cast<uint32_t>(value));
+}
+
+template<>
+PushdownTargetUse EnumUtil::FromString<PushdownTargetUse>(std::string_view value) {
+	return static_cast<PushdownTargetUse>(StringUtil::StringToEnum(GetPushdownTargetUseValues(), 3, "PushdownTargetUse", value));
 }
 
 const StringUtil::EnumStringLiteral *GetQualifiedNameToStringModeValues() {

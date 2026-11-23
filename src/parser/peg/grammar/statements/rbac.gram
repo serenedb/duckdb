@@ -35,7 +35,7 @@ PasswordNullOption  <- 'PASSWORD' 'NULL'
 # ALTER <objtype> name OWNER TO role -> serenedb_alter_owner pragma. Registered
 # before the native AlterStatement so OWNER TO is intercepted (DuckDB's alter
 # binder does not support ownership changes).
-AlterOwnerStatement <- 'ALTER' OwnerObjectType QualifiedName 'OWNER' 'TO' OwnerRoleSpec
+AlterOwnerStatement <- 'ALTER' OwnerObjectType IfExists? QualifiedName 'OWNER' 'TO' OwnerRoleSpec
 OwnerObjectType <- 'TABLE' / 'VIEW' / 'SEQUENCE' / 'SCHEMA' / 'TYPE' / 'JOB' / 'TABLESPACE'
 OwnerRoleSpec <- 'CURRENT_USER' / 'SESSION_USER' / 'CURRENT_ROLE' / ColId
 

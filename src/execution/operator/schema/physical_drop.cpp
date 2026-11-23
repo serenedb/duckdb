@@ -63,7 +63,7 @@ static void ResetSessionAuthorization(ExecutionContext &context) {
 	const Identifier name("session_authorization");
 	ExtensionOption option;
 	if (DBConfig::GetConfig(context.client).TryGetExtensionOption(name, option)) {
-		PhysicalReset::ResetVariable(context, name, SetScope::AUTOMATIC);
+		PhysicalReset::ResetVariable(context.client, name, SetScope::AUTOMATIC);
 	}
 }
 
@@ -72,7 +72,7 @@ static void Discard(ExecutionContext &context, DiscardTarget target) {
 	case DiscardTarget::ALL:
 		DeallocateAll(context.client);
 		ResetSessionAuthorization(context);
-		PhysicalReset::ResetAll(context, SetScope::AUTOMATIC);
+		PhysicalReset::ResetAll(context.client, SetScope::AUTOMATIC);
 		DropTemporaryObjects(context.client);
 		ResetSequences(context.client);
 		break;

@@ -25,12 +25,11 @@ namespace duckdb {
 
 unique_ptr<LogicalOperator> Binder::BindCopyDatabaseSchema(Catalog &from_database,
                                                            const Identifier &target_database_name) {
-	catalog_entry_vector_t catalog_entries;
-	catalog_entries = PhysicalExport::GetNaiveExportOrder(context, from_database);
-
 	auto info = make_uniq<CopyDatabaseInfo>(target_database_name);
 	auto dependency_manager = from_database.GetDependencyManager();
 	auto transaction = from_database.GetCatalogTransaction(context);
+	auto catalog_entries = PhysicalExport::GetNaiveExportOrder(context, from_database);
+	PhysicalExport::OrderEntries(from_database, transaction, catalog_entries);
 	unordered_map<idx_t, QualifiedName> user_types;
 	for (auto &entry : catalog_entries) {
 		if (entry.get().type == CatalogType::TYPE_ENTRY && !entry.get().internal) {
@@ -54,6 +53,8 @@ unique_ptr<LogicalOperator> Binder::BindCopyDatabaseSchema(Catalog &from_databas
 					column.SetType(type);
 				}
 			}
+			RerootTableExpressions(context, create_info->Cast<CreateTableInfo>(), from_database.GetName(),
+			                       target_database_name);
 		}
 		// re-root the entry (keeping its possibly nested schema path) in the target database
 		create_info->SetQualifiedName(create_info->GetQualifiedName().WithCatalog(target_database_name));
@@ -110,7 +111,11 @@ unique_ptr<LogicalOperator> Binder::BindCopyDatabaseData(Catalog &source_catalog
 		auto select_node = make_uniq<SelectNode>();
 		auto &select_list = select_node->select_list;
 		for (auto &col : table.GetColumns().Physical()) {
+			if (col.Generated()) {
+				continue;
+			}
 			select_list.push_back(make_uniq<ColumnRefExpression>(col.Name(), table.name));
+			insert_node.columns.push_back(col.Name());
 		}
 
 		select_node->from_table = std::move(from_tbl);

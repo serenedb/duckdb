@@ -5,6 +5,6 @@
 require core_functions
 
 statement error
-SELECT DISTINCT OPERATOR ( / ) + ARRAY [ ] :: INTERVAL SECONDS [9] [ ] :: SETOF NCHAR ARRAY :: FLOAT ;
+SELECT DISTINCT OPERATOR ( / ) + ARRAY [ ] :: INTERVAL SECONDS [9] [ ] :: NCHAR ARRAY :: FLOAT ;
 ----
 Binder Error:

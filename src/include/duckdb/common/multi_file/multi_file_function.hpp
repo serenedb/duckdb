@@ -98,6 +98,50 @@ struct MultiFileReaderInterface {
 	virtual FileGlobInput GetGlobInput();
 };
 
+class ScannedFilePartition final : public PartitionRowGroup {
+public:
+	ScannedFilePartition(const MultiFileBindData &bind_data_p, shared_ptr<PartitionRowGroup> file_p)
+	    : bind_data(bind_data_p), file(std::move(file_p)) {
+	}
+
+	optionally_owned_ptr<const BaseStatistics> GetColumnStatistics(const StorageIndex &storage_index) final {
+		if (!ReadAsStored(storage_index)) {
+			return {};
+		}
+		auto result = file->GetColumnStatistics(storage_index);
+		if (result && !storage_index.IsPushdownExtract() &&
+		    result->GetType() != bind_data.types[storage_index.GetPrimaryIndex()]) {
+			return {};
+		}
+		return result;
+	}
+
+	bool MinMaxIsExact(const StorageIndex &storage_index) final {
+		return ReadAsStored(storage_index) && file->MinMaxIsExact(storage_index);
+	}
+
+	bool HasPendingWrites() final {
+		return file->HasPendingWrites();
+	}
+
+private:
+	bool ReadAsStored(const StorageIndex &storage_index) const {
+		const auto primary_index = storage_index.GetPrimaryIndex();
+		if (!bind_data.reader_bind.schema.empty() || primary_index >= bind_data.types.size()) {
+			return false;
+		}
+		for (auto &hive : bind_data.reader_bind.hive_partitioning_indexes) {
+			if (hive.index == primary_index) {
+				return false;
+			}
+		}
+		return true;
+	}
+
+	const MultiFileBindData &bind_data;
+	const shared_ptr<PartitionRowGroup> file;
+};
+
 template <class OP>
 class MultiFileFunction : public TableFunction {
 public:
@@ -776,6 +820,7 @@ public:
 		bool opened = false;
 		vector<PartitionStatistics> partitions;
 		vector<optionally_owned_ptr<const BaseStatistics>> statistics;
+		vector<bool> exact;
 	};
 
 	//! Open a file of a planned scan, unless the filters skip it, and list its partitions
@@ -811,15 +856,25 @@ public:
 		}
 		result.listed = true;
 		// a file the filters skip has no rows to order - its partitions stay unordered, and are not read
-		const auto order_column = bind_data.scan_order && reader_data.file_state == MultiFileFileState::OPEN
-		                              ? OrderColumnOf(bind_data, gstate, reader_data)
-		                              : optional_idx();
+		const bool ordered = bind_data.scan_order && reader_data.file_state == MultiFileFileState::OPEN;
+		const bool single_file = bind_data.file_list->GetExpandResult() == FileExpandResult::SINGLE_FILE;
+		const auto order_column =
+		    ordered && !single_file ? OrderColumnOf(bind_data, gstate, reader_data) : optional_idx();
 		for (auto &partition : result.partitions) {
-			if (order_column.IsValid() && partition.partition_row_group) {
-				result.statistics.emplace_back(
-				    partition.partition_row_group->GetColumnStatistics(StorageIndex(order_column.GetIndex())));
+			if (!partition.partition_row_group) {
+				result.statistics.emplace_back();
+				result.exact.push_back(false);
+			} else if (ordered && single_file) {
+				ScannedFilePartition scanned(bind_data, partition.partition_row_group);
+				result.statistics.emplace_back(scanned.GetColumnStatistics(bind_data.scan_order->column_idx));
+				result.exact.push_back(scanned.MinMaxIsExact(bind_data.scan_order->column_idx));
+			} else if (order_column.IsValid()) {
+				const StorageIndex storage_index(order_column.GetIndex());
+				result.statistics.emplace_back(partition.partition_row_group->GetColumnStatistics(storage_index));
+				result.exact.push_back(partition.partition_row_group->MinMaxIsExact(storage_index));
 			} else {
 				result.statistics.emplace_back();
+				result.exact.push_back(false);
 			}
 		}
 	}
@@ -863,11 +918,13 @@ public:
 				return;
 			}
 		}
+		vector<bool> exact;
 		for (auto &file : listed) {
 			file_starts.push_back(partitions.size());
 			for (idx_t i = 0; i < file.partitions.size(); i++) {
 				partitions.push_back(std::move(file.partitions[i]));
 				statistics.push_back(std::move(file.statistics[i]));
+				exact.push_back(file.exact[i]);
 			}
 		}
 		file_starts.push_back(partitions.size());
@@ -878,10 +935,13 @@ public:
 			for (auto &entry : statistics) {
 				order_statistics.emplace_back(entry.get());
 			}
-			order = RowGroupReorderer::OrderPartitions(*bind_data.scan_order, order_statistics, [&](idx_t partition) {
-				auto &stats = partitions[partition];
-				return stats.count_type == CountType::COUNT_EXACT ? stats.count : 0;
-			});
+			order = RowGroupReorderer::OrderPartitions(
+			    *bind_data.scan_order, order_statistics,
+			    [&](idx_t partition) {
+				    auto &stats = partitions[partition];
+				    return stats.count_type == CountType::COUNT_EXACT ? stats.count : 0;
+			    },
+			    [&](idx_t partition) { return exact[partition]; });
 		} else {
 			for (idx_t i = 0; i < partitions.size(); i++) {
 				order.push_back(i);
@@ -1099,7 +1159,7 @@ public:
 
 		// before instantiating a scan trigger a dynamic filter pushdown if possible - unless the plan pinned the
 		// partitions to read, which are numbered over the files of the bind
-		auto new_list = PinsPartitions(bind_data)
+		auto new_list = PinsPartitions(bind_data) || bind_data.stable_file_indexes
 		                    ? nullptr
 		                    : MultiFileFilterPushdown(context, bind_data, input.column_indexes, input.filters);
 		if (new_list) {
@@ -1781,6 +1841,9 @@ public:
 	static void MultiFileComplexFilterPushdown(ClientContext &context, LogicalGet &get, FunctionData *bind_data_p,
 	                                           vector<unique_ptr<Expression>> &filters) {
 		auto &data = bind_data_p->Cast<MultiFileBindData>();
+		if (data.stable_file_indexes) {
+			return;
+		}
 
 		MultiFilePushdownInfo info(get.table_index, data.names, get.GetColumnIds(), get.extra_info);
 		auto new_list =

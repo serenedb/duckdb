@@ -39,17 +39,17 @@ public:
 		return true;
 	}
 
-	static void ResetAll(ExecutionContext &context, SetScope scope);
-	static void ResetVariable(ExecutionContext &context, const Identifier &name, SetScope scope);
+	static void ResetAll(ClientContext &context, SetScope scope);
+	static void ResetVariable(ClientContext &context, const Identifier &name, SetScope scope);
 
 public:
 	const String name;
 	const SetScope scope;
 
 private:
-	static void ResetOption(ExecutionContext &context, DBConfig &config, const ConfigurationOption &option,
+	static void ResetOption(ClientContext &context, DBConfig &config, const ConfigurationOption &option,
 	                        const char *name, SetScope effective_scope);
-	static void ResetExtensionVariable(ExecutionContext &context, DBConfig &config, const Identifier &name,
+	static void ResetExtensionVariable(ClientContext &context, DBConfig &config, const Identifier &name,
 	                                   ExtensionOption &extension_option, SetScope effective_scope);
 };
 

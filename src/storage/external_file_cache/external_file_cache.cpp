@@ -1028,6 +1028,10 @@ void ExternalFileCache::Fetch(InputFile &file, idx_t first_block, std::span<opti
 		if (arrived >= count) {
 			return;
 		}
+		if (arrived == 0) {
+			fetches.fetch_add(1, std::memory_order_relaxed);
+			fetched_bytes.fetch_add(end - start, std::memory_order_relaxed);
+		}
 		const auto valid_until = source->file_system.GetCacheValidUntil(*source);
 		const bool shareable = !valid_until || *valid_until != timestamp_t::ninfinity();
 		if (!shareable) {
@@ -1064,8 +1068,6 @@ void ExternalFileCache::Fetch(InputFile &file, idx_t first_block, std::span<opti
 	} arrival(hand_out);
 	ReadSource(file, *source, targets, start, pins.empty() && !awaited, &arrival);
 	hand_out(targets.size());
-	fetches.fetch_add(1, std::memory_order_relaxed);
-	fetched_bytes.fetch_add(end - start, std::memory_order_relaxed);
 }
 
 FilePin ExternalFileCache::Pin(InputFile &file, idx_t block) {

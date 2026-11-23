@@ -28,7 +28,8 @@ ZoneLocal <- 'LOCAL'
 ZoneDefault <- 'DEFAULT'
 ZoneStringLiteral <- StringLiteral
 ZoneIdentifier <- Identifier
-ZoneIntervalWithInterval <- 'INTERVAL' StringLiteral Interval?
+ZoneIntervalWithInterval <- 'INTERVAL' StringLiteral ZoneIntervalField?
+ZoneIntervalField <- IntervalToIntervalAsType / Interval
 ZoneIntervalWithPrecision <- 'INTERVAL' Parens(NumberLiteral) StringLiteral
 
 SetSetting <- SettingScope? SettingName

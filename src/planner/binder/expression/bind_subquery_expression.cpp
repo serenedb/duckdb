@@ -1,3 +1,4 @@
+#include "duckdb/function/macro_function.hpp"
 #include "duckdb/parser/expression/cast_expression.hpp"
 #include "duckdb/parser/expression/function_expression.hpp"
 #include "duckdb/parser/expression/parameter_expression.hpp"
@@ -103,7 +104,8 @@ BindResult ExpressionBinder::BindExpression(SubqueryExpression &expr, idx_t dept
 		    element_type.id() != LogicalTypeId::SQLNULL) {
 			auto parameter_type = parameters->GetReturnType((*parameter)->Cast<ParameterExpression>().Identifier());
 			if (parameter_type.IsUnknown() || parameter_type.id() == LogicalTypeId::STRING_LITERAL) {
-				*parameter = make_uniq<CastExpression>(LogicalType::LIST(element_type), std::move(*parameter));
+				*parameter = make_uniq<CastExpression>(
+				    LogicalType::LIST(MacroFunction::WithoutTypmod(element_type, context)), std::move(*parameter));
 			}
 		}
 	}

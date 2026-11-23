@@ -67,6 +67,11 @@ bool ScanSamplingInfo::KeepsRow(idx_t row_idx) const {
 	return after > before;
 }
 
+void ScanSamplingInfo::SkipRows(idx_t skipped) {
+	const auto shifted = sample_phase + LossyNumericCast<double>(skipped) * sample_rate;
+	sample_phase = shifted - std::floor(shifted);
+}
+
 idx_t ScanSamplingInfo::SelectRows(idx_t start_row, idx_t count, SelectionVector &sel) const {
 	idx_t result_count = 0;
 	for (idx_t i = 0; i < count; i++) {

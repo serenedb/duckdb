@@ -630,8 +630,9 @@ BoundStatement Binder::BindReturning(vector<unique_ptr<ParsedExpression>> return
 	binder->ExpandStarExpressions(returning_list, new_returning_list);
 	for (auto &returning_expr : new_returning_list) {
 		VerifyNotExcluded(*returning_expr);
+		auto name = returning_expr->GetColumnName();
 		auto expr = returning_binder.Bind(returning_expr, &result_type);
-		result.names.push_back(expr->GetName());
+		result.names.emplace_back(std::move(name));
 		result.types.push_back(result_type);
 		projection_expressions.push_back(std::move(expr));
 	}

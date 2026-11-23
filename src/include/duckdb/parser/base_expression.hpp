@@ -126,8 +126,8 @@ public:
 	virtual Identifier GetName() const;
 	//! The name a SELECT result column gets when no name can be derived from the expression
 	static constexpr const char *ANONYMOUS_COLUMN_NAME = "?column?";
-	//! PG-compatible target-list column name (port of FigureColname).  Only
-	//! used when computing SELECT result column headers — falls back to
+	//! PG-compatible target-list column name (port of FigureColname), used
+	//! for SELECT and RETURNING result column headers — falls back to
 	//! "?column?" when no name can be derived.
 	string GetColumnName() const;
 	//! Convert the Expression to a String

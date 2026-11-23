@@ -70,7 +70,7 @@ public:
 	vector<LogicalType> ParameterTypes() const;
 	bool HasParameterTypes(const vector<LogicalType> &parameter_types) const;
 	static string ParameterTypesToString(const vector<LogicalType> &parameter_types);
-	static LogicalType WithoutTypmod(const LogicalType &type);
+	static LogicalType WithoutTypmod(const LogicalType &type, optional_ptr<ClientContext> context = nullptr);
 	static bool IsVoid(const LogicalType &type);
 	static bool ResultNeedsCast(const LogicalType &result, const LogicalType &declared);
 	LogicalType ResultType() const;

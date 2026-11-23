@@ -41,6 +41,8 @@ public:
 	CatalogEntry(CatalogType type, Identifier name, idx_t oid);
 	virtual ~CatalogEntry();
 
+	static idx_t AssignPostgresOid(Catalog &catalog, bool internal, idx_t oid, idx_t count);
+
 	//! The oid of the entry
 	idx_t oid;
 	//! The type of this catalog entry

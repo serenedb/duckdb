@@ -94,13 +94,14 @@ OrderByStatistics Opposite(const OrderByStatistics order_by) {
 }
 
 idx_t GetMinimumQualifyingTupleCount(idx_t partition, const BaseStatistics &stats, const OrderByColumnType type,
-                                     const RowGroupReorderer::PartitionRowCount &row_count) {
+                                     const RowGroupReorderer::PartitionRowCount &row_count,
+                                     const RowGroupReorderer::PartitionMinMaxExact &exact) {
 	if (!stats.CanHaveNull()) {
 		return row_count(partition);
 	}
 
 	if (type == OrderByColumnType::NUMERIC) {
-		if (!NumericStats::HasMinMax(stats)) {
+		if (!NumericStats::HasMinMax(stats) || !exact(partition)) {
 			return 0;
 		}
 		if (NumericStats::IsConstant(stats)) {
@@ -115,7 +116,8 @@ idx_t GetMinimumQualifyingTupleCount(idx_t partition, const BaseStatistics &stat
 
 bool AddRowGroups(PartitionMap::iterator it, const PartitionMap::iterator end, vector<idx_t> &ordered_row_groups,
                   const idx_t row_limit, const OrderByColumnType column_type, const OrderByStatistics order_by,
-                  const OrderType order_type, const RowGroupReorderer::PartitionRowCount &row_count) {
+                  const OrderType order_type, const RowGroupReorderer::PartitionRowCount &row_count,
+                  const RowGroupReorderer::PartitionMinMaxExact &exact) {
 	const auto opposite_stat_type = Opposite(order_by);
 
 	auto last_unresolved_entry = it;
@@ -127,19 +129,21 @@ bool AddRowGroups(PartitionMap::iterator it, const PartitionMap::iterator end, v
 	idx_t qualify_later = 0;
 
 	idx_t last_unresolved_row_group_sum =
-	    GetMinimumQualifyingTupleCount(it->second.first, last_stats, column_type, row_count);
+	    GetMinimumQualifyingTupleCount(it->second.first, last_stats, column_type, row_count, exact);
 	for (; it != end; ++it) {
 		auto &current_key = it->first;
 		const auto row_group = it->second.first;
 
 		while (last_unresolved_entry != it) {
 			if (current_key <= last_unresolved_boundary) {
-				if (current_key != std::prev(it)->first) {
+				const auto previous = std::prev(it);
+				const bool holds_boundary_row = exact(previous->second.first);
+				if (current_key != previous->first) {
 					// Row groups overlap: we can only guarantee one additional qualifying tuple
 					qualifying_tuples += qualify_later;
 					qualify_later = 0;
-					qualifying_tuples++;
-				} else {
+					qualifying_tuples += holds_boundary_row;
+				} else if (holds_boundary_row) {
 					// Row groups have the same order value, we can only guarantee a qualifying tuple later
 					qualify_later++;
 				}
@@ -148,11 +152,12 @@ bool AddRowGroups(PartitionMap::iterator it, const PartitionMap::iterator end, v
 			}
 			// Row groups do not overlap: we can guarantee that the tuples qualify
 			qualifying_tuples = last_unresolved_row_group_sum;
+			qualify_later = 0;
 			++last_unresolved_entry;
 			auto &upcoming_stats = last_unresolved_entry->second.second.get();
 
-			last_unresolved_row_group_sum += GetMinimumQualifyingTupleCount(last_unresolved_entry->second.first,
-			                                                                upcoming_stats, column_type, row_count);
+			last_unresolved_row_group_sum += GetMinimumQualifyingTupleCount(
+			    last_unresolved_entry->second.first, upcoming_stats, column_type, row_count, exact);
 			last_unresolved_boundary = StatKey(upcoming_stats, opposite_stat_type, order_type);
 		}
 		if (qualifying_tuples >= row_limit) {
@@ -166,7 +171,8 @@ bool AddRowGroups(PartitionMap::iterator it, const PartitionMap::iterator end, v
 bool SetRowGroupVector(PartitionMap &row_group_map, const optional_idx row_limit, const idx_t row_group_offset,
                        const OrderByStatistics order_by, const OrderType order_type,
                        const OrderByColumnType column_type, vector<idx_t> &ordered_row_groups,
-                       const RowGroupReorderer::PartitionRowCount &row_count) {
+                       const RowGroupReorderer::PartitionRowCount &row_count,
+                       const RowGroupReorderer::PartitionMinMaxExact &exact) {
 	const auto end = row_group_map.end();
 	auto it = std::next(row_group_map.begin(), NumericCast<int64_t>(MinValue(row_group_offset, row_group_map.size())));
 	if (it == end) {
@@ -174,7 +180,7 @@ bool SetRowGroupVector(PartitionMap &row_group_map, const optional_idx row_limit
 	}
 	if (row_limit.IsValid()) {
 		return AddRowGroups(it, end, ordered_row_groups, row_limit.GetIndex(), column_type, order_by, order_type,
-		                    row_count);
+		                    row_count, exact);
 	}
 	for (; it != end; ++it) {
 		ordered_row_groups.push_back(it->second.first);
@@ -382,7 +388,8 @@ OffsetPruningResult RowGroupReorderer::GetOffsetAfterPruning(const OrderByStatis
 
 vector<idx_t> RowGroupReorderer::OrderPartitions(const RowGroupOrderOptions &options,
                                                  const vector<optional_ptr<const BaseStatistics>> &statistics,
-                                                 const PartitionRowCount &row_count) {
+                                                 const PartitionRowCount &row_count,
+                                                 const PartitionMinMaxExact &exact) {
 	vector<idx_t> null_only_groups;
 	vector<idx_t> ambiguous_groups;
 	PartitionMap row_group_map;
@@ -411,11 +418,11 @@ vector<idx_t> RowGroupReorderer::OrderPartitions(const RowGroupOrderOptions &opt
 		AppendRowGroups(null_only_groups, options.leading_null_group_offset, ordered_row_groups);
 		AppendRowGroups(ambiguous_groups, 0, ordered_row_groups);
 		SetRowGroupVector(row_group_map, options.row_limit, options.row_group_offset, options.order_by,
-		                  options.order_type, options.column_type, ordered_row_groups, row_count);
+		                  options.order_type, options.column_type, ordered_row_groups, row_count, exact);
 	} else {
 		auto pruned_by_limit =
 		    SetRowGroupVector(row_group_map, options.row_limit, options.row_group_offset, options.order_by,
-		                      options.order_type, options.column_type, ordered_row_groups, row_count);
+		                      options.order_type, options.column_type, ordered_row_groups, row_count, exact);
 		AppendRowGroups(ambiguous_groups, 0, ordered_row_groups);
 		// Once an ascending NULLS LAST limit is already satisfied by earlier non-null row groups, null-only
 		// groups cannot contribute to the ordered prefix anymore.
@@ -444,9 +451,12 @@ optional_ptr<SegmentNode<RowGroup>> RowGroupReorderer::GetRootSegment(RowGroupSe
 		owned_statistics.push_back(row_group.GetNode().GetStatistics(options.column_idx));
 		statistics.emplace_back(owned_statistics.back().get());
 	}
-	const auto order = OrderPartitions(options, statistics, [&](idx_t partition) {
-		return nodes[partition].get().GetNode().GetVisibleRowCount(transaction);
-	});
+	const auto order = OrderPartitions(
+	    options, statistics,
+	    [&](idx_t partition) { return nodes[partition].get().GetNode().GetVisibleRowCount(transaction); },
+	    [&](idx_t partition) {
+		    return nodes[partition].get().GetNode().MinMaxIsExact(transaction, options.column_idx);
+	    });
 	for (auto partition : order) {
 		ordered_row_groups.push_back(nodes[partition]);
 	}

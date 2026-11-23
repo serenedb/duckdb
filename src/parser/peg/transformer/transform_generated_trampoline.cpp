@@ -162,6 +162,9 @@ static const TransformFrameOps SET_SORTED_BY_OPS = {"SetSortedBy",
 static const TransformFrameOps RESET_SORTED_BY_OPS = {"ResetSortedBy",
                                                       &PEGTransformerFactory::InitializeResetSortedByTrampoline,
                                                       &PEGTransformerFactory::FinalizeResetSortedByTrampoline};
+static const TransformFrameOps SET_TABLESPACE_OPS = {"SetTablespace",
+                                                     &PEGTransformerFactory::InitializeSetTablespaceTrampoline,
+                                                     &PEGTransformerFactory::FinalizeSetTablespaceTrampoline};
 static const TransformFrameOps SET_OPTIONS_OPS = {"SetOptions", &PEGTransformerFactory::InitializeSetOptionsTrampoline,
                                                   &PEGTransformerFactory::FinalizeSetOptionsTrampoline};
 static const TransformFrameOps RESET_OPTIONS_OPS = {"ResetOptions",
@@ -3533,6 +3536,9 @@ static const TransformFrameOps ZONE_IDENTIFIER_OPS = {"ZoneIdentifier",
 static const TransformFrameOps ZONE_INTERVAL_WITH_INTERVAL_OPS = {
     "ZoneIntervalWithInterval", &PEGTransformerFactory::InitializeZoneIntervalWithIntervalTrampoline,
     &PEGTransformerFactory::FinalizeZoneIntervalWithIntervalTrampoline};
+static const TransformFrameOps ZONE_INTERVAL_FIELD_OPS = {
+    "ZoneIntervalField", &PEGTransformerFactory::InitializeZoneIntervalFieldTrampoline,
+    &PEGTransformerFactory::FinalizeZoneIntervalFieldTrampoline, true};
 static const TransformFrameOps ZONE_INTERVAL_WITH_PRECISION_OPS = {
     "ZoneIntervalWithPrecision", &PEGTransformerFactory::InitializeZoneIntervalWithPrecisionTrampoline,
     &PEGTransformerFactory::FinalizeZoneIntervalWithPrecisionTrampoline};
@@ -3752,6 +3758,7 @@ PEGTransformerFactory::GeneratedTransformFrameOps() {
 	    {"ResetPartitionedBy", &RESET_PARTITIONED_BY_OPS},
 	    {"SetSortedBy", &SET_SORTED_BY_OPS},
 	    {"ResetSortedBy", &RESET_SORTED_BY_OPS},
+	    {"SetTablespace", &SET_TABLESPACE_OPS},
 	    {"SetOptions", &SET_OPTIONS_OPS},
 	    {"ResetOptions", &RESET_OPTIONS_OPS},
 	    {"AlterColumnEntry", &ALTER_COLUMN_ENTRY_OPS},
@@ -4935,6 +4942,7 @@ PEGTransformerFactory::GeneratedTransformFrameOps() {
 	    {"ZoneStringLiteral", &ZONE_STRING_LITERAL_OPS},
 	    {"ZoneIdentifier", &ZONE_IDENTIFIER_OPS},
 	    {"ZoneIntervalWithInterval", &ZONE_INTERVAL_WITH_INTERVAL_OPS},
+	    {"ZoneIntervalField", &ZONE_INTERVAL_FIELD_OPS},
 	    {"ZoneIntervalWithPrecision", &ZONE_INTERVAL_WITH_PRECISION_OPS},
 	    {"SetSetting", &SET_SETTING_OPS},
 	    {"SetVariable", &SET_VARIABLE_OPS},
@@ -5941,6 +5949,21 @@ arena_ptr<TransformResultValue>
 PEGTransformerFactory::FinalizeResetSortedByTrampoline(PEGTransformer &transformer,
                                                        GeneratedTransformProcess &process) {
 	auto result = TransformResetSortedBy(transformer);
+	return transformer.MakeResult<unique_ptr<AlterTableInfo>>(std::move(result));
+}
+
+void PEGTransformerFactory::InitializeSetTablespaceTrampoline(PEGTransformer &transformer,
+                                                              GeneratedTransformProcess &process) {
+	auto &list_pr = process.parse_result.Cast<ListParseResult>();
+	process.ReserveChildSlots(1);
+	process.PushChild({list_pr.GetChild(2)}, 0);
+}
+
+arena_ptr<TransformResultValue>
+PEGTransformerFactory::FinalizeSetTablespaceTrampoline(PEGTransformer &transformer,
+                                                       GeneratedTransformProcess &process) {
+	auto col_id = process.TakeResult<Identifier>(0);
+	auto result = TransformSetTablespace(transformer, col_id);
 	return transformer.MakeResult<unique_ptr<AlterTableInfo>>(std::move(result));
 }
 
@@ -8029,7 +8052,7 @@ arena_ptr<TransformResultValue> PEGTransformerFactory::FinalizeSetofTypeTrampoli
                                                                                    GeneratedTransformProcess &process) {
 	auto type = process.TakeResult<LogicalType>(0);
 	auto result = TransformSetofType(transformer, type);
-	return transformer.MakeResult<unique_ptr<ParsedExpression>>(std::move(result));
+	return transformer.MakeResult<LogicalType>(result);
 }
 
 void PEGTransformerFactory::InitializeUnionTypeTrampoline(PEGTransformer &transformer,
@@ -29146,9 +29169,9 @@ void PEGTransformerFactory::InitializeZoneIntervalWithIntervalTrampoline(PEGTran
                                                                          GeneratedTransformProcess &process) {
 	auto &list_pr = process.parse_result.Cast<ListParseResult>();
 	process.ReserveChildSlots(1);
-	auto &interval_opt = list_pr.GetChild(2).Cast<OptionalParseResult>();
-	if (interval_opt.HasResult()) {
-		process.PushChild({interval_opt.GetResult()}, 0);
+	auto &zone_interval_field_opt = list_pr.GetChild(2).Cast<OptionalParseResult>();
+	if (zone_interval_field_opt.HasResult()) {
+		process.PushChild({zone_interval_field_opt.GetResult()}, 0);
 	}
 }
 
@@ -29157,12 +29180,33 @@ PEGTransformerFactory::FinalizeZoneIntervalWithIntervalTrampoline(PEGTransformer
                                                                   GeneratedTransformProcess &process) {
 	auto &list_pr = process.parse_result.Cast<ListParseResult>();
 	auto string_literal = TransformStringLiteral(transformer, list_pr.GetChild(1));
-	optional<DatePartSpecifier> interval {};
+	optional<DatePartSpecifier> zone_interval_field {};
 	if (process.child_results[0]) {
-		interval = process.TakeResult<DatePartSpecifier>(0);
+		zone_interval_field = process.TakeResult<DatePartSpecifier>(0);
 	}
-	auto result = TransformZoneIntervalWithInterval(transformer, string_literal, interval);
+	auto result = TransformZoneIntervalWithInterval(transformer, string_literal, zone_interval_field);
 	return transformer.MakeResult<unique_ptr<ParsedExpression>>(std::move(result));
+}
+
+void PEGTransformerFactory::InitializeZoneIntervalFieldTrampoline(PEGTransformer &transformer,
+                                                                  GeneratedTransformProcess &process) {
+	auto &list_pr = process.parse_result.Cast<ListParseResult>();
+	auto &choice_pr = list_pr.Child<ChoiceParseResult>(0);
+	auto &choice_result = choice_pr.GetResult();
+	process.ReserveChildSlots(1);
+	auto child_rule = choice_result.GetRule();
+	auto has_transform_process = child_rule && child_rule->transform_process;
+	if (!has_transform_process) {
+		throw InternalException("No transform process registered for rule '%s'", choice_result.Name());
+	}
+	process.PushChild({*child_rule, choice_result}, 0);
+}
+
+arena_ptr<TransformResultValue>
+PEGTransformerFactory::FinalizeZoneIntervalFieldTrampoline(PEGTransformer &transformer,
+                                                           GeneratedTransformProcess &process) {
+	auto result = process.TakeResult<DatePartSpecifier>(0);
+	return transformer.MakeResult<DatePartSpecifier>(result);
 }
 
 void PEGTransformerFactory::InitializeZoneIntervalWithPrecisionTrampoline(PEGTransformer &transformer,

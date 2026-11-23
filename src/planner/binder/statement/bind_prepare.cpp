@@ -12,7 +12,7 @@ BoundStatement Binder::Bind(PrepareStatement &stmt) {
 	for (auto &entry : stmt.parameter_type_hints) {
 		BindLogicalType(entry.second);
 		if (declared) {
-			entry.second = MacroFunction::WithoutTypmod(entry.second);
+			entry.second = MacroFunction::WithoutTypmod(entry.second, context);
 		}
 	}
 	Planner prepared_planner(context);

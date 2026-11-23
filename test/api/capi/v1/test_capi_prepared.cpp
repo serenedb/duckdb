@@ -564,23 +564,9 @@ TEST_CASE("Test duckdb_parameter_name", "[capi]") {
 	}
 
 	SECTION("Uncontiguous parameters") {
-		REQUIRE(duckdb_prepare(tester.connection, "SELECT $1, $10", &stmt) == DuckDBSuccess);
-
-		REQUIRE(duckdb_nparams(stmt) == 2);
-
-		const char *name;
-		name = duckdb_parameter_name(stmt, 1);
-		REQUIRE(string(name) == "1");
-		duckdb_free((void *)name);
-
-		name = duckdb_parameter_name(stmt, 10);
-		REQUIRE(string(name) == "10");
-		duckdb_free((void *)name);
-
-		// Non-existing indexes
-		REQUIRE(duckdb_parameter_name(stmt, 2) == nullptr);
-		REQUIRE(duckdb_parameter_name(stmt, 11) == nullptr);
-
+		REQUIRE(duckdb_prepare(tester.connection, "SELECT $1, $10", &stmt) == DuckDBError);
+		REQUIRE(string(duckdb_prepare_error(stmt)).find("could not determine data type of parameter $2") !=
+		        string::npos);
 		duckdb_destroy_prepare(&stmt);
 	}
 
