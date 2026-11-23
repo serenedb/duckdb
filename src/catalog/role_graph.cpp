@@ -2,8 +2,7 @@
 
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/catalog/catalog_entry/role_entry.hpp"
-#include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
-#include "duckdb/catalog/catalog_entry/view_catalog_entry.hpp"
+#include "duckdb/catalog/column_acls.hpp"
 #include "duckdb/common/types/hash.hpp"
 #include "duckdb/common/unordered_set.hpp"
 #include "duckdb/main/config.hpp"
@@ -141,26 +140,11 @@ bool RoleAccess::CanColumns(const StandardEntry &relation, AclMode need, std::sp
 	const auto granted = [&](std::span<const AclItem> acl) {
 		return Can(CatalogType::TABLE_ENTRY, acl, need);
 	};
-	if (relation.type == CatalogType::VIEW_ENTRY) {
-		auto &view = relation.Cast<ViewCatalogEntry>();
-		if (columns.empty()) {
-			return std::any_of(view.column_acls.begin(), view.column_acls.end(),
-			                   [&](const ColumnAcl &column) { return granted(column.acl); });
-		}
-		return std::all_of(columns.begin(), columns.end(),
-		                   [&](idx_t column) { return granted(view.ColumnAcl(column)); });
-	}
-	auto &table_columns = relation.Cast<TableCatalogEntry>().GetColumns();
 	if (columns.empty()) {
-		for (auto &column : table_columns.Logical()) {
-			if (granted(column.Acl())) {
-				return true;
-			}
-		}
-		return false;
+		return AnyColumnAcl(relation, granted);
 	}
 	return std::all_of(columns.begin(), columns.end(),
-	                   [&](idx_t column) { return granted(table_columns.GetColumn(LogicalIndex(column)).Acl()); });
+	                   [&](idx_t column) { return granted(ColumnAclOf(relation, column)); });
 }
 
 AclMode RoleAccess::HeldModes(std::span<const AclItem> acl) const {
@@ -220,11 +204,10 @@ SecuritySnapshot::SecuritySnapshot(unordered_map<idx_t, Node> nodes_p, unordered
 	idx_t total = 0;
 	for (auto &role : roles_p) {
 		role.closure.erase(std::remove(role.closure.begin(), role.closure.end(), role.role), role.closure.end());
-		for (auto list : {&role.closure, &role.settable, &role.administered}) {
-			std::sort(list->begin(), list->end());
-			list->erase(std::unique(list->begin(), list->end()), list->end());
-			total += list->size();
-		}
+		std::sort(role.administered.begin(), role.administered.end());
+		role.administered.erase(std::unique(role.administered.begin(), role.administered.end()),
+		                        role.administered.end());
+		total += role.closure.size() + role.settable.size() + role.administered.size();
 		if (!role.closure.empty()) {
 			total += FilterWords(role.closure.size());
 		}

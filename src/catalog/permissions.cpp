@@ -15,6 +15,7 @@
 #include "duckdb/catalog/catalog_entry/window_function_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/view_catalog_entry.hpp"
+#include "duckdb/catalog/column_acls.hpp"
 #include "duckdb/catalog/default/default_schemas.hpp"
 #include "duckdb/common/case_insensitive_map.hpp"
 #include "duckdb/common/extension_type_info.hpp"
@@ -159,22 +160,11 @@ bool EntryVisible(ClientContext &context, const RoleAccess &role, CatalogEntry &
 	case CatalogType::JOB_ENTRY:
 		return role.Owns(entry.permissions.owner) || role.CanAny(kind.acl_class, entry.permissions, kind.privileges);
 	case CatalogType::TABLE_ENTRY:
-	case CatalogType::VIEW_ENTRY: {
-		if (role.Owns(entry.permissions.owner) || role.CanAny(kind.acl_class, entry.permissions, kind.privileges)) {
-			return true;
-		}
-		const auto grants = [&](std::span<const AclItem> acl) {
-			return (role.HeldModes(acl) & ACL_COLUMN_PRIVILEGES) != AclMode::NoRights;
-		};
-		if (entry.type == CatalogType::VIEW_ENTRY) {
-			auto &column_acls = entry.Cast<ViewCatalogEntry>().column_acls;
-			return std::any_of(column_acls.begin(), column_acls.end(),
-			                   [&](const ColumnAcl &column) { return grants(column.acl); });
-		}
-		auto columns = entry.Cast<TableCatalogEntry>().GetColumns().Logical();
-		return std::any_of(columns.begin(), columns.end(),
-		                   [&](const ColumnDefinition &column) { return grants(column.Acl()); });
-	}
+	case CatalogType::VIEW_ENTRY:
+		return role.Owns(entry.permissions.owner) || role.CanAny(kind.acl_class, entry.permissions, kind.privileges) ||
+		       AnyColumnAcl(entry.Cast<StandardEntry>(), [&](std::span<const AclItem> acl) {
+			       return (role.HeldModes(acl) & ACL_COLUMN_PRIVILEGES) != AclMode::NoRights;
+		       });
 	case CatalogType::MACRO_ENTRY:
 	case CatalogType::TABLE_MACRO_ENTRY: {
 		auto &macro = entry.Cast<MacroCatalogEntry>();
@@ -218,7 +208,7 @@ void CheckReference(ClientContext &context, const RoleAccess &role, CatalogEntry
 template <class F>
 static bool AnyRoleReference(const CatalogEntry &entry, F &&named) {
 	auto &permissions = entry.permissions;
-	const auto any_acl = [&](const vector<AclItem> &acl) {
+	const auto any_acl = [&](std::span<const AclItem> acl) {
 		return std::any_of(acl.begin(), acl.end(),
 		                   [&](const AclItem &item) { return named(item.grantee) || named(item.grantor); });
 	};
@@ -242,20 +232,8 @@ static bool AnyRoleReference(const CatalogEntry &entry, F &&named) {
 		return std::any_of(member_of.begin(), member_of.end(),
 		                   [&](const Membership &edge) { return named(edge.grantor); });
 	}
-	if (entry.type == CatalogType::VIEW_ENTRY) {
-		auto &column_acls = entry.Cast<ViewCatalogEntry>().column_acls;
-		return std::any_of(column_acls.begin(), column_acls.end(),
-		                   [&](const ColumnAcl &column) { return any_acl(column.acl); });
-	}
-	if (entry.type != CatalogType::TABLE_ENTRY) {
-		return false;
-	}
-	for (auto &column : entry.Cast<TableCatalogEntry>().GetColumns().Logical()) {
-		if (any_acl(column.Acl())) {
-			return true;
-		}
-	}
-	return false;
+	return (entry.type == CatalogType::VIEW_ENTRY || entry.type == CatalogType::TABLE_ENTRY) &&
+	       AnyColumnAcl(entry.Cast<StandardEntry>(), any_acl);
 }
 
 bool ReferencesRole(const CatalogEntry &entry, idx_t role) {
