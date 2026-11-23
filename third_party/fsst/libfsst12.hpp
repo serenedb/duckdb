@@ -102,7 +102,7 @@ struct Symbol {
 #define FSST_HASH_SHIFT 15 
 #define FSST_HASH_PRIME1 2971215073LL
 #define FSST_HASH(w) (((w)*FSST_HASH_PRIME1)^(((w)*FSST_HASH_PRIME1)>>13))
-   ulong hash() const { uint v0 = 0xFFFFFFFF & val.num; return FSST_HASH(v0); }
+   ulong hash() const { ulong v0 = 0xFFFFFFFF & val.num; return FSST_HASH(v0); }
 
    bool operator==(const Symbol& other) const { return val.num == other.val.num && length() == other.length(); }
 };
