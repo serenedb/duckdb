@@ -2,6 +2,7 @@
 #include "duckdb/main/config.hpp"
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/main/settings.hpp"
+#include "duckdb/planner/binder.hpp"
 #include "duckdb/common/enum_util.hpp"
 
 namespace duckdb {
@@ -30,6 +31,7 @@ struct DuckDBSettingsData : public GlobalTableFunctionState {
 struct DuckDBSettingsBindData : public TableFunctionData {
 	bool debug = false;
 	bool deprecated = false;
+	optional_idx caller_role;
 };
 
 static unique_ptr<FunctionData> DuckDBSettingsBind(ClientContext &context, TableFunctionBindInput &input,
@@ -56,6 +58,7 @@ static unique_ptr<FunctionData> DuckDBSettingsBind(ClientContext &context, Table
 	return_types.emplace_back(LogicalType::VARIANT());
 
 	auto result = make_uniq<DuckDBSettingsBindData>();
+	result->caller_role = input.binder ? input.binder->CallerRole() : optional_idx();
 	for (auto name : {"debug", "deprecated"}) {
 		auto it = input.named_parameters.find(name);
 		if (it != input.named_parameters.end() && it->second.IsNull()) {
@@ -84,7 +87,7 @@ unique_ptr<GlobalTableFunctionState> DuckDBSettingsInit(ClientContext &context, 
 	}
 
 	auto &config = DBConfig::GetConfig(context);
-	const auto role = context.CallerAccess(input.caller_role);
+	const auto role = context.CallerAccess(bind_data.caller_role);
 	auto visible = [&](const string &name) {
 		return Settings::IsVisible(context, role, Identifier(name));
 	};

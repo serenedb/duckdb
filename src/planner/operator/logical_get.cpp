@@ -367,7 +367,6 @@ void LogicalGet::Serialize(Serializer &serializer) const {
 	                                    OrdinalityType::WITHOUT_ORDINALITY);
 	serializer.WritePropertyWithDefault(218, "has_pushed_projection", has_pushed_projection, false);
 	serializer.WritePropertyWithDefault(219, "at_clause", at_clause);
-	serializer.WritePropertyWithDefault<optional_idx>(220, "caller_role", caller_role);
 }
 
 unique_ptr<LogicalOperator> LogicalGet::Deserialize(Deserializer &deserializer) {
@@ -402,7 +401,6 @@ unique_ptr<LogicalOperator> LogicalGet::Deserialize(Deserializer &deserializer) 
 	result->has_pushed_projection =
 	    deserializer.ReadPropertyWithExplicitDefault<bool>(218, "has_pushed_projection", false);
 	result->at_clause = deserializer.ReadPropertyWithDefault<unique_ptr<BoundAtClause>>(219, "at_clause");
-	deserializer.ReadPropertyWithDefault<optional_idx>(220, "caller_role", result->caller_role);
 	auto &context = deserializer.Get<ClientContext &>();
 	virtual_column_map_t virtual_columns;
 	if (!has_serialize) {

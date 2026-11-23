@@ -26,11 +26,9 @@ public:
 	static constexpr const PhysicalOperatorType TYPE = PhysicalOperatorType::RESET;
 
 public:
-	PhysicalReset(PhysicalPlan &physical_plan, const Identifier &name_p, SetScope scope_p, optional_idx caller_role_p,
-	              idx_t estimated_cardinality)
+	PhysicalReset(PhysicalPlan &physical_plan, const Identifier &name_p, SetScope scope_p, idx_t estimated_cardinality)
 	    : PhysicalOperator(physical_plan, PhysicalOperatorType::RESET, {LogicalType::BOOLEAN}, estimated_cardinality),
-	      name(physical_plan.ArenaRef().MakeString(name_p.GetIdentifierName())), scope(scope_p),
-	      caller_role(caller_role_p) {
+	      name(physical_plan.ArenaRef().MakeString(name_p.GetIdentifierName())), scope(scope_p) {
 	}
 
 public:
@@ -43,12 +41,11 @@ public:
 	}
 
 	static void ResetAll(ClientContext &context, SetScope scope, bool discard);
-	static void ResetVariable(ClientContext &context, const RoleAccess &role, const Identifier &name, SetScope scope);
+	static void ResetVariable(ClientContext &context, const Identifier &name, SetScope scope);
 
 public:
 	const String name;
 	const SetScope scope;
-	const optional_idx caller_role;
 
 private:
 	static void ResetOption(ClientContext &context, DBConfig &config, const ConfigurationOption &option,

@@ -29,7 +29,6 @@ public:
 	Identifier name;
 	Value value;
 	SetScope scope;
-	optional_idx caller_role;
 
 public:
 	void Serialize(Serializer &serializer) const override;

@@ -63,8 +63,7 @@ static unique_ptr<FunctionData> DuckDBViewsBind(ClientContext &context, TableFun
 	names.emplace_back("is_bound");
 	return_types.emplace_back(LogicalType::BOOLEAN);
 
-	auto result = make_uniq<DuckDBSystemIncludeHiddenBindData>();
-	result->include_hidden = DuckDBSystemIncludeHiddenBindData::ReadParameter(input);
+	auto result = make_uniq<DuckDBSystemIncludeHiddenBindData>(input);
 	return std::move(result);
 }
 
@@ -73,7 +72,7 @@ unique_ptr<GlobalTableFunctionState> DuckDBViewsInit(ClientContext &context, Tab
 
 	// scan all the schemas for tables and collect them and collect them
 	auto &bind_data = input.bind_data->Cast<DuckDBSystemIncludeHiddenBindData>();
-	const auto role = context.CallerAccess(input.caller_role);
+	const auto role = context.CallerAccess(bind_data.caller_role);
 	auto schemas = Catalog::GetAllSchemas(context, role, bind_data.include_hidden, bind_data.DatabaseFilter(context));
 	for (auto &schema : schemas) {
 		Catalog::ScanListedEntries(context, role, schema.get(), CatalogType::VIEW_ENTRY, [&](CatalogEntry &entry) {

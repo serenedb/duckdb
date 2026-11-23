@@ -22,7 +22,11 @@ namespace duckdb {
 //! Bind data for the catalog-enumerating system table functions (duckdb_tables/indexes/databases) carrying
 //! the `include_hidden := true` named parameter, which makes them list HIDDEN attached databases too.
 struct DuckDBSystemIncludeHiddenBindData : public TableFunctionData {
+	DuckDBSystemIncludeHiddenBindData() = default;
+	explicit DuckDBSystemIncludeHiddenBindData(const TableFunctionBindInput &input);
+
 	bool include_hidden = false;
+	optional_idx caller_role;
 	//! The filters of the scan that read database_name and nothing else, evaluated against each database it lists
 	vector<unique_ptr<Expression>> database_filters;
 	ColumnBinding database_column;

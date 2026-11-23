@@ -48,8 +48,7 @@ static unique_ptr<FunctionData> DuckDBSchemasBind(ClientContext &context, TableF
 	names.emplace_back("parent_schema_oid");
 	return_types.emplace_back(LogicalType::BIGINT);
 
-	auto result = make_uniq<DuckDBSystemIncludeHiddenBindData>();
-	result->include_hidden = DuckDBSystemIncludeHiddenBindData::ReadParameter(input);
+	auto result = make_uniq<DuckDBSystemIncludeHiddenBindData>(input);
 	return std::move(result);
 }
 
@@ -58,8 +57,8 @@ unique_ptr<GlobalTableFunctionState> DuckDBSchemasInit(ClientContext &context, T
 
 	// scan all the schemas and collect them
 	auto &bind_data = input.bind_data->Cast<DuckDBSystemIncludeHiddenBindData>();
-	result->entries = Catalog::GetAllSchemas(context, context.CallerAccess(input.caller_role), bind_data.include_hidden,
-	                                         bind_data.DatabaseFilter(context));
+	result->entries = Catalog::GetAllSchemas(context, context.CallerAccess(bind_data.caller_role),
+	                                         bind_data.include_hidden, bind_data.DatabaseFilter(context));
 
 	return std::move(result);
 }

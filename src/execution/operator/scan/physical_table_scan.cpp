@@ -101,7 +101,6 @@ private:
 		TableFunctionInitInput input(op.bind_data.get(), op.column_ids, op.projection_ids, GetTableFilters(),
 		                             op.extra_info.sample_options, &op);
 		input.partition_info = &partition_info;
-		input.caller_role = op.caller_role;
 		global_state = op.function.init_global(context, input);
 		max_threads = global_state ? global_state->MaxThreads() : 0;
 	}
@@ -139,7 +138,6 @@ private:
 		if (op.function.init_local) {
 			TableFunctionInitInput input(op.bind_data.get(), op.column_ids, op.projection_ids, gstate.GetTableFilters(),
 			                             op.extra_info.sample_options, &op);
-			input.caller_role = op.caller_role;
 			local_state = op.function.init_local(context, input, gstate.global_state.get());
 		}
 	}

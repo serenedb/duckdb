@@ -88,7 +88,7 @@ unique_ptr<FunctionLocalState> NextValLocalFunction(ExpressionState &state, cons
 	auto &context = state.GetContext();
 	auto &info = bind_data->Cast<NextvalBindData>();
 	auto &sequence = info.sequence;
-	const auto role = context.CallerAccess(expr.CallerRole());
+	const auto role = context.CallerAccess(info.caller_role);
 	if (!IsUnowned(sequence) && !role.CanAny(CatalogType::SEQUENCE_ENTRY, sequence.permissions, OP::MODES)) {
 		ThrowPermissionDenied(sequence);
 	}
@@ -183,7 +183,7 @@ unique_ptr<FunctionData> NextValBind(BindScalarFunctionInput &input) {
 	}
 	auto &binder = input.GetBinder();
 	auto &seq = BindSequence(binder, Identifier(seqname.ToString()));
-	return make_uniq<NextvalBindData>(seq);
+	return make_uniq<NextvalBindData>(seq, binder.CallerRole());
 }
 
 void Serialize(Serializer &serializer, const optional_ptr<FunctionData> bind_data, const BoundScalarFunction &) {
@@ -200,7 +200,7 @@ unique_ptr<FunctionData> Deserialize(Deserializer &deserializer, BoundScalarFunc
 	auto &seq_info = create_info->Cast<CreateSequenceInfo>();
 	auto &context = deserializer.Get<ClientContext &>();
 	auto &sequence = BindSequenceFromContext(context, seq_info.GetQualifiedName());
-	return make_uniq<NextvalBindData>(sequence);
+	return make_uniq<NextvalBindData>(sequence, optional_idx());
 }
 
 void NextValModifiedDatabases(ClientContext &context, FunctionModifiedDatabasesInput &input) {

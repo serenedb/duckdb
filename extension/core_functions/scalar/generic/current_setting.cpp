@@ -33,19 +33,21 @@ public:
 };
 
 struct FunctionSettingsBindData : public FunctionData {
-	explicit FunctionSettingsBindData(shared_ptr<CatalogSearchPath> search_path_p)
-	    : search_path(std::move(search_path_p)) {
+	FunctionSettingsBindData(shared_ptr<CatalogSearchPath> search_path_p, optional_idx caller_role)
+	    : search_path(std::move(search_path_p)), caller_role(caller_role) {
 	}
 
 	shared_ptr<CatalogSearchPath> search_path;
+	optional_idx caller_role;
 
 public:
 	unique_ptr<FunctionData> Copy() const override {
-		return make_uniq<FunctionSettingsBindData>(search_path);
+		return make_uniq<FunctionSettingsBindData>(search_path, caller_role);
 	}
 
 	bool Equals(const FunctionData &other_p) const override {
-		return search_path == other_p.Cast<FunctionSettingsBindData>().search_path;
+		auto &other = other_p.Cast<FunctionSettingsBindData>();
+		return search_path == other.search_path && caller_role == other.caller_role;
 	}
 };
 
@@ -66,8 +68,9 @@ void CurrentSettingFunction(DataChunk &args, ExpressionState &state, Vector &res
 void CurrentSettingDynamic(DataChunk &args, ExpressionState &state, Vector &result) {
 	auto &context = state.GetContext();
 	auto &func_expr = state.expr.Cast<BoundFunctionExpression>();
-	const auto role = context.CallerAccess(func_expr.CallerRole());
-	auto &function_path = func_expr.BindInfo()->Cast<FunctionSettingsBindData>().search_path;
+	auto &info = func_expr.BindInfo()->Cast<FunctionSettingsBindData>();
+	const auto role = context.CallerAccess(info.caller_role);
+	auto &function_path = info.search_path;
 	auto names = args.data[0].Values<string_t>();
 	auto writer = FlatVector::Writer<string_t>(result, args.size());
 	for (auto entry : names) {
@@ -102,7 +105,8 @@ unique_ptr<FunctionData> CurrentSettingBind(BindScalarFunctionInput &input) {
 	if (!key_child->HasParameter() && !key_child->IsFoldable()) {
 		bound_function.SetFunctionCallback(CurrentSettingDynamic);
 		bound_function.SetReturnType(LogicalType::VARCHAR);
-		return make_uniq<FunctionSettingsBindData>(std::move(function_path));
+		return make_uniq<FunctionSettingsBindData>(std::move(function_path),
+		                                           input.HasBinder() ? input.GetBinder().CallerRole() : optional_idx());
 	}
 
 	auto key_val = input.GetNonNullConstant(0);

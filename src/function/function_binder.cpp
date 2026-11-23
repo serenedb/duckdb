@@ -1680,9 +1680,6 @@ unique_ptr<Expression> FunctionBinder::BindScalarFunction(shared_ptr<const Scala
 
 	auto result_func = make_uniq<BoundFunctionExpression>(std::move(bound_function), std::move(children),
 	                                                      std::move(bind_info), is_operator);
-	if (auto caller = binder ? binder : this->binder) {
-		result_func->SetCallerRole(caller->CallerRole());
-	}
 
 	if (binder && result_func->Function().GetStability() == FunctionStability::CONSISTENT_WITHIN_QUERY) {
 		// the result depends on the query it is bound in, also when the bind_expression callback folds it

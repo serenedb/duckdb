@@ -1,4 +1,5 @@
 #include "duckdb/parser/statement/set_statement.hpp"
+#include "duckdb/execution/operator/helper/physical_set.hpp"
 #include "duckdb/planner/binder.hpp"
 #include "duckdb/planner/operator/logical_set.hpp"
 #include "duckdb/planner/operator/logical_reset.hpp"
@@ -18,6 +19,7 @@ BoundStatement Binder::Bind(SetVariableStatement &stmt) {
 	Value value;
 	unique_ptr<LogicalOperator> op;
 	if (stmt.scope != SetScope::VARIABLE) {
+		PhysicalSet::CheckAccess(context, CurrentRole(), stmt.name, stmt.scope, "SET LOCAL");
 		ConstantBinder default_binder(*this, context, "SET value");
 		auto bound_value = default_binder.Bind(stmt.value);
 		if (bound_value->HasParameter()) {
@@ -35,7 +37,6 @@ BoundStatement Binder::Bind(SetVariableStatement &stmt) {
 		op = std::move(bound_select.plan);
 	}
 	auto set = make_uniq<LogicalSet>(stmt.name, std::move(value), stmt.scope);
-	set->caller_role = CallerRole();
 	result.plan = std::move(set);
 	if (op) {
 		result.plan->children.push_back(std::move(op));
@@ -50,8 +51,10 @@ BoundStatement Binder::Bind(ResetVariableStatement &stmt) {
 	result.types = {LogicalType::BOOLEAN};
 	result.names = {"Success"};
 
+	if (stmt.scope != SetScope::VARIABLE && !stmt.name.empty()) {
+		PhysicalSet::CheckAccess(context, CurrentRole(), stmt.name, stmt.scope, "RESET LOCAL");
+	}
 	auto reset = make_uniq<LogicalReset>(stmt.name, stmt.scope);
-	reset->caller_role = CallerRole();
 	result.plan = std::move(reset);
 
 	auto &properties = GetStatementProperties();

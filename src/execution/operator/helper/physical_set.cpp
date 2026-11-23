@@ -186,15 +186,37 @@ SetScope PhysicalSet::GetSettingScope(const ConfigurationOption &option, SetScop
 
 SourceResultType PhysicalSet::GetDataInternal(ExecutionContext &context, DataChunk &chunk,
                                               OperatorSourceInput &input) const {
-	if (scope == SetScope::LOCAL && context.client.transaction.IsAutoCommit()) {
-		const char *msg = "SET LOCAL can only be used in transaction blocks";
-		if (!context.client.EmitWarning(msg, "NO_ACTIVE_SQL_TRANSACTION")) {
-			throw InvalidInputException(msg);
-		}
-	}
-	const auto role = context.client.CallerAccess(caller_role);
-	SetVariable(context.client, Identifier(std::string_view(name.data(), name.size())), scope, value, true, &role);
+	WarnOutsideTransaction(context.client, scope, "SET LOCAL");
+	SetVariable(context.client, Identifier(std::string_view(name.data(), name.size())), scope, value, false);
 	return SourceResultType::FINISHED;
+}
+
+void PhysicalSet::WarnOutsideTransaction(ClientContext &context, SetScope scope, const char *statement) {
+	if (scope != SetScope::LOCAL || !context.transaction.IsAutoCommit()) {
+		return;
+	}
+	const auto msg = StringUtil::Format("%s can only be used in transaction blocks", statement);
+	if (!context.EmitWarning(msg.c_str(), "NO_ACTIVE_SQL_TRANSACTION")) {
+		throw InvalidInputException(msg);
+	}
+}
+
+void PhysicalSet::CheckAccess(ClientContext &context, const RoleAccess &role, const Identifier &name, SetScope scope,
+                              const char *statement) {
+	const auto check = [&](const SettingAccess &access, SetScope variable_scope) {
+		if (!Settings::MayChange(context, role, name, access, variable_scope)) {
+			WarnOutsideTransaction(context, scope, statement);
+			Settings::CheckChange(context, role, name, access, variable_scope);
+		}
+	};
+	if (auto option = DBConfig::GetOptionByName(name)) {
+		check(option->access, GetSettingScope(*option, scope));
+		return;
+	}
+	ExtensionOption extension_option;
+	if (DBConfig::GetConfig(context).TryGetExtensionOption(name, extension_option)) {
+		check(extension_option.access, GetSettingScope(extension_option, scope));
+	}
 }
 
 } // namespace duckdb

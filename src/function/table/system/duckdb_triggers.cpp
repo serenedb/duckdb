@@ -65,14 +65,15 @@ static unique_ptr<FunctionData> DuckDBTriggersBind(ClientContext &context, Table
 	names.emplace_back("sql");
 	return_types.emplace_back(LogicalType::VARCHAR);
 
-	return make_uniq<DuckDBSystemIncludeHiddenBindData>();
+	return make_uniq<DuckDBSystemIncludeHiddenBindData>(input);
 }
 
 unique_ptr<GlobalTableFunctionState> DuckDBTriggersInit(ClientContext &context, TableFunctionInitInput &input) {
 	auto result = make_uniq<DuckDBTriggersData>();
 
-	auto database_filter = input.bind_data->Cast<DuckDBSystemIncludeHiddenBindData>().DatabaseFilter(context);
-	const auto role = context.CallerAccess(input.caller_role);
+	auto &bind_data = input.bind_data->Cast<DuckDBSystemIncludeHiddenBindData>();
+	auto database_filter = bind_data.DatabaseFilter(context);
+	const auto role = context.CallerAccess(bind_data.caller_role);
 	auto schemas = Catalog::GetAllSchemas(context, role, false, [&](AttachedDatabase &database) {
 		auto &catalog = database.GetCatalog();
 		return (catalog.IsDuckCatalog() || catalog.Compatibility() == SqlCompatibility::POSTGRES) &&

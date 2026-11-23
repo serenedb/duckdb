@@ -57,13 +57,13 @@ static unique_ptr<FunctionData> DuckDBCoordinateSystemsBind(ClientContext &conte
 	names.emplace_back("wkt2_2019");
 	return_types.emplace_back(LogicalType::VARCHAR);
 
-	return nullptr;
+	return make_uniq<DuckDBSystemIncludeHiddenBindData>(input);
 }
 
 static unique_ptr<GlobalTableFunctionState> DuckDBCoordinateSystemsInit(ClientContext &context,
                                                                         TableFunctionInitInput &input) {
 	auto result = make_uniq<DuckDBCoordinateSystemsData>();
-	const auto role = context.CallerAccess(input.caller_role);
+	const auto role = context.CallerAccess(input.bind_data->Cast<DuckDBSystemIncludeHiddenBindData>().caller_role);
 	auto schemas = Catalog::GetAllSchemas(context, role);
 	for (auto &schema : schemas) {
 		Catalog::ScanListedEntries(context, role, schema.get(), CatalogType::COORDINATE_SYSTEM_ENTRY,

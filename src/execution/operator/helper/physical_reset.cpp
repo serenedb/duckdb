@@ -162,12 +162,7 @@ void PhysicalReset::ResetOption(ClientContext &context, DBConfig &config, const 
 
 SourceResultType PhysicalReset::GetDataInternal(ExecutionContext &context, DataChunk &chunk,
                                                 OperatorSourceInput &input) const {
-	if (scope == SetScope::LOCAL && context.client.transaction.IsAutoCommit()) {
-		const char *msg = "RESET LOCAL can only be used in transaction blocks";
-		if (!context.client.EmitWarning(msg, "NO_ACTIVE_SQL_TRANSACTION")) {
-			throw InvalidInputException(msg);
-		}
-	}
+	PhysicalSet::WarnOutsideTransaction(context.client, scope, "RESET LOCAL");
 	if (scope == SetScope::VARIABLE) {
 		// SQL user variables live in a separate namespace from configuration
 		// options. PhysicalSetVariable does not notify OnSettingChange
@@ -181,12 +176,11 @@ SourceResultType PhysicalReset::GetDataInternal(ExecutionContext &context, DataC
 		ResetAll(context.client, scope, false);
 		return SourceResultType::FINISHED;
 	}
-	ResetVariable(context.client, context.client.CallerAccess(caller_role), Identifier(name.ToStdString()), scope);
+	ResetVariable(context.client, Identifier(name.ToStdString()), scope);
 	return SourceResultType::FINISHED;
 }
 
-void PhysicalReset::ResetVariable(ClientContext &context, const RoleAccess &role, const Identifier &name,
-                                  SetScope scope) {
+void PhysicalReset::ResetVariable(ClientContext &context, const Identifier &name, SetScope scope) {
 	auto &config = DBConfig::GetConfig(context);
 
 	// Single-target RESET: the handler call moved inside ResetOption /
@@ -194,7 +188,6 @@ void PhysicalReset::ResetVariable(ClientContext &context, const RoleAccess &role
 	auto option = DBConfig::GetOptionByName(name);
 	if (option) {
 		const auto variable_scope = PhysicalSet::GetSettingScope(*option, scope);
-		Settings::CheckChange(context, role, name, option->access, variable_scope);
 		ResetOption(context, config, *option, name.GetIdentifierName().c_str(), variable_scope);
 		return;
 	}
@@ -210,7 +203,6 @@ void PhysicalReset::ResetVariable(ClientContext &context, const RoleAccess &role
 		}
 	}
 	const auto variable_scope = PhysicalSet::GetSettingScope(extension_option, scope);
-	Settings::CheckChange(context, role, name, extension_option.access, variable_scope);
 	ResetExtensionVariable(context, config, name, extension_option, variable_scope);
 }
 

@@ -97,8 +97,7 @@ static unique_ptr<FunctionData> DuckDBIndexesBind(ClientContext &context, TableF
 	names.emplace_back("sql");
 	return_types.emplace_back(LogicalType::VARCHAR);
 
-	auto result = make_uniq<DuckDBSystemIncludeHiddenBindData>();
-	result->include_hidden = DuckDBSystemIncludeHiddenBindData::ReadParameter(input);
+	auto result = make_uniq<DuckDBSystemIncludeHiddenBindData>(input);
 	return std::move(result);
 }
 
@@ -107,7 +106,7 @@ unique_ptr<GlobalTableFunctionState> DuckDBIndexesInit(ClientContext &context, T
 	auto &bind_data = input.bind_data->Cast<DuckDBSystemIncludeHiddenBindData>();
 
 	// scan all the schemas for tables and collect them
-	const auto role = context.CallerAccess(input.caller_role);
+	const auto role = context.CallerAccess(bind_data.caller_role);
 	auto schemas = Catalog::GetAllSchemas(context, role, bind_data.include_hidden, bind_data.DatabaseFilter(context));
 	for (auto &schema : schemas) {
 		Catalog::ScanListedEntries(context, role, schema.get(), CatalogType::INDEX_ENTRY, [&](CatalogEntry &entry) {

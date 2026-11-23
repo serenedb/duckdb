@@ -27,10 +27,10 @@ public:
 
 public:
 	PhysicalSet(PhysicalPlan &physical_plan, const Identifier &name_p, Value value_p, SetScope scope_p,
-	            optional_idx caller_role_p, idx_t estimated_cardinality)
+	            idx_t estimated_cardinality)
 	    : PhysicalOperator(physical_plan, PhysicalOperatorType::SET, {LogicalType::BOOLEAN}, estimated_cardinality),
 	      name(physical_plan.ArenaRef().MakeString(name_p.GetIdentifierName())), value(std::move(value_p)),
-	      scope(scope_p), caller_role(caller_role_p) {
+	      scope(scope_p) {
 	}
 
 public:
@@ -47,6 +47,9 @@ public:
 
 	static void SetVariable(ClientContext &context, const Identifier &name, SetScope scope, const Value &value,
 	                        bool check_access = true, optional_ptr<const RoleAccess> role = nullptr);
+	static void CheckAccess(ClientContext &context, const RoleAccess &role, const Identifier &name, SetScope scope,
+	                        const char *statement);
+	static void WarnOutsideTransaction(ClientContext &context, SetScope scope, const char *statement);
 	static void SetCustomVariable(ClientContext &context, const Identifier &name, SetScope scope, const Value &value);
 	static void SetGenericVariable(ClientContext &context, idx_t setting_index, SetScope scope, Value target_value);
 	static Value SessionValue(ClientContext &context, const Identifier &name, optional_idx setting_index);
@@ -58,7 +61,6 @@ public:
 	String name;
 	const Value value;
 	const SetScope scope;
-	const optional_idx caller_role;
 };
 
 } // namespace duckdb

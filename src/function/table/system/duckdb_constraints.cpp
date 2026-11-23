@@ -94,8 +94,7 @@ static unique_ptr<FunctionData> DuckDBConstraintsBind(ClientContext &context, Ta
 	names.emplace_back("constraint_check_mode");
 	return_types.emplace_back(LogicalType::VARCHAR);
 
-	auto result = make_uniq<DuckDBSystemIncludeHiddenBindData>();
-	result->include_hidden = DuckDBSystemIncludeHiddenBindData::ReadParameter(input);
+	auto result = make_uniq<DuckDBSystemIncludeHiddenBindData>(input);
 	return std::move(result);
 }
 
@@ -104,7 +103,7 @@ unique_ptr<GlobalTableFunctionState> DuckDBConstraintsInit(ClientContext &contex
 
 	// scan all the schemas for tables and collect them
 	auto &bind_data = input.bind_data->Cast<DuckDBSystemIncludeHiddenBindData>();
-	const auto role = context.CallerAccess(input.caller_role);
+	const auto role = context.CallerAccess(bind_data.caller_role);
 	auto schemas = Catalog::GetAllSchemas(context, role, bind_data.include_hidden, bind_data.DatabaseFilter(context));
 
 	for (auto &schema : schemas) {

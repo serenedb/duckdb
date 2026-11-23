@@ -20,13 +20,13 @@ static unique_ptr<FunctionData> PragmaCollateBind(ClientContext &context, TableF
 	names.emplace_back("collname");
 	return_types.emplace_back(LogicalType::VARCHAR);
 
-	return nullptr;
+	return make_uniq<DuckDBSystemIncludeHiddenBindData>(input);
 }
 
 unique_ptr<GlobalTableFunctionState> PragmaCollateInit(ClientContext &context, TableFunctionInitInput &input) {
 	auto result = make_uniq<PragmaCollateData>();
 
-	const auto role = context.CallerAccess(input.caller_role);
+	const auto role = context.CallerAccess(input.bind_data->Cast<DuckDBSystemIncludeHiddenBindData>().caller_role);
 	auto schemas = Catalog::GetAllSchemas(context, role);
 	unordered_set<string> listed;
 	for (auto schema : schemas) {

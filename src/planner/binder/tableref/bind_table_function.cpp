@@ -373,7 +373,6 @@ BoundStatement Binder::BindTableFunctionInternal(BoundTableFunction &table_funct
 	get->source_ordinality = ref.with_ordinality;
 	get->input_table_types = input_table_types;
 	get->input_table_names = input_table_names;
-	get->caller_role = CallerRole();
 	if (ref.with_ordinality == OrdinalityType::WITH_ORDINALITY && !correlated_columns.empty()) {
 		get->ordinality_idx = ordinality_column_id;
 	}

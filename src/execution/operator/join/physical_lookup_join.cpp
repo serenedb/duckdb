@@ -51,7 +51,6 @@ unique_ptr<GlobalSinkState> PhysicalLookupJoin::GetGlobalSinkState(ClientContext
 		auto &source = Source();
 		TableFunctionInitInput input(source.bind_data.get(), source.column_ids, source.projection_ids, nullptr, nullptr,
 		                             this);
-		input.caller_role = source.caller_role;
 		result->lookup_state = lookup.init_global(context, input);
 	}
 	return std::move(result);
@@ -164,7 +163,6 @@ void PhysicalLookupJoin::FetchBatches(ExecutionContext &context, GlobalSinkState
 	if (lookup.init_local) {
 		TableFunctionInitInput input(source.bind_data.get(), source.column_ids, source.projection_ids, nullptr, nullptr,
 		                             this);
-		input.caller_role = source.caller_role;
 		local_state = lookup.init_local(context, input, sink.lookup_state.get());
 	}
 	DataChunk ids;

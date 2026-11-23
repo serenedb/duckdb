@@ -47,24 +47,29 @@ const CatalogSearchPath &SearchPathOf(ClientContext &context, const shared_ptr<C
 }
 
 struct CurrentSchemaBindData : public FunctionData {
-	explicit CurrentSchemaBindData(shared_ptr<CatalogSearchPath> function_path_p)
-	    : function_path(std::move(function_path_p)) {
+	CurrentSchemaBindData(shared_ptr<CatalogSearchPath> function_path_p, optional_idx caller_role)
+	    : function_path(std::move(function_path_p)), caller_role(caller_role) {
 	}
 
 	shared_ptr<CatalogSearchPath> function_path;
+	optional_idx caller_role;
 
 public:
 	unique_ptr<FunctionData> Copy() const override {
-		return make_uniq<CurrentSchemaBindData>(function_path);
+		return make_uniq<CurrentSchemaBindData>(function_path, caller_role);
 	}
 	bool Equals(const FunctionData &other_p) const override {
-		return function_path == other_p.Cast<CurrentSchemaBindData>().function_path;
+		auto &other = other_p.Cast<CurrentSchemaBindData>();
+		return function_path == other.function_path && caller_role == other.caller_role;
 	}
 };
 
 unique_ptr<FunctionData> CurrentSchemaBind(BindScalarFunctionInput &input) {
-	return make_uniq<CurrentSchemaBindData>(input.HasBinder() ? input.GetBinder().EntryRetriever().FunctionSearchPath()
-	                                                          : nullptr);
+	if (!input.HasBinder()) {
+		return make_uniq<CurrentSchemaBindData>(nullptr, optional_idx());
+	}
+	auto &binder = input.GetBinder();
+	return make_uniq<CurrentSchemaBindData>(binder.EntryRetriever().FunctionSearchPath(), binder.CallerRole());
 }
 
 // current_schema
@@ -73,11 +78,12 @@ unique_ptr<FunctionData> CurrentSchemaBind(BindScalarFunctionInput &input) {
 void CurrentSchemaFunction(DataChunk &input, ExpressionState &state, Vector &result) {
 	auto &context = state.GetContext();
 	auto &func_expr = state.expr.Cast<BoundFunctionExpression>();
-	auto &search_path = SearchPathOf(context, func_expr.BindInfo()->Cast<CurrentSchemaBindData>().function_path);
+	auto &info = func_expr.BindInfo()->Cast<CurrentSchemaBindData>();
+	auto &search_path = SearchPathOf(context, info.function_path);
 	auto current_catalog = DatabaseManager::GetDefaultDatabase(context);
 	bool found = false;
 	const bool searched_current_catalog = VisitUsableSearchPath(
-	    context, search_path, context.CallerAccess(func_expr.CallerRole()), [&](const Identifier &schema) {
+	    context, search_path, context.CallerAccess(info.caller_role), [&](const Identifier &schema) {
 		    result.Reference(Value(schema), count_t(input.size()));
 		    found = true;
 		    return false;

@@ -70,8 +70,7 @@ static unique_ptr<FunctionData> DuckDBSequencesBind(ClientContext &context, Tabl
 	names.emplace_back("sql");
 	return_types.emplace_back(LogicalType::VARCHAR);
 
-	auto result = make_uniq<DuckDBSystemIncludeHiddenBindData>();
-	result->include_hidden = DuckDBSystemIncludeHiddenBindData::ReadParameter(input);
+	auto result = make_uniq<DuckDBSystemIncludeHiddenBindData>(input);
 	return std::move(result);
 }
 
@@ -80,7 +79,7 @@ unique_ptr<GlobalTableFunctionState> DuckDBSequencesInit(ClientContext &context,
 
 	// scan all the schemas for tables and collect themand collect them
 	auto &bind_data = input.bind_data->Cast<DuckDBSystemIncludeHiddenBindData>();
-	result->role = context.CallerAccess(input.caller_role);
+	result->role = context.CallerAccess(bind_data.caller_role);
 	auto &role = result->role;
 	auto schemas = Catalog::GetAllSchemas(context, role, bind_data.include_hidden, bind_data.DatabaseFilter(context));
 	for (auto &schema : schemas) {
