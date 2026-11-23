@@ -233,13 +233,9 @@ string ObjectTypeKeyword(ParseResult &objtype) {
 	return StringUtil::Join(words, " ");
 }
 
-QualifiedName ObjectName(CatalogType type, QualifiedName name) {
-	return type == CatalogType::DATABASE_ENTRY ? QualifiedName(name.Name()) : std::move(name);
-}
-
 void SetObjectTarget(AlterPermissionsInfo &info, CatalogType type, QualifiedName name) {
 	info.entry_catalog_type = type;
-	info.SetQualifiedName(ObjectName(type, std::move(name)));
+	info.SetQualifiedName(std::move(name));
 }
 
 unique_ptr<SQLStatement> AlterStatementOf(unique_ptr<AlterInfo> info) {
@@ -538,6 +534,9 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformAlterOwnerStatement(PEG
 		info->has_func_args =
 		    TransformFunctionArgumentTypes(transformer, signature.Child<OptionalParseResult>(1), info->func_parameters);
 		TransformRoutineKind(target.GetChild(0), info->include_functions, info->include_procedures);
+	} else if (target.Name() == "OwnerUnqualifiedTarget") {
+		SetObjectTarget(*info, GrantObjectType(ObjectTypeKeyword(target.GetChild(0))),
+		                QualifiedName(Identifier(TransformColIdName(transformer, target.GetChild(1)))));
 	} else {
 		const auto keyword = ObjectTypeKeyword(target.GetChild(0));
 		SetObjectTarget(*info, keyword == "VIEW" ? CatalogType::VIEW_ENTRY : GrantObjectType(keyword),
@@ -639,8 +638,7 @@ static vector<ObjectReference> TransformGrantTarget(PEGTransformer &transformer,
 		}
 		info.all_in_schema = true;
 		for (auto &schema_ref : PEGTransformerFactory::ExtractParseResultsFromList(target.GetChild(4))) {
-			auto schema = transformer.Transform<QualifiedName>(schema_ref.get());
-			names.push_back(ObjectReference {QualifiedName(schema.Schema(), schema.Name(), Identifier())});
+			names.push_back(ObjectReference {transformer.Transform<QualifiedName>(schema_ref.get())});
 		}
 		return names;
 	}
@@ -665,13 +663,19 @@ static vector<ObjectReference> TransformGrantTarget(PEGTransformer &transformer,
 		}
 		return names;
 	}
+	if (chosen.Name() == "GrantUnqualifiedTarget") {
+		info.entry_catalog_type = GrantObjectType(ObjectTypeKeyword(target.GetChild(0)));
+		for (auto &name : PEGTransformerFactory::ExtractParseResultsFromList(target.GetChild(1))) {
+			names.push_back(ObjectReference {QualifiedName(Identifier(TransformColIdName(transformer, name.get())))});
+		}
+		return names;
+	}
 	// GrantNamedTarget: 0:GrantObjType? 1:List(QualifiedName)
 	auto &objtype_opt = target.Child<OptionalParseResult>(0);
 	info.entry_catalog_type =
 	    GrantObjectType(objtype_opt.HasResult() ? ObjectTypeKeyword(objtype_opt.GetResult()) : "TABLE");
 	for (auto &name : PEGTransformerFactory::ExtractParseResultsFromList(target.GetChild(1))) {
-		names.push_back(
-		    ObjectReference {ObjectName(info.entry_catalog_type, transformer.Transform<QualifiedName>(name.get()))});
+		names.push_back(ObjectReference {transformer.Transform<QualifiedName>(name.get())});
 	}
 	return names;
 }

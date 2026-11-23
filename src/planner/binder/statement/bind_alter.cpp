@@ -288,9 +288,10 @@ CatalogEntry &Binder::ResolveDatabaseEntry(CatalogType type, AlterInfo &info, Ac
 
 static void ExpandAllInSchema(Binder &binder, unique_ptr<AlterInfo> info, vector<unique_ptr<AlterInfo>> &objects) {
 	auto &grant = info->Cast<AlterPermissionsInfo>();
-	auto &name = grant.GetQualifiedName();
-	auto &schema = *binder.EntryRetriever().GetSchema(name.Catalog(), {name.Schema()}, AclMode::NoRights,
-	                                                  OnEntryNotFound::THROW_EXCEPTION);
+	const auto name = Binder::ResolveCatalog(binder.EntryRetriever(), grant.GetQualifiedName());
+	auto &path = name.Path();
+	auto &schema = *binder.EntryRetriever().GetSchema(path.front(), vector<Identifier>(path.begin() + 1, path.end()),
+	                                                  AclMode::NoRights, OnEntryNotFound::THROW_EXCEPTION);
 	const auto add = [&](const CatalogEntry &entry, optional_ptr<const MacroFunction> overload) {
 		auto object = grant.Copy();
 		auto &target = object->Cast<AlterPermissionsInfo>();

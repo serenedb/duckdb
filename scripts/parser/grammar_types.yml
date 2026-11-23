@@ -2165,6 +2165,7 @@ excluded_rules:
   - OwnerTarget
   - GrantRoutineKind
   - OwnerRoutineTarget
+  - OwnerUnqualifiedTarget
   - OwnerNamedTarget
   - OwnerRoleSpec
   - GroupGrantee
@@ -2190,6 +2191,7 @@ excluded_rules:
   - FuncArgSignature
   - FuncArg
   - GrantParameterTarget
+  - GrantUnqualifiedTarget
   - GrantNamedTarget
   - GrantedBy
   - MemberOptionList

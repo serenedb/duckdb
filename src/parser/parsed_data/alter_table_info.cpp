@@ -318,9 +318,7 @@ static string PermissionsTargetToSQL(const AlterPermissionsInfo &info, const Qua
 		return Settings::ConfigNameToSQL(name.Name().GetIdentifierName());
 	}
 	if (info.all_in_schema) {
-		return name.Catalog().empty()
-		           ? SQLIdentifier::ToString(name.Schema())
-		           : SQLIdentifier::ToString(name.Catalog()) + "." + SQLIdentifier::ToString(name.Schema());
+		return name.ToString();
 	}
 	auto target = name.ToString(QualifiedNameToStringMode::HIDE_DEFAULT_SCHEMA);
 	if (has_func_args) {

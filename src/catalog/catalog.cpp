@@ -2020,7 +2020,9 @@ void Catalog::Alter(CatalogTransaction transaction, AlterInfo &info) {
 		return AlterSchema(transaction, *schema, schema_info);
 	}
 	if (info.GetCatalogType() == CatalogType::SCHEMA_ENTRY) {
-		auto schema = GetSchema(transaction, info.GetQualifiedName().Name(), info.if_not_found);
+		auto name = info.GetQualifiedName();
+		name.StripCatalog();
+		auto schema = GetSchema(transaction, name.Path(), info.if_not_found);
 		if (!schema) {
 			return;
 		}

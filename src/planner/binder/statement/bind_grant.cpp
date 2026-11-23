@@ -63,9 +63,12 @@ static CatalogEntry &ResolvePermissionsTarget(Binder &binder, AlterPermissionsIn
 	auto &context = binder.context;
 	auto &name = info.GetQualifiedName();
 	if (info.entry_catalog_type == CatalogType::SCHEMA_ENTRY) {
-		auto &schema = *binder.EntryRetriever().GetSchema(name.Catalog(), {name.Name()}, AclMode::NoRights,
-		                                                  OnEntryNotFound::THROW_EXCEPTION);
-		info.SetQualifiedName(schema.ParentCatalog().GetName(), Identifier(), schema.name);
+		auto &path = name.Path();
+		auto &schema =
+		    *binder.EntryRetriever().GetSchema(path.front(), vector<Identifier>(path.begin() + 1, path.end()),
+		                                       AclMode::NoRights, OnEntryNotFound::THROW_EXCEPTION);
+		info.SetQualifiedName(QualifiedName::FromCatalogSchema(schema.ParentCatalog().GetName(),
+		                                                       schema.GetParentSchemaPath(), schema.name));
 		return schema;
 	}
 	const auto container = ObjectKindOf(info.entry_catalog_type).container;
@@ -349,9 +352,14 @@ void Binder::ResolveOwned(AlterInfo &info) {
 
 void Binder::BindAlterPermissions(AlterPermissionsInfo &info, StatementProperties &properties) {
 	const auto catalog_type = info.GetCatalogType();
-	if (catalog_type != CatalogType::DATABASE_ENTRY && catalog_type != CatalogType::ROLE_ENTRY &&
-	    catalog_type != CatalogType::TABLESPACE_ENTRY && catalog_type != CatalogType::FOREIGN_DATA_WRAPPER_ENTRY &&
-	    catalog_type != CatalogType::PARAMETER_ENTRY && catalog_type != CatalogType::LANGUAGE_ENTRY) {
+	if (catalog_type == CatalogType::SCHEMA_ENTRY) {
+		info.SetQualifiedName(ResolveCatalog(entry_retriever, info.GetQualifiedName()));
+		properties.RegisterDBModify(Catalog::GetCatalog(context, info.GetQualifiedName().Path().front()), context,
+		                            DatabaseModificationType::ALTER_TABLE);
+	} else if (catalog_type != CatalogType::DATABASE_ENTRY && catalog_type != CatalogType::ROLE_ENTRY &&
+	           catalog_type != CatalogType::TABLESPACE_ENTRY &&
+	           catalog_type != CatalogType::FOREIGN_DATA_WRAPPER_ENTRY &&
+	           catalog_type != CatalogType::PARAMETER_ENTRY && catalog_type != CatalogType::LANGUAGE_ENTRY) {
 		info.SetQualifiedName(BindTableName(info.GetQualifiedName()));
 		auto &catalog = Catalog::GetCatalog(context, info.GetQualifiedName().Catalog());
 		properties.RegisterDBModify(catalog, context, DatabaseModificationType::ALTER_TABLE);

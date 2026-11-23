@@ -40,10 +40,12 @@ PasswordNullOption  <- 'PASSWORD' 'NULL'
 # before the native AlterStatement so OWNER TO is intercepted (DuckDB's alter
 # binder does not support ownership changes).
 AlterOwnerStatement <- 'ALTER' OwnerTarget 'OWNER' 'TO' OwnerRoleSpec
-OwnerTarget <- OwnerRoutineTarget / OwnerNamedTarget
+OwnerTarget <- OwnerRoutineTarget / OwnerUnqualifiedTarget / OwnerNamedTarget
 OwnerRoutineTarget <- GrantRoutineKind RoutineSignature
+OwnerUnqualifiedTarget <- OwnerUnqualifiedObjType ColId
+OwnerUnqualifiedObjType <- 'SERVER' / 'DATABASE' / 'TABLESPACE'
 OwnerNamedTarget <- OwnerObjectType QualifiedName
-OwnerObjectType <- TextSearchDictionaryObjType / 'TABLE' / 'VIEW' / 'SEQUENCE' / 'SCHEMA' / 'TYPE' / 'JOB' / 'SERVER' / 'DATABASE' / 'TABLESPACE'
+OwnerObjectType <- TextSearchDictionaryObjType / 'TABLE' / 'VIEW' / 'SEQUENCE' / 'SCHEMA' / 'TYPE' / 'JOB'
 TextSearchDictionaryObjType <- 'TEXT' 'SEARCH' 'DICTIONARY'
 OwnerRoleSpec <- 'CURRENT_USER' / 'SESSION_USER' / 'CURRENT_ROLE' / ColId
 ReassignOwnedStatement <- 'REASSIGN' 'OWNED' 'BY' List(OwnerRoleSpec) 'TO' OwnerRoleSpec
@@ -81,7 +83,7 @@ MemberOptionName <- 'ADMIN' / 'INHERIT' / 'SET'
 # first so 'ALL' is not mistaken for a relation name. A FUNCTION/ROUTINE target
 # may carry an argument-type signature -- fn(int) -- to pick a specific
 # overload; PROCEDURE is accepted as a routine synonym too.
-GrantTarget <- GrantAllInSchema / GrantFunctionTarget / GrantParameterTarget / GrantNamedTarget
+GrantTarget <- GrantAllInSchema / GrantFunctionTarget / GrantParameterTarget / GrantUnqualifiedTarget / GrantNamedTarget
 GrantAllInSchema <- 'ALL' GrantObjTypePlural 'IN' 'SCHEMA' List(QualifiedName)
 GrantObjTypePlural <- 'TABLES' / 'SEQUENCES' / 'FUNCTIONS' / 'ROUTINES' / 'PROCEDURES'
 GrantFunctionTarget <- GrantRoutineKind List(RoutineSignature)
@@ -95,6 +97,7 @@ OutArgMode <- 'OUT'
 InoutArgMode <- 'INOUT'
 VariadicArgMode <- 'VARIADIC'
 GrantParameterTarget <- 'PARAMETER' List(SettingPath)
+GrantUnqualifiedTarget <- GrantUnqualifiedObjType List(ColId)
 GrantNamedTarget <- GrantObjType? List(QualifiedName)
 
 # Optional WITH GRANT OPTION suffix on a table GRANT: the grantee may re-grant.
@@ -114,7 +117,8 @@ OptionBool <- 'TRUE' / 'FALSE'
 
 RoleOrUser <- 'ROLE' / 'USER' / 'GROUP'
 # Object class for GRANT/REVOKE ... ON <type> name. Absent defaults to TABLE.
-GrantObjType <- ForeignServerObjType / ForeignDataWrapperObjType / 'TABLE' / 'SEQUENCE' / 'FUNCTION' / 'DATABASE' / 'SCHEMA' / 'TYPE' / 'DOMAIN' / 'LANGUAGE' / 'TABLESPACE'
+GrantObjType <- 'TABLE' / 'SEQUENCE' / 'FUNCTION' / 'SCHEMA' / 'TYPE' / 'DOMAIN'
+GrantUnqualifiedObjType <- ForeignServerObjType / ForeignDataWrapperObjType / 'DATABASE' / 'LANGUAGE' / 'TABLESPACE'
 ForeignServerObjType <- 'FOREIGN' 'SERVER'
 ForeignDataWrapperObjType <- 'FOREIGN' 'DATA' 'WRAPPER'
 # PUBLIC is the pseudo-role; otherwise a normal role identifier.
