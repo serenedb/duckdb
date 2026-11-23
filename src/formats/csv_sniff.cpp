@@ -51,6 +51,11 @@ CsvSniffScanner::CsvSniffScanner(shared_ptr<CSVBufferManager> buffer_manager,
 CsvSniffScanner &CsvSniffScanner::ParseChunk() {
 	chunk.Reset();
 	while (chunk.size() < result_size && !scan->Done()) {
+		if (chunk.size() == 0) {
+			scan->Scan(chunk, result_size);
+			chunk.Flatten();
+			continue;
+		}
 		part.Reset();
 		scan->Scan(part, result_size - chunk.size());
 		if (part.size() > 0) {

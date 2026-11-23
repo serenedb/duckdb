@@ -15,7 +15,6 @@ constexpr idx_t RANGE_OVERLAP = 1 << 12;
 constexpr idx_t SYNC_WINDOW = 1 << 14;
 constexpr idx_t WINDOW_BYTES = 1 << 18;
 constexpr idx_t UNSETTLED_BYTES = 1 << 22;
-constexpr idx_t FEED_BYTES = 1 << 20;
 constexpr idx_t REBASE_BYTES = 1 << 29;
 constexpr idx_t ROW_LIMIT = idx_t(3) << 29;
 constexpr idx_t INTAKE_AHEAD = 2;
@@ -1220,8 +1219,8 @@ bool RowRangeReader::Lex() {
 	const idx_t limit = lex_stop != DConstants::INVALID_INDEX ? lex_stop : ranges.RangeEnd(range, size);
 	idx_t feed_end = MinValue(limit, read_to);
 	bool last = lex_stop != DConstants::INVALID_INDEX && feed_end == lex_stop;
-	if (feed_end > cursor.pos + FEED_BYTES) {
-		feed_end = cursor.pos + FEED_BYTES;
+	if (feed_end > cursor.pos + ranges.feed_bytes) {
+		feed_end = cursor.pos + ranges.feed_bytes;
 		last = false;
 	}
 	const bool whole = cursor.pos < feed_end && (last || feed_end - cursor.pos >= CSV_BLOCK_BYTES + lexer.Lookahead());

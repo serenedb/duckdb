@@ -1,0 +1,25 @@
+# name: test/sql/copy/csv/test_multi_file_sniff_ignore_errors.test
+# description: The sample rows sniffed from a later file of a scan are read whole when ignore_errors drops some of them
+# group: [csv]
+
+statement ok
+COPY (SELECT * FROM (VALUES ('1,a'), ('2,b'), ('3,c'), ('4,d')) t(line)) TO '{TEMP_DIR}/sniff_first.csv' (HEADER false, DELIMITER '|');
+
+statement ok
+COPY (SELECT * FROM (VALUES ('5,e'), ('6,f,extra'), ('7,g'), ('8,h')) t(line)) TO '{TEMP_DIR}/sniff_second.csv' (HEADER false, DELIMITER '|');
+
+query II
+SELECT count(*), sum(column0) FROM read_csv(['{TEMP_DIR}/sniff_first.csv', '{TEMP_DIR}/sniff_second.csv'], ignore_errors=true);
+----
+7	30
+
+query II
+SELECT * FROM read_csv(['{TEMP_DIR}/sniff_first.csv', '{TEMP_DIR}/sniff_second.csv'], ignore_errors=true) ORDER BY ALL;
+----
+1	a
+2	b
+3	c
+4	d
+5	e
+7	g
+8	h
