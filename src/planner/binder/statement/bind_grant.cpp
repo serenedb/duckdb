@@ -288,22 +288,20 @@ static void ResolveDefaultPrivileges(Binder &binder, AlterPermissionsInfo &info)
 	info.SetQualifiedName(Identifier(), Identifier(), database);
 }
 
-static idx_t ResolveOwnedRole(Binder &binder, const string &name, const string &action, const string &detail) {
-	auto &context = binder.context;
-	auto role = RoleSpecId(context, name);
-	if (!binder.CheckAs().MemberOf(role)) {
-		throw PermissionException(
-		    unordered_map<string, string> {{"detail", StringUtil::Format(detail, RoleName(context, role), action)}},
-		    StringUtil::Format("permission denied to %s objects", action));
-	}
-	return role;
-}
-
 static vector<idx_t> ResolveOwnedRoles(Binder &binder, const vector<string> &names, const string &action) {
+	auto &context = binder.context;
 	vector<idx_t> result;
 	for (auto &name : names) {
-		result.push_back(ResolveOwnedRole(binder, name, action,
-		                                  "Only roles with privileges of role \"%s\" may %s objects owned by it."));
+		auto role = RoleSpecId(context, name);
+		if (!binder.CheckAs().MemberOf(role)) {
+			throw PermissionException(
+			    unordered_map<string, string> {
+			        {"detail",
+			         StringUtil::Format("Only roles with privileges of role \"%s\" may %s objects owned by it.",
+			                            RoleName(context, role), action)}},
+			    StringUtil::Format("permission denied to %s objects", action));
+		}
+		result.push_back(role);
 	}
 	return result;
 }
@@ -326,9 +324,27 @@ void Binder::ResolveOwned(AlterInfo &info) {
 	}
 	auto &reassign = info.Cast<ReassignOwnedInfo>();
 	reassign.role_ids = ResolveOwnedRoles(*this, reassign.roles, "reassign");
-	reassign.new_owner_id = ResolveOwnedRole(*this, reassign.new_owner, "reassign",
-	                                         "Only roles with privileges of role \"%s\" may %s objects to it.");
+	reassign.new_owner_id = RoleSpecId(context, reassign.new_owner);
+	auto &role = CheckAs();
+	if (!role.CanSet(reassign.new_owner_id)) {
+		throw PermissionException("must be able to SET ROLE \"%s\"", RoleName(context, reassign.new_owner_id));
+	}
 	RefuseBootstrapRole(*this, reassign.role_ids, "reassign ownership of objects");
+	if (role.is_superuser || role.Has(RoleOption::CreateDb)) {
+		return;
+	}
+	bool database = false;
+	auto &cluster = Catalog::GetSystemCatalog(context);
+	cluster.ScanTopLevelEntries(
+	    cluster.GetCatalogTransaction(context), CatalogType::DATABASE_ENTRY, [&](CatalogEntry &entry) {
+		    const auto owner = entry.permissions.owner;
+		    database = database ||
+		               (owner != reassign.new_owner_id && std::find(reassign.role_ids.begin(), reassign.role_ids.end(),
+		                                                            owner) != reassign.role_ids.end());
+	    });
+	if (database) {
+		throw PermissionException("permission denied to change owner of database");
+	}
 }
 
 void Binder::BindAlterPermissions(AlterPermissionsInfo &info, StatementProperties &properties) {
