@@ -157,10 +157,10 @@ bool EntryVisible(ClientContext &context, const RoleAccess &role, CatalogEntry &
 	case CatalogType::SEQUENCE_ENTRY:
 	case CatalogType::TYPE_ENTRY:
 	case CatalogType::JOB_ENTRY:
-		return role.CanAny(kind.acl_class, entry.permissions, kind.privileges);
+		return role.Owns(entry.permissions.owner) || role.CanAny(kind.acl_class, entry.permissions, kind.privileges);
 	case CatalogType::TABLE_ENTRY:
 	case CatalogType::VIEW_ENTRY: {
-		if (role.CanAny(kind.acl_class, entry.permissions, kind.privileges)) {
+		if (role.Owns(entry.permissions.owner) || role.CanAny(kind.acl_class, entry.permissions, kind.privileges)) {
 			return true;
 		}
 		const auto grants = [&](std::span<const AclItem> acl) {
@@ -179,7 +179,8 @@ bool EntryVisible(ClientContext &context, const RoleAccess &role, CatalogEntry &
 	case CatalogType::TABLE_MACRO_ENTRY: {
 		auto &macro = entry.Cast<MacroCatalogEntry>();
 		return std::any_of(macro.macros.begin(), macro.macros.end(), [&](const unique_ptr<MacroFunction> &overload) {
-			return role.CanAny(kind.acl_class, macro.OverloadPermissions(*overload), kind.privileges);
+			auto &permissions = macro.OverloadPermissions(*overload);
+			return role.Owns(permissions.owner) || role.CanAny(kind.acl_class, permissions, kind.privileges);
 		});
 	}
 	case CatalogType::INDEX_ENTRY: {

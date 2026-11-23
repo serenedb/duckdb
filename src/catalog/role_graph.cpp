@@ -88,8 +88,8 @@ static AclMode CapabilityModes(const RoleAccess &access, CatalogType type) {
 	return modes;
 }
 
-static bool Allows(const RoleAccess &access, std::span<const AclItem> stored, bool uses_default, CatalogType type,
-                   AclMode need, bool any) {
+static bool Allows(const RoleAccess &access, std::span<const AclItem> stored, bool uses_default, AclMode defaults,
+                   CatalogType type, AclMode need, bool any) {
 	if (need == AclMode::NoRights) {
 		return false;
 	}
@@ -98,7 +98,7 @@ static bool Allows(const RoleAccess &access, std::span<const AclItem> stored, bo
 	};
 	AclMode have = CapabilityModes(access, type);
 	if (uses_default) {
-		return done(have | ObjectKindOf(type).public_privileges);
+		return done(have | defaults);
 	}
 	if (done(have)) {
 		return true;
@@ -115,15 +115,23 @@ static bool Allows(const RoleAccess &access, std::span<const AclItem> stored, bo
 }
 
 bool RoleAccess::Can(CatalogType type, std::span<const AclItem> acl, AclMode need) const {
-	return Allows(*this, acl, acl.empty(), type, need, false);
+	return Allows(*this, acl, acl.empty(), ObjectKindOf(type).public_privileges, type, need, false);
+}
+
+static AclMode DefaultModes(const RoleAccess &access, CatalogType type, const Permissions &permissions) {
+	auto &kind = ObjectKindOf(type);
+	return permissions.UsesDefaultAcl() && access.Owns(permissions.owner) ? kind.privileges | kind.public_privileges
+	                                                                      : kind.public_privileges;
 }
 
 bool RoleAccess::Can(CatalogType type, const Permissions &permissions, AclMode need) const {
-	return Owns(permissions.owner) || Allows(*this, permissions.acl, permissions.UsesDefaultAcl(), type, need, false);
+	return is_superuser || Allows(*this, permissions.acl, permissions.UsesDefaultAcl(),
+	                              DefaultModes(*this, type, permissions), type, need, false);
 }
 
 bool RoleAccess::CanAny(CatalogType type, const Permissions &permissions, AclMode need) const {
-	return Owns(permissions.owner) || Allows(*this, permissions.acl, permissions.UsesDefaultAcl(), type, need, true);
+	return is_superuser || Allows(*this, permissions.acl, permissions.UsesDefaultAcl(),
+	                              DefaultModes(*this, type, permissions), type, need, true);
 }
 
 bool RoleAccess::CanColumns(const StandardEntry &relation, AclMode need, std::span<const idx_t> columns) const {
