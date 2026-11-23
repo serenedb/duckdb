@@ -23,6 +23,26 @@ SELECT count(*), sum(column0), max(column4) FROM read_csv('{TEMP_DIR}/late_quote
 ----
 20000	199990000	say "hi", twice
 
+# with 64 KiB buffers the candidates read past the first buffer, whose bytes are all that was checked
+query III
+SELECT Delimiter, Quote, Escape FROM sniff_csv('{TEMP_DIR}/late_quote.csv', buffer_size=65536);
+----
+,	"	"
+
+query II
+SELECT count(*), sum(column0) FROM read_csv('{TEMP_DIR}/late_quote.csv', buffer_size=65536);
+----
+20000	199990000
+
+# an empty file has no first buffer to check
+statement ok
+COPY (SELECT 1 WHERE false) TO '{TEMP_DIR}/empty_candidates.csv' (HEADER false);
+
+query IIII
+SELECT Delimiter, Quote, Escape, HasHeader FROM sniff_csv('{TEMP_DIR}/empty_candidates.csv');
+----
+,	(empty)	(empty)	false
+
 # a delimiter candidate first appears past the first MiB
 statement ok
 COPY (SELECT i AS a, 'word ' || i AS b, i * 3 AS c, repeat('x', 30) AS d,
