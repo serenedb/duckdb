@@ -54,19 +54,8 @@ bool CanUseSchema(const RoleAccess &role, const CatalogEntry &schema) {
 	       role.Can(CatalogType::SCHEMA_ENTRY, schema.permissions, AclMode::Usage);
 }
 
-static bool MayCall(ClientContext &context, const RoleAccess &role, RoleCapability capability) {
-	return capability == RoleCapability::None || role.Has(capability) ||
-	       role.Owns(DBConfig::GetConfig(context).bootstrap_role);
-}
-
-bool MayCallFunction(ClientContext &context, const RoleAccess &role, const CatalogEntry &function) {
-	return MayCall(context, role, function.Cast<FunctionEntry>().required_capability);
-}
-
-void CheckBuiltinCall(ClientContext &context, const RoleAccess &role, const CatalogEntry &function) {
-	if (!MayCallFunction(context, role, function)) {
-		ThrowPermissionDenied(function);
-	}
+static bool MayCall(const RoleAccess &role, RoleCapability capability) {
+	return capability == RoleCapability::None || role.Has(capability) || role.owns_builtins;
 }
 
 static optional_ptr<Catalog> RoleCatalog(ClientContext &context) {
@@ -122,7 +111,7 @@ bool EntryVisible(ClientContext &context, const RoleAccess &role, CatalogEntry &
 		return CanConnect(context, role, entry.name, ClusterEntry(context, CatalogType::DATABASE_ENTRY, entry.name));
 	}
 	if ((entry.type == CatalogType::TABLE_FUNCTION_ENTRY || entry.type == CatalogType::SCALAR_FUNCTION_ENTRY) &&
-	    !MayCallFunction(context, role, entry)) {
+	    !Allowed(role, entry, AclMode::Execute)) {
 		return false;
 	}
 	if (entry.internal || IsUnowned(entry)) {
@@ -269,6 +258,21 @@ static bool IsMacro(const CatalogEntry &entry) {
 	return entry.type == CatalogType::MACRO_ENTRY || entry.type == CatalogType::TABLE_MACRO_ENTRY;
 }
 
+static bool IsFunction(const CatalogEntry &entry) {
+	switch (entry.type) {
+	case CatalogType::SCALAR_FUNCTION_ENTRY:
+	case CatalogType::TABLE_FUNCTION_ENTRY:
+	case CatalogType::AGGREGATE_FUNCTION_ENTRY:
+	case CatalogType::PRAGMA_FUNCTION_ENTRY:
+	case CatalogType::WINDOW_FUNCTION_ENTRY:
+	case CatalogType::MACRO_ENTRY:
+	case CatalogType::TABLE_MACRO_ENTRY:
+		return true;
+	default:
+		return false;
+	}
+}
+
 static bool Uses(AclMode use, AclMode modes) {
 	return (use & modes) != AclMode::NoRights;
 }
@@ -294,6 +298,9 @@ bool Allowed(const RoleAccess &role, const CatalogEntry &entry, AclMode use,
 	D_ASSERT(!Uses(use, AclMode::Drop | AclMode::See));
 	if (role.is_superuser) {
 		return true;
+	}
+	if (Uses(use, AclMode::Execute) && IsFunction(entry) && (!overload || IsUnowned(entry))) {
+		return MayCall(role, entry.Cast<FunctionEntry>().required_capability);
 	}
 	if (Uses(use, AclMode::Own | AclMode::Rename) && !OwnsEntry(role, entry, overload)) {
 		return false;
@@ -589,7 +596,7 @@ optional_ptr<const FunctionCall> DeniedCall(ClientContext &context, const RoleAc
 	}
 	for (auto &call : calls) {
 		if (!call.macro_overload.IsValid()) {
-			if (!MayCall(context, role, call.capability)) {
+			if (!MayCall(role, call.capability)) {
 				return &call;
 			}
 			continue;

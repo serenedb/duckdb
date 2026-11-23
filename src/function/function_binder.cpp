@@ -32,8 +32,8 @@ FunctionBinder::FunctionBinder(Binder &binder_p) : binder(&binder_p), context(bi
 static void Execute(optional_ptr<Binder> binder, ClientContext &context, const CatalogEntry &function) {
 	if (binder) {
 		binder->Execute(function);
-	} else {
-		CheckBuiltinCall(context, context.CurrentRole(), function);
+	} else if (!Allowed(context.CurrentRole(), function, AclMode::Execute)) {
+		ThrowPermissionDenied(function);
 	}
 }
 

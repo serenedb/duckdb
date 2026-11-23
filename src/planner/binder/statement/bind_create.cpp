@@ -1604,6 +1604,12 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 		} else if (!role.IsSystem()) {
 			info.permissions.owner = role.role;
 		}
+		if (!info.tablespace.empty()) {
+			auto tablespace = ClusterEntry(context, CatalogType::TABLESPACE_ENTRY, info.tablespace);
+			if (tablespace && !tablespace->internal) {
+				Require(context, role, *tablespace, AclMode::Create);
+			}
+		}
 		result.plan = make_uniq<LogicalCreate>(LogicalOperatorType::LOGICAL_CREATE_DATABASE, std::move(stmt.info));
 		break;
 	}

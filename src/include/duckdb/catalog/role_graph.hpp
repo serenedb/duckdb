@@ -72,6 +72,7 @@ struct RoleAccess {
 	RoleOption options = RoleOption::None;
 	RoleCapability capabilities = RoleCapability::None;
 	bool is_superuser = false;
+	bool owns_builtins = false;
 	std::span<const uint64_t> closure_filter;
 	std::span<const idx_t> closure;
 	std::span<const idx_t> settable;
@@ -137,7 +138,7 @@ public:
 	};
 
 	SecuritySnapshot(unordered_map<idx_t, Node> nodes, unordered_map<string, idx_t> database_owners,
-	                 idx_t database_owner_role);
+	                 idx_t database_owner_role, idx_t bootstrap_role);
 	~SecuritySnapshot();
 
 	SecuritySnapshot(const SecuritySnapshot &) = delete;
@@ -162,6 +163,7 @@ private:
 	unordered_map<string, idx_t> by_name;
 	unordered_map<string, idx_t> database_owners;
 	idx_t database_owner_role;
+	idx_t bootstrap_role;
 	unordered_map<idx_t, shared_ptr<const SecuritySnapshot>> derived;
 };
 

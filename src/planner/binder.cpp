@@ -88,55 +88,20 @@ Binder::Binder(ClientContext &context, shared_ptr<Binder> parent_p, BinderType b
 	}
 }
 
-static void CheckStatementKind(ClientContext &context, const RoleAccess &role, SQLStatement &statement) {
-	if (role.is_superuser) {
-		return;
-	}
-	switch (statement.type) {
-	case StatementType::EXPORT_STATEMENT:
-	case StatementType::LOAD_STATEMENT:
-	case StatementType::UPDATE_EXTENSIONS_STATEMENT:
-	case StatementType::COPY_DATABASE_STATEMENT:
-	case StatementType::CONNECT_STATEMENT:
-	case StatementType::EXTERNAL_RESOURCE_STATEMENT:
-	case StatementType::DETACH_STATEMENT:
-	case StatementType::ATTACH_STATEMENT:
-		RequireSuperuser(role);
-		break;
-	case StatementType::INVALID_STATEMENT:
-	case StatementType::SELECT_STATEMENT:
-	case StatementType::INSERT_STATEMENT:
-	case StatementType::UPDATE_STATEMENT:
-	case StatementType::CREATE_STATEMENT:
-	case StatementType::DELETE_STATEMENT:
-	case StatementType::PREPARE_STATEMENT:
-	case StatementType::EXECUTE_STATEMENT:
-	case StatementType::ALTER_STATEMENT:
-	case StatementType::TRANSACTION_STATEMENT:
-	case StatementType::COPY_STATEMENT:
-	case StatementType::ANALYZE_STATEMENT:
-	case StatementType::VARIABLE_SET_STATEMENT:
-	case StatementType::CREATE_FUNC_STATEMENT:
-	case StatementType::EXPLAIN_STATEMENT:
-	case StatementType::DROP_STATEMENT:
-	case StatementType::PRAGMA_STATEMENT:
-	case StatementType::VACUUM_STATEMENT:
-	case StatementType::CALL_STATEMENT:
-	case StatementType::SET_STATEMENT:
-	case StatementType::RELATION_STATEMENT:
-	case StatementType::EXTENSION_STATEMENT:
-	case StatementType::LOGICAL_PLAN_STATEMENT:
-	case StatementType::MULTI_STATEMENT:
-	case StatementType::MERGE_INTO_STATEMENT:
-	case StatementType::DISCONNECT_STATEMENT:
-	case StatementType::PASSTHROUGH_STATEMENT:
-	case StatementType::ENUM_SIZE:
-		break;
-	}
-}
+static constexpr StatementType SUPERUSER_STATEMENTS[] = {StatementType::EXPORT_STATEMENT,
+                                                         StatementType::LOAD_STATEMENT,
+                                                         StatementType::UPDATE_EXTENSIONS_STATEMENT,
+                                                         StatementType::COPY_DATABASE_STATEMENT,
+                                                         StatementType::CONNECT_STATEMENT,
+                                                         StatementType::EXTERNAL_RESOURCE_STATEMENT,
+                                                         StatementType::DETACH_STATEMENT,
+                                                         StatementType::ATTACH_STATEMENT};
 
 BoundStatement Binder::Bind(SQLStatement &statement) {
-	CheckStatementKind(context, CheckAs(), statement);
+	if (std::find(std::begin(SUPERUSER_STATEMENTS), std::end(SUPERUSER_STATEMENTS), statement.type) !=
+	    std::end(SUPERUSER_STATEMENTS)) {
+		RequireSuperuser(CheckAs());
+	}
 	switch (statement.type) {
 	case StatementType::SELECT_STATEMENT:
 		return Bind(statement.Cast<SelectStatement>());
@@ -404,12 +369,7 @@ void Binder::RecordCalls(optional_ptr<vector<FunctionCall>> calls) {
 }
 
 void Binder::Execute(const CatalogEntry &function, optional_ptr<const MacroFunction> overload) {
-	auto &role = CurrentRole();
-	const bool owned_overload = overload && !IsUnowned(function);
-	if (!owned_overload) {
-		CheckBuiltinCall(context, role, function);
-	} else if (!role.Can(function.type, function.Cast<MacroCatalogEntry>().OverloadPermissions(*overload),
-	                     AclMode::Execute)) {
+	if (!Allowed(CurrentRole(), function, AclMode::Execute, overload)) {
 		ThrowPermissionDenied(function, overload);
 	}
 	auto calls = global_binder_state->recorded_calls;
@@ -417,7 +377,7 @@ void Binder::Execute(const CatalogEntry &function, optional_ptr<const MacroFunct
 		return;
 	}
 	FunctionCall call {function.type, function.name.GetIdentifierName()};
-	if (owned_overload) {
+	if (overload && !IsUnowned(function)) {
 		call.catalog = function.ParentCatalog().GetName();
 		call.macro_overload = function.Cast<MacroCatalogEntry>().OverloadOid(*overload);
 	} else {

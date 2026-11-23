@@ -177,9 +177,9 @@ static vector<idx_t> Reachable(const unordered_map<idx_t, SecuritySnapshot::Node
 }
 
 SecuritySnapshot::SecuritySnapshot(unordered_map<idx_t, Node> nodes_p, unordered_map<string, idx_t> database_owners_p,
-                                   idx_t database_owner_role_p)
+                                   idx_t database_owner_role_p, idx_t bootstrap_role_p)
     : nodes(std::move(nodes_p)), database_owners(std::move(database_owners_p)),
-      database_owner_role(database_owner_role_p) {
+      database_owner_role(database_owner_role_p), bootstrap_role(bootstrap_role_p) {
 	vector<Role> roles_p;
 	roles_p.reserve(nodes.size());
 	for (auto &[oid, node] : nodes) {
@@ -220,6 +220,8 @@ SecuritySnapshot::SecuritySnapshot(unordered_map<idx_t, Node> nodes_p, unordered
 		access.options = role.options;
 		access.capabilities = role.capabilities;
 		access.is_superuser = HasOption(role.options, RoleOption::Superuser);
+		access.owns_builtins =
+		    role.role == bootstrap_role || std::binary_search(role.closure.begin(), role.closure.end(), bootstrap_role);
 		if (!role.closure.empty()) {
 			const auto words = FilterWords(role.closure.size());
 			const auto filter_begin = arena.size();
@@ -264,8 +266,8 @@ SecuritySnapshot::SecuritySnapshot(unordered_map<idx_t, Node> nodes_p, unordered
 		}
 		auto implied = nodes;
 		implied[owner].member_of.push_back(Membership {database_owner_role, database_owner_role, false, true, true});
-		derived.emplace(owner,
-		                make_shared_ptr<const SecuritySnapshot>(std::move(implied), unordered_map<string, idx_t>(), 0));
+		derived.emplace(owner, make_shared_ptr<const SecuritySnapshot>(
+		                           std::move(implied), unordered_map<string, idx_t>(), 0, bootstrap_role));
 	}
 }
 
@@ -287,8 +289,9 @@ shared_ptr<const SecuritySnapshot> SecuritySnapshot::Build(Catalog &cluster, Cat
 	cluster.ScanTopLevelEntries(transaction, CatalogType::DATABASE_ENTRY, [&](CatalogEntry &entry) {
 		database_owners.emplace(entry.name.GetIdentifierName(), entry.permissions.owner);
 	});
+	auto &config = DBConfig::GetConfig(cluster.GetDatabase());
 	return make_shared_ptr<const SecuritySnapshot>(std::move(nodes), std::move(database_owners),
-	                                               DBConfig::GetConfig(cluster.GetDatabase()).database_owner_role);
+	                                               config.database_owner_role, config.bootstrap_role);
 }
 
 shared_ptr<const SecuritySnapshot> SecuritySnapshot::ForDatabase(const Identifier &database) const {

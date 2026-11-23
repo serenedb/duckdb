@@ -54,8 +54,6 @@ struct FunctionCall {
 
 DUCKDB_API bool IsUnowned(const CatalogEntry &entry);
 DUCKDB_API bool CanUseSchema(const RoleAccess &role, const CatalogEntry &schema);
-DUCKDB_API void CheckBuiltinCall(ClientContext &context, const RoleAccess &role, const CatalogEntry &function);
-DUCKDB_API bool MayCallFunction(ClientContext &context, const RoleAccess &role, const CatalogEntry &function);
 DUCKDB_API bool EntryVisible(ClientContext &context, const RoleAccess &role, CatalogEntry &entry);
 DUCKDB_API bool DatabaseVisible(ClientContext &context, const RoleAccess &role, AttachedDatabase &database);
 DUCKDB_API void CheckReference(ClientContext &context, const RoleAccess &role, CatalogEntry &entry);
