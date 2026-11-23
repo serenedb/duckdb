@@ -60,7 +60,7 @@ add_library_unity(
 target_include_directories(
   test_common PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../../third_party/fsst)
 
-add_library(test_libfsst OBJECT test_libfsst.cpp)
+add_library(test_libfsst OBJECT test_libfsst.cpp test_libfsst12.cpp)
 target_include_directories(
   test_libfsst PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../../third_party/fsst)
 
