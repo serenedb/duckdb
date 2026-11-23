@@ -762,6 +762,9 @@ CsvScanGlobal::CsvScanGlobal(ClientContext &context_p, const CSVReaderOptions &o
 	ranges =
 	    make_uniq<RowRanges>(BufferAllocator::Get(context), *lean, *rows, start, size, range_bytes, skip_rows == 0);
 	ranges->path = source.path;
+	if (source.sniffing) {
+		ranges->feed_bytes = RowWindow::PIECE;
+	}
 	if (whole_file) {
 		const char *data = whole_file->Ptr();
 		ranges->SetWholeFile(make_shared_ptr<CsvBufferView>(std::move(whole_file)), data);
