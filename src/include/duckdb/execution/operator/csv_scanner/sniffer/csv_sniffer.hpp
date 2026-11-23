@@ -149,7 +149,7 @@ private:
 	void AnalyzeDialectCandidate(unique_ptr<CsvColumnCounter>, CandidateStats &stats,
 	                             vector<unique_ptr<CsvColumnCounter>> &successful_candidates);
 	//! 3. Refine Candidates over remaining chunks
-	void RefineCandidates();
+	void RefineCandidates(CsvCandidateBytes &bytes);
 
 	//! Checks if candidate still produces good values for the next chunk
 	bool RefineCandidateNextChunk(CsvColumnCounter &candidate) const;

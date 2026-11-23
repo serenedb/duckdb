@@ -2,7 +2,10 @@
 #include "duckdb/common/bit_utils.hpp"
 #include "duckdb/execution/operator/csv_scanner/csv_reader_options.hpp"
 #include "duckdb/execution/operator/csv_scanner/csv_state_machine.hpp"
+#include "duckdb/execution/operator/csv_scanner/sniffer/csv_sniffer.hpp"
+#include "duckdb/formats/csv_grammar.hpp"
 #include "duckdb/formats/csv_simd.hpp"
+#include "duckdb/formats/csv_sniff.hpp"
 #include "duckdb/formats/row_lexer.hpp"
 
 #include <fstream>
@@ -2073,4 +2076,106 @@ TEST_CASE("Row lexer splits PostgreSQL csv and text like the scalar rules", "[cs
 		}
 	}
 	REQUIRE(accepted > count / 10);
+}
+
+TEST_CASE("Candidate dialects the sniffer counts alike count on from each other's cursors", "[csv]") {
+	CSVReaderOptions options;
+	std::mt19937_64 rng(20261123);
+	const string specials = ",|;\t\"'\\#";
+	const NewLineIdentifier new_lines[] = {NewLineIdentifier::NOT_SET, NewLineIdentifier::SINGLE_N,
+	                                       NewLineIdentifier::SINGLE_R, NewLineIdentifier::CARRY_ON};
+	const auto count = [&](const RowLexer &lexer, RowCursor &cursor, const string &input, idx_t limit,
+	                       vector<RowCount> &rows) {
+		RowShapes shapes {rows, limit};
+		lexer.CountRows(cursor, input.data(), 0, input.size(), true, shapes);
+	};
+	const auto describe = [](const RowCursor &cursor, const vector<RowCount> &rows) {
+		string result = to_string(cursor.pos) + " invalid=" + to_string(cursor.invalid) +
+		                " unterminated=" + to_string(cursor.unterminated) + " quoted=" + to_string(cursor.ever_quoted) +
+		                " escaped=" + to_string(cursor.ever_escaped) + " unstrict=" + to_string(cursor.unstrict) + " ";
+		for (auto &row : rows) {
+			result += DescribeCount(row);
+		}
+		return result;
+	};
+	const auto dialect_text = [](const RowDialect &dialect) {
+		return "delimiter=" + to_string(int(dialect.delimiter)) + " quote=" + to_string(int(dialect.quote)) +
+		       " escape=" + to_string(int(dialect.escape)) + " comment=" + to_string(int(dialect.comment)) +
+		       " strict=" + to_string(dialect.strict) + " new_line=" + to_string(int(dialect.new_line));
+	};
+	idx_t compared = 0;
+	idx_t quote_merges = 0;
+	for (idx_t iteration = 0; iteration < 400; iteration++) {
+		const bool strict = rng() % 2;
+		const auto new_line = new_lines[rng() % 4];
+		string early = "aa  \n\n\r";
+		for (auto special : specials) {
+			if (rng() % 3 == 0) {
+				early += string(2, special);
+			}
+		}
+		const string late = string("aa  \n\n\r") + specials;
+		string input;
+		const idx_t early_size = rng() % 300;
+		for (idx_t i = 0; i < early_size; i++) {
+			input += early[rng() % early.size()];
+		}
+		const idx_t late_size = rng() % 200;
+		for (idx_t i = 0; i < late_size; i++) {
+			input += late[rng() % late.size()];
+		}
+		vector<RowDialect> dialects;
+		for (auto &delimiter : DialectCandidates::GetDefaultDelimiter()) {
+			for (auto &quote_escape : DialectCandidates::GetDefaultQuoteEscapeCombination()) {
+				for (auto comment : DialectCandidates::GetDefaultComment()) {
+					CSVStateMachineOptions machine_options(delimiter, quote_escape.quote, quote_escape.escape, comment,
+					                                       new_line, strict);
+					CSVStateMachine machine(options, machine_options);
+					dialects.push_back(RowDialect::DuckDB(CsvGrammar::For(machine)));
+				}
+			}
+		}
+		const idx_t limit = 1 + rng() % 6;
+		for (idx_t leader_index = 0; leader_index < dialects.size(); leader_index++) {
+			const RowLexer leader(dialects[leader_index], 1, idx_t(1) << 20, false);
+			RowCursor leader_cursor;
+			leader.Start(leader_cursor, 0, true, false);
+			leader_cursor.file_start = true;
+			vector<RowCount> leader_rows;
+			count(leader, leader_cursor, input, limit, leader_rows);
+			bitset<256> present;
+			const idx_t covered =
+			    MinValue<idx_t>(input.size(), leader_cursor.pos + CSV_BLOCK_BYTES + leader.Lookahead());
+			for (idx_t i = 0; i < covered; i++) {
+				present.set(static_cast<uint8_t>(input[i]));
+			}
+			const auto counting = CountingDialect(dialects[leader_index], present);
+			for (idx_t member_index = leader_index + 1; member_index < dialects.size(); member_index++) {
+				if (!(CountingDialect(dialects[member_index], present) == counting)) {
+					continue;
+				}
+				const RowLexer member(dialects[member_index], 1, idx_t(1) << 20, false);
+				RowCursor member_cursor;
+				member.Start(member_cursor, 0, true, false);
+				member_cursor.file_start = true;
+				vector<RowCount> member_rows;
+				count(member, member_cursor, input, limit, member_rows);
+				INFO(dialect_text(dialects[leader_index])
+				     << " | " << dialect_text(dialects[member_index]) << " limit=" << limit << " input=" << input);
+				REQUIRE(describe(member_cursor, member_rows) == describe(leader_cursor, leader_rows));
+				auto copied = leader_cursor;
+				vector<RowCount> own_rest;
+				vector<RowCount> copied_rest;
+				count(member, member_cursor, input, NumericLimits<idx_t>::Maximum(), own_rest);
+				member.FinishCount(member_cursor, own_rest);
+				count(member, copied, input, NumericLimits<idx_t>::Maximum(), copied_rest);
+				member.FinishCount(copied, copied_rest);
+				REQUIRE(describe(copied, copied_rest) == describe(member_cursor, own_rest));
+				compared++;
+				quote_merges += dialects[leader_index].quote != dialects[member_index].quote;
+			}
+		}
+	}
+	REQUIRE(compared > 10000);
+	REQUIRE(quote_merges > 1000);
 }

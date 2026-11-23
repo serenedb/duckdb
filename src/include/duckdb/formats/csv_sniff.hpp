@@ -8,6 +8,7 @@
 
 #pragma once
 
+#include "duckdb/common/bitset.hpp"
 #include "duckdb/common/map.hpp"
 #include "duckdb/formats/csv_scan.hpp"
 
@@ -84,6 +85,11 @@ public:
 	}
 	unique_ptr<CsvSniffScanner> UpgradeToStringValueScanner() const;
 	bool FinishedFile() const;
+	const RowDialect &Dialect() const {
+		return lexer.Dialect();
+	}
+	idx_t CountedTo() const;
+	void CountLike(const CsvColumnCounter &other);
 
 	static idx_t SkipRows(CSVBufferManager &buffer_manager, const CSVStateMachine &state_machine, idx_t rows);
 
@@ -94,6 +100,7 @@ public:
 	bool ever_quoted = false;
 	bool ever_escaped = false;
 	bool used_unstrictness = false;
+	idx_t group = 0;
 
 private:
 	bool NextBuffer();
@@ -119,6 +126,30 @@ private:
 	bool stitching = false;
 	bool eof = false;
 	bool finished = false;
+};
+
+RowDialect CountingDialect(const RowDialect &dialect, const bitset<256> &present);
+
+class CsvCandidateBytes {
+public:
+	static constexpr idx_t START_BYTES = 1 << 20;
+
+	CsvCandidateBytes(CSVBufferManager &buffer_manager, const vector<unique_ptr<CsvColumnCounter>> &counters);
+
+	bool Covers(idx_t end);
+	RowDialect Counting(const RowDialect &dialect) const {
+		return CountingDialect(dialect, present);
+	}
+	idx_t NewGroup() {
+		return next_group++;
+	}
+
+private:
+	shared_ptr<CSVBufferHandle> first;
+	bitset<256> tracked;
+	bitset<256> present;
+	idx_t covered = 0;
+	idx_t next_group = 0;
 };
 
 } // namespace duckdb

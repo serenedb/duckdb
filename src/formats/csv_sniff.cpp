@@ -120,6 +120,113 @@ bool CsvColumnCounter::FinishedFile() const {
 	return finished || !cur_buffer_handle;
 }
 
+idx_t CsvColumnCounter::CountedTo() const {
+	if (buffer_idx != 0 || stitching || !cur_buffer_handle) {
+		return DConstants::INVALID_INDEX;
+	}
+	return MinValue(cursor.pos + CSV_BLOCK_BYTES + lexer.Lookahead(), cur_buffer_handle->actual_size);
+}
+
+void CsvColumnCounter::CountLike(const CsvColumnCounter &other) {
+	D_ASSERT(result.column_counts.size() == other.result.column_counts.size());
+	std::copy_n(other.result.column_counts.begin(), other.result.result_position, result.column_counts.begin());
+	result.rows_per_column_count = other.result.rows_per_column_count;
+	result.result_position = other.result.result_position;
+	result.error = other.result.error;
+	cursor = other.cursor;
+	cur_buffer_handle = other.cur_buffer_handle;
+	window = other.window;
+	boundaries = other.boundaries;
+	next_boundary = other.next_boundary;
+	window_start = other.window_start;
+	buffer_idx = other.buffer_idx;
+	buffer_start = other.buffer_start;
+	buffer_used = other.buffer_used;
+	done = other.done;
+	stitching = other.stitching;
+	eof = other.eof;
+	finished = other.finished;
+	ever_quoted = other.ever_quoted;
+	ever_escaped = other.ever_escaped;
+	used_unstrictness = other.used_unstrictness;
+}
+
+CsvCandidateBytes::CsvCandidateBytes(CSVBufferManager &buffer_manager,
+                                     const vector<unique_ptr<CsvColumnCounter>> &counters)
+    : first(buffer_manager.GetBuffer(0)) {
+	for (auto &counter : counters) {
+		auto &dialect = counter->Dialect();
+		if (dialect.delimiter_size == 1) {
+			tracked.set(static_cast<uint8_t>(dialect.delimiter));
+		}
+		tracked.set(static_cast<uint8_t>(dialect.quote));
+		tracked.set(static_cast<uint8_t>(dialect.escape));
+		tracked.set(static_cast<uint8_t>(dialect.comment));
+	}
+	tracked.reset(0);
+	if (first) {
+		Covers(MinValue<idx_t>(first->actual_size, START_BYTES));
+	}
+	vector<RowDialect> counting;
+	counting.reserve(counters.size());
+	for (idx_t i = 0; i < counters.size(); i++) {
+		counting.push_back(Counting(counters[i]->Dialect()));
+		counters[i]->group = i;
+		for (idx_t j = 0; j < i; j++) {
+			if (counting[j] == counting[i]) {
+				counters[i]->group = counters[j]->group;
+				break;
+			}
+		}
+	}
+	next_group = counters.size();
+}
+
+bool CsvCandidateBytes::Covers(idx_t end) {
+	if (!first || end == DConstants::INVALID_INDEX || end > first->actual_size) {
+		return false;
+	}
+	if (end <= covered) {
+		return true;
+	}
+	const char *data = first->Ptr();
+	for (idx_t byte = 1; byte < 256; byte++) {
+		if (tracked[byte] && !present[byte] && memchr(data + covered, static_cast<int>(byte), end - covered)) {
+			present.set(byte);
+		}
+	}
+	covered = end;
+	return true;
+}
+
+RowDialect CountingDialect(const RowDialect &dialect, const bitset<256> &present) {
+	const auto absent = [&](char byte) {
+		return byte == '\0' || !present[static_cast<uint8_t>(byte)];
+	};
+	auto result = dialect;
+	if (result.delimiter_size == 1 && absent(result.delimiter)) {
+		result.delimiter = '\0';
+	}
+	if (result.strict && absent(result.comment)) {
+		result.comment = '\0';
+	}
+	const bool quote_absent = absent(result.quote);
+	if (quote_absent) {
+		result.quote = '\0';
+		result.quoting = RowQuoting::NONE;
+		result.reopen = false;
+		result.quoted_spaces = false;
+	}
+	if (absent(result.escape)) {
+		result.escape = '\0';
+		if (quote_absent) {
+			result.escape_in_quotes = false;
+			result.unquoted_escape = false;
+		}
+	}
+	return result;
+}
+
 string CsvColumnCounter::LineText(idx_t begin, idx_t end) const {
 	string line;
 	const bool direct = !stitching;

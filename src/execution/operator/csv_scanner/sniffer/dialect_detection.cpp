@@ -55,6 +55,52 @@ vector<ErrorData> ForEachCandidate(ClientContext &context, idx_t count, const st
 	return errors;
 }
 
+vector<ErrorData> CountCandidates(ClientContext &context, vector<unique_ptr<CsvColumnCounter>> &counters,
+                                  const vector<idx_t> &indices, CsvCandidateBytes &bytes) {
+	vector<idx_t> leaders;
+	vector<idx_t> leader_of(indices.size());
+	for (idx_t task = 0; task < indices.size(); task++) {
+		leader_of[task] = task;
+		for (auto leader : leaders) {
+			if (counters[indices[leader]]->group == counters[indices[task]]->group) {
+				leader_of[task] = leader;
+				break;
+			}
+		}
+		if (leader_of[task] == task) {
+			leaders.push_back(task);
+		}
+	}
+	vector<ErrorData> errors(indices.size());
+	auto leader_errors = ForEachCandidate(context, leaders.size(),
+	                                      [&](idx_t index) { counters[indices[leaders[index]]]->ParseChunk(); });
+	for (idx_t index = 0; index < leaders.size(); index++) {
+		errors[leaders[index]] = std::move(leader_errors[index]);
+	}
+	vector<idx_t> alone;
+	for (idx_t task = 0; task < indices.size(); task++) {
+		const idx_t leader_task = leader_of[task];
+		if (leader_task == task) {
+			continue;
+		}
+		auto &leader = *counters[indices[leader_task]];
+		auto &member = *counters[indices[task]];
+		if (!errors[leader_task].HasError() && !leader.error_handler->AnyErrors() && bytes.Covers(leader.CountedTo()) &&
+		    bytes.Counting(member.Dialect()) == bytes.Counting(leader.Dialect())) {
+			member.CountLike(leader);
+			continue;
+		}
+		member.group = bytes.NewGroup();
+		alone.push_back(task);
+	}
+	auto alone_errors =
+	    ForEachCandidate(context, alone.size(), [&](idx_t index) { counters[indices[alone[index]]]->ParseChunk(); });
+	for (idx_t index = 0; index < alone.size(); index++) {
+		errors[alone[index]] = std::move(alone_errors[index]);
+	}
+	return errors;
+}
+
 void Rejoin(CsvColumnCounter &candidate, const ErrorData &error, const shared_ptr<CSVErrorHandler> &shared) {
 	shared->Absorb(*candidate.error_handler);
 	candidate.error_handler = shared;
@@ -543,7 +589,7 @@ void CSVSniffer::AnalyzeDialectCandidate(unique_ptr<CsvColumnCounter> scanner, C
 }
 
 bool CSVSniffer::RefineCandidateNextChunk(CsvColumnCounter &candidate) const {
-	auto &sniffed_column_counts = candidate.ParseChunk();
+	auto &sniffed_column_counts = candidate.GetResult();
 	for (idx_t i = 0; i < sniffed_column_counts.result_position; i++) {
 		if (set_columns.IsSet()) {
 			return !set_columns.IsCandidateUnacceptable(sniffed_column_counts[i].number_of_columns,
@@ -558,7 +604,7 @@ bool CSVSniffer::RefineCandidateNextChunk(CsvColumnCounter &candidate) const {
 	return true;
 }
 
-void CSVSniffer::RefineCandidates() {
+void CSVSniffer::RefineCandidates(CsvCandidateBytes &bytes) {
 	// It's very frequent that more than one dialect can parse a csv file; hence here we run one state machine
 	// fully on the whole sample dataset, when/if it fails, we go to the next one.
 	if (candidates.empty()) {
@@ -583,10 +629,11 @@ void CSVSniffer::RefineCandidates() {
 				refined.push_back(index);
 			}
 		}
+		const auto errors = CountCandidates(buffer_manager->context, candidates, refined, bytes);
 		vector<uint8_t> passed(refined.size());
-		const auto errors = ForEachCandidate(buffer_manager->context, refined.size(), [&](idx_t task) {
-			passed[task] = RefineCandidateNextChunk(*candidates[refined[task]]);
-		});
+		for (idx_t task = 0; task < refined.size(); task++) {
+			passed[task] = !errors[task].HasError() && RefineCandidateNextChunk(*candidates[refined[task]]);
+		}
 		idx_t task = 0;
 		for (idx_t index = 0; index < candidates.size(); index++) {
 			auto &cur_candidate = candidates[index];
@@ -694,14 +741,18 @@ void CSVSniffer::DetectDialect() {
 	// Step 1: Generate state machines
 	GenerateStateMachineSearchSpace(csv_state_machines, dialect_candidates);
 	// Step 2: Analyze all candidates on the first chunk
-	const auto errors = ForEachCandidate(buffer_manager->context, csv_state_machines.size(),
-	                                     [&](idx_t index) { csv_state_machines[index]->ParseChunk(); });
+	CsvCandidateBytes bytes(*buffer_manager, csv_state_machines);
+	vector<idx_t> all(csv_state_machines.size());
+	for (idx_t index = 0; index < all.size(); index++) {
+		all[index] = index;
+	}
+	const auto errors = CountCandidates(buffer_manager->context, csv_state_machines, all, bytes);
 	for (idx_t index = 0; index < csv_state_machines.size(); index++) {
 		Rejoin(*csv_state_machines[index], errors[index], detection_error_handler);
 		AnalyzeDialectCandidate(std::move(csv_state_machines[index]), stats, candidates);
 	}
 	// Step 3: Loop over candidates and find if they can still produce good results for the remaining chunks
-	RefineCandidates();
+	RefineCandidates(bytes);
 
 	// if no dialect candidate was found, we throw an exception
 	if (candidates.empty()) {
