@@ -28,15 +28,15 @@ static void CheckConfig(ClientContext &context, const vector<string> &set_config
 	}
 }
 
-static void CheckConfigChange(ClientContext &context, const vector<string> &set_config, vector<string> &reset_config,
-                              bool &reset_all_config, const vector<string> &current) {
+static void CheckConfigChange(ClientContext &context, const RoleAccess &caller, const vector<string> &set_config,
+                              vector<string> &reset_config, bool &reset_all_config, const vector<string> &current) {
 	for (auto &entry : set_config) {
 		const Identifier name(string(Settings::ConfigKey(entry)));
-		Settings::CheckChange(context, name, AccessOf(context, name), SetScope::SESSION);
+		Settings::CheckChange(context, caller, name, AccessOf(context, name), SetScope::SESSION);
 	}
 	for (auto &key : reset_config) {
 		const Identifier name(key);
-		Settings::CheckChange(context, name, AccessOf(context, name), SetScope::SESSION);
+		Settings::CheckChange(context, caller, name, AccessOf(context, name), SetScope::SESSION);
 	}
 	if (!reset_all_config) {
 		return;
@@ -45,7 +45,7 @@ static void CheckConfigChange(ClientContext &context, const vector<string> &set_
 	for (auto &entry : current) {
 		const auto key = Settings::ConfigKey(entry);
 		const Identifier name {string(key)};
-		if (Settings::MayChange(context, name, AccessOf(context, name), SetScope::SESSION)) {
+		if (Settings::MayChange(context, caller, name, AccessOf(context, name), SetScope::SESSION)) {
 			reset_config.emplace_back(key);
 		}
 	}
@@ -288,7 +288,7 @@ void Binder::BindAlterRole(AlterRoleInfo &info) {
 		CheckConfig(context, info.set_config, info.reset_config);
 	}
 	if (settings && role && !caller.IsSystem() && !caller.is_superuser) {
-		CheckConfigChange(context, info.set_config, info.reset_config, info.reset_all_config,
+		CheckConfigChange(context, caller, info.set_config, info.reset_config, info.reset_all_config,
 		                  role->GetInfo()->Cast<CreateRoleInfo>().config);
 	}
 	Settings::ResolveCurrentValues(context, info.set_config);
@@ -329,7 +329,7 @@ static void CheckDatabaseSettings(ClientContext &context, const RoleAccess &call
 	                                   CreateDbRoleSettingInfo::NameOf(info.database_id, info.role_id))) {
 		current = setting->GetInfo()->Cast<CreateDbRoleSettingInfo>().config;
 	}
-	CheckConfigChange(context, info.set_config, info.reset_config, info.reset_all_config, current);
+	CheckConfigChange(context, caller, info.set_config, info.reset_config, info.reset_all_config, current);
 }
 
 void Binder::BindAlterDatabaseSettings(AlterDatabaseSettingsInfo &info) {

@@ -181,11 +181,12 @@ SourceResultType PhysicalReset::GetDataInternal(ExecutionContext &context, DataC
 		ResetAll(context.client, scope, false);
 		return SourceResultType::FINISHED;
 	}
-	ResetVariable(context.client, Identifier(name.ToStdString()), scope);
+	ResetVariable(context.client, context.client.CallerAccess(caller_role), Identifier(name.ToStdString()), scope);
 	return SourceResultType::FINISHED;
 }
 
-void PhysicalReset::ResetVariable(ClientContext &context, const Identifier &name, SetScope scope) {
+void PhysicalReset::ResetVariable(ClientContext &context, const RoleAccess &role, const Identifier &name,
+                                  SetScope scope) {
 	auto &config = DBConfig::GetConfig(context);
 
 	// Single-target RESET: the handler call moved inside ResetOption /
@@ -193,7 +194,7 @@ void PhysicalReset::ResetVariable(ClientContext &context, const Identifier &name
 	auto option = DBConfig::GetOptionByName(name);
 	if (option) {
 		const auto variable_scope = PhysicalSet::GetSettingScope(*option, scope);
-		Settings::CheckChange(context, name, option->access, variable_scope);
+		Settings::CheckChange(context, role, name, option->access, variable_scope);
 		ResetOption(context, config, *option, name.GetIdentifierName().c_str(), variable_scope);
 		return;
 	}
@@ -209,7 +210,7 @@ void PhysicalReset::ResetVariable(ClientContext &context, const Identifier &name
 		}
 	}
 	const auto variable_scope = PhysicalSet::GetSettingScope(extension_option, scope);
-	Settings::CheckChange(context, name, extension_option.access, variable_scope);
+	Settings::CheckChange(context, role, name, extension_option.access, variable_scope);
 	ResetExtensionVariable(context, config, name, extension_option, variable_scope);
 }
 

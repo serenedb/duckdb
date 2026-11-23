@@ -71,7 +71,8 @@ void PhysicalSet::SetCustomVariable(ClientContext &context, const Identifier &na
 }
 
 void PhysicalSet::SetVariable(ClientContext &context, const Identifier &name, SetScope scope, const Value &value,
-                              bool check_access) {
+                              bool check_access, optional_ptr<const RoleAccess> role) {
+	auto &checked_as = role ? *role : context.CurrentRole();
 	auto &config = DBConfig::GetConfig(context);
 	config.CheckLock(name);
 	auto option = DBConfig::GetOptionByName(name);
@@ -89,7 +90,7 @@ void PhysicalSet::SetVariable(ClientContext &context, const Identifier &name, Se
 		}
 		const auto variable_scope = GetSettingScope(extension_option, scope);
 		if (check_access) {
-			Settings::CheckChange(context, name, extension_option.access, variable_scope);
+			Settings::CheckChange(context, checked_as, name, extension_option.access, variable_scope);
 		}
 		// Invoke the pre-SET observer after resolution so the handler only sees
 		// valid option names and can safely snapshot the current value.
@@ -104,7 +105,7 @@ void PhysicalSet::SetVariable(ClientContext &context, const Identifier &name, Se
 	}
 	SetScope variable_scope = GetSettingScope(*option, scope);
 	if (check_access) {
-		Settings::CheckChange(context, name, option->access, variable_scope);
+		Settings::CheckChange(context, checked_as, name, option->access, variable_scope);
 	}
 	Value input_val = value.CastAs(context, DBConfig::ParseLogicalType(option->parameter_type));
 	context.OnSettingChange(
@@ -191,7 +192,8 @@ SourceResultType PhysicalSet::GetDataInternal(ExecutionContext &context, DataChu
 			throw InvalidInputException(msg);
 		}
 	}
-	SetVariable(context.client, Identifier(std::string_view(name.data(), name.size())), scope, value);
+	const auto role = context.client.CallerAccess(caller_role);
+	SetVariable(context.client, Identifier(std::string_view(name.data(), name.size())), scope, value, true, &role);
 	return SourceResultType::FINISHED;
 }
 

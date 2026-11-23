@@ -161,31 +161,32 @@ void Settings::CheckValue(ClientContext &context, const Identifier &name, const 
 	value.CastAs(context, extension_option.type);
 }
 
-static AclMode HeldParameterPrivileges(ClientContext &context, const Identifier &name) {
+static AclMode HeldParameterPrivileges(ClientContext &context, const RoleAccess &role, const Identifier &name) {
 	auto parameter = ClusterEntry(context, CatalogType::PARAMETER_ENTRY, name);
 	if (!parameter) {
 		return AclMode::NoRights;
 	}
-	return context.CurrentRole().HeldModes(parameter->permissions.acl);
+	return role.HeldModes(parameter->permissions.acl);
 }
 
-bool Settings::MayChange(ClientContext &context, const Identifier &name, const SettingAccess &access, SetScope scope) {
+bool Settings::MayChange(ClientContext &context, const RoleAccess &role, const Identifier &name,
+                         const SettingAccess &access, SetScope scope) {
 	if (access.context == SettingContext::INTERNAL) {
 		return false;
 	}
-	if (context.CurrentRole().is_superuser) {
+	if (role.is_superuser) {
 		return true;
 	}
 	if (scope == SetScope::GLOBAL) {
-		return (HeldParameterPrivileges(context, name) & AclMode::AlterSystem) != AclMode::NoRights;
+		return (HeldParameterPrivileges(context, role, name) & AclMode::AlterSystem) != AclMode::NoRights;
 	}
 	return access.context != SettingContext::SUPERUSER ||
-	       (HeldParameterPrivileges(context, name) & AclMode::Set) != AclMode::NoRights;
+	       (HeldParameterPrivileges(context, role, name) & AclMode::Set) != AclMode::NoRights;
 }
 
-void Settings::CheckChange(ClientContext &context, const Identifier &name, const SettingAccess &access,
-                           SetScope scope) {
-	if (MayChange(context, name, access, scope)) {
+void Settings::CheckChange(ClientContext &context, const RoleAccess &role, const Identifier &name,
+                           const SettingAccess &access, SetScope scope) {
+	if (MayChange(context, role, name, access, scope)) {
 		return;
 	}
 	if (access.context == SettingContext::INTERNAL) {

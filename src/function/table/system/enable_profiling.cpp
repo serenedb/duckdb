@@ -5,6 +5,7 @@
 #include "duckdb/execution/operator/helper/physical_set.hpp"
 #include "duckdb/main/profiler/gathered_metrics.hpp"
 #include "duckdb/function/function_set.hpp"
+#include "duckdb/planner/binder.hpp"
 
 namespace duckdb {
 
@@ -18,10 +19,12 @@ public:
 	Value save_location;
 	Value mode;
 	Value metrics;
+	optional_idx caller_role;
 };
 
 static void EnableProfiling(ClientContext &context, TableFunctionInput &data, DataChunk &output) {
 	auto bind_data = data.bind_data->Cast<EnableProfilingBindData>();
+	const auto role = context.CallerAccess(bind_data.caller_role);
 
 	auto &client_config = ClientConfig::GetConfig(context);
 	client_config.enable_profiler = true;
@@ -39,22 +42,23 @@ static void EnableProfiling(ClientContext &context, TableFunctionInput &data, Da
 	}
 
 	if (!bind_data.format.IsNull()) {
-		PhysicalSet::SetVariable(context, Identifier(EnableProfilingSetting::Name), SetScope::SESSION,
-		                         bind_data.format);
+		PhysicalSet::SetVariable(context, Identifier(EnableProfilingSetting::Name), SetScope::SESSION, bind_data.format,
+		                         true, &role);
 	}
 
 	if (!bind_data.coverage.IsNull()) {
 		PhysicalSet::SetVariable(context, Identifier(ProfilingCoverageSetting::Name), SetScope::SESSION,
-		                         bind_data.coverage);
+		                         bind_data.coverage, true, &role);
 	}
 
 	if (!bind_data.save_location.IsNull()) {
 		PhysicalSet::SetVariable(context, Identifier(ProfilingOutputSetting::Name), SetScope::SESSION,
-		                         bind_data.save_location);
+		                         bind_data.save_location, true, &role);
 	}
 
 	if (!bind_data.mode.IsNull()) {
-		PhysicalSet::SetVariable(context, Identifier(ProfilingModeSetting::Name), SetScope::SESSION, bind_data.mode);
+		PhysicalSet::SetVariable(context, Identifier(ProfilingModeSetting::Name), SetScope::SESSION, bind_data.mode,
+		                         true, &role);
 	}
 
 	if (!bind_data.metrics.IsNull()) {
@@ -62,7 +66,8 @@ static void EnableProfiling(ClientContext &context, TableFunctionInput &data, Da
 		if (metrics_value.type().id() == LogicalTypeId::VARCHAR) {
 			metrics_value = Value::LIST(LogicalType::VARCHAR, {metrics_value});
 		}
-		PhysicalSet::SetVariable(context, Identifier(TrackedMetricsSetting::Name), SetScope::SESSION, metrics_value);
+		PhysicalSet::SetVariable(context, Identifier(TrackedMetricsSetting::Name), SetScope::SESSION, metrics_value,
+		                         true, &role);
 	}
 }
 
@@ -92,6 +97,9 @@ static unique_ptr<FunctionData> BindEnableProfiling(ClientContext &context, Tabl
 
 	// The metrics are placed by position however they were passed; the overload settled pattern or list of names
 	bind_data->metrics = input.inputs[0];
+	if (input.binder) {
+		bind_data->caller_role = input.binder->CallerRole();
+	}
 
 	return_types.emplace_back(LogicalType::BOOLEAN);
 	names.emplace_back("Success");

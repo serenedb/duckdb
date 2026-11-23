@@ -1154,6 +1154,11 @@
         "id": 202,
         "name": "scope",
         "type": "SetScope"
+      },
+      {
+        "id": 16587,
+        "name": "caller_role",
+        "type": "optional_idx"
       }
     ],
     "constructor": [
@@ -1176,6 +1181,11 @@
         "id": 201,
         "name": "scope",
         "type": "SetScope"
+      },
+      {
+        "id": 16586,
+        "name": "caller_role",
+        "type": "optional_idx"
       }
     ],
     "constructor": [

@@ -34,7 +34,9 @@ BoundStatement Binder::Bind(SetVariableStatement &stmt) {
 		}
 		op = std::move(bound_select.plan);
 	}
-	result.plan = make_uniq<LogicalSet>(stmt.name, std::move(value), stmt.scope);
+	auto set = make_uniq<LogicalSet>(stmt.name, std::move(value), stmt.scope);
+	set->caller_role = CallerRole();
+	result.plan = std::move(set);
 	if (op) {
 		result.plan->children.push_back(std::move(op));
 	}
@@ -48,7 +50,9 @@ BoundStatement Binder::Bind(ResetVariableStatement &stmt) {
 	result.types = {LogicalType::BOOLEAN};
 	result.names = {"Success"};
 
-	result.plan = make_uniq<LogicalReset>(stmt.name, stmt.scope);
+	auto reset = make_uniq<LogicalReset>(stmt.name, stmt.scope);
+	reset->caller_role = CallerRole();
+	result.plan = std::move(reset);
 
 	auto &properties = GetStatementProperties();
 	properties.return_type = StatementReturnType::NOTHING;
