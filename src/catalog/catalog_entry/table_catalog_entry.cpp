@@ -44,6 +44,9 @@ TableCatalogEntry::TableCatalogEntry(Catalog &catalog, SchemaCatalogEntry &schem
 	this->comment = info.comment;
 	this->tags = info.tags;
 	this->permissions = info.permissions;
+	for (auto &column : info.columns.Logical()) {
+		has_column_acls |= !column.Acl().empty();
+	}
 }
 
 bool TableCatalogEntry::HasGeneratedColumns() const {

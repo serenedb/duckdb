@@ -25,7 +25,11 @@ bool AnyColumnAcl(const StandardEntry &relation, F &&f) {
 	if (relation.type != CatalogType::TABLE_ENTRY) {
 		return false;
 	}
-	auto columns = relation.Cast<TableCatalogEntry>().GetColumns().Logical();
+	auto &table = relation.Cast<TableCatalogEntry>();
+	if (!table.has_column_acls) {
+		return false;
+	}
+	auto columns = table.GetColumns().Logical();
 	return std::any_of(columns.begin(), columns.end(),
 	                   [&](const ColumnDefinition &column) { return f(std::span<const AclItem>(column.Acl())); });
 }

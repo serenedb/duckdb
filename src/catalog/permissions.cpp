@@ -44,8 +44,7 @@ bool IsUnowned(const CatalogEntry &entry) {
 	if (!entry.internal && catalog.GetAttached().IsReadOnly()) {
 		return true;
 	}
-	const bool stores_owners = catalog.Compatibility() == SqlCompatibility::POSTGRES;
-	return entry.permissions.owner == 0 && (entry.internal || !stores_owners);
+	return entry.permissions.owner == 0 && (entry.internal || catalog.Compatibility() != SqlCompatibility::POSTGRES);
 }
 
 bool CanUseSchema(const RoleAccess &role, const CatalogEntry &schema) {
@@ -106,6 +105,16 @@ bool DatabaseVisible(ClientContext &context, const RoleAccess &role, AttachedDat
 	return server && role.Can(CatalogType::FOREIGN_SERVER_ENTRY, server->permissions, AclMode::Usage);
 }
 
+static bool HoldsAny(const RoleAccess &role, const ObjectKind &kind, const Permissions &permissions) {
+	if (role.Owns(permissions.owner)) {
+		return true;
+	}
+	if (permissions.UsesDefaultAcl() && role.capabilities == RoleCapability::None) {
+		return (kind.public_privileges & kind.privileges) != AclMode::NoRights;
+	}
+	return role.CanAny(kind.acl_class, permissions, kind.privileges);
+}
+
 bool EntryVisible(ClientContext &context, const RoleAccess &role, CatalogEntry &entry) {
 	if (entry.type == CatalogType::DATABASE_ENTRY) {
 		return CanConnect(context, role, entry.name, ClusterEntry(context, CatalogType::DATABASE_ENTRY, entry.name));
@@ -123,19 +132,19 @@ bool EntryVisible(ClientContext &context, const RoleAccess &role, CatalogEntry &
 	case CatalogType::SEQUENCE_ENTRY:
 	case CatalogType::TYPE_ENTRY:
 	case CatalogType::JOB_ENTRY:
-		return role.Owns(entry.permissions.owner) || role.CanAny(kind.acl_class, entry.permissions, kind.privileges);
+		return HoldsAny(role, kind, entry.permissions);
 	case CatalogType::TABLE_ENTRY:
 	case CatalogType::VIEW_ENTRY:
-		return role.Owns(entry.permissions.owner) || role.CanAny(kind.acl_class, entry.permissions, kind.privileges) ||
+		return HoldsAny(role, kind, entry.permissions) ||
 		       AnyColumnAcl(entry.Cast<StandardEntry>(), [&](std::span<const AclItem> acl) {
-			       return (role.HeldModes(acl) & ACL_COLUMN_PRIVILEGES) != AclMode::NoRights;
+			       return !acl.empty() && (role.HeldModes(acl) & ACL_COLUMN_PRIVILEGES) != AclMode::NoRights;
 		       });
 	case CatalogType::MACRO_ENTRY:
 	case CatalogType::TABLE_MACRO_ENTRY: {
 		auto &macro = entry.Cast<MacroCatalogEntry>();
 		return std::any_of(macro.macros.begin(), macro.macros.end(), [&](const unique_ptr<MacroFunction> &overload) {
 			auto &permissions = macro.OverloadPermissions(*overload);
-			return role.Owns(permissions.owner) || role.CanAny(kind.acl_class, permissions, kind.privileges);
+			return HoldsAny(role, kind, permissions);
 		});
 	}
 	case CatalogType::INDEX_ENTRY: {

@@ -74,6 +74,8 @@ public:
 	DUCKDB_API TableCatalogEntry(Catalog &catalog, SchemaCatalogEntry &schema, CreateTableInfo &info,
 	                             shared_ptr<CatalogSet> inherited_triggers = nullptr);
 
+	bool has_column_acls = false;
+
 public:
 	DUCKDB_API unique_ptr<CreateInfo> GetInfo() const override;
 	DUCKDB_API static void RenameColumn(ColumnList &columns, vector<unique_ptr<Constraint>> &constraints,
