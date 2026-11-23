@@ -3,6 +3,7 @@
 #include "fsst.h"
 #include "fsst12.h"
 
+#include <algorithm>
 #include <cstring>
 #include <string>
 #include <vector>
@@ -150,4 +151,45 @@ TEST_CASE("FSST12 refuses damaged symbol tables", "[fsst]") {
 	REQUIRE(duckdb_fsst12_import(&decoder, damaged.data(), table_size) == DUCKDB_FSST12_IMPORT_OUT_OF_BOUNDS);
 	damaged[24] = 9;
 	REQUIRE(duckdb_fsst12_import(&decoder, damaged.data(), table_size) == DUCKDB_FSST12_IMPORT_OUT_OF_BOUNDS);
+}
+
+TEST_CASE("FSST12 decompresses into buffers shorter than the string", "[fsst]") {
+	const auto strings = FsstCorpus();
+	FsstInputs in(strings);
+	auto *encoder = duckdb_fsst12_create(strings.size(), in.lengths.data(), in.pointers.data(), 0);
+	REQUIRE(encoder);
+	vector<unsigned char> out(1 << 20);
+	vector<size_t> out_lengths(strings.size());
+	vector<unsigned char *> out_strings(strings.size());
+	REQUIRE(duckdb_fsst12_compress(encoder, strings.size(), in.lengths.data(), in.pointers.data(), out.size(),
+	                               out.data(), out_lengths.data(), out_strings.data()) == strings.size());
+	auto decoder = duckdb_fsst12_decoder(encoder);
+	duckdb_fsst12_destroy(encoder);
+	constexpr unsigned char CANARY = 0xAB;
+	for (size_t i = 0; i < strings.size(); i++) {
+		const auto &expected = strings[i];
+		for (size_t size : {size_t(0), size_t(1), expected.size() / 2,
+		                    expected.size() - MinValue<size_t>(expected.size(), 1), expected.size()}) {
+			vector<unsigned char> buffer(size + 16, CANARY);
+			const auto written =
+			    duckdb_fsst12_decompress(&decoder, out_lengths[i], out_strings[i], size, buffer.data());
+			REQUIRE(written == expected.size());
+			const auto kept = MinValue(size, expected.size());
+			REQUIRE(string(reinterpret_cast<const char *>(buffer.data()), kept) == expected.substr(0, kept));
+			REQUIRE(std::all_of(buffer.begin() + kept, buffer.end(), [](unsigned char c) { return c == CANARY; }));
+		}
+	}
+}
+
+TEST_CASE("FSST12 refuses a symbol table that ends after its header", "[fsst]") {
+	const auto strings = FsstCorpus();
+	FsstInputs in(strings);
+	auto *encoder = duckdb_fsst12_create(strings.size(), in.lengths.data(), in.pointers.data(), 0);
+	REQUIRE(encoder);
+	vector<unsigned char> table(FSST12_MAXHEADER);
+	const auto table_size = duckdb_fsst12_export(encoder, table.data());
+	duckdb_fsst12_destroy(encoder);
+	REQUIRE(table_size > 24);
+	duckdb_fsst12_decoder_t decoder;
+	REQUIRE(duckdb_fsst12_import(&decoder, table.data(), 24) == DUCKDB_FSST12_IMPORT_OUT_OF_BOUNDS);
 }
