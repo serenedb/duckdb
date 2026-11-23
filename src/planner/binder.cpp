@@ -472,9 +472,14 @@ BoundStatement Binder::BindTarget(TableRef &ref, TableRefUse use) {
 	return result;
 }
 
+static bool Unchecked(const StandardEntry &relation) {
+	const bool system_view = relation.type == CatalogType::VIEW_ENTRY && relation.ParentCatalog().IsSystemCatalog();
+	return IsUnowned(relation) && !system_view;
+}
+
 optional_ptr<RelationNeed> Binder::NeedOf(const StandardEntry &relation) {
 	auto &role = CheckAs();
-	if (role.is_superuser) {
+	if (role.is_superuser || Unchecked(relation)) {
 		return nullptr;
 	}
 	auto &needs = global_binder_state->relation_needs;
@@ -488,8 +493,7 @@ optional_ptr<RelationNeed> Binder::NeedOf(const StandardEntry &relation) {
 }
 
 optional_ptr<RelationNeed> Binder::ReadNeed(const StandardEntry &relation) {
-	const bool system_view = relation.type == CatalogType::VIEW_ENTRY && relation.ParentCatalog().IsSystemCatalog();
-	if (table_ref_use == TableRefUse::UTILITY_TARGET || (IsUnowned(relation) && !system_view)) {
+	if (table_ref_use == TableRefUse::UTILITY_TARGET || Unchecked(relation)) {
 		return nullptr;
 	}
 	if (table_ref_use == TableRefUse::DML_TARGET) {
