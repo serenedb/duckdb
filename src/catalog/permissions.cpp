@@ -424,7 +424,7 @@ static bool OwnsEntry(const RoleAccess &role, const CatalogEntry &entry, optiona
 
 bool Allowed(const RoleAccess &role, const CatalogEntry &entry, AclMode use,
              optional_ptr<const MacroFunction> overload) {
-	D_ASSERT(!Uses(use, AclMode::Drop | AclMode::See));
+	D_ASSERT(!Uses(use, AclMode::Drop));
 	if (role.is_superuser) {
 		return true;
 	}
@@ -497,7 +497,7 @@ static void RequireCreateIn(ClientContext &context, const RoleAccess &role, Cata
 
 void Require(ClientContext &context, const RoleAccess &role, CatalogEntry &entry, AclMode use,
              optional_ptr<const MacroFunction> overload, optional_ptr<const StatementNaming> naming) {
-	D_ASSERT(!Uses(use, AclMode::Admin | AclMode::SetRole | AclMode::See));
+	D_ASSERT(!Uses(use, AclMode::Admin | AclMode::SetRole));
 	if (role.is_superuser) {
 		return;
 	}

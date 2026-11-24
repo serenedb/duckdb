@@ -29,13 +29,11 @@ enum class AclMode : uint64_t {
 	Set = 0x1000,
 	AlterSystem = 0x2000,
 	Maintain = 0x4000,
-	See = 0x100000000,
 	Own = 0x200000000,
 	Drop = 0x400000000,
 	Rename = 0x800000000,
 	Admin = 0x1000000000,
 	SetRole = 0x2000000000,
-	GrantOption = 0x10000000000,
 };
 
 constexpr AclMode operator|(AclMode a, AclMode b) {
