@@ -83,7 +83,7 @@ Binder::Binder(ClientContext &context, shared_ptr<Binder> parent_p, BinderType b
 			if (catalog.IsSystemCatalog() || properties.read_databases.count(catalog.GetName())) {
 				return;
 			}
-			properties.RegisterDBRead(catalog, this->context, CheckAs());
+			properties.RegisterDBRead(catalog, this->context);
 		});
 	}
 }

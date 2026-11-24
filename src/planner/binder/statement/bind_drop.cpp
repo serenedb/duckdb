@@ -42,7 +42,7 @@ void Binder::BindDrop(DropInfo &info, StatementProperties &properties) {
 	case CatalogType::SCHEMA_ENTRY: {
 		// resolve the leading component of the dotted path into a catalog, leaving the path as
 		// [catalog, parent schemas..., schema] (mirrors CREATE SCHEMA - see Binder::BindCreateSchema)
-		info.SetQualifiedName(ResolveCatalog(context, info.GetQualifiedName()));
+		info.SetQualifiedName(ResolveCatalog(entry_retriever, info.GetQualifiedName()));
 		// dropping a schema is never read-only because there are no temporary schemas. The catalog is the leading
 		// component of the resolved path ([catalog, parent schemas..., schema])
 		auto &path = info.GetQualifiedName().Path();
@@ -68,7 +68,7 @@ void Binder::BindDrop(DropInfo &info, StatementProperties &properties) {
 		auto catalog = Catalog::GetCatalogEntry(context, info.GetQualifiedName().Catalog());
 		if (catalog) {
 			// mark catalog as accessed
-			properties.RegisterDBRead(*catalog, context, CheckAs());
+			properties.RegisterDBRead(*catalog, context);
 		}
 		optional_ptr<CatalogEntry> entry;
 		if (info.type == CatalogType::MACRO_ENTRY || info.type == CatalogType::TABLE_MACRO_ENTRY) {

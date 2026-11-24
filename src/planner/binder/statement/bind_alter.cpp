@@ -381,7 +381,7 @@ unique_ptr<LogicalOperator> Binder::BindAlter(unique_ptr<AlterInfo> &info) {
 	if (info->type == AlterType::ALTER_SCHEMA) {
 		// resolve the schema path the same way as CREATE SCHEMA does
 		auto &schema_info = info->Cast<AlterSchemaInfo>();
-		schema_info.SetQualifiedName(ResolveCatalog(context, schema_info.GetQualifiedName()));
+		schema_info.SetQualifiedName(ResolveCatalog(entry_retriever, schema_info.GetQualifiedName()));
 		auto &catalog = Catalog::GetCatalog(context, schema_info.SchemaCatalog());
 		properties.RegisterDBModify(catalog, context, DatabaseModificationType::ALTER_TABLE);
 		entry_retriever.GetSchema(schema_info.SchemaCatalog(), schema_info.SchemaPath(),

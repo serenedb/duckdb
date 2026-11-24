@@ -317,13 +317,6 @@ void CatalogSearchPath::Set(vector<CatalogSearchEntry> new_paths, CatalogSetPath
 			}
 		}
 	}
-	if (set_type != CatalogSetPathType::SET_DIRECTLY) {
-		for (auto &path : new_paths) {
-			if (auto catalog = Catalog::GetCatalogEntry(context, path.GetCatalog())) {
-				context.CheckDatabaseReference(context.CurrentRole(), *catalog);
-			}
-		}
-	}
 	SetPathsInternal(std::move(new_paths));
 	context.BumpBindingGeneration();
 }

@@ -96,13 +96,10 @@ std::string_view StatementReturnTypeToString(StatementReturnType type) {
 }
 // LCOV_EXCL_STOP
 
-void StatementProperties::RegisterDBRead(Catalog &catalog, ClientContext &context, const RoleAccess &role) {
+void StatementProperties::RegisterDBRead(Catalog &catalog, ClientContext &context) {
 	auto catalog_identity = CatalogIdentity {catalog.GetOid(), catalog.GetCatalogVersion(context)};
-	auto entry = read_databases.emplace(catalog.GetName(), catalog_identity);
-	D_ASSERT(entry.first->second == catalog_identity);
-	if (entry.second) {
-		context.CheckDatabaseReference(role, catalog);
-	}
+	D_ASSERT(read_databases.count(catalog.GetName()) == 0 || read_databases[catalog.GetName()] == catalog_identity);
+	read_databases[catalog.GetName()] = catalog_identity;
 }
 
 void StatementProperties::RegisterDataRead(const CatalogEntry &entry, ClientContext &context, TableIndex table_index) {
@@ -118,7 +115,6 @@ void StatementProperties::RegisterDBModify(Catalog &catalog, ClientContext &cont
 	if (entry.second) {
 		// new entry - set the identity
 		entry.first->second.identity = catalog_identity;
-		context.CheckDatabaseReference(context.CurrentRole(), catalog);
 	} else {
 		// existing entry - verify this has the same identity
 		D_ASSERT(entry.first->second.identity == catalog_identity);

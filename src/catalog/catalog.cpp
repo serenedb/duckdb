@@ -1374,8 +1374,7 @@ CatalogEntryLookup Catalog::TryLookupEntryAcrossCatalogs(CatalogEntryRetriever &
 	vector<CatalogLookup> final_lookups;
 	lookups.reserve(entries.size());
 	for (auto &entry : entries) {
-		auto catalog_entry = IsInvalidCatalog(catalog) ? Catalog::GetCatalogEntry(retriever, entry.GetCatalog())
-		                                               : VisibleCatalog(retriever, entry.GetCatalog());
+		auto catalog_entry = VisibleCatalog(retriever, entry.GetCatalog());
 		if (!catalog_entry) {
 			if (IsInvalidCatalog(entry.GetCatalog())) {
 				// the search path's default-database entry, with no database attached: nothing to search there
@@ -1630,7 +1629,7 @@ CatalogEntryLookup Catalog::TryLookupEntry(CatalogEntryRetriever &retriever, con
 
 CatalogEntryLookup Catalog::TryLookupDefaultTable(CatalogEntryRetriever &retriever, const EntryLookupInfo &lookup_info,
                                                   bool allow_ignore_at_clause) {
-	auto catalog_by_name = GetCatalogEntry(retriever, lookup_info.GetEntryIdentifier());
+	auto catalog_by_name = VisibleCatalog(retriever, lookup_info.GetEntryIdentifier());
 
 	if (catalog_by_name && catalog_by_name->HasDefaultTable()) {
 		auto transaction = catalog_by_name->GetCatalogTransaction(retriever.GetContext());
@@ -1668,7 +1667,7 @@ CatalogEntryLookup Catalog::TryLookupDefaultSchema(CatalogEntryRetriever &retrie
 	// look for the entry in the default schema of every catalog that was flagged as an implicit search catalog
 	auto &search_path = retriever.GetSearchPath();
 	for (auto &implicit_catalog : search_path.GetImplicitSearchCatalogs()) {
-		auto catalog_entry = GetCatalogEntry(retriever, implicit_catalog.GetCatalog());
+		auto catalog_entry = VisibleCatalog(retriever, implicit_catalog.GetCatalog());
 		if (!catalog_entry) {
 			continue;
 		}
@@ -1840,8 +1839,7 @@ optional_ptr<SchemaCatalogEntry> Catalog::GetSchema(CatalogEntryRetriever &retri
 	auto &catalog_name = schema_lookup.GetCatalog();
 	auto entries = GetCatalogEntries(retriever, catalog_name, schema_lookup.GetEntryIdentifier());
 	for (idx_t i = 0; i < entries.size(); i++) {
-		auto catalog = IsInvalidCatalog(catalog_name) ? Catalog::GetCatalogEntry(retriever, entries[i].GetCatalog())
-		                                              : VisibleCatalog(retriever, entries[i].GetCatalog());
+		auto catalog = VisibleCatalog(retriever, entries[i].GetCatalog());
 		if (!catalog) {
 			// skip if it is not an attached database
 			continue;
@@ -1899,7 +1897,7 @@ vector<reference<SchemaCatalogEntry>> Catalog::GetSchemas(CatalogEntryRetriever 
 
 		auto &search_path = retriever.GetSearchPath();
 		for (auto &entry : search_path.Get()) {
-			auto catalog = Catalog::GetCatalogEntry(retriever, entry.GetCatalog());
+			auto catalog = VisibleCatalog(retriever, entry.GetCatalog());
 			if (!catalog) {
 				if (IsInvalidCatalog(entry.GetCatalog())) {
 					// the search path's default-database entry, with no database attached

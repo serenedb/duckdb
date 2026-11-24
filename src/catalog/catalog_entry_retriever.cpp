@@ -148,7 +148,6 @@ optional_ptr<CatalogEntry> CatalogEntryRetriever::ReturnAndCallback(optional_ptr
 	if (!result) {
 		return result;
 	}
-	context.CheckDatabaseReference(CheckAs(), result->ParentCatalog());
 	if (callback) {
 		// Call the callback if it's set
 		callback(*result);

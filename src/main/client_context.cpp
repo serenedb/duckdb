@@ -1076,13 +1076,6 @@ void ClientContext::CheckEntryReference(const RoleAccess &role, CatalogEntry &en
 	}
 }
 
-void ClientContext::CheckDatabaseReference(const RoleAccess &role, Catalog &catalog) {
-	if (!role.is_superuser && !catalog.IsSystemCatalog() && !catalog.IsTemporaryCatalog() &&
-	    catalog.GetName() != client_data->default_database) {
-		CheckReference(*this, role, catalog.GetAttached());
-	}
-}
-
 void ClientContext::ResolveCurrentRole() {
 	if (current_role_id == DConstants::INVALID_INDEX) {
 		current_role = &RoleAccess::System();

@@ -136,7 +136,7 @@ void Binder::BindSchemaOrCatalog(ClientContext &context, Identifier &catalog, Id
 }
 
 void Binder::BindSchemaOrCatalog(Identifier &catalog, Identifier &schema) {
-	BindSchemaOrCatalog(context, catalog, schema);
+	BindSchemaOrCatalog(entry_retriever, catalog, schema);
 }
 
 void Binder::BindSchemaOrCatalog(CatalogEntryRetriever &retriever, QualifiedName &qualified_name) {
@@ -158,7 +158,7 @@ void Binder::BindSchemaOrCatalog(ClientContext &context, QualifiedName &qualifie
 }
 
 void Binder::BindSchemaOrCatalog(QualifiedName &qualified_name) {
-	BindSchemaOrCatalog(context, qualified_name);
+	BindSchemaOrCatalog(entry_retriever, qualified_name);
 }
 
 Identifier Binder::BindCatalog(const Identifier &catalog) {
@@ -176,7 +176,7 @@ void Binder::SearchSchema(CreateInfo &info) {
 	// determine the catalog and the (possibly nested) schema path. ResolveCatalog (via BindSchemaOrCatalog) decides
 	// which leading components form the catalog; we pass default_catalog=false so the catalog is left empty when none
 	// is given - that lets us tell "no catalog specified" apart from an explicit catalog when applying defaults below.
-	auto resolved = ResolveCatalog(context, info.GetQualifiedName(), false);
+	auto resolved = ResolveCatalog(entry_retriever, info.GetQualifiedName(), false);
 	auto &path = resolved.Path();
 	Identifier name = path.back();
 	Identifier catalog = path.front();
@@ -224,11 +224,6 @@ void Binder::SearchSchema(CreateInfo &info) {
 	}
 	info.SetQualifiedName(
 	    QualifiedName::FromCatalogSchema(std::move(catalog), std::move(schema_path), std::move(name)));
-}
-
-QualifiedName Binder::ResolveCatalog(ClientContext &context, const QualifiedName &name, bool default_catalog) {
-	CatalogEntryRetriever retriever(context);
-	return ResolveCatalog(retriever, name, default_catalog);
 }
 
 QualifiedName Binder::ResolveCatalog(CatalogEntryRetriever &retriever, const QualifiedName &name,
@@ -297,13 +292,12 @@ QualifiedName Binder::BindTableName(CatalogEntryRetriever &retriever, const Qual
 }
 
 QualifiedName Binder::BindTableName(const QualifiedName &name) {
-	CatalogEntryRetriever retriever(context);
-	return BindTableName(retriever, name);
+	return BindTableName(entry_retriever, name);
 }
 
 void Binder::RegisterEntryRead(optional_ptr<Binder> binder, ClientContext &context, CatalogEntry &entry) {
 	if (binder) {
-		binder->GetStatementProperties().RegisterDBRead(entry.ParentCatalog(), context, binder->CheckAs());
+		binder->GetStatementProperties().RegisterDBRead(entry.ParentCatalog(), context);
 	}
 	if (!binder || !binder->InViewBody()) {
 		context.CheckEntryReference(binder ? binder->CheckAs() : context.CurrentRole(), entry);
@@ -323,7 +317,7 @@ void Binder::BindCreateSchema(CreateSchemaInfo &info) {
 		info.SetQualifiedName(
 		    QualifiedName(vector<Identifier> {DatabaseManager::GetDefaultDatabase(context), path[0]}, Identifier()));
 	} else {
-		info.SetQualifiedName(ResolveCatalog(context, info.GetQualifiedName()));
+		info.SetQualifiedName(ResolveCatalog(entry_retriever, info.GetQualifiedName()));
 	}
 
 	auto &resolved_catalog = Catalog::GetCatalog(context, info.SchemaCatalog());
