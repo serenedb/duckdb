@@ -459,8 +459,8 @@ bool Allowed(const RoleAccess &role, const CatalogEntry &entry, AclMode use,
 	                          entry.name.GetIdentifierName());
 }
 
-static void RequireOwnership(ClientContext &context, const RoleAccess &role, CatalogEntry &entry,
-                             optional_ptr<const MacroFunction> overload, optional_ptr<const StatementNaming> naming) {
+static void RequireOwnership(const RoleAccess &role, CatalogEntry &entry, optional_ptr<const MacroFunction> overload,
+                             optional_ptr<const StatementNaming> naming) {
 	if (entry.type == CatalogType::ROLE_ENTRY) {
 		auto &target = entry.Cast<RoleEntry>();
 		string detail;
@@ -482,14 +482,6 @@ static void RequireOwnership(ClientContext &context, const RoleAccess &role, Cat
 			if (!role.Owns(macro.OverloadPermissions(*function).owner)) {
 				ThrowNotOwner(entry, naming);
 			}
-		}
-		return;
-	}
-	if (entry.type == CatalogType::INDEX_ENTRY) {
-		auto relation =
-		    entry.Cast<IndexCatalogEntry>().GetRelation(entry.ParentCatalog().GetCatalogTransaction(context));
-		if (relation && !role.Owns(relation->permissions.owner)) {
-			ThrowNotOwner(entry, naming);
 		}
 		return;
 	}
@@ -520,7 +512,7 @@ void Require(ClientContext &context, const RoleAccess &role, CatalogEntry &entry
 		return;
 	}
 	if (Uses(use, AclMode::Own | AclMode::Rename)) {
-		RequireOwnership(context, role, entry, overload, naming);
+		RequireOwnership(role, entry, overload, naming);
 	}
 	if (Uses(use, AclMode::Own) && entry.type == CatalogType::SUBSCRIPTION_ENTRY &&
 	    !entry.GetInfo()->Cast<CreateSubscriptionInfo>().password_required) {
@@ -541,7 +533,7 @@ void Require(ClientContext &context, const RoleAccess &role, CatalogEntry &entry
 		const auto container = ObjectKindOf(entry.type).container;
 		const bool in_schema = container != ObjectContainer::DATABASE && container != ObjectContainer::CLUSTER;
 		if (!in_schema || !role.Owns(entry.ParentSchema(context).permissions.owner)) {
-			RequireOwnership(context, role, entry, overload, naming);
+			RequireOwnership(role, entry, overload, naming);
 		}
 	}
 	if (entry.type == CatalogType::SCHEMA_ENTRY && Uses(use, AclMode::Create)) {
