@@ -148,6 +148,8 @@ bool AddRowGroups(PartitionMap::iterator it, const PartitionMap::iterator end, v
 			}
 			// Row groups do not overlap: we can guarantee that the tuples qualify
 			qualifying_tuples = last_unresolved_row_group_sum;
+			// The sum may already count the row groups that wait for a later tuple
+			qualify_later = 0;
 			++last_unresolved_entry;
 			auto &upcoming_stats = last_unresolved_entry->second.second.get();
 
