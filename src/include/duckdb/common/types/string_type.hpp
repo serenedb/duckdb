@@ -144,6 +144,10 @@ public:
 		return GetString();
 	}
 
+	explicit operator std::string_view() const {
+		return std::string_view(GetData(), GetSize());
+	}
+
 	char *GetPointer() const {
 		D_ASSERT(!IsInlined());
 		return value.pointer.ptr;
