@@ -44,14 +44,6 @@ struct RelationChecks {
 	idx_t reference = 0;
 };
 
-struct FunctionCall {
-	CatalogType type = CatalogType::INVALID;
-	string name;
-	RoleCapability capability = RoleCapability::None;
-	Identifier catalog;
-	optional_idx macro_overload;
-};
-
 DUCKDB_API bool IsUnowned(const CatalogEntry &entry);
 DUCKDB_API bool CanUseSchema(const RoleAccess &role, const CatalogEntry &schema);
 DUCKDB_API bool EntryVisible(ClientContext &context, const RoleAccess &role, CatalogEntry &entry);
@@ -82,9 +74,6 @@ DUCKDB_API void RequireForeignDataWrapperUsage(ClientContext &context, const Rol
 DUCKDB_API void RequireUserSchema(const SchemaCatalogEntry &schema, const Identifier &name);
 DUCKDB_API void RequireTypeUsage(ClientContext &context, const RoleAccess &role, const LogicalType &type,
                                  Catalog &catalog);
-DUCKDB_API optional_ptr<const FunctionCall> DeniedCall(ClientContext &context, const RoleAccess &role,
-                                                       std::span<const FunctionCall> calls);
-[[noreturn]] DUCKDB_API void ThrowPermissionDenied(ClientContext &context, const FunctionCall &call);
 DUCKDB_API void AssignOwner(ClientContext &context, Permissions &permissions, Catalog &catalog, CatalogType objtype,
                             optional_ptr<SchemaCatalogEntry> schema, idx_t owner);
 DUCKDB_API optional_ptr<CatalogEntry> ClusterEntry(ClientContext &context, CatalogType type, const Identifier &name);

@@ -9,7 +9,6 @@
 #pragma once
 
 #include "duckdb/catalog/catalog_entry.hpp"
-#include "duckdb/catalog/permissions.hpp"
 #include "duckdb/parser/parsed_data/create_index_info.hpp"
 #include "duckdb/planner/logical_operator.hpp"
 #include "duckdb/function/table_function.hpp"
@@ -35,7 +34,7 @@ public:
 	unique_ptr<AlterTableInfo> alter_table_info;
 	//! Unbound expressions of the indexed columns.
 	vector<unique_ptr<Expression>> unbound_expressions;
-	vector<FunctionCall> function_calls;
+	vector<idx_t> called_overloads;
 
 public:
 	void Serialize(Serializer &serializer) const override;

@@ -356,7 +356,7 @@ void Binder::BindSharedDefinition() {
 	BindStoredDefinition();
 }
 
-void Binder::RecordCalls(optional_ptr<vector<FunctionCall>> calls) {
+void Binder::RecordCalls(optional_ptr<RecordedCalls> calls) {
 	global_binder_state->recorded_calls = calls;
 }
 
@@ -365,23 +365,22 @@ void Binder::Execute(const CatalogEntry &function, optional_ptr<const MacroFunct
 		ThrowPermissionDenied(function, overload);
 	}
 	auto calls = global_binder_state->recorded_calls;
-	if (!calls) {
+	if (!calls || !overload || IsUnowned(function)) {
 		return;
 	}
-	FunctionCall call {function.type, function.name.GetIdentifierName()};
-	if (overload && !IsUnowned(function)) {
-		call.catalog = function.ParentCatalog().GetName();
-		call.macro_overload = function.Cast<MacroCatalogEntry>().OverloadOid(*overload);
-	} else {
-		call.capability = function.Cast<FunctionEntry>().required_capability;
+	if (&function.ParentCatalog() != &calls->catalog) {
+		throw NotImplementedException("cross-database references are not implemented: \"%s.%s.%s\"",
+		                              function.ParentCatalog().GetName().GetIdentifierName(),
+		                              function.ParentSchemaName().GetIdentifierName(),
+		                              function.name.GetIdentifierName());
 	}
-	calls->push_back(std::move(call));
+	calls->overloads.push_back(function.Cast<MacroCatalogEntry>().OverloadOid(*overload));
 }
 
 void Binder::RequireIndexCalls(TableCatalogEntry &table, optional_ptr<const vector<PhysicalIndex>> changed) {
 	auto &role = CurrentRole();
 	auto &state = *global_binder_state;
-	if (role.is_superuser || state.denied_relation || state.denied_call) {
+	if (role.is_superuser || state.denied_relation || state.denied_function) {
 		return;
 	}
 	auto &columns = table.GetColumns();
@@ -390,10 +389,24 @@ void Binder::RequireIndexCalls(TableCatalogEntry &table, optional_ptr<const vect
 			return columns.GetColumn(index).Logical() == LogicalIndex(column);
 		});
 	};
-	table.ParentCatalog().ScanIndexes(context, table, [&](IndexCatalogEntry &index) {
-		if (!state.denied_call &&
-		    (!changed || std::any_of(index.column_ids.begin(), index.column_ids.end(), changes))) {
-			state.denied_call = DeniedCall(context, role, index.GetFunctionCalls());
+	auto &catalog = table.ParentCatalog();
+	const auto transaction = catalog.GetCatalogTransaction(context);
+	catalog.ScanIndexes(context, table, [&](IndexCatalogEntry &index) {
+		if (state.denied_function ||
+		    (changed && std::none_of(index.column_ids.begin(), index.column_ids.end(), changes))) {
+			return;
+		}
+		for (const auto oid : index.CalledOverloads()) {
+			auto function = catalog.LookupOwner(transaction, oid);
+			auto overload = function ? function->Cast<MacroCatalogEntry>().FindOverload(oid) : nullptr;
+			if (!overload) {
+				throw CatalogException("function with OID %llu does not exist", oid);
+			}
+			if (!Allowed(role, *function, AclMode::Execute, overload.get())) {
+				state.denied_function = function.get();
+				state.denied_overload = overload.get();
+				return;
+			}
 		}
 	});
 }
@@ -625,11 +638,13 @@ void Binder::AdoptPrivilegeChecks(Binder &other) {
 		Deny(*source.denied_relation, {nullptr, source.denied_reference});
 	}
 	auto &state = *global_binder_state;
-	if (!state.denied_call) {
-		state.denied_call = source.denied_call;
+	if (!state.denied_function) {
+		state.denied_function = source.denied_function;
+		state.denied_overload = source.denied_overload;
 	}
 	source.denied_relation = nullptr;
-	source.denied_call = nullptr;
+	source.denied_function = nullptr;
+	source.denied_overload = nullptr;
 }
 
 Catalog &Binder::SubscriptionCatalog(const Identifier &catalog_name) {
@@ -685,8 +700,8 @@ void Binder::CheckPrivileges() {
 	if (state.denied_relation) {
 		ThrowPermissionDenied(*state.denied_relation);
 	}
-	if (state.denied_call) {
-		ThrowPermissionDenied(context, *state.denied_call);
+	if (state.denied_function) {
+		ThrowPermissionDenied(*state.denied_function, state.denied_overload);
 	}
 }
 

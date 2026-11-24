@@ -271,6 +271,11 @@ struct MacroFunctionLookup {
 	optional_ptr<ScalarMacroCatalogEntry> macro;
 };
 
+struct RecordedCalls {
+	Catalog &catalog;
+	vector<idx_t> overloads;
+};
+
 struct GlobalBinderState {
 	//! The count of bound_tables
 	idx_t bound_tables = 0;
@@ -282,11 +287,12 @@ struct GlobalBinderState {
 	vector<MacroParameterReference> macro_parameters;
 	idx_t macro_type_probing = 0;
 	unordered_map<idx_t, RoleAccess> role_access;
-	optional_ptr<vector<FunctionCall>> recorded_calls;
+	optional_ptr<RecordedCalls> recorded_calls;
 	idx_t relation_references = 0;
 	optional_ptr<const StandardEntry> denied_relation;
 	idx_t denied_reference = 0;
-	optional_ptr<const FunctionCall> denied_call;
+	optional_ptr<const CatalogEntry> denied_function;
+	optional_ptr<const MacroFunction> denied_overload;
 	//! Statement properties
 	StatementProperties prop;
 	//! Binding mode
@@ -462,7 +468,7 @@ public:
 	void BindUnchecked();
 	void BindStoredDefinition();
 	void BindSharedDefinition();
-	void RecordCalls(optional_ptr<vector<FunctionCall>> calls);
+	void RecordCalls(optional_ptr<RecordedCalls> calls);
 	void Execute(const CatalogEntry &function, optional_ptr<const MacroFunction> overload = nullptr);
 	void RequireIndexCalls(TableCatalogEntry &table, optional_ptr<const vector<PhysicalIndex>> changed);
 	void RequirePlacement(Catalog &catalog, const CreateInfo &info, optional_ptr<const CatalogEntry> indexed);

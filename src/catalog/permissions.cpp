@@ -702,44 +702,4 @@ void RequireTypeUsage(ClientContext &context, const RoleAccess &role, const Logi
 	}
 }
 
-static optional_ptr<MacroCatalogEntry> CalledMacro(ClientContext &context, const FunctionCall &call) {
-	auto catalog = Catalog::GetCatalogEntry(context, call.catalog);
-	auto entry = catalog ? catalog->LookupOwner(catalog->GetCatalogTransaction(context), call.macro_overload.GetIndex())
-	                     : nullptr;
-	if (!entry || !IsMacro(*entry)) {
-		return nullptr;
-	}
-	return &entry->Cast<MacroCatalogEntry>();
-}
-
-optional_ptr<const FunctionCall> DeniedCall(ClientContext &context, const RoleAccess &role,
-                                            std::span<const FunctionCall> calls) {
-	if (role.is_superuser) {
-		return nullptr;
-	}
-	for (auto &call : calls) {
-		if (!call.macro_overload.IsValid()) {
-			if (!MayCall(role, call.capability)) {
-				return &call;
-			}
-			continue;
-		}
-		auto macro = CalledMacro(context, call);
-		auto overload = macro ? macro->FindOverload(call.macro_overload.GetIndex()) : nullptr;
-		if (!overload || !role.Can(macro->type, macro->OverloadPermissions(*overload), AclMode::Execute)) {
-			return &call;
-		}
-	}
-	return nullptr;
-}
-
-void ThrowPermissionDenied(ClientContext &context, const FunctionCall &call) {
-	if (auto macro = call.macro_overload.IsValid() ? CalledMacro(context, call) : nullptr) {
-		if (auto overload = macro->FindOverload(call.macro_overload.GetIndex())) {
-			ThrowPermissionDenied(*macro, overload.get());
-		}
-	}
-	ThrowPermissionDenied(call.type, call.name);
-}
-
 } // namespace duckdb

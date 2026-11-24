@@ -66,7 +66,7 @@ optional_ptr<CatalogEntry> IndexCatalogEntry::GetRelation(CatalogTransaction tra
 	return ParentSchema(transaction).GetEntry(transaction, CatalogType::TABLE_ENTRY, GetTableName());
 }
 
-std::span<const FunctionCall> IndexCatalogEntry::GetFunctionCalls() const {
+std::span<const idx_t> IndexCatalogEntry::CalledOverloads() const {
 	return {};
 }
 
