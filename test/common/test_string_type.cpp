@@ -24,11 +24,14 @@
 #include <string>
 #include <string_view>
 
-TEST_CASE("A string_t views its bytes as a std::string_view", "[string]") {
+TEST_CASE("A string_t views its bytes as characters and as bytes", "[string]") {
 	for (const std::string bytes : {"", "inlined", "longer than the twelve inlined bytes"}) {
 		const duckdb::string_t value(bytes.data(), static_cast<uint32_t>(bytes.size()));
-		const std::string_view view {value};
-		REQUIRE(view == bytes);
-		REQUIRE(view.data() == value.GetData());
+		REQUIRE(value.AsView() == bytes);
+		REQUIRE(value.AsView().data() == value.GetData());
+		const std::basic_string_view<duckdb::data_t, duckdb::CharTraitsU8> expected(
+		    duckdb::const_data_ptr_cast(bytes.data()), bytes.size());
+		REQUIRE(value.AsBytesView() == expected);
+		REQUIRE(value.AsBytesView().data() == duckdb::const_data_ptr_cast(value.GetData()));
 	}
 }
