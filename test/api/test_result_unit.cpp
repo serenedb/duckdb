@@ -1,4 +1,5 @@
 #include "catch.hpp"
+#include "duckdb/common/vector/fsst_vector.hpp"
 #include "duckdb/main/result_unit.hpp"
 #include "test_helpers.hpp"
 
@@ -53,6 +54,7 @@ TEST_CASE("A vector's data size counts its strings' bytes wherever they are held
 
 	const Vector constant(Value(text), count_t(4));
 	REQUIRE(constant.GetDataSize() == 4 * (sizeof(string_t) + text.size()));
+	REQUIRE(constant.GetDataSize(2) == 2 * (sizeof(string_t) + text.size()));
 
 	SelectionVector sel(4);
 	for (idx_t i = 0; i < 4; i++) {
@@ -60,6 +62,17 @@ TEST_CASE("A vector's data size counts its strings' bytes wherever they are held
 	}
 	const Vector dictionary(held, sel, 4);
 	REQUIRE(dictionary.GetDataSize() == 4 * sizeof(string_t) + 2 * text.size());
+	REQUIRE(dictionary.GetDataSize(1) == sizeof(string_t) + text.size());
+
+	Vector compressed(LogicalType::VARCHAR, 4);
+	buffer_ptr<void> decoder;
+	FSSTVector::Create(compressed, decoder, 0, 4);
+	for (idx_t i = 0; i < 4; i++) {
+		FSSTVector::GetCompressedData(compressed)[i] = FSSTVector::AddCompressedString(compressed, text.data(), 1000);
+	}
+	FSSTVector::SetCount(compressed, 4);
+	REQUIRE(compressed.GetDataSize() == compressed.Buffer().GetDataSize(compressed.GetType(), 4));
+	REQUIRE(compressed.GetDataSize() >= 4 * (sizeof(string_t) + 1000));
 
 	auto chunk = make_uniq<DataChunk>();
 	chunk->Initialize(Allocator::DefaultAllocator(), {LogicalType::VARCHAR}, 3);
