@@ -7,6 +7,7 @@
 #include "duckdb/common/vector/shredded_vector.hpp"
 #include "duckdb/common/vector/string_vector.hpp"
 #include "duckdb/common/vector/struct_vector.hpp"
+#include "duckdb/common/vector/vector_iterator.hpp"
 #include "duckdb/common/types/vector.hpp"
 #include "duckdb/common/assert.hpp"
 #include "duckdb/common/exception.hpp"
@@ -400,7 +401,22 @@ idx_t Vector::GetDataSize() const {
 }
 
 idx_t Vector::GetDataSize(idx_t count) const {
-	return Buffer().GetDataSize(type, count);
+	const auto vector_type = GetVectorType();
+	if (type.InternalType() != PhysicalType::VARCHAR || count == 0 ||
+	    (vector_type != VectorType::FLAT_VECTOR && vector_type != VectorType::CONSTANT_VECTOR &&
+	     vector_type != VectorType::DICTIONARY_VECTOR)) {
+		return Buffer().GetDataSize(type, count);
+	}
+	idx_t size = count * sizeof(string_t);
+	for (const auto &entry : ValidValues<string_t>()) {
+		if (entry.GetIndex() >= count) {
+			break;
+		}
+		if (!entry.GetValue().IsInlined()) {
+			size += entry.GetValue().GetSize();
+		}
+	}
+	return size;
 }
 
 idx_t Vector::GetAllocationSize(idx_t cardinality) const {
