@@ -493,7 +493,6 @@ public:
 	BoundRoutine BindRoutine(const RoutineReference &routine, AclMode use, OnEntryNotFound if_not_found,
 	                         bool named_by_statement = false);
 	CatalogEntry &ResolveDatabaseEntry(CatalogType type, AlterInfo &info, AclMode use);
-	void RequireResolvedTypeUsage(optional_ptr<const LogicalDependencyList> dependencies);
 	void BindCreateRole(CreateRoleInfo &info);
 	void BindAlterRole(AlterRoleInfo &info);
 	void BindDropRole(DropInfo &info);

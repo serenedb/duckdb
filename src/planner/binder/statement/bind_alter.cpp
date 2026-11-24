@@ -592,7 +592,6 @@ unique_ptr<LogicalOperator> Binder::BindAlter(unique_ptr<AlterInfo> &info) {
 	if (!entry) {
 		// Bind types in this binder
 		BindAlterTypes(*this, *info, nullptr);
-		RequireResolvedTypeUsage(nullptr);
 		return nullptr;
 	}
 
@@ -612,7 +611,6 @@ unique_ptr<LogicalOperator> Binder::BindAlter(unique_ptr<AlterInfo> &info) {
 	type_binder->SetSearchPath(catalog, info->GetQualifiedName().Schema());
 
 	BindAlterTypes(*type_binder, *info, &catalog);
-	RequireResolvedTypeUsage(nullptr);
 	if (catalog.Compatibility() == SqlCompatibility::POSTGRES) {
 		auto &schema = entry->ParentSchema(context);
 		QualifyAlterUserFunctions(*this, schema, *info);

@@ -120,7 +120,6 @@ struct StatementProperties {
 	identifier_map_t<CatalogIdentity> read_databases;
 	//! The set of databases this statement will modify
 	identifier_map_t<ModificationInfo> modified_databases;
-	vector<const CatalogEntry *> resolved_entries;
 	vector<DataRead> data_reads;
 	bool point_reads_only = false;
 	bool layout_dependent = false;

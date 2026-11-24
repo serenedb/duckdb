@@ -68,7 +68,6 @@ Binder::Binder(ClientContext &context, shared_ptr<Binder> parent_p, BinderType b
 	} else {
 		entry_retriever.SetCallback([this](CatalogEntry &entry) {
 			auto &properties = GetStatementProperties();
-			properties.resolved_entries.push_back(&entry);
 			if (entry.type == CatalogType::TABLE_ENTRY) {
 				const auto location = entry.Cast<TableCatalogEntry>().GetStorageLocation();
 				if (!location.empty()) {
@@ -654,45 +653,6 @@ Catalog &Binder::SubscriptionCatalog(const Identifier &catalog_name) {
 		                              catalog.GetName().GetIdentifierName());
 	}
 	return catalog;
-}
-
-void Binder::RequireResolvedTypeUsage(optional_ptr<const LogicalDependencyList> dependencies) {
-	auto &role = CheckAs();
-	if (role.is_superuser) {
-		return;
-	}
-	reference_set_t<const CatalogEntry> checked;
-	auto check = [&](const CatalogEntry &entry) {
-		if (entry.type != CatalogType::TYPE_ENTRY || IsUnowned(entry) || !checked.insert(entry).second) {
-			return;
-		}
-		if (!Allowed(role, entry, AclMode::Usage)) {
-			ThrowPermissionDenied(entry);
-		}
-	};
-	if (dependencies) {
-		for (auto &dependency : dependencies->Set()) {
-			if (dependency.entry.type != CatalogType::TYPE_ENTRY) {
-				continue;
-			}
-			auto &catalog = Catalog::GetCatalog(context, dependency.catalog);
-			auto dependency_manager = catalog.GetDependencyManager();
-			auto entry = dependency_manager
-			                 ? dependency_manager->LookupEntry(catalog.GetCatalogTransaction(context), dependency)
-			                 : Catalog::GetEntry(context,
-			                                     EntryLookupInfo(CatalogType::TYPE_ENTRY,
-			                                                     QualifiedName::FromCatalogSchema(
-			                                                         dependency.catalog, dependency.entry.schema_path,
-			                                                         dependency.entry.name)),
-			                                     OnEntryNotFound::RETURN_NULL);
-			if (entry) {
-				check(*entry);
-			}
-		}
-	}
-	for (auto entry : GetStatementProperties().resolved_entries) {
-		check(*entry);
-	}
 }
 
 void Binder::CheckPrivileges() {

@@ -1407,7 +1407,6 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 			QualifyUserFunctions(table_schema, create_info);
 		}
 		auto bound_info = BindCreateTableInfo(std::move(stmt.info), table_schema);
-		RequireResolvedTypeUsage(bound_info->Base().dependencies);
 		for (auto &column : bound_info->Base().columns.Logical()) {
 			RequireTypeUsage(context, CheckAs(), column.Type(), bound_info->schema.ParentCatalog());
 		}

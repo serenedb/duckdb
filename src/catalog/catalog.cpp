@@ -1275,6 +1275,22 @@ CatalogException Catalog::CreateMissingEntryException(CatalogEntryRetriever &ret
 	return CatalogException::MissingEntry(lookup_info, did_you_mean);
 }
 
+enum class SchemaAccess : uint8_t { USABLE, HIDDEN, NO_USAGE };
+
+static SchemaAccess RestrictToRole(ClientContext &context, const RoleAccess &role, CatalogEntryLookup &result) {
+	if (result.schema && !LookupVisible(context, role, *result.schema)) {
+		result = CatalogEntryLookup();
+		return SchemaAccess::HIDDEN;
+	}
+	if (result.schema && !CanUseSchema(role, *result.schema)) {
+		return SchemaAccess::NO_USAGE;
+	}
+	if (result.Found() && !LookupVisible(context, role, *result.entry)) {
+		result.entry = nullptr;
+	}
+	return SchemaAccess::USABLE;
+}
+
 CatalogEntryLookup Catalog::TryLookupEntryInternal(CatalogTransaction transaction, const EntryLookupInfo &lookup_info) {
 	if (lookup_info.GetAtClause() && !SupportsTimeTravel()) {
 		return {nullptr, nullptr, ErrorData(BinderException("Catalog type does not support time travel"))};
@@ -1312,11 +1328,10 @@ CatalogEntryLookup Catalog::TryLookupEntry(CatalogEntryRetriever &retriever, con
 			auto result = TryLookupEntryInternal(
 			    transaction, EntryLookupInfo(lookup_info, QualifiedName(GetName(), candidate_schema,
 			                                                            lookup_info.GetEntryIdentifier())));
-			if (result.schema &&
-			    (!LookupVisible(context, role, *result.schema) || !CanUseSchema(role, *result.schema))) {
+			if (RestrictToRole(context, role, result) != SchemaAccess::USABLE) {
 				continue;
 			}
-			if (result.Found() && LookupVisible(context, role, *result.entry)) {
+			if (result.Found()) {
 				return result;
 			}
 			if (result.schema) {
@@ -1326,13 +1341,10 @@ CatalogEntryLookup Catalog::TryLookupEntry(CatalogEntryRetriever &retriever, con
 	} else {
 		auto transaction = GetCatalogTransaction(context);
 		auto result = TryLookupEntryInternal(transaction, lookup_info);
-		if (result.schema && !LookupVisible(context, role, *result.schema)) {
-			result = CatalogEntryLookup();
-		}
-		if (result.schema && !CanUseSchema(role, *result.schema)) {
+		if (RestrictToRole(context, role, result) == SchemaAccess::NO_USAGE) {
 			ThrowPermissionDenied(*result.schema);
 		}
-		if (result.Found() && LookupVisible(context, role, *result.entry)) {
+		if (result.Found()) {
 			return result;
 		}
 		if (result.schema) {
@@ -1505,22 +1517,14 @@ CatalogEntryLookup Catalog::TryLookupEntry(CatalogEntryRetriever &retriever, con
 	for (auto &lookup : lookups) {
 		auto transaction = lookup.catalog.GetCatalogTransaction(context);
 		result = lookup.catalog.TryLookupEntryInternal(transaction, lookup.lookup_info);
-		const bool named = !IsInvalidSchema(lookup_info.GetSchema());
-		if (result.schema && !LookupVisible(context, role, *result.schema)) {
+		const auto access = RestrictToRole(context, role, result);
+		if (access == SchemaAccess::NO_USAGE && !IsInvalidSchema(lookup_info.GetSchema())) {
+			ThrowPermissionDenied(*result.schema);
+		}
+		if (access != SchemaAccess::USABLE) {
 			result = {nullptr, nullptr, ErrorData()};
 			all_errors = false;
 			continue;
-		}
-		if (result.schema && !CanUseSchema(role, *result.schema)) {
-			if (named) {
-				ThrowPermissionDenied(*result.schema);
-			}
-			result = {nullptr, nullptr, ErrorData()};
-			all_errors = false;
-			continue;
-		}
-		if (result.Found() && !LookupVisible(context, role, *result.entry)) {
-			result.entry = nullptr;
 		}
 		if (result.Found() && !TakesPositionalArguments(*result.entry, lookup_info.GetArgumentCount())) {
 			if (!other_arguments.Found()) {
@@ -1654,12 +1658,7 @@ CatalogEntryLookup Catalog::TryLookupDefaultTable(CatalogEntryRetriever &retriev
 		EntryLookupInfo info(CatalogType::TABLE_ENTRY,
 		                     QualifiedName(catalog_by_name->GetName(), table_schema, table_name), at_clause, context);
 		auto result = catalog_by_name->TryLookupEntryInternal(transaction, info);
-		auto &role = retriever.CheckAs();
-		if (result.schema &&
-		    (!LookupVisible(retriever.GetContext(), role, *result.schema) || !CanUseSchema(role, *result.schema))) {
-			return {nullptr, nullptr, ErrorData()};
-		}
-		if (result.Found() && !LookupVisible(retriever.GetContext(), role, *result.entry)) {
+		if (RestrictToRole(retriever.GetContext(), retriever.CheckAs(), result) != SchemaAccess::USABLE) {
 			return {nullptr, nullptr, ErrorData()};
 		}
 		return result;
@@ -1685,12 +1684,7 @@ CatalogEntryLookup Catalog::TryLookupDefaultSchema(CatalogEntryRetriever &retrie
 		EntryLookupInfo default_schema_lookup(
 		    lookup_info, QualifiedName(catalog_entry->GetName(), *default_schema, lookup_info.GetEntryIdentifier()));
 		auto result = catalog_entry->TryLookupEntryInternal(transaction, default_schema_lookup);
-		auto &role = retriever.CheckAs();
-		if (result.schema &&
-		    (!LookupVisible(retriever.GetContext(), role, *result.schema) || !CanUseSchema(role, *result.schema))) {
-			continue;
-		}
-		if (result.Found() && !LookupVisible(retriever.GetContext(), role, *result.entry)) {
+		if (RestrictToRole(retriever.GetContext(), retriever.CheckAs(), result) != SchemaAccess::USABLE) {
 			continue;
 		}
 		if (result.Found() || result.error.HasError()) {

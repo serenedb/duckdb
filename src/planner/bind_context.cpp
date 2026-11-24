@@ -75,24 +75,7 @@ optional_ptr<Binding> BindContext::GetMatchingBinding(const Identifier &column_n
 	return result;
 }
 
-void BindContext::CheckColumnsVisible() {
-	for (auto &binding : bindings_list) {
-		CheckColumnsVisible(*binding);
-	}
-}
-
-void BindContext::CheckColumnsVisible(Binding &binding) {
-	if (binder.InViewBody()) {
-		return;
-	}
-	auto entry = binding.GetStandardEntry();
-	if (entry) {
-		binder.context.CheckEntryReference(binder.CheckAs(), *entry);
-	}
-}
-
 vector<Identifier> BindContext::GetSimilarBindings(const Identifier &column_name) {
-	CheckColumnsVisible();
 	vector<pair<string, double>> scores;
 	for (auto &binding_ptr : bindings_list) {
 		auto &binding = *binding_ptr;
@@ -431,7 +414,6 @@ optional_ptr<Binding> BindContext::GetBinding(const BindingAlias &alias, const I
 	}
 	if (!result) {
 		// found the table binding - but could not find the column
-		CheckColumnsVisible(matching_bindings[0].get());
 		out_error = matching_bindings[0].get().ColumnNotFoundError(column_name);
 	}
 	return result;
@@ -748,7 +730,6 @@ void BindContext::GenerateAllColumnExpressions(StarExpression &expr,
 	//! Verify correctness of the exclude list
 	for (auto &excluded : expr.ExcludeList()) {
 		if (star_state.excluded_qualified_columns.find(excluded) == star_state.excluded_qualified_columns.end()) {
-			CheckColumnsVisible();
 			auto candidate_str = CandidateColumnMessage(star_state.candidate_columns, excluded.column);
 			throw BinderException("Column %s in EXCLUDE list not found in %s%s", excluded.ToDisplayString(),
 			                      expr.RelationName().empty() ? "FROM clause" : expr.RelationName().c_str(),
@@ -759,7 +740,6 @@ void BindContext::GenerateAllColumnExpressions(StarExpression &expr,
 	//! Verify correctness of the replace list
 	for (auto &entry : expr.ReplaceList()) {
 		if (star_state.excluded_columns.find(entry.first) == star_state.excluded_columns.end()) {
-			CheckColumnsVisible();
 			auto candidate_str = CandidateColumnMessage(star_state.candidate_columns, entry.first);
 			throw BinderException("Column %s in REPLACE list not found in %s%s", entry.first,
 			                      expr.RelationName().empty() ? string("FROM clause")

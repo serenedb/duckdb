@@ -475,15 +475,6 @@ static void RequireOwnership(const RoleAccess &role, CatalogEntry &entry, option
 		}
 		throw PermissionException({{"detail", detail}}, "permission denied");
 	}
-	if (IsMacro(entry) && !overload) {
-		auto &macro = entry.Cast<MacroCatalogEntry>();
-		for (auto &function : macro.macros) {
-			if (!role.Owns(macro.OverloadPermissions(*function).owner)) {
-				ThrowNotOwner(entry, naming);
-			}
-		}
-		return;
-	}
 	if (!OwnsEntry(role, entry, overload)) {
 		ThrowNotOwner(entry, naming);
 	}
@@ -686,19 +677,39 @@ void RequireTypeUsage(ClientContext &context, const RoleAccess &role, const Logi
 	if (role.is_superuser) {
 		return;
 	}
-	reference<const LogicalType> element = type;
-	while (element.get().id() == LogicalTypeId::LIST || element.get().id() == LogicalTypeId::ARRAY) {
-		element = element.get().id() == LogicalTypeId::LIST ? ListType::GetChildType(element)
-		                                                    : ArrayType::GetChildType(element);
-	}
-	if (auto extension = element.get().GetExtensionInfo()) {
+	if (auto extension = type.GetExtensionInfo()) {
 		auto oid = extension->properties.find(ExtensionTypeInfo::CATALOG_OID_PROPERTY);
 		if (oid != extension->properties.end()) {
 			auto entry = catalog.LookupOwner(catalog.GetCatalogTransaction(context), oid->second.GetValue<idx_t>());
 			if (entry && entry->type == CatalogType::TYPE_ENTRY && !IsUnowned(*entry)) {
 				Require(context, role, *entry, AclMode::Usage);
 			}
+			return;
 		}
+	}
+	if (!type.HasParameters()) {
+		return;
+	}
+	switch (type.id()) {
+	case LogicalTypeId::LIST:
+		return RequireTypeUsage(context, role, ListType::GetChildType(type), catalog);
+	case LogicalTypeId::ARRAY:
+		return RequireTypeUsage(context, role, ArrayType::GetChildType(type), catalog);
+	case LogicalTypeId::MAP:
+		RequireTypeUsage(context, role, MapType::KeyType(type), catalog);
+		return RequireTypeUsage(context, role, MapType::ValueType(type), catalog);
+	case LogicalTypeId::STRUCT:
+		for (auto &child : StructType::GetChildTypes(type)) {
+			RequireTypeUsage(context, role, child.second, catalog);
+		}
+		return;
+	case LogicalTypeId::UNION:
+		for (idx_t i = 0; i < UnionType::GetMemberCount(type); i++) {
+			RequireTypeUsage(context, role, UnionType::GetMemberType(type, i), catalog);
+		}
+		return;
+	default:
+		return;
 	}
 }
 
