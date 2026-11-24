@@ -606,7 +606,7 @@ bool RowLexer::FeedBlocks(RowCursor &cursor, const char *data, idx_t base, idx_t
 			const idx_t prior = c.last_row_end == DConstants::INVALID_INDEX ? c.origin : c.last_row_end;
 			const idx_t limit =
 			    c.last_row_end == DConstants::INVALID_INDEX && !settled ? max_line_size / 2 : max_line_size;
-			const bool too_long = c.pos + CSV_BLOCK_BYTES - prior > limit || max_line_size < CSV_BLOCK_BYTES;
+			const bool too_long = c.pos + CSV_BLOCK_BYTES - prior > limit;
 			if (!too_long || (settled && !count_errors)) {
 				c.settled = settled;
 				c.long_rows = c.long_rows || too_long;
@@ -614,7 +614,7 @@ bool RowLexer::FeedBlocks(RowCursor &cursor, const char *data, idx_t base, idx_t
 				c.first_term_cr = false;
 				c.partial_before_last = 0;
 				if (track_fields && c.field_blank) {
-					c.field_blank = d.duckdb && vector.Equal(' ') == ~uint64_t(0);
+					c.field_blank = vector.Equal(' ') == ~uint64_t(0);
 				}
 				if (EXTRACT && d.strip_carriage) {
 					c.after_plain_cr = 0;
