@@ -3,6 +3,7 @@
 
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/catalog/catalog_entry/schema_catalog_entry.hpp"
+#include "duckdb/catalog/catalog_entry_retriever.hpp"
 #include "duckdb/catalog/permissions.hpp"
 #include "duckdb/common/constants.hpp"
 #include "duckdb/common/exception.hpp"
@@ -232,6 +233,7 @@ void CatalogSearchPath::Set(vector<CatalogSearchEntry> new_paths, CatalogSetPath
 	if (set_type == CatalogSetPathType::SET_SCHEMA && new_paths.size() != 1) {
 		throw CatalogException("%s can set only 1 schema. This has %d", GetSetName(set_type), new_paths.size());
 	}
+	CatalogEntryRetriever retriever(context);
 	for (auto &path : new_paths) {
 		if (set_type == CatalogSetPathType::SET_DIRECTLY) {
 			if (path.GetCatalog().empty() || path.GetSchema().empty()) {
@@ -240,12 +242,10 @@ void CatalogSearchPath::Set(vector<CatalogSearchEntry> new_paths, CatalogSetPath
 			continue;
 		}
 		auto schema_entry =
-		    Catalog::GetSchema(context, path.GetCatalog(), path.GetSchema(), OnEntryNotFound::RETURN_NULL);
-		auto &role = context.CurrentRole();
-		if (schema_entry && (!context.CanSeeDatabase(role, schema_entry->ParentCatalog().GetAttached()) ||
-		                     !LookupVisible(context, role, *schema_entry))) {
-			schema_entry = nullptr;
-		}
+		    Catalog::GetSchema(retriever,
+		                       EntryLookupInfo(CatalogType::SCHEMA_ENTRY,
+		                                       QualifiedName(path.GetCatalog(), Identifier(), path.GetSchema())),
+		                       OnEntryNotFound::RETURN_NULL);
 		if (schema_entry) {
 			// we are setting a schema - update the catalog and schema
 			if (path.GetCatalog().empty()) {
@@ -290,7 +290,7 @@ void CatalogSearchPath::Set(vector<CatalogSearchEntry> new_paths, CatalogSetPath
 		if (!path.GetCatalog().empty()) {
 			// "a.b" can also name a nested schema - give a clearer error in that case
 			vector<Identifier> nested_path {path.GetCatalog(), path.GetSchema()};
-			if (Catalog::GetSchema(context, Identifier(), nested_path, OnEntryNotFound::RETURN_NULL)) {
+			if (Catalog::GetSchema(retriever, Identifier(), nested_path, OnEntryNotFound::RETURN_NULL)) {
 				throw NotImplementedException("%s: \"%s\" is a nested schema - nested schemas cannot be used in the "
 				                              "search path",
 				                              GetSetName(set_type), path.ToString());
