@@ -318,7 +318,7 @@ static void ExpandAllInSchema(Binder &binder, unique_ptr<AlterInfo> info, vector
 	const auto kind = grant.entry_catalog_type;
 	const auto scan = [&](CatalogType type) {
 		schema.Scan(binder.context, type, [&](CatalogEntry &entry) {
-			if (entry.internal) {
+			if (entry.internal || !LookupVisible(binder.context, binder.CheckAs(), entry)) {
 				return;
 			}
 			if (kind != CatalogType::MACRO_ENTRY) {
