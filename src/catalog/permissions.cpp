@@ -635,8 +635,12 @@ string RoleName(ClientContext &context, idx_t role) {
 }
 
 static bool StoresPermissions(Catalog &catalog) {
-	return !catalog.IsDuckCatalog() || catalog.GetAttached().IsTemporary() ||
-	       IsSereneDBStorageVersion(catalog.GetAttached().GetStorageManager().GetStorageVersion());
+	auto &database = catalog.GetAttached();
+	if (database.ForeignServer().IsValid()) {
+		return false;
+	}
+	return !catalog.IsDuckCatalog() || database.IsTemporary() ||
+	       IsSereneDBStorageVersion(database.GetStorageManager().GetStorageVersion());
 }
 
 void AssignOwner(ClientContext &context, Permissions &permissions, Catalog &catalog, CatalogType objtype,
