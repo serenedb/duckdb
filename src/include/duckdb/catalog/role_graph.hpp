@@ -109,13 +109,9 @@ struct RoleAccess {
 
 struct RoleMemberships {
 	vector<idx_t> members;
-	vector<idx_t> admin;
 
 	bool IsMember(idx_t role) const {
 		return std::binary_search(members.begin(), members.end(), role);
-	}
-	bool IsAdminOf(idx_t role) const {
-		return std::binary_search(admin.begin(), admin.end(), role);
 	}
 };
 

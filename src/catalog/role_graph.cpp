@@ -335,18 +335,6 @@ RoleMemberships SecuritySnapshot::MembershipsOf(idx_t role) const {
 		return result;
 	}
 	result.members = Reachable(nodes, role, nullptr);
-	for (auto member : result.members) {
-		auto node = Find(member);
-		if (!node) {
-			continue;
-		}
-		for (auto &edge : node->member_of) {
-			if (edge.admin_option) {
-				result.admin.push_back(edge.role);
-			}
-		}
-	}
-	std::sort(result.admin.begin(), result.admin.end());
 	return result;
 }
 
