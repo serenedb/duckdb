@@ -1153,7 +1153,7 @@ struct DefaultCollationSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
-	static constexpr bool Rebind = false;
+	static constexpr bool Rebind = true;
 	static constexpr const char *DefaultValue = "";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::GLOBAL_DEFAULT;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -1169,7 +1169,7 @@ struct DefaultNullOrderSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
-	static constexpr bool Rebind = false;
+	static constexpr bool Rebind = true;
 	static constexpr const char *DefaultValue = "NULLS_LAST";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::GLOBAL_DEFAULT;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
@@ -1184,7 +1184,7 @@ struct DefaultOrderSetting {
 	static constexpr bool IsDebug = false;
 	static constexpr bool IsDeprecated = false;
 	static constexpr bool NoResetAll = false;
-	static constexpr bool Rebind = false;
+	static constexpr bool Rebind = true;
 	static constexpr const char *DefaultValue = "ASCENDING";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::GLOBAL_DEFAULT;
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
