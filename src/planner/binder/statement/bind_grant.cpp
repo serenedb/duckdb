@@ -254,7 +254,6 @@ static void ResolveGrant(Binder &binder, AlterPermissionsInfo &info) {
 		}
 		RequireGrantableAcl(context, info, role, config.bootstrap_role, acl, CatalogType::FOREIGN_DATA_WRAPPER_ENTRY,
 		                    wrapper.GetIdentifierName());
-		info.object_owner_id = config.bootstrap_role;
 		info.SetQualifiedName(database_name, Identifier(), wrapper);
 		return;
 	}
@@ -280,7 +279,6 @@ static void ResolveGrant(Binder &binder, AlterPermissionsInfo &info) {
 			acl = parameter->permissions.acl;
 		}
 		RequireGrantableAcl(context, info, role, owner, acl, CatalogType::PARAMETER_ENTRY, name);
-		info.object_owner_id = owner;
 		info.SetQualifiedName(Identifier(), Identifier(), Identifier(StringUtil::Lower(name)));
 		return;
 	}

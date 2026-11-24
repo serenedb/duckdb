@@ -231,7 +231,6 @@ unique_ptr<AlterInfo> AlterPermissionsInfo::Copy() const {
 	result->all_in_schema = all_in_schema;
 	result->include_functions = include_functions;
 	result->include_procedures = include_procedures;
-	result->object_owner_id = object_owner_id;
 	result->drop_owned_role_id = drop_owned_role_id;
 	result->overload_oid = overload_oid;
 	result->func_parameters = func_parameters;

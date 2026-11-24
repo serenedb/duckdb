@@ -131,7 +131,6 @@ struct AlterPermissionsInfo : public AlterInfo {
 	bool all_in_schema = false;
 	bool include_functions = true;
 	bool include_procedures = true;
-	idx_t object_owner_id = 0;
 	idx_t drop_owned_role_id = 0;
 	idx_t overload_oid = 0;
 	vector<LogicalType> func_parameters;
