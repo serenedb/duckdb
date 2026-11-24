@@ -10,7 +10,6 @@ CommentOnType <-    CommentTable / CommentSequence / CommentMacroTable / Comment
 
 CommentTable <- 'TABLE'
 CommentSequence <- 'SEQUENCE'
-CommentFunction <- 'FUNCTION'
 CommentMacroTable <- 'MACRO' 'TABLE'
 CommentMacro <- 'MACRO'
 CommentView <- 'VIEW'

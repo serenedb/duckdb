@@ -73,10 +73,6 @@ CatalogType PEGTransformerFactory::TransformCommentSequence(PEGTransformer &tran
 	return CatalogType::SEQUENCE_ENTRY;
 }
 
-CatalogType PEGTransformerFactory::TransformCommentFunction(PEGTransformer &transformer) {
-	return CatalogType::MACRO_ENTRY;
-}
-
 CatalogType PEGTransformerFactory::TransformCommentMacroTable(PEGTransformer &transformer) {
 	return CatalogType::TABLE_MACRO_ENTRY;
 }

@@ -1472,7 +1472,6 @@ CatalogType:
     - CommentOnType
     - CommentTable
     - CommentSequence
-    - CommentFunction
     - CommentMacroTable
     - CommentMacro
     - CommentView
@@ -1484,7 +1483,6 @@ CatalogType:
     - CommentRole
     - TableOrView
     - SetSchemaEntryType
-    - SetSchemaProcedure
     - SetSchemaDictionary
     - MaterializedViewEntry
 
