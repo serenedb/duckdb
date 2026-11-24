@@ -2220,7 +2220,6 @@ excluded_rules:
   - List
   - Parens
   - DropFunctionItem
-  - DropFunctionArgs
   - FunctionDecorator
   - ReturnsClause
   - ReturnsTable
