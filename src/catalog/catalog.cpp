@@ -757,7 +757,8 @@ SchemaCatalogEntry &Catalog::ResolveSchema(ClientContext &context, const string 
 optional_ptr<SchemaCatalogEntry>
 Catalog::LookupSchemaPath(CatalogTransaction transaction, const EntryLookupInfo &schema_lookup,
                           OnEntryNotFound if_not_found,
-                          const std::function<optional_ptr<CatalogEntry>(const EntryLookupInfo &)> &lookup_root) {
+                          const std::function<optional_ptr<CatalogEntry>(const EntryLookupInfo &)> &lookup_root,
+                          const std::function<bool(CatalogEntry &)> &visible) {
 	auto &path = schema_lookup.GetQualifiedName().Path();
 	optional_ptr<SchemaCatalogEntry> schema;
 	// Bound schema lookups lead with the catalog; bare lookups contain just the schema name.
@@ -767,6 +768,9 @@ Catalog::LookupSchemaPath(CatalogTransaction transaction, const EntryLookupInfo 
 		}
 		EntryLookupInfo lookup(schema_lookup, QualifiedName(path[i]));
 		auto entry = schema ? schema->LookupEntry(transaction, lookup) : lookup_root(lookup);
+		if (entry && schema && visible && !visible(*entry)) {
+			entry = nullptr;
+		}
 		if (!entry) {
 			if (if_not_found == OnEntryNotFound::THROW_EXCEPTION) {
 				throw CatalogException::MissingEntry(lookup, string());
@@ -800,9 +804,11 @@ optional_ptr<SchemaCatalogEntry> Catalog::GetSchema(CatalogEntryRetriever &retri
 	auto path = schema_path;
 	path.insert(path.begin(), catalog.GetName());
 	EntryLookupInfo lookup(CatalogType::SCHEMA_ENTRY, QualifiedName::FromPath(std::move(path)));
+	auto &context = retriever.GetContext();
 	return catalog.LookupSchemaPath(
-	    catalog.GetCatalogTransaction(retriever.GetContext()), lookup, if_not_found,
-	    [&](const EntryLookupInfo &) -> optional_ptr<CatalogEntry> { return schema.get(); });
+	    catalog.GetCatalogTransaction(context), lookup, if_not_found,
+	    [&](const EntryLookupInfo &) -> optional_ptr<CatalogEntry> { return schema.get(); },
+	    [&](CatalogEntry &entry) { return LookupVisible(context, retriever.CheckAs(), entry); });
 }
 
 optional_ptr<SchemaCatalogEntry> Catalog::GetSchema(CatalogTransaction transaction,

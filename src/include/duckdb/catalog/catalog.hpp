@@ -649,7 +649,8 @@ protected:
 	//! Resolve a bound schema path, preserving time travel and error context at every level.
 	DUCKDB_API optional_ptr<SchemaCatalogEntry>
 	LookupSchemaPath(CatalogTransaction transaction, const EntryLookupInfo &schema_lookup, OnEntryNotFound if_not_found,
-	                 const std::function<optional_ptr<CatalogEntry>(const EntryLookupInfo &)> &lookup_root);
+	                 const std::function<optional_ptr<CatalogEntry>(const EntryLookupInfo &)> &lookup_root,
+	                 const std::function<bool(CatalogEntry &)> &visible = nullptr);
 
 	//! Reference to the database
 	AttachedDatabase &db;
