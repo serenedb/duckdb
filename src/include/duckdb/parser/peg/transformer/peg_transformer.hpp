@@ -968,6 +968,14 @@ public:
 	static void InitializeAlterColumnEntryTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
 	static arena_ptr<TransformResultValue> FinalizeAlterColumnEntryTrampoline(PEGTransformer &transformer,
 	                                                                          GeneratedTransformProcess &process);
+	static void InitializeSetCompressionDefaultTrampoline(PEGTransformer &transformer,
+	                                                      GeneratedTransformProcess &process);
+	static arena_ptr<TransformResultValue> FinalizeSetCompressionDefaultTrampoline(PEGTransformer &transformer,
+	                                                                               GeneratedTransformProcess &process);
+	static void InitializeSetCompressionCodecTrampoline(PEGTransformer &transformer,
+	                                                    GeneratedTransformProcess &process);
+	static arena_ptr<TransformResultValue> FinalizeSetCompressionCodecTrampoline(PEGTransformer &transformer,
+	                                                                             GeneratedTransformProcess &process);
 	static void InitializeAddOrDropDefaultTrampoline(PEGTransformer &transformer, GeneratedTransformProcess &process);
 	static arena_ptr<TransformResultValue> FinalizeAddOrDropDefaultTrampoline(PEGTransformer &transformer,
 	                                                                          GeneratedTransformProcess &process);
@@ -5060,6 +5068,10 @@ public:
 	static unique_ptr<AlterTableInfo>
 	TransformResetOptions(PEGTransformer &transformer,
 	                      case_insensitive_map_t<unique_ptr<ParsedExpression>> rel_option_list);
+	static unique_ptr<AlterTableInfo> TransformSetCompressionDefault(PEGTransformer &transformer);
+	static unique_ptr<AlterTableInfo>
+	TransformSetCompressionCodec(PEGTransformer &transformer, const Identifier &col_id_or_string,
+	                             optional<vector<unique_ptr<ParsedExpression>>> expression);
 	static unique_ptr<AlterTableInfo> TransformAddDefault(PEGTransformer &transformer,
 	                                                      unique_ptr<ParsedExpression> expression);
 	static unique_ptr<AlterTableInfo> TransformDropDefault(PEGTransformer &transformer);
@@ -5589,7 +5601,8 @@ public:
 	static ColumnConstraintEntry TransformColumnCollation(PEGTransformer &transformer,
 	                                                      const vector<string> &dotted_identifier);
 	static ColumnConstraintEntry TransformColumnCompression(PEGTransformer &transformer,
-	                                                        const Identifier &col_id_or_string);
+	                                                        const Identifier &col_id_or_string,
+	                                                        optional<vector<unique_ptr<ParsedExpression>>> expression);
 	static KeyActions TransformUpdateFirstKeyActions(PEGTransformer &transformer, const string &update_action,
 	                                                 const optional<string> &delete_action);
 	static KeyActions TransformDeleteFirstKeyActions(PEGTransformer &transformer, const string &delete_action,

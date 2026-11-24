@@ -820,7 +820,10 @@ SetTablespace <- 'SET' 'TABLESPACE' ColId
 SetOptions <- 'SET' RelOptionList
 ResetOptions <- 'RESET' RelOptionList
 
-AlterColumnEntry <- AddOrDropDefault / ChangeNullability / AlterType
+AlterColumnEntry <- AddOrDropDefault / ChangeNullability / AlterType / SetCompressionDefault / SetCompressionCodec
+
+SetCompressionDefault <- 'SET' 'COMPRESSION' 'DEFAULT'
+SetCompressionCodec <- 'SET' 'COMPRESSION' ColIdOrString Parens(List(Expression))?
 
 AddOrDropDefault <- AddDefault / DropDefault
 AddDefault <- 'SET' 'DEFAULT' Expression
