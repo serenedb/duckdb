@@ -636,22 +636,6 @@ string DBConfig::SystemObjectName(std::string_view name) const {
 	return absl::StrCat(options.system_object_prefix, name);
 }
 
-const ForeignDataWrapper &DBConfig::GetForeignDataWrapper(std::string_view name) const {
-	auto wrapper = foreign_data_wrappers.find(name);
-	if (wrapper == foreign_data_wrappers.end()) {
-		throw CatalogException::MissingObject(CatalogType::FOREIGN_DATA_WRAPPER_ENTRY, Identifier(name));
-	}
-	return wrapper->second;
-}
-
-const Language &DBConfig::GetLanguage(std::string_view name) const {
-	auto language = languages.find(name);
-	if (language == languages.end()) {
-		throw CatalogException::MissingObject(CatalogType::LANGUAGE_ENTRY, Identifier(name));
-	}
-	return language->second;
-}
-
 CastFunctionSet &DBConfig::GetCastFunctions() {
 	return type_manager->GetCastFunctions();
 }

@@ -25,7 +25,6 @@
 #include "duckdb/main/attached_database.hpp"
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/main/client_data.hpp"
-#include "duckdb/main/config.hpp"
 #include "duckdb/main/database_manager.hpp"
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/string_util.hpp"
@@ -666,15 +665,12 @@ void RequireDatabasePrivilege(ClientContext &context, const RoleAccess &role, co
 
 void RequireForeignDataWrapperUsage(ClientContext &context, const RoleAccess &role, Catalog &catalog,
                                     std::string_view wrapper) {
-	auto &config = DBConfig::GetConfig(context);
-	config.GetForeignDataWrapper(wrapper);
 	auto entry = catalog.LookupTopLevelEntry(catalog.GetCatalogTransaction(context),
 	                                         CatalogType::FOREIGN_DATA_WRAPPER_ENTRY, Identifier(wrapper));
-	const bool allowed = entry ? role.Can(CatalogType::FOREIGN_DATA_WRAPPER_ENTRY, entry->permissions, AclMode::Usage)
-	                           : role.Owns(config.bootstrap_role);
-	if (!allowed) {
-		ThrowPermissionDenied(CatalogType::FOREIGN_DATA_WRAPPER_ENTRY, wrapper);
+	if (!entry) {
+		throw CatalogException::MissingObject(CatalogType::FOREIGN_DATA_WRAPPER_ENTRY, Identifier(wrapper));
 	}
+	Require(context, role, *entry, AclMode::Usage);
 }
 
 void RequireUserSchema(const SchemaCatalogEntry &schema, const Identifier &name) {

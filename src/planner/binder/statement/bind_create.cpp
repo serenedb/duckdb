@@ -1617,7 +1617,7 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 	}
 	case CatalogType::FOREIGN_SERVER_ENTRY: {
 		auto catalog = BindCatalog(stmt.info->GetQualifiedName().Catalog());
-		if (auto &role = CheckAs(); !role.IsSystem()) {
+		if (auto &role = CheckAs(); !role.IsSystem() && ClusterEntry(context, CatalogType::DATABASE_ENTRY, catalog)) {
 			auto &server_catalog = Catalog::GetCatalog(context, catalog);
 			RequireForeignDataWrapperUsage(context, role, server_catalog,
 			                               stmt.info->Cast<CreateForeignServerInfo>().fdw_name);

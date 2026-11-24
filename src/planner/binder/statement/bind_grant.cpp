@@ -240,28 +240,6 @@ static void ResolveGrant(Binder &binder, AlterPermissionsInfo &info) {
 			info.grantors.insert(info.grantors.end(), role.closure.begin(), role.closure.end());
 		}
 	}
-	if (info.entry_catalog_type == CatalogType::FOREIGN_DATA_WRAPPER_ENTRY) {
-		const auto wrapper = info.GetQualifiedName().Name();
-		auto &config = DBConfig::GetConfig(context);
-		config.GetForeignDataWrapper(wrapper.GetIdentifierName());
-		const auto database_name = DatabaseManager::GetDefaultDatabase(context);
-		ClusterDatabase(context, database_name);
-		auto &catalog = Catalog::GetCatalog(context, database_name);
-		std::span<const AclItem> acl;
-		if (auto entry = catalog.LookupTopLevelEntry(catalog.GetCatalogTransaction(context),
-		                                             CatalogType::FOREIGN_DATA_WRAPPER_ENTRY, wrapper)) {
-			acl = entry->permissions.acl;
-		}
-		RequireGrantableAcl(context, info, role, config.bootstrap_role, acl, CatalogType::FOREIGN_DATA_WRAPPER_ENTRY,
-		                    wrapper.GetIdentifierName());
-		info.SetQualifiedName(database_name, Identifier(), wrapper);
-		return;
-	}
-	if (info.entry_catalog_type == CatalogType::LANGUAGE_ENTRY) {
-		auto &name = info.GetQualifiedName().Name().GetIdentifierName();
-		DBConfig::GetConfig(context).GetLanguage(name);
-		throw PermissionException("Cannot alter entry \"%s\" because it is an internal system entry", name);
-	}
 	if (info.entry_catalog_type == CatalogType::PARAMETER_ENTRY) {
 		const auto setting = info.GetQualifiedName().Name();
 		if (!Settings::GetAccess(context, setting)) {

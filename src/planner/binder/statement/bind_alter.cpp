@@ -282,10 +282,15 @@ BoundRoutine Binder::BindRoutine(const RoutineReference &routine, AclMode use, O
 }
 
 CatalogEntry &Binder::ResolveDatabaseEntry(CatalogType type, AlterInfo &info, AclMode use) {
-	auto &catalog = type == CatalogType::SUBSCRIPTION_ENTRY
-	                    ? SubscriptionCatalog(Identifier())
-	                    : Catalog::GetCatalog(context, DatabaseManager::GetDefaultDatabase(context));
-	auto &entry = *TopLevelEntry(context, CheckAs(), catalog, type, info.GetQualifiedName().Name(), use,
+	optional_ptr<Catalog> catalog;
+	if (type == CatalogType::SUBSCRIPTION_ENTRY) {
+		catalog = SubscriptionCatalog(Identifier());
+	} else {
+		const auto database = DatabaseManager::GetDefaultDatabase(context);
+		ClusterDatabase(context, database);
+		catalog = Catalog::GetCatalog(context, database);
+	}
+	auto &entry = *TopLevelEntry(context, CheckAs(), *catalog, type, info.GetQualifiedName().Name(), use,
 	                             OnEntryNotFound::THROW_EXCEPTION);
 	info.SetQualifiedName(entry.ParentCatalog().GetName(), Identifier(), entry.name);
 	return entry;

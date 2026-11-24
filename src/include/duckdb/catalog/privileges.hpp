@@ -83,7 +83,7 @@ inline constexpr AclPrivilege ACL_PRIVILEGES[] = {
 inline constexpr AclMode ACL_COLUMN_PRIVILEGES = AclMode::Insert | AclMode::Select | AclMode::Update | AclMode::References;
 inline constexpr AclMode ACL_GRANTABLE = AclMode::Insert | AclMode::Select | AclMode::Update | AclMode::Delete | AclMode::Truncate | AclMode::References | AclMode::Trigger | AclMode::Execute | AclMode::Usage | AclMode::Create | AclMode::CreateTemp | AclMode::Connect | AclMode::Set | AclMode::AlterSystem | AclMode::Maintain;
 
-enum class ObjectContainer : uint8_t { NONE, CLUSTER, DATABASE, SCHEMA, RELATION, REGISTRY };
+enum class ObjectContainer : uint8_t { NONE, CLUSTER, DATABASE, SCHEMA, RELATION };
 
 struct ObjectKind {
 	CatalogType acl_class;
@@ -125,7 +125,7 @@ constexpr ObjectKind MakeObjectKind(CatalogType type) {
 	case CatalogType::FOREIGN_DATA_WRAPPER_ENTRY:
 		return {CatalogType::FOREIGN_DATA_WRAPPER_ENTRY, ObjectContainer::DATABASE, AclMode::Usage, AclMode::NoRights, 2328, false};
 	case CatalogType::LANGUAGE_ENTRY:
-		return {CatalogType::LANGUAGE_ENTRY, ObjectContainer::REGISTRY, AclMode::Usage, AclMode::Usage, 2612, false};
+		return {CatalogType::LANGUAGE_ENTRY, ObjectContainer::DATABASE, AclMode::Usage, AclMode::Usage, 2612, false};
 	case CatalogType::PARAMETER_ENTRY:
 		return {CatalogType::PARAMETER_ENTRY, ObjectContainer::CLUSTER, AclMode::Set | AclMode::AlterSystem, AclMode::NoRights, 0, false};
 	case CatalogType::JOB_ENTRY:
