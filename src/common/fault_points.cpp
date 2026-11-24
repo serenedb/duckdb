@@ -108,4 +108,35 @@ void FaultPoints::ParkOnce(std::string_view name) {
 
 } // namespace duckdb
 
+#else
+
+namespace duckdb {
+
+bool FaultPoints::Armed(std::string_view) noexcept {
+	return false;
+}
+
+bool FaultPoints::Arm(std::string_view) {
+	return false;
+}
+
+bool FaultPoints::Disarm(std::string_view) {
+	return false;
+}
+
+void FaultPoints::Clear() noexcept {
+}
+
+vector<string> FaultPoints::List() {
+	return {};
+}
+
+void FaultPoints::WaitWhileArmed(std::string_view) {
+}
+
+void FaultPoints::ParkOnce(std::string_view) {
+}
+
+} // namespace duckdb
+
 #endif
