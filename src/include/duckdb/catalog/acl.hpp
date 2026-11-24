@@ -13,7 +13,6 @@
 #include "duckdb/common/enums/catalog_type.hpp"
 #include "duckdb/common/identifier.hpp"
 #include "duckdb/common/optional_idx.hpp"
-#include "duckdb/common/optional_ptr.hpp"
 #include "duckdb/common/serializer/deserializer.hpp"
 #include "duckdb/common/serializer/serializer.hpp"
 #include "duckdb/common/vector.hpp"
@@ -78,7 +77,6 @@ struct ColumnAcl {
 struct Permissions {
 	idx_t owner = 0;
 	vector<AclItem> acl;
-	vector<DefaultAcl> defaults;
 	bool acl_emptied = false;
 
 	bool operator==(const Permissions &rhs) const = default;
@@ -89,11 +87,20 @@ struct Permissions {
 	static bool TryParsePrivilege(std::string_view keyword, CatalogType acl_class, AclMode &result);
 	static vector<AclItem> AclDefault(CatalogType acl_class, idx_t owner);
 
-	void AssignOwner(idx_t new_owner, CatalogType objtype, optional_ptr<const Permissions> database,
-	                 optional_idx schema);
+	void AssignOwner(idx_t new_owner, CatalogType objtype, std::span<const DefaultAcl> defaults, optional_idx schema);
 
 	void Serialize(Serializer &serializer) const;
 	static Permissions Deserialize(Deserializer &deserializer);
+};
+
+struct CreatePermissions : Permissions {
+	vector<DefaultAcl> defaults;
+
+	using Permissions::operator=;
+	bool operator==(const CreatePermissions &rhs) const = default;
+
+	void Serialize(Serializer &serializer) const;
+	static CreatePermissions Deserialize(Deserializer &deserializer);
 };
 
 DUCKDB_API std::span<const AclItem> FindColumnAcl(const vector<ColumnAcl> &columns, const Identifier &column);

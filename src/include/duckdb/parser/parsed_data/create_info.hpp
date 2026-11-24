@@ -52,7 +52,7 @@ public:
 	Value comment;
 	//! Key-value tags with additional metadata
 	InsertionOrderPreservingMap<string> tags;
-	Permissions permissions;
+	CreatePermissions permissions;
 	idx_t oid = 0;
 	idx_t schema_oid = 0;
 	Identifier tablespace;

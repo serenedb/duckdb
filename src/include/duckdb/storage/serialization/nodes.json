@@ -778,6 +778,37 @@
       {
         "id": 102,
         "name": "defaults",
+        "type": "vector<DefaultAcl>",
+        "status": "deleted"
+      },
+      {
+        "id": 103,
+        "name": "acl_emptied",
+        "type": "bool",
+        "default": "false"
+      }
+    ],
+    "pointer_type": "none"
+  },
+  {
+    "class": "CreatePermissions",
+    "includes": [
+      "duckdb/catalog/acl.hpp"
+    ],
+    "members": [
+      {
+        "id": 100,
+        "name": "owner",
+        "type": "idx_t"
+      },
+      {
+        "id": 101,
+        "name": "acl",
+        "type": "vector<AclItem>"
+      },
+      {
+        "id": 102,
+        "name": "defaults",
         "type": "vector<DefaultAcl>"
       },
       {

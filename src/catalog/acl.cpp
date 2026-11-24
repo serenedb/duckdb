@@ -224,8 +224,27 @@ static void ApplyGrant(const AlterPermissionsInfo &info, Permissions &permission
 void AlterPermissionsInfo::ApplyTo(Permissions &permissions, CatalogType entry_type,
                                    optional_ptr<vector<ColumnAcl>> columns) const {
 	auto &info = *this;
+	D_ASSERT(!info.drop_owned_role_id && info.default_objtype == CatalogType::INVALID);
 	auto &owner = permissions.owner;
 	auto &acl = permissions.acl;
+	if (!info.new_owner.empty()) {
+		if (info.new_owner_id == owner) {
+			return;
+		}
+		ReplaceOwner(acl, owner, info.new_owner_id);
+		if (columns) {
+			for (auto &column : *columns) {
+				ReplaceOwner(column.acl, owner, info.new_owner_id);
+			}
+		}
+		owner = info.new_owner_id;
+		return;
+	}
+	ApplyGrant(info, permissions, ObjectKindOf(entry_type).acl_class, columns);
+}
+
+void AlterPermissionsInfo::ApplyToDatabase(CreatePermissions &permissions) const {
+	auto &info = *this;
 	auto &defaults = permissions.defaults;
 	if (info.drop_owned_role_id) {
 		const auto role = info.drop_owned_role_id;
@@ -244,43 +263,28 @@ void AlterPermissionsInfo::ApplyTo(Permissions &permissions, CatalogType entry_t
 		               defaults.end());
 		return;
 	}
-	if (!info.new_owner.empty()) {
-		if (info.new_owner_id == owner) {
-			return;
-		}
-		ReplaceOwner(acl, owner, info.new_owner_id);
-		if (columns) {
-			for (auto &column : *columns) {
-				ReplaceOwner(column.acl, owner, info.new_owner_id);
-			}
-		}
-		owner = info.new_owner_id;
+	if (info.default_objtype == CatalogType::INVALID) {
+		ApplyTo(permissions, CatalogType::DATABASE_ENTRY, nullptr);
 		return;
 	}
-
-	if (info.default_objtype != CatalogType::INVALID) {
-		auto row = std::find_if(defaults.begin(), defaults.end(), [&](const DefaultAcl &entry) {
-			return entry.role == info.target_role && entry.scope == info.default_scope &&
-			       entry.objtype == info.default_objtype;
-		});
-		const auto baseline = info.default_scope == 0 ? Permissions::AclDefault(info.default_objtype, info.target_role)
-		                                              : vector<AclItem> {};
-		auto row_acl = row == defaults.end() ? baseline : row->acl;
-		Apply(row_acl, info.target_role, ObjectKindOf(info.default_objtype).privileges, info.privileges, info);
-		if (std::is_permutation(row_acl.begin(), row_acl.end(), baseline.begin(), baseline.end())) {
-			if (row != defaults.end()) {
-				defaults.erase(row);
-			}
-		} else if (row == defaults.end()) {
-			defaults.push_back(DefaultAcl {info.target_role, info.default_scope, info.default_objtype,
-			                               std::move(row_acl), info.default_acl_oid});
-		} else {
-			row->acl = std::move(row_acl);
+	auto row = std::find_if(defaults.begin(), defaults.end(), [&](const DefaultAcl &entry) {
+		return entry.role == info.target_role && entry.scope == info.default_scope &&
+		       entry.objtype == info.default_objtype;
+	});
+	const auto baseline =
+	    info.default_scope == 0 ? Permissions::AclDefault(info.default_objtype, info.target_role) : vector<AclItem> {};
+	auto row_acl = row == defaults.end() ? baseline : row->acl;
+	Apply(row_acl, info.target_role, ObjectKindOf(info.default_objtype).privileges, info.privileges, info);
+	if (std::is_permutation(row_acl.begin(), row_acl.end(), baseline.begin(), baseline.end())) {
+		if (row != defaults.end()) {
+			defaults.erase(row);
 		}
-		return;
+	} else if (row == defaults.end()) {
+		defaults.push_back(DefaultAcl {info.target_role, info.default_scope, info.default_objtype, std::move(row_acl),
+		                               info.default_acl_oid});
+	} else {
+		row->acl = std::move(row_acl);
 	}
-
-	ApplyGrant(info, permissions, ObjectKindOf(entry_type).acl_class, columns);
 }
 
 void AlterPermissionsInfo::ApplyTo(Permissions &permissions, CatalogType entry_type, ColumnList &columns) const {
@@ -297,14 +301,11 @@ void AlterPermissionsInfo::ApplyTo(Permissions &permissions, CatalogType entry_t
 	}
 }
 
-void Permissions::AssignOwner(idx_t new_owner, CatalogType objtype, optional_ptr<const Permissions> database,
+void Permissions::AssignOwner(idx_t new_owner, CatalogType objtype, std::span<const DefaultAcl> defaults,
                               optional_idx schema) {
 	owner = new_owner;
-	if (!database) {
-		return;
-	}
 	auto row = [&](idx_t scope) -> optional_ptr<const DefaultAcl> {
-		for (auto &defaults_entry : database->defaults) {
+		for (auto &defaults_entry : defaults) {
 			if (defaults_entry.role == new_owner && defaults_entry.objtype == objtype &&
 			    defaults_entry.scope == scope) {
 				return &defaults_entry;

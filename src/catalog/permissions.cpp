@@ -3,6 +3,7 @@
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/catalog/catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/aggregate_function_catalog_entry.hpp"
+#include "duckdb/catalog/catalog_entry/database_entry.hpp"
 #include "duckdb/catalog/catalog_entry/function_entry.hpp"
 #include "duckdb/catalog/catalog_entry/index_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/macro_catalog_entry.hpp"
@@ -316,10 +317,10 @@ static bool AnyRoleReference(const CatalogEntry &entry, F &&named) {
 	if (named(permissions.owner) || any_acl(permissions.acl)) {
 		return true;
 	}
-	for (auto &row : permissions.defaults) {
-		if (named(row.role) || any_acl(row.acl)) {
-			return true;
-		}
+	if (entry.type == CatalogType::DATABASE_ENTRY) {
+		auto &defaults = entry.Cast<DatabaseEntry>().DefaultAcls();
+		return std::any_of(defaults.begin(), defaults.end(),
+		                   [&](const DefaultAcl &row) { return named(row.role) || any_acl(row.acl); });
 	}
 	if (entry.type == CatalogType::ROLE_ENTRY) {
 		auto &member_of = entry.Cast<RoleEntry>().MemberOf();
@@ -652,7 +653,8 @@ void AssignOwner(ClientContext &context, Permissions &permissions, Catalog &cata
 		return;
 	}
 	auto database = ClusterEntry(context, CatalogType::DATABASE_ENTRY, catalog.GetName());
-	permissions.AssignOwner(owner, objtype, database ? &database->permissions : nullptr,
+	permissions.AssignOwner(owner, objtype,
+	                        database ? database->Cast<DatabaseEntry>().DefaultAcls() : std::span<const DefaultAcl>(),
 	                        schema ? optional_idx(schema->oid) : optional_idx());
 }
 

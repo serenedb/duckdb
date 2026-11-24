@@ -148,6 +148,7 @@ public:
 	vector<unique_ptr<AlterInfo>> SplitObjects() override;
 	void ApplyTo(Permissions &permissions, CatalogType entry_type, optional_ptr<vector<ColumnAcl>> columns) const;
 	void ApplyTo(Permissions &permissions, CatalogType entry_type, ColumnList &columns) const;
+	void ApplyToDatabase(CreatePermissions &permissions) const;
 
 	void Serialize(Serializer &serializer) const override;
 	static unique_ptr<AlterInfo> Deserialize(Deserializer &deserializer);

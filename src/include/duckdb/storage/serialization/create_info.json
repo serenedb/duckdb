@@ -90,8 +90,8 @@
       {
         "id": 16484,
         "name": "permissions",
-        "type": "Permissions",
-        "default": "Permissions()"
+        "type": "CreatePermissions",
+        "default": "CreatePermissions()"
       },
       {
         "id": 16485,
