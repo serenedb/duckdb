@@ -4,7 +4,7 @@
   "skip_compiled": "true",
   "skip_tests": [
     {
-      "reason": "quack_serve returns a chunk whose vector size does not match, which this config verifies.",
+      "reason": "These tests attach the quack server QUACK_SERVER names, which a run under this config does not start.",
       "paths": [
         "test/sql/attach/external_resource_lifecycle.test",
         "test/sql/attach/attach_to_external_resource.test",

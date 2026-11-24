@@ -202,6 +202,8 @@ enum class DependencyEntryType : uint8_t;
 
 enum class DeprecatedIndexType : uint8_t;
 
+enum class DeserializationChecks : uint8_t;
+
 enum class DestroyBufferUpon : uint8_t;
 
 enum class DialectCompatibilityMode : uint8_t;
@@ -960,6 +962,9 @@ const char* EnumUtil::ToChars<DependencyEntryType>(DependencyEntryType value);
 
 template<>
 const char* EnumUtil::ToChars<DeprecatedIndexType>(DeprecatedIndexType value);
+
+template<>
+const char* EnumUtil::ToChars<DeserializationChecks>(DeserializationChecks value);
 
 template<>
 const char* EnumUtil::ToChars<DestroyBufferUpon>(DestroyBufferUpon value);
@@ -1969,6 +1974,9 @@ DependencyEntryType EnumUtil::FromString<DependencyEntryType>(std::string_view v
 
 template<>
 DeprecatedIndexType EnumUtil::FromString<DeprecatedIndexType>(std::string_view value);
+
+template<>
+DeserializationChecks EnumUtil::FromString<DeserializationChecks>(std::string_view value);
 
 template<>
 DestroyBufferUpon EnumUtil::FromString<DestroyBufferUpon>(std::string_view value);

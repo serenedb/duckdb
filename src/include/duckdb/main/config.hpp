@@ -90,6 +90,9 @@ typedef shared_ptr<ClientContext> (*create_client_context_t)(DatabaseInstance &d
 
 typedef unique_ptr<SecretStorage> (*create_secret_storage_t)(DatabaseInstance &db, const string &name, bool persistent);
 
+//! The prefix of DuckDB's own system object names, which DuckDB's clients use whatever a database's prefix is
+static constexpr std::string_view DEFAULT_SYSTEM_OBJECT_PREFIX = "duckdb_";
+
 //! NOTE: DBConfigOptions is mostly deprecated.
 //! If you want to add a setting that can be set by the user, add it as a generic setting to `settings.json`.
 //! See e.g. "http_proxy" (HTTPProxySetting) as an example
@@ -138,7 +141,7 @@ struct DBConfigOptions {
 	//! Initialize the database with the standard set of DuckDB functions
 	//! You should probably not touch this unless you know what you are doing
 	bool initialize_default_database = true;
-	string system_object_prefix = "duckdb_";
+	string system_object_prefix {DEFAULT_SYSTEM_OBJECT_PREFIX};
 	string product_name = "DuckDB";
 	string product_version;
 	string product_source_id;

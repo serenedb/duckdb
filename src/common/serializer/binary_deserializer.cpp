@@ -146,4 +146,17 @@ void BinaryDeserializer::ReadDataPtr(data_ptr_t &ptr_p, idx_t count) {
 	ReadData(ptr_p, count);
 }
 
+void BinaryDeserializer::ReadDataPtr(data_ptr_t ptr, idx_t count,
+                                     absl::FunctionRef<void(idx_t offset, idx_t size)> check) {
+	auto len = VarIntDecode<uint64_t>();
+	if (len != count) {
+		throw SerializationException("Tried to read blob of %d size, but only %d elements are available", count, len);
+	}
+	for (idx_t offset = 0; offset < count; offset += CHECK_BLOCK_SIZE) {
+		auto size = MinValue(CHECK_BLOCK_SIZE, count - offset);
+		ReadData(ptr + offset, size);
+		check(offset, size);
+	}
+}
+
 } // namespace duckdb

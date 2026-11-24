@@ -109,6 +109,7 @@
 #include "duckdb/common/multi_file/multi_file_states.hpp"
 #include "duckdb/common/operator/decimal_cast_operators.hpp"
 #include "duckdb/common/printer.hpp"
+#include "duckdb/common/serializer/deserializer.hpp"
 #include "duckdb/common/sorting/sort_key.hpp"
 #include "duckdb/common/string_format.hpp"
 #include "duckdb/common/types.hpp"
@@ -2042,6 +2043,25 @@ const char* EnumUtil::ToChars<DeprecatedIndexType>(DeprecatedIndexType value) {
 template<>
 DeprecatedIndexType EnumUtil::FromString<DeprecatedIndexType>(std::string_view value) {
 	return static_cast<DeprecatedIndexType>(StringUtil::StringToEnum(GetDeprecatedIndexTypeValues(), 3, "DeprecatedIndexType", value));
+}
+
+const StringUtil::EnumStringLiteral *GetDeserializationChecksValues() {
+	static constexpr StringUtil::EnumStringLiteral values[] {
+		{ static_cast<uint32_t>(DeserializationChecks::NONE), "NONE" },
+		{ static_cast<uint32_t>(DeserializationChecks::STRUCTURE), "STRUCTURE" },
+		{ static_cast<uint32_t>(DeserializationChecks::VALUES), "VALUES" }
+	};
+	return values;
+}
+
+template<>
+const char* EnumUtil::ToChars<DeserializationChecks>(DeserializationChecks value) {
+	return StringUtil::EnumToString(GetDeserializationChecksValues(), 3, "DeserializationChecks", static_cast<uint32_t>(value));
+}
+
+template<>
+DeserializationChecks EnumUtil::FromString<DeserializationChecks>(std::string_view value) {
+	return static_cast<DeserializationChecks>(StringUtil::StringToEnum(GetDeserializationChecksValues(), 3, "DeserializationChecks", value));
 }
 
 const StringUtil::EnumStringLiteral *GetDestroyBufferUponValues() {

@@ -239,6 +239,11 @@ private:
 	//! Create a vector that references the other vector
 	Vector(const Vector &other, VectorConstructorAction action);
 
+	//! Deserialize, as the tags of a UNION of `member_count` members when that is set: a value checked deserializer
+	//! takes every valid tag below it and, where `union_validity` is set, a tag for every row the UNION holds
+	void Deserialize(Deserializer &deserializer, idx_t count, idx_t member_count,
+	                 optional_ptr<const ValidityMask> union_validity);
+
 protected:
 	//! The type of the elements stored in the vector (e.g. integer, float)
 	LogicalType type;
