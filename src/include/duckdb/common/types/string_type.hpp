@@ -10,6 +10,7 @@
 
 #include "duckdb/common/assert.hpp"
 #include "duckdb/common/bswap.hpp"
+#include "duckdb/common/char_traits_u8.hpp"
 #include "duckdb/common/constants.hpp"
 #include "duckdb/common/helper.hpp"
 #include "duckdb/common/numeric_utils.hpp"
@@ -144,8 +145,12 @@ public:
 		return GetString();
 	}
 
-	explicit operator std::string_view() const {
+	std::string_view AsView() const {
 		return std::string_view(GetData(), GetSize());
+	}
+
+	std::basic_string_view<data_t, CharTraitsU8> AsBytesView() const {
+		return std::basic_string_view<data_t, CharTraitsU8>(const_data_ptr_cast(GetData()), GetSize());
 	}
 
 	char *GetPointer() const {
