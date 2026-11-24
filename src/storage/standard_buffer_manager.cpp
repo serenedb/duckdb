@@ -908,14 +908,16 @@ data_ptr_t StandardBufferManager::BufferAllocatorRealloc(PrivateAllocatorData *p
 	if (size > old_size) {
 		auto reservation = data.manager.EvictBlocksOrThrow(QueryContext(), MemoryTag::ALLOCATOR, size - old_size,
 		                                                   nullptr, "failed to allocate data of size %s%s");
+		auto result = BlockAllocator::Get(data.manager.db).ReallocateData(pointer, old_size, size);
 		reservation.size = 0;
-	} else {
-		BufferPoolReservation r(MemoryTag::ALLOCATOR, data.manager.GetBufferPool());
-		r.size = old_size;
-		r.Resize(size);
-		r.size = 0;
+		return result;
 	}
-	return BlockAllocator::Get(data.manager.db).ReallocateData(pointer, old_size, size);
+	auto result = BlockAllocator::Get(data.manager.db).ReallocateData(pointer, old_size, size);
+	BufferPoolReservation r(MemoryTag::ALLOCATOR, data.manager.GetBufferPool());
+	r.size = old_size;
+	r.Resize(size);
+	r.size = 0;
+	return result;
 }
 
 Allocator &BufferAllocator::Get(ClientContext &context) {
