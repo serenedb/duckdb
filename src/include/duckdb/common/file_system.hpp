@@ -143,6 +143,8 @@ public:
 	DUCKDB_API virtual void Close() = 0;
 	//! Drops the file and the bytes committed
 	DUCKDB_API virtual void Abort() noexcept = 0;
+	DUCKDB_API virtual bool Hold();
+	DUCKDB_API virtual shared_ptr<InputFile> Input();
 };
 
 class FileWriteHold {

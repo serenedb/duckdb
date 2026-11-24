@@ -3035,6 +3035,84 @@ TEST_CASE("A remote file whose writer gets no cache block uploads every byte", "
 }
 #endif
 
+TEST_CASE("A file writer reads the bytes written after Hold through Input while it writes through cache blocks",
+          "[external_file_cache]") {
+	DuckDB db(nullptr);
+	auto &fs = FileSystem::GetFileSystem(*db.instance);
+	fs.RegisterSubSystem(make_uniq<RemoteTestFileSystem>());
+	const auto local_path = TestCreatePath("database_fs_held.bin");
+	const string path = RemoteTestFileSystem::PREFIX + local_path;
+	constexpr idx_t SIZE = 2 * BLOCK + 10;
+	constexpr idx_t TOTAL = SIZE + BLOCK;
+	vector<data_t> bytes(TOTAL);
+	for (idx_t i = 0; i < TOTAL; i++) {
+		bytes[i] = ExpectedByte(i);
+	}
+
+	BufferedFileWriter held(fs, path, fs.OpenFileWriter(path));
+	REQUIRE(held.Hold());
+	held.WriteData(bytes.data(), SIZE);
+	const auto input = held.Input();
+	REQUIRE(input);
+	REQUIRE_FALSE(held.Input());
+	REQUIRE(input->GetSize() == SIZE);
+	held.WriteData(bytes.data() + SIZE, TOTAL - SIZE);
+	REQUIRE(HoldsExpectedBytesAt(input->Pin(0, SIZE), 0));
+	REQUIRE(HoldsExpectedBytesAt(input->Pin(BLOCK + 1, 9), BLOCK + 1));
+	held.Close();
+	REQUIRE(input->GetSize() == TOTAL);
+	REQUIRE(HoldsUploadedBytes(local_path, TOTAL));
+
+	auto unheld = fs.OpenFileWriter(path);
+	WriteThrough(*unheld, 0, SIZE);
+	REQUIRE_FALSE(unheld->Input());
+	unheld->Close();
+
+	auto closed = fs.OpenFileWriter(path);
+	REQUIRE(closed->Hold());
+	WriteThrough(*closed, 0, SIZE);
+	closed->Close();
+	REQUIRE_FALSE(closed->Input());
+
+	auto aborted = fs.OpenFileWriter(path);
+	REQUIRE(aborted->Hold());
+	WriteThrough(*aborted, 0, SIZE);
+	aborted->Abort();
+	REQUIRE_FALSE(aborted->Input());
+
+	auto &cache = ExternalFileCache::Get(*db.instance);
+	cache.SetEnabled(false);
+	auto uncached = fs.OpenFileWriter(path);
+	REQUIRE_FALSE(uncached->Hold());
+	REQUIRE_FALSE(uncached->Input());
+	uncached->Close();
+	cache.SetEnabled(true);
+
+	auto local = fs.OpenFileWriter(TestCreatePath("local_fs_held.bin"));
+	REQUIRE_FALSE(local->Hold());
+	WriteThrough(*local, 0, SIZE);
+	REQUIRE_FALSE(local->Input());
+	local->Close();
+}
+
+#ifdef SDB_FAULT_INJECTION
+TEST_CASE("A remote file writer that holds its bytes fails when it gets no cache block", "[external_file_cache]") {
+	DuckDB db(nullptr);
+	auto &fs = FileSystem::GetFileSystem(*db.instance);
+	fs.RegisterSubSystem(make_uniq<RemoteTestFileSystem>());
+	const string path = RemoteTestFileSystem::PREFIX + TestCreatePath("database_fs_held_oom.bin");
+	absl::Cleanup clear = [] {
+		FaultPoints::Clear();
+	};
+
+	auto writer = fs.OpenFileWriter(path);
+	REQUIRE(writer->Hold());
+	WriteThrough(*writer, 0, BLOCK + 5);
+	REQUIRE(FaultPoints::Arm("remote_write_cache_block"));
+	REQUIRE_THROWS_AS(WriteThrough(*writer, BLOCK + 5, 2 * BLOCK), OutOfMemoryException);
+}
+#endif
+
 TEST_CASE("External file cache forgets files no one opens and holds no block of", "[external_file_cache]") {
 	DuckDB db(nullptr);
 	CountingSourceFileSystem fs;

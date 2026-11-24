@@ -474,9 +474,7 @@ void ExternalFileCacheAppender::Commit(idx_t count) {
 		return;
 	}
 	size += count;
-	if (file->IsUnbacked()) {
-		file->GetCache().SetUnbackedSize(*file, size);
-	}
+	file->GetCache().SetAppendedSize(*file, size);
 	if (offset + count == blocks.BlockSize()) {
 		current.Reset();
 	}
@@ -1544,8 +1542,7 @@ FilePin ExternalFileCache::CreateBlock(InputFile &file, idx_t block) {
 	return FilePin(std::move(buffer), file.BlockSize());
 }
 
-void ExternalFileCache::SetUnbackedSize(InputFile &file, idx_t size) {
-	D_ASSERT(file.IsUnbacked());
+void ExternalFileCache::SetAppendedSize(InputFile &file, idx_t size) {
 	file.size.store(size, std::memory_order_release);
 }
 

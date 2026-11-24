@@ -51,6 +51,8 @@ public:
 	DUCKDB_API void SyncHandle();
 	//! Flush the buffer to the file (without sync)
 	DUCKDB_API void Flush();
+	DUCKDB_API bool Hold();
+	DUCKDB_API shared_ptr<InputFile> Input();
 	//! Returns the current size of the file
 	DUCKDB_API idx_t GetFileSize();
 	//! Truncate the size to a previous size (given that size <= GetFileSize())

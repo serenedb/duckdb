@@ -565,6 +565,9 @@ public:
 				window = appender->Window();
 				return window;
 			} catch (const OutOfMemoryException &) {
+				if (holding) {
+					throw;
+				}
 				appender->Abandon();
 				appender.reset();
 			}
@@ -582,6 +585,9 @@ public:
 			return;
 		}
 		if (appender) {
+			if (holding) {
+				held.push_back(appender->ShareWindow(nr_bytes));
+			}
 			handle->file_system.WriteHeld(*handle, window.data, nr_bytes, size, crc32c,
 			                              make_uniq<HeldBlock>(appender->ShareWindow(nr_bytes)));
 			appender->Commit(nr_bytes);
@@ -599,6 +605,19 @@ public:
 		handle->Write(QueryContext(), const_cast<data_ptr_t>(data), nr_bytes, size); // NOLINT: wrong API in Write
 		Written(nr_bytes);
 		return true;
+	}
+
+	bool Hold() override {
+		holding = static_cast<bool>(appender);
+		return holding;
+	}
+
+	shared_ptr<InputFile> Input() override {
+		if (!holding) {
+			return nullptr;
+		}
+		holding = false;
+		return appender->File();
 	}
 
 	void Close() override {
@@ -643,6 +662,7 @@ private:
 	}
 	//! The upload ended, completed or not
 	void Finished() noexcept {
+		holding = false;
 		handle.reset();
 		pending_upload_files.fetch_sub(1, std::memory_order_relaxed);
 		pending_upload_bytes.fetch_sub(size, std::memory_order_relaxed);
@@ -651,6 +671,8 @@ private:
 private:
 	unique_ptr<FileHandle> handle;
 	optional<ExternalFileCacheAppender> appender;
+	vector<FilePin> held;
+	bool holding = false;
 	//! The window of a write that got no block
 	unsafe_unique_array<data_t> buffer;
 	FileWriteWindow window;

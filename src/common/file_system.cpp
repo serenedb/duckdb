@@ -806,6 +806,14 @@ shared_ptr<InputFile> FileSystem::OpenInputFile(const string &path, MappedFileAc
 FileWriter::~FileWriter() {
 }
 
+bool FileWriter::Hold() {
+	return false;
+}
+
+shared_ptr<InputFile> FileWriter::Input() {
+	return nullptr;
+}
+
 FileWriteHold::~FileWriteHold() {
 }
 
