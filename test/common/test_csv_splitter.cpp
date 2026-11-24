@@ -2035,6 +2035,16 @@ static void SplitLikeThePostgresRules(string (*generate)(std::mt19937_64 &, cons
 			continue;
 		}
 		accepted++;
+		RowCursor counted;
+		lexer.Start(counted, 0, true, check_arity);
+		bool counted_ok = true;
+		while (counted_ok && counted.pos < input.size()) {
+			const idx_t end = MinValue<idx_t>(counted.pos + piece, input.size());
+			counted_ok = lexer.Feed(counted, input.data(), 0, end, end == input.size(), nullptr);
+		}
+		CsvRangeEntry counted_entry;
+		counted_ok = counted_ok && lexer.Finish(counted, input.data(), 0, input.size(), true, nullptr,
+		                                        CSVState::NOT_SET, counted_entry);
 		string shown;
 		for (auto ch : input) {
 			if (ch == '\n') {
@@ -2054,6 +2064,9 @@ static void SplitLikeThePostgresRules(string (*generate)(std::mt19937_64 &, cons
 		    " input=" + shown;
 		if (terminated == cursor.unfinished) {
 			FAIL("unterminated input not marked as an unfinished row, or the other way around: " + description);
+		}
+		if (counted_ok ? counted.rows != cursor.rows || counted.lines != cursor.lines : !check_arity) {
+			FAIL("counting the rows disagrees with extracting them: " + description);
 		}
 		if (!terminated) {
 			continue;
