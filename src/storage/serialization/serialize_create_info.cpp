@@ -414,6 +414,9 @@ void CreateTableInfo::Serialize(Serializer &serializer) const {
 	serializer.WritePropertyWithDefault<vector<unique_ptr<ParsedExpression>>>(204, "partition_keys", partition_keys);
 	serializer.WritePropertyWithDefault<vector<unique_ptr<ParsedExpression>>>(205, "sort_keys", sort_keys);
 	serializer.WritePropertyWithDefault<case_insensitive_map_t<unique_ptr<ParsedExpression>>>(206, "options", options);
+	if (serializer.ShouldSerialize(StorageVersion::SDB_V1)) {
+		serializer.WritePropertyWithDefault<idx_t>(16584, "row_type_oid", row_type_oid, 0);
+	}
 }
 
 unique_ptr<CreateInfo> CreateTableInfo::Deserialize(Deserializer &deserializer) {
@@ -425,6 +428,7 @@ unique_ptr<CreateInfo> CreateTableInfo::Deserialize(Deserializer &deserializer) 
 	deserializer.ReadPropertyWithDefault<vector<unique_ptr<ParsedExpression>>>(204, "partition_keys", result->partition_keys);
 	deserializer.ReadPropertyWithDefault<vector<unique_ptr<ParsedExpression>>>(205, "sort_keys", result->sort_keys);
 	deserializer.ReadPropertyWithDefault<case_insensitive_map_t<unique_ptr<ParsedExpression>>>(206, "options", result->options);
+	deserializer.ReadPropertyWithExplicitDefault<idx_t>(16584, "row_type_oid", result->row_type_oid, 0);
 	result->SetName(std::move(table));
 	return std::move(result);
 }
@@ -525,6 +529,12 @@ void CreateViewInfo::Serialize(Serializer &serializer) const {
 		serializer.WritePropertyWithDefault<ViewSecurityType>(207, "security_type", security_type, ViewSecurityType::REGULAR_VIEW);
 	}
 	serializer.WritePropertyWithDefault<bool>(16584, "security_invoker", security_invoker);
+	if (serializer.ShouldSerialize(StorageVersion::SDB_V1)) {
+		serializer.WritePropertyWithDefault<idx_t>(16585, "rule_oid", rule_oid, 0);
+	}
+	if (serializer.ShouldSerialize(StorageVersion::SDB_V1)) {
+		serializer.WritePropertyWithDefault<idx_t>(16586, "row_type_oid", row_type_oid, 0);
+	}
 }
 
 unique_ptr<CreateInfo> CreateViewInfo::Deserialize(Deserializer &deserializer) {
@@ -541,6 +551,8 @@ unique_ptr<CreateInfo> CreateViewInfo::Deserialize(Deserializer &deserializer) {
 	result->query = std::move(query);
 	deserializer.ReadPropertyWithExplicitDefault<ViewSecurityType>(207, "security_type", result->security_type, ViewSecurityType::REGULAR_VIEW);
 	deserializer.ReadPropertyWithDefault<bool>(16584, "security_invoker", result->security_invoker);
+	deserializer.ReadPropertyWithExplicitDefault<idx_t>(16585, "rule_oid", result->rule_oid, 0);
+	deserializer.ReadPropertyWithExplicitDefault<idx_t>(16586, "row_type_oid", result->row_type_oid, 0);
 	result->SetName(std::move(view_name));
 	return std::move(result);
 }
