@@ -7,7 +7,7 @@ namespace duckdb {
 
 BoundStatement Binder::Bind(DetachStatement &stmt) {
 	BoundStatement result;
-	if (Catalog::GetEntry(context, EntryLookupInfo(CatalogType::DATABASE_ENTRY, stmt.info->name),
+	if (Catalog::GetEntry(context, EntryLookupInfo(CatalogType::DATABASE_ENTRY, QualifiedName(stmt.info->name)),
 	                      OnEntryNotFound::RETURN_NULL)) {
 		throw NotImplementedException("cannot detach database \"%s\", use DROP DATABASE",
 		                              stmt.info->name.GetIdentifierName());

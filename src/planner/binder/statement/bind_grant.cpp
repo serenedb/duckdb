@@ -248,8 +248,8 @@ static void ResolveGrant(Binder &binder, AlterPermissionsInfo &info) {
 		}
 		const auto owner = DBConfig::GetConfig(context).bootstrap_role;
 		std::span<const AclItem> acl;
-		if (auto parameter = binder.EntryRetriever().GetEntry(EntryLookupInfo(CatalogType::PARAMETER_ENTRY, setting),
-		                                                      OnEntryNotFound::RETURN_NULL)) {
+		if (auto parameter = binder.EntryRetriever().GetEntry(
+		        EntryLookupInfo(CatalogType::PARAMETER_ENTRY, QualifiedName(setting)), OnEntryNotFound::RETURN_NULL)) {
 			acl = parameter->permissions.acl;
 		}
 		RequireGrantableAcl(context, info, role, owner, acl, CatalogType::PARAMETER_ENTRY, name);
@@ -305,7 +305,7 @@ static void ResolveOwner(Binder &binder, AlterPermissionsInfo &info) {
 		Require(context, context.AccessOf(info.new_owner_id), wrapper, AclMode::Usage);
 	} else if (ObjectKindOf(entry.type).container == ObjectContainer::DATABASE) {
 		if (auto database = Catalog::GetEntry(
-		        context, EntryLookupInfo(CatalogType::DATABASE_ENTRY, entry.ParentCatalog().GetName()),
+		        context, EntryLookupInfo(CatalogType::DATABASE_ENTRY, QualifiedName(entry.ParentCatalog().GetName())),
 		        OnEntryNotFound::RETURN_NULL)) {
 			Require(context, role, *database, AclMode::Create);
 		}
@@ -332,7 +332,7 @@ static void ResolveDefaultPrivileges(Binder &binder, AlterPermissionsInfo &info)
 		                                    OnEntryNotFound::THROW_EXCEPTION)
 		                         ->oid;
 	}
-	binder.EntryRetriever().GetEntry(EntryLookupInfo(CatalogType::DATABASE_ENTRY, database));
+	binder.EntryRetriever().GetEntry(EntryLookupInfo(CatalogType::DATABASE_ENTRY, QualifiedName(database)));
 	info.SetQualifiedName(Identifier(), Identifier(), database);
 }
 

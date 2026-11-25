@@ -1249,9 +1249,9 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 		BindCreateSchema(info);
 		auto &role = CheckAs();
 		const auto owner = authorization && !role.IsSystem() ? authorization->oid : role.role;
-		if (auto database =
-		        Catalog::GetEntry(context, EntryLookupInfo(CatalogType::DATABASE_ENTRY, info.SchemaCatalog()),
-		                          OnEntryNotFound::RETURN_NULL)) {
+		if (auto database = Catalog::GetEntry(
+		        context, EntryLookupInfo(CatalogType::DATABASE_ENTRY, QualifiedName(info.SchemaCatalog())),
+		        OnEntryNotFound::RETURN_NULL)) {
 			Require(context, role, *database, AclMode::Create);
 		}
 		if (!role.IsSystem()) {
@@ -1610,8 +1610,9 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 			info.permissions.owner = role.role;
 		}
 		if (!info.tablespace.empty()) {
-			auto tablespace = entry_retriever.GetEntry(EntryLookupInfo(CatalogType::TABLESPACE_ENTRY, info.tablespace),
-			                                           OnEntryNotFound::RETURN_NULL);
+			auto tablespace =
+			    entry_retriever.GetEntry(EntryLookupInfo(CatalogType::TABLESPACE_ENTRY, QualifiedName(info.tablespace)),
+			                             OnEntryNotFound::RETURN_NULL);
 			if (tablespace && !tablespace->internal) {
 				Require(context, role, *tablespace, AclMode::Create);
 			}
@@ -1621,8 +1622,9 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 	}
 	case CatalogType::FOREIGN_SERVER_ENTRY: {
 		auto &catalog = Catalog::GetCatalog(context, BindCatalog(stmt.info->GetQualifiedName().Catalog()));
-		auto database = Catalog::GetEntry(context, EntryLookupInfo(CatalogType::DATABASE_ENTRY, catalog.GetName()),
-		                                  OnEntryNotFound::RETURN_NULL);
+		auto database =
+		    Catalog::GetEntry(context, EntryLookupInfo(CatalogType::DATABASE_ENTRY, QualifiedName(catalog.GetName())),
+		                      OnEntryNotFound::RETURN_NULL);
 		if (auto &role = CheckAs(); !role.IsSystem() && database) {
 			entry_retriever.GetEntry(
 			    EntryLookupInfo(CatalogType::FOREIGN_DATA_WRAPPER_ENTRY,
@@ -1649,9 +1651,9 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 				                                    "\"pg_create_subscription\" role may create subscriptions."}},
 				    "permission denied to create subscription");
 			}
-			if (auto database =
-			        Catalog::GetEntry(context, EntryLookupInfo(CatalogType::DATABASE_ENTRY, catalog.GetName()),
-			                          OnEntryNotFound::RETURN_NULL)) {
+			if (auto database = Catalog::GetEntry(
+			        context, EntryLookupInfo(CatalogType::DATABASE_ENTRY, QualifiedName(catalog.GetName())),
+			        OnEntryNotFound::RETURN_NULL)) {
 				Require(context, role, *database, AclMode::Create);
 			}
 			AssignOwner(context, stmt.info->permissions, catalog, CatalogType::SUBSCRIPTION_ENTRY, nullptr, role.role);
