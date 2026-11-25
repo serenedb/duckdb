@@ -120,8 +120,8 @@ bool RoleAccess::Can(CatalogType type, std::span<const AclItem> acl, AclMode nee
 
 static AclMode DefaultModes(const RoleAccess &access, CatalogType type, const Permissions &permissions) {
 	auto &kind = ObjectKindOf(type);
-	return permissions.UsesDefaultAcl() && access.Owns(permissions.owner) ? kind.privileges | kind.public_privileges
-	                                                                      : kind.public_privileges;
+	return permissions.UsesDefaultAcl() && access.MemberOf(permissions.owner) ? kind.privileges | kind.public_privileges
+	                                                                          : kind.public_privileges;
 }
 
 bool RoleAccess::Can(CatalogType type, const Permissions &permissions, AclMode need) const {

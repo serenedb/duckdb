@@ -40,7 +40,7 @@ static void WarnUngranted(ClientContext &context, const AlterPermissionsInfo &in
 
 static void RequireGrantableAcl(ClientContext &context, const AlterPermissionsInfo &info, const RoleAccess &role,
                                 idx_t owner, std::span<const AclItem> acl, CatalogType type, std::string_view name) {
-	if (info.repeats_object || role.Owns(owner)) {
+	if (info.repeats_object || role.MemberOf(owner)) {
 		return;
 	}
 	const auto options = BestGrantor(info.grantors, owner, info.privileges, acl).options;
@@ -72,7 +72,7 @@ static void RequireGrantable(Binder &binder, const AlterPermissionsInfo &info, c
 	auto &context = binder.context;
 	auto &permissions = TargetPermissions(info, entry);
 	const auto owner = permissions.owner;
-	const bool checked = !role.Owns(owner);
+	const bool checked = !role.MemberOf(owner);
 	vector<AclItem> defaults;
 	std::span<const AclItem> stored = permissions.acl;
 	if (checked && permissions.UsesDefaultAcl()) {

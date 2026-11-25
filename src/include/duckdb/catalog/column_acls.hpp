@@ -74,7 +74,7 @@ inline bool AllowedAny(const RoleAccess &role, CatalogType type, const Permissio
 	if (grant_options == AclMode::NoRights) {
 		return false;
 	}
-	if (role.Owns(permissions.owner)) {
+	if (role.MemberOf(permissions.owner)) {
 		return true;
 	}
 	auto held = role.GrantableModes(permissions.acl);

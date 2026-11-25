@@ -2,6 +2,7 @@
 
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/common/sql_identifier.hpp"
+#include "duckdb/common/types/value.hpp"
 
 namespace duckdb {
 
@@ -30,7 +31,7 @@ string CreateRoleInfo::ToString() const {
 		result += " CONNECTION LIMIT " + std::to_string(conn_limit);
 	}
 	if (valid_until != 0) {
-		result += " VALID UNTIL " + ValidUntilToSQL(valid_until);
+		result += " VALID UNTIL " + SQLString::ToString(Value::TIMESTAMPTZ(timestamp_tz_t(valid_until)).ToString());
 	}
 	if (!password.empty()) {
 		result += " PASSWORD " + SQLString::ToString(password);

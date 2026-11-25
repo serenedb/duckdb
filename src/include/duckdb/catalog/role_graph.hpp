@@ -92,9 +92,6 @@ struct RoleAccess {
 	bool MemberOf(idx_t other) const {
 		return is_superuser || Uses(other);
 	}
-	bool Owns(idx_t owner) const {
-		return MemberOf(owner);
-	}
 	bool CanSet(idx_t other) const;
 	bool AdminOf(idx_t other) const {
 		return std::binary_search(administered.begin(), administered.end(), other);

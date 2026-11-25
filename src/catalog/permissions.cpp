@@ -38,30 +38,17 @@
 namespace duckdb {
 
 bool IsUnowned(const CatalogEntry &entry) {
-	auto &catalog = entry.ParentCatalog();
-	if (!entry.internal && catalog.GetAttached().IsReadOnly()) {
-		return true;
-	}
-	return entry.permissions.owner == 0 && (entry.internal || catalog.Compatibility() != SqlCompatibility::POSTGRES);
+	return entry.permissions.owner == 0 || (!entry.internal && entry.ParentCatalog().GetAttached().IsReadOnly());
 }
 
 bool CanUseSchema(const RoleAccess &role, const CatalogEntry &schema) {
 	return role.is_superuser || schema.internal || IsUnowned(schema) ||
-	       schema.ParentCatalog().Compatibility() != SqlCompatibility::POSTGRES ||
 	       role.Can(CatalogType::SCHEMA_ENTRY, schema.permissions, AclMode::Usage);
-}
-
-static bool MayCall(const RoleAccess &role, RoleCapability capability) {
-	return capability == RoleCapability::None || role.Has(capability) || role.owns_builtins;
 }
 
 static optional_ptr<CatalogEntry> SystemEntry(ClientContext &context, CatalogType type, const Identifier &name) {
 	auto &system = Catalog::GetSystemCatalog(context);
 	return system.LookupEntry(system.GetCatalogTransaction(context), type, name);
-}
-
-static optional_ptr<CatalogEntry> ClusterDatabaseOf(ClientContext &context, AttachedDatabase &database) {
-	return database.IsReadOnly() ? nullptr : SystemEntry(context, CatalogType::DATABASE_ENTRY, database.GetName());
 }
 
 static optional_ptr<CatalogEntry> ServerOf(ClientContext &context, AttachedDatabase &database) {
@@ -93,15 +80,17 @@ bool DatabaseVisible(ClientContext &context, const RoleAccess &role, AttachedDat
 	if (database.IsSystem() || database.IsTemporary()) {
 		return true;
 	}
-	if (auto entry = ClusterDatabaseOf(context, database)) {
-		return CanConnect(context, role, database.GetName(), entry);
+	if (!database.IsReadOnly()) {
+		if (auto entry = SystemEntry(context, CatalogType::DATABASE_ENTRY, database.GetName())) {
+			return CanConnect(context, role, database.GetName(), entry);
+		}
 	}
 	auto server = ServerOf(context, database);
 	return server && role.Can(CatalogType::FOREIGN_SERVER_ENTRY, server->permissions, AclMode::Usage);
 }
 
 static bool HoldsAny(const RoleAccess &role, const ObjectKind &kind, const Permissions &permissions) {
-	if (role.Owns(permissions.owner)) {
+	if (role.MemberOf(permissions.owner)) {
 		return true;
 	}
 	if (permissions.UsesDefaultAcl() && role.capabilities == RoleCapability::None) {
@@ -136,7 +125,7 @@ bool EntryVisible(ClientContext &context, const RoleAccess &role, CatalogEntry &
 		if (!EntryVisible(context, role, *schema)) {
 			return false;
 		}
-		if (role.Owns(schema->permissions.owner)) {
+		if (role.MemberOf(schema->permissions.owner)) {
 			return true;
 		}
 	}
@@ -149,7 +138,7 @@ bool EntryVisible(ClientContext &context, const RoleAccess &role, CatalogEntry &
 	case CatalogType::FOREIGN_SERVER_ENTRY:
 		return HoldsAny(role, kind, entry.permissions);
 	case CatalogType::SUBSCRIPTION_ENTRY:
-		return role.Owns(entry.permissions.owner);
+		return role.MemberOf(entry.permissions.owner);
 	case CatalogType::TABLE_ENTRY:
 	case CatalogType::VIEW_ENTRY:
 		return HoldsAny(role, kind, entry.permissions) ||
@@ -275,7 +264,7 @@ void CheckReference(ClientContext &context, const RoleAccess &role, CatalogEntry
 	                                                           : entry.ParentCatalog().GetAttached();
 	if (!DatabaseVisible(context, role, database)) {
 		auto &name = database.GetName().GetIdentifierName();
-		if (ClusterDatabaseOf(context, database)) {
+		if (!database.IsReadOnly() && SystemEntry(context, CatalogType::DATABASE_ENTRY, database.GetName())) {
 			throw PermissionException({{"detail", "User does not have CONNECT privilege."}},
 			                          StringUtil::Format("permission denied for database \"%s\"", name));
 		}
@@ -350,10 +339,6 @@ string RoleOptionsToSQL(RoleOption set_options, RoleOption clear_options) {
 	return result;
 }
 
-string ValidUntilToSQL(int64_t valid_until) {
-	return SQLString::ToString(Value::TIMESTAMPTZ(timestamp_tz_t(valid_until)).ToString());
-}
-
 static string ObjectNounOf(CatalogType type, optional_ptr<const MacroFunction> overload) {
 	if (overload && overload->is_procedure) {
 		return string(PROCEDURE_NOUN);
@@ -374,10 +359,6 @@ void RequireSuperuser(const RoleAccess &role) {
 	if (!role.is_superuser) {
 		throw PermissionException("permission denied: superuser required");
 	}
-}
-
-static bool IsMacro(const CatalogEntry &entry) {
-	return entry.type == CatalogType::MACRO_ENTRY || entry.type == CatalogType::TABLE_MACRO_ENTRY;
 }
 
 static bool IsFunction(const CatalogEntry &entry) {
@@ -403,15 +384,15 @@ static bool OwnsEntry(const RoleAccess &role, const CatalogEntry &entry, optiona
 	if (entry.type == CatalogType::ROLE_ENTRY) {
 		return !entry.Cast<RoleEntry>().IsSuperuser() && role.Has(RoleOption::CreateRole) && role.AdminOf(entry.oid);
 	}
-	if (!IsMacro(entry)) {
-		return role.Owns(entry.permissions.owner);
+	if (entry.type != CatalogType::MACRO_ENTRY && entry.type != CatalogType::TABLE_MACRO_ENTRY) {
+		return role.MemberOf(entry.permissions.owner);
 	}
 	auto &macro = entry.Cast<MacroCatalogEntry>();
 	if (overload) {
-		return role.Owns(macro.OverloadPermissions(*overload).owner);
+		return role.MemberOf(macro.OverloadPermissions(*overload).owner);
 	}
 	return std::all_of(macro.macros.begin(), macro.macros.end(), [&](const unique_ptr<MacroFunction> &function) {
-		return role.Owns(macro.OverloadPermissions(*function).owner);
+		return role.MemberOf(macro.OverloadPermissions(*function).owner);
 	});
 }
 
@@ -422,7 +403,8 @@ bool Allowed(const RoleAccess &role, const CatalogEntry &entry, AclMode use,
 		return true;
 	}
 	if (Uses(use, AclMode::Execute) && IsFunction(entry) && (!overload || IsUnowned(entry))) {
-		return MayCall(role, entry.Cast<FunctionEntry>().required_capability);
+		const auto capability = entry.Cast<FunctionEntry>().required_capability;
+		return capability == RoleCapability::None || role.Has(capability) || role.owns_builtins;
 	}
 	if (Uses(use, AclMode::Own | AclMode::Rename) && !OwnsEntry(role, entry, overload)) {
 		return false;
@@ -517,7 +499,7 @@ void Require(ClientContext &context, const RoleAccess &role, CatalogEntry &entry
 	if (Uses(use, AclMode::Drop)) {
 		const auto container = ObjectKindOf(entry.type).container;
 		const bool in_schema = container != ObjectContainer::DATABASE && container != ObjectContainer::CLUSTER;
-		if (!in_schema || !role.Owns(entry.ParentSchema(context).permissions.owner)) {
+		if (!in_schema || !role.MemberOf(entry.ParentSchema(context).permissions.owner)) {
 			RequireOwnership(role, entry, overload, naming);
 		}
 	}
@@ -538,19 +520,18 @@ idx_t RoleId(ClientContext &context, const Identifier &name) {
 	return entry->oid;
 }
 
-static idx_t KeywordRole(ClientContext &context, RoleSpecType type) {
-	return type == RoleSpecType::SESSION_USER ? context.session_role : context.current_role_id;
-}
-
 idx_t RoleSpecId(ClientContext &context, const RoleSpec &role) {
-	return role.type == RoleSpecType::NAME ? RoleId(context, role.name) : KeywordRole(context, role.type);
+	if (role.type == RoleSpecType::NAME) {
+		return RoleId(context, role.name);
+	}
+	return role.type == RoleSpecType::SESSION_USER ? context.session_role : context.current_role_id;
 }
 
 optional_ptr<RoleEntry> RoleSpecEntry(ClientContext &context, const RoleSpec &role, OnEntryNotFound if_not_found) {
 	auto &system = Catalog::GetSystemCatalog(context);
 	auto entry = role.type == RoleSpecType::NAME
 	                 ? system.LookupEntry(system.GetCatalogTransaction(context), CatalogType::ROLE_ENTRY, role.name)
-	                 : system.LookupOwner(system.GetCatalogTransaction(context), KeywordRole(context, role.type));
+	                 : system.LookupOwner(system.GetCatalogTransaction(context), RoleSpecId(context, role));
 	if (entry && entry->type == CatalogType::ROLE_ENTRY) {
 		return &entry->Cast<RoleEntry>();
 	}

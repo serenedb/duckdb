@@ -56,7 +56,6 @@ DUCKDB_API void CheckReference(ClientContext &context, const RoleAccess &role, C
 DUCKDB_API bool ReferencesRole(const CatalogEntry &entry, idx_t role);
 DUCKDB_API void ForEachRoleReference(const CatalogEntry &entry, const std::function<void(idx_t role)> &callback);
 DUCKDB_API string RoleOptionsToSQL(RoleOption set_options, RoleOption clear_options);
-DUCKDB_API string ValidUntilToSQL(int64_t valid_until);
 [[noreturn]] DUCKDB_API void ThrowPermissionDenied(CatalogType type, std::string_view name,
                                                    optional_ptr<const MacroFunction> overload = nullptr);
 [[noreturn]] DUCKDB_API void ThrowPermissionDenied(const CatalogEntry &entry,

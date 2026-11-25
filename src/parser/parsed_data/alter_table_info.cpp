@@ -4,6 +4,7 @@
 #include "duckdb/common/enum_util.hpp"
 #include "duckdb/common/sql_identifier.hpp"
 #include "duckdb/common/string_util.hpp"
+#include "duckdb/common/types/value.hpp"
 #include "duckdb/parser/parsed_data/create_role_info.hpp"
 #include "duckdb/common/logical_type_info.hpp"
 #include "duckdb/function/macro_function.hpp"
@@ -540,7 +541,7 @@ string AlterRoleInfo::ToString() const {
 		result += " CONNECTION LIMIT " + std::to_string(conn_limit);
 	}
 	if (set_valid_until) {
-		result += " VALID UNTIL " + ValidUntilToSQL(valid_until);
+		result += " VALID UNTIL " + SQLString::ToString(Value::TIMESTAMPTZ(timestamp_tz_t(valid_until)).ToString());
 	}
 	if (set_password) {
 		result += null_password ? " PASSWORD NULL" : " PASSWORD " + SQLString::ToString(password);
