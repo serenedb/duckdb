@@ -809,6 +809,32 @@ static bool TransformObjectInternal(const JSONNode *objects[], JSONTransformScra
 	                                      error_unknown_key);
 }
 
+static idx_t RowOfElement(const list_entry_t entries[], const ValidityMask &validity, idx_t element) {
+	idx_t row = 0;
+	while (!validity.RowIsValid(row) || element >= entries[row].offset + entries[row].length) {
+		row++;
+	}
+	return row;
+}
+
+template <class ROW_OF>
+static bool TransformElements(const JSONNode *elements[], idx_t element_count, JSONTransformScratch &scratch,
+                              Vector &result, JSONTransformOptions &options, bool rows_failed, ROW_OF &&row_of) {
+	const auto row_message = rows_failed ? options.error_message : string();
+	const auto row_index = options.object_index;
+	if (JSONTransform::Transform(elements, scratch, result, element_count, options, nullptr)) {
+		return !rows_failed;
+	}
+	const auto element_row = row_of(options.object_index);
+	if (rows_failed && row_index < element_row) {
+		options.error_message = row_message;
+		options.object_index = row_index;
+	} else {
+		options.object_index = element_row;
+	}
+	return false;
+}
+
 static bool TransformArrayToList(const JSONNode *arrays[], JSONTransformScratch &scratch, Vector &result,
                                  const idx_t count, JSONTransformOptions &options) {
 	bool success = true;
@@ -860,24 +886,8 @@ static bool TransformArrayToList(const JSONNode *arrays[], JSONTransformScratch 
 	}
 	D_ASSERT(list_i == offset);
 
-	if (!success) {
-		// Set object index in case of error in nested list so we can get accurate line number information
-		for (idx_t i = 0; i < count; i++) {
-			if (!list_validity.RowIsValid(i)) {
-				continue;
-			}
-			auto &entry = list_entries[i];
-			if (options.object_index >= entry.offset && options.object_index < entry.offset + entry.length) {
-				options.object_index = i;
-			}
-		}
-	}
-
-	// Transform array values
-	if (!JSONTransform::Transform(nested_vals, scratch, ListVector::GetChildMutable(result), offset, options,
-	                              nullptr)) {
-		success = false;
-	}
+	success = TransformElements(nested_vals, offset, scratch, ListVector::GetChildMutable(result), options, !success,
+	                            [&](idx_t element) { return RowOfElement(list_entries, list_validity, element); });
 
 	if (!options.delay_error && !success) {
 		throw InvalidInputException(options.error_message);
@@ -1002,24 +1012,8 @@ static bool TransformArrayToArray(const JSONNode *arrays[], JSONTransformScratch
 		}
 	}
 
-	if (!success) {
-		// Set object index in case of error in nested array so we can get accurate line number information
-		for (idx_t i = 0; i < count; i++) {
-			if (!result_validity.RowIsValid(i)) {
-				continue;
-			}
-			auto offset = i * array_size;
-			if (options.object_index >= offset && options.object_index < offset + array_size) {
-				options.object_index = i;
-			}
-		}
-	}
-
-	// Transform array values
-	if (!JSONTransform::Transform(nested_vals, scratch, ArrayVector::GetChildMutable(result), child_count, options,
-	                              nullptr)) {
-		success = false;
-	}
+	success = TransformElements(nested_vals, child_count, scratch, ArrayVector::GetChildMutable(result), options,
+	                            !success, [&](idx_t element) { return element / array_size; });
 
 	if (!options.delay_error && !success) {
 		throw InvalidInputException(options.error_message);
@@ -1088,10 +1082,8 @@ static bool TransformObjectToMap(const JSONNode *objects[], JSONTransformScratch
 		    StringUtil::Format("%s. Cannot default to NULL, because map keys cannot be NULL", options.error_message));
 	}
 
-	// Transform values
-	if (!JSONTransform::Transform(vals, scratch, MapVector::GetValues(result), list_size, options, nullptr)) {
-		success = false;
-	}
+	success = TransformElements(vals, list_size, scratch, MapVector::GetValues(result), options, !success,
+	                            [&](idx_t element) { return RowOfElement(list_entries, list_validity, element); });
 
 	if (!options.delay_error && !success) {
 		throw InvalidInputException(options.error_message);
