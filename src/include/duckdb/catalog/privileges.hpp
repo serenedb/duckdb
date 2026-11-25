@@ -125,8 +125,6 @@ constexpr ObjectKind MakeObjectKind(CatalogType type) {
 		return {CatalogType::ROLE_ENTRY, ObjectContainer::CLUSTER, AclMode::NoRights, AclMode::NoRights, 1260, true, ""};
 	case CatalogType::FOREIGN_DATA_WRAPPER_ENTRY:
 		return {CatalogType::FOREIGN_DATA_WRAPPER_ENTRY, ObjectContainer::DATABASE, AclMode::Usage, AclMode::NoRights, 2328, false, "foreign-data wrapper"};
-	case CatalogType::LANGUAGE_ENTRY:
-		return {CatalogType::LANGUAGE_ENTRY, ObjectContainer::DATABASE, AclMode::Usage, AclMode::Usage, 2612, false, "language"};
 	case CatalogType::PARAMETER_ENTRY:
 		return {CatalogType::PARAMETER_ENTRY, ObjectContainer::CLUSTER, AclMode::Set | AclMode::AlterSystem, AclMode::NoRights, 0, false, "parameter"};
 	case CatalogType::JOB_ENTRY:

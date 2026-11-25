@@ -63,8 +63,6 @@ string CatalogTypeToString(CatalogType type) {
 		return "Foreign Data Wrapper";
 	case CatalogType::PARAMETER_ENTRY:
 		return "Parameter";
-	case CatalogType::LANGUAGE_ENTRY:
-		return "Language";
 	case CatalogType::DB_ROLE_SETTING_ENTRY:
 		return "Database Role Setting";
 	case CatalogType::SECRET_ENTRY:
@@ -114,8 +112,6 @@ string CatalogTypeToNoun(CatalogType type) {
 		return "server";
 	case CatalogType::FOREIGN_DATA_WRAPPER_ENTRY:
 		return "foreign-data wrapper";
-	case CatalogType::LANGUAGE_ENTRY:
-		return "language";
 	case CatalogType::SUBSCRIPTION_ENTRY:
 		return "subscription";
 	case CatalogType::TRIGGER_ENTRY:
@@ -212,9 +208,6 @@ CatalogType CatalogTypeFromString(const string &type) {
 	}
 	if (type == "Parameter") {
 		return CatalogType::PARAMETER_ENTRY;
-	}
-	if (type == "Language") {
-		return CatalogType::LANGUAGE_ENTRY;
 	}
 	if (type == "Database Role Setting") {
 		return CatalogType::DB_ROLE_SETTING_ENTRY;

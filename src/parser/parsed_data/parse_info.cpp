@@ -53,8 +53,6 @@ string ParseInfo::TypeToString(CatalogType type) {
 		return "FOREIGN DATA WRAPPER";
 	case CatalogType::PARAMETER_ENTRY:
 		return "PARAMETER";
-	case CatalogType::LANGUAGE_ENTRY:
-		return "LANGUAGE";
 	default:
 		throw InternalException("ParseInfo::TypeToString for CatalogType with type: %s not implemented",
 		                        EnumUtil::ToString(type));

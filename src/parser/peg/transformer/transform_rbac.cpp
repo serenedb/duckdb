@@ -215,9 +215,6 @@ CatalogType GrantObjectType(const string &keyword) {
 	if (keyword == "FOREIGN DATA WRAPPER") {
 		return CatalogType::FOREIGN_DATA_WRAPPER_ENTRY;
 	}
-	if (keyword == "LANGUAGE") {
-		return CatalogType::LANGUAGE_ENTRY;
-	}
 	if (keyword == "TEXT SEARCH DICTIONARY") {
 		return CatalogType::TOKENIZER_ENTRY;
 	}

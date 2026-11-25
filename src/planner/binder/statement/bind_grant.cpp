@@ -455,7 +455,7 @@ void Binder::BindAlterPermissions(AlterPermissionsInfo &info, StatementPropertie
 		} else if (catalog_type != CatalogType::DATABASE_ENTRY && catalog_type != CatalogType::ROLE_ENTRY &&
 		           catalog_type != CatalogType::TABLESPACE_ENTRY &&
 		           catalog_type != CatalogType::FOREIGN_DATA_WRAPPER_ENTRY &&
-		           catalog_type != CatalogType::PARAMETER_ENTRY && catalog_type != CatalogType::LANGUAGE_ENTRY) {
+		           catalog_type != CatalogType::PARAMETER_ENTRY) {
 			object.name = BindTableName(object.name);
 			properties.RegisterDBModify(Catalog::GetCatalog(context, object.name.Catalog()), context,
 			                            DatabaseModificationType::ALTER_TABLE);
