@@ -8,7 +8,7 @@
 
 #pragma once
 
-#include "duckdb/catalog/permissions.hpp"
+#include "duckdb/catalog/role_graph.hpp"
 #include "duckdb/common/atomic.hpp"
 #include "duckdb/common/mutex.hpp"
 #include "duckdb/common/winapi.hpp"

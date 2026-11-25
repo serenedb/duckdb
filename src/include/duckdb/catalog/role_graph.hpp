@@ -54,6 +54,8 @@ inline constexpr RoleOptionKeyword ROLE_OPTIONS[] = {
     {RoleOption::BypassRls, "BYPASSRLS"},
 };
 
+DUCKDB_API string RoleOptionsToSQL(RoleOption set_options, RoleOption clear_options);
+
 struct Membership {
 	idx_t role = 0;
 	idx_t grantor = 0;

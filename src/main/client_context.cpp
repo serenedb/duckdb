@@ -1172,13 +1172,11 @@ void ClientContext::CheckFileAccess(const string &requested, RoleCapability suff
 		allowed = properties && (stored(*properties) || absl::c_any_of(properties->file_grants, granted));
 	}
 	if (!allowed) {
-		throw PermissionException(
-		    {{"detail", sufficient == RoleCapability::WriteServerFiles
-		                    ? "Only roles with privileges of the \"pg_write_server_files\" role may write to server "
-		                      "files and URLs."
-		                    : "Only roles with privileges of the \"pg_read_server_files\" role may read server files "
-		                      "and URLs."}},
-		    StringUtil::Format("permission denied to access \"%s\"", requested));
+		throw PermissionException::WithDetail(
+		    sufficient == RoleCapability::WriteServerFiles
+		        ? "Only roles with privileges of the \"pg_write_server_files\" role may write to server files and URLs."
+		        : "Only roles with privileges of the \"pg_read_server_files\" role may read server files and URLs.",
+		    "permission denied to access \"%s\"", requested);
 	}
 }
 

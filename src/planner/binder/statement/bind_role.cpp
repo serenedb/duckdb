@@ -65,10 +65,9 @@ static void RequireAdminOf(const RoleAccess &caller, const RoleEntry &role, Role
 	const auto message = grant ? StringUtil::Format("permission denied to %s role \"%s\"", verb, name)
 	                           : StringUtil::Format("permission denied to %s role", verb);
 	if (role.IsSuperuser()) {
-		throw PermissionException(
-		    {{"detail",
-		      StringUtil::Format("Only roles with the SUPERUSER attribute may %s roles with the SUPERUSER attribute.",
-		                         verb)}},
+		throw PermissionException::WithDetail(
+		    StringUtil::Format("Only roles with the SUPERUSER attribute may %s roles with the SUPERUSER attribute.",
+		                       verb),
 		    message);
 	}
 	if (caller.AdminOf(role.oid) && (membership || caller.Has(RoleOption::CreateRole))) {
@@ -84,7 +83,7 @@ static void RequireAdminOf(const RoleAccess &caller, const RoleEntry &role, Role
 		    "Only roles with the CREATEROLE attribute and the ADMIN option on role \"%s\" may %s this role.", name,
 		    verb);
 	}
-	throw PermissionException({{"detail", detail}}, message);
+	throw PermissionException::WithDetail(detail, message);
 }
 
 static void CheckMembershipAuthorization(ClientContext &context, const RoleAccess &caller, const RoleEntry &granted,
@@ -114,6 +113,12 @@ optional_ptr<RoleEntry> Binder::BindRole(const RoleSpec &role, OnEntryNotFound i
 	return nullptr;
 }
 
+string Binder::RoleName(idx_t role) {
+	auto &system = Catalog::GetSystemCatalog(context);
+	auto entry = system.LookupOwner(system.GetCatalogTransaction(context), role);
+	return entry && entry->type == CatalogType::ROLE_ENTRY ? entry->name.GetIdentifierName() : string();
+}
+
 static idx_t ResolveMembershipGrantor(Binder &binder, const RoleAccess &caller, const RoleEntry &granted,
                                       const AlterRoleInfo &info) {
 	auto &context = binder.context;
@@ -135,25 +140,24 @@ static idx_t ResolveMembershipGrantor(Binder &binder, const RoleAccess &caller, 
 	auto &grantor_name = grantor.name.GetIdentifierName();
 	if (!caller.is_superuser && caller.role != grantor.oid && !caller.Uses(grantor.oid)) {
 		if (info.revoke) {
-			throw PermissionException(
-			    {{"detail", StringUtil::Format("Only roles with privileges of role \"%s\" may revoke privileges "
-			                                   "granted by this role.",
-			                                   grantor_name)}},
-			    StringUtil::Format("permission denied to revoke privileges granted by role \"%s\"", grantor_name));
+			throw PermissionException::WithDetail(
+			    StringUtil::Format(
+			        "Only roles with privileges of role \"%s\" may revoke privileges granted by this role.",
+			        grantor_name),
+			    "permission denied to revoke privileges granted by role \"%s\"", grantor_name);
 		}
-		throw PermissionException(
-		    {{"detail",
-		      StringUtil::Format("Only roles with privileges of role \"%s\" may grant privileges as this role.",
-		                         grantor_name)}},
-		    StringUtil::Format("permission denied to grant privileges as role \"%s\"", grantor_name));
+		throw PermissionException::WithDetail(
+		    StringUtil::Format("Only roles with privileges of role \"%s\" may grant privileges as this role.",
+		                       grantor_name),
+		    "permission denied to grant privileges as role \"%s\"", grantor_name);
 	}
 	if (!info.revoke && grantor.oid != bootstrap) {
 		auto admin = best_admin(grantor.oid);
 		if (!admin.IsValid() || admin.GetIndex() != grantor.oid) {
-			throw PermissionException(
-			    {{"detail", StringUtil::Format("The grantor must have the ADMIN option on role \"%s\".",
-			                                   granted.name.GetIdentifierName())}},
-			    StringUtil::Format("permission denied to grant privileges as role \"%s\"", grantor_name));
+			throw PermissionException::WithDetail(
+			    StringUtil::Format("The grantor must have the ADMIN option on role \"%s\".",
+			                       granted.name.GetIdentifierName()),
+			    "permission denied to grant privileges as role \"%s\"", grantor_name);
 		}
 	}
 	return grantor.oid;
@@ -219,43 +223,36 @@ static void CheckAlterRole(ClientContext &context, const RoleAccess &caller, con
 	}
 	const bool admin = caller.Has(RoleOption::CreateRole) && caller.AdminOf(role.oid);
 	if (role.IsSuperuser()) {
-		throw PermissionException(
-		    {{"detail", "Only roles with the SUPERUSER attribute may alter roles with the SUPERUSER attribute."}},
+		throw PermissionException::WithDetail(
+		    "Only roles with the SUPERUSER attribute may alter roles with the SUPERUSER attribute.",
 		    "permission denied to alter role");
 	}
 	const auto changed = info.set_options | info.clear_options;
 	if (HasOption(changed, RoleOption::Superuser)) {
-		throw PermissionException(
-		    {{"detail", "Only roles with the SUPERUSER attribute may change the SUPERUSER attribute."}},
+		throw PermissionException::WithDetail(
+		    "Only roles with the SUPERUSER attribute may change the SUPERUSER attribute.",
 		    "permission denied to alter role");
 	}
 	const bool other = role.oid != caller.role;
+	const auto not_admin = StringUtil::Format(
+	    "Only roles with the CREATEROLE attribute and the ADMIN option on role \"%s\" may alter this role.", name);
 	if (!admin && (changed != RoleOption::None || info.set_conn_limit || info.set_valid_until)) {
-		throw PermissionException(
-		    {{"detail", StringUtil::Format("Only roles with the CREATEROLE attribute and the ADMIN option on role "
-		                                   "\"%s\" may alter this role.",
-		                                   name)}},
-		    "permission denied to alter role");
+		throw PermissionException::WithDetail(not_admin, "permission denied to alter role");
 	}
 	if (!admin && other && (info.set_password || info.null_password)) {
-		throw PermissionException(
-		    {{"detail", "To change another role's password, the current user must have the CREATEROLE attribute and "
-		                "the ADMIN option on the role."}},
-		    "permission denied to alter role");
+		throw PermissionException::WithDetail("To change another role's password, the current user must have the "
+		                                      "CREATEROLE attribute and the ADMIN option on the role.",
+		                                      "permission denied to alter role");
 	}
 	if (!admin && other) {
-		throw PermissionException(
-		    {{"detail", StringUtil::Format("Only roles with the CREATEROLE attribute and the ADMIN option on role "
-		                                   "\"%s\" may alter this role.",
-		                                   name)}},
-		    "permission denied to alter role");
+		throw PermissionException::WithDetail(not_admin, "permission denied to alter role");
 	}
 	const auto attributes = changed & (RoleOption::CreateDb | RoleOption::Replication | RoleOption::BypassRls);
 	for (auto &named : ROLE_OPTIONS) {
 		if (HasOption(attributes, named.option) && !caller.Has(named.option)) {
-			throw PermissionException(
-			    {{"detail", StringUtil::Format("Only roles with the %s attribute may change the %s attribute.",
-			                                   named.keyword, named.keyword)}},
+			throw PermissionException::WithDetail(
+			    StringUtil::Format("Only roles with the %s attribute may change the %s attribute.", named.keyword,
+			                       named.keyword),
 			    "permission denied to alter role");
 		}
 	}
@@ -264,17 +261,16 @@ static void CheckAlterRole(ClientContext &context, const RoleAccess &caller, con
 void Binder::BindCreateRole(CreateRoleInfo &info) {
 	auto &caller = CheckAs();
 	if (!caller.is_superuser && !caller.Has(RoleOption::CreateRole)) {
-		throw PermissionException({{"detail", "Only roles with the CREATEROLE attribute may create roles."}},
-		                          "permission denied to create role");
+		throw PermissionException::WithDetail("Only roles with the CREATEROLE attribute may create roles.",
+		                                      "permission denied to create role");
 	}
 	const auto attributes =
 	    info.options & (RoleOption::Superuser | RoleOption::CreateDb | RoleOption::Replication | RoleOption::BypassRls);
 	for (auto &named : ROLE_OPTIONS) {
 		if (!caller.is_superuser && HasOption(attributes, named.option) && !caller.Has(named.option)) {
-			throw PermissionException(
-			    {{"detail",
-			      StringUtil::Format("Only roles with the %s attribute may create roles with the %s attribute.",
-			                         named.keyword, named.keyword)}},
+			throw PermissionException::WithDetail(
+			    StringUtil::Format("Only roles with the %s attribute may create roles with the %s attribute.",
+			                       named.keyword, named.keyword),
 			    "permission denied to create role");
 		}
 	}
@@ -365,8 +361,8 @@ void Binder::BindAlterDatabaseSettings(AlterDatabaseSettingsInfo &info) {
 		database = entry_retriever.GetEntry(EntryLookupInfo(CatalogType::DATABASE_ENTRY, info.GetQualifiedName()));
 		info.database_id = database->oid;
 	} else if (!caller.is_superuser) {
-		throw PermissionException({{"detail", "Only roles with the SUPERUSER attribute may alter settings globally."}},
-		                          "permission denied to alter setting");
+		throw PermissionException::WithDetail("Only roles with the SUPERUSER attribute may alter settings globally.",
+		                                      "permission denied to alter setting");
 	}
 	if (!caller.IsSystem()) {
 		CheckDatabaseSettings(context, caller, role, database, info);
@@ -377,9 +373,9 @@ void Binder::BindAlterDatabaseSettings(AlterDatabaseSettingsInfo &info) {
 void Binder::BindDropRole(const Identifier &name) {
 	auto &caller = CheckAs();
 	if (!caller.is_superuser && !caller.Has(RoleOption::CreateRole)) {
-		throw PermissionException({{"detail", "Only roles with the CREATEROLE attribute and the ADMIN option on the "
-		                                      "target roles may drop roles."}},
-		                          "permission denied to drop role");
+		throw PermissionException::WithDetail(
+		    "Only roles with the CREATEROLE attribute and the ADMIN option on the target roles may drop roles.",
+		    "permission denied to drop role");
 	}
 	optional_ptr<RoleEntry> role;
 	if (!caller.IsSystem()) {

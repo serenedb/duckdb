@@ -8,7 +8,6 @@
 
 #pragma once
 
-#include "duckdb/catalog/permissions.hpp"
 #include "duckdb/common/case_insensitive_map.hpp"
 #include "duckdb/common/enums/statement_type.hpp"
 #include "duckdb/common/types/value.hpp"

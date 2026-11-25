@@ -8,8 +8,10 @@
 
 #pragma once
 
+#include "duckdb/catalog/permissions.hpp"
 #include "duckdb/common/identifier.hpp"
 #include "duckdb/common/case_insensitive_map.hpp"
+#include "duckdb/common/enums/on_entry_not_found.hpp"
 #include "duckdb/common/enums/join_type.hpp"
 #include "duckdb/common/enums/merge_action_type.hpp"
 #include "duckdb/common/enums/statement_type.hpp"
@@ -22,6 +24,7 @@
 #include "duckdb/parser/parsed_data/create_role_info.hpp"
 #include "duckdb/parser/parsed_data/create_table_info.hpp"
 #include "duckdb/parser/parsed_data/drop_info.hpp"
+#include "duckdb/parser/role_spec.hpp"
 #include "duckdb/parser/tableref/match_recognize_ref.hpp"
 #include "duckdb/parser/qualified_name.hpp"
 #include "duckdb/parser/qualified_name_set.hpp"
@@ -55,6 +58,7 @@ namespace duckdb {
 class BoundResultModifier;
 class BoundSelectNode;
 class ClientContext;
+class RoleEntry;
 class ExpressionBinder;
 struct ExternalResourceOptions;
 class LimitModifier;
@@ -490,6 +494,8 @@ public:
 	                         bool named_by_statement = false);
 	optional_ptr<RoleEntry> BindRole(const RoleSpec &role,
 	                                 OnEntryNotFound if_not_found = OnEntryNotFound::THROW_EXCEPTION);
+	string RoleName(idx_t role);
+	static void RequireUserSchema(const SchemaCatalogEntry &schema, const Identifier &name);
 	void BindCreateRole(CreateRoleInfo &info);
 	void BindAlterRole(AlterRoleInfo &info);
 	void BindDropRole(const Identifier &name);

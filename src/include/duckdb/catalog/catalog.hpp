@@ -8,6 +8,7 @@
 
 #pragma once
 
+#include "duckdb/catalog/acl.hpp"
 #include "duckdb/catalog/catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry_map.hpp"
 #include "duckdb/catalog/catalog_transaction.hpp"
@@ -566,6 +567,8 @@ public:
 	                          const std::function<void(CatalogEntry &)> &callback);
 	virtual void ScanIndexes(ClientContext &context, const TableCatalogEntry &table,
 	                         absl::FunctionRef<void(IndexCatalogEntry &)> callback);
+	DUCKDB_API void AssignOwner(ClientContext &context, Permissions &permissions, CatalogType objtype,
+	                            optional_ptr<SchemaCatalogEntry> schema, idx_t owner);
 	virtual optional_ptr<CatalogEntry> PlacementTablespace(ClientContext &context, const CreateInfo &info,
 	                                                       optional_ptr<const CatalogEntry> indexed);
 	virtual void RequireSubscription(ClientContext &context, const RoleAccess &role,

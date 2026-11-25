@@ -9,7 +9,7 @@
 #pragma once
 
 #include "duckdb/catalog/catalog_entry.hpp"
-#include "duckdb/catalog/permissions.hpp"
+#include "duckdb/catalog/role_graph.hpp"
 
 namespace duckdb {
 

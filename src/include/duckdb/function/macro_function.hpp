@@ -8,7 +8,7 @@
 
 #pragma once
 
-#include "duckdb/catalog/permissions.hpp"
+#include "duckdb/catalog/acl.hpp"
 #include "duckdb/common/enums/sql_compatibility.hpp"
 #include "duckdb/function/function.hpp"
 #include "duckdb/parser/expression/constant_expression.hpp"

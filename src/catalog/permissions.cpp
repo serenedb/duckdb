@@ -2,7 +2,6 @@
 
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/catalog/catalog_entry.hpp"
-#include "duckdb/catalog/catalog_entry/database_entry.hpp"
 #include "duckdb/catalog/catalog_entry/function_entry.hpp"
 #include "duckdb/catalog/catalog_entry/index_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/macro_catalog_entry.hpp"
@@ -14,7 +13,6 @@
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/view_catalog_entry.hpp"
 #include "duckdb/catalog/column_acls.hpp"
-#include "duckdb/catalog/default/default_schemas.hpp"
 #include "duckdb/catalog/schema_info.hpp"
 #include "duckdb/common/case_insensitive_map.hpp"
 #include "duckdb/common/extension_type_info.hpp"
@@ -30,8 +28,6 @@
 #include "duckdb/parser/column_list.hpp"
 #include "duckdb/parser/parsed_data/create_info.hpp"
 #include "duckdb/parser/parsed_data/create_subscription_info.hpp"
-#include "duckdb/storage/storage_info.hpp"
-#include "duckdb/storage/storage_manager.hpp"
 
 #include <absl/algorithm/container.h>
 
@@ -252,66 +248,11 @@ uint64_t ViewerBits(const RoleAccess &role) {
 	return bits;
 }
 
-template <class F>
-static bool AnyRoleReference(const CatalogEntry &entry, F &&named) {
-	auto &permissions = entry.permissions;
-	const auto any_acl = [&](std::span<const AclItem> acl) {
-		return absl::c_any_of(acl, [&](const AclItem &item) { return named(item.grantee) || named(item.grantor); });
-	};
-	if (entry.type == CatalogType::MACRO_ENTRY || entry.type == CatalogType::TABLE_MACRO_ENTRY) {
-		auto &macro = entry.Cast<MacroCatalogEntry>();
-		return absl::c_any_of(macro.macros, [&](const unique_ptr<MacroFunction> &overload) {
-			auto &overload_permissions = macro.OverloadPermissions(*overload);
-			return named(overload_permissions.owner) || any_acl(overload_permissions.acl);
-		});
-	}
-	if (named(permissions.owner) || any_acl(permissions.acl)) {
-		return true;
-	}
-	if (entry.type == CatalogType::DATABASE_ENTRY) {
-		return absl::c_any_of(entry.Cast<DatabaseEntry>().DefaultAcls(),
-		                      [&](const DefaultAcl &row) { return named(row.role) || any_acl(row.acl); });
-	}
-	if (entry.type == CatalogType::ROLE_ENTRY) {
-		return absl::c_any_of(entry.Cast<RoleEntry>().MemberOf(),
-		                      [&](const Membership &edge) { return named(edge.grantor); });
-	}
-	return (entry.type == CatalogType::VIEW_ENTRY || entry.type == CatalogType::TABLE_ENTRY) &&
-	       AnyColumnAcl(entry.Cast<StandardEntry>(), any_acl);
-}
-
-bool ReferencesRole(const CatalogEntry &entry, idx_t role) {
-	return AnyRoleReference(entry, [&](idx_t oid) { return oid == role; });
-}
-
-void ForEachRoleReference(const CatalogEntry &entry, const std::function<void(idx_t role)> &callback) {
-	AnyRoleReference(entry, [&](idx_t oid) {
-		if (oid != ACL_ID_PUBLIC) {
-			callback(oid);
-		}
-		return false;
-	});
-}
-
-string RoleOptionsToSQL(RoleOption set_options, RoleOption clear_options) {
-	string result;
-	for (auto &named : ROLE_OPTIONS) {
-		if (HasOption(set_options, named.option)) {
-			result += " ";
-			result += named.keyword;
-		} else if (HasOption(clear_options, named.option)) {
-			result += " NO";
-			result += named.keyword;
-		}
-	}
-	return result;
-}
-
 static string ObjectNounOf(CatalogType type, optional_ptr<const MacroFunction> overload) {
 	if (overload && overload->is_procedure) {
-		return string(PROCEDURE_NOUN);
+		return "procedure";
 	}
-	const auto noun = ObjectNoun(type);
+	const auto noun = ObjectKindOf(type).noun;
 	return noun.empty() ? StringUtil::Lower(CatalogTypeToString(type)) : string(noun);
 }
 
@@ -416,7 +357,7 @@ static void RequireOwnership(const RoleAccess &role, CatalogEntry &entry, option
 		} else {
 			return;
 		}
-		throw PermissionException({{"detail", detail}}, "permission denied");
+		throw PermissionException::WithDetail(detail, "permission denied");
 	}
 	if (!OwnsEntry(role, entry, overload)) {
 		ThrowNotOwner(entry, naming);
@@ -449,9 +390,9 @@ void Require(ClientContext &context, const RoleAccess &role, CatalogEntry &entry
 	}
 	if (Uses(use, AclMode::Own) && entry.type == CatalogType::SUBSCRIPTION_ENTRY &&
 	    !entry.GetInfo()->Cast<CreateSubscriptionInfo>().password_required) {
-		throw PermissionException(
-		    unordered_map<string, string> {{"hint", "Subscriptions with the password_required option set to false "
-		                                            "may only be created or modified by the superuser."}},
+		throw PermissionException::WithHint(
+		    "Subscriptions with the password_required option set to false may only be created or modified by the "
+		    "superuser.",
 		    "password_required=false is superuser-only");
 	}
 	if (Uses(use, AclMode::Rename)) {
@@ -477,41 +418,6 @@ void Require(ClientContext &context, const RoleAccess &role, CatalogEntry &entry
 	}
 	if (!Allowed(role, entry, use & ACL_GRANTABLE, overload)) {
 		ThrowPermissionDenied(entry, overload);
-	}
-}
-
-string RoleName(ClientContext &context, idx_t role) {
-	auto &system = Catalog::GetSystemCatalog(context);
-	auto entry = system.LookupOwner(system.GetCatalogTransaction(context), role);
-	return entry && entry->type == CatalogType::ROLE_ENTRY ? entry->name.GetIdentifierName() : string();
-}
-
-static bool StoresPermissions(Catalog &catalog) {
-	auto &database = catalog.GetAttached();
-	if (database.ForeignServer().IsValid()) {
-		return false;
-	}
-	return !catalog.IsDuckCatalog() || database.IsTemporary() ||
-	       IsSereneDBStorageVersion(database.GetStorageManager().GetStorageVersion());
-}
-
-void AssignOwner(ClientContext &context, Permissions &permissions, Catalog &catalog, CatalogType objtype,
-                 optional_ptr<SchemaCatalogEntry> schema, idx_t owner) {
-	if (!StoresPermissions(catalog)) {
-		return;
-	}
-	auto database = SystemEntry(context, CatalogType::DATABASE_ENTRY, catalog.GetName());
-	permissions.AssignOwner(owner, objtype,
-	                        database ? database->Cast<DatabaseEntry>().DefaultAcls() : std::span<const DefaultAcl>(),
-	                        schema ? optional_idx(schema->oid) : optional_idx());
-}
-
-void RequireUserSchema(const SchemaCatalogEntry &schema, const Identifier &name) {
-	if (schema.internal && (!schema.catalog.IsDuckCatalog() || DefaultSchemaGenerator::IsDefaultSchema(schema.name))) {
-		throw PermissionException(
-		    unordered_map<string, string> {{"detail", "System catalog modifications are currently disallowed."}},
-		    StringUtil::Format("permission denied to create \"%s.%s\"", schema.name.GetIdentifierName(),
-		                       name.GetIdentifierName()));
 	}
 }
 

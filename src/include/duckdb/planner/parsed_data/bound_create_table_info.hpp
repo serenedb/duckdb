@@ -8,7 +8,7 @@
 
 #pragma once
 
-#include "duckdb/catalog/permissions.hpp"
+#include "duckdb/catalog/acl.hpp"
 #include "duckdb/parser/parsed_data/create_table_info.hpp"
 #include "duckdb/planner/bound_constraint.hpp"
 #include "duckdb/planner/expression.hpp"

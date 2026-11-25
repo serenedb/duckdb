@@ -171,12 +171,25 @@ public:
 class PermissionException : public Exception {
 public:
 	DUCKDB_API explicit PermissionException(std::string_view msg);
-	DUCKDB_API PermissionException(const unordered_map<string, string> &extra_info, std::string_view msg);
 
 	template <typename... ARGS>
 	explicit PermissionException(std::string_view msg, ARGS &&...params)
 	    : PermissionException(ConstructMessage(msg, std::forward<ARGS>(params)...)) {
 	}
+
+	template <typename... ARGS>
+	static PermissionException WithDetail(std::string_view detail, std::string_view msg, ARGS &&...params) {
+		return PermissionException(unordered_map<string, string> {{"detail", string(detail)}},
+		                           ConstructMessage(msg, std::forward<ARGS>(params)...));
+	}
+	template <typename... ARGS>
+	static PermissionException WithHint(std::string_view hint, std::string_view msg, ARGS &&...params) {
+		return PermissionException(unordered_map<string, string> {{"hint", string(hint)}},
+		                           ConstructMessage(msg, std::forward<ARGS>(params)...));
+	}
+
+private:
+	DUCKDB_API PermissionException(const unordered_map<string, string> &extra_info, std::string_view msg);
 };
 
 class OutOfRangeException : public Exception {

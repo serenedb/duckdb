@@ -191,14 +191,11 @@ void Settings::CheckChange(ClientContext &context, const RoleAccess &role, const
 		                ExceptionType::SETTINGS,
 		                StringUtil::Format("parameter \"%s\" cannot be changed", name.GetIdentifierName()));
 	}
-	if (scope == SetScope::GLOBAL) {
-		throw PermissionException(
-		    {{"detail", "Only roles with the SUPERUSER attribute may change the server-wide value of a parameter."}},
-		    StringUtil::Format("permission denied to set parameter \"%s\"", name.GetIdentifierName()));
-	}
-	throw PermissionException(
-	    {{"detail", "Only roles with the SUPERUSER attribute may change this parameter."}},
-	    StringUtil::Format("permission denied to set parameter \"%s\"", name.GetIdentifierName()));
+	throw PermissionException::WithDetail(
+	    scope == SetScope::GLOBAL
+	        ? "Only roles with the SUPERUSER attribute may change the server-wide value of a parameter."
+	        : "Only roles with the SUPERUSER attribute may change this parameter.",
+	    "permission denied to set parameter \"%s\"", name.GetIdentifierName());
 }
 
 bool Settings::CanRead(const RoleAccess &role, const SettingAccess &access) {
@@ -208,9 +205,9 @@ bool Settings::CanRead(const RoleAccess &role, const SettingAccess &access) {
 void Settings::CheckRead(ClientContext &context, const Identifier &name, const RoleAccess &role) {
 	auto access = GetAccess(context, name);
 	if (access && !CanRead(role, *access)) {
-		throw PermissionException(
-		    {{"detail", "Only roles with privileges of the \"pg_read_all_settings\" role may examine this parameter."}},
-		    StringUtil::Format("permission denied to examine \"%s\"", name.GetIdentifierName()));
+		throw PermissionException::WithDetail(
+		    "Only roles with privileges of the \"pg_read_all_settings\" role may examine this parameter.",
+		    "permission denied to examine \"%s\"", name.GetIdentifierName());
 	}
 }
 

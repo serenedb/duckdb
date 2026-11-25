@@ -14,6 +14,20 @@
 
 namespace duckdb {
 
+string RoleOptionsToSQL(RoleOption set_options, RoleOption clear_options) {
+	string result;
+	for (auto &named : ROLE_OPTIONS) {
+		if (HasOption(set_options, named.option)) {
+			result += " ";
+			result += named.keyword;
+		} else if (HasOption(clear_options, named.option)) {
+			result += " NO";
+			result += named.keyword;
+		}
+	}
+	return result;
+}
+
 static bool FilterMayContain(std::span<const uint64_t> filter, idx_t member) {
 	const auto hash = Hash(uint64_t(member));
 	const auto mask = filter.size() * 64 - 1;

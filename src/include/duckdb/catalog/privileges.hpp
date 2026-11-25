@@ -90,58 +90,66 @@ struct ObjectKind {
 	AclMode public_privileges;
 	idx_t pg_class;
 	bool shared;
+	std::string_view noun;
 };
 
 constexpr ObjectKind MakeObjectKind(CatalogType type) {
 	switch (type) {
 	case CatalogType::TABLE_ENTRY:
+		return {CatalogType::TABLE_ENTRY, ObjectContainer::SCHEMA, AclMode::Insert | AclMode::Select | AclMode::Update | AclMode::Delete | AclMode::Truncate | AclMode::References | AclMode::Trigger | AclMode::Maintain, AclMode::NoRights, 1259, false, "table"};
 	case CatalogType::VIEW_ENTRY:
-		return {CatalogType::TABLE_ENTRY, ObjectContainer::SCHEMA, AclMode::Insert | AclMode::Select | AclMode::Update | AclMode::Delete | AclMode::Truncate | AclMode::References | AclMode::Trigger | AclMode::Maintain, AclMode::NoRights, 1259, false};
+		return {CatalogType::TABLE_ENTRY, ObjectContainer::SCHEMA, AclMode::Insert | AclMode::Select | AclMode::Update | AclMode::Delete | AclMode::Truncate | AclMode::References | AclMode::Trigger | AclMode::Maintain, AclMode::NoRights, 1259, false, "view"};
 	case CatalogType::SEQUENCE_ENTRY:
-		return {CatalogType::SEQUENCE_ENTRY, ObjectContainer::SCHEMA, AclMode::Select | AclMode::Update | AclMode::Usage, AclMode::NoRights, 1259, false};
+		return {CatalogType::SEQUENCE_ENTRY, ObjectContainer::SCHEMA, AclMode::Select | AclMode::Update | AclMode::Usage, AclMode::NoRights, 1259, false, "sequence"};
 	case CatalogType::INDEX_ENTRY:
-		return {CatalogType::INDEX_ENTRY, ObjectContainer::RELATION, AclMode::NoRights, AclMode::NoRights, 1259, false};
+		return {CatalogType::INDEX_ENTRY, ObjectContainer::RELATION, AclMode::NoRights, AclMode::NoRights, 1259, false, "index"};
 	case CatalogType::TYPE_ENTRY:
-		return {CatalogType::TYPE_ENTRY, ObjectContainer::SCHEMA, AclMode::Usage, AclMode::Usage, 1247, false};
+		return {CatalogType::TYPE_ENTRY, ObjectContainer::SCHEMA, AclMode::Usage, AclMode::Usage, 1247, false, "type"};
 	case CatalogType::MACRO_ENTRY:
+		return {CatalogType::MACRO_ENTRY, ObjectContainer::SCHEMA, AclMode::Execute, AclMode::Execute, 1255, false, "function"};
 	case CatalogType::TABLE_MACRO_ENTRY:
-		return {CatalogType::MACRO_ENTRY, ObjectContainer::SCHEMA, AclMode::Execute, AclMode::Execute, 1255, false};
+		return {CatalogType::MACRO_ENTRY, ObjectContainer::SCHEMA, AclMode::Execute, AclMode::Execute, 1255, false, "function"};
 	case CatalogType::TOKENIZER_ENTRY:
-		return {CatalogType::TOKENIZER_ENTRY, ObjectContainer::SCHEMA, AclMode::NoRights, AclMode::NoRights, 3600, false};
+		return {CatalogType::TOKENIZER_ENTRY, ObjectContainer::SCHEMA, AclMode::NoRights, AclMode::NoRights, 3600, false, "text search dictionary"};
 	case CatalogType::SCHEMA_ENTRY:
-		return {CatalogType::SCHEMA_ENTRY, ObjectContainer::DATABASE, AclMode::Usage | AclMode::Create, AclMode::NoRights, 2615, false};
+		return {CatalogType::SCHEMA_ENTRY, ObjectContainer::DATABASE, AclMode::Usage | AclMode::Create, AclMode::NoRights, 2615, false, "schema"};
 	case CatalogType::FOREIGN_SERVER_ENTRY:
-		return {CatalogType::FOREIGN_SERVER_ENTRY, ObjectContainer::DATABASE, AclMode::Usage, AclMode::NoRights, 1417, false};
+		return {CatalogType::FOREIGN_SERVER_ENTRY, ObjectContainer::DATABASE, AclMode::Usage, AclMode::NoRights, 1417, false, "foreign server"};
 	case CatalogType::SUBSCRIPTION_ENTRY:
-		return {CatalogType::SUBSCRIPTION_ENTRY, ObjectContainer::DATABASE, AclMode::NoRights, AclMode::NoRights, 6100, true};
+		return {CatalogType::SUBSCRIPTION_ENTRY, ObjectContainer::DATABASE, AclMode::NoRights, AclMode::NoRights, 6100, true, "subscription"};
 	case CatalogType::DATABASE_ENTRY:
-		return {CatalogType::DATABASE_ENTRY, ObjectContainer::CLUSTER, AclMode::Create | AclMode::CreateTemp | AclMode::Connect, AclMode::CreateTemp | AclMode::Connect, 1262, true};
+		return {CatalogType::DATABASE_ENTRY, ObjectContainer::CLUSTER, AclMode::Create | AclMode::CreateTemp | AclMode::Connect, AclMode::CreateTemp | AclMode::Connect, 1262, true, "database"};
 	case CatalogType::TABLESPACE_ENTRY:
-		return {CatalogType::TABLESPACE_ENTRY, ObjectContainer::CLUSTER, AclMode::Create, AclMode::NoRights, 1213, true};
+		return {CatalogType::TABLESPACE_ENTRY, ObjectContainer::CLUSTER, AclMode::Create, AclMode::NoRights, 1213, true, "tablespace"};
 	case CatalogType::ROLE_ENTRY:
-		return {CatalogType::ROLE_ENTRY, ObjectContainer::CLUSTER, AclMode::NoRights, AclMode::NoRights, 1260, true};
+		return {CatalogType::ROLE_ENTRY, ObjectContainer::CLUSTER, AclMode::NoRights, AclMode::NoRights, 1260, true, ""};
 	case CatalogType::FOREIGN_DATA_WRAPPER_ENTRY:
-		return {CatalogType::FOREIGN_DATA_WRAPPER_ENTRY, ObjectContainer::DATABASE, AclMode::Usage, AclMode::NoRights, 2328, false};
+		return {CatalogType::FOREIGN_DATA_WRAPPER_ENTRY, ObjectContainer::DATABASE, AclMode::Usage, AclMode::NoRights, 2328, false, "foreign-data wrapper"};
 	case CatalogType::LANGUAGE_ENTRY:
-		return {CatalogType::LANGUAGE_ENTRY, ObjectContainer::DATABASE, AclMode::Usage, AclMode::Usage, 2612, false};
+		return {CatalogType::LANGUAGE_ENTRY, ObjectContainer::DATABASE, AclMode::Usage, AclMode::Usage, 2612, false, "language"};
 	case CatalogType::PARAMETER_ENTRY:
-		return {CatalogType::PARAMETER_ENTRY, ObjectContainer::CLUSTER, AclMode::Set | AclMode::AlterSystem, AclMode::NoRights, 0, false};
+		return {CatalogType::PARAMETER_ENTRY, ObjectContainer::CLUSTER, AclMode::Set | AclMode::AlterSystem, AclMode::NoRights, 0, false, "parameter"};
 	case CatalogType::JOB_ENTRY:
-		return {CatalogType::JOB_ENTRY, ObjectContainer::SCHEMA, AclMode::NoRights, AclMode::NoRights, 0, false};
+		return {CatalogType::JOB_ENTRY, ObjectContainer::SCHEMA, AclMode::NoRights, AclMode::NoRights, 0, false, ""};
 	case CatalogType::DB_ROLE_SETTING_ENTRY:
-		return {CatalogType::DB_ROLE_SETTING_ENTRY, ObjectContainer::CLUSTER, AclMode::NoRights, AclMode::NoRights, 0, false};
+		return {CatalogType::DB_ROLE_SETTING_ENTRY, ObjectContainer::CLUSTER, AclMode::NoRights, AclMode::NoRights, 0, false, ""};
+	case CatalogType::TABLE_FUNCTION_ENTRY:
+		return {CatalogType::TABLE_FUNCTION_ENTRY, ObjectContainer::NONE, AclMode::NoRights, AclMode::NoRights, 0, false, "function"};
+	case CatalogType::SCALAR_FUNCTION_ENTRY:
+		return {CatalogType::SCALAR_FUNCTION_ENTRY, ObjectContainer::NONE, AclMode::NoRights, AclMode::NoRights, 0, false, "function"};
+	case CatalogType::AGGREGATE_FUNCTION_ENTRY:
+		return {CatalogType::AGGREGATE_FUNCTION_ENTRY, ObjectContainer::NONE, AclMode::NoRights, AclMode::NoRights, 0, false, "aggregate"};
+	case CatalogType::PRAGMA_FUNCTION_ENTRY:
+		return {CatalogType::PRAGMA_FUNCTION_ENTRY, ObjectContainer::NONE, AclMode::NoRights, AclMode::NoRights, 0, false, "function"};
+	case CatalogType::WINDOW_FUNCTION_ENTRY:
+		return {CatalogType::WINDOW_FUNCTION_ENTRY, ObjectContainer::NONE, AclMode::NoRights, AclMode::NoRights, 0, false, "function"};
 	case CatalogType::INVALID:
 	case CatalogType::PREPARED_STATEMENT:
 	case CatalogType::COLLATION_ENTRY:
 	case CatalogType::COORDINATE_SYSTEM_ENTRY:
 	case CatalogType::TRIGGER_ENTRY:
 	case CatalogType::REPLICATION_ORIGIN_ENTRY:
-	case CatalogType::TABLE_FUNCTION_ENTRY:
-	case CatalogType::SCALAR_FUNCTION_ENTRY:
-	case CatalogType::AGGREGATE_FUNCTION_ENTRY:
-	case CatalogType::PRAGMA_FUNCTION_ENTRY:
 	case CatalogType::COPY_FUNCTION_ENTRY:
-	case CatalogType::WINDOW_FUNCTION_ENTRY:
 	case CatalogType::DELETED_ENTRY:
 	case CatalogType::RENAMED_ENTRY:
 	case CatalogType::SECRET_ENTRY:
@@ -150,7 +158,7 @@ constexpr ObjectKind MakeObjectKind(CatalogType type) {
 	case CatalogType::DEPENDENCY_ENTRY:
 		break;
 	}
-	return {type, ObjectContainer::NONE, AclMode::NoRights, AclMode::NoRights, 0, false};
+	return {type, ObjectContainer::NONE, AclMode::NoRights, AclMode::NoRights, 0, false, {}};
 }
 
 inline constexpr auto OBJECT_KINDS = [] {
@@ -169,68 +177,6 @@ constexpr bool IsCatalogLevel(CatalogType type) {
 	const auto container = ObjectKindOf(type).container;
 	return type != CatalogType::SCHEMA_ENTRY && (container == ObjectContainer::CLUSTER || container == ObjectContainer::DATABASE);
 }
-
-constexpr std::string_view ObjectNoun(CatalogType type) {
-	switch (type) {
-	case CatalogType::TABLE_ENTRY:
-		return "table";
-	case CatalogType::VIEW_ENTRY:
-		return "view";
-	case CatalogType::SEQUENCE_ENTRY:
-		return "sequence";
-	case CatalogType::INDEX_ENTRY:
-		return "index";
-	case CatalogType::TYPE_ENTRY:
-		return "type";
-	case CatalogType::MACRO_ENTRY:
-	case CatalogType::TABLE_MACRO_ENTRY:
-	case CatalogType::TABLE_FUNCTION_ENTRY:
-	case CatalogType::SCALAR_FUNCTION_ENTRY:
-	case CatalogType::PRAGMA_FUNCTION_ENTRY:
-	case CatalogType::WINDOW_FUNCTION_ENTRY:
-		return "function";
-	case CatalogType::TOKENIZER_ENTRY:
-		return "text search dictionary";
-	case CatalogType::SCHEMA_ENTRY:
-		return "schema";
-	case CatalogType::FOREIGN_SERVER_ENTRY:
-		return "foreign server";
-	case CatalogType::SUBSCRIPTION_ENTRY:
-		return "subscription";
-	case CatalogType::DATABASE_ENTRY:
-		return "database";
-	case CatalogType::TABLESPACE_ENTRY:
-		return "tablespace";
-	case CatalogType::FOREIGN_DATA_WRAPPER_ENTRY:
-		return "foreign-data wrapper";
-	case CatalogType::LANGUAGE_ENTRY:
-		return "language";
-	case CatalogType::PARAMETER_ENTRY:
-		return "parameter";
-	case CatalogType::AGGREGATE_FUNCTION_ENTRY:
-		return "aggregate";
-	case CatalogType::ROLE_ENTRY:
-	case CatalogType::JOB_ENTRY:
-	case CatalogType::DB_ROLE_SETTING_ENTRY:
-	case CatalogType::INVALID:
-	case CatalogType::PREPARED_STATEMENT:
-	case CatalogType::COLLATION_ENTRY:
-	case CatalogType::COORDINATE_SYSTEM_ENTRY:
-	case CatalogType::TRIGGER_ENTRY:
-	case CatalogType::REPLICATION_ORIGIN_ENTRY:
-	case CatalogType::COPY_FUNCTION_ENTRY:
-	case CatalogType::DELETED_ENTRY:
-	case CatalogType::RENAMED_ENTRY:
-	case CatalogType::SECRET_ENTRY:
-	case CatalogType::SECRET_TYPE_ENTRY:
-	case CatalogType::SECRET_FUNCTION_ENTRY:
-	case CatalogType::DEPENDENCY_ENTRY:
-		break;
-	}
-	return {};
-}
-
-inline constexpr std::string_view PROCEDURE_NOUN = "procedure";
 
 } // namespace duckdb
 // clang-format on

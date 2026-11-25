@@ -219,7 +219,7 @@ static const RoleAccess &GrantingRole(Binder &binder, const AlterPermissionsInfo
 	}
 	auto granted_by = binder.BindRole(info.granted_by)->oid;
 	if (!role.MemberOf(granted_by)) {
-		throw PermissionException("must be member of role \"%s\"", RoleName(binder.context, granted_by));
+		throw PermissionException("must be member of role \"%s\"", binder.RoleName(granted_by));
 	}
 	return binder.AccessOf(granted_by);
 }
@@ -301,7 +301,7 @@ static void ResolveOwner(Binder &binder, AlterPermissionsInfo &info, ObjectRefer
 		                            : nullptr);
 	}
 	if (!role.CanSet(info.new_owner_id)) {
-		throw PermissionException("must be able to SET ROLE \"%s\"", RoleName(context, info.new_owner_id));
+		throw PermissionException("must be able to SET ROLE \"%s\"", binder.RoleName(info.new_owner_id));
 	}
 	if (entry.type == CatalogType::DATABASE_ENTRY) {
 		if (!role.Has(RoleOption::CreateDb)) {
@@ -359,17 +359,14 @@ static void ResolveDefaultPrivileges(Binder &binder, AlterPermissionsInfo &info)
 }
 
 static vector<idx_t> ResolveOwnedRoles(Binder &binder, const vector<RoleSpec> &names, const string &action) {
-	auto &context = binder.context;
 	vector<idx_t> result;
 	for (auto &name : names) {
 		auto role = binder.BindRole(name)->oid;
 		if (!binder.CheckAs().MemberOf(role)) {
-			throw PermissionException(
-			    unordered_map<string, string> {
-			        {"detail",
-			         StringUtil::Format("Only roles with privileges of role \"%s\" may %s objects owned by it.",
-			                            RoleName(context, role), action)}},
-			    StringUtil::Format("permission denied to %s objects", action));
+			throw PermissionException::WithDetail(
+			    StringUtil::Format("Only roles with privileges of role \"%s\" may %s objects owned by it.",
+			                       binder.RoleName(role), action),
+			    "permission denied to %s objects", action);
 		}
 		result.push_back(role);
 	}
@@ -380,7 +377,7 @@ static void RefuseBootstrapRole(Binder &binder, const vector<idx_t> &roles, cons
 	const auto bootstrap = DBConfig::GetConfig(binder.context).bootstrap_role;
 	if (bootstrap != 0 && absl::c_linear_search(roles, bootstrap)) {
 		throw DependencyException("cannot %s owned by role %s because they are required by the database system", action,
-		                          RoleName(binder.context, bootstrap));
+		                          binder.RoleName(bootstrap));
 	}
 }
 
@@ -397,7 +394,7 @@ void Binder::ResolveOwned(AlterInfo &info) {
 	reassign.new_owner_id = BindRole(reassign.new_owner)->oid;
 	auto &role = CheckAs();
 	if (!role.CanSet(reassign.new_owner_id)) {
-		throw PermissionException("must be able to SET ROLE \"%s\"", RoleName(context, reassign.new_owner_id));
+		throw PermissionException("must be able to SET ROLE \"%s\"", RoleName(reassign.new_owner_id));
 	}
 	RefuseBootstrapRole(*this, reassign.role_ids, "reassign ownership of objects");
 }

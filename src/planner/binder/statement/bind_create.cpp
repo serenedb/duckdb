@@ -6,6 +6,7 @@
 #include "duckdb/common/algorithm.hpp"
 #include "duckdb/catalog/catalog_entry/type_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/view_catalog_entry.hpp"
+#include "duckdb/catalog/default/default_schemas.hpp"
 #include "duckdb/parser/parsed_data/create_schema_info.hpp"
 #include "duckdb/catalog/catalog_search_path.hpp"
 #include "duckdb/catalog/dependency_manager.hpp"
@@ -375,6 +376,14 @@ static void RequireReplacedOwner(ClientContext &context, const RoleAccess &role,
 	}
 }
 
+void Binder::RequireUserSchema(const SchemaCatalogEntry &schema, const Identifier &name) {
+	if (schema.internal && (!schema.catalog.IsDuckCatalog() || DefaultSchemaGenerator::IsDefaultSchema(schema.name))) {
+		throw PermissionException::WithDetail("System catalog modifications are currently disallowed.",
+		                                      "permission denied to create \"%s.%s\"", schema.name.GetIdentifierName(),
+		                                      name.GetIdentifierName());
+	}
+}
+
 SchemaCatalogEntry &Binder::BindCreateSchema(CreateInfo &info) {
 	const bool trigger = info.type == CatalogType::TRIGGER_ENTRY;
 	auto &schema = BindSchema(info, trigger ? AclMode::NoRights : AclMode::Create);
@@ -386,8 +395,8 @@ SchemaCatalogEntry &Binder::BindCreateSchema(CreateInfo &info) {
 	}
 	RequireUserSchema(schema, info.GetQualifiedName().Name());
 	if (!CheckAs().IsSystem()) {
-		AssignOwner(context, info.permissions, schema.ParentCatalog(), ObjectKindOf(info.type).acl_class, &schema,
-		            CreationOwner(context, info, CheckAs()));
+		schema.ParentCatalog().AssignOwner(context, info.permissions, ObjectKindOf(info.type).acl_class, &schema,
+		                                   CreationOwner(context, info, CheckAs()));
 	}
 	return schema;
 }
@@ -1250,8 +1259,8 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 				throw PermissionException("must be able to SET ROLE \"%s\"",
 				                          info.authorization.name.GetIdentifierName());
 			}
-			AssignOwner(context, info.permissions, Catalog::GetCatalog(context, info.SchemaCatalog()),
-			            CatalogType::SCHEMA_ENTRY, nullptr, owner);
+			Catalog::GetCatalog(context, info.SchemaCatalog())
+			    .AssignOwner(context, info.permissions, CatalogType::SCHEMA_ENTRY, nullptr, owner);
 		}
 		properties.RegisterDBModify(Catalog::GetCatalog(context, info.SchemaCatalog()), context,
 		                            DatabaseModificationType::CREATE_CATALOG_ENTRY);
@@ -1413,8 +1422,8 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 		}
 		if (!CheckAs().IsSystem()) {
 			for (auto &serial : bound_info->serial_sequences) {
-				AssignOwner(context, serial.permissions, bound_info->schema.ParentCatalog(),
-				            CatalogType::SEQUENCE_ENTRY, &bound_info->schema, CheckAs().role);
+				bound_info->schema.ParentCatalog().AssignOwner(context, serial.permissions, CatalogType::SEQUENCE_ENTRY,
+				                                               &bound_info->schema, CheckAs().role);
 			}
 		}
 		auto root = std::move(bound_info->query);
@@ -1577,10 +1586,9 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 		auto &info = stmt.info->Cast<CreateTablespaceInfo>();
 		auto &role = CheckAs();
 		if (!role.is_superuser) {
-			throw PermissionException(
-			    unordered_map<string, string> {{"hint", "Must be superuser to create a tablespace."}},
-			    StringUtil::Format("permission denied to create tablespace \"%s\"",
-			                       info.GetQualifiedName().Name().GetIdentifierName()));
+			throw PermissionException::WithHint("Must be superuser to create a tablespace.",
+			                                    "permission denied to create tablespace \"%s\"",
+			                                    info.GetQualifiedName().Name().GetIdentifierName());
 		}
 		info.permissions.owner = info.owner.empty() ? role.role : BindRole(info.owner)->oid;
 		result.plan = make_uniq<LogicalCreate>(LogicalOperatorType::LOGICAL_CREATE_TABLESPACE, std::move(stmt.info));
@@ -1595,7 +1603,7 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 		if (!info.owner.empty()) {
 			info.permissions.owner = BindRole(RoleSpec(info.owner))->oid;
 			if (!role.CanSet(info.permissions.owner)) {
-				throw PermissionException("must be able to SET ROLE \"%s\"", RoleName(context, info.permissions.owner));
+				throw PermissionException("must be able to SET ROLE \"%s\"", RoleName(info.permissions.owner));
 			}
 		} else if (!role.IsSystem()) {
 			info.permissions.owner = role.role;
@@ -1635,10 +1643,8 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 		    QualifiedName(catalog.GetName(), Identifier(), stmt.info->GetQualifiedName().Name()));
 		if (auto &role = CheckAs(); !role.IsSystem()) {
 			if (!role.Has(RoleCapability::CreateSubscription)) {
-				throw PermissionException(
-				    unordered_map<string, string> {{"detail",
-				                                    "Only roles with privileges of the "
-				                                    "\"pg_create_subscription\" role may create subscriptions."}},
+				throw PermissionException::WithDetail(
+				    "Only roles with privileges of the \"pg_create_subscription\" role may create subscriptions.",
 				    "permission denied to create subscription");
 			}
 			if (auto database = Catalog::GetEntry(

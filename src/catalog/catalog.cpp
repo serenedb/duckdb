@@ -3,6 +3,7 @@
 
 #include "duckdb/catalog/catalog_search_path.hpp"
 #include "duckdb/catalog/permissions.hpp"
+#include "duckdb/catalog/catalog_entry/database_entry.hpp"
 #include "duckdb/catalog/catalog_entry/list.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/duck_schema_entry.hpp"
@@ -50,6 +51,7 @@
 #include "duckdb/function/built_in_functions.hpp"
 #include "duckdb/catalog/similar_catalog_entry.hpp"
 #include "duckdb/storage/database_size.hpp"
+#include "duckdb/storage/storage_info.hpp"
 #include "duckdb/storage/storage_manager.hpp"
 #include "duckdb/storage/write_ahead_log.hpp"
 #include "duckdb/main/settings.hpp"
@@ -2123,6 +2125,22 @@ void Catalog::ScanIndexes(ClientContext &context, const TableCatalogEntry &table
 			callback(index);
 		}
 	});
+}
+
+void Catalog::AssignOwner(ClientContext &context, Permissions &permissions, CatalogType objtype,
+                          optional_ptr<SchemaCatalogEntry> schema, idx_t owner) {
+	auto &database = GetAttached();
+	const bool stores_permissions = !database.ForeignServer().IsValid() &&
+	                                (!IsDuckCatalog() || database.IsTemporary() ||
+	                                 IsSereneDBStorageVersion(database.GetStorageManager().GetStorageVersion()));
+	if (!stores_permissions) {
+		return;
+	}
+	auto &system = GetSystemCatalog(context);
+	auto entry = system.LookupEntry(system.GetCatalogTransaction(context), CatalogType::DATABASE_ENTRY, GetName());
+	permissions.AssignOwner(owner, objtype,
+	                        entry ? entry->Cast<DatabaseEntry>().DefaultAcls() : std::span<const DefaultAcl>(),
+	                        schema ? optional_idx(schema->oid) : optional_idx());
 }
 
 optional_ptr<CatalogEntry> Catalog::PlacementTablespace(ClientContext &context, const CreateInfo &info,

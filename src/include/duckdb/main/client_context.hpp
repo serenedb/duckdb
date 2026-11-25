@@ -10,7 +10,7 @@
 
 #include "duckdb/catalog/catalog_entry/schema_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_set.hpp"
-#include "duckdb/catalog/permissions.hpp"
+#include "duckdb/catalog/role_graph.hpp"
 #include "duckdb/common/atomic.hpp"
 #include "duckdb/common/deque.hpp"
 #include "duckdb/common/optional_idx.hpp"

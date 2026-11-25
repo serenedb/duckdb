@@ -8,7 +8,8 @@
 
 #pragma once
 
-#include "duckdb/catalog/permissions.hpp"
+#include "duckdb/catalog/acl.hpp"
+#include "duckdb/catalog/role_graph.hpp"
 #include "duckdb/common/enums/trigger_type.hpp"
 #include "duckdb/common/optional.hpp"
 #include "duckdb/parser/parsed_data/alter_info.hpp"
