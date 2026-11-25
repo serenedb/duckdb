@@ -1903,13 +1903,6 @@ bool JsonScan::DirectStruct(idx_t id, simdjson::ondemand::value &value, idx_t ro
 			return false;
 		}
 	}
-	if (transform_options.error_missing_key) {
-		for (idx_t i = 0; i < node.children.size(); i++) {
-			if (!found[i]) {
-				return false;
-			}
-		}
-	}
 	return true;
 }
 
