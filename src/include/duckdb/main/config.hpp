@@ -9,7 +9,6 @@
 #pragma once
 
 #include "duckdb/storage/storage_info.hpp"
-#include "duckdb/common/enums/role_capability.hpp"
 #include "duckdb/common/allocator.hpp"
 #include "duckdb/common/case_insensitive_map.hpp"
 #include "duckdb/common/cgroups.hpp"

@@ -38,7 +38,6 @@
 #include "duckdb/planner/joinside.hpp"
 #include "duckdb/planner/bound_constraint.hpp"
 #include "duckdb/planner/logical_operator.hpp"
-#include "duckdb/catalog/catalog_entry/function_entry.hpp"
 #include "duckdb/catalog/catalog_entry/trigger_catalog_entry.hpp"
 #include "duckdb/common/enums/copy_option_mode.hpp"
 #include "duckdb/common/enums/trigger_type.hpp"

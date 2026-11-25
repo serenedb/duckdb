@@ -12,7 +12,6 @@
 #include "duckdb/main/extension_helper.hpp"
 #include "duckdb/storage/storage_extension.hpp"
 #include "duckdb/common/serializer/serializer.hpp"
-#include "duckdb/common/exception/catalog_exception.hpp"
 #include "duckdb/common/exception/parser_exception.hpp"
 #include "duckdb/common/path.hpp"
 
