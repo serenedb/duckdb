@@ -169,7 +169,8 @@ unique_ptr<LogicalOperator> FilterPushdown::PushdownGet(unique_ptr<LogicalOperat
 	auto &column_ids = get.GetColumnIds();
 	//! We generate the table filters that will be executed during the table scan
 	vector<FilterPushdownResult> pushdown_results;
-	get.table_filters = combiner.GenerateTableScanFilters(column_ids, pushdown_results);
+	get.table_filters =
+	    combiner.GenerateTableScanFilters(column_ids, pushdown_results, get.function.exact_in_filter_pushdown);
 
 	GenerateFilters();
 
