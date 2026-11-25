@@ -379,10 +379,15 @@ extern "C" u32 duckdb_fsst12_import(duckdb_fsst12_decoder_t *decoder, const u8 *
       // a symbol has 1 to 8 bytes, all of them within buf
       if (len < 1 || len > 8 || len > buf_size - pos) return DUCKDB_FSST12_IMPORT_OUT_OF_BOUNDS;
       decoder->len[i] = len;
-      decoder->symbol[i] = 0;
-      for(u32 j = 0; j < len; j++) {
-        ((u8*) &decoder->symbol[i])[j] = buf[pos++];
+      u64 symbol = 0;
+      if (buf_size - pos >= 8) {
+         memcpy(&symbol, buf + pos, 8);
+         symbol &= ~0ULL >> (64 - 8 * len);
+      } else {
+         memcpy(&symbol, buf + pos, len);
       }
+      decoder->symbol[i] = symbol;
+      pos += len;
    }
    // fill unused symbols with text "corrupt". Gives a chance to detect corrupted code sequences (if there are unused symbols).
    while(symbolCount<4096) {
