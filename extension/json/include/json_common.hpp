@@ -115,8 +115,7 @@ public:
 	//! Maximum recursion depth for recursive functions
 	static constexpr idx_t MAX_RECURSION_DEPTH = 128;
 	//! Read/Write flags
-	static constexpr auto READ_FLAG =
-	    JSONReadFlags::ALLOW_INF_AND_NAN | JSONReadFlags::ALLOW_TRAILING_COMMAS | JSONReadFlags::BIGNUM_AS_RAW;
+	static constexpr auto READ_FLAG = JSON_TYPE_READ_FLAGS;
 	static constexpr auto STRICT_READ_FLAG = JSONReadFlags::BIGNUM_AS_RAW;
 	static constexpr auto WRITE_FLAG = JSONWriteFlags::ALLOW_INF_AND_NAN;
 	static constexpr auto WRITE_PRETTY_FLAG = JSONWriteFlags::ALLOW_INF_AND_NAN | JSONWriteFlags::PRETTY;
