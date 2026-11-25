@@ -41,6 +41,18 @@ SELECT (SELECT [count(*), coalesce(sum(id), -1)] FROM numbers WHERE ${col} <> 7 
 ----
 true
 
+query I
+SELECT (SELECT [count(*), coalesce(sum(id), -1)] FROM numbers WHERE ${col} < 7 AND ${col} <> 3 AND ${col} >= 1) =
+       (SELECT [count(*) FILTER (${col} < 7 AND ${col} <> 3 AND ${col} >= 1), coalesce(sum(id) FILTER (${col} < 7 AND ${col} <> 3 AND ${col} >= 1), -1)] FROM numbers)
+----
+true
+
+query I
+SELECT (SELECT [count(*), coalesce(sum(id), -1)] FROM numbers WHERE ${col} > 120 AND ${col} <> 3) =
+       (SELECT [count(*) FILTER (${col} > 120 AND ${col} <> 3), coalesce(sum(id) FILTER (${col} > 120 AND ${col} <> 3), -1)] FROM numbers)
+----
+true
+
 endloop
 
 endloop
