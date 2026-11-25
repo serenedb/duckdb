@@ -108,11 +108,31 @@ public:
 
 	idx_t FilterSelection(SelectionVector &sel, Vector &vector, idx_t scan_count,
 	                      idx_t &approved_tuple_count) override {
-		for (auto &child : children) {
-			child->FilterSelection(sel, vector, scan_count, approved_tuple_count);
-			if (approved_tuple_count == 0) {
-				break;
+		idx_t child = 0;
+		if (filters_masks && !sel.IsSet() && vector.GetVectorType() == VectorType::FLAT_VECTOR &&
+		    approved_tuple_count != 0 && approved_tuple_count <= STANDARD_VECTOR_SIZE) {
+			uint64_t mask[MASK_WORDS];
+			const auto words = (approved_tuple_count + 63) / 64;
+			std::fill_n(mask, words, ~uint64_t(0));
+			for (auto rows = approved_tuple_count;
+			     child < children.size() && rows * MASKED_SHARE >= approved_tuple_count; child++) {
+				children[child]->FilterMask(vector, approved_tuple_count, mask);
+				rows = 0;
+				for (idx_t w = 0; w < words; w++) {
+					rows += UnsafeNumericCast<idx_t>(std::popcount(mask[w]));
+				}
 			}
+			if (!result_sel.IsSet()) {
+				result_sel.Initialize(STANDARD_VECTOR_SIZE);
+			}
+			const auto rows = MaskToSelection(mask, approved_tuple_count, result_sel.data());
+			if (rows != approved_tuple_count) {
+				sel.Initialize(result_sel);
+				approved_tuple_count = rows;
+			}
+		}
+		for (; child < children.size() && approved_tuple_count != 0; child++) {
+			children[child]->FilterSelection(sel, vector, scan_count, approved_tuple_count);
 		}
 		return approved_tuple_count;
 	}
@@ -141,7 +161,10 @@ public:
 	}
 
 private:
+	static constexpr idx_t MASKED_SHARE = 4;
+
 	vector<unique_ptr<ExpressionFilterExecutor>> children;
+	SelectionVector result_sel;
 	bool filters_values;
 	bool filters_masks;
 };
