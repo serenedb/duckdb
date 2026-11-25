@@ -47,6 +47,7 @@ void ExpressionFilterExecutor::FilterMask(Vector &vector, idx_t count, uint64_t 
 
 static constexpr idx_t MASK_WORDS = STANDARD_VECTOR_SIZE / 64;
 static constexpr idx_t SPARSE_WORD_ROWS = 4;
+static constexpr idx_t MAX_STRING_IN_COMPARISONS = 4;
 
 struct BytePositions {
 	consteval BytePositions() {
@@ -449,6 +450,69 @@ private:
 	LogicalType column_type;
 	idx_t version = 0;
 	unique_ptr<ComparisonFilterExecutor> comparison;
+};
+
+class InFilterExecutor final : public ExpressionFilterExecutor {
+public:
+	explicit InFilterExecutor(vector<unique_ptr<ComparisonFilterExecutor>> children_p)
+	    : children(std::move(children_p)), input_sel(STANDARD_VECTOR_SIZE), result_sel(STANDARD_VECTOR_SIZE),
+	      merge_sel(STANDARD_VECTOR_SIZE) {
+	}
+
+	idx_t FilterSelection(SelectionVector &sel, Vector &vector, idx_t scan_count,
+	                      idx_t &approved_tuple_count) override {
+		if (approved_tuple_count == 0) {
+			return 0;
+		}
+		if (approved_tuple_count > input_sel.Capacity()) {
+			input_sel.Initialize(approved_tuple_count);
+			result_sel.Initialize(approved_tuple_count);
+			merge_sel.Initialize(approved_tuple_count);
+		}
+		const auto has_selection = sel.IsSet();
+		if (has_selection) {
+			for (idx_t i = 0; i < approved_tuple_count; i++) {
+				input_sel.set_index(i, sel.get_index(i));
+			}
+		}
+		idx_t result_count = 0;
+		for (auto &child : children) {
+			SelectionVector child_sel;
+			if (has_selection) {
+				child_sel.Initialize(input_sel);
+			}
+			auto child_count = approved_tuple_count;
+			child->FilterSelection(child_sel, vector, scan_count, child_count);
+			if (child_count == approved_tuple_count) {
+				if (has_selection) {
+					sel.Initialize(input_sel);
+				}
+				return approved_tuple_count;
+			}
+			idx_t left = 0;
+			idx_t right = 0;
+			idx_t merged_count = 0;
+			while (left < result_count || right < child_count) {
+				auto left_index = left < result_count ? result_sel.get_index(left) : scan_count;
+				auto right_index = right < child_count ? child_sel.get_index(right) : scan_count;
+				auto index = MinValue(left_index, right_index);
+				merge_sel.set_index(merged_count++, index);
+				left += left_index == index;
+				right += right_index == index;
+			}
+			std::swap(result_sel, merge_sel);
+			result_count = merged_count;
+		}
+		sel.Initialize(result_sel);
+		approved_tuple_count = result_count;
+		return result_count;
+	}
+
+private:
+	vector<unique_ptr<ComparisonFilterExecutor>> children;
+	SelectionVector input_sel;
+	SelectionVector result_sel;
+	SelectionVector merge_sel;
 };
 
 template <bool IS_NULL>
@@ -880,6 +944,30 @@ static unique_ptr<ExpressionFilterExecutor> TryCreateBetweenExecutor(const Bound
 	return make_uniq<ConjunctionAndFilterExecutor>(std::move(children));
 }
 
+static unique_ptr<ExpressionFilterExecutor> TryCreateInExecutor(const BoundOperatorExpression &expr) {
+	auto &expressions = expr.GetChildren();
+	if (expressions.size() < 2 || !IsColumnReferenceExpression(*expressions[0])) {
+		return nullptr;
+	}
+	const auto type = expressions[0]->GetReturnType().InternalType();
+	if (!IsSupportedComparisonType(type) ||
+	    (type == PhysicalType::VARCHAR && expressions.size() - 1 > MAX_STRING_IN_COMPARISONS)) {
+		return nullptr;
+	}
+	vector<unique_ptr<ComparisonFilterExecutor>> children;
+	for (idx_t i = 1; i < expressions.size(); i++) {
+		if (expressions[i]->GetExpressionClass() != ExpressionClass::BOUND_CONSTANT) {
+			return nullptr;
+		}
+		const auto &constant = expressions[i]->Cast<BoundConstantExpression>().GetValue();
+		if (constant.type().InternalType() != type) {
+			return nullptr;
+		}
+		children.push_back(make_uniq<ComparisonFilterExecutor>(ExpressionType::COMPARE_EQUAL, constant));
+	}
+	return make_uniq<InFilterExecutor>(std::move(children));
+}
+
 static unique_ptr<ExpressionFilterExecutor> TryCreateFunctionExecutor(const BoundFunctionExpression &func,
                                                                       bool inside_selectivity_optional) {
 	if (!inside_selectivity_optional && func.GetExpressionType() == ExpressionType::COMPARE_BETWEEN) {
@@ -945,6 +1033,9 @@ static unique_ptr<ExpressionFilterExecutor> TryCreateFastExecutor(const Expressi
 		return TryCreateFunctionExecutor(expression.Cast<BoundFunctionExpression>(), inside_selectivity_optional);
 	case ExpressionClass::BOUND_OPERATOR: {
 		auto &op = expression.Cast<BoundOperatorExpression>();
+		if (op.GetExpressionType() == ExpressionType::COMPARE_IN) {
+			return inside_selectivity_optional ? nullptr : TryCreateInExecutor(op);
+		}
 		if (op.GetChildren().size() != 1 || !IsColumnReferenceExpression(*op.GetChildren()[0])) {
 			return nullptr;
 		}

@@ -117,3 +117,34 @@ TEST_CASE("Expression filters select over an unset and a set selection alike", "
 	            [](int64_t v) { return v == 2 || v == 9; });
 	CheckFilter(context, values, InList({42, 43}), [](int64_t) { return false; });
 }
+
+TEST_CASE("Expression filters offered no row select none", "[filter]") {
+	DuckDB db(nullptr);
+	Connection con(db);
+	Vector values(LogicalType::BIGINT, STANDARD_VECTOR_SIZE);
+	auto data = FlatVector::GetDataMutable<int64_t>(values);
+	for (idx_t row = 0; row < STANDARD_VECTOR_SIZE; row++) {
+		data[row] = static_cast<int64_t>(row % 10);
+	}
+	FlatVector::SetSize(values, STANDARD_VECTOR_SIZE);
+	auto &context = *con.context;
+
+	vector<unique_ptr<Expression>> expressions;
+	expressions.push_back(ColumnEquals(3));
+	expressions.push_back(make_uniq<BoundConjunctionExpression>(
+	    ExpressionType::CONJUNCTION_AND,
+	    BoundComparisonExpression::Create(ExpressionType::COMPARE_GREATERTHANOREQUALTO, Column(), Constant(2)),
+	    BoundComparisonExpression::Create(ExpressionType::COMPARE_LESSTHANOREQUALTO, Column(), Constant(5))));
+	expressions.push_back(InList({1, 7}));
+	for (auto &expr : expressions) {
+		const ExpressionFilter filter(std::move(expr));
+		auto state = TableFilterState::Initialize(context, filter);
+		INFO(filter.expr->ToString());
+		REQUIRE(state->Cast<ExpressionFilterState>().fast_executor.get() != nullptr);
+		SelectionVector sel;
+		idx_t approved = 0;
+		REQUIRE(ColumnSegment::FilterSelection(sel, values, *state, STANDARD_VECTOR_SIZE, approved) == 0);
+		REQUIRE(approved == 0);
+		REQUIRE(!sel.IsSet());
+	}
+}

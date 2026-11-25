@@ -22,6 +22,7 @@ add_library_unity(
   test_external_file_cache.cpp
   test_hyperlog.cpp
   test_http_body.cpp
+  test_in_filter_executor.cpp
   test_http_transport_manager.cpp
   test_literal.cpp
   test_lru_cache.cpp
