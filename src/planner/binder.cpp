@@ -470,7 +470,7 @@ bool Binder::ActsOnVisibleTarget(CatalogType type, const QualifiedName &name, On
 		}
 		throw CatalogException::MissingObject(type, name.Name());
 	}
-	if (!entry || LookupVisible(context, role, *entry)) {
+	if (!entry || EntryVisible(context, role, *entry)) {
 		return true;
 	}
 	if (if_not_found == OnEntryNotFound::RETURN_NULL) {

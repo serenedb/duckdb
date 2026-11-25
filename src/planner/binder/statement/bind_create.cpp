@@ -97,7 +97,7 @@ void Binder::BindSchemaOrCatalog(CatalogEntryRetriever &retriever, Identifier &c
 	// try searching for the catalog instead
 	auto &db_manager = DatabaseManager::Get(context);
 	auto database = db_manager.GetDatabase(context, schema);
-	if (!database || !context.CanSeeDatabase(retriever.CheckAs(), *database)) {
+	if (!database || !DatabaseVisible(context, retriever.CheckAs(), *database)) {
 		//! No database by that name was found
 		return;
 	}
@@ -251,7 +251,7 @@ QualifiedName Binder::ResolveCatalog(CatalogEntryRetriever &retriever, const Qua
 		// it names an attached database. It is positionally unambiguous, so we do not run the catalog/schema ambiguity
 		// check (which is only relevant for a lone qualifier).
 		auto database = DatabaseManager::Get(context).GetDatabase(context, path[0]);
-		if (database && context.CanSeeDatabase(retriever.CheckAs(), *database)) {
+		if (database && DatabaseVisible(context, retriever.CheckAs(), *database)) {
 			catalog = std::move(path[0]);
 			path.erase(path.begin());
 		}

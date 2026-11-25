@@ -47,7 +47,6 @@ struct RelationChecks {
 DUCKDB_API bool IsUnowned(const CatalogEntry &entry);
 DUCKDB_API bool CanUseSchema(const RoleAccess &role, const CatalogEntry &schema);
 DUCKDB_API bool EntryVisible(ClientContext &context, const RoleAccess &role, CatalogEntry &entry);
-DUCKDB_API bool LookupVisible(ClientContext &context, const RoleAccess &role, CatalogEntry &entry);
 constexpr uint64_t VISIBLE_TO_ALL = ~uint64_t(0);
 DUCKDB_API uint64_t VisibilityBits(const CatalogEntry &entry);
 DUCKDB_API uint64_t ViewerBits(const RoleAccess &role);

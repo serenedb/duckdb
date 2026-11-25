@@ -75,7 +75,7 @@ static vector<shared_ptr<AttachedDatabase>> GetAllCatalogs(ClientContext &contex
 	auto &database_manager = DatabaseManager::Get(context);
 	auto databases = database_manager.GetDatabases(context);
 	for (auto &database : databases) {
-		if (context.CanSeeDatabase(role, *database)) {
+		if (DatabaseVisible(context, role, *database)) {
 			result.push_back(database);
 		}
 	}

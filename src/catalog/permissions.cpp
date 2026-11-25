@@ -77,7 +77,7 @@ static bool CanConnect(ClientContext &context, const RoleAccess &role, const Ide
 }
 
 bool DatabaseVisible(ClientContext &context, const RoleAccess &role, AttachedDatabase &database) {
-	if (database.IsSystem() || database.IsTemporary()) {
+	if (role.is_superuser || database.IsSystem() || database.IsTemporary()) {
 		return true;
 	}
 	if (!database.IsReadOnly()) {
@@ -111,12 +111,11 @@ static optional_ptr<CatalogEntry> ContainingSchema(ClientContext &context, Catal
 }
 
 bool EntryVisible(ClientContext &context, const RoleAccess &role, CatalogEntry &entry) {
+	if (role.is_superuser) {
+		return true;
+	}
 	if (entry.type == CatalogType::DATABASE_ENTRY) {
 		return CanConnect(context, role, entry.name, SystemEntry(context, CatalogType::DATABASE_ENTRY, entry.name));
-	}
-	if ((entry.type == CatalogType::TABLE_FUNCTION_ENTRY || entry.type == CatalogType::SCALAR_FUNCTION_ENTRY) &&
-	    !Allowed(role, entry, AclMode::Execute)) {
-		return false;
 	}
 	if (entry.internal || IsUnowned(entry)) {
 		return true;
@@ -168,11 +167,6 @@ bool EntryVisible(ClientContext &context, const RoleAccess &role, CatalogEntry &
 	default:
 		return true;
 	}
-}
-
-bool LookupVisible(ClientContext &context, const RoleAccess &role, CatalogEntry &entry) {
-	return role.is_superuser || entry.type == CatalogType::TABLE_FUNCTION_ENTRY ||
-	       entry.type == CatalogType::SCALAR_FUNCTION_ENTRY || EntryVisible(context, role, entry);
 }
 
 static constexpr uint64_t PUBLIC_BIT = uint64_t(1) << 63;

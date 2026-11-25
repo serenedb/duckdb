@@ -256,7 +256,7 @@ void CatalogSearchPath::Set(vector<CatalogSearchEntry> new_paths, CatalogSetPath
 		// only schema supplied - check if this is a catalog instead
 		if (path.GetCatalog().empty()) {
 			auto catalog = Catalog::GetCatalogEntry(context, path.GetSchema());
-			if (catalog && context.CanSeeDatabase(context.CurrentRole(), catalog->GetAttached())) {
+			if (catalog && DatabaseVisible(context, context.CurrentRole(), catalog->GetAttached())) {
 				auto default_schema = catalog->GetDefaultSchema();
 				if (default_schema) {
 					auto schema = catalog->GetSchema(context, *default_schema, OnEntryNotFound::RETURN_NULL);
@@ -283,7 +283,7 @@ void CatalogSearchPath::Set(vector<CatalogSearchEntry> new_paths, CatalogSetPath
 		// the catalog itself doesn't exist.
 		if (set_type != CatalogSetPathType::SET_SCHEMA) {
 			auto catalog = Catalog::GetCatalogEntry(context, path.GetCatalog());
-			if (catalog && context.CanSeeDatabase(context.CurrentRole(), catalog->GetAttached())) {
+			if (catalog && DatabaseVisible(context, context.CurrentRole(), catalog->GetAttached())) {
 				continue;
 			}
 		}
