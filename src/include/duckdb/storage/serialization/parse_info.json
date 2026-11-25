@@ -658,6 +658,41 @@
         "id": 332,
         "name": "best_grantor",
         "type": "bool"
+      },
+      {
+        "id": 341,
+        "name": "objects",
+        "type": "vector<ObjectReference>"
+      },
+      {
+        "id": 342,
+        "name": "grantees",
+        "type": "vector<RoleSpec>"
+      },
+      {
+        "id": 343,
+        "name": "grantee_ids",
+        "type": "vector<idx_t>"
+      },
+      {
+        "id": 344,
+        "name": "for_roles",
+        "type": "vector<RoleSpec>"
+      },
+      {
+        "id": 345,
+        "name": "target_roles",
+        "type": "vector<idx_t>"
+      },
+      {
+        "id": 346,
+        "name": "default_schemas",
+        "type": "vector<string>"
+      },
+      {
+        "id": 347,
+        "name": "default_scopes",
+        "type": "vector<idx_t>"
       }
     ]
   },
@@ -888,6 +923,21 @@
         "id": 320,
         "name": "grantor_id",
         "type": "idx_t"
+      },
+      {
+        "id": 322,
+        "name": "granted_roles",
+        "type": "vector<RoleSpec>"
+      },
+      {
+        "id": 323,
+        "name": "grantor_ids",
+        "type": "vector<idx_t>"
+      },
+      {
+        "id": 324,
+        "name": "members",
+        "type": "vector<RoleSpec>"
       }
     ]
   },

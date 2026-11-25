@@ -55,6 +55,7 @@ struct ObjectReference {
 	vector<LogicalType> func_parameters;
 	bool has_func_args = false;
 	CatalogType type = CatalogType::INVALID;
+	idx_t overload_oid = 0;
 
 	void Serialize(Serializer &serializer) const;
 	static ObjectReference Deserialize(Deserializer &deserializer);

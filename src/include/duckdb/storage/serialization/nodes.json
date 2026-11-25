@@ -732,6 +732,11 @@
         "name": "type",
         "type": "CatalogType",
         "default": "CatalogType::INVALID"
+      },
+      {
+        "id": 104,
+        "name": "overload_oid",
+        "type": "idx_t"
       }
     ],
     "pointer_type": "none"

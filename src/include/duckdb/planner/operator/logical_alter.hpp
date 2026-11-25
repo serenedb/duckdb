@@ -19,10 +19,10 @@ public:
 	static constexpr const LogicalOperatorType TYPE = LogicalOperatorType::LOGICAL_ALTER;
 
 public:
-	explicit LogicalAlter(vector<unique_ptr<AlterInfo>> infos);
+	explicit LogicalAlter(unique_ptr<AlterInfo> info);
 	~LogicalAlter() override;
 
-	vector<unique_ptr<AlterInfo>> infos;
+	unique_ptr<AlterInfo> info;
 
 public:
 	void Serialize(Serializer &serializer) const override;
@@ -34,6 +34,9 @@ public:
 
 protected:
 	void ResolveTypes() override;
+
+private:
+	explicit LogicalAlter(unique_ptr<ParseInfo> info);
 };
 
 } // namespace duckdb

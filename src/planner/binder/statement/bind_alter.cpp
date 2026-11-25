@@ -284,79 +284,20 @@ BoundRoutine Binder::BindRoutine(const RoutineReference &routine, AclMode use, O
 	return result;
 }
 
-static void ExpandAllInSchema(Binder &binder, unique_ptr<AlterInfo> info, vector<unique_ptr<AlterInfo>> &objects) {
-	auto &grant = info->Cast<AlterPermissionsInfo>();
-	const auto name = Binder::ResolveCatalog(binder.EntryRetriever(), grant.GetQualifiedName());
-	auto &path = name.Path();
-	auto &schema = *binder.EntryRetriever().GetSchema(path.front(), vector<Identifier>(path.begin() + 1, path.end()),
-	                                                  AclMode::NoRights, OnEntryNotFound::THROW_EXCEPTION);
-	const auto add = [&](const CatalogEntry &entry, optional_ptr<const MacroFunction> overload) {
-		auto object = grant.Copy();
-		auto &target = object->Cast<AlterPermissionsInfo>();
-		target.all_in_schema = false;
-		target.SetQualifiedName(schema.GetQualifiedName(entry.name));
-		if (overload) {
-			target.func_parameters = overload->ParameterTypes();
-			target.has_func_args = true;
-			target.include_functions = !overload->is_procedure;
-			target.include_procedures = overload->is_procedure;
-		}
-		objects.push_back(std::move(object));
-	};
-	const auto kind = grant.entry_catalog_type;
-	const auto scan = [&](CatalogType type) {
-		schema.Scan(binder.context, type, [&](CatalogEntry &entry) {
-			if (entry.internal || !EntryVisible(binder.context, binder.CheckAs(), entry)) {
-				return;
-			}
-			if (kind != CatalogType::MACRO_ENTRY) {
-				if (entry.type == kind || (kind == CatalogType::TABLE_ENTRY && entry.type == CatalogType::VIEW_ENTRY)) {
-					add(entry, nullptr);
-				}
-				return;
-			}
-			for (auto &overload : entry.Cast<MacroCatalogEntry>().macros) {
-				if (overload->is_procedure ? grant.include_procedures : grant.include_functions) {
-					add(entry, overload.get());
-				}
-			}
-		});
-	};
-	scan(kind);
-	if (kind == CatalogType::MACRO_ENTRY) {
-		scan(CatalogType::TABLE_MACRO_ENTRY);
-	}
-}
-
 BoundStatement Binder::Bind(AlterStatement &stmt) {
 	BoundStatement result;
 	result.names = {"Success"};
 	result.types = {LogicalType::BOOLEAN};
 	GetStatementProperties().return_type = StatementReturnType::NOTHING;
-	auto split = stmt.info->SplitObjects();
-	if (split.empty()) {
-		split.push_back(std::move(stmt.info));
+	if (auto plan = BindAlter(stmt.info)) {
+		result.plan = std::move(plan);
+		return result;
 	}
-	vector<unique_ptr<AlterInfo>> infos;
-	for (auto &info : split) {
-		if (info->type == AlterType::ALTER_PERMISSIONS && info->Cast<AlterPermissionsInfo>().all_in_schema) {
-			ExpandAllInSchema(*this, std::move(info), infos);
-		} else {
-			infos.push_back(std::move(info));
-		}
+	auto &info = *stmt.info;
+	if (!ActsOnVisibleTarget(info.GetCatalogType(), info.GetQualifiedName(), info.if_not_found)) {
+		stmt.info.reset();
 	}
-	vector<unique_ptr<AlterInfo>> altered;
-	for (auto &info : infos) {
-		if (auto plan = BindAlter(info)) {
-			D_ASSERT(infos.size() == 1);
-			result.plan = std::move(plan);
-			return result;
-		}
-		if (ActsOnVisibleTarget(info->GetCatalogType(), info->GetQualifiedName(), info->if_not_found)) {
-			altered.push_back(std::move(info));
-		}
-	}
-	result.plan = make_uniq<LogicalAlter>(std::move(altered));
+	result.plan = make_uniq<LogicalAlter>(std::move(stmt.info));
 	return result;
 }
 

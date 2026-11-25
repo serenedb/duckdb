@@ -240,7 +240,7 @@ string ObjectTypeKeyword(ParseResult &objtype) {
 
 void SetObjectTarget(AlterPermissionsInfo &info, CatalogType type, QualifiedName name) {
 	info.entry_catalog_type = type;
-	info.SetQualifiedName(std::move(name));
+	info.objects.push_back(ObjectReference {std::move(name)});
 }
 
 unique_ptr<SQLStatement> AlterStatementOf(unique_ptr<AlterInfo> info) {
@@ -535,8 +535,9 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformAlterOwnerStatement(PEG
 	if (target.Name() == "OwnerRoutineTarget") {
 		auto &signature = target.Child<ListParseResult>(1);
 		SetObjectTarget(*info, CatalogType::MACRO_ENTRY, transformer.Transform<QualifiedName>(signature.GetChild(0)));
-		info->has_func_args =
-		    TransformFunctionArgumentTypes(transformer, signature.Child<OptionalParseResult>(1), info->func_parameters);
+		auto &routine = info->objects.back();
+		routine.has_func_args = TransformFunctionArgumentTypes(transformer, signature.Child<OptionalParseResult>(1),
+		                                                       routine.func_parameters);
 		TransformRoutineKind(target.GetChild(0), info->include_functions, info->include_procedures);
 	} else if (target.Name() == "OwnerUnqualifiedTarget") {
 		SetObjectTarget(*info, GrantObjectType(ObjectTypeKeyword(target.GetChild(0))),

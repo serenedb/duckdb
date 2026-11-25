@@ -95,8 +95,8 @@ optional_ptr<RoleEntry> Binder::BindRole(const RoleSpec &role, OnEntryNotFound i
 	return nullptr;
 }
 
-static void ResolveMembershipGrantor(Binder &binder, const RoleAccess &caller, const RoleEntry &granted,
-                                     AlterRoleInfo &info) {
+static idx_t ResolveMembershipGrantor(Binder &binder, const RoleAccess &caller, const RoleEntry &granted,
+                                      const AlterRoleInfo &info) {
 	auto &context = binder.context;
 	const auto bootstrap = DBConfig::GetConfig(context).bootstrap_role;
 	const auto best_admin = [&](idx_t member) {
@@ -104,15 +104,13 @@ static void ResolveMembershipGrantor(Binder &binder, const RoleAccess &caller, c
 	};
 	if (info.granted_by.empty()) {
 		if (caller.is_superuser) {
-			info.grantor_id = bootstrap;
-			return;
+			return bootstrap;
 		}
 		auto grantor = best_admin(caller.role);
 		if (!grantor.IsValid()) {
 			throw InvalidInputException("no possible grantors");
 		}
-		info.grantor_id = grantor.GetIndex();
-		return;
+		return grantor.GetIndex();
 	}
 	auto &grantor = *binder.BindRole(info.granted_by);
 	auto &grantor_name = grantor.name.GetIdentifierName();
@@ -139,41 +137,58 @@ static void ResolveMembershipGrantor(Binder &binder, const RoleAccess &caller, c
 			    StringUtil::Format("permission denied to grant privileges as role \"%s\"", grantor_name));
 		}
 	}
-	info.grantor_id = grantor.oid;
+	return grantor.oid;
 }
 
-static void BindMembership(Binder &binder, const RoleAccess &caller, const RoleEntry &member, AlterRoleInfo &info) {
+static void BindMemberships(Binder &binder, const RoleAccess &caller, AlterRoleInfo &info) {
 	auto &context = binder.context;
-	auto granted = binder.BindRole(info.grant_role, OnEntryNotFound::RETURN_NULL);
-	if (!granted) {
-		return;
-	}
-	if (info.grant_role.type != RoleSpecType::NAME) {
-		info.grant_role = RoleSpec(granted->name);
-	}
-	if (info.alter_group) {
-		auto &name = granted->name.GetIdentifierName();
-		if (granted->IsPredefined()) {
-			throw Exception({{"error_subtype", "RESERVED_NAME"}, {"detail", "Cannot alter reserved roles."}},
-			                ExceptionType::INVALID_INPUT, StringUtil::Format("role name \"%s\" is reserved", name));
+	vector<reference<RoleEntry>> members;
+	for (auto &spec : info.members) {
+		if (auto member = binder.BindRole(spec, OnEntryNotFound::RETURN_NULL)) {
+			spec = RoleSpec(member->name);
+			members.push_back(*member);
 		}
-		if (!caller.is_superuser && granted->IsSuperuser()) {
-			throw PermissionException(
-			    {{"detail", "Only roles with the SUPERUSER attribute may alter roles with the SUPERUSER attribute."}},
-			    "permission denied to alter role");
-		}
-		if (!caller.is_superuser && !caller.AdminOf(granted->oid)) {
-			throw PermissionException(
-			    {{"detail", StringUtil::Format(
-			                    "Only roles with the ADMIN option on role \"%s\" may add or drop members.", name)}},
-			    "permission denied to alter role");
-		}
-	} else {
-		CheckMembershipAuthorization(context, caller, *granted, info.revoke);
 	}
-	ResolveMembershipGrantor(binder, caller, *granted, info);
-	if (!info.revoke && member.oid == DBConfig::GetConfig(context).database_owner_role) {
-		throw NotImplementedException("role \"%s\" cannot be a member of any role", member.name.GetIdentifierName());
+	for (auto &spec : info.granted_roles) {
+		optional_ptr<RoleEntry> granted;
+		if (!members.empty() && !caller.IsSystem()) {
+			granted = binder.BindRole(spec, OnEntryNotFound::RETURN_NULL);
+		}
+		if (!granted) {
+			info.grantor_ids.push_back(0);
+			continue;
+		}
+		if (spec.type != RoleSpecType::NAME) {
+			spec = RoleSpec(granted->name);
+		}
+		if (info.alter_group) {
+			auto &name = granted->name.GetIdentifierName();
+			if (granted->IsPredefined()) {
+				throw Exception({{"error_subtype", "RESERVED_NAME"}, {"detail", "Cannot alter reserved roles."}},
+				                ExceptionType::INVALID_INPUT, StringUtil::Format("role name \"%s\" is reserved", name));
+			}
+			if (!caller.is_superuser && granted->IsSuperuser()) {
+				throw PermissionException(
+				    {{"detail",
+				      "Only roles with the SUPERUSER attribute may alter roles with the SUPERUSER attribute."}},
+				    "permission denied to alter role");
+			}
+			if (!caller.is_superuser && !caller.AdminOf(granted->oid)) {
+				throw PermissionException(
+				    {{"detail", StringUtil::Format(
+				                    "Only roles with the ADMIN option on role \"%s\" may add or drop members.", name)}},
+				    "permission denied to alter role");
+			}
+		} else {
+			CheckMembershipAuthorization(context, caller, *granted, info.revoke);
+		}
+		info.grantor_ids.push_back(ResolveMembershipGrantor(binder, caller, *granted, info));
+		for (auto &member : members) {
+			if (!info.revoke && member.get().oid == DBConfig::GetConfig(context).database_owner_role) {
+				throw NotImplementedException("role \"%s\" cannot be a member of any role",
+				                              member.get().name.GetIdentifierName());
+			}
+		}
 	}
 }
 
@@ -292,14 +307,16 @@ void Binder::BindCreateRole(CreateRoleInfo &info) {
 
 void Binder::BindAlterRole(AlterRoleInfo &info) {
 	auto &caller = CheckAs();
+	if (!info.granted_roles.empty()) {
+		BindMemberships(*this, caller, info);
+		return;
+	}
 	auto role = BindRole(info.Target(), OnEntryNotFound::RETURN_NULL);
 	if (role) {
 		info.SetQualifiedName(Identifier(), Identifier(), role->name);
 		info.role_type = RoleSpecType::NAME;
 	}
-	if (role && !caller.IsSystem() && !info.grant_role.empty()) {
-		BindMembership(*this, caller, *role, info);
-	} else if (role && !caller.IsSystem()) {
+	if (role && !caller.IsSystem()) {
 		CheckAlterRole(context, caller, *role, info);
 	}
 	const bool settings = !info.set_config.empty() || !info.reset_config.empty() || info.reset_all_config;

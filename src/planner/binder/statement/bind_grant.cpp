@@ -42,7 +42,7 @@ static void WarnUngranted(ClientContext &context, const AlterPermissionsInfo &in
 
 static void RequireGrantableAcl(ClientContext &context, const AlterPermissionsInfo &info, const RoleAccess &role,
                                 idx_t owner, std::span<const AclItem> acl, CatalogType type, std::string_view name) {
-	if (info.repeats_object || role.MemberOf(owner)) {
+	if (role.MemberOf(owner)) {
 		return;
 	}
 	const auto options = BestGrantor(info.grantors, owner, info.privileges, acl).options;
@@ -53,10 +53,10 @@ static void RequireGrantableAcl(ClientContext &context, const AlterPermissionsIn
 	              StringUtil::Format("\"%s\"", name));
 }
 
-static const Permissions &TargetPermissions(const AlterPermissionsInfo &info, CatalogEntry &target) {
-	if (info.overload_oid) {
+static const Permissions &TargetPermissions(idx_t overload_oid, CatalogEntry &target) {
+	if (overload_oid) {
 		auto &macro = target.Cast<MacroCatalogEntry>();
-		return macro.OverloadPermissions(*macro.FindOverload(info.overload_oid));
+		return macro.OverloadPermissions(*macro.FindOverload(overload_oid));
 	}
 	return target.permissions;
 }
@@ -66,30 +66,26 @@ struct RelationColumn {
 	std::span<const AclItem> acl;
 };
 
-static void RequireGrantable(Binder &binder, const AlterPermissionsInfo &info, const RoleAccess &role,
-                             CatalogEntry &entry) {
-	if (info.repeats_object) {
-		return;
-	}
+static void RequireGrantable(Binder &binder, const AlterPermissionsInfo &info, const ObjectReference &object,
+                             const RoleAccess &role, CatalogEntry &entry) {
 	auto &context = binder.context;
-	auto &permissions = TargetPermissions(info, entry);
+	auto &permissions = TargetPermissions(object.overload_oid, entry);
 	const auto owner = permissions.owner;
 	const bool checked = !role.MemberOf(owner);
 	vector<AclItem> defaults;
 	std::span<const AclItem> stored = permissions.acl;
 	if (checked && permissions.UsesDefaultAcl()) {
-		defaults = Permissions::AclDefault(ObjectKindOf(info.entry_catalog_type).acl_class, owner);
+		defaults = Permissions::AclDefault(ObjectKindOf(object.type).acl_class, owner);
 		stored = defaults;
 	}
 	auto &name = entry.name.GetIdentifierName();
 	if (checked && info.privileges != AclMode::NoRights) {
 		const auto options = BestGrantor(info.grantors, owner, info.privileges, stored).options;
 		if (options == AclMode::NoRights &&
-		    !role.CanAny(info.entry_catalog_type, permissions, ObjectKindOf(info.entry_catalog_type).privileges)) {
-			ThrowPermissionDenied(info.entry_catalog_type, name);
+		    !role.CanAny(object.type, permissions, ObjectKindOf(object.type).privileges)) {
+			ThrowPermissionDenied(object.type, name);
 		}
-		WarnUngranted(context, info, info.privileges, options,
-		              info.privileges == ObjectKindOf(info.entry_catalog_type).privileges,
+		WarnUngranted(context, info, info.privileges, options, info.privileges == ObjectKindOf(object.type).privileges,
 		              StringUtil::Format("\"%s\"", name));
 	}
 	const auto implied = info.revoke ? info.privileges & ACL_COLUMN_PRIVILEGES : AclMode::NoRights;
@@ -133,7 +129,7 @@ static void RequireGrantable(Binder &binder, const AlterPermissionsInfo &info, c
 		}
 		auto &column_name = column.name.get().GetIdentifierName();
 		const auto options = BestGrantor(info.grantors, owner, requested, stored, column.acl).options;
-		if (options == AclMode::NoRights && !role.CanAny(info.entry_catalog_type, permissions, ACL_COLUMN_PRIVILEGES) &&
+		if (options == AclMode::NoRights && !role.CanAny(object.type, permissions, ACL_COLUMN_PRIVILEGES) &&
 		    (role.HeldModes(column.acl) & ACL_COLUMN_PRIVILEGES) == AclMode::NoRights) {
 			throw PermissionException("permission denied for column \"%s\" of relation \"%s\"", column_name, name);
 		}
@@ -142,46 +138,48 @@ static void RequireGrantable(Binder &binder, const AlterPermissionsInfo &info, c
 	}
 }
 
-static CatalogEntry &ResolvePermissionsTarget(Binder &binder, AlterPermissionsInfo &info) {
+static CatalogEntry &ResolvePermissionsTarget(Binder &binder, const AlterPermissionsInfo &info,
+                                              ObjectReference &object) {
 	auto &context = binder.context;
-	auto &name = info.GetQualifiedName();
-	if (info.entry_catalog_type == CatalogType::SCHEMA_ENTRY) {
+	auto &name = object.name;
+	object.type = info.entry_catalog_type;
+	if (object.type == CatalogType::SCHEMA_ENTRY) {
 		auto &path = name.Path();
 		auto &schema =
 		    *binder.EntryRetriever().GetSchema(path.front(), vector<Identifier>(path.begin() + 1, path.end()),
 		                                       AclMode::NoRights, OnEntryNotFound::THROW_EXCEPTION);
-		info.SetQualifiedName(QualifiedName::FromCatalogSchema(schema.ParentCatalog().GetName(),
-		                                                       schema.GetParentSchemaPath(), schema.name));
+		object.name = QualifiedName::FromCatalogSchema(schema.ParentCatalog().GetName(), schema.GetParentSchemaPath(),
+		                                               schema.name);
 		return schema;
 	}
-	if (IsCatalogLevel(info.entry_catalog_type)) {
-		auto &entry = *binder.EntryRetriever().GetEntry(EntryLookupInfo(info.entry_catalog_type, name));
-		info.SetQualifiedName(entry.ParentCatalog().GetName(), Identifier(), entry.name);
+	if (IsCatalogLevel(object.type)) {
+		auto &entry = *binder.EntryRetriever().GetEntry(EntryLookupInfo(object.type, name));
+		object.name = QualifiedName(entry.ParentCatalog().GetName(), Identifier(), entry.name);
 		return entry;
 	}
 	optional_ptr<CatalogEntry> entry;
-	if (info.entry_catalog_type == CatalogType::MACRO_ENTRY) {
+	if (object.type == CatalogType::MACRO_ENTRY) {
 		auto routine = binder.BindRoutine(
-		    {name, info.func_parameters, info.has_func_args, info.include_functions, info.include_procedures},
+		    {name, object.func_parameters, object.has_func_args, info.include_functions, info.include_procedures},
 		    AclMode::NoRights, OnEntryNotFound::THROW_EXCEPTION);
 		entry = routine.entry;
 		if (routine.overload && !IsUnowned(*entry)) {
-			info.overload_oid = entry->Cast<MacroCatalogEntry>().OverloadOid(*routine.overload);
+			object.overload_oid = entry->Cast<MacroCatalogEntry>().OverloadOid(*routine.overload);
 		}
 	} else {
-		entry = binder.GetCatalogEntry(EntryLookupInfo(info.entry_catalog_type, name), OnEntryNotFound::RETURN_NULL);
+		entry = binder.GetCatalogEntry(EntryLookupInfo(object.type, name), OnEntryNotFound::RETURN_NULL);
 	}
 	if (!entry) {
-		throw CatalogException::MissingEntry(EntryLookupInfo(info.entry_catalog_type, name), string());
+		throw CatalogException::MissingEntry(EntryLookupInfo(object.type, name), string());
 	}
-	if (info.entry_catalog_type == CatalogType::VIEW_ENTRY && entry->type != CatalogType::VIEW_ENTRY) {
+	if (object.type == CatalogType::VIEW_ENTRY && entry->type != CatalogType::VIEW_ENTRY) {
 		throw CatalogException(Exception::InitializeExtraInfo("WRONG_OBJECT_TYPE", optional_idx()),
 		                       StringUtil::Format("\"%s\" is not a view", name.Name().GetIdentifierName()));
 	}
-	info.entry_catalog_type = entry->type == CatalogType::VIEW_ENTRY ? CatalogType::TABLE_ENTRY : entry->type;
-	info.SetQualifiedName(QualifiedName::FromCatalogSchema(
+	object.type = entry->type == CatalogType::VIEW_ENTRY ? CatalogType::TABLE_ENTRY : entry->type;
+	object.name = QualifiedName::FromCatalogSchema(
 	    entry->ParentCatalog().GetName(),
-	    entry->ParentSchemaPath(entry->ParentCatalog().GetCatalogTransaction(context)), entry->name));
+	    entry->ParentSchemaPath(entry->ParentCatalog().GetCatalogTransaction(context)), entry->name);
 	return *entry;
 }
 
@@ -226,9 +224,11 @@ static const RoleAccess &GrantingRole(Binder &binder, const AlterPermissionsInfo
 	return binder.AccessOf(granted_by);
 }
 
-static void ResolveGrant(Binder &binder, AlterPermissionsInfo &info) {
+static const RoleAccess &ResolveGrantors(Binder &binder, AlterPermissionsInfo &info) {
 	auto &context = binder.context;
-	info.grantee_id = GranteeId(binder, info.grantee);
+	for (auto &grantee : info.grantees) {
+		info.grantee_ids.push_back(GranteeId(binder, grantee));
+	}
 	auto &role = GrantingRole(binder, info);
 	info.grantors = GrantorRoles(context, role);
 	info.best_grantor = true;
@@ -239,8 +239,14 @@ static void ResolveGrant(Binder &binder, AlterPermissionsInfo &info) {
 			info.grantors.insert(info.grantors.end(), role.closure.begin(), role.closure.end());
 		}
 	}
+	return role;
+}
+
+static void ResolveGrant(Binder &binder, const AlterPermissionsInfo &info, const RoleAccess &role,
+                         ObjectReference &object) {
+	auto &context = binder.context;
 	if (info.entry_catalog_type == CatalogType::PARAMETER_ENTRY) {
-		const auto setting = info.GetQualifiedName().Name();
+		const auto setting = object.name.Name();
 		if (!Settings::GetAccess(context, setting)) {
 			Catalog::AutoloadExtensionByConfigName(context, setting);
 		}
@@ -255,23 +261,24 @@ static void ResolveGrant(Binder &binder, AlterPermissionsInfo &info) {
 			acl = parameter->permissions.acl;
 		}
 		RequireGrantableAcl(context, info, role, owner, acl, CatalogType::PARAMETER_ENTRY, name);
-		info.SetQualifiedName(Identifier(), Identifier(), Identifier(StringUtil::Lower(name)));
+		object.name = QualifiedName(Identifier(StringUtil::Lower(name)));
+		object.type = CatalogType::PARAMETER_ENTRY;
 		return;
 	}
-	auto &target = ResolvePermissionsTarget(binder, info);
+	auto &target = ResolvePermissionsTarget(binder, info, object);
 	RefuseSystemTablespace(target);
 	if (target.internal) {
 		throw PermissionException("Cannot alter entry \"%s\" because it is an internal system entry",
 		                          target.name.GetIdentifierName());
 	}
-	RequireGrantable(binder, info, role, target);
+	RequireGrantable(binder, info, object, role, target);
 }
 
-static void ResolveOwner(Binder &binder, AlterPermissionsInfo &info) {
+static void ResolveOwner(Binder &binder, AlterPermissionsInfo &info, ObjectReference &object) {
 	auto &context = binder.context;
-	auto &entry = ResolvePermissionsTarget(binder, info);
+	auto &entry = ResolvePermissionsTarget(binder, info, object);
 	RefuseSystemTablespace(entry);
-	auto &permissions = TargetPermissions(info, entry);
+	auto &permissions = TargetPermissions(object.overload_oid, entry);
 	info.new_owner_id = binder.BindRole(info.new_owner)->oid;
 	auto &role = binder.CheckAs();
 	const bool enforce = !role.is_superuser;
@@ -290,7 +297,8 @@ static void ResolveOwner(Binder &binder, AlterPermissionsInfo &info) {
 	}
 	if (!relation) {
 		Require(context, role, entry, AclMode::Own,
-		        info.overload_oid ? entry.Cast<MacroCatalogEntry>().FindOverload(info.overload_oid).get() : nullptr);
+		        object.overload_oid ? entry.Cast<MacroCatalogEntry>().FindOverload(object.overload_oid).get()
+		                            : nullptr);
 	}
 	if (!role.CanSet(info.new_owner_id)) {
 		throw PermissionException("must be able to SET ROLE \"%s\"", RoleName(context, info.new_owner_id));
@@ -321,18 +329,30 @@ static void ResolveOwner(Binder &binder, AlterPermissionsInfo &info) {
 
 static void ResolveDefaultPrivileges(Binder &binder, AlterPermissionsInfo &info) {
 	auto &context = binder.context;
-	info.target_role = info.for_role.empty() ? context.current_role_id : binder.BindRole(info.for_role)->oid;
-	if (!binder.CheckAs().MemberOf(info.target_role)) {
-		throw PermissionException("permission denied to change default privileges");
+	for (auto &grantee : info.grantees) {
+		info.grantee_ids.push_back(GranteeId(binder, grantee));
 	}
-	info.grantee_id = GranteeId(binder, info.grantee);
-	info.default_acl_oid = DatabaseManager::Get(context).NextOid();
+	const auto add_role = [&](idx_t role) {
+		if (!binder.CheckAs().MemberOf(role)) {
+			throw PermissionException("permission denied to change default privileges");
+		}
+		info.target_roles.push_back(role);
+	};
+	if (info.for_roles.empty()) {
+		add_role(context.current_role_id);
+	}
+	for (auto &for_role : info.for_roles) {
+		add_role(binder.BindRole(for_role)->oid);
+	}
 	const auto database = DatabaseManager::GetDefaultDatabase(context);
-	if (!info.default_schema.empty()) {
-		info.default_scope = binder.EntryRetriever()
-		                         .GetSchema(database, {Identifier(info.default_schema)}, AclMode::NoRights,
-		                                    OnEntryNotFound::THROW_EXCEPTION)
-		                         ->oid;
+	if (info.default_schemas.empty()) {
+		info.default_scopes.push_back(0);
+	}
+	for (auto &schema : info.default_schemas) {
+		info.default_scopes.push_back(
+		    binder.EntryRetriever()
+		        .GetSchema(database, {Identifier(schema)}, AclMode::NoRights, OnEntryNotFound::THROW_EXCEPTION)
+		        ->oid);
 	}
 	binder.EntryRetriever().GetEntry(EntryLookupInfo(CatalogType::DATABASE_ENTRY, QualifiedName(database)));
 	info.SetQualifiedName(Identifier(), Identifier(), database);
@@ -382,26 +402,75 @@ void Binder::ResolveOwned(AlterInfo &info) {
 	RefuseBootstrapRole(*this, reassign.role_ids, "reassign ownership of objects");
 }
 
-void Binder::BindAlterPermissions(AlterPermissionsInfo &info, StatementProperties &properties) {
-	const auto catalog_type = info.GetCatalogType();
-	if (catalog_type == CatalogType::SCHEMA_ENTRY) {
-		info.SetQualifiedName(ResolveCatalog(entry_retriever, info.GetQualifiedName()));
-		properties.RegisterDBModify(Catalog::GetCatalog(context, info.GetQualifiedName().Path().front()), context,
-		                            DatabaseModificationType::ALTER_TABLE);
-	} else if (catalog_type != CatalogType::DATABASE_ENTRY && catalog_type != CatalogType::ROLE_ENTRY &&
-	           catalog_type != CatalogType::TABLESPACE_ENTRY &&
-	           catalog_type != CatalogType::FOREIGN_DATA_WRAPPER_ENTRY &&
-	           catalog_type != CatalogType::PARAMETER_ENTRY && catalog_type != CatalogType::LANGUAGE_ENTRY) {
-		info.SetQualifiedName(BindTableName(info.GetQualifiedName()));
-		auto &catalog = Catalog::GetCatalog(context, info.GetQualifiedName().Catalog());
-		properties.RegisterDBModify(catalog, context, DatabaseModificationType::ALTER_TABLE);
+static void ExpandAllInSchema(Binder &binder, AlterPermissionsInfo &grant) {
+	const auto kind = grant.entry_catalog_type;
+	vector<ObjectReference> objects;
+	for (auto &listed : grant.objects) {
+		const auto name = Binder::ResolveCatalog(binder.EntryRetriever(), listed.name);
+		auto &path = name.Path();
+		auto &schema =
+		    *binder.EntryRetriever().GetSchema(path.front(), vector<Identifier>(path.begin() + 1, path.end()),
+		                                       AclMode::NoRights, OnEntryNotFound::THROW_EXCEPTION);
+		const auto scan = [&](CatalogType type) {
+			schema.Scan(binder.context, type, [&](CatalogEntry &entry) {
+				if (entry.internal || !EntryVisible(binder.context, binder.CheckAs(), entry)) {
+					return;
+				}
+				if (kind != CatalogType::MACRO_ENTRY) {
+					if (entry.type == kind ||
+					    (kind == CatalogType::TABLE_ENTRY && entry.type == CatalogType::VIEW_ENTRY)) {
+						objects.push_back(ObjectReference {schema.GetQualifiedName(entry.name)});
+					}
+					return;
+				}
+				for (auto &overload : entry.Cast<MacroCatalogEntry>().macros) {
+					if (overload->is_procedure ? grant.include_procedures : grant.include_functions) {
+						objects.push_back(
+						    ObjectReference {schema.GetQualifiedName(entry.name), overload->ParameterTypes(), true});
+					}
+				}
+			});
+		};
+		scan(kind);
+		if (kind == CatalogType::MACRO_ENTRY) {
+			scan(CatalogType::TABLE_MACRO_ENTRY);
+		}
 	}
-	if (!info.new_owner.empty()) {
-		ResolveOwner(*this, info);
-	} else if (info.default_objtype != CatalogType::INVALID) {
+	grant.objects = std::move(objects);
+	grant.all_in_schema = false;
+}
+
+void Binder::BindAlterPermissions(AlterPermissionsInfo &info, StatementProperties &properties) {
+	if (info.default_objtype != CatalogType::INVALID) {
 		ResolveDefaultPrivileges(*this, info);
-	} else {
-		ResolveGrant(*this, info);
+		return;
+	}
+	if (info.all_in_schema) {
+		ExpandAllInSchema(*this, info);
+	}
+	const auto catalog_type = info.entry_catalog_type;
+	optional_ptr<const RoleAccess> granting;
+	if (info.new_owner.empty()) {
+		granting = ResolveGrantors(*this, info);
+	}
+	for (auto &object : info.objects) {
+		if (catalog_type == CatalogType::SCHEMA_ENTRY) {
+			object.name = ResolveCatalog(entry_retriever, object.name);
+			properties.RegisterDBModify(Catalog::GetCatalog(context, object.name.Path().front()), context,
+			                            DatabaseModificationType::ALTER_TABLE);
+		} else if (catalog_type != CatalogType::DATABASE_ENTRY && catalog_type != CatalogType::ROLE_ENTRY &&
+		           catalog_type != CatalogType::TABLESPACE_ENTRY &&
+		           catalog_type != CatalogType::FOREIGN_DATA_WRAPPER_ENTRY &&
+		           catalog_type != CatalogType::PARAMETER_ENTRY && catalog_type != CatalogType::LANGUAGE_ENTRY) {
+			object.name = BindTableName(object.name);
+			properties.RegisterDBModify(Catalog::GetCatalog(context, object.name.Catalog()), context,
+			                            DatabaseModificationType::ALTER_TABLE);
+		}
+		if (granting) {
+			ResolveGrant(*this, info, *granting, object);
+		} else {
+			ResolveOwner(*this, info, object);
+		}
 	}
 }
 

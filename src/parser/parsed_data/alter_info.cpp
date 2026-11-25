@@ -28,10 +28,6 @@ AlterInfo::AlterInfo(AlterType type) : ParseInfo(TYPE), type(type) {
 AlterInfo::~AlterInfo() {
 }
 
-vector<unique_ptr<AlterInfo>> AlterInfo::SplitObjects() {
-	return {};
-}
-
 AlterEntryData AlterInfo::GetAlterEntryData() const {
 	return AlterEntryData(GetQualifiedName(), if_not_found);
 }

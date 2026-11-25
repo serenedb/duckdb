@@ -236,58 +236,14 @@ unique_ptr<AlterInfo> AlterPermissionsInfo::Copy() const {
 	result->overload_oid = overload_oid;
 	result->func_parameters = func_parameters;
 	result->has_func_args = has_func_args;
-	result->repeats_object = repeats_object;
 	result->objects = objects;
 	result->grantees = grantees;
+	result->grantee_ids = grantee_ids;
 	result->for_roles = for_roles;
+	result->target_roles = target_roles;
 	result->default_schemas = default_schemas;
+	result->default_scopes = default_scopes;
 	return std::move(result);
-}
-
-vector<unique_ptr<AlterInfo>> AlterPermissionsInfo::SplitObjects() {
-	if (objects.empty() && grantees.empty() && for_roles.empty() && default_schemas.empty()) {
-		return {};
-	}
-	auto listed = std::move(objects);
-	auto roles = std::move(for_roles);
-	auto schemas = std::move(default_schemas);
-	auto names = std::move(grantees);
-	objects.clear();
-	for_roles.clear();
-	default_schemas.clear();
-	grantees.clear();
-	if (listed.empty()) {
-		listed.push_back(ObjectReference {GetQualifiedName(), func_parameters, has_func_args});
-	}
-	if (roles.empty()) {
-		roles.push_back(for_role);
-	}
-	if (schemas.empty()) {
-		schemas.push_back(default_schema);
-	}
-	if (names.empty()) {
-		names.push_back(grantee);
-	}
-	vector<unique_ptr<AlterInfo>> result;
-	for (auto &object : listed) {
-		for (auto &role : roles) {
-			for (auto &schema : schemas) {
-				for (auto &name : names) {
-					auto info = Copy();
-					auto &permissions = info->Cast<AlterPermissionsInfo>();
-					permissions.SetQualifiedName(object.name);
-					permissions.func_parameters = object.func_parameters;
-					permissions.has_func_args = object.has_func_args;
-					permissions.for_role = role;
-					permissions.default_schema = schema;
-					permissions.grantee = name;
-					permissions.repeats_object = &name != &names.front();
-					result.push_back(std::move(info));
-				}
-			}
-		}
-	}
-	return result;
 }
 
 static string TargetKeywordToSQL(const AlterPermissionsInfo &info) {
@@ -449,6 +405,7 @@ unique_ptr<AlterInfo> AlterRoleInfo::Copy() const {
 	result->set_config = set_config;
 	result->grant_role = grant_role;
 	result->granted_roles = granted_roles;
+	result->grantor_ids = grantor_ids;
 	result->members = members;
 	result->revoke = revoke;
 	result->option_only = option_only;
@@ -462,25 +419,6 @@ unique_ptr<AlterInfo> AlterRoleInfo::Copy() const {
 	result->alter_group = alter_group;
 	result->role_type = role_type;
 	return std::move(result);
-}
-
-vector<unique_ptr<AlterInfo>> AlterRoleInfo::SplitObjects() {
-	auto roles = std::move(granted_roles);
-	auto listed = std::move(members);
-	granted_roles.clear();
-	members.clear();
-	vector<unique_ptr<AlterInfo>> result;
-	for (auto &role : roles) {
-		for (auto &member : listed) {
-			auto info = Copy();
-			auto &membership = info->Cast<AlterRoleInfo>();
-			membership.grant_role = role;
-			membership.SetName(member.name);
-			membership.role_type = member.type;
-			result.push_back(std::move(info));
-		}
-	}
-	return result;
 }
 
 RoleSpec AlterRoleInfo::Target() const {

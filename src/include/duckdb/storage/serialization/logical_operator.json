@@ -1187,7 +1187,17 @@
     "class": "LogicalAlter",
     "base": "LogicalOperator",
     "enum": "LOGICAL_ALTER",
-    "custom_implementation": true
+    "members": [
+      {
+        "id": 200,
+        "name": "info",
+        "type": "AlterInfo*",
+        "base": "ParseInfo"
+      }
+    ],
+    "constructor": [
+      "info"
+    ]
   },
   {
     "class": "LogicalLoad",

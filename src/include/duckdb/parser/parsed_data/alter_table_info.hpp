@@ -135,17 +135,18 @@ struct AlterPermissionsInfo : public AlterInfo {
 	idx_t overload_oid = 0;
 	vector<LogicalType> func_parameters;
 	bool has_func_args = false;
-	bool repeats_object = false;
 	vector<ObjectReference> objects;
 	vector<RoleSpec> grantees;
+	vector<idx_t> grantee_ids;
 	vector<RoleSpec> for_roles;
+	vector<idx_t> target_roles;
 	vector<string> default_schemas;
+	vector<idx_t> default_scopes;
 
 public:
 	CatalogType GetCatalogType() const override;
 	unique_ptr<AlterInfo> Copy() const override;
 	string ToString() const override;
-	vector<unique_ptr<AlterInfo>> SplitObjects() override;
 	void ApplyTo(Permissions &permissions, CatalogType entry_type, optional_ptr<vector<ColumnAcl>> columns) const;
 	void ApplyTo(Permissions &permissions, CatalogType entry_type, ColumnList &columns) const;
 	void ApplyToDatabase(CreatePermissions &permissions) const;
@@ -189,6 +190,7 @@ struct AlterRoleInfo : public AlterInfo {
 	vector<string> set_config;
 	RoleSpec grant_role;
 	vector<RoleSpec> granted_roles;
+	vector<idx_t> grantor_ids;
 	vector<RoleSpec> members;
 	bool revoke = false;
 	bool option_only = false;
@@ -207,7 +209,6 @@ public:
 	CatalogType GetCatalogType() const override;
 	unique_ptr<AlterInfo> Copy() const override;
 	string ToString() const override;
-	vector<unique_ptr<AlterInfo>> SplitObjects() override;
 
 	void Serialize(Serializer &serializer) const override;
 	static unique_ptr<AlterInfo> Deserialize(Deserializer &deserializer);
