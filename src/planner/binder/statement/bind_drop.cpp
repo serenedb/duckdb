@@ -28,7 +28,8 @@ void Binder::BindDropTrigger(DropInfo &info, StatementProperties &properties) {
 	// IF EXISTS only guards the trigger, not the table (PostgreSQL-compatible behavior).
 	auto &table_entry = entry_retriever.GetEntry<TableCatalogEntry>(base_table_ref.GetQualifiedName(), AclMode::Own);
 	// the trigger lives in the same (possibly nested) schema as its base table
-	info.SetQualifiedName(table_entry.GetQualifiedName(info.GetQualifiedName().Name()));
+	auto &trigger = info.objects.front().name;
+	trigger = table_entry.GetQualifiedName(trigger.Name());
 	properties.RegisterDBModify(table_entry.ParentCatalog(), context, DatabaseModificationType::DROP_CATALOG_ENTRY);
 }
 

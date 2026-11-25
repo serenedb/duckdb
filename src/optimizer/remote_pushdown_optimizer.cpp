@@ -771,9 +771,6 @@ CatalogPushdownResult RemotePushdownOptimizer::RewriteStatement(DropStatement &s
 	for (auto &object : info.objects) {
 		target = Merge(std::move(target), ResolveDDLTarget(object.name, DDLTarget::EXISTING_ENTRY, info.type));
 	}
-	if (info.objects.empty()) {
-		target = ResolveDDLTarget(info.GetQualifiedName(), DDLTarget::EXISTING_ENTRY, info.type);
-	}
 	return VerifyStatementSupport(statement, std::move(target));
 }
 
@@ -1879,13 +1876,9 @@ void RemotePushdownOptimizer::StripCatalogName(SQLStatement &statement, const Id
 		StripCatalogName(*statement.Cast<CreateStatement>().info, catalog_name);
 		break;
 	case StatementType::DROP_STATEMENT: {
-		auto &info = *statement.Cast<DropStatement>().info;
-		for (auto &object : info.objects) {
+		for (auto &object : statement.Cast<DropStatement>().info->objects) {
 			StripCatalogFromName(object.name, catalog_name);
 		}
-		auto name = info.GetQualifiedName();
-		StripCatalogFromName(name, catalog_name);
-		info.SetQualifiedName(std::move(name));
 		break;
 	}
 	case StatementType::ALTER_STATEMENT:

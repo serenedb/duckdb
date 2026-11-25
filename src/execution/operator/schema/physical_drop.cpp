@@ -178,7 +178,7 @@ SourceResultType PhysicalDrop::GetDataInternal(ExecutionContext &context, DataCh
 		D_ASSERT(info->extra_drop_info);
 		auto &extra_info = info->extra_drop_info->Cast<ExtraDropSecretInfo>();
 		SecretManager::Get(context.client)
-		    .DropSecretByName(context.client, info->GetQualifiedName().Name(), info->if_not_found,
+		    .DropSecretByName(context.client, info->objects.front().name.Name(), info->if_not_found,
 		                      extra_info.persist_mode, Identifier(extra_info.secret_storage));
 		break;
 	}
@@ -194,14 +194,14 @@ SourceResultType PhysicalDrop::GetDataInternal(ExecutionContext &context, DataCh
 		auto &base_table_ref = trigger_extra.base_table->Cast<BaseTableRef>();
 		auto &table_entry = Catalog::GetEntry<TableCatalogEntry>(context.client, base_table_ref.GetQualifiedName());
 		auto transaction = table_entry.ParentCatalog().GetCatalogTransaction(context.client);
-		if (info->if_not_found != OnEntryNotFound::THROW_EXCEPTION &&
-		    !table_entry.GetTrigger(transaction, info->GetQualifiedName().Name())) {
+		auto &trigger = info->objects.front().name.Name();
+		if (info->if_not_found != OnEntryNotFound::THROW_EXCEPTION && !table_entry.GetTrigger(transaction, trigger)) {
 			break;
 		}
-		if (!table_entry.DropTrigger(transaction, info->GetQualifiedName().Name(), info->cascade)) {
+		if (!table_entry.DropTrigger(transaction, trigger, info->cascade)) {
 			if (info->if_not_found == OnEntryNotFound::THROW_EXCEPTION) {
-				throw CatalogException("Trigger with name %s does not exist on table %s",
-				                       info->GetQualifiedName().Name(), base_table_ref.Table());
+				throw CatalogException("Trigger with name %s does not exist on table %s", trigger,
+				                       base_table_ref.Table());
 			}
 		}
 		break;

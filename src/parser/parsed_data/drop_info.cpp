@@ -61,9 +61,6 @@ string DropInfo::ToString() const {
 		for (auto &object : objects) {
 			targets.push_back(ObjectToSQL(object.name, object.func_parameters, object.has_func_args));
 		}
-		if (objects.empty()) {
-			targets.push_back(ObjectToSQL(qualified_name, func_parameters, has_func_args));
-		}
 		result += " " + StringUtil::Join(targets, ", ");
 		if (type == CatalogType::TRIGGER_ENTRY && extra_drop_info) {
 			auto &trigger_info = extra_drop_info->Cast<ExtraDropTriggerInfo>();
