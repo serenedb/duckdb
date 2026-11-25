@@ -26,6 +26,7 @@ add_library_unity(
   logical_operator.cpp
   logical_operator_repeatability.cpp
   binder.cpp
+  binder_privileges.cpp
   bind_context.cpp
   planner.cpp
   statement_preprocessor.cpp

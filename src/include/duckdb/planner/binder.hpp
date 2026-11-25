@@ -58,6 +58,7 @@ namespace duckdb {
 class BoundResultModifier;
 class BoundSelectNode;
 class ClientContext;
+struct CreateIndexInfo;
 class RoleEntry;
 class ExpressionBinder;
 struct ExternalResourceOptions;
@@ -471,6 +472,7 @@ public:
 	void BindSharedDefinition();
 	void RecordCalls(optional_ptr<RecordedCalls> calls);
 	void Execute(const CatalogEntry &function, optional_ptr<const MacroFunction> overload = nullptr);
+	void RequireStatement(StatementType type);
 	void RequireIndexCalls(TableCatalogEntry &table, optional_ptr<const vector<PhysicalIndex>> changed);
 	void RequirePlacement(Catalog &catalog, const CreateInfo &info, optional_ptr<const CatalogEntry> indexed);
 	bool ActsOnVisibleTarget(CatalogType type, const QualifiedName &name, OnEntryNotFound if_not_found);
@@ -496,6 +498,11 @@ public:
 	                                 OnEntryNotFound if_not_found = OnEntryNotFound::THROW_EXCEPTION);
 	string RoleName(idx_t role);
 	static void RequireUserSchema(const SchemaCatalogEntry &schema, const Identifier &name);
+	idx_t CreationOwner(const CreateInfo &info);
+	void RequireReplacedOwner(SchemaCatalogEntry &schema, const CreateInfo &info, const Identifier &name);
+	void RequireIndexCreate(StandardEntry &relation, const CreateIndexInfo &info);
+	static void OwnDefinedOverloads(CreateInfo &info, idx_t defined);
+	void RequireDefinedTypeUsage(CreateInfo &info, idx_t defined, Catalog &catalog);
 	void BindCreateRole(CreateRoleInfo &info);
 	void BindAlterRole(AlterRoleInfo &info);
 	void BindDropRole(const Identifier &name);

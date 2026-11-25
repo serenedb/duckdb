@@ -6,7 +6,6 @@
 #include "duckdb/common/algorithm.hpp"
 #include "duckdb/catalog/catalog_entry/type_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/view_catalog_entry.hpp"
-#include "duckdb/catalog/default/default_schemas.hpp"
 #include "duckdb/parser/parsed_data/create_schema_info.hpp"
 #include "duckdb/catalog/catalog_search_path.hpp"
 #include "duckdb/catalog/dependency_manager.hpp"
@@ -344,46 +343,6 @@ SchemaCatalogEntry &Binder::BindSchema(CreateInfo &info, AclMode use) {
 	return schema_obj;
 }
 
-static idx_t CreationOwner(ClientContext &context, const CreateInfo &info, const RoleAccess &creator) {
-	if (info.type == CatalogType::SEQUENCE_ENTRY) {
-		auto &sequence = info.Cast<CreateSequenceInfo>();
-		if (sequence.serial) {
-			auto table = Catalog::GetEntry(
-			    context,
-			    EntryLookupInfo(CatalogType::TABLE_ENTRY,
-			                    QualifiedName::FromPath({sequence.owned_by.begin(), sequence.owned_by.end() - 1})),
-			    OnEntryNotFound::RETURN_NULL);
-			if (table) {
-				return table->permissions.owner;
-			}
-		}
-	}
-	return creator.role;
-}
-
-static void RequireReplacedOwner(ClientContext &context, const RoleAccess &role, SchemaCatalogEntry &schema,
-                                 const CreateInfo &info, const Identifier &name) {
-	const bool merges_overloads =
-	    info.on_conflict == OnCreateConflict::ALTER_ON_CONFLICT &&
-	    (info.type == CatalogType::MACRO_ENTRY || info.type == CatalogType::TABLE_MACRO_ENTRY);
-	const bool replaces = info.on_conflict == OnCreateConflict::REPLACE_ON_CONFLICT ||
-	                      (info.on_conflict == OnCreateConflict::ALTER_ON_CONFLICT && !merges_overloads);
-	if (role.is_superuser || !replaces) {
-		return;
-	}
-	if (auto existing = schema.GetEntry(schema.catalog.GetCatalogTransaction(context), info.type, name)) {
-		Require(context, role, *existing, AclMode::Own);
-	}
-}
-
-void Binder::RequireUserSchema(const SchemaCatalogEntry &schema, const Identifier &name) {
-	if (schema.internal && (!schema.catalog.IsDuckCatalog() || DefaultSchemaGenerator::IsDefaultSchema(schema.name))) {
-		throw PermissionException::WithDetail("System catalog modifications are currently disallowed.",
-		                                      "permission denied to create \"%s.%s\"", schema.name.GetIdentifierName(),
-		                                      name.GetIdentifierName());
-	}
-}
-
 SchemaCatalogEntry &Binder::BindCreateSchema(CreateInfo &info) {
 	const bool trigger = info.type == CatalogType::TRIGGER_ENTRY;
 	auto &schema = BindSchema(info, trigger ? AclMode::NoRights : AclMode::Create);
@@ -391,12 +350,12 @@ SchemaCatalogEntry &Binder::BindCreateSchema(CreateInfo &info) {
 		throw BinderException("Cannot create entry in system catalog");
 	}
 	if (!trigger) {
-		RequireReplacedOwner(context, CheckAs(), schema, info, info.GetQualifiedName().Name());
+		RequireReplacedOwner(schema, info, info.GetQualifiedName().Name());
 	}
 	RequireUserSchema(schema, info.GetQualifiedName().Name());
 	if (!CheckAs().IsSystem()) {
 		schema.ParentCatalog().AssignOwner(context, info.permissions, ObjectKindOf(info.type).acl_class, &schema,
-		                                   CreationOwner(context, info, CheckAs()));
+		                                   CreationOwner(info));
 	}
 	return schema;
 }
@@ -512,25 +471,6 @@ void Binder::BindCreateViewInfo(CreateViewInfo &base) {
 	}
 	BindView(context, CheckAs(), *base.query, base.GetQualifiedName().Catalog(), base.GetQualifiedName().Schema(),
 	         dependencies, name_bindings, base.aliases, base.types, base.names);
-}
-
-static void OwnDefinedOverloads(CreateInfo &info, idx_t defined) {
-	auto &macros = info.Cast<CreateMacroInfo>().macros;
-	for (idx_t i = 0; i < defined; i++) {
-		macros[i]->permissions = info.permissions;
-	}
-}
-
-static void RequireDefinedTypeUsage(Binder &binder, CreateInfo &info, idx_t defined, Catalog &catalog) {
-	auto &macros = info.Cast<CreateMacroInfo>().macros;
-	for (idx_t i = 0; i < (defined ? defined : macros.size()); i++) {
-		for (auto &type : macros[i]->types) {
-			RequireTypeUsage(binder.context, binder.CheckAs(), type, catalog);
-		}
-		for (auto &type : macros[i]->return_types) {
-			RequireTypeUsage(binder.context, binder.CheckAs(), type, catalog);
-		}
-	}
 }
 
 idx_t Binder::MergeMacroOverloads(CreateInfo &info) {
@@ -1311,7 +1251,7 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 	case CatalogType::TABLE_MACRO_ENTRY: {
 		const auto defined = MergeMacroOverloads(*stmt.info);
 		auto &schema = BindCreateFunctionInfo(*stmt.info);
-		RequireDefinedTypeUsage(*this, *stmt.info, defined, schema.ParentCatalog());
+		RequireDefinedTypeUsage(*stmt.info, defined, schema.ParentCatalog());
 		OwnDefinedOverloads(*stmt.info, defined);
 		result.plan =
 		    make_uniq<LogicalCreate>(LogicalOperatorType::LOGICAL_CREATE_MACRO, std::move(stmt.info), &schema);
@@ -1320,7 +1260,7 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 	case CatalogType::MACRO_ENTRY: {
 		const auto defined = MergeMacroOverloads(*stmt.info);
 		auto &schema = BindCreateFunctionInfo(*stmt.info);
-		RequireDefinedTypeUsage(*this, *stmt.info, defined, schema.ParentCatalog());
+		RequireDefinedTypeUsage(*stmt.info, defined, schema.ParentCatalog());
 		OwnDefinedOverloads(*stmt.info, defined);
 		auto logical_create =
 		    make_uniq<LogicalCreate>(LogicalOperatorType::LOGICAL_CREATE_MACRO, std::move(stmt.info), &schema);
@@ -1363,11 +1303,7 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 		}
 		if (table_ptr) {
 			auto &table = *table_ptr;
-			Require(context, CheckAs(), table, AclMode::Own);
-			auto &schema = table.ParentSchema(context);
-			Require(context, CheckAs(), schema, AclMode::Create);
-			RequireReplacedOwner(context, CheckAs(), schema, create_index_info, create_index_info.GetIndexName());
-			RequirePlacement(table.catalog, create_index_info, table);
+			RequireIndexCreate(table, create_index_info);
 			if (table.temporary) {
 				stmt.info->temporary = true;
 			}
@@ -1378,11 +1314,7 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 			    CatalogType::VIEW_ENTRY,
 			    BindTableName(create_index_info.GetQualifiedName().WithName(create_index_info.table)));
 			auto &view = EntryRetriever().GetEntry(view_lookup)->Cast<ViewCatalogEntry>();
-			Require(context, CheckAs(), view, AclMode::Own);
-			auto &schema = view.ParentSchema(context);
-			Require(context, CheckAs(), schema, AclMode::Create);
-			RequireReplacedOwner(context, CheckAs(), schema, create_index_info, create_index_info.GetIndexName());
-			RequirePlacement(view.catalog, create_index_info, view);
+			RequireIndexCreate(view, create_index_info);
 			properties.RegisterDBModify(view.catalog, context, DatabaseModificationType::CREATE_INDEX);
 			result.plan = view.catalog.BindCreateViewIndex(*this, stmt, view, std::move(plan));
 		}
