@@ -506,35 +506,6 @@ void Require(ClientContext &context, const RoleAccess &role, CatalogEntry &entry
 	}
 }
 
-idx_t RoleId(ClientContext &context, const Identifier &name) {
-	auto entry = SystemEntry(context, CatalogType::ROLE_ENTRY, name);
-	if (!entry) {
-		throw CatalogException::MissingObject(CatalogType::ROLE_ENTRY, name);
-	}
-	return entry->oid;
-}
-
-idx_t RoleSpecId(ClientContext &context, const RoleSpec &role) {
-	if (role.type == RoleSpecType::NAME) {
-		return RoleId(context, role.name);
-	}
-	return role.type == RoleSpecType::SESSION_USER ? context.session_role : context.current_role_id;
-}
-
-optional_ptr<RoleEntry> RoleSpecEntry(ClientContext &context, const RoleSpec &role, OnEntryNotFound if_not_found) {
-	auto &system = Catalog::GetSystemCatalog(context);
-	auto entry = role.type == RoleSpecType::NAME
-	                 ? system.LookupEntry(system.GetCatalogTransaction(context), CatalogType::ROLE_ENTRY, role.name)
-	                 : system.LookupOwner(system.GetCatalogTransaction(context), RoleSpecId(context, role));
-	if (entry && entry->type == CatalogType::ROLE_ENTRY) {
-		return &entry->Cast<RoleEntry>();
-	}
-	if (if_not_found == OnEntryNotFound::THROW_EXCEPTION) {
-		throw CatalogException::MissingObject(CatalogType::ROLE_ENTRY, Identifier(role.ToString()));
-	}
-	return nullptr;
-}
-
 string RoleName(ClientContext &context, idx_t role) {
 	auto &system = Catalog::GetSystemCatalog(context);
 	auto entry = system.LookupOwner(system.GetCatalogTransaction(context), role);

@@ -19,7 +19,7 @@
 namespace duckdb {
 
 static idx_t GranteeId(Binder &binder, const RoleSpec &grantee) {
-	return grantee.IsPublic() ? ACL_ID_PUBLIC : RoleSpecId(binder.context, grantee);
+	return grantee.IsPublic() ? ACL_ID_PUBLIC : binder.BindRole(grantee)->oid;
 }
 
 static void WarnUngranted(ClientContext &context, const AlterPermissionsInfo &info, AclMode requested,
@@ -217,7 +217,7 @@ static const RoleAccess &GrantingRole(Binder &binder, const AlterPermissionsInfo
 	if (info.granted_by.empty()) {
 		return role;
 	}
-	auto granted_by = RoleSpecId(binder.context, info.granted_by);
+	auto granted_by = binder.BindRole(info.granted_by)->oid;
 	if (!role.MemberOf(granted_by)) {
 		throw PermissionException("must be member of role \"%s\"", RoleName(binder.context, granted_by));
 	}
@@ -270,7 +270,7 @@ static void ResolveOwner(Binder &binder, AlterPermissionsInfo &info) {
 	auto &entry = ResolvePermissionsTarget(binder, info);
 	RefuseSystemTablespace(entry);
 	auto &permissions = TargetPermissions(info, entry);
-	info.new_owner_id = RoleSpecId(context, info.new_owner);
+	info.new_owner_id = binder.BindRole(info.new_owner)->oid;
 	auto &role = binder.CheckAs();
 	const bool enforce = !role.is_superuser;
 	const bool relation = Catalog::InRelationNamespace(entry.type);
@@ -319,7 +319,7 @@ static void ResolveOwner(Binder &binder, AlterPermissionsInfo &info) {
 
 static void ResolveDefaultPrivileges(Binder &binder, AlterPermissionsInfo &info) {
 	auto &context = binder.context;
-	info.target_role = info.for_role.empty() ? context.current_role_id : RoleSpecId(context, info.for_role);
+	info.target_role = info.for_role.empty() ? context.current_role_id : binder.BindRole(info.for_role)->oid;
 	if (!binder.CheckAs().MemberOf(info.target_role)) {
 		throw PermissionException("permission denied to change default privileges");
 	}
@@ -340,7 +340,7 @@ static vector<idx_t> ResolveOwnedRoles(Binder &binder, const vector<RoleSpec> &n
 	auto &context = binder.context;
 	vector<idx_t> result;
 	for (auto &name : names) {
-		auto role = RoleSpecId(context, name);
+		auto role = binder.BindRole(name)->oid;
 		if (!binder.CheckAs().MemberOf(role)) {
 			throw PermissionException(
 			    unordered_map<string, string> {
@@ -372,7 +372,7 @@ void Binder::ResolveOwned(AlterInfo &info) {
 	}
 	auto &reassign = info.Cast<ReassignOwnedInfo>();
 	reassign.role_ids = ResolveOwnedRoles(*this, reassign.roles, "reassign");
-	reassign.new_owner_id = RoleSpecId(context, reassign.new_owner);
+	reassign.new_owner_id = BindRole(reassign.new_owner)->oid;
 	auto &role = CheckAs();
 	if (!role.CanSet(reassign.new_owner_id)) {
 		throw PermissionException("must be able to SET ROLE \"%s\"", RoleName(context, reassign.new_owner_id));

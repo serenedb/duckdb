@@ -70,10 +70,6 @@ DUCKDB_API void RequireTypeUsage(ClientContext &context, const RoleAccess &role,
                                  Catalog &catalog);
 DUCKDB_API void AssignOwner(ClientContext &context, Permissions &permissions, Catalog &catalog, CatalogType objtype,
                             optional_ptr<SchemaCatalogEntry> schema, idx_t owner);
-DUCKDB_API idx_t RoleId(ClientContext &context, const Identifier &name);
-DUCKDB_API idx_t RoleSpecId(ClientContext &context, const RoleSpec &role);
-DUCKDB_API optional_ptr<RoleEntry> RoleSpecEntry(ClientContext &context, const RoleSpec &role,
-                                                 OnEntryNotFound if_not_found);
 DUCKDB_API string RoleName(ClientContext &context, idx_t role);
 
 } // namespace duckdb

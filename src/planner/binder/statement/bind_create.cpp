@@ -1236,7 +1236,7 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 		auto &info = stmt.info->Cast<CreateSchemaInfo>();
 		optional_ptr<RoleEntry> authorization;
 		if (!info.authorization.empty()) {
-			authorization = RoleSpecEntry(context, info.authorization, OnEntryNotFound::THROW_EXCEPTION);
+			authorization = BindRole(info.authorization);
 			if (info.authorization.type != RoleSpecType::NAME) {
 				auto path = info.GetQualifiedName().Path();
 				if (path.size() == 2 && path[0].empty()) {
@@ -1591,7 +1591,7 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 			    StringUtil::Format("permission denied to create tablespace \"%s\"",
 			                       info.GetQualifiedName().Name().GetIdentifierName()));
 		}
-		info.permissions.owner = info.owner.empty() ? role.role : RoleSpecId(context, info.owner);
+		info.permissions.owner = info.owner.empty() ? role.role : BindRole(info.owner)->oid;
 		result.plan = make_uniq<LogicalCreate>(LogicalOperatorType::LOGICAL_CREATE_TABLESPACE, std::move(stmt.info));
 		break;
 	}
@@ -1602,7 +1602,7 @@ BoundStatement Binder::Bind(CreateStatement &stmt) {
 			throw PermissionException("permission denied to create database");
 		}
 		if (!info.owner.empty()) {
-			info.permissions.owner = RoleId(context, info.owner);
+			info.permissions.owner = BindRole(RoleSpec(info.owner))->oid;
 			if (!role.CanSet(info.permissions.owner)) {
 				throw PermissionException("must be able to SET ROLE \"%s\"", RoleName(context, info.permissions.owner));
 			}

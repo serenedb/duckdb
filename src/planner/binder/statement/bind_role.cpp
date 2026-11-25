@@ -76,8 +76,28 @@ static void CheckMembershipAuthorization(ClientContext &context, const RoleAcces
 	}
 }
 
-static void ResolveMembershipGrantor(ClientContext &context, const RoleAccess &caller, const RoleEntry &granted,
+optional_ptr<RoleEntry> Binder::BindRole(const RoleSpec &role, OnEntryNotFound if_not_found) {
+	if (role.type == RoleSpecType::NAME) {
+		auto entry =
+		    entry_retriever.GetEntry(EntryLookupInfo(CatalogType::ROLE_ENTRY, QualifiedName(role.name)), if_not_found);
+		return entry ? &entry->Cast<RoleEntry>() : nullptr;
+	}
+	auto &system = Catalog::GetSystemCatalog(context);
+	auto entry =
+	    system.LookupOwner(system.GetCatalogTransaction(context),
+	                       role.type == RoleSpecType::SESSION_USER ? context.session_role : context.current_role_id);
+	if (entry && entry->type == CatalogType::ROLE_ENTRY) {
+		return &entry->Cast<RoleEntry>();
+	}
+	if (if_not_found == OnEntryNotFound::THROW_EXCEPTION) {
+		throw CatalogException::MissingObject(CatalogType::ROLE_ENTRY, Identifier(role.ToString()));
+	}
+	return nullptr;
+}
+
+static void ResolveMembershipGrantor(Binder &binder, const RoleAccess &caller, const RoleEntry &granted,
                                      AlterRoleInfo &info) {
+	auto &context = binder.context;
 	const auto bootstrap = DBConfig::GetConfig(context).bootstrap_role;
 	const auto best_admin = [&](idx_t member) {
 		return context.security ? context.security->BestAdmin(member, granted.oid) : optional_idx();
@@ -94,7 +114,7 @@ static void ResolveMembershipGrantor(ClientContext &context, const RoleAccess &c
 		info.grantor_id = grantor.GetIndex();
 		return;
 	}
-	auto &grantor = *RoleSpecEntry(context, info.granted_by, OnEntryNotFound::THROW_EXCEPTION);
+	auto &grantor = *binder.BindRole(info.granted_by);
 	auto &grantor_name = grantor.name.GetIdentifierName();
 	if (!caller.is_superuser && caller.role != grantor.oid && !caller.Uses(grantor.oid)) {
 		if (info.revoke) {
@@ -122,9 +142,9 @@ static void ResolveMembershipGrantor(ClientContext &context, const RoleAccess &c
 	info.grantor_id = grantor.oid;
 }
 
-static void BindMembership(ClientContext &context, const RoleAccess &caller, const RoleEntry &member,
-                           AlterRoleInfo &info) {
-	auto granted = RoleSpecEntry(context, info.grant_role, OnEntryNotFound::RETURN_NULL);
+static void BindMembership(Binder &binder, const RoleAccess &caller, const RoleEntry &member, AlterRoleInfo &info) {
+	auto &context = binder.context;
+	auto granted = binder.BindRole(info.grant_role, OnEntryNotFound::RETURN_NULL);
 	if (!granted) {
 		return;
 	}
@@ -151,7 +171,7 @@ static void BindMembership(ClientContext &context, const RoleAccess &caller, con
 	} else {
 		CheckMembershipAuthorization(context, caller, *granted, info.revoke);
 	}
-	ResolveMembershipGrantor(context, caller, *granted, info);
+	ResolveMembershipGrantor(binder, caller, *granted, info);
 	if (!info.revoke && member.oid == DBConfig::GetConfig(context).database_owner_role) {
 		throw NotImplementedException("role \"%s\" cannot be a member of any role", member.name.GetIdentifierName());
 	}
@@ -247,7 +267,7 @@ void Binder::BindCreateRole(CreateRoleInfo &info) {
 		}
 	}
 	const auto resolve = [&](RoleSpec &spec) {
-		auto role = RoleSpecEntry(context, spec, OnEntryNotFound::RETURN_NULL);
+		auto role = BindRole(spec, OnEntryNotFound::RETURN_NULL);
 		if (role && spec.type != RoleSpecType::NAME) {
 			spec = RoleSpec(role->name);
 		}
@@ -272,13 +292,13 @@ void Binder::BindCreateRole(CreateRoleInfo &info) {
 
 void Binder::BindAlterRole(AlterRoleInfo &info) {
 	auto &caller = CheckAs();
-	auto role = RoleSpecEntry(context, info.Target(), OnEntryNotFound::RETURN_NULL);
+	auto role = BindRole(info.Target(), OnEntryNotFound::RETURN_NULL);
 	if (role) {
 		info.SetQualifiedName(Identifier(), Identifier(), role->name);
 		info.role_type = RoleSpecType::NAME;
 	}
 	if (role && !caller.IsSystem() && !info.grant_role.empty()) {
-		BindMembership(context, caller, *role, info);
+		BindMembership(*this, caller, *role, info);
 	} else if (role && !caller.IsSystem()) {
 		CheckAlterRole(context, caller, *role, info);
 	}
@@ -333,7 +353,7 @@ void Binder::BindAlterDatabaseSettings(AlterDatabaseSettingsInfo &info) {
 	auto &caller = CheckAs();
 	optional_ptr<RoleEntry> role;
 	if (!info.role.empty()) {
-		role = RoleSpecEntry(context, info.role, OnEntryNotFound::THROW_EXCEPTION);
+		role = BindRole(info.role);
 		info.role_id = role->oid;
 	}
 	optional_ptr<CatalogEntry> database;
@@ -359,7 +379,7 @@ void Binder::BindDropRole(DropInfo &info) {
 	}
 	optional_ptr<RoleEntry> role;
 	if (!caller.IsSystem()) {
-		role = RoleSpecEntry(context, RoleSpec(info.GetQualifiedName().Name()), OnEntryNotFound::RETURN_NULL);
+		role = BindRole(RoleSpec(info.GetQualifiedName().Name()), OnEntryNotFound::RETURN_NULL);
 	}
 	if (role && !caller.is_superuser && role->IsSuperuser()) {
 		throw PermissionException(

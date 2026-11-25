@@ -490,6 +490,8 @@ public:
 	void CheckPrivileges();
 	BoundRoutine BindRoutine(const RoutineReference &routine, AclMode use, OnEntryNotFound if_not_found,
 	                         bool named_by_statement = false);
+	optional_ptr<RoleEntry> BindRole(const RoleSpec &role,
+	                                 OnEntryNotFound if_not_found = OnEntryNotFound::THROW_EXCEPTION);
 	void BindCreateRole(CreateRoleInfo &info);
 	void BindAlterRole(AlterRoleInfo &info);
 	void BindDropRole(DropInfo &info);
