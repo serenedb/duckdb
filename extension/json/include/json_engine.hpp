@@ -277,7 +277,8 @@ private:
 	bool direct_duplicate_error = false;
 };
 
-JSONFormat JsonDetectFormat(const char *data, idx_t size, JSONTreeParser &parser, JSONRecordType &record_type);
+bool JsonDetectFormat(const char *data, idx_t size, bool complete, JSONTreeParser &parser, JSONFormat &format,
+                      JSONRecordType &record_type);
 bool JsonWalkPushdown(const Expression &expr);
 
 } // namespace duckdb

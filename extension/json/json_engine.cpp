@@ -658,7 +658,8 @@ bool DirectDecimal(simdjson::ondemand::value &value, simdjson::ondemand::json_ty
 
 } // namespace
 
-JSONFormat JsonDetectFormat(const char *data, idx_t size, JSONTreeParser &parser, JSONRecordType &record_type) {
+bool JsonDetectFormat(const char *data, idx_t size, bool complete, JSONTreeParser &parser, JSONFormat &format,
+                      JSONRecordType &record_type) {
 	auto line_end = NextNewline(data, size);
 	if (line_end != nullptr) {
 		idx_t line_size = line_end - data;
@@ -668,22 +669,27 @@ JSONFormat JsonDetectFormat(const char *data, idx_t size, JSONTreeParser &parser
 		if (root) {
 			if (root->type == JSONValueType::ARRAY && line_size == size) {
 				record_type = IsEmptyOrRecordsArray(*root) ? JSONRecordType::RECORDS : JSONRecordType::VALUES;
-				return JSONFormat::ARRAY;
+				format = JSONFormat::ARRAY;
+				return complete;
 			}
 			record_type = root->type == JSONValueType::OBJECT ? JSONRecordType::RECORDS : JSONRecordType::VALUES;
-			return JSONFormat::NEWLINE_DELIMITED;
+			format = JSONFormat::NEWLINE_DELIMITED;
+			return true;
 		}
 	}
+	const bool decided = complete || line_end != nullptr;
 	idx_t offset = 0;
 	SkipWhitespace(data, offset, size);
 	auto remaining = size - offset;
 	if (remaining == 0 || data[offset] == '{') {
 		record_type = JSONRecordType::RECORDS;
-		return JSONFormat::UNSTRUCTURED;
+		format = JSONFormat::UNSTRUCTURED;
+		return complete || (decided && remaining > 0);
 	}
 	if (data[offset] != '[') {
 		record_type = JSONRecordType::VALUES;
-		return JSONFormat::UNSTRUCTURED;
+		format = JSONFormat::UNSTRUCTURED;
+		return decided;
 	}
 	JSONParseError error;
 	idx_t read_size = 0;
@@ -693,15 +699,18 @@ JSONFormat JsonDetectFormat(const char *data, idx_t size, JSONTreeParser &parser
 		SkipWhitespace(data, offset, size);
 		if (offset != size) {
 			record_type = JSONRecordType::VALUES;
-			return JSONFormat::UNSTRUCTURED;
+			format = JSONFormat::UNSTRUCTURED;
+			return decided;
 		}
 		record_type = IsEmptyOrRecordsArray(*root) ? JSONRecordType::RECORDS : JSONRecordType::VALUES;
-		return JSONFormat::ARRAY;
+		format = JSONFormat::ARRAY;
+		return complete;
 	}
 	offset++;
 	SkipWhitespace(data, offset, size);
 	record_type = offset == size || data[offset] == '{' ? JSONRecordType::RECORDS : JSONRecordType::VALUES;
-	return JSONFormat::ARRAY;
+	format = JSONFormat::ARRAY;
+	return complete;
 }
 
 void *JsonParserMemory::Allocate(void *context, size_t size) noexcept {
@@ -890,23 +899,34 @@ bool JsonWalkPushdown(const Expression &expr) {
 }
 
 void JsonScanGlobal::Detect() {
-	const idx_t want = MinValue(options.maximum_object_size * 2, source->Size());
-	auto detect = BufferAllocator::Get(context).Allocate(want + JSON_PADDING);
-	auto data = char_ptr_cast(detect.get());
-	const idx_t read = source->Rows().ReadFully(data, want, 0);
-	if (read == 0) {
-		format = JSONFormat::NEWLINE_DELIMITED;
-		return;
+	const idx_t limit = MinValue(options.maximum_object_size * 2, source->Size());
+	auto &allocator = BufferAllocator::Get(context);
+	JSONTreeParser parser(read_flags, allocator);
+	idx_t want = MinValue(RowWindow::PIECE, limit);
+	auto detect = allocator.Allocate(want + JSON_PADDING);
+	idx_t read = 0;
+	while (true) {
+		auto data = char_ptr_cast(detect.get());
+		read += source->Rows().ReadFully(data + read, want - read, read);
+		if (read == 0) {
+			format = JSONFormat::NEWLINE_DELIMITED;
+			return;
+		}
+		const bool complete = read < want || want == limit;
+		idx_t features_offset;
+		if (options.geojson.value_or(false) && FindFeatureCollectionArray(data, read, features_offset)) {
+			features_prefix = true;
+			format = JSONFormat::ARRAY;
+			return;
+		}
+		JSONRecordType record_type;
+		if ((complete || !options.geojson.value_or(false)) &&
+		    JsonDetectFormat(data, read, complete, parser, format, record_type)) {
+			return;
+		}
+		want = format == JSONFormat::ARRAY ? limit : MinValue(want * 2, limit);
+		detect.Reallocate(want + JSON_PADDING);
 	}
-	JSONTreeParser parser(read_flags, BufferAllocator::Get(context));
-	idx_t features_offset;
-	if (options.geojson.value_or(false) && FindFeatureCollectionArray(data, read, features_offset)) {
-		features_prefix = true;
-		format = JSONFormat::ARRAY;
-		return;
-	}
-	JSONRecordType record_type;
-	format = JsonDetectFormat(data, read, parser, record_type);
 }
 
 idx_t JsonScanGlobal::MaxThreads() const {

@@ -1,0 +1,67 @@
+# name: test/sql/json/table/read_json_detect_prefix.test
+# description: Format detection reads more of the input while more bytes could change its decision, and decides what reading its whole limit decides
+# group: [table]
+
+require json
+
+statement ok
+COPY (SELECT ('[1, 2]' || repeat(' ', 70000) || chr(10) || '[3]' || chr(10))::BLOB) TO '{TEST_DIR}/detect_array_lines.json' (FORMAT BLOB);
+
+query I
+SELECT json FROM read_json_objects('{TEST_DIR}/detect_array_lines.json')
+----
+[1, 2]
+[3]
+
+statement ok
+COPY (SELECT ('[1]' || repeat(' ', 70000) || '[2]')::BLOB) TO '{TEST_DIR}/detect_array_values.json' (FORMAT BLOB);
+
+query I
+SELECT json FROM read_json_objects('{TEST_DIR}/detect_array_values.json')
+----
+[1]
+[2]
+
+statement ok
+COPY (SELECT ('{"a": "' || repeat('x', 70000) || '"}' || chr(10) || '{"a": "y"}' || chr(10))::BLOB) TO '{TEST_DIR}/detect_long_line.json' (FORMAT BLOB);
+
+query I
+SELECT length(a) FROM read_json('{TEST_DIR}/detect_long_line.json')
+----
+70000
+1
+
+statement ok
+COPY (SELECT ('{' || chr(10) || '"a": "' || repeat('x', 70000) || '"' || chr(10) || '}' || chr(10) || '{"a": "y"}' || chr(10))::BLOB) TO '{TEST_DIR}/detect_pretty_object.json' (FORMAT BLOB);
+
+query I
+SELECT length(a) FROM read_json('{TEST_DIR}/detect_pretty_object.json')
+----
+70000
+1
+
+statement ok
+COPY (SELECT ('[' || chr(10) || '{"a": "' || repeat('x', 70000) || '"},' || chr(10) || '{"a": "y"}' || chr(10) || ']' || chr(10))::BLOB) TO '{TEST_DIR}/detect_pretty_array.json' (FORMAT BLOB);
+
+query I
+SELECT length(a) FROM read_json('{TEST_DIR}/detect_pretty_array.json')
+----
+70000
+1
+
+statement ok
+COPY (SELECT ('[{"a": "' || repeat('x', 70000) || '"}, {"a": "y"}]')::BLOB) TO '{TEST_DIR}/detect_long_array.json' (FORMAT BLOB);
+
+query I
+SELECT length(a) FROM read_json('{TEST_DIR}/detect_long_array.json')
+----
+70000
+1
+
+statement ok
+COPY (SELECT (repeat(' ', 70000) || chr(10) || '{"a": 1}' || chr(10))::BLOB) TO '{TEST_DIR}/detect_leading_space.json' (FORMAT BLOB);
+
+query I
+SELECT a FROM read_json('{TEST_DIR}/detect_leading_space.json')
+----
+1
