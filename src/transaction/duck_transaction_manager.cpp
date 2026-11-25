@@ -13,6 +13,7 @@
 #include "duckdb/storage/block_manager.hpp"
 #include "duckdb/storage/data_table.hpp"
 #include "duckdb/storage/storage_manager.hpp"
+#include "duckdb/storage/storage_extension.hpp"
 #include "duckdb/transaction/duck_transaction.hpp"
 #include "duckdb/transaction/local_storage.hpp"
 #include "duckdb/transaction/transaction_data.hpp"
