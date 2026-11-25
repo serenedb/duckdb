@@ -13,6 +13,8 @@
 #include "duckdb/execution/expression_executor.hpp"
 #include "duckdb/planner/binder.hpp"
 
+#include <absl/algorithm/container.h>
+
 namespace duckdb {
 
 namespace {
@@ -171,8 +173,8 @@ unique_ptr<FunctionData> CurrentSchemasBind(BindScalarFunctionInput &input) {
 				}
 			}
 			auto &set_paths = search_path.GetSetPaths();
-			if (std::none_of(set_paths.begin(), set_paths.end(),
-			                 [](const CatalogSearchEntry &entry) { return entry.GetSchema() == "pg_catalog"; })) {
+			if (absl::c_none_of(set_paths,
+			                    [](const CatalogSearchEntry &entry) { return entry.GetSchema() == "pg_catalog"; })) {
 				schema_list.emplace_back("pg_catalog");
 			}
 		}

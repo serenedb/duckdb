@@ -16,6 +16,8 @@
 #include "duckdb/parser/parsed_data/create_foreign_server_info.hpp"
 #include "duckdb/planner/binder.hpp"
 
+#include <absl/algorithm/container.h>
+
 namespace duckdb {
 
 static idx_t GranteeId(Binder &binder, const RoleSpec &grantee) {
@@ -110,8 +112,8 @@ static void RequireGrantable(Binder &binder, const AlterPermissionsInfo &info, c
 		}
 	}
 	for (auto &privilege : info.column_privileges) {
-		if (std::none_of(columns.begin(), columns.end(),
-		                 [&](const RelationColumn &column) { return column.name.get() == privilege.column; })) {
+		if (absl::c_none_of(columns,
+		                    [&](const RelationColumn &column) { return column.name.get() == privilege.column; })) {
 			throw CatalogException("column \"%s\" of relation \"%s\" does not exist",
 			                       privilege.column.GetIdentifierName(), name);
 		}
@@ -356,7 +358,7 @@ static vector<idx_t> ResolveOwnedRoles(Binder &binder, const vector<RoleSpec> &n
 
 static void RefuseBootstrapRole(Binder &binder, const vector<idx_t> &roles, const string &action) {
 	const auto bootstrap = DBConfig::GetConfig(binder.context).bootstrap_role;
-	if (bootstrap != 0 && std::find(roles.begin(), roles.end(), bootstrap) != roles.end()) {
+	if (bootstrap != 0 && absl::c_linear_search(roles, bootstrap)) {
 		throw DependencyException("cannot %s owned by role %s because they are required by the database system", action,
 		                          RoleName(binder.context, bootstrap));
 	}

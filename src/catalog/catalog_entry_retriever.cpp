@@ -11,6 +11,8 @@
 #include "duckdb/main/client_data.hpp"
 #include "duckdb/main/database_manager.hpp"
 
+#include <absl/algorithm/container.h>
+
 namespace duckdb {
 
 static bool SameBinding(const NameBinding &binding, const EntryLookupInfo &lookup_info) {
@@ -19,16 +21,16 @@ static bool SameBinding(const NameBinding &binding, const EntryLookupInfo &looku
 }
 
 optional_ptr<CatalogEntry> CatalogEntryRetriever::GetBoundEntry(const EntryLookupInfo &lookup_info) {
-	for (auto &binding : *bindings) {
-		if (SameBinding(binding, lookup_info)) {
-			auto &catalog = binding.catalog.empty() ? bindings_catalog : binding.catalog;
-			return Catalog::GetEntry(*this,
-			                         EntryLookupInfo(lookup_info, QualifiedName::FromCatalogSchema(
-			                                                          catalog, binding.schema_path, binding.name)),
-			                         OnEntryNotFound::RETURN_NULL);
-		}
+	auto binding =
+	    absl::c_find_if(*bindings, [&](const NameBinding &candidate) { return SameBinding(candidate, lookup_info); });
+	if (binding == bindings->end()) {
+		return nullptr;
 	}
-	return nullptr;
+	auto &catalog = binding->catalog.empty() ? bindings_catalog : binding->catalog;
+	return Catalog::GetEntry(
+	    *this,
+	    EntryLookupInfo(lookup_info, QualifiedName::FromCatalogSchema(catalog, binding->schema_path, binding->name)),
+	    OnEntryNotFound::RETURN_NULL);
 }
 
 void CatalogEntryRetriever::RecordBinding(const EntryLookupInfo &lookup_info, CatalogEntry &entry) {
@@ -36,10 +38,9 @@ void CatalogEntryRetriever::RecordBinding(const EntryLookupInfo &lookup_info, Ca
 	if (catalog.IsSystemCatalog() || catalog.IsTemporaryCatalog()) {
 		return;
 	}
-	for (auto &binding : *recorded_bindings) {
-		if (SameBinding(binding, lookup_info)) {
-			return;
-		}
+	if (absl::c_any_of(*recorded_bindings,
+	                   [&](const NameBinding &binding) { return SameBinding(binding, lookup_info); })) {
+		return;
 	}
 	recorded_bindings->push_back(NameBinding {lookup_info.GetCatalogType(), lookup_info.GetEntryIdentifier(),
 	                                          lookup_info.GetArgumentCount(),

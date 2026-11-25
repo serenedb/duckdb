@@ -33,7 +33,7 @@
 #include "duckdb/storage/storage_info.hpp"
 #include "duckdb/storage/storage_manager.hpp"
 
-#include <algorithm>
+#include <absl/algorithm/container.h>
 
 namespace duckdb {
 
@@ -147,9 +147,8 @@ bool EntryVisible(ClientContext &context, const RoleAccess &role, CatalogEntry &
 	case CatalogType::MACRO_ENTRY:
 	case CatalogType::TABLE_MACRO_ENTRY: {
 		auto &macro = entry.Cast<MacroCatalogEntry>();
-		return std::any_of(macro.macros.begin(), macro.macros.end(), [&](const unique_ptr<MacroFunction> &overload) {
-			auto &permissions = macro.OverloadPermissions(*overload);
-			return HoldsAny(role, kind, permissions);
+		return absl::c_any_of(macro.macros, [&](const unique_ptr<MacroFunction> &overload) {
+			return HoldsAny(role, kind, macro.OverloadPermissions(*overload));
 		});
 	}
 	case CatalogType::INDEX_ENTRY: {
@@ -257,12 +256,11 @@ template <class F>
 static bool AnyRoleReference(const CatalogEntry &entry, F &&named) {
 	auto &permissions = entry.permissions;
 	const auto any_acl = [&](std::span<const AclItem> acl) {
-		return std::any_of(acl.begin(), acl.end(),
-		                   [&](const AclItem &item) { return named(item.grantee) || named(item.grantor); });
+		return absl::c_any_of(acl, [&](const AclItem &item) { return named(item.grantee) || named(item.grantor); });
 	};
 	if (entry.type == CatalogType::MACRO_ENTRY || entry.type == CatalogType::TABLE_MACRO_ENTRY) {
 		auto &macro = entry.Cast<MacroCatalogEntry>();
-		return std::any_of(macro.macros.begin(), macro.macros.end(), [&](const unique_ptr<MacroFunction> &overload) {
+		return absl::c_any_of(macro.macros, [&](const unique_ptr<MacroFunction> &overload) {
 			auto &overload_permissions = macro.OverloadPermissions(*overload);
 			return named(overload_permissions.owner) || any_acl(overload_permissions.acl);
 		});
@@ -271,14 +269,12 @@ static bool AnyRoleReference(const CatalogEntry &entry, F &&named) {
 		return true;
 	}
 	if (entry.type == CatalogType::DATABASE_ENTRY) {
-		auto &defaults = entry.Cast<DatabaseEntry>().DefaultAcls();
-		return std::any_of(defaults.begin(), defaults.end(),
-		                   [&](const DefaultAcl &row) { return named(row.role) || any_acl(row.acl); });
+		return absl::c_any_of(entry.Cast<DatabaseEntry>().DefaultAcls(),
+		                      [&](const DefaultAcl &row) { return named(row.role) || any_acl(row.acl); });
 	}
 	if (entry.type == CatalogType::ROLE_ENTRY) {
-		auto &member_of = entry.Cast<RoleEntry>().MemberOf();
-		return std::any_of(member_of.begin(), member_of.end(),
-		                   [&](const Membership &edge) { return named(edge.grantor); });
+		return absl::c_any_of(entry.Cast<RoleEntry>().MemberOf(),
+		                      [&](const Membership &edge) { return named(edge.grantor); });
 	}
 	return (entry.type == CatalogType::VIEW_ENTRY || entry.type == CatalogType::TABLE_ENTRY) &&
 	       AnyColumnAcl(entry.Cast<StandardEntry>(), any_acl);
@@ -363,7 +359,7 @@ static bool OwnsEntry(const RoleAccess &role, const CatalogEntry &entry, optiona
 	if (overload) {
 		return role.MemberOf(macro.OverloadPermissions(*overload).owner);
 	}
-	return std::all_of(macro.macros.begin(), macro.macros.end(), [&](const unique_ptr<MacroFunction> &function) {
+	return absl::c_all_of(macro.macros, [&](const unique_ptr<MacroFunction> &function) {
 		return role.MemberOf(macro.OverloadPermissions(*function).owner);
 	});
 }

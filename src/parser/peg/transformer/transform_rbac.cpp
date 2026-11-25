@@ -1,6 +1,6 @@
+#include <absl/algorithm/container.h>
 #include <absl/container/flat_hash_set.h>
 
-#include <algorithm>
 #include <charconv>
 #include <string_view>
 
@@ -103,12 +103,8 @@ optional_ptr<const RoleOptionKeyword> RoleOptionOf(ParseResult &option, bool &on
 	const auto keyword = StringUtil::Upper(FirstKeyword(option).keyword);
 	on = !StringUtil::StartsWith(keyword, "NO");
 	const auto name = std::string_view(keyword).substr(on ? 0 : 2);
-	for (auto &named : ROLE_OPTIONS) {
-		if (named.keyword == name) {
-			return &named;
-		}
-	}
-	return nullptr;
+	auto named = absl::c_find_if(ROLE_OPTIONS, [&](const RoleOptionKeyword &option) { return option.keyword == name; });
+	return named == std::end(ROLE_OPTIONS) ? nullptr : named;
 }
 
 std::string_view TransformPassword(ParseResult &opt) {
@@ -601,8 +597,8 @@ static void TransformPrivilegeList(PEGTransformer &transformer, ParseResult &pri
 		auto &inner = PEGTransformerFactory::ExtractResultFromParens(columns->Cast<ListParseResult>().GetChild(0));
 		for (auto &col_ref : PEGTransformerFactory::ExtractParseResultsFromList(inner)) {
 			Identifier column(transformer.Transform<string>(col_ref.get()));
-			auto existing = std::find_if(info.column_privileges.begin(), info.column_privileges.end(),
-			                             [&](const ColumnPrivilege &entry) { return entry.column == column; });
+			auto existing = absl::c_find_if(info.column_privileges,
+			                                [&](const ColumnPrivilege &entry) { return entry.column == column; });
 			if (existing == info.column_privileges.end()) {
 				info.column_privileges.push_back(ColumnPrivilege {std::move(column), mode});
 			} else {

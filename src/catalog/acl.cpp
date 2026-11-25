@@ -5,7 +5,7 @@
 #include "duckdb/parser/column_list.hpp"
 #include "duckdb/parser/parsed_data/alter_table_info.hpp"
 
-#include <algorithm>
+#include <absl/algorithm/container.h>
 #include <bit>
 
 namespace duckdb {
@@ -14,12 +14,10 @@ AclMode FindPrivilege(std::string_view keyword) {
 	if (StringUtil::CIEquals(keyword, "TEMP")) {
 		return AclMode::CreateTemp;
 	}
-	for (auto &privilege : ACL_PRIVILEGES) {
-		if (StringUtil::CIEquals(keyword, privilege.keyword)) {
-			return privilege.mode;
-		}
-	}
-	return AclMode::NoRights;
+	auto privilege = absl::c_find_if(ACL_PRIVILEGES, [&](const AclPrivilege &candidate) {
+		return StringUtil::CIEquals(keyword, candidate.keyword);
+	});
+	return privilege == std::end(ACL_PRIVILEGES) ? AclMode::NoRights : privilege->mode;
 }
 
 bool Permissions::TryParsePrivilege(std::string_view keyword, CatalogType acl_class, AclMode &result) {
@@ -81,14 +79,14 @@ Grantor BestGrantor(std::span<const idx_t> roles, idx_t owner, AclMode needed, s
 }
 
 static void Grant(vector<AclItem> &acl, idx_t grantee, idx_t grantor, AclMode privs, AclMode options) {
-	for (auto &item : acl) {
-		if (item.grantee == grantee && item.grantor == grantor) {
-			item.privs |= privs;
-			item.grant_option |= options;
-			return;
-		}
+	auto item = absl::c_find_if(
+	    acl, [&](const AclItem &entry) { return entry.grantee == grantee && entry.grantor == grantor; });
+	if (item == acl.end()) {
+		acl.push_back(AclItem {grantee, grantor, privs, options});
+		return;
 	}
-	acl.push_back(AclItem {grantee, grantor, privs, options});
+	item->privs |= privs;
+	item->grant_option |= options;
 }
 
 static void Revoke(vector<AclItem> &acl, idx_t grantee, idx_t grantor, AclMode privs, bool option_only, bool cascade) {
@@ -108,7 +106,7 @@ static void Revoke(vector<AclItem> &acl, idx_t grantee, idx_t grantor, AclMode p
 		vector<idx_t> dependents;
 		for (auto &item : acl) {
 			if (item.grantor == grantee && item.grantee != grantee && (item.privs & lost) != AclMode::NoRights &&
-			    std::find(dependents.begin(), dependents.end(), item.grantee) == dependents.end()) {
+			    !absl::c_linear_search(dependents, item.grantee)) {
 				dependents.push_back(item.grantee);
 			}
 		}
@@ -154,10 +152,9 @@ static void Apply(vector<AclItem> &acl, idx_t grantor, AclMode grantable, AclMod
 }
 
 static vector<AclItem> &ColumnRow(vector<ColumnAcl> &columns, const Identifier &column) {
-	for (auto &row : columns) {
-		if (row.column == column) {
-			return row.acl;
-		}
+	auto row = absl::c_find_if(columns, [&](const ColumnAcl &entry) { return entry.column == column; });
+	if (row != columns.end()) {
+		return row->acl;
 	}
 	columns.push_back(ColumnAcl {column, {}});
 	return columns.back().acl;
@@ -168,21 +165,17 @@ static void ApplyGrant(const AlterPermissionsInfo &info, Permissions &permission
 	const auto owner = permissions.owner;
 	auto stored = permissions.UsesDefaultAcl() ? Permissions::AclDefault(acl_class, owner) : permissions.acl;
 	idx_t grantor = owner;
-	if (!info.best_grantor && !info.grantors.empty() &&
-	    std::find(info.grantors.begin(), info.grantors.end(), owner) == info.grantors.end()) {
-		grantor = info.grantors[0];
-		for (auto role : info.grantors) {
+	if (!info.best_grantor && !info.grantors.empty() && !absl::c_linear_search(info.grantors, owner)) {
+		const auto holder = absl::c_find_if(info.grantors, [&](idx_t role) {
 			auto held = HeldBy(stored, role, &AclItem::grant_option);
 			if (columns) {
 				for (auto &column : *columns) {
 					held |= HeldBy(column.acl, role, &AclItem::grant_option);
 				}
 			}
-			if (held != AclMode::NoRights) {
-				grantor = role;
-				break;
-			}
-		}
+			return held != AclMode::NoRights;
+		});
+		grantor = holder == info.grantors.end() ? info.grantors[0] : *holder;
 	}
 	const auto choose = [&](AclMode needed, std::span<const AclItem> column_acl) {
 		return BestGrantor(info.best_grantor ? std::span<const idx_t>(info.grantors)
@@ -251,23 +244,17 @@ void AlterPermissionsInfo::ApplyToDatabase(CreatePermissions &permissions) const
 		for (auto &row : defaults) {
 			Revoke(row.acl, role, row.role, ~AclMode::NoRights, false, true);
 		}
-		defaults.erase(std::remove_if(defaults.begin(), defaults.end(),
-		                              [&](const DefaultAcl &row) {
-			                              const auto baseline = row.scope == 0
-			                                                        ? Permissions::AclDefault(row.objtype, row.role)
-			                                                        : vector<AclItem> {};
-			                              return row.role == role ||
-			                                     std::is_permutation(row.acl.begin(), row.acl.end(), baseline.begin(),
-			                                                         baseline.end());
-		                              }),
-		               defaults.end());
+		std::erase_if(defaults, [&](const DefaultAcl &row) {
+			const auto baseline = row.scope == 0 ? Permissions::AclDefault(row.objtype, row.role) : vector<AclItem> {};
+			return row.role == role || absl::c_is_permutation(row.acl, baseline);
+		});
 		return;
 	}
 	if (info.default_objtype == CatalogType::INVALID) {
 		ApplyTo(permissions, CatalogType::DATABASE_ENTRY, nullptr);
 		return;
 	}
-	auto row = std::find_if(defaults.begin(), defaults.end(), [&](const DefaultAcl &entry) {
+	auto row = absl::c_find_if(defaults, [&](const DefaultAcl &entry) {
 		return entry.role == info.target_role && entry.scope == info.default_scope &&
 		       entry.objtype == info.default_objtype;
 	});
@@ -275,7 +262,7 @@ void AlterPermissionsInfo::ApplyToDatabase(CreatePermissions &permissions) const
 	    info.default_scope == 0 ? Permissions::AclDefault(info.default_objtype, info.target_role) : vector<AclItem> {};
 	auto row_acl = row == defaults.end() ? baseline : row->acl;
 	Apply(row_acl, info.target_role, ObjectKindOf(info.default_objtype).privileges, info.privileges, info);
-	if (std::is_permutation(row_acl.begin(), row_acl.end(), baseline.begin(), baseline.end())) {
+	if (absl::c_is_permutation(row_acl, baseline)) {
 		if (row != defaults.end()) {
 			defaults.erase(row);
 		}
@@ -305,13 +292,10 @@ void Permissions::AssignOwner(idx_t new_owner, CatalogType objtype, std::span<co
                               optional_idx schema) {
 	owner = new_owner;
 	auto row = [&](idx_t scope) -> optional_ptr<const DefaultAcl> {
-		for (auto &defaults_entry : defaults) {
-			if (defaults_entry.role == new_owner && defaults_entry.objtype == objtype &&
-			    defaults_entry.scope == scope) {
-				return &defaults_entry;
-			}
-		}
-		return nullptr;
+		auto found = absl::c_find_if(defaults, [&](const DefaultAcl &entry) {
+			return entry.role == new_owner && entry.objtype == objtype && entry.scope == scope;
+		});
+		return found == defaults.end() ? nullptr : &*found;
 	};
 	auto global = row(0);
 	optional_ptr<const DefaultAcl> in_schema;
@@ -328,19 +312,15 @@ void Permissions::AssignOwner(idx_t new_owner, CatalogType objtype, std::span<co
 			Grant(granted, item.grantee, item.grantor, item.privs, item.grant_option);
 		}
 	}
-	if (std::is_permutation(granted.begin(), granted.end(), builtin.begin(), builtin.end())) {
+	if (absl::c_is_permutation(granted, builtin)) {
 		granted.clear();
 	}
 	acl = std::move(granted);
 }
 
 std::span<const AclItem> FindColumnAcl(const vector<ColumnAcl> &columns, const Identifier &column) {
-	for (auto &row : columns) {
-		if (row.column == column) {
-			return row.acl;
-		}
-	}
-	return {};
+	auto row = absl::c_find_if(columns, [&](const ColumnAcl &entry) { return entry.column == column; });
+	return row == columns.end() ? std::span<const AclItem> {} : std::span<const AclItem>(row->acl);
 }
 
 } // namespace duckdb

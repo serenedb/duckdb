@@ -43,6 +43,7 @@
 #include "duckdb/storage/data_table.hpp"
 #include "duckdb/common/types/uuid.hpp"
 
+#include <absl/algorithm/container.h>
 #include <algorithm>
 
 namespace duckdb {
@@ -74,7 +75,7 @@ Binder::Binder(ClientContext &context, shared_ptr<Binder> parent_p, BinderType b
 				if (!location.empty()) {
 					auto path = DBConfig::GetConfig(this->context).SanitizeAllowedPath(string(location));
 					auto &locations = properties.storage_locations;
-					if (std::find(locations.begin(), locations.end(), path) == locations.end()) {
+					if (!absl::c_linear_search(locations, path)) {
 						locations.push_back(std::move(path));
 					}
 				}
@@ -98,8 +99,7 @@ static constexpr StatementType SUPERUSER_STATEMENTS[] = {StatementType::EXPORT_S
                                                          StatementType::ATTACH_STATEMENT};
 
 BoundStatement Binder::Bind(SQLStatement &statement) {
-	if (std::find(std::begin(SUPERUSER_STATEMENTS), std::end(SUPERUSER_STATEMENTS), statement.type) !=
-	    std::end(SUPERUSER_STATEMENTS)) {
+	if (absl::c_linear_search(SUPERUSER_STATEMENTS, statement.type)) {
 		RequireSuperuser(CheckAs());
 	}
 	switch (statement.type) {
@@ -376,15 +376,13 @@ void Binder::RequireIndexCalls(TableCatalogEntry &table, optional_ptr<const vect
 	}
 	auto &columns = table.GetColumns();
 	const auto changes = [&](column_t column) {
-		return std::any_of(changed->begin(), changed->end(), [&](PhysicalIndex index) {
-			return columns.GetColumn(index).Logical() == LogicalIndex(column);
-		});
+		return absl::c_any_of(
+		    *changed, [&](PhysicalIndex index) { return columns.GetColumn(index).Logical() == LogicalIndex(column); });
 	};
 	auto &catalog = table.ParentCatalog();
 	const auto transaction = catalog.GetCatalogTransaction(context);
 	catalog.ScanIndexes(context, table, [&](IndexCatalogEntry &index) {
-		if (state.denied_function ||
-		    (changed && std::none_of(index.column_ids.begin(), index.column_ids.end(), changes))) {
+		if (state.denied_function || (changed && absl::c_none_of(index.column_ids, changes))) {
 			return;
 		}
 		for (const auto oid : index.CalledOverloads()) {
@@ -571,10 +569,9 @@ void Binder::RequireColumns(const TableCatalogEntry &table, const RelationChecks
 		return;
 	}
 	const bool granted =
-	    columns.empty() ? checks.role->CanColumns(table, use, {})
-	                    : std::all_of(columns.begin(), columns.end(), [&](LogicalIndex column) {
-		                      return checks.role->Can(CatalogType::TABLE_ENTRY, table.GetColumn(column).Acl(), use);
-	                      });
+	    columns.empty() ? checks.role->CanColumns(table, use, {}) : absl::c_all_of(columns, [&](LogicalIndex column) {
+		    return checks.role->Can(CatalogType::TABLE_ENTRY, table.GetColumn(column).Acl(), use);
+	    });
 	if (!granted) {
 		Deny(table, checks);
 	}
@@ -587,7 +584,7 @@ void Binder::RequireColumns(const TableCatalogEntry &table, const RelationChecks
 	}
 	const bool granted = columns.empty()
 	                         ? checks.role->CanColumns(table, use, {})
-	                         : std::all_of(columns.begin(), columns.end(), [&](const Identifier &name) {
+	                         : absl::c_all_of(columns, [&](const Identifier &name) {
 		                           return !table.ColumnExists(name) ||
 		                                  checks.role->Can(CatalogType::TABLE_ENTRY, table.GetColumn(name).Acl(), use);
 	                           });

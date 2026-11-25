@@ -30,6 +30,7 @@
 #include "duckdb/planner/table_binding.hpp"
 #include "duckdb/common/string_util.hpp"
 
+#include <absl/algorithm/container.h>
 #include <charconv>
 
 namespace duckdb {
@@ -223,7 +224,7 @@ static void ApplyFunctionDecorators(PEGTransformer &transformer, RepeatParseResu
 				macro_function.config = {"search_path" + entry.substr(key.size())};
 				info.has_config = true;
 			}
-			if (reset_all_config || std::any_of(reset_config.begin(), reset_config.end(), [](const string &key) {
+			if (reset_all_config || absl::c_any_of(reset_config, [](const string &key) {
 				    return StringUtil::CIEquals(key, "search_path");
 			    })) {
 				macro_function.config.clear();

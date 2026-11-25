@@ -8,6 +8,7 @@
 #include "duckdb/common/unordered_set.hpp"
 #include "duckdb/main/config.hpp"
 
+#include <absl/algorithm/container.h>
 #include <algorithm>
 #include <bit>
 
@@ -37,11 +38,11 @@ const RoleAccess &RoleAccess::System() {
 
 bool RoleAccess::Uses(idx_t other) const {
 	return other == role || (!closure_filter.empty() && FilterMayContain(closure_filter, other) &&
-	                         std::binary_search(closure.begin(), closure.end(), other));
+	                         absl::c_binary_search(closure, other));
 }
 
 bool RoleAccess::CanSet(idx_t other) const {
-	return is_superuser || other == role || std::binary_search(settable.begin(), settable.end(), other);
+	return is_superuser || other == role || absl::c_binary_search(settable, other);
 }
 
 static bool Reaches(const RoleAccess &access, const AclItem &item) {
@@ -144,8 +145,7 @@ bool RoleAccess::CanColumns(const StandardEntry &relation, AclMode need, std::sp
 	if (columns.empty()) {
 		return AnyColumnAcl(relation, granted);
 	}
-	return std::all_of(columns.begin(), columns.end(),
-	                   [&](idx_t column) { return granted(ColumnAclOf(relation, column)); });
+	return absl::c_all_of(columns, [&](idx_t column) { return granted(ColumnAclOf(relation, column)); });
 }
 
 AclMode RoleAccess::HeldModes(std::span<const AclItem> acl) const {
@@ -173,7 +173,7 @@ static vector<idx_t> Reachable(const unordered_map<idx_t, SecuritySnapshot::Node
 		}
 	}
 	vector<idx_t> result(seen.begin(), seen.end());
-	std::sort(result.begin(), result.end());
+	absl::c_sort(result);
 	return result;
 }
 
@@ -206,13 +206,13 @@ SecuritySnapshot::SecuritySnapshot(unordered_map<idx_t, Node> nodes_p, unordered
 		roles_p.push_back(Role {oid, node.options, capabilities, std::move(closure),
 		                        Reachable(nodes, oid, &Membership::set_option), std::move(administered)});
 	}
-	std::sort(roles_p.begin(), roles_p.end(), [](const Role &lhs, const Role &rhs) { return lhs.role < rhs.role; });
+	absl::c_sort(roles_p, [](const Role &lhs, const Role &rhs) { return lhs.role < rhs.role; });
 	idx_t total = 0;
 	for (auto &role : roles_p) {
-		role.closure.erase(std::remove(role.closure.begin(), role.closure.end(), role.role), role.closure.end());
-		std::sort(role.administered.begin(), role.administered.end());
-		role.administered.erase(std::unique(role.administered.begin(), role.administered.end()),
-		                        role.administered.end());
+		std::erase(role.closure, role.role);
+		absl::c_sort(role.administered);
+		const auto repeated = std::ranges::unique(role.administered);
+		role.administered.erase(repeated.begin(), repeated.end());
 		total += role.closure.size() + role.settable.size() + role.administered.size();
 		if (!role.closure.empty()) {
 			total += FilterWords(role.closure.size());
@@ -226,8 +226,7 @@ SecuritySnapshot::SecuritySnapshot(unordered_map<idx_t, Node> nodes_p, unordered
 		access.options = role.options;
 		access.capabilities = role.capabilities;
 		access.is_superuser = HasOption(role.options, RoleOption::Superuser);
-		access.owns_builtins =
-		    role.role == bootstrap_role || std::binary_search(role.closure.begin(), role.closure.end(), bootstrap_role);
+		access.owns_builtins = role.role == bootstrap_role || absl::c_binary_search(role.closure, bootstrap_role);
 		if (!role.closure.empty()) {
 			const auto words = FilterWords(role.closure.size());
 			const auto filter_begin = arena.size();
@@ -276,7 +275,7 @@ shared_ptr<const SecuritySnapshot> SecuritySnapshot::Build(Catalog &catalog, Cat
 	catalog.Scan(transaction, CatalogType::ROLE_ENTRY, [&](CatalogEntry &entry) {
 		auto &role = entry.Cast<RoleEntry>();
 		auto member_of = role.MemberOf();
-		std::sort(member_of.begin(), member_of.end(), [](const Membership &left, const Membership &right) {
+		absl::c_sort(member_of, [](const Membership &left, const Membership &right) {
 			return left.role != right.role ? left.role < right.role : left.grantor < right.grantor;
 		});
 		nodes[role.oid] =
@@ -301,8 +300,8 @@ shared_ptr<const SecuritySnapshot> SecuritySnapshot::ForDatabase(const Identifie
 }
 
 optional_ptr<const RoleAccess> SecuritySnapshot::Access(idx_t role) const {
-	auto it = std::lower_bound(roles.begin(), roles.end(), role,
-	                           [](const RoleAccess &access, idx_t value) { return access.role < value; });
+	auto it =
+	    absl::c_lower_bound(roles, role, [](const RoleAccess &access, idx_t value) { return access.role < value; });
 	if (it == roles.end() || it->role != role) {
 		return nullptr;
 	}
@@ -346,7 +345,7 @@ vector<idx_t> SecuritySnapshot::InheritedRoles(idx_t role) const {
 			continue;
 		}
 		for (auto &edge : node->member_of) {
-			if (edge.inherit_option && std::find(result.begin(), result.end(), edge.role) == result.end()) {
+			if (edge.inherit_option && !absl::c_linear_search(result, edge.role)) {
 				result.push_back(edge.role);
 			}
 		}
@@ -360,8 +359,8 @@ optional_idx SecuritySnapshot::BestAdmin(idx_t member, idx_t role) const {
 	}
 	for (auto current : InheritedRoles(member)) {
 		auto node = Find(current);
-		if (node && std::any_of(node->member_of.begin(), node->member_of.end(),
-		                        [&](const Membership &edge) { return edge.role == role && edge.admin_option; })) {
+		if (node && absl::c_any_of(node->member_of,
+		                           [&](const Membership &edge) { return edge.role == role && edge.admin_option; })) {
 			return current;
 		}
 	}

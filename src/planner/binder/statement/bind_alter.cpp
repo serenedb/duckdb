@@ -32,6 +32,8 @@
 #include "duckdb/planner/operator/logical_get.hpp"
 #include "duckdb/planner/operator/logical_alter.hpp"
 
+#include <absl/algorithm/container.h>
+
 namespace duckdb {
 
 unique_ptr<LogicalOperator> DuckCatalog::BindAlterAddIndex(Binder &binder, TableCatalogEntry &table_entry,
@@ -232,10 +234,11 @@ BoundRoutine Binder::BindRoutine(const RoutineReference &routine, AclMode use, O
 	}
 	if (macro && !macro->internal && !routine.every_overload) {
 		if (routine.has_func_args) {
-			for (auto &overload : macro->macros) {
-				if (overload->HasParameterTypes(routine.func_parameters)) {
-					result.overload = overload.get();
-				}
+			auto overload = absl::c_find_if(macro->macros, [&](const unique_ptr<MacroFunction> &candidate) {
+				return candidate->HasParameterTypes(routine.func_parameters);
+			});
+			if (overload != macro->macros.end()) {
+				result.overload = overload->get();
 			}
 		} else if (macro->macros.size() > 1) {
 			const auto kind =
@@ -454,8 +457,8 @@ unique_ptr<LogicalOperator> Binder::BindAlter(unique_ptr<AlterInfo> &info) {
 		auto &overload = *bound.overload;
 		auto create_info = routine.GetInfo();
 		const auto position =
-		    std::find_if(routine.macros.begin(), routine.macros.end(),
-		                 [&](const unique_ptr<MacroFunction> &candidate) { return candidate.get() == &overload; }) -
+		    absl::c_find_if(routine.macros,
+		                    [&](const unique_ptr<MacroFunction> &candidate) { return candidate.get() == &overload; }) -
 		    routine.macros.begin();
 		auto &macro = *create_info->Cast<CreateMacroInfo>().macros[position];
 		if (attributes.set_strict && macro.strict != attributes.strict) {

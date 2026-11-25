@@ -1,5 +1,6 @@
 #include "duckdb/main/client_context.hpp"
 
+#include <absl/algorithm/container.h>
 #include <absl/cleanup/cleanup.h>
 
 #include "duckdb/catalog/catalog.hpp"
@@ -1150,7 +1151,7 @@ void ClientContext::CheckFileAccess(const string &requested, RoleCapability suff
 		return (grant.capability & sufficient) != RoleCapability::None && covers(grant.path);
 	};
 	const auto stored = [&](const StatementProperties &properties) {
-		return std::any_of(properties.storage_locations.begin(), properties.storage_locations.end(), covers);
+		return absl::c_any_of(properties.storage_locations, covers);
 	};
 	bool allowed;
 	if (access_scope) {
@@ -1161,15 +1162,14 @@ void ClientContext::CheckFileAccess(const string &requested, RoleCapability suff
 			allowed = true;
 			if (properties) {
 				properties->hide_secrets |= !role.is_superuser;
-				if (std::none_of(properties->file_grants.begin(), properties->file_grants.end(), granted)) {
+				if (absl::c_none_of(properties->file_grants, granted)) {
 					properties->file_grants.push_back(FileGrant {path, sufficient});
 				}
 			}
 		}
 	} else {
 		auto properties = ActiveStatementProperties();
-		allowed = properties && (stored(*properties) ||
-		                         std::any_of(properties->file_grants.begin(), properties->file_grants.end(), granted));
+		allowed = properties && (stored(*properties) || absl::c_any_of(properties->file_grants, granted));
 	}
 	if (!allowed) {
 		throw PermissionException(

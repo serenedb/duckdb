@@ -9,6 +9,8 @@
 #include "duckdb/main/database_manager.hpp"
 #include "duckdb/parser/parsed_data/alter_table_info.hpp"
 
+#include <absl/algorithm/container.h>
+
 namespace duckdb {
 
 MacroCatalogEntry::MacroCatalogEntry(Catalog &catalog, SchemaCatalogEntry &schema, CreateMacroInfo &info)
@@ -52,12 +54,9 @@ const Value &MacroCatalogEntry::OverloadComment(const MacroFunction &overload) c
 }
 
 optional_ptr<MacroFunction> MacroCatalogEntry::FindOverload(idx_t overload_oid) const {
-	for (auto &macro : macros) {
-		if (OverloadOid(*macro) == overload_oid) {
-			return macro.get();
-		}
-	}
-	return nullptr;
+	auto overload = absl::c_find_if(
+	    macros, [&](const unique_ptr<MacroFunction> &macro) { return OverloadOid(*macro) == overload_oid; });
+	return overload == macros.end() ? nullptr : overload->get();
 }
 
 vector<idx_t> MacroCatalogEntry::GetSubObjectOids() const {
@@ -119,9 +118,9 @@ unique_ptr<CatalogEntry> MacroCatalogEntry::AlterEntry(CatalogTransaction transa
 	auto alter_overload = [&](idx_t overload_oid, auto &&alter) {
 		auto altered = GetInfo();
 		auto &altered_macros = altered->Cast<CreateMacroInfo>().macros;
-		auto target =
-		    std::find_if(altered_macros.begin(), altered_macros.end(),
-		                 [&](const unique_ptr<MacroFunction> &macro) { return OverloadOid(*macro) == overload_oid; });
+		auto target = absl::c_find_if(altered_macros, [&](const unique_ptr<MacroFunction> &macro) {
+			return OverloadOid(*macro) == overload_oid;
+		});
 		if (target == altered_macros.end()) {
 			throw CatalogException("function with OID %llu does not exist", overload_oid);
 		}
@@ -149,7 +148,7 @@ unique_ptr<CatalogEntry> MacroCatalogEntry::AlterEntry(CatalogTransaction transa
 	auto &definition = info.Cast<ReplaceDefinitionInfo>().definition->Cast<CreateMacroInfo>();
 	definition.permissions = permissions;
 	for (auto &function : definition.macros) {
-		auto existing = std::find_if(macros.begin(), macros.end(), [&](const unique_ptr<MacroFunction> &macro) {
+		auto existing = absl::c_find_if(macros, [&](const unique_ptr<MacroFunction> &macro) {
 			return macro->HasParameterTypes(function->ParameterTypes());
 		});
 		if (existing != macros.end()) {

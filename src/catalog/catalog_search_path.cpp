@@ -16,6 +16,7 @@
 #include "duckdb/main/extension_callback_manager.hpp"
 
 #include "duckdb/common/exception/parser_exception.hpp"
+#include <absl/algorithm/container.h>
 #include <absl/strings/ascii.h>
 #include <algorithm>
 
@@ -650,8 +651,7 @@ void CatalogSearchPath::SetPathsInternal(vector<CatalogSearchEntry> new_paths) {
 			postgres_mode = database && database->GetCatalog().Compatibility() == SqlCompatibility::POSTGRES;
 		}
 		const bool pg_catalog_named =
-		    std::any_of(set_paths.begin(), set_paths.end(),
-		                [](const CatalogSearchEntry &path) { return path.GetSchema() == "pg_catalog"; });
+		    absl::c_any_of(set_paths, [](const CatalogSearchEntry &path) { return path.GetSchema() == "pg_catalog"; });
 		builtins_first_order = session_path.postgres_mode && !pg_catalog_named;
 	}
 }

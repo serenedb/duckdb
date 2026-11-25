@@ -1,6 +1,6 @@
 #include "duckdb/parser/parsed_data/parse_info.hpp"
 
-#include <algorithm>
+#include <absl/algorithm/container.h>
 
 #include "duckdb/parser/parsed_expression.hpp"
 #include "duckdb/common/sql_identifier.hpp"
@@ -103,7 +103,7 @@ string RenderSubscriptionOptions(const case_insensitive_map_t<Value> &options) {
 	for (auto &option : options) {
 		items.push_back(option.first + " = " + option.second.ToSQLString());
 	}
-	std::sort(items.begin(), items.end());
+	absl::c_sort(items);
 	return "(" + StringUtil::Join(items, ", ") + ")";
 }
 

@@ -13,7 +13,7 @@
 #include "duckdb/common/enums/role_capability.hpp"
 #include "duckdb/common/unordered_map.hpp"
 
-#include <algorithm>
+#include <absl/algorithm/container.h>
 
 namespace duckdb {
 class Catalog;
@@ -94,7 +94,7 @@ struct RoleAccess {
 	}
 	bool CanSet(idx_t other) const;
 	bool AdminOf(idx_t other) const {
-		return std::binary_search(administered.begin(), administered.end(), other);
+		return absl::c_binary_search(administered, other);
 	}
 	bool Can(CatalogType type, std::span<const AclItem> acl, AclMode need) const;
 	bool Can(CatalogType type, const Permissions &permissions, AclMode need) const;
@@ -108,7 +108,7 @@ struct RoleMemberships {
 	vector<idx_t> members;
 
 	bool IsMember(idx_t role) const {
-		return std::binary_search(members.begin(), members.end(), role);
+		return absl::c_binary_search(members, role);
 	}
 };
 

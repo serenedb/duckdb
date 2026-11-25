@@ -54,6 +54,7 @@
 #include "duckdb/storage/write_ahead_log.hpp"
 #include "duckdb/main/settings.hpp"
 #include "duckdb/logging/logger.hpp"
+#include <absl/algorithm/container.h>
 #include <algorithm>
 
 namespace duckdb {
@@ -1473,7 +1474,7 @@ static bool TakesPositionalArguments(const FunctionSignature &signature, idx_t c
 
 template <class T>
 static bool AnyTakesPositionalArguments(const vector<shared_ptr<const T>> &functions, idx_t count) {
-	return std::any_of(functions.begin(), functions.end(), [&](const shared_ptr<const T> &function) {
+	return absl::c_any_of(functions, [&](const shared_ptr<const T> &function) {
 		return TakesPositionalArguments(function->GetSignature(), count);
 	});
 }
@@ -1492,7 +1493,7 @@ static bool TakesPositionalArguments(CatalogEntry &entry, idx_t count) {
 	case CatalogType::MACRO_ENTRY:
 	case CatalogType::TABLE_MACRO_ENTRY: {
 		auto &macros = entry.Cast<MacroCatalogEntry>().macros;
-		return std::any_of(macros.begin(), macros.end(), [&](const unique_ptr<MacroFunction> &macro) {
+		return absl::c_any_of(macros, [&](const unique_ptr<MacroFunction> &macro) {
 			return count <= macro->parameters.size() &&
 			       count + macro->default_parameters.size() >= macro->parameters.size();
 		});

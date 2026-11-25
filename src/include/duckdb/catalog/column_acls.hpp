@@ -13,7 +13,7 @@
 #include "duckdb/catalog/role_graph.hpp"
 #include "duckdb/parser/column_list.hpp"
 
-#include <algorithm>
+#include <absl/algorithm/container.h>
 #include <span>
 
 namespace duckdb {
@@ -21,9 +21,8 @@ namespace duckdb {
 template <class F>
 bool AnyColumnAcl(const StandardEntry &relation, F &&f) {
 	if (relation.type == CatalogType::VIEW_ENTRY) {
-		auto &columns = relation.Cast<ViewCatalogEntry>().column_acls;
-		return std::any_of(columns.begin(), columns.end(),
-		                   [&](const ColumnAcl &column) { return f(std::span<const AclItem>(column.acl)); });
+		return absl::c_any_of(relation.Cast<ViewCatalogEntry>().column_acls,
+		                      [&](const ColumnAcl &column) { return f(std::span<const AclItem>(column.acl)); });
 	}
 	if (relation.type != CatalogType::TABLE_ENTRY) {
 		return false;
@@ -32,9 +31,8 @@ bool AnyColumnAcl(const StandardEntry &relation, F &&f) {
 	if (!table.has_column_acls) {
 		return false;
 	}
-	auto columns = table.GetColumns().Logical();
-	return std::any_of(columns.begin(), columns.end(),
-	                   [&](const ColumnDefinition &column) { return f(std::span<const AclItem>(column.Acl())); });
+	return absl::c_any_of(table.GetColumns().Logical(),
+	                      [&](const ColumnDefinition &column) { return f(std::span<const AclItem>(column.Acl())); });
 }
 
 inline std::span<const AclItem> ColumnAclOf(const StandardEntry &relation, idx_t column) {
