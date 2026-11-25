@@ -940,6 +940,11 @@
         "id": 217,
         "name": "relations",
         "type": "vector<SubscriptionRelation>"
+      },
+      {
+        "id": 218,
+        "name": "options",
+        "type": "case_insensitive_map_t<Value>"
       }
     ],
     "methods": {
