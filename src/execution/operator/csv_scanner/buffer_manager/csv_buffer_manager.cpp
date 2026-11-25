@@ -3,13 +3,23 @@
 #include "duckdb/execution/operator/csv_scanner/csv_random_access_buffer_manager.hpp"
 #include "duckdb/execution/operator/csv_scanner/csv_buffer.hpp"
 #include "duckdb/function/table/read_csv.hpp"
+#include "duckdb/formats/row_input.hpp"
 namespace duckdb {
+
+static idx_t ReadBufferSize(ClientContext &context, const CSVReaderOptions &options, const OpenFileInfo &file,
+                            const CSVFileHandle &handle) {
+	const idx_t size = options.buffer_size_option.GetValue();
+	if (!RowInput::HostStream(context, handle, file.path, options.encoding == "utf-8")) {
+		return size;
+	}
+	return MaxValue(MinValue(size, RowInput::HOST_STREAM_BYTES), options.maximum_line_size.GetValue());
+}
 
 CSVBufferManager::CSVBufferManager(ClientContext &context_p, const CSVReaderOptions &options,
                                    const OpenFileInfo &file_p, bool per_file_single_threaded_p,
                                    unique_ptr<CSVFileHandle> file_handle_p)
     : file_handle(std::move(file_handle_p)), context(context_p), per_file_single_threaded(per_file_single_threaded_p),
-      file(file_p), buffer_size(options.buffer_size_option.GetValue()) {
+      file(file_p), buffer_size(ReadBufferSize(context_p, options, file_p, *file_handle)) {
 	D_ASSERT(file_handle);
 }
 

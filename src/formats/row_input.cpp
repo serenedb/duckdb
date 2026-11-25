@@ -28,11 +28,17 @@ void FileRowSource::Release(idx_t position) {
 	}
 }
 
-RowInput::RowInput(ClientContext &context, CSVBufferManager &manager, const string &path, bool utf8,
-                   optional_ptr<atomic<idx_t>> bytes_read) {
-	if (manager.file_handle->compression_type == FileCompressionType::UNCOMPRESSED && utf8) {
-		host_stream = FindRowStream(context, path);
+shared_ptr<RowSource> RowInput::HostStream(ClientContext &context, const CSVFileHandle &handle, const string &path,
+                                           bool utf8) {
+	if (handle.compression_type != FileCompressionType::UNCOMPRESSED || !utf8) {
+		return nullptr;
 	}
+	return FindRowStream(context, path);
+}
+
+RowInput::RowInput(ClientContext &context, CSVBufferManager &manager, const string &path, bool utf8,
+                   optional_ptr<atomic<idx_t>> bytes_read)
+    : host_stream(HostStream(context, *manager.file_handle, path, utf8)) {
 	stream = host_stream || !manager.HasKnownBufferRanges();
 	size = stream ? NumericLimits<idx_t>::Maximum() : manager.file_handle->FileSize();
 	if (!host_stream) {
