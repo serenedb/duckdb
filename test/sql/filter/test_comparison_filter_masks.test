@@ -1,0 +1,111 @@
+# name: test/sql/filter/test_comparison_filter_masks.test
+# description: A pushed comparison with a constant keeps the rows the expression executor keeps: every numeric type, whole and partial vectors, results from no row to every row, NULLs, both halves of 128-bit values, NaN and infinities
+# group: [filter]
+
+foreach type TINYINT SMALLINT INTEGER BIGINT HUGEINT UTINYINT USMALLINT UINTEGER UBIGINT UHUGEINT FLOAT DOUBLE
+
+statement ok
+CREATE OR REPLACE TABLE numbers AS
+SELECT i AS id,
+       (i % 100)::${type} AS spread,
+       (CASE WHEN i = 4321 THEN 7 ELSE 50 + i % 50 END)::${type} AS rare,
+       (CASE WHEN i % 3 = 0 THEN NULL ELSE i % 100 END)::${type} AS holes,
+       (CASE WHEN i % 1000 < 300 THEN 7 ELSE i % 100 END)::${type} AS runs
+FROM range(10000) t(i)
+
+foreach col spread rare holes runs
+
+foreach op = <> < <= > >=
+
+foreach value 7 49 120
+
+query I
+SELECT (SELECT [count(*), coalesce(sum(id), -1)] FROM numbers WHERE ${col} ${op} ${value}) =
+       (SELECT [count(*) FILTER (${col} ${op} ${value}), coalesce(sum(id) FILTER (${col} ${op} ${value}), -1)] FROM numbers)
+----
+true
+
+endloop
+
+endloop
+
+query I
+SELECT (SELECT [count(*), coalesce(sum(id), -1)] FROM numbers WHERE ${col} BETWEEN 7 AND 49) =
+       (SELECT [count(*) FILTER (${col} BETWEEN 7 AND 49), coalesce(sum(id) FILTER (${col} BETWEEN 7 AND 49), -1)] FROM numbers)
+----
+true
+
+query I
+SELECT (SELECT [count(*), coalesce(sum(id), -1)] FROM numbers WHERE ${col} <> 7 AND ${col} <> 49 AND ${col} < 120) =
+       (SELECT [count(*) FILTER (${col} <> 7 AND ${col} <> 49 AND ${col} < 120), coalesce(sum(id) FILTER (${col} <> 7 AND ${col} <> 49 AND ${col} < 120), -1)] FROM numbers)
+----
+true
+
+endloop
+
+endloop
+
+statement ok
+CREATE TABLE wide AS
+SELECT i AS id,
+       (i % 5 - 2)::HUGEINT * 18446744073709551616 + (i % 7)::HUGEINT * 3074457345618258602 AS signed_value,
+       (i % 5)::UHUGEINT * 18446744073709551616::UHUGEINT + (i % 7)::UHUGEINT * 3074457345618258602::UHUGEINT AS unsigned_value,
+       CASE WHEN i % 4 = 0 THEN NULL ELSE (i % 5 - 2)::HUGEINT * 18446744073709551616 + (i % 7)::HUGEINT * 3074457345618258602 END AS signed_holes
+FROM range(10000) t(i)
+
+foreach op = <> < <= > >=
+
+foreach value 0 9223372036854775806 12297829382473034408 18446744073709551616 30744573456182586024 36893488147419103232
+
+query I
+SELECT (SELECT [count(*), coalesce(sum(id), -1)] FROM wide WHERE unsigned_value ${op} ${value}::UHUGEINT) =
+       (SELECT [count(*) FILTER (unsigned_value ${op} ${value}::UHUGEINT), coalesce(sum(id) FILTER (unsigned_value ${op} ${value}::UHUGEINT), -1)] FROM wide)
+----
+true
+
+foreach col signed_value signed_holes
+
+foreach sign + -
+
+query I
+SELECT (SELECT [count(*), coalesce(sum(id), -1)] FROM wide WHERE ${col} ${op} ${sign}${value}::HUGEINT) =
+       (SELECT [count(*) FILTER (${col} ${op} ${sign}${value}::HUGEINT), coalesce(sum(id) FILTER (${col} ${op} ${sign}${value}::HUGEINT), -1)] FROM wide)
+----
+true
+
+endloop
+
+endloop
+
+endloop
+
+endloop
+
+foreach type FLOAT DOUBLE
+
+statement ok
+CREATE OR REPLACE TABLE specials AS
+SELECT i AS id,
+       (['nan', 'inf', '-inf', '0', '-0', '1.5', '-1.5', '1e30', NULL])[1 + i % 9]::${type} AS value,
+       (CASE WHEN i % 97 = 0 THEN 'nan' ELSE (i % 50)::VARCHAR END)::${type} AS rare_nan
+FROM range(10000) t(i)
+
+foreach col value rare_nan
+
+foreach op = <> < <= > >=
+
+foreach value 'nan' 'inf' '-inf' 0 1.5 49
+
+query I
+SELECT (SELECT [count(*), coalesce(sum(id), -1)] FROM specials WHERE ${col} ${op} ${value}::${type}) =
+       (SELECT [count(*) FILTER (${col} ${op} ${value}::${type}), coalesce(sum(id) FILTER (${col} ${op} ${value}::${type}), -1)] FROM specials)
+----
+true
+
+endloop
+
+endloop
+
+endloop
+
+endloop

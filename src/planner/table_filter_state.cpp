@@ -46,12 +46,49 @@ void ExpressionFilterExecutor::FilterMask(Vector &vector, idx_t count, uint64_t 
 }
 
 static constexpr idx_t MASK_WORDS = STANDARD_VECTOR_SIZE / 64;
+static constexpr idx_t SPARSE_WORD_ROWS = 4;
+
+struct BytePositions {
+	consteval BytePositions() {
+		for (idx_t byte = 0; byte < 256; byte++) {
+			idx_t count = 0;
+			for (uint8_t bit = 0; bit < 8; bit++) {
+				if ((byte >> bit) & 1) {
+					positions[byte][count++] = bit;
+				}
+			}
+		}
+	}
+
+	uint8_t positions[256][8] = {};
+};
+
+static constexpr BytePositions BYTE_POSITIONS;
 
 static idx_t MaskToSelection(const uint64_t *mask, idx_t count, sel_t *sel) {
+	const auto words = (count + 63) / 64;
 	idx_t result_count = 0;
-	for (idx_t w = 0; w < (count + 63) / 64; w++) {
-		for (auto bits = mask[w]; bits != 0; bits &= bits - 1) {
-			sel[result_count++] = UnsafeNumericCast<sel_t>(w * 64 + CountZeros<uint64_t>::Trailing(bits));
+	for (idx_t w = 0; w < words; w++) {
+		result_count += UnsafeNumericCast<idx_t>(std::popcount(mask[w]));
+	}
+	if (result_count == count) {
+		return count;
+	}
+	result_count = 0;
+	for (idx_t w = 0; w < words; w++) {
+		auto bits = mask[w];
+		if (UnsafeNumericCast<idx_t>(std::popcount(bits)) <= SPARSE_WORD_ROWS) {
+			for (; bits != 0; bits &= bits - 1) {
+				sel[result_count++] = UnsafeNumericCast<sel_t>(w * 64 + CountZeros<uint64_t>::Trailing(bits));
+			}
+			continue;
+		}
+		for (auto first = UnsafeNumericCast<sel_t>(w * 64); bits != 0; bits >>= 8, first += 8) {
+			const auto &positions = BYTE_POSITIONS.positions[bits & 0xFF];
+			for (idx_t j = 0; j < 8; j++) {
+				sel[result_count + j] = first + positions[j];
+			}
+			result_count += UnsafeNumericCast<idx_t>(std::popcount(bits & 0xFF));
 		}
 	}
 	return result_count;
@@ -265,8 +302,8 @@ private:
 		if (current_capacity >= count) {
 			return;
 		}
-		result_sel.Initialize(count);
-		current_capacity = count;
+		current_capacity = AlignValue<idx_t, 8>(count);
+		result_sel.Initialize(current_capacity);
 	}
 
 	using compare_value_t = bool (*)(const_data_ptr_t value, const Value &constant);
