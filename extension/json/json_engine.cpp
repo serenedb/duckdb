@@ -779,12 +779,8 @@ JsonScanGlobal::JsonScanGlobal(ClientContext &context_p, const JSONScanData &bin
 }
 
 void JsonScanGlobal::PlanDirect() {
-	// simdjson built with SIMDJSON_ALLOW_TRAILING_COMMAS or SIMDJSON_ENABLE_NAN_INF accepts them: strict reads then go
-	// through JSONTreeParser, which looks for them
-	const bool lenient_simdjson = SIMDJSON_ALLOW_TRAILING_COMMAS || SIMDJSON_ENABLE_NAN_INF;
 	direct = options.type == JSONScanType::READ_JSON && options.record_type == JSONRecordType::RECORDS &&
-	         format != JSONFormat::AUTO_DETECT && !columns.names.empty() && columns.feature_columns.empty() &&
-	         !(options.strict && lenient_simdjson);
+	         format != JSONFormat::AUTO_DETECT && !columns.names.empty() && columns.feature_columns.empty();
 	if (!direct) {
 		return;
 	}

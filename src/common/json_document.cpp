@@ -888,13 +888,6 @@ static void ReplaceInvalidJSONUnicode(const char *data, idx_t len, string &out) 
 static optional_idx ParseInto(JSONTreeParserState &st, JSONReadFlags flags, const char *data, idx_t len, idx_t readable,
                               bool append, JSONParseError &error, optional_ptr<idx_t> consumed = nullptr);
 
-//! Whether simdjson accepts trailing commas or NaN and Infinity that the flags do not allow: it does when built with
-//! SIMDJSON_ALLOW_TRAILING_COMMAS or SIMDJSON_ENABLE_NAN_INF, which apply to every parser in the binary
-static bool JSONNeedsStrictScan(JSONReadFlags flags) {
-	return (SIMDJSON_ALLOW_TRAILING_COMMAS && !HasFlag(flags, JSONReadFlags::ALLOW_TRAILING_COMMAS)) ||
-	       (SIMDJSON_ENABLE_NAN_INF && !HasFlag(flags, JSONReadFlags::ALLOW_INF_AND_NAN));
-}
-
 JSONTreeParser::JSONTreeParser(JSONReadFlags flags_p, Allocator &allocator)
     : flags(flags_p), state(make_uniq<JSONTreeParserState>(allocator)) {
 	SetFlags(flags_p);
@@ -938,8 +931,8 @@ optional_idx JSONTreeParser::ParseAppend(const char *data, idx_t len, idx_t read
 bool JSONTreeParser::Validate(const char *data, idx_t len, idx_t readable, JSONParseError &error) {
 	constexpr auto rewritten =
 	    static_cast<uint32_t>(JSONReadFlags::ALLOW_COMMENTS | JSONReadFlags::ALLOW_INVALID_UNICODE);
-	const bool plain = (static_cast<uint32_t>(flags) & rewritten) == 0 && !JSONNeedsStrictScan(flags) &&
-	                   readable >= len + PADDING && !(len >= 3 && memcmp(data, "\xEF\xBB\xBF", 3) == 0);
+	const bool plain = (static_cast<uint32_t>(flags) & rewritten) == 0 && readable >= len + PADDING &&
+	                   !(len >= 3 && memcmp(data, "\xEF\xBB\xBF", 3) == 0);
 	if (plain) {
 		JSONCheckVisitor checker;
 		const auto code = state->parser.visit(simdjson::padded_string_view(data, len, readable), checker);
@@ -1047,39 +1040,6 @@ static bool IsJSONSpace(char c) {
 	return c == ' ' || c == '\t' || c == '\n' || c == '\r';
 }
 
-//! The first trailing comma, NaN or Infinity that the flags do not allow, in a document that simdjson accepted
-static optional_idx FindDisallowedJSON(JSONReadFlags flags, const char *data, idx_t len, const char *&message) {
-	const bool commas = !HasFlag(flags, JSONReadFlags::ALLOW_TRAILING_COMMAS);
-	const bool special = !HasFlag(flags, JSONReadFlags::ALLOW_INF_AND_NAN);
-	char previous = '[';
-	for (idx_t i = 0; i < len; i++) {
-		const char c = data[i];
-		if (IsJSONSpace(c)) {
-			continue;
-		}
-		if (c == '"') {
-			for (i++; i < len && data[i] != '"'; i++) {
-				i += data[i] == '\\';
-			}
-		} else if (c == ',' && commas && previous != '[' && previous != '{' && previous != ',' && previous != ':') {
-			idx_t next = i + 1;
-			while (next < len && IsJSONSpace(data[next])) {
-				next++;
-			}
-			if (next < len && (data[next] == ']' || data[next] == '}')) {
-				message = "trailing comma is not allowed";
-				return i;
-			}
-		} else if (special &&
-		           (c == 'N' || c == 'I' || c == 'i' || (c == 'n' && i + 1 < len && (data[i + 1] | 0x20) == 'a'))) {
-			message = "NaN and Infinity are not allowed";
-			return i;
-		}
-		previous = c;
-	}
-	return optional_idx();
-}
-
 //! Copies a document without its trailing commas (a comma after a value and before a closing bracket); false when it
 //! has none
 static bool RemoveTrailingCommas(const char *data, idx_t len, string &out) {
@@ -1145,14 +1105,6 @@ static optional_idx ParseInto(JSONTreeParserState &st, JSONReadFlags flags, cons
 		JSONParseError retry;
 		root = ParseCleanJSON(st, flags, st.uncommaed.data(), len, len, append, retry, consumed);
 		error = retry;
-	}
-	if (root.IsValid() && JSONNeedsStrictScan(flags)) {
-		const char *message;
-		const auto position = FindDisallowedJSON(flags, data, consumed ? *consumed : len, message);
-		if (position.IsValid()) {
-			st.nodes.resize(root.GetIndex());
-			return JSONParseFailure(error, message, position.GetIndex());
-		}
 	}
 	return root;
 }
@@ -1270,12 +1222,11 @@ static optional_idx ParseCleanJSON(JSONTreeParserState &st, JSONReadFlags flags,
 	return root;
 }
 
-//! Whether visit() may read the document: the inputs that ParseInto rewrites, reads as raw numbers, or scans, go to it
+//! Whether visit() may read the document: the inputs that ParseInto rewrites or reads as raw numbers go to it
 static bool JSONVisitable(JSONReadFlags flags, const char *data, idx_t len) {
 	constexpr auto rewritten = static_cast<uint32_t>(
 	    JSONReadFlags::ALLOW_COMMENTS | JSONReadFlags::ALLOW_INVALID_UNICODE | JSONReadFlags::NUMBER_AS_RAW);
-	return (static_cast<uint32_t>(flags) & rewritten) == 0 && !JSONNeedsStrictScan(flags) &&
-	       !(len >= 3 && memcmp(data, "\xEF\xBB\xBF", 3) == 0);
+	return (static_cast<uint32_t>(flags) & rewritten) == 0 && !(len >= 3 && memcmp(data, "\xEF\xBB\xBF", 3) == 0);
 }
 
 //! Copies the document into the input buffer, followed by simdjson's padding
